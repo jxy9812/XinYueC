@@ -8,7 +8,6 @@
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
-#include<time.h>
 #include<stdlib.h>
 
 /* ============================================================

@@ -54,6 +54,8 @@
 #include "XImage.h"
 #include "XPixmap.h"
 #include "XBitmap.h"
+#include "XIcon.h"
+#include "XPainter.h"
 #include "XString.h"
 #include "XGeometry.h"
 #include "XMemory.h"
@@ -393,6 +395,7 @@ static Atom g_xpwnNetWmTypeTooltip;      /**< _NET_WM_WINDOW_TYPE_TOOLTIP。 */
 static Atom g_xpwnNetWmTypeCombo;        /**< _NET_WM_WINDOW_TYPE_COMBO。 */
 static Atom g_xpwnNetWmTypePopupMenu;    /**< _NET_WM_WINDOW_TYPE_POPUP_MENU。 */
 static Atom g_xpwnMotifWmHints;        /**< _MOTIF_WM_HINTS 原子（装饰提示）。 */
+static Atom g_xpwnNetWmIcon;           /**< _NET_WM_ICON 原子（窗口图标，EWMH）。 */
 static XIM g_xpwnInputMethod;     /**< X11 输入法方法（不可用时为 NULL）。 */
 static Atom g_xpwnXdndAware;
 static Atom g_xpwnXdndEnter;
@@ -2471,6 +2474,7 @@ static bool xpwn_ensureConnection(void)
                                             "_NET_WM_STATE_SKIP_PAGER",
                                             False);
     g_xpwnMotifWmHints = XInternAtom(g_xpwnDisplay, "_MOTIF_WM_HINTS", False);
+    g_xpwnNetWmIcon = XInternAtom(g_xpwnDisplay, "_NET_WM_ICON", False);
     /* 窗口状态/类型原子（对标 QXcbWindow::setWindowState/setWindowType
        的 atom() 初始化；AnyPropertyType 语义下 None 返回值在写入端判空
        跳过，无 WM 的最小会话同样安全）。 */
@@ -2612,6 +2616,72 @@ static void xpwn_applyTitle(Window xwin, const XString* title)
                         g_xpwnUtf8String, 8, PropModeReplace,
                         (const unsigned char*)utf8, (int)len);
     }
+}
+
+/** @brief 把 XIcon 渲染成 EWMH _NET_WM_ICON 属性写入原生窗口。
+ *  @details _NET_WM_ICON 是 CARD32 数组：宽度、高度前导头 + 行优先
+ *           ARGB 像素，多尺寸直接串联（EWMH 规范），WM/任务栏按尺寸
+ *           就近取用。这里渲染 16/32/48 三档（任务栏小图/Alt-Tab/停
+ *           靠大图常需），逐档经 XIcon_paint 离屏 ARGB32 XImage 光栅
+ *           化后按字节组装（不整字 punning，宿主字节序无关）。icon 为
+ *           NULL 时删属性（清图标语义，对标 QXcbWindow 位移除路径）。
+ *           属性写入失败静默——无 WM 的最小会话同样无害。 */
+static void xpwn_applyIcon(Window xwin, const XIcon* icon)
+{
+    /* 渲染档位：小图标两档 + 大图标一档；总字数上限 =
+       3*2 头 + 256 + 1024 + 2304 = 3894 字（~15.2KB，堆分配）。 */
+    static const int kSizes[3] = { 16, 32, 48 };
+    unsigned long* data;
+    unsigned long* w;
+    int i;
+    if (!xwin) return;
+    if (!icon || g_xpwnNetWmIcon == None) {
+        if (g_xpwnNetWmIcon != None)
+            XDeleteProperty(g_xpwnDisplay, xwin, g_xpwnNetWmIcon);
+        return;
+    }
+    data = (unsigned long*)XMemory_malloc(
+        sizeof(unsigned long) * (3 * 2 + 256 + 1024 + 2304), 0);
+    if (!data) return;
+    w = data;
+    for (i = 0; i < 3; ++i) {
+        XImage img;
+        XPainter painter;
+        const uint8_t* bits;
+        int s = kSizes[i];
+        int x;
+        int y;
+        XImage_init_ex(&img, s, s, XImageFormat_ARGB32);
+        XPainter_init(&painter, NULL);
+        if (!XPainter_begin_image(&painter, &img)) {
+            XPainter_deinit(&painter);
+            XClassDeinit(&img);
+            continue;
+        }
+        XIcon_paint(icon, &painter, 0, 0, s, s, XAlignment_Center,
+                    XIconMode_Normal, XIconState_Off);
+        XPainter_end(&painter);
+        XPainter_deinit(&painter);
+        bits = XImage_constBits(&img);
+        if (bits && XImage_bytesPerLine(&img) >= s * 4) {
+            *w++ = (unsigned long)s;
+            *w++ = (unsigned long)s;
+            for (y = 0; y < s; ++y) {
+                const uint8_t* row = bits + (int64_t)y * XImage_bytesPerLine(&img);
+                for (x = 0; x < s; ++x, row += 4)
+                    *w++ = (unsigned long)row[3] << 24 |
+                           (unsigned long)row[2] << 16 |
+                           (unsigned long)row[1] << 8 |
+                           (unsigned long)row[0];
+            }
+        }
+        XClassDeinit(&img);
+    }
+    if ((size_t)(w - data) > 4)
+        XChangeProperty(g_xpwnDisplay, xwin, g_xpwnNetWmIcon, XA_CARDINAL,
+                        32, PropModeReplace, (const unsigned char*)data,
+                        (int)(w - data));
+    XMemory_free(data, 0);
 }
 
 /** @brief 把 ARGB32 缓冲的一行/一矩形直拷进 XPutImage 缓冲。
@@ -6484,6 +6554,17 @@ bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title)
     entry = xpwn_findByXWindow(window);
     if (!entry || !entry->m_win) return false;
     xpwn_applyTitle(entry->m_win, title);
+    XFlush(g_xpwnDisplay);
+    return true;
+}
+
+bool XPlatformNativeWindow_setIcon(XWindow* window, const XIcon* icon)
+{
+    XWNPendingEntry* entry;
+    if (!xpwn_ensureConnection()) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_win) return false;
+    xpwn_applyIcon(entry->m_win, icon);
     XFlush(g_xpwnDisplay);
     return true;
 }

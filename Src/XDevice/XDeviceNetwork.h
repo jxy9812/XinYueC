@@ -248,8 +248,13 @@ typedef struct XDeviceNetworkInterfaceConfig {
     XHostAddress ipv6Address;  /**< 首个 IPv6 单播地址（预填用）；isNull()=无。 */
     XHostAddress ipv6Gateway;  /**< 首个 IPv6 默认网关；isNull()=无（lwIP 后端恒无）。 */
     XHostAddress dhcpServer;   /**< DHCP 服务器地址；isNull()=无。 */
-    XHostAddress dnsPrimary;   /**< 首选 DNS；isNull()=无。 */
-    XHostAddress dnsSecondary; /**< 备用 DNS；isNull()=无。 */
+    XHostAddress dnsPrimary;   /**< 首选 DNS（IPv4）；isNull()=无。 */
+    XHostAddress dnsSecondary; /**< 备用 DNS（IPv4）；isNull()=无。 */
+    /** [DNS 分族 2026-10-25] IPv6 DNS 单独承载：安卓在 v6 优先/纯 IPv6
+     *  网络下系统下发的 DNS 全是 IPv6 地址，此前被塞进 dnsPrimary 导致
+     *  界面「IPv4 设置」里显示 IPv6 DNS、而 IPv6 区无 DNS 可显。 */
+    XHostAddress dnsV6Primary;   /**< 首选 DNS（IPv6）；isNull()=无。 */
+    XHostAddress dnsV6Secondary; /**< 备用 DNS（IPv6）；isNull()=无。 */
     int ipv6PrefixLength;    /**< ipv6Address 的前缀长度（0..128）；无 IPv6 为 0。 */
 } XDeviceNetworkInterfaceConfig;
 

@@ -186,7 +186,23 @@ adb logcat -s XGuiDemo
 I XGuiDemo: font: released /data/data/com.xinyuec.xguidemo/files/fonts/XFontOutlineCommon.otf (3511576 bytes)
 ```
 
-## 三、六个必须知道的坑
+### 2.5 签名密钥（`signing/xgui.keystore`）
+
+密钥**不在 `out/` 下**，而在 `platforms/android/signing/`。原因是 `out/` 是
+构建产物目录、会被整体清理；密钥在那里被重新生成时签名就变了，覆盖安装
+要么失败（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`），要么被系统当成"换签名
+重装"而**重置全部运行时权限**。
+
+真机实证（2026-10-25）：目录从 `Tools/android/` 迁到 `platforms/android/`
+后，密钥在 `out/` 重新生成，重装把 `ACCESS_FINE_LOCATION` 打回未授予，
+WiFi 扫描从此**静默返回空表**——状态机照常走完"扫描中 → 扫描完成"，只有
+网络下拉框永远是空的，看起来就像"扫描功能失效"。
+
+> **不要删 `signing/xgui.keystore`**。删掉后重新生成的密钥会触发同样的
+> 权限重置；届时重装后需要在界面里重新授权一次（应用启动时会自动弹窗，
+> 见坑 8）。
+
+## 三、十个必须知道的坑
 
 这些是实机踩出来的，每条都有日志/截图实证。
 
@@ -276,6 +292,64 @@ Windows 是 GBK/936）读取 `.ps1`，UTF-8 的中文字节被误当成双字节
 写成 `#if defined(__ANDROID__) && defined(XNETWORK_USE_PLATFORM_API)`。
 仓库里其它特征宏（`XGUI_ON` 等）都是 `0`/`1`，两种写法都成立；
 **只有这几个网络后端开关是空定义**，别把它们和别的宏混着写。
+
+### 坑 8：WiFi 扫描"完成"但下拉框空 = 定位权限没给
+
+安卓自 API 26 起把 WiFi 扫描结果算作**位置数据**：没有
+`ACCESS_FINE_LOCATION` 时 `WifiManager.getScanResults()` **不抛异常，
+只静默返回空表**。
+
+**症状**：点「扫描」后状态行正常走「扫描中 → 扫描完成」，但「网络」下拉框
+一直是空的。看起来完全像扫描功能坏了，实际扫描本身没问题。
+
+**定位**：系统侧对照即可区分——
+
+```bat
+adb shell cmd wifi list-scan-results   :: 系统能看到一堆 AP
+adb shell dumpsys package com.xinyuec.xguidemo | findstr ACCESS_FINE_LOCATION
+adb shell cmd appops get com.xinyuec.xguidemo
+```
+
+若后者是 `granted=false` / appops `ignore`，就是权限问题。
+
+**两个容易踩的点**：
+
+1. 清单里的 `<uses-permission>` 只是 install-time 声明，**运行时权限必须
+   由应用在界面里申请**。本应用已在 `XGuiNativeActivity.onCreate` 里调
+   `requestPermissions`（首次安装/换签名重装后会自动弹窗）。
+2. MIUI 上 `adb shell pm grant` 常失败
+   （`Neither user 2000 nor current process has GRANT_RUNTIME_PERMISSIONS`），
+   只有 root 下 `su -c 'pm grant ...'` 才行。**不要依赖 adb 授权**——
+   那只是调试手段，真机上必须靠应用自己申请。
+
+**关联坑**：换签名重装会把运行时权限**全部重置**（见 §2.5），这也是一条
+"以前能扫、重新部署后不能扫"的常见路径。
+
+### 坑 9：真机部署后务必核对 `lastUpdateTime`——签名漂移会静默装失败
+
+`adb install -r` 遇签名不匹配报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` 后，
+**旧包原样留在手机上继续跑**。打包脚本换过签名密钥（如 2026-10-25 起
+统一用 `signing/xgui.keystore`）或密钥重新生成过，就会出现"明明装了新包、
+真机跑的还是老界面"的错觉——本轮下拉框排查的收尾阶段即被它误导过
+（装了修复版 → 看到的仍是 `3845bf94` 老界面，误以为修复无效）。
+
+**固定动作**：每次部署后核对安装时间，时间没动就是没装上：
+
+```bat
+adb shell dumpsys package com.xinyuec.xguidemo | findstr lastUpdateTime
+```
+
+签名不一致时先 `adb uninstall com.xinyuec.xguidemo` 再装（代价：运行时
+权限重置，见坑 8；新包已内置权限申请，首启会自动弹窗）。
+
+### 坑 10：安卓点下拉框卡死（单线程 100% CPU）/ 崩溃 —— 红黑树定时器环
+
+"周期型+精确定时器"是红黑树高精度组的第一批周期居民（重绘节奏闸补投
+定时器首开此例），曾触发 `XBBTree_insertAlign` 空树分支残留指针入树 →
+环状破坏 → `insertAdjust` 永旋（卡死）与删除路径 SIGSEGV 同根。
+桌面宏=0 编译期裁剪导致该路径桌面覆盖率为零——**桌面复现不了不代表没病**。
+完整根因、A/B 实证与压力测试回归锁见根目录
+《红黑树定时器环状破坏排查录_20261025.md》。
 
 ## 四、字体：两条路线
 

@@ -400,20 +400,38 @@ XConnection* XObject_connect_1(XObject* object, size_t signal, XObject* receiver
 XConnection* XObject_connect_2(XObject* object, size_t signal, XSlotFunc2 slot_func);
 
 /**
+ * @brief 取信号函数的规范标识（跨模块稳定）。
+ * @param fn 信号函数（首参为对象指针，返回自身地址）。
+ * @return 信号标识值。
+ * @details 信号标识取「信号函数在**其定义模块内**的地址」。各信号函数在
+ *          self==NULL 时统一返回 `(void*)(size_t)(自身名)`（契约见各 signal
+ *          实现），故此处以 NULL 调用取其返回值，得到的是定义模块内的真址。
+ *
+ *          **为何必须取返回值而不是直接取地址**：跨 DLL 边界时，调用方
+ *          （可执行文件）侧 `&fn` 拿到的是 MSVC 增量链接生成的**导入跳板
+ *          地址**，而信号发射侧（动态库内）用的是**真实函数地址**，两者不等
+ *          → signalMap 查不中 → 槽函数永不触发（表现为菜单动作/信号槽
+ *          静默失效）。经 NULL 调用取返回值则两侧同为定义模块真址，天然一致。
+ *
+ * @note  参数经统一原型 `void*(*)(XObject*)` 中转：各 signal 原型首参类型
+ *        与参数个数各异（`(XAction*, bool)`、`(XObject*)` 等），直接强转调用
+ *        会触发 MSVC「function called through a non-compatible type」(C4198)
+ *        告警；经本统一原型中转可规避（2026-10-25 实测）。
+ */
+size_t XObject_signalIdOf(void* (*fn)(XObject*));
+
+/**
  * @brief 信号绑定辅助宏，用于生成信号标识
  * @param signal 信号函数名
  * @return 信号对应的标识值
- * @note 信号标识=信号函数自身地址（各 signal 函数体经 XEmitSignal 返回
- *       `(void*)(size_t)(signal)`，与函数地址同值）。取地址直转不再经
- *       兼容性函数指针做 NULL 调用：旧 `(void*(*)(XObject*))(signal)(NULL)`
- *       调用形态在每个 signal 原型各异的连接点触发「function called
- *       through a non-compatible type」告警（门禁构建日志 error 子串
- *       扫描即被 errorOccurred/error_signal 等 error* 命名命中而误判
- *       BUILD-FAIL，2026-10-21 根修）；且旧调用在 c=NULL 下仍会先行
- *       执行函数体内的实参构造（如 XVarList_Create），凭空泄漏。地址
- *       直转数值语义不变，零调用零副作用。
+ * @note 信号标识=信号函数在**其定义模块内**的地址。取地址直转
+ *       （`((size_t)(signal))`）在同模块内正确，但跨 DLL 边界时调用方侧
+ *       取得的是导入跳板地址，与动态库发射侧的真实函数地址不等，导致
+ *       信号槽静默不触发（2026-10-25 根修：XTestMenu 菜单动作全失效）。
+ *       故改为经 XObject_signalIdOf 中转：以 NULL 调用信号函数取其返回值，
+ *       得到的返回值即定义模块内的真址，与发射侧一致。
  */
-#define XSignal(signal)      ((size_t)(signal))
+#define XSignal(signal)      XObject_signalIdOf((void*(*)(XObject*))(signal))
 
 /**
  * @brief 断开对象信号与接收者槽函数的连接（对标 Qt 6.8 QObject::disconnect）

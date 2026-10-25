@@ -613,7 +613,18 @@ void XProgressBar_setMaximum(XProgressBar* self, int maximum)
 
 int XProgressBar_value(const XProgressBar* self)
 {
-    return self ? self->m_value : 0;
+    int v;
+    if (!self) return 0;
+    v = self->m_value;
+    /* [Qt 对齐 qprogressbar.cpp value()] reset 置 minimum-1 作“未开始”
+     * 哨兵，getter 钳位显示：低于下限→下限、高于上限→上限-1（Qt 同
+     * 款两分支）。此前裸返内部值，reset 后 value()==-1 与 Qt 的 0 不
+     * 一致（apitest「reset 复位到下限」失败根因之一）。 */
+    if (v > self->m_max)
+        v = self->m_max - 1;
+    else if (v < self->m_min)
+        v = self->m_min;
+    return v;
 }
 
 void XProgressBar_setValue(XProgressBar* self, int value)

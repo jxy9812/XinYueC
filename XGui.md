@@ -1657,6 +1657,83 @@ paintEvent 缺 paintOffset 平移（paintImage=顶层后备存储，非零偏移
 绘窗口原点）；XTreeWidget 条目文本 drawText 墨水色传 0（第 4 参是
 色非长度，透明=永不出字）。
 
+### 8.0g28 XLabel/QLCDNumber/ProgressBar 全量对齐（2026-10-25，三路审计对照 Qt 6.8.3 源码 + 真机手机端适配批次）✓
+
+> 方法：三路并发审计（尺寸布局/渲染折行/内容交互，对照本地
+> D:/Qt/6.8.3/Src 逐行）→ 逐条桌面 400x800 复现 → 框架修复 →
+> 显示族 apitest 基线对照（git stash 法鉴別存量失败）→ 真机
+> （Redmi 25102RKBEC，安卓 15）部署验证。全程未 git commit（用户约束）。
+
+**XLabel 簇（修复 11 项，含 3 high）**
+
+- **【hfw 控件级接入·high】** XLabel 未注册
+  `m_heightForWidthHandler` → 布局条目（XWidgetItem 走
+  XWidget_heightForWidth 控件级 API）查高回落静态 sizeHint 缓存
+  （恒 0）→ 盒布局把换行标签当 0 高分配、后续条目叠印其上（真机
+  窗口设置页说明行/状态行叠字实证）。修：label_updateLabel 随
+  isTextLabel 注册 handler（label_sizeForWidth 感知换行）。
+- **【sizeHint/minimumSizeHint 推送·high】** XLabel 全生命周期从不调
+  XWidget_setSizeHint（全库唯一）→ 布局对标签首选/最小尺寸恒 0
+  （各页面普遍手工 setFixedHeight 的根因）。修：updateLabel 按
+  qlabel.cpp:781-816 公式推送（最小高=一行）。
+- **【movie 帧回调缺失·high】** setMovie 从不连接 updated/resized →
+  动画永久冻结。修：连接两信号（qlabel.cpp:1239-1243 对齐），
+  clearContents 统一摘链。
+- **【FontChange 死代码·med】** XWidget_setFont 从不投递
+  FONT_CHANGE → XLabel/XLineEdit 的 changeEvent 字体失效分支不可
+  达。修：setFont 末尾按 qwidget.cpp:4856 投递。
+- **【hfw 注册键·med】** wrap 改 isTextLabel（Qt 对一切文本标签应
+  答）；deinit 注销 handler 防悬垂。
+- **【硬切宽度模型·high】** 长词硬切按均匀字形宽 8·scale 计数、绘制
+  走真实逐码点步进（轮廓字体 CJK ≈2 倍宽）→ 记录宽=画宽一半，横向
+  裁字/对齐偏移。修：逐码点累加真实步进断行 + 末行贪心续行。
+- **【垂直 indent·med】** Top/Bottom 对齐绘制侧不生效（Qt
+  documentRect 两端各扣，qlabel.cpp:1443-1451）。已对齐。
+- **【富文本误检测·med】** mightBeRichText 收紧为『< 后字母开头标签
+  名』（对齐 mightBeRichTextImpl；比较符文本不再剥伪标签）。
+- **低危**：setPixmap 空像素图守卫（对齐 qlabel.cpp:307 首项）、
+  margin/indent int16 钳位、双重 XClassDeinit 收敛×3、
+  selectedText 换行 U+2029（qlabel.cpp:752-758 契约）。
+
+**QLCDNumber 簇（修复 9 项，集中于 smallPoint 绘制簇）**
+
+- **【小数点位·high】** smallPoint 点画在本位底段中央（与底段同色同
+  位，"2.5"显示"25"）→ 位间隙（x+segLen+w/2, y+2·segLen，
+  qlcdnumber.cpp:946-950）。
+- **【幻影点·med】** 非 smallPoint 不画遗留点标志（drawString 传
+  nullptr 同款）。
+- **【位间距·med】** smallPoint 时 digitSpace=2（qlcdnumber.cpp:745，
+  此前恒 1 与 sizeHint 公式矛盾）。
+- **【Flat 段厚·med】** 统一 segLen/5（Qt Flat 仅无立体线，非 1px）。
+- **【Outline·med】** Window 底 + Light/Dark 四棱描凸起轮廓（此前
+  Window 色实心=不可见）。
+- **【mode 钳位·med】** 越界枚举 &3 回绕（Qt 2-bit 位域同款）——此前
+  display 进制 switch 全不命中、走未初始化栈缓冲。
+- **【e+ 右移·low】** "1e+05"→"1 e05"（qlcdnumber.cpp:184-188）；
+  【冒号 +w·low】两点对齐 :960/:970。
+
+**XProgressBar（1 项）**：value() getter 补 Qt 哨兵钳位
+（qprogressbar.cpp——reset 置 minimum-1 后 getter 显示 minimum），
+apitest「reset 复位到下限」由 FAIL 转 PASS。
+
+**测试对齐**：XLcdNumber HLine 用例改 Qt 语义（QLCDNumber::sizeHint
+覆写屏蔽 QFrame 的 HLine 特例，qlcdnumber.cpp:1164-1167）；显示族
+OpacityEffect 三断言补连缺失的 opacityChanged 信号（存量失败根因）。
+基线对照（git stash 法）确认 5 处存量失败与本批无关。
+
+**API 面（增删）**：删 resourceProvider 三件套（存而不用的死接口，
+Qt 无此物、生产零调用，apitest 对应用例同步移除）；alignment 读接
+口核查已有；其余 Qt 属性 11 项逐一对上，无缺可补。
+
+**登记遗留（不修）**：XStrtod 不识别 inf/nan（XStrtod 语义面，低
+危）；XLcdNumber frameWidth 内容内缩（刻意改良偏离，默认边框差
+1-2px）；selectedText 之外受限项（buddy 助记符/openExternalLinks
+跳浏览器）维持头文件声明。
+
+**关联批次**：安卓端响应式适配（紧凑/宽屏双形态骨架 + 沉浸式全屏 +
+挖孔区铺满 + 安卓全屏几何回推 m_geomPending 通道 + javac -encoding）
+见真机部署记录；QLCDNumber 审计登记于本轮同批。
+
 ## 9. 工作流约定
 
 - **子代理并发模式**（远端 §23.5 沉淀）：主线统筹/契约/接线/集成，

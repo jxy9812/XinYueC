@@ -15,9 +15,13 @@
 #include "XLinkTest.h"
 #include "XLinkCodec.h"
 #include "XLinkSession.h"
+#include "XLinkServer.h"
 #include "XGuiRemoteLoopback.h"
+#include "XTcpSocket.h"
+#include "XCoreApplication.h"
 #include "XMemory.h"
 #include "XDateTime.h"
+#include "XThread.h"
 #include "XPrintf.h"
 #include <string.h>
 #if defined(_WIN32)
@@ -104,6 +108,62 @@ static double xlink_q_nowUs(void)
 /* ========================================================================== */
 
 /**
+ * @brief 服务端 churn 单轮：创建->监听(自动端口)->真实客户端接入->销毁。
+ * @param pass 失败时置 0，成功不修改。
+ * @note  服务端销毁连带回收托管会话与监听器子套接字；客户端先排空写队列
+ *        再拆除（发完即走会丢帧，见 XLink.md Q8）。
+ */
+static void xlink_q_server_churn_round(int* pass)
+{
+    XLinkServer* srv = XLinkServer_create();
+    XTcpSocket* sock = NULL;
+    XLinkSession* cli = NULL;
+    uint16_t port;
+    int spin;
+
+    if (!srv) {
+        *pass = 0;
+        return;
+    }
+    if (!XLinkServer_listen_base(srv, "127.0.0.1", 0)) {
+        *pass = 0;
+        XClassDelete((XClass*)srv);
+        return;
+    }
+    port = XTcpServer_serverPort(XLinkServer_tcpServer_const(srv));
+    sock = XTcpSocket_create();
+    if (sock) {
+        XTcpSocket_connectToHost_base((XAbstractSocket*)sock, "127.0.0.1",
+                                      port, XIODevice_ReadWrite,
+                                      XAbstractSocket_AnyIPProtocol);
+        (void)XTcpSocket_waitForConnected_base((XAbstractSocket*)sock, 2000);
+        cli = XLinkSession_create_ex((XIODevice*)sock);
+        for (spin = 0; cli && spin < 200 && XLinkServer_sessionCount(srv) == 0;
+             spin++) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            XLinkServer_pump(srv, xlink_q_nowMs());
+        }
+        if (cli && XLinkServer_sessionCount(srv) == 0)
+            *pass = 0;
+    } else {
+        *pass = 0;
+    }
+    /* 销毁顺序：先客户端（含排空），服务端连带回收会话 */
+    if (cli)
+        XClassDelete((XClass*)cli);
+    if (sock) {
+        int drain;
+        for (drain = 0;
+             drain < 5
+             && XTcpSocket_waitForBytesWritten_base((XAbstractSocket*)sock,
+                                                    100);
+             drain++) {}
+        XClassDelete((XClass*)sock);
+    }
+    XClassDelete((XClass*)srv);
+}
+
+/**
  * @brief 泄漏检测：反复创建/销毁会话，断言在用字节回到基线。
  * @details 覆盖两条释放路径：正常 XClassDelete，以及创建后中途摘除传输
  *          再销毁（确保 setDevice(NULL) 不产生悬挂引用）。
@@ -161,6 +221,106 @@ static void xlink_qtest_leak(void)
                     now.systemBytes, before, delta);
             XLINK_QCHECK(delta <= 0 || delta < 4096,
                          "带传输挂载的创建/销毁无内存泄漏");
+        }
+
+        /* 换设备接线 churn：setDevice 摘挂各 50 轮——
+           每轮做 readyRead 信号断接与内建定时器启停，验证信号连接
+           与对象级簿记不累积。 */
+        before = XMemory_statistics(XMEMORY_TYPE_SYSTEM).systemBytes;
+        {
+            XGuiRemoteLoopbackDevice *a = NULL, *aPeer = NULL;
+            XGuiRemoteLoopbackDevice *b = NULL, *bPeer = NULL;
+            XLinkSession* s = NULL;
+            int i;
+            a = XGuiRemoteLoopbackDevice_createPair(8 * 1024, &aPeer);
+            b = XGuiRemoteLoopbackDevice_createPair(8 * 1024, &bPeer);
+            s = (a && b) ? XLinkSession_create_ex((XIODevice*)a) : NULL;
+            for (i = 0; s && i < 50; i++) {
+                if (!XLinkSession_setDevice(s, (XIODevice*)b)) break;
+                if (!XLinkSession_setDevice(s, (XIODevice*)a)) break;
+            }
+            XLINK_QCHECK(i == 50, "50 轮换设备接线全部成功");
+            if (s) XClassDelete((XClass*)s);
+            if (a) XClassDelete((XClass*)a);
+            if (aPeer) XClassDelete((XClass*)aPeer);
+            if (b) XClassDelete((XClass*)b);
+            if (bPeer) XClassDelete((XClass*)bPeer);
+        }
+        {
+            XMemoryStatistics now = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+            long delta = (long)now.systemBytes - (long)before;
+            XPrintf("        [INFO] 换设备接线循环后在用 %zu 字节（基线 %zu，差 %ld）\n",
+                    now.systemBytes, before, delta);
+            XLINK_QCHECK(delta <= 0 || delta < 4096,
+                         "换设备接线（信号断接+定时器启停）无内存泄漏");
+        }
+
+        /* 订阅/退订 churn：握手后 50 轮订阅-退订——
+           订阅表为定容数组，本项盯的是帧收发路径与幂等去重路径。 */
+        before = XMemory_statistics(XMEMORY_TYPE_SYSTEM).systemBytes;
+        {
+            XGuiRemoteLoopbackDevice *a = NULL, *b = NULL;
+            XLinkSession *sa = NULL, *sb = NULL;
+            int i;
+            a = XGuiRemoteLoopbackDevice_createPair(8 * 1024, &b);
+            sa = (a && b) ? XLinkSession_create_ex((XIODevice*)a) : NULL;
+            sb = (a && b) ? XLinkSession_create_ex((XIODevice*)b) : NULL;
+            if (sa && sb) {
+                XLinkSession_pump(sa, 1000);
+                XLinkSession_pump(sb, 1000);
+                XLinkSession_pump(sa, 1010);
+                XLinkSession_pump(sb, 1010);
+            }
+            for (i = 0; sa && sb && i < 50; i++) {
+                uint32_t topic = XLINK_TOPIC_USER_BASE + (uint32_t)(i % 16);
+                if (!XLinkSession_subscribe(sa, topic)) break;
+                if (!XLinkSession_unsubscribe(sa, topic)) break;
+                XLinkSession_pump(sa, 1020u + (uint32_t)i);
+                XLinkSession_pump(sb, 1020u + (uint32_t)i);
+            }
+            XLINK_QCHECK(i == 50, "50 轮订阅/退订全部成功");
+            if (sa) XClassDelete((XClass*)sa);
+            if (sb) XClassDelete((XClass*)sb);
+            if (a) XClassDelete((XClass*)a);
+            if (b) XClassDelete((XClass*)b);
+        }
+        {
+            XMemoryStatistics now = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+            long delta = (long)now.systemBytes - (long)before;
+            XPrintf("        [INFO] 订阅退订循环后在用 %zu 字节（基线 %zu，差 %ld）\n",
+                    now.systemBytes, before, delta);
+            XLINK_QCHECK(delta <= 0 || delta < 4096,
+                         "订阅/退订 churn 无内存泄漏");
+        }
+
+        /* XLinkServer 生命周期 + 真实接入 churn：10 轮
+           [创建->监听(自动端口)->客户端接入->销毁]——
+           盯监听器子套接字、托管会话、信号连接与内嵌定时器的成对回收。
+           先暖机一轮：真实套接字首次使用会触发框架懒加载（事件分发器/
+           IOCP 基础设施等一次性分配），消耗掉之后再取基线——
+           实测暖机前基线差 +51544 字节且第 1 轮后逐轮完全持平（非泄漏）。 */
+        {
+            int warm = 1;
+            int i;
+            int pass = 1;
+            xlink_q_server_churn_round(&warm);
+            XLINK_QCHECK(warm, "暖机轮服务端接入成功");
+            before = XMemory_statistics(XMEMORY_TYPE_SYSTEM).systemBytes;
+            for (i = 0; i < 10; i++) {
+                int roundPass = 1;
+                xlink_q_server_churn_round(&roundPass);
+                if (!roundPass)
+                    pass = 0;
+            }
+            XLINK_QCHECK(pass, "10 轮服务端生命周期+真实接入全部成功");
+        }
+        {
+            XMemoryStatistics now = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+            long delta = (long)now.systemBytes - (long)before;
+            XPrintf("        [INFO] 服务端 churn 循环后在用 %zu 字节（基线 %zu，差 %ld）\n",
+                    now.systemBytes, before, delta);
+            XLINK_QCHECK(delta <= 0 || delta < 4096,
+                         "XLinkServer 生命周期+真实接入无内存泄漏");
         }
     }
     XMemory_setStatisticsEnabled(false);

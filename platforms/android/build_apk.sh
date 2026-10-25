@@ -33,7 +33,18 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUT_APK_DIR="$SELF_DIR/out"
 WORK="$OUT_APK_DIR/work"
-KEYSTORE="$OUT_APK_DIR/xgui.keystore"
+# 签名密钥放 signing/（**不在 out/ 下**）：out/ 是构建产物目录，会随清理
+# 消失。密钥一旦重新生成，签名就变了——覆盖安装要么失败
+# （INSTALL_FAILED_UPDATE_INCOMPATIBLE），要么被系统当作换签名重装而
+# **重置全部运行时权限**（真机实证：ACCESS_FINE_LOCATION 被打回未授予，
+# WiFi 扫描结果随后恒为空表，表现为"扫描功能失效"）。
+KEYSTORE="$SELF_DIR/signing/xgui.keystore"
+# 旧版密钥位置（2026-10-24 迁入 platforms/ 前生成在 out/ 下）：首次运行
+# 时搬到新位置，保证签名不变、覆盖安装仍成立。
+if [ ! -f "$KEYSTORE" ] && [ -f "$OUT_APK_DIR/xgui.keystore" ]; then
+    mkdir -p "$SELF_DIR/signing"
+    mv "$OUT_APK_DIR/xgui.keystore" "$KEYSTORE"
+fi
 ABIS="${1:-both}"
 
 rm -rf "$WORK"; mkdir -p "$WORK/jni" "$WORK/libs" "$OUT_APK_DIR"
@@ -156,19 +167,30 @@ case "$(uname -s)" in
         fi
         ;;
     *)
+        # JAVA_HOME 优先（与 pack_apk.ps1 口径一致：本机 JDK 不一定装在
+        # 程序Files 惯例路径，如 D:\Program\Java\jdk-11）。
         for _j in \
+            "${JAVA_HOME:-}" \
             "C:/Program Files/Android/Android Studio/jbr" \
             "C:/Program Files/Eclipse Adoptium"/* \
             "C:/Program Files/Java"/*
         do
-            if [ -x "$_j/bin/javac.exe" ]; then JAVA_HOME_CAND="$_j"; break; fi
+            if [ -n "$_j" ] && [ -x "$_j/bin/javac.exe" ]; then JAVA_HOME_CAND="$_j"; break; fi
         done
         ;;
 esac
 if [ -n "$JAVA_HOME_CAND" ] && [ -f "$_D8_PROG" ]; then
     JAVAC="$JAVA_HOME_CAND/bin/$_JAVAC_BIN"
     export JAVA_HOME="$JAVA_HOME_CAND"
-    export PATH="$JAVA_HOME/bin:$PATH"
+    # PATH 里不能直接放 Windows 风格 "$JAVA_HOME/bin"：盘符冒号会被 POSIX
+    # PATH 按分隔符拆开（"D:\Program\..." → 条目 D 和 \Program\...），
+    # 子进程（d8.bat→cmd）解析到半截路径报 "'D:\Program' 不是内部或外部
+    # 命令"。cygpath 转成 /d/... 形态再入 PATH（PortableGit 自带 cygpath）。
+    _JAVA_BIN_POSIX="$JAVA_HOME/bin"
+    if command -v cygpath > /dev/null 2>&1; then
+        _JAVA_BIN_POSIX="$(cygpath -u "$JAVA_HOME/bin")"
+    fi
+    export PATH="$_JAVA_BIN_POSIX:$PATH"
     PLATFORM_JAR="$(ls "$SDK"/platforms/*/android.jar | sort -V | tail -1)"
     rm -rf "$WORK/classes"; mkdir -p "$WORK/classes"
     # --release 8：安卓运行时 dex 支持（javac 25 已移除 -source 8）。
@@ -180,7 +202,11 @@ if [ -n "$JAVA_HOME_CAND" ] && [ -f "$_D8_PROG" ]; then
     if [ ! -d "$JAVA_SRC" ]; then
         echo "缺 Java 桥源码目录: $JAVA_SRC"; exit 1
     fi
-    "$JAVAC" --release 8 -nowarn \
+    # -encoding UTF-8：Java 桥源码是 UTF-8（无 BOM），而 JDK 11 的默认
+    # 源码编码跟随系统 ANSI 代码页（中文 Windows = GBK），不显式指定就会
+    # 报"编码 GBK 的不可映射字符"。JDK 18+ 默认已是 UTF-8，但显式写上
+    # 才能在 JDK 11 上同样通过（JDK 8 ~ 17 都认这个开关）。
+    "$JAVAC" --release 8 -nowarn -encoding UTF-8 \
         -classpath "$PLATFORM_JAR" \
         -d "$WORK/classes" \
         "$JAVA_SRC"/*.java
@@ -208,8 +234,17 @@ if [ -n "$JAVA_HOME_CAND" ] && [ -f "$_D8_PROG" ]; then
                              sed 's|^\./||' | while read -r f; do
                                  echo "$WORK/classes/$f" | sed 's|/|\\\\|g'; done)
             fi
-            "$_D8_PROG" --min-api 26 --lib "$PLATFORM_JAR" \
-                --output "$(cygpath -w "$WORK" 2>/dev/null || echo "$WORK")" $CLASS_FILES
+            # d8.bat 不能直调：msys 起批处理时**含空格的参数不会被重新
+            # 加引号**（--lib "D:\Program Files\..." 在 cmd 命令行被拆开，
+            # 报 "'D:\Program' 不是内部或外部命令"）。改为 java 直调
+            # d8.jar（.exe 传参的引号/路径转换语义正常），调用面与
+            # d8.bat 内部 call "%java_exe%" ... -cp d8.jar 完全一致；
+            # SDK 装在带空格路径（D:\Program Files\Android\SDK，本机
+            # 实装）时必踩，故不走 _D8_PROG。
+            "$JAVA_HOME_CAND/bin/java.exe" -Xmx1024M \
+                -cp "$BT/lib/d8.jar" com.android.tools.r8.D8 \
+                --min-api 26 --lib "$PLATFORM_JAR" \
+                --output "$WORK" $CLASS_FILES
             ;;
     esac
     if [ ! -f "$WORK/classes.dex" ]; then
@@ -240,7 +275,12 @@ if [ -z "${JAVA_HOME:-}" ]; then
 fi
 if [ -n "${JAVA_HOME:-}" ]; then
     export JAVA_HOME
-    export PATH="$JAVA_HOME/bin:$PATH"
+    # 同 3b：Windows 风格路径先转 POSIX 再入 PATH（盘符冒号拆分问题）。
+    _JAVA_BIN_POSIX="$JAVA_HOME/bin"
+    if command -v cygpath > /dev/null 2>&1; then
+        _JAVA_BIN_POSIX="$(cygpath -u "$JAVA_HOME/bin")"
+    fi
+    export PATH="$_JAVA_BIN_POSIX:$PATH"
 fi
 
 if [ ! -f "$KEYSTORE" ]; then

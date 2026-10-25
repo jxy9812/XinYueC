@@ -31,6 +31,13 @@
 #include "XMemory.h"
 #include "XDateTime.h"
 #include "XPrintf.h"
+/* [菜单入口原型 2026-10-25] 必须显式包含 XTestMenu.h：XDdnsTest.h 只对
+ * XTestMenu 做**类型**前置声明（避免拖入 GUI 依赖），不含任何函数原型。
+ * 缺此包含时 XTestMenu_create / XTestMenu_addAction 被隐式声明为返回 int，
+ * 64 位指针被截断成 32 位（高 32 位随机），菜单构建即在
+ * XTreeNode_data_const 读野指针时崩溃。与 XNtpTest.c 同根同修。 */
+#include "XTestMenu.h"
+#include "XAction.h"
 #include <string.h>
 #include <stdlib.h>
 

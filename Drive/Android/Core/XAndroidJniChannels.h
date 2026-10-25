@@ -85,12 +85,31 @@ bool XAndroid_netDhcpInfo(XAndroidDhcpInfo* outInfo);
 
 /** @brief 取活动网络的链路信息（ConnectivityManager.LinkProperties，
  *         经 XNetAdapter 桥）。
- *  @details 填 IPv6 默认网关 / DNS1 / DNS2 / 接口名（均为文本，缺为空串）。
- *           调用方按接口名匹配后才采用（LinkProperties 描述的是活动网络）。 */
+ *  @details 填 IPv6 默认网关 / **按协议族分开的 DNS** / 接口名 / 网卡 MAC
+ *           （均为文本，缺为空串）。
+ *           调用方按接口名匹配后才采用（LinkProperties 描述的是活动网络）。
+ *  @note   [DNS 分族 2026-10-25] 原实现只取前两个 DNS，不区分 v4/v6——
+ *           安卓在纯 IPv6 或 v6 优先的网络下 LinkProperties 前两条常是
+ *           IPv6 DNS，被灌进 IPv4 的 dnsPrimary/dnsSecondary 后，界面上
+ *           「IPv4 设置」里显示的是 IPv6 DNS，而 IPv6 区没有 DNS 可填。
+ *           现按族各取最多两个，调用方按需取用。
+ *  @note   [MAC 2026-10-25] 应用域读不了 /sys/class/net（SELinux 拒），
+ *           取不到硬件地址；这里改从 WifiInfo.getMacAddress 与
+ *           java.net.NetworkInterface.getHardwareAddress 取。 */
 bool XAndroid_netLinkInfo(char* outV6Gateway, int v6GatewayCap,
-                          char* outDns1, int dns1Cap,
-                          char* outDns2, int dns2Cap,
-                          char* outIfaceName, int ifaceNameCap);
+                          char* outDnsV4a, int dnsV4aCap,
+                          char* outDnsV4b, int dnsV4bCap,
+                          char* outDnsV6a, int dnsV6aCap,
+                          char* outDnsV6b, int dnsV6bCap,
+                          char* outIfIface, int ifaceNameCap,
+                          char* outMac, int macCap);
+
+/** @brief 取网卡 MAC 文本（"AA:BB:CC:DD:EE:FF"；取不到返回 false）。
+ *  @details 安卓应用域读不了 /sys/class/net（SELinux enforcing 下
+ *           Permission denied），接口枚举里的 ioctl(SIOCGIFHWADDR) 恒失败。
+ *           本函数走 XNetAdapter.linkInfo 的第 7 槽（WifiInfo /
+ *           java.net.NetworkInterface 取硬件地址）。 */
+bool XAndroid_netLinkMac(char* outMac, int macCap);
 
 /** @brief 切 DHCP 模式（XNetAdapter.setDhcpMode：已 DHCP=成功；否则对当前
  *         WiFi 配置 updateNetwork(DHCP)——受配置所有权限制）。 */

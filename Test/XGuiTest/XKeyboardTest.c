@@ -15,9 +15,7 @@
 #include "XMemory.h"
 #include <stdio.h>
 #include <string.h>
-#ifndef _WIN32
-#include <unistd.h> /* xkb_pumpMs 的 usleep（⑦.8 几何跟随时序适配）。 */
-#endif
+#include "XThread.h" /* xkb_pumpMs 的休眠走框架 XThread_msleep（⑦.8 几何跟随时序适配）。 */
 #if XKEYBOARD_IME_ON
 #include "XPinyinEngine.h"
 #include "XPinyinTable.h"
@@ -106,7 +104,7 @@ static void xkb_pumpMs(int ms)
     int waited = 0;
     while (waited < ms) {
         XCoreApplication_processEvents(XEventLoop_AllEvents);
-        usleep(5000);
+        XThread_msleep(5);
         waited += 5;
     }
 #else
@@ -126,7 +124,7 @@ static void xkb_waitGeometry(XVirtualKeyboard* kb, int wantW, int wantH)
            !(XVirtualKeyboard_width(kb) == wantW &&
              XVirtualKeyboard_height(kb) == wantH)) {
         XCoreApplication_processEvents(XEventLoop_AllEvents);
-        usleep(5000);
+        XThread_msleep(5);
         waited += 5;
     }
 #else

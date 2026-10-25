@@ -102,6 +102,7 @@ typedef struct LabelLayout
 
 static void label_updateLabel(XLabel* self);
 static void label_updateMouseTracking(XLabel* self);
+static XSize label_sizeForWidth(const XLabel* self, int w);
 static void label_freeLinks(XLabel* self);
 static void label_rebuildDisplay(XLabel* self);
 static int label_hitLinkAt(const XLabel* self, const XPoint* pos);
@@ -766,16 +767,24 @@ static uint32_t label_color(const XLabel* self, XPaletteColorRole role)
 
 /* ==================== 富文本 / Markdown 最小子集解析 ==================== */
 
-/** @brief 判断文本是否“像 HTML”（对标 Qt::mightBeRichText 的实用近似）。 */
+/** @brief 判断文本是否“像 HTML”（对标 Qt 6.8.3 mightBeRichTextImpl）。 */
 static bool label_mightBeRichText(const char* utf8)
 {
     const char* lt;
-    char next;
+    char name0;
     if (!utf8 || !*utf8) return false;
     lt = XStrchr(utf8, '<');
     if (!lt) return false;
-    next = lt[1];
-    if (next == '&' || next == '<' || next == '>') return false;
+    name0 = lt[1];
+    /* [对齐 Qt 6.8.3 qtextdocument.cpp mightBeRichTextImpl] '<' 后必须
+     * 紧跟标签名首字母（'/'+字母为闭标签）且段内有 '>' 才判富文本——
+     * 此前任意非 &/< 字符即放行，比较符文本（"i <3 u>"、"a<-b"）被
+     * 误判为 HTML 剥掉伪标签（渲染维度审计 F5）。Qt 侧还查已知元素
+     * 表（lookupElement），本框架解析器接受任意标签名，故放宽为
+     * 『字母开头的标签名』即两侧语义最贴近点。 */
+    if (name0 == '/') name0 = lt[2];
+    if (!((name0 >= 'A' && name0 <= 'Z') || (name0 >= 'a' && name0 <= 'z')))
+        return false;
     return XStrchr(lt, '>') != NULL;
 }
 
@@ -1059,6 +1068,31 @@ static void label_rebuildDisplay(XLabel* self)
 /* ==================== 内容清理（对标 QLabelPrivate::clearContents） ==================== */
 
 /** @brief 释放全部显示内容并退出文本模式；m_text/m_displayText 保留空串。 */
+static void label_clearContents(XLabel* self);
+
+/* [movie 帧回调 2026-10-25] 对标 qlabel.cpp:1190-1220 movieUpdated/
+ * movieResized：帧推进→按帧矩形重绘（不动 sizeHint，防逐帧布局抖动）；
+ * 帧尺寸变化→失效提示并重排。此前 setMovie 从不连接信号，动画永久
+ * 冻结在首帧（三路审计·内容维度 F2 实证）。 */
+static void label_movieUpdatedSlot(XObject* receiver, XVarList* args)
+{
+    XLabel* self = (XLabel*)receiver;
+    (void)args;
+    /* Qt 按帧矩形局部重绘（qlabel.cpp:1207 q->update(r)）；此处整件
+     * 重绘：帧矩形入参解析依赖 XVarList 形参布局，整件更新的成本
+     * （一张 210x70 悬浮图级的脏区）可接受，换取对信号形参零耦合。 */
+    if (!self || !self->m_movie) return;
+    XWidget_update((XWidget*)self);
+}
+
+static void label_movieResizedSlot(XObject* receiver, XVarList* args)
+{
+    XLabel* self = (XLabel*)receiver;
+    (void)args;
+    if (!self) return;
+    label_updateLabel(self);
+}
+
 static void label_clearContents(XLabel* self)
 {
     if (!self) return;
@@ -1077,6 +1111,17 @@ static void label_clearContents(XLabel* self)
      * 从未初始化，无需析构。 */
     if (!XClassIsVtableNull(&self->m_pixmap))
         XClassDeinit(&self->m_pixmap);
+    /* [movie 信号摘链 2026-10-25] 借用的影片在换内容/析构时断开帧/尺
+     * 寸信号（Qt clearContents 断开连接同款，qlabel.cpp:1279-1283）：
+     * 影片生命周期独立于标签，不断链则帧回调打入已清空的标签。 */
+    if (self->m_movie) {
+        XObject_disconnect_1((XObject*)self->m_movie,
+                             (size_t)XMovie_updated_signal(self->m_movie, NULL),
+                             (XObject*)self, label_movieUpdatedSlot);
+        XObject_disconnect_1((XObject*)self->m_movie,
+                             (size_t)XMovie_resized_signal(self->m_movie, NULL),
+                             (XObject*)self, label_movieResizedSlot);
+    }
     self->m_movie = NULL;
     self->m_isTextLabel = false;
     self->m_pressedLink = -1;
@@ -1110,40 +1155,59 @@ void label_freeLinks(XLabel* self)
 
 /* ==================== 文本断行布局（复用 XPainter 区间测宽） ==================== */
 
-/** @brief 把一个单词按可用宽度硬切为多行（等宽字体每字形 8*scale 像素）。 */
-static void label_emitHardBreak(const char* utf8, int start, int end,
-                                int availWidth, int glyphW, LabelLine* lines,
-                                int* count, int cap)
+/** @brief 把一个单词按可用宽度硬切为多行，返回末行起始偏移（相对
+ *  start 的字节位未消费尾段的起点，供调用方贪心续行），*outLastWidth
+ *  = 末行真实宽。
+ *  [宽度模型统一 2026-10-25] 此前按『均匀字形宽 8*scale』计数断行，
+ *  而词宽测量/绘制走 XPainter_textWidthRange 真实逐码点步进——轮廓
+ *  字体下 CJK 字形步进约为点阵宽的 2 倍，硬切行画出约 2 倍可用宽的
+ *  内容（右缘裁字），且 m_width 记录仅为画宽一半 → 对齐偏移、命中
+ *  测试越界（渲染维度审计 F1）。改为逐码点累加真实步进断行，行宽
+ *  与绘制同源。 */
+static int label_emitHardBreak(const char* utf8, int start, int end,
+                               int availWidth, const XFont* font,
+                               LabelLine* lines, int* count, int cap,
+                               int* outLastStart, int* outLastWidth)
 {
-    int maxGlyphs;
     int p = start;
     int lineStart = start;
-    int glyphs = 0;
-    if (glyphW < 1) glyphW = XFONT8X16_WIDTH;
-    maxGlyphs = availWidth / glyphW;
-    if (maxGlyphs < 1) maxGlyphs = 1;
+    int lineWidth = 0;
+    int emitted = 0;
     while (p < end) {
         int gl = label_utf8len(&utf8[p], end - p);
+        int glyphW;
         if (gl <= 0) break;
-        if (glyphs + 1 > maxGlyphs) {
+        glyphW = XPainter_textWidthRange(font, utf8, p, p + gl);
+        if (lineWidth > 0 && lineWidth + glyphW > availWidth) {
             if (*count < cap) {
                 lines[*count].m_start = lineStart;
                 lines[*count].m_end = p;
-                lines[*count].m_width = glyphs * glyphW;
+                lines[*count].m_width = lineWidth;
                 ++(*count);
             }
+            ++emitted;
             lineStart = p;
-            glyphs = 0;
+            lineWidth = 0;
         }
-        ++glyphs;
+        lineWidth += glyphW;
         p += gl;
     }
-    if (*count < cap && p > lineStart) {
-        lines[*count].m_start = lineStart;
-        lines[*count].m_end = p;
-        lines[*count].m_width = glyphs * glyphW;
-        ++(*count);
+    if (lineStart == start && emitted == 0) {
+        /* 单字都放不下（availWidth 极窄）：整词退为一行，防死循环。 */
+        if (*count < cap) {
+            lines[*count].m_start = start;
+            lines[*count].m_end = end;
+            lines[*count].m_width =
+                XPainter_textWidthRange(font, utf8, start, end);
+            ++(*count);
+        }
+        if (outLastStart) *outLastStart = end;
+        if (outLastWidth) *outLastWidth = 0;
+        return 0;
     }
+    if (outLastStart) *outLastStart = lineStart;
+    if (outLastWidth) *outLastWidth = lineWidth;
+    return 0;
 }
 
 /** @brief 对 [start,end) 段做贪心断行（按单词；单词超宽时硬切）。 */
@@ -1235,14 +1299,18 @@ static void label_layoutSegment(const char* utf8, int start, int end,
                                                               scale) : 0);
         if (!haveWord) {
             if (wordWidth > availWidth) {
+                /* [贪心续行 2026-10-25] 硬切末行的剩余空间交给后续词
+                 * 继续填充（此前强制 haveWord=false 另起新行，行数比
+                 * Qt 的贪心填充偏多——渲染维度审计 F8）。 */
+                int lastStart = wordStart;
+                int lastWidth = 0;
                 label_emitHardBreak(utf8, wordStart, wordEnd, availWidth,
-                                    label_scaledMetricValue(bitmapInfo.m_width,
-                                                            scale),
-                                    lines, count, cap);
+                                    font, lines, count, cap,
+                                    &lastStart, &lastWidth);
                 lastWordEnd = wordEnd;
-                lineStart = wordEnd;
-                lineWidth = 0;
-                haveWord = false;
+                lineStart = lastStart;
+                lineWidth = lastWidth;
+                haveWord = (lineStart < wordEnd);
             } else {
                 lineStart = wordStart;
                 lineWidth = wordWidth;
@@ -1331,7 +1399,9 @@ static void label_textBlockSize(const XLabel* self, int layoutWidth,
         XFont font = XWidget_font((XWidget*)self);
         n = label_layout(utf8, layoutWidth, wrap, &font, &lines);
         XClassDeinit(&font);
-        XClassDeinit(&font);
+        /* 单次析构（2026-10-25 收敛）：此前同栈连析两次，正确性
+       依赖 VXFont_deinit 幂等 + 空指针守护的脆弱组合（内容维度
+       审计 F6），且多付一次虚调用。 */
     }
     for (i = 0; i < n; ++i)
         if (lines[i].m_width > w) w = lines[i].m_width;
@@ -1470,7 +1540,9 @@ static void label_computeLayout(const XLabel* self, const XRect* cr,
                                         self->m_wordWrap, &font,
                                         &out->m_lines);
         XClassDeinit(&font);
-        XClassDeinit(&font);
+        /* 单次析构（2026-10-25 收敛）：此前同栈连析两次，正确性
+       依赖 VXFont_deinit 幂等 + 空指针守护的脆弱组合（内容维度
+       审计 F6），且多付一次虚调用。 */
     }
     textH = out->m_lineCount * label_lineHeight(self);
     out->m_rect.x = cr->x;
@@ -1482,6 +1554,16 @@ static void label_computeLayout(const XLabel* self, const XRect* cr,
         if (yo < 0) yo = 0;
     } else if (align & XAlignment_Bottom) {
         yo = cr->height - textH;
+        if (yo < 0) yo = 0;
+    }
+    /* [Qt 对齐 qlabel.cpp:1443-1451 documentRect] 顶/底对齐时垂直缩进
+     * 生效（cr 顶/底各扣 indent）；VCenter 不扣（Qt 同款，两侧此前
+     * 唯一的测量-绘制分叉点——渲染维度审计 F4）。 */
+    if (m > 0) {
+        if (align & XAlignment_Top)
+            yo += m;
+        else if (align & XAlignment_Bottom)
+            yo -= m;
         if (yo < 0) yo = 0;
     }
     out->m_rect.y = cr->y + yo;
@@ -1596,7 +1678,9 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
         XFont font = XWidget_font((XWidget*)self);
         XPainter_setFont(painter, &font);
         XClassDeinit(&font);
-        XClassDeinit(&font);
+        /* 单次析构（2026-10-25 收敛）：此前同栈连析两次，正确性
+       依赖 VXFont_deinit 幂等 + 空指针守护的脆弱组合（内容维度
+       审计 F6），且多付一次虚调用。 */
     }
     utf16pos = 0;
     for (i = 0; i < layout.m_lineCount; ++i) {
@@ -2471,8 +2555,6 @@ static void VXLabel_copy(XLabel* self, const XLabel* other)
     self->m_textInteractionFlags = other->m_textInteractionFlags;
     self->m_pressedLink = -1;
     self->m_textSelecting = false;
-    self->m_resourceProvider = other->m_resourceProvider;
-    self->m_resourceProviderUserData = other->m_resourceProviderUserData;
     if (other->m_picture)
         self->m_picture = XPicture_create_copy(other->m_picture,
                                                XCLASS_DEFAULT_MEMORY_TYPE);
@@ -2549,8 +2631,6 @@ static void VXLabel_move(XLabel* self, XLabel* other)
     self->m_textInteractionFlags = other->m_textInteractionFlags;
     self->m_pressedLink = other->m_pressedLink;
     self->m_textSelecting = other->m_textSelecting;
-    self->m_resourceProvider = other->m_resourceProvider;
-    self->m_resourceProviderUserData = other->m_resourceProviderUserData;
     self->m_picture = other->m_picture; other->m_picture = NULL;
     XClassMove(&self->m_pixmap, &other->m_pixmap);
     XPixmap_init(&other->m_pixmap); /* 源像素图保留有效 vtable，可安全析构 */
@@ -2613,10 +2693,29 @@ static void VXLabel_deinit(XLabel* self)
                              (XObject*)self, label_buddyDestroyedSlot);
         self->m_buddy = NULL;
     }
+    /* [悬垂加固 2026-10-25] 析构即注销控件级 hfw handler：防布局在
+     * 控件释放后激活时经 handler 调入已释放内存（三路审计·尺寸维度
+     * F5c）。 */
+    XWidget_setHeightForWidthHandler((XWidget*)self, NULL, NULL);
     XClass_Deinit_Parent(XFrame, (XFrame*)self);
 }
 
 /* ==================== 刷新（对标 QLabelPrivate::updateLabel） ==================== */
+
+/** @brief 控件级 heightForWidth 回调：把换行感知的按宽求高接入
+ *  XWidget_heightForWidth 的 handler 链。
+ * @details 布局条目（XWidgetItem）查高度走**控件级** API，不经
+ *   XLabel_heightForWidth 公开入口；XLabel 未注册 handler 时该链路
+ *   回落静态 sizeHint 缓存（恒 0）——盒布局把换行标签当 0 高分配，
+ *   后续条目叠印其上（真机窗口设置页说明行/状态行叠字实证
+ *   2026-10-25，桌面 400x800 复现）。 */
+static int label_heightForWidthHandler(XWidget* widget, int width,
+                                       void* userData)
+{
+    (void)userData;
+    if (!widget) return -1;
+    return label_sizeForWidth((const XLabel*)widget, width).height;
+}
 
 /** @brief 刷新 sizeHint 失效、heightForWidth 与重绘（对标 updateLabel）。 */
 static void label_updateLabel(XLabel* self)
@@ -2629,6 +2728,36 @@ static void label_updateLabel(XLabel* self)
     if (XWidgetSizePolicy_hasHeightForWidth(&policy) != wrap) {
         XWidgetSizePolicy_setHeightForWidth(&policy, wrap);
         XWidget_setSizePolicyFull((XWidget*)self, &policy);
+    }
+    /* 控件级 hfw 接入随内容形态同步注册/注销：文本标签（Qt
+     * QLabel::heightForWidth 对一切文本标签无条件应答，qlabel.cpp:611）
+     * 才注册；策略位仍只随 wrap 翻转（Qt 同款：qlabel.cpp:1088-1089，
+     * 策略位管布局是否使用 hfw，handler 管应答值，两个事实源解耦）。 */
+    if (self->m_isTextLabel) {
+        if (((XWidget*)self)->m_heightForWidthHandler !=
+            label_heightForWidthHandler)
+            XWidget_setHeightForWidthHandler((XWidget*)self,
+                                             label_heightForWidthHandler,
+                                             NULL);
+    } else if (((XWidget*)self)->m_heightForWidthHandler ==
+               label_heightForWidthHandler) {
+        XWidget_setHeightForWidthHandler((XWidget*)self, NULL, NULL);
+    }
+    /* [Qt 对齐 qlabel.cpp:781-816] 推送 sizeHint/minimumSizeHint：
+     * XWidget 尺寸查询走静态缓存（无虚分派），XLabel 此前从不推送 →
+     * 布局对任意标签的首选/最小尺寸恒为 0（真机说明行/状态行叠字根因
+     * 之一，也是各页面普遍手工 setFixedHeight 的根因）。Qt 为查询时懒
+     * 重算，本框架为推送式缓存——内容变化时在此推新值即等价。
+     * minimumSizeHint 按 Qt 公式：宽=sizeForWidth(0)、高=sizeForWidth
+     * (MAX)（一行高），且 sizeHint 高更小时收敛到它。 */
+    {
+        XSize sh = label_sizeForWidth(self, -1);
+        XSize msh;
+        msh.width = label_sizeForWidth(self, 0).width;
+        msh.height = label_sizeForWidth(self, XWIDGET_MAX_SIZE).height;
+        if (sh.height < msh.height) msh.height = sh.height;
+        XWidget_setSizeHint((XWidget*)self, &sh);
+        XWidget_setMinimumSizeHint((XWidget*)self, &msh);
     }
     XWidget_updateGeometry((XWidget*)self);
     XWidget_update((XWidget*)self);
@@ -2840,7 +2969,12 @@ XPixmap XLabel_pixmap(const XLabel* self)
 void XLabel_setPixmap(XLabel* self, const XPixmap* pixmap)
 {
     if (!self) return;
-    if (pixmap && self->m_pixmap.m_data == pixmap->m_data)
+    /* [空像素图守卫 2026-10-25] 对标 qlabel.cpp:307 首项 !d->pixmap：
+       传入『非 NULL 指针但空数据』的像素图（加载失败场景）此前被
+       NULL==NULL 相等判断误判为无操作，静默不生效（内容维度审计
+       F5）。仅在双方都有共享数据且同源时才短路。 */
+    if (pixmap && pixmap->m_data != NULL &&
+        self->m_pixmap.m_data == pixmap->m_data)
         return; /* 同一共享数据：无操作 */
     label_clearContents(self);
     if (pixmap && !XPixmap_isNull(pixmap))
@@ -2878,25 +3012,21 @@ void XLabel_setMovie(XLabel* self, XMovie* movie)
     if (!self) return;
     label_clearContents(self);
     self->m_movie = movie;
+    /* [movie 帧回调 2026-10-25] 对标 qlabel.cpp:1239-1243：连接
+     * updated（每帧重绘）与 resized（帧尺寸变化失效提示重排）。此前
+     * 从不连接 → 动画永久冻结（三路审计·内容维度 F2）。换影片/清除
+     * 时由 label_clearContents 统一摘链。 */
+    if (movie) {
+        XObject_connect_1((XObject*)movie,
+                          (size_t)XMovie_updated_signal(movie, NULL),
+                          (XObject*)self, label_movieUpdatedSlot,
+                          XConnectionType_Direct);
+        XObject_connect_1((XObject*)movie,
+                          (size_t)XMovie_resized_signal(movie, NULL),
+                          (XObject*)self, label_movieResizedSlot,
+                          XConnectionType_Direct);
+    }
     label_updateLabel(self);
-}
-
-XLabelResourceProvider XLabel_resourceProvider(const XLabel* self)
-{
-    return self ? self->m_resourceProvider : NULL;
-}
-
-void* XLabel_resourceProviderUserData(const XLabel* self)
-{
-    return self ? self->m_resourceProviderUserData : NULL;
-}
-
-void XLabel_setResourceProvider(XLabel* self, XLabelResourceProvider provider,
-                                void* userData)
-{
-    if (!self) return;
-    self->m_resourceProvider = provider;
-    self->m_resourceProviderUserData = userData;
 }
 
 /* ==================== 布局属性（对标 QLabel） ==================== */
@@ -2942,6 +3072,10 @@ int XLabel_indent(const XLabel* self)
 void XLabel_setIndent(XLabel* self, int indent)
 {
     if (!self || self->m_indent == indent) return;
+    /* int16 存储钳位：越界值回绕为负会使测量侧 hextra/vextra 反向
+       缩水（尺寸维度审计 F6）。 */
+    if (indent < -1) indent = -1;
+    if (indent > 255) indent = 255;
     self->m_indent = indent;
     label_updateLabel(self);
 }
@@ -2954,6 +3088,8 @@ int XLabel_margin(const XLabel* self)
 void XLabel_setMargin(XLabel* self, int margin)
 {
     if (!self || self->m_margin == margin) return;
+    if (margin < 0) margin = 0;
+    if (margin > 255) margin = 255; /* 同上：int16 回绕防护 */
     self->m_margin = margin;
     label_updateLabel(self);
 }
@@ -3154,12 +3290,20 @@ bool XLabel_hasSelectedText(const XLabel* self)
 XString* XLabel_selectedText(const XLabel* self)
 {
     int start, end;
+    XString* out;
     if (!self) return XString_create();
     label_ctlSelectionUtf16(self, &start, &end);
     if (start < 0 || end <= start)
         return XString_create();
-    return XString_mid(self->m_displayText, (size_t)start,
-                       (size_t)(end - start));
+    out = XString_mid(self->m_displayText, (size_t)start,
+                      (size_t)(end - start));
+    /* [对齐 Qt 6.8.3 qlabel.cpp:752-758] 跨行选区的换行以 U+2029
+     * （QTextCursor::paragraphSeparator）返回——依赖该约定做段落切分
+     * 的移植代码才能与 Qt 行为一致（内容维度审计 F9）。 */
+    if (out && XString_contains_utf8(out, "\n", XChar_CaseSensitive))
+        XString_replace_utf8(out, "\n", "\xE2\x80\xA9",
+                             XChar_CaseSensitive);
+    return out;
 }
 
 int XLabel_selectionStart(const XLabel* self)

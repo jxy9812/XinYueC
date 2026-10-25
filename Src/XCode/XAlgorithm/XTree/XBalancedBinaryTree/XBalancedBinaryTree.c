@@ -188,6 +188,16 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XComp
 		XTreeNode_delete(insertNode, memory);//插入失败释放创建的节点
 		return false;
 	}
+	/* [残留链接清扫 2026-10-25] 入树前必须清空 insertNode 的父/子三指针。
+	 * 下方空树分支不做链接直接返回，非空分支也要走到叶位才清孩子——
+	 * 带残留指针入树的节点（定时器组会把脱离的周期节点重插回树）会在
+	 * 树外还挂着一圈父子关系：重插首颗恰逢空树时，其过期链表残留的
+	 * RChild 指向下一颗待重插节点，后者插入时顺着残留指针游走即自成环，
+	 * insertAdjust 红红修复沿环走不出去（安卓真机 SpinLL 永旋实证），
+	 * 删除路径则在脏父链上解引用空指针（SIGSEGV 同根）。 */
+	XBTreeNode_SetParent(insertNode, NULL);
+	XBTreeNode_SetLChild(insertNode, NULL);
+	XBTreeNode_SetRChild(insertNode, NULL);
 	if (this_root == NULL || *this_root == NULL)//如果没有根节点或根为空
 	{
 		return true;

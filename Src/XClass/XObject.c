@@ -708,6 +708,26 @@ void XObject_emitSignal(XObject* object, size_t signal, XVarList* args, void(*de
 		XSignalSlot_emit(object->m_signalSlot, signal, args,del, ref_count,priority);
 }
 
+size_t XObject_signalIdOf(void* (*fn)(XObject*))
+{
+	/* 以 NULL 调用信号函数，取其返回值——即信号函数在**其定义模块内**的
+	 * 真实地址（各 signal 实现约定：self==NULL 时返回 `(void*)(size_t)(自身名)`）。
+	 *
+	 * 跨 DLL 边界的必要性（2026-10-25 根修）：调用方（可执行文件）侧
+	 * `&fn` 得到的是 MSVC 增量链接生成的导入跳板地址，与动态库发射侧使用
+	 * 的真实函数地址不等 → signalMap 查不中 → 槽函数静默不触发（表现为
+	 * Test 菜单动作全部失效）。经本次调用，跳板被穿透、进入定义模块执行，
+	 * 其返回值即定义模块真址，与发射侧一致。
+	 *
+	 * 安全性：NULL 调用时各信号函数在 if(self)/if(!self) 守卫内短路，
+	 * 不会分配参数（XVarList_Create 等实参构造位于 if 函数体内，惰性求值），
+	 * 故无副作用、无泄漏。
+	 */
+	if (!fn)
+		return 0;
+	return (size_t)fn(NULL);
+}
+
 void* XObject_destroyed_signal(XObject* object)
 {
 	XEmitSignal(object, XObject_destroyed_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);

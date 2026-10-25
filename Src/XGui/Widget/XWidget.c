@@ -190,6 +190,15 @@ extern volatile unsigned long g_exposeEvtCount;
 volatile unsigned long g_postPaintCount;
 volatile unsigned long g_flushBsCount;
 
+/* [绘制期标脏抑制 2026-10-25] 顶层 flush 派发 paintTree 期间置 1：
+ * 期间由 paintEvent 内部触发的 update()/repaint() 只并入脏区、不重投
+ * PAINT 事件。没有这道门时「paint → setText → update → postPaint →
+ * paint」自激成环：安卓真机打开下拉框（大面积重绘放大命中率）即卡死，
+ * 原生栈自旋在 XBTree_SpinLL（定时器红黑树左旋，限频重投反复插定时器）。
+ * 脏区由 XWidget_flushBackingStore 尾部的「保留绘制期间脏区并重投」
+ * 收口，不会丢更新。 */
+static int g_paintDispatching = 0;
+
 /* [rprof] 区域尺寸画像状态（XGPU_W_FRAME_PROF 同门控，2026-10-14）。
  * 脏区架构的量化口：入队侧（update*→addDirtyRegion，本文件前部——
  * 故独立于文件尾部的 wprof 状态体在此提前定义）按裁剪后矩形累计像素
@@ -992,10 +1001,38 @@ static bool XWidget_isAncestor(const XWidget* self, const XWidget* child)
     return false;
 }
 
+/* [deactivateWidgetCleanup 2026-10-25] 对标 Qt 6.8.3 QWidgetPrivate::
+ * deactivateWidgetCleanup()（qwidget.cpp:2326，注释原文"This function is
+ * called when a widget is hidden or destroyed. It resets some application
+ * global pointers that should only refer active, visible widgets."）：
+ * 隐藏与析构两条路径此前各维护一份手工清理清单，清单漂移即漏清——
+ * g_buttonDownWidget 只在隐藏清单里、析构清单漏掉，控件在按住状态下
+ * 被同步析构后，下一记 MOVE/RELEASE 经 dispatchPointerEvent 的
+ * buttonDown 改道打到野指针（XWidget_accumulateOffset 读 self+0x90
+ * 访问违例，GPU 变体回归 cdb 实抓）。收敛为单一共享函数后，两路径
+ * 清单恒等，Qt 同款纪律：登记非空即活对象。
+ * Qt 原版只清 qt_button_down 与 activeWindow；本框架的全局登记面更
+ * 宽（焦点/显式抓取/隐式按压靶/触点抓取表/键盘抓取），全部在此集中
+ * 摘除，语义为 Qt 的超集且两路径一致。 */
+static void xwidget_deactivateWidgetCleanup(XWidget* self)
+{
+    if (!self) return;
+    if (g_focusWidget == self)
+        XWidget_clearFocusBase(self, XFocusReason_Other);
+    if (g_mouseGrabWidget == self)
+        g_mouseGrabWidget = NULL;
+    if (g_buttonDownWidget == self)
+        g_buttonDownWidget = NULL; /* 隐式抓取（qt_button_down 同款）。 */
+    /* 全表遍历摘除该控件全部触点抓取表项（per-id 表；多触点抓取同一
+       控件时单指针比较会漏摘其余表项）。 */
+    xwidget_touchGrabRemoveWidget(self);
+    if (g_keyboardGrabWidget == self)
+        g_keyboardGrabWidget = NULL;
+}
+
 /** @brief 递归设置显式可见状态并沿树传播 SHOW/HIDE 事件。 */
 static void XWidget_setExplicitVisibleRecursive(XWidget* self, bool visible,
-                                                bool topLevel)
-{
+                                                bool topLevel){
     bool oldVisible;
     const XWidget* parent;
     bool newVisible;
@@ -1021,16 +1058,7 @@ static void XWidget_setExplicitVisibleRecursive(XWidget* self, bool visible,
         if (newVisible) {
             XWidget_sendShowHide(self, true);
         } else {
-            if (g_focusWidget == self)
-                XWidget_clearFocusBase(self, XFocusReason_Other);
-            if (g_mouseGrabWidget == self)
-                g_mouseGrabWidget = NULL;
-            if (g_buttonDownWidget == self)
-                g_buttonDownWidget = NULL; /* 隐式抓取随隐藏摘除。 */
-            /* 隐藏路径全表遍历摘除该控件全部触点抓取表项（per-id 表）。 */
-            xwidget_touchGrabRemoveWidget(self);
-            if (g_keyboardGrabWidget == self)
-                g_keyboardGrabWidget = NULL;
+            xwidget_deactivateWidgetCleanup(self);
             XWidget_sendShowHide(self, false);
         }
     }
@@ -1430,6 +1458,18 @@ static void XWidget_destroyWindow(XWidget* top, bool defer)
        winId→惰性建柄→复活登记，悬垂根因一环）。先断 widget→window
        通道，析构重入只能看到 NULL。 */
     top->m_windowHandle = NULL;
+    /* [双向摘链 2026-10-25] widget→window 已断，window→widget（借用
+     * 指针 m_widget）必须同拍断开：defer 路径桥接窗经 deleteLater 晚
+     * 一圈消亡，期间收到任何迟到事件（如新窗 WM_SETFOCUS 触发
+     * handleFocusWindowChanged 向本窗补发的 FOCUS_OUT——焦点登记已由
+     * XWindow_destroy 对齐 Qt destroy() 先行摘除，此处为第二道防线）
+     * 时，VXWidgetWindow_event 取 m_widget 转发即对已释放控件解引用
+     * （GPU 回归 test_toolbar_ext_contract 实测 AV，WER dump 抓栈：
+     * XObject_event_base←VXWidgetWindow_event←…←
+     * XWindowSystemInterface_handleFocusWindowChanged←xpwn_wndProc）。
+     * 置 NULL 后 !top 分支回落 XWindow 父类事件槽，语义与
+     * Qt「窗口不孤存活于控件」不变量一致。 */
+    ((XWidgetWindow*)window)->m_widget = NULL;
     /* 桥接窗口由 create_ex 堆分配，销毁后必须同时归还结构体；删除可能
        处于对象自身事件/信号发射帧（控件处理器内 setParent/setWindowFlags
        即在自身派发栈上删窗口），同步删 UAF，延迟回收（对标 Qt
@@ -1651,6 +1691,12 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
     if (copiedSource)
         XRegion_deinit(&sourceCopy);
     XWidget_attrSet(&top->m_attributes, XWidgetAttribute_PendingUpdate, true);
+    /* [绘制期标脏抑制 2026-10-25] paintTree 派发期间不重投 PAINT：
+     * 否则 paintEvent 内的 update()（性能悬浮层每帧 setText）会组成
+     * 「绘制→标脏→再投递→再绘制」自激环，安卓真机在大面积重绘时
+     * 卡死自旋。脏区已入队且 PendingUpdate 已置位，flush 尾部统一收口。 */
+    if (g_paintDispatching > 0)
+        return;
     if (top->m_windowHandle && top->m_visible)
     {
         extern volatile unsigned long g_postPaintCount;
@@ -4233,10 +4279,15 @@ static void VXWidget_deinit(XWidget* self)
 #endif
     if (XObject_parent((XObject*)self))
         XObject_setParent((XObject*)self, NULL);
-    if (g_focusWidget == self)
-        XWidget_clearFocusBase(self, XFocusReason_Other);
-    if (g_mouseGrabWidget == self)
-        g_mouseGrabWidget = NULL;
+    /* [析构路径统一收口 2026-10-25] 对标 Qt 6.8.3 QWidget::destroy()
+     * （qwidget.cpp:12550）经 deactivateWidgetCleanup 清 qt_button_down
+     * 与各抓取登记：隐藏/析构两路径共用 xwidget_deactivateWidgetCleanup，
+     * 清单恒等（此前两份手工清单漂移，g_buttonDownWidget 析构侧漏清，
+     * 按住状态下销毁控件后下一记 MOVE/RELEASE 派发到野指针——
+     * XWidget_accumulateOffset 读 self+0x90 访问违例，GPU 变体回归
+     * cdb 实抓崩溃栈；XColorDialog/XFileDialog/XInputDialog 的
+     * detachInputRecursive 先隐藏后删属逐案变通，本处为根修）。 */
+    xwidget_deactivateWidgetCleanup(self);
     /* 触摸长按序列析构自清（登记非空即活对象纪律）：本控件若是在按
        序列的真实顶层（m_top；定时器宿主恒为模块内部专用静态宿主对象
        xwidget_touchTimerHost，永不析构），同步撤表并复位手势单序列状
@@ -8339,6 +8390,16 @@ void XWidget_setFont(XWidget* self, const XFont* font)
     XClassMove(&self->m_font, &temp);
     XWidget_updateGeometry(self);
     XWidget_update(self);
+    /* [Qt 对齐 qwidget.cpp:4856 setFont_helper] 字体变化投递
+     * FontChange：子类 changeEvent 的字体失效分支（XLabel 的
+     * label_updateLabel、XLineEdit 同款）此前不可达（死代码）——
+     * 标签的 sizeHint 缓存改为内容变化推送后，该分支承载的失效
+     * 副作用必须在字体变化时重跑（三路审计·尺寸维度 F3）。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_FONT_CHANGE);
+        XWidget_event_base(self, &event);
+    }
 }
 
 XFont XWidget_fontMetrics(const XWidget* self)
@@ -9642,6 +9703,11 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     }
     xwidget_wprof_seg(XW_WPROF_SEG_REGION, &wprofMark);
     if (whole.count > 0) {
+        /* [绘制期标脏抑制 2026-10-25] 整段绘制（含 GPU/PARTIAL 各腿）
+         * 期间禁止 addDirtyRegion 重投 PAINT：paintEvent 内部改控件状态
+         * （性能悬浮层每帧 setText）会自激成环，安卓真机大面积重绘时
+         * 卡死在定时器红黑树旋转。脏区仍照常并入 m_dirty，尾部统一收口。 */
+        ++g_paintDispatching;
         /* 后端或平台集成被裁剪/尚未建立时，repaint 仍必须同步派发
            paintEvent；区别仅是没有 XImage 可供绘制、也不会执行上屏。 */
         if (!XBackingStore_paintImage(store)) {
@@ -9658,7 +9724,20 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         /* 呈现限频闸判定值（分叉前由 xwidget_presentThrottleAllow 统一
            决策，见该函数注）；0=本帧跳过提交（GPU/软件腿同闸）。 */
         int presentThisFrame = 1;
-        if (XGpuRenderBackend_requested())
+        /* [GPU 门禁：无原生窗不 acquire 2026-10-25] 子控件形态对话框
+           （XInputDialog/XFileDialog 等）的顶层桥接窗无自有原生窗——
+           winId 回落虚拟自增 id（XWindow_createHandle 的 fbdev 风格
+           兜底），拿去做 GL 会话的 HWND 必败（IsWindow 拒）。放行则
+           双重损伤：acquire 失败烧掉失败预算+冷却（XGPU_WINDOW_RETRY_
+           MAX_FAILURES=3/500ms），且先拆掉既有主窗会话（尺寸不匹配
+           即 destroy）——主窗下一帧又被 360x140 虚拟窗重探，日志里
+           反复 "[xgpu] session retry: failed twice (window=… 360x140)"
+           由此而来（probe 实测 hwnd=0x17 虚拟 id；诊断工作流复核：
+           会话单例跨窗口拆建是失败放大器）。门禁：仅真实挂接了原生
+           窗的顶层（XWindow_isNativeWindowAttached）才允许 acquire，
+           其余走软件腿，预算留给真窗口。 */
+        if (XGpuRenderBackend_requested() && top->m_windowHandle &&
+            XWindow_isNativeWindowAttached((XWindow*)top->m_windowHandle))
             gpuWindow = XGpuRenderBackend_acquireForWindow(
                 (XWindow*)top->m_windowHandle,
                 top->m_windowRect.width, top->m_windowRect.height);
@@ -9886,6 +9965,8 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
 #endif
         xwidget_wprof_seg(XW_WPROF_SEG_COMMIT, &wprofMark);
         }
+        /* 绘制段结束，恢复标脏重投（与上方 ++g_paintDispatching 配对）。 */
+        --g_paintDispatching;
     }
         g_paintTargetImage = NULL;
     XRegion_deinit(&whole);

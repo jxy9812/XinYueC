@@ -16,6 +16,14 @@
  *             标题/状态/样例 + 伸缩 + 按钮行贴底），页面内容区约
  *             760x480 设计口径由边距/间距/定尺复刻。
  *
+ *             [竖屏单列档 2026-10-25] 真机口径（手机竖屏 ≈400 逻辑宽）
+ *             下两列 stretch 均分栅格每格仅 ~184px，而每格最小包络
+ *             ≈246px（启/禁钮行 110x2+间距+格边距），右列（②④）整列
+ *             越界被内容视口硬裁=内容丢失；adapt 按页根有效宽分档收口
+ *             （<600 翻垂直单列+格解除定高交布局协商+触控目标抬 40+
+ *             半宽格标题字级收缩），宽屏档逐项还原装配口径、桌面
+ *             1000x700 视觉零变化（见 fx_applyLayoutTier / adapt）。
+ *
  *             效果对象所有权（对标 Qt QWidget::setGraphicsEffect 语义，
  *             见 XWidget.h m_graphicsEffect 注释与 XWidget.c 实现）：
  *             控件取得挂接效果的所有权——XWidget_setGraphicsEffect 挂接
@@ -72,6 +80,17 @@
 #define FX_CELL_GAP       8  /**< 行/列间距（原列原点 384=12+364+8 推得）。 */
 #define FX_CELL_HEIGHT  224  /**< 格容器固定高（原格纵向包络 12..236）。 */
 
+/* [竖屏单列档 2026-10-25] 阈值与主窗口 compact 断点（xgui_window_demo.c
+ * DEMO_COMPACT_MAX_W=600）同口径：两列栅格每格最小包络 ≈246px，页根
+ * 有效宽低于 600 时两列在任何可达窗宽下都放不下启/禁钮行（600 宽每格
+ * 仅 284），整段切单列交竖排承载。 */
+#define FX_STACK_MAX_W  600  /**< 单列档阈值（页根有效宽 < 此值切单列）。 */
+#define FX_TOUCH_H       40  /**< 单列档触控目标下限（可点控件定高）。 */
+/* 标题行不换行无省略，全名最长为组②「② 模糊 XGraphicsBlurEffect
+ * （3x3 盒式核）」≈296px@14 号；格内可用宽低于该阈值降到 12 号
+ * （≈256px），半宽格（两列档 600~700 窗宽带）不再被硬截。 */
+#define FX_TITLE_SHRINK_W 320 /**< 标题字级收缩的格内可用宽阈值。 */
+
 /* ==================== 页面内部控件登记（demo 单实例 static 自持） ======== */
 
 /**
@@ -126,6 +145,8 @@ static struct
     XBoxLayout m_cellLayouts[4]; /**< 格垂直盒池（标题/状态/样例/伸缩/按钮行）。 */
     XBoxLayout m_btnRows[3];     /**< 启/禁按钮行水平盒池（组①②③）。 */
     XWidget*   m_cells[4];       /**< 格容器（setFixedHeight 复刻原 224 格高）。 */
+    bool       m_compact;        /**< 单列档生效中（宽度分档见 adapt，未越档短路）。 */
+    int        m_titleSize;      /**< 标题行现字级（adapt 连续收放去重；0=未同步）。 */
 #endif
 } s_page;
 
@@ -617,19 +638,154 @@ XWidget* demo_page_effects_build(XWidget* parent,
     return s_page.m_root;
 }
 
-/** @brief 自适应重排（xgui_demo_pages.h 契约）：空实现体。
- * @details [布局容器化 2026-10-17] 原手工重排（列宽取根宽一半、右列
- *          按钮对越界左移收口、标题/状态行宽随列宽收缩的逐控件
- *          setGeometry）整体退场：2x2 栅格由页根垂直盒 + 行盒两格
- *          stretch 均分布局器随根宽自适应（列宽=（根宽-边距-间距）/
- *          2，标题/状态行宽随格宽、按钮行保持定尺左排），根尺寸变化
- *          经布局器自动重激活（XWidget_recomputeGeometry 的
- *          resize→activate 联动），无需手工重排。契约签名保留（主
- *          文件 demo_layout_content 调用点不动），page 与登记根不符
- *          亦无副作用。 */
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+/**
+ * @brief      套用指定档位的布局口径（越档时由 adapt 调用一次）。
+ * @details    宽屏档逐项还原 build 装配段定径（格定高 224/切换钮 30/
+ *             复选框 26/钮间距 10/格盒边距 (8,6,8,12)/页根边距 12 间距
+ *             8），桌面 1000x700 与装配现状同口径；单列档（手机竖屏
+ *             ≈400 逻辑宽）则：
+ *             - 两行行盒翻垂直单列——条目顺序不变（行0=①②、行1=③④，
+ *               即 ①②③④ 自上而下），setDirection 对 magic 空白自动
+ *               横纵翻转；格宽即页根全宽，每格最小包络（钮行 246）在
+ *               400 宽下放得下，右列不再被内容视口硬裁；
+ *             - 格容器解除定高（min 归零/max 放开）交布局协商：四格
+ *               定高 224 竖排合计 ≈992px 远超手机竖屏内容视口
+ *               （≈670~740），解除后紧则收到内容最小高（配合页根/格盒
+ *               边距间距收口，四格最小高合计 ≈650 装得进主流竖屏视
+ *               口），松则余高由格内伸缩段吸收（按钮行仍贴格底=桌面
+ *               观感）；
+ *             - 可点控件（三对启/禁钮、③投影样例复选框与④基线复选框）
+ *               统一抬 FX_TOUCH_H 触控目标、启/禁钮间距 10→12 防误触；
+ *               ③/④ 复选框同步抬保持同尺寸配对，像素对照口径不破。
+ */
+static void fx_applyLayoutTier(bool compact)
+{
+    int i;
+    int hToggle;
+    int hCheck;
+    XPushButton* toggles[6];
+    XCheckBox* checks[2];
+
+    XBoxLayout_setDirection(&s_page.m_rowLayouts[0],
+                            compact ? XBoxLayoutDirection_TopToBottom
+                                    : XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_setDirection(&s_page.m_rowLayouts[1],
+                            compact ? XBoxLayoutDirection_TopToBottom
+                                    : XBoxLayoutDirection_LeftToRight);
+
+    /* 页根边距/行距与格盒边距/条目距收口：换竖排纵轴预算（宽屏档
+       逐项还原装配值，与 build 装配段字面保持一致）。 */
+    XLayout_setContentsMargins((XLayout*)&s_page.m_rootLayout,
+                               compact ? 10 : FX_PAGE_MARGIN,
+                               compact ? 10 : FX_PAGE_MARGIN,
+                               compact ? 10 : FX_PAGE_MARGIN,
+                               compact ? 10 : FX_PAGE_MARGIN);
+    XLayout_setSpacing((XLayout*)&s_page.m_rootLayout,
+                       compact ? 6 : FX_CELL_GAP);
+    for (i = 0; i < 4; ++i)
+    {
+        if (!s_page.m_cells[i]) continue;
+        if (compact)
+        {
+            /* 解除定高：格高交布局协商（紧收至内容最小高、松吃余高）。 */
+            XWidget_setMinimumSize(s_page.m_cells[i], 0, 0);
+            XWidget_setMaximumSize(s_page.m_cells[i],
+                                   XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
+        }
+        else
+        {
+            XWidget_setFixedHeight(s_page.m_cells[i], FX_CELL_HEIGHT);
+        }
+        XLayout_setContentsMargins((XLayout*)&s_page.m_cellLayouts[i],
+                                   8, compact ? 4 : 6,
+                                   8, compact ? 8 : 12);
+        XLayout_setSpacing((XLayout*)&s_page.m_cellLayouts[i],
+                           compact ? 3 : 4);
+    }
+
+    toggles[0] = s_page.m_g0On;
+    toggles[1] = s_page.m_g0Off;
+    toggles[2] = s_page.m_g1On;
+    toggles[3] = s_page.m_g1Off;
+    toggles[4] = s_page.m_g2On;
+    toggles[5] = s_page.m_g2Off;
+    checks[0] = s_page.m_g2Sample;
+    checks[1] = s_page.m_g3Check;
+    hToggle = compact ? FX_TOUCH_H : 30;
+    hCheck = compact ? FX_TOUCH_H : 26;
+    for (i = 0; i < 6; ++i)
+        if (toggles[i])
+            XWidget_setFixedHeight((XWidget*)toggles[i], hToggle);
+    for (i = 0; i < 2; ++i)
+        if (checks[i])
+            XWidget_setFixedHeight((XWidget*)checks[i], hCheck);
+    /* 启/禁钮行间距：10 在触屏上易误触，单列档抬到 12（宽屏档不动）。 */
+    for (i = 0; i < 3; ++i)
+        XLayout_setSpacing((XLayout*)&s_page.m_btnRows[i],
+                           compact ? 12 : 10);
+}
+#endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
+
+/** @brief 自适应重排（xgui_demo_pages.h 契约）：宽度分档唯一入口。
+ * @details [布局容器化 2026-10-17] 同档内几何由页根布局器协商（根尺寸
+ *          变化经 XWidget_recomputeGeometry 的 resize→activate 联动自
+ *          动重激活），手工重排保持退场；[竖屏单列档 2026-10-25] 在此
+ *          按页根有效宽分档（主文件 demo_layout_content 在切页/resize/
+ *          startup/停靠全路径的几何分配之后调用本函数，根尺寸保证新
+ *          鲜；懒分配首显亦在 demo_switchPage 内先建后跑本漏斗）：
+ *          - 宽屏档（≥FX_STACK_MAX_W）：保持装配口径——2x2 两行栅格，
+ *            桌面 1000x700 视觉零变化；
+ *          - 单列档（<FX_STACK_MAX_W，手机竖屏 ≈400 逻辑宽）：栅格翻
+ *            垂直单列 + 触控目标抬 FX_TOUCH_H + 纵轴收口，见
+ *            fx_applyLayoutTier。
+ *          另按格内可用宽连续收放标题字级（半宽格防硬截，两档内都生
+ *          效）。档位/字级留档 s_page，未越档未越阈值时短路零开销
+ *          （拖拽期每像素一轮 adapt）；宽 0（几何未分配）时等下一轮
+ *          有效宽再套档。契约签名保留（主文件调用点不动），page 与
+ *          登记根不符亦无副作用。 */
 void demo_page_effects_adapt(XWidget* page)
 {
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    int i;
+    int w;
+    int titleW;
+    int titleSize;
+    bool compact;
+    XLabel* titles[4];
+
+    if (!s_page.m_ready || !s_page.m_root) return;
+    if (page && page != s_page.m_root) return;
+    w = XWidget_width(s_page.m_root);
+    if (w <= 0) return;
+
+    compact = w < FX_STACK_MAX_W;
+    if (compact != s_page.m_compact)
+    {
+        s_page.m_compact = compact;
+        fx_applyLayoutTier(compact);
+    }
+
+    /* 标题字级随格宽收放（不随档位）：格内可用宽不足最长全名时降号。
+       格内可用宽 = 格宽 - 格盒左右边距 8x2；格宽单列档=根宽-页根边距
+       10x2，两列档=(根宽-页根边距 12x2-列间距 8)/2。 */
+    titleW = compact ? w - 2 * 10 - 16
+                     : (w - 2 * FX_PAGE_MARGIN - FX_CELL_GAP) / 2 - 16;
+    titleSize = titleW < FX_TITLE_SHRINK_W ? 12 : 14;
+    if (titleSize != s_page.m_titleSize)
+    {
+        titles[0] = s_page.m_g0Title;
+        titles[1] = s_page.m_g1Title;
+        titles[2] = s_page.m_g2Title;
+        titles[3] = s_page.m_g3Title;
+        for (i = 0; i < 4; ++i)
+            if (titles[i])
+                XLabel_setTextPixelSize(titles[i], titleSize);
+        s_page.m_titleSize = titleSize;
+    }
+#else /* 布局系统裁剪：页内无布局器可协商，契约入口保持无副作用。 */
     (void)page;
+#endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 }
 
 /* ==================== 契约实现：页面自测 ==================== */

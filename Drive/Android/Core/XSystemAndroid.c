@@ -427,6 +427,42 @@ bool XPlatformScreen_queryFrameSize(int* outWidth, int* outHeight)
     return XAndroid_getWindowFrameSize(outWidth, outHeight);
 }
 
+/** @brief 查询系统状态栏内缩高度（物理 px）。
+ *  @details 安卓 15 起系统**强制 edge-to-edge**：native surface 恒为
+ *           全屏（实测 1200x2608），系统状态栏（时钟/电量）直接叠在
+ *           应用内容之上。框架侧没有"系统栏内缩"概念，故由应用按本
+ *           值把顶栏下移（demo 的根布局上边距）。
+ *  @return 状态栏高度（物理 px）；取不到返回 0（调用方按"无内缩"处理）。
+ */
+int XSystemAndroid_queryStatusBarHeightPx(void)
+{
+    JNIEnv* env = NULL;
+    jclass natActivityCls = NULL;
+    jmethodID mid = NULL;
+    jint h = 0;
+
+    if (!g_xsysAndroidVm || !g_xsysMainActivity) return 0;
+    if ((*g_xsysAndroidVm)->GetEnv(g_xsysAndroidVm, (void**)&env,
+                                   JNI_VERSION_1_6) != JNI_OK &&
+        (*g_xsysAndroidVm)->AttachCurrentThread(g_xsysAndroidVm,
+                                                &env, NULL) != JNI_OK)
+        return 0;
+    natActivityCls = (*env)->GetObjectClass(env, g_xsysMainActivity);
+    if (!natActivityCls) goto done;
+    mid = (*env)->GetMethodID(env, natActivityCls, "getStatusBarHeightPx",
+                              "()I");
+    if (!mid) goto done;
+    h = (*env)->CallIntMethod(env, g_xsysMainActivity, mid);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        h = 0;
+    }
+done:
+    if (natActivityCls) (*env)->DeleteLocalRef(env, natActivityCls);
+    if (env && (*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    return (int)h;
+}
+
 /** @brief 取当前线程 JNIEnv；主线程外首次调用时附加（ detach 由本文件
  *  在采样线程为常驻线程的前提下免做——渲染线程与 demo 生命周期一致）。 */
 static JNIEnv* xsys_androidEnv(void)
@@ -1085,21 +1121,41 @@ static void xsys_copyJString(JNIEnv* env, jstring s, char* out, int cap)
     (*env)->ReleaseStringUTFChars(env, s, utf);
 }
 
+/** @brief 从一个 jstring 数组槽拷到 C 缓冲（越界/空安全；扣本地引用）。 */
+static void xsys_copyJStringSlot(JNIEnv* env, jobjectArray arr, int index,
+                                 int length, char* out, int cap)
+{
+    jstring s;
+    if (!out || cap <= 0) return;
+    out[0] = '\0';
+    if (!arr || index < 0 || index >= length) return;
+    s = (jstring)(*env)->GetObjectArrayElement(env, arr, index);
+    if (!s) return;
+    xsys_copyJString(env, s, out, cap);
+    (*env)->DeleteLocalRef(env, s);
+}
+
 bool XAndroid_netLinkInfo(char* outV6Gateway, int v6GatewayCap,
-                          char* outDns1, int dns1Cap,
-                          char* outDns2, int dns2Cap,
-                          char* outIfaceName, int ifaceNameCap)
+                          char* outDnsV4a, int dnsV4aCap,
+                          char* outDnsV4b, int dnsV4bCap,
+                          char* outDnsV6a, int dnsV6aCap,
+                          char* outDnsV6b, int dnsV6bCap,
+                          char* outIfaceName, int ifaceNameCap,
+                          char* outMac, int macCap)
 {
     JNIEnv* env;
     jmethodID mid;
     jclass cls;
     jobjectArray arr;
-    int filled = 0;
+    jsize n;
 
     if (outV6Gateway) outV6Gateway[0] = '\0';
-    if (outDns1) outDns1[0] = '\0';
-    if (outDns2) outDns2[0] = '\0';
+    if (outDnsV4a) outDnsV4a[0] = '\0';
+    if (outDnsV4b) outDnsV4b[0] = '\0';
+    if (outDnsV6a) outDnsV6a[0] = '\0';
+    if (outDnsV6b) outDnsV6b[0] = '\0';
     if (outIfaceName) outIfaceName[0] = '\0';
+    if (outMac) outMac[0] = '\0';
     env = xsys_androidEnv();
     if (!env) return false;
     cls = xsys_findAppClass(env, XANDROID_JAVA_CLASS("XNetAdapter"));
@@ -1117,31 +1173,23 @@ bool XAndroid_netLinkInfo(char* outV6Gateway, int v6GatewayCap,
         (*env)->ExceptionClear(env);
         return false;
     }
-    {
-        jsize n = (*env)->GetArrayLength(env, arr);
-        /* 槽位：[0]=v6gw [1]=dns1 [2]=dns2 [3]=iface */
-        if (n > 0 && outV6Gateway) {
-            jstring s = (jstring)(*env)->GetObjectArrayElement(env, arr, 0);
-            xsys_copyJString(env, s, outV6Gateway, v6GatewayCap);
-            if (s) { (*env)->DeleteLocalRef(env, s); ++filled; }
-        }
-        if (n > 1 && outDns1) {
-            jstring s = (jstring)(*env)->GetObjectArrayElement(env, arr, 1);
-            xsys_copyJString(env, s, outDns1, dns1Cap);
-            if (s) { (*env)->DeleteLocalRef(env, s); ++filled; }
-        }
-        if (n > 2 && outDns2) {
-            jstring s = (jstring)(*env)->GetObjectArrayElement(env, arr, 2);
-            xsys_copyJString(env, s, outDns2, dns2Cap);
-            if (s) { (*env)->DeleteLocalRef(env, s); ++filled; }
-        }
-        if (n > 3 && outIfaceName) {
-            jstring s = (jstring)(*env)->GetObjectArrayElement(env, arr, 3);
-            xsys_copyJString(env, s, outIfaceName, ifaceNameCap);
-            if (s) (*env)->DeleteLocalRef(env, s);
-        }
-    }
+    n = (*env)->GetArrayLength(env, arr);
+    /* 槽位：[0]=v6gw [1]=v4dns1 [2]=v4dns2 [3]=v6dns1 [4]=v6dns2
+     *       [5]=iface [6]=mac（见 XNetAdapter.linkInfo 契约）。 */
+    xsys_copyJStringSlot(env, arr, 0, n, outV6Gateway, v6GatewayCap);
+    xsys_copyJStringSlot(env, arr, 1, n, outDnsV4a, dnsV4aCap);
+    xsys_copyJStringSlot(env, arr, 2, n, outDnsV4b, dnsV4bCap);
+    xsys_copyJStringSlot(env, arr, 3, n, outDnsV6a, dnsV6aCap);
+    xsys_copyJStringSlot(env, arr, 4, n, outDnsV6b, dnsV6bCap);
+    xsys_copyJStringSlot(env, arr, 5, n, outIfaceName, ifaceNameCap);
+    xsys_copyJStringSlot(env, arr, 6, n, outMac, macCap);
     return true;
+}
+
+bool XAndroid_netLinkMac(char* outMac, int macCap)
+{
+    return XAndroid_netLinkInfo(NULL, 0, NULL, 0, NULL, 0, NULL, 0,
+                                NULL, 0, NULL, 0, outMac, macCap);
 }
 
 bool XAndroid_netSetDhcp(void)

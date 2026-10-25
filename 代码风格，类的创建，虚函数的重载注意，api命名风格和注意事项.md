@@ -1333,39 +1333,173 @@ XString_append_utf8(str, "追加内容");
 
 ## 信号与槽规范
 
-### 基本用法
+### ⚠ 首要约束：槽函数第一个参数的语义由连接 API 决定，不可凭直觉假设
+
+本框架的槽函数有**两种签名**，分别对应两种连接 API。**写槽函数前必须先确认自己用的是哪个 API**，
+否则会把「连接接收者」当成「信号发送者」，读出完全错位的字段——且**不会崩溃、不报错**，
+表现为"数据莫名其妙是 0/旧值"，极难定位。
 
 ```c
-// 信号定义（在类的头文件中）：使用 XSignal_SLOT 宏或直接声明函数指针类型
-typedef void (*XSignal_ResponseSignal)(XATComm*, XByteArray*);
-#define XATComm_response_signal(self) \
-    XObject_connect_sender_0(self, response_signal)
+// Src/XCode/XEvent/XSignalSlot/XSignalSlot.h:16-17
+typedef void (*XSlotFunc1)(XObject* receiver, XVarList* args);  // ← 第1参是「连接接收者」
+typedef void (*XSlotFunc2)(XObject* sender,  XVarList* args);  // ← 第1参是「信号发送者」
+```
 
-// 连接信号到槽（按参数个数选择版本）
-XObject_connect_1(sender, signal, receiver, slot, XConnectionType_AutoConnection);
-XObject_connect_2(sender, signal, receiver, slot, XConnectionType_AutoConnection);
+发射时按 `conn->receiver` 是否为 NULL 二选一（`XSignalSlot.c:280-296`，`XConnection_directEmit`）：
 
-// 连接类型
-// XConnectionType_AutoConnection   -- 自动选择（同线程直接调用/跨线程队列）
-// XConnectionType_DirectConnection -- 直接调用（同步）
-// XConnectionType_QueuedConnection -- 通过事件队列（异步）
+```c
+// Src/XCode/XEvent/XSignalSlot/XSignalSlot.c:286-295（XConnection_directEmit）
+if(conn->receiver)           conn->slot_func1(conn->receiver, args);        // ← 传 receiver
+else if (conn->slot_func2)    conn->slot_func2(conn->signal->sender, args);  // ← 传 sender
+```
+
+对应关系表：
+
+| 连接 API | 槽函数类型 | 槽第 1 参含义 | 何时用 |
+|----------|-----------|---------------|--------|
+| `XObject_connect_1(obj, signal, receiver, slot, type)` | `XSlotFunc1` | **receiver**（连接时传入的那个对象） | 槽逻辑不关心是谁发的信号；或需要 receiver 参与后续派发 |
+| `XObject_connect_2(obj, signal, slot)` | `XSlotFunc2` | **sender**（真正发射信号的对象） | 槽逻辑需要区分信号来源（多路复用同一槽） |
+
+**硬性要求：**
+
+1. **用 `XObject_connect_1` 时，槽函数的第一个参数命名为 `receiver`，绝不能当 sender 用。**
+   需要真正的发送者时，必须显式取 `XObject_sender(receiver)`（`XObject.c:934`，
+   内部按"当前线程的发送者栈"查找最近一次发射的 sender，跨线程与嵌套发射均安全），
+   或改用 `XObject_connect_2`。
+2. **用 `XObject_connect_1` 时，若槽里需要按类型区分不同来源对象，必须用
+   `XObject_sender(receiver)` 取回 sender 后再判断**，不能直接把第 1 参强转成
+   业务对象类型。
+3. **禁止把 `connect_1` 的第 1 参强制转型成信号发送者的类型。** 两类对象的首成员
+   都是 `XObject m_class`、字段偏移天然对齐，**错位读取不会触发任何断言或崩溃**，
+   只会读出"看起来合法"的错值——这是本库最难排查的一类缺陷。
+
+**实证（2026-10-25 安卓真机 Modbus 主站排障）**：`XModbusReply` 与 `XModbusTcpClient`
+都以 `XObject m_class` 开头，探针误用 `connect_1` 的第 1 参当 `XModbusReply*`，
+导致读出 `state=2`（实为 client 的 `m_state`）、`error=0`、`values=0`（实为
+`m_params[0]`=NULL），并把真正的 reply 泄漏、`XObject_deleteLater()` 误删了
+**client 本身**（进而触发设备状态置 Unconnected），最终表现为"应答收到了却像是
+没收到、且连接莫名断开"。同一份库代码用 `connect_2` 后四相位轮询全部正常应答。
+
+**正误对照（槽需要知道信号来自谁时）：**
+
+```c
+/* ✅ connect_1 + 显式取 sender：槽不依赖第 1 参的语义，安全 */
+static void onReply(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    XModbusReply* reply = (XModbusReply*)XObject_sender(receiver);  // 真 sender
+    if (!reply) return;
+    /* ... 用 reply ... */
+}
+XObject_connect_1((XObject*)reply, XSignal(XModbusReply_finished_signal),
+                  (XObject*)self, onReply, XConnectionType_Direct);
+
+/* ✅ 或直接用 connect_2：第 1 参天然就是 sender */
+static void onReply2(XObject* sender, XVarList* args)
+{
+    (void)args;
+    XModbusReply* reply = (XModbusReply*)sender;   // 真 sender
+    /* ... */
+}
+XObject_connect_2((XObject*)reply, XSignal(XModbusReply_finished_signal), onReply2);
+
+/* ❌ 禁止：把 connect_1 的第 1 参（receiver）当 sender 用 */
+static void onReplyBad(XObject* receiver, XVarList* args)
+{
+    XModbusReply* reply = (XModbusReply*)receiver;  // ← receiver 不是 reply！
+    /* 读到的是错位数据，且 deleteLater(receiver) 会删错对象 */
+}
+```
+
+### 真实 API 签名（勿凭记忆书写）
+
+```c
+// Src/XClass/XObject.h:390 —— 第1参是 receiver
+XConnection* XObject_connect_1(XObject* object, size_t signal, XObject* receiver,
+                               XSlotFunc1 slot_func, XConnectionType type);
+
+// Src/XClass/XObject.h:400 —— 只有 3 参，无 receiver；第1参是 sender
+XConnection* XObject_connect_2(XObject* object, size_t signal, XSlotFunc2 slot_func);
+```
+
+> 注意：`XObject_connect_2` **没有** receiver 与连接类型参数（与 Qt 的
+> `connect(sender, signal, receiver, slot, type)` 形似而不同，勿照抄 Qt 写法）。
+
+连接类型枚举（`XSignalSlot.h:31-38`）：
+
+```c
+XConnectionType_Auto           = 0,      // 自动选择（同线程直接调用 / 跨线程队列）
+XConnectionType_Direct         = 1,      // 直接调用（同步，在发射处执行）
+XConnectionType_Queued         = 2,      // 投递到接收者线程的事件队列（异步）
+XConnectionType_BlockingQueued = 3,      // 阻塞等待队列投递完成
+XConnectionType_Unique         = 0x80,   // 标志位：同一 receiver+slot 只连一次
+XConnectionType_SingleShot     = 0x100,  // 标志位：触发一次后自动断开
 ```
 
 ### 信号声明规范
 
 ```c
-// 在结构体中声明信号槽管理器
+// 信号函数在类的头文件中声明；结构体里放「信号槽管理器指针」（非内嵌结构）
 typedef struct XATComm {
     XObject m_class;
     // ...
-    XSignalSlot m_signalSlot;  // 信号槽管理器
+    XSignalSlot* m_signalSlot;  // 槽管理器指针（XObject 内部持有，勿内嵌）
 } XATComm;
 
-// 声明回调函数指针类型
-typedef void (*XATComm_ResponseCallback)(XATComm*, XByteArray*);
-typedef void (*XATComm_OkCallback)(XATComm*);
-typedef void (*XATComm_ErrorCallback)(XATComm*);
+// 信号发射函数：XEmitSignal 同步发射
+void* XATComm_response_signal(XATComm* self) {
+    XEmitSignal(self, XATComm_response_signal, NULL, NULL, NULL,
+                XEVENT_PRIORITY_NORMAL);
+}
 ```
+
+**带参信号函数的写法**：参数用 `XVarList_Create(XVar(类型, 值))` 构造。
+`XEmitSignal` 宏体是 `if(object && object->m_signalSlot) XObject_emitSignal(..., args, ...)`，
+**实参 `args` 位于 `if` 的函数体内，惰性求值**——对象为空时 `XVarList_Create` 根本不会执行，
+故信号函数被以 NULL 调用（取信号地址，见 `XObject_signalIdOf`）时无分配、无泄漏。
+但**直接调用带参信号函数**（而非经 `XSignal()` 宏取地址）时 `args` 会真实求值并分配，
+此时若发射路径最终未消费该 `XVarList` 就会泄漏——**带参信号函数应保证 args 必被消费**
+（发射成功时由 `XSignalSlot_emitReleaseRef` 释放）。
+
+### 信号地址必须经 `XSignal()` 宏获取
+
+```c
+// ✅ 正确：宏内部以 NULL 调用信号函数，取回其真实地址（跨 DLL 边界亦准）
+XObject_connect_1((XObject*)sender, XSignal(XFoo_bar_signal),
+                  (XObject*)receiver, on_bar, XConnectionType_Direct);
+
+// ❌ 错误：直接取函数地址 &fn，跨 DLL 边界得到的是导入跳板地址，
+//          与发射侧的真实地址不等 → signalMap 查不中 → 槽函数静默不触发
+```
+
+`XSignal()` 展开为 `XObject_signalIdOf((void*(*)(XObject*))(signal))`
+（`XObject.h:434`），后者以 NULL 调用信号函数取其返回值
+（`XObject.c:711-729`）——这是**跨 DLL 边界也能取到真实地址**的唯一可靠途径。
+
+### 连接与断开
+
+```c
+// 连接
+XObject_connect_1((XObject*)sender, XSignal(XFoo_bar_signal),
+                  (XObject*)receiver, on_bar, XConnectionType_Direct);
+XObject_connect_2((XObject*)sender, XSignal(XFoo_bar_signal), on_bar);
+
+// 断开：connect_1 用对象+信号+receiver+槽 定位；connect_2 需持有返回的 XConnection*
+XObject_disconnect_1((XObject*)sender, XSignal(XFoo_bar_signal),
+                     (XObject*)receiver, on_bar);
+XObject_disconnect_2(conn);   // conn 为 XObject_connect_2 的返回值
+```
+
+### 常见错误与最佳实践
+
+| 错误 | 后果 | 正确做法 |
+|------|------|---------|
+| `connect_1` 的槽把第 1 参当 sender 强转 | 静默读到错位字段（无崩溃、无断言） | 用 `XObject_sender(receiver)`，或改 `connect_2` |
+| 槽里 `XObject_deleteLater((XObject*)sender)` | 删错对象（把 client 当 reply 删） | 先确认第 1 参语义再决定删谁 |
+| 槽依赖"信号来自谁"却用 `connect_1` | 多路复用时判错分支 | `connect_2` 或 `XObject_sender()` |
+| 照抄 Qt 写 `connect_2(obj, sig, receiver, slot, type)` | 编译不过 / 参数错位 | `connect_2` 只有 3 参，无 receiver |
+| 直接用 `&fn` 或 `(size_t)fn` 取信号地址 | 跨 DLL 边界取到导入跳板地址，signalMap 查不中 → **槽函数静默不触发** | 一律用 `XSignal(fn)` 宏 |
+| 引用不存在的 API（如 `XObject_connect_sender_0`） | 编译失败 | 以 `XObject.h` 为准，见本节「真实 API 签名」 |
 
 ---
 

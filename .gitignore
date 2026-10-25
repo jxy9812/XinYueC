@@ -521,3 +521,7 @@ gmon.out
 /_*.txt
 probe_src/
 *.bak
+
+# 安卓 APK 签名密钥（pack_apk.ps1 首跑自动生成；丢了重签=覆盖安装失败，
+# 入库=私钥泄漏。同 xconsole_ssh_hostkey.bin 口径：敏感，只留磁盘）
+platforms/android/signing/

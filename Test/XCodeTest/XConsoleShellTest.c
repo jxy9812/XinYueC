@@ -2127,7 +2127,11 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         XClassDelete(fileN);
         if (!ok) return false;
     }
-    /* 5. 含空格文件名补全：补全后仍能通过 cat 正确读取 */
+    /* 5. 含空格文件名补全：补全后仍能通过 cat 正确读取
+       用反斜杠转义空格（`xcs\ compl`）。Windows 下反斜杠是路径分隔符，
+       不是转义符（见 XConsoleShellParser.c 的平台约定），故该转义写法
+       只在 POSIX 语义下成立，Windows 走下面的引号补全分支。 */
+#ifndef _WIN32
     {
         const char* spacedPath = "/tmp/xcs complete file.txt";
         XString* spaced = XString_create_utf8(spacedPath);
@@ -2169,6 +2173,52 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         XDeviceFile_removePermanent(spaced);
         XClassDelete(spaced);
     }
+#else
+    /* 5'. Windows 等价覆盖：反斜杠是路径分隔符，含空格的文件名改用引号
+       表达（`cat "/tmp/xcs complete file.txt"`），补全后仍能正确读出内容。 */
+    {
+        const char* spacedPath = "/tmp/xcs complete file.txt";
+        XString* spaced = XString_create_utf8(spacedPath);
+        XFd wfd;
+        int error = 0;
+        bool ok = false;
+        if (!spaced) return false;
+        XDeviceFile_removePermanent(spaced);
+        wfd = xcs_test_open_file(spaced, XDeviceFile_WriteOnly |
+                                       XDeviceFile_Truncate, &error);
+        if (wfd != XFD_INVALID) {
+            ok = XDeviceFile_write(wfd, "SPACE_OK", 8) == 8;
+            XDeviceFile_close(wfd);
+        }
+        if (!ok) {
+            XClassDelete(spaced);
+            return false;
+        }
+        memset(transport->output, 0, sizeof(transport->output));
+        transport->length = 0;
+        if (XConsoleShell_feedData(shell, "cat \"/tmp/xcs compl\t\n", 21) !=
+            XConsoleResult_Ok) {
+            XDeviceFile_removePermanent(spaced);
+            XClassDelete(spaced);
+            return false;
+        }
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        if (!XConsoleShell_flushOutput(shell)) {
+            XDeviceFile_removePermanent(spaced);
+            XClassDelete(spaced);
+            return false;
+        }
+#endif
+        if (!strstr(transport->output, "SPACE_OK")) {
+            XPrintf("quoted-space path output missing: [%s]\n", transport->output);
+            XDeviceFile_removePermanent(spaced);
+            XClassDelete(spaced);
+            return false;
+        }
+        XDeviceFile_removePermanent(spaced);
+        XClassDelete(spaced);
+    }
+#endif
     /* 6. fs cd 子命令参数目录补全 */
     {
         XString* subDir = XString_create_utf8("/tmp/xcs_complete_dir_a");

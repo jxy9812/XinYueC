@@ -70,6 +70,7 @@ typedef uintptr_t XWindowId;
 /** @brief XWindow 前向声明（公共层只持有借用指针，不引用其内部）。 */
 typedef struct XWindow XWindow;
 typedef struct XPixmap XPixmap;
+typedef struct XIcon XIcon;
 /** @brief XString 前向声明（标题 UTF-8 字符串）。 */
 typedef struct XString XString;
 /** @brief XImage 前向声明（present 提交的软件帧缓冲）。 */
@@ -209,6 +210,21 @@ bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags);
  * @return     true 已同步；false 入参非法或平台不可用。
  */
 bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title);
+
+/**
+ * @brief      同步窗口图标到真实原生窗口。
+ * @details    对标 QPlatformWindow::setIcon（QWindow::setIcon 句柄存在
+ *             即转发平台落地）：X11 写 EWMH _NET_WM_ICON（CARD32 数组，
+ *             多尺寸 [w,h,ARGB...] 串联，任务栏/WM/Alt-Tab 取用）；
+ *             Win32 用 exe 资源首个图标（.rc `1 ICON`，与资源管理器同
+ *             图源）经 WM_SETICON 落地；安卓无运行期窗口图标通道（启
+ *             动器图标走 APK mipmap），no-op。未创建窗口/无后端时安全
+ *             no-op。icon 为 NULL 时清除平台侧图标（X11 删属性）。
+ * @param      window 目标窗口借用指针；可为 NULL。
+ * @param      icon   窗口图标借用指针；NULL 表示清除。
+ * @return     true 已请求平台同步；false 入参非法或平台不可用。
+ */
+bool XPlatformNativeWindow_setIcon(XWindow* window, const XIcon* icon);
 
 /**
  * @brief      把窗口最小/最大尺寸同步为原生 WM 尺寸约束。

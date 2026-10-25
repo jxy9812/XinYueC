@@ -57,6 +57,9 @@
 #include "XWidget.h"
 #include "XWidget_Protected.h"
 #include "XImage.h"
+#include "XIcon.h"
+#include "XPixmap.h"
+#include "XPainter.h"
 #include "XWindow.h"
 #include "XWindowEvent.h"
 #include "xgui_demo_pages.h"
@@ -81,6 +84,11 @@
 /* 嵌入式 fbdev 板级引导头：显示驱动注册入口 + 触摸输入驱动注册入口
  * （两文件经门控宏自行裁剪，XPLATFORM_FBINPUT_ON=0 时后者为空头）。 */
 #include "XPlatformFramebuffer_posix.h"
+#if defined(__linux__) && XGUI_ON && XPLATFORM_DRM_ON
+/* DRM/KMS 后端（无 /dev/fb* 的现代嵌入式板，如 RK3506 Buildroot 内核）：
+ * 板级引导先试 DRM，失败回落 fbdev（下方既有块）。 */
+#include "XPlatformFramebuffer_drm.h"
+#endif
 #if XPLATFORM_FBINPUT_ON
 #include "XPlatformFbInput_posix.h"
 #endif
@@ -318,8 +326,15 @@
 /* chrome 高度单一事实源（布局化 chrome 2026-10-17）：品牌条/状态条
  * 高度只在此定义；内容区顶=CSD 保留边距(demo_sysbarH)+品牌条高，由根
  * 垂直布局自动分配，任何布局点不得手写坐标偏移。 */
+/* 主窗类型前向声明：品牌条（下方子类）持有 owner 指针并在点击槽里置
+ * 一个待处理位，需要该类型可见（完整定义在本文件中段）。 */
+struct DemoWin;
 #define DEMO_BRAND_H  40
 #define DEMO_STATUS_H 26
+/* 顶栏导航图标（☰）触控区宽：Material 48dp。品牌条（宽屏/横屏）与
+ * 移动端应用栏（紧凑形态）共用——两者都在左上角画同一枚 ☰，故定义
+ * 必须早于这两个子类。 */
+#define DEMO_APPBAR_BTN_W  48
 
 /* ==================== 状态栏标签子类 ==================== */
 
@@ -385,19 +400,83 @@ void DemoStatusLabel_init(DemoStatusLabel* self, XWidget* parent,
 static void demo_draw_checker(XPainter* painter, int x0, int y0,
                               int cols, int rows, int cell);
 
+/* ==================== 应用图标（品牌条棋盘格同源，程序化构造） ==== */
+
+/** @brief 程序化构造品牌条棋盘格图标并设到顶层控件（应用图标落地）。
+ *  @details 64x64 ARGB32 离屏 XImage 经 XPainter 直绘（fillRect 与
+ *           VDemoBrandBar_paintEvent 同一套图元），XWidget_setWindowIcon
+ *           存值后经窗口桥接由平台层按后端落地：X11=_NET_WM_ICON（任务
+ *           栏/Alt-Tab 取用），Win32=exe 资源图标（rc `1 ICON`，即
+ *           Test/XGuiDemo/res/xgui.ico，与此处同图源），安卓=APK
+ *           mipmap 启动器图标（AndroidManifest android:icon，打包链路
+ *           入包），无窗管环境平台层 no-op。配色与品牌条绘制共用字面
+ *           量口径，改图需两处同步（此处 + VDemoBrandBar_paintEvent）。 */
+static void demo_applyWindowIcon(XWidget* win)
+{
+    XImage img;
+    XPixmap pm;
+    XIcon icon;
+    XPainter painter;
+    XRect rect;
+    XRect cell;
+    const uint32_t kBg = 0xff1f4e79u;    /* 品牌条底色同源 */
+    const uint32_t kBlue = 0xff4a7ba6u;  /* 棋盘偶格（左上/右下） */
+    const uint32_t kLight = 0xffc8d8e8u; /* 棋盘奇格（右上/左下） */
+    const int canvas = 64;
+    const int total = 36;                /* 棋盘总边长：画布 ~56%，缩到 16px 格仍可辨 */
+    const int csz = total / 2;
+    const int x0 = (canvas - total) / 2;
+    const int y0 = x0;
+    if (!win) return;
+    XImage_init_ex(&img, canvas, canvas, XImageFormat_ARGB32);
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, &img)) {
+        XPainter_deinit(&painter);
+        XClassDeinit(&img);
+        return;
+    }
+    XRect_init(&rect, 0, 0, canvas, canvas);
+    XPainter_fillRect(&painter, &rect, kBg);
+    XRect_init(&cell, x0, y0, csz, csz);
+    XPainter_fillRect(&painter, &cell, kBlue);
+    XRect_init(&cell, x0 + csz, y0, csz, csz);
+    XPainter_fillRect(&painter, &cell, kLight);
+    XRect_init(&cell, x0, y0 + csz, csz, csz);
+    XPainter_fillRect(&painter, &cell, kLight);
+    XRect_init(&cell, x0 + csz, y0 + csz, csz, csz);
+    XPainter_fillRect(&painter, &cell, kBlue);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XPixmap_fromImage(&img, 0, &pm);
+    XClassDeinit(&img);
+    memset(&icon, 0, sizeof(icon));
+    XIcon_init(&icon);
+    XIcon_init_pixmap(&icon, &pm);
+    XWidget_setWindowIcon(win, &icon);
+    XClassDeinit(&icon);
+    XClassDeinit(&pm);
+}
+
 /* ==================== 品牌条子类（蓝底+棋盘格+标题文字一体） ==== */
 
 XCLASS_DEFINE_BEGING(DemoBrandBar)
 XCLASS_DEFINE_EXTEND_END(DemoBrandBar, XLabel)
 
 /** @brief 品牌条：自带深蓝底与棋盘格装饰的品牌标题条（demo 自定义
- *          chrome，非框架标题条），文本由 XLabel 绘制管线接管。 */
+ *         chrome，非框架标题条），文本由 XLabel 绘制管线接管。
+ *  @note  [横屏 ☰ 2026-10-25] 宽屏/横屏形态下顶部品牌条左侧加导航
+ *         图标，**替代原导航面板上的「收起」按钮**：点 ☰ 收起/展开
+ *         左侧导航面板（与「收起」同一开关 demo_navCollapsed）。
+ *         注意这不是"打开全屏菜单页"——那套是紧凑形态（竖屏）的
+ *         独立机制，横屏仍用常驻侧栏。 */
 typedef struct DemoBrandBar
 {
     XLabel m_base; /**< XLabel 基类；必须是第一个成员。 */
+    struct DemoWin* m_owner; /**< 归属主窗（导航图标点击 → 收起/展开侧栏）。 */
 } DemoBrandBar;
 
-/** @brief 绘制事件：树内按自身几何先铺品牌底色与棋盘格，再画标题文字。 */
+/** @brief 绘制事件：树内按自身几何先铺品牌底色与棋盘格，再画导航图标
+ *         与标题文字。 */
 static void VDemoBrandBar_paintEvent(XWidget* self, XEvent* event)
 {
     XImage* image;
@@ -419,9 +498,48 @@ static void VDemoBrandBar_paintEvent(XWidget* self, XEvent* event)
     XPainter_fillRect(&painter, &rect, 0xff1f4e79u);
     demo_draw_checker(&painter,
                       XWidget_width(self) - 24 - 8, 8, 2, 2, 12);
+    /* 导航图标：左端 48dp 触控区画三横条 ☰（点击收起/展开左侧导航
+     * 面板，替代原面板上的「收起」按钮）。 */
+    {
+        int cx = 16;
+        int cy = XWidget_height(self) / 2;
+        int i;
+        for (i = 0; i < 3; ++i) {
+            XRect line;
+            line.x = cx; line.y = cy - 9 + i * 8;
+            line.width = 20; line.height = 2;
+            XPainter_fillRect(&painter, &line, 0xffffffffu);
+        }
+    }
     XLabel_drawContents((XLabel*)self, &painter);
     XPainter_end(&painter);
     XPainter_deinit(&painter);
+}
+
+/* 品牌条（下方子类）点击要切换导航面板收起态；该动作的实现在文件后段
+ * （需要 DemoWin 完整定义），故此处只对不完整类型做前置声明。 */
+static void demo_brandNavToggle(struct DemoWin* self);
+
+/** @brief 鼠标按下：命中导航图标区（左侧 48dp）→ 收起/展开左侧导航面板。
+ *  @details 与已删除的「收起」按钮同一开关（翻转 m_navCollapsed 并重排
+ *           面板/内容）。事件在此接受后不会再上传给主窗，故必须**就地**
+ *           调用开关函数——不能靠主窗消费标志位（那样永远收不到）。 */
+static void VDemoBrandBar_mousePressEvent(XWidget* self, XEvent* event)
+{
+    DemoBrandBar* bar = (DemoBrandBar*)self;
+    if (!self || !event) return;
+    if (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS && bar &&
+        bar->m_owner) {
+        XMouseEvent* mouse = (XMouseEvent*)event;
+        XPoint pos = XMouseEvent_position(mouse);
+        if (pos.x < DEMO_APPBAR_BTN_W) {
+            demo_brandNavToggle(bar->m_owner);
+            XEvent_accept(event);
+            return;
+        }
+    }
+    XClass_Parent(XWidget, EXWidget_MousePressEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
 }
 
 /** @brief 初始化品牌条类虚函数表。 */
@@ -431,6 +549,8 @@ XVtable* DemoBrandBar_class_init(void)
     XVTABLE_INHERIT_XCLASS(XLabel);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,
                              VDemoBrandBar_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             VDemoBrandBar_mousePressEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -441,9 +561,151 @@ void DemoBrandBar_init(DemoBrandBar* self, XWidget* parent,
     if (!self) return;
     XLabel_init(&self->m_base, parent, flags);
     XClassSetVtable(self, DemoBrandBar);
+    self->m_owner = NULL;
 }
 
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+
+/* ==================== 移动端应用栏（☰ + 当前页标题） ====================
+ * 2026-10-25 手机竖横屏适配：紧凑形态（逻辑宽 < 600dp）的顶栏。
+ * 参照 Material 3 应用栏：56dp 高、导航图标触控区 48dp、标题左对齐
+ * 紧跟导航图标右侧、同一色面承载（沿用品牌条的深蓝，与桌面形态视觉
+ * 连贯）。导航图标（☰ / 返回箭头）由 paint 直接画三道白条/折线——
+ * 不走字库字形（轮廓字体未必含 U+2630/HAMBURGER，缺字会渲染成豆腐块）。
+ */
+
+/* 主窗类型此处尚未定义（DemoWin 的完整定义在下方），故用不完整类型
+ * 前向引用——不重复 typedef（C99 下重定义 typedef 是约束违规）。 */
+struct DemoWin;
+
+/* ---- 移动端形态常量（Material 3 窗口尺寸类口径）----
+ * compact 断点：逻辑宽 < 600dp（Material 3 的 compact 窗口上限）——
+ * 手机竖屏必落此档；横屏手机逻辑宽 ≈ 869dp → 落宽屏档，侧栏形态在
+ * 横屏下是更好的信息架构（导航项多时侧栏优于底部条）。 */
+#define DEMO_COMPACT_MAX_W 600   /**< compact 断点（逻辑 px，≈dp）。 */
+#define DEMO_APPBAR_H      56    /**< 应用栏高（Material 应用栏 56dp）。 */
+/* DEMO_APPBAR_BTN_W 已于上方（品牌条之前）定义——两处共用同一图标区宽。 */
+#define DEMO_MENU_ROW_H    44    /**< 菜单行高（触控目标 ≥ 44dp）。 */
+#define DEMO_MENU_CAT_H    40    /**< 菜单分区标题高。 */
+#define DEMO_MENU_PAGE_IDX 21    /**< 移动端菜单页在内容堆叠中的下标（页面 0..20 之后）。 */
+
+/** @brief 菜单开合（应用栏 ☰ 点击 / Esc 返回键）。 */
+static void demo_menuToggle(struct DemoWin* self);
+
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+
+XCLASS_DEFINE_BEGING(DemoAppBar)
+XCLASS_DEFINE_EXTEND_END(DemoAppBar, XLabel)
+
+/** @brief 移动端应用栏：深蓝底 + 导航图标 + 当前页标题（一体自绘）。 */
+typedef struct DemoAppBar
+{
+    XLabel    m_base;   /**< XLabel 基类；标题文本/对齐/缩进沿用其接口。 */
+    struct DemoWin* m_owner; /**< 归属主窗（导航图标点击 → 主窗切菜单页）。 */
+    bool      m_menuOpen; /**< 菜单页是否展开（决定图标形态：☰ / ←）。 */
+} DemoAppBar;
+
+/** @brief 绘制：底色 + 导航图标（菜单态=三横条，菜单开=返回箭头）+ 标题。 */
+static void VDemoAppBar_paintEvent(XWidget* self, XEvent* event)
+{
+    XImage* image;
+    XPoint offset;
+    XPainter painter;
+    XRect rect;
+    if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
+    image = XWidget_paintImage(self);
+    if (!image) return;
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, image)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+    XRect_init(&rect, 0, 0, XWidget_width(self), XWidget_height(self));
+    XPainter_fillRect(&painter, &rect, 0xff1f4e79u);
+    {
+        /* 导航图标：左端 48dp 触控区内画图形（不依赖字库字形）。
+         * [回左侧 2026-10-25 用户裁定] ☰ 回到标题左侧（Material 标准
+         * 顶栏形：导航图标在文字左），此前右置一版已回退。 */
+        int cx = 16;
+        int cy = XWidget_height(self) / 2;
+        int i;
+        DemoAppBar* bar = (DemoAppBar*)self;
+        int menuOpen = bar ? bar->m_menuOpen : 0;
+        if (menuOpen) {
+            /* 返回箭头 ←（菜单开）：主干 + 上/下两笔斜折（线段画出真斜
+             * 线；此前用横向矩形拼，出来是四道杠的怪图形——桌面实测）。 */
+            XPainter_setPen(&painter, 0xffffffffu);
+            XPainter_setPenWidth(&painter, 2);
+            XPainter_drawLine(&painter, cx + 3, cy, cx + 21, cy);
+            XPainter_drawLine(&painter, cx + 3, cy, cx + 11, cy - 8);
+            XPainter_drawLine(&painter, cx + 3, cy, cx + 11, cy + 8);
+        } else {
+            for (i = 0; i < 3; ++i) {
+                XRect line;
+                line.x = cx; line.y = cy - 9 + i * 8;
+                line.width = 20; line.height = 2;
+                XPainter_fillRect(&painter, &line, 0xffffffffu);
+            }
+        }
+    }
+    XLabel_drawContents((XLabel*)self, &painter);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+}
+
+/** @brief 鼠标按下：命中导航图标区（左侧 48dp）→ 主窗切菜单页。 */
+static void VDemoAppBar_mousePressEvent(XWidget* self, XEvent* event)
+{
+    DemoAppBar* bar = (DemoAppBar*)self;
+    if (!self || !event) return;
+    if (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS && bar &&
+        bar->m_owner) {
+        XMouseEvent* mouse = (XMouseEvent*)event;
+        XPoint pos = XMouseEvent_position(mouse);
+        if (pos.x < DEMO_APPBAR_BTN_W) {
+            demo_menuToggle(bar->m_owner);
+            XEvent_accept(event);
+            return;
+        }
+    }
+    XClass_Parent(XWidget, EXWidget_MousePressEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
+/** @brief 初始化应用栏类虚函数表。 */
+XVtable* DemoAppBar_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(DemoAppBar)
+    XVTABLE_INHERIT_XCLASS(XLabel);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,
+                             VDemoAppBar_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             VDemoAppBar_mousePressEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 初始化移动端应用栏（标题文本/对齐沿用 XLabel 接口）。 */
+void DemoAppBar_init(DemoAppBar* self, XWidget* parent,
+                     XWidgetFlags flags)
+{
+    if (!self) return;
+    XLabel_init(&self->m_base, parent, flags);
+    XClassSetVtable(self, DemoAppBar);
+    self->m_owner = NULL;
+    self->m_menuOpen = false;
+}
+
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+
+/* 紧凑形态依赖内容堆叠（菜单页是堆叠里的一页）：堆叠关闭时应用栏的
+ * 导航图标无菜单可切，给一个空实现保住链接完整性。 */
+#if !(XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
+      XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON)
+static void demo_menuToggle(struct DemoWin* self) { (void)self; }
+#endif
 
 /* ==================== 演示窗口子类 ==================== */
 
@@ -481,6 +743,23 @@ typedef struct DemoWin
     DemoBrandBar    m_brandBar; /**< 顶部品牌条（蓝底+棋盘格+标题文字一体；
                                   *   布局化 chrome：根垂直布局首段，高度
                                   *   DEMO_BRAND_H 固定）。 */
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    DemoAppBar      m_appBar;    /**< 移动端应用栏（☰ + 当前页标题）：紧凑
+                                  *   形态的顶栏，宽屏形态隐藏。 */
+#endif
+    int             m_layoutMode; /**< 布局形态：0=宽屏（桌面/横屏，侧栏导航）
+                                   *   1=紧凑（手机竖屏，应用栏 + 全屏菜单页）。
+                                   *   按逻辑宽与 DEMO_COMPACT_MAX_W 判定。 */
+    int             m_menuPageIdx; /**< 移动端菜单页在内容堆叠中的实际下标
+                                   *   （随特性裁剪而变，注册时实测写入——
+                                   *   写死常量会在页数被裁的构建里指向别的页）。 */
+    bool            m_menuOpen;  /**< 紧凑形态：菜单页是否展开。 */
+    int             m_pageBeforeMenu; /**< 打开菜单前的页索引（菜单关闭时回退目标）。 */
+    bool            m_navCollapsedUser; /**< 用户手动收起态（紧凑形态强制收起，
+                                   *   回宽屏形态时还原用户原值）。 */
+    XWidget         m_mobileMenu; /**< 紧凑形态的全屏菜单页（内容堆叠第
+                                   *   DEMO_MENU_PAGE_IDX 页）：导航树平铺，
+                                   *   Material 抽屉在紧凑窗口的"全屏变体"。 */
     XWidget         m_contentHost; /**< 内容区宿主（根布局中段伸展；页面
                                   *   堆叠/浮动导航面板/悬浮层的父）。 */
     XBoxLayout      m_rootLayout; /**< 根垂直布局（品牌条/中段宿主/状态栏
@@ -516,7 +795,6 @@ typedef struct DemoWin
     XWidget         m_navPanel;      /**< 浮动导航面板（四边停靠/收起贴边，见 demo_navUpdatePanel）。 */
     XLabel          m_navTitle;      /**< 面板标题「导航」。 */
     XPushButton     m_navDockBtn;    /**< 换边钮：左→右→上→下循环。 */
-    XPushButton     m_navCollapseBtn;/**< 收起/展开钮：收起后贴边成细条。 */
     XPushButton     m_navCatBtns[3]; /**< 一级分类钮（控件/系统设置/远程；手风琴）。 */
     XLabel          m_navHeadLabels[5]; /**< 子分组标题标签池（控件类内「按钮/输入/…」，竖版展开时启用）。 */
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
@@ -868,7 +1146,19 @@ static void demo_performance_anchorBottomRight(DemoWin* self)
         (self->m_statusBarVisible ? DEMO_STATUS_H : 0);
     if (x < 0) x = 0;
     if (y < 0) y = 0;
-    XPerformanceOverlay_setPosition(&self->m_performanceOverlay, x, y);
+    if (x != geo.x || y != geo.y) {
+        /* 悬浮层文字自适应收框只改尺寸不动位置：右下锚定随行宽变化
+           （如网速位数增减）整体位移。位置变更后旧矩形不再属于悬浮层
+           但残着上一帧像素——真机竖屏实测出界残影（边缘残留半个字形）。
+           新旧矩形各投一次更新，旧位残迹清除、新位随即绘上。 */
+        XPerformanceOverlay_setPosition(&self->m_performanceOverlay, x, y);
+        XWidget_updateRect(base, &geo);
+        {
+            XRect moved;
+            moved = XPerformanceOverlay_geometry(&self->m_performanceOverlay);
+            XWidget_updateRect(base, &moved);
+        }
+    }
     self->m_overlayAnchorW = geo.width;  /* 记录锚定时尺寸，供每帧检测 */
     self->m_overlayAnchorH = geo.height;
 }
@@ -943,6 +1233,12 @@ static int demo_sysbarH(DemoWin* self)
     return XWindowDecoration_marginsFor((XWidget*)self).top;
 }
 
+/* [下移取消 2026-10-25 用户裁定] 状态栏让位（demo_topInset，整体下移
+ * 48dp）已回退：安卓改走沉浸式（XGuiNativeActivity 隐藏状态栏 +
+ * LAYOUT_FULLSCREEN 铺满），顶部没有需要让位的系统栏，应用栏直接落
+ * y=0。菜单图标同步移到标题文字右侧（避免顶栏左缘与未来可能的系统
+ * 时钟位打架）。 */
+
 /* demo_drawStaticScene 无条件编译：静态场景缓存关闭（昆仑通态 fbdev
  * 定版=0）时，demo_paintScene 的 #else 分支仍需现绘整页静态基底。 */
 /** @brief 绘制不随性能采样变化的 Demo 场景：窗口背景、标题栏与状态栏基底。
@@ -981,6 +1277,8 @@ static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
 #endif
         demo_fill_rect(painter, 0, 0, w, h, bg);       /* 窗口背景 */
     }
+    /* [下移取消 2026-10-25] 状态栏让位带已随 demo_topInset 一并回退：
+     * 沉浸式下状态栏隐藏、应用栏落 y=0，无需染色带。 */
     /* 标题带/棋盘格由 DemoBrandBar 子控件自绘（布局化 chrome），静态
      * 基底只剩窗口背景。导航为浮动面板（子控件自绘）。 */
     /* 状态栏底色由 DemoStatusLabel 子控件自带（要盖在越界内容之上，
@@ -1695,6 +1993,7 @@ static bool demo_framePumpBody(void* userData);
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 static void demo_navUpdatePanel(DemoWin* self);
 static void demo_layout_content(DemoWin* self);
+static void demo_layoutModeUpdate(DemoWin* self);
 #endif
 
 /** @brief autotest 截图落盘目录：POSIX/安卓 /tmp；Windows 用 %TEMP%/%TMP%
@@ -1785,6 +2084,9 @@ static bool demo_framePumpBody(void* userData)
             demo->m_lastContentH = ch;
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+            /* 形态判定基于**窗口**宽（内容区宽在紧凑态已占满，跨断点
+               时内容区宽可能不变）——每轮兜底一次，代价=一次比较。 */
+            demo_layoutModeUpdate(demo);
             demo_navUpdatePanel(demo);
             demo_layout_content(demo);
 #endif
@@ -2153,6 +2455,195 @@ static int demo_navCategoryForPage(int page)
 
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+
+/** @brief 当前布局形态判定：逻辑宽 < DEMO_COMPACT_MAX_W → 紧凑（手机）。
+ * @details 只看宽度不看高度：横屏手机逻辑宽 ≈869dp 落宽屏档（侧栏在
+ *          横屏下信息密度更优）；竖屏手机 ≈400dp 落紧凑档。宽高都不看
+ *          会让"竖屏平板"误判，故此处按宽度分档，与 Material 3 的
+ *          compact/medium/expanded 窗口尺寸类同口径。 */
+static int demo_layoutModeOf(DemoWin* self)
+{
+    int w;
+    if (!self) return 0;
+    w = XWidget_width(&self->m_base);
+    if (w <= 0) return self->m_layoutMode;  /* 未排布：沿用当前形态。 */
+    return (w < DEMO_COMPACT_MAX_W) ? 1 : 0;
+}
+
+/** @brief 应用栏标题同步：当前页名（菜单页显示「菜单」）。 */
+static void demo_appBarTitleUpdate(DemoWin* self)
+{
+    int cur;
+    if (!self) return;
+    cur = XStackedLayout_currentIndex(&self->m_stackLayout);
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    if (cur == self->m_menuPageIdx)
+        XLabel_setText_2((XLabel*)&self->m_appBar, "\xE8\x8F\x9C\xE5\x8D\x95");
+    else if (cur >= 0 && cur < DEMO_NAV_PAGE_N)
+        XLabel_setText_2((XLabel*)&self->m_appBar, demo_page_name(cur));
+    else
+        XLabel_setText_2((XLabel*)&self->m_appBar, "XGui \xE6\x8E\xA7\xE4\xBB\xB6\xE6\xBC\x94\xE7\xA4\xBA");
+#endif
+    self->m_appBar.m_menuOpen = (cur == self->m_menuPageIdx);
+}
+
+/** @brief 紧凑形态：菜单页内排布（三大分区平铺 + 44dp 触控行高）。
+ * @details 菜单页=内容堆叠的第 DEMO_MENU_PAGE_IDX 页，占满内容区；
+ *          导航滚动容器从桌面导航面板搬进本页（控件搬家而非复制，
+ *          页面按钮与分类按钮实体唯一，选中态互斥组不分裂）。条目平铺
+ *          全部三个分区（不折叠）：手机上"折叠手风琴"要多点一次，
+ *          平铺让 21 个目的地一屏可达（Material 抽屉在紧凑窗口的
+ *          全屏变体）。子分组标题保留为轻量分隔标签。 */
+static void demo_compactMenuLayout(DemoWin* self)
+{
+    int i;
+    int y = 0;
+    int mw;
+    int mh;
+    if (!self) return;
+    mw = XWidget_width(&self->m_mobileMenu);
+    mh = XWidget_height(&self->m_mobileMenu);
+    if (mw < 1) mw = 1;
+    if (mh < 1) mh = 1;
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+    XWidget_setGeometry((XWidget*)&self->m_navScroll, 0, 0, mw, mh);
+    XWidget_show((XWidget*)&self->m_navScroll);
+    for (i = 0; i < DEMO_NAV_CAT_N; ++i)
+        XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[i],
+                               self->m_navContent);
+    for (i = 0; i < DEMO_NAV_PAGE_N; ++i)
+        XWidget_setParentPlain((XWidget*)&self->m_pageNav[i],
+                               self->m_navContent);
+    for (i = 0; i < DEMO_NAV_HEAD_N; ++i)
+        XWidget_setParentPlain((XWidget*)&self->m_navHeadLabels[i],
+                               self->m_navContent);
+#endif
+    {
+        int head = 0;
+        for (i = 0; i < DEMO_NAV_CAT_N; ++i) {
+            int p;
+            /* 分区标题（分类钮兼作分区头，样式与桌面分类钮一致）。 */
+            XWidget_setGeometry((XWidget*)&self->m_navCatBtns[i], 8, y,
+                                mw - 16, DEMO_MENU_CAT_H);
+            XWidget_show((XWidget*)&self->m_navCatBtns[i]);
+            y += DEMO_MENU_CAT_H + 2;
+            for (p = 0; p < kNavGroups[i].count; ++p) {
+                const DemoNavItem* item = &kNavGroups[i].items[p];
+                if (item->page < 0) {
+                    if (head < DEMO_NAV_HEAD_N) {
+                        XLabel* label = &self->m_navHeadLabels[head++];
+                        XLabel_setText_2(label, item->caption);
+                        XLabel_setTextPixelSize(label, 12);
+                        XWidget_setGeometry((XWidget*)label, 16, y + 2,
+                                            mw - 32, 16);
+                        XWidget_show((XWidget*)label);
+                    }
+                    y += 22;
+                    continue;
+                }
+                XWidget_setGeometry((XWidget*)&self->m_pageNav[item->page],
+                                    16, y, mw - 32, DEMO_MENU_ROW_H);
+                XWidget_show((XWidget*)&self->m_pageNav[item->page]);
+                y += DEMO_MENU_ROW_H;
+            }
+            y += 10; /* 分区间距。 */
+        }
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+        XWidget_resize(self->m_navContent, mw, y > 1 ? y : 1);
+#endif
+        for (i = head; i < DEMO_NAV_HEAD_N; ++i)
+            XWidget_hide((XWidget*)&self->m_navHeadLabels[i]);
+    }
+}
+
+/** @brief 菜单页开合（应用栏导航图标 / Esc 返回键）。 */
+static void demo_menuToggle(DemoWin* self)
+{
+    int cur;
+    if (!self) return;
+    if (self->m_layoutMode != 1) return;   /* 仅紧凑形态有菜单页。 */
+    cur = XStackedLayout_currentIndex(&self->m_stackLayout);
+    if (cur == self->m_menuPageIdx) {
+        int back = self->m_pageBeforeMenu;
+        if (back < 0 || back >= DEMO_NAV_PAGE_N) back = 0;
+        XStackedLayout_setCurrentIndex(&self->m_stackLayout, back);
+    } else {
+        self->m_pageBeforeMenu = cur;
+        XStackedLayout_setCurrentIndex(&self->m_stackLayout,
+                                       self->m_menuPageIdx);
+    }
+    self->m_menuOpen = (XStackedLayout_currentIndex(&self->m_stackLayout) ==
+                        self->m_menuPageIdx);
+    demo_appBarTitleUpdate(self);
+    /* [运行时开合重排 2026-10-25] XStackedLayout 只给**当前页**分配几何：
+       菜单页在非当前态几何恒 0，切到当前才拿到 contentHost 的矩形——
+       此刻必须紧跟一次导航面板重排（紧凑分支=compactMenuLayout，按新
+       几何铺菜单项）。缺这一步时菜单项停在 0 尺寸几何上：真机/桌面
+       运行时点 ☰ 打开菜单只剩一行"控件"挤在左上角（用户桌面实测）；
+       --menu 启动路径看不见此账，因 main 里 toggle 之后本来就各有一次
+       navUpdatePanel/layout_content。contentHost 尺寸未变，帧泵兜底门
+       也不会代跑。 */
+    demo_navUpdatePanel(self);
+    demo_layout_content(self);
+    XWidget_update(&self->m_base);
+}
+
+/** @brief 形态切换：紧凑（手机竖屏）↔ 宽屏（桌面/横屏）。
+ * @details 紧凑态：品牌条让位应用栏；桌面导航面板收起（内容独占整宽）
+ *          且手柄归零（8px 细条在 400dp 宽屏上占比过大、拖拽会把桌面
+ *          侧栏拽出来）；导航滚动容器搬进移动端菜单页。宽屏态：全部
+ *          还原（含用户手动收起态——紧凑态强制收起属形态策略，不该
+ *          覆盖用户意图，故单独记一份用户值）。 */
+static void demo_layoutModeUpdate(DemoWin* self)
+{
+    int mode;
+    if (!self) return;
+    mode = demo_layoutModeOf(self);
+    if (mode == self->m_layoutMode) return;
+    self->m_layoutMode = mode;
+    if (mode == 1) {
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+        XWidget_hide((XWidget*)&self->m_brandBar);
+        XWidget_show((XWidget*)&self->m_appBar);
+#endif
+        self->m_navCollapsedUser = self->m_navCollapsed;
+        self->m_navCollapsed = true;
+#if XSPLITTER_ON
+        XSplitter_setHandleWidth(&self->m_navSplitter, 0);
+#endif
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+        XWidget_setParentPlain((XWidget*)&self->m_navScroll,
+                               &self->m_mobileMenu);
+#endif
+    } else {
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+        XWidget_show((XWidget*)&self->m_brandBar);
+        XWidget_hide((XWidget*)&self->m_appBar);
+#endif
+        self->m_navCollapsed = self->m_navCollapsedUser;
+#if XSPLITTER_ON
+        XSplitter_setHandleWidth(&self->m_navSplitter, 8);
+#endif
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+        XWidget_setParentPlain((XWidget*)&self->m_navScroll,
+                               &self->m_navPanel);
+#endif
+    }
+    /* 形态切换后菜单页状态复位：紧凑→宽屏时若停在菜单页，回到原页。 */
+    if (mode == 0 &&
+        XStackedLayout_currentIndex(&self->m_stackLayout) ==
+            self->m_menuPageIdx) {
+        int back = self->m_pageBeforeMenu;
+        if (back < 0 || back >= DEMO_NAV_PAGE_N) back = 0;
+        XStackedLayout_setCurrentIndex(&self->m_stackLayout, back);
+    }
+    self->m_menuOpen = (XStackedLayout_currentIndex(&self->m_stackLayout) ==
+                        self->m_menuPageIdx);
+    demo_appBarTitleUpdate(self);
+    demo_navUpdatePanel(self);
+    demo_layout_content(self);
+}
+
 /** @brief 按停靠边/收起态/展开分类重排导航面板几何与子钮。
  * @details 面板为 m_base 子控件（z 顶）；占位条带尺寸与
  *          demo_layout_content 的避让口径同源——左右停靠占
@@ -2302,6 +2793,13 @@ static void demo_navUpdatePanel(DemoWin* self)
 #endif
     pw = XWidget_width(&self->m_navPanel);
     ph = XWidget_height(&self->m_navPanel);
+    if (self->m_layoutMode == 1) {
+        /* 紧凑形态（手机竖屏）：桌面导航面板强制收起且隐藏——内容区独
+           占整宽，导航改由移动端菜单页承载（☰ 打开）。面板自身几何
+           无意义，条目排布交给 demo_compactMenuLayout。 */
+        demo_compactMenuLayout(self);
+        return;
+    }
     if (self->m_navDock <= 1) {
         int head;
         int scrollTop = 30; /* 标题行高（title 5..27 + 间隙）。 */
@@ -2310,12 +2808,10 @@ static void demo_navUpdatePanel(DemoWin* self)
         XWidget_show(&self->m_navTitle);
         XPushButton_setText_2(&self->m_navDockBtn,
                               "\xE6\x8D\xA2\xE8\xBE\xB9"); /* 换边 */
-        XWidget_setGeometry(&self->m_navDockBtn, pw - 100, 5, 46, 22);
+        /* [删「收起」2026-10-25] 用户裁定去掉收起钮（横屏改用顶栏 ☰
+         * 打开菜单页，与竖屏同一套逻辑）。「换边」独占标题行右端。 */
+        XWidget_setGeometry(&self->m_navDockBtn, pw - 54, 5, 46, 22);
         XWidget_show(&self->m_navDockBtn);
-        XPushButton_setText_2(&self->m_navCollapseBtn,
-                              "\xE6\x94\xB6\xE8\xB5\xB7"); /* 收起 */
-        XWidget_setGeometry(&self->m_navCollapseBtn, pw - 52, 5, 44, 22);
-        XWidget_show(&self->m_navCollapseBtn);
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
         if (scrollH < 1) scrollH = 1;
         XWidget_setGeometry((XWidget*)&self->m_navScroll, 0, scrollTop,
@@ -2398,12 +2894,9 @@ static void demo_navUpdatePanel(DemoWin* self)
         XWidget_show(&self->m_navTitle);
         XPushButton_setText_2(&self->m_navDockBtn,
                               "\xE6\x8D\xA2\xE8\xBE\xB9"); /* 换边 */
-        XWidget_setGeometry(&self->m_navDockBtn, pw - 100, 4, 46, 22);
+        /* [删「收起」2026-10-25] 同竖版分支：收起钮不再参与布局。 */
+        XWidget_setGeometry(&self->m_navDockBtn, pw - 54, 4, 46, 22);
         XWidget_show(&self->m_navDockBtn);
-        XPushButton_setText_2(&self->m_navCollapseBtn,
-                              "\xE6\x94\xB6\xE8\xB5\xB7"); /* 收起 */
-        XWidget_setGeometry(&self->m_navCollapseBtn, pw - 52, 4, 44, 22);
-        XWidget_show(&self->m_navCollapseBtn);
         for (i = 0; i < DEMO_NAV_CAT_N; ++i) {
             XWidget_setGeometry(&self->m_navCatBtns[i], 8 + i * bw, 30,
                                 bw - 4, 26);
@@ -2539,6 +3032,21 @@ static void demo_navDockSlot(XObject* receiver, XVarList* args)
     demo_layout_content(self);
 }
 
+/** @brief 品牌条 ☰ 点击：收起/展开左侧导航面板。
+ *  @details 与已删除的「收起」按钮同一行为——翻转 m_navCollapsed（并
+ *           同步用户记忆值，避免形态切换时被旧值覆盖）后重排面板与
+ *           内容区。品牌条子类在文件前段，故经前置声明调用本函数。 */
+static void demo_brandNavToggle(struct DemoWin* self_)
+{
+    DemoWin* self = (DemoWin*)self_;
+    if (!self) return;
+    self->m_navCollapsed = !self->m_navCollapsed;
+    self->m_navCollapsedUser = self->m_navCollapsed;
+    demo_navUpdatePanel(self);
+    demo_layout_content(self);
+    XWidget_update((XWidget*)&self->m_base);
+}
+
 /** @brief 收起/展开钮：完整面板 ⇔ 贴边细条。 */
 static void demo_navCollapseSlot(XObject* receiver, XVarList* args)
 {
@@ -2546,10 +3054,134 @@ static void demo_navCollapseSlot(XObject* receiver, XVarList* args)
     (void)args;
     if (!self) return;
     self->m_navCollapsed = !self->m_navCollapsed;
+    self->m_navCollapsedUser = self->m_navCollapsed;
+    /* 品牌条图标绘制不变（☰ 恒为三横条），但收起后内容区宽度变化需要
+     * 重排；此处只做重排，图标本身无状态。
+     * [横屏 ☰ 2026-10-25] 本槽现由品牌条导航图标调用（原「收起」按钮
+     * 已删），行为不变：切换 m_navCollapsed 并重排面板/内容。 */
     demo_navUpdatePanel(self);
     demo_layout_content(self);
 }
 #endif /* 浮动导航面板门 */
+
+/** @brief 内建页（0/1/2/3/12）紧凑形态自适应重排（demo_layout_content
+ *         统一漏斗逐路径调用，与扩展页 demo_page_*_adapt 同口径）。
+ * @details 真机竖屏 400dp 体检暴露的内建页三类问题，均为构造期按桌面
+ *          口径定值、不随窗宽重排所致：
+ *          - 页 0/1/2 控件行高 22-36px、页 12 切换钮行高 24px，低于
+ *            手机触控目标下限（约 40 逻辑像素），拇指难以准确点按；
+ *          - 页 3 顶行=左列分组框定宽 288+右列 stretch，右列起点
+ *            x≈316，整列（下拉框/拨盘行/数码管行/日期三件套）越出
+ *            400dp 窗口右缘成列裁切；
+ *          - 页 12 五钮固定 84 宽，5×84+4×8=452px 超出内容宽，第 5 钮
+ *            整体出界不可点。
+ *          处理口径：紧凑档（m_layoutMode=1，窗宽<600dp）页 0/1/2 可
+ *          点行高提到 ≥44 并单列纵排，页 3 顶行翻纵向单列流式，页 12
+ *          五钮按内容宽均分且高 40；宽屏档逐一还原构造期定值，桌面
+ *          1000x700 观感零变化。 */
+static void demo_corePages_adapt(DemoWin* self)
+{
+    bool compact;
+    int pw;
+    if (!self) return;
+    compact = (self->m_layoutMode == 1);
+    /* 页内可用宽：页根几何由堆叠随 contentHost 分配，取不到时按窗口
+     * 宽扣内容区左右边距兜底；仅用于钳宽防右缘出窗，不影响分档。 */
+    pw = XWidget_width(&self->m_pageButtons);
+    if (pw < 1) pw = XWidget_width(&self->m_base) - 24;
+    if (pw < 1) pw = 1;
+    /* ---- 页 0：按钮/命令链接/工具按钮/状态行/按钮盒（构造期绝对坐
+     *       标，无布局承载，直接按档回写几何）。 ---- */
+    XWidget_setGeometry((XWidget*)&self->m_button, 40, 48, 180,
+                        compact ? 44 : 36);
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
+    /* 命令链接 54 高已达标，窄宽只钳右缘。 */
+    XWidget_setGeometry((XWidget*)&self->m_commandLink, 40, 104,
+                        compact ? (pw - 48 < 320 ? pw - 48 : 320) : 320, 54);
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON && XMENU_ON
+    XWidget_setGeometry((XWidget*)&self->m_toolButton, 40, 168, 150,
+                        compact ? 44 : 32);
+#endif
+    XWidget_setGeometry((XWidget*)&self->m_linkLabel, 40,
+                        compact ? 222 : 212,
+                        compact ? (pw - 48 < 420 ? pw - 48 : 420) : 420, 24);
+#if XDIALOGBUTTONBOX_ON
+    /* 盒内钮高 26 由 XDialogButtonBox 的 relayout 定死（框架层），demo
+     * 侧加高盒体只徒增空边；紧凑档仅钳盒宽防右缘出窗（340+40>376）。 */
+    XWidget_setGeometry((XWidget*)&self->m_buttonBox, 40,
+                        compact ? 256 : 250,
+                        compact ? (pw - 80 < 340 ? pw - 80 : 340) : 340, 40);
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
+    /* ---- 页 1：复选框 26→44；单选 22→44 并由桌面并排改紧凑纵排
+     *       （40dp 触控行=单列流式）。 ---- */
+    XWidget_setGeometry((XWidget*)&self->m_checkBox, 40, 48,
+                        compact ? 240 : 220, compact ? 44 : 26);
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON
+    if (compact) {
+        XWidget_setGeometry((XWidget*)&self->m_radioA, 40, 104, 140, 44);
+        XWidget_setGeometry((XWidget*)&self->m_radioB, 40, 158, 140, 44);
+    } else {
+        XWidget_setGeometry((XWidget*)&self->m_radioA, 40, 88, 120, 22);
+        XWidget_setGeometry((XWidget*)&self->m_radioB, 180, 88, 120, 22);
+    }
+#endif
+    XWidget_setGeometry((XWidget*)&self->m_choiceLabel, 40,
+                        compact ? 214 : 124,
+                        compact ? (pw - 48 < 420 ? pw - 48 : 420) : 420, 24);
+#if XPUSHBUTTON_ON
+    /* ---- 页 2：上一页/下一页 28→44（触控高度），横向余宽让给钮宽。 */
+    if (compact) {
+        XWidget_setGeometry((XWidget*)&self->m_stackPrevButton,
+                            40, 170, 130, 44);
+        XWidget_setGeometry((XWidget*)&self->m_stackNextButton,
+                            180, 170, 130, 44);
+    } else {
+        XWidget_setGeometry((XWidget*)&self->m_stackPrevButton,
+                            40, 170, 90, 28);
+        XWidget_setGeometry((XWidget*)&self->m_stackNextButton,
+                            136, 170, 90, 28);
+    }
+#endif
+#if XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && XABSTRACTSLIDER_ON && \
+    XSLIDER_ON && XPROGRESSBAR_ON
+    /* ---- 页 3：窄宽单列。顶行翻纵向（左列[分组框+多行编辑]在上、
+     *       右列输入族流到其下），余高交左列多行编辑吸收；右列各行
+     *       本就满宽铺放，不再被 288 定宽左列挤出窗口。宽屏还原横向
+     *       双列（余高仍归右列尾部伸缩空白，对标构造期口径）。 ---- */
+    XBoxLayout_setDirection(&self->m_inputsTopRow,
+                            compact ? XBoxLayoutDirection_TopToBottom
+                                    : XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_setStretch(&self->m_inputsTopRow, 0, compact ? 1 : 0);
+    XBoxLayout_setStretch(&self->m_inputsTopRow, 1, compact ? 0 : 1);
+#endif
+#if XCHARTS_ON
+    /* ---- 页 12：切换钮行。紧凑档五钮按内容宽均分（钳 48..84）、行高
+     *       40 达触控标准，总宽不再超出 400dp；宽屏还原 84x24 构造期
+     *       定值。 ---- */
+    {
+        int cw = XWidget_width(&self->m_pageChart);
+        int bw;
+        int bh = compact ? 40 : 24;
+        int i;
+        XPushButton* const btns[5] = {
+            &self->m_btnLegend, &self->m_btnGrid, &self->m_btnTitle,
+            &self->m_btnSeries, &self->m_btnRange
+        };
+        if (cw < 1) cw = pw;
+        bw = 84;
+        if (compact) {
+            bw = (cw - 24 - 4 * 8) / 5; /* 扣页边距 12x2 与段距 8x4。 */
+            if (bw < 48) bw = 48;
+            if (bw > 84) bw = 84;
+        }
+        for (i = 0; i < 5; ++i)
+            XWidget_setFixedSize((XWidget*)btns[i], bw, bh);
+    }
+#endif
+}
 
 /** @brief 扩展页自适应重排统一漏斗（切页/resize/startup/停靠切换全路径调用）。
  * @details [布局化 chrome 三段 2026-10-17] 主内容堆叠已托管到 contentHost
@@ -2567,6 +3199,9 @@ static void demo_navCollapseSlot(XObject* receiver, XVarList* args)
 static void demo_layout_content(DemoWin* self)
 {
     if (!self) return;
+    /* 内建页（0/1/2/3/12）紧凑形态重排：与扩展页 adapt 同走本漏斗，
+     * 切页/resize/形态切换全路径生效（见函数头注）。 */
+    demo_corePages_adapt(self);
     /* 扩展页自适应重排（xgui_demo_pages.h 契约）：内容区几何随 CSD
      * 系统栏/窗口尺寸/导航面板占位变化，各页按当前根几何重排——本函数
      * 在切页/resize/startup/停靠切换全路径执行；登记表下标=页索引-5
@@ -2680,6 +3315,13 @@ static void demo_switchPage(DemoWin* self, int index)
        与程序化切页（--page / autotest 调度 / 截图门）共用同一口径；
        互斥组自动反选其余成员。 */
     XAbstractButton_setChecked((XAbstractButton*)&self->m_pageNav[index], true);
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
+    XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    /* 紧凑形态：离开菜单页即收起菜单态（应用栏图标回到 ☰、标题回到
+       页名）。切页本身即隐含"用户已从菜单里选了目的地"。 */
+    self->m_menuOpen = false;
+    demo_appBarTitleUpdate(self);
 #endif
     /* XStackedLayout 的 setGeometry 只给当前页面分配几何；切换后必须
        重新分配，否则新页面容器保持 0x0 导致页面内容不可见。 */
@@ -3088,7 +3730,8 @@ void demo_main_refreshChrome(void* user)
     if (!win) return;
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_ON
     /* CSD 保留边距=根布局 contentsMargins.top（单一出处）：边框开关
-     * 收放边距后更新之，品牌条/内容区/状态栏三段由布局自动重排。 */
+     * 收放边距后更新之，品牌条/内容区/状态栏三段由布局自动重排。
+     * [下移取消 2026-10-25] 安卓沉浸式后无状态栏让位，只余 CSD。 */
     XLayout_setContentsMargins(&win->m_rootLayout,
                                0, demo_sysbarH(win), 0, 0);
     XLayout_activate((XLayout*)&win->m_rootLayout);
@@ -3450,6 +4093,10 @@ static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    /* [移动端形态 2026-10-25] 窗宽跨过 compact 断点（600dp）时切骨架：
+       手机竖屏（宽 400dp）→ 应用栏 + 全屏菜单页；横屏/桌面（宽 ≥600）
+       → 品牌条 + 侧栏导航。切换须先于面板重排（形态决定面板语义）。 */
+    demo_layoutModeUpdate(demo);
     /* 浮动导航面板随窗重排（贴边坐标/横竖版切换），先于内容区避让。 */
     demo_navUpdatePanel(demo);
 #endif
@@ -3575,8 +4222,23 @@ static void demo_diag(const char* fmt, ...)
 static void VDemoWin_keyPressEvent(XWidget* self, XEvent* event)
 {
     XKeyEvent* key = (XKeyEvent*)event;
-    (void)self;
     if (!key) return;
+    /* [移动端返回键 2026-10-25] 安卓「返回」被平台层映射为 XKey_Escape
+       （XPlatformWindowAndroid.c 的 AKEYCODE_BACK 映射）：紧凑形态下
+       Esc = 关闭菜单页（与 ☰ 图标同语义），符合手机返回键直觉。 */
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
+    XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    if (XKeyEvent_key(key) == XKey_Escape) {
+        DemoWin* demo = (DemoWin*)self;
+        if (demo->m_layoutMode == 1 &&
+            XStackedLayout_currentIndex(&demo->m_stackLayout) ==
+                demo->m_menuPageIdx) {
+            demo_menuToggle(demo);
+            XEvent_accept(event);
+            return;
+        }
+    }
+#endif
     demo_log("XGuiWindowDemo: keyPress key=%d modifiers=0x%x autoRepeat=%d\n",
              XKeyEvent_key(key), (unsigned)XKeyEvent_modifiers(key),
              (int)XKeyEvent_autoRepeat(key));
@@ -3854,6 +4516,7 @@ static DemoWin* DemoWin_create(void)
      * contentsMargins.top（边框开关只更新这一处）。Bold：合成粗体
      * 样张——标题是界面里最合适加粗的层级。 */
     DemoBrandBar_init(&self->m_brandBar, &self->m_base, 0);
+    self->m_brandBar.m_owner = self;
     demo_set_widget_default_font((XWidget*)&self->m_brandBar);
     {
         XFont titleFont = XWidget_font((XWidget*)&self->m_brandBar);
@@ -3865,11 +4528,35 @@ static DemoWin* DemoWin_create(void)
     XLabel_setTextPixelSize((XLabel*)&self->m_brandBar, 18);
     XLabel_setAlignment((XLabel*)&self->m_brandBar,
                         XAlignment_Left | XAlignment_VCenter);
-    XLabel_setIndent((XLabel*)&self->m_brandBar, 16);
+    XLabel_setIndent((XLabel*)&self->m_brandBar, 56); /* 让开左侧 ☰ 图标区
+                                                       （与紧凑形态应用栏同口径）。 */
     XWidget_setForegroundRole((XWidget*)&self->m_brandBar,
                               XPaletteColorRole_HighlightedText);
     XWidget_setFixedHeight((XWidget*)&self->m_brandBar, DEMO_BRAND_H);
     XWidget_show((XWidget*)&self->m_brandBar);
+
+    /* ---- 移动端应用栏（紧凑形态顶栏；宽屏形态隐藏）----
+     * 与品牌条同色（深蓝）保证两形态视觉连贯；标题随当前页更新，
+     * 左侧 48dp 触控区是导航图标（☰/←），点击切菜单页。 */
+    DemoAppBar_init(&self->m_appBar, &self->m_base, 0);
+    self->m_appBar.m_owner = self;
+    demo_set_widget_default_font((XWidget*)&self->m_appBar);
+    {
+        XFont titleFont = XWidget_font((XWidget*)&self->m_appBar);
+        XFont_setBold(&titleFont, true);
+        XWidget_setFont((XWidget*)&self->m_appBar, &titleFont);
+        XClassDeinit(&titleFont);
+    }
+    XLabel_setText_2((XLabel*)&self->m_appBar,
+                     "XGui \xE6\x8E\xA7\xE4\xBB\xB6\xE6\xBC\x94\xE7\xA4\xBA");
+    XLabel_setTextPixelSize((XLabel*)&self->m_appBar, 18);
+    XLabel_setAlignment((XLabel*)&self->m_appBar,
+                        XAlignment_Left | XAlignment_VCenter);
+    XLabel_setIndent((XLabel*)&self->m_appBar, 56); /* 让开左侧导航图标区。 */
+    XWidget_setForegroundRole((XWidget*)&self->m_appBar,
+                              XPaletteColorRole_HighlightedText);
+    XWidget_setFixedHeight((XWidget*)&self->m_appBar, DEMO_APPBAR_H);
+    XWidget_hide((XWidget*)&self->m_appBar);
 
     XBoxLayout_init(&self->m_rootLayout, XBoxLayoutDirection_TopToBottom);
     XWidget_init(&self->m_midHost, &self->m_base, 0);
@@ -3896,6 +4583,7 @@ static DemoWin* DemoWin_create(void)
     XBoxLayout_setStretch(&self->m_midHostLayout, 0, 1);
 #endif
     XBoxLayout_addWidget(&self->m_rootLayout, (XWidget*)&self->m_brandBar);
+    XBoxLayout_addWidget(&self->m_rootLayout, (XWidget*)&self->m_appBar);
     XBoxLayout_addWidget(&self->m_rootLayout, &self->m_midHost);
     XBoxLayout_addWidget(&self->m_rootLayout,
                          (XWidget*)&self->m_statusLabel);
@@ -3972,6 +4660,16 @@ static DemoWin* DemoWin_create(void)
                                          self->m_extPages[exti]);
         }
     }
+    /* ---- 移动端菜单页（紧凑形态的导航载体，堆叠末页）----
+     * 下标 = 21（页面 0..20 之后）：Material 抽屉在紧凑窗口的"全屏
+     * 变体"——导航树平铺在内容区，应用栏 ☰ 打开、选中条目即切页并
+     * 关闭。导航条目控件实体唯一（从桌面面板搬入本页），选中态互斥
+     * 组与页切换逻辑不分叉。 */
+    XWidget_init(&self->m_mobileMenu, &self->m_contentHost, 0);
+    XStackedLayout_addWidget(&self->m_stackLayout, &self->m_mobileMenu);
+    /* 菜单页下标实测写入（页数随特性裁剪而变，写死常量会指错页）。 */
+    self->m_menuPageIdx =
+        XStackedLayout_indexOf(&self->m_stackLayout, &self->m_mobileMenu);
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
@@ -4023,13 +4721,8 @@ static DemoWin* DemoWin_create(void)
                       (XObject*)self, demo_navDockSlot,
                       XConnectionType_Direct);
     XWidget_show(&self->m_navDockBtn);
-    XPushButton_init(&self->m_navCollapseBtn, &self->m_navPanel, 0);
-    demo_set_widget_default_font((XWidget*)&self->m_navCollapseBtn);
-    XObject_connect_1((XObject*)&self->m_navCollapseBtn,
-                      (size_t)XPushButton_clicked_signal(NULL, false),
-                      (XObject*)self, demo_navCollapseSlot,
-                      XConnectionType_Direct);
-    XWidget_show(&self->m_navCollapseBtn);
+    /* [删「收起」2026-10-25] 收起/展开改由顶部品牌条左侧 ☰ 承担
+     * （横屏/桌面形态），导航面板上不再有收起钮。 */
     {
         static void (*const kNavSlots[21])(XObject*, XVarList*) = {
             demo_nav0Slot, demo_nav1Slot, demo_nav2Slot, demo_nav3Slot,
@@ -4100,6 +4793,12 @@ static DemoWin* DemoWin_create(void)
     self->m_navCategory = 0;   /* 默认展开「控件」 */
     self->m_navWidth = DEMO_NAV_PANEL_W;
     self->m_navTBH = DEMO_NAV_TB_H;
+    /* 移动端形态状态（2026-10-25）：初值=宽屏形态，紧凑形态由窗口
+     * 宽度（< 600dp）触发切换，见 demo_layoutModeUpdate。 */
+    self->m_layoutMode = 0;
+    self->m_menuOpen = false;
+    self->m_pageBeforeMenu = 0;
+    self->m_navCollapsedUser = false;
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     /* [编译健全性 2026-10-18] 成员声明在 overlay 宏域内（DemoWin :462），
        使用处须同宏域护栏——此前 overlay=0 裁剪构建编不过
@@ -4463,15 +5162,46 @@ static DemoWin* DemoWin_create(void)
        视口仍可滚动（滚动演示语义保持）。 */
     XScrollArea_init(&self->m_scrollArea, (XWidget*)&self->m_tabWidget, 0);
     {
-        XLabel* big = XLabel_create((XWidget*)&self->m_scrollArea, 0);
-        XLabel_setText_2(big,
-            "滚动内容\n第二行\n第三行\n第四行\n第五行\n第六行\n"
-            "第七行\n第八行\n第九行\n第十行\n第十一行\n第十二行\n"
-            "第十三行\n第十四行\n第十五行\n第十六行\n第十七行\n第十八行\n"
-            "第十九行\n第二十行\n第二一行\n第二二行\n第二三行\n第二四行\n"
-            "第二五行\n第二六行\n第二七行\n第二八行\n第二九行\n第三十行");
-        XWidget_resize(big, 260, 620);
-        XScrollArea_setWidget(&self->m_scrollArea, (XWidget*)big);
+        /* 行距改逐行标签承载：框架 XLabel 的多行行距=字高定尺（无行
+           间隙可调），30 行文本相邻行笔画相触（真机 4x 放大可见串行）。
+           拆为单行标签+盒距 8，行间留出真实空隙；行高逐标签按当前字
+           体实测（heightForWidth 单行值），内容总高随之计算，滚动
+           语义与 30 行文案保持不变。 */
+        static const char* const kScrollLines[30] = {
+            "滚动内容", "第二行", "第三行", "第四行", "第五行",
+            "第六行", "第七行", "第八行", "第九行", "第十行",
+            "第十一行", "第十二行", "第十三行", "第十四行", "第十五行",
+            "第十六行", "第十七行", "第十八行", "第十九行", "第二十行",
+            "第二一行", "第二二行", "第二三行", "第二四行", "第二五行",
+            "第二六行", "第二七行", "第二八行", "第二九行", "第三十行"
+        };
+        XWidget* content = XWidget_create((XWidget*)&self->m_scrollArea, 0);
+        XBoxLayout* lines =
+            XBoxLayout_create(XBoxLayoutDirection_TopToBottom, content);
+        int lineH;
+        int i;
+        XLayout_setContentsMargins((XLayout*)lines, 0, 0, 0, 0);
+        XLayout_setSpacing((XLayout*)lines, 8);
+        /* SetNoConstraint：容器尺寸由下方显式 resize 定版（滚动区内
+           不随布局最小尺寸回写，口径同页 3 分组框）。 */
+        XLayout_setSizeConstraint((XLayout*)lines,
+                                  XLayoutSizeConstraint_SetNoConstraint);
+        lineH = 16; /* 字体查询失败时的兜底行高（位图字库定尺）。 */
+        for (i = 0; i < 30; ++i) {
+            XLabel* line = XLabel_create(content, 0);
+            XLabel_setText_2(line, kScrollLines[i]);
+            if (i == 0)
+                lineH = XLabel_heightForWidth(line, 260);
+            if (lineH < 1) lineH = 16;
+            XWidget_setFixedHeight((XWidget*)line, lineH);
+            XBoxLayout_addWidget(lines, (XWidget*)line);
+            XWidget_show((XWidget*)line);
+        }
+        XWidget_resize(content, 260, 30 * lineH + 29 * 8);
+        XScrollArea_setWidget(&self->m_scrollArea, content);
+        XScrollArea_setWidgetResizable(&self->m_scrollArea, false);
+        XFrame_setFrameStyle((XFrame*)&self->m_scrollArea,
+                             (int)(XFrameShape_NoFrame | XFrameShadow_Plain));
     }
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 0,
                                demo_wrapTabPage(self, (XWidget*)&self->m_scrollArea,
@@ -5012,7 +5742,9 @@ static DemoWin* DemoWin_create(void)
 #if XWIDGET_ON && XCHARTS_ON && XPUSHBUTTON_ON
     /* 页 12 装配：切换钮行顶置（钮固定 84x24、段距 8）+ 图表视图
        stretch 铺满余区（边距 12,8,12,8/段距 6 对标原钮行 y8 h24、
-       图表 y38 铺到高-8）。 */
+       图表 y38 铺到高-8）。84x24 为宽屏定值：竖屏 400dp 下五钮总宽
+       超窗且 24px 行高低于手机触控标准，紧凑档由 demo_corePages_adapt
+       按内容宽均分并提行高。 */
     XBoxLayout_init(&self->m_chartBtnRow, XBoxLayoutDirection_LeftToRight);
     XBoxLayout_addWidget(&self->m_chartBtnRow, (XWidget*)&self->m_btnLegend);
     XBoxLayout_addWidget(&self->m_chartBtnRow, (XWidget*)&self->m_btnGrid);
@@ -5193,6 +5925,7 @@ int xgui_demo_main(int argc, char* argv[])
     demo_log_markBase(); /* 诊断时间戳基准：此后每行日志前缀 [秒.毫秒]。 */
     const char* styleOpt;
     int screenshotPage;
+    bool openMenuOpt;
     int screenshotTab;
     int orientOpt;      /* --orient：截图前切到的窗口方向（0/90/180/270）。 */
     bool autoTest;
@@ -5304,6 +6037,7 @@ int xgui_demo_main(int argc, char* argv[])
     apiTestSuite = false;
     apiTestFamily = NULL;
     screenshotPage = 0;
+    openMenuOpt = false;
     screenshotTab = -1;
     orientOpt = -1;   /* 默认不切方向。 */
     memset(&remoteCli, 0, sizeof(remoteCli)); /* --remote-* 全默认。 */
@@ -5347,6 +6081,23 @@ int xgui_demo_main(int argc, char* argv[])
         }
         else if (strcmp(argv[argi], "--page") == 0 && argi + 1 < argc) {
             screenshotPage = atoi(argv[++argi]);
+        }
+        else if (strcmp(argv[argi], "--menu") == 0) {
+            /* 启动即打开移动端菜单页（紧凑形态的导航页）：手机端无头/
+             * 自动化验证用（无输入注入权限的设备上无法点汉堡钮）。 */
+            openMenuOpt = true;
+        }
+        else if (strcmp(argv[argi], "--hr-stress") == 0) {
+            /* [两孩子删除句柄身份压测 2026-10-25] 独立入口：不建窗，
+             * 直接跑高精度定时器组的随机增删/句柄回收压力测试后退出。
+             * 返回码=失败断言数。仅桌面目标（XHrTimerStressTest 所在
+             * 源文件未编入安卓 xguidemo 目标）。 */
+#if !defined(__ANDROID__)
+            extern int XHrTimerStressTest(void);
+            return XHrTimerStressTest();
+#else
+            XPrintf("XGuiWindowDemo: --hr-stress is desktop-only\n");
+#endif
         }
         else if (strcmp(argv[argi], "--tab") == 0) {
             screenshotTab = atoi(argv[++argi]);
@@ -5720,6 +6471,14 @@ int xgui_demo_main(int argc, char* argv[])
          故在应用创建之后；设备节点经环境变量 XPLATFORM_FBINPUT_DEVICE
          定制）。无 /dev/fb0 或 /dev/input/event0 的环境注册失败为
          预期路径，应用继续以无输入/无上屏方式运行。 */
+#if defined(__linux__) && XGUI_ON && XPLATFORM_DRM_ON
+    /* 1.6.0) DRM 优先：现代嵌入式 BSP（RK3506 等）默认不开 fbdev 仿真，
+       只有 /dev/dri/card0；注册成功则 fbdev 探测恒败、自动让位。 */
+    if (XPlatformNativeWindow_useDrmDriver(NULL))
+        XPrintf("XGuiWindowDemo: DRM 显示驱动已注册（KMS dumb 直写）\n");
+    else
+        XPrintf("XGuiWindowDemo: DRM 显示驱动不可用（无 /dev/dri 或无已连接面板）\n");
+#endif
     if (XPlatformNativeWindow_useFramebufferDriver(NULL))
         XPrintf("XGuiWindowDemo: fbdev 显示驱动已注册\n");
     else
@@ -5755,6 +6514,29 @@ int xgui_demo_main(int argc, char* argv[])
     /* 顶层控件字体补设：框架标题栏文本取顶层控件字体，未设时为空字体
        （fbdev 上首帧标题缺失的嫌疑之一）；与子控件同族默认字体。 */
     demo_set_widget_default_font(&win->m_base);
+#endif
+#if XWIDGET_ON && XWINDOW_ON
+    /* 应用图标：品牌条棋盘格同源（三平台落地路径见函数注释）；show 前
+       存值，窗口句柄创建时经 XWidget→XWindow 桥接 + 平台 setIcon 落地。 */
+    demo_applyWindowIcon(&win->m_base);
+#endif
+#if XWIDGET_ON && XWINDOW_ON && defined(__ANDROID__)
+    /* [安卓无边框 2026-10-25] 安卓没有窗口管理器，框架的 CSD 自绘条件
+       命中（无原生窗口回落路径）→ 会画出一条桌面式系统标题栏（最小化/
+       最大化/关闭）。手机上没有窗口可最小化，那条标题栏既无意义又挤
+       占顶部空间：置 FramelessWindowHint 抑制装饰，顶部改由 demo 自绘
+       的应用栏/品牌条承担（桌面形态保留 CSD 行为不变）。 */
+    XWidget_setWindowFlags(&win->m_base,
+                           XWidget_windowFlags(&win->m_base) |
+                               (XWidgetFlags)XWindowType_FramelessWindowHint);
+#if XLAYOUT_ON
+    /* 根布局上边距 = 框架系统标题栏高（桌面 CSD）。[下移取消 2026-10-25]
+     * 安卓改沉浸式（状态栏隐藏、surface 铺满），应用栏直接落 y=0，
+     * 不再做状态栏让位下移。 */
+    XLayout_setContentsMargins((XLayout*)&win->m_rootLayout, 0,
+                               demo_sysbarH(win), 0, 0);
+    XWidget_updateGeometry((XWidget*)&win->m_base);
+#endif
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* [懒分配 2026-10-19·工程要点①·红线] CLI autostart 豁免：
@@ -5800,6 +6582,15 @@ int xgui_demo_main(int argc, char* argv[])
  * 清零兜底，黑色桌面底两缓冲同清不残留）。--maximized 的全屏化在
  * show 后的 fbdev 块执行（还原基准几何存档后再最大化）。 */
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+#if defined(__ANDROID__)
+    /* [安卓全屏 2026-10-25] 安卓无窗口管理器：surface 即全部画布，窗口
+       几何必须跟随 surface 的逻辑尺寸，否则框架按桌面尺寸（1000x700）
+       排布、present 再按 presentScale(=dpr=3) 放大进画布 → 内容被裁
+       （真机实证：竖屏下右侧面板整片裁掉）。平台层在 surface 创建/旋转
+       时回推全屏几何（XPlatformWindowAndroid 的 m_geomPending 通道），
+       此处只给一个手机量级的初值，避免首帧出现桌面尺寸的布局。 */
+    XWidget_setGeometry(&win->m_base, 0, 0, 400, 800);
+#else
     if (win->m_extPages[0] || win->m_extPages[1] ||
         win->m_extPages[2] || win->m_extPages[3] || win->m_extPages[4] ||
         win->m_extPages[5] || win->m_extPages[6] || win->m_extPages[7] ||
@@ -5827,8 +6618,11 @@ int xgui_demo_main(int argc, char* argv[])
             XWidget_setGeometry(&win->m_base, 40, 40, baseW, baseH);
         }
     else
-#endif
+        XWidget_setGeometry(&win->m_base, 60, 60, 520, 360);
+#endif /* !__ANDROID__ */
+#else
     XWidget_setGeometry(&win->m_base, 60, 60, 520, 360);
+#endif /* XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
 #if defined(XINYUE_PANEL_WIDTH) && defined(XINYUE_PANEL_HEIGHT)
     /* 嵌入式单屏：窗口全屏铺满面板（板级 present 回调直写 GRAM，
      * 面板尺寸经编译定义注入，见 Drive/STM32/ShenzhouF407）。 */
@@ -5870,6 +6664,17 @@ int xgui_demo_main(int argc, char* argv[])
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    /* --menu：启动即展开移动端菜单页（紧凑形态的导航页）。真机若没有
+       输入注入权限（adb shell input 被 ROM 拒绝）就点不到汉堡钮，自动化
+       验证走此入口。必须在窗口几何定版之后执行——形态判定读的是窗口宽
+       （紧凑断点 600dp），几何未定时宽为 0、形态判定会悬空。 */
+    if (openMenuOpt) {
+        demo_layoutModeUpdate(win);
+        demo_menuToggle(win);
+    }
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
+    XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     demo_navUpdatePanel(win); /* 面板贴边几何定版（默认左、展开）。 */
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
@@ -5892,6 +6697,16 @@ int xgui_demo_main(int argc, char* argv[])
         XWidget_showMaximized(&win->m_base);
     else
         XWidget_showNormal(&win->m_base);
+#if defined(__ANDROID__) && XWIDGET_ON
+    /* [状态对齐 2026-10-25 用户裁定] 安卓=沉浸式全屏（Java 侧隐藏状态
+     * 栏 + 挖孔区铺满），但框架窗口态此前仍是 Normal——窗口设置页的
+     * 「全屏显示」勾选经 wn_syncFromWindow 回读 XWidget_isFullScreen
+     * 时谎报未勾（用户真机指正：全屏显示没勾，当前是全屏显示）。show
+     * 之后置 FullScreen 只翻状态位，几何本就全屏（几何回推通道管）；
+     * 平台层「还原」路径同步改为回落全屏几何（手机无窗口化语义，
+     * 见 XPlatformNativeWindow_setWindowState），取消勾选不会缩窗。 */
+    XWidget_showFullScreen(&win->m_base);
+#endif
 #if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
     if (fbPanelW > 0 && fbPanelH > 0 && !benchmarkMaximized)
     {
@@ -6093,7 +6908,6 @@ int xgui_demo_main(int argc, char* argv[])
             XClassDeinit(&win->m_navCatBtns[cat]);
         for (cat = 0; cat < DEMO_NAV_HEAD_N; ++cat)
             XClassDeinit(&win->m_navHeadLabels[cat]);
-        XClassDeinit(&win->m_navCollapseBtn);
         XClassDeinit(&win->m_navDockBtn);
         XClassDeinit(&win->m_navTitle);
 #if XSPLITTER_ON

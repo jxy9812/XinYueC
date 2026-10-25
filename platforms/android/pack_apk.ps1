@@ -27,7 +27,18 @@ if (-not $SELF) { throw "无法确定脚本所在目录（请用 -File 方式调
 $ROOT  = (Resolve-Path (Join-Path $SELF '..\..')).Path
 $OUT   = Join-Path $SELF 'out'
 $WORK  = "$OUT\work"
-$KS    = "$OUT\xgui.keystore"
+# 签名密钥放 signing\（**不在 out\ 下**）：out\ 是构建产物目录，会被清理。
+# 密钥一旦重新生成签名就变了——覆盖安装要么失败
+# （INSTALL_FAILED_UPDATE_INCOMPATIBLE），要么被系统当作换签名重装而
+# **重置全部运行时权限**（真机实证：ACCESS_FINE_LOCATION 被打回未授予，
+# WiFi 扫描结果随后恒为空表，表现为"扫描功能失效"）。
+$KS    = "$SELF\signing\xgui.keystore"
+# 旧版密钥位置（2026-10-24 迁入 platforms\ 前生成在 out\ 下）：首次运行
+# 时搬到新位置，保证签名不变、覆盖安装仍成立。
+if (-not (Test-Path $KS) -and (Test-Path "$OUT\xgui.keystore")) {
+    New-Item -ItemType Directory -Path "$SELF\signing" -Force | Out-Null
+    Move-Item "$OUT\xgui.keystore" $KS -Force
+}
 $JAVA  = if ($env:JAVA_HOME) { $env:JAVA_HOME } else { 'C:\Program Files\Android\Android Studio\jbr' }
 
 # ABI 映射：CMake 构建目录名 ↔ APK 内 jniLibs 目录名
@@ -123,7 +134,10 @@ New-Item -ItemType Directory -Path $CLASSES -Force | Out-Null
 $javaFiles = Get-ChildItem "$JAVA_SRC\*.java" | ForEach-Object { $_.FullName }
 if (-not $javaFiles) { throw "Java 桥源码目录为空: $JAVA_SRC" }
 Write-Host "== 2c) javac (java bridge) =="
-& "$JAVA\bin\javac.exe" --release 8 -nowarn -classpath "$PLAT" -d "$CLASSES" @javaFiles
+# -encoding UTF-8：Java 桥源码是 UTF-8（无 BOM），JDK 11 的默认源码编码
+# 跟随系统 ANSI 代码页（中文 Windows = GBK），不显式指定会报"编码 GBK 的
+# 不可映射字符"。JDK 18+ 默认已是 UTF-8，显式写上才能在 JDK 11 上同样通过。
+& "$JAVA\bin\javac.exe" --release 8 -nowarn -encoding UTF-8 -classpath "$PLAT" -d "$CLASSES" @javaFiles
 if ($LASTEXITCODE -ne 0) { throw "javac failed ($LASTEXITCODE)" }
 $classFiles = Get-ChildItem "$CLASSES\*.class" -Recurse | ForEach-Object { $_.FullName }
 if (-not $classFiles) { throw "javac 未产出 class 文件" }

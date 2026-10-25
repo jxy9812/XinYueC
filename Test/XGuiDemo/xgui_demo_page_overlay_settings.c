@@ -24,6 +24,12 @@
  *
  *             autotest 口径：全程非阻塞，直呼槽/真实控件路径，逐项
  *             切换并断言悬浮层 getter 回读，结束恢复默认态。
+ *
+ *             竖屏窄宽分档（2026-10-25）：四条水平行按桌面定尺最宽需
+ *             584，竖屏 400 逻辑宽放不下（「网络/内存」「数据来源」
+ *             「允许拖动」裁出屏外），adapt 按页根宽 600 分档：窄档
+ *             收缩定尺+可点控件抬到 40 高（触控目标），宽档回写桌面
+ *             装配原值，1000x700 现状不动。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include <stdio.h>
@@ -97,6 +103,7 @@ static struct
     XLabel*      m_statusLabel;  /**< 操作结果行（钉底）。 */
 
     bool         m_syncing;      /**< 回读同步中（抑制状态行刷屏）。 */
+    bool         m_tierNarrow;   /**< 窄宽档已生效（adapt 分档去重，免重排）。 */
 
     /* ---- 布局器（2026-10-17 容器化；build 装配段挂根，静态自持） ---- */
     XBoxLayout   m_rootLayout;   /**< 根垂直布局器（页内唯一 setLayout）。 */
@@ -695,12 +702,141 @@ XWidget* demo_page_overlay_settings_build(XWidget* parent,
 
 /* ==================== 自适应重排（xgui_demo_pages.h 契约） ============ */
 
+/*
+ * 竖屏窄宽分档（2026-10-25 真机截图体检）：容器化后行内排布全交布局
+ * 器，但四个水平行的子件都是固定定尺，桌面口径合计最宽 584（显示数据
+ * 行：根边距 24 + 行左缩进 12 + 五开关 520 + 行距 40），竖屏 400 逻辑
+ * 宽放不下——「网络/内存」开关、「数据来源」下拉、「允许拖动」开关整
+ * 段落到屏外不可见不可点。以页根宽 600 分档：≥600 交回桌面定尺（最小
+ * 需求 584 也放得下，两档拼接无死角），<600 走窄档收缩。窄档不动结构
+ * （行条目仅原地改定尺/空白尺寸），只把四行算进 400 口径的可视宽内，
+ * 并把可点控件高度统一抬到 40（手机触控目标下限；CheckBox 命中整个
+ * 控件矩形，控件高即触控高）。竖向余量交页根既有竖排承载，不再手写
+ * 几何。
+ */
+
+/** @brief 窄宽分档阈值：桌面档最宽行需 584，600 以下走窄档定尺。 */
+#define OV_ADAPT_NARROW_WIDTH 600
+
+/** @brief 窄档可点控件高度下限（手机触控目标，逻辑像素）。 */
+#define OV_ADAPT_TOUCH_HEIGHT 40
+
+/** @brief 把行内指定位置的固定空白换成新尺寸。
+ *  @details 行条目顺序在 build 装配段定死（addSpacing 落位即索引）；
+ *  take 出旧空白删除后原位补回，条目总数与次序不变，档位来回切可重入。 */
+static void ov_setRowGap(XBoxLayout* row, int index, int gap)
+{
+    XLayoutItem* item;
+    if (!row) return;
+    item = XLayout_takeAt_base((XLayout*)row, index);
+    if (!item) return;
+    XClassDelete(item);
+    XBoxLayout_insertSpacing(row, index, gap);
+}
+
+/** @brief 按档位落四条水平行的定尺与触控高度（narrow=竖屏窄档）。
+ *  @details 窄档数值按 400 口径整算：行可用宽 = 页宽 - 根边距 24 -
+ *  行左缩进 12 = 364，四行合计 350/358/362/266 全部落位；文字宽按最
+ *  大 16px 位图字预留（下拉文本区 = 宽-24、复选文本自 x≈21 起），不
+ *  赌具体字号。宽档数值与 build 装配段逐一对应，改装配须同步这里。 */
+static void ov_applyTierGeometry(bool narrow)
+{
+    int chkH = narrow ? OV_ADAPT_TOUCH_HEIGHT : 22;
+    int comboH = narrow ? OV_ADAPT_TOUCH_HEIGHT : 26;
+
+    /* 「显示数据」行：五开关收窄+行距 10→6，合计 350 ≤ 364。 */
+    if (s_ov.m_fpsCheck) {
+        XWidget_setFixedWidth((XWidget*)s_ov.m_fpsCheck, narrow ? 50 : 90);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_fpsCheck, chkH);
+    }
+    if (s_ov.m_frameCheck) {
+        XWidget_setFixedWidth((XWidget*)s_ov.m_frameCheck,
+                              narrow ? 72 : 110);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_frameCheck, chkH);
+    }
+    if (s_ov.m_sysCheck) {
+        XWidget_setFixedWidth((XWidget*)s_ov.m_sysCheck, narrow ? 88 : 120);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_sysCheck, chkH);
+    }
+    if (s_ov.m_netCheck) {
+        XWidget_setFixedWidth((XWidget*)s_ov.m_netCheck, narrow ? 58 : 100);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_netCheck, chkH);
+    }
+    if (s_ov.m_memCheck) {
+        XWidget_setFixedWidth((XWidget*)s_ov.m_memCheck, narrow ? 58 : 100);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_memCheck, chkH);
+    }
+    XLayout_setSpacing((XLayout*)&s_ov.m_rowsRow, narrow ? 6 : 10);
+
+    /* 「内存行」：中缝 32→12，两下拉 110/96，合计 358 ≤ 364。 */
+    ov_setRowGap(&s_ov.m_memRow, 3, narrow ? 12 : 32);
+    if (s_ov.m_memDispCombo) {
+        XWidget_setFixedWidth((XWidget*)s_ov.m_memDispCombo,
+                              narrow ? 110 : 170);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_memDispCombo, comboH);
+    }
+    if (s_ov.m_memSrcCombo) {
+        XWidget_setFixedWidth((XWidget*)s_ov.m_memSrcCombo,
+                              narrow ? 96 : 190);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_memSrcCombo, comboH);
+    }
+
+    /* 「位置」行：中缝 36→12、开关缝 10→8，预设下拉 100、两开关 86，
+     * 合计 362 ≤ 364。 */
+    ov_setRowGap(&s_ov.m_posRow, 3, narrow ? 12 : 36);
+    ov_setRowGap(&s_ov.m_posRow, 5, narrow ? 8 : 10);
+    if (s_ov.m_presetCombo) {
+        XWidget_setFixedWidth((XWidget*)s_ov.m_presetCombo,
+                              narrow ? 100 : 170);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_presetCombo, comboH);
+    }
+    if (s_ov.m_fixedCheck) {
+        XWidget_setFixedWidth((XWidget*)s_ov.m_fixedCheck,
+                              narrow ? 86 : 110);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_fixedCheck, chkH);
+    }
+    if (s_ov.m_movableCheck) {
+        XWidget_setFixedWidth((XWidget*)s_ov.m_movableCheck,
+                              narrow ? 86 : 110);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_movableCheck, chkH);
+    }
+
+    /* 「外观」行：桌面口径在 ≥600 分档内本就落位，窄档同节奏收窄，
+     * 与其余三行保持同一触控/密度口径。 */
+    ov_setRowGap(&s_ov.m_styleRow, 3, narrow ? 12 : 26);
+    if (s_ov.m_fontCombo) {
+        XWidget_setFixedWidth((XWidget*)s_ov.m_fontCombo, narrow ? 64 : 120);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_fontCombo, comboH);
+    }
+    if (s_ov.m_autofitCheck) {
+        XWidget_setFixedWidth((XWidget*)s_ov.m_autofitCheck,
+                              narrow ? 120 : 140);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_autofitCheck, chkH);
+    }
+
+    /* 复位钮两档同宽，窄档只抬高度凑触控目标。 */
+    if (s_ov.m_resetBtn)
+        XWidget_setFixedHeight((XWidget*)s_ov.m_resetBtn,
+                               narrow ? OV_ADAPT_TOUCH_HEIGHT : 30);
+}
+
 void demo_page_overlay_settings_adapt(XWidget* page)
 {
-    /* 2026-10-17 容器化：页内排布全部交给根布局器（提示/状态行经
-     * stretch 贴底、随根几何自动重排），此处不再做任何手写几何；
-     * 契约签名保留（主文件调用点不动）。 */
-    (void)page;
+    int w;
+    bool narrow;
+    /* 容器化后常态排布仍全交根布局器，本入口只做窄宽分档：页根几何
+     * 未定（首拍/非当前堆叠页宽为 0）不动定尺，保 build 桌面口径；
+     * 档位未变免重排。定尺/空白改动后显式失效并立即重解算——留到
+     * 下一拍事件激活会闪一帧旧几何。 */
+    if (!page || page != s_ov.m_root || !s_ov.m_ready) return;
+    w = (int)XWidget_width(page);
+    if (w <= 0) return;
+    narrow = w < OV_ADAPT_NARROW_WIDTH;
+    if (narrow == s_ov.m_tierNarrow) return;
+    s_ov.m_tierNarrow = narrow;
+    ov_applyTierGeometry(narrow);
+    XLayout_invalidate((XLayout*)&s_ov.m_rootLayout);
+    XLayout_activate((XLayout*)&s_ov.m_rootLayout);
 }
 
 /* ==================== autotest ==================== */

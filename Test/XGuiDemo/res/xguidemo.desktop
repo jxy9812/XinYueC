@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=XGui Controls Demo
+Name[zh_CN]=XGui 控件演示
+GenericName=GUI Widget Demo
+GenericName[zh_CN]=GUI 控件演示
+Comment=XinYueC XGui widget visual test program
+Comment[zh_CN]=XinYueC XGui 控件可视化测试程序
+Exec=XGuiWindowDemo_Test
+Icon=xguidemo
+Terminal=false
+Categories=Development;GUIDesigner;

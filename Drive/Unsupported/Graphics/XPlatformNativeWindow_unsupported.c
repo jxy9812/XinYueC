@@ -94,6 +94,13 @@ bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title)
     return false;
 }
 
+bool XPlatformNativeWindow_setIcon(XWindow* window, const XIcon* icon)
+{
+    /* 无真实窗口系统（无 WM/任务栏可消费图标）：no-op。 */
+    (void)window; (void)icon;
+    return false;
+}
+
 bool XPlatformNativeWindow_setSizeHints(XWindow* window)
 {
     (void)window; /* 无真实窗口系统：no-op。 */

@@ -8,7 +8,7 @@ project(Xin_Yue_C VERSION 0.1 LANGUAGES C)
 option(XGUI_ON "XGui 模块总开关（默认开；-DXGUI_ON=0 关闭）" ON)
 foreach(_xsw XGUI_ON XGPU_ON XIMAGEIOPLUGIN_ON XSVGICON_ON XPIXMAPCACHE_ON XMOVIE_ON
              XVIRTUALKEYBOARD_DESKTOP_ON
-             XPLATFORM_FBDEV_ON XPLATFORM_FBINPUT_ON XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+             XPLATFORM_FBDEV_ON XPLATFORM_DRM_ON XPLATFORM_FBINPUT_ON XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
              XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_BUFFER_COUNT)
     if(DEFINED ${_xsw})
         set(_xval "${${_xsw}}")
@@ -29,6 +29,13 @@ endforeach()
 # （默认 0，XPlatformDisplayDriver.h 内 #ifndef 兜底；嵌入式目标以
 # -DXPLATFORM_FBDEV_ON=ON 开启）。默认关闭时该文件经预处理守卫整段裁剪，
 # 桌面 X11 路径零变化；无需额外链接库（fbdev 经 sys/ioctl.h + mmap 即可）。
+
+# ==================== DRM/KMS 显示驱动（无 fbdev 现代嵌入式板） ====================
+# Drive/Posix/Graphics/XPlatformFramebuffer_drm.c（及其 .h）同经上方 glob 自动
+# 入列。功能受 XPLATFORM_DRM_ON 控制（默认 0；嵌入式目标以
+# -DXPLATFORM_DRM_ON=ON 开启，注册表符号随 fbdev 编译单元，FBDEV 开关须同
+# 开）。板上引导先试 DRM（/dev/dri/card0 dumb buffer 直写）失败再试 fbdev，
+# 见 XGuiWindowDemo。零外链（内核 UAPI 就地声明，不经 libdrm）。
 
 # ---- XGuiRemote 编解码 NEON 加速（perf9 路4，2026-10-05） ----
 # 仅对 XGuiRemoteCodec.c 追加 -mfpu=neon（ARM 交叉目标默认开；-DXGUI_REMOTE_NEON=0
@@ -313,11 +320,22 @@ list(REMOVE_ITEM TEST_FILE
 # 不得卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xntp_min_repro.c")
+# xmodbus_android_probe 同理：自带 main 的安卓真机 Modbus TCP 主站轮询
+# 探针独立可执行（XModbusAndroidProbe 目标，2026-10-25 安卓 seccomp 拒
+# io_uring_setup 根修车道诊断工具），不得卷入主程序（与 main.c 重复定义
+# main）——TEST_FILE 剔除三查同款坑第五次。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xmodbus_android_probe.c")
 # xdevice_wifi_probe 同理：自带 main 的无线契约探针独立可执行
 # （XDeviceWiFiProbe 目标，2026-10-24 无线平台抽象 L0 实测工具），
 # 不得卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XDeviceTest/xdevice_wifi_probe.c")
+# 高精度定时器组压测原为自带 main 的独立驱动（Test/XTimerTest/
+# hr_stress_driver.c），2026-10-25 该文件已删除：压测改从测试菜单进入
+# （「定时器 → XHrTimer(高精度定时器组) → 压测(随机增删+句柄回收)」，
+# 实现见 Test/XTimerTest/XHrTimerTest.c），随 TEST_FILE 编译进主程序，
+# 不再需要剔除（无 main，不会与 main.c 重复定义）。
 file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
 # 桌面（非交叉）构建排除嵌入式移植层（2026-10-05 回归门修复）：FreeRTOS
 # portmacro.h/tasks.c 含 ARM CMSIS 内联汇编（mrs/msr basepri、isb），x86
@@ -760,6 +778,30 @@ else()
     target_link_libraries(XDeviceWiFiProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
+# ==================== 安卓真机 Modbus TCP 主站轮询探针（独立可执行） ====================
+# [2026-10-25] 安卓真机（小米 25102RKBEC）上 Modbus 主站连真实远程 IO 设备
+# 时 TCP 层 ESTABLISHED 但一个应答都收不回来——安卓 seccomp 拒
+# io_uring_setup（EACCES）故须走 epoll 引擎，而桌面走 io_uring，两条路径
+# 不同、桌面全绿掩盖了 epoll 分支缺陷。本探针无 GUI，直接驱动库：
+# 连接 → 等 connected → 周期发读请求 → 打印每次结果，供复现与回归。
+# 用法：./xmodbus_android_probe.exe <host> <port> <unitId> <pointCount>
+add_executable(XModbusAndroidProbe
+    "./Test/XProtocolTest/xmodbus_android_probe.c"
+)
+if(UNIX)
+    target_link_libraries(XModbusAndroidProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XModbusAndroidProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== 高精度定时器组压测（菜单入口） ====================
+# [两孩子删除句柄身份压测 2026-10-25] 原先本节为独立可执行
+# XHrTimerStress_Test（自带 main 的 hr_stress_driver.c，供 CI / 桌面闸门
+# 直跑）。该驱动文件已删除、目标已下线：压测改从测试菜单进入
+#   「测试代码 → 定时器 → XHrTimer(高精度定时器组) → 压测(随机增删+句柄回收)」
+# 菜单入口见 Test/XTimerTest/XHrTimerTest.c，测试主体见
+# XHrTimerStressTest.c，与 XGuiWindowDemo_Test 的 --hr-stress 入口同源共用。
+
 # ==================== XFtp 端到端真服务器联调测试 ====================
 # 独立可执行文件 ftp_e2e_test.exe，搭配 ftp_test_server.py 跑完整 FTP 协议测试
 add_executable(FtpE2E_Test
@@ -973,6 +1015,9 @@ endif()
 if(XGUI_ON AND NOT ANDROID)
 if(WIN32)
 enable_language(RC)
+# exe 图标（demo 品牌条棋盘格导出的多尺寸 ico），经 configure_file 注入
+# rc 模板；绝对路径正斜杠形式，rc.exe 对引号内正斜杠路径接受。
+set(XGUI_DEMO_ICON_FILE "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiDemo/res/xgui.ico")
 configure_file("${CMAKE_CURRENT_LIST_DIR}/Test/XGuiDemo/xgui_window_demo.rc.in"
                "${CMAKE_CURRENT_BINARY_DIR}/xgui_window_demo.rc" @ONLY)
 set(XGUI_WINDOW_DEMO_RC "${CMAKE_CURRENT_BINARY_DIR}/xgui_window_demo.rc")
@@ -997,6 +1042,8 @@ add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_demo_page_modbus.c"
     "./Test/XGuiDemo/xgui_demo_page_window.c"
     "./Test/XGuiDemo/xgui_demo_page_timeddns.c"
+    # [两孩子删除句柄身份压测 2026-10-25] --hr-stress 入口
+    "./Test/XTimerTest/XHrTimerStressTest.c"
     "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
     "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
     "./Test/XGuiDemo/xgui_demo_apitest_input.c"
@@ -1011,6 +1058,21 @@ if(UNIX)
     target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+# Linux 桌面图标/启动器接线（安卓不装桌面文件；Windows 图标走 rc 资源）：
+# exe 入 bin，hicolor 四档 PNG 入系统图标主题（freedesktop 惯例，文件名
+# xguidemo 与 .desktop Icon= 一致），.desktop 入 applications——安装后
+# 桌面环境应用列表/收藏栏即带品牌棋盘格图标；运行期窗口图标（任务栏/
+# Alt-Tab）另由 demo 的 XWidget_setWindowIcon→_NET_WM_ICON 通道落地。
+if(UNIX AND NOT ANDROID)
+    install(TARGETS XGuiWindowDemo_Test RUNTIME DESTINATION bin)
+    foreach(_sz 48 64 128 256)
+        install(FILES "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiDemo/res/icons/xguidemo-${_sz}.png"
+                DESTINATION "share/icons/hicolor/${_sz}x${_sz}/apps"
+                RENAME "xguidemo.png")
+    endforeach()
+    install(FILES "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiDemo/res/xguidemo.desktop"
+            DESTINATION "share/applications")
 endif()
 
 # ==================== XGuiRemote 远程窗口双进程演示 ====================
@@ -1085,6 +1147,23 @@ if(XGUI_ON AND ANDROID)
     # --undefined 把符号标记为外部引用，阻止裁剪。
     target_link_options(xguidemo PRIVATE
         "LINKER:--undefined=JNI_OnLoad")
+endif()
+
+# ==================== 安卓真机 Modbus 主站轮询探针 ====================
+# [2026-10-25] 安卓真机 Modbus 主站「连上了但不轮询」的复现/回归工具：
+# 无 GUI，直接驱动库（连接 → 等 connected → 周期发读请求 → 打印每次
+# 结果）。安卓 seccomp 拒 io_uring_setup（实测 EACCES）故强制走
+# XNetIoRingPosix 的 epoll 引擎，而桌面走 io_uring——两条路径不同，
+# 桌面用例覆盖不到 epoll 分支的缺陷（Modbus 应答收不回来的根因所在）。
+# 探针独立可执行，改完 epoll 引擎可直推手机验证，无需打包 APK 跑 UI。
+#   用法：./xmodbus_android_probe <host> <port> <unitId> <pointCount>
+if(ANDROID)
+    add_executable(xmodbus_android_probe
+        "./Test/XProtocolTest/xmodbus_android_probe.c"
+    )
+    target_link_libraries(xmodbus_android_probe ${EXPORT_NAME}S
+        ${XINYUE_UNIX_THREAD_LIBS} mbedtls lwip zlib fatfs pcre2)
+    target_link_libraries(xmodbus_android_probe android log)
 endif()
 
 # ==================== XGui 字库离屏巡检工具 ====================

@@ -22,6 +22,7 @@
 #include "XFileDescriptor.h"
 #include "XMemory.h"
 #include "XRingBuffer.h"
+#include "XVariant.h"
 #include <windows.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -216,10 +217,27 @@ static HANDLE xpw_open_redirect(const XString* path, bool write, bool append)
                  : XDeviceFile_ReadOnly;
     fd = xpw_open_file(path, mode, &error);
     if (fd == XFD_INVALID) return NULL;
-    source = (HANDLE)XFd_handle(fd);
-    duplicate = xpw_duplicate_inheritable(source);
-    XDeviceFile_close(fd);
-    return duplicate;
+    /* XDevice_open 返回的是**设备上下文**描述符（XFD_TYPE_CLASS），其
+     * XFd_handle 指向 XDeviceContext*，并非 Win32 HANDLE；直接拿它做
+     * DuplicateHandle 必然失败 → 重定向句柄为空 → 进程根本起不来
+     * （实测 xprocess 回归：CreateProcessW 从未被调用，报
+     * "Failed to start process"）。原生 HANDLE 须经
+     * XDeviceProperty_NativeHandle 取得（与 POSIX 后端的 dup() 路径同源）。
+     * 该属性是借用语义：复制完即可关闭设备上下文。 */
+    {
+        XVariant nativeHandle;
+        void* raw;
+        memset(&nativeHandle, 0, sizeof(nativeHandle));
+        if (!XDevice_getProperty(fd, XDeviceProperty_NativeHandle, &nativeHandle)) {
+            XDeviceFile_close(fd);
+            return NULL;
+        }
+        raw = XVariant_toPtr(&nativeHandle);
+        source = (HANDLE)raw;
+        duplicate = xpw_duplicate_inheritable(source);
+        XDeviceFile_close(fd);
+        return duplicate;
+    }
 #endif
 }
 

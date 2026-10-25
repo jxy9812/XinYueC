@@ -58,6 +58,9 @@
 #include "XEvent.h"
 #include "xgui_demo_theme.h"
 #include "xgui_demo_pages.h"
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+#include "XPerformanceOverlay.h" /* 窄宽档提示行换行时按悬浮层几何让位。 */
+#endif
 
 /* 原生样式断言（Windows 专项门禁；其它平台编译期整段出局）：
  * 「显示边框」必须表现为「框架自绘条在、原生装饰不在」。框架强制 CSD
@@ -966,7 +969,8 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
                          "\xE6\x94\xB9\xE5\x8A\xA8\xE5\x8D\xB3\xE6\x97\xB6\xE7\x94\x9F\xE6\x95\x88\xEF\xBC\x9B\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91=\xE5\x9B\x9B\xE6\x96\xB9\xE4\xBD\x8D\xE5\xA4\x96\xE6\xA1\x86\xE6\x97\x8B\xE8\xBD\xAC\xEF\xBC\x88\xE6\x8C\x89\xE4\xB8\xBB\xE5\xB1\x8F\xE5\x8F\xAF\xE7\x94\xA8\xE5\x87\xA0\xE4\xBD\x95\xE9\x92\xB3\xE4\xBD\x8D\xEF\xBC\x89\xEF\xBC\x9B"
                          "\xE9\x9A\x90\xE8\x97\x8F\xE9\xBC\xA0\xE6\xA0\x87\xE5\x90\x8E\xE7\xA7\xBB\xE5\x8A\xA8\xE6\x97\xA0\xE5\x85\x89\xE6\xA0\x87\xEF\xBC\x8C\xE5\x9B\x9E\xE6\x9C\xAC\xE9\xA1\xB5\xE5\x8B\xBE\xE9\x80\x89\xE6\x81\xA2\xE5\xA4\x8D");
         XLabel_setTextPixelSize(s_wn.m_hintLabel, 12);
-        XWidget_setFixedHeight((XWidget*)s_wn.m_hintLabel, 20);
+        /* 不设定高：高度由 hfw（窄档换行）/推送的 sizeHint（宽档单行）
+         * 驱动（见 adapt；2026-10-25 框架 hfw 修复后删除绕 Bug 定高）。 */
         XWidget_show((XWidget*)s_wn.m_hintLabel);
     }
     s_wn.m_statusLabel = XLabel_create(s_wn.m_root, 0);
@@ -1074,12 +1078,99 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
 
 /* ==================== 自适应重排（xgui_demo_pages.h 契约） ============ */
 
+/** @brief 窄宽分档阈值（逻辑宽）：覆盖 400 级手机竖屏；宽于该值的窗口
+ *  （桌面 1000x700 等）恒走 build 装配的桌面口径，布局零扰动。 */
+#define WN_NARROW_PAGE_WIDTH 520
+
 void demo_page_window_settings_adapt(XWidget* page)
 {
-    /* 2026-10-17 容器化：页内排布全部交给根布局器（提示/状态行经
-     * stretch 贴底、随根几何自动重排），此处不再做任何手写几何；
-     * 契约签名保留（主文件调用点不动）。 */
-    (void)page;
+    /* 2026-10-17 容器化：页内排布交给根布局器（提示/状态行经 stretch
+     * 贴底、随根几何自动重排），桌面口径不做手写几何。2026-10-25 起
+     * 增加窄宽分档：build 装配的固定值（行标题列宽/开关行高/提示单行）
+     * 都按桌面口径写死，400 级竖屏下提示行溢出右缘且压进 FPS 悬浮层、
+     * 「窗口方向」四字标题顶到下拉框、框架组开关行距低于拇指触控目标
+     * ——这些只在窄宽档出现，故分档收敛在本入口，宽档恒复原桌面
+     * 常量，resize 跨档来回不残留。 */
+    bool narrow;
+    if (!page || !s_wn.m_ready || page != s_wn.m_root) return;
+    narrow = XWidget_width(page) > 0 &&
+             XWidget_width(page) < WN_NARROW_PAGE_WIDTH;
+
+    /* ---- 页底提示行：窄宽档开换行并按 FPS 悬浮层宽收窄换行宽 ----
+     * 提示文本约 64 个全角字符，桌面 1000 宽单行放得下；400 宽单行
+     * 必然溢出窗口右缘被裁，且贴底行与右下锚定的悬浮层同落窗口底带、
+     * 被盖掉大半。窄宽档：换行 + 最大宽收窄到让开悬浮层（悬浮层右缘
+     * 贴窗右缘，页根右缘与之对齐，按其宽让位即可整行避让），行高按
+     * heightForWidth 给足；悬浮层隐藏/未解算尺寸时先不让位，下一轮
+     * resize/切页 adapt 会补上；用户把悬浮层预设到它处时也只是多换
+     * 一行，无害冗余。 */
+    if (s_wn.m_hintLabel) {
+        if (narrow) {
+            int wrapW = XWidget_width(page) - 24; /* 根布局左右边距 12+12。 */
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+            XPerformanceOverlay* overlay =
+                (XPerformanceOverlay*)demo_main_overlay(s_wn.m_user);
+            if (overlay && XWidget_isVisible((XWidget*)overlay)) {
+                XRect og = XPerformanceOverlay_geometry(overlay);
+                if (og.width > 0 && og.width < wrapW)
+                    wrapW -= og.width + 12; /* 悬浮层宽 + 呼吸间距。 */
+            }
+#endif
+            if (wrapW < 160) wrapW = 160; /* 下限：再窄宁可叠窗缘不碎行。 */
+            XLabel_setWordWrap(s_wn.m_hintLabel, true);
+            XWidget_setMaximumWidth((XWidget*)s_wn.m_hintLabel, wrapW);
+        } else {
+            XLabel_setWordWrap(s_wn.m_hintLabel, false);
+            XWidget_setMaximumWidth((XWidget*)s_wn.m_hintLabel,
+                                    XWIDGET_MAX_SIZE);
+        }
+        /* [定高约束删除 2026-10-25 用户裁定] 不再 setFixedHeight：此前
+         * XLabel 从不推送 sizeHint（布局视标签为 0 高）才在此手工算行
+         * 数定高。框架修复（hfw handler + XLayoutItem 钳位 + sizeHint
+         * 推送）后，盒布局的 hfw 替换路径按 maximumWidth 自行算出换行
+         * 高，宽档经推送的 sizeHint 得单行高——手工定高反而以 min/max
+         * 钳住框架的新鲜值（文本一改即又错），属绕 Bug 补丁，删除。 */
+    }
+
+    /* ---- 「窗口方向」行标题列：64 是桌面口径，真机默认字号下「窗口
+     * 方向」四字 advance 约 74px，字尾把行内 6px 间距吃剩 2px 顶到下
+     * 拉框左边框——窄宽档放宽标题列让间距回到设计值（上方「主题」
+     * 两字 64 放得下，不动）。竖向居中由装配的 addWidgetEx(VCenter)
+     * 承载（布局引擎按格居中、XLabel 文字默认 VCenter），不在此另调。 ---- */
+    if (s_wn.m_capOrientName)
+        XWidget_setFixedWidth((XWidget*)s_wn.m_capOrientName,
+                              narrow ? 88 : 64);
+
+    /* ---- 「方向与鼠标」行：窄宽档整行翻竖排单列 ----
+     * 桌面横排行 [标题|6|方向下拉 ·20· 鼠标开关] 实需 12+64..88+6+170+
+     * 20+170=442..466 逻辑宽，400 竖屏行内只有 ~364：行尾「显示鼠标光标」被
+     * 推过右缘裁字（真机像素口径「光」只余七成、「标」整字不见）。行
+     * 内三件都是定宽控件且文字不可省——收窄任一件都会转而裁下拉闭态
+     * 条目（「竖屏（90°）」等）或开关文字，故按 dialogs 页行盒先例用
+     * setDirection 整行翻竖排（幂等，内部失效重排）：四件纵列后各占
+     * 整行宽（400 档行内宽 ~364），170 定宽原样直用，零裁字；行内
+     * 6/20 间距件转为纵列行距，视觉成立。宽档翻回横排复原桌面装配，
+     * resize 跨档来回不残留。 ---- */
+    XBoxLayout_setDirection(
+        &s_wn.m_orientRow,
+        narrow ? XBoxLayoutDirection_TopToBottom
+               : XBoxLayoutDirection_LeftToRight);
+
+    /* ---- 「窗口框架」开关组：22 高 + 6 间距（行距 28）在拇指触控下
+     * 相邻行易误触（触控目标 ≥40 的通行建议）→ 窄宽档把开关拉高到
+     * 40：XCheckBox 指示器(13px)与文字都按控件矩形垂直居中绘制，拉高
+     * 只扩大命中区不改笔画，行距随之 ≥46。「显示鼠标光标」同是开关
+     * 触控件（竖排独占一行，40 高恰为该行触控带），一并拉高。 ---- */
+    if (s_wn.m_frameCheck)
+        XWidget_setFixedHeight((XWidget*)s_wn.m_frameCheck, narrow ? 40 : 22);
+    if (s_wn.m_statusCheck)
+        XWidget_setFixedHeight((XWidget*)s_wn.m_statusCheck, narrow ? 40 : 22);
+    if (s_wn.m_maxCheck)
+        XWidget_setFixedHeight((XWidget*)s_wn.m_maxCheck, narrow ? 40 : 22);
+    if (s_wn.m_fullCheck)
+        XWidget_setFixedHeight((XWidget*)s_wn.m_fullCheck, narrow ? 40 : 22);
+    if (s_wn.m_mouseCheck)
+        XWidget_setFixedHeight((XWidget*)s_wn.m_mouseCheck, narrow ? 40 : 22);
 }
 
 /* ==================== autotest ==================== */

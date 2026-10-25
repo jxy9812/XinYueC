@@ -117,13 +117,8 @@ typedef enum XLabelTextInteractionFlag
 /** @brief 文本交互标志组合类型（多个标志位按位或）。 */
 typedef uint32_t XLabelTextInteractionFlags;
 
-/** @brief 富文本资源加载回调（对标 QTextDocument::ResourceProvider 的 C 适配）。
- * @details 返回新建 XString*（如读取到的资源文本），所有权转移给调用方；
- *          返回 NULL 表示未提供。当前富文本子集不渲染外链资源图片，
- *          该回调仅作为扩展点保存，供后续富文本资源解析使用。 */
-typedef XString* (*XLabelResourceProvider)(XLabel* label,
-                                           const XString* url,
-                                           void* userData);
+/* [resourceProvider typedef 已删除 2026-10-25 冗余清理] 见布局属性
+   段的删除说明：存而不用的死接口，富文本资源解析落地时按需回归。 */
 
 /**
  * @brief      链接范围（内部使用的记录单元）。
@@ -171,8 +166,6 @@ typedef struct XLabelLinkRange
  *               「按下与释放命中同一链接」的激活匹配，选区查询不读它）；
  *               m_textSelecting 标记鼠标拖选进行中（决定 move 事件走
  *               选区扩展还是链接悬停路径）；
- *             - m_resourceProvider/m_resourceProviderUserData：资源回调
- *               与其上下文（借用）。
  *             调用方不得手工修改任何字段；属性读写一律走公开 API。
  */
 typedef struct XLabel
@@ -187,8 +180,6 @@ typedef struct XLabel
     XString*                        m_displayText;/**< 显示文本（拥有）。 */
     XLabelLinkRange*                m_links;     /**< 链接范围数组（拥有）。 */
     XTextControl*                   m_textControl; /**< 文本控制器（拥有；选区/键盘/链接交互承载）。 */
-    XLabelResourceProvider           m_resourceProvider;       /**< 资源回调（借用）。 */
-    void*                           m_resourceProviderUserData;/**< 资源回调上下文（借用）。 */
     XAlignments                     m_alignment; /**< 内容对齐。 */
     /* [内存治理 2026-10-11] 标志位字（对标 XObject uint32_t 位域风格）：
        5 个 bool + 2 个格式枚举并入一个 uint32_t 字——原 5×bool + 2×enum
@@ -313,17 +304,10 @@ XMovie* XLabel_movie(const XLabel* self);
  */
 void XLabel_setMovie(XLabel* self, XMovie* movie);
 
-/** @brief 查询富文本资源回调（对标 QLabel::resourceProvider）。 */
-XLabelResourceProvider XLabel_resourceProvider(const XLabel* self);
-/** @brief 查询富文本资源回调上下文。 */
-void* XLabel_resourceProviderUserData(const XLabel* self);
-/**
- * @brief      设置富文本资源回调（对标 QLabel::setResourceProvider）。
- * @details    回调与上下文均为借用，标签不持有/不释放；当前富文本子集
- *             不自动取用外部资源，回调作为扩展点保存。
- */
-void XLabel_setResourceProvider(XLabel* self, XLabelResourceProvider provider,
-                                void* userData);
+/* [resourceProvider 族已删除 2026-10-25 用户裁定·冗余清理] 该回调为
+ * 存而不用的死接口：XLabel 内部无任何调用点（纯数据钩子，富文本子集
+ * 不渲染外链资源），生产代码亦零调用，Qt QLabel 无此 API。将来富文本
+ * 资源解析落地时按需以新 API 回归（三路审计·内容维度）。 */
 
 /* ==================== 布局属性（对标 QLabel） ==================== */
 

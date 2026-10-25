@@ -23,7 +23,11 @@
  *                合成预览的 XImage（m_lastPreview，XImage_save_2 落盘）
  *                ——绝不经 XLabel_pixmap→XPixmap_toImage 往返：该链路
  *                实测搅乱像素行（2026-10-08 cv2 解码对照实证，图形库
- *                待查），结果经页面状态行与主窗口状态栏双反馈。
+ *                待查），结果经页面状态行与主窗口状态栏双反馈；
+ *              - 窄档自适应（adapt，2026-10-25 真机体检）：页面窄于
+ *                桌面固定行宽（竖屏 400 逻辑宽档）时输入框按余宽收缩、
+ *                预览行主轴翻转把「保存 PNG…」换到预览下方，可点击
+ *                控件高度统一 ≥40 触控口径（详见 adapt 头注）。
  *
  *             autotest 口径：全程非阻塞——只断言控件装配、缺省文本
  *             直接编码成功（预览 pixmap 非空、矩阵边长>0）、内嵌图
@@ -66,10 +70,26 @@
 
 /** @brief 页面装配基线（2026-10-17 容器化：页内坐标排布改由根布局器
  *         承载，此处只保留控件宽高常量；段间节奏在 build 装配段用
- *         addSpacing 近似原设计稿）。 */
-#define QR_EDIT_W       420    /**< 输入框宽。 */
-#define QR_CTRL_H       26     /**< 输入行高。 */
-#define QR_PREVIEW_SIZE 300    /**< 预览图边长（正方形；外框 +8 余量）。 */
+ *         addSpacing 近似原设计稿）。真机口径体检（2026-10-25）：桌面
+ *         固定行宽在竖屏 400 逻辑宽下溢出被窗口裁掉，窄档补偿集中在
+ *         adapt（demo_page_qrcode_adapt）；行内间距/控件宽收进常量是
+ *         为了 build 桌面档与 adapt 收缩档共用同一套数，避免两处手抄
+ *         漂移后行宽账对不上。 */
+#define QR_EDIT_W         420    /**< 输入框宽（桌面档；窄档按余宽收缩）。 */
+#define QR_EDIT_MIN_W     120    /**< 输入框窄档下限：再窄宁可少许溢出，
+                                     保住同行生成按钮可点（编辑框内部
+                                     横向滚动，收窄不丢已输内容）。 */
+#define QR_CAP_W          40     /**< 「内容」标题宽。 */
+#define QR_ROW_GAP        8      /**< 行内控件间距。 */
+#define QR_BTN_GENERATE_W 110    /**< 生成按钮宽。 */
+#define QR_SAVE_BTN_W     130    /**< 保存按钮宽。 */
+#define QR_PREVIEW_GAP    16     /**< 预览框与保存钮间距。 */
+#define QR_TOUCH_H        40     /**< 可点击控件高度下限：手机触控目标
+                                     ≥40 逻辑像素才好命中（原 22/26/30
+                                     档真机难点中，2026-10-25 体检）。 */
+#define QR_PREVIEW_SIZE   300    /**< 预览图边长（正方形；外框 +8 余量）。 */
+#define QR_PREVIEW_BOX_W  (QR_PREVIEW_SIZE + 8) /**< 预览方框外沿
+                                     （图 300 + 外框余量 8）。 */
 #define QR_QUIET_ZONE   4      /**< 二维码四周静区（模块数）。 */
 #define QR_MODULE_PX    8      /**< 每模块渲染像素。 */
 #define QR_DEFAULT_TEXT "https://xinyuec.demo/qr" /**< 缺省演示文本。 */
@@ -84,6 +104,9 @@ static struct
     void*            m_user;        /**< 回调上下文（主窗口指针，借用）。 */
     char             m_lastStatus[192]; /**< 最近一次反馈文本（自测断言用）。 */
     bool             m_ready;       /**< build 已完成且控件指针有效。 */
+    int              m_editW;       /**< adapt 已施加的输入框宽（0=尚未
+                                       施加；档位没变不重设固定宽，省去
+                                       每次 adapt 一次无谓几何失效）。 */
 
     /* ---- 输入与触发区 ---- */
     XLabel*      m_titleLabel;     /**< 页标题。 */
@@ -618,14 +641,14 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
     if (s_qr.m_capContent) {
         XLabel_setText_2(s_qr.m_capContent,
                          "\xE5\x86\x85\xE5\xAE\xB9"); /* 内容 */
-        XWidget_setFixedWidth((XWidget*)s_qr.m_capContent, 40);
+        XWidget_setFixedWidth((XWidget*)s_qr.m_capContent, QR_CAP_W);
         XWidget_setFixedHeight((XWidget*)s_qr.m_capContent, 22);
         XWidget_show((XWidget*)s_qr.m_capContent);
     }
     s_qr.m_contentEdit = XLineEdit_create(s_qr.m_root, 0);
     if (!s_qr.m_contentEdit) return s_qr.m_root;
     XWidget_setFixedWidth((XWidget*)s_qr.m_contentEdit, QR_EDIT_W);
-    XWidget_setFixedHeight((XWidget*)s_qr.m_contentEdit, QR_CTRL_H);
+    XWidget_setFixedHeight((XWidget*)s_qr.m_contentEdit, QR_TOUCH_H);
     XLineEdit_setPlaceholderText(
         s_qr.m_contentEdit,
         "\xE8\xAF\xB7\xE8\xBE\x93\xE5\x85\xA5\xE6\x96\x87\xE6\x9C\xAC"
@@ -641,8 +664,9 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
         XPushButton_setText_2(s_qr.m_generateBtn,
                               "\xE7\x94\x9F\xE6\x88\x90\xE4\xBA\x8C\xE7\xBB"
                               "\xB4\xE7\xA0\x81"); /* 生成二维码 */
-        XWidget_setFixedWidth((XWidget*)s_qr.m_generateBtn, 110);
-        XWidget_setFixedHeight((XWidget*)s_qr.m_generateBtn, 30);
+        XWidget_setFixedWidth((XWidget*)s_qr.m_generateBtn,
+                              QR_BTN_GENERATE_W);
+        XWidget_setFixedHeight((XWidget*)s_qr.m_generateBtn, QR_TOUCH_H);
         XObject_connect_2((XObject*)s_qr.m_generateBtn,
                           XSignal(XAbstractButton_clicked_signal),
                           qr_generateSlot);
@@ -657,7 +681,7 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
                                   "\xBF\x83\xE5\x9B\xBE\xE7\x89\x87");
                                   /* 内嵌中心图片 */
         XWidget_setFixedWidth((XWidget*)s_qr.m_logoCheck, 120);
-        XWidget_setFixedHeight((XWidget*)s_qr.m_logoCheck, 22);
+        XWidget_setFixedHeight((XWidget*)s_qr.m_logoCheck, QR_TOUCH_H);
         XObject_connect_2((XObject*)s_qr.m_logoCheck,
                           XSignal(XAbstractButton_toggled_signal),
                           qr_logoToggledSlot);
@@ -669,7 +693,7 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
                               "\xE9\x80\x89\xE6\x8B\xA9\xE5\x9B\xBE\xE7\x89"
                               "\x87\xE2\x80\xA6"); /* 选择图片… */
         XWidget_setFixedWidth((XWidget*)s_qr.m_logoPickBtn, 96);
-        XWidget_setFixedHeight((XWidget*)s_qr.m_logoPickBtn, 26);
+        XWidget_setFixedHeight((XWidget*)s_qr.m_logoPickBtn, QR_TOUCH_H);
         XObject_connect_2((XObject*)s_qr.m_logoPickBtn,
                           XSignal(XAbstractButton_clicked_signal),
                           qr_logoPickSlot);
@@ -695,10 +719,8 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
                      "\xA8\xE6\xAD\xA4"); /* 生成的二维码显示在此 */
     XLabel_setAlignment(s_qr.m_previewLabel,
                         XAlignment_Center | XAlignment_VCenter);
-    XWidget_setFixedWidth((XWidget*)s_qr.m_previewLabel,
-                          QR_PREVIEW_SIZE + 8);
-    XWidget_setFixedHeight((XWidget*)s_qr.m_previewLabel,
-                           QR_PREVIEW_SIZE + 8);
+    XWidget_setFixedWidth((XWidget*)s_qr.m_previewLabel, QR_PREVIEW_BOX_W);
+    XWidget_setFixedHeight((XWidget*)s_qr.m_previewLabel, QR_PREVIEW_BOX_W);
     XWidget_show((XWidget*)s_qr.m_previewLabel);
 
     /* ---- 保存按钮（预览右侧） ---- */
@@ -707,8 +729,8 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
         XPushButton_setText_2(s_qr.m_saveBtn,
                               "\xE4\xBF\x9D\xE5\xAD\x98 PNG\xE2\x80\xA6");
                               /* 保存 PNG… */
-        XWidget_setFixedWidth((XWidget*)s_qr.m_saveBtn, 130);
-        XWidget_setFixedHeight((XWidget*)s_qr.m_saveBtn, 30);
+        XWidget_setFixedWidth((XWidget*)s_qr.m_saveBtn, QR_SAVE_BTN_W);
+        XWidget_setFixedHeight((XWidget*)s_qr.m_saveBtn, QR_TOUCH_H);
         XObject_connect_2((XObject*)s_qr.m_saveBtn,
                           XSignal(XAbstractButton_clicked_signal),
                           qr_saveSlot);
@@ -736,13 +758,16 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
     XLayout_setContentsMargins((XLayout*)&s_qr.m_rootLayout, 12, 8, 12, 8);
     XBoxLayout_addWidget(&s_qr.m_rootLayout, (XWidget*)s_qr.m_titleLabel);
     XBoxLayout_addSpacing(&s_qr.m_rootLayout, 12);
-    /* 内容输入行：标题 | 8 | 输入框 | 8 | 生成钮。 */
+    /* 内容输入行：标题 | 8 | 输入框 | 8 | 生成钮。行高由 40 触控档
+       输入框承载，22 固定高的「内容」标题显式垂直居中——默认顶贴
+       会在高行里与邻居错位。 */
     XBoxLayout_init(&s_qr.m_inputRow, XBoxLayoutDirection_LeftToRight);
     XLayout_setSpacing((XLayout*)&s_qr.m_inputRow, 0);
-    XBoxLayout_addWidget(&s_qr.m_inputRow, (XWidget*)s_qr.m_capContent);
-    XBoxLayout_addSpacing(&s_qr.m_inputRow, 8);
+    XBoxLayout_addWidgetEx(&s_qr.m_inputRow, (XWidget*)s_qr.m_capContent,
+                           0, XAlignment_VCenter);
+    XBoxLayout_addSpacing(&s_qr.m_inputRow, QR_ROW_GAP);
     XBoxLayout_addWidget(&s_qr.m_inputRow, (XWidget*)s_qr.m_contentEdit);
-    XBoxLayout_addSpacing(&s_qr.m_inputRow, 8);
+    XBoxLayout_addSpacing(&s_qr.m_inputRow, QR_ROW_GAP);
     XBoxLayout_addWidget(&s_qr.m_inputRow, (XWidget*)s_qr.m_generateBtn);
     /* 行尾伸展：余量留行尾，保持行内左对齐原节奏。 */
     XBoxLayout_addStretch(&s_qr.m_inputRow, 1);
@@ -752,19 +777,22 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
     XBoxLayout_init(&s_qr.m_logoRow, XBoxLayoutDirection_LeftToRight);
     XLayout_setSpacing((XLayout*)&s_qr.m_logoRow, 0);
     XBoxLayout_addWidget(&s_qr.m_logoRow, (XWidget*)s_qr.m_logoCheck);
-    XBoxLayout_addSpacing(&s_qr.m_logoRow, 8);
+    XBoxLayout_addSpacing(&s_qr.m_logoRow, QR_ROW_GAP);
     XBoxLayout_addWidget(&s_qr.m_logoRow, (XWidget*)s_qr.m_logoPickBtn);
-    XBoxLayout_addSpacing(&s_qr.m_logoRow, 8);
-    /* 路径展示（伸展铺满；固定高 20 默认贴行顶）。 */
+    XBoxLayout_addSpacing(&s_qr.m_logoRow, QR_ROW_GAP);
+    /* 路径展示（伸展铺满；固定高 20 非点击件，行高升到 40 触控档后
+       显式垂直居中，不与开关/按钮错位）。 */
     XBoxLayout_addWidgetEx(&s_qr.m_logoRow, (XWidget*)s_qr.m_logoPathLabel,
-                           1, 0);
+                           1, XAlignment_VCenter);
     XBoxLayout_addLayout(&s_qr.m_rootLayout, (XLayout*)&s_qr.m_logoRow);
     XBoxLayout_addSpacing(&s_qr.m_rootLayout, 44);
-    /* 预览行：预览方框 | 16 | 保存钮（固定高 30 默认贴行顶）。 */
+    /* 预览行：预览方框 | 16 | 保存钮（固定高 40 触控档默认贴行顶）。
+       竖屏放不下本行时由 adapt 把主轴翻转为纵向（保存钮换行），此处
+       仍按桌面档横向装配。 */
     XBoxLayout_init(&s_qr.m_previewRow, XBoxLayoutDirection_LeftToRight);
     XLayout_setSpacing((XLayout*)&s_qr.m_previewRow, 0);
     XBoxLayout_addWidget(&s_qr.m_previewRow, (XWidget*)s_qr.m_previewLabel);
-    XBoxLayout_addSpacing(&s_qr.m_previewRow, 16);
+    XBoxLayout_addSpacing(&s_qr.m_previewRow, QR_PREVIEW_GAP);
     /* 保存钮显式贴顶对齐（无对齐时本布局器垂直默认居中，与原稿
        「与预览顶边平齐」不符）。 */
     XBoxLayout_addWidgetEx(&s_qr.m_previewRow, (XWidget*)s_qr.m_saveBtn,
@@ -861,13 +889,54 @@ int demo_page_qrcode_autotest(XWidget* page)
     return failures;
 }
 
-/** @brief 页面自适应重排（契约 adapt）。 */
+/** @brief 页面自适应重排（契约 adapt；切页/resize/startup 全路径由
+ *         主文件 demo_layout_content 漏斗调用）。
+ *  @details 真机口径体检（2026-10-25）：桌面档固定行宽按 1000x700 设计，
+ *           竖屏 400 逻辑宽放不下——输入行需 40+8+420+8+110=586px、
+ *           预览行需 308+16+130=454px，超宽部分被窗口直接裁掉（生成钮
+ *           整体出窗、保存钮被压到 52px 截成「保存」）。窄档补偿全部
+ *           收敛在本函数，按页根实时宽度分档，桌面宽档零改动：
+ *            ① 输入框按余宽收缩（下限 QR_EDIT_MIN_W；编辑框内部横向
+ *              滚动承载长文本，收窄不丢已输内容，生成钮保得住）；
+ *            ② 预览行放不下时布局器主轴翻转为纵向——框架 setDirection
+ *              对 magic 空白随主轴横纵互转，「保存 PNG…」自然换到
+ *              预览下方整行独占，控件不搬家、布局拓扑不动。
+ *           宽档恢复桌面原状（输入框回 420、预览行回横向），只在档位
+ *           切换沿上执行一次；页宽未定（首帧布局前为 0）维持 build
+ *           形态，等几何分配后再补。 */
 void demo_page_qrcode_adapt(XWidget* page)
 {
-    /* 2026-10-17 容器化：页内排布全部交给根布局器（预览方框固定尺寸，
-     * 状态行随内容排布），此处不再做任何手写几何；契约签名保留
-     * （主文件调用点不动）。 */
-    (void)page;
+    int pageW;
+    int innerW;
+    XMargins mg;
+    if (page != s_qr.m_root || !s_qr.m_root || !s_qr.m_ready)
+        return;
+    pageW = XWidget_width(s_qr.m_root);
+    if (pageW <= 0)
+        return; /* 首帧前几何未分配：维持 build 桌面形态 */
+    mg = XLayout_contentsMargins((const XLayout*)&s_qr.m_rootLayout);
+    innerW = pageW - mg.left - mg.right;
+    if (innerW < 0) innerW = 0;
+
+    /* ① 输入行收缩：标题|8|输入框|8|生成钮 需 586px，超了先收输入框。 */
+    if (s_qr.m_contentEdit) {
+        int editW = innerW - QR_CAP_W - QR_ROW_GAP * 2 - QR_BTN_GENERATE_W;
+        if (editW > QR_EDIT_W) editW = QR_EDIT_W;
+        if (editW < QR_EDIT_MIN_W) editW = QR_EDIT_MIN_W;
+        if (editW != s_qr.m_editW) { /* 档位没变不重设，省一次几何失效 */
+            XWidget_setFixedWidth((XWidget*)s_qr.m_contentEdit, editW);
+            s_qr.m_editW = editW;
+        }
+    }
+    /* ② 预览行换行：预览框|16|保存钮 需 454px，放不下整行转纵向。 */
+    if (s_qr.m_previewLabel && s_qr.m_saveBtn) {
+        int need = QR_PREVIEW_BOX_W + QR_PREVIEW_GAP + QR_SAVE_BTN_W;
+        XBoxLayoutDirection want =
+            innerW < need ? XBoxLayoutDirection_TopToBottom
+                          : XBoxLayoutDirection_LeftToRight;
+        if (XBoxLayout_direction(&s_qr.m_previewRow) != want)
+            XBoxLayout_setDirection(&s_qr.m_previewRow, want);
+    }
 }
 
 #else /* 裁剪桩 */

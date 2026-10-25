@@ -947,6 +947,11 @@ void XWindow_createHandle(XWindow* self)
             /* 初始标题同步（后端 create 内已兜底，这里按公共层状态再同步，
                保证 create 之后用户先 setTitle 的时序正确）。 */
             XPlatformNativeWindow_setTitle(self, data->m_title);
+            /* 初始图标同步（同 setTitle 时序口径：create 之前已 setIcon
+               的在此补落地，供 WM 任务栏/Alt-Tab 取用；无图标跳过免
+               属性 churn——清属性语义由 setIcon(NULL) 显式触发）。 */
+            if (data->m_icon)
+                XPlatformNativeWindow_setIcon(self, data->m_icon);
             /* 创建前已请求的状态（showMaximized/showMinimized 早于
                show() 时）在原生窗口就绪后补应用，否则状态位与原生
                几何不一致（对齐 Qt：状态在 create 后由平台窗口应用）。 */
@@ -1043,6 +1048,26 @@ void XWindow_destroy(XWindow* self)
     data->m_created = false;
     data->m_winId = 0;
     data->m_exposed = false;
+#if XGUIAPPLICATION_ON
+    /* [焦点登记 destroy 即清 2026-10-25] 对标 Qt 6.8.3
+     * QWindowPrivate::destroy()（qwindow.cpp:2112-2113
+     * `if (focus_window == q) focus_window = q->parent()`）：应用级
+     * 焦点窗口是**借用**登记，平台窗口拆除时即须摘除，不能等对象
+     * 析构的 removeWindow 兜底——deleteLater 延迟回收的桥接窗
+     * （XWidget_destroyWindow defer 路径）在兑现前的一圈内仍会被
+     * handleFocusWindowChanged 选为 oldFocused 补发 FOCUS_OUT（新窗
+     * ShowWindow 的 WM_SETFOCUS 同步触发），事件打进半拆窗口后经
+     * VXWidgetWindow_event 转发给已释放根控件（GPU 回归 WER dump
+     * 实测 AV）。Qt 析构函数里还有同款二次清理（qwindow.cpp:200，
+     * QTBUG-75326）；本框架 removeWindow 已承担该角色，此处补齐
+     * destroy 时机。必须走裸赋值入口（transferFocusWindowForDestroy）
+     * 而非 setFocusWindow：后者发射 focusWindowChanged 并联动 IME
+     * setFocusObject 链，destroy 半拆状态下信号重入即崩（dock/float
+     * 循环实测）。父窗口回退与 Qt 同款：焦点交给父窗而非清空。 */
+    if (XGuiApplication_focusWindow() == self)
+        XGuiApplication_transferFocusWindowForDestroy(
+            self, XWindow_parent(self, XWindowAncestor_ExcludeTransients));
+#endif
 }
 
 /* ==================== 父窗口与顶层判断 ==================== */
@@ -2100,7 +2125,17 @@ XString* XWindow_filePath(const XWindow* self)
 }
 
 void XWindow_setIcon(XWindow* self, const XIcon* icon)
-{ if (self && self->m_data) XWindow_setIconInternal(&self->m_data->m_icon, icon); }
+{
+    if (!self || !self->m_data) return;
+    XWindow_setIconInternal(&self->m_data->m_icon, icon);
+#if XPLATFORMNATIVEWINDOW_ON
+    /* 运行期换图标即时落地（对标 QWindow::setIcon：句柄存在即转发
+       QPlatformWindow::setIcon）；未挂接原生窗口时仅存值，create 期
+       统一补同步（见创建路径的初始图标同步）。 */
+    if (self->m_data->m_created && self->m_data->m_nativeWindowAttached)
+        XPlatformNativeWindow_setIcon(self, self->m_data->m_icon);
+#endif /* XPLATFORMNATIVEWINDOW_ON */
+}
 
 XIcon* XWindow_icon(const XWindow* self)
 {

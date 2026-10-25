@@ -93,6 +93,11 @@ typedef struct KbdPageState
     int returnPressedCount;     /**< 编辑框 returnPressed 信号计数。 */
     int readyCount;             /**< 键盘 ready 信号计数。 */
     int cancelCount;            /**< 键盘 cancel 信号计数。 */
+    XWidget* hintRow;           /**< 只读操作说明行（XLABEL 形态=XLabel、
+                                     回退形态=只读 XLineEdit；行盒借挂页
+                                     根布局器，宽度分档须随根几何改写其
+                                     固定尺寸——build 局部变量活不过
+                                     build，分档入口在 ResizeEvent）。 */
 #if XLAYOUT_ON && XLAYOUT_BOX_ON
     XBoxLayout rootLayout;      /**< 页根垂直布局器（XWidget_setLayout
                                      仅存指针不取所有权——布局器须随
@@ -134,6 +139,125 @@ static void kbd_cancelSlot(XObject* receiver, XVarList* args)
     ++s_kbd.cancelCount;
     if (s_kbd.status)
         s_kbd.status(s_kbd.user, "键盘页：收起（cancel 信号）");
+}
+
+/* ==================== 宽度分档自适应（手机竖屏口径） ====================
+ *
+ * 真机体检（竖屏 400 逻辑宽，页 9）：四编辑框与说明行按桌面定宽装配，
+ * 加页根左右边距后整体越出视口约 46px——框体右闭合边画进窗外，输入区
+ * 右侧不可见（破版）；且 28 逻辑高的可点行低于手机约 40dp 的触控目标
+ * 下限（误触）。本页无主文件 adapt 契约（xgui_demo_pages.h 未登记
+ * demo_page_keyboard_adapt，demo_layout_content 漏斗不覆盖页 9），分
+ * 档入口只能落在页内：页根子类 ResizeEvent 随堆叠几何分配重跑（堆叠
+ * StackOne 首显/切页回贴/旋转/拖拽的每次真实尺寸变化都触发，写法与
+ * views 页大表格 refit 同型）。
+ */
+
+/** @brief 桌面档编辑框定宽：1000x700 现状值（体检基线），窄视口按行
+ *         盒预算向下钳。 */
+#define KBD_BOX_MAX_W 420
+/** @brief 桌面档编辑框定高（现状值）。 */
+#define KBD_BOX_H 28
+/** @brief 手机档可点行高：≥40 逻辑像素的触控目标下限，留 4dp 余量。 */
+#define KBD_BOX_H_TOUCH 44
+/** @brief compact 分档断点：逻辑宽 <600dp（Material 3 compact 窗口类
+ *         上限，与主文件 DEMO_COMPACT_MAX_W 同口径）。按宿主顶层窗宽
+ *         判档——形态判定以窗口宽为准（demo_layoutModeUpdate 同口径，
+ *         内容区宽在紧凑态已占满，两者只在断点附近差个边距）。 */
+#define KBD_COMPACT_MAX_W 600
+/** @brief 页根布局器 contentsMargins(12,8,12,8) 左右合计：行内固定宽
+ *         控件的宽度预算=页宽−24。 */
+#define KBD_PAGE_MARGIN_W 24
+
+/** @brief 宽度分档自适应：按页宽/宿主窗宽档位改写行内控件固定尺寸。
+ * @details 宽度恒钳入行盒预算 min(420, 页宽−24)：桌面页宽 952 仍落
+ *          420（1000x700 现状逐像素不变），400 竖屏落 352 恰满行——
+ *          右侧留出页根 12px 边距，右闭合边回屏内。高度仅手机档（窗
+ *          宽<600）抬到 44，桌面维持 28；四框为页内全部可点目标，须
+ *          同抬防误触。说明行宽随档后按 heightForWidth 重算定高（窄
+ *          宽多折行，高度须随行数涨，否则第四行被裁半——2026-10-01
+ *          实机报告 D2 既有口径），只读回退说明行非可点目标、高度不
+ *          入档。约束 setter 对同值幂等早退（XWidget.c 最小/最大尺寸
+ *          口），桌面每次 resize 重复调用零约束抖动；改约束经
+ *          updateGeometry 通知根布局重排，行盒尾 stretch 吸收余量，
+ *          无需手动 activate。 */
+static void kbd_adaptRows(int pageW)
+{
+    int rowW;
+    int boxW;
+    int boxH;
+    XWidget* top;
+    if (!s_kbd.page || pageW <= 0) return;
+    rowW = pageW - KBD_PAGE_MARGIN_W;
+    if (rowW < KBD_BOX_H_TOUCH) return; /* 极端窄视口：维持既有约束。 */
+    boxW = (rowW < KBD_BOX_MAX_W) ? rowW : KBD_BOX_MAX_W;
+    top = XWidget_topLevelWidget(s_kbd.page);
+    boxH = (XWidget_width(top ? top : s_kbd.page) < KBD_COMPACT_MAX_W)
+               ? KBD_BOX_H_TOUCH
+               : KBD_BOX_H;
+    if (s_kbd.editor) {
+        XWidget_setFixedWidth((XWidget*)s_kbd.editor, boxW);
+        XWidget_setFixedHeight((XWidget*)s_kbd.editor, boxH);
+    }
+    if (s_kbd.editorDigits) {
+        XWidget_setFixedWidth((XWidget*)s_kbd.editorDigits, boxW);
+        XWidget_setFixedHeight((XWidget*)s_kbd.editorDigits, boxH);
+    }
+    if (s_kbd.editorLatin) {
+        XWidget_setFixedWidth((XWidget*)s_kbd.editorLatin, boxW);
+        XWidget_setFixedHeight((XWidget*)s_kbd.editorLatin, boxH);
+    }
+    if (s_kbd.editor2) {
+        XWidget_setFixedWidth((XWidget*)s_kbd.editor2, boxW);
+        XWidget_setFixedHeight((XWidget*)s_kbd.editor2, boxH);
+    }
+#if XLABEL_ON && XFRAME_ON
+    if (s_kbd.hintRow) {
+        XLabel* hint = (XLabel*)s_kbd.hintRow;
+        int hintH = XLabel_heightForWidth(hint, boxW);
+        XWidget_setFixedWidth(s_kbd.hintRow, boxW);
+        XWidget_setFixedHeight(s_kbd.hintRow, hintH > 0 ? hintH : 40);
+    }
+#else
+    if (s_kbd.hintRow)
+        XWidget_setFixedWidth(s_kbd.hintRow, boxW);
+#endif /* XLABEL_ON && XFRAME_ON */
+}
+
+/* ==================== 页面根控件子类（宽度分档自适应载体） ====================
+ *
+ * 本页无主文件 adapt 契约（节注），旋转/拖拽后的几何重排在页内无现成
+ * 入口——堆叠布局只在尺寸真实变化时派发 resize，页根子类截获该边沿重
+ * 跑分档即可覆盖首显/切页回贴/旋转全路径（切页回贴的是 contentHost 当
+ * 前矩形：窗口在他页期间 resize 过则尺寸必变，事件必达）。父链级联析
+ * 构口径不变（堆创建，页根随主窗口父链释放）。
+ */
+
+/** @brief 页面根控件子类（m_base 必须是第一个成员）。 */
+typedef struct KbdPageRootWidget
+{
+    XWidget m_base; /**< 基类成员；必须是第一个。 */
+} KbdPageRootWidget;
+
+XCLASS_DEFINE_BEGING(KbdPageRootWidget)
+XCLASS_DEFINE_EXTEND_END(KbdPageRootWidget, XWidget)
+
+/** @brief 页根尺寸变化：重跑宽度分档（页宽=行盒宽度预算的唯一出处）。 */
+static void VKbdPageRoot_resizeEvent(XWidget* self, XEvent* event)
+{
+    XClass_Parent(XWidget, EXWidget_ResizeEvent,
+                  void (*)(XWidget*, XEvent*))((XWidget*)self, event);
+    kbd_adaptRows(XWidget_width(self));
+}
+
+/** @brief 初始化 KbdPageRootWidget 类虚函数表。 */
+XVtable* KbdPageRootWidget_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(KbdPageRootWidget)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
+                             VKbdPageRoot_resizeEvent);
+    return XVTABLE_DEFAULT;
 }
 
 /* ==================== autotest 工具 ==================== */
@@ -279,9 +403,19 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
     XWidget* page;
     XWidget* hintRow = NULL;    /**< 说明行控件（两门控分支归一，装配段用）。 */
     if (!parent) return NULL;
-    page = XWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, parent, 0);
-    if (!page) return NULL;
+    /* 页面根控件：子类堆创建，父子链级联析构（契约口径）——子类
+       ResizeEvent 入口随堆叠几何分配重跑宽度分档（见「宽度分档自适应」
+       节注；views 页根子类同型）。s_kbd 先清零再建：创建期任何重入事件
+       经分档入口读到的是零值态而非上一页残留。 */
     memset(&s_kbd, 0, sizeof(s_kbd));
+    page = (XWidget*)XMemory_malloc(sizeof(KbdPageRootWidget),
+                                    XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!page) return NULL;
+    XMemset(page, 0, sizeof(KbdPageRootWidget));
+    XWidget_init(page, parent, 0);
+    XClassSetVtable(page, KbdPageRootWidget);
+    Set_Class_Memory(page, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(page, true);
     s_kbd.page = page;
     s_kbd.status = status;
     s_kbd.user = user;
@@ -290,10 +424,12 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
      *     默认）。 ---- */
     s_kbd.editor = XLineEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, page, 0);
     if (s_kbd.editor) {
-        /* 几何交页根布局器分配（原手写 12,8,420,28 → 固定宽 420/高
-           28，原点与行距由根布局边距/行盒边距复刻）。 */
-        XWidget_setFixedWidth((XWidget*)s_kbd.editor, 420);
-        XWidget_setFixedHeight((XWidget*)s_kbd.editor, 28);
+        /* 几何交页根布局器分配（原手写 12,8,420,28 → 桌面档定宽/定高，
+           原点与行距由根布局边距/行盒边距复刻）；手机竖屏档由页根
+           ResizeEvent 分档改写（「宽度分档自适应」节注），此处装配值
+           即桌面档现状。 */
+        XWidget_setFixedWidth((XWidget*)s_kbd.editor, KBD_BOX_MAX_W);
+        XWidget_setFixedHeight((XWidget*)s_kbd.editor, KBD_BOX_H);
         XLineEdit_setPlaceholderText(s_kbd.editor,
                                      "默认框：无提示位 → 键盘主布局（main）");
         XObject_connect_1((XObject*)s_kbd.editor,
@@ -308,8 +444,8 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
     s_kbd.editorDigits =
         XLineEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, page, 0);
     if (s_kbd.editorDigits) {
-        XWidget_setFixedWidth((XWidget*)s_kbd.editorDigits, 420);
-        XWidget_setFixedHeight((XWidget*)s_kbd.editorDigits, 28);
+        XWidget_setFixedWidth((XWidget*)s_kbd.editorDigits, KBD_BOX_MAX_W);
+        XWidget_setFixedHeight((XWidget*)s_kbd.editorDigits, KBD_BOX_H);
         XWidget_setInputMethodHints((XWidget*)s_kbd.editorDigits,
                                     XInputMethodHint_DigitsOnly);
         XLineEdit_setPlaceholderText(s_kbd.editorDigits,
@@ -322,8 +458,8 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
     s_kbd.editorLatin =
         XLineEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, page, 0);
     if (s_kbd.editorLatin) {
-        XWidget_setFixedWidth((XWidget*)s_kbd.editorLatin, 420);
-        XWidget_setFixedHeight((XWidget*)s_kbd.editorLatin, 28);
+        XWidget_setFixedWidth((XWidget*)s_kbd.editorLatin, KBD_BOX_MAX_W);
+        XWidget_setFixedHeight((XWidget*)s_kbd.editorLatin, KBD_BOX_H);
         XWidget_setInputMethodHints((XWidget*)s_kbd.editorLatin,
                                     XInputMethodHint_LatinOnly);
         XLineEdit_setPlaceholderText(s_kbd.editorLatin,
@@ -334,8 +470,8 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
     /* ---- 第二输入框（演示守护 tick 焦点跟随重绑时组串自动复位）。 ---- */
     s_kbd.editor2 = XLineEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, page, 0);
     if (s_kbd.editor2) {
-        XWidget_setFixedWidth((XWidget*)s_kbd.editor2, 420);
-        XWidget_setFixedHeight((XWidget*)s_kbd.editor2, 28);
+        XWidget_setFixedWidth((XWidget*)s_kbd.editor2, KBD_BOX_MAX_W);
+        XWidget_setFixedHeight((XWidget*)s_kbd.editor2, KBD_BOX_H);
         XLineEdit_setPlaceholderText(s_kbd.editor2,
                                      "点击第二个输入框 → 键盘跟随重绑（拼音组串复位）");
         XWidget_show((XWidget*)s_kbd.editor2);
@@ -349,16 +485,16 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
             /* 高度按 heightForWidth 实算（对齐 QLabel::heightForWidth
              * 口径）：固定 40px 只装三行，第四行被裁半（2026-10-01 用
              * 户实机报告 D2，user-report-label-clip.png 实锚）；文本与
-             * wordWrap 先置再算，宽 420 与固定宽一致（x/y 交页根布局
-             * 器分配）。 */
+             * wordWrap 先置再算，宽=桌面档定宽与固定宽一致（x/y 交页
+             * 根布局器分配；手机档宽随分档改写后按新宽重算定高）。 */
             int hintH;
             XLabel_setText_2(hint,
                              "三框并列演示 hints 自动切键盘：默认框=主布局 / 数字框=12 键数字盘 / "
                              "英文框=主布局锁拉丁；拼音：中/EN 切换 → 字母上候选带 → "
                              "空格 / 点 chip / 1-9 上屏 → 回车=原字母 → 退格先删组串");
             XLabel_setWordWrap(hint, true);
-            hintH = XLabel_heightForWidth(hint, 420);
-            XWidget_setFixedWidth((XWidget*)hint, 420);
+            hintH = XLabel_heightForWidth(hint, KBD_BOX_MAX_W);
+            XWidget_setFixedWidth((XWidget*)hint, KBD_BOX_MAX_W);
             XWidget_setFixedHeight((XWidget*)hint, hintH > 0 ? hintH : 40);
             hintRow = (XWidget*)hint;
             XWidget_show((XWidget*)hint);
@@ -368,8 +504,8 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
     {
         XLineEdit* hint = XLineEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, page, 0);
         if (hint) {
-            XWidget_setFixedWidth((XWidget*)hint, 420);
-            XWidget_setFixedHeight((XWidget*)hint, 28);
+            XWidget_setFixedWidth((XWidget*)hint, KBD_BOX_MAX_W);
+            XWidget_setFixedHeight((XWidget*)hint, KBD_BOX_H);
             XLineEdit_setText(hint,
                               "默认/数字/英文三框自动切键盘；拼音：中/EN 切换 → 空格/1-9 上屏");
             XLineEdit_setReadOnly(hint, true);
@@ -378,14 +514,16 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
         }
     }
 #endif /* XLABEL_ON && XFRAME_ON */
+    s_kbd.hintRow = hintRow; /* 登记进页状态：宽度分档随根几何改写。 */
 
     /* ---- 页内布局容器化：页根挂垂直盒布局器统一分配几何（原页内
        setGeometry 手写排布全部退场）。观感对齐改造前截图：边距
        (12,8,12,8) 复刻原手写原点 (12,8)；行距 8px 用行盒底边距近似
-       （布局器无逐条目间距 API，末行不留）；各框固定宽 420/高 28
-       （说明行高按 heightForWidth 实算），不设伸缩因子——多余空间留
-       主轴末尾。XVirtualKeyboard 为应用单例顶层弹层（不挂本页），
-       不参与页内布局。 ---- */
+       （布局器无逐条目间距 API，末行不留）；各框装配值=桌面档定宽/
+       定高（说明行高按 heightForWidth 实算），手机竖屏档由页根
+       ResizeEvent 分档改写（「宽度分档自适应」节注），不设伸缩因子
+       ——多余空间留主轴末尾。XVirtualKeyboard 为应用单例顶层弹层（不
+       挂本页），不参与页内布局。 ---- */
 #if XLAYOUT_ON && XLAYOUT_BOX_ON
     {
         int rowi = 0;

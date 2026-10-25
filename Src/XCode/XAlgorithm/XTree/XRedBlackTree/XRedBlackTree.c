@@ -249,48 +249,50 @@ static XRBTreeNode* TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNo
 	size_t dataSize)
 {
 #if XVector_ON
-	XRBTreeNode* LPreplace = NULL; // 后继节点（用于替换）
-
-	// 1. 找到后继节点 (右子树中的最左节点)
-	LPreplace = XBTreeNode_GetRChild(eraseNode);
-	while (XBTreeNode_GetLChild(LPreplace) != NULL)
+	/* [句柄身份根修 2026-10-25] 旧实现交换两节点内联数据、摘掉后继并返回
+	 * 后继——对"句柄=节点指针"的使用方（如定时器组）是灾难：换数据后
+	 * eraseNode 里装的是别人的定时器，句柄身份全部漂移，最终同一节点被
+	 * 重复释放（安卓 Scudo "invalid chunk state" 实证）。
+	 * 现改为**节点换位**：把后继 s 从原位摘除（OneChild_erase，含删除
+	 * 平衡修复），再让 s 顶替 eraseNode 的位置并继承其颜色；eraseNode
+	 * 带着自己的数据整体脱离树、交还调用方释放。数据不迁移，句柄身份
+	 * 永远稳定。dataSize 参数保留（兼容旧签名），不再需要。 */
+	XRBTreeNode* s = XBTreeNode_GetRChild(eraseNode);
+	while (XBTreeNode_GetLChild(s) != NULL)
 	{
-		LPreplace = XBTreeNode_GetLChild(LPreplace);
+		s = (XRBTreeNode*)XBTreeNode_GetLChild(s);
+	}
+	(void)dataSize;
+
+	// 1) 后继 s 从原位摘除（s 至多只有右孩子；含颜色平衡修复）。
+	OneChild_erase(this_root, s);
+
+	// 2) s 顶替 eraseNode：父指针/左右孩子/颜色全部按位接管。
+	{
+		XTreeNode** ppToErase = XTreeNode_childrenParent_ref(eraseNode);
+		XRBTreeNode* left = XBTreeNode_GetLChild(eraseNode);
+		XRBTreeNode* right = XBTreeNode_GetRChild(eraseNode);
+		enum XRBTreeColor color = XRBTree_GetColor(eraseNode);
+
+		if (ppToErase != NULL)
+			*ppToErase = s;
+		else
+			*this_root = s;
+		XBTreeNode_SetParent(s, XBTreeNode_GetParent(eraseNode));
+		XBTreeNode_SetLChild(s, left);
+		XBTreeNode_SetRChild(s, right);
+		if (left != NULL)
+			XBTreeNode_SetParent(left, s);
+		if (right != NULL)
+			XBTreeNode_SetParent(right, s);
+		XRBTree_SetColor(s, color);
 	}
 
-	// 2. === 关键修复：直接将 eraseNode 的数据指针替换为 LPreplace 的数据指针 ===
-	//    注意：这里只交换数据指针，不交换颜色！
-	//size_t dataSize = ((XTreeNode*)eraseNode)->dataSize;
-	if (dataSize > 0) 
-	{
-		/*
-		 * 临时交换数据使用第三种内存池：小数据走快速池，大数据由混合池
-		 * 回退系统内存。节点所属的 memory 只用于节点生命周期管理，不能
-		 * 因为节点使用了其他内存方法而改变临时缓冲区的分配策略。
-		 */
-		XMemory* temporaryMemory = XMemory_method(XMEMORY_TYPE_HYBRID);
-		char* tempBuffer = temporaryMemory && temporaryMemory->malloc
-			? (char*)temporaryMemory->malloc(dataSize) : NULL;
-		if (tempBuffer == NULL) {
-			// 处理内存分配失败的情况，例如直接返回或采取其他措施
-			return NULL;
-		}
-		memcpy(tempBuffer, XTreeNode_GetDataPtr(eraseNode), dataSize);
-		memcpy(XTreeNode_GetDataPtr(eraseNode), XTreeNode_GetDataPtr(LPreplace), dataSize);
-		memcpy(XTreeNode_GetDataPtr(LPreplace), tempBuffer, dataSize);
-		if (temporaryMemory && temporaryMemory->free)
-			temporaryMemory->free(tempBuffer); // 使用分配时的混合池释放临时缓冲区
-	}
-	//void* tempData = XTreeNode_GetDataPtr(eraseNode);
-	//memcpy();
-	//XTreeNode_SetDataPtr(eraseNode, XTreeNode_GetDataPtr(LPreplace));
-	//XTreeNode_SetDataPtr(LPreplace, tempData);
-
-	// 3. === 核心思想：现在，LPreplace 节点持有需要被清理的旧数据 ===
-	//    我们现在要做的就是像删除一个普通节点一样删除 LPreplace。
-	//    由于 LPreplace 是后继节点，它最多只有一个右孩子，所以可以直接调用 OneChild_erase。
-	OneChild_erase(this_root, LPreplace);
-	return LPreplace;
+	// 3) eraseNode 完全脱离树，交还调用方释放。
+	XBTreeNode_SetLChild(eraseNode, NULL);
+	XBTreeNode_SetRChild(eraseNode, NULL);
+	XBTreeNode_SetParent(eraseNode, NULL);
+	return eraseNode;
 
 #else
 	IS_ON_DEBUG(XVector_ON);

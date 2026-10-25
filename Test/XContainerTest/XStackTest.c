@@ -1,7 +1,6 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST_ON
 #include<stdint.h>
-#include<time.h>
 #include<stdlib.h>
 #include"XStack.h"
 #include"XLockFreeStack.h"

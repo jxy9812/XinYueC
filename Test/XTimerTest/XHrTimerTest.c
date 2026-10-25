@@ -6,12 +6,8 @@
 #include"XPrintf.h"
 #include"XThread.h"
 #include <assert.h>
-#ifdef _WIN32
-#include <windows.h> // for Sleep
-#else
-#include <unistd.h> // for usleep
-#define Sleep(x) usleep((x) * 1000)
-#endif
+// 休眠统一走框架接口 XThread_msleep（对标 QThread::msleep），不再自带
+// 平台分支的 Sleep/usleep 宏。
 // 全局变量用于测试回调
 static int g_callback_count = 0;
 static int g_single_shot_fired = 0;
@@ -81,7 +77,7 @@ void XHrTimerTest()
 
         // 5. 等待并触发滴答 (60ms)
         // 此时应该只触发单次定时器
-        Sleep(60);
+        XThread_msleep(60);
         XHrTimerGroup_tick_base(timer_group);
 
         assert(g_callback_count == 1);
@@ -90,7 +86,7 @@ void XHrTimerTest()
         XPrintf("5. Single-shot timer fired correctly.\n");
 
         // 6. 再次滴答 (再等110ms)
-        Sleep(110);
+        XThread_msleep(110);
         XHrTimerGroup_tick_base(timer_group);
 
         assert(g_callback_count == 2);
@@ -98,7 +94,7 @@ void XHrTimerTest()
         XPrintf("6. First periodic timer fired.\n");
 
         // 7. 再次滴答 (再等110ms)
-        Sleep(110);
+        XThread_msleep(110);
         XHrTimerGroup_tick_base(timer_group);
 
         assert(g_callback_count == 3);
@@ -107,7 +103,7 @@ void XHrTimerTest()
 
         // 8. 再次滴答 (再等110ms)
         // 周期性定时器第三次触发，并在回调中被移除
-        Sleep(110);
+        XThread_msleep(110);
         XHrTimerGroup_tick_base(timer_group);
 
         assert(g_callback_count == 4);
@@ -115,7 +111,7 @@ void XHrTimerTest()
         XPrintf("8. Third periodic timer fired and removed.\n");
 
         // 9. 再等待一段时间，确保没有多余回调
-        Sleep(200);
+        XThread_msleep(200);
         XHrTimerGroup_tick_base(timer_group);
 
         assert(g_callback_count == 4); // 计数不应再增加
@@ -140,4 +136,35 @@ void XTestMenu_XHrTimerTest(XTestMenu* root)
 		XAction* action = XTestMenu_addAction(menu, "主测试");
 		XTestMenu_setActionFunction(action, XHrTimerTest);
 	}
+	/* [两孩子删除句柄身份压测 2026-10-25] 压测项与主测试同属 XHrTimer
+	 * 菜单：随机增删 + 句柄全量回收（主体见 XHrTimerStressTest.c）。 */
+	XTestMenu_XHrTimerStressTest(menu);
+}
+
+/* ==================== 压测菜单入口 ====================
+ * [两孩子删除句柄身份压测 2026-10-25] 原为独立可执行 XHrTimerStress_Test
+ * 的自带 main 驱动（hr_stress_driver.c），现取消 main：压测改从测试菜单
+ * 进入——「测试代码 → 定时器 → XHrTimer(高精度定时器组) → 压测(随机增删+
+ * 句柄回收)」，与 XGuiWindowDemo 的 --hr-stress 入口同源共用
+ * XHrTimerStressTest()，失败断言数经返回值与打印双通道汇报。 */
+
+/* 菜单动作：跑一轮压测并汇报失败断言数（0=通过）。 */
+void XHrTimerStressMenuAction(XVariant* data)
+{
+	int failures;
+	(void)data;
+	failures = XHrTimerStressTest();
+	XPrintf("XHrTimer 压测结束：失败断言 %d 条（0=通过）\n", failures);
+}
+
+/* 把压测项挂到给定的 XHrTimer 菜单（由 XTestMenu_XHrTimerTest 调用）。 */
+void XTestMenu_XHrTimerStressTest(XTestMenu* root)
+{
+	XAction* action;
+	if (root == NULL)
+		return;
+	action = XTestMenu_addAction(root, "压测(随机增删+句柄回收)");
+	if (action == NULL)
+		return;
+	XTestMenu_setActionFunction(action, XHrTimerStressMenuAction);
 }

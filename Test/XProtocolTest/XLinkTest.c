@@ -1,21 +1,33 @@
 ﻿/** @file       XLinkTest.c
- * @brief      XLink 私有应用层协议全量单元测试（接入 Test 菜单/命令行体系）。
+ * @brief      XLink 私有应用层协议全量单元测试 + 实战案例（接入 Test 菜单/命令行体系）。
  * @details    覆盖 XLink 公开 API 的每一条路径，读测试代码即可了解协议用途：
  *
  *   一、编解码层 XLinkCodec（小端序列化 / 帧头往返 / 载荷上限安全阀）
  *   二、会话生命周期 XLinkSession（init/create/create_ex/deinit 配对）
  *   三、传输挂载与状态机（Inactive -> Connected -> Ready）
- *   四、握手与能力位协商（双向对称 Hello/HelloAck，能力按位与）
+ *   四、握手与能力位协商（自动 Hello/HelloAck 双向对称，能力按位与）
  *   五、请求-应答关联（requestId 双向独立、应答出表、异步应答支持）
  *   六、推送与 topicId 承载（u32 topicId 不被 u16 msgCode 截断）
  *   七、订阅/退订语义（订阅表登记、回滚、重复退订拒绝）
- *   八、待应答表与超时（不误报、取出不重复上报）
+ *   八、待应答表与自动超时（严格大于阈值判定、终局上报与出表）
  *   九、心跳与静默判线
  *   十、防御性路径（NULL 防御、非法参数、协议违例、半包粘包）
+ *   十一、服务端包装 XLinkServer（监听接入/模板下发/自动握手/会话回收，真实 TCP）
+ *   （十二、实战案例已分立为 XLinkDemoServer.c / XLinkDemoClient.c /
+ *      XLinkDemo.h 三个文件，本文件经 XLinkTest.h 间接引用其入口。）
+ *   十三、信号与自动超时重试（stateChanged/requestFinished 信号、请求自动
+ *      超时静默重发与终局上报、sendTick==0 起算回归、四条新 API 防御）
+ *   十四、客户端包装 XLinkClient（NULL 防御、默认值与栈上生命周期、正常
+ *      链路、踢线自动重连、重连关、手动断开、最大重连次数；原
+ *      XLinkClientTest.c 已整体并入本分组）
+ *   十五、能力位全矩阵（None/对称/不对称/全组合、HelloAck 附加快照容忍、
+ *      RequestTimeout 位不干扰自动超时；negotiatedCapability(NULL) 已见
+ *      分组十，不重复）
  *
- *   传输介质统一使用 XGuiRemoteLoopbackDevice（内存回环设备对）：两个会话
- *   经同一条管道互连，无需真实网卡即可跑通完整链路；其"全有全无"写入
- *   语义恰好能压出 XLink 的帧原子性缺陷。
+ *   单元测试（一~十）的传输介质统一使用 XGuiRemoteLoopbackDevice（内存回环
+ *   设备对）：两个会话经同一条管道互连，无需真实网卡即可跑通完整链路；其
+ *   "全有全无"写入语义恰好能压出 XLink 的帧原子性缺陷。服务端测试（十一）、
+ *   实战案例（十二）与客户端包装测试（十四）使用真实 127.0.0.1 环回 TCP。
  *
  *   运行入口：Test 菜单「协议栈 → XLink(...)」，或命令行
  *   `XinYueC -test xlink`（见 Test/XProtocolTest 的命令行分派）。
@@ -23,12 +35,21 @@
  * @author      XinYueC 团队
  */
 #include "XLinkTest.h"
+#include "XLinkDemo.h"
 #include "XLinkCodec.h"
 #include "XLinkSession.h"
+#include "XLinkServer.h"
+#include "XLinkClient.h"
 #include "XGuiRemoteLoopback.h"
+#include "XTcpSocket.h"
+#include "XCoreApplication.h"
+#include "XDateTime.h"
+#include "XThread.h"
 #include "XTestMenu.h"
 #include "XAction.h"
+#include "XStringUtils.h"
 #include "XPrintf.h"
+#include <stdlib.h>
 #include <string.h>
 
 /* ========================================================================== */
@@ -152,7 +173,7 @@ static void xlink_fixture_step(XLinkTestFixture* fixture, int rounds)
 }
 
 /* ========================================================================== */
-/*                        测试用消息收发器                                   */
+/*                     测试用消息收发器与信号观测槽                            */
 /* ========================================================================== */
 
 /** 服务端收到的请求数。 */
@@ -218,6 +239,86 @@ static void xlink_client_dispatch(XLinkSession* self,
             g_lastPublishTopic = XLinkCodec_getU32(payload);
             g_lastPublishByte = (frame->m_payloadLen >= 5) ? payload[4] : 0;
         }
+    }
+}
+
+/** @brief 换设备测试的投递计数（xlink_switch_dispatch 落账，用例内清零）。 */
+static int g_switchHits = 0;
+
+/**
+ * @brief 换设备测试的投递计数器：任何投递到业务层的帧计 1。
+ */
+static void xlink_switch_dispatch(XLinkSession* self,
+                                  const XLinkFrameHeader* frame,
+                                  const uint8_t* payload)
+{
+    (void)self;
+    (void)frame;
+    (void)payload;
+    g_switchHits++;
+}
+
+/* ========================================================================== */
+/*                        信号观测槽                                          */
+/* ========================================================================== */
+
+/** stateChanged 信号观测：累计发射次数。 */
+static int g_stateChangedCount = 0;
+/** stateChanged 信号观测：最近一次携带的新状态。 */
+static XLinkSessionState g_lastStateChanged = XLinkSessionState_Inactive;
+/** requestFinished 信号观测：累计发射次数。 */
+static int g_reqFinishedCount = 0;
+/** requestFinished 信号观测：最近一次携带的请求 id。 */
+static uint32_t g_reqFinishedId = 0;
+/** requestFinished 信号观测：最近一次携带的命令号。 */
+static uint16_t g_reqFinishedCmd = 0;
+/** requestFinished 信号观测：最近一次携带的终局结果。 */
+static bool g_reqFinishedOk = false;
+/** 只计数不应答的服务端回调：收到的请求总数。 */
+static int g_silentRequestCount = 0;
+/** 只计数不应答的服务端回调：最近一次请求的命令号。 */
+static uint16_t g_silentLastCmd = 0;
+
+/**
+ * @brief stateChanged 信号槽：落账发射次数与最新状态。
+ * @note  参数解包类型与 XLinkSession_stateChanged_signal 发射侧逐一对应
+ *        （XVarList 按创建时的类型与大小连续存储）。
+ */
+static void xlink_state_changed_slot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    XVarList_args_1(args, XLinkSessionState, state);
+    g_stateChangedCount++;
+    g_lastStateChanged = state;
+}
+
+/**
+ * @brief requestFinished 信号槽：落账终局三元组（id/命令/成败）。
+ */
+static void xlink_request_finished_slot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    XVarList_args_3(args, uint32_t, requestId, uint16_t, command,
+                    bool, succeeded);
+    g_reqFinishedCount++;
+    g_reqFinishedId = requestId;
+    g_reqFinishedCmd = command;
+    g_reqFinishedOk = succeeded;
+}
+
+/**
+ * @brief 只计数不应答的服务端分发回调：构造"请求石沉大海"的稳定超时场景。
+ * @note  不回任何应答，客户端的待应答槽只能靠自动超时路径终局。
+ */
+static void xlink_silent_dispatch(XLinkSession* self,
+                                  const XLinkFrameHeader* frame,
+                                  const uint8_t* payload)
+{
+    (void)self;
+    (void)payload;
+    if (frame && frame->m_msgClass == XLinkMsgClass_Request) {
+        g_silentRequestCount++;
+        g_silentLastCmd = frame->m_msgCode;
     }
 }
 
@@ -447,6 +548,109 @@ static void xlink_test_state_machine(void)
         xlink_fixture_delete(f);
         XLINK_CHECK(1, "夹具销毁（会话与设备全部释放）");
     }
+
+    /* 换设备接线：会话从设备对 A 摘下挂到设备对 B 并重新握手后，
+       A 侧的收包不再投递（旧 readyRead 接线已摘），B 侧正常收发。
+       先在 B 侧完成握手再验证 A 侧帧不达——把「旧接线已摘」与
+       「握手未完成不投递」两个因素隔离开。 */
+    {
+        XGuiRemoteLoopbackDevice *aDev = NULL, *aPeer = NULL;
+        XGuiRemoteLoopbackDevice *bDev = NULL, *bPeer = NULL;
+        XLinkSession *session = NULL, *aOpponent = NULL, *bOpponent = NULL;
+        g_switchHits = 0;
+
+        aDev = XGuiRemoteLoopbackDevice_createPair(8 * 1024, &aPeer);
+        bDev = XGuiRemoteLoopbackDevice_createPair(8 * 1024, &bPeer);
+        session = XLinkSession_create_ex((XIODevice*)aDev);
+        aOpponent = aPeer ? XLinkSession_create_ex((XIODevice*)aPeer) : NULL;
+        bOpponent = bPeer ? XLinkSession_create_ex((XIODevice*)bPeer) : NULL;
+        XLINK_CHECK(session && aOpponent && bOpponent,
+                    "换设备测试夹具搭建成功");
+        if (session && aOpponent && bOpponent) {
+            XLinkSession_setDispatchCallback(session, xlink_switch_dispatch,
+                                             NULL);
+
+            /* A 对：双方首圈 pump 自动互发 Hello，两圈完成握手 */
+            XLinkSession_pump(session, 1000);
+            XLinkSession_pump(aOpponent, 1000);
+            XLinkSession_pump(session, 1010);
+            XLinkSession_pump(aOpponent, 1010);
+            XLINK_CHECK(XLinkSession_isReady(session),
+                        "换设备前 A 链路就绪");
+
+            /* A 对端发一帧：会话（挂在 A 上）应收到 */
+            XLinkSession_sendPublish(aOpponent, XLINK_TOPIC_USER_BASE + 3,
+                                     (const uint8_t*)"A", 1);
+            XLinkSession_pump(aOpponent, 1020);
+            XLinkSession_pump(session, 1020);
+            XLINK_CHECK(g_switchHits == 1, "挂载 A 时收到 A 侧推送");
+
+            /* 换到设备 B 并与新对端握手 */
+            XLINK_CHECK(XLinkSession_setDevice(session, (XIODevice*)bDev),
+                        "换设备挂载成功");
+            XLinkSession_pump(session, 1030);
+            XLinkSession_pump(bOpponent, 1030);
+            XLinkSession_pump(session, 1040);
+            XLinkSession_pump(bOpponent, 1040);
+            XLINK_CHECK(XLinkSession_isReady(session),
+                        "换设备后 B 链路就绪");
+
+            /* A 对端再发一帧：旧接线已摘，不得投递 */
+            XLinkSession_sendPublish(aOpponent, XLINK_TOPIC_USER_BASE + 3,
+                                     (const uint8_t*)"A2", 2);
+            XLinkSession_pump(aOpponent, 1050);
+            XLinkSession_pump(session, 1050);
+            XLINK_CHECK(g_switchHits == 1,
+                        "换设备后旧设备 A 的帧不再投递");
+
+            /* B 对端发一帧：新接线正常投递 */
+            XLinkSession_sendPublish(bOpponent, XLINK_TOPIC_USER_BASE + 3,
+                                     (const uint8_t*)"B2", 2);
+            XLinkSession_pump(bOpponent, 1060);
+            XLinkSession_pump(session, 1060);
+            XLINK_CHECK(g_switchHits == 2,
+                        "换设备后新设备 B 的帧正常投递");
+        }
+        if (session) XClassDelete((XClass*)session);
+        if (aOpponent) XClassDelete((XClass*)aOpponent);
+        if (bOpponent) XClassDelete((XClass*)bOpponent);
+        if (aDev) XClassDelete((XClass*)aDev);
+        if (aPeer) XClassDelete((XClass*)aPeer);
+        if (bDev) XClassDelete((XClass*)bDev);
+        if (bPeer) XClassDelete((XClass*)bPeer);
+    }
+
+    /* 分发回调清空：置 NULL 后帧静默丢弃（只发不收的合法用法） */
+    {
+        XLinkTestFixture* f = xlink_fixture_create();
+        if (!f) {
+            XLINK_CHECK(false, "夹具搭建成功");
+            return;
+        }
+        XLinkSession_setDispatchCallback(f->m_server, xlink_server_dispatch,
+                                         NULL);
+        XLinkSession_setDispatchCallback(f->m_client, xlink_client_dispatch,
+                                         NULL);
+        xlink_fixture_step(f, 3); /* 首圈自动互发 Hello，三圈完成握手 */
+
+        XLinkSession_setDispatchCallback(f->m_client, NULL, NULL);
+        {
+            int before = g_clientPublishCount;
+            XLinkSession_sendPublish(f->m_server, XLINK_TOPIC_USER_BASE + 1,
+                                     NULL, 0);
+            xlink_fixture_step(f, 3);
+            XLINK_CHECK(g_clientPublishCount == before,
+                        "回调清空后帧静默丢弃（不投递不崩溃）");
+            XLinkSession_setDispatchCallback(f->m_client,
+                                             xlink_client_dispatch, NULL);
+            XLinkSession_sendPublish(f->m_server, XLINK_TOPIC_USER_BASE + 1,
+                                     NULL, 0);
+            xlink_fixture_step(f, 3);
+            XLINK_CHECK(g_clientPublishCount == before + 1,
+                        "重新注册回调后恢复投递");
+        }
+        xlink_fixture_delete(f);
+    }
 }
 
 /* ========================================================================== */
@@ -454,7 +658,7 @@ static void xlink_test_state_machine(void)
 /* ========================================================================== */
 
 /**
- * @brief 覆盖双向对称握手：Hello/HelloAck 自动应答与能力位按位与。
+ * @brief 覆盖双向对称握手：自动 Hello/HelloAck 与能力位按位与。
  */
 static void xlink_test_handshake(void)
 {
@@ -462,8 +666,6 @@ static void xlink_test_handshake(void)
 
     {
         XLinkTestFixture* f = xlink_fixture_create();
-        uint8_t helloBuf[4];
-        XLinkHelloPayload hello;
         if (!f) {
             XLINK_CHECK(false, "夹具搭建成功");
             return;
@@ -472,7 +674,7 @@ static void xlink_test_handshake(void)
         XLinkSession_setDispatchCallback(f->m_server, xlink_server_dispatch, NULL);
         XLinkSession_setDispatchCallback(f->m_client, xlink_client_dispatch, NULL);
 
-        /* 两端各声明能力：服务端 Zlib|Tls，客户端仅 Zlib */
+        /* 两端各声明能力：服务端 Zlib|Tls，客户端仅 Zlib（随自动 Hello 上线） */
         XLinkSession_setCapability(f->m_server,
                                   XLinkCapability_Zlib | XLinkCapability_Tls);
         XLinkSession_setCapability(f->m_client, XLinkCapability_Zlib);
@@ -480,32 +682,25 @@ static void xlink_test_handshake(void)
         XLINK_CHECK(XLinkSession_setCapability(NULL, 1) == false,
                     "setCapability 对 NULL 返回 false");
 
-        /* 握手前对业务消息不可见：Publish 不应被投递 */
+        /* 握手完成前对业务消息不可见：Publish 不应被投递（增量基线，
+           计数器可能被前序用例累加过）。Publish 在驱动前入环，首圈
+           pump 触发自动握手，投递与否取决于到达时对端状态。 */
         {
             uint8_t payload = 0x11;
+            int before = g_clientPublishCount;
             XLinkSession_sendPublish(f->m_server, XLINK_TOPIC_USER_BASE + 5,
                                      &payload, 1);
             xlink_fixture_step(f, 2);
-            XLINK_CHECK(g_clientPublishCount == 0,
+            XLINK_CHECK(g_clientPublishCount == before,
                         "握手完成前不投递业务消息（防止乱序帧喂给应用）");
         }
 
-        /* 服务端发 Hello，客户端应自动回 HelloAck 并双双转 Ready */
-        hello.m_version = XLINK_VERSION;
-        hello.m_capability = XLinkCapability_Zlib | XLinkCapability_Tls;
-        XLINK_CHECK(XLinkCodec_encodeHello(&hello, helloBuf, sizeof(helloBuf),
-                                           NULL),
-                    "Hello 载荷编码成功");
-        XLINK_CHECK(XLinkSession_sendSession(f->m_server,
-                                             XLinkSessionCode_Hello,
-                                             helloBuf, 4),
-                    "服务端发出 Hello");
-        xlink_fixture_step(f, 3);
-
+        /* 自动握手：双方首次驱动各自补发 Hello，收到对端 Hello 自动回
+           HelloAck 并转 Ready（零样板，双向对称） */
         XLINK_CHECK(XLinkSession_isReady(f->m_client),
-                    "客户端收到 Hello 后自动应答并转 Ready");
+                    "客户端自动握手完成并转 Ready");
         XLINK_CHECK(XLinkSession_isReady(f->m_server),
-                    "服务端收到 HelloAck 后转 Ready（双向对称）");
+                    "服务端自动握手完成并转 Ready（双向对称）");
         XLINK_CHECK(XLinkSession_remoteVersion(f->m_client) == XLINK_VERSION,
                     "客户端学到对端协议版本");
         XLINK_CHECK(XLinkSession_remoteVersion(f->m_server) == XLINK_VERSION,
@@ -557,11 +752,11 @@ static void xlink_test_request_response(void)
 
     {
         XLinkTestFixture* f = xlink_fixture_create();
-        uint8_t helloBuf[4];
-        XLinkHelloPayload hello;
+        uint8_t arg = 0x5A;
         uint32_t id1 = 0;
         uint32_t id2 = 0;
-        uint8_t arg = 0x5A;
+        int reqBase = 0;
+        int respBase = 0;
         if (!f) {
             XLINK_CHECK(false, "夹具搭建成功");
             return;
@@ -575,14 +770,12 @@ static void xlink_test_request_response(void)
         XLINK_CHECK(XLinkSession_sendRequest(NULL, 1, &arg, 1, &id1) == false,
                     "sendRequest 对 NULL 会话返回 false");
 
-        /* 先握手，业务消息才可见 */
-        hello.m_version = XLINK_VERSION;
-        hello.m_capability = XLinkCapability_Zlib;
-        XLinkCodec_encodeHello(&hello, helloBuf, sizeof(helloBuf), NULL);
-        XLinkSession_sendSession(f->m_server, XLinkSessionCode_Hello,
-                                 helloBuf, 4);
+        /* 自动握手：首次驱动补发 Hello，业务消息就绪后才可见 */
         xlink_fixture_step(f, 3);
-        XLINK_CHECK(XLinkSession_isReady(f->m_client), "握手完成");
+        XLINK_CHECK(XLinkSession_isReady(f->m_client), "自动握手完成");
+        /* 计数取增量基线：全局计数器可能被前序用例累加过 */
+        reqBase = g_serverRequestCount;
+        respBase = g_clientResponseCount;
 
         /* 请求 id 生成与待应答入表 */
         XLINK_CHECK(XLinkSession_sendRequest(f->m_client, 42, &arg, 1, &id1),
@@ -598,8 +791,8 @@ static void xlink_test_request_response(void)
 
         xlink_fixture_step(f, 3);
 
-        XLINK_CHECK(g_serverRequestCount == 2, "服务端收到两条请求");
-        XLINK_CHECK(g_clientResponseCount == 2, "客户端收到两条应答");
+        XLINK_CHECK(g_serverRequestCount == reqBase + 2, "服务端收到两条请求");
+        XLINK_CHECK(g_clientResponseCount == respBase + 2, "客户端收到两条应答");
         XLINK_CHECK(!XLinkSession_isPending(f->m_client, id1),
                     "应答到达后请求 1 出待应答表");
         XLINK_CHECK(!XLinkSession_isPending(f->m_client, id2),
@@ -628,8 +821,6 @@ static void xlink_test_publish(void)
 
     {
         XLinkTestFixture* f = xlink_fixture_create();
-        uint8_t helloBuf[4];
-        XLinkHelloPayload hello;
         uint8_t payload = 0x99;
         if (!f) {
             XLINK_CHECK(false, "夹具搭建成功");
@@ -646,14 +837,12 @@ static void xlink_test_publish(void)
         XLINK_CHECK(!XLinkSession_sendPublish(f->m_server, 5, &payload, 1),
                     "sendPublish 拒绝低于用户基址的 topicId");
 
-        hello.m_version = XLINK_VERSION;
-        hello.m_capability = XLinkCapability_Zlib;
-        XLinkCodec_encodeHello(&hello, helloBuf, sizeof(helloBuf), NULL);
-        XLinkSession_sendSession(f->m_server, XLinkSessionCode_Hello,
-                                 helloBuf, 4);
-        xlink_fixture_step(f, 3);
+        xlink_fixture_step(f, 3); /* 自动握手 */
 
-        /* 零载荷推送（事件类"仅通知无数据"形态） */
+        /* 零载荷推送（事件类"仅通知无数据"形态）。
+           计数取增量基线：全局计数器可能被前序用例累加过。 */
+        {
+            int before = g_clientPublishCount;
         XLINK_CHECK(XLinkSession_sendPublish(f->m_server,
                                              XLINK_TOPIC_USER_BASE + 1,
                                              NULL, 0),
@@ -665,11 +854,31 @@ static void xlink_test_publish(void)
                     "带载荷推送发送成功");
         xlink_fixture_step(f, 3);
 
-        XLINK_CHECK(g_clientPublishCount == 2, "客户端收到两条推送");
+        XLINK_CHECK(g_clientPublishCount == before + 2, "客户端收到两条推送");
         XLINK_CHECK(g_lastPublishTopic == XLINK_TOPIC_USER_BASE + 1,
                     "推送载荷携带完整 u32 topicId（0x10001 高位未丢失）");
         XLINK_CHECK(g_lastPublishByte == 0x99,
                     "业务载荷紧随 topicId 之后未错位");
+
+        /* 业务载荷超上限（可用上限 = XLINK_MAX_PAYLOAD - 4）：
+           拒绝、不截断、不部分发送，且链路不受影响。 */
+        {
+            static uint8_t bigBuf[XLINK_MAX_PAYLOAD - 3]; /* 比上限多 1 字节 */
+            XLINK_CHECK(!XLinkSession_sendPublish(f->m_server,
+                                                  XLINK_TOPIC_USER_BASE + 1,
+                                                  bigBuf, sizeof(bigBuf)),
+                        "业务载荷超上限被拒");
+            XLINK_CHECK(XLinkSession_isReady(f->m_server),
+                        "超限拒绝后链路仍健康");
+            XLINK_CHECK(XLinkSession_sendPublish(f->m_server,
+                                                 XLINK_TOPIC_USER_BASE + 1,
+                                                 &payload, 1),
+                        "超限拒绝后仍可正常推送");
+            xlink_fixture_step(f, 3);
+            XLINK_CHECK(g_clientPublishCount == before + 3,
+                        "超限拒绝不影响后续推送送达");
+            }
+        }
 
         xlink_fixture_delete(f);
     }
@@ -714,8 +923,6 @@ static void xlink_test_subscribe(void)
     /* 已握手场景：验证订阅驱动对端推送 */
     {
         XLinkTestFixture* f = xlink_fixture_create();
-        uint8_t helloBuf[4];
-        XLinkHelloPayload hello;
         uint32_t topic = XLINK_TOPIC_USER_BASE + 7;
         if (!f) {
             XLINK_CHECK(false, "夹具搭建成功");
@@ -726,12 +933,7 @@ static void xlink_test_subscribe(void)
         XLinkSession_setCapability(f->m_server, XLinkCapability_Zlib);
         XLinkSession_setCapability(f->m_client, XLinkCapability_Zlib);
 
-        hello.m_version = XLINK_VERSION;
-        hello.m_capability = XLinkCapability_Zlib;
-        XLinkCodec_encodeHello(&hello, helloBuf, sizeof(helloBuf), NULL);
-        XLinkSession_sendSession(f->m_server, XLinkSessionCode_Hello,
-                                 helloBuf, 4);
-        xlink_fixture_step(f, 3);
+        xlink_fixture_step(f, 3); /* 自动握手 */
 
         /* 记录订阅前推送数，便于对比 */
         {
@@ -755,6 +957,19 @@ static void xlink_test_subscribe(void)
                         "服务端从载荷解析出退订 topicId");
             XLINK_CHECK(!XLinkSession_unsubscribe(f->m_client, topic),
                         "重复退订被拒");
+
+            /* 重复订阅幂等：多次订阅等价一次（不重复占槽），一次退订即退净。
+               （若订阅重复占槽，此处一次退订后 isSubscribed 仍为 true） */
+            XLINK_CHECK(XLinkSession_subscribe(f->m_client, topic),
+                        "首次订阅成功");
+            XLINK_CHECK(XLinkSession_subscribe(f->m_client, topic),
+                        "重复订阅幂等返回 true");
+            XLINK_CHECK(XLinkSession_subscribe(f->m_client, topic),
+                        "多次订阅仍幂等");
+            XLINK_CHECK(XLinkSession_unsubscribe(f->m_client, topic),
+                        "幂等订阅一次退订即退净");
+            XLINK_CHECK(!XLinkSession_isSubscribed(f->m_client, topic),
+                        "幂等订阅退订后无残留槽位");
         }
 
         xlink_fixture_delete(f);
@@ -762,63 +977,73 @@ static void xlink_test_subscribe(void)
 }
 
 /* ========================================================================== */
-/*                        八、待应答表与超时                                  */
+/*                        八、待应答表与自动超时                              */
 /* ========================================================================== */
 
 /**
- * @brief 覆盖待应答表的超时判定：到点才报、取出不重报。
+ * @brief 覆盖自动超时判定：严格大于阈值才终局，终局出表且不重复上报。
  */
 static void xlink_test_pending_timeout(void)
 {
-    XLINK_SECTION("八、待应答表与超时");
+    XLINK_SECTION("八、待应答表与自动超时");
 
     XLINK_CHECK(XLinkSession_isPending(NULL, 1) == false,
                 "isPending 对 NULL 返回 false");
-    XLINK_CHECK(XLinkSession_takeTimedOut(NULL, 0, 100, NULL) == false,
-                "takeTimedOut 对 NULL 返回 false");
 
     {
         XLinkTestFixture* f = xlink_fixture_create();
         uint8_t arg = 0x01;
         uint32_t id = 0;
-        uint16_t cmd = 0;
-        uint32_t base;
         if (!f) {
             XLINK_CHECK(false, "夹具搭建成功");
             return;
         }
-        /* 先 pump 一轮建立时间基准：会话的发送时间戳取自最近一次 pump 的
-           nowTick（协议不自行取时，见 XLinkSession.h 时间口径），若在首次
-           pump 前发请求，基准为 0 会导致超时判定失真。 */
-        f->m_now += 10;
-        XLinkSession_pump(f->m_server, f->m_now);
+        /* 双端首次驱动自动握手；服务端不注册回调：请求发出后无人应答，
+           构造稳定的超时终局场景。 */
+        xlink_fixture_step(f, 3);
+        XLINK_CHECK(XLinkSession_isReady(f->m_client), "自动握手完成");
 
-        /* 不注册对端回调：请求发出后无人应答，构造稳定超时场景 */
-        base = f->m_now;
-        XLINK_CHECK(XLinkSession_sendRequest(f->m_server, 99, &arg, 1, &id),
+        /* 自动模式：阈值 500ms、不重试（首次超时即终局） */
+        XLINK_CHECK(XLinkSession_setRequestTimeout(f->m_client, 500),
+                    "setRequestTimeout(500) 成功");
+        XLINK_CHECK(XLinkSession_setNumberOfRetries(f->m_client, 0),
+                    "setNumberOfRetries(0) 成功");
+        g_reqFinishedCount = 0;
+        g_reqFinishedId = 0;
+        g_reqFinishedCmd = 0;
+        g_reqFinishedOk = true;
+        XObject_connect_2((XObject*)f->m_client,
+                          XSignal(XLinkSession_requestFinished_signal),
+                          xlink_request_finished_slot);
+
+        XLINK_CHECK(XLinkSession_sendRequest(f->m_client, 99, &arg, 1, &id),
                     "发出不会被应答的请求");
-        XLINK_CHECK(XLinkSession_isPending(f->m_server, id),
+        XLINK_CHECK(XLinkSession_isPending(f->m_client, id),
                     "请求在待应答表中");
 
-        XLINK_CHECK(!XLinkSession_takeTimedOut(f->m_server, f->m_now,
-                                               2000, &cmd),
-                    "未到时不误报超时");
-        XLINK_CHECK(!XLinkSession_takeTimedOut(f->m_server, f->m_now + 1999,
-                                               2000, &cmd),
-                    "差 1ms 未到阈值不报超时");
+        /* 恰好等于阈值不算超时：判定口径为严格大于 */
+        XLinkSession_pump(f->m_client, f->m_now + 500);
+        XLINK_CHECK(g_reqFinishedCount == 0,
+                    "达到阈值但未超过不判超时（严格大于口径）");
+        XLINK_CHECK(XLinkSession_isPending(f->m_client, id),
+                    "阈值边缘请求仍在待应答表");
 
-        XLINK_CHECK(XLinkSession_takeTimedOut(f->m_server, f->m_now + 3000,
-                                              2000, &cmd),
-                    "超过阈值后取出超时请求");
-        XLINK_CHECK(cmd == 99, "取出的超时命令号与发出时一致");
-        XLINK_CHECK(!XLinkSession_isPending(f->m_server, id),
-                    "超时取出后请求已出表");
-        XLINK_CHECK(!XLinkSession_takeTimedOut(f->m_server, f->m_now + 3000,
-                                               2000, &cmd),
-                    "超时取出后不重复上报（不刷屏）");
+        /* 再过 1ms 越过阈值：终局上报并出表 */
+        XLinkSession_pump(f->m_client, f->m_now + 501);
+        XLINK_CHECK(g_reqFinishedCount == 1,
+                    "越过阈值后发射 requestFinished(false)");
+        XLINK_CHECK(g_reqFinishedId == id && g_reqFinishedCmd == 99
+                        && g_reqFinishedOk == false,
+                    "终局信号携带原请求 id、命令号与失败结果");
+        XLINK_CHECK(!XLinkSession_isPending(f->m_client, id),
+                    "超时终局后请求已出表");
+
+        /* 出表后继续 pump：不重复上报（不刷屏） */
+        XLinkSession_pump(f->m_client, f->m_now + 601);
+        XLINK_CHECK(g_reqFinishedCount == 1,
+                    "超时终局后不重复上报");
 
         xlink_fixture_delete(f);
-        XLINK_CHECK(base > 0, "夹具时间游标已推进");
     }
 
     /* 待应答表容量：超出槽位数应拒绝而非静默丢 */
@@ -861,8 +1086,6 @@ static void xlink_test_heartbeat_timeout(void)
 
     {
         XLinkTestFixture* f = xlink_fixture_create();
-        uint8_t helloBuf[4];
-        XLinkHelloPayload hello;
         if (!f) {
             XLINK_CHECK(false, "夹具搭建成功");
             return;
@@ -870,12 +1093,7 @@ static void xlink_test_heartbeat_timeout(void)
         XLinkSession_setDispatchCallback(f->m_server, xlink_server_dispatch, NULL);
         XLinkSession_setCapability(f->m_server, XLinkCapability_Zlib);
 
-        hello.m_version = XLINK_VERSION;
-        hello.m_capability = XLinkCapability_Zlib;
-        XLinkCodec_encodeHello(&hello, helloBuf, sizeof(helloBuf), NULL);
-        XLinkSession_sendSession(f->m_server, XLinkSessionCode_Hello,
-                                 helloBuf, 4);
-        xlink_fixture_step(f, 3);
+        xlink_fixture_step(f, 3); /* 自动握手 */
         XLINK_CHECK(XLinkSession_isReady(f->m_server), "握手完成进入 Ready");
 
         /* 静默推进超过阈值：pump 期间无任何收发，应判线 */
@@ -948,18 +1166,12 @@ static void xlink_test_defensive(void)
             XLinkSession* b = XLinkSession_create_ex((XIODevice*)devB);
             XLinkSession_setDispatchCallback(b, xlink_client_dispatch, NULL);
             if (a && b) {
-                uint8_t helloBuf[4];
-                XLinkHelloPayload hello;
                 int before = g_clientPublishCount;
                 uint8_t payload = 0x66;
 
-                /* 先握手 */
+                /* 先握手（各端首次 pump 自动补发 Hello） */
                 XLinkSession_setCapability(a, XLinkCapability_Zlib);
                 XLinkSession_setCapability(b, XLinkCapability_Zlib);
-                hello.m_version = XLINK_VERSION;
-                hello.m_capability = XLinkCapability_Zlib;
-                XLinkCodec_encodeHello(&hello, helloBuf, sizeof(helloBuf), NULL);
-                XLinkSession_sendSession(a, XLinkSessionCode_Hello, helloBuf, 4);
                 XLinkSession_pump(a, 1000);
                 XLinkSession_pump(b, 1000);
                 XLinkSession_pump(a, 1000);
@@ -1006,6 +1218,1556 @@ static void xlink_test_defensive(void)
 }
 
 /* ========================================================================== */
+/*                        十一、服务端包装 XLinkServer                        */
+/* ========================================================================== */
+
+/** 服务端 notify：Added 事件计数。 */
+static int g_srvAddedCount = 0;
+/** 服务端 notify：Removed 事件计数。 */
+static int g_srvRemovedCount = 0;
+/** 服务端分发回调收到的请求数。 */
+static int g_srvEchoRequests = 0;
+/** 客户端收到 0x5A 回显应答数。 */
+static int g_srvEchoResponses = 0;
+
+/**
+ * @brief 服务端会话增删通知回调：统计 Added/Removed。
+ */
+static void xlink_srv_notify(XLinkServer* self, XLinkSession* session,
+                             XLinkServerSessionEvent event)
+{
+    (void)self;
+    (void)session;
+    if (event == XLinkServerSessionEvent_Added)
+        g_srvAddedCount++;
+    else
+        g_srvRemovedCount++;
+}
+
+/**
+ * @brief 服务端分发回调：请求即回 1 字节回显应答。
+ */
+static void xlink_srv_dispatch(XLinkSession* self,
+                               const XLinkFrameHeader* frame,
+                               const uint8_t* payload)
+{
+    if (!self || !frame)
+        return;
+    if (frame->m_msgClass == XLinkMsgClass_Request) {
+        uint8_t echo = (payload && frame->m_payloadLen > 0) ? payload[0] : 0;
+        g_srvEchoRequests++;
+        XLinkSession_sendResponse(self, frame->m_requestId, frame->m_msgCode,
+                                  &echo, 1);
+    }
+}
+
+/**
+ * @brief 客户端分发回调：统计 0x5A 回显应答。
+ */
+static void xlink_srv_client_dispatch(XLinkSession* self,
+                                      const XLinkFrameHeader* frame,
+                                      const uint8_t* payload)
+{
+    (void)self;
+    if (frame && frame->m_msgClass == XLinkMsgClass_Response
+        && payload && frame->m_payloadLen >= 1 && payload[0] == 0x5A)
+        g_srvEchoResponses++;
+}
+
+/**
+ * @brief 覆盖 XLinkServer：NULL 防御、栈上生命周期、真实 TCP 监听接入、
+ *        模板下发、零样板自动握手、请求应答、Inactive 会话回收。
+ * @note  真实链路经 127.0.0.1 环回 TCP，accept 依赖 processEvents 驱动
+ *        监听器事件（与 XConsoleShellBackendTest 同口径）；pump 的 nowMs
+ *        全程用实时单调毫秒——服务端会话可能被内建定时器/readyRead 以
+ *        真实时钟异步驱动，混入假时钟会污染静默判线时间轴。
+ */
+static void xlink_test_server(void)
+{
+    XLINK_SECTION("十一、服务端包装 XLinkServer");
+
+    /* --- NULL 防御 --- */
+    XLinkServer_pump(NULL, 0);
+    XLinkServer_close(NULL);
+    XLINK_CHECK(XLinkServer_sessionCount(NULL) == 0,
+                "sessionCount 对 NULL 返回 0");
+    XLINK_CHECK(XLinkServer_sessionAt(NULL, 0) == NULL,
+                "sessionAt 对 NULL 返回 NULL");
+    XLINK_CHECK(XLinkServer_tcpServer_const(NULL) == NULL,
+                "tcpServer_const 对 NULL 返回 NULL");
+    XLINK_CHECK(!XLinkServer_setTickInterval(NULL, 100),
+                "setTickInterval 对 NULL 拒绝");
+    XLINK_CHECK(XLinkServer_tickInterval(NULL) == 0,
+                "tickInterval 对 NULL 返回 0");
+    XLINK_CHECK(!XLinkServer_listen_base(NULL, "127.0.0.1", 0),
+                "listen 对 NULL 拒绝");
+    XLINK_CHECK(1, "pump/close 对 NULL 安全空操作");
+
+    /* --- 栈上生命周期：init/deinit 配对 --- */
+    {
+        XLinkServer stackSrv;
+        XLinkServer_init(&stackSrv);
+        XLINK_CHECK(XLinkServer_tcpServer_const(&stackSrv) != NULL,
+                    "栈上 init 内嵌监听器就绪");
+        XLINK_CHECK(XLinkServer_sessionCount(&stackSrv) == 0,
+                    "初始托管会话数为 0");
+        XClassDeinit(&stackSrv);
+        XLINK_CHECK(1, "栈上 init/deinit 配对无崩溃");
+    }
+
+    /* --- 真实 TCP 全链路 --- */
+    {
+        XLinkServer* srv = XLinkServer_create();
+        XTcpSocket* clientSock = NULL;
+        XLinkSession* client = NULL;
+        XLinkSession* srvSession = NULL;
+        uint16_t port = 0;
+        int i;
+        uint32_t reqId = 0;
+        uint8_t arg = 0x5A;
+
+        g_srvAddedCount = 0;
+        g_srvRemovedCount = 0;
+        g_srvEchoRequests = 0;
+        g_srvEchoResponses = 0;
+
+        XLINK_CHECK(srv != NULL, "服务端堆创建成功");
+        if (!srv)
+            return;
+
+        XLinkServer_setCapability(srv, XLinkCapability_Zlib);
+        XLinkServer_setDispatchCallback(srv, xlink_srv_dispatch, NULL);
+        XLinkServer_setNotifyCallback(srv, xlink_srv_notify);
+
+        if (XLinkServer_listen_base(srv, "127.0.0.1", 0)) {
+            XTcpServer* listener = XLinkServer_tcpServer_const(srv);
+            port = XTcpServer_serverPort(listener);
+            XLINK_CHECK(port != 0, "自动分配端口监听成功");
+        } else {
+            XLINK_CHECK(0, "自动分配端口监听成功");
+        }
+
+        /* 客户端连入（异步 connect + 事件驱动 accept） */
+        clientSock = XTcpSocket_create();
+        if (clientSock) {
+            XTcpSocket_connectToHost_base((XAbstractSocket*)clientSock,
+                                          "127.0.0.1", port,
+                                          XIODevice_ReadWrite,
+                                          XAbstractSocket_AnyIPProtocol);
+            XLINK_CHECK(XTcpSocket_waitForConnected_base(
+                            (XAbstractSocket*)clientSock, 3000),
+                        "客户端连接环回端口成功");
+
+            for (i = 0; i < 500 && g_srvAddedCount == 0; i++) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XLinkServer_pump(srv,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            }
+            XLINK_CHECK(g_srvAddedCount == 1, "newConnection 自动建会话（Added 通知）");
+            XLINK_CHECK(XLinkServer_sessionCount(srv) == 1,
+                        "托管会话数为 1");
+            srvSession = XLinkServer_sessionAt(srv, 0);
+            XLINK_CHECK(srvSession != NULL
+                        && XLinkSession_state(srvSession)
+                               == XLinkSessionState_Connected,
+                        "新会话处于 Connected（模板能力位/回调已下发）");
+        } else {
+            XLINK_CHECK(0, "客户端连接环回端口成功");
+        }
+
+        /* 客户端侧会话 + 零样板握手：两侧均不手动发 Hello，
+           各自首次 pump 自动补发，对端收到自动回 HelloAck。 */
+        if (clientSock) {
+            client = XLinkSession_create_ex((XIODevice*)clientSock);
+            XLinkSession_setCapability(client, XLinkCapability_Zlib);
+            XLinkSession_setDispatchCallback(client, xlink_srv_client_dispatch,
+                                              NULL);
+        }
+        for (i = 0; i < 500
+                    && !(client && XLinkSession_isReady(client)
+                         && srvSession && XLinkSession_isReady(srvSession));
+             i++) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            XLinkServer_pump(srv,
+                             (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            if (client)
+                XLinkSession_pump(client,
+                                  (uint32_t)XDateTime_currentMSecsSinceEpoch());
+        }
+        XLINK_CHECK(client != NULL && XLinkSession_isReady(client),
+                    "客户端自动握手完成（零样板）");
+        XLINK_CHECK(srvSession != NULL && XLinkSession_isReady(srvSession),
+                    "服务端会话自动握手完成");
+        XLINK_CHECK((client ? XLinkSession_negotiatedCapability(client) : 0)
+                        & XLinkCapability_Zlib,
+                    "能力位按位与协商生效（Zlib）");
+
+        /* 请求-应答走真实 TCP */
+        if (client && XLinkSession_isReady(client)) {
+            XLinkSession_sendRequest(client, 0x1234, &arg, 1, &reqId);
+            for (i = 0; i < 500 && g_srvEchoResponses == 0; i++) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XLinkServer_pump(srv,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                XLinkSession_pump(client,
+                                  (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            }
+            XLINK_CHECK(g_srvEchoRequests == 1, "服务端模板回调收到请求");
+            XLINK_CHECK(g_srvEchoResponses == 1, "客户端收到 0x5A 回显应答");
+        }
+
+        /* 回收：客户端 Goodbye -> 服务端会话 Inactive -> 自动出表删除 */
+        if (client && XLinkSession_isReady(client)) {
+            XLinkSession_sendSession(client, XLinkSessionCode_Goodbye,
+                                     NULL, 0);
+            for (i = 0; i < 500 && g_srvRemovedCount == 0; i++) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XLinkServer_pump(srv,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            }
+            XLINK_CHECK(g_srvRemovedCount == 1, "Inactive 会话自动回收（Removed 通知）");
+            XLINK_CHECK(XLinkServer_sessionCount(srv) == 0,
+                        "回收后托管会话数为 0");
+        }
+
+        if (client)
+            XClassDelete((XClass*)client);
+        if (clientSock)
+            XClassDelete((XClass*)clientSock);
+        XClassDelete((XClass*)srv);
+        XLINK_CHECK(1, "服务端销毁连带回收全部资源无崩溃");
+    }
+
+    /* --- 复用与查询边界：sessionAt 越界 / close 重听 / 重复 listen --- */
+    {
+        XLinkServer* srv = XLinkServer_create();
+        XTcpServer* listener;
+        uint16_t port1 = 0;
+        bool ok = false;
+
+        XLINK_CHECK(srv != NULL, "复用测试服务端创建成功");
+        if (!srv)
+            return;
+
+        /* 空表查询边界 */
+        XLINK_CHECK(XLinkServer_sessionAt(srv, -1) == NULL,
+                    "sessionAt 负下标返回 NULL");
+        XLINK_CHECK(XLinkServer_sessionAt(srv, 0) == NULL,
+                    "空表 sessionAt(0) 返回 NULL");
+        XLINK_CHECK(XLinkServer_sessionAt(srv, 99) == NULL,
+                    "sessionAt 越界下标返回 NULL");
+
+        /* 首次监听 */
+        ok = XLinkServer_listen_base(srv, "127.0.0.1", 0);
+        XLINK_CHECK(ok, "复用测试首次监听成功");
+        if (ok) {
+            listener = XLinkServer_tcpServer_const(srv);
+            port1 = XTcpServer_serverPort(listener);
+            XLINK_CHECK(port1 != 0, "首次监听拿到端口");
+
+            /* 重复 listen：语义为"关旧开新"，监听态保持 */
+            XLINK_CHECK(XLinkServer_listen_base(srv, "127.0.0.1", 0),
+                        "重复 listen 关旧开新成功");
+            listener = XLinkServer_tcpServer_const(srv);
+            XLINK_CHECK(XTcpServer_isListening(listener),
+                        "重复 listen 后仍在监听");
+
+            /* 内建节拍周期运行中可调：改值回读一致、监听不受影响、
+               置 0 即停节拍（转手动 pump）、再恢复默认。 */
+            XLINK_CHECK(XLinkServer_tickInterval(srv)
+                            == XLINK_HEARTBEAT_TICK_MS,
+                        "默认节拍为编译配置值");
+            XLINK_CHECK(XLinkServer_setTickInterval(srv, 100),
+                        "运行中调整节拍为 100ms");
+            XLINK_CHECK(XLinkServer_tickInterval(srv) == 100,
+                        "节拍回读一致");
+            XLINK_CHECK(XTcpServer_isListening(
+                            XLinkServer_tcpServer_const(srv)),
+                        "调整节拍后监听不受影响");
+            XLINK_CHECK(XLinkServer_setTickInterval(srv, 0),
+                        "节拍置 0（停内建节拍）");
+            XLINK_CHECK(XLinkServer_tickInterval(srv) == 0,
+                        "节拍 0 回读一致");
+            XLINK_CHECK(XLinkServer_setTickInterval(srv,
+                                            XLINK_HEARTBEAT_TICK_MS),
+                        "恢复默认节拍");
+        }
+
+        /* close 后对象可复用：再听一次 */
+        XLinkServer_close(srv);
+        XLINK_CHECK(XLinkServer_sessionCount(srv) == 0,
+                    "close 后托管会话清空");
+        XLINK_CHECK(XLinkServer_sessionAt(srv, 0) == NULL,
+                    "close 后 sessionAt 返回 NULL");
+        XLINK_CHECK(XLinkServer_listen_base(srv, "127.0.0.1", 0),
+                    "close 后重新监听成功");
+        listener = XLinkServer_tcpServer_const(srv);
+        XLINK_CHECK(XTcpServer_isListening(listener),
+                    "重听后监听态正常");
+
+        XClassDelete((XClass*)srv);
+        XLINK_CHECK(1, "复用测试服务端销毁无崩溃");
+    }
+}
+
+/* ========================================================================== */
+/*                        十三、信号与自动超时重试                            */
+/* ========================================================================== */
+
+/* 信号观测槽与只计数不应答的服务端回调统一放在文件头部
+   「测试用消息收发器与信号观测」区（第八分组同样消费 requestFinished）。 */
+
+/**
+ * @brief 覆盖分组十三：stateChanged/requestFinished 两条信号与请求自动
+ *        超时静默重试，及四条新 API 的 NULL 防御。
+ * @note  信号经 XObject_connect_2 连接（发射同步直达槽），假时钟由夹具
+ *        xlink_fixture_step 推进；自动超时的判定口径为严格大于阈值。
+ */
+static void xlink_test_signals_retry(void)
+{
+    XLINK_SECTION("十三、信号与自动超时重试");
+
+    /* --- 四条新 API 的 NULL 防御 --- */
+    XLINK_CHECK(XLinkSession_setNumberOfRetries(NULL, 3) == false,
+                "setNumberOfRetries 对 NULL 返回 false");
+    XLINK_CHECK(XLinkSession_numberOfRetries(NULL) == 0,
+                "numberOfRetries 对 NULL 返回 0");
+    XLINK_CHECK(XLinkSession_setRequestTimeout(NULL, 100) == false,
+                "setRequestTimeout 对 NULL 返回 false");
+    XLINK_CHECK(XLinkSession_requestTimeout(NULL) == 0,
+                "requestTimeout 对 NULL 返回 0");
+
+    /* --- 默认参数即被动模式：与既有行为一致（零回归红线） --- */
+    {
+        XLinkSession* s = XLinkSession_create();
+        XLINK_CHECK(s && XLinkSession_numberOfRetries(s)
+                        == XLINK_RETRY_MAX_DEFAULT,
+                    "新会话重试次数默认 XLINK_RETRY_MAX_DEFAULT");
+        XLINK_CHECK(s && XLinkSession_requestTimeout(s)
+                        == XLINK_REQUEST_TIMEOUT_MS,
+                    "新会话超时阈值默认 XLINK_REQUEST_TIMEOUT_MS（被动模式）");
+        if (s) XClassDelete((XClass*)s);
+    }
+
+    /* --- stateChanged：建链/断链发射，同态不重发 --- */
+    {
+        XGuiRemoteLoopbackDevice* devA = NULL;
+        XGuiRemoteLoopbackDevice* devB = NULL;
+        XLinkSession* s = NULL;
+        XLinkSession* peer = NULL;
+        devA = XGuiRemoteLoopbackDevice_createPair(8 * 1024, &devB);
+        s = devA ? XLinkSession_create() : NULL;
+        XLINK_CHECK(s != NULL, "stateChanged 测试会话创建成功");
+        if (s && devA && devB) {
+            g_stateChangedCount = 0;
+            g_lastStateChanged = XLinkSessionState_Inactive;
+            XLINK_CHECK(XObject_connect_2(
+                                (XObject*)s,
+                                XSignal(XLinkSession_stateChanged_signal),
+                                xlink_state_changed_slot) != NULL,
+                        "stateChanged 信号连接成功");
+
+            /* 建链：Inactive -> Connected（第 1 次发射） */
+            XLINK_CHECK(XLinkSession_setDevice(s, (XIODevice*)devA),
+                        "挂载传输建链成功");
+            XLINK_CHECK(g_stateChangedCount == 1
+                            && g_lastStateChanged
+                                   == XLinkSessionState_Connected,
+                        "挂载传输发射 stateChanged(Connected)");
+
+            /* 握手转 Ready：对端自动应答 HelloAck，本端收到后转 Ready */
+            peer = XLinkSession_create_ex((XIODevice*)devB);
+            XLinkSession_pump(s, 1000);      /* s 自动补发 Hello */
+            XLinkSession_pump(peer, 1000);   /* peer 收 Hello 回 HelloAck */
+            XLinkSession_pump(s, 1010);      /* s 收 HelloAck 转 Ready */
+            XLINK_CHECK(g_stateChangedCount == 2
+                            && g_lastStateChanged == XLinkSessionState_Ready,
+                        "握手完成发射 stateChanged(Ready)");
+
+            /* 断链：reset 回 Inactive（第 3 次发射） */
+            XLinkSession_reset(s);
+            XLINK_CHECK(g_stateChangedCount == 3
+                            && g_lastStateChanged
+                                   == XLinkSessionState_Inactive,
+                        "reset 断链发射 stateChanged(Inactive)");
+
+            /* 同态不重发：Inactive 态重复 reset 不发射 */
+            XLinkSession_reset(s);
+            XLINK_CHECK(g_stateChangedCount == 3,
+                        "同态（Inactive）重复 reset 不重发信号");
+
+            /* 重复挂载同设备：Connected 态再挂载不发射 */
+            XLINK_CHECK(XLinkSession_setDevice(s, (XIODevice*)devA),
+                        "Connected 态重复挂载返回 true");
+            XLINK_CHECK(g_stateChangedCount == 4,
+                        "再次建链发射（第 4 次）");
+            XLINK_CHECK(XLinkSession_setDevice(s, (XIODevice*)devA),
+                        "同态重复挂载返回 true");
+            XLINK_CHECK(g_stateChangedCount == 4,
+                        "同态（Connected）重复挂载不重发信号");
+        }
+        if (s) XClassDelete((XClass*)s);
+        if (peer) XClassDelete((XClass*)peer);
+        if (devA) XClassDelete((XClass*)devA);
+        if (devB) XClassDelete((XClass*)devB);
+    }
+
+    /* --- requestFinished：应答命中发射 true，携带正确 id 与命令 --- */
+    {
+        XLinkTestFixture* f = xlink_fixture_create();
+        uint8_t arg = 0x5A;
+        uint32_t id = 0;
+        if (!f) {
+            XLINK_CHECK(false, "requestFinished 测试夹具搭建成功");
+            return;
+        }
+        XLinkSession_setDispatchCallback(f->m_server, xlink_server_dispatch,
+                                         NULL);
+        XLinkSession_setDispatchCallback(f->m_client, xlink_client_dispatch,
+                                         NULL);
+        xlink_fixture_step(f, 3); /* 自动握手 */
+        XLINK_CHECK(XLinkSession_isReady(f->m_client),
+                    "requestFinished 测试前置握手完成");
+
+        g_reqFinishedCount = 0;
+        g_reqFinishedId = 0;
+        g_reqFinishedCmd = 0;
+        g_reqFinishedOk = true;
+        XObject_connect_2((XObject*)f->m_client,
+                          XSignal(XLinkSession_requestFinished_signal),
+                          xlink_request_finished_slot);
+
+        XLINK_CHECK(XLinkSession_sendRequest(f->m_client, 42, &arg, 1, &id),
+                    "发出待应答请求（命令 42）");
+        xlink_fixture_step(f, 3);
+        XLINK_CHECK(g_reqFinishedCount == 1,
+                    "应答命中待应答表发射 requestFinished 一次");
+        XLINK_CHECK(g_reqFinishedId == id,
+                    "成功信号携带原请求 id");
+        XLINK_CHECK(g_reqFinishedCmd == 42,
+                    "成功信号携带命令号 42");
+        XLINK_CHECK(g_reqFinishedOk,
+                    "成功信号 succeeded=true");
+        XLINK_CHECK(!XLinkSession_isPending(f->m_client, id),
+                    "成功终局后槽已出表");
+
+        /* 漂移应答（无对应待应答槽）不发射 */
+        XLINK_CHECK(XLinkSession_sendResponse(f->m_server, 777, 88, &arg, 1),
+                    "服务端发出漂移应答（id=777 无人等待）");
+        xlink_fixture_step(f, 3);
+        XLINK_CHECK(g_reqFinishedCount == 1,
+                    "漂移应答不发射 requestFinished");
+
+        /* 重复应答（槽已出表）不发射 */
+        XLINK_CHECK(XLinkSession_sendResponse(f->m_server, id, 42, &arg, 1),
+                    "服务端对已终局请求重复应答");
+        xlink_fixture_step(f, 3);
+        XLINK_CHECK(g_reqFinishedCount == 1,
+                    "重复应答不发射 requestFinished（仅终局一次）");
+
+        xlink_fixture_delete(f);
+    }
+
+    /* --- 自动超时静默重试：假时钟跨超时点，重发不换 id，终局发 false --- */
+    {
+        XLinkTestFixture* f = xlink_fixture_create();
+        uint8_t arg = 0x5A;
+        static uint8_t bigArg[XLINK_RETRY_PAYLOAD_MAX + 1]; /* 超长：129 字节 */
+        uint32_t id42 = 0;
+        uint32_t idBig = 0;
+        uint32_t idEmpty = 0;
+        if (!f) {
+            XLINK_CHECK(false, "自动重试测试夹具搭建成功");
+            return;
+        }
+        /* 服务端只计数不应答：请求石沉大海，超时路径稳定可断言 */
+        XLinkSession_setDispatchCallback(f->m_server, xlink_silent_dispatch,
+                                         NULL);
+        xlink_fixture_step(f, 3); /* 自动握手 */
+        XLINK_CHECK(XLinkSession_isReady(f->m_client),
+                    "自动重试测试前置握手完成");
+
+        /* 开启自动模式：超时 500ms，最多重发 1 次 */
+        XLINK_CHECK(XLinkSession_setRequestTimeout(f->m_client, 500),
+                    "setRequestTimeout(500) 成功");
+        XLINK_CHECK(XLinkSession_requestTimeout(f->m_client) == 500,
+                    "requestTimeout 回读一致");
+        XLINK_CHECK(XLinkSession_setNumberOfRetries(f->m_client, 1),
+                    "setNumberOfRetries(1) 成功");
+        XLINK_CHECK(XLinkSession_numberOfRetries(f->m_client) == 1,
+                    "numberOfRetries 回读一致");
+        XObject_connect_2((XObject*)f->m_client,
+                          XSignal(XLinkSession_requestFinished_signal),
+                          xlink_request_finished_slot);
+
+        /* 子场景一：小载荷请求跨超时点——静默重发同命令，额度用尽发 false */
+        g_silentRequestCount = 0;
+        g_silentLastCmd = 0;
+        g_reqFinishedCount = 0;
+        XLINK_CHECK(XLinkSession_sendRequest(f->m_client, 42, &arg, 1, &id42),
+                    "发出 1 字节载荷请求（命令 42）");
+        xlink_fixture_step(f, 60); /* 推进 600ms：跨过 500ms 超时点 */
+        XLINK_CHECK(g_silentRequestCount == 2,
+                    "超时后原 requestId 静默重发（服务端收到两次同命令请求）");
+        XLINK_CHECK(g_silentLastCmd == 42,
+                    "重发请求命令号与原请求一致");
+        XLINK_CHECK(g_reqFinishedCount == 0,
+                    "重发成功不发射终局信号");
+        XLINK_CHECK(XLinkSession_isPending(f->m_client, id42),
+                    "重发后请求仍在待应答表（不换 id 不出表）");
+
+        xlink_fixture_step(f, 60); /* 再推进 600ms：重试额度（1 次）用尽 */
+        XLINK_CHECK(g_reqFinishedCount == 1,
+                    "第二次超时（额度用尽）发射 requestFinished(false)");
+        XLINK_CHECK(g_reqFinishedId == id42,
+                    "终局信号携带原请求 id");
+        XLINK_CHECK(g_reqFinishedCmd == 42,
+                    "终局信号携带命令号 42");
+        XLINK_CHECK(g_reqFinishedOk == false,
+                    "终局信号 succeeded=false");
+        XLINK_CHECK(!XLinkSession_isPending(f->m_client, id42),
+                    "终局后槽已出表");
+        XLINK_CHECK(g_silentRequestCount == 2,
+                    "额度用尽后不再重发（服务端仍只见过两次）");
+
+        /* 子场景二：超长载荷（> XLINK_RETRY_PAYLOAD_MAX）不可重试，
+           首次超时即终局，不发第二次请求 */
+        g_silentRequestCount = 0;
+        g_reqFinishedCount = 0;
+        memset(bigArg, 0xA5, sizeof(bigArg));
+        XLINK_CHECK(XLinkSession_sendRequest(f->m_client, 43, bigArg,
+                                             sizeof(bigArg), &idBig),
+                    "发出超长载荷请求（129 字节照常发送）");
+        xlink_fixture_step(f, 60);
+        XLINK_CHECK(g_silentRequestCount == 1,
+                    "超长载荷超时不重发（服务端只见过一次）");
+        XLINK_CHECK(g_reqFinishedCount == 1 && g_reqFinishedOk == false
+                        && g_reqFinishedCmd == 43,
+                    "超长载荷首次超时即终局上报 false");
+        XLINK_CHECK(!XLinkSession_isPending(f->m_client, idBig),
+                    "超长载荷终局后槽已出表");
+
+        /* 子场景三：空载荷也算可重试（快照 len=0），超时后重发空请求 */
+        g_silentRequestCount = 0;
+        g_reqFinishedCount = 0;
+        XLINK_CHECK(XLinkSession_sendRequest(f->m_client, 44, NULL, 0,
+                                             &idEmpty),
+                    "发出零载荷请求（命令 44）");
+        xlink_fixture_step(f, 60);
+        XLINK_CHECK(g_silentRequestCount == 2,
+                    "空载荷请求超时后静默重发（服务端收到两次）");
+        XLINK_CHECK(g_reqFinishedCount == 0
+                        && XLinkSession_isPending(f->m_client, idEmpty),
+                    "空载荷重发成功不发终局、槽保持待应答");
+
+        xlink_fixture_delete(f);
+    }
+
+    /* --- 子场景四：未 pump 过发出的请求（sendTick==0）自首次 pump 起算，
+       不被首拍误判超时（回归：判定式 nowMs >= 0 恒真曾致刚发出的请求
+       在异步首拍被立即重发/终局） --- */
+    {
+        XGuiRemoteLoopbackDevice* devA = NULL;
+        XGuiRemoteLoopbackDevice* devB = NULL;
+        XLinkSession* client = NULL;
+        XLinkSession* server = NULL;
+        uint8_t helloBuf[4];
+        XLinkHelloPayload hello;
+        uint8_t arg = 0x5A;
+        uint32_t id = 0;
+        devA = XGuiRemoteLoopbackDevice_createPair(8 * 1024, &devB);
+        client = devA ? XLinkSession_create_ex((XIODevice*)devA) : NULL;
+        server = devB ? XLinkSession_create_ex((XIODevice*)devB) : NULL;
+        XLINK_CHECK(client != NULL && server != NULL,
+                    "起算回归测试双会话创建成功");
+        if (client && server) {
+            XLinkSession_setDispatchCallback(server, xlink_silent_dispatch,
+                                             NULL);
+            /* 客户端手动发 Hello（sendSession 不经 pump，客户端 m_nowTick
+               保持 0），服务端 pump 后转 Ready——客户端全程未 pump。 */
+            hello.m_version = XLINK_VERSION;
+            hello.m_capability = XLinkCapability_Zlib;
+            XLinkCodec_encodeHello(&hello, helloBuf, sizeof(helloBuf), NULL);
+            XLinkSession_sendSession(client, XLinkSessionCode_Hello,
+                                     helloBuf, 4);
+            XLinkSession_pump(server, 1000);
+            XLINK_CHECK(XLinkSession_isReady(server),
+                        "服务端经手动 Hello 握手就绪（客户端仍未 pump）");
+
+            XLinkSession_setRequestTimeout(client, 500);
+            XLinkSession_setNumberOfRetries(client, 0);
+            g_silentRequestCount = 0;
+            g_reqFinishedCount = 0;
+            g_reqFinishedOk = true;
+            XObject_connect_2((XObject*)client,
+                              XSignal(XLinkSession_requestFinished_signal),
+                              xlink_request_finished_slot);
+            /* 关键时序：m_nowTick==0 时发出请求（sendTick==0），下一拍
+               直接跳到远超阈值的大时刻（模拟异步模式真实单调毫秒）。 */
+            XLINK_CHECK(XLinkSession_sendRequest(client, 42, &arg, 1, &id),
+                        "未 pump 过的会话发出请求（sendTick==0）");
+            XLinkSession_pump(client, 5000);
+            XLINK_CHECK(g_reqFinishedCount == 0,
+                        "首拍不对 sendTick==0 的请求误判超时（不误发终局）");
+            XLINK_CHECK(XLinkSession_isPending(client, id),
+                        "首拍后请求保持待应答（不误出表）");
+
+            XLinkSession_pump(server, 5010);
+            XLINK_CHECK(g_silentRequestCount == 1,
+                        "服务端只收到一次请求（无首拍误重发的重复帧）");
+
+            /* 自首拍（5000）起算：+600ms 越过 500ms 阈值，正常终局 */
+            XLinkSession_pump(client, 5600);
+            XLINK_CHECK(g_reqFinishedCount == 1 && g_reqFinishedOk == false
+                            && g_reqFinishedCmd == 42,
+                        "起算后越过阈值正常终局上报 false");
+            XLINK_CHECK(!XLinkSession_isPending(client, id),
+                        "正常终局后槽已出表");
+            XLINK_CHECK(g_silentRequestCount == 1,
+                        "终局前未发生任何重发（服务端仍只见过一次）");
+        }
+        if (client) XClassDelete((XClass*)client);
+        if (server) XClassDelete((XClass*)server);
+        if (devA) XClassDelete((XClass*)devA);
+        if (devB) XClassDelete((XClass*)devB);
+    }
+}
+
+/* ========================================================================== */
+/*                        十四、客户端包装 XLinkClient                        */
+/* ========================================================================== */
+
+/**
+ * @brief 覆盖分组十四：客户端包装 XLinkClient（真实 127.0.0.1 TCP）。
+ * @details 模式照第十一节 xlink_test_server：本地 XLinkServer 固定监听
+ *          47321 端口，processEvents 轮询驱动（事件全量派发 + 服务端手动
+ *          pump 兜底），子分组：
+ *
+ *   一、NULL 防御（全部公开 API 对 NULL 的行为）
+ *   二、默认值与栈上生命周期（init/deinit 配对、重连配置默认值）
+ *   三、正常链路（connectToServer -> isReady -> 经 session() 发 PING 收回执）
+ *   四、自动重连（服务端踢线 -> Reconnecting -> 原端口重听 -> 再次 isReady，
+ *       stateChanged 信号计数校验）
+ *   五、重连关（踢线后停在 UnconnectedState）
+ *   六、手动断开（Goodbye 排空收尾，服务端 notify 收到 Removed；开着重连
+ *       断开也不触发 Reconnecting）
+ *   七、最大重连次数（达到 maxReconnectAttempts 后收手转 UnconnectedState）
+ *
+ * @note  原 Test/XProtocolTest/XLinkClientTest.c 已整体并入本分组；由
+ *        XLinkTest_run 全量回归与 XLinkClientTest_run 单独入口共用，运行
+ *        入口 `--test xlink-client` / Test 命令 `Test xlink-client`。
+ */
+
+/** @brief 本分组专用固定端口（避免与 xlink-demo 的 45200 冲突）。 */
+#define XCLIENT_TEST_PORT 47321u
+
+/** @brief 测试业务命令号：PING（服务端同步回 1 字节 0x5A 回执）。 */
+#define XCLIENT_CMD_PING 0x00A1u
+
+/** @brief 当前被测客户端（等待条件闭包用；单流程，文件域即可）。 */
+static XLinkClient* g_client = NULL;
+/** @brief 客户端 stateChanged 信号发射次数（与第十三分组会话信号观测相区分）。 */
+static int g_clientStateChangedCount = 0;
+/** @brief 最近一次 stateChanged 携带的状态。 */
+static XLinkClientState g_lastState = XLinkClient_UnconnectedState;
+/** @brief 是否进入过 ReconnectingState。 */
+static bool g_sawReconnecting = false;
+/** @brief 客户端收到 0x5A 回执数。 */
+static int g_pingResponses = 0;
+/** @brief 服务端会话 Added/Removed 通知计数。 */
+static int g_srvAdded = 0;
+static int g_srvRemoved = 0;
+/** @brief 服务端分发回调收到的请求数。 */
+static int g_srvRequests = 0;
+
+/**
+ * @brief 客户端 stateChanged 信号槽：计数并落账最新状态。
+ */
+static void xlink_client_test_on_state(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    if (!receiver)
+        return;
+    g_clientStateChangedCount++;
+    g_lastState = XLinkClient_state((XLinkClient*)receiver);
+    if (g_lastState == XLinkClient_ReconnectingState)
+        g_sawReconnecting = true;
+}
+
+/**
+ * @brief 服务端会话增删通知：统计 Added/Removed。
+ */
+static void xlink_client_test_srv_notify(XLinkServer* self,
+                                         XLinkSession* session,
+                                         XLinkServerSessionEvent event)
+{
+    (void)self;
+    (void)session;
+    if (event == XLinkServerSessionEvent_Added)
+        g_srvAdded++;
+    else
+        g_srvRemoved++;
+}
+
+/**
+ * @brief 服务端分发回调：请求即回 1 字节 0x5A 回显应答。
+ */
+static void xlink_client_test_srv_dispatch(XLinkSession* self,
+                                           const XLinkFrameHeader* frame,
+                                           const uint8_t* payload)
+{
+    if (!self || !frame)
+        return;
+    if (frame->m_msgClass == XLinkMsgClass_Request) {
+        uint8_t echo = (payload && frame->m_payloadLen > 0) ? payload[0] : 0;
+        g_srvRequests++;
+        XLinkSession_sendResponse(self, frame->m_requestId, frame->m_msgCode,
+                                  &echo, 1);
+    }
+}
+
+/**
+ * @brief 客户端分发回调（会话模板）：统计 PING 0x5A 回执。
+ */
+static void xlink_client_test_cli_dispatch(XLinkSession* self,
+                                           const XLinkFrameHeader* frame,
+                                           const uint8_t* payload)
+{
+    (void)self;
+    if (frame && frame->m_msgClass == XLinkMsgClass_Response
+        && frame->m_msgCode == XCLIENT_CMD_PING
+        && payload && frame->m_payloadLen >= 1 && payload[0] == 0x5A)
+        g_pingResponses++;
+}
+
+/** @brief 等待条件：客户端已 Ready。 */
+static bool xlink_client_test_cond_ready(void)
+{
+    return g_client && XLinkClient_isReady(g_client);
+}
+
+/** @brief 等待条件：客户端进入 ReconnectingState。 */
+static bool xlink_client_test_cond_reconnecting(void)
+{
+    return g_client
+           && XLinkClient_state(g_client) == XLinkClient_ReconnectingState;
+}
+
+/** @brief 等待条件：客户端回到 UnconnectedState。 */
+static bool xlink_client_test_cond_unconnected(void)
+{
+    return g_client
+           && XLinkClient_state(g_client) == XLinkClient_UnconnectedState;
+}
+
+/** @brief 等待条件：PING 回执已到达。 */
+static bool xlink_client_test_cond_ping(void)
+{
+    return g_pingResponses >= 1;
+}
+
+/** @brief 等待条件：服务端已收到 Removed 通知。 */
+static bool xlink_client_test_cond_removed(void)
+{
+    return g_srvRemoved >= 1;
+}
+
+/**
+ * @brief 有界 processEvents 泵：条件成立或超时即返回。
+ * @note  照 xlink_test_server 口径：事件全量派发（套接字/内建定时器驱动）+
+ *        服务端手动 pump 兜底；pump 的 nowMs 全程用实时单调毫秒，不混入
+ *        假时钟污染静默判线时间轴。
+ */
+static bool xlink_client_test_wait(bool (*cond)(void), uint32_t ms,
+                                   XLinkServer* srv)
+{
+    uint64_t start = XDateTime_currentMSecsSinceEpoch();
+    while (!cond()) {
+        if (XDateTime_currentMSecsSinceEpoch() - start >= ms)
+            return false;
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        if (srv)
+            XLinkServer_pump(srv,
+                             (uint32_t)XDateTime_currentMSecsSinceEpoch());
+        XThread_msleep(5);
+    }
+    return true;
+}
+
+/**
+ * @brief 重置全部落账计数（沿用原 XLinkClientTest.c 的用例前清零口径）。
+ */
+static void xlink_client_test_reset(void)
+{
+    g_client = NULL;
+    g_clientStateChangedCount = 0;
+    g_lastState = XLinkClient_UnconnectedState;
+    g_sawReconnecting = false;
+    g_pingResponses = 0;
+    g_srvAdded = 0;
+    g_srvRemoved = 0;
+    g_srvRequests = 0;
+}
+
+/**
+ * @brief 创建已配好地址/模板/信号计数的被测客户端。
+ * @param autoReconnect 自动重连开关。
+ * @param intervalMs 重连间隔（毫秒）。
+ * @param maxAttempts 最大重连次数。
+ * @return 成功返回客户端指针；失败返回 NULL（调用方负责检查）。
+ */
+static XLinkClient* xlink_client_test_make_client(bool autoReconnect,
+                                                  uint32_t intervalMs,
+                                                  int16_t maxAttempts)
+{
+    XLinkClient* client = XLinkClient_create();
+    if (!client)
+        return NULL;
+    XLinkClient_setHostPort(client, "127.0.0.1", XCLIENT_TEST_PORT);
+    XLinkClient_setCapability(client, XLinkCapability_Zlib);
+    XLinkClient_setDispatchCallback(client, xlink_client_test_cli_dispatch,
+                                    NULL);
+    XLinkClient_setAutoReconnect(client, autoReconnect);
+    XLinkClient_setReconnectInterval(client, intervalMs);
+    XLinkClient_setMaxReconnectAttempts(client, maxAttempts);
+    XObject_connect_1((XObject*)client,
+                      XSignal(XLinkClient_stateChanged_signal),
+                      (XObject*)client, xlink_client_test_on_state,
+                      XConnectionType_Auto);
+    return client;
+}
+
+/**
+ * @brief 创建监听 47321 的服务端（套回调模板）。
+ * @return 成功返回服务端指针；监听失败返回 NULL。
+ */
+static XLinkServer* xlink_client_test_make_server(void)
+{
+    XLinkServer* srv = XLinkServer_create();
+    if (!srv)
+        return NULL;
+    XLinkServer_setCapability(srv, XLinkCapability_Zlib);
+    XLinkServer_setDispatchCallback(srv, xlink_client_test_srv_dispatch, NULL);
+    XLinkServer_setNotifyCallback(srv, xlink_client_test_srv_notify);
+    if (!XLinkServer_listen_base(srv, "127.0.0.1", XCLIENT_TEST_PORT)) {
+        XClassDelete((XClass*)srv);
+        return NULL;
+    }
+    return srv;
+}
+
+/**
+ * @brief 子分组一：NULL 防御（全部公开 API 对 NULL 的行为）。
+ */
+static void xlink_client_test_null_defense(void)
+{
+    XLINK_SECTION("十四·一、客户端包装 NULL 防御");
+    XLINK_CHECK(!XLinkClient_setHostPort(NULL, "127.0.0.1", 1),
+                "setHostPort 对 NULL 拒绝");
+    XLINK_CHECK(XLinkClient_host_const(NULL) == NULL,
+                "host_const 对 NULL 返回 NULL");
+    XLINK_CHECK(XLinkClient_port(NULL) == 0, "port 对 NULL 返回 0");
+    XLINK_CHECK(!XLinkClient_setCapability(NULL, XLinkCapability_Zlib),
+                "setCapability 对 NULL 拒绝");
+    XLINK_CHECK(!XLinkClient_setDispatchCallback(NULL, NULL, NULL),
+                "setDispatchCallback 对 NULL 拒绝");
+    XLINK_CHECK(!XLinkClient_setAutoReconnect(NULL, true),
+                "setAutoReconnect 对 NULL 拒绝");
+    XLINK_CHECK(!XLinkClient_autoReconnect(NULL),
+                "autoReconnect 对 NULL 返回 false");
+    XLINK_CHECK(!XLinkClient_setReconnectInterval(NULL, 1),
+                "setReconnectInterval 对 NULL 拒绝");
+    XLINK_CHECK(XLinkClient_reconnectInterval(NULL) == 1000,
+                "reconnectInterval 对 NULL 返回默认 1000");
+    XLINK_CHECK(!XLinkClient_setMaxReconnectAttempts(NULL, 1),
+                "setMaxReconnectAttempts 对 NULL 拒绝");
+    XLINK_CHECK(XLinkClient_maxReconnectAttempts(NULL) == -1,
+                "maxReconnectAttempts 对 NULL 返回默认 -1");
+    XLINK_CHECK(XLinkClient_reconnectAttempts(NULL) == 0,
+                "reconnectAttempts 对 NULL 返回 0");
+    XLINK_CHECK(!XLinkClient_connectToServer(NULL),
+                "connectToServer 对 NULL 拒绝");
+    XLinkClient_disconnectFromServer(NULL);
+    XLINK_CHECK(1, "disconnectFromServer 对 NULL 安全空操作");
+    XLINK_CHECK(XLinkClient_session(NULL) == NULL,
+                "session 对 NULL 返回 NULL");
+    XLINK_CHECK(XLinkClient_state(NULL) == XLinkClient_UnconnectedState,
+                "state 对 NULL 返回 Unconnected");
+    XLINK_CHECK(!XLinkClient_isReady(NULL), "isReady 对 NULL 返回 false");
+    (void)XLinkClient_stateChanged_signal(NULL, XLinkClient_UnconnectedState);
+    XLINK_CHECK(1, "stateChanged_signal 对 NULL 安全不发射");
+}
+
+/**
+ * @brief 子分组二：默认值与栈上生命周期（init/deinit 配对、重连配置默认值）。
+ */
+static void xlink_client_test_defaults(void)
+{
+    XLINK_SECTION("十四·二、客户端包装 默认值与栈上生命周期");
+    {
+        XLinkClient stack;
+        XLinkClient_init(&stack);
+        XLINK_CHECK(XLinkClient_state(&stack)
+                        == XLinkClient_UnconnectedState,
+                    "栈上 init 初始为 UnconnectedState");
+        XLINK_CHECK(!XLinkClient_autoReconnect(&stack),
+                    "autoReconnect 默认 false");
+        XLINK_CHECK(XLinkClient_reconnectInterval(&stack) == 1000,
+                    "reconnectInterval 默认 1000ms");
+        XLINK_CHECK(XLinkClient_maxReconnectAttempts(&stack) == -1,
+                    "maxReconnectAttempts 默认 -1（无限）");
+        XLINK_CHECK(XLinkClient_reconnectAttempts(&stack) == 0,
+                    "reconnectAttempts 初始为 0");
+        XLINK_CHECK(XLinkClient_session(&stack) == NULL,
+                    "初始无会话");
+        XLINK_CHECK(!XLinkClient_isReady(&stack),
+                    "初始 isReady 为 false");
+        XLINK_CHECK(!XLinkClient_connectToServer(&stack),
+                    "未设置主机名时连接拒绝");
+        XLINK_CHECK(XLinkClient_setHostPort(&stack, "127.0.0.1",
+                                            XCLIENT_TEST_PORT),
+                    "setHostPort 成功");
+        XLINK_CHECK(strcmp(XLinkClient_host_const(&stack),
+                           "127.0.0.1") == 0,
+                    "host 经 XString 深拷贝可读回");
+        XLINK_CHECK(XLinkClient_port(&stack) == XCLIENT_TEST_PORT,
+                    "port 回读一致");
+        XLINK_CHECK(!XLinkClient_setHostPort(&stack, NULL, 1),
+                    "host 为 NULL 时拒绝且不修改原配置");
+        XLINK_CHECK(strcmp(XLinkClient_host_const(&stack),
+                           "127.0.0.1") == 0,
+                    "拒绝后原配置保持不变");
+        XClassDeinit(&stack);
+        XLINK_CHECK(1, "栈上 init/deinit 配对无崩溃");
+    }
+    {
+        /* 堆对象生命周期：create + XClassDelete（未连接直接销毁）。 */
+        XLinkClient* heap = XLinkClient_create();
+        XLINK_CHECK(heap != NULL, "堆创建成功");
+        XLINK_CHECK(XLinkClient_state(heap) == XLinkClient_UnconnectedState,
+                    "堆对象初始为 UnconnectedState");
+        XClassDelete((XClass*)heap);
+        XLINK_CHECK(1, "堆对象销毁无崩溃");
+    }
+}
+
+/**
+ * @brief 子分组三：正常链路（连接/握手/PING 收回执）。
+ */
+static void xlink_client_test_normal_link(void)
+{
+    XLINK_SECTION("十四·三、客户端包装 正常链路（连接/握手/PING 收回执）");
+    xlink_client_test_reset();
+    {
+        XLinkServer* srv = xlink_client_test_make_server();
+        XLinkSession* session = NULL;
+        uint32_t reqId = 0;
+        uint8_t arg = 0x5A;
+
+        XLINK_CHECK(srv != NULL, "服务端监听 127.0.0.1:47321 成功");
+        if (!srv)
+            return;
+
+        g_client = xlink_client_test_make_client(false, 1000, -1);
+        XLINK_CHECK(g_client != NULL, "客户端堆创建成功");
+        if (!g_client) {
+            XClassDelete((XClass*)srv);
+            return;
+        }
+
+        XLINK_CHECK(XLinkClient_connectToServer(g_client),
+                    "connectToServer 异步发起成功");
+        XLINK_CHECK(XLinkClient_state(g_client)
+                        == XLinkClient_ConnectingState,
+                    "发起后进入 ConnectingState");
+        XLINK_CHECK(xlink_client_test_wait(xlink_client_test_cond_ready,
+                                           3000, srv),
+                    "3s 内握手完成（isReady）");
+        XLINK_CHECK(XLinkClient_state(g_client)
+                        == XLinkClient_ConnectedState,
+                    "Ready 即 ConnectedState");
+        session = XLinkClient_session(g_client);
+        XLINK_CHECK(session != NULL, "session() 借用指针非空");
+        XLINK_CHECK(session
+                        && (XLinkSession_negotiatedCapability(session)
+                            & XLinkCapability_Zlib),
+                    "能力位模板随自动 Hello 协商生效（Zlib）");
+
+        /* 经 session() 发 PING，服务端模板回调同步回执 */
+        if (session && XLinkSession_isReady(session)) {
+            XLinkSession_sendRequest(session, XCLIENT_CMD_PING, &arg, 1,
+                                     &reqId);
+            XLINK_CHECK(xlink_client_test_wait(
+                            xlink_client_test_cond_ping, 2000, srv),
+                        "经 session() 发 PING 收到 0x5A 回执");
+            XLINK_CHECK(g_srvRequests == 1, "服务端模板回调收到请求");
+        }
+
+        XLINK_CHECK(g_clientStateChangedCount >= 2,
+                    "stateChanged 至少发射 Unconnected->Connecting->Connected");
+        XLINK_CHECK(g_lastState == XLinkClient_ConnectedState,
+                    "最新状态为 ConnectedState");
+
+        /* 收尾：手动断开（本用例不校验服务端 Removed，留给子分组六） */
+        XLinkClient_disconnectFromServer(g_client);
+        XLINK_CHECK(XLinkClient_state(g_client)
+                        == XLinkClient_UnconnectedState,
+                    "断开后回到 UnconnectedState");
+        XLINK_CHECK(XLinkClient_session(g_client) == NULL,
+                    "断开后会话已拆除");
+        XClassDelete((XClass*)g_client);
+        g_client = NULL;
+        XLinkServer_close(srv);
+        XClassDelete((XClass*)srv);
+        XLINK_CHECK(1, "子分组三资源收尾无崩溃");
+    }
+}
+
+/**
+ * @brief 子分组四：自动重连（踢线 -> Reconnecting -> 重听 -> 再 Ready）。
+ */
+static void xlink_client_test_auto_reconnect(void)
+{
+    XLINK_SECTION("十四·四、客户端包装 自动重连（踢线->Reconnecting->重听->再Ready）");
+    xlink_client_test_reset();
+    {
+        XLinkServer* srv = xlink_client_test_make_server();
+        uint32_t reqId = 0;
+        uint8_t arg = 0x5A;
+        int addedBefore = 0;
+
+        XLINK_CHECK(srv != NULL, "服务端监听 127.0.0.1:47321 成功");
+        if (!srv)
+            return;
+
+        g_client = xlink_client_test_make_client(true, 150, -1);
+        if (!g_client) {
+            XClassDelete((XClass*)srv);
+            XLINK_CHECK(0, "客户端堆创建成功");
+            return;
+        }
+
+        XLINK_CHECK(XLinkClient_connectToServer(g_client),
+                    "connectToServer 发起成功");
+        XLINK_CHECK(xlink_client_test_wait(xlink_client_test_cond_ready,
+                                           3000, srv),
+                    "首次连接握手完成");
+        addedBefore = g_srvAdded;
+        XLINK_CHECK(addedBefore == 1, "服务端收到首次 Added 通知");
+
+        /* 服务端踢线：XTcpServer_close 只关监听 fd，已 accept 的连接套接字
+           不被关闭、客户端收不到 FIN（XTcpServer.c close 语义），故照用例
+           七口径 close 后连服务端对象一起删除，客户端才观测到链路断开。 */
+        XLinkServer_close(srv);
+        XClassDelete((XClass*)srv);
+        srv = NULL;
+        XLINK_CHECK(xlink_client_test_wait(
+                        xlink_client_test_cond_reconnecting, 2000, NULL),
+                    "踢线后进入 ReconnectingState");
+        XLINK_CHECK(XLinkClient_session(g_client) == NULL,
+                    "重连等待期旧会话已拆除");
+        XLINK_CHECK(g_sawReconnecting, "stateChanged 信号报告过 Reconnecting");
+
+        /* 原端口重听：旧服务端对象已删除，新建服务端占回 47321；
+           客户端按 150ms 周期重试，服务端起来即恢复链路 */
+        srv = xlink_client_test_make_server();
+        XLINK_CHECK(srv != NULL, "原端口重新监听成功");
+        XLINK_CHECK(xlink_client_test_wait(xlink_client_test_cond_ready,
+                                           5000, srv),
+                    "重连后再次握手完成（isReady）");
+        XLINK_CHECK(g_srvAdded == addedBefore + 1,
+                    "服务端收到重连 Added 通知");
+        XLINK_CHECK(XLinkClient_reconnectAttempts(g_client) == 0,
+                    "重连成功后重连计数清零");
+        XLINK_CHECK(g_clientStateChangedCount >= 4,
+                    "stateChanged 经历 Connecting/Connected/Reconnecting/Connected");
+        XLINK_CHECK(g_lastState == XLinkClient_ConnectedState,
+                    "最新状态回到 ConnectedState");
+
+        /* 重连后的链路可正常收发：载荷带 0x5A，服务端模板回显后客户端
+           分发回调才认账（服务端回显 payload[0]，空载荷回 0 不计入）。 */
+        if (XLinkClient_isReady(g_client)) {
+            g_pingResponses = 0;
+            g_srvRequests = 0;
+            XLinkSession_sendRequest(XLinkClient_session(g_client),
+                                     XCLIENT_CMD_PING, &arg, 1, &reqId);
+            XLINK_CHECK(xlink_client_test_wait(
+                            xlink_client_test_cond_ping, 2000, srv),
+                        "重连后链路 PING 收到回执");
+        }
+
+        XLinkClient_disconnectFromServer(g_client);
+        XClassDelete((XClass*)g_client);
+        g_client = NULL;
+        if (srv)
+            XClassDelete((XClass*)srv);
+        XLINK_CHECK(1, "子分组四资源收尾无崩溃");
+    }
+}
+
+/**
+ * @brief 子分组五：重连关（踢线后停在 UnconnectedState）。
+ */
+static void xlink_client_test_no_reconnect(void)
+{
+    XLINK_SECTION("十四·五、客户端包装 重连关（踢线后停在 UnconnectedState）");
+    xlink_client_test_reset();
+    {
+        XLinkServer* srv = xlink_client_test_make_server();
+
+        XLINK_CHECK(srv != NULL, "服务端监听 127.0.0.1:47321 成功");
+        if (!srv)
+            return;
+
+        /* 默认 autoReconnect=false */
+        g_client = xlink_client_test_make_client(false, 150, -1);
+        if (!g_client) {
+            XClassDelete((XClass*)srv);
+            XLINK_CHECK(0, "客户端堆创建成功");
+            return;
+        }
+        XLINK_CHECK(!XLinkClient_autoReconnect(g_client),
+                    "默认自动重连关闭");
+
+        XLINK_CHECK(XLinkClient_connectToServer(g_client),
+                    "connectToServer 发起成功");
+        XLINK_CHECK(xlink_client_test_wait(xlink_client_test_cond_ready,
+                                           3000, srv),
+                    "首次连接握手完成");
+
+        /* 踢线同子分组四：close 只停听，须删服务端对象才断开已 accept 连接 */
+        XLinkServer_close(srv);
+        XClassDelete((XClass*)srv);
+        srv = NULL;
+        XLINK_CHECK(xlink_client_test_wait(
+                        xlink_client_test_cond_unconnected, 2000, NULL),
+                    "踢线后回到 UnconnectedState");
+        XLINK_CHECK(XLinkClient_session(g_client) == NULL,
+                    "会话已拆除");
+        XLINK_CHECK(!g_sawReconnecting, "全程未进入 ReconnectingState");
+        XLINK_CHECK(g_lastState == XLinkClient_UnconnectedState,
+                    "最新状态为 UnconnectedState");
+
+        XClassDelete((XClass*)g_client);
+        g_client = NULL;
+        XLINK_CHECK(1, "子分组五资源收尾无崩溃");
+    }
+}
+
+/**
+ * @brief 子分组六：手动断开（Goodbye 收尾，服务端收到 Removed）。
+ */
+static void xlink_client_test_manual_disconnect(void)
+{
+    XLINK_SECTION("十四·六、客户端包装 手动断开（Goodbye 收尾，服务端收到 Removed）");
+    xlink_client_test_reset();
+    {
+        XLinkServer* srv = xlink_client_test_make_server();
+
+        XLINK_CHECK(srv != NULL, "服务端监听 127.0.0.1:47321 成功");
+        if (!srv)
+            return;
+
+        /* 特意开自动重连：验证手动 disconnectFromServer 不触发重连 */
+        g_client = xlink_client_test_make_client(true, 150, -1);
+        if (!g_client) {
+            XClassDelete((XClass*)srv);
+            XLINK_CHECK(0, "客户端堆创建成功");
+            return;
+        }
+
+        XLINK_CHECK(XLinkClient_connectToServer(g_client),
+                    "connectToServer 发起成功");
+        XLINK_CHECK(xlink_client_test_wait(xlink_client_test_cond_ready,
+                                           3000, srv),
+                    "连接握手完成");
+        XLINK_CHECK(g_srvAdded == 1, "服务端收到 Added 通知");
+
+        XLinkClient_disconnectFromServer(g_client);
+        XLINK_CHECK(XLinkClient_state(g_client)
+                        == XLinkClient_UnconnectedState,
+                    "断开后立即回到 UnconnectedState");
+        XLINK_CHECK(XLinkClient_session(g_client) == NULL,
+                    "会话已拆除");
+        XLINK_CHECK(xlink_client_test_wait(xlink_client_test_cond_removed,
+                                           2000, srv),
+                    "服务端 notify 收到 Removed（Goodbye 判活回收）");
+        XLINK_CHECK(xlink_client_test_wait(
+                        xlink_client_test_cond_unconnected, 500, NULL),
+                    "等待期保持 UnconnectedState（手动断开不重连）");
+        XLINK_CHECK(!g_sawReconnecting, "手动断开未进入 ReconnectingState");
+
+        XClassDelete((XClass*)g_client);
+        g_client = NULL;
+        XLinkServer_close(srv);
+        XClassDelete((XClass*)srv);
+        XLINK_CHECK(1, "子分组六资源收尾无崩溃");
+    }
+}
+
+/**
+ * @brief 子分组七：最大重连次数（达到上限收手转 Unconnected）。
+ */
+static void xlink_client_test_max_attempts(void)
+{
+    XLINK_SECTION("十四·七、客户端包装 最大重连次数（达到上限收手转 Unconnected）");
+    xlink_client_test_reset();
+    {
+        XLinkServer* srv = xlink_client_test_make_server();
+
+        XLINK_CHECK(srv != NULL, "服务端监听 127.0.0.1:47321 成功");
+        if (!srv)
+            return;
+
+        g_client = xlink_client_test_make_client(true, 120, 2);
+        if (!g_client) {
+            XClassDelete((XClass*)srv);
+            XLINK_CHECK(0, "客户端堆创建成功");
+            return;
+        }
+
+        XLINK_CHECK(XLinkClient_connectToServer(g_client),
+                    "connectToServer 发起成功");
+        XLINK_CHECK(xlink_client_test_wait(xlink_client_test_cond_ready,
+                                           3000, srv),
+                    "首次连接握手完成");
+
+        /* 服务端永久下线：最多再试 2 次（约 2×120ms）即收手 */
+        XLinkServer_close(srv);
+        XClassDelete((XClass*)srv);
+        srv = NULL;
+        XLINK_CHECK(xlink_client_test_wait(
+                        xlink_client_test_cond_reconnecting, 2000, NULL),
+                    "踢线后进入 ReconnectingState");
+        XLINK_CHECK(xlink_client_test_wait(
+                        xlink_client_test_cond_unconnected, 5000, NULL),
+                    "达到最大重连次数后转 UnconnectedState 收手");
+        XLINK_CHECK(XLinkClient_session(g_client) == NULL,
+                    "收手后会话与套接字已拆除");
+        XLINK_CHECK(g_sawReconnecting, "重连流程确实经历过");
+
+        XClassDelete((XClass*)g_client);
+        g_client = NULL;
+        XLINK_CHECK(1, "子分组七资源收尾无崩溃");
+    }
+}
+
+/* ========================================================================== */
+/*                        十五、能力位全矩阵                                   */
+/* ========================================================================== */
+
+/** @brief 分组十五参数化能力位表（与 xlink_cap_matrix_names 一一对应）。 */
+static const uint16_t xlink_cap_matrix_bits[] = {
+    XLinkCapability_Zlib,
+    XLinkCapability_Tls,
+    XLinkCapability_Snapshot,
+    XLinkCapability_RequestTimeout
+};
+
+/** @brief 分组十五参数化能力位名（与 xlink_cap_matrix_bits 一一对应）。 */
+static const char* const xlink_cap_matrix_names[] = {
+    "Zlib", "Tls", "Snapshot", "RequestTimeout"
+};
+
+/** @brief 参数化能力位个数（bits/names 两表等长）。 */
+static const int xlink_cap_matrix_count =
+    (int)(sizeof(xlink_cap_matrix_bits) / sizeof(xlink_cap_matrix_bits[0]));
+
+/**
+ * @brief 覆盖分组十五：XLinkCapability 四个能力位（Zlib/Tls/Snapshot/
+ *        RequestTimeout）的协商全矩阵——双侧不置位（None）、对称置位、
+ *        单侧置位（两个方向）、全组合；HelloAck 附加快照（4+N 超长载荷）
+ *        的容忍语义；RequestTimeout 位不干扰请求自动超时路径。
+ * @note  能力协商是纯按位与（交集 = 对端声明 & 本端声明，见
+ *        XLinkSession.c onFrame 的 Hello/HelloAck 分支），与传输介质无关，
+ *        统一走回环夹具 + 假时钟推进（与分组四同口径）。
+ *        negotiatedCapability(NULL) 的防御断言已见于分组十，此处不重复。
+ */
+static void xlink_test_capability_matrix(void)
+{
+    char desc[160];
+    uint16_t full = (uint16_t)(XLinkCapability_Zlib | XLinkCapability_Tls
+                               | XLinkCapability_Snapshot
+                               | XLinkCapability_RequestTimeout);
+    int i;
+    int dir;
+
+    XLINK_SECTION("十五、能力位全矩阵（None/对称/不对称/全组合/快照/超时语义）");
+
+    /* --- 子用例一：None——双方均不置位，握手正常就绪且双侧交集为 0 --- */
+    {
+        XLinkTestFixture* f = xlink_fixture_create();
+        if (!f) {
+            XLINK_CHECK(false, "None 用例夹具搭建成功");
+            return;
+        }
+        /* 服务端显式 setCapability(None)，客户端完全不调（init 清零默认
+           为 0）：两种「不置位」写法在本用例中等价覆盖。 */
+        XLINK_CHECK(XLinkSession_setCapability(f->m_server,
+                                               XLinkCapability_None),
+                    "setCapability(None) 显式声明无能力成功");
+        xlink_fixture_step(f, 3); /* 自动握手 */
+        XLINK_CHECK(XLinkSession_isReady(f->m_server)
+                        && XLinkSession_isReady(f->m_client),
+                    "双侧均不置位时自动握手正常就绪");
+        XLINK_CHECK(XLinkSession_negotiatedCapability(f->m_server)
+                        == XLinkCapability_None,
+                    "双侧不置位：服务端能力交集为 0（None）");
+        XLINK_CHECK(XLinkSession_negotiatedCapability(f->m_client)
+                        == XLinkCapability_None,
+                    "双侧不置位：客户端能力交集为 0（None）");
+        xlink_fixture_delete(f);
+    }
+
+    /* --- 子用例二：对称——每个位单独双侧同置，交集恰为该位 --- */
+    for (i = 0; i < xlink_cap_matrix_count; i++) {
+        uint16_t bit = xlink_cap_matrix_bits[i];
+        XLinkTestFixture* f = xlink_fixture_create();
+        if (!f) {
+            XLINK_CHECK(false, "对称用例夹具搭建成功");
+            return;
+        }
+        XLinkSession_setCapability(f->m_server, bit);
+        XLinkSession_setCapability(f->m_client, bit);
+        xlink_fixture_step(f, 3); /* 自动握手 */
+        XSnprintf(desc, sizeof(desc), "对称置位 %s：自动握手正常就绪",
+                  xlink_cap_matrix_names[i]);
+        XLINK_CHECK(XLinkSession_isReady(f->m_server)
+                        && XLinkSession_isReady(f->m_client), desc);
+        XSnprintf(desc, sizeof(desc), "对称置位 %s：服务端能力交集恰为 %s",
+                  xlink_cap_matrix_names[i], xlink_cap_matrix_names[i]);
+        XLINK_CHECK(XLinkSession_negotiatedCapability(f->m_server) == bit,
+                    desc);
+        XSnprintf(desc, sizeof(desc), "对称置位 %s：客户端能力交集恰为 %s",
+                  xlink_cap_matrix_names[i], xlink_cap_matrix_names[i]);
+        XLINK_CHECK(XLinkSession_negotiatedCapability(f->m_client) == bit,
+                    desc);
+        xlink_fixture_delete(f);
+    }
+
+    /* --- 子用例三：不对称——单侧置位，双侧交集均不含该位
+           （按位与语义：单侧声明 & 对端 0 = 0，两个方向结论一致） --- */
+    for (dir = 0; dir < 2; dir++) {
+        const char* setterName = (dir == 0) ? "服务端" : "客户端";
+        for (i = 0; i < xlink_cap_matrix_count; i++) {
+            uint16_t bit = xlink_cap_matrix_bits[i];
+            XLinkSession* setter;
+            XLinkSession* other;
+            XLinkTestFixture* f = xlink_fixture_create();
+            if (!f) {
+                XLINK_CHECK(false, "不对称用例夹具搭建成功");
+                return;
+            }
+            setter = (dir == 0) ? f->m_server : f->m_client;
+            other = (dir == 0) ? f->m_client : f->m_server;
+            XLinkSession_setCapability(setter, bit);
+            xlink_fixture_step(f, 3); /* 自动握手 */
+            XSnprintf(desc, sizeof(desc),
+                      "不对称（仅%s置位 %s）：握手正常就绪",
+                      setterName, xlink_cap_matrix_names[i]);
+            XLINK_CHECK(XLinkSession_isReady(f->m_server)
+                            && XLinkSession_isReady(f->m_client), desc);
+            XSnprintf(desc, sizeof(desc),
+                      "不对称（仅%s置位 %s）：置位侧交集不含该位",
+                      setterName, xlink_cap_matrix_names[i]);
+            XLINK_CHECK(XLinkSession_negotiatedCapability(setter) == 0,
+                        desc);
+            XSnprintf(desc, sizeof(desc),
+                      "不对称（仅%s置位 %s）：未置位侧交集同样不含该位",
+                      setterName, xlink_cap_matrix_names[i]);
+            XLINK_CHECK(XLinkSession_negotiatedCapability(other) == 0,
+                        desc);
+            xlink_fixture_delete(f);
+        }
+    }
+
+    /* --- 子用例四：全组合——双侧同置全掩码，交集为全掩码 --- */
+    {
+        XLinkTestFixture* f = xlink_fixture_create();
+        if (!f) {
+            XLINK_CHECK(false, "全组合用例夹具搭建成功");
+            return;
+        }
+        XLINK_CHECK(XLinkSession_setCapability(f->m_server, full),
+                    "服务端声明全掩码（四能力位按位或）成功");
+        XLINK_CHECK(XLinkSession_setCapability(f->m_client, full),
+                    "客户端声明全掩码（四能力位按位或）成功");
+        xlink_fixture_step(f, 3); /* 自动握手 */
+        XLINK_CHECK(XLinkSession_isReady(f->m_server)
+                        && XLinkSession_isReady(f->m_client),
+                    "全掩码对称声明时自动握手正常就绪");
+        XLINK_CHECK(XLinkSession_negotiatedCapability(f->m_server) == full,
+                    "全组合：服务端能力交集为全掩码（四位全保留）");
+        XLINK_CHECK(XLinkSession_negotiatedCapability(f->m_client) == full,
+                    "全组合：客户端能力交集为全掩码（四位全保留）");
+        xlink_fixture_delete(f);
+    }
+
+    /* --- 子用例五：Snapshot 深度语义——HelloAck 载荷 = hello(4B) +
+           伪快照(N=64)。约定：HelloAck 可携带全量快照，长度由帧头
+           payloadLen 推导，解析侧只读前 4 字节 hello 前缀。
+           手动改道说明：自动 HelloAck 的触发条件是「本端 pump 消费到
+           对端 Hello」即回（XLinkSession.c onFrame 的 Hello 分支），
+           无从抑制；可行路径是让服务端在消费 Hello 之前先手动回
+           HelloAck——客户端收到的手动 HelloAck（4+N）与服务端随后补发
+           的自动 HelloAck（4B）并存无害，握手照常完成，按此路径验证。 */
+    {
+        /* Codec 层前置：decodeHello 对 4+N 超长载荷返回 true 且只读前 4 字节 */
+        {
+            uint8_t buf[4 + 64];
+            XLinkHelloPayload src;
+            XLinkHelloPayload dst;
+            memset(&src, 0, sizeof(src));
+            memset(&dst, 0, sizeof(dst));
+            src.m_version = XLINK_VERSION;
+            src.m_capability = (uint16_t)(XLinkCapability_Zlib
+                                          | XLinkCapability_Snapshot);
+            XLINK_CHECK(XLinkCodec_encodeHello(&src, buf, 4, NULL),
+                        "encodeHello 编出 4 字节 hello 前缀");
+            memset(&buf[4], 0xA5, 64); /* 伪快照字节 */
+            XLINK_CHECK(XLinkCodec_decodeHello(buf, sizeof(buf), &dst),
+                        "decodeHello 对 4+64 超长 Hello 载荷返回 true"
+                        "（快照附加字节不破坏解析）");
+            XLINK_CHECK(dst.m_version == XLINK_VERSION
+                            && dst.m_capability == src.m_capability,
+                        "超长载荷仅读前 4 字节：版本与能力位解析正确");
+        }
+
+        /* 会话层：服务端手动 HelloAck（4+64）应答客户端自动 Hello */
+        {
+            XLinkTestFixture* f = xlink_fixture_create();
+            uint8_t snapBuf[4 + 64];
+            XLinkHelloPayload hello;
+            if (!f) {
+                XLINK_CHECK(false, "快照语义用例夹具搭建成功");
+                return;
+            }
+            XLinkSession_setDispatchCallback(f->m_server,
+                                             xlink_server_dispatch, NULL);
+            XLinkSession_setDispatchCallback(f->m_client,
+                                             xlink_client_dispatch, NULL);
+            XLinkSession_setCapability(f->m_server, full);
+            XLinkSession_setCapability(f->m_client, full);
+
+            /* 客户端先驱动：自动补发 Hello（帧落在服务端接收环，尚未被消费） */
+            XLinkSession_pump(f->m_client, f->m_now);
+            f->m_now += 10;
+
+            /* 服务端此刻不 pump（不触发自动 HelloAck），手动改道：
+               以 4+64 载荷回 HelloAck（hello 前缀 + 伪快照字节） */
+            hello.m_version = XLINK_VERSION;
+            hello.m_capability = full;
+            XLINK_CHECK(XLinkCodec_encodeHello(&hello, snapBuf, 4, NULL),
+                        "手动 HelloAck 的 hello 前缀编码成功");
+            memset(&snapBuf[4], 0xA5, 64);
+            XLINK_CHECK(XLinkSession_sendSession(f->m_server,
+                                                 XLinkSessionCode_HelloAck,
+                                                 snapBuf,
+                                                 (uint32_t)sizeof(snapBuf)),
+                        "服务端手动发出携带 4+64 伪快照的 HelloAck");
+
+            /* 客户端消费手动 HelloAck：解析只读前 4 字节，握手照常完成 */
+            XLinkSession_pump(f->m_client, f->m_now);
+            f->m_now += 10;
+            XLINK_CHECK(XLinkSession_isReady(f->m_client),
+                        "客户端经手动 HelloAck（含伪快照）完成握手转 Ready");
+            XLINK_CHECK((XLinkSession_negotiatedCapability(f->m_client)
+                             & XLinkCapability_Snapshot) != 0,
+                        "客户端能力交集含 Snapshot");
+
+            /* 服务端补驱动：消费客户端 Hello 转 Ready，并补发一帧 4 字节
+               自动 HelloAck（与手动 HelloAck 并存，客户端幂等消化） */
+            XLinkSession_pump(f->m_server, f->m_now);
+            f->m_now += 10;
+            XLINK_CHECK(XLinkSession_isReady(f->m_server),
+                        "服务端随后消费 Hello 完成握手转 Ready");
+            XLINK_CHECK((XLinkSession_negotiatedCapability(f->m_server)
+                             & XLinkCapability_Snapshot) != 0,
+                        "服务端能力交集含 Snapshot");
+
+            xlink_fixture_step(f, 4); /* 消化互发的自动 Hello/HelloAck */
+            XLINK_CHECK(XLinkSession_isReady(f->m_server)
+                            && XLinkSession_isReady(f->m_client),
+                        "手动与自动握手帧并存收敛后链路保持 Ready");
+
+            /* 后续业务帧收发不受快照附加字节影响：请求-应答 + 推送各验一条 */
+            {
+                uint8_t arg = 0x5A;
+                uint32_t id = 0;
+                int respBase = g_clientResponseCount;
+                int pubBase = g_clientPublishCount;
+                XLINK_CHECK(XLinkSession_sendRequest(f->m_client, 0x30,
+                                                     &arg, 1, &id),
+                            "快照握手后客户端发业务请求");
+                XLINK_CHECK(XLinkSession_sendPublish(f->m_server,
+                                                     XLINK_TOPIC_USER_BASE + 9,
+                                                     &arg, 1),
+                            "快照握手后服务端发业务推送");
+                xlink_fixture_step(f, 3);
+                XLINK_CHECK(g_clientResponseCount == respBase + 1,
+                            "快照握手后请求-应答正常送达");
+                XLINK_CHECK(g_clientPublishCount == pubBase + 1,
+                            "快照握手后推送正常送达");
+            }
+            xlink_fixture_delete(f);
+        }
+    }
+
+    /* --- 子用例六：RequestTimeout 语义——双侧置位 + 客户端自动超时配置，
+           服务端不应答，超时终局照常上报（能力位不干扰自动超时路径） --- */
+    {
+        XLinkTestFixture* f = xlink_fixture_create();
+        uint8_t arg = 0x42;
+        uint32_t id = 0;
+        if (!f) {
+            XLINK_CHECK(false, "超时语义用例夹具搭建成功");
+            return;
+        }
+        /* 服务端只计数不应答：请求石沉大海，构造稳定的超时终局场景 */
+        XLinkSession_setDispatchCallback(f->m_server, xlink_silent_dispatch,
+                                         NULL);
+        XLinkSession_setCapability(f->m_server,
+                                   XLinkCapability_RequestTimeout);
+        XLinkSession_setCapability(f->m_client,
+                                   XLinkCapability_RequestTimeout);
+        xlink_fixture_step(f, 3); /* 自动握手 */
+        XLINK_CHECK(XLinkSession_isReady(f->m_server)
+                        && XLinkSession_isReady(f->m_client),
+                    "RequestTimeout 双侧置位时自动握手正常就绪");
+        XLINK_CHECK((XLinkSession_negotiatedCapability(f->m_server)
+                         & XLinkCapability_RequestTimeout) != 0
+                        && (XLinkSession_negotiatedCapability(f->m_client)
+                            & XLinkCapability_RequestTimeout) != 0,
+                    "双侧能力交集均含 RequestTimeout");
+        XLINK_CHECK(XLinkSession_setRequestTimeout(f->m_client, 100),
+                    "客户端 setRequestTimeout(100) 成功");
+        XLINK_CHECK(XLinkSession_setNumberOfRetries(f->m_client, 0),
+                    "客户端 setNumberOfRetries(0) 成功（首次超时即终局）");
+        g_reqFinishedCount = 0;
+        g_reqFinishedId = 0;
+        g_reqFinishedCmd = 0;
+        g_reqFinishedOk = true;
+        XObject_connect_2((XObject*)f->m_client,
+                          XSignal(XLinkSession_requestFinished_signal),
+                          xlink_request_finished_slot);
+        XLINK_CHECK(XLinkSession_sendRequest(f->m_client, 0x42, &arg, 1, &id),
+                    "发出不会被应答的请求（命令 0x42）");
+        xlink_fixture_step(f, 15); /* 推进 150ms，越过 100ms 阈值 */
+        XLINK_CHECK(g_reqFinishedCount == 1 && g_reqFinishedOk == false,
+                    "服务端不应答时客户端收到 requestFinished(false)"
+                    "（能力位不干扰自动超时）");
+        XLINK_CHECK(g_reqFinishedId == id && g_reqFinishedCmd == 0x42,
+                    "终局信号携带原请求 id 与命令号 0x42");
+        XLINK_CHECK(!XLinkSession_isPending(f->m_client, id),
+                    "超时终局后请求已出待应答表");
+        XLINK_CHECK(XLinkSession_isReady(f->m_server)
+                        && XLinkSession_isReady(f->m_client),
+                    "超时终局后链路保持 Ready（无副作用）");
+        xlink_fixture_delete(f);
+    }
+}
+
+/* ========================================================================== */
 /*                        入口                                               */
 /* ========================================================================== */
 
@@ -1029,6 +2791,16 @@ int XLinkTest_run(void)
     xlink_test_pending_timeout();
     xlink_test_heartbeat_timeout();
     xlink_test_defensive();
+    xlink_test_server();
+    xlink_test_signals_retry();
+    xlink_client_test_null_defense();
+    xlink_client_test_defaults();
+    xlink_client_test_normal_link();
+    xlink_client_test_auto_reconnect();
+    xlink_client_test_no_reconnect();
+    xlink_client_test_manual_disconnect();
+    xlink_client_test_max_attempts();
+    xlink_test_capability_matrix();
 
     XPrintf("\n========== XLink 测试完成: %d 通过, %d 失败 ==========\n",
             g_passed, g_failed);
@@ -1070,9 +2842,60 @@ void XLinkSessionTest(void)
     xlink_test_pending_timeout();
     xlink_test_heartbeat_timeout();
     xlink_test_defensive();
+    xlink_test_signals_retry();
     XPrintf("\n========== XLink 会话层测试完成: %d 通过, %d 失败 ==========\n",
             g_passed, g_failed);
 }
+
+/**
+ * @brief 仅跑服务端包装测试（监听接入/模板下发/自动握手/会话回收）。
+ * @note  依赖真实环回 TCP 与事件处理，比会话层测试重；单独成项便于
+ *        网络环境受限时跳过。
+ */
+void XLinkServerTest(void)
+{
+    g_passed = 0;
+    g_failed = 0;
+    xlink_test_server();
+    XPrintf("\n========== XLink 服务端测试完成: %d 通过, %d 失败 ==========\n",
+            g_passed, g_failed);
+}
+
+/**
+ * @brief 仅跑客户端包装测试（NULL 防御/默认值与生命周期/正常链路/踢线自动
+ *        重连/重连关停/手动断开/最大重连次数）。
+ * @note  即分组十四（原 XLinkClientTest.c 全量用例）；依赖真实环回 TCP
+ *        （127.0.0.1:47321）与事件处理，比会话层测试重；单独成项便于
+ *        网络环境受限时跳过。命令行入口 `--test xlink-client`。
+ */
+int XLinkClientTest_run(void)
+{
+    XPrintf("========== XLinkClient 客户端包装单元测试开始 ==========\n");
+    g_passed = 0;
+    g_failed = 0;
+
+    xlink_client_test_null_defense();
+    xlink_client_test_defaults();
+    xlink_client_test_normal_link();
+    xlink_client_test_auto_reconnect();
+    xlink_client_test_no_reconnect();
+    xlink_client_test_manual_disconnect();
+    xlink_client_test_max_attempts();
+
+    XPrintf("\n========== XLinkClient 测试完成: %d 通过, %d 失败 ==========\n",
+            g_passed, g_failed);
+    return g_failed;
+}
+
+/**
+ * @brief XTestMenu 菜单入口：运行全部 XLinkClient 测试。
+ * @note  签名与 Test/XProtocolTest 同族测试（XLinkTest 等）一致。
+ */
+void XLinkClientTest(void)
+{
+    (void)XLinkClientTest_run();
+}
+
 
 /* ======================================================================== *
  * 菜单注册：挂到 Test 菜单「协议栈 → XLink(xlink)」子菜单
@@ -1088,6 +2911,28 @@ void XTestMenu_XLinkTest(XTestMenu* root)
     {
         XAction* action = XTestMenu_addAction(menu, "编解码层单元测试");
         XTestMenu_setActionFunction(action, XLinkCodecTest);
+    }
+    {
+        XAction* action = XTestMenu_addAction(menu, "服务端包装单元测试");
+        XTestMenu_setActionFunction(action, XLinkServerTest);
+    }
+    {
+        /* 客户端包装（分组十四，原 XLinkClientTest.c）：真实 TCP 自动重连 */
+        XAction* action = XTestMenu_addAction(menu, "客户端包装单元测试");
+        XTestMenu_setActionFunction(action, XLinkClientTest);
+    }
+    {
+        XAction* action = XTestMenu_addAction(menu, "实战案例（本进程联调）");
+        XTestMenu_setActionFunction(action, XLinkDemo);
+    }
+    {
+        /* 实战案例·服务端/客户端（声明在 XLinkDemo.h）：双进程联调两个角色 */
+        XAction* action = XTestMenu_addAction(menu, "实战案例·服务端");
+        XTestMenu_setActionFunction(action, XLinkDemoServer);
+    }
+    {
+        XAction* action = XTestMenu_addAction(menu, "实战案例·客户端");
+        XTestMenu_setActionFunction(action, XLinkDemoClient);
     }
     {
         XAction* action = XTestMenu_addAction(menu, "会话层单元测试");

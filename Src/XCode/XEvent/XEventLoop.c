@@ -218,6 +218,5 @@ bool XEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags fla
     XAbstractEventDispatcher* dispatcher = XEventLoop_dispatcher(loop);
     if (!dispatcher)
         return false;
-
     return XAbstractEventDispatcher_processEvents_base(dispatcher, flags);
 }

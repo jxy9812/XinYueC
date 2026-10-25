@@ -228,11 +228,18 @@ static bool xfs_ls_emit(XConsoleShell* shell, const XString* fullPath,
     line = (char*)XMalloc_System(lineCapacity);
     if (!line) return false;
     memset(&stat, 0, sizeof(stat));
+    /* stat 失败（如 Windows 保留设备名 nul/PRN 等无法 stat 的条目）不应
+     * 中断整条目录列举：退化为仅用目录枚举已知的条目属性输出名称，
+     * 与 POSIX ls 的容错口径一致（单个条目异常不拖垮整次列举）。 */
     if (!XDeviceFile_stat(fullPath, &stat)) {
-        XFree_System(line);
-        return false;
-    }
-    if (options->longFormat) {
+        if (options->longFormat) {
+            written = XSnprintf(line, lineCapacity, "%-10s %10s %-9s %s %s",
+                               "----------", "-", "?", "-", displayName);
+        } else {
+            if (options->classify && entry->isDir) suffix = "/";
+            written = XSnprintf(line, lineCapacity, "%s%s", displayName, suffix);
+        }
+    } else if (options->longFormat) {
         if (!xfs_ls_time(stat.modificationTime, timeText, sizeof(timeText))) {
             timeText[0] = '-';
             timeText[1] = '\0';
@@ -752,7 +759,10 @@ static bool xfs_du_size(const XString* path, int64_t* total)
     XDirEntry entry;
     XFd iterator = XFD_INVALID;
     bool ok = true;
-    if (!path || !total || !XDeviceFile_stat(path, &stat)) return false;
+    if (!path || !total) return false;
+    /* 条目无法 stat（如 Windows 保留设备名 nul/PRN）时跳过该条目，
+     * 不中断整棵目录的统计（与 ls 的单条目容错口径一致）。 */
+    if (!XDeviceFile_stat(path, &stat)) return true;
     *total += stat.size > 0 ? stat.size : 0;
     if (!stat.isDir) return true;
     name = XString_create();
@@ -768,11 +778,12 @@ static bool xfs_du_size(const XString* path, int64_t* total)
             if (XStrcmp(XString_toUtf8(name), ".") == 0 ||
                 XStrcmp(XString_toUtf8(name), "..") == 0) continue;
             if (!XString_assign_utf8(child, XString_toUtf8(path)) ||
-                !xfs_append_path_component(child, XString_toUtf8(name)) ||
-                !xfs_du_size(child, total)) {
+                !xfs_append_path_component(child, XString_toUtf8(name))) {
                 ok = false;
                 break;
             }
+            /* 子条目统计失败不拖垮整体（见上）。 */
+            (void)xfs_du_size(child, total);
         }
         XDeviceDir_close(iterator);
     }

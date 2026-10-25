@@ -91,9 +91,18 @@
 #define XTUI_VIM_LINE_MAX 256
 #endif
 
-/** @brief vim 冒号命令缓冲最大长度。 */
+/**
+ * @brief vim 冒号命令缓冲最大长度。
+ * @details 必须容得下「命令前缀 + 完整文件路径」：冒号命令要携带
+ *          目标路径（如 ":e <path>"），而 m_actionPath 的容量是
+ *          XTUI_VIM_LINE_MAX。若命令缓冲明显小于路径缓冲，长路径
+ *          会在输入阶段被静默截断（实测 Windows 临时目录下 72 字节的
+ *          ":e <path>" 被截到 64 字节，路径退化成 "...\o"，随后打开
+ *          的是另一个文件，:wq 也写错了目标）。故此处取与
+ *          XTUI_VIM_LINE_MAX 同量级，保证路径可完整送达。
+ */
 #ifndef XTUI_VIM_CMD_MAX
-#define XTUI_VIM_CMD_MAX 64
+#define XTUI_VIM_CMD_MAX 256
 #endif
 
 /** @brief vim 状态栏文本缓冲长度。 */

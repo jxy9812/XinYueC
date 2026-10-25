@@ -1,7 +1,14 @@
 # XLink 私有应用层协议
 
-> 版本：v1.0　|　协议版本：`0x0100`　|　日期：2026-10-15
+> 版本：v1.2　|　协议版本：`0x0100`　|　日期：2026-10-24
 > 落点：`Src/XProtocol/XLink/`　|　开关：`XLINK_ON`
+>
+> v1.2 变更：删除被自动超时（setRequestTimeout + requestFinished 信号）取代的
+> 待应答被动超时查询 API（含声明/实现/文档/测试）；示例与实战代码全面收敛到
+> 自动握手与信号消费口径。线上格式零变化。
+>
+> v1.1 变更：会话升级为 XObject 事件驱动（readyRead + 内建定时器）、握手零样板
+> （自动 Hello）、新增服务端包装 XLinkServer；线上格式零变化，全 API 向后兼容。
 
 ---
 
@@ -19,7 +26,9 @@
   - [6.4 推送与订阅](#64-推送与订阅)
   - [6.5 待应答与超时](#65-待应答与超时)
   - [6.6 心跳与判线](#66-心跳与判线)
-  - [6.7 TLS 加密链路](#67-tls-加密链路)
+  - [6.7 服务端包装 XLinkServer](#67-服务端包装-xlinkserver推荐)
+  - [6.8 客户端包装 XLinkClient](#68-客户端包装-xlinkclient)
+  - [6.9 TLS 加密链路](#69-tls-加密链路)
 - [7. 完整示例](#7-完整示例)
 - [8. 配置项](#8-配置项)
 - [9. API 速查表](#9-api-速查表)
@@ -112,7 +121,9 @@ XLinkSession* session = XLinkSession_create_ex(conn);
 | `XLink_config.h` | 协议开关与容量常量 |
 | `XLinkProto.h` | 线上格式定义：消息类枚举、能力位、帧头结构 |
 | `XLinkCodec.h/.c` | 小端序列化原语、Hello 载荷编解码、帧头编解码 |
-| `XLinkSession.h/.c` | 会话对象：收发、分发、订阅表、待应答表、心跳 |
+| `XLinkSession.h/.c` | 会话对象：收发、分发、订阅表、待应答表、心跳；XObject 事件驱动 |
+| `XLinkServer.h/.c` | 服务端包装（可选，`XLINK_SERVER_ON`）：监听、自动建会话、会话回收 |
+| `XLinkClient.h/.c` | 客户端包装（可选，`XLINK_CLIENT_ON`）：自动重连（默认关） |
 
 ---
 
@@ -205,6 +216,10 @@ Hello / HelloAck 载荷携带，握手后取**按位与**作为协商结果：
 
 未置位的特性对端不得依赖（如未协商 `ZLIB` 则载荷必须为原始字节）。
 
+> 测试口径：四个能力位的协商矩阵（双侧不置位 / 单侧置位两方向 / 对称置位 /
+> 全组合）与 HelloAck 附加快照的 `4+N` 超长载荷容忍语义（解析只读前 4 字节，
+> 附加字节被忽略），由 `Test/XProtocolTest/XLinkTest.c` 分组十五全量覆盖。
+
 ---
 
 ## 5. 会话状态机
@@ -284,9 +299,18 @@ XLinkSession_setCapability(session, XLinkCapability_Zlib | XLinkCapability_Tls);
 XLinkSession_setDispatchCallback(session, my_dispatch_callback, userData);
 ```
 
-**第 3 步：发送 Hello（双向对称，谁先发都行）**
+> ⚠️ 能力位须在事件循环转起来之前设置（通常在 create_ex 之后同步调用）：
+> 会话挂载传输后首次驱动会自动补发 Hello，能力位随 Hello 上线。
+
+**第 3 步：握手——什么都不用做**
+
+自 v1.1 起握手零样板：挂载传输后首次 pump（或首个 readyRead/定时器节拍）
+自动补发 Hello；收到对端 Hello 时自动回 HelloAck，双方转 `Ready`。
+手动 `sendSession(Hello)` 仍然支持（发送成功会抑制自动补发，不会产生重复帧），
+"谁先发都行"的对称语义不变。
 
 ```c
+/* 旧式手动握手（仍可用，可选） */
 XLinkHelloPayload hello;
 uint8_t buf[4];
 
@@ -296,14 +320,23 @@ XLinkCodec_encodeHello(&hello, buf, sizeof(buf), NULL);
 XLinkSession_sendSession(session, XLinkSessionCode_Hello, buf, 4);
 ```
 
-**第 4 步：驱动事件循环**
+**第 4 步：驱动事件循环（二选一或混用）**
 
 ```c
+/* 方式 A：异步驱动（推荐）——什么都不写。
+   会话继承 XObject，挂载传输时已自动接线 readyRead（收包事件驱动）并
+   启动内建定时器（XLINK_HEARTBEAT_TICK_MS 节拍，驱动心跳与判线），
+   事件循环跑起来链路就自己活着。 */
+
+/* 方式 B：手动驱动——按圈 pump，时间注入单调毫秒 */
 while (running) {
     XLinkSession_pump(session, XDateTime_currentMSecsSinceEpoch());
     /* ... 其他事件处理 ... */
 }
 ```
+
+两种方式可混用（pump 幂等）。回环设备不发 readyRead、无事件分发器的裸主循环、
+需要注入固定时钟的测试，走方式 B；真实 TCP/TLS 传输走方式 A。
 
 **对称性**：收到对端 Hello 时自动回 HelloAck，双方都会转 `Ready`。**不需要区分谁是客户端**。
 
@@ -412,28 +445,58 @@ XLinkSession_unsubscribe(session, TOPIC_ALARM_EVENT);
 ```
 
 > ⚠️ 业务载荷上限为 `XLINK_MAX_PAYLOAD - 4`（4 字节 topicId 前缀）。超出直接返回 `false`，不截断、不部分发送。
+>
+> 订阅幂等：对已订阅的 topic 重复 `subscribe` 返回 `true`，不重复占用定容表槽位、不向对端重发帧；`unsubscribe` 对未订阅 topic 返回 `false`（不发无意义帧）。推送谁发都行——任意一端都可向对端 `sendPublish`，空载荷（仅 topicId 通知）合法。
 
 ### 6.5 待应答与超时
 
-请求发出后进入待应答表，应答到达自动出表。超时需应用层主动查询：
+请求发出后进入待应答表，应答到达自动出表并发射 `requestFinished(succeeded=true)`。超时处理由**自动超时引擎**承担（设置阈值大于 0 即启用）：pump 在时间检查区内自动扫描待应答表，对超时槽执行"静默重发或终局上报"，应用层零轮询：
 
 ```c
-/* 每次 pump 后检查 */
-uint16_t cmd;
-if (XLinkSession_takeTimedOut(session, nowMs, 2000, &cmd)) {
-    show_error("设备无响应 (命令 %u)", cmd);   /* 取出的槽位不会重复上报 */
+XLinkSession_setRequestTimeout(session, 500); /* 超时阈值 500ms（0 = 被动模式） */
+XLinkSession_setNumberOfRetries(session, 2);  /* 超时后自动重发上限 2 次 */
+
+/* 终局结果走信号（应答成功 / 最终超时各发一次） */
+XObject_connect_2((XObject*)session,
+                  XSignal(XLinkSession_requestFinished_signal),
+                  on_request_finished);   /* 参数：requestId, command, succeeded */
+
+static void on_request_finished(XObject* sender, XVarList* args)
+{
+    uint32_t requestId;
+    uint16_t command;
+    bool succeeded;
+
+    (void)sender;
+    XVarList_args_3(args, uint32_t, requestId, uint16_t, command,
+                    bool, succeeded);
+    if (!succeeded)
+        show_error("设备无响应 (命令 %u)", command);   /* 槽已出表，不会重复上报 */
 }
 ```
 
-**设计要点**：超时判定不由库自动触发，而是交给应用层 —— 因为「超时」在不同业务里含义不同（可重试？需回滚？弹窗提示？）。
+自动模式行为细则：
+
+- **静默重发**：超时槽若可重试且重试额度未满，按**原 requestId** 原载荷（快照自待应答槽）重新发送，对端无感知 id 变化；重发成功即刷新该槽的超时起算点
+- **可重试条件**：请求载荷不超过 `XLINK_RETRY_PAYLOAD_MAX`（默认 128 字节，快照进定容槽位）；空载荷（len=0）也算可重试；超长请求照常发送但不可重试，首次超时即终局
+- **终局上报**：额度用尽 / 不可重试 / 重发失败时，发射 `requestFinished(succeeded=false)` 并出表，同一请求不会产生第二次上报
+- **成功路径**：应答命中待应答表时发射 `requestFinished(succeeded=true)`；漂移应答（无对应槽）与重复应答不发射
+- **判定口径**：自请求发出（或最近一次重发）起严格大于阈值才算超时；未经 pump 就发出的请求自首次 pump 那一拍起算（`sendRequest` 不自行取时，首拍不判超时）
+- **被动模式**：默认参数（阈值 0、重试 0）下整段逻辑被跳过，超时请求长期滞留待应答表（可经 `isPending` 查询，断链时随表清空），行为与无自动超时时完全一致
+
+**状态信号**：链路状态真变化时（挂载→Connected、握手→Ready、断链→Inactive）自动发射 `stateChanged`，同态重复设置不重发，UI 可据此免轮询刷新连接图标。
 
 **容量限制**：待应答表定容 `XLINK_PENDING_SLOTS`（默认 8 槽）。表满时 `sendRequest` 返回 `false`，**拒绝发请求而非静默丢失**。高频请求场景请调大该宏。
 
 ### 6.6 心跳与判线
 
-**自动心跳**：握手完成后，`pump` 会按 `XLINK_HEARTBEAT_INTERVAL_MS`（默认 1 秒）自动发送 Heartbeat。
+**自动心跳**：握手完成后按 `XLINK_HEARTBEAT_INTERVAL_MS`（默认 1 秒）的间隔门限
+自动发送 Heartbeat。异步模式下由会话内建定时器按 `XLINK_HEARTBEAT_TICK_MS`
+（默认 250ms）节拍驱动；手动模式下由每圈 pump 驱动。
 
-**自动判线**：超过 `XLINK_HEARTBEAT_TIMEOUT_MS`（默认 3 秒）未收到任何字节，会话自动转 `Inactive`。
+**自动判线**：超过 `XLINK_HEARTBEAT_TIMEOUT_MS`（默认 3 秒）未收到任何字节，
+会话自动转 `Inactive`。判线检查密度由节拍决定（异步 250ms / 手动 = pump 圈频），
+默认配置下判定误差不超过一个节拍。
 
 **主动断链**
 
@@ -442,9 +505,63 @@ XLinkSession_sendSession(session, XLinkSessionCode_Goodbye, NULL, 0);
 XLinkSession_reset(session);
 ```
 
-> ⚠️ **时间轴必须连续**。`pump` 的 `nowMs` 若发生回退或跨越静默阈值，会误判为断线。建议统一用 `XDateTime_currentMSecsSinceEpoch()`（单调时钟）传入。
+> ⚠️ **手动模式的时间轴必须连续**。pump 的 `nowMs` 若发生回退或跨越静默阈值，
+> 会误判为断线。建议统一用 `XDateTime_currentMSecsSinceEpoch()`（单调时钟）传入。
+> 异步模式时间由库内经同一接口取，天然连续；但**两种模式不要混用不同时间源**
+> （如手动传假时钟、定时器用真实时钟），否则静默计时被污染。
 
-### 6.7 TLS 加密链路
+### 6.7 服务端包装 XLinkServer（推荐）
+
+服务端样板（accept → create_ex → setCapability → setCallback → 逐会话驱动与
+回收）收敛为一个对象，开关 `XLINK_SERVER_ON`（默认开）：
+
+```c
+XLinkServer* srv = XLinkServer_create();
+XLinkServer_setCapability(srv, XLinkCapability_Zlib);      /* 新会话模板 */
+XLinkServer_setDispatchCallback(srv, on_frame, NULL);      /* 新会话模板 */
+XLinkServer_setNotifyCallback(srv, on_session_added_removed, NULL); /* 可选 */
+XLinkServer_listen_base(srv, "127.0.0.1", 45200);
+
+/* 事件循环里：什么都不用写。
+   - newConnection 信号到达即自动建会话（套模板）；
+   - 会话各自异步驱动（readyRead + 内建定时器）；
+   - Inactive 会话（Goodbye/判线/违例/断开）由内建节拍自动回收。 */
+```
+
+手动模式（无事件分发器）下按圈 `XLinkServer_pump(srv, now)` 兜底：接受连接、
+驱动会话、回收会话。`XLinkServer_sessionAt/count` 遍历在线会话；notify 回调
+（Added/Removed）维护"会话指针 → 应用上下文"映射。
+
+> 回收时机安全性：同步删除只发生在最外层 pump 末尾或事件分派的定时器回调里，
+> 此刻任何会话的调用栈均已退出，符合「对象释放方式选择约束」的同步释放判据；
+> pump 重入（在分发回调里再调 pump）时跳过回收，推迟到外层。
+
+### 6.8 客户端包装 XLinkClient
+
+与服务端包装对偶的客户端形态（开关 `XLINK_CLIENT_ON`，默认开）：自持 XTcpSocket +
+XLinkSession，命名与状态机对齐 XModbusDevice/QModbus 惯例。
+
+```c
+XLinkClient* cli = XLinkClient_create();
+XLinkClient_setHostPort(cli, "192.168.1.10", 45200);
+XLinkClient_setCapability(cli, XLinkCapability_Zlib);
+XLinkClient_setDispatchCallback(cli, on_frame, NULL);   /* 会话模板 */
+XLinkClient_setAutoReconnect(cli, true);                 /* 默认关 */
+XLinkClient_setReconnectInterval(cli, 1000);             /* 默认 1s */
+XLinkClient_setMaxReconnectAttempts(cli, -1);            /* -1 无限 */
+XLinkClient_connectToServer(cli);                        /* 异步发起，之后全自动 */
+/* 状态经 XLinkClient_stateChanged_signal 通知：
+   UnconnectedState → ConnectingState → ConnectedState(会话已握手) →…
+   断线且自动重连开 → ReconnectingState（内建定时器驱动重试）→ 回 ConnectedState */
+XLinkSession* s = XLinkClient_session(cli);              /* 借用，业务收发照旧 */
+XLinkClient_disconnectFromServer(cli);                   /* Goodbye+排空写队列+拆除 */
+```
+
+要点：TCP 连上才建会话（会话自身自动握手）；曾连上后判线且 autoReconnect 开则成对拆除旧
+会话/套接字并按 reconnectInterval 重试，达 maxReconnectAttempts（非 -1）转 UnconnectedState
+收手；手动 `disconnectFromServer` 永不触发重连。
+
+### 6.9 TLS 加密链路
 
 加密由**传输层**（`XSslSocket` + mbedTLS）承担，XLink 协议层不实现任何密码学。
 
@@ -470,6 +587,23 @@ XLinkSession_setCapability(s, XLinkCapability_Zlib | XLinkCapability_Tls);
 ---
 
 ## 7. 完整示例
+
+> 可运行的实战案例分立两个程序文件（推荐从这里读用法）：`XLinkDemoServer.c`
+> 与 `XLinkDemoClient.c`，一个"远程电机监控"故事：3 条命令（PING 同步回执 / ADD 序列化 /
+> SLOW 异步回执）+ 2 个 topic（STATE 周期推送 / ALARM 事件通知）。三个入口：
+>
+> | 命令 | 形态 |
+> |------|------|
+> | `--test xlink-demo-server` | 双进程联调·服务端（监听 45200，等客户端） |
+> | `--test xlink-demo-client` | 双进程联调·客户端（带重试连接，跑完全流程） |
+> | `--test xlink-demo` | 本进程联调：两个角色同进程跑真实 TCP 环回（CI 友好） |
+>
+> 双进程用法（两个终端，先起服务端后起客户端），两侧日志带毫秒时刻可对轴，
+> 均以 exit 0 退出：案例本身就是"异步模式下应用代码长什么样"的答案——
+> 两端事件循环只有 processEvents + sleep，没有任何 XLink 手动调用。
+>
+> 下面的示例保留手动握手与手动 pump 的写法（两种模式都受支持，便于对照
+> 理解协议细节）；生产代码按案例的异步形态写。
 
 ### 7.1 控制进程（服务端）
 
@@ -526,6 +660,20 @@ static void on_frame(XLinkSession* s, const XLinkFrameHeader* f,
     }
 }
 
+/* 请求终局槽：自动超时模式下，超时终局经 requestFinished 信号上报 */
+static void on_request_finished(XObject* sender, XVarList* args)
+{
+    uint32_t requestId;
+    uint16_t command;
+    bool succeeded;
+
+    (void)sender;
+    XVarList_args_3(args, uint32_t, requestId, uint16_t, command,
+                    bool, succeeded);
+    if (!succeeded)
+        XPrintf("[控制] 命令 %u 超时未应答\n", command);
+}
+
 int main(void)
 {
     XTcpServer* server = XTcpServer_create();
@@ -545,7 +693,13 @@ int main(void)
                 XLinkSession_setCapability(session, XLinkCapability_Zlib);
                 XLinkSession_setDispatchCallback(session, on_frame, NULL);
 
-                /* 主动发 Hello（对称：谁先发都行） */
+                /* 请求自动超时 + 终局信号（挂载后设置一次即可） */
+                XLinkSession_setRequestTimeout(session, 2000);
+                XObject_connect_2((XObject*)session,
+                                  XSignal(XLinkSession_requestFinished_signal),
+                                  on_request_finished);
+
+                /* 主动发 Hello（对称：谁先发都行；不写则首次 pump 自动补发） */
                 XLinkHelloPayload hello = { XLINK_VERSION, XLinkCapability_Zlib };
                 uint8_t buf[4];
                 XLinkCodec_encodeHello(&hello, buf, sizeof(buf), NULL);
@@ -566,11 +720,6 @@ int main(void)
                                          XLINK_TOPIC_USER_BASE + 1, buf, 8);
                 lastPush = now;
             }
-
-            /* 请求超时检查 */
-            uint16_t cmd;
-            if (XLinkSession_takeTimedOut(session, now, 2000, &cmd))
-                XPrintf("[控制] 命令 %u 超时未应答\n", cmd);
 
             /* 断线重置 */
             if (!XLinkSession_isReady(session)) {
@@ -627,6 +776,20 @@ static void on_frame(XLinkSession* s, const XLinkFrameHeader* f,
     }
 }
 
+/* 请求终局槽：自动超时模式下，超时终局经 requestFinished 信号上报 */
+static void on_request_finished(XObject* sender, XVarList* args)
+{
+    uint32_t requestId;
+    uint16_t command;
+    bool succeeded;
+
+    (void)sender;
+    XVarList_args_3(args, uint32_t, requestId, uint16_t, command,
+                    bool, succeeded);
+    if (!succeeded)
+        show_error("设备无响应 (命令 %u)", command);
+}
+
 static void send_command(XLinkSession* s, uint16_t cmd)
 {
     uint32_t reqId = 0;
@@ -637,6 +800,12 @@ static void send_command(XLinkSession* s, uint16_t cmd)
 
 void ui_loop(XLinkSession* s)
 {
+    /* 自动超时 + 终局信号：会话建立后设置一次即可，主循环零轮询 */
+    XLinkSession_setRequestTimeout(s, 2000);
+    XObject_connect_2((XObject*)s,
+                      XSignal(XLinkSession_requestFinished_signal),
+                      on_request_finished);
+
     for (;;) {
         uint32_t now = (uint32_t)XDateTime_currentMSecsSinceEpoch();
         XLinkSession_pump(s, now);
@@ -651,11 +820,6 @@ void ui_loop(XLinkSession* s)
             send_command(s, CMD_START_MOTOR);
         if (button_stop_clicked())
             send_command(s, CMD_STOP_MOTOR);
-
-        /* 请求超时提示 */
-        uint16_t cmd;
-        if (XLinkSession_takeTimedOut(s, now, 2000, &cmd))
-            show_error("设备无响应 (命令 %u)", cmd);
     }
 }
 ```
@@ -672,14 +836,23 @@ void ui_loop(XLinkSession* s)
 | `XLINK_CODEC_ON` | 1 | 帧编解码层 |
 | `XLINK_SESSION_ON` | 1 | 会话层 |
 | `XLINK_SSL_ON` | 1 | TLS 能力感知（实际加密由 `XSslSocket` 承担） |
+| `XLINK_SERVER_ON` | 1 | 服务端包装 XLinkServer（依赖 XTcpServer） |
 | `XLINK_VERSION` | `0x0100` | 协议版本（高字节主版本，低字节次版本） |
 | `XLINK_HEADER_SIZE` | 12 | 帧头固定长度 |
 | `XLINK_TOPIC_USER_BASE` | `0x10000` | 业务 topicId 起始值 |
 | `XLINK_MAX_PAYLOAD` | `16384` | **线上**载荷上限（含 topicId 前缀） |
 | `XLINK_PENDING_SLOTS` | 8 | 待应答表槽位 |
+| `XLINK_REQUEST_TIMEOUT_MS` | 0 | 请求自动超时阈值（毫秒；0 = 被动模式，运行时可经 `setRequestTimeout` 调整） |
+| `XLINK_RETRY_MAX_DEFAULT` | 0 | 请求自动重发次数默认值（运行时可经 `setNumberOfRetries` 调整） |
+| `XLINK_RETRY_PAYLOAD_MAX` | 128 | 可自动重发的请求载荷上限（超长请求超时不重试） |
 | `XLINK_TOPIC_SLOTS` | 16 | 订阅表槽位 |
 | `XLINK_HEARTBEAT_INTERVAL_MS` | 1000 | 心跳间隔（0 = 不发心跳） |
 | `XLINK_HEARTBEAT_TIMEOUT_MS` | 3000 | 静默判线阈值 |
+| `XLINK_HEARTBEAT_TICK_MS` | 250 | 异步节拍默认值（运行中可经 `XLinkServer_setTickInterval` 调整） |
+| `XLINK_CLIENT_ON` | 1 | 客户端包装 XLinkClient（自动重连，默认关） |
+| `XLINK_RETRY_MAX_DEFAULT` | 0 | 请求超时自动重试默认次数（0=仅报超时；经 `setNumberOfRetries` 调整） |
+| `XLINK_RETRY_PAYLOAD_MAX` | 128 | 可重试请求的载荷快照上限（超过则该请求超时不重试） |
+| `XLINK_REQUEST_TIMEOUT_MS` | 0 | 请求自动超时判定阈值（0=被动模式；经 `setRequestTimeout` 调整） |
 
 **裁剪示例**
 
@@ -715,6 +888,7 @@ void ui_loop(XLinkSession* s)
 | `XLinkSession_isReady(s)` | 是否已握手且健康 |
 | `XLinkSession_remoteVersion(s)` | 对端协议版本 |
 | `XLinkSession_negotiatedCapability(s)` | 能力交集 |
+| `XLinkSession_stateChanged_signal(s, state)` | 信号：链路状态真变化（同态不重发） |
 
 ### 9.3 收发
 
@@ -739,7 +913,11 @@ void ui_loop(XLinkSession* s)
 | API | 说明 |
 |-----|------|
 | `XLinkSession_isPending(s, reqId)` | 请求是否仍在等待应答 |
-| `XLinkSession_takeTimedOut(s, nowMs, timeoutMs, &cmd)` | 取出超时请求（不重复上报） |
+| `XLinkSession_setRequestTimeout(s, ms)` | 设自动超时阈值（0 = 被动模式，默认） |
+| `XLinkSession_requestTimeout(s)` | 读自动超时阈值 |
+| `XLinkSession_setNumberOfRetries(s, count)` | 设超时自动重发次数上限 |
+| `XLinkSession_numberOfRetries(s)` | 读自动重发次数上限 |
+| `XLinkSession_requestFinished_signal(s, reqId, cmd, ok)` | 信号：请求终局（应答 true / 超时终局 false） |
 
 ### 9.6 分发
 
@@ -748,7 +926,37 @@ void ui_loop(XLinkSession* s)
 | `XLinkSession_setDispatchCallback(s, cb, userData)` | 注册业务消息回调 |
 | `XLinkSession_dispatch_base(s, frame, payload)` | 虚表分发入口（子类扩展用） |
 
-### 9.7 编解码
+### 9.7 服务端包装（XLINK_SERVER_ON）
+
+| API | 说明 |
+|-----|------|
+| `XLinkServer_create()` | 堆创建（内嵌 XTcpServer） |
+| `XLinkServer_listen_base(srv, host, port)` | 监听；port=0 自动分配 |
+| `XLinkServer_close(srv)` | 停止监听并回收全部会话 |
+| `XLinkServer_setCapability(srv, cap)` | 新会话能力位模板 |
+| `XLinkServer_setDispatchCallback(srv, cb, ud)` | 新会话分发回调模板 |
+| `XLinkServer_setNotifyCallback(srv, cb)` | 会话 Added/Removed 通知 |
+| `XLinkServer_setTickCallback(srv, cb, ud)` | 注册周期业务回调（随内建节拍触发） |
+| `XLinkServer_setTickInterval(srv, ms)` | 运行中调整内建节拍周期；0 = 停节拍转手动 pump |
+| `XLinkServer_tickInterval(srv)` | 读取当前节拍周期 |
+| `XLinkServer_pump(srv, nowMs)` | 手动兜底泵：accept + 驱动 + 回收 |
+| `XLinkServer_sessionCount(srv)` / `sessionAt(srv, i)` | 遍历在线会话 |
+| `XLinkServer_tcpServer_const(srv)` | 内嵌监听器（高级配置，借用） |
+
+### 9.8 客户端包装（XLINK_CLIENT_ON）
+
+| API | 说明 |
+|-----|------|
+| `XLinkClient_create()` / `init` | 堆/栈创建（自持 socket+会话） |
+| `XLinkClient_setHostPort(cli, host, port)` | 目标地址（UTF-8，深拷贝） |
+| `XLinkClient_setCapability` / `setDispatchCallback` | 新会话模板 |
+| `XLinkClient_setAutoReconnect` / `setReconnectInterval` / `setMaxReconnectAttempts` | 自动重连配置（默认关/1000ms/-1 无限） |
+| `XLinkClient_connectToServer` / `disconnectFromServer` | 异步建链 / 优雅断开（Goodbye+排空） |
+| `XLinkClient_session(cli)` | 借用内部会话（业务收发入口） |
+| `XLinkClient_state` / `isReady` | 状态查询（Unconnected/Connecting/Connected/Reconnecting） |
+| `XLinkClient_stateChanged_signal` | 状态迁移信号（XEmitSignal 发射，XModbus 风格） |
+
+### 9.9 编解码
 
 | API | 说明 |
 |-----|------|
@@ -833,8 +1041,8 @@ void ui_loop(XLinkSession* s)
 
 | 套件 | 文件 | 断言数 | 覆盖内容 |
 |------|------|--------|----------|
-| 功能测试 | `XLinkTest.c` | 130 | 编解码、生命周期、状态机、握手、请求应答、推送、订阅、超时、心跳、防御性路径 |
-| 质量门禁 | `XLinkQualityTest.c` | 41 | 内存泄漏、性能基准、吞吐天花板、边界与对抗 |
+| 功能测试 | `XLinkTest.c` | 411（含分组十五，绿灯实测） | 编解码、生命周期、状态机、换设备接线、自动握手与能力协商、请求应答、推送（含超限/空载荷）、订阅（含幂等）、自动超时（严格大于阈值/终局出表/不重报）、心跳、防御性路径、服务端包装（含复用/边界）、实战案例、信号与自动超时重试（stateChanged/requestFinished/静默重发/终局上报/sendTick==0 起算回归）、客户端包装 XLinkClient（NULL 防御、默认值与栈上生命周期、正常链路、踢线自动重连复活、重连关停、手动断开 Goodbye、最大重连次数；原 `XLinkClientTest.c` 已并入分组十四）、能力位全矩阵（None/对称/不对称两方向/全组合、HelloAck 附加快照 4+N 容忍、RequestTimeout 位不干扰自动超时；分组十五） |
+| 质量门禁 | `XLinkQualityTest.c` | 48 | 内存泄漏（会话/换设备接线/订阅 churn/服务端生命周期+真实接入）、性能基准、吞吐天花板、边界与对抗 |
 
 ### 11.3 关键测试项
 
@@ -862,10 +1070,12 @@ void ui_loop(XLinkSession* s)
 | u32 topicId 走载荷而非 msgCode | msgCode 只有 u16，而 topic 从 0x10000 起会溢出 |
 | 单次原子写 | 部分传输是「全有全无」，分段写会产生截断帧流 |
 | 常驻收发缓冲 | 稳态零堆分配，避免高频路径 malloc/free |
-| 库内不取时 | 遵循「`Src/` 禁止直呼时间源」，时间由调用方传入 |
+| 双驱动时间口径 | 手动 pump 由调用方注入单调毫秒（测试可注入固定时钟）；异步路径（readyRead/内建定时器）库内经 XDateTime_currentMSecsSinceEpoch 取时——与 XAbstractSocket 等框架模块同口径（仓库时间源裁定：时长测量用单调毫秒） |
+| XObject 内建定时器而非 XTimer 组合 | startTimer/killTimer + timerEvent 重载即框架正统用法，零额外对象 |
 | 请求不自动应答 | 真实设备 IO 耗时，应答可能异步 |
 | 定容表（待应答/订阅） | 嵌入式内存可预测，无动态扩容 |
 | 业务帧不投递半成品 | 握手完成前不投递，防止乱序帧污染应用状态 |
+| 服务端同步回收而非 deleteLater | 回收点固定在"任何会话调用栈均已退出"的上下文（最外层 pump 末尾/事件分派的定时器回调），符合同步释放判据；deleteLater 依赖事件循环真正释放，无分发器环境会悬挂 |
 
 ### 12.2 内存模型
 
@@ -905,7 +1115,7 @@ void ui_loop(XLinkSession* s)
 
 ### Q3：`pump` 的 `nowMs` 该怎么传？
 
-统一用 `XDateTime_currentMSecsSinceEpoch()`（单调毫秒）。**时间轴必须连续** —— 回退或跨越静默阈值会被误判为断线。
+统一用 `XDateTime_currentMSecsSinceEpoch()`（单调毫秒）。**手动模式时间轴必须连续** —— 回退或跨越静默阈值会被误判为断线。异步模式（readyRead/内建定时器驱动）无需关心：库内经同一接口取时。**两种驱动混用时不要传不同时间源**（如手动传假时钟），否则静默计时被污染。
 
 ### Q4：画面卡顿/不刷新？
 
@@ -930,6 +1140,26 @@ bool zlib = (cap & XLinkCapability_Zlib) != 0;
 
 `XIODevice_read_1` 优先读内部读缓冲层，单轮调用取不满时会回到底层设备读取。16KB 的帧可能需要多轮才能读完，这是传输层的正常语义，不是协议问题。
 
+### Q8：进程退出 / 删除会话前，最后几帧丢了？
+
+**传输的写是异步管线**：`sendRequest/sendPublish` 等返回 `true` 只表示帧已进入套接字内部写缓冲排队，真正落到内核由写完成事件逐步推进。发送后立即退出进程或删除会话/套接字，会把队列中未 flush 的帧一起丢掉。正确姿势（见实战案例客户端收尾）：
+
+```c
+XLinkSession_sendSession(session, XLinkSessionCode_Goodbye, NULL, 0);
+/* 排空写队列：每次调用至少推进一个写完成，循环到排空 */
+while (XTcpSocket_waitForBytesWritten_base((XAbstractSocket*)sock, 200)) {}
+XClassDelete((XClass*)session);
+```
+
+长时间运行的常驻进程无需关心——队列会在后续事件循环中自然 flush；只有"发完即走"的收尾路径需要显式排空。
+
+### Q9：自动超时模式下，超时请求会重复上报吗？怎么和被动用法区分？
+
+**不会重复上报**。每条请求只有一次终局：应答命中发 `requestFinished(true)`，超时终局（重试额度用尽 / 不可重试 / 重发失败）发 `requestFinished(false)` 并出表，出表后不再产生任何上报。
+
+- **自动模式（阈值 > 0，推荐）**：pump 自动扫描待应答表，静默重发或终局上报，应用层只消费信号。
+- **被动模式（默认，阈值 0）**：库不碰超时，请求长期滞留待应答表（可经 `isPending` 查询，断链时随表清空）；需要超时语义的业务请开启自动模式，不要混用于同一会话的同一批请求。
+
 ---
 
 ## 附：源码索引
@@ -940,6 +1170,11 @@ bool zlib = (cap & XLinkCapability_Zlib) != 0;
 | 线上格式与枚举 | `XLinkProto.h` |
 | 编解码实现 | `XLinkCodec.h/.c` |
 | 会话对象 | `XLinkSession.h/.c` |
-| 功能测试 | `Test/XProtocolTest/XLinkTest.c` |
+| 服务端包装 | `XLinkServer.h/.c` |
+| 客户端包装（自动重连） | `XLinkClient.h/.c` |
+| 实战案例·服务端程序 | `Test/XProtocolTest/XLinkDemoServer.c` |
+| 实战案例·客户端程序 | `Test/XProtocolTest/XLinkDemoClient.c` |
+| 实战案例·公共头（协议/日志/入口） | `Test/XProtocolTest/XLinkDemo.h` |
+| 功能测试（含客户端包装分组十四） | `Test/XProtocolTest/XLinkTest.c` |
 | 质量门禁 | `Test/XProtocolTest/XLinkQualityTest.c` |
 | 测试入口声明 | `Test/XProtocolTest/XLinkTest.h` |

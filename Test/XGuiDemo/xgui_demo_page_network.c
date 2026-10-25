@@ -24,7 +24,12 @@
  *                折叠/展开承载（多地址不再内联长行，避免溢出窗口被裁）；
  *                信息区高度随回填行数自适应，下游行距整体联动；
  *              - 操作提示随 XNetworkInterface_configSupported 平台化
- *                （有通路=netsh 下发说明；无通路=仅展示与校验）。
+ *                （有通路=netsh 下发说明；无通路=仅展示与校验）；
+ *              - 窄根自适应（2026-10-25 真机口径整改）：页根逻辑宽
+ *                <600（与主窗 Material 3 compact 档同源）时 adapt 把
+ *                模式行/无线口令行各拆出第二行、IP 双列字段转单列、
+ *                编辑框宽随内容宽收缩、可点击控件高抬到 40（手机触控
+ *                目标）；宽根形态不动，桌面 1000x700 现状保持。
  *
  *             autotest 口径：全程非阻塞，绝不真实下发配置（只走非法
  *             输入拒应用门控与枚举/回填断言），避免污染测试机网络。
@@ -39,6 +44,8 @@
 #include "XObject.h"
 #include "XWidget.h"
 #include "XBoxLayout.h"
+#include "XScrollArea.h"
+#include "XAbstractScrollArea.h"
 #include "XLabel.h"
 #include "XCheckBox.h"
 #include "XLineEdit.h"
@@ -53,6 +60,9 @@
 #include "XTimer.h"        /* 无线扫描/连接状态轮询定时器 */
 #endif
 #include "XSystem.h" /* XSystem_environment: 环境变量唯一入口。 */
+#if defined(__ANDROID__)
+#include "XAndroidJniChannels.h" /* MAC 兜底：应用域读不到 /sys/class/net。 */
+#endif
 #include "xgui_demo_pages.h"
 
 /*
@@ -64,7 +74,8 @@
  */
 #if XNETWORK_ON && XNETWORK_INTERFACE_ON && XWIDGET_ON && \
     XLABEL_ON && XCOMBOBOX_ON && XLINEEDIT_ON && XPUSHBUTTON_ON && \
-    XCHECKBOX_ON && XLAYOUT_ON && XLAYOUT_BOX_ON
+    XCHECKBOX_ON && XLAYOUT_ON && XLAYOUT_BOX_ON && \
+    XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON && XSCROLLBAR_ON
 
 /* ==================== 布局常量 ==================== */
 
@@ -74,28 +85,174 @@
 #define NET_CAP_W      80     /**< 字段标题列宽。 */
 #define NET_FIELD_W    300    /**< 输入控件宽。 */
 #define NET_BTN_W      110    /**< 应用按钮宽。 */
-/* 根布局中 IPv6 行条目索引（装配序；三分区标题 + 无线区上移后，
- * IPv6 行落在条目 16——WiFi 分区整段被编译裁掉时少 8 个条目）。 */
-#if XNETWORK_ON && XDEVICE_WIFI_ON
-#define NET_ROOTITEM_V6ROW 16
-#else
-#define NET_ROOTITEM_V6ROW 8
-#endif
+/* 窄根分档（2026-10-25）：断点与主窗 xgui_window_demo.c 的 Material 3
+ * compact 口径同源（逻辑宽 <600，手机竖屏必落此档）；触控目标高取
+ * 移动端建议的 40 逻辑像素下限——宽屏 22~30 的行高在真机上点不中。 */
+#define NET_COMPACT_MAX_W 600 /**< adapt 窄根档断点（页根逻辑宽）。 */
+#define NET_TOUCH_H       40  /**< 窄根档可点击控件高（触控目标下限）。 */
+/* IPv4/IPv6 两分区并排判据：两列各自的**最小可用宽**之和 + 列距。
+ * 各列内容 = 标题列(80/100) + 行距 4 + 编辑框最小 120 + 右余量；
+ * 取 374 + 16(列距) = 390 —— 400 逻辑宽的竖屏刚好不够（堆叠），
+ * 821 逻辑宽的横屏绰绰有余（并排）。 */
+#define NET_IP_COLS_MIN_W 390
+
+/* ==================== 整页竖滚壳（页宿主 + 滚动区） ====================
+ * [竖屏滚动 2026-10-25] 手机竖屏（400x869 逻辑）内容远超一屏，原先没有
+ * 任何滚动承载，下方 IPv6 区/提示行整段不可达。按 Modbus 页已踩过的
+ * 定式包一层：
+ *   页宿主（XWidget 子类，堆叠条目）→ XScrollArea → 内容根（普通 XWidget）
+ * 不直接把 XScrollArea 挂进 XStackedLayout：实测堆叠给 XScrollArea 条目
+ * 分配的几何异常（只有 184x150 且不再重摆，Modbus 页同款实证）。
+ *
+ * 滚动条纪律：水平条 AlwaysOff（内容宽恒=视口宽，横向永不需要），竖条
+ * AsNeeded——**只在内容确实超高时才出现**，一屏装得下（桌面 1000x700）
+ * 时完全不出条，桌面现状不变。
+ *
+ * widgetResizable 必须 false：true 会把内容几何钉成视口尺寸
+ * （XScrollArea.c 的 xsa_updateWidgetGeometry），内容永远不超视口 ⇒ 竖滚
+ * 无从发生。改由本壳 resizeEvent 自管内容宽高（高度取布局合计首选高，
+ * 两遍收敛——第一遍 activate 可能改变行数/换行，第二遍读实测高）。
+ */
+XCLASS_DEFINE_BEGING(NetPageHost)
+XCLASS_DEFINE_EXTEND_END(NetPageHost, XWidget)
+
+typedef struct NetPageHost
+{
+    XWidget m_base;   /**< XWidget 基类；必须是第一个成员。 */
+    XWidget* m_scroll;/**< 内嵌滚动区（借用；随父子链析构）。 */
+} NetPageHost;
+
+XCLASS_DEFINE_BEGING(NetPageScroll)
+XCLASS_DEFINE_EXTEND_END(NetPageScroll, XScrollArea)
+
+typedef struct NetPageScroll
+{
+    XScrollArea m_base; /**< XScrollArea 基类；必须是第一个成员。 */
+} NetPageScroll;
+
+static void net_fitScrollContent(XScrollArea* area);
+
+/** @brief 页宿主 resizeEvent：内嵌滚动区铺满宿主矩形。 */
+static void VNetPageHost_resizeEvent(XWidget* self, XEvent* event)
+{
+    NetPageHost* host;
+    (void)event;
+    if (!self) return;
+    host = (NetPageHost*)self;
+    if (host->m_scroll) {
+        XWidget_setGeometry(host->m_scroll, 0, 0,
+                            XWidget_width(self), XWidget_height(self));
+    }
+}
+
+XVtable* NetPageHost_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(NetPageHost)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VNetPageHost_resizeEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 滚动区 resizeEvent：基类重排视口/滚动条后，按新视口宽重定
+ *         内容宽高（宽=视口宽，高=布局合计首选高，超出部分即竖滚量）。 */
+static void VNetPageScroll_resizeEvent(XWidget* self, XEvent* event)
+{
+    if (!self) return;
+    XClass_Parent(XScrollArea, EXWidget_ResizeEvent,
+                  XWidgetEventSlot)(self, event);
+    net_fitScrollContent((XScrollArea*)self);
+}
+
+XVtable* NetPageScroll_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(NetPageScroll)
+    XVTABLE_INHERIT_XCLASS(XScrollArea);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VNetPageScroll_resizeEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 建页宿主（堆叠条目）。 */
+static XWidget* net_createPageHost(XWidget* parent)
+{
+    NetPageHost* host = (NetPageHost*)XMalloc_System(sizeof(NetPageHost));
+    if (!host) return (XWidget*)0;
+    XMemset(host, 0, sizeof(*host));
+    XWidget_init(&host->m_base, parent, 0);
+    XClassSetVtable(host, NetPageHost);
+    return &host->m_base;
+}
+
+/** @brief 建滚动壳（内容重承载钩子的 XScrollArea 子类实例）。 */
+static XWidget* net_createScroll(XWidget* parent)
+{
+    NetPageScroll* scroll =
+        (NetPageScroll*)XMalloc_System(sizeof(NetPageScroll));
+    if (!scroll) return (XWidget*)0;
+    XMemset(scroll, 0, sizeof(*scroll));
+    XScrollArea_init(&scroll->m_base, parent, 0);
+    XClassSetVtable(scroll, NetPageScroll);
+    return (XWidget*)scroll;
+}
+
+/** @brief 内容根按视口宽定宽、按布局合计首选高定高（两遍收敛），并把
+ *         最终尺寸提交给滚动区（驱动竖条显隐与滚动范围）。
+ *  @details 落最小/首选取大：无显式 sizeHint 的定尺寸条目在合计首选里
+ *           可能记 0，而合计最小会把 min=max 的条目按实高累计——两者取
+ *           大才是「所有条目都不被裁」的内容高（Modbus 页同口径）。 */
+static void net_fitScrollContent(XScrollArea* area)
+{
+    XWidget* viewport;
+    XWidget* content;
+    int vw;
+    int vh;
+    int pass;
+    if (!area) return;
+    viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)area);
+    content = XScrollArea_widget(area);
+    if (!viewport || !content) return;
+    vw = XWidget_width(viewport);
+    vh = XWidget_height(viewport);
+    if (vw < 1) return; /* 视口未就位（堆叠未给几何）不猜，下一拍重入。 */
+    XWidget_setFixedWidth(content, vw);
+    for (pass = 0; pass < 2; ++pass) {
+        XSize hint;
+        XSize minHint;
+        if (XWidget_layout(content))
+            XLayout_invalidate(XWidget_layout(content));
+        hint = XWidget_sizeHint(content);
+        minHint = XWidget_minimumSizeHint(content);
+        if (minHint.height > hint.height) hint.height = minHint.height;
+        if (minHint.width > hint.width) hint.width = minHint.width;
+        if (hint.width < 1) hint.width = vw;
+        if (hint.height < 1) hint.height = vh > 0 ? vh : 1;
+        XWidget_setFixedHeight(content, hint.height);
+        XWidget_setGeometry(content, 0, 0, hint.width, hint.height);
+        if (XWidget_layout(content))
+            XLayout_activate(XWidget_layout(content));
+    }
+    XAbstractScrollArea_setContentSize((XAbstractScrollArea*)area, vw,
+        XWidget_height(content) > vh ? XWidget_height(content) : vh);
+}
 
 /* ==================== 页面内部控件登记（demo 单实例 static 自持） ==== */
 
 /** @brief 网络设置页内部登记表。 */
 static struct
 {
-    XWidget*         m_root;        /**< 页面根控件（契约返回值；堆对象）。 */
+    XWidget*         m_pageHost;   /**< 页宿主（堆叠条目；滚动区挂其下）。 */
+    XScrollArea*     m_scroll;     /**< 整页竖滚区（全页唯一滚动条）。 */
+    XWidget*         m_root;       /**< 内容根（滚动区内容件；页内控件父）。 */
     DemoPageStatusFn m_status;      /**< 主窗口状态栏反馈回调（借用）。 */
     void*            m_user;        /**< 回调上下文（主窗口指针，借用）。 */
     char             m_lastStatus[192]; /**< 最近一次反馈文本（自测断言用）。 */
     bool             m_ready;       /**< build 已完成且控件指针有效。 */
+    bool             m_compact;     /**< 窄根档生效中（adapt 分档状态，
+                                         折叠重排按此套触控行高）。 */
 
     /* ---- 网卡选择区 ---- */
     XLabel*    m_titleLabel;   /**< 第一分区标题「网卡设置」（居中）。 */
-    XLabel*    m_ipTitle;      /**< 第三分区标题「IP 设置」（居中）。 */
+    XLabel*    m_ipTitle;      /**< 第三分区标题「IPv4 设置」（居中）。 */
+    XLabel*    m_v6Title;      /**< 第四分区标题「IPv6 设置」（居中）。 */
     XLabel*    m_capAdapter;   /**< 「网卡」标题。 */
     XComboBox* m_adapterCombo; /**< 网卡下拉框（枚举所有接口）。 */
     XPushButton* m_refreshBtn; /**< 刷新按钮。 */
@@ -129,6 +286,10 @@ static struct
     XLineEdit*   m_v6PrefixEdit;/**< 前缀长度（0..128，默认 64）。 */
     XLabel*      m_capV6Gw;    /**< 「IPv6 网关」标题。 */
     XLineEdit*   m_v6GwEdit;   /**< IPv6 网关（可空；lwIP 后端忽略）。 */
+    XLabel*      m_capV6Dns1;  /**< 「首选 DNS」标题（IPv6 区）。 */
+    XLineEdit*   m_v6Dns1Edit; /**< 首选 IPv6 DNS（只读展示系统下发值）。 */
+    XLabel*      m_capV6Dns2;  /**< 「备用 DNS」标题（IPv6 区）。 */
+    XLineEdit*   m_v6Dns2Edit; /**< 备用 IPv6 DNS（只读展示系统下发值）。 */
 
     /* ---- 反馈区 ---- */
     XLabel*    m_hintLabel;    /**< 操作提示行（钉底上方）。 */
@@ -147,13 +308,18 @@ static struct
     /* ---- 布局器（2026-10-17 容器化；build 装配段挂根，静态自持） ---- */
     XBoxLayout m_rootLayout;   /**< 根垂直布局器（页内唯一 setLayout）。 */
     XBoxLayout m_adapterRow;   /**< 网卡选择行（水平：标题+下拉+刷新）。 */
-    XBoxLayout m_v6Row;        /**< IPv6 行（水平：折叠单行+展开开关）。 */
-    XBoxLayout m_modeRow;      /**< 模式行（水平：IPv4/IPv6 两组开关）。 */
-    XBoxLayout m_fieldCols;    /**< 静态字段双列容器（水平）。 */
-    XBoxLayout m_v4Col;        /**< 左列 IPv4 五行（垂直）。 */
-    XBoxLayout m_v6Col;        /**< 右列 IPv6 三行（垂直）。 */
+    XBoxLayout m_v6Row;        /**< IPv6 地址展示行（折叠单行+展开开关）。 */
+    XBoxLayout m_ipCols;       /**< IPv4/IPv6 两分区容器（够宽=并排，
+                                    不够=堆叠；adapt 切方向）。 */
+    XBoxLayout m_v4Section;    /**< IPv4 分区（标题+模式行+五字段）。 */
+    XBoxLayout m_v6Section;    /**< IPv6 分区（标题+地址行+模式行+五字段）。 */
+    XBoxLayout m_v4ModeRow;    /**< IPv4 模式行（标题+下拉+应用）。 */
+    XBoxLayout m_v6ModeRow;    /**< IPv6 模式行（标题+下拉+应用）。 */
+    XBoxLayout m_v4Col;        /**< IPv4 五字段单列（垂直）。 */
+    XBoxLayout m_v6Col;        /**< IPv6 五字段单列（垂直）。 */
     XBoxLayout m_v4Rows[5];    /**< IPv4 字段行布局器（标题+编辑）。 */
-    XBoxLayout m_v6Rows[3];    /**< IPv6 字段行布局器（标题+编辑）。 */
+    XBoxLayout m_v6Rows[3];    /**< IPv6 地址/前缀/网关字段行。 */
+    XBoxLayout m_v6DnsRows[2]; /**< IPv6 DNS 两字段行（只读展示）。 */
 
 #if XNETWORK_ON && XDEVICE_WIFI_ON
     /* ---- 无线（Wi-Fi）区 ---- */
@@ -174,6 +340,9 @@ static struct
     XTimer*      m_wifiTimer;         /**< 扫描/连接状态轮询定时器（250ms）。 */
     XBoxLayout   m_wifiRow;           /**< 无线适配器行（水平）。 */
     XBoxLayout   m_wifiNetRow;        /**< 无线网络行（水平）。 */
+    XBoxLayout   m_wifiPassRow;       /**< 口令行（窄根独用骨架：宽根恒空
+                                           高 0，窄根 adapt 收容摘出的
+                                           口令/连接/断开三件+口令标题）。 */
 #endif
 } s_net;
 
@@ -249,8 +418,10 @@ static void net_setV4EditsEnabled(bool enabled)
             XWidget_setEnabled((XWidget*)edits[i], enabled);
 }
 
-/** @brief IPv6 静态编辑框启停（右列三件 + 应用钮；随 IPv6 模式独立，
- *         与 IPv4 模式互不影响）。 */
+/** @brief IPv6 静态编辑框启停（右列地址/前缀/网关三件 + 应用钮；随 IPv6
+ *         模式独立，与 IPv4 模式互不影响）。
+ *  @note  IPv6 DNS 两行是**系统下发值的只读展示**（安卓不允许应用改 WiFi
+ *         的 IPv6 DNS），不随模式启停——始终禁用。 */
 static void net_setV6EditsEnabled(bool enabled)
 {
     XLineEdit* edits[3];
@@ -293,6 +464,13 @@ static int net_collectLinkInfo(int ifIndex, char* mac, size_t macCap,
         hw = XNetworkInterface_hardwareAddress_const(iface);
         if (mac && hw && XString_toUtf8(hw) && XString_toUtf8(hw)[0])
             snprintf(mac, macCap, "%s", XString_toUtf8(hw));
+#if defined(__ANDROID__)
+        /* [MAC 2026-10-25] 接口枚举的 ioctl(SIOCGIFHWADDR) 在安卓 SELinux
+         * 下恒失败（/sys/class/net 对应用 uid 不可读），h 为空时再走一次
+         * Java 桥（WifiInfo / java.net.NetworkInterface）。 */
+        if (mac && (!hw || !XString_toUtf8(hw) || !XString_toUtf8(hw)[0]))
+            (void)XAndroid_netLinkMac(mac, macCap);
+#endif
         entries = XNetworkInterface_addressEntries(iface);
         for (j = 0; entries && j < XVector_size_base(entries); ++j) {
             XNetworkAddressEntry* entry =
@@ -348,6 +526,9 @@ static void net_fillInfoFromInterface(int ifIndex)
         if (!iface || XNetworkInterface_index(iface) != ifIndex) continue;
         found = true;
         mac = XNetworkInterface_hardwareAddress_const(iface);
+        /* [MAC 2026-10-25] 后端接口枚举取不到 MAC 时（安卓 SELinux 下
+         * ioctl(SIOCGIFHWADDR) 恒失败）为空——由调用方 net_collectLinkInfo
+         * 再走一次 JNI 兜底。 */
         entries = XNetworkInterface_addressEntries(iface);
         ipv4[0] = '\0';
         s_net.m_v6All[0] = '\0';
@@ -462,10 +643,19 @@ static void net_relayout(void)
         if (s_net.m_v6PrefixEdit) XWidget_hide((XWidget*)s_net.m_v6PrefixEdit);
         if (s_net.m_capV6Gw) XWidget_hide((XWidget*)s_net.m_capV6Gw);
         if (s_net.m_v6GwEdit) XWidget_hide((XWidget*)s_net.m_v6GwEdit);
+        if (s_net.m_capV6Dns1) XWidget_hide((XWidget*)s_net.m_capV6Dns1);
+        if (s_net.m_v6Dns1Edit) XWidget_hide((XWidget*)s_net.m_v6Dns1Edit);
+        if (s_net.m_capV6Dns2) XWidget_hide((XWidget*)s_net.m_capV6Dns2);
+        if (s_net.m_v6Dns2Edit) XWidget_hide((XWidget*)s_net.m_v6Dns2Edit);
         if (s_net.m_hintLabel) XWidget_hide((XWidget*)s_net.m_hintLabel);
         if (s_net.m_v6Label) {
-            /* 释放折叠态固定高，伸展因子接管（行高随窗口自适应）。 */
-            XWidget_setMinimumHeight((XWidget*)s_net.m_v6Label, 0);
+            /* 展开态：列表必须有**实际高度**。滚动壳里内容高由布局合计
+             * 自由高决定，没有"剩余空间"可分——只释放固定高再靠伸展因子
+             * 会得到 0 高（真机+桌面实测：展开态列表高度不增，自测断言
+             * 失败）。故按地址条数给足最小高（每行 16px + 余量），行高由
+             * 内容撑开、超出视口的部分由整页竖滚承担。 */
+            int listH = s_net.m_v6Count > 0 ? s_net.m_v6Count * 16 + 16 : 40;
+            XWidget_setMinimumHeight((XWidget*)s_net.m_v6Label, listH);
             XWidget_setMaximumHeight((XWidget*)s_net.m_v6Label,
                                      XWIDGET_MAX_SIZE);
             XLabel_setText_2(s_net.m_v6Label,
@@ -478,8 +668,14 @@ static void net_relayout(void)
             XWidget_setMaximumHeight((XWidget*)s_net.m_v6ExpandCheck,
                                      XWIDGET_MAX_SIZE);
         }
-        /* IPv6 行在根布局中升为伸展条目（占标题/状态之外全部高度）。 */
-        XBoxLayout_setStretch(&s_net.m_rootLayout, NET_ROOTITEM_V6ROW, 1);
+        /* IPv6 分区容器升为伸展条目（占标题/状态之外全部高度）：
+         * 2026-10-25 起 IPv6 地址行被收进 m_v6Section，伸展因子必须加在
+         * 分区容器上——加在根布局的行索引上会让整段 IPv6 分区高度错位。 */
+        XBoxLayout_setStretch(&s_net.m_ipCols, 1, 1);
+        XBoxLayout_setStretch(&s_net.m_v6Section, 2, 1);
+        /* 展开/收起改变内容首选高（编辑区让位、列表变高）：重拟合滚动
+         * 范围，否则收起后仍能滚到已隐藏内容留下的空白、展开后滚不到底。 */
+        net_fitScrollContent(s_net.m_scroll);
         return;
     }
     /* ---- 折叠：编辑视图整体显形 + 标准行高 ---- */
@@ -490,7 +686,10 @@ static void net_relayout(void)
     if (s_net.m_v6Label)
         XWidget_setFixedHeight((XWidget*)s_net.m_v6Label, 20);
     if (s_net.m_v6ExpandCheck)
-        XWidget_setFixedHeight((XWidget*)s_net.m_v6ExpandCheck, 22);
+        /* 开关是点击目标：窄根档随触控目标抬到 40（与 adapt 同口径，
+           否则切一轮展开/收起就把窄根行高打回 22）。 */
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6ExpandCheck,
+                               s_net.m_compact ? NET_TOUCH_H : 22);
     if (s_net.m_infoLabel) XWidget_show((XWidget*)s_net.m_infoLabel);
     if (s_net.m_capV4Mode) XWidget_show((XWidget*)s_net.m_capV4Mode);
     if (s_net.m_v4ModeCombo) XWidget_show((XWidget*)s_net.m_v4ModeCombo);
@@ -514,9 +713,16 @@ static void net_relayout(void)
     if (s_net.m_v6PrefixEdit) XWidget_show((XWidget*)s_net.m_v6PrefixEdit);
     if (s_net.m_capV6Gw) XWidget_show((XWidget*)s_net.m_capV6Gw);
     if (s_net.m_v6GwEdit) XWidget_show((XWidget*)s_net.m_v6GwEdit);
+    if (s_net.m_capV6Dns1) XWidget_show((XWidget*)s_net.m_capV6Dns1);
+    if (s_net.m_v6Dns1Edit) XWidget_show((XWidget*)s_net.m_v6Dns1Edit);
+    if (s_net.m_capV6Dns2) XWidget_show((XWidget*)s_net.m_capV6Dns2);
+    if (s_net.m_v6Dns2Edit) XWidget_show((XWidget*)s_net.m_v6Dns2Edit);
     if (s_net.m_hintLabel) XWidget_show((XWidget*)s_net.m_hintLabel);
-    XBoxLayout_setStretch(&s_net.m_rootLayout, NET_ROOTITEM_V6ROW, 0);
+    XBoxLayout_setStretch(&s_net.m_ipCols, 1, 0);
+    XBoxLayout_setStretch(&s_net.m_v6Section, 2, 0);
     net_updateV6Label();
+    /* 收起后内容高变小：同上重拟合滚动范围（避免残留可滚空白）。 */
+    net_fitScrollContent(s_net.m_scroll);
 }
 
 /** @brief 「展开全部 IPv6 / 收起」开关槽：切态 → 重排。 */
@@ -611,10 +817,10 @@ static void net_updateHint(void)
         XLabel_setText_2(s_net.m_hintLabel,
                          "\xE5\xAE\x89\xE5\x8D\x93\xEF\xBC\x9AIP \xE7\x94\xB1"
                          "\xE7\xB3\xBB\xE7\xBB\x9F WiFi \xE7\xAE\xA1\xE7\x90\x86"
-                         "\xEF\xBC\x9B\xE9\x9D\x99\xE6\xE9\x85\x8D\xE7\xBD\xAE"
+                         "\xEF\xBC\x9B\xE9\x9D\x99\xE6\x80\x81\xE9\x85\x8D\xE7\xBD\xAE"
                          "\xE4\xBB\x85\xE5\xAF\xB9\xE5\xBA\x94\xE7\x94\xA8\xE5\x88"
                          "\x9B\xE5\xBB\xBA\xE7\x9A\x84\xE7\xBD\x91\xE7\xBB\x9C\xE7"
-                         "\x94\x9F\xE6\x95\x88\xEF\xBC\x9B\xE9\x9D\x99\xE6 IPv6"
+                         "\x94\x9F\xE6\x95\x88\xEF\xBC\x9B\xE9\x9D\x99\xE6\x80\x81 IPv6"
                          "\xE7\xB3\xBB\xE7\xBB\x9F\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81");
                          /* 安卓：IP 由系统 WiFi 管理；静态配置仅对应用创建的网络生效；静态 IPv6 系统不支持 */
 #else
@@ -624,7 +830,7 @@ static void net_updateHint(void)
                          "\xEF\xBC\x88\xE9\x9C\x80\xE7\xAE\xA1\xE7\x90\x86"
                          "\xE5\x91\x98\xE6\x9D\x83\xE9\x99\x90\xEF\xBC\x89"
                          "\xEF\xBC\x9B\xE5\x88\x87\xE6\x8D\xA2\xE4\xBC\x9A"
-                         "\xE7\x9F\x9F\xE6\x9A\x82\xE4\xB8\xAD\xE6\x96\xAD"
+                         "\xE7\x9F\xAD\xE6\x9A\x82\xE4\xB8\xAD\xE6\x96\xAD"
                          "\xE8\xAF\xA5\xE7\xBD\x91\xE5\x8D\xA1");
                          /* 应用经系统 netsh 通路（需管理员权限）；切换会短暂中断该网卡 */
 #endif
@@ -649,9 +855,9 @@ static void net_refreshSelection(void)
     char dhcp[64];
     char dns1[64];
     char dns2[64];
+    char v6dns1[64];
+    char v6dns2[64];
     char mac[40];
-    char v6addr[64];
-    char v6gw[64];
     char info[640];
     slot = s_net.m_adapterCombo
                ? XComboBox_currentIndex(s_net.m_adapterCombo) : -1;
@@ -676,6 +882,11 @@ static void net_refreshSelection(void)
     net_addrText(&config->m_dhcpServer, dhcp, sizeof(dhcp));
     net_addrText(&config->m_dnsPrimary, dns1, sizeof(dns1));
     net_addrText(&config->m_dnsSecondary, dns2, sizeof(dns2));
+    /* [DNS 分族 2026-10-25] IPv6 DNS 只从 v6 槽取——旧实现把 LinkProperties
+     * 的前两条 DNS（v6 优先网络下可能全是 IPv6）塞进 v4 槽，界面「IPv4
+     * 设置」里显示的就是 IPv6 DNS。 */
+    net_addrText(&config->m_dnsV6Primary, v6dns1, sizeof(v6dns1));
+    net_addrText(&config->m_dnsV6Secondary, v6dns2, sizeof(v6dns2));
     /* IPv6 全列表 + MAC（跨平台经接口枚举；缓存供折叠/展开双态用）。 */
     s_net.m_v6Count = net_collectLinkInfo(s_net.m_ifIndex[slot],
                                           mac, sizeof(mac),
@@ -767,6 +978,15 @@ static void net_refreshSelection(void)
             XLineEdit_setText(s_net.m_v6GwEdit, "");
         }
     }
+    /* IPv6 DNS 回填（系统下发值，只读展示）。 */
+    if (s_net.m_v6Dns1Edit)
+        XLineEdit_setText(s_net.m_v6Dns1Edit,
+                          XHostAddress_isNull(&config->m_dnsV6Primary)
+                              ? "" : v6dns1);
+    if (s_net.m_v6Dns2Edit)
+        XLineEdit_setText(s_net.m_v6Dns2Edit,
+                          XHostAddress_isNull(&config->m_dnsV6Secondary)
+                              ? "" : v6dns2);
     XClassDelete(config);
     net_updateHint();
     net_relayout();
@@ -1337,12 +1557,27 @@ XWidget* demo_page_network_build(XWidget* parent,
     s_net.m_status = status;
     s_net.m_user = user;
     if (!parent) return (XWidget*)0;
-    s_net.m_root = XWidget_create(parent, 0);
-    if (!s_net.m_root) return (XWidget*)0;
+    /* 页宿主（堆叠条目）→ 滚动区 → 内容根（页内控件全挂内容根）。
+     * 页面契约返回值是**页宿主**（主文件按堆叠条目登记），内容根只作
+     * 滚动区内容件。 */
+    s_net.m_pageHost = net_createPageHost(parent);
+    if (!s_net.m_pageHost) return (XWidget*)0;
+    s_net.m_scroll = (XScrollArea*)net_createScroll(s_net.m_pageHost);
+    if (!s_net.m_scroll) return s_net.m_pageHost;
+    ((NetPageHost*)s_net.m_pageHost)->m_scroll = (XWidget*)s_net.m_scroll;
+    /* 水平条恒关（内容宽=视口宽，永不需要横滚）；竖条保持默认
+     * AsNeeded——只有内容确实超高时才出现。 */
+    XAbstractScrollArea_setHorizontalScrollBarPolicy(
+        (XAbstractScrollArea*)s_net.m_scroll, XScrollBarPolicy_AlwaysOff);
+    /* widgetResizable 保持 false：内容几何由 NetPageScroll::resizeEvent
+     * 自管（见 net_fitScrollContent 注释）。 */
+    s_net.m_root = XWidget_create((XWidget*)s_net.m_scroll, 0);
+    if (!s_net.m_root) return s_net.m_pageHost;
+    XScrollArea_setWidget(s_net.m_scroll, s_net.m_root);
 
     /* ---- 三分区标题（网卡设置 / WiFi 设置 / IP 设置；同款式居中） ---- */
     s_net.m_titleLabel = XLabel_create(s_net.m_root, 0);
-    if (!s_net.m_titleLabel) return s_net.m_root;
+    if (!s_net.m_titleLabel) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_titleLabel,
                      "\xE7\xBD\x91\xE5\x8D\xA1\xE8\xAE\xBE\xE7\xBD\xAE");
                      /* 网卡设置 */
@@ -1351,13 +1586,21 @@ XWidget* demo_page_network_build(XWidget* parent,
     XWidget_setFixedHeight((XWidget*)s_net.m_titleLabel, 24);
     XWidget_show((XWidget*)s_net.m_titleLabel);
     s_net.m_ipTitle = XLabel_create(s_net.m_root, 0);
-    if (!s_net.m_ipTitle) return s_net.m_root;
+    if (!s_net.m_ipTitle) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_ipTitle,
-                     "IP \xE8\xAE\xBE\xE7\xBD\xAE"); /* IP 设置 */
+                     "IPv4 \xE8\xAE\xBE\xE7\xBD\xAE"); /* IPv4 设置 */
     XLabel_setTextPixelSize(s_net.m_ipTitle, 15);
     XLabel_setAlignment(s_net.m_ipTitle, XAlignment_Center);
     XWidget_setFixedHeight((XWidget*)s_net.m_ipTitle, 24);
     XWidget_show((XWidget*)s_net.m_ipTitle);
+    s_net.m_v6Title = XLabel_create(s_net.m_root, 0);
+    if (!s_net.m_v6Title) return s_net.m_pageHost;
+    XLabel_setText_2(s_net.m_v6Title,
+                     "IPv6 \xE8\xAE\xBE\xE7\xBD\xAE"); /* IPv6 设置 */
+    XLabel_setTextPixelSize(s_net.m_v6Title, 15);
+    XLabel_setAlignment(s_net.m_v6Title, XAlignment_Center);
+    XWidget_setFixedHeight((XWidget*)s_net.m_v6Title, 24);
+    XWidget_show((XWidget*)s_net.m_v6Title);
 #if XNETWORK_ON && XDEVICE_WIFI_ON
     s_net.m_wifiTitle = XLabel_create(s_net.m_root, 0);
     if (s_net.m_wifiTitle) {
@@ -1380,7 +1623,7 @@ XWidget* demo_page_network_build(XWidget* parent,
         XWidget_show((XWidget*)s_net.m_capAdapter);
     }
     s_net.m_adapterCombo = XComboBox_create(s_net.m_root, 0);
-    if (!s_net.m_adapterCombo) return s_net.m_root;
+    if (!s_net.m_adapterCombo) return s_net.m_pageHost;
     XWidget_setFixedHeight((XWidget*)s_net.m_adapterCombo, 26);
     XObject_connect_2((XObject*)s_net.m_adapterCombo,
                       XSignal(XComboBox_activated_signal),
@@ -1401,7 +1644,7 @@ XWidget* demo_page_network_build(XWidget* parent,
     /* ---- 信息展示区（5 行：模式/IPv4/DNS/DHCP/MAC；高度随回填行数
      *         在 net_relayout 里以固定高自适应） ---- */
     s_net.m_infoLabel = XLabel_create(s_net.m_root, 0);
-    if (!s_net.m_infoLabel) return s_net.m_root;
+    if (!s_net.m_infoLabel) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_infoLabel,
                      "\xE6\xAD\xA3\xE5\x9C\xA8\xE6\x9E\x9A\xE4\xB8\xBE"
                      "\xE7\xBD\x91\xE5\x8D\xA1\xE2\x80\xA6"); /* 正在枚举网卡… */
@@ -1413,7 +1656,7 @@ XWidget* demo_page_network_build(XWidget* parent,
 
     /* ---- IPv6 地址区（折叠一行/展开全列表）+ 展开开关 ---- */
     s_net.m_v6Label = XLabel_create(s_net.m_root, 0);
-    if (!s_net.m_v6Label) return s_net.m_root;
+    if (!s_net.m_v6Label) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_v6Label, "IPv6: -");
     XLabel_setTextPixelSize(s_net.m_v6Label, 12);
     XLabel_setAlignment(s_net.m_v6Label,
@@ -1442,7 +1685,7 @@ XWidget* demo_page_network_build(XWidget* parent,
         XWidget_show((XWidget*)s_net.m_capV4Mode);
     }
     s_net.m_v4ModeCombo = XComboBox_create(s_net.m_root, 0);
-    if (!s_net.m_v4ModeCombo) return s_net.m_root;
+    if (!s_net.m_v4ModeCombo) return s_net.m_pageHost;
     XComboBox_addItem_2(s_net.m_v4ModeCombo,
                         "DHCP \xE8\x87\xAA\xE5\x8A\xA8\xE8\x8E\xB7"
                         "\xE5\x8F\x96"); /* DHCP 自动获取 */
@@ -1477,7 +1720,7 @@ XWidget* demo_page_network_build(XWidget* parent,
         XWidget_show((XWidget*)s_net.m_capV6Mode);
     }
     s_net.m_v6ModeCombo = XComboBox_create(s_net.m_root, 0);
-    if (!s_net.m_v6ModeCombo) return s_net.m_root;
+    if (!s_net.m_v6ModeCombo) return s_net.m_pageHost;
     XComboBox_addItem_2(s_net.m_v6ModeCombo,
                         "\xE8\x87\xAA\xE5\x8A\xA8\xE8\x8E\xB7\xE5\x8F"
                         "\x96"); /* 自动获取 */
@@ -1525,7 +1768,7 @@ XWidget* demo_page_network_build(XWidget* parent,
         XWidget_show((XWidget*)s_net.m_capV6Addr);
     }
     s_net.m_v6AddrEdit = XLineEdit_create(s_net.m_root, 0);
-    if (!s_net.m_v6AddrEdit) return s_net.m_root;
+    if (!s_net.m_v6AddrEdit) return s_net.m_pageHost;
     XWidget_setFixedWidth((XWidget*)s_net.m_v6AddrEdit, 264);
     XWidget_setFixedHeight((XWidget*)s_net.m_v6AddrEdit, 24);
     XWidget_show((XWidget*)s_net.m_v6AddrEdit);
@@ -1558,6 +1801,12 @@ XWidget* demo_page_network_build(XWidget* parent,
         XWidget_setFixedHeight((XWidget*)s_net.m_v6GwEdit, 24);
         XWidget_show((XWidget*)s_net.m_v6GwEdit);
     }
+    /* ---- IPv6 DNS 两行（只读展示：系统下发，安卓不允许应用改 WiFi 的
+     *      IPv6 DNS；StaticIpConfiguration 只有 v4） ---- */
+    net_buildField("\xE9\xA6\x96\xE9\x80\x89 DNS",
+                   &s_net.m_capV6Dns1, &s_net.m_v6Dns1Edit); /* 首选 DNS */
+    net_buildField("\xE5\xA4\x87\xE7\x94\xA8 DNS",
+                   &s_net.m_capV6Dns2, &s_net.m_v6Dns2Edit); /* 备用 DNS */
     net_setV6EditsEnabled(false); /* IPv6 模式初始=自动获取（右列置灰）。 */
 
     /* ---- 无线（Wi-Fi）区：适配器 + 扫描 · 网络 + 口令 + 连接/断开 ---- */
@@ -1580,7 +1829,7 @@ XWidget* demo_page_network_build(XWidget* parent,
         XWidget_show((XWidget*)s_net.m_wifiCap);
     }
     s_net.m_wifiAdapterCombo = XComboBox_create(s_net.m_root, 0);
-    if (!s_net.m_wifiAdapterCombo) return s_net.m_root;
+    if (!s_net.m_wifiAdapterCombo) return s_net.m_pageHost;
     XWidget_setFixedHeight((XWidget*)s_net.m_wifiAdapterCombo, 26);
     XObject_connect_2((XObject*)s_net.m_wifiAdapterCombo,
                       XSignal(XComboBox_activated_signal),
@@ -1607,7 +1856,7 @@ XWidget* demo_page_network_build(XWidget* parent,
             XWidget_show((XWidget*)s_net.m_wifiNetCap);
         }
         s_net.m_wifiApCombo = XComboBox_create(s_net.m_root, 0);
-        if (!s_net.m_wifiApCombo) return s_net.m_root;
+        if (!s_net.m_wifiApCombo) return s_net.m_pageHost;
         XWidget_setFixedHeight((XWidget*)s_net.m_wifiApCombo, 26);
         XWidget_show((XWidget*)s_net.m_wifiApCombo);
         s_net.m_wifiPassCap = XLabel_create(s_net.m_root, 0);
@@ -1619,7 +1868,7 @@ XWidget* demo_page_network_build(XWidget* parent,
             XWidget_show((XWidget*)s_net.m_wifiPassCap);
         }
         s_net.m_wifiPassEdit = XLineEdit_create(s_net.m_root, 0);
-        if (!s_net.m_wifiPassEdit) return s_net.m_root;
+        if (!s_net.m_wifiPassEdit) return s_net.m_pageHost;
         XWidget_setFixedWidth((XWidget*)s_net.m_wifiPassEdit, 140);
         XWidget_setFixedHeight((XWidget*)s_net.m_wifiPassEdit, 24);
         XWidget_show((XWidget*)s_net.m_wifiPassEdit);
@@ -1694,7 +1943,7 @@ XWidget* demo_page_network_build(XWidget* parent,
         net_updateHint();
     }
     s_net.m_statusLabel = XLabel_create(s_net.m_root, 0);
-    if (!s_net.m_statusLabel) return s_net.m_root;
+    if (!s_net.m_statusLabel) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_statusLabel,
                      "\xE5\xB0\xB1\xE7\xBB\xAA"); /* 就绪 */
     XWidget_setFixedHeight((XWidget*)s_net.m_statusLabel, 22);
@@ -1762,51 +2011,45 @@ XWidget* demo_page_network_build(XWidget* parent,
     XBoxLayout_addWidget(&s_net.m_wifiNetRow,
                          (XWidget*)s_net.m_wifiDisconnectBtn);
     XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_wifiNetRow);
-    XBoxLayout_addSpacing(&s_net.m_rootLayout, 4);     /* 条目 11 */
+    /* 口令行骨架（条目 11，窄根独用）：只预置「行内距+行尾伸展」魔法
+       空白，宽根恒空几何高 0（不影响桌面现状）；窄根 adapt 把口令
+       标题/输入/连接/断开摘进来成第二行——无线网络行固定宽合计 394，
+       400 窗减边距只剩 376，单行必裁掉断开钮。 */
+    XBoxLayout_init(&s_net.m_wifiPassRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_net.m_wifiPassRow, 0);
+    XBoxLayout_addSpacing(&s_net.m_wifiPassRow, 4);
+    XBoxLayout_addSpacing(&s_net.m_wifiPassRow, 8);
+    XBoxLayout_addSpacing(&s_net.m_wifiPassRow, 6);
+    XBoxLayout_addStretch(&s_net.m_wifiPassRow, 1);
+    XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_wifiPassRow);
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 4);     /* 条目 12 */
     XBoxLayout_addWidget(&s_net.m_rootLayout,
-                         (XWidget*)s_net.m_wifiInfoLabel); /* 条目 12 */
+                         (XWidget*)s_net.m_wifiInfoLabel); /* 条目 13 */
 #endif
-    /* ===== 第三分区：IP 设置（IPv6 行/模式行/双列字段） ===== */
-    XBoxLayout_addSpacing(&s_net.m_rootLayout, 12);    /* 条目 13：分区间距
-       （无线段裁剪时此间距兼作前一分区的收尾，条目数差 8 见
-       NET_ROOTITEM_V6ROW 的双值口径）。 */
-    XBoxLayout_addWidget(&s_net.m_rootLayout,
-                         (XWidget*)s_net.m_ipTitle);    /* 条目 14 */
-    XBoxLayout_addSpacing(&s_net.m_rootLayout, 8);     /* 条目 15 */
-    /* IPv6 行：折叠单行(伸展) | 4 | 展开开关。 条目 16=NET_ROOTITEM_V6ROW
-       （单行标签不设对齐=填满整格：展开态释放固定高后由伸展因子撑满，
-       折叠态受 20px 固定高约束，两态皆正确）。 */
-    XBoxLayout_init(&s_net.m_v6Row, XBoxLayoutDirection_LeftToRight);
-    XLayout_setSpacing((XLayout*)&s_net.m_v6Row, 0);
-    XBoxLayout_addWidgetEx(&s_net.m_v6Row, (XWidget*)s_net.m_v6Label, 1, 0);
-    XBoxLayout_addSpacing(&s_net.m_v6Row, 4);
-    XBoxLayout_addWidget(&s_net.m_v6Row,
-                         (XWidget*)s_net.m_v6ExpandCheck);
-    XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_v6Row);
-    XBoxLayout_addSpacing(&s_net.m_rootLayout, 10);    /* 条目 17 */
-    /* 模式行：IPv4 标题|4|下拉|8|应用 · 56 · IPv6 标题|4|下拉|8|应用。
-       条目 18 */
-    XBoxLayout_init(&s_net.m_modeRow, XBoxLayoutDirection_LeftToRight);
-    XLayout_setSpacing((XLayout*)&s_net.m_modeRow, 0);
-    XBoxLayout_addWidget(&s_net.m_modeRow, (XWidget*)s_net.m_capV4Mode);
-    XBoxLayout_addSpacing(&s_net.m_modeRow, 4);
-    XBoxLayout_addWidget(&s_net.m_modeRow, (XWidget*)s_net.m_v4ModeCombo);
-    XBoxLayout_addSpacing(&s_net.m_modeRow, 8);
-    XBoxLayout_addWidget(&s_net.m_modeRow, (XWidget*)s_net.m_applyBtn);
-    XBoxLayout_addSpacing(&s_net.m_modeRow, 56);
-    XBoxLayout_addWidget(&s_net.m_modeRow, (XWidget*)s_net.m_capV6Mode);
-    XBoxLayout_addSpacing(&s_net.m_modeRow, 4);
-    XBoxLayout_addWidget(&s_net.m_modeRow, (XWidget*)s_net.m_v6ModeCombo);
-    XBoxLayout_addSpacing(&s_net.m_modeRow, 8);
-    XBoxLayout_addWidget(&s_net.m_modeRow, (XWidget*)s_net.m_applyV6Btn);
-    /* 行尾伸展：窄根（导航占位）下模式行余量留在行尾，不均摊进条目前。 */
-    XBoxLayout_addStretch(&s_net.m_modeRow, 1);
-    XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_modeRow);
-    XBoxLayout_addSpacing(&s_net.m_rootLayout, 12);    /* 条目 19 */
-    /* 双列字段：左 IPv4 五行（列距 4）· 24 · 右 IPv6 三行（列距 6）。
-       条目 20 */
-    XBoxLayout_init(&s_net.m_fieldCols, XBoxLayoutDirection_LeftToRight);
-    XLayout_setSpacing((XLayout*)&s_net.m_fieldCols, 0);
+    /* ===== 第三分区：IPv4 / IPv6 设置（可并排、可堆叠） =====
+     * [横屏并排 2026-10-25] 两个协议族各装进一个纵向容器（标题+模式行+
+     * 字段），再由 s_net.m_ipCols 承载：**可用宽够就左右并排，不够就上下
+     * 堆叠**（adapt 按内容宽与两列最小宽之和判定方向）。竖屏 400 逻辑宽
+     * 只能堆叠，横屏 821 逻辑宽并排——同一份控件树，切向即可重排。 */
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 12);    /* 条目 14：分区间距
+       （无线段裁剪时此间距兼作前一分区的收尾）。 */
+    /* IPv4 分区容器：标题 | 8 | 模式行 | 8 | 五字段。 */
+    XBoxLayout_init(&s_net.m_v4Section, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&s_net.m_v4Section, 0);
+    XBoxLayout_addWidget(&s_net.m_v4Section, (XWidget*)s_net.m_ipTitle);
+    XBoxLayout_addSpacing(&s_net.m_v4Section, 8);
+    /* IPv4 模式行：IPv4 标题|4|下拉|8|应用|伸展。 */
+    XBoxLayout_init(&s_net.m_v4ModeRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_net.m_v4ModeRow, 0);
+    XBoxLayout_addWidget(&s_net.m_v4ModeRow, (XWidget*)s_net.m_capV4Mode);
+    XBoxLayout_addSpacing(&s_net.m_v4ModeRow, 4);
+    XBoxLayout_addWidget(&s_net.m_v4ModeRow, (XWidget*)s_net.m_v4ModeCombo);
+    XBoxLayout_addSpacing(&s_net.m_v4ModeRow, 8);
+    XBoxLayout_addWidget(&s_net.m_v4ModeRow, (XWidget*)s_net.m_applyBtn);
+    XBoxLayout_addStretch(&s_net.m_v4ModeRow, 1);
+    XBoxLayout_addLayout(&s_net.m_v4Section, (XLayout*)&s_net.m_v4ModeRow);
+    XBoxLayout_addSpacing(&s_net.m_v4Section, 8);
+    /* IPv4 五字段单列。 */
     XBoxLayout_init(&s_net.m_v4Col, XBoxLayoutDirection_TopToBottom);
     XLayout_setSpacing((XLayout*)&s_net.m_v4Col, 4);
     net_addFieldRow(&s_net.m_v4Col, &s_net.m_v4Rows[0],
@@ -1819,29 +2062,67 @@ XWidget* demo_page_network_build(XWidget* parent,
                     s_net.m_capDns1, s_net.m_dns1Edit);
     net_addFieldRow(&s_net.m_v4Col, &s_net.m_v4Rows[4],
                     s_net.m_capDns2, s_net.m_dns2Edit);
+    XBoxLayout_addLayout(&s_net.m_v4Section, (XLayout*)&s_net.m_v4Col);
+    XBoxLayout_addStretch(&s_net.m_v4Section, 1);
+
+    /* IPv6 分区容器：标题 | 8 | 地址展示行 | 8 | 模式行 | 8 | 五字段。 */
+    XBoxLayout_init(&s_net.m_v6Section, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&s_net.m_v6Section, 0);
+    XBoxLayout_addWidget(&s_net.m_v6Section, (XWidget*)s_net.m_v6Title);
+    XBoxLayout_addSpacing(&s_net.m_v6Section, 8);
+    /* IPv6 地址展示行：折叠单行(伸展) | 4 | 展开开关。 */
+    XBoxLayout_init(&s_net.m_v6Row, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_net.m_v6Row, 0);
+    XBoxLayout_addWidgetEx(&s_net.m_v6Row, (XWidget*)s_net.m_v6Label, 1, 0);
+    XBoxLayout_addSpacing(&s_net.m_v6Row, 4);
+    XBoxLayout_addWidget(&s_net.m_v6Row,
+                         (XWidget*)s_net.m_v6ExpandCheck);
+    XBoxLayout_addLayout(&s_net.m_v6Section, (XLayout*)&s_net.m_v6Row);
+    XBoxLayout_addSpacing((XLayout*)&s_net.m_v6Section, 8);
+    /* IPv6 模式行：IPv6 标题|4|下拉|8|应用|伸展。 */
+    XBoxLayout_init(&s_net.m_v6ModeRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_net.m_v6ModeRow, 0);
+    XBoxLayout_addWidget(&s_net.m_v6ModeRow, (XWidget*)s_net.m_capV6Mode);
+    XBoxLayout_addSpacing(&s_net.m_v6ModeRow, 4);
+    XBoxLayout_addWidget(&s_net.m_v6ModeRow, (XWidget*)s_net.m_v6ModeCombo);
+    XBoxLayout_addSpacing(&s_net.m_v6ModeRow, 8);
+    XBoxLayout_addWidget(&s_net.m_v6ModeRow, (XWidget*)s_net.m_applyV6Btn);
+    XBoxLayout_addStretch(&s_net.m_v6ModeRow, 1);
+    XBoxLayout_addLayout(&s_net.m_v6Section, (XLayout*)&s_net.m_v6ModeRow);
+    XBoxLayout_addSpacing((XLayout*)&s_net.m_v6Section, 8);
+    /* IPv6 五字段单列（地址/前缀/网关 + 系统下发的两个 DNS）。 */
     XBoxLayout_init(&s_net.m_v6Col, XBoxLayoutDirection_TopToBottom);
-    XLayout_setSpacing((XLayout*)&s_net.m_v6Col, 6);
+    XLayout_setSpacing((XLayout*)&s_net.m_v6Col, 4);
     net_addFieldRow(&s_net.m_v6Col, &s_net.m_v6Rows[0],
                     s_net.m_capV6Addr, s_net.m_v6AddrEdit);
     net_addFieldRow(&s_net.m_v6Col, &s_net.m_v6Rows[1],
                     s_net.m_capV6Prefix, s_net.m_v6PrefixEdit);
     net_addFieldRow(&s_net.m_v6Col, &s_net.m_v6Rows[2],
                     s_net.m_capV6Gw, s_net.m_v6GwEdit);
-    XBoxLayout_addLayout(&s_net.m_fieldCols, (XLayout*)&s_net.m_v4Col);
-    XBoxLayout_addSpacing(&s_net.m_fieldCols, 24);
-    XBoxLayout_addLayout(&s_net.m_fieldCols, (XLayout*)&s_net.m_v6Col);
-    /* 列尾/列内伸展：宽根下双列保持左对齐（余量留行尾不均摊）、右列
-       三行在列高富余时保持 6px 行距顶对齐。 */
-    XBoxLayout_addStretch(&s_net.m_v4Col, 1);
-    XBoxLayout_addStretch(&s_net.m_v6Col, 1);
-    XBoxLayout_addStretch(&s_net.m_fieldCols, 1);
-    XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_fieldCols);
-    XBoxLayout_addStretch(&s_net.m_rootLayout, 1);     /* 条目 21 */
+    net_addFieldRow(&s_net.m_v6Col, &s_net.m_v6DnsRows[0],
+                    s_net.m_capV6Dns1, s_net.m_v6Dns1Edit);
+    net_addFieldRow(&s_net.m_v6Col, &s_net.m_v6DnsRows[1],
+                    s_net.m_capV6Dns2, s_net.m_v6Dns2Edit);
+    XBoxLayout_addLayout(&s_net.m_v6Section, (XLayout*)&s_net.m_v6Col);
+    XBoxLayout_addStretch(&s_net.m_v6Section, 1);
+
+    /* 两分区容器：宽度够 → 并排；不够 → 堆叠（adapt 切方向）。 */
+    XBoxLayout_init(&s_net.m_ipCols, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&s_net.m_ipCols, 12);
+    XBoxLayout_addLayout(&s_net.m_ipCols, (XLayout*)&s_net.m_v4Section);
+    XBoxLayout_addLayout(&s_net.m_ipCols, (XLayout*)&s_net.m_v6Section);
+    /* 两列等分宽度（并排时各占一半；堆叠时伸展在纵轴上均分余高）。
+     * 折叠态余高留在根布局的尾部伸展上，这里给 0 由 relayout 定版。 */
+    XBoxLayout_setStretch(&s_net.m_ipCols, 0, 1);
+    XBoxLayout_setStretch(&s_net.m_ipCols, 1, 1);
+    XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_ipCols);
+
+    XBoxLayout_addStretch(&s_net.m_rootLayout, 1);     /* 条目 15 */
     XBoxLayout_addWidget(&s_net.m_rootLayout,
-                         (XWidget*)s_net.m_hintLabel); /* 条目 22 */
-    XBoxLayout_addSpacing(&s_net.m_rootLayout, 2);     /* 条目 23 */
+                         (XWidget*)s_net.m_hintLabel); /* 条目 16 */
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 2);     /* 条目 17 */
     XBoxLayout_addWidget(&s_net.m_rootLayout,
-                         (XWidget*)s_net.m_statusLabel); /* 条目 24 */
+                         (XWidget*)s_net.m_statusLabel); /* 条目 18 */
     XWidget_setLayout(s_net.m_root, (XLayout*)&s_net.m_rootLayout);
 
     /* ---- 统一切换（折叠视图定版）+ 首轮枚举回填。 ---- */
@@ -1850,7 +2131,7 @@ XWidget* demo_page_network_build(XWidget* parent,
 
     s_net.m_ready = true;
     net_page_network_headless_hook();
-    return s_net.m_root;
+    return s_net.m_pageHost;
 }
 
 /** @brief 无头截图/自动化钩子：XGUI_NET_EXPAND_V6=1 时构建末尾展开
@@ -1867,12 +2148,252 @@ static void net_page_network_headless_hook(void)
 
 /* ==================== 自适应重排（xgui_demo_pages.h 契约） ============ */
 
+/** @brief 窄根档字段宽：编辑框随页根内容宽收缩（宽根恢复常量口径）。
+ *  @details 400 逻辑窗减根边距 24 只剩 376 内容宽：IPv4 行「标题 80 +
+ *           行距 4 + 编辑 300」= 384 必溢出（真机截图左列贴右缘、右列
+ *           整体出窗的根因之一），收缩量按行内最宽标题分别预留。 */
+static void net_adaptFieldWidths(bool compact)
+{
+    int contentW;
+    int colW;
+    int v4W;
+    int v6W;
+    int i;
+    bool sideBySide;
+    XLineEdit* v4Edits[5];
+    XLineEdit* v6Edits[5];
+    v4Edits[0] = s_net.m_ipEdit;
+    v4Edits[1] = s_net.m_maskEdit;
+    v4Edits[2] = s_net.m_gwEdit;
+    v4Edits[3] = s_net.m_dns1Edit;
+    v4Edits[4] = s_net.m_dns2Edit;
+    /* IPv6 五件（地址/前缀/网关 + 两个 DNS）——各行标题列宽不同，统一
+     * 按最宽的「IPv6 地址」预留，各框等宽（视觉对齐，窄根也不越界）。 */
+    v6Edits[0] = s_net.m_v6AddrEdit;
+    v6Edits[1] = s_net.m_v6PrefixEdit;
+    v6Edits[2] = s_net.m_v6GwEdit;
+    v6Edits[3] = s_net.m_v6Dns1Edit;
+    v6Edits[4] = s_net.m_v6Dns2Edit;
+    if (!compact) {
+        /* 宽根：并排时每列只有半宽，编辑框不能再吃满 300——按列宽
+         * 收缩，避免右列越出根边距（横屏 1000 宽时两列各 ~482）。 */
+        sideBySide = XBoxLayout_direction(&s_net.m_ipCols)
+                         == XBoxLayoutDirection_LeftToRight;
+        contentW = s_net.m_root ? XWidget_width(s_net.m_root) - 24 : 0;
+        if (contentW < 200) contentW = 200;
+        colW = sideBySide ? (contentW - 12) / 2 : contentW;
+        v4W = colW - NET_CAP_W - 16;
+        v6W = colW - 100 - 16;
+        if (v4W > NET_FIELD_W) v4W = NET_FIELD_W;
+        if (v4W < 120) v4W = 120;
+        if (v6W > 304) v6W = 304;
+        if (v6W < 120) v6W = 120;
+        for (i = 0; i < 5; ++i) {
+            if (v4Edits[i])
+                XWidget_setFixedWidth((XWidget*)v4Edits[i], v4W);
+            if (v6Edits[i])
+                XWidget_setFixedWidth((XWidget*)v6Edits[i], v6W);
+        }
+        return;
+    }
+    /* 内容宽 = 页根宽 - 根布局左右 contentsMargins(12+12)；下限防极端
+     * 窄根把编辑框压没，上限钳回宽屏常量（中段窄窗不放宽）。
+     * 窄根必为堆叠（400 << NET_IP_COLS_MIN_W），故按整宽算。 */
+    contentW = s_net.m_root ? XWidget_width(s_net.m_root) - 24 : 0;
+    if (contentW < 200) contentW = 200;
+    v4W = contentW - NET_CAP_W - 16;  /* 标题列 80 + 行距 4 + 右余量 12 */
+    v6W = contentW - 100 - 16;        /* 最宽标题「IPv6 地址」列 100 */
+    if (v4W > NET_FIELD_W) v4W = NET_FIELD_W;
+    if (v4W < 120) v4W = 120;
+    if (v6W > 304) v6W = 304;
+    if (v6W < 120) v6W = 120;
+    for (i = 0; i < 5; ++i) {
+        if (v4Edits[i])
+            XWidget_setFixedWidth((XWidget*)v4Edits[i], v4W);
+        if (v6Edits[i])
+            XWidget_setFixedWidth((XWidget*)v6Edits[i], v6W);
+    }
+}
+
+/** @brief 窄根档触控高度：可点击控件统一抬到 40 逻辑像素（手机触控
+ *         目标下限）；宽根恢复 build 常量，桌面 1000x700 密度不变。
+ *         标签非点击目标不抬，行高由行内最高控件承载。 */
+static void net_adaptTouchHeights(bool compact)
+{
+    int hCombo = compact ? NET_TOUCH_H : 26; /* 下拉/刷新/扫描/连接/断开 */
+    int hApply = compact ? NET_TOUCH_H : 30; /* 应用配置 / 应用 IPv6 */
+    int hEdit4 = compact ? NET_TOUCH_H : 22; /* IPv4 五编辑框 */
+    int hEdit6 = compact ? NET_TOUCH_H : 24; /* IPv6 三编辑 + WiFi 口令 */
+    int hCheck = compact ? NET_TOUCH_H : 22; /* IPv6 展开开关 */
+    int i;
+    XLineEdit* v4Edits[5];
+    v4Edits[0] = s_net.m_ipEdit;
+    v4Edits[1] = s_net.m_maskEdit;
+    v4Edits[2] = s_net.m_gwEdit;
+    v4Edits[3] = s_net.m_dns1Edit;
+    v4Edits[4] = s_net.m_dns2Edit;
+    if (s_net.m_adapterCombo)
+        XWidget_setFixedHeight((XWidget*)s_net.m_adapterCombo, hCombo);
+    if (s_net.m_refreshBtn)
+        XWidget_setFixedHeight((XWidget*)s_net.m_refreshBtn, hCombo);
+    if (s_net.m_v4ModeCombo)
+        XWidget_setFixedHeight((XWidget*)s_net.m_v4ModeCombo, hCombo);
+    if (s_net.m_applyBtn)
+        XWidget_setFixedHeight((XWidget*)s_net.m_applyBtn, hApply);
+    if (s_net.m_v6ModeCombo)
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6ModeCombo, hCombo);
+    if (s_net.m_applyV6Btn)
+        XWidget_setFixedHeight((XWidget*)s_net.m_applyV6Btn, hApply);
+    for (i = 0; i < 5; ++i)
+        if (v4Edits[i])
+            XWidget_setFixedHeight((XWidget*)v4Edits[i], hEdit4);
+    if (s_net.m_v6AddrEdit)
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6AddrEdit, hEdit6);
+    if (s_net.m_v6PrefixEdit)
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6PrefixEdit, hEdit6);
+    if (s_net.m_v6GwEdit)
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6GwEdit, hEdit6);
+    if (s_net.m_v6Dns1Edit)
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6Dns1Edit, hEdit6);
+    if (s_net.m_v6Dns2Edit)
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6Dns2Edit, hEdit6);
+    if (s_net.m_v6ExpandCheck)
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6ExpandCheck, hCheck);
+#if XNETWORK_ON && XDEVICE_WIFI_ON
+    if (s_net.m_wifiAdapterCombo)
+        XWidget_setFixedHeight((XWidget*)s_net.m_wifiAdapterCombo, hCombo);
+    if (s_net.m_wifiScanBtn)
+        XWidget_setFixedHeight((XWidget*)s_net.m_wifiScanBtn, hCombo);
+    if (s_net.m_wifiApCombo)
+        XWidget_setFixedHeight((XWidget*)s_net.m_wifiApCombo, hCombo);
+    if (s_net.m_wifiPassEdit)
+        XWidget_setFixedHeight((XWidget*)s_net.m_wifiPassEdit, hEdit6);
+    if (s_net.m_wifiConnectBtn)
+        XWidget_setFixedHeight((XWidget*)s_net.m_wifiConnectBtn, hCombo);
+    if (s_net.m_wifiDisconnectBtn)
+        XWidget_setFixedHeight((XWidget*)s_net.m_wifiDisconnectBtn, hCombo);
+#endif
+}
+
+/** @brief 窄根行收拢：模式行/无线网络行各拆出第二行 + 字段双列转单列。
+ *  @details 400 逻辑宽（内容 376）装不下宽屏单行：模式行 IPv4+IPv6
+ *           两组定宽合计 750、无线网络行固定宽合计 394——右半必然出窗
+ *           被裁（真机截图 IPv6 模式组与右列三行全部不可见）。只动布局
+ *           条目不破坏控件父子（removeWidget 就地释放包装条目，复插重
+ *           建，可随档位来回切）；两根骨架行 build 时预置「行内距+行尾
+ *           伸展」魔法空白且宽根恒空（几何高 0，不影响桌面现状），插回
+ *           索引对应骨架空位、与宽屏原序逐位对齐。 */
+/** @brief 窄根档重排：IPv4/IPv6 已是各自独立分区（不再有横排双组），
+ *         故只需（1）无线网络行在窄根摘出口令组到第二行、（2）字段宽
+ *         随内容宽收缩、（3）触控目标抬到 40。
+ *  @details 2026-10-25 二次整改：原「IPv4/IPv6 两组挤在同一模式行 +
+ *           双列字段」在 400 宽竖屏下把 IPv6 模式下拉和三字段推到屏外，
+ *           且 IPv6 控件与 IPv4 视觉上混成一片。现改为 IPv4 设置、IPv6
+ *           设置两个独立分区（各自模式行 + 单列字段），窄根不再需要
+ *           搬移模式组、也不再需要双列转单列——结构本身已经是单列。 */
+static void net_applyCompactRows(bool compact)
+{
+#if XNETWORK_ON && XDEVICE_WIFI_ON
+    if (compact) {
+        XLayout_removeWidget((XLayout*)&s_net.m_wifiNetRow,
+                             (XWidget*)s_net.m_wifiPassCap);
+        XLayout_removeWidget((XLayout*)&s_net.m_wifiNetRow,
+                             (XWidget*)s_net.m_wifiPassEdit);
+        XLayout_removeWidget((XLayout*)&s_net.m_wifiNetRow,
+                             (XWidget*)s_net.m_wifiConnectBtn);
+        XLayout_removeWidget((XLayout*)&s_net.m_wifiNetRow,
+                             (XWidget*)s_net.m_wifiDisconnectBtn);
+        /* 骨架 [4,8,6,伸展] 依序插回 = 口令|4|输入|8|连接|6|断开|伸展。 */
+        XBoxLayout_insertWidget(&s_net.m_wifiPassRow, 0,
+                                (XWidget*)s_net.m_wifiPassCap, 0);
+        XBoxLayout_insertWidget(&s_net.m_wifiPassRow, 2,
+                                (XWidget*)s_net.m_wifiPassEdit, 0);
+        XBoxLayout_insertWidget(&s_net.m_wifiPassRow, 4,
+                                (XWidget*)s_net.m_wifiConnectBtn, 0);
+        XBoxLayout_insertWidget(&s_net.m_wifiPassRow, 5,
+                                (XWidget*)s_net.m_wifiDisconnectBtn, 0);
+        XLayout_setContentsMargins((XLayout*)&s_net.m_wifiPassRow, 0, 6, 0, 0);
+    } else {
+        XLayout_removeWidget((XLayout*)&s_net.m_wifiPassRow,
+                             (XWidget*)s_net.m_wifiPassCap);
+        XLayout_removeWidget((XLayout*)&s_net.m_wifiPassRow,
+                             (XWidget*)s_net.m_wifiPassEdit);
+        XLayout_removeWidget((XLayout*)&s_net.m_wifiPassRow,
+                             (XWidget*)s_net.m_wifiConnectBtn);
+        XLayout_removeWidget((XLayout*)&s_net.m_wifiPassRow,
+                             (XWidget*)s_net.m_wifiDisconnectBtn);
+        /* 归位宽屏序：残留 [.., sp8, sp4, sp8, sp6, 伸展]，索引
+           4/6/8/10 逐位插回，还原 口令|4|输入|8|连接|6|断开。 */
+        XBoxLayout_insertWidget(&s_net.m_wifiNetRow, 4,
+                                (XWidget*)s_net.m_wifiPassCap, 0);
+        XBoxLayout_insertWidget(&s_net.m_wifiNetRow, 6,
+                                (XWidget*)s_net.m_wifiPassEdit, 0);
+        XBoxLayout_insertWidget(&s_net.m_wifiNetRow, 8,
+                                (XWidget*)s_net.m_wifiConnectBtn, 0);
+        XBoxLayout_insertWidget(&s_net.m_wifiNetRow, 10,
+                                (XWidget*)s_net.m_wifiDisconnectBtn, 0);
+        XLayout_setContentsMargins((XLayout*)&s_net.m_wifiPassRow, 0, 0, 0, 0);
+    }
+#else
+    (void)compact;
+#endif
+    net_adaptFieldWidths(compact);
+    net_adaptTouchHeights(compact);
+}
+
+/** @brief IPv4/IPv6 两分区排布方向：可用宽够=左右并排，不够=上下堆叠。
+ *  @details 并排时两列等分宽度（各 stretch 1），列距 12；堆叠时列距同样
+ *           12（作为行距）。两档切换只翻方向，控件父子不动。
+ *  @param contentW 页根内容宽（已扣左右边距）。 */
+static void net_adaptIpColumns(int contentW)
+{
+    bool sideBySide = contentW >= NET_IP_COLS_MIN_W;
+    XBoxLayoutDirection want = sideBySide
+                                   ? XBoxLayoutDirection_LeftToRight
+                                   : XBoxLayoutDirection_TopToBottom;
+    if (XClassIsVtableNull((XClass*)&s_net.m_ipCols))
+        return; /* 布局未装配（理论上不会走到）。 */
+    if (XBoxLayout_direction(&s_net.m_ipCols) == want)
+        return; /* 同向幂等：拖拽 resize 每步零开销。 */
+    XBoxLayout_setDirection(&s_net.m_ipCols, want);
+}
+
 void demo_page_network_adapt(XWidget* page)
 {
-    /* 2026-10-17 容器化：页内排布全部交给根布局器（随根几何自动重排，
-     * 折叠/展开形态见 net_relayout），此处不再做任何手写几何；
-     * 契约签名保留（主文件调用点不动）。 */
-    (void)page;
+    /* 2026-10-17 容器化后页内排布交给根布局器；2026-10-25 窄根分档是
+     * 此处仅存的手写几何——主窗 demo_layout_content 漏斗在切页/resize/
+     * 停靠全路径调用（页根几何新鲜），按 Material 3 compact 断点分档
+     * 收拢；同档幂等短路，拖拽 resize 每步零开销。
+     * [竖屏滚动 2026-10-25] 页根已改为页宿主（XScrollArea 壳内嵌），
+     * 契约入参是页宿主；宽度分档取**视口宽**（滚动条占位后才是真实
+     * 可用宽），内容几何由壳的 resizeEvent 自行拟合。 */
+    bool compact;
+    int w;
+    if (!page || !s_net.m_ready || page != s_net.m_pageHost)
+        return;
+    w = s_net.m_scroll
+            ? XWidget_width(XAbstractScrollArea_viewport(
+                  (XAbstractScrollArea*)s_net.m_scroll))
+            : XWidget_width(page);
+    if (w <= 0) return; /* 几何未定（首帧前）：不投档，等下一拍重排。 */
+    /* IPv4/IPv6 分区排布方向（每次 adapt 都判，横竖屏切换即时生效）：
+     * 可用宽够=左右并排，不够=上下堆叠。内容宽=视口宽-根左右边距(24)。
+     * **必须先于 net_applyCompactRows**：字段宽度要在方向已定的前提下
+     * 才算得出（并排时每列只有半宽），顺序反了会拿上一档的宽度。 */
+    net_adaptIpColumns(w - 24);
+    compact = w < NET_COMPACT_MAX_W;
+    if (compact != s_net.m_compact) {
+        s_net.m_compact = compact;
+        net_applyCompactRows(compact);
+        net_relayout(); /* 折叠/展开态约束（展开开关高等）按新档位重套。 */
+    } else {
+        /* 档位未变但方向可能变了（横竖屏切换）：宽度按新方向重算。 */
+        net_adaptFieldWidths(compact);
+    }
+    /* 档位未变也要重拟合内容高：展开/收起、信息区行数变化都不改档位，
+     * 但内容首选高变了——不重算则滚动范围停在旧值（收起后仍能滚到空白，
+     * 或展开后滚不到底部）。 */
+    net_fitScrollContent(s_net.m_scroll);
 }
 
 /* ==================== autotest ==================== */
@@ -1884,17 +2405,36 @@ int demo_page_network_autotest(XWidget* page)
     do { if (cond) XPrintf("XGuiAutoTest: [PASS] %s\n", what); \
          else { XPrintf("XGuiAutoTest: [FAIL] %s\n", what); ++failures; } } while (0)
 
-    if (!page || !s_net.m_ready || page != s_net.m_root)
+    if (!page || !s_net.m_ready || page != s_net.m_pageHost)
         return -1;
 
     /* ---- 控件登记完整 ---- */
     NET_EXPECT(s_net.m_titleLabel && s_net.m_ipTitle &&
+               s_net.m_v6Title &&
                s_net.m_adapterCombo && s_net.m_refreshBtn &&
                s_net.m_infoLabel && s_net.m_v4ModeCombo && s_net.m_applyBtn &&
                s_net.m_ipEdit && s_net.m_maskEdit && s_net.m_gwEdit &&
                s_net.m_dns1Edit && s_net.m_dns2Edit &&
                s_net.m_hintLabel && s_net.m_statusLabel,
                "网络设置页: 控件全部登记");
+
+    /* ---- 滚动承载：页宿主内嵌滚动区，内容件=页根 ---- */
+    NET_EXPECT(s_net.m_pageHost && s_net.m_scroll &&
+                   XScrollArea_widget(s_net.m_scroll) == s_net.m_root,
+               "网络设置页: 整页滚动区已装配(内容=页根)");
+    NET_EXPECT(XAbstractScrollArea_horizontalScrollBarPolicy(
+                   (const XAbstractScrollArea*)s_net.m_scroll)
+                   == XScrollBarPolicy_AlwaysOff,
+               "网络设置页: 水平滚动条恒关(内容宽=视口宽)");
+    NET_EXPECT(XAbstractScrollArea_verticalScrollBarPolicy(
+                   (const XAbstractScrollArea*)s_net.m_scroll)
+                   == XScrollBarPolicy_AsNeeded,
+               "网络设置页: 竖直滚动条按需出现");
+    /* 内容高确实按布局合计撑开（不是被钉在视口高）——否则竖滚永不触发。 */
+    NET_EXPECT(s_net.m_root &&
+                   XWidget_height(s_net.m_root) > 0 &&
+                   XWidget_layout(s_net.m_root) != NULL,
+               "网络设置页: 内容根有布局且高度已拟合");
 
     /* ---- 枚举：至少一个接口（回环无处不在）且选中回填非空 ---- */
     NET_EXPECT(XComboBox_count(s_net.m_adapterCombo) >= 1 &&

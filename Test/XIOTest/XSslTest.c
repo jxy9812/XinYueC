@@ -48,8 +48,8 @@ typedef struct XSslTestBio {
 } XSslTestBio;
 
 typedef struct XSslTestSocketFactory {
-    XSslCertificate* certificate;
-    XSslKey* private_key;
+    const char* certificatePem;   /**< 服务端证书 PEM（每个 socket 各自解析一份）。 */
+    const char* privateKeyPem;     /**< 服务端私钥 PEM（每个 socket 各自解析一份）。 */
 } XSslTestSocketFactory;
 
 static const char xssl_test_certificate[] =
@@ -122,8 +122,20 @@ static XTcpSocket* xssl_test_socket_factory(void* context)
         (void)XSslSocket_setCipherSuites(socket, cipher_suites);
         XClassDelete((XClass*)cipher_suites);
     }
-    XSslSocket_setLocalCertificate(socket, factory->certificate);
-    XSslSocket_setPrivateKey(socket, factory->private_key);
+    /* 每个被接受的连接各自解析一份证书/私钥：setLocalCertificate/setPrivateKey
+     * 的 setter 语义是「接管传入对象并归 self 所有」（析构时由 socket 释放），
+     * 若把同一实例交给多个 socket，第一个 socket 析构即释放它，其余 socket
+     * 持有的悬垂指针在析构时二次释放 → 堆损坏崩溃（实测 TLS 1.2 回环用例
+     * 在 mbedtls_pk_free 处访问违例）。 */
+    {
+        XSslCertificate* certificate = XSsl_certificateFromPem(
+            factory->certificatePem, strlen(factory->certificatePem));
+        XSslKey* private_key = XSsl_keyFromPem(
+            factory->privateKeyPem, strlen(factory->privateKeyPem),
+            XSSL_KeyAlgorithm_Ec, XSSL_PrivateKey, NULL);
+        XSslSocket_setLocalCertificate(socket, certificate);
+        XSslSocket_setPrivateKey(socket, private_key);
+    }
     return (XTcpSocket*)socket;
 }
 
@@ -3391,8 +3403,6 @@ static bool xssl_test_socket_configuration(void)
 
 static bool xssl_test_socket_tls12_loopback(void)
 {
-    XSslCertificate* certificate = NULL;
-    XSslKey* private_key = NULL;
     XTcpServer* listener = NULL;
     XSslSocket* client = NULL;
     XSslSocket* server = NULL;
@@ -3405,17 +3415,16 @@ static bool xssl_test_socket_tls12_loopback(void)
     uint64_t deadline;
     bool ok = false;
 
-    certificate = XSsl_certificateFromPem(xssl_test_certificate, strlen(xssl_test_certificate));
-    private_key = XSsl_keyFromPem(xssl_test_private_key, strlen(xssl_test_private_key),
-                                  XSSL_KeyAlgorithm_Ec, XSSL_PrivateKey, NULL);
     listener = XTcpServer_create();
     client = XSslSocket_create();
     host_name = XString_create_utf8("127.0.0.1");
     cipher_suites = XString_create_utf8("ECDHE-ECDSA-AES128-GCM-SHA256");
-    if (!certificate || !private_key || !listener || !client || !host_name || !cipher_suites)
+    if (!listener || !client || !host_name || !cipher_suites)
         goto cleanup;
-    factory.certificate = certificate;
-    factory.private_key = private_key;
+    /* 证书/私钥由工厂按连接各自解析（见 xssl_test_socket_factory 注释），
+     * 此处不再持有实例，避免与 socket 的所有权约定冲突。 */
+    factory.certificatePem = xssl_test_certificate;
+    factory.privateKeyPem = xssl_test_private_key;
     XTcpServer_setIncomingSocketFactory(listener, xssl_test_socket_factory, &factory);
     if (!XTcpServer_listen(listener, NULL, 0))
         goto cleanup;
@@ -3489,8 +3498,6 @@ cleanup:
     }
     if (cipher_suites) XClassDelete((XClass*)cipher_suites);
     if (host_name) XClassDelete((XClass*)host_name);
-    if (private_key) XSsl_keyDestroy(private_key);
-    if (certificate) XSsl_certificateDestroy(certificate);
     XSSL_TEST_REQUIRE(ok, "XSslSocket local TLS 1.2", "本地回环握手或双向读写失败");
     XSSL_TEST_PASS("XSslSocket local TLS 1.2 handshake and records");
     return true;

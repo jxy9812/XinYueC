@@ -46,11 +46,26 @@ public class XNetAdapter {
     /**
      * 查询活动网络的链路信息（ConnectivityManager.LinkProperties）。
      *
-     * @return [0]=IPv6 默认网关文本, [1]=DNS1, [2]=DNS2, [3]=接口名（如
-     *         "wlan0"）；缺项为 ""。调用方（C 侧）按接口名匹配后才采用。
+     * @return 九个槽位：
+     *         [0]=IPv6 默认网关文本
+     *         [1]=IPv4 DNS-1   [2]=IPv4 DNS-2
+     *         [3]=IPv6 DNS-1   [4]=IPv6 DNS-2
+     *         [5]=接口名（如 "wlan0"）
+     *         [6]=网卡 MAC（"AA:BB:..." 形式；取不到为空串）
+     *         缺项为 ""。调用方（C 侧）按接口名匹配后才采用。
+     *
+     * 【DNS 分族】安卓在纯 IPv6 / v6 优先的网络下，LinkProperties 的
+     * DNS 列表前两条往往都是 IPv6 地址。此前不分族地取「前两个」灌进
+     * IPv4 的 DNS 槽，界面「IPv4 设置」里就显示成 IPv6 DNS，而 IPv6
+     * 区反而没有 DNS——现按地址族各自收集，最多各两个。
+     *
+     * 【MAC】应用域读不了 /sys/class/net（SELinux 拒），posix 后端的
+     * ioctl(SIOCGIFHWADDR) 在安卓恒失败。这里优先取 WifiInfo 的 MAC
+     * （本机 WiFi 正在用时最准），退化到 java.net.NetworkInterface 按
+     * 接口名取硬件地址。
      */
     public static String[] linkInfo(Context ctx) {
-        String[] out = {"", "", "", ""};
+        String[] out = {"", "", "", "", "", "", ""};
         try {
             ConnectivityManager cm = (ConnectivityManager)
                     ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -60,7 +75,7 @@ public class XNetAdapter {
             LinkProperties lp = cm.getLinkProperties(net);
             if (lp == null) return out;
             String iface = lp.getInterfaceName();
-            out[3] = iface == null ? "" : iface;
+            out[5] = iface == null ? "" : iface;
             for (RouteInfo r : lp.getRoutes()) {
                 if (r == null || !r.isDefaultRoute()) continue;
                 InetAddress gw = r.getGateway();
@@ -70,19 +85,74 @@ public class XNetAdapter {
                     out[0] = t; /* IPv6 默认网关（v4 网关由 DhcpInfo 覆盖） */
                 }
             }
+            /* DNS 按地址族分别收集（各最多两个）。 */
+            int v4Taken = 0;
+            int v6Taken = 0;
             List<InetAddress> dns = lp.getDnsServers();
-            int taken = 0;
             for (InetAddress d : dns) {
-                if (d == null || taken >= 2) continue;
+                if (d == null) continue;
                 String t = d.getHostAddress();
                 if (t == null || t.isEmpty()) continue;
-                if (taken == 0) { out[1] = t; taken = 1; }
-                else { out[2] = t; break; }
+                if (t.contains(":")) {
+                    if (v6Taken < 2) {
+                        out[3 + v6Taken] = t; /* [3]=v6 dns1 [4]=v6 dns2 */
+                        ++v6Taken;
+                    }
+                } else {
+                    if (v4Taken < 2) {
+                        out[1 + v4Taken] = t; /* [1]=v4 dns1 [2]=v4 dns2 */
+                        ++v4Taken;
+                    }
+                }
             }
+            out[6] = macAddress(ctx, iface);
         } catch (Throwable t) {
             android.util.Log.w(TAG, "linkInfo: " + t);
         }
         return out;
+    }
+
+    /**
+     * 取网卡 MAC（大写冒号分隔）；取不到返回空串。
+     *
+     * 优先 WifiInfo.getMacAddress（当前 WiFi 连接的硬件地址，安卓 6 起
+     * 普通应用拿到的是系统化的固定值而非真实 MAC，但仍是系统认可的
+     * 「本机地址」，足以展示），退化到 java.net.NetworkInterface。
+     */
+    @SuppressWarnings("deprecation")
+    private static String macAddress(Context ctx, String iface) {
+        String mac = "";
+        try {
+            WifiManager wm = (WifiManager)
+                    ctx.getSystemService(Context.WIFI_SERVICE);
+            if (wm != null) {
+                WifiInfo info = wm.getConnectionInfo();
+                if (info != null) {
+                    String m = info.getMacAddress();
+                    if (m != null) mac = m;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        if (mac.isEmpty() && iface != null && !iface.isEmpty()) {
+            try {
+                java.net.NetworkInterface ni =
+                        java.net.NetworkInterface.getByName(iface);
+                if (ni != null) {
+                    byte[] hw = ni.getHardwareAddress();
+                    if (hw != null && hw.length == 6) {
+                        StringBuilder sb = new StringBuilder();
+                        for (int i = 0; i < hw.length; ++i) {
+                            if (i > 0) sb.append(':');
+                            sb.append(String.format("%02X", hw[i] & 0xFF));
+                        }
+                        mac = sb.toString();
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return mac == null ? "" : mac.toUpperCase(java.util.Locale.US);
     }
 
     /**

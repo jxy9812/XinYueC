@@ -28,6 +28,7 @@
 #include "XSslTest.h"
 #include "XProtocolTest.h"
 #include "XLinkTest.h"
+#include "XLinkDemo.h"
 #include "XNtpTest.h"
 #include "XDdnsTest.h"
 #include "XDataTest.h"
@@ -117,9 +118,18 @@ static int main_run_test_path(const char* testPath)
     /* 质量门禁：内存泄漏 / 性能基准 / 边界与对抗。 */
     if (strcmp(testPath, "xlink-quality") == 0)
         return XLinkQualityTest_run() == 0 ? 0 : 1;
-    /* 功能 + 质量合并闸门（发布前跑这一个即可）。 */
+    /* 实战案例·双进程联调：本进程扮演服务端（或客户端），另一个终端跑对端。 */
+    if (strcmp(testPath, "xlink-demo-server") == 0)
+        return XLinkDemoServer_run();
+    if (strcmp(testPath, "xlink-demo-client") == 0)
+        return XLinkDemoClient_run();
+    /* 实战案例·本进程联调：两个角色同进程跑真实 TCP 环回（CI 友好）。 */
+    if (strcmp(testPath, "xlink-demo") == 0)
+        return XLinkDemo_run();
+    /* 全功能闸门：功能 + 质量 + 案例联调（发布前跑这一个即可）。 */
     if (strcmp(testPath, "xlink-all") == 0)
-        return (XLinkTest_run() == 0 && XLinkQualityTest_run() == 0) ? 0 : 1;
+        return (XLinkTest_run() == 0 && XLinkQualityTest_run() == 0
+                && XLinkDemo_run() == 0) ? 0 : 1;
     if (strcmp(testPath, "xlink-codec") == 0) {
         XLinkCodecTest();
         return 0;
@@ -128,6 +138,12 @@ static int main_run_test_path(const char* testPath)
         XLinkSessionTest();
         return 0;
     }
+    /* XLink 客户端包装（自动重连）：真实 TCP 环回全链路
+       （原 XLinkClientTest.c 已并入 XLinkTest.c 分组十四，声明在 XLinkTest.h）。 */
+#if XLINK_CLIENT_ON
+    if (strcmp(testPath, "xlink-client") == 0)
+        return XLinkClientTest_run() == 0 ? 0 : 1;
+#endif
 #endif
 #if XPROTOCOL_ON && XNTP_ON
     /* XNtp SNTP 客户端全量回归（离线：进程内模拟 NTP 服务器）。 */
@@ -167,8 +183,10 @@ static int main_run_test_path(const char* testPath)
         bool mqtt = XMqttTest_runAll();
         bool ok = esp8266 && deviceFile && deviceNetwork && deviceSerialPort && data && process && shell && backend && clients && cryptographic && ssl && mqtt;
 #if XPROTOCOL_ON && XLINK_ON
-        /* XLink 私有协议回归并入全量闸门。 */
+        /* XLink 私有协议回归并入全量闸门：功能 + 质量 + 案例联调。 */
         ok = ok && (XLinkTest_run() == 0);
+        ok = ok && (XLinkQualityTest_run() == 0);
+        ok = ok && (XLinkDemo_run() == 0);
 #endif
         return ok ? 0 : 1;
     }
@@ -195,7 +213,11 @@ static void main_print_test_list(void)
     XPrintf("  --test xdevice-network\n");
     XPrintf("  --test xdevice-serial-port\n");
     XPrintf("  --test xdata\n");
-    XPrintf("  --test all\n");
+    XPrintf("  --test xlink (功能) / xlink-quality (质量) / xlink-demo (案例联调)\n");
+    XPrintf("  --test xlink-demo-server + xlink-demo-client (双进程联调)\n");
+    XPrintf("  --test xlink-all (全功能闸门) / all (全仓闸门)\n");
+    XPrintf("  --test xlink-client (客户端包装·自动重连)\n");
+    XPrintf("  Test 菜单「协议栈 → XLink(xlink)」: 客户端包装 / 实战案例·服务端 / 实战案例·客户端\n");
 }
 
 int main(int argc, char* args[])

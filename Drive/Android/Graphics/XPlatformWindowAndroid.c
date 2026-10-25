@@ -177,6 +177,19 @@ typedef struct XPadState
     int m_logicalW;                   /**< surface 的框架逻辑口径宽（标定分支推导）。 */
     int m_logicalH;                   /**< surface 的框架逻辑口径高。 */
     bool m_screenPending;             /**< 事件线程待消费：屏幕登记/密度回填（§1.3/§1.4）。 */
+    /* ---- 全屏逻辑几何回推（2026-10-25 手机竖横屏适配）----
+     * 安卓没有窗口管理器：surface 就是全部画布，框架窗口的逻辑尺寸
+     * 必须**跟随 surface**，否则框架仍按启动时请求的尺寸（如 demo 的
+     * 1000x700）排布，present 再按 presentScale 放大进 surface——放大
+     * 后超出画布的部分被裁掉（真机实证：手机竖屏下 demo 右侧面板整片
+     * 裁切、上下留黑边）。旋转只换 surface 尺寸，若不回推几何，框架
+     * 连 RESIZE 事件都收不到（安卓侧不产几何事件），布局无从重排。
+     * 口径：几何=surface 的逻辑尺寸（logicalW/H），坐标原点 (0,0)，
+     * 与 presentScale 自洽（logicalW*presentScale==surfW，1:1 铺满）。
+     * 状态栏让位由 demo 的根布局上边距承担（demo_sysbarH）。 */
+    bool m_geomPending;               /**< 事件线程待消费：全屏几何回推。 */
+    int m_geomW;                      /**< 待回推的框架逻辑宽。 */
+    int m_geomH;                      /**< 待回推的框架逻辑高。 */
 } XPadState;
 
 static XPadState g_xpad = {
@@ -189,7 +202,9 @@ static XPadState g_xpad = {
     /* DPI/标定默认：dpr=1、PHYSICAL、scale=1 —— 全部安全退化为现网
        dpr=1 行为（JNI 读数失败时的兜底链，设计 §10-13）。 */
     1.0f, 160, 160.0f, 160.0f, false,
-    XPAD_VIEW_SPACE_PHYSICAL, 1.0f, 0, 0, false
+    XPAD_VIEW_SPACE_PHYSICAL, 1.0f, 0, 0, false,
+    /* 全屏几何回推默认：无待推几何。 */
+    false, 0, 0
 };
 
 /* 显示驱动注册句柄与几何缓存。 */
@@ -870,6 +885,13 @@ static void xpad_registerWindow(XWindow* window)
         g_xpadWindows[g_xpadWindowCount].visible = true;
         g_xpadWindows[g_xpadWindowCount].lastImage = NULL;
         ++g_xpadWindowCount;
+        /* [全屏几何回推 2026-10-25] 新窗口登记后必须立刻拿到 surface
+         * 逻辑尺寸：surface 可能先于框架窗口创建（onNativeWindowCreated
+         * 早于 demo 建窗），那时的几何回推因无窗口可推而丢失。此处补
+         * 置 pending，由事件线程在有窗后回推一次。 */
+        g_xpad.m_geomPending = true;
+        g_xpad.m_geomW = g_xpad.m_logicalW;
+        g_xpad.m_geomH = g_xpad.m_logicalH;
         XPAD_LOGI("register: win=%p pos=(%d,%d) size=%dx%d",
                   (void*)window, geom.x, geom.y, geom.width, geom.height);
     }
@@ -1120,15 +1142,44 @@ bool XPlatformNativeWindow_setWindowState(XWindow* window,
         return true;
     }
 
-    /* 还原（NoState）：回落 800x600 常规几何（与 demo 初始对齐）。 */
-    XRect_init(&target, 40, 40, 800, 600);
-    XWindow_setGeometry_rect(window, &target);
-    XWindowSystemInterface_handleGeometryChange(window, &target);
-    pthread_mutex_lock(&g_xpad.m_mutex);
-    g_xpad.m_surfaceDirty = true;
-    pthread_cond_broadcast(&g_xpad.m_cond);
-    pthread_mutex_unlock(&g_xpad.m_mutex);
-    return true;
+    /* 还原（NoState）：[手机语义 2026-10-25] 手机没有"窗口化"——退出
+       全屏/还原仍回落**全屏几何**（与最大化同口径：queryFrameSize ÷dpr
+       + 旋转对调），只把框架状态位翻回 Normal 供窗口设置页回读。沿用
+       800x600 会在手机上把窗口缩成画布一角（画布恒全屏，窗口外露黑）。 */
+    {
+        int fw = 0;
+        int fh = 0;
+        float dpr;
+        bool logicalFrame;
+        if (XPlatformScreen_queryFrameSize(&fw, &fh) && fw > 0 && fh > 0) {
+            pthread_mutex_lock(&g_xpad.m_mutex);
+            dpr = g_xpad.m_dpr;
+            logicalFrame = (g_xpad.m_viewSpace == XPAD_VIEW_SPACE_LOGICAL);
+            pthread_mutex_unlock(&g_xpad.m_mutex);
+            if (!logicalFrame && dpr > 0.0f) {
+                fw = (int)((float)fw / dpr + 0.5f);
+                fh = (int)((float)fh / dpr + 0.5f);
+            }
+            if (XWindow_rotationSwapsAxes(
+                    XWindow_contentRotationDegrees(window))) {
+                int t = fw;
+                fw = fh;
+                fh = t;
+            }
+            XRect_init(&target, 0, 0, fw, fh);
+        } else {
+            XRect_init(&target, 0, 0, 800, 600); /* 查询失败兜底。 */
+        }
+        XWindow_setGeometry_rect(window, &target);
+        XWindowSystemInterface_handleGeometryChange(window, &target);
+        pthread_mutex_lock(&g_xpad.m_mutex);
+        g_xpad.m_surfaceDirty = true;
+        pthread_cond_broadcast(&g_xpad.m_cond);
+        pthread_mutex_unlock(&g_xpad.m_mutex);
+        XPAD_LOGI("restore: geometry set to %dx%d (phone=fullscreen)",
+                  target.width, target.height);
+        return true;
+    }
 }
 
 bool XPlatformNativeWindow_deferGeometry(XWindow* window, bool deferred)
@@ -1147,6 +1198,16 @@ bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags)
 bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title)
 {
     (void)window; (void)title;
+    return true;
+}
+
+bool XPlatformNativeWindow_setIcon(XWindow* window, const XIcon* icon)
+{
+    /* 安卓无运行期窗口图标通道（NativeActivity surface 无 WM 概念）：
+       启动器/任务切换图标走 APK mipmap 资源（AndroidManifest
+       android:icon=@mipmap/ic_launcher，res/mipmap-* 由打包脚本入包），
+       与桌面（X11 _NET_WM_ICON / Win32 类资源图标）互为两套口径。 */
+    (void)window; (void)icon;
     return true;
 }
 
@@ -1260,6 +1321,30 @@ bool XPlatformNativeWindow_processPendingEvents(void)
             for (i = 0; i < count; ++i)
                 XWindowSystemInterface_handleExposeEvent(targets[i], &region);
             XRegion_deinit(&region);
+        }
+        pthread_mutex_lock(&g_xpad.m_mutex);
+    }
+
+    /* ---- 1.5 全屏几何回推（2026-10-25）：框架主窗几何跟随 surface ----
+     *        安卓无窗口管理器，surface 即全部画布：框架窗口必须按
+     *        surface 的逻辑尺寸排布，否则布局尺寸与画布不匹配（内容被
+     *        presentScale 放大后裁切/留边）。本处回推同时产生框架的
+     *        几何事件（RESIZE）→ 控件树重排 → 竖横屏切换后布局自适应。
+     *        严禁持 m_mutex 跨框架调用（handleGeometryChange 同步重排
+     *        并回 present 抢锁），故取快照后解锁再推。 */
+    if (g_xpad.m_geomPending && g_xpadWindowCount > 0) {
+        XWindow* primary = g_xpadPrimaryWindow;
+        int gw = g_xpad.m_geomW;
+        int gh = g_xpad.m_geomH;
+        g_xpad.m_geomPending = false;
+        had = true;
+        pthread_mutex_unlock(&g_xpad.m_mutex);
+        if (primary && gw > 0 && gh > 0) {
+            XRect rect;
+            XRect_init(&rect, 0, 0, gw, gh);
+            XWindow_setGeometry_rect(primary, &rect);
+            XWindowSystemInterface_handleGeometryChange(primary, &rect);
+            XPAD_LOGI("geometry pushed: %dx%d (surface logical)", gw, gh);
         }
         pthread_mutex_lock(&g_xpad.m_mutex);
     }
@@ -1731,6 +1816,12 @@ void XPad_onNativeWindowCreated(ANativeWindow* window)
     g_xpad.m_logicalH = logicalH;
     g_xpad.m_presentScale = presentScale;
     g_xpad.m_screenPending = true;
+    /* [全屏几何回推 2026-10-25] surface 尺寸此刻已定 → 通知事件线程把
+     * 框架主窗几何改成 surface 的逻辑尺寸（0,0,logicalW,logicalH）。
+     * 旋转重建 surface 亦走本函数 → 新尺寸自动生效。 */
+    g_xpad.m_geomPending = true;
+    g_xpad.m_geomW = logicalW;
+    g_xpad.m_geomH = logicalH;
     pthread_cond_broadcast(&g_xpad.m_cond);
     pthread_mutex_unlock(&g_xpad.m_mutex);
 
@@ -1780,16 +1871,29 @@ void XPad_onNativeWindowResized(ANativeWindow* window)
        dpr）；标定分支复用不重标（§4.3.1-②）。logicalW 未标定（冷启动
        created 标定块曾整体跳过的残留态）时按 PHYSICAL 口径补齐并置
        pending 让屏幕差分回填——系数与真值解耦的部分只剩 dpr 一路。 */
-    if (g_xpad.m_logicalW > 0 && g_xpadWidth > 0 && g_xpad.m_dpr > 1.0f)
-        g_xpad.m_presentScale = (float)g_xpadWidth / (float)g_xpad.m_logicalW;
-    else if (g_xpad.m_logicalW <= 0 && g_xpadWidth > 0 &&
-             g_xpad.m_dpr > 1.0f) {
+    /* [全屏几何回推 2026-10-25] PHYSICAL 标定下逻辑尺寸=surface/dpr，
+     * 旋转/尺寸变化后创建期的旧值已失效，须随新 surface 重算。
+     * [顺序红线 2026-10-25 二修] **先定逻辑尺寸、后算 presentScale**：
+     * 原实现先用旧逻辑宽算系数（真机竖→横实测 2464/400=6.160，应为
+     * 2464/821=3.0），render 按错系数放大而输入仍 ÷dpr → 所见与点击
+     * 错一倍（用户真机实测「点击坐标都不准」的根因）。本机清单声明
+     * configChanges，旋转走**原地 resize**（surface 不重建、Created
+     * 重标定不来），错系数会一直存活到 redrawNeeded 才被治愈——中间
+     * 的点击全部落错。LOGICAL 标定下逻辑尺寸=view 尺寸，本路径取不到
+     * 新 view 值，沿用创建期标定值，随后的 Created 重标定修正。 */
+    if (g_xpad.m_viewSpace == XPAD_VIEW_SPACE_PHYSICAL && g_xpadWidth > 0 &&
+        g_xpad.m_dpr > 0.0f) {
         g_xpad.m_logicalW = (int)((float)g_xpadWidth / g_xpad.m_dpr + 0.5f);
         g_xpad.m_logicalH = (int)((float)g_xpadHeight / g_xpad.m_dpr + 0.5f);
-        g_xpad.m_viewSpace = XPAD_VIEW_SPACE_PHYSICAL;
-        g_xpad.m_presentScale = (float)g_xpadWidth / (float)g_xpad.m_logicalW;
-        g_xpad.m_screenPending = true;
     }
+    /* 实测放大系数随**新逻辑值**重推（dpr<=1 钳 1.0：快路径红线）。 */
+    if (g_xpad.m_logicalW > 0 && g_xpadWidth > 0 && g_xpad.m_dpr > 1.0f)
+        g_xpad.m_presentScale = (float)g_xpadWidth / (float)g_xpad.m_logicalW;
+    else if (g_xpad.m_dpr <= 1.0f)
+        g_xpad.m_presentScale = 1.0f;
+    g_xpad.m_geomPending = true;
+    g_xpad.m_geomW = g_xpad.m_logicalW;
+    g_xpad.m_geomH = g_xpad.m_logicalH;
     g_xpad.m_surfaceDirty = true;
     pthread_cond_broadcast(&g_xpad.m_cond);
     pthread_mutex_unlock(&g_xpad.m_mutex);
@@ -1815,14 +1919,20 @@ void XPad_onNativeWindowRedrawNeeded(ANativeWindow* window)
     pthread_mutex_lock(&g_xpad.m_mutex);
     g_xpadWidth = ANativeWindow_getWidth(window);
     g_xpadHeight = ANativeWindow_getHeight(window);
+    /* [顺序红线 2026-10-25] 先定逻辑尺寸、后算系数（与 Resized 同修）：
+       PHYSICAL 标定下旧逻辑值对新 surface 已失效，先用它算系数会落
+       newW/oldLogicalW 的错倍率（render 与输入口径劈叉=点击错位）。 */
+    if (g_xpad.m_viewSpace == XPAD_VIEW_SPACE_PHYSICAL && g_xpadWidth > 0 &&
+        g_xpad.m_dpr > 0.0f) {
+        g_xpad.m_logicalW = (int)((float)g_xpadWidth / g_xpad.m_dpr + 0.5f);
+        g_xpad.m_logicalH = (int)((float)g_xpadHeight / g_xpad.m_dpr + 0.5f);
+    }
     if (g_xpad.m_logicalW > 0 && g_xpadWidth > 0 && g_xpad.m_dpr > 1.0f)
         g_xpad.m_presentScale = (float)g_xpadWidth / (float)g_xpad.m_logicalW;
     else if (g_xpad.m_logicalW <= 0 && g_xpadWidth > 0 &&
              g_xpad.m_dpr > 1.0f) {
         /* 未标定补齐（与 Resized 同款兜底）：冷启动标定缺口在此闭合，
            不得拖到下次 surface 重建才自愈。 */
-        g_xpad.m_logicalW = (int)((float)g_xpadWidth / g_xpad.m_dpr + 0.5f);
-        g_xpad.m_logicalH = (int)((float)g_xpadHeight / g_xpad.m_dpr + 0.5f);
         g_xpad.m_viewSpace = XPAD_VIEW_SPACE_PHYSICAL;
         g_xpad.m_presentScale = (float)g_xpadWidth / (float)g_xpad.m_logicalW;
         g_xpad.m_screenPending = true;

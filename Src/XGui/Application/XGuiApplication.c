@@ -883,6 +883,23 @@ XWindow* XGuiApplication_focusWindow(void)
     return app ? app->m_focusWindow : NULL;
 }
 
+void XGuiApplication_transferFocusWindowForDestroy(XWindow* win,
+                                                   XWindow* fallback)
+{
+    /* [destroy 时机裸清理 2026-10-25] 对标 Qt 6.8.3
+     * QWindowPrivate::destroy()（qwindow.cpp:2112-2113
+     * `focus_window = q->parent()`）：窗口销毁时焦点登记的转移是
+     * **裸赋值**，不经 setFocusWindow——后者发射 focusWindowChanged
+     * 并联动 IME setFocusObject 链，destroy 可处于半拆状态（平台窗
+     * 已拆、桥接窗 deleteLater 待兑现），信号槽重入即崩（dock/float
+     * 循环实测）。XWindow_destroy 经本入口转移焦点到父窗。 */
+    XGuiApplication* app = XGuiApplication_instance();
+    if (!app || app->m_focusWindow != win) return;
+    app->m_focusWindow = fallback;
+    if (app->m_focusObject == (XObject*)win)
+        app->m_focusObject = (XObject*)fallback;
+}
+
 XObject* XGuiApplication_focusObject(void)
 {
     XGuiApplication* app = XGuiApplication_instance();

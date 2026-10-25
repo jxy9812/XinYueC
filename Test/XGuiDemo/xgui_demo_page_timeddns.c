@@ -14,6 +14,14 @@
  *   客户端对象懒创建并 setParent 到页面根（随父子链级联析构，页面无需
  *   shutdown 契约）；信号均为同线程直连，槽内直触控件安全。
  *
+ *   布局承载与分档（2026-10-25 竖屏适配收口）：
+ *     · 页根=只竖滚的 XScrollArea（水平条恒关，同 Modbus 页口径）：
+ *       内容件宽恒=视口宽、高=重排后的内容首选高，超高交由右侧唯一
+ *       竖滚条——窄屏单列排不下的部分滚动可达，不再被裁出屏外；
+ *     · adapt 按视口宽分档：≥768（右列 400..768 的双列承载下限）保持
+ *       桌面 1000x700 双列现状坐标；<768 重排为单列堆叠，可点行高
+ *       统一 40 逻辑像素（手机触控目标下限，桌面档维持原尺寸不动）。
+ *
  *   autotest 口径：非阻塞、不触真实网络——NTP 清空服务器后触发
  *   （NoServer 即时失败）；DDNS 不填凭据触发（NoConfig 即时失败，
  *   配置检查先于任何网络动作）。
@@ -35,6 +43,7 @@
 #include "XDdnsAliyun.h"
 #include "XDateTime.h"
 #include "XComboBox.h"
+#include "XScrollArea.h"
 #include "XCoreApplication.h"
 #include "XEventLoop.h"
 #include "XThread.h"
@@ -47,10 +56,24 @@
 typedef struct DemoTimeDdnsPage {
     DemoPageStatusFn m_status; /**< 主窗口状态栏回调。 */
     void* m_user;              /**< 主窗口指针（透传给 status）。 */
-    XWidget* m_root;           /**< 页面根控件。 */
+    XWidget* m_root;           /**< 页面根控件（=只竖滚的 XScrollArea）。 */
+    XWidget* m_content;        /**< 滚动内容件（绝对坐标承载层，宽随视口）。 */
+
+    /* ---- 布局锚点：adapt 全量重排要挪的小标签（无句柄则挪不动） ---- */
+    XLabel* m_ntpTitle;        /**< 「NTP 网络校时」标题。 */
+    XLabel* m_ntpServerCap;    /**< 「服务器」行内标签。 */
+    XLabel* m_ntpStatusCap;    /**< NTP「状态」行内标签。 */
+    XLabel* m_ddnsTitle;       /**< 「DDNS 动态域名」标题。 */
+    XLabel* m_ddnsProviderCap; /**< 「服务商」行内标签。 */
+    XLabel* m_ddnsKeyIdCap;    /**< AccessKeyId 行内标签。 */
+    XLabel* m_ddnsSecretCap;   /**< AccessKeySecret 行内标签。 */
+    XLabel* m_ddnsDomainCap;   /**< 「主域名」行内标签。 */
+    XLabel* m_ddnsRrCap;       /**< 「主机记录」行内标签。 */
+    XLabel* m_ddnsStatusCap;   /**< DDNS「状态」行内标签。 */
 
     /* ---- NTP 控件 ---- */
     XLineEdit* m_ntpServer;    /**< 服务器编辑框。 */
+    XPushButton* m_ntpSyncBtn; /**< 「立即校时」按钮（窄屏重排需挪位）。 */
     XCheckBox* m_ntpAuto;      /**< 自动校时复选框。 */
     XLabel* m_ntpStatus;       /**< NTP 状态区（多行）。 */
     XLabel* m_ntpTime;         /**< 校时成功后的时间显示区。 */
@@ -435,22 +458,34 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
     s_td.m_user = user;
     if (!parent)
         return (XWidget*)0;
-    s_td.m_root = XWidget_create(parent, 0);
+    /* 页根=只竖滚的 XScrollArea：水平条恒关（内容宽恒=视口宽，窄屏
+     * 不出横向裁切），超高交由竖滚条——单列重排后的 DDNS 段滚动可达
+     * （竖屏 400 宽下两段内容约一屏半，靠滚动承载而非裁切）。 */
+    s_td.m_root = (XWidget*)XScrollArea_create(parent, 0);
     if (!s_td.m_root)
         return (XWidget*)0;
+    XAbstractScrollArea_setHorizontalScrollBarPolicy(
+        (XAbstractScrollArea*)s_td.m_root, XScrollBarPolicy_AlwaysOff);
+    /* 内容件承载全部可见控件（widgetResizable 缺省 false=内容自管
+     * 几何，宽/高由 adapt 重排统一定）。 */
+    s_td.m_content = XWidget_create(s_td.m_root, 0);
+    if (!s_td.m_content)
+        return (XWidget*)0;
+    XScrollArea_setWidget((XScrollArea*)s_td.m_root, s_td.m_content);
 
 #if XNTP_ON
-    /* ---- NTP 左列 ---- */
-    td_label(s_td.m_root, "NTP 网络校时", 12, 8, 360, 24);
-    td_label(s_td.m_root, "服务器", 12, 46, 64, 22);
-    s_td.m_ntpServer = XLineEdit_create(s_td.m_root, 0);
+    /* ---- NTP 左列（窄屏档在 adapt 重排为单列首段） ---- */
+    s_td.m_ntpTitle = td_label(s_td.m_content, "NTP 网络校时", 12, 8, 360, 24);
+    s_td.m_ntpServerCap = td_label(s_td.m_content, "服务器", 12, 46, 64, 22);
+    s_td.m_ntpServer = XLineEdit_create(s_td.m_content, 0);
     if (s_td.m_ntpServer) {
         XLineEdit_setText(s_td.m_ntpServer, "ntp.aliyun.com");
         XWidget_setGeometry((XWidget*)s_td.m_ntpServer, 80, 44, 300, 24);
         XWidget_show((XWidget*)s_td.m_ntpServer);
     }
     {
-        XPushButton* btn = XPushButton_create(s_td.m_root, 0);
+        XPushButton* btn = XPushButton_create(s_td.m_content, 0);
+        s_td.m_ntpSyncBtn = btn;
         if (btn) {
             XPushButton_setText_2(btn, "立即校时");
             XWidget_setGeometry((XWidget*)btn, 12, 80, 110, 30);
@@ -460,7 +495,7 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
             XWidget_show((XWidget*)btn);
         }
     }
-    s_td.m_ntpAuto = XCheckBox_create(s_td.m_root, 0);
+    s_td.m_ntpAuto = XCheckBox_create(s_td.m_content, 0);
     if (s_td.m_ntpAuto) {
         XCheckBox_setText_2(s_td.m_ntpAuto, "自动校时(每小时)");
         XWidget_setGeometry((XWidget*)s_td.m_ntpAuto, 140, 86, 200, 22);
@@ -470,8 +505,8 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
                           td_onNtpAutoToggled);
         XWidget_show((XWidget*)s_td.m_ntpAuto);
     }
-    td_label(s_td.m_root, "状态", 12, 128, 64, 22);
-    s_td.m_ntpStatus = XLabel_create(s_td.m_root, 0);
+    s_td.m_ntpStatusCap = td_label(s_td.m_content, "状态", 12, 128, 64, 22);
+    s_td.m_ntpStatus = XLabel_create(s_td.m_content, 0);
     if (s_td.m_ntpStatus) {
         XLabel_setText_2(s_td.m_ntpStatus, "状态: 未同步");
         XLabel_setTextPixelSize(s_td.m_ntpStatus, 13);
@@ -481,7 +516,7 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
         XWidget_show((XWidget*)s_td.m_ntpStatus);
     }
     /* 时间显示区：校时成功后回填服务器时间与本机偏差 */
-    s_td.m_ntpTime = XLabel_create(s_td.m_root, 0);
+    s_td.m_ntpTime = XLabel_create(s_td.m_content, 0);
     if (s_td.m_ntpTime) {
         XLabel_setText_2(s_td.m_ntpTime, "时间: (尚未校时)");
         XLabel_setTextPixelSize(s_td.m_ntpTime, 14);
@@ -493,11 +528,11 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
 #endif /* XNTP_ON */
 
 #if XDDNS_ON
-    /* ---- DDNS 右列 ---- */
-    td_label(s_td.m_root, "DDNS 动态域名", 400, 8, 380, 24);
+    /* ---- DDNS 右列（窄屏档在 adapt 重排为单列次段） ---- */
+    s_td.m_ddnsTitle = td_label(s_td.m_content, "DDNS 动态域名", 400, 8, 380, 24);
     /* 服务商下拉框：枚举注册表填充；切换即恢复该厂商默认端点 */
-    td_label(s_td.m_root, "服务商", 400, 46, 110, 22);
-    s_td.m_ddnsProvider = XComboBox_create(s_td.m_root, 0);
+    s_td.m_ddnsProviderCap = td_label(s_td.m_content, "服务商", 400, 46, 110, 22);
+    s_td.m_ddnsProvider = XComboBox_create(s_td.m_content, 0);
     if (s_td.m_ddnsProvider) {
         int pi;
         int count = XDdnsProvider_count();
@@ -520,42 +555,50 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
         XWidget_setGeometry((XWidget*)s_td.m_ddnsProvider, 516, 44, 252, 24);
         XWidget_show((XWidget*)s_td.m_ddnsProvider);
     }
-    td_label(s_td.m_root, "AccessKeyId", 400, 76, 110, 22);
-    s_td.m_ddnsKeyId = XLineEdit_create(s_td.m_root, 0);
+    s_td.m_ddnsKeyIdCap = td_label(s_td.m_content, "AccessKeyId", 400, 76, 110, 22);
+    s_td.m_ddnsKeyId = XLineEdit_create(s_td.m_content, 0);
     if (s_td.m_ddnsKeyId) {
         XWidget_setGeometry((XWidget*)s_td.m_ddnsKeyId, 516, 74, 252, 24);
         XWidget_show((XWidget*)s_td.m_ddnsKeyId);
     }
-    td_label(s_td.m_root, "AccessKeySecret", 400, 106, 110, 22);
-    s_td.m_ddnsSecret = XLineEdit_create(s_td.m_root, 0);
+    {
+        /* 15 个 ASCII 字符按默认 16px 点阵（8px/字）约 120px 宽，110px
+         * 标签框必裁尾（实测裁成「AccessKeySecr」）；压到 14px 约 105px
+         * 完整落框——行内标签与输入框坐标零移动，桌面双列现状不动。 */
+        s_td.m_ddnsSecretCap = td_label(s_td.m_content, "AccessKeySecret",
+                                        400, 106, 110, 22);
+        if (s_td.m_ddnsSecretCap)
+            XLabel_setTextPixelSize(s_td.m_ddnsSecretCap, 14);
+    }
+    s_td.m_ddnsSecret = XLineEdit_create(s_td.m_content, 0);
     if (s_td.m_ddnsSecret) {
         XLineEdit_setEchoMode(s_td.m_ddnsSecret,
                               (int)XLineEditEchoMode_Password);
         XWidget_setGeometry((XWidget*)s_td.m_ddnsSecret, 516, 104, 252, 24);
         XWidget_show((XWidget*)s_td.m_ddnsSecret);
     }
-    td_label(s_td.m_root, "主域名", 400, 136, 110, 22);
-    s_td.m_ddnsDomain = XLineEdit_create(s_td.m_root, 0);
+    s_td.m_ddnsDomainCap = td_label(s_td.m_content, "主域名", 400, 136, 110, 22);
+    s_td.m_ddnsDomain = XLineEdit_create(s_td.m_content, 0);
     if (s_td.m_ddnsDomain) {
         XLineEdit_setText(s_td.m_ddnsDomain, "example.com");
         XWidget_setGeometry((XWidget*)s_td.m_ddnsDomain, 516, 134, 252, 24);
         XWidget_show((XWidget*)s_td.m_ddnsDomain);
     }
-    td_label(s_td.m_root, "主机记录", 400, 166, 110, 22);
-    s_td.m_ddnsRr = XLineEdit_create(s_td.m_root, 0);
+    s_td.m_ddnsRrCap = td_label(s_td.m_content, "主机记录", 400, 166, 110, 22);
+    s_td.m_ddnsRr = XLineEdit_create(s_td.m_content, 0);
     if (s_td.m_ddnsRr) {
         XLineEdit_setText(s_td.m_ddnsRr, "www");
         XWidget_setGeometry((XWidget*)s_td.m_ddnsRr, 516, 164, 110, 24);
         XWidget_show((XWidget*)s_td.m_ddnsRr);
     }
-    s_td.m_ddnsV6 = XCheckBox_create(s_td.m_root, 0);
+    s_td.m_ddnsV6 = XCheckBox_create(s_td.m_content, 0);
     if (s_td.m_ddnsV6) {
         XCheckBox_setText_2(s_td.m_ddnsV6, "IPv6(AAAA)");
         XWidget_setGeometry((XWidget*)s_td.m_ddnsV6, 640, 166, 130, 22);
         XWidget_show((XWidget*)s_td.m_ddnsV6);
     }
     {
-        XPushButton* btn = XPushButton_create(s_td.m_root, 0);
+        XPushButton* btn = XPushButton_create(s_td.m_content, 0);
         s_td.m_ddnsCheckBtn = btn;
         if (btn) {
             XPushButton_setText_2(btn, "立即检查");
@@ -566,7 +609,7 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
             XWidget_show((XWidget*)btn);
         }
     }
-    s_td.m_ddnsAuto = XCheckBox_create(s_td.m_root, 0);
+    s_td.m_ddnsAuto = XCheckBox_create(s_td.m_content, 0);
     if (s_td.m_ddnsAuto) {
         XCheckBox_setText_2(s_td.m_ddnsAuto, "自动检查(10分钟)");
         XWidget_setGeometry((XWidget*)s_td.m_ddnsAuto, 530, 204, 200, 22);
@@ -576,8 +619,8 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
                           td_onDdnsAutoToggled);
         XWidget_show((XWidget*)s_td.m_ddnsAuto);
     }
-    td_label(s_td.m_root, "状态", 400, 240, 64, 22);
-    s_td.m_ddnsStatus = XLabel_create(s_td.m_root, 0);
+    s_td.m_ddnsStatusCap = td_label(s_td.m_content, "状态", 400, 240, 64, 22);
+    s_td.m_ddnsStatus = XLabel_create(s_td.m_content, 0);
     if (s_td.m_ddnsStatus) {
         XLabel_setText_2(s_td.m_ddnsStatus, "状态: 未就绪");
         XLabel_setTextPixelSize(s_td.m_ddnsStatus, 13);
@@ -596,25 +639,188 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
 /*                        自适应与自测                                       */
 /* ========================================================================== */
 
-/** @brief 页面自适应：状态区随根高伸缩（底部留 24px 边距）。 */
-void demo_page_timeddns_adapt(XWidget* page)
+/* ---- 窄屏（竖屏）档度量 ----
+ * 触控行高统一 40 逻辑像素：按钮/复选框/编辑框原尺寸（22~30）低于
+ * 手机触控目标下限，真机上是误触与「点不中」的主要来源；桌面双列档
+ * 不套用（保持 1000x700 现状），仅窄屏重排时生效。 */
+#define TD_TWO_COL_MIN_W   768  /**< 双列承载下限：右列右缘 400+368=768，
+                                     视口不足即收单列（否则必裁列）。 */
+#define TD_MARGIN          12   /**< 页左右边距/条目横向留白。 */
+#define TD_TOUCH_H         40   /**< 可点击行统一行高（触控目标下限）。 */
+#define TD_TITLE_H         24   /**< 段标题高。 */
+#define TD_CAP_H           22   /**< 行内标签高（不可点，维持原尺寸）。 */
+#define TD_CAP_NTP_W       64   /**< NTP 行内标签列宽（3 个全角字）。 */
+#define TD_CAP_DDNS_W      110  /**< DDNS 行内标签列宽（容纳 14px 的
+                                       AccessKeySecret 全词）。 */
+#define TD_BTN_W           130  /**< 主操作按钮宽（4 个全角字 + 内边距）。 */
+#define TD_STATUS_H        88   /**< NTP 状态/时间区高（4 行 13px + 呼吸）。 */
+#define TD_DDNS_STATUS_MIN 100  /**< DDNS 状态区最小高（同宽屏档口径）。 */
+
+/** @brief 便捷：控件非空才落几何（重排函数对个别创建失败容忍）。 */
+static void td_move(XWidget* w, int x, int y, int cw, int ch)
 {
-    int rootH;
-    if (page != s_td.m_root || !s_td.m_root)
-        return;
-    rootH = (int)XWidget_height(s_td.m_root);
+    if (w)
+        XWidget_setGeometry(w, x, y, cw, ch);
+}
+
+/** @brief 宽屏档全量重排：桌面双列现状坐标（与 build 字面一致），
+ *         仅两块状态区随视口高伸缩。幂等——窄屏切回宽屏靠它还原。 */
+static int td_reflowWide(int vw, int vh)
+{
+    (void)vw; /* 双列坐标钉死（现状口径），不随视口宽缩放。 */
 #if XNTP_ON
-    if (s_td.m_ntpStatus)
-        XWidget_setGeometry((XWidget*)s_td.m_ntpStatus, 12, 152, 368, 88);
-    if (s_td.m_ntpTime)
-        XWidget_setGeometry((XWidget*)s_td.m_ntpTime, 12, 244, 368,
-                            rootH - 268 > 60 ? rootH - 268 : 60);
+    td_move((XWidget*)s_td.m_ntpTitle, 12, 8, 360, 24);
+    td_move((XWidget*)s_td.m_ntpServerCap, 12, 46, 64, 22);
+    td_move((XWidget*)s_td.m_ntpServer, 80, 44, 300, 24);
+    td_move((XWidget*)s_td.m_ntpSyncBtn, 12, 80, 110, 30);
+    td_move((XWidget*)s_td.m_ntpAuto, 140, 86, 200, 22);
+    td_move((XWidget*)s_td.m_ntpStatusCap, 12, 128, 64, 22);
+    td_move((XWidget*)s_td.m_ntpStatus, 12, 152, 368, 88);
+    td_move((XWidget*)s_td.m_ntpTime, 12, 244, 368,
+            vh - 268 > 60 ? vh - 268 : 60);
 #endif
 #if XDDNS_ON
-    if (s_td.m_ddnsStatus)
-        XWidget_setGeometry((XWidget*)s_td.m_ddnsStatus, 400, 264, 368,
-                            rootH - 288 > 100 ? rootH - 288 : 100);
+    td_move((XWidget*)s_td.m_ddnsTitle, 400, 8, 380, 24);
+    td_move((XWidget*)s_td.m_ddnsProviderCap, 400, 46, 110, 22);
+    td_move((XWidget*)s_td.m_ddnsProvider, 516, 44, 252, 24);
+    td_move((XWidget*)s_td.m_ddnsKeyIdCap, 400, 76, 110, 22);
+    td_move((XWidget*)s_td.m_ddnsKeyId, 516, 74, 252, 24);
+    td_move((XWidget*)s_td.m_ddnsSecretCap, 400, 106, 110, 22);
+    td_move((XWidget*)s_td.m_ddnsSecret, 516, 104, 252, 24);
+    td_move((XWidget*)s_td.m_ddnsDomainCap, 400, 136, 110, 22);
+    td_move((XWidget*)s_td.m_ddnsDomain, 516, 134, 252, 24);
+    td_move((XWidget*)s_td.m_ddnsRrCap, 400, 166, 110, 22);
+    td_move((XWidget*)s_td.m_ddnsRr, 516, 164, 110, 24);
+    td_move((XWidget*)s_td.m_ddnsV6, 640, 166, 130, 22);
+    td_move((XWidget*)s_td.m_ddnsCheckBtn, 400, 198, 110, 30);
+    td_move((XWidget*)s_td.m_ddnsAuto, 530, 204, 200, 22);
+    td_move((XWidget*)s_td.m_ddnsStatusCap, 400, 240, 64, 22);
+    td_move((XWidget*)s_td.m_ddnsStatus, 400, 264, 368,
+            vh - 288 > TD_DDNS_STATUS_MIN ? vh - 288 : TD_DDNS_STATUS_MIN);
 #endif
+    return vh > 0 ? vh : 1; /* 双列恰一屏：内容高=视口高，竖滚不发生。 */
+}
+
+/** @brief 窄屏档全量重排：单列纵向堆叠（NTP 段在上、DDNS 段在后，
+ *         行宽随视口收缩），可点行高统一 TD_TOUCH_H。
+ *  @return 内容首选高——超出视口的部分由页根竖滚条承载，DDNS 段
+ *          滚动可达（替代旧的「钉 x=400 被裁出屏外」）。 */
+static int td_reflowNarrow(int vw, int vh)
+{
+    int y = 8;
+    int w = vw - TD_MARGIN * 2; /* 内容列满宽（左右各留边距）。 */
+    int contentH;
+#if !XNTP_ON && !XDDNS_ON
+    (void)w; /* 两段皆裁剪的兜底配置：仅保本函数可编译。 */
+#endif
+#if XNTP_ON
+    int fieldX = TD_MARGIN + TD_CAP_NTP_W + 8;
+    td_move((XWidget*)s_td.m_ntpTitle, TD_MARGIN, y, w, TD_TITLE_H);
+    y += TD_TITLE_H + TD_MARGIN;
+    /* 服务器行：标签行内垂直居中（XLabel 缺省 Left|VCenter，加高即居中）。 */
+    td_move((XWidget*)s_td.m_ntpServerCap, TD_MARGIN, y,
+            TD_CAP_NTP_W, TD_TOUCH_H);
+    td_move((XWidget*)s_td.m_ntpServer, fieldX, y,
+            vw - fieldX - TD_MARGIN, TD_TOUCH_H);
+    y += TD_TOUCH_H + TD_MARGIN;
+    td_move((XWidget*)s_td.m_ntpSyncBtn, TD_MARGIN, y, TD_BTN_W, TD_TOUCH_H);
+    td_move((XWidget*)s_td.m_ntpAuto, TD_MARGIN + TD_BTN_W + TD_MARGIN, y,
+            vw - (TD_MARGIN + TD_BTN_W + TD_MARGIN) - TD_MARGIN, TD_TOUCH_H);
+    y += TD_TOUCH_H + TD_MARGIN;
+    td_move((XWidget*)s_td.m_ntpStatusCap, TD_MARGIN, y, TD_CAP_NTP_W, TD_CAP_H);
+    y += TD_CAP_H + 6;
+    td_move((XWidget*)s_td.m_ntpStatus, TD_MARGIN, y, w, TD_STATUS_H);
+    y += TD_STATUS_H + 8;
+    td_move((XWidget*)s_td.m_ntpTime, TD_MARGIN, y, w, TD_STATUS_H);
+    y += TD_STATUS_H + 16; /* 段间距拉开一档，视觉分隔两段功能。 */
+#endif
+#if XDDNS_ON
+    int dFieldX = TD_MARGIN + TD_CAP_DDNS_W + 6;
+    int dFieldW = vw - dFieldX - TD_MARGIN;
+    td_move((XWidget*)s_td.m_ddnsTitle, TD_MARGIN, y, w, TD_TITLE_H);
+    y += TD_TITLE_H + TD_MARGIN;
+    td_move((XWidget*)s_td.m_ddnsProviderCap, TD_MARGIN, y,
+            TD_CAP_DDNS_W, TD_TOUCH_H);
+    td_move((XWidget*)s_td.m_ddnsProvider, dFieldX, y, dFieldW, TD_TOUCH_H);
+    y += TD_TOUCH_H + TD_MARGIN;
+    td_move((XWidget*)s_td.m_ddnsKeyIdCap, TD_MARGIN, y,
+            TD_CAP_DDNS_W, TD_TOUCH_H);
+    td_move((XWidget*)s_td.m_ddnsKeyId, dFieldX, y, dFieldW, TD_TOUCH_H);
+    y += TD_TOUCH_H + TD_MARGIN;
+    td_move((XWidget*)s_td.m_ddnsSecretCap, TD_MARGIN, y,
+            TD_CAP_DDNS_W, TD_TOUCH_H);
+    td_move((XWidget*)s_td.m_ddnsSecret, dFieldX, y, dFieldW, TD_TOUCH_H);
+    y += TD_TOUCH_H + TD_MARGIN;
+    td_move((XWidget*)s_td.m_ddnsDomainCap, TD_MARGIN, y,
+            TD_CAP_DDNS_W, TD_TOUCH_H);
+    td_move((XWidget*)s_td.m_ddnsDomain, dFieldX, y, dFieldW, TD_TOUCH_H);
+    y += TD_TOUCH_H + TD_MARGIN;
+    td_move((XWidget*)s_td.m_ddnsRrCap, TD_MARGIN, y,
+            TD_CAP_DDNS_W, TD_TOUCH_H);
+    td_move((XWidget*)s_td.m_ddnsRr, dFieldX, y, dFieldW, TD_TOUCH_H);
+    y += TD_TOUCH_H + TD_MARGIN;
+    /* IPv6 复选框独占一行：400 宽下「标签+输入框+复选框」同行放不下。 */
+    td_move((XWidget*)s_td.m_ddnsV6, TD_MARGIN, y, w, TD_TOUCH_H);
+    y += TD_TOUCH_H + TD_MARGIN;
+    td_move((XWidget*)s_td.m_ddnsCheckBtn, TD_MARGIN, y, TD_BTN_W, TD_TOUCH_H);
+    td_move((XWidget*)s_td.m_ddnsAuto, TD_MARGIN + TD_BTN_W + TD_MARGIN, y,
+            vw - (TD_MARGIN + TD_BTN_W + TD_MARGIN) - TD_MARGIN, TD_TOUCH_H);
+    y += TD_TOUCH_H + TD_MARGIN;
+    td_move((XWidget*)s_td.m_ddnsStatusCap, TD_MARGIN, y, TD_CAP_NTP_W, TD_CAP_H);
+    y += TD_CAP_H + 6;
+#endif
+    /* 状态区吃掉剩余全部首选高：内容不足一屏时铺满视口（防底部
+     * 空洞/滚动抖动），超一屏时保持最小高、超出部分交给竖滚条。 */
+    contentH = y + TD_DDNS_STATUS_MIN;
+    if (contentH < vh)
+        contentH = vh;
+#if XDDNS_ON
+    td_move((XWidget*)s_td.m_ddnsStatus, TD_MARGIN, y, w, contentH - y);
+#endif
+    return contentH;
+}
+
+/** @brief 按视口尺寸分档重排并把首选高落到内容件/滚动范围。
+ *  @note  adapt 与 autotest（窄屏档回归验后还原）共用此唯一入口，
+ *         保证两处口径永不漂移。 */
+static void td_mountContent(int vw, int vh)
+{
+    int contentH = (vw >= TD_TWO_COL_MIN_W) ? td_reflowWide(vw, vh)
+                                            : td_reflowNarrow(vw, vh);
+    XWidget_setGeometry(s_td.m_content, 0, 0, vw, contentH);
+    /* 内容尺寸驱动滚动范围（宽=视口宽 ⇒ 水平恒无滚动需求，叠加
+     * AlwaysOff 双保险；高超出部分即竖滚量）。 */
+    XAbstractScrollArea_setContentSize((XAbstractScrollArea*)s_td.m_root,
+                                       vw, contentH > vh ? contentH : vh);
+}
+
+/**
+ * @brief 页面自适应（切页/resize/startup/停靠切换统一漏斗的页内入口）。
+ * @details 旧实现只伸缩两块状态区高度、x/y 恒为 build 字面——400 逻辑
+ *          宽竖屏下右列（x=400..768）整体被裁出屏右缘且无滚动承载，
+ *          半页功能不可用。现按视口宽分档全量重排：≥768 保持桌面双列
+ *          现状（1000x700 口径零变化）；<768 收单列堆叠 + 40 触控行高，
+ *          重排后的内容首选高经内容件落几何并驱动滚动范围（页根
+ *          XScrollArea 竖滚承载，内容宽恒=视口宽、横向不滚）。
+ */
+void demo_page_timeddns_adapt(XWidget* page)
+{
+    XWidget* viewport;
+    int vw;
+    int vh;
+    if (page != s_td.m_root || !s_td.m_root || !s_td.m_content)
+        return;
+    viewport = XAbstractScrollArea_viewport(
+        (XAbstractScrollArea*)s_td.m_root);
+    if (!viewport)
+        return;
+    vw = XWidget_width(viewport);
+    vh = XWidget_height(viewport);
+    if (vw < 1)
+        return; /* 视口未就位（堆叠尚未分配几何）不猜，帧泵兜底门会重入。 */
+    if (vh < 1)
+        vh = 1;
+    td_mountContent(vw, vh);
 }
 
 /**
@@ -771,6 +977,42 @@ int demo_page_timeddns_autotest(XWidget* page)
              "入口拒绝不置错误码");
     TD_CHECK(XDdnsClient_state(s_td.m_ddns) == XDdnsClientState_Idle,
              "客户端保持 Idle");
+#endif
+
+#if XNTP_ON
+    /* 窄屏（竖屏）档重排回归（纯几何，无事件注入、无网络）：400 逻辑
+     * 宽单列排布须满足——可点目标行高 ≥40（手机触控目标下限）、DDNS
+     * 控件不越右缘且排在 NTP 段下方（旧布局钉 x=400 被整体裁出屏外、
+     * 半页不可用的回归闸）。验后按视口实际尺寸还原，真实重排仍由
+     * adapt 漏斗全责。 */
+    {
+        XWidget* vp = XAbstractScrollArea_viewport(
+            (XAbstractScrollArea*)s_td.m_root);
+        int vw = XWidget_width(vp);
+        int vh = XWidget_height(vp);
+        if (vh < 1)
+            vh = 1;
+        td_mountContent(400, 700);
+        TD_CHECK(XWidget_height((XWidget*)s_td.m_ntpSyncBtn) >= 40
+                     && XWidget_height((XWidget*)s_td.m_ntpServer) >= 40
+                     && XWidget_height((XWidget*)s_td.m_ntpAuto) >= 40,
+                 "窄屏 NTP 可点目标高 ≥40");
+#if XDDNS_ON
+        TD_CHECK(XWidget_x((XWidget*)s_td.m_ddnsKeyId)
+                         + XWidget_width((XWidget*)s_td.m_ddnsKeyId)
+                     <= 400,
+                 "窄屏 DDNS 控件不越 400 右缘");
+        TD_CHECK(XWidget_height((XWidget*)s_td.m_ddnsCheckBtn) >= 40
+                     && XWidget_height((XWidget*)s_td.m_ddnsProvider) >= 40
+                     && XWidget_height((XWidget*)s_td.m_ddnsSecret) >= 40,
+                 "窄屏 DDNS 可点目标高 ≥40");
+        TD_CHECK(XWidget_y((XWidget*)s_td.m_ddnsTitle)
+                     > XWidget_y((XWidget*)s_td.m_ntpTime),
+                 "窄屏 DDNS 段在 NTP 段下方（单列堆叠）");
+#endif
+        /* 验后还原当前档位（与 adapt 同口径同入口）。 */
+        td_mountContent(vw > 0 ? vw : 400, vh);
+    }
 #endif
 
 #undef TD_CHECK

@@ -240,14 +240,6 @@ static void labels_linkHoveredSlot(XObject* receiver, XVarList* args)
 
 /* 富文本资源回调样例（仅验证 setter/getter 往返，不参与解析）。 */
 static int g_labels_providerCtx = 0;
-static XString* labels_resourceProvider(XLabel* label, const XString* url,
-                                        void* userData)
-{
-    (void)label;
-    (void)url;
-    (void)userData;
-    return NULL;
-}
 
 static int labels_label(void)
 {
@@ -352,14 +344,6 @@ static int labels_label(void)
     XAPI_EXPECT(XLabel_openExternalLinks(&label),
                 "XLabel setOpenExternalLinks(true) 往返");
 
-    /* 资源回调往返（Qt setResourceProvider/resourceProvider）。 */
-    XLabel_setResourceProvider(&label, labels_resourceProvider,
-                               &g_labels_providerCtx);
-    XAPI_EXPECT(XLabel_resourceProvider(&label) == labels_resourceProvider &&
-                    XLabel_resourceProviderUserData(&label) ==
-                        (void*)&g_labels_providerCtx,
-                "XLabel setResourceProvider 回调/上下文往返");
-    XLabel_setResourceProvider(&label, NULL, NULL);
 
     /* 伙伴控件往返（Qt setBuddy/buddy；助记符快捷键为受限未实现项，
      * 仅验证关系读写）。 */
@@ -1113,11 +1097,14 @@ static int labels_batchFixups(void)
         hint = XWidget_sizeHint((XWidget*)&lcd.m_base);
         XAPI_EXPECT(hint.width == 10 + 9 * (5 + 1) && hint.height == 23,
                     "XLcdNumber setFrameStyle 后 sizeHint 不被冲掉");
-        /* 形状特例仍按现场计算（HLine=(-1,3)），改回 Box 恢复存储值。 */
+        /* [对齐 Qt 6.8.3] QLCDNumber::sizeHint（qlcdnumber.cpp:1164-1167）
+         * 覆写了 QFrame::sizeHint 的 HLine/VLine 特例——返回恒为数字公
+         * 式，与边框形状无关（此前期望 (-1,3) 测的是 QFrame 基类行为，
+         * 对 QLCDNumber 而言 Qt 里并不存在该行为）。 */
         XLcdNumber_setFrameShape(&lcd, XFrameShape_HLine);
         hint = XWidget_sizeHint((XWidget*)&lcd.m_base);
-        XAPI_EXPECT(hint.width == -1 && hint.height == 3,
-                    "XLcdNumber HLine 特例 sizeHint=(-1,3) 现场计算");
+        XAPI_EXPECT(hint.width == 10 + 9 * (5 + 1) && hint.height == 23,
+                    "XLcdNumber HLine 边框 sizeHint 仍=数字公式（覆写屏蔽特例）");
         XLcdNumber_setFrameShape(&lcd, XFrameShape_Box);
         hint = XWidget_sizeHint((XWidget*)&lcd.m_base);
         XAPI_EXPECT(hint.width == 10 + 9 * (5 + 1) && hint.height == 23,
@@ -1349,6 +1336,13 @@ static int labels_batchFixups(void)
             XClassDelete((XClass*)ds);
         }
         if (op) {
+            /* [补连 2026-10-25] 槽已定义未连接（对比上方 DropShadow 三
+             * 槽均连接）→ 计数器恒 0，三条断言必挂（显示族存量失败根
+             * 因）。 */
+            XObject_connect_1(
+                (XObject*)op,
+                XSignal(XGraphicsOpacityEffect_opacityChanged_signal),
+                (XObject*)op, labels_opacitySlot, XConnectionType_Direct);
             XGraphicsOpacityEffect_setOpacity(op, 0.5f);
             XAPI_EXPECT(g_lbl_opacityChanged == 1 &&
                             g_lbl_opacityValue == 0.5f,

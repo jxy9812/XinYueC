@@ -4,6 +4,8 @@
 #include "XThreadData.h"
 #include "XCoreApplication.h"
 #include <string.h>
+#if defined(__ANDROID__)
+#endif
 
 // --- 内部辅助函数声明 ---
 static void VXHrTimerGroup_deinit(XHrTimerGroup* group);
@@ -231,10 +233,9 @@ static void VXHrTimerGroup_tick(XHrTimerGroup* group) {
             delete_hr_timer_node(group, current_expired);
         }
         else if (data->m_timer_data.m_isSingleShot) {
-            // 单次定时器：触发后节点已脱离树且不会再调度，节点由本组（属主）
-            // 就地释放，不再依赖调用方事后补调 removeTimer 造成泄漏；
-            // 回调期间已 removeTimer 标记删除的节点由上方分支释放，不会重复释放。
-            delete_hr_timer_node(group, current_expired);
+            // 单次定时器：不释放节点！标记后由 removeTimer 回调释放。
+            // 避免 tick 提前释放导致 removeTimer 访问已释放内存。
+            data->m_is_was_deleted = true;
         }
                 else {
             // 周期性定时器：重新计算下次到期时间
@@ -335,7 +336,8 @@ void XHrTimerGroup_init(XHrTimerGroup* group, uint64_t precision_ns) {
     group->m_rbtree_root = NULL;
     group->m_min_node = NULL; // 初始化最小节点指针
     XAtomic_init(group->m_count, 0);
-    //group->m_mutex = XMutex_create(XLock_Spin);
+    /* 红黑树定时器组为**单线程**设计（归属事件分发线程），不加互斥锁；
+     * 跨线程操作必须经事件投递到归属线程执行（用户设计约定）。 */
     group->m_mutex = NULL;
     ((XTimerGroupBase*)group)->m_max_time = UINT64_MAX;
     ((XTimerGroupBase*)group)->m_min_time = precision_ns;

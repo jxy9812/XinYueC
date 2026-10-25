@@ -19,6 +19,11 @@
  *          DI/DO 灯格放不下换行往下放（对标主站页 IO 网格换行口径，
  *          宿主高=行数×行高随宽度重算）；寄存器表列宽自适应铺满表宽、
  *          16 行全展开；内容超高只出整页右侧一条竖滚条，任何子段无滚动条。
+ *          [10-25 竖屏适配] 可用宽 <800（MB_COMPACT_MAX_W）判紧凑档：
+ *          「一行并到黑」的工具行翻纵向单列（XBoxLayout_setDirection
+ *          公开语义），寄存器表行高/灯格纵距换 40/44 触控口径、值列
+ *          表头换短称；桌面 1000x700 稳落宽档、现状零改动。分档入口
+ *          =两页 adapt + 各页 fit/syncViewport 收敛链，翻档幂等。
  *
  * 主站「远程 IO 模块」适配语义：把远端从站当作远程 IO 模块——
  *   输入点 = 离散输入（DiscreteInputs，只读轮询显示）；
@@ -91,6 +96,19 @@
 
 /* ==================== 布局常量 ==================== */
 #define MB_ROW_H        24      /* 标准行高。 */
+
+/* [竖屏适配 2026-10-25] 400 逻辑宽手机竖屏口径三件套：
+ * - MB_COMPACT_MAX_W：可用宽低于此值判「紧凑档」——各工具行翻纵向
+ *   单列、可点元素换触控尺寸。宽档最长行（主站参数合并行≈800px）在
+ *   800 可用宽以下必被右缘裁掉且无横滚条可救，桌面 1000x700（视口
+ *   ~970+）稳落宽档、现状零改动，故分界取 800。
+ * - MB_REG_ROW_H_TOUCH：紧凑档寄存器表行高——行内双击编辑是触控
+ *   目标，默认 24 远低于 40 逻辑像素的手机触控下限。
+ * - MB_CELL_PITCH_H_TOUCH：紧凑档灯格单元纵距（控件实高=纵距-4=40，
+ *   达触控下限；桌面维持 22 纵距/18 实高现状）。 */
+#define MB_COMPACT_MAX_W        800
+#define MB_REG_ROW_H_TOUCH      40
+#define MB_CELL_PITCH_H_TOUCH   44
 
 /* 数据面板行容量（DI/DO 各段上限；IR/HR 寄存器表行数）。
  * [10-18 三次追加 2026-10-18] 寄存器个数改可调：MB_SLAVE_REG_ROWS 降格为
@@ -342,6 +360,9 @@ typedef struct MbMaster {
     XScrollArea*    scroll;           /* 整页竖滚区（页宿主内，唯一滚动条）。 */
     XWidget*        pageHost;         /* 页宿主（堆叠条目；resize 铺满 scroll）。 */
     int             viewportH;        /* scroll 视口高快照（显示行折算用）。 */
+    /* [竖屏适配 2026-10-25] 当前档位快照（1=紧凑单列档）：只在档位翻
+     * 转那一拍做布局动作（见 mb_masterApplyTier），fit 每拍幂等早退。 */
+    int             compact;
     /* [布局容器化 2026-10-17] 页内排布全权移交盒式布局器：页根纵列+
      * 行/列子布局器。子布局经 addLayout 按借用指针挂入父布局器，
      * 对象寿命须覆盖页面生命周期——全部落在本静态容器。 */
@@ -532,6 +553,9 @@ typedef struct MbSlave {
      * mb_slaveRegCellChangedAt）。 */
     /* 视口快照（幂等门控用；壳宽预算 ioBudgetW 随滚动壳删除）。 */
     int             gridCols;         /* 灯格可见列数 = 段宽/单元宽（宽度驱动）。 */
+    /* [竖屏适配 2026-10-25] 当前档位快照（可用宽<MB_COMPACT_MAX_W=1）：
+     * 翻档那一拍统一换 行方向/表行高/灯格纵距（见 mb_slaveSyncViewport）。 */
+    int             compact;
     int             gridPts;          /* 上次重建时的 max(点数)，点数变化触发重建。 */
     /* 引擎对象（常驻：停止只断连不销毁 ⇒ 停止期间仍可单机调点位）。 */
     XModbusServer*  server;           /* TcpServer 或 RtuSerialServer。 */
@@ -898,6 +922,7 @@ static void mb_masterRewriteAddrCol(XTableWidget* tbl, int start);
 static void mb_masterSetRegCfgEnabled(bool on);
 static void mb_slaveMountRegRow(XTableWidget* tbl, int i, int hex);
 static void mb_masterRegSyncViewport(void);
+static void mb_masterApplyTier(int availW);
 static void mb_masterSingleTxSlot(XObject* sender, XVarList* args);
 
 /* ==================== 寄存器值显示格式（10/16 进制，两页共用） ====================
@@ -921,6 +946,57 @@ static long mb_regParseText(const char* text, int hex)
     if (!hex && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
         return strtol(text, NULL, 16);
     return strtol(text, NULL, hex ? 16 : 10);
+}
+
+/* ==================== 竖屏紧凑档（双页共用） ====================
+ * [实测口径 2026-10-25] 400 宽竖屏下所有「一行并到黑」的工具行（主站
+ * 参数行/IR·HR 标题行/从站通道行/DI·DO 标题行）横排总宽 500~800px，
+ * 全部超宽被裁且全页无横滚条——唯一出路是按可用宽分档：紧凑档把行
+ * 方向翻成 TopToBottom（单列左对齐；setDirection 是框架公开支持的
+ * 翻转，addSpacing/addStretch 的空白条目自动横纵互换），可点元素同
+ * 步放大到触控下限。宽档（桌面 1000x700）走原路径，观感不变。 */
+
+/** @brief 灯格单元纵距：紧凑档 44（控件实高 40 达触控下限），宽档维持
+ *  22 的桌面现状。 */
+static int mb_cellPitchH(int compact)
+{
+    return compact ? MB_CELL_PITCH_H_TOUCH : MB_CELL_H;
+}
+
+/** @brief 寄存器表行高：紧凑档 40（值格双击编辑=触控目标），宽档 24。 */
+static int mb_regRowH(int compact)
+{
+    return compact ? MB_REG_ROW_H_TOUCH : MB_ROW_H;
+}
+
+/* 寄存器表头文案：紧凑档值列宽只有 ~170px，全称「值(双击编辑/回车
+ * 生效)」实测末尾右括号被裁，缩为短称；宽档维持全称（桌面现状）。 */
+static const char* const kMbRegHeadWide[2] = {
+    "\xE5\x9C\xB0\xE5\x9D\x80",             /* 地址 */
+    "\xE5\x80\xBC(\xE5\x8F\x8C\xE5\x87\xBB\xE7\xBC\x96\xE8\xBE\x91/"
+    "\xE5\x9B\x9E\xE8\xBD\xA6\xE7\x94\x9F\xE6\x95\x88)" /* 值(双击编辑/回车生效) */
+};
+static const char* const kMbRegHeadCompact[2] = {
+    "\xE5\x9C\xB0\xE5\x9D\x80",             /* 地址 */
+    "\xE5\x80\xBC(\xE5\x8F\x8C\xE5\x87\xBB\xE7\xBC\x96\xE8\xBE\x91)" /* 值(双击编辑) */
+};
+
+/** @brief 两张寄存器表按档位套行高与表头（仅在档位翻转那一拍调用；
+ *  行高变更后表满高由各页 sync 路径读实际行高重算，无需在此定尺）。 */
+static void mb_regTablesApplyTier(XTableWidget* irTbl, XTableWidget* hrTbl,
+                                  int compact)
+{
+    XTableWidget* tabs[2];
+    int i;
+    tabs[0] = irTbl;
+    tabs[1] = hrTbl;
+    for (i = 0; i < 2; ++i) {
+        XTableWidget* tbl = tabs[i];
+        if (!tbl) continue;
+        XTableView_setRowHeight(&tbl->m_base, mb_regRowH(compact));
+        XTableWidget_setHorizontalHeaderLabels(
+            tbl, compact ? kMbRegHeadCompact : kMbRegHeadWide, 2);
+    }
 }
 
 /** @brief 寄存器表按点数扩缩（IR/HR 共用核心）：行数=SpinBox 现值，
@@ -1344,6 +1420,10 @@ static void mb_masterDoSlot15(XObject* sender, XVarList* args)
 static void mb_masterRebuildGrids(void)
 {
     int i;
+    /* [竖屏适配 2026-10-25] 纵距随档位：紧凑档 44（控件实高 40 达触控
+     * 下限），宽档 22 维持桌面现状；横距与列数不随档（5 列×68=348 恒
+     * 装得下 400 宽竖屏）。 */
+    int pitch = mb_cellPitchH(s_mb.compact);
     if (!s_mb.inGridHost || !s_mb.outGridHost) return;
     for (i = 0; i < MB_SLAVE_MAX_POINTS; ++i) {
         if (s_mb.inCells[i]) {
@@ -1361,8 +1441,8 @@ static void mb_masterRebuildGrids(void)
         MbDiLamp_init(cell, s_mb.inGridHost, i);
         XWidget_setGeometry((XWidget*)cell,
                             MB_GRID_X0 + (i % MB_GRID_COLS) * MB_CELL_W,
-                            (i / MB_GRID_COLS) * MB_CELL_H,
-                            MB_CELL_W - 4, MB_CELL_H - 4);
+                            (i / MB_GRID_COLS) * pitch,
+                            MB_CELL_W - 4, pitch - 4);
         s_mb.inCells[i] = cell;
     }
     for (i = 0; i < s_mb.outCount; ++i) {
@@ -1374,8 +1454,8 @@ static void mb_masterRebuildGrids(void)
         MbDoLamp_init(cell, s_mb.outGridHost, i);
         XWidget_setGeometry((XWidget*)cell,
                             MB_GRID_X0 + (i % MB_GRID_COLS) * MB_CELL_W,
-                            (i / MB_GRID_COLS) * MB_CELL_H,
-                            MB_CELL_W - 4, MB_CELL_H - 4);
+                            (i / MB_GRID_COLS) * pitch,
+                            MB_CELL_W - 4, pitch - 4);
         {
             static void (*const kDoSlots[16])(XObject*, XVarList*) = {
                 mb_masterDoSlot0, mb_masterDoSlot1, mb_masterDoSlot2,
@@ -2702,11 +2782,8 @@ static void mb_slaveBuildRegTable(XWidget* parent, XTableWidget** outTable,
                                   int rowCount, XObject* receiver,
                                   int hex, XSlotFunc1 changedSlot)
 {
-    static const char* const kHead[2] = {
-        "\xE5\x9C\xB0\xE5\x9D\x80",             /* 地址 */
-        "\xE5\x80\xBC(\xE5\x8F\x8C\xE5\x87\xBB\xE7\xBC\x96\xE8\xBE\x91/"
-        "\xE5\x9B\x9E\xE8\xBD\xA6\xE7\x94\x9F\xE6\x95\x88)" /* 值(双击编辑/回车生效) */
-    };
+    /* [竖屏适配 2026-10-25] 表头取全称常量（宽档口径）；紧凑档由
+     * mb_regTablesApplyTier 在翻档时换短称「值(双击编辑)」。 */
     XTableWidget* tbl;
     int i;
     if (!parent || !outTable || !receiver || !changedSlot) return;
@@ -2715,8 +2792,8 @@ static void mb_slaveBuildRegTable(XWidget* parent, XTableWidget** outTable,
     tbl = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, parent, 0);
     if (!tbl) return;
     XTableWidget_setColumnCount(tbl, 2);
-    XTableWidget_setHorizontalHeaderLabels(tbl, kHead,
-            (int)(sizeof(kHead) / sizeof(kHead[0])));
+    XTableWidget_setHorizontalHeaderLabels(tbl, kMbRegHeadWide,
+            (int)(sizeof(kMbRegHeadWide) / sizeof(kMbRegHeadWide[0])));
     XTableWidget_setRowCount(tbl, rowCount);
     /* [1019 晨 用户指令·表格零滚动条] 同主站寄存器表:AlwaysOff,
      * 尺寸自适应交由布局容器(表满高全展开,滚动壳纪律不变)。 */
@@ -2752,6 +2829,9 @@ static void mb_slaveRebuildGrids(void)
     int cols;
     int diRows;
     int doRows;
+    /* [竖屏适配 2026-10-25] 纵距随档位：紧凑档 44（控件实高 40 达触控
+     * 下限，灯格是可点翻转目标），宽档 22 维持桌面现状。 */
+    int pitch = mb_cellPitchH(s_mbSlave.compact);
     if (!s_mbSlave.diGridHost || !s_mbSlave.doGridHost) return;
     for (i = 0; i < MB_SLAVE_MAX_POINTS; ++i) {
         if (s_mbSlave.diCells[i]) {
@@ -2773,12 +2853,12 @@ static void mb_slaveRebuildGrids(void)
     {
         XSize hint;
         XWidget_setFixedWidth(s_mbSlave.diGridHost, cols * MB_CELL_W);
-        XWidget_setFixedHeight(s_mbSlave.diGridHost, diRows * MB_CELL_H);
-        XSize_init(&hint, cols * MB_CELL_W, diRows * MB_CELL_H);
+        XWidget_setFixedHeight(s_mbSlave.diGridHost, diRows * pitch);
+        XSize_init(&hint, cols * MB_CELL_W, diRows * pitch);
         XWidget_setSizeHint(s_mbSlave.diGridHost, &hint);
         XWidget_setFixedWidth(s_mbSlave.doGridHost, cols * MB_CELL_W);
-        XWidget_setFixedHeight(s_mbSlave.doGridHost, doRows * MB_CELL_H);
-        XSize_init(&hint, cols * MB_CELL_W, doRows * MB_CELL_H);
+        XWidget_setFixedHeight(s_mbSlave.doGridHost, doRows * pitch);
+        XSize_init(&hint, cols * MB_CELL_W, doRows * pitch);
         XWidget_setSizeHint(s_mbSlave.doGridHost, &hint);
     }
     for (i = 0; i < s_mbSlave.inCount && i < MB_SLAVE_MAX_POINTS; ++i) {
@@ -2787,8 +2867,8 @@ static void mb_slaveRebuildGrids(void)
         MbSwLamp_init(cell, s_mbSlave.diGridHost, i, "DI");
         XWidget_setGeometry((XWidget*)cell,
                             (i % cols) * MB_CELL_W,
-                            (i / cols) * MB_CELL_H,
-                            MB_CELL_W - 4, MB_CELL_H - 4);
+                            (i / cols) * pitch,
+                            MB_CELL_W - 4, pitch - 4);
         XObject_connect_1((XObject*)cell,
                           (size_t)XAbstractButton_toggled_signal(
                               (XAbstractButton*)cell, false),
@@ -2802,8 +2882,8 @@ static void mb_slaveRebuildGrids(void)
         MbSwLamp_init(cell, s_mbSlave.doGridHost, i, "DO");
         XWidget_setGeometry((XWidget*)cell,
                             (i % cols) * MB_CELL_W,
-                            (i / cols) * MB_CELL_H,
-                            MB_CELL_W - 4, MB_CELL_H - 4);
+                            (i / cols) * pitch,
+                            MB_CELL_W - 4, pitch - 4);
         XObject_connect_1((XObject*)cell,
                           (size_t)XAbstractButton_toggled_signal(
                               (XAbstractButton*)cell, false),
@@ -2913,6 +2993,31 @@ static void mb_slaveSyncViewport(void)
     availW = rawW;
     /* 只防 0/负与未定尺兜底，真实几何优先（同旧口径）。 */
     if (availW < MB_SLAVE_MIN_AVAIL_W) availW = MB_SLAVE_MIN_AVAIL_W;
+    /* [竖屏适配 2026-10-25] 宽度分档（只在翻档那一拍动作）：紧凑档把
+     * 通道行/启动行/DI·DO·IR·HR 标题行翻纵向单列——这些行横排总宽
+     * 400~800px，竖屏 400 宽必被右缘裁掉且无横滚条（实测「DI全开/
+     * 全关」「10进制」「本站地址」整组不可达），单列是唯一不裁的排法
+     * （定式见文件头 mb_regParseText 后的共用说明）；寄存器表行高/
+     * 表头同步换触控口径。置 gridCols=-1 强制下方幂等门控走一次灯格
+     * 重建，让纵距切换生效。宽档恢复横排（桌面 1000x700 现状）。 */
+    {
+        int compact = (availW < MB_COMPACT_MAX_W) ? 1 : 0;
+        if (compact != s_mbSlave.compact) {
+            XBoxLayoutDirection dir = compact
+                ? XBoxLayoutDirection_TopToBottom
+                : XBoxLayoutDirection_LeftToRight;
+            s_mbSlave.compact = compact;
+            XBoxLayout_setDirection(&s_mbSlave.layChannel, dir);
+            XBoxLayout_setDirection(&s_mbSlave.layStart, dir);
+            XBoxLayout_setDirection(&s_mbSlave.layDiTitle, dir);
+            XBoxLayout_setDirection(&s_mbSlave.layDoTitle, dir);
+            XBoxLayout_setDirection(&s_mbSlave.layIrTitle, dir);
+            XBoxLayout_setDirection(&s_mbSlave.layHrTitle, dir);
+            mb_regTablesApplyTier(s_mbSlave.irTable, s_mbSlave.hrTable,
+                                  compact);
+            s_mbSlave.gridCols = -1;
+        }
+    }
     /* 可见列数 = 宽度 / 单元宽（至少 1 列；宽度收紧时换行加行）。 */
     cols = availW / MB_CELL_W;
     if (cols < 1) cols = 1;
@@ -3340,7 +3445,14 @@ static void mb_masterRegSyncViewport(void)
     tabs[1] = s_mb.hrTable;
     if (!tabs[0] && !tabs[1]) return;
     w = s_mb.root ? XWidget_width(s_mb.root) : 0;
+    /* [竖屏适配 2026-10-25] 扣除页根左右边距（build 定的 12+12）：表宽
+     * =整宽时右缘越出边距被视口裁掉（右框线消失、表头文字贴死裁切
+     * 边），也给整页竖滚条留出留白。 */
+    w -= 24;
     if (w < 260) w = 260; /* fit 首拍前宽度未定，最小可读宽兜底。 */
+    /* 宽度分档先行：翻档会改表行高，必须赶在下面按行高算表满高之前
+     * （见 mb_masterApplyTier；未翻档时本调用零动作）。 */
+    mb_masterApplyTier(w);
     for (i = 0; i < 2; ++i) {
         XTableWidget* tbl = tabs[i];
         int rows;
@@ -3368,6 +3480,71 @@ static void mb_masterRegSyncViewport(void)
                             XWidget_y((XWidget*)tbl), w, h);
         mb_slaveApplyRegColWidths(tbl, w);
     }
+}
+
+/** @brief 主站灯格按当前档位重摆（仅在档位翻转那一拍被 applyTier 调用）
+ *  ：纵距 22↔44 换触控口径，网格宿主高随行数×纵距重算（宽档回 build
+ *  时的 84 口径，桌面现状不变）。 */
+static void mb_masterRepositionGrids(void)
+{
+    int pitch = mb_cellPitchH(s_mb.compact);
+    int i;
+    for (i = 0; i < MB_SLAVE_MAX_POINTS; ++i) {
+        if (s_mb.inCells[i])
+            XWidget_setGeometry((XWidget*)s_mb.inCells[i],
+                                MB_GRID_X0 + (i % MB_GRID_COLS) * MB_CELL_W,
+                                (i / MB_GRID_COLS) * pitch,
+                                MB_CELL_W - 4, pitch - 4);
+        if (s_mb.outCells[i])
+            XWidget_setGeometry((XWidget*)s_mb.outCells[i],
+                                MB_GRID_X0 + (i % MB_GRID_COLS) * MB_CELL_W,
+                                (i / MB_GRID_COLS) * pitch,
+                                MB_CELL_W - 4, pitch - 4);
+    }
+    if (s_mb.inGridHost) {
+        int rows = (s_mb.inCount + MB_GRID_COLS - 1) / MB_GRID_COLS;
+        if (rows < 1) rows = 1;
+        XWidget_setFixedHeight(s_mb.inGridHost,
+                               s_mb.compact ? rows * pitch : 84);
+    }
+    if (s_mb.outGridHost) {
+        int rows = (s_mb.outCount + MB_GRID_COLS - 1) / MB_GRID_COLS;
+        if (rows < 1) rows = 1;
+        XWidget_setFixedHeight(s_mb.outGridHost,
+                               s_mb.compact ? rows * pitch : 84);
+    }
+}
+
+/** @brief 主站宽度分档（幂等；regSync/adapt 每拍调用，未翻档零动作）：
+ *  可用宽 <MB_COMPACT_MAX_W 判紧凑档——
+ *  - 参数合并行/双列点位/IR·HR 标题行翻纵向单列：这些行横排总宽
+ *    500~800px，竖屏 400 宽下「服务器/端口/从站地址/单事务模式」
+ *    「按点数重建/16进制」整组被推出视口且无横滚条（实测截图口径），
+ *    翻单列是唯一不裁的排法；setDirection 为框架公开语义，空白条目
+ *    自动横纵互换；
+ *  - 寄存器表行高/表头、灯格纵距换触控口径。
+ *  宽档全部恢复 build 装配时的横排/24 行高/全称表头/22 纵距（桌面
+ *  1000x700 现状零改动）。 */
+static void mb_masterApplyTier(int availW)
+{
+    int compact = (availW < MB_COMPACT_MAX_W) ? 1 : 0;
+    if (compact == s_mb.compact) return;
+    s_mb.compact = compact;
+    {
+        XBoxLayoutDirection dir = compact
+            ? XBoxLayoutDirection_TopToBottom
+            : XBoxLayoutDirection_LeftToRight;
+        XBoxLayout_setDirection(&s_mb.layParams, dir);
+        XBoxLayout_setDirection(&s_mb.layGrid, dir);
+        XBoxLayout_setDirection(&s_mb.layIrTitle, dir);
+        XBoxLayout_setDirection(&s_mb.layHrTitle, dir);
+    }
+    mb_regTablesApplyTier(s_mb.irTable, s_mb.hrTable, compact);
+    mb_masterRepositionGrids();
+    /* 翻档作废全部行度量：显式失效并就地 activate 一遍，adapt 直入
+     * 本函数时也能自洽收敛（regSync 调用方随后还会再收敛一遍，幂等）。 */
+    XLayout_invalidate((XLayout*)&s_mb.layRoot);
+    XLayout_activate((XLayout*)&s_mb.layRoot);
 }
 
 XCLASS_DEFINE_BEGING(MbMasterRoot)
@@ -4931,6 +5108,9 @@ int demo_page_modbus_slave_autotest(XWidget* page)
          * （放不下换行往下放一行，无滚动壳）。 */
         if (s_mbSlave.diGridHost && s_mbSlave.doGridHost) {
             int cols = s_mbSlave.gridCols > 0 ? s_mbSlave.gridCols : 1;
+            /* [竖屏适配 2026-10-25] 纵距与重建同源（档位函数），宽档
+             * 仍等于 MB_CELL_H，桌面断言口径不变。 */
+            int pitch = mb_cellPitchH(s_mbSlave.compact);
             int diRows = (s_mbSlave.inCount + cols - 1) / cols;
             int doRows = (s_mbSlave.outCount + cols - 1) / cols;
             if (diRows < 1) diRows = 1;
@@ -4938,12 +5118,12 @@ int demo_page_modbus_slave_autotest(XWidget* page)
             if (XWidget_maximumSize((XWidget*)s_mbSlave.diGridHost).width !=
                     cols * MB_CELL_W ||
                 XWidget_maximumSize((XWidget*)s_mbSlave.diGridHost).height !=
-                    diRows * MB_CELL_H)
+                    diRows * pitch)
                 ++failures;
             if (XWidget_maximumSize((XWidget*)s_mbSlave.doGridHost).width !=
                     cols * MB_CELL_W ||
                 XWidget_maximumSize((XWidget*)s_mbSlave.doGridHost).height !=
-                    doRows * MB_CELL_H)
+                    doRows * pitch)
                 ++failures;
         } else {
             ++failures;
@@ -5132,11 +5312,12 @@ int demo_page_modbus_slave_autotest(XWidget* page)
                     ++failures;
                 {
                     int cols = s_mbSlave.gridCols > 0 ? s_mbSlave.gridCols : 1;
+                    int pitch = mb_cellPitchH(s_mbSlave.compact);
                     int doRows = (s_mbSlave.outCount + cols - 1) / cols;
                     if (doRows < 1) doRows = 1;
                     if (!s_mbSlave.doGridHost ||
                         XWidget_maximumSize((XWidget*)s_mbSlave.doGridHost)
-                                .height != doRows * MB_CELL_H)
+                                .height != doRows * pitch)
                         ++failures;
                 }
                 mb_slaveSetBit(XModbusCoils, 3, saved != 0);
@@ -5257,15 +5438,17 @@ void demo_page_modbus_slave_adapt(XWidget* page)
     mb_slaveSyncViewport();
 }
 
-/** @brief 主站页自适应重排（xgui_demo_pages.h 契约）：保留签名，空实现。
+/** @brief 主站页自适应重排（xgui_demo_pages.h 契约）。
  * @details [布局容器化 2026-10-17] 页内几何分配全权移交页根 XBoxLayout
  *          （build 一次装配）——XStackedLayout 重贴根几何时经
  *          resize→XLayout_activate 自动重排，寄存器表列组/显示行随视
- *          口的自适应由页根 resizeEvent（MbMasterRoot）承接，本函数
- *          无事可做；主文件 demo_layout_content 调用点保持不动。 */
+ *          口的自适应由页根 resizeEvent（MbMasterRoot）承接。
+ *          [竖屏适配 2026-10-25] 宽度分档入口：走 regSync 同一条收敛
+ *          链（紧凑档翻单列+触控行高先行，表几何随后跟随），幂等。 */
 void demo_page_modbus_master_adapt(XWidget* page)
 {
     (void)page;
+    mb_masterRegSyncViewport();
 }
 
 #else /* !MB_PAGE_ENABLED */

@@ -78,7 +78,15 @@
  * 移除, 改由根列 XBoxLayout + 8 条行盒式布局器管理——控件固定尺寸
  * （setFixedWidth/Height 保持原行高）+ setStretch 伸缩语义近似原稿:
  * 边距 (12,8,8,12) 行距 8, 末字段/档位下拉/UDP 开关等 stretch 铺满,
- * 会话状态区 stretch 吃满纵轴余量, 服务地址行固定高 24 贴底。 */
+ * 会话状态区 stretch 吃满纵轴余量, 服务地址行贴底（高随宽度档:
+ * 桌面 24 单行 / 窄屏 40 两行, 见 RS_COMPACT_WIDTH 分档）。 */
+
+/* 窄屏宽度档阈值（逻辑像素）: 根宽低于此值按手机竖屏口径重排——
+ * 交互控件行高统一抬到 40 逻辑像素触控目标线（桌面密度的 24/28/30
+ * 在 400 逻辑宽真机上全部低于该线, 触控误触率高）, 服务地址行改
+ * 两行折行（单行串 4 个 IP+端口约 600px, 400 宽下行宽仅 ~376px,
+ * 沿用桌面单行口径会把端口和其余 IP 全部裁没——真机截图实证）。 */
+#define RS_COMPACT_WIDTH 480
 
 /* ==================== 服务地址行（本机 IP 枚举; 2026-10-02 增强） ======== */
 
@@ -181,6 +189,11 @@ static struct
     XBoxLayout       m_rowPing;     /**< RemotePing 行: 计数标签伸缩。 */
     XBoxLayout       m_rowEcho;     /**< 回显行: 回显框伸缩 + 双钮定宽。 */
     bool             m_layoutsInited; /**< 布局器已 init(重复 build 防御依据)。 */
+    int              m_compactTier;  /**< 宽度档位: 0=桌面原稿口径, 1=窄屏
+                                       *   (RS_COMPACT_WIDTH 以下)触控/折行
+                                       *   档; adaptWidth 判档落尺寸——
+                                       *   memset 清零即桌面档, 与 build
+                                       *   时的静态尺寸一致。 */
     DemoPageStatusFn m_status;      /**< 主窗口状态栏反馈回调（借用）。 */
     void*            m_user;        /**< 回调上下文（主窗口指针，借用）。 */
     char             m_lastStatus[160]; /**< 最近一次反馈文本（自测断言用）。 */
@@ -462,7 +475,28 @@ static void rs_refreshAddrLabel(void)
                ? (int)XGuiServer_serverPort(s_rs.m_server)
                : rs_portFromEdit();
     rs_collectLocalIPv4(addrs, (int)sizeof(addrs), 4);
-    snprintf(buf, sizeof(buf), "服务地址: %s:%d", addrs, port);
+    if (s_rs.m_compactTier == 1) {
+        /* 窄屏两行折行: 首个 IP:端口 独占首行, 余下 IP 归第二行。不开
+         * wordWrap（竖列布局器对 hfw 条目的首选高缺陷, 见创建段）,
+         * 走会话状态区同款手工 '\n' 多行路径, 固定高 40 恰容两行。 */
+        const char* rest = strchr(addrs, ',');
+        if (rest) {
+            char first[64];
+            int firstLen = (int)(rest - addrs);
+            if (firstLen >= (int)sizeof(first))
+                firstLen = (int)sizeof(first) - 1;
+            memcpy(first, addrs, (size_t)firstLen);
+            first[firstLen] = '\0';
+            snprintf(buf, sizeof(buf), "服务地址: %s:%d\n%s",
+                     first, port, rest + 1);
+        }
+        else {
+            snprintf(buf, sizeof(buf), "服务地址: %s:%d", addrs, port);
+        }
+    }
+    else {
+        snprintf(buf, sizeof(buf), "服务地址: %s:%d", addrs, port);
+    }
     XLabel_setText_2(s_rs.m_addrLabel, buf);
 }
 
@@ -480,13 +514,68 @@ static void rs_adaptLayout(void)
     (void)s_rs; /* 空实现: 布局器接管全部页内几何（防告警占位）。 */
 }
 
-/** @brief 契约自适应入口（2026-10-17 布局容器化后为空实现体）。
+/** @brief 按宽度档位落控件行高（2026-10-25 窄屏触控档）。
+ *  @details 手机竖屏（400 逻辑宽）口径下, 桌面密度的原稿行高（输入框
+ *           /复选框/下拉 24、按钮 28/30）全部低于 ~40 逻辑像素的触控
+ *           目标线, 真机截图实测 RemotePing 仅 26px 高——窄屏档统一
+ *           抬到 40; 桌面档逐控件回原稿值（1000x700 现状不动）。档位
+ *           翻转双向可逆; setFixedHeight 经 XWidget_updateGeometry 使
+ *           所在行布局器失效重排, 无需手工重排。服务地址行一并在此
+ *           落高（窄屏两行折行需 ~2x16px 行高, 24 单行高会竖裁）。 */
+static void rs_applyTierHeights(int compact)
+{
+    const struct
+    {
+        XWidget* w; /**< 控件（借用; 建构失败路径允许为 NULL）。 */
+        int h;      /**< 桌面档行高（原稿值）。 */
+    } items[] = {
+        { (XWidget*)s_rs.m_srvToggle,    24 },
+        { (XWidget*)s_rs.m_portEdit,     24 },
+        { (XWidget*)s_rs.m_profileCombo, 24 },
+        { (XWidget*)s_rs.m_tlsCheck,     24 },
+        { (XWidget*)s_rs.m_udpCheck,     24 },
+        { (XWidget*)s_rs.m_certEdit,     24 },
+        { (XWidget*)s_rs.m_keyEdit,      24 },
+        { (XWidget*)s_rs.m_authCombo,    24 },
+        { (XWidget*)s_rs.m_passwordEdit, 24 },
+        { (XWidget*)s_rs.m_applyBtn,     28 },
+        { (XWidget*)s_rs.m_pingBtn,      30 },
+        { (XWidget*)s_rs.m_echoEdit,     24 },
+        { (XWidget*)s_rs.m_setPwdBtn,    28 },
+        { (XWidget*)s_rs.m_clearPwdBtn,  28 },
+    };
+    size_t i;
+    for (i = 0; i < sizeof(items) / sizeof(items[0]); ++i) {
+        if (items[i].w)
+            XWidget_setFixedHeight(items[i].w, compact ? 40 : items[i].h);
+    }
+    if (s_rs.m_addrLabel)
+        XWidget_setFixedHeight((XWidget*)s_rs.m_addrLabel,
+                               compact ? 40 : 24);
+}
+
+/** @brief 契约自适应入口（2026-10-17 布局容器化移交几何; 2026-10-25
+ *         起承载窄屏宽度分档）。
  *  @details 主文件 demo_layout_content 在切页/resize/startup/停靠全
- *           路径调用本函数（调用点不动）——页内几何已整体移交根列 +
- *           行盒式布局器（根控件 resize 即自动 activate 解算）, 无需
- *           任何手工重排; 签名与调用约定保持 xgui_demo_pages.h 契约。 */
+ *           路径调用本函数（调用点不动）, 且调用时页面根几何已由
+ *           contentHost 布局链分配（「根尺寸都新鲜」）。页内行列几何
+ *           仍由根列 + 行盒式布局器解算, 本函数只按根宽判档落差异:
+ *           根宽 < RS_COMPACT_WIDTH 判窄屏档（交互控件 ≥40 触控目标 +
+ *           服务地址行两行折行）, 否则回桌面原稿口径; 同档幂等早退
+ *           （漏斗每 resize 步必跑, 不做无效写）。 */
 void demo_page_remote_server_adaptWidth(void)
 {
+    int w;
+    int compact;
+    if (!s_rs.m_ready || !s_rs.m_root) return;
+    w = XWidget_width(s_rs.m_root);
+    /* 根宽尚未分配（0）按桌面档: build 静态尺寸即桌面档, 待布局器
+     * 就绪后的下一次漏斗调用（首帧/切页必经）按真实宽度修正。 */
+    compact = (w > 0 && w < RS_COMPACT_WIDTH) ? 1 : 0;
+    if (compact == s_rs.m_compactTier) return;
+    s_rs.m_compactTier = compact;
+    rs_applyTierHeights(compact);
+    rs_refreshAddrLabel(); /* 档位翻转: 地址行单行/两行形态随档重排。 */
 }
 
 /** @brief 输入回显 → 窗口标题同步（2026-10-02 增强: 联调断言辅助）。
@@ -883,7 +972,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
      *     边距 (12,8,8,12) 行距 8 复刻原稿纵轴节律（基稿行锚
      *     8/40/72/104/132/160/200/238/274 与底行贴底缘 12）, 8 条行
      *     布局器按 addLayout 顺序入列, 会话状态区 stretch 吃满纵轴
-     *     余量、服务地址行固定高 24 殿后贴底。行内控件尺寸用
+     *     余量、服务地址行殿后贴底（高随宽度档 24/40）。行内控件尺寸用
      *     setFixedWidth/Height 定格原稿宽高, 伸缩语义用
      *     setStretchFactorWidget（=按控件取索引的 setStretch）声明。 ---- */
     XBoxLayout_init(&s_rs.m_layoutRoot, XBoxLayoutDirection_TopToBottom);
@@ -943,8 +1032,9 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
 
     /* ---- 服务地址行（2026-10-02 增强: 「服务地址: <本机IP>:<端口>」;
      *     2026-10-04 多 IP 自适应宽度; 2026-10-17 容器化: 根列末条目
-     *     横向铺满整幅（根边距 12/8 收口）+ 固定高 24 贴底, 原手工
-     *     「随根宽伸缩 + 锚底」语义由布局器承担, 左下对齐保持。 ---- */
+     *     横向铺满整幅（根边距 12/8 收口）+ 固定高贴底, 原手工
+     *     「随根宽伸缩 + 锚底」语义由布局器承担, 左下对齐保持;
+     *     高随宽度档 24 单行/40 两行, 见 rs_applyTierHeights。 ---- */
     s_rs.m_addrLabel = XLabel_create(s_rs.m_root, 0);
     if (!s_rs.m_addrLabel) return s_rs.m_root;
     XLabel_setText_2(s_rs.m_addrLabel, "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x9C\xB0"
@@ -952,7 +1042,11 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     /* wordWrap 不开（沿用原稿窄窗「随列宽裁切」口径）: 行高固定 24
      * 只容单行, 折行也会竖裁; 且竖列布局器对 hfw(随宽变高)条目的
      * 首选高替换路径会把它按 0 高参与分配（实测: 开 wrap 后本行被
-     * 挤出根底缘 12px 整行半裁）, 关掉即恢复满算。 */
+     * 挤出根底缘 12px 整行半裁）, 关掉即恢复满算。
+     * [2026-10-25 窄屏档] 400 逻辑宽竖屏下该「随列宽裁切」口径破版
+     * （多 IP+端口单行串约 600px, 行宽仅 ~376px, 端口与后续 IP 全被
+     * 裁没）——窄屏档改 rs_refreshAddrLabel 手工 '\n' 两行折行 +
+     * 本行固定高随档 40（rs_applyTierHeights）, 绕开上述 hfw 缺陷。 */
     XLabel_setAlignment(s_rs.m_addrLabel,
                         XAlignment_Left | XAlignment_Bottom);
     XWidget_setFixedHeight((XWidget*)s_rs.m_addrLabel, 24);
@@ -1238,7 +1332,8 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     XBoxLayout_addWidget(&s_rs.m_layoutRoot, (XWidget*)s_rs.m_sessionLabel);
     XBoxLayout_setStretchFactorWidget(&s_rs.m_layoutRoot,
                                       (XWidget*)s_rs.m_sessionLabel, 1);
-    /* 服务地址行殿后入列（根列末条目, 固定高 24 贴底, 见前文创建段）。 */
+    /* 服务地址行殿后入列（根列末条目, 固定高贴底——高随宽度档
+     * 24/40, 见前文创建段与 rs_applyTierHeights）。 */
     XBoxLayout_addWidget(&s_rs.m_layoutRoot, (XWidget*)s_rs.m_addrLabel);
 
     /* ---- 服务对象: 父挂主窗口顶层（对象树级联析构兜底）, 惰性 host。 */

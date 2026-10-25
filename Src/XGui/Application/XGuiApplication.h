@@ -411,6 +411,20 @@ XWindow* XGuiApplication_modalWindow(void);
 void XGuiApplication_setFocusWindow(XWindow* window, XObject* object);
 
 /**
+ * @brief      窗口销毁时转移焦点登记（内部收口，destroy 时机专用）。
+ * @details    对标 Qt 6.8.3 QWindowPrivate::destroy()（qwindow.cpp:2112
+ *             `focus_window = q->parent()`）：裸赋值、不发射
+ *             focusWindowChanged——destroy 可处于半拆状态（平台窗已拆、
+ *             桥接窗 deleteLater 待兑现），信号槽重入即崩。仅当 win
+ *             恰为当前焦点窗口时转移给 fallback（通常取父窗，无父为
+ *             NULL），焦点对象同步随之。
+ * @param      win 正在销毁的窗口。
+ * @param      fallback 焦点转移目标；可为 NULL。
+ */
+void XGuiApplication_transferFocusWindowForDestroy(XWindow* win,
+                                                   XWindow* fallback);
+
+/**
  * @brief      设置焦点对象（对标 QGuiApplication::focusObjectChanged）。
  * @details    控件级焦点变化经此收口（XApplication_setFocusWidget 调
  *             用）：变更时发射 focusObjectChanged 并联动平台输入上下文

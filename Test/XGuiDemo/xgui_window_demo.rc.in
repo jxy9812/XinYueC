@@ -1,7 +1,12 @@
 // Win32 VERSIONINFO 资源（configure_file 由 CMake 注入版本）：
 // 资源管理器属性页/安装器/升级器按此读取文件版本与产品信息（对标 qmake
 // 在 Windows 自动生成的版本资源）。纯 ASCII 规避 rc.exe 代码页问题。
+// 应用图标：demo 品牌条棋盘格（@XGuiDemo 深蓝底 2x2 棋盘）导出的多尺寸
+// ico；ID 取 1——ICON 与 VERSIONINFO 类型不同不冲突，首个 ICON 资源即
+// 资源管理器/任务栏显示的 exe 图标。路径由 CMake 注入（正斜杠 rc.exe 接受）。
 #include <winver.h>
+
+1 ICON "@XGUI_DEMO_ICON_FILE@"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION @XUPGRADE_PRODUCT_VERSION_RC@,0

@@ -35,9 +35,21 @@
 
     <application
         android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
         android:hasCode="true"
         android:debuggable="true"
-        android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+        <!-- [图标 2026-10-25] 桌面 demo 品牌条棋盘格（深蓝底 2x2 棋盘，
+             蓝底 0xff1f4e79 / 棋盘 0xff4a7ba6+0xffc8d8e8）导出的启动器
+             图标，res/mipmap-*/ic_launcher.png 五密度齐供；与 Windows
+             exe 图标（Test/XGuiDemo/res/xgui.ico）同源同图。 -->
+        <!-- [主题 2026-10-25 手机适配] 原 NoActionBar.Fullscreen：系统状态栏
+             被隐藏，但内容视图仍按状态栏内缩（surface 只拿 1200x2464），屏幕
+             顶部剩 144px 空黑带，demo 的应用栏被顶到黑带下方——顶部导航
+             图标落在屏幕最上角而可点区在其下方 48dp，真机点不中。改用非
+             Fullscreen 主题：系统状态栏正常显示（时钟/电量），应用内容落在
+             状态栏之下，是标准 Android 应用版式；框架自绘的应用栏紧随其后，
+             导航图标就在拇指可达的左上角。 -->
         <activity
             android:name="com.xinyuec.android.XGuiNativeActivity"
             android:label="@string/app_name"

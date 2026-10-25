@@ -342,6 +342,13 @@ static void VXListView_paintEvent(XWidget* self, XEvent* event)
     offset = XWidget_paintOffset(self);
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+    /* 收进控件自身矩形：本函数直绘顶层后备存储且此前全程无裁剪，
+     * 行槽网格与控件高不对齐时（紧凑档盒式布局把余高分摊给各视图，
+     * 控件高常非「行高+间距」整数倍），末行按整槽绘制会越出控件下
+     * 边界压到页面上下一个小节的标题上。对标 Qt 控件自绘不越自身
+     * 矩形：ReplaceClip 一次收紧填充/文本/勾选框/装饰/分隔线全部
+     * 图元；裁剪盒在调用点映射为设备坐标，后续滚动平移不挪动它。 */
+    XPainter_setClipRect(&painter, &r, XPainterClipOperation_ReplaceClip);
     /* 视图族配色消费调色板（对标 Qt item view 的
      * Base/Highlight/HighlightedText/WindowText/AlternateBase）：
      * 默认调色板下 AlternateBase=(247,247,247) 与历史硬编码逐位一致，
@@ -371,7 +378,9 @@ static void VXListView_paintEvent(XWidget* self, XEvent* event)
         XPainter_translate(&painter, -(float)offX, -(float)offY);
     y = 0;
     bottom = offY + r.height;
-    for (row = 0; row < rows && y <= bottom; ++row) {
+    /* 行顶不越过视口下缘才进循环：行顶恰在底缘的行可见像素为零，
+     * 不再整槽空绘（越界像素另有控件矩形裁剪兜底）。 */
+    for (row = 0; row < rows && y < bottom; ++row) {
         int h = slotH + lv->m_spacing;
         XRect cell = { 0, y, slotW, slotH };
         bool sel;

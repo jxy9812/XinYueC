@@ -59,6 +59,38 @@ extern "C" {
 #define XLINK_SSL_ON 1
 #endif
 
+/** @brief 服务端包装（XLinkServer.h/.c）：内嵌 XTcpServer 监听，新连接自动
+ *         建会话（套能力位/分发回调模板），Inactive 会话自动回收。
+ *  @note  依赖 XNetwork 的 XTcpServer；纯手动管理连接的用法可关闭本开关。 */
+#ifndef XLINK_SERVER_ON
+#define XLINK_SERVER_ON 1
+#endif
+
+/** @brief 客户端包装（XLinkClient.h/.c）：内嵌 XTcpSocket + XLinkSession，
+ *         支持自动重连（默认关）。XLinkClient 任务专用，勿改（统筹预处理）。 */
+#ifndef XLINK_CLIENT_ON
+#define XLINK_CLIENT_ON 1
+#endif
+
+/** @brief 请求超时自动重试：默认重试次数（0 = 不重试，仅报超时）。
+ *  @note  XLinkSession 任务专用，勿改（统筹预处理）。 */
+#ifndef XLINK_RETRY_MAX_DEFAULT
+#define XLINK_RETRY_MAX_DEFAULT 0
+#endif
+
+/** @brief 自动重试可缓存的请求载荷上限（字节）：超过此长度的请求超时后
+ *         不重试（直接报超时），避免定容待应答表膨胀。 */
+#ifndef XLINK_RETRY_PAYLOAD_MAX
+#define XLINK_RETRY_PAYLOAD_MAX 128
+#endif
+
+/** @brief 请求自动超时判定阈值（毫秒）；0 = 被动模式（默认，超时不由
+ *         库自动处理）。运行时可经 XLinkSession_setRequestTimeout 调整，
+ *         终局结果经 requestFinished 信号上报。 */
+#ifndef XLINK_REQUEST_TIMEOUT_MS
+#define XLINK_REQUEST_TIMEOUT_MS 0
+#endif
+
 /* ========================================================================== */
 /*                        协议常量                                           */
 /* ========================================================================== */
@@ -102,6 +134,16 @@ extern "C" {
 /** @brief 心跳静默判线阈值（毫秒），超过即认定链路断开。 */
 #ifndef XLINK_HEARTBEAT_TIMEOUT_MS
 #define XLINK_HEARTBEAT_TIMEOUT_MS 3000u
+#endif
+
+/** @brief 异步驱动节拍（毫秒）：会话挂载传输后经 XObject 内建定时器
+ *         （XObject_startTimer_ms）周期驱动的间隔，用于心跳发送与静默判线。
+ *  @note  心跳仍按 XLINK_HEARTBEAT_INTERVAL_MS 的间隔门限发送，本节拍只决定
+ *         判线/心跳检查的密度——默认 250ms 使 3 秒静默超时的判定误差不超过
+ *         一个节拍。置 0 表示不启动定时器（收包仍由 readyRead 事件驱动，
+ *         判线退化为手动 pump 模式）。 */
+#ifndef XLINK_HEARTBEAT_TICK_MS
+#define XLINK_HEARTBEAT_TICK_MS 250u
 #endif
 
 #endif /* XLINK_ON */

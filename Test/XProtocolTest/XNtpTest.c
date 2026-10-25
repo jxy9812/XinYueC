@@ -20,6 +20,11 @@
  */
 #include "XNtpTest.h"
 #include "XNtpClient.h"
+/* [白盒访问器原型 2026-10-25] 必须显式包含 XNtpClient_Protected.h：
+ * XNtpClient_private 只在该头声明，XNtpClient.h 仅前置声明类型不声明函数。
+ * 缺此包含时该函数被隐式声明为返回 int，64 位指针被截断成 32 位，
+ * 与指针比较（!= NULL / == NULL）判据失真。 */
+#include "XNtpClient_Protected.h"
 #include "XNtpPacket.h"
 #include "XNtpProto.h"
 #include "XUdpSocket.h"
@@ -30,6 +35,14 @@
 #include "XString.h"
 #include "XThread.h"
 #include "XPrintf.h"
+/* [菜单入口原型 2026-10-25] 必须显式包含 XTestMenu.h：XNtpTest.h 只对
+ * XTestMenu 做**类型**前置声明（避免拖入 GUI 依赖），不含任何函数原型。
+ * 缺此包含时 XTestMenu_create / XTestMenu_addAction 被隐式声明为返回 int，
+ * 64 位指针被截断成 32 位（高 32 位随机），菜单构建即在
+ * XTreeNode_data_const 读野指针时崩溃（VS: 读取访问权限冲突）。
+ * 兄弟文件 XModbusTest.c / XCanTest.c / XLinkTest.c / XMqttTest.c 均已包含。 */
+#include "XTestMenu.h"
+#include "XAction.h"
 #include <string.h>
 
 /* ========================================================================== */

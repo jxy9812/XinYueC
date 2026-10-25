@@ -327,6 +327,11 @@ typedef struct XNetworkInterfaceConfig {
     XHostAddress m_dhcpServer;  ///< DHCP 服务器地址；isNull()=无
     XHostAddress m_dnsPrimary;  ///< 首选 DNS；isNull()=无
     XHostAddress m_dnsSecondary;///< 备用 DNS；isNull()=无
+    /** [DNS 分族 2026-10-25] IPv6 DNS 单独承载：安卓在 v6 优先/纯 IPv6
+     *  网络下系统下发的 DNS 全是 IPv6 地址，此前被塞进 m_dnsPrimary
+     *  导致界面「IPv4 设置」里显示 IPv6 DNS、IPv6 区反而没有 DNS。 */
+    XHostAddress m_dnsV6Primary;  ///< 首选 DNS（IPv6）；isNull()=无
+    XHostAddress m_dnsV6Secondary;///< 备用 DNS（IPv6）；isNull()=无
     int m_ifIndex;              ///< 接口索引（查询入参回显）
     int m_ipv6PrefixLength;     ///< m_ipv6Address 的前缀长度（0..128）；无 IPv6 为 0
     bool m_dhcpEnabled;         ///< true=DHCP 自动获取，false=静态配置

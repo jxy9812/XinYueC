@@ -66,8 +66,21 @@ bool XPlatformGraphicsDriver_createOpenGL(XWindow* window, void** nativeState)
     descriptor.cDepthBits = 24;
     descriptor.cStencilBits = 8;
     descriptor.iLayerType = PFD_MAIN_PLANE;
-    format = ChoosePixelFormat(state->m_dc, &descriptor);
-    if (!format || !SetPixelFormat(state->m_dc, format, &descriptor)) goto failed;
+    /* [像素格式二次设置根修 2026-10-25] Win32 硬规则：同一窗口的
+     * 像素格式一生只能设置一次，二次 SetPixelFormat 必失败。窗口
+     * GPU 会话是进程级单例（XGpuRenderBackend g_xgpuWindowSession），
+     * 尺寸不同的顶层窗口交替重绘会销毁重建会话——重建对同一 HWND
+     * 再走 ChoosePixelFormat+SetPixelFormat 即必败，50ms 内联重试
+     * 无法自愈（格式已设），反复打出 "[xgpu] session retry: failed
+     * twice"（诊断工作流独立复核确认）。GetPixelFormat>0 表示该窗口
+     * 已设过格式：直接复用既有格式，跳过 Choose/Set——重建请求的
+     * 表面属性（RGBA8888+DS24+S8+双缓冲）与首次一致，复用安全。 */
+    format = GetPixelFormat(state->m_dc);
+    if (format <= 0) {
+        format = ChoosePixelFormat(state->m_dc, &descriptor);
+        if (!format || !SetPixelFormat(state->m_dc, format, &descriptor))
+            goto failed;
+    }
     state->m_context = wglCreateContext(state->m_dc);
     if (!state->m_context) goto failed;
     *nativeState = state;

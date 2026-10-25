@@ -34,10 +34,15 @@ static int xlcd_formatDec(double num, int ndigits, char* out, size_t cap,
         len = XSnprintf(out, cap, "%*.*g", ndigits, nd, num);
         if (len < 0) len = 0;
         if ((size_t)len >= cap) len = (int)cap - 1;
-        /* Qt 将 "e+" 的 '+' 换为空格以省一位；本实现同样处理。 */
+        /* [对齐 qlcdnumber.cpp:184-188] "e+" 的 'e' 右移一位、原位换
+         * 空格（"1e+05"→"1 e05"，E 段落第 3 位）——此前原位只清 '+'，
+         * E 段错位一档（审计 F7，长度与溢出判定不变）。 */
         {
             char* e = XStrchr(out, 'e');
-            if (e && e[1] == '+') e[1] = ' ';
+            if (e && e[1] == '+') {
+                e[0] = ' ';
+                e[1] = 'e';
+            }
         }
     } while (nd-- && (int)len > ndigits);
     if (oflow) *oflow = (int)len > ndigits;
@@ -304,16 +309,13 @@ static void xlcd_drawSegment(XLcdNumber* self, XPainter* painter,
                              int x, int y, int segLen, int seg,
                              uint32_t on, uint32_t off)
 {
-    uint32_t color = (self->m_segmentStyle ==
-                      (int)XLcdNumberSegmentStyle_Outline) ? off : on;
-    /* 段厚对标 QLCDNumberPrivate::drawSegment（qlcdnumber.cpp:844
-     * width = segLen/5；此前 /8 偏细）。Flat 风格保持 1px 细段。
+    /* 段厚对标 qlcdnumber.cpp:844 width = segLen/5：Flat 与 Filled 同厚
+     * （Flat 仅省略高光/阴影立体线，非 1px 细线风格——审计 F4）。
      * 竖段/底段一律收进 segLen×2·segLen 单元格内侧（右竖 [segLen-w,segLen)、
      * 底横 [2·segLen-w,2·segLen)、中横以 segLen 居中、点/冒号偏移按
      * qlcdnumber.cpp:946-978）——此前右竖/底横画在单元格外侧，c/d、b/g
      * 交接角无人覆盖，成 w×w 缺角（用户截图「3」缺角病灶）。 */
-    int w = (self->m_segmentStyle == (int)XLcdNumberSegmentStyle_Flat)
-                ? 1 : (segLen / 5 < 1 ? 1 : segLen / 5);
+    int w = (segLen / 5 < 1) ? 1 : segLen / 5;
     XRect r;
     switch (seg) {
     case 0: XRect_init(&r, x, y, segLen, w); break;                          /* a 顶 */
@@ -325,14 +327,35 @@ static void xlcd_drawSegment(XLcdNumber* self, XPainter* painter,
     case 6: XRect_init(&r, x, y + segLen - w / 2, segLen, w); break;           /* g 中 */
     case 7: XRect_init(&r, x + segLen / 2, y + 2 * segLen - w,
                        w, w); break;                                           /* 小数点 */
-    case 8: XRect_init(&r, x + segLen / 2 - w / 2 + 1, y + segLen / 2,
-                       w, w); break;                                           /* 冒号上 */
-    case 9: XRect_init(&r, x + segLen / 2 - w / 2 + 1, y + 3 * segLen / 2,
-                       w, w); break;                                           /* 冒号下 */
+    case 8: XRect_init(&r, x + segLen / 2 - w / 2 + 1, y + segLen / 2 + w,
+                       w, w); break;                                           /* 冒号上（+w 对齐 qlcdnumber.cpp:960） */
+    case 9: XRect_init(&r, x + segLen / 2 - w / 2 + 1, y + 3 * segLen / 2 + w,
+                       w, w); break;                                           /* 冒号下（+w 对齐 :970） */
     default: return;
     }
-    (void)off;
-    XPainter_fillRect(painter, &r, color);
+    if (self->m_segmentStyle == (int)XLcdNumberSegmentStyle_Outline) {
+        /* [Qt 对齐 qlcdnumber.cpp:863-890] Outline 不做填充：Window 底
+         * 上以 Light 上/左棱 + Dark 下/右棱勾出凸起轮廓（此前画 Window
+         * 色实心矩形 = 与背景同色不可见，审计 F5）。段形仍为矩形——
+         * 六边形属头文件已声明的工程简化。 */
+        XRect e;
+        XPainter_fillRect(painter, &r,
+                          xlcd_color(self, XPaletteColorRole_Window));
+        XRect_init(&e, r.x, r.y, r.width, 1);
+        XPainter_fillRect(painter, &e,
+                          xlcd_color(self, XPaletteColorRole_Light));
+        XRect_init(&e, r.x, r.y, 1, r.height);
+        XPainter_fillRect(painter, &e,
+                          xlcd_color(self, XPaletteColorRole_Light));
+        XRect_init(&e, r.x, r.y + r.height - 1, r.width, 1);
+        XPainter_fillRect(painter, &e,
+                          xlcd_color(self, XPaletteColorRole_Dark));
+        XRect_init(&e, r.x + r.width - 1, r.y, 1, r.height);
+        XPainter_fillRect(painter, &e,
+                          xlcd_color(self, XPaletteColorRole_Dark));
+        return;
+    }
+    XPainter_fillRect(painter, &r, on);
 }
 
 /** @brief 绘制一位数字（字符经段表映射；point 为 smallPoint 点标志）。 */
@@ -393,8 +416,10 @@ static void VX_lcdNumber_paintEvent(XWidget* self, XEvent* event)
        此前只按高度取段长，控件被页签拉伸为大宽矮矩形时段长远超位宽，
        数字互相重叠且末位段码越出右缘（页签2 黑块病灶）。 */
     {
-        int digitSpace = 1; /* 非 smallPoint 模式的位间距（对标
-                               smallPoint?2:1；本简化版无 smallPoint）。 */
+        int digitSpace = lcd->m_smallDecimalPoint ? 2 : 1; /* 位间距
+                               对标 qlcdnumber.cpp:745 smallPoint?2:1
+                               （此前恒 1 且与 sizeHint 公式矛盾——审计
+                               F3）；smallPoint 的点画位间隙需加宽。 */
         int xSegLen = r.width * 5 / (ndigits * (5 + digitSpace) + digitSpace);
         int ySegLen = (r.height - 2 * fw) * 5 / 12;
         segLen = ySegLen > xSegLen ? xSegLen : ySegLen;
@@ -413,7 +438,10 @@ static void VX_lcdNumber_paintEvent(XWidget* self, XEvent* event)
         int x = startX + i * dw;
         int y = fw + (r.height - 2 * fw - 2 * segLen) / 2;
         char ch = lcd->m_digitStr[i];
-        bool pt = lcd->m_points[i] != 0;
+        bool pt = lcd->m_smallDecimalPoint && lcd->m_points[i] != 0;
+        /* [幻影点 2026-10-25] 非 smallPoint 显式不画点标志（Qt
+           drawString 传 nullptr，qlcdnumber.cpp:670-673）——此前关闭
+           smallPoint 后遗留点标志继续绘制幻影小数点（审计 F2）。 */
         if (ch == '.') {
             /* 独立小数点位（非 smallPoint 模式）。 */
             xlcd_drawSegment(lcd, &painter, x, y, segLen, 7, on, off);
@@ -565,6 +593,12 @@ XLcdNumberMode XLcdNumber_mode(const XLcdNumber* self)
 void XLcdNumber_setMode(XLcdNumber* self, XLcdNumberMode mode)
 {
     if (!self || (int)mode == self->m_mode) return;
+    /* [越界钳位 2026-10-25] Qt 的 base 是 2-bit 位域（qlabel 侧
+       qlcdnumber_p.h），越界枚举存入即回绕为合法 0..3——display_2/3
+       的进制 switch 恒命中。此前存任意值会让 switch 全不命中、
+       display 走未初始化栈缓冲（审计 F6，未定义读）。 */
+    mode = (XLcdNumberMode)((int)mode & 3);
+    if ((int)mode == self->m_mode) return;
     self->m_mode = (int)mode;
     /* 对标 Qt：setMode 后以当前值重显（进制变化重算显示串）。 */
     XLcdNumber_display_3(self, self->m_value);

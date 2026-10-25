@@ -86,6 +86,40 @@ extern int XUpgradeApplyStub_main(int argc, char* argv[]);
 /** @brief UI 泵周期（毫秒）：语义事件到控件的典型时延上界。 */
 #define UPD_PUMP_MS    120
 
+/** @brief 窄窗分档阈值（页根宽，逻辑像素）：决策行单行装配内容 694 + 根盒
+ *         左右边距 24 ≈ 718，低于它的竖屏/窄分栏单行必然水平溢出——adapt
+ *         按此分档切「决策双行 + 40 触控行高 + 提示折行」版式。 */
+#define UPD_COMPACT_MAX_W 720
+
+/** @brief 提示行文案（宽档单行，复刻原稿口径）。 */
+static const char UPD_HINT_WIDE[] =
+    "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x99\xA8\xE5\x9C\xB0"
+    "\xE5\x9D\x80\xE5\x9C\xA8\xE8\xBE\x93\xE5\x85\xA5"
+    "\xE8\xA1\x8C\xE8\xAE\xBE\xE7\xBD\xAE\xEF\xBC\x88"
+    "\xE9\xA6\x96\xE6\xAC\xA1\xE5\x90\xAF\xE5\x8A\xA8"
+    "\xE5\x90\x8E\xE9\x94\x81\xE5\xAE\x9A\xEF\xBC\x89"
+    "\xEF\xBC\x9B\xE5\xBC\x95\xE6\x93\x8E\xE6\x87\x92"
+    "\xE5\x90\xAF\xE5\x8A\xA8\xEF\xBC\x8C\xE5\xB7\xA5"
+    "\xE4\xBD\x9C\xE5\x8C\xBA\xE5\x9C\xA8\xE7\xB3\xBB"
+    "\xE7\xBB\x9F\xE4\xB8\xB4\xE6\x97\xB6\xE7\x9B\xAE"
+    "\xE5\xBD\x95";
+    /* 服务器地址在输入行设置（首次启动后锁定）；引擎懒启动，工作区在系统临时目录 */
+/** @brief 提示行文案（窄档在分号处手动折两行）：固定高标签不参与自动换行，
+ *         单行约 460 逻辑宽在 400 宽竖屏必被右缘裁切，且尾部正落右下角
+ *         性能悬浮层覆盖区；折行后两行最长约 240 逻辑宽，均避开右缘。 */
+static const char UPD_HINT_COMPACT[] =
+    "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x99\xA8\xE5\x9C\xB0"
+    "\xE5\x9D\x80\xE5\x9C\xA8\xE8\xBE\x93\xE5\x85\xA5"
+    "\xE8\xA1\x8C\xE8\xAE\xBE\xE7\xBD\xAE\xEF\xBC\x88"
+    "\xE9\xA6\x96\xE6\xAC\xA1\xE5\x90\xAF\xE5\x8A\xA8"
+    "\xE5\x90\x8E\xE9\x94\x81\xE5\xAE\x9A\xEF\xBC\x89"
+    "\x0A"
+    "\xE5\xBC\x95\xE6\x93\x8E\xE6\x87\x92\xE5\x90\xAF"
+    "\xE5\x8A\xA8\xEF\xBC\x8C\xE5\xB7\xA5\xE4\xBD\x9C"
+    "\xE5\x8C\xBA\xE5\x9C\xA8\xE7\xB3\xBB\xE7\xBB\x9F"
+    "\xE4\xB8\xB4\xE6\x97\xB6\xE7\x9B\xAE\xE5\xBD\x95";
+    /* 服务器地址在输入行设置（首次启动后锁定）\n引擎懒启动，工作区在系统临时目录 */
+
 /* ==================== 页面内部控件登记（demo 单实例 static 自持） ==== */
 
 /** @brief 软件更新页内部登记表。 */
@@ -140,8 +174,18 @@ static struct
     XBoxLayout m_barsCol;      /**< 四段进度条列。 */
     XBoxLayout m_barRows[4];   /**< 各段行盒（标题列+进度条伸展）。 */
     XBoxLayout m_buttonRow;    /**< 决策+安装单行。 */
+    XBoxLayout m_buttonRow2;   /**< 决策续行盒：与决策行同位预挂根盒；宽档恒为
+                                * 空盒（无条目不占尺寸、不参与行距），窄档由
+                                * adapt 注入决策行让位的右半段。 */
     XBoxLayout m_wrapPool[14]; /**< 单条目包裹盒池（盒边距复刻原手写间距/行内错位下沉）。 */
     int        m_wrapCount;    /**< 包裹盒池游标。 */
+    XBoxLayout* m_remoteWrap;  /**< 「远程版本」标题包裹盒句柄（窄档搬移用：
+                                * 子布局对象即布局条目，takeAt/addLayout
+                                * 即可零堆分配在两行间搬移）。 */
+    XBoxLayout* m_comboWrap;   /**< 远程版本下拉包裹盒句柄（窄档搬移用）。 */
+    XBoxLayout* m_installWrap; /**< 安装钮包裹盒句柄（窄档搬移用）。 */
+    bool       m_compact;      /**< 窄档生效中（adapt 宽度分档状态：只在翻转
+                                * 时搬移条目，防 resize 反复重排抖动）。 */
     XWidget*   m_titleSpring;  /**< 标题行水平弹簧（程序版本推右缘）。 */
     XWidget*   m_barsGap;      /**< 进度条列与决策行间固定空隙（16px，复刻原间距）。 */
     XWidget*   m_vSpring;      /**< 根垂直弹簧（吃掉多余高度，钉底两行）。 */
@@ -885,20 +929,23 @@ static void upd_installSelSlot(XObject* receiver, XVarList* args)
  *           主轴（XBoxLayout_calcMetrics），水平包裹盒的宽提示才等于
  *           「控件宽+右边距」，行内水平间距不占行高。盒对象为页内静
  *           态池的值成员（XBoxLayout_addLayout 借用不取所有权，须随页
- *           常驻）；池满静默丢弃。 */
-static void upd_wrapAdd(XBoxLayout* parent, XWidget* w,
-                        int l, int t, int r, int b)
+ *           常驻）；池满静默丢弃。
+ *  @return 包裹盒借用指针（adapt 窄档分档搬移的句柄）；父/控件为空或
+ *          池满返回 NULL（调用方据此跳过搬移）。 */
+static XBoxLayout* upd_wrapAdd(XBoxLayout* parent, XWidget* w,
+                               int l, int t, int r, int b)
 {
     XBoxLayout* box;
-    if (!parent || !w) return;
+    if (!parent || !w) return NULL;
     if (s_upd.m_wrapCount >= (int)(sizeof(s_upd.m_wrapPool) /
                                    sizeof(s_upd.m_wrapPool[0])))
-        return;
+        return NULL;
     box = &s_upd.m_wrapPool[s_upd.m_wrapCount++];
     XBoxLayout_init(box, XBoxLayoutDirection_LeftToRight);
     XLayout_setContentsMargins((XLayout*)box, l, t, r, b);
     XBoxLayout_addWidget(box, w);
     XBoxLayout_addLayout(parent, (XLayout*)box);
+    return box;
 }
 #endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 
@@ -1111,17 +1158,7 @@ XWidget* demo_page_update_build(XWidget* parent,
     s_upd.m_hintLabel = XLabel_create(s_upd.m_root, 0);
     if (s_upd.m_hintLabel) {
         XLabel_setTextPixelSize(s_upd.m_hintLabel, 12);
-    XLabel_setText_2(s_upd.m_hintLabel,
-                     "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x99\xA8\xE5\x9C\xB0"
-                     "\xE5\x9D\x80\xE5\x9C\xA8\xE8\xBE\x93\xE5\x85\xA5"
-                     "\xE8\xA1\x8C\xE8\xAE\xBE\xE7\xBD\xAE\xEF\xBC\x88"
-                     "\xE9\xA6\x96\xE6\xAC\xA1\xE5\x90\xAF\xE5\x8A\xA8"
-                     "\xE5\x90\x8E\xE9\x94\x81\xE5\xAE\x9A\xEF\xBC\x89"
-                     "\xEF\xBC\x9B\xE5\xBC\x95\xE6\x93\x8E\xE6\x87\x92"
-                     "\xE5\x90\xAF\xE5\x8A\xA8\xEF\xBC\x8C\xE5\xB7\xA5"
-                     "\xE4\xBD\x9C\xE5\x8C\xBA\xE5\x9C\xA8\xE7\xB3\xBB"
-                     "\xE7\xBB\x9F\xE4\xB8\xB4\xE6\x97\xB6\xE7\x9B\xAE"
-                     "\xE5\xBD\x95");
+    XLabel_setText_2(s_upd.m_hintLabel, UPD_HINT_WIDE);
                      /* 服务器地址在输入行设置（首次启动后锁定）；引擎懒启动，工作区在系统临时目录 */
         /* 原手写 (12,414,752,20)→根盒铺宽（宽随根收放）+ 垂直弹簧钉底，
          * 行高 20 固定（底边距 2 复刻与状态行行距）。 */
@@ -1204,14 +1241,26 @@ XWidget* demo_page_update_build(XWidget* parent,
     }
     /* 决策+安装单行：水平间距 8/10/6/10 与行内错位下沉经包裹盒边距
      * 复刻（远程版本 20+5+5=30、下拉 26+2+2=30 装满行高防居中）；
-     * 安装钮后余量留主轴末尾（同原固定排布不右锚定）。 */
+     * 安装钮后余量留主轴末尾（同原固定排布不右锚定）。安装钮也入零边
+     * 距包裹盒（几何不变）：窄档分档要把右半段三个条目整体搬去续行盒，
+     * 子布局对象即布局条目，持句柄即可 takeAt/addLayout 零堆分配搬移。 */
     XBoxLayout_init(&s_upd.m_buttonRow, XBoxLayoutDirection_LeftToRight);
     upd_wrapAdd(&s_upd.m_buttonRow, (XWidget*)s_upd.m_checkBtn, 0, 0, 8, 0);
     upd_wrapAdd(&s_upd.m_buttonRow, (XWidget*)s_upd.m_skipBtn, 0, 0, 10, 0);
-    upd_wrapAdd(&s_upd.m_buttonRow, (XWidget*)s_upd.m_remoteCap, 0, 5, 6, 5);
-    upd_wrapAdd(&s_upd.m_buttonRow, (XWidget*)s_upd.m_remoteCombo,
-                0, 2, 10, 2);
-    XBoxLayout_addWidget(&s_upd.m_buttonRow, (XWidget*)s_upd.m_installBtn);
+    s_upd.m_remoteWrap = upd_wrapAdd(&s_upd.m_buttonRow,
+                                     (XWidget*)s_upd.m_remoteCap,
+                                     0, 5, 6, 5);
+    s_upd.m_comboWrap = upd_wrapAdd(&s_upd.m_buttonRow,
+                                    (XWidget*)s_upd.m_remoteCombo,
+                                    0, 2, 10, 2);
+    s_upd.m_installWrap = upd_wrapAdd(&s_upd.m_buttonRow,
+                                      (XWidget*)s_upd.m_installBtn,
+                                      0, 0, 0, 0);
+    /* 决策续行盒：紧随决策行同位预挂根盒——空盒无条目不占尺寸也不参与
+     * 行距，宽档（含桌面 1000x700）观感零变化；窄档由 adapt 注入右半段
+     * 成「检查/跳过」+「远程版本/下拉/安装」双行，避免单行 718 逻辑宽
+     * 在竖屏溢出。 */
+    XBoxLayout_init(&s_upd.m_buttonRow2, XBoxLayoutDirection_LeftToRight);
     /* 根装配：以上行/列按序入根盒；进度条列→决策行间 16px、提示→状态
      * 行间 2px 用固定高空隙条复刻；垂直弹簧吃掉全部多余高度，提示/状
      * 态两行钉底。 */
@@ -1227,11 +1276,13 @@ XWidget* demo_page_update_build(XWidget* parent,
         XBoxLayout_addWidget(&s_upd.m_rootLayout, s_upd.m_barsGap);
     }
     XBoxLayout_addLayout(&s_upd.m_rootLayout, (XLayout*)&s_upd.m_buttonRow);
+    XBoxLayout_addLayout(&s_upd.m_rootLayout, (XLayout*)&s_upd.m_buttonRow2);
     s_upd.m_vSpring = XWidget_create(s_upd.m_root, 0);
     if (s_upd.m_vSpring) {
         XWidget_show(s_upd.m_vSpring); /* 隐藏件会被布局按空条目跳过。 */
         XBoxLayout_addWidget(&s_upd.m_rootLayout, s_upd.m_vSpring);
-        XBoxLayout_setStretch(&s_upd.m_rootLayout, 7, 1);
+        /* 弹簧因子下标随续行盒入列顺延（决策行 6、续行 7、弹簧 8）。 */
+        XBoxLayout_setStretch(&s_upd.m_rootLayout, 8, 1);
     }
     XBoxLayout_addWidget(&s_upd.m_rootLayout, (XWidget*)s_upd.m_hintLabel);
     s_upd.m_hintGap = XWidget_create(s_upd.m_root, 0);
@@ -1262,16 +1313,152 @@ XWidget* demo_page_update_build(XWidget* parent,
 
 /* ==================== 自适应重排（xgui_demo_pages.h 契约） ============ */
 
-/** @brief 自适应重排（xgui_demo_pages.h 契约）：保留签名，空实现。
- *  @details 2026-10-17 页内布局容器化：几何分配全权移交页根 XBoxLayout
- *           （build 一次装配）——XStackedLayout 重贴根几何时经
- *           resize→XLayout_activate 自动重排，信息列/进度条随根宽收放、
- *           提示/状态两行钉底、程序版本行右锚定等原 adapt 语义由布局器
- *           持续保持，本函数无事可做；主文件 demo_layout_content 调用点
- *           保持不动。 */
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+
+/** @brief 窄档触控行高（逻辑像素）：手机触控目标建议下限；桌面 30px 单行
+ *         口径只在宽档保持。 */
+#define UPD_COMPACT_ROW_H 40
+
+/** @brief 把包裹盒从行盒 from 搬到行盒 to。
+ *  @details takeAt 只把条目摘出布局并解除父子关系（不析构对象；包裹盒
+ *           为页内静态池值成员），addLayout 重新登记进目标行——搬移零堆
+ *           分配、可逆；包裹盒不在 from 内（已就位/装配期未入池）时零操作。 */
+static void upd_wrapMove(XBoxLayout* from, XBoxLayout* to, XBoxLayout* wrap)
+{
+    int idx;
+    if (!from || !to || !wrap || from == to) return;
+    idx = XLayout_indexOfItem((XLayout*)from, (XLayoutItem*)wrap);
+    if (idx < 0) return;
+    if (XLayout_takeAt_base((XLayout*)from, idx))
+        XBoxLayout_addLayout(to, (XLayout*)wrap);
+}
+
+/** @brief 窄/宽档互斥切换（仅分档翻转时调用一次；几何值与 build 复刻的
+ *         桌面口径一一对应，来回切换无漂移）。 */
+static void upd_applyCompact(bool compact)
+{
+    if (compact) {
+        /* 窄档：决策行右半段让位续行（远程版本→下拉→安装，追加次序即
+         * 装配次序），行高统一抬到触控下限，标题列居中下沉随之改写。 */
+        upd_wrapMove(&s_upd.m_buttonRow, &s_upd.m_buttonRow2,
+                     s_upd.m_remoteWrap);
+        upd_wrapMove(&s_upd.m_buttonRow, &s_upd.m_buttonRow2,
+                     s_upd.m_comboWrap);
+        upd_wrapMove(&s_upd.m_buttonRow, &s_upd.m_buttonRow2,
+                     s_upd.m_installWrap);
+        if (s_upd.m_checkBtn)
+            XWidget_setFixedHeight((XWidget*)s_upd.m_checkBtn,
+                                   UPD_COMPACT_ROW_H);
+        if (s_upd.m_skipBtn)
+            XWidget_setFixedHeight((XWidget*)s_upd.m_skipBtn,
+                                   UPD_COMPACT_ROW_H);
+        if (s_upd.m_remoteCombo)
+            XWidget_setFixedHeight((XWidget*)s_upd.m_remoteCombo,
+                                   UPD_COMPACT_ROW_H);
+        if (s_upd.m_installBtn)
+            XWidget_setFixedHeight((XWidget*)s_upd.m_installBtn,
+                                   UPD_COMPACT_ROW_H);
+        if (s_upd.m_remoteWrap)
+            XLayout_setContentsMargins((XLayout*)s_upd.m_remoteWrap,
+                                       0, 10, 6, 10);
+        if (s_upd.m_comboWrap)
+            XLayout_setContentsMargins((XLayout*)s_upd.m_comboWrap,
+                                       0, 0, 10, 0);
+        /* 两行决策行间留 8px 行缝（宽档行缝由空续行盒承担=0）。 */
+        XLayout_setContentsMargins((XLayout*)&s_upd.m_buttonRow, 0, 0, 0, 8);
+        /* 标题行让宽：300+332 固定宽在竖屏必把程序版本标签右缘硬裁——
+         * 标题列收窄到信息列口径，程序版本占满余宽（随根宽在 adapt 末尾
+         * 重算）。 */
+        if (s_upd.m_titleLabel)
+            XWidget_setFixedWidth((XWidget*)s_upd.m_titleLabel, 96);
+        /* 提示行折两行（窄档文案在分号处手动分行）：单行约 460 逻辑宽竖屏
+         * 必溢出且尾部落右下性能悬浮层覆盖区。 */
+        if (s_upd.m_hintLabel) {
+            XLabel_setText_2(s_upd.m_hintLabel, UPD_HINT_COMPACT);
+            XWidget_setFixedHeight((XWidget*)s_upd.m_hintLabel, 34);
+        }
+    } else {
+        /* 宽档：整体还原装配期复刻的桌面口径（值同 build）。 */
+        upd_wrapMove(&s_upd.m_buttonRow2, &s_upd.m_buttonRow,
+                     s_upd.m_remoteWrap);
+        upd_wrapMove(&s_upd.m_buttonRow2, &s_upd.m_buttonRow,
+                     s_upd.m_comboWrap);
+        upd_wrapMove(&s_upd.m_buttonRow2, &s_upd.m_buttonRow,
+                     s_upd.m_installWrap);
+        if (s_upd.m_checkBtn)
+            XWidget_setFixedHeight((XWidget*)s_upd.m_checkBtn, 30);
+        if (s_upd.m_skipBtn)
+            XWidget_setFixedHeight((XWidget*)s_upd.m_skipBtn, 30);
+        if (s_upd.m_remoteCombo)
+            XWidget_setFixedHeight((XWidget*)s_upd.m_remoteCombo, 26);
+        if (s_upd.m_installBtn)
+            XWidget_setFixedHeight((XWidget*)s_upd.m_installBtn, 30);
+        if (s_upd.m_remoteWrap)
+            XLayout_setContentsMargins((XLayout*)s_upd.m_remoteWrap,
+                                       0, 5, 6, 5);
+        if (s_upd.m_comboWrap)
+            XLayout_setContentsMargins((XLayout*)s_upd.m_comboWrap,
+                                       0, 2, 10, 2);
+        XLayout_setContentsMargins((XLayout*)&s_upd.m_buttonRow, 0, 0, 0, 0);
+        if (s_upd.m_titleLabel)
+            XWidget_setFixedWidth((XWidget*)s_upd.m_titleLabel, 300);
+        if (s_upd.m_progVerLabel)
+            XWidget_setFixedWidth((XWidget*)s_upd.m_progVerLabel, 332);
+        if (s_upd.m_remoteCombo)
+            XWidget_setFixedWidth((XWidget*)s_upd.m_remoteCombo, 268);
+        if (s_upd.m_hintLabel) {
+            XLabel_setText_2(s_upd.m_hintLabel, UPD_HINT_WIDE);
+            XWidget_setFixedHeight((XWidget*)s_upd.m_hintLabel, 20);
+        }
+    }
+}
+
+/** @brief 窄档随根宽重算固定宽（每次 adapt 都执行：同档内窗口宽度仍会
+ *         变，如旋转/分栏拖拽）。 */
+static void upd_adaptCompactWidths(int rootW)
+{
+    /* 下拉占续行余宽：标题列 64 + 标题距 6 + 安装钮前距 10 + 安装钮 128；
+     * 程序版本占标题行余宽：标题列 96。逐项钳 120 下限（极窄窗宁可挤压
+     * 也不给负宽/零宽），分档口径本就瞄准 ≥376 的竖屏（400 目标机）。 */
+    int comboW = rootW - 24 - 208;
+    int progW = rootW - 24 - 96;
+    if (comboW < 120) comboW = 120;
+    if (progW < 120) progW = 120;
+    if (s_upd.m_remoteCombo)
+        XWidget_setFixedWidth((XWidget*)s_upd.m_remoteCombo, comboW);
+    if (s_upd.m_progVerLabel)
+        XWidget_setFixedWidth((XWidget*)s_upd.m_progVerLabel, progW);
+}
+
+#endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
+
+/** @brief 自适应重排（xgui_demo_pages.h 契约）：按页根宽度分档。
+ *  @details 2026-10-17 页内布局容器化后常规几何随根盒自动重排，但决策行
+ *           「单行装配」的固定宽内容（约 718 逻辑宽）、标题行「300+332」
+ *           与固定高 20 的单行提示在窄窗/竖屏必水平溢出或右缘硬裁——本
+ *           函数按 UPD_COMPACT_MAX_W 分档：窄档把决策行右半段搬入续行盒、
+ *           行高抬到触控下限、提示行折行、标题行让宽；宽档（含桌面
+ *           1000x700）与 build 装配完全一致零改动。搬移只在分档翻转时
+ *           执行一次，同档内仅重算随根宽的固定宽；主文件
+ *           demo_layout_content 调用点保持不动。 */
 void demo_page_update_adapt(XWidget* page)
 {
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    bool compact;
+    int w;
+    if (!page || page != s_upd.m_root || !s_upd.m_ready) return;
+    w = XWidget_width(page);
+    if (w <= 0) return; /* 首帧几何未落：等下次 resize/布局再分档。 */
+    compact = w < UPD_COMPACT_MAX_W;
+    if (compact != s_upd.m_compact) {
+        s_upd.m_compact = compact;
+        upd_applyCompact(compact);
+    }
+    if (compact)
+        upd_adaptCompactWidths(w);
+#else
     (void)page;
+#endif
 }
 
 /* ==================== 退出清理（xgui_demo_pages.h 契约） ============== */

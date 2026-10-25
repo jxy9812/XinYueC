@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XDeviceNetwork_posix.c
  * @brief XNetwork POSIX 平台实现（Linux io_uring 异步 I/O）
  *
@@ -18,6 +18,9 @@
  * Drive/Android/Device/Network/XDeviceNetwork_android.c（与 WiFi 后端同处
  * 平台层），本驱动只保留基础实现与调用点。 */
 #include "XDeviceNetwork_android.h"
+/* [MAC 2026-10-25] 接口枚举的 ioctl(SIOCGIFHWADDR) 在安卓 SELinux 下恒
+ * 失败（/sys/class/net 对应用 uid 不可读），MAC 改由 Java 桥取。 */
+#include "XAndroidJniChannels.h"
 #endif
 #include "XIODevice.h"
 #include "XIODevice_Protected.h"
@@ -1767,6 +1770,19 @@ struct XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterf
             }
             close(fd);
         }
+#if defined(__ANDROID__)
+        /* [MAC 2026-10-25] 安卓应用域读不了 /sys/class/net，SIOCGIFHWADDR
+         * 在 SELinux enforcing 下恒失败（真机实证 Permission denied），
+         * 上面这段取不到任何值。改由 Java 侧（XNetAdapter）取系统认可的
+         * MAC（WifiInfo / java.net.NetworkInterface）。 */
+        if (!iface->m_hardwareAddress) {
+            char macText[32];
+            if (XAndroid_netLinkMac(macText, (int)sizeof(macText)) &&
+                macText[0]) {
+                iface->m_hardwareAddress = XString_create_utf8(macText);
+            }
+        }
+#endif
     }
 
     /* MTU - 通过 ioctl SIOCGIFMTU 获取 */
@@ -2438,6 +2454,8 @@ bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
     XHostAddress_init(&outConfig->dhcpServer);
     XHostAddress_init(&outConfig->dnsPrimary);
     XHostAddress_init(&outConfig->dnsSecondary);
+    XHostAddress_init(&outConfig->dnsV6Primary);
+    XHostAddress_init(&outConfig->dnsV6Secondary);
 
     /* 1) getifaddrs: 按 ifIndex 定位 → 名称/Up/IPv4 地址+掩码/IPv6 地址。 */
     if (getifaddrs(&list) != 0) return false;
@@ -2553,6 +2571,9 @@ bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
         }
         fclose(f);
     }
+    /* [DNS 分族 2026-10-25] resolv.conf 里 v4/v6 nameserver 混排：按地址
+     * 族各写各的槽（此前一律塞进 v4 的 dnsPrimary/dnsSecondary，v6 DNS
+     * 会显示到界面「IPv4 设置」里）。 */
     if (dns1[0]) {
         struct in_addr a4;
         uint8_t b6[16];
@@ -2560,7 +2581,7 @@ bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
             XHostAddress_setAddressIPv4(&outConfig->dnsPrimary,
                                         ntohl(a4.s_addr));
         else if (inet_pton(AF_INET6, dns1, b6) == 1)
-            XHostAddress_setAddressIPv6(&outConfig->dnsPrimary, b6);
+            XHostAddress_setAddressIPv6(&outConfig->dnsV6Primary, b6);
     }
     if (dns2[0]) {
         struct in_addr a4;
@@ -2569,7 +2590,7 @@ bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
             XHostAddress_setAddressIPv4(&outConfig->dnsSecondary,
                                         ntohl(a4.s_addr));
         else if (inet_pton(AF_INET6, dns2, b6) == 1)
-            XHostAddress_setAddressIPv6(&outConfig->dnsSecondary, b6);
+            XHostAddress_setAddressIPv6(&outConfig->dnsV6Secondary, b6);
     }
 
     /* 5) DHCP: pid 文件(BusyBox)或租约痕迹(对齐 win32 的 dhcpServer);
@@ -2613,6 +2634,8 @@ void XDeviceNetwork_freeInterfaceConfig(XDeviceNetworkInterfaceConfig* config)
     XClassDeinit(&config->dhcpServer);
     XClassDeinit(&config->dnsPrimary);
     XClassDeinit(&config->dnsSecondary);
+    XClassDeinit(&config->dnsV6Primary);
+    XClassDeinit(&config->dnsV6Secondary);
     memset(config, 0, sizeof(*config));
 }
 

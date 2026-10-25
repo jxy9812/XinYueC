@@ -10,6 +10,11 @@
  *               逐一 XWidget_show；
  *             - 一列触发按钮（每个对话框一行）+ 每行说明标签（行盒=
  *               水平盒：触发按钮固定 150x34 + 说明标签定高 34）；
+ *             - 宽度分档（dlgpg_scrollRelayout 单一收口）：宽根维持
+ *               上述桌面口径；窄根（竖屏手机口径）翻窄根单列档——行
+ *               盒转纵向（按钮在上、说明满宽换行在下），按钮抬到触控
+ *               目标下限 40，说明列解除单行定高按换行实测定高，内容
+ *               自然高同步重算，触达交由纵向滚动（横滚根除）；
  *             - 消息框四键走【非阻塞】实例路径：XMessageBox 堆构造 +
  *               XDialog_open()（对标 QDialog::open：窗口模态显示但不
  *               进入本地事件循环），按钮盒 accepted/rejected → 
@@ -88,7 +93,9 @@ typedef int xgui_demo_page_dialogs_nonempty_t;
  * 旧内置字库，最长说明文案实测 396（含度量余量）——176（说明列 X）+
  * 396 = 572，旧页宽 760 经 HUD 让位（-224）后 content 仅 536，说明列
  * 尾字被滚动区右缘裁半（「互」字实测）。812-224=588 ≥ 572+16 余量；
- * 窄窗横向滚动条 AsNeeded 兜底。 */
+ * 窄根（<DLGPG_HUD_YIELD_MIN_ROOT）不做横滚兜底，改窄根单列档整列
+ * 重排（见 dlgpg_scrollRelayout 窄根档注）——横滚默认首屏说明列尽失
+ * （真机 400x800 实证 rootW=376 时 contentW=812）。 */
 #define DLGPG_PAGE_WIDTH   812
 #define DLGPG_PAGE_HEIGHT  480
 /* 触发按钮行数。必须与下方 dlgpg_addRow 调用次数严格一致（当前 10：
@@ -101,12 +108,20 @@ typedef int xgui_demo_page_dialogs_nonempty_t;
 #define DLGPG_ROW_COUNT    10
 #define DLGPG_ROW_HEIGHT   50   /* 行距（原手写口径，行盒底边距由此推）。 */
 #define DLGPG_BTN_WIDTH    150
+/* 触发按钮定高（宽根档口径，复刻桌面观感）；窄根档抬到
+   DLGPG_BTN_TOUCH_HEIGHT（触控目标下限），见 dlgpg_scrollRelayout。 */
 #define DLGPG_BTN_HEIGHT   34
 #define DLGPG_NOTE_WIDTH   568  /* 说明列基准宽（relayout 按根宽/实测收放）。 */
 /* [布局容器化 2026-10-17] 原点/列位手写坐标（BTN_X=16/NOTE_X=176）退场：
-   改由布局器边距与间距表达——内容根垂直盒边距 (16,14,16,22) 复刻原
-   首行原点 (16,14) 与末行底余量（内容高 520-末行底 498）；行盒间距
-   10 复刻原说明列 x 偏移（16+150→176）；行盒底边距 16=行距-行高。 */
+   改由布局器边距与间距表达——内容根垂直盒边距宏化于下（窄根单列档
+   反推说明列宽/内容自然高也用它们，改值两处同步）：边距 (16,14,16,22)
+   复刻原首行原点 (16,14) 与末行底余量（内容高 520-末行底 498）；行盒
+   间距 10 复刻原说明列 x 偏移（16+150→176）；行盒底边距 16=行距-行高。 */
+#define DLGPG_MARGIN_L     16
+#define DLGPG_MARGIN_T     14
+#define DLGPG_MARGIN_R     16
+#define DLGPG_MARGIN_B     22
+#define DLGPG_ROW_SPACING  10
 #define DLGPG_ROW_GAP      (DLGPG_ROW_HEIGHT - DLGPG_BTN_HEIGHT)
 /* 右缘 HUD 让位带（FPS 浮层自由拖动前的静态避让）：主窗右下角半透明
    FPS 性能浮层（XPerformanceOverlay 210x70+autoFit，见主文件
@@ -117,6 +132,13 @@ typedef int xgui_demo_page_dialogs_nonempty_t;
    宽，得不偿失）。 */
 #define DLGPG_HUD_YIELD_WIDTH   224
 #define DLGPG_HUD_YIELD_MIN_ROOT 640
+/* [窄根单列档 2026-10-25] 触控目标下限（手机口径 ~40 逻辑像素，低于
+   此值指尖难点中）：窄根档触发按钮定高抬到此值，行内说明列随之改
+   满宽换行（单行 34 定高在窄根下把文案推出视口右缘）。 */
+#define DLGPG_BTN_TOUCH_HEIGHT  40
+/* 窄根档内容宽让出的纵向滚动条带（与 views 页大表格可视宽让位 12 同
+   口径）：内容宽=根宽-此带，纵条一出现也不致横溢出横向条。 */
+#define DLGPG_VSCROLL_BAND      12
 
 /* ==================== 页面内部控件登记表（demo 单实例） ==================== */
 
@@ -212,67 +234,151 @@ static void dlgpg_status(const char* text)
    裁剪），并重新通告内容尺寸驱动滚动范围。XWidget_paintTree 对子控件
    逐级按自身矩形裁剪（XWidget.c:7146），收窄即截断行尾文字。 */
 
-/** @brief 重排内容定尺与说明列宽（HUD 让位带档位判断的唯一入口）。
+/** @brief 重排内容定尺/说明列宽与行盒方向（宽度分档判断的唯一入口）。
  *  @details [布局容器化 2026-10-17] 原说明列逐行 setGeometry 手写排布
  *           退场：行几何由内容根垂直盒布局器分配（行盒=按钮+说明），
  *           本函数只收口两处定尺——内容宽（HUD 让位档）与说明列宽
  *           （档位/实测取大），均经 setFixedWidth 表达（min/max 收口
  *           即时触发控件 resize，进而自动重激活布局器，见
- *           XWidget_recomputeGeometry 的 resize→activate 联动）。 */
+ *           XWidget_recomputeGeometry 的 resize→activate 联动）。
+ *           [窄根单列档 2026-10-25] 窄根（<DLGPG_HUD_YIELD_MIN_ROOT，
+ *           竖屏手机口径）不再维持 812 定宽横滚——横滚下默认首屏只见
+ *           按钮列，说明列整体在视口右缘外（真机 400x800 实证
+ *           rootW=376 时 contentW=812/measured=396，说明文案首屏尽
+ *           失）。窄根改单列重排：内容宽收进根宽（扣纵条带，横滚根
+ *           除），行盒翻纵向（按钮在上、说明满宽换行在下），说明列解
+ *           除单行定高按换行实测定高（XLabel_heightForWidth），触发
+ *           按钮抬到触控目标下限，内容自然高按各件实高重算通告滚动
+ *           范围——触达交纵向滚动。宽根档维持桌面口径（旋转回横屏整
+ *           列还原，单行 34/水平行盒原样）。 */
 static void dlgpg_scrollRelayout(XScrollArea* scroll)
 {
     XWidget* content;
     int rootW;
     int contentW;
+    int contentH;
+    int btnH;
+    bool compact;
+#if DLGPG_LABELS_ON
+    int noteW;
+#endif
     if (!scroll || !s_dlgpg.m_root)
         return;
     content = s_dlgpg.m_root;
     rootW = XWidget_width((XWidget*)scroll);
-    /* 宽根让位：右缘收进 HUD 浮层左缘内；窄根保持满宽（浮层同样盖
-       但滚动可达，见 DLGPG_HUD_YIELD_WIDTH 注）。内容高度在 build
-       时 setFixedHeight 定尺（行区自然高），此处只收放宽度。 */
-    contentW = DLGPG_PAGE_WIDTH;
-    if (rootW >= DLGPG_HUD_YIELD_MIN_ROOT)
+    /* 宽度分档：窄根（竖屏手机）单列重排收进根宽；宽根让位 HUD 浮层
+       （右缘收进浮层左缘内，见 DLGPG_HUD_YIELD_WIDTH 注）。 */
+    compact = rootW < DLGPG_HUD_YIELD_MIN_ROOT;
+    if (compact)
+        contentW = rootW - DLGPG_VSCROLL_BAND;
+    else
         contentW = DLGPG_PAGE_WIDTH - DLGPG_HUD_YIELD_WIDTH;
     if (contentW < 1)
         contentW = 1;
-#if DLGPG_LABELS_ON
-    /* 说明列收窄 224：宽根缩至让位右缘，窄根恢复常量口径。
-       字体度量自适应：ft2 直读字体（Noto）字形宽于旧内置字库，常量
-       列宽会截断文案（真屏对话框页实证）——实测宽度超出时按实测
-       加宽（上限=页右缘），文本完整性优先于 HUD 让位收窄。先定列宽
-       再收内容宽：内容 resize 自动重激活布局器时即按最终列宽分配。 */
+    btnH = compact ? DLGPG_BTN_TOUCH_HEIGHT : DLGPG_BTN_HEIGHT;
+#if DLGPG_BUTTONS_ON
+    /* 触发按钮定高随档位：窄根抬到触控目标下限（手机指尖口径，34 难
+       点中），宽根回 34 复刻桌面观感。 */
     {
         int i;
-        int noteW = DLGPG_NOTE_WIDTH;
+        for (i = 0; i < DLGPG_ROW_COUNT; ++i) {
+            if (s_dlgpg.m_btn[i])
+                XWidget_setFixedHeight((XWidget*)s_dlgpg.m_btn[i], btnH);
+        }
+    }
+#endif
+#if DLGPG_LABELS_ON
+    /* 说明列分档：窄根满宽换行（内容宽扣根盒左右边距；列宽不再实测
+       加宽——横滚已根除，实测口径只服务宽根单行模式）。宽根缩至让位
+       右缘；字体度量自适应：ft2 直读字体（Noto）字形宽于旧内置字库，
+       常量列宽会截断文案（真屏对话框页实证）——实测宽度超出时按实
+       测加宽（上限=页右缘），文本完整性优先于 HUD 让位收窄。先定列
+       宽再收内容宽：内容 resize 自动重激活布局器时即按最终列宽分配。 */
+    if (compact) {
+        noteW = contentW - (DLGPG_MARGIN_L + DLGPG_MARGIN_R);
+    } else {
+        noteW = DLGPG_NOTE_WIDTH;
         if (rootW >= DLGPG_HUD_YIELD_MIN_ROOT)
             noteW = DLGPG_NOTE_WIDTH - DLGPG_HUD_YIELD_WIDTH;
         if (s_dlgpg.m_noteTextW > noteW) {
             noteW = s_dlgpg.m_noteTextW;
-            if (noteW > DLGPG_PAGE_WIDTH - (16 + DLGPG_BTN_WIDTH + 10))
-                noteW = DLGPG_PAGE_WIDTH - (16 + DLGPG_BTN_WIDTH + 10);
+            if (noteW > DLGPG_PAGE_WIDTH - (DLGPG_MARGIN_L +
+                                            DLGPG_BTN_WIDTH +
+                                            DLGPG_ROW_SPACING))
+                noteW = DLGPG_PAGE_WIDTH - (DLGPG_MARGIN_L +
+                                            DLGPG_BTN_WIDTH +
+                                            DLGPG_ROW_SPACING);
         }
-        if (noteW < 1)
-            noteW = 1;
-        XPrintf("[dlgpg] rootW=%d contentW=%d measured=%d noteW=%d\n",
-                rootW, contentW, s_dlgpg.m_noteTextW, noteW);
+    }
+    if (noteW < 1)
+        noteW = 1;
+    XPrintf("[dlgpg] rootW=%d contentW=%d measured=%d noteW=%d\n",
+            rootW, contentW, s_dlgpg.m_noteTextW, noteW);
+    {
+        int i;
         for (i = 0; i < DLGPG_ROW_COUNT; ++i) {
             if (!s_dlgpg.m_note[i])
                 continue;
+            /* 换行档位随根切换：窄根开自动断行并按断行实测定高——换行
+               后单行 34 定高会把后续行裁进下个条目带（定高须与断行同
+               源）；宽根关回单行定高 34 复刻桌面。先定宽后取实测，实
+               测即最终分配宽下的行数（列宽=行盒内宽，同源无偏差）。 */
+            XLabel_setWordWrap(s_dlgpg.m_note[i], compact);
             XWidget_setFixedWidth((XWidget*)s_dlgpg.m_note[i], noteW);
+            XWidget_setFixedHeight(
+                (XWidget*)s_dlgpg.m_note[i],
+                compact ? XLabel_heightForWidth(s_dlgpg.m_note[i], noteW)
+                        : DLGPG_BTN_HEIGHT);
         }
     }
 #endif
-    XWidget_setFixedWidth(content, contentW);
 #if XLAYOUT_ON && XLAYOUT_BOX_ON
-    /* 兜底重激活：内容宽度未变时 setFixedWidth 不触发 resize/activate，
-       显式跑一遍解算保证行盒按最新列宽分配（幂等，零开销量级）。 */
+    /* 行盒方向随档位翻转（setDirection 幂等，内部失效布局）：窄根纵
+       向单列（按钮在上、说明在下，件间距复用行盒 spacing），宽根水
+       平复刻桌面。 */
+    {
+        int i;
+        for (i = 0; i < DLGPG_ROW_COUNT; ++i) {
+            XBoxLayout_setDirection(
+                &s_dlgpg.m_rowLayouts[i],
+                compact ? XBoxLayoutDirection_TopToBottom
+                        : XBoxLayoutDirection_LeftToRight);
+        }
+    }
+#endif
+    /* 内容自然高分档：宽根恒为行区定尺（build 口径 520）；窄根按单列
+       档各件实高累加（按钮触控高 + 行盒间距 + 说明断行实测高 + 行距
+       DLGPG_ROW_GAP，末行免行距），根盒上下边距与 build 同口径——与
+       布局器解算同源，行区恰满不裁尾行。 */
+    if (compact) {
+        int i;
+        contentH = DLGPG_MARGIN_T + DLGPG_MARGIN_B;
+        for (i = 0; i < DLGPG_ROW_COUNT; ++i) {
+            contentH += btnH;
+#if DLGPG_LABELS_ON
+            if (s_dlgpg.m_note[i])
+                contentH += DLGPG_ROW_SPACING +
+                            XLabel_heightForWidth(s_dlgpg.m_note[i], noteW);
+#endif
+            if (i != DLGPG_ROW_COUNT - 1)
+                contentH += DLGPG_ROW_GAP;
+        }
+    } else {
+        contentH = DLGPG_PAGE_HEIGHT + 40;
+    }
+    XWidget_setFixedWidth(content, contentW);
+    XWidget_setFixedHeight(content, contentH);
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    /* 兜底重激活：内容定尺未变时 setFixed* 不触发 resize/activate，
+       显式跑一遍解算保证行盒按最新档位/列宽/方向分配（幂等，零开销
+       量级）。 */
     XLayout_activate((XLayout*)&s_dlgpg.m_pageLayout);
 #endif
     /* 收口后重新通告内容尺寸（内容尺寸驱动滚动范围，XScrollArea.c
-       xsa_updateWidgetGeometry 尾注；窄根恢复满宽时水平条随之撤销）。 */
+       xsa_updateWidgetGeometry 尾注；窄根档只剩纵向滚动，横条随之撤
+       销）。 */
     XAbstractScrollArea_setContentSize((XAbstractScrollArea*)scroll,
-                                       contentW, DLGPG_PAGE_HEIGHT + 40);
+                                       contentW, contentH);
 }
 
 /** @brief resizeEvent：先由基类重排视口/滚动条，再按新根宽让位收口。 */
@@ -695,7 +801,9 @@ static XProgressDialog* dlgpg_ensureProgress(void)
     if (s_dlgpg.m_progressCancel) {
         XPushButton_setText_2(s_dlgpg.m_progressCancel, "取消");
         XWidget_setFixedWidth((XWidget*)s_dlgpg.m_progressCancel, 96);
-        XWidget_setFixedHeight((XWidget*)s_dlgpg.m_progressCancel, 32);
+        /* 触控目标下限（手机口径 ~40 逻辑像素）：原 32 指尖难点中；
+           布局包络随之 +8，对话框 show 路径自定尺吸收（≥360x160）。 */
+        XWidget_setFixedHeight((XWidget*)s_dlgpg.m_progressCancel, 40);
         XObject_connect_1((XObject*)s_dlgpg.m_progressCancel,
                           (size_t)XPushButton_clicked_signal(NULL, false),
                           (XObject*)progress, dlgpg_progressCancelSlot,
@@ -911,9 +1019,11 @@ static void dlgpg_countCanceledSlot(XObject* receiver, XVarList* args)
  *           注）。
  *           [布局容器化 2026-10-17] 原手工 setGeometry（按钮 16,y,150,34
  *           /说明 176,y,568,34）退场：控件只留定尺（按钮 150x34、说明
- *           定高 34，宽由 relayout 按档位收放），原点/行距/列位由内容
- *           根垂直盒边距 (16,14,16,22)、行盒间距 10 与行盒底边距
- *           DLGPG_ROW_GAP 复刻；行盒对象存 m_rowLayouts[row]
+ *           定高 34——均为宽根档口径，宽根档宽也由 relayout 按档位收
+ *           放；窄根档由 dlgpg_scrollRelayout 翻纵向单列并改触控高/
+ *           换行定高），原点/行距/列位由内容根垂直盒边距宏
+ *           （DLGPG_MARGIN_L/T/R/B）、行盒间距 DLGPG_ROW_SPACING 与
+ *           行盒底边距 DLGPG_ROW_GAP 复刻；行盒对象存 m_rowLayouts[row]
  *           （addLayout 借用不取所有权，随页常驻）。 */
 static void dlgpg_addRow(int row, const char* btnText,
                          const char* noteText, XSlotFunc1 trigger)
@@ -974,7 +1084,7 @@ static void dlgpg_addRow(int row, const char* btnText,
     {
         XBoxLayout* rowBox = &s_dlgpg.m_rowLayouts[row];
         XBoxLayout_init(rowBox, XBoxLayoutDirection_LeftToRight);
-        XLayout_setSpacing((XLayout*)rowBox, 10);
+        XLayout_setSpacing((XLayout*)rowBox, DLGPG_ROW_SPACING);
         XLayout_setContentsMargins(
             (XLayout*)rowBox, 0, 0, 0,
             row == DLGPG_ROW_COUNT - 1 ? 0 : DLGPG_ROW_GAP);
@@ -1051,12 +1161,14 @@ XWidget* demo_page_dialogs_build(XWidget* parent,
        前截图：边距 (16,14,16,22) 复刻原首行原点 (16,14) 与末行底余量
        （520-498）；行盒（dlgpg_addRow 内装配）底边距 16=原行距 50-
        行高 34。SetNoConstraint：内容定尺由滚动区内容口径自持
-       （relayout 按 HUD 让位档收放宽度），布局激活不得反写最小尺寸。
+       （relayout 按宽度分档收放宽/高，窄根单列档另翻行盒方向），
+       布局激活不得反写最小尺寸。
        根盒初始化须先于 dlgpg_addRow（行盒经 addLayout 借挂根盒），
        挂接在行区装配完成后（attach 即激活解算一次）。 ---- */
     XBoxLayout_init(&s_dlgpg.m_pageLayout, XBoxLayoutDirection_TopToBottom);
     XLayout_setContentsMargins((XLayout*)&s_dlgpg.m_pageLayout,
-                               16, 14, 16, 22);
+                               DLGPG_MARGIN_L, DLGPG_MARGIN_T,
+                               DLGPG_MARGIN_R, DLGPG_MARGIN_B);
     XLayout_setSizeConstraint((XLayout*)&s_dlgpg.m_pageLayout,
                               XLayoutSizeConstraint_SetNoConstraint);
 #endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */

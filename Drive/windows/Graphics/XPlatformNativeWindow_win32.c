@@ -505,6 +505,12 @@ static bool xpwn_ensureInstance(void)
     wc.lpfnWndProc = xpwn_wndProc;
     wc.hInstance = g_xpwnInstance;
     wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
+    /* 窗口类图标：取 exe 资源首个图标（.rc `1 ICON` 惯例，与资源管理
+       器/任务栏同图源，对标 Qt win32 模板把图标编进 rc 后类注册即得）。
+       无图标资源的工程 LoadIconW 返回 NULL，注册照旧（系统通用图标
+       回落，与未接资源行为一致）。 */
+    wc.hIcon = LoadIconW(g_xpwnInstance, (LPCWSTR)(uintptr_t)1);
+    wc.hIconSm = wc.hIcon;
     wc.hbrBackground = NULL; /* 自绘窗口：不占用系统画刷，避免擦除闪烁。 */
     wc.lpszClassName = XPWN_CLASS_NAME;
     if (!RegisterClassExW(&wc)) {
@@ -4219,6 +4225,33 @@ bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title)
     entry = xpwn_findByXWindow(window);
     if (!entry || !entry->m_hwnd) return false;
     xpwn_applyTitle(entry->m_hwnd, title);
+    return true;
+}
+
+bool XPlatformNativeWindow_setIcon(XWindow* window, const XIcon* icon)
+{
+    /* Win32 窗口图标主通道=窗口类资源（exe `1 ICON`，ensureInstance 注册
+       时已全类生效，新建窗口自动带图标）；这里对既有窗口按需 WM_SETICON
+       刷新（对标 QWindowsWindow::setIcon 的 setWindowIcon 消息路径）。
+       运行期 XIcon→HICON 位图转换链路不引入：exe 资源即同一图源（rc
+       注入的 Test/XGuiDemo/res/xgui.ico），无资源时 LoadIconW 返回 NULL
+       ——NULL 句柄发送会**清除**窗口图标，故仅在取到时才发送。 */
+    HICON iconBig;
+    HICON iconSmall;
+    XWNPendingEntry* entry;
+    (void)icon;
+    if (!xpwn_ensureInstance()) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_hwnd) return false;
+    iconBig = LoadIconW(g_xpwnInstance, (LPCWSTR)(uintptr_t)1);
+    if (!iconBig) return false;
+    iconSmall = (HICON)LoadImageW(g_xpwnInstance, (LPCWSTR)(uintptr_t)1,
+                                  IMAGE_ICON,
+                                  GetSystemMetrics(SM_CXSMICON),
+                                  GetSystemMetrics(SM_CYSMICON),
+                                  LR_DEFAULTCOLOR);
+    SendMessageW(entry->m_hwnd, WM_SETICON, ICON_BIG, (LPARAM)iconBig);
+    SendMessageW(entry->m_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)iconSmall);
     return true;
 }
 

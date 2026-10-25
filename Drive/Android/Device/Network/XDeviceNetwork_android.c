@@ -50,17 +50,23 @@ void XAndroidNetwork_applyInterfaceConfig(XDeviceNetworkInterfaceConfig* outConf
         }
     }
 
-    /* 2) LinkProperties：v6 默认网关 + 系统实际下发的 DNS（可能含 v6）。
+    /* 2) LinkProperties：v6 默认网关 + 系统实际下发的 DNS（按族分开）。
      *    按活动网络接口名匹配，避免把别的网络的 DNS 串进来。 */
     {
         char v6gw[48];
-        char dns1t[48];
-        char dns2t[48];
+        char v4dns1[48];
+        char v4dns2[48];
+        char v6dns1[48];
+        char v6dns2[48];
+        char mac[32];
         char activeIface[IFNAMSIZ];
         if (XAndroid_netLinkInfo(v6gw, (int)sizeof(v6gw),
-                                 dns1t, (int)sizeof(dns1t),
-                                 dns2t, (int)sizeof(dns2t),
-                                 activeIface, (int)sizeof(activeIface)) &&
+                                 v4dns1, (int)sizeof(v4dns1),
+                                 v4dns2, (int)sizeof(v4dns2),
+                                 v6dns1, (int)sizeof(v6dns1),
+                                 v6dns2, (int)sizeof(v6dns2),
+                                 activeIface, (int)sizeof(activeIface),
+                                 mac, (int)sizeof(mac)) &&
             activeIface[0] && ifname && strcmp(activeIface, ifname) == 0) {
             uint8_t b6[16];
             struct in_addr a4;
@@ -68,21 +74,20 @@ void XAndroidNetwork_applyInterfaceConfig(XDeviceNetworkInterfaceConfig* outConf
                 XHostAddress_isNull(&outConfig->ipv6Gateway)) {
                 XHostAddress_setAddressIPv6(&outConfig->ipv6Gateway, b6);
             }
-            /* DNS 以 LinkProperties 优先（系统实际下发，含 v6）。 */
-            if (dns1t[0]) {
-                if (inet_pton(AF_INET, dns1t, &a4) == 1)
-                    XHostAddress_setAddressIPv4(&outConfig->dnsPrimary,
-                                                ntohl(a4.s_addr));
-                else if (inet_pton(AF_INET6, dns1t, b6) == 1)
-                    XHostAddress_setAddressIPv6(&outConfig->dnsPrimary, b6);
-            }
-            if (dns2t[0]) {
-                if (inet_pton(AF_INET, dns2t, &a4) == 1)
-                    XHostAddress_setAddressIPv4(&outConfig->dnsSecondary,
-                                                ntohl(a4.s_addr));
-                else if (inet_pton(AF_INET6, dns2t, b6) == 1)
-                    XHostAddress_setAddressIPv6(&outConfig->dnsSecondary, b6);
-            }
+            /* [DNS 分族 2026-10-25] 各族只写各族的槽——此前不分族地把
+             * 前两条 DNS 塞进 v4 的 dnsPrimary/dnsSecondary，v6 优先网络
+             * 下就把 IPv6 DNS 显示到了「IPv4 设置」里。 */
+            if (v4dns1[0] && inet_pton(AF_INET, v4dns1, &a4) == 1)
+                XHostAddress_setAddressIPv4(&outConfig->dnsPrimary,
+                                            ntohl(a4.s_addr));
+            if (v4dns2[0] && inet_pton(AF_INET, v4dns2, &a4) == 1)
+                XHostAddress_setAddressIPv4(&outConfig->dnsSecondary,
+                                            ntohl(a4.s_addr));
+            if (v6dns1[0] && inet_pton(AF_INET6, v6dns1, b6) == 1)
+                XHostAddress_setAddressIPv6(&outConfig->dnsV6Primary, b6);
+            if (v6dns2[0] && inet_pton(AF_INET6, v6dns2, b6) == 1)
+                XHostAddress_setAddressIPv6(&outConfig->dnsV6Secondary, b6);
+            (void)mac;
         }
     }
 }

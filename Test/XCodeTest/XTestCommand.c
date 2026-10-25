@@ -17,6 +17,7 @@
 #include "XSslTest.h"
 #include "XProtocolTest.h"
 #include "XLinkTest.h"
+#include "XLinkDemo.h"
 #include "XNtpTest.h"
 #include "XDdnsTest.h"
 #include "XSshTelnetClientTest.h"
@@ -33,10 +34,46 @@ static bool xtest_write(XConsoleShell* shell, const char* text)
     return shell && text && XConsoleShell_writeUtf8(shell, text);
 }
 
+/*
+ * 运行测试前暂停 Shell 的异步输入轮询，跑完再恢复。
+ *
+ * 原因：Shell 的异步输入跑在独立工作线程上，其事件循环与测试线程
+ * 共享**全局**的 IOCP 完成端口（XAbstractNetIoRing_global）。测试期间
+ * 工作线程会抢走属于测试用例套接字的网络完成包（如 XLink 回环用例的
+ * accept/connect 完成），导致用例等不到握手完成而误判失败（实测
+ * `Test xlink` 交互态 10 项失败，同一用例走 `--test xlink` 直跑全过）。
+ * 菜单路径（xtest_run_menu）本就做了同样的暂停/恢复，命名路径与全量
+ * 路径需同口径。
+ */
+#if XCONSOLE_SHELL_ASYNC_ON
+static bool xtest_async_pause(XConsoleShell* shell)
+{
+    return !shell || !XConsoleShell_isAsyncRunning(shell) ||
+           XConsoleShell_stopAsync(shell, UINT32_MAX);
+}
+
+static void xtest_async_resume(XConsoleShell* shell, bool restart)
+{
+    if (restart && shell)
+        (void)XConsoleShell_startAsync(shell);
+}
+#endif
+
 static int xtest_run_named(XConsoleShell* shell, const char* name)
 {
     bool result;
-    if (!name) return XConsoleResult_InvalidArgument;
+    bool restartAsync = false;
+#if XCONSOLE_SHELL_ASYNC_ON
+    restartAsync = shell && XConsoleShell_isAsyncRunning(shell);
+    if (!xtest_async_pause(shell))
+        return XConsoleResult_Failed;
+#endif
+    if (!name) {
+#if XCONSOLE_SHELL_ASYNC_ON
+        xtest_async_resume(shell, restartAsync);
+#endif
+        return XConsoleResult_InvalidArgument;
+    }
     if (strcmp(name, "xprocess") == 0) {
         result = XProcessTest_runAll();
     } else if (strcmp(name, "xconsole-shell") == 0) {
@@ -71,6 +108,20 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
     /* 质量门禁：内存泄漏 / 性能基准 / 边界与对抗。 */
     } else if (strcmp(name, "xlink-quality") == 0) {
         result = XLinkQualityTest_run() == 0;
+    /* 实战案例（本进程联调）：服务端角色 + 客户端角色跑真实 TCP 环回。 */
+    } else if (strcmp(name, "xlink-demo") == 0) {
+        result = XLinkDemo_run() == 0;
+    /* 全功能闸门：功能 152 + 质量门禁 41 + 本进程案例联调。 */
+    } else if (strcmp(name, "xlink-all") == 0) {
+        result = (XLinkTest_run() == 0)
+                 && (XLinkQualityTest_run() == 0)
+                 && (XLinkDemo_run() == 0);
+    /* 客户端包装（自动重连）：真实 TCP 环回全链路
+       （原 XLinkClientTest.c 已并入 XLinkTest.c 分组十四，声明在 XLinkTest.h）。 */
+#if XLINK_CLIENT_ON
+    } else if (strcmp(name, "xlink-client") == 0) {
+        result = XLinkClientTest_run() == 0;
+#endif
 #endif
 #if XPROTOCOL_ON && XNTP_ON
     /* XNtp SNTP 客户端（应用内校时）。 */
@@ -83,26 +134,50 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
         result = XDdnsTest_run() == 0;
 #endif
     } else {
+#if XCONSOLE_SHELL_ASYNC_ON
+        xtest_async_resume(shell, restartAsync);
+#endif
         return XConsoleResult_UnknownCommand;
     }
+#if XCONSOLE_SHELL_ASYNC_ON
+    xtest_async_resume(shell, restartAsync);
+#endif
     if (!xtest_write(shell, result ? "Test PASS\n" : "Test FAIL\n"))
         return XConsoleResult_IoError;
     return result ? XConsoleResult_Ok : XConsoleResult_Failed;
 }
-
 static int xtest_run_all(XConsoleShell* shell)
 {
-    bool process = XProcessTest_runAll();
-    bool shellTest = XConsoleShellTest_runAll();
-    bool backend = XConsoleShellBackendTest_runAll();
-    bool protocolClients = XSshTelnetClientTest_runAll();
-    bool cryptographic = XCryptographicPrimitiveTest_runAll();
-    bool ssl = XSslTest_runAll();
-    bool mqtt = XMqttTest_runAll();
-    bool result = process && shellTest && backend && protocolClients && cryptographic && ssl && mqtt;
+    bool process;
+    bool shellTest;
+    bool backend;
+    bool protocolClients;
+    bool cryptographic;
+    bool ssl;
+    bool mqtt;
+    bool result;
+    bool restartAsync = false;
+#if XCONSOLE_SHELL_ASYNC_ON
+    restartAsync = shell && XConsoleShell_isAsyncRunning(shell);
+    if (!xtest_async_pause(shell))
+        return XConsoleResult_Failed;
+#endif
+    process = XProcessTest_runAll();
+    shellTest = XConsoleShellTest_runAll();
+    backend = XConsoleShellBackendTest_runAll();
+    protocolClients = XSshTelnetClientTest_runAll();
+    cryptographic = XCryptographicPrimitiveTest_runAll();
+    ssl = XSslTest_runAll();
+    mqtt = XMqttTest_runAll();
+    result = process && shellTest && backend && protocolClients && cryptographic && ssl && mqtt;
 #if XPROTOCOL_ON && XLINK_ON
-    /* XLink 私有协议回归并入全量闸门。 */
+    /* XLink 私有协议回归并入全量闸门：功能 + 质量 + 本进程案例联调。 */
     result = result && (XLinkTest_run() == 0);
+    result = result && (XLinkQualityTest_run() == 0);
+    result = result && (XLinkDemo_run() == 0);
+#endif
+#if XCONSOLE_SHELL_ASYNC_ON
+    xtest_async_resume(shell, restartAsync);
 #endif
     if (!xtest_write(shell, result ? "Test all PASS\n" : "Test all FAIL\n"))
         return XConsoleResult_IoError;

@@ -33,6 +33,10 @@
  *                 XMainWindow    "打开主窗口"按钮 → 独立顶层主窗口
  *                                （XMenuBar+菜单、中央 XLabel、左右
  *                                XDockWidget）；重复点击 show 已有实例。
+ *             - adapt：宽度分档唯一入口（2026-10-25）——根宽 <480 竖屏
+ *               单列档：双列行盒翻垂直、右列边距收段间距、可点击钮抬
+ *               40 触控高、超宽说明行换短文案（档位留档防重入）；宽档
+ *               逐项还原装配口径，桌面视觉不变。
  *             - autotest：全程非阻塞（不进模态循环/事件等待），事件经
  *               XObject_event_base 直发（与真实输入同路径），输出
  *               "XGuiAutoTest: [PASS]/[FAIL] 中文描述"，返回失败断言数
@@ -263,7 +267,8 @@ typedef struct AdvState
     XLabel* shortcutStatus;            /**< 快捷键触发状态行。 */
 #endif
     /* 2026-10-03 自适应重排登记（原为 build 局部变量；2026-10-17 页内
-     * 布局容器化后 adapt 空实现，几何全交页根 XBoxLayout 分配）。 */
+     * 布局容器化后几何全交页根 XBoxLayout 分配；2026-10-25 竖屏分档在
+     * adapt 按根宽跨档套用，见 adv_applyLayoutTier）。 */
     XPushButton* insertButton;         /**< 「键入文本」按钮（左列首行右）。 */
     XLabel* topHint;                   /**< 橡皮筋提示行（左列）。 */
     XLabel* completerCaption;          /**< 「补全输入」标题。 */
@@ -285,6 +290,9 @@ typedef struct AdvState
     XBoxLayout bottomRow;    /**< 底部行盒（弹簧推 SizeGrip 贴右下角）。 */
     XBoxLayout colRows[14];  /**< 单条目行盒池（左 7+右 6 简单行，底边距=行距）。 */
     int rowCount;            /**< 行盒池游标（adv_rowAdd 递增）。 */
+    bool singleCol;          /**< 当前宽度分档留档：build 装配即宽档口径，
+                                  false 与装配一致 → 首拍同档 adapt 短路
+                                  零开销（拖拽期每像素一轮 adapt）。 */
 #endif
 } AdvState;
 
@@ -370,6 +378,114 @@ static void adv_rowAdd(XBoxLayout* col, XWidget* w, int rowGap)
     XLayout_setContentsMargins((XLayout*)row, 0, 0, 0, rowGap);
     XBoxLayout_addWidget(row, w);
     XBoxLayout_addLayout(col, (XLayout*)row);
+}
+
+/* ==================== 竖屏分档（宽度分档自适应） ================== */
+/* 断点/触控高与远程客户端页（RC_STACK_MAX_W=480/RC_TOUCH_H=40）同口径：
+ * 页根有效宽 <480 视为手机竖屏单列档；可点击控件统一抬到 40 逻辑像素
+ * （手机触控目标下限）。 */
+#define ADV_STACK_MAX_W 480
+#define ADV_TOUCH_H 40
+
+#if ADV_LABEL_ON
+/** @brief 文本行显式首选宽=当前文案自然宽（高保持单行 18）。
+ *  @details 文本行的布局条目最小宽/首选宽均为 0——XLabel 不向控件字段
+ *           回写自身度量（XWidget_minimumSizeHint 直读存储字段，标签类
+ *           未发布），行宽全由列宽裁决，文案比行宽长就画出控件右缘、
+ *           被绘制裁剪吃掉（XLabel 绘制按自身矩形设裁剪，宽屏实测丢
+ *           「藏）」）。给足自然宽后行盒协商保住整行；换档文案后须重
+ *           调（adv_applyLayoutTier）。 */
+static void adv_setNatHint(XLabel* label)
+{
+    XSize nat;
+    if (!label) return;
+    nat = XLabel_sizeHint(label);
+    adv_setHint((XWidget*)label, nat.width, 18);
+}
+#endif
+
+/** @brief 竖屏分档套用（仅跨档时由 adapt 调用；逐项幂等可重入）。
+ *  @details [2026-10-25 竖屏分档] 真机 400 逻辑宽截图体检三账：右列
+ *           「全局快捷键」段沿用宽屏双列坐标，在 400 宽下被窗口右缘
+ *           硬裁；说明行文本比行宽长画出控件右缘（见 adv_setNatHint）；
+ *           按钮行高 24~30 低于手机触控下限。单列档收敛：
+ *           - 双列行盒翻垂直（setDirection 条目顺序不变，右列段落整
+ *             体落到左列之下独占整行宽，不再与左列争 400 宽）；
+ *           - 右列左缘 24/顶缘 36 宽档口径（列间距+列首下沉）收成段
+ *             间距 8，整行宽尽数让给文本；
+ *           - 可点击按钮统一抬 ADV_TOUCH_H；富文本预览固定高 232 收
+ *             180——预览态内部可滚，纵轴预算让给新落的右列段，底部
+ *             SizeGrip 行不被顶出窗口；
+ *           - 会超宽的说明行换竖屏短文案并重给自然首选宽；
+ *             shortcutStatus 仅在仍是另一档初始文案时换档——已被
+ *             adv_shortcutSlot 改写为触发反馈时不回写，反馈不随分档
+ *             丢失。
+ *           宽档逐项还原 build 装配口径（含原文案），桌面 1000x700
+ *           视觉不变。 */
+static void adv_applyLayoutTier(bool single)
+{
+    int h;
+    XBoxLayout_setDirection(&s_adv.contentRow,
+                            single ? XBoxLayoutDirection_TopToBottom
+                                   : XBoxLayoutDirection_LeftToRight);
+    XLayout_setContentsMargins((XLayout*)&s_adv.rightCol,
+                               single ? 0 : 24, single ? 8 : 36, 0, 0);
+#if ADV_TEXTEDIT_ON
+    if (s_adv.textEdit) {
+        h = single ? 180 : 232;
+        XWidget_setFixedHeight((XWidget*)s_adv.textEdit, h);
+        adv_setHint((XWidget*)s_adv.textEdit, 196, h);
+    }
+#endif
+#if ADV_LABEL_ON
+    if (s_adv.topHint) {
+        XLabel_setText_2(s_adv.topHint,
+                         single ? "按住拖拽 → 橡皮筋选框"
+                                : "按住左键拖拽 → 橡皮筋选框（松开隐藏）");
+        adv_setNatHint(s_adv.topHint);
+    }
+    if (s_adv.kseCaption)
+        XLabel_setText_2(s_adv.kseCaption,
+                         single ? "快捷键捕获（点击后按键）:"
+                                : "快捷键捕获（点击后按键，试 Ctrl+O）:");
+    if (s_adv.shortcutCaption) {
+        XLabel_setText_2(s_adv.shortcutCaption,
+                         single ? "全局快捷键: 按 T 触发"
+                                : "全局快捷键: 按 T 触发 (对标 Ctrl+T)");
+        adv_setNatHint(s_adv.shortcutCaption);
+    }
+    if (s_adv.shortcutStatus) {
+        const char* wideInit = "XShortcut 未触发 (键 T, 单键码承载)";
+        const char* narrowInit = "XShortcut 未触发（键 T）";
+        if (XString_equals_utf8(XLabel_text(s_adv.shortcutStatus),
+                                single ? narrowInit : wideInit,
+                                XChar_CaseSensitive))
+            XLabel_setText_2(s_adv.shortcutStatus,
+                             single ? wideInit : narrowInit);
+        adv_setNatHint(s_adv.shortcutStatus);
+    }
+#endif
+    h = single ? ADV_TOUCH_H : 26;
+    if (s_adv.insertButton) {
+        XWidget_setFixedHeight((XWidget*)s_adv.insertButton, h);
+        adv_setHint((XWidget*)s_adv.insertButton, 100, h);
+    }
+#if ADV_FOCUSFRAME_ON
+    h = single ? ADV_TOUCH_H : 30;
+    if (s_adv.focusTarget) {
+        XWidget_setFixedHeight((XWidget*)s_adv.focusTarget, h);
+        adv_setHint((XWidget*)s_adv.focusTarget, 150, h);
+    }
+#endif
+    h = single ? ADV_TOUCH_H : 28;
+    if (s_adv.splashButton) {
+        XWidget_setFixedHeight((XWidget*)s_adv.splashButton, h);
+        adv_setHint((XWidget*)s_adv.splashButton, 130, h);
+    }
+    if (s_adv.mainWinButton) {
+        XWidget_setFixedHeight((XWidget*)s_adv.mainWinButton, h);
+        adv_setHint((XWidget*)s_adv.mainWinButton, 150, h);
+    }
 }
 #endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 
@@ -816,10 +932,14 @@ XWidget* demo_page_advanced_build(XWidget* parent,
                                         (XWidget*)page, 0);
         s_adv.topHint = hint;
         if (hint) {
+            /* 原手写 (12,196,430,18)，高固定 18 复刻原行高；宽交行盒。
+             * 文案[2026-10-25 收短]：「页面空白处」前缀退场——自然宽比
+             * 宽档左列伸缩分配宽长出两字，尾「藏）」被控件右缘裁掉
+             * （XLabel 绘制按自身矩形设裁剪，旧注「不裁剪溢出文本」与
+             * 实测不符）；收短后自然宽进行盒首选即可整行呈现（自然首
+             * 选宽见装配段 adv_setNatHint）。 */
             XLabel_setText_2(hint,
-                             "页面空白处按住左键拖拽 → 橡皮筋选框（松开隐藏）");
-            /* 原手写 (12,196,430,18)：高固定 18 复刻原行高；宽交左列
-             * 布局器铺满（XLabel 不裁剪溢出文本，窄窗表现不劣于旧版）。 */
+                             "按住左键拖拽 → 橡皮筋选框（松开隐藏）");
             XWidget_setFixedHeight((XWidget*)hint, 18);
             XWidget_show((XWidget*)hint);
         }
@@ -1101,15 +1221,24 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     /* 显式首选尺寸与 setFixed 对齐（理由见 adv_setHint @details）。 */
     adv_setHint((XWidget*)s_adv.textEdit, 196, 232);
     adv_setHint((XWidget*)s_adv.insertButton, 100, 26);
+    /* 会超宽的文本行首选宽=文案自然宽（理由见 adv_setNatHint）；其余
+     * 说明行文案短于列宽下限，首选 0 交列伸缩即可。换档文案后的自然
+     * 首选宽由 adv_applyLayoutTier 重给。 */
+#if ADV_LABEL_ON
+    adv_setNatHint(s_adv.topHint);
+    adv_setNatHint(s_adv.shortcutCaption);
+    adv_setNatHint(s_adv.shortcutStatus);
+#else
     adv_setHint((XWidget*)s_adv.topHint, 0, 18);
+    adv_setHint((XWidget*)s_adv.shortcutCaption, 0, 18);
+    adv_setHint((XWidget*)s_adv.shortcutStatus, 0, 18);
+#endif
     adv_setHint((XWidget*)s_adv.completerCaption, 0, 18);
     adv_setHint((XWidget*)s_adv.completerEdit, 220, 26);
     adv_setHint((XWidget*)s_adv.completerStatus, 0, 18);
     adv_setHint((XWidget*)s_adv.kseCaption, 0, 18);
     adv_setHint((XWidget*)s_adv.kse, 240, 28);
     adv_setHint((XWidget*)s_adv.kseStatus, 0, 18);
-    adv_setHint((XWidget*)s_adv.shortcutCaption, 0, 18);
-    adv_setHint((XWidget*)s_adv.shortcutStatus, 0, 18);
     adv_setHint((XWidget*)s_adv.focusTarget, 150, 30);
     adv_setHint((XWidget*)s_adv.splashButton, 130, 28);
     adv_setHint((XWidget*)s_adv.mainWinButton, 150, 28);
@@ -1189,15 +1318,34 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     return (XWidget*)page;
 }
 
-/** @brief 自适应重排（xgui_demo_pages.h 契约）：保留签名，空实现。
- * @details 2026-10-17 页内布局容器化：几何分配全权移交页根 XBoxLayout
- *          （build 一次装配）——XStackedLayout 重贴根几何时经
- *          resize→XLayout_activate 自动重排，左列 45/右列 55 伸缩、
- *          SizeGrip 贴右下角等原 adapt 语义由布局器持续保持，本函数
- *          无事可做；主文件 demo_layout_content 调用点保持不动。 */
+/** @brief 自适应重排（xgui_demo_pages.h 契约）：宽度分档唯一入口。
+ * @details 几何分配全权在页根 XBoxLayout（build 一次装配；XStackedLayout
+ *          重贴根几何时经 resize→XLayout_activate 自动重排，左列 45/
+ *          右列 55 伸缩、SizeGrip 贴右下角等装配语义由布局器持续保持），
+ *          本函数只负责跨档：按页根有效宽分档（<ADV_STACK_MAX_W=竖屏
+ *          单列档；主文件 demo_layout_content 在切页/resize/startup/
+ *          停靠全路径的几何分配之后调用，根尺寸保证新鲜），档位留档
+ *          s_adv.singleCol，同档短路零开销；跨档套用后显式 activate
+ *          一次让改档立即落几何——adapt 不在事件循环泵内，等
+ *          LayoutRequest 投递会晚一拍。宽 0（占位壳未定尺）时等下一
+ *          轮有效宽再套档。 */
 void demo_page_advanced_adapt(XWidget* page)
 {
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    int w;
+    bool single;
+    if (!s_adv.page || page != (XWidget*)s_adv.page)
+        return; /* 占位壳/错页（防错口径与 autotest 的 -1 同源，静默）。 */
+    w = XWidget_width(page);
+    if (w <= 0) return;
+    single = w < ADV_STACK_MAX_W;
+    if (single == s_adv.singleCol) return;
+    s_adv.singleCol = single;
+    adv_applyLayoutTier(single);
+    XLayout_activate((XLayout*)&s_adv.rootLayout);
+#else
     (void)page;
+#endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 }
 
 /* ==================== 页面自测（契约接口） ======================== */

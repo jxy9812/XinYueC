@@ -1560,15 +1560,15 @@ void XConsoleShell_init(XConsoleShell* self, const XConsoleShellIo* io)
     memset(self->m_asyncProcesses, 0, sizeof(self->m_asyncProcesses));
 #endif
 #if XCONSOLE_SHELL_MULTI_SESSION_ON
-    {
-        size_t si;
-        for (si = 0; si < XCONSOLE_SHELL_MAX_SESSIONS - 1u; ++si) {
-            if (self->m_sessions[si]) {
-                XMemory_free(self->m_sessions[si], XCLASS_DEFAULT_MEMORY_TYPE);
-                self->m_sessions[si] = NULL;
-            }
-        }
-    }
+    /* 附加会话槽必须**清零**而非释放：init 的契约是「self 指向尚未初始化的
+     * 存储」（见 XConsoleShell.h），故槽内指针是未初始化内存（MSVC Debug CRT
+     * 的 malloc 填充值 0xCD），对其 free 即 free 野指针 → 堆损坏 → 进程
+     * abort（实测：启动即中断，退出码 3；xconsole-shell / xconsole-shell-
+     * backend / 全量闸门均在该行崩掉）。旧的「释放槽位」写法只对「重复
+     * init 已初始化对象」成立，与契约冲突。
+     * 附加会话的生命周期由 openSession（懒分配）/ closeSession 与
+     * deinit（VXConsoleShell_deinit）成对负责，init 不参与。 */
+    memset(self->m_sessions, 0, sizeof(self->m_sessions));
     self->m_sessionCount = 1;
     self->m_nextSessionId = 2;
 #endif
@@ -1788,7 +1788,10 @@ void XConsoleShell_init(XConsoleShell* self, const XConsoleShellIo* io)
 
 XConsoleShell* XConsoleShell_create_ex(XMemoryType memory, const XConsoleShellIo* io)
 {
-    XConsoleShell* self = (XConsoleShell*)XMemory_malloc(sizeof(XConsoleShell), memory);
+    /* 用 calloc 而非 malloc：init 的契约是「self 指向尚未初始化的存储」，
+     * 但 init 内部按「已清零」的前提处理指针槽（见 init 内 m_sessions 注释）。
+     * calloc 保证堆路径下指针槽确为 NULL，杜绝未初始化内存被当作指针使用。 */
+    XConsoleShell* self = (XConsoleShell*)XMemory_calloc(1, sizeof(XConsoleShell), memory);
     if (!self) return NULL;
     XConsoleShell_init(self, io);
     Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);

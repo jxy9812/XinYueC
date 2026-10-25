@@ -361,6 +361,14 @@ static int VXWidgetItem_heightForWidth(const XLayoutItem* self, int width)
     if (!item || !item->m_widget) return -1;
     if (!VXWidgetItem_hasHeightForWidth(self)) return -1;
     height = XWidget_heightForWidth(item->m_widget, width);
+    /* [对齐 Qt 6.8.3 QWidgetItem::heightForWidth] hfw 结果先钳最大高、
+     * 再钳最小高（min 优先）：fixed-height + wrap 组合下标签 hfw 按
+     * 换行宽算出的行数与用户定高无关，不钳则 min>max 打架、盒布局
+     * qGeomCalc 分配错乱（真机说明行/状态行叠字实证 2026-10-25）。 */
+    if (height > XWidget_maximumHeight(item->m_widget))
+        height = XWidget_maximumHeight(item->m_widget);
+    if (height < XWidget_minimumHeight(item->m_widget))
+        height = XWidget_minimumHeight(item->m_widget);
     return height < 0 ? VXWidgetItem_sizeHint(self).height : height;
 }
 

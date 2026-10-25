@@ -10,8 +10,9 @@
  *             镜像视图进页面容器布局, 本地控件全部可达; 旧版全页镜像
  *             盖死设置控件的缺陷见 build/xgui-remote-live/run_pairs.sh
  *             RS-d 阻塞记录。2026-10-17 布局容器化: 页内手写坐标排布
- *             全部删除, 几何改由页根盒式布局协商, 见装配段与 adapt
- *             空实现注记）：
+ *             全部删除, 几何改由页根盒式布局协商; 2026-10-25 adapt 增
+ *             竖屏单列档: 页根宽 <RC_STACK_MAX_W 时翻垂直单列并抬触控
+ *             目标到 40 逻辑像素, 见 adapt 段注记）：
  *              - 视图区（页根水平布局左段, 伸缩占满余宽, 普通容器控件）:
  *                XGuiClient 1:1 镜像视图宿主。FB_META 后客户端
  *                setFixedSize(远端尺寸)（冻结语义保留, 布局按最值约束
@@ -98,6 +99,15 @@
 /** @brief 控制列定宽（布局化后=列容器固定宽; 分割条回调仍按此报默认
  *         列宽, 拖宽语义随 adapt 收空一并冻结）。 */
 #define RC_COL_W 252
+/** @brief 竖屏单列档阈值（页根有效宽低于此值切单列, 见 adapt）。手机
+ *         竖屏逻辑宽 360~440 主流, 左右切分下视图段余宽（宽-272）被压
+ *         成百像素级窄条——占位文本两端裁切、左条整条空白; 桌面
+ *         1000x700 与平板横宽远高于此, 分档不影响。 */
+#define RC_STACK_MAX_W 480
+/** @brief 移动端触控目标下限（逻辑像素, 竖屏单列档套用）。真机口径:
+ *         24~32px 高的按钮/下拉/复选框在触屏上点不准（可点控件高度
+ *         普遍低于 40 的审计项）; 宽屏档维持装配原高, 桌面不动。 */
+#define RC_TOUCH_H 40
 
 /* ==================== CLI 初始默认值（进程级, build 前预置） ============ */
 
@@ -170,6 +180,8 @@ static struct
     XWidget*    m_split;      /**< 视图区/控制列分割条（拖宽/双击收列/单击展）。 */
     int         m_colW;       /**< 控制列宽（分割条可拖 200..420，默认 RC_COL_W）。 */
     bool        m_colCollapsed; /**< 控制列收起态（细条单击展开）。 */
+    bool        m_stackLayout; /**< 竖屏单列档生效中（宽度分档见 adapt;
+                                *   留档避免每轮 adapt 重复套档）。 */
     XWidget*    m_topLevel;   /**< 主窗口顶层（借用; build 时的 parent）。 */
     XGuiRemoteProfileId m_profile; /**< 界面档位（连接后经 PROFILE_SET 协商）。 */
 
@@ -1116,16 +1128,125 @@ static void rc_splitToggle(void* owner)
     demo_page_remote_client_adapt(s_rc.m_root);
 }
 
-/** @brief 自适应重排（xgui_demo_pages.h 契约）：2026-10-17 布局容器化
- * @details 页内手写坐标排布已全部删除, 几何改由页根盒式布局协商：
- *          视图区=伸缩段吃掉全部余宽/高, 控制列=定宽容器贴右, 分割条
- *          =定宽 6px 条目, 镜像视图由视图宿主垂直布局铺满（FIT 随宿主
- *          缩放/1:1 定径放行溢出）; 悬浮会话条附着矩形由
- *          rc_syncSessionBarView 轻同步。本函数保留签名、实现收空——
- *          主文件 demo_layout_content 与分割条回调调用点按契约不动。 */
+/** @brief 套用指定档位的布局口径（越档时由 adapt 调用一次）。
+ *  @details 宽屏档逐项恢复 build 装配段原定径（列定宽/字段 220/原行高）,
+ *           保证桌面 1000x700 与装配现状逐像素同口径; 竖屏单列档则:
+ *           - 页根水平布局翻转垂直单列——镜像视图居首吃余高、占位文本
+ *             与信箱画面不再被压进窄条, 控制列跟在其下;
+ *           - 分割条隐藏（单列下左右拖宽无意义, 6px magic 空白条目由
+ *             setDirection 自动翻成横纵间隙, 条目顺序不变）;
+ *           - 控制列解除定宽铺满全宽并补呼吸边距, 竖屏无分割条入口,
+ *             进入前若整列处于收起态须强制展开, 否则表单永久不可达;
+ *           - 字段列解除 220 定宽, 行内既有伸缩因子把余宽让给字段,
+ *             400 宽下行内不再留大片尾空白;
+ *           - 可点击控件（按钮/下拉/复选框）统一抬到 RC_TOUCH_H 触控
+ *             目标; IP/端口/口令编辑框维持 24 原高——单列档纵轴预算
+ *             紧张（列内容高 ≈530）, 再抬会把视图区压剩不足百像素。 */
+static void rc_applyLayoutTier(bool stack)
+{
+    int hBtn;
+    int hCombo;
+    int hCheck;
+    int hTouch;
+    XWidget* fields[5];
+    int i;
+
+    /* 页根: 水平左右切分 ↔ 垂直单列。setDirection 对 magic 空白自动
+     * 横纵翻转、条目顺序不变——视图区仍居首, 竖屏档即「画布在上吃
+     * 余高、设置列在下铺全宽」。 */
+    XBoxLayout_setDirection(&s_rc.m_layRoot,
+                            stack ? XBoxLayoutDirection_TopToBottom
+                                  : XBoxLayoutDirection_LeftToRight);
+
+    if (s_rc.m_split) {
+        if (stack) XWidget_hide(s_rc.m_split);
+        else XWidget_show(s_rc.m_split);
+    }
+
+    if (s_rc.m_col) {
+        if (stack) {
+            if (s_rc.m_colCollapsed) {
+                s_rc.m_colCollapsed = false;
+                if (s_rc.m_split)
+                    DemoSplitter_setState(s_rc.m_split, 1, false);
+            }
+            XWidget_show(s_rc.m_col);
+            XWidget_setMinimumSize(s_rc.m_col, 0, 0);
+            XWidget_setMaximumSize(s_rc.m_col, XWIDGET_MAX_SIZE,
+                                   XWIDGET_MAX_SIZE);
+            XLayout_setContentsMargins((XLayout*)&s_rc.m_layCol, 8, 8, 8, 0);
+        }
+        else {
+            XWidget_setFixedWidth(s_rc.m_col, RC_COL_W);
+            XLayout_setContentsMargins((XLayout*)&s_rc.m_layCol, 0, 8, 0, 0);
+        }
+    }
+
+    fields[0] = (XWidget*)s_rc.m_hostEdit;
+    fields[1] = (XWidget*)s_rc.m_portEdit;
+    fields[2] = (XWidget*)s_rc.m_profileCombo;
+    fields[3] = (XWidget*)s_rc.m_authCombo;
+    fields[4] = (XWidget*)s_rc.m_passwordEdit;
+    for (i = 0; i < (int)(sizeof(fields) / sizeof(fields[0])); ++i) {
+        if (!fields[i]) continue;
+        if (stack) {
+            XWidget_setMinimumSize(fields[i], 0, 0);
+            XWidget_setMaximumSize(fields[i], XWIDGET_MAX_SIZE,
+                                   XWIDGET_MAX_SIZE);
+        }
+        else {
+            XWidget_setFixedWidth(fields[i], 220);
+        }
+    }
+
+    hBtn   = stack ? RC_TOUCH_H : 28;
+    hCombo = stack ? RC_TOUCH_H : 26;
+    hCheck = stack ? RC_TOUCH_H : 24;
+    hTouch = stack ? RC_TOUCH_H : 32;
+    if (s_rc.m_connectBtn)
+        XWidget_setFixedHeight((XWidget*)s_rc.m_connectBtn, hBtn);
+    if (s_rc.m_disconnectBtn)
+        XWidget_setFixedHeight((XWidget*)s_rc.m_disconnectBtn, hBtn);
+    if (s_rc.m_profileCombo)
+        XWidget_setFixedHeight((XWidget*)s_rc.m_profileCombo, hCombo);
+    if (s_rc.m_authCombo)
+        XWidget_setFixedHeight((XWidget*)s_rc.m_authCombo, hCombo);
+    if (s_rc.m_tlsCheck)
+        XWidget_setFixedHeight((XWidget*)s_rc.m_tlsCheck, hCheck);
+    if (s_rc.m_udpCheck)
+        XWidget_setFixedHeight((XWidget*)s_rc.m_udpCheck, hCheck);
+    if (s_rc.m_touchBtn)
+        XWidget_setFixedHeight((XWidget*)s_rc.m_touchBtn, hTouch);
+
+    /* 视图区矩形已随档变化: 悬浮会话条附着矩形立即跟随（1s 统计定时
+     * 器兜底, 此处先同步避免连接期跨档时工具条悬旧位至一秒）。 */
+    rc_syncSessionBarView();
+}
+
+/** @brief 自适应重排（xgui_demo_pages.h 契约）：宽度分档唯一入口。
+ *  @details [2026-10-17 布局容器化] 页内手写坐标排布已全部删除, 几何由
+ *           页根盒式布局协商; [2026-10-25 竖屏分档] 在此按页根有效宽
+ *           分档（主文件 demo_layout_content 在切页/resize/startup/
+ *           停靠全路径的几何分配之后调用本函数, 根尺寸保证新鲜）:
+ *           - 宽屏档（≥RC_STACK_MAX_W）: 保持装配口径——视图区|分割条|
+ *             控制列水平切分, 桌面 1000x700 视觉零变化;
+ *           - 竖屏单列档（<RC_STACK_MAX_W, 手机 ≈400 逻辑宽）: 页根翻
+ *             垂直单列+触控目标抬 RC_TOUCH_H, 见 rc_applyLayoutTier。
+ *           档位留档 m_stackLayout, 未越档时短路零开销（拖拽期每像素
+ *           一轮 adapt, 布局器自管同档内几何）; 宽 0（几何未分配）时
+ *           等下一轮有效宽再套档。 */
 void demo_page_remote_client_adapt(XWidget* page)
 {
-    (void)page; /* 布局容器接管几何: 无需手工重排（签名契约保留）。 */
+    int w;
+    bool stack;
+    if (!s_rc.m_ready || !s_rc.m_root) return;
+    if (page && page != s_rc.m_root) return;
+    w = XWidget_width(s_rc.m_root);
+    if (w <= 0) return;
+    stack = w < RC_STACK_MAX_W;
+    if (stack == s_rc.m_stackLayout) return;
+    s_rc.m_stackLayout = stack;
+    rc_applyLayoutTier(stack);
 }
 
 /* ==================== 首帧自动连接（--remote-client 预置） ============= */

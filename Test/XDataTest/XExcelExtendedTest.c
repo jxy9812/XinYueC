@@ -83,6 +83,14 @@ static const char* xexcel_asset_path(const char* name)
     }
     snprintf(path, sizeof(path), "../assets/%s", name);
     XString_assign_utf8(&candidate, path);
+    if (XFile_exists_static(&candidate)) {
+        XClassDeinit(&candidate);
+        return path;
+    }
+    /* 直跑口径为 bin/Debug（仓库构建输出目录），仓库根的 assets/ 需回退
+       三级才能命中（与 XExcelTest.c 的三级回退口径一致）。 */
+    snprintf(path, sizeof(path), "../../assets/%s", name);
+    XString_assign_utf8(&candidate, path);
     bool exists = XFile_exists_static(&candidate);
     XClassDeinit(&candidate);
     return exists ? path : "";

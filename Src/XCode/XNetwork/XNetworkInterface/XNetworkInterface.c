@@ -496,6 +496,8 @@ static void VXNetworkInterfaceConfig_deinit(XNetworkInterfaceConfig* config)
     XClassDeinit(&config->m_dhcpServer);
     XClassDeinit(&config->m_dnsPrimary);
     XClassDeinit(&config->m_dnsSecondary);
+    XClassDeinit(&config->m_dnsV6Primary);
+    XClassDeinit(&config->m_dnsV6Secondary);
 }
 
 static void VXNetworkInterfaceConfig_copy(XNetworkInterfaceConfig* dest,
@@ -519,6 +521,8 @@ static void VXNetworkInterfaceConfig_copy(XNetworkInterfaceConfig* dest,
     XClassCopy(&dest->m_dhcpServer, &src->m_dhcpServer);
     XClassCopy(&dest->m_dnsPrimary, &src->m_dnsPrimary);
     XClassCopy(&dest->m_dnsSecondary, &src->m_dnsSecondary);
+    XClassCopy(&dest->m_dnsV6Primary, &src->m_dnsV6Primary);
+    XClassCopy(&dest->m_dnsV6Secondary, &src->m_dnsV6Secondary);
     dest->m_ifIndex = src->m_ifIndex;
     dest->m_ipv6PrefixLength = src->m_ipv6PrefixLength;
     dest->m_dhcpEnabled = src->m_dhcpEnabled;
@@ -549,6 +553,8 @@ static void VXNetworkInterfaceConfig_move(XNetworkInterfaceConfig* dest,
     XClassMove(&dest->m_dhcpServer, &src->m_dhcpServer);
     XClassMove(&dest->m_dnsPrimary, &src->m_dnsPrimary);
     XClassMove(&dest->m_dnsSecondary, &src->m_dnsSecondary);
+    XClassMove(&dest->m_dnsV6Primary, &src->m_dnsV6Primary);
+    XClassMove(&dest->m_dnsV6Secondary, &src->m_dnsV6Secondary);
     dest->m_ifIndex = src->m_ifIndex;
     dest->m_ipv6PrefixLength = src->m_ipv6PrefixLength;
     dest->m_dhcpEnabled = src->m_dhcpEnabled;
@@ -576,6 +582,8 @@ void XNetworkInterfaceConfig_init(XNetworkInterfaceConfig* config)
     XHostAddress_init(&config->m_dhcpServer);
     XHostAddress_init(&config->m_dnsPrimary);
     XHostAddress_init(&config->m_dnsSecondary);
+    XHostAddress_init(&config->m_dnsV6Primary);
+    XHostAddress_init(&config->m_dnsV6Secondary);
     config->m_ifIndex = 0;
     config->m_ipv6PrefixLength = 0;
     config->m_dhcpEnabled = false;
@@ -609,6 +617,8 @@ static void XNI_assignDeviceConfig(XNetworkInterfaceConfig* dest,
     XClassCopy(&dest->m_dhcpServer, &src->dhcpServer);
     XClassCopy(&dest->m_dnsPrimary, &src->dnsPrimary);
     XClassCopy(&dest->m_dnsSecondary, &src->dnsSecondary);
+    XClassCopy(&dest->m_dnsV6Primary, &src->dnsV6Primary);
+    XClassCopy(&dest->m_dnsV6Secondary, &src->dnsV6Secondary);
     dest->m_dhcpEnabled = src->dhcpEnabled;
     dest->m_operUp = src->operUp;
     dest->m_ipv6PrefixLength = src->ipv6PrefixLength;

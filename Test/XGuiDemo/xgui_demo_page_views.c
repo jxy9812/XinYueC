@@ -45,6 +45,17 @@
  *             autotest 经 XObject_event_base 直发鼠标事件（与真实输入
  *             同路径），断言控件状态 getter，输出
  *             "XGuiAutoTest: [PASS]/[FAIL] 中文描述"，返回失败断言数。
+ *
+ *             【宽/紧凑宽度分档（2026-10-25）】真机 400 逻辑宽竖屏截图
+ *             体检：宽档四列横排在窄根下自第二列起整体裁出视口——大表
+ *             格被 380 定宽小表格挤成零宽（内容不可见且无滚动可达）、
+ *             小节标题按列宽截断、表头段带只剩段 0；行高 24 亦低于手机
+ *             40px 触控目标。根宽 <560 转紧凑档：五小节「标题+视图」
+ *             成对纵排全宽单列（小表格行转纵向，小表格按「表头+3 行」
+ *             定高全展、大表格吃余高），可点击行高统一提到 40；≥560
+ *             逐位还原宽档装配（桌面 1000x700 现状不变）。分档统一走
+ *             views_applyWidthTier（幂等），根 resize 与 adapt 契约双
+ *             入口共用。
  * @note       文件所有权：本文件为页面独立翻译单元，不改契约头、主
  *             文件与 Src/ 任何文件。
  * @author     XinYueC 团队
@@ -472,9 +483,18 @@ static struct
     XBoxLayout viewsRow;        /**< 视图行（水平：列表/视图/树/表头）。 */
     XBoxLayout midSection;      /**< 小表格段（纵向：标题 + 小表格行）。 */
     XBoxLayout fileRow;         /**< 小表格行（水平：小表格+大表格余宽）。 */
+    /* 紧凑档（根宽 <560 竖屏口径）四个小节盒：「标题+视图」成对纵排
+     * 全宽单列，替代宽档四列横排（宽档下窄根自第二列起裁出视口）。
+     * 盒惰性初始化一次，跨档翻转复用（子控件随档在行盒/小节盒间迁移）。 */
+    XBoxLayout secList;         /**< 紧凑档小节盒：XListWidget 标题+视图。 */
+    XBoxLayout secView;         /**< 紧凑档小节盒：XListView 标题+视图。 */
+    XBoxLayout secTree;         /**< 紧凑档小节盒：XTreeWidget 标题+视图。 */
+    XBoxLayout secHeader;       /**< 紧凑档小节盒：XHeaderView 标题+段带。 */
     XTableWidget* bigTable;     /**< 主文件后挂大表格（m_tableWidget 借用）。 */
     bool bigTableAdopted;       /**< 大表格已收编进 fileRow 守卫。 */
     bool buildDone;             /**< build 装配完成守卫（其后新增子=大表格）。 */
+    bool secBoxesReady;         /**< 紧凑档小节盒已初始化守卫（惰性一次）。 */
+    bool compact;               /**< 当前宽度档：true=紧凑纵排 false=宽档横排。 */
 #endif
 } g_views;
 
@@ -492,13 +512,13 @@ static void views_setState(const char* text)
 /* ==================== 页面根控件子类（大表格收编载体，2026-10-17） ====================
  *
  * 主文件 DemoWin_create 在本页 build 之后才把大表格（m_tableWidget）
- * 以本页根为父挂入（自选项卡页打散归位），而契约只有 build/adapt/
- * autotest 三个入口、adapt 已退化为空实现——故以根控件子类的事件
- * 入口拦截 CHILD_ADDED，把 build 完成后新增的子控件（即大表格）收编
- * 进小表格行（贴其右侧、stretch 吃余宽），列宽随根宽定版（对标原
- * demo_layout_content「条目视图页补充大表格」段的摆位/列宽逻辑，该段
- * 已自主文件删除）。事件拦截写法与 XGroupBox.c VXGroupBox_event 同型
- * （本框架子对象事件经事件入口分派而不走 EXObject_ChildEvent 槽位）。
+ * 以本页根为父挂入（自选项卡页打散归位），build 装配段已收工、adapt
+ * 契约又不携带新增子控件——故以根控件子类的事件入口拦截 CHILD_ADDED，
+ * 把 build 完成后新增的子控件（即大表格）收编进小表格行（贴其右侧、
+ * stretch 吃余宽），列宽随根宽定版（对标原 demo_layout_content「条目
+ * 视图页补充大表格」段的摆位/列宽逻辑，该段已自主文件删除）。事件拦
+ * 截写法与 XGroupBox.c VXGroupBox_event 同型（本框架子对象事件经事件
+ * 入口分派而不走 EXObject_ChildEvent 槽位）。
  */
 
 XCLASS_DEFINE_BEGING(DemoViewsRootWidget)
@@ -511,6 +531,33 @@ typedef struct DemoViewsRootWidget
 } DemoViewsRootWidget;
 
 #if XLAYOUT_ON
+/* ==================== 宽/紧凑宽度分档（真机竖屏口径，2026-10-25） ====================
+ *
+ * 真机 400 逻辑宽竖屏截图体检（见文件头「宽/紧凑宽度分档」节）：宽档
+ * 四列横排在窄根下自第二列起整体裁出视口，行高 24 低于手机触控目标。
+ * 按根宽分双档：≥560 维持宽档（桌面现状逐位不变），<560 转紧凑档纵排
+ * 单列 + 行高 40。分档判定挂根宽（页面根几何由堆叠布局分配，根 resize
+ * 与 adapt 契约两路都携带新鲜宽度），统一入口 views_applyWidthTier。
+ */
+
+/** @brief 宽/紧凑分档阈值：宽档四列横排（3 伸缩列 + 176 定宽树列 +
+ *         间距边距）需约 ≥560 根宽标题才不截断；手机横屏（~800）落
+ *         宽档、竖屏（400）落紧凑档。 */
+#define VIEWS_COMPACT_MAX_W 560
+/** @brief 紧凑档统一行高：手机可点击行触控目标下限（40 逻辑像素）。 */
+#define VIEWS_COMPACT_ROW_H 40
+/** @brief 宽档行高还原值 = 各视图库默认（XListView/XTreeView/XTableView
+ *         缺省同为 24），桌面现状不动。 */
+#define VIEWS_WIDE_ROW_H 24
+/** @brief 宽档树列/小表格定宽与表头段带高（build 宽档装配原值，翻档
+ *         逐位还原用）。 */
+#define VIEWS_WIDE_TREE_W 176
+#define VIEWS_WIDE_TABLE_W 380
+#define VIEWS_WIDE_HEADER_H 26
+/** @brief 紧凑档表头段带高：段可点击（sectionClicked），随触控目标一并
+ *         提到 40。 */
+#define VIEWS_COMPACT_HEADER_H 40
+
 /** @brief 大表格列宽随可视宽定版（逐式对标原 demo_layout_content 段：
  *         可视宽≥372 四列定宽恰满；≥200 保「名称+类型」主列比例，其余
  *         列横滚可达；<200 不动（原窄根换行铺位已由布局器静态摆位取
@@ -520,9 +567,14 @@ static void views_bigTableRefit(void)
     XTableWidget* table = g_views.bigTable;
     int view;
     if (!g_views.bigTableAdopted || !table) return;
-    /* 大表格宽 = 根宽 − 左右缘 16 − 小表格 380 − 段距 16（fileRow 摆位
-     * 式，与原段 tx=404/tw=rootW-412 逐像素同源）；可视宽再让纵条带 12。 */
-    view = XWidget_width(g_views.root) - 412 - 12;
+    /* 大表格宽按档换算：宽档 = 根宽 − 左右缘 16 − 小表格 380 − 段距 16
+     * （fileRow 摆位式，与原段 tx=404/tw=rootW-412 逐像素同源）；紧凑档
+     * 小表格行转纵向，大表格满列宽 = 根宽 − 左右缘 16。可视宽再让纵条
+     * 带 12。 */
+    if (g_views.compact)
+        view = XWidget_width(g_views.root) - 16 - 12;
+    else
+        view = XWidget_width(g_views.root) - 412 - 12;
     if (view >= 372) {
         XTableView_setColumnWidth((XTableView*)table, 0, 128);
         XTableView_setColumnWidth((XTableView*)table, 1, 72);
@@ -537,18 +589,194 @@ static void views_bigTableRefit(void)
     }
 }
 
+/** @brief 可点击行度量随档定版（幂等，每拍重申无害）：列表/模型视图/
+ *         树/双表格行高宽档还原库默认 24（桌面现状不动）、紧凑档提到
+ *         40 手机触控目标；表头段带同为可点击元素随档 26/40。 */
+static void views_applyRowMetrics(bool compact)
+{
+    int rowH = compact ? VIEWS_COMPACT_ROW_H : VIEWS_WIDE_ROW_H;
+    XListView_setRowHeight((XListView*)&g_views.list, rowH);
+    XListView_setRowHeight((XListView*)&g_views.view, rowH);
+    XTreeView_setRowHeight((XTreeView*)&g_views.tree, rowH);
+    XTableView_setRowHeight((XTableView*)&g_views.table, rowH);
+    if (g_views.bigTableAdopted && g_views.bigTable)
+        XTableView_setRowHeight((XTableView*)g_views.bigTable, rowH);
+    XWidget_setFixedHeight((XWidget*)&g_views.header,
+                           compact ? VIEWS_COMPACT_HEADER_H
+                                   : VIEWS_WIDE_HEADER_H);
+}
+
+/** @brief 切紧凑档装配：五小节「标题+视图」成对纵排全宽单列。
+ * @details 子控件从宽档 capRow/viewsRow 摘出挂入四个小节盒（盒体惰性
+ *          初始化一次、跨档复用），宽档两行盒整体从页根让位（addLayout
+ *          挂入的借用条目，取出不释放；stretch 平行数组随取出/插入同步
+ *          迁移，见 VXBoxLayout_takeAt）；小表格行转纵向——树列/小表格
+ *          解除宽档定宽改随列全宽（窄根下 380 定宽会把行内兄弟挤成零
+ *          宽，大表格不可见的根因），小表格高按「表头+3 行」定版（3 行
+ *          数据全展不出内滚条），大表格吃余高。仅在档位翻转时调用，
+ *          子控件归属由档位守卫唯一确定（摘挂顺序不可倒置）。 */
+static void views_layoutCompact(void)
+{
+    if (!g_views.secBoxesReady) {
+        XBoxLayout_init(&g_views.secList, XBoxLayoutDirection_TopToBottom);
+        XBoxLayout_init(&g_views.secView, XBoxLayoutDirection_TopToBottom);
+        XBoxLayout_init(&g_views.secTree, XBoxLayoutDirection_TopToBottom);
+        XBoxLayout_init(&g_views.secHeader, XBoxLayoutDirection_TopToBottom);
+        XLayout_setSpacing((XLayout*)&g_views.secList, 4);
+        XLayout_setSpacing((XLayout*)&g_views.secView, 4);
+        XLayout_setSpacing((XLayout*)&g_views.secTree, 4);
+        XLayout_setSpacing((XLayout*)&g_views.secHeader, 4);
+        g_views.secBoxesReady = true;
+    }
+    /* 先摘后挂：此刻四个标题/视图必挂宽档行盒（档位守卫保证）。 */
+    XLayout_removeWidget((XLayout*)&g_views.capRow,
+                         (XWidget*)&g_views.capList);
+    XLayout_removeWidget((XLayout*)&g_views.capRow,
+                         (XWidget*)&g_views.capView);
+    XLayout_removeWidget((XLayout*)&g_views.capRow,
+                         (XWidget*)&g_views.capTree);
+    XLayout_removeWidget((XLayout*)&g_views.capRow,
+                         (XWidget*)&g_views.capHeader);
+    XLayout_removeWidget((XLayout*)&g_views.viewsRow,
+                         (XWidget*)&g_views.list);
+    XLayout_removeWidget((XLayout*)&g_views.viewsRow,
+                         (XWidget*)&g_views.view);
+    XLayout_removeWidget((XLayout*)&g_views.viewsRow,
+                         (XWidget*)&g_views.tree);
+    XLayout_removeWidget((XLayout*)&g_views.viewsRow,
+                         (XWidget*)&g_views.header);
+    XBoxLayout_addWidget(&g_views.secList, (XWidget*)&g_views.capList);
+    XBoxLayout_addWidgetEx(&g_views.secList, (XWidget*)&g_views.list, 1, 0);
+    XBoxLayout_addWidget(&g_views.secView, (XWidget*)&g_views.capView);
+    XBoxLayout_addWidgetEx(&g_views.secView, (XWidget*)&g_views.view, 1, 0);
+    XBoxLayout_addWidget(&g_views.secTree, (XWidget*)&g_views.capTree);
+    XBoxLayout_addWidgetEx(&g_views.secTree, (XWidget*)&g_views.tree, 1, 0);
+    XBoxLayout_addWidget(&g_views.secHeader, (XWidget*)&g_views.capHeader);
+    XBoxLayout_addWidget(&g_views.secHeader, (XWidget*)&g_views.header);
+    /* 宽档两行盒让位，四小节插回页根头部（midSection/状态行保持原位）。 */
+    XLayout_removeItem((XLayout*)&g_views.rootBox,
+                       (XLayoutItem*)&g_views.capRow);
+    XLayout_removeItem((XLayout*)&g_views.rootBox,
+                       (XLayoutItem*)&g_views.viewsRow);
+    XBoxLayout_insertLayout(&g_views.rootBox, 0, (XLayout*)&g_views.secList,
+                            1);
+    XBoxLayout_insertLayout(&g_views.rootBox, 1, (XLayout*)&g_views.secView,
+                            1);
+    XBoxLayout_insertLayout(&g_views.rootBox, 2, (XLayout*)&g_views.secTree,
+                            1);
+    XBoxLayout_insertLayout(&g_views.rootBox, 3, (XLayout*)&g_views.secHeader,
+                            0);
+    XBoxLayout_setDirection(&g_views.fileRow,
+                            XBoxLayoutDirection_TopToBottom);
+    XWidget_setMinimumWidth((XWidget*)&g_views.tree, 0);
+    XWidget_setMaximumWidth((XWidget*)&g_views.tree, XWIDGET_MAX_SIZE);
+    XWidget_setMinimumWidth((XWidget*)&g_views.capTree, 0);
+    XWidget_setMaximumWidth((XWidget*)&g_views.capTree, XWIDGET_MAX_SIZE);
+    XWidget_setMinimumWidth((XWidget*)&g_views.table, 0);
+    XWidget_setMaximumWidth((XWidget*)&g_views.table, XWIDGET_MAX_SIZE);
+    XWidget_setFixedHeight((XWidget*)&g_views.table,
+                           g_views.table.m_headerHeight +
+                           XTableView_rowHeight(
+                               (XTableView*)&g_views.table) * 3);
+}
+
+/** @brief 切宽档装配：四小节摘回 capRow/viewsRow 行盒，逐位还原 build
+ *         宽档装配的伸展/对齐/定宽，小表格行转回横向。
+ * @details 对齐位与伸展挂在布局的条目包装上，removeWidget 连同包装一并
+ *          销毁，故重挂时须逐一重申（stretch 数组虽随取出/插入同步，
+ *          条目是新建的，显式传参最稳）。 */
+static void views_layoutWide(void)
+{
+    XLayout_removeWidget((XLayout*)&g_views.secList,
+                         (XWidget*)&g_views.capList);
+    XLayout_removeWidget((XLayout*)&g_views.secList, (XWidget*)&g_views.list);
+    XLayout_removeWidget((XLayout*)&g_views.secView,
+                         (XWidget*)&g_views.capView);
+    XLayout_removeWidget((XLayout*)&g_views.secView, (XWidget*)&g_views.view);
+    XLayout_removeWidget((XLayout*)&g_views.secTree,
+                         (XWidget*)&g_views.capTree);
+    XLayout_removeWidget((XLayout*)&g_views.secTree, (XWidget*)&g_views.tree);
+    XLayout_removeWidget((XLayout*)&g_views.secHeader,
+                         (XWidget*)&g_views.capHeader);
+    XLayout_removeWidget((XLayout*)&g_views.secHeader,
+                         (XWidget*)&g_views.header);
+    XLayout_removeItem((XLayout*)&g_views.rootBox,
+                       (XLayoutItem*)&g_views.secList);
+    XLayout_removeItem((XLayout*)&g_views.rootBox,
+                       (XLayoutItem*)&g_views.secView);
+    XLayout_removeItem((XLayout*)&g_views.rootBox,
+                       (XLayoutItem*)&g_views.secTree);
+    XLayout_removeItem((XLayout*)&g_views.rootBox,
+                       (XLayoutItem*)&g_views.secHeader);
+    XBoxLayout_insertLayout(&g_views.rootBox, 0, (XLayout*)&g_views.capRow,
+                            0);
+    XBoxLayout_insertLayout(&g_views.rootBox, 1, (XLayout*)&g_views.viewsRow,
+                            1);
+    /* 标题行：列表/视图/表头伸缩 27、树列定宽 176（build 宽档原口径）。 */
+    XBoxLayout_addWidgetEx(&g_views.capRow, (XWidget*)&g_views.capList, 27, 0);
+    XBoxLayout_addWidgetEx(&g_views.capRow, (XWidget*)&g_views.capView, 27, 0);
+    XBoxLayout_addWidgetEx(&g_views.capRow, (XWidget*)&g_views.capTree, 0, 0);
+    XWidget_setFixedWidth((XWidget*)&g_views.capTree, VIEWS_WIDE_TREE_W);
+    XBoxLayout_addWidgetEx(&g_views.capRow, (XWidget*)&g_views.capHeader, 27,
+                           0);
+    /* 视图行：同构四列，表头 h26 顶对齐（build 宽档原口径）。 */
+    XBoxLayout_addWidgetEx(&g_views.viewsRow, (XWidget*)&g_views.list, 27, 0);
+    XBoxLayout_addWidgetEx(&g_views.viewsRow, (XWidget*)&g_views.view, 27, 0);
+    XBoxLayout_addWidgetEx(&g_views.viewsRow, (XWidget*)&g_views.tree, 0, 0);
+    XWidget_setFixedWidth((XWidget*)&g_views.tree, VIEWS_WIDE_TREE_W);
+    XBoxLayout_addWidgetEx(&g_views.viewsRow, (XWidget*)&g_views.header, 27,
+                           XAlignment_Top);
+    /* 小表格行转回横向：小表格定宽 380、高交还根布局弹性分配（撑满改造
+     * 口径：撤固定高随段双向撑满）。 */
+    XBoxLayout_setDirection(&g_views.fileRow,
+                            XBoxLayoutDirection_LeftToRight);
+    XWidget_setFixedWidth((XWidget*)&g_views.table, VIEWS_WIDE_TABLE_W);
+    XWidget_setMinimumHeight((XWidget*)&g_views.table, 0);
+    XWidget_setMaximumHeight((XWidget*)&g_views.table, XWIDGET_MAX_SIZE);
+    XBoxLayout_setStretchFactorLayout(&g_views.rootBox,
+                                      (XLayout*)&g_views.midSection, 1);
+}
+
+/** @brief 宽/紧凑分档统一入口（幂等）：根宽过阈值翻档重排，行度量与
+ *         大表格列宽每拍重申。
+ * @details 根 resizeEvent 与 adapt 契约双入口共用（重复无害）。翻档改
+ *          的多是定尺/条目归属，setFixed 不失效布局、摘挂也只标脏——
+ *          须显式 invalidate+activate 让新装配本拍落几何（根 resizeEvent
+ *          派发于根布局 activate 之前，此时根宽已是新值，activate 以新
+ *          宽解算；同 Modbus 从站页定尺纪律）。 */
+static void views_applyWidthTier(void)
+{
+    bool compact;
+    if (!g_views.root || !g_views.buildDone) return;
+    compact = XWidget_width(g_views.root) > 0 &&
+              XWidget_width(g_views.root) < VIEWS_COMPACT_MAX_W;
+    views_applyRowMetrics(compact);
+    if (compact != g_views.compact) {
+        g_views.compact = compact;
+        if (compact)
+            views_layoutCompact();
+        else
+            views_layoutWide();
+        XLayout_invalidate((XLayout*)&g_views.rootBox);
+        XLayout_activate((XLayout*)&g_views.rootBox);
+    }
+    views_bigTableRefit();
+}
+
 /** @brief 收编主文件后挂的本页子控件（大表格）：插到小表格之后，stretch
  *         吃行内余宽（宽随页面根自适应）；[撑满改造 2026-10-17] 撤
  *         h124 固定高——原定高防内容 sizeHint(~186) 顶高行挤偏小表格，
  *         现行高由根布局 stretch 分配（小表格段 1 份弹性高），sizeHint
- *         不再驱动行高，两表随行撑满（固定高反而被居中留缝）。 */
+ *         不再驱动行高，两表随行撑满（固定高反而被居中留缝）。
+ *         收编时点晚于 build，页根可能已是紧凑档：走分档统一入口补齐
+ *         行高/列宽与行向，不再只刷列宽。 */
 static void views_adoptBigTable(XObject* child)
 {
     if (g_views.bigTableAdopted || !child || !child->m_is_widget) return;
     g_views.bigTable = (XTableWidget*)child;
     XBoxLayout_insertWidgetEx(&g_views.fileRow, 1, (XWidget*)child, 1, 0);
     g_views.bigTableAdopted = true;
-    views_bigTableRefit();
+    views_applyWidthTier();
 }
 #endif /* XLAYOUT_ON */
 
@@ -568,13 +796,16 @@ static bool VDemoViewsRootWidget_event(XWidget* self, XEvent* event)
 }
 
 /** @brief 根控件尺寸变化：重定大表格列宽（本槽派发于根布局 activate
- *         之前，故列宽按根宽预测式换算——与 fileRow 摆位式同源）。 */
+ *         之前，故列宽按根宽预测式换算——与 fileRow 摆位式同源）；并按
+ *         新根宽过档（真机竖屏口径：宽/紧凑分档见 views_applyWidthTier
+ *         节注）——堆叠几何随 contentHost resize 自动重激活的路径不经过
+ *         adapt 契约漏斗，窄根翻档须在此兜住。 */
 static void VDemoViewsRootWidget_resizeEvent(XWidget* self, XEvent* event)
 {
     XClass_Parent(XWidget, EXWidget_ResizeEvent,
                   void (*)(XWidget*, XEvent*))((XWidget*)self, event);
 #if XLAYOUT_ON
-    views_bigTableRefit();
+    views_applyWidthTier();
 #endif
 }
 
@@ -891,15 +1122,22 @@ XWidget* demo_page_views_build(XWidget* parent,
     return root;
 }
 
-/** @brief 自适应重排（xgui_demo_pages.h 契约）：布局容器化后空实现。
- * @details 2026-10-17 起页内排布由根控件挂盒式布局器自管（装配见
- *          demo_page_views_build），几何随堆叠布局分配的根尺寸自动
- *          重排，本函数不再手写坐标；主文件 demo_layout_content 的
- *          契约调用点原样保留，大表格摆位/列宽逻辑已迁入本文件
- *          （DemoViewsRootWidget 节）。page 与登记根不符时亦无操作。 */
+/** @brief 自适应重排（xgui_demo_pages.h 契约）：宽/紧凑宽度分档重排。
+ * @details 页内摆位 2026-10-17 起由根控件挂盒式布局器自管（装配见
+ *          demo_page_views_build），几何随堆叠布局分配的根尺寸自动重排，
+ *          手写坐标不再；2026-10-25 起本契约恢复职责——主文件
+ *          demo_layout_content 在切页/resize/startup/停靠全路径携带
+ *          新鲜根宽调用进来，这里按根宽分宽/紧凑双档重排（幂等统一
+ *          入口 views_applyWidthTier；根 resizeEvent 为另一兜底入口）。
+ *          大表格摆位/列宽逻辑在本文件（DemoViewsRootWidget 节）。
+ *          page 与登记根不符时亦无操作。 */
 void demo_page_views_adapt(XWidget* page)
 {
+#if XLAYOUT_ON
+    if (page == g_views.root) views_applyWidthTier();
+#else
     (void)page;
+#endif
 }
 
 /* ==================== 自动测试（事件注入 + getter 断言） ==================== */
