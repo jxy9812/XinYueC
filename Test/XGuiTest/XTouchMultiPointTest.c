@@ -481,7 +481,9 @@ int XTouchMultiPointTest_run(void)
                        XTOUCHPOINT_STATE_RELEASED, 5160);
 
         /* 4.6 长折认领：控件接受 LongPress 判定→右键序列免合成（右键/
-         *    CONTEXT_MENU 均为零），左键序列照旧远偏移关断。 */
+         *    CONTEXT_MENU 均为零）、远偏移释放免合成（挂着的左键 press
+         *    续持——长按重复类控件跨长按间隔不断流，2026-10-25 根修）；
+         *    END 在当前位置配对 RELEASE 收口（认领序列不再悬挂）。 */
         {
             TpGestureSink gs3;
             memset(&gs3, 0, sizeof(gs3));
@@ -499,8 +501,9 @@ int XTouchMultiPointTest_run(void)
                       "4.6 long-claim：LongPress 认领后免右键/免菜单");
             tp_gestureStep(xw, XEVENT_TYPE_TOUCH_END, 8, 200, 200,
                            XTOUCHPOINT_STATE_RELEASED, 6950);
-            tp_expect(gs3.m_press == 1 && gs3.m_release == 0,
-                      "4.6 long-claim：仅 BEGIN 压合成（远偏移释放不落靶、END 零合成）");
+            tp_expect(gs3.m_press == 1 && gs3.m_release == 1 &&
+                      gs3.m_lastReleaseX == 200 && gs3.m_lastReleaseY == 200,
+                      "4.6 long-claim：press 续持且 END 按当前位置 RELEASE 收口");
             XClassDeinit(&gs3.m_base);
         }
         tp_gestureStep(xw, XEVENT_TYPE_TOUCH_CANCEL, 8, 5, 5,

@@ -3488,15 +3488,26 @@ static bool xkb_activateButton(XVirtualKeyboard* self, uint32_t buttonId)
 
 /* ==================== 定时器（长按重复 + 守护轮询） ==================== */
 
-/** @brief 停止长按重复定时器（幂等）。 */
-/* [死码清理] xkb_stopRepeat 已删除：全仓无调用点（见审计清单）。
- */
+/** @brief 停止长按重复定时器（幂等；release/hide/析构统一收口）。
+ *  @details 分发器 startTimer 注册的是周期型定时器（XTimerData 零初始
+ *           化 singleShot=false，到期无条件重挂）——只清标志/覆盖 id 不
+ *           杀表则旧表永久空转（每按键泄漏一颗 600ms/50ms 周期表，
+ *           fd 表慢性耗尽，2026-10-25 长按劣化次根因）。 */
+static void xkb_stopRepeat(XVirtualKeyboard* self)
+{
+    if (!self || self->m_repeatTimer == XTIMER_INVALID_ID) return;
+    XObject_killTimer((XObject*)self, self->m_repeatTimer);
+    self->m_repeatTimer = XTIMER_INVALID_ID;
+}
+
 /** @brief 按下可重复键时启动长按计时（先 400ms 起振；先停旧计时再判
  *         NO_REPEAT，避免前一按键的挂起计时串键）。 */
 static void xkb_startRepeat(XVirtualKeyboard* self)
 {
     const char* label;
     if (!self || self->m_pressedKey == XKEYBOARD_BUTTON_NONE) return;
+    /* 先停旧计时（周期表不杀即永久空转；防串键）。 */
+    xkb_stopRepeat(self);
     if ((int)self->m_keyCtrls[self->m_pressedKey] &
         (int)XKEYBOARD_CTRL_NO_REPEAT)
         return;
@@ -3523,20 +3534,41 @@ static void xkb_startRepeat(XVirtualKeyboard* self)
            (label[0] >= 'A' && label[0] <= 'Z'))))
         return;
     /* 节拍单一事实源=engine 头宏（600/50；测试注入覆写同源生效）——
-       「重复从面板 400/100 移入 engine 600/50」的节拍承载点。 */
-    self->m_repeatTimer = XObject_startTimer_ms(
-        (XObject*)self, XVIRTUALKEYBOARD_REPEAT_FIRST_MS,
-        XTimerType_CoarseTimer);
+       「重复从面板 400/100 移入 engine 600/50」的节拍承载点。首拍分
+       档：桌面真实鼠标 600ms 档；触摸合成 press 再分两档——退格**无
+       选区**走删除快档 500ms（连删是刻意按住的动作，起振要快，2026-
+       10-25 真机反馈「启动连删有点慢」；慢 tap「删两字符」代价可接
+       受=主流键盘口径），退格**有选区**（按下激活已删整段选区，快档
+       首拍对慢 tap 再删一字符=症状③投诉形态回归）与字母键（慢 tap
+       双字母=键速丢字形态回归）走保守触摸档 1000ms。中/EN、数字键
+       2026-10-04 同现象按禁复收口。稳态间隔各档同源 50ms 不分档。 */
+    if (self->m_pressFromTouch) {
+        self->m_repeatTimer = XObject_startTimer_ms(
+            (XObject*)self,
+            (XStrcmp(label, XKEYBOARD_LBL_BACKSPACE) == 0 &&
+             !self->m_pressHadSelection)
+                ? XVIRTUALKEYBOARD_TOUCH_DELETE_REPEAT_FIRST_MS
+                : XVIRTUALKEYBOARD_TOUCH_REPEAT_FIRST_MS,
+            XTimerType_CoarseTimer);
+    } else {
+        self->m_repeatTimer = XObject_startTimer_ms(
+            (XObject*)self, XVIRTUALKEYBOARD_REPEAT_FIRST_MS,
+            XTimerType_CoarseTimer);
+    }
 }
 
 /** @brief 长按 tick：重发当前按住键并切换到 50ms 重复间隔（重启定时器
- *         即换挡，无需相位计数）。 */
+ *         即换挡，无需相位计数）。重启前先杀旧表——分发器定时器为周
+ *         期型（不杀即到期重挂），逐 tick 覆盖 id 会按 20 颗/秒泄漏
+ *         （2026-10-25 次根因）；未武装早退同步停表防僵尸空转。 */
 static void xkb_repeatTick(XVirtualKeyboard* self)
 {
     if (self->m_pressedKey == XKEYBOARD_BUTTON_NONE || !self->m_pressArmed) {
+        xkb_stopRepeat(self);
         return;
     }
     xkb_activateButton(self, self->m_pressedKey);
+    xkb_stopRepeat(self);
     self->m_repeatTimer = XObject_startTimer_ms(
         (XObject*)self, XVIRTUALKEYBOARD_REPEAT_MS, XTimerType_CoarseTimer);
 }
@@ -4124,7 +4156,10 @@ static void VXKeyboard_resizeEvent(XWidget* self, XEvent* event)
 
 /** @brief 鼠标按下：命中→武装（按下触发键立即激活；CLICK_TRIG/POPOVER
  *         键留释放触发）+ 可重复键起振长按计时 + 隐式抓取（按住滑动
- *         出键的取消/恢复语义依赖移动事件，对标 XLineEdit 按压抓取）。 */
+ *         出键的取消/恢复语义依赖移动事件，对标 XLineEdit 按压抓取）。
+ *         DBL_CLICK 同按下处理（XWidget 默认双击槽转发 mousePressEvent，
+ *         Qt qwidget.cpp:9579-9582 口径——触摸双拍第二拍合成 DBL_CLICK，
+ *         只认 PRESS 会使快速两拍丢一拍，2026-10-25 键速丢字根修）。 */
 static void VXKeyboard_mousePressEvent(XWidget* self, XEvent* event)
 {
     XVirtualKeyboard* kb = (XVirtualKeyboard*)self;
@@ -4132,8 +4167,14 @@ static void VXKeyboard_mousePressEvent(XWidget* self, XEvent* event)
     XPoint pos;
     uint32_t id;
     if (!kb || !event ||
-        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
+        (XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS &&
+         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK)) return;
     me = (XMouseEvent*)event;
+    /* 按下来源登记（触摸合成/真实鼠标）：长按首拍分档依据——触摸合成
+       press（XWidget_synthesizeMouseFromTouch 置 m_synthesized）走触摸
+       档 1000ms，桌面真实鼠标走 600ms 档（xkb_startRepeat）。DBL_CLICK
+       转发负载同为合成来源，登记口径一致。 */
+    kb->m_pressFromTouch = XMouseEvent_isSynthesized(me);
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) {
         XEvent_ignore(event);
         return;
@@ -4214,6 +4255,21 @@ static void VXKeyboard_mousePressEvent(XWidget* self, XEvent* event)
     kb->m_pressArmed = (id != XKEYBOARD_BUTTON_NONE);
     if (id != XKEYBOARD_BUTTON_NONE) {
         int ctrl = (int)kb->m_keyCtrls[id];
+        /* 选区感知登记（激活**前**——激活即消费选区，此后查到的恒
+         * 空）：触摸按下退格且焦点控件有选区=「选文字→点退格删整
+         * 段」形态，长按首拍必须走保守触摸档防慢 tap 双删（症状③）；
+         * 无选区=刻意连删起步，走删除快档快速起振。仅触摸+退格查询
+         * （selectedText 经输入法查询链，有拷贝成本，不进热路径）。 */
+        kb->m_pressHadSelection = false;
+        if (kb->m_pressFromTouch && kb->m_keyLabels[id] &&
+            XStrcmp(kb->m_keyLabels[id], XKEYBOARD_LBL_BACKSPACE) == 0) {
+            XVirtualKeyboardInputContext* selCtx = xkb_contextOf(kb);
+            XString* selTxt = selCtx
+                ? XVirtualKeyboardInputContext_selectedText(selCtx) : NULL;
+            kb->m_pressHadSelection =
+                selTxt && XString_size_base(selTxt) > 0;
+            if (selTxt) XClassDelete(selTxt);
+        }
         if ((ctrl & (int)XKEYBOARD_CTRL_CLICK_TRIG) == 0 &&
             (ctrl & (int)XKEYBOARD_CTRL_POPOVER) == 0) {
             /* 默认按下触发（无 CLICK_TRIG 且无 POPOVER）。 */
@@ -4364,6 +4420,10 @@ static bool xkb_touchDragClaimAt(XVirtualKeyboard* self, int x, int y)
  *         栏空白即接受，框架转左键按住拖动仿真（press 续持+MOVE 随行
  *         +RELEASE 收口），本控件既有紧凑拖移管线（m_compactDrag：press
  *         起拖+grabMouse、move 求 delta 移窗、release 收尾）原样驱动；
+ *         长按（LongPress）判定在按键武装态认领——框架免远偏移释放杀
+ *         按住（挂着的合成左键 press 续持，END/Abort 收口位配对释放），
+ *         长按连删跨 800ms 长按间隔不断流（2026-10-25 长按退格中断根
+ *         修；未武装=面板空白长按仍走框架右键兜底语义）；
  *         其余手势种类/形态不认领（tap 走按键面合成鼠标语义）。 */
 static void VXKeyboard_touchDragEvent(XWidget* self, XEvent* event)
 {
@@ -4371,6 +4431,12 @@ static void VXKeyboard_touchDragEvent(XWidget* self, XEvent* event)
     XPoint pos;
     if (!kb || !event || XEvent_type(event) != XEVENT_TYPE_TOUCH_DRAG)
         return;
+    if (XTouchEvent_gesture((const XTouchEvent*)event) ==
+        (int)XTouchGesture_LongPress) {
+        if (kb->m_pressedKey != XKEYBOARD_BUTTON_NONE && kb->m_pressArmed)
+            XEvent_accept(event); /* 武装键按住：连删语义自管。 */
+        return;
+    }
     if (XTouchEvent_gesture((const XTouchEvent*)event) !=
         (int)XTouchGesture_DragBegin)
         return;
@@ -4425,6 +4491,9 @@ static void VXKeyboard_mouseReleaseEvent(XWidget* self, XEvent* event)
     }
     kb->m_pressedKey = XKEYBOARD_BUTTON_NONE;
     kb->m_pressArmed = false;
+    kb->m_pressFromTouch = false; /* 来源登记随按下序列收口复位。 */
+    kb->m_pressHadSelection = false; /* 选区登记随按下序列收口复位。 */
+    xkb_stopRepeat(kb); /* 释放杀表：周期型重复表不杀即永久空转。 */
 #if XVIRTUALKEYBOARD_ON
 #endif
     if (XWidget_mouseGrabber() == self) XWidget_releaseMouse(self);
@@ -4441,6 +4510,8 @@ static void VXKeyboard_hideEvent(XWidget* self, XEvent* event)
     kb->m_popped = false;
     kb->m_pressedKey = XKEYBOARD_BUTTON_NONE;
     kb->m_pressArmed = false;
+    kb->m_pressFromTouch = false; /* 来源登记随隐藏复位。 */
+    kb->m_pressHadSelection = false; /* 选区登记随隐藏复位。 */
     kb->m_pressedTool = -1; /* 工具栏按压武装随层清除。 */
     kb->m_layoutSelectorOpen = false; /* 键盘选择面板随隐藏关闭。 */
     kb->m_editPanelOpen = false; /* 文字编辑面板随隐藏关闭。 */
@@ -4448,6 +4519,7 @@ static void VXKeyboard_hideEvent(XWidget* self, XEvent* event)
     kb->m_compactFloat = false; /* 紧凑悬浮态随隐藏复位。 */
     kb->m_compactDrag = false;
     kb->m_physKeyActive = false; /* 物理会话标记随隐藏复位。 */
+    xkb_stopRepeat(kb); /* 长按重复表随隐藏停运（周期型不杀即空转）。 */
     xkb_t9TapReset(kb); /* 九键英文多击循环随隐藏闭合。 */
 #if XVIRTUALKEYBOARD_ON
     /* 页切换/祖先隐藏弃草稿（engine reset→插件 resetComposition，
@@ -4511,6 +4583,7 @@ static void VXKeyboard_deinit(XVirtualKeyboard* self)
 {
     if (!self) return;
     xkb_stopGuard(self);
+    xkb_stopRepeat(self); /* 长按重复表随析构停运（对齐 stopGuard 范式）。 */
     xkb_t9TapReset(self); /* 九键英文多击确认定时器随析构停运。 */
     if (self->m_geomSyncTimer != XTIMER_INVALID_ID) {
         XObject_killTimer((XObject*)self, self->m_geomSyncTimer);
@@ -4578,6 +4651,8 @@ static void VXKeyboard_copy(XVirtualKeyboard* self, const XVirtualKeyboard* othe
     self->m_selectedKey = XKEYBOARD_BUTTON_NONE;
     self->m_pressedKey = XKEYBOARD_BUTTON_NONE;
     self->m_pressArmed = false;
+    self->m_pressFromTouch = false; /* 按下来源属运行态，不迁移。 */
+    self->m_pressHadSelection = false; /* 选区登记属运行态，不迁移。 */
     self->m_pressedTool = -1;
     self->m_layoutSelectorOpen = false;
     self->m_editPanelOpen = false; /* 面板开合/选择态属运行态，不迁移。 */
@@ -4701,6 +4776,10 @@ static void VXKeyboard_move(XVirtualKeyboard* self, XVirtualKeyboard* other)
     other->m_selectedKey = XKEYBOARD_BUTTON_NONE;
     other->m_pressedKey = XKEYBOARD_BUTTON_NONE;
     other->m_pressArmed = false;
+    self->m_pressFromTouch = false; /* 按下来源属运行态，不随移动转移。 */
+    other->m_pressFromTouch = false;
+    self->m_pressHadSelection = false; /* 选区登记属运行态，不随移动转移。 */
+    other->m_pressHadSelection = false;
     self->m_pressedTool = -1; /* 按压武装属运行态，不随移动转移。 */
     other->m_pressedTool = -1;
     self->m_layoutSelectorOpen = false; /* 面板开合属运行态，不随移动转移。 */
@@ -4788,6 +4867,8 @@ void XVirtualKeyboard_init(XVirtualKeyboard* self, XWidget* parent, XWidgetFlags
     self->m_selectedKey = XKEYBOARD_BUTTON_NONE;
     self->m_pressedKey = XKEYBOARD_BUTTON_NONE;
     self->m_pressArmed = false;
+    self->m_pressFromTouch = false; /* 按下来源：无（memset 清零后显式口径）。 */
+    self->m_pressHadSelection = false; /* 选区登记：无（memset 清零后显式口径）。 */
     self->m_pressedTool = -1; /* 工具栏按压武装：无。 */
     self->m_layoutSelectorOpen = false; /* 键盘选择面板：关。 */
     self->m_editPanelOpen = false; /* 文字编辑面板：关。 */

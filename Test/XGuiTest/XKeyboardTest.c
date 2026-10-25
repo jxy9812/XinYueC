@@ -438,6 +438,11 @@ static void imeGoldenSpotKeys(uint16_t niId, uint16_t haoId, uint16_t shiId,
 #ifndef XVIRTUALKEYBOARD_REPEAT_MS
 #define XVIRTUALKEYBOARD_REPEAT_MS 50
 #endif
+/* 触摸合成 press 首拍档（engine 头 #ifndef 默认 1000；此处兜底定义仅
+ * 为编译期锚常量可求值）。默认值锚在 ⑦.11 运行期断言。 */
+#ifndef XVIRTUALKEYBOARD_TOUCH_REPEAT_FIRST_MS
+#define XVIRTUALKEYBOARD_TOUCH_REPEAT_FIRST_MS 1000
+#endif
 
 /** @brief 直发一次守护轮询 tick：合成 XTIMER 类型事件按 m_guardTimer
  *         id 命中键盘 timerEvent 分派（与真实定时器事件同 vtable 路
@@ -510,6 +515,27 @@ static void xkb_clickAtReleaseOnly(XVirtualKeyboard* kb, int idx)
     XObject_event_base((XObject*)kb, (XEvent*)&me);
 }
 
+/** @brief 注入单点触摸序列步（⑦.9/⑦.10 触摸路径回归；XTouchMultiPoint
+ *         测试 tp_gestureStep 同范式）：显式时间戳驱动手势机（双击窗
+ *         口/长按惰性兜底判定域），同步自发投递（调用返回即处理完），
+ *         零真钟依赖。坐标=顶层局部（与鼠标注入同域）。 */
+static void xkb_touchStep(XWindow* window, XEventType type, int32_t id,
+                          int x, int y, uint32_t ts)
+{
+    XTouchPoint one;
+    one.m_id = id;
+    one.m_state = (type == XEVENT_TYPE_TOUCH_BEGIN)
+                      ? XTOUCHPOINT_STATE_PRESSED
+                      : ((type == XEVENT_TYPE_TOUCH_END)
+                             ? XTOUCHPOINT_STATE_RELEASED
+                             : XTOUCHPOINT_STATE_UPDATED);
+    one.m_position.x = (short)x;
+    one.m_position.y = (short)y;
+    one.m_globalPosition = one.m_position;
+    one.m_pressure = 1.0f;
+    XWindowSystemInterface_handleTouchPoints_ex(window, type, &one, 1, ts);
+}
+
 /** @brief 忙等至距 startMs 已过 ms（engine 重复节拍真时钟注入；
  *         计时源=XDateTime_currentMSecsSinceEpoch，全库统一单调毫
  *         秒口径）。 */
@@ -517,6 +543,19 @@ static void xkb_waitMsSince(int64_t startMs, int64_t ms)
 {
     while (XDateTime_currentMSecsSinceEpoch() - startMs < ms)
         ;
+}
+
+/** @brief 原文本挖除 [start, start+len) 段得期望串（⑦.11/⑦.12 拖选
+ *         退格断言垫片；ASCII 文本字节序=字符序）。 */
+static void xkb_textWithoutSel(char* out, size_t cap, const char* src,
+                               int start, int len)
+{
+    size_t k = 0;
+    int i;
+    for (i = 0; src && src[i] && k + 1 < cap; ++i) {
+        if (i < start || i >= start + len) out[k++] = src[i];
+    }
+    out[k] = '\0';
 }
 
 /** @brief preeditText 往返断言垫片：真 API 返回新建 XString*（调用方
@@ -3578,6 +3617,399 @@ bool XKeyboardTest_runAll(void)
             XVirtualKeyboard_setParent(ku, NULL, 0);
             XClassDelete(eu);
             XClassDelete(ku);
+        }
+
+        /* ---- ⑦.9 触摸快速二拍/三拍字符零丢失（2026-10-25 键速丢字
+         *     根修锁）：同点二拍（距上次 tap 收口 120ms<400ms 双击窗
+         *     口）第二拍被手势机布防双击、收口合成 DBL_CLICK——XWidget
+         *     默认双击槽转发 mousePressEvent（Qt qwidget.cpp:9579-9582
+         *     口径）+ 面板 press 槽接受 DBL_CLICK，第二拍对只处理
+         *     PRESS 的面板不再失明；三拍序列（超窗第三拍走普通 press
+         *     路径）逐拍出字。时间戳域全注入（判定域=xwidget_gestureNowMs
+         *     的触摸时间戳通道，零真钟依赖）；退格未涉及，白盒锚随拍
+         *     断言重复表 release 即杀（泄漏纪律）。 ---- */
+        {
+            XVirtualKeyboard* kf9 = XVirtualKeyboard_create(NULL, 0);
+            XWidget* win = XWidget_create(NULL, 0);
+            XLineEdit* ef9 = XLineEdit_create(win, 0);
+            XWindow* xw = NULL;
+            int aIdx = -1;
+            XPoint p;
+            xkb_expect(win != NULL, "⑦.9 前置：测试顶层桥接窗口可建");
+            XWidget_setGeometry(win, 0, 0, 400, 300);
+            XWidget_setGeometry((XWidget*)ef9, 20, 20, 200, 28);
+            XWidget_show(win);
+            XWidget_show((XWidget*)ef9);
+            if (win) xw = XWidget_windowHandle(win);
+            xkb_expect(xw != NULL, "⑦.9 前置：顶层窗口句柄就绪");
+            XWidget_setFocus((XWidget*)ef9);
+            XVirtualKeyboard_popup(kf9, (XWidget*)ef9);
+            aIdx = xkb_findButton(kf9, "a");
+            xkb_expect(aIdx >= 0, "⑦.9 前置：弹出布局可定位 a 键");
+            if (aIdx >= 0 && xw) {
+                p.x = (short)(XWidget_x((XWidget*)kf9) +
+                              kf9->m_keyRects[aIdx].x +
+                              kf9->m_keyRects[aIdx].width / 2);
+                p.y = (short)(XWidget_y((XWidget*)kf9) +
+                              kf9->m_keyRects[aIdx].y +
+                              kf9->m_keyRects[aIdx].height / 2);
+                /* tap1：普通拍（press+release@同点，ts=1000/1040）。 */
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 1, p.x, p.y, 1000);
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_END, 1, p.x, p.y, 1040);
+                xkb_expect(strcmp(XLineEdit_text(ef9), "a") == 0,
+                           "⑦.9 tap1：普通拍出字（合成链基线）");
+                /* tap2：同点二拍（距收口 120ms<400ms）→布防双击→
+                 * DBL_CLICK 经默认转发当拍出字（根修前此拍蒸发，文本停
+                 * 留 "a"）。 */
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 1, p.x, p.y, 1160);
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_END, 1, p.x, p.y, 1200);
+                xkb_expect(strcmp(XLineEdit_text(ef9), "aa") == 0,
+                           "⑦.9 快速二拍零丢失：DBL_CLICK 第二拍出字");
+                xkb_expect(kf9->m_pressedKey == XKEYBOARD_BUTTON_NONE &&
+                               kf9->m_repeatTimer == XTIMER_INVALID_ID &&
+                               XWidget_mouseGrabber() == NULL,
+                           "⑦.9 tap2 收口：武装清零+重复表杀+抓取归还");
+                /* tap3：超窗（>400ms）普通拍对照（防误伤：布防逻辑不
+                 * 外溢）。 */
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 1, p.x, p.y, 3000);
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_END, 1, p.x, p.y, 3040);
+                xkb_expect(strcmp(XLineEdit_text(ef9), "aaa") == 0,
+                           "⑦.9 超窗第三拍正常出字（普通拍对照）");
+                xkb_expect(XWidget_mouseGrabber() == NULL,
+                           "⑦.9 tap3 收口：抓取归还");
+            }
+            XVirtualKeyboard_closePopup(kf9);
+            XVirtualKeyboard_setParent((XWidget*)kf9, NULL, 0);
+            XClassDelete(win); /* ef9 随宿主销毁（closePopup 已解绑）。 */
+            XClassDelete(kf9);
+        }
+
+        /* ---- ⑦.10 触摸长按退格跨 800ms 连删不断流（2026-10-25 长按
+         *     中断根修锁）：手势机长按间隔（800ms）到期改先问认领——
+         *     面板武装态认领 LongPress 免远偏移释放杀按住，连删跨间隔
+         *     永续；键面微动抖动（±1px 同键内）只随行 MOUSE_MOVE 不断
+         *     振；END 收口配对 RELEASE 立即停+抓取归还。节拍真钟承载
+         *     （XObject 周期表泵 processEvents；触摸合成 press 首拍走
+         *     触摸档 1000ms——2026-10-25 症状③根修分档，稳态 50ms），
+         *     长按判定域为注入时间戳（惰性兜底与真钟定时器双覆盖）。
+         *     ---- */
+        {
+            XVirtualKeyboard* kf10 = XVirtualKeyboard_create(NULL, 0);
+            XWidget* win = XWidget_create(NULL, 0);
+            XLineEdit* ef10 = XLineEdit_create(win, 0);
+            XWindow* xw = NULL;
+            int bsIdx = -1;
+            XPoint p;
+            size_t len0;
+            size_t lenStart;
+            size_t lenCross;
+            xkb_expect(win != NULL, "⑦.10 前置：测试顶层桥接窗口可建");
+            XWidget_setGeometry(win, 0, 0, 400, 300);
+            XWidget_setGeometry((XWidget*)ef10, 20, 20, 200, 28);
+            XWidget_show(win);
+            XWidget_show((XWidget*)ef10);
+            if (win) xw = XWidget_windowHandle(win);
+            xkb_expect(xw != NULL, "⑦.10 前置：顶层窗口句柄就绪");
+            XLineEdit_insert(ef10, "0123456789ABCDEFGHIJ");
+            XWidget_setFocus((XWidget*)ef10);
+            XVirtualKeyboard_popup(kf10, (XWidget*)ef10);
+            bsIdx = xkb_findButton(kf10, XKEYBOARD_LBL_BACKSPACE);
+            xkb_expect(bsIdx >= 0, "⑦.10 前置：弹出布局可定位退格键");
+            if (bsIdx >= 0 && xw) {
+                p.x = (short)(XWidget_x((XWidget*)kf10) +
+                              kf10->m_keyRects[bsIdx].x +
+                              kf10->m_keyRects[bsIdx].width / 2);
+                p.y = (short)(XWidget_y((XWidget*)kf10) +
+                              kf10->m_keyRects[bsIdx].y +
+                              kf10->m_keyRects[bsIdx].height / 2);
+                /* BEGIN 落退格：按下即删 1 字 + 起振表（触摸档 500ms
+                 * 删除快档/无选区；20 字符夹具=快档下首段泵 ~13 删仍
+                 * 有余量，「不断流」相对断言不踩空文本）。 */
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 2, p.x, p.y,
+                              10000);
+                len0 = strlen(XLineEdit_text(ef10));
+                xkb_expect(len0 == 19,
+                           "⑦.10 按下即删 1 字（触摸合成链基线）");
+                /* 键面微动抖动（±1px 同键内，ts<800ms 不触发长按）：
+                 * 随行 MOUSE_MOVE 保持武装，不断振。 */
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 2, p.x + 1, p.y,
+                              10300);
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 2, p.x, p.y,
+                              10500);
+                /* 泵 ~1100ms（>触摸首振 1000ms；期间真钟 800ms 长按表
+                 * 先到期→面板认领续持，随后首拍起振连删）。 */
+                xkb_pumpMs(1100);
+                lenStart = strlen(XLineEdit_text(ef10));
+                xkb_expect(lenStart < len0,
+                           "⑦.10 长按起振：抖动期间连删进行中");
+                /* 跨 800ms 长按间隔（上方泵内真钟 800ms 长按表已到期
+                 * 认领；此组 UPDATE 为注入时间戳域惰性兜底的同域复核，
+                 * m_longFired 后随行零合成）：免远偏移释放，连删不断流
+                 * （根修前此处远偏移 RELEASE 解除武装，连删就此停住）。 */
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 2, p.x, p.y,
+                              10900);
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 2, p.x + 1, p.y,
+                              10950);
+                xkb_pumpMs(300);
+                lenCross = strlen(XLineEdit_text(ef10));
+                xkb_expect(lenCross < lenStart,
+                           "⑦.10 跨 800ms 间隔连删不断流（认领长按免远偏"
+                           "移释放）");
+                /* END 收口：认领序列按当前位置配对 RELEASE→立即停+复
+                 * 位。 */
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_END, 2, p.x + 1, p.y,
+                              11000);
+                xkb_expect(kf10->m_pressedKey == XKEYBOARD_BUTTON_NONE &&
+                               !kf10->m_pressArmed &&
+                               kf10->m_repeatTimer == XTIMER_INVALID_ID &&
+                               XWidget_mouseGrabber() == NULL,
+                           "⑦.10 END 收口：武装清零+重复表杀+抓取归还");
+                xkb_pumpMs(250);
+                xkb_expect(strlen(XLineEdit_text(ef10)) == lenCross,
+                           "⑦.10 release 立即停：收口后零再删");
+            }
+            XVirtualKeyboard_closePopup(kf10);
+            XVirtualKeyboard_setParent((XWidget*)kf10, NULL, 0);
+            XClassDelete(win); /* ef10 随宿主销毁（closePopup 已解绑）。 */
+            XClassDelete(kf10);
+        }
+
+        /* ---- ⑦.11 触摸拖选→触摸点退格整段一次删除（2026-10-25 症状③
+         *     「选区被清/只删单字符」根修锁）：拖选走触摸合成链
+         *     （BEGIN 合成 press→UPDATE 超拖动阈值转拖，抓取者在位=
+         *     序列归抓取者仿真持续，XLineEdit 拖选扩展；END 同位收口
+         *     RELEASE 解除抓取——缺收口则抓取滞留，后续 tap 的合成
+         *     press 被旧抓取改道全部落空）；退格 tap 接触 ~740ms
+         *     （>桌面档 600ms 首振+粗定时器裕量、<触摸档 1000ms 首振）
+         *     ——触摸「瞄准-按压-抬指」接触 600ms+ 常见，根修前
+         *     600ms 首拍对触摸 tap 二次触发（按下激活删选区+首拍删
+         *     单字符=投诉形态），根修后慢 tap 恰激活一次=整段删除。
+         *     节拍真钟有界等待（750/250ms，⑦.4 同款）；拖选/长按判
+         *     定域全走注入时间戳。 ---- */
+        {
+            XVirtualKeyboard* kf11 = XVirtualKeyboard_create(NULL, 0);
+            XWidget* win = XWidget_create(NULL, 0);
+            XLineEdit* ef11 = XLineEdit_create(win, 0);
+            XWindow* xw = NULL;
+            int bsIdx = -1;
+            int selStart;
+            int selLen;
+            size_t len0;
+            XPoint p;
+            char expectTxt[32];
+            xkb_expect(win != NULL, "⑦.11 前置：测试顶层桥接窗口可建");
+            XWidget_setGeometry(win, 0, 0, 400, 300);
+            XWidget_setGeometry((XWidget*)ef11, 20, 20, 200, 28);
+            XWidget_show(win);
+            XWidget_show((XWidget*)ef11);
+            if (win) xw = XWidget_windowHandle(win);
+            xkb_expect(xw != NULL, "⑦.11 前置：顶层窗口句柄就绪");
+            XLineEdit_insert(ef11, "abcdefgh");
+            XWidget_setFocus((XWidget*)ef11);
+            XVirtualKeyboard_popup(kf11, (XWidget*)ef11);
+            bsIdx = xkb_findButton(kf11, XKEYBOARD_LBL_BACKSPACE);
+            xkb_expect(bsIdx >= 0, "⑦.11 前置：弹出布局可定位退格键");
+            xkb_expect(XVIRTUALKEYBOARD_TOUCH_REPEAT_FIRST_MS == 1000 &&
+                           XVIRTUALKEYBOARD_REPEAT_FIRST_MS == 600,
+                       "⑦.11 前置：重复首拍宏默认 鼠标600/触摸1000（分"
+                       "档锚）");
+            if (bsIdx >= 0 && xw) {
+                /* 触摸拖选：BEGIN→UPDATE 渐进超阈（10px）转抓取拖拽
+                 * →END 同位收口。时间戳 20000..20080（<800ms 长按域，
+                 * 不触发长按兜底）。 */
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 3, 34, 34,
+                              20000);
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 3, 40, 34,
+                              20020);
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 3, 95, 34,
+                              20040);
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 3, 110, 34,
+                              20060);
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_END, 3, 110, 34,
+                              20080);
+                selStart = XLineEdit_selectionStart(ef11);
+                selLen = XLineEdit_selectionLength(ef11);
+                xkb_expect(XLineEdit_hasSelectedText(ef11) && selLen > 0,
+                           "⑦.11 拖选：触摸链产生选区");
+                xkb_expect(XWidget_mouseGrabber() == NULL,
+                           "⑦.11 拖选收口：END 同位 RELEASE 归还抓取"
+                           "（不滞留）");
+                /* 期望文本=原文本挖去选区段（经公开 API 读取选区，不
+                 * 依赖字体度量）。 */
+                xkb_textWithoutSel(expectTxt, sizeof(expectTxt),
+                                   XLineEdit_text(ef11), selStart, selLen);
+                p.x = (short)(XWidget_x((XWidget*)kf11) +
+                              kf11->m_keyRects[bsIdx].x +
+                              kf11->m_keyRects[bsIdx].width / 2);
+                p.y = (short)(XWidget_y((XWidget*)kf11) +
+                              kf11->m_keyRects[bsIdx].y +
+                              kf11->m_keyRects[bsIdx].height / 2);
+                /* 触摸 tap 退格：BEGIN 按下激活=第 1 次激活——有选区
+                 * 删整段。 */
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 3, p.x, p.y,
+                              21000);
+                xkb_expect(strcmp(XLineEdit_text(ef11), expectTxt) == 0 &&
+                               !XLineEdit_hasSelectedText(ef11),
+                           "⑦.11 按下即删整段选区（恰一次激活）");
+                len0 = strlen(XLineEdit_text(ef11));
+                /* 接触 ~750ms：根修前 600ms 首拍在此窗口内二次触发
+                 * （再删 1 字符=投诉形态），根修后触摸档 1000ms 未到
+                 * =零再删。 */
+                xkb_pumpMs(750);
+                xkb_expect(strlen(XLineEdit_text(ef11)) == len0,
+                           "⑦.11 接触期零再删（600ms 首拍不对触摸 tap "
+                           "二次触发）");
+                /* END 收口（接触 ~740ms<800ms 长按域，普通 tap 收口路
+                 * 径）：解除武装+杀表+归还抓取。 */
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_END, 3, p.x, p.y,
+                              21740);
+                xkb_expect(kf11->m_pressedKey == XKEYBOARD_BUTTON_NONE &&
+                               !kf11->m_pressArmed &&
+                               kf11->m_repeatTimer == XTIMER_INVALID_ID &&
+                               XWidget_mouseGrabber() == NULL,
+                           "⑦.11 END 收口：武装清零+重复表杀+抓取归还");
+                xkb_pumpMs(250);
+                xkb_expect(strlen(XLineEdit_text(ef11)) == len0,
+                           "⑦.11 release 立即停：收口后零再删");
+            }
+            XVirtualKeyboard_closePopup(kf11);
+            XVirtualKeyboard_setParent((XWidget*)kf11, NULL, 0);
+            XClassDelete(win); /* ef11 随宿主销毁（closePopup 已解绑）。 */
+            XClassDelete(kf11);
+        }
+
+        /* ---- ⑦.12 鼠标路径对照：拖选→鼠标点击退格整段一次删除（症
+         *     状③「鼠标不回归」锁）：真实鼠标注入（平台通道 handle
+         *     MouseEvent，m_synthesized=false——触摸分档判据不误伤），
+         *     拖选+立即点放（<600ms）恰一次激活=整段删除；触摸档首拍
+         *     分档不外溢鼠标路径（600ms 首振既有锁=⑦.4）。 ---- */
+        {
+            XVirtualKeyboard* kf12 = XVirtualKeyboard_create(NULL, 0);
+            XWidget* win = XWidget_create(NULL, 0);
+            XLineEdit* ef12 = XLineEdit_create(win, 0);
+            XWindow* xw = NULL;
+            int bsIdx = -1;
+            int selStart;
+            int selLen;
+            XPoint pos;
+            char expectTxt[32];
+            xkb_expect(win != NULL, "⑦.12 前置：测试顶层桥接窗口可建");
+            XWidget_setGeometry(win, 0, 0, 400, 300);
+            XWidget_setGeometry((XWidget*)ef12, 20, 20, 200, 28);
+            XWidget_show(win);
+            XWidget_show((XWidget*)ef12);
+            if (win) xw = XWidget_windowHandle(win);
+            xkb_expect(xw != NULL, "⑦.12 前置：顶层窗口句柄就绪");
+            XLineEdit_insert(ef12, "abcdefgh");
+            XWidget_setFocus((XWidget*)ef12);
+            XVirtualKeyboard_popup(kf12, (XWidget*)ef12);
+            bsIdx = xkb_findButton(kf12, XKEYBOARD_LBL_BACKSPACE);
+            xkb_expect(bsIdx >= 0, "⑦.12 前置：弹出布局可定位退格键");
+            if (bsIdx >= 0 && xw) {
+                /* 鼠标拖选（真实鼠标：按住左键 MOVE 扩展，释放收口）。 */
+                pos.x = 34;
+                pos.y = 34;
+                XWindowSystemInterface_handleMouseEvent(
+                    xw, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                    XMouseButton_LeftButton, XMouseButton_LeftButton,
+                    (XKeyboardModifiers)0, pos);
+                pos.x = 110;
+                XWindowSystemInterface_handleMouseEvent(
+                    xw, XEVENT_TYPE_MOUSE_MOVE, XMouseButton_NoButton,
+                    XMouseButton_LeftButton, (XKeyboardModifiers)0, pos);
+                XWindowSystemInterface_handleMouseEvent(
+                    xw, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                    XMouseButton_LeftButton, (XMouseButton)0,
+                    (XKeyboardModifiers)0, pos);
+                selStart = XLineEdit_selectionStart(ef12);
+                selLen = XLineEdit_selectionLength(ef12);
+                xkb_expect(XLineEdit_hasSelectedText(ef12) && selLen > 0,
+                           "⑦.12 拖选：鼠标链产生选区");
+                xkb_textWithoutSel(expectTxt, sizeof(expectTxt),
+                                   XLineEdit_text(ef12), selStart, selLen);
+                /* 鼠标点击退格：按下+立即释放（<600ms 恰一次激活）。
+                 * 首拍分档不外溢：真实鼠标 press 登记 m_pressFromTouch
+                 * =false，起振仍走桌面档 600ms（⑦.4 既有锁）。 */
+                xkb_clickAt(kf12, bsIdx, true);
+                xkb_expect(strcmp(XLineEdit_text(ef12), expectTxt) == 0 &&
+                               !XLineEdit_hasSelectedText(ef12),
+                           "⑦.12 鼠标点击退格：整段一次删除（不回归）");
+                xkb_expect(kf12->m_pressedKey == XKEYBOARD_BUTTON_NONE &&
+                               XWidget_mouseGrabber() == NULL,
+                           "⑦.12 收口：武装清零+抓取归还");
+            }
+            XVirtualKeyboard_closePopup(kf12);
+            XVirtualKeyboard_setParent((XWidget*)kf12, NULL, 0);
+            XClassDelete(win); /* ef12 随宿主销毁（closePopup 已解绑）。 */
+            XClassDelete(kf12);
+        }
+
+        /* ---- ⑦.13 触摸退格无选区=删除快档起振（2026-10-25 真机反馈
+         *     「启动连删有点慢」行为锁）：无选区按下（删 1 字符）后快
+         *     档 500ms 首拍再删 1 字符——泵 520ms 落在 [500 首拍已发、
+         *     550 稳态拍未到] 的宽余量窗（⑦.11 同款「不早发」钟型假
+         *     设），快档不生效（保守 1000ms 档）则恒为 1 次删除，二值
+         *     可分不踩粗定时器裕量；有选区与字母键的保守档不回归由
+         *     ⑦.11（750ms 接触零再删>快档 500）反证锁死。 ---- */
+        {
+            XVirtualKeyboard* kf13 = XVirtualKeyboard_create(NULL, 0);
+            XWidget* win = XWidget_create(NULL, 0);
+            XLineEdit* ef13 = XLineEdit_create(win, 0);
+            XWindow* xw = NULL;
+            int bsIdx = -1;
+            XPoint p;
+            xkb_expect(win != NULL, "⑦.13 前置：测试顶层桥接窗口可建");
+            XWidget_setGeometry(win, 0, 0, 400, 300);
+            XWidget_setGeometry((XWidget*)ef13, 20, 20, 200, 28);
+            XWidget_show(win);
+            XWidget_show((XWidget*)ef13);
+            if (win) xw = XWidget_windowHandle(win);
+            xkb_expect(xw != NULL, "⑦.13 前置：顶层窗口句柄就绪");
+            XLineEdit_insert(ef13, "abcdefgh");
+            XWidget_setFocus((XWidget*)ef13);
+            XVirtualKeyboard_popup(kf13, (XWidget*)ef13);
+            bsIdx = xkb_findButton(kf13, XKEYBOARD_LBL_BACKSPACE);
+            xkb_expect(bsIdx >= 0, "⑦.13 前置：弹出布局可定位退格键");
+            xkb_expect(XVIRTUALKEYBOARD_TOUCH_DELETE_REPEAT_FIRST_MS == 500,
+                       "⑦.13 前置：删除快档宏默认 500ms（分档锚）");
+            if (bsIdx >= 0 && xw) {
+                p.x = (short)(XWidget_x((XWidget*)kf13) +
+                              kf13->m_keyRects[bsIdx].x +
+                              kf13->m_keyRects[bsIdx].width / 2);
+                p.y = (short)(XWidget_y((XWidget*)kf13) +
+                              kf13->m_keyRects[bsIdx].y +
+                              kf13->m_keyRects[bsIdx].height / 2);
+                /* 触摸按下退格（无选区）：按下激活=第 1 次删除。时间
+                 * 戳 24000 距 ⑦.11 末序列 21740 >400ms 双击窗（同进程
+                 * 手势全局态跨块延续，落窗即被布防双击第二拍、不合成
+                 * press——⑦.11 自身即该机制的回归锁）。 */
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 3, p.x, p.y,
+                              24000);
+                xkb_expect(!kf13->m_pressHadSelection &&
+                               strcmp(XLineEdit_text(ef13), "abcdefg") == 0,
+                           "⑦.13 无选区按下：登记 false+删 1 字符");
+                /* 快档首拍窗口：520ms∈[500 已发、550 未到]。 */
+                xkb_pumpMs(520);
+                xkb_expect(strcmp(XLineEdit_text(ef13), "abcdef") == 0,
+                           "⑦.13 快档起振：500ms 首拍再删 1 字符（连删"
+                           "不等 1000ms）");
+                /* END 收口（接触 600ms<800ms 长按域）：杀表+归抓取，
+                 * release 立即停。 */
+                xkb_touchStep(xw, XEVENT_TYPE_TOUCH_END, 3, p.x, p.y,
+                              24600);
+                xkb_expect(kf13->m_pressedKey == XKEYBOARD_BUTTON_NONE &&
+                               !kf13->m_pressArmed &&
+                               kf13->m_repeatTimer == XTIMER_INVALID_ID &&
+                               XWidget_mouseGrabber() == NULL,
+                           "⑦.13 END 收口：武装清零+重复表杀+抓取归还");
+                xkb_pumpMs(250);
+                xkb_expect(strcmp(XLineEdit_text(ef13), "abcdef") == 0,
+                           "⑦.13 release 立即停：收口后零再删");
+            }
+            XVirtualKeyboard_closePopup(kf13);
+            XVirtualKeyboard_setParent((XWidget*)kf13, NULL, 0);
+            XClassDelete(win); /* ef13 随宿主销毁（closePopup 已解绑）。 */
+            XClassDelete(kf13);
         }
     }
 #endif /* XVIRTUALKEYBOARD_ON */

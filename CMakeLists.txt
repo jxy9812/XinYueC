@@ -373,7 +373,12 @@ xinyue_force_include_config(${EXPORT_NAME})
 # 动态库 PRIVATE 仅自身链接阶段解析）；未检出时 Posix 原生窗口文件整段被
 # 守卫裁剪，由 Drive/XPlatformNativeWindow_unsupported.c 兜底，XWindow 回落
 # 虚拟 WId 行为，嵌入式构建不受影响。
-if(UNIX AND NOT APPLE)
+# Android 排除（整段）：安卓交叉构建（NDK）在 Linux 宿主上会把宿主
+# X11/OpenGL/pkg-config 依赖（dbus/fontconfig 等）误探进来——头文件
+# 侥幸能编、链接的是宿主 x86_64 库必炸；Windows 宿主因探不到而隐式
+# 跳过，本条件把该事实显式化。安卓图形/输入/字体一律走 Drive/Android
+# 平台层（字体=APK assets 外挂目录），不吃本段任何宏。
+if(UNIX AND NOT APPLE AND NOT ANDROID)
     find_package(X11)
     if(X11_FOUND)
         add_compile_definitions(XINYUE_C_HAS_X11=1)
@@ -465,7 +470,9 @@ endif()
 
 # POSIX USB Host 后端使用 libusb-1.0。该探测独立于 Linux 桌面图形依赖，
 # 因而同样覆盖 macOS、BSD 和裁剪后的嵌入式 Linux 系统。
-if(UNIX)
+# Android 排除：同上段理由——宿主 libusb（x86_64）不可链入安卓 .so；
+# 安卓 USB 走平台层实现。Windows 宿主探不到本就隐式跳过。
+if(UNIX AND NOT ANDROID)
     find_package(PkgConfig QUIET)
     if(PKG_CONFIG_FOUND)
         pkg_check_modules(XINYUE_LIBUSB QUIET libusb-1.0)

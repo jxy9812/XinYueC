@@ -13,8 +13,16 @@
 # ============================================================
 set -e
 
-SDK="${ANDROID_SDK:-C:/Users/jxy/AppData/Local/Android/Sdk}"
-NDK="${ANDROID_NDK:-D:/android-ndk/android-ndk-r29}"
+# 默认路径按平台分流：Windows=原实装路径（历史默认），Linux=~/android-tools
+# 布局（免 sudo 安装，见 ~/android-tools-install.sh：JDK17+NDK r29+build-tools 36）。
+case "$(uname -s)" in
+    Linux)
+        SDK="${ANDROID_SDK:-$HOME/android-tools/sdk}"
+        NDK="${ANDROID_NDK:-$HOME/android-tools/android-ndk-r29}" ;;
+    *)
+        SDK="${ANDROID_SDK:-C:/Users/jxy/AppData/Local/Android/Sdk}"
+        NDK="${ANDROID_NDK:-D:/android-ndk/android-ndk-r29}" ;;
+esac
 BT="$SDK/build-tools/36.0.0"
 # 平台 android.jar 自动取已装 platforms 里版本号最高的一个（本机实装为
 # android-37.0；脚本原写死 android-35 的路径在本机不存在）。
@@ -130,16 +138,35 @@ cp -r libs/* lib/
 # 类（XGuiNativeActivity / XGuiA11yHost / XGuiA11yBridge），编译成
 # classes.dex 随包发布。缺 javac/d8 时**不静默跳过**——跳过则 Activity
 # 类名在清单里但不存在，运行必崩；此时直接报错让构建失败。
+_JAVAC_BIN=javac.exe
+_D8_PROG="$BT/d8.bat"
 JAVA_HOME_CAND=""
-for _j in \
-    "C:/Program Files/Android/Android Studio/jbr" \
-    "C:/Program Files/Eclipse Adoptium"/* \
-    "C:/Program Files/Java"/*
-do
-    if [ -x "$_j/bin/javac.exe" ]; then JAVA_HOME_CAND="$_j"; break; fi
-done
-if [ -n "$JAVA_HOME_CAND" ] && [ -f "$BT/d8.bat" ]; then
-    JAVAC="$JAVA_HOME_CAND/bin/javac.exe"
+case "$(uname -s)" in
+    Linux)
+        # Linux：javac 按 JAVA_HOME → ~/android-tools/jdk → PATH 探测（无
+        # .exe 后缀）；d8 是 build-tools 自带 POSIX 脚本（内部调 java，须
+        # JAVA_HOME/bin 已入 PATH）。
+        _JAVAC_BIN=javac
+        _D8_PROG="$BT/d8"
+        for _j in "${JAVA_HOME:-}" "$HOME/android-tools/jdk"; do
+            if [ -n "$_j" ] && [ -x "$_j/bin/javac" ]; then JAVA_HOME_CAND="$_j"; break; fi
+        done
+        if [ -z "$JAVA_HOME_CAND" ] && command -v javac > /dev/null 2>&1; then
+            JAVA_HOME_CAND="$(dirname "$(dirname "$(command -v javac)")")"
+        fi
+        ;;
+    *)
+        for _j in \
+            "C:/Program Files/Android/Android Studio/jbr" \
+            "C:/Program Files/Eclipse Adoptium"/* \
+            "C:/Program Files/Java"/*
+        do
+            if [ -x "$_j/bin/javac.exe" ]; then JAVA_HOME_CAND="$_j"; break; fi
+        done
+        ;;
+esac
+if [ -n "$JAVA_HOME_CAND" ] && [ -f "$_D8_PROG" ]; then
+    JAVAC="$JAVA_HOME_CAND/bin/$_JAVAC_BIN"
     export JAVA_HOME="$JAVA_HOME_CAND"
     export PATH="$JAVA_HOME/bin:$PATH"
     PLATFORM_JAR="$(ls "$SDK"/platforms/*/android.jar | sort -V | tail -1)"
@@ -160,20 +187,31 @@ if [ -n "$JAVA_HOME_CAND" ] && [ -f "$BT/d8.bat" ]; then
     if [ ! -d "$WORK/classes/com" ]; then
         echo "javac 未产出 class 文件"; exit 1
     fi
-    # d8 是 Windows 程序：class 路径必须是 Windows 反斜杠形态（d8 收到
-    # POSIX 斜杠路径会 NoSuchFileException）。用 cygpath 转换（PortableGit
-    # 自带）；无 cygpath 时退化为手工替换。
-    if command -v cygpath > /dev/null 2>&1; then
-        CLASS_FILES=$(cd "$WORK/classes" && find . -name '*.class' | \
-                     sed 's|^\./||' | while read -r f; do
-                         cygpath -w "$WORK/classes/$f"; done)
-    else
-        CLASS_FILES=$(cd "$WORK/classes" && find . -name '*.class' | \
-                     sed 's|^\./||' | while read -r f; do
-                         echo "$WORK/classes/$f" | sed 's|/|\\\\|g'; done)
-    fi
-    "$BT/d8.bat" --min-api 26 --lib "$PLATFORM_JAR" \
-        --output "$(cygpath -w "$WORK" 2>/dev/null || echo "$WORK")" $CLASS_FILES
+    # d8 路径形态按平台：Linux d8 为 POSIX 脚本，正斜杠路径直用；Windows
+    # d8 是 .bat 且只认反斜杠形态（POSIX 斜杠路径会 NoSuchFileException），
+    # 用 cygpath 转换（PortableGit 自带）；无 cygpath 时退化为手工替换。
+    case "$(uname -s)" in
+        Linux)
+            CLASS_FILES=$(cd "$WORK/classes" && find . -name '*.class' | \
+                          sed 's|^\./||' | while read -r f; do
+                              echo "$WORK/classes/$f"; done)
+            "$_D8_PROG" --min-api 26 --lib "$PLATFORM_JAR" \
+                --output "$WORK" $CLASS_FILES
+            ;;
+        *)
+            if command -v cygpath > /dev/null 2>&1; then
+                CLASS_FILES=$(cd "$WORK/classes" && find . -name '*.class' | \
+                             sed 's|^\./||' | while read -r f; do
+                                 cygpath -w "$WORK/classes/$f"; done)
+            else
+                CLASS_FILES=$(cd "$WORK/classes" && find . -name '*.class' | \
+                             sed 's|^\./||' | while read -r f; do
+                                 echo "$WORK/classes/$f" | sed 's|/|\\\\|g'; done)
+            fi
+            "$_D8_PROG" --min-api 26 --lib "$PLATFORM_JAR" \
+                --output "$(cygpath -w "$WORK" 2>/dev/null || echo "$WORK")" $CLASS_FILES
+            ;;
+    esac
     if [ ! -f "$WORK/classes.dex" ]; then
         echo "d8 未产出 classes.dex"; exit 1
     fi

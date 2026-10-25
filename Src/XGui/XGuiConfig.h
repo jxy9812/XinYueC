@@ -225,6 +225,31 @@
 #ifndef XGUI_PRESENT_MAX_FPS
 #define XGUI_PRESENT_MAX_FPS 0
 #endif
+/* - XGUI_REPAINT_MAX_FPS：重绘（绘制+上屏整链）节奏上限（2026-10-25 用户
+ *   裁定取 60）。此前三条限频路径都拦不住「绘制」本身：RESIZE 只管装饰
+ *   手势两分支，PRESENT 闸只跳提交不跳绘制（屏幕不更新但 paintTree 照
+ *   付全额 CPU），PARTIAL 攒批腿在 fbdev/桌面定版平台根本不编译。实测
+ *   昆仑通态 A33 上 HUD 读数可达 160+ 帧的绘制活动率，主因是任意来源的
+ *   update() 都能立刻驱动一次整窗 paintTree+pan。
+ *   本宏挂点=XWidget_postPaintEvent（所有重绘请求汇入的唯一口：update/
+ *   updateRect/updateRegion/repaint/show 全经此处），语义=「上次真正派发
+ *   PAINT 的时刻起不足 1000/fps 毫秒则本帧只记账不派发」。记账=脏区已在
+ *   m_dirty 里累积，另置一次性补投定时器在剩余窗口到期时补发，因此跳帧
+ *   零丢失、尾帧结构性必达（与 PRESENT 闸同款不丢帧纪律）。
+ *   取值 0=不限（编译期裁掉整个闸与补投路径，桌面历史口径逐位不变）；
+ *   运行期环境变量 XGUI_REPAINT_MAX_FPS 覆盖宏值（同 present 闸族约定）。
+ *   与 PRESENT 闸的分工：本宏管「画不画」（省 CPU），PRESENT 管「提交不
+ *   提交」（省带宽/防闪烁）；同时开启时重绘节拍先收敛，present 闸退化为
+ *   兜底。 */
+#ifndef XGUI_REPAINT_MAX_FPS
+#if XPLATFORM_FBDEV_ON
+/* 嵌入式单屏直写：面板 60Hz 量级，绘制超频纯属浪费 CPU（present 是阻塞
+ * pan，绘制更快只会把队列打满）。取 60 与面板刷新对齐。 */
+#define XGUI_REPAINT_MAX_FPS 60
+#else
+#define XGUI_REPAINT_MAX_FPS 0
+#endif
+#endif
 
 /* 强制 DPI 缩放（对标 Qt QT_SCALE_FACTOR 的编译期版；2026-10-01 用户
  * 裁定用宏而非环境变量——调试经 CMake -D 注入即可，安卓无 shell env
@@ -303,6 +328,10 @@
 #if XGUI_PRESENT_MAX_FPS < 0
 #undef XGUI_PRESENT_MAX_FPS
 #define XGUI_PRESENT_MAX_FPS 0
+#endif
+#if XGUI_REPAINT_MAX_FPS < 0
+#undef XGUI_REPAINT_MAX_FPS
+#define XGUI_REPAINT_MAX_FPS 0
 #endif
 /* fbdev 影子缓冲豁免：fb 直写无翻页轮换，双缓冲只会多分配一块
  * 1.2MB 影子并触发无意义的交替+整搬（昆仑通态 A7 实测）。 */
@@ -1000,6 +1029,8 @@
 #define XGUI_RESIZE_REPAINT_MAX_FPS 0
 #undef XGUI_PRESENT_MAX_FPS
 #define XGUI_PRESENT_MAX_FPS 0
+#undef XGUI_REPAINT_MAX_FPS
+#define XGUI_REPAINT_MAX_FPS 0
 #undef XGUI_RETAINED_LAYER_BUDGET_BYTES
 #define XGUI_RETAINED_LAYER_BUDGET_BYTES 0
 #undef XPIXMAP_ON

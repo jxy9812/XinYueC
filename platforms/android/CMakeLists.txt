@@ -61,6 +61,11 @@ add_custom_target(lib
             -DCMAKE_TOOLCHAIN_FILE=${_android_toolchain}
             -DANDROID_ABI=${ANDROID_ABI_NAME}
             -DANDROID_PLATFORM=android-${ANDROID_API_LEVEL}
+            # 显式锚定产物目录=本构建目录（.so 落 out/android-<abi>/，打包
+            # 脚本按此找）。不传则机器本地 CMake_Config.cmake 可能把
+            # CMAKE_RUNTIME_OUTPUT_DIRECTORY 改指仓库 bin/，被根工程的
+            # 交叉构建守卫拒绝（防交叉产物覆盖桌面门禁二进制）。
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=${ANDROID_BUILD_DIR}
     COMMAND ${CMAKE_COMMAND} --build "${ANDROID_BUILD_DIR}" --target xguidemo
     WORKING_DIRECTORY "${REPO_ROOT}"
     BYPRODUCTS "${ANDROID_BUILD_DIR}/libxguidemo.so"

@@ -66,6 +66,26 @@ typedef struct XVirtualKeyboardTrace XVirtualKeyboardTrace;
 #ifndef XVIRTUALKEYBOARD_REPEAT_FIRST_MS
 #define XVIRTUALKEYBOARD_REPEAT_FIRST_MS 600
 #endif
+/** @brief 触摸合成 press 的长按重复起振延时（毫秒；桌面鼠标档之上另
+ *         设的触摸档）：触屏「瞄准-按压-抬指」接触 600ms+ 常见，600ms
+ *         首拍对触摸 tap 必然二次触发（按下激活删选区 + 首拍删光标前
+ *         一字符=2026-10-25 症状③「选区被清/只删单字符」投诉形态；
+ *         2026-10-04 中/EN、数字键同现象按禁复收口，退格/字母保留长
+ *         按连删故改走本档），桌面真实鼠标点击 80-150ms 仍走 600ms 档
+ *         不变。测试注入可覆写。 */
+#ifndef XVIRTUALKEYBOARD_TOUCH_REPEAT_FIRST_MS
+#define XVIRTUALKEYBOARD_TOUCH_REPEAT_FIRST_MS 1000
+#endif
+/** @brief 触摸合成 press 下退格（删除类）键的长按重复起振延时（毫秒；
+ *         测试注入可覆写）：连删是刻意按住的动作，起振要快（对齐主流
+ *         键盘 ~400-500ms 口径，2026-10-25 真机反馈「启动连删有点慢」）。
+ *         分档边界——退格**无选区**按住走本快档（慢 tap「删两字符」代
+ *         价可接受，主流键盘同此）；退格**有选区**（按下激活已删整段
+ *         选区=症状③主诉形态）与字母键（慢 tap 双字母=键速丢字形态）
+ *         仍走 XVIRTUALKEYBOARD_TOUCH_REPEAT_FIRST_MS 保守档。 */
+#ifndef XVIRTUALKEYBOARD_TOUCH_DELETE_REPEAT_FIRST_MS
+#define XVIRTUALKEYBOARD_TOUCH_DELETE_REPEAT_FIRST_MS 500
+#endif
 /** @brief 长按重复间隔（毫秒；对齐 Qt 引擎稳态 50ms 口径；测试注入可
  *         覆写）。 */
 #ifndef XVIRTUALKEYBOARD_REPEAT_MS

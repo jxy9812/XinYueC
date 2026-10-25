@@ -479,6 +479,20 @@ typedef struct XVirtualKeyboard
                                             * 「触摸点击不被键盘打断」）。 */
     bool m_popped;                     /**< 弹层可见状态。 */
     bool m_pressArmed;                 /**< 按下触发武装位（滑动出键即取消）。 */
+    bool m_pressFromTouch;             /**< 当前按下序列来源=触摸合成鼠标
+                                            （XMouseEvent_isSynthesized；
+                                            长按首拍取触摸档
+                                            XVIRTUALKEYBOARD_TOUCH_REPEAT_
+                                            FIRST_MS，桌面鼠标 600ms 档
+                                            不变；随按下登记、释放/隐藏
+                                            复位）。 */
+    bool m_pressHadSelection;          /**< 触摸按下退格时焦点编辑控件有
+                                            选区（激活前登记——激活即消费
+                                            选区，查到的恒空；有选区=长按
+                                            首拍走保守触摸档防慢 tap 双删
+                                            （症状③形态回归），无选区=删除
+                                            快档快速起振；随按下登记、释放/
+                                            隐藏复位）。 */
     int8_t  m_pressedTool : 3;  /* -1=未按压（哨兵）、0..3=槽位 */                 /**< 按下中工具栏槽位（0..3，按压武
                                             装释放触发；-1=无）。 */
     bool m_layoutSelectorOpen;         /**< 键盘选择面板开合（Sogou 改版

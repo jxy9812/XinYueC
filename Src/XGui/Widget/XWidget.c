@@ -701,11 +701,34 @@ static void xwidget_postLayoutRequest(XWidget* receiver)
         XClassDelete((XClass*)event);
 }
 
-/** @brief 投递顶层控件绘制事件，并报告事件是否确实进入线程队列。 */
-static bool XWidget_postPaintEvent(XWidget* top)
+/** @brief 在已占用 m_paintEventPosted 占位位的前提下构造并投递 PAINT。
+ * @details 失败时归还占位位并保留 dirty/PendingUpdate，使后续 update/show
+ *          能再次尝试投递（与旧实现同口径）。 */
+static bool xwidget_postPaintEventLocked(XWidget* top)
 {
     XEvent* event;
-    XObject* receiver;
+    if (!top) return false;
+    event = XWidget_createPaintEvent(top);
+    if (!event) {
+        XAtomic_store_int32(&top->m_paintEventPosted, 0,
+                            XAtomic_MemoryOrder_Release);
+        return false;
+    }
+    if (!XCoreApplication_tryPostEvent((XObject*)top->m_windowHandle,
+                                       event, 0)) {
+        /* tryPostEvent 失败时不接管 event；由本调用方释放，并保留 dirty
+           与 PendingUpdate，使后续 update/show 能再次尝试投递。 */
+        XClassDelete((XClass*)event);
+        XAtomic_store_int32(&top->m_paintEventPosted, 0,
+                            XAtomic_MemoryOrder_Release);
+        return false;
+    }
+    return true;
+}
+
+/** @brief 投递顶层控件绘制事件原始实现（不含重绘节奏闸）。 */
+static bool xwidget_postPaintEventRaw(XWidget* top)
+{
     int32_t expected;
     if (!top || !top->m_windowHandle || !top->m_visible)
         return false;
@@ -717,22 +740,241 @@ static bool XWidget_postPaintEvent(XWidget* top)
             &top->m_paintEventPosted, &expected, 1,
             XAtomic_MemoryOrder_AcqRel, XAtomic_MemoryOrder_Acquire))
         return true;
-    receiver = (XObject*)top->m_windowHandle;
-    event = XWidget_createPaintEvent(top);
-    if (!event) {
-        XAtomic_store_int32(&top->m_paintEventPosted, 0,
-                            XAtomic_MemoryOrder_Release);
-        return false;
+    return xwidget_postPaintEventLocked(top);
+}
+
+/* ---- 重绘节奏闸（XGUI_REPAINT_MAX_FPS）与尾帧补投 ----
+ * 挂点=XWidget_postPaintEvent：update/updateRect/updateRegion/repaint 之外的
+ * 一切重绘请求（addDirtyRegion/flush 尾部重投/show 传播）都汇入此处，是
+ * 「这一帧到底画不画」的唯一决策点。语义=距上次允许派发的 PAINT 不足
+ * 1000/fps 毫秒则本帧不派发：脏区已在 m_dirty 累积、PendingUpdate 保持
+ * 置位，另由一次性定时器在剩余窗口到期时补投——跳帧零丢失、尾帧结构性
+ * 必达（与 XGUI_PRESENT_MAX_FPS 同款不丢帧纪律）。
+ * 与 present 闸分工：本闸省「绘制」CPU（paintTree 整链不跑），present 闸
+ * 省「提交」带宽；两者同时开时本闸先收敛，present 闸退化为兜底。
+ * 取 0=不限（宏默认桌面 0、fbdev 60）；运行期 XGUI_REPAINT_MAX_FPS 环境
+ * 变量覆盖宏值（同 present 闸族一次性读取、进程内生效）。 */
+#define XWIDGET_REPAINT_DEFER_MAX 16
+
+/** @brief 待补投顶层表（含已到期未派发者；析构即摘除）。 */
+static XWidget* g_repaintDeferTops[XWIDGET_REPAINT_DEFER_MAX];
+/** @brief 待补投顶层数（0=表空）。 */
+static int g_repaintDeferCount = 0;
+/** @brief 补投定时器 id（XTIMER_INVALID_ID=未布防；单实例防重复布防）。 */
+static XTimerId g_repaintDeferTimerId = XTIMER_INVALID_ID;
+/** @brief 上次允许派发 PAINT 的单调微秒（0=从未派发，首帧恒放行）。
+ * @note 用微秒而非毫秒：60fps 的 16.67ms 在 1ms 粒度下只能近似成 16/17，
+ *       累积误差会让实测节拍漂到设定值之外；微秒基准可精确表达任意
+ *       1000/fps。 */
+static int64_t g_repaintLastPostUs = 0;
+
+/** @brief 内部补投定时器宿主虚表枚举（仅重载 TimerEvent 槽）。 */
+XCLASS_DEFINE_BEGING(xwidget_repaintTimerHost)
+XCLASS_DEFINE_EXTEND_END(xwidget_repaintTimerHost, XObject)
+
+/** @brief 补投定时器专用宿主（静态存储零堆分配）。
+ * @details 复用长按定时器宿主的同款理由：叶子控件类普遍覆写
+ *          EXObject_TimerEvent，以顶层控件作宿主会被其吞掉；本宿主固定为
+ *          模块内部类，到期事件必达。无父对象、非控件、无几何，不进任何
+ *          枚举/命中路径。 */
+typedef struct xwidget_repaintTimerHost
+{
+    XObject m_base;      /**< 基类 XObject；必须是第一个成员。 */
+} xwidget_repaintTimerHost;
+
+/** @brief 宿主唯一实例（静态存储；进程级生命周期）。 */
+static xwidget_repaintTimerHost g_repaintTimerHostInstance;
+/** @brief 宿主惰性初始化守卫（幂等）。 */
+static bool g_repaintTimerHostReady = false;
+
+static void xwidget_repaintDeferFlush(void);
+
+/** @brief 宿主定时器事件槽：到期即补投待办顶层表。 */
+static void xwidget_repaintTimerHost_timerEvent(XObject* object,
+                                                XTimerEvent* event)
+{
+    (void)object;
+    if (!event) return;
+    if (XTimerEvent_timerId(event) != XTIMER_INVALID_ID &&
+        XTimerEvent_timerId(event) == g_repaintDeferTimerId) {
+        xwidget_repaintDeferFlush();
+        XEvent_accept((XEvent*)event);
     }
-    if (!XCoreApplication_tryPostEvent(receiver, event, 0)) {
-        /* tryPostEvent 失败时不接管 event；由本调用方释放，并保留 dirty
-           与 PendingUpdate，使后续 update/show 能再次尝试投递。 */
-        XClassDelete((XClass*)event);
-        XAtomic_store_int32(&top->m_paintEventPosted, 0,
-                            XAtomic_MemoryOrder_Release);
-        return false;
+}
+
+/** @brief 宿主类虚函数表（继承 XObject 全部槽位 + 重载 TimerEvent）。 */
+static XVtable* xwidget_repaintTimerHost_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(xwidget_repaintTimerHost)
+    XVTABLE_INHERIT_XCLASS(XObject);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent,
+                             xwidget_repaintTimerHost_timerEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 宿主实例初始化（静态存储：XObject_init 后改绑本类虚表）。 */
+static void xwidget_repaintTimerHost_init(xwidget_repaintTimerHost* host)
+{
+    if (!host) return;
+    XObject_init(&host->m_base);
+    XClassSetVtable(&host->m_base, xwidget_repaintTimerHost);
+    Set_Class_IsHeap(&host->m_base, false);
+}
+
+/** @brief 取补投定时器宿主（惰性初始化一次）。 */
+static XObject* xwidget_repaintTimerHostInstance(void)
+{
+    if (!g_repaintTimerHostReady)
+    {
+        g_repaintTimerHostReady = true;
+        xwidget_repaintTimerHost_init(&g_repaintTimerHostInstance);
     }
-    return true;
+    return &g_repaintTimerHostInstance.m_base;
+}
+
+/** @brief 重绘节奏间隔（毫秒）；0=不限（解析单点：env 优先、宏兜底）。 */
+static double xwidget_repaintThrottleMinMs(void)
+{
+    static int init = -1;
+    static double minMs = 0.0;
+    if (init < 0)
+    {
+        const char* tv = XSystem_environment("XGUI_REPAINT_MAX_FPS");
+        int fps = XGUI_REPAINT_MAX_FPS;
+        if (tv && *tv) fps = (int)XStrtol(tv, NULL, 10);
+        minMs = fps > 0 ? 1000.0 / (double)fps : 0.0;
+        init = 1;
+    }
+    return minMs;
+}
+
+/** @brief 把顶层登记进补投表（重复登记幂等；表满则立即放行保正确性）。 */
+static void xwidget_repaintDeferAdd(XWidget* top)
+{
+    int i;
+    if (!top) return;
+    for (i = 0; i < g_repaintDeferCount; ++i)
+        if (g_repaintDeferTops[i] == top) return;
+    if (g_repaintDeferCount >= XWIDGET_REPAINT_DEFER_MAX)
+    {
+        /* 表满（异常多的并发顶层）：正确性优先于节奏，立即原样派发。 */
+        (void)xwidget_postPaintEventRaw(top);
+        return;
+    }
+    g_repaintDeferTops[g_repaintDeferCount++] = top;
+}
+
+/** @brief 析构摘除：控件先于补投到期消亡时不得留悬挂借用指针。 */
+static void xwidget_repaintDeferRemove(XWidget* top)
+{
+    int i;
+    if (!top) return;
+    for (i = 0; i < g_repaintDeferCount; ++i)
+    {
+        if (g_repaintDeferTops[i] == top)
+        {
+            g_repaintDeferTops[i] = g_repaintDeferTops[--g_repaintDeferCount];
+            g_repaintDeferTops[g_repaintDeferCount] = NULL;
+            --i;
+        }
+    }
+}
+
+/** @brief 补投到期：逐个顶层重派 PAINT（脏区仍非空才派发）。
+ * @note 本函数**不绕过**限频窗口：定时器到期与「普通请求恰好通过闸门」
+ *       可能落在同一毫秒，若无条件派发会同窗双投（实测 20fps 档跑出
+ *       41.5、60fps 档跑出 117.5 的整倍超发）。到期时先复核窗口，未到
+ *       就把整表原样保留、按剩余窗口重新布防。 */
+static void xwidget_repaintDeferFlush(void)
+{
+    int i;
+    int n;
+    double minMs;
+    int64_t now;
+    /* 必须先真正注销分发器侧定时器再清 id：registerTimer 零初始化
+     * XTimerData（singleShot=false），时间轮对非 singleShot 节点到期后
+     * 无条件重挂——只清 id 则本回调每周期空唤醒并堆分配一个被 id 比对
+     * 守卫忽略的 TIMER 事件，永久泄漏（长按定时器同款根修 2026-10-25）。 */
+    if (g_repaintDeferTimerId != XTIMER_INVALID_ID)
+    {
+        XObject_killTimer(xwidget_repaintTimerHostInstance(),
+                          g_repaintDeferTimerId);
+        g_repaintDeferTimerId = XTIMER_INVALID_ID;
+    }
+    minMs = xwidget_repaintThrottleMinMs();
+    now = XDateTime_currentNSecsSinceEpoch() / 1000LL;
+    if (minMs > 0.0 && g_repaintLastPostUs != 0 &&
+        (double)(now - g_repaintLastPostUs) < minMs * 1000.0)
+    {
+        /* 窗口未真正打开（到期与放行同刻竞争）：保留待办、续期。 */
+        int64_t remain = (int64_t)(minMs + 0.5) -
+                         (now - g_repaintLastPostUs) / 1000LL;
+        if (remain < 1) remain = 1;
+        g_repaintDeferTimerId = XObject_startTimer_ms(
+            xwidget_repaintTimerHostInstance(), (uint64_t)remain,
+            XTimerType_PreciseTimer);
+        return;
+    }
+    n = g_repaintDeferCount;
+    g_repaintDeferCount = 0;
+    g_repaintLastPostUs = now;
+    for (i = 0; i < n; ++i)
+    {
+        XWidget* top = g_repaintDeferTops[i];
+        g_repaintDeferTops[i] = NULL;
+        if (!top || !top->m_windowHandle || !top->m_visible) continue;
+        if (top->m_dirty.count <= 0) continue;
+        (void)xwidget_postPaintEventRaw(top);
+    }
+}
+
+/** @brief 布防补投定时器：剩余窗口不足 1ms 按 1ms（防 0 间隔忙等）。 */
+static void xwidget_repaintDeferSchedule(XWidget* top)
+{
+    double minMs = xwidget_repaintThrottleMinMs();
+    int64_t now;
+    int64_t remain;
+    if (minMs <= 0.0 || !top) return;
+    xwidget_repaintDeferAdd(top);
+    if (g_repaintDeferTimerId != XTIMER_INVALID_ID) return;
+    now = XDateTime_currentNSecsSinceEpoch() / 1000LL;
+    remain = (int64_t)(minMs + 0.5) -
+             (now - g_repaintLastPostUs) / 1000LL;
+    if (remain < 1) remain = 1;
+    g_repaintDeferTimerId = XObject_startTimer_ms(
+        xwidget_repaintTimerHostInstance(), (uint64_t)remain,
+        XTimerType_PreciseTimer);
+}
+
+/** @brief 投递顶层控件绘制事件（含重绘节奏闸；跳帧由补投定时器兜底）。 */
+static bool XWidget_postPaintEvent(XWidget* top)
+{
+    int32_t expected;
+    double minMs;
+    if (!top || !top->m_windowHandle || !top->m_visible)
+        return false;
+    /* 已有在途 PAINT 直接视为成功（请求已被覆盖），不占限频窗口。 */
+    expected = 0;
+    if (!XAtomic_compare_exchange_strong_int32(
+            &top->m_paintEventPosted, &expected, 1,
+            XAtomic_MemoryOrder_AcqRel, XAtomic_MemoryOrder_Acquire))
+        return true;
+    minMs = xwidget_repaintThrottleMinMs();
+    if (minMs > 0.0)
+    {
+        int64_t nowUs = XDateTime_currentNSecsSinceEpoch() / 1000LL;
+        if (g_repaintLastPostUs != 0 &&
+            (double)(nowUs - g_repaintLastPostUs) < minMs * 1000.0)
+        {
+            /* 限频窗口内：归还占位位、脏区保留、登记补投。 */
+            XAtomic_store_int32(&top->m_paintEventPosted, 0,
+                                XAtomic_MemoryOrder_Release);
+            xwidget_repaintDeferSchedule(top);
+            return true;
+        }
+        g_repaintLastPostUs = nowUs;
+    }
+    return xwidget_postPaintEventLocked(top);
 }
 
 /** @brief 判断 self 是否 child 的祖先控件。 */
@@ -2548,13 +2790,15 @@ static XPoint xwidget_gestureFarPoint(int beginX, int beginY)
     return p;
 }
 
-/** @brief 长按触发动作：远偏移释放关闭挂着的左键序列（press 靶的
+/** @brief 长按触发动作：LongPress 手势先问控件（TouchDragEvent 虚槽
+ *         接受=控件认领长按，自管语义——挂着的合成左键按住续持，由
+ *         END/CANCEL 在收口位配对 RELEASE；长按重复类控件（屏幕键盘
+ *         连删等）跨长按间隔不再断流，2026-10-25 长按退格中断根修）；
+ *         无人认领时远偏移释放关闭挂着的左键序列（press 靶的
  *         pressed/hitButton 必假，防长按把按住中的按钮误判 click——对标
- *         长按取消点击语义）+ LongPress 手势先问控件（TouchDragEvent 虚
- *         槽接受=控件认领长按，自管语义，框架不再合成右键）；未被接受时
- *         合成右键按下（自动弹 CONTEXT_MENU，见 XWidget_dispatchPointer-
- *         Event 尾部契约）+ 右键释放配对收口；longFired 后本序列
- *         UPDATE/END 不再合成鼠标事件。 */
+ *         长按取消点击语义）+ 合成右键按下（自动弹 CONTEXT_MENU，见
+ *         XWidget_dispatchPointerEvent 尾部契约）+ 右键释放配对收口；
+ *         longFired 后本序列 UPDATE 不再合成鼠标事件。 */
 static void xwidget_touchGestureFireLongPress(XWidget* top)
 {
     XPoint beginPos;
@@ -2566,22 +2810,23 @@ static void xwidget_touchGestureFireLongPress(XWidget* top)
     xwidget_touchGestureKillTimer();
     beginPos.x = (short)g_touchGesture.m_beginX;
     beginPos.y = (short)g_touchGesture.m_beginY;
-    farPos = xwidget_gestureFarPoint(g_touchGesture.m_beginX,
-                                     g_touchGesture.m_beginY);
-    if (g_touchGesture.m_synthPressSent) {
-        /* a) 已合成左键 press：远偏移释放关闭左键序列（释放沿命中管线
-         *    落在序列起点之外，不再构成按钮点击）。 */
-        XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
-                                         XMouseButton_LeftButton,
-                                         XMouseButton_NoButton, &farPos);
-        g_touchGesture.m_synthPressSent = false;
-    }
-    /* b) LongPress 手势先问控件：接受=控件认领（右键序列免合成）。 */
+    /* a) LongPress 手势先问控件：接受=控件认领（右键序列免合成，挂
+     *    着的左键 press 续持，END/Abort 收口位配对释放）。 */
     {
         XPoint beginGlobal = XWidget_mapToGlobal(top, &beginPos);
         if (xwidget_touchGestureNotify(top, XTouchGesture_LongPress,
                                        &beginPos, &beginGlobal))
             return;
+    }
+    farPos = xwidget_gestureFarPoint(g_touchGesture.m_beginX,
+                                     g_touchGesture.m_beginY);
+    if (g_touchGesture.m_synthPressSent) {
+        /* b) 已合成左键 press：远偏移释放关闭左键序列（释放沿命中管线
+         *    落在序列起点之外，不再构成按钮点击）。 */
+        XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                                         XMouseButton_LeftButton,
+                                         XMouseButton_NoButton, &farPos);
+        g_touchGesture.m_synthPressSent = false;
     }
     /* c) 右键按下（自动弹 CONTEXT_MENU）+ 右键释放（普通点击对收口）。 */
     XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
@@ -2867,8 +3112,10 @@ static void xwidget_touchGestureUpdate(XWidget* top, const XTouchEvent* te,
  *         口→DoubleTap 手势先问控件（接受=控件接管，免合成），否则合成
  *         DBL_CLICK+RELEASE（代替 press+release）；普通合成序列→
  *         RELEASE（同点）+ Tap 收口通知（仅告知，配对 release 已合成）；
- *         tap 收口记录跨序列 lastTapEnd（双击窗口基准）；长按已触发→
- *         不再合成任何鼠标事件。末尾清全部单序列状态。 */
+ *         长按被控件认领→挂着的左键 press 按当前位置 RELEASE 收口（不
+ *         构成 tap）；长按未认领→不再合成任何鼠标事件。
+ *         tap 收口记录跨序列 lastTapEnd（双击窗口基准）；末尾清全部
+ *         单序列状态。 */
 static void xwidget_touchGestureEnd(XWidget* top, const XTouchEvent* te,
                                     const XPoint* topLocal)
 {
@@ -2887,6 +3134,20 @@ static void xwidget_touchGestureEnd(XWidget* top, const XTouchEvent* te,
             g_touchGesture.m_synthPressSent = false;
         }
     } else if (g_touchGesture.m_dragging) {
+        /* 抓取拖拽模式收口（转拖时抓取者在位=序列归抓取者、挂着的合成
+           左键 press 保留）：END 按当前位置配对 RELEASE（兑现转拖分支
+           「END 同位收口」契约——抓取者 mouseReleaseEvent 就地解除抓
+           取/落定拖拽态；缺此步抓取滞留，下一次 tap 的合成 press 被
+           抓取改道仍投旧抓取者，触摸拖选后的键盘点按全部落空——
+           2026-10-25 症状③触摸拖选→退格链路的框架缺口）。
+           滚轮模式（press 已远偏移关闭）synthPressSent 已 false，
+           不受影响。 */
+        if (g_touchGesture.m_synthPressSent) {
+            XWidget_synthesizeMouseFromTouch(top,
+                XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
+                XMouseButton_NoButton, topLocal);
+            g_touchGesture.m_synthPressSent = false;
+        }
         xwidget_touchGestureEmitWheel(top, true, topLocal, &globalPos);
     } else if (!g_touchGesture.m_longFired) {
         if (g_touchGesture.m_armedDouble) {
@@ -2914,6 +3175,15 @@ static void xwidget_touchGestureEnd(XWidget* top, const XTouchEvent* te,
         }
         tapDone = (g_touchGesture.m_synthPressSent ||
                    g_touchGesture.m_armedDouble);
+    } else if (g_touchGesture.m_synthPressSent) {
+        /* 长按被控件认领（FireLongPress 免远偏移释放）：挂着的左键
+         * press 由 END 在当前位置配对 RELEASE 收口——按住重复类控件
+         * （屏幕键盘连删）在收口位解除按压态/抓取/节拍；不构成 tap
+         * （认领者自管长按语义，tap 收口记录不更新）。 */
+        XWidget_synthesizeMouseFromTouch(top,
+            XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
+            XMouseButton_NoButton, topLocal);
+        g_touchGesture.m_synthPressSent = false;
     }
     if (tapDone) {
         /* tap 收口记录：下一序列 BEGIN 的双击窗口/邻域判定基准。 */
@@ -2943,6 +3213,28 @@ static void xwidget_touchGestureAbort(XWidget* top)
         XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
                                          XMouseButton_LeftButton,
                                          XMouseButton_NoButton, &farPos);
+    } else if (g_touchGesture.m_longFired && g_touchGesture.m_synthPressSent) {
+        /* 长按被控件认领（FireLongPress 免远偏移释放）：挂着的左键
+         * press 按最近主点位置收口（同左键拖动收口域，防半路落点误
+         * 构成点击；按住重复类控件就地解除按压态/抓取/节拍）。 */
+        XPoint lastPos;
+        lastPos.x = (short)g_touchGesture.m_lastX;
+        lastPos.y = (short)g_touchGesture.m_lastY;
+        XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                                         XMouseButton_LeftButton,
+                                         XMouseButton_NoButton, &lastPos);
+        g_touchGesture.m_synthPressSent = false;
+    } else if (g_touchGesture.m_dragging && g_touchGesture.m_synthPressSent) {
+        /* 抓取拖拽模式异常收口（新 BEGIN/CANCEL 打断）：挂着的合成左键
+         * press 按最近主点位置配对 RELEASE（同 END 收口契约；last 基准
+         * 在抓取拖拽 MOVE 随行中同步，防半路落点误构成点击）。 */
+        XPoint lastPos;
+        lastPos.x = (short)g_touchGesture.m_lastX;
+        lastPos.y = (short)g_touchGesture.m_lastY;
+        XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                                         XMouseButton_LeftButton,
+                                         XMouseButton_NoButton, &lastPos);
+        g_touchGesture.m_synthPressSent = false;
     } else if (g_touchGesture.m_leftDrag && g_touchGesture.m_synthPressSent) {
         XPoint lastPos;
         lastPos.x = (short)g_touchGesture.m_lastX;
@@ -3236,6 +3528,22 @@ static void XWidget_ignoreEvent_default(XWidget* self, XEvent* event)
 {
     (void)self;
     if (event) XEvent_ignore(event);
+}
+
+/** @brief 双击默认槽：转发 mousePressEvent（对标 QWidget::
+ *         mouseDoubleClickEvent 默认实现，Qt 6.8 qwidget.cpp:9579-9582
+ *         「mousePressEvent(event)」口径）。
+ * @details 触摸双击序列的第二拍由手势机合成 DBL_CLICK（XWidget.c
+ *          xwidget_touchGestureEnd）——此前默认忽略使只处理 PRESS 的
+ *          控件（屏幕键盘按下即触发面等）对第二拍失明，快速两拍丢一
+ *          拍（2026-10-25 键速丢字根修）。转发保持事件原 type 与负
+ *          载，经虚槽分派到最派生 press 槽；接受状态由 press 槽定
+ *          夺，未接受仍沿父链传播（与 Qt 忽略语义一致）。覆写了双击
+ *          槽的控件（列表/编辑框等）不经本默认，行为零变化。 */
+static void XWidget_mouseDoubleClickForward_default(XWidget* self,
+                                                    XEvent* event)
+{
+    XWidget_mousePressEvent_base(self, event);
 }
 
 /** @brief 默认拖放槽：仅在 setAcceptDrops(true) 时接受。 */
@@ -3614,7 +3922,7 @@ XVtable* XWidget_class_init(void)
         XWidget_dropEvent_default,         /* DropEvent */
         XWidget_ignoreEvent_default,       /* MousePressEvent */
         XWidget_ignoreEvent_default,       /* MouseReleaseEvent */
-        XWidget_ignoreEvent_default,       /* MouseDoubleClickEvent */
+        XWidget_mouseDoubleClickForward_default, /* MouseDoubleClickEvent（对标 Qt 默认转发 mousePressEvent） */
         XWidget_ignoreEvent_default,       /* MouseMoveEvent */
         XWidget_ignoreEvent_default,       /* WheelEvent */
         XWidget_noopEvent_default,         /* ShowEvent */
@@ -3880,6 +4188,10 @@ static void XFocusProxy_cleanupFor(XWidget* self)
 static void VXWidget_deinit(XWidget* self)
 {
     if (!self) return;
+    /* 重绘补投表摘项（登记非空即活对象纪律，同焦点/抓取/长按靶）：控件
+       先于补投定时器到期消亡时，表内悬垂借用指针会在到期回调被解引用。
+       未登记控件线性扫无命中即返，零开销。 */
+    xwidget_repaintDeferRemove(self);
 #if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
     /* 装饰注册表摘项（键=本控件指针，见 XWindowDecoration_Protected.h）：
        控件可先于其桥接窗口消亡（直接 delete/deferred 删除序），不摘项
