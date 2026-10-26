@@ -177,8 +177,6 @@ static bool buildAndSendRequest(XModbusTcpClient* client, XModbusReply* reply,
 
     // 发送数据
     int64_t sent = XIODevice_write_2((XIODevice*)socket, requestData);
-    //XClassDelete(requestData);
-
     if (sent <= 0) return false;
 
     // 启动超时定时器
@@ -410,6 +408,13 @@ static XModbusReply* VXModbusTcpClient_sendRawRequest(XModbusClient* baseClient,
             XModbusReply_setState(reply, XModbusReply_State_Requesting);
             if (!buildAndSendRequest(client, reply, fallbackTid,
                                      reply->m_request, serverAddress)) {
+                /* [2026-10-26 UAF 根修] Ref 契约=返回 NULL 时请求所有权归
+                 * 调用方；此前仅 deleteLater(reply)（异步），Reply 仍持有
+                 * m_request——调用方按契约立即释放请求后，延迟删除再删一次
+                 * =堆 UAF（ASan 实证：断链窗口 sendReadRequest 失败路径，
+                 * 随后内存复用引发设备状态抖动/缓存哨兵等次生乱象）。先摘
+                 * 所有权再异步删 Reply。 */
+                reply->m_request = NULL;
                 XModbusReply_deleteLater(reply);
                 return NULL;
             }
@@ -428,6 +433,8 @@ static XModbusReply* VXModbusTcpClient_sendRawRequest(XModbusClient* baseClient,
     // 构建并发送请求
     //if (buildAndSendRequest(client, reply, newTransactionId, reply->m_request, reply->m_serverAddress))
     if (!buildAndSendRequest(client, reply, transactionId, reply->m_request, reply->m_serverAddress)) {
+        /* [2026-10-26 UAF 根修] 同上：摘除请求所有权再异步删 Reply。 */
+        reply->m_request = NULL;
         XModbusReply_deleteLater(reply);
         return NULL;
     }

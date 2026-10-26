@@ -59,6 +59,7 @@
 #include "XString.h"
 #include "XGeometry.h"
 #include "XMemory.h"
+#include "XAlignment.h" /* XAlignment_Center（窗口图标居中绘制用）。 */
 #include "XPlatformDisplayDriver.h" /* 单屏互斥检查（XPLATFORM_FBDEV_ON=0 时为空头）。 */
 #include "XWindowRotation.h" /* 内容旋转换算（0/90/180/270 轴判定 + 点/矩形正逆变换）。 */
 #include <stdio.h>

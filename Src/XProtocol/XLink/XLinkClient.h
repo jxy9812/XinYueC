@@ -85,26 +85,32 @@ typedef struct XLinkClient {
     XLinkSessionDispatchCallback m_dispatchCallback; /**< 新会话的分发回调模板（借用）。 */
     void* m_userData;  /**< 分发回调上下文（借用，原样透传给会话回调）。 */
 
-    bool m_autoReconnect;             /**< 自动重连开关（默认 false，对齐 QModbusClient）。 */
-    uint32_t m_reconnectInterval;     /**< 重连间隔（毫秒，默认 1000）。 */
+uint32_t m_reconnectInterval;     /**< 重连间隔（毫秒，默认 1000）。 */
     int16_t m_maxReconnectAttempts;   /**< 最大重连次数（-1 表示无限，默认 -1）。 */
     int16_t m_reconnectAttempts;      /**< 当前重连尝试计数（仅供实现使用，
                                            连接成功后清零）。 */
 
-    XTcpSocket* m_socket;   /**< 内嵌套接字（对象拥有，init 时为 NULL，首次
+    XTcpSocket* m_socket;   /* 内嵌套接字（对象拥有，init 时为 NULL，首次
                                  connectToServer 或重连尝试时创建）；仅供实现使用。 */
-    XLinkSession* m_session;  /**< 当前会话（对象拥有，TCP 连上才创建，链路
+    XLinkSession* m_session;  /* 当前会话（对象拥有，TCP 连上才创建，链路
                                    断开即拆除）；借用经 XLinkClient_session。
                                    仅供实现使用。 */
 
-    XTimerId m_reconnectTimerId;  /**< 重连定时器 id（进入 ReconnectingState 时
+    XTimerId m_reconnectTimerId;  /* 重连定时器 id（进入 ReconnectingState 时
                                        启动，XObject 内建定时器）；XTIMER_INVALID_ID
                                        表示未启动。仅供实现使用。 */
-    XLinkClientState m_state;  /**< 当前连接状态，见 XLinkClientState。 */
+    XLinkClientState m_state;  /* 当前连接状态，见 XLinkClientState。 */
 
-    bool m_everReady;        /**< 曾达到 ConnectedState（会话 Ready）标志：
+    /* 【位域收敛 2026-10-26】三个布尔标志原本分散在结构体两端
+     * （m_autoReconnect 在头、另两个在尾），各自带 3 字节对齐填充。
+     * 改为位域并聚于尾部：bool 位域按 1 字节单元分配，三标志共占
+     * 1 字节（省 2 字节 + 两处 3 字节填充洞）。成员名与语义不变，
+     * 调用点零改动（bool 位域的读写/取址语义与普通 bool 一致，
+     * 本结构无取址用法）。 */
+    bool m_autoReconnect : 1;   /* 自动重连开关（默认 false，对齐 QModbusClient）。 */
+    bool m_everReady : 1;       /* 曾达到 ConnectedState（会话 Ready）标志：
                                   自动重连只在该标志置位后生效。仅供实现使用。 */
-    bool m_userDisconnect;   /**< 手动断开进行中标志：屏蔽拆除过程中的信号
+    bool m_userDisconnect : 1;  /* 手动断开进行中标志：屏蔽拆除过程中的信号
                                   触发自动重连。仅供实现使用。 */
 } XLinkClient;
 

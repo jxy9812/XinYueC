@@ -344,8 +344,9 @@ static bool XLinkSessionPrivate_addSub(XLinkSession* self, uint32_t topicId)
 {
     int i;
     for (i = 0; i < XLINK_TOPIC_SLOTS; i++) {
-        if (!self->m_subscriptions[i].m_used) {
-            self->m_subscriptions[i].m_used = true;
+        /* 槽位占用位走会话级位图（表项退化为纯 u32，16 槽 128→64 字节）。 */
+        if (!(self->m_subscriptionUsed & (1u << (unsigned)i))) {
+            self->m_subscriptionUsed |= (1u << (unsigned)i);
             self->m_subscriptions[i].m_topicId = topicId;
             return true;
         }
@@ -358,9 +359,9 @@ static bool XLinkSessionPrivate_removeSub(XLinkSession* self, uint32_t topicId)
 {
     int i;
     for (i = 0; i < XLINK_TOPIC_SLOTS; i++) {
-        if (self->m_subscriptions[i].m_used
+        if ((self->m_subscriptionUsed & (1u << (unsigned)i))
             && self->m_subscriptions[i].m_topicId == topicId) {
-            self->m_subscriptions[i].m_used = false;
+            self->m_subscriptionUsed &= ~(1u << (unsigned)i);
             return true;
         }
     }
@@ -914,7 +915,7 @@ bool XLinkSession_isSubscribed(const XLinkSession* self, uint32_t topicId)
     if (ISNULL(self, "XLinkSession_isSubscribed self"))
         return false;
     for (i = 0; i < XLINK_TOPIC_SLOTS; i++) {
-        if (self->m_subscriptions[i].m_used
+        if ((self->m_subscriptionUsed & (1u << (unsigned)i))
             && self->m_subscriptions[i].m_topicId == topicId)
             return true;
     }

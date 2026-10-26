@@ -18,7 +18,7 @@
  *                xdevice_wifi_probe.exe <ssid> [口令]   追加连接测试
  *
  *              判读口径：
- *                - capabilities=0            平台无无线后端（如 POSIX 现阶段）
+ *                - capabilities=0            平台无无线后端（无 NM / wpa 控制口 / WEXT 可用）
  *                - 适配器数=0                本机无无线网卡 / WLAN 服务未起
  *                - 扫描状态 Failed            驱动拒绝发起扫描
  *                - 扫描 0 条且 4 秒超时       周边无可用 AP（正常）

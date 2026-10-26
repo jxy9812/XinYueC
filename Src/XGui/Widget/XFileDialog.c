@@ -707,6 +707,10 @@ static void xff_setRoleColor(XWidget* w, XPaletteColorRole role,
  * xtw_headerHandleAt 均库内 static，契约头不扩）。 */
 
 #define XFF_TREE_HEADER_H   20 /**< 表头带高（=XTreeWidget XTW_HEADER_H）。 */
+
+/* [2026-10-26 竖屏适配] 构建期屏向缓存（true=竖屏）：布局定宽常量的
+ * 柔性化分支依据，xff_buildDialog 开头统一取样一次。 */
+static bool g_ffPortrait = false;
 #define XFF_TREE_HANDLE_HIT  3 /**< 分隔线拖宽热区半径（=XTW_HANDLE_HIT）。 */
 
 #if XFILE_ON && XDIR_ON
@@ -2792,6 +2796,18 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
             XClassDelete((XClass*)abs0);
         }
     }
+    /* [2026-10-26 竖屏适配] 竖屏屏（高>宽）上各定宽常量柔性化：
+     * 导航窗格 120→92、搜索框 150→100、地址下拉 min 280→120、
+     * 文件树 min 宽 360→260、文件名框 min 240→150——否则竖屏宽
+     * （480-页边距=456）装不下横屏最小宽和，盒布局溢出钳挤。
+     * 构建期即取屏向（exec 定尺前，对话框生命周期内屏向不变）。 */
+    {
+        XScreen* scr = XGuiApplication_primaryScreen();
+        XRect sg;
+        memset(&sg, 0, sizeof(sg));
+        if (scr) sg = XScreen_geometry(scr);
+        g_ffPortrait = (sg.height > sg.width && sg.width > 0) ? true : false;
+    }
     ls->root = XBoxLayout_create(XBoxLayoutDirection_TopToBottom,
                                  (XWidget*)dlg);
     if (!ls->root) {
@@ -2827,7 +2843,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         combo = XComboBox_create((XWidget*)dlg, 0);
         if (combo) {
             xff_setName((XObject*)combo, XFF_NAME_DIRCOMBO);
-            XWidget_setMinimumSize((XWidget*)combo, 280, 26);
+            XWidget_setMinimumSize((XWidget*)combo, g_ffPortrait ? 120 : 280, 28);
             xff_setRoleColor((XWidget*)combo, XPaletteColorRole_Base,
                              XFF_WIN10_WHITE);
             /* XComboBox 基线焦点策略 NoFocus（类内未设置）——地址栏不可
@@ -2838,7 +2854,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         }
         if (up) {
             XAbstractButton_setText_2((XAbstractButton*)up, "上级");
-            XWidget_setMinimumSize((XWidget*)up, 64, 26);
+            XWidget_setMinimumSize((XWidget*)up, 64, 28);
             xff_setName((XObject*)up, XFF_NAME_UPBTN);
             XWidget_setVisible((XWidget*)up, true);
             /* 导航钮退出 autoDefault 候选（对标 Qt QFileDialog 的
@@ -2851,7 +2867,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         }
         if (back) {
             XAbstractButton_setText_2((XAbstractButton*)back, "←");
-            XWidget_setMinimumSize((XWidget*)back, 36, 26);
+            XWidget_setMinimumSize((XWidget*)back, 36, 28);
             xff_setName((XObject*)back, XFF_NAME_BACKBTN);
             XWidget_setVisible((XWidget*)back, true);
             /* 首载后退栈为空：初始即禁用灰化（xff_cdEx 换目录后同步）。 */
@@ -2861,8 +2877,8 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         }
         if (search) {
             xff_setName((XObject*)search, XFF_NAME_SEARCH);
-            XWidget_setMinimumSize((XWidget*)search, 130, 24);
-            XWidget_setFixedWidth((XWidget*)search, 150);
+            XWidget_setMinimumSize((XWidget*)search, g_ffPortrait ? 90 : 130, 24);
+            XWidget_setFixedWidth((XWidget*)search, g_ffPortrait ? 100 : 150);
             XLineEdit_setPlaceholderText(search, "搜索");
             /* Win10 搜索框白底（主题 Base #FFFFE0 偏黄，控件级覆写）。 */
             xff_setRoleColor((XWidget*)search, XPaletteColorRole_Base,
@@ -2889,7 +2905,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
     if (view) {
         static const char* const kHeaders[3] = { "名称", "大小", "类型" };
         xff_setName((XObject*)view, XFF_NAME_VIEW);
-        XWidget_setMinimumSize((XWidget*)view, 360, 220);
+        XWidget_setMinimumSize((XWidget*)view, g_ffPortrait ? 260 : 360, 220);
         /* 多列详情 + 表头（页5 树双列先例同款：setColumnCount +
          * setHeaderLabels；内建桥模型随条目同步，无外部 model）。 */
         XTreeWidget_setColumnCount(view, 3);
@@ -2915,8 +2931,8 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         if (nav) {
             XAbstractItemModel* navModel = XAbstractItemModel_create();
             xff_setName((XObject*)nav, XFF_NAME_NAV);
-            XWidget_setMinimumSize((XWidget*)nav, 120, 220);
-            XWidget_setFixedWidth((XWidget*)nav, 120);
+            XWidget_setMinimumSize((XWidget*)nav, g_ffPortrait ? 92 : 120, 220);
+            XWidget_setFixedWidth((XWidget*)nav, g_ffPortrait ? 92 : 120);
             if (navModel) {
                 XStringList* navNames = NULL;
                 XStringList* navPaths = NULL;
@@ -2968,7 +2984,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         edit = XLineEdit_create((XWidget*)dlg, 0);
         if (edit) {
             xff_setName((XObject*)edit, XFF_NAME_NAMEEDIT);
-            XWidget_setMinimumSize((XWidget*)edit, 240, 24);
+            XWidget_setMinimumSize((XWidget*)edit, g_ffPortrait ? 150 : 240, 24);
             /* Win10 文件名框白底（主题 Base 偏黄，控件级覆写）。 */
             xff_setRoleColor((XWidget*)edit, XPaletteColorRole_Base,
                              XFF_WIN10_WHITE);
@@ -3049,7 +3065,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
                 else if (fileMode == XFileDialog_Directory)
                     okText = "选择文件夹";
                 XAbstractButton_setText_2((XAbstractButton*)ok, okText);
-                XWidget_setMinimumSize((XWidget*)ok, 80, 28);
+                XWidget_setMinimumSize((XWidget*)ok, 88, 28);
                 xff_setName((XObject*)ok, XFF_NAME_OK);
                 /* 确定钮 = 显式默认按钮（对标 QFileDialog 的 Accept 钮
                  * setDefault(true)）：对话框 Return/初始焦点分派不再依
@@ -3063,7 +3079,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
             }
             if (cancel) {
                 XAbstractButton_setText_2((XAbstractButton*)cancel, "取消");
-                XWidget_setMinimumSize((XWidget*)cancel, 80, 28);
+                XWidget_setMinimumSize((XWidget*)cancel, 88, 28);
                 xff_setName((XObject*)cancel, XFF_NAME_CANCEL);
                 XBoxLayout_addWidget(ls->bar, (XWidget*)cancel);
                 XObject_connect_1((XObject*)cancel,
@@ -3278,10 +3294,55 @@ static int xff_selectedFilterIndex(const XFileDialog* dlg)
 static bool xff_exec(XFileDialog* dlg)
 {
     if (!dlg) return false;
-    /* 宽度容纳地址行（后退36+上级64+标签+目录下拉280+搜索150）与
-     * 主体行（导航窗格 120 + 文件树 min 360）+ 页边距；680 与 Win10
-     * 文件对话框默认幅面同量级。 */
-    XWidget_resize((XWidget*)dlg, 680, 460);
+    /* 尺寸随屏（2026-10-26 竖屏适配）：此前硬编码 680x460，竖屏
+     * （480x800 类）被平台层钳到 480 宽而内部布局仍按 680 解算——
+     * 正文整体空白（竖屏目验实证）。口径：
+     *   横屏：680x460（Win10 幅面同量级），仅对屏幕收敛；
+     *   竖屏：宽=屏宽-16、高=屏高 72%（Win10 手机文件对话框满宽
+     *   窄高同款），盒布局按实际宽重排，工具栏/列表最小宽相应柔性
+     *   化（见 xff_buildDialog 的竖屏分支）。 */
+    {
+        /* 尺寸取样链：父窗口几何（对话框总在其宿主屏上，最可靠）→
+         * 主屏 → 旧幅面兜底。 */
+        XRect g;
+        int gw = 0, gh = 0;
+        int w = 680, h = 460;
+        bool portrait = false;
+        {
+            XWidget* parent = XWidget_parentWidget((XWidget*)dlg);
+            if (parent) {
+                g = XWidget_geometry(parent);
+                gw = g.width;
+                gh = g.height;
+            }
+        }
+        if (gw <= 0 || gh <= 0) {
+            XScreen* screen = XGuiApplication_primaryScreen();
+            if (screen) {
+                g = XScreen_geometry(screen);
+                gw = g.width;
+                gh = g.height;
+            }
+        }
+        if (gw > 0 && gh > 0) {
+            portrait = (gh > gw);
+            if (portrait) {
+                w = gw - 16;
+                h = gh * 72 / 100;
+                if (w < 320) w = 320;
+                if (h < 400) h = 400;
+                if (h > gh - 24) h = gh - 24;
+            } else {
+                if (w > gw - 16) w = gw - 16;
+                if (h > gh - 16) h = gh - 16;
+            }
+        }
+        /* 构建期屏向取样兜底（父/屏都不可得时沿用旧幅面）。 */
+        if (g_ffPortrait && !portrait) {
+            /* 不可得即维持旧幅面：无屏信息时不猜。 */
+        }
+        XWidget_resize((XWidget*)dlg, w, h);
+    }
     xff_centerOnScreen((XWidget*)dlg);
     /* 不预聚焦文件名编辑框（项目口径）：嵌入式软键盘机型上文本框取得
      * 输入焦点即弹软键盘，打开对话框不应强制弹键盘（Qt 桌面

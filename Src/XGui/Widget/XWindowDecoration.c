@@ -268,10 +268,21 @@ static bool xwd_hostFullScreen(const XWidget* top)
 {
     XWindow* win;
     if (!top || !top->m_isWindow) return false;
+    /* 【双源合并判定 2026-10-25 真机根修】原先「有窗口句柄就只读窗口侧
+     * 状态」是错的：XWidget_setWindowState 先落控件状态位、再
+     * XWindow_setWindowStates 同步，而全屏请求常在首帧建窗/建条阶段发生
+     * （fbdev 无 WM 尤其如此），此刻窗口侧 m_windowStates 可能尚未写入
+     * FullScreen——判定返回 false，xwd_stripHeight 落到默认条高 28，保留
+     * 边距不归零，全屏内容顶被永久留白一条（真机实证：品牌条从 y=28 起、
+     * 上方整幅 28px 灰带；桌面因建条时序更早未暴露）。
+     * 改为两源取或：任一侧报告全屏即视为全屏——控件侧是请求方权威、窗口
+     * 侧是 WM 回写权威，二者语义等价，不会互相误判（非全屏态两侧都为 0）。 */
+    if (top->m_windowState & (XWindowStates)XWindowState_FullScreen)
+        return true;
     win = top->m_windowHandle;
     if (win)
         return XWindow_windowState(win) == XWindowState_FullScreen;
-    return (top->m_windowState & (XWindowStates)XWindowState_FullScreen) != 0;
+    return false;
 }
 
 /** @brief 条带高度：标题条控件实际高度优先（自定义条可高/矮于默认），
@@ -284,8 +295,16 @@ static bool xwd_hostFullScreen(const XWidget* top)
 static int xwd_stripHeight(const XWindowDecorationState* st)
 {
     int h;
+    /* 【全屏判定前移 2026-10-25 真机根修】此前该判定嵌在 `st->m_bar`
+     * 存在性判断内：条尚未承载（m_bar==NULL，典型=showFullScreen 发生在
+     * 首帧建条之前）时直接落到下方 XTitleBar_defaultHeight()，返回 28px
+     * 默认条高——全屏态保留边距不归零，内容区顶被永久留白一条（昆仑通态
+     * A33 实测：品牌条从 y=28 起，上方 28px 灰带）。桌面 X11 因建条时序
+     * 更早未暴露。现改为先判全屏：全屏恒零条带，与条是否已建无关；四消费
+     * 点（marginsFor/handlePointer/repaintStrip/ensureBar）同源本函数，
+     * 保持「条已隐 ⇒ 边距必归零」的无中间态不变量。 */
+    if (st && xwd_hostFullScreen(st->m_top)) return 0; /* 全屏：条带让位。 */
     if (st && st->m_bar) {
-        if (xwd_hostFullScreen(st->m_top)) return 0; /* 全屏：条带让位。 */
         h = XWidget_height(st->m_bar);
         if (h > 0) return h;
     }
@@ -1952,8 +1971,15 @@ XMargins XWindowDecoration_marginsFor(const XWidget* top)
 {
     XMargins margins;
     XMargins_init(&margins, 0, 0, 0, 0);
-    if (XWindowDecoration_activeFor(top))
-        margins.top = xwd_stripHeight(xwd_stateFor(top));
+    if (!XWindowDecoration_activeFor(top)) return margins;
+    /* 【保留边距的全屏闸 2026-10-25 真机根修】不能只依赖 xwd_stripHeight：
+     * 它经 xwd_stateFor(top) 取装饰状态，而状态对象在首次 ensureState 之前
+     * 为 NULL——此时 xwd_stripHeight(NULL) 直接返回 XTitleBar_defaultHeight()
+     * （28px），全屏保留边距不归零，内容区顶永久留白一条（真机实证：品牌条
+     * 从 y=28 起、上方整幅 28px 灰带）。这里在取状态之前先判全屏：全屏态
+     * 与是否已建条/已建状态对象无关，保留边距恒零。 */
+    if (xwd_hostFullScreen(top)) return margins;
+    margins.top = xwd_stripHeight(xwd_stateFor(top));
     return margins;
 }
 

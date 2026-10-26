@@ -1431,6 +1431,12 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
  *  「静态场景缓存 + 仅重绘性能浮层小块」路径，反映小区域增量刷新；
  *  强制整帧才能得到每页的真实全屏绘制成本。 */
 static bool g_benchmarkFullRedraw;
+/** @brief 启动即全屏（--fullscreen，2026-10-25 用户需求：开机自启铺满面板）。
+ * @details 与 --maximized 的区别是窗口状态不同：Maximized 保留 CSD 标题栏
+ *          （内容区让位条带高），FullScreen 按框架语义隐藏标题栏、内容铺满
+ *          整个窗口——设备上即整块 1024x600 面板。fbdev 无 WM，两者都只是
+ *          框架内的软件窗口状态，无原生窗交互差异。 */
+static bool g_startFullScreen;
 /** @brief 交互空闲闸门（环境变量 XGUI_DEMO_IDLE_GATE，默认开）。开启时
  *  帧泵空闲不再逐轮强制重绘（无脏区不重绘，对标 Qt），悬浮层指标改为
  *  独立降频定时器（XGUI_DEMO_IDLE_OVERLAY_MS，4Hz）自刷新；设 0 回退
@@ -4124,6 +4130,43 @@ static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
     }
 }
 
+/** @brief ChangeEvent：窗口状态（最小化/最大化/全屏）变化时的 demo 侧重排。
+ * @details 对标 Qt QWidget::changeEvent(QEvent::WindowStateChange)。
+ *          【职责边界 2026-10-25 真机纠正】全屏只去掉**窗口装饰**——CSD 标题
+ *          条由框架装饰层在 notifyWindowState 里隐藏并把保留边距归零，本槽
+ *          不碰它。应用自己的 chrome（蓝底品牌条 DEMO_BRAND_H、底部状态栏
+ *          DEMO_STATUS_H）是全屏内容的一部分，必须照常显示：上一版在此把两
+ *          条一并隐藏是错的（用户指正「蓝色状态栏和底部黑色状态栏都没了」）。
+ *          本槽只做状态无关的重排兜底：状态翻转会改变装饰保留边距（内容区
+ *          起点），布局与内容页需按新边距重解算一次。 */
+static void VDemoWin_changeEvent(XWidget* self, XEvent* event)
+{
+    XClass_Parent(XWidget, EXWidget_ChangeEvent,
+                  void(*)(XWidget*, XEvent*))(self, event);
+    if (XEvent_type(event) != XEVENT_TYPE_WINDOW_STATE_CHANGE) return;
+    {
+        DemoWin* demo = (DemoWin*)self;
+        demo->m_staticSceneDirty = true;
+    }
+    /* 【关键】根布局 contentsMargins.top 是装饰保留边距的**快照**（见
+     * demo_main_refreshChrome 注释）：框架全屏时把保留边距归零，但 demo
+     * 根布局不会自动跟随——必须经 refreshChrome 把新值重取进布局，否则
+     * 内容区顶仍停在 28px CSD 条高（真机实证：品牌条从 y=28 起，上方
+     * 整幅 28px 灰带；桌面窗口尺寸变化恰好触发 RESIZE→refreshChrome 才
+     * 侥幸看不出）。refreshChrome 内含根布局激活 + 悬浮层重锚 + 导航面板
+     * 与页内排布，一次覆盖全部 chrome 重排。 */
+    demo_main_refreshChrome(self);
+#if XWIDGET_ON && XLAYOUT_ON
+    XWidget_updateGeometry(self);
+#endif
+    /* 整窗重绘：装饰边距翻转会改变内容区起点，原区域需要重新上漆。 */
+    {
+        XRect full;
+        XRect_init(&full, 0, 0, XWidget_width(self), XWidget_height(self));
+        XWidget_updateRect(self, &full);
+    }
+}
+
 /** @brief PaintEvent：根控件背景与性能悬浮层；子控件由 XWidget 自动递归绘制。 */
 static void VDemoWin_paintEvent(XWidget* self, XEvent* event)
 {
@@ -4450,6 +4493,7 @@ static XVtable* DemoWin_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VDemoWin_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_CloseEvent, VDemoWin_closeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VDemoWin_resizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VDemoWin_changeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VDemoWin_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VDemoWin_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyReleaseEvent, VDemoWin_keyReleaseEvent);
@@ -6055,6 +6099,11 @@ int xgui_demo_main(int argc, char* argv[])
         else if (strcmp(argv[argi], "--maximized") == 0) {
             benchmarkMaximized = true;
         }
+        else if (strcmp(argv[argi], "--fullscreen") == 0) {
+            /* 启动即全屏（对标 QWidget::showFullScreen）：与 --maximized
+             * 的状态语义不同——全屏隐藏 CSD 标题栏、内容铺满整窗。 */
+            g_startFullScreen = true;
+        }
         else if (strcmp(argv[argi], "--benchmark-full") == 0) {
             g_benchmarkFullRedraw = true;
         }
@@ -6689,12 +6738,16 @@ int xgui_demo_main(int argc, char* argv[])
          * 由窗口装饰模块的切换路径承接（requestPanelClear 单发）。 */
         if (benchmarkMaximized)
             XWidget_showMaximized(&win->m_base);
+        else if (g_startFullScreen)
+            XWidget_showFullScreen(&win->m_base);
         else
             XWidget_showNormal(&win->m_base);
     } else
 #endif
     if (benchmarkMaximized)
         XWidget_showMaximized(&win->m_base);
+    else if (g_startFullScreen)
+        XWidget_showFullScreen(&win->m_base);
     else
         XWidget_showNormal(&win->m_base);
 #if defined(__ANDROID__) && XWIDGET_ON
@@ -6708,7 +6761,8 @@ int xgui_demo_main(int argc, char* argv[])
     XWidget_showFullScreen(&win->m_base);
 #endif
 #if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
-    if (fbPanelW > 0 && fbPanelH > 0 && !benchmarkMaximized)
+    if (fbPanelW > 0 && fbPanelH > 0 && !benchmarkMaximized &&
+        !g_startFullScreen)
     {
         /* 窗口化启动：窗外面板区域铺桌面底色（RGB565 浅灰，与框架
          * 标题栏同源）。无 WM 环境框架即合成器，但面板底没有「桌面」

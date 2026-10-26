@@ -1022,16 +1022,22 @@ void XNetIoRingPosix_init(XNetIoRingPosix* ring) {
     {
         int ioAllowed = 0;
         const char* force = getenv("XNET_FORCE_IOURING");
-        if (force && force[0] == '1') {
-            ioAllowed = 1;
-        } else {
-            struct utsname uts;
-            if (uname(&uts) == 0) {
-                int major = 0, minor = 0;
-                sscanf(uts.release, "%d.%d", &major, &minor);
-                ioAllowed = (major > 5) || (major == 5 && minor >= 10);
+        /* [2026-10-25 XNET_FORCE_EPOLL] 与 XNET_FORCE_IOURING 对称的桌面
+         * 回归开关：置 1 跳过 io_uring 直接落 epoll 引擎。双引擎行为
+         * 一致性测试（Modbus 断线重连战役）需要同机切换后端对照。 */
+        const char* forceEpoll = getenv("XNET_FORCE_EPOLL");
+        if (!(forceEpoll && forceEpoll[0] == '1')) {
+            if (force && force[0] == '1') {
+                ioAllowed = 1;
             } else {
-                ioAllowed = 1; /* 版本号不可得：维持原行为（setup 探测把关） */
+                struct utsname uts;
+                if (uname(&uts) == 0) {
+                    int major = 0, minor = 0;
+                    sscanf(uts.release, "%d.%d", &major, &minor);
+                    ioAllowed = (major > 5) || (major == 5 && minor >= 10);
+                } else {
+                    ioAllowed = 1; /* 版本号不可得：维持原行为（setup 探测把关） */
+                }
             }
         }
         if (ioAllowed && ioSetupRing(ring)) {

@@ -18,6 +18,7 @@
 15. [智能体协作与持续任务规范](#智能体协作与持续任务规范)
 16. [常见错误与最佳实践](#常见错误与最佳实践)
 17. [总结](#总结)
+- [定时器使用规范（2026-10-26 裁定）](#定时器使用规范2026-10-26-裁定)：XObject 派生类内禁内嵌独立 XTimer
 
 ---
 
@@ -1549,6 +1550,47 @@ XObject_disconnect_2(conn);   // conn 为 XObject_connect_2 的返回值
 ### 6. 向用户报告的最低内容
 
 每轮持续任务至少说明：当前五个智能体各自的范围和状态、已审核或待审核的结果、是否补发了新任务、是否有构建或测试阻塞，以及是否发生了 Git 提交。不能把"已派发"写成"已完成"，也不能把等待超时写成任务失败。
+
+---
+
+## 定时器使用规范（2026-10-26 裁定）
+
+> **XObject 派生类内部需要定时器时，一律用 XObject 自带定时器机制，禁止再
+> 内嵌独立 `XTimer` 类实例。**
+
+### 规则
+
+1. **注册**：`XObject_startTimer_ms(obj, intervalMs, timerType)` 返回 `XTimerId`；
+   到期经 `EXObject_TimerEvent` 虚函数重载分发（`XTimerEvent_timerId(event)`
+   区分多路定时器，`XEvent_accept(event)` 收尾）。
+2. **注销**：停止时必须 `XObject_killTimer(obj, id)` 并把成员 id 复位为
+   `XTIMER_INVALID_ID`。**周期定时器只覆盖 id 不 kill = 定时器泄漏**（分发器
+   startTimer 恒 singleShot=false 到期重挂，对象销毁才被统一注销——
+   2026-10-25 键盘战役实证过此类泄漏）。
+3. **独立 `XTimer` 类的适用面收窄**：仅限「对象本体不是 XObject 派生」或
+   「需要独立生命周期/跨对象移交」的场景（如探针自建拍子）。业务对象内部
+   拍子（轮询、重发、超时、限频）一律走对象自带定时器。
+4. **回调里先比对 id 再动作**：多路定时器共用一个 timerEvent 入口，未知
+   id 交父类处理（`XClass_Parent(..., EXObject_TimerEvent, ...)`），不要吞。
+
+```c
+/* ✅ 对象内定时器（XObject 派生类） */
+obj->m_pollTimer = XObject_startTimer_ms((XObject*)obj, 1000, XTimerType_CoarseTimer);
+
+static void VXHub_timerEvent(XObject* obj, XTimerEvent* event)
+{
+    XModbusHub* hub = (XModbusHub*)obj;
+    XTimerId id = XTimerEvent_timerId(event);
+    XEvent_accept(event);
+    /* 按 id 分发；未知 id 落父类 */
+}
+
+/* 停止：必须 kill + 复位 */
+if (obj->m_pollTimer != XTIMER_INVALID_ID) {
+    XObject_killTimer((XObject*)obj, obj->m_pollTimer);
+    obj->m_pollTimer = XTIMER_INVALID_ID;
+}
+```
 
 ---
 

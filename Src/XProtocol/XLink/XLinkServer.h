@@ -99,21 +99,21 @@ typedef struct XLinkServer {
     XVector* m_sessions;  /**< 托管会话列表（对象拥有，元素为 XLinkSession*）。
                                仅供实现使用。 */
 
-    uint16_t m_capability;  /**< 新会话的能力位模板（setCapability 预设）。 */
-    XLinkSessionDispatchCallback m_dispatchCallback; /**< 新会话的分发回调模板（借用）。 */
-    void* m_userData;  /**< 分发回调上下文（借用，原样透传给会话）。 */
-    XLinkServerNotifyCallback m_notifyCallback; /**< 会话增删通知回调（借用，可为 NULL）。 */
-    XLinkServerTickCallback m_tickCallback; /**< 周期业务回调（借用，可为 NULL）。 */
-    void* m_tickUserData;  /**< 周期业务回调上下文（借用，原样回传）。 */
+uint16_t m_capability;  /**< 新会话的能力位模板（setCapability 预设）。 */
+    XLinkSessionDispatchCallback m_dispatchCallback; /* 新会话的分发回调模板（借用）。 */
+    void* m_userData;  /* 分发回调上下文（借用，原样透传给会话）。 */
+    XLinkServerNotifyCallback m_notifyCallback; /* 会话增删通知回调（借用，可为 NULL）。 */
+    XLinkServerTickCallback m_tickCallback; /* 周期业务回调（借用，可为 NULL）。 */
+    void* m_tickUserData;  /* 周期业务回调上下文（借用，原样回传）。 */
 
-    XTimerId m_timerId;  /**< 内建节拍定时器 id（listen 时启动，驱动回收与手动模式
+    XTimerId m_timerId;  /* 内建节拍定时器 id（listen 时启动，驱动回收与手动模式
                               兜底 pump）；XTIMER_INVALID_ID 表示未启动（无事件
                               分发器时），退化为手动 pump。仅供实现使用。 */
-    uint32_t m_tickIntervalMs;  /**< 内建节拍周期（毫秒）：listen 时按它启动节拍
+    uint32_t m_tickIntervalMs;  /* 内建节拍周期（毫秒）：listen 时按它启动节拍
                                      定时器，运行中可经 XLinkServer_setTickInterval
                                      调整；0 表示不启动节拍（转手动 pump）。
                                      默认取 XLINK_HEARTBEAT_TICK_MS。仅供实现使用。 */
-    int m_pumpDepth;     /**< pump 重入深度（仅供实现使用）：仅最外层 pump 末尾
+    int m_pumpDepth;     /* pump 重入深度（仅供实现使用）：仅最外层 pump 末尾
                               回收会话，保证回收点不在任何会话的调用栈上。 */
 } XLinkServer;
 

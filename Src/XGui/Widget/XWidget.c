@@ -199,6 +199,19 @@ volatile unsigned long g_flushBsCount;
  * 收口，不会丢更新。 */
 static int g_paintDispatching = 0;
 
+/* [绘制期抑制的重投计数 2026-10-26 回归根修] 上游 2026-10-25 的绘制期
+ * 抑制门与 flush 尾部的重投条件互相抵消，导致绘制期产生的脏区**永久
+ * 丢失**：addDirtyRegion 抑制路径先把 PendingUpdate 置真才 return，而
+ * flush 尾部以「!alreadyPending」为重投前提——该位刚被抑制路径置真，
+ * 条件永不成立，脏区滞留 m_dirty 却不再派发 PAINT。
+ * 真机症状（昆仑通态 A33 192.168.1.252）：触摸后画面完全不刷新、只有
+ * 软件光标跟随点击；A/B 对照=合并前旧版（md5 3fbef457）点击正常响应，
+ * 合并后版本（md5 2695a470）点击无任何反应（导航区指纹点击前后全同）。
+ * 本计数记录「本次绘制期被抑制的标脏次数」，flush 尾部据此**强制补投**，
+ * 兑现上游注释承诺的「不会丢更新」，同时保留抑制门防自激的意图
+ * （补投发生在绘制之外的事件队列，非绘制栈内递归）。 */
+static int g_paintSuppressedDirty = 0;
+
 /* [rprof] 区域尺寸画像状态（XGPU_W_FRAME_PROF 同门控，2026-10-14）。
  * 脏区架构的量化口：入队侧（update*→addDirtyRegion，本文件前部——
  * 故独立于文件尾部的 wprof 状态体在此提前定义）按裁剪后矩形累计像素
@@ -1691,12 +1704,19 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
     if (copiedSource)
         XRegion_deinit(&sourceCopy);
     XWidget_attrSet(&top->m_attributes, XWidgetAttribute_PendingUpdate, true);
-    /* [绘制期标脏抑制 2026-10-25] paintTree 派发期间不重投 PAINT：
+/* [绘制期标脏抑制 2026-10-25] paintTree 派发期间不重投 PAINT：
      * 否则 paintEvent 内的 update()（性能悬浮层每帧 setText）会组成
      * 「绘制→标脏→再投递→再绘制」自激环，安卓真机在大面积重绘时
-     * 卡死自旋。脏区已入队且 PendingUpdate 已置位，flush 尾部统一收口。 */
+     * 卡死在定时器红黑树旋转。脏区已入队且 PendingUpdate 已置位，flush
+     * 尾部统一收口。
+     * [2026-10-26 回归根修] 抑制期间计数：flush 尾部据该计数强制补投
+     * （旧路径按 !alreadyPending 判断，而本行刚把 PendingUpdate 置真，
+     *  条件恒假 → 绘制期脏区永久滞留 = 画面冻结）。 */
     if (g_paintDispatching > 0)
+    {
+        ++g_paintSuppressedDirty;
         return;
+    }
     if (top->m_windowHandle && top->m_visible)
     {
         extern volatile unsigned long g_postPaintCount;
@@ -6732,6 +6752,29 @@ void XWidget_setWindowState(XWidget* self, XWindowStates state)
      * 本函数不再重复回放（否则直呼路径双跑幂等回放）。 */
     XWindowDecoration_notifyWindowState(self);
 #endif
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+    /* 【WINDOW_STATE_CHANGE 派发 2026-10-25】对标 Qt：窗口状态真变化时向
+     * 顶层控件派发 QEvent::WindowStateChange（qwidget.cpp:QWidgetPrivate::
+     * hide_helper 同款），应用侧据此重排自绘 chrome——自定义标题条/品牌条/
+     * 工具条这类**框架不认识的布局子控件**，此前全屏态下无任何通知可监听，
+     * 只能各自读 XWidget_isFullScreen 轮询或干脆不响应（demo 品牌条在全屏
+     * 后仍占 40px 顶部条带＝「标题栏还在」的根因）。
+     * 位置在本函数尾部：装饰层的条显隐/边距重算与同尺寸 RESIZE 回放均已
+     * 落地，changeEvent 内读到的是收敛后的状态（与 Qt「状态先落、事件后
+     * 派」一致）。同值重复设置（old==state）不派发——Qt 亦只在真变化时
+     * 发 WindowStateChange；showNormal/showMaximized/showFullScreen 三个
+     * show 入口都先 setState 再 setVisible，事件因此先于窗口映射，槽内
+     * 布局重算在 show 落位后由既有 LAYOUT_REQUEST 兜底。
+     * 事件栈区构造：changeEvent 契约只读状态位（XWidget_windowState），
+     * 派发返回即析构，无需堆分配。 */
+    if (old != state)
+    {
+        XEvent ev;
+        XEvent_init(&ev, XEVENT_TYPE_WINDOW_STATE_CHANGE);
+        XWidget_sendEvent(self, &ev);
+        XClassDeinit(&ev);
+    }
+#endif
 }
 
 void XWidget_overrideWindowState(XWidget* self, XWindowStates state)
@@ -9708,6 +9751,10 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
          * （性能悬浮层每帧 setText）会自激成环，安卓真机大面积重绘时
          * 卡死在定时器红黑树旋转。脏区仍照常并入 m_dirty，尾部统一收口。 */
         ++g_paintDispatching;
+        /* [2026-10-26 回归根修] 本次绘制期的抑制计数归零：flush 尾部
+         * 据此判断「本次绘制是否发生过被抑制的标脏」，决定是否强制
+         * 补投（见 g_paintSuppressedDirty 注）。 */
+        g_paintSuppressedDirty = 0;
         /* 后端或平台集成被裁剪/尚未建立时，repaint 仍必须同步派发
            paintEvent；区别仅是没有 XImage 可供绘制、也不会执行上屏。 */
         if (!XBackingStore_paintImage(store)) {
@@ -9975,11 +10022,20 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     /* 保留绘制期间或本次快照未覆盖的脏区，并确保它最终会再次派发。 */
     if (top->m_dirty.count > 0)
     {
+        /* [2026-10-26 回归根修] 本次绘制期若发生过被抑制的标脏
+         * （g_paintSuppressedDirty > 0），必须**强制补投**：抑制路径已把
+         * PendingUpdate 置真，若仍按旧条件「!alreadyPending」判断则该条件
+         * 恒假，本次绘制产生的脏区永久滞留 m_dirty 而不再派发 PAINT——
+         * 真机症状即「触摸后画面不刷新、只有光标跟随」。强制补投走事件
+         * 队列（非绘制栈内递归），既补回丢失的更新，又保留绘制期抑制门
+         * 防「paint→setText→update→postPaint→paint」自激的意图。 */
+        bool suppressed = (g_paintSuppressedDirty > 0);
         bool alreadyPending = XWidget_attrTest(
             &top->m_attributes, XWidgetAttribute_PendingUpdate);
         XWidget_attrSet(&top->m_attributes,
                         XWidgetAttribute_PendingUpdate, true);
-        if (!alreadyPending && top->m_windowHandle && top->m_visible)
+        if ((!alreadyPending || suppressed) &&
+            top->m_windowHandle && top->m_visible)
         {
             if (!XWidget_postPaintEvent(top))
                 XWidget_attrSet(&top->m_attributes,

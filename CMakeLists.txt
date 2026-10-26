@@ -326,6 +326,15 @@ list(REMOVE_ITEM TEST_FILE
 # main）——TEST_FILE 剔除三查同款坑第五次。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xmodbus_android_probe.c")
+# xmodbus_hub_test 同理：自带 main 的聚合设备闭环测试独立可执行
+# （XModbusHubTest 目标，2026-10-26 XModbus 聚合设备战役闭环回归），
+# 不得卷入主程序（与 main.c 重复定义 main）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xmodbus_hub_test.c")
+# xgui_dialog_portrait_probe 同理：自带 main 的对话框族竖屏适配探针
+# （XDialogPortraitProbe 目标，2026-10-26 对话框竖屏适配战役目验工具）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiDemo/xgui_dialog_portrait_probe.c")
 # xdevice_wifi_probe 同理：自带 main 的无线契约探针独立可执行
 # （XDeviceWiFiProbe 目标，2026-10-24 无线平台抽象 L0 实测工具），
 # 不得卷入主程序（与 main.c 重复定义 main）。
@@ -336,6 +345,11 @@ list(REMOVE_ITEM TEST_FILE
 # （「定时器 → XHrTimer(高精度定时器组) → 压测(随机增删+句柄回收)」，
 # 实现见 Test/XTimerTest/XHrTimerTest.c），随 TEST_FILE 编译进主程序，
 # 不再需要剔除（无 main，不会与 main.c 重复定义）。
+# xdevice_wifi_posix_parsers_test 同理：自带 main 的 POSIX 无线后端解析器
+# 单元测试独立可执行（XDeviceWiFiParsers_Test 目标，2026-10-25 Linux
+# 无线适配补齐），不得卷入主程序（与 main.c 重复定义 main）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XDeviceTest/xdevice_wifi_posix_parsers_test.c")
 file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
 # 桌面（非交叉）构建排除嵌入式移植层（2026-10-05 回归门修复）：FreeRTOS
 # portmacro.h/tasks.c 含 ARM CMSIS 内联汇编（mrs/msr basepri、isb），x86
@@ -794,6 +808,33 @@ else()
     target_link_libraries(XModbusAndroidProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
+# ==================== 对话框族竖屏适配探针（独立可执行） ====================
+# [2026-10-26 竖屏适配战役] 竖屏 Xvfb 下逐个打开 xguidemo 对话框族
+# （文件打开/另存为/目录选择/输入/颜色/进度/消息框），文件驱动相位，
+# 供外部 xwd 截图目验布局与美化效果。
+add_executable(XDialogPortraitProbe
+    "./Test/XGuiDemo/xgui_dialog_portrait_probe.c"
+)
+if(UNIX)
+    target_link_libraries(XDialogPortraitProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XDialogPortraitProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== XModbus 聚合设备闭环测试（独立可执行） ====================
+# [2026-10-26 聚合设备战役] XModbusMapping + XModbusHub 闭环回归：
+# 2×TCP 从站 + 1×RTU pty 从站（mbtest_hub_slaves.py 先行启动），验证
+# 映射切片/输入轮询回填/输出写直通与重发/宕机重连滞留写补发/映射刷新。
+# 用法：./XModbusHubTest <portA> <portB>
+add_executable(XModbusHubTest
+    "./Test/XProtocolTest/xmodbus_hub_test.c"
+)
+if(UNIX)
+    target_link_libraries(XModbusHubTest ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XModbusHubTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
 # ==================== 高精度定时器组压测（菜单入口） ====================
 # [两孩子删除句柄身份压测 2026-10-25] 原先本节为独立可执行
 # XHrTimerStress_Test（自带 main 的 hr_stress_driver.c，供 CI / 桌面闸门
@@ -801,6 +842,17 @@ endif()
 #   「测试代码 → 定时器 → XHrTimer(高精度定时器组) → 压测(随机增删+句柄回收)」
 # 菜单入口见 Test/XTimerTest/XHrTimerTest.c，测试主体见
 # XHrTimerStressTest.c，与 XGuiWindowDemo_Test 的 --hr-stress 入口同源共用。
+
+# 无线后端解析器单元测试（纯函数，无需无线硬件）：WEXT 事件流（展开/紧凑
+# 两种内核布局）、wpa_supplicant SCAN_RESULTS、nmcli -t 转义、STATUS 键值。
+add_executable(XDeviceWiFiParsers_Test
+    "./Test/XDeviceTest/xdevice_wifi_posix_parsers_test.c"
+)
+if(UNIX)
+    target_link_libraries(XDeviceWiFiParsers_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XDeviceWiFiParsers_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
 
 # ==================== XFtp 端到端真服务器联调测试 ====================
 # 独立可执行文件 ftp_e2e_test.exe，搭配 ftp_test_server.py 跑完整 FTP 协议测试

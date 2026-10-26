@@ -42,6 +42,7 @@
 #include "XDdnsProvider.h"
 #include "XDdnsAliyun.h"
 #include "XDateTime.h"
+#include "XTimer.h"        /* 系统时间 1s 刷新定时器 */
 #include "XComboBox.h"
 #include "XScrollArea.h"
 #include "XCoreApplication.h"
@@ -60,6 +61,7 @@ typedef struct DemoTimeDdnsPage {
     XWidget* m_content;        /**< 滚动内容件（绝对坐标承载层，宽随视口）。 */
 
     /* ---- 布局锚点：adapt 全量重排要挪的小标签（无句柄则挪不动） ---- */
+    XLabel* m_sysTimeCap;      /**< 「系统时间」标题（系统时间卡锚点）。 */
     XLabel* m_ntpTitle;        /**< 「NTP 网络校时」标题。 */
     XLabel* m_ntpServerCap;    /**< 「服务器」行内标签。 */
     XLabel* m_ntpStatusCap;    /**< NTP「状态」行内标签。 */
@@ -77,6 +79,8 @@ typedef struct DemoTimeDdnsPage {
     XCheckBox* m_ntpAuto;      /**< 自动校时复选框。 */
     XLabel* m_ntpStatus;       /**< NTP 状态区（多行）。 */
     XLabel* m_ntpTime;         /**< 校时成功后的时间显示区。 */
+    XLabel* m_sysTime;         /**< 系统时间实时显示（1s 刷新，与 NTP 对照）。 */
+    XTimer*  m_sysTimer;       /**< 系统时间刷新定时器（1s 周期；父=页根）。 */
     XNtpClient* m_ntp;         /**< 校时客户端（懒创建，父=页面根）。 */
 
     /* ---- DDNS 控件 ---- */
@@ -98,6 +102,48 @@ static DemoTimeDdnsPage s_td = { 0 };
 /* ========================================================================== */
 /*                        NTP 槽与辅助                                       */
 /* ========================================================================== */
+
+/**
+ * @brief 刷新系统时间显示区（1s 定时器驱动 + 校时完成后即时刷新）。
+ * @details 只显示**本机系统时间**与同步状态一句话。
+ *          【不显示 NTP 时间/时间差的理由 2026-10-25 用户裁定】NTP 不是持续
+ *          推流的数据源——XNtpClient 只在「立即校时」/每小时自动校时那一刻
+ *          取一次服务器时刻快照，之后不再更新。把它当成实时对照行显示，一
+ *          方面快照会随时间流逝而陈旧（写完系统时钟后尤其明显：每过一秒
+ *          「差值」就虚增一秒），另一方面会让人误以为存在持续的网络对时。
+ *          校时结果的详细账（服务器时刻/偏差/时延/层级）留在下方 NTP 状态
+ *          区与「最近一次校时」区，那里语义明确是快照记录。
+ */
+static void td_refreshSysTime(void)
+{
+    char buf[160];
+    char sysText[32];
+    bool synced;
+    if (!s_td.m_sysTime) return;
+    {
+        XDateTime now = XDateTime_currentDateTime();
+        /* 时间文本本地格式化：框架 XDateTime_toString_format 不补前导零
+         * （minute/second 走 XString_setNum_int），直接用来显示会出现
+         * 「15:8:41」这种不成型的时刻；这里统一按 %02d 拼装。 */
+        XSnprintf(sysText, sizeof(sysText), "%04d-%02d-%02d %02d:%02d:%02d",
+                  XDate_year(&now.m_date), XDate_month(&now.m_date),
+                  XDate_day(&now.m_date), XTime_hour(&now.m_time),
+                  XTime_minute(&now.m_time), XTime_second(&now.m_time));
+    }
+    synced = s_td.m_ntp && XNtpClient_isSynchronized(s_td.m_ntp);
+    XSnprintf(buf, sizeof(buf), "系统时间: %s\n%s",
+              sysText,
+              synced ? "状态: 已完成 NTP 校时"
+                     : "状态: 未同步(本机时间, 未与 NTP 校时)");
+    XLabel_setText_2(s_td.m_sysTime, buf);
+}
+
+/** @brief 系统时间 1s 定时器回调（XTimer 周期触发）。 */
+static void td_sysTimeTimerCb(void* userData, XTimerData* timer)
+{
+    (void)userData; (void)timer;
+    td_refreshSysTime();
+}
 
 /**
  * @brief 刷新 NTP 状态区（从客户端 getter 回读，信号与按钮共用）。
@@ -138,38 +184,69 @@ static void td_refreshNtpStatus(void)
     }
     XLabel_setText_2(s_td.m_ntpStatus, buf);
 
-    /* 时间显示区：同步成功后展示服务器时间（UTC）与本机偏差。 */
+    /* 校时记录区：展示本次校时的服务器时间、偏差与网络时延（快照语义——
+     * 这是「校时那一刻」的账，不随时间滚动；实时对照见上方系统时间卡）。 */
     if (s_td.m_ntpTime) {
         if (XNtpClient_isSynchronized(s_td.m_ntp)) {
             XDateTime server;
-            XString* text;
-            XDateTime_setSecsSinceEpoch(
-                &server, (int64_t)XNtpClient_serverSecs(s_td.m_ntp));
-            text = XDateTime_toString_iso(&server);
+            char stamp[32];
+            int64_t srvSecs = (int64_t)XNtpClient_serverSecs(s_td.m_ntp);
+            XDateTime_setSecsSinceEpoch(&server, srvSecs);
+            XSnprintf(stamp, sizeof(stamp),
+                      "%04d-%02d-%02d %02d:%02d:%02d",
+                      XDate_year(&server.m_date), XDate_month(&server.m_date),
+                      XDate_day(&server.m_date), XTime_hour(&server.m_time),
+                      XTime_minute(&server.m_time),
+                      XTime_second(&server.m_time));
             XSnprintf(buf, sizeof(buf),
-                      "校时成功\n服务器时间(UTC): %s\n本机偏差: %lld ms "
-                      "(时延 %lld ms)",
-                      text ? XString_toUtf8(text) : "?",
+                      "最近一次校时\n服务器时间: %s\n偏差: %lld ms (时延 %lld ms)",
+                      stamp,
                       (long long)XNtpClient_offsetMs(s_td.m_ntp),
                       (long long)XNtpClient_roundTripMs(s_td.m_ntp));
-            if (text) XClassDelete(text);
             XLabel_setText_2(s_td.m_ntpTime, buf);
         } else {
-            XLabel_setText_2(s_td.m_ntpTime, "时间: (尚未校时)");
+            XLabel_setText_2(s_td.m_ntpTime, "最近一次校时: (尚未校时)");
         }
     }
 }
 
 /**
- * @brief NTP 同步成功信号槽：回填状态区 + 主窗口状态栏。
+ * @brief NTP 同步成功信号槽：写入系统时钟 + 回填状态区 + 主窗口状态栏。
+ * @details 校时的语义就是「让本机时间对齐网络时间」，只更新界面显示而
+ *          不写系统时钟等于没校时（2026-10-25 用户指正）。落地走框架既有
+ *          抽象 API：XNtpClient_applyToSystem()——它把按往返时延估算的
+ *          当前真实时刻写入系统墙钟，未同步/无权限时返回 false 并保持
+ *          系统时间不变。
+ *          权限前置门：先用 XDateTime_canSetSystemTime() 探测（POSIX 需
+ *          root 或 CAP_SYS_TIME），无权限时不反复尝试写入，改为在状态栏
+ *          明确提示「仅读取偏差、未写入系统时钟」，让用户知道为什么屏幕
+ *          时间没变。
+ *          注意：系统时钟跳变只影响墙钟（日志/文件时间戳），框架的单调
+ *          时钟接口（XDateTime_currentMSecsSinceEpoch）不受影响，定时器/
+ *          心跳/超时测量安全。
  */
 static void td_onNtpSynced(XObject* sender, XVarList* args)
 {
     XDdnsClient* unused = NULL;
+    bool applied = false;
+    bool canSet;
     (void)sender; (void)args; (void)unused;
+    canSet = XDateTime_canSetSystemTime();
+    if (canSet && s_td.m_ntp)
+        applied = XNtpClient_applyToSystem(s_td.m_ntp);
     td_refreshNtpStatus();
-    if (s_td.m_status)
-        s_td.m_status(s_td.m_user, "NTP 校时成功");
+    /* 写入系统时钟后立即刷新系统时间卡：此刻「系统时间」应已跳到 NTP
+     * 时刻，差值归零或仅剩秒级取整误差，不必等下一个 1s 定时器拍。 */
+    td_refreshSysTime();
+    if (s_td.m_status) {
+        if (!canSet)
+            s_td.m_status(s_td.m_user,
+                          "NTP 已同步(无写时钟权限，仅显示偏差)");
+        else if (!applied)
+            s_td.m_status(s_td.m_user, "NTP 已同步(写系统时钟失败)");
+        else
+            s_td.m_status(s_td.m_user, "NTP 校时成功，系统时钟已更新");
+    }
 }
 
 /**
@@ -474,13 +551,28 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
     XScrollArea_setWidget((XScrollArea*)s_td.m_root, s_td.m_content);
 
 #if XNTP_ON
+    /* ---- 系统时间卡（最上段）----
+     * [系统时间条 2026-10-25] 最上方先放本机实时时间（1s 刷新），与下方
+     * 的 NTP 校时区形成「本机 vs 网络」上下对照：用户一眼能看出系统时间
+     * 与 NTP 差多少、有没有同步。整块 NTP 区相对旧版下移 92px 让位。 */
+    s_td.m_sysTimeCap = td_label(s_td.m_content, "系统时间", 12, 8, 380, 24);
+    s_td.m_sysTime = XLabel_create(s_td.m_content, 0);
+    if (s_td.m_sysTime) {
+        XLabel_setText_2(s_td.m_sysTime, "系统时间: --");
+        XLabel_setTextPixelSize(s_td.m_sysTime, 14);
+        XLabel_setAlignment(s_td.m_sysTime,
+                            XAlignment_Left | XAlignment_Top);
+        XWidget_setGeometry((XWidget*)s_td.m_sysTime, 12, 34, 368, 60);
+        XWidget_show((XWidget*)s_td.m_sysTime);
+    }
+
     /* ---- NTP 左列（窄屏档在 adapt 重排为单列首段） ---- */
-    s_td.m_ntpTitle = td_label(s_td.m_content, "NTP 网络校时", 12, 8, 360, 24);
-    s_td.m_ntpServerCap = td_label(s_td.m_content, "服务器", 12, 46, 64, 22);
+    s_td.m_ntpTitle = td_label(s_td.m_content, "NTP 网络校时", 12, 100, 360, 24);
+    s_td.m_ntpServerCap = td_label(s_td.m_content, "服务器", 12, 138, 64, 22);
     s_td.m_ntpServer = XLineEdit_create(s_td.m_content, 0);
     if (s_td.m_ntpServer) {
         XLineEdit_setText(s_td.m_ntpServer, "ntp.aliyun.com");
-        XWidget_setGeometry((XWidget*)s_td.m_ntpServer, 80, 44, 300, 24);
+        XWidget_setGeometry((XWidget*)s_td.m_ntpServer, 80, 136, 300, 24);
         XWidget_show((XWidget*)s_td.m_ntpServer);
     }
     {
@@ -488,7 +580,7 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
         s_td.m_ntpSyncBtn = btn;
         if (btn) {
             XPushButton_setText_2(btn, "立即校时");
-            XWidget_setGeometry((XWidget*)btn, 12, 80, 110, 30);
+            XWidget_setGeometry((XWidget*)btn, 12, 172, 110, 30);
             XObject_connect_2((XObject*)btn,
                               XSignal(XAbstractButton_clicked_signal),
                               td_ntpSyncSlot);
@@ -498,33 +590,47 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
     s_td.m_ntpAuto = XCheckBox_create(s_td.m_content, 0);
     if (s_td.m_ntpAuto) {
         XCheckBox_setText_2(s_td.m_ntpAuto, "自动校时(每小时)");
-        XWidget_setGeometry((XWidget*)s_td.m_ntpAuto, 140, 86, 200, 22);
+        XWidget_setGeometry((XWidget*)s_td.m_ntpAuto, 140, 178, 200, 22);
         /* 勾选即时生效（无需点「立即校时」才应用周期） */
         XObject_connect_2((XObject*)s_td.m_ntpAuto,
                           XSignal(XAbstractButton_toggled_signal),
                           td_onNtpAutoToggled);
         XWidget_show((XWidget*)s_td.m_ntpAuto);
     }
-    s_td.m_ntpStatusCap = td_label(s_td.m_content, "状态", 12, 128, 64, 22);
+s_td.m_ntpStatusCap = td_label(s_td.m_content, "状态", 12, 220, 64, 22);
     s_td.m_ntpStatus = XLabel_create(s_td.m_content, 0);
     if (s_td.m_ntpStatus) {
         XLabel_setText_2(s_td.m_ntpStatus, "状态: 未同步");
         XLabel_setTextPixelSize(s_td.m_ntpStatus, 13);
         XLabel_setAlignment(s_td.m_ntpStatus,
                             XAlignment_Left | XAlignment_Top);
-        XWidget_setGeometry((XWidget*)s_td.m_ntpStatus, 12, 152, 368, 88);
+        XWidget_setGeometry((XWidget*)s_td.m_ntpStatus, 12, 244, 368, 88);
         XWidget_show((XWidget*)s_td.m_ntpStatus);
     }
-    /* 时间显示区：校时成功后回填服务器时间与本机偏差 */
+    /* 校时记录区：校时成功后回填服务器时间与本机偏差（快照语义）。 */
     s_td.m_ntpTime = XLabel_create(s_td.m_content, 0);
     if (s_td.m_ntpTime) {
-        XLabel_setText_2(s_td.m_ntpTime, "时间: (尚未校时)");
+        XLabel_setText_2(s_td.m_ntpTime, "最近一次校时: (尚未校时)");
         XLabel_setTextPixelSize(s_td.m_ntpTime, 14);
         XLabel_setAlignment(s_td.m_ntpTime,
                             XAlignment_Left | XAlignment_Top);
-        XWidget_setGeometry((XWidget*)s_td.m_ntpTime, 12, 244, 368, 108);
+        XWidget_setGeometry((XWidget*)s_td.m_ntpTime, 12, 336, 368, 88);
         XWidget_show((XWidget*)s_td.m_ntpTime);
     }
+    /* 系统时间刷新定时器：挂内容件（与系统时间标签同父同生共死，
+     * 防标签先析构后定时器仍回调的悬垂写入）。
+     * 1s 周期——秒级时间显示的最低成本节奏；启动后立即刷一次首帧，避免
+     * 首秒显示占位文本。 */
+    s_td.m_sysTimer = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (s_td.m_sysTimer) {
+        XTimer_setInterval(s_td.m_sysTimer, 1000);
+        XTimer_setTimerCallback(s_td.m_sysTimer, td_sysTimeTimerCb);
+        XTimer_setUserData(s_td.m_sysTimer, NULL);
+        XObject_setParent((XObject*)s_td.m_sysTimer,
+                          (XObject*)s_td.m_content);
+        XTimer_start_base(s_td.m_sysTimer);
+    }
+    td_refreshSysTime();
 #endif /* XNTP_ON */
 
 #if XDDNS_ON
@@ -654,6 +760,7 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
                                        AccessKeySecret 全词）。 */
 #define TD_BTN_W           130  /**< 主操作按钮宽（4 个全角字 + 内边距）。 */
 #define TD_STATUS_H        88   /**< NTP 状态/时间区高（4 行 13px + 呼吸）。 */
+#define TD_SYS_TIME_H      60   /**< 系统时间卡值区高（时刻 + 同步状态两行）。 */
 #define TD_DDNS_STATUS_MIN 100  /**< DDNS 状态区最小高（同宽屏档口径）。 */
 
 /** @brief 便捷：控件非空才落几何（重排函数对个别创建失败容忍）。 */
@@ -669,15 +776,22 @@ static int td_reflowWide(int vw, int vh)
 {
     (void)vw; /* 双列坐标钉死（现状口径），不随视口宽缩放。 */
 #if XNTP_ON
-    td_move((XWidget*)s_td.m_ntpTitle, 12, 8, 360, 24);
-    td_move((XWidget*)s_td.m_ntpServerCap, 12, 46, 64, 22);
-    td_move((XWidget*)s_td.m_ntpServer, 80, 44, 300, 24);
-    td_move((XWidget*)s_td.m_ntpSyncBtn, 12, 80, 110, 30);
-    td_move((XWidget*)s_td.m_ntpAuto, 140, 86, 200, 22);
-    td_move((XWidget*)s_td.m_ntpStatusCap, 12, 128, 64, 22);
-    td_move((XWidget*)s_td.m_ntpStatus, 12, 152, 368, 88);
-    td_move((XWidget*)s_td.m_ntpTime, 12, 244, 368,
-            vh - 268 > 60 ? vh - 268 : 60);
+/* [系统时间条 2026-10-25] 左列整体下移 92px 容纳顶部系统时间卡：
+     *   系统时间标题 y=8 / 系统时间值 y=34..94（固定高 60）
+     *   NTP 标题 y=100 / 服务器 136 / 按钮 172 / 状态标题 220
+     *   状态区 y=244（固定 88）/ 时间区 y=336 起随根高伸展
+     * （坐标与 build 字面一致，切换窄屏档靠本函数还原——幂等口径） */
+    td_move((XWidget*)s_td.m_sysTimeCap, 12, 8, 380, 24);
+    td_move((XWidget*)s_td.m_sysTime, 12, 34, 368, 60);
+    td_move((XWidget*)s_td.m_ntpTitle, 12, 100, 360, 24);
+    td_move((XWidget*)s_td.m_ntpServerCap, 12, 138, 64, 22);
+    td_move((XWidget*)s_td.m_ntpServer, 80, 136, 300, 24);
+    td_move((XWidget*)s_td.m_ntpSyncBtn, 12, 172, 110, 30);
+    td_move((XWidget*)s_td.m_ntpAuto, 140, 178, 200, 22);
+    td_move((XWidget*)s_td.m_ntpStatusCap, 12, 220, 64, 22);
+    td_move((XWidget*)s_td.m_ntpStatus, 12, 244, 368, 88);
+    td_move((XWidget*)s_td.m_ntpTime, 12, 336, 368,
+            vh - 360 > 60 ? vh - 360 : 60);
 #endif
 #if XDDNS_ON
     td_move((XWidget*)s_td.m_ddnsTitle, 400, 8, 380, 24);
@@ -715,6 +829,11 @@ static int td_reflowNarrow(int vw, int vh)
 #endif
 #if XNTP_ON
     int fieldX = TD_MARGIN + TD_CAP_NTP_W + 8;
+    /* 系统时间卡置首（与宽屏档同序：本机时间在上、NTP 校时在下）。 */
+    td_move((XWidget*)s_td.m_sysTimeCap, TD_MARGIN, y, w, TD_TITLE_H);
+    y += TD_TITLE_H + TD_MARGIN;
+    td_move((XWidget*)s_td.m_sysTime, TD_MARGIN, y, w, TD_SYS_TIME_H);
+    y += TD_SYS_TIME_H + TD_MARGIN;
     td_move((XWidget*)s_td.m_ntpTitle, TD_MARGIN, y, w, TD_TITLE_H);
     y += TD_TITLE_H + TD_MARGIN;
     /* 服务器行：标签行内垂直居中（XLabel 缺省 Left|VCenter，加高即居中）。 */
@@ -997,6 +1116,19 @@ int demo_page_timeddns_autotest(XWidget* page)
                      && XWidget_height((XWidget*)s_td.m_ntpServer) >= 40
                      && XWidget_height((XWidget*)s_td.m_ntpAuto) >= 40,
                  "窄屏 NTP 可点目标高 ≥40");
+        /* [系统时间条 2026-10-25] 系统时间卡同样纳入窄屏适配口径：
+         *   ①不越 400 右缘（随视口收缩，非钉死宽）；②置于 NTP 段之前
+         *   （本机时间在上、NTP 校时在下的对照序不被窄屏打乱）；
+         *   ③高度不塌缩（两行文本可读）。 */
+        TD_CHECK(XWidget_x((XWidget*)s_td.m_sysTime)
+                         + XWidget_width((XWidget*)s_td.m_sysTime)
+                     <= 400,
+                 "窄屏系统时间卡不越 400 右缘");
+        TD_CHECK(XWidget_y((XWidget*)s_td.m_sysTimeCap)
+                     < XWidget_y((XWidget*)s_td.m_ntpTitle),
+                 "窄屏系统时间卡在 NTP 段之前");
+        TD_CHECK(XWidget_height((XWidget*)s_td.m_sysTime) >= 40,
+                 "窄屏系统时间卡高度不塌缩");
 #if XDDNS_ON
         TD_CHECK(XWidget_x((XWidget*)s_td.m_ddnsKeyId)
                          + XWidget_width((XWidget*)s_td.m_ddnsKeyId)

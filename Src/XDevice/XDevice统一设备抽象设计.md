@@ -260,7 +260,7 @@ int64_t XDevice_read(XFd fd, void* buf, int64_t size)
 | Serial | `XDeviceSerialPort` | `XSerialPortWin32/Posix/STM32`（待迁移） |
 | Timer | `XDeviceTimer` | `XAbstractEventDispatcher` 定时器（待迁移） |
 | Socket | `XDeviceSocket` | `XNetwork`（Bind/Connect/Listen/Accept）（待迁移） |
-| WiFi | `XDeviceWiFi` | Native WiFi/WlanAPI（Windows）、nmcli（POSIX）、片上 SDK（ESP8266）；无线专有能力走 GetProperty/Control 虚槽（已接入 XDevice 门面） |
+| WiFi | `XDeviceWiFi` | Native WiFi/WlanAPI（Windows）、NetworkManager/wpa_supplicant/WEXT 三层后端（POSIX）、片上 SDK（ESP8266）；无线专有能力走 GetProperty/Control 虚槽（已接入 XDevice 门面） |
 
 ### 8.2 新设备
 

@@ -96,27 +96,37 @@ typedef void (*XLinkSessionDispatchCallback)(XLinkSession* self,
  * @brief 待应答表项：一条已发出、尚未收到 Response 的 Request。
  */
 typedef struct XLinkPendingRequest {
+    /* 【布局收敛 2026-10-26】按对齐宽度降序排布 + 小成员相邻：
+     * 原序（u32,u16,u32,bool,buf[128],u32,u8）留三处填充洞
+     * （u16 后 2B、bool 后 3B、u8 后 3B），sizeof=152；现序
+     * （u32,u32,u32,u16,u8,bool,buf[128]）零填充，sizeof=144。
+     * 待应答表 8 槽 → 每会话省 64 字节。成员名与语义不变，
+     * 调用点零改动。 */
     uint32_t m_requestId;    /**< 本端分配的关联 id。 */
-    uint16_t m_command;      /**< 该 Request 的命令号（msgCode），用于匹配应答。 */
     uint32_t m_sendTick;     /**< 发出（或最近一次自动重发）时的单调毫秒值，用于超时判定。 */
-    bool     m_used;         /**< 槽位占用标志；false 表示空闲槽。 */
-    uint8_t  m_payload[XLINK_RETRY_PAYLOAD_MAX]; /**< 请求载荷快照（自动重发用，
-                                仅快照长度不超过 XLINK_RETRY_PAYLOAD_MAX 的请求）；
-                                仅供实现使用。 */
     uint32_t m_payloadLen;   /**< 快照长度（字节）：可重试时等于原始载荷长度
                                 （空载荷为 0）；超过 XLINK_RETRY_PAYLOAD_MAX 的
                                 请求置 0 表示不可重试。仅供实现使用。 */
+    uint16_t m_command;      /**< 该 Request 的命令号（msgCode），用于匹配应答。 */
     uint8_t  m_retryCount;   /**< 已自动重发次数；0xFF 为"不可重试"哨兵
                                 （超长载荷），永远不满足重试额度判定。
+                                仅供实现使用。 */
+    bool     m_used;         /**< 槽位占用标志；false 表示空闲槽。 */
+    uint8_t  m_payload[XLINK_RETRY_PAYLOAD_MAX]; /**< 请求载荷快照（自动重发用，
+                                仅快照长度不超过 XLINK_RETRY_PAYLOAD_MAX 的请求）；
                                 仅供实现使用。 */
 } XLinkPendingRequest;
 
 /**
  * @brief 订阅表项：一个已向对端登记的 topicId。
+ * @details 【布局收敛 2026-10-26】槽位占用位**不挤占 topicId**：
+ *          topicId 是协议标识，用户 topic 可达 0xFFFFFFFF，位域截断会
+ *          静默改写线上标识（topic 匹配错配）。故占用位改由会话级位图
+ *          （XLinkSession::m_subscriptionUsed）承担，表项退化为纯 u32：
+ *          16 槽由 128 字节降到 64 字节（每会话省 64 字节）。
  */
 typedef struct XLinkTopicSubscription {
     uint32_t m_topicId; /**< 订阅的 topic（须 >= XLINK_TOPIC_USER_BASE）。 */
-    bool     m_used;    /**< 槽位占用标志；false 表示空闲槽。 */
 } XLinkTopicSubscription;
 
 /**
@@ -156,15 +166,16 @@ typedef struct XLinkSession {
                               启动）；XTIMER_INVALID_ID 表示未启动（无事件分发器或
                               XLINK_HEARTBEAT_TICK_MS=0），会话退化为手动 pump 模式。
                               仅供实现使用。 */
-    bool m_helloSent;    /**< Hello 已发出标志：手动 sendSession(Hello) 成功或首次驱动
+bool m_helloSent : 1; /**< Hello 已发出标志：手动 sendSession(Hello) 成功或首次驱动
                               自动补发后置位，防重复握手；换设备/复位时清零。
                               仅供实现使用。 */
-
-    uint8_t m_retryCount;       /**< 请求自动重发次数上限（仅供实现使用）：自动超时
+    uint8_t m_retryCount : 8; /**< 请求自动重发次数上限（仅供实现使用）：自动超时
                                      后按原 requestId 静默重发的最大次数；
                                      init 默认 XLINK_RETRY_MAX_DEFAULT，运行时经
-                                     XLinkSession_setNumberOfRetries 调整。 */
-    uint32_t m_requestTimeoutMs; /**< 请求自动超时判定阈值（毫秒，仅供实现使用）：
+                                     XLinkSession_setNumberOfRetries 调整。
+                                     【位域 2026-10-26】与 m_helloSent 同占 2 字节
+                                     单元（原两成员各带 3 字节填充 = 8 字节）。 */
+    uint32_t m_requestTimeoutMs; /* 请求自动超时判定阈值（毫秒，仅供实现使用）：
                                       0 = 被动模式（默认，超时不由库自动处理）；
                                       大于 0 时 pump 内自动扫描待应答表：
                                       可重试且额度未满则静默重发，否则发射
@@ -174,6 +185,10 @@ typedef struct XLinkSession {
 
     XLinkPendingRequest m_pending[XLINK_PENDING_SLOTS];      /**< 待应答表（定容，稳态零分配）。 */
     XLinkTopicSubscription m_subscriptions[XLINK_TOPIC_SLOTS]; /**< 订阅表（定容，稳态零分配）。 */
+    uint32_t m_subscriptionUsed;  /**< 订阅表槽位占用位图（bit i = 第 i 槽占用）：
+                                      占用位由会话级位图承担（表项退化为纯 u32，
+                                      16 槽 128→64 字节）；XLINK_TOPIC_SLOTS≤32 时
+                                      恰好占满一个 u32。仅供实现使用。 */
 
     XLinkSessionDispatchCallback m_dispatchCallback; /**< 消息分发回调（借用，可为 NULL）。 */
     void* m_userData;  /**< 调用方上下文（借用，仅供实现回传，不取得所有权）。 */

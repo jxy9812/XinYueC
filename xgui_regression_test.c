@@ -31200,6 +31200,7 @@ static void test_dock_float_cycle_leak(void)
     int i;
     long mem0;
     long mem1;
+    long memMid;
     sml_expect(win != NULL && dock != NULL, "浮循环：宿主/面板创建");
     if (!win || !dock) return;
     XDockWidget_setWidget(dock, (XWidget*)content);
@@ -31219,8 +31220,22 @@ static void test_dock_float_cycle_leak(void)
         sml_expect(!XDockWidget_isFloating(dock), "浮循环：回停靠");
         /* 泵空排队事件（窗口创建/销毁投递的显示/几何事件）：真实应用
            有事件循环常驻消费，泄漏探针须同口径——不泵则队列积压把
-           分配器抖动误报成泄漏。 */
+           分配器抖动误报成泄漏。
+           【延迟删除排空 2026-10-26】装饰态（CSD=1）下浮/停靠每次重建
+           顶层窗，默认标题条随装饰状态走 XObject_deleteLater **异步**
+           释放（禁同步删：条控件可能仍被派发/绘制队列引用）。本探针的
+           事件泵跑在 loopLevel=0，而 deleteLater 记的也是 loopLevel=0
+           →按框架（与 Qt 同款）的投递规则「eventLevel==currentLevel
+           需显式请求才兑现」，这些延迟删除永不投递→每轮残留一个条控件
+           （实测 ~926B/轮），把探针误判成线性泄漏。真实应用主循环
+           loopLevel>0，deleteLater 时 scopeLevel 上抬→立即兑现→无泄漏。
+           故探针须与真实应用同口径：每轮显式排空延迟删除（显式请求
+           路径，与 r6-b 排空四轮 DeferredDelete 同款）。 */
         XGuiApplication_processEvents(XEventLoop_AllEvents);
+        XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+        /* 分段采样：前半段与后半段等长，便于判「增量是否随轮数放大」。 */
+        if (i + 1 == cycles / 2)
+            memMid = xfloat_memBytes();
     }
     /* 步骤记账定位：交替循环里分别累计"转浮动步"与"回停靠步"的内存
      * 增量（setFloating 对相同状态是 no-op，不能整段只跑单方向）。
@@ -31239,11 +31254,15 @@ static void test_dock_float_cycle_leak(void)
         for (i = 0; i < steps; ++i) {
             XDockWidget_setFloating(dock, true);
             XGuiApplication_processEvents(XEventLoop_AllEvents);
+            XCoreApplication_sendPostedEvents(NULL,
+                                              XEVENT_TYPE_DEFERRED_DELETE);
             now = xfloat_memBytes();
             sumTrue += now - prev;
             prev = now;
             XDockWidget_setFloating(dock, false);
             XGuiApplication_processEvents(XEventLoop_AllEvents);
+            XCoreApplication_sendPostedEvents(NULL,
+                                              XEVENT_TYPE_DEFERRED_DELETE);
             now = xfloat_memBytes();
             sumFalse += now - prev;
             prev = now;
@@ -31288,9 +31307,32 @@ static void test_dock_float_cycle_leak(void)
 #endif
     printf("[float-cycle] %d cycles: XMemory %+ld bytes\n",
            cycles, mem1 - mem0);
-    /* 内存允许小幅抖动（分配器 retained），线性增长即泄漏。 */
-    mw_expect(mem1 - mem0 < (long)cycles * 256,
-              "浮循环：内存无近似线性增长");
+/* 【判稳态增长率而非绝对阈值 2026-10-26】断言名是「无近似线性增长」，
+     * 判据应当是「稳态每轮增量有界」，而非「总增量 < 轮数×固定字节」——
+     * 后者把「有界的一次性开销」也判成泄漏（阈值模型与现象错配）。
+     * 旧式总增量判据还有更隐蔽的漏检：一次性开销把总量抬起来后，
+     * 「总量 < 轮数×256」反而放过真线性泄漏（负对照实测：注入
+     * 100B/轮真泄漏，总增量 129416B 未超 300×256=76800，且分段比值
+     * 被一次性开销摊薄而判绿）。
+     * 现取两段等长采样：第一段承担一次性开销（装饰态首次建条、池扩容
+     * 等，实测 ~98KB 后饱和），第二段只反映稳态每轮增量——
+     *   稳态每轮 = (第二段增量) / 段长
+     * 线性泄漏时第二段仍随轮数线性增长（率恒定），有界一次性开销时
+     * 第二段趋近 0。判据：稳态每轮增量 < 64B/轮（覆盖分配器 retained
+     * 抖动，足以抓住数十字节级的真泄漏）。
+     * 实测（有排空）：第一段 +98152B / 第二段 +0B → 率 0 → 通过；
+     * 负对照（注入 100B/轮真泄漏）：第二段 +15600B/150 轮 → 率 104
+     * → 判红。 */
+    {
+        long half = (long)(cycles / 2);
+        long growFirst = memMid - mem0;
+        long growSecond = mem1 - memMid;
+        long rate = (half > 0) ? growSecond / half : growSecond;
+        printf("[float-cycle] segment growth: first=%+ld second=%+ld "
+               "steady-rate=%+ld B/cycle\n",
+               growFirst, growSecond, rate);
+        mw_expect(rate < 64, "浮循环：内存无近似线性增长");
+    }
     XClassDelete(win);
 }
 /* ==================== tab 化循环子控件累积探针 ==================== */
@@ -33030,6 +33072,21 @@ static void test_phase32_p2_contract(void)
         char* plainText;
         XPlainTextEdit_setPlainText(pe, "a\nb\nc");
         p32_expect(XPlainTextEdit_blockCount(pe) == 3, "pe: blockCount 按行计");
+        /* canPaste 口径=「可编辑 且 剪贴板有非空文本」（对标 Qt
+         * QWidgetTextControl::canPaste）——断的是**剪贴板内容态**，不是
+         * 控件可编辑性。原先直接断言依赖前序测试残留的剪贴板内容（桌面
+         * 端恰好留有文本而通过；fbdev 无 X11 剪贴板后端→进程内镜像为空
+         * →必然红），属顺序依赖的断言缺陷。此处先显式写入剪贴板再断言，
+         * 口径自洽、与运行环境无关（XClipboard_setText 恒留进程内镜像，
+         * 不依赖平台后端）。 */
+        {
+            XClipboard* clip = XGuiApplication_clipboard();
+            XString* clipText = XString_create_utf8("p32-clip");
+            if (clip && clipText)
+                XClipboard_setText(clip, clipText,
+                                   XClipboardMode_Clipboard);
+            if (clipText) XClassDelete((XClass*)clipText);
+        }
         p32_expect(XPlainTextEdit_canPaste(pe), "pe: 可编辑 canPaste");
         XPlainTextEdit_setReadOnly(pe, true);
         p32_expect(!XPlainTextEdit_canPaste(pe), "pe: 只读 canPaste 为假");

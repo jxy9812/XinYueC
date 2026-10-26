@@ -1326,24 +1326,50 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
          * 内核拒绝操作(5.2.9 MCGS 内核 IORING_OP_CONNECT 恒 -EINVAL)——
          * connect() 从未发起, 原逻辑查 SO_ERROR=0 误判假成功。置全局门并
          * 就地回退裸 connect(非阻塞 EINPROGRESS 语义)。真实对端拒绝
-         * (ECONNREFUSED 等)时 SO_ERROR 同值非 0, 仍走下方常规失败分支。 */
+         * (ECONNREFUSED 等)时 SO_ERROR 同值非 0, 仍走下方常规失败分支。
+         * [2026-10-25 断线重连不恢复根修] 上面的「SO_ERROR==0 ⇒ 内核拒操
+         * 作」判别式把两件事混为一谈：①epoll 引擎 epExecutePending 的
+         * CONNECT 分支已用 getsockopt(SO_ERROR) 读走拒因(res=-err)，本处
+         * 重读恒 0；②io_uring 真实拒连时拒因只随 CQE res 传达，SO_ERROR
+         * 同样为 0。于是两引擎上「从站下线期间的正常 ECONNREFUSED」都被
+         * 误判成内核拒操作 → g_ioConnectBroken=-1 全进程锁死，此后一律走
+         * 同步 connect 兜底——其 EINPROGRESS 分支谎报 m_connected=true 且
+         * 没有任何完成事件机制，拒绝后设备状态永久卡 Connecting、重连定
+         * 时器已被消费不再重挂（桌面双引擎+安卓真机三方复现：杀从站 8s
+         * 即楔死；对齐 Windows 语义：ConnectEx 失败就是普通连接失败，重试
+         * 即可，绝不永久切换连接模式）。修=仅操作码级拒绝(EINVAL/ENOSYS/
+         * EOPNOTSUPP/EPERM)才锁门回退，网络级失败(ioRes=-ECONNREFUSED 等)
+         * 照常置 m_connected=false 交由上层重连。A33(5.2.9 io_uring
+         * CONNECT 恒 -EINVAL) 的既有兜底语义不变。 */
         {
             int64_t ioRes = p->connectContext.base.result;
             if (ioRes < 0 && ioRes != XNETWORK_IO_PENDING_RESULT &&
                 ioRes != -ECANCELED && ioRes != -ENOENT && soError == 0) {
-                int ret;
-                g_ioConnectBroken = -1;
-                ret = connect(p->socket, (struct sockaddr*)&p->connectAddress,
-                              p->connectAddressLength);
-                if (ret == 0 || errno == EINPROGRESS) {
-                    p->base.m_connected = true;
-                    syncSocketEndpoints(priv);
-                    /* first read started by XDeviceNetwork_socketContinueRead
-                     * in event handler */
-                } else {
-                    p->base.m_connected = false;
+                switch (ioRes) {
+                case -EINVAL:
+                case -ENOSYS:
+                case -EOPNOTSUPP:
+                case -EPERM: {
+                    int ret;
+                    g_ioConnectBroken = -1;
+                    ret = connect(p->socket, (struct sockaddr*)&p->connectAddress,
+                                  p->connectAddressLength);
+                    if (ret == 0 || errno == EINPROGRESS) {
+                        p->base.m_connected = true;
+                        syncSocketEndpoints(priv);
+                        /* first read started by XDeviceNetwork_socketContinueRead
+                         * in event handler */
+                    } else {
+                        p->base.m_connected = false;
+                    }
+                    return true;
                 }
-                return true;
+                default:
+                    /* 网络级失败：真实拒连（对端下线/端口未开/不可达），
+                     * 走常规失败分支由上层自动重连。 */
+                    p->base.m_connected = false;
+                    return true;
+                }
             }
         }
         if (soError == 0) {

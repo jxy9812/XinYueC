@@ -30,6 +30,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <stdarg.h>
 
 #include "XCoreApplication.h"
 #include "XEventLoop.h"
@@ -47,6 +49,11 @@
 #include "XByteArray.h"
 
 #define PROBE_MAX_TICKS 15
+
+/* [2026-10-25 soak 长跑模式] 桌面双引擎（io_uring/epoll）断线重连回归用：
+ *   ./xmodbus_android_probe <host> <port> <unit> <points> soak [秒]
+ * 秒数省略或 0 = 跑到被杀为止。每拍带单调毫秒时间戳，统计
+ * 断链次数与恢复次数（断链后首个 OK 应答 = 恢复），每 10 拍打一行汇总。 */
 
 /* 相位：0=DI(FC2) 1=DO(FC1) 2=IR(FC4) 3=HR(FC3) ——同 demo 主站页。 */
 typedef enum {
@@ -69,6 +76,23 @@ static int  g_hrCount     = 16;
 static ProbePhase g_phase  = PHASE_DI;
 static char g_host[128]   = "192.168.1.117";
 static int  g_port        = 502;
+
+/* soak 模式状态。 */
+static int      g_soak        = 0;
+static long     g_soakSeconds = 0;   /* 0 = 无限 */
+static uint64_t g_bootMs      = 0;
+static int      g_discCount   = 0;  /* 观测到的断链次数（state→Unconnected） */
+static int      g_recovCount  = 0;  /* 断链后首个 OK 应答次数 */
+static int      g_offline     = 0;  /* 当前是否处于断链态 */
+static int      g_nullStreak  = 0;  /* 连续 sendReadRequest 返回 NULL 拍数 */
+static uint64_t g_lastStateMs = 0;  /* 上次状态变化时刻（恢复耗时计算） */
+
+static uint64_t nowMs(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000u);
+}
 
 /* 前向声明。 */
 static void onReply(XObject* sender, XVarList* args);
@@ -94,22 +118,32 @@ static void onReply(XObject* sender, XVarList* args)
 
     XModbusDevice_Error err = XModbusReply_error(reply);
     XString* errStr = XModbusReply_errorString(reply);
-    probe_log("[REPLY #%d] state=%d error=%d errStr='%s'\n",
-              g_tick, (int)XModbusReply_state(reply), (int)err,
+    probe_log("[REPLY #%d t=%llu] state=%d error=%d errStr='%s'\n",
+              g_tick, (unsigned long long)(nowMs() - g_bootMs),
+              (int)XModbusReply_state(reply), (int)err,
               errStr ? XString_toUtf8(errStr) : "");
 
     if (err == XModbusDevice_NoError) {
         const XModbusDataUnit* result = XModbusReply_result_const(reply);
         size_t n = result ? XModbusDataUnit_valueCount(result) : 0;
         ++g_okCount;
-        probe_log("[REPLY #%d] OK  values=%u  first=%u\n",
-                  g_tick, (unsigned)n,
+        probe_log("[REPLY #%d t=%llu] OK  values=%u  first=%u\n",
+                  g_tick, (unsigned long long)(nowMs() - g_bootMs),
+                  (unsigned)n,
                   (n ? XModbusDataUnit_value(result, 0) : 0));
+        if (g_offline) {
+            g_offline = 0;
+            ++g_recovCount;
+            probe_log("[RECOVERED #%d t=%llu] 断链后恢复（耗时 %llu ms, 累计 disc=%d recov=%d）\n",
+                      g_recovCount, (unsigned long long)(nowMs() - g_bootMs),
+                      (unsigned long long)(nowMs() - g_lastStateMs),
+                      g_discCount, g_recovCount);
+        }
     } else {
         ++g_errCount;
     }
     XObject_deleteLater((XObject*)reply);
-    if (g_tick >= PROBE_MAX_TICKS) g_done = 1;
+    if (!g_soak && g_tick >= PROBE_MAX_TICKS) g_done = 1;
 }
 
 /** @brief 设备状态变化。 */
@@ -118,7 +152,18 @@ static void onStateChanged(XObject* sender, XVarList* args)
     (void)sender;
     if (args) {
         XVarList_args_1(args, int, state);
-        probe_log("[STATE] device state -> %d\n", state);
+        g_lastStateMs = nowMs();
+        probe_log("[STATE t=%llu] device state -> %d\n",
+                  (unsigned long long)(g_lastStateMs - g_bootMs), state);
+        /* 0=Unconnected 1=Connecting 2=Connected（XModbusDevice_State）。
+         * soak 下断链判定：掉到 Unconnected/Connecting 且此前在线。 */
+        if (state != 2 && !g_offline && g_okCount > 0) {
+            g_offline = 1;
+            ++g_discCount;
+            probe_log("[DISCONNECT #%d t=%llu] 在线→离线（state=%d）\n",
+                      g_discCount, (unsigned long long)(g_lastStateMs - g_bootMs),
+                      state);
+        }
     }
 }
 
@@ -160,6 +205,22 @@ static XModbusDataUnit* getUnit(ProbePhase phase)
     return unit;
 }
 
+/** @brief 每拍状态汇总（soak 用）：连续 NULL 发送是「卡死」征兆。 */
+static void soakSummary(int nullNow)
+{
+    g_nullStreak = nullNow ? (g_nullStreak + 1) : 0;
+    if (g_nullStreak == 3)
+        probe_log("[STUCK?] 连续 %d 拍发送失败（state=%d offline=%d）\n",
+                  g_nullStreak,
+                  (int)XModbusDevice_state((XModbusDevice*)g_client),
+                  g_offline);
+    if (g_tick % 10 == 0)
+        probe_log("[SUMMARY t=%llu] tick=%d ok=%d err=%d disc=%d recov=%d nullStreak=%d\n",
+                  (unsigned long long)(nowMs() - g_bootMs), g_tick,
+                  g_okCount, g_errCount, g_discCount, g_recovCount,
+                  g_nullStreak);
+}
+
 /** @brief 轮询拍：每 1s 发一次读请求（四相位轮转）。 */
 static void onTick(void* userData, XTimerData* timer)
 {
@@ -168,8 +229,8 @@ static void onTick(void* userData, XTimerData* timer)
 
     ++g_tick;
     if (g_reply) {
-        probe_log("[TICK %d] 在途应答未回（pendingReply 卡住）→ 不发新请求\n",
-                  g_tick);
+        probe_log("[TICK %d t=%llu] 在途应答未回（pendingReply 卡住）→ 不发新请求\n",
+                  g_tick, (unsigned long long)(nowMs() - g_bootMs));
         return;
     }
 
@@ -177,8 +238,9 @@ static void onTick(void* userData, XTimerData* timer)
     XModbusDataUnit* unit = getUnit(g_phase);
     if (!unit) { probe_log("[TICK %d] unit 创建失败\n", g_tick); return; }
 
-    probe_log("[TICK %d] state=%d phase=%d sendRead...\n",
-              g_tick, (int)st, (int)g_phase);
+    probe_log("[TICK %d t=%llu] state=%d phase=%d sendRead...\n",
+              g_tick, (unsigned long long)(nowMs() - g_bootMs),
+              (int)st, (int)g_phase);
 
     /* 注意：**不**删除 unit（缓存复用，与 demo 一致）。 */
     XModbusReply* reply = XModbusClient_sendReadRequest(
@@ -186,12 +248,14 @@ static void onTick(void* userData, XTimerData* timer)
 
     if (!reply) {
         ++g_errCount;
-        probe_log("[TICK %d] sendReadRequest 返回 NULL（未连接或发送失败）\n",
-                  g_tick);
+        probe_log("[TICK %d t=%llu] sendReadRequest 返回 NULL（未连接或发送失败）\n",
+                  g_tick, (unsigned long long)(nowMs() - g_bootMs));
         g_phase = (ProbePhase)((g_phase + 1) % 4);
-        if (g_tick >= PROBE_MAX_TICKS) g_done = 1;
+        if (g_soak) soakSummary(1);
+        if (!g_soak && g_tick >= PROBE_MAX_TICKS) g_done = 1;
         return;
     }
+    if (g_soak) soakSummary(0);
     g_reply = reply;
     /* connect_2：第一参是真 sender（reply 本身）。 */
     XObject_connect_2((XObject*)reply,
@@ -226,10 +290,17 @@ int main(int argc, char* argv[])
     if (argc > 2) g_port = atoi(argv[2]);
     if (argc > 3) g_unitId = atoi(argv[3]);
     if (argc > 4) g_pointCount = atoi(argv[4]);
+    if (argc > 5 && strcmp(argv[5], "soak") == 0) {
+        g_soak = 1;
+        if (argc > 6) g_soakSeconds = atol(argv[6]);
+    }
+    g_bootMs = nowMs();
 
     probe_log("=== Modbus TCP master probe (demo-equivalent) ===\n");
-    probe_log("host=%s port=%d unit=%d points=%d\n",
-              g_host, g_port, g_unitId, g_pointCount);
+    probe_log("host=%s port=%d unit=%d points=%d soak=%d%s%ld%s\n",
+              g_host, g_port, g_unitId, g_pointCount, g_soak,
+              g_soak ? " seconds=" : "", g_soakSeconds,
+              (argc > 5 && strcmp(argv[5], "reconnect") == 0) ? " mode=reconnect" : "");
 
     XCoreApplication_create(0, NULL);
 
@@ -247,8 +318,7 @@ int main(int argc, char* argv[])
         XVariant_create_int(g_port));
 
     XObject_connect_1((XObject*)g_client,
-                      (size_t)XModbusDevice_stateChanged_signal(
-                          (XModbusDevice*)g_client, XModbusDevice_ConnectedState),
+                      XSignal(XModbusDevice_stateChanged_signal),
                       (XObject*)g_client, onStateChanged, XConnectionType_Direct);
 
     /* [状态残留实验] 复刻 demo 页「连接 → 断开 → 再连接」序列：
@@ -276,9 +346,26 @@ int main(int argc, char* argv[])
     XTimer_start_base(timer);
 
     while (!g_done) {
+        if (g_soak) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents |
+                                           XEventLoop_WaitForMoreEvents);
+            if (g_soakSeconds > 0 &&
+                (long)((nowMs() - g_bootMs) / 1000u) >= g_soakSeconds)
+                break;
+            continue;
+        }
         XCoreApplication_processEvents(XEventLoop_AllEvents);
     }
 
+    if (g_soak) {
+        probe_log("=== SOAK 结果: ok=%d err=%d ticks=%d disc=%d recov=%d elapsed=%llu ms ===\n",
+                  g_okCount, g_errCount, g_tick, g_discCount, g_recovCount,
+                  (unsigned long long)(nowMs() - g_bootMs));
+        /* 验收判据：断链次数与恢复次数一致且均 >0 = 全部自愈。 */
+        if (g_discCount > 0 && g_discCount == g_recovCount) return 0;
+        if (g_discCount > 0) return 1; /* 有断链未恢复 */
+        return g_okCount > 0 ? 0 : 1;
+    }
     probe_log("=== 结果: ok=%d err=%d ticks=%d ===\n",
               g_okCount, g_errCount, g_tick);
     return g_okCount > 0 ? 0 : 1;

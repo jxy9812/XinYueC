@@ -58,6 +58,16 @@ extern "C" {
 #define XMODBUS_TCP_ON (XMODBUS_CLIENT_ON || XMODBUS_SERVER_ON)
 #endif
 
+/** @brief 聚合映射管理器（XModbusMapping：统一虚拟地址空间翻译/段表） */
+#ifndef XMODBUS_MAPPING_ON
+#define XMODBUS_MAPPING_ON XMODBUS_CLIENT_ON
+#endif
+
+/** @brief 聚合设备（XModbusHub：多从站虚拟合一 + 输入轮询 + 输出按需写重发） */
+#ifndef XMODBUS_HUB_ON
+#define XMODBUS_HUB_ON XMODBUS_MAPPING_ON
+#endif
+
 #endif /* XMODBUS_ON */
 
 #ifdef __cplusplus
