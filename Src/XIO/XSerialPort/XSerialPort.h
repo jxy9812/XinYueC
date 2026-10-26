@@ -21,6 +21,12 @@ XCLASS_DEFINE_BEGING(XSerialPort)
 XCLASS_DEFINE_EXTEND_END(XSerialPort, XIODevice)
 #define XSERIALPORT_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XIODevice))       //XSerialPort容器虚函数表大小
 /**
+ * @brief 默认接收轮询间隔（毫秒）
+ * @details 串口设备层无 fd 级可读事件，XSerialPort 用该间隔的定时器把"有数据"转成 readyRead 信号。
+ *          2ms 对 38400bps 的 Modbus RTU 足够（整帧 35 字节约 10ms，轮询只影响首个字节的感知延迟）。
+ */
+#define XSerialPort_DefaultRxPollIntervalMs 2
+/**
  * @brief 串口设备类，对齐 Qt QSerialPort。
  * @details 继承 XIODevice；堆对象经 XSerialPort_create* 创建并用 XClassDelete 释放，
  *          栈对象经 XSerialPort_init 初始化并用 XClassDeinit 反初始化。
@@ -35,6 +41,8 @@ typedef struct XSerialPort
     uint16_t isOpen : 1;/**< 串口已打开标志；1=已打开 0=未打开，仅供实现内部维护 */
     uint16_t readyReadTriggered : 1;/**< 是否触发了数据可读事件；仅供实现内部维护 */
     uint16_t bytesWrittenTriggered : 1;/**< 是否触发了数据发送完成事件；仅供实现内部维护 */
+    XTimerId m_rxTimer;/**< RX 轮询定时器标识；打开期间用于把"有数据可读"转成 readyRead 信号；未启动时为 XTIMER_INVALID_ID */
+    int32_t rxPollIntervalMs;/**< RX 轮询间隔（毫秒）；打开期间每拍检查一次接收缓冲是否有数据；<=0 表示关闭轮询（不发射 readyRead） */
     int32_t baudRate;/**< 波特率（单位：波特），有效范围受平台限定，默认 XSerialPort_Baud9600 */
     XSerialPort_DataBits dataBits;/**< 数据位数（5~8 位），默认 XSerialPort_Data8 */
     XSerialPort_Parity parity;/**< 校验方式，默认 XSerialPort_NoParity */
@@ -176,6 +184,24 @@ XHandle XSerialPort_handle(const XSerialPort* port);
  * @return 返回当前配置的流控类型
  */
 XSerialPort_FlowControl XSerialPort_flowControl(const XSerialPort* port);
+
+/**
+ * @brief 设置接收轮询间隔
+ * @param port 指向XSerialPort实例的指针（不可为NULL）
+ * @param intervalMs 轮询间隔（毫秒）；<=0 表示关闭轮询
+ * @details 串口设备层（XDeviceSerialPort）在 POSIX/Windows 上是纯同步读模型，
+ *          没有 fd 级可读事件通知，因此 XSerialPort 自行持有一个毫秒级定时器：
+ *          每拍检查一次接收缓冲，有数据则发射 XIODevice 的 readyRead 信号。
+ *          Modbus RTU 主站依赖该信号切分帧边界，必须保持开启。
+ * @note 仅在串口打开前设置生效（打开后修改需重新打开串口）
+ */
+void XSerialPort_setRxPollInterval(XSerialPort* port, int32_t intervalMs);
+/**
+ * @brief 获取接收轮询间隔
+ * @param port 指向XSerialPort实例的指针（不可为NULL）
+ * @return 返回当前轮询间隔（毫秒）
+ */
+int32_t XSerialPort_rxPollInterval(const XSerialPort* port);
 
 /**
  * @brief 设置DTR（Data Terminal Ready）信号状态

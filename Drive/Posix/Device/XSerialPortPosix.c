@@ -418,9 +418,19 @@ bool XDeviceSerialPort_platformEnumeratePorts(XDeviceSerialPortPortCollector col
     if (!dir) return false;
 
     while ((item = readdir(dir)) != NULL) {
+        char deviceDir[PATH_MAX];
         if (item->d_name[0] == '.') continue;
         if (nameCount >= POSIX_SERIAL_MAX_PORTS) break;
         if (strlen(item->d_name) >= POSIX_SERIAL_MAX_NAME) continue;
+        /* 真串口判定前移到收集阶段：names 是固定容量的数组（上限
+           POSIX_SERIAL_MAX_PORTS），而 /sys/class/tty 下除真 UART 外还有
+           数十个虚拟控制台 ttyN/console/ptmx。先无差别收集再于下方
+           过滤时，数组会被虚拟项占满，真正的 UART（ttySx）根本进不来
+           ——真机 2026-10-26 实证：板上有 74 项（64 个 ttyN），枚举结果
+           只剩 /dev/ttyFIQ0，RS485 的 ttyS3/4/5/7/8/9 全丢。此处先过
+           滤再入表，数组只装真串口。下方循环内的判定保留（幂等）。 */
+        if (!posixIsRealSerial(item->d_name, deviceDir, sizeof(deviceDir)))
+            continue;
         strncpy(names[nameCount], item->d_name, POSIX_SERIAL_MAX_NAME - 1);
         names[nameCount][POSIX_SERIAL_MAX_NAME - 1] = '\0';
         ++nameCount;

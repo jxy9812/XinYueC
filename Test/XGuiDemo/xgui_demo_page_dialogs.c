@@ -368,6 +368,15 @@ static void dlgpg_scrollRelayout(XScrollArea* scroll)
     }
     XWidget_setFixedWidth(content, contentW);
     XWidget_setFixedHeight(content, contentH);
+    /* [内容根定尺 2026-10-26] 固定宽/高在本框架是「约束归布局」：控件
+       自己挂了布局即被判定为托管，约束变更不直接改几何（XWidget.c
+       setMinimumSize/setMaximumSize 的 managed 判定）。而滚动区从不
+       resize 它的内容控件（XAbstractScrollArea 只摆 viewport/滚动条），
+       内容根的实际宽度便停在初值（本例 ~200px）——其子控件（说明列，
+       起点 x≈190、宽 396）超出父控件，绘制被父级裁成一字宽（真机：
+       说明列只余「非」字；切走再切回整页重绘后即完整）。这里按收口
+       后的尺寸显式定尺内容根，使其与页面布局解算出的子控件位置同源。 */
+    XWidget_resize((XWidget*)content, contentW, contentH);
 #if XLAYOUT_ON && XLAYOUT_BOX_ON
     /* 兜底重激活：内容定尺未变时 setFixed* 不触发 resize/activate，
        显式跑一遍解算保证行盒按最新档位/列宽/方向分配（幂等，零开销

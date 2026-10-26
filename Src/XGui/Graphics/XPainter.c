@@ -10807,6 +10807,31 @@ static uint32_t painterGlyphCacheHash(const void* face, uint32_t codepoint,
     return h;
 }
 
+/**
+ * @brief      字形 alpha 覆盖图缓存的哈希（笔点入键）。
+ * @details    覆盖图不是位置无关的：拟合/吸附链的浮点阈值以**绝对**
+ *             坐标求值（基线量级不同会在 roundf/0.35 邻界上翻向），
+ *             同一字形在不同笔位产出的覆盖位图并不逐位相同。故缓存键
+ *             必须含笔点——否则后存者毒化先存者，命中方显示他实例的
+ *             字形（笔画错位/断裂，2026-10-26 真机首帧文字残缺实证：
+ *             说明列只余首字、导航栏文字只剩零星笔画，切页重绘后恢复）。
+ *             笔点入哈希是为让不同笔位各落一桶、索引快路径各自命中，
+ *             完整键复核仍是最终依据。
+ */
+static uint32_t painterGlyphCacheHashOrigin(const void* face,
+                                            uint32_t codepoint,
+                                            uint32_t scaleKey,
+                                            int originX, int originY)
+{
+    uint32_t h = painterGlyphCacheHash(face, codepoint, scaleKey);
+    h ^= (uint32_t)originX * 0x27D4EB2Fu;
+    h ^= (uint32_t)originY * 0x165667B1u;
+    h ^= h >> 16;
+    h *= 0x2545F491u;
+    h ^= h >> 15;
+    return h;
+}
+
 /** @brief 由缩放因子导出缓存键（与 painterOutlineScaleKey 同式，
  *         独立定义以便点阵路径（无轮廓缓存构建）也可复用）。 */
 static uint32_t painterGlyphScaleKey(float scale)
@@ -10992,18 +11017,20 @@ static PainterGlyphAlphaCacheEntry* painterGlyphAlphaCacheFind(
     uint32_t bucket;
     int i;
     if (!face || scaleKey == 0u) return NULL;
-    bucket = painterGlyphCacheHash(face, codepoint, scaleKey) &
+    bucket = painterGlyphCacheHashOrigin(face, codepoint, scaleKey,
+                                         originX, originY) &
              (uint32_t)(sizeof(g_glyphAlphaIndex) /
                         sizeof(g_glyphAlphaIndex[0]) - 1u);
-    /* 快路径：索引指认的槽位键完全匹配。 */
+    /* 快路径：索引指认的槽位键完全匹配（笔点含在内）。 */
     if (g_glyphAlphaIndex[bucket])
     {
         PainterGlyphAlphaCacheEntry* entry =
             &g_glyphAlphaCache[g_glyphAlphaIndex[bucket] - 1u];
         if (entry->m_valid && entry->m_face == face &&
             entry->m_codepoint == codepoint &&
-            entry->m_scaleKey == scaleKey)
-            /* 实验 B：键去位置化（Qt 对齐）——比对移除 */
+            entry->m_scaleKey == scaleKey &&
+            entry->m_originX == originX &&
+            entry->m_originY == originY)
         {
             entry->m_stamp = ++g_glyphAlphaCacheStamp;
             return entry;
@@ -11014,8 +11041,9 @@ static PainterGlyphAlphaCacheEntry* painterGlyphAlphaCacheFind(
         PainterGlyphAlphaCacheEntry* entry = &g_glyphAlphaCache[i];
         if (entry->m_valid && entry->m_face == face &&
             entry->m_codepoint == codepoint &&
-            entry->m_scaleKey == scaleKey)
-            /* 实验 B：键去位置化——比对移除 */
+            entry->m_scaleKey == scaleKey &&
+            entry->m_originX == originX &&
+            entry->m_originY == originY)
         {
             entry->m_stamp = ++g_glyphAlphaCacheStamp;
             g_glyphAlphaIndex[bucket] = (uint16_t)(i + 1);
@@ -11089,8 +11117,9 @@ static bool painterGlyphAlphaCacheStore(PainterGlyphAlphaCacheEntry* slot,
     slot->m_alpha = copy;
     slot->m_valid = true;
     /* 同步写加速索引（哈希桶只记最近一次写入的槽位；被覆盖的旧
-       索引项由命中时的键复核兜底）。 */
-    g_glyphAlphaIndex[painterGlyphCacheHash(face, codepoint, scaleKey) &
+       索引项由命中时的键复核兜底）。哈希与查找同口径：笔点入键。 */
+    g_glyphAlphaIndex[painterGlyphCacheHashOrigin(face, codepoint, scaleKey,
+                                                   originX, originY) &
                       (uint32_t)(sizeof(g_glyphAlphaIndex) /
                                  sizeof(g_glyphAlphaIndex[0]) - 1u)] =
         (uint16_t)(slot - g_glyphAlphaCache + 1);

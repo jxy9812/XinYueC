@@ -68,6 +68,11 @@ extern "C" {
 #define XMODBUS_HUB_ON XMODBUS_MAPPING_ON
 #endif
 
+/** @brief 施耐德 ATV61 变频器专用驱动（XModbusAtv61：启停/调速/状态/报警） */
+#ifndef XMODBUS_ATV61_ON
+#define XMODBUS_ATV61_ON XMODBUS_CLIENT_ON
+#endif
+
 #endif /* XMODBUS_ON */
 
 #ifdef __cplusplus

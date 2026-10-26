@@ -5223,6 +5223,16 @@ static void XWidget_recomputeGeometry(XWidget* self, const XRect* oldRect)
             XRect dirty = XRect_united(&old, &self->m_windowRect);
             /* 经 addDirtyRegion 联动父链与兄弟交叠保留层。 */
             XWidget_updateRect(parent, &dirty);
+            /* [几何变化自失效 2026-10-26] 控件内容按**新**几何排版，
+               必须按新几何标脏控件自身：仅靠父控件的 old∪new 失效不
+               足——该失效经 addDirtyRegion 会被父控件客户区裁剪，且父
+               客户区此刻可能仍是旧几何，控件的新位置/新尺寸就落在脏区
+               之外；控件 paint 的裁剪矩形（控件矩形 ∩ 顶层脏区）因此
+               停留在早期的窄几何，文本被裁成一字宽（真机 2026-10-26：
+               对话框页说明列文字只剩首字「非」，控件实宽 396 而裁剪
+               宽 12；切走再切回整页重绘后即完整）。Qt 语义同款：resize
+               后控件自身重绘。 */
+            XWidget_updateRect(self, &self->m_windowRect);
         } else if (sizeChanged) {
             /* [顶层防残影 2026-10-17] 顶层（parent==NULL）此前直接跳过
              * 失效——CSD 标题栏/状态栏/HUD 等顶层绘制物的旧位置像素没

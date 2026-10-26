@@ -73,13 +73,22 @@ ASan 零报告。覆盖：映射纯逻辑（重叠/切片/按设备收集/回绕
 
 ## 已知缺口（待办）
 
-1. **串口异步收**：`XSerialPortPosix` 为纯同步读模型，无人布防 RX 事件 →
-   RTU 客户端 `readyRead` 永不触发（发 OK/收断）。本测试用例⑦b 对 RTU 写
-   采用「受理即过」的待办口径，IR v16/DI v23（C 数据）暂以查询接口口径验收。
-   落地方向：dispatcher 注册串口 fd 轮询回调（对齐 lwIP 的
-   `addPollCallback` 先例）或串口设备接入 IoRing/epoll 引擎。落地后恢复
-   测试精确断言（用例内已留注释标记「RTU RX 待办」）。
-2. RTU 轮询节拍实测依赖上条——RTU 读回填未在桌面 pty 上闭环。
+1. ~~**串口异步收**~~ **【2026-10-26 已根修】**：`XSerialPort` 现自带
+   **RX 轮询定时器**（默认 2 ms，`XSerialPort_DefaultRxPollIntervalMs`），
+   每拍检查 `BytesAvailable > 0` 即发射 `XIODevice_readyRead_signal`；
+   RTU 客户端原已连该信号，无需改动即恢复收帧。API：
+   `XSerialPort_setRxPollInterval(port, ms)` / `XSerialPort_rxPollInterval(port)`
+   （≤0 关闭轮询）。
+   实现落点：`Src/XIO/XSerialPort/XSerialPort.{h,c}`（RX 定时器字段 +
+   `VXSerialPort_timerEvent` + open/close/deinit 生命周期挂钩）。
+   选择"轮询"而非"dispatcher fd 事件"的理由：socket-notifier 机制面向
+   socket fd，io_uring/epoll 双引擎对 tty fd 可读事件支持不齐；轮询在
+   POSIX / Windows / Android-NDK 三平台行为一致。
+   **遗留**：轮询带来每 2 ms 一次系统调用的固定开销（多路串口可调至 5 ms）；
+   通用串口"fd 可读事件"方案仍可作为后续优化。
+2. ~~RTU 轮询节拍实测依赖上条~~ **【2026-10-26 已闭环】**：RTU 读回填已在
+   桌面 pty 从站上实测闭环（`Test/XProtocolTest/mbtest_atv61_slave.py` +
+   `xmodbus_atv61_test.c`，io/epoll 双引擎 0 失败）。
 
 ## 调试过程中顺手根修的预存缺陷
 

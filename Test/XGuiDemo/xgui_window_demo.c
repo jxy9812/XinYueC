@@ -784,7 +784,7 @@ typedef struct DemoWin
     DemoStatusLabel m_statusLabel; /**< 底部状态栏（自带深色底，白字）。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton     m_pageNav[21]; /**< 页面切换按钮（下标=页索引；挂在浮动导航面板活动分类下，装配见 DemoWin_create；页 15=二维码、页 16=软件更新、页 17/18=Modbus 主站/从站、页 19=窗口设置、页 20=时钟与 DDNS，2026-10-19 合并扩列 21）。 */
+    XPushButton     m_pageNav[22]; /**< 页面切换按钮（下标=页索引；挂在浮动导航面板活动分类下，装配见 DemoWin_create；页 15=二维码、页 16=软件更新、页 17/18=Modbus 主站/从站、页 19=窗口设置、页 20=时钟与 DDNS，2026-10-19 合并扩列 21）。 */
 #endif
 #if XBUTTONGROUP_ON
     XButtonGroup    m_navGroup;    /**< 页面钮互斥组：当前页按钮保持选中高亮（主题 :checked 态）。 */
@@ -818,8 +818,8 @@ typedef struct DemoWin
     XWidget         m_pageInputs;  /**< 页面 3：输入控件演示容器。 */
     XWidget         m_pageTabs;    /**< 页面 4：容器与窗口演示容器。 */
     XWidget         m_pageChart;   /**< 页面 12：图表演示容器（自选项卡页打散独立）。 */
-    XWidget*        m_extPages[16]; /**< 页面 5~20：扩展页根（xgui_demo_pages.h 契约，5+下标=页索引，下标 7=内置图表页占位恒 NULL；堆对象随父链级联析构；下标 12/13=Modbus 主站/从站页 2026-10-13 双页拆分，下标 14=窗口设置页 2026-10-17，下标 15=时钟与 DDNS 页 2026-10-16）。[懒分配 2026-10-19] 语义更新：注册期=空占位壳（XWidget_create 堆对象，仅保「堆叠下标=页索引」与几何分支口径），首显经 demo_ext_ensureBuilt 同位换入真页根后槽位才指真根；构建回落（裁剪）时槽位清空=旧「跳过注册」口径。 */
-    bool            m_extBuilt[16]; /**< [懒分配 2026-10-19] 扩展页已构建/已尝试标记（demo_ext_ensureBuilt 幂等守卫）：false=槽位仍是注册期占位壳；true=已换真页根或已裁剪回落。全量懒分配策略=常驻不销毁，置位后无复位路径（页活到进程退出，与现状销毁语义一致）。 */
+    XWidget*        m_extPages[17]; /**< 页面 5~20：扩展页根（xgui_demo_pages.h 契约，5+下标=页索引，下标 7=内置图表页占位恒 NULL；堆对象随父链级联析构；下标 12/13=Modbus 主站/从站页 2026-10-13 双页拆分，下标 14=窗口设置页 2026-10-17，下标 15=时钟与 DDNS 页 2026-10-16）。[懒分配 2026-10-19] 语义更新：注册期=空占位壳（XWidget_create 堆对象，仅保「堆叠下标=页索引」与几何分支口径），首显经 demo_ext_ensureBuilt 同位换入真页根后槽位才指真根；构建回落（裁剪）时槽位清空=旧「跳过注册」口径。 */
+    bool            m_extBuilt[17]; /**< [懒分配 2026-10-19] 扩展页已构建/已尝试标记（demo_ext_ensureBuilt 幂等守卫）：false=槽位仍是注册期占位壳；true=已换真页根或已裁剪回落。全量懒分配策略=常驻不销毁，置位后无复位路径（页活到进程退出，与现状销毁语义一致）。 */
     /* 页 3/4/12 布局容器化（2026-10-17）：页内排布改由盒式布局管理，
      * demo_layout_content 对应手写坐标段删除。嵌套行/列布局器按借用
      * 指针挂入父布局（XBoxLayout_addLayout 不取所有权），故全部作为
@@ -1810,13 +1810,13 @@ static const char* demo_page_name(int index);
  *         kExtBuilders 提升为文件级：注册循环查表建占位壳，
  *         demo_ext_ensureBuilt 查表真建，autotest 调度查表甄别裁剪槽）。
  *         下标=页索引-5，下标 7=页 12（图表演示，内置页）恒 NULL 占位。 */
-XWidget* (*const g_extBuilders[16])(XWidget*, DemoPageStatusFn, void*) = {
+XWidget* (*const g_extBuilders[17])(XWidget*, DemoPageStatusFn, void*) = {
 #if XINYUE_EMBEDDED
     /* 嵌入式（F407 外扩堆 1008KB）：全部扩展页暂不预建——键盘页的
      * 拼音引擎+虚拟键盘控件树为最大内存户；性能悬浮窗演示优先，
      * 键盘页待后备存储静态绑定（extbuf 640KB 方案）后接回。 */
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL
 #else
     demo_page_views_build, demo_page_dialogs_build,
     demo_page_advanced_build, demo_page_effects_build,
@@ -1830,7 +1830,8 @@ XWidget* (*const g_extBuilders[16])(XWidget*, DemoPageStatusFn, void*) = {
     demo_page_modbus_master_build, /* 2026-10-13 Modbus 主站页。 */
     demo_page_modbus_slave_build, /* 2026-10-13 Modbus 从站页。 */
     demo_page_window_settings_build, /* 2026-10-17 窗口设置页（系统设置）。 */
-    demo_page_timeddns_build /* 2026-10-16 时钟与 DDNS 页（系统设置）。 */
+    demo_page_timeddns_build, /* 2026-10-16 时钟与 DDNS 页（系统设置）。 */
+    demo_page_atv61_build /* 2026-10-26 ATV61 变频器页（Modbus RTU 主站）。 */
 #endif
 };
 /* 前向声明：扩展页状态回调定义在导航槽段（demo_nav19Slot 之后）。 */
@@ -1902,7 +1903,7 @@ static void demo_ext_ensureBuilt(DemoWin* self, int exti)
 {
     XWidget* placeholder;
     XWidget* real;
-    if (!self || exti < 0 || exti >= 16)
+    if (!self || exti < 0 || exti >= 17)
         return;
     if (!g_extBuilders[exti])
         return; /* 裁剪注册表/内置图表页占位槽：零操作。 */
@@ -1952,7 +1953,7 @@ static int g_autotestPageOnly = -1; /**< --autotest-page 指定页号；-1=全�
  *          后的页永远测不到，卡死类缺陷因此长期无门禁。 */
 static void demo_ext_pages_autotest(DemoWin* demo)
 {
-    int (*const kTests[16])(XWidget*) = {
+    int (*const kTests[17])(XWidget*) = {
         demo_page_views_autotest, demo_page_dialogs_autotest,
         demo_page_advanced_autotest, demo_page_effects_autotest,
         demo_page_keyboard_autotest, demo_page_remote_server_autotest,
@@ -1965,11 +1966,12 @@ static void demo_ext_pages_autotest(DemoWin* demo)
         demo_page_modbus_master_autotest, /* 2026-10-13 Modbus 主站页。 */
         demo_page_modbus_slave_autotest, /* 2026-10-13 Modbus 从站页。 */
         demo_page_window_settings_autotest, /* 2026-10-17 窗口设置页。 */
-        demo_page_timeddns_autotest /* 2026-10-16 时钟与 DDNS 页。 */
+        demo_page_timeddns_autotest, /* 2026-10-16 时钟与 DDNS 页。 */
+        demo_page_atv61_autotest /* 2026-10-26 ATV61 变频器页。 */
     };
     int total = 0;
     int exti;
-    for (exti = 0; exti < 16; ++exti) {
+    for (exti = 0; exti < 17; ++exti) {
         int failures;
         if (!kTests[exti] || !g_extBuilders[exti])
             continue; /* 无契约/裁剪占位槽（内置图表页等），跳过 */
@@ -2335,7 +2337,7 @@ static void demo_set_status(DemoWin* self, const char* text)
 /** @brief 页面名称表（与导航按钮一一对应，中文）。 */
 static const char* demo_page_name(int index)
 {
-    static const char* const kNames[21] = {
+    static const char* const kNames[22] = {
         "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
         "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
         "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
@@ -2356,9 +2358,10 @@ static const char* demo_page_name(int index)
         "Modbus \xE4\xB8\xBB\xE7\xAB\x99", /* Modbus 主站(2026-10-13) */
         "Modbus \xE4\xBB\x8E\xE7\xAB\x99", /* Modbus 从站(2026-10-13) */
         "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE", /* 窗口设置(2026-10-17 系统设置) */
-        "\xE6\x97\xB6\xE9\x92\x9F\xE4\xB8\x8E DDNS" /* 时钟与 DDNS(2026-10-16) */
+        "\xE6\x97\xB6\xE9\x92\x9F\xE4\xB8\x8E DDNS", /* 时钟与 DDNS(2026-10-16) */
+        "ATV61 \xE5\x8F\x98\xE9\xA2\x91\xE5\x99\xA8" /* ATV61 变频器(2026-10-26) */
     };
-    if (index < 0 || index > 20)
+    if (index < 0 || index > 21)
         return kNames[0];
     return kNames[index];
 }
@@ -2380,7 +2383,7 @@ static const char* demo_page_name(int index)
 #define DEMO_NAV_TB_MAX  320   /**< 上下停靠面板高上限（换行页面钮自动抬高至此）。 */
 #define DEMO_NAV_STRIP_W 8     /**< 收起贴边分割条细条厚。 */
 #define DEMO_NAV_CAT_N   3     /**< 一级分类数（=kNavGroups 项数）。 */
-#define DEMO_NAV_PAGE_N  21    /**< 页面数（2026-10-19 合并：+窗口设置页 19、+时钟与 DDNS 页 20）。 */
+#define DEMO_NAV_PAGE_N  22    /**< 页面数（2026-10-26：+ATV61 变频器页 21）。 */
 #define DEMO_NAV_HEAD_N  5     /**< 单分类最多子分组标题数（标签池容量）。 */
 #define DEMO_NAV_PAGE_H    24  /**< 页面钮高（竖版）。 */
 #define DEMO_NAV_PAGE_PITCH 26 /**< 页面钮行距（竖版）。 */
@@ -2427,7 +2430,8 @@ static const DemoNavItem kNavRemoteItems[] = {
     { "\xE8\xBF\x9C\xE7\xA8\x8B\xE7\xAA\x97\xE5\x8F\xA3", 10 },             /* 远程窗口 */
     { "\xE8\xBF\x9C\xE7\xA8\x8B\xE5\xAE\xA2\xE6\x88\xB7\xE7\xAB\xAF", 11 }, /* 远程客户端 */
     { "Modbus \xE4\xB8\xBB\xE7\xAB\x99", 17 },  /* Modbus 主站(2026-10-13) */
-    { "Modbus \xE4\xBB\x8E\xE7\xAB\x99", 18 }   /* Modbus 从站(2026-10-13) */
+    { "Modbus \xE4\xBB\x8E\xE7\xAB\x99", 18 },   /* Modbus 从站(2026-10-13) */
+    { "ATV61 \xE5\x8F\x98\xE9\xA2\x91\xE5\x99\xA8", 21 } /* ATV61 变频器(2026-10-26) */
 };
 
 /** @brief 一级分类表（手风琴数据源；条目内 page=-1 为子分组标题）。 */
@@ -3241,6 +3245,8 @@ static void demo_layout_content(DemoWin* self)
         demo_page_window_settings_adapt(self->m_extPages[14]); /* 2026-10-17 窗口设置页。 */
     if (self->m_extPages[15])
         demo_page_timeddns_adapt(self->m_extPages[15]); /* 2026-10-16 时钟与 DDNS 页。 */
+    if (self->m_extPages[16])
+        demo_page_atv61_adapt(self->m_extPages[16]); /* 2026-10-26 ATV61 变频器页。 */
     /* 远程服务器页（2026-10-06 补入统一漏斗）：此前只在 resizeEvent
      * 单独调用，切页路径漏跑——XStackedLayout StackOne 只给当前页
      * 分配几何，resize 落在别的页时本页根保持陈旧尺寸，adapt 算出
@@ -3287,7 +3293,7 @@ static void demo_switchPage(DemoWin* self, int index)
     }
 #endif
     if (index < 0) index = 0;
-    if (index > 20) index = 20; /* 2026-10-19 页 19=窗口设置、页 20=时钟与 DDNS 入列。 */
+    if (index > 21) index = 21; /* 2026-10-26 页 21=ATV61 变频器入列。 */
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 导航面板手风琴随页展开所在分类（程序化切页 --page/autotest 与
@@ -3614,6 +3620,13 @@ static void demo_nav20Slot(XObject* receiver, XVarList* args)
 {
     (void)args;
     demo_switchPage((DemoWin*)receiver, 20);
+}
+
+/** @brief 页面 21（ATV61 变频器）导航槽（2026-10-26 远程类入列）。 */
+static void demo_nav21Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 21);
 }
 
 /** @brief 扩展页状态回调：转发到主窗状态栏（xgui_demo_pages.h 契约适配）。 */
@@ -4336,7 +4349,7 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
                 ++depth;
             }
         }
-        for (exti = 0; exti < 16; ++exti) {
+        for (exti = 0; exti < 17; ++exti) {
             XWidget* page = demo->m_extPages[exti];
             if (page)
                 demo_log("HITPROBE ext[%d] rect=(%d,%d %dx%d) vis=%d built=%d\n",
@@ -4670,7 +4683,7 @@ static DemoWin* DemoWin_create(void)
      * 下标=页索引-5，下标 7=页 12（图表演示，内置页）恒 NULL 占位。 ---- */
     {
         int exti;
-        for (exti = 0; exti < 16; ++exti) {
+        for (exti = 0; exti < 17; ++exti) {
 #if XCHARTS_ON
             if (exti == 7) {
                 /* 页 12（图表演示）内置页在此占位入栈：保证「堆叠下标=
@@ -4768,7 +4781,7 @@ static DemoWin* DemoWin_create(void)
     /* [删「收起」2026-10-25] 收起/展开改由顶部品牌条左侧 ☰ 承担
      * （横屏/桌面形态），导航面板上不再有收起钮。 */
     {
-        static void (*const kNavSlots[21])(XObject*, XVarList*) = {
+        static void (*const kNavSlots[22])(XObject*, XVarList*) = {
             demo_nav0Slot, demo_nav1Slot, demo_nav2Slot, demo_nav3Slot,
             demo_nav4Slot, demo_nav5Slot, demo_nav6Slot, demo_nav7Slot,
             demo_nav8Slot, demo_nav9Slot, demo_nav10Slot, demo_nav11Slot,
@@ -4780,7 +4793,8 @@ static DemoWin* DemoWin_create(void)
             demo_nav17Slot, /* 2026-10-13 Modbus 主站入列。 */
             demo_nav18Slot, /* 2026-10-13 Modbus 从站入列。 */
             demo_nav19Slot, /* 2026-10-17 窗口设置入列。 */
-            demo_nav20Slot  /* 2026-10-16 时钟与 DDNS 入列。 */
+            demo_nav20Slot,  /* 2026-10-16 时钟与 DDNS 入列。 */
+            demo_nav21Slot  /* 2026-10-26 ATV61 变频器入列。 */
         };
         int i;
 #if XBUTTONGROUP_ON

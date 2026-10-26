@@ -310,6 +310,19 @@ typedef struct XWNPendingEntry
     bool m_deferredActivation;         /**< 窗口未映射期间的激活请求挂起
                                             （对齐 QXcbWindow::m_deferredActivation，
                                             MapNotify 后补激活）。 */
+    bool m_bypassWm;                   /**< 创建期 override_redirect（绕过
+                                            WM 的弹窗族/全屏属主对话框）：
+                                            激活请求不得 XSetInputFocus——
+                                            bypass 窗在 WM 焦点体系之外，
+                                            抢焦点会把 _NET_ACTIVE 从全屏
+                                            属主挪走，WM 即放回 dock 层
+                                            （真机 xfce4 实证），键盘经框
+                                            架内部焦点路由照常到达。 */
+    bool m_keyboardGrabbed;            /**< bypass 模态窗激活时的键盘抓取
+                                            在握（XGrabKeyboard 单槽位，
+                                            XMenu 弹层开/关会替换/释放本
+                                            进程唯一抓取，菜单关闭后模态
+                                            对话框需重新激活才能续抓）。 */
     bool m_deferGeometry;              /**< 几何挂起臂（拖拽改尺寸手势期）：
                                             setGeometry 只记账不落窗，落窗
                                             改由 present 与内容同批执行。 */
@@ -5499,6 +5512,23 @@ bool XPlatformNativeWindow_create(XWindow* window)
         bool winTransient = winType == XWindowType_Popup ||
                             winType == XWindowType_ToolTip ||
                             winType == XWindowType_SplashScreen;
+        /* 全屏属主的对话框随弹窗族 bypass（全屏模态根修 2026-10-26）：
+         * Dialog 受 WM 管理（dialogs-r1 #1）的前提是 WM 介入不破坏应用
+         * 形态——属主全屏时恰相反：受管对话框一映射/激活，WM 把活动
+         * 焦点从全屏属主挪走，xfwm4 等即以「无活动全屏窗」为由把 dock
+         * 层放回屏幕（系统任务栏复现）并给对话框加原生装饰（真机
+         * xfce4 实证，关掉对话框才恢复全屏）。全屏形态下对话框本就是
+         * 应用内模态层：位置程序侧定（居中漏斗）、模态门框架级、焦点
+         * 经 XSetInputFocus 直达，绕过 WM 与 Popup 族同语义。创建期判
+         * 据取属主生效状态——对话框均为打开时惰性建窗，建窗时属主已
+         * 全屏；非全屏属主的对话框行为零变化。 */
+        if (!winTransient && winType == XWindowType_Dialog) {
+            XWindow* owner = XWindow_transientParent(window);
+            if (owner &&
+                ((uint32_t)XWindow_windowState(owner) &
+                 (uint32_t)XWindowState_FullScreen) != 0u)
+                winTransient = true;
+        }
         if (winTransient ||
             (winFlags & (uint32_t)XWindowType_BypassWindowManagerHint) != 0u) {
             attr.override_redirect = True;
@@ -5560,6 +5590,7 @@ bool XPlatformNativeWindow_create(XWindow* window)
     entry->m_win = xwin;
     entry->m_window = window;
     entry->m_gc = XCreateGC(g_xpwnDisplay, xwin, 0, NULL);
+    entry->m_bypassWm = (attr.override_redirect != False);
     entry->m_client = geom;
     /* [弹窗随转·方案B 2026-10-18] 建窗 footprint（上方
        xpwn_applyRotationFootprint）按本角对调，随记账，供 setGeometry
@@ -5834,6 +5865,12 @@ static void xpwn_releaseNativeEntry(XWNPendingEntry* entry,
 {
     XWindow* window = entry->m_window;
     if (!entry->m_win) return;
+    if (entry->m_keyboardGrabbed) {
+        /* 防御：未走 setVisible(false) 的销毁路径（外部摧毁/异常收尾）
+           也要释放激活期键盘抓取，防悬空吞键。 */
+        XUngrabKeyboard(g_xpwnDisplay, CurrentTime);
+        entry->m_keyboardGrabbed = false;
+    }
     if (entry->m_inputContext) {
         XDestroyIC(entry->m_inputContext);
         entry->m_inputContext = NULL;
@@ -5910,6 +5947,13 @@ bool XPlatformNativeWindow_setVisible(XWindow* window, bool visible)
         xpwn_applyPendingGeometry(entry);
         XMapWindow(g_xpwnDisplay, entry->m_win);
     } else {
+        /* bypass 模态窗随隐藏释放激活期键盘抓取（requestActivate 的
+           bypass 分支建立）：exec/模态门随 hide 结束，抓取在握不放会
+           悬空吞掉本进程后续全部按键。 */
+        if (entry->m_keyboardGrabbed) {
+            XUngrabKeyboard(g_xpwnDisplay, CurrentTime);
+            entry->m_keyboardGrabbed = false;
+        }
         XUnmapWindow(g_xpwnDisplay, entry->m_win);
     }
     XFlush(g_xpwnDisplay);
@@ -6616,6 +6660,28 @@ bool XPlatformNativeWindow_requestActivate(XWindow* window)
     if (!xpwn_ensureConnection()) return false;
     entry = xpwn_findByXWindow(window);
     if (!entry || !entry->m_win) return false;
+    /* bypass 窗（弹窗族/全屏属主对话框）不参与 WM 焦点体系：激活只
+       补 Z 序、不 XSetInputFocus——抢焦点会把 _NET_ACTIVE 从全屏属主
+       挪走，WM 即以「无活动全屏窗」为由放回 dock 层（系统任务栏复现，
+       真机 xfce4 实证）。模态 bypass 窗另需键盘通路：X 焦点留在属主
+       时按键全落在模态门之下的属主上被门吞掉（真机目录对话框行编辑
+       聚焦后键入无效实证），故对标 Qt 弹层 grabForPopup（qapplication
+       .cpp grabKeyboard）以 XGrabKeyboard 把按键引到本窗——不改焦点、
+       不惊动 WM；非模态 bypass 窗（菜单/补全等）自持 XMenu 式抓取生
+       命期，此处只补 Z 序。 */
+    if (entry->m_bypassWm) {
+        if ((uint32_t)XWindow_modality(window) !=
+            (uint32_t)XWindowModality_NonModal &&
+            !entry->m_keyboardGrabbed) {
+            if (XGrabKeyboard(g_xpwnDisplay, entry->m_win, True,
+                              GrabModeAsync, GrabModeAsync,
+                              CurrentTime) == GrabSuccess)
+                entry->m_keyboardGrabbed = true;
+        }
+        XRaiseWindow(g_xpwnDisplay, entry->m_win);
+        XFlush(g_xpwnDisplay);
+        return true;
+    }
     /* 对齐 QXcbWindow::requestActivateWindow：窗口尚未完全映射
        （unmapped/unviewable，例如 show() 的映射仍是异步未完成、或
        父窗口链未映射）时，XSetInputFocus 会产生 BadMatch，因此不发

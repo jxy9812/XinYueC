@@ -47,7 +47,8 @@ endforeach()
 option(XGUI_REMOTE_NEON
     "XGuiRemote 编解码热循环 NEON 加速（仅 ARM 交叉目标有意义）" ON)
 if(XGUI_REMOTE_NEON AND CMAKE_C_COMPILER_ID STREQUAL "GNU"
-        AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|aarch64)")
+        AND CMAKE_SYSTEM_PROCESSOR MATCHES "^arm")
+    # 仅 ARM32 加此参：aarch64 NEON 为标配且 gcc 拒绝 -mfpu（RK3568 板端/交叉实测报错）。
     set_source_files_properties(
         "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiRemoteCodec.c"
         PROPERTIES COMPILE_OPTIONS "-mfpu=neon")
@@ -331,6 +332,11 @@ list(REMOVE_ITEM TEST_FILE
 # 不得卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xmodbus_hub_test.c")
+# xmodbus_atv61_test 同理：自带 main 的 ATV61 变频器闭环测试独立可执行
+# （XModbusAtv61Test 目标，2026-10-26 ATV61 485 变频器控制战役闭环回归），
+# 不得卷入主程序（与 main.c 重复定义 main）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xmodbus_atv61_test.c")
 # xgui_dialog_portrait_probe 同理：自带 main 的对话框族竖屏适配探针
 # （XDialogPortraitProbe 目标，2026-10-26 对话框竖屏适配战役目验工具）。
 list(REMOVE_ITEM TEST_FILE
@@ -835,6 +841,20 @@ else()
     target_link_libraries(XModbusHubTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
+# ==================== ATV61 变频器 Modbus RTU 闭环测试（独立可执行） ====================
+# [2026-10-26 ATV61 485 变频器控制战役] XModbusRtuSerialClient + XModbusAtv61
+# 驱动端到端回归：Python 模拟从站（mbtest_atv61_slave.py，pty 虚拟串口）先行
+# 启动，验证 串口收发闭环 / 读状态 / 调速 / CiA402 启停 / 报警读取 / 故障复位。
+# 用法：./XModbusAtv61Test <pty_path>
+add_executable(XModbusAtv61Test
+    "./Test/XProtocolTest/xmodbus_atv61_test.c"
+)
+if(UNIX)
+    target_link_libraries(XModbusAtv61Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XModbusAtv61Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
 # ==================== 高精度定时器组压测（菜单入口） ====================
 # [两孩子删除句柄身份压测 2026-10-25] 原先本节为独立可执行
 # XHrTimerStress_Test（自带 main 的 hr_stress_driver.c，供 CI / 桌面闸门
@@ -1094,6 +1114,7 @@ add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_demo_page_modbus.c"
     "./Test/XGuiDemo/xgui_demo_page_window.c"
     "./Test/XGuiDemo/xgui_demo_page_timeddns.c"
+    "./Test/XGuiDemo/xgui_demo_page_atv61.c"
     # [两孩子删除句柄身份压测 2026-10-25] --hr-stress 入口
     "./Test/XTimerTest/XHrTimerStressTest.c"
     "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"

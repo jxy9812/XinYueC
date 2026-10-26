@@ -345,6 +345,26 @@ void demo_page_keyboard_headless_hook(void);
  */
 XWidget* demo_page_keyboard_screenshot_target(void);
 
+/**
+ * @brief 构建 ATV61 变频器页（Modbus RTU 主站面板：串口名/波特率/从站
+ *        地址 + 启停控制（正转启动/反转启动/受控停机/自由停车/快速停机/
+ *        故障复位）+ 频率给定 + 监视/报警区）。Modbus 模块或控件裁剪时
+ *        返回 NULL（主文件跳过注册）。
+ */
+XWidget* demo_page_atv61_build(XWidget* parent,
+                               DemoPageStatusFn status, void* user);
+
+/**
+ * @brief ATV61 变频器页自测（非阻塞：验控件存在、默认波特率 38400、
+ *        构建后未连接、故障码表映射）。
+ */
+int demo_page_atv61_autotest(XWidget* page);
+
+/**
+ * @brief ATV61 变频器页自适应重排（盒式布局自适应，无需手工重排）。
+ */
+void demo_page_atv61_adapt(XWidget* page);
+
 #ifdef __cplusplus
 }
 #endif

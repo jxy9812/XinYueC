@@ -10,9 +10,34 @@
 #include <string.h>
 
 static bool VXSerialPort_event(XSerialPort* port, XEvent* event);
+static void VXSerialPort_timerEvent(XObject* obj, XTimerEvent* event);
 static bool setIntProperty(XSerialPort* port, uint32_t property, int value);
 static bool setInt64Property(XSerialPort* port, uint32_t property, int64_t value);
 static bool setBoolProperty(XSerialPort* port, uint32_t property, bool value);
+
+/**
+ * @brief 停止接收轮询定时器
+ */
+static void VXSerialPort_rxTimerStop(XSerialPort* port)
+{
+    if (!port) return;
+    if (port->m_rxTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)port, port->m_rxTimer);
+        port->m_rxTimer = XTIMER_INVALID_ID;
+    }
+}
+
+/**
+ * @brief 启动接收轮询定时器（已启动则先停后启，保证间隔变更生效）
+ */
+static void VXSerialPort_rxTimerStart(XSerialPort* port)
+{
+    if (!port) return;
+    VXSerialPort_rxTimerStop(port);
+    if (port->rxPollIntervalMs <= 0) return;
+    port->m_rxTimer = XObject_startTimer_ms((XObject*)port,
+        (uint64_t)port->rxPollIntervalMs, XTimerType_CoarseTimer);
+}
 
 static bool VXSerialPort_open(XIODevice* io, XIODeviceBaseMode mode)
 {
@@ -62,6 +87,7 @@ static bool VXSerialPort_open(XIODevice* io, XIODeviceBaseMode mode)
     port->base.m_openMode = (uint8_t)mode;
     port->isOpen = 1;
     port->error = XSerialPort_NoError;
+    VXSerialPort_rxTimerStart(port);
     return true;
 }
 
@@ -69,6 +95,7 @@ static void VXSerialPort_close(XIODevice* io)
 {
     XSerialPort* port = (XSerialPort*)io;
     if (!port) return;
+    VXSerialPort_rxTimerStop(port);
     if (port->base.m_fd != XFD_INVALID) {
         XDevice_close(port->base.m_fd);
         port->base.m_fd = XFD_INVALID;
@@ -180,12 +207,40 @@ static void VXSerialPort_deinit(XObject* object)
 {
     XSerialPort* port = (XSerialPort*)object;
     if (!port) return;
+    VXSerialPort_rxTimerStop(port);
     if (port->isOpen) VXSerialPort_close(&port->base);
     if (port->portName) {
         XFree_System(port->portName);
         port->portName = NULL;
     }
     XClass_Deinit_Parent(XIODevice, (XIODevice*)object);
+}
+
+/**
+ * @brief 定时器事件：接收轮询拍
+ * @details 串口设备层（XDeviceSerialPort）在 POSIX/Windows 上只有同步 read/write，
+ *          没有 fd 级可读事件，因此这里用毫秒级定时器轮询接收缓冲：
+ *          一旦有数据可读就发射 XIODevice 的 readyRead 信号，
+ *          由上层（如 XModbusRtuSerialClient）取走数据。
+ */
+static void VXSerialPort_timerEvent(XObject* obj, XTimerEvent* event)
+{
+    if (!obj || !event) goto parent_call;
+
+    XEvent_accept(event);
+    XSerialPort* port = (XSerialPort*)obj;
+    if (XTimerEvent_timerId(event) == port->m_rxTimer) {
+        if (port->isOpen && port->base.m_fd != XFD_INVALID) {
+            if (VXSerialPort_bytesAvailable((XIODevice*)port) > 0) {
+                port->readyReadTriggered = 1;
+                XIODevice_readyRead_signal((XIODevice*)port);
+            }
+        }
+        return;
+    }
+
+parent_call:
+    XClass_Parent(XIODevice, EXObject_TimerEvent, void (*)(XObject*, XTimerEvent*))(obj, event);
 }
 
 static bool VXSerialPort_event(XSerialPort* port, XEvent* event)
@@ -220,6 +275,7 @@ XVtable* XSerialPort_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteData, VXSerialPort_writeData);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSerialPort_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXSerialPort_event);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXSerialPort_timerEvent);
     XCLASS_SET_CLASS_NAME_DEFAULT("XSerialPort");
     XCLASS_SHOW_SIZE_DEFAULT(XSerialPort);
     return XVTABLE_DEFAULT;
@@ -243,6 +299,8 @@ void XSerialPort_init(XSerialPort* port)
     port->flowControl = XSerialPort_NoFlowControl;
     port->error = XSerialPort_NoError;
     port->readBufferSize = 512 * 1024;
+    port->m_rxTimer = XTIMER_INVALID_ID;
+    port->rxPollIntervalMs = XSerialPort_DefaultRxPollIntervalMs;
 }
 
 XSerialPort* XSerialPort_create_ex(XMemoryType memory)
@@ -380,6 +438,18 @@ bool XSerialPort_setFlowControl(XSerialPort* port, XSerialPort_FlowControl value
 XSerialPort_FlowControl XSerialPort_flowControl(const XSerialPort* port)
 {
     return port ? port->flowControl : XSerialPort_NoFlowControl;
+}
+
+void XSerialPort_setRxPollInterval(XSerialPort* port, int32_t intervalMs)
+{
+    if (!port) return;
+    port->rxPollIntervalMs = intervalMs;
+    if (port->isOpen) VXSerialPort_rxTimerStart(port);
+}
+
+int32_t XSerialPort_rxPollInterval(const XSerialPort* port)
+{
+    return port ? port->rxPollIntervalMs : 0;
 }
 
 XHandle XSerialPort_handle(const XSerialPort* port)
