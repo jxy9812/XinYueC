@@ -51,6 +51,9 @@ extern "C" {
 #include "XObject.h"
 #include "XClass.h"
 #include "XIODevice.h"
+#if XLINK_AUTH_ON
+#include "XString.h"
+#endif
 
 /* ========================================================================== */
 /*                        虚函数表                                           */
@@ -77,7 +80,9 @@ typedef struct XLinkSession XLinkSession;
 typedef enum XLinkSessionState {
     XLinkSessionState_Inactive  = 0, /**< 未挂载传输，或传输已断开/判线（初始态）。 */
     XLinkSessionState_Connected = 1, /**< 已挂载传输但握手未完成，暂不投递业务消息。 */
-    XLinkSessionState_Ready     = 2  /**< 握手完成且链路健康，全部分类消息正常投递。 */
+    XLinkSessionState_Ready     = 2, /**< 握手完成且链路健康，全部分类消息正常投递。 */
+    XLinkSessionState_Authenticating = 3 /**< 握手完成但登录认证未完成（XLINK_AUTH_ON）：
+                                              业务消息仍不投递，仅登录帧可通行。 */
 } XLinkSessionState;
 
 /**
@@ -130,6 +135,76 @@ typedef struct XLinkTopicSubscription {
 } XLinkTopicSubscription;
 
 /**
+ * @brief 服务端凭据查询结果（XLinkSessionAuthLookupCallback 返回值）。
+ */
+typedef enum XLinkSessionAuthLookupResult {
+    XLinkSessionAuthLookup_Ok      = 0, /**< 用户存在且允许认证：盐/迭代/H/角色已填。 */
+    XLinkSessionAuthLookup_BadUser = 1, /**< 用户不存在。 */
+    XLinkSessionAuthLookup_Locked  = 2  /**< 用户被锁定。 */
+} XLinkSessionAuthLookupResult;
+
+/**
+ * @brief 服务端凭据查询回调（XLINK_AUTH_ON）。
+ * @param userData 注册时传入的上下文（借用）。
+ * @param user 对端申报的用户名（UTF-8，非空）。
+ * @param saltOut 输出盐（XLINK_AUTH_SALT_BYTES 字节）。
+ * @param iterationsOut 输出口令派生迭代次数（>= 1）。
+ * @param hashOut 输出存储的派生摘要 H（XLINK_AUTH_NONCE_BYTES 字节）。
+ * @param roleOut 输出该用户角色（XLinkAuthRole）。
+ * @return 见 XLinkSessionAuthLookupResult。
+ * @note 回调在会话 pump 栈上同步执行；服务端不接触口令明文，仅持有 H。
+ */
+typedef int (*XLinkSessionAuthLookupCallback)(
+    void* userData, const char* user,
+    uint8_t saltOut[XLINK_AUTH_SALT_BYTES], uint32_t* iterationsOut,
+    uint8_t hashOut[XLINK_AUTH_NONCE_BYTES], uint8_t* roleOut);
+
+/**
+ * @brief 客户端挑战应答计算回调（XLINK_AUTH_ON）。
+ * @param userData 注册时传入的上下文（借用）。
+ * @param challenge 服务端下发的挑战（借用，仅本次调用有效）。
+ * @param methodOut 输出实际采用的认证方法（XLinkAuthMethod）。
+ * @param responseOut 输出 response = HMAC-SHA256(H, nonce)。
+ * @param hashOut 输出本地派生的 H = iteratedHMAC-SHA256(口令, salt)，
+ *                供会话校验服务端证明（服务端证明 = HMAC(H, nonce||0x01)）。
+ * @return 成功返回 true；无凭据/计算失败返回 false（会话按认证失败断开）。
+ * @note 口令明文保存在调用方（XLinkClient），会话层不保存、不打印；
+ *       会话层只在连接存续期保存 H，用于校验对端身份，断链即零化。
+ */
+typedef bool (*XLinkSessionAuthResponseCallback)(
+    void* userData, const XLinkAuthChallengePayload* challenge,
+    uint8_t* methodOut, uint8_t responseOut[XLINK_AUTH_NONCE_BYTES],
+    uint8_t hashOut[XLINK_AUTH_NONCE_BYTES]);
+
+/**
+ * @brief 文件传输帧处理回调（XLINK_FILE_ON）。
+ * @param self 会话对象（借用）。
+ * @param frame 帧头（借用）。
+ * @param payload 载荷（借用，仅本次调用有效）。
+ * @param userData 注册时传入的上下文（借用）。
+ * @return true 表示已消费（不再投递给业务分发回调）；false 表示放弃处理。
+ * @note 传输引擎在会话 pump 栈上同步调用；回调内可安全调用会话发送接口。
+ */
+typedef bool (*XLinkSessionFileCallback)(XLinkSession* self,
+                                         const XLinkFrameHeader* frame,
+                                         const uint8_t* payload,
+                                         void* userData);
+
+/**
+ * @brief 会话统计（累计值，reset/setDevice 不清零，便于长期观察）。
+ */
+typedef struct XLinkSessionStats {
+    uint64_t m_framesSent;      /**< 已完整写出队列的帧数。 */
+    uint64_t m_framesReceived;  /**< 已解析分发的帧数。 */
+    uint64_t m_bytesSent;       /**< 已写出字节数（含帧头）。 */
+    uint64_t m_bytesReceived;   /**< 已读入字节数。 */
+    uint32_t m_requestsSent;    /**< 发出的请求数。 */
+    uint32_t m_requestsTimedOut;/**< 超时终局的请求数。 */
+    uint32_t m_protocolErrors;  /**< 协议违例次数（畸形帧/超限）。 */
+    uint32_t m_resets;          /**< 复位次数（断链/判线/违例）。 */
+} XLinkSessionStats;
+
+/**
  * @brief XLink 会话对象。
  * @details 持有帧接收缓冲、请求 id 发生器、待应答表、订阅表与握手状态。
  *          生命周期内仅在 init 时一次性申请接收缓冲，稳态收发路径零堆分配。
@@ -154,6 +229,10 @@ typedef struct XLinkSession {
 
     uint16_t m_localCapability;  /**< 本端声明的能力位，见 XLinkCapability。 */
     uint16_t m_remoteCapability; /**< 握手协商后的能力交集；未握手时为 0。 */
+    uint16_t m_peerDeclaredCapability; /**< 对端 Hello/HelloAck 中**原始**声明的
+                                            能力位（未与本地求交）；用于识别
+                                            "对端要求认证但本地不支持"等场景
+                                            （交集看不到对端单独置的位）。 */
     uint16_t m_remoteVersion;    /**< 对端 Hello 携带的版本；未握手时为 0。 */
 
     uint32_t m_nextRequestId;      /**< 本端请求 id 发生器，从 1 起自增，0 视为无效并跳过。 */
@@ -166,15 +245,23 @@ typedef struct XLinkSession {
                               启动）；XTIMER_INVALID_ID 表示未启动（无事件分发器或
                               XLINK_HEARTBEAT_TICK_MS=0），会话退化为手动 pump 模式。
                               仅供实现使用。 */
-bool m_helloSent : 1; /**< Hello 已发出标志：手动 sendSession(Hello) 成功或首次驱动
-                              自动补发后置位，防重复握手；换设备/复位时清零。
-                              仅供实现使用。 */
-    uint8_t m_retryCount : 8; /**< 请求自动重发次数上限（仅供实现使用）：自动超时
-                                     后按原 requestId 静默重发的最大次数；
-                                     init 默认 XLINK_RETRY_MAX_DEFAULT，运行时经
-                                     XLinkSession_setNumberOfRetries 调整。
-                                     【位域 2026-10-26】与 m_helloSent 同占 2 字节
-                                     单元（原两成员各带 3 字节填充 = 8 字节）。 */
+
+    /* ---------- 布尔标志位域（1 字节，替代原先多个 bool 各自占位） ----------
+     * 【布局收敛】原 m_helloSent/m_authRequired/m_authAllowAnonymous/
+     * m_authPassed/m_authChallengeSent 五个 bool 各占 1~4 字节（合计约
+     * 8~20 字节，含填充）；收敛为同一存储单元内的位域后固定 1 字节。
+     * 成员名与语义不变，调用点零改动。 */
+    uint8_t m_helloSent : 1;          /**< Hello 已发出（防重复握手）。 */
+    uint8_t m_authRequired : 1;       /**< 本端要求对端认证（服务端视角）。 */
+    uint8_t m_authAllowAnonymous : 1; /**< 要求认证但允许老对端匿名接入。 */
+    uint8_t m_authPassed : 1;         /**< 本连接已通过认证。 */
+    uint8_t m_authChallengeSent : 1;  /**< 服务端已下发挑战。 */
+    uint8_t m_authReserved : 3;       /**< 保留位。 */
+
+    uint8_t m_retryCount;  /**< 请求自动重发次数上限：自动超时后按原 requestId
+                                静默重发的最大次数；init 默认
+                                XLINK_RETRY_MAX_DEFAULT，运行时经
+                                XLinkSession_setNumberOfRetries 调整。 */
     uint32_t m_requestTimeoutMs; /* 请求自动超时判定阈值（毫秒，仅供实现使用）：
                                       0 = 被动模式（默认，超时不由库自动处理）；
                                       大于 0 时 pump 内自动扫描待应答表：
@@ -192,6 +279,47 @@ bool m_helloSent : 1; /**< Hello 已发出标志：手动 sendSession(Hello) 成
 
     XLinkSessionDispatchCallback m_dispatchCallback; /**< 消息分发回调（借用，可为 NULL）。 */
     void* m_userData;  /**< 调用方上下文（借用，仅供实现回传，不取得所有权）。 */
+
+    /* ---------- 发送队列（XLINK_TX_QUEUE_BYTES > 0 时启用） ----------
+     * 帧先整帧入队，pump 期间按设备可接受量续写；短写只推进游标不丢数据，
+     * 保证任何传输（非阻塞 TCP/回环）下都不会产生半帧。队列为对象拥有，
+     * init 时一次性申请，稳态零堆分配。 */
+    uint8_t* m_txQueue;      /**< 发送队列缓冲（对象拥有；容量 XLINK_TX_QUEUE_BYTES）。 */
+    uint32_t m_txQueueCap;   /**< 发送队列容量（字节）。 */
+    uint32_t m_txHead;       /**< 队列读游标（下一次续写的起始偏移）。 */
+    uint32_t m_txTail;       /**< 队列写游标（已入队末尾偏移）。 */
+    uint32_t m_txUsed;       /**< 队列内待写字节数。 */
+
+    /* ---------- 握手/认证超时 ---------- */
+    uint32_t m_attachTick;      /**< 挂载传输（进入 Connected）时的单调毫秒，握手超时起算点。 */
+    uint32_t m_authStartTick;   /**< 进入 Authenticating 时的单调毫秒，认证超时起算点。 */
+    uint32_t m_handshakeTimeoutMs; /**< 握手超时（0 = 不检查），默认 XLINK_HANDSHAKE_TIMEOUT_MS。 */
+    uint32_t m_authTimeoutMs;   /**< 认证超时（0 = 不检查），默认 XLINK_AUTH_TIMEOUT_MS。 */
+    uint8_t  m_authFailureLimit;/**< 单连接认证失败上限，默认 XLINK_AUTH_FAILURE_LIMIT。 */
+
+    /* ---------- 登录认证状态（XLINK_AUTH_ON） ---------- */
+    XLinkSessionAuthLookupCallback m_authLookup;     /**< 服务端凭据查询回调（借用）。 */
+    void* m_authLookupUserData;                      /**< 上述回调上下文（借用）。 */
+    XLinkSessionAuthResponseCallback m_authRespond;  /**< 客户端挑战应答回调（借用）。 */
+    void* m_authRespondUserData;                     /**< 上述回调上下文（借用）。 */
+    uint8_t  m_authRole;          /**< 认证成功后的角色（XLinkAuthRole）；匿名时为 0。 */
+    uint8_t  m_authFailures;      /**< 本连接累计认证失败次数（达上限断链）。 */
+    XString* m_authUser;          /**< 认证通过的用户名（对象拥有，XString UTF-8；
+                                       未认证时为空串对象，避免 NULL 判断散布）。 */
+    uint8_t  m_authHash[XLINK_AUTH_NONCE_BYTES];  /**< 派生摘要 H：服务端为查表所得，
+                                                       客户端为本地派生所得（供校验服务端证明）。 */
+    uint8_t  m_authNonce[XLINK_AUTH_NONCE_BYTES]; /**< 本连接挑战 nonce（双方各持一份）。 */
+    uint8_t  m_authSalt[XLINK_AUTH_SALT_BYTES];   /**< 本连接盐（服务端下发/客户端接收）。 */
+    uint32_t m_authIterations;    /**< 本连接口令派生迭代次数。 */
+    uint8_t  m_authPendingRole;   /**< 认证成功后拟授予的角色（服务端查表结果）。 */
+    XString* m_authPendingUser;   /**< 待认证用户名（对象拥有，XString UTF-8）。 */
+
+    /* ---------- 文件传输钩子（XLINK_FILE_ON） ---------- */
+    XLinkSessionFileCallback m_fileCallback;  /**< File 消息类处理回调（借用，可为 NULL）。 */
+    void* m_fileUserData;                     /**< 上述回调上下文（借用）。 */
+
+    /* ---------- 统计 ---------- */
+    XLinkSessionStats m_stats;   /**< 累计统计（供观测；不参与状态机）。 */
 } XLinkSession;
 
 /* ========================================================================== */
@@ -447,6 +575,200 @@ XLinkSessionState XLinkSession_state(const XLinkSession* self);
  * @return     状态为 XLinkSessionState_Ready 时返回 true。
  */
 bool XLinkSession_isReady(const XLinkSession* self);
+
+/**
+ * @brief      获取发送队列中尚未写出的字节数（背压观测）。
+ * @param      self 会话对象（借用）；传入 NULL 时返回 0。
+ * @return     待写字节数；未启用发送队列时恒为 0。
+ * @note       调用方可据此判断是否需要暂缓发送（如大文件传输），
+ *             避免发送接口因队列满而返回 false。
+ */
+uint32_t XLinkSession_pendingBytes(const XLinkSession* self);
+
+/**
+ * @brief      获取会话累计统计快照。
+ * @param      self 会话对象（借用）；传入 NULL 时输出保持原值。
+ * @param      out 输出统计（调用方提供存储）；可为 NULL（仅查询是否可用）。
+ * @return     成功返回 true；self 或 out 为 NULL 返回 false。
+ * @note       统计自 init 起累计，reset/setDevice 不清零。
+ */
+bool XLinkSession_stats(const XLinkSession* self, XLinkSessionStats* out);
+
+/**
+ * @brief      刷新链路活跃时间（抑制静默判线）。
+ * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
+ * @param      nowMs 当前单调毫秒（0 = 由库内取时）。
+ * @return     成功返回 true；self 为 NULL 或未挂载设备返回 false。
+ * @note       供长耗时单向业务（如文件传输）使用：这些场景下本端可能
+ *             长时间只发不收或只收不发，若对端 ACK 间隔超过静默阈值，
+ *             会话会被误判断链。业务侧确认链路仍在推进时调用本函数续命。
+ *             不要用它掩盖真实的死链——只在确有进展（收到数据/确认）时调。
+ */
+bool XLinkSession_keepAlive(XLinkSession* self, uint32_t nowMs);
+
+/**
+ * @brief      设置握手超时（毫秒，运行期覆盖编译期默认值）。
+ * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
+ * @param      ms 超时；0 = 不检查。默认 XLINK_HANDSHAKE_TIMEOUT_MS。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ * @note       超时用于回收「连上但从不完成握手」的半开连接。
+ */
+bool XLinkSession_setHandshakeTimeout(XLinkSession* self, uint32_t ms);
+
+/**
+ * @brief      获取当前握手超时。
+ * @param      self 会话对象（借用）；传入 NULL 时返回 0。
+ * @return     超时毫秒数；0 表示不检查。
+ */
+uint32_t XLinkSession_handshakeTimeout(const XLinkSession* self);
+
+/* ========================================================================== */
+/*                        登录认证（XLINK_AUTH_ON）                          */
+/* ========================================================================== */
+
+#if XLINK_AUTH_ON
+
+/**
+ * @brief      服务端：注册凭据查询回调并声明本端要求认证。
+ * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
+ * @param      callback 凭据查询回调（借用）；非 NULL 即表示本端要求对端认证。
+ * @param      userData 回调上下文（借用）。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ * @note       必须在握手完成前设置（通常在建会话后立即调用）。设置后会话
+ *             握手完成时不直接转 Ready，而是进入 Authenticating 等待对端
+ *             发送 AuthRequest；认证通过才转 Ready 并投递业务消息。
+ *             置 NULL 取消要求（回落匿名模式）。
+ */
+bool XLinkSession_setAuthLookup(XLinkSession* self,
+                                XLinkSessionAuthLookupCallback callback,
+                                void* userData);
+
+/**
+ * @brief      服务端：设置"要求认证时是否允许不支持认证的老对端匿名接入"。
+ * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
+ * @param      allow 是否允许（默认 false）。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ * @note       默认 false 是安全基线：对端不宣告 XLinkCapability_Auth 时
+ *             一律按 AuthRequired 拒绝，防止「不声明能力位即绕过认证」。
+ *             只有明确需要兼容老版本对端时才置 true。
+ */
+bool XLinkSession_setAuthAllowAnonymous(XLinkSession* self, bool allow);
+
+/**
+ * @brief      客户端：注册挑战应答回调并提供凭据。
+ * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
+ * @param      callback 挑战应答回调（借用）；非 NULL 表示本端可完成认证。
+ * @param      userData 回调上下文（借用）。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ * @note       握手后若协商能力含 Auth（对端要求认证），会话自动发送
+ *             AuthRequest 并驱动完整挑战应答流程；回调返回 false 视为
+ *             无凭据，直接断链。置 NULL 取消凭据。
+ */
+bool XLinkSession_setAuthResponse(XLinkSession* self,
+                                  XLinkSessionAuthResponseCallback callback,
+                                  void* userData);
+
+/**
+ * @brief      客户端：设置登录用户名（随 AuthRequest 上报）。
+ * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
+ * @param      user UTF-8 用户名；NULL 或空串表示清除。
+ * @return     成功返回 true；self 为 NULL 或用户名为 NULL 返回 false。
+ * @note       用户名超长按 XLINK_AUTH_NAME_BYTES 截断（不产生畸形帧）。
+ */
+bool XLinkSession_setAuthUser(XLinkSession* self, const char* user);
+
+/**
+ * @brief      查询本连接是否已通过认证。
+ * @param      self 会话对象（借用）；传入 NULL 时返回 false。
+ * @return     已认证返回 true。
+ * @note       未启用认证（匿名模式）时，进入 Ready 即视为已认证（true），
+ *             便于业务层统一按「可服务」判断。
+ */
+bool XLinkSession_isAuthenticated(const XLinkSession* self);
+
+/**
+ * @brief      获取认证通过的用户名。
+ * @param      self 会话对象（借用）；传入 NULL 时返回 NULL。
+ * @return     借用指针（内部缓冲，有效至断链/reset）；未认证返回 NULL。
+ */
+const char* XLinkSession_authUser_const(const XLinkSession* self);
+
+/**
+ * @brief      获取认证通过的角色。
+ * @param      self 会话对象（借用）；传入 NULL 时返回 XLinkAuthRole_Anonymous。
+ * @return     角色，见 XLinkAuthRole；匿名/未认证返回 Anonymous。
+ */
+uint8_t XLinkSession_authRole(const XLinkSession* self);
+
+/**
+ * @brief      设置认证超时（毫秒，运行期覆盖编译期默认值）。
+ * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
+ * @param      ms 超时；0 = 不检查。默认 XLINK_AUTH_TIMEOUT_MS。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ */
+bool XLinkSession_setAuthTimeout(XLinkSession* self, uint32_t ms);
+
+/**
+ * @brief      服务端：设置单连接认证失败次数上限。
+ * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
+ * @param      limit 上限（>=1 有效，0 归一为 1）。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ * @note       达上限后服务端发送 AuthResult(Rejected) + Goodbye(AuthFailed)
+ *             并断开。默认 XLINK_AUTH_FAILURE_LIMIT。
+ */
+bool XLinkSession_setAuthFailureLimit(XLinkSession* self, uint8_t limit);
+
+/**
+ * @brief      服务端：触发 challenge 信号（认证挑战下发时由内部发射）。
+ * @param      self 会话对象实例指针（非NULL）。
+ * @param      user 对端申报的用户名（借用）。
+ * @param      result 凭据查询结果（XLinkSessionAuthLookupResult）。
+ * @return     信号标识
+ * @note 槽函数原型：void slot(XObject* sender, XVarList* args)，参数依次为
+ *       const char* user、int result。供服务端审计/限流观察；业务层通常
+ *       无需手动发射。
+ */
+void* XLinkSession_authChallenge_signal(XLinkSession* self, const char* user,
+                                        int result);
+
+/**
+ * @brief      触发 authChanged 信号（认证结果确定时由内部发射）。
+ * @param      self 会话对象实例指针（非NULL）。
+ * @param      passed 是否通过。
+ * @param      status 结果码（XLinkAuthStatus）。
+ * @param      role 通过时的角色；失败时为 0。
+ * @return     信号标识
+ * @note 槽函数原型：void slot(XObject* sender, XVarList* args)，参数依次为
+ *       bool passed、uint8_t status、uint8_t role。服务端与客户端都会发射：
+ *       服务端在应答校验后，客户端在收到 AuthResult 后。
+ */
+void* XLinkSession_authChanged_signal(XLinkSession* self, bool passed,
+                                      uint8_t status, uint8_t role);
+
+#endif /* XLINK_AUTH_ON */
+
+/* ========================================================================== */
+/*                        文件传输钩子（XLINK_FILE_ON）                      */
+/* ========================================================================== */
+
+#if XLINK_FILE_ON
+
+/**
+ * @brief      注册 File 消息类处理回调（文件传输引擎挂接点）。
+ * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
+ * @param      callback 回调（借用）；非 NULL 时 File 类帧先交给它，返回
+ *                      true 表示已消费；返回 false 或未注册时帧被丢弃
+ *                      （File 帧永不投递给业务分发回调）。
+ * @param      userData 回调上下文（借用）。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ * @note       仅当协商能力含 XLinkCapability_FileTransfer 时才允许收发
+ *             File 帧；未协商时收到的 File 帧按协议违例丢弃（不投递）。
+ */
+bool XLinkSession_setFileCallback(XLinkSession* self,
+                                  XLinkSessionFileCallback callback,
+                                  void* userData);
+
+#endif /* XLINK_FILE_ON */
 
 /**
  * @brief      设置请求自动重发次数上限（自动超时重试模式）。

@@ -1,7 +1,28 @@
 # XLink 私有应用层协议
 
-> 版本：v1.2　|　协议版本：`0x0100`　|　日期：2026-10-24
+> 版本：v1.3-dev　|　协议版本：`0x0101`　|　日期：2026-10-27（进行中，见 §14）
 > 落点：`Src/XProtocol/XLink/`　|　开关：`XLINK_ON`
+>
+> v1.3-dev 变更（登录认证 + 文件传输 + 底层加固，**进行中**，进度与已知问题见文末 §14）：
+>   - **登录认证**（`XLINK_AUTH_ON`，默认开）：挑战应答（盐 + 迭代 HMAC-SHA256）
+>     + 服务端证明防假冒 + 常量时间比较；新模块 `XLinkAuth`（协议与派生）、
+>     `XLinkUserStore`（JSON 账户库，XString 存储）；会话新增 Authenticating 态
+>     与 AuthRequest/AuthChallenge/AuthResponse/AuthResult 四个子码；服务端
+>     `XLinkServer_addUser/setAuthEnabled` + 审计回调，客户端
+>     `XLinkClient_setCredential` 自动登录 + `authFailed` 信号 + 认证失败不重连。
+>     能力位降级默认拒绝（防绕过认证），`setAuthAllowAnonymous` 显式兼容。
+>   - **文件传输**（`XLINK_FILE_ON`，默认开）：新消息类 `File=6`，七个操作码
+>     （Open/OpenAck/Data/Ack/Finish/FinishAck/Abort），块 4KB、窗口 32KB、
+>     每块必 ACK、断点续传、整文件 SHA-256 校验、沙箱（`XLinkFileServer`：
+>     相对路径白名单 + 规范化根目录前缀校验 + 软链接拒绝）、引擎 `XLinkFileTransfer`、
+>     客户端 `XLinkFileClient`（upload/download/abort + progress/finished 信号）。
+>   - **底层加固**：发送队列（整帧原子入队 + pump 续写，非阻塞 TCP 短写不再
+>     丢半帧）、握手超时（半开连接回收）、`keepAlive`（长耗时单向业务续命）、
+>     会话统计（`XLinkSession_stats`）、`XLinkServer` 会话销毁前钩子
+>     （`setSessionGoneHook`，扩展清理借用指针）、**接收缓冲越界根修**
+>     （读取空间改为"剩余容量"，原公式在半帧残留时最多越界写 m_rxFilled 字节）。
+>   - 测试：新增分组十六（认证 5 子组）与十七（文件 3 子组）；
+>     当前 **570 通过 / 4 失败**（失败集中在下载端到端，见 §14 已知问题）。
 >
 > v1.2 变更：删除被自动超时（setRequestTimeout + requestFinished 信号）取代的
 > 待应答被动超时查询 API（含声明/实现/文档/测试）；示例与实战代码全面收敛到
@@ -1178,3 +1199,72 @@ XClassDelete((XClass*)session);
 | 功能测试（含客户端包装分组十四） | `Test/XProtocolTest/XLinkTest.c` |
 | 质量门禁 | `Test/XProtocolTest/XLinkQualityTest.c` |
 | 测试入口声明 | `Test/XProtocolTest/XLinkTest.h` |
+
+---
+
+## 14. v1.3-dev 进度与交接（2026-10-27，换机续作）
+
+### 14.1 已完成（全部编译通过 + 测试验证）
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| P0 发送队列 | ✅ 完成 | `XLINK_TX_QUEUE_BYTES`（128KB）整帧原子入队；`XLinkSession_pendingBytes()` 观测背压；非阻塞 TCP 短写续传。原 411 项旧测试全绿。 |
+| P0 接收缓冲越界根修 | ✅ 完成 | `XLinkSession_pump` 读取空间原为 `m_rxFilled + MAX` 截断到总容量，半帧残留时**最多越界写 m_rxFilled 字节**（堆损坏）。已改为 `cap - m_rxFilled`。这是文件传输联调中段错误/会话幽灵断链的根源之一。 |
+| P0 握手超时 | ✅ 完成 | `XLINK_HANDSHAKE_TIMEOUT_MS`（5s）+ `setHandshakeTimeout`；半开连接回收（分组十六 4.4 用例覆盖）。 |
+| P1 登录协议 | ✅ 完成 | 4 个会话子码（5~8）+ 载荷编解码 + 迭代 HMAC 派生 + 服务端证明（`HMAC(H, nonce‖0x01)`，域分离防应答替代证明）+ 常量时间比较。 |
+| P1 会话认证状态机 | ✅ 完成 | `Authenticating` 态；握手分流规则（含 Connected 守卫防双 Hello 重复触发）；认证超时；失败上限；能力位降级默认拒绝。 |
+| P1 用户库 | ✅ 完成 | `XLinkUserStore`：JSON 持久化（XDeviceFile/XJson），盐+迭代 HMAC 摘要，角色/锁定，XString 存用户名，位域状态。 |
+| P1 服务端/客户端 API | ✅ 完成 | `XLinkServer_setAuthEnabled/addUser/setUserStorePath/审计回调`；`XLinkClient_setCredential`（XString 存储，清除时零化）+ 自动重登 + 认证失败停重连 + `authFailed` 信号。 |
+| P2 文件协议 | ✅ 完成 | `XLinkFile.h/.c`：7 操作码编解码 + `isSafeName`（绝对路径/盘符/穿越/隐藏名/NUL/控制字符拒绝）。**注意 OpenAck 头部 28 字节（含 u64 totalSize，下载方向必填）。** |
+| P2 传输引擎 | ✅ 完成 | `XLinkFileTransfer`：发/收状态机、窗口流控（`offset - ackOffset < window`）、断点续传（.part 续写）、整文件 SHA-256（发起时预计算，`beginSendFile` 用已打开句柄 hash 避免二次打开失败）。 |
+| P2 服务端沙箱 | ✅ 完成 | `XLinkFileServer`：根目录规范化前缀校验（Canonical 失败回退 Absolute）、软链接/目录拒绝、策略位（方向/覆盖/大小/角色/认证）；`setSessionGoneHook` 清槽防悬垂；`setPreSessionPumpHook` 在会话 pump 前续命（判线前！tick 回调时已晚）。 |
+| P2 客户端 | ✅ 完成 | `XLinkFileClient`：upload/download/abort + progress/finished 信号（XEmitSignal 风格）；收帧后立即 pump（防无事件分发器时停滞）；`XLinkFileClient_pump` 手动驱动口。 |
+| P2 测试 | ⚠️ 上传全绿 | 分组十六 93 断言 + 分组十七：**上传端到端（37KB 逐字节比对）通过**；下载 4 断言失败（见 14.3）。总计 570 通过 / 4 失败。 |
+
+### 14.2 关键设计要点（换机续作必读）
+
+1. **认证分流必须带 `state == Connected` 守卫**：自动握手双方各收 Hello+HelloAck 两帧，不守卫会把 Authenticating 覆盖回 Ready（认证门控失效，曾有 6 项测试因此变红）。
+2. **挑战必须携带账户存储盐**：客户端按挑战里的盐派生 H，服务端按存储 H 校验；曾因服务端发随机新盐导致正确口令也被拒（bad password）。
+3. **"对端要求认证"看原始声明**（`m_peerDeclaredCapability`），不是能力交集——客户端不宣告 Auth 时交集里没有该位，但服务端强制置位，必须能识别并快速失败，否则出现短暂 Ready 窗口。
+4. **会话 pump 前续命**：`XLinkServer` 的 preSessionPump 钩子在会话 pump（内含静默判线）**之前**调用；文件传输长耗时单向流量靠它防误判线。tick 回调（pump 末尾）里续命已经太晚。
+5. **传输引擎 `deinit` 保留回调**（progress/finished/userData 只由 `setCallbacks` 替换），否则客户端收帧槽挂接会在重置时被清掉。
+6. **OpenAck 帧头是 28 字节**：1+1+2+4+4+8+8，字段 totalSize（下载方向由服务端告知真实大小）。曾误写 24 导致解析错位。
+7. **哈希用一次性接口 + 整读**：`XCryptographicHash_hash`（一次性）；服务端下载侧用 `xft_hashOpenFile`（已打开句柄 seek 回 0），二次打开同一路径在 Windows 共享模式下会失败。
+8. **服务端 tick 回调内禁止再 pump 会话**（与 `XLinkServer_pump` 交织会搅乱收发游标，实测段错误）；`m_inTick` 重入保护保留。
+9. **测试文件写入要带 `XIODevice_Create`**，且清理前先恢复写权限（Windows 只读文件删不掉，曾让测试第二次运行失败）。
+
+### 14.3 已知问题（下载端到端，下一步第一优先）
+
+**现象**：上传 37KB 全链路通过；随后发起下载，Open 帧（`open sent ... mode=1`，会话态 Ready、pending=0，即已完整写出到套接字）**从未到达服务端**（`xfs_onFileFrame` 无日志）；约 3 秒后服务端会话静默判线回收（`SILENCE delta≈3015`）。
+
+**已排除**：
+- 协议违例（服务端无 decode FAILED 日志）
+- 背压（客户端 pending=0、服务端无 BACKPRESSURE）
+- Goodbye（未触发）
+- transferId 不匹配 / 无槽（服务端帧入口无日志 = 帧根本没被读出）
+- 接收缓冲越界（已根修，段错误消失但下载仍不通）
+
+**关键观察**：客户端 `XLinkSession_send` 返回 true 且 pendingBytes=0（数据已交给内核），但服务端**没读到任何字节**；期间服务端→客户端方向的心跳/帧正常。上传（同一条 TCP 反方向跑满 37KB）成功。怀疑方向：
+1. 客户端 `XLinkFileClient_pump` 里显式调用的 `XLinkSession_pump`（与 XLinkClient 的内建定时器驱动**双驱动同一会话**）可能搅乱读缓冲/静默计时——`XLinkClient` 内部已有自己的驱动链，建议验证：把 `XLinkFileClient_pump` 里的会话 pump 去掉、只保留 `XLinkFileTransfer_pump` 再测；
+2. 或下载 Open 帧写出到 socket 的时机与上传 Finish 的收尾排空（`XLinkClient_disconnectFromServer` 的 drain）存在交互——但测试中上传后并不断链，此假设优先级低；
+3. 服务端 `xfs_preSessionPump` 钩子里的 keepAlive 会把 `m_lastReceiveTick` 置为当前值，可能与"测试等待循环里手动 pump 服务端"的时间轴交互产生判线放大——可尝试只在传输 Active 时续命、Opening 时不续命。
+
+**建议续作顺序**：
+1. 按怀疑 1 验证双驱动问题（最快）；
+2. 复现后用 cdb 抓崩溃/断链现场（`cdb -g -G -c "sxe -c \"kv;q\" av; g; q"`，注意 `-c` 与被调试程序参数之间不要加 `--`）；
+3. 下载 4 断言转绿后跑 `--test xlink-all` 全量闸门；
+4. 更新本文档 §4/§5/§6/§8/§9/§11 各节（当前仅头部与 §14 记录了 v1.3-dev）；
+5. demo（`XLinkDemoServer/Client`）加登录 + 上传/下载剧情；质量门禁补文件传输内存/吞吐项。
+
+### 14.4 新增文件清单
+
+| 文件 | 职责 |
+|---|---|
+| `XLinkAuth.h/.c` | 认证载荷编解码、口令派生、挑战应答、常量时间比较、secureZero |
+| `XLinkUserStore.h/.c` | JSON 账户库（盐/迭代摘要/角色/锁定，XString 用户名） |
+| `XLinkFile.h/.c` | 文件协议编解码 + 文件名安全校验 |
+| `XLinkFileTransfer.h/.c` | 收发状态机（流控/续传/校验/回调） |
+| `XLinkFileServer.h/.c` | 服务端沙箱 + 策略 + 会话槽 + 三钩子挂接 |
+| `XLinkFileClient.h/.c` | 客户端 upload/download/abort + 信号 |
+
+修改：`XLinkProto.h`（能力位 Auth/FileTransfer、会话子码 5~8、GoodbyeReason、消息类 File=6、认证/文件载荷结构、版本 0x0101）、`XLink_config.h`（新增开关与容量宏）、`XLinkSession.h/.c`（发送队列、Authenticating 态、认证内核、文件钩子、keepAlive、统计、握手超时、**接收缓冲越界根修**）、`XLinkServer.h/.c`（认证集成、File 回调、三钩子）、`XLinkClient.h/.c`（凭据、自动重登、authFailed）、`Test/XProtocolTest/XLinkTest.c`（分组十六/十七）。

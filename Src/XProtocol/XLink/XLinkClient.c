@@ -16,6 +16,9 @@
 #include "XMemory.h"
 #include "XString.h"
 #include <string.h>
+#if XLINK_AUTH_ON
+#include "XLinkAuth.h"
+#endif
 
 /* 会话层 stateChanged 信号由并行任务补入 XLinkSession.h/.c：本头文件尚未
    声明时在此给出 extern 原型（签名对齐 XAbstractSocket_stateChanged_signal
@@ -37,6 +40,9 @@ void* XLinkSession_stateChanged_signal(XLinkSession* self, XLinkSessionState sta
 static void VXLinkClient_onSocketConnected(XObject* receiver, XVarList* args);
 static void VXLinkClient_onSocketDisconnected(XObject* receiver, XVarList* args);
 static void VXLinkClient_onSessionStateChanged(XObject* receiver, XVarList* args);
+#if XLINK_AUTH_ON
+static void VXLinkClient_onAuthChanged(XObject* receiver, XVarList* args);
+#endif
 
 /**
  * @brief 迁移连接状态并发射 stateChanged 信号（同值迁移不发射）。
@@ -162,6 +168,17 @@ static void XLinkClientPrivate_handleLinkLost(XLinkClient* self)
     if (self->m_state == XLinkClient_ReconnectingState)
         return; /* 重连定时器已接手，勿重复启定时器 */
 
+#if XLINK_AUTH_ON
+    /* 认证失败是永久失败：口令/账户问题重试无意义，直接收手回未连接。
+       （onAuthChanged 通常已先行处理；此处兜底会话复位引发的链路丢失。） */
+    if (self->m_authFailed) {
+        XLinkClientPrivate_stopReconnectTimer(self);
+        XLinkClientPrivate_teardown(self, false, true);
+        XLinkClientPrivate_setState(self, XLinkClient_UnconnectedState);
+        return;
+    }
+#endif
+
     if (!self->m_everReady || !self->m_autoReconnect) {
         XLinkClientPrivate_stopReconnectTimer(self);
         XLinkClientPrivate_teardown(self, false, true);
@@ -178,6 +195,92 @@ static void XLinkClientPrivate_handleLinkLost(XLinkClient* self)
         XObject_startTimer_ms((XObject*)self, self->m_reconnectInterval,
                               XTimerType_CoarseTimer);
 }
+
+#if XLINK_AUTH_ON
+
+/**
+ * @brief 会话挑战应答回调：本地派生 H 并计算 response。
+ * @note  口令明文只在本函数栈上短暂使用；派生得到的 H 交给会话用于
+ *        校验服务端证明，断链时由会话零化。
+ */
+static bool XLinkClientPrivate_authRespond(
+    void* userData, const XLinkAuthChallengePayload* challenge,
+    uint8_t* methodOut, uint8_t responseOut[XLINK_AUTH_NONCE_BYTES],
+    uint8_t hashOut[XLINK_AUTH_NONCE_BYTES])
+{
+    XLinkClient* self = (XLinkClient*)userData;
+    if (!self || !self->m_authPassword || !challenge || !methodOut
+        || !responseOut || !hashOut)
+        return false;
+    if (!XLinkAuth_deriveHash(XString_toUtf8(self->m_authPassword),
+                              challenge->m_salt,
+                              challenge->m_iterations, hashOut))
+        return false;
+    if (!XLinkAuth_computeResponse(hashOut, challenge->m_nonce, responseOut)) {
+        XLinkAuth_secureZero(hashOut, XLINK_AUTH_NONCE_BYTES);
+        return false;
+    }
+    *methodOut = (uint8_t)XLinkAuthMethod_IteratedHmac;
+    return true;
+}
+
+/**
+ * @brief 会话认证结果槽：失败时阻断自动重连并发射 authFailed。
+ */
+static void VXLinkClient_onAuthChanged(XObject* receiver, XVarList* args)
+{
+    XLinkClient* self = (XLinkClient*)receiver;
+    int reason;
+
+    if (!self || !args)
+        return;
+    XVarList_args_3(args, bool, passed, uint8_t, status, uint8_t, role);
+    (void)role;
+    if (passed || self->m_userDisconnect)
+        return;
+
+    switch (status) {
+    case XLinkAuthStatus_BadUser: reason = XLinkClientAuthFailure_BadUser; break;
+    case XLinkAuthStatus_BadPassword:
+        reason = XLinkClientAuthFailure_BadPassword; break;
+    case XLinkAuthStatus_Locked: reason = XLinkClientAuthFailure_Locked; break;
+    case XLinkAuthStatus_Timeout: reason = XLinkClientAuthFailure_Timeout; break;
+    case XLinkAuthStatus_Protocol:
+        reason = XLinkClientAuthFailure_Protocol; break;
+    default: reason = XLinkClientAuthFailure_Rejected; break;
+    }
+
+    self->m_lastAuthFailure = reason;
+    self->m_authFailed = true;
+    /* 认证失败是永久失败：停重连，直接把状态归一为未连接。
+       本槽运行在会话的信号发射栈上——会话拆除必须延迟（deleteLater）。 */
+    XLinkClientPrivate_stopReconnectTimer(self);
+    XLinkClientPrivate_teardown(self, false, true);
+    XLinkClientPrivate_setState(self, XLinkClient_UnconnectedState);
+    XLinkClient_authFailed_signal(self, reason, status);
+}
+
+/** @brief 释放凭据（口令先零化内容再释放 XString）。 */
+static void XLinkClientPrivate_freeCredential(XLinkClient* self)
+{
+    if (!self)
+        return;
+    if (self->m_authPassword) {
+        /* XString 内部缓冲先原地零化：XClassDelete 只释放不擦除。 */
+        const char* text = XString_toUtf8(self->m_authPassword);
+        size_t n = XString_toUtf8_length(self->m_authPassword);
+        if (text && n)
+            XLinkAuth_secureZero((void*)text, n);
+        XClassDelete((XClass*)self->m_authPassword);
+        self->m_authPassword = NULL;
+    }
+    if (self->m_authUser) {
+        XClassDelete((XClass*)self->m_authUser);
+        self->m_authUser = NULL;
+    }
+}
+
+#endif /* XLINK_AUTH_ON */
 
 /**
  * @brief 重连定时器节拍：每次触发尝试重连一次并计数，达到上限收手。
@@ -231,8 +334,29 @@ static void VXLinkClient_onSocketConnected(XObject* receiver, XVarList* args)
     session = XLinkSession_create_ex((XIODevice*)self->m_socket);
     if (!session)
         return;
+#if XLINK_AUTH_ON
+    /* 有凭据：能力位补 Auth 并挂应答回调，握手后自动登录；无凭据：
+       不宣告 Auth——服务端若强制认证，会在其侧按能力位缺失走拒绝路径。 */
+    if (self->m_authUser && self->m_authPassword)
+        XLinkSession_setCapability(
+            session, (uint16_t)(self->m_capability | XLinkCapability_Auth));
+    else if (self->m_capability)
+        XLinkSession_setCapability(session, self->m_capability);
+#else
     if (self->m_capability)
         XLinkSession_setCapability(session, self->m_capability);
+#endif
+#if XLINK_AUTH_ON
+    if (self->m_authUser && self->m_authPassword) {
+        XLinkSession_setAuthUser(session, XString_toUtf8(self->m_authUser));
+        XLinkSession_setAuthResponse(session, XLinkClientPrivate_authRespond,
+                                     self);
+        XObject_connect_1((XObject*)session,
+                          XSignal(XLinkSession_authChanged_signal),
+                          (XObject*)self, VXLinkClient_onAuthChanged,
+                          XConnectionType_Auto);
+    }
+#endif
     XLinkSession_setDispatchCallback(session, self->m_dispatchCallback,
                                      self->m_userData);
     self->m_session = session;
@@ -311,6 +435,9 @@ static void VXLinkClient_deinit(XClass* object)
         XClassDelete((XClass*)obj->m_host);
         obj->m_host = NULL;
     }
+#if XLINK_AUTH_ON
+    XLinkClientPrivate_freeCredential(obj);
+#endif
     XClass_Deinit_Parent(XObject, (XObject*)obj);
 }
 
@@ -356,6 +483,12 @@ void XLinkClient_init(XLinkClient* obj)
     obj->m_state = XLinkClient_UnconnectedState;
     obj->m_everReady = false;
     obj->m_userDisconnect = false;
+#if XLINK_AUTH_ON
+    obj->m_authUser = NULL;
+    obj->m_authPassword = NULL;
+    obj->m_lastAuthFailure = XLinkClientAuthFailure_None;
+    obj->m_authFailed = false;
+#endif
 }
 
 XLinkClient* XLinkClient_create(void)
@@ -496,6 +629,10 @@ bool XLinkClient_connectToServer(XLinkClient* self)
     self->m_userDisconnect = false;
     self->m_everReady = false;
     self->m_reconnectAttempts = 0;
+#if XLINK_AUTH_ON
+    self->m_authFailed = false;
+    self->m_lastAuthFailure = XLinkClientAuthFailure_None;
+#endif
     XLinkClientPrivate_stopReconnectTimer(self);
     XLinkClientPrivate_teardown(self, false, false);
 
@@ -554,5 +691,94 @@ void* XLinkClient_stateChanged_signal(XLinkClient* self, XLinkClientState state)
                 XVarList_Create(XVar(XLinkClientState, state)),
                 NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
+
+#if XLINK_AUTH_ON
+
+/* ========================================================================== */
+/*                        登录凭据                                           */
+/* ========================================================================== */
+
+/** @brief 深拷贝一个 C 字符串到 XString（UTF-8）；空串/NULL 返回 NULL。 */
+static XString* XLinkClientPrivate_dupString(const char* text)
+{
+    if (!text || !text[0])
+        return NULL;
+    return XString_create_utf8(text);
+}
+
+bool XLinkClient_setCredential(XLinkClient* self, const char* user,
+                               const char* password)
+{
+    XString* userCopy;
+    XString* passwordCopy;
+
+    if (ISNULL(self, "XLinkClient_setCredential self"))
+        return false;
+    if (!user || !user[0] || !password || !password[0])
+        return false;
+
+    userCopy = XLinkClientPrivate_dupString(user);
+    passwordCopy = XLinkClientPrivate_dupString(password);
+    if (!userCopy || !passwordCopy) {
+        if (userCopy) XClassDelete((XClass*)userCopy);
+        if (passwordCopy) XClassDelete((XClass*)passwordCopy);
+        return false;
+    }
+    XLinkClientPrivate_freeCredential(self);
+    self->m_authUser = userCopy;
+    self->m_authPassword = passwordCopy;
+    self->m_authFailed = false;
+    self->m_lastAuthFailure = XLinkClientAuthFailure_None;
+    return true;
+}
+
+void XLinkClient_clearCredential(XLinkClient* self)
+{
+    if (ISNULL(self, "XLinkClient_clearCredential self"))
+        return;
+    XLinkClientPrivate_freeCredential(self);
+    self->m_authFailed = false;
+    self->m_lastAuthFailure = XLinkClientAuthFailure_None;
+}
+
+bool XLinkClient_hasCredential(const XLinkClient* self)
+{
+    if (ISNULL(self, "XLinkClient_hasCredential self"))
+        return false;
+    return self->m_authUser && self->m_authPassword;
+}
+
+const char* XLinkClient_user_const(const XLinkClient* self)
+{
+    if (ISNULL(self, "XLinkClient_user_const self") || !self->m_authUser)
+        return NULL;
+    return XString_toUtf8(self->m_authUser);
+}
+
+int XLinkClient_lastAuthFailure(const XLinkClient* self)
+{
+    if (ISNULL(self, "XLinkClient_lastAuthFailure self"))
+        return 0;
+    return self->m_lastAuthFailure;
+}
+
+bool XLinkClient_isAuthenticated(const XLinkClient* self)
+{
+    if (ISNULL(self, "XLinkClient_isAuthenticated self"))
+        return false;
+    if (!self->m_session)
+        return false;
+    return XLinkSession_isAuthenticated(self->m_session);
+}
+
+void* XLinkClient_authFailed_signal(XLinkClient* self, int reason,
+                                     uint8_t status)
+{
+    XEmitSignal(self, XLinkClient_authFailed_signal,
+                XVarList_Create(XVar(int, reason), XVar(uint8_t, status)),
+                NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+#endif /* XLINK_AUTH_ON */
 
 #endif /* XLINK_ON && XLINK_SESSION_ON && XLINK_CLIENT_ON */

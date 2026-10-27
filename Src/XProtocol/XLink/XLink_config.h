@@ -92,12 +92,147 @@ extern "C" {
 #endif
 
 /* ========================================================================== */
+/*                        可选项扩展开关                                     */
+/* ========================================================================== */
+
+/** @brief 登录认证扩展（XLinkAuth / XLinkUserStore）：挑战应答 + 账户库。
+ *  @note  关闭时能力位 Auth 不置位、登录会话子码整体裁空，协议行为与
+ *         未引入本扩展前完全一致（向后兼容基线）。 */
+#ifndef XLINK_AUTH_ON
+#define XLINK_AUTH_ON 1
+#endif
+
+/** @brief 文件传输扩展（XLinkFile / XLinkFileServer / XLinkFileClient）。
+ *  @note  关闭时消息类 File 整体裁空、能力位 FileTransfer 不置位。 */
+#ifndef XLINK_FILE_ON
+#define XLINK_FILE_ON 1
+#endif
+
+/* ========================================================================== */
+/*                        发送队列与超时                                     */
+/* ========================================================================== */
+
+/** @brief 每会话发送队列容量（字节）。发送接口把整帧原子入队，pump 续写；
+ *         队列不足时发送接口返回 false（背压），绝不产生半帧。
+ *  @note  0 表示关闭发送队列（退回旧的一次性直写语义，短写即失败）。
+ *         默认 128KB：足以容纳一整窗口文件数据（32KB）的多个块并留出
+ *         控制帧余量，避免大文件传输时队列频繁打满。嵌入式可下调。
+ */
+#ifndef XLINK_TX_QUEUE_BYTES
+#define XLINK_TX_QUEUE_BYTES (128u * 1024u)
+#endif
+
+/** @brief 握手超时（毫秒）：挂载传输后在此时间内未完成握手（未进入 Ready
+ *         或 Authenticating）即判链路无效并断开。
+ *  @note  0 表示不检查。默认 5 秒——远大于正常握手往返，只用于回收
+ *         「连上但从不说话」的半开连接，防止服务端会话槽位被占满。 */
+#ifndef XLINK_HANDSHAKE_TIMEOUT_MS
+#define XLINK_HANDSHAKE_TIMEOUT_MS 5000u
+#endif
+
+/** @brief 登录认证超时（毫秒）：进入 Authenticating 后在此时间内未完成
+ *         认证即断开。0 表示不检查。 */
+#ifndef XLINK_AUTH_TIMEOUT_MS
+#define XLINK_AUTH_TIMEOUT_MS 5000u
+#endif
+
+/** @brief 单连接登录失败次数上限（达到即断链）。 */
+#ifndef XLINK_AUTH_FAILURE_LIMIT
+#define XLINK_AUTH_FAILURE_LIMIT 3
+#endif
+
+/* ========================================================================== */
+/*                        登录认证扩展常量                                   */
+/* ========================================================================== */
+
+/** @brief 口令盐字节数（随机盐，随账户存储）。 */
+#ifndef XLINK_AUTH_SALT_BYTES
+#define XLINK_AUTH_SALT_BYTES 16u
+#endif
+
+/** @brief 挑战 nonce 与应答摘要字节数（SHA-256 输出宽度）。 */
+#ifndef XLINK_AUTH_NONCE_BYTES
+#define XLINK_AUTH_NONCE_BYTES 32u
+#endif
+
+/** @brief 口令派生的默认迭代次数（可被账户库逐账户覆盖）。 */
+#ifndef XLINK_AUTH_HASH_ITERATIONS
+#define XLINK_AUTH_HASH_ITERATIONS 10000u
+#endif
+
+/** @brief 用户名最大字节数（不含终止符）。 */
+#ifndef XLINK_AUTH_NAME_BYTES
+#define XLINK_AUTH_NAME_BYTES 32u
+#endif
+
+/** @brief 账户库最多容纳的用户数。 */
+#ifndef XLINK_AUTH_USER_SLOTS
+#define XLINK_AUTH_USER_SLOTS 16u
+#endif
+
+/** @brief 认证失败原因/结果文本的最大字节数。 */
+#ifndef XLINK_AUTH_TEXT_BYTES
+#define XLINK_AUTH_TEXT_BYTES 96u
+#endif
+
+/* ========================================================================== */
+/*                        文件传输扩展常量                                   */
+/* ========================================================================== */
+
+/** @brief 文件传输块大小（字节）：DATA 帧承载的业务数据量。
+ *  @note  必须 <= XLINK_MAX_PAYLOAD - 12（DATA 载荷含 u64 偏移 + 头部）。
+ *         默认 4KB，兼顾吞吐与嵌入式内存。 */
+#ifndef XLINK_FILE_CHUNK_BYTES
+#define XLINK_FILE_CHUNK_BYTES 4096u
+#endif
+
+/** @brief 流控窗口（字节）：接收方允许发送方在收到 ACK 前的未确认数据量。 */
+#ifndef XLINK_FILE_WINDOW_BYTES
+#define XLINK_FILE_WINDOW_BYTES (32u * 1024u)
+#endif
+
+/** @brief 服务端同时托管的传输数上限（每会话最多一个传输）。 */
+#ifndef XLINK_FILE_MAX_TRANSFERS
+#define XLINK_FILE_MAX_TRANSFERS 4u
+#endif
+
+/** @brief 单个文件大小上限（字节）。0 表示不限制。 */
+#ifndef XLINK_FILE_MAX_BYTES
+#define XLINK_FILE_MAX_BYTES (128ull * 1024ull * 1024ull)
+#endif
+
+/** @brief 单次传输的空闲超时（毫秒）：超过此时间无任何进展即中止传输。 */
+#ifndef XLINK_FILE_IDLE_TIMEOUT_MS
+#define XLINK_FILE_IDLE_TIMEOUT_MS 30000u
+#endif
+
+/** @brief 传输期间的高频驱动节拍（毫秒）：有活动传输时把会话节拍切到此值。
+ *  @note  0 表示不切换（始终使用 XLINK_HEARTBEAT_TICK_MS）。 */
+#ifndef XLINK_FILE_TICK_MS
+#define XLINK_FILE_TICK_MS 10u
+#endif
+
+/** @brief 远程文件名最大字节数（不含终止符）。 */
+#ifndef XLINK_FILE_NAME_BYTES
+#define XLINK_FILE_NAME_BYTES 128u
+#endif
+
+/** @brief 文件传输结果文本最大字节数。 */
+#ifndef XLINK_FILE_TEXT_BYTES
+#define XLINK_FILE_TEXT_BYTES 128u
+#endif
+
+/* ========================================================================== */
 /*                        协议常量                                           */
 /* ========================================================================== */
 
 /** @brief 协议版本号（写入 Hello 载荷，线上为 u16）。高字节主版本、低字节次版本。
- *  @note 版本不匹配不致命：会话层仅记录到 m_remoteVersion，兼容策略由应用层定。 */
-#define XLINK_VERSION 0x0100u
+ *  @note  版本不匹配不致命：会话层仅记录到 m_remoteVersion，兼容策略由应用层定。
+ *         正本定义在 XLinkProto.h（含 1.1 变更说明）；此处保留同名兜底宏，
+ *         以 #ifndef 守护避免与 XLinkProto.h 冲突（C4005 宏重定义）。 */
+#ifndef XLINK_VERSION
+#define XLINK_VERSION 0x0101u
+#endif
 
 /** @brief 帧头固定长度（字节）：payloadLen(4) + msgClass(2) + msgCode(2) + requestId(4)。
  *  @note 全部字段小端线序（fbdev/网络栈惯例，ARM 与 x86 一致）。 */

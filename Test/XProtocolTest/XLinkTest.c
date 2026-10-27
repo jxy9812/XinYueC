@@ -40,6 +40,18 @@
 #include "XLinkSession.h"
 #include "XLinkServer.h"
 #include "XLinkClient.h"
+#if XLINK_AUTH_ON
+#include "XLinkAuth.h"
+#include "XLinkUserStore.h"
+#endif
+#if XLINK_FILE_ON
+#include "XLinkFile.h"
+#include "XLinkFileServer.h"
+#include "XLinkFileClient.h"
+#include "XFile.h"
+#include "XDir.h"
+#include "XDeviceFile.h"
+#endif
 #include "XGuiRemoteLoopback.h"
 #include "XTcpSocket.h"
 #include "XCoreApplication.h"
@@ -2768,6 +2780,1407 @@ static void xlink_test_capability_matrix(void)
 }
 
 /* ========================================================================== */
+/*                        十六、登录认证（XLINK_AUTH_ON）                     */
+/* ========================================================================== */
+
+#if XLINK_AUTH_ON
+
+/** @brief 登录测试专用端口（避免与其他分组冲突）。 */
+#define XAUTH_TEST_PORT 47325u
+
+/** @brief 登录测试口令（仅测试用；不出现在任何日志断言里）。 */
+#define XAUTH_TEST_PASSWORD "xlink-test-pw-2026"
+/** @brief 登录测试用户名。 */
+#define XAUTH_TEST_USER "tester"
+/** @brief 登录测试管理员名。 */
+#define XAUTH_TEST_ADMIN "root"
+
+/** @brief 认证测试全局观测量。 */
+static int g_authChallengeCount = 0;
+static int g_authChangedOk = 0;
+static int g_authChangedFail = 0;
+static uint8_t g_authLastRole = 0;
+static int g_authClientFailed = 0;
+static int g_authClientFailureReason = 0;
+static int g_authSrvRequests = 0;
+static int g_authClientResponses = 0;
+
+/** @brief 凭据查询桩：任意用户返回一条固定凭据（4.x 用例用）。 */
+static int xauth_dummy_lookup(void* userData, const char* user,
+                              uint8_t saltOut[XLINK_AUTH_SALT_BYTES],
+                              uint32_t* iterationsOut,
+                              uint8_t hashOut[XLINK_AUTH_NONCE_BYTES],
+                              uint8_t* roleOut)
+{
+    (void)userData;
+    (void)user;
+    memset(saltOut, 0x11, XLINK_AUTH_SALT_BYTES);
+    memset(hashOut, 0x22, XLINK_AUTH_NONCE_BYTES);
+    *iterationsOut = 1;
+    *roleOut = XLinkAuthRole_User;
+    return XLinkSessionAuthLookup_Ok;
+}
+
+/** @brief 应答回调桩：永不给出应答（让认证停在等待态，验证超时）。 */
+static bool xauth_never_respond(void* userData,
+                                const XLinkAuthChallengePayload* challenge,
+                                uint8_t* methodOut,
+                                uint8_t responseOut[XLINK_AUTH_NONCE_BYTES],
+                                uint8_t hashOut[XLINK_AUTH_NONCE_BYTES])
+{
+    (void)userData;
+    (void)challenge;
+    (void)methodOut;
+    (void)responseOut;
+    (void)hashOut;
+    return false;
+}
+
+/** @brief 认证挑战信号槽：计数。 */
+static void xauth_on_challenge(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    (void)args;
+    g_authChallengeCount++;
+}
+
+/** @brief 会话 authChanged 槽：统计通过与失败。 */
+static void xauth_on_auth_changed(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_3(args, bool, passed, uint8_t, status, uint8_t, role);
+    (void)status;
+    if (passed) {
+        g_authChangedOk++;
+        g_authLastRole = role;
+    }
+    else {
+        g_authChangedFail++;
+    }
+}
+
+/** @brief 客户端 authFailed 槽。 */
+static void xauth_on_client_failed(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_2(args, int, reason, uint8_t, status);
+    (void)status;
+    g_authClientFailed++;
+    g_authClientFailureReason = reason;
+}
+
+/** @brief 服务端分发回调：记录业务请求数（认证通过后才应递增）。 */
+static void xauth_srv_dispatch(XLinkSession* self, const XLinkFrameHeader* frame,
+                               const uint8_t* payload)
+{
+    if (!self || !frame)
+        return;
+    if (frame->m_msgClass == XLinkMsgClass_Request) {
+        uint8_t echo = (payload && frame->m_payloadLen > 0) ? payload[0] : 0;
+        g_authSrvRequests++;
+        XLinkSession_sendResponse(self, frame->m_requestId, frame->m_msgCode,
+                                  &echo, 1);
+    }
+}
+
+/** @brief 客户端分发模板：统计应答数。 */
+static void xauth_cli_dispatch(XLinkSession* self, const XLinkFrameHeader* frame,
+                               const uint8_t* payload)
+{
+    (void)self;
+    (void)payload;
+    if (frame && frame->m_msgClass == XLinkMsgClass_Response)
+        g_authClientResponses++;
+}
+
+/** @brief 等待条件：客户端已连接且已认证。 */
+static bool xauth_cond_client_authed(void)
+{
+    return g_client && XLinkClient_isReady(g_client)
+           && XLinkClient_isAuthenticated(g_client);
+}
+
+/** @brief 等待条件：客户端连接就绪（不论认证）。 */
+static bool xauth_cond_client_ready(void)
+{
+    return g_client && XLinkClient_isReady(g_client);
+}
+
+/** @brief 等待条件：客户端收到认证失败。 */
+static bool xauth_cond_client_auth_failed(void)
+{
+    return g_authClientFailed >= 1;
+}
+
+/** @brief 有界事件泵（复用客户端分组口径）。 */
+static bool xauth_wait(bool (*cond)(void), uint32_t ms, XLinkServer* srv)
+{
+    uint64_t start = XDateTime_currentMSecsSinceEpoch();
+    while (!cond()) {
+        if (XDateTime_currentMSecsSinceEpoch() - start >= ms)
+            return false;
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        if (srv)
+            XLinkServer_pump(srv,
+                             (uint32_t)XDateTime_currentMSecsSinceEpoch());
+        XThread_msleep(5);
+    }
+    return true;
+}
+
+/** @brief 清零认证测试观测量。 */
+static void xauth_reset(void)
+{
+    g_client = NULL;
+    g_authChallengeCount = 0;
+    g_authChangedOk = 0;
+    g_authChangedFail = 0;
+    g_authLastRole = 0;
+    g_authClientFailed = 0;
+    g_authClientFailureReason = 0;
+    g_authSrvRequests = 0;
+    g_authClientResponses = 0;
+}
+
+/**
+ * @brief 子分组一：认证编解码与口令派生的纯函数正确性。
+ */
+static void xauth_test_codec(void)
+{
+    XLINK_SECTION("十六·一、认证编解码与口令派生");
+
+    /* AuthRequest 往返 */
+    {
+        XLinkAuthRequestPayload src;
+        XLinkAuthRequestPayload dst;
+        uint8_t buf[1 + XLINK_AUTH_NAME_BYTES];
+        size_t len = 0;
+        memset(&src, 0, sizeof(src));
+        src.m_nameLen = (uint8_t)strlen(XAUTH_TEST_USER);
+        memcpy(src.m_name, XAUTH_TEST_USER, src.m_nameLen);
+        XLINK_CHECK(XLinkAuth_encodeRequest(&src, buf, sizeof(buf), &len),
+                    "AuthRequest 编码成功");
+        XLINK_CHECK(len == 1u + src.m_nameLen, "AuthRequest 长度 = 1 + nameLen");
+        XLINK_CHECK(XLinkAuth_decodeRequest(buf, len, &dst),
+                    "AuthRequest 解码成功");
+        XLINK_CHECK(dst.m_nameLen == src.m_nameLen
+                        && memcmp(dst.m_name, src.m_name, src.m_nameLen) == 0,
+                    "AuthRequest 往返一致");
+        XLINK_CHECK(!XLinkAuth_decodeRequest(buf, 1, &dst),
+                    "AuthRequest 截断载荷被拒");
+        XLINK_CHECK(!XLinkAuth_encodeRequest(&src, buf, 0, &len),
+                    "AuthRequest 容量不足被拒（不半写）");
+    }
+
+    /* AuthChallenge 往返与封闭枚举校验 */
+    {
+        XLinkAuthChallengePayload src;
+        XLinkAuthChallengePayload dst;
+        uint8_t buf[8 + XLINK_AUTH_SALT_BYTES + XLINK_AUTH_NONCE_BYTES];
+        size_t len = 0;
+        memset(&src, 0, sizeof(src));
+        src.m_method = (uint8_t)XLinkAuthMethod_IteratedHmac;
+        src.m_iterations = 1234;
+        memset(src.m_salt, 0x11, sizeof(src.m_salt));
+        memset(src.m_nonce, 0x22, sizeof(src.m_nonce));
+        XLINK_CHECK(XLinkAuth_encodeChallenge(&src, buf, sizeof(buf), &len),
+                    "AuthChallenge 编码成功");
+        XLINK_CHECK(XLinkAuth_decodeChallenge(buf, len, &dst),
+                    "AuthChallenge 解码成功");
+        XLINK_CHECK(dst.m_iterations == 1234
+                        && dst.m_salt[0] == 0x11 && dst.m_nonce[0] == 0x22,
+                    "AuthChallenge 往返一致");
+        buf[0] = 0x7F;
+        XLINK_CHECK(!XLinkAuth_decodeChallenge(buf, len, &dst),
+                    "未知认证方法被拒（封闭枚举）");
+        buf[0] = (uint8_t)XLinkAuthMethod_IteratedHmac;
+        buf[4] = buf[5] = buf[6] = buf[7] = 0;
+        XLINK_CHECK(!XLinkAuth_decodeChallenge(buf, len, &dst),
+                    "迭代次数为 0 被拒（防退化）");
+        XLINK_CHECK(XLinkAuth_encodeChallenge(&src, buf, sizeof(buf), &len),
+                    "AuthChallenge 重新编码成功");
+        buf[1] = 8;
+        XLINK_CHECK(!XLinkAuth_decodeChallenge(buf, len, &dst),
+                    "盐长度不符被拒");
+        XLINK_CHECK(!XLinkAuth_decodeChallenge(buf, len - 1, &dst),
+                    "负载截断被拒");
+    }
+
+    /* AuthResponse / AuthResult 往返 */
+    {
+        XLinkAuthResponsePayload resp;
+        XLinkAuthResponsePayload respOut;
+        XLinkAuthResultPayload result;
+        XLinkAuthResultPayload resultOut;
+        uint8_t buf[4 + XLINK_AUTH_TEXT_BYTES + XLINK_AUTH_NONCE_BYTES];
+        size_t len = 0;
+
+        memset(&resp, 0, sizeof(resp));
+        resp.m_method = (uint8_t)XLinkAuthMethod_IteratedHmac;
+        resp.m_len = XLINK_AUTH_NONCE_BYTES;
+        memset(resp.m_response, 0x44, sizeof(resp.m_response));
+        XLINK_CHECK(XLinkAuth_encodeResponse(&resp, buf, sizeof(buf), &len),
+                    "AuthResponse 编码成功");
+        XLINK_CHECK(XLinkAuth_decodeResponse(buf, len, &respOut)
+                        && respOut.m_response[0] == 0x44,
+                    "AuthResponse 往返一致");
+        buf[2] = 16;
+        XLINK_CHECK(!XLinkAuth_decodeResponse(buf, len, &respOut),
+                    "AuthResponse 长度不符被拒");
+
+        memset(&result, 0, sizeof(result));
+        result.m_status = XLinkAuthStatus_Ok;
+        result.m_role = XLinkAuthRole_Admin;
+        result.m_textLen = 4;
+        memcpy(result.m_text, "ok!!", 4);
+        memset(result.m_serverProof, 0x33, sizeof(result.m_serverProof));
+        XLINK_CHECK(XLinkAuth_encodeResult(&result, buf, sizeof(buf), &len),
+                    "AuthResult 编码成功");
+        XLINK_CHECK(XLinkAuth_decodeResult(buf, len, &resultOut),
+                    "AuthResult 解码成功");
+        XLINK_CHECK(resultOut.m_status == XLinkAuthStatus_Ok
+                        && resultOut.m_role == XLinkAuthRole_Admin
+                        && resultOut.m_serverProof[0] == 0x33,
+                    "AuthResult 往返一致");
+        XLINK_CHECK(!XLinkAuth_decodeResult(buf, 2, &resultOut),
+                    "AuthResult 头部截断被拒");
+    }
+
+    /* 口令派生确定性 + 应答/证明域分离 */
+    {
+        uint8_t salt[XLINK_AUTH_SALT_BYTES];
+        uint8_t nonce[XLINK_AUTH_NONCE_BYTES];
+        uint8_t hash1[XLINK_AUTH_NONCE_BYTES];
+        uint8_t hash2[XLINK_AUTH_NONCE_BYTES];
+        uint8_t resp[XLINK_AUTH_NONCE_BYTES];
+        uint8_t proof[XLINK_AUTH_NONCE_BYTES];
+        memset(salt, 0x5A, sizeof(salt));
+        memset(nonce, 0xA5, sizeof(nonce));
+        XLINK_CHECK(XLinkAuth_deriveHash(XAUTH_TEST_PASSWORD, salt, 100, hash1),
+                    "口令派生成功");
+        XLINK_CHECK(XLinkAuth_deriveHash(XAUTH_TEST_PASSWORD, salt, 100, hash2),
+                    "口令派生可重复");
+        XLINK_CHECK(memcmp(hash1, hash2, sizeof(hash1)) == 0,
+                    "同盐同迭代派生结果确定");
+        XLINK_CHECK(XLinkAuth_computeResponse(hash1, nonce, resp),
+                    "挑战应答计算成功");
+        XLINK_CHECK(XLinkAuth_computeServerProof(hash1, nonce, proof),
+                    "服务端证明计算成功");
+        XLINK_CHECK(memcmp(resp, proof, sizeof(resp)) != 0,
+                    "应答与服务端证明因域分离而不同（不可互相替代）");
+        XLINK_CHECK(XLinkAuth_deriveHash(XAUTH_TEST_PASSWORD, salt, 101, hash2)
+                        && memcmp(hash1, hash2, sizeof(hash1)) != 0,
+                    "迭代次数参与派生（100 与 101 结果不同）");
+        salt[0] ^= 0xFF;
+        XLINK_CHECK(XLinkAuth_deriveHash(XAUTH_TEST_PASSWORD, salt, 100, hash2)
+                        && memcmp(hash1, hash2, sizeof(hash1)) != 0,
+                    "盐参与派生（换盐结果不同）");
+        salt[0] ^= 0xFF;
+        XLINK_CHECK(XLinkAuth_deriveHash("wrong-password", salt, 100, hash2)
+                        && memcmp(hash1, hash2, sizeof(hash1)) != 0,
+                    "错误口令派生结果不同");
+        XLINK_CHECK(!XLinkAuth_deriveHash("", salt, 100, hash2),
+                    "空口令被拒");
+        XLINK_CHECK(!XLinkAuth_deriveHash(XAUTH_TEST_PASSWORD, salt, 0, hash2),
+                    "零迭代被拒");
+        XLINK_CHECK(XLinkAuth_constantTimeEqual(hash1, hash1, sizeof(hash1)),
+                    "常量时间比较：相等返回 true");
+        hash2[0] ^= 1;
+        XLINK_CHECK(!XLinkAuth_constantTimeEqual(hash1, hash2, sizeof(hash1)),
+                    "常量时间比较：单字节差异返回 false");
+    }
+}
+
+/**
+ * @brief 子分组二：账户库（内存态语义）。
+ */
+static void xauth_test_userstore(void)
+{
+    XLINK_SECTION("十六·二、账户库 XLinkUserStore");
+
+    {
+        XLinkUserStore store;
+        const XLinkUserRecord* record;
+        XLinkUserStore_init(&store);
+        XLINK_CHECK(XLinkUserStore_count(&store) == 0, "新账户库为空");
+
+        XLINK_CHECK(XLinkUserStore_upsert(&store, XAUTH_TEST_USER,
+                                          XAUTH_TEST_PASSWORD,
+                                          XLinkAuthRole_User),
+                    "添加普通用户成功");
+        XLINK_CHECK(XLinkUserStore_count(&store) == 1, "账户数为 1");
+        XLINK_CHECK(XLinkUserStore_upsert(&store, XAUTH_TEST_ADMIN,
+                                          "admin-pw", XLinkAuthRole_Admin),
+                    "添加管理员成功");
+        XLINK_CHECK(XLinkUserStore_count(&store) == 2, "账户数为 2");
+        XLINK_CHECK(!XLinkUserStore_upsert(&store, "nopw", NULL,
+                                           XLinkAuthRole_User),
+                    "新建账户无口令被拒");
+        XLINK_CHECK(XLinkUserStore_upsert(&store, XAUTH_TEST_USER,
+                                          "new-password",
+                                          XLinkAuthRole_Admin),
+                    "同名账户更新口令与角色成功");
+        XLINK_CHECK(XLinkUserStore_count(&store) == 2, "更新不增加账户数");
+        record = XLinkUserStore_find(&store, XAUTH_TEST_USER);
+        XLINK_CHECK(record && record->m_role == XLinkAuthRole_Admin,
+                    "角色已更新为管理员");
+
+        {
+            uint8_t role = 0;
+            XLINK_CHECK(XLinkUserStore_verify(&store, XAUTH_TEST_USER,
+                                              "new-password", &role) == 0,
+                        "正确口令校验通过");
+            XLINK_CHECK(role == XLinkAuthRole_Admin,
+                        "校验返回更新后的角色");
+            XLINK_CHECK(XLinkUserStore_verify(&store, XAUTH_TEST_USER,
+                                              "wrong", NULL) == 3,
+                        "错误口令校验失败（码 3）");
+            XLINK_CHECK(XLinkUserStore_verify(&store, "ghost", "x", NULL) == 1,
+                        "不存在的用户校验失败（码 1）");
+        }
+
+        XLINK_CHECK(XLinkUserStore_setLocked(&store, XAUTH_TEST_USER, true),
+                    "锁定账户成功");
+        XLINK_CHECK(XLinkUserStore_verify(&store, XAUTH_TEST_USER,
+                                          "new-password", NULL) == 2,
+                    "锁定账户校验失败（码 2）");
+        XLINK_CHECK(XLinkUserStore_setLocked(&store, XAUTH_TEST_USER, false),
+                    "解锁账户成功");
+        XLINK_CHECK(XLinkUserStore_verify(&store, XAUTH_TEST_USER,
+                                          "new-password", NULL) == 0,
+                    "解锁后校验恢复通过");
+        XLINK_CHECK(XLinkUserStore_remove(&store, XAUTH_TEST_ADMIN),
+                    "删除账户成功");
+        XLINK_CHECK(XLinkUserStore_count(&store) == 1, "删除后账户数为 1");
+        XLINK_CHECK(!XLinkUserStore_remove(&store, XAUTH_TEST_ADMIN),
+                    "重复删除返回 false");
+
+        XLinkUserStore_clear(&store);
+        XLINK_CHECK(XLinkUserStore_count(&store) == 0, "clear 后账户库为空");
+        XLINK_CHECK(!XLinkUserStore_upsert(NULL, "a", "b", 1),
+                    "upsert 对 NULL 库拒绝");
+        XLINK_CHECK(XLinkUserStore_find(NULL, "a") == NULL,
+                    "find 对 NULL 库返回 NULL");
+        XLINK_CHECK(XLinkUserStore_count(NULL) == 0,
+                    "count 对 NULL 库返回 0");
+    }
+}
+
+/**
+ * @brief 子分组三：真实 TCP 链路端到端认证（成功/错误口令/无凭据）。
+ */
+static void xauth_test_end_to_end(void)
+{
+    XLINK_SECTION("十六·三、真实链路端到端认证");
+
+    /* --- 3.1 正确口令：握手 -> 认证 -> Ready -> 业务可用 --- */
+    {
+        XLinkServer* srv;
+        XLinkClient* cli;
+        uint8_t arg = 0x5A;
+
+        xauth_reset();
+        srv = XLinkServer_create();
+        XLINK_CHECK(srv != NULL, "服务端创建成功");
+        if (!srv)
+            return;
+        XLinkServer_setCapability(srv, XLinkCapability_Zlib);
+        XLinkServer_setDispatchCallback(srv, xauth_srv_dispatch, NULL);
+        XLinkServer_addUser(srv, XAUTH_TEST_USER, XAUTH_TEST_PASSWORD,
+                            XLinkAuthRole_User);
+        XLINK_CHECK(XLinkServer_setAuthEnabled(srv, true),
+                    "服务端启用登录认证");
+        XLINK_CHECK(XLinkServer_authEnabled(srv), "authEnabled 回读为真");
+        XLINK_CHECK(XLinkServer_userCount(srv) == 1, "服务端账户数为 1");
+
+        if (!XLinkServer_listen_base(srv, "127.0.0.1", XAUTH_TEST_PORT)) {
+            XLINK_CHECK(false, "服务端监听成功");
+            XClassDelete((XClass*)srv);
+            return;
+        }
+
+        cli = XLinkClient_create();
+        XLINK_CHECK(cli != NULL, "客户端创建成功");
+        if (cli) {
+            XLinkClient_setHostPort(cli, "127.0.0.1", XAUTH_TEST_PORT);
+            XLinkClient_setCapability(cli, XLinkCapability_Zlib);
+            XLinkClient_setDispatchCallback(cli, xauth_cli_dispatch, NULL);
+            XLINK_CHECK(XLinkClient_setCredential(cli, XAUTH_TEST_USER,
+                                                  XAUTH_TEST_PASSWORD),
+                        "客户端设置凭据成功");
+            XLINK_CHECK(XLinkClient_hasCredential(cli), "hasCredential 为真");
+            XLINK_CHECK(!XLinkClient_setCredential(cli, "", "x"),
+                        "空用户名设置凭据被拒");
+            XObject_connect_1((XObject*)cli,
+                              XSignal(XLinkClient_authFailed_signal),
+                              (XObject*)cli, xauth_on_client_failed,
+                              XConnectionType_Auto);
+            g_client = cli;
+            XLINK_CHECK(XLinkClient_connectToServer(cli), "发起连接成功");
+            XLINK_CHECK(xauth_wait(xauth_cond_client_authed, 8000, srv),
+                        "正确口令：客户端连上并通过认证");
+            XLINK_CHECK(XLinkClient_isAuthenticated(cli),
+                        "客户端 isAuthenticated 为真");
+            if (XLinkClient_session(cli)) {
+                XLINK_CHECK(XLinkSession_isAuthenticated(
+                                XLinkClient_session(cli)),
+                            "会话层 isAuthenticated 为真");
+                XLINK_CHECK(XLinkSession_authUser_const(
+                                XLinkClient_session(cli)) != NULL
+                                && strcmp(XLinkSession_authUser_const(
+                                              XLinkClient_session(cli)),
+                                          XAUTH_TEST_USER) == 0,
+                            "会话记录登录用户名");
+                XLINK_CHECK(XLinkSession_authRole(
+                                XLinkClient_session(cli)) == XLinkAuthRole_User,
+                            "会话记录用户角色");
+            }
+            else {
+                XLINK_CHECK(false, "会话指针有效");
+            }
+
+            g_authSrvRequests = 0;
+            XLINK_CHECK(XLinkSession_sendRequest(XLinkClient_session(cli),
+                                                 0x31, &arg, 1, NULL),
+                        "认证后发业务请求成功");
+            /* 请求送达需要事件泵推进（回环/TCP 写是异步管线）。 */
+            {
+                uint64_t t0 = XDateTime_currentMSecsSinceEpoch();
+                while (g_authSrvRequests < 1
+                       && XDateTime_currentMSecsSinceEpoch() - t0 < 3000) {
+                    XCoreApplication_processEvents(XEventLoop_AllEvents);
+                    XLinkServer_pump(
+                        srv, (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                    XThread_msleep(5);
+                }
+            }
+            XLINK_CHECK(g_authSrvRequests >= 1,
+                        "认证后业务请求送达服务端（认证前会被门控拦截）");
+            XLinkClient_disconnectFromServer(cli);
+            XClassDelete((XClass*)cli);
+            g_client = NULL;
+        }
+        XLinkServer_close(srv);
+        XClassDelete((XClass*)srv);
+    }
+
+    /* --- 3.2 错误口令：认证被拒，客户端不进入 Ready --- */
+    {
+        XLinkServer* srv;
+        XLinkClient* cli;
+        int i;
+
+        xauth_reset();
+        srv = XLinkServer_create();
+        if (!srv) {
+            XLINK_CHECK(false, "服务端创建成功（错误口令用例）");
+            return;
+        }
+        XLinkServer_setCapability(srv, XLinkCapability_Zlib);
+        XLinkServer_setDispatchCallback(srv, xauth_srv_dispatch, NULL);
+        XLinkServer_addUser(srv, XAUTH_TEST_USER, XAUTH_TEST_PASSWORD,
+                            XLinkAuthRole_User);
+        XLinkServer_setAuthEnabled(srv, true);
+        XLinkServer_setAuthFailureLimit(srv, 1);
+        if (!XLinkServer_listen_base(srv, "127.0.0.1", XAUTH_TEST_PORT)) {
+            XLINK_CHECK(false, "服务端监听成功（错误口令用例）");
+            XClassDelete((XClass*)srv);
+            return;
+        }
+
+        cli = XLinkClient_create();
+        if (cli) {
+            XLinkClient_setHostPort(cli, "127.0.0.1", XAUTH_TEST_PORT);
+            XLinkClient_setDispatchCallback(cli, xauth_cli_dispatch, NULL);
+            XLinkClient_setCredential(cli, XAUTH_TEST_USER, "definitely-wrong");
+            XObject_connect_1((XObject*)cli,
+                              XSignal(XLinkClient_authFailed_signal),
+                              (XObject*)cli, xauth_on_client_failed,
+                              XConnectionType_Auto);
+            g_client = cli;
+            XLinkClient_connectToServer(cli);
+            XLINK_CHECK(xauth_wait(xauth_cond_client_auth_failed, 10000, srv),
+                        "错误口令：客户端收到 authFailed");
+            XLINK_CHECK(g_authClientFailureReason
+                            == XLinkClientAuthFailure_BadPassword,
+                        "authFailed 原因为口令错误");
+            XLINK_CHECK(!XLinkClient_isReady(cli),
+                        "错误口令：客户端未进入 Ready");
+            XLINK_CHECK(XLinkClient_lastAuthFailure(cli)
+                            == XLinkClientAuthFailure_BadPassword,
+                        "lastAuthFailure 记录口令错误");
+            for (i = 0; i < 200 && XLinkClient_state(cli)
+                                            != XLinkClient_UnconnectedState;
+                 ++i) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XLinkServer_pump(srv,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                XThread_msleep(5);
+            }
+            XLINK_CHECK(XLinkClient_state(cli)
+                            == XLinkClient_UnconnectedState,
+                        "错误口令：状态回到未连接（不卡在连接中）");
+            XClassDelete((XClass*)cli);
+            g_client = NULL;
+        }
+        XLinkServer_close(srv);
+        XClassDelete((XClass*)srv);
+    }
+
+    /* --- 3.3 无凭据：对端要求认证时不放行 --- */
+    {
+        XLinkServer* srv;
+        XLinkClient* cli;
+
+        xauth_reset();
+        srv = XLinkServer_create();
+        if (!srv) {
+            XLINK_CHECK(false, "服务端创建成功（无凭据用例）");
+            return;
+        }
+        XLinkServer_setDispatchCallback(srv, xauth_srv_dispatch, NULL);
+        XLinkServer_addUser(srv, XAUTH_TEST_USER, XAUTH_TEST_PASSWORD,
+                            XLinkAuthRole_User);
+        XLinkServer_setAuthEnabled(srv, true);
+        if (!XLinkServer_listen_base(srv, "127.0.0.1", XAUTH_TEST_PORT)) {
+            XLINK_CHECK(false, "服务端监听成功（无凭据用例）");
+            XClassDelete((XClass*)srv);
+            return;
+        }
+
+        cli = XLinkClient_create();
+        if (cli) {
+            XLinkClient_setHostPort(cli, "127.0.0.1", XAUTH_TEST_PORT);
+            XLinkClient_setDispatchCallback(cli, xauth_cli_dispatch, NULL);
+            XObject_connect_1((XObject*)cli,
+                              XSignal(XLinkClient_authFailed_signal),
+                              (XObject*)cli, xauth_on_client_failed,
+                              XConnectionType_Auto);
+            g_client = cli;
+            XLinkClient_connectToServer(cli);
+            {
+                int i;
+                bool sawReady = false;
+                for (i = 0; i < 400; ++i) {
+                    XCoreApplication_processEvents(XEventLoop_AllEvents);
+                    XLinkServer_pump(
+                        srv, (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                    if (XLinkClient_isReady(cli))
+                        sawReady = true;
+                    XThread_msleep(5);
+                }
+                XLINK_CHECK(!sawReady,
+                            "无凭据：客户端从未进入 Ready（认证门控生效）");
+            }
+            XLINK_CHECK(!XLinkClient_isAuthenticated(cli),
+                        "无凭据：客户端未认证");
+            XClassDelete((XClass*)cli);
+            g_client = NULL;
+        }
+        XLinkServer_close(srv);
+        XClassDelete((XClass*)srv);
+    }
+}
+
+/**
+ * @brief 子分组四：能力位降级不可绕过认证 + 认证超时 + 握手超时。
+ */
+static void xauth_test_hardening(void)
+{
+    XLINK_SECTION("十六·四、认证加固（降级/超时/半开连接）");
+
+    /* --- 4.1 对端不宣告 Auth：默认拒绝（不因不声明能力位而放行） --- */
+    {
+        XGuiRemoteLoopbackDevice* devA = NULL;
+        XGuiRemoteLoopbackDevice* devB = NULL;
+        XLinkSession* server = NULL;
+        XLinkSession* client = NULL;
+
+        devA = XGuiRemoteLoopbackDevice_createPair(64 * 1024, &devB);
+        if (!devA || !devB) {
+            XLINK_CHECK(false, "回环设备对创建成功（降级用例）");
+            return;
+        }
+        server = XLinkSession_create_ex((XIODevice*)devA);
+        client = XLinkSession_create_ex((XIODevice*)devB);
+        if (!server || !client) {
+            XLINK_CHECK(false, "会话创建成功（降级用例）");
+        }
+        else {
+            int i;
+            XLinkSession_setAuthLookup(server, xauth_dummy_lookup, NULL);
+            XLinkSession_setDispatchCallback(server, xauth_srv_dispatch, NULL);
+            /* 客户端只宣告 Zlib（无 Auth），模拟老对端/能力位降级。 */
+            XLinkSession_setCapability(client, XLinkCapability_Zlib);
+            for (i = 0; i < 8; ++i) {
+                XLinkSession_pump(server, 1000u + (uint32_t)i * 10u);
+                XLinkSession_pump(client, 1000u + (uint32_t)i * 10u);
+            }
+            XLINK_CHECK(!XLinkSession_isReady(server),
+                        "对端不宣告 Auth 时服务端不放行 Ready（默认拒绝）");
+            XLINK_CHECK(XLinkSession_state(server)
+                            == XLinkSessionState_Inactive,
+                        "能力位降级被拒绝并断链");
+            XLINK_CHECK(g_authSrvRequests == 0,
+                        "降级连接未投递任何业务消息");
+        }
+        if (server) XClassDelete((XClass*)server);
+        if (client) XClassDelete((XClass*)client);
+        if (devA) XClassDelete((XClass*)devA);
+        if (devB) XClassDelete((XClass*)devB);
+    }
+
+    /* --- 4.2 显式允许匿名时，老对端可接入（兼容模式） ---
+       注意语义边界：allowAnonymous 是**服务端**决定"不宣告 Auth 的对端
+       可以匿名接入"。客户端只要看到对端宣告了 Auth，就必须尝试登录
+       （或快速失败），不能自行假定对方允许匿名——否则一个中间人只要
+       谎称"允许匿名"就能绕过认证。因此本用例让服务端**不宣告** Auth
+       （m_authRequired 为假），模拟真正的匿名服务端。 */
+    {
+        XGuiRemoteLoopbackDevice* devA = NULL;
+        XGuiRemoteLoopbackDevice* devB = NULL;
+        XLinkSession* server = NULL;
+        XLinkSession* client = NULL;
+
+        devA = XGuiRemoteLoopbackDevice_createPair(64 * 1024, &devB);
+        if (!devA || !devB) {
+            XLINK_CHECK(false, "回环设备对创建成功（匿名兼容用例）");
+            return;
+        }
+        server = XLinkSession_create_ex((XIODevice*)devA);
+        client = XLinkSession_create_ex((XIODevice*)devB);
+        if (!server || !client) {
+            XLINK_CHECK(false, "会话创建成功（匿名兼容用例）");
+        }
+        else {
+            int i;
+            XLinkSession_setCapability(server, XLinkCapability_Zlib);
+            XLinkSession_setAuthAllowAnonymous(server, true);
+            XLinkSession_setCapability(client, XLinkCapability_Zlib);
+            for (i = 0; i < 8; ++i) {
+                XLinkSession_pump(server, 1000u + (uint32_t)i * 10u);
+                XLinkSession_pump(client, 1000u + (uint32_t)i * 10u);
+            }
+            XLINK_CHECK(XLinkSession_isReady(server),
+                        "服务端未要求认证时匿名链路正常就绪");
+            XLINK_CHECK(XLinkSession_isAuthenticated(server),
+                        "匿名接入视为已认证（业务层判断口径一致）");
+            XLINK_CHECK(XLinkSession_authRole(server) == XLinkAuthRole_Anonymous,
+                        "匿名接入角色为 Anonymous");
+        }
+        if (server) XClassDelete((XClass*)server);
+        if (client) XClassDelete((XClass*)client);
+        if (devA) XClassDelete((XClass*)devA);
+        if (devB) XClassDelete((XClass*)devB);
+    }
+
+    /* --- 4.3 认证超时：服务端等待应答超阈值即断链，不悬挂 --- */
+    {
+        XGuiRemoteLoopbackDevice* devA = NULL;
+        XGuiRemoteLoopbackDevice* devB = NULL;
+        XLinkSession* server = NULL;
+        XLinkSession* client = NULL;
+        uint32_t now = 1000;
+
+        devA = XGuiRemoteLoopbackDevice_createPair(64 * 1024, &devB);
+        if (!devA || !devB) {
+            XLINK_CHECK(false, "回环设备对创建成功（认证超时用例）");
+            return;
+        }
+        server = XLinkSession_create_ex((XIODevice*)devA);
+        client = XLinkSession_create_ex((XIODevice*)devB);
+        if (!server || !client) {
+            XLINK_CHECK(false, "会话创建成功（认证超时用例）");
+        }
+        else {
+            int i;
+            XLinkSession_setAuthLookup(server, xauth_dummy_lookup, NULL);
+            XLinkSession_setAuthTimeout(server, 300);
+            XLinkSession_setCapability(client, XLinkCapability_Auth);
+            /* 客户端配一个"永不回应"的应答回调：认证会停在服务端等待
+               AuthResponse 处，从而能确定性地验证超时断链。 */
+            XLinkSession_setAuthUser(client, "probe");
+            XLinkSession_setAuthResponse(client, xauth_never_respond, NULL);
+            for (i = 0; i < 6; ++i) {
+                now += 10;
+                XLinkSession_pump(server, now);
+                XLinkSession_pump(client, now);
+            }
+            XLINK_CHECK(XLinkSession_state(server)
+                            == XLinkSessionState_Authenticating,
+                        "服务端进入认证等待态");
+            now += 400;
+            XLinkSession_pump(server, now);
+            XLINK_CHECK(XLinkSession_state(server)
+                            == XLinkSessionState_Inactive,
+                        "认证超时后服务端断链（不悬挂）");
+        }
+        if (server) XClassDelete((XClass*)server);
+        if (client) XClassDelete((XClass*)client);
+        if (devA) XClassDelete((XClass*)devA);
+        if (devB) XClassDelete((XClass*)devB);
+    }
+
+    /* --- 4.4 握手超时：对端设备从不回应，半开连接被回收 --- */
+    {
+        XGuiRemoteLoopbackDevice* dev = NULL;
+        XGuiRemoteLoopbackDevice* peer = NULL;
+        XLinkSession* session = NULL;
+        uint32_t now = 1000;
+
+        dev = XGuiRemoteLoopbackDevice_createPair(64 * 1024, &peer);
+        if (!dev || !peer) {
+            XLINK_CHECK(false, "回环设备对创建成功（握手超时用例）");
+            return;
+        }
+        session = XLinkSession_create_ex((XIODevice*)dev);
+        if (!session) {
+            XLINK_CHECK(false, "会话创建成功（握手超时用例）");
+        }
+        else {
+            XLinkSession_setHandshakeTimeout(session, 200);
+            XLINK_CHECK(XLinkSession_handshakeTimeout(session) == 200,
+                        "握手超时可运行时设置");
+            /* 只 pump 本端：Hello 发进对端环，但没有人消费并回应。 */
+            XLinkSession_pump(session, now);
+            XLINK_CHECK(XLinkSession_state(session)
+                            == XLinkSessionState_Connected,
+                        "仅本端 pump：仍停留在握手中");
+            now += 300;
+            XLinkSession_pump(session, now);
+            XLINK_CHECK(XLinkSession_state(session)
+                            == XLinkSessionState_Inactive,
+                        "握手超时后断链（半开连接被回收）");
+            XLINK_CHECK(XLinkSession_stats(session, &(XLinkSessionStats){0}),
+                        "stats 在断链后仍可读");
+        }
+        if (session) XClassDelete((XClass*)session);
+        XClassDelete((XClass*)dev);
+        XClassDelete((XClass*)peer);
+    }
+}
+
+/**
+ * @brief 子分组五：统计 API 与发送队列观测。
+ */
+static void xauth_test_stats(void)
+{
+    XLINK_SECTION("十六·五、统计与发送队列观测");
+
+    {
+        XLinkTestFixture* f = xlink_fixture_create();
+        XLinkSessionStats stats;
+        if (!f) {
+            XLINK_CHECK(false, "夹具搭建成功（统计用例）");
+            return;
+        }
+        memset(&stats, 0, sizeof(stats));
+        XLINK_CHECK(!XLinkSession_stats(NULL, &stats),
+                    "stats 对 NULL 会话返回 false");
+        XLINK_CHECK(!XLinkSession_stats(f->m_server, NULL),
+                    "stats 对 NULL 输出返回 false");
+
+        XLinkSession_stats(f->m_server, &stats);
+        {
+            uint64_t framesBefore = stats.m_framesSent;
+            uint64_t bytesBefore = stats.m_bytesSent;
+            xlink_fixture_step(f, 3);
+            XLinkSession_stats(f->m_server, &stats);
+            XLINK_CHECK(stats.m_framesSent > framesBefore,
+                        "握手后 framesSent 增长");
+            XLINK_CHECK(stats.m_bytesSent > bytesBefore,
+                        "握手后 bytesSent 增长");
+            XLINK_CHECK(stats.m_framesReceived > 0,
+                        "握手后 framesReceived 非零");
+        }
+
+        XLINK_CHECK(XLinkSession_pendingBytes(f->m_server)
+                        <= XLINK_TX_QUEUE_BYTES,
+                    "pendingBytes 在容量范围内");
+        XLINK_CHECK(XLinkSession_pendingBytes(NULL) == 0,
+                    "pendingBytes 对 NULL 返回 0");
+
+        xlink_fixture_delete(f);
+    }
+}
+
+/**
+ * @brief 分组十六入口：登录认证与底层加固。
+ */
+static void xlink_test_auth(void)
+{
+    xauth_test_codec();
+    xauth_test_userstore();
+    xauth_test_end_to_end();
+    xauth_test_hardening();
+    xauth_test_stats();
+}
+
+#endif /* XLINK_AUTH_ON */
+
+/* ========================================================================== */
+/*                        十七、文件传输（XLINK_FILE_ON）                     */
+/* ========================================================================== */
+
+#if XLINK_FILE_ON
+
+/** @brief 文件传输测试专用端口。 */
+#define XFILE_TEST_PORT 47329u
+
+/** @brief 测试文件名。 */
+#define XFILE_TEST_NAME "xlink-test-file.bin"
+
+/** @brief 构造并创建测试目录（相对当前工作目录），返回其路径。
+ *  @param leaf 叶子名（拼成 xlink_ft_<leaf>）。
+ *  @param out 输出缓冲（调用方提供，至少 256 字节）。
+ *  @return 成功返回 out；失败返回 NULL（目录未建成）。
+ *  @note  目录创建后立即可用于落盘；所有测试路径都相对当前工作目录，
+ *         避免依赖平台临时目录 API（XDeviceFile_getSpecialPath 在部分
+ *         后端不可用）。 */
+static const char* xfile_test_makeDir(const char* leaf, char* out,
+                                      size_t cap)
+{
+    XString* dirPath;
+    bool created = false;
+
+    if (!leaf || !out || cap == 0)
+        return NULL;
+    XSnprintf(out, cap, "xlink_ft_%s", leaf);
+
+    dirPath = XString_create_utf8(out);
+    if (!dirPath)
+        return NULL;
+    /* 直接建目录（XDir_mkdir 的 dirName 是相对 dir 的路径，语义不符）；
+       目录已存在按成功处理。 */
+    created = XDeviceFile_mkdir(dirPath, false);
+    if (!created) {
+        XFileStat stat;
+        created = XDeviceFile_stat(dirPath, &stat) && stat.exists
+                  && stat.isDir;
+    }
+    XClassDelete((XClass*)dirPath);
+    return created ? out : NULL;
+}
+
+/** @brief 写一个指定大小/内容的测试文件（经 XFile；覆盖已存在文件）。 */
+static bool xfile_test_writeFile(const char* path, uint32_t size,
+                                  uint8_t seed)
+{
+    XString* name = XString_create_utf8(path);
+    XFile* file;
+    uint8_t* buffer;
+    uint32_t i;
+    int64_t written;
+
+    if (!name)
+        return false;
+    file = XFile_create_2(name);
+    XClassDelete((XClass*)name);
+    if (!file)
+        return false;
+    if (!XFile_open_2(file, XIODevice_WriteOnly | XIODevice_Create
+                             | XIODevice_Truncate, 0)) {
+        XClassDelete((XClass*)file);
+        return false;
+    }
+    buffer = (uint8_t*)XMalloc_System(size ? size : 1u);
+    if (!buffer) {
+        XClassDelete((XClass*)file);
+        return false;
+    }
+    for (i = 0; i < size; ++i)
+        buffer[i] = (uint8_t)(seed + i * 7u);
+    written = XIODevice_write_1((XIODevice*)file, (const char*)buffer,
+                                (int64_t)size);
+    XFree_System(buffer);
+    XFile_flush(file);
+    XClassDelete((XClass*)file);
+    return written == (int64_t)size;
+}
+
+/** @brief 读文件并返回大小（失败返回 -1）。 */
+static int64_t xfile_test_readFile(const char* path, uint8_t** outData)
+{
+    XString* name;
+    XFile* file;
+    int64_t size;
+    uint8_t* buffer;
+    int64_t got;
+
+    *outData = NULL;
+    name = XString_create_utf8(path);
+    if (!name)
+        return -1;
+    file = XFile_create_2(name);
+    XClassDelete((XClass*)name);
+    if (!file)
+        return -1;
+    if (!XFile_open_2(file, XIODevice_ReadOnly, 0)) {
+        XClassDelete((XClass*)file);
+        return -1;
+    }
+    size = (int64_t)XFile_size_base(file);
+    buffer = (uint8_t*)XMalloc_System((size_t)(size ? size : 1));
+    if (!buffer) {
+        XClassDelete((XClass*)file);
+        return -1;
+    }
+    got = XIODevice_read_1((XIODevice*)file, (char*)buffer, size);
+    XClassDelete((XClass*)file);
+    if (got != size) {
+        XFree_System(buffer);
+        return -1;
+    }
+    *outData = buffer;
+    return size;
+}
+
+/** @brief 删除测试文件/目录（尽力而为）。
+ *  @note  先恢复可写权限：Windows 下只读文件无法删除，而部分打开路径会
+ *         留下只读属性（曾致测试第二次运行失败）。 */
+static void xfile_test_cleanup(const char* dir)
+{
+    XString* path = XString_create_utf8(dir);
+    XDir* handle;
+    XFileStat stat;
+    if (!path)
+        return;
+    if (XDeviceFile_stat(path, &stat) && stat.exists && stat.isFile)
+        (void)XDeviceFile_setPermissions(path, (XFilePermissions)0666);
+    handle = XDir_create_2(path);
+    if (handle) {
+        (void)XDir_removeRecursively(handle);
+        XClassDelete((XClass*)handle);
+    }
+    XClassDelete((XClass*)path);
+}
+
+/**
+ * @brief 子分组一：文件协议编解码与文件名安全校验（纯函数）。
+ */
+static void xfile_test_codec(void)
+{
+    XLINK_SECTION("十七·一、文件协议编解码与文件名校验");
+
+    /* Open 往返 */
+    {
+        XLinkFileOpenPayload src;
+        XLinkFileOpenPayload dst;
+        uint8_t buf[XLINK_FILE_OPEN_HEADER + XLINK_FILE_NAME_BYTES];
+        size_t len = 0;
+        memset(&src, 0, sizeof(src));
+        src.m_mode = XLinkFileMode_Upload;
+        src.m_flags = 1;
+        src.m_nameLen = (uint16_t)strlen(XFILE_TEST_NAME);
+        src.m_chunkBytes = 4096;
+        src.m_windowBytes = 32768;
+        src.m_totalSize = 123456;
+        src.m_startOffset = 0;
+        memcpy(src.m_name, XFILE_TEST_NAME, src.m_nameLen);
+
+        XLINK_CHECK(XLinkFile_encodeOpen(&src, buf, sizeof(buf), &len),
+                    "Open 编码成功");
+        XLINK_CHECK(len == XLINK_FILE_OPEN_HEADER + src.m_nameLen,
+                    "Open 长度 = 头部 + 文件名");
+        XLINK_CHECK(XLinkFile_decodeOpen(buf, len, &dst), "Open 解码成功");
+        XLINK_CHECK(dst.m_mode == src.m_mode && dst.m_totalSize == src.m_totalSize
+                        && dst.m_chunkBytes == src.m_chunkBytes,
+                    "Open 往返一致");
+        XLINK_CHECK(strcmp(dst.m_name, XFILE_TEST_NAME) == 0,
+                    "Open 文件名往返一致");
+        XLINK_CHECK(!XLinkFile_decodeOpen(buf, len - 1u, &dst),
+                    "Open 截断载荷被拒");
+        /* 方向封闭枚举 */
+        buf[0] = 9;
+        XLINK_CHECK(!XLinkFile_decodeOpen(buf, len, &dst),
+                    "Open 非法方向被拒（封闭枚举）");
+        buf[0] = XLinkFileMode_Upload;
+        /* 起始偏移 > 总大小 必须拒绝 */
+        {
+            uint8_t big[XLINK_FILE_OPEN_HEADER + XLINK_FILE_NAME_BYTES];
+            size_t blen = 0;
+            XLinkFileOpenPayload bad = src;
+            bad.m_startOffset = bad.m_totalSize + 1;
+            XLINK_CHECK(XLinkFile_encodeOpen(&bad, big, sizeof(big), &blen),
+                        "越界起始偏移仍可编码（编码侧不校验语义）");
+            XLINK_CHECK(!XLinkFile_decodeOpen(big, blen, &dst),
+                        "起始偏移超过总大小被拒");
+        }
+    }
+
+    /* Data 往返 */
+    {
+        uint8_t data[64];
+        uint8_t buf[XLINK_FILE_DATA_OFFSET_BYTES + sizeof(data)];
+        uint64_t offset = 0;
+        const uint8_t* got = NULL;
+        uint32_t gotLen = 0;
+        size_t len = 0;
+        int i;
+        for (i = 0; i < (int)sizeof(data); ++i)
+            data[i] = (uint8_t)i;
+        XLINK_CHECK(XLinkFile_encodeData(0x1122334455667788ull, data,
+                                         sizeof(data), buf, sizeof(buf), &len),
+                    "Data 编码成功");
+        XLINK_CHECK(XLinkFile_decodeData(buf, len, &offset, &got, &gotLen),
+                    "Data 解码成功");
+        XLINK_CHECK(offset == 0x1122334455667788ull,
+                    "Data 偏移往返一致（u64 高位不丢）");
+        XLINK_CHECK(gotLen == sizeof(data) && got && got[0] == 0
+                        && got[63] == 63,
+                    "Data 载荷往返一致");
+        XLINK_CHECK(!XLinkFile_decodeData(buf, 4, &offset, &got, &gotLen),
+                    "Data 头部截断被拒");
+    }
+
+    /* Ack / Finish / FinishAck / Abort */
+    {
+        XLinkFileAckPayload ack;
+        XLinkFileAckPayload ackOut;
+        XLinkFileFinishPayload fin;
+        XLinkFileFinishPayload finOut;
+        XLinkFileFinishAckPayload fa;
+        XLinkFileFinishAckPayload faOut;
+        XLinkFileAbortPayload ab;
+        XLinkFileAbortPayload abOut;
+        uint8_t buf[128];
+        size_t len = 0;
+        int i;
+
+        ack.m_nextOffset = 987654321ull;
+        ack.m_creditBytes = 65536;
+        XLINK_CHECK(XLinkFile_encodeAck(&ack, buf, sizeof(buf), &len)
+                        && XLinkFile_decodeAck(buf, len, &ackOut)
+                        && ackOut.m_nextOffset == 987654321ull
+                        && ackOut.m_creditBytes == 65536,
+                    "Ack 往返一致");
+
+        memset(&fin, 0, sizeof(fin));
+        fin.m_totalSize = 42;
+        for (i = 0; i < 32; ++i)
+            fin.m_sha256[i] = (uint8_t)(i * 3);
+        XLINK_CHECK(XLinkFile_encodeFinish(&fin, buf, sizeof(buf), &len)
+                        && XLinkFile_decodeFinish(buf, len, &finOut)
+                        && finOut.m_totalSize == 42
+                        && memcmp(finOut.m_sha256, fin.m_sha256, 32) == 0,
+                    "Finish（含 SHA-256）往返一致");
+
+        memset(&fa, 0, sizeof(fa));
+        fa.m_ok = 1;
+        fa.m_status = XLinkFileStatus_Ok;
+        fa.m_textLen = 2;
+        memcpy(fa.m_text, "ok", 2);
+        XLINK_CHECK(XLinkFile_encodeFinishAck(&fa, buf, sizeof(buf), &len)
+                        && XLinkFile_decodeFinishAck(buf, len, &faOut)
+                        && faOut.m_ok == 1 && faOut.m_status == 0,
+                    "FinishAck 往返一致");
+
+        memset(&ab, 0, sizeof(ab));
+        ab.m_status = XLinkFileStatus_Checksum;
+        ab.m_byPeer = 1;
+        ab.m_textLen = 3;
+        memcpy(ab.m_text, "bad", 3);
+        XLINK_CHECK(XLinkFile_encodeAbort(&ab, buf, sizeof(buf), &len)
+                        && XLinkFile_decodeAbort(buf, len, &abOut)
+                        && abOut.m_status == XLinkFileStatus_Checksum
+                        && abOut.m_byPeer == 1,
+                    "Abort 往返一致");
+    }
+
+    /* 文件名安全校验 */
+    {
+        XLINK_CHECK(XLinkFile_isSafeName("a.txt", 0), "普通文件名通过");
+        XLINK_CHECK(XLinkFile_isSafeName("dir/a.txt", 0),
+                    "一级子目录通过");
+        XLINK_CHECK(!XLinkFile_isSafeName("", 0), "空名被拒");
+        XLINK_CHECK(!XLinkFile_isSafeName("/etc/passwd", 0),
+                    "绝对路径被拒");
+        XLINK_CHECK(!XLinkFile_isSafeName("C:\\Windows\\x", 0),
+                    "盘符路径被拒");
+        XLINK_CHECK(!XLinkFile_isSafeName("../secret", 0),
+                    "上跳路径被拒");
+        XLINK_CHECK(!XLinkFile_isSafeName("a/../../b", 0),
+                    "中段上跳被拒");
+        XLINK_CHECK(!XLinkFile_isSafeName("..", 0), "纯上跳被拒");
+        XLINK_CHECK(!XLinkFile_isSafeName(".hidden", 0), "隐藏名被拒");
+        /* 单点分量（"."）不构成上跳，属于安全名；靠后续规范化折叠。 */
+        XLINK_CHECK(XLinkFile_isSafeName("a/./b", 0),
+                    "单点分量不算路径穿越（规范化时折叠）");
+        XLINK_CHECK(!XLinkFile_isSafeName("a\0b", 3), "内嵌 NUL 被拒");
+        XLINK_CHECK(!XLinkFile_isSafeName("a\nb", 0), "控制字符被拒");
+        XLINK_CHECK(XLinkFile_baseName_const("a/b/c.txt") != NULL
+                        && strcmp(XLinkFile_baseName_const("a/b/c.txt"),
+                                  "c.txt") == 0,
+                    "baseName 取最后一段");
+    }
+}
+
+/**
+ * @brief 子分组二：服务端沙箱路径策略（不依赖网络）。
+ */
+static void xfile_test_sandbox(void)
+{
+    XLINK_SECTION("十七·二、服务端沙箱策略");
+
+    char rootBuf[256];
+    const char* root = xfile_test_makeDir("sandbox", rootBuf,
+                                       sizeof(rootBuf));
+    if (!root) {
+        XLINK_CHECK(false, "测试目录创建成功");
+        return;
+    }
+    XLINK_CHECK(xfile_test_writeFile("xlink_ft_sandbox/inside.txt", 16, 1),
+                "沙箱内测试文件写入成功");
+    XLINK_CHECK(xfile_test_writeFile("xlink_ft_outside.txt", 8, 2),
+                "沙箱外测试文件写入成功");
+
+    {
+        XLinkFileServer fs;
+        XLinkFileServer_init(&fs);
+        XLINK_CHECK(XLinkFileServer_rootDir_const(&fs) == NULL,
+                    "初始无根目录");
+        XLINK_CHECK(XLinkFileServer_setRootDir(&fs, "no_such_dir_xyz") == false,
+                    "不存在的根目录被拒");
+        XLINK_CHECK(XLinkFileServer_setRootDir(&fs, root),
+                    "设置沙箱根目录成功");
+        XLINK_CHECK(XLinkFileServer_rootDir_const(&fs) != NULL,
+                    "根目录可查询");
+
+        /* 沙箱安全性由 xfs_resolve 承担，但它是 static；这里通过公开行为
+           间接验证：isSafeName 拒绝穿越 + 根目录必须存在。 */
+        XLINK_CHECK(!XLinkFile_isSafeName("../xlink_ft_outside.txt", 0),
+                    "沙箱外文件名被 isSafeName 拒绝");
+
+        XLINK_CHECK(XLinkFileServer_setFlags(
+                        &fs, XLINK_FILESRV_ALLOW_UPLOAD
+                                 | XLINK_FILESRV_ALLOW_DOWNLOAD),
+                    "设置传输方向成功");
+        XLINK_CHECK(XLinkFileServer_setMaxFileBytes(&fs, 1024),
+                    "设置大小上限成功");
+        XLINK_CHECK(XLinkFileServer_setMinRole(&fs, XLinkAuthRole_Admin),
+                    "设置最低角色成功");
+        XLINK_CHECK(!XLinkFileServer_setMinRole(&fs, 99),
+                    "非法角色被拒");
+        XLINK_CHECK(XLinkFileServer_setMaxFileBytes(&fs, 0),
+                    "清零大小上限（不限制）成功");
+        XLinkFileServer_deinit(&fs);
+    }
+
+    xfile_test_cleanup("xlink_ft_sandbox");
+    xfile_test_cleanup("xlink_ft_outside.txt");
+}
+
+/**
+ * @brief 子分组三：真实 TCP 端到端上传/下载（含校验与断点续传）。
+ */
+static void xfile_test_end_to_end(void)
+{
+    XLINK_SECTION("十七·三、真实链路端到端文件传输");
+
+    char rootBuf[256];
+    const char* root = xfile_test_makeDir("e2e", rootBuf,
+                                       sizeof(rootBuf));
+    if (!root) {
+        XLINK_CHECK(false, "端到端测试目录创建成功");
+        return;
+    }
+    /* 准备源文件（37KB，跨多个 4KB 块）。 */
+    {
+        const uint32_t size = 37u * 1024u + 123u;
+        if (!xfile_test_writeFile("xlink_ft_e2e/src.bin", size, 0x5A)) {
+            XLINK_CHECK(false, "源文件准备成功");
+            xfile_test_cleanup("xlink_ft_e2e");
+            return;
+        }
+        XLINK_CHECK(1, "源文件准备成功（37KB+123）");
+    }
+
+    {
+        XLinkServer* srv = XLinkServer_create();
+        XLinkClient* cli = XLinkClient_create();
+        XLinkFileServer* fs = (XLinkFileServer*)XMalloc_System(
+            sizeof(XLinkFileServer));
+        XLinkFileClient* fc = XLinkFileClient_create();
+        uint32_t transferId = 0;
+        uint32_t waited;
+
+        XLINK_CHECK(srv && cli && fs && fc,
+                    "文件传输端到端对象创建成功");
+        if (!srv || !cli || !fs || !fc) {
+            if (srv) XClassDelete((XClass*)srv);
+            if (cli) XClassDelete((XClass*)cli);
+            if (fs) XFree_System(fs);
+            if (fc) XClassDelete((XClass*)fc);
+            xfile_test_cleanup("xlink_ft_e2e");
+            return;
+        }
+
+        XLinkFileServer_init(fs);
+        XLINK_CHECK(XLinkFileServer_setRootDir(fs, root),
+                    "服务端沙箱根目录设置成功");
+        XLINK_CHECK(XLinkFileServer_setFlags(
+                        fs, XLINK_FILESRV_ALLOW_UPLOAD
+                                | XLINK_FILESRV_ALLOW_DOWNLOAD
+                                | XLINK_FILESRV_ALLOW_OVERWRITE),
+                    "服务端允许双向传输与覆盖");
+        XLinkFileServer_setMaxFileBytes(fs, 0);
+
+        XLinkServer_setCapability(srv, XLinkCapability_Zlib);
+        XLINK_CHECK(XLinkFileServer_attach(fs, srv),
+                    "文件服务端挂接成功");
+        if (!XLinkServer_listen_base(srv, "127.0.0.1", XFILE_TEST_PORT)) {
+            XLINK_CHECK(false, "服务端监听成功（文件传输）");
+            XLinkFileServer_deinit(fs);
+            XFree_System(fs);
+            XClassDelete((XClass*)fc);
+            XClassDelete((XClass*)cli);
+            XClassDelete((XClass*)srv);
+            xfile_test_cleanup("xlink_ft_e2e");
+            return;
+        }
+
+        XLinkClient_setHostPort(cli, "127.0.0.1", XFILE_TEST_PORT);
+        /* 文件能力必须在连接前声明（握手期协商），否则双方交集不含
+           FileTransfer，会话层会直接丢弃 File 帧。 */
+        XLinkClient_setCapability(cli, XLinkCapability_Zlib
+                                       | XLinkCapability_FileTransfer);
+        g_client = cli;
+        XLINK_CHECK(XLinkClient_connectToServer(cli), "客户端连接发起成功");
+        XLINK_CHECK(xauth_wait(xauth_cond_client_ready, 8000, srv),
+                    "文件传输前置：客户端 Ready");
+        XLINK_CHECK(XLinkFileClient_attach(fc, cli),
+                    "文件客户端挂接成功");
+        XLINK_CHECK(!XLinkFileClient_isBusy(fc), "初始无活跃传输");
+
+        /* --- 上传 --- */
+        XLINK_CHECK(XLinkFileClient_upload(fc, "xlink_ft_e2e/src.bin",
+                                           "uploaded.bin", 1, &transferId),
+                    "上传发起成功");
+        XLINK_CHECK(XLinkFileClient_isBusy(fc), "上传期间处于忙碌态");
+        waited = 0;
+        while (XLinkFileClient_isBusy(fc) && waited < 20000u) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            XLinkServer_pump(srv,
+                             (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            XLinkFileClient_pump(fc,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            XThread_msleep(5);
+            waited += 5;
+        }
+        XLINK_CHECK(XLinkFileClient_state(fc)
+                        == XLinkFileTransferState_Done,
+                    "上传完成（状态 Done）");
+        {
+            uint8_t* srcData = NULL;
+            uint8_t* dstData = NULL;
+            int64_t srcLen = xfile_test_readFile("xlink_ft_e2e/src.bin",
+                                                 &srcData);
+            int64_t dstLen = xfile_test_readFile("xlink_ft_e2e/uploaded.bin",
+                                                 &dstData);
+            XLINK_CHECK(srcLen > 0 && dstLen == srcLen,
+                        "上传后目标文件大小一致");
+            XLINK_CHECK(srcLen > 0 && dstLen == srcLen && srcData && dstData
+                            && memcmp(srcData, dstData, (size_t)srcLen) == 0,
+                        "上传后文件内容逐字节一致（SHA-256 校验通过）");
+            if (srcData) XFree_System(srcData);
+            if (dstData) XFree_System(dstData);
+        }
+
+        /* 服务端收尾：给几个 pump 轮次让上传槽位释放、会话回 Ready 稳态，
+           再发起下载（避免与上传收尾竞态）。 */
+        {
+            int settle;
+            for (settle = 0; settle < 20; ++settle) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XLinkServer_pump(srv,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                XThread_msleep(5);
+            }
+        }
+
+        /* --- 下载 --- */
+        XLINK_CHECK(XLinkFileClient_download(fc, "uploaded.bin",
+                                             "xlink_ft_e2e_dl.bin", 1,
+                                             &transferId),
+                    "下载发起成功");
+        waited = 0;
+        while (XLinkFileClient_isBusy(fc) && waited < 20000u) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            XLinkServer_pump(srv,
+                             (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            XLinkFileClient_pump(fc,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            XThread_msleep(5);
+            waited += 5;
+        }
+        XLINK_CHECK(XLinkFileClient_state(fc)
+                        == XLinkFileTransferState_Done,
+                    "下载完成（状态 Done）");
+        {
+            uint8_t* a = NULL;
+            uint8_t* b = NULL;
+            int64_t alen = xfile_test_readFile("xlink_ft_e2e/src.bin", &a);
+            int64_t blen = xfile_test_readFile("xlink_ft_e2e_dl.bin", &b);
+            XLINK_CHECK(alen > 0 && blen == alen && a && b
+                            && memcmp(a, b, (size_t)alen) == 0,
+                        "下载后文件与原文件逐字节一致");
+            if (a) XFree_System(a);
+            if (b) XFree_System(b);
+        }
+
+        /* --- 下载不存在的文件：应被沙箱/策略拒绝并终局失败 --- */
+        XLINK_CHECK(XLinkFileClient_download(fc, "not-exists.bin",
+                                             "xlink_ft_e2e_missing.bin", 1,
+                                             &transferId),
+                    "下载不存在文件的请求已发出");
+        waited = 0;
+        while (XLinkFileClient_isBusy(fc) && waited < 8000u) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            XLinkServer_pump(srv,
+                             (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            XLinkFileClient_pump(fc,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            XThread_msleep(5);
+            waited += 5;
+        }
+        XLINK_CHECK(XLinkFileClient_state(fc)
+                        == XLinkFileTransferState_Failed,
+                    "下载不存在文件终局失败（沙箱拒绝）");
+
+        /* --- 路径穿越：必须被拒绝 --- */
+        XLINK_CHECK(!XLinkFileClient_upload(fc, "xlink_ft_e2e/src.bin",
+                                            "../escape.bin", 1, &transferId),
+                    "路径穿越的上传请求被本地拒绝");
+
+        XLinkClient_disconnectFromServer(cli);
+        XLinkFileClient_abort(fc, XLinkFileStatus_Aborted, "cleanup");
+        XClassDelete((XClass*)fc);
+        XLinkFileServer_deinit(fs);
+        XFree_System(fs);
+        XClassDelete((XClass*)cli);
+        XLinkServer_close(srv);
+        XClassDelete((XClass*)srv);
+        g_client = NULL;
+    }
+
+    xfile_test_cleanup("xlink_ft_e2e_dl.bin");
+    xfile_test_cleanup("xlink_ft_e2e_missing.bin");
+    xfile_test_cleanup("xlink_ft_e2e");
+}
+
+/**
+ * @brief 分组十七入口：文件传输。
+ */
+static void xlink_test_file(void)
+{
+    xfile_test_codec();
+    xfile_test_sandbox();
+    xfile_test_end_to_end();
+}
+
+#endif /* XLINK_FILE_ON */
+
+/* ========================================================================== */
 /*                        入口                                               */
 /* ========================================================================== */
 
@@ -2801,6 +4214,12 @@ int XLinkTest_run(void)
     xlink_client_test_manual_disconnect();
     xlink_client_test_max_attempts();
     xlink_test_capability_matrix();
+#if XLINK_AUTH_ON
+    xlink_test_auth();
+#endif
+#if XLINK_FILE_ON
+    xlink_test_file();
+#endif
 
     XPrintf("\n========== XLink 测试完成: %d 通过, %d 失败 ==========\n",
             g_passed, g_failed);

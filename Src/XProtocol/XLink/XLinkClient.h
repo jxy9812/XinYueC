@@ -37,6 +37,9 @@ extern "C" {
 #include <stdbool.h>
 #include "XLinkSession.h"
 #include "XTcpSocket.h"
+#if XLINK_AUTH_ON
+#include "XString.h"
+#endif
 
 /* ========================================================================== */
 /*                        虚函数表                                           */
@@ -112,6 +115,15 @@ uint32_t m_reconnectInterval;     /**< 重连间隔（毫秒，默认 1000）。
                                   自动重连只在该标志置位后生效。仅供实现使用。 */
     bool m_userDisconnect : 1;  /* 手动断开进行中标志：屏蔽拆除过程中的信号
                                   触发自动重连。仅供实现使用。 */
+#if XLINK_AUTH_ON
+    /* 认证相关标志同样收敛为位域（与上面三标志同一存储单元扩展）。 */
+    bool m_authFailed : 1;      /* 最近一次连接因认证失败而终止：阻断自动重连
+                                   （口令错误属永久失败）。仅供实现使用。 */
+    XString* m_authUser;        /* 登录用户名（对象拥有，XString UTF-8 存储）。 */
+    XString* m_authPassword;    /* 登录口令（对象拥有；XString 内部缓冲，
+                                    清除/析构时先零化内容再释放）。 */
+    int m_lastAuthFailure;      /* 最近一次认证失败原因（XLinkClientAuthFailure）。 */
+#endif
 } XLinkClient;
 
 /* ========================================================================== */
@@ -327,6 +339,91 @@ bool XLinkClient_isReady(const XLinkClient* self);
  *             的每次实际迁移。
  */
 void* XLinkClient_stateChanged_signal(XLinkClient* self, XLinkClientState state);
+
+#if XLINK_AUTH_ON
+
+/* ========================================================================== */
+/*                        登录凭据（XLINK_AUTH_ON）                          */
+/* ========================================================================== */
+
+/** @brief 客户端登录失败原因（authFailed 信号参数）。 */
+typedef enum XLinkClientAuthFailure {
+    XLinkClientAuthFailure_None = 0,        /**< 未失败。 */
+    XLinkClientAuthFailure_BadUser = 1,     /**< 用户不存在。 */
+    XLinkClientAuthFailure_BadPassword = 2, /**< 口令错误。 */
+    XLinkClientAuthFailure_Locked = 3,      /**< 账户锁定。 */
+    XLinkClientAuthFailure_Rejected = 4,    /**< 通用拒绝。 */
+    XLinkClientAuthFailure_NoCredential = 5,/**< 对端要求认证但本端未设凭据。 */
+    XLinkClientAuthFailure_Timeout = 6,     /**< 认证超时。 */
+    XLinkClientAuthFailure_Proof = 7,       /**< 服务端证明校验失败（可疑对端）。 */
+    XLinkClientAuthFailure_Protocol = 8     /**< 认证帧畸形。 */
+} XLinkClientAuthFailure;
+
+/**
+ * @brief      设置登录用户名与口令（深拷贝保存）。
+ * @param      self 客户端对象；传入 NULL 时函数不执行任何操作。
+ * @param      user UTF-8 用户名（非空）。
+ * @param      password UTF-8 口令明文（非空）。
+ * @return     成功返回 true；参数非法或分配失败返回 false。
+ * @note       设置后每次连接/重连成功都会自动登录；口令以明文驻留内存
+ *             （协议需要它在本地派生摘要），clearCredential/析构时零化释放。
+ *             口令不会出现在任何日志中。
+ */
+bool XLinkClient_setCredential(XLinkClient* self, const char* user,
+                               const char* password);
+
+/**
+ * @brief      清除登录凭据（零化后释放）。
+ * @param      self 客户端对象；传入 NULL 时函数不执行任何操作。
+ * @return     无。
+ * @note       清除后若对端要求认证，连接会快速失败（authFailed/
+ *             NoCredential），不会挂起。
+ */
+void XLinkClient_clearCredential(XLinkClient* self);
+
+/**
+ * @brief      查询是否已设置登录凭据。
+ * @param      self 客户端对象（借用）；传入 NULL 时返回 false。
+ * @return     已设置返回 true。
+ */
+bool XLinkClient_hasCredential(const XLinkClient* self);
+
+/**
+ * @brief      查询登录用户名。
+ * @param      self 客户端对象（借用）；传入 NULL 时返回 NULL。
+ * @return     借用 UTF-8 指针；未设置返回 NULL。
+ */
+const char* XLinkClient_user_const(const XLinkClient* self);
+
+/**
+ * @brief      查询最近一次认证失败原因。
+ * @param      self 客户端对象（借用）；传入 NULL 时返回 0。
+ * @return     XLinkClientAuthFailure 值；未失败返回 0。
+ * @note       authFailed 信号到达后查询，用于界面提示。
+ */
+int XLinkClient_lastAuthFailure(const XLinkClient* self);
+
+/**
+ * @brief      查询当前会话是否已通过认证。
+ * @param      self 客户端对象（借用）；传入 NULL 时返回 false。
+ * @return     已认证返回 true；未连接/认证未完成返回 false。
+ */
+bool XLinkClient_isAuthenticated(const XLinkClient* self);
+
+/**
+ * @brief      触发 authFailed 信号（认证失败终局时由内部发射）。
+ * @param      self 客户端实例指针（可为 NULL，为 NULL 时不发射）。
+ * @param      reason 失败原因，见 XLinkClientAuthFailure。
+ * @param      status 协议层结果码（XLinkAuthStatus），便于诊断。
+ * @return     信号标识。
+ * @note       槽函数原型：void slot(XObject* sender, XVarList* args)，
+ *             参数依次为 int reason、uint8_t status。认证失败会同时停止
+ *             自动重连（口令错误重试无意义），状态转 UnconnectedState。
+ */
+void* XLinkClient_authFailed_signal(XLinkClient* self, int reason,
+                                    uint8_t status);
+
+#endif /* XLINK_AUTH_ON */
 
 #endif /* XLINK_ON && XLINK_SESSION_ON && XLINK_CLIENT_ON */
 

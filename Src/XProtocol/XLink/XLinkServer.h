@@ -37,6 +37,9 @@ extern "C" {
 #include "XLink_config.h"
 #include "XLinkSession.h"
 #include "XTcpServer.h"
+#if XLINK_AUTH_ON
+#include "XLinkUserStore.h"
+#endif
 
 /* ========================================================================== */
 /*                        虚函数表                                           */
@@ -86,6 +89,34 @@ typedef void (*XLinkServerNotifyCallback)(XLinkServer* self,
  */
 typedef void (*XLinkServerTickCallback)(XLinkServer* self, void* userData);
 
+#if XLINK_AUTH_ON
+/**
+ * @brief 认证审计事件。
+ */
+typedef enum XLinkServerAuthEvent {
+    XLinkServerAuthEvent_Success = 0, /**< 认证通过。 */
+    XLinkServerAuthEvent_Failure = 1, /**< 认证失败。 */
+    XLinkServerAuthEvent_Timeout = 2, /**< 认证超时。 */
+    XLinkServerAuthEvent_Anonymous = 3 /**< 匿名连接（未启用认证或允许匿名）。 */
+} XLinkServerAuthEvent;
+
+/**
+ * @brief 认证审计回调：登录成功/失败/超时/匿名接入时触发。
+ * @param self 服务端对象（借用）。
+ * @param session 相关会话（借用；回调返回后可能被回收，禁止保存）。
+ * @param event 事件类型。
+ * @param user 用户名（UTF-8，借用；失败时可能为空串）。
+ * @param role 通过时的角色；失败时为 0。
+ * @return 无。
+ * @note 只在服务端做审计/日志/限流统计用；**禁止**在回调内打印口令内容
+ *       （回调拿不到口令，仅用户名与结果）。
+ */
+typedef void (*XLinkServerAuthAuditCallback)(XLinkServer* self,
+                                             XLinkSession* session,
+                                             XLinkServerAuthEvent event,
+                                             const char* user, uint8_t role);
+#endif
+
 /**
  * @brief XLink 服务端包装对象。
  * @details 拥有内嵌 XTcpServer 与全部托管会话；对象销毁时同步删除监听器
@@ -115,6 +146,32 @@ uint16_t m_capability;  /**< 新会话的能力位模板（setCapability 预设�
                                      默认取 XLINK_HEARTBEAT_TICK_MS。仅供实现使用。 */
     int m_pumpDepth;     /* pump 重入深度（仅供实现使用）：仅最外层 pump 末尾
                               回收会话，保证回收点不在任何会话的调用栈上。 */
+
+#if XLINK_AUTH_ON
+    XLinkUserStore m_users;      /* 账户库（对象拥有）：setUserStorePath 加载/
+                                    认证查表用；未配置认证时保持空库。 */
+    char* m_userStorePath;       /* 账户库路径（对象拥有，UTF-8 深拷贝）；NULL
+                                    表示未持久化。 */
+    bool m_authEnabled;          /* 已启用登录认证（账户库非空且显式开启）。 */
+    bool m_authAllowAnonymous;   /* 认证启用时是否仍允许匿名连接（默认否）。 */
+    uint8_t m_authFailureLimit;  /* 单连接认证失败上限（模板值）。 */
+    uint32_t m_authTimeoutMs;    /* 认证超时（模板值）。 */
+    XLinkServerAuthAuditCallback m_authAudit; /* 认证审计回调（借用）。 */
+    void* m_authAuditUserData;   /* 审计回调上下文（借用）。 */
+#endif
+#if XLINK_FILE_ON
+    XLinkSessionFileCallback m_fileHandler; /* File 消息类处理回调（借用）：
+                                               文件传输引擎挂接点。 */
+    void* m_fileHandlerUserData;            /* 上述回调上下文（借用）。 */
+    void (*m_sessionGone)(XLinkServer* self, XLinkSession* session,
+                          void* userData);  /* 会话即将被删除的内部钩子
+                                               （扩展模块清理借用指针用）。 */
+    void* m_sessionGoneUserData;            /* 上述钩子上下文（借用）。 */
+    void (*m_preSessionPump)(XLinkServer* self, XLinkSession* session,
+                             void* userData); /* 每会话 pump **之前**的钩子：
+                                                 扩展可在判线逻辑前续命。 */
+    void* m_preSessionPumpUserData;         /* 上述钩子上下文（借用）。 */
+#endif
 } XLinkServer;
 
 /* ========================================================================== */
@@ -292,6 +349,200 @@ XLinkSession* XLinkServer_sessionAt(const XLinkServer* self, int index);
  *             可用于设置 maxPendingConnections、backlog 等。
  */
 XTcpServer* XLinkServer_tcpServer_const(const XLinkServer* self);
+
+#if XLINK_AUTH_ON
+
+/* ========================================================================== */
+/*                        登录认证（XLINK_AUTH_ON）                          */
+/* ========================================================================== */
+
+/**
+ * @brief      启用/关闭登录认证。
+ * @param      self 服务端对象；传入 NULL 时函数不执行任何操作。
+ * @param      enabled 是否要求新会话认证。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ * @note       启用后：
+ *               - 新会话能力位模板自动 OR 上 XLinkCapability_Auth；
+ *               - 新会话握手完成后进入 Authenticating，认证通过才转 Ready；
+ *               - 存量会话不受影响（在线连接不会被踢）。
+ *             账户库为空时启用无意义：所有登录都会失败（文档已注明）。
+ */
+bool XLinkServer_setAuthEnabled(XLinkServer* self, bool enabled);
+
+/**
+ * @brief      查询是否启用登录认证。
+ * @param      self 服务端对象（借用）；传入 NULL 时返回 false。
+ * @return     已启用返回 true。
+ */
+bool XLinkServer_authEnabled(const XLinkServer* self);
+
+/**
+ * @brief      设置账户库文件路径并立即加载。
+ * @param      self 服务端对象；传入 NULL 时函数不执行任何操作。
+ * @param      path UTF-8 路径；NULL 或空串表示清除路径（账户库保持内存态）。
+ * @return     加载成功返回 true；文件损坏/路径非法返回 false（库保持清空）。
+ * @note       文件不存在视为成功（空库），调用方随后用 addUser 建账户并
+ *             saveUserStore 落盘。路径深拷贝保存。
+ */
+bool XLinkServer_setUserStorePath(XLinkServer* self, const char* path);
+
+/**
+ * @brief      把当前账户库写回已设置的路径。
+ * @param      self 服务端对象；传入 NULL 时函数不执行任何操作。
+ * @return     成功返回 true；未设置路径或写入失败返回 false。
+ */
+bool XLinkServer_saveUserStore(XLinkServer* self);
+
+/**
+ * @brief      添加或更新账户（内存态；需 saveUserStore 才持久化）。
+ * @param      self 服务端对象；传入 NULL 时函数不执行任何操作。
+ * @param      user 用户名（UTF-8，非空）。
+ * @param      password 口令明文（借用，不保存）；NULL/空串表示不改口令。
+ * @param      role 角色，见 XLinkAuthRole。
+ * @return     成功返回 true；库满/参数非法返回 false。
+ * @note       新建账户必须给口令；账户口令以随机盐 + 迭代 HMAC 摘要保存，
+ *             明文不留存。添加首个账户不会自动启用认证（须显式
+ *             setAuthEnabled(true)，避免"加了个账户就连不上"）。
+ */
+bool XLinkServer_addUser(XLinkServer* self, const char* user,
+                         const char* password, uint8_t role);
+
+/**
+ * @brief      删除账户（内存态）。
+ * @param      self 服务端对象；user 用户名。
+ * @return     删除成功返回 true；不存在返回 false。
+ */
+bool XLinkServer_removeUser(XLinkServer* self, const char* user);
+
+/**
+ * @brief      锁定/解锁账户（内存态）。
+ * @param      self 服务端对象；user 用户名；locked 是否锁定。
+ * @return     成功返回 true；用户不存在返回 false。
+ */
+bool XLinkServer_setUserLocked(XLinkServer* self, const char* user, bool locked);
+
+/**
+ * @brief      获取账户数量。
+ * @param      self 服务端对象（借用）；传入 NULL 时返回 0。
+ * @return     账户数。
+ */
+uint32_t XLinkServer_userCount(const XLinkServer* self);
+
+/**
+ * @brief      按下标查询账户（只读视图，供管理界面展示）。
+ * @param      self 服务端对象（借用）。
+ * @param      index 下标 [0, userCount)。
+ * @return     借用指针；越界返回 NULL。
+ * @note       返回结构含盐与摘要，展示层不应把摘要明文输出到界面/日志。
+ */
+const XLinkUserRecord* XLinkServer_userAt(const XLinkServer* self,
+                                          uint32_t index);
+
+/**
+ * @brief      设置认证启用时是否允许匿名连接。
+ * @param      self 服务端对象；传入 NULL 时函数不执行任何操作。
+ * @param      allow 是否允许（默认 false：启用认证即全员须登录）。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ * @note       开启后，协商能力含 Auth 的对端仍会收到挑战；不宣告 Auth 的
+ *             老对端按匿名放行（能力位门控的兼容语义）。
+ */
+bool XLinkServer_setAuthAllowAnonymous(XLinkServer* self, bool allow);
+
+/**
+ * @brief      设置单连接认证失败上限（只影响之后建立的会话）。
+ * @param      self 服务端对象；limit >= 1（0 归一为 1）。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ */
+bool XLinkServer_setAuthFailureLimit(XLinkServer* self, uint8_t limit);
+
+/**
+ * @brief      设置认证超时（只影响之后建立的会话）。
+ * @param      self 服务端对象；ms 毫秒，0 = 不检查。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ */
+bool XLinkServer_setAuthTimeout(XLinkServer* self, uint32_t ms);
+
+/**
+ * @brief      注册认证审计回调。
+ * @param      self 服务端对象；callback 借用，可为 NULL 取消。
+ * @param      userData 回调上下文（借用）。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ */
+bool XLinkServer_setAuthAuditCallback(XLinkServer* self,
+                                      XLinkServerAuthAuditCallback callback,
+                                      void* userData);
+
+/**
+ * @brief      查询某个在线会话的登录用户。
+ * @param      self 服务端对象（借用）。
+ * @param      session 会话（借用；可为 NULL）。
+ * @return     已认证时返回借用用户名；未认证/匿名返回 NULL。
+ */
+const char* XLinkServer_sessionUser_const(const XLinkServer* self,
+                                          const XLinkSession* session);
+
+/**
+ * @brief      查询某个在线会话的角色。
+ * @param      self 服务端对象（借用）。
+ * @param      session 会话（借用；可为 NULL）。
+ * @return     角色，见 XLinkAuthRole；未认证返回 Anonymous。
+ */
+uint8_t XLinkServer_sessionRole(const XLinkServer* self,
+                                const XLinkSession* session);
+
+#endif /* XLINK_AUTH_ON */
+
+#if XLINK_FILE_ON
+
+/* ========================================================================== */
+/*                        文件传输挂接（XLINK_FILE_ON）                      */
+/* ========================================================================== */
+
+/**
+ * @brief      注册 File 消息类处理回调（文件传输引擎挂接点）。
+ * @param      self 服务端对象；传入 NULL 时函数不执行任何操作。
+ * @param      callback 回调（借用）；服务端会把新会话的 File 帧转给它。
+ * @param      userData 回调上下文（借用）。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ * @note       只影响之后建立的会话（模板下发）；已托管会话不受影响。
+ *             服务端启用文件传输时，能力位模板会自动补上
+ *             XLinkCapability_FileTransfer（由引擎在 attach 时设置）。
+ */
+bool XLinkServer_setFileCallback(XLinkServer* self,
+                                 XLinkSessionFileCallback callback,
+                                 void* userData);
+
+/**
+ * @brief      注册"会话即将被删除"内部钩子（扩展模块清理借用指针用）。
+ * @param      self 服务端对象；NULL 时无操作。
+ * @param      callback 钩子（借用）；在会话**删除前**调用，此时指针有效。
+ * @param      userData 钩子上下文（借用）。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ * @note       每个服务端只保留一个钩子（后注册覆盖先注册）。文件传输
+ *             扩展用它把会话槽里的借用指针在会话销毁前清掉，避免悬垂。
+ */
+bool XLinkServer_setSessionGoneHook(XLinkServer* self,
+                                    void (*callback)(XLinkServer* self,
+                                                     XLinkSession* session,
+                                                     void* userData),
+                                    void* userData);
+
+/**
+ * @brief      注册"会话 pump 之前"钩子（扩展模块续命用）。
+ * @param      self 服务端对象；NULL 时无操作。
+ * @param      callback 钩子（借用）；在每个托管会话 pump 之前调用。
+ * @param      userData 钩子上下文（借用）。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ * @note       文件传输扩展用它为活跃传输的会话续命：会话 pump 内含静默
+ *             判线，若等 tick 回调（pump 末尾）再续命就已判线断链。
+ */
+bool XLinkServer_setPreSessionPumpHook(XLinkServer* self,
+                                       void (*callback)(XLinkServer* self,
+                                                        XLinkSession* session,
+                                                        void* userData),
+                                       void* userData);
+
+#endif /* XLINK_FILE_ON */
 
 #endif /* XLINK_ON && XLINK_SESSION_ON && XLINK_SERVER_ON */
 
