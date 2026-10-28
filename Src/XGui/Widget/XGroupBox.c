@@ -18,6 +18,7 @@
  ******************************************************************************/
 #if XGUI_ON
 
+#include "XPainter.h"
 #include "XGroupBox.h"
 
 #include "CXinYueConfig.h"
@@ -531,6 +532,28 @@ void XGroupBox_init(XGroupBox* self, XWidget* parent, XWidgetFlags flags)
     /* 悬停外观 opt-in：面板绘制按 State_MouseOver 出悬停高亮，
      * ENTER/LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
     XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
+    /* [minimumSizeHint 补齐 2026-10-27 框架对齐] Qt QGroupBox 不 override
+     * sizeHint（继承 QWidget 缺省空尺寸），但 override minimumSizeHint
+     * （qgroupbox.cpp:456-480）：标题文本宽 + 空格宽（可勾选时另加
+     * 指示器宽与标签间距），高取字高（可勾选时取指示器高较大者）。
+     * 补齐后布局竖排收缩有真实下界（此前 min=0，容器可被压塌）。 */
+    {
+        XSize minHint;
+        XFont font = XWidget_font((XWidget*)self);
+        const char* title = self->m_title
+                                ? XString_toUtf8(self->m_title) : NULL;
+        int baseW = 0;
+        int baseH = 0;
+        if (title && title[0]) {
+            baseW = XPainter_textWidth(&font, title) +
+                    XPainter_textWidth(&font, " ");
+        }
+        baseH = XPainter_textHeight(&font);
+        XClassDeinit(&font);
+        if (baseH <= 0) baseH = 14;
+        XSize_init(&minHint, baseW, baseH);
+        XWidget_setMinimumSizeHint((XWidget*)self, &minHint);
+    }
 }
 
 XGroupBox* XGroupBox_create_ex(XMemoryType memory, XWidget* parent,

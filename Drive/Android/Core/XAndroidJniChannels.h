@@ -140,6 +140,45 @@ bool XAndroid_wifiDisconnect(void);
  *         3=Failed；与 XDeviceWiFiConnectState 值域一致）。 */
 int XAndroid_wifiConnectState(void);
 
+/* ==================== 屏幕休眠（Settings.System 屏幕超时） ==================== */
+
+/** @brief 写系统「屏幕超时」时长（毫秒；<=0=从不），即委托系统自动
+ *         息屏。
+ *  @param millis 超时毫秒。
+ *  @return true=已写入；false=未获 WRITE_SETTINGS 授权或写入失败。 */
+bool XAndroid_setScreenOffTimeout(int millis);
+
+/** @brief 是否已获 WRITE_SETTINGS 授权（可写系统设置）。
+ *  @return true=已授权；false=未授权（界面据此提示用户去系统设置授权）。 */
+bool XAndroid_canWriteSystemSettings(void);
+
+/** @brief 引导用户到系统设置页授予 WRITE_SETTINGS（特殊权限逐应用授权）。
+ *  @return true=已跳转授权页；false=跳转失败。 */
+bool XAndroid_requestWriteSystemSettings(void);
+
+/* ==================== 显示方向（Activity.setRequestedOrientation） ==================== */
+
+/** @brief 申请显示方向（Activity.setRequestedOrientation）。
+ *  @param degrees 目标角度（0=横屏/90=竖屏/180=倒置横屏/270=倒置竖屏），
+ *                 -1=跟随系统（UNSPECIFIED）。
+ *  @return true=请求已下发给系统；false=VM/反射失败或 Activity 未就绪。
+ *  @note  受理≠立即生效：系统转屏是异步的（随后重建 surface），应用侧
+ *         表现为收到一次 resize。 */
+bool XAndroid_setRequestedOrientation(int degrees);
+
+/** @brief 回读当前**实际**显示方向（度）。
+ *  @return 0/90/180/270；未知返回 -1。 */
+int XAndroid_getDisplayOrientation(void);
+
+/** @brief 读应用窗口当前是否全屏（窗口边界==显示真实边界）。
+ *  @return true=全屏（含读取失败兜底）；false=窗口化（自由窗口/分屏）。 */
+bool XAndroid_isWindowFullscreen(void);
+
+/** @brief 系统是否会采纳应用的方向请求。
+ *  @return true=会采纳；false=不会（大屏设备等场景系统强制忽略应用的
+ *          方向请求——此时应用应如实报「不支持」并降级）。 */
+bool XAndroid_canRequestOrientation(void);
+
 #ifdef __cplusplus
 }
 #endif

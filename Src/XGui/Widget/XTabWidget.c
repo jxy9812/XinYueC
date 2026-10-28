@@ -400,6 +400,32 @@ XVtable* XTabWidget_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
+/** @brief 刷新尺寸提示（对标 Qt QTabWidget）。
+ *  @details Qt 6.8.3（qtabwidget.cpp:837-870）：sizeHint = 页签条尺寸
+ *           （+ 左右角部件尺寸）+ 当前页的 sizeHint。 */
+static void xtabwidget_updateSizeHint(XTabWidget* self)
+{
+    XSize hint;
+    XSize barHint;
+    XSize pageHint;
+    int barH = 0;
+    int pageW = 0;
+    int pageH = 0;
+    if (!self) return;
+    barHint = XWidget_sizeHint((XWidget*)&self->m_tabBar);
+    barH = barHint.height;
+    if (self->m_currentIndex >= 0 && self->m_currentIndex < self->m_count &&
+        self->m_pages && self->m_pages[self->m_currentIndex]) {
+        pageHint = XWidget_sizeHint(self->m_pages[self->m_currentIndex]);
+        pageW = pageHint.width;
+        pageH = pageHint.height;
+    }
+    XSize_init(&hint, pageW > barHint.width ? pageW : barHint.width,
+               barH + pageH);
+    XWidget_setSizeHint((XWidget*)self, &hint);
+    XWidget_setMinimumSizeHint((XWidget*)self, &hint);
+}
+
 void XTabWidget_init(XTabWidget* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
@@ -421,6 +447,7 @@ void XTabWidget_init(XTabWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_cornerWidgets[3] = NULL; /* BottomRight */
     XTabBar_init(&self->m_tabBar, (XWidget*)self, 0);
     XWidget_show((XWidget*)&self->m_tabBar);
+    xtabwidget_updateSizeHint(self);
     XObject_connect_2((XObject*)&self->m_tabBar,
                       (size_t)XTabBar_currentChanged_signal(
                           &self->m_tabBar, 0),

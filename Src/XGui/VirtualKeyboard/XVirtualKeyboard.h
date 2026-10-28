@@ -142,7 +142,8 @@ extern "C" {
 #define XKEYBOARD_MAX_BUTTONS 64
 
 /* 键帽/候选等键盘文字的等比缩放系数：labelPx = 键行高×35%（钳
- * [9,48]）。35% 由 800×600 缺省标定（键行高≈46px → 16px，与历史
+ * [9,48]；2026-10-28 档位适配后 calibrated 轨上限改 dp(48)，legacy 轨
+ * 仍 48）。35% 由 800×600 缺省标定（键行高≈46px → 16px，与历史
  * 恒定字号一致）；键盘放大时文字同等放大（等比例缩放需求）。 */
 #define XKB_LABEL_PX_PER_KEYH_PERCENT 35
 /** @brief 无选中/无按下按钮（对标 LV_BUTTONMATRIX_BUTTON_NONE）。 */
@@ -154,11 +155,15 @@ extern "C" {
 /** @brief 槽位存储容量（4 内置 + 4 用户 + Digits/Dialpad 两 VK 合成
  *         布局；第 11 位保留 NULL 尾）。setMap 仍只接受 0..7。 */
 #define XKEYBOARD_MODE_SLOT_COUNT 10
-/** @brief 长按重复起振延时（毫秒；对标 lv_indev 长按默认 400ms）。 */
+/** @brief 长按重复起振延时（毫秒；**未接线死宏**——实际节拍由
+ *         XVirtualKeyboard.c:186-191 的 XVIRTUALKEYBOARD_REPEAT_FIRST_
+ *         MS/REPEAT_MS（600/50，XVK 引擎头同值兜底）承载，本对宏仅存
+ *         兼容壳；2026-10-28 档位适配战役文档漂移修正注明，勿再引用）。 */
 #ifndef XKEYBOARD_LONG_PRESS_START_MS
 #define XKEYBOARD_LONG_PRESS_START_MS 400
 #endif
-/** @brief 长按重复间隔（毫秒；对标 lv_indev 重复默认 100ms）。 */
+/** @brief 长按重复间隔（毫秒；**未接线死宏**，见
+ *         XKEYBOARD_LONG_PRESS_START_MS 注）。 */
 #ifndef XKEYBOARD_REPEAT_MS
 #define XKEYBOARD_REPEAT_MS 100
 #endif
@@ -166,14 +171,115 @@ extern "C" {
 #ifndef XKEYBOARD_GUARD_INTERVAL_MS
 #define XKEYBOARD_GUARD_INTERVAL_MS 200
 #endif
+/* ---- 四档尺寸适配常量（2026-10-28 v3 定稿；全部 #ifndef 门控） ----
+ * 换算口径（全案一处定义）：mm2px(mm10)=mm10×dpi/254（整数除法取整，
+ * mm10=毫米×10）；dp(px)=px×dpi/160。轨制开关（每次调用现读，零缓存）：
+ * XKB_METRICS=legacy|auto（缺省 auto）、XKB_FORCE_DEVICE=phone|tablet
+ * （dpi=XKB_FORCE_DPI>0?该值:160）；标定不可用自动落 legacy 轨逐字节
+ * 走现状公式（回归闸）。 */
+/** @brief 竖屏目标物理高 32.6mm＝AOSP 205.6dp@160（真机手感旋钮）。 */
+#ifndef XKB_METRICS_MM10_TARGET_PORTRAIT
+#define XKB_METRICS_MM10_TARGET_PORTRAIT  326
+#endif
+/** @brief 横屏目标物理高 30.0mm（2026-10-28 目验 r3 由 281 增高一档：
+ *         教训①——横屏面板塞「工具栏+5 行」时键高仅 26~29px、键面比
+ *         2.2~3:1，抬到 300 后 rowH=38、键面比 1.39 入带 1.3~1.5；
+ *         仅 phone 消费——平板横屏走 TABLET_LANDSCAPE+域钳）。 */
+#ifndef XKB_METRICS_MM10_TARGET_LANDSCAPE
+#define XKB_METRICS_MM10_TARGET_LANDSCAPE 300
+#endif
+/** @brief 平板横屏高度档 42.0mm（2026-10-28 目验 r1 增高一档；r3 由
+ *         统一 TABLET 改名拆向——1280x800 域钳带内 264=33% 原值保持，
+ *         mm2px(420)@160=264）。 */
+#ifndef XKB_METRICS_MM10_TARGET_TABLET_LANDSCAPE
+#define XKB_METRICS_MM10_TARGET_TABLET_LANDSCAPE 420
+#endif
+/** @brief 平板竖屏高度档 60.0mm（2026-10-28 目验 r3：教训②——平板竖
+ *         屏照搬 42mm 仅占 800x1280 的 20.6%、键 79x30=2.6:1 过扁，
+ *         600mm10 基准被域钳抬到 384=30% 屏高；mm2px(600)@160=377）。 */
+#ifndef XKB_METRICS_MM10_TARGET_TABLET_PORTRAIT
+#define XKB_METRICS_MM10_TARGET_TABLET_PORTRAIT  600
+#endif
+/** @brief 平板停靠高域钳下限（hostH×30%；r3 教训②：竖屏目标档下矮
+ *         宿主仍可能低于 30% 屏高时抬入带内；hostH<334 时被
+ *         XKEYBOARD_POPUP_MIN_H=120 顶穿、百分比声明在该类宿主不适用
+ *         ——钳序声明见 xkb_dockHeight 函数头）。 */
+#ifndef XKB_METRICS_TABLET_DOMAIN_LO_PCT
+#define XKB_METRICS_TABLET_DOMAIN_LO_PCT   30
+#endif
+/** @brief 平板停靠高域钳上限（hostH×36%；教训②验收带 30~36% 上界）。 */
+#ifndef XKB_METRICS_TABLET_DOMAIN_HI_PCT
+#define XKB_METRICS_TABLET_DOMAIN_HI_PCT   36
+#endif
+/** @brief 竖屏停靠高上限（hostH×46%）。 */
+#ifndef XKB_METRICS_CAP_PORTRAIT_PCT
+#define XKB_METRICS_CAP_PORTRAIT_PCT       46
+#endif
+/** @brief 横屏停靠高上限（hostH×50%，≤半屏硬规）。 */
+#ifndef XKB_METRICS_CAP_LANDSCAPE_PCT
+#define XKB_METRICS_CAP_LANDSCAPE_PCT      50
+#endif
+/** @brief 手机/平板短边分界 95.0mm（Android sw-600dp@mdpi 行业口径）。 */
+#ifndef XKB_METRICS_DEVICE_SHORT_EDGE_MM10
+#define XKB_METRICS_DEVICE_SHORT_EDGE_MM10 950
+#endif
+/** @brief 竖屏候选/菜单条等效高 40dp（calibrated 轨带高基准；r3 更注：
+ *         横屏走 BAND_H_DP_LANDSCAPE）。 */
+#ifndef XKB_METRICS_BAND_H_DP
+#define XKB_METRICS_BAND_H_DP              40
+#endif
+/** @brief 横屏候选/菜单条等效高 32dp（2026-10-28 目验 r3：教训①「压
+ *         工具栏/候选条」——横屏给键行让高，四行款 rowH 33→36、五行款
+ *         26→28、平板横 55→57；钳序 [contentH×12%,contentH/3] 不变）。 */
+#ifndef XKB_METRICS_BAND_H_DP_LANDSCAPE
+#define XKB_METRICS_BAND_H_DP_LANDSCAPE    32
+#endif
+/** @brief 窄盘键宽:高比分子（5/4=1.25 近方；2026-10-28 目验 r3 更注：
+ *         口径收窄为「窄盘（Number/Digits/Dialpad）+紧凑 rowH 反解」
+ *         专用，横屏文本盘改 LAND 宏——教训③正面样例=手机竖屏数字键
+ *         80x45 近方）。 */
+#ifndef XKB_METRICS_KEYW_NUM
+#define XKB_METRICS_KEYW_NUM                 5
+#endif
+/** @brief 窄盘键宽:高比分母（消费点同 KEYW_NUM 更注）。 */
+#ifndef XKB_METRICS_KEYW_DEN
+#define XKB_METRICS_KEYW_DEN                 4
+#endif
+/** @brief 横屏文本盘键宽:高比分子（7/5=1.4；2026-10-28 目验 r3 由 5/4
+ *         增宽一档：教训①验收带 1.3~1.5 的中位——rowH=38@960x480 时键
+ *         53x38=1.39；紧凑 rowH 反解同消费（XVirtualKeyboard.c 紧凑分
+ *         支），外部 #ifndef 覆盖时两处同源不漂移）。 */
+#ifndef XKB_METRICS_KEYW_LAND_NUM
+#define XKB_METRICS_KEYW_LAND_NUM            7
+#endif
+/** @brief 横屏文本盘键宽:高比分母（同 KEYW_LAND_NUM）。 */
+#ifndef XKB_METRICS_KEYW_LAND_DEN
+#define XKB_METRICS_KEYW_LAND_DEN            5
+#endif
+/** @brief 窄盘（Number/Digits/Dialpad）定宽上限（hostW×60%）。 */
+#ifndef XKB_METRICS_PAD_W_MAX_PCT
+#define XKB_METRICS_PAD_W_MAX_PCT          60
+#endif
+/** @brief 紧凑悬浮目标宽（hostW×55%）。 */
+#ifndef XKB_METRICS_COMPACT_W_PCT
+#define XKB_METRICS_COMPACT_W_PCT          55
+#endif
+/** @brief 紧凑楼层下限＝9键×7mm=63mm（调研3 口径；mm2px(630)@160≈396px）。 */
+#ifndef XKB_METRICS_COMPACT_MIN_MM10
+#define XKB_METRICS_COMPACT_MIN_MM10      630
+#endif
+/** @brief 键面圆角=rowH×3/20 钳 [3,14]（calibrated 轨）。 */
+#ifndef XKB_METRICS_RADIUS_NUM
+#define XKB_METRICS_RADIUS_NUM               3
+#endif
+/** @brief 键面圆角分母。 */
+#ifndef XKB_METRICS_RADIUS_DEN
+#define XKB_METRICS_RADIUS_DEN              20
+#endif
+
 /** @brief 弹层高度下界（像素；钳位次序：hostH/2 → 下界 → 上界）。 */
 #ifndef XKEYBOARD_POPUP_MIN_H
 #define XKEYBOARD_POPUP_MIN_H 120
-#endif
-/** @brief 弹层宽度下界（像素；宿主未布局（宽 0）时的保底面板宽——
- *  键位矩形可命中，reposition 不把面板缩为零宽）。 */
-#ifndef XKEYBOARD_POPUP_MIN_W
-#define XKEYBOARD_POPUP_MIN_W 240
 #endif
 /** @brief 弹层高度上界余量（像素；恒给编辑区保留的高度）。 */
 #ifndef XKEYBOARD_POPUP_MARGIN_H
@@ -427,6 +533,21 @@ typedef struct XVirtualKeyboard
                                             （候选替换菜单），空闲态=图标
                                             工具栏（四等分：悬浮切换/键
                                             盘选择/文字编辑/收起）。 */
+    int m_layoutRows;                  /**< 当前布局行数（rebuildLayout
+                                            解析期写入；四档适配宽度式
+                                            的 rowH 预估输入，0=未布局）。
+                                            */
+    int m_layoutMaxRowUnits;           /**< 当前布局最大行单位总数（每行
+                                            宽度单位求和取最大；窄盘宽度
+                                            式的键宽=单位×rowH×5/4 输入，
+                                            0=未布局）。 */
+    int m_layoutRefRowUnits;           /**< 参考行单位总数（键数最多行的
+                                            单位数，QWERTY 字母行口径；
+                                            2026-10-28 目验 r1 新增——横
+                                            屏文本盘宽度=参考行×rowH×5/4
+                                            +4，参考行键面比≈1.25，修
+                                            F4/F6/F8 键面过扁；0=未布
+                                            局）。 */
     uint32_t m_selectedKey;            /**< 最后激活按钮；无则 XKEYBOARD_BUTTON_NONE。 */
     uint32_t m_pressedKey;             /**< 按下中按钮；无则 XKEYBOARD_BUTTON_NONE。 */
     int m_hostW;                       /**< 宿主宽度缓存（reposition 工作变量）。 */
@@ -996,6 +1117,23 @@ bool XVirtualKeyboard_setImeChinese(XVirtualKeyboard* self, bool chinese);
 bool XVirtualKeyboard_imeChinese(const XVirtualKeyboard* self);
 
 #endif /* XVIRTUALKEYBOARD_ON */
+
+/* ==================== 尺寸档位查询（四档适配；只读快照） ==================== */
+
+/**
+ * @brief      查询档位解析结果（2026-10-28 四档尺寸适配的公共只读面）。
+ * @details    与 reposition/rebuildLayout 等消费点同一解析函数（静态无
+ *             状态，每次现读 XKB_METRICS/XKB_FORCE_DEVICE/XKB_FORCE_DPI
+ *             + 主屏物理尺寸探测，零缓存）。track/device/orient 取值为
+ *             0/1：track 0=legacy（现状公式轨）1=calibrated（物理标定
+ *             轨）；device 0=phone 1=tablet（短边<95.0mm 分界）；orient
+ *             0=portrait 1=landscape（按键盘宿主宽高）。dpi=有效物理
+ *             DPI（整数；legacy 轨不消费，恒 160 兜底）。自读窗口自身
+ *             宽高作 hostW/hostH 输入；任一输出指针可为 NULL 忽略；
+ *             self 为 NULL 时全部输出取 legacy 兜底值。
+ */
+void XVirtualKeyboard_metrics(const XVirtualKeyboard* self, int* outTrack,
+                              int* outDevice, int* outOrient, int* outDpi);
 
 /* ==================== 信号（纯 ID getter，绝不在此发射） ==================== */
 

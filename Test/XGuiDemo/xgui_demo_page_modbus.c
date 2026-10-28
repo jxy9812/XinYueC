@@ -469,6 +469,17 @@ typedef struct MbMaster {
      * 交叠写帧，主站侧随后走 1s 超时×重试级联（轮询卡数秒+写未应用）。
      * 让路后从机只见串行请求，写必达且不卡。 */
     XModbusDataUnit* deferredWriteUnit; /* 待发写单元（NULL=无）。 */
+    /* [连接反馈 2026-10-27] 连接过程/失败提示链：TCP 连接是异步的，
+     * 发起≠建立；对方 IP 不通时 socket 在 Connecting 停到内核超时，
+     * 库内 errorOccurred 无页面监听=界面零提示、统计冻结。页内状态行
+     * 承担实时态，主窗底部状态栏承担 episode 级提醒（failHinted 闸：
+     * 自动重连 2s 一轮反复翻态，无闸则状态栏被同文刷屏）。 */
+    DemoPageStatusFn statusFn;       /* 主窗状态栏回调（build 传入，此前弃用）。 */
+    void*            statusUser;     /* 状态栏回调用户指针。 */
+    char             lastHint[128];  /* 状态栏最近推送文本（同文去重）。 */
+    bool             failHinted;     /* 本轮故障已推送状态栏（episode 闸）。 */
+    bool             everConnected;  /* 已真实建立过（区分首连失败/断线）。 */
+    char             lastErr[96];    /* 最近设备错误文本（状态行拼接用）。 */
 } MbMaster;
 
 /* ==================== 从站页状态 ==================== */
@@ -700,7 +711,13 @@ static void mb_buildLabel(XWidget* parent, const char* text, int w,
     if (label) {
         XLabel_setText_2(label, text);
         /* [2026-10-13 重叠根修] 参数行标签统一 13px 小字：默认 16px 下
-         * 3~4 字标签实际渲染宽超预留列宽，文本右缘压进同行输入框。 */
+         * 3~4 字标签实际渲染宽超预留列宽，文本右缘压进同行输入框。
+         * [对比度 2026-10-27 视觉走查 P3-C] 字段标签是**正文级信息**，文字
+         * 色必须用正文语义角色：Qt Fusion 的 Dark(159)/Mid(184) 是
+         * background.darker() 出来的**装饰色**（边框/分隔线用），当文字
+         * 色在白底上只有 ~2:1 对比度（不可读）。此处改 Text(黑，21:1)。
+         * 弱化层次靠字号/留白，不靠把文字刷成装饰色。 */
+        XWidget_setForegroundRole((XWidget*)label, XPaletteColorRole_Text);
         XLabel_setTextPixelSize(label, 13);
         XWidget_setFixedWidth((XWidget*)label, w);
         XWidget_setFixedHeight((XWidget*)label, 22);
@@ -896,6 +913,10 @@ static void mb_masterPollPeriodSlot(XObject* sender, XVarList* args);
  *  不再做 sender 指针反查。 */
 
 static void mb_masterStateSlot(XObject* sender, XVarList* args);
+/* [连接反馈 2026-10-27] 设备错误槽：连接失败/通信错误此前库内记账后
+ * 无人监听（errorOccurred 未挂接=界面零提示），现挂接上屏+状态栏。 */
+static void mb_masterErrorSlot(XObject* sender, XVarList* args);
+static void mb_masterRefreshStats(void);
 static void mb_masterWriteCoil(int index, bool on);
 static void mb_masterDoAutoSlot(void* userData, XTimerData* timer);
 static void mb_masterWriteReplyDone(XObject* sender, XVarList* args);
@@ -1182,7 +1203,7 @@ static void mb_masterRegCellChangedAt(XModbusRegisterType type, int row,
                 }
                 reply = XModbusClient_sendWriteRequest(
                     (XModbusClient*)s_mb.device, unit,
-                    XSpinBox_value(s_mb.unitSpin));
+                    XSpinBox_value(s_mb.unitSpin), XModbusRequestPriority_Normal);
                 XClassDelete(unit);
                 if (reply) {
                     ++s_mb.reqCount;
@@ -1527,7 +1548,7 @@ static void mb_masterDoSetAll(bool on)
         }
         reply = XModbusClient_sendWriteRequest((XModbusClient*)s_mb.device,
                                                unit,
-                                               XSpinBox_value(s_mb.unitSpin));
+                                               XSpinBox_value(s_mb.unitSpin), XModbusRequestPriority_Normal);
         XClassDelete(unit);
         if (reply) {
             ++s_mb.reqCount;
@@ -1575,7 +1596,7 @@ static void mb_masterWriteCoil(int index, bool on)
         return;
     }
     reply = XModbusClient_sendWriteRequest((XModbusClient*)s_mb.device,
-                                           unit, XSpinBox_value(s_mb.unitSpin));
+                                           unit, XSpinBox_value(s_mb.unitSpin), XModbusRequestPriority_Normal);
     fprintf(stderr, "[WC] send reply=%p\n", (void*)reply);
     XClassDelete(unit);
     if (reply) {
@@ -1702,7 +1723,7 @@ static void mb_masterPollOnce(void)
         }
         reply = XModbusClient_sendReadRequest((XModbusClient*)s_mb.device,
                                               *unit,
-                                              XSpinBox_value(s_mb.unitSpin));
+                                              XSpinBox_value(s_mb.unitSpin), XModbusRequestPriority_Normal);
     } else if (phase == 1) {
         if (!s_mb.coilUnit) {
             s_mb.coilUnit = XModbusDataUnit_create_ex(
@@ -1712,7 +1733,7 @@ static void mb_masterPollOnce(void)
         }
         reply = XModbusClient_sendReadRequest((XModbusClient*)s_mb.device,
                                               s_mb.coilUnit,
-                                              XSpinBox_value(s_mb.unitSpin));
+                                              XSpinBox_value(s_mb.unitSpin), XModbusRequestPriority_Normal);
     } else {
         if (!s_mb.pollUnit) {
             s_mb.pollUnit = XModbusDataUnit_create_ex(
@@ -1722,7 +1743,7 @@ static void mb_masterPollOnce(void)
         }
         reply = XModbusClient_sendReadRequest((XModbusClient*)s_mb.device,
                                               s_mb.pollUnit,
-                                              XSpinBox_value(s_mb.unitSpin));
+                                              XSpinBox_value(s_mb.unitSpin), XModbusRequestPriority_Normal);
     }
     if (reply) {
         ++s_mb.reqCount;
@@ -1733,7 +1754,10 @@ static void mb_masterPollOnce(void)
                           (XObject*)s_mb.root, mb_masterOnReply,
                           XConnectionType_Direct);
     } else {
+        /* [连接反馈 2026-10-27] 发送失败（未连接/连接中）也刷统计：
+           断链期「错误」上涨是用户可见的活性信号（此前只记账不上屏）。 */
         ++s_mb.errCount;
+        mb_masterRefreshStats();
     }
     s_mb.pollPhase = (s_mb.pollPhase + 1) % 4; /* 下一拍换相。 */
 }
@@ -1837,7 +1861,7 @@ static void mb_masterOnReply(XObject* sender, XVarList* args)
     if (s_mb.deferredWriteUnit && !s_mb.pendingReply) {
         XModbusReply* wreply = XModbusClient_sendWriteRequest(
             (XModbusClient*)s_mb.device, s_mb.deferredWriteUnit,
-            XSpinBox_value(s_mb.unitSpin));
+            XSpinBox_value(s_mb.unitSpin), XModbusRequestPriority_Normal);
         if (wreply) {
             ++s_mb.reqCount;
             s_mb.retiredWriteReply = wreply; /* 回收定时器延迟删。 */
@@ -1852,6 +1876,15 @@ static void mb_masterOnReply(XObject* sender, XVarList* args)
         s_mb.deferredWriteUnit = NULL;
     }
     /* 刷新统计行。 */
+    mb_masterRefreshStats();
+}
+
+/** @brief 统计行刷新（应答回收与轮询发送失败两路共用）。[连接反馈
+ *  2026-10-27] 此前只在应答槽刷——连接不通时每拍发送失败只递增
+ *  errCount 无上屏，统计两数冻结成「假死」观感；发送失败路也刷后，
+ *  断链期「错误」持续上涨本身即活性提示。 */
+static void mb_masterRefreshStats(void)
+{
     if (s_mb.statLabel) {
         char buf[96];
         snprintf(buf, sizeof(buf),
@@ -1861,6 +1894,24 @@ static void mb_masterOnReply(XObject* sender, XVarList* args)
     }
 }
 
+/** @brief 页内状态行更新（主显示面，随状态/重试自由刷新）。 */
+static void mb_masterStateText(const char* text)
+{
+    if (s_mb.stateLabel)
+        XLabel_setText_2(s_mb.stateLabel, text);
+}
+
+/** @brief 主窗底部状态栏推送（episode 级提醒）：同文去重+failHinted
+ *  闸由调用侧把关——自动重连 2s 一轮让 Connecting/Unconnected 反复
+ *  翻转，无闸状态栏会被同组文本循环刷屏。 */
+static void mb_masterPushHint(const char* text)
+{
+    if (!s_mb.statusFn) return;
+    if (strncmp(text, s_mb.lastHint, sizeof(s_mb.lastHint)) == 0) return;
+    s_mb.statusFn(s_mb.statusUser, text);
+    snprintf(s_mb.lastHint, sizeof(s_mb.lastHint), "%s", text);
+}
+
 static void mb_masterStopEngine(void)
 {
     if (s_mb.pollTimer) {
@@ -1868,6 +1919,10 @@ static void mb_masterStopEngine(void)
         XClassDelete((XClass*)s_mb.pollTimer);
         s_mb.pollTimer = NULL;
     }
+    s_mb.failHinted = false;
+    s_mb.everConnected = false;
+    s_mb.lastErr[0] = '\0';
+    s_mb.lastHint[0] = '\0';
     /* [2026-10-13 断开 UAF 根修二] Reply 一律不在此 deleteLater：
      * 在途 pendingReply 断开时会经 client clearAllPendingRequests 走
      * setError→finished→我们的 retire 槽（回收定时器随后删）；已 retire
@@ -1901,10 +1956,14 @@ static void mb_masterStopEngine(void)
          * socket disconnected 回调，autoReconnect 开着时库内会挂 2s
          * 重连定时器——重连触发时 device 已被本函数 deleteLater=UAF
          * （用户点断开秒崩实证）。 */
-        XModbusClient_setAutoReconnect((XModbusClient*)s_mb.device, false);
-        XModbusDevice_disconnectDevice(s_mb.device);
-        XObject_deleteLater(s_mb.device);
+        XModbusDevice* dev = s_mb.device;
+        /* [连接反馈 2026-10-27] 先摘引用再断：close() 同步发
+         * stateChanged(Unconnected)，引用还在时状态槽会把用户主动断开
+         * 误报成「断线重连中」（主动断开≠断线）。 */
         s_mb.device = NULL;
+        XModbusClient_setAutoReconnect((XModbusClient*)dev, false);
+        XModbusDevice_disconnectDevice(dev);
+        XObject_deleteLater(dev);
     }
     /* [连接门控] 断开后 DO 圆圈禁点（灰圈）。 */
     {
@@ -2020,12 +2079,20 @@ static void mb_masterStartEngine(void)
             XTimer_setUserData(s_mb.pollTimer, NULL);
             XTimer_start_base(s_mb.pollTimer);
         }
-        if (s_mb.stateLabel) {
-            XLabel_setText_2(s_mb.stateLabel,
-                             "\xE5\xB7\xB2\xE8\xBF\x9E\xE6\x8E\xA5"
-                             "(\xE8\xBD\xAE\xE8\xAF\xA2\xE4\xB8\xAD)");
-                             /* 已连接(轮询中) */
-        }
+        /* [连接反馈 2026-10-27] TCP 连接是异步的：connectDevice 返回
+         * true 只代表「连接尝试已发起」。此前此处乐观写「已连接(轮询
+         * 中)」——对方 IP 不通时该文案一直停到内核超时，轮询拍拍失败
+         * 却无任何提示。现写「连接中」，真正建立由 stateChanged
+         * (ConnectedState) 翻牌（状态槽接管）。 */
+        s_mb.failHinted = false;
+        s_mb.everConnected = false;
+        s_mb.lastErr[0] = '\0';
+        s_mb.lastHint[0] = '\0'; /* 新 episode：状态栏去重表清零。 */
+        mb_masterStateText(
+            "\xE8\xBF\x9E\xE6\x8E\xA5\xE4\xB8\xAD..."); /* 连接中... */
+        mb_masterPushHint(
+            "Modbus\xE4\xB8\xBB\xE7\xAB\x99: "
+            "\xE8\xBF\x9E\xE6\x8E\xA5\xE4\xB8\xAD..."); /* Modbus主站: 连接中... */
         XMemset(s_mbDoWritten, 0, sizeof(s_mbDoWritten)); /* 重连后模块线圈态=初始 0。 */
         /* [连接门控] 连接成功 DO 圆圈可点。 */
         {
@@ -2043,12 +2110,22 @@ static void mb_masterStartEngine(void)
                               XModbusDevice_UnconnectedState),
                           (XObject*)s_mb.root, mb_masterStateSlot,
                           XConnectionType_Direct);
+        /* [连接反馈 2026-10-27] 错误信号挂接：连接失败/通信错误的
+         * 具体原因走此路（此前设备 errorOccurred 无页面监听）。 */
+        XObject_connect_1((XObject*)dev,
+                          (size_t)XModbusDevice_errorOccurred_signal(dev,
+                              XModbusDevice_ConnectionError),
+                          (XObject*)s_mb.root, mb_masterErrorSlot,
+                          XConnectionType_Direct);
     } else {
         XObject_deleteLater(dev);
         if (s_mb.stateLabel)
             XLabel_setText_2(s_mb.stateLabel,
                              "\xE8\xBF\x9E\xE6\x8E\xA5\xE5\xA4\xB1\xE8\xB4\xA5");
                              /* 连接失败 */
+        mb_masterPushHint(
+            "Modbus\xE4\xB8\xBB\xE7\xAB\x99: "
+            "\xE8\xBF\x9E\xE6\x8E\xA5\xE5\xA4\xB1\xE8\xB4\xA5"); /* Modbus主站: 连接失败 */
     }
 }
 
@@ -2060,25 +2137,107 @@ static void mb_masterDisconnectAutoSlot(void* userData, XTimerData* timer)
         XAbstractButton_click((XAbstractButton*)s_mb.connectBtn);
 }
 
-/** @brief 设备状态槽：断开（含真机踢线）时清在途请求、复位 UI，
- *  自动重连由 XModbusClient 内置定时器承担（重连成功会再发 connected）。 */
+/** @brief 设备错误槽（[连接反馈 2026-10-27]）：留取最近错误文本供状态
+ *  行拼接；「连接中」态的首错推一次状态栏（episode 闸）。NoError 直
+ *  接忽略——open()/onConnected 用 setError(NoError) 做「清错误」动作，
+ *  误留痕会让状态行拼出「断线重连中: No error」、且在慢失败（IP 不
+ *  通）场景于连接真正失败前误推「连接失败」。Unconnected 态的
+ *  errorOccurred 是断线后轮询空转的 "Not connected"（每拍一发）
+ *  ——原因已在状态行覆盖，不提示防刷屏。 */
+static void mb_masterErrorSlot(XObject* sender, XVarList* args)
+{
+    XModbusDevice* dev = s_mb.device;
+    XString* es;
+    (void)sender; (void)args;
+    if (!dev) return;
+    if (XModbusDevice_error(dev) == XModbusDevice_NoError) return;
+    es = XModbusDevice_errorString(dev); /* 副本，调用者释放。 */
+    if (es) {
+        const char* utf8 = XString_toUtf8(es);
+        if (utf8 && utf8[0])
+            snprintf(s_mb.lastErr, sizeof(s_mb.lastErr), "%s", utf8);
+        XClassDelete(es);
+    }
+    if (XModbusDevice_state(dev) != XModbusDevice_ConnectingState)
+        return; /* 断线空转噪声：状态行已覆盖。 */
+    if (!s_mb.failHinted) {
+        mb_masterPushHint(
+            "Modbus\xE4\xB8\xBB\xE7\xAB\x99: "
+            "\xE8\xBF\x9E\xE6\x8E\xA5\xE5\xA4\xB1\xE8\xB4\xA5,"
+            "\xE8\x87\xAA\xE5\x8A\xA8\xE9\x87\x8D\xE8\xBF\x9E\xE4\xB8\xAD"
+            "(\xE6\xA3\x80\xE6\x9F\xA5\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x99\xA8"
+            "IP/\xE7\xAB\xAF\xE5\x8F\xA3)");
+            /* Modbus主站: 连接失败,自动重连中(检查服务器IP/端口) */
+        s_mb.failHinted = true;
+    }
+}
+
+/** @brief 设备状态槽：[连接反馈 2026-10-27] 三态接管。此前只在
+ *  Unconnected 写「断线重连中」，且 startEngine 发起后乐观写「已连接」
+ *  ——TCP 异步连接下对方 IP 不通时页面会误导性停在该文案直到内核
+ *  超时。现：Connecting=连接中(重试第N次)；Connected=已连接(轮询中)
+ *  （同时清故障闸）；Unconnected=断线重连中:最近错误，episode 首次
+ *  推状态栏。自动重连由 XModbusClient 内置定时器承担。 */
 static void mb_masterStateSlot(XObject* sender, XVarList* args)
 {
     (void)sender;
+    if (!s_mb.device) return; /* 用户主动断开（引用已摘）：不进提示链。 */
     if (args) {
         XVarList_args_1(args, int, state);
         (void)state;
     }
-    if (s_mb.device &&
-        XModbusDevice_state(s_mb.device) == XModbusDevice_UnconnectedState) {
+    switch (XModbusDevice_state(s_mb.device)) {
+    case XModbusDevice_ConnectedState:
+        s_mb.everConnected = true;
+        s_mb.failHinted = false;
+        s_mb.lastErr[0] = '\0';
+        mb_masterStateText(
+            "\xE5\xB7\xB2\xE8\xBF\x9E\xE6\x8E\xA5"
+            "(\xE8\xBD\xAE\xE8\xAF\xA2\xE4\xB8\xAD)"); /* 已连接(轮询中) */
+        mb_masterPushHint(
+            "Modbus\xE4\xB8\xBB\xE7\xAB\x99: "
+            "\xE5\xB7\xB2\xE8\xBF\x9E\xE6\x8E\xA5"); /* Modbus主站: 已连接 */
+        break;
+    case XModbusDevice_ConnectingState: {
+        char buf[64];
+        int tries = XModbusClient_reconnectAttempts(
+                        (XModbusClient*)s_mb.device);
+        if (tries > 0)
+            snprintf(buf, sizeof(buf),
+                     "\xE8\xBF\x9E\xE6\x8E\xA5\xE4\xB8\xAD"
+                     "(\xE9\x87\x8D\xE8\xAF\x95\xE7\xAC\xAC%d\xE6\xAC\xA1)",
+                     tries); /* 连接中(重试第N次) */
+        else
+            snprintf(buf, sizeof(buf),
+                     "\xE8\xBF\x9E\xE6\x8E\xA5\xE4\xB8\xAD..."); /* 连接中... */
+        mb_masterStateText(buf);
+        break;
+    }
+    default: /* UnconnectedState */ {
+        char buf[160];
         if (s_mb.pendingReply) {
             XObject_deleteLater((XObject*)s_mb.pendingReply);
             s_mb.pendingReply = NULL;
         }
-        if (s_mb.stateLabel)
-            XLabel_setText_2(s_mb.stateLabel,
-                             "\xE6\x96\xAD\xE7\xBA\xBF\xE9\x87\x8D\xE8\xBF\x9E\xE4\xB8\xAD");
-                             /* 断线重连中 */
+        if (s_mb.lastErr[0])
+            snprintf(buf, sizeof(buf),
+                     "\xE6\x96\xAD\xE7\xBA\xBF\xE9\x87\x8D\xE8\xBF\x9E"
+                     "\xE4\xB8\xAD: %s", s_mb.lastErr); /* 断线重连中: 原因 */
+        else
+            snprintf(buf, sizeof(buf),
+                     "\xE6\x96\xAD\xE7\xBA\xBF\xE9\x87\x8D\xE8\xBF\x9E"
+                     "\xE4\xB8\xAD"); /* 断线重连中 */
+        mb_masterStateText(buf);
+        if (s_mb.everConnected && !s_mb.failHinted) {
+            mb_masterPushHint(
+                "Modbus\xE4\xB8\xBB\xE7\xAB\x99: "
+                "\xE8\xBF\x9E\xE6\x8E\xA5\xE6\x96\xAD\xE5\xBC\x80,"
+                "\xE8\x87\xAA\xE5\x8A\xA8\xE9\x87\x8D\xE8\xBF\x9E\xE4\xB8\xAD");
+                /* Modbus主站: 连接断开,自动重连中 */
+            s_mb.failHinted = true;
+        }
+        break;
+    }
     }
 }
 
@@ -2106,6 +2265,9 @@ static void mb_masterConnectSlot(XObject* sender, XVarList* args)
         mb_masterStopEngine();
         XPushButton_setText_2(s_mb.connectBtn,
                               "\xE8\xBF\x9E\xE6\x8E\xA5"); /* 连接 */
+        mb_masterPushHint(
+            "Modbus\xE4\xB8\xBB\xE7\xAB\x99: "
+            "\xE5\xB7\xB2\xE6\x96\xAD\xE5\xBC\x80"); /* Modbus主站: 已断开 */
     } else {
         /* 记录远程 IO 点数并重建网格。 */
         s_mb.inCount = s_mb.inCountSpin ? XSpinBox_value(s_mb.inCountSpin) : 8;
@@ -3630,9 +3792,12 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
                                        DemoPageStatusFn statusFn, void* user)
 {
     XLabel* title = NULL;
-    (void)statusFn; (void)user;
 
     XMemset(&s_mb, 0, sizeof(s_mb));
+    /* [连接反馈 2026-10-27] 接住主窗状态栏回调（此前弃用丢弃）：
+     * 连接过程/断线/失败的 episode 级提醒经它进底部状态条。 */
+    s_mb.statusFn = statusFn;
+    s_mb.statusUser = user;
     s_mb.inCount = 8;
     s_mb.outCount = 8;
 
@@ -4692,7 +4857,7 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
             XLabel* lbl = NULL;
             mb_buildLabel(s_mbSlave.dataArea,
                           "\xE8\xBE\x93\xE5\x85\xA5\xE7\x82\xB9 DI"
-                          "(\xE7\x82\xB9\xE5\x87\xBB\xE7\xBD\xAE\xE4\xB8\x8D)",
+                          "(\xE7\x82\xB9\xE5\x87\xBB\xE7\xBD\xAE\xE4\xBD\x8D)",
                           180, &lbl); /* 输入点 DI(点击置位) */
             if (lbl)
                 XBoxLayout_addWidget(&s_mbSlave.layDiTitle,

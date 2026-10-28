@@ -319,6 +319,49 @@ bool XCursor_swActive(void);
 XRect XCursor_swRect(void);
 
 /**
+ * @brief      按**指定形状**查内建精灵位图（平台后端造原生光标用）。
+ * @details    与 swBits（按当前有效形状）不同：本函数按参数形状查内建
+ *             位图表（Arrow/PointingHand/Cross/IBeam/Wait），供 X11/
+ *             Win32 硬件光标后端把内建位图转成原生光标——**跨平台外形
+ *             一致**（同一份 2bit 素材：软件精灵直接画、硬件平台转原生
+ *             位图光标），而非各自映射系统形状。查无表（SizeVer 等功能
+ *             形状/Bitmap/Custom）返回 NULL，调用方回落系统形状映射。
+ * @param      shape 目标形状。
+ * @param      outW 位图宽出参；可为 NULL。
+ * @param      outH 位图高出参；可为 NULL。
+ * @param      outHotX 热点 X 出参；可为 NULL。
+ * @param      outHotY 热点 Y 出参；可为 NULL。
+ * @return     位图数据指针（静态存储期，借用）；无内建位图返回 NULL。
+ */
+const uint8_t* XCursor_swSpriteBitsFor(XCursorShape shape, int* outW,
+                                       int* outH, int* outHotX, int* outHotY);
+
+/**
+ * @brief      当前**有效形状**的内建精灵位图（软件精灵绘制取图口）。
+ * @details    按软件精灵有效形状（override 优先/形状账次之，Blank 不
+ *             会到达——swActive 已过滤）返回对应位图：Arrow/PointingHand/
+ *             Cross/IBeam/Wait 各有内建 2bit 位图（0=透明/1=黑/2=白，
+ *             行主序，与 swArrowBits 同口径）；其余形状回落箭头位图。
+ *             静态存储期，调用方只借用。平台呈现层配合 swRect/swWidth/
+ *             swHeight/swHotSpot 落笔，形状变化自动生效。
+ * @return     位图数据指针；swActive 为 false 时返回箭头位图（调用方
+ *             应先以 swActive 过滤）。
+ */
+const uint8_t* XCursor_swBits(void);
+
+/** @brief 返回当前有效形状的内建精灵位图宽（逻辑像素）。 */
+int XCursor_swWidth(void);
+
+/** @brief 返回当前有效形状的内建精灵位图高（逻辑像素）。 */
+int XCursor_swHeight(void);
+
+/**
+ * @brief      返回当前有效形状的精灵热点。
+ * @return     热点坐标（逻辑像素；XCursor_swRect 已按其计算左上角）。
+ */
+XPoint XCursor_swHotSpot(void);
+
+/**
  * @brief      内建经典箭头位图（约 12x19，黑描边白填充）。
  * @details    行主序 W*H 字节，每像素 2bit 值域按字节存储：
  *             0=透明 / 1=黑 / 2=白；颜色到面板像素值的映射（RGB565

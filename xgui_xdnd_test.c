@@ -267,8 +267,16 @@ int main(int argc, char** argv)
 
     xdnd_sendClientMessage(sourceDisplay, (Window)targetId, xdndEnter,
                            (long)source, 5L << 24, (long)uriList, None, None);
+    /* XDND 协议规定 XdndPosition 的 data.l[2] 是**根窗口坐标**；接收端
+     * 会减窗口原点换算成客户区坐标（xpwn_eventPosToLogicalXdnd：减原点
+     * → dpr → R⁻¹，见 XPlatformNativeWindow_posix.c:4304-4311）。目标
+     * 窗口由本用例置于 (30,30)（上方 XWindow_setGeometry），故"客户区
+     * (24,36)"对应根坐标 (24+30, 36+30)=(54,66)。原用例直接发 (24,36)
+     * 却断言收到 (24,36)，等于要求接收端不做换——与协议和实现均不符
+     * （实测收到 (24-30, 36-30)=(-6,6)）。 */
     xdnd_sendClientMessage(sourceDisplay, (Window)targetId, xdndPosition,
-                           (long)source, 0, (24L << 16) | 36L,
+                           (long)source, 0,
+                           ((24L + 30L) << 16) | (36L + 30L),
                            CurrentTime, None);
     /* 让源客户端确认服务器已接收 Enter/Position；仅 XFlush 时，繁忙
        回归进程中目标事件泵可能在请求尚未进入服务器队列前就结束探测。 */

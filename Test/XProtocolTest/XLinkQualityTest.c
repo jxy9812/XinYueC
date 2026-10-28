@@ -8,6 +8,9 @@
  *      （画面块类）的发送/接收吞吐、每帧平均耗时，确认无堆分配热点。
  *   三、边界与对抗：最大载荷帧、粘包（多帧一次到达）、订阅表满、
  *      畸形帧流、连续建链/断链（无资源累积）。
+ *   四、文件传输质量（XLINK_FILE_ON）：上传/下载反复 churn 断言分配器
+ *      在用字节回基线；1~4MB 大载荷上传+下载计时的吞吐宽松下限；
+ *      传输完成后 XLinkSession_stats 的字节数/帧数冒烟区间。
  *
  *   本文件不重复 XLinkTest.c 已覆盖的协议语义，只补「质量维度」。
  * @author     XinYueC 团队
@@ -16,6 +19,13 @@
 #include "XLinkCodec.h"
 #include "XLinkSession.h"
 #include "XLinkServer.h"
+#include "XLinkClient.h"
+#include "XLinkFileServer.h"
+#include "XLinkFileClient.h"
+#include "XFile.h"
+#include "XDir.h"
+#include "XDeviceFile.h"
+#include "XString.h"
 #include "XGuiRemoteLoopback.h"
 #include "XTcpSocket.h"
 #include "XCoreApplication.h"
@@ -903,11 +913,417 @@ static void xlink_qtest_boundary(void)
 }
 
 /* ========================================================================== */
+/*                        五、文件传输质量（XLINK_FILE_ON）                   */
+/* ========================================================================== */
+
+#if XLINK_FILE_ON && XLINK_CLIENT_ON
+
+/** @brief 文件质量测试根目录（相对当前工作目录，测毕递归清理）。 */
+#define XLINK_Q_FILE_DIR "xlink_ft_q"
+/** @brief churn 轮数：每轮完整建拆一套传输对象（含会话）并传一个小文件。 */
+#define XLINK_Q_FILE_CHURN_ROUNDS 10
+/** @brief churn 单轮载荷（16KB：跨 4 个默认 4KB 块，覆盖分块与 ACK 路径）。 */
+#define XLINK_Q_FILE_CHURN_BYTES (16u * 1024u)
+/** @brief 吞吐基准载荷（4MB：取 1~4MB 口径的上限）。 */
+#define XLINK_Q_FILE_BENCH_BYTES (4u * 1024u * 1024u)
+/** @brief 单方向传输等待上限（毫秒）：挂死保护，非性能断言。 */
+#define XLINK_Q_FILE_WAIT_MS 45000u
+/** @brief 客户端握手等待上限（毫秒）。 */
+#define XLINK_Q_FILE_READY_MS 8000u
+/** @brief 组合吞吐宽松下限（Mbps，上传+下载合计）：只防数量级退化，不追极限。 */
+#define XLINK_Q_FILE_MIN_MBPS 1.0
+
+/**
+ * @brief 确保测试目录存在（已存在按成功处理）。
+ * @note  目录路径相对当前工作目录，避免依赖平台临时目录 API
+ *        （口径同 XLinkTest.c 的 xfile_test_makeDir）。
+ */
+static bool xlink_q_file_ensureDir(void)
+{
+    XString* path = XString_create_utf8(XLINK_Q_FILE_DIR);
+    XFileStat stat;
+    bool ok;
+    if (!path)
+        return false;
+    /* XDir_mkdir 的 dirName 语义不符，直接经设备层建目录（见 XLinkTest）。 */
+    ok = XDeviceFile_mkdir(path, false);
+    if (!ok)
+        ok = XDeviceFile_stat(path, &stat) && stat.exists && stat.isDir;
+    XClassDelete((XClass*)path);
+    return ok;
+}
+
+/** @brief 写一个指定大小/内容的测试文件（覆盖写；口径同 XLinkTest.c）。 */
+static bool xlink_q_file_writeFile(const char* path, uint32_t size,
+                                   uint8_t seed)
+{
+    XString* name = XString_create_utf8(path);
+    XFile* file;
+    uint8_t* buffer;
+    uint32_t i;
+    int64_t written;
+
+    if (!name)
+        return false;
+    file = XFile_create_2(name);
+    XClassDelete((XClass*)name);
+    if (!file)
+        return false;
+    if (!XFile_open_2(file, XIODevice_WriteOnly | XIODevice_Create
+                             | XIODevice_Truncate, 0)) {
+        XClassDelete((XClass*)file);
+        return false;
+    }
+    buffer = (uint8_t*)XMalloc_System(size ? size : 1u);
+    if (!buffer) {
+        XClassDelete((XClass*)file);
+        return false;
+    }
+    for (i = 0; i < size; ++i)
+        buffer[i] = (uint8_t)(seed + i * 7u);
+    written = XIODevice_write_1((XIODevice*)file, (const char*)buffer,
+                                (int64_t)size);
+    XFree_System(buffer);
+    XFile_flush(file);
+    XClassDelete((XClass*)file);
+    return written == (int64_t)size;
+}
+
+/** @brief 删除测试目录（尽力而为；先恢复可写权限，见 XLinkTest.c 说明）。 */
+static void xlink_q_file_cleanup(void)
+{
+    XString* path = XString_create_utf8(XLINK_Q_FILE_DIR);
+    XDir* handle;
+    XFileStat stat;
+    if (!path)
+        return;
+    if (XDeviceFile_stat(path, &stat) && stat.exists && stat.isFile)
+        (void)XDeviceFile_setPermissions(path, (XFilePermissions)0666);
+    handle = XDir_create_2(path);
+    if (handle) {
+        (void)XDir_removeRecursively(handle);
+        XClassDelete((XClass*)handle);
+    }
+    XClassDelete((XClass*)path);
+}
+
+/**
+ * @brief 拆除一套传输四件套（NULL 安全；顺序沿 XLinkTest.c 端到端用例）。
+ * @note  先断客户端链路，再拆文件客户端、文件服务端、客户端，最后关停服务端；
+ *        对象建拆的内存对称性正是 churn 项要盯的。
+ */
+static void xlink_q_file_teardown(XLinkServer* srv, XLinkClient* cli,
+                                  XLinkFileServer* fs, XLinkFileClient* fc)
+{
+    if (cli)
+        XLinkClient_disconnectFromServer(cli);
+    if (fc) {
+        XLinkFileClient_abort(fc, XLinkFileStatus_Aborted, "cleanup");
+        XClassDelete((XClass*)fc);
+    }
+    if (fs) {
+        XLinkFileServer_deinit(fs);
+        XFree_System(fs);
+    }
+    if (cli)
+        XClassDelete((XClass*)cli);
+    if (srv) {
+        XLinkServer_close(srv);
+        XClassDelete((XClass*)srv);
+    }
+}
+
+/**
+ * @brief 搭一套文件传输「四件套」并完成握手（服务端+文件服务端+客户端+文件客户端）。
+ * @details 与 XLinkTest.c 端到端用例同口径：服务端自动端口（0）避免并发冲突；
+ *          文件能力必须在连接前声明（握手期协商），否则 File 帧被会话层丢弃；
+ *          服务端策略放开双方向与覆盖（测试沙箱内自覆盖写，磁盘占用恒定）。
+ * @return 全部成功返回 true；失败时已回收全部半成品并输出 NULL。
+ */
+static bool xlink_q_file_setup(XLinkServer** outSrv, XLinkClient** outCli,
+                               XLinkFileServer** outFs,
+                               XLinkFileClient** outFc)
+{
+    XLinkServer* srv;
+    XLinkClient* cli;
+    XLinkFileServer* fs;
+    XLinkFileClient* fc;
+    bool ok;
+
+    srv = XLinkServer_create();
+    cli = XLinkClient_create();
+    fs = (XLinkFileServer*)XMalloc_System(sizeof(XLinkFileServer));
+    fc = XLinkFileClient_create();
+    if (!srv || !cli || !fs || !fc) {
+        /* 未 init 的 fs 不能 deinit，直接释放；其余走析构 */
+        if (fc) XClassDelete((XClass*)fc);
+        if (fs) XFree_System(fs);
+        if (cli) XClassDelete((XClass*)cli);
+        if (srv) XClassDelete((XClass*)srv);
+        *outSrv = NULL; *outCli = NULL; *outFs = NULL; *outFc = NULL;
+        return false;
+    }
+    XLinkFileServer_init(fs);
+    ok = XLinkFileServer_setRootDir(fs, XLINK_Q_FILE_DIR)
+         && XLinkFileServer_setFlags(fs, XLINK_FILESRV_ALLOW_UPLOAD
+                                          | XLINK_FILESRV_ALLOW_DOWNLOAD
+                                          | XLINK_FILESRV_ALLOW_OVERWRITE);
+    if (ok) {
+        XLinkFileServer_setMaxFileBytes(fs, 0); /* 沙箱内测试文件不限大小 */
+        XLinkServer_setCapability(srv, XLinkCapability_Zlib);
+        ok = XLinkFileServer_attach(fs, srv);
+    }
+    if (ok)
+        ok = XLinkServer_listen_base(srv, "127.0.0.1", 0);
+    if (ok) {
+        uint16_t port = XTcpServer_serverPort(XLinkServer_tcpServer_const(srv));
+        XLinkClient_setHostPort(cli, "127.0.0.1", port);
+        XLinkClient_setCapability(cli, XLinkCapability_Zlib
+                                            | XLinkCapability_FileTransfer);
+        ok = XLinkClient_connectToServer(cli);
+    }
+    if (ok) {
+        uint32_t waited = 0;
+        while (!XLinkClient_isReady(cli) && waited < XLINK_Q_FILE_READY_MS) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            XLinkServer_pump(srv, xlink_q_nowMs());
+            XThread_msleep(2);
+            waited += 2;
+        }
+        ok = XLinkClient_isReady(cli);
+    }
+    if (ok)
+        ok = XLinkFileClient_attach(fc, cli);
+    if (!ok) {
+        xlink_q_file_teardown(srv, cli, fs, fc);
+        *outSrv = NULL; *outCli = NULL; *outFs = NULL; *outFc = NULL;
+        return false;
+    }
+    *outSrv = srv; *outCli = cli; *outFs = fs; *outFc = fc;
+    return true;
+}
+
+/**
+ * @brief 泵到当前传输终局（或超时）；驱动口径同 XLinkTest.c 端到端用例
+ *        （事件循环 + 服务端 pump + 文件客户端 pump；环回 TCP 上客户端会话
+ *        由 readyRead 信号驱动，文件引擎须按圈手动泵送）。
+ * @return 返回时的传输状态；超时则停在最后一个状态（由调用方判 Done）。
+ */
+static XLinkFileTransferState xlink_q_file_runTransfer(XLinkServer* srv,
+                                                       XLinkFileClient* fc,
+                                                       uint32_t budgetMs)
+{
+    uint32_t waited = 0;
+    while (XLinkFileClient_isBusy(fc) && waited < budgetMs) {
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        XLinkServer_pump(srv, xlink_q_nowMs());
+        XLinkFileClient_pump(fc, xlink_q_nowMs());
+        XThread_msleep(2);
+        waited += 2;
+    }
+    return XLinkFileClient_state(fc);
+}
+
+/**
+ * @brief 文件 churn 单轮：建四件套 -> 上传小文件 -> 下载回来 -> 全部拆光。
+ * @return 1 = 本轮全部成功；0 = 任一步失败。
+ * @note  上传/下载均为覆盖写且路径固定（服务端 churn_up.bin / 本地 dl.bin），
+ *        磁盘足迹恒定，不随轮数累积。
+ */
+static int xlink_q_file_churnRound(void)
+{
+    XLinkServer* srv = NULL;
+    XLinkClient* cli = NULL;
+    XLinkFileServer* fs = NULL;
+    XLinkFileClient* fc = NULL;
+    int pass = xlink_q_file_setup(&srv, &cli, &fs, &fc);
+
+    if (pass)
+        pass = XLinkFileClient_upload(fc, XLINK_Q_FILE_DIR "/src.bin",
+                                      "churn_up.bin", 1, NULL)
+               && xlink_q_file_runTransfer(srv, fc, XLINK_Q_FILE_WAIT_MS)
+                      == XLinkFileTransferState_Done;
+    if (pass)
+        pass = XLinkFileClient_download(fc, "churn_up.bin",
+                                        XLINK_Q_FILE_DIR "/dl.bin", 1, NULL)
+               && xlink_q_file_runTransfer(srv, fc, XLINK_Q_FILE_WAIT_MS)
+                      == XLinkFileTransferState_Done;
+    xlink_q_file_teardown(srv, cli, fs, fc);
+    return pass ? 1 : 0;
+}
+
+/**
+ * @brief 文件传输质量门禁：churn 内存回基线 / 大载荷吞吐宽松下限 / 统计冒烟。
+ * @details 走真实环回 TCP + 完整对象栈（XLinkServer/XLinkFileServer/
+ *          XLinkClient/XLinkFileClient），与 XLinkTest.c 端到端用例同口径。
+ */
+static void xlink_qtest_file(void)
+{
+    XLINK_QSECTION("五、文件传输质量");
+
+    /* 测试目录与 churn 源文件（一次写入多轮复用；必须在启用分配器统计
+       之前准备，避免夹具自身的分配污染基线）。 */
+    {
+        bool dirOk = xlink_q_file_ensureDir();
+        XLINK_QCHECK(dirOk, "文件质量测试目录创建成功");
+        if (!dirOk)
+            return;
+    }
+    {
+        bool srcOk = xlink_q_file_writeFile(XLINK_Q_FILE_DIR "/src.bin",
+                                            XLINK_Q_FILE_CHURN_BYTES, 0x3D);
+        XLINK_QCHECK(srcOk, "churn 源文件准备成功（16KB）");
+        if (!srcOk) {
+            xlink_q_file_cleanup();
+            return;
+        }
+    }
+
+    /* --- 5.1 上传/下载反复 churn：对象与会话建拆多轮，在用字节回基线 --- */
+    XMemory_setStatisticsEnabled(true);
+    {
+        int i;
+        int pass = 1;
+        size_t before;
+
+        /* 暖机一轮：真实套接字与文件引擎首次使用会触发框架懒加载
+           （事件分发器基础设施、根目录规范化等一次性分配），消耗掉之后
+           再取基线——口径同泄漏分组的服务端 churn 暖机（该处实测暖机前
+           基线差 +51544 字节且逐轮完全持平，非泄漏）。 */
+        {
+            int warm = xlink_q_file_churnRound();
+            XLINK_QCHECK(warm, "文件 churn 暖机轮（上传+下载）成功");
+        }
+        before = XMemory_statistics(XMEMORY_TYPE_SYSTEM).systemBytes;
+        for (i = 0; i < XLINK_Q_FILE_CHURN_ROUNDS; i++) {
+            if (!xlink_q_file_churnRound()) {
+                pass = 0;
+                break;
+            }
+        }
+        XLINK_QCHECK(pass, "10 轮文件传输对象/会话建拆（上传+下载）全部成功");
+        {
+            XMemoryStatistics now = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+            long delta = (long)now.systemBytes - (long)before;
+            XPrintf("        [INFO] 文件 churn 循环后在用 %zu 字节（基线 %zu，差 %ld）\n",
+                    now.systemBytes, before, delta);
+            XLINK_QCHECK(delta <= 0 || delta < 4096,
+                         "文件传输对象/会话建拆 churn 无内存泄漏（在用字节回到基线容差内）");
+        }
+        XMemory_setStatisticsEnabled(false);
+    }
+
+    /* --- 5.2 吞吐基准：4MB 上传+下载计时，断言宽松下限 ---
+       计时口径：上传发起到下载终局（含两次传输全程与中间收尾）；
+       组合字节数 = 2 × 载荷（帧头/ACK 只增不减，对下限判定有利无害）。 */
+    {
+        XLinkServer* srv = NULL;
+        XLinkClient* cli = NULL;
+        XLinkFileServer* fs = NULL;
+        XLinkFileClient* fc = NULL;
+        bool benchOk = xlink_q_file_writeFile(XLINK_Q_FILE_DIR "/bench.bin",
+                                              XLINK_Q_FILE_BENCH_BYTES, 0x5A);
+        double t0u;
+        double t1u;
+        double ms;
+        double mbps;
+        XLinkFileTransferState state;
+
+        XLINK_QCHECK(benchOk, "吞吐基准源文件准备成功（4MB）");
+        if (benchOk)
+            benchOk = xlink_q_file_setup(&srv, &cli, &fs, &fc);
+        XLINK_QCHECK(benchOk, "吞吐基准夹具握手成功（客户端 Ready）");
+        if (!benchOk) {
+            xlink_q_file_cleanup();
+            return;
+        }
+
+        t0u = xlink_q_nowUs();
+        state = XLinkFileTransferState_Failed;
+        if (XLinkFileClient_upload(fc, XLINK_Q_FILE_DIR "/bench.bin",
+                                   "bench_up.bin", 1, NULL))
+            state = xlink_q_file_runTransfer(srv, fc, XLINK_Q_FILE_WAIT_MS);
+        XLINK_QCHECK(state == XLinkFileTransferState_Done,
+                     "4MB 上传完成（状态 Done）");
+        state = XLinkFileTransferState_Failed;
+        if (XLinkFileClient_download(fc, "bench_up.bin",
+                                     XLINK_Q_FILE_DIR "/bench_dl.bin", 1, NULL))
+            state = xlink_q_file_runTransfer(srv, fc, XLINK_Q_FILE_WAIT_MS);
+        t1u = xlink_q_nowUs();
+        XLINK_QCHECK(state == XLinkFileTransferState_Done,
+                     "4MB 下载完成（状态 Done）");
+
+        ms = (t1u > t0u ? (t1u - t0u) : 1.0) / 1000.0;
+        mbps = (2.0 * (double)XLINK_Q_FILE_BENCH_BYTES * 8.0 / 1024.0 / 1024.0)
+               / (ms / 1000.0);
+        XPrintf("        [INFO] 4MB 上传+下载: %.0f ms, 组合吞吐 %.1f Mbps"
+                "（宽松下限 %.1f Mbps）\n",
+                ms, mbps, XLINK_Q_FILE_MIN_MBPS);
+        XLINK_QCHECK(mbps >= XLINK_Q_FILE_MIN_MBPS,
+                     "4MB 上传+下载组合吞吐 >= 1 Mbps（宽松下限，防数量级退化）");
+
+        /* --- 5.3 会话统计冒烟：传输完成后字节数/帧数落在合理区间 ---
+           区间推演（P=4MB，C=协商块大小帧数 ceil(P/chunk)，默认 4096 块
+           时 C=1024）：上行 DATA×C + Open/Finish/Hello，下行 ACK×C +
+           Open/Finish——引擎当前为每块必回 ACK（见 XLinkFileTransfer.c
+           xft_onData），故帧数约 2C；即使未来改为攒批 ACK 也不低于 C。
+           字节数：载荷 P 是绝对下限；线上开销 16B 帧头/帧 × 2C 约 64KB，
+           上限给 P + P/8 + 64KB 已足够宽。 */
+        {
+            XLinkSession* sess = cli ? XLinkClient_session(cli) : NULL;
+            XLinkFileTransfer* t = fc ? XLinkFileClient_transfer(fc) : NULL;
+            uint32_t chunk = t ? t->m_chunkBytes : XLINK_FILE_CHUNK_BYTES;
+            uint64_t dataFrames = chunk
+                ? ((uint64_t)XLINK_Q_FILE_BENCH_BYTES + chunk - 1) / chunk
+                : 0;
+            XLinkSessionStats st;
+            bool statsOk;
+
+            memset(&st, 0, sizeof(st));
+            XLINK_QCHECK(sess != NULL, "统计冒烟：客户端会话可访问");
+            statsOk = (sess != NULL) && XLinkSession_stats(sess, &st);
+            XLINK_QCHECK(statsOk, "统计冒烟：XLinkSession_stats 读取成功");
+            XLINK_QCHECK(st.m_bytesSent >= (uint64_t)XLINK_Q_FILE_BENCH_BYTES,
+                         "统计冒烟：发送字节 >= 上传载荷");
+            XLINK_QCHECK(st.m_bytesSent
+                              <= (uint64_t)XLINK_Q_FILE_BENCH_BYTES
+                                     + (uint64_t)XLINK_Q_FILE_BENCH_BYTES / 8
+                                     + 65536,
+                         "统计冒烟：发送字节在载荷+线头容差内");
+            XLINK_QCHECK(st.m_bytesReceived
+                              >= (uint64_t)XLINK_Q_FILE_BENCH_BYTES,
+                         "统计冒烟：接收字节 >= 下载载荷");
+            XLINK_QCHECK(st.m_bytesReceived
+                              <= (uint64_t)XLINK_Q_FILE_BENCH_BYTES
+                                     + (uint64_t)XLINK_Q_FILE_BENCH_BYTES / 8
+                                     + 65536,
+                         "统计冒烟：接收字节在载荷+线头容差内");
+            XLINK_QCHECK(st.m_framesSent >= dataFrames + 16,
+                         "统计冒烟：发送帧数 >= 数据块帧数+握手余量");
+            XLINK_QCHECK(st.m_framesSent <= 2 * dataFrames + 256,
+                         "统计冒烟：发送帧数 <= 2×数据块帧数+余量（无帧风暴）");
+            XLINK_QCHECK(st.m_framesReceived >= dataFrames + 8,
+                         "统计冒烟：接收帧数 >= 数据块帧数+握手余量");
+            XLINK_QCHECK(st.m_framesReceived <= 2 * dataFrames + 256,
+                         "统计冒烟：接收帧数 <= 2×数据块帧数+余量");
+            XLINK_QCHECK(st.m_protocolErrors == 0,
+                         "统计冒烟：全程无协议违例");
+        }
+
+        xlink_q_file_teardown(srv, cli, fs, fc);
+    }
+
+    xlink_q_file_cleanup();
+}
+
+#endif /* XLINK_FILE_ON && XLINK_CLIENT_ON */
+
+/* ========================================================================== */
 /*                        入口                                               */
 /* ========================================================================== */
 
 /**
- * @brief 运行全部 XLink 质量门禁（泄漏 / 性能 / 边界对抗）。
+ * @brief 运行全部 XLink 质量门禁（泄漏 / 性能 / 边界对抗 / 文件传输）。
  * @return 失败计数（0 表示全部通过）。
  */
 int XLinkQualityTest_run(void)
@@ -920,6 +1336,9 @@ int XLinkQualityTest_run(void)
     xlink_qtest_performance();
     xlink_qtest_throughput();
     xlink_qtest_boundary();
+#if XLINK_FILE_ON && XLINK_CLIENT_ON
+    xlink_qtest_file();
+#endif
 
     XPrintf("\n========== XLink 质量门禁完成: %d 通过, %d 失败 ==========\n",
             g_qPassed, g_qFailed);

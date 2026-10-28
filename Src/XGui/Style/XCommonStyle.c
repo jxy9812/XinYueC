@@ -31,6 +31,63 @@ static void xcs_drawArrow(XStyle* self, const XStyleOption* option,
 static XIcon* xcs_standardIcon(XStyle* self, int sp,
                                const XStyleOption* option,
                                const XWidget* widget);
+static XRect VXCommonStyle_subControlRect(XStyle* self, int cc,
+                                          const XStyleOption* opt, int sc,
+                                          const XWidget* widget);
+
+/* ==================== 微调框步进列几何（唯一真值源） ==================== */
+
+/** @brief 微调框步进列几何（对标 Qt 6.8.3 QCommonStyle::subControlRect
+ *         CC_SpinBox，qcommonstyle.cpp:4203-4245）。
+ *
+ *  @details Qt 的公式（本库此前分散在四处推导，互不一致）：
+ *      fw = PM_SpinBoxFrameWidth（frame 关闭时为 0）
+ *      bh = qMax(8, rect.height()/2 - fw)
+ *      bw = qMax(16, qMin(bh*8/5, rect.width()/4))
+ *      x  = rect.x + rect.width - fw - bw   （按钮列左缘）
+ *      y  = fw + rect.y
+ *      EditField = (fw, fw, x-fw, height-2fw)
+ *
+ *  关键：Qt 的 SC_SpinBoxEditField 宽度是 `rx = x - fw`，其中 x 是
+ *  按钮列**左缘**——故编辑区右缘恰落在按钮列左缘（贴合，无间隙）。
+ *  本函数的 EditField 宽度即按此口径给出（rx 作 width，非右边界）。
+ *
+ *  本函数是步进列几何的**唯一真值源**：样式几何（subControlRect）、
+ *  底层绘制（xcs_drawSpinBox）、QSS 子件镜像（xsss2_subControlRect）
+ *  与命中检测（XSpinBox.c）全部经由本函数派生，杜绝四方分叉。
+ *
+ *  @param style  取度量用样式（PM_SpinBoxFrameWidth 的来源；须与
+ *                实际绘制该控件的样式一致，否则预留区与实绘区错位）。
+ *  @param opt    样式选项（m_rect/m_spinFrame 有效）。
+ *  @param fwOut  输出边框宽（frame 关闭时为 0）。
+ *  @param bwOut  输出按钮列宽。
+ *  @param bhOut  输出上/下按钮各半高。
+ *  @param bxOut  输出按钮列左缘（绝对坐标）。
+ *  @param byOut  输出上按钮顶缘（绝对坐标）。
+ */
+static void xcs_spinBoxColumn(XStyle* style, const XStyleOption* opt,
+                               int* fwOut, int* bwOut, int* bhOut,
+                               int* bxOut, int* byOut)
+{
+    int fw = opt->m_spinFrame
+        ? XStyle_pixelMetric(style, XStylePM_SpinBoxFrameWidth, opt)
+        : 0;
+    int bh = opt->m_rect.height / 2 - fw;
+    int bw;
+    if (bh < 8) bh = 8;
+    /* Qt 口径：bw = qMax(16, qMin(bh*8/5, w/4))——qMax 在 qMin 之外，
+     * 即 16px 下限**优先于** w/4 上限。本库此前顺序相反（先保底 16
+     * 再按 w/4 压），窄控件下得出 bw=10 而 Qt 为 16：按钮列比 Qt 窄
+     * 6px，绘制侧仍画 16px → 按钮列压住预留编辑区（w=40 时压 4px）。 */
+    bw = bh * 8 / 5;
+    if (bw > opt->m_rect.width / 4) bw = opt->m_rect.width / 4;
+    if (bw < 16) bw = 16;
+    *fwOut = fw;
+    *bwOut = bw;
+    *bhOut = bh;
+    *bxOut = opt->m_rect.x + opt->m_rect.width - fw - bw;
+    *byOut = fw + opt->m_rect.y;
+}
 
 /* 调色板角色取色（option 内嵌调色板）。 */
 
@@ -386,10 +443,16 @@ static void xcs_drawArrow(XStyle* self, const XStyleOption* option,
     fg = xcs_buttonText(option);
     cx = r.x + r.width / 2;
     cy = r.y + r.height / 2;
-    hw = r.width / 3;
-    if (hw < 2) hw = 2;
-    hh = r.height / 3;
-    if (hh < 2) hh = 2;
+    /* [箭头比例 2026-10-27 视觉走查] 此前 hw=r.width/3、hh=r.height/3
+     * 分别取半宽半高：下拉按钮区是 16x26 的窄条 → 三角形被拉成
+     * 10x16 的**针状**（跨页通用缺陷：所有 combobox 下拉箭头皆如此）。
+     * 改为同基准取小边的一半度：等边三角，宽高自洽。 */
+    {
+        int size = r.width < r.height ? r.width : r.height;
+        hw = size / 3;
+        if (hw < 2) hw = 2;
+        hh = hw;
+    }
     if (dir == 0) {          /* 下：顶边两点 + 底尖。 */
         tri[0].x = cx - hw; tri[0].y = cy - hh;
         tri[1].x = cx + hw; tri[1].y = cy - hh;
@@ -1203,13 +1266,22 @@ static void xcs_drawSpinBox(XStyle* self, const XStyleOption* option,
 {
     XStyleOption copy = *option;
     XRect r = option->m_rect;
-    int buttonW = 16;
-    int bh = r.height / 2;
-    int bx = r.x + r.width - buttonW;
+    int fw;
+    int bw;
+    int bh;
+    int bx;
+    int by;
     bool upEnabled = (option->m_spinStepEnabled & 0x01) != 0;
     bool downEnabled = (option->m_spinStepEnabled & 0x02) != 0;
     if (!option || !painter) return;
     if (r.width <= 2 || r.height <= 2) return;
+    /* 步进列几何取自唯一真值源 xcs_spinBoxColumn（与样式几何
+     * VXCommonStyle_subControlRect(CC_SpinBox) 同源）。此前本函数
+     * 写死 16px 列 + h/2 均分 + 右缘齐平，与样式侧公式分叉：绘制
+     * 列左缘 44（w=60）而预留编辑区右缘 42（fw=2 口径）——实绘
+     * 步进列压住预留编辑区 2px，正是「上下箭头压输入框右边框」的
+     * 成因（框架绘制级，非 demo 布局问题）。 */
+    xcs_spinBoxColumn(self, option, &fw, &bw, &bh, &bx, &by);
     /* frame。 */
     if (option->m_spinFrame) {
         XStyleOption frame = *option;
@@ -1249,22 +1321,26 @@ static void xcs_drawSpinBox(XStyle* self, const XStyleOption* option,
             }
         }
     }
-    /* 按钮区背景（与原 XSpinBox 一致：按钮列填充 + 分隔线）。 */
+    /* 按钮区背景（与原 XSpinBox 一致：按钮列填充 + 分隔线）。
+     * 分隔线画在按钮列**左缘之外 1px**（bx-1），与编辑区右缘
+     * （=bx）相邻而不重叠——Qt 的编辑区右缘恰为按钮列左缘
+     * （xcs_spinBoxColumn 注释），故分隔线落在两者之间的 1px 缝
+     * 内，不再压住输入框右边框。 */
     {
         XRect area;
-        XRect_init(&area, bx, r.y, buttonW, r.height);
+        XRect_init(&area, bx, by, bw, bh * 2);
         XPainter_fillRect(painter, &area,
             xcs_color(option, XPaletteColorRole_Button));
         XPainter_fillRect(painter,
-            &(XRect){bx - 1, r.y, 1, r.height},
+            &(XRect){bx - 1, by, 1, bh * 2},
             xcs_color(option, XPaletteColorRole_Dark));
     }
     /* 上按钮。 */
     if (option->m_spinSymbols != 2 /* NoButtons 不达此处 */) {
         XStyleOption up = copy;
         up.m_rect.x = bx;
-        up.m_rect.y = r.y;
-        up.m_rect.width = buttonW;
+        up.m_rect.y = by;
+        up.m_rect.width = bw;
         up.m_rect.height = bh;
         up.m_type = XStylePE_PanelButtonBevel;
         up.m_state = option->m_state & ~(uint32_t)XStyleState_Sunken;
@@ -1288,8 +1364,8 @@ static void xcs_drawSpinBox(XStyle* self, const XStyleOption* option,
         {
             XStyleOption down = copy;
             down.m_rect.x = bx;
-            down.m_rect.y = r.y + bh;
-            down.m_rect.width = buttonW;
+            down.m_rect.y = by + bh;
+            down.m_rect.width = bw;
             down.m_rect.height = bh;
             down.m_type = XStylePE_PanelButtonBevel;
             down.m_state = option->m_state &
@@ -3890,22 +3966,19 @@ static XRect VXCommonStyle_subControlRect(XStyle* self, int cc,
         break;
     }
     case XStyleCC_SpinBox: {
-        int fw = opt->m_spinFrame
-            ? XStyle_pixelMetric((XStyle*)self, XStylePM_SpinBoxFrameWidth,
-                                 opt) : 0;
-        int bh = opt->m_rect.height / 2 - fw;
+        int fw;
         int bw;
+        int bh;
         int x;
         int y;
         int lx;
         int rx;
-        if (bh < 8) bh = 8;
-        bw = bh * 8 / 5;
-        if (bw < 16) bw = 16;
-        if (bw > opt->m_rect.width / 4) bw = opt->m_rect.width / 4;
-        y = fw + opt->m_rect.y;
-        x = opt->m_rect.x + opt->m_rect.width - fw - bw;
+        /* 步进列几何取自唯一真值源（与 xcs_drawSpinBox 同源，见
+         * xcs_spinBoxColumn）。 */
+        xcs_spinBoxColumn(self, opt, &fw, &bw, &bh, &x, &y);
         lx = fw;
+        /* rx 是编辑区**宽度**（Qt QRect(lx, fw, rx, h-2fw) 同义），
+         * 其右缘恰落在按钮列左缘 x 上（贴合，无间隙）。 */
         rx = x - fw;
         switch (sc) {
         case XStyleSC_SpinBoxUp:

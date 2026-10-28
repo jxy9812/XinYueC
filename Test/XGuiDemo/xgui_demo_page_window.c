@@ -1,7 +1,7 @@
 /******************************************************************************
  * @file       xgui_demo_page_window.c
  * @brief      XGuiWindowDemo「窗口设置」页（系统设置：皮肤/边框/状态栏/
- *             最大化/窗口方向/鼠标显示）。
+ *             最大化/画布旋转/窗口方向/鼠标显示）。
  * @details    契约见 xgui_demo_pages.h（demo_page_window_settings_build /
  *             demo_page_window_settings_autotest / adapt）。
  *
@@ -21,12 +21,28 @@
  *                （内容区底部预留 26px 同步收放）；
  *              - 最大化：XWidget_showMaximized/showNormal（进入方向切换
  *                前若最大化先还原，避免几何被最大化接管）；
- *              - 窗口方向四方位：0° 横屏/90° 竖屏/180° 倒置横屏/270°
- *                倒置竖屏=窗口外框几何旋转（90°/270° 宽高对调；0° 基准
- *                尺寸懒捕获共用；按主屏可用几何钳位防越屏）；
+ *              - **画布旋转**（2026-10-26 由原「窗口方向」改名）：四方位
+ *                0°/90°/180°/270° = **窗口内容**在应用内逐像素转置
+ *                （框架 XWindow_setContentRotation，系统不知情；适合
+ *                「只转这一个窗口」的场景），0° 基准尺寸懒捕获共用，
+ *                按主屏可用几何钳位防越屏；
+ *              - **窗口方向**（2026-10-26 新增）：向**系统**申请显示
+ *                方向（平台契约 XPlatformOrientation）——安卓走
+ *                Activity.setRequestedOrientation、X11 走 Xrandr 屏幕
+ *                旋转、Win32 走 DEVMODE；系统采纳后物理显示随之转，
+ *                系统 UI 一并转，应用侧收到一次 resize。与「画布旋转」
+ *                是两件事（正交）：转屏时画布旋转角应为 0°。平台不支持
+ *                时该行置灰并如实说明（不编造能力）；
  *              - 鼠标光标：XGuiApplication 覆盖光标栈——勾选=清空栈
  *                （确保 Blank override 出栈，fbdev 软件精灵恢复跟随）、
  *                取消勾选=压入 Blank（隐藏，幂等防栈堆积）；
+ *              - 屏幕休眠（2026-10-26）：屏幕电源两档（正常/熄屏），
+ *                熄屏=**关屏但系统继续运行**（事件循环与渲染照常）；
+ *                两个独立超时（自动熄屏 / 自动系统休眠，档位
+ *                从不/1/3/5/10/30 分钟）注入框架侧空闲原语；空闲
+ *                判定=无鼠标/键盘/滚轮/触摸输入；熄屏后任一输入即
+ *                唤醒；两个维度能力各自独立探测，不支持项在状态行
+ *                如实标出；另有「立即熄屏/立即唤醒」手动入口；
  *              - 「复位默认」一键恢复（全部控件回默认态并重新应用）。
  *
  *             autotest 口径：全程非阻塞，直呼槽/真实控件路径，逐项切换
@@ -56,6 +72,9 @@
 #include "XListView.h"
 #include "XAbstractItemView.h"
 #include "XEvent.h"
+#include "XApplication.h" /* 应用级样式表入口（换肤=安装+全顶层重绘）。 */
+#include "XPlatformPower.h" /* 屏幕电源/系统电源契约（熄屏与休眠设置页）。 */
+#include "XPlatformOrientation.h" /* 显示方向契约（向系统申请转屏，2026-10-26）。 */
 #include "xgui_demo_theme.h"
 #include "xgui_demo_pages.h"
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
@@ -261,9 +280,26 @@ static struct
 
     /* ---- 方向与鼠标 ---- */
     XLabel*      m_capOrient;    /**< 「方向与鼠标」分组标题。 */
-    XLabel*      m_capOrientName; /**< 「窗口方向」行标题。 */
-    XComboBox*   m_orientCombo;  /**< 横屏/竖屏。 */
+    XLabel*      m_capCanvasName;/**< 「画布旋转」行标题（应用内内容转置）。 */
+    XComboBox*   m_canvasCombo;  /**< 画布旋转四方位（0/90/180/270）。 */
+    XLabel*      m_capScreenOrientName; /**< 「窗口方向」行标题（向系统申请）。 */
+    XComboBox*   m_screenOrientCombo;   /**< 窗口方向档位（跟随系统/四方位）。 */
     XCheckBox*   m_mouseCheck;   /**< 显示鼠标光标。 */
+    XLabel*      m_capCursorShapeName; /**< 「鼠标外形」行标题（2026-10-27）。 */
+    XComboBox*   m_cursorShapeCombo;   /**< 鼠标外形档位（五款内建形状）。 */
+
+    /* ---- 屏幕休眠（2026-10-26）---- */
+    XLabel*      m_capPower;      /**< 「屏幕休眠」分组标题。 */
+    XLabel*      m_capBlankName;  /**< 「自动熄屏」行标题。 */
+    XComboBox*   m_blankCombo;    /**< 自动熄屏超时（从不/1/3/5/10/30 分钟）。 */
+    XLabel*      m_capSuspendName;/**< 「自动休眠」行标题。 */
+    XComboBox*   m_suspendCombo;  /**< 自动系统挂起超时（同上档位）。 */
+    XPushButton* m_blankBtn;      /**< 立即熄屏。 */
+    XLabel*      m_capWakeName;   /**< 「唤醒方式」行标题。 */
+    XCheckBox*   m_wakeMouseCheck;/**< 鼠标唤醒（熄屏后由鼠标唤醒）。 */
+    XCheckBox*   m_wakeKeyCheck;  /**< 键盘唤醒。 */
+    XCheckBox*   m_wakeTouchCheck;/**< 触摸唤醒。 */
+    XLabel*      m_powerStateLabel;/**< 能力与当前态行（熄屏/系统休眠支持情况）。 */
 
     /* ---- 操作与反馈 ---- */
     XPushButton* m_resetBtn;     /**< 复位默认。 */
@@ -273,6 +309,8 @@ static struct
     bool         m_syncing;      /**< 回读/编程应用中（抑制槽重复生效）。 */
     bool         m_rotationProbed;    /**< 旋转平台能力是否已探测（一次性）。 */
     bool         m_rotationSupported; /**< 平台是否支持软件内容旋转。 */
+    bool         m_screenOrientSupported; /**< 平台是否支持向系统申请转屏。 */
+    int          m_cursorShapeIdx; /**< 鼠标外形影子档位（0=箭头）。 */
     int          m_savedW;       /**< 0° 基准宽（懒捕获；0=未捕获）。 */
     int          m_savedH;       /**< 0° 基准高（四方位共用）。 */
 
@@ -281,8 +319,66 @@ static struct
     XBoxLayout   m_skinRow;      /**< 「主题」标题+下拉行（水平）。 */
     XBoxLayout   m_frameCol;     /**< 「窗口框架」开关列（垂直，含行）。 */
     XBoxLayout   m_frameRow;     /**< 边框+状态栏开关行（水平）。 */
-    XBoxLayout   m_orientRow;    /**< 窗口方向+鼠标开关行（水平）。 */
+    XBoxLayout   m_frameRow2;    /**< 最大化+鼠标光标开关行（水平）。 */
+    XBoxLayout   m_frameRow3;    /**< 鼠标外形标题+下拉行（水平，2026-10-27）。 */
+    XBoxLayout   m_orientCol;    /**< 方向组（垂直：画布旋转行+窗口方向行）。 */
+    XBoxLayout   m_orientRow;    /**< 画布旋转标题+下拉行（水平）。 */
+    XBoxLayout   m_screenOrientRow; /**< 「窗口方向」标题+下拉行（水平）。 */
+    XBoxLayout   m_powerCol;     /**< 「屏幕休眠」组（垂直，含三行）。 */
+    XBoxLayout   m_powerRow1;    /**< 自动熄屏行（标题+下拉）。 */
+    XBoxLayout   m_powerRow2;    /**< 自动休眠行（标题+下拉）。 */
+    XBoxLayout   m_powerRow3;    /**< 立即熄屏 + 能力/状态行。 */
+    XBoxLayout   m_powerRow4;    /**< 唤醒方式行（标题 + 三个开关）。 */
 } s_wn;
+
+/* ==================== 鼠标外形档位表（2026-10-27） ==================== */
+
+/** @brief 鼠标外形档位（索引=下拉序；值=XCursorShape）。
+ *  @details 五款内建形状跨平台视觉一致：同一份 2bit 位图素材——
+ *           fbdev/安卓软件精灵直接绘制、X11/Win32 后端转原生位图光标
+ *           （XCursor_swSpriteBitsFor），不再各自映射系统形状。 */
+static const struct {
+    XCursorShape shape; /**< XCursorShape 值。 */
+    const char*  text;  /**< 下拉条目文本。 */
+} kCursorShapes[] = {
+    { XCursor_Arrow,        "\xE7\xAE\xAD\xE5\xA4\xB4" },   /* 箭头 */
+    { XCursor_PointingHand, "\xE6\x89\x8B\xE5\x9E\x8B" },   /* 手型 */
+    { XCursor_Cross,        "\xE5\x8D\x81\xE5\xAD\x97" },   /* 十字 */
+    { XCursor_IBeam,        "\xE6\x96\x87\xE6\x9C\xAC" },   /* 文本 */
+    { XCursor_Wait,         "\xE7\xAD\x89\xE5\xBE\x85" }    /* 等待 */
+};
+
+/** @brief 鼠标外形档位条目数。 */
+#define WN_CURSOR_SHAPE_COUNT ((int)(sizeof(kCursorShapes) / sizeof(kCursorShapes[0])))
+
+/* ==================== 休眠超时档位表 ==================== */
+
+/** @brief 熄屏/休眠超时档位（索引 0=从不；档位与页面两个下拉同源）。
+ *  @note  框架只提供「空闲多久」原语，超时阈值是应用策略，由本页注入
+ *         （XPlatformPower_setIdleTimeout/setSuspendTimeout）。 */
+static const struct {
+    const char* text; /**< 下拉条目文本。 */
+    int64_t     ms;   /**< 超时毫秒（0=从不）。 */
+} kPowerTimeouts[] = {
+    { "\xE4\xBB\x8E\xE4\xB8\x8D",                 0 },
+    { "1 \xE5\x88\x86\xE9\x92\x9F",  60LL * 1000 },
+    { "3 \xE5\x88\x86\xE9\x92\x9F", 180LL * 1000 },
+    { "5 \xE5\x88\x86\xE9\x92\x9F", 300LL * 1000 },
+    { "10 \xE5\x88\x86\xE9\x92\x9F", 600LL * 1000 },
+    { "30 \xE5\x88\x86\xE9\x92\x9F", 1800LL * 1000 }
+};
+
+/** @brief 档位表条目数。 */
+#define WN_POWER_TIMEOUT_COUNT ((int)(sizeof(kPowerTimeouts) / sizeof(kPowerTimeouts[0])))
+
+/** @brief 超时毫秒 → 档位索引（无匹配回落 0=从不）。 */
+static int wn_timeoutIndex(int64_t ms)
+{
+    int i;
+    for (i = 0; i < WN_POWER_TIMEOUT_COUNT; i++)
+        if (kPowerTimeouts[i].ms == ms) return i;
+    return 0;
+}
 
 /* ==================== 内部辅助 ==================== */
 
@@ -321,11 +417,61 @@ static void wn_applySkin(int index)
         if (hints) XStyleHints_setColorScheme(
             hints, XStyleHintsColorScheme_Light);
     }
-    if (!XStyle_installStyleSheet(css))
-        wn_report("\xE7\x9A\xAE\xE8\x82\xA4\xE6\xA0\xB7\xE5\xBC\x8F\xE8\xA1\xA8\xE5\xAE\x89\xE8\xA3\x85\xE5\xA4\xB1\xE8\xB4\xA5");
+    /* [2026-10-26 换肤不重绘根修] 改走应用级入口：XApplication_setStyleSheet_
+       2 = 安装样式表 + 全部顶层窗口 update（对标 Qt QApplication::
+       setStyleSheet 的 repolish 可见等价）。此前直呼 XStyle_installStyleSheet
+       ——该层按契约只换规则不动重绘（「重绘调度由调用方承担」），而本页
+       的兜底 demo_repaint 在静态场景缓存关（默认）时只标 FPS 悬浮层区域，
+       调色板广播又因顶层注册表长在 XApplication 子类上而静默失效（demo 只
+       创建 XGuiApplication）→ DIRECT 渲染模式（安卓/嵌入式）下整页留旧
+       配色，点其它控件才被带着重绘。桌面 FULL 模式每次 PAINT 整窗重画，
+       把两条失效全遮住了。 */
+    /* 对标 Qt QApplication::setStyleSheet：void 返回，安装失败静默回落
+       默认规则（与 Qt 一致），不另设错误通道。 */
+    XApplication_setStyleSheet_2(css);
     /* 换表+方案联动只影响后续绘制：主窗静态基底（窗口背景/标题栏带）
-       带缓存，显式失效重建并整窗重绘（否则内容区留旧浅底=白底白字）。 */
+       带缓存，显式失效重建并整窗重绘（否则内容区留旧浅底=白底白字）。
+       上面的全顶层 update 已含整窗；本调用补静态场景缓存脏标记
+       （缓存开构建下基底重建走这里）。 */
     demo_main_sceneInvalidate(s_wn.m_user);
+}
+
+/** @brief 刷新电源能力与当前态标签（能力位按维度分别显示，不支持项
+ *         如实标出——UI 不得让用户点了才发现本平台做不到）。 */
+static void wn_refreshPowerState(void)
+{
+    char buf[192];
+    unsigned caps = XPlatformPower_capabilities();
+    bool off = XPlatformPower_isScreenOff();
+    snprintf(buf, sizeof(buf),
+             "%s  |  %s  |  %s",
+             off ? "\xE5\xB7\xB2\xE7\x86\x84\xE5\xB1\x8F"
+                 : "\xE5\xBD\x93\xE5\x89\x8D\xEF\xBC\x9A\xE6\xAD\xA3\xE5\xB8\xB8",
+             (caps & (unsigned)XPlatformPowerCap_ScreenControl)
+                 ? "\xE7\x86\x84\xE5\xB1\x8F\xE6\x94\xAF\xE6\x8C\x81"
+                 : ((caps & (unsigned)XPlatformPowerCap_ScreenTimeout)
+                        /* 无主动关屏原语、但能把「屏幕超时」交给系统——
+                           如安卓：息屏由系统计时执行。 */
+                        ? "\xE7\x86\x84\xE5\xB1\x8F\xE7\x94\xB1\xE7\xB3\xBB\xE7\xBB\x9F\xE5\xA7\x94\xE6\x89\x98"
+                        : "\xE7\x86\x84\xE5\xB1\x8F\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81"),
+             (caps & (unsigned)XPlatformPowerCap_SystemSuspend)
+                 ? "\xE7\xB3\xBB\xE7\xBB\x9F\xE4\xBC\x91\xE7\x9C\xA0\xE6\x94\xAF\xE6\x8C\x81"
+                 : "\xE7\xB3\xBB\xE7\xBB\x9F\xE4\xBC\x91\xE7\x9C\xA0\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81");
+    if (s_wn.m_powerStateLabel)
+        XLabel_setText_2(s_wn.m_powerStateLabel, buf);
+}
+
+/** @brief 「窗口方向」档位 ↔ 下拉索引互转。
+ *  @param degrees 角度（0/90/180/270）或 XPLATFORM_ORIENTATION_AUTO。
+ *  @return 下拉索引（0=跟随系统，1..4=四方位）；角度非法返回 0。 */
+static int wn_screenOrientIndex(int degrees)
+{
+    if (degrees == XPLATFORM_ORIENTATION_AUTO) return 0;
+    if (degrees == 0)   return 1;
+    if (degrees == 90)  return 2;
+    if (degrees == 180) return 3;
+    if (degrees == 270) return 4;
+    return 0;
 }
 
 /** @brief 页面控件 ← 主窗当前态回读（build/复位共用；m_syncing 抑制槽）。 */
@@ -350,9 +496,16 @@ static void wn_syncFromWindow(void)
     /* 方向回读（2026-10-18）：改读**有效旋转角**，不再按宽高比推断
        （h>w 在 180° 下同样成立，会把 180/270 误打回 0/1；且 90° 下逻辑
        宽高是竖的，footprint 对调在平台层完成，本页读到的仍是逻辑值）。 */
-    if (s_wn.m_orientCombo)
-        XComboBox_setCurrentIndex(s_wn.m_orientCombo,
+    if (s_wn.m_canvasCombo)
+        XComboBox_setCurrentIndex(s_wn.m_canvasCombo,
                                   XWidget_contentRotationDegrees(top) / 90);
+    /* 窗口方向回读（2026-10-26）：读**影子值**（本应用最近一次成功受理
+       的申请），而非平台的实时方向——实时方向在转屏动画期间会抖动，
+       且部分平台（如 X11）根本没有回读面。影子值是界面回显的权威。 */
+    if (s_wn.m_screenOrientCombo)
+        XComboBox_setCurrentIndex(s_wn.m_screenOrientCombo,
+                                  wn_screenOrientIndex(
+                                      XPlatformOrientation_lastRequested()));
     /* 皮肤回读：深色方案→首个深色档（墨蓝/暖橙/森绿同方案不可分辨，
      * 取 3）；浅色/未指定→浅色档。鼠标回读：覆盖光标栈空=显示。 */
     if (s_wn.m_skinCombo) {
@@ -363,10 +516,77 @@ static void wn_syncFromWindow(void)
             idx = 3;
         XComboBox_setCurrentIndex(s_wn.m_skinCombo, idx);
     }
-    if (s_wn.m_mouseCheck)
-        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_mouseCheck,
-                                   XGuiApplication_overrideCursor() == NULL);
+    /* 鼠标回读（2026-10-27 外形选择语义）：显示态=**非隐藏态**——
+       即「栈空（用户未表达，精灵/硬件光标按形状账默认显示）」或
+       「栈顶非 Blank（显式压入的形状）」，唯「栈顶=Blank」为隐藏。
+       与精灵可见性同源（软件精灵 swActive 的形状判据=有效形状非
+       Blank，栈空时即形状账默认——非 Blank），**不需要**按栈判空回
+       读：安卓/fbdev 上栈空但精灵在画，按「栈空=未勾」回读会把显示
+       读成隐藏（真机实证）。外形下拉回读栈顶形状在档位表中的下标
+       （隐藏态保持影子档位）。 */
+    {
+        const XCursor* top = XGuiApplication_overrideCursor();
+        bool shapeShown = !(top && XCursor_shape(top) == XCursor_Blank);
+        int ci;
+        if (s_wn.m_mouseCheck)
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_mouseCheck,
+                                       shapeShown);
+        if (top && shapeShown) {
+            for (ci = 0; ci < WN_CURSOR_SHAPE_COUNT; ci++)
+                if (kCursorShapes[ci].shape == XCursor_shape(top)) {
+                    s_wn.m_cursorShapeIdx = ci;
+                    break;
+                }
+        }
+        if (s_wn.m_cursorShapeCombo)
+            XComboBox_setCurrentIndex(s_wn.m_cursorShapeCombo,
+                                      s_wn.m_cursorShapeIdx);
+    }
+    /* 电源策略回读：一次取回两个阈值 + 唤醒来源掩码。 */
+    if (s_wn.m_blankCombo || s_wn.m_suspendCombo) {
+        XPlatformPowerPolicy policy;
+        XPlatformPower_policy(&policy);
+        if (s_wn.m_wakeMouseCheck)
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeMouseCheck,
+                (policy.m_wakeInputs &
+                 (unsigned)XPlatformPowerInputMouse) != 0u);
+        if (s_wn.m_wakeKeyCheck)
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeKeyCheck,
+                (policy.m_wakeInputs &
+                 (unsigned)XPlatformPowerInputKeyboard) != 0u);
+        if (s_wn.m_wakeTouchCheck)
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeTouchCheck,
+                (policy.m_wakeInputs &
+                 (unsigned)XPlatformPowerInputTouch) != 0u);
+        if (s_wn.m_blankCombo)
+            XComboBox_setCurrentIndex(s_wn.m_blankCombo,
+                                      wn_timeoutIndex(policy.m_screenOffMs));
+        if (s_wn.m_suspendCombo)
+            XComboBox_setCurrentIndex(s_wn.m_suspendCombo,
+                                      wn_timeoutIndex(policy.m_systemSuspendMs));
+    }
     s_wn.m_syncing = false;
+    wn_refreshPowerState();
+}
+
+/** @brief 窗口状态信号槽：整页回读（windowStateChanged → 复选框态）。 */
+/** @brief 窗口状态改变 → 整页回读（主窗 changeEvent 推入）。
+ *
+ *  @details 通知链（2026-10-28 对齐 Qt 定稿）：任何来源的窗口状态变化
+ *  （软件请求路径 XWidget_setWindowState 尾部直派；平台回写路径
+ *  XWindow_reportWindowStateChanged 发窗口事件、经 XWidgetWindow 桥
+ *  转发——对标 Qt QWidgetWindow::event 的 WindowStateChange 桥接）
+ *  最终都以 XEVENT_TYPE_WINDOW_STATE_CHANGE 送达**顶层控件**的
+ *  changeEvent（Qt 全路径同语义）。主窗 VDemoWin_changeEvent 收到后
+ *  调本钩子；本页只消费事件，不再自行订阅窗口信号——fbdev 自启
+ *  `--page 19 --fullscreen` 时页面 build 早于建窗，一次性信号接线在
+ *  判空处跳过后永不重试，启动全屏的「已连接(轮询中)」漏勾实证信号
+ *  方案存在订阅时序缺口，事件方案无此时序面。与用户点击走同一
+ *  m_syncing 抑制路径，重复推入幂等。 */
+void demo_page_window_settings_syncFromWindow(void)
+{
+    if (!s_wn.m_ready) return;
+    wn_syncFromWindow();
 }
 
 /* ==================== 槽 ==================== */
@@ -504,7 +724,7 @@ static void wn_fullSlot(XObject* receiver, XVarList* args)
     }
 }
 
-/** @brief 窗口方向：横竖屏宽高对调（进竖屏存横屏尺寸；按屏钳位）。 */
+/** @brief 画布旋转：横竖屏宽高对调（进竖屏存横屏尺寸；按屏钳位）。 */
 /** @brief 内存安全阀阈值（kB）：换向（角度真变化）前 MemAvailable 低于
  *         该值即拒绝。默认 8192（8MB，覆盖换向重建峰值 + 全帧重绘 +
  *         系统全局波动的余量）；环境变量 XGUI_ROT_MEM_FLOOR_KB 覆写
@@ -559,7 +779,7 @@ static bool wn_memFloorOk(void)
     return true;
 }
 
-/** @brief 窗口方向应用（0/90/180/270；基准=0° 横屏尺寸）。
+/** @brief 画布旋转应用（0/90/180/270；基准=0° 横屏尺寸）。
  * @details 四方位只旋转窗口外框几何：0°/180° 同基准宽、90°/270° 宽高
  *          对调，按主屏可用几何钳位防越屏；最大化先还原（几何由窗口
  *          状态接管）。基准尺寸懒捕获（首次离开 0° 时若未存，按当前
@@ -567,7 +787,7 @@ static bool wn_memFloorOk(void)
  * @return  1=已应用；0=平台不支持；-1=内存安全阀拒绝（2026-10-23，
  *          角度真变化且 MemAvailable 低于 wn_memFloorKb 阈值——不部分
  *          生效、不留半初始化状态，内存回升后重试即可）。 */
-static int wn_orientApply(int deg, int* outW, int* outH)
+static int wn_canvasApply(int deg, int* outW, int* outH)
 {
     XWidget* top = wn_toplevel();
     XScreen* screen;
@@ -577,7 +797,7 @@ static int wn_orientApply(int deg, int* outW, int* outH)
     bool wasMax;
     bool wasFull;
     if (!top) return 0; /* 无顶层=探测必败（原裸 return 非零值返回 UB，告警修）。 */
-    /* 内存安全阀（2026-10-23）：角度真变化才查——同角重应用（wn_orientApply
+    /* 内存安全阀（2026-10-23）：角度真变化才查——同角重应用（wn_canvasApply
        二次置闩路径）与页面构建期的能力探测（直呼 setter，不经本函数）
        不受阀影响。拒绝发生在任何状态改动之前：不 showNormal、不设角、
        不改几何，窗口保持当前方向原样（无半初始化态）。 */
@@ -620,8 +840,8 @@ static int wn_orientApply(int deg, int* outW, int* outH)
             top && top->m_windowHandle
                 ? XWindow_rotationSupported((XWindow*)top->m_windowHandle)
                 : false;
-        if (!s_wn.m_rotationSupported && s_wn.m_orientCombo)
-            XWidget_setEnabled((XWidget*)s_wn.m_orientCombo, false);
+        if (!s_wn.m_rotationSupported && s_wn.m_canvasCombo)
+            XWidget_setEnabled((XWidget*)s_wn.m_canvasCombo, false);
         fprintf(stderr, "[WN] rot probe: supported=%d top=%p handle=%p\n",
                 (int)s_wn.m_rotationSupported, (void*)top,
                 top ? top->m_windowHandle : NULL);
@@ -708,7 +928,7 @@ static int wn_orientApply(int deg, int* outW, int* outH)
     return 1;
 }
 
-static void wn_orientSlot(XObject* receiver, XVarList* args)
+static void wn_canvasSlot(XObject* receiver, XVarList* args)
 {
     static const char* const kNames[4] = {
         "\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "0" "\xC2\xB0\xEF\xBC\x89",
@@ -722,10 +942,10 @@ static void wn_orientSlot(XObject* receiver, XVarList* args)
     int w = 0;
     int h = 0;
     (void)receiver; (void)args;
-    if (!s_wn.m_orientCombo || s_wn.m_syncing) return;
-    index = XComboBox_currentIndex(s_wn.m_orientCombo);
+    if (!s_wn.m_canvasCombo || s_wn.m_syncing) return;
+    index = XComboBox_currentIndex(s_wn.m_canvasCombo);
     if (index < 0 || index > 3) index = 0;
-    rc = wn_orientApply(index * 90, &w, &h);
+    rc = wn_canvasApply(index * 90, &w, &h);
     if (rc < 0)
     {
         /* 内存安全阀拒绝（2026-10-23）：明确文案而非静默，方向保持原样；
@@ -752,35 +972,236 @@ static void wn_orientSlot(XObject* receiver, XVarList* args)
     wn_report(buf);
 }
 
-/** @brief 鼠标光标显隐：覆盖光标栈压 Blank（隐藏）/ 清空栈（恢复显示）。
- * @details fbdev 触摸跟随软件精灵的有效形状取覆盖栈顶（XCursor.c
- *          xcursor_swEffectiveShape：非空 override 优先，Blank=停画），
- *          本页是全库唯一覆盖栈用户，开关即屏上光标真实显隐。 */
-static void wn_mouseSlot(XObject* receiver, XVarList* args)
+/** @brief 「窗口方向」变更：向系统申请显示方向（转屏）。
+ *  @details 与「画布旋转」槽是两件事：这里改的是**物理显示朝向**——
+ *          安卓走 Activity.setRequestedOrientation、X11 走 Xrandr 屏幕
+ *          旋转、Win32 走 DEVMODE；系统采纳后系统 UI 一并转、应用侧收到
+ *          一次 resize。申请是**异步**的，故文案只说「已申请」，不说
+ *          「已转」；平台拒绝或不支持时如实报失败并把下拉框回读到实际
+ *          影子值（不留一个没生效的档位在框里）。 */
+static void wn_screenOrientSlot(XObject* receiver, XVarList* args)
 {
-    bool show;
+    static const char* const kNames[5] = {
+        "\xE8\xB7\x9F\xE9\x9A\x8F\xE7\xB3\xBB\xE7\xBB\x9F",
+        "\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "0" "\xC2\xB0\xEF\xBC\x89",
+        "\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "90" "\xC2\xB0\xEF\xBC\x89",
+        "\xE5\x80\x92\xE7\xBD\xAE\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "180" "\xC2\xB0\xEF\xBC\x89",
+        "\xE5\x80\x92\xE7\xBD\xAE\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "270" "\xC2\xB0\xEF\xBC\x89"
+    }; /* 跟随系统/横屏(0°)/竖屏(90°)/倒置横屏(180°)/倒置竖屏(270°) */
+    char buf[96];
+    int index;
+    int degrees;
     (void)receiver; (void)args;
-    if (!s_wn.m_mouseCheck || s_wn.m_syncing) return;
-    show = XAbstractButton_isChecked((XAbstractButton*)s_wn.m_mouseCheck);
-    if (show) {
-        /* 显示=确保 Blank override 清除：栈深不定（他处/历史压栈），
-           逐层弹出直至空，有效形状回落窗口最近形状，精灵恢复跟随。 */
-        while (XGuiApplication_overrideCursor())
-            XGuiApplication_restoreOverrideCursor();
-        wn_report("\xE5\xB7\xB2\xE6\x98\xBE\xE7\xA4\xBA\xE9\xBC\xA0\xE6\xA0\x87\xE5\x85\x89\xE6\xA0\x87");
-    } else {
-        /* 隐藏=压 Blank；栈顶已是 Blank 则幂等跳过，防重复取消勾选
-           把栈越压越深（复位/回读按 override==NULL 判显示态）。 */
-        if (!XGuiApplication_overrideCursor() ||
-            XCursor_shape(XGuiApplication_overrideCursor()) !=
-                XCursor_Blank) {
+    if (!s_wn.m_screenOrientCombo || s_wn.m_syncing) return;
+    index = XComboBox_currentIndex(s_wn.m_screenOrientCombo);
+    if (index < 0 || index > 4) index = 0;
+    degrees = (index == 0) ? XPLATFORM_ORIENTATION_AUTO : (index - 1) * 90;
+    if (!XPlatformOrientation_setOrientation(degrees))
+    {
+        /* 两种失败要分开说：平台根本没有该能力（fbdev 面板/安卓大屏
+           等）与「有能力但系统这次没接受」（驱动拒绝/服务端不认该旋
+           转档）——文案混成一句「不支持」会误导排查方向。下拉框一律
+           回读实际影子值，不留一个没生效的档位在框里骗人。 */
+        if (XPlatformOrientation_supports(XPlatformOrientationCap_Request))
+            wn_report("\xE7\xB3\xBB\xE7\xBB\x9F\xE6\x9C\xAA\xE6\x8E\xA5\xE5\x8F\x97\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\xE7\x94\xB3\xE8\xAF\xB7");
+        else
+            wn_report("\xE6\x9C\xAC\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81\xE7\x94\xB3\xE8\xAF\xB7\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91");
+        s_wn.m_syncing = true;
+        if (s_wn.m_screenOrientCombo)
+            XComboBox_setCurrentIndex(s_wn.m_screenOrientCombo,
+                wn_screenOrientIndex(XPlatformOrientation_lastRequested()));
+        s_wn.m_syncing = false;
+        return;
+    }
+    snprintf(buf, sizeof(buf),
+             "\xE5\xB7\xB2\xE7\x94\xB3\xE8\xAF\xB7\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\xEF\xBC\x9A%s",
+             kNames[index]); /* 已申请窗口方向：… */
+    wn_report(buf);
+}
+
+/** @brief 鼠标光标显隐 + 外形应用（覆盖光标栈顶操作）。
+ * @details [2026-10-27 外形选择] 勾选=压入**所选外形**（kCursorShapes
+ *          影子档位）——硬件光标平台（X11/Win32）转同一份内建位图原生
+ *          光标、软件精灵平台（fbdev/安卓）按形状位图绘制，勾选即肉眼
+ *          可见换样（旧版勾选=清栈恢复系统箭头，硬件平台上毫无变化）。
+ *          取消=压 Blank（隐藏）。栈顶已是目标形状则幂等跳过防越压越
+ *          深；demo 是覆盖栈唯一用户，restore+压入的配对保持栈深 ≤1。 */
+static void wn_cursorShapeApply(int shapeIdx)
+{
+    XCursor target;
+    const XCursor* top = XGuiApplication_overrideCursor();
+    if (shapeIdx < 0 || shapeIdx >= WN_CURSOR_SHAPE_COUNT) shapeIdx = 0;
+    if (top && XCursor_shape(top) == kCursorShapes[shapeIdx].shape)
+        return; /* 栈顶已是目标形状：幂等。 */
+    if (top)
+        XGuiApplication_restoreOverrideCursor(); /* 弹出旧顶再压新值。 */
+    XCursor_init(&target);
+    XCursor_setShape(&target, kCursorShapes[shapeIdx].shape);
+    XGuiApplication_setOverrideCursor(&target);
+    XClassDeinit(&target);
+}
+
+/** @brief 按当前勾选态落覆盖栈（显示=所选形状 / 隐藏=Blank）。 */
+static void wn_cursorSyncOverride(void)
+{
+    bool show = s_wn.m_mouseCheck &&
+        XAbstractButton_isChecked((XAbstractButton*)s_wn.m_mouseCheck);
+    const XCursor* top = XGuiApplication_overrideCursor();
+    if (!show) {
+        if (!top || XCursor_shape(top) != XCursor_Blank)
+            wn_cursorShapeApply(-1); /* 非 Blank 顶先弹出。 */
+        {
             XCursor blank;
             XCursor_init(&blank);
             XCursor_setShape(&blank, XCursor_Blank);
             XGuiApplication_setOverrideCursor(&blank);
             XClassDeinit(&blank);
         }
-        wn_report("\xE5\xB7\xB2\xE9\x9A\x90\xE8\x97\x8F\xE9\xBC\xA0\xE6\xA0\x87\xE5\x85\x89\xE6\xA0\x87");
+        return;
+    }
+    wn_cursorShapeApply(s_wn.m_cursorShapeIdx);
+}
+
+static void wn_mouseSlot(XObject* receiver, XVarList* args)
+{
+    bool show;
+    (void)receiver; (void)args;
+    if (!s_wn.m_mouseCheck || s_wn.m_syncing) return;
+    show = XAbstractButton_isChecked((XAbstractButton*)s_wn.m_mouseCheck);
+    wn_cursorSyncOverride();
+    wn_report(show ? "\xE5\xB7\xB2\xE6\x98\xBE\xE7\xA4\xBA\xE9\xBC\xA0\xE6\xA0\x87\xE5\x85\x89\xE6\xA0\x87"
+                   : "\xE5\xB7\xB2\xE9\x9A\x90\xE8\x97\x8F\xE9\xBC\xA0\xE6\xA0\x87\xE5\x85\x89\xE6\xA0\x87");
+}
+
+/** @brief 鼠标外形选择：更新影子档位；显示态即时替换覆盖栈顶形状。 */
+static void wn_cursorShapeSlot(XObject* receiver, XVarList* args)
+{
+    int index;
+    char buf[64];
+    (void)receiver; (void)args;
+    if (!s_wn.m_cursorShapeCombo || s_wn.m_syncing) return;
+    index = XComboBox_currentIndex(s_wn.m_cursorShapeCombo);
+    if (index < 0 || index >= WN_CURSOR_SHAPE_COUNT) index = 0;
+    s_wn.m_cursorShapeIdx = index;
+    if (s_wn.m_mouseCheck &&
+        XAbstractButton_isChecked((XAbstractButton*)s_wn.m_mouseCheck)) {
+        wn_cursorShapeApply(index);
+        snprintf(buf, sizeof(buf),
+                 "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xE9\xBC\xA0\xE6\xA0\x87\xE5\xA4\x96\xE5\xBD\xA2\xEF\xBC\x9A%s",
+                 kCursorShapes[index].text);
+        wn_report(buf);
+    }
+}
+
+/* ==================== 屏幕休眠槽（2026-10-26） ==================== */
+
+/** @brief 自动熄屏超时选择：注入框架侧空闲阈值（0=从不）。
+ *  @details 走统一入口 XPlatformPower_setScreenTimeout：平台支持「委托
+ *           计时」时交平台（安卓写系统「屏幕超时」，由系统自己熄屏），
+ *           否则回落到本地空闲计时（fbdev/X11/Win32，应用自己关屏）。 */
+static void wn_blankSlot(XObject* receiver, XVarList* args)
+{
+    int index;
+    char text[64];
+    (void)receiver; (void)args;
+    if (!s_wn.m_blankCombo || s_wn.m_syncing) return;
+    index = XComboBox_currentIndex(s_wn.m_blankCombo);
+    if (index < 0 || index >= WN_POWER_TIMEOUT_COUNT) index = 0;
+    {
+        XPlatformPowerPolicy policy;
+        XPlatformPower_policy(&policy);
+        policy.m_screenOffMs = kPowerTimeouts[index].ms;
+        if (!XPlatformPower_setPolicy(&policy)) {
+            /* 平台支持委托计时但设置失败（如安卓未获 WRITE_SETTINGS 授
+             * 权）：如实报告并引导授权，**不假装已设置**——否则界面显示
+             * 「5 分钟」而系统从不熄屏，是最坏的静默失效。 */
+            if (XPlatformPower_requestScreenTimeoutPermission())
+                wn_report("\xE9\x9C\x80\xE6\x8E\x88\xE6\x9D\x83\xE7\xB3\xBB\xE7\xBB\x9F\xE8\xAE\xBE\xE7\xBD\xAE\xE6\x9D\x83\xE9\x99\x90\xEF\xBC\x8C\xE5\xB7\xB2\xE8\xB7\xB3\xE8\xBD\xAC\xE6\x8E\x88\xE6\x9D\x83\xE9\xA1\xB5");
+            else
+                wn_report("\xE9\x9C\x80\xE6\x8E\x88\xE6\x9D\x83\xE7\xB3\xBB\xE7\xBB\x9F\xE8\xAE\xBE\xE7\xBD\xAE\xE6\x9D\x83\xE9\x99\x90");
+            return;
+        }
+    }
+    snprintf(text, sizeof(text), "\xE8\x87\xAA\xE5\x8A\xA8\xE7\x86\x84\xE5\xB1\x8F\xEF\xBC\x9A%s",
+             kPowerTimeouts[index].text);
+    wn_report(text);
+}
+
+/** @brief 自动系统休眠超时选择：注入框架侧挂起阈值（0=从不）。 */
+static void wn_suspendSlot(XObject* receiver, XVarList* args)
+{
+    int index;
+    char text[64];
+    (void)receiver; (void)args;
+    if (!s_wn.m_suspendCombo || s_wn.m_syncing) return;
+    index = XComboBox_currentIndex(s_wn.m_suspendCombo);
+    if (index < 0 || index >= WN_POWER_TIMEOUT_COUNT) index = 0;
+    {
+        XPlatformPowerPolicy policy;
+        XPlatformPower_policy(&policy);
+        policy.m_systemSuspendMs = kPowerTimeouts[index].ms;
+        /* 平台不支持系统挂起时（如安卓、桌面）设置仍会落库，但巡检时
+         * 挂起动作会被能力位跳过——界面不假装本平台能挂起整机。 */
+        XPlatformPower_setPolicy(&policy);
+    }
+    snprintf(text, sizeof(text), "\xE8\x87\xAA\xE5\x8A\xA8\xE4\xBC\x91\xE7\x9C\xA0\xEF\xBC\x9A%s",
+             kPowerTimeouts[index].text);
+    wn_report(text);
+}
+
+/** @brief 立即熄屏（手动触发；系统与事件循环继续运行）。 */
+static void wn_blankNowSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+    if (!s_wn.m_ready) return;
+    if (!XPlatformPower_supports(XPlatformPowerCap_ScreenControl)) {
+        wn_report("\xE6\x9C\xAC\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81\xE7\x86\x84\xE5\xB1\x8F");
+        return;
+    }
+    if (XPlatformPower_setScreenState(XPlatformPowerScreenState_Off))
+        wn_report("\xE5\xB7\xB2\xE7\xAB\x8B\xE5\x8D\xB3\xE7\x86\x84\xE5\xB1\x8F");
+    else
+        wn_report("\xE7\x86\x84\xE5\xB1\x8F\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x8C\xE8\xAF\xB7\xE7\xA8\x8D\xE5\x90\x8E\xE5\x9B\x9E\xE6\x8A\xA5");
+    wn_refreshPowerState();
+}
+
+/**
+ * @brief 唤醒方式开关变更：收集三个开关状态 → 写入电源策略。
+ * @details 熄屏后屏幕不输出画面，界面上的任何按钮都点不到——**唤醒
+ *          只能来自输入设备本身**。故这里配置「哪些输入能唤醒」，
+ *          默认三种全开。
+ */
+static void wn_wakeInputSlot(XObject* receiver, XVarList* args)
+{
+    unsigned mask = 0;
+    (void)receiver; (void)args;
+    if (s_wn.m_syncing) return;
+    if (s_wn.m_wakeMouseCheck &&
+        XAbstractButton_isChecked((XAbstractButton*)s_wn.m_wakeMouseCheck))
+        mask |= (unsigned)XPlatformPowerInputMouse;
+    if (s_wn.m_wakeKeyCheck &&
+        XAbstractButton_isChecked((XAbstractButton*)s_wn.m_wakeKeyCheck))
+        mask |= (unsigned)XPlatformPowerInputKeyboard;
+    if (s_wn.m_wakeTouchCheck &&
+        XAbstractButton_isChecked((XAbstractButton*)s_wn.m_wakeTouchCheck))
+        mask |= (unsigned)XPlatformPowerInputTouch;
+    if (mask == 0) {
+        /* 不允许把唤醒路径全关死：熄屏后将无输入可唤醒，只能靠外部手段
+           恢复设备（嵌入式场景等于变砖）。撤销本次改动——勾回鼠标作为
+           保底项并如实提示。勾选会再次触发本槽，届时掩码非零即正常落
+           策略，故此处直接 return，不重复写策略（否则会用空掩码覆盖
+           递归中写入的保底值）。 */
+        wn_report("\xE8\x87\xB3\xE5\xB0\x91\xE4\xBF\x9D\xE7\x95\x99\xE4\xB8\x80\xE7\xA7\x8D\xE5\x94\xA4\xE9\x86\x92\xE6\x96\xB9\xE5\xBC\x8F");
+        if (s_wn.m_wakeMouseCheck)
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeMouseCheck,
+                                       true);
+        return;
+    }
+    {
+        XPlatformPowerPolicy policy;
+        XPlatformPower_policy(&policy);
+        policy.m_wakeInputs = mask;
+        XPlatformPower_setPolicy(&policy);
     }
 }
 
@@ -800,11 +1221,39 @@ static void wn_resetSlot(XObject* receiver, XVarList* args)
         XAbstractButton_setChecked((XAbstractButton*)s_wn.m_maxCheck, false);
     if (s_wn.m_fullCheck)
         XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck, false);
-    if (s_wn.m_orientCombo)
-        XComboBox_setCurrentIndex(s_wn.m_orientCombo, 0);
+    if (s_wn.m_canvasCombo)
+        XComboBox_setCurrentIndex(s_wn.m_canvasCombo, 0);
+    if (s_wn.m_screenOrientCombo)
+        XComboBox_setCurrentIndex(s_wn.m_screenOrientCombo, 0);
+    if (s_wn.m_cursorShapeCombo)
+        XComboBox_setCurrentIndex(s_wn.m_cursorShapeCombo, 0);
     if (s_wn.m_mouseCheck)
-        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_mouseCheck, true);
+        XAbstractButton_setChecked((XWidget*)s_wn.m_mouseCheck, true);
+    if (s_wn.m_blankCombo)
+        XComboBox_setCurrentIndex(s_wn.m_blankCombo, 0);
+    if (s_wn.m_suspendCombo)
+        XComboBox_setCurrentIndex(s_wn.m_suspendCombo, 0);
     s_wn.m_syncing = false;
+
+    /* 窗口方向复位：交回系统（跟随系统/传感器）。复位全程持 m_syncing，
+       setCurrentIndex 不触发槽，故这里显式调用契约——平台不支持时
+       静默跳过（控件本就置灰），不谎报成功。 */
+    if (s_wn.m_screenOrientSupported)
+        XPlatformOrientation_setOrientation(XPLATFORM_ORIENTATION_AUTO);
+
+
+    /* 休眠相关复位：两个阈值回「从不」；若当前已熄屏则点亮——默认态
+       不应停在黑屏（否则用户点「复位默认」后屏幕仍黑，且新的空闲计时
+       从点亮那一刻重新起算）。 */
+    {
+        XPlatformPowerPolicy policy;
+        policy.m_screenOffMs = 0;
+        policy.m_systemSuspendMs = 0;
+        policy.m_wakeInputs = (unsigned)XPlatformPowerInputAll;
+        XPlatformPower_setPolicy(&policy);
+    }
+    if (XPlatformPower_isScreenOff())
+        XPlatformPower_setScreenState(XPlatformPowerScreenState_On);
 
     wn_applySkin(0);
     {
@@ -833,11 +1282,16 @@ static void wn_resetSlot(XObject* receiver, XVarList* args)
        【内存安全阀 2026-10-23】回 0° 同受阀约束（同为换向重建）；拒绝
        时窗口保持旋转态，其余复位项照常生效，状态行如实报因而非「已
        复位默认」。 */
-    if (wn_orientApply(0, NULL, NULL) < 0)
+    if (wn_canvasApply(0, NULL, NULL) < 0)
         wn_report("\xE5\x86\x85\xE5\xAD\x98\xE4\xB8\x8D\xE8\xB6\xB3\xEF\xBC\x8C\xE5\xB7\xB2\xE4\xBF\x9D\xE6\x8C\x81\xE5\xBD\x93\xE5\x89\x8D\xE6\x96\xB9\xE5\x90\x91");
     else
         wn_report("\xE5\xB7\xB2\xE5\xA4\x8D\xE4\xBD\x8D\xE9\xBB\x98\xE8\xAE\xA4");
     XGuiApplication_restoreOverrideCursor();
+    /* 鼠标光标复位（2026-10-27 外形选择语义）：勾选默认=显示（true）
+       且外形回箭头档——restore 清栈后按新语义压入所选形状（复选框
+       回读=栈顶非 Blank，裸 restore 会让回读显示未勾选）。 */
+    s_wn.m_cursorShapeIdx = 0;
+    wn_cursorSyncOverride();
     wn_syncFromWindow();
 }
 
@@ -850,8 +1304,14 @@ static XLabel* wn_buildCaption(const char* text)
     if (label) {
         XLabel_setText_2(label, text);
         XLabel_setTextPixelSize(label, 13);
+        /* [对比度 2026-10-27 视觉走查 P3-B] 组标题是**次要文字**：Qt 里
+         * 弱化文字的语义角色是 PlaceholderText（浅色组=黑 50% 透明，
+         * ≈#808080，对比度约 4:1）。此前用的 Mid(184)/Dark(159) 是
+         * background.darker() 出来的**装饰色**（边框/分隔线用），当文字
+         * 色在白底上只有 ~2:1 对比度——不是颜色选错角色的问题，而是拿
+         * 装饰色当文字色。 */
         XWidget_setForegroundRole((XWidget*)label,
-                                  XPaletteColorRole_Mid);
+                                  XPaletteColorRole_PlaceholderText);
         XWidget_setFixedHeight((XWidget*)label, 22);
         XWidget_show((XWidget*)label);
     }
@@ -930,29 +1390,203 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
                                        wn_statusSlot);
     s_wn.m_maxCheck = wn_buildCheck("\xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\xE6\x98\xBE\xE7\xA4\xBA", 190, wn_maxSlot);
     s_wn.m_fullCheck = wn_buildCheck("\xE5\x85\xA8\xE5\xB1\x8F\xE6\x98\xBE\xE7\xA4\xBA", 150, wn_fullSlot);
-
-    /* ---- 方向与鼠标 ---- */
-    s_wn.m_capOrient = wn_buildCaption("\xE6\x96\xB9\xE5\x90\x91\xE4\xB8\x8E\xE9\xBC\xA0\xE6\xA0\x87");
-    s_wn.m_capOrientName = XLabel_create(s_wn.m_root, 0);
-    if (s_wn.m_capOrientName) {
-        XLabel_setText_2(s_wn.m_capOrientName, "\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91");
-        XWidget_setFixedWidth((XWidget*)s_wn.m_capOrientName, 64);
-        XWidget_setFixedHeight((XWidget*)s_wn.m_capOrientName, 22);
-        XWidget_show((XWidget*)s_wn.m_capOrientName);
-    }
-    s_wn.m_orientCombo = XComboBox_create(s_wn.m_root, 0);
-    if (!s_wn.m_orientCombo) return s_wn.m_root;
-    XComboBox_addItem_2(s_wn.m_orientCombo, "\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "0" "\xC2\xB0\xEF\xBC\x89");
-    XComboBox_addItem_2(s_wn.m_orientCombo, "\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "90" "\xC2\xB0\xEF\xBC\x89");
-    XComboBox_addItem_2(s_wn.m_orientCombo, "\xE5\x80\x92\xE7\xBD\xAE\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "180" "\xC2\xB0\xEF\xBC\x89");
-    XComboBox_addItem_2(s_wn.m_orientCombo, "\xE5\x80\x92\xE7\xBD\xAE\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "270" "\xC2\xB0\xEF\xBC\x89");
-    XWidget_setFixedWidth((XWidget*)s_wn.m_orientCombo, 170);
-    XWidget_setFixedHeight((XWidget*)s_wn.m_orientCombo, 26);
-    XObject_connect_2((XObject*)s_wn.m_orientCombo,
-                      XSignal(XComboBox_activated_signal), wn_orientSlot);
-    XWidget_show((XWidget*)s_wn.m_orientCombo);
+    /* 显示鼠标光标：与上面四个开关同属一组（2026-10-26 用户裁定自
+       「方向与鼠标」行上移——孤行挂在方向组里语义不贴）。 */
     s_wn.m_mouseCheck = wn_buildCheck("\xE6\x98\xBE\xE7\xA4\xBA\xE9\xBC\xA0\xE6\xA0\x87\xE5\x85\x89\xE6\xA0\x87", 170,
                                       wn_mouseSlot);
+    /* 鼠标外形（2026-10-27）：五款内建形状跨平台视觉一致（同一份
+       2bit 位图素材：fbdev/安卓软件精灵直接绘制、X11/Win32 转原生
+       位图光标），选择即时替换覆盖栈顶（显示态）。 */
+    s_wn.m_capCursorShapeName = XLabel_create(s_wn.m_root, 0);
+    if (s_wn.m_capCursorShapeName) {
+        XLabel_setText_2(s_wn.m_capCursorShapeName,
+                         "\xE9\xBC\xA0\xE6\xA0\x87\xE5\xA4\x96\xE5\xBD\xA2");
+        XWidget_setFixedWidth((XWidget*)s_wn.m_capCursorShapeName, 64);
+        XWidget_setFixedHeight((XWidget*)s_wn.m_capCursorShapeName, 22);
+        XWidget_show((XWidget*)s_wn.m_capCursorShapeName);
+    }
+    s_wn.m_cursorShapeCombo = XComboBox_create(s_wn.m_root, 0);
+    if (!s_wn.m_cursorShapeCombo) return s_wn.m_root;
+    {
+        int ci;
+        for (ci = 0; ci < WN_CURSOR_SHAPE_COUNT; ci++)
+            XComboBox_addItem_2(s_wn.m_cursorShapeCombo,
+                                kCursorShapes[ci].text);
+    }
+    XWidget_setFixedWidth((XWidget*)s_wn.m_cursorShapeCombo, 140);
+    XWidget_setFixedHeight((XWidget*)s_wn.m_cursorShapeCombo, 26);
+    XObject_connect_2((XObject*)s_wn.m_cursorShapeCombo,
+                      XSignal(XComboBox_activated_signal), wn_cursorShapeSlot);
+    XWidget_show((XWidget*)s_wn.m_cursorShapeCombo);
+
+    /* ---- 方向 ---- */
+    s_wn.m_capOrient = wn_buildCaption("\xE6\x96\xB9\xE5\x90\x91");
+    s_wn.m_capCanvasName = XLabel_create(s_wn.m_root, 0);
+    if (s_wn.m_capCanvasName) {
+        /* 「画布旋转」（2026-10-26 由原「窗口方向」改名）：内容在应用内
+           逐像素转置，系统完全不知情——与下一行「窗口方向」（向系统申请
+           转屏）是两件事，名字必须区分开，否则用户以为「窗口方向」会
+           把屏幕转过来。 */
+        XLabel_setText_2(s_wn.m_capCanvasName,
+                         "\xE7\x94\xBB\xE5\xB8\x83\xE6\x97\x8B\xE8\xBD\xAC");
+        XWidget_setFixedWidth((XWidget*)s_wn.m_capCanvasName, 64);
+        XWidget_setFixedHeight((XWidget*)s_wn.m_capCanvasName, 22);
+        XWidget_show((XWidget*)s_wn.m_capCanvasName);
+    }
+    s_wn.m_canvasCombo = XComboBox_create(s_wn.m_root, 0);
+    if (!s_wn.m_canvasCombo) return s_wn.m_root;
+    XComboBox_addItem_2(s_wn.m_canvasCombo, "\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "0" "\xC2\xB0\xEF\xBC\x89");
+    XComboBox_addItem_2(s_wn.m_canvasCombo, "\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "90" "\xC2\xB0\xEF\xBC\x89");
+    XComboBox_addItem_2(s_wn.m_canvasCombo, "\xE5\x80\x92\xE7\xBD\xAE\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "180" "\xC2\xB0\xEF\xBC\x89");
+    XComboBox_addItem_2(s_wn.m_canvasCombo, "\xE5\x80\x92\xE7\xBD\xAE\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "270" "\xC2\xB0\xEF\xBC\x89");
+    XWidget_setFixedWidth((XWidget*)s_wn.m_canvasCombo, 170);
+    XWidget_setFixedHeight((XWidget*)s_wn.m_canvasCombo, 26);
+    XObject_connect_2((XObject*)s_wn.m_canvasCombo,
+                      XSignal(XComboBox_activated_signal), wn_canvasSlot);
+    XWidget_show((XWidget*)s_wn.m_canvasCombo);
+
+    /* ---- 「窗口方向」行（2026-10-26 新增）：向**系统**申请显示方向 ----
+     * 与上面的「画布旋转」是两件事：这里改的是物理显示朝向（系统 UI 一并
+     * 转、应用收到一次 resize），上面改的是应用内内容转置。平台不支持
+     * （fbdev 面板无通用旋转原语、安卓大屏系统会忽略方向请求）时整行置灰
+     * 并在状态行如实说明——不编造能力。 */
+    s_wn.m_capScreenOrientName = XLabel_create(s_wn.m_root, 0);
+    if (s_wn.m_capScreenOrientName) {
+        XLabel_setText_2(s_wn.m_capScreenOrientName,
+                         "\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91");
+        XWidget_setFixedWidth((XWidget*)s_wn.m_capScreenOrientName, 64);
+        XWidget_setFixedHeight((XWidget*)s_wn.m_capScreenOrientName, 22);
+        XWidget_show((XWidget*)s_wn.m_capScreenOrientName);
+    }
+    s_wn.m_screenOrientCombo = XComboBox_create(s_wn.m_root, 0);
+    if (!s_wn.m_screenOrientCombo) return s_wn.m_root;
+    /* 索引 0=跟随系统（交回系统按传感器/用户设置决定）；1..4=四方位，
+     * 角度口径与画布旋转一致（0/90/180/270）。 */
+    XComboBox_addItem_2(s_wn.m_screenOrientCombo,
+                        "\xE8\xB7\x9F\xE9\x9A\x8F\xE7\xB3\xBB\xE7\xBB\x9F");
+    XComboBox_addItem_2(s_wn.m_screenOrientCombo, "\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "0" "\xC2\xB0\xEF\xBC\x89");
+    XComboBox_addItem_2(s_wn.m_screenOrientCombo, "\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "90" "\xC2\xB0\xEF\xBC\x89");
+    XComboBox_addItem_2(s_wn.m_screenOrientCombo, "\xE5\x80\x92\xE7\xBD\xAE\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "180" "\xC2\xB0\xEF\xBC\x89");
+    XComboBox_addItem_2(s_wn.m_screenOrientCombo, "\xE5\x80\x92\xE7\xBD\xAE\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "270" "\xC2\xB0\xEF\xBC\x89");
+    XWidget_setFixedWidth((XWidget*)s_wn.m_screenOrientCombo, 170);
+    XWidget_setFixedHeight((XWidget*)s_wn.m_screenOrientCombo, 26);
+    XObject_connect_2((XObject*)s_wn.m_screenOrientCombo,
+                      XSignal(XComboBox_activated_signal), wn_screenOrientSlot);
+    XWidget_show((XWidget*)s_wn.m_screenOrientCombo);
+    /* 能力探测：平台不支持申请转屏时整行置灰（控件不假装可用）。 */
+    {
+        bool canRequest = XPlatformOrientation_supports(
+                              XPlatformOrientationCap_Request);
+        s_wn.m_screenOrientSupported = canRequest;
+        if (!canRequest && s_wn.m_screenOrientCombo)
+            XWidget_setEnabled((XWidget*)s_wn.m_screenOrientCombo, false);
+        if (!canRequest && s_wn.m_capScreenOrientName)
+            XWidget_setEnabled((XWidget*)s_wn.m_capScreenOrientName, false);
+    }
+
+    /* ---- 屏幕休眠（2026-10-26）----
+     * 两档语义（正常/熄屏）+ 两个独立超时（自动熄屏 / 自动系统休眠）：
+     * 熄屏=关屏但系统继续运行（事件循环与渲染照常）；系统休眠=整机挂起。
+     * 两个维度能力各自独立探测（平台可能能关屏却不能挂起），不支持项在
+     * 状态行如实标出，控件不假装可用。 */
+    s_wn.m_capPower = wn_buildCaption("\xE5\xB1\x8F\xE5\xB9\x95\xE4\xBC\x91\xE7\x9C\xA0");
+    s_wn.m_capBlankName = XLabel_create(s_wn.m_root, 0);
+    if (s_wn.m_capBlankName) {
+        XLabel_setText_2(s_wn.m_capBlankName,
+                         "\xE8\x87\xAA\xE5\x8A\xA8\xE7\x86\x84\xE5\xB1\x8F");
+        /* 88：「自动熄屏」四字 advance 约 74px，64 会顶到下拉框左边框
+           （「窗口方向」行同款教训，窄宽档已按 88 放宽）。 */
+        XWidget_setFixedWidth((XWidget*)s_wn.m_capBlankName, 88);
+        XWidget_setFixedHeight((XWidget*)s_wn.m_capBlankName, 22);
+        XWidget_show((XWidget*)s_wn.m_capBlankName);
+    }
+    s_wn.m_blankCombo = XComboBox_create(s_wn.m_root, 0);
+    if (!s_wn.m_blankCombo) return s_wn.m_root;
+    {
+        int i;
+        for (i = 0; i < WN_POWER_TIMEOUT_COUNT; i++)
+            XComboBox_addItem_2(s_wn.m_blankCombo, kPowerTimeouts[i].text);
+    }
+    XWidget_setFixedWidth((XWidget*)s_wn.m_blankCombo, 140);
+    XWidget_setFixedHeight((XWidget*)s_wn.m_blankCombo, 26);
+    XObject_connect_2((XObject*)s_wn.m_blankCombo,
+                      XSignal(XComboBox_activated_signal), wn_blankSlot);
+    XWidget_show((XWidget*)s_wn.m_blankCombo);
+
+    s_wn.m_capSuspendName = XLabel_create(s_wn.m_root, 0);
+    if (s_wn.m_capSuspendName) {
+        XLabel_setText_2(s_wn.m_capSuspendName,
+                         "\xE8\x87\xAA\xE5\x8A\xA8\xE4\xBC\x91\xE7\x9C\xA0");
+        XWidget_setFixedWidth((XWidget*)s_wn.m_capSuspendName, 88);
+        XWidget_setFixedHeight((XWidget*)s_wn.m_capSuspendName, 22);
+        XWidget_show((XWidget*)s_wn.m_capSuspendName);
+    }
+    s_wn.m_suspendCombo = XComboBox_create(s_wn.m_root, 0);
+    if (!s_wn.m_suspendCombo) return s_wn.m_root;
+    {
+        int i;
+        for (i = 0; i < WN_POWER_TIMEOUT_COUNT; i++)
+            XComboBox_addItem_2(s_wn.m_suspendCombo, kPowerTimeouts[i].text);
+    }
+    XWidget_setFixedWidth((XWidget*)s_wn.m_suspendCombo, 140);
+    XWidget_setFixedHeight((XWidget*)s_wn.m_suspendCombo, 26);
+    XObject_connect_2((XObject*)s_wn.m_suspendCombo,
+                      XSignal(XComboBox_activated_signal), wn_suspendSlot);
+    XWidget_show((XWidget*)s_wn.m_suspendCombo);
+
+    s_wn.m_blankBtn = XPushButton_create(s_wn.m_root, 0);
+    if (!s_wn.m_blankBtn) return s_wn.m_root;
+    XPushButton_setText_2(s_wn.m_blankBtn,
+                          "\xE7\xAB\x8B\xE5\x8D\xB3\xE7\x86\x84\xE5\xB1\x8F");
+    XWidget_setFixedWidth((XWidget*)s_wn.m_blankBtn, 100);
+    XWidget_setFixedHeight((XWidget*)s_wn.m_blankBtn, 30);
+    XObject_connect_2((XObject*)s_wn.m_blankBtn,
+                      XSignal(XAbstractButton_clicked_signal), wn_blankNowSlot);
+    XWidget_show((XWidget*)s_wn.m_blankBtn);
+
+    /* 「立即唤醒」按钮**已删除**：屏幕灭掉后界面不可见，物理上点不到
+     * ——死 UI。唤醒路径只能是输入设备本身（见下方「唤醒方式」行）。 */
+    if (s_wn.m_blankBtn)
+        XWidget_setEnabled((XWidget*)s_wn.m_blankBtn,
+                           XPlatformPower_supports(
+                               XPlatformPowerCap_ScreenControl));
+
+    /* 唤醒方式：熄屏后哪些输入能把屏幕点亮（默认全部有效）。 */
+    s_wn.m_capWakeName = XLabel_create(s_wn.m_root, 0);
+    if (s_wn.m_capWakeName) {
+        XLabel_setText_2(s_wn.m_capWakeName,
+                         "\xE5\x94\xA4\xE9\x86\x92\xE6\x96\xB9\xE5\xBC\x8F");
+        XWidget_setFixedWidth((XWidget*)s_wn.m_capWakeName, 88);
+        XWidget_setFixedHeight((XWidget*)s_wn.m_capWakeName, 22);
+        XWidget_show((XWidget*)s_wn.m_capWakeName);
+    }
+    s_wn.m_wakeMouseCheck = wn_buildCheck("\xE9\xBC\xA0\xE6\xA0\x87\xE5\x94\xA4\xE9\x86\x92", 110,
+                                         wn_wakeInputSlot);
+    s_wn.m_wakeKeyCheck = wn_buildCheck("\xE9\x94\xAE\xE7\x9B\x98\xE5\x94\xA4\xE9\x86\x92", 110,
+                                       wn_wakeInputSlot);
+    s_wn.m_wakeTouchCheck = wn_buildCheck("\xE8\xA7\xA6\xE6\x91\xB8\xE5\x94\xA4\xE9\x86\x92", 110,
+                                         wn_wakeInputSlot);
+    /* 平台不能主动关屏/唤醒时（如安卓——息屏与唤醒都是系统行为，应用
+     * 无主动原语），唤醒方式设置对本平台无意义，整行置灰。 */
+    {
+        bool canControl = XPlatformPower_supports(
+                              XPlatformPowerCap_ScreenControl);
+        if (s_wn.m_wakeMouseCheck)
+            XWidget_setEnabled((XWidget*)s_wn.m_wakeMouseCheck, canControl);
+        if (s_wn.m_wakeKeyCheck)
+            XWidget_setEnabled((XWidget*)s_wn.m_wakeKeyCheck, canControl);
+        if (s_wn.m_wakeTouchCheck)
+            XWidget_setEnabled((XWidget*)s_wn.m_wakeTouchCheck, canControl);
+    }
+
+    s_wn.m_powerStateLabel = XLabel_create(s_wn.m_root, 0);
+    if (s_wn.m_powerStateLabel) {
+        XLabel_setText_2(s_wn.m_powerStateLabel,
+                         "\xE5\xBD\x93\xE5\x89\x8D\xEF\xBC\x9A\xE6\xAD\xA3\xE5\xB8\xB8");
+        XLabel_setTextPixelSize(s_wn.m_powerStateLabel, 12);
+        XWidget_setFixedHeight((XWidget*)s_wn.m_powerStateLabel, 22);
+        XWidget_show((XWidget*)s_wn.m_powerStateLabel);
+    }
 
     /* ---- 操作与反馈 ---- */
     s_wn.m_resetBtn = XPushButton_create(s_wn.m_root, 0);
@@ -966,8 +1600,11 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
     s_wn.m_hintLabel = XLabel_create(s_wn.m_root, 0);
     if (s_wn.m_hintLabel) {
         XLabel_setText_2(s_wn.m_hintLabel,
-                         "\xE6\x94\xB9\xE5\x8A\xA8\xE5\x8D\xB3\xE6\x97\xB6\xE7\x94\x9F\xE6\x95\x88\xEF\xBC\x9B\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91=\xE5\x9B\x9B\xE6\x96\xB9\xE4\xBD\x8D\xE5\xA4\x96\xE6\xA1\x86\xE6\x97\x8B\xE8\xBD\xAC\xEF\xBC\x88\xE6\x8C\x89\xE4\xB8\xBB\xE5\xB1\x8F\xE5\x8F\xAF\xE7\x94\xA8\xE5\x87\xA0\xE4\xBD\x95\xE9\x92\xB3\xE4\xBD\x8D\xEF\xBC\x89\xEF\xBC\x9B"
-                         "\xE9\x9A\x90\xE8\x97\x8F\xE9\xBC\xA0\xE6\xA0\x87\xE5\x90\x8E\xE7\xA7\xBB\xE5\x8A\xA8\xE6\x97\xA0\xE5\x85\x89\xE6\xA0\x87\xEF\xBC\x8C\xE5\x9B\x9E\xE6\x9C\xAC\xE9\xA1\xB5\xE5\x8B\xBE\xE9\x80\x89\xE6\x81\xA2\xE5\xA4\x8D");
+                         /* 「画布旋转」= 应用内内容转置；「窗口方向」= 向
+                          * 系统申请转屏（两者正交，提示行须分开讲）。 */
+                         "\xE6\x94\xB9\xE5\x8A\xA8\xE7\x94\xBB\xE5\xB8\x83\xE6\x97\x8B\xE8\xBD\xAC\x3D\xE5\x9B\x9B\xE6\x96\xB9\xE4\xBD\x8D\xE5\xA4\x96\xE6\xA1\x86\xE6\x97\x8B\xE8\xBD\xAC\xEF\xBC\x88\xE6\x8C\x89\xE4\xB8\xBB\xE5\xB1\x8F\xE5\x8F\xAF\xE7\x94\xA8\xE5\x87\xA0\xE4\xBD\x95\xE9\x92\xB3\xE4\xBD\x8D\xEF\xBC\x89\xEF\xBC\x9B"
+                         "\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\x3D\xE5\x90\x91\xE7\xB3\xBB\xE7\xBB\x9F\xE7\x94\xB3\xE8\xAF\xB7\xE8\xBD\xAC\xE5\xB1\x8F\xEF\xBC\x88\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81\xE6\x97\xB6\xE7\xBD\xAE\xE7\x81\xB0\xEF\xBC\x89\xEF\xBC\x9B"
+                         "\xE9\x9A\x90\xE8\x97\x8F\xE9\xBC\xA0\xE6\xA0\x87\xE5\x90\x8E\xE6\xBB\x91\xE5\x8A\xA8\xE6\x97\xA0\xE5\x85\x89\xE6\xA0\x87\xEF\xBC\x8C\xE5\x9B\x9E\xE6\x9C\xAC\xE9\xA1\xB5\xE5\x8B\xBE\xE9\x80\x89\xE6\x81\xA2\xE5\xA4\x8D");
         XLabel_setTextPixelSize(s_wn.m_hintLabel, 12);
         /* 不设定高：高度由 hfw（窄档换行）/推送的 sizeHint（宽档单行）
          * 驱动（见 adapt；2026-10-25 框架 hfw 修复后删除绕 Bug 定高）。 */
@@ -1004,7 +1641,9 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
     XBoxLayout_addSpacing(&s_wn.m_rootLayout, 12);
     XBoxLayout_addWidget(&s_wn.m_rootLayout, (XWidget*)s_wn.m_capFrame);
     XBoxLayout_addSpacing(&s_wn.m_rootLayout, 4);
-    /* 框架开关列（缩进 12）：[边框|26|状态栏] 行 + 6 + 最大化行。 */
+    /* 框架开关列（缩进 12）：[边框|26|状态栏] 行 + [最大化|26|鼠标光标]
+     * 行 + 全屏行（2026-10-26 用户裁定：显示鼠标光标自方向组上移并入
+     * 本组，与最大化同排）。 */
     XBoxLayout_init(&s_wn.m_frameCol, XBoxLayoutDirection_TopToBottom);
     XLayout_setSpacing((XLayout*)&s_wn.m_frameCol, 6);
     XLayout_setContentsMargins((XLayout*)&s_wn.m_frameCol, 12, 0, 0, 0);
@@ -1014,25 +1653,115 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
     XBoxLayout_addWidget(&s_wn.m_frameRow, (XWidget*)s_wn.m_statusCheck);
     XBoxLayout_addStretch(&s_wn.m_frameRow, 1); /* 吸收行尾余量保持左聚。 */
     XBoxLayout_addLayout(&s_wn.m_frameCol, (XLayout*)&s_wn.m_frameRow);
-    XBoxLayout_addWidget(&s_wn.m_frameCol, (XWidget*)s_wn.m_maxCheck);
+    XBoxLayout_init(&s_wn.m_frameRow2, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_wn.m_frameRow2, 26);
+    XBoxLayout_addWidget(&s_wn.m_frameRow2, (XWidget*)s_wn.m_maxCheck);
+    XBoxLayout_addWidget(&s_wn.m_frameRow2, (XWidget*)s_wn.m_mouseCheck);
+    XBoxLayout_addStretch(&s_wn.m_frameRow2, 1); /* 吸收行尾余量保持左聚。 */
+    XBoxLayout_addLayout(&s_wn.m_frameCol, (XLayout*)&s_wn.m_frameRow2);
+    /* 鼠标外形行：[标题|6|下拉 140]（缩进 12+64+6+140=222 < 窄档行内宽
+     * ~364，不溢出，无需翻竖排）。 */
+    XBoxLayout_init(&s_wn.m_frameRow3, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_wn.m_frameRow3, 0);
+    XBoxLayout_addWidget(&s_wn.m_frameRow3,
+                         (XWidget*)s_wn.m_capCursorShapeName);
+    XBoxLayout_addSpacing(&s_wn.m_frameRow3, 6);
+    XBoxLayout_addWidget(&s_wn.m_frameRow3,
+                         (XWidget*)s_wn.m_cursorShapeCombo);
+    XBoxLayout_addStretch(&s_wn.m_frameRow3, 1);
+    XBoxLayout_addLayout(&s_wn.m_frameCol, (XLayout*)&s_wn.m_frameRow3);
     XBoxLayout_addWidget(&s_wn.m_frameCol, (XWidget*)s_wn.m_fullCheck);
     XBoxLayout_addLayout(&s_wn.m_rootLayout, (XLayout*)&s_wn.m_frameCol);
     XBoxLayout_addSpacing(&s_wn.m_rootLayout, 14);
     XBoxLayout_addWidget(&s_wn.m_rootLayout, (XWidget*)s_wn.m_capOrient);
     XBoxLayout_addSpacing(&s_wn.m_rootLayout, 6);
-    /* 方向行：窗口方向|6|下拉 · 20 · 显示鼠标光标（VC 对齐 26 行高）。 */
+    /* 方向组（缩进 12，垂直两行）：
+     *   [画布旋转|6|下拉]
+     *   [窗口方向|6|下拉]
+     * 两行是两个不同的能力（应用内内容转置 / 向系统申请转屏），不能合并
+     * 成一行——名字相近，必须分行摆开避免误读。显示鼠标光标开关已于
+     * 2026-10-26 上移窗口框架组（用户裁定），本组只留两个方向下拉。 */
+    XBoxLayout_init(&s_wn.m_orientCol, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&s_wn.m_orientCol, 6);
+    XLayout_setContentsMargins((XLayout*)&s_wn.m_orientCol, 12, 0, 0, 0);
     XBoxLayout_init(&s_wn.m_orientRow, XBoxLayoutDirection_LeftToRight);
     XLayout_setSpacing((XLayout*)&s_wn.m_orientRow, 0);
-    XLayout_setContentsMargins((XLayout*)&s_wn.m_orientRow, 12, 0, 0, 0);
-    XBoxLayout_addWidgetEx(&s_wn.m_orientRow, (XWidget*)s_wn.m_capOrientName,
+    XLayout_setContentsMargins((XLayout*)&s_wn.m_orientRow, 0, 0, 0, 0);
+    XBoxLayout_addWidgetEx(&s_wn.m_orientRow, (XWidget*)s_wn.m_capCanvasName,
                            0, XAlignment_VCenter);
     XBoxLayout_addSpacing(&s_wn.m_orientRow, 6);
-    XBoxLayout_addWidget(&s_wn.m_orientRow, (XWidget*)s_wn.m_orientCombo);
-    XBoxLayout_addSpacing(&s_wn.m_orientRow, 20);
-    XBoxLayout_addWidgetEx(&s_wn.m_orientRow, (XWidget*)s_wn.m_mouseCheck,
-                           0, XAlignment_VCenter);
+    XBoxLayout_addWidget(&s_wn.m_orientRow, (XWidget*)s_wn.m_canvasCombo);
     XBoxLayout_addStretch(&s_wn.m_orientRow, 1); /* 吸收行尾余量保持左聚。 */
-    XBoxLayout_addLayout(&s_wn.m_rootLayout, (XLayout*)&s_wn.m_orientRow);
+    XBoxLayout_addLayout(&s_wn.m_orientCol, (XLayout*)&s_wn.m_orientRow);
+    /* 「窗口方向」行：标题|6|下拉（170 定宽；窄宽档 88 标题列，合计
+     * 88+6+170=264 < 窄档行内宽 ~364，不溢出，无需翻竖排）。 */
+    XBoxLayout_init(&s_wn.m_screenOrientRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_wn.m_screenOrientRow, 0);
+    XLayout_setContentsMargins((XLayout*)&s_wn.m_screenOrientRow, 0, 0, 0, 0);
+    XBoxLayout_addWidgetEx(&s_wn.m_screenOrientRow,
+                           (XWidget*)s_wn.m_capScreenOrientName, 0,
+                           XAlignment_VCenter);
+    XBoxLayout_addSpacing(&s_wn.m_screenOrientRow, 6);
+    XBoxLayout_addWidget(&s_wn.m_screenOrientRow,
+                         (XWidget*)s_wn.m_screenOrientCombo);
+    XBoxLayout_addStretch(&s_wn.m_screenOrientRow, 1);
+    XBoxLayout_addLayout(&s_wn.m_orientCol, (XLayout*)&s_wn.m_screenOrientRow);
+    XBoxLayout_addLayout(&s_wn.m_rootLayout, (XLayout*)&s_wn.m_orientCol);
+    XBoxLayout_addSpacing(&s_wn.m_rootLayout, 14);
+    XBoxLayout_addWidget(&s_wn.m_rootLayout, (XWidget*)s_wn.m_capPower);
+    XBoxLayout_addSpacing(&s_wn.m_rootLayout, 6);
+    /* 屏幕休眠组（缩进 12）：[自动熄屏|6|下拉] 6 [自动休眠|6|下拉] 6
+     * [立即熄屏|12|立即唤醒|12|能力/状态行]。三行皆定宽控件，窄宽档
+     * 翻竖排由 adapt 负责（见该函数）。 */
+    XBoxLayout_init(&s_wn.m_powerCol, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&s_wn.m_powerCol, 6);
+    XLayout_setContentsMargins((XLayout*)&s_wn.m_powerCol, 12, 0, 0, 0);
+    XBoxLayout_init(&s_wn.m_powerRow1, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_wn.m_powerRow1, 0);
+    XLayout_setContentsMargins((XLayout*)&s_wn.m_powerRow1, 0, 0, 0, 0);
+    XBoxLayout_addWidgetEx(&s_wn.m_powerRow1, (XWidget*)s_wn.m_capBlankName,
+                           0, XAlignment_VCenter);
+    XBoxLayout_addSpacing(&s_wn.m_powerRow1, 6);
+    XBoxLayout_addWidget(&s_wn.m_powerRow1, (XWidget*)s_wn.m_blankCombo);
+    XBoxLayout_addStretch(&s_wn.m_powerRow1, 1);
+    XBoxLayout_addLayout(&s_wn.m_powerCol, (XLayout*)&s_wn.m_powerRow1);
+    XBoxLayout_init(&s_wn.m_powerRow2, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_wn.m_powerRow2, 0);
+    XLayout_setContentsMargins((XLayout*)&s_wn.m_powerRow2, 0, 0, 0, 0);
+    XBoxLayout_addWidgetEx(&s_wn.m_powerRow2, (XWidget*)s_wn.m_capSuspendName,
+                           0, XAlignment_VCenter);
+    XBoxLayout_addSpacing(&s_wn.m_powerRow2, 6);
+    XBoxLayout_addWidget(&s_wn.m_powerRow2, (XWidget*)s_wn.m_suspendCombo);
+    XBoxLayout_addStretch(&s_wn.m_powerRow2, 1);
+    XBoxLayout_addLayout(&s_wn.m_powerCol, (XLayout*)&s_wn.m_powerRow2);
+    XBoxLayout_init(&s_wn.m_powerRow3, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_wn.m_powerRow3, 0);
+    XLayout_setContentsMargins((XLayout*)&s_wn.m_powerRow3, 0, 0, 0, 0);
+    XBoxLayout_addWidgetEx(&s_wn.m_powerRow3, (XWidget*)s_wn.m_blankBtn,
+                           0, XAlignment_VCenter);
+    XBoxLayout_addSpacing(&s_wn.m_powerRow3, 12);
+    XBoxLayout_addWidgetEx(&s_wn.m_powerRow3, (XWidget*)s_wn.m_powerStateLabel,
+                           0, XAlignment_VCenter);
+    XBoxLayout_addStretch(&s_wn.m_powerRow3, 1);
+    XBoxLayout_addLayout(&s_wn.m_powerCol, (XLayout*)&s_wn.m_powerRow3);
+    /* 唤醒方式行：[标题|6|鼠标|16|键盘|16|触摸]。 */
+    XBoxLayout_init(&s_wn.m_powerRow4, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_wn.m_powerRow4, 0);
+    XLayout_setContentsMargins((XLayout*)&s_wn.m_powerRow4, 0, 0, 0, 0);
+    XBoxLayout_addWidgetEx(&s_wn.m_powerRow4, (XWidget*)s_wn.m_capWakeName,
+                           0, XAlignment_VCenter);
+    XBoxLayout_addSpacing(&s_wn.m_powerRow4, 6);
+    XBoxLayout_addWidgetEx(&s_wn.m_powerRow4, (XWidget*)s_wn.m_wakeMouseCheck,
+                           0, XAlignment_VCenter);
+    XBoxLayout_addSpacing(&s_wn.m_powerRow4, 16);
+    XBoxLayout_addWidgetEx(&s_wn.m_powerRow4, (XWidget*)s_wn.m_wakeKeyCheck,
+                           0, XAlignment_VCenter);
+    XBoxLayout_addSpacing(&s_wn.m_powerRow4, 16);
+    XBoxLayout_addWidgetEx(&s_wn.m_powerRow4, (XWidget*)s_wn.m_wakeTouchCheck,
+                           0, XAlignment_VCenter);
+    XBoxLayout_addStretch(&s_wn.m_powerRow4, 1);
+    XBoxLayout_addLayout(&s_wn.m_powerCol, (XLayout*)&s_wn.m_powerRow4);
+    XBoxLayout_addLayout(&s_wn.m_rootLayout, (XLayout*)&s_wn.m_powerCol);
     XBoxLayout_addSpacing(&s_wn.m_rootLayout, 16);
     XBoxLayout_addWidget(&s_wn.m_rootLayout, (XWidget*)s_wn.m_resetBtn);
     XBoxLayout_addStretch(&s_wn.m_rootLayout, 1);
@@ -1043,6 +1772,12 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
 
     /* ---- 控件初值 ← 主窗当前态 ---- */
     wn_syncFromWindow();
+    /* 状态变化订阅（2026-10-28 定稿）：不走窗口信号——build 早于建窗
+     * （懒建窗）时一次性接线判空跳过后永不重试，自启 --fullscreen 的
+     * 启动全屏信号漏听（昆仑通态真机实证）。改由主窗 changeEvent 收
+     * WINDOW_STATE_CHANGE 事件后调 demo_page_window_settings_syncFrom
+     * Window 推入（Qt 对齐：全路径事件送达顶层控件 changeEvent），
+     * 无订阅时序面。 */
 
     s_wn.m_ready = true;
     /* 【全屏取证驱动 2026-10-23】env XGUI_WN_FULL_DEMO 分档驱动：
@@ -1132,29 +1867,23 @@ void demo_page_window_settings_adapt(XWidget* page)
          * 钳住框架的新鲜值（文本一改即又错），属绕 Bug 补丁，删除。 */
     }
 
-    /* ---- 「窗口方向」行标题列：64 是桌面口径，真机默认字号下「窗口
-     * 方向」四字 advance 约 74px，字尾把行内 6px 间距吃剩 2px 顶到下
-     * 拉框左边框——窄宽档放宽标题列让间距回到设计值（上方「主题」
+    /* ---- 方向两行的标题列：64 是桌面口径，真机默认字号下「画布旋转」
+     * /「窗口方向」四字 advance 约 74px，字尾把行内 6px 间距吃剩 2px
+     * 顶到下拉框左边框——窄宽档放宽标题列让间距回到设计值（上方「主题」
      * 两字 64 放得下，不动）。竖向居中由装配的 addWidgetEx(VCenter)
      * 承载（布局引擎按格居中、XLabel 文字默认 VCenter），不在此另调。 ---- */
-    if (s_wn.m_capOrientName)
-        XWidget_setFixedWidth((XWidget*)s_wn.m_capOrientName,
+    if (s_wn.m_capCanvasName)
+        XWidget_setFixedWidth((XWidget*)s_wn.m_capCanvasName,
+                              narrow ? 88 : 64);
+    if (s_wn.m_capScreenOrientName)
+        XWidget_setFixedWidth((XWidget*)s_wn.m_capScreenOrientName,
                               narrow ? 88 : 64);
 
-    /* ---- 「方向与鼠标」行：窄宽档整行翻竖排单列 ----
-     * 桌面横排行 [标题|6|方向下拉 ·20· 鼠标开关] 实需 12+64..88+6+170+
-     * 20+170=442..466 逻辑宽，400 竖屏行内只有 ~364：行尾「显示鼠标光标」被
-     * 推过右缘裁字（真机像素口径「光」只余七成、「标」整字不见）。行
-     * 内三件都是定宽控件且文字不可省——收窄任一件都会转而裁下拉闭态
-     * 条目（「竖屏（90°）」等）或开关文字，故按 dialogs 页行盒先例用
-     * setDirection 整行翻竖排（幂等，内部失效重排）：四件纵列后各占
-     * 整行宽（400 档行内宽 ~364），170 定宽原样直用，零裁字；行内
-     * 6/20 间距件转为纵列行距，视觉成立。宽档翻回横排复原桌面装配，
-     * resize 跨档来回不残留。 ---- */
-    XBoxLayout_setDirection(
-        &s_wn.m_orientRow,
-        narrow ? XBoxLayoutDirection_TopToBottom
-               : XBoxLayoutDirection_LeftToRight);
+    /* ---- 「方向」行：窄宽档翻竖排的旧需求已消失 ----
+     * 原横排行含「显示鼠标光标」开关实需 ~442..466 逻辑宽、400 竖屏装
+     * 不下才整行翻竖排；2026-10-26 鼠标开关上移窗口框架组后本行只剩
+     * [标题|6|下拉]=88+6+170=264 < 窄档行内宽 ~364，横排恒装得下，
+     * 翻排分支整体摘除（跨档 resize 无残留可证）。 ---- */
 
     /* ---- 「窗口框架」开关组：22 高 + 6 间距（行距 28）在拇指触控下
      * 相邻行易误触（触控目标 ≥40 的通行建议）→ 窄宽档把开关拉高到
@@ -1171,6 +1900,34 @@ void demo_page_window_settings_adapt(XWidget* page)
         XWidget_setFixedHeight((XWidget*)s_wn.m_fullCheck, narrow ? 40 : 22);
     if (s_wn.m_mouseCheck)
         XWidget_setFixedHeight((XWidget*)s_wn.m_mouseCheck, narrow ? 40 : 22);
+
+    /* ---- 「屏幕休眠」组：窄宽档按钮行翻竖排 + 触控目标拉高 ----
+     * 按钮行实需 100+12+100+12+状态标签（能力文案最宽约 220）≈ 444
+     * 逻辑宽，400 竖屏行内只有 ~364：状态标签被推过右缘裁字。行内三件
+     * 都是定宽控件且文字不可省（能力文案要如实显示，不能省），故按
+     * orientRow 同款 setDirection 整行翻竖排（幂等，内部失效重排）。
+     * 两个下拉行 12+88+6+140=246 不溢出，无需翻排。 */
+    XBoxLayout_setDirection(
+        &s_wn.m_powerRow3,
+        narrow ? XBoxLayoutDirection_TopToBottom
+               : XBoxLayoutDirection_LeftToRight);
+    /* 唤醒方式行同款（2026-10-27 视觉走查 P2）：88+6+110+16+110+16+110
+     * =456 > 窄档行内宽 ~364，「触摸唤醒」行尾被裁断（真机截图实证），
+     * 翻竖排后各开关独占整行零裁字。 */
+    XBoxLayout_setDirection(
+        &s_wn.m_powerRow4,
+        narrow ? XBoxLayoutDirection_TopToBottom
+               : XBoxLayoutDirection_LeftToRight);
+    if (s_wn.m_blankBtn)
+        XWidget_setFixedHeight((XWidget*)s_wn.m_blankBtn, narrow ? 40 : 30);
+    if (s_wn.m_wakeMouseCheck)
+        XWidget_setFixedHeight((XWidget*)s_wn.m_wakeMouseCheck,
+                               narrow ? 40 : 22);
+    if (s_wn.m_wakeKeyCheck)
+        XWidget_setFixedHeight((XWidget*)s_wn.m_wakeKeyCheck, narrow ? 40 : 22);
+    if (s_wn.m_wakeTouchCheck)
+        XWidget_setFixedHeight((XWidget*)s_wn.m_wakeTouchCheck,
+                               narrow ? 40 : 22);
 }
 
 /* ==================== autotest ==================== */
@@ -1263,14 +2020,40 @@ int demo_page_window_settings_autotest(XWidget* page)
 
     if (!page || !s_wn.m_ready || page != s_wn.m_root)
         return -1;
+    /* 缺省策略断言（须在任何 setPolicy 之前）：未经任何设置时，唤醒
+     * 来源**不得为空**——空 = 「熄屏后无输入可唤醒」。静态零初始化不
+     * 等于缺省语义（两个阈值上 0 = 从总是对的，唤醒来源上 0 是危险
+     * 值），框架须在首次使用前建立缺省。此断言专防「界面三个开关
+     * 全部未勾」这类回归——它只在应用启动路径上暴露（自测若先调过
+     * setPolicy 就会把它盖住）。 */
+    {
+        XPlatformPowerPolicy policy;
+        XPlatformPower_policy(&policy);
+        WN_EXPECT(policy.m_wakeInputs != 0u,
+                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE7\xBC\xBA\xE7\x9C\x81\xE5\x94\xA4\xE9\x86\x92\xE6\x9D\xA5\xE6\xBA\x90\xE9\x9D\x9E\xE7\xA9\xBA");
+    }
+    /* 自测期间禁止自动熄屏/自动休眠：真机上屏幕会在用例中途黑掉，
+     * 后续断言无从读取（且无人触发输入来唤醒）。真实熄屏/唤醒属
+     * 真机手测项，不进自测。 */
+    {
+        XPlatformPowerPolicy policy;
+        policy.m_screenOffMs = 0;
+        policy.m_systemSuspendMs = 0;
+        policy.m_wakeInputs = (unsigned)XPlatformPowerInputAll;
+        XPlatformPower_setPolicy(&policy);
+    }
     top = wn_toplevel();
     WN_EXPECT(top != NULL, "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE4\xB8\xBB\xE7\xAA\x97\xE9\xA1\xB6\xE5\xB1\x82\xE5\x80\x9F\xE7\x94\xA8\xE5\x8F\xAF\xE7\x94\xA8");
 
     /* ---- 控件登记完整 ---- */
     WN_EXPECT(s_wn.m_skinCombo && s_wn.m_frameCheck && s_wn.m_statusCheck &&
-              s_wn.m_maxCheck && s_wn.m_orientCombo && s_wn.m_mouseCheck &&
+              s_wn.m_maxCheck && s_wn.m_canvasCombo && s_wn.m_mouseCheck &&
               s_wn.m_resetBtn,
               "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\x8E\xA7\xE4\xBB\xB6\xE5\x85\xA8\xE9\x83\xA8\xE7\x99\xBB\xE8\xAE\xB0");
+    WN_EXPECT(s_wn.m_blankCombo && s_wn.m_suspendCombo && s_wn.m_blankBtn &&
+              s_wn.m_wakeMouseCheck && s_wn.m_wakeKeyCheck &&
+              s_wn.m_wakeTouchCheck && s_wn.m_powerStateLabel,
+              "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE5\xB1\x8F\xE5\xB9\x95\xE4\xBC\x91\xE7\x9C\xA0\xE6\x8E\xA7\xE4\xBB\xB6\xE7\x99\xBB\xE8\xAE\xB0\xE5\xAE\x8C\xE6\x95\xB4");
 
     if (top) {
         /* ---- 边框：去框 → 回读 Frameless 位 → 复原 ---- */
@@ -1356,6 +2139,70 @@ int demo_page_window_settings_autotest(XWidget* page)
                       "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\xE8\xBF\x98\xE5\x8E\x9F");
         }
 
+        /* ---- 屏幕休眠：超时档位注入 → 回读 → 复位（**不触发真实熄屏**）----
+         * 真机上自测若真熄屏，屏幕黑掉后断言无从读取、后续用例全灭；故
+         * 本段只验「阈值注入→回读→复位」这条纯软件链路，真实熄屏/唤醒
+         * 属真机手测项，不进自测。 */
+        {
+            XPlatformPowerPolicy policy;
+            XComboBox_setCurrentIndex(s_wn.m_blankCombo, 3);
+            wn_blankSlot(NULL, NULL);
+            XPlatformPower_policy(&policy);
+            WN_EXPECT(policy.m_screenOffMs == 300LL * 1000,
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE8\x87\xAA\xE5\x8A\xA8\xE7\x86\x84\xE5\xB1\x8F\xE9\x98\x88\xE5\x80\xBC\xE6\xB3\xA8\xE5\x85\xA5\xE7\x94\x9F\xE6\x95\x88");
+            XComboBox_setCurrentIndex(s_wn.m_suspendCombo, 2);
+            wn_suspendSlot(NULL, NULL);
+            XPlatformPower_policy(&policy);
+            WN_EXPECT(policy.m_systemSuspendMs == 180LL * 1000,
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE8\x87\xAA\xE5\x8A\xA8\xE4\xBC\x91\xE7\x9C\xA0\xE9\x98\x88\xE5\x80\xBC\xE6\xB3\xA8\xE5\x85\xA5\xE7\x94\x9F\xE6\x95\x88");
+            /* 能力查询自洽：supports 与能力位集合判定必须一致。 */
+            WN_EXPECT(XPlatformPower_supports(XPlatformPowerCap_ScreenControl) ==
+                      ((XPlatformPower_capabilities() &
+                        (unsigned)XPlatformPowerCap_ScreenControl) != 0),
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE7\x86\x84\xE5\xB1\x8F\xE8\x83\xBD\xE5\x8A\x9B\xE6\x9F\xA5\xE8\xAF\xA2\xE8\x87\xAA\xE6\xB4\xBD");
+            /* 档位回读：下拉索引与注入的阈值互相还原。 */
+            WN_EXPECT(XComboBox_currentIndex(s_wn.m_blankCombo) == 3 &&
+                      XComboBox_currentIndex(s_wn.m_suspendCombo) == 2,
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE4\xBC\x91\xE7\x9C\xA0\xE6\xA1\xA3\xE4\xBD\x8D\xE4\xB8\x8B\xE6\x8B\x89\xE5\x9B\x9E\xE8\xAF\xBB\xE4\xB8\x80\xE8\x87\xB4");
+            /* 唤醒来源：可单独关闭某类输入（如键盘），且不允许全关。 */
+            {
+                XPlatformPowerPolicy policy;
+                XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeKeyCheck,
+                                           false);
+                wn_wakeInputSlot(NULL, NULL);
+                XPlatformPower_policy(&policy);
+                WN_EXPECT((policy.m_wakeInputs &
+                           (unsigned)XPlatformPowerInputKeyboard) == 0u,
+                          "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE5\x94\xA4\xE9\x86\x92\xE6\x9D\xA5\xE6\xBA\x90\xE5\x8F\xAF\xE5\x8D\x95\xE7\x8B\xAC\xE5\x85\xB3\xE9\x97\xAD\xEF\xBC\x88\xE9\x94\xAE\xE7\x9B\x98\xEF\xBC\x89");
+                /* 三个全关 → 必须被拒绝（否则熄屏后无输入可唤醒）。 */
+                XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeMouseCheck,
+                                           false);
+                XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeTouchCheck,
+                                           false);
+                wn_wakeInputSlot(NULL, NULL);
+                XPlatformPower_policy(&policy);
+                WN_EXPECT(policy.m_wakeInputs != 0u,
+                          "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE5\x94\xA4\xE9\x86\x92\xE6\x9D\xA5\xE6\xBA\x90\xE4\xB8\x8D\xE5\x85\x81\xE8\xAE\xB8\xE5\x85\xA8\xE9\x83\xA8\xE5\x85\xB3\xE9\x97\xAD");
+                /* 复原：三项全开。 */
+                XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeMouseCheck,
+                                           true);
+                XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeKeyCheck,
+                                           true);
+                XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeTouchCheck,
+                                           true);
+                wn_wakeInputSlot(NULL, NULL);
+            }
+            /* 复位：阈值回「从不」。 */
+            XComboBox_setCurrentIndex(s_wn.m_blankCombo, 0);
+            wn_blankSlot(NULL, NULL);
+            XComboBox_setCurrentIndex(s_wn.m_suspendCombo, 0);
+            wn_suspendSlot(NULL, NULL);
+            XPlatformPower_policy(&policy);
+            WN_EXPECT(policy.m_screenOffMs == 0 &&
+                      policy.m_systemSuspendMs == 0,
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE4\xBC\x91\xE7\x9C\xA0\xE9\x98\x88\xE5\x80\xBC\xE5\xA4\x8D\xE4\xBD\x8D\xE5\x9B\x9E\xE3\x80\x8C\xE4\xBB\x8E\xE4\xB8\x8D\xE3\x80\x8D");
+        }
+
         /* ---- 方向四方位：90° 竖 → 180° 横(同基准) → 270° 竖 → 0° 还原 ----
          * 竖屏口径=高>宽；对调值按主屏可用几何钳位（1000 高进 900 高屏
          * 即钳 900），故不断言精确对调值；180°/0° 须精确还原基准宽高。
@@ -1368,8 +2215,8 @@ int demo_page_window_settings_autotest(XWidget* page)
             if (h0 <= w0 && w0 > 0) {
                 int deg;
                 for (deg = 90; deg <= 270; deg += 90) {
-                    XComboBox_setCurrentIndex(s_wn.m_orientCombo, deg / 90);
-                    wn_orientSlot(NULL, NULL);
+                    XComboBox_setCurrentIndex(s_wn.m_canvasCombo, deg / 90);
+                    wn_canvasSlot(NULL, NULL);
                     if (s_wn.m_rotationSupported)
                         WN_EXPECT(XWidget_contentRotationDegrees(top) == deg,
                                   "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\x9C\x89\xE6\x8A\x8A\xE9\xA1\xB5\xE5\xAE\x9A\xE8\xA7\x92\xE6\x89\x8D\xE4\xBD\x8D\xEF\xBC\x88\xE5\xB9\xB2\xE7\x94\x9F\xE6\x95\xB0\xEF\xBC\x89");
@@ -1380,8 +2227,8 @@ int demo_page_window_settings_autotest(XWidget* page)
                         WN_EXPECT(XWidget_height(top) > XWidget_width(top),
                                   "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE7\xAB\x96\xE5\xB1\x8F\xE5\xAE\xBD\xE9\xAB\x98\xE5\xAF\xB9\xE8\xB0\x83");
                 }
-                XComboBox_setCurrentIndex(s_wn.m_orientCombo, 0);
-                wn_orientSlot(NULL, NULL);
+                XComboBox_setCurrentIndex(s_wn.m_canvasCombo, 0);
+                wn_canvasSlot(NULL, NULL);
                 if (s_wn.m_rotationSupported)
                     WN_EXPECT(XWidget_contentRotationDegrees(top) == 0,
                               "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x9B\x9E\xE5\x8D\xA0\xE5\x85\x8D\xE8\xBD\xAC\xE7\x8E\x87\xE5\xBD\x92\xE9\x9B\xB6");
@@ -1396,8 +2243,8 @@ int demo_page_window_settings_autotest(XWidget* page)
             {
                 int deg;
                 for (deg = 90; deg <= 270; deg += 90) {
-                    XComboBox_setCurrentIndex(s_wn.m_orientCombo, deg / 90);
-                    wn_orientSlot(NULL, NULL);
+                    XComboBox_setCurrentIndex(s_wn.m_canvasCombo, deg / 90);
+                    wn_canvasSlot(NULL, NULL);
                     WN_EXPECT(XWidget_contentRotationDegrees(top) == deg ||
                                   !s_wn.m_rotationSupported,
                               "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\xBC\xB9\xE5\xB1\x82\xE9\x80\x89\xE6\x96\xB9\xE4\xBD\x8D\xE5\x90\x8E\xE6\x97\x8B\xE8\xBD\xAC\xE8\xA7\x92\xE7\x94\x9F\xE6\x95\x88");
@@ -1406,23 +2253,67 @@ int demo_page_window_settings_autotest(XWidget* page)
                                       XWidget_height(top) == h0,
                                   "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: 180\xC2\xB0 \xE5\xAE\xBD\xE9\xAB\x98\xE4\xB8\x8E 0\xC2\xB0 \xE5\x90\x8C");
                 }
-                XComboBox_setCurrentIndex(s_wn.m_orientCombo, 0);
-                wn_orientSlot(NULL, NULL);
+                XComboBox_setCurrentIndex(s_wn.m_canvasCombo, 0);
+                wn_canvasSlot(NULL, NULL);
             }
         }
 
-        /* ---- 鼠标：隐藏 → 覆盖栈非空 → 恢复 ---- */
+        /* ---- 窗口方向（2026-10-26 新增）：**不触发真实转屏** ----
+         * 真机上自测若真转屏，屏幕朝向突变会让后续用例（坐标类断言、
+         * 截图对比）全灭，且会把开发者桌面转过来。故本段只验纯软件链路：
+         * 档位数、控件可用性与平台能力的一致性、下拉回显与影子值一致。
+         * 真实转屏属真机手测项（同「真实熄屏不进自测」的纪律）。 */
+        {
+            bool canRequest = XPlatformOrientation_supports(
+                                  XPlatformOrientationCap_Request);
+            WN_EXPECT(XComboBox_count(s_wn.m_screenOrientCombo) == 5,
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\xE6\xA1\xA3\xE4\xBD\x8D\xE6\x95\xB0\xE4\xB8\x8D\xE5\xAF\xB9");
+            /* 能力一致性：契约判定与页面记录必须一致（能力探测漏同步时
+             * 控件会「以为能用」而点了没反应）。 */
+            WN_EXPECT(canRequest == s_wn.m_screenOrientSupported,
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\xE8\x83\xBD\xE5\x8A\x9B\xE4\xB8\x8E\xE7\x94\x9F\xE6\x95\x88\xE5\x9B\x9E\xE8\xAF\xBB\xE4\xB8\x8D\xE4\xB8\x80\xE8\x87\xB4");
+            /* 不支持时控件必须置灰（不假装可用）。 */
+            if (!canRequest)
+                WN_EXPECT(!XWidget_isEnabled((XWidget*)s_wn.m_screenOrientCombo),
+                          "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81\xE6\x97\xB6\xE6\x8E\xA7\xE4\xBB\xB6\xE5\xBA\x94\xE7\xBD\xAE\xE7\x81\xB0");
+            /* 下拉回显与影子值一致（影子=本应用最近一次成功受理的申请）。 */
+            WN_EXPECT(XComboBox_currentIndex(s_wn.m_screenOrientCombo) ==
+                          wn_screenOrientIndex(
+                              XPlatformOrientation_lastRequested()),
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\xE5\x9B\x9E\xE6\x98\xBE\xE4\xB8\x8E\xE5\xBD\xB1\xE5\xAD\x90\xE5\x80\xBC\xE4\xB8\x8D\xE4\xB8\x80\xE8\x87\xB4");
+        }
+
+        /* ---- 鼠标：隐藏(BBlank) → 显示(所选形状) → 外形切换 → 复原 ----
+         * [2026-10-27 外形选择语义] 勾选=压入所选外形（栈顶=该形状），
+         * 取消=压 Blank；「恢复=栈空」的旧断言随语义一并更新。 */
         {
             XAbstractButton_setChecked((XAbstractButton*)s_wn.m_mouseCheck,
                                        false);
             wn_mouseSlot(NULL, NULL);
-            WN_EXPECT(XGuiApplication_overrideCursor() != NULL,
+            WN_EXPECT(XGuiApplication_overrideCursor() != NULL &&
+                          XCursor_shape(XGuiApplication_overrideCursor()) ==
+                              XCursor_Blank,
                       "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE9\x9A\x90\xE8\x97\x8F\xE9\xBC\xA0\xE6\xA0\x87\xE7\x94\x9F\xE6\x95\x88(\xE8\xA6\x86\xE7\x9B\x96\xE6\xA0\x88 Blank)");
             XAbstractButton_setChecked((XAbstractButton*)s_wn.m_mouseCheck,
                                        true);
             wn_mouseSlot(NULL, NULL);
-            WN_EXPECT(XGuiApplication_overrideCursor() == NULL,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE9\xBC\xA0\xE6\xA0\x87\xE6\x81\xA2\xE5\xA4\x8D(\xE8\xA6\x86\xE7\x9B\x96\xE6\xA0\x88\xE5\xBC\xB9\xE5\x87\xBA)");
+            WN_EXPECT(XGuiApplication_overrideCursor() != NULL &&
+                          XCursor_shape(XGuiApplication_overrideCursor()) ==
+                              kCursorShapes[s_wn.m_cursorShapeIdx].shape,
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\x98\xBE\xE7\xA4\xBA\xE9\xBC\xA0\xE6\xA0\x87\xE6\x89\x80\xE9\x80\x89\xE5\xA4\x96\xE5\xBD\xA2\xE7\x94\x9F\xE6\x95\x88");
+            /* 外形切换：手型 → 栈顶随选即变（显示态）。 */
+            XComboBox_setCurrentIndex(s_wn.m_cursorShapeCombo, 1);
+            wn_cursorShapeSlot(NULL, NULL);
+            WN_EXPECT(XGuiApplication_overrideCursor() != NULL &&
+                          XCursor_shape(XGuiApplication_overrideCursor()) ==
+                              XCursor_PointingHand,
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE9\xBC\xA0\xE6\xA0\x87\xE5\xA4\x96\xE5\xBD\xA2\xE5\x88\x87\xE6\x8D\xA2\xE7\x94\x9F\xE6\x95\x88");
+            XComboBox_setCurrentIndex(s_wn.m_cursorShapeCombo, 0);
+            wn_cursorShapeSlot(NULL, NULL);
+            WN_EXPECT(XGuiApplication_overrideCursor() != NULL &&
+                          XCursor_shape(XGuiApplication_overrideCursor()) ==
+                              XCursor_Arrow,
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE9\xBC\xA0\xE6\xA0\x87\xE5\xA4\x96\xE5\xBD\xA2\xE5\x9B\x9E\xE7\xAE\xAD\xE5\xA4\xB4");
         }
 
         /* ---- 皮肤：切深色 → 方案回读 Dark → 复位浅色 ---- */
@@ -1543,7 +2434,9 @@ int demo_page_window_settings_autotest(XWidget* page)
                   "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\xA4\x8D\xE4\xBD\x8D\xE5\x90\x8E\xE7\x8A\xB6\xE6\x80\x81\xE6\xA0\x8F\xE6\x98\xBE\xE7\xA4\xBA");
         WN_EXPECT(top && !XWidget_isMaximized(top),
                   "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\xA4\x8D\xE4\xBD\x8D\xE5\x90\x8E\xE9\x9D\x9E\xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96");
-        WN_EXPECT(XGuiApplication_overrideCursor() == NULL,
+        WN_EXPECT(XGuiApplication_overrideCursor() != NULL &&
+                      XCursor_shape(XGuiApplication_overrideCursor()) ==
+                          XCursor_Arrow,
                   "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\xA4\x8D\xE4\xBD\x8D\xE5\x90\x8E\xE9\xBC\xA0\xE6\xA0\x87\xE6\x98\xBE\xE7\xA4\xBA");
     }
 
@@ -1573,6 +2466,10 @@ int demo_page_window_settings_autotest(XWidget* page)
 void demo_page_window_settings_adapt(XWidget* page)
 {
     (void)page;
+}
+
+void demo_page_window_settings_syncFromWindow(void)
+{
 }
 
 #endif /* 控件段守卫 */

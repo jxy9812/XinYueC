@@ -16,6 +16,8 @@
  ******************************************************************************/
 #if XGUI_ON
 
+#include <stdlib.h>
+#include <stdio.h>
 #include "XLayoutItem.h"
 
 #include "XAlgorithm.h"

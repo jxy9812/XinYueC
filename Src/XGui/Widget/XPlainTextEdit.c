@@ -1396,6 +1396,13 @@ void XPlainTextEdit_init(XPlainTextEdit* self, XWidget* parent, XWidgetFlags fla
     hint.width = 240;
     hint.height = 180;
     XWidget_setSizeHint((XWidget*)self, &hint);
+    /* [minimumSizeHint 补齐 2026-10-27 框架对齐] Qt QPlainTextEdit/
+     * QTextEdit 不自设 sizeHint（继承 QAbstractScrollArea 的
+     * viewport+滚动条口径，qabstractscrollarea.cpp:1426-1442），
+     * minimumSizeHint 亦继承同族（:1405-1419）——本类基类
+     * XAbstractScrollArea 已按该口径补齐；此处把本类显式尺寸同步为
+     * 最小下界（此前 min=0，竖排收缩时可被压塌至不可见）。 */
+    XWidget_setMinimumSizeHint((XWidget*)self, &hint);
     /* 初始几何就绪后下发折行宽度（WidgetWidth = 视口文本区宽）。 */
     xpe_updateWrapWidth(self);
 }

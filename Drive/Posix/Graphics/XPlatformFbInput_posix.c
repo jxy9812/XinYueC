@@ -72,6 +72,7 @@
 #include <linux/input.h>
 
 #include "XAbstractEventDispatcher.h"
+#include "XAbstractNetIoRing.h" /* 触摸 fd 注册进异步后端等待集（唤醒通道）。 */
 #include "XWindowSystemInterface.h"
 #include "XWindowRotation.h" /* 命中 footprint 与窗口局部坐标的 R⁻¹ 逆变换。 */
 #include "XWidget.h" /* mouseGrabber/windowHandle：按住拖出窗口界的注入。 */
@@ -88,6 +89,8 @@
 static int g_xpfiFd = -1;              /**< evdev 设备描述符；<0 未打开。 */
 static bool g_xpfiRegistered = false;  /**< 读泵已注册进轮询链。 */
 static XHandle g_xpfiPumpHandle;       /**< 轮询链句柄（remove 用）。 */
+/** 触摸 fd 已注册进异步后端等待集（唤醒通道，2026-10-26）；false=轮询兜底。 */
+static bool g_xpfiPassiveRegistered = false;
 
 /** @brief ABS 坐标取值范围（EVIOCGABS 探测；0 上限表示未探测到）。 */
 static int g_xpfiAbsXMax = 0;
@@ -1131,6 +1134,27 @@ static void xpfi_feedEvent(const struct input_event* ev)
 
 /* ==================== 轮询泵（事件分发器每轮回调） ==================== */
 
+static bool xpfi_pump(void* userData); /**< 前向声明（被动就绪回调引用）。 */
+
+/**
+ * @brief      触摸 fd 就绪回调（事件环「被动可读 fd」通道，2026-10-26）。
+ * @details    触摸 fd 已注册进框架异步后端的等待集（epoll 引擎
+ *             epoll_ctl(ADD)），设备有数据 ⇒ 内核直接唤醒阻塞中的事件
+ *             循环 ⇒ 本回调在**同一次唤醒**里被调用，触摸数据立即被
+ *             抽干并注入框架，**不再等下一圈边界**。
+ *
+ *             这修的是昆仑通态真机实测的「触摸后无反馈 + 画面整体不动」：
+ *             改造前触摸 fd 不在等待集，事件循环被拉长到 ~400ms 一圈
+ *             （FPS 2.5），触摸注入后日志无 mousePress、画面静止。
+ *
+ *             读失败（设备热拔）不在此处理：xpfi_pump 内已有一次性告警 +
+ *             摘除逻辑，抽干失败由它统一兜底。
+ */
+static void xpfi_onPassiveReady(int osFd)
+{
+    xpfi_pump(NULL);
+}
+
 /**
  * @brief      抽干 evdev 积压报文并按帧注入多点触摸事件。
  * @details    非阻塞读循环：每次最多 32 报文，EAGAIN 即积压抽干。设备
@@ -1334,10 +1358,33 @@ bool XPlatformFbInput_register(void)
         g_xpfiFd = -1;
         return false;
     }
+    /* 【触摸唤醒通道 2026-10-26】把 evdev fd 注册进框架异步后端的等待集：
+     * 触摸到达 ⇒ 内核直接唤醒阻塞中的事件循环 ⇒ 同一次唤醒里立即抽干
+     * 触摸数据并注入框架，**不等下一圈边界**。
+     *
+     * 改造前触摸 fd 只挂在轮询回调链（只在事件循环圈边界执行），真机实测
+     * 事件圈被拉长到 ~400ms（FPS 2.5）⇒ 触摸注入后无 mousePress、画面
+     * 静止。注册失败（后端不支持被动 fd，如 io_uring 引擎/Windows）时
+     * 保留轮询回调链兜底，行为退化为改造前口径，不产生功能回退。
+     */
+    g_xpfiPassiveRegistered = false;
+#if XAbstractNetIoRing_ON
+    {
+        XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+        if (ring &&
+            XAbstractNetIoRing_registerPassiveOsFd_base(ring, g_xpfiFd,
+                                                        xpfi_onPassiveReady))
+        {
+            g_xpfiPassiveRegistered = true;
+        }
+    }
+#endif
     g_xpfiRegistered = true;
-    fprintf(stderr, "[fbinput] 触摸输入已接入：%s（%s，%s，校准=%s）\n", path,
+    fprintf(stderr, "[fbinput] 触摸输入已接入：%s（%s，%s，校准=%s，"
+            "唤醒通道=%s）\n", path,
             name, g_xpfiMtProtocol ? "MT 协议 B 8 槽" : "ST 单点协议",
-            g_xpfiCalLoaded ? "pointercal" : "线性归一回退");
+            g_xpfiCalLoaded ? "pointercal" : "线性归一回退",
+            g_xpfiPassiveRegistered ? "事件环等待集" : "轮询回调兜底");
     return true;
 }
 
@@ -1348,6 +1395,17 @@ void XPlatformFbInput_unregister(void)
         XAbstractEventDispatcher_removePollCallback(g_xpfiPumpHandle);
         g_xpfiRegistered = false;
     }
+    /* 触摸 fd 已从异步后端等待集注销（关闭 fd 前必须先摘，避免等待集里
+     * 留一个即将失效的 fd ⇒ 事件循环在别的 fd 就绪时读到已关闭 fd）。 */
+#if XAbstractNetIoRing_ON
+    if (g_xpfiPassiveRegistered)
+    {
+        XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+        if (ring)
+            XAbstractNetIoRing_unregisterPassiveOsFd_base(ring, g_xpfiFd);
+        g_xpfiPassiveRegistered = false;
+    }
+#endif
     if (g_xpfiFd >= 0)
     {
         close(g_xpfiFd);

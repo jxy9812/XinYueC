@@ -940,7 +940,7 @@ static bool xfs_posix_shm_armRead(XFd fdx, XFileSharedMemoryPosix* m)
 {
 #ifdef __linux__
     XAbstractNetIoRing* ring;
-    struct io_uring_sqe* sqe;
+    XNetSqe* sqe;
 
     if (!m || m->m_readPending || m->signalFd < 0) return false;
     ring = XAbstractNetIoRing_global();
@@ -1020,7 +1020,7 @@ static void xfs_posix_shm_cancelRead(XFileSharedMemoryPosix* m)
 {
 #ifdef __linux__
     XAbstractNetIoRing* ring;
-    struct io_uring_sqe* sqe;
+    XNetSqe* sqe;
     int tries = 0;
 
     if (!m || !m->m_readPending) return;

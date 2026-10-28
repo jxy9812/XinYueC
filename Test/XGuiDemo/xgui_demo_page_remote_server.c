@@ -181,6 +181,7 @@ static struct
      *     初始化（build 入口防御）, demo 当前单次构建常态不走。 ---- */
     XBoxLayout       m_layoutRoot;  /**< 根列布局器（TopToBottom, 挂根）。 */
     XBoxLayout       m_rowHeader;   /**< 标题行: 标题(伸缩) + 服务状态(右锚)。 */
+    XBoxLayout       m_sessionCol;  /**< 会话状态单行标签纵列（label 池宿主）。 */
     XBoxLayout       m_rowToggle;   /**< 开关行: 启用开关 + 待生效提示(右锚)。 */
     XBoxLayout       m_rowPort;     /**< 端口/档位行: 档位下拉伸缩贴右。 */
     XBoxLayout       m_rowTls;      /**< TLS/UDP 行: UDP 开关伸缩。 */
@@ -220,7 +221,11 @@ static struct
     XLabel*    m_addrLabel;   /**< 服务地址行（服务地址: <本机IP>:<端口>;
                                *   2026-10-02 增强）。 */
     XLabel*    m_pendingLabel;/**< 待生效提示行。 */
-    XLabel*    m_sessionLabel;/**< 会话状态多行（监听/会话数/事件/错误）。 */
+    XLabel*    m_sessionLabel;/**< 会话状态首行（兼容旧引用/autotest）。 */
+    XLabel*    m_sessionLine[8]; /**< 会话状态第 2..9 行（label 池，2026-10-27
+                                  *   拆单行缓解 XLabel 多行动态文本渲染残影
+                                  *   ——监听态 9 行时行距 0 笔画粘连）。 */
+    int        m_sessionLineUsed; /**< 当前实际占用的池行数（0..8）。 */
 
     /* ---- 行标签（2026-10-06 纳入成员; 2026-10-17 起几何由行布局器
      *   管理——固定 40x22, 随窗口拉伸自动就位, 无需手工重排）。 ---- */
@@ -389,19 +394,38 @@ static void rs_refreshSessionLabel(void)
                  s_rs.m_lastEvent, s_rs.m_lastError);
     }
     {
-        const char* p;
-        int lines = 1;
-        for (p = buf; *p; ++p)
-            if (*p == '\n') ++lines;
-        if (lines != s_rs.m_sessionLines) {
-            /* 行数变化(未创建 4/停止 4/监听 9): 2026-10-17 布局容器化后
-             * 会话区高度由根列布局器伸缩自适应, 行数仅记诊断计数;
-             * rs_adaptLayout 已是空实现, 调用点保留作时序锚。 */
-            s_rs.m_sessionLines = lines;
-            rs_adaptLayout();
+        /* [拆单行 label 池 2026-10-27] 按 '\n' 切行逐行 setText：首行进
+         * m_sessionLabel，其余进池行；池行按实际行数显隐（隐藏行高度
+         * 0 不占布局空间）。行数仅记诊断计数（同旧口径）。 */
+        const char* p = buf;
+        int lineIdx = 0;
+        while (*p && lineIdx < 9) {
+            const char* nl = strchr(p, '\n');
+            int len = nl ? (int)(nl - p) : (int)strlen(p);
+            char row[192];
+            if (len >= (int)sizeof(row)) len = (int)sizeof(row) - 1;
+            memcpy(row, p, (size_t)len);
+            row[len] = '\0';
+            if (lineIdx == 0) {
+                XLabel_setText_2(s_rs.m_sessionLabel, row);
+            } else {
+                XLabel* pool = s_rs.m_sessionLine[lineIdx - 1];
+                XLabel_setText_2(pool, row);
+                XWidget_setVisible((XWidget*)pool, true);
+            }
+            ++lineIdx;
+            if (!nl) break;
+            p = nl + 1;
         }
+        /* 多余池行隐藏（监听 9 行 → 停止 4 行时收起 5..8 行）。 */
+        while (lineIdx <= 8) {
+            XWidget_setVisible((XWidget*)s_rs.m_sessionLine[lineIdx - 1],
+                               false);
+            ++lineIdx;
+        }
+        s_rs.m_sessionLineUsed = lineIdx > 9 ? 9 : lineIdx;
+        s_rs.m_sessionLines = s_rs.m_sessionLineUsed;
     }
-    XLabel_setText_2(s_rs.m_sessionLabel, buf);
 }
 
 /** @brief 待生效提示行刷新（监听中且配置有改动 → 显式提示）。 */
@@ -1321,6 +1345,12 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     /* ---- 会话状态多行区（根列 stretch 条目: 吃满回显行与服务地址行
      *     之间全部纵轴余量, 宽随根横向铺满——原稿「恰贴地址行上方,
      *     宽随根」口径; 行数增长由布局器自适应, 无需手工定高）。 ---- */
+    /* [拆单行 label 池 2026-10-27 视觉走查 P3-E] 会话状态最多 9 行
+     * （监听态），多行动态文本在 XLabel 上行距 0 笔画粘连（横屏像素
+     * 剖面实证）——拆 1+8 单行标签纵列（盒距 3），行数按 refresh 实际
+     * 占用显隐。首行沿用 m_sessionLabel 字段（旧引用/autotest 兼容）。 */
+    XBoxLayout_init(&s_rs.m_sessionCol, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&s_rs.m_sessionCol, 3);
     s_rs.m_sessionLabel = XLabel_create(s_rs.m_root, 0);
     if (!s_rs.m_sessionLabel) return s_rs.m_root;
     XLabel_setText_2(s_rs.m_sessionLabel,
@@ -1329,9 +1359,23 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     XLabel_setAlignment(s_rs.m_sessionLabel,
                         XAlignment_Left | XAlignment_Top);
     XWidget_show((XWidget*)s_rs.m_sessionLabel);
-    XBoxLayout_addWidget(&s_rs.m_layoutRoot, (XWidget*)s_rs.m_sessionLabel);
-    XBoxLayout_setStretchFactorWidget(&s_rs.m_layoutRoot,
-                                      (XWidget*)s_rs.m_sessionLabel, 1);
+    XBoxLayout_addWidget(&s_rs.m_sessionCol, (XWidget*)s_rs.m_sessionLabel);
+    {
+        int li;
+        for (li = 0; li < 8; ++li) {
+            s_rs.m_sessionLine[li] = XLabel_create(s_rs.m_root, 0);
+            if (!s_rs.m_sessionLine[li]) return s_rs.m_root;
+            XLabel_setAlignment(s_rs.m_sessionLine[li],
+                                XAlignment_Left | XAlignment_Top);
+            XBoxLayout_addWidget(&s_rs.m_sessionCol,
+                                 (XWidget*)s_rs.m_sessionLine[li]);
+        }
+    }
+    s_rs.m_sessionLineUsed = 1;
+    XBoxLayout_addLayout(&s_rs.m_layoutRoot, (XLayout*)&s_rs.m_sessionCol);
+    /* 伸缩因子按索引：会话列前已有 9 个行盒条目（index 0..8），本列
+     * index=9（旧单 label 用 widget 型因子，拆池后改 index 型）。 */
+    XBoxLayout_setStretch(&s_rs.m_layoutRoot, 9, 1);
     /* 服务地址行殿后入列（根列末条目, 固定高贴底——高随宽度档
      * 24/40, 见前文创建段与 rs_applyTierHeights）。 */
     XBoxLayout_addWidget(&s_rs.m_layoutRoot, (XWidget*)s_rs.m_addrLabel);

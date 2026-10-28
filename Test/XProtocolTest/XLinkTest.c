@@ -3662,7 +3662,13 @@ static const char* xfile_test_makeDir(const char* leaf, char* out,
     return created ? out : NULL;
 }
 
-/** @brief 写一个指定大小/内容的测试文件（经 XFile；覆盖已存在文件）。 */
+static void xfile_test_cleanup(const char* dir);
+
+/** @brief 写一个指定大小/内容的测试文件（经 XFile；覆盖已存在文件）。
+ *  @note  写前先清残留：老版本 cleanup 曾把目标chmod成不可写权限位
+ *         又删不掉（见 xfile_test_cleanup 注），一次污染会让后续每轮
+ *         在同一路径上打开即拒（沙箱外写/源文件准备首当其冲）。
+ *         写前自愈让单个残留文件最多影响一轮。 */
 static bool xfile_test_writeFile(const char* path, uint32_t size,
                                   uint8_t seed)
 {
@@ -3674,6 +3680,7 @@ static bool xfile_test_writeFile(const char* path, uint32_t size,
 
     if (!name)
         return false;
+    xfile_test_cleanup(path); /* 写前清残留（自愈，见函数注） */
     file = XFile_create_2(name);
     XClassDelete((XClass*)name);
     if (!file)
@@ -3737,7 +3744,15 @@ static int64_t xfile_test_readFile(const char* path, uint8_t** outData)
 
 /** @brief 删除测试文件/目录（尽力而为）。
  *  @note  先恢复可写权限：Windows 下只读文件无法删除，而部分打开路径会
- *         留下只读属性（曾致测试第二次运行失败）。 */
+ *         留下只读属性（曾致测试第二次运行失败）。
+ *         文件与目录必须分流删除：removeRecursively 走 rmdir 语义，对
+ *         普通文件恒失败——残留文件会让下一次运行的沙箱外写与下载本地
+ *         落盘打开被拒，连跑必红；文件侧改走 XDir_removePath_static
+ *         （对标 C remove 的类型分流）。
+ *         权限旗标必须用 XFilePermission 枚举值：本层是 Qt 风格位域，
+ *         直接传 0666 八进制会被逐位误读（0o666 十进制 = 0x1B6 恰好
+ *         解码出 ExeUser|WriteGroup|…，chmod 出 0136 的不可写文件，
+ *         「恢复可写」反成投毒，实测留下连跑必红的残留）。 */
 static void xfile_test_cleanup(const char* dir)
 {
     XString* path = XString_create_utf8(dir);
@@ -3745,8 +3760,13 @@ static void xfile_test_cleanup(const char* dir)
     XFileStat stat;
     if (!path)
         return;
-    if (XDeviceFile_stat(path, &stat) && stat.exists && stat.isFile)
-        (void)XDeviceFile_setPermissions(path, (XFilePermissions)0666);
+    if (XDeviceFile_stat(path, &stat) && stat.exists && stat.isFile) {
+        (void)XDeviceFile_setPermissions(path,
+                                         XFile_ReadOwner | XFile_WriteOwner);
+        (void)XDir_removePath_static(path);
+        XClassDelete((XClass*)path);
+        return;
+    }
     handle = XDir_create_2(path);
     if (handle) {
         (void)XDir_removeRecursively(handle);
@@ -4099,6 +4119,8 @@ static void xfile_test_end_to_end(void)
         }
 
         /* --- 下载 --- */
+        /* 下载目标由传输引擎打开（非 writeFile），同样先清旧残留。 */
+        xfile_test_cleanup("xlink_ft_e2e_dl.bin");
         XLINK_CHECK(XLinkFileClient_download(fc, "uploaded.bin",
                                              "xlink_ft_e2e_dl.bin", 1,
                                              &transferId),
@@ -4168,6 +4190,430 @@ static void xfile_test_end_to_end(void)
     xfile_test_cleanup("xlink_ft_e2e");
 }
 
+/** @brief 激进双泵节奏测试端口（与十七·三错开，防监听互扰）。 */
+#define XFILE_TEST_DP_PORT (XFILE_TEST_PORT + 1u)
+
+/** @brief 激进双泵节奏单阶段等待上限（毫秒；每圈 1ms，高频短拍）。 */
+#define XFILE_TEST_DP_BUDGET_MS 20000u
+
+/**
+ * @brief 子分组四：激进双泵节奏端到端（上传+下载连跑，驱动链回归锁）。
+ * @details 每圈 processEvents（触发会话内建定时器/readyRead 异步驱动）与
+ *          XLinkFileClient_pump 背靠背交替，节奏远快于会话 250ms 内建
+ *          节拍。Auto 模式锁「单驱动门控下传输不被漏泵」；Force 模式锁
+ *          「顺序双泵不搅会话、不丢帧」（XLink.md §14.3 怀疑 1 的回归
+ *          保险）。防未来驱动链改动回退。
+ */
+static void xfile_test_double_pump(void)
+{
+    XLINK_SECTION("十七·四、激进双泵节奏（驱动链回归锁）");
+
+    /* 驱动模式 API 自身的行为（不依赖链路）。 */
+    {
+        XLinkFileClient* fc = XLinkFileClient_create();
+        XLINK_CHECK(fc != NULL, "驱动模式测试对象创建成功");
+        if (!fc)
+            return;
+        XLINK_CHECK(XLinkFileClient_sessionDrive(fc)
+                        == XLinkFileClientSessionDrive_Auto,
+                    "会话驱动模式缺省 Auto");
+        XLINK_CHECK(XLinkFileClient_setSessionDrive(
+                        fc, XLinkFileClientSessionDrive_ForceSessionPump),
+                    "切换 Force 模式成功");
+        XLINK_CHECK(XLinkFileClient_sessionDrive(fc)
+                        == XLinkFileClientSessionDrive_ForceSessionPump,
+                    "Force 模式读回一致");
+        XLINK_CHECK(XLinkFileClient_setSessionDrive(
+                        fc, XLinkFileClientSessionDrive_Auto),
+                    "切回 Auto 模式成功");
+        XLINK_CHECK(!XLinkFileClient_setSessionDrive(
+                        fc, (XLinkFileClientSessionDrive)9),
+                    "非法驱动模式被拒");
+        XClassDelete((XClass*)fc);
+    }
+
+    /* 真实链路：同一条连接上先上传后下载连跑，再以 Force 模式重传一次。 */
+    {
+        char rootBuf[256];
+        const char* root = xfile_test_makeDir("dp", rootBuf,
+                                              sizeof(rootBuf));
+        XLinkServer* srv = NULL;
+        XLinkClient* cli = NULL;
+        XLinkFileServer* fs = NULL;
+        XLinkFileClient* fc = NULL;
+        uint32_t transferId = 0;
+
+        XLINK_CHECK(root != NULL, "双泵测试目录创建成功");
+        if (!root)
+            return;
+        if (!xfile_test_writeFile("xlink_ft_dp/src.bin",
+                                  17u * 1024u + 9u, 0xA5)) {
+            XLINK_CHECK(false, "双泵源文件准备成功");
+            xfile_test_cleanup("xlink_ft_dp");
+            return;
+        }
+        XLINK_CHECK(1, "双泵源文件准备成功（17KB+9）");
+
+        srv = XLinkServer_create();
+        cli = XLinkClient_create();
+        fs = (XLinkFileServer*)XMalloc_System(sizeof(XLinkFileServer));
+        fc = XLinkFileClient_create();
+        XLINK_CHECK(srv && cli && fs && fc, "双泵节奏端到端对象创建成功");
+        if (!srv || !cli || !fs || !fc) {
+            if (srv) XClassDelete((XClass*)srv);
+            if (cli) XClassDelete((XClass*)cli);
+            if (fs) XFree_System(fs);
+            if (fc) XClassDelete((XClass*)fc);
+            xfile_test_cleanup("xlink_ft_dp");
+            return;
+        }
+
+        XLinkFileServer_init(fs);
+        XLINK_CHECK(XLinkFileServer_setRootDir(fs, root),
+                    "双泵节奏沙箱根目录设置成功");
+        XLINK_CHECK(XLinkFileServer_setFlags(
+                        fs, XLINK_FILESRV_ALLOW_UPLOAD
+                                | XLINK_FILESRV_ALLOW_DOWNLOAD
+                                | XLINK_FILESRV_ALLOW_OVERWRITE),
+                    "双泵节奏服务端允许双向传输与覆盖");
+        XLinkFileServer_setMaxFileBytes(fs, 0);
+        XLinkServer_setCapability(srv, XLinkCapability_Zlib);
+        if (!XLinkFileServer_attach(fs, srv)
+            || !XLinkServer_listen_base(srv, "127.0.0.1",
+                                        XFILE_TEST_DP_PORT)) {
+            XLINK_CHECK(false, "双泵节奏服务端监听成功");
+            XLinkFileServer_deinit(fs);
+            XFree_System(fs);
+            XClassDelete((XClass*)fc);
+            XClassDelete((XClass*)cli);
+            XClassDelete((XClass*)srv);
+            xfile_test_cleanup("xlink_ft_dp");
+            return;
+        }
+        XLINK_CHECK(1, "双泵节奏服务端监听成功");
+
+        XLinkClient_setHostPort(cli, "127.0.0.1", XFILE_TEST_DP_PORT);
+        XLinkClient_setCapability(cli, XLinkCapability_Zlib
+                                       | XLinkCapability_FileTransfer);
+        g_client = cli;
+        XLINK_CHECK(XLinkClient_connectToServer(cli), "双泵节奏连接发起成功");
+        XLINK_CHECK(xauth_wait(xauth_cond_client_ready, 8000, srv),
+                    "双泵节奏前置：客户端 Ready");
+        XLINK_CHECK(XLinkFileClient_attach(fc, cli), "双泵节奏文件客户端挂接成功");
+
+        /* --- 阶段一：Auto 模式上传（门控生效，会话单驱动） --- */
+        XLINK_CHECK(XLinkFileClient_upload(fc, "xlink_ft_dp/src.bin",
+                                           "dp_uploaded.bin", 1, &transferId),
+                    "Auto 模式上传发起成功");
+        {
+            uint32_t waited = 0;
+            while (XLinkFileClient_isBusy(fc)
+                   && waited < XFILE_TEST_DP_BUDGET_MS) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XLinkServer_pump(srv,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                XLinkFileClient_pump(fc, 0u);
+                XThread_msleep(1);
+                waited += 1;
+            }
+        }
+        XLINK_CHECK(XLinkFileClient_state(fc) == XLinkFileTransferState_Done,
+                    "Auto 激进双泵上传完成");
+        XLINK_CHECK(XLinkClient_isReady(cli), "Auto 上传后会话仍 Ready（无误判回收）");
+        {
+            uint8_t* a = NULL;
+            uint8_t* b = NULL;
+            int64_t alen = xfile_test_readFile("xlink_ft_dp/src.bin", &a);
+            int64_t blen = xfile_test_readFile("xlink_ft_dp/dp_uploaded.bin",
+                                               &b);
+            XLINK_CHECK(alen > 0 && alen == blen && a && b
+                            && memcmp(a, b, (size_t)alen) == 0,
+                        "Auto 上传文件逐字节一致");
+            if (a) XFree_System(a);
+            if (b) XFree_System(b);
+        }
+
+        /* --- 阶段二：Auto 模式下载（紧接上传，同链路同节奏） --- */
+        xfile_test_cleanup("xlink_ft_dp_dp_dl.bin"); /* 下载目标先清残留 */
+        XLINK_CHECK(XLinkFileClient_download(fc, "dp_uploaded.bin",
+                                             "xlink_ft_dp_dp_dl.bin", 1,
+                                             &transferId),
+                    "Auto 模式下载发起成功（紧接上传）");
+        {
+            uint32_t waited = 0;
+            while (XLinkFileClient_isBusy(fc)
+                   && waited < XFILE_TEST_DP_BUDGET_MS) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XLinkServer_pump(srv,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                XLinkFileClient_pump(fc, 0u);
+                XThread_msleep(1);
+                waited += 1;
+            }
+        }
+        XLINK_CHECK(XLinkFileClient_state(fc) == XLinkFileTransferState_Done,
+                    "Auto 激进双泵下载完成");
+        XLINK_CHECK(XLinkClient_isReady(cli), "Auto 下载后会话仍 Ready（无误判回收）");
+        {
+            uint8_t* a = NULL;
+            uint8_t* b = NULL;
+            int64_t alen = xfile_test_readFile("xlink_ft_dp/src.bin", &a);
+            int64_t blen = xfile_test_readFile("xlink_ft_dp_dp_dl.bin", &b);
+            XLINK_CHECK(alen > 0 && alen == blen && a && b
+                            && memcmp(a, b, (size_t)alen) == 0,
+                        "Auto 下载文件与原文件逐字节一致");
+            if (a) XFree_System(a);
+            if (b) XFree_System(b);
+        }
+
+        /* --- 阶段三：Force 模式上传（旧版顺序双泵行为回归锁） --- */
+        XLINK_CHECK(XLinkFileClient_setSessionDrive(
+                        fc, XLinkFileClientSessionDrive_ForceSessionPump),
+                    "切 Force 模式成功（顺序双泵回归锁）");
+        XLINK_CHECK(XLinkFileClient_upload(fc, "xlink_ft_dp/src.bin",
+                                           "dp_uploaded.bin", 1, &transferId),
+                    "Force 模式上传发起成功");
+        {
+            uint32_t waited = 0;
+            while (XLinkFileClient_isBusy(fc)
+                   && waited < XFILE_TEST_DP_BUDGET_MS) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XLinkServer_pump(srv,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                XLinkFileClient_pump(fc, 0u);
+                XThread_msleep(1);
+                waited += 1;
+            }
+        }
+        XLINK_CHECK(XLinkFileClient_state(fc) == XLinkFileTransferState_Done,
+                    "Force 顺序双泵上传完成（双泵不搅会话）");
+        XLINK_CHECK(XLinkClient_isReady(cli), "Force 上传后会话仍 Ready");
+        {
+            uint8_t* a = NULL;
+            uint8_t* b = NULL;
+            int64_t alen = xfile_test_readFile("xlink_ft_dp/src.bin", &a);
+            int64_t blen = xfile_test_readFile("xlink_ft_dp/dp_uploaded.bin",
+                                               &b);
+            XLINK_CHECK(alen > 0 && alen == blen && a && b
+                            && memcmp(a, b, (size_t)alen) == 0,
+                        "Force 上传文件逐字节一致（覆盖重传）");
+            if (a) XFree_System(a);
+            if (b) XFree_System(b);
+        }
+        XLINK_CHECK(XLinkFileClient_setSessionDrive(
+                        fc, XLinkFileClientSessionDrive_Auto),
+                    "恢复 Auto 模式成功");
+
+        XLinkClient_disconnectFromServer(cli);
+        XLinkFileClient_abort(fc, XLinkFileStatus_Aborted, "cleanup");
+        XClassDelete((XClass*)fc);
+        XLinkFileServer_deinit(fs);
+        XFree_System(fs);
+        XClassDelete((XClass*)cli);
+        XLinkServer_close(srv);
+        XClassDelete((XClass*)srv);
+        g_client = NULL;
+    }
+
+    xfile_test_cleanup("xlink_ft_dp_dp_dl.bin");
+    xfile_test_cleanup("xlink_ft_dp");
+}
+
+/** @brief 门控子句锁测试端口（与十七·三/四错开，防监听互扰）。 */
+#define XFILE_TEST_GATE_PORT (XFILE_TEST_PORT + 2u)
+
+/** @brief 无事件观察窗后「事件恢复」救援循环的完成预算（毫秒）。 */
+#define XFILE_TEST_GATE_BUDGET_MS 20000u
+
+/** @brief Auto 拒泵观察窗（毫秒）：localhost 上若代泵发生，一次小文件
+ *  传输远快于此窗；窗内不完成即证「会话未被本函数驱动」。 */
+#define XFILE_TEST_GATE_PROBE_MS 500u
+
+/**
+ * @brief 子分组五：单驱动门控子句锁（复核 medium·③）。
+ * @details 十七·四的三个阶段每圈都转 processEvents，会话在 Auto/Force
+ *          下都被异步驱动，门控子句本身（Auto+分发器在位 ⇒ pump 不代泵
+ *          会话；Force ⇒ 代泵）没有可观察断言——把门控条件改反/改没，
+ *          那组测试照样全绿。本分组两段锁：
+ *            - 子句锁（willPumpSession 查询，与 pump 判定同源单一事实）：
+ *              Auto ⇒ false、Force ⇒ true、切回 Auto ⇒ false。
+ *            - 行为锁：观察窗内只泵服务端与文件客户端、**不转事件**，
+ *              Auto 下传输停滞在 Opening；恢复转事件后同一笔传输照常
+ *              推到 Done——证明停滞只来自无事件窗口，门控没有破坏传输、
+ *              会话没有被误判回收。
+ *          注：真实 TCP 的读写均为事件驱动（收包进环形缓冲、写残留推进
+ *          都在分发器事件处理内，见 XAbstractSocket），无事件窗口里即便
+ *          Force 代泵会话也搬不动数据，「Force 无事件救援」不可作为断言，
+ *          Force 子句由查询 API 锁定。
+ *          心跳拍编译为 0 时 Auto 恒代泵（会话契约），子句形态不同，
+ *          该构建下跳过锁段。 */
+static void xfile_test_drive_gate(void)
+{
+    XLINK_SECTION("十七·五、单驱动门控子句锁（Auto 拒泵/Force 代泵）");
+
+    {
+        char rootBuf[256];
+        const char* root = xfile_test_makeDir("gate", rootBuf,
+                                              sizeof(rootBuf));
+        XLinkServer* srv = NULL;
+        XLinkClient* cli = NULL;
+        XLinkFileServer* fs = NULL;
+        XLinkFileClient* fc = NULL;
+        uint32_t transferId = 0;
+        uint32_t waited;
+
+        XLINK_CHECK(root != NULL, "门控锁测试目录创建成功");
+        if (!root)
+            return;
+        if (!xfile_test_writeFile("xlink_ft_gate/src.bin",
+                                  4u * 1024u + 7u, 0x3C)) {
+            XLINK_CHECK(false, "门控锁源文件准备成功");
+            xfile_test_cleanup("xlink_ft_gate");
+            return;
+        }
+        XLINK_CHECK(1, "门控锁源文件准备成功（4KB+7）");
+
+        srv = XLinkServer_create();
+        cli = XLinkClient_create();
+        fs = (XLinkFileServer*)XMalloc_System(sizeof(XLinkFileServer));
+        fc = XLinkFileClient_create();
+        XLINK_CHECK(srv && cli && fs && fc, "门控锁测试对象创建成功");
+        if (!srv || !cli || !fs || !fc) {
+            if (srv) XClassDelete((XClass*)srv);
+            if (cli) XClassDelete((XClass*)cli);
+            if (fs) XFree_System(fs);
+            if (fc) XClassDelete((XClass*)fc);
+            xfile_test_cleanup("xlink_ft_gate");
+            return;
+        }
+
+        XLinkFileServer_init(fs);
+        XLinkFileServer_setRootDir(fs, root);
+        XLinkFileServer_setFlags(fs, XLINK_FILESRV_ALLOW_DOWNLOAD
+                                     | XLINK_FILESRV_ALLOW_OVERWRITE);
+        XLinkServer_setCapability(srv, XLinkCapability_Zlib);
+        if (!XLinkFileServer_attach(fs, srv)
+            || !XLinkServer_listen_base(srv, "127.0.0.1",
+                                        XFILE_TEST_GATE_PORT)) {
+            XLINK_CHECK(false, "门控锁服务端监听成功");
+            XLinkFileServer_deinit(fs);
+            XFree_System(fs);
+            XClassDelete((XClass*)fc);
+            XClassDelete((XClass*)cli);
+            XClassDelete((XClass*)srv);
+            xfile_test_cleanup("xlink_ft_gate");
+            return;
+        }
+        XLINK_CHECK(1, "门控锁服务端监听成功");
+
+        XLinkClient_setHostPort(cli, "127.0.0.1", XFILE_TEST_GATE_PORT);
+        XLinkClient_setCapability(cli, XLinkCapability_Zlib
+                                       | XLinkCapability_FileTransfer);
+        g_client = cli;
+        XLINK_CHECK(XLinkClient_connectToServer(cli), "门控锁连接发起成功");
+        /* 前置就绪走正常异步驱动（转事件），与被锁子句无关。 */
+        XLINK_CHECK(xauth_wait(xauth_cond_client_ready, 8000, srv),
+                    "门控锁前置：客户端 Ready");
+        XLINK_CHECK(XLinkFileClient_attach(fc, cli), "门控锁文件客户端挂接成功");
+
+#if XLINK_HEARTBEAT_TICK_MS > 0
+        /* 宿主前提：本线程分发器在位（测试宿主建了 XCoreApplication）。
+           分发器缺席时 Auto 本就代泵，观察窗测不出子句。 */
+        if (XObject_eventDispatcher((XObject*)fc)) {
+            XLINK_CHECK(XLinkFileClient_sessionDrive(fc)
+                            == XLinkFileClientSessionDrive_Auto,
+                        "门控锁缺省 Auto 模式");
+            xfile_test_cleanup("xlink_ft_gate_dl.bin");
+            XLINK_CHECK(XLinkFileClient_download(fc, "src.bin",
+                                                 "xlink_ft_gate_dl.bin", 1,
+                                                 &transferId),
+                        "门控锁下载发起成功");
+            /* 观察窗：只泵服务端（OpenAck 会送到本机 socket）与文件
+               客户端，**不转事件**——Auto 门控下会话无推进通道。 */
+            waited = 0;
+            while (XLinkFileClient_isBusy(fc)
+                   && waited < XFILE_TEST_GATE_PROBE_MS) {
+                XLinkServer_pump(srv,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                XLinkFileClient_pump(fc, 0u);
+                XThread_msleep(1);
+                waited += 1;
+            }
+            XLINK_CHECK(XLinkFileClient_state(fc)
+                            == XLinkFileTransferState_Opening,
+                        "Auto+分发器在位：会话未被代泵（传输停在 Opening）");
+            XLINK_CHECK(!XLinkFileTransfer_isFinished(
+                            XLinkFileClient_transfer(fc)),
+                        "Auto 观察窗内传输未终局（未被门控外通道推进）");
+
+            /* 子句锁（willPumpSession 与 pump 判定同源）：Force ⇒ 代泵，
+               切回 Auto ⇒ 恢复拒泵。真实 TCP 的读写均为事件驱动（见
+               XAbstractSocket），无事件窗口里即便 Force 代泵会话也搬不动
+               数据——「Force 无事件救援」不可作为断言，子句以查询锁定。 */
+            XLINK_CHECK(XLinkFileClient_setSessionDrive(
+                            fc, XLinkFileClientSessionDrive_ForceSessionPump),
+                        "切 Force 模式成功（门控锁）");
+            XLINK_CHECK(XLinkFileClient_willPumpSession(fc),
+                        "Force 模式查询代泵（willPumpSession=true）");
+            XLINK_CHECK(XLinkFileClient_setSessionDrive(
+                            fc, XLinkFileClientSessionDrive_Auto),
+                        "切回 Auto 模式成功（门控锁）");
+            XLINK_CHECK(!XLinkFileClient_willPumpSession(fc),
+                        "切回 Auto 查询恢复拒泵（willPumpSession=false）");
+
+            /* 事件恢复出口：同一笔传输转事件后照常推进到 Done——证明
+               停滞只来自无事件窗口（Auto 拒泵 + 传输层事件依赖），门控
+               没有破坏传输、会话也没有被误判回收。 */
+            waited = 0;
+            while (XLinkFileClient_isBusy(fc)
+                   && waited < XFILE_TEST_GATE_BUDGET_MS) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XLinkServer_pump(srv,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                XLinkFileClient_pump(fc, 0u);
+                XThread_msleep(1);
+                waited += 1;
+            }
+            XLINK_CHECK(XLinkFileClient_state(fc)
+                            == XLinkFileTransferState_Done,
+                        "事件恢复后同一传输走出停滞并完成");
+            XLINK_CHECK(XLinkClient_isReady(cli),
+                        "事件恢复后会话仍 Ready（无误判回收）");
+            {
+                uint8_t* a = NULL;
+                uint8_t* b = NULL;
+                int64_t alen = xfile_test_readFile("xlink_ft_gate/src.bin",
+                                                   &a);
+                int64_t blen = xfile_test_readFile("xlink_ft_gate_dl.bin",
+                                                   &b);
+                XLINK_CHECK(alen > 0 && alen == blen && a && b
+                                && memcmp(a, b, (size_t)alen) == 0,
+                            "事件恢复后下载文件逐字节一致");
+                if (a) XFree_System(a);
+                if (b) XFree_System(b);
+            }
+        } else {
+            XLINK_CHECK(1, "宿主无事件分发器：Auto 本就代泵，子句锁跳过");
+        }
+#else
+        XLINK_CHECK(1, "心跳拍为 0 的构建：Auto 恒代泵，子句锁跳过");
+#endif /* XLINK_HEARTBEAT_TICK_MS > 0 */
+
+        XLinkClient_disconnectFromServer(cli);
+        XLinkFileClient_abort(fc, XLinkFileStatus_Aborted, "cleanup");
+        XClassDelete((XClass*)fc);
+        XLinkFileServer_deinit(fs);
+        XFree_System(fs);
+        XClassDelete((XClass*)cli);
+        XLinkServer_close(srv);
+        XClassDelete((XClass*)srv);
+        g_client = NULL;
+    }
+
+    xfile_test_cleanup("xlink_ft_gate_dl.bin");
+    xfile_test_cleanup("xlink_ft_gate");
+}
+
 /**
  * @brief 分组十七入口：文件传输。
  */
@@ -4176,6 +4622,8 @@ static void xlink_test_file(void)
     xfile_test_codec();
     xfile_test_sandbox();
     xfile_test_end_to_end();
+    xfile_test_double_pump();
+    xfile_test_drive_gate();
 }
 
 #endif /* XLINK_FILE_ON */

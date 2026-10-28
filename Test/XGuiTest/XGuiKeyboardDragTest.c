@@ -295,6 +295,16 @@ int main(void)
     unsigned long flushMovesSum = 0;
     int panBefore;
 
+    /* 三处 main 兜底之二（评审⑤）：XKB_METRICS 未设时置 legacy——伪
+     * fbdev 面板无毫米参数本就探测失败自动回 legacy 轨，显式兜底防面
+     * 板毫米参数未来接入时本测试几何断言漂移（外部 env 显式设置优先，
+     * 覆写 0）。 */
+#ifdef _WIN32
+    _putenv_s("XKB_METRICS", "legacy");
+#else
+    setenv("XKB_METRICS", "legacy", 0);
+#endif
+
     if (!XPlatformDisplayDriver_register(&t_ops))
     {
         fprintf(stderr, "[KD-FAIL] fake display driver register\n");

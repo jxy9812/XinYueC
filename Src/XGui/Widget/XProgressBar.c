@@ -535,6 +535,53 @@ XVtable* XProgressBar_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
+/** @brief 刷新尺寸提示（对标 Qt QProgressBar）。
+ *  @details Qt 6.8.3（qprogressbar.cpp:388-412）：sizeHint = 块宽
+ *           （PM_ProgressBarChunkWidth）×7 + 数字宽×4，字高 +8，竖向
+ *           则转置；再经样式 CT_ProgressBar 收口。minimumSizeHint =
+ *           sizeHint 但另一轴回落到字高+2。
+ *  @note    此前本类**无 sizeHint** ⇒ 布局条目首选尺寸 0（竖排时高度
+ *           塌 0、控件不可见）。 */
+static void xprogressbar_updateSizeHint(XProgressBar* self)
+{
+    XSize hint;
+    XSize minHint;
+    XStyleOption opt;
+    XFont font;
+    int chunkW;
+    int textW;
+    int textH;
+    int w;
+    int h;
+    bool horizontal;
+    if (!self) return;
+    horizontal = self->m_orientation == XProgressBarOrientation_Horizontal;
+    XStyleOption_init(&opt, XStyleCT_ProgressBar);
+    opt.m_horizontal = horizontal ? 1 : 0;
+    chunkW = XStyle_pixelMetric(XStyle_defaultStyle(),
+                                XStylePM_ProgressBarChunkWidth, &opt);
+    if (chunkW <= 0) chunkW = 9;
+    font = XWidget_font((XWidget*)self);
+    textW = XPainter_textWidth(&font, "0000");
+    textH = XPainter_textHeight(&font);
+    XClassDeinit(&font);
+    if (textH <= 0) textH = 14;
+    w = (chunkW > 9 ? chunkW : 9) * 7 + textW;
+    h = textH + 8;
+    if (!horizontal) { int t = w; w = h; h = t; }
+    {
+        XSize content;
+        XSize_init(&content, w, h);
+        hint = XStyle_sizeFromContents(XStyle_defaultStyle(),
+                                       XStyleCT_ProgressBar, &opt, content);
+    }
+    XWidget_setSizeHint((XWidget*)self, &hint);
+    minHint = hint;
+    if (horizontal) minHint.height = textH + 2;
+    else minHint.width = textH + 2;
+    XWidget_setMinimumSizeHint((XWidget*)self, &minHint);
+}
+
 void XProgressBar_init(XProgressBar* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
@@ -551,6 +598,7 @@ void XProgressBar_init(XProgressBar* self, XWidget* parent, XWidgetFlags flags)
     self->m_textDirection = XProgressBarDirection_TopToBottom;
     self->m_alignment = XAlignment_HCenter | XAlignment_VCenter;
     self->m_format = XString_create_utf8("%p%");
+    xprogressbar_updateSizeHint(self);
 }
 
 XProgressBar* XProgressBar_create_ex(XMemoryType memory, XWidget* parent,
@@ -613,18 +661,14 @@ void XProgressBar_setMaximum(XProgressBar* self, int maximum)
 
 int XProgressBar_value(const XProgressBar* self)
 {
-    int v;
+    /* [Qt 对齐 qprogressbar.cpp:301-304] value() 直接返回内部值，不做
+     * 任何钳位——reset() 置的 minimum-1 哨兵（"未开始"）必须原样可见。
+     * 越界钳位只发生在 setValue() 入口（xprogressbar_clamp），与 Qt 一致。
+     * 此前 getter 侧再钳一次（低于下限→下限）把 reset 哨兵吃掉，违反
+     * Qt，且与 XProgressBarTest 的 Qt 对齐期望（收缩/复位后 == minimum-1）
+     * 冲突。 */
     if (!self) return 0;
-    v = self->m_value;
-    /* [Qt 对齐 qprogressbar.cpp value()] reset 置 minimum-1 作“未开始”
-     * 哨兵，getter 钳位显示：低于下限→下限、高于上限→上限-1（Qt 同
-     * 款两分支）。此前裸返内部值，reset 后 value()==-1 与 Qt 的 0 不
-     * 一致（apitest「reset 复位到下限」失败根因之一）。 */
-    if (v > self->m_max)
-        v = self->m_max - 1;
-    else if (v < self->m_min)
-        v = self->m_min;
-    return v;
+    return self->m_value;
 }
 
 void XProgressBar_setValue(XProgressBar* self, int value)

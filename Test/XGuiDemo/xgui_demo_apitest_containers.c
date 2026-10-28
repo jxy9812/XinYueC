@@ -2464,16 +2464,27 @@ static int containers_toolbox(void)
                 "XToolBox setCurrentWidget 按控件迁移（Qt 同）");
 
     /* ================================================================
-     * C. 条目属性（禁用条目不可选——Qt setItemEnabled 语义）。
+     * C. 条目属性（Qt setItemEnabled 语义）。
      * ================================================================ */
     XAPI_EXPECT(XToolBox_isItemEnabled(&tb, 1), "XToolBox 新条目默认启用");
     XToolBox_setItemEnabled(&tb, 1, false);
     XAPI_EXPECT(!XToolBox_isItemEnabled(&tb, 1),
                 "XToolBox setItemEnabled(false) 往返");
     XToolBox_setCurrentIndex(&tb, 1);
-    XAPI_EXPECT(XToolBox_currentIndex(&tb) == 0,
-                "XToolBox 禁用条目不可被选中（Qt 同）");
+    /* [Qt 6.8.3 定案 qtoolbox.cpp:387-403 + 110-115] setCurrentIndex 只拦
+     * 越界与同页，page(index) 不检查 enabled → **程序化切换允许落在禁用条目
+     * 上**；"禁用条目不可点选"是页头按钮 setEnabled(false) 后 clicked 不
+     * 发射的交互层语义，API 层不拦截。 */
+    XAPI_EXPECT(XToolBox_currentIndex(&tb) == 1,
+                "XToolBox 禁用条目仍可被程序化选中（Qt 同：setCurrentIndex 不检查 enabled）");
     XToolBox_setItemEnabled(&tb, 1, true);
+    /* 禁用**当前页**时 Qt 自动切到相邻启用页（qtoolbox.cpp:552-571）。 */
+    XToolBox_setCurrentIndex(&tb, 0);
+    XToolBox_setItemEnabled(&tb, 0, false);
+    XAPI_EXPECT(XToolBox_currentIndex(&tb) == 1,
+                "XToolBox 禁用当前页自动切到相邻启用页（Qt 同）");
+    XToolBox_setItemEnabled(&tb, 0, true);
+    XToolBox_setCurrentIndex(&tb, 0);
     XToolBox_setItemText(&tb, 0, "改名");
     XAPI_EXPECT(strcmp(xapi_cstr(XToolBox_itemText(&tb, 0)), "改名") == 0,
                 "XToolBox setItemText 往返");

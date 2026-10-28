@@ -21,8 +21,9 @@
 >     会话统计（`XLinkSession_stats`）、`XLinkServer` 会话销毁前钩子
 >     （`setSessionGoneHook`，扩展清理借用指针）、**接收缓冲越界根修**
 >     （读取空间改为"剩余容量"，原公式在半帧残留时最多越界写 m_rxFilled 字节）。
->   - 测试：新增分组十六（认证 5 子组）与十七（文件 3 子组）；
->     当前 **570 通过 / 4 失败**（失败集中在下载端到端，见 §14 已知问题）。
+>   - 测试：新增分组十六（认证 5 子组）与十七（文件 5 子组）；
+>     当前 **621 通过 / 0 失败**（Linux x86-64 实测，2026-10-28；
+>     下载端到端闭环与 Windows 平台说明见 §14.3）。
 >
 > v1.2 变更：删除被自动超时（setRequestTimeout + requestFinished 信号）取代的
 > 待应答被动超时查询 API（含声明/实现/文档/测试）；示例与实战代码全面收敛到
@@ -50,6 +51,8 @@
   - [6.7 服务端包装 XLinkServer](#67-服务端包装-xlinkserver推荐)
   - [6.8 客户端包装 XLinkClient](#68-客户端包装-xlinkclient)
   - [6.9 TLS 加密链路](#69-tls-加密链路)
+  - [6.10 登录认证](#610-登录认证xlink_auth_on)
+  - [6.11 文件传输](#611-文件传输xlink_file_on)
 - [7. 完整示例](#7-完整示例)
 - [8. 配置项](#8-配置项)
 - [9. API 速查表](#9-api-速查表)
@@ -84,7 +87,7 @@ XLink 是 XinYueC 自有的**应用层私有协议**，用于自研程序之间�
 |------|-------------|
 | 控制与界面分离，故障互不影响 | 两进程独立，GUI 崩溃不影响控制运行 |
 | 界面崩溃后快速恢复画面 | 重连时握手阶段重推全量快照，无需增量补偿逻辑 |
-| 双向：GUI 下发命令 + 服务器推状态 | 三个正交消息类，任意一端既能发起请求也能推送 |
+| 双向：GUI 下发命令 + 服务器推状态 | 消息类正交（请求-应答/推送/订阅），任意一端既能发起请求也能推送 |
 | 通用：新增业务不改框架 | 加一个 topic 或命令号即可，协议层零改动 |
 | 嵌入式友好 | 收发全链路稳态零堆分配；不解密压缩，帧头仅 12 字节 |
 
@@ -124,12 +127,14 @@ XLink 的核心设计是**没有服务器/客户端之分**。两端使用同一
 ```c
 /* 控制进程：被动接受连接 */
 XTcpServer* server = XTcpServer_create(...);
-XIODevice* conn = XTcpServer_nextPendingConnection(server);
+XIODevice* conn = (XIODevice*)XTcpServer_nextPendingConnection_base(server);
 XLinkSession* session = XLinkSession_create_ex(conn);
 
 /* GUI 进程：主动连接 */
 XIODevice* conn = XTcpSocket_create();
-XTcpSocket_connect(...);
+XTcpSocket_connectToHost_base((XAbstractSocket*)conn, host, port,
+                              XIODevice_ReadWrite,
+                              XAbstractSocket_AnyIPProtocol);
 XLinkSession* session = XLinkSession_create_ex(conn);
 ```
 
@@ -140,11 +145,17 @@ XLinkSession* session = XLinkSession_create_ex(conn);
 | 文件 | 职责 |
 |------|------|
 | `XLink_config.h` | 协议开关与容量常量 |
-| `XLinkProto.h` | 线上格式定义：消息类枚举、能力位、帧头结构 |
+| `XLinkProto.h` | 线上格式定义：消息类枚举、能力位、帧头结构、认证/文件载荷 |
 | `XLinkCodec.h/.c` | 小端序列化原语、Hello 载荷编解码、帧头编解码 |
-| `XLinkSession.h/.c` | 会话对象：收发、分发、订阅表、待应答表、心跳；XObject 事件驱动 |
-| `XLinkServer.h/.c` | 服务端包装（可选，`XLINK_SERVER_ON`）：监听、自动建会话、会话回收 |
-| `XLinkClient.h/.c` | 客户端包装（可选，`XLINK_CLIENT_ON`）：自动重连（默认关） |
+| `XLinkSession.h/.c` | 会话对象：收发、分发、订阅表、待应答表、心跳、发送队列、认证内核；XObject 事件驱动 |
+| `XLinkServer.h/.c` | 服务端包装（可选，`XLINK_SERVER_ON`）：监听、自动建会话、会话回收、认证集成 |
+| `XLinkClient.h/.c` | 客户端包装（可选，`XLINK_CLIENT_ON`）：自动重连（默认关）、登录凭据 |
+| `XLinkAuth.h/.c` | 登录认证支撑层（`XLINK_AUTH_ON`）：认证帧编解码、口令派生、挑战应答、常量时间比较 |
+| `XLinkUserStore.h/.c` | JSON 账户库（`XLINK_AUTH_ON`）：盐 + 迭代 HMAC 摘要 + 角色/锁定 |
+| `XLinkFile.h/.c` | 文件传输线上格式（`XLINK_FILE_ON`）：七个操作码编解码 + 文件名安全校验 |
+| `XLinkFileTransfer.h/.c` | 文件传输引擎（`XLINK_FILE_ON`）：收发状态机、流控、断点续传、SHA-256 |
+| `XLinkFileServer.h/.c` | 文件服务端沙箱（`XLINK_FILE_ON`）：根目录校验 + 策略位 + 会话槽 |
+| `XLinkFileClient.h/.c` | 文件客户端（`XLINK_FILE_ON`）：upload/download/abort + progress/finished 信号 |
 
 ---
 
@@ -158,8 +169,8 @@ XLinkSession* session = XLinkSession_create_ex(conn);
 |------|------|------|------|
 | 0 | 4 | `payloadLen` | 载荷字节数（不含帧头），须 ≤ `XLINK_MAX_PAYLOAD` |
 | 4 | 2 | `msgClass` | 消息类，见 [4. 消息类详解](#4-消息类详解) |
-| 6 | 2 | `msgCode` | 业务码：Request/Response = 命令号；Publish/Subscribe = topicId 低 16 位；Session = 子类型 |
-| 8 | 4 | `requestId` | Request/Response 关联 id；其余消息类填 0 |
+| 6 | 2 | `msgCode` | 业务码：Request/Response = 命令号；Publish/Subscribe = topicId 低 16 位；Session = 子类型（含认证四子码）；File = `XLinkFileCode` |
+| 8 | 4 | `requestId` | Request/Response 关联 id；File 类 = transferId；其余消息类填 0 |
 | 12 | N | `payload` | 载荷 |
 
 ### 3.2 topicId 的承载规则（重要）
@@ -200,18 +211,21 @@ memcpy(buf, &state, sizeof(state));
 
 ## 4. 消息类详解
 
-### 4.1 三个正交消息类
+### 4.1 消息类总览
 
 | 消息类 | 值 | 语义 | 是否等应答 | 谁发都行 |
 |--------|-----|------|-----------|---------|
-| `XLinkMsgClass_Session` | 0 | 会话管理：Hello/HelloAck/Heartbeat/Goodbye | 否 | ✅ |
+| `XLinkMsgClass_Session` | 0 | 会话管理：Hello/HelloAck/Heartbeat/Goodbye + 登录认证四子码（见 4.2） | 否 | ✅ |
 | `XLinkMsgClass_Request` | 1 | 请求-响应的请求方 | 是 | ✅ |
 | `XLinkMsgClass_Response` | 2 | 请求-响应的应答方 | — | ✅ |
 | `XLinkMsgClass_Publish` | 3 | 单向推送 | 否 | ✅ |
 | `XLinkMsgClass_Subscribe` | 4 | 订阅 | — | ✅ |
 | `XLinkMsgClass_Unsubscribe` | 5 | 退订 | — | ✅ |
+| `XLinkMsgClass_File` | 6 | 文件传输（`XLINK_FILE_ON`）：msgCode = `XLinkFileCode`，requestId = transferId | 否 | ✅ |
 
-**为什么这样设计**：消息类正交而非逐条枚举业务语义。Request/Response 管"我问你要答"，Publish 管"我单方面告诉你"，Subscribe 管"以后这类推给我"。三类正交组合，覆盖全部交互形态。新增业务只表现为新增 msgCode/topicId，**协议层与编解码层零改动**。
+**为什么这样设计**：消息类正交而非逐条枚举业务语义。Request/Response 管"我问你要答"，Publish 管"我单方面告诉你"，Subscribe 管"以后这类推给我"。三类正交组合，覆盖常规交互形态。新增业务只表现为新增 msgCode/topicId，**协议层与编解码层零改动**。
+
+**File 类的特殊性**（v1.3 新增）：它不是业务消息——帧由文件传输引擎消费，**永不投递给业务分发回调**；`requestId` 字段被复用为 transferId（发起方分配、接收方回显）。仅当能力协商含 `XLinkCapability_FileTransfer` 时才允许收发，未协商时收到的 File 帧按协议违例丢弃（见 `XLinkSession.h` 的 `XLinkSessionFileCallback` 声明）。
 
 ### 4.2 会话子类型
 
@@ -222,7 +236,13 @@ memcpy(buf, &state, sizeof(state));
 | `XLinkSessionCode_Hello` | 1 | 建链后首帧，携版本与能力位 |
 | `XLinkSessionCode_HelloAck` | 2 | 对 Hello 的应答；约定可携带全量快照 |
 | `XLinkSessionCode_Heartbeat` | 3 | 心跳，静默超时即判线 |
-| `XLinkSessionCode_Goodbye` | 4 | 主动断链通知 |
+| `XLinkSessionCode_Goodbye` | 4 | 主动断链通知；可选载荷首字节为原因（`XLinkGoodbyeReason`：Normal/Protocol/AuthFailed/AuthRequired/Timeout/ServerShutdown） |
+| `XLinkSessionCode_AuthRequest` | 5 | 登录请求（客户端 → 服务端，`XLINK_AUTH_ON`）：`[u8 nameLen][name...]` |
+| `XLinkSessionCode_AuthChallenge` | 6 | 登录挑战（服务端 → 客户端）：方法 + 盐 + 迭代次数 + nonce 32 |
+| `XLinkSessionCode_AuthResponse` | 7 | 登录应答（客户端 → 服务端）：`HMAC-SHA256(H, nonce)` 摘要 |
+| `XLinkSessionCode_AuthResult` | 8 | 登录结果（服务端 → 客户端）：结果码 + 角色 + 文本 + 服务端证明 32 |
+
+认证四子码（5~8）为追加式扩展：载荷编解码在 `XLinkAuth.h/.c`（纯函数，逐字段小端，禁止 memcpy 结构体上线）；老对端走 default 分支静默忽略，能力位 Auth 未协商时不参与线上交互。
 
 ### 4.3 能力位
 
@@ -234,12 +254,14 @@ Hello / HelloAck 载荷携带，握手后取**按位与**作为协商结果：
 | `XLinkCapability_Tls` | 0x0002 | 链路已运行在 TLS 之上 |
 | `XLinkCapability_Snapshot` | 0x0004 | HelloAck 载荷内携带全量快照 |
 | `XLinkCapability_RequestTimeout` | 0x0008 | 支持请求超时通知 |
+| `XLinkCapability_Auth` | 0x0010 | 支持登录认证（`XLINK_AUTH_ON`）。服务端仅在确实配置了口令/账户库时置位；双方交集含本位时，握手后进入认证流程（见 §5/§6.10） |
+| `XLinkCapability_FileTransfer` | 0x0020 | 支持文件传输（`XLINK_FILE_ON`）。交集含本位才允许收发 File 消息类（见 §6.11） |
 
 未置位的特性对端不得依赖（如未协商 `ZLIB` 则载荷必须为原始字节）。
 
-> 测试口径：四个能力位的协商矩阵（双侧不置位 / 单侧置位两方向 / 对称置位 /
-> 全组合）与 HelloAck 附加快照的 `4+N` 超长载荷容忍语义（解析只读前 4 字节，
-> 附加字节被忽略），由 `Test/XProtocolTest/XLinkTest.c` 分组十五全量覆盖。
+> ⚠️ 「对端要求认证」的判定看**对端原始声明**（`m_peerDeclaredCapability`），不看交集——客户端不宣告 Auth 时交集里没有该位，但服务端强制置位，必须按原始声明识别并快速失败，否则会出现短暂 Ready 窗口（详见 §5）。
+
+> 测试口径：四个 v1.2 能力位（Zlib/Tls/Snapshot/RequestTimeout）的协商矩阵（双侧不置位 / 单侧置位两方向 / 对称置位 / 全组合）与 HelloAck 附加快照的 `4+N` 超长载荷容忍语义（解析只读前 4 字节，附加字节被忽略），由 `Test/XProtocolTest/XLinkTest.c` 分组十五全量覆盖；Auth/FileTransfer 两位的协商、降级与门控行为由分组十六覆盖（见 §11）。
 
 ---
 
@@ -253,23 +275,51 @@ Hello / HelloAck 载荷携带，握手后取**按位与**作为协商结果：
   │ Inactive  │◄────────────────────│  Connected  │
   │ 初始态     │  reset / 传输断开     │ 已挂载传输    │
   │           │  静默超时判线        │ 握手未完成    │
-  └───────────┘                     └─────────────┘
-                                          │
-                                  收到 Hello / HelloAck
-                                          ▼
-                                   ┌─────────────┐
-                                   │    Ready    │
-                                   │ 链路健康     │
-                                   │ 全部分类投递 │
-                                   └─────────────┘
+  └───────────┘                     └──────┬──────┘
+        ▲                                  │ 收到 Hello / HelloAck
+        │                                  ▼
+        │                        能力协商后分流（XLINK_AUTH_ON）
+        │                     ┌─────────────┐
+        │      认证通过/匿名链路 │Authenticating│ 本端要求认证或对端要求认证
+        │   ┌─────────────────│ 握手完成但    │（凭据就绪时客户端主动发
+        │   │                 │ 认证未完成    │  AuthRequest，服务端等）
+        │   ▼                 └──────┬──────┘
+  ┌─────────────┐                   │ 认证通过（AuthResult=Ok）
+  │    Ready    │◄──────────────────┘
+  │ 链路健康     │  认证失败/超时/失败达上限 → Goodbye + Inactive
+  │ 全部分类投递 │
+  └─────────────┘
 ```
+
+状态枚举（`XLinkSessionState`）：`Inactive=0`、`Connected=1`、`Ready=2`、`Authenticating=3`（`XLINK_AUTH_ON` 门控）。
 
 **关键行为**
 
 - 握手完成前，**不投递任何业务消息** —— 防止把未建立状态下的乱序帧喂给应用
+- `Authenticating` 态同样不投递业务消息，**仅登录帧可通行**（File 类帧在非 Ready 态也不处理）
 - 静默超过 `XLINK_HEARTBEAT_TIMEOUT_MS`（默认 3 秒）自动转 `Inactive`
 - 收到 `Goodbye` 立即转 `Inactive`（对端主动断链感知）
 - `setDevice(NULL)` 立即断开，并清空帧缓冲、待应答表、订阅表
+
+**握手完成后的分流规则**（`XLINK_AUTH_ON`，实现在 `XLinkSession.c` 的 Hello/HelloAck 处理内，按优先级依次判定）：
+
+| # | 条件 | 结果 |
+|---|------|------|
+| 1 | 客户端配了凭据（`setAuthResponse` + `setAuthUser`）且**对端原始声明**含 Auth | 主动发 `AuthRequest`，进入 `Authenticating`（不置 authPassed） |
+| 2 | 本端要求认证（服务端 `setAuthLookup`）且能力**交集**含 Auth | 进入 `Authenticating` 等对端发 AuthRequest |
+| 3 | 本端要求认证但对端不宣告 Auth（老对端/能力位降级） | **默认拒绝**：Goodbye(AuthRequired) + 断链。`setAuthAllowAnonymous(true)` 才显式回落匿名 Ready（防"不声明能力位即绕过认证"） |
+| 4 | 对端要求认证但本端无凭据 | **快速失败**：不发必错的登录请求、不谎报 Ready；Goodbye(AuthRequired) + `authChanged(false, NoCredential)` + 断链 |
+| 5 | 其余 | 匿名链路，直接 `Ready`（authPassed 置位，`isAuthenticated` 为 true） |
+
+**认证阶段的守卫与超时**
+
+- **Connected 守卫防双 Hello 重复触发**：自动握手会让双方各收到 Hello 与 HelloAck 两帧；分流逻辑整体包裹在 `state == Connected` 判定内，第二次进入时状态已是 Ready/Authenticating，必须整体跳过——否则认证态会被覆盖回 Ready，认证门控失效（v1.3 联调中曾致 6 项测试变红）。
+- **认证超时**：进入 `Authenticating` 后超过 `XLINK_AUTH_TIMEOUT_MS`（默认 5 秒，运行时 `setAuthTimeout` 可调）未完成认证即断链，服务端资源不被悬挂。
+- **失败上限**：服务端对每连接累计认证失败次数，达 `XLINK_AUTH_FAILURE_LIMIT`（默认 3，`setAuthFailureLimit` 可调）即下发 `AuthResult(Rejected)` + `Goodbye(AuthFailed)` 并断链；未达上限允许对端换用户/换口令重试。客户端收到任何拒绝即终局断链（口令错误属永久失败，不重试）。
+- **Ready 后的重复认证帧忽略**（幂等，防重放干扰）。
+- **握手超时**与认证超时互斥生效：`XLINK_HANDSHAKE_TIMEOUT_MS`（默认 5 秒）只管 Connected 态"连上但不说话"的半开连接；进入 Ready/Authenticating 后不再受握手超时约束（认证另有超时）。
+
+**认证通过后的状态**：`isReady()` 仅在 `Ready` 态为 true；`isAuthenticated()` 在认证通过或匿名链路（直接 Ready）下为 true——业务层可统一按「可服务」判断。认证结果经 `authChanged` 信号上报（服务端在应答校验后、客户端在收到 AuthResult 后各发射一次）。
 
 ---
 
@@ -309,7 +359,7 @@ XClassDelete((XClass*)s);
 
 ```c
 /* 任一端收到连接后 */
-XIODevice* conn = XTcpServer_nextPendingConnection(server);
+XIODevice* conn = (XIODevice*)XTcpServer_nextPendingConnection_base(server);
 XLinkSession* session = XLinkSession_create_ex(conn);
 ```
 
@@ -540,7 +590,7 @@ XLinkSession_reset(session);
 XLinkServer* srv = XLinkServer_create();
 XLinkServer_setCapability(srv, XLinkCapability_Zlib);      /* 新会话模板 */
 XLinkServer_setDispatchCallback(srv, on_frame, NULL);      /* 新会话模板 */
-XLinkServer_setNotifyCallback(srv, on_session_added_removed, NULL); /* 可选 */
+XLinkServer_setNotifyCallback(srv, on_session_added_removed); /* 可选，2 参 */
 XLinkServer_listen_base(srv, "127.0.0.1", 45200);
 
 /* 事件循环里：什么都不用写。
@@ -592,7 +642,8 @@ XLinkSession* s = XLinkSession_create_ex(tcpSocket);
 
 /* 加密 */
 XSslSocket* ssl = XSslSocket_create();
-XSslSocket_connect_base(ssl, host, port);
+XSslSocket_connectToHost_base(ssl, host, port, XIODevice_ReadWrite,
+                              XAbstractSocket_AnyIPProtocol);
 XLinkSession* s = XLinkSession_create_ex((XIODevice*)ssl);
 
 /* 握手时声明链路已加密 */
@@ -604,6 +655,230 @@ XLinkSession_setCapability(s, XLinkCapability_Zlib | XLinkCapability_Tls);
 - 开关 `XLINK_SSL_ON` 只决定 XLink 是否**感知/声明** TLS 能力位，关闭后仍可挂任意 `XIODevice`
 - 厂内网明文即可；跨网段或公网再切 TLS
 - 协商结果可查：`XLinkSession_negotiatedCapability(s) & XLinkCapability_Tls`
+
+---
+
+### 6.10 登录认证（`XLINK_AUTH_ON`）
+
+v1.3 新增的可选扩展（默认开，关闭后能力位 Auth 不置位、登录子码整体裁空，行为与未引入前完全一致）。定位：厂内网"控制进程 ↔ GUI 进程"之间的**最低限度接入控制**——口令明文不过网、服务端不存口令明文、客户端能识别假冒服务端。
+
+**协议时序**（四个会话子码 5~8，见 §4.2）：
+
+```
+客户端                                     服务端
+  │  Hello(version, capability 含 Auth)       │
+  │─────────────────────────────────────────►│
+  │  HelloAck(cap 交集)                       │
+  │◄─────────────────────────────────────────│
+  │            （握手完成 → Authenticating）    │
+  │  AuthRequest[nameLen][name]              │
+  │─────────────────────────────────────────►│ 查账户库（盐+迭代次数+H+角色）
+  │  AuthChallenge[method][salt][iter][nonce] │
+  │◄─────────────────────────────────────────│
+  │  本地派生 H = iterHMAC-SHA256(口令, 盐)     │
+  │  AuthResponse[HMAC-SHA256(H, nonce)]     │
+  │─────────────────────────────────────────►│ 同式重算 + 常量时间比较
+  │  AuthResult[status][role][serverProof]   │
+  │◄─────────────────────────────────────────│ serverProof = HMAC(H, nonce‖0x01)
+  │  校验服务端证明 → Ready                    │ → Ready
+```
+
+**服务端用法**（`XLinkServer` 已内嵌 `XLinkUserStore` 账户库）：
+
+```c
+static void on_auth_audit(XLinkServer* srv, XLinkSession* session,
+                          XLinkServerAuthEvent event,
+                          const char* user, uint8_t role)
+{
+    /* 审计：Success/Failure/Timeout/Anonymous 四类事件。
+       回调拿不到口令（协议里就没有），禁止把摘要打到日志。 */
+    (void)srv; (void)session;
+    XPrintf("[认证] %s -> %s (role=%u)\n", user ? user : "-",
+            event == XLinkServerAuthEvent_Success ? "ok" : "denied", role);
+}
+
+XLinkServer* srv = XLinkServer_create();
+XLinkServer_setUserStorePath(srv, "xlink-users.json");  /* 立即加载；不存在视为空库 */
+if (XLinkServer_userCount(srv) == 0)                    /* 首次部署建初始账户 */
+    XLinkServer_addUser(srv, "admin", "secret", XLinkAuthRole_Admin);
+XLinkServer_saveUserStore(srv);      /* addUser 是内存态，须显式落盘（原子写） */
+XLinkServer_setAuthEnabled(srv, true);  /* 新会话须登录；存量会话不被踢 */
+XLinkServer_setAuthAuditCallback(srv, on_auth_audit, NULL);
+/* 可选：XLinkServer_setAuthAllowAnonymous(srv, true) 才允许不宣告 Auth 的
+   老对端匿名接入——默认 false 是安全基线（防能力位降级绕过，见 §5）。 */
+XLinkServer_listen_base(srv, "0.0.0.0", 45200);
+```
+
+要点：
+
+- `setAuthEnabled(true)` 会把新会话能力位模板自动 OR 上 `XLinkCapability_Auth`，会话握手完成后进入 `Authenticating`（状态机规则见 §5）
+- **添加首个账户不会自动启用认证**——必须显式 `setAuthEnabled(true)`，避免"加了个账户就连不上"
+- 账户库为空时启用认证无意义：所有登录都会失败
+- 失败上限/超时模板：`setAuthFailureLimit`（默认 3 次）/ `setAuthTimeout`（默认 5 秒），只影响之后建立的会话
+- 在线会话查询：`sessionUser_const(srv, session)` / `sessionRole(srv, session)`；账户管理：`removeUser` / `setUserLocked` / `userAt`（展示层不要把摘要输出到界面/日志）
+
+**客户端用法**（`XLinkClient` 内嵌凭据，**自动重登**）：
+
+```c
+static void on_auth_failed(XObject* sender, XVarList* args)
+{
+    int reason;               /* XLinkClientAuthFailure */
+    uint8_t status;           /* 协议层 XLinkAuthStatus，便于诊断 */
+    (void)sender;
+    XVarList_args_2(args, int, reason, uint8_t, status);
+    show_login_error(reason); /* 口令错误重试无意义——自动重连已被库停止 */
+}
+
+XLinkClient* cli = XLinkClient_create();
+XLinkClient_setHostPort(cli, "192.168.1.10", 45200);
+XLinkClient_setCredential(cli, "admin", "secret");  /* 深拷贝保存；清除时零化 */
+XObject_connect_2((XObject*)cli, XSignal(XLinkClient_authFailed_signal),
+                  on_auth_failed);
+XLinkClient_setAutoReconnect(cli, true);
+XLinkClient_connectToServer(cli);
+/* 之后每次连接/重连成功都会自动登录；isReady 即"已认证可服务"。 */
+```
+
+要点：
+
+- **认证失败停重连**：口令错误属永久失败，`authFailed` 发射后自动重连被停止，状态转 `UnconnectedState`——不会拿着错口令反复撞服务端（撞到服务端失败上限也会被断）
+- 凭据查询：`hasCredential` / `user_const` / `lastAuthFailure`（信号到达后取，驱动界面提示）；`clearCredential` 零化后释放
+- 无凭据遇强制认证：快速失败（`authFailed(NoCredential)`），不挂起、不出现短暂 Ready 窗口
+
+**会话级高级接口**（不用 XLinkServer/XLinkClient 包装、直接驱动 `XLinkSession` 时挂接；包装类内部正是调它们）：
+
+| API | 角色 | 说明 |
+|-----|------|------|
+| `XLinkSession_setAuthLookup(s, cb, ud)` | 服务端 | 注册凭据查询回调即"本端要求认证"；回调填盐/迭代次数/H/角色，返回 `XLinkSessionAuthLookupResult`（Ok/BadUser/Locked）。须在握手完成前设置 |
+| `XLinkSession_setAuthAllowAnonymous(s, allow)` | 服务端 | 降级兼容开关，默认 false（见 §5 分流规则 3） |
+| `XLinkSession_setAuthResponse(s, cb, ud)` | 客户端 | 挑战应答回调：入参挑战，出参 method/response/H（H 供会话校验服务端证明）；返回 false 视为无凭据 |
+| `XLinkSession_setAuthUser(s, user)` | 客户端 | 登录用户名（随 AuthRequest 上报；超长截断不产生畸形帧） |
+| `XLinkSession_isAuthenticated(s)` | 双端 | 认证通过为 true；匿名链路进 Ready 即 true（业务层统一按「可服务」判断） |
+| `XLinkSession_authUser_const(s)` / `authRole(s)` | 双端 | 认证通过的用户名（借用）/角色 |
+| `XLinkSession_setAuthTimeout(s, ms)` / `setAuthFailureLimit(s, n)` | 服务端 | 运行期覆盖编译期默认（5s / 3 次） |
+| `XLinkSession_authChallenge_signal(s, user, result)` | 服务端 | 挑战下发时发射（审计/限流观察） |
+| `XLinkSession_authChanged_signal(s, passed, status, role)` | 双端 | 认证结论确定时发射（服务端应答校验后 / 客户端收到 AuthResult 后） |
+
+**安全口径**（与 `XGuiRemoteAuth`/`XConsoleShellLogin` 对齐并加强）：
+
+- 口令明文禁止过网、禁止入日志；服务端只持有派生摘要 H 与随机盐（账户库格式与 XConsoleShellLogin 一致，可互换/迁移）
+- nonce 每连接随机（`XRandomGenerator_fillSecure` 安全随机），防重放
+- 服务端证明 `HMAC(H, nonce‖0x01)` 与客户端应答 `HMAC(H, nonce)` 输入不同、互相不可替代——客户端据此识别假冒服务端
+- 应答比较走**常量时间**（`XLinkAuth_constantTimeEqual`），用户不存在与口令错误对外同码（不暴露账户存在性）
+- 挑战应答**不防离线字典攻击**（盐与响应在线上可见）——跨网段必须叠加 TLS（§6.9）
+
+> 测试口径：分组十六覆盖认证编解码与口令派生、账户库内存态语义、真实 TCP 端到端（成功/错误口令/无凭据）、能力位降级不可绕过 + 认证超时 + 握手超时、统计与发送队列观测（见 §11）。
+
+### 6.11 文件传输（`XLINK_FILE_ON`）
+
+v1.3 新增的可选扩展（默认开，关闭后消息类 File 整体裁空、能力位 FileTransfer 不置位）。定位：把"大内容走文件通道"从业务分帧里解放出来——协议帧上限 16KB，日志/固件/采集数据这类块状内容不该塞进 Publish。
+
+**一次上传的帧序列**（操作码见 §4.1 File 类，msgCode = `XLinkFileCode`，requestId = transferId）：
+
+```
+发起方（客户端）                             接收方（服务端）
+  │ Open[mode=Upload][name][totalSize][chunk][window][startOffset]
+  │─────────────────────────────────────────►│ 沙箱校验（§下文）+ 策略判定
+  │ OpenAck[accepted][chunk][window][startOffset][totalSize]
+  │◄─────────────────────────────────────────│
+  │ Data[offset][bytes...]（窗口内连续发）      │
+  │─────────────────────────────────────────►│ 落盘并回 Ack（每块必回）
+  │ Ack[nextOffset][creditBytes]             │
+  │◄─────────────────────────────────────────│
+  │ ... 循环至尾部 ...                         │
+  │ Finish[totalSize][sha256 32]             │
+  │─────────────────────────────────────────│ 复算整文件 SHA-256 比对
+  │ FinishAck[ok][status]                    │ .part 原子改名
+  │◄─────────────────────────────────────────│
+  │        Abort[status] 任意时刻双向可发       │
+```
+
+**协议要点**（线上常量全部可在 `XLink_config.h` 裁剪）：
+
+- **块 4KB、窗口 32KB、每块必 ACK**：发送方维护 credit（未确认字节额度），`offset - ackOffset` 达到窗口即停发等 Ack；接收方**每收到一块就回 Ack**——把 Ack 当作"已落盘水位"的即时通告。攒半窗口再回会在"额度刚好耗尽"时形成一次往返停顿，且末块 Ack 的边界条件容易让双方互等（实测下载方向会卡住）；每块一 Ack 的开销仅 12+8+4 字节帧，相对 4KB 数据可忽略
+- **OpenAck 头部 28 字节**（`XLINK_FILE_OPEN_ACK_HEADER`）：`accepted(1)+status(1)+textLen(2)+chunkBytes(4)+windowBytes(4)+startOffset(8)+totalSize(8)`。**totalSize 下载方向必填**——发起方 Open 时并不知道文件多大，必须由服务端在 OpenAck 里告知（曾误写 24 字节导致解析错位）；Open 头部同为 28 字节（`XLINK_FILE_OPEN_HEADER`）
+- **断点续传（.part）**：接收侧写入 `<目标>.part`，若已存在且小于总大小则按其大小作为起始偏移续写（Open/OpenAck 的 `startOffset` 双方对齐）；完成后原子改名。SHA-256 不符即 Abort 并**保留 .part**（便于排查）
+- **整文件 SHA-256**：发送侧在发起时预计算（`beginSendFile` 用已打开句柄 seek 回 0 哈希，避免传完再二次打开同一路径在 Windows 共享模式下失败）；Finish 携带摘要，接收侧复算比对
+- **空闲超时**：超过 `XLINK_FILE_IDLE_TIMEOUT_MS`（默认 30 秒）无任何进展即 Abort
+- 方向枚举 `XLinkFileMode`：Upload=0（发起方发文件）、Download=1（发起方请求对端发文件）；结果码 `XLinkFileStatus` 共 11 种（Ok/Rejected/NotFound/AlreadyExists/TooLarge/NoSpace/Checksum/Protocol/Aborted/Timeout/RoleDenied）
+
+**服务端沙箱**（`XLinkFileServer`，值类型 init/deinit，attach 后由服务端节拍驱动）：
+
+```c
+static XLinkFileServer g_fs;
+
+XLinkFileServer_init(&g_fs);   /* 默认策略：禁止任何方向 + 要求认证 */
+XLinkFileServer_setRootDir(&g_fs, "./xfs_root");     /* 目录必须已存在 */
+XLinkFileServer_setFlags(&g_fs, XLINK_FILESRV_ALLOW_UPLOAD
+                              | XLINK_FILESRV_ALLOW_DOWNLOAD
+                              | XLINK_FILESRV_ALLOW_OVERWRITE);
+XLinkFileServer_setMaxFileBytes(&g_fs, 64ull * 1024ull * 1024ull);
+XLinkFileServer_setMinRole(&g_fs, XLinkAuthRole_User);  /* 配合认证按角色门控 */
+XLinkFileServer_attach(&g_fs, srv);  /* 接管 File 帧；自动补 FileTransfer 能力位 */
+/* 收摊：XLinkFileServer_detach(&g_fs) → XLinkFileServer_deinit(&g_fs) */
+```
+
+策略位（`XLINK_FILESRV_*`，可按位或）：
+
+| 策略位 | 值 | 含义 |
+|--------|-----|------|
+| `XLINK_FILESRV_ALLOW_UPLOAD` | 0x01 | 允许上传（客户端 → 服务端） |
+| `XLINK_FILESRV_ALLOW_DOWNLOAD` | 0x02 | 允许下载（服务端 → 客户端） |
+| `XLINK_FILESRV_ALLOW_OVERWRITE` | 0x04 | 允许覆盖已存在文件（否则拒绝 `AlreadyExists`） |
+| `XLINK_FILESRV_REQUIRE_AUTH` | 0x08 | 要求会话已通过认证（**默认开启**） |
+| `XLINK_FILESRV_ALLOW_SUBDIR` | 0x10 | 允许在根目录下创建子目录（默认关闭） |
+
+沙箱三道闸（缺一不可，代码在 `XLinkFile.c` / `XLinkFileServer.c`）：
+
+1. **文件名白名单**：`XLinkFile_isSafeName` 拒绝绝对路径（`/`、`\`、盘符）、`..` 目录穿越、`.` 开头隐藏名、NUL/控制字符、超长名
+2. **根目录前缀校验**：相对路径拼根目录后规范化（Canonical），失败回退 Absolute，前缀不符即拒——软链接逃逸在这一步被拦
+3. **软链接/目录拒绝**：写入侧拒绝符号链接，读取侧拒绝越界
+
+**客户端**（`XLinkFileClient`，XObject；同一时刻只允许一个活跃传输，重连时自动中止旧传输防悬挂）：
+
+```c
+static void on_progress(XObject* sender, XVarList* args)
+{
+    uint32_t transferId; uint64_t done, total;
+    (void)sender;
+    XVarList_args_3(args, uint32_t, transferId, uint64_t, done, uint64_t, total);
+    update_progress_bar(done, total);
+}
+
+static void on_finished(XObject* sender, XVarList* args)
+{
+    uint32_t transferId; bool ok; uint8_t status; const char* text;
+    (void)sender;
+    XVarList_args_4(args, uint32_t, transferId, bool, ok,
+                    uint8_t, status, const char*, text);
+    /* 成功/失败各恰一次；status 见 XLinkFileStatus */
+}
+
+XLinkFileClient* fc = XLinkFileClient_create();
+XLinkFileClient_attach(fc, cli);                 /* 借用 XLinkClient */
+XObject_connect_2((XObject*)fc, XSignal(XLinkFileClient_progress_signal),
+                  on_progress);
+XObject_connect_2((XObject*)fc, XSignal(XLinkFileClient_finished_signal),
+                  on_finished);
+
+uint32_t tid = 0;
+XLinkFileClient_upload(fc, "local.bin", "log/remote.bin", 1, &tid);
+/* flags bit0 = 允许覆盖；上传 = 客户端发文件到服务端沙箱 */
+XLinkFileClient_download(fc, "remote.bin", "local_copy.bin", 1, &tid);
+/* 下载 = 请求服务端发文件，落到本地 local_copy.bin */
+XLinkFileClient_abort(fc, XLinkFileStatus_Aborted, "user cancel");
+
+/* 状态查询：isBusy / state / doneBytes / totalBytes；引擎借用：transfer() */
+```
+
+**手动驱动与单驱动门控**：`XLinkFileClient_pump(fc, nowMs)` 每圈必泵传输引擎（它无任何异步驱动，不泵则发送侧不续发数据块）；承载会话默认**不**代泵（Auto 门控）——异步环境（本线程有事件分发器且心跳拍 > 0）会话已由框架驱动（内建定时器 + readyRead），再泵一次即成「顺序双泵」；无分发器的手动环境或心跳拍编译为 0 时才由本函数代泵会话。可用 `XLinkFileClient_setSessionDrive` 切 Force（每圈强制代泵，旧版行为）或 `XLinkFileClient_willPumpSession` 查询下一圈的代泵判定（与 pump 同源）。注意真实 TCP 的读写均为事件驱动（见 XAbstractSocket）：「分发器在位却不转事件」的宿主即便 Force 也无法搬运数据，Force 面向环回等同步传输的手动驱动与诊断对比。异步环境调用 pump 请传 `nowMs=0`（内部取实时），勿注入异构时钟。
+
+**会话续命钩子（preSessionPump）**：文件传输是长耗时单向流量——本端可能长时间"只发不收"，若对端 Ack 间隔超过静默阈值（3 秒）会话会被误判断链。两级防线：
+
+- 会话级：`XLinkSession_keepAlive(s, nowMs)` 刷新静默计时（只在确有进展时调，不要用它掩盖真死链）
+- 服务端级：`XLinkServer_setPreSessionPumpHook(srv, cb, ud)` 在**每个托管会话 pump 之前**调用（判线逻辑在 pump 内！等 tick 回调——pump 末尾——再续命已判线断链）。`XLinkFileServer_attach` 自动挂接，为活跃传输的会话续命；配套 `setSessionGoneHook` 在会话删除前清槽防悬垂指针
+
+> 测试口径：分组十七覆盖文件协议编解码与文件名安全校验（纯函数）、服务端沙箱路径策略、真实 TCP 端到端上传/下载（含 37KB 逐字节比对、SHA-256 校验与断点续传）、激进双泵节奏与单驱动门控子句锁（5 个子分组，见 §11.3）。下载端到端的排查与闭环结论见 §14.3。
 
 ---
 
@@ -631,6 +906,7 @@ XLinkSession_setCapability(s, XLinkCapability_Zlib | XLinkCapability_Tls);
 ```c
 #include "XLinkSession.h"
 #include "XTcpServer.h"
+#include "XHostAddress.h"
 #include "XDateTime.h"
 #include "XPrintf.h"
 
@@ -698,7 +974,9 @@ static void on_request_finished(XObject* sender, XVarList* args)
 int main(void)
 {
     XTcpServer* server = XTcpServer_create();
-    XTcpServer_listen_base(server, "0.0.0.0", 45200);
+    XHostAddress any;
+    XHostAddress_setAddressSpecial(&any, XHostAddress_AnySpecial); /* 0.0.0.0 */
+    XTcpServer_listen(server, &any, 45200);
 
     XLinkSession* session = NULL;
     uint32_t lastPush = 0;
@@ -708,7 +986,8 @@ int main(void)
 
         /* 接受新连接 */
         if (!session) {
-            XIODevice* conn = XTcpServer_nextPendingConnection(server);
+            XIODevice* conn =
+                (XIODevice*)XTcpServer_nextPendingConnection_base(server);
             if (conn) {
                 session = XLinkSession_create_ex(conn);
                 XLinkSession_setCapability(session, XLinkCapability_Zlib);
@@ -849,7 +1128,9 @@ void ui_loop(XLinkSession* s)
 
 ## 8. 配置项
 
-在 `XLink_config.h` 中定义，或通过 CMake 编译选项覆盖。
+在 `XLink_config.h` 中定义，或通过 CMake 编译选项覆盖。按下表顺序分组登记（与头文件编排一致，全量）：
+
+**协议总开关与子功能开关**
 
 | 宏 | 默认值 | 说明 |
 |----|--------|------|
@@ -858,27 +1139,71 @@ void ui_loop(XLinkSession* s)
 | `XLINK_SESSION_ON` | 1 | 会话层 |
 | `XLINK_SSL_ON` | 1 | TLS 能力感知（实际加密由 `XSslSocket` 承担） |
 | `XLINK_SERVER_ON` | 1 | 服务端包装 XLinkServer（依赖 XTcpServer） |
-| `XLINK_VERSION` | `0x0100` | 协议版本（高字节主版本，低字节次版本） |
+| `XLINK_CLIENT_ON` | 1 | 客户端包装 XLinkClient（自动重连，默认关） |
+| `XLINK_AUTH_ON` | 1 | 登录认证扩展（XLinkAuth/XLinkUserStore）；关闭时能力位 Auth 不置位、会话子码 5~8 整体裁空 |
+| `XLINK_FILE_ON` | 1 | 文件传输扩展（XLinkFile/XLinkFileServer/XLinkFileClient）；关闭时消息类 File 整体裁空 |
+
+**请求自动超时**
+
+| 宏 | 默认值 | 说明 |
+|----|--------|------|
+| `XLINK_REQUEST_TIMEOUT_MS` | 0 | 请求自动超时阈值（毫秒；0 = 被动模式，运行时可经 `setRequestTimeout` 调整） |
+| `XLINK_RETRY_MAX_DEFAULT` | 0 | 请求自动重发次数默认值（0 = 仅报超时；运行时可经 `setNumberOfRetries` 调整） |
+| `XLINK_RETRY_PAYLOAD_MAX` | 128 | 可自动重发的请求载荷快照上限（超过则该请求超时不重试） |
+
+**发送队列与超时（v1.3 加固）**
+
+| 宏 | 默认值 | 说明 |
+|----|--------|------|
+| `XLINK_TX_QUEUE_BYTES` | `128*1024` | 每会话发送队列容量（字节）。整帧原子入队 + pump 续写，短写不丢数据；0 = 关闭队列（退回一次性直写语义）。默认足以容纳一整窗口（32KB）文件数据并留控制帧余量 |
+| `XLINK_HANDSHAKE_TIMEOUT_MS` | 5000 | 握手超时（毫秒）：挂载传输后未完成握手（未进 Ready/Authenticating）即判链路无效断开，回收"连上但从不说话"的半开连接；0 = 不检查 |
+
+**登录认证常量（`XLINK_AUTH_ON`）**
+
+| 宏 | 默认值 | 说明 |
+|----|--------|------|
+| `XLINK_AUTH_TIMEOUT_MS` | 5000 | 认证超时（毫秒）：进入 Authenticating 后未完成认证即断链；0 = 不检查 |
+| `XLINK_AUTH_FAILURE_LIMIT` | 3 | 单连接认证失败次数上限（服务端达到即 AuthResult(Rejected) + Goodbye(AuthFailed) 断链） |
+| `XLINK_AUTH_SALT_BYTES` | 16 | 口令盐字节数（随机盐，随账户存储） |
+| `XLINK_AUTH_NONCE_BYTES` | 32 | 挑战 nonce 与应答摘要字节数（SHA-256 输出宽度） |
+| `XLINK_AUTH_HASH_ITERATIONS` | 10000 | 口令派生默认迭代次数（可被账户库逐账户覆盖） |
+| `XLINK_AUTH_NAME_BYTES` | 32 | 用户名最大字节数（不含终止符） |
+| `XLINK_AUTH_USER_SLOTS` | 16 | 账户库最多容纳的用户数 |
+| `XLINK_AUTH_TEXT_BYTES` | 96 | 认证失败原因/结果文本最大字节数 |
+
+**文件传输常量（`XLINK_FILE_ON`）**
+
+| 宏 | 默认值 | 说明 |
+|----|--------|------|
+| `XLINK_FILE_CHUNK_BYTES` | 4096 | 传输块大小（字节）：DATA 帧承载的业务数据量，须 ≤ `XLINK_MAX_PAYLOAD - 12`（DATA 载荷含 u64 偏移） |
+| `XLINK_FILE_WINDOW_BYTES` | `32*1024` | 流控窗口（字节）：收到 ACK 前允许的未确认数据量 |
+| `XLINK_FILE_MAX_TRANSFERS` | 4 | 服务端同时托管的传输数上限（每会话最多一个传输） |
+| `XLINK_FILE_MAX_BYTES` | `128MB` | 单个文件大小上限（字节）；0 = 不限制 |
+| `XLINK_FILE_IDLE_TIMEOUT_MS` | 30000 | 单次传输空闲超时（毫秒）：无任何进展即中止 |
+| `XLINK_FILE_TICK_MS` | 10 | 传输期间高频驱动节拍（毫秒）：有活动传输时把 `XLinkFileClient` 节拍切到此值；0 = 不切换 |
+| `XLINK_FILE_NAME_BYTES` | 128 | 远程文件名最大字节数（不含终止符） |
+| `XLINK_FILE_TEXT_BYTES` | 128 | 文件传输结果文本最大字节数 |
+
+**协议常量**
+
+| 宏 | 默认值 | 说明 |
+|----|--------|------|
+| `XLINK_VERSION` | `0x0101` | 协议版本（高字节主版本，低字节次版本）。正本定义在 `XLinkProto.h`（1.1 新增认证/文件两个可选能力位）；`XLink_config.h` 保留 `#ifndef` 兜底宏 |
 | `XLINK_HEADER_SIZE` | 12 | 帧头固定长度 |
 | `XLINK_TOPIC_USER_BASE` | `0x10000` | 业务 topicId 起始值 |
-| `XLINK_MAX_PAYLOAD` | `16384` | **线上**载荷上限（含 topicId 前缀） |
+| `XLINK_MAX_PAYLOAD` | `16384` | **线上**载荷上限（含 topicId 前缀）；同时是接收/发送缓冲的容量依据 |
 | `XLINK_PENDING_SLOTS` | 8 | 待应答表槽位 |
-| `XLINK_REQUEST_TIMEOUT_MS` | 0 | 请求自动超时阈值（毫秒；0 = 被动模式，运行时可经 `setRequestTimeout` 调整） |
-| `XLINK_RETRY_MAX_DEFAULT` | 0 | 请求自动重发次数默认值（运行时可经 `setNumberOfRetries` 调整） |
-| `XLINK_RETRY_PAYLOAD_MAX` | 128 | 可自动重发的请求载荷上限（超长请求超时不重试） |
 | `XLINK_TOPIC_SLOTS` | 16 | 订阅表槽位 |
 | `XLINK_HEARTBEAT_INTERVAL_MS` | 1000 | 心跳间隔（0 = 不发心跳） |
 | `XLINK_HEARTBEAT_TIMEOUT_MS` | 3000 | 静默判线阈值 |
 | `XLINK_HEARTBEAT_TICK_MS` | 250 | 异步节拍默认值（运行中可经 `XLinkServer_setTickInterval` 调整） |
-| `XLINK_CLIENT_ON` | 1 | 客户端包装 XLinkClient（自动重连，默认关） |
-| `XLINK_RETRY_MAX_DEFAULT` | 0 | 请求超时自动重试默认次数（0=仅报超时；经 `setNumberOfRetries` 调整） |
-| `XLINK_RETRY_PAYLOAD_MAX` | 128 | 可重试请求的载荷快照上限（超过则该请求超时不重试） |
-| `XLINK_REQUEST_TIMEOUT_MS` | 0 | 请求自动超时判定阈值（0=被动模式；经 `setRequestTimeout` 调整） |
 
 **裁剪示例**
 
 ```c
-/* 极简嵌入式配置：关闭心跳、缩小缓冲 */
+/* 极简嵌入式配置：关闭可选扩展、缩小缓冲 */
+#define XLINK_AUTH_ON         0
+#define XLINK_FILE_ON         0
 #define XLINK_MAX_PAYLOAD     (4 * 1024)
 #define XLINK_PENDING_SLOTS   4
 #define XLINK_TOPIC_SLOTS     8
@@ -904,11 +1229,15 @@ void ui_loop(XLinkSession* s)
 |-----|------|
 | `XLinkSession_setDevice(s, dev)` | 挂载/更换传输（传 NULL 断开） |
 | `XLinkSession_reset(s)` | 复位到 Inactive |
-| `XLinkSession_pump(s, nowMs)` | 非阻塞泵，驱动收发与心跳 |
-| `XLinkSession_state(s)` | 查询链路状态 |
-| `XLinkSession_isReady(s)` | 是否已握手且健康 |
+| `XLinkSession_pump(s, nowMs)` | 非阻塞泵，驱动收发、队列续写、握手/认证超时与心跳 |
+| `XLinkSession_state(s)` | 查询链路状态（Inactive/Connected/Ready/Authenticating） |
+| `XLinkSession_isReady(s)` | 是否已握手且健康（仅 Ready 态为 true） |
 | `XLinkSession_remoteVersion(s)` | 对端协议版本 |
 | `XLinkSession_negotiatedCapability(s)` | 能力交集 |
+| `XLinkSession_pendingBytes(s)` | 发送队列未写出字节数（背压观测；未启用队列恒为 0） |
+| `XLinkSession_stats(s, &out)` | 累计统计快照（收发帧/字节、超时/违例/复位计数；reset 不清零） |
+| `XLinkSession_keepAlive(s, nowMs)` | 刷新链路活跃时间，抑制静默判线（长耗时单向业务续命，见 §6.11） |
+| `XLinkSession_setHandshakeTimeout(s, ms)` / `handshakeTimeout(s)` | 握手超时设置/读取（0 = 不检查，默认 `XLINK_HANDSHAKE_TIMEOUT_MS`） |
 | `XLinkSession_stateChanged_signal(s, state)` | 信号：链路状态真变化（同态不重发） |
 
 ### 9.3 收发
@@ -958,11 +1287,35 @@ void ui_loop(XLinkSession* s)
 | `XLinkServer_setDispatchCallback(srv, cb, ud)` | 新会话分发回调模板 |
 | `XLinkServer_setNotifyCallback(srv, cb)` | 会话 Added/Removed 通知 |
 | `XLinkServer_setTickCallback(srv, cb, ud)` | 注册周期业务回调（随内建节拍触发） |
-| `XLinkServer_setTickInterval(srv, ms)` | 运行中调整内建节拍周期；0 = 停节拍转手动 pump |
-| `XLinkServer_tickInterval(srv)` | 读取当前节拍周期 |
+| `XLinkServer_setTickInterval(srv, ms)` / `tickInterval(srv)` | 运行中调整/读取内建节拍周期；0 = 停节拍转手动 pump |
+| `XLinkServer_publish(srv, topic, payload, len)` | 一对多发布：只推"已订阅且握手完成"的会话，返回推送到的会话数 |
+| `XLinkServer_broadcast(srv, topic, payload, len)` | 广播：不管订阅关系推给全部握手完成的会话 |
 | `XLinkServer_pump(srv, nowMs)` | 手动兜底泵：accept + 驱动 + 回收 |
 | `XLinkServer_sessionCount(srv)` / `sessionAt(srv, i)` | 遍历在线会话 |
 | `XLinkServer_tcpServer_const(srv)` | 内嵌监听器（高级配置，借用） |
+
+**登录认证（`XLINK_AUTH_ON`，详见 §6.10）**
+
+| API | 说明 |
+|-----|------|
+| `XLinkServer_setAuthEnabled(srv, on)` / `authEnabled(srv)` | 启用/查询登录认证（新会话能力位自动 OR Auth，存量不踢） |
+| `XLinkServer_setUserStorePath(srv, path)` | 设置账户库 JSON 路径并立即加载（不存在视为空库） |
+| `XLinkServer_saveUserStore(srv)` | 账户库写回已设置路径（原子写） |
+| `XLinkServer_addUser(srv, user, pwd, role)` / `removeUser(srv, user)` | 内存态增删账户（口令只用于即时派生，不留存） |
+| `XLinkServer_setUserLocked(srv, user, locked)` | 锁定/解锁账户（内存态） |
+| `XLinkServer_userCount(srv)` / `userAt(srv, i)` | 账户数 / 只读视图（展示层勿输出摘要） |
+| `XLinkServer_setAuthAllowAnonymous(srv, allow)` | 认证启用时是否允许不宣告 Auth 的老对端匿名接入（默认 false） |
+| `XLinkServer_setAuthFailureLimit(srv, n)` / `setAuthTimeout(srv, ms)` | 失败上限/认证超时模板（只影响之后建立的会话） |
+| `XLinkServer_setAuthAuditCallback(srv, cb, ud)` | 认证审计回调（Success/Failure/Timeout/Anonymous） |
+| `XLinkServer_sessionUser_const(srv, s)` / `sessionRole(srv, s)` | 查询在线会话的登录用户/角色 |
+
+**文件传输挂接（`XLINK_FILE_ON`，详见 §6.11）**
+
+| API | 说明 |
+|-----|------|
+| `XLinkServer_setFileCallback(srv, cb, ud)` | File 消息类处理回调模板（`XLinkFileServer_attach` 自动安装） |
+| `XLinkServer_setSessionGoneHook(srv, cb, ud)` | 会话删除前内部钩子（扩展清理借用指针防悬垂；后注册覆盖先注册） |
+| `XLinkServer_setPreSessionPumpHook(srv, cb, ud)` | 会话 pump **之前**钩子（扩展在判线前续命，见 §6.11） |
 
 ### 9.8 客户端包装（XLINK_CLIENT_ON）
 
@@ -970,12 +1323,25 @@ void ui_loop(XLinkSession* s)
 |-----|------|
 | `XLinkClient_create()` / `init` | 堆/栈创建（自持 socket+会话） |
 | `XLinkClient_setHostPort(cli, host, port)` | 目标地址（UTF-8，深拷贝） |
+| `XLinkClient_host_const(cli)` / `port(cli)` | 读取已存地址/端口（借用视图） |
 | `XLinkClient_setCapability` / `setDispatchCallback` | 新会话模板 |
 | `XLinkClient_setAutoReconnect` / `setReconnectInterval` / `setMaxReconnectAttempts` | 自动重连配置（默认关/1000ms/-1 无限） |
+| `XLinkClient_reconnectAttempts(cli)` | 本次失线以来已尝试的重连次数 |
 | `XLinkClient_connectToServer` / `disconnectFromServer` | 异步建链 / 优雅断开（Goodbye+排空） |
-| `XLinkClient_session(cli)` | 借用内部会话（业务收发入口） |
+| `XLinkClient_session(cli)` | 借用内部会话（业务收发入口；重连后旧指针失效） |
 | `XLinkClient_state` / `isReady` | 状态查询（Unconnected/Connecting/Connected/Reconnecting） |
 | `XLinkClient_stateChanged_signal` | 状态迁移信号（XEmitSignal 发射，XModbus 风格） |
+
+**登录凭据（`XLINK_AUTH_ON`，详见 §6.10）**
+
+| API | 说明 |
+|-----|------|
+| `XLinkClient_setCredential(cli, user, pwd)` | 设置登录用户名与口令（深拷贝；之后每次连接/重连自动登录） |
+| `XLinkClient_clearCredential(cli)` | 清除凭据（零化后释放） |
+| `XLinkClient_hasCredential(cli)` / `user_const(cli)` | 是否已设凭据 / 登录用户名 |
+| `XLinkClient_lastAuthFailure(cli)` | 最近一次认证失败原因（`XLinkClientAuthFailure`） |
+| `XLinkClient_isAuthenticated(cli)` | 当前会话是否已通过认证 |
+| `XLinkClient_authFailed_signal(cli, reason, status)` | 信号：认证失败终局（同时停止自动重连，转 UnconnectedState） |
 
 ### 9.9 编解码
 
@@ -987,6 +1353,110 @@ void ui_loop(XLinkSession* s)
 | `XLinkCodec_decodeHello(buf, len, &out)` | Hello 载荷解码 |
 | `XLinkCodec_encodeHeader(frame, buf)` | 帧头打包（12 字节） |
 | `XLinkCodec_decodeHeader(buf, len, &out)` | 帧头解包（含载荷上限校验） |
+
+### 9.10 登录认证 XLinkAuth（`XLINK_AUTH_ON`，详见 §6.10）
+
+| API | 说明 |
+|-----|------|
+| `XLinkAuth_encodeRequest(&msg, buf, cap, &len)` / `decodeRequest(buf, len, &out)` | AuthRequest 载荷编解码（`[u8 nameLen][name...]`；解码保证 `m_name[m_nameLen]` 处写 `'\0'`） |
+| `XLinkAuth_encodeChallenge(...)` / `decodeChallenge(...)` | AuthChallenge 编解码（方法未知/盐长不符/迭代 0/越界拒绝） |
+| `XLinkAuth_encodeResponse(...)` / `decodeResponse(...)` | AuthResponse 编解码（摘要须 == `XLINK_AUTH_NONCE_BYTES`） |
+| `XLinkAuth_encodeResult(...)` / `decodeResult(...)` | AuthResult 编解码（文本超长按 `XLINK_AUTH_TEXT_BYTES` 截断） |
+| `XLinkAuth_deriveHash(password, salt, iterations, outHash)` | H = 迭代 HMAC-SHA256(口令, 盐)；空口令非法 |
+| `XLinkAuth_computeResponse(hash, nonce, out)` | response = HMAC-SHA256(H, nonce) |
+| `XLinkAuth_computeServerProof(hash, nonce, out)` | serverProof = HMAC-SHA256(H, nonce‖0x01)（域分离，与应答互不可替代） |
+| `XLinkAuth_constantTimeEqual(a, b, len)` | 常量时间比较（防时序侧信道） |
+| `XLinkAuth_randomFill(buf, len)` | 密码学安全随机字节（盐/nonce） |
+| `XLinkAuth_secureZero(data, len)` | 零化敏感缓冲（防编译器优化掉） |
+
+### 9.11 账户库 XLinkUserStore（`XLINK_AUTH_ON`）
+
+值类型（init/deinit 配对），可嵌入服务端私有块或栈上使用；JSON 持久化经 XDeviceFile/XJsonDocument，保存为原子写（临时文件 + 重命名），格式与 XConsoleShellLogin 账户库一致（可互换/迁移）。
+
+| API | 说明 |
+|-----|------|
+| `XLinkUserStore_init(&store)` / `clear(&store)` | 初始化空表 / 清空（敏感摘要零化；不落盘） |
+| `XLinkUserStore_load(&store, path, &exists)` | 从 JSON 加载；文件不存在视为成功（空库）；损坏返回 false 且库保持清空 |
+| `XLinkUserStore_save(&store, path)` | 原子写 JSON；权限尽力仅属主可读写 |
+| `XLinkUserStore_upsert(&store, user, pwd, role)` | 添加/更新账户（口令 NULL/空 = 不改；新建必须给口令） |
+| `XLinkUserStore_remove(&store, user)` | 删除账户 |
+| `XLinkUserStore_setLocked(&store, user, locked)` | 设置锁定状态 |
+| `XLinkUserStore_find(&store, user)` / `at(&store, i)` / `count(&store)` | 只读查询（借用指针，修改后失效） |
+| `XLinkUserStore_name_const(&rec)` / `isLocked(&rec)` / `hasPassword(&rec)` | 记录字段便捷查询 |
+| `XLinkUserStore_verify(&store, user, pwd, &role)` | 校验口令：0 通过/1 无此用户/2 锁定/3 口令错（与 `XLinkSessionAuthLookupResult` 数值对齐，常量时间比较） |
+
+### 9.12 文件协议与传输引擎（`XLINK_FILE_ON`，详见 §6.11）
+
+**线上格式层 `XLinkFile.h`（纯函数，无状态无堆）**
+
+| API | 说明 |
+|-----|------|
+| `XLinkFile_encodeOpen(...)` / `decodeOpen(...)` | Open 载荷编解码（头部 28 字节 `XLINK_FILE_OPEN_HEADER` + 文件名） |
+| `XLinkFile_encodeOpenAck(...)` / `decodeOpenAck(...)` | OpenAck 编解码（头部 28 字节，含 u64 totalSize——下载方向必填） |
+| `XLinkFile_encodeData(offset, data, len, ...)` / `decodeData(...)` | DATA 编解码（载荷 = `[u64 offset][bytes...]`；dataOut 指向 buf 内部） |
+| `XLinkFile_encodeAck(...)` / `decodeAck(...)` | Ack 编解码（`[u64 nextOffset][u32 creditBytes]`） |
+| `XLinkFile_encodeFinish(...)` / `decodeFinish(...)` | Finish 编解码（总大小 + 整文件 SHA-256） |
+| `XLinkFile_encodeFinishAck(...)` / `decodeFinishAck(...)` | FinishAck 编解码 |
+| `XLinkFile_encodeAbort(...)` / `decodeAbort(...)` | Abort 编解码（含原因与对端/本端发起标志） |
+| `XLinkFile_isSafeName(name, nameLen)` | 文件名安全校验（沙箱第一道闸，规则见 §6.11） |
+| `XLinkFile_baseName_const(name)` | 取文件名最后一段（仅展示用；落盘路径须走完整沙箱校验） |
+
+**传输引擎 `XLinkFileTransfer.h`（值类型；一个对象承载一个方向的一次传输）**
+
+| API | 说明 |
+|-----|------|
+| `XLinkFileTransfer_init(&t)` / `deinit(&t)` | 初始化 / 反初始化（deinit 不发 Abort、**保留回调**——progress/finished/userData 只由 setCallbacks 替换） |
+| `XLinkFileTransfer_setCallbacks(&t, progress, finished, ud)` | 注册进度/终局回调（借用，可为 NULL） |
+| `XLinkFileTransfer_beginUpload(&t, s, localPath, remoteName, flags, &id)` | 发起上传（Open 入队；须会话 Ready 且协商文件能力） |
+| `XLinkFileTransfer_beginDownload(&t, s, remoteName, localPath, flags, &id)` | 发起下载 |
+| `XLinkFileTransfer_beginReceive(&t, s, &open, localPath, id, chunk, window)` | 接收方受理 Open（已有 `.part` 按其大小续传） |
+| `XLinkFileTransfer_beginSendFile(&t, s, localPath, remoteName, nameLen, flags, totalSize, id, chunk, window, startOffset)` | 服务端受理下载：不发 Open，直接回 OpenAck 进入 Active |
+| `XLinkFileTransfer_pump(&t, nowMs)` | 推进一步（每轮最多一个 chunk，不阻塞） |
+| `XLinkFileTransfer_onFrame(&t, frame, payload, nowMs)` | 处理收到的 File 帧（会话 File 回调内调用） |
+| `XLinkFileTransfer_abort(&t, status, text)` | 主动中止（向对端发 Abort） |
+| `XLinkFileTransfer_isFinished(&t)` / `state(&t)` | 是否终局（Done/Failed）/ 当前状态（Idle/Opening/Active/Finishing/Done/Failed） |
+| `XLinkFileTransfer_doneBytes(&t)` / `totalBytes(&t)` | 已处理字节数 / 文件总字节数 |
+
+**会话挂接**
+
+| API | 说明 |
+|-----|------|
+| `XLinkSession_setFileCallback(s, cb, ud)` | 注册 File 帧处理回调：返回 true 已消费；File 帧永不投递业务分发回调；未协商 FileTransfer 能力时收到的帧按违例丢弃 |
+
+### 9.13 文件服务端沙箱 XLinkFileServer（`XLINK_FILE_ON`，详见 §6.11）
+
+值类型（init/deinit 配对）；attach 后由 `XLinkServer` 节拍驱动，自动安装 File 回调与两个内部钩子（会话销毁清槽 / pump 前续命）。
+
+| API | 说明 |
+|-----|------|
+| `XLinkFileServer_init(&fs)` / `deinit(&fs)` | 初始化（默认策略：禁止任何方向 + 要求认证）/ 中止并清理全部传输 |
+| `XLinkFileServer_setRootDir(&fs, dir)` | 设置沙箱根目录（必须已存在；规范化在首次使用时进行） |
+| `XLinkFileServer_setFlags(&fs, flags)` | 策略位（`XLINK_FILESRV_*`，见 §6.11 策略位表） |
+| `XLinkFileServer_setMaxFileBytes(&fs, bytes)` | 单文件大小上限（0 = 不限制） |
+| `XLinkFileServer_setMinRole(&fs, role)` | 允许传输的最低角色（配合认证） |
+| `XLinkFileServer_attach(&fs, srv)` / `detach(&fs)` | 挂接/摘除服务端（业务 dispatch/tick 以链式方式保留） |
+| `XLinkFileServer_rootDir_const(&fs)` | 根目录只读借用 |
+
+### 9.14 文件客户端 XLinkFileClient（`XLINK_FILE_ON` 且 `XLINK_CLIENT_ON`，详见 §6.11）
+
+XObject 子类；同一时刻只允许一个活跃传输，客户端重连时自动中止旧传输。
+
+| API | 说明 |
+|-----|------|
+| `XLinkFileClient_create()` / `init(obj)` | 堆/栈创建 |
+| `XLinkFileClient_attach(obj, cli)` | 关联 XLinkClient（借用；存活期须覆盖本对象） |
+| `XLinkFileClient_upload(obj, localPath, remoteName, flags, &id)` | 上传本地文件到服务端沙箱（Open 已入队返回 true） |
+| `XLinkFileClient_download(obj, remoteName, localPath, flags, &id)` | 从服务端下载文件到本地 |
+| `XLinkFileClient_abort(obj, status, text)` | 中止当前传输（status 0 归一为 Aborted） |
+| `XLinkFileClient_pump(obj, nowMs)` | 手动驱动（每圈必泵传输引擎；会话按单驱动门控决定是否代泵；nowMs 可传 0 由内部取时） |
+| `XLinkFileClient_setSessionDrive(obj, mode)` | 会话驱动模式：Auto（默认门控）/ ForceSessionPump（强制代泵，旧版行为） |
+| `XLinkFileClient_sessionDrive(obj)` | 读取当前会话驱动模式（NULL 返回 Auto） |
+| `XLinkFileClient_willPumpSession(obj)` | 查询下一圈 pump 是否代泵会话（与 pump 判定同源；动态求值） |
+| `XLinkFileClient_isBusy(obj)` / `state(obj)` | 是否有活跃传输 / 当前传输状态 |
+| `XLinkFileClient_doneBytes(obj)` / `totalBytes(obj)` | 已传输 / 文件总字节数 |
+| `XLinkFileClient_transfer(obj)` | 借用传输引擎（高级用法，可再挂回调） |
+| `XLinkFileClient_progress_signal(obj, id, done, total)` | 信号：传输推进（参数 uint32/uint64/uint64） |
+| `XLinkFileClient_finished_signal(obj, id, ok, status, text)` | 信号：传输终局，成功/失败各一次（参数 uint32/bool/uint8/const char*） |
 
 ---
 
@@ -1062,10 +1532,32 @@ void ui_loop(XLinkSession* s)
 
 | 套件 | 文件 | 断言数 | 覆盖内容 |
 |------|------|--------|----------|
-| 功能测试 | `XLinkTest.c` | 411（含分组十五，绿灯实测） | 编解码、生命周期、状态机、换设备接线、自动握手与能力协商、请求应答、推送（含超限/空载荷）、订阅（含幂等）、自动超时（严格大于阈值/终局出表/不重报）、心跳、防御性路径、服务端包装（含复用/边界）、实战案例、信号与自动超时重试（stateChanged/requestFinished/静默重发/终局上报/sendTick==0 起算回归）、客户端包装 XLinkClient（NULL 防御、默认值与栈上生命周期、正常链路、踢线自动重连复活、重连关停、手动断开 Goodbye、最大重连次数；原 `XLinkClientTest.c` 已并入分组十四）、能力位全矩阵（None/对称/不对称两方向/全组合、HelloAck 附加快照 4+N 容忍、RequestTimeout 位不干扰自动超时；分组十五） |
-| 质量门禁 | `XLinkQualityTest.c` | 48 | 内存泄漏（会话/换设备接线/订阅 churn/服务端生命周期+真实接入）、性能基准、吞吐天花板、边界与对抗 |
+| 功能测试 | `XLinkTest.c` | 621（2026-10-28 Linux x86-64 实测 621 通过 / 0 失败） | 编解码、生命周期、状态机、换设备接线、自动握手与能力协商、请求应答、推送（含超限/空载荷）、订阅（含幂等）、自动超时（严格大于阈值/终局出表/不重报）、心跳、防御性路径、服务端包装（含复用/边界）、实战案例（含登录认证+文件传输剧情）、信号与自动超时重试（stateChanged/requestFinished/静默重发/终局上报/sendTick==0 起算回归）、客户端包装 XLinkClient（NULL 防御、默认值与栈上生命周期、正常链路、踢线自动重连复活、重连关停、手动断开 Goodbye、最大重连次数；原 `XLinkClientTest.c` 已并入分组十四）、能力位全矩阵（None/对称/不对称两方向/全组合、HelloAck 附加快照 4+N 容忍、RequestTimeout 位不干扰自动超时；分组十五）、**登录认证与底层加固（分组十六）**、**文件传输（分组十七）** |
+| 质量门禁 | `XLinkQualityTest.c` | 69（含 v1.3 新增「五、文件传输质量」：内存 churn 回基线、吞吐基准、会话统计冒烟） | 内存泄漏（会话/换设备接线/订阅 churn/文件传输 churn/服务端生命周期+真实接入）、性能基准、吞吐天花板、文件传输吞吐、边界与对抗 |
 
-### 11.3 关键测试项
+### 11.3 新增分组覆盖（v1.3）
+
+**分组十六：登录认证与底层加固**（`XLINK_AUTH_ON` 门控，5 个子分组）：
+
+| 子分组 | 覆盖内容 |
+|--------|----------|
+| 一·编解码与口令派生 | 四个认证帧载荷编解码往返与畸形拒绝；H 派生 / challenge 应答 / 服务端证明 / 常量时间比较 / 安全随机的纯函数正确性 |
+| 二·账户库 | `XLinkUserStore` 内存态语义：upsert/remove/锁定/查找/verify 返回码、库满与参数非法防御 |
+| 三·端到端认证 | 真实 TCP 链路：正确口令登录成功（含服务端证明校验）、错误口令 authFailed(BadPassword)、无凭据快速失败（NoCredential） |
+| 四·加固 | 能力位降级不可绕过认证（对端不宣告 Auth 即拒绝）、认证超时断链、握手超时回收半开连接 |
+| 五·统计与队列 | `XLinkSession_stats` 计数正确性、`pendingBytes` 背压观测、发送队列短写续传 |
+
+**分组十七：文件传输**（`XLINK_FILE_ON` 门控，5 个子分组）：
+
+| 子分组 | 覆盖内容 |
+|--------|----------|
+| 一·协议编解码 | 七个操作码载荷编解码往返与畸形拒绝；`isSafeName` 文件名安全校验（绝对路径/穿越/隐藏名/NUL/控制字符/超长逐项覆盖） |
+| 二·沙箱路径策略 | 服务端根目录规范化前缀校验、软链接/目录拒绝、策略位（方向/覆盖/大小/角色）判定（不依赖网络） |
+| 三·端到端传输 | 真实 TCP 上传/下载：37KB 文件逐字节比对、SHA-256 校验、`.part` 断点续传、每块 ACK 流控、进度与终局信号 |
+| 四·激进双泵节奏 | 驱动模式 API 语义 + Auto/Force 两模式下「processEvents 与 pump 背靠背」的端到端上传+下载连跑（驱动链回归锁） |
+| 五·单驱动门控子句锁 | `willPumpSession` 查询锁门控子句（Auto 拒泵/Force 代泵/切回恢复）；无事件观察窗内传输停滞在 Opening、恢复转事件后同一笔传输照常到 Done（停滞只来自窗口，门控不破坏传输；Force 无事件救援不可断言——真实 TCP 读写均为事件驱动，见 §14.3） |
+
+### 11.4 关键测试项
 
 **内存泄漏**：反复创建/销毁 200 次 + 带传输夹具 100 次，断言系统分配器在用字节回到基线（实测差 0）。
 
@@ -1193,10 +1685,16 @@ XClassDelete((XClass*)session);
 | 会话对象 | `XLinkSession.h/.c` |
 | 服务端包装 | `XLinkServer.h/.c` |
 | 客户端包装（自动重连） | `XLinkClient.h/.c` |
+| 登录认证支撑（编解码/派生/比较） | `XLinkAuth.h/.c` |
+| JSON 账户库 | `XLinkUserStore.h/.c` |
+| 文件协议编解码 + 文件名校验 | `XLinkFile.h/.c` |
+| 文件传输引擎（流控/续传/校验） | `XLinkFileTransfer.h/.c` |
+| 文件服务端沙箱 | `XLinkFileServer.h/.c` |
+| 文件客户端 | `XLinkFileClient.h/.c` |
 | 实战案例·服务端程序 | `Test/XProtocolTest/XLinkDemoServer.c` |
 | 实战案例·客户端程序 | `Test/XProtocolTest/XLinkDemoClient.c` |
 | 实战案例·公共头（协议/日志/入口） | `Test/XProtocolTest/XLinkDemo.h` |
-| 功能测试（含客户端包装分组十四） | `Test/XProtocolTest/XLinkTest.c` |
+| 功能测试（含分组十四~十七） | `Test/XProtocolTest/XLinkTest.c` |
 | 质量门禁 | `Test/XProtocolTest/XLinkQualityTest.c` |
 | 测试入口声明 | `Test/XProtocolTest/XLinkTest.h` |
 
@@ -1219,7 +1717,7 @@ XClassDelete((XClass*)session);
 | P2 传输引擎 | ✅ 完成 | `XLinkFileTransfer`：发/收状态机、窗口流控（`offset - ackOffset < window`）、断点续传（.part 续写）、整文件 SHA-256（发起时预计算，`beginSendFile` 用已打开句柄 hash 避免二次打开失败）。 |
 | P2 服务端沙箱 | ✅ 完成 | `XLinkFileServer`：根目录规范化前缀校验（Canonical 失败回退 Absolute）、软链接/目录拒绝、策略位（方向/覆盖/大小/角色/认证）；`setSessionGoneHook` 清槽防悬垂；`setPreSessionPumpHook` 在会话 pump 前续命（判线前！tick 回调时已晚）。 |
 | P2 客户端 | ✅ 完成 | `XLinkFileClient`：upload/download/abort + progress/finished 信号（XEmitSignal 风格）；收帧后立即 pump（防无事件分发器时停滞）；`XLinkFileClient_pump` 手动驱动口。 |
-| P2 测试 | ⚠️ 上传全绿 | 分组十六 93 断言 + 分组十七：**上传端到端（37KB 逐字节比对）通过**；下载 4 断言失败（见 14.3）。总计 570 通过 / 4 失败。 |
+| P2 测试 | ✅ 全绿 | 分组十六 93 断言 + 分组十七（5 子分组，含激进双泵与单驱动门控子句锁）。**2026-10-28 Linux x86-64 实测：功能 621 通过 / 0 失败、质量 69 通过 / 0 失败（`--test xlink-all` 退出码 0）。** 下载端到端在 Linux 从不复现（旧机 Windows 平台相关，闭环结论见 14.3）。 |
 
 ### 14.2 关键设计要点（换机续作必读）
 
@@ -1233,7 +1731,42 @@ XClassDelete((XClass*)session);
 8. **服务端 tick 回调内禁止再 pump 会话**（与 `XLinkServer_pump` 交织会搅乱收发游标，实测段错误）；`m_inTick` 重入保护保留。
 9. **测试文件写入要带 `XIODevice_Create`**，且清理前先恢复写权限（Windows 只读文件删不掉，曾让测试第二次运行失败）。
 
-### 14.3 已知问题（下载端到端，下一步第一优先）
+### 14.3 下载端到端问题——已闭环（2026-10-28）
+
+> **v1.3-dev 整改落点（状态同步）**：怀疑 1 已落地为 `XLinkFileClient_pump`
+> 的单驱动门控（Auto 按分发器/心跳拍门控代泵，Force 回旧双泵行为，
+> 分组十七·四/五锁定）；传输活跃期注入时钟的隔离靠「异步环境请传 0」
+> 契约（keepAlive 对 0 内部自取实时），Opening 无应答重发加了
+> `XLINK_FILE_OPEN_RETRY_MAX` 上限，不再无限停滞。全量闸门复跑中暴露的
+> 「沙箱外写 / 下载落盘」3 项失败，根因是旧版测试 cleanup 以八进制
+> 0666 误投 Qt 风格权限位域（chmod 出 0136 不可写残留且 removeRecursively
+> 删不掉文件）污染下一轮运行——cleanup 已改用 `XFile_ReadOwner|WriteOwner`
+> 枚举并分流删文件，测试写前/下载前自愈清残留。
+>
+> **闭环结论（换机 Linux 复测 + 四路整改工作流）**：
+> 1. 下载 4 断言在 Linux **从未复现**（接手首跑 574/574 直接过）——旧机
+>    Windows 平台相关，协议/会话层静态审查未发现缺陷。「Open 帧已写出但
+>    对端收不到任何字节（连心跳都断）」的形态最符合**套接字写缓冲滞留**：
+>    `pendingBytes=0` 只代表 XLink 发送队列排进 XTcpSocket 写缓冲，不等于
+>    落到内核；若上传突发后写事件通知器失活，后续帧（含心跳）全部滞留，
+>    客户端无感知（反方向心跳正常），服务端 3s 静默判线——与全部观察吻合。
+> 2. 双驱动分析定论：**顺序双泵今日无害**（pump 幂等、单圈自洽无跨圈
+>    游标），门控只是收敛暴露面；真正的雷是「回调栈内再泵会话」的重入
+>    （§14.2 注 8 前科）。
+> 3. 复跑另根修一处测试前提错误：门控子句锁（十七·五）初版断言「Force
+>    代泵在无事件宿主里救活真实 TCP 传输」——**真实 TCP 的读写均为事件
+>    驱动**（收包进环形缓冲、写残留推进都在分发器事件处理内，见
+>    XAbstractSocket），无事件窗口里连 Force 也搬不动任何数据，客户端
+>    会话 3s 静默判线正由此来；已改为 `willPumpSession` 查询锁子句 +
+>    「无事件停滞 / 事件恢复后同一传输完成」行为锁。
+> 4. **最终状态：功能 621 / 0、质量 69 / 0，`--test xlink-all` 退出码 0。**
+>
+> **Windows 复测指引（唯一遗留）**：在旧 Windows 机拉取本版跑
+> `--test xlink`（预期 621/0）。若仍复现「Open 帧滞留」：抓 XTcpSocket
+> 写缓冲水位与 bytesWritten 事件链（疑点：上传突发后写通知器失活），
+> cdb 命令见下；同时确认 17-5 修正版全绿（排除测试侧残留干扰）。
+
+**下表现象与排查记录保留作归档。**
 
 **现象**：上传 37KB 全链路通过；随后发起下载，Open 帧（`open sent ... mode=1`，会话态 Ready、pending=0，即已完整写出到套接字）**从未到达服务端**（`xfs_onFileFrame` 无日志）；约 3 秒后服务端会话静默判线回收（`SILENCE delta≈3015`）。
 
@@ -1249,12 +1782,12 @@ XClassDelete((XClass*)session);
 2. 或下载 Open 帧写出到 socket 的时机与上传 Finish 的收尾排空（`XLinkClient_disconnectFromServer` 的 drain）存在交互——但测试中上传后并不断链，此假设优先级低；
 3. 服务端 `xfs_preSessionPump` 钩子里的 keepAlive 会把 `m_lastReceiveTick` 置为当前值，可能与"测试等待循环里手动 pump 服务端"的时间轴交互产生判线放大——可尝试只在传输 Active 时续命、Opening 时不续命。
 
-**建议续作顺序**：
-1. 按怀疑 1 验证双驱动问题（最快）；
-2. 复现后用 cdb 抓崩溃/断链现场（`cdb -g -G -c "sxe -c \"kv;q\" av; g; q"`，注意 `-c` 与被调试程序参数之间不要加 `--`）；
-3. 下载 4 断言转绿后跑 `--test xlink-all` 全量闸门；
-4. 更新本文档 §4/§5/§6/§8/§9/§11 各节（当前仅头部与 §14 记录了 v1.3-dev）；
-5. demo（`XLinkDemoServer/Client`）加登录 + 上传/下载剧情；质量门禁补文件传输内存/吞吐项。
+**建议续作顺序（2026-10-28 全部完成，唯余 Windows 复测）**：
+1. ✅ 怀疑 1 双驱动：分析定论「顺序双泵今日无害」+ 单驱动门控加固（`setSessionDrive`/`willPumpSession`，分组十七·四/五锁定）；
+2. ✅ 全量闸门 `--test xlink-all` 全绿（功能 621 + 质量 69，退出码 0）；
+3. ✅ 本文档 §4/§5/§6/§8/§9/§11 已扩写至 v1.3-dev 并按终态校正；
+4. ✅ demo（`XLinkDemoServer/Client`）已加登录 + 上传/下载剧情（单进程形态覆盖新剧情，随闸门验证）；质量门禁已补文件传输 churn/吞吐/会话统计三项；
+5. ⬜ Windows 旧机复测（平台相关，指引见上方闭环结论；cdb 用法：`cdb -g -G -c "sxe -c \"kv;q\" av; g; q"`，注意 `-c` 与被调试程序参数之间不要加 `--`）。
 
 ### 14.4 新增文件清单
 

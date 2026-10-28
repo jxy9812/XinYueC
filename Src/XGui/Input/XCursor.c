@@ -107,6 +107,195 @@ static const uint8_t g_cursorSwArrowBits[XCURSOR_SW_ARROW_W *
     /* .....##..... */
     0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0};
 
+/* ---- 内建形状位图集（2026-10-27 扩展：软件精灵按形状取图） ----
+ * 原先除 Blank 外一律回落箭头（单表时代）；为「外形选择」类应用
+ * 语义补四款常用形状，2bit 口径与箭头一致（0=透明/1=黑/2=白）。
+ * 无表的形状（UpArrow/SizeXXX/Bitmap/Custom 等）仍回落箭头——
+ * 呈现层经 XCursor_swBits 取图即自动获得该回落，无需自行判形。 */
+
+/** @brief 手型（PointingHand）14x19，指尖热点 (7,1)。 */
+static const uint8_t g_cursorSwHandBits[14 * 19] = {
+    /* ......##...... */
+    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0,
+    /* .....#oo#..... */
+    0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0, 0,
+    /* .....#oo#..... */
+    0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0, 0,
+    /* .....#oo#..... */
+    0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0, 0,
+    /* .....#oo#..... */
+    0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0, 0,
+    /* .....#oo#..... */
+    0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0, 0,
+    /* .....#oo####.. */
+    0, 0, 0, 0, 0, 1, 2, 2, 1, 1, 1, 1, 0, 0,
+    /* .....#oo#oo#.. */
+    0, 0, 0, 0, 0, 1, 2, 2, 1, 2, 2, 1, 0, 0,
+    /* ..##.#oo#oo#.. */
+    0, 0, 1, 1, 0, 1, 2, 2, 1, 2, 2, 1, 0, 0,
+    /* .#oo##ooooo#.. */
+    0, 1, 2, 2, 1, 1, 2, 2, 2, 2, 2, 1, 0, 0,
+    /* .#oooooooooo#. */
+    0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0,
+    /* .#ooooooooooo# */
+    0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1,
+    /* .#ooooooooooo# */
+    0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1,
+    /* .#ooooooooooo# */
+    0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1,
+    /* ..#ooooooooo#. */
+    0, 0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0,
+    /* ..#ooooooooo#. */
+    0, 0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0,
+    /* ...#ooooooo#.. */
+    0, 0, 0, 1, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0,
+    /* ...##ooooo##.. */
+    0, 0, 0, 1, 1, 2, 2, 2, 2, 2, 1, 1, 0, 0,
+    /* .....#####.... */
+    0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0};
+
+/** @brief 十字（Cross）15x15，中心热点 (7,7)：黑线白描边。 */
+static const uint8_t g_cursorSwCrossBits[15 * 15] = {
+    /* .......o....... */
+    0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0,
+    /* ......o#o...... */
+    0, 0, 0, 0, 0, 0, 2, 1, 2, 0, 0, 0, 0, 0, 0,
+    /* ......o#o...... */
+    0, 0, 0, 0, 0, 0, 2, 1, 2, 0, 0, 0, 0, 0, 0,
+    /* ......o#o...... */
+    0, 0, 0, 0, 0, 0, 2, 1, 2, 0, 0, 0, 0, 0, 0,
+    /* ......o#o...... */
+    0, 0, 0, 0, 0, 0, 2, 1, 2, 0, 0, 0, 0, 0, 0,
+    /* ......o#o...... */
+    0, 0, 0, 0, 0, 0, 2, 1, 2, 0, 0, 0, 0, 0, 0,
+    /* ooooooo#ooooooo */
+    2, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2,
+    /* ############### */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    /* ooooooo#ooooooo */
+    2, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2,
+    /* ......o#o...... */
+    0, 0, 0, 0, 0, 0, 2, 1, 2, 0, 0, 0, 0, 0, 0,
+    /* ......o#o...... */
+    0, 0, 0, 0, 0, 0, 2, 1, 2, 0, 0, 0, 0, 0, 0,
+    /* ......o#o...... */
+    0, 0, 0, 0, 0, 0, 2, 1, 2, 0, 0, 0, 0, 0, 0,
+    /* ......o#o...... */
+    0, 0, 0, 0, 0, 0, 2, 1, 2, 0, 0, 0, 0, 0, 0,
+    /* ......o#o...... */
+    0, 0, 0, 0, 0, 0, 2, 1, 2, 0, 0, 0, 0, 0, 0,
+    /* .......o....... */
+    0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0};
+
+/** @brief 文本 I（IBeam）9x16，中点热点 (4,7)。 */
+static const uint8_t g_cursorSwIbeamBits[9 * 16] = {
+    /* .#######. */
+    0, 1, 1, 1, 1, 1, 1, 1, 0,
+    /* .#ooooo#. */
+    0, 1, 2, 2, 2, 2, 2, 1, 0,
+    /* ..o###o.. */
+    0, 0, 2, 1, 1, 1, 2, 0, 0,
+    /* ...o#o... */
+    0, 0, 0, 2, 1, 2, 0, 0, 0,
+    /* ...o#o... */
+    0, 0, 0, 2, 1, 2, 0, 0, 0,
+    /* ...o#o... */
+    0, 0, 0, 2, 1, 2, 0, 0, 0,
+    /* ...o#o... */
+    0, 0, 0, 2, 1, 2, 0, 0, 0,
+    /* ...o#o... */
+    0, 0, 0, 2, 1, 2, 0, 0, 0,
+    /* ...o#o... */
+    0, 0, 0, 2, 1, 2, 0, 0, 0,
+    /* ...o#o... */
+    0, 0, 0, 2, 1, 2, 0, 0, 0,
+    /* ...o#o... */
+    0, 0, 0, 2, 1, 2, 0, 0, 0,
+    /* ...o#o... */
+    0, 0, 0, 2, 1, 2, 0, 0, 0,
+    /* ...o#o... */
+    0, 0, 0, 2, 1, 2, 0, 0, 0,
+    /* ..o###o.. */
+    0, 0, 2, 1, 1, 1, 2, 0, 0,
+    /* .#ooooo#. */
+    0, 1, 2, 2, 2, 2, 2, 1, 0,
+    /* .#######. */
+    0, 1, 1, 1, 1, 1, 1, 1, 0};
+
+/** @brief 等待沙漏（Wait）12x19，中点热点 (6,9)。 */
+static const uint8_t g_cursorSwWaitBits[12 * 19] = {
+    /* ############ */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    /* .#oooooooo#. */
+    0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0,
+    /* ..#oooooo#.. */
+    0, 0, 1, 2, 2, 2, 2, 2, 2, 1, 0, 0,
+    /* ..#oooooo#.. */
+    0, 0, 1, 2, 2, 2, 2, 2, 2, 1, 0, 0,
+    /* ...#oooo#... */
+    0, 0, 0, 1, 2, 2, 2, 2, 1, 0, 0, 0,
+    /* ...#oooo#... */
+    0, 0, 0, 1, 2, 2, 2, 2, 1, 0, 0, 0,
+    /* ....#oo#.... */
+    0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0,
+    /* ....#oo#.... */
+    0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0,
+    /* .....##..... */
+    0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0,
+    /* .....##..... */
+    0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0,
+    /* ....#oo#.... */
+    0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0,
+    /* ....#oo#.... */
+    0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0,
+    /* ...#oooo#... */
+    0, 0, 0, 1, 2, 2, 2, 2, 1, 0, 0, 0,
+    /* ...#oooo#... */
+    0, 0, 0, 1, 2, 2, 2, 2, 1, 0, 0, 0,
+    /* ..#oooooo#.. */
+    0, 0, 1, 2, 2, 2, 2, 2, 2, 1, 0, 0,
+    /* ..#oooooo#.. */
+    0, 0, 1, 2, 2, 2, 2, 2, 2, 1, 0, 0,
+    /* .#oooooooo#. */
+    0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0,
+    /* .#oooooooo#. */
+    0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0,
+    /* ############ */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+
+/** @brief 单个内建精灵条目（位图+尺寸+热点）。 */
+typedef struct {
+    const uint8_t* m_bits;  /**< 位图数据（行主序 2bit 字节）；借用。 */
+    int m_width;            /**< 位图宽（逻辑像素）。 */
+    int m_height;           /**< 位图高（逻辑像素）。 */
+    int m_hotX;             /**< 热点 X。 */
+    int m_hotY;             /**< 热点 Y。 */
+} XCursorSwSprite;
+
+/** @brief 内建精灵形状表（Arrow+四款扩展；查无回落 Arrow，见
+ *         xcursor_swSpriteFor）。 */
+static const XCursorSwSprite g_cursorSwSprites[] = {
+    { g_cursorSwArrowBits, XCURSOR_SW_ARROW_W, XCURSOR_SW_ARROW_H, 1, 1 },
+    { g_cursorSwHandBits,  14, 19, 7, 1 },
+    { g_cursorSwCrossBits, 15, 15, 7, 7 },
+    { g_cursorSwIbeamBits,  9, 16, 4, 7 },
+    { g_cursorSwWaitBits,  12, 19, 6, 9 }
+};
+
+/** @brief 形状 → 内建精灵条目（查无回落 Arrow 条目——Bitmap/Custom/
+ *         未绘制形状统一画箭头，与单表时代语义一致）。 */
+static const XCursorSwSprite* xcursor_swSpriteFor(XCursorShape shape)
+{
+    switch (shape) {
+        case XCursor_Arrow:        return &g_cursorSwSprites[0];
+        case XCursor_PointingHand: return &g_cursorSwSprites[1];
+        case XCursor_Cross:        return &g_cursorSwSprites[2];
+        case XCursor_IBeam:        return &g_cursorSwSprites[3];
+        case XCursor_Wait:         return &g_cursorSwSprites[4];
+        default:                   return &g_cursorSwSprites[0];
+    }
+}
+
 void XCursor_installPlatformBackend(const XCursorPlatformBackend* backend)
 {
     g_cursorBackend = backend;
@@ -169,8 +358,9 @@ bool XCursor_softwareCursorEnabled(void)
 
 /**
  * @brief      软件精灵当前有效形状（override 优先，形状账次之）。
- * @details    除 Blank 隐藏外，其它形状（含 Bitmap/Custom）绘制一律
- *             回落内建箭头位图——嵌入式软件精灵不做逐形状位图集。
+ * @details    Blank=隐藏；Arrow/PointingHand/Cross/IBeam/Wait 有内建
+ *             位图按形状绘制，其余形状（Bitmap/Custom 等）绘制回落
+ *             内建箭头位图（xcursor_swSpriteFor 统一回落）。
  */
 static XCursorShape xcursor_swEffectiveShape(void)
 {
@@ -193,13 +383,15 @@ XRect XCursor_swRect(void)
 {
     XRect rect;
     XPoint pos;
-    XPoint hotSpot;
+    const XCursorSwSprite* sprite;
     XRect_init(&rect, 0, 0, 0, 0);
     if (!XCursor_swActive()) return rect; /* 未激活：全零空矩形。 */
     pos = XCursor_pos();
-    hotSpot = XCursor_swArrowHotSpot();
-    XRect_init(&rect, pos.x - hotSpot.x, pos.y - hotSpot.y,
-               XCURSOR_SW_ARROW_W, XCURSOR_SW_ARROW_H);
+    /* [2026-10-27 按形状取图] 尺寸/热点挂有效形状（外形选择语义）；
+     * 无表形状回落箭头条目，与单表时代逐位一致。 */
+    sprite = xcursor_swSpriteFor(xcursor_swEffectiveShape());
+    XRect_init(&rect, pos.x - sprite->m_hotX, pos.y - sprite->m_hotY,
+               sprite->m_width, sprite->m_height);
     return rect;
 }
 
@@ -222,6 +414,50 @@ XPoint XCursor_swArrowHotSpot(void)
 {
     XPoint hotSpot;
     XPoint_init(&hotSpot, 1, 1);
+    return hotSpot;
+}
+
+/* ---- 按有效形状的精灵取图（2026-10-27 外形选择配套） ---- */
+
+const uint8_t* XCursor_swSpriteBitsFor(XCursorShape shape, int* outW,
+                                       int* outH, int* outHotX, int* outHotY)
+{
+    const XCursorSwSprite* sprite;
+    /* 白名单内才有内建位图：其余形状返回 NULL 让平台走系统形状映射
+       （功能形状如 SizeVer 视觉属平台语义，不强行统一）。 */
+    if (shape != XCursor_Arrow && shape != XCursor_PointingHand &&
+        shape != XCursor_Cross && shape != XCursor_IBeam &&
+        shape != XCursor_Wait)
+        return NULL;
+    sprite = xcursor_swSpriteFor(shape);
+    if (outW) *outW = sprite->m_width;
+    if (outH) *outH = sprite->m_height;
+    if (outHotX) *outHotX = sprite->m_hotX;
+    if (outHotY) *outHotY = sprite->m_hotY;
+    return sprite->m_bits;
+}
+
+const uint8_t* XCursor_swBits(void)
+{
+    return xcursor_swSpriteFor(xcursor_swEffectiveShape())->m_bits;
+}
+
+int XCursor_swWidth(void)
+{
+    return xcursor_swSpriteFor(xcursor_swEffectiveShape())->m_width;
+}
+
+int XCursor_swHeight(void)
+{
+    return xcursor_swSpriteFor(xcursor_swEffectiveShape())->m_height;
+}
+
+XPoint XCursor_swHotSpot(void)
+{
+    XPoint hotSpot;
+    const XCursorSwSprite* sprite =
+        xcursor_swSpriteFor(xcursor_swEffectiveShape());
+    XPoint_init(&hotSpot, sprite->m_hotX, sprite->m_hotY);
     return hotSpot;
 }
 

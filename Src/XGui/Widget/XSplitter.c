@@ -15,6 +15,7 @@
 
 #if XGUI_ON
 
+#include "XGridLayout.h" /* XOrientation 方向枚举。 */
 #include "XSplitter.h"
 #include "XSplitterHandle.h"
 #include "XRubberBand.h"
@@ -1001,6 +1002,65 @@ static void xsp_moveSlot(XSplitter* self, int cur, int index)
 
 /* ==================== 生命周期 ==================== */
 
+/** @brief 刷新尺寸提示（对标 Qt QSplitter）。
+ *  @details Qt 6.8.3（qsplitter.cpp:1490-1507）：sizeHint = 全部可见子项
+ *           sizeHint 沿主轴累加、交叉轴取最大。 */
+static void xsplitter_updateSizeHint(XSplitter* self)
+{
+    XSize hint;
+    int count;
+    int i;
+    int mainAcc = 0;
+    int crossMax = 0;
+    bool horizontal;
+    if (!self) return;
+    horizontal = XSplitter_orientation(self) == XOrientation_Horizontal;
+    count = XSplitter_count(self);
+    for (i = 0; i < count; ++i) {
+        XWidget* w = XSplitter_widget(self, i);
+        XSize sh;
+        if (!w || !XWidget_isVisible(w)) continue;
+        sh = XWidget_sizeHint(w);
+        if (sh.width <= 0 && sh.height <= 0) continue;
+        if (horizontal) {
+            mainAcc += sh.width;
+            if (sh.height > crossMax) crossMax = sh.height;
+        } else {
+            mainAcc += sh.height;
+            if (sh.width > crossMax) crossMax = sh.width;
+        }
+    }
+    if (horizontal) XSize_init(&hint, mainAcc, crossMax);
+    else XSize_init(&hint, crossMax, mainAcc);
+    XWidget_setSizeHint((XWidget*)self, &hint);
+    /* Qt QSplitter 另 override minimumSizeHint（qsplitter.cpp:1514+）：各子项
+     * 最小尺寸的累加——本类按子项 minimumSizeHint 同口径取（缺省 0 时
+     * 回落 sizeHint，保证布局竖排有真实下界）。 */
+    {
+        XSize minHint;
+        int minAcc = 0;
+        int minCross = 0;
+        for (i = 0; i < count; ++i) {
+            XWidget* w = XSplitter_widget(self, i);
+            XSize mh;
+            if (!w || !XWidget_isVisible(w)) continue;
+            mh = XWidget_minimumSizeHint(w);
+            if (mh.width <= 0 && mh.height <= 0)
+                mh = XWidget_sizeHint(w);
+            if (horizontal) {
+                minAcc += mh.width;
+                if (mh.height > minCross) minCross = mh.height;
+            } else {
+                minAcc += mh.height;
+                if (mh.width > minCross) minCross = mh.width;
+            }
+        }
+        if (horizontal) XSize_init(&minHint, minAcc, minCross);
+        else XSize_init(&minHint, minCross, minAcc);
+        XWidget_setMinimumSizeHint((XWidget*)self, &minHint);
+    }
+}
+
 void XSplitter_init(XSplitter* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
@@ -1009,7 +1069,8 @@ void XSplitter_init(XSplitter* self, XWidget* parent, XWidgetFlags flags)
     XClassSetVtable(self, XSplitter);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
-    self->m_orientation = 1;
+    self->m_orientation = 1;   /* 水平（对标 Qt 默认 Horizontal）。 */
+    xsplitter_updateSizeHint(self);
     /* 把手宽保持显式 5（默认样式 PM_SplitterWidth 非 5：Fusion=dpiScaled4/
        XCommonStyle=0，照 Qt 哨兵默认会丢把手宽）；不透明拖动存 true 但
        不置已设置位——getter 走 SH_Splitter_OpaqueResize 样式回落。 */

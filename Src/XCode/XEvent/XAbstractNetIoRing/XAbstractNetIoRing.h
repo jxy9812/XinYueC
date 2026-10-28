@@ -51,6 +51,8 @@ XCLASS_DEFINE_ENUM(XAbstractNetIoRing, UnregisterEvent),  /**< 注销事件源 *
 XCLASS_DEFINE_ENUM(XAbstractNetIoRing, DispatchCQEntry),  /**< 分发一条 CQ 完成事件到应用层 */
 XCLASS_DEFINE_ENUM(XAbstractNetIoRing, WaitForEvents),    /**< 阻塞等待事件(超时返回),由平台后端重载 */
 XCLASS_DEFINE_ENUM(XAbstractNetIoRing, WakeUp),           /**< 唤醒阻塞中的 WaitForEvents,由平台后端重载 */
+XCLASS_DEFINE_ENUM(XAbstractNetIoRing, RegisterPassiveOsFd), /**< 注册裸 OS fd 为被动可读事件源（见下方 API 注） */
+XCLASS_DEFINE_ENUM(XAbstractNetIoRing, UnregisterPassiveOsFd), /**< 注销裸 OS fd 被动事件源（对称通道） */
 XCLASS_DEFINE_END(XAbstractNetIoRing)
 
 /* ================================================================
@@ -278,6 +280,49 @@ void XAbstractNetIoRing_dispatchCQEntry_base(XAbstractNetIoRing* ring, const XAb
  *       裸机/非阻塞平台直接返回
  */
 void XAbstractNetIoRing_waitForEvents_base(XAbstractNetIoRing* ring, int timeoutMs);
+
+/**
+ * @brief 把一个**裸 OS 文件描述符**注册为「被动可读事件源」（虚函数）
+ * @param  ring 事件环实例指针
+ * @param  osFd  裸 OS fd（如 evdev 输入设备的 /dev/input/event0）
+ * @param  notify 就绪回调（可为 NULL）；就绪时以 osFd 为参数调用一次
+ * @return true=注册成功；false=失败（该后端不支持或 fd 无效）
+ * @details 与 RegisterEvent 的区别（**两套编号空间，勿混用**）：
+ *          - RegisterEvent 收 **XFd**（fd 表槽位号，框架内部编号空间）；
+ *          - 本 API 收**裸 OS fd**（内核编号空间），供平台层把「自己打开
+ *            的设备 fd」交给事件环——fbdev 触摸泵持有的 evdev fd 即属此类
+ *            （它不在 XFd 表里，套用 RegisterEvent 会注册到错误的槽位）。
+ *
+ *          语义：fd 可读时**唤醒阻塞中的事件循环**（与 socket notifier
+ *          同款「数据就绪直接唤醒、零轮询延迟」），并回调 notify 通知
+ *          属主去读取。属主的读取动作（如 evdev 抽干报文）由属主自己在
+ *          回调或后续轮询回调链中完成，本 API 不代为读取。
+ *
+ * @note  平台实现：
+ *          - POSIX epoll 引擎：epoll_ctl(ADD) 纳入等待集；
+ *          - POSIX io_uring 引擎：POLL_ADD 提交；
+ *          - Windows IOCP 引擎：**无等价语义**，恒返回 false。IOCP 只接纳
+ *            与 OVERLAPPED I/O 绑定的 HANDLE，不存在「把一个只读设备 fd
+ *            挂进等待集」的原语；Windows 的输入侧本就由窗口消息
+ *            （WM_POINTER/WM_MOUSE）驱动、经 XPlatformNativeWindow 的
+ *            事件泵进入框架，不需要本通道。返回 false ⇒ 调用方保留
+ *            轮询兜底，Windows 行为与本 API 引入前逐位一致。
+ *          - 其他后端：默认实现返回 false（调用方须保留轮询兜底路径）。
+ */
+bool XAbstractNetIoRing_registerPassiveOsFd_base(XAbstractNetIoRing* ring,
+                                                  int osFd,
+                                                  void (*notify)(int osFd));
+
+/**
+ * @brief 从异步后端注销「被动可读 fd」（与 RegisterPassiveOsFd 对称）
+ * @param  ring 异步事件环实例指针
+ * @param  osFd 此前经 RegisterPassiveOsFd 注册的裸 OS fd
+ * @return true=已注销（含「本就未注册」的幂等情形）；false=失败
+ * @note  属主关闭 fd 前**必须**先注销：等待集里留一个即将失效的 fd，
+ *        会让事件循环在其他 fd 就绪时读到已关闭 fd（EBADF/复用风险）。
+ */
+bool XAbstractNetIoRing_unregisterPassiveOsFd_base(XAbstractNetIoRing* ring,
+                                                    int osFd);
 
 /**
  * @brief 唤醒阻塞中的 WaitForEvents(虚函数)

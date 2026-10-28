@@ -486,6 +486,59 @@ static void VXSlider_move(XSlider* self, XSlider* other)
     other->m_dragOffset = 0;
 }
 
+/* ==================== 尺寸提示（对标 Qt QSlider） ==================== */
+
+/** @brief 刷新尺寸提示（sizeHint + minimumSizeHint）。
+ *  @details 对标 Qt 6.8.3 QSlider::sizeHint（qslider.cpp:424-445）：
+ *           槽长 84（Qt 的 SliderLength 常量）+ 厚度
+ *           （PM_SliderThickness），水平方向时宽=槽长、高=厚度；再经
+ *           样式 CT_Slider 收口。minimumSizeHint 同 Qt
+ *           （qslider.cpp:447-460）：取 sizeHint 但主轴回落到
+ *           PM_SliderLength（其余轴不变）。
+ *  @note    此前本类**既无 sizeHint 也无 minimumSizeHint** ⇒ 布局
+ *           条目首选/最小尺寸皆为 0：放进盒布局竖排时控件高度塌 0
+ *           （不可见，同 XSpinBox 2026-10-27 的暴露面）。 */
+static void xslider_updateSizeHint(XSlider* self)
+{
+    XSize hint;
+    XSize minHint;
+    XStyleOption opt;
+    int thick;
+    int length = 84;   /* Qt QSlider 的 SliderLength 常量（qslider.cpp:427）。 */
+    int w;
+    int h;
+    bool horizontal;
+    if (!self) return;
+    horizontal = XAbstractSlider_orientation((XAbstractSlider*)self) ==
+                XAbstractSliderOrientation_Horizontal;
+    XStyleOption_init(&opt, XStyleCT_Slider);
+    opt.m_horizontal = horizontal ? 1 : 0;
+    opt.m_sliderMin = 0;
+    opt.m_sliderMax = 0;
+    opt.m_sliderValue = 0;
+    thick = XStyle_pixelMetric(XStyle_defaultStyle(),
+                               XStylePM_SliderThickness, &opt);
+    if (thick <= 0) thick = 16;
+    w = horizontal ? length : thick;
+    h = horizontal ? thick : length;
+    {
+        XSize content;
+        XSize_init(&content, w, h);
+        hint = XStyle_sizeFromContents(XStyle_defaultStyle(),
+                                       XStyleCT_Slider, &opt, content);
+    }
+    XWidget_setSizeHint((XWidget*)self, &hint);
+    minHint = hint;
+    {
+        int minLen = XStyle_pixelMetric(XStyle_defaultStyle(),
+                                        XStylePM_SliderLength, &opt);
+        if (minLen <= 0) minLen = 16;
+        if (horizontal) minHint.width = minLen;
+        else minHint.height = minLen;
+    }
+    XWidget_setMinimumSizeHint((XWidget*)self, &minHint);
+}
+
 /* ==================== 生命周期 ==================== */
 
 XVtable* XSlider_class_init(void)
@@ -522,6 +575,7 @@ void XSlider_init(XSlider* self, XWidget* parent, XWidgetFlags flags)
     /* 悬停外观 opt-in：绘制按 State_MouseOver 出悬停高亮，ENTER/
      * LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
     XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
+    xslider_updateSizeHint(self);
 }
 
 XSlider* XSlider_create_ex(XMemoryType memory, XWidget* parent,

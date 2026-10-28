@@ -46,6 +46,7 @@
 #include "XPrintf.h"
 #include "XRingBuffer.h"
 #include "XWindowRotation.h" /* 安卓内容旋转换算（与 posix/win32 同源口径）。 */
+#include "XCursor.h" /* 软件光标精灵：触摸喂位 + present 合成后落笔。 */
 
 #include <android/native_activity.h>
 #include <android/native_window.h>
@@ -65,10 +66,30 @@
 void XAndroid_setMainActivity(jobject activity);
 bool XAndroid_moveTaskToBack(void);
 
+/** @brief 单调毫秒（CLOCK_MONOTONIC）。帧界钳等节奏判定专用：不受
+ *         wall-clock 跳变影响（pthread 等待用的 CLOCK_REALTIME 各管
+ *         各的，互不替代）。 */
+static int64_t xpad_monoMs(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
 /* ==================== 编译期配置 ==================== */
 
 #ifndef XPLATFORM_ANDROID_ON
 #define XPLATFORM_ANDROID_ON 1
+#endif
+
+/* [跨圈帧界钳 2026-10-27] 纯 MOVE 帧注入的最小间隔（毫秒；0=关闭）。
+ * 触摸报点 120~240Hz 远超重绘需求：同圈折叠只保证「一圈一次」，而事件
+ * 循环圈频率=报点率，每条放行 MOVE 都会驱动一次控件布局/失效链。本宏
+ * 把注入频率再钳到时间界（与 fbdev XPF_MOVE_FRAME_MS 同款纪律；拖拽
+ * 语义按绝对坐标无状态重算，被钳帧的位移由放行帧一次落位，零丢失；
+ * 手指停住无新报点时位置最多滞后一个帧界）。按下/抬起不受此门。 */
+#ifndef XGUI_MOVE_FRAME_MS
+#define XGUI_MOVE_FRAME_MS 25
 #endif
 
 #if XPLATFORMINTEGRATION_ON && XPLATFORM_ANDROID_ON
@@ -188,8 +209,17 @@ typedef struct XPadState
      * 与 presentScale 自洽（logicalW*presentScale==surfW，1:1 铺满）。
      * 状态栏让位由 demo 的根布局上边距承担（demo_sysbarH）。 */
     bool m_geomPending;               /**< 事件线程待消费：全屏几何回推。 */
+    bool m_startupFullscreenPushed;   /**< 启动全屏态已对齐（一次性）。 */
     int m_geomW;                      /**< 待回推的框架逻辑宽。 */
     int m_geomH;                      /**< 待回推的框架逻辑高。 */
+    /* [跨圈帧界钳 2026-10-27] 纯 MOVE 帧的处理节流基准（单调毫秒，
+     * 0=从未注入）。同圈 MOVE 折叠只保证「一圈一次」，但事件循环圈
+     * 频率远高于人眼需求：真机实测触摸移动时 FPS 100~200、CPU 满核。
+     * 故再加一层时间门把注入频率钳到 XGUI_MOVE_FRAME_MS（与 fbdev
+     * XPF_MOVE_FRAME_MS 同款纪律）。被钳帧的位移由放行帧按绝对坐标
+     * 一次落位（拖拽语义无状态重算，零丢失）；按下/抬起不受此门限制。 */
+    int64_t m_lastMoveCommitMs;       /**< 上次纯 MOVE 帧注入的单调毫秒。 */
+    int m_moveFrameMs;                /**< 帧界窗口（毫秒；0=关闭钳制）。 */
 } XPadState;
 
 static XPadState g_xpad = {
@@ -203,8 +233,9 @@ static XPadState g_xpad = {
        dpr=1 行为（JNI 读数失败时的兜底链，设计 §10-13）。 */
     1.0f, 160, 160.0f, 160.0f, false,
     XPAD_VIEW_SPACE_PHYSICAL, 1.0f, 0, 0, false,
-    /* 全屏几何回推默认：无待推几何。 */
-    false, 0, 0
+    /* 全屏几何回推默认：无待推几何；启动全屏态尚未对齐。
+       帧界钳默认：从未注入、窗口取缺省 25ms（见 XGUI_MOVE_FRAME_MS）。 */
+    false, false, 0, 0, 0, 25
 };
 
 /* 显示驱动注册句柄与几何缓存。 */
@@ -229,6 +260,100 @@ typedef struct XPadLayer
 static XPadLayer g_xpadWindows[XPAD_MAX_WINDOWS];
 static XPadLayer* xpad_findLayer(XWindow* window);
 static int g_xpadWindowCount = 0;
+
+/* ---- 目的地缓冲欠账表（脏区直递 2026-10-27，对齐 Qt 上屏语义）----
+ * ANativeWindow 的 BufferQueue 持 2~3 块物理缓冲轮转，lock 取到哪块
+ * 内容无保证（可能是新分配，也可能是两帧前的旧块）——这正是旧实现
+ * 「每帧整屏清黑+全图层重画」的原因：每帧 O(全屏) 清屏+逐像素缩放
+ * blit，拖拽时 CPU 打满而帧率上不去（Qt 软件栈语义=脏区直递，绝不全
+ * 屏重画；其安卓端则连软件提交都没有——widget 走 QRhiBackingStore 上
+ * 传纹理由 GPU 合成）。
+ * 改法：给每块目的缓冲记「欠账」（其后所有帧的物理脏区都累进所有块
+ * 的账）；lock 到哪块就从各图层 lastImage 把它的欠账裁剪补画再清账。
+ * 陌生指针（新缓冲/surface 重建）=欠全屏，走一次全量重画兜底。源
+ * （各图层 lastImage）恒为最新完整内容，欠账无论跨几帧都能一次补对；
+ * 身份判错的最坏结果只是回落全量（多画，不会画错）。 */
+#define XPAD_MAX_BUFFERS 4
+typedef struct XPadBufferLedger
+{
+    uint8_t* bits;    /**< 缓冲身份（lock 返回 bits 指针）；NULL=空槽。 */
+    XRegion pending;  /**< 待补区（物理 surface 坐标；capacity 0 起步由
+                           XRegion_addRect 懒扩容）。 */
+    bool full;        /**< 欠全屏（首次见到/源变化范围未知时置位）。 */
+} XPadBufferLedger;
+static XPadBufferLedger g_xpadBufLedger[XPAD_MAX_BUFFERS];
+static int g_xpadBufLedgerVictim = 0;   /**< 表满时的逐出游标（轮转）。 */
+/* 光标精灵带（物理坐标）：精灵画在 surface 上、不在任何图层 lastImage
+ * 里，隐没/移位时旧带必须补画还原——每帧把「上帧带∪本帧带」记入全部
+ * 欠账即可（同 fbdev 差带账本的 purpose，账本载体不同）。surface 重建
+ * 时随欠账表一并失效。 */
+static XRect g_xpadLastCursorBand;
+static bool g_xpadHasCursorBand = false;
+
+/** @brief 欠账表整体失效（surface 生命周期事件，持 g_xpad.m_mutex 调）。 */
+static void xpad_bufLedgerResetLocked(void)
+{
+    int i;
+    for (i = 0; i < XPAD_MAX_BUFFERS; ++i) {
+        g_xpadBufLedger[i].bits = NULL;
+        g_xpadBufLedger[i].full = false;
+        XRegion_clear(&g_xpadBufLedger[i].pending);
+    }
+    g_xpadBufLedgerVictim = 0;
+    g_xpadHasCursorBand = false;
+    XRect_init(&g_xpadLastCursorBand, 0, 0, 0, 0);
+}
+
+/** @brief 按身份查欠账槽；无则占空槽/逐出最旧槽（持 g_xpad.m_mutex 调）。
+ *  @note  返回 NULL 表示表异常（不应发生）；调用方按欠全屏处理。 */
+static XPadBufferLedger* xpad_bufLedgerAcquireLocked(uint8_t* bits)
+{
+    int i;
+    if (!bits) return NULL;
+    for (i = 0; i < XPAD_MAX_BUFFERS; ++i)
+        if (g_xpadBufLedger[i].bits == bits)
+            return &g_xpadBufLedger[i];
+    for (i = 0; i < XPAD_MAX_BUFFERS; ++i) {
+        if (!g_xpadBufLedger[i].bits) {
+            g_xpadBufLedger[i].bits = bits;
+            g_xpadBufLedger[i].full = true;   /* 新缓冲：欠全屏 */
+            XRegion_clear(&g_xpadBufLedger[i].pending);
+            return &g_xpadBufLedger[i];
+        }
+    }
+    /* 表满（BufferQueue 缓冲数超过表容）：轮转逐出，逐出槽欠全屏。 */
+    i = g_xpadBufLedgerVictim % XPAD_MAX_BUFFERS;
+    ++g_xpadBufLedgerVictim;
+    g_xpadBufLedger[i].bits = bits;
+    g_xpadBufLedger[i].full = true;
+    XRegion_clear(&g_xpadBufLedger[i].pending);
+    return &g_xpadBufLedger[i];
+}
+
+/** @brief 把一笔物理矩形账记入全部已登记欠账（持 g_xpad.m_mutex 调）。 */
+static void xpad_bufLedgerAccrueRectLocked(const XRect* rectPhys)
+{
+    int i;
+    if (!rectPhys || XRect_isEmpty(rectPhys)) return;
+    for (i = 0; i < XPAD_MAX_BUFFERS; ++i) {
+        if (!g_xpadBufLedger[i].bits || g_xpadBufLedger[i].full) continue;
+        XRegion_addRect(&g_xpadBufLedger[i].pending, rectPhys);
+    }
+}
+
+/** @brief 全部已登记欠账升格为欠全屏（持 g_xpad.m_mutex 调）。
+ *  @note  用于源变化范围未知的帧（区域空/旋转层 flush）：本次全量重画
+ *         只救当前缓冲，其他缓冲的既有欠账不含未知的源变化，若不清全
+ *         会在其下次补画时漏掉这部分变化（陈旧像素残留）。 */
+static void xpad_bufLedgerMarkAllFullLocked(void)
+{
+    int i;
+    for (i = 0; i < XPAD_MAX_BUFFERS; ++i) {
+        if (!g_xpadBufLedger[i].bits) continue;
+        g_xpadBufLedger[i].full = true;
+        XRegion_clear(&g_xpadBufLedger[i].pending);
+    }
+}
 
 /* ==================== 显示驱动（XPlatformDisplayDriverOps 契约） ==================== */
 
@@ -367,23 +492,361 @@ static void xpad_blitRowSwap(uint8_t* dst, const uint8_t* src,
     }
 }
 
+/* ---- 缩放 blit 快路化辅助（xpad_drawImageScaled 专用，静态） ---- */
+
+/** 栈上分块大小（目标像素计）：块缓冲最大 256x4=1KB，免逐帧堆分配。 */
+#define XPAD_SCALED_CHUNK 256
+
+/** @brief 缩放计划：裁剪收口后三条快路共用的只读参数包。 */
+typedef struct XPadScaledPlan {
+    const uint8_t* m_src;       /* 源图像基址 */
+    uint8_t* m_dst;             /* 目标 surface 基址 */
+    size_t m_srcBpl;            /* 源行距（字节） */
+    size_t m_dstBpl;            /* 目标行距（字节） */
+    int m_srcBpp;               /* 源字节宽（RGB16 源 2 / ARGB32 源 4） */
+    int m_sx0, m_sy0;           /* 源裁剪起点 */
+    int m_visW, m_visH;         /* 可见源尺寸 */
+    int m_dw, m_dh;             /* 可见源对应的目标尺寸 */
+    int m_x0, m_y0;             /* 目标写起点（surface 物理域） */
+    int m_cols, m_rows;         /* 目标写尺寸 */
+    int m_colStart, m_rowStart; /* 写域在缩放域内的起点 */
+} XPadScaledPlan;
+
+/** @brief 放大 run 表项：列映射与行无关，逐调用构建一次、全行复用。
+ *         ANativeWindow 锁出的 bits 页对齐，行基址偏移均为像素宽整数倍，
+ *         故按 2/4 字节定宽写入对齐有保证（与逐字节写语义逐位一致）。 */
+typedef struct XPadScaledRun {
+    int32_t m_cnt; /* 目标连续像素数（>0，已按写域裁剪） */
+    int32_t m_src; /* 源列（未加 sx0 的相对列） */
+} XPadScaledRun;
+
+/* 像素级小辅助每 run/每像素调用，当前安卓构建（CMAKE_BUILD_TYPE 空，
+   实为 -O0）下调用开销显著，强制内联（gcc/clang 均支持）。 */
+#if defined(__GNUC__)
+#define XPAD_ALWAYS_INLINE static inline __attribute__((always_inline))
+#else
+#define XPAD_ALWAYS_INLINE static
+#endif
+
+/** @brief 取一源像素折成 565 位型（RGB16 源直拷，ARGB32 源位截断，
+ *         转换式与逐像素参照一致）。 */
+XPAD_ALWAYS_INLINE uint16_t xpad_scaledLoad565(const uint8_t* s8, int srcBpp, int col)
+{
+    if (srcBpp == 2) {
+        uint16_t px;
+        memcpy(&px, s8 + (size_t)col * 2u, 2u);
+        return px;
+    }
+    else {
+        uint8_t b8 = s8[col * 4 + 0];
+        uint8_t g8 = s8[col * 4 + 1];
+        uint8_t r8 = s8[col * 4 + 2];
+        return (uint16_t)(((r8 >> 3) << 11) | ((g8 >> 2) << 5) | (b8 >> 3));
+    }
+}
+
+/** @brief 取一 ARGB32 源像素重排成 RGBA8888 单字（小端写入，内存序
+ *         R,G,B,A），供常量填充宽写。 */
+XPAD_ALWAYS_INLINE uint32_t xpad_scaledLoad8888(const uint8_t* s8, int col)
+{
+    return (uint32_t)s8[col * 4 + 2] |
+           ((uint32_t)s8[col * 4 + 1] << 8) |
+           ((uint32_t)s8[col * 4 + 0] << 16) |
+           ((uint32_t)s8[col * 4 + 3] << 24);
+}
+
+/** @brief 把单像素常量填充进目标连续 cnt 段（无数据相关分支的
+ *         memset 形态，可被编译器自动向量化成宽写）。 */
+XPAD_ALWAYS_INLINE void xpad_scaledFill565(uint16_t* d16, int cnt, uint16_t px)
+{
+    int k;
+    for (k = 0; k < cnt; ++k)
+        d16[k] = px;
+}
+
+XPAD_ALWAYS_INLINE void xpad_scaledFill8888(uint32_t* d32, int cnt, uint32_t px)
+{
+    int k;
+    for (k = 0; k < cnt; ++k)
+        d32[k] = px;
+}
+
+/** @brief 放大快路（565 窗口，dw>=visW，含非整数系数）：列映射与行无关
+ *         ——先逐块构建 run 表（源列 s 覆盖全局目标 [f(s), f(s+1))，
+ *         f(s)=ceil(s*dw/visW)，run 长 = f(s+1)-f(s) 以 base+余数进位
+ *         递推免除法），再逐行查表纯填充。行映射沿用参照式
+ *         srcRow = sy0 + row*visH/dh，输出与逐像素参照逐位一致。 */
+static void xpad_scaledUp565(const XPadScaledPlan* p)
+{
+    XPadScaledRun runs[XPAD_SCALED_CHUNK + 2];
+    const int dw = p->m_dw;
+    const int visW = p->m_visW;
+    const int base = dw / visW; /* 每 run 基长（>=1） */
+    const int rem = dw - base * visW;
+    int rr, c0;
+    for (c0 = 0; c0 < p->m_cols; c0 += XPAD_SCALED_CHUNK) {
+        int cn = p->m_cols - c0;
+        int s, num, tG, frac, tNext, nr, i;
+        if (cn > XPAD_SCALED_CHUNK) cn = XPAD_SCALED_CHUNK;
+        s = ((p->m_colStart + c0) * visW) / dw; /* 块首目标列的源列 */
+        num = s * dw + visW - 1;                /* ceil 分子 N_s */
+        tG = num / visW;                        /* f(s) */
+        frac = num - tG * visW;
+        tNext = tG - (p->m_colStart + c0);      /* 首run块内起点（可<0） */
+        nr = 0;
+        while (tNext < cn) {
+            int run = base;
+            int a, b;
+            frac += rem;
+            if (frac >= visW) { frac -= visW; ++run; }
+            a = (tNext > 0) ? tNext : 0;
+            b = tNext + run;
+            if (b > cn) b = cn;
+            if (b > a) {
+                runs[nr].m_cnt = b - a;
+                runs[nr].m_src = s;
+                ++nr;
+            }
+            tNext += run;
+            ++s;
+        }
+        for (rr = 0; rr < p->m_rows; ++rr) {
+            int row = p->m_rowStart + rr;
+            int srcRow = p->m_sy0 + (row * p->m_visH) / p->m_dh;
+            const uint8_t* s8 = p->m_src + (size_t)srcRow * p->m_srcBpl;
+            uint16_t* d16 = (uint16_t*)
+                (p->m_dst + (size_t)(p->m_y0 + rr) * p->m_dstBpl +
+                 (size_t)(p->m_x0 + c0) * 2u);
+            for (i = 0; i < nr; ++i) {
+                xpad_scaledFill565(d16, runs[i].m_cnt,
+                                   xpad_scaledLoad565(s8, p->m_srcBpp,
+                                                      p->m_sx0 +
+                                                          runs[i].m_src));
+                d16 += runs[i].m_cnt;
+            }
+        }
+    }
+}
+
+/** @brief 放大快路（8888 窗口）：结构同 xpad_scaledUp565，像素为
+ *         RGBA8888 单字宽写。 */
+static void xpad_scaledUp8888(const XPadScaledPlan* p)
+{
+    XPadScaledRun runs[XPAD_SCALED_CHUNK + 2];
+    const int dw = p->m_dw;
+    const int visW = p->m_visW;
+    const int base = dw / visW;
+    const int rem = dw - base * visW;
+    int rr, c0;
+    for (c0 = 0; c0 < p->m_cols; c0 += XPAD_SCALED_CHUNK) {
+        int cn = p->m_cols - c0;
+        int s, num, tG, frac, tNext, nr, i;
+        if (cn > XPAD_SCALED_CHUNK) cn = XPAD_SCALED_CHUNK;
+        s = ((p->m_colStart + c0) * visW) / dw;
+        num = s * dw + visW - 1;
+        tG = num / visW;
+        frac = num - tG * visW;
+        tNext = tG - (p->m_colStart + c0);
+        nr = 0;
+        while (tNext < cn) {
+            int run = base;
+            int a, b;
+            frac += rem;
+            if (frac >= visW) { frac -= visW; ++run; }
+            a = (tNext > 0) ? tNext : 0;
+            b = tNext + run;
+            if (b > cn) b = cn;
+            if (b > a) {
+                runs[nr].m_cnt = b - a;
+                runs[nr].m_src = s;
+                ++nr;
+            }
+            tNext += run;
+            ++s;
+        }
+        for (rr = 0; rr < p->m_rows; ++rr) {
+            int row = p->m_rowStart + rr;
+            int srcRow = p->m_sy0 + (row * p->m_visH) / p->m_dh;
+            const uint8_t* s8 = p->m_src + (size_t)srcRow * p->m_srcBpl;
+            uint32_t* d32 = (uint32_t*)
+                (p->m_dst + (size_t)(p->m_y0 + rr) * p->m_dstBpl +
+                 (size_t)(p->m_x0 + c0) * 4u);
+            for (i = 0; i < nr; ++i) {
+                xpad_scaledFill8888(d32, runs[i].m_cnt,
+                                    xpad_scaledLoad8888(
+                                        s8, p->m_sx0 + runs[i].m_src));
+                d32 += runs[i].m_cnt;
+            }
+        }
+    }
+}
+
+/** @brief 整数倍放大快路（565 窗口，dw=n*visW 且 dh=n*visH）：块缓冲里
+ *         整行展开一次、复制到共享同一源行的连续 n 个目标行（行复制
+ *         路线）。组边界仍逐行重算参照式 srcRow 收口，不依赖整除假设；
+ *         列映射 g/n 与参照 (colStart+col)*visW/dw 恒等（visW 约束后
+ *         整除消去）。 */
+static void xpad_scaledIntRow565(const XPadScaledPlan* p, int n)
+{
+    uint16_t tmp[XPAD_SCALED_CHUNK];
+    int rr = 0;
+    while (rr < p->m_rows) {
+        int row = p->m_rowStart + rr;
+        int srcRow = p->m_sy0 + (row * p->m_visH) / p->m_dh;
+        const uint8_t* s8 = p->m_src + (size_t)srcRow * p->m_srcBpl;
+        int rr2 = rr + 1;
+        int c0;
+        while (rr2 < p->m_rows &&
+               p->m_sy0 + ((p->m_rowStart + rr2) * p->m_visH) / p->m_dh ==
+                   srcRow)
+            ++rr2; /* 行组 [rr,rr2) 共享源行（整数倍下恰 n 行，首尾组可短） */
+        for (c0 = 0; c0 < p->m_cols; c0 += XPAD_SCALED_CHUNK) {
+            int cn = p->m_cols - c0;
+            int gA, s, skip, t, r;
+            if (cn > XPAD_SCALED_CHUNK) cn = XPAD_SCALED_CHUNK;
+            gA = p->m_colStart + c0; /* 块首全局目标列 */
+            s = gA / n;
+            skip = gA - s * n;       /* 首源像素被块界裁掉的前导 */
+            t = 0;
+            while (t < cn) {
+                uint16_t px = xpad_scaledLoad565(s8, p->m_srcBpp,
+                                                 p->m_sx0 + s);
+                int k = skip;
+                skip = 0;
+                for (; k < n && t < cn; ++k, ++t)
+                    tmp[t] = px;
+                ++s;
+            }
+            for (r = rr; r < rr2; ++r)
+                memcpy(p->m_dst + (size_t)(p->m_y0 + r) * p->m_dstBpl +
+                           (size_t)(p->m_x0 + c0) * 2u,
+                       tmp, (size_t)cn * 2u);
+        }
+        rr = rr2;
+    }
+}
+
+/** @brief 整数倍放大快路（8888 窗口）：结构同 xpad_scaledIntRow565，
+ *         像素为 RGBA8888 单字。 */
+static void xpad_scaledIntRow8888(const XPadScaledPlan* p, int n)
+{
+    uint32_t tmp[XPAD_SCALED_CHUNK];
+    int rr = 0;
+    while (rr < p->m_rows) {
+        int row = p->m_rowStart + rr;
+        int srcRow = p->m_sy0 + (row * p->m_visH) / p->m_dh;
+        const uint8_t* s8 = p->m_src + (size_t)srcRow * p->m_srcBpl;
+        int rr2 = rr + 1;
+        int c0;
+        while (rr2 < p->m_rows &&
+               p->m_sy0 + ((p->m_rowStart + rr2) * p->m_visH) / p->m_dh ==
+                   srcRow)
+            ++rr2;
+        for (c0 = 0; c0 < p->m_cols; c0 += XPAD_SCALED_CHUNK) {
+            int cn = p->m_cols - c0;
+            int gA, s, skip, t, r;
+            if (cn > XPAD_SCALED_CHUNK) cn = XPAD_SCALED_CHUNK;
+            gA = p->m_colStart + c0;
+            s = gA / n;
+            skip = gA - s * n;
+            t = 0;
+            while (t < cn) {
+                uint32_t px = xpad_scaledLoad8888(s8, p->m_sx0 + s);
+                int k = skip;
+                skip = 0;
+                for (; k < n && t < cn; ++k, ++t)
+                    tmp[t] = px;
+                ++s;
+            }
+            for (r = rr; r < rr2; ++r)
+                memcpy(p->m_dst + (size_t)(p->m_y0 + r) * p->m_dstBpl +
+                           (size_t)(p->m_x0 + c0) * 4u,
+                       tmp, (size_t)cn * 4u);
+        }
+        rr = rr2;
+    }
+}
+
+/** @brief 缩小快路（565 窗口，dw<visW）：每目标列源列查表（每调用一次、
+ *         栈上分块，源列式与参照恒等 off[t] = sx0+(colStart+t)*visW/dw），
+ *         逐行纯查表拷贝（无逐像素进位分支）。 */
+static void xpad_scaledDown565(const XPadScaledPlan* p)
+{
+    int32_t off[XPAD_SCALED_CHUNK];
+    int c0;
+    for (c0 = 0; c0 < p->m_cols; c0 += XPAD_SCALED_CHUNK) {
+        int cn = p->m_cols - c0;
+        int t, rr;
+        if (cn > XPAD_SCALED_CHUNK) cn = XPAD_SCALED_CHUNK;
+        for (t = 0; t < cn; ++t)
+            off[t] = p->m_sx0 +
+                     ((p->m_colStart + c0 + t) * p->m_visW) / p->m_dw;
+        for (rr = 0; rr < p->m_rows; ++rr) {
+            int row = p->m_rowStart + rr;
+            int srcRow = p->m_sy0 + (row * p->m_visH) / p->m_dh;
+            const uint8_t* s8 = p->m_src + (size_t)srcRow * p->m_srcBpl;
+            uint16_t* d16 = (uint16_t*)
+                (p->m_dst + (size_t)(p->m_y0 + rr) * p->m_dstBpl +
+                 (size_t)(p->m_x0 + c0) * 2u);
+            for (t = 0; t < cn; ++t)
+                d16[t] = xpad_scaledLoad565(s8, p->m_srcBpp, off[t]);
+        }
+    }
+}
+
+/** @brief 缩小快路（8888 窗口）：结构同 xpad_scaledDown565，像素为
+ *         RGBA8888 单字。 */
+static void xpad_scaledDown8888(const XPadScaledPlan* p)
+{
+    int32_t off[XPAD_SCALED_CHUNK];
+    int c0;
+    for (c0 = 0; c0 < p->m_cols; c0 += XPAD_SCALED_CHUNK) {
+        int cn = p->m_cols - c0;
+        int t, rr;
+        if (cn > XPAD_SCALED_CHUNK) cn = XPAD_SCALED_CHUNK;
+        for (t = 0; t < cn; ++t)
+            off[t] = p->m_sx0 +
+                     ((p->m_colStart + c0 + t) * p->m_visW) / p->m_dw;
+        for (rr = 0; rr < p->m_rows; ++rr) {
+            int row = p->m_rowStart + rr;
+            int srcRow = p->m_sy0 + (row * p->m_visH) / p->m_dh;
+            const uint8_t* s8 = p->m_src + (size_t)srcRow * p->m_srcBpl;
+            uint32_t* d32 = (uint32_t*)
+                (p->m_dst + (size_t)(p->m_y0 + rr) * p->m_dstBpl +
+                 (size_t)(p->m_x0 + c0) * 4u);
+            for (t = 0; t < cn; ++t)
+                d32[t] = xpad_scaledLoad8888(s8, off[t]);
+        }
+    }
+}
+
 /** @brief 缩放路径：最近邻整数式重采样（scale!=1.0 时启用）。
  *  @details 全链唯一物理放大点（设计 §5，方案 B）：图层图像为逻辑口径
  *           后备存储，present 时按实测系数 g_xpad.m_presentScale 放大进
- *           物理 surface。内核 srcX = dstX x srcW / dstW 整数式（列映射
- *           用 Bresenham 累加器免逐像素除法，约 4 次整数运算/像素；
- *           visW>dw 的缩小同样成立），565/8888 双路各自内联。
+ *           物理 surface。内核映射定义式保持 srcCol(col)=sx0+
+ *           (colStart+col)*visW/dw、srcRow(row)=sy0+row*visH/dh（最近邻
+ *           索引只依赖相对偏移，visW>dw 的缩小同样成立），按缩放类型
+ *           分派三条等价快路（输出与逐像素 Bresenham 参照逐位一致）：
+ *           - 整数倍（dw=n*visW 且 dh=n*visH，n>=2）：整行展开一次 +
+ *             连续 n 行 memcpy 行复制（565/8888 双路）；
+ *           - 非整数放大（dw>=visW）：源像素 → 连续目标 run，run 长
+ *             = f(s+1)-f(s)，f(s)=ceil(s*dw/visW)，base+余数进位递推
+ *             免除法；run 表逐调用构建一次（与行无关）、逐行查表纯
+ *             常量填充（内环无分支，可被编译器向量化）；
+ *           - 缩小（dw<visW）：每目标列源列查表（每调用一次）+ 逐行
+ *             纯拷贝。
  *           裁剪次序（§5-4 源侧裁剪缩放前）：左/上越界先折算成源裁剪量
  *           并平移目标原点；右/下与折算舍入残余由目标域最终钳制收口
  *           ——最近邻索引只依赖相对偏移，目标域截断与源侧截断逐一
  *           对应，源读索引可证不越界（srcCol<=sx0+visW-1<=w-1）。 */
 static void xpad_drawImageScaled(ANativeWindow_Buffer* buf,
                                  const XImage* image,
-                                 int dx, int dy, int32_t winFmt, float scale)
+                                 int dx, int dy, int32_t winFmt, float scale,
+                                 int cx0, int cy0, int cx1, int cy1)
 {
     const uint8_t* src;
     size_t srcBpl;
-    int w, h, row, col;
+    int w, h;
     int dw, dh;
     int sx0, sy0, visW, visH;
     int x0, y0, x1, y1;
@@ -420,94 +883,107 @@ static void xpad_drawImageScaled(ANativeWindow_Buffer* buf,
     if (dw <= 0 || dh <= 0) return;
 
     /* 目标域最终钳制：覆盖右/下溢出与源侧折算的舍入残余（理论可达：
-       round(sx0*scale) 可比补偿量少 1 像素使 dx 残留 -1）。 */
+       round(sx0*scale) 可比补偿量少 1 像素使 dx 残留 -1）；再交目的裁剪
+       （脏区直递：本帧只许写欠账矩形内，[cx0,cx1)x[cy0,cy1) 含头舍尾）。 */
     x0 = (dx < 0) ? 0 : dx;
     y0 = (dy < 0) ? 0 : dy;
     x1 = dx + dw; if (x1 > buf->width)  x1 = buf->width;
     y1 = dy + dh; if (y1 > buf->height) y1 = buf->height;
+    if (x0 < cx0) x0 = cx0;
+    if (y0 < cy0) y0 = cy0;
+    if (x1 > cx1) x1 = cx1;
+    if (y1 > cy1) y1 = cy1;
     colStart = x0 - dx;
     rowStart = y0 - dy;
     if (x1 <= x0 || y1 <= y0 || colStart >= dw || rowStart >= dh) return;
 
-    if (winFmt == WINDOW_FORMAT_RGB_565) {
-        /* 565 窗口：源可为 RGB16（2 字节近邻拷贝）或 ARGB32（位截断
-           转换）。行距 2 字节/像素。 */
-        size_t dstBpl = (size_t)buf->stride * 2u;
-        int srcBpp = (XImage_format(image) == XImageFormat_RGB16) ? 2 : 4;
-        int cols = x1 - x0;
-        if (srcBpl < (size_t)w * (size_t)srcBpp) return;
-        for (row = rowStart; row < rowStart + (y1 - y0); ++row) {
-            int srcRow = sy0 + (row * visH) / dh;
-            const uint8_t* s8 = src + (size_t)srcRow * srcBpl;
-            uint8_t* d8 = (uint8_t*)buf->bits +
-                          (size_t)(y0 + (row - rowStart)) * dstBpl +
-                          (size_t)x0 * 2u;
-            int colAcc = (colStart * visW) % dw;
-            int srcCol = sx0 + (colStart * visW) / dw;
-            for (col = 0; col < cols; ++col) {
-                if (srcBpp == 2) {
-                    d8[0] = s8[srcCol * 2 + 0];
-                    d8[1] = s8[srcCol * 2 + 1];
-                }
-                else {
-                    uint8_t b8 = s8[srcCol * 4 + 0];
-                    uint8_t g8 = s8[srcCol * 4 + 1];
-                    uint8_t r8 = s8[srcCol * 4 + 2];
-                    uint16_t px = (uint16_t)(((r8 >> 3) << 11) |
-                                             ((g8 >> 2) << 5) |
-                                             (b8 >> 3));
-                    d8[0] = (uint8_t)(px & 0xFF);
-                    d8[1] = (uint8_t)(px >> 8);
-                }
-                colAcc += visW;
-                while (colAcc >= dw) { ++srcCol; colAcc -= dw; }
-                d8 += 2;
-            }
+    /* 依窗口格式定源字节宽与目标行距，再按缩放类型分派三条快路。 */
+    {
+        XPadScaledPlan plan;
+        int nCand;
+        if (winFmt == WINDOW_FORMAT_RGB_565) {
+            plan.m_srcBpp =
+                (XImage_format(image) == XImageFormat_RGB16) ? 2 : 4;
+            if (srcBpl < (size_t)w * (size_t)plan.m_srcBpp) return;
+            plan.m_dstBpl = (size_t)buf->stride * 2u;
         }
-    }
-    else {
-        /* 8888 窗口（RGBA8888/RGBX8888）：ARGB32 内存序 B,G,R,A →
-           R,G,B,A 逐像素通道重排。行距 4 字节/像素。 */
-        int cols = x1 - x0;
-        if (srcBpl < (size_t)w * 4u) return;
-        for (row = rowStart; row < rowStart + (y1 - y0); ++row) {
-            int srcRow = sy0 + (row * visH) / dh;
-            const uint8_t* s8 = src + (size_t)srcRow * srcBpl;
-            uint8_t* d8 = (uint8_t*)buf->bits +
-                          (size_t)(y0 + (row - rowStart)) *
-                              (size_t)buf->stride * 4u +
-                          (size_t)x0 * 4u;
-            int colAcc = (colStart * visW) % dw;
-            int srcCol = sx0 + (colStart * visW) / dw;
-            for (col = 0; col < cols; ++col) {
-                d8[0] = s8[srcCol * 4 + 2];
-                d8[1] = s8[srcCol * 4 + 1];
-                d8[2] = s8[srcCol * 4 + 0];
-                d8[3] = s8[srcCol * 4 + 3];
-                colAcc += visW;
-                while (colAcc >= dw) { ++srcCol; colAcc -= dw; }
-                d8 += 4;
-            }
+        else {
+            plan.m_srcBpp = 4;
+            if (srcBpl < (size_t)w * 4u) return;
+            plan.m_dstBpl = (size_t)buf->stride * 4u;
+        }
+        plan.m_src = src;
+        plan.m_dst = (uint8_t*)buf->bits;
+        plan.m_srcBpl = srcBpl;
+        plan.m_sx0 = sx0;
+        plan.m_sy0 = sy0;
+        plan.m_visW = visW;
+        plan.m_visH = visH;
+        plan.m_dw = dw;
+        plan.m_dh = dh;
+        plan.m_x0 = x0;
+        plan.m_y0 = y0;
+        plan.m_cols = x1 - x0;
+        plan.m_rows = y1 - y0;
+        plan.m_colStart = colStart;
+        plan.m_rowStart = rowStart;
+
+        nCand = dw / visW;
+        if (nCand >= 2 && nCand * visW == dw && dh == nCand * visH) {
+            /* 整数倍：整行展开一次 + 连续 n 行复制。 */
+            if (winFmt == WINDOW_FORMAT_RGB_565)
+                xpad_scaledIntRow565(&plan, nCand);
+            else
+                xpad_scaledIntRow8888(&plan, nCand);
+        }
+        else if (dw >= visW) {
+            /* 放大（含 1 倍邻域）：源像素 → 连续目标 run。 */
+            if (winFmt == WINDOW_FORMAT_RGB_565)
+                xpad_scaledUp565(&plan);
+            else
+                xpad_scaledUp8888(&plan);
+        }
+        else {
+            /* 缩小：每目标列源列查表 + 逐行纯拷贝。 */
+            if (winFmt == WINDOW_FORMAT_RGB_565)
+                xpad_scaledDown565(&plan);
+            else
+                xpad_scaledDown8888(&plan);
         }
     }
 }
 
-/** @brief 把图像按图层位置画进已锁定的 surface 缓冲（越界裁剪）。
+/** @brief 把图像按图层位置画进已锁定的 surface 缓冲（越界+目的域裁剪）。
  *  @note  width/height 为图像（逻辑）口径；pos 为图层在 surface 内的
  *         目标位置、scale 为物理放大系数（均由调用方按实测系数折算）。
  *         scale==1.0 走历史 memcpy 快路径（dpr=1/WSA 逐位不变，红线；
- *         presentScale 在 dpr<=1 时被钳为恒 1.0，见各更新点守卫）。 */
+ *         presentScale 在 dpr<=1 时被钳为恒 1.0，见各更新点守卫）。
+ *         clip 为目的裁剪矩形（surface 物理坐标；NULL=整幅）——脏区
+ *         直递时传欠账矩形，本帧只写其内像素。 */
 static void xpad_drawImage(ANativeWindow_Buffer* buf, const XImage* image,
-                           const XPoint* pos, int32_t winFmt, float scale)
+                           const XPoint* pos, int32_t winFmt, float scale,
+                           const XRect* clip)
 {
     const uint8_t* src;
     size_t srcBpl;
     int w, h, x, y, row;
+    int cx0, cy0, cx1, cy1;
 
     if (!buf || !buf->bits || !image) return;
+    /* 目的裁剪域（脏区直递：clip=NULL=整个 surface）。 */
+    cx0 = 0; cy0 = 0;
+    cx1 = buf->width; cy1 = buf->height;
+    if (clip && clip->width > 0 && clip->height > 0) {
+        if (clip->x > cx0) cx0 = clip->x;
+        if (clip->y > cy0) cy0 = clip->y;
+        if (clip->x + clip->width < cx1) cx1 = clip->x + clip->width;
+        if (clip->y + clip->height < cy1) cy1 = clip->y + clip->height;
+    }
+    if (cx1 <= cx0 || cy1 <= cy0) return;
     if (scale != 1.0f) {
         /* 缩放路径：pos 已由调用方折算成目标系坐标。 */
-        xpad_drawImageScaled(buf, image, pos->x, pos->y, winFmt, scale);
+        xpad_drawImageScaled(buf, image, pos->x, pos->y, winFmt, scale,
+                             cx0, cy0, cx1, cy1);
         return;
     }
     src = (const uint8_t*)XImage_constBits(image);
@@ -518,11 +994,15 @@ static void xpad_drawImage(ANativeWindow_Buffer* buf, const XImage* image,
     if (w <= 0 || h <= 0) return;
 
     x = pos->x; y = pos->y;
-    /* 左侧/上方越界裁剪（弹层可被拖出屏外）。 */
+    /* 左侧/上方越界裁剪（弹层可被拖出屏外）+ 目的裁剪域收口。 */
     if (x < 0) { w += x; x = 0; }
     if (y < 0) { h += y; y = 0; }
     if (x + w > buf->width) w = buf->width - x;
     if (y + h > buf->height) h = buf->height - y;
+    if (x < cx0) { w -= cx0 - x; x = cx0; }
+    if (y < cy0) { h -= cy0 - y; y = cy0; }
+    if (x + w > cx1) w = cx1 - x;
+    if (y + h > cy1) h = cy1 - y;
     if (w <= 0 || h <= 0) return;
 
     if (winFmt == WINDOW_FORMAT_RGB_565) {
@@ -729,11 +1209,203 @@ static void xpad_drawImageRotated(ANativeWindow_Buffer* buf,
     }
 }
 
+/** @brief 图层补画快照（部分补画路径持锁一次取齐，锁外逐矩形绘制）。 */
+typedef struct XPadLayerSnap
+{
+    const XImage* img;   /**< 图层最近提交图像（借用）。 */
+    XPoint posPx;        /**< surface 物理落位（devPos×presentScale）。 */
+} XPadLayerSnap;
+
+/** @brief 逻辑（窗口本地）脏矩形 → 物理 surface 矩形：图层设备原点平移
+ *         （含缓冲偏移修正）+ presentScale 放大，右/下缘多收 1 物理像素
+ *         防逐帧舍入缝（欠 1 像素=残影，多 1 像素=无害重画），再裁
+ *         surface 界。 */
+static XRect xpad_dirtyRectToPhys(const XRect* logical, const XPoint* devOrigin,
+                                  float scale, int surfW, int surfH)
+{
+    int lx0 = devOrigin->x + logical->x;
+    int ly0 = devOrigin->y + logical->y;
+    int px0 = (int)((float)lx0 * scale);
+    int py0 = (int)((float)ly0 * scale);
+    int px1 = (int)((float)(lx0 + logical->width) * scale + 0.5f) + 1;
+    int py1 = (int)((float)(ly0 + logical->height) * scale + 0.5f) + 1;
+    XRect r;
+
+    if (px0 < 0) px0 = 0;
+    if (py0 < 0) py0 = 0;
+    if (px1 > surfW) px1 = surfW;
+    if (py1 > surfH) py1 = surfH;
+    XRect_init(&r, px0, py0, px1 - px0, py1 - py0);
+    return r;
+}
+
 /**
- * @brief  XPlatformNativeWindow_present 的安卓实现：锁 surface、按脏区
- *         重排行、解锁提交。
+ * @brief  XPlatformNativeWindow_present 的安卓实现（脏区直递，2026-10-27）。
+ * @details [对齐 Qt 上屏语义：脏区直递、绝不无故整屏重画] region 不再
+ *          丢弃：窗口本地逻辑脏区折算物理坐标后记入**全部**目的缓冲的
+ *          欠账；本次 lock 到的缓冲按其欠账从各图层 lastImage 裁剪补画
+ *          （画家序）再清账。lock 缓冲以 bits 指针为身份（BufferQueue
+ *          2~3 块轮转，各记各的账，见 g_xpadBufLedger 注）；陌生缓冲
+ *          （首次 lock 到/surface 重建）欠全屏，走一次全量兜底。
+ *          整幅回退（=旧模型：整屏清黑+全图层重画）的场合：
+ *          - region 为 NULL/空（契约：按整张缓冲处理）；
+ *          - 源变化范围未知：本层未登记、本层或任一可见层带内容旋转
+ *            （旋转 blit 无矩形口径）——此时其余缓冲一并升格欠全屏
+ *            （其既有欠账不含未知变化，不清全会在下次补画漏新）；
+ *          - presentScale 未标定（≤0）。
+ *          光标精灵带每帧随账入各缓冲（上帧带=还原、本帧带=落笔），
+ *          精灵不在任何图层图像里，须专账（g_xpadLastCursorBand）。
  * @note   ANativeWindow 的 stride 是像素数且可能大于宽度，必须逐行拷。
  */
+#if XCURSOR_ON
+/**
+ * @brief  算软件光标精灵的物理像素带与设备轴锚点（纯算不画，记账/落笔
+ *         两用；2026-10-27 从 xpad_drawSwCursor 提取）。
+ * @details 与 fbdev 直写精灵同源口径（XCursor_swRect/swBits/swPosFrame）：
+ *          激活判定 XCursor_swActive（软件使能 && 无硬件后端 && 已喂位
+ *          && 有效形状非 Blank）；逻辑外接矩形按喂给参考系
+ *          （rot/logW/logH/origin）rotationMapRect 正变换到设备坐标，
+ *          再按 presentScale 放大到物理像素并裁 surface 界。
+ * @param   scale    presentScale（物理/逻辑放大系数）。
+ * @param   surfW/H  surface 物理尺寸（裁剪界）。
+ * @param   outPhys  出参：物理带矩形（已裁界）。
+ * @param   outDev   出参：设备轴矩形原点（逐像素反查用）；可 NULL。
+ * @return  false=精灵不可见（未激活/形状空/带裁空），outPhys 不动。
+ */
+static bool xpad_swCursorGeom(float scale, int surfW, int surfH,
+                              XRect* outPhys, XPoint* outDev)
+{
+    XRect lrect;
+    int bw, bh;
+    int rot = 0, logW = 0, logH = 0;
+    XPoint frameOrigin;
+    int px, py, pw, ph;
+    int x0, y0, x1, y1;
+
+    if (!XCursor_swActive()) return false;
+    lrect = XCursor_swRect();
+    if (lrect.width <= 0 || lrect.height <= 0) return false;
+    bw = XCursor_swWidth();
+    bh = XCursor_swHeight();
+    if (!XCursor_swBits() || bw <= 0 || bh <= 0) return false;
+    XCursor_swPosFrame(&rot, &logW, &logH, &frameOrigin);
+
+    /* 逻辑矩形 → 设备矩形（rotationMapRect 正变换 + 原点平移）。 */
+    {
+        int rx = 0, ry = 0, rw = 0, rh = 0;
+        if (!XWindow_rotationNormalize(rot, &rx)) return false;
+        XWindow_rotationMapRect(rot, logW, logH, &lrect.x, &lrect.y,
+                                &lrect.width, &lrect.height,
+                                &rx, &ry, &rw, &rh);
+        px = rx + frameOrigin.x;
+        py = ry + frameOrigin.y;
+        pw = rw;
+        ph = rh;
+    }
+    if (pw <= 0 || ph <= 0) return false;
+
+    /* 设备矩形 → 物理像素矩形（presentScale 放大）+ surface 界裁剪。 */
+    x0 = (int)((float)px * scale + 0.5f);
+    y0 = (int)((float)py * scale + 0.5f);
+    x1 = (int)((float)(px + pw) * scale + 0.5f);
+    y1 = (int)((float)(py + ph) * scale + 0.5f);
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > surfW) x1 = surfW;
+    if (y1 > surfH) y1 = surfH;
+    if (x1 <= x0 || y1 <= y0) return false;
+
+    XRect_init(outPhys, x0, y0, x1 - x0, y1 - y0);
+    if (outDev) { outDev->x = px; outDev->y = py; }
+    return true;
+}
+
+/**
+ * @brief  把软件光标精灵画进 surface（present 合成后落笔，2026-10-27）。
+ * @details 逐物理像素 /scale 反查设备坐标 → R⁻¹ 回内容局部 → 位图取色
+ *          （0=透明跳过，1=黑，2=白），565/8888 两格式同 xpad_drawImage
+ *          的像素写法。精灵带由 xpad_swCursorGeom 给出；脏区直递模型下
+ *          本帧带与上帧带都已记入各缓冲欠账（欠账补画先还原旧精灵再
+ *          落新精灵），不会踩到未补画的底图。
+ * @param   buf    已 lock 的 surface 缓冲。
+ * @param   winFmt 窗口像素格式（565/8888）。
+ * @param   scale  presentScale（物理/逻辑放大系数）。
+ */
+static void xpad_drawSwCursor(ANativeWindow_Buffer* buf, int32_t winFmt,
+                              float scale)
+{
+    XRect band;
+    XPoint dev;
+    XRect lrect;
+    const uint8_t* bits;
+    int bw, bh;
+    int rot = 0, logW = 0, logH = 0;
+    XPoint frameOrigin;
+    int px, py;
+    int dx, dy;
+    size_t bpp;
+
+    if (!buf || !buf->bits) return;
+    if (!xpad_swCursorGeom(scale, buf->width, buf->height, &band, &dev)) return;
+    bits = XCursor_swBits();
+    bw = XCursor_swWidth();
+    bh = XCursor_swHeight();
+    if (!bits || bw <= 0 || bh <= 0) return;
+    lrect = XCursor_swRect();
+    XCursor_swPosFrame(&rot, &logW, &logH, &frameOrigin);
+    px = dev.x;
+    py = dev.y;
+
+    bpp = (winFmt == WINDOW_FORMAT_RGB_565) ? 2u : 4u;
+    for (dy = band.y; dy < band.y + band.height; ++dy)
+    {
+        uint8_t* row = (uint8_t*)buf->bits +
+            (size_t)dy * (size_t)buf->stride * bpp;
+        for (dx = band.x; dx < band.x + band.width; ++dx)
+        {
+            int devX = (int)((float)(dx - band.x) / scale) + px;
+            int devY = (int)((float)(dy - band.y) / scale) + py;
+            int lx = 0, ly = 0;
+            int sx, sy;
+            uint8_t v;
+            uint8_t* d8;
+            /* 物理像素 → 设备坐标（/scale）→ 内容局部（R⁻¹）。 */
+            if (rot != 0)
+            {
+                XWindow_rotationUnmapPoint(rot, logW, logH,
+                                           devX - frameOrigin.x,
+                                           devY - frameOrigin.y, &lx, &ly);
+            }
+            else
+            {
+                lx = devX - frameOrigin.x;
+                ly = devY - frameOrigin.y;
+            }
+            sx = lx - lrect.x;
+            sy = ly - lrect.y;
+            if (sx < 0 || sx >= bw || sy < 0 || sy >= bh) continue;
+            v = bits[(size_t)sy * (size_t)bw + (size_t)sx];
+            if (v == 0) continue; /* 透明：保留底图。 */
+            d8 = row + (size_t)dx * bpp;
+            if (winFmt == WINDOW_FORMAT_RGB_565)
+            {
+                uint16_t pxv = (v == 2) ? 0xFFFFu : 0x0000u;
+                d8[0] = (uint8_t)(pxv & 0xFF);
+                d8[1] = (uint8_t)(pxv >> 8);
+            }
+            else
+            {
+                /* 8888（ARGB）：精灵全实心（无半透明），黑/白不透明。 */
+                d8[0] = 0;                          /* B */
+                d8[1] = (v == 2) ? 0xFF : 0x00;     /* G */
+                d8[2] = (v == 2) ? 0xFF : 0x00;     /* R */
+                d8[3] = 0xFF;                       /* A */
+            }
+        }
+    }
+}
+#endif /* XCURSOR_ON */
+
 static bool xpad_present(XWindow* window, const XImage* image,
                          const XRegion* region, const XPoint* offset)
 {
@@ -742,21 +1414,44 @@ static bool xpad_present(XWindow* window, const XImage* image,
     int32_t winFmt;
     XPadLayer* selfLayer;
     float presentScale;
+    XPoint selfDev;
+    int selfRot = 0;
+    bool anyRot = false;
+    bool sourceUnknown = false;
+    XRegion frameDirty;
+    XRegion work;
     int i;
     bool ok = false;
 
-    (void)region; /* 图层合成模型：每帧按登记顺序整层重画 */
-    (void)offset;
     if (!window || !image) return false;
+    XRegion_init(&frameDirty);
+    XRegion_init(&work);
+    selfDev.x = 0; selfDev.y = 0;
 
-    /* 短锁①：登记本层图像 + 取 surface 引用 + 读实测放大系数（锁外
-       使用，先持引用）。 */
+    /* 短锁①：登记本层图像 + 取 surface 引用 + 读实测放大系数与账目
+       快照（锁外使用，先持引用）。 */
     pthread_mutex_lock(&g_xpad.m_mutex);
     win = g_xpad.m_window;
     selfLayer = xpad_findLayer(window);
     if (selfLayer) selfLayer->lastImage = image;
     presentScale = g_xpad.m_presentScale;
     if (win) ANativeWindow_acquire(win);
+    /* [脏区直递] 账目快照：设备原点换算 + 各可见层实时取角（与合成段
+       同源口径；旋转层 blit 无矩形口径 → 本帧退整幅）。 */
+    xpad_updateDeviceOrigins();
+    if (selfLayer) {
+        selfDev = selfLayer->devPos;
+        selfRot = selfLayer->win
+                      ? XWindow_contentRotationDegrees(selfLayer->win) : 0;
+    }
+    for (i = 0; i < g_xpadWindowCount; ++i) {
+        XPadLayer* layer = &g_xpadWindows[i];
+        if (layer->visible && layer->lastImage && layer->win &&
+            XWindow_contentRotationDegrees(layer->win) != 0) {
+            anyRot = true;
+            break;
+        }
+    }
     pthread_mutex_unlock(&g_xpad.m_mutex);
     if (!(presentScale > 0.0f)) presentScale = 1.0f; /* 未标定兜底 */
     /* surface 未就绪：干净退出，等 onNativeWindowCreated 之后的
@@ -787,66 +1482,182 @@ static bool xpad_present(XWindow* window, const XImage* image,
         return false;
     }
 
-    /* 整屏清黑：图层合成模型下窗口外的 surface 区域不属于任何图层，
-       不清则保留上一帧残影（最大化→还原后旧全宽标题栏/浮窗滞留）。
-       lock 缓冲每帧都可能是新分配的（需初始化）或复用的（含旧帧），
-       统一清零最稳妥。 */
-    {
-        size_t bpp = (winFmt == WINDOW_FORMAT_RGB_565) ? 2u : 4u;
-        uint8_t* row8 = (uint8_t*)buf.bits;
-        size_t rowBytes = (size_t)buf.stride * bpp;
-        int r;
-        for (r = 0; r < buf.height; ++r)
-            memset(row8 + (size_t)r * rowBytes, 0, rowBytes);
-    }
-
-    /*
-     * 图层合成（画家算法）：按登记顺序把每个可见图层的最后提交图像
-     * 画到 surface 的窗口位置上（主窗先画，弹层按 setGeometry 位置
-     * 后画覆盖其上）。本次提交的图像已在上一步记入图层表，统一走
-     * lastImage 管线；逐层绘制在锁外进行（图像生命周期由后备存储
-     * 持有，与 present 调用方同线程，无竞态）。
-     * 全链唯一物理放大点（设计 §0/§5）：图层 pos 为框架逻辑口径，
-     * 此处 x 实测系数折算物理像素后绘制（layerPosPx=round(logical x
-     * scale)）；scale==1.0 时折算恒等、drawImage 走 memcpy 快路径，
-     * dpr=1/WSA 逐位不变。后备存储保持逻辑尺寸零改动。
-     */
-    pthread_mutex_lock(&g_xpad.m_mutex);
-    /* 设备原点先行换算（弹层落位域）：旋转态弹层要按 opener 正变换落到
-       设备轴，0°/普通图层恒等。 */
-    xpad_updateDeviceOrigins();
-    for (i = 0; i < g_xpadWindowCount; ++i) {
-        XPadLayer* layer = &g_xpadWindows[i];
-        if (layer->visible && layer->lastImage) {
-            XPoint posPx;
-            const XImage* img = layer->lastImage;
-            int rot;
-            /* 落位用**设备轴原点** devPos（旋转态弹层≠逻辑全局 pos）。 */
-            posPx.x = (int)((float)layer->devPos.x * presentScale + 0.5f);
-            posPx.y = (int)((float)layer->devPos.y * presentScale + 0.5f);
-            /* [实时取角 2026-10-24] 旋转角**每帧实时**取自窗口，不缓存：
-               安卓主窗几何由系统决定，setGeometry 未必被调用（真机实测
-               主窗全程无 setGeometry 日志），若只在 setGeometry 里记角，
-               主窗的角会永远停在 0 → 切了方向但画面不转。
-               弹层（Popup）已按 transientParent 继承主窗的角
-               （XWindow_setTransientParent → xwin_inheritTransientRotation），
-               故这里对所有图层统一实时取角，弹层与主窗同角同源。 */
-            rot = layer->win ? XWindow_contentRotationDegrees(layer->win) : 0;
-            pthread_mutex_unlock(&g_xpad.m_mutex);
-            if (rot != 0)
-                /* 内容旋转：逻辑帧按 R⁻¹ 转置后写进设备 footprint
-                   （与桌面 posix/win32 同源口径，XWindowRotation.h 唯一样本）。 */
-                xpad_drawImageRotated(&buf, img, &posPx, winFmt, presentScale,
-                                      rot);
-            else
-                xpad_drawImage(&buf, img, &posPx, winFmt, presentScale);
-            pthread_mutex_lock(&g_xpad.m_mutex);
+    /* 本帧账目构建（锁外纯算）：逻辑脏区（窗口本地，扣缓冲偏移）→
+       物理 surface 坐标。 */
+    sourceUnknown = (selfLayer == NULL || selfRot != 0 || anyRot ||
+                     !region || XRegion_isEmpty(region));
+    if (!sourceUnknown) {
+        XPoint origin;
+        origin.x = selfDev.x - (offset ? offset->x : 0);
+        origin.y = selfDev.y - (offset ? offset->y : 0);
+        for (i = 0; i < region->count; ++i) {
+            XRect pr = xpad_dirtyRectToPhys(&region->rects[i], &origin,
+                                            presentScale,
+                                            buf.width, buf.height);
+            XRegion_addRect(&frameDirty, &pr);
         }
     }
-    pthread_mutex_unlock(&g_xpad.m_mutex);
+
+    /* 欠账结算（短锁②）：本帧账先记入全部已登记缓冲（源变化未知则
+       全部升格欠全屏），再取走本次缓冲的欠账作补画清单并清其账。
+       取走-清账后本次绘制在锁外进行（欠账表仅本线程与生命周期清账
+       竞争，均持本互斥量）。 */
+    {
+        XPadBufferLedger* led;
+        bool workFull = sourceUnknown;
+
+        pthread_mutex_lock(&g_xpad.m_mutex);
+        if (sourceUnknown)
+            xpad_bufLedgerMarkAllFullLocked();
+        else {
+            for (i = 0; i < frameDirty.count; ++i)
+                xpad_bufLedgerAccrueRectLocked(&frameDirty.rects[i]);
+        }
+#if XCURSOR_ON
+        /* 光标精灵带记账：上帧带（还原旧精灵）∪本帧带（落新精灵）。 */
+        {
+            XRect nowBand;
+            if (xpad_swCursorGeom(presentScale, buf.width, buf.height,
+                                  &nowBand, NULL)) {
+                if (g_xpadHasCursorBand)
+                    xpad_bufLedgerAccrueRectLocked(&g_xpadLastCursorBand);
+                xpad_bufLedgerAccrueRectLocked(&nowBand);
+                g_xpadLastCursorBand = nowBand;
+                g_xpadHasCursorBand = true;
+            }
+            else if (g_xpadHasCursorBand) {
+                /* 精灵隐没：旧带仍须补画还原。 */
+                xpad_bufLedgerAccrueRectLocked(&g_xpadLastCursorBand);
+                g_xpadHasCursorBand = false;
+            }
+        }
+#endif /* XCURSOR_ON */
+        led = xpad_bufLedgerAcquireLocked((uint8_t*)buf.bits);
+        if (led && !led->full) {
+            XRegion_copy(&led->pending, &work);
+            led->full = false;
+            XRegion_clear(&led->pending);
+        }
+        else {
+            workFull = true;   /* 陌生缓冲/欠全屏：整幅补画。 */
+            if (led) {
+                led->full = false;
+                XRegion_clear(&led->pending);
+            }
+        }
+        pthread_mutex_unlock(&g_xpad.m_mutex);
+
+        if (workFull) {
+            /* 整幅补画（回退路径）：整屏清黑 + 全图层重画。
+               整屏清黑：图层合成模型下窗口外的 surface 区域不属于任何
+               图层，不清则保留上一帧残影（最大化→还原后旧全宽标题栏/
+               浮窗滞留）。lock 缓冲每帧都可能是新分配的（需初始化）或
+               复用的（含旧帧），统一清零最稳妥。 */
+            size_t bpp = (winFmt == WINDOW_FORMAT_RGB_565) ? 2u : 4u;
+            uint8_t* row8 = (uint8_t*)buf.bits;
+            size_t rowBytes = (size_t)buf.stride * bpp;
+            int r;
+            for (r = 0; r < buf.height; ++r)
+                memset(row8 + (size_t)r * rowBytes, 0, rowBytes);
+
+            /*
+             * 图层合成（画家算法）：按登记顺序把每个可见图层的最后提交
+             * 图像画到 surface 的窗口位置上（主窗先画，弹层按
+             * setGeometry 位置后画覆盖其上）。本次提交的图像已在上一步
+             * 记入图层表，统一走 lastImage 管线；逐层绘制在锁外进行
+             * （图像生命周期由后备存储持有，与 present 调用方同线程，
+             * 无竞态）。
+             * 全链唯一物理放大点（设计 §0/§5）：图层 pos 为框架逻辑
+             * 口径，此处 x 实测系数折算物理像素后绘制（layerPosPx=
+             * round(logical x scale)）；scale==1.0 时折算恒等、
+             * drawImage 走 memcpy 快路径，dpr=1/WSA 逐位不变。后备存储
+             * 保持逻辑尺寸零改动。
+             */
+            pthread_mutex_lock(&g_xpad.m_mutex);
+            /* 设备原点先行换算（弹层落位域）：旋转态弹层要按 opener
+               正变换落到设备轴，0°/普通图层恒等。 */
+            xpad_updateDeviceOrigins();
+            for (i = 0; i < g_xpadWindowCount; ++i) {
+                XPadLayer* layer = &g_xpadWindows[i];
+                if (layer->visible && layer->lastImage) {
+                    XPoint posPx;
+                    const XImage* img = layer->lastImage;
+                    int rot;
+                    /* 落位用**设备轴原点** devPos（旋转态弹层≠逻辑全局
+                       pos）。 */
+                    posPx.x =
+                        (int)((float)layer->devPos.x * presentScale + 0.5f);
+                    posPx.y =
+                        (int)((float)layer->devPos.y * presentScale + 0.5f);
+                    /* [实时取角 2026-10-24] 旋转角**每帧实时**取自窗口，
+                       不缓存：安卓主窗几何由系统决定，setGeometry 未必被
+                       调用（真机实测主窗全程无 setGeometry 日志），若只
+                       在 setGeometry 里记角，主窗的角会永远停在 0 → 切了
+                       方向但画面不转。弹层（Popup）已按 transientParent
+                       继承主窗的角（XWindow_setTransientParent →
+                       xwin_inheritTransientRotation），故这里对所有图层
+                       统一实时取角，弹层与主窗同角同源。 */
+                    rot = layer->win
+                              ? XWindow_contentRotationDegrees(layer->win)
+                              : 0;
+                    pthread_mutex_unlock(&g_xpad.m_mutex);
+                    if (rot != 0)
+                        /* 内容旋转：逻辑帧按 R⁻¹ 转置后写进设备
+                           footprint（与桌面 posix/win32 同源口径，
+                           XWindowRotation.h 唯一样本）。 */
+                        xpad_drawImageRotated(&buf, img, &posPx, winFmt,
+                                              presentScale, rot);
+                    else
+                        xpad_drawImage(&buf, img, &posPx, winFmt, presentScale,
+                                       NULL); /* clip=NULL=整幅 surface */
+                    pthread_mutex_lock(&g_xpad.m_mutex);
+                }
+            }
+            pthread_mutex_unlock(&g_xpad.m_mutex);
+        }
+        else {
+            /* 部分补画（主路径）：不清屏（欠账外像素=本缓冲上次自己画
+               的内容，未变），对欠账逐矩形按画家序裁剪补各层。图层快照
+               持锁一次取齐（含实时取角；旋转层理论已被 anyRot 闸拦到
+               整幅路径，这里仍防御性跳过），逐矩形绘制在锁外。 */
+            XPadLayerSnap snaps[XPAD_MAX_WINDOWS];
+            int snapCount = 0;
+            int ri;
+
+            pthread_mutex_lock(&g_xpad.m_mutex);
+            xpad_updateDeviceOrigins();
+            for (i = 0; i < g_xpadWindowCount; ++i) {
+                XPadLayer* layer = &g_xpadWindows[i];
+                if (layer->visible && layer->lastImage && layer->win &&
+                    XWindow_contentRotationDegrees(layer->win) == 0) {
+                    snaps[snapCount].img = layer->lastImage;
+                    snaps[snapCount].posPx.x =
+                        (int)((float)layer->devPos.x * presentScale + 0.5f);
+                    snaps[snapCount].posPx.y =
+                        (int)((float)layer->devPos.y * presentScale + 0.5f);
+                    ++snapCount;
+                }
+            }
+            pthread_mutex_unlock(&g_xpad.m_mutex);
+
+            for (ri = 0; ri < work.count; ++ri) {
+                for (i = 0; i < snapCount; ++i)
+                    xpad_drawImage(&buf, snaps[i].img, &snaps[i].posPx,
+                                   winFmt, presentScale, &work.rects[ri]);
+            }
+        }
+    }
+
+    /* [软件光标 2026-10-27] 图层合成后落笔精灵（全屏最顶）。脏区直递
+     * 模型下精灵带已随账补画（上帧带还原），此处只管落笔。 */
+#if XCURSOR_ON
+    xpad_drawSwCursor(&buf, winFmt, presentScale);
+#endif /* XCURSOR_ON */
 
     ANativeWindow_unlockAndPost(win);
     ANativeWindow_release(win);
+    XRegion_deinit(&frameDirty);
+    XRegion_deinit(&work);
     ok = true;
     return ok;
 }
@@ -1344,6 +2155,23 @@ bool XPlatformNativeWindow_processPendingEvents(void)
             XRect_init(&rect, 0, 0, gw, gh);
             XWindow_setGeometry_rect(primary, &rect);
             XWindowSystemInterface_handleGeometryChange(primary, &rect);
+            /* [启动状态对齐 2026-10-27] 框架主窗软件状态停在 NoState，
+               而窗口设置页「全屏显示」回读 isFullScreen——与用户所见
+               （沉浸式恒满屏）矛盾（真机反馈）。对齐方式=**读取平台
+               真实状态**（用户裁定，不硬编码）：JNI 比较应用窗口边界与
+               显示真实边界——全屏则推 FullScreen 软件态；窗口化形态
+               （自由窗口/分屏）保持 NoState。仅**首次**几何回推时读取
+               对齐；此后用户经窗口设置页自由切换，旋转等后续回推不再
+               重推。 */
+            if (!g_xpad.m_startupFullscreenPushed) {
+                bool fs = XAndroid_isWindowFullscreen();
+                g_xpad.m_startupFullscreenPushed = true;
+                if (fs) {
+                    XWindowSystemInterface_handleWindowStateChanged(
+                        primary, XWindowState_FullScreen);
+                }
+                XPAD_LOGI("startup state aligned: fullscreen=%d", (int)fs);
+            }
             XPAD_LOGI("geometry pushed: %dx%d (surface logical)", gw, gh);
         }
         pthread_mutex_lock(&g_xpad.m_mutex);
@@ -1392,6 +2220,19 @@ bool XPlatformNativeWindow_processPendingEvents(void)
                         (next.action & AMOTION_EVENT_ACTION_MASK) ==
                             AMOTION_EVENT_ACTION_MOVE)
                         continue; /* 后面还有 MOVE：本帧折叠。 */
+                    /* [跨圈帧界钳 2026-10-27 接线] 折叠后仍到队首的 MOVE
+                       再过时间门：距上次注入不足 XGUI_MOVE_FRAME_MS 毫秒
+                       则本帧不入（位置由后续放行帧按绝对坐标补齐；60Hz
+                       报点=隔帧放行 30fps，120Hz+=每 2~5 帧放行一次，拖
+                       拽跟手性与 25ms 帧界一致）。按下/抬起不受此门。 */
+                    if (g_xpad.m_moveFrameMs > 0) {
+                        int64_t nowMs = xpad_monoMs();
+                        if (g_xpad.m_lastMoveCommitMs != 0 &&
+                            nowMs - g_xpad.m_lastMoveCommitMs <
+                                (int64_t)g_xpad.m_moveFrameMs)
+                            continue; /* 帧界内：本帧不注入。 */
+                        g_xpad.m_lastMoveCommitMs = nowMs;
+                    }
                 }
                 /* 动作映射（K3 多点收口，对标 QWindowSystemInterface::
                    handleTouchEvent 的 QEventPoint 列表形态）：
@@ -1538,6 +2379,36 @@ bool XPlatformNativeWindow_processPendingEvents(void)
                     g_xpad.m_lastCount = n;
                 }
                 pthread_mutex_unlock(&g_xpad.m_mutex);
+                /* [软件光标喂位 2026-10-27] 触摸帧即光标位置来源（安卓
+                 * 无指针设备，手指所在即「鼠标」位置；窗口设置页的
+                 * 「显示鼠标光标」开关据此绘制精灵）。
+                 *
+                 * **不在此处请求重绘**：光标单独移动（手指在空白处滑动、
+                 * 无控件脏区）时不产生 PAINT/flush，精灵位置会滞后到下一
+                 * 次重绘——这与 fbdev 侧「空白处移动要不要搬运可见缓冲」
+                 * 是同一个取舍，fbdev 用专有搬运通道解决；present 侧已改
+                 * 脏区直递（精灵带上帧带还原+本帧带落笔都走欠账），此后
+                 * 若要「空白处光标即时跟随」，只需在此以带状脏区请求局部
+                 * 重绘即可（成本=两条 32px 带的补画），暂保持「随帧更新」
+                 * 不引入额外重绘请求。
+                 *
+                 * 此前工作树版本在这里无条件 handlePaintEvent（整窗
+                 * 重绘），触摸报点 100~400Hz 时逐帧触发 ⇒ 真机实测 CPU
+                 * 满核、FPS 104、画面残留重。 */
+#if XCURSOR_ON
+                if (n > 0 && targetLayer && targetLayer->win) {
+                    int swRot = XWindow_contentRotationDegrees(
+                                    targetLayer->win);
+                    int swW = targetLayer->lastImage
+                                  ? XImage_width(targetLayer->lastImage) : 0;
+                    int swH = targetLayer->lastImage
+                                  ? XImage_height(targetLayer->lastImage) : 0;
+                    XCursor_swSetPosFrame(swRot, swW, swH,
+                                          &targetLayer->devPos);
+                    XCursor_setPos(pts[0].m_globalPosition.x,
+                                   pts[0].m_globalPosition.y);
+                }
+#endif /* XCURSOR_ON */
                 XWindowSystemInterface_handleTouchPoints_ex(target, type, pts,
                                                             n,
                                                             frame.timestampMs);
@@ -1845,6 +2716,7 @@ void XPad_onNativeWindowCreated(ANativeWindow* window)
     logicalW = g_xpad.m_logicalW;
     logicalH = g_xpad.m_logicalH;
     g_xpad.m_surfaceDirty = true;
+    xpad_bufLedgerResetLocked();   /* 新 surface：旧缓冲身份全部失效 */
     pthread_cond_broadcast(&g_xpad.m_cond);
     pthread_mutex_unlock(&g_xpad.m_mutex);
     if (old) ANativeWindow_release(old);
@@ -1895,6 +2767,7 @@ void XPad_onNativeWindowResized(ANativeWindow* window)
     g_xpad.m_geomW = g_xpad.m_logicalW;
     g_xpad.m_geomH = g_xpad.m_logicalH;
     g_xpad.m_surfaceDirty = true;
+    xpad_bufLedgerResetLocked();   /* resize 期缓冲可能重分配：身份全失效 */
     pthread_cond_broadcast(&g_xpad.m_cond);
     pthread_mutex_unlock(&g_xpad.m_mutex);
     XPAD_LOGI("surface resized %dx%d (window detached until redrawNeeded) "
@@ -1938,6 +2811,7 @@ void XPad_onNativeWindowRedrawNeeded(ANativeWindow* window)
         g_xpad.m_screenPending = true;
     }
     g_xpad.m_surfaceDirty = true;
+    xpad_bufLedgerResetLocked();   /* 重挂窗口：缓冲身份按失效处理 */
     pthread_cond_broadcast(&g_xpad.m_cond);
     pthread_mutex_unlock(&g_xpad.m_mutex);
     XPAD_LOGI("redrawNeeded: window re-attached %dx%d presentScale=%.3f",
@@ -1951,6 +2825,7 @@ void XPad_onNativeWindowDestroyed(void)
     old = g_xpad.m_window;
     g_xpad.m_window = NULL;
     g_xpad.m_surfaceDirty = false;
+    xpad_bufLedgerResetLocked();   /* surface 销毁：欠账表连同失效 */
     pthread_cond_broadcast(&g_xpad.m_cond);
     pthread_mutex_unlock(&g_xpad.m_mutex);
     if (old) ANativeWindow_release(old); /* 引用计数保证 present 中的对象存活 */

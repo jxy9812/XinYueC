@@ -553,7 +553,7 @@ static XNetIoRingPosix* getIoRing(void) {
 }
 
 /* 提交一条 SQE 并返回 */
-static struct io_uring_sqe* getSqe(void) {
+static XNetSqe* getSqe(void) {
     XNetIoRingPosix* ring = getIoRing();
     return ring ? XNetIoRingPosix_getSqe(ring) : NULL;
 }
@@ -565,7 +565,7 @@ static void submitSqe(int count) {
 
 static bool cancelSqe(XEventContext_IO* context)
 {
-    struct io_uring_sqe* sqe;
+    XNetSqe* sqe;
 
     if (!context) return false;
     sqe = getSqe();
@@ -615,7 +615,7 @@ static void startAsyncRead(XDeviceNetworkContext* priv, bool isUdp)
     p->readContext.base.result = XNETWORK_IO_PENDING_RESULT;
     p->readContext.socket = XSocketDescriptor_fromIntptr(p->socket);
 
-    struct io_uring_sqe* sqe = getSqe();
+    XNetSqe* sqe = getSqe();
     if (!sqe) return;
 
     memset(sqe, 0, sizeof(*sqe));
@@ -714,7 +714,7 @@ static void startAsyncWriteCore(XDeviceNetworkContext* priv, const void* data,
     p->writeContext.base.finishedBytes = (size_t)len;
     p->writeContext.socket = XSocketDescriptor_fromIntptr(p->socket);
 
-    struct io_uring_sqe* sqe = getSqe();
+    XNetSqe* sqe = getSqe();
     if (!sqe) return;
 
     memset(sqe, 0, sizeof(*sqe));
@@ -947,6 +947,67 @@ bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
 
     if (sockType == XDeviceNetwork_Tcp) {
 
+        /* [2026-10-26 物理断链(拔网线)不恢复·平台层根修]
+         *
+         * 拔网线是「链路层静默」断链：对端不发 FIN/RST，本机既无读完成
+         * （对端无数据）也无写错误（数据进内核发送缓冲，未收到 RST 即无
+         * EPIPE），socket 永远停在 ESTABLISHED ⇒ 平台层无任何事件可报
+         * ⇒ 框架层的 disconnected 信号永不发出 ⇒ 自动重连永不启动。
+         *
+         * Windows 平台无此症状：其 TCP 栈在链路失效时由系统网卡状态变更
+         * 驱动，立即让挂起的 WSARecv 失败并投递错误事件。本平台（POSIX）
+         * 必须自行提供等价的「链路死亡探测」能力，否则上层协议
+         * （Modbus/远程屏/NTP/HTTP）全部卡在假连接态。
+         *
+         * 修法：启用 SO_KEEPALIVE 并收紧探测参数，使内核在链路静默后
+         * 主动探测失败并把挂起的读操作以 ETIMEDOUT 唤醒——平台层由此
+         * 拿到「对端已死」的确证，走既有错误上报路径驱动框架重连。
+         *   TCP_KEEPIDLE  10s  空闲多久后开始探测
+         *   TCP_KEEPINTVL  3s  探测包间隔
+         *   TCP_KEEPCNT    3   连续失败次数（≈19s 判定链路已死）
+         *
+         * TCP_USER_TIMEOUT：拔网线的另一形态——对端网卡下线但内核仍在
+         * 跑，本机写操作**本地成功**（数据进发送缓冲）却永远收不到 ACK，
+         * 此时 keepalive 探测同样收不到响应，TCP_USER_TIMEOUT 令内核在
+         * 设定时限内拿不到 ACK 即以 ETIMEDOUT 终止连接（默认无限长＝
+         * 永不断链）。两者互补覆盖「对端静默」与「对端消失」两种拔线
+         * 形态；探测参数取较严者（keepalive 约 19s，user_timeout 15s）。
+         *
+         * 环境变量可调（供不同现场/板卡调参，0 或非法值表示不覆盖）：
+         *   XNET_KEEPALIVE_IDLE / XNET_KEEPALIVE_INTVL / XNET_KEEPALIVE_CNT
+         *   XNET_TCP_USER_TIMEOUT_MS
+         * 置 XNET_KEEPALIVE_OFF=1 可整体关闭（退回旧行为，仅供 A/B 对照）。
+         */
+        if (!getenv("XNET_KEEPALIVE_OFF")) {
+            int on = 1;
+            int idle = 10, intvl = 3, cnt = 3;
+            int userTimeoutMs = 15000;
+            const char* eIdle = getenv("XNET_KEEPALIVE_IDLE");
+            const char* eIntvl = getenv("XNET_KEEPALIVE_INTVL");
+            const char* eCnt = getenv("XNET_KEEPALIVE_CNT");
+            const char* eUserTimeout = getenv("XNET_TCP_USER_TIMEOUT_MS");
+            if (eIdle && atoi(eIdle) > 0) idle = atoi(eIdle);
+            if (eIntvl && atoi(eIntvl) > 0) intvl = atoi(eIntvl);
+            if (eCnt && atoi(eCnt) > 0) cnt = atoi(eCnt);
+            if (eUserTimeout && atoi(eUserTimeout) > 0)
+                userTimeoutMs = atoi(eUserTimeout);
+            setsockopt(p->socket, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
+#ifdef TCP_KEEPIDLE
+            setsockopt(p->socket, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+#endif
+#ifdef TCP_KEEPINTVL
+            setsockopt(p->socket, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+#endif
+#ifdef TCP_KEEPCNT
+            setsockopt(p->socket, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+#endif
+#ifdef TCP_USER_TIMEOUT
+            /* 本机写成功但对端 ACK 永不到 ⇒ 拔网线的静默形态。 */
+            setsockopt(p->socket, IPPROTO_TCP, TCP_USER_TIMEOUT,
+                       &userTimeoutMs, sizeof(userTimeoutMs));
+#endif
+        }
+
 #ifdef __linux__
         /* [io_uring CONNECT 能力门 2026-10-16] 内核已拒绝过该操作时直接走
          * 同步回退，不再重复提交注定 -EINVAL 的 SQE。 */
@@ -971,7 +1032,7 @@ bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
         p->connectContext.base.result = XNETWORK_IO_PENDING_RESULT;
         p->connectContext.socket = XSocketDescriptor_fromIntptr(p->socket);
 
-        struct io_uring_sqe* sqe = getSqe();
+        XNetSqe* sqe = getSqe();
         if (sqe) {
             memset(sqe, 0, sizeof(*sqe));
             sqe->opcode = IORING_OP_CONNECT;
@@ -1249,6 +1310,18 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
             }
             /* pr==0(真 FIN)或 recv 其他错误: 照旧按断链走。 */
         }
+        /* [2026-10-26 物理断链根修·平台层] 读完成若为「链路已死」类
+         * 错误（errno 白名单，见 XNetIoRingPosix_isLinkDeadErrno）：
+         * 置 m_connected=false，配合引擎层「链路死错误补 Connect 位」的
+         * 映射，框架的 Connect 分支读到 false → 走既有断开路径
+         * （disconnected 信号 → 上层自动重连）。此前此处不置位，错误被
+         * 静默吞掉，设备状态恒为「已连接」，拔网线后永不恢复。
+         * 白名单口径避免把 EAGAIN/EINTR/ENOMEM 等瞬态错误误判为断链。 */
+        if (p->readContext.base.result < 0 &&
+            p->readContext.base.result != XNETWORK_IO_PENDING_RESULT &&
+            XNetIoRingPosix_isLinkDeadErrno((int)(-p->readContext.base.result))) {
+            p->base.m_connected = false;
+        }
         return p->readContext.base.finishedBytes > 0;
     }
     if (sockAct->actType & XSocketActType_Write) {
@@ -1313,6 +1386,18 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
                                     p->destAddrValid ? &p->destAddr : NULL,
                                     p->destAddrLen);
             }
+        }
+        /* [2026-10-26 物理断链根修·平台层] 写完成若为「链路已死」类错误
+         * （errno 白名单）：置 m_connected=false，配合引擎层「链路死错误
+         * 补 Connect 位」的映射，框架 Connect 分支读到 false → 走既有
+         * 断开路径（disconnected 信号 → 上层自动重连）。
+         * 实证：拔网线场景写完成恒 result=-32(EPIPE)，而错误被静默吞掉，
+         * 设备状态恒为「已连接」，拔线后永不恢复。
+         * 白名单口径避免把 EAGAIN/EINTR/ENOMEM 等瞬态错误误判为断链。 */
+        if (p->writeContext.base.result < 0 &&
+            p->writeContext.base.result != XNETWORK_IO_PENDING_RESULT &&
+            XNetIoRingPosix_isLinkDeadErrno((int)(-p->writeContext.base.result))) {
+            p->base.m_connected = false;
         }
         return true;
     }
@@ -1554,7 +1639,7 @@ bool XDeviceNetwork_serverAccept(XFd xfd)
     p->acceptContext.base.result = XNETWORK_IO_PENDING_RESULT;
     p->acceptContext.socket = XSocketDescriptor_fromIntptr(p->socket);
 
-    struct io_uring_sqe* sqe = getSqe();
+    XNetSqe* sqe = getSqe();
     if (!sqe) return false;
 
     memset(sqe, 0, sizeof(*sqe));

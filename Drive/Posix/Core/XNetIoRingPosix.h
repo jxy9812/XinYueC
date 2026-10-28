@@ -17,6 +17,54 @@
 #include "XAbstractNetIoRing.h"
 
 #ifdef __linux__
+#include <errno.h>
+#include <stddef.h> /* offsetof（XNetSqe/XNetCqe 的 ABI 静态断言用）。 */
+
+/**
+ * @brief 判定一个 POSIX errno 是否属于「链路已死」（对端不可达/已断开）。
+ *
+ * @details [2026-10-26 物理断链根修·平台层共用口径] 拔网线（链路层静默
+ *          断链）后，套接字 I/O 会以这些 errno 报错。白名单而非黑名单：
+ *          EAGAIN/EWOULDBLOCK（资源暂不可用）、EINTR（被信号中断）、
+ *          ENOMEM（资源不足）等瞬态错误都**不是**链路死亡，误判会导致
+ *          正常连接被当作断链而反复重连。
+ *
+ *          白名单内容：
+ *            EPIPE        对端已关闭（写向已断开的连接）
+ *            ECONNRESET   对端复位（RST）
+ *            ECONNABORTED 本地协议栈中止连接
+ *            ETIMEDOUT    链路超时（keepalive 探测耗尽/重传耗尽）
+ *            ENETUNREACH  网络不可达
+ *            EHOSTUNREACH 主机不可达
+ *            ENOTCONN     套接字未连接
+ *            ECONNREFUSED 对端拒绝（从站未监听/已停机）
+ *            ENETDOWN     网卡已下线
+ *            ENETRESET    网络栈复位
+ *
+ * @param err POSIX errno（正数）。
+ * @return true 表示链路已死，应上报断链。
+ */
+static inline bool XNetIoRingPosix_isLinkDeadErrno(int err)
+{
+    switch (err) {
+    case EPIPE:
+    case ECONNRESET:
+    case ECONNABORTED:
+    case ETIMEDOUT:
+    case ENETUNREACH:
+    case EHOSTUNREACH:
+    case ENOTCONN:
+    case ECONNREFUSED:
+    case ENETDOWN:
+    case ENETRESET:
+        return true;
+    default:
+        return false;
+    }
+}
+#endif /* __linux__ */
+
+#ifdef __linux__
 /* ================================================================
  * 双内核支持（编译期能力探测 XNET_HAS_IO_URING_HDR + 运行时回退）
  *
@@ -83,27 +131,42 @@ int XAndroid_netIoUringSetup(unsigned entries, struct io_uring_params* params);
 
 #if !XNET_HAS_IO_URING_HDR
 /* ================================================================
- * 伪 SQE 与操作码常量（无 io_uring 头的老工具链编译兼容层）：
- * 与 io_uring 同名/同布局子集，外部调用点字段语义一致、零修改。
- * ================================================================ */
-struct io_uring_sqe {
-    uint8_t  opcode;        /**< IORING_OP_* 操作码（真实内核取值） */
-    uint8_t  pad0[3];       /**< 对齐填充 */
+ * 无 io_uring 头的老工具链：**自有伪 SQE 载体**（不冒充内核结构体）
+ * ================================================================
+ *
+ * 【统一口径 2026-10-26】此前此处定义了一份「与 io_uring 同名同布局」
+ * 的 struct io_uring_sqe / io_uring_cqe，但它与**内核真实 ABI 不一致**
+ * （sqe 72 字节 vs 内核 64；addr/off 位置互换；缺 poll_events/flags 字段），
+ * 且「有真头」与「无真头」两套定义并存 ⇒ 同一份源码在两种工具链下会
+ * 得到**不同的字节布局**，是一颗随时会炸的雷（一旦有人把伪结构体喂给
+ * 内核即错位）。
+ *
+ * 统一后的口径：
+ *  - **有真头**（桌面/armel 工具链现状）：io_uring 引擎只用内核真实
+ *    结构体，并由下方静态断言锁死 ABI 偏移；
+ *  - **无真头**：io_uring 引擎根本不编译（XNET_BUILD_IO_URING=0，见上），
+ *    此处这份结构体**只被 epoll 引擎当作「操作描述载体」**使用——它从
+ *    不与内核打交道，字段语义完全自洽（opcode/fd/addr/len/off/user_data
+ *    即 epoll 提交路径需要的全部信息）。故改名为自有类型
+ *    XNetPseudoSqe / XNetPseudoCqe，与内核 ABI **彻底解耦**：名字不再
+ *    暗示内核布局，杜绝误用。
+ */
+
+/** @brief 操作描述载体（epoll 引擎的伪 SQE；仅无 io_uring 头时存在）。 */
+typedef struct XNetPseudoSqe {
+    uint8_t  opcode;        /**< IORING_OP_* 操作码（沿用内核取值，便于两引擎同码） */
     int32_t  fd;            /**< 目标 fd */
     uint64_t addr;          /**< 缓冲/消息指针（RECVMSG 时为 msghdr） */
     uint32_t len;           /**< 长度 */
-    uint32_t pad1;          /**< 对齐填充 */
     uint64_t off;           /**< 文件偏移 / connect 地址长度 */
     uint64_t user_data;     /**< 完成标识（XEventContext 指针） */
-    uint32_t flags;         /**< SQE 标志（保留） */
-    int32_t  cancel_flags;  /**< ASYNC_CANCEL 标志 */
-    uint8_t  pad2[24];      /**< 填充至 64 字节（与真 SQE 同尺寸） */
-};
-struct io_uring_cqe {
+} XNetPseudoSqe;
+
+/** @brief 完成条目载体（epoll 引擎的伪 CQE；仅无 io_uring 头时存在）。 */
+typedef struct XNetPseudoCqe {
     uint64_t user_data;     /**< 完成标识 */
     int32_t  res;           /**< 完成结果（负 errno） */
-    int32_t  pad;           /**< 对齐填充 */
-};
+} XNetPseudoCqe;
 
 /* 内核真实操作码取值（linux/io_uring.h 5.1 的 enum io_uring_op） */
 #define IORING_OP_NOP           0u
@@ -123,6 +186,40 @@ struct io_uring_cqe {
 #define IORING_OP_SEND          26u
 #define IORING_OP_RECV          27u
 #endif /* !XNET_HAS_IO_URING_HDR */
+
+/* ================================================================
+ * 引擎内 SQE/CQE 类型统一（2026-10-26 统一口径）
+ * ================================================================
+ * 有 io_uring 头：别名到**内核真实结构体**（io_uring 引擎直接与内核交互，
+ *   布局必须逐字节等于内核 ABI——下方静态断言锁死）。
+ * 无 io_uring 头：别名到上方的**自有伪载体**（epoll 引擎的操作描述载体，
+ *   从不与内核交互，布局自洽即可）。
+ *
+ * C 文件内一律使用 XNetSqe / XNetCqe，**不再直接写 struct io_uring_***
+ * ——消除「两套同名不同布局」的定义，杜绝误用与版本漂移。
+ */
+#if XNET_HAS_IO_URING_HDR
+typedef struct io_uring_sqe XNetSqe;
+typedef struct io_uring_cqe XNetCqe;
+/* 【ABI 锁】内核 io_uring 结构体布局自 5.1 起未变；工具链头若来自更早
+ * 或被裁剪的版本，偏移会变——此时静态断言直接编译失败（宁可构建失败，
+ * 也不静默编出与内核错位的结构体）。 */
+_Static_assert(sizeof(XNetSqe) == 64, "io_uring_sqe ABI 变化：sizeof != 64");
+_Static_assert(offsetof(XNetSqe, opcode) == 0, "io_uring_sqe ABI 变化");
+_Static_assert(offsetof(XNetSqe, fd) == 4, "io_uring_sqe ABI 变化");
+_Static_assert(offsetof(XNetSqe, off) == 8, "io_uring_sqe ABI 变化");
+_Static_assert(offsetof(XNetSqe, addr) == 16, "io_uring_sqe ABI 变化");
+_Static_assert(offsetof(XNetSqe, len) == 24, "io_uring_sqe ABI 变化");
+_Static_assert(offsetof(XNetSqe, poll_events) == 28, "io_uring_sqe ABI 变化");
+_Static_assert(offsetof(XNetSqe, user_data) == 32, "io_uring_sqe ABI 变化");
+_Static_assert(sizeof(XNetCqe) == 16, "io_uring_cqe ABI 变化");
+_Static_assert(offsetof(XNetCqe, user_data) == 0, "io_uring_cqe ABI 变化");
+_Static_assert(offsetof(XNetCqe, res) == 8, "io_uring_cqe ABI 变化");
+_Static_assert(offsetof(XNetCqe, flags) == 12, "io_uring_cqe ABI 变化");
+#else
+typedef XNetPseudoSqe XNetSqe;
+typedef XNetPseudoCqe XNetCqe;
+#endif
 #endif /* __linux__ */
 
 #include "XSocketDescriptor.h"
@@ -206,9 +303,11 @@ int IoUring_getGlobalRingFd(void);
  * @brief 获取 io_uring SQ 条目（供外部 I/O 提交使用）
  * @param ring XNetIoRingPosix 实例指针
  * @return SQE 指针，失败返回 NULL
- * @note 调用者填充 SQE 后调用 XNetIoRingPosix_submitSqe 提交
+ * @note 调用者填充 SQE 后调用 XNetIoRingPosix_submitSqe 提交。
+ *       返回类型是 **XNetSqe**（引擎内统一类型）：有 io_uring 头时即内核
+ *       真实 struct io_uring_sqe，无头时为自有伪载体（仅 epoll 引擎用）。
  */
-struct io_uring_sqe* XNetIoRingPosix_getSqe(XNetIoRingPosix* ring);
+XNetSqe* XNetIoRingPosix_getSqe(XNetIoRingPosix* ring);
 
 /**
  * @brief 提交已填充的 SQE 到内核

@@ -1,13 +1,13 @@
 #!/bin/bash
 # ATV61 变频器 Modbus RTU 闭环测试驱动（2026-10-26）。
 # 用法: mbtest_atv61_run.sh [引擎:io|epoll|both]
-# 流程: 起 ATV61 模拟从站(python, pty 虚拟串口) → 等就绪 → 跑 XModbusAtv61Test。
+# 流程: 起 ATV61 模拟从站(python, pty 虚拟串口) → 等就绪 → 跑 XVfdAtv61Test。
 # 产物: /tmp/mbsoak/atv61/{slave.log,test-<engine>.log,driver.log}
 
 set -u
 ENGINE="${1:-io}"
 REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
-BIN="${ATV61_BIN:-$REPO/bin/XModbusAtv61Test}"
+BIN="${ATV61_BIN:-$REPO/bin/XVfdAtv61Test}"
 SLAVES_PY="$REPO/Test/XProtocolTest/mbtest_atv61_slave.py"
 OUT="${ATV61_BASE:-/tmp/mbsoak/atv61}"
 mkdir -p "$OUT"

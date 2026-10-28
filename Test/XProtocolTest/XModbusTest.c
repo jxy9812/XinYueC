@@ -41,7 +41,7 @@ static void rtuFinished(XObject* sender, XVarList* args)
     XModbusClient* client = XObject_parent(sender);
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils, 0, 1);
     XModbusDataUnit_setValue(read, 0, true);
-    XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
+    XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1, XModbusRequestPriority_Normal);
     XObject_setParent(reply, client);
     XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), rtuFinished);
     XObject_connect_1(reply, XSignal(XModbusReply_finished_signal), reply, XObject_deleteLater, XConnectionType_Auto);
@@ -65,7 +65,7 @@ void XModbusRtuSerialClientTest()
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils,0,1);
     XModbusDataUnit_setValue(read,0,true);
 
-    XModbusReply* reply= XModbusClient_sendWriteRequest(client, read,1);
+    XModbusReply* reply= XModbusClient_sendWriteRequest(client, read,1, XModbusRequestPriority_Normal);
     XObject_setParent(reply, client);
     XObject_connect_2(reply,XSignal(XModbusReply_finished_signal), rtuFinished);
 
@@ -85,7 +85,7 @@ static void tcpFinished(XObject* receiver, XVarList* args)
         return;
     }
     XModbusDataUnit_setValue(read, 0, true);
-    XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
+    XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1, XModbusRequestPriority_Normal);
     if (!reply) {
         XObject_deleteLater(sender);
         XClassDelete(read);
@@ -109,7 +109,7 @@ static void tcpStart(XObject* sender, XVarList* args)
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils, 0, 1);
     if (!read) return;
     XModbusDataUnit_setValue(read, 0, true);
-    XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
+    XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1, XModbusRequestPriority_Normal);
     if (!reply) {
         XClassDelete(read);
         return;

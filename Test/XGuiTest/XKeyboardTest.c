@@ -14,6 +14,7 @@
 #include "XVector.h" /* xkb_zIndex 栈序断言（XObject_children 遍历）。 */
 #include "XMemory.h"
 #include <stdio.h>
+#include <stdlib.h> /* setenv：档位解析断言节逐例设 env + runAll 入口 legacy 兜底。 */
 #include <string.h>
 #include "XThread.h" /* xkb_pumpMs 的休眠走框架 XThread_msleep（⑦.8 几何跟随时序适配）。 */
 #if XKEYBOARD_IME_ON
@@ -573,9 +574,273 @@ static int xkb_preeditEq(const XVirtualKeyboardInputContext* ctx,
 }
 #endif /* XVIRTUALKEYBOARD_ON */
 
-bool XKeyboardTest_runAll(void)
+/* ==================== ⑨ 档位解析断言（2026-10-28 四档尺寸适配；只增节） ==================== */
+
+/* 档位 env 设定/复位（逐例现读是 xkb_metricsResolve 契约，setenv 即刻
+ * 生效；win32 无 setenv 走 _putenv_s——xgui_font_scan_tool 同款可移植
+ * 口径）。 */
+static void xkb_tierSetenv(const char* device, const char* dpi)
+{
+#ifdef _WIN32
+    _putenv_s("XKB_METRICS", "auto");
+    _putenv_s("XKB_FORCE_DEVICE", device);
+    _putenv_s("XKB_FORCE_DPI", dpi);
+#else
+    setenv("XKB_METRICS", "auto", 1);
+    setenv("XKB_FORCE_DEVICE", device, 1);
+    setenv("XKB_FORCE_DPI", dpi, 1);
+#endif
+}
+static void xkb_tierRestore(void)
+{
+#ifdef _WIN32
+    _putenv_s("XKB_METRICS", "legacy");
+    _putenv_s("XKB_FORCE_DEVICE", "");
+    _putenv_s("XKB_FORCE_DPI", "");
+#else
+    setenv("XKB_METRICS", "legacy", 1); /* 套件其余断言保持 legacy 轨。 */
+    unsetenv("XKB_FORCE_DEVICE");
+    unsetenv("XKB_FORCE_DPI");
+#endif
+}
+
+#if XLINEEDIT_ON
+/** @brief 档位停靠几何断言单例：win(editor)→setMode→popup→断言矩形。
+ *  @details 程序内窗口无 windowHandle（reposition 走控件级回退路径），
+ *           几何在 popup() 内同步落定（XKB_FORCE_DEVICE 在位=calibrated
+ *           轨不依赖主屏探测，160dpi 下 dp(v)==v）。 */
+static void xkb_tierDockAssert(int hostW, int hostH, XKeyboardMode mode,
+                               XKeyboardLayoutKind kind,
+                               int wantW, int wantH, int wantX, int wantY,
+                               const char* what)
 {
     XVirtualKeyboard* kb = XVirtualKeyboard_create(NULL, 0);
+    XWidget* win = XWidget_create(NULL, 0);
+    XLineEdit* ed = XLineEdit_create(win, 0);
+    XInputMethodHints hints = (XInputMethodHints)0;
+    XWidget_setGeometry(win, 0, 0, hostW, hostH);
+    XWidget_setGeometry((XWidget*)ed, 8, 8, 120, 24);
+    /* 窄盘经 hints 映射（既有 hints 断言族同款口径）：setMode 会在
+       popup 的 applyFocusHints 按 ImhNone 回落 TextLower，窄盘断言必
+       须走 hints→模式链。 */
+    if (mode == XKeyboardMode_Number)
+        hints = XInputMethodHint_PreferNumbers;
+    else if (mode == XKeyboardMode_Digits)
+        hints = XInputMethodHint_DigitsOnly;
+    else if (mode == XKeyboardMode_Dialpad)
+        hints = XInputMethodHint_DialableCharactersOnly;
+    XWidget_setInputMethodHints((XWidget*)ed, hints);
+    if (kind != XKeyboardLayout_PinyinFull)
+        XVirtualKeyboard_setLayoutKind(kb, kind);
+    XWidget_setFocus((XWidget*)ed);
+    XWidget_show(win);
+    XWidget_show((XWidget*)ed);
+    XVirtualKeyboard_popup(kb, (XWidget*)ed);
+    if (!(XVirtualKeyboard_width(kb) == wantW &&
+              XVirtualKeyboard_height(kb) == wantH &&
+              XWidget_x((XWidget*)kb) == wantX &&
+              XWidget_y((XWidget*)kb) == wantY))
+        fprintf(stderr,
+                "[XKB-TIER] %s: want (%d,%d,%d,%d) got (%d,%d,%d,%d)\n",
+                what ? what : "", wantX, wantY, wantW, wantH,
+                XWidget_x((XWidget*)kb), XWidget_y((XWidget*)kb),
+                XVirtualKeyboard_width(kb), XVirtualKeyboard_height(kb));
+    xkb_expect(XVirtualKeyboard_width(kb) == wantW &&
+                   XVirtualKeyboard_height(kb) == wantH &&
+                   XWidget_x((XWidget*)kb) == wantX &&
+                   XWidget_y((XWidget*)kb) == wantY,
+               what);
+    XVirtualKeyboard_closePopup(kb);
+    XVirtualKeyboard_setParent(kb, NULL, 0);
+    XClassDelete(win);
+    XClassDelete(kb);
+}
+
+/** @brief 档位紧凑悬浮断言单例：停靠弹出→工具栏「悬浮切换」图标按压
+ *  释放→断言紧凑矩形（160dpi 下图标盒公式与 legacy 档一致：barH−6 钳
+ *  [8,26]）。 */
+static void xkb_tierCompactAssert(int hostW, int hostH,
+                                  int wantW, int wantH, int wantX, int wantY,
+                                  const char* what)
+{
+    XVirtualKeyboard* kb = XVirtualKeyboard_create(NULL, 0);
+    XWidget* win = XWidget_create(NULL, 0);
+    XLineEdit* ed = XLineEdit_create(win, 0);
+    XPoint pos;
+    XMouseEvent me;
+    int barH;
+    int barW;
+    int box;
+    int cellW;
+    int iconX0;
+    int iconY;
+    XWidget_setGeometry(win, 0, 0, hostW, hostH);
+    XWidget_setGeometry((XWidget*)ed, 8, 8, 120, 24);
+    XWidget_show(win);
+    XWidget_show((XWidget*)ed);
+    XVirtualKeyboard_popup(kb, (XWidget*)ed);
+    barH = kb->m_menuBarRect.height;
+    barW = kb->m_menuBarRect.width;
+    box = barH - 6;
+    if (box < 8) box = 8;
+    if (box > 26) box = 26;
+    cellW = barW / 4;
+    iconX0 = kb->m_menuBarRect.x + (cellW - box) / 2;
+    iconY = kb->m_menuBarRect.y + (barH - box) / 2;
+    pos.x = (short)iconX0;
+    pos.y = (short)iconY;
+    XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                     XMouseButton_LeftButton, 0, pos);
+    XObject_event_base((XObject*)kb, (XEvent*)&me);
+    XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                     XMouseButton_LeftButton, 0, pos);
+    XObject_event_base((XObject*)kb, (XEvent*)&me);
+    xkb_expect(kb->m_compactFloat &&
+                   XVirtualKeyboard_width(kb) == wantW &&
+                   XVirtualKeyboard_height(kb) == wantH &&
+                   XWidget_x((XWidget*)kb) == wantX &&
+                   XWidget_y((XWidget*)kb) == wantY,
+               what);
+    XVirtualKeyboard_closePopup(kb);
+    XClassDelete(win);
+    XClassDelete(kb);
+}
+
+/* 档位精简款仿真用自定义 5 行表（r3 §9 ⑧c「行数驱动高」的行数源；
+ * 39 键=与内置 Special 原表 40 键/精简款 42 键均可区分，兼作 setMap
+ * 不替换守卫的形状指纹）。各行单位 10/10/9/7/3。 */
+static const char* const kTierFiveRowMap[] = {
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "\n",
+    "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "\n",
+    "a", "s", "d", "f", "g", "h", "j", "k", "l", "\n",
+    "z", "x", "c", "v", "b", "n", "m", "\n",
+    XKEYBOARD_LBL_DISMISS, " ", XKEYBOARD_LBL_OK,
+    NULL
+};
+static const XKeyboardButtonCtrl kTierFiveRowCtrl[] = {
+    (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)1, (XKeyboardButtonCtrl)1,
+    (XKeyboardButtonCtrl)((int)XKEYBOARD_CTRL_BUTTON_FLAGS | 2),                       /* 收起 */
+    (XKeyboardButtonCtrl)4,                                     /* 空格 */
+    (XKeyboardButtonCtrl)((int)XKEYBOARD_CTRL_BUTTON_FLAGS | 2)                        /* 确认 */
+};
+
+/** @brief 档位 env 显式回 legacy（⑩ 守卫用；win32 同 tierSetenv 口径）。 */
+static void xkb_tierSetLegacy(void)
+{
+#ifdef _WIN32
+    _putenv_s("XKB_METRICS", "legacy");
+    _putenv_s("XKB_FORCE_DEVICE", "");
+    _putenv_s("XKB_FORCE_DPI", "");
+#else
+    setenv("XKB_METRICS", "legacy", 1);
+    unsetenv("XKB_FORCE_DEVICE");
+    unsetenv("XKB_FORCE_DPI");
+#endif
+}
+
+/** @brief 档位紧凑随动断言单例（r3 §9 ⑧/⑩）：popup→工具栏「悬浮切
+ *  换」按压释放（tierCompactAssert 同款注入）→[可选 setMap 注入]→
+ *  [可选 setMode 切模式]→断言紧凑矩形。device=NULL 时按 legacy 轨
+ *  （⑩ 守卫：legacy 紧凑内切模式窗矩形必须原样不动）。 */
+static void xkb_tierCompactSwitchAssert(int hostW, int hostH,
+                                        const char* device, const char* dpi,
+                                        XKeyboardMode modeAfter,
+                                        const char* const* customMap,
+                                        const XKeyboardButtonCtrl* customCtrl,
+                                        int wantW, int wantH,
+                                        int wantX, int wantY,
+                                        const char* what)
+{
+    XVirtualKeyboard* kb = XVirtualKeyboard_create(NULL, 0);
+    XWidget* win = XWidget_create(NULL, 0);
+    XLineEdit* ed = XLineEdit_create(win, 0);
+    XPoint pos;
+    XMouseEvent me;
+    int barH;
+    int barW;
+    int box;
+    int cellW;
+    int iconX0;
+    int iconY;
+    if (device)
+        xkb_tierSetenv(device, dpi);
+    else
+        xkb_tierSetLegacy();
+    XWidget_setGeometry(win, 0, 0, hostW, hostH);
+    XWidget_setGeometry((XWidget*)ed, 8, 8, 120, 24);
+    XWidget_show(win);
+    XWidget_show((XWidget*)ed);
+    if (customMap)
+        XVirtualKeyboard_setMap(kb, XKeyboardMode_Special, customMap,
+                                customCtrl);
+    XVirtualKeyboard_popup(kb, (XWidget*)ed);
+    barH = kb->m_menuBarRect.height;
+    barW = kb->m_menuBarRect.width;
+    box = barH - 6;
+    if (box < 8) box = 8;
+    if (box > 26) box = 26;
+    cellW = barW / 4;
+    iconX0 = kb->m_menuBarRect.x + (cellW - box) / 2;
+    iconY = kb->m_menuBarRect.y + (barH - box) / 2;
+    pos.x = (short)iconX0;
+    pos.y = (short)iconY;
+    XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                     XMouseButton_LeftButton, 0, pos);
+    XObject_event_base((XObject*)kb, (XEvent*)&me);
+    XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                     XMouseButton_LeftButton, 0, pos);
+    XObject_event_base((XObject*)kb, (XEvent*)&me);
+    if (modeAfter != (XKeyboardMode)-1)
+        XVirtualKeyboard_setMode(kb, modeAfter);
+    if (!(kb->m_compactFloat &&
+          XVirtualKeyboard_width(kb) == wantW &&
+          XVirtualKeyboard_height(kb) == wantH &&
+          XWidget_x((XWidget*)kb) == wantX &&
+          XWidget_y((XWidget*)kb) == wantY))
+        fprintf(stderr,
+                "[XKB-TIER] %s: want (%d,%d,%d,%d) got (%d,%d,%d,%d)\n",
+                what ? what : "", wantX, wantY, wantW, wantH,
+                XWidget_x((XWidget*)kb), XWidget_y((XWidget*)kb),
+                XVirtualKeyboard_width(kb), XVirtualKeyboard_height(kb));
+    xkb_expect(kb->m_compactFloat &&
+                   XVirtualKeyboard_width(kb) == wantW &&
+                   XVirtualKeyboard_height(kb) == wantH &&
+                   XWidget_x((XWidget*)kb) == wantX &&
+                   XWidget_y((XWidget*)kb) == wantY,
+               what);
+    XVirtualKeyboard_closePopup(kb);
+    XClassDelete(win);
+    XClassDelete(kb);
+}
+#endif /* XLINEEDIT_ON */
+
+bool XKeyboardTest_runAll(void)
+{
+    XVirtualKeyboard* kb;
+    /* 三处 main 兜底之一（评审⑤；本套件宿主= XGuiRegression_Test）：
+     * XKB_METRICS 未设时置 legacy——既有断言锁死现状几何（停靠 500×
+     * 360→恰 500×180 等），测试环境程序内窗口无物理标定，显式回旧轨
+     * 双保险（尾部「档位解析」断言节逐例 setenv 覆盖并复位）。 */
+#ifdef _WIN32
+    _putenv_s("XKB_METRICS", "legacy");
+#else
+    setenv("XKB_METRICS", "legacy", 0); /* 覆写 0：外部显式设置优先。 */
+#endif
+
+    kb = XVirtualKeyboard_create(NULL, 0);
 
     xkb_readyCount = 0;
     xkb_cancelCount = 0;
@@ -4059,6 +4324,293 @@ bool XKeyboardTest_runAll(void)
         XClassDelete(kb);
     }
 #endif /* XVIRTUALKEYBOARD_ON */
+
+    /* ---- ⑨ 档位解析（只增节；逐例 setenv→断言 §3.1/§3.3 公式值与
+     *    真值表边界→复位）。全部期望值按 mm2px(mm10)=mm10×dpi/254 与
+     *    dp(px)=px×dpi/160 现算（设计 §6 口径，tolerance 0：整数式确
+     *    定值）。160dpi 下 dp(v)==v。 ---- */
+#if XLINEEDIT_ON
+    /* 期望值族（phone/tablet @160dpi；r3 公式：dock 高 竖 mm2px(326)=
+     * 205 / 横 mm2px(300)=188 / 平板 600/420+域钳 [30%,36%]hostH；带高
+     * 竖 dp(40)=40 / 横 dp(32)=32；键宽=单位×rowH×键面比（横屏文本盘
+     * 7/5、窄盘 5/4）+4）。 */
+    xkb_tierSetenv("phone", "160");
+    xkb_tierDockAssert(480, 960, XKeyboardMode_TextLower,
+                       XKeyboardLayout_PinyinFull,
+                       480, 205, 0, 755,
+                       "档位①：480x960 竖屏停靠 h=205（mm2px(326)）全宽");
+    xkb_tierDockAssert(960, 480, XKeyboardMode_TextLower,
+                       XKeyboardLayout_PinyinFull,
+                       534, 188, 213, 292,
+                       "档位②：960x480 横屏停靠 h=188（r3 mm2px(300) 增"
+                       "高一档）文本盘参考行定宽 10×53+4=534 居中（键面"
+                       "比 7/5=1.39 入带 1.3~1.5，教训①）");
+    xkb_tierDockAssert(480, 200, XKeyboardMode_TextLower,
+                       XKeyboardLayout_PinyinFull,
+                       294, 120, 93, 80,
+                       "档位真值表：480x200 横屏 hostH=200 cap→下界 120，"
+                       "参考行定宽 10×29+4=294 居中（r3 横带 dp32）");
+    xkb_tierDockAssert(480, 150, XKeyboardMode_TextLower,
+                       XKeyboardLayout_PinyinFull,
+                       284, 118, 98, 32,
+                       "档位真值表：hostH=150 cap→下界 120→hostH-32=118"
+                       "（带高 dp32 在 contentH/3=38 内不绑）");
+    xkb_tierDockAssert(480, 31, XKeyboardMode_TextLower,
+                       XKeyboardLayout_PinyinFull,
+                       14, 1, 233, 30,
+                       "档位真值表：hostH=31 全链钳尽 h=1 宽 14（不崩）");
+    xkb_tierDockAssert(960, 480, XKeyboardMode_Dialpad,
+                       XKeyboardLayout_PinyinFull,
+                       192, 188, 384, 292,
+                       "档位窄盘：960x480 拨号盘 kbW=4×47+4=192 居中 x=384"
+                       "（窄盘键面比 5/4 保持，教训③正面样例口径）");
+    xkb_tierDockAssert(960, 480, XKeyboardMode_Number,
+                       XKeyboardLayout_PinyinFull,
+                       239, 188, 360, 292,
+                       "档位窄盘：Number kbW=5×47+4=239（cap 576 不绑）");
+    xkb_tierDockAssert(960, 480, XKeyboardMode_Digits,
+                       XKeyboardLayout_PinyinFull,
+                       286, 188, 337, 292,
+                       "档位窄盘：Digits kbW=6×47+4=286");
+    xkb_tierDockAssert(480, 960, XKeyboardMode_Dialpad,
+                       XKeyboardLayout_PinyinFull,
+                       204, 205, 138, 755,
+                       "档位窄盘⑧b：480x960 手机拨号盘 rowH=40 kbW=4×50+4"
+                       "=204 居中（竖盘零漂移：KEYW 5/4 与 dp40 均未改）");
+    xkb_tierSetenv("tablet", "160");
+    xkb_tierDockAssert(800, 1280, XKeyboardMode_TextLower,
+                       XKeyboardLayout_PinyinFull,
+                       800, 384, 0, 896,
+                       "档位③：800x1280 平板竖屏全宽 w=800 x=0，h=384"
+                       "（r3 mm2px(600)=377 被域钳下界 hostH×30%=384 抬"
+                       "入带，教训②占屏 30~36%）");
+    xkb_tierDockAssert(1280, 800, XKeyboardMode_TextLower,
+                       XKeyboardLayout_EnglishFull,
+                       794, 264, 243, 536,
+                       "档位④：1280x800 平板横屏文本盘 h=264（域钳带内 "
+                       "33%）参考行定宽 10×79+4=794 居中 x=243（键面比 "
+                       "7/5=1.39，r3 删 50% 封宽下限后自然宽度留白）");
+    xkb_tierDockAssert(1280, 800, XKeyboardMode_Dialpad,
+                       XKeyboardLayout_PinyinFull,
+                       288, 264, 496, 536,
+                       "档位⑧：平板横屏拨号盘 kbW=4×71+4=288 居中 x=496"
+                       "（rowH=57 随平板档；窄盘独立定宽不随主盘拉伸，"
+                       "键 71x57 近方，教训③）");
+    /* r3 新增：平板竖屏域钳上界（600x960：mm2px(600)=377 被 960×36%=345
+       上界绑）与域钳/120 下限优先级（1280x300：base 264 域钳到 108 后
+       被 XKEYBOARD_POPUP_MIN_H=120 抬回——hostH<334 时百分比声明不适
+       用，§2 钳位优先级声明的直接产物）。 */
+    xkb_tierDockAssert(600, 960, XKeyboardMode_TextLower,
+                       XKeyboardLayout_PinyinFull,
+                       600, 345, 0, 615,
+                       "档位⑦：600x960 平板竖屏域钳上界 h=345（hostH×36%"
+                       " 绑，30~36% 带内）");
+    xkb_tierDockAssert(1280, 300, XKeyboardMode_TextLower,
+                       XKeyboardLayout_EnglishFull,
+                       294, 120, 493, 180,
+                       "档位⑨：1280x300 平板横域钳优先级——base 264 域钳"
+                       "到 108 后被 120 下限抬回（终值断言，§2 声明案）");
+    xkb_tierSetenv("phone", "403");
+    xkb_tierDockAssert(480, 960, XKeyboardMode_TextLower,
+                       XKeyboardLayout_PinyinFull,
+                       480, 441, 0, 519,
+                       "档位⑫：403dpi target=517 先被 cap 960×46%=441 绑");
+    /* F9 场景直锁（r1 根修）：弹出（文本盘）后 setMode 切窄盘——
+       setMode 尾部重定位把几何从文本盘定宽切换为窄盘定宽居中。 */
+    xkb_tierSetenv("tablet", "160");
+    {
+        XVirtualKeyboard* kb = XVirtualKeyboard_create(NULL, 0);
+        XWidget* win = XWidget_create(NULL, 0);
+        XLineEdit* ed = XLineEdit_create(win, 0);
+        XWidget_setGeometry(win, 0, 0, 1280, 800);
+        XWidget_setGeometry((XWidget*)ed, 8, 8, 120, 24);
+        XWidget_setInputMethodHints((XWidget*)ed, (XInputMethodHints)0);
+        XWidget_setFocus((XWidget*)ed);
+        XWidget_show(win);
+        XWidget_show((XWidget*)ed);
+        XVirtualKeyboard_popup(kb, (XWidget*)ed);
+        if (!(XVirtualKeyboard_width(kb) == 794))
+            fprintf(stderr, "[XKB-TIER] F9 前置: want w=794 got %d\n",
+                    XVirtualKeyboard_width(kb));
+        xkb_expect(XVirtualKeyboard_width(kb) == 794,
+                   "F9 前置：文本盘弹出定宽 794（r3 键面比 7/5）");
+        XVirtualKeyboard_setMode(kb, XKeyboardMode_Number);
+        if (!(XVirtualKeyboard_width(kb) == 359 &&
+              XWidget_x((XWidget*)kb) == 460))
+            fprintf(stderr,
+                    "[XKB-TIER] F9 切窄盘: want (460,536,359,264) got "
+                    "(%d,%d,%d,%d)\n",
+                    XWidget_x((XWidget*)kb), XWidget_y((XWidget*)kb),
+                    XVirtualKeyboard_width(kb),
+                    XVirtualKeyboard_height(kb));
+        xkb_expect(XVirtualKeyboard_width(kb) == 359 &&
+                       XWidget_x((XWidget*)kb) == 460,
+                   "F9 根修：切 Number 即重定位 5×71+4=359 居中 x=460"
+                   "（窄盘独立定宽近方键 71x57，教训③）");
+        XVirtualKeyboard_closePopup(kb);
+        XVirtualKeyboard_setParent(kb, NULL, 0);
+        XClassDelete(win);
+        XClassDelete(kb);
+    }
+    xkb_tierSetenv("tablet", "160");
+    xkb_tierDockAssert(1280, 900, XKeyboardMode_TextLower,
+                       XKeyboardLayout_PinyinFull,
+                       814, 270, 233, 630,
+                       "档位⑬（r1 F1 同尺寸）：1280x900 平板横屏 h=270"
+                       "（r3 域钳下界 hostH×30% 抬入带）定宽 10×81+4=814"
+                       " 居中 x=233");
+    xkb_tierCompactAssert(1280, 900, 704, 196, 576, 704,
+                          "档位⑭（r1 F2 同尺寸）：1280x900 紧凑 "
+                          "compactW=704（55%）行数键驱动高 4+32+4×40=196"
+                          "（r3 横带 dp32）宿主右下角");
+    /* 紧凑悬浮楼层（§3.3：calibrated compactW=max(hostW×55%,
+     * mm2px(630)=396) 钳 hostW-8；高=行数键驱动（r3 删同比例 max 分
+     * 支，教训⑤明禁按停靠比例继承）。 */
+    xkb_tierSetenv("phone", "160");
+    xkb_tierCompactAssert(960, 480, 528, 184, 432, 296,
+                          "档位⑤：960x480 紧凑 compactW=528，行数键驱动"
+                          "高 4+32+4×37=184（横带 dp32；rowH=528×5/70=37）");
+    xkb_tierCompactAssert(480, 960, 396, 156, 84, 804,
+                          "档位⑤b：480 宽竖屏楼层绑定 compactW=mm2px"
+                          "(630)=396，行数键驱动高 4+40+4×28=156（rowH"
+                          " 钳 dp28 下限生效；比例高分支已删）");
+    /* r3 §9 ⑥：Special 手机竖屏精简款（教训④减列 8~10 列落地）+三重
+       守卫（平板竖/手机横不消费、setMap 注入自定义表不替换）。 */
+    xkb_tierSetenv("phone", "160");
+    {
+        XVirtualKeyboard* kb = XVirtualKeyboard_create(NULL, 0);
+        XWidget* win = XWidget_create(NULL, 0);
+        XLineEdit* ed = XLineEdit_create(win, 0);
+        XWidget_setGeometry(win, 0, 0, 480, 960);
+        XWidget_setGeometry((XWidget*)ed, 8, 8, 120, 24);
+        XWidget_setFocus((XWidget*)ed);
+        XWidget_show(win);
+        XWidget_show((XWidget*)ed);
+        XVirtualKeyboard_popup(kb, (XWidget*)ed);
+        XVirtualKeyboard_setMode(kb, XKeyboardMode_Special);
+        xkb_expect(XVirtualKeyboard_width(kb) == 480 &&
+                       XVirtualKeyboard_height(kb) == 205 &&
+                       XWidget_y((XWidget*)kb) == 755,
+                   "⑥ 前置：精简款停靠几何与文本盘同式（全宽 480x205）");
+        xkb_expect(kb->m_layoutRows == 5 &&
+                       kb->m_layoutMaxRowUnits == 10 &&
+                       kb->m_layoutRefRowUnits == 10 &&
+                       XVirtualKeyboard_buttonCount(kb) == 42,
+                   "⑥ Special 手机竖屏精简款：5 行 10 列 42 键"
+                   "（13→10 减列，23 符号+直写逗/句号）");
+        {
+            uint32_t ki;
+            int minUnitW = 9999;
+            int maxRight = 0;
+            for (ki = 0; ki < XVirtualKeyboard_buttonCount(kb); ++ki) {
+                const XRect* kr = &kb->m_keyRects[ki];
+                if (kr->x + kr->width > maxRight)
+                    maxRight = kr->x + kr->width;
+                if (kr->width < 90 && kr->width < minUnitW)
+                    minUnitW = kr->width;
+            }
+            xkb_expect(maxRight <= 478,
+                       "⑥ 精简款末键右缘 ≤478（13 列越缘裁切根修）");
+            xkb_expect(minUnitW >= 47,
+                       "⑥ 精简款单位键宽 ≥47px（47px=7.4mm 达标）");
+        }
+        /* 守卫 A：应用 setMap 注入自定义 Special 表后不替换（指针比对
+           gating；39 键指纹≠精简款 42 键）。 */
+        XVirtualKeyboard_setMap(kb, XKeyboardMode_Special, kTierFiveRowMap,
+                                kTierFiveRowCtrl);
+        XVirtualKeyboard_setMode(kb, XKeyboardMode_TextLower);
+        XVirtualKeyboard_setMode(kb, XKeyboardMode_Special);
+        xkb_expect(XVirtualKeyboard_buttonCount(kb) == 39,
+                   "⑥ 守卫：setMap 注入自定义 Special 表后不替换精简款");
+        XVirtualKeyboard_closePopup(kb);
+        XVirtualKeyboard_setParent(kb, NULL, 0);
+        XClassDelete(win);
+        XClassDelete(kb);
+    }
+    xkb_tierSetenv("tablet", "160");
+    {
+        XVirtualKeyboard* kb = XVirtualKeyboard_create(NULL, 0);
+        XWidget* win = XWidget_create(NULL, 0);
+        XLineEdit* ed = XLineEdit_create(win, 0);
+        XWidget_setGeometry(win, 0, 0, 800, 1280);
+        XWidget_setGeometry((XWidget*)ed, 8, 8, 120, 24);
+        XWidget_setFocus((XWidget*)ed);
+        XWidget_show(win);
+        XWidget_show((XWidget*)ed);
+        XVirtualKeyboard_popup(kb, (XWidget*)ed);
+        XVirtualKeyboard_setMode(kb, XKeyboardMode_Special);
+        /* 实测口径：原表行 4=收起2+<-2+空格6+->2+确认2=14（设计稿「13
+           单位参考行」系手数笔误——参考行=行 2 的 13 单位不变，§3 宽度
+           仿真不受影响）。守卫目的=「原表未被精简款替换」，断实测值。 */
+        xkb_expect(kb->m_layoutMaxRowUnits == 14,
+                   "⑥ 守卫：平板竖屏 Special 仍原表 14 单位（精简款不"
+                   "消费平板）");
+        XVirtualKeyboard_closePopup(kb);
+        XVirtualKeyboard_setParent(kb, NULL, 0);
+        XClassDelete(win);
+        XClassDelete(kb);
+    }
+    xkb_tierSetenv("phone", "160");
+    {
+        XVirtualKeyboard* kb = XVirtualKeyboard_create(NULL, 0);
+        XWidget* win = XWidget_create(NULL, 0);
+        XLineEdit* ed = XLineEdit_create(win, 0);
+        XWidget_setGeometry(win, 0, 0, 960, 480);
+        XWidget_setGeometry((XWidget*)ed, 8, 8, 120, 24);
+        XWidget_setFocus((XWidget*)ed);
+        XWidget_show(win);
+        XWidget_show((XWidget*)ed);
+        XVirtualKeyboard_popup(kb, (XWidget*)ed);
+        XVirtualKeyboard_setMode(kb, XKeyboardMode_Special);
+        xkb_expect(kb->m_layoutMaxRowUnits == 14,
+                   "⑥ 守卫：手机横屏 Special 仍原表 14 单位（精简款不"
+                   "消费横屏）");
+        XVirtualKeyboard_closePopup(kb);
+        XVirtualKeyboard_setParent(kb, NULL, 0);
+        XClassDelete(win);
+        XClassDelete(kb);
+    }
+    /* r3 §9 ⑧c：紧凑内切模式随动（setMode 尾部对偶 resize）+min 钳入
+       宿主落位。默认右下角案：480x960 紧凑 396x156@(84,804) 切 5 行
+       款 →h=184、y=min(804,960−184)=776、x=min(84,480−396)=84；
+       1280x800 自定义 5 行表切 Special →h=4+32+5×40=236、
+       y=min(644,564)=564。 */
+    xkb_tierCompactSwitchAssert(480, 960, "phone", "160",
+                                XKeyboardMode_Special, NULL, NULL,
+                                396, 184, 84, 776,
+                                "档位⑧c：480x960 紧凑内切 Special 随动 "
+                                "396x184（5 行精简款；y=776=min 钳入宿主"
+                                "，底缘 960 内）");
+    xkb_tierCompactSwitchAssert(1280, 800, "tablet", "160",
+                                XKeyboardMode_Special,
+                                kTierFiveRowMap, kTierFiveRowCtrl,
+                                704, 236, 576, 564,
+                                "档位⑧c-b：1280x800 紧凑内切 5 行自定义"
+                                "表随动 704x236（行数驱动高；y 钳入宿主）");
+    /* r3 §9 ⑩：legacy 紧凑内 setMode 窗矩形原样（resize 对 Legacy 早
+       退的守卫断言——复算自收缩防回归）。 */
+    xkb_tierCompactSwitchAssert(960, 480, NULL, NULL,
+                                XKeyboardMode_Special, NULL, NULL,
+                                420, 105, 540, 375,
+                                "档位⑩：legacy 紧凑内切 Special 窗矩形"
+                                "原样 420x105（resize 早退守卫）");
+    /* legacy 闸回归：XKB_METRICS=legacy 显式回旧轨（紧凑 45%/420 原式
+     * 与停靠 h=hostH/2 原式）。 */
+    xkb_tierSetLegacy();
+    xkb_tierDockAssert(480, 960, XKeyboardMode_TextLower,
+                       XKeyboardLayout_PinyinFull,
+                       480, 480, 0, 480,
+                       "档位回归闸：legacy 显式回旧轨 480x960→h=480 原式");
+    xkb_tierCompactAssert(960, 480, 420, 105, 540, 375,
+                          "档位回归闸：legacy 紧凑宽 min(960×45%=432,420)"
+                          "=420 原式 高 240×420/960=105");
+    xkb_tierRestore();
+    xkb_expect(getenv("XKB_FORCE_DEVICE") == NULL &&
+                   getenv("XKB_FORCE_DPI") == NULL,
+               "档位节复位：FORCE_DEVICE/FORCE_DPI 已清");
+#else
+    xkb_tierRestore(); /* 无编辑控件构建：仅复位（断言随 XLINEEDIT 裁剪）。 */
+#endif /* XLINEEDIT_ON */
 
     {
         int failures = xkb_failures;

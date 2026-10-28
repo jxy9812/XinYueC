@@ -65,6 +65,7 @@
 #include "XAbstractEventDispatcher.h"
 #if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
 #include "XWindowSystemInterface.h"
+#include "XPlatformPower.h" /* 电源策略推进（熄屏/挂起超时判定）。 */
 #endif /* XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON */
 #if XWINDOW_ON
 #include "XWindow_Protected.h"   /* XWindow_setDevicePixelRatio_internal：screen dpr 信号→窗口推送（DPI 定版 §1.6） */
@@ -99,6 +100,21 @@
 
 static void VXGuiApplication_deinit(XGuiApplication* app);
 static bool VXGuiApplication_notify(XObject* receiver, XEvent* event);
+
+/** @brief 电源策略巡检周期（毫秒）。
+ *  @details 熄屏/挂起的超时阈值是分钟级量纲，判定精度到秒足够；1Hz 巡检
+ *           既把「到期」延迟压在 1 秒内，又让空闲时几乎零开销（对比每帧
+ *           轮询：每帧一次时钟读取，徒增事件泵负担）。 */
+#define XGUI_POWER_POLICY_INTERVAL_MS 1000
+
+/** @brief 电源策略巡检回调（XTimer 周期到期）。
+ *  @details 只推进策略判定（空闲时长 vs 阈值），不做 UI 动作；熄屏动作
+ *           本身由平台契约下沉执行。 */
+static void xgui_powerPolicyTick(void* userData, XTimerData* timer)
+{
+    (void)userData; (void)timer;
+    XPlatformPower_tick();
+}
 #if XWIDGET_ON
 /** @brief 惰性注册"属性设置完成"钩子（定义见应用程序属性一节）。 */
 static void guiApp_ensureAttributeHookInstalled(void);
@@ -329,6 +345,13 @@ static void VXGuiApplication_deinit(XGuiApplication* app)
         XClassDelete((XClass*)app->m_windows);
         app->m_windows = NULL;
     }
+#if XAPPLICATION_ON && XWIDGET_ON
+    if (app->m_topLevelWidgets) {
+        /* 顶层控件由调用方拥有，这里只释放注册表容器。 */
+        XClassDelete((XClass*)app->m_topLevelWidgets);
+        app->m_topLevelWidgets = NULL;
+    }
+#endif /* XAPPLICATION_ON && XWIDGET_ON */
     app->m_focusWindow = NULL;
     app->m_modalWindow = NULL;
     app->m_focusObject = NULL;
@@ -370,6 +393,13 @@ static void VXGuiApplication_deinit(XGuiApplication* app)
         app->m_platformIntegration = NULL;
     }
 #endif /* XPLATFORMINTEGRATION_ON */
+    /* 电源策略巡检定时器：先停再释放（周期定时器不 kill 会留在分发器
+     * 轮询链里继续投递到期事件——泄漏面）。 */
+    if (app->m_powerPolicyTimer) {
+        XTimer_stop_base(app->m_powerPolicyTimer);
+        XClassDelete(app->m_powerPolicyTimer);
+        app->m_powerPolicyTimer = NULL;
+    }
 #if XSTYLEHINTS_ON
     if (app->m_styleHints) {
         XClassDelete(app->m_styleHints);
@@ -489,6 +519,11 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
     app->m_platformName = XString_create_utf8("xiniyue-embedded");
     app->m_overrideStack = XVector_Create(XCursor*);
     app->m_windows = XVector_Create(XWindow*);
+#if XAPPLICATION_ON && XWIDGET_ON
+    /* 顶层控件注册表随基类持有（XApplication 同名 API 转发本表；
+       调色板广播对只创建 XGuiApplication 的应用同样生效）。 */
+    app->m_topLevelWidgets = XVector_Create(XWidget*);
+#endif /* XAPPLICATION_ON && XWIDGET_ON */
 #if XPALETTE_ON
     XPalette_init_default(&app->m_palette);
     /* 调色板随颜色方案联动默认开启（对标 Qt 6.5 深浅色跟随）；
@@ -506,6 +541,23 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
             XGuiApplication_pumpNativeEvents, app);
     app->m_layoutDirection = XGuiApplication_resolveAutoLayoutDirection(app);
 #endif /* XPLATFORMINTEGRATION_ON */
+
+    /* 电源策略巡检定时器：周期推进熄屏/挂起超时判定（框架自有定时器
+     * 抽象，不在事件泵里做每帧轮询）。两个阈值都未设置时 tick 首行即
+     * 返回，空闲开销可忽略。 */
+    if (!app->m_powerPolicyTimer) {
+        app->m_powerPolicyTimer =
+            XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (app->m_powerPolicyTimer) {
+            XTimer_setInterval(app->m_powerPolicyTimer,
+                               XGUI_POWER_POLICY_INTERVAL_MS);
+            XTimer_setSingleShot(app->m_powerPolicyTimer, false);
+            XTimer_setTimerCallback(app->m_powerPolicyTimer,
+                                    xgui_powerPolicyTick);
+            XTimer_setUserData(app->m_powerPolicyTimer, app);
+            XTimer_start_base(app->m_powerPolicyTimer);
+        }
+    }
 
     /* 所有成员已经处于可用状态后再发布 GUI 单例，避免初始化回调看到
        只有 XCoreApplication 已登记、GUI 尾部尚未完成的中间状态。 */
@@ -1726,6 +1778,8 @@ XGuiDpiRoundingPolicy XGuiApplication_highDpiScaleFactorRoundingPolicy(void)
 
 void XGuiApplication_processEvents(XEventLoopProcessEventsFlags flags)
 {
+    /* 电源策略（熄屏/挂起超时判定）**不在此处轮询**：由 init 时挂上的
+     * 周期定时器（XTimer，1Hz）驱动，见 xgui_powerPolicyTick。 */
 #if XPLATFORMINTEGRATION_ON
     XGuiApplication* app = XGuiApplication_instance();
     /* 原生事件由 XAbstractEventDispatcher 的轮询回调统一泵空；这里不再

@@ -1564,8 +1564,17 @@ static void xwin_applySoftwareWindowState(XWindow* self,
                               XWindowState_FullScreen)) != 0;
     if (enterZoom && !wasZoom) {
         if (!data->m_normalGeometryValid) {
-            data->m_normalGeometry = data->m_geometry;
-            data->m_normalGeometryValid = true;
+            /* 【空几何守卫 2026-10-28】当前几何为空（0×0——建窗序异常/
+             * 未布局即进全屏）时不得存为 normalGeometry：Qt 的
+             * normalGeometry 只在正常态持有真实 crect 时才有意义，存入
+             * 0×0 会让退出全屏把窗口还原成零尺寸（输入命中全失+零重绘
+             * =界面冻结）。空几何时不标记 valid，退出走「保持当前几何」
+             * 兜底（restore 分支要求 valid）。 */
+            if (data->m_geometry.width > 0 && data->m_geometry.height > 0)
+            {
+                data->m_normalGeometry = data->m_geometry;
+                data->m_normalGeometryValid = true;
+            }
         }
         if (xwin_screenRect(self, &target)) {
             /* 旋转感知最大化（2026-10-22 用户需求「全屏换向保持全屏」）：
@@ -1647,7 +1656,19 @@ void XWindow_reportWindowStateChanged(XWindow* self, XWindowState state)
     data->m_windowStates = (XWindowStates)state;
     after = XWindow_effectiveState(data);
     if (after != before)
+    {
         XWindow_windowStateChanged_signal(self, after);
+        /* 【WindowStateChange 事件补派 2026-10-28 对齐 Qt】WM 回写路径
+         * 此前只发信号——XEvent WINDOW_STATE_CHANGE 只在控件侧请求路径
+         * （XWidget_setWindowState 尾部）派发，平台强制改态（WM 强制
+         * 还原/安卓沉浸式启动对齐）时控件树收不到 changeEvent。Qt 全部
+         * 路径都会以 QEvent::WindowStateChange 送达 widget（qwidgetwindow
+         * .cpp 桥接转发）。本处把事件发到**窗口对象**：普通 XWindow 无
+         * 事件分支自然忽略；XWidgetWindow（XWidget.c 桥）转发给归属顶
+         * 层控件——与软件路径「直派控件」在控件侧汇合为同一事件，不重
+         * 不漏（软件路径不发窗口事件，无双重派发）。 */
+        XWindow_sendEvent(self, XEVENT_TYPE_WINDOW_STATE_CHANGE);
+    }
     /* 最小化上报同样要联动可见性枚举（Minimized→Minimized 可见性），
        与 setWindowStates 末尾的 updateVisibility 保持一致。 */
     XWindow_updateVisibility(self);

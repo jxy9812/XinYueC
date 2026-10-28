@@ -416,18 +416,62 @@ static void spinbox_onEditingFinished(XObject* sender, XVarList* args)
     XAbstractSpinBox_interpretText((XAbstractSpinBox*)self);
 }
 
-/** @brief 命中检测：点击位置是否在按钮区（右 16px）。 */
-static bool spinbox_hitButton(const XSpinBox* self, const XPoint* pos)
+/** @brief 步进按钮列几何（以控件本地坐标表达）。
+ *
+ *  @details 与样式层同源：CC_SpinBox/SC_SpinBoxUp 由
+ *  XStyle_subControlRect 给出（样式内部经 xcs_spinBoxColumn 单点推导），
+ *  故命中区恒等于实绘按钮区。此前本处写死 `w-16` / `h/2`，与样式
+ *  公式分叉：窄控件下样式列宽可能只有 w/4，命中区却仍按 16px 判定
+ *  ——「点箭头没反应 / 点输入框却步进」的成因。
+ *
+ *  无样式时回落既有口径（16px 右列、上下各半），与
+ *  XSpinBox 的非样式绘制路径一致。 */
+static bool spinbox_buttonRect(const XSpinBox* self, XRect* out)
 {
     int w = XWidget_width((XWidget*)self);
-    return pos && pos->x >= w - XSPINBOX_BUTTON_W;
+    int h = XWidget_height((XWidget*)self);
+    if (w <= 2 || h <= 2) return false;
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        XStyleOption opt;
+        XRect up;
+        XStyleOption_init(&opt, XStyleCC_SpinBox);
+        XRect_init(&opt.m_rect, 0, 0, w, h);
+        opt.m_state = XWidget_isEnabled((XWidget*)self)
+            ? (uint32_t)XStyleState_Enabled : 0;
+        opt.m_spinFrame = self->m_base.m_frame;
+        opt.m_spinSymbols = XAbstractSpinBox_buttonSymbols(
+            (XAbstractSpinBox*)self);
+        up = XStyle_subControlRect(XStyle_defaultStyle(),
+                                   XStyleCC_SpinBox, &opt,
+                                   XStyleSC_SpinBoxUp, (XWidget*)self);
+        if (up.width > 0 && up.height > 0) {
+            /* 上/下按钮等高等宽，列高 = 2*hb；合成整列判定。 */
+            XRect_init(out, up.x, up.y, up.width, up.height * 2);
+            return true;
+        }
+        return false;
+    }
+#endif /* XSTYLE_ON */
+    XRect_init(out, w - XSPINBOX_BUTTON_W, 0, XSPINBOX_BUTTON_W, h);
+    return true;
+}
+
+/** @brief 命中检测：点击位置是否在按钮列内。 */
+static bool spinbox_hitButton(const XSpinBox* self, const XPoint* pos)
+{
+    XRect col;
+    if (!pos || !spinbox_buttonRect(self, &col)) return false;
+    return pos->x >= col.x && pos->x < col.x + col.width &&
+           pos->y >= col.y && pos->y < col.y + col.height;
 }
 
 /** @brief 按钮区上/下半：上箭头（true）/下箭头（false）。 */
 static bool spinbox_buttonIsUp(const XSpinBox* self, const XPoint* pos)
 {
-    int h = XWidget_height((XWidget*)self);
-    return pos->y < h / 2;
+    XRect col;
+    if (!pos || !spinbox_buttonRect(self, &col)) return false;
+    return pos->y < col.y + col.height / 2;
 }
 
 /* ==================== 虚槽实现 ==================== */
@@ -941,6 +985,62 @@ XVtable* XSpinBox_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
+/** @brief 按 Qt 6.8 QSpinBox::sizeHint 语义计算建议尺寸（文本宽 + 步进
+ *         按钮区 + 风格边距）。
+ * @details [sizeHint 补齐 2026-10-27 视觉走查 P1] XSpinBox 是此前唯一
+ *          未设置 sizeHint 的输入类控件（XComboBox/XLineEdit/XPushButton
+ *          均有）→ 布局度量回落 0（XWidget.c 初始 sizeHint=(-1,-1)），
+ *          窄档盒布局竖排（按 hint 高给尺寸）时高度塌 0 ⇒ **控件整体
+ *          不可见**（ATV61 窄档「站号」「轮询」两个数字框消失，真机
+ *          截图实证）。本函数按内容宽+步进区给出建议高，与绘制路径
+ *          同经风格取边距。 */
+static XSize spinbox_computeSizeHint(const XSpinBox* self)
+{
+    XSize out;
+    XFont font;
+    const char* text;
+    int textW = 0;
+    int textH = 0;
+    int stepW = 12;
+    int frame = 4;
+    if (!self) { XSize_init(&out, -1, -1); return out; }
+    font = XWidget_font((XWidget*)self);
+    /* XAbstractSpinBox_text 返回 const char*（内嵌编辑框文本），非
+     * XString*——误调 XString_toUtf8 会把 char* 当 XString* 解引用崩溃。 */
+    text = XSpinBox_text(self);
+    if (!text) text = "";
+    textW = XPainter_textWidth(&font, text);
+    textH = XPainter_textHeight(&font);
+    /* 空文本（初值未刷）时按三字位量宽：字体须在释放前量（用已释放的
+     * font 复量=use-after-free）。 */
+    if (textW <= 0) textW = XPainter_textWidth(&font, "000");
+    XClassDeinit(&font);
+    {
+        /* 步进按钮区宽（上下箭头列）+ 边框留白：与绘制路径同量级。 */
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStyleCT_SpinBox);
+        if (XStyle_defaultStyle()) {
+            frame = XStyle_pixelMetric(XStyle_defaultStyle(),
+                                       XStylePM_SpinBoxFrameWidth, &opt);
+        }
+        if (frame <= 0) frame = 1;
+        stepW = 12; /* 步进按钮列宽（上下箭头）：绘制路径同量级。 */
+    }
+    if (textH <= 0) textH = 14;
+    XSize_init(&out, textW + stepW + frame * 2, textH + frame * 2);
+    return out;
+}
+
+/** @brief 刷新基类 XWidget 的 sizeHint/minimumSizeHint 存储位。 */
+static void spinbox_refreshSizeHint(XSpinBox* self)
+{
+    XSize hint;
+    if (!self) return;
+    hint = spinbox_computeSizeHint(self);
+    XWidget_setSizeHint((XWidget*)self, &hint);
+    XWidget_setMinimumSizeHint((XWidget*)self, &hint);
+}
+
 void XSpinBox_init(XSpinBox* self, XWidget* parent, XWidgetFlags flags)
 {
     XLineEdit* edit;
@@ -984,6 +1084,9 @@ void XSpinBox_init(XSpinBox* self, XWidget* parent, XWidgetFlags flags)
                           (size_t)XLineEdit_editingFinished_signal(edit),
                           spinbox_onEditingFinished);
     }
+    /* [sizeHint 补齐 2026-10-27] 首次建立建议尺寸（窄档竖排按 hint 高
+     * 给尺寸——无 hint 则高度塌 0、控件不可见）。 */
+    spinbox_refreshSizeHint(self);
 }
 
 XSpinBox* XSpinBox_create_ex(XMemoryType memory, XWidget* parent,
@@ -1047,6 +1150,8 @@ void XSpinBox_setValue(XSpinBox* self, int value)
     self->m_textDirty = false;
     self->m_base.m_cleared = false;
     spinbox_refreshText(self);
+    /* 文本宽度随值变化（多位→少位）⇒ 建议宽随之刷新。 */
+    spinbox_refreshSizeHint(self);
     spinbox_emitInt(self, (size_t)XSpinBox_valueChanged_signal(self),
                     self->m_value);
 }

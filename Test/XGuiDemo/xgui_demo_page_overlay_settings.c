@@ -767,6 +767,11 @@ static void ov_applyTierGeometry(bool narrow)
         XWidget_setFixedHeight((XWidget*)s_ov.m_memCheck, chkH);
     }
     XLayout_setSpacing((XLayout*)&s_ov.m_rowsRow, narrow ? 6 : 10);
+    /* [窄档翻竖排 2026-10-27 视觉走查 P3-I] 五开关横排 400 宽装不下
+     * （「CPU/GPU」与「网络」间距被压到 0），窄档纵列零拥挤。 */
+    XBoxLayout_setDirection(&s_ov.m_rowsRow,
+        narrow ? XBoxLayoutDirection_TopToBottom
+               : XBoxLayoutDirection_LeftToRight);
 
     /* 「内存行」：中缝 32→12，两下拉 110/96，合计 358 ≤ 364。 */
     ov_setRowGap(&s_ov.m_memRow, 3, narrow ? 12 : 32);

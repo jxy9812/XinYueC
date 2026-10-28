@@ -246,6 +246,14 @@
 /* 嵌入式单屏直写：面板 60Hz 量级，绘制超频纯属浪费 CPU（present 是阻塞
  * pan，绘制更快只会把队列打满）。取 60 与面板刷新对齐。 */
 #define XGUI_REPAINT_MAX_FPS 60
+#elif defined(__ANDROID__)
+/* [安卓限帧缺省补齐 2026-10-27] 安卓与 fbdev 同属「直写/整帧提交」形态
+ * （XPlatformWindowAndroid 的 present 是 surface 整帧上屏），此前落进
+ * else 分支取 0=不限：真机实测任何拖动/滚动都触发满速重绘——HUD 读数
+ * FPS 155、CPU 107%，同时因每帧整窗重画而表现为**画面残留重、卡顿**，
+ * 且宏看似"无效"（实际是默认值根本没进限帧分支）。
+ * 取 60 与面板刷新对齐（手机普遍 60/120Hz，60 已足够顺滑且省电）。 */
+#define XGUI_REPAINT_MAX_FPS 60
 #else
 #define XGUI_REPAINT_MAX_FPS 0
 #endif

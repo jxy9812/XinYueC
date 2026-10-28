@@ -30716,8 +30716,15 @@ static void test_toolbox_contract(void)
 
     XToolBox_setItemEnabled(box, 0, false);
     XToolBox_setCurrentIndex(box, 0);
-    tbx_expect(XToolBox_currentIndex(box) == 2, "禁用条目不可选");
+    /* [Qt 6.8.3 定案 qtoolbox.cpp:387-403 + 110-115] setCurrentIndex 只拦
+     * 越界与同页，page(index) 不检查 enabled → 程序化切换**允许**落在禁用
+     * 条目上；"禁用条目不可点选"是页头按钮 setEnabled(false) 后 clicked
+     * 不发射的交互层语义。禁用**当前页**时 Qt 才自动切到相邻启用页
+     * （qtoolbox.cpp:552-571）。 */
+    tbx_expect(XToolBox_currentIndex(box) == 0,
+               "禁用条目仍可被程序化选中（Qt 同）");
     XToolBox_setItemEnabled(box, 0, true);
+    XToolBox_setCurrentIndex(box, 2);   /* 恢复现场 */
 
     XToolBox_removeItem(box, 2);
     tbx_expect(XToolBox_count(box) == 2, "移除后剩 2 页");
@@ -30926,13 +30933,26 @@ static void test_small_widgets_contract(void)
     /* ---- XFocusFrame ---- */
     {
         XFocusFrame* ff = XFocusFrame_create(NULL, 0);
-        XLabel* target = XLabel_create(NULL, 0);
+        XLabel* host = XLabel_create(NULL, 0);
+        XLabel* target = XLabel_create((XWidget*)host, 0);
         sml_expect(ff != NULL, "XFocusFrame 创建");
+        /* [Qt 6.8.3 定案 qfocusframe.cpp:149-203] setWidget 只在
+         * "非顶层窗口且父控件非 SubWindow" 时记录目标；目标是顶层窗口时
+         * 走 else 分支——d->widget = nullptr 且 hide()。故往返用例须用
+         * 有父的子控件（QFocusFrame 的正常用法：焦点框画在控件周围）。 */
         XFocusFrame_setWidget(ff, (XWidget*)target);
         sml_expect(XFocusFrame_widget(ff) == (XWidget*)target,
-                   "setWidget/widget 往返");
+                   "setWidget/widget 往返（子控件目标）");
+        {
+            /* 目标是顶层窗口 → Qt 不记录（置空 + 隐藏） */
+            XLabel* win = XLabel_create(NULL, 0);
+            XFocusFrame_setWidget(ff, (XWidget*)win);
+            sml_expect(XFocusFrame_widget(ff) == NULL,
+                       "顶层窗口目标不记录（Qt 同：置空 + 隐藏）");
+            XClassDelete(win);
+        }
         XClassDelete(ff);
-        XClassDelete(target);
+        XClassDelete(host);   /* target 随 host 析构 */
     }
 }
 /* ==================== XSplashScreen 契约测试（对标 QSplashScreen） === */
@@ -36650,6 +36670,9 @@ static void test_dialog_r2_defect_locks(void)
                 box, (int)(XDialogButtonBoxStandard_Ok |
                            XDialogButtonBoxStandard_Cancel));
             s_r2RejectedCount = 0;
+            /* [根修 2026-10-27] 框架侧 detachInputRecursive 已改为"只清事件
+             * 层登记、不动显隐位"（XWidget_deactivateInputRegistrations），
+             * 故普通 open 收口后对话框仍可正常复用——不再需要走 open_2 绕过。 */
             XObject_connect_1((XObject*)box,
                 (size_t)XDialog_rejected_signal((XDialog*)box),
                 (XObject*)box, r2_rejectedSlot, XConnectionType_Direct);
@@ -36688,12 +36711,22 @@ static void test_dialog_r2_defect_locks(void)
             if (cancel) {
                 XRect bb = XWidget_geometry((XWidget*)box->m_buttonBox);
                 XRect br = XWidget_geometry((XWidget*)cancel);
-                expect_true(XWidget_childAt_2(
-                                (XWidget*)box,
-                                bb.x + br.x + br.width / 2,
-                                bb.y + br.y + br.height / 2) ==
-                                (XWidget*)cancel,
-                            "r2#1 二次 open 取消钮中心命中仍=按钮");
+                /* QMessageBox 每次 open/setText 会**重建按钮**
+                 * （QMessageBoxPrivate::detectEscapeButton → 重建按钮布局），
+                 * 故二次 open 后旧 cancel 指针已失效——须重新取当前按钮再断言。 */
+                cancel = XMessageBox_button(box, XDialogButtonBoxStandard_Cancel);
+                expect_true(cancel != NULL,
+                            "r2#1 二次 open 取消钮存在（消息框重建按钮）");
+                if (cancel) {
+                    XRect bb2 = XWidget_geometry((XWidget*)box->m_buttonBox);
+                    XRect br2 = XWidget_geometry((XWidget*)cancel);
+                    expect_true(XWidget_childAt_2(
+                                    (XWidget*)box,
+                                    bb2.x + br2.x + br2.width / 2,
+                                    bb2.y + br2.y + br2.height / 2) ==
+                                    (XWidget*)cancel,
+                                "r2#1 二次 open 取消钮中心命中仍=按钮");
+                }
             }
             XAbstractButton_click(cancel);
             expect_true(!XWidget_isVisible((XWidget*)box) &&

@@ -489,6 +489,28 @@ void XAbstractScrollArea_init(XAbstractScrollArea* self, XWidget* parent,
     hint.width = 256;
     hint.height = 192;
     XWidget_setSizeHint((XWidget*)self, &hint);
+    /* [minimumSizeHint 补齐 2026-10-27 框架对齐] Qt
+     * QAbstractScrollArea::minimumSizeHint（qabstractscrollarea.cpp:
+     * 1405-1419）= 滚动条尺寸 + 边框（2×frameWidth）——本类无「滚动条
+     * 容器」概念（Qt 的 scrollBarContainers 在 XGui 合并进滚动区自身），
+     * 故取「视口最小 + 对向滚动条厚度 + 边框」。补齐后布局竖排收缩有
+     * 真实下界（此前 min=0，视图族控件可被压塌至不可见）。 */
+    {
+        XSize minHint;
+        int hbarH = 0;
+        int vbarW = 0;
+        XSize sh;
+        if (self->m_hScrollBar) {
+            sh = XWidget_sizeHint((XWidget*)self->m_hScrollBar);
+            hbarH = sh.height;
+        }
+        if (self->m_vScrollBar) {
+            sh = XWidget_sizeHint((XWidget*)self->m_vScrollBar);
+            vbarW = sh.width;
+        }
+        XSize_init(&minHint, vbarW + 2, hbarH + 2);
+        XWidget_setMinimumSizeHint((XWidget*)self, &minHint);
+    }
 }
 
 XAbstractScrollArea* XAbstractScrollArea_create_ex(

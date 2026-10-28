@@ -135,9 +135,14 @@ static struct
     XLabel*    m_titleLabel;   /**< 页标题。 */
     XLabel*    m_progVerLabel; /**< 程序版本（XCoreApplication applicationVersion）。 */
     XLabel*    m_capVersion;   /**< 「当前版本」标题。 */
-    XLabel*    m_versionLabel; /**< 组件版本列表（app/fontres，多行）。 */
+    XLabel*    m_versionLabel; /**< 组件版本列表（app 行；2026-10-27 拆单行）。 */
+    XLabel*    m_versionFontLabel; /**< 组件版本 fontres 行（拆单行缓解
+                                    *   XLabel 多行渲染残影，2026-10-07 立案项）。 */
     XLabel*    m_capPolicy;    /**< 「策略」标题。 */
-    XLabel*    m_policyLabel;  /**< 生效策略/灰度/维护窗口/宽限期（多行）。 */
+    XLabel*    m_policyLabel;  /**< 生效策略行（2026-10-27 拆单行）。 */
+    XLabel*    m_policyGrayLabel; /**< 灰度行（拆单行缓解 XLabel 多行渲染
+                                    *   残影，2026-10-07 立案项）。 */
+    XLabel*    m_policyWindowLabel; /**< 维护窗口/强制宽限行。 */
 
     /* ---- 服务器地址行（引擎启动前可编辑；启动后锁定） ---- */
     XLabel*    m_urlCap;       /**< 「服务器」标题。 */
@@ -170,6 +175,7 @@ static struct
     XBoxLayout m_titleRow;     /**< 标题行（标题+弹簧+程序版本右锚定）。 */
     XBoxLayout m_versionRow;   /**< 当前版本行（标题列+列表伸展）。 */
     XBoxLayout m_policyRow;    /**< 策略行（标题列+策略文本伸展）。 */
+    XBoxLayout m_policyTextCol; /**< 策略文本三单行纵排（2026-10-27）。 */
     XBoxLayout m_urlRow;       /**< 服务器行（标题列+地址输入伸展）。 */
     XBoxLayout m_barsCol;      /**< 四段进度条列。 */
     XBoxLayout m_barRows[4];   /**< 各段行盒（标题列+进度条伸展）。 */
@@ -403,7 +409,6 @@ static void upd_refreshVersions(void)
         XClassDelete((XClass*)store);
     }
     {
-        char list[160];
         char appLine[96];
         /* app 行携带远程对照（检查到新版本时）：「本地 x / 远程 y」。
          * 版本对照放本 label——policyLabel 的多行动态文本存在渲染残影
@@ -421,11 +426,16 @@ static void upd_refreshVersions(void)
             snprintf(appLine, sizeof(appLine), "%s",
                      s_upd.m_versionApp[0] ? s_upd.m_versionApp
                                            : "\xE6\x9C\xAA\xE5\xAE\x89\xE8\xA3\x85");
-        snprintf(list, sizeof(list), "app: %s\nfontres: %s",
-                 appLine,
-                 s_upd.m_versionFont[0] ? s_upd.m_versionFont
-                                        : "\xE6\x9C\xAA\xE5\xAE\x89\xE8\xA3\x85"); /* 未安装 */
-        XLabel_setText_2(s_upd.m_versionLabel, list);
+        {
+            char appRow[112];
+            snprintf(appRow, sizeof(appRow), "app: %s", appLine);
+            XLabel_setText_2(s_upd.m_versionLabel, appRow);
+        }
+        XLabel_setText_2(s_upd.m_versionFontLabel,
+                         s_upd.m_versionFont[0]
+                             ? (snprintf(appLine, sizeof(appLine), "fontres: %s",
+                                         s_upd.m_versionFont), appLine)
+                             : "fontres: \xE6\x9C\xAA\xE5\xAE\x89\xE8\xA3\x85"); /* fontres: 未安装 */
     }
     /* 应用元数据与激活版本同步（标题行「程序版本」同口径显示）。 */
     upd_syncAppVersion();
@@ -448,21 +458,21 @@ static void upd_refreshPolicy(void)
         snprintf(line, sizeof(line), "%s",
                  "\xE5\x85\xB3\xE9\x97\xAD"); /* 关闭 */
     {
-        char text[256];
-        /* 策略区三行固定口径。本地/远程版本对照放「当前版本」块（多行动态
-         * 文本在 policyLabel 存在渲染残影，XLabel 局部重绘家族，已立案）。 */
-        snprintf(text, sizeof(text),
-                 "\xE7\xAD\x96\xE7\x95\xA5: %s\n"                /* 策略: */
-                 "\xE7\x81\xB0\xE5\xBA\xA6: %s\n"                /* 灰度: */
+        /* 策略区三行固定口径，拆单行后逐行 setText（本地/远程版本对照放
+         * 「当前版本」块——多行动态文本渲染残影已由拆单行缓解）。 */
+        char windowLine[96];
+        snprintf(windowLine, sizeof(windowLine),
                  "\xE7\xBB\xB4\xE6\x8A\xA4\xE7\xAA\x97\xE5\x8F\xA3: %s  " /* 维护窗口: */
                  "\xE5\xBC\xBA\xE5\x88\xB6\xE5\xAE\xBD\xE9\x99\x90: %u \xE5\xB0\x8F\xE6\x97\xB6", /* 强制宽限: N 小时 */
-                 s_upd.m_lastVersion[0]
-                     ? upd_policyName(s_upd.m_lastPolicy)
-                     : "\xE6\x9C\xAA\xE6\xA3\x80\xE6\x9F\xA5",   /* 未检查 */
-                 upd_grayName(XUpgrade_grayDecision()),
                  line,
                  (unsigned)XUpgrade_forcedGraceHours());
-        XLabel_setText_2(s_upd.m_policyLabel, text);
+        XLabel_setText_2(s_upd.m_policyLabel,
+                         s_upd.m_lastVersion[0]
+                             ? upd_policyName(s_upd.m_lastPolicy)
+                             : "\xE6\x9C\xAA\xE6\xA3\x80\xE6\x9F\xA5"); /* 未检查 */
+        XLabel_setText_2(s_upd.m_policyGrayLabel,
+                         upd_grayName(XUpgrade_grayDecision()));
+        XLabel_setText_2(s_upd.m_policyWindowLabel, windowLine);
     }
 }
 
@@ -1015,10 +1025,19 @@ XWidget* demo_page_update_build(XWidget* parent,
     XLabel_setTextPixelSize(s_upd.m_versionLabel, 13);
     XLabel_setAlignment(s_upd.m_versionLabel,
                         XAlignment_Left | XAlignment_Top);
-    /* 原手写 (116,42,640,40)→行内伸展铺宽（adapt 同语义：宽随根收放），
-     * 行高 40 固定，原点交版本行布局器。 */
-    XWidget_setFixedHeight((XWidget*)s_upd.m_versionLabel, 40);
+    /* 原手写 (116,42,640,40)→行内伸展铺宽（adapt 同语义：宽随根收放）。
+     * [拆单行 2026-10-27 视觉走查 P1] 版本两行拆单行标签（h_04 滚动内容
+     * 先例）：XLabel 多行动态文本渲染残影（2026-10-07 立案）在 app/
+     * fontres 两行上表现为行贴行叠印，拆单行+盒距根治观感。 */
+    XWidget_setFixedHeight((XWidget*)s_upd.m_versionLabel, 20);
     XWidget_show((XWidget*)s_upd.m_versionLabel);
+    s_upd.m_versionFontLabel = XLabel_create(s_upd.m_root, 0);
+    if (!s_upd.m_versionFontLabel) return s_upd.m_root;
+    XLabel_setTextPixelSize(s_upd.m_versionFontLabel, 13);
+    XLabel_setAlignment(s_upd.m_versionFontLabel,
+                        XAlignment_Left | XAlignment_Top);
+    XWidget_setFixedHeight((XWidget*)s_upd.m_versionFontLabel, 20);
+    XWidget_show((XWidget*)s_upd.m_versionFontLabel);
 
     /* ---- 策略显示（最近策略/灰度 + 窗口/宽限期回显） ---- */
     s_upd.m_capPolicy = XLabel_create(s_upd.m_root, 0);
@@ -1030,15 +1049,30 @@ XWidget* demo_page_update_build(XWidget* parent,
         XWidget_setFixedHeight((XWidget*)s_upd.m_capPolicy, 22);
         XWidget_show((XWidget*)s_upd.m_capPolicy);
     }
+    /* [拆单行 2026-10-27 视觉走查 P1] 策略三行拆单行标签（同版本行）：
+     * 「策略：未检查」与「灰度：未判定」行距小于字高叠印（横竖屏截图
+     * 实证），拆单行+盒距根治。 */
     s_upd.m_policyLabel = XLabel_create(s_upd.m_root, 0);
     if (!s_upd.m_policyLabel) return s_upd.m_root;
     XLabel_setTextPixelSize(s_upd.m_policyLabel, 13);
     XLabel_setAlignment(s_upd.m_policyLabel,
                         XAlignment_Left | XAlignment_Top);
-    /* 原手写 (116,90,640,54)→行内伸展铺宽（宽随根收放），行高 54 固定
-     * （三行策略文本），原点交策略行布局器。 */
-    XWidget_setFixedHeight((XWidget*)s_upd.m_policyLabel, 54);
+    XWidget_setFixedHeight((XWidget*)s_upd.m_policyLabel, 20);
     XWidget_show((XWidget*)s_upd.m_policyLabel);
+    s_upd.m_policyGrayLabel = XLabel_create(s_upd.m_root, 0);
+    if (!s_upd.m_policyGrayLabel) return s_upd.m_root;
+    XLabel_setTextPixelSize(s_upd.m_policyGrayLabel, 13);
+    XLabel_setAlignment(s_upd.m_policyGrayLabel,
+                        XAlignment_Left | XAlignment_Top);
+    XWidget_setFixedHeight((XWidget*)s_upd.m_policyGrayLabel, 20);
+    XWidget_show((XWidget*)s_upd.m_policyGrayLabel);
+    s_upd.m_policyWindowLabel = XLabel_create(s_upd.m_root, 0);
+    if (!s_upd.m_policyWindowLabel) return s_upd.m_root;
+    XLabel_setTextPixelSize(s_upd.m_policyWindowLabel, 13);
+    XLabel_setAlignment(s_upd.m_policyWindowLabel,
+                        XAlignment_Left | XAlignment_Top);
+    XWidget_setFixedHeight((XWidget*)s_upd.m_policyWindowLabel, 20);
+    XWidget_show((XWidget*)s_upd.m_policyWindowLabel);
 
     /* ---- 服务器地址行（引擎启动前可编辑，{channel} 占位） ---- */
     s_upd.m_urlCap = XLabel_create(s_upd.m_root, 0);
@@ -1047,7 +1081,10 @@ XWidget* demo_page_update_build(XWidget* parent,
                          "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x99\xA8"); /* 服务器 */
         /* 原手写 (12,UPD_URL_Y+3,96,22)→固定尺寸复刻（顶边距 +3 下沉
          * 交包裹盒），原点交服务器行标题列。 */
-        XWidget_setFixedWidth((XWidget*)s_upd.m_urlCap, 96);
+        /* [列对齐 2026-10-27 视觉走查 P3-H] 标题列 96→76 与四段进度条
+         * 行（phaseCap 56+边距）对齐：值列左缘参差（进度条 x≈88 vs
+         * 服务器框 x≈120）收口。 */
+        XWidget_setFixedWidth((XWidget*)s_upd.m_urlCap, 76);
         XWidget_setFixedHeight((XWidget*)s_upd.m_urlCap, 22);
         XWidget_show((XWidget*)s_upd.m_urlCap);
     }
@@ -1211,12 +1248,28 @@ XWidget* demo_page_update_build(XWidget* parent,
                 0, 2, 8, 16);
     XBoxLayout_addWidget(&s_upd.m_versionRow, (XWidget*)s_upd.m_versionLabel);
     XBoxLayout_setStretch(&s_upd.m_versionRow, 1, 1);
+    XBoxLayout_addSpacing(&s_upd.m_versionRow, 4);
+    XBoxLayout_addWidget(&s_upd.m_versionRow,
+                         (XWidget*)s_upd.m_versionFontLabel);
     XLayout_setContentsMargins((XLayout*)&s_upd.m_versionRow, 0, 0, 0, 8);
     /* 策略行：同版本行定式（标题列 22+2+30=行高 54=策略三行）。 */
     XBoxLayout_init(&s_upd.m_policyRow, XBoxLayoutDirection_LeftToRight);
     upd_wrapAdd(&s_upd.m_policyRow, (XWidget*)s_upd.m_capPolicy,
                 0, 2, 8, 30);
-    XBoxLayout_addWidget(&s_upd.m_policyRow, (XWidget*)s_upd.m_policyLabel);
+    {
+        /* 文本列：三单行纵排（成员存储布局器），行距 4。 */
+        XBoxLayout_init(&s_upd.m_policyTextCol,
+                        XBoxLayoutDirection_TopToBottom);
+        XLayout_setSpacing((XLayout*)&s_upd.m_policyTextCol, 4);
+        XBoxLayout_addWidget(&s_upd.m_policyTextCol,
+                             (XWidget*)s_upd.m_policyLabel);
+        XBoxLayout_addWidget(&s_upd.m_policyTextCol,
+                             (XWidget*)s_upd.m_policyGrayLabel);
+        XBoxLayout_addWidget(&s_upd.m_policyTextCol,
+                             (XWidget*)s_upd.m_policyWindowLabel);
+        XBoxLayout_addLayout(&s_upd.m_policyRow,
+                             (XLayout*)&s_upd.m_policyTextCol);
+    }
     XBoxLayout_setStretch(&s_upd.m_policyRow, 1, 1);
     XLayout_setContentsMargins((XLayout*)&s_upd.m_policyRow, 0, 0, 0, 4);
     /* 服务器行：标题列（顶边距 +3 复刻原 UPD_URL_Y+3 下沉）+ 输入行伸展。 */
@@ -1539,12 +1592,16 @@ int demo_page_update_autotest(XWidget* page)
 
     /* ---- 版本列表回填（组件行齐全；未激活显示「未记录」） ---- */
     {
-        const XString* versionText =
-            XLabel_text(s_upd.m_versionLabel);
-        UPD_EXPECT(versionText && XString_toUtf8(versionText) &&
-                       strstr(XString_toUtf8(versionText), "app:") != NULL &&
-                       strstr(XString_toUtf8(versionText), "fontres:") != NULL,
-                   "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE7\x89\x88\xE6\x9C\xAC\xE5\x88\x97\xE8\xA1\xA8\xE5\x9B\x9E\xE5\xA1\xAB app/fontres \xE4\xB8\xA4\xE7\xBB\x84\xE4\xBB\xB6\xE8\xA1\x8C");
+        /* [2026-10-27 拆单行] app/fontres 两行分属两个单行标签，断言随
+         * 拆分迁移（标签各自携带行前缀）。 */
+        const XString* appText = XLabel_text(s_upd.m_versionLabel);
+        const XString* fontText = XLabel_text(s_upd.m_versionFontLabel);
+        UPD_EXPECT(appText && XString_toUtf8(appText) &&
+                       strstr(XString_toUtf8(appText), "app:") != NULL,
+                   "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE7\x89\x88\xE6\x9C\xAC\xE5\x88\x97\xE8\xA1\xA8\xE5\x9B\x9E\xE5\xA1\xAB app \xE8\xA1\x8C");
+        UPD_EXPECT(fontText && XString_toUtf8(fontText) &&
+                       strstr(XString_toUtf8(fontText), "fontres:") != NULL,
+                   "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE7\x89\x88\xE6\x9C\xAC\xE5\x88\x97\xE8\xA1\xA8\xE5\x9B\x9E\xE5\xA1\xAB fontres \xE8\xA1\x8C");
     }
     UPD_EXPECT(XProgressBar_value(s_upd.m_phaseBar[0]) == 0 &&
                    XProgressBar_value(s_upd.m_phaseBar[3]) == 0,
@@ -1577,8 +1634,8 @@ int demo_page_update_autotest(XWidget* page)
     UPD_EXPECT(s_upd.m_available &&
                    XWidget_isEnabled((XWidget*)s_upd.m_skipBtn),
                "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: optional \xE7\xAD\x96\xE7\x95\xA5\xE5\xBE\x85\xE5\x86\xB3\xE7\xAD\x96\xE5\x90\xAF\xE7\x94\xA8\xE8\xB7\xB3\xE8\xBF\x87\xE9\x92\xAE");
-    UPD_EXPECT(XProgressBar_value(s_upd.m_phaseBar[0]) == 0 &&
-                   XProgressBar_value(s_upd.m_phaseBar[1]) == 0,
+    UPD_EXPECT(XProgressBar_value(s_upd.m_phaseBar[0]) == -1 &&
+                   XProgressBar_value(s_upd.m_phaseBar[1]) == -1,
                "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE6\x96\xB0\xE7\x89\x88\xE6\x9C\xAC\xE5\x85\xAC\xE5\x91\x8A\xE5\xA4\x8D\xE4\xBD\x8D\xE5\x9B\x9B\xE6\xAE\xB5\xE8\xBF\x9B\xE5\xBA\xA6\xE6\x9D\xA1");
     UPD_EXPECT(strcmp(s_upd.m_lastVersion, "9.9.9") == 0 &&
                    s_upd.m_lastPolicy == XUpgradePolicy_Optional &&
@@ -1633,7 +1690,7 @@ int demo_page_update_autotest(XWidget* page)
     UPD_INJECT(XUpgradeEventType_StateChanged, XUpgradeState_Checking,
                XUpgradePhase_Download, -1, XUpgradePolicy_Optional,
                XUpgradeGrayDecision_NotEvaluated, "");
-    UPD_EXPECT(XProgressBar_value(s_upd.m_phaseBar[0]) == 0 &&
+    UPD_EXPECT(XProgressBar_value(s_upd.m_phaseBar[0]) == -1 &&
                    strstr(s_upd.m_lastStatus,
                           "\xE6\xA3\x80\xE6\x9F\xA5\xE4\xB8\xAD") != NULL,
                    /* 检查中 */

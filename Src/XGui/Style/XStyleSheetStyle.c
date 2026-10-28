@@ -2661,11 +2661,40 @@ static XSize VXStyleSheetStyle_sizeFromContents(XStyle* self, int ct,
 
 static void VXStyleSheetStyle_deinit(XStyleSheetStyle* self);
 
+/** @brief 像素度量（对标 Qt QStyleSheetStyle::pixelMetric：未由样式表
+ *         规则接管的度量一律回落源样式 baseStyle()->pixelMetric）。
+ *
+ *  @details 本库 QSS 代理此前**不**接管 PixelMetric，全部落回
+ *  XWindowsStyle/XCommonStyle 的度量表；而代理的绘制却委派给源样式
+ *  （XFusionStyle）。两侧度量不同源 ⇒ 同一控件的「预留几何」与
+ *  「实绘几何」分叉：微调框步进列即因此错位（代理侧
+ *  PM_SpinBoxFrameWidth=2、实绘侧 Fusion=3）。
+ *
+ *  仅接管 PM_SpinBoxFrameWidth 一项（其余度量回落父类，避免牵动
+ *  全局观感）：Qt 的 QStyleSheetStyle::pixelMetric 尾部同样是
+ *  `return baseStyle()->pixelMetric(m, opt, w);`
+ *  （qstylesheetstyle.cpp:4989），即「未接管则回落源样式」。
+ */
+static int VXStyleSheetStyle_pixelMetric(XStyle* self, int pm,
+                                         const XStyleOption* option)
+{
+    XStyleSheetStyle* ss = (XStyleSheetStyle*)self;
+    XStyle* src = xsss_source(ss);
+    if (pm == XStylePM_SpinBoxFrameWidth && src && src != self) {
+        return XStyle_pixelMetric(src, pm, option);
+    }
+    return XClass_Parent(XWindowsStyle, EXStyle_PixelMetric,
+                         int(*)(XStyle*, int, const XStyleOption*))(
+            (XStyle*)self, pm, option);
+}
+
 XVtable* XStyleSheetStyle_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XStyleSheetStyle)
     XVTABLE_INHERIT_XCLASS(XWindowsStyle);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStyleSheetStyle_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_PixelMetric,
+                             VXStyleSheetStyle_pixelMetric);
     XVTABLE_OVERLOAD_DEFAULT(EXStyle_DrawPrimitive,
                              VXStyleSheetStyle_drawPrimitive);
     XVTABLE_OVERLOAD_DEFAULT(EXStyle_DrawControl,
@@ -2943,25 +2972,27 @@ static bool xsss2_subControlPresent(int cc, const XStyleOption* option,
 /** @brief 子控件矩形（逐 CC 镜像底层绘制的几何表达式；近似口径见区首）。
  *
  *  @return false = 底层该 CC 早退不绘（如矩形过小）或子件无几何。 */
-static bool xsss2_subControlRect(int cc, const XStyleOption* option, int sc,
+static bool xsss2_subControlRect(XStyle* srcStyle, int cc,
+                                 const XStyleOption* option, int sc,
                                  XRect* out)
 {
     const XRect* r = &option->m_rect;
     switch (cc) {
     case XStyleCC_SpinBox: {
-        /* xcs_drawSpinBox（XCommonStyle.c:1174-1180,1245-1260）：
-         * 按钮列恒 16px 右缘贴齐、上下各半。 */
-        int bh;
-        int bx;
+        /* 与底层绘制同源：改走源样式的 subControlRect（其内部经
+         * xcs_spinBoxColumn 单点推导），不再镜像写死的 16px。
+         * 此前本处硬编码 16px/右缘齐平，与样式公式（含 fw 扣减、
+         * 按高度推导列宽）分叉——QSS ::up-button 的 chrome 因此
+         * 落在实绘按钮列之外，压住输入框右边框。 */
+        XRect q;
         if (r->width <= 2 || r->height <= 2) return false;
-        bh = r->height / 2;
-        bx = r->x + r->width - 16;
-        if (sc == XStyleSC_SpinBoxUp)
-            XRect_init(out, bx, r->y, 16, bh);
-        else if (sc == XStyleSC_SpinBoxDown)
-            XRect_init(out, bx, r->y + bh, 16, bh);
-        else
+        if (sc != XStyleSC_SpinBoxUp && sc != XStyleSC_SpinBoxDown)
             return false;
+        if (!srcStyle) return false;
+        q = XStyle_subControlRect(srcStyle, XStyleCC_SpinBox, option, sc,
+                                  NULL);
+        if (q.width <= 0 || q.height <= 0) return false;
+        *out = q;
         return true;
     }
     case XStyleCC_ComboBox: {
@@ -3377,7 +3408,8 @@ static void xsss2_dispatchSubControls(XStyleSheetStyle* self, int cc,
     for (i = 0; i < specCount; ++i) {
         XRect r;
         if (!xsss2_subControlPresent(cc, option, specs[i].m_sc)) continue;
-        if (!xsss2_subControlRect(cc, option, specs[i].m_sc, &r)) continue;
+        if (!xsss2_subControlRect(xsss_source(self), cc, option,
+                                  specs[i].m_sc, &r)) continue;
         rects[count] = r;
         rules[count] = xsss_widgetRule(self, (const XObject*)widget,
                                        option->m_state, specs[i].m_name);

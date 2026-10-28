@@ -300,7 +300,7 @@ static bool hubSendPollSegment(XModbusHub* hub, XModbusHubDevice* dev, size_t se
     XModbusDataUnit_init_ex(&unit, (XModbusRegisterType)seg->type,
                             seg->remoteStart, seg->count);
     XModbusReply* reply = XModbusClient_sendReadRequest(
-        dev->client, &unit, seg->range.unitId);
+        dev->client, &unit, seg->range.unitId, XModbusRequestPriority_Normal);
     XClassDeinit(&unit);
     if (!reply) return false;
 
@@ -325,7 +325,7 @@ static bool hubSendWriteIntent(XModbusHub* hub, XModbusHubDevice* dev,
     for (uint16_t k = 0; k < intent->count; ++k)
         XModbusDataUnit_setValue(&unit, k, intent->values[k]);
     XModbusReply* reply = XModbusClient_sendWriteRequest(
-        dev->client, &unit, intent->unitId);
+        dev->client, &unit, intent->unitId, XModbusRequestPriority_Normal);
     XClassDeinit(&unit);
     if (!reply) return false;
 

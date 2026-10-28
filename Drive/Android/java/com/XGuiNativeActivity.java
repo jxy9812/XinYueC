@@ -208,6 +208,209 @@ public class XGuiNativeActivity extends NativeActivity {
     }
 
     /**
+     * 写入系统「屏幕超时」时长（毫秒）——即委托系统自动息屏。
+     *
+     * 需要 WRITE_SETTINGS 权限（安卓 6.0 起为「特殊权限」：须由用户在
+     * 系统设置里对本应用单独授权，声明权限本身不等于已获授权）。未授权
+     * 时 Settings.System.putInt 抛 SecurityException，此处吞掉并返回
+     * false，由 native 侧如实上报「未获授权」——不静默假成功。
+     *
+     * @param millis 超时毫秒；<=0 表示「从不自动熄屏」（系统侧写 0 即
+     *                关闭屏幕超时）。
+     * @return true=已写入；false=无权限或写入失败。
+     */
+    public boolean setScreenOffTimeout(int millis) {
+        try {
+            int value = (millis > 0) ? millis : 0;
+            return android.provider.Settings.System.putInt(
+                    getContentResolver(),
+                    android.provider.Settings.System.SCREEN_OFF_TIMEOUT, value);
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    /**
+     * 是否已获 WRITE_SETTINGS 授权（可写系统设置）。
+     *
+     * @return true=已授权；false=未授权（界面据此提示用户去系统设置授权）。
+     */
+    public boolean canWriteSystemSettings() {
+        try {
+            // Settings.System.canWrite 的入参是 Context（Activity 本身即
+            // Context），不是 ContentResolver——传错类型编译不过。
+            return android.provider.Settings.System.canWrite(this);
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    /**
+     * 引导用户到系统设置页为本应用授予「修改系统设置」权限。
+     *
+     * WRITE_SETTINGS 是安卓的「特殊权限」：清单声明 ≠ 已获授权，须由
+     * 用户在系统设置里逐应用开启。本方法跳转 ACTION_MANAGE_WRITE_
+     * SETTINGS（本应用详情页），用户开启后应用即可写系统「屏幕超时」。
+     *
+     * @return true=已跳转；false=跳转失败（活动不存在等）。
+     */
+    public boolean requestWriteSettingsPermission() {
+        try {
+            android.content.Intent intent = new android.content.Intent(
+                    android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                    android.net.Uri.parse("package:" + getPackageName()));
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+            return true;
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    /**
+     * 读取应用窗口当前是否全屏（窗口边界 == 显示真实边界）。
+     *
+     * 口径：decorView 尺寸 vs Display.getRealMetrics（显示**真实**尺寸，
+     * 不随旋转/内容裁剪变化）。相等=全屏（沉浸式/普通全屏 Activity）；
+     * 小于=应用运行在窗口化形态（自由窗口/分屏），此时框架窗口状态应
+     * 保持 Normal 而不是想当然推全屏（用户裁定 2026-10-27：启动**读取**
+     * 平台真实状态对齐，不硬编码）。
+     *
+     * @return true=全屏（含读取失败兜底——真机常态即全屏）；false=窗口化。
+     */
+    public boolean isWindowFullscreen() {
+        try {
+            View decor = getWindow().getDecorView();
+            android.view.Display display = getWindowManager().getDefaultDisplay();
+            if (decor == null || display == null) return true;
+            android.util.DisplayMetrics real = new android.util.DisplayMetrics();
+            display.getRealMetrics(real);
+            int dw = decor.getWidth();
+            int dh = decor.getHeight();
+            if (dw <= 0 || dh <= 0) return true;  /* 未完成布局：兜底全屏。 */
+            return dw >= real.widthPixels && dh >= real.heightPixels;
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
+    /**
+     * 申请显示方向（自横屏起顺时针度数）。
+     *
+     * 口径与框架统一：0=横屏、90=竖屏、180=倒置横屏、270=倒置竖屏，
+     * -1=跟随系统（交回系统按传感器/用户设置决定）。
+     *
+     * 安卓的显示方向只能由系统掌握——Activity.setRequestedOrientation 是
+     * 唯一正规入口（清单 android:screenOrientation 只给初值，运行期改向
+     * 必须走这个 API）。系统采纳后会重建 surface，应用侧表现为收到一次
+     * resize；native 侧不自行转任何像素（那是「画布旋转」，两者正交）。
+     *
+     * 注意：setRequestedOrientation 属 UI 线程 API，非 UI 线程调用时
+     * 投到主线程执行（受理语义：本次调用返回即表示请求已下发）。
+     *
+     * @param degrees 目标角度（0/90/180/270），-1=跟随系统。
+     */
+    public void setRequestedOrientationByDegrees(int degrees) {
+        final int mode;
+        switch (degrees) {
+            case 0:
+                mode = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+                break;
+            case 90:
+                mode = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+                break;
+            case 180:
+                mode = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE;
+                break;
+            case 270:
+                mode = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT;
+                break;
+            default:
+                mode = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+                break;
+        }
+        Runnable apply = new Runnable() {
+            @Override
+            public void run() {
+                setRequestedOrientation(mode);
+            }
+        };
+        try {
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                apply.run();
+            } else {
+                runOnUiThread(apply);
+            }
+        } catch (Throwable ignored) {
+            // 请求失败不抛给 native：调用方按「未生效」处理。
+        }
+    }
+
+    /**
+     * 回读当前**实际**显示方向（自横屏起顺时针度数；未知返回 -1）。
+     *
+     * 判定链：Display.getRotation() 给出相对「面板自然方向」的旋转档
+     * （0/90/180/270），Display.getRealMetrics() 给出**不随旋转变换**的
+     * 面板自然尺寸——两者合起来才能把「自然竖屏的设备转到横屏」与
+     * 「自然横屏的设备停在横屏」区分开（只读 rotation 无法区分：两种
+     * 设备的 ROTATION_90 含义相反）。
+     */
+    public int getDisplayOrientationDegrees() {
+        try {
+            android.view.Display display = getWindowManager().getDefaultDisplay();
+            if (display == null) {
+                return -1;
+            }
+            android.util.DisplayMetrics real = new android.util.DisplayMetrics();
+            display.getRealMetrics(real);
+            int rot = display.getRotation() & 3;
+            boolean naturalPortrait = real.widthPixels < real.heightPixels;
+            if (naturalPortrait) {
+                /* 自然竖屏设备：rot0=正竖(90) rot1=横(0) rot2=倒竖(270)
+                 * rot3=倒横(180)。 */
+                switch (rot) {
+                    case 0: return 90;
+                    case 1: return 0;
+                    case 2: return 270;
+                    default: return 180;
+                }
+            }
+            /* 自然横屏设备：rot0=正横(0) rot1=竖(90) rot2=倒横(180)
+             * rot3=倒竖(270)。 */
+            switch (rot) {
+                case 0: return 0;
+                case 1: return 90;
+                case 2: return 180;
+                default: return 270;
+            }
+        } catch (Throwable ignored) {
+        }
+        return -1;
+    }
+
+    /**
+     * 系统是否会采纳应用的方向请求。
+     *
+     * Android 12 起系统会在**大屏设备**上忽略 targetSdk>=31 应用的方向
+     * 请求；Android 16（API 36）起该策略扩大到全部应用（大屏设备一律
+     * 忽略）。本应用 targetSdk=28，故 API 31~35 的大屏仍采纳，API 36+
+     * 不采纳——此处如实回报，供 native 侧把「窗口方向」控件置灰而不是
+     * 让用户点了没反应。
+     */
+    public boolean canRequestOrientation() {
+        try {
+            int sdk = android.os.Build.VERSION.SDK_INT;
+            if (sdk >= 36) {
+                int swDp = getResources().getConfiguration().smallestScreenWidthDp;
+                return swDp < 600;
+            }
+            return true;
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    /**
      * 安装无障碍宿主 View。
      * 说明：NativeActivity 的内容视图是 native 侧 surface，Java 侧没有
      * 可挂控件的容器——故用 WindowManager 的 content 视图（addContentView）

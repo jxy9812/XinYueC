@@ -1,21 +1,23 @@
-/**
+﻿/**
  * @file       xgui_demo_page_atv61.c
- * @brief      XGuiDemo 扩展页 21：施耐德 ATV61 变频器（Modbus RTU 主站面板）。
- * @details    把 XModbusRtuSerialClient + XModbusAtv61 驱动接入 GUI：
+ * @brief      XGuiDemo 扩展页 21：施耐德 ATV61 变频器（XVfd 抽象层 + Modbus RTU）。
+ * @details    把 XModbusRtuSerialClient（总线主站）+ XVfdModbusLink 链路 +
+ *             XVfdAtv61 品牌子类接入 GUI（2026-10-27 XVfd 子系统落地迁移，
+ *             原 XModbusAtv61 直挂模式已删除）：
  *
  *   ① 通信配置行：串口名下拉（每次弹出重枚举本机串口）+ 波特率下拉
  *      （4800/9600/19200/38400，默认 38400）+ 从站地址 +【连接/断开】；
  *   ② 运行控制行：【正转启动】【反转启动】【受控停机】【自由停车】
- *      【快速停机】【故障复位】——启动走 CiA402 状态机
- *      （Shutdown→Switch on→Enable operation），不是"写 0x000F 就完事"；
- *   ③ 调速行：频率给定文本框（Hz，0.1 精度，ATV61 用 0.1Hz 定点）+【下发】；
- *   ④ 监视区：ETA 状态字、输出频率、电机电流、转矩、电网电压、变频器
- *      热态、电机热态、电机功率；
- *   ⑤ 报警区：故障码 + 故障缩写（OCF/OLF/SLF1…）+ 中文说明 + 复位提示；
- *   ⑥ 自动轮询（周期可调，默认 500ms）。
+ *      【快速停机】【故障复位】——启动走 CiA402 状态机；
+ *   ③ 调速行：频率给定文本框（Hz）+【下发】；
+ *   ④ 监视区：ETA 状态字、输出频率、给定、电流、转矩、电网电压、热态；
+ *   ⑤ 报警区：故障码 + 字母码 + 中文说明；
+ *   ⑥ 轮询由链路计划表统一排拍（页内无定时器）：轮询开关/周期直接映射
+ *      设备轮询配置（XVfdDevice_setPollInterval），动作优先于轮询
+ *      （轮询在途时动作自动挂起补发）。
  *
  *   线程口径：全部同线程直连（XConnectionType_Direct），槽内只触碰控件与
- *   驱动对象，不做阻塞等待；Modbus 事务异步，结果经驱动信号回填。
+ *   设备对象，不做阻塞等待；Modbus 事务异步，结果经设备信号回填。
  *
  *   ⚠ 变频器侧前置条件（不改则面板连不上/不动作）：
  *      [1.9 通信] Add=1~247、tbr=38.4kbps、tFO=8E1；
@@ -36,8 +38,10 @@
 #include "XPushButton.h"
 #include "XSpinBox.h"
 #include "XBoxLayout.h"
+#include "XScrollArea.h"
+#include "XAbstractScrollArea.h"
+#include "XPerformanceOverlay.h" /* HUD 让位（adapt 收口）。 */
 #include "XLayout.h"
-#include "XTimer.h"
 #include "XString.h"
 #include "XStringUtils.h"
 #include "XVariant.h"
@@ -47,10 +51,15 @@
 #include "XSerialPortInfo.h"
 
 #include "XModbus_config.h"
-#if XMODBUS_CORE_ON && XMODBUS_CLIENT_ON && XMODBUS_RTU_ON && XMODBUS_ATV61_ON
+#include "XVfd_config.h"
+#if XMODBUS_CORE_ON && XMODBUS_CLIENT_ON && XMODBUS_RTU_ON && \
+    XVFD_ON && XVFD_DEVICE_ON && XVFD_LINK_ON && XVFD_ATV61_ON
 #include "XModbusRtuSerialClient.h"
 #include "XModbusDevice.h"
-#include "XModbusAtv61.h"
+#include "XVfdDevice.h"
+#include "XVfdDevice_Protected.h"
+#include "XVfdModbusLink.h"
+#include "XVfdAtv61.h"
 #define ATV_PAGE_ENABLED (XLAYOUT_ON && XLAYOUT_BOX_ON && XWIDGET_ON && \
                          XLABEL_ON && XCOMBOBOX_ON && XLINEEDIT_ON && \
                          XPUSHBUTTON_ON && XCHECKBOX_ON && XSPINBOX_ON)
@@ -66,6 +75,7 @@ typedef struct Atv61Page {
     DemoPageStatusFn m_status;   /**< 主窗口状态栏回调。 */
     void* m_user;                /**< 主窗口指针。 */
     XWidget* m_root;             /**< 页面根控件。 */
+    XWidget*   m_scroll;         /**< 整页竖滚区（页宿主=build 返回值）。 */
     XBoxLayout m_rootLayout;     /**< 页根垂直布局。 */
     XBoxLayout m_rows[6];        /**< 行布局池（成员存储：栈上局部布局在
                                   * build 返回后成悬垂指针，页根重排时崩）。 */
@@ -88,7 +98,7 @@ typedef struct Atv61Page {
     /* 调速与轮询 */
     XLineEdit* m_freqEdit;       /**< 频率给定（Hz 文本）。 */
     XPushButton* m_freqBtn;      /**< 下发频率。 */
-    XCheckBox* m_pollChk;        /**< 自动轮询开关。 */
+    XCheckBox* m_pollChk;        /**< 轮询开关（映射设备轮询配置）。 */
     XSpinBox* m_pollMs;          /**< 轮询周期（ms）。 */
 
     /* 监视与报警 */
@@ -97,9 +107,10 @@ typedef struct Atv61Page {
     XLabel* m_hint;              /**< 操作提示。 */
 
     /* 引擎 */
-    XModbusRtuSerialClient* m_client; /**< RTU 主站客户端。 */
-    XModbusAtv61* m_drive;       /**< ATV61 驱动。 */
-    XTimer* m_pollTimer;         /**< 轮询定时器（父=页根）。 */
+    XModbusRtuSerialClient* m_client; /**< RTU 主站客户端（总线主站）。 */
+    XVfdModbusLink* m_link;      /**< Modbus 链路适配器。 */
+    XVfdAtv61* m_drive;          /**< ATV61 品牌子类。 */
+    XVfdDevice* m_dev;           /**< 设备基类视图（= &m_drive->m_base.m_base）。 */
     bool m_connected;            /**< 是否已连接。 */
 } Atv61Page;
 
@@ -142,32 +153,41 @@ static XPushButton* atv_addButton(XBoxLayout* row, const char* text, int width)
     return btn;
 }
 
+/** @brief 当前轮询配置（开关+周期）换算成设备轮询周期。 */
+static uint32_t atv_pollIntervalFromUi(void)
+{
+    int ms;
+    if (!s_atv.m_pollChk || !XCheckBox_isChecked(s_atv.m_pollChk)) return 0;
+    ms = s_atv.m_pollMs ? XSpinBox_value(s_atv.m_pollMs) : 500;
+    if (ms < 100) ms = 100;
+    return (uint32_t)ms;
+}
+
 /** @brief 刷新监视区与报警区显示。 */
 static void atv_refreshMonitor(void)
 {
-    const XModbusAtv61Status* st = s_atv.m_drive
-        ? XModbusAtv61_status_const(s_atv.m_drive) : NULL;
+    const XVfdStatus* st = s_atv.m_dev ? XVfdDevice_status_const(s_atv.m_dev) : NULL;
     char buf[512];
-    if (!st || !st->valid) {
+    if (!st || !st->m_valid) {
         if (s_atv.m_monitor) {
-            XLabel_setText_2(s_atv.m_monitor, "监视：尚无数据（连接后自动轮询）");
+            XLabel_setText_2(s_atv.m_monitor, "监视：尚无数据（连接后链路自动轮询）");
             XWidget_update((XWidget*)s_atv.m_monitor);
         }
         return;
     }
     snprintf(buf, sizeof(buf),
              "监视：ETA=0x%04X  状态=%s%s\n"
-             "输出频率 %.1f Hz    给定 %.1f Hz    电机 %u\n"
+             "输出频率 %.1f Hz    给定 %.1f Hz    电机 %.0f\n"
              "转矩 %.1f %%    电网 %.1f V    电机电压 %.0f V\n"
              "变频器热态 %.0f %%    电机热态 %.0f %%    功率 %.0f %%",
-             st->eta,
-             st->running ? "运行" : (st->faulted ? "故障" : "待机"),
-             st->reverse ? "（反转）" : "",
-             st->outputFreqHz, st->referenceHz,
-             (unsigned)st->motorCurrent,
-             st->motorTorquePercent, st->mainsVoltage, st->motorVoltage,
-             st->driveThermalPercent, st->motorThermalPercent,
-             st->motorPowerPercent);
+             st->m_rawStateWord,
+             st->m_running ? "运行" : (st->m_faulted ? "故障" : "待机"),
+             st->m_reverse ? "（反转）" : "",
+             st->m_outputFreqHz, st->m_setFreqHz,
+             st->m_outputCurrentA,
+             st->m_torquePercent, st->m_mainsVoltageV, st->m_outputVoltageV,
+             st->m_driveThermalPercent, st->m_motorThermalPercent,
+             st->m_outputPowerPercent);
     if (s_atv.m_monitor) {
         XLabel_setText_2(s_atv.m_monitor, buf);
         XWidget_update((XWidget*)s_atv.m_monitor);
@@ -176,17 +196,16 @@ static void atv_refreshMonitor(void)
 
 static void atv_refreshAlarm(void)
 {
-    const XModbusAtv61Status* st = s_atv.m_drive
-        ? XModbusAtv61_status_const(s_atv.m_drive) : NULL;
+    const XVfdStatus* st = s_atv.m_dev ? XVfdDevice_status_const(s_atv.m_dev) : NULL;
     char buf[256];
     const char* name;
     const char* text;
-    uint16_t code = st ? st->lastFault : 0;
-    name = XModbusAtv61_faultName(code);
-    text = XModbusAtv61_faultText(code);
+    uint16_t code = st ? st->m_faultCode : 0;
+    name = XVfdAtv61_faultName(code);
+    text = XVfdAtv61_faultText(code);
     if (!code) {
         snprintf(buf, sizeof(buf), "报警：无故障%s",
-                 (st && st->warning) ? "（存在警告，请查看状态字 ETA bit7）" : "");
+                 (st && st->m_warning) ? "（存在警告，请查看状态字 ETA bit7）" : "");
     } else {
         snprintf(buf, sizeof(buf), "报警：故障码 %u（%s）%s%s",
                  (unsigned)code,
@@ -213,7 +232,7 @@ static void atv_refreshConnState(void)
              s_atv.m_unit ? XSpinBox_value(s_atv.m_unit) : 1,
              s_atv.m_baud && XComboBox_currentText(s_atv.m_baud)
                  ? XString_toUtf8(XComboBox_currentText(s_atv.m_baud)) : "-",
-             (s_atv.m_drive && XModbusAtv61_isBusy(s_atv.m_drive)) ? "（事务中）" : "");
+             (s_atv.m_dev && XVfdDevice_isBusy(s_atv.m_dev)) ? "（事务中）" : "");
     if (s_atv.m_connState) {
         XLabel_setText_2(s_atv.m_connState, buf);
         XWidget_update((XWidget*)s_atv.m_connState);
@@ -225,7 +244,7 @@ static void atv_refreshConnState(void)
 /** @brief 运行控制动作分派（按被点按钮句柄区分动作）。 */
 static void atv_dispatch(XObject* sender);
 
-/** @brief 驱动状态更新 → 刷新监视/报警区。 */
+/** @brief 设备状态更新 → 刷新监视/报警区。 */
 static void atv_onStatusUpdated(XObject* receiver, XVarList* args)
 {
     (void)receiver; (void)args;
@@ -234,7 +253,7 @@ static void atv_onStatusUpdated(XObject* receiver, XVarList* args)
     atv_refreshConnState();
 }
 
-/** @brief 驱动动作完成 → 状态栏回显。 */
+/** @brief 设备动作完成 → 状态栏回显。 */
 static void atv_onCommandCompleted(XObject* receiver, XVarList* args)
 {
     (void)receiver;
@@ -242,24 +261,23 @@ static void atv_onCommandCompleted(XObject* receiver, XVarList* args)
     bool ok = false;
     if (args) {
         XVarList_start(args);
-        op = (int)XVarList_arg(args, XModbusAtv61_Operation);
+        op = (int)XVarList_arg(args, XVfdOperation);
         ok = XVarList_arg(args, bool);
     }
     switch (op) {
-    case XModbusAtv61_Op_ReadStatus:   atv_status(ok ? "状态读取完成" : "状态读取失败"); break;
-    case XModbusAtv61_Op_SetFrequency: atv_status(ok ? "频率给定已下发" : "频率给定下发失败"); break;
-    case XModbusAtv61_Op_SetSpeed:     atv_status(ok ? "转速给定已下发" : "转速给定下发失败"); break;
-    case XModbusAtv61_Op_Start:        atv_status(ok ? "启动成功" : "启动失败"); break;
-    case XModbusAtv61_Op_Stop:         atv_status(ok ? "已受控停机" : "停机失败"); break;
-    case XModbusAtv61_Op_FreeStop:     atv_status(ok ? "已自由停车" : "自由停车失败"); break;
-    case XModbusAtv61_Op_QuickStop:    atv_status(ok ? "已快速停机" : "快速停机失败"); break;
-    case XModbusAtv61_Op_ResetFault:   atv_status(ok ? "故障复位已下发" : "故障复位失败"); break;
+    case XVfdOperation_SetFrequency: atv_status(ok ? "频率给定已下发" : "频率给定下发失败"); break;
+    case XVfdOperation_SetSpeed:     atv_status(ok ? "转速给定已下发" : "转速给定下发失败"); break;
+    case XVfdOperation_Start:        atv_status(ok ? "启动成功" : "启动失败"); break;
+    case XVfdOperation_Stop:         atv_status(ok ? "已受控停机" : "停机失败"); break;
+    case XVfdOperation_FreeStop:     atv_status(ok ? "已自由停车" : "自由停车失败"); break;
+    case XVfdOperation_QuickStop:    atv_status(ok ? "已快速停机" : "快速停机失败"); break;
+    case XVfdOperation_ResetFault:   atv_status(ok ? "故障复位已下发" : "故障复位失败"); break;
     default: break;
     }
     atv_refreshConnState();
 }
 
-/** @brief 驱动错误 → 状态栏与报警区。 */
+/** @brief 设备错误 → 状态栏。 */
 static void atv_onDriverError(XObject* receiver, XVarList* args)
 {
     (void)receiver;
@@ -268,7 +286,7 @@ static void atv_onDriverError(XObject* receiver, XVarList* args)
         XVarList_start(args);
         msg = XVarList_arg(args, const char*);
     }
-    atv_status(msg && msg[0] ? msg : "驱动错误");
+    atv_status(msg && msg[0] ? msg : "设备错误");
 }
 
 /** @brief 连接/断开按钮。 */
@@ -278,8 +296,8 @@ static void atv_onConnClicked(XObject* receiver, XVarList* args)
     if (!s_atv.m_client) return;
     XModbusDevice* dev = (XModbusDevice*)s_atv.m_client;
     if (s_atv.m_connected) {
+        XVfdModbusBase_detach(&s_atv.m_drive->m_base); /* 注销链路轮询计划 */
         XModbusDevice_disconnectDevice(dev);
-        if (s_atv.m_pollTimer) XTimer_stop_base(s_atv.m_pollTimer);
         s_atv.m_connected = false;
         if (s_atv.m_connBtn) XPushButton_setText_2(s_atv.m_connBtn, "连接");
         atv_status("已断开串口");
@@ -331,19 +349,26 @@ static void atv_onConnClicked(XObject* receiver, XVarList* args)
             XModbusDevice_SerialStopBitsParameter, var);
     }
 
-    int unit = s_atv.m_unit ? XSpinBox_value(s_atv.m_unit) : 1;
-    if (unit < 1 || unit > 247) unit = 1;
-    if (s_atv.m_drive) XModbusAtv61_attach(s_atv.m_drive, (XModbusClient*)s_atv.m_client, unit);
-
     if (!XModbusDevice_connectDevice(dev)) {
         atv_status("串口打开失败（检查串口占用/设备存在）");
         atv_refreshConnState();
         return;
     }
+    /* 串口已通：设备挂链路（登记轮询计划，周期取 UI 当前配置） */
+    if (s_atv.m_drive && s_atv.m_link) {
+        int unit = s_atv.m_unit ? XSpinBox_value(s_atv.m_unit) : 1;
+        if (unit < 1 || unit > 247) unit = 1;
+        XVfdDevice_setPollInterval(s_atv.m_dev, atv_pollIntervalFromUi());
+        if (!XVfdModbusBase_setLink(&s_atv.m_drive->m_base, s_atv.m_link, unit)) {
+            atv_status("设备挂链路失败");
+            XModbusDevice_disconnectDevice(dev);
+            atv_refreshConnState();
+            return;
+        }
+    }
     s_atv.m_connected = true;
     if (s_atv.m_connBtn) XPushButton_setText_2(s_atv.m_connBtn, "断开");
-    if (s_atv.m_pollTimer) XTimer_start_base(s_atv.m_pollTimer);
-    atv_status("串口已连接");
+    atv_status("串口已连接（链路轮询已启动）");
     atv_refreshConnState();
 }
 
@@ -351,14 +376,14 @@ static void atv_onConnClicked(XObject* receiver, XVarList* args)
 static void atv_onFreqClicked(XObject* receiver, XVarList* args)
 {
     (void)receiver; (void)args;
-    if (!s_atv.m_drive) return;
+    if (!s_atv.m_dev) return;
     if (!s_atv.m_connected) { atv_status("未连接，无法下发"); return; }
     double hz = 0.0;
     if (s_atv.m_freqEdit) {
         const char* txt = XLineEdit_text(s_atv.m_freqEdit);
         if (txt && txt[0]) hz = atof(txt);
     }
-    if (!XModbusAtv61_setFrequency(s_atv.m_drive, hz)) {
+    if (!XVfdDevice_setFrequency(s_atv.m_dev, hz)) {
         atv_status("频率给定下发失败（总线忙或未连接）");
         return;
     }
@@ -373,54 +398,39 @@ static void atv_onRunClicked(XObject* sender, XVarList* args)
 /* 动作分派：用按钮句柄比对（页内单实例，句柄唯一）。 */
 static void atv_dispatch(XObject* sender)
 {
-    if (!s_atv.m_drive || !s_atv.m_connected) {
+    if (!s_atv.m_dev || !s_atv.m_connected) {
         atv_status("未连接，无法操作");
         return;
     }
     if (sender == (XObject*)s_atv.m_runBtn) {
-        XModbusAtv61_start(s_atv.m_drive, false);
+        XVfdDevice_start(s_atv.m_dev, false);
     } else if (sender == (XObject*)s_atv.m_revBtn) {
-        XModbusAtv61_start(s_atv.m_drive, true);
+        XVfdDevice_start(s_atv.m_dev, true);
     } else if (sender == (XObject*)s_atv.m_stopBtn) {
-        XModbusAtv61_stop(s_atv.m_drive);
+        XVfdDevice_stop(s_atv.m_dev);
     } else if (sender == (XObject*)s_atv.m_freeBtn) {
-        XModbusAtv61_freeStop(s_atv.m_drive);
+        XVfdDevice_freeStop(s_atv.m_dev);
     } else if (sender == (XObject*)s_atv.m_qstopBtn) {
-        XModbusAtv61_quickStop(s_atv.m_drive);
+        XVfdDevice_quickStop(s_atv.m_dev);
     } else if (sender == (XObject*)s_atv.m_resetBtn) {
-        XModbusAtv61_resetFault(s_atv.m_drive);
+        XVfdDevice_resetFault(s_atv.m_dev);
     }
 }
 
-/** @brief 轮询定时器回调。 */
-static void atv_pollTimerCb(void* userData, XTimerData* timer)
-{
-    (void)userData; (void)timer;
-    if (!s_atv.m_drive || !s_atv.m_connected) return;
-    if (s_atv.m_pollChk && !XCheckBox_isChecked(s_atv.m_pollChk)) return;
-    XModbusAtv61_readStatus(s_atv.m_drive);
-}
-
-/** @brief 轮询开关切换 → 启停定时器。 */
+/** @brief 轮询开关切换 → 映射设备轮询配置（链路计划表即时生效）。 */
 static void atv_onPollToggled(XObject* receiver, XVarList* args)
 {
     (void)receiver; (void)args;
-    if (!s_atv.m_pollTimer) return;
-    if (s_atv.m_pollChk && XCheckBox_isChecked(s_atv.m_pollChk)) {
-        if (s_atv.m_connected) XTimer_start_base(s_atv.m_pollTimer);
-    } else {
-        XTimer_stop_base(s_atv.m_pollTimer);
-    }
+    if (!s_atv.m_dev || !s_atv.m_connected) return;
+    XVfdDevice_setPollInterval(s_atv.m_dev, atv_pollIntervalFromUi());
 }
 
-/** @brief 轮询周期变更 → 重设定时器间隔。 */
+/** @brief 轮询周期变更 → 映射设备轮询配置。 */
 static void atv_onPollMsChanged(XObject* receiver, XVarList* args)
 {
     (void)receiver; (void)args;
-    if (!s_atv.m_pollTimer || !s_atv.m_pollMs) return;
-    int ms = XSpinBox_value(s_atv.m_pollMs);
-    if (ms < 100) ms = 100;
-    XTimer_setInterval(s_atv.m_pollTimer, (size_t)ms);
+    if (!s_atv.m_dev || !s_atv.m_connected) return;
+    XVfdDevice_setPollInterval(s_atv.m_dev, atv_pollIntervalFromUi());
 }
 
 /** @brief 重枚举串口下拉（保留原选择）。 */
@@ -463,6 +473,76 @@ static void atv_refreshPorts(void)
     }
 }
 
+/* ---- 整页竖滚壳（2026-10-27 视觉走查立项②） ----
+ * 窄档翻竖排后总高远超视口（rows 竖排+说明行换行），底部说明文字被
+ * 页底缘裁断且无滚动条（真机/桌面截图实证）。套「页宿主=scroll、内容
+ * 根宽恒跟随视口、高=内容首选高」壳（views 页 ViewsScroll 同款已验证
+ * 模式）：resizeEvent → fit（定内容宽/高 + setContentSize 驱动竖滚范
+ * 围）。本页 rows 池固定无双档互移，无 views 页的装配交互问题。 */
+XCLASS_DEFINE_BEGING(AtvScroll)
+XCLASS_DEFINE_EXTEND_END(AtvScroll, XScrollArea)
+
+typedef struct AtvScroll
+{
+    XScrollArea m_base; /**< 基类成员；必须是第一个。 */
+} AtvScroll;
+
+static void atv_fitScrollContent(XScrollArea* area);
+
+static void VAtvScroll_resizeEvent(XWidget* self, XEvent* event)
+{
+    if (!self) return;
+    XClass_Parent(XScrollArea, EXWidget_ResizeEvent,
+                  XWidgetEventSlot)(self, event);
+    atv_fitScrollContent((XScrollArea*)self);
+}
+
+XVtable* AtvScroll_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(AtvScroll)
+    XVTABLE_INHERIT_XCLASS(XScrollArea);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
+                             VAtvScroll_resizeEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 内容根定尺收口：宽=视口宽（水平恒不滚），高=布局合计首选/最
+ *         小取大（定尺寸条目不被裁）。 */
+static void atv_fitScrollContent(XScrollArea* area)
+{
+    XWidget* viewport;
+    XWidget* content;
+    int vw;
+    int vh;
+    int pass;
+    if (!area) return;
+    viewport = XAbstractScrollArea_viewport(area);
+    content = XScrollArea_widget(area);
+    if (!viewport || !content) return;
+    vw = XWidget_width(viewport);
+    vh = XWidget_height(viewport);
+    if (vw < 1) return;   /* 视口未就位（堆叠未给几何）不猜。 */
+    XWidget_setFixedWidth(content, vw);
+    for (pass = 0; pass < 2; ++pass) {
+        XSize hint;
+        XSize minHint;
+        if (XWidget_layout(content))
+            XLayout_invalidate(XWidget_layout(content));
+        hint = XWidget_sizeHint(content);
+        minHint = XWidget_minimumSizeHint(content);
+        if (minHint.height > hint.height) hint.height = minHint.height;
+        if (minHint.width > hint.width) hint.width = minHint.width;
+        if (hint.width < 1) hint.width = vw;
+        if (hint.height < 1) hint.height = vh > 0 ? vh : 1;
+        XWidget_setFixedHeight(content, hint.height);
+        XWidget_setGeometry(content, 0, 0, hint.width, hint.height);
+        if (XWidget_layout(content))
+            XLayout_activate(XWidget_layout(content));
+    }
+    XAbstractScrollArea_setContentSize(area, vw,
+        XWidget_height(content) > vh ? XWidget_height(content) : vh);
+}
+
 /* ==================== 构建 ==================== */
 
 XWidget* demo_page_atv61_build(XWidget* parent,
@@ -475,8 +555,29 @@ XWidget* demo_page_atv61_build(XWidget* parent,
 
     if (!parent) return NULL;
     memset(&s_atv, 0, sizeof(s_atv));
+    {
+        /* [整页竖滚 2026-10-27 立项②] 页宿主=scroll（返回值），内容根=
+         * 原页面根：窄档翻竖排后总高远超视口，由竖滚条承担（底部说明
+         * 不再被页底缘裁断）。AtvScroll 壳 resizeEvent → fit 收口。 */
+        AtvScroll* scroll =
+            (AtvScroll*)XMemory_malloc(sizeof(AtvScroll),
+                                       XCLASS_DEFAULT_MEMORY_TYPE);
+        if (!scroll) return NULL;
+        XMemset(scroll, 0, sizeof(*scroll));
+        XScrollArea_init(&scroll->m_base, parent, 0);
+        XClassSetVtable(scroll, AtvScroll);
+        Set_Class_Memory(scroll, XCLASS_DEFAULT_MEMORY_TYPE);
+        Set_Class_IsHeap(scroll, true);
+        XAbstractScrollArea_setVerticalScrollBarPolicy(
+            (XAbstractScrollArea*)scroll, XScrollBarPolicy_AsNeeded);
+        XAbstractScrollArea_setHorizontalScrollBarPolicy(
+            (XAbstractScrollArea*)scroll, XScrollBarPolicy_AlwaysOff);
+        s_atv.m_scroll = (XWidget*)scroll;
+        parent = (XWidget*)scroll; /* 内容根改挂 scroll（下句 create 用）。 */
+    }
     root = XWidget_create(parent, 0);
     if (!root) return NULL;
+    XScrollArea_setWidget((XScrollArea*)s_atv.m_scroll, root); /* 收编内容件。 */
     s_atv.m_root = root;
     s_atv.m_status = status;
     s_atv.m_user = user;
@@ -488,7 +589,7 @@ XWidget* demo_page_atv61_build(XWidget* parent,
     {
         XLabel* title = XLabel_create(root, 0);
         if (title) {
-            XLabel_setText_2(title, "ATV61 变频器（Modbus RTU 主站）");
+            XLabel_setText_2(title, "ATV61 变频器（XVfd 抽象层 + Modbus RTU）");
             XBoxLayout_addWidget(&s_atv.m_rootLayout, (XWidget*)title);
         }
     }
@@ -541,7 +642,7 @@ XWidget* demo_page_atv61_build(XWidget* parent,
     /* ---- 调速行 ---- */
     row = &s_atv.m_rows[rowIdx++];
     atv_row(&s_atv.m_rootLayout, row, XBoxLayoutDirection_LeftToRight);
-    atv_addLabel(row, "频率给定(Hz)", 88);
+    atv_addLabel(row, "频率给定(Hz)", 128);
     s_atv.m_freqEdit = XLineEdit_create(root, 0);
     if (s_atv.m_freqEdit) {
         XLineEdit_setText(s_atv.m_freqEdit, "50.0");
@@ -553,6 +654,7 @@ XWidget* demo_page_atv61_build(XWidget* parent,
     s_atv.m_pollChk = XCheckBox_create(root, 0);
     if (s_atv.m_pollChk) {
         XAbstractButton_setText_2((XAbstractButton*)s_atv.m_pollChk, "自动");
+        XAbstractButton_setChecked((XAbstractButton*)s_atv.m_pollChk, true);
         XBoxLayout_addWidget(row, (XWidget*)s_atv.m_pollChk);
     }
     s_atv.m_pollMs = XSpinBox_create(root, 0);
@@ -583,7 +685,7 @@ XWidget* demo_page_atv61_build(XWidget* parent,
     if (s_atv.m_hint) {
         XLabel_setText_2(s_atv.m_hint,
             "变频器侧前置：[1.9 通信] Add=1~247 / tbr=38.4k / tFO=8E1；"
-            "[1.6 命令] CHCF=SIM 时 Fr1=Mdb。");
+            "[1.6 命令] CHCF=SIM 时 Fr1=Mdb。轮询由链路计划表统一排拍。");
         XBoxLayout_addWidget(&s_atv.m_rootLayout, (XWidget*)s_atv.m_hint);
     }
 
@@ -596,31 +698,28 @@ XWidget* demo_page_atv61_build(XWidget* parent,
         XModbusClient_setReconnectInterval((XModbusClient*)s_atv.m_client, 2000);
         XObject_setParent((XObject*)s_atv.m_client, (XObject*)root);
     }
-    s_atv.m_drive = XModbusAtv61_create();
+    s_atv.m_link = XVfdModbusLink_create();
+    if (s_atv.m_link) {
+        XVfdModbusLink_setClient(s_atv.m_link, (XModbusClient*)s_atv.m_client);
+        XVfdLink_setTickMs(&s_atv.m_link->m_base, 50);
+        XObject_setParent((XObject*)s_atv.m_link, (XObject*)root);
+    }
+    s_atv.m_drive = XVfdAtv61_create();
     if (s_atv.m_drive) {
-        XModbusAtv61_attach(s_atv.m_drive, (XModbusClient*)s_atv.m_client, 1);
+        s_atv.m_dev = &s_atv.m_drive->m_base.m_base;
         XObject_setParent((XObject*)s_atv.m_drive, (XObject*)root);
         XObject_connect_1((XObject*)s_atv.m_drive,
-                          XSignal(XModbusAtv61_statusUpdated_signal),
+                          XSignal(XVfdDevice_statusUpdated_signal),
                           (XObject*)root, atv_onStatusUpdated,
                           XConnectionType_Direct);
         XObject_connect_1((XObject*)s_atv.m_drive,
-                          XSignal(XModbusAtv61_commandCompleted_signal),
+                          XSignal(XVfdDevice_commandCompleted_signal),
                           (XObject*)root, atv_onCommandCompleted,
                           XConnectionType_Direct);
         XObject_connect_1((XObject*)s_atv.m_drive,
-                          XSignal(XModbusAtv61_errorOccurred_signal),
+                          XSignal(XVfdDevice_errorOccurred_signal),
                           (XObject*)root, atv_onDriverError,
                           XConnectionType_Direct);
-    }
-
-    /* ---- 轮询定时器 ---- */
-    s_atv.m_pollTimer = XTimer_create();
-    if (s_atv.m_pollTimer) {
-        XTimer_setInterval(s_atv.m_pollTimer, 500);
-        XTimer_setTimerCallback(s_atv.m_pollTimer, atv_pollTimerCb);
-        XTimer_setUserData(s_atv.m_pollTimer, NULL);
-        XObject_setParent((XObject*)s_atv.m_pollTimer, (XObject*)root);
     }
 
     /* ---- 信号接线 ---- */
@@ -669,7 +768,7 @@ XWidget* demo_page_atv61_build(XWidget* parent,
     atv_refreshConnState();
     atv_refreshMonitor();
     atv_refreshAlarm();
-    return root;
+    return s_atv.m_scroll; /* 页宿主=滚动区（fit 由其 resizeEvent 收口）。 */
 }
 
 /* ==================== 自测 ==================== */
@@ -695,8 +794,18 @@ int demo_page_atv61_autotest(XWidget* page)
         if (txt) XClassDelete(txt);
     }
 
-    if (!s_atv.m_drive) { printf("XGuiAutoTest: [FAIL] ATV61 驱动缺失\n"); ++fail; }
-    else printf("XGuiAutoTest: [PASS] ATV61 驱动已建\n");
+    if (!s_atv.m_drive || !s_atv.m_link || !s_atv.m_dev) {
+        printf("XGuiAutoTest: [FAIL] ATV61 引擎缺失（设备/链路）\n");
+        ++fail;
+    } else {
+        printf("XGuiAutoTest: [PASS] ATV61 引擎已建（XVfdAtv61 + XVfdModbusLink）\n");
+        if (!XVfdDevice_hasCapability(s_atv.m_dev, XVfdCap_Reverse)) {
+            printf("XGuiAutoTest: [FAIL] 能力位图缺反转位\n");
+            ++fail;
+        } else {
+            printf("XGuiAutoTest: [PASS] 能力位图（反转位）\n");
+        }
+    }
 
     if (s_atv.m_connected) {
         printf("XGuiAutoTest: [FAIL] ATV61 构建后不应处于已连接态\n");
@@ -705,8 +814,8 @@ int demo_page_atv61_autotest(XWidget* page)
         printf("XGuiAutoTest: [PASS] ATV61 构建后未连接\n");
     }
 
-    if (XModbusAtv61_faultName(9) == NULL ||
-        strcmp(XModbusAtv61_faultName(9), "OCF") != 0) {
+    if (XVfdAtv61_faultName(9) == NULL ||
+        strcmp(XVfdAtv61_faultName(9), "OCF") != 0) {
         printf("XGuiAutoTest: [FAIL] 故障码表映射异常（9 应为 OCF）\n");
         ++fail;
     } else {
@@ -721,13 +830,51 @@ int demo_page_atv61_autotest(XWidget* page)
 
 void demo_page_atv61_adapt(XWidget* page)
 {
-    (void)page;
-    /* 盒式布局自适应：无需手工重排（控件宽度固定、纵向流式排布）。 */
+    /* [窄档翻竖排 2026-10-27 视觉走查 P1] 三行横排定宽控件合计：
+     * 通信行 48+160+56+90+40+70+80=544、控制行 88*6=528、调速行
+     * 128+100+88+40+80+30=466+checkbox——400 级竖屏行内宽 ~364 全部
+     * 溢出右缘。按 window 页先例 setDirection 整行翻竖排（幂等）。
+     * 宽档翻回横排复原桌面装配，resize 跨档来回不残留。 */
+    bool narrow;
+    if (!page || (page != s_atv.m_root && page != s_atv.m_scroll)) return;
+    narrow = XWidget_width(page) > 0 && XWidget_width(page) < 600;
+    XBoxLayout_setDirection(&s_atv.m_rows[0],
+        narrow ? XBoxLayoutDirection_TopToBottom
+               : XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_setDirection(&s_atv.m_rows[1],
+        narrow ? XBoxLayoutDirection_TopToBottom
+               : XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_setDirection(&s_atv.m_rows[2],
+        narrow ? XBoxLayoutDirection_TopToBottom
+               : XBoxLayoutDirection_LeftToRight);
+    /* 翻排改变内容高：scroll 壳主动收口一次（resizeEvent 只盖窗口
+     * 尺寸变化路径）。 */
+    if (s_atv.m_scroll)
+        atv_fitScrollContent((XScrollArea*)s_atv.m_scroll);
+    /* [HUD 让位 2026-10-27 视觉走查 P2-8] 底部说明行与右下锚定的 FPS
+     * 悬浮层同落页底带，说明行尾部被遮（横屏截图实证）：hint 最大宽
+     * 按悬浮层几何收窄（window 页 adapt 同款先例）；悬浮层隐藏/未解算
+     * 时先不让位，下一轮 adapt 补上。 */
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    if (s_atv.m_hint) {
+        int wrapW = XWidget_width(page) - 24;
+        XPerformanceOverlay* overlay =
+            (XPerformanceOverlay*)demo_main_overlay(s_atv.m_user);
+        if (overlay && XWidget_isVisible((XWidget*)overlay)) {
+            XRect og = XPerformanceOverlay_geometry(overlay);
+            if (og.width > 0 && og.width < wrapW)
+                wrapW -= og.width + 12;
+        }
+        if (wrapW < 160) wrapW = 160;
+        XLabel_setWordWrap(s_atv.m_hint, true);
+        XWidget_setMaximumWidth((XWidget*)s_atv.m_hint, wrapW);
+    }
+#endif
 }
 
 #else /* !ATV_PAGE_ENABLED */
 
-/* 裁剪契约桩：控件或 Modbus 模块被裁掉时，主文件跳过本页注册。 */
+/* 裁剪契约桩：控件或 XVfd/Modbus 模块被裁掉时，主文件跳过本页注册。 */
 XWidget* demo_page_atv61_build(XWidget* parent, DemoPageStatusFn status, void* user)
 {
     (void)parent; (void)status; (void)user;

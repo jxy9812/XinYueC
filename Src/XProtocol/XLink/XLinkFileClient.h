@@ -37,6 +37,22 @@ XCLASS_DEFINE_ENUM(XLinkFileClient, timerEvent) = XCLASS_VTABLE_GET_SIZE(XObject
 XCLASS_DEFINE_END(XLinkFileClient)
 
 /**
+ * @brief 会话驱动模式（pump 是否代泵承载会话）。
+ * @details 单驱动口径：会话挂载传输时已自动接好异步驱动（内建定时器 +
+ *          readyRead，见 XLinkSession attachAsync），异步环境下本类再泵
+ *          会话即成「顺序双泵」。默认 Auto 按本线程分发器在位与否门控，
+ *          心跳拍编译为 0（XLINK_HEARTBEAT_TICK_MS == 0）时无条件代泵
+ *          （会话契约要求手动 pump）。注意真实 TCP 的读写均为事件驱动
+ *          （见 XAbstractSocket），"分发器在位却不转事件"的宿主即便
+ *          Force 也无法搬运数据——Force 面向环回等同步传输的手动驱动
+ *          与诊断对比，不是真实 TCP 无事件宿主的救生出口。
+ */
+typedef enum XLinkFileClientSessionDrive {
+    XLinkFileClientSessionDrive_Auto = 0,        /**< 默认：无分发器或心跳拍为 0（手动环境）才代泵会话。 */
+    XLinkFileClientSessionDrive_ForceSessionPump = 1 /**< 强制：每圈 pump 都代泵会话（旧版行为）。 */
+} XLinkFileClientSessionDrive;
+
+/**
  * @brief 文件传输客户端对象。
  * @details 拥有一个传输引擎；自身是 XObject，可接收节拍驱动。
  */
@@ -47,6 +63,7 @@ typedef struct XLinkFileClient {
     uint32_t m_nextTransferId;/**< transferId 发生器（客户端用奇数）。 */
     uint32_t m_tickIntervalMs;/**< 节拍周期（默认 XLINK_FILE_TICK_MS）。 */
     XTimerId m_timerId;       /**< 内建节拍定时器（仅活跃传输期间运行）。 */
+    int m_sessionDrive;       /**< 会话驱动模式（XLinkFileClientSessionDrive）。 */
 } XLinkFileClient;
 
 /* ========================================================================== */
@@ -106,15 +123,56 @@ bool XLinkFileClient_download(XLinkFileClient* obj, const char* remoteName,
                               uint32_t* outTransferId);
 
 /**
- * @brief      推进一步传输（手动驱动；无事件分发器时必须调用）。
+ * @brief      推进一步传输（手动驱动口；传输引擎的唯一通用推进通道）。
  * @param      obj 对象。
  * @param      nowMs 当前单调毫秒（可传 0 由内部取时）。
  * @return     无。
- * @note       异步环境（有事件分发器）下由内建定时器自动驱动，本函数可选；
- *             手动/测试环境（无分发器，定时器不生效）必须按圈调用，
- *             否则发送侧不会续发数据块。
+ * @note       驱动契约（单驱动原则，双泵禁令的边界在这里）：
+ *               - 传输引擎本函数每圈必泵——它无任何异步驱动，
+ *                 不调用则发送侧不续发数据块；
+ *               - 承载会话默认**不**代泵：异步环境（本线程有事件分发器
+ *                 且心跳拍 > 0，会话内建定时器与 readyRead 在位）会话已
+ *                 由框架驱动，再泵一次即成双驱动；手动环境（无分发器，
+ *                 定时器必然缺席，见 XObject_startTimer_ms；或心跳拍
+ *                 编译为 0，会话契约要求手动 pump）才由本函数代泵会话；
+ *               - nowMs 会注入会话时间基（m_nowTick/静默计时/心跳判定，
+ *                 传输活跃期经 keepAlive 直达，门控不隔离它），异步环境
+ *                 下请传 0（内部取实时），勿注入异构时钟；
+ *               - "分发器在位却不转事件"的宿主 Auto 拒泵（可用
+ *                 XLinkFileClient_setSessionDrive 切 Force），但真实 TCP
+ *                 的读写均为事件驱动，此类宿主即便 Force 也无法搬运数据，
+ *                 Force 只对环回等同步传输的手动驱动有意义。
  */
 void XLinkFileClient_pump(XLinkFileClient* obj, uint32_t nowMs);
+
+/**
+ * @brief      设置会话驱动模式（缺省 Auto）。
+ * @param      obj 对象。
+ * @param      mode XLinkFileClientSessionDrive。
+ * @return     设置成功返回 true；参数非法返回 false。
+ * @note       仅影响 XLinkFileClient_pump 是否代泵会话，不影响本类内建
+ *             节拍定时器；传输活跃中可随时切换，下一圈生效。
+ */
+bool XLinkFileClient_setSessionDrive(XLinkFileClient* obj,
+                                     XLinkFileClientSessionDrive mode);
+
+/**
+ * @brief      读取当前会话驱动模式。
+ * @param      obj 对象（借用）；NULL 时返回 Auto。
+ */
+XLinkFileClientSessionDrive XLinkFileClient_sessionDrive(
+    const XLinkFileClient* obj);
+
+/**
+ * @brief      查询下一圈 pump 是否会代泵承载会话。
+ * @param      obj 对象（借用）；NULL 时返回 false。
+ * @return     与 XLinkFileClient_pump 的门控判定同源（单一事实源）：
+ *             Force 恒 true；Auto 在无分发器或心跳拍为 0 时 true，
+ *             异步环境 false。
+ * @note       自定义宿主可据此决定是否自行驱动承载会话（查询动态求值，
+ *             分发器创建/销毁后结果随之变化）。
+ */
+bool XLinkFileClient_willPumpSession(const XLinkFileClient* obj);
 
 /**
  * @brief      中止当前传输。

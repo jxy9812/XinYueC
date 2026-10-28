@@ -773,9 +773,11 @@ static bool xpbs_swCursorStampOther(const XPlatformDisplayInfo* info,
     if (!xpbs_swCursorPanelRect(info, rot, logW, logH, origin, &panel))
         return false;
     lrect = XCursor_swRect();
-    bits = XCursor_swArrowBits();
-    bw = XCursor_swArrowWidth();
-    bh = XCursor_swArrowHeight();
+    /* [2026-10-27 按形状取图] 外形选择语义：位图/尺寸随软件精灵有效
+     * 形状（swRect 同源），无表形状回落箭头。 */
+    bits = XCursor_swBits();
+    bw = XCursor_swWidth();
+    bh = XCursor_swHeight();
     for (dy = panel.y; dy < panel.y + panel.height; ++dy)
     {
         uint8_t* row = (uint8_t*)info->m_frameBuffer +
@@ -907,9 +909,11 @@ static bool xpbs_swCursorDraw(const XPlatformDisplayInfo* info, int writeIndex,
     }
     lrect = XCursor_swRect(); /* 逻辑外接矩形（像素环只取原点反查位图
                                  下标；正变换已在 panelRect 完成）。 */
-    bits = XCursor_swArrowBits();
-    bw = XCursor_swArrowWidth();
-    bh = XCursor_swArrowHeight();
+    /* [2026-10-27 按形状取图] 外形选择语义：位图/尺寸随软件精灵有效
+     * 形状（swRect 同源），无表形状回落箭头。 */
+    bits = XCursor_swBits();
+    bw = XCursor_swWidth();
+    bh = XCursor_swHeight();
     /* 【备份保持 2026-10-23】同矩形且备份仍有效时**不重备份**：
      * 1) 备份有效性以 m_backupValid/m_backupRect 记账，**不挂 m_active**
      *    ——present 头部恢复后记录作废、尾部重画同矩形，此刻双落笔/桥

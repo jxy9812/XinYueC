@@ -205,8 +205,27 @@ typedef struct XModbusPdu {
  * XModbusPdu_setData((XModbusPdu*)req, data, 4);
  * @endcode
  */
+/**
+ * @brief 请求优先级（任意整数值；XinYueC 扩展，Qt 的 QModbusRequest 无对应概念）。
+ * @details 对齐 Qt 事件队列语义（QEvent::priority + QCoreApplication::postEvent）：
+ *          值越大越先出队；**支持任意等级**，不限于两档。相同优先级的请求保持
+ *          FIFO（先入队者先发出）。供多优先队列的传输实现排序出队——Modbus RTU
+ *          主站（485 半双工单总线）与单事务模式下的 Modbus/TCP 主站据此降低
+ *          控制命令的排队延迟（已发出的帧不可抢占，优先级只作用于等待中的请求）。
+ */
+typedef int XModbusRequestPriority;
+
+/** @brief 普通优先级（默认；状态轮询/参数读写等） */
+#define XModbusRequestPriority_Normal 0
+/** @brief 高优先级（控制命令等，需快速响应） */
+#define XModbusRequestPriority_High 1
+
 typedef struct XModbusRequest {
     XModbusPdu m_base;                          ///< 继承自XModbusPdu（必须是第一个成员）
+    int m_priority;                             ///< 请求优先级（XModbusRequestPriority；默认 Normal=0；
+                                              ///< 任意整数值，值越大越先出队）。
+                                              ///< 供支持多优先队列的传输（如 Modbus RTU 主站）排序出队用；
+                                              ///< Qt 的 QModbusRequest 无对应概念，属 XinYueC 扩展字段。
 } XModbusRequest;
 
 /**

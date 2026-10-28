@@ -202,10 +202,19 @@ static void VXComboBox_paintEvent(XWidget* self, XEvent* event)
         }
     }
 xcombo_style_text: {}
-    /* style 分支与原路径共用：当前项文本在下方绘制。 */
-    /* 当前项文本（部件化后列表由独立弹出视图承载，自身恒画文本）。 */
-    {
-        if (combo->m_currentIndex >= 0 && combo->m_currentIndex < combo->m_itemCount &&
+    /* 当前项文本（部件化后列表由独立弹出视图承载，自身恒画文本）。
+     * [可编辑不双绘 2026-10-27 框架根修] 对标 Qt QCommonStyle
+     * CE_ComboBoxLabel（qcommonstyle.cpp:2250）：闭态文本**仅非可编辑
+     * 时**绘制——`if (!cb->currentText.isEmpty() && !cb->editable)`。
+     * 可编辑态的文本由**内嵌编辑框**承载（QComboBox 的 lineEdit 子控件
+     * 占据编辑区并自行绘制），闭态若再画一遍即**同一位置双绘**：两串字
+     * 形互相叠印、互不可读（XFontComboBox 构造即 setEditable(true)，
+     * qfontcombobox.cpp:403 —— 真机/桌面截图实证：字体下拉叠印
+     * 「Noto Sans」与「Noto Sans: Gurmukhi」）。本实现此前**无条件**画
+     * 闭态文本 ⇒ 与内嵌编辑框双绘，即该 P1 叠印的框架根因。 */
+    if (!combo->m_editable) {
+        if (combo->m_currentIndex >= 0 &&
+            combo->m_currentIndex < combo->m_itemCount &&
             combo->m_items[combo->m_currentIndex]) {
             XPainter_drawText(&painter, 6, (r.height - 14) / 2 + 12,
                               XString_toUtf8(combo->m_items[combo->m_currentIndex]), text);
@@ -830,6 +839,16 @@ static void xcombo_updateSizeHint(XComboBox* self)
                                        XStyleCT_ComboBox, &opt, content);
     }
     XWidget_setSizeHint((XWidget*)self, &hint);
+    /* [minimumSizeHint 补齐 2026-10-27 视觉走查] Qt QComboBox::
+       minimumSizeHint() = recomputeSizeHint —— sizeHint 与 minimumSizeHint
+       同源（qcombobox.cpp:2505-2509）。此前本类不设 minimumSizeHint ⇒
+       XWidgetItem_minimumSize 的 minHint 无效回退 (0,0) ⇒ 布局 min=0：
+       盒布局竖排（按 hint 高给尺寸）在空间不足时「低于首选」均分收缩
+       分支可把高度压到 min=0 附近的任意小值（ATV61 窄档翻竖排后下拉框
+       塌成 6px 高，桌面截图实证）。补上同值 minimumSizeHint 后，布局
+       收缩有真实下界（qGeomCalc 的 size < minimumSize 早退分支得以
+       生效）。 */
+    XWidget_setMinimumSizeHint((XWidget*)self, &hint);
 }
 
 /** @brief 结算插入策略（对标 QComboBoxPrivate::returnPressed 主体）。

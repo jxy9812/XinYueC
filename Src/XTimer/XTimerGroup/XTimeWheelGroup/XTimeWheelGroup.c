@@ -227,9 +227,27 @@ static bool addTimer_lockfree(XTimeWheelGroup* group, XListSNode* timer_node, si
         ticksCompare *= XContainerSize(&wheel->m_slots);
         if (timeout_ticks < ticksCompare)
         {
-            // 计算在当前轮上应延迟的滴答数（绝对偏移）
-            size_t offset_ticks = timeout_ticks / wheelSize;
-            if (i > 0 && offset_ticks == 0) offset_ticks = 1; // 至少偏移 1 格，避免立即触发
+            size_t offset_ticks;
+            if (i == 0) {
+                // L0 每 tick 消费一次，槽偏移=全局刻度数，无相位问题
+                offset_ticks = timeout_ticks;
+            } else {
+                /* [相位落槽修正 2026-10-28] 高层轮的槽只在全局刻度到达本级
+                 * 边界时被级联（L1 每 30 刻度、L2 每 900 刻度一次），且第 k
+                 * 个边界级联的是槽 (m_tick+k-1)。旧实现 offset = timeout /
+                 * 本级槽跨度并放到 (m_tick+offset) 槽，等价于"从下个边界再
+                 * 数 offset 个边界"——周期中段注册的定时器要多等一整圈：
+                 * 1000ms 定时器（L2 offset=1）实测固定 1800ms 触发、每次
+                 * 晚 ~800ms（顶栏时钟 1s 刷新变 1.8s 实证，桌面与刻度无关
+                 * 纯数学缺陷）。修正按目标边界序号落槽：距下一边界 d 刻度，
+                 * 第 k=(timeout-d)/unit+1 个边界级联时残余 (0,unit] 交由低
+                 * 级轮/到期直兑现路径完成，实际触发时刻回到 ±1 槽精度。 */
+                size_t unit = wheelSize; /* 本级每槽对应的全局刻度跨度 */
+                size_t d = unit - (group->m_class.m_current_tick % unit);
+                size_t k = ((timeout_ticks > d) ?
+                            (timeout_ticks - d) / unit : 0) + 1;
+                offset_ticks = k - 1; /* 0 合法=下一边界级联（残余即到期） */
+            }
             return add_timer_to_wheel_lockfree(group, wheel, timer_node, offset_ticks);
         }
         wheelSize *= XContainerSize(&wheel->m_slots);

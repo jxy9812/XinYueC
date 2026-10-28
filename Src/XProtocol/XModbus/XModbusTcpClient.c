@@ -402,7 +402,8 @@ static XModbusReply* VXModbusTcpClient_sendRawRequest(XModbusClient* baseClient,
     if (XModbusClient_serialTransactions(baseClient) &&
         XModbusTcpClient_hasPendingRequests(client)) {
         if (!XModbusClient_serialQueuePush(baseClient,
-                (XModbusRequest*)request, reply, serverAddress)) {
+                (XModbusRequest*)request, reply, serverAddress,
+                (XModbusRequestPriority)request->m_priority)) {
             /* 队列满：回退为立即发送（保底不丢请求，仅可能从机侧竞争） */
             uint16_t fallbackTid = XModbusTcpClient_nextTransactionId(client);
             XModbusReply_setState(reply, XModbusReply_State_Requesting);

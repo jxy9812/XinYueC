@@ -927,6 +927,38 @@ XVtable* XTabBar_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
+/** @brief 刷新尺寸提示（对标 Qt QTabBar）。
+ *  @details Qt 6.8.3（qtabbar.cpp:1487-1498）：sizeHint = 全部**可见**
+ *           页签矩形（maxRect）的并集尺寸。 */
+static void xtabbar_updateSizeHint(XTabBar* self)
+{
+    XSize hint;
+    int count;
+    int i;
+    int bx = 0, by = 0, bx2 = 0, by2 = 0;
+    bool any = false;
+    if (!self) return;
+    count = XTabBar_count(self);
+    for (i = 0; i < count; ++i) {
+        XRect r;
+        if (!XTabBar_tabRect(self, i, &r)) continue;
+        if (!any) {
+            bx = r.x; by = r.y; bx2 = r.x + r.width; by2 = r.y + r.height;
+            any = true;
+            continue;
+        }
+        if (r.x < bx) bx = r.x;
+        if (r.y < by) by = r.y;
+        if (r.x + r.width > bx2) bx2 = r.x + r.width;
+        if (r.y + r.height > by2) by2 = r.y + r.height;
+    }
+    if (!any) XSize_init(&hint, 0, 0);
+    else XSize_init(&hint, bx2 - bx, by2 - by);
+    XWidget_setSizeHint((XWidget*)self, &hint);
+    /* Qt QTabBar 未 override minimumSizeHint（继承 QWidget 缺省）——此处
+     * 保持同口径：不另设最小尺寸（由 XTabWidget 侧汇总）。 */
+}
+
 void XTabBar_init(XTabBar* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
@@ -950,6 +982,7 @@ void XTabBar_init(XTabBar* self, XWidget* parent, XWidgetFlags flags)
     self->m_currentIndex = -1;
     self->m_tabsClosable = false;
     self->m_movable = false;
+    xtabbar_updateSizeHint(self);
     self->m_autoHide = false;
     self->m_expanding = true;
     self->m_elideMode = 1; /* Qt::ElideRight */

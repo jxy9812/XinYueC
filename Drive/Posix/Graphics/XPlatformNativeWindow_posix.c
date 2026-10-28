@@ -1970,6 +1970,73 @@ static int xpwn_cursorShapeToFontGlyph(XCursorShape shape)
     }
 }
 
+/**
+ * @brief  内建精灵位图（2bit）→ X11 双色 1bit src/mask 位数据。
+ * @details [2026-10-27 跨平台外形一致] 五款内建形状（Arrow/PointingHand/
+ *          Cross/IBeam/Wait）在**所有平台画同一份位图素材**（公共层
+ *          XCursor_swSpriteBitsFor），硬件平台转原生光标而非映射系统
+ *          形状——X11 侧走既有 xpwn_cursorCreateFromBits 双色通道：
+ *          v=1(黑)→src 位 0（前景黑）+mask 1；v=2(白)→src 位 1（背景
+ *          白）+mask 1；v=0(透明)→src 0+mask 0（透写）。行序 LSB
+ *          （bit0=行内最左，XCreateBitmapFromData 约定）。
+ *          缓冲 XMemory 分配，调用方用完 XFree_System（两块各
+ *          lineBytes*h）。
+ * @return  true 转换成功（srcBits/maskBits 交调用方释放）；false 该
+ *          形状无内建位图/分配失败（调用方回落系统字形映射）。
+ */
+/* 前向声明：内建位图转原生光标复用既有双色通道（定义在本文件后段）。 */
+static Cursor xpwn_cursorCreateFromBits(const unsigned char* srcBits,
+                                        const unsigned char* maskBits,
+                                        int w, int h, int hotX, int hotY);
+
+static bool xpwn_cursorBuiltinSpriteMasks(XCursorShape shape,
+                                          unsigned char** outSrc,
+                                          unsigned char** outMask,
+                                          int* outW, int* outH,
+                                          int* outHotX, int* outHotY)
+{
+    const uint8_t* bits;
+    int w, h, hotX, hotY;
+    int lineBytes;
+    int row, col;
+    unsigned char* srcBits;
+    unsigned char* maskBits;
+    bits = XCursor_swSpriteBitsFor(shape, &w, &h, &hotX, &hotY);
+    if (!bits || w <= 0 || h <= 0) return false;
+    lineBytes = (w + 7) / 8;
+    srcBits = (unsigned char*)XMemory_malloc(
+        (size_t)lineBytes * (size_t)h, XCLASS_DEFAULT_MEMORY_TYPE);
+    maskBits = (unsigned char*)XMemory_malloc(
+        (size_t)lineBytes * (size_t)h, XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!srcBits || !maskBits) {
+        if (srcBits) XFree_System(srcBits);
+        if (maskBits) XFree_System(maskBits);
+        return false;
+    }
+    XMemset(srcBits, 0, (size_t)lineBytes * (size_t)h);
+    XMemset(maskBits, 0, (size_t)lineBytes * (size_t)h);
+    for (row = 0; row < h; ++row) {
+        for (col = 0; col < w; ++col) {
+            uint8_t v = bits[(size_t)row * (size_t)w + (size_t)col];
+            unsigned char* sb = srcBits + (size_t)row * (size_t)lineBytes +
+                                (size_t)(col >> 3);
+            unsigned char* mb = maskBits + (size_t)row * (size_t)lineBytes +
+                                (size_t)(col >> 3);
+            unsigned char sbit = (unsigned char)(1u << (col & 7));
+            unsigned char mbit = (unsigned char)(1u << (col & 7));
+            if (v == 2) *sb |= sbit;   /* 白 → 背景色位 1。 */
+            if (v != 0) *mb |= mbit;   /* 非透明 → 透写。 */
+        }
+    }
+    *outSrc = srcBits;
+    *outMask = maskBits;
+    if (outW) *outW = w;
+    if (outH) *outH = h;
+    if (outHotX) *outHotX = hotX;
+    if (outHotY) *outHotY = hotY;
+    return true;
+}
+
 /** @brief 取（或创建）形状对应的 X11 光标资源；失败返回 None。 */
 static Cursor xpwn_cursorAcquireShapeCursor(XCursorShape shape)
 {
@@ -2001,6 +2068,24 @@ static Cursor xpwn_cursorAcquireShapeCursor(XCursorShape shape)
     slot = (int)shape;
     if (g_xpwnCursorCache[slot].m_valid)
         return g_xpwnCursorCache[slot].m_cursor;
+    /* [2026-10-27 跨平台外形一致] 内建位图形状优先走位图光标（同一份
+     * 素材与 fbdev/安卓软件精灵逐位一致），无内建位图的形状才映射
+     * cursor font 字形（系统样式）。 */
+    {
+        unsigned char* srcBits = NULL;
+        unsigned char* maskBits = NULL;
+        int w = 0, h = 0, hotX = 0, hotY = 0;
+        if (xpwn_cursorBuiltinSpriteMasks(shape, &srcBits, &maskBits,
+                                          &w, &h, &hotX, &hotY)) {
+            Cursor cur = xpwn_cursorCreateFromBits(srcBits, maskBits,
+                                                    w, h, hotX, hotY);
+            XFree_System(srcBits);
+            XFree_System(maskBits);
+            g_xpwnCursorCache[slot].m_cursor = cur;
+            g_xpwnCursorCache[slot].m_valid = cur != None;
+            return g_xpwnCursorCache[slot].m_cursor;
+        }
+    }
     glyph = xpwn_cursorShapeToFontGlyph(shape);
     if (glyph < 0)
         return None; /* 字体无对应（Bitmap/Custom 已由 apply 分流到位图

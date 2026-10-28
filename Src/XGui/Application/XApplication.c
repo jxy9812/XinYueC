@@ -43,10 +43,8 @@ static void VXApplication_deinit(XApplication* self)
 {
     if (!self) return;
     if (g_xapp == self) g_xapp = NULL;
-    if (self->m_topLevelWidgets) {
-        XClassDelete((XClass*)self->m_topLevelWidgets);
-        self->m_topLevelWidgets = NULL;
-    }
+    /* 顶层控件注册表已下沉基类（XGuiApplication_deinit 释放），此处不再
+       持有副本。 */
     self->m_activeWindow = NULL;
     self->m_focusWidget = NULL;
     self->m_activeModalWidget = NULL;
@@ -76,7 +74,7 @@ void XApplication_init(XApplication* self, int argc, char** argv)
     /* 基类 XGuiApplication_init 会初始化并登记 XCoreApplication 单例。 */
     XGuiApplication_init(&self->m_class, argc, argv);
     XClassSetVtable(self, XApplication);
-    self->m_topLevelWidgets = XVector_Create(XWidget*);
+    /* 顶层控件注册表已下沉基类（XGuiApplication_init 创建），见类注释。 */
     self->m_activeWindow = NULL;
     self->m_focusWidget = NULL;
     self->m_activeModalWidget = NULL;
@@ -114,32 +112,45 @@ XApplication* XApplication_instance(void)
 
 void XApplication_registerTopLevelWidget(XWidget* widget)
 {
-    XApplication* app = g_xapp;
+    /* [2026-10-26 注册表下沉] 表在基类 XGuiApplication 上：只创建
+       XGuiApplication 的应用（demo/嵌入式，无 g_xapp）同样登记，
+       否则调色板广播对它们静默失效（换肤不重绘根因）。 */
+    XGuiApplication* app = XGuiApplication_instance();
+    XVector* registry;
     size_t n;
-    if (!app || !widget || !app->m_topLevelWidgets) return;
-    n = XVector_size_base((const XContainer*)app->m_topLevelWidgets);
+    if (!app || !widget) return;
+    registry = app->m_topLevelWidgets;
+    if (!registry) return;
+    n = XVector_size_base((const XContainer*)registry);
     for (size_t i = 0; i < n; ++i) {
-        if (XVector_At_Base(app->m_topLevelWidgets, (int64_t)i, XWidget*) == widget)
+        if (XVector_At_Base(registry, (int64_t)i, XWidget*) == widget)
             return; /* 幂等。 */
     }
-    XVector_Push_Back_Base(app->m_topLevelWidgets, XWidget*, widget);
+    XVector_Push_Back_Base(registry, XWidget*, widget);
 }
 
 void XApplication_unregisterTopLevelWidget(XWidget* widget)
 {
+    /* 注册表在基类（见 register 注）；焦点/活动引用仍在 XApplication
+       子类字段上，g_xapp 缺席时只摘表不清理引用（那些字段本就为空）。 */
+    XGuiApplication* gui = XGuiApplication_instance();
     XApplication* app = g_xapp;
+    XVector* registry;
     size_t n;
     int64_t index = -1;
-    if (!app || !widget || !app->m_topLevelWidgets) return;
-    n = XVector_size_base((const XContainer*)app->m_topLevelWidgets);
+    if (!gui || !widget) return;
+    registry = gui->m_topLevelWidgets;
+    if (!registry) return;
+    n = XVector_size_base((const XContainer*)registry);
     for (size_t i = 0; i < n; ++i) {
-        if (XVector_At_Base(app->m_topLevelWidgets, (int64_t)i, XWidget*) == widget) {
+        if (XVector_At_Base(registry, (int64_t)i, XWidget*) == widget) {
             index = (int64_t)i;
             break;
         }
     }
-    if (index >= 0) XVector_remove_base(app->m_topLevelWidgets, index, 1);
+    if (index >= 0) XVector_remove_base(registry, index, 1);
     /* 同步清理指向该控件的焦点/活动引用。 */
+    if (!app) return;
     if (app->m_activeWindow == widget) app->m_activeWindow = NULL;
     if (app->m_focusWidget == widget) app->m_focusWidget = NULL;
     if (app->m_activeModalWidget == widget) app->m_activeModalWidget = NULL;
@@ -148,15 +159,20 @@ void XApplication_unregisterTopLevelWidget(XWidget* widget)
 
 XVector* XApplication_topLevelWidgets(void)
 {
-    XApplication* app = g_xapp;
+    /* 注册表在基类（见 register 注）：广播等公共路径经本入口取表，
+       对只创建 XGuiApplication 的应用同样返回登记内容。 */
+    XGuiApplication* gui = XGuiApplication_instance();
+    XVector* registry;
     XVector* out;
     size_t n;
-    if (!app || !app->m_topLevelWidgets) return NULL;
+    if (!gui) return NULL;
+    registry = gui->m_topLevelWidgets;
+    if (!registry) return NULL;
     out = XVector_Create(XWidget*);
     if (!out) return NULL;
-    n = XVector_size_base((const XContainer*)app->m_topLevelWidgets);
+    n = XVector_size_base((const XContainer*)registry);
     for (size_t i = 0; i < n; ++i) {
-        XWidget* w = XVector_At_Base(app->m_topLevelWidgets, (int64_t)i, XWidget*);
+        XWidget* w = XVector_At_Base(registry, (int64_t)i, XWidget*);
         if (w) XVector_Push_Back_Base(out, XWidget*, w);
     }
     return out;
@@ -164,15 +180,18 @@ XVector* XApplication_topLevelWidgets(void)
 
 XWidget* XApplication_widgetAt(const XPoint* point)
 {
-    XApplication* app = g_xapp;
+    XGuiApplication* gui = XGuiApplication_instance();
+    XVector* registry;
     size_t n;
-    if (!app || !point || !app->m_topLevelWidgets) return NULL;
+    if (!gui || !point) return NULL;
+    registry = gui->m_topLevelWidgets;
+    if (!registry) return NULL;
     /* 后登记的视为更上层，逆序查找第一个包含该点的可见顶层控件。 */
 #if XWIDGET_ON
-    n = XVector_size_base((const XContainer*)app->m_topLevelWidgets);
+    n = XVector_size_base((const XContainer*)registry);
     if (n == 0) return NULL;
     for (size_t i = n; i > 0; --i) {
-        XWidget* w = XVector_At_Base(app->m_topLevelWidgets, (int64_t)(i - 1), XWidget*);
+        XWidget* w = XVector_At_Base(registry, (int64_t)(i - 1), XWidget*);
         if (w) {
             if (!XWidget_isVisible(w)) continue;
             XRect g = XWidget_geometry(w);
@@ -466,15 +485,18 @@ void* XApplication_focusChanged_signal(XApplication* self,
 
 XVector* XApplication_allWidgets(void)
 {
-    XApplication* app = g_xapp;
+    XGuiApplication* gui = XGuiApplication_instance();
+    XVector* registry;
     size_t n;
     XVector* out;
-    if (!app || !app->m_topLevelWidgets) return NULL;
-    n = XVector_size_base((const XContainer*)app->m_topLevelWidgets);
+    if (!gui) return NULL;
+    registry = gui->m_topLevelWidgets;
+    if (!registry) return NULL;
+    n = XVector_size_base((const XContainer*)registry);
     out = XVector_Create(XWidget*);
     if (!out) return NULL;
     for (size_t i = 0; i < n; ++i) {
-        XWidget* w = XVector_At_Base(app->m_topLevelWidgets, (int64_t)i, XWidget*);
+        XWidget* w = XVector_At_Base(registry, (int64_t)i, XWidget*);
         if (w) XVector_push_back_1_base(out, &w);
     }
     return out;
@@ -482,13 +504,16 @@ XVector* XApplication_allWidgets(void)
 
 XWidget* XApplication_topLevelAt(const XPoint* point)
 {
-    XApplication* app = g_xapp;
+    XGuiApplication* gui = XGuiApplication_instance();
+    XVector* registry;
     size_t n;
-    if (!app || !point || !app->m_topLevelWidgets) return NULL;
+    if (!gui || !point) return NULL;
+    registry = gui->m_topLevelWidgets;
+    if (!registry) return NULL;
 #if XWIDGET_ON
-    n = XVector_size_base((const XContainer*)app->m_topLevelWidgets);
+    n = XVector_size_base((const XContainer*)registry);
     for (size_t i = n; i > 0; --i) {
-        XWidget* w = XVector_At_Base(app->m_topLevelWidgets, (int64_t)(i - 1), XWidget*);
+        XWidget* w = XVector_At_Base(registry, (int64_t)(i - 1), XWidget*);
         if (w && XWidget_isVisible(w)) {
             XRect g = XWidget_geometry(w);
             if (XRect_contains(&g, point->x, point->y)) return w;
@@ -528,14 +553,19 @@ void XApplication_setEffectEnabled(int effect, bool enable)
 
 void XApplication_closeAllWindows(void)
 {
-    XApplication* app = g_xapp;
+    /* 注册表在基类（见 register 注）：对只创建 XGuiApplication 的应用
+       同样可关闭全部顶层窗口。 */
+    XGuiApplication* gui = XGuiApplication_instance();
+    XVector* registry;
     size_t n;
     size_t i;
-    if (!app || !app->m_topLevelWidgets) return;
+    if (!gui) return;
+    registry = gui->m_topLevelWidgets;
+    if (!registry) return;
 #if XWIDGET_ON
-    n = XVector_size_base((const XContainer*)app->m_topLevelWidgets);
+    n = XVector_size_base((const XContainer*)registry);
     for (i = 0; i < n; ++i) {
-        XWidget* w = XVector_At_Base(app->m_topLevelWidgets, (int64_t)i, XWidget*);
+        XWidget* w = XVector_At_Base(registry, (int64_t)i, XWidget*);
         if (w) XWidget_close(w);
     }
 #else
@@ -555,13 +585,18 @@ void XApplication_aboutQt(void)
  *          故逐顶层 update 即覆盖全部控件（无需逐控件递归）。 */
 static void xapp_updateTopLevelWidgets(void)
 {
-    XApplication* app = g_xapp;
+    /* 注册表在基类（见 register 注）：setStyleSheet 的全量 repolish
+       等价对 XGuiApplication 单例应用同样生效。 */
+    XGuiApplication* gui = XGuiApplication_instance();
+    XVector* registry;
     size_t n;
     size_t i;
-    if (!app || !app->m_topLevelWidgets) return;
-    n = XVector_size_base((const XContainer*)app->m_topLevelWidgets);
+    if (!gui) return;
+    registry = gui->m_topLevelWidgets;
+    if (!registry) return;
+    n = XVector_size_base((const XContainer*)registry);
     for (i = 0; i < n; ++i) {
-        XWidget* w = XVector_At_Base(app->m_topLevelWidgets, (int64_t)i, XWidget*);
+        XWidget* w = XVector_At_Base(registry, (int64_t)i, XWidget*);
         if (w) XWidget_update(w);
     }
 }
@@ -581,16 +616,24 @@ const char* XApplication_styleSheet_2(void)
 
 void XApplication_setStyleSheet(const XString* css)
 {
+    /* [2026-10-26 放宽 g_xapp 依赖] 应用级样式表文本只在 XApplication
+       实例上存档（styleSheet() 回读用）；只创建 XGuiApplication 的应用
+       （demo/嵌入式）此前在此被 `if (!app) return` 整体拦下——样式表
+       既不安装也不触发全量重绘（换肤不重绘根因之二）。现改为：有
+       XApplication 则照旧存档，没有也继续执行 安装+全顶层 update。 */
     XApplication* app = g_xapp;
     const char* utf8;
-    if (!app) return;
-    if (!app->m_styleSheet) app->m_styleSheet = XString_create();
-    if (!app->m_styleSheet) return;
-    if (css)
-        XString_assign(app->m_styleSheet, css);
-    else
-        XString_assign_utf8(app->m_styleSheet, "");
-    utf8 = XString_toUtf8(app->m_styleSheet);
+    if (app) {
+        if (!app->m_styleSheet) app->m_styleSheet = XString_create();
+        if (!app->m_styleSheet) return;
+        if (css)
+            XString_assign(app->m_styleSheet, css);
+        else
+            XString_assign_utf8(app->m_styleSheet, "");
+        utf8 = XString_toUtf8(app->m_styleSheet);
+    } else {
+        utf8 = css ? XString_toUtf8(css) : "";
+    }
 #if XSTYLE_ON
     XStyle_installStyleSheet(utf8 ? utf8 : "");
 #else
@@ -610,9 +653,11 @@ void XApplication_setStyleSheet(const XString* css)
 
 void XApplication_setStyleSheet_2(const char* css)
 {
-    XApplication* app = g_xapp;
+    /* [2026-10-26 放宽 g_xapp 依赖] 本函数只是 char* → XString 适配器，
+       不应要求 XApplication 实例存在（同 setStyleSheet 主入口的放宽）；
+       此前的 `if (!app) return` 让只创建 XGuiApplication 的应用整个换肤
+       链路静默失效。 */
     XString* tmp = NULL;
-    if (!app) return;
     if (css) {
         tmp = XString_create_utf8(css);
         if (!tmp) return;

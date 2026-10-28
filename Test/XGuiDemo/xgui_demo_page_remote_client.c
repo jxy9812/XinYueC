@@ -678,7 +678,8 @@ static XLabel* rc_buildCapLabel(const char* text, int capW)
 
 /** @brief 组装一行「字段标题 + 输入控件」挂入控制列布局（旧装配口径:
  *         字段定宽 220 落在列内 +32 起——IP 标题 28 宽 + 4px 间距,
- *         CJK 标题 32 宽贴 0 间距, 两式行宽均恰为 252; 字段带伸缩
+ *         CJK 标题 32 宽 + 4px 间距（2026-10-27 视觉走查 P3-D：0 间距
+ *         标签贴框观感粘连，与 IP 行统一 4px）, 两式行宽均恰为 252; 字段带伸缩
  *         因子, 列若加宽由字段吸收余量）。 */
 static void rc_addCapRow(XBoxLayout* row, const char* text, int capW,
                          int rowSpacing, XLabel** outCap, XWidget* field)
@@ -984,7 +985,7 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     XBoxLayout_addStretch(&s_rc.m_layRowBtn, 1);
     XBoxLayout_addLayout(&s_rc.m_layCol, (XLayout*)&s_rc.m_layRowBtn);
     rc_addCapRow(&s_rc.m_layRowProfile,
-                 "\xE6\xA1\xA3\xE4\xBD\x8D", 32, 0,                  /* 档位 */
+                 "\xE6\xA1\xA3\xE4\xBD\x8D", 32, 4,                  /* 档位 */
                  &s_rc.m_capProfile, (XWidget*)s_rc.m_profileCombo);
     /* TLS+UDP 开关行: TLS 定宽 96, UDP 伸缩占行内余宽 148（旧装配同排
      * 右段; 96+8+148=252 恰满, 无需行尾空白）。 */
@@ -995,10 +996,10 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     XBoxLayout_setStretch(&s_rc.m_layRowTls, 1, 1);
     XBoxLayout_addLayout(&s_rc.m_layCol, (XLayout*)&s_rc.m_layRowTls);
     rc_addCapRow(&s_rc.m_layRowAuth,
-                 "\xE8\xAE\xA4\xE8\xAF\x81", 32, 0,                  /* 认证 */
+                 "\xE8\xAE\xA4\xE8\xAF\x81", 32, 4,                  /* 认证 */
                  &s_rc.m_capAuth, (XWidget*)s_rc.m_authCombo);
     rc_addCapRow(&s_rc.m_layRowPwd,
-                 "\xE5\x8F\xA3\xE4\xBB\xA4", 32, 0,                  /* 口令 */
+                 "\xE5\x8F\xA3\xE4\xBB\xA4", 32, 4,                  /* 口令 */
                  &s_rc.m_capPassword, (XWidget*)s_rc.m_passwordEdit);
     if (s_rc.m_touchBtn)
         XBoxLayout_addWidget(&s_rc.m_layCol, (XWidget*)s_rc.m_touchBtn);

@@ -4,16 +4,21 @@
  *               - 连接：XLinkClient 包装（自持 XTcpSocket + XLinkSession），
  *                 setHostPort（XLINK_DEMO_HOST 可指对端 IP，缺省本机环回）
  *                 + setCapability/setDispatchCallback 会话模板 +
- *                 connectToServer 异步发起；首连失败不自动重连，包装器回
- *                 Unconnected 即再发起（重试上限 10s，自动重连保持默认关
- *                 ——案例是单次流程）；
+ *                 setCredential 登录凭据（v1.3 剧情：连接成功后自动登录，
+ *                 握手 -> Authenticating -> Ready）+ connectToServer 异步
+ *                 发起；首连失败不自动重连，包装器回 Unconnected 即再发起
+ *                 （重试上限 10s，自动重连保持默认关——案例是单次流程）；
  *               - 握手零样板：TCP 连上包装器自动建会话并套模板，自动
- *                 Hello/HelloAck 转 Ready，stateChanged 信号打印每次迁移；
- *               - 等 Ready 后才能发业务帧（Hello 之前的帧会被对端丢弃）；
+ *                 Hello/HelloAck/认证挑战应答转 Ready，stateChanged 信号
+ *                 打印每次迁移；
+ *               - 等 Ready 后才能发业务帧（Hello/登录之前的帧会被对端丢弃）；
  *               - 完整故事：PING（请求-应答）-> ADD（序列化）-> SLOW
- *                 （异步应答）-> 状态推送 -> 推送与订阅全景 -> Goodbye
- *                 -> 排空写队列再拆除（收尾统一由
- *                 XLinkClient_disconnectFromServer 承担，见 XLink.md Q8）。
+ *                 （异步应答）-> 状态推送 -> 文件上传/下载逐字节校验
+ *                 （v1.3 剧情：XLinkFileClient 挂接后 256KB 模式化文件
+ *                 上传再下载回来，进度/终局走信号，纯事件循环驱动）->
+ *                 推送与订阅全景 -> Goodbye -> 排空写队列再拆除（收尾
+ *                 统一由 XLinkClient_disconnectFromServer 承担，见
+ *                 XLink.md Q8）。
  *             事件循环只有 processEvents + sleep——没有任何手动 pump。
  *             入口：`--test xlink-demo-client`（双进程联调·客户端）。
  * @author      XinYueC 团队
@@ -27,7 +32,16 @@
 #include "XLinkClient.h"
 #include "XCoreApplication.h"
 #include "XThread.h"
+#include "XMemory.h"
+#include <stdlib.h>
 #include <string.h>
+
+#if XLINK_FILE_ON
+#include "XLinkFileClient.h"
+#include "XFile.h"
+#include "XDir.h"
+#include "XString.h"
+#endif
 
 /* ==================== 客户端落账 ==================== */
 
@@ -42,6 +56,18 @@ static uint32_t g_cliLastStateCounter;
 static int g_cliAlarmCount;
 /** 客户端包装（等待条件需要；单流程，文件域即可）。 */
 static XLinkClient* g_cliClient = NULL;
+#if XLINK_AUTH_ON
+/** 认证失败信号落账（正常剧情不应触发，触发即主流程失败证据）。 */
+static int g_cliAuthFailures;
+#endif
+#if XLINK_FILE_ON
+/** 文件传输客户端（对象拥有）与终局信号落账。 */
+static XLinkFileClient* g_cliFile = NULL;
+static bool g_fileFinished;      /**< finished 信号已到。 */
+static bool g_fileOk;            /**< 终局是否成功。 */
+static uint32_t g_fileActiveId;  /**< 当前传输 id（进度节流按传输复位）。 */
+static uint32_t g_fileLastPercent; /**< 已打印到的进度（每 25% 一条）。 */
+#endif
 
 static void demo_client_reset(void)
 {
@@ -50,6 +76,16 @@ static void demo_client_reset(void)
     g_cliStateCount = 0;
     g_cliLastStateCounter = 0;
     g_cliAlarmCount = 0;
+#if XLINK_AUTH_ON
+    g_cliAuthFailures = 0;
+#endif
+#if XLINK_FILE_ON
+    g_cliFile = NULL;
+    g_fileFinished = false;
+    g_fileOk = false;
+    g_fileActiveId = 0;
+    g_fileLastPercent = 0;
+#endif
 }
 
 /**
@@ -110,6 +146,11 @@ static bool demo_cond_state(void) { return g_cliStateCount >= 3; }
 /** @brief 等待条件：ALARM 事件已收到。 */
 static bool demo_cond_alarm(void) { return g_cliAlarmCount >= 1; }
 
+#if XLINK_FILE_ON
+/** @brief 等待条件：文件传输终局信号已到。 */
+static bool demo_cond_file_finished(void) { return g_fileFinished; }
+#endif
+
 /**
  * @brief 状态迁移槽：stateChanged 信号的发射式消费（对齐 XModbus 的
  *        信号面用法），打印每次连接状态迁移。
@@ -137,6 +178,151 @@ static void demo_client_on_state(XObject* sender, XVarList* args)
         break;
     }
 }
+
+#if XLINK_AUTH_ON
+/**
+ * @brief 认证失败槽：authFailed 信号落账并打印。
+ * @note  正常剧情（凭据正确）不会触发；触发即说明服务端账户/策略出了问题，
+ *        主流程将因 Ready 等待超时而失败，这里负责留下第一现场。
+ */
+static void demo_client_on_auth_failed(XObject* sender, XVarList* args)
+{
+    XVarList_args_2(args, int, reason, uint8_t, status);
+    (void)sender;
+    g_cliAuthFailures++;
+    DEMO_LOG("client", "认证失败（reason=%d status=%u）",
+             reason, (unsigned)status);
+}
+#endif
+
+#if XLINK_FILE_ON
+/**
+ * @brief 文件传输进度槽：progress 信号落账，每 25% 打一条日志。
+ * @note  参数与 XLinkFileClient_progress_signal 发射侧逐一对应
+ *        （transferId、done、total）。
+ */
+static void demo_client_on_file_progress(XObject* sender, XVarList* args)
+{
+    XVarList_args_3(args, uint32_t, transferId, uint64_t, done,
+                    uint64_t, total);
+    (void)sender;
+    if (transferId != g_fileActiveId) {
+        /* 新传输开跑：进度节流重新计。 */
+        g_fileActiveId = transferId;
+        g_fileLastPercent = 0;
+    }
+    if (total == 0)
+        return;
+    {
+        uint32_t percent = (uint32_t)(done * 100u / total);
+        if (percent - g_fileLastPercent >= 25u) {
+            g_fileLastPercent = percent;
+            DEMO_LOG("client", "文件传输进度 %u%%（%u/%u 字节，id=%u）",
+                     percent, (unsigned)done, (unsigned)total, transferId);
+        }
+    }
+}
+
+/**
+ * @brief 文件传输终局槽：finished 信号落账（成功/失败各一次）。
+ * @note  参数与 XLinkFileClient_finished_signal 发射侧逐一对应
+ *        （transferId、ok、status、text）。
+ */
+static void demo_client_on_file_finished(XObject* sender, XVarList* args)
+{
+    XVarList_args_4(args, uint32_t, transferId, bool, ok, uint8_t, status,
+                    const char*, text);
+    (void)sender;
+    g_fileFinished = true;
+    g_fileOk = ok;
+    DEMO_LOG("client", "文件传输终局 id=%u %s（status=%u %s）",
+             transferId, ok ? "成功" : "失败", (unsigned)status,
+             (text && text[0]) ? text : "-");
+}
+
+/** @brief 文件辅助：删除本地临时文件（不存在为安全空操作）。 */
+static void demo_client_remove_local(const char* path)
+{
+    XString* p = XString_create_utf8(path);
+    if (!p)
+        return;
+    (void)XDir_removePath_static(p);
+    XClassDelete((XClass*)p);
+}
+
+/** @brief 文件辅助：生成模式化测试文件（字节模式 i*31+7，确定可复现）。 */
+static bool demo_client_make_test_file(const char* path)
+{
+    XString* name = XString_create_utf8(path);
+    XFile* file;
+    uint8_t* buffer;
+    uint32_t i;
+    int64_t written;
+
+    if (!name)
+        return false;
+    file = XFile_create_2(name);
+    XClassDelete((XClass*)name);
+    if (!file)
+        return false;
+    /* 写入要带 Create|Truncate：残留旧文件不能影响本次校验。 */
+    if (!XFile_open_2(file, XIODevice_WriteOnly | XIODevice_Create
+                             | XIODevice_Truncate, 0)) {
+        XClassDelete((XClass*)file);
+        return false;
+    }
+    buffer = (uint8_t*)XMalloc_System(XLINK_DEMO_FILE_BYTES);
+    if (!buffer) {
+        XClassDelete((XClass*)file);
+        return false;
+    }
+    for (i = 0; i < XLINK_DEMO_FILE_BYTES; ++i)
+        buffer[i] = (uint8_t)(i * 31u + 7u);
+    written = XIODevice_write_1((XIODevice*)file, (const char*)buffer,
+                                (int64_t)XLINK_DEMO_FILE_BYTES);
+    XFree_System(buffer);
+    XFile_flush(file);
+    XClassDelete((XClass*)file);
+    return written == (int64_t)XLINK_DEMO_FILE_BYTES;
+}
+
+/** @brief 文件辅助：整读文件进内存（调用方 XFree_System 释放）。 */
+static uint8_t* demo_client_read_file(const char* path, int64_t* outLen)
+{
+    XString* name;
+    XFile* file;
+    int64_t size;
+    uint8_t* buffer;
+    int64_t got;
+
+    *outLen = -1;
+    name = XString_create_utf8(path);
+    if (!name)
+        return NULL;
+    file = XFile_create_2(name);
+    XClassDelete((XClass*)name);
+    if (!file)
+        return NULL;
+    if (!XFile_open_2(file, XIODevice_ReadOnly, 0)) {
+        XClassDelete((XClass*)file);
+        return NULL;
+    }
+    size = (int64_t)XFile_size_base(file);
+    buffer = (uint8_t*)XMalloc_System((size_t)(size > 0 ? size : 1));
+    if (!buffer) {
+        XClassDelete((XClass*)file);
+        return NULL;
+    }
+    got = XIODevice_read_1((XIODevice*)file, (char*)buffer, size);
+    XClassDelete((XClass*)file);
+    if (got != size) {
+        XFree_System(buffer);
+        return NULL;
+    }
+    *outLen = size;
+    return buffer;
+}
+#endif /* XLINK_FILE_ON */
 
 /**
  * @brief 客户端通用等待：有界 processEvents 泵，条件成立或超时即返回。
@@ -182,8 +368,29 @@ int XLinkDemo_client_flow(uint16_t port)
         return 1;
     }
     XLinkClient_setHostPort(g_cliClient, host, port);
-    XLinkClient_setCapability(g_cliClient, XLinkCapability_Zlib);
+    /* 能力位：文件传输必须连接前声明（能力协商在握手期，事后声明无效——
+       服务端挂了文件服务端会对 File 帧路由，但客户端不宣告该位则交集
+       不含 FileTransfer，会话层会直接丢弃 File 帧）。 */
+    XLinkClient_setCapability(g_cliClient, XLinkCapability_Zlib
+#if XLINK_FILE_ON
+                              | XLinkCapability_FileTransfer
+#endif
+    );
     XLinkClient_setDispatchCallback(g_cliClient, demo_client_dispatch, NULL);
+#if XLINK_AUTH_ON
+    /* 剧情：登录凭据连接前设好——每次连接/重连成功后自动登录（握手后进
+       Authenticating，凭据通过服务端挑战应答才转 Ready）。 */
+    if (!XLinkClient_setCredential(g_cliClient, XLINK_DEMO_USER,
+                                   XLINK_DEMO_PASSWORD)) {
+        DEMO_LOG0("client", "设置登录凭据失败");
+        goto fail;
+    }
+    XObject_connect_2((XObject*)g_cliClient,
+                      XSignal(XLinkClient_authFailed_signal),
+                      demo_client_on_auth_failed);
+    DEMO_LOG("client", "已设置登录凭据（user=%s，认证自动完成）",
+             XLINK_DEMO_USER);
+#endif
     /* 自动重连保持默认关：案例是单次流程，连接失败由下面的重试循环兜底。 */
     /* 发射式消费：接 stateChanged 信号，打印每次状态迁移。 */
     XObject_connect_2((XObject*)g_cliClient,
@@ -222,6 +429,16 @@ int XLinkDemo_client_flow(uint16_t port)
     }
     DEMO_LOG("client", "握手完成（自动 Hello/HelloAck，negotiated=0x%04x）",
              XLinkSession_negotiatedCapability(session));
+#if XLINK_AUTH_ON
+    /* 认证剧情检查点：Ready 本身已含"认证通过"（Authenticating 不算
+       Ready），这里显式确认一次并留日志，剧情闭环更直观。 */
+    if (!XLinkClient_isAuthenticated(g_cliClient)) {
+        DEMO_LOG0("client", "会话未通过登录认证（服务端认证剧情未达成）");
+        goto fail;
+    }
+    DEMO_LOG("client", "已通过服务端登录认证（user=%s），进入授权通道",
+             XLinkClient_user_const(g_cliClient));
+#endif
     XLinkSession_subscribe(session, XLINK_DEMO_TOPIC_STATE);
 
     /* --- 1) PING：最小请求-应答 --- */
@@ -280,7 +497,114 @@ int XLinkDemo_client_flow(uint16_t port)
     else
         DEMO_LOG0("client", "ALARM 事件未收到");
 
-    /* --- 6) 推送与订阅全景：反向推送/空载荷/超限拒绝/幂等订阅/退订 --- */
+#if XLINK_FILE_ON
+    /* --- 6) 文件上传/下载：授权通道上的 256KB 模式化文件往返 ---
+       上传 -> 下载回来 -> 逐字节比对。驱动完全交给事件循环：传输引擎有
+       内建 10ms 节拍（活跃期间自动启停），会话收发由 XLinkClient 的
+       定时器/套接字信号驱动——不手动调 XLinkFileClient_pump（它会显式
+       pump 会话，与包装器内建驱动叠加成双驱动，见 XLink.md §14.3）。 */
+    {
+        uint32_t transferId = 0;
+        uint8_t* srcData = NULL;
+        uint8_t* dstData = NULL;
+        int64_t srcLen;
+        int64_t dstLen;
+        uint64_t off;
+        int mismatch = 0;
+
+        DEMO_LOG("client", "生成模式化测试文件 %s（%uKB）",
+                 XLINK_DEMO_LOCAL_UPLOAD,
+                 (unsigned)(XLINK_DEMO_FILE_BYTES / 1024u));
+        if (!demo_client_make_test_file(XLINK_DEMO_LOCAL_UPLOAD)) {
+            DEMO_LOG0("client", "测试文件生成失败");
+            goto fail;
+        }
+        g_cliFile = XLinkFileClient_create();
+        if (!g_cliFile || !XLinkFileClient_attach(g_cliFile, g_cliClient)) {
+            DEMO_LOG0("client", "XLinkFileClient 创建/挂接失败");
+            goto fail;
+        }
+        XObject_connect_2((XObject*)g_cliFile,
+                          XSignal(XLinkFileClient_progress_signal),
+                          demo_client_on_file_progress);
+        XObject_connect_2((XObject*)g_cliFile,
+                          XSignal(XLinkFileClient_finished_signal),
+                          demo_client_on_file_finished);
+
+        /* 6a 上传（flags bit0 = 允许覆盖远端，与服务端 ALLOW_OVERWRITE 对应） */
+        g_fileFinished = false;
+        g_fileOk = false;
+        if (!XLinkFileClient_upload(g_cliFile, XLINK_DEMO_LOCAL_UPLOAD,
+                                    XLINK_DEMO_FILE_NAME, 1u, &transferId)) {
+            DEMO_LOG0("client", "上传发起失败");
+            goto fail;
+        }
+        DEMO_LOG("client", "上传已发起（id=%u -> 远端 %s）",
+                 transferId, XLINK_DEMO_FILE_NAME);
+        if (!demo_client_wait(demo_cond_file_finished, XLINK_DEMO_FILE_WAIT_MS)
+            || !g_fileOk
+            || XLinkFileClient_state(g_cliFile)
+                   != XLinkFileTransferState_Done) {
+            DEMO_LOG0("client", "上传未在时限内完成");
+            goto fail;
+        }
+
+        /* 6b 下载回来（flags bit0 = 允许覆盖本地旧文件） */
+        g_fileFinished = false;
+        g_fileOk = false;
+        if (!XLinkFileClient_download(g_cliFile, XLINK_DEMO_FILE_NAME,
+                                      XLINK_DEMO_LOCAL_DOWNLOAD, 1u,
+                                      &transferId)) {
+            DEMO_LOG0("client", "下载发起失败");
+            goto fail;
+        }
+        DEMO_LOG("client", "下载已发起（id=%u <- 远端 %s）",
+                 transferId, XLINK_DEMO_FILE_NAME);
+        if (!demo_client_wait(demo_cond_file_finished, XLINK_DEMO_FILE_WAIT_MS)
+            || !g_fileOk
+            || XLinkFileClient_state(g_cliFile)
+                   != XLinkFileTransferState_Done) {
+            DEMO_LOG0("client", "下载未在时限内完成");
+            goto fail;
+        }
+
+        /* 6c 逐字节校验：下载件与原文件长度一致且内容零差异。 */
+        srcData = demo_client_read_file(XLINK_DEMO_LOCAL_UPLOAD, &srcLen);
+        dstData = demo_client_read_file(XLINK_DEMO_LOCAL_DOWNLOAD, &dstLen);
+        if (srcLen != (int64_t)XLINK_DEMO_FILE_BYTES || srcData == NULL
+            || dstLen != srcLen || dstData == NULL) {
+            DEMO_LOG("client", "文件大小不符（原 %d 下载 %d）",
+                     (int)srcLen, (int)dstLen);
+            if (srcData)
+                XFree_System(srcData);
+            if (dstData)
+                XFree_System(dstData);
+            goto fail;
+        }
+        for (off = 0; off < (uint64_t)srcLen; ++off) {
+            if (srcData[off] != dstData[off]) {
+                DEMO_LOG("client", "逐字节校验失败：偏移 %u 处不一致"
+                         "（原 0x%02x 下载 0x%02x）",
+                         (unsigned)off, srcData[off], dstData[off]);
+                mismatch = 1;
+                break;
+            }
+        }
+        if (mismatch) {
+            XFree_System(srcData);
+            XFree_System(dstData);
+            goto fail;
+        }
+        DEMO_LOG("client", "下载文件与原文件逐字节一致（%u 字节）"
+                 "——文件通道闭环", (unsigned)srcLen);
+        XFree_System(srcData);
+        XFree_System(dstData);
+        XClassDelete((XClass*)g_cliFile);
+        g_cliFile = NULL;
+    }
+#endif
+
+    /* --- 7) 推送与订阅全景：反向推送/空载荷/超限拒绝/幂等订阅/退订 --- */
     {
         static uint8_t bigBuf[XLINK_MAX_PAYLOAD - 3]; /* 比业务上限多 1 字节 */
 
@@ -342,11 +666,25 @@ int XLinkDemo_client_flow(uint16_t port)
     XLinkClient_disconnectFromServer(g_cliClient);
     XClassDelete((XClass*)g_cliClient);
     g_cliClient = NULL;
+#if XLINK_FILE_ON
+    /* 本地临时文件用完即删（上传源 + 下载件；远端沙箱由服务端退出清理）。 */
+    demo_client_remove_local(XLINK_DEMO_LOCAL_UPLOAD);
+    demo_client_remove_local(XLINK_DEMO_LOCAL_DOWNLOAD);
+#endif
     DEMO_LOG0("client", "exit 0");
     return 0;
 
 fail:
     DEMO_LOG0("client", "失败，exit 1");
+#if XLINK_FILE_ON
+    if (g_cliFile) {
+        XLinkFileClient_abort(g_cliFile, XLinkFileStatus_Aborted, "cleanup");
+        XClassDelete((XClass*)g_cliFile);
+        g_cliFile = NULL;
+    }
+    demo_client_remove_local(XLINK_DEMO_LOCAL_UPLOAD);
+    demo_client_remove_local(XLINK_DEMO_LOCAL_DOWNLOAD);
+#endif
     if (g_cliClient) {
         XLinkClient_disconnectFromServer(g_cliClient);
         XClassDelete((XClass*)g_cliClient);

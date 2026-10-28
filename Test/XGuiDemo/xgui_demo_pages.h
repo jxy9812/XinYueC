@@ -213,7 +213,8 @@ int demo_page_modbus_slave_autotest(XWidget* page);
 void demo_page_modbus_slave_adapt(XWidget* page);
 
 /** @brief 构建窗口设置页（系统设置：皮肤/边框(标题栏)/状态栏/最大化/
- *         窗口方向/鼠标光标显示 + 复位默认；改动即时生效）。控件或样式/
+ *         全屏/窗口方向/鼠标光标显示/屏幕休眠(熄屏与系统休眠超时) +
+ *         复位默认；改动即时生效）。控件或样式/
  *         调色板段被裁剪时返回 NULL，主文件跳过注册（2026-10-17 追加）。 */
 XWidget* demo_page_window_settings_build(XWidget* parent,
                                          DemoPageStatusFn status, void* user);
@@ -224,6 +225,12 @@ int demo_page_window_settings_autotest(XWidget* page);
 
 /** @brief 窗口设置页自适应重排（说明/状态行贴底；同上契约）。 */
 void demo_page_window_settings_adapt(XWidget* page);
+
+/** @brief 窗口状态改变推入（主窗 changeEvent 收到 WINDOW_STATE_CHANGE
+ *         时调用；整页控件回读主窗当前态）。未 build 时空操作。
+ *         [2026-10-28 对齐 Qt] 全路径状态变化事件最终送达顶层控件
+ *         changeEvent，页面由此自动修正「全屏显示」等复选框回读。 */
+void demo_page_window_settings_syncFromWindow(void);
 
 /** @brief 构建时钟与 DDNS 页（系统设置：NTP 应用内校时[服务器/立即校时/
  *         自动校时/偏移时延状态] + 动态域名解析[阿里云凭据/域名记录/

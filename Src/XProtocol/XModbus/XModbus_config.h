@@ -68,10 +68,8 @@ extern "C" {
 #define XMODBUS_HUB_ON XMODBUS_MAPPING_ON
 #endif
 
-/** @brief 施耐德 ATV61 变频器专用驱动（XModbusAtv61：启停/调速/状态/报警） */
-#ifndef XMODBUS_ATV61_ON
-#define XMODBUS_ATV61_ON XMODBUS_CLIENT_ON
-#endif
+/* 变频器驱动已迁出至 Src/XProtocol/XVfd/（XVfdDevice 抽象父类 + XVfdAtv61/
+ * XVfdM512 品牌子类），裁剪开关见 XVfd_config.h（XVFD_ATV61_ON 等）。 */
 
 #endif /* XMODBUS_ON */
 

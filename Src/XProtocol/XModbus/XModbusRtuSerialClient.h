@@ -73,7 +73,8 @@ typedef struct XModbusRtuSerialClient {
     bool m_waitingForTurnaround;    ///< 是否正在等待广播响应延迟
     XByteArray* m_receiveBuffer;
     XByteArray* m_requestData;       ///< 请求数据（用于重试）
-    XQueueBase* m_queue;//任务队列
+    /* 发送队列复用基类双优先队列（XModbusClient_serialQueuePush/Pop），
+     * RTU 恒串行：请求恒入队，按优先级出队（先高后普通）。 */
 } XModbusRtuSerialClient;
 
 /******************************************************************************************

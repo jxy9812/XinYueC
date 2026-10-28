@@ -206,6 +206,16 @@ extern "C" {
 #define XLINK_FILE_IDLE_TIMEOUT_MS 30000u
 #endif
 
+/** @brief Open 无应答重发上限（次）：Opening 态每秒重发一次 Open，
+ *  超过此次数仍无 OpenAck 即终局失败（Timeout）。
+ *  @note  对端不回 OpenAck 时（能力未协商/链路半开/宿主不转事件），
+ *         不设上限会把失败形态变成「每秒重发到天荒地老」的无限停滞；
+ *         默认 30 次 ≈ 30s，与 XLINK_FILE_IDLE_TIMEOUT_MS 同量级。
+ *         注意不能直接套用空闲超时：每次成功重发都会刷新活动戳。 */
+#ifndef XLINK_FILE_OPEN_RETRY_MAX
+#define XLINK_FILE_OPEN_RETRY_MAX 30u
+#endif
+
 /** @brief 传输期间的高频驱动节拍（毫秒）：有活动传输时把会话节拍切到此值。
  *  @note  0 表示不切换（始终使用 XLINK_HEARTBEAT_TICK_MS）。 */
 #ifndef XLINK_FILE_TICK_MS

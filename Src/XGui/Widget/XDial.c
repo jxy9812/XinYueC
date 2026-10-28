@@ -488,6 +488,23 @@ XVtable* XDial_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
+/** @brief 刷新尺寸提示（对标 Qt QDial）。
+ *  @details Qt 6.8.3（qdial.cpp:425-428）：sizeHint 恒 100x100（表盘
+ *           固定直径，不随内容）；minimumSizeHint 恒 50x50
+ *           （qdial.cpp:416-419）。
+ *  @note    此前本类**无 sizeHint** ⇒ 布局条目首选尺寸 0（竖排时高度
+ *           塌 0、控件不可见）。 */
+static void xdial_updateSizeHint(XDial* self)
+{
+    XSize hint;
+    XSize minHint;
+    if (!self) return;
+    XSize_init(&hint, 100, 100);
+    XWidget_setSizeHint((XWidget*)self, &hint);
+    XSize_init(&minHint, 50, 50);
+    XWidget_setMinimumSizeHint((XWidget*)self, &minHint);
+}
+
 void XDial_init(XDial* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
@@ -501,6 +518,7 @@ void XDial_init(XDial* self, XWidget* parent, XWidgetFlags flags)
     /* 悬停外观 opt-in：绘制按 State_MouseOver 出悬停高亮，ENTER/
      * LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
     XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
+    xdial_updateSizeHint(self);
 }
 
 XDial* XDial_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags)

@@ -62,7 +62,6 @@ XCLASS_DEFINE_EXTEND_END(XApplication, XGuiApplication)
 
 /** @brief XApplication 应用对象；m_class 必须是第一个成员（嵌 XGuiApplication）。
  * @details 字段含义：
- *          - m_topLevelWidgets：登记的全部顶层控件（XWidget* 借用指针）；
  *          - m_activeWindow：当前活动窗口控件（借用，可为 NULL）；
  *          - m_focusWidget：当前焦点控件（借用，可为 NULL）；
  *          - m_activeModalWidget：当前模态控件（借用，可为 NULL）；
@@ -71,7 +70,9 @@ XCLASS_DEFINE_EXTEND_END(XApplication, XGuiApplication)
 typedef struct XApplication
 {
     XGuiApplication m_class;         /**< 基类成员（必须是第一个）。 */
-    XVector* m_topLevelWidgets;      /**< 顶层控件注册表（拥有）。 */
+    /* [2026-10-26 下沉] 顶层控件注册表移入基类 XGuiApplication
+     * （m_topLevelWidgets）：只创建 XGuiApplication 的应用也要参与
+     * 调色板广播，本类同名 API 转发基类表。 */
     XWidget* m_activeWindow;         /**< 活动窗口控件（借用）。 */
     XWidget* m_focusWidget;          /**< 焦点控件（借用）。 */
     XWidget* m_activeModalWidget;    /**< 模态控件（借用）。 */

@@ -36,6 +36,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include <stdio.h>
+#include <stdlib.h> /* setenv：XGUI_KB_TIER→XKB_FORCE_DEVICE 进程级代设。 */
 #include "XObject_Protected.h"
 #include <string.h>
 #include <stdint.h>
@@ -473,7 +474,7 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
         XWidget_setFixedWidth((XWidget*)s_kbd.editor2, KBD_BOX_MAX_W);
         XWidget_setFixedHeight((XWidget*)s_kbd.editor2, KBD_BOX_H);
         XLineEdit_setPlaceholderText(s_kbd.editor2,
-                                     "点击第二个输入框 → 键盘跟随重绑（拼音组串复位）");
+                                     "点击第二框 → 键盘跟随重绑（组串复位）");
         XWidget_show((XWidget*)s_kbd.editor2);
     }
 
@@ -622,6 +623,21 @@ static void kbd_dumpGeometryBrief(XVirtualKeyboard* kb)
             XWidget_width((XWidget*)kb), XWidget_height((XWidget*)kb));
     XPrintf("XKB-GEO band x=%d y=%d w=%d h=%d\n", band.x, band.y,
             band.width, band.height);
+    /* 档位行（2026-10-28 四档适配目验；track/device/orient/dpi 与
+       reposition 消费点同源解析，keyW=首行键宽——期望值口径见
+       xgui_keyboard_tier_shoot.sh）。 */
+    {
+        int trk = 0;
+        int dev = 0;
+        int ori = 0;
+        int dpi = 0;
+        int keyW = kb->m_keyCount > 0 ? (int)kb->m_keyRects[0].width : 0;
+        XVirtualKeyboard_metrics(kb, &trk, &dev, &ori, &dpi);
+        XPrintf("XKB-GEO metrics track=%s device=%s orient=%s dpi=%d keyW=%d\n",
+                trk == 1 ? "calibrated" : "legacy",
+                dev == 1 ? "tablet" : "phone",
+                ori == 1 ? "landscape" : "portrait", dpi, keyW);
+    }
 }
 
 /** @brief 打印布局几何（XKB-GEO 前缀行；供脚本与 xkb_rebuildLayout
@@ -709,7 +725,8 @@ bool demo_page_keyboard_headless_requested(void)
         "XGUI_KB_AUTOSHOW", "XGUI_KB_MODE",    "XGUI_KB_CHINESE",
         "XGUI_KB_COMPOSE",  "XGUI_KB_PRESS_LABEL", "XGUI_KB_CLOSE",
         "XGUI_KB_DUMP",     "XGUI_KB_LAYOUT",  "XGUI_KB_PANEL",
-        "XGUI_KB_BANDPAGE", "XGUI_KB_PHYSKEY"
+        "XGUI_KB_BANDPAGE", "XGUI_KB_PHYSKEY", "XGUI_KB_TIER",
+        "XGUI_KB_COMPACT_MODE"
     };
     size_t i;
     for (i = 0; i < sizeof(kKbEnvNames) / sizeof(kKbEnvNames[0]); ++i) {
@@ -723,6 +740,19 @@ void demo_page_keyboard_headless_hook(void)
 {
     const char* env;
     if (!s_kbd.page || !s_kbd.editor || !s_kbd.keyboard) return;
+    /* 档位入口转发（2026-10-28 四档适配目验）：XGUI_KB_TIER=phone|
+       tablet → XKB_FORCE_DEVICE 进程级代设（xgui_demo_remote.c TLS 档
+       同款 setenv 纪律；置于一切早退之前——reposition/重建的 metrics
+       现读自此生效；脚本直设 XKB_FORCE_DEVICE 时等价 no-op）。 */
+    env = XSystem_environment("XGUI_KB_TIER");
+    if (env && (strcmp(env, "phone") == 0 || strcmp(env, "tablet") == 0))
+    {
+#ifdef _WIN32
+        _putenv_s("XKB_FORCE_DEVICE", env);
+#else
+        setenv("XKB_FORCE_DEVICE", env, 1);
+#endif
+    }
     if (!kbd_envFlag("XGUI_KB_AUTOSHOW")) return;
     /* 弹出（挂宿主顶层窗口底部，与真机「点编辑框自动弹出」同一函数
        路径；焦点同步落编辑框，hints 映射与真机一致）。 */
@@ -778,6 +808,17 @@ void demo_page_keyboard_headless_hook(void)
             XVirtualKeyboard_setMode(s_kbd.keyboard,
                                      XKeyboardMode_TextLower);
 #endif
+    }
+    /* Special 档位目验入口（r3 §11 #16；置于 LAYOUT 之后——默认框落
+       User1 引擎表无「符」键，先落款型主表再真路径点「符」才能切）：
+       MODE=special → kbd_clickButton 点「符」（press/release 事件链，
+       与真机点键同路）——手机竖屏命中精简款 5 行 10 列表，键位几何由
+       DUMP 行断言。 */
+    env = XSystem_environment("XGUI_KB_MODE");
+    if (env && strcmp(env, "special") == 0) {
+        kbd_clickButton(s_kbd.keyboard,
+                        kbd_findButton(s_kbd.keyboard,
+                                       XKEYBOARD_LBL_SYMBOL));
     }
     /* 组串注入：逐字符直点同名字符键（与真机点键同一事件路径）；九键
        组键标签为多字母（"ABC"…），单字符未命中且为 '2'..'9' 时按数字
@@ -875,6 +916,20 @@ void demo_page_keyboard_headless_hook(void)
                 s_kbd.keyboard->m_layoutSelectorOpen ? 1 : 0,
                 s_kbd.keyboard->m_editPanelOpen ? 1 : 0,
                 s_kbd.keyboard->m_compactFloat ? 1 : 0);
+    }
+    /* 紧凑态内切模式注入（r3 §11 #17）：PANEL=float 之后处理——真路
+       径点「符」在紧凑悬浮态切 Special，验证 setMode 尾部对偶
+       xkb_compactFloatResize 随动+min 钳入宿主；窗矩形由外部 xwininfo
+       直读（教训⑦：禁日志推算，XKB-GEO 行仅作框架侧对账）。 */
+    env = XSystem_environment("XGUI_KB_COMPACT_MODE");
+    if (env && strcmp(env, "special") == 0 &&
+        s_kbd.keyboard->m_compactFloat) {
+        kbd_clickButton(s_kbd.keyboard,
+                        kbd_findButton(s_kbd.keyboard,
+                                       XKEYBOARD_LBL_SYMBOL));
+        XPrintf("XKB-GEO panel compact_special=%d\n",
+                s_kbd.keyboard->m_mode == (int)XKeyboardMode_Special ? 1
+                                                                     : 0);
     }
     if (kbd_envFlag("XGUI_KB_CLOSE")) {
         XVirtualKeyboard_closePopup(s_kbd.keyboard);
@@ -1182,15 +1237,15 @@ int demo_page_keyboard_autotest(XWidget* page)
                                     XInputMethodHint_LatinOnly);
         XWidget_setFocus((XWidget*)s_kbd.editorLatin);
         XVirtualKeyboard_popup(s_kbd.keyboard, (XWidget*)s_kbd.editorLatin);
-        KBD_EXPECT(XVirtualKeyboard_buttonCount(s_kbd.keyboard) == 40 &&
+        KBD_EXPECT(XVirtualKeyboard_buttonCount(s_kbd.keyboard) == 35 &&
                        XVirtualKeyboard_mode(s_kbd.keyboard) ==
                            XKeyboardMode_TextLower,
-                   "英文框（ImhLatinOnly）自动切 main 40 键并锁 Latin"
+                   "英文框（ImhLatinOnly）自动切 main 35 键并锁 Latin"
                    "（TextLower）");
         XVirtualKeyboard_closePopup(s_kbd.keyboard);
         XWidget_setFocus((XWidget*)s_kbd.editor);
         XVirtualKeyboard_popup(s_kbd.keyboard, (XWidget*)s_kbd.editor);
-        KBD_EXPECT(XVirtualKeyboard_buttonCount(s_kbd.keyboard) == 40 &&
+        KBD_EXPECT(XVirtualKeyboard_buttonCount(s_kbd.keyboard) == 35 &&
                        XVirtualKeyboard_mode(s_kbd.keyboard) ==
                            XKeyboardMode_TextLower,
                    "默认框（无 hints）回落 main 布局（hints 自动切回；"
@@ -1207,7 +1262,7 @@ int demo_page_keyboard_autotest(XWidget* page)
         XVirtualKeyboard_closePopup(s_kbd.keyboard);
         XWidget_setFocus((XWidget*)s_kbd.editor);
         XVirtualKeyboard_popup(s_kbd.keyboard, (XWidget*)s_kbd.editor);
-        KBD_EXPECT(XVirtualKeyboard_buttonCount(s_kbd.keyboard) == 40 &&
+        KBD_EXPECT(XVirtualKeyboard_buttonCount(s_kbd.keyboard) == 35 &&
                        XVirtualKeyboard_mode(s_kbd.keyboard) ==
                            XKeyboardMode_TextLower,
                    "回归锁：默认框重绑回落 main（main→digits→main 往返，"

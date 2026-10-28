@@ -244,7 +244,7 @@ static void onTick(void* userData, XTimerData* timer)
 
     /* 注意：**不**删除 unit（缓存复用，与 demo 一致）。 */
     XModbusReply* reply = XModbusClient_sendReadRequest(
-        (XModbusClient*)g_client, unit, g_unitId);
+        (XModbusClient*)g_client, unit, g_unitId, XModbusRequestPriority_Normal);
 
     if (!reply) {
         ++g_errCount;

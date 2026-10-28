@@ -457,6 +457,38 @@ static void demo_applyWindowIcon(XWidget* win)
     XClassDeinit(&pm);
 }
 
+/* ==================== 顶栏系统时钟（品牌条/应用栏共用绘制） ==== */
+
+/** @brief 在品牌条/应用栏右端绘制本机系统时钟（HH:MM:SS，白字）。
+ *  @details [顶栏时钟 2026-10-28] 顶部蓝色状态条右侧实时显示系统时间，
+ *           1s 节奏由主窗 m_clockTimer 驱动（定时器只 invalid 顶栏小条，
+ *           不牵动整窗）。时刻取绘制瞬间的 XDateTime_currentDateTime；
+ *           文字沿用所在顶栏自身字体（与标题同源粗体），右缘留
+ *           rightReserve 像素：品牌条给右端棋盘格装饰让位（装饰占
+ *           [w-32, w-8] 再加间距），紧凑应用栏无装饰只留边距。 */
+static void demo_draw_clockText(XPainter* painter, const XWidget* self,
+                                int rightReserve)
+{
+    char buf[16];
+    XDateTime now;
+    XFont font;
+    XRect rect;
+    if (!painter || !self) return;
+    now = XDateTime_currentDateTime();
+    snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
+             XTime_hour(&now.m_time), XTime_minute(&now.m_time),
+             XTime_second(&now.m_time));
+    font = XWidget_font(self);
+    XPainter_setFont(painter, &font);
+    XClassDeinit(&font);
+    XRect_init(&rect, 0, 0, XWidget_width(self) - rightReserve,
+               XWidget_height(self));
+    XPainter_drawTextRect(painter, &rect,
+                          XPAINTER_TEXT_ALIGN_RIGHT |
+                          XPAINTER_TEXT_ALIGN_VCENTER,
+                          buf, 0xffffffffu);
+}
+
 /* ==================== 品牌条子类（蓝底+棋盘格+标题文字一体） ==== */
 
 XCLASS_DEFINE_BEGING(DemoBrandBar)
@@ -512,6 +544,9 @@ static void VDemoBrandBar_paintEvent(XWidget* self, XEvent* event)
         }
     }
     XLabel_drawContents((XLabel*)self, &painter);
+    /* 系统时钟（右端，1s 刷新）：右缘给棋盘格装饰让位（装饰起于
+     * w-32，再加 8px 间距）。 */
+    demo_draw_clockText(&painter, self, 40);
     XPainter_end(&painter);
     XPainter_deinit(&painter);
 }
@@ -652,6 +687,8 @@ static void VDemoAppBar_paintEvent(XWidget* self, XEvent* event)
         }
     }
     XLabel_drawContents((XLabel*)self, &painter);
+    /* 系统时钟（右端，1s 刷新）：应用栏无右端装饰，只留边距。 */
+    demo_draw_clockText(&painter, self, 12);
     XPainter_end(&painter);
     XPainter_deinit(&painter);
 }
@@ -721,6 +758,7 @@ typedef struct DemoWin
     XHandle         m_framePump; /**< 事件循环轮询回调句柄（刷新不受定时器限制）。 */
     XTimerId        m_autoQuitTimer; /**< 自动退出定时器。 */
     XTimerId        m_lcdTimer;     /**< LCD 数码管自动更新定时器。 */
+    XTimerId        m_clockTimer;   /**< 顶栏系统时钟 1s 刷新定时器（品牌条/应用栏右端 HH:MM:SS）。 */
     XTimerId        m_overlayTimer; /**< 空闲闸门下悬浮层降频自刷新定时器（XGUI_DEMO_IDLE_OVERLAY_MS，4Hz）。 */
     int             m_lcdValue;     /**< LCD 字符序列索引（循环段码表 30 字符）。 */
     bool            m_closed; /**< CloseEvent 被接受或自动退出后置真。 */
@@ -1727,9 +1765,19 @@ static void demo_input_autotest(DemoWin* self)
          * 取中心（面板停靠/收起/展开任意状态下都从几何推导，硬编码
          * 像素坐标会漂）。 */
         navRect = XWidget_geometry((XWidget*)&self->m_pageNav[5]);
-        XPoint_init(&tpos, navRect.x + navRect.width / 2,
-                    navRect.y + navRect.height / 2);
-        tglobal = tpos;
+        /* [坐标口径 2026-10-27] XWidget_geometry 返回**父坐标系**矩形
+         * （对标 QWidget::geometry）。窗口级注入的 position 期望**窗口
+         * 客户区坐标**——直接把父相对矩形当窗口坐标会漏掉祖先链偏移
+         * （本页导航面板在内容区容器内，偏移 98px），点击落到别的页签
+         * 上（实测命中 nav[9] 而非 nav[5]）。须经 XWidget_mapTo 换算。 */
+        {
+            XPoint localCenter;
+            XPoint_init(&localCenter, navRect.width / 2, navRect.height / 2);
+            tpos = XWidget_mapTo((XWidget*)&self->m_pageNav[5], (XWidget*)self,
+                                 &localCenter);
+        }
+        tglobal = XWidget_mapToGlobal((XWidget*)&self->m_pageNav[5],
+                                      &(XPoint){ navRect.width / 2, navRect.height / 2 });
         /* 对照组：窗口级合成鼠标按下/抬起点页签。 */
         XWindowSystemInterface_handleMouseEvent_ex(
             xwin, XEVENT_TYPE_MOUSE_BUTTON_PRESS, XMouseButton_LeftButton,
@@ -1746,9 +1794,19 @@ static void demo_input_autotest(DemoWin* self)
         demo_switchPage(self, 3);
         demo_switchPage(self, 5);
         navRect = XWidget_geometry((XWidget*)&self->m_pageNav[5]);
-        XPoint_init(&tpos, navRect.x + navRect.width / 2,
-                    navRect.y + navRect.height / 2);
-        tglobal = tpos;
+        /* [坐标口径 2026-10-27] XWidget_geometry 返回**父坐标系**矩形
+         * （对标 QWidget::geometry）。窗口级注入的 position 期望**窗口
+         * 客户区坐标**——直接把父相对矩形当窗口坐标会漏掉祖先链偏移
+         * （本页导航面板在内容区容器内，偏移 98px），点击落到别的页签
+         * 上（实测命中 nav[9] 而非 nav[5]）。须经 XWidget_mapTo 换算。 */
+        {
+            XPoint localCenter;
+            XPoint_init(&localCenter, navRect.width / 2, navRect.height / 2);
+            tpos = XWidget_mapTo((XWidget*)&self->m_pageNav[5], (XWidget*)self,
+                                 &localCenter);
+        }
+        tglobal = XWidget_mapToGlobal((XWidget*)&self->m_pageNav[5],
+                                      &(XPoint){ navRect.width / 2, navRect.height / 2 });
         XTouchEvent_init(&te, XEVENT_TYPE_TOUCH_BEGIN, &tpos, &tglobal, 1);
         XWindowSystemInterface_handleTouchEvent_ex(
             xwin, XEVENT_TYPE_TOUCH_BEGIN, tpos, &tglobal, 1, 0);
@@ -2259,6 +2317,10 @@ static void demo_stopTimers(DemoWin* self)
         XObject_killTimer((XObject*)self, self->m_lcdTimer);
         self->m_lcdTimer = XTIMER_INVALID_ID;
     }
+    if (self->m_clockTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_clockTimer);
+        self->m_clockTimer = XTIMER_INVALID_ID;
+    }
     if (self->m_overlayTimer != XTIMER_INVALID_ID) {
         XObject_killTimer((XObject*)self, self->m_overlayTimer);
         self->m_overlayTimer = XTIMER_INVALID_ID;
@@ -2290,6 +2352,16 @@ static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
            250ms（XGUI_PERFORMANCE_OVERLAY_UPDATE_MS），指标更新与
            重绘节奏一致。XGUI_DEMO_IDLE_GATE=0 时本定时器不启动。 */
         demo_repaint(self);
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+    if (timerId == self->m_clockTimer) {
+        /* 顶栏系统时钟 1s 刷新（品牌条/应用栏两形态互斥显示）：只
+         * invalid 可见顶栏的小条区域，不牵动整窗；隐藏件不投递。 */
+        if (XWidget_isVisible((XWidget*)&self->m_brandBar))
+            XWidget_update((XWidget*)&self->m_brandBar);
+        if (XWidget_isVisible((XWidget*)&self->m_appBar))
+            XWidget_update((XWidget*)&self->m_appBar);
         XEvent_accept((XEvent*)event);
         return;
     }
@@ -3208,6 +3280,19 @@ static void demo_corePages_adapt(DemoWin* self)
  *          adapt：各页按当前根几何重排（登记表下标=页索引-5）。 */
 static void demo_layout_content(DemoWin* self)
 {
+    /* [页 3 窄档翻排 2026-10-27 视觉走查 P2-5] 输入页顶行（左列 288+右
+     * 列）在 400 级竖屏放不下：右列被压到 ~90px，表盘左缘出负裁、字体
+     * 下拉被压扁。窄档顶行翻竖排（左列/右列各占全宽），宽档复原横排
+     * （幂等，布局器内部失效重排）。 */
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_BOX_ON && XCOMBOBOX_ON
+    if (self && XWidget_width(&self->m_pageInputs) > 0) {
+        bool narrow =
+            XWidget_width(&self->m_pageInputs) < 600;
+        XBoxLayout_setDirection(&self->m_inputsTopRow,
+            narrow ? XBoxLayoutDirection_TopToBottom
+                   : XBoxLayoutDirection_LeftToRight);
+    }
+#endif
     if (!self) return;
     /* 内建页（0/1/2/3/12）紧凑形态重排：与扩展页 adapt 同走本漏斗，
      * 切页/resize/形态切换全路径生效（见函数头注）。 */
@@ -4172,6 +4257,12 @@ static void VDemoWin_changeEvent(XWidget* self, XEvent* event)
 #if XWIDGET_ON && XLAYOUT_ON
     XWidget_updateGeometry(self);
 #endif
+    /* 【窗口设置页状态回读推入 2026-10-28】窗口状态全路径变化（软件
+     * 请求/平台回写经 XWidgetWindow 桥转发）都以本事件收口——窗口
+     * 设置页据此自动修正「全屏显示」等复选框（Qt：widget 的
+     * changeEvent 驱动 UI 回读；安卓沉浸式/fbdev 自启全屏的启动期
+     * 推入晚于页面 build，无此推入则勾选框永久漏勾）。 */
+    demo_page_window_settings_syncFromWindow();
     /* 整窗重绘：装饰边距翻转会改变内容区起点，原区域需要重新上漆。 */
     {
         XRect full;
@@ -4537,6 +4628,7 @@ static DemoWin* DemoWin_create(void)
     self->m_framePump = NULL;
     self->m_autoQuitTimer = XTIMER_INVALID_ID;
     self->m_lcdTimer = XTIMER_INVALID_ID;
+    self->m_clockTimer = XTIMER_INVALID_ID;
     self->m_overlayTimer = XTIMER_INVALID_ID;
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     /* 底部状态栏文本（深灰背景由静态场景绘制，白字覆盖其上）。
@@ -5979,6 +6071,19 @@ int xgui_demo_main(int argc, char* argv[])
     bool benchmarkResize;
     bool benchmarkMaximized;
     const char* screenshotPath;
+    /* 三处 main 兜底之三（评审⑤）：XKB_METRICS 未设时置 legacy——桌面
+       会话/Xvfb 可能读到 RandR 毫米标定而进 calibrated 轨，既有截图基
+       线与风格检查按 legacy 几何锁；档位目验脚本显式 env（XKB_METRICS
+       /XKB_FORCE_DEVICE/XKB_FORCE_DPI）优先（覆写 0）。 */
+    if (!XSystem_environment("XKB_METRICS") ||
+        !XSystem_environment("XKB_METRICS")[0])
+    {
+#ifdef _WIN32
+        _putenv_s("XKB_METRICS", "legacy");
+#else
+        setenv("XKB_METRICS", "legacy", 0);
+#endif
+    }
     demo_log_markBase(); /* 诊断时间戳基准：此后每行日志前缀 [秒.毫秒]。 */
     demo_log_markBase(); /* 诊断时间戳基准：此后每行日志前缀 [秒.毫秒]。 */
     const char* styleOpt;
@@ -6852,6 +6957,12 @@ int xgui_demo_main(int argc, char* argv[])
         if (win->m_lcdTimer == XTIMER_INVALID_ID) {
             XPrintf("XGuiWindowDemo: LCD 定时器创建失败\n");
         }
+        /* 顶栏系统时钟刷新定时器（1 秒：品牌条/应用栏右端 HH:MM:SS）。 */
+        win->m_clockTimer = XObject_startTimer_ms(
+            (XObject*)win, 1000u, XTimerType_CoarseTimer);
+        if (win->m_clockTimer == XTIMER_INVALID_ID) {
+            XPrintf("XGuiWindowDemo: 顶栏时钟定时器创建失败\n");
+        }
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
         /* 空闲闸门开启时：悬浮层指标自刷新降频为独立 4Hz 定时器（帧泵
            已被闸门停用，见 demo_framePumpBody）。demo_repaint 在静态
@@ -7038,6 +7149,16 @@ int xgui_demo_main(int argc, char* argv[])
 {
     (void)argc;
     (void)argv;
+    /* 三处 main 兜底之三（裁剪壳同口径；见上方完整分支注）。 */
+    if (!XSystem_environment("XKB_METRICS") ||
+        !XSystem_environment("XKB_METRICS")[0])
+    {
+#ifdef _WIN32
+        _putenv_s("XKB_METRICS", "legacy");
+#else
+        setenv("XKB_METRICS", "legacy", 0);
+#endif
+    }
     XPrintf("XGuiWindowDemo: 本演示需要 XGUIAPPLICATION_ON / XWINDOW_ON / "
                     "XBACKINGSTORE_ON / XPLATFORMINTEGRATION_ON / "
                     "XPLATFORMNATIVEWINDOW_ON。\n");

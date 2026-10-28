@@ -518,6 +518,11 @@ void XScrollBar_init_2(XScrollBar* self, int orientation,
     hint.width = 15;
     hint.height = 15;
     XWidget_setSizeHint((XWidget*)self, &hint);
+    /* [minimumSizeHint 补齐 2026-10-27 框架对齐] Qt QScrollBar 的
+     * sizeHint 与 minimumSizeHint 同为「范围×2 + 滑块最小」的尺寸
+     * （qscrollbar.cpp:411-425），最小尺寸不低于它——补齐后布局竖排
+     * 收缩有真实下界（否则 min=0，控件可被压塌至不可见）。 */
+    XWidget_setMinimumSizeHint((XWidget*)self, &hint);
     /* 悬停外观 opt-in：绘制按 State_MouseOver 出悬停高亮，ENTER/
      * LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
     XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);

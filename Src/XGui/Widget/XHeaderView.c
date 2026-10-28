@@ -499,6 +499,33 @@ XVtable* XHeaderView_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
+/** @brief 刷新尺寸提示（对标 Qt QHeaderView）。
+ *  @details Qt 6.8.3（qheaderview.cpp）：sizeHint = 全部可见段的尺寸
+ *           沿主轴累加、交叉轴取最大段尺寸（本类段高固定为表头行高，
+ *           交叉轴取段尺寸的较大者，保持与段内容自洽）。 */
+static void xheaderview_updateSizeHint(XHeaderView* self)
+{
+    XSize hint;
+    int count;
+    int i;
+    int mainAcc = 0;
+    int crossMax = 0;
+    bool horizontal;
+    if (!self) return;
+    horizontal = self->m_orientation == 1;
+    count = XHeaderView_count(self);
+    for (i = 0; i < count; ++i) {
+        int sz = XHeaderView_sectionSize(self, i);
+        if (sz <= 0) continue;
+        mainAcc += sz;
+        if (sz > crossMax) crossMax = sz;
+    }
+    if (horizontal) XSize_init(&hint, mainAcc, crossMax);
+    else XSize_init(&hint, crossMax, mainAcc);
+    XWidget_setSizeHint((XWidget*)self, &hint);
+    XWidget_setMinimumSizeHint((XWidget*)self, &hint);
+}
+
 void XHeaderView_init(XHeaderView* self, XWidget* parent, XWidgetFlags flags,
                       int orientation)
 {
@@ -536,6 +563,8 @@ void XHeaderView_init(XHeaderView* self, XWidget* parent, XWidgetFlags flags,
     self->m_cascadingResizes = false;
     self->m_resizeContentsPrecision =
         XHEADERVIEW_DEFAULT_RESIZE_CONTENTS_PRECISION;
+    xheaderview_updateSizeHint(self);
+
 }
 
 XHeaderView* XHeaderView_create_ex(XMemoryType memory, XWidget* parent,

@@ -190,6 +190,321 @@
 #define XVIRTUALKEYBOARD_REPEAT_MS 50
 #endif
 
+/* ==================== 四档尺寸适配（2026-10-28 v3 定稿） ==================== */
+
+#include <stdlib.h> /* getenv/atoi：轨制开关 XKB_METRICS/XKB_FORCE_DEVICE/
+                    * XKB_FORCE_DPI 现读（XCursor.c 同款纪律，零缓存）。 */
+#if XSCREEN_ON
+#include "XScreen.h" /* 主屏物理尺寸探测（XScreen_physicalSize，标定可用
+                      * 判据；XSCREEN_OFF 裁剪构建整段回落 legacy 轨）。 */
+#include "XPlatformScreen.h" /* 物理 DPI 拉取（queryDpi xdpi/ydpi）。 */
+#endif
+
+/** @brief 尺寸档位轨制（legacy=现状公式逐字节；calibrated=物理毫米
+ *         定标公式族，见 XGui.md 档位适配节）。 */
+typedef enum XkbMetricsTrack
+{
+    XkbMetricsTrack_Legacy = 0,     /**< 现状公式（回归轨）。 */
+    XkbMetricsTrack_Calibrated = 1  /**< 物理标定轨（新公式族）。 */
+} XkbMetricsTrack;
+/** @brief 设备档（短边 <95.0mm=phone，否则 tablet）。 */
+typedef enum XkbMetricsDevice
+{
+    XkbMetricsDevice_Phone = 0,
+    XkbMetricsDevice_Tablet = 1
+} XkbMetricsDevice;
+/** @brief 方向档（hostW>hostH=landscape，方屏归竖屏）。 */
+typedef enum XkbMetricsOrient
+{
+    XkbMetricsOrient_Portrait = 0,
+    XkbMetricsOrient_Landscape = 1
+} XkbMetricsOrient;
+
+/** @brief 档位解析结果（xkb_metricsResolve 产出；无状态即取即弃）。 */
+typedef struct XkbMetrics
+{
+    int track;   /**< XkbMetricsTrack。 */
+    int device;  /**< XkbMetricsDevice。 */
+    int orient;  /**< XkbMetricsOrient。 */
+    int dpi;     /**< 有效物理 DPI（整数；legacy 轨不消费）。 */
+} XkbMetrics;
+
+/** @brief 环境变量串等值判定（NULL/缺省安全）。 */
+static bool xkb_envIs(const char* name, const char* value)
+{
+    const char* v = getenv(name);
+    return v && XStrcmp(v, value) == 0;
+}
+
+/**
+ * @brief 档位解析（静态无状态；每次调用现读 env+primaryScreen，零成员
+ *        缓存——断言节逐例 setenv 即刻生效，消费点各自调用）。
+ * @details 判定链（设计 §1）：①env XKB_METRICS==legacy→legacy（回归
+ *          闸）；②env XKB_FORCE_DEVICE∈{phone,tablet}→calibrated（
+ *          dpi=XKB_FORCE_DPI>0?该值:160；测试/真机单档强锁）；③主屏
+ *          XScreen_physicalSize 宽高均>0→calibrated（dpi=queryDpi 的
+ *          min(非零 xdpi,ydpi)→物理尺寸折算（XScreen.c:172-180 同式）
+ *          →仍缺→legacy）；设备档=短边 mm10<950?phone:tablet。探测失
+ *          败整函数返 legacy，dp() 消费点短路为原常量，无 0 值扩散。
+ */
+static void xkb_metricsResolve(int hostW, int hostH, XkbMetrics* out)
+{
+    XkbMetrics m;
+    m.track = XkbMetricsTrack_Legacy;
+    m.device = XkbMetricsDevice_Phone;
+    m.orient = hostW > hostH ? XkbMetricsOrient_Landscape
+                             : XkbMetricsOrient_Portrait;
+    m.dpi = 160;
+    if (!out) return;
+    if (xkb_envIs("XKB_METRICS", "legacy")) {
+        *out = m; /* 回归闸：逐字节现状公式。 */
+        return;
+    }
+    if (xkb_envIs("XKB_FORCE_DEVICE", "phone") ||
+        xkb_envIs("XKB_FORCE_DEVICE", "tablet")) {
+        const char* forcedDpi = getenv("XKB_FORCE_DPI");
+        int dpi = forcedDpi ? atoi(forcedDpi) : 0;
+        m.track = XkbMetricsTrack_Calibrated;
+        m.device = xkb_envIs("XKB_FORCE_DEVICE", "tablet")
+                       ? XkbMetricsDevice_Tablet
+                       : XkbMetricsDevice_Phone;
+        if (dpi > 0) m.dpi = dpi; /* 缺省 160（结构体初值）。 */
+        *out = m;
+        return;
+    }
+#if XSCREEN_ON
+    {
+        const XScreen* screen = XScreen_primaryScreen();
+        if (screen) {
+            XSizeF phys = XScreen_physicalSize(screen);
+            if (phys.width > 0.0f && phys.height > 0.0f) {
+                int dpi = 0;
+                XPlatformScreenDpiInfo info;
+                if (XPlatformScreen_queryDpi(&info)) {
+                    if (info.m_xdpi > 0 && info.m_ydpi > 0)
+                        dpi = info.m_xdpi < info.m_ydpi ? info.m_xdpi
+                                                        : info.m_ydpi;
+                    else if (info.m_xdpi > 0)
+                        dpi = info.m_xdpi;
+                    else if (info.m_ydpi > 0)
+                        dpi = info.m_ydpi;
+                }
+                if (dpi <= 0) {
+                    /* 物理尺寸折算（XScreen.c:172-180 同式；geometry
+                     * 读数即该式输入，逐字节对齐）。 */
+                    XRect geom = XScreen_geometry(screen);
+                    if (geom.width > 0 && phys.width > 0.0f) {
+                        int dx = (int)((float)geom.width / phys.width *
+                                       25.4f);
+                        if (dx > 0) dpi = dx;
+                    }
+                    if (dpi <= 0 && geom.height > 0 && phys.height > 0.0f) {
+                        int dy = (int)((float)geom.height / phys.height *
+                                       25.4f);
+                        if (dy > 0) dpi = dy;
+                    }
+                }
+                if (dpi <= 0)
+                {
+                    *out = m; /* 标定半缺：legacy 兜底（无害回退）。 */
+                    return;
+                }
+                m.track = XkbMetricsTrack_Calibrated;
+                m.dpi = dpi;
+                {
+                    int shortPx = hostW < hostH ? hostW : hostH;
+                    int shortMm10 =
+                        (int)(((int64_t)shortPx * 254) / dpi);
+                    m.device = shortMm10 < XKB_METRICS_DEVICE_SHORT_EDGE_MM10
+                                   ? XkbMetricsDevice_Phone
+                                   : XkbMetricsDevice_Tablet;
+                }
+                *out = m;
+                return;
+            }
+        }
+    }
+#endif /* XSCREEN_ON */
+    *out = m; /* 无主屏/无物理尺寸：legacy。 */
+}
+
+/** @brief 毫米→像素（全案口径 mm2px(mm10)=mm10×dpi/254 整数除法）。 */
+static int xkb_mm2px(const XkbMetrics* m, int mm10)
+{
+    return (int)(((int64_t)mm10 * (int64_t)m->dpi) / 254);
+}
+
+/** @brief dp→像素（dp(px)=px×dpi/160；legacy 轨恒等短路=原常量）。 */
+static int xkb_dpPx(const XkbMetrics* m, int px)
+{
+    if (m->track != XkbMetricsTrack_Calibrated) return px;
+    return (int)(((int64_t)px * (int64_t)m->dpi) / 160);
+}
+
+/**
+ * @brief 候选/菜单条带高（calibrated=竖屏 dp(40)/横屏 dp(32) 钳
+ *        [contentH×12%,contentH/3]；legacy=contentH/(rows+1) 原式零改动
+ *        ——rows 仅 legacy 消费）。
+ * @details 钳序按设计 §3.4：cap 先（相对上限 1/3）、12% 相对下限次之
+ *          （12%<33% 恒可满足）、<1 绝对下限收尾。横屏压带（r3 教训①
+ *          「压工具栏/候选条」，见头注 XKB_METRICS_BAND_H_DP_LANDSCAPE）。
+ */
+static int xkb_bandHeight(const XkbMetrics* m, int contentH, int rows)
+{
+    int bandH;
+    if (m->track == XkbMetricsTrack_Legacy)
+        return contentH / (rows + 1); /* 原序原值零改动。 */
+    bandH = xkb_dpPx(m, m->orient == XkbMetricsOrient_Landscape
+                             ? XKB_METRICS_BAND_H_DP_LANDSCAPE
+                             : XKB_METRICS_BAND_H_DP);
+    if (bandH > contentH / 3) bandH = contentH / 3;
+    if (bandH < contentH * 12 / 100) bandH = contentH * 12 / 100;
+    if (bandH < 1) bandH = 1;
+    return bandH;
+}
+
+/**
+ * @brief 停靠/悬浮锚高度（docked/overlay/收缩分支共用单点）。
+ * @details legacy=hostH/2→120→hostH−32→1 原序原值；calibrated=mm2px
+ *          (tablet 竖 600 / tablet 横 420 / phone 竖 326 / phone 横
+ *          300)→平板域钳 [hostH×30%,hostH×36%]→cap（竖 46%/横 50%）→
+ *          120→hostH−32→1（设计 §2 显式 if 链）。
+ *          钳位优先级声明（r3 §2）：域钳在 cap 之前、XKEYBOARD_POPUP_
+ *          MIN_H=120 之下——hostH<334（120/0.36）时 120 下限优先，域钳
+ *          百分比声明在该类宿主不适用（只断言终值：1280x300 平板横
+ *          base 264 域钳到 108 后被抬回 120=40%）；与既有真值表
+ *          「480x200 cap=100→被 120 顶穿」同机制，非新回归。
+ */
+static int xkb_dockHeight(const XkbMetrics* m, int hostH)
+{
+    int kbH;
+    if (m->track == XkbMetricsTrack_Legacy) {
+        kbH = hostH / 2;
+        if (kbH < XKEYBOARD_POPUP_MIN_H) kbH = XKEYBOARD_POPUP_MIN_H;
+        if (kbH > hostH - XKEYBOARD_POPUP_MARGIN_H)
+            kbH = hostH - XKEYBOARD_POPUP_MARGIN_H;
+        if (kbH < 1) kbH = 1;
+        return kbH;
+    }
+    kbH = xkb_mm2px(m,
+                    m->device == XkbMetricsDevice_Tablet
+                        ? (m->orient == XkbMetricsOrient_Landscape
+                               ? XKB_METRICS_MM10_TARGET_TABLET_LANDSCAPE
+                               : XKB_METRICS_MM10_TARGET_TABLET_PORTRAIT)
+                        : (m->orient == XkbMetricsOrient_Landscape
+                               ? XKB_METRICS_MM10_TARGET_LANDSCAPE
+                               : XKB_METRICS_MM10_TARGET_PORTRAIT));
+    if (m->device == XkbMetricsDevice_Tablet) {
+        /* 平板域钳（r3 教训②）：目标档毫米值在矮宿主上可能不足屏高
+         * 30%，高宿主上可能超 36%——钳入 [30%,36%]hostH 验收带。 */
+        int lo = (int)(((int64_t)hostH *
+                        XKB_METRICS_TABLET_DOMAIN_LO_PCT) / 100);
+        int hi = (int)(((int64_t)hostH *
+                        XKB_METRICS_TABLET_DOMAIN_HI_PCT) / 100);
+        if (kbH < lo) kbH = lo;
+        if (kbH > hi) kbH = hi;
+    }
+    {
+        int capPct = m->orient == XkbMetricsOrient_Landscape
+                         ? XKB_METRICS_CAP_LANDSCAPE_PCT
+                         : XKB_METRICS_CAP_PORTRAIT_PCT;
+        int cap = (int)(((int64_t)hostH * capPct) / 100);
+        if (kbH > cap) kbH = cap; /* cap 先绑。 */
+    }
+    if (kbH < XKEYBOARD_POPUP_MIN_H) kbH = XKEYBOARD_POPUP_MIN_H;
+    if (kbH > hostH - XKEYBOARD_POPUP_MARGIN_H)
+        kbH = hostH - XKEYBOARD_POPUP_MARGIN_H;
+    if (kbH < 1) kbH = 1;
+    return kbH;
+}
+
+/** @brief 窄盘模式判定（Number/Digits/Dialpad 三合成布局；T9/全键等文
+ *         本盘不在此列——按模式集合判定避免 T9 的 4 单位行误入窄盘）。 */
+static bool xkb_isNarrowPadMode(XKeyboardMode mode)
+{
+    return mode == XKeyboardMode_Number ||
+           mode == XKeyboardMode_Digits ||
+           mode == XKeyboardMode_Dialpad;
+}
+
+/** @brief 未布局时（行结构快照缺席）按当前模式给保守估值（reposition
+ *         先于首拍 rebuildLayout 的时序兜底）。 */
+static int xkb_fallbackMaxRowUnits(XKeyboardMode mode)
+{
+    switch (mode) {
+    case XKeyboardMode_Number:  return 5;  /* 行单位实测 5/5/5/5。 */
+    case XKeyboardMode_Digits:  return 6;  /* 3/3/3/6。 */
+    case XKeyboardMode_Dialpad: return 4;  /* 3/3/3/4。 */
+    default:                    return 10; /* 参考行（QWERTY 字母行）。 */
+    }
+}
+
+/**
+ * @brief 停靠/悬浮锚/收缩三分支统一宽度（legacy 轨全不参与，恒全宽
+ *        x=0；calibrated 按设计 §3+r3 修订：竖屏文本盘（phone/tablet）
+ *        全宽；横屏文本盘（phone/tablet）=参考行单位式定宽（键面比
+ *        7/5=1.4 入教训①带 1.3~1.5，r3 由 5/4 增宽）钳 [1,hostW] 居中
+ *        ——r3 删平板横屏 50% 封宽下限（floor 在矮宿主把 1.4 健康键面
+ *        强拉成 1.9:1 与教训①反向，且 r1 断言/目验中 floor 均未绑定，
+ *        删除零回归面）；窄盘任意档=最大行单位式定宽（键面比 5/4 近
+ *        方，教训③正面样例口径）钳 [1,hostW×60%] 居中）。
+ * @param kbH 已定的停靠高（rowH 预估输入=同轨带高函数）。
+ */
+static void xkb_dockWidth(const XVirtualKeyboard* self, const XkbMetrics* m,
+                          int hostW, int kbH, int* outW, int* outX)
+{
+    int kbW;
+    if (m->track == XkbMetricsTrack_Legacy || hostW < 1) {
+        *outW = hostW;
+        *outX = 0;
+        return;
+    }
+    if (!(m->orient == XkbMetricsOrient_Landscape) &&
+        !xkb_isNarrowPadMode(self->m_mode)) {
+        *outW = hostW; /* 竖屏文本盘：全宽（phone/tablet 同，§1 口径）。 */
+        *outX = 0;
+        return;
+    }
+    {
+        int rows = self->m_layoutRows > 0 ? self->m_layoutRows : 4;
+        int refUnits = self->m_layoutRefRowUnits > 0
+                           ? self->m_layoutRefRowUnits
+                           : xkb_fallbackMaxRowUnits(self->m_mode);
+        int maxUnits = self->m_layoutMaxRowUnits > 0
+                           ? self->m_layoutMaxRowUnits
+                           : xkb_fallbackMaxRowUnits(self->m_mode);
+        int contentH = kbH - 4;
+        int bandH;
+        int rowH;
+        if (contentH < 1) contentH = 1;
+        bandH = xkb_bandHeight(m, contentH, rows);
+        rowH = (contentH - bandH) / rows;
+        if (rowH < 1) rowH = 1;
+        /* 键宽=单位×rowH×键面比（单键先取整再乘单位，设计 §3.1 口径
+           ——rowH=38 时横屏单键 53），+4=内容区 2px×2 内缩。文本盘按
+           参考行（键数最多行=字母行）计宽（键面比 7/5，r3 教训①带
+           中位）；窄盘按最大行计宽（键面比 5/4 近方，教训③）。 */
+        if (xkb_isNarrowPadMode(self->m_mode))
+            kbW = maxUnits * (rowH * XKB_METRICS_KEYW_NUM /
+                              XKB_METRICS_KEYW_DEN) + 4;
+        else
+            kbW = refUnits * (rowH * XKB_METRICS_KEYW_LAND_NUM /
+                              XKB_METRICS_KEYW_LAND_DEN) + 4;
+    }
+    if (xkb_isNarrowPadMode(self->m_mode)) {
+        int cap = (int)(((int64_t)hostW * XKB_METRICS_PAD_W_MAX_PCT) / 100);
+        if (kbW > cap) kbW = cap;
+        if (kbW < 1) kbW = 1;
+    } else {
+        /* 横屏文本盘：r3 删平板 50% 封宽下限（原
+         * XKB_METRICS_TABLET_LAND_W_MIN_PCT 块整删，头注宏同删）——
+         * 单位式自然宽度已留白（1280x800→794 宽两侧各 243px）。 */
+        if (kbW > hostW) kbW = hostW;
+    }
+    *outW = kbW;
+    *outX = (hostW - kbW) / 2;
+}
+
 /* ==================== 内置静态映射表（对标 lv_keyboard.c:87-206） ==================== */
 
 /** @brief 字符键控制字（宽度单位 | POPOVER 位，对标 LV_KB_BTN）。 */
@@ -307,6 +622,47 @@ static const XKeyboardButtonCtrl s_kbCtrlSpecial[] = {
     (XKeyboardButtonCtrl)((int)XKEYBOARD_CTRL_CHECKED | 2),
     (XKeyboardButtonCtrl)6,
     (XKeyboardButtonCtrl)((int)XKEYBOARD_CTRL_CHECKED | 2),
+    (XKeyboardButtonCtrl)(XKB_FLAGS | 2)
+};
+
+/* SPECIAL 手机竖屏精简款（r3 §6.2，教训④「符号盘减列」另案落地）：
+ * 4→5 行、13→10 单位，23 符号一个不少、补直写逗/句号；各行单位
+ * 10/10/10/9/10（行 4 内归一化稍宽，无害；行 5 光标键宽 1、灰面
+ * CHECKED 位与原表口径一致）。仅 calibrated+phone+竖屏且槽位仍是内置
+ * Special 表时经 rebuildLayout 分流消费（指针比对 gating）——应用经
+ * setMap 注入的自定义 Special 表不替换，legacy 轨/平板/横屏不消费，
+ * 上方原 Special 表零改动。 */
+static const char* const s_kbMapSpecialPhone[] = {
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "\n",
+    XKEYBOARD_LBL_LOWER, "+", "&", "/", "*", "=", "%", "!", "?", "\n",
+    "#", "<", ">", "\\", "@", "$", "(", ")", "{", "}", "\n",
+    "[", "]", ";", "\"", "'", ",", ".", XKEYBOARD_LBL_BACKSPACE, "\n",
+    XKEYBOARD_LBL_DISMISS, XKEYBOARD_LBL_LEFT, " ", XKEYBOARD_LBL_RIGHT,
+    XKEYBOARD_LBL_OK,
+    NULL
+};
+static const XKeyboardButtonCtrl s_kbCtrlSpecialPhone[] = {
+    /* 行1：数字 10 键（POPOVER）。 */
+    XKB_BTN(1), XKB_BTN(1), XKB_BTN(1), XKB_BTN(1), XKB_BTN(1),
+    XKB_BTN(1), XKB_BTN(1), XKB_BTN(1), XKB_BTN(1), XKB_BTN(1),
+    /* 行2：abc（控制键宽 2）+ 8 符号。 */
+    (XKeyboardButtonCtrl)(XKB_FLAGS | 2),
+    XKB_BTN(1), XKB_BTN(1), XKB_BTN(1), XKB_BTN(1),
+    XKB_BTN(1), XKB_BTN(1), XKB_BTN(1), XKB_BTN(1),
+    /* 行3：10 符号。 */
+    XKB_BTN(1), XKB_BTN(1), XKB_BTN(1), XKB_BTN(1), XKB_BTN(1),
+    XKB_BTN(1), XKB_BTN(1), XKB_BTN(1), XKB_BTN(1), XKB_BTN(1),
+    /* 行4：7 键（[ ] ; " ' , .）+ 退格（宽 2 灰面可重复，原表口径）。 */
+    XKB_BTN(1), XKB_BTN(1), XKB_BTN(1), XKB_BTN(1), XKB_BTN(1),
+    XKB_BTN(1), XKB_BTN(1),
+    (XKeyboardButtonCtrl)((int)XKEYBOARD_CTRL_CHECKED | 2),
+    /* 行5：收起(2)/<-(1)/空格(4)/->(1)/确认(2)=10 单位（设计 §6.2 表；
+     * 光标键灰面 CHECKED 位保留、宽度 1——与原 Special 行 4 的宽 2 不
+     * 同，原表行 4 实测 14 单位非本表口径）。 */
+    (XKeyboardButtonCtrl)(XKB_FLAGS | 2),
+    (XKeyboardButtonCtrl)((int)XKEYBOARD_CTRL_CHECKED | 1),
+    (XKeyboardButtonCtrl)4,
+    (XKeyboardButtonCtrl)((int)XKEYBOARD_CTRL_CHECKED | 1),
     (XKeyboardButtonCtrl)(XKB_FLAGS | 2)
 };
 
@@ -528,6 +884,7 @@ static bool xkb_editPanelHit(XVirtualKeyboard* self, int x, int y);
 static void xkb_editPanelPaint(XVirtualKeyboard* self, XPainter* painter);
 static void xkb_compactFloatEnter(XVirtualKeyboard* self);
 static void xkb_compactFloatExit(XVirtualKeyboard* self);
+static void xkb_compactFloatResize(XVirtualKeyboard* self);
 static bool xkb_menuBarIconHot(const XVirtualKeyboard* self, int slot,
                                int x, int y);
 static void xkb_writeText(XVirtualKeyboard* self, const char* text);
@@ -1250,11 +1607,19 @@ static void xkb_hostDestroyedSlot(XObject* receiver, XVarList* args)
 #define XKB_ACCENT_PRESSED     0xFF3263BFu /* 强调色按压态（darken 20% 派生值）。 */
 #define XKB_ACCENT_TEXT        0xFFFFFFFFu /* 强调色键面文字（白字）。 */
 
-/** @brief 键圆角半径（rowH>=44px 取 8、否则 4——≈12dp/8dp@130dpi 的
- *         像素取整口径，对齐 LVGL RADIUS_DEFAULT 12/8dp+小屏减半）。 */
-static int xkb_keyRadius(int rowH)
+/** @brief 键圆角半径（legacy 轨：rowH>=44px 取 8、否则 4——≈12dp/8dp
+ *         @130dpi 的像素取整口径，对齐 LVGL RADIUS_DEFAULT 12/8dp+小屏
+ *         减半；calibrated 轨：rowH×3/20 钳 [3,14]，设计 §3.4 次序）。 */
+static int xkb_keyRadius(const XkbMetrics* m, int rowH)
 {
-    return rowH >= 44 ? 8 : 4;
+    if (m->track == XkbMetricsTrack_Legacy)
+        return rowH >= 44 ? 8 : 4;
+    {
+        int r = rowH * XKB_METRICS_RADIUS_NUM / XKB_METRICS_RADIUS_DEN;
+        if (r < 3) r = 3;
+        if (r > 14) r = 14;
+        return r;
+    }
 }
 
 /**
@@ -1306,6 +1671,26 @@ static void xkb_roundRect(XPainter* painter, const XRect* rect,
 /** @brief 工具栏图标盒边长上限（px；随条高缩放钳位——超高条不无限
  *         放大图标，对标搜狗工具栏图标近恒定尺寸）。 */
 #define XKB_MENU_ICON_MAX 26
+
+/** @brief 工具栏图标盒边长（绘制/命中两路同源；2026-10-28 档位适配：
+ *        盒=barH−2·dp(3) 钳序 if(<dp(8))=dp(8); if(>dp(26))=dp(26)——
+ *        legacy 轨 dp 恒等即原式 box=barH−6 钳 [8,26] 逐值不变）。 */
+static int xkb_menuIconBox(int barH)
+{
+    XkbMetrics mtr;
+    int pad;
+    int box;
+    xkb_metricsResolve(0, 0, &mtr);
+    pad = xkb_dpPx(&mtr, XKB_MENU_PAD);
+    box = barH - 2 * pad;
+    {
+        int minBox = xkb_dpPx(&mtr, 8);
+        int maxBox = xkb_dpPx(&mtr, XKB_MENU_ICON_MAX);
+        if (box < minBox) box = minBox;
+        if (box > maxBox) box = maxBox;
+    }
+    return box;
+}
 
 /** @brief 菜单条工具栏槽位（对标安卓搜狗工具栏四键序：悬浮切换/键盘
  *         选择/文字编辑/收起；四等分热区）。 */
@@ -1402,9 +1787,7 @@ static bool xkb_menuBarIconHot(const XVirtualKeyboard* self, int slot,
     if (!self || slot < 0 || slot >= XkbToolBarSlot_Count) return false;
     xkb_menuBarLayout(self, &geo);
     if (geo.bar.height <= 0 || geo.cell[slot].width <= 0) return false;
-    box = geo.bar.height - 2 * XKB_MENU_PAD;
-    if (box < 8) box = 8;
-    if (box > XKB_MENU_ICON_MAX) box = XKB_MENU_ICON_MAX;
+    box = xkb_menuIconBox(geo.bar.height);
     ix = geo.cell[slot].x + (geo.cell[slot].width - box) / 2 - 2;
     iy = geo.cell[slot].y + (geo.cell[slot].height - box) / 2 - 2;
     return x >= ix && x < ix + box + 4 && y >= iy && y < iy + box + 4;
@@ -1414,13 +1797,64 @@ static bool xkb_menuBarIconHot(const XVirtualKeyboard* self, int slot,
  * @brief 菜单条工具栏动作（收起=closePopup 直连；其余三键本阶段桩，
  *        后续阶段填实）。
  */
+/**
+ * @brief 紧凑悬浮窗尺寸单点（calibrated 轨；enter 与切模式随动 resize
+ *        共用，r3 §5.3——两处各写一份必然漂移）。
+ * @details 宽度公式不动（55% cap 楼层 mm2px(630) 钳 hostW-8）；高度
+ *          行数驱动（r3 教训⑤主战场）：rows=m_layoutRows（快照缺席兜
+ *          底 4）、rowH=compactW×KEYW_LAND_DEN/(KEYW_LAND_NUM×refUnits)
+ *          钳 [dp(28),dp(40)]（消费 LAND 宏——与 dockWidth 横屏文本盘
+ *          键面比同源，外部 #ifndef 覆盖宏时两处不漂移；不留 4/5 或
+ *          5/7 字面量）、h=4+宿主向带高（横 dp32/竖 dp40）+rows×rowH
+ *          再钳 hostH−32——修 5 行款第 5 行被写死 4 行裁掉；r1 的
+ *          「同比例 max」分支已整删（教训⑤明禁按停靠比例继承）。
+ */
+static void xkb_compactFloatSize(const XVirtualKeyboard* self,
+                                 const XkbMetrics* mtr,
+                                 int hostW, int hostH,
+                                 int* outW, int* outH)
+{
+    int compactW;
+    int compactH;
+    int rows;
+    int refUnits;
+    int rowH;
+    int bandH;
+    compactW = (int)(((int64_t)hostW * XKB_METRICS_COMPACT_W_PCT) / 100);
+    {
+        int floorW = xkb_mm2px(mtr, XKB_METRICS_COMPACT_MIN_MM10);
+        if (compactW < floorW) compactW = floorW;
+    }
+    if (compactW > hostW - 8) compactW = hostW - 8;
+    if (compactW < 1) compactW = 1;
+    rows = self->m_layoutRows > 0 ? self->m_layoutRows : 4;
+    refUnits = self->m_layoutRefRowUnits > 0 ? self->m_layoutRefRowUnits : 10;
+    rowH = (int)((int64_t)compactW * XKB_METRICS_KEYW_LAND_DEN /
+                 (XKB_METRICS_KEYW_LAND_NUM * refUnits));
+    {
+        int rowHi = xkb_dpPx(mtr, 40);
+        int rowLo = xkb_dpPx(mtr, 28);
+        if (rowH > rowHi) rowH = rowHi;
+        if (rowH < rowLo) rowH = rowLo;
+    }
+    bandH = xkb_dpPx(mtr, mtr->orient == XkbMetricsOrient_Landscape
+                                 ? XKB_METRICS_BAND_H_DP_LANDSCAPE
+                                 : XKB_METRICS_BAND_H_DP);
+    compactH = 4 + bandH + rows * rowH;
+    if (compactH > hostH - 32) compactH = hostH - 32;
+    if (compactH < 1) compactH = 1;
+    *outW = compactW;
+    *outH = compactH;
+}
+
 /** @brief 进入紧凑悬浮态（工具栏「悬浮切换」；第三形态 compactFloat）。
  *  @details 停靠态（弹出的子控件浮层）原位转独立顶层 Popup——复用既有
  *           悬浮形态转换路径 setParent(NULL,0) 归位顶层 +
  *           setWindowFlags(Popup)（popup() 悬浮分支同款）；尺寸=宽
- *           min(宿主宽45%,420)、高按同比例缩放（docked 高×宽比不变，
- *           保持 行数+工具栏 比例）；落位宿主右下角（宿主几何读
- *           XWindow 记账，reposition 同款口径）。进入后
+ *           min(宿主宽45%,420)（calibrated 轨改 max(宿主宽55%,
+ *           mm2px(63mm)) 再钳 hostW-8，见下方尺寸块）、高按同比例缩放
+ *           （docked 高×宽比不变，保持 行数+工具栏 比例）；落位宿主右
+ *           下角（宿主几何读 XWindow 记账，reposition 同款口径）。进入后
  *           xkb_reposition 的宿主几何跟随被 m_compactFloat 守卫跳过
  *           （不抢几何，用户可拖移）；守护 tick 顶层 raise 维护继续
  *           生效。与 m_floating/setHostWindow 悬浮锚形态互斥（锚形态
@@ -1451,8 +1885,13 @@ static void xkb_compactFloatEnter(XVirtualKeyboard* self)
     self->m_popped = true;
     self->m_compactFloat = true;
     self->m_compactDrag = false;
-    /* 尺寸：宽=min(宿主宽45%,420)，高按同比例（保持 行数+工具栏 比例
-       ——docked 宽=宿主宽，比值=compactW/hostW）。 */
+    /* 尺寸：宽=legacy min(宿主宽45%,420) / calibrated max(宿主宽55%,
+       mm2px(63mm))（63mm=调研3 的 7mm/键×9 键楼层，物理键距不随窗缩
+       ——@160dpi≈396px；hostW<720px 时楼层绑定系悬浮形态不变量的接受
+       后果）。高=legacy docked 同比例（r3 逐字节保留，仅 enter 时有
+       效——dockedH 读的是此刻停靠面板高）/ calibrated 行数键驱动
+       （xkb_compactFloatSize 单点，enter 与切模式随动 resize 共用；
+       r3 删「同比例 max」分支，教训⑤）。 */
     hostW = self->m_hostW > 0 ? self->m_hostW
                               : XWidget_width(self->m_host);
     if (hostW < 1) hostW = 1;
@@ -1460,11 +1899,20 @@ static void xkb_compactFloatEnter(XVirtualKeyboard* self)
                               : XWidget_height(self->m_host);
     if (hostH < 1) hostH = 1;
     dockedH = XWidget_height((XWidget*)self);
-    compactW = hostW * 45 / 100;
-    if (compactW > 420) compactW = 420;
-    if (compactW < 1) compactW = 1;
-    compactH = dockedH * compactW / hostW;
-    if (compactH < 1) compactH = 1;
+    {
+        XkbMetrics mtr;
+        xkb_metricsResolve(hostW, hostH, &mtr);
+        if (mtr.track == XkbMetricsTrack_Legacy) {
+            compactW = hostW * 45 / 100;
+            if (compactW > 420) compactW = 420;
+            if (compactW < 1) compactW = 1;
+            compactH = dockedH * compactW / hostW;
+            if (compactH < 1) compactH = 1;
+        } else {
+            xkb_compactFloatSize(self, &mtr, hostW, hostH,
+                                 &compactW, &compactH);
+        }
+    }
     /* 落位宿主右下角。 */
     hostWin = (XWindow*)XWidget_windowHandle(self->m_host);
     if (hostWin) {
@@ -1504,6 +1952,72 @@ static void xkb_compactFloatExit(XVirtualKeyboard* self)
     self->m_popped = true;
     XWidget_raise((XWidget*)self);
     XWidget_update((XWidget*)self);
+}
+
+/** @brief 紧凑悬浮态随模式/款型切换重算窗几何（r3 §5.3；setMode/
+ *         setLayoutKind 尾部对偶分支消费）。
+ *  @details legacy 轨立即 return（教训⑥/⑧：legacy 紧凑几何维持现状，
+ *           切模式不改窗、与今日行为逐字节一致）——legacy 式
+ *           compactH=dockedH×compactW/hostW 的 dockedH 只在进入时读停
+ *           靠面板高，已紧凑态复算成 h×w/hostW 逐次自收缩（960x480
+ *           420x105→105×420/960=45），既非 no-op 也击穿 legacy 回归闸
+ *           断言（XKeyboardTest 紧凑 420,105 现锁）；calibrated 分支无
+ *           此雷：h 只依赖 compactW（m_hostW/H 冻结值）+rows+dp 带，
+ *           幂等稳定（xkb_compactFloatSize 单点）。
+ *           落位：保留用户拖移位并 min 钳入宿主（hostW/H=m_hostW/
+ *           m_hostH 冻结记录值，锚=宿主全局原点与 enter 同源读法）——
+ *           默认右下角案 480x960 切 5 行后 y=min(804,960−184)=776 自
+ *           然回收入屏（教训⑦「窗矩形完全在宿主内」）；屏内拖移位两
+ *           钳均不绑、分文不动。同值短路零操作（reposition 同款）。 */
+static void xkb_compactFloatResize(XVirtualKeyboard* self)
+{
+    XkbMetrics mtr;
+    XPoint hostGlobal;
+    XWindow* hostWin;
+    XRect r;
+    XRect current;
+    int hostW;
+    int hostH;
+    int w;
+    int h;
+    int x;
+    int y;
+    if (!self || !self->m_compactFloat || !self->m_popped || !self->m_host)
+        return;
+    hostW = self->m_hostW > 0 ? self->m_hostW
+                              : XWidget_width(self->m_host);
+    if (hostW < 1) hostW = 1;
+    hostH = self->m_hostH > 0 ? self->m_hostH
+                              : XWidget_height(self->m_host);
+    if (hostH < 1) hostH = 1;
+    xkb_metricsResolve(hostW, hostH, &mtr);
+    if (mtr.track == XkbMetricsTrack_Legacy)
+        return; /* legacy 紧凑几何维持现状（切模式不改窗）。 */
+    xkb_compactFloatSize(self, &mtr, hostW, hostH, &w, &h);
+    /* 宿主全局原点（enter 同款口径）：钳位锚须与控件全局坐标同帧。 */
+    hostWin = (XWindow*)XWidget_windowHandle(self->m_host);
+    if (hostWin) {
+        XPoint hp = XWindow_position(hostWin);
+        hostGlobal.x = hp.x;
+        hostGlobal.y = hp.y;
+    } else {
+        XPoint origin;
+        origin.x = 0;
+        origin.y = 0;
+        hostGlobal = XWidget_mapToGlobal(self->m_host, &origin);
+    }
+    x = XWidget_x((XWidget*)self);
+    y = XWidget_y((XWidget*)self);
+    if (x > hostGlobal.x + hostW - w) x = hostGlobal.x + hostW - w;
+    if (y > hostGlobal.y + hostH - h) y = hostGlobal.y + hostH - h;
+    XRect_init(&r, x, y, w, h);
+    current = XWidget_rect((XWidget*)self);
+    if (current.x == r.x && current.y == r.y &&
+        current.width == r.width && current.height == r.height)
+        return; /* 同值短路：幂等（切款/回切零 churn）。 */
+    XWidget_setGeometryRect((XWidget*)self, &r);
+    /* 顶层无宿主帧泵：几何变更后主动补帧上屏（enter 同款）。 */
+    XWidget_flushBackingStore((XWidget*)self, NULL);
 }
 
 static void xkb_toggleCompactFloat(XVirtualKeyboard* self)
@@ -1588,9 +2102,7 @@ static void xkb_menuBarPaint(XVirtualKeyboard* self, XPainter* painter)
     radius = 8;
     if (radius > geo.bar.height / 2) radius = geo.bar.height / 2;
     xkb_roundRect(painter, &geo.bar, XKB_LVGL_CARD, XKB_LVGL_GREY, radius);
-    box = geo.bar.height - 2 * XKB_MENU_PAD;
-    if (box < 8) box = 8;
-    if (box > XKB_MENU_ICON_MAX) box = XKB_MENU_ICON_MAX;
+    box = xkb_menuIconBox(geo.bar.height);
     for (i = 0; i < XkbToolBarSlot_Count; ++i) {
         XRect icon;
         bool pressed = (self->m_pressedTool == i);
@@ -2367,15 +2879,20 @@ static int xkb_imeCharWidth(const XVirtualKeyboard* self)
 
 /** @brief 候选 chip 实宽（变宽口径：clamp(textWidth+2*垫宽, chipMinW,
  *         chips 区宽)；chipMinW=rowH 钳 8 近方形下限，超宽候选钳排布
- *         区）。空文本退化 chipMinW。布局与页容量换算同源。 */
+ *         区）。空文本退化 chipMinW。布局与页容量换算同源。垫宽
+ *         dp(3)（legacy 恒等=原 3px）。 */
 static int xkb_imeChipTextWidth(const XVirtualKeyboard* self, const char* text,
                                 int chipMinW, int areaW)
 {
     int w = chipMinW;
+    int pad;
+    XkbMetrics mtr;
+    xkb_metricsResolve(0, 0, &mtr);
+    pad = xkb_dpPx(&mtr, XKB_IME_CHIP_PAD);
     if (text && text[0])
     {
         w = XPainter_textWidth(&((XWidget*)self)->m_font, text) +
-            2 * XKB_IME_CHIP_PAD;
+            2 * pad;
         if (w < chipMinW) w = chipMinW;
         if (w > areaW) w = areaW;
     }
@@ -2400,16 +2917,23 @@ static int xkb_imePageInfoWidth(const XVirtualKeyboard* self)
     int pageCount;
     int pos = 0;
     int w;
+    XkbMetrics mtr;
+    int cellW;
+    int infoMax;
+    int pad;
+    xkb_metricsResolve(0, 0, &mtr);
+    cellW = xkb_dpPx(&mtr, XKB_IME_PAGE_CELL_W);
+    infoMax = xkb_dpPx(&mtr, XKB_IME_PAGE_INFO_W_MAX);
+    pad = xkb_dpPx(&mtr, XKB_IME_PAD);
     pageCount = self ? xkb_candidatePageCount(self) : 0;
-    if (pageCount <= 0) return XKB_IME_PAGE_CELL_W;
+    if (pageCount <= 0) return cellW;
     pos += xkb_imeFormatUInt(self->m_candidatePage + 1, pageText + pos);
     if (pos < (int)sizeof(pageText) - 2) pageText[pos++] = '/';
     pos += xkb_imeFormatUInt(pageCount, pageText + pos);
     pageText[pos] = '\0';
-    w = XPainter_textWidth(&((XWidget*)self)->m_font, pageText) +
-        2 * XKB_IME_PAD;
-    if (w < XKB_IME_PAGE_CELL_W) w = XKB_IME_PAGE_CELL_W;
-    if (w > XKB_IME_PAGE_INFO_W_MAX) w = XKB_IME_PAGE_INFO_W_MAX;
+    w = XPainter_textWidth(&((XWidget*)self)->m_font, pageText) + 2 * pad;
+    if (w < cellW) w = cellW;
+    if (w > infoMax) w = infoMax;
     return w;
 }
 
@@ -2425,6 +2949,15 @@ static void xkb_imeBandLayout(const XVirtualKeyboard* self, int rowH,
     int innerH;
     int composeW;
     int right;
+    XkbMetrics mtr;
+    int modeW;
+    int cellW;
+    int gap;
+    int pad;
+    int arrowW;
+    int infoW;
+    int chipW;
+    bool hideInfo = false;
     if (!geo) return;
     XRect_init(&geo->band, 0, 0, 0, 0);
     XRect_init(&geo->modeChip, 0, 0, 0, 0);
@@ -2439,47 +2972,85 @@ static void xkb_imeBandLayout(const XVirtualKeyboard* self, int rowH,
     if (!self || self->m_imeBandRect.height <= 0 ||
         self->m_imeBandRect.width <= 0)
         return;
+    /* 固定件档位缩放（2026-10-28）：legacy 轨 dp 恒等=原常量零改动；
+       calibrated 轨 MODE_CHIP/PAGE_CELL/GAP/PAD 全走 dp。 */
+    xkb_metricsResolve(0, 0, &mtr);
+    modeW = xkb_dpPx(&mtr, XKB_IME_MODE_CHIP_W);
+    cellW = xkb_dpPx(&mtr, XKB_IME_PAGE_CELL_W);
+    gap = xkb_dpPx(&mtr, XKB_IME_GAP);
+    pad = xkb_dpPx(&mtr, XKB_IME_PAD);
     geo->band = self->m_imeBandRect;
-    innerH = geo->band.height - 2 * XKB_IME_PAD;
+    innerH = geo->band.height - 2 * pad;
     if (innerH < 1) innerH = 1;
-    /* 左「中」chip（固定 40px，点按=切中英）。 */
-    geo->modeChip.x = geo->band.x + XKB_IME_PAD;
-    geo->modeChip.y = geo->band.y + XKB_IME_PAD;
-    geo->modeChip.width = XKB_IME_MODE_CHIP_W;
+    /* 左「中」chip（点按=切中英）。 */
+    geo->modeChip.x = geo->band.x + pad;
+    geo->modeChip.y = geo->band.y + pad;
+    geo->modeChip.width = modeW;
     geo->modeChip.height = innerH;
-    /* 右端翻页区（自右向左：">" "页码" "<"）：箭头单元恒
-       XKB_IME_PAGE_CELL_W，页码格宽按页码文本实测推导（整行字号恰好
-       装下；布局/绘制/命中同源几何）。 */
-    right = geo->band.x + geo->band.width - XKB_IME_PAD;
-    geo->pageNext.x = right - XKB_IME_PAGE_CELL_W;
-    geo->pageNext.width = XKB_IME_PAGE_CELL_W;
-    geo->pageInfo.width = xkb_imePageInfoWidth(self);
-    geo->pageInfo.x = geo->pageNext.x - geo->pageInfo.width;
-    geo->pagePrev.x = geo->pageInfo.x - XKB_IME_PAGE_CELL_W;
-    geo->pagePrev.width = XKB_IME_PAGE_CELL_W;
-    geo->pageNext.y = geo->band.y + XKB_IME_PAD;
-    geo->pageInfo.y = geo->band.y + XKB_IME_PAD;
-    geo->pagePrev.y = geo->band.y + XKB_IME_PAD;
-    geo->pageNext.height = innerH;
-    geo->pageInfo.height = innerH;
-    geo->pagePrev.height = innerH;
     /* 组串区（宽=min(带宽/3, 15×字符宽+16)，显示 ASCII 组串——15 为
-       INV2 组串容量，跨音节组串最长 15 字母）。 */
+       INV2 组串容量，跨音节组串最长 15 字母；可截断口径不变，优先级
+       modeChip>chips>箭头>页码>组串区）。 */
     composeW = geo->band.width / 3;
     if (xkb_imeCharWidth(self) * 15 + 16 < composeW)
         composeW = xkb_imeCharWidth(self) * 15 + 16;
     if (composeW < 1) composeW = 1;
-    geo->compose.x = geo->modeChip.x + geo->modeChip.width + XKB_IME_GAP;
-    geo->compose.y = geo->band.y + XKB_IME_PAD;
+    /* 右端翻页区（自右向左：">" "页码" "<"）+ 降级序（calibrated 且
+       chips 预估 <2×chipMinW）：①隐页码格 ②箭头格压 dp(16) ③chip
+       最小宽下限 dp(20)——legacy 轨零降级（页码格恒在、箭头恒
+       PAGE_CELL_W、chipW=rowH 钳 8 原式）。 */
+    arrowW = cellW;
+    infoW = xkb_imePageInfoWidth(self);
+    chipW = rowH > 0 ? rowH : innerH;
+    if (chipW < 8) chipW = 8;
+    {
+        int chipsEst = geo->band.width - 2 * pad - modeW - 3 * gap -
+                       composeW - cellW - (hideInfo ? 0 : infoW) - arrowW;
+        if (mtr.track == XkbMetricsTrack_Calibrated) {
+            if (chipsEst < 2 * chipW) {
+                hideInfo = true; /* ①隐页码格。 */
+                chipsEst = geo->band.width - 2 * pad - modeW - 3 * gap -
+                           composeW - cellW - arrowW;
+            }
+            if (chipsEst < 2 * chipW) {
+                arrowW = xkb_dpPx(&mtr, 16); /* ②箭头格压 dp(16)。 */
+                chipsEst = geo->band.width - 2 * pad - modeW - 3 * gap -
+                           composeW - cellW - arrowW;
+            }
+            if (chipsEst < 2 * chipW) {
+                chipW = xkb_dpPx(&mtr, 20); /* ③chip 下限 dp(20)。 */
+                if (chipW < 8) chipW = 8;
+            }
+        }
+    }
+    right = geo->band.x + geo->band.width - pad;
+    geo->pageNext.x = right - cellW;
+    geo->pageNext.width = cellW;
+    if (hideInfo) {
+        geo->pageInfo.width = 0;
+        geo->pageInfo.x = geo->pageNext.x;
+    } else {
+        geo->pageInfo.width = infoW;
+        geo->pageInfo.x = geo->pageNext.x - infoW;
+    }
+    geo->pagePrev.x = geo->pageInfo.x - arrowW;
+    geo->pagePrev.width = arrowW;
+    geo->pageNext.y = geo->band.y + pad;
+    geo->pageInfo.y = geo->band.y + pad;
+    geo->pagePrev.y = geo->band.y + pad;
+    geo->pageNext.height = innerH;
+    geo->pageInfo.height = innerH;
+    geo->pagePrev.height = innerH;
+    geo->compose.x = geo->modeChip.x + geo->modeChip.width + gap;
+    geo->compose.y = geo->band.y + pad;
     geo->compose.width = composeW;
     geo->compose.height = innerH;
     /* chip 排布区与 chip 最小尺寸（chipW=键行高钳 8 近方形下限；行高
-       缺席以带内高兜底）。 */
-    geo->chipW = rowH > 0 ? rowH : innerH;
-    if (geo->chipW < 8) geo->chipW = 8;
-    geo->chips.x = geo->compose.x + composeW + XKB_IME_GAP;
-    geo->chips.y = geo->band.y + XKB_IME_PAD;
-    geo->chips.width = geo->pagePrev.x - XKB_IME_GAP - geo->chips.x;
+       缺席以带内高兜底；降级步③下限改 dp(20)）。 */
+    geo->chipW = chipW;
+    geo->chipGap = gap;
+    geo->chips.x = geo->compose.x + composeW + gap;
+    geo->chips.y = geo->band.y + pad;
+    geo->chips.width = geo->pagePrev.x - gap - geo->chips.x;
     if (geo->chips.width < 0) geo->chips.width = 0;
     geo->chips.height = innerH;
     /* 变宽 chip 几何（不受 PHRASE_ON 门控——单字 3 字节汉字等宽，视
@@ -2928,18 +3499,48 @@ static void xkb_rebuildLayout(XVirtualKeyboard* self)
     int rowStart[XKEYBOARD_MAX_BUTTONS + 1];
     int rows = 0;
     const char* labels[XKEYBOARD_MAX_BUTTONS];
+    XkbMetrics mtr;
 
     if (!self) return;
+    /* 档位解析（r3 §6.1，一次解析带高与精简款 gating 共用）：解析源
+       m_hostW/m_hostH（>0）优先、控件自尺寸兜底——紧凑窗/浮层形态的
+       控件自身尺寸会污染设备/方向档（紧凑窗 396x156 恒判横屏、平板横
+       盘短边 264px 误判 phone 的源污染）；m_hostW/H 由 reposition/浮
+       层同步维护（docked=宿主、compact=宿主冻结值、overlay=scope）。 */
+    {
+        int mw = self->m_hostW > 0 ? self->m_hostW
+                                   : XWidget_width((XWidget*)self);
+        int mh = self->m_hostH > 0 ? self->m_hostH
+                                   : XWidget_height((XWidget*)self);
+        xkb_metricsResolve(mw, mh, &mtr);
+    }
     map = self->m_maps[self->m_mode];
+    /* Special 手机竖屏精简款（r3 §6.2，教训④）：五档条件全占才分流——
+       calibrated+phone+竖屏+Special+槽位指针仍是内置原表（应用经
+       setMap 注入的自定义表指针已变，不替换，消除双轨行为分叉）。
+       legacy 轨/平板/横屏不消费；分流只换本次布局消费的表，槽位指针
+       不动（mapArray/回切语义不变）。 */
+    if (mtr.track == XkbMetricsTrack_Calibrated &&
+        mtr.device == XkbMetricsDevice_Phone &&
+        mtr.orient == XkbMetricsOrient_Portrait &&
+        self->m_mode == XKeyboardMode_Special &&
+        self->m_maps[XKeyboardMode_Special] == s_kbMapSpecial &&
+        self->m_ctrls[XKeyboardMode_Special] == s_kbCtrlSpecial) {
+        map = s_kbMapSpecialPhone;
+    }
     if (!map) {
         self->m_keyCount = 0;
+        self->m_layoutRows = 0; /* 空表：行结构快照一并归零。 */
+        self->m_layoutMaxRowUnits = 0;
+        self->m_layoutRefRowUnits = 0;
         XRect_init(&self->m_menuBarRect, 0, 0, 0, 0); /* 空表无条。 */
 #if XVIRTUALKEYBOARD_ON
         XRect_init(&self->m_imeBandRect, 0, 0, 0, 0); /* 空表无带。 */
 #endif
         return;
     }
-    ctrlMap = self->m_ctrls[self->m_mode];
+    ctrlMap = map == s_kbMapSpecialPhone ? s_kbCtrlSpecialPhone
+                                         : self->m_ctrls[self->m_mode];
     rowStart[0] = 0; /* 首行起点（首行前无换行分隔符）。 */
 
     /* 第一遍：解析按钮/行结构并落生效控制字（临时表，拒绝时不破坏原布局）。 */
@@ -3037,8 +3638,12 @@ static void xkb_rebuildLayout(XVirtualKeyboard* self)
        记入 m_menuBarRect，键区 y 自 contentY+bandH 起（既有偏移通道）。
        候选带判据（xkb_imeBandWanted）不变：中文态时 m_imeBandRect=条矩
        形（组串态候选带替换菜单渲染，复用带三件套），空闲态归零（条渲
-       染图标工具栏，xkb_menuBarPaint/Hit）。 */
-    bandH = contentH / (rows + 1);
+       染图标工具栏，xkb_menuBarPaint/Hit）。
+       2026-10-28 档位适配：带高走 xkb_bandHeight 单点——legacy 轨即上
+       式原值；calibrated 轨竖屏 dp(40)/横屏 dp(32)（r3 §4）钳
+       [contentH×12%, contentH/3]。metrics=r3 §6.1 上提的宿主优先解析
+       （mtr），带高与精简款 gating 同源。 */
+    bandH = xkb_bandHeight(&mtr, contentH, rows);
     XRect_init(&self->m_menuBarRect, contentX, contentY, contentW, bandH);
 #if XVIRTUALKEYBOARD_ON
     if (xkb_imeBandWanted(self)) {
@@ -3060,26 +3665,45 @@ static void xkb_rebuildLayout(XVirtualKeyboard* self)
         xkb_imeInjectPageSize(self, rowH);
 #endif
 
-    for (row = 0; row < rows; ++row) {
-        int total = 0;
-        int x = contentX;
-        int y = contentY + bandH + row * rowH;
-        int b;
-        for (b = rowStart[row]; b < rowStart[row + 1]; ++b)
-            total += (int)ctrls[b] & (int)XKEYBOARD_CTRL_WIDTH_MASK;
-        if (total <= 0) total = 1;
-        for (b = rowStart[row]; b < rowStart[row + 1]; ++b) {
-            int unit = (int)ctrls[b] & (int)XKEYBOARD_CTRL_WIDTH_MASK;
-            /* 边界式：每键占 unit/total 行宽，x 为像素边界直加（原式
-               (x-contentX+unit)*W/T 把像素偏移当单位累加，宽度逐键乘
-               W/T 复利爆炸至 INT_MAX 溢出，键位矩形互相错位）。 */
-            int xEnd = x + (int)(((int64_t)unit * contentW) / total);
-            rects[b].x = x;
-            rects[b].y = y;
-            rects[b].width = xEnd - x;
-            rects[b].height = rowH;
-            x = xEnd;
+    {
+        int maxRowUnits = 0;
+        int refRowUnits = 0;
+        int refRowKeys = -1;
+        for (row = 0; row < rows; ++row) {
+            int total = 0;
+            int keys = rowStart[row + 1] - rowStart[row];
+            int x = contentX;
+            int y = contentY + bandH + row * rowH;
+            int b;
+            for (b = rowStart[row]; b < rowStart[row + 1]; ++b)
+                total += (int)ctrls[b] & (int)XKEYBOARD_CTRL_WIDTH_MASK;
+            if (total <= 0) total = 1;
+            if (total > maxRowUnits) maxRowUnits = total;
+            /* 参考行=键数最多的行（QWERTY 字母行口径；并列取首行）——
+               横屏文本盘宽度按此行单位式计算（r1 目验 F4/F6/F8）。 */
+            if (keys > refRowKeys) {
+                refRowKeys = keys;
+                refRowUnits = total;
+            }
+            for (b = rowStart[row]; b < rowStart[row + 1]; ++b) {
+                int unit = (int)ctrls[b] & (int)XKEYBOARD_CTRL_WIDTH_MASK;
+                /* 边界式：每键占 unit/total 行宽，x 为像素边界直加（原式
+                   (x-contentX+unit)*W/T 把像素偏移当单位累加，宽度逐键乘
+                   W/T 复利爆炸至 INT_MAX 溢出，键位矩形互相错位）。 */
+                int xEnd = x + (int)(((int64_t)unit * contentW) / total);
+                rects[b].x = x;
+                rects[b].y = y;
+                rects[b].width = xEnd - x;
+                rects[b].height = rowH;
+                x = xEnd;
+            }
         }
+        /* 行结构快照（2026-10-28 档位适配）：行数/最大行单位/参考行单
+           位供 xkb_dockWidth 的 rowH 预估与键宽单位式消费（reposition
+           先于首拍重建时由 xkb_fallbackMaxRowUnits 按模式兜底）。 */
+        self->m_layoutRows = rows;
+        self->m_layoutMaxRowUnits = maxRowUnits;
+        self->m_layoutRefRowUnits = refRowUnits;
     }
 
     /* 提交（拒绝路径不触及成员，保持原布局）。 */
@@ -3639,6 +4263,9 @@ static void xkb_repositionOverlay(XVirtualKeyboard* self)
     int scopeW;
     int scopeH;
     int kbH;
+    int kbW;
+    int kbX;
+    XkbMetrics mtr;
     int x;
     int y;
     if (!self) return;
@@ -3646,16 +4273,13 @@ static void xkb_repositionOverlay(XVirtualKeyboard* self)
     if (!scope) return;
     scopeW = XWidget_width(scope);
     scopeH = XWidget_height(scope);
-    kbH = scopeH / 2;
-    if (kbH < XKEYBOARD_POPUP_MIN_H) kbH = XKEYBOARD_POPUP_MIN_H;
-    if (kbH > scopeH - XKEYBOARD_POPUP_MARGIN_H)
-        kbH = scopeH - XKEYBOARD_POPUP_MARGIN_H;
-    if (kbH < 1) kbH = 1;
     origin.x = 0;
     origin.y = 0;
     /* 几何读 XWindow 记账（reposition 同款零滞后口径）：信号发射点在
        控件层几何回写之前，槽链上读控件级是上一帧值。顶层窗口记账几何
-       即全局坐标。 */
+       即全局坐标。kbH 与几何读取解耦（2026-10-28 档位适配）：两分支
+       汇合后统一算一次（控件级分支是 windowHandle==NULL 回退路径的
+       唯一高度来源，保留；legacy 轨内 xkb_dockHeight 即原序原值）。 */
     if (XWidget_windowHandle(scope)) {
         XWindow* scopeWin = (XWindow*)XWidget_windowHandle(scope);
         XRect wg = XWindow_geometry(scopeWin);
@@ -3663,25 +4287,34 @@ static void xkb_repositionOverlay(XVirtualKeyboard* self)
         scopeH = wg.height;
         sg.x = wg.x;
         sg.y = wg.y;
-        kbH = scopeH / 2;
-        if (kbH < XKEYBOARD_POPUP_MIN_H) kbH = XKEYBOARD_POPUP_MIN_H;
-        if (kbH > scopeH - XKEYBOARD_POPUP_MARGIN_H)
-            kbH = scopeH - XKEYBOARD_POPUP_MARGIN_H;
-        if (kbH < 1) kbH = 1;
     } else {
         sg = XWidget_mapToGlobal(scope, &origin);
     }
+    /* 浮层态档位事实源同步（r3 §5.2）：rebuildLayout 的 metrics 解析
+       r3 起优先消费 m_hostW/m_hostH（控件自尺寸只作兜底）——浮层形态
+       m_host=宿主对话框、面板几何却按范围顶层算，若不同步，带高与
+       Special 精简款 gating 将按对话框判档（小对话框恒判 phone、方向
+       随对话框横竖）。同步后 rebuildLayout 三形态单一事实源闭合
+       （docked=宿主、compact=宿主冻结值、overlay=scope）。 */
+    self->m_hostW = scopeW;
+    self->m_hostH = scopeH;
+    /* 四档适配：高度/宽度与 reposition 同一函数单点（scope 代 host），
+       legacy 轨逐值与现状一致。 */
+    xkb_metricsResolve(scopeW, scopeH, &mtr);
+    kbH = xkb_dockHeight(&mtr, scopeH);
+    xkb_dockWidth(self, &mtr, scopeW, kbH, &kbW, &kbX);
     /* y=贴范围顶层底部（2026-10-03 所有者裁定「这种大小的底部对齐」）：
-       与主窗/悬浮形态「宿主底部全宽」同款逻辑——面板铺范围底层，编辑
-       器与面板间的对话框中部内容不被遮蔽；顶层无父偏移，全局坐标即屏
-       幕坐标（XComboBox 弹层 setGeometryRect 先例）。 */
-    x = sg.x;
+       与主窗/悬浮形态「宿主底部」同款逻辑——面板铺范围底层，编辑器与
+       面板间的对话框中部内容不被遮蔽；顶层无父偏移，全局坐标即屏幕坐
+       标（XComboBox 弹层 setGeometryRect 先例）。x=范围全局 x+居中偏
+       移（legacy 轨 kbX=0=左对齐主窗原值）。 */
+    x = sg.x + kbX;
     y = sg.y + scopeH - kbH;
     self->m_popupHeight = kbH;
     {
         XRect r;
         XRect current;
-        XRect_init(&r, x, y, scopeW, kbH);
+        XRect_init(&r, x, y, kbW, kbH);
         /* 几何短路（reposition 同款）：范围顶层 x/y/w/h 信号成对到达，
            目标与当前一致时零操作——防布局 churn 与外部合法调整被打回。 */
         current = XWidget_rect((XWidget*)self);
@@ -3714,6 +4347,9 @@ static void xkb_repositionOverlay(XVirtualKeyboard* self)
 static void xkb_reposition(XVirtualKeyboard* self)
 {
     int kbH;
+    int kbW;
+    int kbX;
+    XkbMetrics mtr;
     XRect target;
     XRect current;
     XWindow* hostWin;
@@ -3743,11 +4379,11 @@ static void xkb_reposition(XVirtualKeyboard* self)
         xkb_repositionOverlay(self);
         return;
     }
-    kbH = self->m_hostH / 2;
-    if (kbH < XKEYBOARD_POPUP_MIN_H) kbH = XKEYBOARD_POPUP_MIN_H;
-    if (kbH > self->m_hostH - XKEYBOARD_POPUP_MARGIN_H)
-        kbH = self->m_hostH - XKEYBOARD_POPUP_MARGIN_H;
-    if (kbH < 1) kbH = 1;
+    /* 四档适配（2026-10-28）：轨制现读（legacy 轨内下方公式逐字节原
+     * 值），高度走 xkb_dockHeight 单点、宽度走 xkb_dockWidth 单点。 */
+    xkb_metricsResolve(self->m_hostW, self->m_hostH, &mtr);
+    kbH = xkb_dockHeight(&mtr, self->m_hostH);
+    xkb_dockWidth(self, &mtr, self->m_hostW, kbH, &kbW, &kbX);
     self->m_popupHeight = kbH;
     if (self->m_floating) {
         XPoint anchorGlobal;
@@ -3762,37 +4398,42 @@ static void xkb_reposition(XVirtualKeyboard* self)
             anchorLocal.y = self->m_hostH - kbH;
             anchorGlobal = XWidget_mapToGlobal(self->m_host, &anchorLocal);
         }
-        XRect_init(&target, anchorGlobal.x, anchorGlobal.y,
-                   self->m_hostW, kbH);
+        XRect_init(&target, anchorGlobal.x + kbX, anchorGlobal.y,
+                   kbW, kbH);
     } else {
 #if XVIRTUALKEYBOARD_ON
         if (xkb_composeCollapsedWanted(self)) {
             /* 组串收缩（需求③）：目标高=候选带高+上下 2px 内缩（与
-               rebuildLayout contentY=2 边距同口径），贴宿主底部全宽。
-               带高按宿主全量几何推（kbH 即上方全量钳位高、contentH=
-               kbH-4 与 rebuildLayout 一致），行数数键矩形 y 分层——
-               不拿收缩后自身高度算，防「收缩→带更矮→更收缩」反馈
-               自缩；带矩形本身由 resizeEvent→rebuildLayout 按全量
-               contentH 重排，越界键区被裁剪。 */
+               rebuildLayout contentY=2 边距同口径），贴宿主底部；带高
+               按宿主全量几何推（kbH 即上方全量钳位高、contentH=kbH-4
+               与 rebuildLayout 一致，防「收缩→带更矮→更收缩」反馈自
+               缩）；行数数键矩形 y 分层仅 legacy 轨需要（calibrated 轨
+               改调同一带高函数，输入仍=全量 kbH-4）。带矩形本身由
+               resizeEvent→rebuildLayout 按全量 contentH 重排，越界键
+               区被裁剪。 */
             int fullContentH = kbH - 4;
             int bandH;
-            int collapsedRows = 0;
-            uint32_t ki;
+            int rowsForBand = 1;
             if (fullContentH < 1) fullContentH = 1;
-            for (ki = 0; ki < self->m_keyCount; ++ki) {
-                if (ki == 0 ||
-                    self->m_keyRects[ki].y != self->m_keyRects[ki - 1].y)
-                    ++collapsedRows;
+            if (mtr.track == XkbMetricsTrack_Legacy) {
+                uint32_t ki;
+                int collapsedRows = 0;
+                for (ki = 0; ki < self->m_keyCount; ++ki) {
+                    if (ki == 0 ||
+                        self->m_keyRects[ki].y != self->m_keyRects[ki - 1].y)
+                        ++collapsedRows;
+                }
+                if (collapsedRows < 1) collapsedRows = 1;
+                rowsForBand = collapsedRows;
             }
-            if (collapsedRows < 1) collapsedRows = 1;
-            bandH = fullContentH / (collapsedRows + 1);
+            bandH = xkb_bandHeight(&mtr, fullContentH, rowsForBand);
             if (bandH < 1) bandH = 1;
-            XRect_init(&target, 0, self->m_hostH - (bandH + 4),
-                       self->m_hostW, bandH + 4);
+            XRect_init(&target, kbX, self->m_hostH - (bandH + 4),
+                       kbW, bandH + 4);
         } else
 #endif
         {
-            XRect_init(&target, 0, self->m_hostH - kbH, self->m_hostW, kbH);
+            XRect_init(&target, kbX, self->m_hostH - kbH, kbW, kbH);
         }
     }
     /* 几何短路：width/height 信号成对到达（每次缩放两槽），第二次
@@ -3950,11 +4591,13 @@ static void xkb_guardTick(XVirtualKeyboard* self)
 /* ==================== 虚槽实现 ==================== */
 
 /** @brief 绘制：面板底 + 逐键矩形 + 文本居中 + 按压态 + CHECKED 底色 +
- *         气泡带 + 拼音候选带（XVK）。全部键位文本用控件当前字体
- *         （家族=配置默认字库；像素字号恒为构造默认，不随行高缩放）
- *         居中绘制，控件零字体家族自带（不调
- *         XFont_setFamily）；键面/候选带配色=LVGL 单一路径（主题宏
- *         已删，双分支合并）。 */
+ *         气泡带 + 拼音候选带（XVK）。全部键位文本用控件当前字体家族
+ *         （配置默认字库；控件零字体家族自带，不调 XFont_setFamily），
+ *         像素字号=paint 期按首行键高等比推导（labelPx=键高×35% 钳
+ *         [9,48]/dp(48)，几何只读推导无反馈回路，见下方字号块与
+ *         VXKeyboard_paintEvent 字号注释——「恒定字号」为历史口径，本
+ *         注释 2026-10-28 文档漂移修正）；键面/候选带配色=LVGL 单一路
+ *         径（主题宏已删，双分支合并）。 */
 static void VXKeyboard_paintEvent(XWidget* self, XEvent* event)
 {
     XVirtualKeyboard* kb = (XVirtualKeyboard*)self;
@@ -3962,6 +4605,7 @@ static void VXKeyboard_paintEvent(XWidget* self, XEvent* event)
     XImage* image;
     XPoint offset;
     XRect r = XWidget_rect(self);
+    XkbMetrics mtr;
     int bandH = 0;
     int rowH = 0;
     uint32_t i;
@@ -3970,6 +4614,7 @@ static void VXKeyboard_paintEvent(XWidget* self, XEvent* event)
     if (!kb || r.width <= 4 || r.height <= 4) return;
     r.x = 0;
     r.y = 0;
+    xkb_metricsResolve(r.width, r.height, &mtr);
 
     image = XWidget_paintImage(self);
     if (!image) return;
@@ -3992,8 +4637,9 @@ static void VXKeyboard_paintEvent(XWidget* self, XEvent* event)
         XFont scaled;
         int keyH = kb->m_keyCount > 0 ? kb->m_keyRects[0].height : 0;
         int labelPx = keyH > 0 ? keyH * XKB_LABEL_PX_PER_KEYH_PERCENT / 100 : 0;
+        int capPx = xkb_dpPx(&mtr, 48);
         if (labelPx < 9) labelPx = 9;
-        if (labelPx > 48) labelPx = 48;
+        if (labelPx > capPx) labelPx = capPx;
         XFont_init(&scaled);
         XClassCopy(&scaled, &((XWidget*)self)->m_font);
         XFont_setPixelSize(&scaled, labelPx);
@@ -4078,7 +4724,7 @@ static void VXKeyboard_paintEvent(XWidget* self, XEvent* event)
         faceRect.width = kr->width - 5;
         faceRect.height = kr->height - 5;
         xkb_roundRect(&painter, &faceRect, fill, fill,
-                      xkb_keyRadius(kr->height));
+                      xkb_keyRadius(&mtr, kr->height));
         if (text && text[0]) {
             /* 键帽标签按"键面∪本键命中矩形降部带"裁剪：drawTextRect
                默认裁剪到布局矩形，而行盒（ascent+descent+lineGap 的
@@ -4127,7 +4773,7 @@ static void VXKeyboard_paintEvent(XWidget* self, XEvent* event)
             bubble.height = (bandH > rowH ? bandH : rowH) - 4;
             if (bubble.height < 1) bubble.height = 1;
             xkb_roundRect(&painter, &bubble, XKB_LVGL_CARD, XKB_LVGL_CARD,
-                          xkb_keyRadius(rowH));
+                          xkb_keyRadius(&mtr, rowH));
             XPainter_drawTextRect(&painter, &bubble,
                                   XPAINTER_TEXT_ALIGN_CENTER |
                                       XPAINTER_TEXT_SINGLE_LINE,
@@ -4636,6 +5282,9 @@ static void VXKeyboard_copy(XVirtualKeyboard* self, const XVirtualKeyboard* othe
         self->m_keyRects[i] = other->m_keyRects[i];
     }
     self->m_menuBarRect = other->m_menuBarRect; /* 菜单条几何随布局快照。 */
+    self->m_layoutRows = other->m_layoutRows; /* 行结构快照随拷贝迁移。 */
+    self->m_layoutMaxRowUnits = other->m_layoutMaxRowUnits;
+    self->m_layoutRefRowUnits = other->m_layoutRefRowUnits;
     self->m_hostW = other->m_hostW;
     self->m_hostH = other->m_hostH;
     self->m_popupHeight = other->m_popupHeight;
@@ -4730,6 +5379,12 @@ static void VXKeyboard_move(XVirtualKeyboard* self, XVirtualKeyboard* other)
     }
     self->m_menuBarRect = other->m_menuBarRect; /* 菜单条几何随布局转移。 */
     XRect_init(&other->m_menuBarRect, 0, 0, 0, 0);
+    self->m_layoutRows = other->m_layoutRows; /* 行结构快照随移动转移。 */
+    self->m_layoutMaxRowUnits = other->m_layoutMaxRowUnits;
+    self->m_layoutRefRowUnits = other->m_layoutRefRowUnits;
+    other->m_layoutRows = 0;
+    other->m_layoutMaxRowUnits = 0;
+    other->m_layoutRefRowUnits = 0;
     self->m_target = other->m_target;
     other->m_target = NULL;
     self->m_host = other->m_host;
@@ -5360,6 +6015,16 @@ void XVirtualKeyboard_setMode(XVirtualKeyboard* self, XKeyboardMode mode)
     xkb_notifyObserver(self);
 #endif
     xkb_rebuildLayout(self);
+    /* 模式切换即重定位（2026-10-28 目验 r1 F9 根修）：停靠宽度随模式
+       宽度式变化（窄盘居中定宽/文本盘定宽），切模式不重定位时数字盘
+       沿文本盘宽度拉伸成 7:1 横条；几何短路防 churn，紧凑悬浮态由
+       reposition 的 m_compactFloat 守卫跳过（不抢几何）、改走对偶的
+       xkb_compactFloatResize 随动（r3 §5.3：紧凑内切模式/款型重算窗
+       几何并钳入宿主，legacy 轨内早退维持现状）。 */
+    if (self->m_popped && !self->m_compactFloat)
+        xkb_reposition(self);
+    else if (self->m_popped && self->m_compactFloat)
+        xkb_compactFloatResize(self);
     XWidget_update((XWidget*)self);
 }
 
@@ -5406,6 +6071,13 @@ void XVirtualKeyboard_setLayoutKind(XVirtualKeyboard* self,
     xkb_notifyObserver(self);
 #endif
     xkb_rebuildLayout(self);
+    /* 款型切换即重定位（同 setMode 的 r1 F9 口径）：T9/全键参考行单
+       位不同，横屏定宽随款型重算；紧凑悬浮态走对偶 resize 随动
+       （r3 §5.3，与 setMode 尾部同款）。 */
+    if (self->m_popped && !self->m_compactFloat)
+        xkb_reposition(self);
+    else if (self->m_popped && self->m_compactFloat)
+        xkb_compactFloatResize(self);
     XWidget_update((XWidget*)self);
 }
 
@@ -5498,6 +6170,25 @@ bool XVirtualKeyboard_handleButton(XVirtualKeyboard* self, uint32_t buttonId)
 }
 
 /* ==================== 弹层（XGui 扩展） ==================== */
+
+void XVirtualKeyboard_metrics(const XVirtualKeyboard* self, int* outTrack,
+                              int* outDevice, int* outOrient, int* outDpi)
+{
+    XkbMetrics mtr;
+    int hostW = 0;
+    int hostH = 0;
+    if (self) {
+        hostW = self->m_hostW > 0 ? self->m_hostW
+                                  : XWidget_width((const XWidget*)self);
+        hostH = self->m_hostH > 0 ? self->m_hostH
+                                  : XWidget_height((const XWidget*)self);
+    }
+    xkb_metricsResolve(hostW, hostH, &mtr);
+    if (outTrack) *outTrack = (int)mtr.track;
+    if (outDevice) *outDevice = (int)mtr.device;
+    if (outOrient) *outOrient = (int)mtr.orient;
+    if (outDpi) *outDpi = mtr.dpi;
+}
 
 void XVirtualKeyboard_popup(XVirtualKeyboard* self, XWidget* editor)
 {

@@ -432,6 +432,7 @@ void XModbusRequest_init(XModbusRequest* req)
     if (!req) return;
     XModbusPdu_init(&req->m_base);
     XClassGetVtable(&req->m_base.m_class) = XModbusRequest_class_init();
+    req->m_priority = XModbusRequestPriority_Normal;
 }
 
 void XModbusRequest_init_with_code(XModbusRequest* req, XModbusPdu_FunctionCode code)

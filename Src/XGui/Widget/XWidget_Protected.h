@@ -295,6 +295,23 @@ void XWidget_setApplicationModalWidget(XWidget* widget);
 /** @brief      返回当前应用模态控件（借用）；无则 NULL。 */
 XWidget* XWidget_applicationModalWidget(void);
 
+/**
+ * @brief 递归摘除子树在事件层的输入侧静态登记（焦点/鼠标抓取/隐式按压靶/
+ *        触点抓取表/键盘抓取），**不改变任何控件的显隐状态**。
+ * @details 对标 Qt 6.8.3 QWidget::destroy 经 QWidgetPrivate::
+ *          deactivateWidgetCleanup 清 qt_button_down 与各抓取登记的口径
+ *          （qwidget.cpp:2331-2334）。QWidget::setVisible(false) 的隐藏
+ *          分支只摘除**指向自身**的登记（父容器隐藏不递归清子控件），
+ *          故对话框"子树即将延迟析构"的场景需要本递归版本。
+ *          **不得**用"逐控件 setVisible(false)"代替：那会把每个子控件
+ *          永久标记为显式隐藏（WA_WState_Hidden），对话框复用（再次 open）
+ *          时 showChildren 会跳过它们，呈现空面板——Qt 的 showChildren
+ *          同理（qwidget.cpp:8189 跳过 WA_WState_Hidden）。
+ * @param self 起始控件；可为 NULL（不操作）。自身也会被清理。
+ * @note 仅供框架内部与对话框收口路径使用，不对外公开。
+ */
+void XWidget_deactivateInputRegistrations(XWidget* self);
+
 #ifdef __cplusplus
 }
 #endif

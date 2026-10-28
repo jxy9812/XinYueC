@@ -49,6 +49,7 @@ extern "C" {
 #include "XStyleHints.h"
 #include "XClipboard.h"
 #include "XPalette.h"
+#include "XTimer.h"
 #if XPLATFORMINTEGRATION_ON
 #include "XPlatformIntegration.h"
 #else /* !XPLATFORMINTEGRATION_ON */
@@ -190,6 +191,15 @@ typedef struct XGuiApplication
 #endif /* XPALETTE_ON */
     XVector* m_overrideStack;             /**< 光标覆盖栈（XCursor* 堆拷贝）。 */
     XVector* m_windows;                   /**< 窗口注册表（XWindow* 借用指针）。 */
+    XVector* m_topLevelWidgets;           /**< 顶层控件注册表（XWidget* 借用指针）。
+                                           *   调色板变化广播用（对标
+                                           *   QApplication::topLevelWidgets）。
+                                           *   [2026-10-26 下沉] 原属 XApplication
+                                           *   子类——只创建 XGuiApplication 的应用
+                                           *   （demo/嵌入式）注册表恒空，调色板
+                                           *   广播静默失效（换肤不重绘根因），故
+                                           *   下沉到基类，XApplication 同名 API
+                                           *   转发本表。 */
     XWindow* m_focusWindow;               /**< 焦点窗口（借用指针）。 */
     XWindow* m_modalWindow;               /**< 模态窗口（借用指针）。 */
     XObject* m_focusObject;               /**< 焦点对象（借用指针）。 */
@@ -216,6 +226,12 @@ typedef struct XGuiApplication
 #if XINPUTMETHOD_ON
     XInputMethod* m_inputMethod;          /**< 输入法惰性单例（拥有，与集成层双向绑定）。 */
 #endif /* XINPUTMETHOD_ON */
+    XTimer* m_powerPolicyTimer;           /**< 电源策略巡检定时器（拥有，init 时创建、
+                                           *   deinit 时释放）：周期调用
+                                           *   XPlatformPower_tick 推进熄屏/挂起
+                                           *   超时判定。**不做每帧轮询**——框架自有
+                                           *   定时器抽象（XTimer），判定节奏 1Hz 与
+                                           *   分钟级超时匹配，空闲时几乎零开销。 */
 #if XVIRTUALKEYBOARD_ON
     XVirtualKeyboard* m_virtualKeyboard;         /**< 虚拟键盘默认面板惰性单例（拥有，见
                                                XGuiApplication_virtualKeyboard）。 */

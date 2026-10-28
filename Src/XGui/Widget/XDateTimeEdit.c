@@ -3388,6 +3388,41 @@ XVtable* XDateTimeEdit_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
+/** @brief 刷新尺寸提示（对标 Qt QDateTimeEdit）。
+ *  @details Qt 6.8.3（qdatetimeedit.cpp:1074-1100）：sizeHint 取内嵌
+ *           编辑器的 height，再按显示格式串量宽，经样式收口；本类
+ *           内嵌编辑器为 XAbstractSpinBox 的 m_lineEdit。
+ *  @note    此前本类**无 sizeHint** ⇒ 布局条目首选尺寸 0（竖排时高度
+ *           塌 0、控件不可见）。 */
+static void xdatetimeedit_updateSizeHint(XDateTimeEdit* self)
+{
+    XLineEdit* edit;
+    XSize hint;
+    XSize minHint;
+    XFont font;
+    int textH = 0;
+    int textW = 0;
+    if (!self) return;
+    edit = XAbstractSpinBox_lineEdit((XAbstractSpinBox*)self);
+    if (edit) {
+        XSize sh = XWidget_sizeHint((XWidget*)edit);
+        textH = sh.height;
+        textW = sh.width;
+    }
+    if (textH <= 0) {
+        font = XWidget_font((XWidget*)self);
+        textH = XPainter_textHeight(&font);
+        textW = XPainter_textWidth(&font, "yyyy/MM/dd");
+        XClassDeinit(&font);
+    }
+    if (textH <= 0) textH = 16;
+    if (textW <= 0) textW = 80;
+    XSize_init(&hint, textW, textH);
+    XWidget_setSizeHint((XWidget*)self, &hint);
+    XSize_init(&minHint, textW / 2, textH);
+    XWidget_setMinimumSizeHint((XWidget*)self, &minHint);
+}
+
 void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
                         XWidgetFlags flags)
 {
@@ -3398,6 +3433,7 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
     XClassSetVtable(self, XDateTimeEdit);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
+    xdatetimeedit_updateSizeHint(self);
     self->m_dateTime = XDateTime_create();
     /* 默认值=当前日期时间：必须用墙钟（currentDateTime）。
      * XDateTime_currentMSecsSinceEpoch 已切换为单调时钟（开机时长），

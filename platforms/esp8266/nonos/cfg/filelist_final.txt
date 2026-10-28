@@ -11,6 +11,7 @@ Drive/Unsupported/Graphics/XPlatformDrag_unsupported.c
 Drive/Unsupported/Graphics/XPlatformFontDatabase_unsupported.c
 Drive/Unsupported/Graphics/XPlatformGraphics_unsupported.c
 Drive/Unsupported/Graphics/XPlatformNativeWindow_unsupported.c
+Drive/Unsupported/Graphics/XPlatformPower_unsupported.c
 Drive/Unsupported/Graphics/XPlatformScreen_unsupported.c
 Drive/Unsupported/Graphics/XPlatformServices_unsupported.c
 Drive/Unsupported/Graphics/XPlatformTheme_unsupported.c
@@ -219,6 +220,7 @@ Src/XGui/Platform/XPlatformFontDatabase.c
 Src/XGui/Platform/XPlatformGraphics.c
 Src/XGui/Platform/XPlatformIntegration.c
 Src/XGui/Platform/XPlatformNativeInterface.c
+Src/XGui/Platform/XPlatformPower.c
 Src/XGui/Platform/XPlatformServices.c
 Src/XGui/Platform/XPlatformTheme.c
 Src/XGui/Platform/XPlatformWindow.c

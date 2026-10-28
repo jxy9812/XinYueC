@@ -74,6 +74,11 @@ typedef struct XNetIoRingWin32 {
 static XFd   VXNetIoRingWin32_getEventFd(XAbstractNetIoRing* self);
 static void  VXNetIoRingWin32_pollPlatform(XAbstractNetIoRing* self);
 static bool  VXNetIoRingWin32_registerEvent(XAbstractNetIoRing* self, XFd fd);
+static bool  VXNetIoRingWin32_registerPassiveOsFd(XAbstractNetIoRing* self,
+                                                   int osFd,
+                                                   void (*notify)(int osFd));
+static bool  VXNetIoRingWin32_unregisterPassiveOsFd(XAbstractNetIoRing* self,
+                                                     int osFd);
 static void  VXNetIoRingWin32_waitForEvents(XAbstractNetIoRing* self, int timeoutMs);
 static void  VXNetIoRingWin32_wakeUp(XAbstractNetIoRing* self);
 static void  VXNetIoRingWin32_deinit(XAbstractNetIoRing* obj);
@@ -203,6 +208,30 @@ static bool VXNetIoRingWin32_registerEvent(XAbstractNetIoRing* self, XFd fd) {
                                   (ULONG_PTR)desc->object, 0) != NULL;
 }
 
+/* 注册裸 OS fd 为被动可读事件源：Windows 无等价原语，恒不支持。
+ *
+ * IOCP 只接纳与 OVERLAPPED I/O 绑定的 HANDLE，不存在「把一个只读设备 fd
+ * 挂进完成端口等待集」的原语；Windows 的输入侧本就由窗口消息驱动
+ * （WM_POINTER / WM_MOUSE），经 XPlatformNativeWindow 的事件泵进入框架，
+ * 不需要本通道。返回 false ⇒ 调用方（fbdev 触摸泵等）保留轮询兜底路径，
+ * Windows 行为与本 API 引入前逐位一致。 */
+static bool VXNetIoRingWin32_registerPassiveOsFd(XAbstractNetIoRing* self,
+                                                  int osFd,
+                                                  void (*notify)(int osFd)) {
+    (void)self;
+    (void)osFd;
+    (void)notify;
+    return false;
+}
+
+/* 注销裸 OS fd 被动事件源：Windows 从未注册（见上），恒幂等成功。 */
+static bool VXNetIoRingWin32_unregisterPassiveOsFd(XAbstractNetIoRing* self,
+                                                    int osFd) {
+    (void)self;
+    (void)osFd;
+    return true;
+}
+
 /* 阻塞等待事件（虚函数） */
 static void VXNetIoRingWin32_waitForEvents(XAbstractNetIoRing* self, int timeoutMs) {
     XNetIoRingWin32* win = (XNetIoRingWin32*)self;
@@ -269,6 +298,8 @@ XVtable* XNetIoRingWin32_class_init(void) {
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_GetEventFd,    VXNetIoRingWin32_getEventFd);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_PollPlatform,  VXNetIoRingWin32_pollPlatform);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_RegisterEvent, VXNetIoRingWin32_registerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_RegisterPassiveOsFd, VXNetIoRingWin32_registerPassiveOsFd);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_UnregisterPassiveOsFd, VXNetIoRingWin32_unregisterPassiveOsFd);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_WaitForEvents, VXNetIoRingWin32_waitForEvents);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_WakeUp,        VXNetIoRingWin32_wakeUp);
 

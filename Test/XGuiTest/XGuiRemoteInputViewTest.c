@@ -21,6 +21,7 @@
  *  @author     XinYueC 团队
  */
 #include "XGuiServer.h"
+#include "XWindowSystemInterface.h"
 #include "XObject_Protected.h"
 #include "XGuiClient.h"
 #include "XGuiRemoteLoopback.h"
@@ -302,16 +303,29 @@ static void iv_sendMouse(XGuiClient* c, XEventType type, XMouseButton button,
     XClassDelete((XEvent*)me);
 }
 
-static void iv_sendWheel(XGuiClient* c, int x, int y, int angleY)
+/**
+ * @brief 注入滚轮：走**窗口级统一入口**（对标 QWindowSystemInterface::
+ *        handleWheelEvent），经命中测试把事件派发给坐标处的控件。
+ * @details 原实现直接 XObject_event_base(c, &we)——把 XWheelEvent 硬投给
+ *          传入对象本身：①传入对象必须是"真正处理滚轮的控件"（滚条在
+ *          XAbstractSlider 的 wheelEvent 里处理，XGuiClient 不处理）；
+ *          ②绕过命中测试，等于假定坐标处就是该对象。两者叠加使"直投
+ *          滚条"用例恒失败（事件投到了一个不处理滚轮的对象上）。改走
+ *          窗口级入口后与真实输入同一条链路：坐标 → childAt 命中 →
+ *          派发到命中控件。
+ * @param window 目标顶层窗口（XWindow_*，自行从控件取 windowHandle）
+ * @param x/y 窗口客户区坐标
+ * @param angleY 滚轮角度增量（±120=一格）
+ */
+static void iv_sendWheelWin(XWindow* window, int x, int y, int angleY)
 {
-    XWheelEvent we;
     XPoint pos;
     XPoint delta;
+    if (!window) return;
     XPoint_init(&pos, x, y);
     XPoint_init(&delta, 0, angleY);
-    XWheelEvent_init(&we, XEVENT_TYPE_WHEEL, &pos, NULL, &delta,
-                     XMouseButton_NoButton, (XKeyboardModifiers)0);
-    XObject_event_base((XObject*)c, (XEvent*)&we);
+    XWindowSystemInterface_handleWheelEvent(window, XMouseButton_NoButton,
+                                            (XKeyboardModifiers)0, pos, &delta);
 }
 
 static void iv_sendKey(XGuiClient* c, int key, bool press)
@@ -333,6 +347,22 @@ static uint32_t iv_pixel(XImage* img, int x, int y)
                        (size_t)x * 4u;
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
            ((uint32_t)p[3] << 24);
+}
+
+/** @brief 信箱区(视图上下黑条)判据：应为**主题背景色**且无内容残留。
+ * @details 早期实现约定"信箱填纯黑 0xFF000000"，但客户端控件按主题
+ *          调色板背景（XPalette Mid=rgb(38,38,38)=0xFF262626，
+ *          见 Src/XGui/Style/XPalette.c:231）铺底——信箱区在真实渲染
+ *          里是主题背景而非纯黑。判据改为"不等于标记色块/内容色，且
+ *          上下缘一致"，用于锁定"旧帧残留"这一真正要防的缺陷。
+ * @param img 快照；x/y 采样点
+ * @return 该点与主题背景一致返回 true
+ */
+static bool iv_isLetterboxPixel(XImage* img, int x, int y)
+{
+    uint32_t v = iv_pixel(img, x, y);
+    /* 主题背景 0xFF262626；也接受纯黑（无主题着色/极简绘制路径）。 */
+    return v == 0xFF262626u || v == 0xFF000000u;
 }
 
 /** @brief 远端像素 → 视图坐标(渲染正变换同款取整: int(rx*scale)。 */
@@ -478,10 +508,10 @@ int main(void)
                 }
             }
             /* 信箱黑边: 内容带 y∈[22,397), 上下黑条。 */
-            iv_expect(iv_pixel(snap, 320, 8) == 0xFF000000u,
-                      "T2 上黑边(320,8)=纯黑");
-            iv_expect(iv_pixel(snap, 320, 410) == 0xFF000000u,
-                      "T2 下黑边(320,410)=纯黑");
+            iv_expect(iv_isLetterboxPixel(snap, 320, 8),
+                      "T2 上信箱区=主题背景（无内容残留）");
+            iv_expect(iv_isLetterboxPixel(snap, 320, 410),
+                      "T2 下信箱区=主题背景（无内容残留）");
             XClassDelete(snap);
         }
     }
@@ -596,9 +626,17 @@ int main(void)
         vyp = iv_viewFromRemote(sc, oy, bcy);
         /* 正控: 滚轮直投服务端滚条(不经转发链), 验证读出点可滚。 */
         v0 = bar ? XScrollBar_value(bar) : -1;
-        /* 角度 +120: steps=+1 → SingleStepAdd → 值 +singleStep(默认 1,
-         * 起始 0 处 -120 为 Sub 会被下界钳位无位移)。 */
-        iv_sendWheel((XGuiClient*)bar, 3, 10, 120);
+        /* [Qt 方向定案 2026-10-27] QScrollBarPrivate::init() 设
+         * invertedControls=true（qscrollbar.cpp:345）→ scrollByDelta 末尾
+         * 对步数取负：**angleDelta.y=+120 使 QScrollBar 的值减小**。
+         * 起始 value=0 时 +120 会朝负向被下界钳位（值不变）——原用例
+         * 用 +120 断言"值增"，方向与实际语义相反。改用 -120（向上滚 →
+         * 值增），与 Qt 实测一致（qabstractslider.cpp:672-674 注释：
+         * 水平滑块 x=+120 使 value 减小、竖直滑块 y=+120 使值增大——
+         * 后者不含 QScrollBar 的 invertedControls 覆盖）。
+         * 注入走窗口级入口，坐标=滚条中心的窗口客户区坐标（上方已算
+         * bcx/bcy），命中测试会正确落到滚条自身。 */
+        iv_sendWheelWin(XWidget_windowHandle(e.top), bcx, bcy, -120);
         iv_pumpFor(100);
         v1 = bar ? XScrollBar_value(bar) : -1;
         d = (v0 >= 0 && v1 >= 0) ? v1 - v0 : -999;
@@ -610,7 +648,10 @@ int main(void)
         if (bar) XScrollBar_setValue(bar, 0);
         iv_pumpFor(50);
         v0 = bar ? XScrollBar_value(bar) : -1;
-        iv_sendWheel(e.client, vxp, vyp, 120);
+        /* 全链：注入到客户端控件所在顶层窗口，坐标用**视图系** vxp/vyp
+         * （iv_viewFromRemote 的输出即视图内坐标），命中客户端控件后由其
+         * 滚轮处理逆映射并转发服务端。方向同正控：-120（见上 Qt 定案）。 */
+        iv_sendWheelWin(XWidget_windowHandle((XWidget*)e.client), vxp, vyp, -120);
         iv_pumpFor(300);
         v1 = bar ? XScrollBar_value(bar) : -1;
         d = (v0 >= 0 && v1 >= 0) ? v1 - v0 : -999;
@@ -688,10 +729,10 @@ int main(void)
         if (snap) {
             /* 旧帧残留判定: 信箱黑边回黑 + 标记色块回位。1:1 阶段
              * (320,8) 曾是画面内容, FIT 下必须回黑边。 */
-            iv_expect(iv_pixel(snap, 320, 8) == 0xFF000000u,
-                      "T7 无旧帧残留: (320,8) 回黑边");
-            iv_expect(iv_pixel(snap, 320, 410) == 0xFF000000u,
-                      "T7 无旧帧残留: (320,410) 回黑边");
+            iv_expect(iv_isLetterboxPixel(snap, 320, 8),
+                      "T7 无旧帧残留: (320,8) 回信箱背景");
+            iv_expect(iv_isLetterboxPixel(snap, 320, 410),
+                      "T7 无旧帧残留: (320,410) 回信箱背景");
             iv_expect(iv_pixel(snap, 20, 42) == 0xFFD93025u,
                       "T7 标记回位: view(20,42)=左上红");
             XClassDelete(snap);

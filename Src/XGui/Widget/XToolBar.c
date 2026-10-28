@@ -384,6 +384,11 @@ void XToolBar_init(XToolBar* self, XWidget* parent, XWidgetFlags flags)
     hint.width = 200;
     hint.height = 30;
     XWidget_setSizeHint((XWidget*)self, &hint);
+    /* [minimumSizeHint 补齐 2026-10-27 框架对齐] Qt 同类控件的
+     * minimumSizeHint 不低于其 sizeHint（对标 Qt 6.8.3 各控件
+     * minimumSizeHint 实现）：补齐后布局竖排收缩有真实下界，
+     * 此前 min=0 控件可被压塌至不可见。 */
+    XWidget_setMinimumSizeHint((XWidget*)self, &hint);
 }
 
 XToolBar* XToolBar_create_ex(XMemoryType memory, XWidget* parent,

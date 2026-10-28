@@ -25,6 +25,7 @@
 #include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XPrintf.h"
+#include "XPlatformPower.h" /* 电源管理空闲打点（熄屏策略的唯一活动来源）。 */
 
 #if XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON && XWINDOW_ON && XWINDOWEVENT_ON
 
@@ -612,6 +613,8 @@ bool XWindowSystemInterface_handleKeyEvent_ex(XWindow* window, XEventType type,
 {
     XKeyEvent* event;
     if (!window) return false;
+    /* 外部输入打点（熄屏策略的活动来源）：键盘。 */
+    XPlatformPower_noteActivity((unsigned)XPlatformPowerInputKeyboard);
     event = XKeyEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, key, modifiers);
     if (!event) return false;
     XKeyEvent_setAutoRepeat(event, autoRepeat);
@@ -710,6 +713,8 @@ bool XWindowSystemInterface_handleMouseEvent_ex(XWindow* window, XEventType type
 {
     XMouseEvent* event;
     if (!window) return false;
+    /* 外部输入打点（熄屏策略的活动来源）：鼠标（含移动）。 */
+    XPlatformPower_noteActivity((unsigned)XPlatformPowerInputMouse);
 #if XWIDGET_ON
     /* 指针移动派发路径：按新旧靶控件合成 ENTER/LEAVE（控件级悬停
        根修 N5-2，见文件头 XWindowSystemInterface_hoverSynthesizeMouseMove 注释）。 */
@@ -735,6 +740,8 @@ bool XWindowSystemInterface_handleWheelEvent(XWindow* window,
 {
     XWheelEvent* event;
     if (!window) return false;
+    /* 外部输入打点（熄屏策略的活动来源）：滚轮（归入鼠标类）。 */
+    XPlatformPower_noteActivity((unsigned)XPlatformPowerInputMouse);
     event = XWheelEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                   XEVENT_TYPE_WHEEL, &position, NULL,
                                   angleDelta, buttons, modifiers);
@@ -772,6 +779,8 @@ bool XWindowSystemInterface_handleTouchEvent_ex(XWindow* window, XEventType type
                     type != XEVENT_TYPE_TOUCH_CANCEL))
         return false;
     if (pointCount < 1) pointCount = 1;
+    /* 外部输入打点（熄屏策略的活动来源）：触摸。 */
+    XPlatformPower_noteActivity((unsigned)XPlatformPowerInputTouch);
     /* 记录本序列时间戳供合成器读取：注入为同步自发投递（调用返回时
        事件已处理完毕），静态值的作用域即"当前同步派发中的触摸事件"，
        合成器在投递栈内读取恰好命中本序列；XTouchEvent 负载结构未扩展
@@ -802,6 +811,9 @@ bool XWindowSystemInterface_handleTouchPoints_ex(XWindow* window,
          type != XEVENT_TYPE_TOUCH_END &&
          type != XEVENT_TYPE_TOUCH_CANCEL))
         return false;
+    /* 外部输入打点（熄屏策略的活动来源）：多点触摸（fbdev evdev 走
+     * 本入口）。 */
+    XPlatformPower_noteActivity((unsigned)XPlatformPowerInputTouch);
     g_touchTimestamp = timestamp;
     /* 按帧容量单块创建（柔性数组定容），setPoints 容量内原地整表覆写
        （零二次分配）；主点字段取 points[0] 并由 setPoints 再同步。 */

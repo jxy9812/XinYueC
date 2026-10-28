@@ -73,10 +73,12 @@ void XModbusClient_init(XModbusClient* client) {
     // 初始化成员变量
     client->m_timeout = 1000; // 对齐 Qt QModbusClient 默认 1000 毫秒
     client->m_serialTransactions = false;
-    client->m_serialQueue = NULL;
-    client->m_serialQueueCap = 0;
-    client->m_serialQueueHead = 0;
-    client->m_serialQueueCount = 0;
+    /* 发送队列常驻（双优先：普通 + 高优先），供 RTU 恒串行与 TCP 单事务模式共用 */
+    /* 容量 64：覆盖原 RTU 私有队列深度 50（统一后不缩水） */
+    /* 发送等待队列（XVector，创建时预留默认容量；元素为 POD，不启用 COW） */
+    client->m_serialQueue = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+        sizeof(struct XModbusSerialSend), false);
+    if (client->m_serialQueue) XVector_reserve_base(client->m_serialQueue, 64);
     client->m_numberOfRetries = 3; // 默认3次
     client->m_timeoutTimer= XTIMER_INVALID_ID;
     client->m_poolMap = NULL;
@@ -102,6 +104,11 @@ static void VXModbusClient_deinit(XModbusClient* client) {
     {
         XClassDelete(client->m_poolMap);
         client->m_poolMap = NULL;
+    }
+    /* 释放发送队列（元素为借用指针，不逐个析构——Reply 由其所有者回收） */
+    if (client->m_serialQueue) {
+        XClassDelete((XClass*)client->m_serialQueue);
+        client->m_serialQueue = NULL;
     }
     // 调用基类析构
     XClass_Deinit_Parent(XModbusDevice, client);
@@ -270,7 +277,8 @@ static XModbusRequest* buildReadWriteRequest(const XModbusDataUnit* readUnit, co
 }
 
 // ================== Public API ==================
-XModbusReply* XModbusClient_sendReadRequest(XModbusClient* client, const XModbusDataUnit* read, int serverAddress) {
+XModbusReply* XModbusClient_sendReadRequest(XModbusClient* client, const XModbusDataUnit* read,
+                                          int serverAddress, XModbusRequestPriority priority) {
     if (!client || !read || serverAddress < 0) {
         return NULL;
     }
@@ -278,6 +286,7 @@ XModbusReply* XModbusClient_sendReadRequest(XModbusClient* client, const XModbus
     if (!request) {
         return NULL;
     }
+    request->m_priority = (uint8_t)priority;
     XModbusReply* reply = XModbusClient_sendRawRequest_ref_base(client, request, serverAddress);
     if (!reply) XClassDelete(request);   // 失败时所有权退回调用方（成功路径由 reply 释放）
     return reply;
@@ -297,7 +306,8 @@ XModbusReply* XModbusClient_pollReadRequest(XModbusClient* client, const XModbus
     return reply;
 }
 
-XModbusReply* XModbusClient_sendWriteRequest(XModbusClient* client, const XModbusDataUnit* write, int serverAddress) {
+XModbusReply* XModbusClient_sendWriteRequest(XModbusClient* client, const XModbusDataUnit* write,
+                                           int serverAddress, XModbusRequestPriority priority) {
     if (!client || !write || serverAddress < 0) {
         return NULL;
     }
@@ -305,6 +315,7 @@ XModbusReply* XModbusClient_sendWriteRequest(XModbusClient* client, const XModbu
     if (!request) {
         return NULL;
     }
+    request->m_priority = (uint8_t)priority;
     XModbusReply* reply = XModbusClient_sendRawRequest_ref_base(client, request, serverAddress);
     if (!reply) XClassDelete(request);   // 失败时所有权退回调用方（成功路径由 reply 释放）
     return reply;
@@ -527,42 +538,39 @@ void XModbusClient_setSerialTransactions(XModbusClient* client, bool enable)
     client->m_serialTransactions = enable;
     if (enable) {
         /* 队列仅在单事务模式开启期间存在（按需分配），关闭即销毁释放。 */
-        client->m_serialQueueCap = 32;
-        client->m_serialQueue = XMemory_malloc(
-            sizeof(struct XModbusSerialSend) * (size_t)client->m_serialQueueCap,
-            XCLASS_DEFAULT_MEMORY_TYPE);
-        client->m_serialQueueHead = 0;
-        client->m_serialQueueCount = 0;
+        /* 队列改为常驻（init 创建 / deinit 释放）：RTU 主站恒串行也复用本队列，
+         * 不再依赖"单事务开关开启"才具备队列。开关只决定是否启用排队语义。 */
     } else {
         XModbusClient_serialQueueClear(client,
             XModbusDevice_TimeoutError, "single-transaction disabled");
-        if (client->m_serialQueue) {
-            XMemory_free(client->m_serialQueue, XCLASS_DEFAULT_MEMORY_TYPE);
-            client->m_serialQueue = NULL;
-        }
-        client->m_serialQueueCap = 0;
-        client->m_serialQueueHead = 0;
-        client->m_serialQueueCount = 0;
+        if (client->m_serialQueue) XVector_clear_base(client->m_serialQueue);
     }
 }
 
 bool XModbusClient_serialQueuePush(XModbusClient* client,
     struct XModbusRequest* ownedRequest, struct XModbusReply* reply,
-    int serverAddress)
+    int serverAddress, XModbusRequestPriority priority)
 {
-    struct XModbusSerialSend* slot;
-    int idx;
-    if (!client || !client->m_serialQueue ||
-        client->m_serialQueueCount >= client->m_serialQueueCap)
-        return false;
-    idx = (client->m_serialQueueHead + client->m_serialQueueCount) %
-          client->m_serialQueueCap;
-    slot = &client->m_serialQueue[idx];
-    slot->request = ownedRequest;
-    slot->reply = reply;
-    slot->serverAddress = serverAddress;
-    ++client->m_serialQueueCount;
-    return true;
+    struct XModbusSerialSend item;
+    size_t count;
+    size_t i;
+    size_t pos;
+    if (!client || !client->m_serialQueue) return false;
+    count = XVector_size_base(client->m_serialQueue);
+    if (count >= XMODBUS_SERIAL_QUEUE_CAPACITY) return false;
+    /* 有序插入（对齐 Qt QEventQueue::postEvent）：按优先级降序排列，
+     * 同优先级保持 FIFO（插入到同优先级元素之后）。队列深度小，O(n) 定位可接受。 */
+    pos = count;
+    for (i = 0; i < count; ++i) {
+        const struct XModbusSerialSend* e =
+            (const struct XModbusSerialSend*)XVector_at_base(client->m_serialQueue, (int64_t)i);
+        if (e && e->priority < priority) { pos = i; break; }
+    }
+    item.request = ownedRequest;
+    item.reply = reply;
+    item.serverAddress = serverAddress;
+    item.priority = priority;
+    return XVector_insert_2(client->m_serialQueue, (int64_t)pos, &item);
 }
 
 bool XModbusClient_serialQueuePop(XModbusClient* client,
@@ -570,32 +578,37 @@ bool XModbusClient_serialQueuePop(XModbusClient* client,
     int* outServerAddress)
 {
     struct XModbusSerialSend* slot;
-    if (!client || client->m_serialQueueCount <= 0) return false;
-    slot = &client->m_serialQueue[client->m_serialQueueHead];
-    *outRequest = slot->request;
-    *outReply = slot->reply;
-    *outServerAddress = slot->serverAddress;
+    if (!client || !client->m_serialQueue) return false;
+    if (XVector_size_base(client->m_serialQueue) <= 0) return false;
+    /* 队头即最高优先级（同优先级 FIFO 由入队有序插入保证） */
+    slot = (struct XModbusSerialSend*)XVector_front_base(client->m_serialQueue);
+    if (!slot) return false;
+    if (outRequest) *outRequest = slot->request;
+    if (outReply) *outReply = slot->reply;
+    if (outServerAddress) *outServerAddress = slot->serverAddress;
     slot->request = NULL;
     slot->reply = NULL;
-    client->m_serialQueueHead = (client->m_serialQueueHead + 1) %
-        client->m_serialQueueCap;
-    --client->m_serialQueueCount;
+    XVector_remove_base(client->m_serialQueue, 0, 1);
     return true;
 }
 
 int XModbusClient_serialQueueCount(const XModbusClient* client)
 {
-    return client ? client->m_serialQueueCount : 0;
+    if (!client || !client->m_serialQueue) return 0;
+    return (int)XVector_size_base(client->m_serialQueue);
 }
 
 void XModbusClient_serialQueueClear(XModbusClient* client,
     XModbusDevice_Error error, const char* errorMsg)
 {
-    int i;
-    if (!client) return;
-    for (i = 0; i < client->m_serialQueueCount; ++i) {
-        struct XModbusSerialSend* slot = &client->m_serialQueue[
-            (client->m_serialQueueHead + i) % client->m_serialQueueCap];
+    size_t count;
+    size_t i;
+    if (!client || !client->m_serialQueue) return;
+    count = XVector_size_base(client->m_serialQueue);
+    for (i = 0; i < count; ++i) {
+        struct XModbusSerialSend* slot =
+            (struct XModbusSerialSend*)XVector_at_base(client->m_serialQueue, (int64_t)i);
+        if (!slot) continue;
         if (slot->reply) {
             XModbusReply_setError(slot->reply, error, errorMsg);
             XModbusReply_setState(slot->reply, XModbusReply_State_Timeout);
@@ -604,8 +617,7 @@ void XModbusClient_serialQueueClear(XModbusClient* client,
         slot->request = NULL;
         slot->reply = NULL;
     }
-    client->m_serialQueueHead = 0;
-    client->m_serialQueueCount = 0;
+    XVector_clear_base(client->m_serialQueue);
 }
 
 bool XModbusClient_serialTransactions(const XModbusClient* client)

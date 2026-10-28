@@ -769,6 +769,96 @@ static HCURSOR xpwn_cursorHandleForShape(XCursorShape shape)
     }
 }
 
+/**
+ * @brief  内建精灵位图（2bit）→ 原生 HCURSOR（CreateIconIndirect）。
+ * @details [2026-10-27 跨平台外形一致] 五款内建形状（Arrow/PointingHand/
+ *          Cross/IBeam/Wait）在**所有平台画同一份位图素材**（公共层
+ *          XCursor_swSpriteBitsFor）——Windows 侧不再映射 IDC_* 系统形状
+ *          （各平台系统样式不一致），而是把与 fbdev/安卓软件精灵逐位
+ *          相同的 2bit 素材转成 32bpp ARGB 色位图 + 单色 AND 掩码：
+ *          v=0(透明)→alpha 0 + mask 位 1；v=1(黑)→BGR 0 + alpha 0xFF；
+ *          v=2(白)→BGR 0xFF + alpha 0xFF。热点取素材表值。
+ *          结果按形状槽缓存（进程常驻，不 DestroyCursor——与
+ *          LoadCursorW 共享句柄同生命周期语义）。非内建形状返回 NULL，
+ *          调用方回落系统形状映射。
+ * @param   shape 目标形状。
+ * @return  原生 HCURSOR；无内建位图/创建失败返回 NULL。
+ */
+static HCURSOR xpwn_cursorBuiltinSpriteCursor(XCursorShape shape)
+{
+    static HCURSOR s_cache[26];
+    const uint8_t* bits;
+    int w, h, hotX, hotY;
+    int row;
+    size_t maskLineBytes;
+    unsigned char* colorBits;
+    unsigned char* maskBits;
+    HBITMAP hbmColor;
+    HBITMAP hbmMask;
+    ICONINFO info;
+    HCURSOR cur;
+
+    if ((int)shape < 0 || (int)shape >= 26) return NULL;
+    if (s_cache[(int)shape]) return s_cache[(int)shape];
+    bits = XCursor_swSpriteBitsFor(shape, &w, &h, &hotX, &hotY);
+    if (!bits || w <= 0 || h <= 0) return NULL;
+
+    colorBits = (unsigned char*)XMemory_malloc((size_t)w * (size_t)h * 4u,
+                                               XCLASS_DEFAULT_MEMORY_TYPE);
+    maskLineBytes = (size_t)((w + 15) / 16) * 2;   /* 单色位图行 WORD 对齐。 */
+    maskBits = (unsigned char*)XMemory_malloc(maskLineBytes * (size_t)h,
+                                              XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!colorBits || !maskBits) {
+        if (colorBits) XFree_System(colorBits);
+        if (maskBits) XFree_System(maskBits);
+        return NULL;
+    }
+    XMemset(maskBits, 0, maskLineBytes * (size_t)h);
+    for (row = 0; row < h; ++row) {
+        int col;
+        for (col = 0; col < w; ++col) {
+            uint8_t v = bits[(size_t)row * (size_t)w + (size_t)col];
+            unsigned char* px = colorBits +
+                ((size_t)row * (size_t)w + (size_t)col) * 4u;
+            unsigned char* mb = maskBits + (size_t)row * maskLineBytes +
+                                (size_t)(col >> 3);
+            unsigned char mbit = (unsigned char)(1u << (col & 7));
+            if (v == 0) {
+                px[0] = px[1] = px[2] = 0;
+                px[3] = 0;                      /* 透明。 */
+                *mb |= mbit;                    /* AND mask：1=透写。 */
+            } else {
+                unsigned char gray = (v == 2) ? 0xFF : 0x00;
+                px[0] = gray;                   /* B */
+                px[1] = gray;                   /* G */
+                px[2] = gray;                   /* R */
+                px[3] = 0xFF;                   /* A 实色。 */
+            }
+        }
+    }
+    hbmColor = CreateBitmap(w, h, 1, 32, colorBits);
+    hbmMask = CreateBitmap(w, h, 1, 1, maskBits);
+    XFree_System(colorBits);
+    XFree_System(maskBits);
+    if (!hbmColor || !hbmMask) {
+        if (hbmColor) DeleteObject(hbmColor);
+        if (hbmMask) DeleteObject(hbmMask);
+        return NULL;
+    }
+    ZeroMemory(&info, sizeof(info));
+    info.fIcon = FALSE;
+    info.xHotspot = (DWORD)hotX;
+    info.yHotspot = (DWORD)hotY;
+    info.hbmMask = hbmMask;
+    info.hbmColor = hbmColor;
+    cur = CreateIconIndirect(&info);
+    DeleteObject(hbmColor);
+    DeleteObject(hbmMask);
+    if (!cur) return NULL;
+    s_cache[(int)shape] = cur;   /* 进程常驻（同 LoadCursorW 共享语义）。 */
+    return cur;
+}
+
 static bool xpwn_cursorBackendQueryPos(int* x, int* y)
 {
     POINT pt;
@@ -809,7 +899,11 @@ static bool xpwn_cursorBackendApplyWindowCursor(uintptr_t nativeWindowId,
         return true;
     }
     shape = XCursor_shape(cursor);
-    handle = xpwn_cursorHandleForShape(shape);
+    /* [2026-10-27 跨平台外形一致] 内建位图形状优先用自绘原生光标
+     * （与 fbdev/安卓软件精灵同一份素材），其余形状才映射系统光标。 */
+    handle = xpwn_cursorBuiltinSpriteCursor(shape);
+    if (!handle)
+        handle = xpwn_cursorHandleForShape(shape);
     if (!handle && shape != XCursor_Blank)
         return false; /* LoadCursorW 失败（预定义共享光标几乎不失败）。 */
     entry->m_hcursor = handle;

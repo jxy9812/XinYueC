@@ -77,16 +77,10 @@ typedef struct XModbusTcpClient {
     XHashMap* m_timerMap;               ///< timerId -> transactionId（反向映射）
     XByteArray* m_receiveBuffer;        ///< 接收缓冲区
     XByteArray* m_requestData;          //请求缓冲区
-    /* [单事务模式 2026-10-15] 发送等待队列（FIFO，容量 32）：串行开关
-     * 置位且在途>0 时，新请求入队；任一请求离开在途（完成/终态超时）
-     * 后按序出队上线。队列元素为本文件内 XModbusTcpQueuedSend。 */
-    struct XModbusTcpQueuedSend {
-        XModbusRequest* request;        /**< 请求对象（所有权入队转移）。 */
-        XModbusReply* reply;            /**< 关联 Reply（状态保持 Waiting）。 */
-        int serverAddress;              /**< 从机地址。 */
-    } m_sendQueue[32];
-    int m_sendQueueHead;                /**< 队头下标（循环）。 */
-    int m_sendQueueCount;               /**< 队内元素数。 */
+    /* [单事务模式 2026-10-15] 发送等待队列复用基类双优先队列
+     * （XModbusClient_serialQueuePush/Pop）：串行开关置位且在途>0 时新请求
+     * 入队；任一请求离开在途（完成/终态超时）后按优先级出队上线
+     * （高优先先出）。本类不再自持队列字段。 */
 } XModbusTcpClient;
 
 /******************************************************************************************

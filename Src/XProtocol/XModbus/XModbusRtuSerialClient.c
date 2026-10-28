@@ -27,6 +27,7 @@ static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args
 static void XModbusRtuSerialClient_onErrorOccurred(XObject* receiver, XVarList* args);
 static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* receiveBuffer);
 static bool startNewRequest(XModbusRtuSerialClient* client);
+static bool startRequestReply(XModbusRtuSerialClient* client, XModbusReply* reply);
 static void handleRequestTimeout(XModbusRtuSerialClient* client);
 static void XModbusRtuSerialClient_attemptReconnect(XModbusRtuSerialClient* client);
 // =============== 辅助函数 ===============
@@ -119,7 +120,8 @@ void XModbusRtuSerialClient_init(XModbusRtuSerialClient* client)
     client->m_waitingForTurnaround = false;
     client->m_requestData = NULL;
     client->m_receiveBuffer = XByteArray_create();  // 创建接收缓冲区
-    client->m_queue = XCircularQueue_create(sizeof(XModbusReply*), 50);
+    /* 发送队列复用基类双优先队列（XModbusClient_serialQueuePush/Pop），
+     * RTU 恒串行：请求恒入队，由基类按优先级出队。 */
 }
 
 // =============== 帧间延迟 ===============
@@ -424,8 +426,15 @@ cleanup:
 bool startNewRequest(XModbusRtuSerialClient* client)
 {
     XModbusReply* reply = NULL;
-    if (!XQueueBase_receive_base(client->m_queue, &reply))
+    /* 基类双优先队列出队：先高优先后普通（485 单总线串行，已发帧不可抢占） */
+    if (!XModbusClient_serialQueuePop((XModbusClient*)client, NULL, &reply, NULL))
         return false;
+    return startRequestReply(client, reply);
+}
+
+/** @brief 取出待发请求并执行发送（出队后的公共发送路径）。 */
+static bool startRequestReply(XModbusRtuSerialClient* client, XModbusReply* reply)
+{
     if (!client || !reply || !reply->m_request || reply->m_serverAddress < 0 || reply->m_serverAddress > 247) {
         return false;
     }
@@ -666,7 +675,13 @@ static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XTimerEvent* event)
             XModbusReply** pReply = XHashMap_value_base(client->m_base.m_poolMap, &timerId);
             if (pReply)
             {
-                XQueueBase_push_base(client->m_queue, pReply /*XHashMap_value_base(client->m_base.m_poolMap, &timerId)*/);
+                {
+                    /* 重发按原请求优先级回队（request 传 NULL：由 Reply 持有） */
+                    uint8_t prio = 0;
+                    if (pReply && *pReply && (*pReply)->m_request) prio = (*pReply)->m_request->m_priority;
+                    XModbusClient_serialQueuePush((XModbusClient*)client, NULL, *pReply,
+                                                  0, (XModbusRequestPriority)prio);
+                }
                 if (!client->m_currentReply)//当前是空闲的
                     startNewRequest(client);
                 return;
@@ -704,10 +719,7 @@ static void VXModbusRtuSerialClient_deinit(XModbusRtuSerialClient* client)
     }
     // 释放请求队列容器（init 中创建；队列内的 XModbusReply* 归调用方所有，
     // 这里只销毁容器本身，不触碰队列元素）
-    if (client->m_queue) {
-        XClassDelete(client->m_queue);
-        client->m_queue = NULL;
-    }
+    /* 发送队列由基类持有并释放（此处不重复释放） */
     if (client->m_currentReply) {
         XModbusReply_setError(client->m_currentReply, XModbusDevice_TimeoutError, "Device closed");
         XModbusReply* reply = client->m_currentReply;
@@ -748,7 +760,10 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
     else if (type == XFuncParamType_Ref)
         reply = XModbusClient_createReply_ref(client, request, serverAddress);
     if (!reply) return NULL;
-    if (!XQueueBase_push_base(rtuClient->m_queue, &reply))
+    /* 入基类双优先队列：request 传 NULL（请求所有权随 Reply，避免双重释放）；
+     * 优先级取自请求（控制命令=High 由上层打标）。 */
+    if (!XModbusClient_serialQueuePush((XModbusClient*)rtuClient, NULL, reply,
+                                       serverAddress, (XModbusRequestPriority)request->m_priority))
     {
         XModbusReply_deleteLater(reply);
         return NULL;

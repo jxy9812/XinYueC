@@ -5,11 +5,22 @@ project(Xin_Yue_C VERSION 0.1 LANGUAGES C)
 
 # ---- 裁剪开关转发：命令行 -DX?_ON=0/1 转为全局编译定义 ----
 # （否则 -D 仅入缓存为 UNINITIALIZED，不产生编译定义，"裁剪构建"实际全量编译。）
+#
+# 【枚举型开关必须显式映射 2026-10-26 根修】XGUI_BACKINGSTORE_RENDER_MODE
+# 不是布尔量，而是三值枚举（PARTIAL=0 / DIRECT=1 / FULL=2，见 XGuiConfig.h）。
+# 旧转发只认 ON/TRUE/OFF/FALSE，"DIRECT" 两侧都不匹配 ⇒ 原样透传为编译定义
+# XGUI_BACKINGSTORE_RENDER_MODE=DIRECT。该宏在 #if 比较里展开成**未定义标识符**，
+# 预处理器按 0 处理 ⇒ 与 PARTIAL(0) 相等 ⇒ 嵌入构建实际编出的是 PARTIAL
+# （tile 攒批）而非 DIRECT！真机症状：后备缓冲按 min(w,160)×min(h,80) 分配，
+# present 把 160×80 的图往 1024×600 面板直写 ⇒ 逐行错位 ⇒ 面板上出现
+# 阶梯状黑块/黑条纹（昆仑通态 A33 真机实证：黑带 |x−2y|≤320 斜带、
+# 非黑区域与正确帧逐位一致）。此处补齐枚举名映射，命令行 -D…=DIRECT 由此
+# 真正落到数值 1。
 option(XGUI_ON "XGui 模块总开关（默认开；-DXGUI_ON=0 关闭）" ON)
 foreach(_xsw XGUI_ON XGPU_ON XIMAGEIOPLUGIN_ON XSVGICON_ON XPIXMAPCACHE_ON XMOVIE_ON
              XVIRTUALKEYBOARD_DESKTOP_ON
              XPLATFORM_FBDEV_ON XPLATFORM_DRM_ON XPLATFORM_FBINPUT_ON XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
-             XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_BUFFER_COUNT)
+             XGUI_BACKINGSTORE_BUFFER_COUNT)
     if(DEFINED ${_xsw})
         set(_xval "${${_xsw}}")
         if(_xval STREQUAL "ON" OR _xval STREQUAL "TRUE")
@@ -21,6 +32,30 @@ foreach(_xsw XGUI_ON XGPU_ON XIMAGEIOPLUGIN_ON XSVGICON_ON XPIXMAPCACHE_ON XMOVI
         unset(_xval)
     endif()
 endforeach()
+
+# 渲染模式枚举名 → 数值（与 XGuiConfig.h 的 PARTIAL=0/DIRECT=1/FULL=2 对齐）。
+# 单独处理：它是三值枚举，不能走上面的布尔映射（DIRECT 既非 ON 也非 OFF）。
+if(DEFINED XGUI_BACKINGSTORE_RENDER_MODE)
+    set(_xrm "${XGUI_BACKINGSTORE_RENDER_MODE}")
+    if(_xrm STREQUAL "PARTIAL")
+        set(_xrm 0)
+    elseif(_xrm STREQUAL "DIRECT")
+        set(_xrm 1)
+    elseif(_xrm STREQUAL "FULL")
+        set(_xrm 2)
+    else()
+        # 数值直给（0/1/2）或未识别值：数值原样透传；未识别的**标识符**
+        # 会退化成预处理器里的未定义符号（按 0 = PARTIAL 生效），此处显式
+        # 报错拒收——宁可构建失败，也不要静默编出与意图相反的模式。
+        if(NOT _xrm MATCHES "^[0-9]+$")
+            message(FATAL_ERROR
+                "XGUI_BACKINGSTORE_RENDER_MODE 取值非法：'${_xrm}'。"
+                "合法值：PARTIAL(0) / DIRECT(1) / FULL(2)（枚举名或数值）。")
+        endif()
+    endif()
+    add_compile_definitions(XGUI_BACKINGSTORE_RENDER_MODE=${_xrm})
+    unset(_xrm)
+endif()
 
 # ==================== fbdev 显示驱动模板（嵌入式 RGB565 直写铺路） ====================
 # 新增源文件 Drive/Posix/Graphics/XPlatformFramebuffer_posix.c（及其 .h）经上方
@@ -332,11 +367,24 @@ list(REMOVE_ITEM TEST_FILE
 # 不得卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xmodbus_hub_test.c")
-# xmodbus_atv61_test 同理：自带 main 的 ATV61 变频器闭环测试独立可执行
-# （XModbusAtv61Test 目标，2026-10-26 ATV61 485 变频器控制战役闭环回归），
+# XTimerWheelPhaseTest 同理：自带 main 的时间轮「相位落槽」回归测试独立
+# 可执行（2026-10-28 顶栏时钟 1s 变 1.8s 根修的回归锁：错相注册 1000/
+# 2500ms Coarse 定时器并逐次断言触发间隔），不得卷入主程序。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XTimerTest/XTimerWheelPhaseTest.c")
+# xfdv_atv61_test 同理：自带 main 的变频器抽象层闭环测试独立可执行
+# （XVfdAtv61Test 目标，2026-10-27 XVfd 子系统落地：XVfdAtv61 子类 + 链路轮询），
 # 不得卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xmodbus_atv61_test.c")
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xfdv_atv61_test.c")
+# xfdv_m512_test 同理：双站混合总线闭环测试独立可执行
+# （XVfdM512Test 目标，2026-10-27 XVfd 落地：511M 族 + 离线隔离 + 参数通道）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xfdv_m512_test.c")
+# xfdv_bus485_test 同理：虚拟 485 总线（多从站）闭环测试独立可执行
+# （XVfdBus485Test 目标，2026-10-27 虚拟总线 hub + 双独立从站进程）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xfdv_bus485_test.c")
 # xgui_dialog_portrait_probe 同理：自带 main 的对话框族竖屏适配探针
 # （XDialogPortraitProbe 目标，2026-10-26 对话框竖屏适配战役目验工具）。
 list(REMOVE_ITEM TEST_FILE
@@ -346,6 +394,17 @@ list(REMOVE_ITEM TEST_FILE
 # 不得卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XDeviceTest/xdevice_wifi_probe.c")
+# xspinbox_geometry_probe 同理：自带 main 的步进列几何四方口径探针
+# （XSpinBoxGeometryProbe 目标，2026-10-27 微调框步进列几何单源化战役
+# 的可复现证据工具），不得卷入主程序（与 main.c 重复定义 main）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/xspinbox_geometry_probe.c")
+# xscroll_clip_probe 同理：自带 main 的滚动区子控件越界裁剪探针
+# （XScrollClipProbe 目标，2026-10-27 滚动区子控件越界绘制根修的可复现
+# 证据工具），不得卷入主程序（与 main.c 重复定义 main）——TEST_FILE 剔除
+# 同款坑。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/xscroll_clip_probe.c")
 # 高精度定时器组压测原为自带 main 的独立驱动（Test/XTimerTest/
 # hr_stress_driver.c），2026-10-25 该文件已删除：压测改从测试菜单进入
 # （「定时器 → XHrTimer(高精度定时器组) → 压测(随机增删+句柄回收)」，
@@ -356,6 +415,11 @@ list(REMOVE_ITEM TEST_FILE
 # 无线适配补齐），不得卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XDeviceTest/xdevice_wifi_posix_parsers_test.c")
+# xdevice_iou_passive_probe 同理：自带 main 的异步后端「被动可读 fd」通道
+# 探针独立可执行（XDeviceIoUPassiveProbe 目标，2026-10-26 触摸唤醒通道
+# io_uring 侧验证工具），不得卷入主程序（与 main.c 重复定义 main）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XDeviceTest/xdevice_iou_passive_probe.c")
 file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
 # 桌面（非交叉）构建排除嵌入式移植层（2026-10-05 回归门修复）：FreeRTOS
 # portmacro.h/tasks.c 含 ARM CMSIS 内联汇编（mrs/msr basepri、isb），x86
@@ -452,6 +516,21 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
             add_compile_definitions(XINYUE_C_HAS_XI2=1)
             target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_XI_LIBRARY})
             target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_XI_LIBRARY})
+        endif()
+        # DPMS（显示器电源管理，Drive/Posix/Graphics/XPlatformPower_posix.c）：
+        # DPMSForceLevel 位于 libXext（**不是** libXss），本机通常只有运行库
+        # libXext.so.6 而无开发链接，按 RandR/XI2 同款两段式兜底；协议头
+        # dpms.h 缺失，最小原型内联在平台文件中（纪律同 RandR/XI2 段）。
+        # 未检出则不注入 XINYUE_C_HAS_DPMS，DPMS 段整段不编译（链接不引
+        # 用未解析符号），熄屏能力自动回落为「本平台不支持」。
+        find_library(XINYUE_XEXT_LIBRARY NAMES Xext)
+        if(NOT XINYUE_XEXT_LIBRARY)
+            find_library(XINYUE_XEXT_LIBRARY NAMES libXext.so.6 Xext.so.6)
+        endif()
+        if(XINYUE_XEXT_LIBRARY)
+            add_compile_definitions(XINYUE_C_HAS_DPMS=1)
+            target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_XEXT_LIBRARY})
+            target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_XEXT_LIBRARY})
         endif()
     endif()
 
@@ -616,6 +695,18 @@ target_link_libraries(${EXPORT_NAME} PRIVATE freetype)
 # 上游 xxHash（Yann Collet，BSD-2-Clause），XCryptographicHash_XxHash64 的实现。
 # 以子目录静态库方式集成，详见 Library/xxHash/CMakeLists.txt
 add_subdirectory(Library/xxHash)
+
+# [2026-10-26 armel 交叉构建固化] 32 位 ARM（gnueabi soft-float）的
+# 64 位原子操作（XAtomic_GCC 的 __atomic_store_8 等）需链 libatomic——
+# 此前以手配链接器旗标方式加过（分割条拖拽限帧战役 1018 记录"armel
+# 交叉链必须 -latomic"），本次入库固化：仅交叉编译时追加。非交叉
+# 桌面/安卓构建不受影响。
+if(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm")
+    # [2026-10-26 落点修正] link_libraries 会把 -latomic 放在
+    # libXinYueCS.a 之前（首试实证 undefined __atomic_store_8）——
+    # 必须挂静态库 PUBLIC 依赖，消费端链接行才落在库后可解析。
+    target_link_libraries(${EXPORT_NAME}S PUBLIC atomic)
+endif()
 
 # ==================== 平台模板（platforms/）====================
 # ⚠ 2026-10-22 起，平台模板**不作为本根工程的子目录**（2026-10-24 迁入
@@ -798,6 +889,19 @@ else()
     target_link_libraries(XDeviceWiFiProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
+# 异步后端「被动可读 fd」通道探针（独立可执行，2026-10-26 触摸唤醒通道）：
+# 验证 Linux 异步后端（XNetIoRingPosix）在 io_uring / epoll 双引擎下的
+# 被动 fd 注册—唤醒—重挂—注销链路（fbdev 触摸泵用的正是这条通道）。
+# 用法：XDeviceIoUPassiveProbe [epoll|iouring]（不带参数=按引擎默认）。
+add_executable(XDeviceIoUPassiveProbe
+    "./Test/XDeviceTest/xdevice_iou_passive_probe.c"
+)
+if(UNIX)
+    target_link_libraries(XDeviceIoUPassiveProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XDeviceIoUPassiveProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
 # ==================== 安卓真机 Modbus TCP 主站轮询探针（独立可执行） ====================
 # [2026-10-25] 安卓真机（小米 25102RKBEC）上 Modbus 主站连真实远程 IO 设备
 # 时 TCP 层 ESTABLISHED 但一个应答都收不回来——安卓 seccomp 拒
@@ -812,6 +916,36 @@ if(UNIX)
     target_link_libraries(XModbusAndroidProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XModbusAndroidProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== XSpinBox 步进按钮列几何四方口径探针（独立可执行） ====================
+# [2026-10-27] XSpinBox 步进按钮列几何在本库有四处独立实现：样式几何
+# （XStyle_subControlRect，Qt 口径）／底层绘制（恒 16px）／QSS 子控件镜像
+# （随绘制）／命中判定（恒 16px）。四方不一致会让「箭头压输入框右边框」
+# 一类观感问题在改一处、坏另一处。本探针在给定控件宽高下打印四方
+# 数值，量化是否一致（诊断用，不参与门禁）。
+# 用法：./xspinbox_geometry_probe [width] [height]
+add_executable(XSpinBoxGeometryProbe
+    "./Test/XGuiTest/xspinbox_geometry_probe.c"
+)
+if(UNIX)
+    target_link_libraries(XSpinBoxGeometryProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XSpinBoxGeometryProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== 滚动区子控件越界裁剪探针（独立可执行） ====================
+# [2026-10-27 滚动越界根修] 滚动区内控件移出 viewport 边界后未被父容器
+# 裁剪（越到品牌条/标题栏上）。本探针复刻结构并打印几何/全局坐标，
+# 区分「几何越界」与「绘制未裁剪」（诊断用，不参与门禁）。
+# 用法：./xscroll_clip_probe [scrollValue] [winW] [winH]
+add_executable(XScrollClipProbe
+    "./Test/XGuiTest/xscroll_clip_probe.c"
+)
+if(UNIX)
+    target_link_libraries(XScrollClipProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XScrollClipProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
 # ==================== 对话框族竖屏适配探针（独立可执行） ====================
@@ -841,18 +975,47 @@ else()
     target_link_libraries(XModbusHubTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
-# ==================== ATV61 变频器 Modbus RTU 闭环测试（独立可执行） ====================
-# [2026-10-26 ATV61 485 变频器控制战役] XModbusRtuSerialClient + XModbusAtv61
-# 驱动端到端回归：Python 模拟从站（mbtest_atv61_slave.py，pty 虚拟串口）先行
-# 启动，验证 串口收发闭环 / 读状态 / 调速 / CiA402 启停 / 报警读取 / 故障复位。
-# 用法：./XModbusAtv61Test <pty_path>
-add_executable(XModbusAtv61Test
-    "./Test/XProtocolTest/xmodbus_atv61_test.c"
+# ==================== 变频器抽象层 Modbus RTU 闭环测试（独立可执行） ====================
+# [2026-10-27 XVfd 子系统落地] XModbusRtuSerialClient（总线主站）+ XVfdModbusLink
+# + XVfdAtv61 子类端到端回归：Python 模拟从站（mbtest_atv61_slave.py，pty 虚拟
+# 串口）先行启动，验证 链路轮询排拍 / 调速 / CiA402 启停 / 报警读取 / 故障复位。
+# 用法：./XVfdAtv61Test <pty_path>
+add_executable(XVfdAtv61Test
+    "./Test/XProtocolTest/xfdv_atv61_test.c"
 )
 if(UNIX)
-    target_link_libraries(XModbusAtv61Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(XVfdAtv61Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
-    target_link_libraries(XModbusAtv61Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(XVfdAtv61Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== 511M 族变频器双站混合总线闭环测试（独立可执行） ====================
+# [2026-10-27 XVfd 落地] XVfdModbusLink（一条 485 总线）+ 两台 XVfdM512（unit1/2）
+# 端到端回归：Python 模拟从站（mbtest_m512_slave.py，双站+按站静默）先行启动，
+# 验证 双站轮询排拍 / 调速百分比换算 / 启停隔离 / 故障注入与名称映射 /
+# 参数读写通道 / 从站静默离线退避与探活恢复。
+# 用法：./XVfdM512Test <pty_path>
+add_executable(XVfdM512Test
+    "./Test/XProtocolTest/xfdv_m512_test.c"
+)
+if(UNIX)
+    target_link_libraries(XVfdM512Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XVfdM512Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== 虚拟 RS485 总线（多从站）闭环测试（独立可执行） ====================
+# [2026-10-27] Python 虚拟总线 hub（1 master pty + 2 slave pty，复刻广播/站号过滤/
+# 应答串行化/冲突检测）+ 两个独立从站进程 + XVfdModbusLink + 两台 XVfdM512：
+# 验证真多从站共享总线的站号过滤、互不串扰、跨设备优先级插队、应答不冲突。
+# 用法：./XVfdBus485Test <master_pty_path>
+add_executable(XVfdBus485Test
+    "./Test/XProtocolTest/xfdv_bus485_test.c"
+)
+if(UNIX)
+    target_link_libraries(XVfdBus485Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XVfdBus485Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
 # ==================== 高精度定时器组压测（菜单入口） ====================
@@ -1200,6 +1363,11 @@ if(XGUI_ON AND ANDROID)
         "./Test/XGuiDemo/xgui_demo_page_modbus.c"
         "./Test/XGuiDemo/xgui_demo_page_window.c"
         "./Test/XGuiDemo/xgui_demo_page_timeddns.c"
+        # [2026-10-26 补漏] ATV61 页（xgui_window_demo.c 无条件引用其
+        # build/adapt/autotest 符号）此前只进了桌面目标列表，安卓目标
+        # 漏列 → 链接期 undefined symbol: demo_page_atv61_build 等三个
+        # （与上方 remote 页同款漏列的复发，按同一纪律补齐）。
+        "./Test/XGuiDemo/xgui_demo_page_atv61.c"
         "./Test/XGuiDemo/xgui_demo_splitter.c"
         "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
         "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
@@ -1309,6 +1477,21 @@ else()
     target_link_libraries(x_timer_coarse_repro ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
+# ==================== 时间轮相位落槽回归测试（独立可执行） ====================
+# [2026-10-28 顶栏时钟战役] addTimer_lockfree 高层轮旧落槽忽视注册相位：
+# 1000ms CoarseTimer 落 L2（槽距 900ms）后固定 1800ms 触发（顶栏时钟
+# 「1s 刷新变 1.8s」实证）。本测试错相注册 1000/2500ms 定时器并逐次
+# 断言触发间隔（容差 -120/+150ms），缺陷复现即红。
+# 用法：XTimerWheelPhaseTest [运行毫秒]
+add_executable(XTimerWheelPhaseTest
+    "./Test/XTimerTest/XTimerWheelPhaseTest.c"
+)
+if(UNIX)
+    target_link_libraries(XTimerWheelPhaseTest ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XTimerWheelPhaseTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
 # ==================== 测试/工具目标统一强制包含配置头 ====================
 # 布局分裂根修（2026-10-21）：核心库经 xinyue_force_include_config 强制
 # /FI CXinYueConfig.h，而本文件尾部的测试/工具可执行目标此前没有——
@@ -1338,6 +1521,7 @@ set(XINYUE_EXEC_TARGETS
     XGuiGpu_Test
     xgui_glyph_coverage_diff_tool
     x_timer_coarse_repro
+    XTimerWheelPhaseTest
 )
 foreach(_tgt IN LISTS XINYUE_EXEC_TARGETS)
     if(TARGET ${_tgt})

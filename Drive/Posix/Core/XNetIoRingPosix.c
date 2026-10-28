@@ -101,6 +101,11 @@ static int guardedIoUringSetup(unsigned entries, struct io_uring_params* params)
 #define XNET_EPOLL_MAX_EVENTS 64
 #endif
 
+/* 被动可读 fd 记录表容量（2026-10-26 触摸唤醒通道）。 */
+#ifndef XNET_PASSIVE_MAX
+#define XNET_PASSIVE_MAX 8
+#endif
+
 /* [2026-10-03 互联测试指挥官] epoll 引擎逐操作追踪（默认 0）：真机
  * MCGS(5.2.9 内核 memlock 回退 epoll)互联联调缺陷定位用, 编译期
  * -DXNET_EPOLL_IO_DEBUG=1 重开全部输出 —— 仿本仓库 XPWN_IME_DEBUG
@@ -302,6 +307,43 @@ static void processOneCompletion(XAbstractNetIoRing* self, int64_t res,
             cqEntry.m_events = XSocketActType_Connect;
         }
 
+        /* [2026-10-26 物理断链(拔网线)不恢复根修·平台层]
+         *
+         * 拔网线是「链路层静默」断链：对端不发 FIN/RST，本机既无读完成
+         * （对端无数据）也无写错误（数据进内核发送缓冲，未收到 RST 即无
+         * EPIPE），socket 永远停在 ESTABLISHED ⇒ 平台层无事件可报 ⇒
+         * 框架层 disconnected 信号永不发出 ⇒ 上层自动重连永不启动。
+         *
+         * Windows 无此症状：其 IOCP 后端在链路失效时让挂起的 WSARecv/
+         * WSASend 失败并投递错误完成，框架据此断链。本平台（POSIX）必须
+         * 提供等价能力，否则 Modbus/远程屏/NTP/HTTP 全部卡在假连接态。
+         *
+         * 缺口定位：上方「I/O 失败时标记为 Connect 事件」判据是
+         * `cqEntry.m_events == 0`，而本引擎的 m_events 直接取
+         * ctx->eventMask（Read=1/Write=2，恒非 0）⇒ 该分支是死代码，
+         * 套接字 I/O 错误（EPIPE/ECONNRESET/ETIMEDOUT…）被**静默丢弃**：
+         * 实证拔线场景下写完成恒 result=-32(EPIPE)，而设备状态恒为
+         * 「已连接」、断链事件永不产生。
+         *
+         * 修法（对齐 Windows 语义）：套接字的读/写完成若为「链路已死」
+         * 类错误（见 XNetIoRingPosix_isLinkDeadErrno 白名单），一律按
+         * 「连接已断」处理——把事件掩码补上 Connect 位，使框架的 Connect
+         * 分支读到 m_connected=false 并走既有断开路径（disconnected 信号
+         * → 上层自动重连），与 Windows 的「I/O 失败时：连接丢失等错误也
+         * 标记为 Connect 事件」同构。
+         *
+         * 用 errno 白名单而非「任何 res<0」：EAGAIN/EWOULDBLOCK（资源暂
+         * 不可用）、EINTR（被信号中断）、ENOMEM（资源不足）等瞬态错误
+         * 不是链路死亡，误判会把正常连接当断链而反复重连。
+         * 只处理网络套接字（ctx->type == Socket）：文件 I/O 失败语义不同
+         * （读文件遇 EIO 不等于连接断开），不得混入断链路径。
+         */
+        if (res < 0 &&
+            ctx->type == XEventContextType_Type_Socket &&
+            XNetIoRingPosix_isLinkDeadErrno((int)(-res))) {
+            cqEntry.m_events |= XSocketActType_Connect;
+        }
+
         ctx->finishedBytes = (res >= 0) ? (size_t)res : 0;
         XAbstractNetIoRing_pushCompletion(self, &cqEntry);
     }
@@ -313,7 +355,7 @@ static void processOneCompletion(XAbstractNetIoRing* self, int64_t res,
 
 /** @brief 挂起（等待 fd 就绪）的伪 SQE 请求（epoll 引擎）。 */
 typedef struct XNetPendingOp {
-    struct io_uring_sqe sqe;    /**< 伪/真 SQE 副本（提交时快照） */
+    XNetSqe sqe;    /**< 伪/真 SQE 副本（提交时快照） */
     XEventContext* ctx;         /**< 完成上下文（= sqe.user_data） */
     struct XNetPendingOp* next; /**< 链表后继 */
 } XNetPendingOp;
@@ -331,18 +373,38 @@ typedef struct XNetIoRingPosix {
     unsigned* m_sqMaskPtr;        /**< SQ ring mask */
     unsigned* m_sqFlagsPtr;       /**< SQ ring flags */
     unsigned* m_sqArray;          /**< SQ 索引数组 */
-    struct io_uring_cqe* m_cqes;  /**< CQ 条目数组 */
+    XNetCqe* m_cqes;  /**< CQ 条目数组 */
     unsigned* m_cqHeadPtr;        /**< CQ head 指针（用户空间写入） */
     unsigned* m_cqTailPtr;        /**< CQ tail 指针（内核写入） */
     unsigned* m_cqMaskPtr;        /**< CQ ring mask */
-    struct io_uring_sqe* m_sqes;  /**< SQ 条目数组 */
+    XNetSqe* m_sqes;  /**< SQ 条目数组 */
     unsigned m_sqEntries;         /**< SQ 条目数 */
+    /* 被动可读 fd（io_uring 侧，2026-10-26）：POLL_ADD 纳管，就绪时
+     * 由内核产生 CQE（user_data 指向各自的 XEventContext，type=Custom
+     * 标识「非网络完成」）。POLL_ADD 是一次性的，完成后须重新提交
+     * 才能继续监听（见 ioArmPassive）。 */
+    struct {
+        int  m_osFd;               /**< 裸 OS fd（内核编号空间）。 */
+        void (*m_notify)(int);    /**< 就绪回调（NULL=仅唤醒不通知）。 */
+        XEventContext m_ctx;      /**< 专属完成上下文（user_data 指向它）。 */
+        bool m_armed;              /**< multishot POLL_ADD 是否在飞。 */
+        bool m_multiFailed;        /**< multishot 被内核拒绝（5.10~5.12）⇒ 不再重试。 */
+    } m_passiveIo[XNET_PASSIVE_MAX];
+    int     m_passiveIoCount;     /**< 已注册被动 fd 数（io_uring 侧）。 */
 #endif /* XNET_BUILD_IO_URING */
 #if XNET_BUILD_EPOLL
     int     m_epollFd;            /**< epoll 实例 fd */
-    struct io_uring_sqe m_currentSqe; /**< getSqe 单槽暂存（外部填充） */
+    XNetSqe m_currentSqe; /**< getSqe 单槽暂存（外部填充） */
     bool    m_hasCurrentSqe;      /**< 暂存槽是否有效 */
     XNetPendingOp* m_pendingHead; /**< 挂起请求链表头 */
+    /* 被动可读 fd 记录（2026-10-26 触摸唤醒通道）：这些 fd 由平台层
+     * （fbdev 触摸泵）自己打开，不在 XFd 表内、也没有挂起的网络请求——
+     * 只作为「可读即唤醒事件循环」的等待项。就绪时按记录回调 notify。 */
+    struct {
+        int  m_osFd;               /**< 裸 OS fd（内核编号空间）。 */
+        void (*m_notify)(int);    /**< 就绪回调（NULL=仅唤醒不通知）。 */
+    } m_passive[XNET_PASSIVE_MAX];
+    int     m_passiveCount;       /**< 已注册被动 fd 数。 */
 #endif /* XNET_BUILD_EPOLL */
 } XNetIoRingPosix;
 
@@ -352,6 +414,11 @@ typedef struct XNetIoRingPosix {
 static XFd   VXNetIoRingPosix_getEventFd(XAbstractNetIoRing* self);
 static void  VXNetIoRingPosix_pollPlatform(XAbstractNetIoRing* self);
 static bool  VXNetIoRingPosix_registerEvent(XAbstractNetIoRing* self, XFd fd);
+static bool  VXNetIoRingPosix_registerPassiveOsFd(XAbstractNetIoRing* self,
+                                                   int osFd,
+                                                   void (*notify)(int osFd));
+static bool  VXNetIoRingPosix_unregisterPassiveOsFd(XAbstractNetIoRing* self,
+                                                     int osFd);
 static void  VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self, int timeoutMs);
 static void  VXNetIoRingPosix_wakeUp(XAbstractNetIoRing* self);
 static void  VXNetIoRingPosix_deinit(XAbstractNetIoRing* obj);
@@ -362,7 +429,7 @@ static void  VXNetIoRingPosix_deinit(XAbstractNetIoRing* obj);
 #if XNET_BUILD_IO_URING
 
 /* 获取 SQ 空闲槽位索引，返回 SQE 指针 */
-static struct io_uring_sqe* ioGetSqeSlot(XNetIoRingPosix* posix) {
+static XNetSqe* ioGetSqeSlot(XNetIoRingPosix* posix) {
     if (!posix->m_sqHeadPtr || !posix->m_sqTailPtr || !posix->m_sqMaskPtr || !posix->m_sqes)
         return NULL;
     unsigned head = __atomic_load_n(posix->m_sqHeadPtr, __ATOMIC_ACQUIRE);
@@ -409,7 +476,7 @@ static void ioSubmitEntries(XNetIoRingPosix* posix, int toSubmit) {
 }
 
 /* 从 CQ 获取一个完成条目，非阻塞 */
-static struct io_uring_cqe* ioPeekCqe(XNetIoRingPosix* posix) {
+static XNetCqe* ioPeekCqe(XNetIoRingPosix* posix) {
     unsigned head = __atomic_load_n(posix->m_cqHeadPtr, __ATOMIC_ACQUIRE);
     unsigned tail = __atomic_load_n(posix->m_cqTailPtr, __ATOMIC_ACQUIRE);
 
@@ -425,13 +492,105 @@ static void ioAdvanceCq(XNetIoRingPosix* posix) {
     __atomic_store_n(posix->m_cqHeadPtr, head + 1, __ATOMIC_RELEASE);
 }
 
+/**
+ * @brief  挂载一个 multishot POLL_ADD（io_uring 侧被动 fd 通道，2026-10-26）。
+ * @details IORING_POLL_ADD_MULTI（内核 5.13+）：**一次挂载持续生效**——fd
+ *          每次就绪产生一条 CQE（带 IORING_CQE_F_MORE），**无需重挂**。
+ *
+ *          为什么不用一次性 POLL_ADD + 完成重挂（初版实现）：真机桌面
+ *          （6.18）实测「同一 ring 上第 3 次挂等同 fd」不再触发（SQE
+ *          字节级与裸程序一致、内核 enter 消费正常、CQE 却永不再来；
+ *          同进程新建 ring 同序列正常；裸 ABI 复刻全序列正常）——一次性
+ *          重挂路径在该内核上存在未定根因的坑。multishot 一次挂载绕开
+ *          重挂语义，且天然无「重挂时数据未读空 → 立即就绪 → CQ 风暴」
+ *          问题（每轮至多一条 CQE）。
+ *
+ *          版本兼容：multishot 需内核 ≥5.13；版本门 ≥5.10 的 5.10~5.12
+ *          内核不支持 ⇒ ioArmPassive 失败（CQE res=-EINVAL）时回退登记
+ *          为「不支持」，调用方保留轮询兜底。探测在首次挂载的 CQE 到达
+ *          时完成（res<0 即 multishot 不可用）。
+ *
+ * @return true=已提交；false=SQ 无空槽（下次尝试）。
+ */
+static bool ioArmPassive(XNetIoRingPosix* posix, int idx) {
+    XNetSqe* sqe;
+    if (!posix || idx < 0 || idx >= posix->m_passiveIoCount) return false;
+    sqe = ioGetSqeSlot(posix);
+    if (!sqe) return false;               /* SQ 满：下次再挂。 */
+    memset(sqe, 0, sizeof(*sqe));
+    sqe->opcode = IORING_OP_POLL_ADD;
+    sqe->fd = posix->m_passiveIo[idx].m_osFd;
+    sqe->poll_events = POLLIN;
+#ifndef IORING_POLL_ADD_MULTI
+#define IORING_POLL_ADD_MULTI (1U << 0)   /* 内核 5.13+；老工具链头缺失时补定义 */
+#endif
+    sqe->len = IORING_POLL_ADD_MULTI;     /* 内核 5.13+：POLL_ADD 命令标志存 sqe->len */
+    sqe->user_data = (uint64_t)(uintptr_t)&posix->m_passiveIo[idx].m_ctx;
+    posix->m_passiveIo[idx].m_armed = true;
+    ioSubmitEntries(posix, 1);
+    return true;
+}
+
+/**
+ * @brief  分派一条「被动 fd 完成」CQE（io_uring 侧）。
+ * @details multishot 下**无需重挂**：挂载持续生效，回调只清「待重挂」
+ *          语义不存在——armed 保持 true。若该完成携带错误（multishot
+ *          不被内核支持，res<0），置 m_multiFailed ⇒ 不再重试挂载，
+ *          registerPassiveOsFd 的调用方语义退化为轮询兜底。
+ */
+static void ioDispatchPassive(XNetIoRingPosix* posix, int idx, int res) {
+    void (*notify)(int);
+    int osFd;
+    if (!posix || idx < 0 || idx >= posix->m_passiveIoCount) return;
+    if (res < 0)
+    {
+        /* multishot 不被支持（-EINVAL 等，内核 5.10~5.12）：登记失败，
+         * 注销该 fd 的等待（POLL_REMOVE），调用方语义回落轮询兜底。 */
+        posix->m_passiveIo[idx].m_armed = false;
+        posix->m_passiveIo[idx].m_multiFailed = true;
+        if (posix->m_ringFd >= 0) {
+            XNetSqe* sqe = ioGetSqeSlot(posix);
+            if (sqe) {
+                memset(sqe, 0, sizeof(*sqe));
+                sqe->opcode = IORING_OP_POLL_REMOVE;
+                sqe->fd = -1;
+                sqe->addr = (uint64_t)(uintptr_t)
+                            &posix->m_passiveIo[idx].m_ctx;
+                sqe->user_data = 0;
+                ioSubmitEntries(posix, 1);
+            }
+        }
+        return;
+    }
+    notify = posix->m_passiveIo[idx].m_notify;
+    osFd = posix->m_passiveIo[idx].m_osFd;
+    if (notify) notify(osFd);
+}
+
 /* 非阻塞轮询 CQ（io 引擎） */
 static void ioPollPlatform(XNetIoRingPosix* posix, XAbstractNetIoRing* self) {
     int batchCount = 0;
     if (posix->m_ringFd < 0) return;
     while (batchCount < XNETIORING_POSIX_POLL_BATCH) {
-        struct io_uring_cqe* cqe = ioPeekCqe(posix);
+        XNetCqe* cqe = ioPeekCqe(posix);
+        XEventContext* ctx;
         if (!cqe) break;
+        ctx = (XEventContext*)(uintptr_t)cqe->user_data;
+        /* 被动 fd 完成（2026-10-26）：ctx->type == Type_Custom 标识「非网络
+         * 完成」（被动 fd 专属上下文）——按设备类型标注区分，不靠哨兵值。
+         * 该完成不进入网络完成链（processOneCompletion 会把它当 socket/
+         * file 完成解释），改走被动 fd 分派 + 重挂 POLL_ADD。 */
+        if (ctx && ctx->type == XEventContextType_Type_Custom) {
+            int idx;
+            for (idx = 0; idx < posix->m_passiveIoCount; ++idx) {
+                if (&posix->m_passiveIo[idx].m_ctx == ctx) break;
+            }
+            ioAdvanceCq(posix);
+            if (idx < posix->m_passiveIoCount)
+                ioDispatchPassive(posix, idx, (int)cqe->res);
+            ++batchCount;
+            continue;
+        }
         processOneCompletion(self, cqe->res,
                              (void*)(uintptr_t)cqe->user_data);
         ioAdvanceCq(posix);
@@ -474,7 +633,7 @@ static bool ioSetupRing(XNetIoRingPosix* ring) {
     ring->m_sqFlagsPtr = (unsigned*)((char*)sqPtr + params.sq_off.flags);
     ring->m_sqArray    = (unsigned*)((char*)sqPtr + params.sq_off.array);
 
-    size_t cqRingSize = (size_t)params.cq_off.cqes + params.cq_entries * sizeof(struct io_uring_cqe);
+    size_t cqRingSize = (size_t)params.cq_off.cqes + params.cq_entries * sizeof(XNetCqe);
     void* cqPtr = mmap(0, cqRingSize, PROT_READ | PROT_WRITE,
                        MAP_SHARED | MAP_POPULATE, ringFd, IORING_OFF_CQ_RING);
     if (cqPtr == MAP_FAILED) goto fail;
@@ -482,14 +641,14 @@ static bool ioSetupRing(XNetIoRingPosix* ring) {
     ring->m_cqHeadPtr = (unsigned*)((char*)cqPtr + params.cq_off.head);
     ring->m_cqTailPtr = (unsigned*)((char*)cqPtr + params.cq_off.tail);
     ring->m_cqMaskPtr = (unsigned*)((char*)cqPtr + params.cq_off.ring_mask);
-    ring->m_cqes      = (struct io_uring_cqe*)((char*)cqPtr + params.cq_off.cqes);
+    ring->m_cqes      = (XNetCqe*)((char*)cqPtr + params.cq_off.cqes);
 
-    size_t sqesSize = params.sq_entries * sizeof(struct io_uring_sqe);
+    size_t sqesSize = params.sq_entries * sizeof(XNetSqe);
     void* sqesPtr = mmap(0, sqesSize, PROT_READ | PROT_WRITE,
                          MAP_SHARED | MAP_POPULATE, ringFd, IORING_OFF_SQES);
     if (sqesPtr == MAP_FAILED) goto fail;
 
-    ring->m_sqes = (struct io_uring_sqe*)sqesPtr;
+    ring->m_sqes = (XNetSqe*)sqesPtr;
 
     ring->m_wakeFd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (ring->m_wakeFd < 0) goto fail;
@@ -516,8 +675,8 @@ static void ioDeinitCleanup(XNetIoRingPosix* posix) {
         size_t cqRingSize = (size_t)(posix->m_cqMaskPtr) -
                             (size_t)(posix->m_cqHeadPtr) +
                             sizeof(unsigned) +
-                            posix->m_sqEntries * sizeof(struct io_uring_cqe);
-        size_t sqesSize = posix->m_sqEntries * sizeof(struct io_uring_sqe);
+                            posix->m_sqEntries * sizeof(XNetCqe);
+        size_t sqesSize = posix->m_sqEntries * sizeof(XNetSqe);
 
         if (posix->m_sqHeadPtr) {
             munmap(posix->m_sqHeadPtr, sqRingSize);
@@ -611,7 +770,7 @@ static void epRearmInterest(XNetIoRingPosix* posix, int fd) {
  *  @return true 已完成并释放；false 仍在挂起（EAGAIN）。 */
 static bool epExecutePending(XNetIoRingPosix* posix, XNetPendingOp* op,
                              XAbstractNetIoRing* self) {
-    const struct io_uring_sqe* sqe = &op->sqe;
+    const XNetSqe* sqe = &op->sqe;
     ssize_t res;
     errno = 0;
     switch (sqe->opcode) {
@@ -649,6 +808,19 @@ static bool epExecutePending(XNetIoRingPosix* posix, XNetPendingOp* op,
         break;
     }
 
+    /* [2026-10-26 物理断链根修·平台层] errno 归一化：recv/send/sendmsg/
+     * accept4 等系统调用失败时返回 -1，真实原因在 errno 里。原实现直接把
+     * -1 当完成码上抛，下游无法区分「链路已死」(EPIPE/ECONNRESET/…) 与
+     * 「瞬态不可用」(EAGAIN)，断链判定因此失效——实测 epoll 引擎拔网线
+     * 场景写完成恒 result=-1，断链事件永不产生，设备状态恒为「已连接」。
+     * 此处归一为 -errno，与 io_uring 后端（CQE 直接给 -errno）口径一致，
+     * 两引擎行为对齐。
+     * 判据用「系统调用返回值恰为 -1」而非 res<0：default 分支的 -EINVAL
+     * 与 CONNECT 分支的 -err/-errno 都已是归一化码，不可二次取反。 */
+    if (res == -1 && errno != 0) {
+        res = -errno;
+    }
+
 #if XNET_EPOLL_IO_DEBUG
     fprintf(stderr, "[XNET-EPOLL] exec op=%d fd=%d res=%zd errno=%d\n",
             (int)sqe->opcode, sqe->fd, res, errno);
@@ -681,7 +853,7 @@ static bool epExecutePending(XNetIoRingPosix* posix, XNetPendingOp* op,
 /** @brief 文件类操作同步执行（普通文件 epoll 不适用），完成入队。 */
 static void epExecuteFileSync(XNetIoRingPosix* posix,
                               XAbstractNetIoRing* self,
-                              const struct io_uring_sqe* sqe) {
+                              const XNetSqe* sqe) {
     ssize_t res;
     (void)posix;
     errno = 0;
@@ -827,6 +999,175 @@ static bool VXNetIoRingPosix_registerEvent(XAbstractNetIoRing* self, XFd fd) {
     return true; /* io_uring SQE 自带 fd；epoll 在提交时按需 ADD */
 }
 
+/**
+ * @brief  把裸 OS fd 注册为「被动可读事件源」（2026-10-26 触摸唤醒通道）。
+ * @details epoll 引擎：epoll_ctl(ADD) 把 fd 纳入等待集——fd 可读即唤醒
+ *          阻塞中的事件循环，触摸事件由此获得「事件驱动」而非「等下一圈
+ *          边界」的响应（fbdev 真机实证：触摸 fd 未入等待集时，事件圈被
+ *          拉长到 ~400ms，触摸注入后日志无 mousePress、画面静止）。
+ *
+ *          io_uring 引擎：**不实现**（返回 false）。POLL_ADD 的语义在
+ *          内核 5.3 才完善，而本项目的 io_uring 版本门是 ≥5.10（5.2.9 的
+ *          MCGS 板走不到该分支），无实测条件时不引入未验证路径；调用方
+ *          见 false 即保留原有轮询回调链兜底，行为退化为改造前口径。
+ *
+ *          记录表容量上限 XNET_PASSIVE_MAX；重复注册同一 fd 幂等（更新
+ *          回调指针，不重复 ADD）。
+ */
+static bool VXNetIoRingPosix_registerPassiveOsFd(XAbstractNetIoRing* self,
+                                                  int osFd,
+                                                  void (*notify)(int osFd)) {
+    XNetIoRingPosix* posix = (XNetIoRingPosix*)self;
+    if (!posix || osFd < 0) return false;
+#if XNET_BUILD_IO_URING
+    if (posix->m_mode == XNET_MODE_IOURING) {
+        int i;
+        if (posix->m_ringFd < 0) return false;
+        for (i = 0; i < posix->m_passiveIoCount; ++i) {
+            if (posix->m_passiveIo[i].m_osFd == osFd) {
+                posix->m_passiveIo[i].m_notify = notify; /* 幂等。 */
+                return true;
+            }
+        }
+        if (posix->m_passiveIoCount >= XNET_PASSIVE_MAX) return false;
+        i = posix->m_passiveIoCount++;
+        posix->m_passiveIo[i].m_osFd = osFd;
+        posix->m_passiveIo[i].m_notify = notify;
+        posix->m_passiveIo[i].m_armed = false;
+        /* 专属完成上下文：type=Custom 标识「非网络完成」（被动 fd），
+         * fd 字段存 OS fd 号（供回调定位）。 */
+        memset(&posix->m_passiveIo[i].m_ctx, 0,
+               sizeof(posix->m_passiveIo[i].m_ctx));
+        posix->m_passiveIo[i].m_ctx.type = XEventContextType_Type_Custom;
+        posix->m_passiveIo[i].m_ctx.fd = (XFd)osFd;
+        posix->m_passiveIo[i].m_multiFailed = false;
+        /* 立即挂载 multishot POLL_ADD：此后 fd 每次就绪即产生一条 CQE
+         * 唤醒事件循环（无需重挂）。 */
+        if (!ioArmPassive(posix, i)) {
+            --posix->m_passiveIoCount; /* SQ 满：撤销登记，下次再试。 */
+            return false;
+        }
+        return true;
+    }
+#endif /* XNET_BUILD_IO_URING */
+#if XNET_BUILD_EPOLL
+    {
+        int i;
+        struct epoll_event ev;
+        if (posix->m_mode != XNET_MODE_EPOLL) return false;
+        if (posix->m_epollFd < 0) return false;
+        for (i = 0; i < posix->m_passiveCount; ++i) {
+            if (posix->m_passive[i].m_osFd == osFd) {
+                posix->m_passive[i].m_notify = notify; /* 幂等：只更新回调。 */
+                return true;
+            }
+        }
+        if (posix->m_passiveCount >= XNET_PASSIVE_MAX) return false;
+        memset(&ev, 0, sizeof(ev));
+        ev.events = XNET_EPOLL_IN_INTEREST;
+        ev.data.fd = osFd;
+        if (epoll_ctl(posix->m_epollFd, EPOLL_CTL_ADD, osFd, &ev) != 0) {
+            if (errno == EEXIST) {
+                /* 已被别的路径注册（如网络提交路径）：兴趣已含 IN，直接记账。 */
+                posix->m_passive[posix->m_passiveCount].m_osFd = osFd;
+                posix->m_passive[posix->m_passiveCount].m_notify = notify;
+                ++posix->m_passiveCount;
+                return true;
+            }
+            return false;
+        }
+        posix->m_passive[posix->m_passiveCount].m_osFd = osFd;
+        posix->m_passive[posix->m_passiveCount].m_notify = notify;
+        ++posix->m_passiveCount;
+        return true;
+    }
+#else
+    (void)notify;
+    return false;
+#endif
+}
+
+/**
+ * @brief  注销「被动可读 fd」（触摸唤醒通道，2026-10-26）。
+ * @details 从 epoll 等待集摘除并清记录。属主关闭 fd 前必须先调用：
+ *          等待集里留一个即将失效的 fd，会让事件循环在其他 fd 就绪时
+ *          读到已关闭 fd（EBADF / fd 号复用风险）。
+ */
+static bool VXNetIoRingPosix_unregisterPassiveOsFd(XAbstractNetIoRing* self,
+                                                    int osFd) {
+    XNetIoRingPosix* posix = (XNetIoRingPosix*)self;
+    if (!posix) return true;
+#if XNET_BUILD_IO_URING
+    if (posix->m_mode == XNET_MODE_IOURING) {
+        int i;
+        for (i = 0; i < posix->m_passiveIoCount; ++i) {
+            if (posix->m_passiveIo[i].m_osFd != osFd) continue;
+            /* 撤销在飞的 POLL_ADD：POLL_REMOVE 用 user_data 定位请求。
+             * 已在飞的一次性 POLL_ADD 若不撤销，其 CQE 仍会到达——但记录
+             * 已被移除，ioPollPlatform 的 ctx 匹配找不到 idx ⇒ 只推进 CQ
+             * 不回调（见 ioPollPlatform 的 idx<count 判定），安全。 */
+            if (posix->m_passiveIo[i].m_armed && posix->m_ringFd >= 0) {
+                XNetSqe* sqe = ioGetSqeSlot(posix);
+                if (sqe) {
+                    memset(sqe, 0, sizeof(*sqe));
+                    sqe->opcode = IORING_OP_POLL_REMOVE;
+                    sqe->fd = -1;
+                    sqe->addr = (uint64_t)(uintptr_t)
+                                &posix->m_passiveIo[i].m_ctx;
+                    sqe->user_data = 0;
+                    posix->m_passiveIo[i].m_armed = false;
+                    ioSubmitEntries(posix, 1);
+                }
+            }
+            /* 前移后续记录，保持表紧凑。 */
+            for (; i + 1 < posix->m_passiveIoCount; ++i)
+                posix->m_passiveIo[i] = posix->m_passiveIo[i + 1];
+            --posix->m_passiveIoCount;
+            return true;
+        }
+        return true; /* 未注册：幂等成功。 */
+    }
+#endif /* XNET_BUILD_IO_URING */
+#if XNET_BUILD_EPOLL
+    {
+        int i;
+        if (posix->m_mode != XNET_MODE_EPOLL) return true;
+        for (i = 0; i < posix->m_passiveCount; ++i) {
+            if (posix->m_passive[i].m_osFd != osFd) continue;
+            if (posix->m_epollFd >= 0)
+                epoll_ctl(posix->m_epollFd, EPOLL_CTL_DEL, osFd, NULL);
+            /* 前移后续记录，保持表紧凑。 */
+            for (; i + 1 < posix->m_passiveCount; ++i)
+                posix->m_passive[i] = posix->m_passive[i + 1];
+            --posix->m_passiveCount;
+            return true;
+        }
+        return true; /* 未注册：幂等成功。 */
+    }
+#else
+    (void)osFd;
+    return true;
+#endif
+}
+
+/**
+ * @brief  在 epoll 事件循环里分派被动 fd 就绪（触摸唤醒通道的回调侧）。
+ * @details 被动 fd 就绪时：① 回调属主 notify（属主据此抽干设备数据）；
+ *          ② 该 fd 的就绪**不**走网络挂起请求链（无 pending op），只
+ *          触发回调——不派发网络完成事件。
+ */
+static void epDispatchPassive(XNetIoRingPosix* posix, int fd) {
+    int i;
+    if (!posix) return;
+    for (i = 0; i < posix->m_passiveCount; ++i) {
+        if (posix->m_passive[i].m_osFd == fd) {
+            void (*notify)(int) = posix->m_passive[i].m_notify;
+            if (notify) notify(fd);
+            return;
+        }
+    }
+}
+
 static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self,
                                            int timeoutMs) {
     XNetIoRingPosix* posix = (XNetIoRingPosix*)self;
@@ -932,6 +1273,21 @@ static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self,
                        errno == EINTR) {}
                 continue;
             }
+            /* 被动可读 fd（触摸等）：只回调属主，不走网络挂起请求链。 */
+            {
+                int p;
+                bool isPassive = false;
+                for (p = 0; p < posix->m_passiveCount; ++p) {
+                    if (posix->m_passive[p].m_osFd == fd) {
+                        isPassive = true;
+                        break;
+                    }
+                }
+                if (isPassive) {
+                    epDispatchPassive(posix, fd);
+                    continue;
+                }
+            }
             {
                 XNetPendingOp* op =
                     epTakePending(posix, fd, XNET_EPOLL_WANT_IN);
@@ -980,6 +1336,8 @@ XVtable* XNetIoRingPosix_class_init(void) {
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_GetEventFd,    VXNetIoRingPosix_getEventFd);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_PollPlatform,  VXNetIoRingPosix_pollPlatform);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_RegisterEvent, VXNetIoRingPosix_registerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_RegisterPassiveOsFd, VXNetIoRingPosix_registerPassiveOsFd);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_UnregisterPassiveOsFd, VXNetIoRingPosix_unregisterPassiveOsFd);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_WaitForEvents, VXNetIoRingPosix_waitForEvents);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_WakeUp,        VXNetIoRingPosix_wakeUp);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetIoRingPosix_deinit);
@@ -1085,7 +1443,7 @@ int IoUring_getGlobalRingFd(void) {
     return ring ? XNetIoRingPosix_ringFd(ring) : -1;
 }
 
-struct io_uring_sqe* XNetIoRingPosix_getSqe(XNetIoRingPosix* ring) {
+XNetSqe* XNetIoRingPosix_getSqe(XNetIoRingPosix* ring) {
 #if XNET_BUILD_IO_URING
     if (ring && ring->m_mode == XNET_MODE_IOURING)
         return ioGetSqeSlot(ring);
@@ -1111,7 +1469,7 @@ void XNetIoRingPosix_submitSqe(XNetIoRingPosix* ring, int toSubmit) {
 #if XNET_BUILD_EPOLL
     if (ring && ring->m_mode == XNET_MODE_EPOLL) {
         XEventContext* ctx;
-        struct io_uring_sqe* sqe;
+        XNetSqe* sqe;
         XNetPendingOp* op;
         struct epoll_event ev;
         if (!ring->m_hasCurrentSqe) return;
@@ -1274,7 +1632,7 @@ int XNetIoRingPosix_waitCqe(XNetIoRingPosix* ring, uint64_t userData) {
                 unsigned tail = __atomic_load_n(ring->m_cqTailPtr,
                                                 __ATOMIC_ACQUIRE);
                 if (head != tail) {
-                    struct io_uring_cqe* cqe =
+                    XNetCqe* cqe =
                         &ring->m_cqes[head & (*ring->m_cqMaskPtr)];
                     if (userData == 0 || cqe->user_data == userData) {
                         __atomic_store_n(ring->m_cqHeadPtr, head + 1,

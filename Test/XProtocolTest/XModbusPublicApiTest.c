@@ -338,7 +338,7 @@ static void test_tcp_loopback(void)
     CHECK(connected, "TCP 客户端本机连接");
     read = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusHoldingRegisters, 0, 1);
     if (client && connected && read)
-        reply = XModbusClient_sendReadRequest((XModbusClient *)client, read, 1);
+        reply = XModbusClient_sendReadRequest((XModbusClient *)client, read, 1, XModbusRequestPriority_Normal);
     for (i = 0; reply && i < 100 && !XModbusReply_isFinished(reply); ++i)
         XCoreApplication_processEventsWithMaxTime(XEventLoop_AllEvents, 10);
     CHECK(reply && XModbusReply_isFinished(reply) && XModbusReply_error(reply) == XModbusDevice_NoError,
@@ -945,7 +945,7 @@ static void test_client_fc15_pressure_e2e(void)
                 XModbusDataUnit_setValue(unit, (size_t)i,
                     pattern[i] ? 1u : 0u);
             reply = XModbusClient_sendWriteRequest((XModbusClient *)client,
-                unit, 1);
+                unit, 1, XModbusRequestPriority_Normal);
         }
         for (i = 0; reply && i < 200 && !XModbusReply_isFinished(reply); ++i)
             XCoreApplication_processEventsWithMaxTime(XEventLoop_AllEvents, 10);
@@ -958,7 +958,7 @@ static void test_client_fc15_pressure_e2e(void)
             XModbusDataUnit *read = XModbusDataUnit_create_ex(
                 XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils, 0, 16);
             reply = read ? XModbusClient_sendReadRequest(
-                (XModbusClient *)client, read, 1) : NULL;
+                (XModbusClient *)client, read, 1, XModbusRequestPriority_Normal) : NULL;
             for (i = 0; reply && i < 200 && !XModbusReply_isFinished(reply); ++i)
                 XCoreApplication_processEventsWithMaxTime(XEventLoop_AllEvents, 10);
             if (reply && XModbusReply_isFinished(reply) &&
@@ -1003,7 +1003,7 @@ static void test_client_offline_error(void)
     CHECK(client && !XModbusDevice_connectDevice((XModbusDevice *)client),
         "离线连接失败如实返回失败");
     if (client && read)
-        reply = XModbusClient_sendReadRequest((XModbusClient *)client, read, 1);
+        reply = XModbusClient_sendReadRequest((XModbusClient *)client, read, 1, XModbusRequestPriority_Normal);
     CHECK(!reply, "未连接发送请求如实返回 NULL（错误路径入口）");
     if (reply) XModbusReply_deleteLater(reply);
     if (read) XClassDelete(read);

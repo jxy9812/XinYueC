@@ -1042,8 +1042,18 @@ void XLinkFileTransfer_pump(XLinkFileTransfer* transfer, uint32_t nowMs)
     /* Opening 停滞重发：Open 是下载方向的"触发帧"——对端不回 OpenAck
        就永远不会有数据流动，而静默判线要 3 秒才会断链。为不把一次
        丢帧/竞态放大成整次传输失败，这里每秒重发一次 Open；对端按
-       "重置槽位并重新受理"处理（幂等）。 */
+       "重置槽位并重新受理"处理（幂等）。
+       重发次数有上限（XLINK_FILE_OPEN_RETRY_MAX）：本分支提前 return，
+       走不到下面的空闲超时判定，且每次成功重发都刷新活动戳——不另设
+       上限的话，对端长期不应答（能力未协商/链路半开/异常宿主不转事件）
+       会变成每秒重发的无限停滞；到限即终局失败，兑现
+       XLinkFileClient.c xfc_readySession 注中「由传输引擎的空闲超时
+       兜底」的承诺。 */
     if (transfer->m_state == XLinkFileTransferState_Opening) {
+        if (transfer->m_retryCount >= XLINK_FILE_OPEN_RETRY_MAX) {
+            xft_fail(transfer, XLinkFileStatus_Timeout, "open timeout");
+            return;
+        }
         if (transfer->m_lastActivityTick != 0
             && nowMs - transfer->m_lastActivityTick >= 1000u) {
             XLinkFileOpenPayload open;
@@ -1067,6 +1077,7 @@ void XLinkFileTransfer_pump(XLinkFileTransfer* transfer, uint32_t nowMs)
                 && XLinkFile_encodeOpen(&open, buf, sizeof(buf), &len)
                 && xft_send(transfer, XLinkFileCode_Open, buf, (uint32_t)len)) {
                 transfer->m_lastActivityTick = nowMs;
+                ++transfer->m_retryCount; /* Open 重发计数（OpenAck 受理时清零） */
             }
         }
         return;

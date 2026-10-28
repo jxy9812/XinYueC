@@ -31,6 +31,13 @@
     <uses-permission android:name="android.permission.DUMP"/>
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"/>
     <uses-permission android:name="android.permission.READ_LOGS"/>
+    <!-- [屏幕休眠 2026-10-26] WRITE_SETTINGS：安卓无「应用主动关屏」原语
+         （goToSleep 需 DEVICE_POWER 签名权限），息屏是系统行为——应用把
+         「屏幕超时」写进 Settings.System.SCREEN_OFF_TIMEOUT 委托系统自己
+         计时熄屏。该权限为「特殊权限」：声明不等于已获授权，须由用户在
+         系统设置里对本应用单独授权（未授权时写入抛 SecurityException，
+         界面如实提示「需授权」）。 -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS"/>
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="28" />
 
     <application

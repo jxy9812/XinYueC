@@ -20,6 +20,7 @@ extern "C" {
 #include "XModbusDevice.h"
 #include "XModbusReply.h"
 #include "XModbusDataUnit.h"
+#include "XVector.h"
 #include "XModbusPdu.h"
 
 XCLASS_DEFINE_BEGING(XModbusClient)
@@ -37,10 +38,16 @@ XCLASS_DEFINE_END(XModbusClient)
  * 单事务模式开启期间由 XModbusClient_setSerialTransactions 创建，
  * 关闭模式即销毁释放内存。 */
 struct XModbusSerialSend {
-    struct XModbusRequest* request; /**< 请求（所有权入队转移，随 Reply 释放）。 */
+    struct XModbusRequest* request; /**< 请求（所有权入队转移，随 Reply 释放）；
+                                     * 允许为 NULL——表示请求由 Reply 持有
+                                     * （Ref 语义入队时用），出队方从 Reply 取。 */
     struct XModbusReply* reply;     /**< 关联 Reply（完成时向调用方通告）。 */
     int serverAddress;              /**< 从机地址。 */
+    XModbusRequestPriority priority; /**< 请求优先级（高优先队列先出队）。 */
 };
+
+/** @brief 发送等待队列容量上限（元素数；创建时预留此容量，超出则入队失败）。 */
+#define XMODBUS_SERIAL_QUEUE_CAPACITY 64
 
 typedef struct XModbusClient {
     XModbusDevice m_base;           ///< 继承自XModbusDevice基类
@@ -60,10 +67,10 @@ typedef struct XModbusClient {
      * 请求，pipelining 并发会丢写帧。默认关=pipelining 多事务（规范
      * 允许，多事务从机零回归）。 */
     bool m_serialTransactions;      /**< 单事务串行发送开关（默认 false）。 */
-    struct XModbusSerialSend* m_serialQueue; /**< 发送等待队列（循环缓冲）。 */
-    int m_serialQueueCap;           /**< 队列容量（元素数）。 */
-    int m_serialQueueHead;          /**< 队头下标。 */
-    int m_serialQueueCount;         /**< 队内元素数。 */
+    /* 发送等待队列：XVector + 按优先级有序插入（对齐 Qt QEventQueue 语义——
+     * QList 按 priority 有序插入，值越大越靠前出队，同优先级保持 FIFO）。
+     * 创建时预留默认容量，避免频繁重分配。 */
+    XVector* m_serialQueue;         /**< 发送等待队列（XVector，元素按优先级有序）。 */
 } XModbusClient;
 
 
@@ -105,7 +112,8 @@ void XModbusClient_init(XModbusClient* client);
  * @return 成功返回指向XModbusReply对象的指针，失败返回NULL
  * @note 调用者拥有返回的XModbusReply对象，需负责其生命周期管理
  */
-XModbusReply* XModbusClient_sendReadRequest(XModbusClient* client, const XModbusDataUnit* read, int serverAddress);
+XModbusReply* XModbusClient_sendReadRequest(XModbusClient* client, const XModbusDataUnit* read,
+                                          int serverAddress, XModbusRequestPriority priority);
 /**
 * @brief 轮询方式发送Modbus读取请求并等待响应（阻塞直到成功、超时或被取消）
 * @param client 客户端实例指针（非NULL）
@@ -124,7 +132,8 @@ XModbusReply* XModbusClient_pollReadRequest(XModbusClient* client, const XModbus
 * @return 成功返回指向XModbusReply对象的指针，失败返回NULL
 * @note 调用者拥有返回的XModbusReply对象，需负责其生命周期管理
 */
-XModbusReply* XModbusClient_sendWriteRequest(XModbusClient* client, const XModbusDataUnit* write, int serverAddress);
+XModbusReply* XModbusClient_sendWriteRequest(XModbusClient* client, const XModbusDataUnit* write,
+                                           int serverAddress, XModbusRequestPriority priority);
 /**
 * @brief 轮询方式发送Modbus写入请求并等待响应（阻塞直到成功、超时或被取消）
 * @param client 客户端实例指针（非NULL）
@@ -264,7 +273,7 @@ bool XModbusClient_serialTransactions(const XModbusClient* client);
  *  XModbusClient_setSerialTransactions 创建/销毁。 */
 bool XModbusClient_serialQueuePush(XModbusClient* client,
     struct XModbusRequest* ownedRequest, struct XModbusReply* reply,
-    int serverAddress);
+    int serverAddress, XModbusRequestPriority priority);
 /** @brief 单事务发送队列出队：取队头请求（调用方负责上线/释放）。 */
 bool XModbusClient_serialQueuePop(XModbusClient* client,
     struct XModbusRequest** outRequest, struct XModbusReply** outReply,

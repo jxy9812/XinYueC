@@ -124,6 +124,30 @@ static bool VXAbstractNetIoRing_unregisterEvent(XAbstractNetIoRing* self, XFd fd
     return true;
 }
 
+/* 注册裸 OS fd 为被动可读事件源：默认不支持（返回 false）。
+ *
+ * 基类无从得知后端等待集的实现方式（IOCP 无「被动 fd」等价物、epoll 可
+ * epoll_ctl(ADD)、io_uring 需 POLL_ADD），故默认不实现——调用方（fbdev
+ * 触摸泵等）据此判定「注册失败 → 保留原有轮询回调链兜底」，行为退化为
+ * 本次改造前的口径，不产生功能回退。 */
+static bool VXAbstractNetIoRing_registerPassiveOsFd(XAbstractNetIoRing* self,
+                                                     int osFd,
+                                                     void (*notify)(int osFd)) {
+    (void)self;
+    (void)osFd;
+    (void)notify;
+    return false;
+}
+
+/* 注销裸 OS fd 被动事件源：默认幂等成功（本就未注册亦视为成功）。
+ * 属主关闭 fd 前调用，确保等待集里不留失效 fd。 */
+static bool VXAbstractNetIoRing_unregisterPassiveOsFd(XAbstractNetIoRing* self,
+                                                       int osFd) {
+    (void)self;
+    (void)osFd;
+    return true;
+}
+
 /* 分发一条 CQ 完成事件到应用层。
  *
  * 从 CQ 条目提取 fd 和事件掩码，通过 XFd_Get(fd)->object 获取 Socket 的
@@ -271,7 +295,11 @@ XVtable* XAbstractNetIoRing_class_init(void) {
         VXAbstractNetIoRing_unregisterEvent,
         VXAbstractNetIoRing_dispatchCQEntry,
         VXAbstractNetIoRing_waitForEvents,
-        VXAbstractNetIoRing_wakeUp
+        VXAbstractNetIoRing_wakeUp,
+        /* 追加项（2026-10-26）：裸 OS fd 被动注册通道。追加在末尾，
+         * 既有 9 项索引不变（ABI 面零破坏）。 */
+        VXAbstractNetIoRing_registerPassiveOsFd,
+        VXAbstractNetIoRing_unregisterPassiveOsFd
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
@@ -443,6 +471,23 @@ void XAbstractNetIoRing_waitForEvents_base(XAbstractNetIoRing* ring, int timeout
         return;
     XClassGetVirtualFunc(ring, EXAbstractNetIoRing_WaitForEvents,
         void(*)(XAbstractNetIoRing*, int))(ring, timeoutMs);
+}
+
+bool XAbstractNetIoRing_registerPassiveOsFd_base(XAbstractNetIoRing* ring,
+                                                  int osFd,
+                                                  void (*notify)(int osFd)) {
+    if (ISNULL(ring, "XAbstractNetIoRing") || ISNULL(XClassGetVtable(ring), "Vtable"))
+        return false;
+    return XClassGetVirtualFunc(ring, EXAbstractNetIoRing_RegisterPassiveOsFd,
+        bool(*)(XAbstractNetIoRing*, int, void(*)(int)))(ring, osFd, notify);
+}
+
+bool XAbstractNetIoRing_unregisterPassiveOsFd_base(XAbstractNetIoRing* ring,
+                                                    int osFd) {
+    if (ISNULL(ring, "XAbstractNetIoRing") || ISNULL(XClassGetVtable(ring), "Vtable"))
+        return false;
+    return XClassGetVirtualFunc(ring, EXAbstractNetIoRing_UnregisterPassiveOsFd,
+        bool(*)(XAbstractNetIoRing*, int))(ring, osFd);
 }
 
 void XAbstractNetIoRing_wakeUp_base(XAbstractNetIoRing* ring) {

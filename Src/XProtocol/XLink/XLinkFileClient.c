@@ -161,6 +161,7 @@ void XLinkFileClient_init(XLinkFileClient* obj)
     obj->m_nextTransferId = 1;
     obj->m_tickIntervalMs = XLINK_FILE_TICK_MS;
     obj->m_timerId = XTIMER_INVALID_ID;
+    obj->m_sessionDrive = XLinkFileClientSessionDrive_Auto;
 }
 
 XLinkFileClient* XLinkFileClient_create(void)
@@ -278,18 +279,70 @@ bool XLinkFileClient_download(XLinkFileClient* obj, const char* remoteName,
     return true;
 }
 
+/** @brief 会话驱动判定（pump 与查询 API 共用的单一事实源）。
+ *  @note  Force 优先；Auto 下两种情形代泵（缺一即会话无任何推进通道）：
+ *           1. 本线程无事件分发器——startTimer 返回无效 id，定时器必然
+ *              缺席的手动模式，pump 是会话唯一推进通道；
+ *           2. 心跳拍被编译为 0（XLINK_HEARTBEAT_TICK_MS == 0，受支持
+ *              配置）——会话无内建定时器，按会话层契约（见
+ *              XLinkSessionPrivate_attachAsync 注）此时由手动 pump 驱动，
+ *              与分发器在位与否无关；环回设备等不发 readyRead 的传输
+ *              同样依赖手动 pump。
+ *         「分发器在位却不转事件」的宿主 Auto 拒泵。注意真实 TCP 的读写
+ *         均为事件驱动（收包进环形缓冲、写残留推进都在分发器事件处理内，
+ *         见 XAbstractSocket），此类宿主即便 Force 代泵也无法搬运数据；
+ *         Force 的适用面是环回等同步传输的手动驱动与诊断对比。 */
+static bool xfc_shouldDriveSession(const XLinkFileClient* obj)
+{
+    return obj->m_sessionDrive == XLinkFileClientSessionDrive_ForceSessionPump
+           || XLINK_HEARTBEAT_TICK_MS == 0
+           || !XObject_eventDispatcher((const XObject*)obj);
+}
+
 void XLinkFileClient_pump(XLinkFileClient* obj, uint32_t nowMs)
 {
     uint32_t now;
     if (!obj)
         return;
     now = nowMs ? nowMs : (uint32_t)XDateTime_currentMSecsSinceEpoch();
-    /* 先驱动承载会话：排空控制帧（Open/ACK）发送队列并抽取收到的数据帧。
-       手动驱动环境（无事件分发器）下这是唯一的推进通道。 */
-    if (obj->m_transfer.m_session)
+    /* 单驱动门控（判定条件见 xfc_shouldDriveSession）：会话挂载传输时已
+       自动接好异步驱动链（内建定时器 + readyRead），本函数再泵即成
+       「顺序双泵」。顺序双泵今日无害（pump 幂等、读不到字节不刷新静默
+       计时），门控只是收敛暴露面：「回调栈内再泵会话」的重入前科
+       （XLink.md §14.2 注 8）。
+       注意门控**不**隔离注入时钟：传输引擎无异步驱动、两种模式都照泵，
+       而 XLinkFileTransfer_pump 会无条件把 now 转手给
+       XLinkSession_keepAlive（写 m_lastReceiveTick/m_lastSendTick/
+       m_nowTick 三者）——传输活跃窗口内注入 nowMs 仍直达会话时间基。
+       注入时钟的真正防线是本函数头部「异步环境请传 0」契约（keepAlive
+       对 0 内部自取实时），勿归功于门控。 */
+    if (xfc_shouldDriveSession(obj) && obj->m_transfer.m_session)
         XLinkSession_pump(obj->m_transfer.m_session, now);
     XLinkFileTransfer_pump(&obj->m_transfer, now);
     xfc_stopTimerIfIdle(obj);
+}
+
+bool XLinkFileClient_setSessionDrive(XLinkFileClient* obj,
+                                     XLinkFileClientSessionDrive mode)
+{
+    if (!obj || (mode != XLinkFileClientSessionDrive_Auto
+                 && mode != XLinkFileClientSessionDrive_ForceSessionPump))
+        return false;
+    obj->m_sessionDrive = (int)mode;
+    return true;
+}
+
+XLinkFileClientSessionDrive XLinkFileClient_sessionDrive(
+    const XLinkFileClient* obj)
+{
+    if (!obj)
+        return XLinkFileClientSessionDrive_Auto;
+    return (XLinkFileClientSessionDrive)obj->m_sessionDrive;
+}
+
+bool XLinkFileClient_willPumpSession(const XLinkFileClient* obj)
+{
+    return obj ? xfc_shouldDriveSession(obj) : false;
 }
 
 void XLinkFileClient_abort(XLinkFileClient* obj, uint8_t status,

@@ -15,6 +15,14 @@
  *               TOPIC_STATE  —— 服务端每 200ms 推 [u32 tick][u32 counter]；
  *               TOPIC_ALARM  —— 事件通知，产生即推。
  *
+ *             登录认证 + 文件传输剧情（v1.3 起）：
+ *               服务端开启登录认证（账户 demo / demo123，见下方常量）并挂接
+ *               文件服务端（沙箱根目录 = cwd 下 xlink_demo_files/，启动时建、
+ *               退出清理；审计回调逐条打日志）；客户端 setCredential 后连接
+ *               即自动登录（握手 -> Authenticating -> Ready），Ready 后生成
+ *               一个模式化测试文件（256KB）上传、再下载回来逐字节比对——
+ *               演示"先登录、后传文件"的真实业务形态。
+ *
  *             运行入口：
  *               1. `--test xlink-demo-server`  双进程联调·服务端
  *                  （XLINK_DEMO_BIND 可设监听地址，跨机时设 0.0.0.0）；
@@ -58,6 +66,25 @@ extern "C" {
 #define XLINK_DEMO_DEADLINE_MS   30000u  /**< 服务端最长等待（联调失败兜底）。 */
 #define XLINK_DEMO_CLIENT_WAIT_MS 10000u /**< 客户端连不上的重试上限。 */
 
+/* ==================== 登录认证 + 文件传输剧情 ==================== */
+
+/** @brief 演示账户（服务端 addUser / 客户端 setCredential 同源，改一处即可）。 */
+#define XLINK_DEMO_USER          "demo"
+#define XLINK_DEMO_PASSWORD      "demo123"
+
+/** @brief 服务端文件沙箱：cwd 下唯一子目录，启动时建、退出时整体清理。 */
+#define XLINK_DEMO_FILE_DIR      "xlink_demo_files"
+/** @brief 上传到沙箱的远端文件名（相对沙箱根目录）。 */
+#define XLINK_DEMO_FILE_NAME     "demo_upload.bin"
+/** @brief 客户端本地测试文件（cwd 下，流程结束即删，不进沙箱）。 */
+#define XLINK_DEMO_LOCAL_UPLOAD  "xlink_demo_upload.bin"
+#define XLINK_DEMO_LOCAL_DOWNLOAD "xlink_demo_download.bin"
+/** @brief 模式化测试文件大小（256KB：跨 64 个 4KB 分块、8 个流控窗口）。 */
+#define XLINK_DEMO_FILE_BYTES    (256u * 1024u)
+/** @brief 单向传输的等待上限（上传走客户端内建 10ms 节拍、下载受服务端
+ *         200ms tick 窗口推进，环回实测秒级，20s 已含充分余量）。 */
+#define XLINK_DEMO_FILE_WAIT_MS  20000u
+
 /* 跨机联调开关（缺省保持本机环回）：
    XLINK_DEMO_BIND  服务端监听地址，跨机当服务端时设为 0.0.0.0；
    XLINK_DEMO_HOST  客户端连接目标，跨机当客户端时设为对端 IP。 */
@@ -81,14 +108,16 @@ extern "C" {
 /* ==================== 角色组合接口（本进程联调用） ==================== */
 
 /**
- * @brief 客户端角色完整故事：连接 -> 等 Ready -> 三条命令 -> 收推送 ->
- *        推送与订阅全景 -> Goodbye。
+ * @brief 客户端角色完整故事：连接（自动登录）-> 等 Ready -> 三条命令 ->
+ *        收推送 -> 文件上传/下载逐字节校验 -> 推送与订阅全景 -> Goodbye。
  * @param port 服务端端口。
  * @return 全部步骤通过返回 0；任一步失败返回 1（已打印现场）。
  * @note  由 XLinkDemoClient_run 直接调用；本进程联调（XLinkDemo_run）经
  *        此入口把客户端角色接进同一事件循环。应用学写客户端照抄本函数：
- *        建链/握手经 XLinkClient（connectToServer + stateChanged 信号），
- *        Goodbye 排空收尾由 disconnectFromServer 承担。
+ *        建链/握手/登录经 XLinkClient（setCredential + connectToServer +
+ *        stateChanged 信号），文件传输经 XLinkFileClient（upload/download
+ *        + progress/finished 信号，纯事件循环驱动、不手动 pump），Goodbye
+ *        排空收尾由 disconnectFromServer 承担。
  * @note  等待一律"注册检查定时器 + 嵌套 XEventLoop_exec"：条件满足或超时
  *        由定时器回调退出循环，不手写 while+sleep 轮询。服务端的周期
  *        业务同样注册在 XTimer 上，exec 期间自动触发——两个角色在同一个

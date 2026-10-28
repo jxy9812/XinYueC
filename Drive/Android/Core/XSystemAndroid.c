@@ -1583,4 +1583,197 @@ int XAndroid_wifiConnectState(void)
     return (int)state;
 }
 
+/* ==================== 屏幕休眠（2026-10-26） ====================
+ * 安卓无「应用主动关屏」原语（goToSleep 需 DEVICE_POWER 签名权限），
+ * 息屏是**系统行为**：系统按「屏幕超时」设置自动熄屏。故安卓侧走
+ * 「委托系统」路径——读写 Settings.System.SCREEN_OFF_TIMEOUT，由系统
+ * 自己计时熄屏。写该设置需 WRITE_SETTINGS 特殊权限（用户逐应用授权），
+ * 未授权时 putInt 抛 SecurityException，此处吞掉并报 false（不假成功）。 */
+
+/** @brief 写系统「屏幕超时」（毫秒；<=0=从不）；无 WRITE_SETTINGS 授权
+ *  返回 false。 */
+bool XAndroid_setScreenOffTimeout(int millis)
+{
+    JNIEnv* env;
+    jclass cls;
+    jmethodID mid;
+    jboolean ok = JNI_FALSE;
+
+    env = xsys_androidEnv();
+    if (!env || !g_xsysMainActivity) return false;
+    cls = (*env)->GetObjectClass(env, g_xsysMainActivity);
+    if (!cls) goto fail;
+    mid = (*env)->GetMethodID(env, cls, "setScreenOffTimeout", "(I)Z");
+    if (!mid) goto fail;
+    ok = (*env)->CallBooleanMethod(env, g_xsysMainActivity, mid, (jint)millis);
+    if ((*env)->ExceptionCheck(env)) goto fail;
+    return (ok == JNI_TRUE);
+
+fail:
+    (*env)->ExceptionClear(env);
+    return false;
+}
+
+/** @brief 是否已获 WRITE_SETTINGS 授权（可写系统设置）。 */
+bool XAndroid_canWriteSystemSettings(void)
+{
+    JNIEnv* env;
+    jclass cls;
+    jmethodID mid;
+    jboolean ok = JNI_FALSE;
+
+    env = xsys_androidEnv();
+    if (!env || !g_xsysMainActivity) return false;
+    cls = (*env)->GetObjectClass(env, g_xsysMainActivity);
+    if (!cls) goto fail;
+    mid = (*env)->GetMethodID(env, cls, "canWriteSystemSettings", "()Z");
+    if (!mid) goto fail;
+    ok = (*env)->CallBooleanMethod(env, g_xsysMainActivity, mid);
+    if ((*env)->ExceptionCheck(env)) goto fail;
+    return (ok == JNI_TRUE);
+
+fail:
+    (*env)->ExceptionClear(env);
+    return false;
+}
+
+/** @brief 引导用户到系统设置页授予 WRITE_SETTINGS（特殊权限）。 */
+bool XAndroid_requestWriteSystemSettings(void)
+{
+    JNIEnv* env;
+    jclass cls;
+    jmethodID mid;
+    jboolean ok = JNI_FALSE;
+
+    env = xsys_androidEnv();
+    if (!env || !g_xsysMainActivity) return false;
+    cls = (*env)->GetObjectClass(env, g_xsysMainActivity);
+    if (!cls) goto fail;
+    mid = (*env)->GetMethodID(env, cls, "requestWriteSettingsPermission",
+                              "()Z");
+    if (!mid) goto fail;
+    ok = (*env)->CallBooleanMethod(env, g_xsysMainActivity, mid);
+    if ((*env)->ExceptionCheck(env)) goto fail;
+    return (ok == JNI_TRUE);
+
+fail:
+    (*env)->ExceptionClear(env);
+    return false;
+}
+
+/** @brief 读应用窗口当前是否全屏（isWindowFullscreen；读取失败兜底
+ *         true——真机常态即全屏）。 */
+bool XAndroid_isWindowFullscreen(void)
+{
+    JNIEnv* env;
+    jclass cls;
+    jmethodID mid;
+    jboolean ok = JNI_TRUE;
+
+    env = xsys_androidEnv();
+    if (!env || !g_xsysMainActivity) return true;
+    cls = (*env)->GetObjectClass(env, g_xsysMainActivity);
+    if (!cls) goto fail;
+    mid = (*env)->GetMethodID(env, cls, "isWindowFullscreen", "()Z");
+    if (!mid) goto fail;
+    ok = (*env)->CallBooleanMethod(env, g_xsysMainActivity, mid);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        return true;
+    }
+    (*env)->DeleteLocalRef(env, cls);
+    return (ok == JNI_TRUE);
+
+fail:
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (env && (*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    return true;
+}
+
+/* ==================== 显示方向（2026-10-26） ====================
+ * 安卓的「显示方向」由系统掌握：Activity.setRequestedOrientation 是唯一
+ * 正规入口（清单 android:screenOrientation 只给初值，运行期改向必须走
+ * 这个 API）。系统采纳后重建 surface，应用侧表现为收到一次 resize——
+ * 故 native 侧只需把请求下发出去，不自行转任何像素（那是「画布旋转」，
+ * 见 XWindow_setContentRotation，两者正交）。
+ * 角度口径与框架统一：0=横屏/90=竖屏/180=倒置横屏/270=倒置竖屏，
+ * -1=跟随系统（UNSPECIFIED）。 */
+
+/** @brief 申请显示方向（Activity.setRequestedOrientation）。 */
+bool XAndroid_setRequestedOrientation(int degrees)
+{
+    JNIEnv* env;
+    jclass cls;
+    jmethodID mid;
+
+    env = xsys_androidEnv();
+    if (!env || !g_xsysMainActivity) return false;
+    cls = (*env)->GetObjectClass(env, g_xsysMainActivity);
+    if (!cls) goto fail;
+    mid = (*env)->GetMethodID(env, cls, "setRequestedOrientationByDegrees",
+                              "(I)V");
+    if (!mid) goto fail;
+    (*env)->CallVoidMethod(env, g_xsysMainActivity, mid, (jint)degrees);
+    if ((*env)->ExceptionCheck(env)) goto fail;
+    return true;
+
+fail:
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    (*env)->ExceptionClear(env);
+    return false;
+}
+
+/** @brief 回读当前实际显示方向（度；未知 -1）。 */
+int XAndroid_getDisplayOrientation(void)
+{
+    JNIEnv* env;
+    jclass cls;
+    jmethodID mid;
+    jint deg = -1;
+
+    env = xsys_androidEnv();
+    if (!env || !g_xsysMainActivity) return -1;
+    cls = (*env)->GetObjectClass(env, g_xsysMainActivity);
+    if (!cls) goto fail;
+    mid = (*env)->GetMethodID(env, cls, "getDisplayOrientationDegrees",
+                              "()I");
+    if (!mid) goto fail;
+    deg = (*env)->CallIntMethod(env, g_xsysMainActivity, mid);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        deg = -1;
+    }
+    (*env)->DeleteLocalRef(env, cls);
+    return (int)deg;
+
+fail:
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (env && (*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    return -1;
+}
+
+/** @brief 系统是否会采纳应用的方向请求（大屏等场景系统强制忽略）。 */
+bool XAndroid_canRequestOrientation(void)
+{
+    JNIEnv* env;
+    jclass cls;
+    jmethodID mid;
+    jboolean ok = JNI_FALSE;
+
+    env = xsys_androidEnv();
+    if (!env || !g_xsysMainActivity) return false;
+    cls = (*env)->GetObjectClass(env, g_xsysMainActivity);
+    if (!cls) goto fail;
+    mid = (*env)->GetMethodID(env, cls, "canRequestOrientation", "()Z");
+    if (!mid) goto fail;
+    ok = (*env)->CallBooleanMethod(env, g_xsysMainActivity, mid);
+    if ((*env)->ExceptionCheck(env)) goto fail;
+    return (ok == JNI_TRUE);
+
+fail:
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    (*env)->ExceptionClear(env);
+    return false;
+}
+
 #endif /* __ANDROID__ */

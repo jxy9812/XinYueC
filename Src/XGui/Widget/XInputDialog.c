@@ -74,18 +74,13 @@
  *  须在父对话框尚未隐藏时调用；跳过子窗（弹层另行收口）。 */
 static void xid_detachInputRecursive(XWidget* w)
 {
-    const XVector* children;
-    size_t i;
-    size_t n;
-    if (!w) return;
-    children = XObject_children((XObject*)w);
-    n = children ? XVector_size_base(children) : 0;
-    for (i = 0; i < n; ++i) {
-        XObject* child = *(XObject**)XVector_at_base(children, i);
-        if (child && child->m_is_widget && !child->m_is_window)
-            xid_detachInputRecursive((XWidget*)child);
-    }
-    XWidget_setVisible(w, false);
+    /* [根修 2026-10-27] 原实现"逐控件 setVisible(false)"会把子控件永久
+     * 标记为显式隐藏（WA_WState_Hidden），对话框复用时 showChildren 跳过
+     * 它们 → 复开空面板（XMessageBox 二次 open 用例实证）。真正需要的
+     * 只是"清事件层指向子树的输入侧登记"，与显隐状态无关——改用框架
+     * 新增的 XWidget_deactivateInputRegistrations（与析构路径同一份清单，
+     * 对标 Qt QWidget::destroy → deactivateWidgetCleanup）。 */
+    XWidget_deactivateInputRegistrations(w);
 }
 
 /** @brief 排空后回收登记表（单槽 + owner 校验，见上方块注）。 */

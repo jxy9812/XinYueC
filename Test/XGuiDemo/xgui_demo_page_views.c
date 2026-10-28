@@ -678,6 +678,23 @@ static void views_layoutCompact(void)
                            g_views.table.m_headerHeight +
                            XTableView_rowHeight(
                                (XTableView*)&g_views.table) * 3);
+    /* [最小高保障 2026-10-27 视觉走查 P1-3] 五视图紧凑档总高超出视口时
+     * 布局把余高压薄，树只剩 ~1.5 行且被水平滚动条叠压（真机截图实证）。
+     * 视图最小高=表头档+3 行（紧凑行高常量与 applyRowMetrics 同源）：
+     * 内容超出视口的底部截断交由后续页级滚动专项（scroll 壳已验证可
+     * 行，双档装配交互待收尾），本处先保可读。 */
+    XWidget_setMinimumHeight((XWidget*)&g_views.list,
+                             VIEWS_COMPACT_HEADER_H +
+                             VIEWS_COMPACT_ROW_H * 3);
+    XWidget_setMinimumHeight((XWidget*)&g_views.view,
+                             VIEWS_COMPACT_HEADER_H +
+                             VIEWS_COMPACT_ROW_H * 3);
+    XWidget_setMinimumHeight((XWidget*)&g_views.tree,
+                             VIEWS_COMPACT_HEADER_H +
+                             VIEWS_COMPACT_ROW_H * 3);
+    XWidget_setMinimumHeight((XWidget*)&g_views.header,
+                             VIEWS_COMPACT_HEADER_H +
+                             VIEWS_COMPACT_ROW_H * 2);
 }
 
 /** @brief 切宽档装配：四小节摘回 capRow/viewsRow 行盒，逐位还原 build

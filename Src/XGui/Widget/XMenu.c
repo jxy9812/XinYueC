@@ -1591,6 +1591,46 @@ void XMenu_init(XMenu* self, XWidget* parent)
     XMenu_init_2(self, parent, NULL);
 }
 
+/** @brief 刷新尺寸提示（对标 Qt QMenu）。
+ *  @details Qt 6.8.3（qmenu.cpp:2260-2276）：sizeHint = 全部动作矩形
+ *           （actionRects）的并集尺寸——XMenu 侧对应 XMenu_actionGeometry
+ *           逐动作矩形。菜单是 Popup 窗口、通常不参与盒布局分配，本项
+ *           补齐是为「按尺寸摆放」类调用方（如弹层定位）提供同源口径。 */
+static void xmenu_updateSizeHint(XMenu* self)
+{
+    XSize hint;
+    const XVector* actions;
+    size_t i;
+    int bx = 0, by = 0, bx2 = 0, by2 = 0;
+    bool any = false;
+    if (!self) return;
+    actions = XMenu_actions(self);
+    if (actions) {
+        size_t n = XVector_size_base((const XContainer*)actions);
+        for (i = 0; i < n; ++i) {
+            XAction* a = (XAction*)XVector_at_base(actions, (int64_t)i);
+            XRect r;
+            if (!a) continue;
+            r = XMenu_actionGeometry(self, a);
+            if (r.width <= 0 || r.height <= 0) continue;
+            if (!any) {
+                bx = r.x; by = r.y; bx2 = r.x + r.width; by2 = r.y + r.height;
+                any = true;
+                continue;
+            }
+            if (r.x < bx) bx = r.x;
+            if (r.y < by) by = r.y;
+            if (r.x + r.width > bx2) bx2 = r.x + r.width;
+            if (r.y + r.height > by2) by2 = r.y + r.height;
+        }
+    }
+    if (!any) XSize_init(&hint, 0, 0);
+    else XSize_init(&hint, bx2 - bx, by2 - by);
+    XWidget_setSizeHint((XWidget*)self, &hint);
+    /* Qt QMenu 未 override minimumSizeHint（继承 QWidget 缺省）——保持同口径：
+     * 不另设最小尺寸。 */
+}
+
 void XMenu_init_2(XMenu* self, XWidget* parent, const char* utf8Title)
 {
     if (!self)
@@ -1607,6 +1647,7 @@ void XMenu_init_2(XMenu* self, XWidget* parent, const char* utf8Title)
     self->m_grabTimer = XTIMER_INVALID_ID;
     if (utf8Title && utf8Title[0])
         XMenu_setTitle_2(self, utf8Title);
+    xmenu_updateSizeHint(self);
 }
 
 XMenu* XMenu_create(void)

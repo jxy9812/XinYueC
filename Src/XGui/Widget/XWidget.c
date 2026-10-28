@@ -1027,7 +1027,7 @@ static bool XWidget_isAncestor(const XWidget* self, const XWidget* child)
  * Qt 原版只清 qt_button_down 与 activeWindow；本框架的全局登记面更
  * 宽（焦点/显式抓取/隐式按压靶/触点抓取表/键盘抓取），全部在此集中
  * 摘除，语义为 Qt 的超集且两路径一致。 */
-static void xwidget_deactivateWidgetCleanup(XWidget* self)
+void XWidget_deactivateInputRegistrations(XWidget* self)
 {
     if (!self) return;
     if (g_focusWidget == self)
@@ -1071,7 +1071,7 @@ static void XWidget_setExplicitVisibleRecursive(XWidget* self, bool visible,
         if (newVisible) {
             XWidget_sendShowHide(self, true);
         } else {
-            xwidget_deactivateWidgetCleanup(self);
+            XWidget_deactivateInputRegistrations(self);
             XWidget_sendShowHide(self, false);
         }
     }
@@ -1368,11 +1368,20 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top)
     if (top->m_mask.count > 0)
         XWindow_setMask(window, &top->m_mask);
     XWindow_setModality(window, top->m_windowModality);
-    XWindow_setWindowStates(window, top->m_windowState);
     XWindow_setMinimumSize(window, &top->m_minimumSize);
     XWindow_setMaximumSize(window, &top->m_maximumSize);
+    /* 【先几何后状态 2026-10-28·昆仑通态复位冻结根修】挂起窗口态的补
+     * 应用必须在 setGeometry **之后**：进入最大化/全屏的软件路径会把
+     * 「当前几何」存为 normalGeometry（对标 QWidget::normalGeometry 的
+     * 正常态记账）——先状态后几何时存到的是 XWindow_init 的 0×0 且被
+     * 标记有效；此后复位默认/用户退出全屏走 showNormal 恢复 0×0：
+     * 窗口零尺寸 ⇒ 输入泵命中全失（事件静默丢弃）+ 零尺寸窗零重绘
+     * ⇒「界面冻结但轮询/光标照常」（--fullscreen 启动后点复位 100%
+     * 复现，窗化启动不复现）。Qt 建平台窗同为先 crect 后 state
+     * （QWidgetWindow 构造序）。 */
     XWindow_setGeometry(window, top->m_windowRect.x, top->m_windowRect.y,
                         top->m_windowRect.width, top->m_windowRect.height);
+    XWindow_setWindowStates(window, top->m_windowState);
 #if XWINDOW_ON
     /* 对标 Qt 顶层窗口 owner 链路（qwindowswindow.cpp:784-786 顶层以
        transient parent 为 owner）：取父控件链顶层已存在的桥接窗口登记
@@ -3832,6 +3841,16 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
     case XEVENT_TYPE_CLOSE:
         XWidget_sendEvent(top, event);
         return XEvent_isAccepted(event);
+    case XEVENT_TYPE_WINDOW_STATE_CHANGE:
+        /* 【平台回写转发 2026-10-28 对齐 Qt】窗口状态改变事件到达**窗口
+         * 对象**时转发归属顶层控件（Qt QWidgetWindow::event 对
+         * QEvent::WindowStateChange 的桥接：事件先到 QWindow，桥转发
+         * widget 走 changeEvent）。来源=XWindow_reportWindowStateChanged
+         * （WM 回写/平台强制改态——安卓沉浸式启动对齐等）；软件请求路径
+         * （XWidget_setWindowState）已在控件侧直派同一事件，不经此处，
+         * 无双重派发。 */
+        XWidget_sendEvent(top, event);
+        return XEvent_isAccepted(event);
     case XEVENT_TYPE_SHOW:
     case XEVENT_TYPE_HIDE:
         /* 对标 Qt：showEvent/hideEvent 由 QWidget::setVisible 经
@@ -4307,7 +4326,7 @@ static void VXWidget_deinit(XWidget* self)
      * XWidget_accumulateOffset 读 self+0x90 访问违例，GPU 变体回归
      * cdb 实抓崩溃栈；XColorDialog/XFileDialog/XInputDialog 的
      * detachInputRecursive 先隐藏后删属逐案变通，本处为根修）。 */
-    xwidget_deactivateWidgetCleanup(self);
+    XWidget_deactivateInputRegistrations(self);
     /* 触摸长按序列析构自清（登记非空即活对象纪律）：本控件若是在按
        序列的真实顶层（m_top；定时器宿主恒为模块内部专用静态宿主对象
        xwidget_touchTimerHost，永不析构），同步撤表并复位手势单序列状
@@ -9122,10 +9141,101 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
          * Popup 弹层被覆盖为纯背景色（14.114 弹层文字消失根因）。 */
         if (w->m_isWindow) continue;
         childRect = w->m_windowRect;
-        XRegion_intersectRectInto(paintRegion, &childRect, &clipped);
-        if (clipped.count > 0) {
-            XRegion_translateInline(&clipped, -childRect.x, -childRect.y);
-            XWidget_paintTree(w, &clipped);
+        /* 子控件绘制必须裁剪到本控件客户区内（对标 Qt：子控件只在父的
+         * 客户区可见，paintEvent 的 systemClip 恒被父链 rect 收窄）。
+         *
+         * [父客户区求交 2026-10-27] 此前此处只做 childRect ∩ 污区，
+         * 不与父的 m_contentsRect 求交 ⇒ 脏区路径（XWidget_addDirtyRegion
+         * 沿父链求交）与绘制路径对「子控件在哪可见」判定不一致。
+         * 补齐后两条路径一致。
+         *
+         * 【勘误 2026-10-27】本处曾把越界绘制归因于「带内嵌子件的控件
+         * （XLineEdit 内嵌于 XAbstractSpinBox）」，该归因**已被证伪**：
+         * 实测通道下拉是**非 editable** 的 XComboBox（无内嵌子件）、
+         * 端口输入框 XLineEdit 同样无子控件，二者照样越界；而
+         * XPushButton 无子控件却正常——它恰好消费了 PAINT 事件矩形
+         * （XPainter_setClipRect）。真判据是「**是否消费 PAINT 裁剪
+         * 矩形**」，与内嵌子件无关。真根修见下方「框架层父容器裁剪」
+         * （surface clip 逐层收窄，对全类控件生效）。
+         *
+         * childRect 与 m_contentsRect 同在父坐标空间可直接求交；求交后
+         * 再转成子局部坐标下发子树（translateInline 语义不变）。 */
+        {
+            XRect visibleRect = XRect_intersected(&childRect,
+                                                  &widget->m_contentsRect);
+            if (visibleRect.width > 0 && visibleRect.height > 0) {
+                XRegion_intersectRectInto(paintRegion, &visibleRect, &clipped);
+                if (clipped.count > 0) {
+                    /* [框架层父容器裁剪 2026-10-27 根修] 子控件**部分**
+                     * 伸出父客户区时，把 surface clip（表面裁剪）收窄到
+                     * 「该子控件在本父客户区内的可见区」，并在该子树绘制
+                     * 期间生效 ⇒ 子控件**及其后代**的像素一律不得写到父客
+                     * 户区之外。
+                     *
+                     * 为什么必须框架层做：paintTree 只把「可见区」以
+                     * PAINT 事件矩形的形式下发给控件，**是否消费由各控件
+                     * 自己决定**——XLabel/XPushButton 等少数控件调了
+                     * XPainter_setClipRect 才被正确裁剪，而 XComboBox /
+                     * XLineEdit / XSpinBox 等把事件矩形 `(void)event;`
+                     * 丢弃、整幅自绘，于是它们滚出滚动视口的部分照画，
+                     * 压到窗口顶部标题栏/品牌条上（桌面 + 安卓双端实证）。
+                     * 治本口径 = Qt 绘制引擎的 **systemClip 逐层收窄**
+                     * （QWidgetPrivate::drawWidget → setSystemClip），
+                     * 一次收窄即对全类控件生效，无需逐个控件 opt-in。
+                     *
+                     * 坐标口径：surface clip 是**后备存储（设备）像素
+                     * 坐标**；clipped 此刻是**父局部坐标**，加父控件的
+                     * XWidget_paintOffset（= accumulateOffset − paintOrigin，
+                     * 与控件 painter 的 translate 同一原点）即换算到设备
+                     * 坐标。与外层 surface clip 取交，保证「越界更严」而非
+                     * 放宽。
+                     *
+                     * 与 Qt 的两处**有意偏离**（勿照抄）：
+                     * ① 基准用父的 **m_contentsRect**（Qt 的 clipRect()
+                     *    用祖先整块 rect()，不含边框内缩）——XGui 更严格，
+                     *    边框内缩区不画子控件。
+                     * ② **离屏渲染例外**：Qt 的 render()/grab() 带
+                     *    DrawInvisible 标志时**故意跳过** clipRect
+                     *    （qwidget.cpp:5534），允许子控件画到被渲染控件
+                     *    rect 之外；本实现对齐该语义——离屏重定向生效
+                     *    （xwidget_redirectRoot 非空）时不收窄 surface
+                     *    clip，否则控件快照会把越界后代裁掉（与 Qt 不符）。 */
+                    bool clippedToParent =
+                        (visibleRect.x != childRect.x ||
+                         visibleRect.y != childRect.y ||
+                         visibleRect.width != childRect.width ||
+                         visibleRect.height != childRect.height) &&
+                        !xwidget_redirectRoot(widget);
+                    XRect savedClip;
+                    XImage* savedTarget = NULL;
+                    int hadSaved = 0;
+                    if (clippedToParent) {
+                        XRect clipImg;
+                        XPoint off = XWidget_paintOffset(widget);
+                        XRegion_boundingRect(&clipped, &clipImg);
+                        clipImg.x += off.x;
+                        clipImg.y += off.y;
+                        if (XPainter_surfaceClipRect()) {
+                            savedClip = *XPainter_surfaceClipRect();
+                            savedTarget = XPainter_surfaceClipTarget();
+                            hadSaved = 1;
+                            clipImg = XRect_intersected(&clipImg, &savedClip);
+                        }
+                        XPainter_setSurfaceClipRect(&clipImg,
+                                                   XWidget_paintImage(widget));
+                    }
+                    XRegion_translateInline(&clipped,
+                                            -childRect.x, -childRect.y);
+                    XWidget_paintTree(w, &clipped);
+                    if (clippedToParent) {
+                        if (hadSaved) {
+                            XPainter_setSurfaceClipRect(&savedClip, savedTarget);
+                        } else {
+                            XPainter_clearSurfaceClipRect();
+                        }
+                    }
+                }
+            }
         }
     }
     XRegion_deinit(&clipped);
@@ -9705,6 +9815,32 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         wholeBbox.width = maxRx1 - wholeBbox.x;
         wholeBbox.height = maxRy1 - wholeBbox.y;
     }
+    /* 【多矩形 whole 归并为包围盒 2026-10-27 重绘节奏闸根修】DIRECT/
+     * PARTIAL 平台（安卓 fbdev 同构）的 PAINT 事件区域=入队时脏区快照，
+     * 拖动/滚动期恒为多矩形（滚动带+滚标+悬停翻转+HUD 标签等互不相交
+     * 矩形在同一闸窗内累积）。paintTree 对多矩形区域逐矩形组**整树重
+     * 派**（下方 count>1 拆分分支）：一次 flush 内顶层 paintEvent 跑 N
+     * 遍、全部子件 paintEvent 各跑 N 遍——重绘节奏闸（XGUI_REPAINT_
+     * MAX_FPS，XGuiConfig.h:244 闸在 postPaintEvent，只钳 flush 次数）
+     * 因此被整倍架空：真机实测安卓拖动 flush 已钳在 60/s 而 paintEvent
+     * 派发率 250+/s（HUD 读数即该口径，xgui_window_demo.c:4252 每
+     * paintEvent 计 1 帧），CPU 同倍放大（250×1.9ms≈48%，实测吻合）。
+     * 桌面 Xvfb 复现：DIRECT 构建 + 闸=60 + 3 矩形脏区 → flush=56/s、
+     * topPaint=168/s=3×闸值。
+     * 修法=绘制入口把 whole 收拢为**单包围盒矩形**（本仓 P0-4 脏区回退
+     * 路径同款纪律，见下方 dirty 分支 bbox 注；present 侧读回亦恒单包
+     * 围盒）：paintTree 收到单矩形 ⇒ 拆分分支不再触发，每 flush 恰好
+     * 一遍整树绘制，绘制活动率与 HUD 口径同时钳回 1000/fps。像素语义
+     * 变化=本帧多画各脏矩形间的间隙像素（bbox ⊇ 各矩形，重绘内容与
+     * 原值相同），与 FULL 模式整窗重绘同构，无正确性影响；2026-09-28
+     * 擦白根修的「表面裁剪收窄」仍生效（单组派发无组间互抹，裁剪=bbox）。
+     * 事件携带的原始多矩形区域不改动：m_dirty 消费扣减（下方 subtract）
+     * 以 whole ⊇ 各矩形为前提成立，超集扣减同为恒等清空。 */
+    if (whole.count > 1)
+    {
+        XRegion_clear(&whole);
+        XRegion_addRect(&whole, &wholeBbox);
+    }
     /* [rprof] 帧侧画像：矩形像素和=本帧实际绘制/提交面积，包围盒=
        带宽上限（多矩形拆分前的表面裁剪口径）。两值差距大即「同帧
        多点失效」，包围盒接近整窗即「触摸阵发提交税」的直接证据。 */
@@ -9765,6 +9901,34 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
          * 据此判断「本次绘制是否发生过被抑制的标脏」，决定是否强制
          * 补投（见 g_paintSuppressedDirty 注）。 */
         g_paintSuppressedDirty = 0;
+        /* [顶层预填底 2026-10-27 框架根修] 对标 Qt
+         * QWidgetPrivate::paintBackground 的 **asRoot 分支**
+         * （qwidget.cpp:2290-2303）：顶层控件上屏绘制前**总是**先用
+         * Window 角色色回填本次绘制区域（autoFillBackground 且其刷子
+         * 不透明时除外），不论该控件是否开了自动填充。
+         * 这是子控件局部重绘**不留残影**的根防线——Qt 的重画从顶层开
+         * 始（顶层先填底，再遍历子树画子控件），任何不透明白底的子控件
+         * （如 XLabel 缺省 autoFillBackground=false）其旧像素都由顶层
+         * 这一次回填覆盖。XGui 此前**无此环节**：paintTree 只派发
+         * paintEvent、背景由各控件自行决定是否填 ⇒ 不透明白底子控件局部
+         * 重绘必留旧像素（XLabel 多行动态文本的「渲染残影」即此，2026-10-07
+         * 立案项的框架根因；此前仅在 demo 侧拆单行缓解，属绕行）。
+         * 口径：只填**本次绘制区域**（Qt fillRegion 语义同款），不整页
+         * 铺底——整页铺底的像素成本（最大化约 250 万像素/帧）由各控件
+         * 自己的背景负责。 */
+        {
+            XImage* fillImage = XBackingStore_paintImage(store);
+            if (fillImage) {
+                XPalette fillPal = XWidget_palette(top);
+                XColor bg = XPalette_color(&fillPal,
+                                           XPaletteColorGroup_Active,
+                                           XPaletteColorRole_Window);
+                uint32_t argb = XColor_rgba(&bg);
+                int fi;
+                for (fi = 0; fi < whole.count; ++fi)
+                    XImage_fillRect(fillImage, &whole.rects[fi], argb);
+            }
+        }
         /* 后端或平台集成被裁剪/尚未建立时，repaint 仍必须同步派发
            paintEvent；区别仅是没有 XImage 可供绘制、也不会执行上屏。 */
         if (!XBackingStore_paintImage(store)) {

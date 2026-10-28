@@ -2945,3 +2945,227 @@ passed"（首红一处方向错，纠后终态零失败行；r1 24+r2 31+r3 11 �
 12 处断言行真实执行；`bin/XLineControl_Acceptance_Test` exit=0 旁证零扰动；
 `strings … | grep -c '^r4#'`=15。账本逐条标注见
 .zcode/wf/qss-align/targets/dialog-defects-r4.md（▶ 标记）。
+
+### 10.6 虚拟键盘四档尺寸适配（2026-10-28，v3 定稿逐条落地；r3 终版公式见节末）
+
+**口径（全案一处定义）**：`mm2px(mm10)=mm10×dpi/254`（整数除法）、
+`dp(px)=px×dpi/160`。160dpi 处：32.6mm→205px、30.0mm→188px
+（300×160/254=188.97）、平板竖 60.0mm→377px、平板横 42.0mm→264px、
+63mm→396px、带高竖 40dp→40px/横 32dp→32px。
+
+**轨制开关（每次调用现读，零缓存）**：`XKB_METRICS=legacy|auto`（缺省
+auto；legacy=回归闸逐字节现状公式）；`XKB_FORCE_DEVICE=phone|tablet` +
+`XKB_FORCE_DPI`（dpi 强锁，缺省 160）；无强制时按主屏
+`XScreen_physicalSize` 宽高均>0 判定标定可用，dpi=queryDpi min(非零
+xdpi,ydpi)→物理尺寸折算→仍缺回 legacy。设备档=短边<95.0mm=phone；
+方向=宿主宽>高。三处 main 兜底（XGuiRegression_Test 宿主
+XKeyboardTest_runAll / XGuiKeyboardDragTest main / xguidemo
+xgui_demo_main 两分支）：XKB_METRICS 未设时置 legacy，存量截图基线零
+漂移。
+
+**实现落点（Src/XGui/VirtualKeyboard/XVirtualKeyboard.{h,c}）**：
+§2 常量 `XKB_METRICS_*`（#ifndef 门控）入头；`xkb_metricsResolve/
+xkb_mm2px/xkb_dpPx/xkb_bandHeight/xkb_dockHeight/xkb_dockWidth` 静态
+无状态函数族；死宏 `XKEYBOARD_POPUP_MIN_W(240)` 删除（grep 零消费点
+复核）、`XKEYBOARD_LONG_PRESS_START_MS/REPEAT_MS(400/100)` 注明未接线
+（实际节拍=.c 的 600/50）。公式链（r3 终版）：停靠高=legacy(h/2→120→
+h−32→1 原序)/calibrated(mm2px(phone 竖 326/横 300、tablet 竖 600/横
+420)→平板域钳 [hostH×30%,hostH×36%]→cap 竖46%/横50% 先绑→120→h−32→1
+——hostH<334 时 120 下限顶穿域钳，百分比声明不适用，只断终值)；
+宽度=legacy 恒全宽/calibrated（文本盘 phone 两向∨tablet 竖屏全宽、
+横屏文本盘=units×(rowH×7/5)+4 钳[1,hostW] 居中（键面比 1.4 入教训①
+带 1.3~1.5；r3 删平板 50% 封宽下限，自然宽度留白）；窄盘
+Number/Digits/Dialpad 任意档=units×(rowH×5/4)+4 钳[1,60%h] 居中——
+**手机窄盘从全宽变居中**为 §7 影响面已声明项）；紧凑楼层=legacy
+(45%/420)/calibrated(max(hostW×55%, mm2px(630)) 钳 hostW−8)×行数键
+驱动高（rows=m_layoutRows 兜底 4；rowH=compactW×5/(7×参考行) 钳
+[dp(28),dp(40)]；h=4+宿主向带高(横 dp32/竖 dp40)+rows×rowH 钳
+hostH−32——切模式/款型经 setMode/setLayoutKind 尾部对偶
+xkb_compactFloatResize 随动重算并 min 钳入宿主，legacy 轨早退维持现
+状）；带高=竖 dp(40)/横 dp(32) 钳 [contentH×12%, contentH/3]；圆角=
+rowH×3/20 钳[3,14]；字号上限 dp(48)；候选带固定件（中chip40/页码格
+24/上限44/GAP4/PAD2/CHIP垫3）全走 dp，降级序（calibrated 且 chips 预
+估<2×chipMinW）①隐页码 ②箭头压 dp(16) ③chip 下限 dp(20)；工具栏图
+标盒=barH−2·dp(3) 钳[dp(8),dp(26)]（绘制/命中同源 `xkb_menuIconBox`）。
+行结构快照新成员 `m_layoutRows/m_layoutMaxRowUnits`（rebuildLayout 写
+入，copy/move 随迁）；`m_mode∉{Number,Digits,Dialpad}` 即文本盘（T9 4
+单位行不误入窄盘）。Special 手机竖屏精简款（r3 §6.2 教训④）：5 行
+10 单位 42 键（23 符号+直写逗/句号），rebuildLayout 指针比对 gating
+（calibrated+phone+竖屏+槽位==内置原表才分流；setMap 注入不替换，
+legacy/平板/横屏不消费）；rebuildLayout 档位解析源=m_hostW/m_hostH
+（>0）优先、控件自尺寸兜底（docked=宿主、compact=宿主冻结值、
+overlay=浮层 scope 同步——三形态单一事实源）。公共只读面
+`XVirtualKeyboard_metrics()`（track/device/orient/dpi 四值）供 demo
+dump 与档位目验。
+
+**测试与目验**：XKeyboardTest 尾部只增「⑨ 档位解析」断言节
+（逐例 setenv→dock/compact 几何断言→复位）：竖 205/横 177、真值表
+hostH=200→120 与 150→118 与 31→1、窄盘 Dialpad 168/Number 209/
+Digits 250/手机 8b 204（均居中）、平板竖屏全宽 800、平板横屏文本盘
+832/x=224、403dpi cap 441、紧凑 528×97 与 480 宽楼层绑定 396×169、
+legacy 显式回旧（dock 480、compact 420×105）。全套
+`XGuiRegression_Test` rc=0（legacy 基线断言族同绿）。fbdev 变体
+（build-fbdev：-DXPLATFORM_FBDEV_ON=ON + BUFFER_COUNT=2 + RGB16 trio）
+`XGuiKeyboardDrag_Test` [KD-PASS] rc=0（伪 fbdev 无毫米参数走 legacy）；
+注：`KD_GATE=1` flush 量化器在**改动前基线**即红（2026-10-27 重绘节奏
+闸工作区改动引入，HEAD 键盘模块置换复跑同红两点 flush），非本战役回归
+（unpure-move 步的 2 次 flush 与键盘模块无关）。目验矩阵
+`Test/XGuiDemo/xgui_keyboard_tier_shoot.sh`（Xvfb 逐案几何→demo
+--page 9 --screenshot 自截自退→XKB-GEO 行 ±2 容差断言→#9 解码像素
+diff）：14/14 过——含 #9 legacy 与改动前基线（HEAD 键盘模块置换产出，
+工作区页文件保持现状）解码像素 diff 为空、#5 紧凑拖移切换后窗位随动、
+#4 平板横屏定宽留白 832/x=224 截图目验。#11 overlay（对话框外置浮层）
+无头入口缺席，由回归套件浮层断言族覆盖（legacy 逐值锁）。门脚本
+`.zcode/wf-gates/wf_kb_drag_gate.sh`（flock→build-direct 回归+fbdev
+KD→独立 Xvfb :72→日志落盘 rc=测试 rc）。
+
+**已知限制（如实）**：①「宿主缩小后紧凑窗不回收入屏」维持现状（修复
+须动几何守卫即破坏既有锁）；②横屏左右分离键盘、高度用户调节记忆为
+二期（`XkbToolBarSlot` 枚举+rebuildLayout 按列中缝切分即锚点）；③
+hostW<720px 紧凑楼层绑定（480 宽→396≈83% 宽）系物理键距不变量的接受
+后果；④Android JNI DisplayMetrics 物理尺寸是否填入 XScreen 未追读，
+探测失败自动 legacy 无害回退，真机落地时 dump 验证。
+
+**目验 r1 修订（2026-10-28，9 案 fail 逐条闭环）**：①模式/款型切换即
+重定位（`setMode/setLayoutKind` 尾部 `m_popped && !m_compactFloat` 时调
+`xkb_reposition`，几何短路防 churn）——修 F9「平板横屏 Number 沿 832
+文本盘宽拉伸成 7:1 横条」，切后窄盘按最大行单位式定宽居中；②横屏文
+本盘宽度改**参考行**（键数最多行=字母行，新成员 `m_layoutRefRowUnits`）
+单位式 `refUnits×(rowH×5/4)+4`，参考行键面比≈1.25——修 F4（640 横屏
+63×29≈2.2:1 → 414 定宽 1.3:1）/F8；phone 横屏不再强抬全宽；③平板高度
+档 `XKB_METRICS_MM10_TARGET_TABLET=420`（42mm，横竖同标，mm2px@160=
+264）——修 F5（平板竖屏 205 增至 264，与手机分档）/F6（832 定宽键面
+3:1 → 684@264 键面 1.27，平板横屏下限 65%→50% 让位单位式宽度）；④
+calibrated 紧凑高改**键驱动**：`rowH=compactW×4/(5×参考行)` 钳
+[dp(28),dp(40)]、`compactH=4+dp(40)+4×rowH` 与比例高取 max、钳
+hostH−32——修 F2/F7（704×97 键 16px/4.4:1 → 704×204 键高 40px=7mm 触
+控档、面比≤1.9）。F3（360 宽符号行「末键裁切」）经 4× 放大取证证伪
+（' 键完整、面距右缘 4px），12~13 列密度为 LVGL 规范 Special 表现状，
+减列需改表另案。F1/F2 的 legacy 案（1280x900 无 env）系案例 env 缺席：
+legacy 为回归轨恒全宽（设计轨制），calibrated@force 下同尺寸定宽居中已
+入 XKeyboardTest ⑬/⑭ 与目验 #13/#14（目验案 2/8/10/13 显式
+XGUI_KB_LAYOUT=english 对齐评审基线的 4 行款型；demo 默认框无 LAYOUT
+时落 IME User1 引擎表 5 行 44 键，参考行同为 10 单位、宽度式同样生
+效）。回归：XGuiRegression_Test rc=0（档位节期望随 v4 全量更新含真值
+表 480x200/150/31 横屏短宿主与 ⑤b 比例高 max 口径）；fbdev
+XGuiKeyboardDrag_Test [KD-PASS]（legacy 轨零改动）；目验矩阵 16/16；
+`wf_all_gate.sh` → .zcode/wf-gates/kb1028_build_visual_r1.log rc=0；
+`wf_kb_drag_gate.sh` rc=0。
+
+**目验 r2 核查（2026-10-28）**：r2 清单与 r1 逐字节相同，产物实锤未重
+拍——`out/kb_adapt_1028/` 全部 png/log mtime=03:03~03:05（v4 修复落地
+前），其 1280x800-docked.log 仍记 `w=832 h=177`（现行二进制=684x264，
+已由 r1 修复轮 XGuiRegression_Test rc=0 与目验矩阵 16/16 实证）。现行二
+进制全量重拍摄至 `out/kb_adapt_1028_r2/`（新脚本
+`Test/XGuiDemo/xgui_keyboard_tier_r2_evidence.sh`，评审同款管线：
+xdotool mousemove 点击「符」/「123」真路径切款 + `xwd -id` 按窗抓帧——
+root 抓帧对子控件后备库刷出不可靠）：1280x900 停靠 684x264 居中 x=298
+/ 紧凑 704x204；640x360 手机横屏 414x177 居中 x=113；800x1280 平板竖屏
+800x264；1280x800 停靠 684x264 / 紧凑 704x204；**交互实拍** 1280x800
+点「123」→ Number 定宽居中键面近方（r1 F9 修复后真态）、点「符」→
+Special 参考行 13 单位 888 居中键面比≈1.15、360x640 点「符」→ Special
+全宽（右缘切口=窗口出屏 40px 截图工件，窗内无裁切，r1 放大取证结论不
+变）；另附 1280x900 无 env legacy 现状对照两帧（420x147/1280x450——
+legacy 回归轨口径，calibrated 案需 env，见 F1/F2 处置）。
+`wf_all_gate.sh` → kb1028_build_visual_r2.log rc=0。
+
+**目验 r3 终版（2026-10-28，上轮 v3 公式目验 9/12 失败逐条闭环；两轮评审
+共 8 条意见全部落实）**：只修 r1 后仍未达标的三类缺口，legacy 轨/紧凑拖
+移状态机/`m_compactFloat` 几何守卫逐字节不动。
+
+- **高度档**（教训①②）：phone 横屏 `XKB_METRICS_MM10_TARGET_LANDSCAPE`
+  281→**300**（@160=188px，rowH=38）；平板拆向——竖屏新
+  `…_TABLET_PORTRAIT=600`、横屏 `…_TABLET_LANDSCAPE=420`（由统一
+  TABLET 改名），平板双向加**域钳 [hostH×30%,hostH×36%]**
+  （`…_TABLET_DOMAIN_LO/HI_PCT=30/36`，插在 cap 之前、120 下限之下：
+  hostH<334 时被 120 顶穿、百分比声明不适用只断终值，⑨ 案
+  1280x300→120 实证）。800x1280 平板竖 264→**384**（30.0%）、
+  1280x900 平板横 264→**270**（30% 下界抬）、600x960→345（36% 上界绑）。
+- **键面比**（教训①③）：横屏文本盘宽度式键面比 5/4→**7/5**
+  （`XKB_METRICS_KEYW_LAND_NUM/DEN=7/5`，1.4=验收带 1.3~1.5 中位；
+  960x480 键 53x38=1.39、1280x800 键 79x57=1.39）；窄盘保持 5/4 近方
+  （KEYW_NUM/DEN 更注「窄盘口径」）；**删平板横屏 50% 封宽下限**
+  （`XKB_METRICS_TABLET_LAND_W_MIN_PCT` 整删——floor 在矮宿主把健康键
+  面强拉扁，r1 断言/目验均未绑定，删除零回归面；1280x800 自然宽度
+  794 两侧各留 243px）。
+- **带高**（教训①）：横屏候选/菜单条 dp(40)→**dp(32)**
+  （`XKB_METRICS_BAND_H_DP_LANDSCAPE`；竖屏 dp(40) 不变），640x360 四
+  行款 rowH 33→36、平板横 55→57。
+- **紧凑行数驱动高**（教训⑤）：尺寸计算抽单点
+  `xkb_compactFloatSize`（enter 与随动 resize 共用）——rows=
+  `m_layoutRows`（写死 4 删，5 行款第 5 行不再被裁）、
+  rowH=compactW×5/(7×参考行) 钳 [dp(28),dp(40)]（消费 LAND 宏，与
+  dockWidth 同源不漂移）、h=4+宿主向带高+rows×rowH；**删同比例 max
+  分支**（教训⑤明禁按停靠比例继承）。960x480 紧凑 204→184、
+  480x960 169→156（rowH 钳 28 下限）、1280x800 97px 案闭环保持 196。
+- **切模式随动**（评审③轮意见①）：新 `xkb_compactFloatResize`，
+  setMode/setLayoutKind 尾部对偶分支消费；**Legacy 轨入口早退**——
+  legacy 式 `compactH=dockedH×compactW/hostW` 的 dockedH 只在进入时
+  有效，已紧凑态复算逐次自收缩（420x105→45），既非 no-op 也击穿
+  legacy 回归闸（⑩ 守卫断言：legacy 紧凑内 setMode 窗矩形原样
+  420x105）；calibrated 无 dockedH 依赖故幂等。落位=保留拖移位
+  **min 钳入宿主**（评审③轮意见②：默认右下角案 480x960 切 5 行后
+  y=804→776 自收回屏，屏内拖移位分文不动，与教训⑦同向）。
+- **overlay 事实源**（评审 r2 轮意见①）：`xkb_repositionOverlay` 在
+  metricsResolve 前写 `m_hostW/m_hostH=scope` 尺寸——rebuildLayout
+  解析源切换（m_hostW/H>0 优先、控件自尺寸兜底）后三形态单一事实源
+  闭合（docked=宿主、compact=宿主冻结值、overlay=scope），修小对话
+  框浮层按对话框判档的密度偏差（教训④在浮层态的隐性表现）。
+- **Special 手机竖屏精简款**（教训④「减列 8~10 列」落地）：新
+  `s_kbMapSpecialPhone/s_kbCtrlSpecialPhone`——4→5 行、13→10 单位、
+  42 键（23 符号一个不少+直写逗/句号，行单位 10/10/10/9/10）；gating=
+  rebuildLayout 内 calibrated+phone+竖屏+Special+**槽位指针仍是内置
+  原表**才分流（setMap 注入自定义表不替换；legacy/平板/横屏不消费，
+  原表零改动）。480x960 键 47x32（47px=7.4mm）、末键右缘 ≤478。
+  实测勘误：原 Special 表 maxRowUnits=**14**（行 4=收起2+<-2+空格6+
+  ->2+确认2），设计稿「13 单位参考行」系手数笔误——参考行=行 2 的
+  13 单位不变，§3 宽度仿真（1031@1280x800）不受影响；守卫断言按实
+  测 14。
+- **demo 注入口**：`XGUI_KB_MODE=special`（点「符」真路径切 Special；
+  置于 LAYOUT 处理之后——默认框 User1 引擎表无「符」键，先落款型主
+  表）、`XGUI_KB_COMPACT_MODE=special`（PANEL=float 之后处理——紧凑
+  态内切 Special 验证随动；窗矩形由 xwininfo 直读，教训⑦）。
+
+**测试（XKeyboardTest ⑨ 节全量更新+只增）**：②953x480 案 534,188,213,292
+（笔误更正：960x480）；真值表 480x200→294,120,93,80、480x150→284,118,
+98,32、480x31→14,1,233,30（零漂移）；窄盘 192/239/286@188（x=384/360/
+337）；③800x1280→800,384,0,896；④1280x800→794,264,243,536；⑧平板横
+Dialpad 288,264,496,536（键 71x57 近方）；F9 794→359,460；⑬1280x900→
+814,270,233,630；⑭紧凑 704,196,576,704；⑤528,184,432,296；⑤b 396,156,
+84,804（比例高分支删除断言改写）；legacy 闸两案零漂移。新增：⑥精简款
+5 行/10 列/42 键+右缘/键宽扫描+平板竖屏与手机横屏原表 14 单位守卫+
+setMap 注入不替换守卫（39 键指纹）；⑦600x960 域钳上界 (600,345,0,615)；
+⑧c 紧凑内切 Special 随动 (396,184,84,776)@480x960 与自定义 5 行表
+(704,236,576,564)@1280x800；⑨1280x300 域钳优先级 (294,120,493,180)；
+⑩legacy 紧凑内 setMode 原样 (420,105,540,375)。`wf_kb_drag_gate.sh`
+rc=0（XGuiRegression_Test 全量 rc=0 + fbdev XGuiKeyboardDrag_Test
+[KD-PASS]，日志 .zcode/wf-gates/kb1028_r3_gate.log）。
+
+**目验矩阵（xgui_keyboard_tier_shoot.sh r3 16 案+#15~#17）**：紧凑三案
+改存活形态（demo 位置参数秒数自退，存活期内 xwininfo 直读紧凑顶层窗矩
+形——教训⑦「X 服务器真值」；XKB-GEO 行作框架侧对账）。门禁映射：①
+=#2/#4 键比 53x38/79x57=1.39∈[1.3,1.5]；②=#3/#15 占屏 30%/35.9%∈
+[30,36]%；③=XKeyboardTest ⑧/F9 窄盘独立定宽近方键；④=#16；⑤=#5/#6/
+#14/#17（xwininfo 直读）；⑥=#9 legacy 豁免（只查现状公式零漂移）；⑦
+=#5/#6/#14/#17 xwininfo 矩形在宿主内（#17 底缘 1000=宿主底）；⑧=回归
+闸。LAYOUT=english 对齐 4 行基线案：#5/#14/#16/#17（demo 默认框落
+User1 引擎表 5 行 44 键，行数驱动高公式对该表给 221 系正确行为，非缺
+陷）。结果见 `out/kb_adapt_1028_r3/`（本轮全绿，见节末结果行）。
+#11/#19 overlay（对话框外置浮层）无头入口缺席如实 SKIP（回归套件浮层
+断言族覆盖）。
+
+**已知限制（r3 更新）**：①「宿主缩小后紧凑窗不回收入屏」维持现状；
+②横屏左右分离键盘、高度用户调节记忆为二期；③hostW<720px 紧凑楼层绑
+定；④Android JNI DisplayMetrics 未追读（探测失败自动 legacy 无害回
+退）；⑤**legacy 紧凑内切 5 行款（如 IME 引擎落 User1）第 5 行仍被裁**
+——r3 前既有、随 Legacy resize 早退刻意保持（r3 §5.3 已知边界）。
+
+**r3 结果行**：wf_kb_drag_gate.sh rc=0（终轮
+.zcode/wf-gates/kb1028_r3_gate_final.log，XGuiRegression_Test 全量
+rc=0 + fbdev XGuiKeyboardDrag_Test [KD-PASS]）；目验矩阵
+out/kb_adapt_1028_r3 pass=27 fail=0（21 几何/键比/键区扫描 + 4 紧凑窗
+xwininfo 直读 + 2 占屏比，SKIP #9 像素 diff/#11/#19 三条如实声明）。
+demo --autotest rc=0、扩展页9(键盘演示) PASS；全量 [FAIL] 仅剩「窗口
+设置页: 边框开态框架自绘标题栏生效」1 条——window 装饰子系统断言，
+与本战役改动面（XVirtualKeyboard.{h,c}/XKeyboardTest.c/demo 键盘页/
+目验脚本）无交集，如实记录不归属。
