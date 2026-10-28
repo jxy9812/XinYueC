@@ -276,9 +276,17 @@ extern "C" {
 #define XLINK_HEARTBEAT_INTERVAL_MS 1000u
 #endif
 
-/** @brief 心跳静默判线阈值（毫秒），超过即认定链路断开。 */
+/** @brief 心跳静默判线阈值（毫秒），超过即认定链路断开。
+ *  @note  默认 6000ms（v1.3-dev 起，原 3000）：Windows 平台 IOCP 环回在
+ *         大流量突发（如 37KB 文件分块）结束后，两侧挂起的 send/recv
+ *         完成可整体停滞数秒（裸 socket 100 行即可复现，触发点在本机
+ *         内核/驱动栈，Linux epoll 从不复现），3s 阈值会误杀健康会话
+ *         ——实测即"下载 Open 帧已写出但对端收不到、双端先后判线"的
+ *         文件传输端到端失败（XLink.md §14.3）。6s 覆盖实测最长停滞
+ *         窗口；真断链（拔线/进程退出）的感知延迟相应加倍，厂内网
+ *         控制/GUI 链路可接受。 */
 #ifndef XLINK_HEARTBEAT_TIMEOUT_MS
-#define XLINK_HEARTBEAT_TIMEOUT_MS 3000u
+#define XLINK_HEARTBEAT_TIMEOUT_MS 6000u
 #endif
 
 /** @brief 异步驱动节拍（毫秒）：会话挂载传输后经 XObject 内建定时器

@@ -247,6 +247,22 @@ void XLinkFileTransfer_abort(XLinkFileTransfer* transfer, uint8_t status,
                              const char* text);
 
 /**
+ * @brief      解除会话借用引用（会话已失效时调用），并把未终局的传输置失败。
+ * @param      transfer 对象。
+ * @param      status 失败原因（XLinkFileStatus）。
+ * @param      text 说明文本（UTF-8，可为 NULL）。
+ * @return     无。
+ * @note       传输引擎持有会话的**借用指针**。会话被其所有者销毁
+ *             （客户端重连/断开拆除、XLinkClientPrivate_teardown）后，
+ *             引擎若继续 pump 就会解引用已释放内存（实测 Windows
+ *             段错误，栈：XLinkSession_isReady ← XLinkFileTransfer_pump
+ *             ← XLinkFileClient_pump）。调用方发现会话失效时必须先
+ *             detach：**不得**再向该会话发 Abort（会二次 UAF）。
+ */
+void XLinkFileTransfer_detachSession(XLinkFileTransfer* transfer,
+                                     uint8_t status, const char* text);
+
+/**
  * @brief      传输是否已终局（Done/Failed）。
  * @param      transfer 对象（借用）；NULL 时返回 true。
  * @return     终局返回 true。

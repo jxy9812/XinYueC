@@ -1156,6 +1156,40 @@ void XGuiApplication_setPrimaryScreen(XScreen* screen)
 /* ==================== 光标覆盖栈 ==================== */
 
 #if XCURSOR_ON
+/**
+ * @brief 覆盖栈变更后，把生效光标同步到所有已注册窗口。
+ * @details [2026-10-28 板子实测根修] 覆盖栈此前只被软件精灵路径读取，
+ *          硬件光标平台（X11/Win32）压根收不到 ⇒ 「鼠标外形」切换在
+ *          板子（X11）上毫无反应。此处把栈顶（或栈空时的控件光标）
+ *          逐窗口下发，走与控件光标同一条 XDefineCursor/SetCursor
+ *          通道（XCursor_applyEffectiveToWindow 统一判定优先级）。
+ */
+static void xguiApplication_syncOverrideCursors(void)
+{
+    XGuiApplication* app = XGuiApplication_instance();
+    size_t i;
+    size_t n;
+    if (!app || !app->m_windows) return;
+    n = XVector_size_base((const XContainer*)app->m_windows);
+    for (i = 0; i < n; ++i) {
+        XWindow* w = (XWindow*)XVector_At_Base(app->m_windows, (int64_t)i, XWindow*);
+        XWindowId winId;
+        XCursor* stored;
+        if (!w) continue;
+        /* 只取已存在的原生句柄：不得触发惰性建窗（批量下发不得提前
+         * 创建平台窗口）。 */
+        winId = XWindow_winIdIfCreated(w);
+        if (!winId) continue;
+        /* 栈空时恢复窗口自身记录的控件光标（覆盖期间 hover 形状被
+         * 覆盖栈压住，栈空后要还原回去）。 */
+        stored = XWindow_cursor(w);
+        (void)XCursor_applyEffectiveToWindow((uintptr_t)winId, stored);
+        if (stored) XClassDelete((XClass*)stored);
+    }
+}
+#endif /* XCURSOR_ON */
+
+#if XCURSOR_ON
 XCursor* XGuiApplication_overrideCursor(void)
 {
     XGuiApplication* app = XGuiApplication_instance();
@@ -1175,6 +1209,8 @@ void XGuiApplication_setOverrideCursor(const XCursor* cursor)
     if (!copy) return;
     if (!XVector_push_back_1_base(app->m_overrideStack, &copy))
         XClassDelete(copy);
+    else
+        xguiApplication_syncOverrideCursors(); /* 下发到原生窗口。 */
 }
 
 void XGuiApplication_changeOverrideCursor(const XCursor* cursor)
@@ -1192,6 +1228,7 @@ void XGuiApplication_changeOverrideCursor(const XCursor* cursor)
     if (!copy) return;
     XClassDelete(XVector_At_Base(app->m_overrideStack, (int64_t)(n - 1), XCursor*));
     XVector_At_Base(app->m_overrideStack, (int64_t)(n - 1), XCursor*) = copy;
+    xguiApplication_syncOverrideCursors(); /* 下发到原生窗口。 */
 }
 
 void XGuiApplication_restoreOverrideCursor(void)
@@ -1203,6 +1240,7 @@ void XGuiApplication_restoreOverrideCursor(void)
     if (n == 0) return;
     XClassDelete(XVector_At_Base(app->m_overrideStack, (int64_t)(n - 1), XCursor*));
     XVector_remove_base(app->m_overrideStack, (int64_t)(n - 1), 1);
+    xguiApplication_syncOverrideCursors(); /* 栈空 ⇒ 恢复控件光标。 */
 }
 #endif /* XCURSOR_ON */
 

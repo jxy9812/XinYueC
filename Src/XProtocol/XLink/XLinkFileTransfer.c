@@ -1127,6 +1127,20 @@ void XLinkFileTransfer_abort(XLinkFileTransfer* transfer, uint8_t status,
                          text ? text : "aborted");
 }
 
+void XLinkFileTransfer_detachSession(XLinkFileTransfer* transfer,
+                                     uint8_t status, const char* text)
+{
+    if (!transfer)
+        return;
+    /* 会话已失效：先摘引用再终局。**不发 Abort**——向已释放的会话发帧
+       会二次 UAF（这正是本函数存在的理由）。 */
+    transfer->m_session = NULL;
+    if (XLinkFileTransfer_isFinished(transfer))
+        return;
+    xft_fail(transfer, status ? status : XLinkFileStatus_Aborted,
+             text ? text : "session gone");
+}
+
 /* ========================================================================== */
 /*                        查询                                               */
 /* ========================================================================== */

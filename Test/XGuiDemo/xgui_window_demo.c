@@ -3405,6 +3405,8 @@ static void demo_switchPage(DemoWin* self, int index)
             demo_page_remote_client_pause();
         else if (prevIndex != 11 && index == 11)
             demo_page_remote_client_resume();
+        else if (prevIndex != 13 && index == 13)
+            demo_page_network_resume(); /* 无线构建期瞬态失败的恢复口 */
     }
     XStackedLayout_setCurrentIndex(&self->m_stackLayout, index);
 #if XBUTTONGROUP_ON && XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON

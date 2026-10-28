@@ -1444,10 +1444,11 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top)
     if (top->m_cursor && XWindow_setCursor)
         XWindow_setCursor(window, top->m_cursor);
     /* 惰性建窗补生效：setCursor 先于窗口创建时（平台后端尚未注册或
-       winId 未就绪而静默），窗口建立后补做一次原生应用。 */
-    if (top->m_cursor)
-        (void)XCursor_applyToWindow((uintptr_t)XWindow_winId(window),
-                                    top->m_cursor);
+       winId 未就绪而静默），窗口建立后补做一次原生应用。
+       [2026-10-28] 经生效口下发（覆盖光标优先）；无覆盖且无控件光标
+       时走清除通道（新建窗口本就无光标，等价无副作用）。 */
+    (void)XCursor_applyEffectiveToWindow((uintptr_t)XWindow_winId(window),
+                                         top->m_cursor);
 #endif /* XCURSOR_ON */
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
     XApplication_registerTopLevelWidget(top);
@@ -7834,9 +7835,11 @@ void XWidget_setCursor(XWidget* self, const XCursor* cursor)
         XWindow_setCursor(window, self->m_cursor);
         /* 平台生效路径：形状/自定义光标映射为原生光标并 XDefineCursor
            到窗口（XCursor 平台后端；无后端/窗口未映射时静默，存储已
-           完成）。形状变化时重复调用即更新生效光标。 */
-        (void)XCursor_applyToWindow((uintptr_t)XWindow_winId(window),
-                                    self->m_cursor);
+           完成）。形状变化时重复调用即更新生效光标。
+           [2026-10-28] 经生效口下发：应用覆盖光标存在时优先用覆盖
+           形状，hover 形状不得顶掉覆盖形状（对标 Qt 覆盖光标优先）。 */
+        (void)XCursor_applyEffectiveToWindow((uintptr_t)XWindow_winId(window),
+                                             self->m_cursor);
     }
 #else
     (void)self;
@@ -7858,8 +7861,10 @@ void XWidget_unsetCursor(XWidget* self)
     if (top && top->m_windowHandle) {
         XWindow* window = (XWindow*)top->m_windowHandle;
         XWindow_unsetCursor(window);
-        /* 平台清除路径：XUndefineCursor 恢复窗口默认光标（静默语义同上）。 */
-        (void)XCursor_clearForWindow((uintptr_t)XWindow_winId(window));
+        /* 平台清除路径：XUndefineCursor 恢复窗口默认光标（静默语义同上）。
+           [2026-10-28] 经生效口：覆盖光标在位时不清（覆盖优先）。 */
+        (void)XCursor_applyEffectiveToWindow((uintptr_t)XWindow_winId(window),
+                                             NULL);
     }
 #else
     (void)self;

@@ -26,6 +26,15 @@
 
 #include <windows.h>
 
+/* Windows SDK wingdi.h 的方向常量名为 DMDO_DEFAULT/DMDO_90/DMDO_180/DMDO_270，
+ * 此处按本文件原用的 DMDO_ORIENTATION_* 记法对齐（值一一对应）。 */
+#ifndef DMDO_ORIENTATION_0
+#define DMDO_ORIENTATION_0    DMDO_DEFAULT
+#define DMDO_ORIENTATION_90   DMDO_90
+#define DMDO_ORIENTATION_180  DMDO_180
+#define DMDO_ORIENTATION_270  DMDO_270
+#endif
+
 static DEVMODE g_xoriDefaultMode;   /**< 启动时捕获的原始显示模式。 */
 static bool    g_xoriHaveDefault = false;
 static int     g_xoriNatW = 0;       /**< 显示自然宽（未旋转）。 */

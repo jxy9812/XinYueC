@@ -73,6 +73,10 @@ typedef struct XLinkFileServer {
     bool m_attached;           /**< 已挂接。 */
     bool m_inTick;             /**< tick 重入保护：服务端 timerEvent 与手动
                                     pump 并存时，同一轮不重复推进传输。 */
+    XLinkServerTickCallback m_prevTickCallback; /**< attach 前业务的 tick 回调
+                                    （detach 时还原：本类占用服务端唯一 tick
+                                    槽位，不还原则业务的周期回调被吞）。 */
+    void* m_prevTickUserData;  /**< attach 前业务的 tick 用户数据。 */
 } XLinkFileServer;
 
 /**
@@ -84,7 +88,13 @@ void XLinkFileServer_init(XLinkFileServer* fs);
 /**
  * @brief      反初始化：中止并清理全部传输。
  * @param      fs 对象；NULL 时无操作。
- * @note       不修改 XLinkServer 本身（由调用方负责 detach 或销毁顺序）。
+ * @note       本函数**先摘钩子再拆资源**：服务端上仍挂着指向本对象的
+ *             File/tick/sessionGone/preSessionPump 回调，若调用方先
+ *             deinit+释放本对象、之后才销毁服务端（XLinkServer_close
+ *             回收会话时触发 sessionGone 钩子），钩子会以已释放的 fs
+ *             被调用 → 释放后使用（实测 Windows 段错误，栈：
+ *             xfs_onSessionGone ← XLinkServer_close ← 测试收尾）。
+ *             deinit 内隐式 detach 后，销毁顺序不再敏感。
  */
 void XLinkFileServer_deinit(XLinkFileServer* fs);
 

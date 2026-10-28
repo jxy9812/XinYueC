@@ -13,7 +13,7 @@
 | 桌面 | Xfce + LightDM（DISPLAY=:0），触摸屏 ILITEK ILITEK-TP（DSI-1 1280x800）+ HDMI-1 1920x1080 |
 | 板端工具链 | gcc 10.2 / cmake 3.18（可用但极慢） |
 | 自启程序 | `run_test.service → /usr/bin/run.sh → /usr/bin/RK3568-IP-V2`（标题"万象奥科平板整机外设测试程序"） |
-| 凭据 | root / root |
+| 凭据 | root / hmklj20250803（2026-10-28 改密，旧 root/root 失效；部署脚本可用环境变量 `RK3568_PASS` 覆盖） |
 
 ## 1. 总路线
 
@@ -146,10 +146,38 @@ done
 - `XPlatformNativeWindow_posix.c:2661` `XAlignment_Center` 未声明：图标接线代码漏
   `#include "XAlignment.h"`（Win32 经其他头间接带入，POSIX 暴露）。已修在仓库。
 
+### 坑⑩：Git Bash tar 直读 DrvFs 静默丢文件
+- 现象：mbedtls 的 37 个头只有 36 个落进 WSL（`build_info.h` 消失），编译报错却是
+  间接的 `fatal error: mbedtls/build_info.h: No such file or directory`，毫无丢失痕迹。
+- 根因：MSYS tar 读 DrvFs（F: 盘）时按 inode 归并归档成员（硬链接判定），
+  个别文件被静默吞掉；tar 退出码只有读取失败才报错。
+- 解法：源码同步一律 `git archive --format=tar HEAD | tar xf -`，并校验
+  `git ls-files | wc -l` 与解出文件数一致（一键脚本已内置该校验）。
+
+### 坑⑪：git archive 不带 gitignore 的本地配置
+- 现象：改用 git archive 后 cmake 配置期即挂：
+  `CMakeLists.txt:220: include could not find requested file: CMake_Config.cmake`。
+- 根因：根目录 `CMake_Config.cmake` 是 gitignore 的本地配置（仓库只有
+  `_template` 模板），git archive 只打包被跟踪文件。
+- 解法：归档解开后单独 `cp /mnt/<repo>/CMake_Config.cmake`；一键脚本已内置。
+
+### 坑⑫：wsl 独立 argv 传 POSIX 路径被 MSYS 改写
+- 现象：`wsl ... bash -s "$WSL_SRC"` 里的 `/root/xinyuec-src` 变成
+  `D:/Program Files/Git/root/xinyuec-src`，cmake 报源目录不存在。
+- 根因：MSYS 只对「看起来像路径的独立 argv token」做改写；藏在
+  `bash -c "rm -rf /root/..."` 这类大字符串里的路径反而安然无恙。
+- 解法：跨 wsl.exe 传参一律把路径写死在带引号 heredoc/`bash -c` 字符串内，
+  不作为独立 argv 传递（一键脚本全线如此）。
+
 ### 附加：WSL 运维注意
 - `wsl.exe` 退出会带走同会话 nohup 后台进程，WSL 内长任务要么前台同步跑，要么 `setsid`；
 - WSL 的 `/tmp` 会在实例空闲回收后被清空，跨命令的中间文件放 `/root`；
-- Git Bash 调 `wsl -- cp /root/...` 会被 MSYS 路径转换改写，用 `bash -c '...'` 包一层。
+- Git Bash 调 `wsl -- cp /root/...` 会被 MSYS 路径转换改写，用 `bash -c '...'` 包一层；
+- cmake 失败时 `&& make` 不会执行，tail 到的是上一次的旧 make 日志，极易误判——
+  每次构建先删旧日志，或失败时只看当次日志（一键脚本已按此处理）；
+- `bash -s <<EOF` 的脚本里调 ssh 必须 `-n`：ssh 会把 heredoc 剩余脚本字节当自己的
+  stdin 吸走，表现为首条 ssh 之后的命令全部静默消失、整体仍退出 0
+  （2026-10-28 实踩：stop 生效、scp/start/pgrep 全没跑却报部署成功）。
 
 ## 5. 工具链文件（/root/toolchain-aarch64.cmake，当前可用版本）
 
@@ -173,6 +201,11 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 ```
 
 ## 6. 日常构建与部署
+
+> **一键脚本**：`Tools/posix/cross-compile-rk3568.sh` 已固化本节全流程——
+> git archive 同步（含 CMake_Config.cmake 补拷与文件数校验）→ 编译 →
+> GLIBC 红线验收 → `--deploy` 自动部署板子并重启自启服务。
+> 手工流程保留如下备查。
 
 ```bash
 # —— WSL 内构建（源码更新后：先从 Windows 侧同步改动文件到 /root/xinyuec-src）——

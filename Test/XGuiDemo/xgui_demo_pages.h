@@ -129,6 +129,11 @@ int demo_page_network_autotest(XWidget* page);
 /** @brief 网络设置页自适应重排（信息区伸缩 + 状态行贴底；同上契约）。 */
 void demo_page_network_adapt(XWidget* page);
 
+/** @brief 网络设置页重新可见钩子（切回本页时主文件调用）：无线会话
+ *         未开时重试一次并恢复入口（构建期平台瞬态失败置灰后的恢复口；
+ *         已就绪时零开销返回）。 */
+void demo_page_network_resume(void);
+
 /** @brief 构建悬浮窗设置页（系统设置：性能悬浮层显示数据行/内存行
  *         显示与来源/九宫格预设位置/固定与拖动/字号/自适应尺寸，
  *         改动即时生效）。XGUI_PERFORMANCE_OVERLAY_ON=0 或控件裁剪

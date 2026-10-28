@@ -29,6 +29,8 @@ static uint32_t xfc_tickInterval(const XLinkFileClient* obj)
 
 /* 前置声明：收帧槽与 pump 都会调用（定义见下）。 */
 static void xfc_stopTimerIfIdle(XLinkFileClient* obj);
+static bool xfc_sessionValid(XLinkFileClient* obj);
+static void xfc_handleSessionGone(XLinkFileClient* obj);
 
 /** @brief 把 File 帧转给传输引擎。 */
 static bool xfc_onFileFrame(XLinkSession* session, const XLinkFrameHeader* frame,
@@ -38,6 +40,10 @@ static bool xfc_onFileFrame(XLinkSession* session, const XLinkFrameHeader* frame
     (void)session;
     if (!obj || !frame)
         return true;
+    if (!xfc_sessionValid(obj)) {
+        xfc_handleSessionGone(obj);
+        return true;
+    }
     if (!XLinkFileTransfer_isFinished(&obj->m_transfer))
         XLinkFileTransfer_onFrame(&obj->m_transfer, frame, payload,
                                   (uint32_t)XDateTime_currentMSecsSinceEpoch());
@@ -117,6 +123,42 @@ static void VXLinkFileClient_deinit(XClass* object)
     XClass_Deinit_Parent(XObject, (XObject*)obj);
 }
 
+/**
+ * @brief 会话有效性守卫：传输引擎持有的会话借用指针是否仍然有效。
+ * @details 传输引擎持有会话的**借用指针**，而会话由 XLinkClient 拥有，
+ *          断线/重连/手动断开时 XLinkClientPrivate_teardown 会把它销毁
+ *          （重连则换成新会话）。引擎若继续 pump，就会解引用已释放的
+ *          会话 —— 实测 Windows 段错误（栈：XLinkSession_isReady ←
+ *          XLinkFileTransfer_pump ← XLinkFileClient_pump）。
+ * @return true = 可以照常推进（含「无借用引用」的空闲态）；
+ *         false = 借用指针已悬垂，必须先走 xfc_handleSessionGone。
+ */
+static bool xfc_sessionValid(XLinkFileClient* obj)
+{
+    XLinkSession* current;
+    if (!obj)
+        return false;
+    if (!obj->m_transfer.m_session)
+        return true; /* 无借用引用（空闲/已摘除）：无需守卫 */
+    if (!obj->m_client)
+        return false;
+    current = XLinkClient_session(obj->m_client);
+    return current != NULL && current == obj->m_transfer.m_session;
+}
+
+/**
+ * @brief 会话失效时的收尾：摘掉悬垂引用并把传输置为终局失败。
+ * @note  绝不能向失效会话发 Abort（二次 UAF）——故用 detachSession。
+ */
+static void xfc_handleSessionGone(XLinkFileClient* obj)
+{
+    if (!obj)
+        return;
+    XLinkFileTransfer_detachSession(&obj->m_transfer,
+                                    XLinkFileStatus_Aborted, "session gone");
+    xfc_stopTimerIfIdle(obj);
+}
+
 static void VXLinkFileClient_timerEvent(XObject* object, XTimerEvent* event)
 {
     XLinkFileClient* obj = (XLinkFileClient*)object;
@@ -126,6 +168,10 @@ static void VXLinkFileClient_timerEvent(XObject* object, XTimerEvent* event)
         XClass_Parent(XObject, EXObject_TimerEvent,
                       void (*)(XObject*, XTimerEvent*))((XObject*)object,
                                                         event);
+        return;
+    }
+    if (!xfc_sessionValid(obj)) {
+        xfc_handleSessionGone(obj);
         return;
     }
     XLinkFileTransfer_pump(&obj->m_transfer,
@@ -316,6 +362,10 @@ void XLinkFileClient_pump(XLinkFileClient* obj, uint32_t nowMs)
        m_nowTick 三者）——传输活跃窗口内注入 nowMs 仍直达会话时间基。
        注入时钟的真正防线是本函数头部「异步环境请传 0」契约（keepAlive
        对 0 内部自取实时），勿归功于门控。 */
+    if (!xfc_sessionValid(obj)) {
+        xfc_handleSessionGone(obj);
+        return;
+    }
     if (xfc_shouldDriveSession(obj) && obj->m_transfer.m_session)
         XLinkSession_pump(obj->m_transfer.m_session, now);
     XLinkFileTransfer_pump(&obj->m_transfer, now);
@@ -350,6 +400,10 @@ void XLinkFileClient_abort(XLinkFileClient* obj, uint8_t status,
 {
     if (!obj)
         return;
+    if (!xfc_sessionValid(obj)) {
+        xfc_handleSessionGone(obj);
+        return;
+    }
     XLinkFileTransfer_abort(&obj->m_transfer, status, text);
     xfc_stopTimerIfIdle(obj);
 }

@@ -16,6 +16,7 @@ Tools/
 │   ├── vulkan/              Vulkan 无 SDK 方案全套（见下）
 │   └── diag/                帧诊断/基准（PowerShell + Win32，Windows 专属）
 ├── posix/                   POSIX/Linux 平台产物
+│   ├── cross-compile-rk3568.sh  RK3568 一键交叉编译/部署（Git Bash + WSL，见 docs/cross-compile-rk3568.md）
 │   └── xgui.lsan.supp       LeakSanitizer 抑制列表（Linux ASan）
 ├── codegen/                 源码生成模块
 ├── analysis/                静态分析模块

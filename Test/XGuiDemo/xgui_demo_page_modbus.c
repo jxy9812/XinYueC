@@ -97,6 +97,40 @@
 /* ==================== 布局常量 ==================== */
 #define MB_ROW_H        24      /* 标准行高。 */
 
+/** @brief 读环境变量并**立刻拷贝**到调用方缓冲区。
+ *  @details XSystem_environment 在 Windows 平台返回**共享静态缓冲**
+ *           （Drive/windows/Core/XSystem_win32.c:97 的 static char
+ *           buffer[1024]）⇒ 连续多次取值时后一次会覆盖前一次，留在
+ *           变量里的指针会全部指向最后一次读到的内容。凡是要同时用
+ *           多个环境变量，必须逐个「读→立刻拷走」，不能留裸指针。
+ *  @param dst  目标缓冲（调用方保证容量足够）
+ *  @param cap  dst 容量（含结尾 '\0'）
+ *  @param name 环境变量名
+ *  @return 取到非空值返回 true（dst 已写入以 '\0' 结尾的副本）
+ */
+static bool mb_envCopy(char* dst, size_t cap, const char* name)
+{
+    const char* v;
+    size_t n;
+    if (!dst || cap == 0) return false;
+    dst[0] = '\0';
+    v = XSystem_environment(name);
+    if (!v || !v[0]) return false;
+    n = strlen(v);
+    if (n >= cap) n = cap - 1;
+    memcpy(dst, v, n);
+    dst[n] = '\0';
+    return true;
+}
+
+/* 串口兜底名（枚举失败/下拉为空时用）：按平台给合法形态的默认口名，
+ * 避免 Windows 上落下 "/dev/ttyS1" 这种永远打不开的名字。 */
+#if defined(_WIN32) || defined(_WIN64)
+#define MB_DEFAULT_SERIAL_NAME "COM3"
+#else
+#define MB_DEFAULT_SERIAL_NAME "/dev/ttyS1"
+#endif
+
 /* [竖屏适配 2026-10-25] 400 逻辑宽手机竖屏口径三件套：
  * - MB_COMPACT_MAX_W：可用宽低于此值判「紧凑档」——各工具行翻纵向
  *   单列、可点元素换触控尺寸。宽档最长行（主站参数合并行≈800px）在
@@ -831,7 +865,7 @@ static void mb_serialComboRefresh(XComboBox* combo)
     if (XComboBox_count(combo) <= 0)
         XComboBox_addItem_2(combo,
                             (keepText && keepText[0]) ? keepText
-                                                      : "/dev/ttyS1");
+                                                      : MB_DEFAULT_SERIAL_NAME);
     if (idx < 0 && XComboBox_count(combo) > 0) idx = 0;
     XComboBox_setCurrentIndex(combo, idx);
     if (keep) XClassDelete(keep);
@@ -874,10 +908,25 @@ static XComboBox* mb_buildSerialCombo(XWidget* parent, int w)
     mb_serialComboRefresh(&combo->m_base); /* 首轮枚举（内置兜底默认名）。 */
     if (XComboBox_count(&combo->m_base) <= 0) {
         /* 首轮枚举失败/无串口：留默认名占位（连接侧同口径兜底）。 */
-        XComboBox_addItem_2(&combo->m_base, "/dev/ttyS1");
+        XComboBox_addItem_2(&combo->m_base, MB_DEFAULT_SERIAL_NAME);
         XComboBox_setCurrentIndex(&combo->m_base, 0);
     }
     return &combo->m_base;
+}
+
+/** @brief 把串口下拉切到指定端口名（不在列表里则补一条再选中）。
+ *  @details 供 env 注入端口名：485 口往往不是枚举首项（PC 侧可能枚举
+ *           出 COM1/BIOS 口，真正接 485 转换器的是 CH343 的 COM17）。 */
+static void mb_serialComboSelect(XComboBox* combo, const char* name)
+{
+    int idx;
+    if (!combo || !name || !name[0]) return;
+    idx = XComboBox_findText_2(combo, name);
+    if (idx < 0) {
+        XComboBox_addItem_2(combo, name);
+        idx = XComboBox_count(combo) - 1;
+    }
+    XComboBox_setCurrentIndex(combo, idx);
 }
 #endif /* XMODBUS_RTU_ON */
 
@@ -1031,7 +1080,7 @@ static void mb_masterRegApplyCount(XTableWidget* tbl, XSpinBox* spin,
     int i;
     if (!tbl || !spin || !curCount) return;
     n = XSpinBox_value(spin);
-    if (n < 1) n = 1;
+    if (n < 0) n = 0;   /* [2026-10-28 数量可归零] 0 行合法（相位跳过）。 */
     if (n > MB_SLAVE_REG_MAX_ROWS) n = MB_SLAVE_REG_MAX_ROWS;
     s_mb.regSuppress = 1;
     XTableWidget_setRowCount(tbl, n);
@@ -1552,7 +1601,8 @@ static void mb_masterDoSetAll(bool on)
         XClassDelete(unit);
         if (reply) {
             ++s_mb.reqCount;
-            s_mb.retiredWriteReply = reply; /* 回收定时器延迟删。 */
+            /* [在途不回收 2026-10-28] 发送时 reply 仍由 client 持有，
+             * 入回收槽会被 1s 回收拍删掉=野指针；改由 finished 槽入槽。 */
             XObject_connect_1((XObject*)reply,
                               (size_t)XModbusReply_finished_signal(reply),
                               (XObject*)s_mb.root, mb_masterWriteReplyDone,
@@ -1800,18 +1850,44 @@ static void mb_masterWriteReplyDone(XObject* sender, XVarList* args)
 {
     (void)args;
     (void)sender;
-    /* [2026-10-13] 暂不回收写 Reply（演示页生命周期兜底）：写应答与
-     * DI 轮询应答在同 socket 交错到达，立即/延迟删均与 client 内部
-     * pending/timer 状态竞争（ASan UAF 实证）。泄漏量=160B×点击次数。 */
+    /* [写应答回收 2026-10-28] 写应答 finished 后才入回收槽（1s 独立拍
+     * 删）：发送时入槽会在应答还没回来时被回收拍删掉——client 手里仍
+     * 引用它，删后即野指针。槽首参是接收者，真正的发出者用
+     * XObject_sender 取（框架 directEmit 传 receiver，见
+     * XSignalSlot.c:290）。 */
+    XObject* sigSender = XObject_sender((XObject*)s_mb.root);
+    if (!sigSender) return;
+    if (s_mb.retiredWriteReply && s_mb.retiredWriteReply != sigSender) {
+        XObject_deleteLater((XObject*)s_mb.retiredWriteReply);
+    }
+    s_mb.retiredWriteReply = (XModbusReply*)sigSender;
 }
 
 /** @brief 收读应答：刷新输入点网格 + 回收 Reply。 */
 static void mb_masterOnReply(XObject* sender, XVarList* args)
 {
     (void)sender; (void)args;
-    if (s_mb.pendingReply) {
-        XModbusReply* reply = s_mb.pendingReply;
-        s_mb.pendingReply = NULL;
+    {
+        /* [reply 归属修复 2026-10-28] 本槽挂在**每个**读应答的 finished
+         * 信号上，槽首参是接收者（框架 directEmit 传 receiver，见
+         * XSignalSlot.c:290）⇒ 真正的发出者要用 XObject_sender 取。
+         * 原实现恒取 s_mb.pendingReply（最新那条），在「写让路」与轮询
+         * 读两个在途并存时会**回收错对象**——把仍在 client 队列/在途的
+         * reply 提前删掉，client 随后用它应答即野指针崩溃（RTU 主站
+         * 收到第一帧应答即崩，栈见 XModbusPdu_setFunctionCode）。 */
+        XObject* sigSender = XObject_sender((XObject*)s_mb.root);
+        XModbusReply* reply = (XModbusReply*)sigSender;
+        if (!reply) reply = s_mb.pendingReply; /* 兜底：无发送者上下文。 */
+        if (!reply) {
+            /* 无可回收对象：仍要走下面的「写让路」补发逻辑，故不早退。 */
+        } else {
+        if (reply == s_mb.pendingReply) s_mb.pendingReply = NULL;
+        /* 回收槽只留一条：前一条若还没被回收拍删掉，先就地删（它已
+         * finished，client 侧已解引用，删安全），避免覆盖丢失=泄漏。 */
+        if (s_mb.retiredReply && s_mb.retiredReply != reply) {
+            XObject_deleteLater((XObject*)s_mb.retiredReply);
+            s_mb.retiredReply = NULL;
+        }
         s_mb.retiredReply = reply; /* 延迟回收：嵌套泵（repaint）内不可删。 */
         if (XModbusReply_error(reply) == XModbusDevice_NoError) {
             const XModbusDataUnit* result = XModbusReply_result_const(reply);
@@ -1853,7 +1929,10 @@ static void mb_masterOnReply(XObject* sender, XVarList* args)
         } else {
             ++s_mb.errCount;
         }
-        XObject_deleteLater((XObject*)reply);
+        /* 回收统一走 retiredReply（1s 独立拍删）——此处**不再**立即
+         * deleteLater：与 retiredReply 机制重复释放同一 reply = 二次
+         * 释放（2026-10-28 主站崩溃的另一半根因）。 */
+        }
     }
     /* [写让路 2026-10-15] 读应答完成=空闲槽：补发暂存的写请求（全开/
        全关/单点翻转在轮询在途时到达的写，此前被暂存让路）。空闲槽发出
@@ -1864,7 +1943,7 @@ static void mb_masterOnReply(XObject* sender, XVarList* args)
             XSpinBox_value(s_mb.unitSpin), XModbusRequestPriority_Normal);
         if (wreply) {
             ++s_mb.reqCount;
-            s_mb.retiredWriteReply = wreply; /* 回收定时器延迟删。 */
+            /* [在途不回收 2026-10-28] 同上：finished 时再入回收槽。 */
             XObject_connect_1((XObject*)wreply,
                               (size_t)XModbusReply_finished_signal(wreply),
                               (XObject*)s_mb.root, mb_masterWriteReplyDone,
@@ -2026,7 +2105,7 @@ static void mb_masterStartEngine(void)
             const char* name = s_mb.serialNameCombo
                 ? XComboBox_currentText_2(s_mb.serialNameCombo) : "";
             int baud = 9600;
-            if (!name || !name[0]) name = "/dev/ttyS1";
+            if (!name || !name[0]) name = MB_DEFAULT_SERIAL_NAME;
             if (s_mb.serialBaudCombo)
                 baud = atoi(XComboBox_currentText(s_mb.serialBaudCombo));
             if (baud <= 0) baud = 9600;
@@ -2068,8 +2147,24 @@ static void mb_masterStartEngine(void)
     /* 真机 IO 模块多带单连接/请求限额保护，周期断连由库内自动重连承接。 */
     XModbusClient_setAutoReconnect((XModbusClient*)dev, true);
     XModbusClient_setReconnectInterval((XModbusClient*)dev, 2000);
+    /* [信号先挂后连 2026-10-28] stateChanged/errorOccurred 必须**先挂**再
+     * connectDevice：串口 RTU 的 open() 成功即同步置 Connected 并发信号，
+     * 信号晚挂会漏掉这一拍 ⇒ 状态行永远停在「连接中...」（用户实证）。
+     * 同时先把 s_mb.device 挂上——状态槽首行判 s_mb.device 为空即返回。 */
+    s_mb.device = dev;
+    XObject_connect_1((XObject*)dev,
+                      (size_t)XModbusDevice_stateChanged_signal(dev,
+                          XModbusDevice_UnconnectedState),
+                      (XObject*)s_mb.root, mb_masterStateSlot,
+                      XConnectionType_Direct);
+    /* [连接反馈 2026-10-27] 错误信号挂接：连接失败/通信错误的
+     * 具体原因走此路（此前设备 errorOccurred 无页面监听）。 */
+    XObject_connect_1((XObject*)dev,
+                      (size_t)XModbusDevice_errorOccurred_signal(dev,
+                          XModbusDevice_ConnectionError),
+                      (XObject*)s_mb.root, mb_masterErrorSlot,
+                      XConnectionType_Direct);
     if (XModbusDevice_connectDevice(dev)) {
-        s_mb.device = dev;
         s_mb.pollTimer = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         if (s_mb.pollTimer) {
             XTimer_setInterval(s_mb.pollTimer,
@@ -2088,11 +2183,17 @@ static void mb_masterStartEngine(void)
         s_mb.everConnected = false;
         s_mb.lastErr[0] = '\0';
         s_mb.lastHint[0] = '\0'; /* 新 episode：状态栏去重表清零。 */
-        mb_masterStateText(
-            "\xE8\xBF\x9E\xE6\x8E\xA5\xE4\xB8\xAD..."); /* 连接中... */
-        mb_masterPushHint(
-            "Modbus\xE4\xB8\xBB\xE7\xAB\x99: "
-            "\xE8\xBF\x9E\xE6\x8E\xA5\xE4\xB8\xAD..."); /* Modbus主站: 连接中... */
+        /* [已连接别被覆盖 2026-10-28] 串口 RTU 的 open() 成功即同步置
+         * Connected——信号先挂后连（见上），状态槽此刻已把状态行刷成
+         * 「已连接(轮询中)」；此处再无条件写「连接中...」会把它盖回去
+         * （用户实证：一直显示连接中）。故按当前态择文案。 */
+        if (XModbusDevice_state(dev) != XModbusDevice_ConnectedState) {
+            mb_masterStateText(
+                "\xE8\xBF\x9E\xE6\x8E\xA5\xE4\xB8\xAD..."); /* 连接中... */
+            mb_masterPushHint(
+                "Modbus\xE4\xB8\xBB\xE7\xAB\x99: "
+                "\xE8\xBF\x9E\xE6\x8E\xA5\xE4\xB8\xAD..."); /* Modbus主站: 连接中... */
+        }
         XMemset(s_mbDoWritten, 0, sizeof(s_mbDoWritten)); /* 重连后模块线圈态=初始 0。 */
         /* [连接门控] 连接成功 DO 圆圈可点。 */
         {
@@ -2105,19 +2206,9 @@ static void mb_masterStartEngine(void)
         mb_masterSetRegCfgEnabled(false);
         XPushButton_setText_2(s_mb.connectBtn,
                               "\xE6\x96\xAD\xE5\xBC\x80"); /* 断开 */
-        XObject_connect_1((XObject*)dev,
-                          (size_t)XModbusDevice_stateChanged_signal(dev,
-                              XModbusDevice_UnconnectedState),
-                          (XObject*)s_mb.root, mb_masterStateSlot,
-                          XConnectionType_Direct);
-        /* [连接反馈 2026-10-27] 错误信号挂接：连接失败/通信错误的
-         * 具体原因走此路（此前设备 errorOccurred 无页面监听）。 */
-        XObject_connect_1((XObject*)dev,
-                          (size_t)XModbusDevice_errorOccurred_signal(dev,
-                              XModbusDevice_ConnectionError),
-                          (XObject*)s_mb.root, mb_masterErrorSlot,
-                          XConnectionType_Direct);
     } else {
+        /* 连接失败：摘引用（状态槽/错误槽以 s_mb.device 为准）再销毁。 */
+        s_mb.device = NULL;
         XObject_deleteLater(dev);
         if (s_mb.stateLabel)
             XLabel_setText_2(s_mb.stateLabel,
@@ -2399,12 +2490,14 @@ static void mb_slaveRebuildMap(void)
      * 「未配置点=0」）。寄存器（XVector 路径）扩容实测正常，照旧。 */
     if (s_mbSlave.unitIn && s_mbSlave.unitCoil &&
         s_mbSlave.unitIr && s_mbSlave.unitHr) {
+        /* [2026-10-28 数量可归零] 0 行=server 不模拟该区：寄存器单元
+         * 直配 0 容量，主站读任何地址都吃 IllegalDataAddress（与真实
+         * 「无该寄存器区」设备口径一致，可用于模拟 MT3A 类纯 IO 模块）。
+         * 寄存器走 XVector resize，0 容量安全；位区不在本函数改容。 */
         XModbusDataUnit_setValueCount(s_mbSlave.unitIr,
-                                      (size_t)(s_mbSlave.irCount > 0
-                                                  ? s_mbSlave.irCount : 1));
+                                      (size_t)s_mbSlave.irCount);
         XModbusDataUnit_setValueCount(s_mbSlave.unitHr,
-                                      (size_t)(s_mbSlave.hrCount > 0
-                                                  ? s_mbSlave.hrCount : 1));
+                                      (size_t)s_mbSlave.hrCount);
         return;
     }
     map = XModbusDataUnitMap_create();
@@ -2427,16 +2520,14 @@ static void mb_slaveRebuildMap(void)
     }
     unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                      XModbusInputRegisters, 0,
-                                     (size_t)(s_mbSlave.irCount > 0
-                                                  ? s_mbSlave.irCount : 1));
+                                     (size_t)s_mbSlave.irCount);
     if (unit) {
         XMap_insert_base((XMapBase*)map, &s_mbSlave.irEnum, unit);
         XClassDelete(unit);
     }
     unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                      XModbusHoldingRegisters, 0,
-                                     (size_t)(s_mbSlave.hrCount > 0
-                                                  ? s_mbSlave.hrCount : 1));
+                                     (size_t)s_mbSlave.hrCount);
     if (unit) {
         XMap_insert_base((XMapBase*)map, &s_mbSlave.hrEnum, unit);
         XClassDelete(unit);
@@ -3245,7 +3336,7 @@ static void mb_slaveApplyChannelParams(void)
         const char* name = s_mbSlave.serialNameCombo
                 ? XComboBox_currentText_2(s_mbSlave.serialNameCombo) : "";
         int baud = 9600;
-        if (!name || !name[0]) name = "/dev/ttyS1";
+        if (!name || !name[0]) name = MB_DEFAULT_SERIAL_NAME;
         if (s_mbSlave.serialBaudCombo)
             baud = atoi(XComboBox_currentText(s_mbSlave.serialBaudCombo));
         if (baud <= 0) baud = 9600;
@@ -3262,6 +3353,31 @@ static void mb_slaveApplyChannelParams(void)
             XModbusDevice_setConnectionParameter_move(
                 (XModbusDevice*)srv,
                 XModbusDevice_SerialBaudRateParameter, var);
+            XClassDelete((XClass*)var);
+            var = NULL;
+        }
+        /* 8N1：与主站同口径（主站侧同样显式写死这三个参数）。 */
+        var = XVariant_create_int(XSerialPort_Data8);
+        if (var) {
+            XModbusDevice_setConnectionParameter_move(
+                (XModbusDevice*)srv,
+                XModbusDevice_SerialDataBitsParameter, var);
+            XClassDelete((XClass*)var);
+            var = NULL;
+        }
+        var = XVariant_create_int(XSerialPort_NoParity);
+        if (var) {
+            XModbusDevice_setConnectionParameter_move(
+                (XModbusDevice*)srv,
+                XModbusDevice_SerialParityParameter, var);
+            XClassDelete((XClass*)var);
+            var = NULL;
+        }
+        var = XVariant_create_int(XSerialPort_OneStop);
+        if (var) {
+            XModbusDevice_setConnectionParameter_move(
+                (XModbusDevice*)srv,
+                XModbusDevice_SerialStopBitsParameter, var);
             XClassDelete((XClass*)var);
             var = NULL;
         }
@@ -3378,6 +3494,23 @@ static void mb_slaveStartStop(void)
         if (s_mbSlave.startBtn)
             XPushButton_setText_2(s_mbSlave.startBtn,
                                   "\xE5\x90\xAF\xE5\x8A\xA8");  /* 启动 */
+        /* [诊断 2026-10-28] 失败原因只落在标签上，串口打不开时无从下手；
+         * 这里把通道/端口/波特率/框架错误串打到日志。 */
+        {
+            int channel = s_mbSlave.channelCombo
+                            ? XComboBox_currentIndex(s_mbSlave.channelCombo) : 0;
+            const char* port = "";
+            int baud = 0;
+            XString* err = XModbusDevice_errorString((XModbusDevice*)s_mbSlave.server);
+            if (channel == 1 && s_mbSlave.serialNameCombo)
+                port = XComboBox_currentText_2(s_mbSlave.serialNameCombo);
+            if (channel == 1 && s_mbSlave.serialBaudCombo)
+                baud = atoi(XComboBox_currentText(s_mbSlave.serialBaudCombo));
+            XPrintf("XGuiWindowDemo: mbSlave start FAILED ch=%d port=%s baud=%d err=%s\n",
+                    channel, port ? port : "", baud,
+                    err ? XString_toUtf8(err) : "");
+            if (err) XClassDelete((XClass*)err);
+        }
     }
 }
 
@@ -3480,9 +3613,9 @@ static void mb_slaveApplyRegCounts(void)
     XTableWidget* tabs[2];
     int counts[2];
     int t;
-    if (newIr < 1) newIr = 1;
+    if (newIr < 0) newIr = 0;   /* [2026-10-28 数量可归零] 0 行=不模拟该区。 */
     if (newIr > MB_SLAVE_REG_MAX_ROWS) newIr = MB_SLAVE_REG_MAX_ROWS;
-    if (newHr < 1) newHr = 1;
+    if (newHr < 0) newHr = 0;
     if (newHr > MB_SLAVE_REG_MAX_ROWS) newHr = MB_SLAVE_REG_MAX_ROWS;
     tabs[0] = s_mbSlave.irTable;   tabs[1] = s_mbSlave.hrTable;
     counts[0] = newIr;             counts[1] = newHr;
@@ -3873,10 +4006,10 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     if (s_mb.tcpAddrEdit) {
         /* [联调] env XGUI_DEMO_MB_HOST 预置服务器地址（真机远程 IO 直连）。 */
         {
-            const char* hostEnv = XSystem_environment("XGUI_DEMO_MB_HOST");
+            char hostEnv[64];
+            mb_envCopy(hostEnv, sizeof(hostEnv), "XGUI_DEMO_MB_HOST");
             XLineEdit_setText(s_mb.tcpAddrEdit,
-                              (hostEnv && hostEnv[0]) ? hostEnv
-                                                      : "127.0.0.1");
+                              hostEnv[0] ? hostEnv : "127.0.0.1");
         }
         XWidget_setFixedWidth((XWidget*)s_mb.tcpAddrEdit, 120);
         XWidget_setFixedHeight((XWidget*)s_mb.tcpAddrEdit, 24);
@@ -3887,9 +4020,10 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     if (s_mb.tcpPortEdit) {
         /* [联调] env XGUI_DEMO_MB_PORT 预置端口。 */
         {
-            const char* portEnv = XSystem_environment("XGUI_DEMO_MB_PORT");
+            char portEnv[32];
+            mb_envCopy(portEnv, sizeof(portEnv), "XGUI_DEMO_MB_PORT");
             XLineEdit_setText(s_mb.tcpPortEdit,
-                              (portEnv && portEnv[0]) ? portEnv : "15020");
+                              portEnv[0] ? portEnv : "15020");
         }
         XWidget_setFixedWidth((XWidget*)s_mb.tcpPortEdit, 62);
         XWidget_setFixedHeight((XWidget*)s_mb.tcpPortEdit, 24);
@@ -3967,9 +4101,10 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     if (s_mb.inLbl)
         XBoxLayout_addWidget(&s_mb.layIo, (XWidget*)s_mb.inLbl);
     {
-        const char* inEnv = XSystem_environment("XGUI_DEMO_MB_IN");
+        char inEnv[32];
+        mb_envCopy(inEnv, sizeof(inEnv), "XGUI_DEMO_MB_IN");
         s_mb.inCountSpin = mb_buildSpin(s_mb.root, 60, 0, 64,
-                                        (inEnv && inEnv[0]) ? atoi(inEnv) : 8);
+                                        inEnv[0] ? atoi(inEnv) : 8);
     }
     if (s_mb.inCountSpin)
         XBoxLayout_addWidget(&s_mb.layIo, (XWidget*)s_mb.inCountSpin);
@@ -3979,10 +4114,10 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     if (s_mb.outLbl)
         XBoxLayout_addWidget(&s_mb.layIo, (XWidget*)s_mb.outLbl);
     {
-        const char* outEnv = XSystem_environment("XGUI_DEMO_MB_OUT");
+        char outEnv[32];
+        mb_envCopy(outEnv, sizeof(outEnv), "XGUI_DEMO_MB_OUT");
         s_mb.outCountSpin = mb_buildSpin(s_mb.root, 60, 0, 64,
-                                         (outEnv && outEnv[0]) ? atoi(outEnv)
-                                                               : 8);
+                                         outEnv[0] ? atoi(outEnv) : 8);
     }
     if (s_mb.outCountSpin)
         XBoxLayout_addWidget(&s_mb.layIo, (XWidget*)s_mb.outCountSpin);
@@ -4004,8 +4139,9 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
                       XConnectionType_Direct);
     /* [联调] env XGUI_DEMO_MB_POLL 预置轮询周期 ms（10..5000）。 */
     {
-        const char* pollEnv = XSystem_environment("XGUI_DEMO_MB_POLL");
-        if (pollEnv && pollEnv[0]) {
+        char pollEnv[32];
+        mb_envCopy(pollEnv, sizeof(pollEnv), "XGUI_DEMO_MB_POLL");
+        if (pollEnv[0]) {
             int pv = atoi(pollEnv);
             if (pv >= 10 && pv <= 5000)
                 XSpinBox_setValue(s_mb.pollSpin, pv);
@@ -4145,7 +4281,9 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
                           XConnectionType_Direct);
     }
     s_mb.irAddr = 0;
-    s_mb.irCountSpin = mb_buildSpin(s_mb.root, 64, 1, 16, 16);
+    /* [2026-10-28 数量可归零] min=0：对无 IR/HR 区的远程 IO（如 MT3A-
+     * IO1632，RO=RW=0）允许配 0，轮询相位跳过即不再吃异常。 */
+    s_mb.irCountSpin = mb_buildSpin(s_mb.root, 64, 0, 16, 16);
     if (s_mb.irCountSpin) {
         XBoxLayout_addWidget(&s_mb.layIrTitle, (XWidget*)s_mb.irCountSpin);
         XObject_connect_1((XObject*)s_mb.irCountSpin,
@@ -4214,7 +4352,7 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
                           XConnectionType_Direct);
     }
     s_mb.hrAddr = 0;
-    s_mb.hrCountSpin = mb_buildSpin(s_mb.root, 64, 1, 16, 16);
+    s_mb.hrCountSpin = mb_buildSpin(s_mb.root, 64, 0, 16, 16);
     if (s_mb.hrCountSpin) {
         XBoxLayout_addWidget(&s_mb.layHrTitle, (XWidget*)s_mb.hrCountSpin);
         XObject_connect_1((XObject*)s_mb.hrCountSpin,
@@ -4258,6 +4396,10 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     if (s_mb.hrTable)
         XBoxLayout_addWidget(&s_mb.layRoot, (XWidget*)s_mb.hrTable);
     s_mb.hrCount = 16;
+    /* [2026-10-28 纵向布局收口] 表格行数少时余白不再均摊到上部各行
+     * （XBoxLayout 无 stretch 时按全部条目均分，图 2 症状根源）：尾部
+     * 收一个 stretch，内容恒从上往下堆叠，余白全留底部。 */
+    XBoxLayout_addStretch(&s_mb.layRoot, 1);
     /* 装配收口：内容根挂布局器；内容根作 scroll 内容件（水平 AlwaysOff,
      * 竖条 AsNeeded=全页唯一滚动条；超高由竖滚承担）。 */
     XWidget_setLayout(s_mb.pageRoot, (XLayout*)&s_mb.layRoot);
@@ -4267,8 +4409,9 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     /* [程序化数量] env XGUI_DEMO_MB_COUNT=n：IR/HR 两表数量 SpinBox 同置
        n 并触发扩缩（动态行的程序化验证通道）。 */
     {
-        const char* cntEnv = XSystem_environment("XGUI_DEMO_MB_COUNT");
-        if (cntEnv && s_mb.irCountSpin && s_mb.hrCountSpin) {
+        char cntEnv[32];
+        mb_envCopy(cntEnv, sizeof(cntEnv), "XGUI_DEMO_MB_COUNT");
+        if (cntEnv[0] && s_mb.irCountSpin && s_mb.hrCountSpin) {
             int n = atoi(cntEnv);
             if (n >= 1 && n <= 16) {
                 XSpinBox_setValue(s_mb.irCountSpin, n);
@@ -4283,6 +4426,52 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     /* 两表首拍定尺（fit 链随后每拍跟随；宽度未定走最小可读宽兜底）。 */
     mb_masterRegSyncViewport();
 
+    /* [串口模式联调] env XGUI_DEMO_MB_SERIAL=1：把通道切到串口 RTU
+     * （等价用户选择 combo 第 2 项，走 activated 槽完整路径），供串口
+     * 模式截图/回归与 485 联调。env XGUI_DEMO_MB_SERIAL_PORT=COM17：
+     * 指定下拉里的端口名（485 转换器口常不是枚举首项）。
+     * [顺序约束 2026-10-28] 本块必须早于 AUTOSTART 块——自动连接读的是
+     * **当下**的通道与端口下拉值，晚切通道则连接走的是 TCP。 */
+    {
+        char serialEnv[32];
+        char serialPortEnv[64];
+        char baudEnv[32];
+        mb_envCopy(serialEnv, sizeof(serialEnv), "XGUI_DEMO_MB_SERIAL");
+        mb_envCopy(serialPortEnv, sizeof(serialPortEnv),
+                   "XGUI_DEMO_MB_SERIAL_PORT");
+        mb_envCopy(baudEnv, sizeof(baudEnv), "XGUI_DEMO_MB_BAUD");
+        if (baudEnv[0] && s_mb.serialBaudCombo) {
+            int b = atoi(baudEnv);
+            if (b > 0) {
+                char buf[16];
+                int idx = -1;
+                int i;
+                int n = XComboBox_count(s_mb.serialBaudCombo);
+                snprintf(buf, sizeof(buf), "%d", b);
+                for (i = 0; i < n; ++i) {
+                    const char* item =
+                        XComboBox_itemText_2(s_mb.serialBaudCombo, i);
+                    if (item && strcmp(item, buf) == 0) { idx = i; break; }
+                }
+                if (idx < 0) {
+                    XComboBox_addItem_2(s_mb.serialBaudCombo, buf);
+                    idx = XComboBox_count(s_mb.serialBaudCombo) - 1;
+                }
+                XComboBox_setCurrentIndex(s_mb.serialBaudCombo, idx);
+            }
+        }
+        if (serialPortEnv[0] && s_mb.serialNameCombo)
+            mb_serialComboSelect(s_mb.serialNameCombo, serialPortEnv);
+        if (serialEnv[0] && strcmp(serialEnv, "0") != 0 &&
+            s_mb.channelCombo) {
+            XComboBox_setCurrentIndex(s_mb.channelCombo, MB_MASTER_RTU);
+            mb_masterChannelSlot(NULL, NULL);
+            XPrintf("XGuiWindowDemo: modbus channel=RTU (serial mode) serial=%s\n",
+                    s_mb.serialNameCombo
+                        ? XComboBox_currentText_2(s_mb.serialNameCombo)
+                        : "(none)");
+        }
+    }
     /* [端到端联调入口] env XGUI_DEMO_MB_AUTOSTART=master：构建后程序化
      * 连接（XAbstractButton_click 走完整激活流程；回环联调用）。
      * env XGUI_DEMO_MB_DO=索引列表(逗号分隔)：连接后 2 秒逐个勾选 DO——
@@ -4290,8 +4479,9 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
      * [2026-10-24] regread 角色保留只连不读：寄存器区已常驻轮询，无手
      * 动读按钮可点。 */
     {
-        const char* autoRole = XSystem_environment("XGUI_DEMO_MB_AUTOSTART");
-        if (autoRole && (strcmp(autoRole, "master") == 0 ||
+        char autoRole[32];
+        mb_envCopy(autoRole, sizeof(autoRole), "XGUI_DEMO_MB_AUTOSTART");
+        if (autoRole[0] && (strcmp(autoRole, "master") == 0 ||
                          strcmp(autoRole, "regread") == 0 ||
                          strcmp(autoRole, "disconnect") == 0) &&
             s_mb.connectBtn) {
@@ -4301,8 +4491,9 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
         {
             /* [断开回归联调] env=XGUI_DEMO_MB_AUTOSTART=disconnect：
              * 连接后 5 秒程序化点断开（用户点击的等价路径）。 */
-            const char* doEnv = XSystem_environment("XGUI_DEMO_MB_DO");
-            if (doEnv && strcmp(doEnv, "all") == 0 && s_mb.allOnBtn) {
+            char doEnv[64];
+            mb_envCopy(doEnv, sizeof(doEnv), "XGUI_DEMO_MB_DO");
+            if (doEnv[0] && strcmp(doEnv, "all") == 0 && s_mb.allOnBtn) {
                 /* 全开回归：5 秒后程序化点「全开」。 */
                 XTimer* ta = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
                 if (ta) {
@@ -4313,7 +4504,7 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
                     s_mb.doAutoList = XString_create_utf8("all");
                     s_mbDoAutoTimer = ta;
                 }
-            } else if (doEnv && doEnv[0] && s_mb.outCount > 0) {
+            } else if (doEnv[0] && s_mb.outCount > 0) {
                 /* 2 秒后逐个勾选（等首轮连接建立）。 */
                 XTimer* t = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
                 if (t) {
@@ -4327,26 +4518,12 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
             }
         }
     }
-    /* [串口模式截图联调] env XGUI_DEMO_MB_SERIAL=1：构建后把通道切到
-     * 串口 RTU（等价用户选择 combo 第 2 项，走 activated 槽完整路径），
-     * 供截图/回归验证串口参数行布局。 */
-    {
-        const char* serialEnv = XSystem_environment("XGUI_DEMO_MB_SERIAL");
-        if (serialEnv && serialEnv[0] && strcmp(serialEnv, "0") != 0 &&
-            s_mb.channelCombo) {
-            XComboBox_setCurrentIndex(s_mb.channelCombo, MB_MASTER_RTU);
-            mb_masterChannelSlot(NULL, NULL);
-            XPrintf("XGuiWindowDemo: modbus channel=RTU (serial mode) serial=%s\n",
-                    s_mb.serialNameCombo
-                        ? XComboBox_currentText_2(s_mb.serialNameCombo)
-                        : "(none)");
-        }
-    }
     /* [断开回归联调] env AUTOSTART=disconnect：连接后 5 秒程序化点断开
      * （XAbstractButton_click=用户点击等价路径；回归断开 UAF 用）。 */
     {
-        const char* autoRole2 = XSystem_environment("XGUI_DEMO_MB_AUTOSTART");
-        if (autoRole2 && strcmp(autoRole2, "disconnect") == 0 &&
+        char autoRole2[32];
+        mb_envCopy(autoRole2, sizeof(autoRole2), "XGUI_DEMO_MB_AUTOSTART");
+        if (autoRole2[0] && strcmp(autoRole2, "disconnect") == 0 &&
             s_mb.connectBtn) {
             XTimer* t = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
             if (t) {
@@ -4866,8 +5043,9 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
         /* [联调 2026-10-19] env XGUI_DEMO_MB_SLAVE_IN/OUT 预置从站点数
          * （回环联调复现 16 点混合态用；缺省仍 8，同主站 IN/OUT 先例）。 */
         {
-            const char* env = XSystem_environment("XGUI_DEMO_MB_SLAVE_IN");
-            int v = (env && env[0]) ? atoi(env) : 8;
+            char env[32];
+            mb_envCopy(env, sizeof(env), "XGUI_DEMO_MB_SLAVE_IN");
+            int v = env[0] ? atoi(env) : 8;
             if (v < 0 || v > 64) v = 8;
             s_mbSlave.inCountSpin = mb_buildSpin(s_mbSlave.dataArea, 60,
                                                  0, 64, v);
@@ -4949,8 +5127,9 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
         }
         /* [联调 2026-10-19] env XGUI_DEMO_MB_SLAVE_OUT 同上（输出点数）。 */
         {
-            const char* env = XSystem_environment("XGUI_DEMO_MB_SLAVE_OUT");
-            int v = (env && env[0]) ? atoi(env) : 8;
+            char env[32];
+            mb_envCopy(env, sizeof(env), "XGUI_DEMO_MB_SLAVE_OUT");
+            int v = env[0] ? atoi(env) : 8;
             if (v < 0 || v > 64) v = 8;
             s_mbSlave.outCountSpin = mb_buildSpin(s_mbSlave.dataArea, 60,
                                                   0, 64, v);
@@ -5031,7 +5210,7 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
         if (s_mbSlave.irTitleLbl)
             XBoxLayout_addWidget(&s_mbSlave.layIrTitle,
                                  (XWidget*)s_mbSlave.irTitleLbl);
-        s_mbSlave.irCountSpin = mb_buildSpin(s_mbSlave.dataArea, 64, 1,
+        s_mbSlave.irCountSpin = mb_buildSpin(s_mbSlave.dataArea, 64, 0,
                                              MB_SLAVE_REG_MAX_ROWS,
                                              MB_SLAVE_REG_ROWS);
         if (s_mbSlave.irCountSpin) {
@@ -5095,7 +5274,7 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
         if (s_mbSlave.hrTitleLbl)
             XBoxLayout_addWidget(&s_mbSlave.layHrTitle,
                                  (XWidget*)s_mbSlave.hrTitleLbl);
-        s_mbSlave.hrCountSpin = mb_buildSpin(s_mbSlave.dataArea, 64, 1,
+        s_mbSlave.hrCountSpin = mb_buildSpin(s_mbSlave.dataArea, 64, 0,
                                              MB_SLAVE_REG_MAX_ROWS,
                                              MB_SLAVE_REG_ROWS);
         if (s_mbSlave.hrCountSpin) {
@@ -5147,8 +5326,14 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
         if (s_mbSlave.hrTable)
             XBoxLayout_addWidget(&s_mbSlave.layData,
                                  (XWidget*)s_mbSlave.hrTable);
+        /* [2026-10-28 纵向布局收口] 数据区内部同样尾部收 stretch：行数
+         * 再少，八条目恒从上往下堆叠，余白留数据区底部（不均摊）。 */
+        XBoxLayout_addStretch(&s_mbSlave.layData, 1);
     }
 
+    /* [2026-10-28 纵向布局收口] 同主站页：尾部收 stretch，行数再少内容
+     * 也恒从上往下堆叠，余白全留底部（不均摊到上部各行）。 */
+    XBoxLayout_addStretch(&s_mbSlave.layRoot, 1);
     /* 装配收口：内容根挂布局器；scroll 装内容件并定滚动纪律（水平条
      * AlwaysOff，竖条默认 AsNeeded=全页唯一滚动条）。此后堆叠布局重贴
      * scroll 几何即经 MbSlaveScroll resizeEvent→fitScrollContent→内容根
@@ -5180,11 +5365,62 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
      * 未就位时自退避，show/resize 路径再收敛）。 */
     mb_slaveSyncViewport();
 
+    /* [串口从站联调 2026-10-28] env XGUI_DEMO_MB_SLAVE_SERIAL=<端口名>：
+     * 从站页切到串口 RTU 通道并锁定端口（485 联调：板子开从站）。
+     * env XGUI_DEMO_MB_SLAVE_BAUD=<波特率>：指定波特率（缺省沿用下拉
+     * 首项=9600）。二者必须早于 AUTOSTART=slave——启动读的是当下通道与
+     * 端口下拉值。 */
+    {
+        char slaveSerialEnv[64];
+        char slaveBaudEnv[32];
+        mb_envCopy(slaveSerialEnv, sizeof(slaveSerialEnv),
+                   "XGUI_DEMO_MB_SLAVE_SERIAL");
+        mb_envCopy(slaveBaudEnv, sizeof(slaveBaudEnv),
+                   "XGUI_DEMO_MB_SLAVE_BAUD");
+        if (slaveSerialEnv[0]) {
+            if (slaveBaudEnv[0] && s_mbSlave.serialBaudCombo) {
+                /* 波特率下拉按文本匹配（"9600"/"19200"/…），找不到就补一条。 */
+                int b = atoi(slaveBaudEnv);
+                if (b > 0) {
+                    char buf[16];
+                    int idx = -1;
+                    int i;
+                    int n = XComboBox_count(s_mbSlave.serialBaudCombo);
+                    snprintf(buf, sizeof(buf), "%d", b);
+                    for (i = 0; i < n; ++i) {
+                        const char* item =
+                            XComboBox_itemText_2(s_mbSlave.serialBaudCombo, i);
+                        if (item && strcmp(item, buf) == 0) { idx = i; break; }
+                    }
+                    if (idx < 0) {
+                        XComboBox_addItem_2(s_mbSlave.serialBaudCombo, buf);
+                        idx = XComboBox_count(s_mbSlave.serialBaudCombo) - 1;
+                    }
+                    XComboBox_setCurrentIndex(s_mbSlave.serialBaudCombo, idx);
+                }
+            }
+            if (s_mbSlave.serialNameCombo)
+                mb_serialComboSelect(s_mbSlave.serialNameCombo,
+                                     slaveSerialEnv);
+            if (s_mbSlave.channelCombo) {
+                XComboBox_setCurrentIndex(s_mbSlave.channelCombo, 1);
+                mb_slaveOnChannelChanged(NULL, NULL);
+            }
+            XPrintf("XGuiWindowDemo: mbSlave channel=RTU serial=%s baud=%s\n",
+                    s_mbSlave.serialNameCombo
+                        ? XComboBox_currentText_2(s_mbSlave.serialNameCombo)
+                        : "(none)",
+                    s_mbSlave.serialBaudCombo
+                        ? XComboBox_currentText_2(s_mbSlave.serialBaudCombo)
+                        : "(none)");
+        }
+    }
     /* [端到端联调入口] env XGUI_DEMO_MB_AUTOSTART=slave：构建后程序化
      * 启动监听（XAbstractButton_click 走完整激活流程；回环联调用）。 */
     {
-        const char* autoRole = XSystem_environment("XGUI_DEMO_MB_AUTOSTART");
-        if (autoRole && strcmp(autoRole, "slave") == 0 && s_mbSlave.startBtn) {
+        char autoRole[32];
+        mb_envCopy(autoRole, sizeof(autoRole), "XGUI_DEMO_MB_AUTOSTART");
+        if (autoRole[0] && strcmp(autoRole, "slave") == 0 && s_mbSlave.startBtn) {
             XAbstractButton_click((XAbstractButton*)s_mbSlave.startBtn);
             XPrintf("XGuiWindowDemo: modbus autostart slave done\n");
         }

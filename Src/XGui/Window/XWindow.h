@@ -436,6 +436,17 @@ void XWindow_createHandle(XWindow* self);
 XWindowId XWindow_winId(const XWindow* self);
 
 /**
+ * @brief      返回**已存在**的窗口 id，不创建窗口（对标 winId 的只读变体）。
+ * @details    XWindow_winId() 未创建时会惰性建柄（副作用：提前创建平台
+ *             窗口）。光标覆盖同步等「遍历已注册窗口逐个下发」的批量
+ *             路径不得触发建窗——用本函数：仅当窗口已创建且句柄非 0
+ *             时返回该 id，否则返回 0（调用方跳过）。
+ * @param      self 目标窗口；可为 NULL。
+ * @return     已创建的窗口 id；未创建/无效返回 0。
+ */
+XWindowId XWindow_winIdIfCreated(const XWindow* self);
+
+/**
  * @brief      判断窗口是否处于析构（deinit）进行中。
  * @details    析构期复活闸查询：deinit 已摘除应用登记但尚未释放本体时
  *             返回 true。XGuiApplication_addWindow 等登记方据此拒绝把

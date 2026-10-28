@@ -263,6 +263,18 @@ bool XLinkServer_setTickCallback(XLinkServer* self,
                                  void* userData);
 
 /**
+ * @brief      读取当前 tick 回调（供扩展模块做链式保存/还原）。
+ * @param      self 服务端对象；NULL 时不执行任何操作。
+ * @param[out] outCallback 输出：当前 tick 回调（可能为 NULL）。
+ * @param[out] outUserData 输出：当前 tick 用户数据（可能为 NULL）。
+ * @note       扩展模块（如 XLinkFileServer）占用服务端唯一 tick 槽位，
+ *             attach 前保存、detach 时还原，避免业务的周期回调被吞。
+ */
+void XLinkServer_tickCallback_const(XLinkServer* self,
+                                    XLinkServerTickCallback* outCallback,
+                                    void** outUserData);
+
+/**
  * @brief      调整服务端内建节拍周期（运行中即时生效）。
  * @param      self 服务端对象；传入 NULL 时函数不执行任何操作。
  * @param      intervalMs 新周期（毫秒）；0 表示停掉内建节拍（tick 回调与

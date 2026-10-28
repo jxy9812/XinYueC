@@ -74,6 +74,7 @@
 #include "XVector.h"
 #include "XMemory.h"
 #include "XDateTime.h"
+#include "XPrintf.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1278,8 +1279,15 @@ bool XDeviceWiFi_platformOpen(void)
         s_nmRunning = -1;
 
         /* 无无线接口即打开失败：上层据此禁用无线入口，不出现"会话已开、
-         * 列表空、按钮可点但没反应"的半可用状态。 */
-        if (xdevwifi_refreshSlots() == 0) return false;
+         * 列表空、按钮可点但没反应"的半可用状态。留痕区分两种零：常态
+         * "系统真没有无线接口"（errno=0）与枚举本身失败（如进程 fd 耗尽
+         * 致 opendir 失败，2026-10-28 真机回归嫌疑）——事后排查必须能
+         * 分辨这两者。 */
+        if (xdevwifi_refreshSlots() == 0) {
+            XPrintf("XDeviceWiFi_posix: 无线接口枚举为空/失败 errno=%d\n",
+                    errno);
+            return false;
+        }
         /* 有接口但后端全不可用（无 WEXT、无 wpa 控制口、无 NM）：同样如实
          * 失败。逐个槽位判定，任一可用即成功（多网卡不必同源）。 */
         for (i = 0; i < XDEVICE_WIFI_MAX_ADAPTERS; ++i) {

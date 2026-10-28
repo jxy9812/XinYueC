@@ -310,11 +310,18 @@ static void processReceiveBuffer(XModbusRtuSerialServer* server)
                 }
             }
             if (!found) {
-                // 未找到有效帧，若缓冲区过大则清除
-                if (dataSize > MODBUS_RTU_RECEIVE_BUFFER_MAX_SIZE) {
-                    XContainer_clear_base((XContainer*)buffer);
-                }
-                break;
+                /* [滑窗重同步 2026-10-28] 本起点解不出合法帧 ⇒ 丢掉首
+                 * 字节换起点重试。原实现直接 break：扫描只在**同一起点**
+                 * 换长度试，永远够不到后面偏移处的合法帧——缓冲头部一旦
+                 * 压着垃圾/半帧（对端断线瞬间的线路毛刺、break 字节、
+                 * 半截请求），从站从此再也不应答，主站表现为「断开后再
+                 * 连连不上」（实测：主站断开重连后请求全错）。已知功能
+                 * 码的 CRC 失败分支本就滑窗一字节（见下），此处补齐
+                 * 未知功能码分支，两条路径口径一致。 */
+                XByteArray_remove_base(buffer, 0, 1);
+                data = XContainerDataAddr(buffer);
+                dataSize = XByteArray_size_base(buffer);
+                continue;
             }
         } else if ((size_t)frameLen <= dataSize) {
             // 已知帧长度，用 XModbusAdu 验证 CRC
@@ -382,6 +389,8 @@ void XModbusRtuSerialServer_init(XModbusRtuSerialServer* server)
     if (server->m_serialPort) {
         // 设置默认波特率
         XSerialPort_setBaudRate(server->m_serialPort, XSerialPort_Baud19200, XSerialPort_AllDirections);
+        /* 暴露底层串口：XModbusDevice_device() 取用（与 RTU 客户端口径一致）。 */
+        server->m_base.m_base.m_ioDevice = (XIODevice*)server->m_serialPort;
     }
 
     // 初始化帧间延迟（0表示自动计算）
@@ -436,6 +445,58 @@ static bool VXModbusRtuSerialServer_open(XModbusDevice* device)
     if (!server || !server->m_serialPort) {
         XModbusDevice_setError(device, XModbusDevice_ConfigurationError, "No serial port available");
         return false;
+    }
+
+    /* 连接参数 → 串口对象。口径与 XModbusRtuSerialClient_open 完全一致：
+     * 从站不读连接参数时串口名恒为空，open 必失败（表现为「选哪个串口
+     * 都启动不了」），且波特率停在 init 里的 19200 与主站对不上。 */
+    {
+        const XVariant* portNameVar =
+            XModbusDevice_connectionParameter_const(
+                device, XModbusDevice_SerialPortNameParameter);
+        if (portNameVar) {
+            XString* portName = XVariant_toString_const(portNameVar);
+            if (portName) {
+                XSerialPort_setPortName(server->m_serialPort,
+                                       XString_toUtf8(portName));
+            }
+        }
+
+        const XVariant* baudRateVar =
+            XModbusDevice_connectionParameter_const(
+                device, XModbusDevice_SerialBaudRateParameter);
+        if (baudRateVar) {
+            int baudRate = XVariant_toInt(baudRateVar);
+            if (baudRate > 0) {
+                XSerialPort_setBaudRate(server->m_serialPort,
+                                        (int32_t)baudRate,
+                                        XSerialPort_AllDirections);
+            }
+        }
+
+        const XVariant* dataBitsVar =
+            XModbusDevice_connectionParameter_const(
+                device, XModbusDevice_SerialDataBitsParameter);
+        if (dataBitsVar) {
+            XSerialPort_setDataBits(server->m_serialPort,
+                (XSerialPort_DataBits)XVariant_toInt(dataBitsVar));
+        }
+
+        const XVariant* parityVar =
+            XModbusDevice_connectionParameter_const(
+                device, XModbusDevice_SerialParityParameter);
+        if (parityVar) {
+            XSerialPort_setParity(server->m_serialPort,
+                (XSerialPort_Parity)XVariant_toInt(parityVar));
+        }
+
+        const XVariant* stopBitsVar =
+            XModbusDevice_connectionParameter_const(
+                device, XModbusDevice_SerialStopBitsParameter);
+        if (stopBitsVar) {
+            XSerialPort_setStopBits(server->m_serialPort,
+                (XSerialPort_StopBits)XVariant_toInt(stopBitsVar));
+        }
     }
 
     // 如果已经打开，先关闭
@@ -522,14 +583,26 @@ static void VXModbusRtuSerialServer_timerEvent(XObject* obj, XTimerEvent* event)
 
     XTimerId timerId = event->timerId;
 
+    /* [触发即注销 2026-10-28] startTimer 注册的是**重复型**定时器：
+     * 触发≠注销，fd 槽位与调度节点都存续到 killTimer 才释放。三个分支
+     * 旧实现都只把存储 id 置 INVALID——下一次 *TimerStop 因 id 已失效
+     * 杀不掉它，而每轮收包又 start 新定时器 ⇒ 每轮收包永久泄漏一个
+     * ~5ms 重复定时器（fd 表仅 128 槽：485 轮询下几分钟占满，占满后
+     * 全应用再无定时器可用，从站因 processReceiveBuffer 永不触发而
+     * 哑掉；真机 10-28 普查 126/128 全是本类泄漏定时器）。消费触发时
+     * 显式 killTimer。迟到事件的旧 id 同理必须杀（id 槽位复用后误杀
+     * 新定时器无害：语义仍是"接收超时已到"，下轮收包会重启）。 */
+
     // 帧间延迟定时器触发
     if (timerId == server->m_interFrameTimer) {
+        XObject_killTimer(obj, timerId);
         server->m_interFrameTimer = XTIMER_INVALID_ID;
         return;
     }
 
     // 接收缓冲区超时定时器触发
     if (timerId == server->m_receiveBufferTimer) {
+        XObject_killTimer(obj, timerId);
         server->m_receiveBufferTimer = XTIMER_INVALID_ID;
         // 接收缓冲区超时，尝试处理缓冲区中的完整帧
         processReceiveBuffer(server);
@@ -538,9 +611,24 @@ static void VXModbusRtuSerialServer_timerEvent(XObject* obj, XTimerEvent* event)
 
     // 响应延迟定时器触发
     if (timerId == server->m_turnaroundTimer) {
+        XObject_killTimer(obj, timerId);
         server->m_turnaroundTimer = XTIMER_INVALID_ID;
         return;
     }
+
+    /* [迟到事件收口 2026-10-28] 走到这说明 timerId 是**历史上某次**
+     * receiveBufferTimerStart 的旧 id（本类唯一的 startTimer 调用点
+     * 就是接收定时器）。旧实现直接忽略——负载重（全屏渲染+轮询风暴）
+     * 时定时器事件在队列里积压迟到，而每次收数据 receiveBufferTimer-
+     * Start 都 stop 旧+start 新换 id ⇒ 派发时 id 恒不匹配 ⇒ 事件全部
+     * 被丢弃 ⇒ 缓冲只进不出，从站从此不应答（断开重连压力实测：连跑
+     * 3 轮活、第 4 轮起哑掉，RX 打点见 buf 水位 8→16→…→72 无一消化）。
+     * processReceiveBuffer 幂等（无完整帧就空跑），迟到事件照样收口。
+     * 旧 id 同样触发即注销（见上"触发即注销"）：否则每个迟到事件背后
+     * 都挂着一个永不注销的重复定时器。 */
+    XObject_killTimer(obj, timerId);
+    server->m_receiveBufferTimer = XTIMER_INVALID_ID;
+    processReceiveBuffer(server);
 }
 
 static void VXModbusRtuSerialServer_deinit(XModbusRtuSerialServer* server)

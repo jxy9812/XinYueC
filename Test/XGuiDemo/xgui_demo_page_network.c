@@ -1815,7 +1815,11 @@ XWidget* demo_page_network_build(XWidget* parent,
     if (s_net.m_wifi) {
         int wifiError = 0;
         if (!XNetworkWiFi_open(s_net.m_wifi, &wifiError)) {
-            /* 平台无无线能力或资源申请失败：无线入口如实禁用。 */
+            /* 平台无无线能力或资源申请失败：无线入口如实禁用。失败要留痕：
+             * 瞬态失败（如系统 fd 耗尽致 opendir 失败）同样落这里，页面
+             * 构建只此一次，不留痕则事后无从排查（2026-10-28 真机回归）。 */
+            XPrintf("XGuiWindowDemo: 网络设置页 无线会话打开失败 err=%d"
+                    "（入口置灰，切页重进时经 resume 重试）\n", wifiError);
             XClassDelete(s_net.m_wifi);
             s_net.m_wifi = NULL;
         }
@@ -2396,6 +2400,35 @@ void demo_page_network_adapt(XWidget* page)
     net_fitScrollContent(s_net.m_scroll);
 }
 
+/** @brief 页面重新可见：无线会话未开时重试一次并恢复入口。
+ *  @details 无线区可用性在 build 时一次性判定，而打开失败可能是瞬态的
+ *           （真机 2026-10-28 回归：长跑实例内平台打开失败 → 无线区永久
+ *           置灰，直到整个应用重启）。恢复口挂切页重进：已就绪则零开销
+ *           返回；未就绪则重建会话，成功即解锁六个入口并重枚举适配器，
+ *           失败维持置灰并留痕。 */
+void demo_page_network_resume(void)
+{
+#if XNETWORK_ON && XDEVICE_WIFI_ON
+    int wifiError = 0;
+    if (!s_net.m_ready || net_wifiReady()) return;
+    if (!s_net.m_wifi) s_net.m_wifi = XNetworkWiFi_create();
+    if (s_net.m_wifi && XNetworkWiFi_open(s_net.m_wifi, &wifiError)) {
+        XPrintf("XGuiWindowDemo: 网络设置页 无线会话重试成功，恢复入口\n");
+        XWidget_setEnabled((XWidget*)s_net.m_wifiAdapterCombo, true);
+        XWidget_setEnabled((XWidget*)s_net.m_wifiScanBtn, true);
+        XWidget_setEnabled((XWidget*)s_net.m_wifiApCombo, true);
+        XWidget_setEnabled((XWidget*)s_net.m_wifiPassEdit, true);
+        XWidget_setEnabled((XWidget*)s_net.m_wifiConnectBtn, true);
+        XWidget_setEnabled((XWidget*)s_net.m_wifiDisconnectBtn, true);
+        net_wifiRefreshAdapters();
+        net_wifiRefreshInfo();
+    } else {
+        XPrintf("XGuiWindowDemo: 网络设置页 无线会话重试失败 err=%d\n",
+                wifiError);
+    }
+#endif
+}
+
 /* ==================== autotest ==================== */
 
 int demo_page_network_autotest(XWidget* page)
@@ -2595,6 +2628,10 @@ int demo_page_network_autotest(XWidget* page)
 void demo_page_network_adapt(XWidget* page)
 {
     (void)page;
+}
+
+void demo_page_network_resume(void)
+{
 }
 
 #endif /* XNETWORK_ON && XNETWORK_INTERFACE_ON && 控件段 */

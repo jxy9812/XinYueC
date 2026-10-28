@@ -990,6 +990,17 @@ XWindowId XWindow_winId(const XWindow* self)
     return w->m_data->m_winId;
 }
 
+XWindowId XWindow_winIdIfCreated(const XWindow* self)
+{
+    const XWindow* w = self;
+    if (!w || !w->m_data) return 0;
+    if (w->m_data->m_inDestruct) return 0;
+    /* 与框架内部「可用原生句柄」判定同口径（XWindow_setCursor 等处
+     * 用 m_created && m_winId != 0）。不触发惰性建窗。 */
+    if (!w->m_data->m_created || w->m_data->m_winId == 0) return 0;
+    return w->m_data->m_winId;
+}
+
 bool XWindow_isDestructing(const XWindow* self)
 {
     return self && self->m_data && self->m_data->m_inDestruct;
@@ -2372,8 +2383,10 @@ void XWindow_setCursor(XWindow* self, const XCursor* cursor)
        同义，走 clear 通道恢复默认。 */
     if (data->m_created && data->m_winId != 0) {
         if (data->m_cursor)
-            (void)XCursor_applyToWindow((uintptr_t)data->m_winId,
-                                        data->m_cursor);
+            /* [2026-10-28] 经生效口下发：应用覆盖光标存在时优先用
+               覆盖形状（对标 Qt 覆盖光标优先于控件光标）。 */
+            (void)XCursor_applyEffectiveToWindow((uintptr_t)data->m_winId,
+                                                 data->m_cursor);
         else
             (void)XCursor_clearForWindow((uintptr_t)data->m_winId);
     }
@@ -2386,9 +2399,10 @@ void XWindow_unsetCursor(XWindow* self)
     if (!self || !(data = self->m_data)) return;
     XWindow_setCursorInternal(&data->m_cursor, NULL);
 #if XPLATFORMNATIVEWINDOW_ON
-    /* 平台清除路径：XUndefineCursor 恢复窗口默认光标（静默语义同上）。 */
+    /* 平台清除路径：XUndefineCursor 恢复窗口默认光标（静默语义同上）。
+       [2026-10-28] 经生效口：覆盖光标在位时不清（覆盖优先）。 */
     if (data->m_created && data->m_winId != 0)
-        (void)XCursor_clearForWindow((uintptr_t)data->m_winId);
+        (void)XCursor_applyEffectiveToWindow((uintptr_t)data->m_winId, NULL);
 #endif /* XPLATFORMNATIVEWINDOW_ON */
 }
 #else

@@ -344,6 +344,24 @@ bool XCursor_clearForWindow(uintptr_t nativeWindowId)
     return g_cursorBackend->m_clearWindowCursor(nativeWindowId);
 }
 
+bool XCursor_applyEffectiveToWindow(uintptr_t nativeWindowId,
+                                    const XCursor* fallback)
+{
+    /* 覆盖光标优先（对标 Qt QGuiApplication::setOverrideCursor）：应用
+     * 覆盖栈非空时，控件 hover 形状不得顶掉覆盖形状；栈空则回落控件
+     * 光标（fallback），fallback 为 NULL 则清除恢复系统箭头。
+     * [2026-10-28 板子实测根修] 此前覆盖栈只被软件精灵路径读取，硬
+     * 件光标平台（X11/Win32）收不到任何覆盖光标 ⇒ 换外形无效果。 */
+#if XGUIAPPLICATION_ON
+    {
+        const XCursor* override = XGuiApplication_overrideCursor();
+        if (override) return XCursor_applyToWindow(nativeWindowId, override);
+    }
+#endif
+    if (fallback) return XCursor_applyToWindow(nativeWindowId, fallback);
+    return XCursor_clearForWindow(nativeWindowId);
+}
+
 /* ---- 软件精灵公共 API ---- */
 
 void XCursor_setSoftwareCursorEnabled(bool enabled)

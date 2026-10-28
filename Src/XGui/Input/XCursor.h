@@ -272,6 +272,28 @@ bool XCursor_clearForWindow(uintptr_t nativeWindowId);
 /* ==================== 软件光标精灵（无硬件光标平台触摸跟随） ============ */
 
 /**
+ * @brief      把**生效光标**下发到原生窗口（覆盖光标优先）。
+ * @details    对标 Qt：QGuiApplication::setOverrideCursor 的覆盖光标
+ *             优先于控件光标（hover 形状），栈空后回落控件光标。本
+ *             函数是「谁该生效」的唯一判定口：
+ *               1) 应用覆盖栈非空 → 下发栈顶覆盖光标（X11 XDefineCursor
+ *                  / Win32 SetCursor 通道）；
+ *               2) 覆盖栈空 → 下发调用方给的控件/窗口光标 fallback；
+ *               3) fallback 为 NULL → 清除（恢复系统默认箭头）。
+ *             控件光标（XWidget_setCursor/XWindow_setCursor）与应用
+ *             覆盖栈变更（XGuiApplication_setOverrideCursor 等）都经
+ *             此口，保证覆盖光标不被 hover 形状顶掉、栈空后能恢复
+ *             原控件形状。此前覆盖栈仅被软件精灵路径读取，硬件光标
+ *             平台（X11/Win32）完全收不到 ⇒ 换外形无效果
+ *             （2026-10-28 板子实测）。
+ * @param      nativeWindowId 原生窗口句柄（X11 Window / Win32 HWND）。
+ * @param      fallback 覆盖栈为空时使用的控件/窗口光标；可为 NULL。
+ * @return     true 已下发；false 无平台后端/窗口无效（静默）。
+ */
+bool XCursor_applyEffectiveToWindow(uintptr_t nativeWindowId,
+                                    const XCursor* fallback);
+
+/**
  * @brief      内建经典箭头位图尺寸（软件精灵恒回落此位图绘制）。
  * @details    精灵外接矩形在面板坐标里旋转 90/270 时宽高对调，上界
  *             XCURSOR_SW_ARROW_H（平台备份缓冲按此定容）。

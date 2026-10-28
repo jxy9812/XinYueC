@@ -444,6 +444,18 @@ bool XLinkServer_setTickCallback(XLinkServer* self,
     return true;
 }
 
+void XLinkServer_tickCallback_const(XLinkServer* self,
+                                    XLinkServerTickCallback* outCallback,
+                                    void** outUserData)
+{
+    if (!self)
+        return;
+    if (outCallback)
+        *outCallback = self->m_tickCallback;
+    if (outUserData)
+        *outUserData = self->m_tickUserData;
+}
+
 bool XLinkServer_setTickInterval(XLinkServer* self, uint32_t intervalMs)
 {
     if (ISNULL(self, "XLinkServer_setTickInterval self"))

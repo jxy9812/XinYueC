@@ -776,7 +776,9 @@ XWidget* demo_page_atv61_build(XWidget* parent,
 int demo_page_atv61_autotest(XWidget* page)
 {
     int fail = 0;
-    if (!page || page != s_atv.m_root) return -1;
+    /* [整页竖滚] build 返回页宿主 scroll（与调度槽位同源），守卫比对
+     * 口径随之从内容根 m_root 换成 m_scroll，否则自测恒 -1。 */
+    if (!page || page != s_atv.m_scroll) return -1;
 
     if (!s_atv.m_port) { printf("XGuiAutoTest: [FAIL] ATV61 串口下拉缺失\n"); ++fail; }
     else printf("XGuiAutoTest: [PASS] ATV61 串口下拉存在\n");

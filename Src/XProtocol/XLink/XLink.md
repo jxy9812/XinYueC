@@ -1761,10 +1761,107 @@ XClassDelete((XClass*)session);
 >    「无事件停滞 / 事件恢复后同一传输完成」行为锁。
 > 4. **最终状态：功能 621 / 0、质量 69 / 0，`--test xlink-all` 退出码 0。**
 >
-> **Windows 复测指引（唯一遗留）**：在旧 Windows 机拉取本版跑
-> `--test xlink`（预期 621/0）。若仍复现「Open 帧滞留」：抓 XTcpSocket
-> 写缓冲水位与 bytesWritten 事件链（疑点：上传突发后写通知器失活），
-> cdb 命令见下；同时确认 17-5 修正版全绿（排除测试侧残留干扰）。
+> **Windows 复测结果（2026-10-28，本机即"旧 Windows 机"，win32 10.0.19045
+> x64 + VS2022/x64-Debug）**：复现且已定位到层面，**尚未全绿**。五连跑
+> `--test xlink`：615/6、段错误、612/9、615/6、段错误。定性结论：
+>
+> 1. **主因是本机 Windows 环回的传输层停滞**（非 XLink 协议缺陷）：大流量
+>    突发（37KB 分块）结束后，两侧挂起的 overlapped WSASend/WSARecv 完成
+>    整体停滞数秒乃至 20s+ 后成批释放；停滞窗口内双端互无字节 → 静默判线
+>    → 会话被杀 → 下载 Open 永无应答 → 级联失败。与 §14.3 旧观察
+>    （"Open 帧已写出但对端收不到"）完全吻合。
+> 2. **已排除**（逐项插桩实证）：XLink/框架完成管线（IOCP→CQ→SOCK_ACT
+>    序列号四站配对审计零丢失/零串号）、IOCP 端口不唯一（assoc 与轮询
+>    同句柄）、事件循环停摆（pollTick 全程 15ms 存活）、Nagle（
+>    TCP_NODELAY 无改善）、Winsock 第三方 LSP（目录纯净）、半帧卡死
+>    （rx=0）、openMode 丢读位。**裸 socket 100 行复现程序亦可触发停滞**：
+>    `verify/windows_loopback_stall_repro.c`（变体 0/2/3/4、忙轮询/阻塞
+>    等待均复现）——触发点在本机内核/驱动栈，Linux epoll 从不复现。
+> 3. **已落地缓解**：`XLINK_HEARTBEAT_TIMEOUT_MS` 3000→6000（见
+>    `XLink_config.h` 注）。17·三 下载主体从"必挂"降为"偶发残余"
+>    （run5 仅剩"下载不存在文件终局失败"1 项：Open 重发上限先于停滞
+>    恢复耗尽，传输滞留 Opening 未及终局）。停滞更长时仍会破防。
+> 4. **遗留两事项**（下机续作）：(a) 停滞内核触发点——用
+>    `verify/windows_loopback_stall_repro.c` + WinDbg（本机无 cdb，
+>    需装 Debugging Tools 或开 WER LocalDumps）追内核态；(b) 段错误
+>    （2/5，集中于 17·五"无事件观察窗"恢复路径，崩溃点在 FIN→拆连
+>    级联，疑 UAF 未证实）——同样待转储定位。
+>
+> **段错误已根修（2026-10-28 下午，cdb 10.0.26100.7705 + PageHeap 实证）**：
+> 装上 Debugging Tools 后两处 UAF 先后抓到现行并修复——
+>
+> 5. **UAF #1（收尾顺序）**：栈 `xfs_onSessionGone ← XLinkServer_close ←
+>    测试收尾`。`XLinkFileServer_deinit` 不摘钩子，调用方"deinit+释放 fs
+>    早于 XLinkServer_close"时，close 回收会话触发 sessionGone 钩子即以
+>    已释放的 fs 被调用。修复：**deinit 内隐式 detach**（先摘四个钩子再
+>    拆资源，销毁顺序不再敏感）；attach 保存业务 tick 回调、detach 还原
+>    （本类占用服务端唯一 tick 槽位，防业务周期回调被吞；新增
+>    `XLinkServer_tickCallback_const` 读取口）。
+> 6. **UAF #2（引擎会话借用悬垂）**：PageHeap 下必现，栈
+>    `XLinkSession_isReady ← XLinkFileTransfer_pump ← XLinkFileClient_pump`。
+>    传输引擎持有会话**借用指针**，而会话由 XLinkClient 拥有——断线/
+>    重连/手动断开（`XLinkClientPrivate_teardown`）销毁会话后，引擎与
+>    文件客户端继续 pump 即解引用已释放内存。修复：新增
+>    `XLinkFileTransfer_detachSession`（摘引用 + 不发 Abort 地置终局，
+>    防二次 UAF）；`XLinkFileClient` 在**定时器/显式 pump/收帧/abort 四条
+>    路径**加会话一致性守卫（`xfc_sessionValid`：借用指针 ≠ 客户端当前
+>    会话即收尾），覆盖重连换新会话的情形。
+> 7. **附：构建系统缺陷（本机）**：本构建树的 ninja `msvc_deps_prefix`
+>    与 `deps` 数据库实际为空（`ninja -t deps` 全部 #deps 0），**头文件
+>    改动从不触发重编**——曾致"库/测试结构体布局不一致 → RTC 栈校验
+>    abort（EXIT=3）"。改头文件后须 `touch` 相关 .c 或全量重编。此缺陷
+>    也使早前"6s 判线缓解无效"的结论失真（改动当时未编进二进制）。
+> 8. **修复后终态（8 连跑）**：**段错误 0/8**；17·三 端到端（含上传/
+>    下载/不存在文件拒绝）8/8 全绿；残 failures 3~6 项，全部集中于
+>    17·四 Force 上传（7/8）与 17·五 事件恢复（8/8）——插桩确认仍是
+>    环境级停滞（实测两例：握手期 16B Hello 提交后数据永不到达对端、
+>    服务端从未 Ready；Auto 下载 17KB 突发后紧邻的 47B Open 停滞），
+>    非 XLink 缺陷，根治需解决本机内核/驱动栈（见第 4 条 (a)）。
+> 9. **停滞异常的关键签名（2026-10-28 傍晚，供下机续作）**：设备层加
+>    "recv 挂起 3s 无完成即 CancelIoEx 踢挂"实验（已回滚——设备层无法
+>    区分空闲与停滞，触发条件不成立）捕获到异常的**真实形态**：
+>    `CancelIoEx` 返回 NOT_FOUND（操作其实已完成）且 `finishedBytes=0`
+>    ——即栈在连接存活时吐出**虚假 0 字节 recv 完成**且其完成包在
+>    出队前丢失。0 字节完成被既有语义当作"无数据，重挂"静默吞掉，
+>    此后对端发来的数据能否完成新挂起的 recv 视栈状态而定——这就
+>    是"对端 sendOK 而本端永远收不到"的机制。下机可沿两条路根治：
+>    (a) 会话层饥饿看门狗——Ready 态下 `now-lastReceive>3s` 且本端
+>    心跳在发，经新 API（如 `XAbstractSocket_kickPendingIo` → 设备
+>    control）对 recv 做 CancelIoEx 重挂（需同步解决 0 字节完成与
+>    真数据的甄别：完成包丢失时 `finishedBytes` 保留在
+>    `readContext.finishedBytes` 可用作补投递依据）；(b) 换机/换网栈
+>    对比定位驱动因素。写侧停滞（17·五 的 Hello）不可用 CancelIoEx
+>    自愈（取消即丢块、流损坏），只能靠协议层重发（Hello 重发需处理
+>    Ready 态重复 Hello 的 HelloAck 重答）。
+>
+> **换机交接（2026-10-28 收口）**：
+>
+> | 项 | 状态 |
+> |---|---|
+> | 已入库（本分支） | UAF#1（FileServer deinit 摘钩子 + tick 链式还原）、判线 6000ms、UAF#2（`detachSession` + 客户端四路径守卫）、本节文档、复现程序 `verify/windows_loopback_stall_repro.c` |
+> | 本机终态 | 段错误 0/8；17·三 全绿；残余 3~6 项（17·四 Force / 17·五 恢复）= 环境停滞 |
+>
+> **新机验证流程**：
+> 1. 拉取本分支，**全量重编**（勿复用旧构建树；若新机同为中文 MSVC +
+>    Ninja，注意 §第 7 条的依赖库缺陷，编译后可用 `ninja -t deps
+>    <obj>` 抽查是否仍为空）。
+> 2. 跑 `XinYueC_Static.exe --test xlink` **至少 5 次**（停滞是概率性
+>    的，单次全绿不足为凭）。
+> 3. 判读：
+>    - **621/0 稳定** → 坐实旧机环境问题（栈/驱动/杀软），代码侧到此
+>      收口，§第 9 条两条根治路线归档备查；
+>    - **17·四/17·五 同样失败或出现段错误** → Windows 后端代码 bug，
+>      以第 9 条"虚假 0 字节 recv 完成"为线索专项审计
+>      `Drive/windows/Device/Network/XDeviceNetwork_win32.c` 的
+>      OVERLAPPED 生命周期（重点：取消/超时/重挂路径与
+>      `readDispatched` 式去重的缺失——当前代码无此去重）。
+> 4. 段错误抓栈环境：Debugging Tools 安装法 `winsdksetup.exe /features
+>    OptionId.WindowsDesktopDebuggers /installpath <SDK目录> /q`（本机
+>    装于 `D:\Windows Kits\10\Debuggers\x64\`）；PageHeap：
+>    `gflags /p /enable XinYueC_Static.exe /full` 后 cdb 循环跑：
+>    `cdb -G -y <构建目录> -c "sxe -c \"kv 30; q\" av; g; q"
+>    XinYueC_Static.exe --test xlink`（注意 `-c` 与程序参数间不加
+>    `--`；`-G` 而非 `-g`，否则 sxe 注册晚于首崩）。
 
 **下表现象与排查记录保留作归档。**
 
@@ -1787,7 +1884,7 @@ XClassDelete((XClass*)session);
 2. ✅ 全量闸门 `--test xlink-all` 全绿（功能 621 + 质量 69，退出码 0）；
 3. ✅ 本文档 §4/§5/§6/§8/§9/§11 已扩写至 v1.3-dev 并按终态校正；
 4. ✅ demo（`XLinkDemoServer/Client`）已加登录 + 上传/下载剧情（单进程形态覆盖新剧情，随闸门验证）；质量门禁已补文件传输 churn/吞吐/会话统计三项；
-5. ⬜ Windows 旧机复测（平台相关，指引见上方闭环结论；cdb 用法：`cdb -g -G -c "sxe -c \"kv;q\" av; g; q"`，注意 `-c` 与被调试程序参数之间不要加 `--`）。
+5. ✅ Windows 旧机复测已执行（结论见上方"Windows 复测结果"块：环境级传输停滞定性 + 6s 判线缓解 + 复现程序归档 `verify/windows_loopback_stall_repro.c`；**两处段错误 UAF 已用 cdb+PageHeap 抓实并根修**——deinit 未摘钩子、传输引擎会话借用悬垂；残 failures 为环境停滞，根治待内核态定位）。
 
 ### 14.4 新增文件清单
 

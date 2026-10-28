@@ -445,6 +445,8 @@ void XLinkFileServer_init(XLinkFileServer* fs)
     fs->m_policy.m_flags = XLINK_FILESRV_REQUIRE_AUTH;
     fs->m_policy.m_minRole = XLinkAuthRole_User;
     fs->m_inTick = false;
+    fs->m_prevTickCallback = NULL;
+    fs->m_prevTickUserData = NULL;
     for (i = 0; i < (int)XLINK_FILE_MAX_TRANSFERS; ++i) {
         XLinkFileTransfer_init(&fs->m_slots[i].m_transfer);
         fs->m_slots[i].m_used = false;
@@ -457,6 +459,13 @@ void XLinkFileServer_deinit(XLinkFileServer* fs)
     int i;
     if (!fs)
         return;
+    /* 先摘钩子：服务端上仍挂着指向本对象的四个回调（File/tick/
+       sessionGone/preSessionPump）。若调用方随后释放本对象、再销毁
+       服务端，XLinkServer_close 回收会话时会以已释放的 fs 调用
+       sessionGone 钩子 → 释放后使用（实测 Windows 段错误，栈
+       xfs_onSessionGone ← XLinkServer_close）。摘钩在前，销毁顺序
+       即便颠倒也安全。 */
+    XLinkFileServer_detach(fs);
     for (i = 0; i < (int)XLINK_FILE_MAX_TRANSFERS; ++i)
         xfs_releaseSlot(&fs->m_slots[i]);
     if (fs->m_policy.m_rootDir) {
@@ -470,6 +479,8 @@ void XLinkFileServer_deinit(XLinkFileServer* fs)
     fs->m_server = NULL;
     fs->m_attached = false;
     fs->m_inTick = false;
+    fs->m_prevTickCallback = NULL;
+    fs->m_prevTickUserData = NULL;
 }
 
 /* ========================================================================== */
@@ -528,6 +539,10 @@ bool XLinkFileServer_attach(XLinkFileServer* fs, XLinkServer* server)
 {
     if (!fs || !server)
         return false;
+    /* 业务 tick 回调先存下：本类占用服务端唯一 tick 槽位，detach 时
+       还原，否则业务的周期回调被静默吞掉（链式语义，见 §9.13）。 */
+    XLinkServer_tickCallback_const(server, &fs->m_prevTickCallback,
+                                   &fs->m_prevTickUserData);
     fs->m_server = server;
     fs->m_attached = true;
     XLinkServer_setFileCallback(server, xfs_onFileFrame, fs);
@@ -546,9 +561,13 @@ void XLinkFileServer_detach(XLinkFileServer* fs)
         return;
     if (fs->m_server) {
         XLinkServer_setFileCallback(fs->m_server, NULL, NULL);
-        XLinkServer_setTickCallback(fs->m_server, NULL, NULL);
         XLinkServer_setSessionGoneHook(fs->m_server, NULL, NULL);
         XLinkServer_setPreSessionPumpHook(fs->m_server, NULL, NULL);
+        /* tick 槽位还原给业务（本类摘掉自己那份）。 */
+        XLinkServer_setTickCallback(fs->m_server, fs->m_prevTickCallback,
+                                    fs->m_prevTickUserData);
+        fs->m_prevTickCallback = NULL;
+        fs->m_prevTickUserData = NULL;
     }
     fs->m_attached = false;
 }
