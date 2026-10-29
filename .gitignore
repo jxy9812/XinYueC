@@ -525,3 +525,7 @@ probe_src/
 # 安卓 APK 签名密钥（pack_apk.ps1 首跑自动生成；丢了重签=覆盖安装失败，
 # 入库=私钥泄漏。同 xconsole_ssh_hostkey.bin 口径：敏感，只留磁盘）
 platforms/android/signing/
+
+# 仓库根目录的一次性本地探针可执行文件（手工 gcc 直编的临时 exe，如
+# dbl_tap_runner.exe）：源码不在库内、构建系统不产出，纯过程垃圾。
+/*.exe

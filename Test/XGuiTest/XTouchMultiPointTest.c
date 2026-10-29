@@ -14,8 +14,16 @@
 #include "XTouchMultiPointTest.h"
 #include "XWidget.h"
 #include "XWindowEvent.h"
+#include "XGestureEvent.h"   /* 手势事件载荷（减负对齐 QTouchEvent）。 */
 #include "XWindowSystemInterface.h"
 #include "XMemory.h"
+#include "XDateTime.h"   /* 第 6 节：惯性速度采样墙钟间隔/泵拍限时刻。 */
+#if XGUI_ON && XGUIAPPLICATION_ON
+#include "XGuiApplication.h" /* 第 6 节：惯性拍事件泵。 */
+#endif
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+#include "XScrollArea.h" /* 第 6 节：滚动区触摸跟手+惯性回归。 */
+#endif
 #include <stdio.h>
 #include <string.h>
 
@@ -173,22 +181,25 @@ static void TpGestureSink_wheel(XWidget* self, XEvent* event)
 static void TpGestureSink_touchDrag(XWidget* self, XEvent* event)
 {
     TpGestureSink* sink = (TpGestureSink*)self;
-    const XTouchEvent* drag;
+    const XGestureEvent* drag;
     if (XEvent_type(event) != XEVENT_TYPE_TOUCH_DRAG) return;
-    drag = (const XTouchEvent*)event;
-    switch (XTouchEvent_gesture(drag)) {
-    case XTouchGesture_Tap:
+    /* [减负对齐 QTouchEvent 2026-10-29] 手势载荷改 XGestureEvent：拖动
+       四类映射为平移手势的四个状态（Started/Updated/Finished/Canceled）。 */
+    drag = (const XGestureEvent*)event;
+    switch (XGestureEvent_gestureType(drag)) {
+    case XGestureEventType_Tap:
         ++sink->m_gestureTap; /* 通知型：接受与否均不改变合成行为。 */
         break;
-    case XTouchGesture_DoubleTap:
+    case XGestureEventType_DoubleTap:
         ++sink->m_gestureDouble;
         if (sink->m_claimDouble) XEvent_accept(event);
         break;
-    case XTouchGesture_LongPress:
+    case XGestureEventType_TapAndHold:
         ++sink->m_gestureLong;
         if (sink->m_claimLong) XEvent_accept(event);
         break;
-    case XTouchGesture_DragBegin:
+    case XGestureEventType_Pan:
+        if (XGestureEvent_state(drag) != XGestureState_Started) break;
         ++sink->m_gestureDrag;
         if (sink->m_claimDrag) XEvent_accept(event);
         break;
@@ -538,6 +549,203 @@ int XTouchMultiPointTest_run(void)
 
         XClassDeinit(&gs.m_base);
     }
+
+#if XWIDGET_ON && XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+    /* ==================== 第 6 节：滚动区触摸跟手+惯性（2026-10-29） ====
+     * XAbstractScrollArea 触摸滚动通道（XGui 扩展）：DragBegin 认领标
+     * XTouchDragMode_Track → DragUpdate 原始位移流按帧差分写滚动条
+     * （跟手 1:1 无量化，手指方向=内容移动方向，移动端操作习惯）；
+     * DragEnd 按近期采样速度给惯性衰减滚动；不可滚内容/开关关闭不认领
+     * （回落合成滚轮历史语义）。 */
+    {
+        XWidget top2;
+        XScrollArea* sa;
+        XWidget* content;
+        XScrollBar* vsb;
+        XWindow* xw2;
+        uint32_t ts = 10000;
+        (void)XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL);
+        XWidget_init(&top2, NULL, 0);
+        XWidget_setGeometry(&top2, 0, 0, 400, 300);
+        sa = XScrollArea_create(&top2, 0);
+        tp_expect(sa != NULL, "6.0 滚动区创建");
+        XWidget_setGeometry((XWidget*)sa, 0, 0, 200, 200);
+        content = XWidget_create(NULL, 0);
+        XWidget_setGeometry(content, 0, 0, 200, 800);
+        XScrollArea_setWidget(sa, content); /* resizable=false：内容定尺 800 高。 */
+        XAbstractScrollArea_setHorizontalScrollBarPolicy(
+            (XAbstractScrollArea*)sa, (int)XScrollBarPolicy_AlwaysOff);
+        XWidget_show(&top2);
+        XWidget_show((XWidget*)sa);
+        xw2 = (XWindow*)XWidget_windowHandle(&top2);
+        vsb = XAbstractScrollArea_verticalScrollBar((XAbstractScrollArea*)sa);
+        tp_expect(xw2 != NULL && vsb != NULL &&
+                  XScrollBar_maximum(vsb) == 600,
+                  "6.0 竖滚范围就绪（内容 800 > 视口 200 → range 600）");
+
+        /* 6.1 跟手 1:1 + 方向（移动端口径）：手指上滑（y 减小 25px×4 帧）
+         *    → 内容上移 → value 增大，恰好 +100（含越阈帧全量差分）；
+         *    Track 模式零滚轮合成。 */
+        ts = 20000;
+        tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_BEGIN, 21, 100, 180,
+                       XTOUCHPOINT_STATE_PRESSED, ts);
+        {
+            int frame;
+            for (frame = 0; frame < 4; ++frame) {
+                ts += 16;
+                tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_UPDATE, 21, 100,
+                               180 - 25 * (frame + 1),
+                               XTOUCHPOINT_STATE_UPDATED, ts);
+            }
+        }
+        tp_expect(XScrollBar_value(vsb) == 100,
+                  "6.1 drag-track：跟手 1:1（100px 手指=100px 滚动，向上=值增）");
+        tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_END, 21, 100, 80,
+                       XTOUCHPOINT_STATE_RELEASED, ts += 16);
+        tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_CANCEL, 21, 5, 5,
+                       XTOUCHPOINT_STATE_RELEASED, ts += 16);
+
+        /* 6.2 惯性 fling：快速上甩（3 帧 30px/帧、帧距 ~30ms 墙钟）→
+         *    END 后无需触摸事件 value 继续增大；足够泵拍后停稳（值域
+         *    钳口 600 封顶）。 */
+        {
+            int vAfterDrag;
+            int vSettled;
+            int64_t deadline;
+            ts = 40000;
+            tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_BEGIN, 22, 100, 180,
+                           XTOUCHPOINT_STATE_PRESSED, ts);
+            for (ts = 40000; ts < 40120; ts += 16) {
+                deadline = XDateTime_currentMSecsSinceEpoch() + 30;
+                while (XDateTime_currentMSecsSinceEpoch() < deadline) { /* 墙钟间隔喂速度采样 */ }
+                tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_UPDATE, 22, 100,
+                               180 - 30 * ((int)(ts - 40000) / 16 + 1),
+                               XTOUCHPOINT_STATE_UPDATED, ts);
+            }
+            vAfterDrag = XScrollBar_value(vsb);
+            tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_END, 22, 100,
+                           180 - 30 * 3, XTOUCHPOINT_STATE_RELEASED,
+                           ts += 16);
+            /* 惯性泵：~1.2s 内停稳（v0≈900px/s，半衰 ~215ms）。 */
+            deadline = XDateTime_currentMSecsSinceEpoch() + 1200;
+            while (XDateTime_currentMSecsSinceEpoch() < deadline)
+                XGuiApplication_processEvents(XEventLoop_AllEvents);
+            vSettled = XScrollBar_value(vsb);
+            tp_expect(vSettled > vAfterDrag,
+                      "6.2 fling：END 后惯性继续滚动（无需触摸事件）");
+            tp_expect(vSettled <= 600,
+                      "6.2 fling：值域钳口封顶");
+            deadline = XDateTime_currentMSecsSinceEpoch();
+            {
+                int vHold = XScrollBar_value(vsb);
+                int64_t hold = deadline + 150;
+                while (XDateTime_currentMSecsSinceEpoch() < hold)
+                    XGuiApplication_processEvents(XEventLoop_AllEvents);
+                tp_expect(XScrollBar_value(vsb) == vHold,
+                          "6.2 fling：停稳后不再漂移");
+            }
+        }
+
+        /* 6.3 tap 不滚动：同点 BEGIN/END（tap 语义），value 不动。 */
+        {
+            int v = XScrollBar_value(vsb);
+            ts = 60000;
+            tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_BEGIN, 23, 100, 100,
+                           XTOUCHPOINT_STATE_PRESSED, ts);
+            tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_END, 23, 100, 100,
+                           XTOUCHPOINT_STATE_RELEASED, ts + 40);
+            tp_expect(XScrollBar_value(vsb) == v,
+                      "6.3 tap：零滚动（点击语义不受滚动通道影响）");
+            tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_CANCEL, 23, 5, 5,
+                           XTOUCHPOINT_STATE_RELEASED, ts + 60);
+        }
+
+        /* 6.4 不可滚内容不认领：内容 100 < 视口 200（range 0）→拖动零
+         *    滚动（DragBegin 放行，滚轮回落路径值域钳口空转）。 */
+        {
+            XWidget top3;
+            XScrollArea* sb;
+            XWidget* small;
+            XScrollBar* vsb3;
+            XWindow* xw3;
+            XWidget_init(&top3, NULL, 0);
+            XWidget_setGeometry(&top3, 0, 0, 400, 300);
+            sb = XScrollArea_create(&top3, 0);
+            XWidget_setGeometry((XWidget*)sb, 0, 0, 200, 200);
+            small = XWidget_create(NULL, 0);
+            XWidget_setGeometry(small, 0, 0, 200, 100);
+            XScrollArea_setWidget(sb, small);
+            XWidget_show(&top3);
+            XWidget_show((XWidget*)sb);
+            xw3 = (XWindow*)XWidget_windowHandle(&top3);
+            vsb3 = XAbstractScrollArea_verticalScrollBar(
+                (XAbstractScrollArea*)sb);
+            tp_expect(XScrollBar_maximum(vsb3) == 0, "6.4 无滚范围就绪");
+            ts = 70000;
+            tp_gestureStep(xw3, XEVENT_TYPE_TOUCH_BEGIN, 24, 100, 180,
+                           XTOUCHPOINT_STATE_PRESSED, ts);
+            {
+                int frame;
+                for (frame = 0; frame < 4; ++frame) {
+                    ts += 16;
+                    tp_gestureStep(xw3, XEVENT_TYPE_TOUCH_UPDATE, 24, 100,
+                                   180 - 25 * (frame + 1),
+                                   XTOUCHPOINT_STATE_UPDATED, ts);
+                }
+            }
+            tp_gestureStep(xw3, XEVENT_TYPE_TOUCH_END, 24, 100, 80,
+                           XTOUCHPOINT_STATE_RELEASED, ts += 16);
+            tp_expect(XScrollBar_value(vsb3) == 0,
+                      "6.4 不可滚内容：拖动零滚动");
+            tp_gestureStep(xw3, XEVENT_TYPE_TOUCH_CANCEL, 24, 5, 5,
+                           XTOUCHPOINT_STATE_RELEASED, ts += 16);
+            XClassDeinit(&top3);
+        }
+
+        /* 6.5 开关关闭回落滚轮语义：touchScrollEnabled=false → DragBegin
+         *    不认领，历史合成滚轮路径接管（60px 格量化，无惯性）。 */
+        {
+            XAbstractScrollArea_setTouchScrollEnabled(
+                (XAbstractScrollArea*)sa, false);
+            tp_expect(!XAbstractScrollArea_touchScrollEnabled(
+                          (XAbstractScrollArea*)sa),
+                      "6.5 开关回读 false");
+            ts = 80000;
+            tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_BEGIN, 25, 100, 180,
+                           XTOUCHPOINT_STATE_PRESSED, ts);
+            {
+                int frame;
+                int vBefore = XScrollBar_value(vsb);
+                for (frame = 0; frame < 4; ++frame) {
+                    ts += 16;
+                    tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_UPDATE, 25, 100,
+                                   180 - 25 * (frame + 1),
+                                   XTOUCHPOINT_STATE_UPDATED, ts);
+                }
+                tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_END, 25, 100, 80,
+                               XTOUCHPOINT_STATE_RELEASED, ts += 16);
+                /* 滚轮量化：100px 手指=整格 1 格=60px（余数 40px 收口
+                 * 携带但不足一格不滚）；随后泵拍确认无惯性漂移。 */
+                tp_expect(XScrollBar_value(vsb) == vBefore + 60,
+                          "6.5 关闭：回落滚轮量化滚动（+60 而非 +100）");
+                {
+                    int64_t deadline =
+                        XDateTime_currentMSecsSinceEpoch() + 200;
+                    while (XDateTime_currentMSecsSinceEpoch() < deadline)
+                        XGuiApplication_processEvents(XEventLoop_AllEvents);
+                    tp_expect(XScrollBar_value(vsb) == vBefore + 60,
+                              "6.5 关闭：无惯性漂移");
+                }
+            }
+            tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_CANCEL, 25, 5, 5,
+                           XTOUCHPOINT_STATE_RELEASED, ts += 16);
+            XAbstractScrollArea_setTouchScrollEnabled(
+                (XAbstractScrollArea*)sa, true);
+        }
+
+        XClassDeinit(&top2);
+    }
+#endif /* XWIDGET_ON && XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON */
 
     XClassDeinit(&sinkB.m_base);
     XClassDeinit(&sinkA.m_base);

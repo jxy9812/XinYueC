@@ -6,10 +6,52 @@
 #if XPOLL_SCHEDULER_ON
 
 #include <string.h>
+#include "XVector.h"
+
+/* =============== 内部工具 =============== */
+
+/** @brief 在用条目数（动态表实时口径；未建表=0）。 */
+static int schedCount(const XPollScheduler* sched)
+{
+    return (sched && sched->m_entries) ? (int)XVector_size_base(sched->m_entries) : 0;
+}
+
+/** @brief 惰性建表：零初始化内嵌（未经 init）也可直接登记。 */
+static bool schedEnsureTable(XPollScheduler* sched)
+{
+    if (sched->m_entries) return true;
+    sched->m_entries = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                         sizeof(XPollEntry), false);
+    return sched->m_entries != NULL;
+}
+
+/**
+ * @brief 尾交换删除 index：末条移入被删位后弹出（O(1)，不保序）。
+ * @note  不保序是动态化的代价：条目下标只在登记时刻有效。游标随删除
+ *        修正（删除位之后左移一位、越界收敛 0），轮转错峰语义不变。
+ */
+static void schedEraseAt(XPollScheduler* sched, int index)
+{
+    const int last = (int)XVector_size_base(sched->m_entries) - 1;
+    if (index < 0 || index > last) return;
+    if (index != last) {
+        *(XPollEntry*)XVector_at_base(sched->m_entries, index) =
+            *(const XPollEntry*)XVector_at_base(sched->m_entries, last);
+    }
+    XVector_pop_back_base(sched->m_entries);
+    if (sched->m_cursor > index) --sched->m_cursor;
+    if (sched->m_cursor < 0 || sched->m_cursor >= last) sched->m_cursor = 0;
+}
+
+/* =============== 生命周期 =============== */
 
 void XPollScheduler_init(XPollScheduler* sched)
 {
     if (!sched) return;
+    if (sched->m_entries) {
+        XClassDelete(sched->m_entries);
+        sched->m_entries = NULL;
+    }
     memset(sched, 0, sizeof(XPollScheduler));
     sched->m_maxFails = XPOLL_SCHED_DEFAULT_MAX_FAILS;
     sched->m_muteMs = XPOLL_SCHED_DEFAULT_MUTE_MS;
@@ -18,18 +60,25 @@ void XPollScheduler_init(XPollScheduler* sched)
 void XPollScheduler_deinit(XPollScheduler* sched)
 {
     if (!sched) return;
+    if (sched->m_entries) {
+        XClassDelete(sched->m_entries);
+        sched->m_entries = NULL;
+    }
     memset(sched, 0, sizeof(XPollScheduler));
 }
 
 /* =============== 内部查找 =============== */
 
-/** @brief owner 键查找（XVfd 语义；命中首个在用同 owner 条目）。 */
+/** @brief owner 键查找（XVfd 语义；命中首个同 owner 条目）。 */
 static XPollEntry* schedFind(XPollScheduler* sched, XObject* owner)
 {
     int i;
-    for (i = 0; i < XPOLL_SCHED_MAX_ENTRIES; ++i) {
-        if (sched->m_entries[i].m_active && sched->m_entries[i].m_owner == owner)
-            return &sched->m_entries[i];
+    int n;
+    if (!owner) return NULL; /* key 簿记条目 owner 为空，不在此命中 */
+    n = schedCount(sched);
+    for (i = 0; i < n; ++i) {
+        XPollEntry* e = (XPollEntry*)XVector_at_base(sched->m_entries, i);
+        if (e->m_owner == owner) return e;
     }
     return NULL;
 }
@@ -38,10 +87,10 @@ static XPollEntry* schedFind(XPollScheduler* sched, XObject* owner)
 static XPollEntry* schedFindByKey(XPollScheduler* sched, int key)
 {
     int i;
-    for (i = 0; i < XPOLL_SCHED_MAX_ENTRIES; ++i) {
-        if (sched->m_entries[i].m_active && sched->m_entries[i].m_owner == NULL &&
-            sched->m_entries[i].m_unitId == key)
-            return &sched->m_entries[i];
+    int n = schedCount(sched);
+    for (i = 0; i < n; ++i) {
+        XPollEntry* e = (XPollEntry*)XVector_at_base(sched->m_entries, i);
+        if (e->m_owner == NULL && e->m_unitId == key) return e;
     }
     return NULL;
 }
@@ -51,36 +100,28 @@ static XPollEntry* schedFindByKey(XPollScheduler* sched, int key)
 int XPollScheduler_register(XPollScheduler* sched, XObject* owner, void* userData,
                             XPollDueFunc dueFunc, int unitId, uint32_t intervalMs)
 {
-    int i;
+    XPollEntry e;
     if (!sched || !owner || !dueFunc) return -1;
     if (schedFind(sched, owner)) return -1; /* 同设备重复登记拒绝 */
-    for (i = 0; i < XPOLL_SCHED_MAX_ENTRIES; ++i) {
-        XPollEntry* e = &sched->m_entries[i];
-        if (e->m_active) continue;
-        e->m_owner = owner;
-        e->m_userData = userData;
-        e->m_due = dueFunc;
-        e->m_unitId = unitId;
-        e->m_intervalMs = intervalMs;
-        e->m_lastSentMs = 0;
-        e->m_failCount = 0;
-        e->m_muteUntilMs = 0;
-        e->m_active = true;
-        ++sched->m_count;
-        return i;
-    }
-    return -1;
+    if (!schedEnsureTable(sched)) return -1;
+    memset(&e, 0, sizeof(e));
+    e.m_owner = owner;
+    e.m_userData = userData;
+    e.m_due = dueFunc;
+    e.m_unitId = unitId;
+    e.m_intervalMs = intervalMs;
+    if (!XVector_push_back_1_base(sched->m_entries, &e)) return -1;
+    return (int)XVector_size_base(sched->m_entries) - 1;
 }
 
 void XPollScheduler_unregisterOwner(XPollScheduler* sched, XObject* owner)
 {
     int i;
     if (!sched || !owner) return;
-    for (i = 0; i < XPOLL_SCHED_MAX_ENTRIES; ++i) {
-        XPollEntry* e = &sched->m_entries[i];
-        if (!e->m_active || e->m_owner != owner) continue;
-        memset(e, 0, sizeof(XPollEntry));
-        if (sched->m_count > 0) --sched->m_count;
+    /* 倒序删 + 尾交换：换入位（原末位）必已访问过，不漏条目。 */
+    for (i = schedCount(sched) - 1; i >= 0; --i) {
+        const XPollEntry* e = (const XPollEntry*)XVector_at_base(sched->m_entries, i);
+        if (e && e->m_owner == owner) schedEraseAt(sched, i);
     }
 }
 
@@ -96,25 +137,15 @@ bool XPollScheduler_setInterval(XPollScheduler* sched, XObject* owner, uint32_t 
 
 int XPollScheduler_registerKey(XPollScheduler* sched, int key, uint32_t intervalMs)
 {
-    int i;
+    XPollEntry e;
     if (!sched || key < 0) return -1;
     if (schedFindByKey(sched, key)) return -1; /* 同键重复登记拒绝 */
-    for (i = 0; i < XPOLL_SCHED_MAX_ENTRIES; ++i) {
-        XPollEntry* e = &sched->m_entries[i];
-        if (e->m_active) continue;
-        e->m_owner = NULL;
-        e->m_userData = NULL;
-        e->m_due = NULL;          /* 纯簿记条目：tick 恒跳过 */
-        e->m_unitId = key;
-        e->m_intervalMs = intervalMs;
-        e->m_lastSentMs = 0;
-        e->m_failCount = 0;
-        e->m_muteUntilMs = 0;
-        e->m_active = true;
-        ++sched->m_count;
-        return i;
-    }
-    return -1;
+    if (!schedEnsureTable(sched)) return -1;
+    memset(&e, 0, sizeof(e));
+    e.m_unitId = key;             /* owner/due 恒空：纯簿记条目，tick 恒跳过 */
+    e.m_intervalMs = intervalMs;
+    if (!XVector_push_back_1_base(sched->m_entries, &e)) return -1;
+    return (int)XVector_size_base(sched->m_entries) - 1;
 }
 
 /* =============== 节拍与健康簿记 =============== */
@@ -165,19 +196,30 @@ bool XPollScheduler_reportResultKey(XPollScheduler* sched, int key, bool ok, uin
 
 bool XPollScheduler_tick(XPollScheduler* sched, uint64_t nowMs)
 {
-    int i;
     int scanned;
-    if (!sched || sched->m_count <= 0) return false;
-    for (scanned = 0; scanned < XPOLL_SCHED_MAX_ENTRIES; ++scanned) {
+    int count;
+    if (!sched) return false;
+    count = schedCount(sched);
+    if (count <= 0) {
+        sched->m_cursor = 0;
+        return false;
+    }
+    if (sched->m_cursor < 0 || sched->m_cursor >= count) sched->m_cursor = 0;
+    for (scanned = 0; scanned < count; ++scanned) {
         XPollEntry* e;
-        sched->m_cursor = (sched->m_cursor + 1) % XPOLL_SCHED_MAX_ENTRIES;
-        e = &sched->m_entries[sched->m_cursor];
-        if (!e->m_active || e->m_intervalMs == 0 || !e->m_due) continue;
+        XObject* owner;
+        void* userData;
+        sched->m_cursor = (sched->m_cursor + 1) % count;
+        e = (XPollEntry*)XVector_at_base(sched->m_entries, sched->m_cursor);
+        if (!e->m_due || e->m_intervalMs == 0) continue;
         if (e->m_muteUntilMs != 0 && nowMs < e->m_muteUntilMs) continue;
         if (e->m_lastSentMs != 0 && nowMs - e->m_lastSentMs < (uint64_t)e->m_intervalMs) continue;
-        /* 静默到期首拍：解除静默（探活） */
-        if (e->m_muteUntilMs != 0 && nowMs >= e->m_muteUntilMs) e->m_muteUntilMs = 0;
-        e->m_due(e->m_owner, e->m_userData);
+        /* 回调可能增删条目（realloc 搬移表体）：先快照透传参数、解除静默，
+           此后绝不再经由 e 访问表体。 */
+        owner = e->m_owner;
+        userData = e->m_userData;
+        if (e->m_muteUntilMs != 0) e->m_muteUntilMs = 0; /* 静默到期首拍：探活 */
+        e->m_due(owner, userData);
         return true;
     }
     return false;

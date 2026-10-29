@@ -764,6 +764,33 @@ static void hubFillGroupResult(XModbusHub* hub, XModbusHubDevice* dev,
     }
 }
 
+/**
+ * @brief 脏区间块内偏移 → 统一空间虚拟起始地址（按块段表反查）。
+ * @details writeStalled/writeCompleted 的契约参数是 virtualStart；失败沿
+ *          发射点只有块内偏移，必须经段表翻译——远端≠虚拟的映射下直发
+ *          远端地址会让上层把故障挂到错误的点位上。段表未命中属不变量
+ *          破坏（脏区间恒在块内、块恒有段覆盖），退化为首段虚拟起点。
+ */
+static int hubDirtyVirtualStart(const XModbusHubCacheBlock* b,
+                                const XModbusHubDirtyRange* d)
+{
+    const uint32_t r = (uint32_t)b->remoteStart + d->offset;
+    size_t si;
+    for (si = 0; si < XVector_size_base(b->segs); ++si) {
+        const XModbusHubCacheSeg* seg =
+            (const XModbusHubCacheSeg*)XVector_at_base(b->segs, (int64_t)si);
+        if (seg && r >= seg->remoteStart &&
+            r < (uint32_t)seg->remoteStart + seg->count)
+            return (int)(seg->virtualStart + (r - seg->remoteStart));
+    }
+    if (XVector_size_base(b->segs) > 0) {
+        const XModbusHubCacheSeg* seg0 =
+            (const XModbusHubCacheSeg*)XVector_at_base(b->segs, 0);
+        if (seg0) return (int)seg0->virtualStart;
+    }
+    return 0;
+}
+
 /** @brief 按视图切片逐段发 writeCompleted（上层看到的粒度=映射段）。 */
 static void hubEmitWriteDone(XModbusHub* hub, uint16_t type,
                              uint16_t virtualStart, uint16_t count, bool ok)
@@ -1019,17 +1046,18 @@ static bool hubSendNextWrite(XModbusHub* hub, XModbusHubDevice* dev)
         ++d->attempts;                                  /* 下发次数（失败重发累计）。 */
         if (hub->m_writeStallNoticeAt >= 1 &&
             d->attempts >= (uint32_t)hub->m_writeStallNoticeAt) {
+            const int virtualStart = hubDirtyVirtualStart(b, d);
             if (!d->stallNotified) {
                 d->stallNotified = true;
                 XModbusHub_writeStalled_signal(hub, (int)b->type,
-                                               (int)b->remoteStart + d->offset,
+                                               virtualStart,
                                                (int)d->count, (int)d->attempts);
             }
             if (!d->failNotified) {
                 d->failNotified = true;
                 /* [2026-10-29 失败沿] 写失败对上层可见：通道层
                  * XDigitalOutput_writeDone(false) 的故障判据。仍继续重发。 */
-                hubEmitWriteDone(hub, b->type, b->remoteStart + d->offset,
+                hubEmitWriteDone(hub, b->type, (uint16_t)virtualStart,
                                  d->count, false);
             }
         }
@@ -1265,20 +1293,10 @@ bool XModbusHub_removeDevice(XModbusHub* hub, int deviceId)
             for (di = 0; di < XVector_size_base(b->dirty); ++di) {
                 const XModbusHubDirtyRange* d =
                     (const XModbusHubDirtyRange*)XVector_at_base(b->dirty, (int64_t)di);
-                uint16_t vs = 0;
-                size_t si;
                 if (!d) continue;
-                for (si = 0; si < XVector_size_base(b->segs); ++si) {
-                    const XModbusHubCacheSeg* seg =
-                        (const XModbusHubCacheSeg*)XVector_at_base(b->segs, (int64_t)si);
-                    const uint32_t r = (uint32_t)b->remoteStart + d->offset;
-                    if (seg && r >= seg->remoteStart &&
-                        r < (uint32_t)seg->remoteStart + seg->count) {
-                        vs = (uint16_t)(seg->virtualStart + (r - seg->remoteStart));
-                        break;
-                    }
-                }
-                hubEmitWriteDone(hub, b->type, vs, d->count, false);
+                hubEmitWriteDone(hub, b->type,
+                                 (uint16_t)hubDirtyVirtualStart(b, d),
+                                 d->count, false);
             }
         }
     }

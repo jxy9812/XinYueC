@@ -10,6 +10,7 @@
 
 #include "XAbstractScrollArea.h"
 #include "XAbstractScrollArea_Protected.h"
+#include "XGestureEvent.h"   /* 手势事件载荷（减负对齐 QTouchEvent）。 */
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XVarList.h"
@@ -18,10 +19,14 @@
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include "XAlignment.h"
+#include "XDateTime.h"    /* 惯性/速度采样单调毫秒（约束文档时间源规则）。 */
 
 #if XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON
 
 /* ==================== 内部工具 ==================== */
+
+/* 停触摸滚动（定义在本文件触摸滚动节；滚轮/把手按下路径先行引用）。 */
+static void xasa_touchScrollStop(XAbstractScrollArea* self);
 
 /** @brief 滚轮：转发到滚动条步进（对标 QScrollArea 视口滚轮滚动）。
  *         默认滚垂直条，按住 Shift 滚水平条，120 角度 = 3 倍单步，
@@ -34,6 +39,7 @@ static void VX_asa_wheelEvent(XWidget* self, XEvent* event)
     bool shift = false;
     bool horizontal = false;
     if (!area || !event || XEvent_type(event) != XEVENT_TYPE_WHEEL) return;
+    xasa_touchScrollStop(area); /* 滚轮接管：停跟手/惯性（社会滚动让位）。 */
 #if XWINDOWEVENT_ON
     {
         XWheelEvent* we = (XWheelEvent*)event;
@@ -81,6 +87,14 @@ static void xasa_hScrollChangedSlot(XObject* receiver, XVarList* args)
     XAbstractScrollArea_scrollContentsBy_base(self, 1, 0);
 }
 
+/** @brief 滚动条把手按下 → 停触摸滚动（社会滚动接管：把手拖拽与惯性
+ *         不打架；连接随条替换同步挂/摘）。 */
+static void xasa_sliderPressKillSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    if (receiver) xasa_touchScrollStop((XAbstractScrollArea*)receiver);
+}
+
 /** @brief 连接滚动条 valueChanged → 内容滚动虚槽。 */
 static void xasa_connectBar(XAbstractScrollArea* self, XScrollBar* bar,
                             bool horizontal)
@@ -96,6 +110,11 @@ static void xasa_connectBar(XAbstractScrollArea* self, XScrollBar* bar,
                           (size_t)XScrollBar_valueChanged_signal(bar, 0),
                           (XObject*)self, xasa_vScrollChangedSlot,
                           XConnectionType_Direct);
+    XObject_connect_1((XObject*)bar,
+                      (size_t)XAbstractSlider_sliderPressed_signal(
+                          (XAbstractSlider*)bar),
+                      (XObject*)self, xasa_sliderPressKillSlot,
+                      XConnectionType_Direct);
 }
 
 /** @brief 断开滚动条连接（替换滚动条前调用）。 */
@@ -108,6 +127,10 @@ static void xasa_disconnectBar(XAbstractScrollArea* self, XScrollBar* bar,
                          (XObject*)self,
                          horizontal ? xasa_hScrollChangedSlot
                                     : xasa_vScrollChangedSlot);
+    XObject_disconnect_1((XObject*)bar,
+                         (size_t)XAbstractSlider_sliderPressed_signal(
+                             (XAbstractSlider*)bar),
+                         (XObject*)self, xasa_sliderPressKillSlot);
 }
 
 /** @brief 视口/滚动条几何排布前置声明（显隐联动重排用）。 */
@@ -157,6 +180,331 @@ static void xasa_margins(const XAbstractScrollArea* self, int* l, int* t,
     *t = self->m_marginTop;
     *r = self->m_marginRight;
     *b = self->m_marginBottom;
+}
+
+/* ==================== 触摸跟手滚动 + 惯性（XGui 扩展） ====================
+ * [触摸滚动 2026-10-29] 移动端操作习惯的触摸滚动：按住视口拖动，内容
+ * 随手指同向跟移（手指下滑=内容下移=滚向开头），抬手按近端位移采样给
+ * 惯性衰减滚动（fling）。接入点=框架手势状态机的 Track 拖动模式
+ * （DragBegin 认领时标 XGestureDragMode_Track，后续 UPDATE/END/异常收口
+ * 改发 DragUpdate/DragEnd/DragCancel 原始位移流，XWidget.c 状态机）；
+ * 此前触摸拖动只能走「无人接受→合成滚轮」回落路径（60px 一格量化、无
+ * 惯性）。方向口径：主点 dy>0（手下移）→ value 减小 → scrollContentsBy
+ * 平移内容向下——与滚轮/把手同用一套滚动条值域，编程滚动天然一致。 */
+
+/** 惯性步进节拍 ms（粗定时器；dt 按实测毫秒积分，节拍只定调度频率）。 */
+#define XASA_FLING_TICK_MS 16
+/** 启动惯性的最低速度 px/s（低于此值抬手即停：轻放不算甩）。 */
+#define XASA_FLING_START_VEL 150
+/** 惯性停机速度阈值 px/s（衰减到此即停，防无限尾速）。 */
+#define XASA_FLING_STOP_VEL 40
+/** 速度采样窗口 ms（只取最近样本对算速度；抬手前停顿超窗=无惯性）。 */
+#define XASA_VEL_WINDOW_MS 150
+/** 惯性每拍速度衰减（1e-3 域）：16ms ×0.95 ≈ 半衰 215ms，行程
+ *  v0×0.32s（v0=1500px/s → ~480px，对标 Android 列表 fling 观感）。 */
+#define XASA_FLING_DECAY 50
+
+/** @brief 单调毫秒（惯性积分/采样共用一手时钟）。 */
+static int64_t xasa_nowMs(void)
+{
+    return XDateTime_currentMSecsSinceEpoch();
+}
+
+/** @brief 停惯性（撤定时器清状态；幂等）。 */
+static void xasa_flingStop(XAbstractScrollArea* self)
+{
+    if (!self) return;
+    if (self->m_flingTimerId != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_flingTimerId);
+        self->m_flingTimerId = XTIMER_INVALID_ID;
+    }
+    self->m_flingActive = false;
+    self->m_flingVelX = 0;
+    self->m_flingVelY = 0;
+    self->m_flingRemX = 0;
+    self->m_flingRemY = 0;
+}
+
+/** @brief 停跟手+惯性（公共收口：滚轮/resize/隐藏/滚动条把手按下）。 */
+static void xasa_touchScrollStop(XAbstractScrollArea* self)
+{
+    if (!self) return;
+    self->m_touchScrolling = false;
+    self->m_velSampleCount = 0;
+    self->m_velSampleHead = 0;
+    xasa_flingStop(self);
+}
+
+/** @brief 启动惯性（速度过小零操作；定时器宿主=自身，TimerEvent 槽按
+ *         id 守卫只消费本惯性拍，子类业务拍照常链回父类）。 */
+static void xasa_flingStart(XAbstractScrollArea* self, int velX, int velY)
+{
+    if (!self) return;
+    xasa_flingStop(self);
+    {
+        int ax = velX >= 0 ? velX : -velX;
+        int ay = velY >= 0 ? velY : -velY;
+        if (ax < XASA_FLING_START_VEL && ay < XASA_FLING_START_VEL)
+            return; /* 轻放：无惯性。 */
+    }
+    self->m_flingVelX = velX;
+    self->m_flingVelY = velY;
+    self->m_flingRemX = 0;
+    self->m_flingRemY = 0;
+    self->m_flingLastMs = xasa_nowMs();
+    self->m_flingTimerId = XObject_startTimer_ms(
+        (XObject*)self, XASA_FLING_TICK_MS, XTimerType_CoarseTimer);
+    if (self->m_flingTimerId == XTIMER_INVALID_ID)
+        return; /* 无事件环环境：静默不惯性（跟手滚动不受影响）。 */
+    self->m_flingActive = true;
+}
+
+/** @brief 惯性拍：速度衰减 + 位移积分写入滚动条（值域钳位在
+ *         XScrollBar_setValue 内部；端点顶死即停——对标 Android 列表
+ *         边界急停，无回弹）。 */
+static void xasa_flingTick(XAbstractScrollArea* self)
+{
+    int64_t now;
+    int64_t dt;
+    XScrollBar* vsb;
+    XScrollBar* hsb;
+    int velX;
+    int velY;
+    bool alive;
+    if (!self || self->m_flingTimerId == XTIMER_INVALID_ID) return;
+    now = xasa_nowMs();
+    dt = now - self->m_flingLastMs;
+    if (dt <= 0) dt = 1;
+    if (dt > 64) dt = 64; /* 长空窗（挂起/断拍）限幅防跳变。 */
+    self->m_flingLastMs = now;
+    velX = self->m_flingVelX;
+    velY = self->m_flingVelY;
+    /* 指数衰减（1e-3 定标整数算术；dt 实测毫秒）。 */
+    velX = velX * (1000 - (XASA_FLING_DECAY * (int)dt) / XASA_FLING_TICK_MS) / 1000;
+    velY = velY * (1000 - (XASA_FLING_DECAY * (int)dt) / XASA_FLING_TICK_MS) / 1000;
+    self->m_flingVelX = velX;
+    self->m_flingVelY = velY;
+    vsb = XAbstractScrollArea_verticalScrollBar(self);
+    hsb = XAbstractScrollArea_horizontalScrollBar(self);
+    alive = false;
+    /* 纵轴积分：+v*dt 位移（1e-3 px 域）→ 内容随指方向=值减。 */
+    if (vsb && velY != 0) {
+        int64_t acc = (int64_t)self->m_flingRemY +
+                      (int64_t)velY * dt;
+        int step = (int)(acc / 1000);
+        self->m_flingRemY = (int)(acc - (int64_t)step * 1000);
+        if (step != 0) {
+            int before = XScrollBar_value(vsb);
+            XScrollBar_setValue(vsb, before - step);
+            if (XScrollBar_value(vsb) == before)
+                velY = 0; /* 端点顶死：该轴停摆。 */
+            else
+                alive = true;
+        } else {
+            alive = true; /* 亚像素节拍：余数累积中，仍在滑行。 */
+        }
+    }
+    /* 横轴积分：+x=内容右移=值减。 */
+    if (hsb && velX != 0) {
+        int64_t acc = (int64_t)self->m_flingRemX +
+                      (int64_t)velX * dt;
+        int step = (int)(acc / 1000);
+        self->m_flingRemX = (int)(acc - (int64_t)step * 1000);
+        if (step != 0) {
+            int before = XScrollBar_value(hsb);
+            XScrollBar_setValue(hsb, before - step);
+            if (XScrollBar_value(hsb) == before)
+                velX = 0;
+            else
+                alive = true;
+        } else {
+            alive = true;
+        }
+    }
+    {
+        int ax = velX >= 0 ? velX : -velX;
+        int ay = velY >= 0 ? velY : -velY;
+        if (!alive || (ax < XASA_FLING_STOP_VEL && ay < XASA_FLING_STOP_VEL))
+            xasa_flingStop(self); /* 端点/尾速：停机。 */
+    }
+}
+
+/** @brief 采样环复位（DragBegin/收口清空）。 */
+static void xasa_velSamplesReset(XAbstractScrollArea* self)
+{
+    if (!self) return;
+    self->m_velSampleCount = 0;
+    self->m_velSampleHead = 0;
+}
+
+/** @brief 推一帧主点采样（容量 4 满后覆盖最旧）。 */
+static void xasa_velSamplePush(XAbstractScrollArea* self, int x, int y,
+                               int64_t ms)
+{
+    int head;
+    if (!self) return;
+    head = self->m_velSampleHead;
+    self->m_velSampleX[head] = x;
+    self->m_velSampleY[head] = y;
+    self->m_velSampleMs[head] = ms;
+    self->m_velSampleHead = (head + 1) % 4;
+    if (self->m_velSampleCount < 4)
+        ++self->m_velSampleCount;
+}
+
+/** @brief 按采样环估抬手速度 px/s：取窗口内最旧样本对最新样本的位移
+ *         差（跨度 <20ms 抖动大、>XASA_VEL_WINDOW_MS 视为停顿后轻放，
+ *         均不给惯性）。方向与跟手同口径：+y=内容下移方向。 */
+static void xasa_velSampleVelocity(const XAbstractScrollArea* self,
+                                   int64_t nowMs, int* velX, int* velY)
+{
+    int i;
+    int oldest = -1;
+    int newest = -1;
+    *velX = 0;
+    *velY = 0;
+    if (!self || self->m_velSampleCount < 2) return;
+    for (i = 0; i < self->m_velSampleCount; ++i) {
+        if (oldest < 0 ||
+            self->m_velSampleMs[i] < self->m_velSampleMs[oldest])
+            oldest = i;
+        if (newest < 0 ||
+            self->m_velSampleMs[i] > self->m_velSampleMs[newest])
+            newest = i;
+    }
+    if (oldest == newest) return;
+    {
+        int64_t span = self->m_velSampleMs[newest] -
+                       self->m_velSampleMs[oldest];
+        if (span < 20 || span > XASA_VEL_WINDOW_MS) return;
+        *velX = (int)(((int64_t)(self->m_velSampleX[newest] -
+                                 self->m_velSampleX[oldest])) * 1000 / span);
+        *velY = (int)(((int64_t)(self->m_velSampleY[newest] -
+                                 self->m_velSampleY[oldest])) * 1000 / span);
+    }
+}
+
+/** @brief 触摸手势槽（Track 滚动拖动消费）：DragBegin 可滚才认领并标
+ *         Track（不可滚放行=回落合成滚轮历史语义，行为不变）；
+ *         DragUpdate 按帧差分直接写滚动条（跟手无量化）；DragEnd 按采
+ *         样速度给惯性；DragCancel 只停跟手。Tap/DoubleTap/LongPress 与
+ *         非本区认领的位移流一律放行（嵌套滚动区/兄弟手势不受扰）。 */
+static void VX_asa_touchDragEvent(XWidget* self, XEvent* event)
+{
+    XAbstractScrollArea* area = (XAbstractScrollArea*)self;
+    int gestureType;
+    int gestureState;
+    if (!area || !event) return;
+    if (XEvent_type(event) != XEVENT_TYPE_TOUCH_DRAG) return;
+    /* [减负对齐 QTouchEvent 2026-10-29] 手势载荷改 XGestureEvent：拖动
+       四类映射为平移手势的四个状态（Started/Updated/Finished/Canceled，
+       对标 Qt QPanGesture 状态序列）。 */
+    gestureType = (int)XGestureEvent_gestureType((XGestureEvent*)event);
+    gestureState = (int)XGestureEvent_state((XGestureEvent*)event);
+    if (gestureType != (int)XGestureEventType_Pan) {
+        /* Tap/DoubleTap/TapAndHold 与其它手势：不认领不干扰（嵌套滚动
+           区/兄弟手势不受扰）。 */
+        return;
+    }
+    switch (gestureState) {
+    case (int)XGestureState_Started: {
+        XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(area);
+        XScrollBar* hsb = XAbstractScrollArea_horizontalScrollBar(area);
+        XPoint pos;
+        bool scrollable;
+        if (!area->m_touchScrollEnabled) return;
+        scrollable = (vsb && XScrollBar_maximum(vsb) > 0) ||
+                     (hsb && XScrollBar_maximum(hsb) > 0);
+        if (!scrollable) return;
+        xasa_touchScrollStop(area);
+        pos = XGestureEvent_position((XGestureEvent*)event);
+        area->m_touchScrolling = true;
+        area->m_dragLastX = pos.x;
+        area->m_dragLastY = pos.y;
+        xasa_velSamplesReset(area);
+        xasa_velSamplePush(area, pos.x, pos.y, xasa_nowMs());
+        XGestureEvent_setDragMode((XGestureEvent*)event,
+                                  XGestureDragMode_Track);
+        XEvent_accept(event);
+        return;
+    }
+    case (int)XGestureState_Updated: {
+        XPoint pos;
+        int dx;
+        int dy;
+        XScrollBar* bar;
+        if (!area->m_touchScrolling) return;
+        pos = XGestureEvent_position((XGestureEvent*)event);
+        dx = pos.x - area->m_dragLastX;
+        dy = pos.y - area->m_dragLastY;
+        area->m_dragLastX = pos.x;
+        area->m_dragLastY = pos.y;
+        if (dy != 0) {
+            bar = XAbstractScrollArea_verticalScrollBar(area);
+            if (bar) XScrollBar_setValue(bar, XScrollBar_value(bar) - dy);
+        }
+        if (dx != 0) {
+            bar = XAbstractScrollArea_horizontalScrollBar(area);
+            if (bar) XScrollBar_setValue(bar, XScrollBar_value(bar) - dx);
+        }
+        xasa_velSamplePush(area, pos.x, pos.y, xasa_nowMs());
+        XEvent_accept(event);
+        return;
+    }
+    case (int)XGestureState_Finished: {
+        int velX;
+        int velY;
+        if (!area->m_touchScrolling) return;
+        area->m_touchScrolling = false;
+        xasa_velSampleVelocity(area, xasa_nowMs(), &velX, &velY);
+        xasa_velSamplesReset(area);
+        xasa_flingStart(area, velX, velY);
+        XEvent_accept(event);
+        return;
+    }
+    case (int)XGestureState_Canceled: {
+        if (!area->m_touchScrolling) return;
+        /* 异常收口（CANCEL/新序列打断）：只停跟手，不给惯性。 */
+        area->m_touchScrolling = false;
+        xasa_velSamplesReset(area);
+        XEvent_accept(event);
+        return;
+    }
+    default:
+        return;
+    }
+}
+
+/** @brief 惯性定时器拍（id 守卫：只消费本区惯性拍；子类业务拍——如
+ *         XPlainTextEdit 光标闪烁经 XClass_Parent 链入本类——原样链回
+ *         父类槽，历史行为逐位保持）。 */
+static void VX_asa_timerEvent(XObject* object, XTimerEvent* event)
+{
+    XAbstractScrollArea* area = (XAbstractScrollArea*)object;
+    if (!area || !event) return;
+    if (area->m_flingTimerId == XTIMER_INVALID_ID ||
+        XTimerEvent_timerId(event) != area->m_flingTimerId) {
+        XClass_Parent(XObject, EXObject_TimerEvent,
+                      void (*)(XObject*, XTimerEvent*))(object, event);
+        return;
+    }
+    xasa_flingTick(area);
+    XEvent_accept((XEvent*)event);
+}
+
+/** @brief 隐藏即停触摸滚动（惯性拍在隐藏控件上写值是纯浪费）。
+ * @note  [自递归根修 2026-10-29] 父类实现按**槽的真正拥有者**取：
+ *         XClass_Parent(Type, Enum, Sig) 展开为 XVtableGetFunc(
+ *         Type##_class_init(), Enum, Sig)——只按槽位下标读函数指针，
+ *         **不跳过本类自身**；按本类名取被自己重载过的槽即拿到自己 →
+ *         无限递归（切页隐藏页根触发 HideEvent → 递归爆栈，表现为
+ *         点击任意菜单按钮即崩）。HideEvent 槽由 XWidget 提供默认
+ *         实现，故按 XWidget 取。 */
+static void VX_asa_hideEvent(XWidget* self, XEvent* event)
+{
+    if (self) xasa_touchScrollStop((XAbstractScrollArea*)self);
+    XClass_Parent(XWidget, EXWidget_HideEvent,
+                  XWidgetEventSlot)(self, event);
 }
 
 /** @brief 依据策略与内容尺寸更新滚动条可见性与范围。
@@ -331,6 +679,7 @@ static void VX_asa_resizeEvent(XWidget* self, XEvent* event)
     XAbstractScrollArea* area = (XAbstractScrollArea*)self;
     (void)event;
     if (!area || !area->m_viewport) return;
+    xasa_touchScrollStop(area); /* 几何重排：值域即将重算，停跟手/惯性。 */
     xasa_layout(area);
     xasa_updateScrollBars(area);
 }
@@ -431,6 +780,10 @@ XVtable* XAbstractScrollArea_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy,
                              VX_asa_scrollContentsBy);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VX_asa_wheelEvent);
+    /* [触摸滚动 2026-10-29] Track 拖动模式消费 + 惯性拍 + 隐藏停滚。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_TouchDragEvent, VX_asa_touchDragEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VX_asa_timerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_HideEvent, VX_asa_hideEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -481,6 +834,10 @@ void XAbstractScrollArea_init(XAbstractScrollArea* self, XWidget* parent,
         (int)XAbstractSliderOrientation_Horizontal, self, 0);
     self->m_vPolicy = (uint8_t)XScrollBarPolicy_AsNeeded;
     self->m_hPolicy = (uint8_t)XScrollBarPolicy_AsNeeded;
+    /* [触摸滚动 2026-10-29] 跟手/惯性默认开；定时器 id 显式置无效
+     * （XMemset 已清零，XTIMER_INVALID_ID 非零哨兵时防误判）。 */
+    self->m_touchScrollEnabled = true;
+    self->m_flingTimerId = XTIMER_INVALID_ID;
     XWidget_setVisible((XWidget*)self->m_vScrollBar, false);
     XWidget_setVisible((XWidget*)self->m_hScrollBar, false);
     xasa_connectBar(self, self->m_vScrollBar, false);
@@ -821,6 +1178,27 @@ void XAbstractScrollArea_setSizeAdjustPolicy(
     self->m_sizeHintCached = false;
     XSize_init(&self->m_sizeHintCache, 0, 0);
     XWidget_updateGeometry((XWidget*)self);
+}
+
+/* ==================== 触摸滚动（XGui 扩展） ==================== */
+
+void XAbstractScrollArea_setTouchScrollEnabled(XAbstractScrollArea* self,
+                                               bool enabled)
+{
+    if (!self || self->m_touchScrollEnabled == enabled) return;
+    self->m_touchScrollEnabled = enabled;
+    if (!enabled)
+        xasa_touchScrollStop(self); /* 关断即收：跟手/惯性一并停。 */
+}
+
+bool XAbstractScrollArea_touchScrollEnabled(const XAbstractScrollArea* self)
+{
+    return self ? self->m_touchScrollEnabled : false;
+}
+
+void XAbstractScrollArea_stopTouchScroll(XAbstractScrollArea* self)
+{
+    xasa_touchScrollStop(self);
 }
 
 XSize XAbstractScrollArea_minimumSizeHint(const XAbstractScrollArea* self)

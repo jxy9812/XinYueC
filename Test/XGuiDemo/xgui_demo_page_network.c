@@ -25,11 +25,14 @@
  *                信息区高度随回填行数自适应，下游行距整体联动；
  *              - 操作提示随 XNetworkInterface_configSupported 平台化
  *                （有通路=netsh 下发说明；无通路=仅展示与校验）；
- *              - 窄根自适应（2026-10-25 真机口径整改）：页根逻辑宽
- *                <600（与主窗 Material 3 compact 档同源）时 adapt 把
- *                模式行/无线口令行各拆出第二行、IP 双列字段转单列、
- *                编辑框宽随内容宽收缩、可点击控件高抬到 40（手机触控
- *                目标）；宽根形态不动，桌面 1000x700 现状保持。
+ *              - 窄根自适应（2026-10-25 真机口径整改）：页视口逻辑宽
+ *                <640（2026-10-29 自 600 提档，覆盖 800x480 工控真机；
+ *                原与主窗 Material 3 compact 档同源）时 adapt 把模式行/
+ *                无线口令行各拆出第二行、IP 双列字段转单列、编辑框宽随
+ *                视口宽收缩、可点击控件高抬到 40（手机触控目标）；宽根
+ *                形态不动，桌面 1000x700 现状保持。字段/下拉收缩量的
+ *                参考宽一律取视口而非内容根（根宽会被超宽 sizeHint
+ *                顶破，按它算永远不收缩——2026-10-29 真机右列被裁根因）。
  *
  *             autotest 口径：全程非阻塞，绝不真实下发配置（只走非法
  *             输入拒应用门控与枚举/回填断言），避免污染测试机网络。
@@ -82,16 +85,27 @@
 #define NET_CAP_W      80     /**< 字段标题列宽。 */
 #define NET_FIELD_W    300    /**< 输入控件宽。 */
 #define NET_BTN_W      110    /**< 应用按钮宽。 */
-/* 窄根分档（2026-10-25）：断点与主窗 xgui_window_demo.c 的 Material 3
- * compact 口径同源（逻辑宽 <600，手机竖屏必落此档）；触控目标高取
- * 移动端建议的 40 逻辑像素下限——宽屏 22~30 的行高在真机上点不中。 */
-#define NET_COMPACT_MAX_W 600 /**< adapt 窄根档断点（页根逻辑宽）。 */
+/* 窄根分档（2026-10-25）：断点口径原与主窗 xgui_window_demo.c 的
+ * Material 3 compact 同源（逻辑宽 <600，手机竖屏必落此档）。
+ * [2026-10-29 640] 800x480 工控真机整页视口 ~618，原 600 断点刚好躲过
+ * ——行高停在桌面档 22~30，触摸屏点不中（本页注释设计动机即"真机上
+ * 点不中"）。提到 640 让该档真机落触控档（40 高触控目标 + 无线行拆
+ * 分），桌面 818+ 视口不受影响。 */
+#define NET_COMPACT_MAX_W 640 /**< adapt 窄根档断点（页视口逻辑宽）。 */
 #define NET_TOUCH_H       40  /**< 窄根档可点击控件高（触控目标下限）。 */
 /* IPv4/IPv6 两分区并排判据：两列各自的**最小可用宽**之和 + 列距。
- * 各列内容 = 标题列(80/100) + 行距 4 + 编辑框最小 120 + 右余量；
- * 取 374 + 16(列距) = 390 —— 400 逻辑宽的竖屏刚好不够（堆叠），
- * 821 逻辑宽的横屏绰绰有余（并排）。 */
-#define NET_IP_COLS_MIN_W 390
+ * 列最小宽取列内最宽行——模式行（标题 80 + 行距 4 + 模式下拉最小
+ * NET_MODE_COMBO_MIN_W + 行距 8 + 应用钮 110）压过字段行（标题
+ * 80/100 + 行距 4 + 编辑框最小 120），故判据按模式行推导：
+ * 2*(80+4+100+8+110)+12 = 616。
+ * [2026-10-29 根修] 旧判据 390 只算字段行，漏了模式行的定宽下拉与
+ * 应用钮——判了并排却装不下，右列整体被裁出视口（内容根宽=
+ * max(视口, sizeHint)，见 net_adaptFieldWidths 说明）：800x480 真机
+ * （视口 ~618，内容 594）右列六行全部不可达。现按实宽推导，竖屏
+ * 400、真机 618 都判堆叠（编辑框以全宽呈现），桌面 818+ 才并排。 */
+#define NET_MODE_COMBO_MIN_W 100 /**< 模式行下拉并排档最小宽。 */
+#define NET_IP_COLS_MIN_W \
+    (2 * (NET_CAP_W + 4 + NET_MODE_COMBO_MIN_W + 8 + NET_BTN_W) + 12)
 
 /* ==================== 整页竖滚壳（页宿主 + 滚动区） ====================
  * [竖屏滚动 2026-10-25] 手机竖屏（400x869 逻辑）内容远超一屏，原先没有
@@ -2083,16 +2097,31 @@ static void net_page_network_headless_hook(void)
  *  @details 400 逻辑窗减根边距 24 只剩 376 内容宽：IPv4 行「标题 80 +
  *           行距 4 + 编辑 300」= 384 必溢出（真机截图左列贴右缘、右列
  *           整体出窗的根因之一），收缩量按行内最宽标题分别预留。 */
-static void net_adaptFieldWidths(bool compact)
+/** @brief 字段/模式下拉宽度随视口收缩（adapt 几何的落地点）。
+ *  @details 宽度参考**必须用视口宽**（adapt 传入），不能读 m_root 宽：
+ *           XScrollArea 的可伸缩钳制是 内容根宽=max(视口宽, 最小提示,
+ *           sizeHint)（XScrollArea.c updateWidgetGeometry），固定宽子件
+ *           把 sizeHint 撑破视口后根宽恒超限——按根宽算出的收缩量永远
+ *           不收缩，右列停在裁剪态（2026-10-29 真机 800x480 根因：build
+ *           定宽合计 828 > 视口 618，adapt 读到 828 以为空间足够）。
+ *           宽度公式由排布方向唯一决定：并排时每列只有半宽，编辑框/
+ *           模式下拉按列宽收缩；堆叠时吃满整宽，下拉经上限钳回 build
+ *           宽（150/140），两档共用同一条公式，档位含义只剩触控高度与
+ *           无线行拆分。
+ *  @param compact 窄根档标记（宽度公式已由方向决定，仅留档位语义）。
+ *  @param viewportW 滚动区视口宽（adapt 取好的实时值）。 */
+static void net_adaptFieldWidths(bool compact, int viewportW)
 {
     int contentW;
     int colW;
     int v4W;
     int v6W;
+    int comboW;
     int i;
     bool sideBySide;
     XLineEdit* v4Edits[5];
     XLineEdit* v6Edits[5];
+    (void)compact;
     v4Edits[0] = s_net.m_ipEdit;
     v4Edits[1] = s_net.m_maskEdit;
     v4Edits[2] = s_net.m_gwEdit;
@@ -2105,45 +2134,36 @@ static void net_adaptFieldWidths(bool compact)
     v6Edits[2] = s_net.m_v6GwEdit;
     v6Edits[3] = s_net.m_v6Dns1Edit;
     v6Edits[4] = s_net.m_v6Dns2Edit;
-    if (!compact) {
-        /* 宽根：并排时每列只有半宽，编辑框不能再吃满 300——按列宽
-         * 收缩，避免右列越出根边距（横屏 1000 宽时两列各 ~482）。 */
-        sideBySide = XBoxLayout_direction(&s_net.m_ipCols)
-                         == XBoxLayoutDirection_LeftToRight;
-        contentW = s_net.m_root ? XWidget_width(s_net.m_root) - 24 : 0;
-        if (contentW < 200) contentW = 200;
-        colW = sideBySide ? (contentW - 12) / 2 : contentW;
-        v4W = colW - NET_CAP_W - 16;
-        v6W = colW - 100 - 16;
-        if (v4W > NET_FIELD_W) v4W = NET_FIELD_W;
-        if (v4W < 120) v4W = 120;
-        if (v6W > 304) v6W = 304;
-        if (v6W < 120) v6W = 120;
-        for (i = 0; i < 5; ++i) {
-            if (v4Edits[i])
-                XWidget_setFixedWidth((XWidget*)v4Edits[i], v4W);
-            if (v6Edits[i])
-                XWidget_setFixedWidth((XWidget*)v6Edits[i], v6W);
-        }
-        return;
-    }
-    /* 内容宽 = 页根宽 - 根布局左右 contentsMargins(12+12)；下限防极端
-     * 窄根把编辑框压没，上限钳回宽屏常量（中段窄窗不放宽）。
-     * 窄根必为堆叠（400 << NET_IP_COLS_MIN_W），故按整宽算。 */
-    contentW = s_net.m_root ? XWidget_width(s_net.m_root) - 24 : 0;
+    /* 内容宽 = 视口宽 - 根布局左右 contentsMargins(12+12)；下限防极端
+     * 窄根把编辑框压没，上限钳回宽屏常量（中段窄窗不放宽）。 */
+    contentW = viewportW - 24;
     if (contentW < 200) contentW = 200;
-    v4W = contentW - NET_CAP_W - 16;  /* 标题列 80 + 行距 4 + 右余量 12 */
-    v6W = contentW - 100 - 16;        /* 最宽标题「IPv6 地址」列 100 */
+    sideBySide = XBoxLayout_direction(&s_net.m_ipCols)
+                     == XBoxLayoutDirection_LeftToRight;
+    colW = sideBySide ? (contentW - 12) / 2 : contentW;
+    v4W = colW - NET_CAP_W - 16;      /* 标题列 80 + 行距 4 + 右余量 12 */
+    v6W = colW - 100 - 16;            /* 最宽标题「IPv6 地址」列 100 */
     if (v4W > NET_FIELD_W) v4W = NET_FIELD_W;
     if (v4W < 120) v4W = 120;
     if (v6W > 304) v6W = 304;
     if (v6W < 120) v6W = 120;
+    /* 模式行下拉：标题 80 + 行距 4 + 行距 8 + 应用钮 110。并排窄列收缩
+     * 到 NET_MODE_COMBO_MIN_W（并排判据保证装得下），堆叠/宽列经上限
+     * 钳回 build 宽。 */
+    comboW = colW - NET_CAP_W - 4 - 8 - NET_BTN_W;
+    if (comboW > 150) comboW = 150;
+    if (comboW < NET_MODE_COMBO_MIN_W) comboW = NET_MODE_COMBO_MIN_W;
     for (i = 0; i < 5; ++i) {
         if (v4Edits[i])
             XWidget_setFixedWidth((XWidget*)v4Edits[i], v4W);
         if (v6Edits[i])
             XWidget_setFixedWidth((XWidget*)v6Edits[i], v6W);
     }
+    if (s_net.m_v4ModeCombo)
+        XWidget_setFixedWidth((XWidget*)s_net.m_v4ModeCombo, comboW);
+    if (s_net.m_v6ModeCombo)
+        XWidget_setFixedWidth((XWidget*)s_net.m_v6ModeCombo,
+                              comboW > 140 ? 140 : comboW);
 }
 
 /** @brief 窄根档触控高度：可点击控件统一抬到 40 逻辑像素（手机触控
@@ -2222,7 +2242,7 @@ static void net_adaptTouchHeights(bool compact)
  *           且 IPv6 控件与 IPv4 视觉上混成一片。现改为 IPv4 设置、IPv6
  *           设置两个独立分区（各自模式行 + 单列字段），窄根不再需要
  *           搬移模式组、也不再需要双列转单列——结构本身已经是单列。 */
-static void net_applyCompactRows(bool compact)
+static void net_applyCompactRows(bool compact, int viewportW)
 {
 #if XNETWORK_ON && XDEVICE_WIFI_ON
     if (compact) {
@@ -2268,7 +2288,7 @@ static void net_applyCompactRows(bool compact)
 #else
     (void)compact;
 #endif
-    net_adaptFieldWidths(compact);
+    net_adaptFieldWidths(compact, viewportW);
     net_adaptTouchHeights(compact);
 }
 
@@ -2315,11 +2335,13 @@ void demo_page_network_adapt(XWidget* page)
     compact = w < NET_COMPACT_MAX_W;
     if (compact != s_net.m_compact) {
         s_net.m_compact = compact;
-        net_applyCompactRows(compact);
+        net_applyCompactRows(compact, w);
         net_relayout(); /* 折叠/展开态约束（展开开关高等）按新档位重套。 */
     } else {
-        /* 档位未变但方向可能变了（横竖屏切换）：宽度按新方向重算。 */
-        net_adaptFieldWidths(compact);
+        /* 档位未变但方向可能变了（横竖屏切换）：宽度按新方向重算。
+         * 传视口宽 w：字段/下拉的收缩量只能以视口为事实源（见
+         * net_adaptFieldWidths 说明，根宽会被超宽 sizeHint 顶破）。 */
+        net_adaptFieldWidths(compact, w);
     }
     /* 档位未变也要触发框架重排版：展开/收起、信息区行数变化都不改档
      * 位，但内容首选高变了——不重算则滚动范围停在旧值（收起后仍能滚

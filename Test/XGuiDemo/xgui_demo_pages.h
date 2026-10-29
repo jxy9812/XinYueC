@@ -377,6 +377,51 @@ int demo_page_atv61_autotest(XWidget* page);
  */
 void demo_page_atv61_adapt(XWidget* page);
 
+/**
+ * @brief 构建测试菜单/Shell 页（2026-10-29 页索引 22，第 18 扩展页）：
+ *        控制台 `test` 交互菜单树（XTestMenuTest_create）的 GUI 化——
+ *        子菜单进/返回上级 + 动作点击运行（XPrintf 线程级重定向捕获
+ *        打印，XLabel 展示）；Shell 行支持开启/关闭页面内 XConsoleShell、
+ *        输入框执行命令（挂 Test 命令）、clear/cls 清屏。嵌入式裁剪或
+ *        控件缺失时返回 NULL（主文件跳过注册；Shell 段另受
+ *        XCONSOLE_SHELL_ON/IO 联动）。
+ */
+XWidget* demo_page_testmenu_build(XWidget* parent,
+                                  DemoPageStatusFn status, void* user);
+
+/**
+ * @brief 测试菜单页自测（非阻塞：验装配完整、菜单树非空、根层按钮已
+ *        渲染、双栏方向与页宽口径一致；不触发任何测试动作）。
+ */
+int demo_page_testmenu_autotest(XWidget* page);
+
+/**
+ * @brief 测试菜单页横竖屏自适应（页宽 ≥600 双栏菜单|输出，<600 单列）。
+ */
+void demo_page_testmenu_adapt(XWidget* page);
+
+/**
+ * @brief 构建 Shell 页（2026-10-29 页索引 23，第 19 扩展页，自测试菜单
+ *        页拆分独立）：页面内 XConsoleShell 控制台——开启/关闭按钮按需
+ *        创建/销毁 Shell 实例（内存只在开启期间占用），输入框回车/
+ *        发送执行命令（挂 Test 命令），clear/cls 清屏，输出区 XLabel
+ *        展示。Shell 能力裁剪（XCONSOLE_SHELL_ON/IO）或控件缺失时返回
+ *        NULL（主文件跳过注册）。
+ */
+XWidget* demo_page_shell_build(XWidget* parent,
+                               DemoPageStatusFn status, void* user);
+
+/**
+ * @brief Shell 页自测（非阻塞：验装配完整、Shell 缺省关闭、输出缓冲
+ *        缺省未分配——按需内存口径锁）。
+ */
+int demo_page_shell_autotest(XWidget* page);
+
+/**
+ * @brief Shell 页横竖屏自适应（单列竖排天然双档通吃，契约空操作）。
+ */
+void demo_page_shell_adapt(XWidget* page);
+
 #ifdef __cplusplus
 }
 #endif

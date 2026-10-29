@@ -127,6 +127,7 @@
 
 #include "XVirtualKeyboard.h"
 #include "XWidget_Protected.h"
+#include "XGestureEvent.h"   /* 手势事件载荷（减负对齐 QTouchEvent）。 */
 #include "XObject_Protected.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -5142,16 +5143,19 @@ static void VXKeyboard_touchDragEvent(XWidget* self, XEvent* event)
     XPoint pos;
     if (!kb || !event || XEvent_type(event) != XEVENT_TYPE_TOUCH_DRAG)
         return;
-    if (XTouchEvent_gesture((const XTouchEvent*)event) ==
-        (int)XTouchGesture_LongPress) {
+    /* [减负对齐 QTouchEvent 2026-10-29] 手势载荷改 XGestureEvent。 */
+    if (XGestureEvent_gestureType((const XGestureEvent*)event) ==
+        (int)XGestureEventType_TapAndHold) {
         if (kb->m_pressedKey != XKEYBOARD_BUTTON_NONE && kb->m_pressArmed)
             XEvent_accept(event); /* 武装键按住：连删语义自管。 */
         return;
     }
-    if (XTouchEvent_gesture((const XTouchEvent*)event) !=
-        (int)XTouchGesture_DragBegin)
+    if (XGestureEvent_gestureType((const XGestureEvent*)event) !=
+            (int)XGestureEventType_Pan ||
+        XGestureEvent_state((const XGestureEvent*)event) !=
+            (int)XGestureState_Started)
         return;
-    pos = ((const XTouchEvent*)event)->m_position;
+    pos = XGestureEvent_position((const XGestureEvent*)event);
     if (!xkb_touchDragClaimAt(kb, pos.x, pos.y)) return;
     XEvent_accept(event);
 }

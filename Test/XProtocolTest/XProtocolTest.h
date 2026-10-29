@@ -35,6 +35,31 @@ extern "C" {
 	void XDataFrameCommTest();
 	void TJCHMICommTest();
 
+	//XModbus 聚合设备闭环 + 485 战役 + XVfd 变频器闭环（2026-10-29 由独立
+	//main 可执行收编进主程序：实现于 xmodbus_hub_test.c /
+	//xprotocol_campaign_test.c / xfdv_m512_test.c / xfdv_bus485_test.c /
+	//xfdv_atv61_test.c；_run 供 --test/Test 命令分派并回失败数，菜单动作
+	//签名同 XModbusPublicApiTest。运行前提：驱动脚本先行启动对应虚拟从站）
+#if XPROTOCOL_ON && XMODBUS_HUB_ON
+	int XModbusHubTest_runEx(int portA, int portB);
+	int XModbusHubTest_run(void);
+	void XModbusHubTest(XVariant* data);
+	int XProtocolCampaignTest_runEx(const char* baseDir, int tcpPort);
+	int XProtocolCampaignTest_run(void);
+	void XProtocolCampaignTest(XVariant* data);
+#endif
+#if XPROTOCOL_ON && XVFD_ON
+	int XVfdM512Test_runEx(const char* ptyPath);
+	int XVfdM512Test_run(void);
+	void XVfdM512Test(XVariant* data);
+	int XVfdBus485Test_runEx(const char* ptyPath);
+	int XVfdBus485Test_run(void);
+	void XVfdBus485Test(XVariant* data);
+	int XVfdAtv61Test_runEx(const char* ptyPath);
+	int XVfdAtv61Test_run(void);
+	void XVfdAtv61Test(XVariant* data);
+#endif
+
 	//PLC/S7 协议（离线单测 + 集成测试，实现于 XS7Test.c；随 XPLC/XS7 裁剪联动）
 #if XPROTOCOL_ON && XPLC_ON && XS7_ON
 	void XS7TpktTest();

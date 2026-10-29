@@ -776,32 +776,12 @@ typedef struct XTouchPoint
 #define XTOUCHPOINT_STATE_STATIONARY 2
 #define XTOUCHPOINT_STATE_RELEASED   3
 
-/** @brief 触摸手势种类（XGui 扩展；框架手势状态机统一判定后，经
- *         XEVENT_TYPE_TOUCH_DRAG 类型的 XTouchEvent 携带下发，控件经
- *         XWidget 的 TouchDragEvent 虚槽接收，接受与否由控件自定）。
- * @details 判定与下发时机（详见 XWidget.c 主点触摸手势状态机）：
- *          - LongPress：长按间隔到（定时器/惰性兜底），先问控件，接受
- *            则框架不再合成右键 press（CONTEXT_MENU 归控件自管）；
- *          - DragBegin：主点位移越过拖动阈值，先问控件，接受则本序列
- *            转为左键按住拖动仿真（合成 press 续持 + MOUSE_MOVE 随行 +
- *            END/取消 RELEASE 收口，等效真实鼠标左键拖拽），无人接受
- *            回落合成滚轮（滚动语义，历史行为）；
- *          - DoubleTap：双击布防序列 tap 收口，先问控件，接受则框架
- *            不再合成 DBL_CLICK+RELEASE；
- *          - Tap：普通 tap 收口通知（配对 release 已随行合成，仅告知，
- *            接受状态不改变合成行为）。
- *          手势事件 m_position/m_globalPosition=判定基准（序列起点），
- *          无触点列表（m_points=NULL）。 */
-typedef enum XTouchGestureKind
-{
-    XTouchGesture_None = 0,        /**< 非手势（普通触摸帧，type=TOUCH_*）。 */
-    XTouchGesture_Tap = 1,         /**< 单击收口通知（release 已随行合成）。 */
-    XTouchGesture_DoubleTap = 2,   /**< 双击判定（接受则免合成 DBL_CLICK）。 */
-    XTouchGesture_LongPress = 3,   /**< 长按判定（接受则免合成右键序列）。 */
-    XTouchGesture_DragBegin = 4    /**< 按住拖动判定（接受则转左键拖动仿真）。 */
-} XTouchGestureKind;
-
 /** @brief 触摸事件对象（方案 B 多点：尾部柔性数组内联触点列表）。
+ * @note 本类为**纯原始触摸帧**载荷（对标 Qt QTouchEvent）：只承载触点
+ *       位置/状态/压力等原始输入，不含任何手势语义。触摸手势（点按/
+ *       长按/平移/缩放/轻扫/旋转/双击/甩动）统一由 XGui/Gesture 模块的
+ *       XGestureEvent 承载（对标 Qt QGestureEvent）——手势字段已从本
+ *       类移出（[减负对齐 QTouchEvent 2026-10-29]）。
  * @note m_position/m_globalPosition 保留为主点（points[0]）兼容视图；
  *       旧读代码继续读主点字段。
  * @note 单块分配口径（柔性数组）：触点列表内联在事件对象尾部，创建时
@@ -810,9 +790,7 @@ typedef enum XTouchGestureKind
  *       实际点数。m_pointCount==0 表示旧单点负载形态（无列表，主点字
  *       段承载，读方回退主点）——语义等价改造前 m_points==NULL；
  *       setPoints 仅做「容量内整表覆写」（count>m_pointCapacity 防御性
- *       忽略），clone/deinit 均单块配对，不再二次分配。m_gesture 仅
- *       XEVENT_TYPE_TOUCH_DRAG 手势事件携带（XTouchGestureKind；普通
- *       触摸帧恒 None）。
+ *       忽略），clone/deinit 均单块配对，不再二次分配。
  * @note 内存分配器口径：事件本体连柔性数组一律沿对象自身保存的内存分
  *       配器族（Class_Memory，由 create_ex 的 memory 参数决定）单块分
  *       配与释放（deinit/clone 同块配对）。 */
@@ -825,7 +803,6 @@ typedef struct XTouchEvent
                                    承载；>0=柔性数组内有效点数）。 */
     uint16_t m_pointCapacity;  /**< 柔性数组容量（创建时定容；0=无柔性空间，
                                    外部存储/无列表事件；setPoints 上界）。 */
-    uint8_t m_gesture;        /**< 手势种类（存 XTouchGestureKind，0..4；默认 None）。 */
     XTouchPoint m_points[];  /**< 柔性数组（C99）：触点列表内联在本对象
                                    尾部同一分配块内；容量=m_pointCapacity，
                                    实际=m_pointCount，经 XTouchEvent_points
@@ -872,11 +849,10 @@ const XTouchPoint* XTouchEvent_points(const XTouchEvent* event);
  * @note 覆写后 m_pointCount=count；主点字段同步为 points[0]。 */
 void XTouchEvent_setPoints(XTouchEvent* event,
                            const XTouchPoint* points, int count);
-/** @brief 设置手势种类（XTouchGestureKind；仅 XEVENT_TYPE_TOUCH_DRAG
- *         手势事件由框架手势状态机填充）。 */
-void XTouchEvent_setGesture(XTouchEvent* event, int gesture);
-/** @brief 获取手势种类（XTouchGestureKind；普通触摸帧恒 None）。 */
-int XTouchEvent_gesture(const XTouchEvent* event);
+/* [减负对齐 QTouchEvent 2026-10-29] 手势种类/拖动模式访问器已随
+   XTouchEvent 的手势字段一并迁出：手势统一由 XGui/Gesture 模块的
+   XGestureEvent 承载（XGestureEvent_gestureType /
+   XGestureEvent_setDragMode），本类回归纯原始触摸帧语义。 */
 
 /* ========================================================================== */
 /*        XTabletEvent 数位板事件（对标 QTabletEvent 最小负载）                */

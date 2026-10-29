@@ -101,6 +101,23 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
         result = XModbusCoverageTest_run();
     } else if (strcmp(name, "xmqtt-tcp-interop") == 0) {
         result = XMqttTcpInteropTest_run();
+#if XPROTOCOL_ON && XMODBUS_HUB_ON
+    /* XModbus 聚合设备闭环 + 485 战役（原独立 main 可执行收编，2026-10-29；
+       运行前须由驱动脚本起好对应虚拟从站）。 */
+    } else if (strcmp(name, "xmodbus-hub") == 0) {
+        result = XModbusHubTest_run() == 0;
+    } else if (strcmp(name, "xprotocol-campaign") == 0) {
+        result = XProtocolCampaignTest_run() == 0;
+#endif
+#if XPROTOCOL_ON && XVFD_ON
+    /* XVfd 变频器闭环三件套（pty 路径走缺省文件回退）。 */
+    } else if (strcmp(name, "xvfd-m512") == 0) {
+        result = XVfdM512Test_run() == 0;
+    } else if (strcmp(name, "xvfd-bus485") == 0) {
+        result = XVfdBus485Test_run() == 0;
+    } else if (strcmp(name, "xvfd-atv61") == 0) {
+        result = XVfdAtv61Test_run() == 0;
+#endif
 #if XPROTOCOL_ON && XLINK_ON
     /* XLink 私有应用层协议（控制进程 <-> GUI 进程 消息互通）。 */
     } else if (strcmp(name, "xlink") == 0) {
@@ -284,6 +301,8 @@ static int xtest_execute(XConsoleShell* shell, XConsoleShellSession* session,
                            "  Test xcryptographic\n"
                            "  Test xssl\n"
                            "  Test xmqtt\n"
+                           "  Test xmodbus-hub / xprotocol-campaign (需虚拟从站)\n"
+                           "  Test xvfd-m512 / xvfd-bus485 / xvfd-atv61 (需虚拟从站)\n"
                            "  Test all\n")
                    ? XConsoleResult_Ok : XConsoleResult_IoError;
     }

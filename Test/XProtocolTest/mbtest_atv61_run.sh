@@ -7,7 +7,7 @@
 set -u
 ENGINE="${1:-io}"
 REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
-BIN="${ATV61_BIN:-$REPO/bin/XVfdAtv61Test}"
+BIN="${ATV61_BIN:-$REPO/bin/XinYueC_Static}"
 SLAVES_PY="$REPO/Test/XProtocolTest/mbtest_atv61_slave.py"
 OUT="${ATV61_BASE:-/tmp/mbsoak/atv61}"
 mkdir -p "$OUT"
@@ -35,7 +35,7 @@ run_engine() {
     return 9
   fi
   echo "[driver] engine=$eng slave up (pid=$SPID, pty=$(cat "$OUT/pty_path"))" >> "$OUT/driver.log"
-  timeout 90 "$BIN" "$(cat "$OUT/pty_path")" > "$OUT/test-$eng.log" 2>&1
+  timeout 90 "$BIN" --test xvfd-atv61 > "$OUT/test-$eng.log" 2>&1
   local RC=$?
   kill -9 "$SPID" 2>/dev/null
   echo "[driver] engine=$eng TEST_RC=$RC" | tee -a "$OUT/driver.log"

@@ -111,6 +111,23 @@ static int main_run_test_path(const char* testPath)
         return XMqttTcpClientProcess_run() ? 0 : 1;
     if (strcmp(testPath, "xmqtt-tcp-interop") == 0)
         return XMqttTcpInteropTest_run() ? 0 : 1;
+#if XPROTOCOL_ON && XMODBUS_HUB_ON
+    /* XModbus 聚合设备闭环 + 485 战役（原独立 main 可执行收编，2026-10-29；
+       运行前须由驱动脚本起好对应虚拟从站，返回码=失败数）。 */
+    if (strcmp(testPath, "xmodbus-hub") == 0)
+        return XModbusHubTest_run() == 0 ? 0 : 1;
+    if (strcmp(testPath, "xprotocol-campaign") == 0)
+        return XProtocolCampaignTest_run() == 0 ? 0 : 1;
+#endif
+#if XPROTOCOL_ON && XVFD_ON
+    /* XVfd 变频器闭环三件套（pty 路径走缺省文件回退）。 */
+    if (strcmp(testPath, "xvfd-m512") == 0)
+        return XVfdM512Test_run() == 0 ? 0 : 1;
+    if (strcmp(testPath, "xvfd-bus485") == 0)
+        return XVfdBus485Test_run() == 0 ? 0 : 1;
+    if (strcmp(testPath, "xvfd-atv61") == 0)
+        return XVfdAtv61Test_run() == 0 ? 0 : 1;
+#endif
 #if XPROTOCOL_ON && XLINK_ON
     /* XLink 私有应用层协议（控制进程 <-> GUI 进程 消息互通）全量回归。 */
     if (strcmp(testPath, "xlink") == 0)
@@ -217,7 +234,10 @@ static void main_print_test_list(void)
     XPrintf("  --test xlink-demo-server + xlink-demo-client (双进程联调)\n");
     XPrintf("  --test xlink-all (全功能闸门) / all (全仓闸门)\n");
     XPrintf("  --test xlink-client (客户端包装·自动重连)\n");
+    XPrintf("  --test xmodbus-hub / xprotocol-campaign (需先起虚拟从站)\n");
+    XPrintf("  --test xvfd-m512 / xvfd-bus485 / xvfd-atv61 (需先起虚拟从站)\n");
     XPrintf("  Test 菜单「协议栈 → XLink(xlink)」: 客户端包装 / 实战案例·服务端 / 实战案例·客户端\n");
+    XPrintf("  Test 菜单「协议栈 → XModbus/XVfd」: Hub闭环 / 485战役 / 变频器三件套\n");
 }
 
 int main(int argc, char* args[])

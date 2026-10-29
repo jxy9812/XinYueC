@@ -117,7 +117,6 @@ typedef struct XBackingStore XBackingStore;
 #if XINPUTMETHOD_ON
 #include "XInputMethod.h"
 #endif /* XINPUTMETHOD_ON */
-
 /* ==================== 依赖类型前向声明（避免循环包含） ==================== */
 /** @brief XApplication 前向声明；XWidget.c 内部完成焦点登记联动。 */
 typedef struct XApplication XApplication;
@@ -132,6 +131,9 @@ typedef struct XGraphicsEffect XGraphicsEffect;
 typedef struct XWidget XWidget;
 /** @brief XWidgetWindow 顶层桥接窗口前向声明（XWindow 子类，内部实现）。 */
 typedef struct XWidgetWindow XWidgetWindow;
+/** @brief XGestureRecognizer 前向声明（手势识别器订阅列表元素；完整
+ *  定义见 XGui/Gesture/XGestureRecognizer.h，XWidget 只借用不拥有）。 */
+typedef struct XGestureRecognizer XGestureRecognizer;
 /** @brief XAction 前向声明（actions/addAction 动作列表元素；XWidget 只借用
  *  指针、不拥有动作；完整定义见 XAction.h）。 */
 typedef struct XAction XAction;
@@ -499,6 +501,11 @@ XCLASS_DEFINE_ENUM(XWidget, HideEvent),
                                       XEVENT_TYPE_TOUCH_DRAG 分派；单击/双击/
                                       长按通知 + 按住拖动判定，默认忽略→沿父
                                       链传播，接受=控件认领该手势）。 */
+    XCLASS_DEFINE_ENUM(XWidget, GestureEvent), /**< 手势事件槽（对标
+                                      QWidget::gestureEvent；XEVENT_TYPE_GESTURE
+                                      分派，载荷 XGestureEvent——手势识别器
+                                      识别成功后经事件循环投递，默认忽略→
+                                      沿父链传播）。 */
     XCLASS_DEFINE_END(XWidget)
 
 /**
@@ -597,6 +604,11 @@ typedef struct XWidget
     XVector*                m_actions;         /**< 动作列表（元素为 XAction* 借用指针；容器惰性创建、
                                                 *   由控件拥有，动作对象本身不归控件所有，
                                                 *   对标 QWidget::actions）。 */
+    XVector*                m_gestureRecognizers; /**< 手势识别器列表（元素为
+                                                *   XGestureRecognizer* 借用指针；容器惰性创建、
+                                                *   由控件拥有，识别器对象本身不归控件
+                                                *   所有，对标 QWidget::grabGesture 订阅
+                                                *   关系）。 */
     XStyle*                 m_style;           /**< 控件级样式（借用；NULL 表示使用 XStyle_defaultStyle，
                                                 *   对标 QWidget::setStyle/style）。 */
     XScreen*                m_associatedScreen;/**< 显式关联屏幕（借用；仅顶层控件有效，
@@ -1776,6 +1788,39 @@ void XWidget_insertAction(XWidget* self, XAction* before, XAction* action);
  * @return     无返回值；元素为 NULL 时跳过该元素。
  */
 void XWidget_insertActions(XWidget* self, XAction* before, const XVector* actions);
+
+/* ==================== 手势识别器订阅（对标 QWidget::grabGesture） ==================== */
+
+/**
+ * @brief      订阅手势识别器（对标 QWidget::grabGesture）。
+ * @details    识别器识别成功后经事件循环把 XGestureEvent 投递到本控件，
+ *             由本控件的 GestureEvent 虚槽消费（对标 Qt QEvent::Gesture）。
+ *             订阅时自动把识别器的目标控件绑定为本控件；重复订阅同一
+ *             识别器幂等（不重复入列）。
+ * @param      self 目标控件；NULL 无操作。
+ * @param recognizer 手势识别器借用指针；NULL 时不执行操作。
+ * @return     无返回值；识别器对象所有权仍归调用方（控件只持有引用）。
+ * @note       识别器由应用创建与销毁；控件析构时自动解除引用（不销毁
+ *             识别器对象）。
+ */
+void XWidget_addGestureRecognizer(XWidget* self,
+                                  XGestureRecognizer* recognizer);
+
+/**
+ * @brief      解除手势识别器订阅（对标 QWidget::ungrabGesture）。
+ * @param      self 目标控件；NULL 无操作。
+ * @param recognizer 手势识别器借用指针；NULL 或未订阅时不执行操作。
+ * @return     无返回值；识别器对象所有权仍归调用方。
+ */
+void XWidget_removeGestureRecognizer(XWidget* self,
+                                     XGestureRecognizer* recognizer);
+
+/**
+ * @brief      解除本控件的全部手势识别器订阅。
+ * @param      self 目标控件；NULL 无操作。
+ * @return     无返回值；识别器对象所有权仍归调用方。
+ */
+void XWidget_clearGestureRecognizers(XWidget* self);
 
 /**
  * @brief      从动作列表移除动作（对标 QWidget::removeAction）。

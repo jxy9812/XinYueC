@@ -24,7 +24,8 @@
 #include "XImage.h" /* 拖动快照离屏图像（窗口本地全幅；XImage_reinit_ex 复用分配） */
 #include "XWindow_Protected.h"
 #include "XWindowEvent.h" /* 同尺寸 RESIZE 回放（全屏翻转内容区重排踢） */
-#include "XWidget_Protected.h" /* XWidget_event_base：RESIZE 回放直投控件事件入口（同 XWidget.c XWidget_sendEvent 语义） */
+#include "XWidget_Protected.h"
+#include "XGestureEvent.h"   /* 手势事件载荷（减负对齐 QTouchEvent）。 */ /* XWidget_event_base：RESIZE 回放直投控件事件入口（同 XWidget.c XWidget_sendEvent 语义） */
 #include "XWindowRotation.h" /* B 域条带基：rotationMapRect 正映射（像素下标口径单一实现点） */
 #include "XCursor.h" /* 边缘改尺寸悬停光标：标准形状经 XWidget_setCursor 生效链 */
 #include "XPlatformTheme.h"
@@ -2071,16 +2072,19 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
     if (barH <= 0) return false;
     switch (XEvent_type(event)) {
     case XEVENT_TYPE_TOUCH_DRAG: {
-        const XTouchEvent* drag = (const XTouchEvent*)event;
+        const XGestureEvent* drag = (const XGestureEvent*)event;
         /* 触摸按住拖动手势判定（DragBegin）：起点落在条内空白→接受认领，
          * 框架转左键按住拖动仿真（press 续持+MOVE 随行），本装饰既有的
          * 标题拖拽状态机（PRESS 已起拖+显式抓取）直接驱动移窗；用户按钮
          * 上放行（交按钮树）；最大化/全屏禁拖（对标桌面，同 PRESS 臂）。
          * 判定域=手势序列起点（touch 侧保证），越阈指尖滑出条区不误判。
          * 其余手势种类（Tap/DoubleTap/LongPress 通知）不认领。 */
-        if (XTouchEvent_gesture(drag) != (int)XTouchGesture_DragBegin)
+        /* [减负对齐 QTouchEvent 2026-10-29] 手势载荷改 XGestureEvent：
+           平移手势的 Started 状态=拖动判定。 */
+        if (XGestureEvent_gestureType(drag) != (int)XGestureEventType_Pan ||
+            XGestureEvent_state(drag) != (int)XGestureState_Started)
             return false;
-        pos = drag->m_position;
+        pos = XGestureEvent_position(drag);
         if (pos.y < 0 || pos.y >= barH) return false;
         if (xwd_isBarChild(st, XWidget_childAt(top, &pos))) return false;
         if (XWindow_windowState(st->m_window) == XWindowState_Maximized ||

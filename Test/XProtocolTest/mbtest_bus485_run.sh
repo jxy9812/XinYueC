@@ -6,7 +6,7 @@
 set -u
 ENGINE="${1:-io}"
 REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
-BIN="${BUS485_BIN:-$REPO/bin/XVfdBus485Test}"
+BIN="${BUS485_BIN:-$REPO/bin/XinYueC_Static}"
 OUT="${BUS485_BASE:-/tmp/mbsoak/bus485}"
 HUB_PY="$REPO/Test/XProtocolTest/mbtest_bus485_hub.py"
 SLAVES_PY="$REPO/Test/XProtocolTest/mbtest_m512_slave.py"
@@ -52,7 +52,7 @@ run_engine() {
   sleep 0.6
 
   echo "[driver] engine=$eng hub up (master=$(cat "$OUT/bus_master_path"))" >> "$OUT/driver.log"
-  timeout 120 "$BIN" "$(cat "$OUT/bus_master_path")" > "$OUT/test-$eng.log" 2>&1
+  timeout 120 "$BIN" --test xvfd-bus485 > "$OUT/test-$eng.log" 2>&1
   local RC=$?
   echo "[driver] engine=$eng TEST_RC=$RC"
   [ $RC -eq 0 ]

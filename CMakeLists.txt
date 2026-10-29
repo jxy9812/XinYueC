@@ -365,29 +365,23 @@ list(REMOVE_ITEM TEST_FILE
 # main）——TEST_FILE 剔除三查同款坑第五次。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xmodbus_android_probe.c")
-# xmodbus_hub_test 同理：自带 main 的聚合设备闭环测试独立可执行
-# （XModbusHubTest 目标，2026-10-26 XModbus 聚合设备战役闭环回归），
-# 不得卷入主程序（与 main.c 重复定义 main）。
+# XScrollTouchProbe / XGestureRecognizerTest 同理：自带 main 的独立可执行
+# （XScrollTouchProbe_Test / XGestureRecognizer_Test 目标，2026-10-29 触摸
+# 跟手滚动与手势识别器战役新增），不得卷入主程序（与 main.c 重复定义
+# main）——TEST_FILE 剔除三查同款坑第六次（漏加即 XinYueC_Static/_Dynamic
+# 链接失败）。
 list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xmodbus_hub_test.c")
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XScrollTouchProbe.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGestureRecognizerTest.c")
+# xmodbus_hub_test / xfdv_atv61_test / xfdv_m512_test / xfdv_bus485_test /
+# xprotocol_campaign_test 五个闭环测试原先各自带 main、按独立可执行剔除；
+# 2026-10-29 去 main 收编进主程序（菜单 + --test/Test 命令分派），随
+# TEST_FILE 编译，不再需要剔除（无 main，不会与 main.c 重复定义）。
 # XTimerWheelPhaseTest 同理：自带 main 的时间轮「相位落槽」回归测试独立
 # 可执行（2026-10-28 顶栏时钟 1s 变 1.8s 根修的回归锁：错相注册 1000/
 # 2500ms Coarse 定时器并逐次断言触发间隔），不得卷入主程序。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XTimerTest/XTimerWheelPhaseTest.c")
-# xfdv_atv61_test 同理：自带 main 的变频器抽象层闭环测试独立可执行
-# （XVfdAtv61Test 目标，2026-10-27 XVfd 子系统落地：XVfdAtv61 子类 + 链路轮询），
-# 不得卷入主程序（与 main.c 重复定义 main）。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xfdv_atv61_test.c")
-# xfdv_m512_test 同理：双站混合总线闭环测试独立可执行
-# （XVfdM512Test 目标，2026-10-27 XVfd 落地：511M 族 + 离线隔离 + 参数通道）。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xfdv_m512_test.c")
-# xfdv_bus485_test 同理：虚拟 485 总线（多从站）闭环测试独立可执行
-# （XVfdBus485Test 目标，2026-10-27 虚拟总线 hub + 双独立从站进程）。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xfdv_bus485_test.c")
 # xgui_dialog_portrait_probe 同理：自带 main 的对话框族竖屏适配探针
 # （XDialogPortraitProbe 目标，2026-10-26 对话框竖屏适配战役目验工具）。
 list(REMOVE_ITEM TEST_FILE
@@ -423,11 +417,8 @@ list(REMOVE_ITEM TEST_FILE
 # io_uring 侧验证工具），不得卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XDeviceTest/xdevice_iou_passive_probe.c")
-# xprotocol_campaign_test 同理：自带 main 的 XProtocol 485 收口战役测试驱动
-# 独立可执行（XProtocolCampaignTest 目标，2026-10-29），不得卷入主程序
-# （与 main.c 重复定义 main）。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xprotocol_campaign_test.c")
+# xprotocol_campaign_test 的旧剔除项随 2026-10-29 去 main 收编一并移除
+# （见上方五个闭环测试收编说明）。
 file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
 # 桌面（非交叉）构建排除嵌入式移植层（2026-10-05 回归门修复）：FreeRTOS
 # portmacro.h/tasks.c 含 ARM CMSIS 内联汇编（mrs/msr basepri、isb），x86
@@ -975,79 +966,15 @@ else()
     target_link_libraries(XDialogPortraitProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
-# ==================== XModbus 聚合设备闭环测试（独立可执行） ====================
-# [2026-10-26 聚合设备战役] XModbusMapping + XModbusHub 闭环回归：
-# 2×TCP 从站 + 1×RTU pty 从站（mbtest_hub_slaves.py 先行启动），验证
-# 映射切片/输入轮询回填/输出写直通与重发/宕机重连滞留写补发/映射刷新。
-# 用法：./XModbusHubTest <portA> <portB>
-add_executable(XModbusHubTest
-    "./Test/XProtocolTest/xmodbus_hub_test.c"
-)
-if(UNIX)
-    target_link_libraries(XModbusHubTest ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XModbusHubTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== 战役 1028 XProtocol 端到端联调测试（独立可执行） ====================
-# [2026-10-28 战役 1028] S1..S10 端到端联调矩阵：广播回合续泵/重试耗尽续泵/
-# CRC 损坏收口/发送失败不遗弃/共口死从站退避（unitLost/unitAlive）/写优先级/
-# writeStalled 滞留可见性/XVfdModbusLink 生命周期（cancelOwner）/串口双开守卫/
-# 连接抖动+CRC 注入微浸泡。Python 多模式虚拟从站（mbtest_campaign_slave.py，
-# 3 pty 总线 + 1 TCP）先行启动，驱动脚本 mbtest_campaign_run.sh 负责起停与
-# 双引擎切换；产物与帧日志全在 CAMPAIGN_BASE。
-# 用法：./XProtocolCampaignTest [base_dir] [tcp_port]
-add_executable(XProtocolCampaignTest
-    "./Test/XProtocolTest/xprotocol_campaign_test.c"
-)
-if(UNIX)
-    target_link_libraries(XProtocolCampaignTest ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XProtocolCampaignTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== 变频器抽象层 Modbus RTU 闭环测试（独立可执行） ====================
-# [2026-10-27 XVfd 子系统落地] XModbusRtuSerialClient（总线主站）+ XVfdModbusLink
-# + XVfdAtv61 子类端到端回归：Python 模拟从站（mbtest_atv61_slave.py，pty 虚拟
-# 串口）先行启动，验证 链路轮询排拍 / 调速 / CiA402 启停 / 报警读取 / 故障复位。
-# 用法：./XVfdAtv61Test <pty_path>
-add_executable(XVfdAtv61Test
-    "./Test/XProtocolTest/xfdv_atv61_test.c"
-)
-if(UNIX)
-    target_link_libraries(XVfdAtv61Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XVfdAtv61Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== 511M 族变频器双站混合总线闭环测试（独立可执行） ====================
-# [2026-10-27 XVfd 落地] XVfdModbusLink（一条 485 总线）+ 两台 XVfdM512（unit1/2）
-# 端到端回归：Python 模拟从站（mbtest_m512_slave.py，双站+按站静默）先行启动，
-# 验证 双站轮询排拍 / 调速百分比换算 / 启停隔离 / 故障注入与名称映射 /
-# 参数读写通道 / 从站静默离线退避与探活恢复。
-# 用法：./XVfdM512Test <pty_path>
-add_executable(XVfdM512Test
-    "./Test/XProtocolTest/xfdv_m512_test.c"
-)
-if(UNIX)
-    target_link_libraries(XVfdM512Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XVfdM512Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== 虚拟 RS485 总线（多从站）闭环测试（独立可执行） ====================
-# [2026-10-27] Python 虚拟总线 hub（1 master pty + 2 slave pty，复刻广播/站号过滤/
-# 应答串行化/冲突检测）+ 两个独立从站进程 + XVfdModbusLink + 两台 XVfdM512：
-# 验证真多从站共享总线的站号过滤、互不串扰、跨设备优先级插队、应答不冲突。
-# 用法：./XVfdBus485Test <master_pty_path>
-add_executable(XVfdBus485Test
-    "./Test/XProtocolTest/xfdv_bus485_test.c"
-)
-if(UNIX)
-    target_link_libraries(XVfdBus485Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XVfdBus485Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
+# ==================== 五个闭环测试：已去 main 收编主程序（2026-10-29） ====================
+# 原 XModbusHubTest / XProtocolCampaignTest / XVfdAtv61Test / XVfdM512Test /
+# XVfdBus485Test 五个独立 main 可执行目标在本节；现统一改为
+#   int XxxTest_run(void)（--test/<name> 分派，返回失败数）
+#   void XxxTest(XVariant*)（测试菜单动作）
+# 随 TEST_FILE 编译进 XinYueC_Static/_Dynamic（声明在 XProtocolTest.h，
+# 菜单接线在 XTestMenu_XModbusTest，命令分派在 main.c 与 XTestCommand.c）。
+# 跑法不变：驱动脚本（mbtest_*_run.sh）起好虚拟从站后调
+#   ./bin/XinYueC_Static --test xmodbus-hub|xprotocol-campaign|xvfd-m512|xvfd-bus485|xvfd-atv61
 
 # ==================== 高精度定时器组压测（菜单入口） ====================
 # [两孩子删除句柄身份压测 2026-10-25] 原先本节为独立可执行
@@ -1135,6 +1062,36 @@ else()
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 endif() # XGUI_ON
+
+# ==================== 滚动区触摸跟手+惯性独立探针 ====================
+# 自带 main：注入式验证 XAbstractScrollArea 触摸滚动通道（跟手 1:1+方向/
+# 惯性 fling 停稳/不可滚不认领/tap 零滚动/开关关闭回落滚轮量化），脱离
+# 整包回归单独跑（整包回归含机器环境相关段，CI 定位诊断用）。
+if(XGUI_ON)
+add_executable(XScrollTouchProbe_Test
+    "./Test/XGuiTest/XScrollTouchProbe.c"
+)
+if(UNIX)
+    target_link_libraries(XScrollTouchProbe_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XScrollTouchProbe_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+endif()
+
+# ==================== 手势识别器回归测试 ====================
+# 独立可执行(自带 main): 注入式验证 XGestureRecognizer 族（点按/长按/
+# 双击/平移/轻扫/缩放/旋转/甩动）——原始触摸帧注入 → 识别 → 状态机迁移
+# → XGestureEvent 经事件循环投递 → 控件 GestureEvent 槽消费。
+if(XGUI_ON)
+add_executable(XGestureRecognizer_Test
+    "./Test/XGuiTest/XGestureRecognizerTest.c"
+)
+if(UNIX)
+    target_link_libraries(XGestureRecognizer_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XGestureRecognizer_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+endif()
 
 # ==================== XGuiRemote 访问口令认证矩阵测试 ====================
 # 独立可执行(自带 main): 回环对 + 127.0.0.1 真 TCP(MITM 抓包)跑 XGuiRemote.md
@@ -1309,6 +1266,8 @@ add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_demo_page_window.c"
     "./Test/XGuiDemo/xgui_demo_page_timeddns.c"
     "./Test/XGuiDemo/xgui_demo_page_atv61.c"
+    "./Test/XGuiDemo/xgui_demo_page_testmenu.c"
+    "./Test/XGuiDemo/xgui_demo_page_shell.c"
     # [两孩子删除句柄身份压测 2026-10-25] --hr-stress 入口
     "./Test/XTimerTest/XHrTimerStressTest.c"
     "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
@@ -1321,10 +1280,29 @@ add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_demo_apitest_menus.c"
     "./Test/XGuiDemo/xgui_demo_apitest_core.c"
 )
+# [测试菜单页收编 2026-10-29] xgui_demo_page_testmenu 的菜单树来自
+# XTestMenuTest_create（XTestMenuTest.c + 各域 builder，全在 TEST_FILE）。
+# 非嵌入式构建把整棵测试树链进 GUI demo（与控制台宿主 XinYueC_Static
+# 同口径）；XHrTimerStressTest 已显式在上方源列表，剔除防重复。嵌入式
+# （F407）不链——页面自身按 XINYUE_EMBEDDED 降级为提示桩。
+if(NOT XINYUE_EMBEDDED)
+    set(XGUI_DEMO_TESTTREE_SOURCES ${TEST_FILE})
+    list(REMOVE_ITEM XGUI_DEMO_TESTTREE_SOURCES
+        "${CMAKE_CURRENT_LIST_DIR}/Test/XTimerTest/XHrTimerStressTest.c"
+        # [触摸滚动探针 2026-10-29] 自带 main 的独立可执行（与
+        # XHrTimerStressTest 同款剔除防重复）。
+        "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XScrollTouchProbe.c"
+        # [手势识别器测试 2026-10-29] 自带 main 的独立可执行。
+        "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGestureRecognizerTest.c")
+    target_sources(XGuiWindowDemo_Test PRIVATE ${XGUI_DEMO_TESTTREE_SOURCES})
+endif()
 if(UNIX)
-    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    # [链接序对齐 2026-10-29] 与 XinYueC_Static 同口径（sqlite 夹在两份主
+    # 库之间）：测试树收编后 demo 也从 sqlite3_xin_vfs 反向要 XReadWriteLock
+    # 等主库符号——sqlite 排在末位时符号无法回解（链接序根修）。
+    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
 else()
-    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
 endif()
 # Linux 桌面图标/启动器接线（安卓不装桌面文件；Windows 图标走 rc 资源）：
 # exe 入 bin，hicolor 四档 PNG 入系统图标主题（freedesktop 惯例，文件名

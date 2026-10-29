@@ -6,8 +6,10 @@
 
 set -u
 ENGINE="${1:-io}"
-REPO=/home/xinyue/Code/XinYueC
-BIN="$REPO/bin/XModbusHubTest"
+REPO="${REPO:-/home/xinyue/Code/XinYueC}"
+# [2026-10-29 收编] XModbusHubTest 独立 main 可执行已下线，改走主程序
+# --test 分派（返回码=失败数）；端口取代码缺省 15331/15332。
+BIN="${HUB_BIN:-$REPO/bin/XinYueC_Static}"
 SLAVES_PY="$REPO/Test/XProtocolTest/mbtest_hub_slaves.py"
 OUT=/tmp/mbsoak/hub
 mkdir -p "$OUT"
@@ -35,7 +37,7 @@ run_engine() {
   ss -tln 2>/dev/null | grep -q ":$P1 " && ss -tln 2>/dev/null | grep -q ":$P2 " \
     || { echo "[driver] slaves NOT listening, abort"; kill -9 $SPID; return 9; }
   echo "[driver] engine=$eng slaves up (pid=$SPID)" >> "$OUT/driver.log"
-  timeout 90 "$BIN" "$P1" "$P2" > "$OUT/test-$eng.log" 2>&1
+  timeout 90 "$BIN" --test xmodbus-hub > "$OUT/test-$eng.log" 2>&1
   local RC=$?
   kill -9 "$SPID" 2>/dev/null
   echo "[driver] engine=$eng TEST_RC=$RC" | tee -a "$OUT/driver.log"

@@ -277,6 +277,21 @@ static int frameLogHasLine(const char* tag, uint32_t minOffset,
     return found;
 }
 
+/** @brief waitUntil 谓词：帧日志增量区间出现 "fc=<fc> start=<start> " 行。
+ *  @details 帧日志由从站进程异步落盘，「值已回填」≠「帧已上日志」——
+ *           断言帧存在必须带超时等待，读后立查会抢在帧落盘之前。 */
+typedef struct {
+    const char* tag;
+    uint32_t minOffset;
+    int fc, start;
+} PredFrameLog;
+
+static bool predFrameLog(void* ctx)
+{
+    PredFrameLog* p = (PredFrameLog*)ctx;
+    return frameLogHasLine(p->tag, p->minOffset, p->fc, p->start) != 0;
+}
+
 /**
  * @brief 用一个 TCP 从站建裸 Hub（无信号挂接差异：共用全局计数槽）。
  * @return hub；失败 NULL（设备未登记）。
@@ -351,19 +366,22 @@ static void testReadMerge(int port)
     CHECK(frameLogHasLine("A", base, 4, 0), "读帧起址=远端0");
     CHECK(frameLogCount("A", base) <= 8, "合并档帧数少（≤8 行增量）");
 
-    /* gap=0 对照：两段必须分两帧（远端 0 与 16 各一帧）。 */
+    /* gap=0 对照：两段必须分两帧（远端 0 与 16 各一帧）。此轮数值已是
+       期望值，等值立即返回，所以直接等帧日志出现（远端 16 是 gap=8 轮
+       没有发过的起址，出现即证明本轮分帧）。 */
     {
         uint32_t b0;
+        PredFrameLog f0 = { "A", 0, 4, 0 };
+        PredFrameLog f16 = { "A", 0, 4, 16 };
         XModbusHub_setReadMergeGap(hub, 0);
         b0 = frameLogSize("A");
+        f0.minOffset = b0;
+        f16.minOffset = b0;
         XModbusHub_startPolling(hub);
-        {
-            PredEq p2 = { hub, 15, XModbusInputRegisters, 23 * 3 + 7 };
-            (void)waitUntil(predValEq, &p2, 3000);
-        }
-        XModbusHub_stopPolling(hub);
-        CHECK(frameLogHasLine("A", b0, 4, 0) && frameLogHasLine("A", b0, 4, 16),
+        CHECK(waitUntil(predFrameLog, &f16, 5000) &&
+              waitUntil(predFrameLog, &f0, 1000),
               "gap=0 时远端 0 与 16 各自成帧");
+        XModbusHub_stopPolling(hub);
     }
 
     /* 点级质量：轮询过 ⇒ 新鲜且年龄有限；未映射 ⇒ valueAge 返回假。 */
@@ -388,11 +406,12 @@ static void testReadMerge(int port)
     }
     {
         uint32_t rb = frameLogSize("A");
+        PredFrameLog frb = { "A", rb, 4, 0 };
         PredEq p1 = { hub, 0, XModbusInputRegisters, 7 };
         CHECK(XModbusHub_requestRefresh(hub, XModbusInputRegisters, 0, 8),
               "requestRefresh(IR v0..7) 受理（IR 不在轮询掩码内）");
         CHECK(waitUntil(predValEq, &p1, 3000), "按需刷新后仍读到 v0=7");
-        CHECK(frameLogHasLine("A", rb, 4, 0), "按需刷新确实发了一帧 FC04");
+        CHECK(waitUntil(predFrameLog, &frb, 3000), "按需刷新确实发了一帧 FC04");
     }
     XModbusHub_stopPolling(hub);
     XModbusHub_deleteLater(hub);
@@ -428,8 +447,12 @@ static void testWriteMerge(int port)
     XObject_connect_2((XObject*)hub, XSignal(XModbusHub_writeCompleted_signal),
                       onWriteCompletedFail);
 
-    /* —— ① 相邻线圈合并成 FC15：受理三笔，一次刷写只发 1 帧。—— */
+    /* —— ① 相邻线圈合并成 FC15：受理三笔，一次刷写只发 1 帧。——
+       断言写合并必须先拉合并窗口：默认 coalesce=0「受理即下发」与
+       「多笔合成一帧」矛盾（首笔已上线，后两笔只能等它回），窗口内
+       三笔并成单条脏区间，一次刷写一帧 FC15 [1..3]（2026-10-29 收口）。 */
     XModbusHub_stopPolling(hub);
+    XModbusHub_setWriteCoalesceMs(hub, 40);
     base = frameLogSize("A");
     {
         const int okBefore = g_cnt.writeOk;
@@ -438,11 +461,16 @@ static void testWriteMerge(int port)
         CHECK(XModbusHub_writeValue(hub, XModbusCoils, 3, 0), "写线圈 v3=0 受理");
         /* 受理阶段纯内存：帧日志尚未出现任何写帧（写未下发）。 */
         CHECK(waitUntil(predPendingZero, hub, 4000), "三笔写全部落定");
-        CHECK(g_cnt.writeOk >= okBefore + 3, "writeCompleted 按切片逐条回发(≥3)");
-        CHECK(frameLogHasLine("A", base, 15, 0), "下发的是 FC15（合并写线圈）");
+        /* writeCompleted 粒度=映射段（hubEmitWriteDone 契约）：单条脏区间
+           [1..3] 落在单段 v0..15 内 ⇒ 恰好一次完成回调，跨度=合并跨度。 */
+        CHECK(g_cnt.writeOk == okBefore + 1, "合并切片只回一次 writeCompleted");
+        CHECK(g_cnt.lastWcType == (int)XModbusCoils && g_cnt.lastWcStart == 1 &&
+              g_cnt.lastWcCount == 3, "完成回调覆盖合并跨度 v1..v3");
+        CHECK(frameLogHasLine("A", base, 15, 1), "下发的是 FC15（合并写线圈）");
         CHECK(!frameLogHasLine("A", base, 5, 1), "未逐点发 FC05");
         CHECK(frameLogCount("A", base) == 1, "三笔线圈写只上 1 帧");
     }
+    XModbusHub_setWriteCoalesceMs(hub, 0);
 
     /* —— ② 合并窗口：同寄存器连写 5 次只上 1 帧、值为最后那次。—— */
     XModbusHub_setWriteCoalesceMs(hub, 40);
@@ -502,12 +530,10 @@ static void testWriteMerge(int port)
     XCoreApplication_processEvents(XEventLoop_AllEvents);
 }
 
-/* ==================== 主流程 ==================== */
+/* ==================== 入口（主程序菜单 + --test 分派共用） ==================== */
 
-int main(int argc, char* argv[])
+int XModbusHubTest_runEx(int portA, int portB)
 {
-    const int portA = (argc > 1) ? atoi(argv[1]) : 15331;
-    const int portB = (argc > 2) ? atoi(argv[2]) : 15332;
     g_bootMs = XDateTime_currentMSecsSinceEpoch();
 
     printf("=== XModbusHub 闭环测试 ===\n"); fflush(stdout);
@@ -775,4 +801,19 @@ int main(int argc, char* argv[])
            g_fail, g_cnt.valueChanged, g_cnt.writeOk, g_cnt.devStateChanged);
     fflush(stdout);
     return g_fail;
+}
+
+int XModbusHubTest_run(void)
+{
+    /* 缺省端口段：mbtest_hub_slaves.py 15331(TCP-A) 15332(TCP-B) + RTU pty。 */
+    return XModbusHubTest_runEx(15331, 15332);
+}
+
+void XModbusHubTest(XVariant* data)
+{
+    const int fails = XModbusHubTest_run();
+    (void)data;
+    printf("=== XModbusHubTest: %s（失败 %d 项）===\n",
+           fails == 0 ? "PASS" : "FAIL", fails);
+    fflush(stdout);
 }

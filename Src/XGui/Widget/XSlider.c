@@ -20,7 +20,11 @@
  *             - 拖动：setSliderPosition（内部发射 sliderMoved；
  *               tracking=true 时提交值发 valueChanged）；
  *             - 释放：setSliderDown(false) → sliderReleased（位置≠值
- *               时提交值，tracking=false 场景）。
+ *               时提交值，tracking=false 场景）；
+ *             - 按下即 grabMouse、释放解除（拖动语义，XDial/XScrollBar
+ *               同款）：真实鼠标拖出控件靠抓取回投，触摸合成事件不参与
+ *               buttonDown 隐式抓取，触摸手势状态机转拖以「抓取者在位」
+ *               续持仿真，缺抓取超阈值即转滚轮收口、拖动脱手。
  *             invertedAppearance 翻转绘制端；invertedControls 翻转
  *             拖动方向由基类键盘/滚轮处理。
  * @author     XinYueC 团队
@@ -140,6 +144,20 @@ static int xslider_pick(const XAbstractSlider* base, XPoint pos)
                ? pos.x : pos.y;
 }
 
+/** @brief 拖动期鼠标抓取（按下即抓，释放解除；对标 QWidget::grabMouse
+ *         拖动语义，XDial/XScrollBar 同款）。
+ * @details 真实鼠标靠按下登记的 buttonDown 隐式抓取改投即可跟手，但
+ *          触摸合成事件按设计不参与该隐式抓取（见 XWidget.c
+ *          dispatchPointerEvent 合成豁免注）：触摸手势状态机转拖时以
+ *          「抓取者在位」为准续持左键仿真，缺抓取则超拖动阈值即转滚轮
+ *          并在远点合成 RELEASE 收口——触摸拖动只跟 startDragDistance
+ *          就脱手，且该远点 RELEASE 按命中派发多不落回本控件，
+ *          m_sliderDown 卡死。按下即抓取消除两条分叉。 */
+static void xslider_grabForDrag(XWidget* self)
+{
+    XWidget_grabMouse(self);
+}
+
 /* ==================== 鼠标交互（对标 QSlider） ==================== */
 
 /** @brief 按下：命中 handle → 进入拖动 + sliderPressed；否则 handle
@@ -181,6 +199,7 @@ static void VXSlider_mousePressEvent(XWidget* self, XEvent* event)
         /* 命中 handle：记录拖动偏移，进入拖动并发射 sliderPressed。 */
         slider->m_dragOffset = pickPos - handlePos;
         XAbstractSlider_setSliderDown(base, true);
+        xslider_grabForDrag(self);
         XEvent_accept(event);
         return;
     }
@@ -189,6 +208,7 @@ static void VXSlider_mousePressEvent(XWidget* self, XEvent* event)
     value = xslider_posToValue(slider, pickPos);
     slider->m_dragOffset = 0;
     XAbstractSlider_setSliderDown(base, true);
+    xslider_grabForDrag(self);
     XAbstractSlider_setSliderPosition(base, value);
     XAbstractSlider_triggerAction(base, XAbstractSliderSliderAction_Move);
     XEvent_accept(event);
@@ -231,6 +251,7 @@ static void VXSlider_mouseReleaseEvent(XWidget* self, XEvent* event)
         return;
     }
     if (base->m_sliderDown) XAbstractSlider_setSliderDown(base, false);
+    XWidget_releaseMouse(self);
     XEvent_accept(event);
 }
 

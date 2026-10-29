@@ -9,6 +9,7 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
+#include "XGestureEvent.h"   /* 手势事件载荷（减负对齐 QTouchEvent）。 */
 #include "XEvent.h"
 #include "XFont.h"
 #include "XImage.h"
@@ -421,8 +422,12 @@ static void VXPerformanceOverlay_touchDragEvent(XWidget* self, XEvent* event)
     if (!overlay || !event ||
         XEvent_type(event) != XEVENT_TYPE_TOUCH_DRAG)
         return;
-    if (XTouchEvent_gesture((const XTouchEvent*)event) !=
-        (int)XTouchGesture_DragBegin)
+    /* [减负对齐 QTouchEvent 2026-10-29] 手势载荷改 XGestureEvent：
+       平移手势的 Started 状态=拖动判定（对标 Qt QPanGesture 状态序列）。 */
+    if (XGestureEvent_gestureType((const XGestureEvent*)event) !=
+            XGestureEventType_Pan ||
+        XGestureEvent_state((const XGestureEvent*)event) !=
+            XGestureState_Started)
         return;
     if (!overlay->m_movable || overlay->m_fixed)
         return; /* 不可移/钉死：不认领（不构成滚动面的宿主区域回落滚轮）。 */

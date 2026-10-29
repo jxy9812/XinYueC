@@ -6,8 +6,9 @@
 ## 0. 一句话状态
 
 Hub 缓存层（每设备块缓存 + 读写指令合并 + 点级质量 + 写失败沿）**代码已全部落地并编译通过**；
-既有回归（Hub 用例①~⑧、战役 S1..S13）**全绿**；**新增缓存层用例⑨⑩仍有 12 项失败未收口**
-（用户 2026-10-29 要求停止调试先出文档）。
+既有回归（Hub 用例①~⑧、战役 S1..S13）**全绿**；~~新增缓存层用例⑨⑩仍有 12 项失败未收口~~
+**→ 2026-10-29 换机续役已全部收口：用例①~⑩ 0 失败（RC=0），战役 S1..S13 ALL-PASS（io），
+收口根因见 §5 各条「收口记录」。**
 
 ## 1. 改了哪些文件
 
@@ -56,31 +57,40 @@ int      XModbusHub_readGroupCount(hub, deviceId);           // 诊断/回归
 | --- | --- |
 | WSL 原生 gcc 编译（`build-native`） | 通过（仅全库同款 `XVector_size_base` 指针类型警告） |
 | aarch64 交叉（`build-x`） | `libXinYueC.so`、静态库、`XIndustryModbus_Test`、`XIndustryValve_Test`、`XModbusHubTest`、`XProtocolCampaignTest` 链接成功；`out-arm` 另有既有 `__isoc23_scanf` 工具链坑（与本改动无关） |
-| **Windows MSVC** | **未构建**（换机后请先跑一次） |
+| **Windows MSVC** | **✔ 已构建通过（2026-10-29 换机续役，VS 2026 / `-G "Visual Studio 18 2026"`，`build-msvc`，0 error；产物 `bin/Debug/XModbusHubTest.exe`。Windows 无 pty 跑不了从站脚本，运行时验证以 WSL 为准）** |
 | Hub 既有用例①~⑧ | **0 失败**（三设备上线 / 轮询回填 / 跨段读洞 / 写直通 / 写重发 / 宕机重连补写 / 映射刷新） |
 | 战役 `XProtocolCampaignTest` S1..S13 | **0 失败**（io 引擎；含 S7 writeStalled 语义） |
-| **新增用例⑨⑩** | **12 项失败（未收口）** |
+| **新增用例⑨⑩** | ~~12 项失败~~ → **2026-10-29 换机续役收口：0 失败**（见 §5） |
 
-## 5. 未收口的三条（接着修从这里开始）
+## 5. 未收口的三条 → 【已全部收口 2026-10-29 换机续役】
 
-### 5.1 写合并断言（⑩前半，5 项）
+### 5.1 写合并断言（⑩前半，5 项）✔ 已收口
 现象：三笔相邻线圈写最终上的是逐点帧，`writeCompleted` 只回 2 条（`v=1 n=1`、`v=2 n=2`），不是一帧 FC15。
 根因判断：**默认 `writeCoalesceMs=0` ⇒ 每笔写受理后立刻泵**，第一笔已上线，后两笔只能等它回。即「无窗口即下发」与「多笔合成一帧」本身矛盾。
-两个修法（择一，前者不改语义）：
-- **改用例**：断言写合并时先 `setWriteCoalesceMs(40)`，或先让设备处于在途状态再连写；
-- **改实现**：给「同一拍内的写」加一次微任务延迟（例如把首次泵改到 `XTimer_singleShot1(0, ...)`），使同拍写入合并后再发。
 
-### 5.2 写落定 / 失败沿（⑩后半，6 项）
+**收口记录（修法 A：改用例不改实现）**：断言前 `setWriteCoalesceMs(40)`，窗口内三笔并成单条脏区间 → 一帧 FC15 [1..3]。另修正两处断言口径：
+- FC15 起址断言 `start=0` → `start=1`（脏区间从 v1 起，0 从未写过）；
+- `writeCompleted ≥3` → **恰 1 次**（`v=1 n=3`）：`hubEmitWriteDone` 契约粒度=映射段，单段内合并切片只回一次，原期望与「只上 1 帧」自相矛盾。
+
+### 5.2 写落定 / 失败沿（⑩后半，6 项）✔ 已收口
 现象：`pendingWriteCount` 不归零、解吞后也不落定 ⇒ FC06 写应答被判失败、无限重发。
-已核：`XModbusClient.c:820` 起，FC05/FC06 响应解析按「respData **不含功能码**、4 字节」；从站脚本须回 `pdu[:4]`（现在是 `pdu[:4]`）。
-下一步：在 `XModbusHub_onReplyFinished` 打 `XModbusReply_error(reply)` 实际值；查 TCP 从站回帧的 `length`（应 = PDU 长度 + 1）与 `tid` 回填；确认 `store.respond()` 的 `self.lock` 未与 `frame_log` 文件 IO 冲突（`frame_log` 在锁内做磁盘写，9600 下不明显但可挪到锁外）。
 
-### 5.3 帧日志断言（⑨后半，2 项）
+**收口记录**：真根因在**从站脚本**——FC05/FC06 应答回 `pdu[:4]`（4 字节**含功能码**），而主站 `VXModbusClient_processResponse` 的 `respData` 已剥功能码，FC06 要求 4 字节净荷（addr2+val2），实收 3 字节 → 解析必败。交接单原结论「从站须回 `pdu[:4]`」**数错了字节**；已改为标准整请求回显 `pdu[:5]`（FC16 本就回 `pdu[:5]`，故既有用例全绿）。TCP `length`/`tid` 回填核对无问题。
+**附带根修（真 bug）**：`hubSendNextWrite` 的 `writeStalled`/失败沿把**远端地址**当 `virtualStart` 发（违反两信号的头文件契约），远端≠虚拟映射下上层会把故障挂错点位——此前日志的神秘 `[SIG] v=5` 即用例⑧映射（远端 5）经 stdout 缓冲错位后的残影。新增 `hubDirtyVirtualStart()` 段表反查，`removeDevice` 的同款内联循环一并收敛。
+
+### 5.3 帧日志断言（⑨后半，2 项）✔ 已收口
 `gap=0 时远端 0 与 16 各自成帧`、`按需刷新确实发了一帧 FC04` 失败。
-原因：`frames_A.log` 跨轮累积，`frameLogSize()` 用字节偏移做基线；从站只在 `main()` 清一次日志，若同一从站进程被复用（本轮跑 15 个用例），基线可跨越上一轮内容。
-修法：断言前用 `ftruncate` 清空，或让从站在每次 `rtu_slave`/监听重建时清；也可把断言改成「窗口内出现且只出现一次指定起始地址的帧」。
+
+**收口记录**：真根因是**时序**而非基线残留——「值已回填」≠「帧已落盘」：gap=0 对照轮的值断言立即返回、按需刷新轮 v0 本就等于 7，CHECK 抢在从站把帧写进日志之前。新增 `PredFrameLog` 谓词 + `waitUntil` 带超时等日志行出现后再断言；`frameLogSize` 字节基线机制本身无恙（从站每帧 open-append-close，行原子）。
 
 ## 6. 复现环境（重要，都是实锅）
+
+> **[2026-10-29 收编更新]** XModbusHubTest 独立 main 可执行已下线（同批：
+> XProtocolCampaignTest / XVfdM512Test / XVfdBus485Test / XVfdAtv61Test），
+> 改走主程序分派：`./bin/XinYueC_Static --test xmodbus-hub`（菜单「测试代码 →
+> 协议栈 → XModbus → Hub聚合设备闭环」同源；`Test xmodbus-hub` 命令亦通）。
+> 下方 run_hub.sh 模板中的 `./bin/XModbusHubTest 15331 15332` 相应替换为
+> `./bin/XinYueC_Static --test xmodbus-hub`（仓库内 mbtest_*_run.sh 已改）。
 
 WSL 侧（Ubuntu，root）：
 
@@ -122,13 +132,20 @@ REPO=/root/xinyuec-src CAMPAIGN_BASE=/tmp/mbsoak/campaign1028 bash Test/XProtoco
 2. 仓库里的 `mbtest_*_run.sh` 是 CRLF，`sh` 会报 `$'\r'`，跑前 `sed -i "s/\r$//"`。
 3. `pkill -f "mbtest_hub_slaves.py"` 会杀掉自己那条 `sh -c`；用 `pgrep` 取 PID 再 kill。
 4. `wsl -d Ubuntu -u root -- /root/x.sh` 会被 Git Bash 路径转换吃掉 → 加 `MSYS_NO_PATHCONV=1` 或写 `-- sh /root/x.sh`。
-5. WSL 与 Windows 是两份源码副本（`/root/xinyuec-src` ↔ `F:\Code\CMake\XinYueC`），改完必须 `cp` 同步，否则测的是旧代码。
+5. WSL 与 Windows 是两份源码副本（`/root/xinyuec-src` ↔ 仓库根），改完必须同步，否则测的是旧代码。
+6. **换机续役（2026-10-29，新机 D:\code\CMake\XinYueC）**：本机 WSL 发行版名是
+   `Ubuntu-22.04`（非 `Ubuntu`）；副本重建用 `git archive HEAD | wsl -d Ubuntu-22.04 -u root
+   -- bash -c "mkdir -p /root/xinyuec-src && tar -x -C /root/xinyuec-src"` 再补拷
+   gitignore 的 `CMake_Config.cmake`（cmake 报 include 缺失即此因）。`wsl -- bash -c`
+   传脚本会被外层展开 `$`，写文件走 base64 管道。二进制产出在仓库根 `bin/`
+   （`CMAKE_RUNTIME_OUTPUT_DIRECTORY`），不在 `build-native/bin`。
 
 ## 7. Windows 侧现状（换机前最后状态）
 
 - 工作区有大量未提交改动（`git status` 见下），其中**本战役**只涉及 §1 那张表的文件。
 - `bin/` 下 `XinYueCd.dll`、`XGuiWindowDemo_Test.exe`、`XGuiRegression_Test.exe` 是 15:01~15:29 的构建产物，**不含**本次 Hub 改动（Hub 改动在 16:00 后落地）。
-- 换机后建议顺序：`git stash`/提交当前改动 → 在 WSL 或 MSVC 里先编 `XModbusHubTest` → 跑 §6 的两套回归 → 按 §5 收口三条。
+- 换机后建议顺序：~~`git stash`/提交当前改动 → 在 WSL 或 MSVC 里先编 `XModbusHubTest` → 跑 §6 的两套回归 → 按 §5 收口三条~~
+  **→ 全部已于 2026-10-29 完成：§5 三条收口、WSL 两套回归全绿、MSVC 构建通过。剩余即提交。**
 
 ## 8. 与本战役相关的既往结论
 

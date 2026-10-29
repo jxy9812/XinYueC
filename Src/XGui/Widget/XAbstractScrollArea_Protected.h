@@ -36,6 +36,11 @@ void XAbstractScrollArea_scrollContentsBy_base(XAbstractScrollArea* self,
  *         事件槽内部请用 XClass_Parent（代码风格约定）。 */
 void XAbstractScrollArea_resizeEvent_base(XAbstractScrollArea* self);
 
+/** @brief 停止触摸跟手/惯性滚动（XGui 扩展；子类在自管输入路径——如
+ *         滚轮覆写、编程滚动——应调用，避免惯性与社会滚动打架）。
+ * @param self 目标滚动区域；NULL 无操作。 */
+void XAbstractScrollArea_stopTouchScroll(XAbstractScrollArea* self);
+
 #endif /* XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON */
 
 #ifdef __cplusplus

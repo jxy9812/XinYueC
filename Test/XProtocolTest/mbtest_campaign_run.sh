@@ -13,7 +13,10 @@
 set -u
 ENGINE="${1:-io}"
 REPO="${REPO:-/home/xinyue/Code/XinYueC}"
-CAMPAIGN_BIN="${CAMPAIGN_BIN:-$REPO/bin/XProtocolCampaignTest}"
+# [2026-10-29 收编] XProtocolCampaignTest 独立 main 可执行已下线，改走主程序
+# --test 分派（返回码=失败数）；base 目录经 CAMPAIGN_BASE 环境变量传入，
+# 端口取代码缺省 15431。
+CAMPAIGN_BIN="${CAMPAIGN_BIN:-$REPO/bin/XinYueC_Static}"
 BASE="${CAMPAIGN_BASE:-/tmp/mbsoak/campaign1028}"
 SLAVES_PY="$REPO/Test/XProtocolTest/mbtest_campaign_slave.py"
 PORT=15431
@@ -61,7 +64,7 @@ run_engine() {
   fi
   echo "[driver] engine=$eng slaves up (pid=$SPID, base=$BASE, port=$PORT)" \
     | tee -a "$BASE/driver.log"
-  timeout "$TIMEOUT_SEC" "$CAMPAIGN_BIN" "$BASE" "$PORT" \
+  CAMPAIGN_BASE="$BASE" timeout "$TIMEOUT_SEC" "$CAMPAIGN_BIN" --test xprotocol-campaign \
     > "$BASE/test-$eng.log" 2>&1
   local RC=$?
   kill -9 "$SPID" 2>/dev/null

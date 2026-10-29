@@ -104,8 +104,13 @@ ASan 零报告。覆盖：映射纯逻辑（重叠/切片/按设备收集/回绕
 1. **B1 公共组件提炼**：新增 `Src/XProtocol/XPoll/XPollScheduler.{h,c}`——
    `XVfdPollScheduler` 语义原样上移为通用「总线轮询计划表」（登记/注销/改
    周期/markSent/reportResult 静默退避/tick 错峰单条派发/isMuted/setBackoff；
-   固定容量 32 条目 + 游标轮转；纯逻辑、无定时器无 IO，时刻一律由调用方注入
-   `nowMs`）。另加 Hub 用的 **key 注册扩展**（`registerKey`/`reportResultKey`/
+   纯逻辑、无定时器无 IO，时刻一律由调用方注入 `nowMs`）。
+   **（2026-10-29 动态化）条目表由固定 32 槽改为 XVector 按需增长**：不再
+   表满拒登（只剩分配失败），登记返回的下标只在登记时刻有效（删除走尾交换
+   不保序）；tick 全程下标访问、回调前快照透传参数，回调内 register/
+   unregister 安全；表体惰性建表，零初始化内嵌亦可直接登记。动因：32 槽
+   对 >32 从站的非典型总线会静默丢退避簿记（Hub 侧 `(void)registerKey`），
+   且 2 KiB/表的固定开销换不来可感知收益。另加 Hub 用的 **key 注册扩展**（`registerKey`/`reportResultKey`/
    `isMutedKey`/`isLostKey`：owner 为空、按 unitId 寻址，tick 自动跳过），
    供 (设备, 从站) 粒度失联簿记；同一张表内 owner 登记与 key 登记互不串位。
    配置开关 `XPOLL_SCHEDULER_ON` 登记进 `XProtocol_config.h`，缺省
@@ -248,24 +253,24 @@ writeValue(s)
   `Test/XProtocolTest/xmodbus_hub_test.c`（含帧日志断言工具
   `frameLogSize/frameLogCount/frameLogHasLine`；从站脚本
   `mbtest_hub_slaves.py` 配套新增 `frames_<tag>.log`、FC15 解包、
-  数组放大到 di/coils=32 / ir/hr=64）。**当前未收口：最新一轮 12 项失败**
-  （2026-10-29 收尾时按用户要求停止调试）。失败集中在：
-  1. **写合并断言全组失败（⑩前半）**——从站日志显示三笔线圈写最终是
-     **逐点 FC06/FC05 帧**而非一帧 FC15，且 `writeCompleted` 只回了
-     2 条（v=1 n=1、v=2 n=2）而非按切片 3 条。排查方向：
-     `hubMarkDirty` 的合并判据（相邻区间判定用了 `offset <= dEnd` 的
-     半开区间比较，正确）与写后是否**立刻**泵（`hubScheduleFlush`
-     窗口=0 时逐笔即时下发 ⇒ 第一笔已上线、后两笔来不及合并）。即
-     「默认无窗口时逐笔即时下发」与「合并成一帧」本身冲突：合并要么
-     依赖窗口（`setWriteCoalesceMs>0`），要么依赖设备忙时排队。用例应在
-     有窗口或设备忙碌的前提下断言合并。
-  2. **写落定/失败沿断言失败（⑩后半）**——`pendingWriteCount` 未归零、
-     解吞后仍不落定，说明 FC06 写应答被判失败并无限重发。`XModbusClient`
-     的 FC05/FC06 响应解析按「respData 不含功能码、需 4 字节」实现
-     （`XModbusClient.c:820`），从站脚本必须回 `pdu[:4]`（已按此写死）；
-     若仍失败，下一步查 TCP 从站 `length` 字段与 `tid` 回填是否匹配。
-  3. **帧日志断言（⑨后半）**——`frames_A.log` 按轮次累积，断言用
-     `frameLogSize()` 取基线字节偏移；`gap=0 时远端 0 与 16 各自成帧`
-     与 `按需刷新确实发了一帧 FC04` 失败更可能是**基线在进程内取到的是
-     上一轮残留文件**（从站启动时清理只在 `main()` 首次执行）或断言窗口
-     跨了多拍（帧数/起点匹配过严），需在断言前先 `truncate` 帧日志。
+  数组放大到 di/coils=32 / ir/hr=64）。
+  **已全部收口（2026-10-29 换机续役）：用例①~⑩ 0 失败**。三条根因与修法：
+  1. **写合并断言（⑩前半，5 项）**——根因确认为「默认 coalesce=0 受理即
+     下发」与「合并成一帧」矛盾（首轮判断成立）。按修法 A 改用例：断言前
+     `setWriteCoalesceMs(40)`，窗口内三笔并成单条脏区间 → 一帧 FC15
+     [1..3]。另修正两处断言口径：FC15 起址应为远端 **1**（脏区间起点，
+     非 0）；`writeCompleted` 粒度=映射段（`hubEmitWriteDone` 契约），
+     单段内合并切片只回 **1 次**（v=1 n=3），原「≥3」期望与设计矛盾。
+  2. **写落定/失败沿（⑩后半，6 项）**——真根因在**从站脚本**：FC05/FC06
+     应答回 `pdu[:4]`（4 字节**含功能码**），主站 `VXModbusClient_processResponse`
+     的 `respData` 已剥功能码，FC06 要求 4 字节净荷（addr2+val2），实收
+     3 字节 → 解析必败 → 无限重发。此前「从站须回 pdu[:4]」的结论数错了
+     字节；已改为标准整请求回显 `pdu[:5]`。**附带根修**：
+     `hubSendNextWrite` 的 `writeStalled`/失败沿把**远端地址**当
+     `virtualStart` 发（违反两信号头文件契约），远端≠虚拟映射下上层会把
+     故障挂错点位（此前日志里的神秘 `v=5` 即用例⑧映射的远端地址）；
+     新增 `hubDirtyVirtualStart()` 段表反查统一三处发射口径。
+  3. **帧日志断言（⑨后半，2 项）**——真根因是**时序**而非基线残留：
+     「值已回填」≠「帧已落盘」，gap=0 对照轮与按需刷新轮的值断言立即
+     返回，CHECK 抢在帧写日志之前。新增 `PredFrameLog` 谓词 +
+     `waitUntil` 带超时等帧日志行出现后再断言，基线机制不变。

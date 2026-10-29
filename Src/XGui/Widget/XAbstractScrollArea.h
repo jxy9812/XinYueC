@@ -83,6 +83,28 @@ typedef struct XAbstractScrollArea
     int16_t m_marginBottom;    /**< 视口下边距 px（默认 0）。 */
     XSize m_sizeHintCache;     /**< AdjustToContentsOnFirstShow 的尺寸提示缓存（内部）。 */
     bool m_sizeHintCached;     /**< 尺寸提示缓存是否有效（内部）。 */
+    /* [触摸滚动 2026-10-29] 触摸跟手滚动+惯性状态：DragBegin 认领时标
+       XGestureDragMode_Track，随后 DragUpdate/DragEnd/DragCancel 原始位移
+       流按帧差分驱动滚动条；DragEnd 按近期采样速度启动惯性定时衰减
+       （对标移动端 fling）。XTimerId 经 XObject.h 链入。 */
+    bool m_touchScrollEnabled; /**< 触摸拖动滚动开关（默认 true；关=DragBegin
+                                    不认领，回落历史合成滚轮语义）。 */
+    bool m_touchScrolling;     /**< 跟手拖动进行中（本区已认领 Track）。 */
+    bool m_flingActive;        /**< 惯性滚动进行中（m_flingTimerId 有效）。 */
+    int  m_dragLastX;          /**< 跟手帧最近主点位置（本控件局部坐标）。 */
+    int  m_dragLastY;
+    XTimerId m_flingTimerId;   /**< 惯性定时器 id（XTIMER_INVALID_ID=未布防）。 */
+    int  m_flingVelX;          /**< 惯性速度 px/s（+x=内容随指右移方向）。 */
+    int  m_flingVelY;          /**< 惯性速度 px/s（+y=内容随指下移方向）。 */
+    int  m_flingRemX;          /**< 惯性位移累加余数（1e-3 px 域；亚像素
+                                    节拍不丢步，尾速平滑到停机阈值）。 */
+    int  m_flingRemY;
+    int64_t m_flingLastMs;     /**< 惯性上一拍时刻（单调毫秒）。 */
+    int  m_velSampleX[4];      /**< 跟手速度采样环（DragUpdate 主点位置）。 */
+    int  m_velSampleY[4];
+    int64_t m_velSampleMs[4];  /**< 采样时刻（单调毫秒；>150ms 旧样不计速）。 */
+    uint8_t m_velSampleCount;  /**< 有效采样数（0..4）。 */
+    uint8_t m_velSampleHead;   /**< 环写指针（满后覆盖最旧）。 */
 } XAbstractScrollArea;
 
 /* ==================== 生命周期 ==================== */
@@ -247,6 +269,24 @@ XAbstractScrollAreaSizeAdjustPolicy XAbstractScrollArea_sizeAdjustPolicy(
  */
 void XAbstractScrollArea_setSizeAdjustPolicy(
     XAbstractScrollArea* self, XAbstractScrollAreaSizeAdjustPolicy policy);
+
+/* ==================== 触摸滚动（XGui 扩展） ==================== */
+
+/**
+ * @brief  设置触摸拖动滚动开关（XGui 扩展，默认开启）。
+ * @details 开启时触摸拖动由本区认领（XGestureDragMode_Track）：按住视口
+ *          拖动内容随手跟移（手指方向=内容移动方向，移动端操作习惯），
+ *          抬手按近期位移采样给惯性衰减滚动；无滚动范围（内容未超高）
+ *          或开关关闭时不认领，回落历史合成滚轮语义（行为不变）。触摸
+ *          滚动条把手不受影响（把手按下即 grabMouse，DragBegin 不会
+ *          询问到本区）。
+ * @param self 目标滚动区域；NULL 无操作。
+ * @param enabled true=开启（默认）；false=关闭。
+ */
+void XAbstractScrollArea_setTouchScrollEnabled(XAbstractScrollArea* self,
+                                               bool enabled);
+/** @brief 查询触摸拖动滚动开关（默认 true；self 为 NULL 返回 false）。 */
+bool XAbstractScrollArea_touchScrollEnabled(const XAbstractScrollArea* self);
 
 /* 保护槽入口（scrollContentsBy_base/resizeEvent_base）声明于
  * XAbstractScrollArea_Protected.h；本公共头仅保留公开 API。 */

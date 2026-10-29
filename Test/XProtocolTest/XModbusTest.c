@@ -887,4 +887,34 @@ void XTestMenu_XModbusTest(XTestMenu* root)
         XAction* action = XTestMenu_addAction(menu, "TcpClient测试");
         XTestMenu_setActionFunction(action, XModbusTcpClientTest);
     }
+#if XMODBUS_HUB_ON
+    /* 闭环回归（原独立 main 可执行收编，2026-10-29）：运行前须由驱动脚本
+       起好对应虚拟从站，否则受理/连网用例会按失败数退出。 */
+    {
+        XAction* action = XTestMenu_addAction(menu, "Hub聚合设备闭环（需从站15331/15332）");
+        XTestMenu_setActionFunction(action, XModbusHubTest);
+    }
+    {
+        XAction* action = XTestMenu_addAction(menu, "485协议战役S1..S13（需虚拟从站）");
+        XTestMenu_setActionFunction(action, XProtocolCampaignTest);
+    }
+#endif
+#if XVFD_ON
+    {
+        XTestMenu* vfd = XTestMenu_create("XVfd变频器(485)");
+        XTestMenu_addMenu(menu, vfd);
+        {
+            XAction* action = XTestMenu_addAction(vfd, "M512双站混合总线闭环（需虚拟从站）");
+            XTestMenu_setActionFunction(action, XVfdM512Test);
+        }
+        {
+            XAction* action = XTestMenu_addAction(vfd, "虚拟RS485总线多从站闭环（需虚拟从站）");
+            XTestMenu_setActionFunction(action, XVfdBus485Test);
+        }
+        {
+            XAction* action = XTestMenu_addAction(vfd, "ATV61闭环（需虚拟从站）");
+            XTestMenu_setActionFunction(action, XVfdAtv61Test);
+        }
+    }
+#endif
 }

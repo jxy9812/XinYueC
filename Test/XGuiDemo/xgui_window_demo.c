@@ -799,7 +799,7 @@ typedef struct DemoWin
     DemoStatusLabel m_statusLabel; /**< 底部状态栏（自带深色底，白字）。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton     m_pageNav[22]; /**< 页面切换按钮（下标=页索引；挂在浮动导航面板活动分类下，装配见 DemoWin_create；页 15=二维码、页 16=软件更新、页 17/18=Modbus 主站/从站、页 19=窗口设置、页 20=时钟与 DDNS，2026-10-19 合并扩列 21）。 */
+    XPushButton     m_pageNav[24]; /**< 页面切换按钮（下标=页索引；挂在浮动导航面板活动分类下，装配见 DemoWin_create；页 15=二维码、页 16=软件更新、页 17/18=Modbus 主站/从站、页 19=窗口设置、页 20=时钟与 DDNS、页 22=测试菜单 2026-10-29 合并扩列 23）。 */
 #endif
 #if XBUTTONGROUP_ON
     XButtonGroup    m_navGroup;    /**< 页面钮互斥组：当前页按钮保持选中高亮（主题 :checked 态）。 */
@@ -810,7 +810,7 @@ typedef struct DemoWin
     XWidget         m_navPanel;      /**< 浮动导航面板（四边停靠/收起贴边，见 demo_navUpdatePanel）。 */
     XLabel          m_navTitle;      /**< 面板标题「导航」。 */
     XPushButton     m_navDockBtn;    /**< 换边钮：左→右→上→下循环。 */
-    XPushButton     m_navCatBtns[3]; /**< 一级分类钮（控件/系统设置/远程；手风琴）。 */
+    XPushButton     m_navCatBtns[4]; /**< 一级分类钮（控件/系统设置/远程/测试；手风琴）。 */
     XLabel          m_navHeadLabels[5]; /**< 子分组标题标签池（控件类内「按钮/输入/…」，竖版展开时启用）。 */
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
     XScrollArea     m_navScroll;     /**< 竖版内容滚动容器（AsNeeded：内容超高才出垂直滚动条）。 */
@@ -833,8 +833,14 @@ typedef struct DemoWin
     XWidget         m_pageInputs;  /**< 页面 3：输入控件演示容器。 */
     XWidget         m_pageTabs;    /**< 页面 4：容器与窗口演示容器。 */
     XWidget         m_pageChart;   /**< 页面 12：图表演示容器（自选项卡页打散独立）。 */
-    XWidget*        m_extPages[17]; /**< 页面 5~20：扩展页根（xgui_demo_pages.h 契约，5+下标=页索引，下标 7=内置图表页占位恒 NULL；堆对象随父链级联析构；下标 12/13=Modbus 主站/从站页 2026-10-13 双页拆分，下标 14=窗口设置页 2026-10-17，下标 15=时钟与 DDNS 页 2026-10-16）。[懒分配 2026-10-19] 语义更新：注册期=空占位壳（XWidget_create 堆对象，仅保「堆叠下标=页索引」与几何分支口径），首显经 demo_ext_ensureBuilt 同位换入真页根后槽位才指真根；构建回落（裁剪）时槽位清空=旧「跳过注册」口径。 */
-    bool            m_extBuilt[17]; /**< [懒分配 2026-10-19] 扩展页已构建/已尝试标记（demo_ext_ensureBuilt 幂等守卫）：false=槽位仍是注册期占位壳；true=已换真页根或已裁剪回落。全量懒分配策略=常驻不销毁，置位后无复位路径（页活到进程退出，与现状销毁语义一致）。 */
+    XWidget*        m_extPages[19]; /**< 页面 5~22：扩展页根（xgui_demo_pages.h 契约，5+下标=页索引，下标 7=内置图表页占位恒 NULL；堆对象随父链级联析构；下标 12/13=Modbus 主站/从站页 2026-10-13 双页拆分，下标 14=窗口设置页 2026-10-17，下标 17=测试菜单+Shell 页 2026-10-29）。[懒分配 2026-10-19] 语义更新：注册期=空占位壳（XWidget_create 堆对象，仅保「堆叠下标=页索引」与几何分支口径），首显经 demo_ext_ensureBuilt 同位换入真页根后槽位才指真根；构建回落（裁剪）时槽位清空=旧「跳过注册」口径。 */
+    bool            m_extBuilt[19]; /**< [懒分配 2026-10-19] 扩展页已构建/已尝试标记（demo_ext_ensureBuilt 幂等守卫）：false=槽位仍是注册期占位壳；true=已换真页根或已裁剪回落。全量懒分配策略=常驻不销毁，置位后无复位路径（页活到进程退出，与现状销毁语义一致）。 */
+    /* [页级滚动壳 2026-10-29] 页索引 → 包裹滚动区（DemoScrollHost 内嵌
+     * 壳；NULL=该页未包裹——已自带滚动承载的豁免页/滚动模块裁剪）。
+     * adapt 漏斗收尾按当前页刷新一次内容排版（页内档位重排改内容提示
+     * 后滚动范围即时跟上，network/modbus 页各自 adapt 显式调用的统一
+     * 化收口）。指针皆借用（滚动区随宿主父子链存活，页常驻不销毁）。 */
+    XScrollArea*    m_pageScrolls[26]; /**< 堆叠页索引 0~23 + 菜单页（容量含余量）。 */
     /* 页 3/4/12 布局容器化（2026-10-17）：页内排布改由盒式布局管理，
      * demo_layout_content 对应手写坐标段删除。嵌套行/列布局器按借用
      * 指针挂入父布局（XBoxLayout_addLayout 不取所有权），故全部作为
@@ -1729,6 +1735,11 @@ static void demo_input_autotest(DemoWin* self)
             DEMO_EXPECT(XSpinBox_value(spin) == v, "微调框与滑块联动");
             DEMO_EXPECT(XProgressBar_value(bar) == v, "进度条与滑块联动");
         }
+        /* 配对 RELEASE 收口：滑块按下即 grabMouse（拖动语义），缺释放
+         * 会让抓取与 m_sliderDown 双滞留，吞掉演示窗后续首击。 */
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                         XMouseButton_LeftButton, 0, p);
+        XObject_event_base((XObject*)slider, (XEvent*)&me);
     }
 
     /* 3. 单行输入：中文（IME 提交路径）+ 西文键入，保持焦点看光标。 */
@@ -1865,6 +1876,149 @@ static void demo_input_autotest(DemoWin* self)
         XGuiApplication_quit();
 }
 
+#if XWIDGET_ON && XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+/* ==================== 页级滚动壳（2026-10-29 整页竖滚统一收口） ========
+ * [所有页面可滚] 未自带滚动承载的页面（条目视图/高级控件/图形效果/
+ * 虚拟键盘/远程服务端/远程客户端/悬浮窗设置/二维码/软件更新/窗口设置/
+ * 测试菜单 + 内建 0~4/12/菜单页）统一在堆叠条目层包一层：
+ *   DemoScrollHost（堆叠条目，XWidget 子类）
+ *     └ XScrollArea（竖条 AsNeeded、横条 AlwaysOff、widgetResizable(true)）
+ *         └ 真页根
+ * 不直接把 XScrollArea 挂进 XStackedLayout：堆叠给 XScrollArea 条目的
+ * 几何分配异常（仅 184x150 且不再重摆，network/modbus 页同款实证），
+ * 宿主内嵌定式与 net_createScroll/mb_slaveCreateScroll 同口径。
+ * 竖条 AsNeeded：内容一屏装得下时完全不出条（桌面现状不变），超高才
+ * 出；触摸滑动由框架 XAbstractScrollArea 触摸跟手+惯性承载（手指方向=
+ * 内容移动方向，移动端操作习惯）。
+ * 身份契约：m_extPages[]/m_page* 成员仍指真页根（逐页 adapt/autotest/
+ * 大表格收编钩子/远程 isWindow 门按真根消费，零感知）；包裹只发生在
+ * 堆叠条目层。已自带整页滚动的页面（dialogs/timeddns/atv61/modbus
+ * 从站真根=滚动区，network/modbus 主站自带页宿主内嵌壳）经豁免表跳
+ * 过，防双层滚动条。 */
+XCLASS_DEFINE_BEGING(DemoScrollHost)
+XCLASS_DEFINE_EXTEND_END(DemoScrollHost, XWidget)
+
+typedef struct DemoScrollHost
+{
+    XWidget m_base;        /**< XWidget 基类；必须是第一个成员。 */
+    XScrollArea* m_scroll; /**< 内嵌滚动区（拥有；随父子链析构）。 */
+} DemoScrollHost;
+
+/** @brief 页宿主 resizeEvent：内嵌滚动区铺满宿主矩形（堆叠分配几何的
+ *         唯一消费点，NetPageHost 定式）。 */
+static void VDemoScrollHost_resizeEvent(XWidget* self, XEvent* event)
+{
+    DemoScrollHost* host;
+    (void)event;
+    if (!self) return;
+    host = (DemoScrollHost*)self;
+    if (host->m_scroll)
+        XWidget_setGeometry((XWidget*)host->m_scroll, 0, 0,
+                            XWidget_width(self), XWidget_height(self));
+}
+
+XVtable* DemoScrollHost_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(DemoScrollHost)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
+                             VDemoScrollHost_resizeEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 把真页根包进滚动壳，返回堆叠条目。
+ * @details 失败（分配失败）原样返回真根：页面退化为「超高截断」历史
+ *         行为，功能不受损；调用方无需判别包裹与否。真根所有权移交
+ *         滚动区（XScrollArea_setWidget 接管语义）。
+ * @param scrollOut 非空时回填内嵌滚动区（借用；NULL 传可不关心）。 */
+static XWidget* demo_wrap_page_scroll_ex(XWidget* page,
+                                         XScrollArea** scrollOut)
+{
+    DemoScrollHost* host;
+    if (scrollOut) *scrollOut = NULL;
+    if (!page) return NULL;
+    host = (DemoScrollHost*)XMemory_malloc(sizeof(DemoScrollHost),
+                                           XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!host) return page;
+    XMemset(host, 0, sizeof(*host));
+    XWidget_init(&host->m_base, NULL, 0);
+    XClassSetVtable(host, DemoScrollHost);
+    Set_Class_Memory(host, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(host, true);
+    host->m_scroll = XScrollArea_create((XWidget*)host, 0);
+    if (!host->m_scroll) {
+        XObject_deleteLater((XObject*)host);
+        return page;
+    }
+    XAbstractScrollArea_setHorizontalScrollBarPolicy(
+        (XAbstractScrollArea*)host->m_scroll,
+        (int)XScrollBarPolicy_AlwaysOff);
+    XScrollArea_setWidgetResizable(host->m_scroll, true);
+    XScrollArea_setWidget(host->m_scroll, page);
+    if (scrollOut) *scrollOut = host->m_scroll;
+    return &host->m_base;
+}
+#endif /* XWIDGET_ON && XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON */
+
+/** @brief 内建页/菜单页包裹 + 映射登记（包裹失败/模块裁剪原样返回）。
+ * @param pageIdx 页索引（>=0 时登记 m_pageScrolls[pageIdx]）。 */
+static XWidget* demo_win_wrapBuiltinPage(DemoWin* self, XWidget* page,
+                                         int pageIdx)
+{
+#if XWIDGET_ON && XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+    XScrollArea* sb = NULL;
+    XWidget* entry = demo_wrap_page_scroll_ex(page, &sb);
+    if (entry != page && sb && pageIdx >= 0 && pageIdx < 26)
+        self->m_pageScrolls[pageIdx] = sb;
+    return entry;
+#else
+    (void)self; (void)pageIdx;
+    return page;
+#endif
+}
+
+/** @brief 扩展页滚动壳豁免表（下标=exti=页索引-5）：true=真根已自带
+ *         整页滚动承载（真根本身是滚动区，或页宿主内嵌滚动壳），堆叠
+ *         换入时不再包裹防双层滚动条。 */
+static const bool g_extPageScrollReady[19] = {
+    false, /* exti0 条目视图 */
+    true,  /* exti1 对话框（DlgPgScroll=XScrollArea 子类，自管排版） */
+    false, /* exti2 高级控件 */
+    false, /* exti3 图形效果 */
+    false, /* exti4 虚拟键盘 */
+    false, /* exti5 远程服务端 */
+    false, /* exti6 远程客户端（远程视图自管触摸，壳只覆盖页边缘空白） */
+    true,  /* exti7 占位（内置图表页，恒不查表） */
+    true,  /* exti8 网络设置（NetPageHost 内嵌壳） */
+    false, /* exti9 悬浮窗设置 */
+    false, /* exti10 二维码 */
+    false, /* exti11 软件更新 */
+    true,  /* exti12 Modbus 主站（页宿主内嵌壳） */
+    true,  /* exti13 Modbus 从站（真根=XScrollArea） */
+    false, /* exti14 窗口设置 */
+    true,  /* exti15 时钟与 DDNS（真根=XScrollArea） */
+    true,  /* exti16 ATV61（真根=XScrollArea） */
+    false, /* exti17 测试菜单（页内滚动区只管菜单树，页级另包） */
+    true   /* exti18 Shell（真根=XScrollArea，页宿主=scroll 定式） */
+};
+
+/** @brief 扩展页真根 → 堆叠条目（按豁免表决定是否包滚动壳）。 */
+static XWidget* demo_ext_stackEntry(DemoWin* self, int exti, XWidget* real)
+{
+#if XWIDGET_ON && XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+    if (real && exti >= 0 && exti < 19 && !g_extPageScrollReady[exti]) {
+        XScrollArea* wrapScroll = NULL;
+        XWidget* entry = demo_wrap_page_scroll_ex(real, &wrapScroll);
+        if (entry != real && self && 5 + exti < 26)
+            self->m_pageScrolls[5 + exti] = wrapScroll; /* 漏斗刷新登记。 */
+        return entry;
+    }
+#else
+    (void)self; (void)exti;
+#endif
+    return real;
+}
+
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 /* 前向声明：本函数定义在 demo_page_name 之前。 */
 static const char* demo_page_name(int index);
@@ -1893,13 +2047,13 @@ static const char* demo_page_name(int index);
  *         kExtBuilders 提升为文件级：注册循环查表建占位壳，
  *         demo_ext_ensureBuilt 查表真建，autotest 调度查表甄别裁剪槽）。
  *         下标=页索引-5，下标 7=页 12（图表演示，内置页）恒 NULL 占位。 */
-XWidget* (*const g_extBuilders[17])(XWidget*, DemoPageStatusFn, void*) = {
+XWidget* (*const g_extBuilders[19])(XWidget*, DemoPageStatusFn, void*) = {
 #if XINYUE_EMBEDDED
     /* 嵌入式（F407 外扩堆 1008KB）：全部扩展页暂不预建——键盘页的
      * 拼音引擎+虚拟键盘控件树为最大内存户；性能悬浮窗演示优先，
      * 键盘页待后备存储静态绑定（extbuf 640KB 方案）后接回。 */
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 #else
     demo_page_views_build, demo_page_dialogs_build,
     demo_page_advanced_build, demo_page_effects_build,
@@ -1914,7 +2068,9 @@ XWidget* (*const g_extBuilders[17])(XWidget*, DemoPageStatusFn, void*) = {
     demo_page_modbus_slave_build, /* 2026-10-13 Modbus 从站页。 */
     demo_page_window_settings_build, /* 2026-10-17 窗口设置页（系统设置）。 */
     demo_page_timeddns_build, /* 2026-10-16 时钟与 DDNS 页（系统设置）。 */
-    demo_page_atv61_build /* 2026-10-26 ATV61 变频器页（Modbus RTU 主站）。 */
+    demo_page_atv61_build, /* 2026-10-26 ATV61 变频器页（Modbus RTU 主站）。 */
+    demo_page_testmenu_build, /* 2026-10-29 测试菜单页（控制台 test 菜单 GUI 化）。 */
+    demo_page_shell_build /* 2026-10-29 Shell 页（页面内控制台，按需开关）。 */
 #endif
 };
 /* 前向声明：扩展页状态回调定义在导航槽段（demo_nav19Slot 之后）。 */
@@ -1986,7 +2142,7 @@ static void demo_ext_ensureBuilt(DemoWin* self, int exti)
 {
     XWidget* placeholder;
     XWidget* real;
-    if (!self || exti < 0 || exti >= 17)
+    if (!self || exti < 0 || exti >= 19)
         return;
     if (!g_extBuilders[exti])
         return; /* 裁剪注册表/内置图表页占位槽：零操作。 */
@@ -2003,9 +2159,22 @@ static void demo_ext_ensureBuilt(DemoWin* self, int exti)
         return;
     }
     self->m_extPages[exti] = real;
+#if XTABLEWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    /* [页级滚动壳 2026-10-29 顺序约束] 大表格收编必须先于包裹：收编把
+     * mid-init（vtable 未装）的表格插入 views 页根布局——root 尚无几何
+     * 时布局激活惰性（历史行为，sizeHint 不被查询）；若先包后收编，
+     * 包裹壳 setWidget 已按视口立即排版 root 并激活布局，mid-init 表格
+     * 入布局即被 sizeHint 虚调用 → 崩溃（真机 420x640 --page 5 实证）。 */
+    if (exti == 0)
+        demo_ext_viewsBigTableHook(self); /* 工程要点②：大表格收编。 */
+#endif
     if (placeholder &&
         XStackedLayout_indexOf(&self->m_stackLayout, placeholder) >= 0) {
-        XStackedLayout_insertWidget(&self->m_stackLayout, 5 + exti, real);
+        /* [页级滚动壳 2026-10-29] 堆叠条目=滚动壳包真根（豁免表甄别，
+         * 见 DemoScrollHost 段）；m_extPages 仍指真根——adapt/autotest/
+         * 大表格收编/远程门身份契约不变。 */
+        XStackedLayout_insertWidget(&self->m_stackLayout, 5 + exti,
+                                    demo_ext_stackEntry(self, exti, real));
         XStackedLayout_removeWidget(&self->m_stackLayout, placeholder);
         /* 占位壳已隐藏并摘出容器（removeWidget 置 parent=NULL）：
            XObject_deleteLater 延迟释放（仓库定式；XObject 析构清挂起
@@ -2014,12 +2183,9 @@ static void demo_ext_ensureBuilt(DemoWin* self, int exti)
     } else {
         /* 占位壳缺席（理论不可达，防御分支）：末尾追加兜底，页功能
            不受损（堆叠下标可能漂移，仅注册链异常时可达）。 */
-        XStackedLayout_addWidget(&self->m_stackLayout, real);
+        XStackedLayout_addWidget(&self->m_stackLayout,
+                                 demo_ext_stackEntry(self, exti, real));
     }
-#if XTABLEWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-    if (exti == 0)
-        demo_ext_viewsBigTableHook(self); /* 工程要点②：大表格收编。 */
-#endif
 }
 
 /** @brief 扩展页（5~15）图形界面自动化验证调度。
@@ -2036,7 +2202,7 @@ static int g_autotestPageOnly = -1; /**< --autotest-page 指定页号；-1=全�
  *          后的页永远测不到，卡死类缺陷因此长期无门禁。 */
 static void demo_ext_pages_autotest(DemoWin* demo)
 {
-    int (*const kTests[17])(XWidget*) = {
+    int (*const kTests[19])(XWidget*) = {
         demo_page_views_autotest, demo_page_dialogs_autotest,
         demo_page_advanced_autotest, demo_page_effects_autotest,
         demo_page_keyboard_autotest, demo_page_remote_server_autotest,
@@ -2050,11 +2216,13 @@ static void demo_ext_pages_autotest(DemoWin* demo)
         demo_page_modbus_slave_autotest, /* 2026-10-13 Modbus 从站页。 */
         demo_page_window_settings_autotest, /* 2026-10-17 窗口设置页。 */
         demo_page_timeddns_autotest, /* 2026-10-16 时钟与 DDNS 页。 */
-        demo_page_atv61_autotest /* 2026-10-26 ATV61 变频器页。 */
+        demo_page_atv61_autotest, /* 2026-10-26 ATV61 变频器页。 */
+        demo_page_testmenu_autotest, /* 2026-10-29 测试菜单页。 */
+        demo_page_shell_autotest /* 2026-10-29 Shell 页。 */
     };
     int total = 0;
     int exti;
-    for (exti = 0; exti < 17; ++exti) {
+    for (exti = 0; exti < 19; ++exti) {
         int failures;
         if (!kTests[exti] || !g_extBuilders[exti])
             continue; /* 无契约/裁剪占位槽（内置图表页等），跳过 */
@@ -2204,7 +2372,12 @@ static bool demo_framePumpBody(void* userData)
        图形界面验证）。 */
     if (demo->m_autoTest) {
         if (demo->m_autoTestFrames == 3) {
-            demo_input_autotest(demo);
+            /* [专项直达 2026-10-29] --autotest-page 指向扩展页（>=5）时
+               跳过内置页自测：其一，直达语义本该只跑指定页；其二，内置
+               自测含跨页导航（如输入页切页 5），会误触无关扩展页构建，
+               令指定页之外的在途问题拦住专项回归。 */
+            if (g_autotestPageOnly < 0 || g_autotestPageOnly < 5)
+                demo_input_autotest(demo);
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
             demo_ext_pages_autotest(demo);
 #endif
@@ -2439,7 +2612,7 @@ static void demo_set_status(DemoWin* self, const char* text)
 /** @brief 页面名称表（与导航按钮一一对应，中文）。 */
 static const char* demo_page_name(int index)
 {
-    static const char* const kNames[22] = {
+    static const char* const kNames[24] = {
         "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
         "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
         "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
@@ -2461,16 +2634,18 @@ static const char* demo_page_name(int index)
         "Modbus \xE4\xBB\x8E\xE7\xAB\x99", /* Modbus 从站(2026-10-13) */
         "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE", /* 窗口设置(2026-10-17 系统设置) */
         "\xE6\x97\xB6\xE9\x92\x9F\xE4\xB8\x8E DDNS", /* 时钟与 DDNS(2026-10-16) */
-        "ATV61 \xE5\x8F\x98\xE9\xA2\x91\xE5\x99\xA8" /* ATV61 变频器(2026-10-26) */
+        "ATV61 \xE5\x8F\x98\xE9\xA2\x91\xE5\x99\xA8", /* ATV61 变频器(2026-10-26) */
+        "\xE6\xB5\x8B\xE8\xAF\x95\xE8\x8F\x9C\xE5\x8D\x95", /* 测试菜单(2026-10-29) */
+        "Shell" /* Shell 控制台(2026-10-29) */
     };
-    if (index < 0 || index > 21)
+    if (index < 0 || index > 23)
         return kNames[0];
     return kNames[index];
 }
 
 /* ==================== 浮动导航面板 ====================
  * 「先切一级分类、再选页面」两级导航（2026-10-06 一级菜单整改：收拢
- * 为「控件 / 系统设置 / 远程」三大类——原七个平铺分类降为控件类内的
+ * 为「控件 / 系统设置 / 远程 / 测试」四大类——原七个平铺分类降为控件类内的
  * 子分组标题行，分类语义与用户操作面一致）。面板默认贴左停靠，「换
  * 边」钮循环 左→右→上→下，「收起」钮贴边成 26px 细条（点细条复原）。
  * 面板内 3 个一级分类钮常驻，活动分类的条目在手风琴下展开——分类即
@@ -2484,8 +2659,8 @@ static const char* demo_page_name(int index)
 #define DEMO_NAV_TB_H    100   /**< 上下停靠面板默认高（分割条可拖 92..320）。 */
 #define DEMO_NAV_TB_MAX  320   /**< 上下停靠面板高上限（换行页面钮自动抬高至此）。 */
 #define DEMO_NAV_STRIP_W 8     /**< 收起贴边分割条细条厚。 */
-#define DEMO_NAV_CAT_N   3     /**< 一级分类数（=kNavGroups 项数）。 */
-#define DEMO_NAV_PAGE_N  22    /**< 页面数（2026-10-26：+ATV61 变频器页 21）。 */
+#define DEMO_NAV_CAT_N   4     /**< 一级分类数（=kNavGroups 项数；2026-10-29 +测试）。 */
+#define DEMO_NAV_PAGE_N  24    /**< 页面数（2026-10-29：+测试菜单/Shell 页 22）。 */
 #define DEMO_NAV_HEAD_N  5     /**< 单分类最多子分组标题数（标签池容量）。 */
 #define DEMO_NAV_PAGE_H    24  /**< 页面钮高（竖版）。 */
 #define DEMO_NAV_PAGE_PITCH 26 /**< 页面钮行距（竖版）。 */
@@ -2536,6 +2711,13 @@ static const DemoNavItem kNavRemoteItems[] = {
     { "ATV61 \xE5\x8F\x98\xE9\xA2\x91\xE5\x99\xA8", 21 } /* ATV61 变频器(2026-10-26) */
 };
 
+/** @brief 测试类条目（2026-10-29 自远程类拆出：测试/调试工具自成一类，
+ *          与远程设备页语义解耦；后续测试工具页统一入此分类）。 */
+static const DemoNavItem kNavTestItems[] = {
+    { "\xE6\xB5\x8B\xE8\xAF\x95\xE8\x8F\x9C\xE5\x8D\x95", 22 }, /* 测试菜单(2026-10-29) */
+    { "Shell", 23 } /* Shell 控制台(2026-10-29) */
+};
+
 /** @brief 一级分类表（手风琴数据源；条目内 page=-1 为子分组标题）。 */
 static const struct {
     const char*        caption; /**< 分类名（一级分类钮文本）。 */
@@ -2550,7 +2732,10 @@ static const struct {
       (int)(sizeof(kNavSystemItems) / sizeof(kNavSystemItems[0])) },
     { "\xE8\xBF\x9C\xE7\xA8\x8B",                                     /* 远程 */
       kNavRemoteItems,
-      (int)(sizeof(kNavRemoteItems) / sizeof(kNavRemoteItems[0])) }
+      (int)(sizeof(kNavRemoteItems) / sizeof(kNavRemoteItems[0])) },
+    { "\xE6\xB5\x8B\xE8\xAF\x95",                                     /* 测试（2026-10-29 新增分类） */
+      kNavTestItems,
+      (int)(sizeof(kNavTestItems) / sizeof(kNavTestItems[0])) }
 };
 
 /** @brief 页索引 → 分类下标（切页时手风琴展开所在分类）。 */
@@ -3362,6 +3547,10 @@ static void demo_layout_content(DemoWin* self)
         demo_page_timeddns_adapt(self->m_extPages[15]); /* 2026-10-16 时钟与 DDNS 页。 */
     if (self->m_extPages[16])
         demo_page_atv61_adapt(self->m_extPages[16]); /* 2026-10-26 ATV61 变频器页。 */
+    if (self->m_extPages[17])
+        demo_page_testmenu_adapt(self->m_extPages[17]); /* 2026-10-29 测试菜单页（横竖屏双栏翻转）。 */
+    if (self->m_extPages[18])
+        demo_page_shell_adapt(self->m_extPages[18]); /* 2026-10-29 Shell 页（契约空操作）。 */
     /* 远程服务器页（2026-10-06 补入统一漏斗）：此前只在 resizeEvent
      * 单独调用，切页路径漏跑——XStackedLayout StackOne 只给当前页
      * 分配几何，resize 落在别的页时本页根保持陈旧尺寸，adapt 算出
@@ -3370,6 +3559,17 @@ static void demo_layout_content(DemoWin* self)
      * 局部），本漏斗随后跑 adapt，切页/resize/startup/停靠全路径
      * 根尺寸都新鲜。 */
     demo_page_remote_server_adaptWidth();
+#if XWIDGET_ON && XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+    /* [页级滚动壳 2026-10-29] 漏斗收尾：当前页若在滚动壳内，页内档位
+     * 重排（adapt 改内部控件约束）后内容提示已变，重排版一次让滚动
+     * 范围即时跟上（幂等；几何未变时 setContentSize 短路）——统一收
+     * 口 network/modbus 页各自 adapt 内显式调用的同款刷新。 */
+    {
+        int cur = XStackedLayout_currentIndex(&self->m_stackLayout);
+        if (cur >= 0 && cur < 26 && self->m_pageScrolls[cur])
+            XScrollArea_updateWidgetGeometry(self->m_pageScrolls[cur]);
+    }
+#endif
 }
 
 /** @brief 切换主内容页面：更新堆叠布局当前页、重新分配几何并更新状态栏。 */
@@ -3408,7 +3608,7 @@ static void demo_switchPage(DemoWin* self, int index)
     }
 #endif
     if (index < 0) index = 0;
-    if (index > 21) index = 21; /* 2026-10-26 页 21=ATV61 变频器入列。 */
+    if (index > 23) index = 23; /* 2026-10-29 页 22=测试菜单、页 23=Shell 入列。 */
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 导航面板手风琴随页展开所在分类（程序化切页 --page/autotest 与
@@ -3744,6 +3944,20 @@ static void demo_nav21Slot(XObject* receiver, XVarList* args)
 {
     (void)args;
     demo_switchPage((DemoWin*)receiver, 21);
+}
+
+/** @brief 页面 22（测试菜单）导航槽（2026-10-29 远程类入列）。 */
+static void demo_nav22Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 22);
+}
+
+/** @brief 页面 23（Shell 控制台）导航槽（2026-10-29 远程类入列）。 */
+static void demo_nav23Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 23);
 }
 
 /** @brief 扩展页状态回调：转发到主窗状态栏（xgui_demo_pages.h 契约适配）。 */
@@ -4472,7 +4686,7 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
                 ++depth;
             }
         }
-        for (exti = 0; exti < 17; ++exti) {
+        for (exti = 0; exti < 19; ++exti) {
             XWidget* page = demo->m_extPages[exti];
             if (page)
                 demo_log("HITPROBE ext[%d] rect=(%d,%d %dx%d) vis=%d built=%d\n",
@@ -4527,8 +4741,15 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
                  * Popup，天然恒在所有子控件（含浮层）之上——层级口径
                  * 「主窗内容 < 性能浮层 < 屏幕键盘」自动成立。 */
                 XWidget_raise((XWidget*)&demo->m_performanceOverlay);
-                (void)XPerformanceOverlay_beginDrag(
-                    &demo->m_performanceOverlay, position.x, position.y);
+                if (XPerformanceOverlay_beginDrag(
+                        &demo->m_performanceOverlay, position.x, position.y)) {
+                    /* 拖动期抓取（对标 QWidget::grabMouse，XSlider/XDial
+                     * 同款根修）：触摸合成事件不参与 buttonDown 隐式抓取，
+                     * DragBegin 认领后的 MOVE 按命中派发，手指瞬时越出
+                     * 悬浮层矩形（低帧率必现）即断链脱手；抓取后
+                     * MOVE/RELEASE 直投本窗口，拖移与真实鼠标同轨。 */
+                    XWidget_grabMouse(self);
+                }
             }
             XEvent_accept(event);
         }
@@ -4543,11 +4764,15 @@ static void VDemoWin_mouseReleaseEvent(XWidget* self, XEvent* event)
     XMouseEvent* mouse = (XMouseEvent*)event;
     if (!mouse) return;
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
-    if (XMouseEvent_button(mouse) == XMouseButton_LeftButton &&
-        XPerformanceOverlay_isDragging(&demo->m_performanceOverlay)) {
-        XPerformanceOverlay_endDrag(&demo->m_performanceOverlay);
-        demo_repaint(demo);
-        XEvent_accept(event);
+    if (XMouseEvent_button(mouse) == XMouseButton_LeftButton) {
+        if (XPerformanceOverlay_isDragging(&demo->m_performanceOverlay)) {
+            XPerformanceOverlay_endDrag(&demo->m_performanceOverlay);
+            demo_repaint(demo);
+            XEvent_accept(event);
+        }
+        /* 抓取配对解除（对齐按下侧 beginDrag 即抓）：拖动若被长按远点
+         * 收口/movable 翻转等旁路提前终结，仍须摘抓取防事件滞留本窗。 */
+        if (XWidget_mouseGrabber() == self) XWidget_releaseMouse(self);
     }
 #endif
 }
@@ -4581,7 +4806,9 @@ static void VDemoWin_mouseMoveEvent(XWidget* self, XEvent* event)
                 demo_repaint(demo);
             XEvent_accept(event);
         } else {
+            /* 按键中途丢失收口：同步摘抓取（拖动态与抓取态一起归零）。 */
             XPerformanceOverlay_endDrag(&demo->m_performanceOverlay);
+            if (XWidget_mouseGrabber() == self) XWidget_releaseMouse(self);
         }
     }
 #endif
@@ -4792,24 +5019,32 @@ static DemoWin* DemoWin_create(void)
     XWidget_init(&self->m_pageChoices, &self->m_contentHost, 0);
     XWidget_init(&self->m_pageStacked, &self->m_contentHost, 0);
     XWidget_init(&self->m_pageInputs, &self->m_contentHost, 0);
+    /* [页级滚动壳 2026-10-29] 内建页堆叠条目=滚动壳包成员页根（成员
+     * 身份不变，槽/adapt 按成员消费；内容超高才出竖条，桌面满屏不变）。
+     * 包裹壳登记 m_pageScrolls[页索引]（adapt 漏斗收尾刷新用）。 */
     XStackedLayout_addWidget(&self->m_stackLayout,
-                             (XWidget*)&self->m_pageButtons);
+                             demo_win_wrapBuiltinPage(
+                                 self, (XWidget*)&self->m_pageButtons, 0));
     XStackedLayout_addWidget(&self->m_stackLayout,
-                             (XWidget*)&self->m_pageChoices);
+                             demo_win_wrapBuiltinPage(
+                                 self, (XWidget*)&self->m_pageChoices, 1));
     XStackedLayout_addWidget(&self->m_stackLayout,
-                             (XWidget*)&self->m_pageStacked);
+                             demo_win_wrapBuiltinPage(
+                                 self, (XWidget*)&self->m_pageStacked, 2));
     XStackedLayout_addWidget(&self->m_stackLayout,
-                             (XWidget*)&self->m_pageInputs);
+                             demo_win_wrapBuiltinPage(
+                                 self, (XWidget*)&self->m_pageInputs, 3));
     XWidget_init(&self->m_pageTabs, &self->m_contentHost, 0);
     XStackedLayout_addWidget(&self->m_stackLayout,
-                             (XWidget*)&self->m_pageTabs);
+                             demo_win_wrapBuiltinPage(
+                                 self, (XWidget*)&self->m_pageTabs, 4));
     /* ---- 页面 5~16：扩展页注册（xgui_demo_pages.h 契约）。[懒分配
      * 2026-10-19] 改惰性：注册期只建空占位壳入栈（真页根推迟到首显，
      * 由 demo_ext_ensureBuilt 同位换入，见文件级 g_extBuilders 注）。
      * 下标=页索引-5，下标 7=页 12（图表演示，内置页）恒 NULL 占位。 ---- */
     {
         int exti;
-        for (exti = 0; exti < 17; ++exti) {
+        for (exti = 0; exti < 19; ++exti) {
 #if XCHARTS_ON
             if (exti == 7) {
                 /* 页 12（图表演示）内置页在此占位入栈：保证「堆叠下标=
@@ -4818,7 +5053,8 @@ static DemoWin* DemoWin_create(void)
                    顶掉了它的序号（--page 13/14 截图错页实证）。 */
                 XWidget_init(&self->m_pageChart, &self->m_contentHost, 0);
                 XStackedLayout_addWidget(&self->m_stackLayout,
-                                         &self->m_pageChart);
+                                         demo_win_wrapBuiltinPage(
+                                             self, &self->m_pageChart, 12));
                 continue;
             }
 #endif
@@ -4849,6 +5085,9 @@ static DemoWin* DemoWin_create(void)
      * 关闭。导航条目控件实体唯一（从桌面面板搬入本页），选中态互斥
      * 组与页切换逻辑不分叉。 */
     XWidget_init(&self->m_mobileMenu, &self->m_contentHost, 0);
+    /* [页级滚动壳 2026-10-29 豁免] 菜单页不入壳：页内容即导航滚动容器
+     * （m_navScroll 铺满整页，见 demo_compactMenuLayout），再包一层成
+     * 嵌套滚动；其触摸滑动由框架 XAbstractScrollArea 通道直接生效。 */
     XStackedLayout_addWidget(&self->m_stackLayout, &self->m_mobileMenu);
     /* 菜单页下标实测写入（页数随特性裁剪而变，写死常量会指错页）。 */
     self->m_menuPageIdx =
@@ -4857,7 +5096,7 @@ static DemoWin* DemoWin_create(void)
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 浮动导航面板装配（「先切一级分类、再选页面」，见文件域
-     * 「浮动导航面板」段）：面板/标题/换边/收起 + 3 一级分类钮
+     * 「浮动导航面板」段）：面板/标题/换边/收起 + 4 一级分类钮
      * （控件/系统设置/远程，互斥组 idClicked 切手风琴）+ 5 子分组
      * 标题标签池（竖版展开时按活动分类轮转显隐）+ 16 页面钮（挂活动
      * 分类下，互斥组高亮当前页）。m_pageNav 下标=页索引不变，CLI
@@ -4907,7 +5146,7 @@ static DemoWin* DemoWin_create(void)
     /* [删「收起」2026-10-25] 收起/展开改由顶部品牌条左侧 ☰ 承担
      * （横屏/桌面形态），导航面板上不再有收起钮。 */
     {
-        static void (*const kNavSlots[22])(XObject*, XVarList*) = {
+        static void (*const kNavSlots[24])(XObject*, XVarList*) = {
             demo_nav0Slot, demo_nav1Slot, demo_nav2Slot, demo_nav3Slot,
             demo_nav4Slot, demo_nav5Slot, demo_nav6Slot, demo_nav7Slot,
             demo_nav8Slot, demo_nav9Slot, demo_nav10Slot, demo_nav11Slot,
@@ -4920,7 +5159,9 @@ static DemoWin* DemoWin_create(void)
             demo_nav18Slot, /* 2026-10-13 Modbus 从站入列。 */
             demo_nav19Slot, /* 2026-10-17 窗口设置入列。 */
             demo_nav20Slot,  /* 2026-10-16 时钟与 DDNS 入列。 */
-            demo_nav21Slot  /* 2026-10-26 ATV61 变频器入列。 */
+            demo_nav21Slot,  /* 2026-10-26 ATV61 变频器入列。 */
+            demo_nav22Slot,  /* 2026-10-29 测试菜单入列。 */
+            demo_nav23Slot   /* 2026-10-29 Shell 控制台入列。 */
         };
         int i;
 #if XBUTTONGROUP_ON
@@ -7151,7 +7392,7 @@ int xgui_demo_main(int argc, char* argv[])
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-    /* 浮动导航面板成员（面板/标题/两钮/3 一级分类钮 + 5 子分组标题
+    /* 浮动导航面板成员（面板/标题/两钮/4 一级分类钮 + 5 子分组标题
        标签池；页面钮已在其上回收，面板容器随 m_base 级联，成员结构体
        须显式 deinit）。 */
     {

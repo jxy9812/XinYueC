@@ -3,7 +3,7 @@
  * @brief      通用总线轮询计划表（传输无关纯逻辑组件）公开 API。
  * @details    [2026-10-28 公共组件提炼] 语义自 XVfdPollScheduler 原样上移：
  *             每张表登记若干轮询计划条目（owner 或 unit 键 + 周期 + 到期回调），
- *             tick 统一排拍——按「上次发送时刻 + 周期」固定容量条目 + 游标
+ *             tick 统一排拍——按「上次发送时刻 + 周期」动态条目表 + 游标
  *             轮转、错峰触发；条目连续失败达阈值进入静默退避（跳拍），到期
  *             探活恢复。本组件是纯逻辑表（无定时器、无 IO、零系统调用）：
  *             时刻一律由调用方注入 nowMs，驱动方（XVfdLink / XModbusHub 等）
@@ -12,6 +12,9 @@
  *             isMutedKey/isLostKey：owner 为空、按 unitId 寻址），供
  *             (设备, 从站) 粒度的失联退避簿记——同一张表内 owner 登记与
  *             key 登记互不混淆（key 查找只命中 owner 为空的条目）。
+ *             [2026-10-29 动态化] 条目表由固定 32 槽改为 XVector 按需增长：
+ *             不再有表满拒登（只剩分配失败），代价是删除走尾交换（不保序，
+ *             条目下标仅在登记时有效）且 tick 内不得跨回调持条目指针。
  */
 #ifndef XPOLLSCHEDULER_H
 #define XPOLLSCHEDULER_H
@@ -28,8 +31,6 @@ extern "C" {
 #include <stdbool.h>
 #include "XObject.h"
 
-/** @brief 计划表容量上限（同一张表登记的条目数上限） */
-#define XPOLL_SCHED_MAX_ENTRIES 32
 /** @brief 连续失败静默阈值缺省值 */
 #define XPOLL_SCHED_DEFAULT_MAX_FAILS 3
 /** @brief 静默退避时长缺省值（毫秒） */
@@ -44,6 +45,7 @@ typedef void (*XPollDueFunc)(XObject* owner, void* userData);
 
 /**
  * @brief 单条轮询计划条目。
+ * @note  动态表只保存在用条目；登记/注销由组件内部管理，外部只读。
  */
 typedef struct XPollEntry {
     XObject* m_owner;           /**< 登记设备（借用，不拥有；key 登记=NULL） */
@@ -54,16 +56,16 @@ typedef struct XPollEntry {
     uint64_t m_lastSentMs;      /**< 上次成功提交时刻（单调毫秒；0=立即可发） */
     uint32_t m_failCount;       /**< 连续失败计数（成功清零） */
     uint64_t m_muteUntilMs;     /**< 静默退避截止时刻（单调毫秒；0=未静默） */
-    bool m_active;              /**< 条目是否在用 */
 } XPollEntry;
 
 /**
  * @brief 轮询计划表（纯逻辑组件；由链路/聚合设备等驱动方持有并驱动）。
+ * @note  可零初始化内嵌使用（register 路径惰性建表）；与
+ *        XPollScheduler_init/deinit 成对使用则语义最完整。
  */
 typedef struct XPollScheduler {
-    XPollEntry m_entries[XPOLL_SCHED_MAX_ENTRIES]; /**< 条目数组（固定容量） */
-    int m_count;                /**< 在用条目数 */
-    int m_cursor;               /**< 轮转游标（错峰） */
+    struct XVector* m_entries;  /**< 条目动态表（XPollEntry，仅含在用条目） */
+    int m_cursor;               /**< 轮转游标（错峰；删除时组件内部修正） */
     uint32_t m_maxFails;        /**< 连续失败静默阈值 */
     uint32_t m_muteMs;          /**< 静默退避时长毫秒 */
 } XPollScheduler;
@@ -71,13 +73,13 @@ typedef struct XPollScheduler {
 /* ==================== 生命周期 ==================== */
 
 /**
- * @brief 初始化计划表（与 XPollScheduler_deinit 成对）。
+ * @brief 初始化计划表（与 XPollScheduler_deinit 成对；幂等，可对旧表重入）。
  * @param sched 计划表（非 NULL）
  */
 void XPollScheduler_init(XPollScheduler* sched);
 
 /**
- * @brief 反初始化计划表并清空全部条目。
+ * @brief 反初始化计划表并释放全部条目。
  * @param sched 计划表（非 NULL）
  */
 void XPollScheduler_deinit(XPollScheduler* sched);
@@ -92,7 +94,8 @@ void XPollScheduler_deinit(XPollScheduler* sched);
  * @param dueFunc 到期回调（非 NULL）
  * @param unitId 从站地址（健康事件携带）
  * @param intervalMs 轮询周期毫秒（0=登记但暂停）
- * @return 条目下标（0 基）；表满或参数非法返回 -1
+ * @return 登记时的条目下标（0 基）；分配失败或参数非法返回 -1
+ * @note  动态表删除走尾交换：下标只在登记时刻有效，不保证后续稳定。
  */
 int XPollScheduler_register(XPollScheduler* sched, XObject* owner, void* userData,
                             XPollDueFunc dueFunc, int unitId, uint32_t intervalMs);
@@ -122,7 +125,7 @@ bool XPollScheduler_setInterval(XPollScheduler* sched, XObject* owner, uint32_t 
  * @param sched 计划表（非 NULL）
  * @param key 登记键（从站地址；>=0）
  * @param intervalMs 预留周期毫秒（0=不参与 tick 派发）
- * @return 条目下标（0 基）；表满或参数非法返回 -1
+ * @return 登记时的条目下标（0 基）；分配失败或参数非法返回 -1
  */
 int XPollScheduler_registerKey(XPollScheduler* sched, int key, uint32_t intervalMs);
 
@@ -164,6 +167,8 @@ bool XPollScheduler_reportResultKey(XPollScheduler* sched, int key, bool ok, uin
  * @return 本拍有派发返回 true；无到期条目返回 false
  * @note 到期回调内设备是否成功提交由 markSent 决定；未提交则下拍重试。
  *       纯簿记条目（due 为空，registerKey 登记）恒被跳过。
+ *       回调内允许 register/unregister：tick 全程下标访问、回调前快照
+ *       owner/userData，不跨回调持条目指针。
  */
 bool XPollScheduler_tick(XPollScheduler* sched, uint64_t nowMs);
 

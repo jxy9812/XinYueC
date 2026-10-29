@@ -1110,7 +1110,6 @@ static XEvent* VXTouchEvent_clone(const XTouchEvent* event)
     copy->m_globalPosition = event->m_globalPosition;
     copy->m_pointCount = event->m_pointCount;
     copy->m_pointCapacity = event->m_pointCapacity;
-    copy->m_gesture = event->m_gesture;
     if (event->m_pointCount > 0 && event->m_pointCapacity > 0)
     {
         XMemcpy(copy->m_points, event->m_points,
@@ -1168,7 +1167,6 @@ void XTouchEvent_init(XTouchEvent* event, XEventType type,
        create_ex 在单块分配后回填（外部存储无柔性空间，恒 0）。 */
     event->m_pointCount = 0;
     event->m_pointCapacity = 0;
-    event->m_gesture = XTouchGesture_None;
 }
 
 XPoint XTouchEvent_position(const XTouchEvent* event)
@@ -1205,16 +1203,6 @@ void XTouchEvent_setPoints(XTouchEvent* event,
     /* 主点字段同步为 points[0]（兼容视图，对标 Qt6 单点事件语义）。 */
     event->m_position = points[0].m_position;
     event->m_globalPosition = points[0].m_globalPosition;
-}
-
-void XTouchEvent_setGesture(XTouchEvent* event, int gesture)
-{
-    if (event) event->m_gesture = gesture;
-}
-
-int XTouchEvent_gesture(const XTouchEvent* event)
-{
-    return event ? event->m_gesture : XTouchGesture_None;
 }
 
 /* ==================== XTabletEvent（Task 2.13） ==================== */

@@ -1,5 +1,8 @@
-#ifndef XMENU_H
-#define XMENU_H
+#ifndef XTEST_MENU_H
+#define XTEST_MENU_H
+/* [守卫根修 2026-10-29] 原 XMENU_H 与 Src/XGui/Widget/XMenu.h 撞车：
+ * 先入 GUI 头的 TU（如 xgui_demo_page_testmenu.c）再含本头时整文件被
+ * 跳过，XTestMenu 类型未定义。改用本文件专名守卫。 */
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -47,4 +50,4 @@ void XTestMenu_delete(XTestMenu* menu);
 #ifdef __cplusplus
 }
 #endif
-#endif// !XREDBLACKTREE_H
+#endif /* XTEST_MENU_H */

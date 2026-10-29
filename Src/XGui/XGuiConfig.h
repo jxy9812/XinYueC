@@ -589,6 +589,12 @@
 #ifndef XSCROLLAREA_ON
 #define XSCROLLAREA_ON 1
 #endif
+/* [手势识别器 2026-10-29] 触摸手势识别体系（对标 Qt QGestureRecognizer/
+ * QGestureEvent）：XGestureEvent + XGestureRecognizer 族 + 控件
+ * GestureEvent 虚槽；裁剪时连带受 XWIDGET_ON/XWINDOWEVENT_ON 约束。 */
+#ifndef XGESTURE_ON
+#define XGESTURE_ON 1
+#endif
 #ifndef XDATETIMEEDIT_ON
 #define XDATETIMEEDIT_ON 1
 #endif

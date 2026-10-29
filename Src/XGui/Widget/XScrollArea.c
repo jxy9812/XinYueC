@@ -17,6 +17,7 @@
 #include "XAlgorithm.h"
 #include "XAlignment.h"
 #include "XWidget_Protected.h"
+#include "XAbstractScrollArea_Protected.h"
 
 #if XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON && XSCROLLAREA_ON
 
@@ -204,6 +205,9 @@ static void VXScrollArea_wheelEvent(XWidget* self, XEvent* event)
     int steps;
     int value;
     if (!area || !event || XEvent_type(event) != XEVENT_TYPE_WHEEL) return;
+    /* 滚轮接管：停触摸跟手/惯性（基类滚轮槽同口径；本覆写不链基类，
+     * 须经保护入口自行收口）。 */
+    XAbstractScrollArea_stopTouchScroll((XAbstractScrollArea*)area);
 #if XWINDOWEVENT_ON
     delta = XWheelEvent_angleDelta((XWheelEvent*)event);
 #else

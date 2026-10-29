@@ -153,7 +153,7 @@ static int scanBusFramesSince(int baseLine, int* outActionReq, int* outPollReq, 
     return total;
 }
 
-int main(int argc, char* argv[])
+int XVfdBus485Test_runEx(const char* ptyOverride)
 {
     char ptyPath[256] = { 0 };
     XVfdM512* d1;
@@ -167,8 +167,8 @@ int main(int argc, char* argv[])
 
     /* ---------- 读 hub 分配的 master pty 路径 ---------- */
     g_case = "topology";
-    if (argc > 1) {
-        snprintf(ptyPath, sizeof(ptyPath), "%s", argv[1]);
+    if (ptyOverride && ptyOverride[0]) {
+        snprintf(ptyPath, sizeof(ptyPath), "%s", ptyOverride);
     } else {
         char pathFile[256];
         snprintf(pathFile, sizeof(pathFile), "%s/bus_master_path", BUS485_BASE);
@@ -289,4 +289,19 @@ int main(int argc, char* argv[])
     printf("=== 结束：失败用例 %d ===\n", g_fail);
     fflush(stdout);
     return g_fail;
+}
+
+int XVfdBus485Test_run(void)
+{
+    /* master pty 路径缺省读 BUS485_BASE/bus_master_path 文件（虚拟总线 hub 写入）。 */
+    return XVfdBus485Test_runEx(NULL);
+}
+
+void XVfdBus485Test(XVariant* data)
+{
+    const int fails = XVfdBus485Test_run();
+    (void)data;
+    printf("=== XVfdBus485Test: %s（失败用例 %d）===\n",
+           fails == 0 ? "PASS" : "FAIL", fails);
+    fflush(stdout);
 }

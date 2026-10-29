@@ -5,7 +5,7 @@
 set -u
 ENGINE="${1:-io}"
 REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
-BIN="${M512_BIN:-$REPO/bin/XVfdM512Test}"
+BIN="${M512_BIN:-$REPO/bin/XinYueC_Static}"
 SLAVES_PY="$REPO/Test/XProtocolTest/mbtest_m512_slave.py"
 OUT="${M512_BASE:-/tmp/mbsoak/m512}"
 mkdir -p "$OUT"
@@ -31,7 +31,7 @@ run_engine() {
     kill -9 $SPID 2>/dev/null
     return 9
   fi
-  timeout 120 "$BIN" "$(cat "$OUT/pty_path")" > "$OUT/test-$eng.log" 2>&1
+  timeout 120 "$BIN" --test xvfd-m512 > "$OUT/test-$eng.log" 2>&1
   local RC=$?
   kill -9 $SPID 2>/dev/null
   echo "[driver] engine=$eng TEST_RC=$RC"

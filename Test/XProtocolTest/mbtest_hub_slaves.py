@@ -87,14 +87,17 @@ class ModbusStore:
                 if start < len(self.coils):
                     self.coils[start] = 1 if val else 0
                 log(self.tag, "WRITE COIL[%d]=%d" % (start, 1 if val else 0))
-                return pdu[:4]
+                # 标准 FC05 应答=整请求回显（fc+addr+val 共 5 字节）。曾回
+                # pdu[:4]，主站剥掉功能码后只剩 3 字节：FC06 要求 4 字节净荷
+                # 判解析失败 → 写无限重发（2026-10-29 收口根因）。
+                return pdu[:5]
             if fc == 6:
                 start, val = struct.unpack(">HH", pdu[1:5])
                 self.frame_log(fc, start, 1)
                 if start < len(self.hr):
                     self.hr[start] = val
                 log(self.tag, "WRITE HR[%d]=%d" % (start, val))
-                return pdu[:4]
+                return pdu[:5]
             if fc == 15:
                 # [2026-10-29 缓存层战役] FC15 写多线圈：缓存层把相邻脏点
                 # 合并成一帧下发，从站必须按位解包（旧脚本只认 FC5/6/16）。

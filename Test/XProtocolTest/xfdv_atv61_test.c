@@ -139,7 +139,7 @@ static void touchFile(const char* path, const char* content)
     fclose(f);
 }
 
-int main(int argc, char* argv[])
+int XVfdAtv61Test_runEx(const char* ptyOverride)
 {
     char ptyPath[256] = { 0 };
     g_bootMs = XDateTime_currentMSecsSinceEpoch();
@@ -149,8 +149,8 @@ int main(int argc, char* argv[])
 
     /* ---------- 读从端 pty 路径 ---------- */
     g_case = "topology";
-    if (argc > 1) {
-        snprintf(ptyPath, sizeof(ptyPath), "%s", argv[1]);
+    if (ptyOverride && ptyOverride[0]) {
+        snprintf(ptyPath, sizeof(ptyPath), "%s", ptyOverride);
     } else {
         char pathFile[256];
         snprintf(pathFile, sizeof(pathFile), "%s/pty_path", ATV61_BASE);
@@ -344,4 +344,19 @@ int main(int argc, char* argv[])
     printf("=== 结束：失败用例 %d ===\n", g_fail);
     fflush(stdout);
     return g_fail;
+}
+
+int XVfdAtv61Test_run(void)
+{
+    /* pty 路径缺省读 ATV61_BASE/pty_path 文件（驱动脚本先行启动从站时写入）。 */
+    return XVfdAtv61Test_runEx(NULL);
+}
+
+void XVfdAtv61Test(XVariant* data)
+{
+    const int fails = XVfdAtv61Test_run();
+    (void)data;
+    printf("=== XVfdAtv61Test: %s（失败用例 %d）===\n",
+           fails == 0 ? "PASS" : "FAIL", fails);
+    fflush(stdout);
 }

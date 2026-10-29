@@ -59,6 +59,9 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
+#include "XGestureEvent.h"   /* [减负对齐 QTouchEvent 2026-10-29] 手势事件载荷。 */
+#include "XGestureRecognizer.h" /* 手势识别器订阅与帧投递。 */
+#include "XVector.h"           /* 手势识别器列表容器。 */
 #include "XShortcut.h"
 #include "XVarList.h"
 /* ShortcutOverride 询问接收侧（对标 QLineEdit/QPlainTextEdit::event 的
@@ -317,9 +320,13 @@ static bool g_touchMouseSynthEnabled = true;
  *         虚槽向控件链下发手势标记的 XTouchEvent（type=TOUCH_DRAG、
  *         m_gesture 标种类；单击/双击/长按=通知或免合成接管；按住拖动
  *         DragBegin=判定询问）——控件接受 DragBegin
- *         则本序列转为左键按住拖动仿真（press 续持+MOVE 随行+RELEASE
+ *         则按事件上标记的拖动模式（XGestureDragMode）分流：SimulateMouse
+ *         （默认）=左键按住拖动仿真（press 续持+MOVE 随行+RELEASE
  *         收口，等效真实鼠标拖拽，标题栏移窗/悬浮窗/紧凑键盘拖移即由
- *         各自既有鼠标拖动逻辑驱动）；无人接受回落上表默认语义。
+ *         各自既有鼠标拖动逻辑驱动）；Track=滚动拖动（挂着的合成 press
+ *         远偏移释放关闭，本序列后续 UPDATE/END/异常收口改发
+ *         DragUpdate/DragEnd/DragCancel 原始位移流——XAbstractScrollArea
+ *         跟手滚动+惯性即由此驱动）；两种模式都无人接受回落上表默认语义。
  *         模块级静态、一次只跟一个主点序列（多点时非主点只做触摸派发）；
  *         仿真开关联动：同一 BEGIN 只走 touch 或合成一条路。 */
 typedef struct XWidgetTouchGesture
@@ -334,7 +341,12 @@ typedef struct XWidgetTouchGesture
     bool     m_synthPressSent; /**< 本序列已合成左键 press（收口须配对释放）。 */
     bool     m_dragging;       /**< 已转入拖动（此后 UPDATE 按模式推进）。 */
     bool     m_leftDrag;       /**< 拖动=左键按住拖动仿真（DragBegin 被控件
-                                    认领；press 续持、MOVE 随行；假=滚轮）。 */
+                                    认领且模式 SimulateMouse；press 续持、
+                                    MOVE 随行）。 */
+    bool     m_scrollDrag;     /**< 拖动=滚动拖动（DragBegin 被控件认领且
+                                    模式 Track；UPDATE/END/异常收口改发
+                                    DragUpdate/DragEnd/DragCancel 原始
+                                    位移流，消费方按帧差分自滚）。 */
     bool     m_longFired;      /**< 长按已触发（本序列不再合成任何鼠标事件）。 */
     bool     m_armedDouble;    /**< 双击已布防（tap 收口改发 DBL_CLICK）。 */
     bool     m_wheelSent;      /**< 本序列已发过滚轮（首个 phase=ScrollBegin）。 */
@@ -412,6 +424,8 @@ static XWidget* XWidget_deepestFocusProxy(const XWidget* self);
 void XWidget_touchEvent_base(XWidget* self, XEvent* event);
 /** @brief 触摸手势槽入口（XGui 扩展；XEVENT_TYPE_TOUCH_DRAG 分派形态）。 */
 void XWidget_touchDragEvent_base(XWidget* self, XEvent* event);
+/** @brief 手势事件槽入口（XEVENT_TYPE_GESTURE 分派形态）。 */
+void XWidget_gestureEvent_base(XWidget* self, XEvent* event);
 /** @brief 数位板事件槽入口（对标 QWidget::tabletEvent 虚函数调用形态）。 */
 void XWidget_tabletEvent_base(XWidget* self, XEvent* event);
 static void XFocusProxy_register(XWidget* owner);
@@ -454,9 +468,11 @@ static XPoint xwidget_gestureFarPoint(int beginX, int beginY);
 static void xwidget_touchGestureFireLongPress(XWidget* top);
 static void xwidget_touchGestureTimerExpired(void);
 static void xwidget_touchGestureLazyLongPress(XWidget* top);
-static bool xwidget_touchGestureNotify(XWidget* top, int gesture,
+static bool xwidget_touchGestureNotify(XWidget* top, int gestureType,
+                                        int gestureState,
                                         const XPoint* topLocal,
-                                        const XPoint* globalPos);
+                                        const XPoint* globalPos,
+                                        int* dragModeOut);
 static void xwidget_touchGestureEmitWheel(XWidget* top, bool finalEnd,
                                           const XPoint* topLocal,
                                           const XPoint* globalPos);
@@ -559,6 +575,69 @@ static int32_t xwidget_touchPrimaryId(const XTouchEvent* event)
  *          （对标鼠标抓取的同型兜底路由）。子事件只携带该靶触点，
  *          spontaneous 镜像源事件。
  * @return 子事件被接受返回 true；构造失败/无人接受返回 false。 */
+#if XGESTURE_ON
+/** @brief 手势识别器帧投递（Qt 风格 gestureContext 沿祖先链收集）：
+ *         命中靶自身与其祖先链上订阅了识别器的控件各收到一份本帧，
+ *         坐标换算为各自控件局部坐标（对标 Qt 的 widget-local 语义）。
+ * @details 识别器识别成功后经事件循环投递 XGestureEvent（异步），故
+ *          本钩子在控件 touchEvent 槽之后执行不影响手势事件的到达
+ *          顺序；坐标取派发后已局部化的位置（最贴近消费方视角）。
+ * @param recv 命中靶（事件接收控件）；NULL 时零操作。
+ * @param sub  本帧触摸事件（借用；坐标为 recv 局部坐标）。
+ */
+static void xwidget_feedGestureRecognizers(XWidget* chainStart,
+                                           XWidget* coordBase,
+                                           const XTouchEvent* sub)
+{
+    XWidget* w = chainStart;
+    int64_t nowMs;
+    const XTouchPoint* pts;
+    int count;
+    if (!chainStart || !coordBase || !sub) return;
+    nowMs = XGestureRecognizer_nowMs();
+    pts = XTouchEvent_points(sub);
+    count = XTouchEvent_pointCount(sub);
+    /* 触点数硬上限（与识别器前帧快照容量同口径）：超出部分不参与
+       判定——此前仅拷贝时截断而计数未截断，识别器按原计数读栈上数组
+       越界。 */
+    if (count > XGESTURE_MAX_POINTS) count = XGESTURE_MAX_POINTS;
+    while (w) {
+        if (w->m_gestureRecognizers) {
+            size_t i;
+            size_t n = XVector_size(w->m_gestureRecognizers);
+            for (i = 0; i < n; ++i) {
+                XGestureRecognizer* rec =
+                    (XGestureRecognizer*)XVector_at_base(w->m_gestureRecognizers,
+                                                         (int64_t)i);
+                XTouchPoint localPts[XGESTURE_MAX_POINTS];
+                int k;
+                int dx;
+                int dy;
+                if (!rec) continue;
+                /* 坐标换算为该订阅控件的局部坐标：坐标基准控件局部 +
+                 *（基准相对 w 的偏移差）。点列表拷入栈上数组——不可就地
+                 * 改写源事件的柔性数组区（结构体拷贝不复制柔性数组内容，
+                 * 就地改写会污染原事件）。 */
+                {
+                    XPoint offBase = XWidget_accumulateOffset(coordBase);
+                    XPoint offW = XWidget_accumulateOffset(w);
+                    dx = offBase.x - offW.x;
+                    dy = offBase.y - offW.y;
+                }
+                for (k = 0; k < count; ++k) {
+                    localPts[k] = pts[k];
+                    localPts[k].m_position.x = (short)(pts[k].m_position.x + dx);
+                    localPts[k].m_position.y = (short)(pts[k].m_position.y + dy);
+                }
+                XGestureRecognizer_processTouch(rec, sub, localPts, count,
+                                                nowMs);
+            }
+        }
+        w = XWidget_parentWidget(w);
+    }
+}
+#endif /* XGESTURE_ON */
+
 static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
                                        XEventType type,
                                        const XTouchPoint* group, int count,
@@ -566,6 +645,8 @@ static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
 {
     XTouchEvent* sub;
     bool accepted = false;
+    XWidget* recv = NULL;
+    XWidget* hitTarget = NULL;
     if (!top || !source || !group || count <= 0 || !target) return false;
     sub = XTouchEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, NULL, NULL,
                                 count);
@@ -584,7 +665,16 @@ static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
            → 逐点 setGrab(id, receiver)（对标 qapplication.cpp:3791；
            activateImplicitTouchGrab 对非 Begin 早退——UPDATE/END 即使
            被接受也不新设抓取）。 */
-        XWidget* recv = XWidget_dispatchInputAt(top, (XEvent*)sub);
+        /* 命中靶（childAt 命中的最深控件）：手势识别器订阅通常挂在它
+           身上——派发的最终接收者可能是无人接受时的顶层，只喂最终接收
+           者会漏掉命中靶（识别器收不到帧）。命中靶在派发**前**算出
+           （此时 sub 坐标仍是顶层坐标），供识别器帧投递沿命中链使用。 */
+        {
+            XPoint topPos = XTouchEvent_position(sub);
+            hitTarget = XWidget_childAt(top, &topPos);
+            if (!hitTarget) hitTarget = top;
+        }
+        recv = XWidget_dispatchInputAt(top, (XEvent*)sub);
         /* 逐点坐标的平移在 XWidget_dispatchInputAt 内随主点一并完成（那里
            才是逐接收者换算主点的地方）——见该函数内「触摸逐点坐标随接收者
            增量平移」段：Qt 口径=整份事件随接收控件平移，主点与逐点列表同
@@ -625,6 +715,14 @@ static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
         XWidget_sendEvent(target, (XEvent*)sub);
     }
     accepted = XEvent_isAccepted((XEvent*)sub);
+#if XGESTURE_ON
+    /* 手势识别器帧投递：命中链（命中靶 + 祖先）上的订阅者（Qt
+       gestureContext 沿祖先链收集的同款语义）；坐标基准=最终接收者
+       （sub 的坐标已局部化到它）。 */
+    xwidget_feedGestureRecognizers(direct ? target
+                                         : (hitTarget ? hitTarget : recv),
+                                  recv ? recv : top, sub);
+#endif /* XGESTURE_ON */
     XClassDelete((XEvent*)sub);
     return accepted;
 }
@@ -1070,6 +1168,19 @@ static void XWidget_setExplicitVisibleRecursive(XWidget* self, bool visible,
             xwidget_retainedInvalidateForRect(self);
         if (newVisible) {
             XWidget_sendShowHide(self, true);
+#if XLAYOUT_ON
+            /* [布局联动 2026-10-29] 对标 Qt QWidgetPrivate::show_helper：
+             * show 后父布局须重排——控件从「隐藏（布局条目 empty、不占
+             * 主轴空间）」转为可见，若不失效父布局，几何仍按空条目
+             * 分配（症状：控件可见但叠在原点、彼此重叠）。 */
+            {
+                const XWidget* p = (const XWidget*)XObject_parent((XObject*)self);
+                if (p && p->m_layout) {
+                    XLayout_invalidate(p->m_layout);
+                    XLayout_activate(p->m_layout);
+                }
+            }
+#endif /* XLAYOUT_ON */
         } else {
             XWidget_deactivateInputRegistrations(self);
             XWidget_sendShowHide(self, false);
@@ -2021,7 +2132,13 @@ static XPoint XWidget_eventPosition(const XEvent* event)
     case XEVENT_TYPE_TOUCH_UPDATE:
     case XEVENT_TYPE_TOUCH_END:
     case XEVENT_TYPE_TOUCH_CANCEL:
-        out = ((const XTouchEvent*)event)->m_position;
+    /* [触摸滚动 2026-10-29 补口] TOUCH_DRAG 手势事件同按主点位置命中：
+       此前缺席=手势事件恒以 (0,0) 命中——历史平移消费方（键盘/标题栏/
+       悬浮窗）不用坐标靠冒泡兜底侥幸可用，跟手滚动的帧差分消费方依赖
+       逐帧位置，在此显式补口。[减负对齐 QTouchEvent 2026-10-29] 载荷
+       改由 XGestureEvent 承载（位置字段随之迁位）。 */
+    case XEVENT_TYPE_TOUCH_DRAG:
+        out = ((const XGestureEvent*)event)->m_position;
         break;
     case XEVENT_TYPE_TABLET_PRESS:
     case XEVENT_TYPE_TABLET_RELEASE:
@@ -2061,7 +2178,9 @@ static void XWidget_eventSetPosition(XEvent* event, const XPoint* pos)
     case XEVENT_TYPE_TOUCH_UPDATE:
     case XEVENT_TYPE_TOUCH_END:
     case XEVENT_TYPE_TOUCH_CANCEL:
-        ((XTouchEvent*)event)->m_position = *pos;
+    case XEVENT_TYPE_TOUCH_DRAG: /* [触摸滚动 2026-10-29 补口]，同上；
+                                  载荷改由 XGestureEvent 承载。 */
+        ((XGestureEvent*)event)->m_position = *pos;
         break;
     case XEVENT_TYPE_TABLET_PRESS:
     case XEVENT_TYPE_TABLET_RELEASE:
@@ -2664,32 +2783,60 @@ static bool XWidget_synthesizeMouseFromTouch(XWidget* top, XEventType type,
 }
 
 /** @brief 触摸手势下发（XGui 扩展统一手势通道）：构造手势标记的
- *         XTouchEvent（type=XEVENT_TYPE_TOUCH_DRAG、m_gesture=手势种类、
- *         无触点列表）经指针派发管线（装饰拦截+鼠标抓取改道+命中父链
- *         传播）送达命中控件，控件经 TouchDragEvent 虚槽定夺——接受=
- *         true=控件认领该手势（调用方按手势语义免合成/转左键拖动仿真），
- *         无人接受=false=回落既有合成语义。位置取手势判定基准（序列
- *         起点，非当前指尖）：DragBegin 的判定域=按压落点（压在哪块拖
- *         动面即由那块控件定夺，越阈时指尖已滑出面板的边界序列不误判），
- *         长按/双击同域。 */
-static bool xwidget_touchGestureNotify(XWidget* top, int gesture,
+ *         XGestureEvent（type=XEVENT_TYPE_TOUCH_DRAG、m_gestureType=
+ *         手势类型、m_state=手势状态）经指针派发管线（装饰拦截+鼠标
+ *         抓取改道+命中父链传播）送达命中控件，控件经 TouchDragEvent
+ *         虚槽定夺——接受=true=控件认领该手势（调用方按手势语义免合成/
+ *         转拖动模式分流），无人接受=false=回落既有合成语义。
+ *         位置取手势判定基准（序列起点，非当前指尖）：平移手势 Started
+ *         的判定域=按压落点（压在哪块拖动面即由那块控件定夺，越阈时指尖
+ *         已滑出面板的边界序列不误判），长按/双击同域；Updated/Finished/
+ *         Canceled 位置=当前主点。
+ * @details 手势类型与状态对齐 Qt（[减负对齐 QTouchEvent 2026-10-29]：
+ *          手势载荷自 XTouchEvent 迁出，统一由 XGui/Gesture 的
+ *          XGestureEvent 承载）：原四类拖动手势 DragBegin/DragUpdate/
+ *          DragEnd/DragCancel 映射为**平移手势的四个状态**
+ *          (Pan + Started/Updated/Finished/Canceled)，与 Qt
+ *          QPanGesture 的状态序列一一对应。
+ * @param gestureType 手势类型（存 XGestureEventType）。
+ * @param gestureState 手势状态（存 XGestureState）。
+ * @param dragModeOut 非空时回填被接受事件上的拖动模式标记
+ *        （XGestureDragMode；无人接受或调用方不关心传 NULL——回填值
+ *        仅平移 Started 认领路径消费，其余手势恒 SimulateMouse 无副作用）。 */
+static bool xwidget_touchGestureNotify(XWidget* top, int gestureType,
+                                        int gestureState,
                                         const XPoint* topLocal,
-                                        const XPoint* globalPos)
+                                        const XPoint* globalPos,
+                                        int* dragModeOut)
 {
-    XTouchEvent* drag;
+    XGestureEvent* drag;
     bool accepted;
     if (!top || !topLocal) return false;
-    drag = XTouchEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                 XEVENT_TYPE_TOUCH_DRAG, topLocal,
-                                 globalPos, 0);
+    drag = XGestureEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                   XEVENT_TYPE_TOUCH_DRAG);
     if (!drag) return false;
-    XTouchEvent_setGesture(drag, gesture);
+    drag->m_gestureType = (uint8_t)gestureType;
+    drag->m_state = (uint8_t)gestureState;
+    drag->m_position = *topLocal;
+    drag->m_lastPosition = *topLocal;
+    drag->m_startPosition = *topLocal;
+    if (globalPos) drag->m_globalPosition = *globalPos;
     accepted = XWidget_dispatchPointerEvent(top, (XEvent*)drag);
+    if (accepted && dragModeOut)
+        *dragModeOut = XGestureEvent_dragMode(drag);
     XClassDelete((XEvent*)drag);
     return accepted;
 }
 
 /* ==================== 主点触摸手势状态机（单击/双击/长按/拖动） ==================== */
+
+/** 双击布防再按下最小间隔 ms：前次 tap 收口后该间隔内的再次 BEGIN 视为
+ *  电阻屏接触抖动（幻触沿），不布防双击、照常合成普通 press。真指二次
+ *  点击须物理抬离再落下，抬落间隔实测少低于 50ms；TSC2007 抖动沿成对
+ *  出现在 1~3 个报文帧内（<30ms）。真机症状（RK3506+TSC2007）：菜单
+ *  分割条一触即收（抖动沿被布防成双击→DBL_CLICK→handleClicked(index,1)
+ *  切换折叠）且拖动断流（布防序列不合成 press，转拖后无挂按键）。 */
+#define XWIDGET_TOUCH_DBL_ARM_MIN_GAP_MS 50
 
 /** @brief 查询双击判定间隔 ms（对标 QApplication::doubleClickInterval；
  *         XApplication 不可用时回退 Qt 默认 400）。 */
@@ -2890,8 +3037,9 @@ static void xwidget_touchGestureFireLongPress(XWidget* top)
      *    着的左键 press 续持，END/Abort 收口位配对释放）。 */
     {
         XPoint beginGlobal = XWidget_mapToGlobal(top, &beginPos);
-        if (xwidget_touchGestureNotify(top, XTouchGesture_LongPress,
-                                       &beginPos, &beginGlobal))
+        if (xwidget_touchGestureNotify(top, XGestureEventType_TapAndHold,
+                                       XGestureState_Finished,
+                                       &beginPos, &beginGlobal, NULL))
             return;
     }
     farPos = xwidget_gestureFarPoint(g_touchGesture.m_beginX,
@@ -3047,6 +3195,7 @@ static void xwidget_touchGestureBegin(XWidget* top, const XTouchEvent* te,
     g_touchGesture.m_wheelSent = false;
     g_touchGesture.m_dragging = false;
     g_touchGesture.m_leftDrag = false;
+    g_touchGesture.m_scrollDrag = false;
     g_touchGesture.m_longFired = false;
     g_touchGesture.m_synthPressSent = false;
     /* 双击布防：上次 tap 收口后 dblMs 内、起点与收口点邻域（manhattan
@@ -3057,6 +3206,7 @@ static void xwidget_touchGestureBegin(XWidget* top, const XTouchEvent* te,
     if (dy < 0) dy = -dy;
     g_touchGesture.m_armedDouble =
         (g_touchLastTapEndMs > 0 && now >= g_touchLastTapEndMs &&
+         now - g_touchLastTapEndMs >= XWIDGET_TOUCH_DBL_ARM_MIN_GAP_MS &&
          now - g_touchLastTapEndMs <= (int64_t)dblMs && (dx + dy) <= dist);
     if (!g_touchGesture.m_armedDouble) {
         /* tap 首段：合成左键 press（对标 Qt
@@ -3117,10 +3267,13 @@ static void xwidget_touchGestureUpdate(XWidget* top, const XTouchEvent* te,
          * 随行、END 同位收口）——远偏移 RELEASE 会在拖动中途触发装饰
          * 松手清扫，把面板\本窗（含父窗区域）整片洗成桌面底色（真机
          * 拖动对话框全屏白屏实证 2026-10-04）；无抓取者先问 DragBegin
-         * 手势（判定基准=序列起点）：接受=左键按住拖动仿真（挂着的
-         * press 续持，MOVE 随行至收口）；无人接受=滚轮滚动（挂着的左
-         * 键 press 以远偏移释放关闭，防止后续滚轮序列仍处于左键按压
-         * 态），累积器自序列起点重新计。 */
+         * 手势（判定基准=序列起点），按接受控件在事件上标记的拖动模式
+         * 分流：Track=滚动拖动（挂着的左键 press 以远偏移释放关闭，防
+         * 按钮卡按压态；下方 scrollDrag 分支自本帧起派发 DragUpdate
+         * 原始位移流）；SimulateMouse（默认，历史语义）=左键按住拖动
+         * 仿真（挂着的 press 续持，MOVE 随行至收口）；无人接受=滚轮
+         * 滚动（挂着的左键 press 以远偏移释放关闭，防止后续滚轮序列
+         * 仍处于左键按压态），累积器自序列起点重新计。 */
         g_touchGesture.m_dragging = true;
         xwidget_touchGestureKillTimer();
         if (g_touchGesture.m_synthPressSent) {
@@ -3128,10 +3281,26 @@ static void xwidget_touchGestureUpdate(XWidget* top, const XTouchEvent* te,
                 /* 抓取者在位：本序列归抓取者（保持仿真，见上注）。 */
             } else {
                 XPoint beginPos;
+                int dragMode = XGestureDragMode_SimulateMouse;
+                bool dragAccepted;
                 beginPos.x = (short)g_touchGesture.m_beginX;
                 beginPos.y = (short)g_touchGesture.m_beginY;
-                if (xwidget_touchGestureNotify(top, XTouchGesture_DragBegin,
-                                               &beginPos, globalPos)) {
+                dragAccepted = xwidget_touchGestureNotify(
+                    top, XGestureEventType_Pan, XGestureState_Started,
+                    &beginPos, globalPos, &dragMode);
+                if (dragAccepted &&
+                    dragMode == XGestureDragMode_Track) {
+                    /* 滚动拖动：远偏移释放关闭挂着的合成 press（按钮
+                     * 按下态就地解除），此后本序列走 scrollDrag 位移流。 */
+                    XPoint farPos = xwidget_gestureFarPoint(
+                        g_touchGesture.m_beginX, g_touchGesture.m_beginY);
+                    XWidget_synthesizeMouseFromTouch(top,
+                        XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                        XMouseButton_LeftButton, XMouseButton_NoButton,
+                        &farPos);
+                    g_touchGesture.m_synthPressSent = false;
+                    g_touchGesture.m_scrollDrag = true;
+                } else if (dragAccepted) {
                     g_touchGesture.m_leftDrag = true;
                 } else {
                     XPoint farPos = xwidget_gestureFarPoint(
@@ -3171,6 +3340,17 @@ static void xwidget_touchGestureUpdate(XWidget* top, const XTouchEvent* te,
                                          XMouseButton_NoButton,
                                          XMouseButton_LeftButton,
                                          topLocal);
+        g_touchGesture.m_lastX = topLocal->x;
+        g_touchGesture.m_lastY = topLocal->y;
+        return;
+    }
+    if (g_touchGesture.m_scrollDrag) {
+        /* 滚动拖动：派发 DragUpdate 原始位移流（位置=当前主点；消费方
+         * 按帧间差分自滚，跟手无量化；最后一帧主点基准随行，供异常
+         * 收口 DragCancel 取最近位置）。 */
+        (void)xwidget_touchGestureNotify(top, XGestureEventType_Pan,
+                                         XGestureState_Updated,
+                                         topLocal, globalPos, NULL);
         g_touchGesture.m_lastX = topLocal->x;
         g_touchGesture.m_lastY = topLocal->y;
         return;
@@ -3222,6 +3402,15 @@ static void xwidget_touchGestureEnd(XWidget* top, const XTouchEvent* te,
     if (!g_touchGesture.m_active)
         return;
     xwidget_touchGestureLazyLongPress(top); /* 惰性兜底先行。 */
+    if (g_touchGesture.m_scrollDrag) {
+        /* 滚动拖动收口：DragEnd 原始位移流（位置=当前主点；挂着的合成
+         * press 已在转拖位关闭，无鼠标收口事务），随后清序列状态。 */
+        (void)xwidget_touchGestureNotify(top, XGestureEventType_Pan,
+                                         XGestureState_Finished,
+                                         topLocal, &globalPos, NULL);
+        xwidget_touchGestureReset();
+        return;
+    }
     if (g_touchGesture.m_leftDrag) {
         /* 左键按住拖动仿真收口：当前位置 RELEASE（拖动面控件按位移
          * 落定终点；同真实鼠标拖拽语义，不构成 tap）。 */
@@ -3254,8 +3443,9 @@ static void xwidget_touchGestureEnd(XWidget* top, const XTouchEvent* te,
             /* 双击：DoubleTap 手势先问控件（接受=控件接管，DBL_CLICK
              * 序列免合成）；否则 DBL_CLICK（button 与 buttons 携带
              * LeftButton）+ 配对 RELEASE，代替普通 tap 的 press+release。 */
-            if (!xwidget_touchGestureNotify(top, XTouchGesture_DoubleTap,
-                                            topLocal, &globalPos)) {
+            if (!xwidget_touchGestureNotify(top, XGestureEventType_DoubleTap,
+                                            XGestureState_Finished,
+                                            topLocal, &globalPos, NULL)) {
                 XWidget_synthesizeMouseFromTouch(top,
                     XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK,
                     XMouseButton_LeftButton,
@@ -3270,8 +3460,9 @@ static void xwidget_touchGestureEnd(XWidget* top, const XTouchEvent* te,
                 XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
                 XMouseButton_NoButton, topLocal);
             /* Tap 收口通知（仅告知；控件自定是否消费 touch 语义）。 */
-            (void)xwidget_touchGestureNotify(top, XTouchGesture_Tap,
-                                             topLocal, &globalPos);
+            (void)xwidget_touchGestureNotify(top, XGestureEventType_Tap,
+                                             XGestureState_Finished,
+                                             topLocal, &globalPos, NULL);
         }
         tapDone = (g_touchGesture.m_synthPressSent ||
                    g_touchGesture.m_armedDouble);
@@ -3306,6 +3497,23 @@ static void xwidget_touchGestureAbort(XWidget* top)
     if (!g_touchGesture.m_active)
         return;
     xwidget_touchGestureKillTimer();
+    if (g_touchGesture.m_scrollDrag) {
+        /* 滚动拖动异常收口（CANCEL/新 BEGIN 打断）：DragCancel 原始位
+         * 移流（位置=最近主点；派发对象=序列真实顶层——本函数 top 形参
+         * 在新 BEGIN 打断路径传入的是新序列顶层，误用会把收口发错树；
+         * 挂着的合成 press 已在转拖位关闭，无鼠标收口事务）。 */
+        XWidget* scrollTop = g_touchGesture.m_top ? g_touchGesture.m_top
+                                                  : top;
+        XPoint lastPos;
+        lastPos.x = (short)g_touchGesture.m_lastX;
+        lastPos.y = (short)g_touchGesture.m_lastY;
+        (void)xwidget_touchGestureNotify(scrollTop,
+                                         XGestureEventType_Pan,
+                                         XGestureState_Canceled,
+                                         &lastPos, NULL, NULL);
+        xwidget_touchGestureReset();
+        return;
+    }
     if (g_touchGesture.m_synthPressSent && !g_touchGesture.m_longFired &&
         !g_touchGesture.m_dragging) {
         XPoint farPos = xwidget_gestureFarPoint(g_touchGesture.m_beginX,
@@ -4045,6 +4253,7 @@ XVtable* XWidget_class_init(void)
         ,XWidget_inputMethodQuery_default /* InputMethodQuery（对标 QWidget::inputMethodQuery） */
 #endif /* XINPUTMETHOD_ON */
         ,XWidget_ignoreEvent_default       /* TouchDragEvent（XGui 扩展：默认忽略→沿父链传播；接受=控件认领手势） */
+        ,XWidget_ignoreEvent_default       /* GestureEvent（手势事件；默认忽略→沿父链传播，对标 QWidget::gestureEvent） */
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXWidget_deinit);
@@ -4165,6 +4374,23 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
             (self->m_windowFlags &
              ((XWindowFlags)XWindowType_Window |
               (XWindowFlags)XWindowType_Popup)) ? 1 : 0;
+#if XLAYOUT_ON
+        /* [自动可见 2026-10-29] 对标 Qt QWidget::setParent（qwidget.cpp：
+         * `if (parent && parent->isVisible() && !q->testAttribute(WA_WState_ExplicitShowHide)) q->show();`）
+         * 与 QWidgetPrivate::init 的同款语义——**父已可见时创建的子控件
+         * 立即可见**。本框架 m_explicitShow 默认为 0 且此前无任何自动
+         * show 路径：父若早已 show 过（动态建控件的常态），新控件永远
+         * 不可见（症状：页面翻层后整片空白——只有页面首次 show 时的
+         * showChildren 传播能救一次）。
+         * 显式隐藏位 WA_WState_Hidden 已由 init 按「有父=不 Hidden」置位，
+         * 故此处不会误显「显式隐藏」的控件。 */
+        if (!self->m_isWindow && parent->m_visible &&
+            !XWidget_attrTest(&self->m_attributes,
+                              XWidgetAttribute_WState_Hidden)) {
+            self->m_explicitShow = 1;
+            self->m_visible = 1;
+        }
+#endif /* XLAYOUT_ON */
     }
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
     if (self->m_isWindow)
@@ -4401,6 +4627,24 @@ static void VXWidget_deinit(XWidget* self)
         self->m_palette = NULL;
     }
 #endif /* XPALETTE_ON */
+#if XGESTURE_ON
+    /* 手势识别器订阅表析构自清：容器持有识别器指针（借用，不拥有），但
+     * 识别器内的目标引用指向本控件——析构须先解绑再归还容器，否则识别器
+     * 仍指向垂死控件（后续手势投递命中野指针）。 */
+    if (self->m_gestureRecognizers) {
+        size_t i;
+        size_t n = XVector_size(self->m_gestureRecognizers);
+        for (i = 0; i < n; ++i) {
+            XGestureRecognizer* rec =
+                (XGestureRecognizer*)XVector_at_base(self->m_gestureRecognizers,
+                                                     (int64_t)i);
+            if (rec && XGestureRecognizer_target(rec) == (XObject*)self)
+                XGestureRecognizer_setTarget(rec, NULL);
+        }
+        XClassDelete(self->m_gestureRecognizers);
+        self->m_gestureRecognizers = NULL;
+    }
+#endif /* XGESTURE_ON */
     XWidget_freeContentCache(self);
     /* 保留层登记节点持有本控件借用指针，析构必须先摘除再释放缓存。 */
     xwidget_retainedDisable(self);
@@ -4887,6 +5131,13 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
          * touchDragEvent 虚槽分派；accept 状态由槽设置（接受=控件认领
          * 该手势），默认忽略以沿父链传播——保留接受状态供父链传播判定。 */
         XWidget_touchDragEvent_base(self, event);
+        return XEvent_isAccepted(event);
+    case XEVENT_TYPE_GESTURE:
+        /* 手势事件（对标 QWidget::event 的 QEvent::Gesture）：手势识别器
+         * 识别成功后经事件循环投递，载荷 XGestureEvent（点按/长按/平移/
+         * 缩放/轻扫/旋转/双击/甩动 + 手势状态序列）→ gestureEvent 虚槽
+         * 分派；默认忽略→沿父链传播（未被消费的手势可上抛给父控件）。 */
+        XWidget_gestureEvent_base(self, event);
         return XEvent_isAccepted(event);
     case XEVENT_TYPE_TABLET_PRESS:
     case XEVENT_TYPE_TABLET_RELEASE:
@@ -5965,8 +6216,16 @@ void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
     /* 父链变化后重算生效可见状态。 */
     {
         bool newVisible = self->m_explicitShow;
+        XWidget* p = (XWidget*)XObject_parent((XObject*)self);
+        /* [自动可见 2026-10-29] 对标 Qt QWidget::setParent：换到可见父后
+         * 自动可见（除非被显式隐藏过——Qt 的 WA_WState_ExplicitShowHide
+         * 对位本框架的 WState_Hidden 显式位）。 */
+        if (!self->m_isWindow && p && p->m_visible &&
+            !XWidget_attrTest(&self->m_attributes,
+                              XWidgetAttribute_WState_Hidden))
+            self->m_explicitShow = 1;
+        newVisible = self->m_explicitShow;
         if (!self->m_isWindow) {
-            XWidget* p = (XWidget*)XObject_parent((XObject*)self);
             if (p && !p->m_visible) newVisible = false;
         }
         self->m_visible = newVisible ? 1 : 0;
@@ -7744,6 +8003,82 @@ XLayout* XWidget_layout(const XWidget* self)
     return NULL;
 #endif /* XLAYOUT_ON */
 }
+
+/* ==================== 手势识别器订阅（对标 QWidget grabGesture） ==================== */
+
+#if XGESTURE_ON
+/** @brief 订阅手势识别器（对标 QWidget::grabGesture）。 */
+void XWidget_addGestureRecognizer(XWidget* self,
+                                  XGestureRecognizer* recognizer)
+{
+    if (!self || !recognizer) return;
+    /* 一个识别器实例只服务一个控件（识别器内持有目标引用）：已绑定到
+     * 其它控件时拒绝订阅，避免事件投错目标（应用需要多处响应同一手势
+     * 时创建多个识别器实例）。 */
+    {
+        XObject* bound = XGestureRecognizer_target(recognizer);
+        if (bound && bound != (XObject*)self) return;
+    }
+    if (!self->m_gestureRecognizers) {
+        self->m_gestureRecognizers =
+            XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(void*), true);
+        if (!self->m_gestureRecognizers) return;
+    }
+    /* 幂等：同一识别器不重复入列。 */
+    {
+        size_t i;
+        size_t n = XVector_size(self->m_gestureRecognizers);
+        for (i = 0; i < n; ++i) {
+            if (XVector_at_base(self->m_gestureRecognizers, (int64_t)i) ==
+                (void*)recognizer)
+                return;
+        }
+    }
+    {
+        void* elem = (void*)recognizer;
+        if (!XVector_push_back_1_base(self->m_gestureRecognizers, &elem))
+            return;
+    }
+    XGestureRecognizer_setTarget(recognizer, (XObject*)self);
+}
+
+/** @brief 解除手势识别器订阅（对标 QWidget::ungrabGesture）。 */
+void XWidget_removeGestureRecognizer(XWidget* self,
+                                     XGestureRecognizer* recognizer)
+{
+    size_t i;
+    size_t n;
+    if (!self || !recognizer || !self->m_gestureRecognizers) return;
+    n = XVector_size(self->m_gestureRecognizers);
+    for (i = 0; i < n; ++i) {
+        if (XVector_at_base(self->m_gestureRecognizers, (int64_t)i) ==
+            (void*)recognizer) {
+            /* 容器按位删除（元素为指针值，无需析构）。 */
+            XVector_remove_base(self->m_gestureRecognizers, (int64_t)i, 1);
+            if (XGestureRecognizer_target(recognizer) == (XObject*)self)
+                XGestureRecognizer_setTarget(recognizer, NULL);
+            return;
+        }
+    }
+}
+
+/** @brief 解除本控件的全部手势识别器订阅。 */
+void XWidget_clearGestureRecognizers(XWidget* self)
+{
+    size_t i;
+    size_t n;
+    if (!self || !self->m_gestureRecognizers) return;
+    n = XVector_size(self->m_gestureRecognizers);
+    for (i = 0; i < n; ++i) {
+        XGestureRecognizer* rec =
+            (XGestureRecognizer*)XVector_at_base(self->m_gestureRecognizers,
+                                                 (int64_t)i);
+        if (rec && XGestureRecognizer_target(rec) == (XObject*)self)
+            XGestureRecognizer_setTarget(rec, NULL);
+    }
+    XVector_clear_base(self->m_gestureRecognizers);
+}
+#endif /* XGESTURE_ON */
 
 void XWidget_setLayout(XWidget* self, XLayout* layout)
 {
@@ -10400,6 +10735,7 @@ XWIDGET_VT_DISPATCH(changeEvent, EXWidget_ChangeEvent)
 XWIDGET_VT_DISPATCH(touchEvent, EXWidget_TouchEvent)
 XWIDGET_VT_DISPATCH(tabletEvent, EXWidget_TabletEvent)
 XWIDGET_VT_DISPATCH(touchDragEvent, EXWidget_TouchDragEvent)
+XWIDGET_VT_DISPATCH(gestureEvent, EXWidget_GestureEvent)
 
 /* ==================== 图形效果（对标 QWidget::graphicsEffect） ==================== */
 

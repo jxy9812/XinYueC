@@ -1147,16 +1147,16 @@ static bool readPathFile(const char* path, char* out, size_t cap)
     return ok && out[0] != 0;
 }
 
-int main(int argc, char* argv[])
+int XProtocolCampaignTest_runEx(const char* baseDir, int tcpPort)
 {
     g_bootMs = XDateTime_currentMSecsSinceEpoch();
-    if (argc > 1 && argv[1][0]) {
-        snprintf(g_base, sizeof(g_base), "%s", argv[1]);
+    if (baseDir && baseDir[0]) {
+        snprintf(g_base, sizeof(g_base), "%s", baseDir);
     } else {
         const char* env = getenv("CAMPAIGN_BASE");
         if (env && env[0]) snprintf(g_base, sizeof(g_base), "%s", env);
     }
-    if (argc > 2) g_tcpPort = atoi(argv[2]);
+    if (tcpPort > 0) g_tcpPort = tcpPort;
 
     printf("=== 战役 1028 XProtocol 端到端联调测试 ===\n");
     printf("base=%s tcp=%d\n", g_base, g_tcpPort); fflush(stdout);
@@ -1204,4 +1204,19 @@ int main(int argc, char* argv[])
     printf("=== 结果: 失败 %d 项 (S1..S13 全矩阵) ===\n", g_fail);
     fflush(stdout);
     return g_fail;
+}
+
+int XProtocolCampaignTest_run(void)
+{
+    /* base 目录/端口走 CAMPAIGN_BASE 环境变量与固定缺省段（15431）。 */
+    return XProtocolCampaignTest_runEx(NULL, 0);
+}
+
+void XProtocolCampaignTest(XVariant* data)
+{
+    const int fails = XProtocolCampaignTest_run();
+    (void)data;
+    printf("=== XProtocolCampaignTest: %s（失败 %d 项）===\n",
+           fails == 0 ? "PASS" : "FAIL", fails);
+    fflush(stdout);
 }
