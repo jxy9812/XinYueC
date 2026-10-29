@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XModbusMapping.h
  * @brief      Modbus 聚合设备映射管理器（统一虚拟地址空间 ↔ 多底层设备翻译）。
  * @details    [XModbus 聚合设备 2026-10-26] 把多个 Modbus 从站的地址空间映射到

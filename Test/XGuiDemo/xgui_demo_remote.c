@@ -144,10 +144,12 @@ static XGuiRemoteProfileId xr_nextProfile(XGuiRemoteProfileId id)
 static void srv_applyColor(void)
 {
     if (!g_colorBox) return;
+    /* [冗余收口 2026-10-29] 手动 XWidget_update 已删：setPalette 末尾
+     * 自刷（XWidget.c XWidget_setPalette），其后的 setAutoFillBackground
+     * 同样自刷（XWidget.c XWidget_setAutoFillBackground）。 */
     xr_setWidgetColor(g_colorBox, XR_COLORS[g_colorIdx % XR_COLOR_COUNT][0],
                       XR_COLORS[g_colorIdx % XR_COLOR_COUNT][1],
                       XR_COLORS[g_colorIdx % XR_COLOR_COUNT][2]);
-    XWidget_update(g_colorBox);
 }
 
 static void srv_onColorClicked(XObject* sender, XVarList* args)

@@ -46,7 +46,6 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include "XLink_config.h"
 #include "XLinkProto.h"
 #include "XObject.h"
 #include "XClass.h"
@@ -134,6 +133,8 @@ typedef struct XLinkTopicSubscription {
     uint32_t m_topicId; /**< 订阅的 topic（须 >= XLINK_TOPIC_USER_BASE）。 */
 } XLinkTopicSubscription;
 
+#if XLINK_AUTH_ON
+
 /**
  * @brief 服务端凭据查询结果（XLinkSessionAuthLookupCallback 返回值）。
  */
@@ -176,6 +177,8 @@ typedef bool (*XLinkSessionAuthResponseCallback)(
     uint8_t* methodOut, uint8_t responseOut[XLINK_AUTH_NONCE_BYTES],
     uint8_t hashOut[XLINK_AUTH_NONCE_BYTES]);
 
+#endif /* XLINK_AUTH_ON */
+
 /**
  * @brief 文件传输帧处理回调（XLINK_FILE_ON）。
  * @param self 会话对象（借用）。
@@ -198,8 +201,6 @@ typedef struct XLinkSessionStats {
     uint64_t m_framesReceived;  /**< 已解析分发的帧数。 */
     uint64_t m_bytesSent;       /**< 已写出字节数（含帧头）。 */
     uint64_t m_bytesReceived;   /**< 已读入字节数。 */
-    uint32_t m_requestsSent;    /**< 发出的请求数。 */
-    uint32_t m_requestsTimedOut;/**< 超时终局的请求数。 */
     uint32_t m_protocolErrors;  /**< 协议违例次数（畸形帧/超限）。 */
     uint32_t m_resets;          /**< 复位次数（断链/判线/违例）。 */
 } XLinkSessionStats;
@@ -217,13 +218,14 @@ typedef struct XLinkSession {
 
     uint8_t* m_rxBuffer;  /**< 接收缓冲（对象拥有，XLINK_HEADER_SIZE + XLINK_MAX_PAYLOAD
                                 字节，init 时经 XMemory 一次性申请）；仅供实现使用。 */
+#if XLINK_TX_QUEUE_BYTES == 0
+    /* 无发送队列时的一次性直写缓冲：单次原子写需帧头与载荷连续，常驻缓冲
+       避免大帧每次发送堆分配（稳态零堆）。有队列时整帧入队即返回，本缓冲
+       派不上用场，不再无条件占用每会话约 16KB 堆。仅供实现使用。 */
     uint8_t* m_txBuffer;  /**< 发送缓冲（对象拥有，XLINK_HEADER_SIZE + XLINK_MAX_PAYLOAD
-                                字节，init 时经 XMemory 一次性申请）：单次原子写需帧头与
-                                载荷连续，常驻缓冲避免大帧每次发送堆分配（稳态零堆）；
-                                仅供实现使用。 */
+                                字节，init 时经 XMemory 一次性申请）。 */
+#endif
     uint32_t m_rxFilled;  /**< 接收缓冲中已填充字节数（仅供实现使用）。 */
-    uint32_t m_rxExpected; /**< 当前帧的期望总长度（仅供实现使用）：0 表示尚在等待帧头，
-                                否则为帧头 12 字节 + 载荷长度。 */
 
     XLinkSessionState m_state; /**< 链路状态，见 XLinkSessionState。 */
 
@@ -298,6 +300,7 @@ typedef struct XLinkSession {
     uint8_t  m_authFailureLimit;/**< 单连接认证失败上限，默认 XLINK_AUTH_FAILURE_LIMIT。 */
 
     /* ---------- 登录认证状态（XLINK_AUTH_ON） ---------- */
+#if XLINK_AUTH_ON
     XLinkSessionAuthLookupCallback m_authLookup;     /**< 服务端凭据查询回调（借用）。 */
     void* m_authLookupUserData;                      /**< 上述回调上下文（借用）。 */
     XLinkSessionAuthResponseCallback m_authRespond;  /**< 客户端挑战应答回调（借用）。 */
@@ -309,10 +312,10 @@ typedef struct XLinkSession {
     uint8_t  m_authHash[XLINK_AUTH_NONCE_BYTES];  /**< 派生摘要 H：服务端为查表所得，
                                                        客户端为本地派生所得（供校验服务端证明）。 */
     uint8_t  m_authNonce[XLINK_AUTH_NONCE_BYTES]; /**< 本连接挑战 nonce（双方各持一份）。 */
-    uint8_t  m_authSalt[XLINK_AUTH_SALT_BYTES];   /**< 本连接盐（服务端下发/客户端接收）。 */
     uint32_t m_authIterations;    /**< 本连接口令派生迭代次数。 */
     uint8_t  m_authPendingRole;   /**< 认证成功后拟授予的角色（服务端查表结果）。 */
     XString* m_authPendingUser;   /**< 待认证用户名（对象拥有，XString UTF-8）。 */
+#endif /* XLINK_AUTH_ON */
 
     /* ---------- 文件传输钩子（XLINK_FILE_ON） ---------- */
     XLinkSessionFileCallback m_fileCallback;  /**< File 消息类处理回调（借用，可为 NULL）。 */

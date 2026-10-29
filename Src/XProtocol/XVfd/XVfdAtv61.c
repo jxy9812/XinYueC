@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XVfdAtv61.c
  * @brief 施耐德 ATV61 变频器子类实现。
  * @details 资产平移自原 XModbusAtv61.c（已删除）：CiA402 启动序列、状态解析、
@@ -28,14 +28,10 @@
 /* =============== 故障码表 ===============
  * 数值与字母码取自施耐德官方《ATV610 通信参数表》LFT 枚举（EAV64394），
  * 与 ATV61/ATV71 同属一个逻辑地址家族，故障字母码一致。
- * 现场若遇不一致，以 HMI [1.10 诊断] 当前故障列表为准并修订本表。 */
-typedef struct XVfdAtv61FaultEntry {
-    uint16_t m_code;      /**< LFT 寄存器数值 */
-    const char* m_name;   /**< ATV61 故障缩写 */
-    const char* m_text;   /**< 中文说明 */
-} XVfdAtv61FaultEntry;
-
-static const XVfdAtv61FaultEntry s_atv61Faults[] = {
+ * 现场若遇不一致，以 HMI [1.10 诊断] 当前故障列表为准并修订本表。
+ * 条目布局为公共 XVfdFaultEntry（XVfdModbusBase_Protected.h），查找走
+ * XVfdModbusBase_faultEntry_const。 */
+static const XVfdFaultEntry s_atv61Faults[] = {
     { 0, "NOF", "无故障" },
     { 2, "EEF1", "控制存储器故障" },
     { 3, "CFF", "配置不正确" },
@@ -360,15 +356,6 @@ parent_call:
     XClass_Parent(XVfdModbusBase, EXObject_TimerEvent, void (*)(XObject*, XTimerEvent*))(obj, event);
 }
 
-/* =============== 单写动作收口（简单动作共用） =============== */
-static void atv61SimpleWriteDone(XObject* owner, void* userData, bool ok, const XModbusDataUnit* result)
-{
-    (void)userData;
-    (void)result;
-    if (!owner) return;
-    XVfdModbusBase_finishAction((XVfdModbusBase*)owner, ok);
-}
-
 /* =============== 业务虚函数实现（重载 XVfdDevice 槽） =============== */
 static bool VXVfdAtv61_Start(XVfdDevice* d, bool reverse)
 {
@@ -399,7 +386,7 @@ static bool VXVfdAtv61_Stop(XVfdDevice* d)
     }
     if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_Stop)) return false;
     if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdAtv61_AddrCmd,
-                                          XVfdAtv61_CmdDisableOperation, atv61SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
+                                          XVfdAtv61_CmdDisableOperation, XVfdModbusBase_simpleWriteDone, NULL, XModbusRequestPriority_High)) {
         XVfdModbusBase_finishAction(&dev->m_base, false);
         return false;
     }
@@ -416,7 +403,7 @@ static bool VXVfdAtv61_FreeStop(XVfdDevice* d)
     }
     if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_FreeStop)) return false;
     if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdAtv61_AddrCmd,
-                                          XVfdAtv61_CmdDisableVoltage, atv61SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
+                                          XVfdAtv61_CmdDisableVoltage, XVfdModbusBase_simpleWriteDone, NULL, XModbusRequestPriority_High)) {
         XVfdModbusBase_finishAction(&dev->m_base, false);
         return false;
     }
@@ -433,7 +420,7 @@ static bool VXVfdAtv61_QuickStop(XVfdDevice* d)
     }
     if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_QuickStop)) return false;
     if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdAtv61_AddrCmd,
-                                          XVfdAtv61_CmdQuickStopCmd, atv61SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
+                                          XVfdAtv61_CmdQuickStopCmd, XVfdModbusBase_simpleWriteDone, NULL, XModbusRequestPriority_High)) {
         XVfdModbusBase_finishAction(&dev->m_base, false);
         return false;
     }
@@ -459,7 +446,7 @@ static bool VXVfdAtv61_SetFrequency(XVfdDevice* d, double hz)
     if (scaled < -32768.0) scaled = -32768.0;
     if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, dev->m_referenceAddress,
                                           (uint16_t)(int16_t)(int32_t)scaled,
-                                          atv61SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
+                                          XVfdModbusBase_simpleWriteDone, NULL, XModbusRequestPriority_High)) {
         XVfdModbusBase_finishAction(&dev->m_base, false);
         return false;
     }
@@ -478,7 +465,7 @@ static bool VXVfdAtv61_SetSpeedRpm(XVfdDevice* d, int rpm)
     if (rpm > 32767) rpm = 32767;
     if (rpm < -32768) rpm = -32768;
     if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdAtv61_AddrLfrd,
-                                          (uint16_t)(int16_t)rpm, atv61SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
+                                          (uint16_t)(int16_t)rpm, XVfdModbusBase_simpleWriteDone, NULL, XModbusRequestPriority_High)) {
         XVfdModbusBase_finishAction(&dev->m_base, false);
         return false;
     }
@@ -584,20 +571,16 @@ void XVfdAtv61_setReferenceAddress(XVfdAtv61* dev, uint16_t address)
 /* =============== 故障码查询 =============== */
 const char* XVfdAtv61_faultName(uint16_t code)
 {
-    size_t i;
-    for (i = 0; i < ATV61_FAULT_COUNT; ++i) {
-        if (s_atv61Faults[i].m_code == code) return s_atv61Faults[i].m_name;
-    }
-    return NULL;
+    const XVfdFaultEntry* e = XVfdModbusBase_faultEntry_const(
+        s_atv61Faults, (int)ATV61_FAULT_COUNT, code);
+    return e ? e->m_name : NULL;
 }
 
 const char* XVfdAtv61_faultText(uint16_t code)
 {
-    size_t i;
-    for (i = 0; i < ATV61_FAULT_COUNT; ++i) {
-        if (s_atv61Faults[i].m_code == code) return s_atv61Faults[i].m_text;
-    }
-    return NULL;
+    const XVfdFaultEntry* e = XVfdModbusBase_faultEntry_const(
+        s_atv61Faults, (int)ATV61_FAULT_COUNT, code);
+    return e ? e->m_text : NULL;
 }
 
 #endif /* XVFD_ATV61_ON */

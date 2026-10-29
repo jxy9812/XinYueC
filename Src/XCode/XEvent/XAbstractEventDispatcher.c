@@ -8,6 +8,8 @@
 #include "XThreadData.h"
 #include "XThread.h"
 #include "XDateTime.h"
+#include "XPrintf.h" /* [PUMPGAP 2026-10-29 诊断] 泵返回间隔对账。 */
+#include <time.h>
 #include "XFileDescriptor.h"
 #include "XSocketNotifier.h"   /* poll(notifier fds)：激活信号发射 */
 #include "XWindowEvent.h"      /* XPaintEvent（重型事件画像诊断） */
@@ -631,44 +633,79 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
         }
     }
 
-    /* 3. 处理投递事件（含定时器/I/O 产生的事件） */
+    /* 3. 处理投递事件（含定时器/I/O 产生的事件）
+     * [TIMER 保底派发 2026-10-29] 定时器事件由后端提取后投递进同一条
+     * posted 队列，与推帧洪水按优先级稳定序排队——持续推帧时 TIMER 事
+     * 件被压在整批非定时事件之后，实测派发排队缺口 ~921ms（板上
+     * Modbus 50ms 轮询 TICKGAP 对账：提取层零迟滞、缺口全在队列段）。
+     * 两圈派发：第一圈只派发 TIMER 类事件，第二圈按原有顺序派发其余
+     * （第一圈已派槽位经 m_event 置空守卫自然跳过）。越车边界：输入
+     * 事件之前——TIMER 只越过首个待派用户输入事件之前的队列段，输入
+     * 一旦在队，其后事件（含 TIMER）严格按原序，键盘连删节拍/收口
+     * 语义不因保底圈改变（实测无此边界时 ⑦.13 起振/收口断言翻红）。
+     * 对标 Qt 定时器事件不经普通队列合并的语义。 */
     size_t size = 0;
     XVector* events = XThreadData_takePostedEvents();
     if (events)
     {
+        int timerPass;
+        size_t postCount = XContainerSize(events);
+        XPostEvent* posts = (XPostEvent*)XContainerDataAddr(events);
+        size_t firstInputIdx = postCount;
+        size_t scanIdx;
         if (!XThreadData_pushActivePostedEvents(events)) {
             XThreadData_push_front_list(events);
             XClassDelete(events);
             return false;
         }
-        for_each_iterator(events, XVector, it)
+        for (scanIdx = 0; scanIdx < postCount; ++scanIdx)
         {
-            XPostEvent* ePost = XVector_iterator_data(&it);
-            if (!ePost|| !ePost->m_event) continue;
-            if (ePost->m_event->m_type == XEVENT_TYPE_DEFERRED_DELETE
-                && !XDeferredDeleteEvent_shouldDeliver((XDeferredDeleteEvent*)ePost->m_event,
-                                                        XThreadData_current(), false))
+            XPostEvent* scanned = &posts[scanIdx];
+            if (scanned->m_event &&
+                scanned->m_event->m_input_event == XEventLoop_ExcludeUserInputEvents)
             {
-                continue;
+                firstInputIdx = scanIdx;
+                break;
             }
-            if ((flags & XEventLoop_ExcludeUserInputEvents) && ePost->m_event->m_input_event == XEventLoop_ExcludeUserInputEvents)
+        }
+        for (timerPass = 1; timerPass >= 0; --timerPass)
+        {
+            size_t slotIdx = 0;
+            for_each_iterator(events, XVector, it)
             {
-                continue;
-            }
-            if ((flags & XEventLoop_ExcludeSocketNotifiers) && ePost->m_event->m_type == XEVENT_TYPE_SOCK_ACT) {
-                continue;
-            }
-            if ((flags & XEventLoop_X11ExcludeTimers) && ePost->m_event->m_type == XEVENT_TYPE_TIMER) {
-                continue;
-            }
-            if (!ePost->m_receiver||ePost->m_receiver->m_is_deleting_children)
-            {
-                XThreadData_discardPostedEvent(ePost);
+                XPostEvent* ePost = XVector_iterator_data(&it);
+                size_t curSlot = slotIdx++;
+                if (!ePost|| !ePost->m_event) continue;
+                if (timerPass)
+                {
+                    if (ePost->m_event->m_type != XEVENT_TYPE_TIMER) continue;
+                    if (curSlot >= firstInputIdx) continue;
+                }
+                if (ePost->m_event->m_type == XEVENT_TYPE_DEFERRED_DELETE
+                    && !XDeferredDeleteEvent_shouldDeliver((XDeferredDeleteEvent*)ePost->m_event,
+                                                            XThreadData_current(), false))
+                {
+                    continue;
+                }
+                if ((flags & XEventLoop_ExcludeUserInputEvents) && ePost->m_event->m_input_event == XEventLoop_ExcludeUserInputEvents)
+                {
+                    continue;
+                }
+                if ((flags & XEventLoop_ExcludeSocketNotifiers) && ePost->m_event->m_type == XEVENT_TYPE_SOCK_ACT) {
+                    continue;
+                }
+                if ((flags & XEventLoop_X11ExcludeTimers) && ePost->m_event->m_type == XEVENT_TYPE_TIMER) {
+                    continue;
+                }
+                if (!ePost->m_receiver||ePost->m_receiver->m_is_deleting_children)
+                {
+                    XThreadData_discardPostedEvent(ePost);
+                    ++size;
+                    continue;
+                }
+                XThreadData_deliverPostedEvent(ePost);
                 ++size;
-                continue;
             }
-            XThreadData_deliverPostedEvent(ePost);
-            ++size;
         }
         XThreadData_popActivePostedEvents(events);
         XThreadData_push_front_list(events);
@@ -767,9 +804,25 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
             /* 主线程：阻塞在 IOCP 完成端口上（I/O 完成事件唤醒） */
             if (ioRing && XAbstractNetIoRing_isEnabled(ioRing))
             {
+                /* [PUMPGAP 2026-10-29 诊断] 泵返回间隔对账：两次返回的
+                 * MONOTONIC 间隔 >200ms 打点（判事件泵睡死 vs 时间轮
+                 * 兑现失速——主循环 921ms 冻结终审）。 */
+                static double s_pumpLastWake = 0.0;
+                static int s_pumpGuard = 0;
+                struct timespec ptx;
+                double now0, now1;
+                clock_gettime(CLOCK_MONOTONIC, &ptx);
+                now0 = (double)ptx.tv_sec + ptx.tv_nsec * 1e-9;
+                if (!s_pumpGuard) { s_pumpLastWake = now0; s_pumpGuard = 1; }
                 XAbstractEventDispatcher_aboutToBlock_signal(self);
                 XAbstractNetIoRing_waitForEvents_base(ioRing, timeoutMs);
                 XAbstractEventDispatcher_awake_signal(self);
+                clock_gettime(CLOCK_MONOTONIC, &ptx);
+                now1 = (double)ptx.tv_sec + ptx.tv_nsec * 1e-9;
+                if (now1 - s_pumpLastWake > 0.2)
+                    XPrintf("[PUMPGAP] %.1fms since last pump return\n",
+                            (now1 - s_pumpLastWake) * 1e3);
+                s_pumpLastWake = now1;
             }
         }
         else

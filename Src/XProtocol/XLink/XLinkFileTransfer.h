@@ -3,8 +3,8 @@
  * @details    本模块把 XLinkFile 的线上格式变成可用的传输：
  *               - 一个对象承载**一个方向的一次传输**（发或收），
  *                 由 XLinkFileServer / XLinkFileClient 按需创建；
- *               - 发送侧：按 credit 窗口切片读文件、编码 DATA、推进偏移，
- *                 收 ACK 后补充额度；卡住超时即 Abort；
+ *               - 发送侧：按窗口切片读文件、编码 DATA、推进偏移，
+ *                 未确认字节达窗口即停发等 ACK；卡住超时即 Abort；
  *               - 接收侧：按 offset 定位写入 <目标>.part，累计 SHA-256，
  *                 按已消费量回 ACK 授信，Finish 时校验摘要并原子改名；
  *               - 所有 IO 都是增量的：每轮 pump 只做有限工作（受
@@ -24,7 +24,7 @@ extern "C" {
 
 #include "XLink_config.h"
 
-#if XLINK_ON && XLINK_FILE_ON
+#if XLINK_ON && XLINK_SESSION_ON && XLINK_FILE_ON
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -39,7 +39,7 @@ extern "C" {
 typedef enum XLinkFileTransferState {
     XLinkFileTransferState_Idle      = 0, /**< 未启动。 */
     XLinkFileTransferState_Opening   = 1, /**< 已发 Open，等 OpenAck。 */
-    XLinkFileTransferState_Active    = 2, /**< 正在传数据（受 credit 约束）。 */
+    XLinkFileTransferState_Active    = 2, /**< 正在传数据（受窗口约束）。 */
     XLinkFileTransferState_Finishing = 3, /**< 已发 Finish，等 FinishAck。 */
     XLinkFileTransferState_Done      = 4, /**< 成功完成。 */
     XLinkFileTransferState_Failed    = 5  /**< 失败/中止（见 m_status）。 */
@@ -87,14 +87,12 @@ typedef struct XLinkFileTransfer {
     XFile* m_file;             /**< 本地文件（对象拥有；未打开为 NULL）。 */
     XString* m_localPath;      /**< 本地路径（对象拥有）。 */
     XString* m_remoteName;     /**< 远程文件名（对象拥有）。 */
-    XString* m_partPath;       /**< 接收侧临时文件路径（对象拥有）。 */
 
     uint64_t m_totalSize;      /**< 文件总字节数。 */
     uint64_t m_offset;         /**< 发送侧：已发出偏移；接收侧：已落盘偏移。 */
     uint64_t m_ackOffset;      /**< 发送侧：对端已确认偏移（收 ACK 推进）。 */
     uint32_t m_chunkBytes;     /**< 协商块大小。 */
     uint32_t m_windowBytes;    /**< 协商窗口。 */
-    uint32_t m_credit;         /**< 发送侧剩余授信（字节）；接收侧累计待确认量。 */
 
     uint8_t m_flags;           /**< Open 标志（bit0 允许覆盖）。 */
     uint8_t m_status;          /**< 失败时的结果码（XLinkFileStatus）。 */
@@ -287,7 +285,7 @@ uint64_t XLinkFileTransfer_doneBytes(const XLinkFileTransfer* transfer);
  */
 uint64_t XLinkFileTransfer_totalBytes(const XLinkFileTransfer* transfer);
 
-#endif /* XLINK_ON && XLINK_FILE_ON */
+#endif /* XLINK_ON && XLINK_SESSION_ON && XLINK_FILE_ON */
 
 #ifdef __cplusplus
 }

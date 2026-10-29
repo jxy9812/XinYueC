@@ -267,6 +267,11 @@ static bool VXModbusRtuSerialClient_open(XModbusDevice* device)
         XSerialPort_setStopBits(serialPort, (XSerialPort_StopBits)XVariant_toInt(stopBitsVar));
     }
 
+    // [A8 双开守卫配套] open 已开端口现在会返回 false：内部调用方先补 close。
+    if (XSerialPort_isOpen(serialPort)) {
+        XSerialPort_close_base(serialPort);
+    }
+
     // 打开串口
     bool result = XSerialPort_open_base(serialPort, XIODevice_ReadWrite);
     if (!result) {
@@ -296,16 +301,27 @@ static void VXModbusRtuSerialClient_close(XModbusDevice* device)
 
     XModbusRtuSerialClient* client = (XModbusRtuSerialClient*)device;
 
-    interFrameTimerStop(device);
-    XModbusClient_timeoutTimerStop(device);
+    /* [A6 复核根修] 原实现把 XModbusDevice* 裸传给子类型参数
+     * （interFrameTimerStop 收 XModbusRtuSerialClient*、
+     *   XModbusClient_timeoutTimerStop 收 XModbusClient*），
+     * 仅因首成员偏移为 0 而碰巧可用，改传正确类型。 */
+    interFrameTimerStop(client);
+    XModbusClient_timeoutTimerStop((XModbusClient*)client);
 
     if (client->m_currentReply) {
-        XModbusReply_setError(client->m_currentReply, XModbusDevice_ConnectionError, "Device closed");
+        /* [A4 不变式 + A5 终态不复活] 先摘引用再置错；finished 已到持有方后
+         * 状态机不再回拉 No_Started（原实现 setError 后又 setState(No_Started)
+         * 复活终态 reply）。 */
         XModbusReply* reply = client->m_currentReply;
         client->m_currentReply = NULL;
-        XModbusReply_setState(reply, XModbusReply_State_No_Started);
-        //XModbusReply_setFinished(reply, true);
+        XModbusReply_setError(reply, XModbusDevice_ConnectionError, "Device closed");
+        XModbusReply_setState(reply, XModbusReply_State_Finished);
     }
+
+    /* [A2/A4 收口] 排空发送队列：close 是终结路径，排队中的 Reply 必须
+     * 恰好一次终态收口（对齐 TCP 客户端 close 口径），不再悬挂。 */
+    XModbusClient_serialQueueClear((XModbusClient*)client,
+        XModbusDevice_ConnectionError, "Device closed");
 
     if (client->m_requestData) {
         XByteArray_clear_base(client->m_requestData);
@@ -331,26 +347,27 @@ static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* rec
     size_t len = XByteArray_size_base(receiveBuffer);
 
     if (!validateRtuFrame(data, len)) {
-        XModbusReply_setError(reply, XModbusDevice_UnknownError, "CRC check failed");
+        /* [A4 复核根修] CRC 错是可重试的中间错误：仅记中间错误并走超时重发。
+         * 原实现在此 setError —— finished 同步到达持有方后 RTU 层仍解引用
+         * m_currentReply 继续重发，违背"终态后绝不解引用"不变式。
+         * 终结只发生在重试耗尽的 handleRequestTimeout（恰好一次）。 */
         XModbusReply_addIntermediateError(reply, XModbusDevice_ResponseCrcError);
         handleRequestTimeout(client);//重发请求
         return;
-        //goto cleanup;
     }
 
     if (data[0] != client->m_currentServerAddress) {
-        XModbusReply_setError(reply, XModbusDevice_UnknownError, "Server address mismatch");
+        /* [A4 复核根修] 同上：地址不匹配走中间错误+重发，不提前终结。 */
         XModbusReply_addIntermediateError(reply, XModbusDevice_ResponseRequestMismatch);
         handleRequestTimeout(client);//重发请求
         return;
-        //goto cleanup;
     }
-    if (!client->m_currentReply->m_rawResult)
-        client->m_currentReply->m_rawResult = XModbusResponse_create();
+    if (!reply->m_rawResult)
+        reply->m_rawResult = XModbusResponse_create();
     // 解析响应PDU
    /* XModbusResponse response;
     XModbusResponse_init(&response);*/
-    XModbusResponse* response = client->m_currentReply->m_rawResult;
+    XModbusResponse* response = reply->m_rawResult;
     uint8_t fc = data[1];
     XModbusPdu_setFunctionCode(response, (XModbusPdu_FunctionCode)fc);
 
@@ -373,7 +390,11 @@ static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* rec
             case XModbusPdu_GatewayTargetDeviceFailedToRespond: errorMsg = "Gateway target device failed to respond"; break;
             default: break;
             }
-            XModbusReply_setError(client->m_currentReply, XModbusDevice_ProtocolError, errorMsg);
+            /* [A4 不变式] 先摘 m_currentReply 再置错：setError 会让 finished
+             * 同步到达持有方，此后本层绝不再解引用 m_currentReply（全程只用局部
+             * reply，且持有方按框架约定以 deleteLater 延迟释放）。 */
+            client->m_currentReply = NULL;
+            XModbusReply_setError(reply, XModbusDevice_ProtocolError, errorMsg);
         }
         goto cleanup;
     }
@@ -387,12 +408,13 @@ static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* rec
 
 
 
-    if (!client->m_currentReply->m_result)
-        client->m_currentReply->m_result = XModbusDataUnit_create();
+
+    if (!reply->m_result)
+        reply->m_result = XModbusDataUnit_create();
 
     // 获取结果单元
     //XModbusDataUnit* resultUnit = XModbusDataUnit_create();
-    XModbusDataUnit* resultUnit = client->m_currentReply->m_result;
+    XModbusDataUnit* resultUnit = reply->m_result;
 
     /* XString* text= XByteArray_to16HexString(receiveBuffer);
      XPrintf_string(text);
@@ -406,7 +428,9 @@ static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* rec
         //XModbusReply_setResult_ref(client->m_currentReply, resultUnit);
     }
     else {
-        XModbusReply_setError(client->m_currentReply, XModbusDevice_UnknownError, "Response processing failed");
+        /* [A4 不变式] 同上：先摘引用再置错。 */
+        client->m_currentReply = NULL;
+        XModbusReply_setError(reply, XModbusDevice_UnknownError, "Response processing failed");
         // 释放临时结果单元
         /*if (resultUnit) {
             XClassDelete(resultUnit);
@@ -420,7 +444,12 @@ cleanup:
     //XPrintf("准备调用槽函数\n");
     //XModbusReply_setFinished(reply, true);
     XModbusReply_setState(reply, XModbusReply_State_Finished);
-    if (!client->m_currentReply)//当前是空闲的
+    /* [A2 续泵 + 空闲守卫] 终结后必须续泵（否则超时/广播后整条队列停摆）；
+     * 但 finished 是同步直达持有方的——持有方 done 回调可能已提交新请求并经
+     * sendRawRequest 的内层泵填住 m_currentReply，此时外层再泵就会弹出无辜
+     * 队列条目撞上收口分支（回归实证：v1 设频写帧被错误终结，485 门用例
+     * "站 1 输出频率 25.0Hz" 失败）。故必须判定空闲后才续泵。 */
+    if (!client->m_currentReply)
         startNewRequest(client);
 }
 bool startNewRequest(XModbusRtuSerialClient* client)
@@ -432,10 +461,20 @@ bool startNewRequest(XModbusRtuSerialClient* client)
     return startRequestReply(client, reply);
 }
 
-/** @brief 取出待发请求并执行发送（出队后的公共发送路径）。 */
+/** @brief 取出待发请求并执行发送（出队后的公共发送路径）。
+ *  @note  [A3 收口不变式] reply 一经出队就不再回队：任何失败路径都必须先以
+ *         error 终态终结该 reply（finished 同步到达持有方）再返回/续泵，
+ *         绝不让已出队的 reply 悬空——否则持有方（如链路层 inflight）
+ *         永不 finished，单飞永久卡死。 */
 static bool startRequestReply(XModbusRtuSerialClient* client, XModbusReply* reply)
 {
-    if (!client || !reply || !reply->m_request || reply->m_serverAddress < 0 || reply->m_serverAddress > 247) {
+    if (!client) return false;
+    if (!reply || !reply->m_request || reply->m_serverAddress < 0 || reply->m_serverAddress > 247) {
+        /* 出队条目失效：以错误终态收口，避免静默丢弃 */
+        if (reply) {
+            XModbusReply_setError(reply, XModbusDevice_UnknownError, "Invalid queued request");
+            XModbusReply_setState(reply, XModbusReply_State_Finished);
+        }
         return false;
     }
     const XModbusRequest* request = reply->m_request;
@@ -445,20 +484,31 @@ static bool startRequestReply(XModbusRtuSerialClient* client, XModbusReply* repl
     XModbusDevice* device = (XModbusDevice*)client;
 
     if (XModbusDevice_state(device) != XModbusDevice_ConnectedState) {
+        /* 未连接：出队 reply 以错误终态收口（排队期间的连接断开不再悬空） */
+        XModbusReply_setError(reply, XModbusDevice_ConnectionError, "Device not connected");
+        XModbusReply_setState(reply, XModbusReply_State_Finished);
         return false;
     }
 
     XIODevice* io = device->m_ioDevice;
     if (!io || !XIODevice_isOpen(io)) {
+        XModbusReply_setError(reply, XModbusDevice_ConnectionError, "I/O device closed");
+        XModbusReply_setState(reply, XModbusReply_State_Finished);
         return false;
     }
 
     if (rtuClient->m_currentReply != NULL) {
+        /* 出队时在途占用（所有泵点均已空闲守卫，此分支为防御性收口） */
+        XModbusReply_setError(reply, XModbusDevice_UnknownError, "Client busy");
+        XModbusReply_setState(reply, XModbusReply_State_Finished);
         return false;
     }
     XByteArray* pdu = ((XModbusPdu*)request)->m_data;
-    if (!pdu || XByteArray_isEmpty_base(pdu))
+    if (!pdu || XByteArray_isEmpty_base(pdu)) {
+        XModbusReply_setError(reply, XModbusDevice_UnknownError, "Empty request PDU");
+        XModbusReply_setState(reply, XModbusReply_State_Finished);
         return false;
+    }
     /* XModbusReply* reply = XModbusClient_createReply(client, request, serverAddress);
      if (!reply) return NULL;*/
 
@@ -493,8 +543,20 @@ static bool startRequestReply(XModbusRtuSerialClient* client, XModbusReply* repl
 
      // 发送RTU请求
     int64_t sent = XIODevice_write_2(io, rtuClient->m_requestData);
-    if (!sent) {
-        return  startNewRequest(client);;
+    /* 失败可能是 0（未写）也可能是负数（XIODevice_writeData → -1，如 pty
+     * master 已关的 EIO）：只判 !sent 会把 -1 当成功，reply 在发送已失败后
+     * 仍被登记在途（此时同步 errorOccurred 已把 state 拉成 Unconnected，
+     * 超时定时器又被状态门槛吞掉 → 单飞永久卡死）。 */
+    if (sent <= 0) {
+        /* [A3 根修] 发送失败：已出队的 reply 先以错误终态收口（finished 同步
+         * 到达持有方），再续泵下一条。原实现直接递归泵下一条，本 reply 未置错
+         * 未终结——持有方（如 Hub/链路层的 inflight）永不 finished，单飞永久卡死。
+         * 续泵须判空闲：终结的 finished 同步链可能已提交并发送新请求。 */
+        XModbusReply_setError(reply, XModbusDevice_WriteError, "Failed to write request");
+        XModbusReply_setState(reply, XModbusReply_State_Finished);
+        if (!rtuClient->m_currentReply)
+            return startNewRequest(client);
+        return true;
     }
     XModbusReply_clearIntermediateError(reply);
 
@@ -552,7 +614,7 @@ static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args
  * @brief 处理帧间延迟超时
  * @param client RTU客户端
  */
-static void handleInterFrameTimeout(XModbusRtuSerialClient* client)
+static bool handleInterFrameTimeout(XModbusRtuSerialClient* client)
 {
     interFrameTimerStop(client);
     size_t bufLen = XByteArray_size_base(client->m_receiveBuffer);
@@ -613,10 +675,16 @@ static void handleRequestTimeout(XModbusRtuSerialClient* client)
     // 广播消息的 turnaround 延迟结束
     if (client->m_waitingForTurnaround) {
         client->m_waitingForTurnaround = false;
+        /* [A4 不变式 + A2 续泵] 先摘引用再进终态，终结后空闲才续泵——
+         * 原实现广播回合收口不调 startNewRequest，与正常收口不对称，
+         * 广播之后整条发送队列停摆。finished 同步链可能已填住
+         * m_currentReply（见 processReceivedFrame 收口注释），须守卫。 */
         XModbusReply* reply = client->m_currentReply;
         client->m_currentReply = NULL;
+        client->m_retryCount = 0;
         XModbusReply_setState(reply, XModbusReply_State_Timeout);
-        //XModbusReply_setFinished(reply, true);
+        if (!client->m_currentReply)
+            startNewRequest(client);
         return;
     }
 
@@ -631,7 +699,9 @@ static void handleRequestTimeout(XModbusRtuSerialClient* client)
             ((XModbusDevice*)client)->m_ioDevice,
             client->m_requestData);
 
-        if (sent) {
+        /* 只认正数：负数是写失败（同上，会同步触发 errorOccurred 把在途回合
+         * 收口并摘引用），必须落穿到下方终结分支，不得当成功续命超时。 */
+        if (sent > 0) {
             // 清空接收缓冲区
             if (client->m_receiveBuffer) {
                 XByteArray_clear_base(client->m_receiveBuffer);
@@ -642,12 +712,17 @@ static void handleRequestTimeout(XModbusRtuSerialClient* client)
     }
 
     // 重试次数用尽或重试失败
-    XModbusReply_setError(client->m_currentReply, XModbusDevice_TimeoutError, "Request timeout");
+    /* [A4 不变式 + A2 续泵] 先摘引用再 setError：finished 同步到达持有方后
+     * 本层绝不再解引用 m_currentReply；终结后空闲才续泵下一条——原实现重试
+     * 耗尽收口不调 startNewRequest，超时之后整条队列停摆。finished 同步链
+     * 可能已提交并发送新请求（守卫原因见 processReceivedFrame 收口注释）。 */
     XModbusReply* reply = client->m_currentReply;
     client->m_currentReply = NULL;
     client->m_retryCount = 0;
-    //XModbusReply_setFinished(reply, true);
+    XModbusReply_setError(reply, XModbusDevice_TimeoutError, "Request timeout");
     XModbusReply_setState(reply, XModbusReply_State_Timeout);
+    if (!client->m_currentReply)
+        startNewRequest(client);
 }
 // =============== 定时器事件处理 ===============
 static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XTimerEvent* event) {
@@ -656,6 +731,14 @@ static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XTimerEvent* event)
     XEvent_accept(event);
     XModbusRtuSerialClient* client = (XModbusRtuSerialClient*)obj;
     XTimerId timerId = XTimerEvent_timerId(event);
+    /* 处理请求超时定时器（先于状态门槛）：链路掉线（state 已非 Connected）
+     * 而回合仍在途时超时也必须收口——若被状态门槛吞掉，在途 reply 永不
+     * finished，单飞永久卡死（战役 S4-B 实证）。handleRequestTimeout 内部
+     * 对空在途/重试写失败均有终态收口，掉线态下触发是安全路径。 */
+    if (timerId == ((XModbusClient*)client)->m_timeoutTimer) {
+        handleRequestTimeout(client);
+        return;
+    }
     if (XModbusDevice_state(client) == XModbusDevice_ConnectedState)
     {
         // 处理帧间延迟定时器 - 一帧接收完成
@@ -664,12 +747,6 @@ static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XTimerEvent* event)
             return;
         }
 
-        // 处理请求超时定时器
-        if (timerId == ((XModbusClient*)client)->m_timeoutTimer) {
-            //XModbusClient_timeoutTimerStop(client);
-            handleRequestTimeout(client);
-            return;
-        }
         if(client->m_base.m_poolMap)
         {
             XModbusReply** pReply = XHashMap_value_base(client->m_base.m_poolMap, &timerId);
@@ -721,11 +798,12 @@ static void VXModbusRtuSerialClient_deinit(XModbusRtuSerialClient* client)
     // 这里只销毁容器本身，不触碰队列元素）
     /* 发送队列由基类持有并释放（此处不重复释放） */
     if (client->m_currentReply) {
-        XModbusReply_setError(client->m_currentReply, XModbusDevice_TimeoutError, "Device closed");
+        /* [A4 不变式 + A5 终态不复活] 先摘引用再置错并进终态；
+         * 原实现 setError（已触发 finished）后又拉回 No_Started。 */
         XModbusReply* reply = client->m_currentReply;
         client->m_currentReply = NULL;
-        XModbusReply_setState(reply, XModbusReply_State_No_Started);
-        //XModbusReply_setFinished(reply, true);
+        XModbusReply_setError(reply, XModbusDevice_TimeoutError, "Device closed");
+        XModbusReply_setState(reply, XModbusReply_State_Finished);
     }
 
     XIODevice* io = ((XModbusDevice*)client)->m_ioDevice;
@@ -789,14 +867,16 @@ static void XModbusRtuSerialClient_onErrorOccurred(XObject* receiver, XVarList* 
 
     if (client->m_currentReply)
     {
+        /* [A4 复核根修 + A5] 原实现先按重试余量把 m_currentReply 置 NULL，
+         * 再对可能为 NULL 的指针 setError —— setError 直接返回，该 reply
+         * 永不 finished，上层持有方永久卡死；未置 NULL 分支又把已置错的
+         * reply 拉回 No_Started（终态复活）。现统一：先摘引用，再以
+         * ConnectionError 恰好一次终态收口（串口故障时在途回合不可续）。 */
         XModbusReply* reply = client->m_currentReply;
-        int maxRetries = XModbusClient_numberOfRetries((XModbusClient*)client);
-        if (client->m_retryCount >= maxRetries)
-        {
-            client->m_currentReply = NULL;
-        }
-        XModbusReply_setError(client->m_currentReply, XModbusDevice_ConnectionError, "Serial port error");
-        XModbusReply_setState(reply, XModbusReply_State_No_Started);
+        client->m_currentReply = NULL;
+        client->m_retryCount = 0;
+        XModbusReply_setError(reply, XModbusDevice_ConnectionError, "Serial port error");
+        XModbusReply_setState(reply, XModbusReply_State_Finished);
     }
 
     XModbusDevice_setState(device, XModbusDevice_UnconnectedState);
@@ -877,6 +957,12 @@ static void XModbusRtuSerialClient_attemptReconnect(XModbusRtuSerialClient* clie
     // 更新帧间延迟
     if (client->m_interFrameDelay == 0) {
         client->m_interFrameDelay = XModbusRtuSerialClient_interFrameDelay(client);
+    }
+
+    /* [A2 续泵] 重连成功后续泵发送队列：串口错误终结在途回合时队列中排队
+     * 的请求保留到重连成功后上线（后续回合完成再逐条续泵）。 */
+    if (!client->m_currentReply) {
+        startNewRequest(client);
     }
 }
 

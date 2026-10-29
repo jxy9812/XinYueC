@@ -158,6 +158,17 @@ bool XVfdModbusLink_isBusy(const XVfdModbusLink* link);
  */
 int XVfdModbusLink_outstanding(const XVfdModbusLink* link);
 
+/**
+ * @brief 取消某 owner 的全部在途登记（设备解绑/析构前调用）。
+ * @param link 链路实例（非 NULL）
+ * @param owner 提交设备对象
+ * @return 实际取消的登记条数（0=该 owner 无在途登记）
+ * @note 取消后该 owner 的在途应答不再回调其完成钩子、也不做健康记账；
+ *       应答对象延迟到底层客户端自然终结（应答/超时/断开收口）时由链路
+ *       统一释放。用于堵住"设备销毁后在途应答仍回调悬垂 owner"的 UAF。
+ */
+int XVfdModbusLink_cancelOwner(XVfdModbusLink* link, XObject* owner);
+
 #ifdef __cplusplus
 }
 #endif

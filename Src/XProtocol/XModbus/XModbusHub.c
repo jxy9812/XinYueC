@@ -13,9 +13,16 @@
  *                 2026-10-26：不内嵌独立 XTimer）；拍内按计划单飞逐段
  *                 sendReadRequest，应答经映射回填缓存（变化检测后发
  *                 valueChanged，type 字段区分来源寄存器类别）。
+ *                 [2026-10-28 单元退避] 每设备内嵌一张 XPoll/XPollScheduler
+ *                 退避表（按 plan 内 unitId 去重簿记）：连续失败达阈值
+ *                 静默该从站（跳过其段，把总线让给活从站），到期自动探活；
+ *                 跃迁沿发 unitLost/unitAlive。
  *               - 写：乐观更新缓存 → 写意图入队 → 设备空闲即时下发（写优先
  *                 于轮询）；失败滞留队列由 m_retryTimer 周期重试，成功出队发
  *                 writeCompleted(ok=true)，永不终局失败（用户裁定语义）。
+ *                 [2026-10-28] 写下发统一走 High 优先级（传输层插队）；
+ *                 attempts 达阈值（setWriteStallNotice，默认 3）发一次
+ *                 writeStalled 提示。
  *               - 设备状态：connect_2 跟踪（槽第一参=真 sender=client，经
  *                 parent 反查 hub 后按指针定设备），恢复 Connected 时
  *                 reconnectCount++ 并立即泵轮询/补写滞留写——底层断线重连
@@ -43,6 +50,12 @@ static void XModbusHub_onDeviceStateChanged(XObject* sender, XVarList* args);
 static void XModbusHub_onReplyFinished(XObject* sender, XVarList* args);
 static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev);
 static void hubPumpWriteQueue(XModbusHub* hub);
+static void hubRebuildUnitSched(XModbusHub* hub, XModbusHubDevice* dev); /* [2026-10-28 单元退避] */
+
+/* [A3 时序缺口兜底] 同步终态收口重入护栏：收口尾部续泵理论上可经防御性
+ * 忙分支再次同步终态（可达路径均被连接态门槛挡住），护栏兜底防栈爆；
+ * 重入层改为就地释放+清 inflight（语义良性：意图留队下拍重试，无滞留）。 */
+static int s_hubInSyncFinish = 0;
 
 /* ==================== 虚函数前置声明（class_init 在文件前部引用） ==================== */
 static void VXModbusHub_deinit(XModbusHub* hub);
@@ -211,6 +224,7 @@ static void hubRebuildAll(XModbusHub* hub)
             }
         }
         d->planCursor = 0;
+        hubRebuildUnitSched(hub, d);   /* [2026-10-28 单元退避] 健康表随计划重建。 */
     }
 }
 
@@ -285,6 +299,40 @@ static bool hubRemoveWriteIntent(XModbusHub* hub, const XModbusHubWriteIntent* s
 /* ==================== 发送（轮询/写） ==================== */
 
 /**
+ * @brief [2026-10-28 单元退避] 计划段对应从站是否静默中（退避表查询）。
+ * @return 静默返回 true；段越界/未登记返回 false（不拦截）。
+ */
+static bool hubSegmentMuted(XModbusHubDevice* dev, size_t segIndex, uint64_t nowMs)
+{
+    const XModbusMapSegment* seg;
+    if (!dev || !dev->plan || segIndex >= XVector_size_base(dev->plan)) return false;
+    seg = (const XModbusMapSegment*)XVector_at_base(dev->plan, (int64_t)segIndex);
+    if (!seg) return false;
+    return XPollScheduler_isMutedKey(&dev->unitSched, seg->range.unitId, nowMs);
+}
+
+/**
+ * @brief [2026-10-28 单元退避] 计划重建后同步设备退避表：清表重建，按计划
+ *        内 unitId 去重登记簿记条目（阈值/时长沿用 Hub 配置）。
+ */
+static void hubRebuildUnitSched(XModbusHub* hub, XModbusHubDevice* dev)
+{
+    size_t i;
+    size_t planLen;
+    if (!hub || !dev) return;
+    XPollScheduler_deinit(&dev->unitSched);
+    XPollScheduler_init(&dev->unitSched);
+    XPollScheduler_setBackoff(&dev->unitSched, hub->m_unitMaxFails, hub->m_unitMuteMs);
+    if (!dev->plan) return;
+    planLen = XVector_size_base(dev->plan);
+    for (i = 0; i < planLen; ++i) {
+        const XModbusMapSegment* seg =
+            (const XModbusMapSegment*)XVector_at_base(dev->plan, (int64_t)i);
+        if (seg) (void)XPollScheduler_registerKey(&dev->unitSched, seg->range.unitId, 0);
+    }
+}
+
+/**
  * @brief 发一段轮询读。请求单元为栈上临时对象——sendReadRequest 经
  *        createReply 深拷贝收编，返回后即可析构。
  * @return true=已上线（应答异步回 onReplyFinished）；false=未受理。
@@ -308,6 +356,26 @@ static bool hubSendPollSegment(XModbusHub* hub, XModbusHubDevice* dev, size_t se
     dev->inflight = reply;
     dev->inflightKind = XModbusHubInflight_Poll;
     dev->inflightSegIndex = segIndex;
+    /* [A3 时序缺口兜底] reply 可能在 send 内部即同步终态（未连接/io 关闭/
+     * 忙/空 PDU/发送失败等收口分支，setError 同步发射 finished）——此刻
+     * finished 已发射给空监听集，connect_2 再挂也收不到。若不就地收口，
+     * dev->inflight 永卡：状态变化槽不清 inflight、重连续泵被单飞闸挡死
+     * →该设备轮询永久停摆。先登记再直调收口槽＝与异步收口完全等价的路径
+     * （退避记账/回填/统计/续泵全不走样）。递归有界：首个同步写/发失败已
+     * 把设备拉成 Unconnected，收口尾部续泵会被 hubPumpDevice 的连接态
+     * 门槛挡住。 */
+    if (XModbusReply_isFinished(reply)) {
+        if (!s_hubInSyncFinish) {
+            s_hubInSyncFinish = 1;
+            XModbusHub_onReplyFinished((XObject*)reply, NULL);
+            s_hubInSyncFinish = 0;
+        } else {
+            dev->inflight = NULL;
+            dev->inflightKind = XModbusHubInflight_None;
+            XObject_deleteLater((XObject*)reply);
+        }
+        return true;
+    }
     XObject_connect_2((XObject*)reply,
                       XSignal(XModbusReply_finished_signal),
                       XModbusHub_onReplyFinished);
@@ -324,8 +392,10 @@ static bool hubSendWriteIntent(XModbusHub* hub, XModbusHubDevice* dev,
                             intent->remoteStart, intent->count);
     for (uint16_t k = 0; k < intent->count; ++k)
         XModbusDataUnit_setValue(&unit, k, intent->values[k]);
+    /* [2026-10-28 写优先级] 写走 High 队列在传输层插队（轮询读保持 Normal）；
+     * 即时下发与滞留重发共用本入口，一处收口。 */
     XModbusReply* reply = XModbusClient_sendWriteRequest(
-        dev->client, &unit, intent->unitId, XModbusRequestPriority_Normal);
+        dev->client, &unit, intent->unitId, XModbusRequestPriority_High);
     XClassDeinit(&unit);
     if (!reply) return false;
 
@@ -334,6 +404,21 @@ static bool hubSendWriteIntent(XModbusHub* hub, XModbusHubDevice* dev,
     dev->inflight = reply;
     dev->inflightKind = XModbusHubInflight_Write;
     dev->inflightWrite = *intent;
+    /* [A3 时序缺口兜底] 同 hubSendPollSegment：send 内部同步终态就地带
+     * inflight 登记直调收口槽（写意图按成败出队/留队 + 续泵等价），防
+     * dev->inflight 永卡单飞。 */
+    if (XModbusReply_isFinished(reply)) {
+        if (!s_hubInSyncFinish) {
+            s_hubInSyncFinish = 1;
+            XModbusHub_onReplyFinished((XObject*)reply, NULL);
+            s_hubInSyncFinish = 0;
+        } else {
+            dev->inflight = NULL;
+            dev->inflightKind = XModbusHubInflight_None;
+            XObject_deleteLater((XObject*)reply);
+        }
+        return true;
+    }
     XObject_connect_2((XObject*)reply,
                       XSignal(XModbusReply_finished_signal),
                       XModbusHub_onReplyFinished);
@@ -354,14 +439,35 @@ static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev)
     XModbusHubWriteIntent* it = hubNextWriteForDevice(hub, dev);
     if (it) {
         ++it->attempts;
+        /* [2026-10-28 写滞留可见性] attempts 首次达阈值发一次提示
+         * （stallNotified 护栏保证每意图至多一次；重发语义不变）。 */
+        if (!it->stallNotified && hub->m_writeStallNoticeAt >= 1 &&
+            it->attempts >= (uint32_t)hub->m_writeStallNoticeAt) {
+            it->stallNotified = true;
+            XModbusHub_writeStalled_signal(hub, (int)it->type,
+                                           (int)it->virtualStart,
+                                           (int)it->count, (int)it->attempts);
+        }
         hubSendWriteIntent(hub, dev, it);
         return;
     }
-    /* ② 轮询：总闸开且计划非空；planCursor 回卷。 */
+    /* ② 轮询：总闸开且计划非空；planCursor 回卷。[2026-10-28 单元退避]
+     *    静默从站的段跳过——RTU 共口多从站时把总线让给活从站（死从站
+     *    不再占用单飞槽吃超时），静默到期自动恢复探活；全部从站静默则
+     *    本拍让总线。 */
     if (!hub->m_polling || !dev->plan) return;
-    const size_t planLen = XVector_size_base(dev->plan);
-    if (planLen == 0) return;
-    if (dev->planCursor >= planLen) dev->planCursor = 0;
+    {
+        const size_t planLen = XVector_size_base(dev->plan);
+        const uint64_t nowMs = XDateTime_currentMSecsSinceEpoch();
+        size_t scanned = 0;
+        if (planLen == 0) return;
+        if (dev->planCursor >= planLen) dev->planCursor = 0;
+        while (scanned < planLen && hubSegmentMuted(dev, dev->planCursor, nowMs)) {
+            dev->planCursor = (dev->planCursor + 1) % planLen;
+            ++scanned;
+        }
+        if (scanned >= planLen) return;                          /* 全静默：本拍不发。 */
+    }
     if (hubSendPollSegment(hub, dev, dev->planCursor))
         dev->planCursor++;                                       /* 在途；完成槽再续泵。 */
 }
@@ -410,6 +516,7 @@ static void VXModbusHub_deinit(XModbusHub* hub)
                 XClassDelete(d->plan);
                 d->plan = NULL;
             }
+            XPollScheduler_deinit(&d->unitSched); /* [2026-10-28 单元退避] 纯数据，清零即可。 */
         }
         XClassDelete(hub->m_devices);
         hub->m_devices = NULL;
@@ -467,6 +574,10 @@ void XModbusHub_init(XModbusHub* hub)
     hub->m_retryTimer = XTIMER_INVALID_ID;
     hub->m_writeRetryIntervalMs = 1000;
     hub->m_changedOnlySignals = true;
+    /* [2026-10-28 单元退避/写滞留可见性] 缺省对齐 XPollScheduler 缺省值。 */
+    hub->m_unitMaxFails = XPOLL_SCHED_DEFAULT_MAX_FAILS;
+    hub->m_unitMuteMs = XPOLL_SCHED_DEFAULT_MUTE_MS;
+    hub->m_writeStallNoticeAt = 3;
 }
 
 XModbusHub* XModbusHub_create_ex(XMemoryType memory)
@@ -551,6 +662,7 @@ bool XModbusHub_removeDevice(XModbusHub* hub, int deviceId)
         XClassDelete(dev->plan);
         dev->plan = NULL;
     }
+    XPollScheduler_deinit(&dev->unitSched); /* [2026-10-28 单元退避] 槽位摘除前清表。 */
     const int idx = hubDeviceIndexById(hub, deviceId);
     if (idx >= 0) XVector_remove_base(hub->m_devices, idx, 1);
     return true;
@@ -671,6 +783,24 @@ void XModbusHub_setPollAreas(XModbusHub* hub, unsigned areaMask)
     if (hub->m_pollAreas == areaMask) return;
     hub->m_pollAreas = areaMask;
     hubRebuildAll(hub);
+}
+
+void XModbusHub_setUnitBackoff(XModbusHub* hub, uint32_t maxFails, uint32_t muteMs)
+{
+    if (!hub) return;
+    /* 门槛与 XPollScheduler_setBackoff 一致：>=1 / >=1000 才生效。 */
+    if (maxFails >= 1) hub->m_unitMaxFails = maxFails;
+    if (muteMs >= 1000) hub->m_unitMuteMs = muteMs;
+    /* 已建设备即时同步（退避表在下次计划重建时也会按新配置重建）。 */
+    if (hub->m_devices) {
+        const size_t n = XVector_size_base(hub->m_devices);
+        for (size_t i = 0; i < n; ++i) {
+            XModbusHubDevice* d =
+                (XModbusHubDevice*)XVector_at_base(hub->m_devices, (int64_t)i);
+            if (d) XPollScheduler_setBackoff(&d->unitSched,
+                                             hub->m_unitMaxFails, hub->m_unitMuteMs);
+        }
+    }
 }
 
 void XModbusHub_startPolling(XModbusHub* hub)
@@ -866,6 +996,11 @@ void XModbusHub_setWriteRetryInterval(XModbusHub* hub, size_t ms)
     }
 }
 
+void XModbusHub_setWriteStallNotice(XModbusHub* hub, int attempts)
+{
+    if (hub) hub->m_writeStallNoticeAt = attempts; /* <1=关闭提示；只影响提示不改重发。 */
+}
+
 /* ==================== 统计 ==================== */
 
 uint32_t XModbusHub_pollOkCount(const XModbusHub* hub, int deviceId)
@@ -986,19 +1121,30 @@ static void XModbusHub_onReplyFinished(XObject* sender, XVarList* args)
     const bool ok = (XModbusReply_error(reply) == XModbusDevice_NoError);
 
     if (dev->inflightKind == XModbusHubInflight_Poll) {
+        /* [2026-10-28 单元退避] 段/从站定位提前到成败分支之前，结果先回报
+         * 退避表（lost 跃迁沿发 unitLost/unitAlive），再做回填与计数。 */
+        const XModbusMapSegment* seg = (dev->plan && dev->inflightSegIndex <
+                                        XVector_size_base(dev->plan))
+            ? (const XModbusMapSegment*)XVector_at_base(dev->plan,
+                                                        (int64_t)dev->inflightSegIndex)
+            : NULL;
+        const int unitId = seg ? seg->range.unitId : -1;
+        const bool wasLost = (unitId >= 0) &&
+            XPollScheduler_isLostKey(&dev->unitSched, unitId);
+        const bool enteredMute = (unitId >= 0) &&
+            XPollScheduler_reportResultKey(&dev->unitSched, unitId, ok, now);
         if (ok) {
             const XModbusDataUnit* result = XModbusReply_result_const(reply);
-            const XModbusMapSegment* seg = (dev->plan && dev->inflightSegIndex <
-                                            XVector_size_base(dev->plan))
-                ? (const XModbusMapSegment*)XVector_at_base(dev->plan,
-                                                            (int64_t)dev->inflightSegIndex)
-                : NULL;
             if (result && seg)
                 hubFillFromResult(hub, (int)seg->type, seg->virtualStart, result);
             ++dev->pollOkCount;
             dev->lastSuccessMs = now;
+            if (wasLost)
+                XModbusHub_unitAlive_signal(hub, dev->id, unitId); /* 失联→恢复跃迁。 */
         } else {
             ++dev->pollErrCount; /* 不风暴：静默计数，下轮计划重试该段。 */
+            if (enteredMute && !wasLost)
+                XModbusHub_unitLost_signal(hub, dev->id, unitId); /* 首次进入静默。 */
         }
         /* 计划游标推进到在途段的下一段（在途发送时已 +1，此处保持）。 */
         XModbusHub_deviceStatsChanged_signal(hub, dev->id);
@@ -1056,6 +1202,29 @@ void* XModbusHub_deviceStatsChanged_signal(XModbusHub* hub, int deviceId)
 {
     XEmitSignal(hub, XModbusHub_deviceStatsChanged_signal,
         XVarList_Create(XVar(int, deviceId)), NULL,
+        NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XModbusHub_unitLost_signal(XModbusHub* hub, int deviceId, int unitId)
+{
+    XEmitSignal(hub, XModbusHub_unitLost_signal,
+        XVarList_Create(XVar(int, deviceId), XVar(int, unitId)), NULL,
+        NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XModbusHub_unitAlive_signal(XModbusHub* hub, int deviceId, int unitId)
+{
+    XEmitSignal(hub, XModbusHub_unitAlive_signal,
+        XVarList_Create(XVar(int, deviceId), XVar(int, unitId)), NULL,
+        NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XModbusHub_writeStalled_signal(XModbusHub* hub, int type,
+                                     int virtualStart, int count, int attempts)
+{
+    XEmitSignal(hub, XModbusHub_writeStalled_signal,
+        XVarList_Create(XVar(int, type), XVar(int, virtualStart), XVar(int, count),
+                        XVar(int, attempts)), NULL,
         NULL, XEVENT_PRIORITY_NORMAL);
 }
 

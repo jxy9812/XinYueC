@@ -98,3 +98,50 @@ ASan 零报告。覆盖：映射纯逻辑（重叠/切片/按设备收集/回绕
 2. `XModbusMapping`/Hub 缓存的**枚举-稠密下标混用**（`XModbusInvalid=0` 使
    四类区实值 1..4，直接当数组下标对 HR=4 越界一字）——统一入口
    `mappingTypeIndex`/`hubTypeIndex` 转稠密，出口 `hubEnumOfType` 转回。
+
+## 2026-10-28 修订（B1–B5：公共组件提炼 + 写插队 + 单元退避 + 写滞留可见性）
+
+1. **B1 公共组件提炼**：新增 `Src/XProtocol/XPoll/XPollScheduler.{h,c}`——
+   `XVfdPollScheduler` 语义原样上移为通用「总线轮询计划表」（登记/注销/改
+   周期/markSent/reportResult 静默退避/tick 错峰单条派发/isMuted/setBackoff；
+   固定容量 32 条目 + 游标轮转；纯逻辑、无定时器无 IO，时刻一律由调用方注入
+   `nowMs`）。另加 Hub 用的 **key 注册扩展**（`registerKey`/`reportResultKey`/
+   `isMutedKey`/`isLostKey`：owner 为空、按 unitId 寻址，tick 自动跳过），
+   供 (设备, 从站) 粒度失联簿记；同一张表内 owner 登记与 key 登记互不串位。
+   配置开关 `XPOLL_SCHEDULER_ON` 登记进 `XProtocol_config.h`，缺省
+   `= XMODBUS_HUB_ON || XVFD_ON`（宏惰性展开，与 include 顺序无关；
+   `XProtocol_config.h` 同时引入 `XVfd_config.h` 保证 `XVFD_ON` 处处可见）。
+   中文 Doxygen 全套 + UTF-8 BOM + extern C。
+2. **B2 兼容壳**：`XVfdPollScheduler.h` 改为纯别名/宏映射壳
+   （`typedef XPollScheduler XVfdPollScheduler` 等 + 全部函数名宏），删除
+   `XVfdPollScheduler.c`（实现统一在 XPoll）。结构体大小与成员布局零变化，
+   `XVfdLink` 内嵌实例 `m_sched` 与 `XVfdLink_Protected.h` 的
+   `XVfdLink_scheduler` 返回类型不受影响；`XVfdLink.{h,c}` 一行未改。
+3. **B3 写优先级**：`hubSendWriteIntent` 提交 `sendWriteRequest` 时传
+   `XModbusRequestPriority_High`（轮询读保持 Normal）——即时下发与滞留重发
+   共用该入口，一处收口，写在传输层队列正确插队。
+4. **B4 失联退避 + 健康事件**：每设备内嵌一张 `XPollScheduler unitSched`
+   （`XModbusHubDevice` 新字段），`hubRebuildAll` 重建计划时按段内 unitId
+   去重重建退避表：
+   - 退避粒度 = (设备, unitId)：RTU 共口多从站时，死从站静默期间其映射段
+     不再提交（`hubPumpDevice` 选段时跳过 `isMutedKey` 命中的段；全静默则
+     本拍让总线），不再占用单飞槽吃超时，把总线让给活从站；静默到期自动
+     恢复探活（`isMutedKey` 随时刻自然解除，下一拍即重试）。
+   - 阈值/时长可配：`XModbusHub_setUnitBackoff(maxFails, muteMs)`
+     （>=1 / >=1000 生效；缺省 3 次 / 5000ms，对齐 `XVfdLink_setBackoff`
+     风格），已建设备即时同步。
+   - 新信号 `unitLost(deviceId, unitId)` / `unitAlive(deviceId, unitId)`：
+     失败结果先经 `reportResultKey` 记账，按跃迁沿发射（进入静默且此前未
+     失联 → unitLost；失联中收到首个成功应答 → unitAlive），静默期内不重复。
+   - 既有 API 签名与语义零破坏（只增不改）；`pollOkCount`/`pollErrCount`
+     语义不变（仍按实际提交的段计）；单飞语义不变（有在途应答跳过本拍）；
+     计时全部 `XDateTime_currentMSecsSinceEpoch`，无新增定时器（沿用每设备
+     `pollTimer` 节拍，风险最小；kill+复位配对纪律不变）。
+5. **B5 写滞留可见性**：新信号 `writeStalled(type, virtualStart, count,
+   attempts)`——写意图下发次数 `attempts` 首次达阈值发一次（每意图至多一次，
+   `stallNotified` 护栏）；阈值经 `XModbusHub_setWriteStallNotice(attempts)`
+   配置（缺省 3，<1 关闭）。只增可见性不改重发语义（失败仍静默留队周期
+   重试直至成功）。`XModbusHubWriteIntent` 相应增加 `stallNotified` 字段。
+6. **B6** `XModbusHub.h`、`XModbusMapping.h` 补 UTF-8 BOM。
+7. 裁剪联动：`XPOLL_SCHEDULER_ON` 显式置 0 时须同时关 `XMODBUS_HUB_ON`
+   （Hub 单元退避依赖该组件）。

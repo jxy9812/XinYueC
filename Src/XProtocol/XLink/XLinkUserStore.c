@@ -183,8 +183,6 @@ void XLinkUserStore_clear(XLinkUserStore* store)
         xus_resetRecord(&store->m_users[i]);
     XLinkAuth_secureZero(store->m_users, sizeof(store->m_users));
     store->m_count = 0;
-    store->m_loaded = 0;
-    store->m_dirty = 0;
 }
 
 /* ========================================================================== */
@@ -218,7 +216,6 @@ bool XLinkUserStore_load(XLinkUserStore* store, const char* path,
     if (!target)
         return false;
     if (!XDeviceFile_stat(target, &stat) || !stat.exists) {
-        store->m_loaded = 1;
         XClassDelete(target);
         return true;
     }
@@ -329,8 +326,6 @@ bool XLinkUserStore_load(XLinkUserStore* store, const char* path,
         store->m_count++;
     }
 
-    store->m_loaded = 1;
-    store->m_dirty = 0;
     ok = true;
 
 cleanup:
@@ -430,8 +425,6 @@ bool XLinkUserStore_save(XLinkUserStore* store, const char* path)
     XDeviceFile_close(fd);
     fd = XFD_INVALID;
     (void)XDeviceFile_setPermissions(path, XFile_ReadOwner | XFile_WriteOwner);
-    store->m_dirty = 0;
-    store->m_loaded = 1;
     ok = true;
 
 cleanup:
@@ -488,7 +481,6 @@ bool XLinkUserStore_upsert(XLinkUserStore* store, const char* user,
         }
         record->m_role = role;
     }
-    store->m_dirty = 1;
     return true;
 }
 
@@ -509,7 +501,6 @@ bool XLinkUserStore_remove(XLinkUserStore* store, const char* user)
     store->m_count--;
     if (store->m_count < XLINK_AUTH_USER_SLOTS)
         memset(&store->m_users[store->m_count], 0, sizeof(store->m_users[0]));
-    store->m_dirty = 1;
     return true;
 }
 
@@ -526,7 +517,6 @@ bool XLinkUserStore_setLocked(XLinkUserStore* store, const char* user,
         store->m_users[index].m_flags |= XLINK_USER_FLAG_LOCKED;
     else
         store->m_users[index].m_flags &= (uint8_t)~XLINK_USER_FLAG_LOCKED;
-    store->m_dirty = 1;
     return true;
 }
 

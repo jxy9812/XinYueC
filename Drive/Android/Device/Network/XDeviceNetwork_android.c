@@ -100,6 +100,16 @@ bool XAndroidNetwork_setDhcp(uint32_t ifIndex)
     return XAndroid_netSetDhcp();
 }
 
+/* [下沉 2026-10-29] 接口枚举硬件地址兜底：应用域 ioctl(SIOCGIFHWADDR)
+ * 在 SELinux enforcing 下恒失败（/sys/class/net 对应用 uid 不可读），
+ * Java 桥（XNetAdapter.linkInfo 第 7 槽：WifiInfo /
+ * java.net.NetworkInterface）取系统认可的 MAC。原先内联在共享 POSIX
+ * 驱动与应用页面（xgui_demo_page_network net_collectLinkInfo）里。 */
+bool XAndroidNetwork_fillInterfaceMac(char* outMac, int macCap)
+{
+    return XAndroid_netLinkMac(outMac, macCap) && outMac && outMac[0];
+}
+
 /** @brief 掩码文本（点分十进制）→ 前缀长度（非法返回 -1）。
  *  安卓 StaticIpConfiguration 用 prefixLength 而非掩码文本。 */
 static int xandroid_net_maskToPrefix(const char* mask)

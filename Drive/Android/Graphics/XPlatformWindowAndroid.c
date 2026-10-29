@@ -256,6 +256,14 @@ typedef struct XPadLayer
                                    opener 正变换换算，0° 时恒等于 pos。 */
     bool visible;              /**< setVisible 状态。 */
     const XImage* lastImage;   /**< 最近一次 present 的图像（借用，弹层叠加用）。 */
+    /* [占位收缩清底 2026-10-28] 上一帧的**物理占位矩形**（surface 坐标）。
+       图层图像只覆盖自己那块矩形，占位一旦收缩/移位（窗口变小、旋转
+       换 footprint、弹层收起），腾空区不属于任何图层、不在任何脏区
+       里——脏区直递不清屏的模型下旧帧会永久滞留（真机：安卓竖屏点
+       「复位默认」窗口被压成 711x711，下方整片旧画面留存）。每帧把
+       「上帧占位 − 本帧占位」记入全部缓冲欠账，由补画路径清底。 */
+    XRect lastPhysRect;
+    bool hasLastPhysRect;
 } XPadLayer;
 static XPadLayer g_xpadWindows[XPAD_MAX_WINDOWS];
 static XPadLayer* xpad_findLayer(XWindow* window);
@@ -302,6 +310,12 @@ static void xpad_bufLedgerResetLocked(void)
     g_xpadBufLedgerVictim = 0;
     g_xpadHasCursorBand = false;
     XRect_init(&g_xpadLastCursorBand, 0, 0, 0, 0);
+    /* [占位收缩清底 2026-10-28] 占位快照与 surface 生命周期同生共死：
+       旧 surface 的坐标在新 surface 上没有意义，留着会产生伪腾空区。 */
+    for (i = 0; i < XPAD_MAX_WINDOWS; ++i) {
+        g_xpadWindows[i].hasLastPhysRect = false;
+        XRect_init(&g_xpadWindows[i].lastPhysRect, 0, 0, 0, 0);
+    }
 }
 
 /** @brief 按身份查欠账槽；无则占空槽/逐出最旧槽（持 g_xpad.m_mutex 调）。
@@ -1209,12 +1223,152 @@ static void xpad_drawImageRotated(ANativeWindow_Buffer* buf,
     }
 }
 
+/** @brief 把 surface 上一个物理矩形清黑（脏区直递的补画底）。
+ *  @details 图层图像恒不透明（565 直拷/转换不混 alpha），但**图层不覆盖
+ *           的地方**必须显式清底：占位收缩/移位腾出的区域不属于任何
+ *           图层，不清则旧帧滞留。逐行 memset 与整幅路径同口径。 */
+static void xpad_clearRectPhys(ANativeWindow_Buffer* buf, int32_t winFmt,
+                               const XRect* rect)
+{
+    size_t bpp;
+    size_t rowBytes;
+    int x0, y0, x1, y1, r;
+    if (!buf || !buf->bits || !rect) return;
+    bpp = (winFmt == WINDOW_FORMAT_RGB_565) ? 2u : 4u;
+    x0 = rect->x;
+    y0 = rect->y;
+    x1 = rect->x + rect->width;
+    y1 = rect->y + rect->height;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > buf->width) x1 = buf->width;
+    if (y1 > buf->height) y1 = buf->height;
+    if (x1 <= x0 || y1 <= y0) return;
+    rowBytes = (size_t)(x1 - x0) * bpp;
+    for (r = y0; r < y1; ++r) {
+        memset((uint8_t*)buf->bits + (size_t)r * (size_t)buf->stride * bpp +
+                   (size_t)x0 * bpp,
+               0, rowBytes);
+    }
+}
+
 /** @brief 图层补画快照（部分补画路径持锁一次取齐，锁外逐矩形绘制）。 */
 typedef struct XPadLayerSnap
 {
     const XImage* img;   /**< 图层最近提交图像（借用）。 */
     XPoint posPx;        /**< surface 物理落位（devPos×presentScale）。 */
 } XPadLayerSnap;
+
+/** @brief 把某图层上一帧占位记为腾空（记入全部缓冲欠账）并清快照。
+ *  @details 图层隐藏/注销时调用：此后不会再有该层的 present，等到下一
+ *           次别的 present 才检测就晚了（期间屏上留旧帧）。持
+ *           g_xpad.m_mutex 调用。 */
+static void xpad_vacateLayerLocked(XPadLayer* layer)
+{
+    if (!layer) return;
+    if (layer->hasLastPhysRect && !XRect_isEmpty(&layer->lastPhysRect))
+        xpad_bufLedgerAccrueRectLocked(&layer->lastPhysRect);
+    layer->hasLastPhysRect = false;
+    XRect_init(&layer->lastPhysRect, 0, 0, 0, 0);
+}
+
+/** @brief 算一个图层的**物理占位矩形**（surface 坐标，已裁界）。
+ *  @details 占位=该图层本帧会涂到的全部像素：逻辑图像按内容旋转角取
+ *           设备 footprint（90/270 宽高对调）、乘 presentScale 放大、
+ *           平移到设备原点。与 present 的落位口径同源（xpad_drawImage /
+ *           xpad_drawImageRotated 的 dstW/dstH 算法）。
+ *           「上帧占位 − 本帧占位」即本帧新腾空、需要清底的区域。
+ *  @param  rot       图层内容旋转角（0/90/180/270）。
+ *  @param  logW/logH 逻辑图像尺寸（图层 lastImage 宽高）。
+ *  @return false=不可用（参数无效/占位为空）。 */
+static bool xpad_layerPhysRect(int rot, int logW, int logH,
+                               const XPoint* devOrigin, float scale,
+                               int surfW, int surfH, XRect* out)
+{
+    int devW = 0;
+    int devH = 0;
+    int x0, y0, x1, y1;
+    if (!out || !devOrigin || logW <= 0 || logH <= 0) return false;
+    if (rot != 0)
+        XWindow_rotationDeviceSize(rot, logW, logH, &devW, &devH);
+    else {
+        devW = logW;
+        devH = logH;
+    }
+    if (devW <= 0 || devH <= 0) return false;
+    x0 = (int)((float)devOrigin->x * scale + 0.5f);
+    y0 = (int)((float)devOrigin->y * scale + 0.5f);
+    /* 右/下缘多收 1 物理像素（与 xpad_dirtyRectToPhys 同口径防舍入缝）。 */
+    x1 = x0 + (int)((float)devW * scale + 0.5f) + 1;
+    y1 = y0 + (int)((float)devH * scale + 0.5f) + 1;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > surfW) x1 = surfW;
+    if (y1 > surfH) y1 = surfH;
+    if (x1 <= x0 || y1 <= y0) return false;
+    XRect_init(out, x0, y0, x1 - x0, y1 - y0);
+    return true;
+}
+
+/** @brief 算「上帧占位 − 本帧占位」的腾空区，逐条带写入 out。
+ *  @details 占位收缩、移位、图层隐藏都会产生腾空区；该区不属于任何
+ *           图层，脏区直递不清屏时必须显式清底，否则旧帧永久滞留。
+ *           补集按「上帧矩形扣掉本帧矩形」拆成最多 4 条带（上/下/左/
+ *           右），互不重叠，逐条记入即可。 */
+static void xpad_accrueVacatedToRegion(const XRect* oldRect,
+                                       const XRect* newRect,
+                                       XRegion* out)
+{
+    int oy1, ny1;
+    if (!out || !oldRect || XRect_isEmpty(oldRect)) return;
+    if (!newRect || XRect_isEmpty(newRect)) {
+        XRegion_addRect(out, oldRect);   /* 整体腾空。 */
+        return;
+    }
+    oy1 = oldRect->y + oldRect->height;
+    ny1 = newRect->y + newRect->height;
+    /* 上带：上帧矩形中本帧矩形顶边以上的部分（全宽）。 */
+    if (oldRect->y < newRect->y) {
+        XRect band;
+        int h = newRect->y - oldRect->y;
+        if (h > oldRect->height) h = oldRect->height;
+        XRect_init(&band, oldRect->x, oldRect->y, oldRect->width, h);
+        XRegion_addRect(out, &band);
+    }
+    /* 下带：本帧矩形底边以下的部分（全宽）。 */
+    if (ny1 < oy1) {
+        XRect band;
+        int top = (ny1 > oldRect->y) ? ny1 : oldRect->y;   /* 夹回上帧矩形。 */
+        XRect_init(&band, oldRect->x, top, oldRect->width, oy1 - top);
+        XRegion_addRect(out, &band);
+    }
+    /* 左右带：与本帧矩形纵向重叠的区间内，本帧矩形左右两侧的部分。
+       纵向重叠段 = [max(oldY,newY), min(oldY1,newY1))。 */
+    {
+        int ovTop = (oldRect->y > newRect->y) ? oldRect->y : newRect->y;
+        int ovBot = (oy1 < ny1) ? oy1 : ny1;
+        if (ovBot > ovTop) {
+            if (newRect->x > oldRect->x) {
+                XRect band;
+                int w = newRect->x - oldRect->x;
+                if (w > oldRect->width) w = oldRect->width;
+                XRect_init(&band, oldRect->x, ovTop, w, ovBot - ovTop);
+                XRegion_addRect(out, &band);
+            }
+            {
+                int oldX1 = oldRect->x + oldRect->width;
+                int newX1 = newRect->x + newRect->width;
+                if (oldX1 > newX1) {
+                    XRect band;
+                    int left = (newX1 > oldRect->x) ? newX1 : oldRect->x;
+                    XRect_init(&band, left, ovTop, oldX1 - left,
+                               ovBot - ovTop);
+                    XRegion_addRect(out, &band);
+                }
+            }
+        }
+    }
+}
 
 /** @brief 逻辑（窗口本地）脏矩形 → 物理 surface 矩形：图层设备原点平移
  *         （含缓冲偏移修正）+ presentScale 放大，右/下缘多收 1 物理像素
@@ -1498,6 +1652,59 @@ static bool xpad_present(XWindow* window, const XImage* image,
         }
     }
 
+    /* [占位收缩清底 2026-10-28] 图层占位比上帧小/移位时，腾空区不属于
+       任何图层，脏区直递的「只补画图层」模型不会碰它 → 旧帧永久滞留
+       （安卓竖屏点「复位默认」窗口被压成 711x711，下方整片旧画面留存
+       即此）。逐图层算「上帧物理占位 − 本帧物理占位」，并入本帧脏区：
+       该区随后随之入各缓冲欠账，任何缓冲 lock 到时都会被补到（补画
+       路径对每个待补矩形先清底再按画家序合成，见下方部分补画段）。
+       图层隐藏/注销已在 setVisible/unregister 各自记过账，这里也会因
+       「本帧占位为空」补上。 */
+    {
+        int li;
+        pthread_mutex_lock(&g_xpad.m_mutex);
+        xpad_updateDeviceOrigins();
+        for (li = 0; li < g_xpadWindowCount; ++li) {
+            XPadLayer* layer = &g_xpadWindows[li];
+            XRect nowRect;
+            bool haveNow = false;
+            if (!layer->hasLastPhysRect) {
+                /* 首帧：记下占位，无腾空区可言（整幅路径会铺满）。 */
+                if (layer->lastImage && layer->visible && layer->win &&
+                    xpad_layerPhysRect(
+                        XWindow_contentRotationDegrees(layer->win),
+                        XImage_width(layer->lastImage),
+                        XImage_height(layer->lastImage), &layer->devPos,
+                        presentScale, buf.width, buf.height, &nowRect)) {
+                    layer->lastPhysRect = nowRect;
+                    layer->hasLastPhysRect = true;
+                }
+                continue;
+            }
+            if (layer->lastImage && layer->visible && layer->win)
+                haveNow = xpad_layerPhysRect(
+                    XWindow_contentRotationDegrees(layer->win),
+                    XImage_width(layer->lastImage),
+                    XImage_height(layer->lastImage), &layer->devPos,
+                    presentScale, buf.width, buf.height, &nowRect);
+            if (!haveNow)
+                XRect_init(&nowRect, 0, 0, 0, 0);
+            if (!XRect_isEmpty(&layer->lastPhysRect)) {
+                XRegion bands;
+                int bi;
+                XRegion_init(&bands);
+                xpad_accrueVacatedToRegion(&layer->lastPhysRect, &nowRect,
+                                           &bands);
+                for (bi = 0; bi < bands.count; ++bi)
+                    XRegion_addRect(&frameDirty, &bands.rects[bi]);
+                XRegion_deinit(&bands);
+            }
+            layer->lastPhysRect = nowRect;
+            layer->hasLastPhysRect = !XRect_isEmpty(&nowRect);
+        }
+        pthread_mutex_unlock(&g_xpad.m_mutex);
+    }
+
     /* 欠账结算（短锁②）：本帧账先记入全部已登记缓冲（源变化未知则
        全部升格欠全屏），再取走本次缓冲的欠账作补画清单并清其账。
        取走-清账后本次绘制在锁外进行（欠账表仅本线程与生命周期清账
@@ -1641,6 +1848,16 @@ static bool xpad_present(XWindow* window, const XImage* image,
             pthread_mutex_unlock(&g_xpad.m_mutex);
 
             for (ri = 0; ri < work.count; ++ri) {
+                /* [占位收缩清底 2026-10-28] 先清底再合成：本矩形内没有
+                   图层覆盖的像素（占位收缩腾空区、窗口外区域）必须回到
+                   底色，否则旧帧永久滞留。图层图像恒不透明（565 直拷/
+                   转换不混 alpha），清底后按画家序叠加与整幅路径（整屏
+                   清黑 + 全图层重画）结果逐位一致。
+                   逐矩形 memset 的开销远小于其后的逐像素缩放 blit；
+                   且该矩形本来就是本帧必须重画的欠账区，无额外放大。
+                   多缓冲一并正确：腾空区已入所有缓冲的欠账，任何缓冲
+                   lock 到时都走这里清底，不依赖「本帧恰好检测到收缩」。 */
+                xpad_clearRectPhys(&buf, winFmt, &work.rects[ri]);
                 for (i = 0; i < snapCount; ++i)
                     xpad_drawImage(&buf, snaps[i].img, &snaps[i].posPx,
                                    winFmt, presentScale, &work.rects[ri]);
@@ -1695,6 +1912,9 @@ static void xpad_registerWindow(XWindow* window)
         g_xpadWindows[g_xpadWindowCount].devPos.y = geom.y;
         g_xpadWindows[g_xpadWindowCount].visible = true;
         g_xpadWindows[g_xpadWindowCount].lastImage = NULL;
+        g_xpadWindows[g_xpadWindowCount].hasLastPhysRect = false;
+        XRect_init(&g_xpadWindows[g_xpadWindowCount].lastPhysRect,
+                   0, 0, 0, 0);
         ++g_xpadWindowCount;
         /* [全屏几何回推 2026-10-25] 新窗口登记后必须立刻拿到 surface
          * 逻辑尺寸：surface 可能先于框架窗口创建（onNativeWindowCreated
@@ -1713,6 +1933,9 @@ static void xpad_unregisterWindow(XWindow* window)
     int i;
     for (i = 0; i < g_xpadWindowCount; ++i) {
         if (g_xpadWindows[i].win == window) {
+            /* [占位收缩清底 2026-10-28] 注销=占位消失：上帧占位记成腾空
+               （销毁后不再有该层 present，等到下次检测就晚了）。 */
+            xpad_vacateLayerLocked(&g_xpadWindows[i]);
             g_xpadWindows[i] = g_xpadWindows[--g_xpadWindowCount];
             return;
         }
@@ -1859,7 +2082,13 @@ bool XPlatformNativeWindow_setVisible(XWindow* window, bool visible)
     pthread_mutex_lock(&g_xpad.m_mutex);
     {
         XPadLayer* layer = xpad_findLayer(window);
-        if (layer) layer->visible = visible;
+        if (layer) {
+            /* [占位收缩清底 2026-10-28] 隐藏=占位立即变空：把上帧占位
+               记成腾空，下一次 present 补画即可清掉旧帧。不能等到本层
+               下一个 present——隐藏后它不再有 present。 */
+            if (!visible) xpad_vacateLayerLocked(layer);
+            layer->visible = visible;
+        }
     }
     pthread_mutex_unlock(&g_xpad.m_mutex);
     return true;

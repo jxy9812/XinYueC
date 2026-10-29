@@ -420,6 +420,11 @@ list(REMOVE_ITEM TEST_FILE
 # io_uring 侧验证工具），不得卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XDeviceTest/xdevice_iou_passive_probe.c")
+# xprotocol_campaign_test 同理：自带 main 的 XProtocol 485 收口战役测试驱动
+# 独立可执行（XProtocolCampaignTest 目标，2026-10-29），不得卷入主程序
+# （与 main.c 重复定义 main）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xprotocol_campaign_test.c")
 file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
 # 桌面（非交叉）构建排除嵌入式移植层（2026-10-05 回归门修复）：FreeRTOS
 # portmacro.h/tasks.c 含 ARM CMSIS 内联汇编（mrs/msr basepri、isb），x86
@@ -973,6 +978,23 @@ if(UNIX)
     target_link_libraries(XModbusHubTest ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XModbusHubTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== 战役 1028 XProtocol 端到端联调测试（独立可执行） ====================
+# [2026-10-28 战役 1028] S1..S10 端到端联调矩阵：广播回合续泵/重试耗尽续泵/
+# CRC 损坏收口/发送失败不遗弃/共口死从站退避（unitLost/unitAlive）/写优先级/
+# writeStalled 滞留可见性/XVfdModbusLink 生命周期（cancelOwner）/串口双开守卫/
+# 连接抖动+CRC 注入微浸泡。Python 多模式虚拟从站（mbtest_campaign_slave.py，
+# 3 pty 总线 + 1 TCP）先行启动，驱动脚本 mbtest_campaign_run.sh 负责起停与
+# 双引擎切换；产物与帧日志全在 CAMPAIGN_BASE。
+# 用法：./XProtocolCampaignTest [base_dir] [tcp_port]
+add_executable(XProtocolCampaignTest
+    "./Test/XProtocolTest/xprotocol_campaign_test.c"
+)
+if(UNIX)
+    target_link_libraries(XProtocolCampaignTest ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XProtocolCampaignTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
 # ==================== 变频器抽象层 Modbus RTU 闭环测试（独立可执行） ====================

@@ -7,7 +7,7 @@
  */
 #include "XLinkFileClient.h"
 
-#if XLINK_ON && XLINK_FILE_ON && XLINK_CLIENT_ON
+#if XLINK_ON && XLINK_SESSION_ON && XLINK_FILE_ON && XLINK_CLIENT_ON
 
 #include "XLinkFile.h"
 #include "XString.h"
@@ -185,8 +185,6 @@ XVtable* XLinkFileClient_class_init(void)
     XVTABLE_INHERIT_XCLASS(XObject);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXLinkFileClient_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXLinkFileClient_timerEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXLinkFileClient_timerEvent,
-                             VXLinkFileClient_timerEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -466,4 +464,4 @@ void* XLinkFileClient_finished_signal(XLinkFileClient* self,
                 NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-#endif /* XLINK_ON && XLINK_FILE_ON && XLINK_CLIENT_ON */
+#endif /* XLINK_ON && XLINK_SESSION_ON && XLINK_FILE_ON && XLINK_CLIENT_ON */

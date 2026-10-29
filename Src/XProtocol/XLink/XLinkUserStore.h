@@ -54,14 +54,10 @@ typedef struct XLinkUserRecord {
  * @brief 账户库对象（内联数组，无动态容器）。
  * @details 用 init/deinit 管理生命周期；`XLinkUserStore` 为值类型，
  *          可嵌入服务端私有块，也可栈上使用。
- *          状态位收敛为一个位域单元（原三个 bool 各占 1~4 字节）。
  */
 typedef struct XLinkUserStore {
     XLinkUserRecord m_users[XLINK_AUTH_USER_SLOTS]; /**< 账户表（定容）。 */
     uint32_t m_count;                                /**< 当前账户数。 */
-    uint32_t m_loaded : 1;                           /**< 已从文件加载过。 */
-    uint32_t m_dirty  : 1;                           /**< 有未落盘修改。 */
-    uint32_t m_reserved : 30;                        /**< 保留位，必须为 0。 */
 } XLinkUserStore;
 
 /**

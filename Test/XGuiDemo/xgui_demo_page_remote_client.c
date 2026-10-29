@@ -230,25 +230,13 @@ static void rc_splitToggle(void* owner);
 /** @brief 实时统计多行区整体刷新前置声明(定时回调先行引用)。 */
 static void rc_refreshStatsLabel(void);
 
-/** @brief 悬浮会话条视图矩形跟随（2026-10-17 布局容器化配套）。
- *  @details adapt 收空后无页内重排口, 会话条附着矩形改按视图区宿主
- *           实测几何轻同步（1s 统计定时器 + 连接达成时调用）; 收起球
- *           已被用户拖动时 attachView 内部不摆位, 不抢用户摆放。 */
-static void rc_syncSessionBarView(void)
-{
-    XRect viewRect;
-    if (!s_rc.m_sessionBar || !s_rc.m_viewHost) return;
-    XRect_init(&viewRect, 0, 0, XWidget_width(s_rc.m_viewHost),
-               XWidget_height(s_rc.m_viewHost));
-    XRemoteSessionBar_attachView(s_rc.m_sessionBar, &viewRect);
-}
-
 /** @brief 统计/UDP 状态刷新定时回调(2026-10-04): 1s 轻刷统计区。 */
 static void rc_statsTimerCb(void* userData, XTimerData* timer)
 {
     (void)userData; (void)timer;
     rc_refreshStatsLabel();
-    rc_syncSessionBarView(); /* 布局化后视图区随窗口缩放, 附着矩形跟随。 */
+    /* 会话条视图区跟随已下沉框架(attachViewHost 30ms 锚定轮询,
+     * 2026-10-29): 定时器只管统计区, 不再兜底同步附着矩形。 */
 }
 
 static void rc_benchStatsCb(void* userData, XTimerData* timer)
@@ -583,9 +571,8 @@ static void rc_onConnected(XObject* sender, XVarList* args)
     /* 连接达成即按界面档位请求一次协商(服务端允许时 PROFILE_RESULT/FB_META)。 */
     if (s_rc.m_client)
         XGuiClient_requestProfileId(s_rc.m_client, s_rc.m_profile);
-    /* 会话条展开吸附用矩形按视图区实测几何刷新（本槽先于会话条内部
-     * connected 槽执行, 吸附落点即正确; 布局容器化后 adapt 不再重排）。 */
-    rc_syncSessionBarView();
+    /* 会话条吸附矩形由框架宿主锚定自跟随(attachViewHost 30ms 轮询,
+     * 2026-10-29): 浮现落点即视图区宿主当前实测几何, 页面不同步。 */
     rc_refreshStateLabel();
     rc_refreshStatsLabel();
 }
@@ -917,15 +904,14 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     }
 
     /* ---- 悬浮会话工具条（页根子控件, z 顶; 连接期浮现/断开隐藏,
-     *     断开=「退出会话不退出应用」的 UI 入口, 2026-10-03）。附着
-     *     矩形初始给设计值, 运行期由 rc_syncSessionBarView 按视图区
-     *     宿主实测几何轻同步（布局容器化后 adapt 不再重排）。 ---- */
+     *     断开=「退出会话不退出应用」的 UI 入口, 2026-10-03）。吸附
+     *     参照锚定视图区宿主控件(attachViewHost, 2026-10-29): 宿主
+     *     Move/Resize/Show/Hide 由框架条内 30ms 跟随轮询自动重贴,
+     *     页面不再手写/定时同步附着矩形。 ---- */
     s_rc.m_sessionBar = XRemoteSessionBar_create(s_rc.m_root, 0);
     if (s_rc.m_sessionBar) {
-        XRect viewRect;
-        XRect_init(&viewRect, 0, 0, RC_VIEW_W, RC_VIEW_H);
         XRemoteSessionBar_setClient(s_rc.m_sessionBar, s_rc.m_client);
-        XRemoteSessionBar_attachView(s_rc.m_sessionBar, &viewRect);
+        XRemoteSessionBar_attachViewHost(s_rc.m_sessionBar, s_rc.m_viewHost);
         XWidget_hide((XWidget*)s_rc.m_sessionBar); /* 未连接: 隐藏。 */
     }
 
@@ -1218,10 +1204,8 @@ static void rc_applyLayoutTier(bool stack)
         XWidget_setFixedHeight((XWidget*)s_rc.m_udpCheck, hCheck);
     if (s_rc.m_touchBtn)
         XWidget_setFixedHeight((XWidget*)s_rc.m_touchBtn, hTouch);
-
-    /* 视图区矩形已随档变化: 悬浮会话条附着矩形立即跟随（1s 统计定时
-     * 器兜底, 此处先同步避免连接期跨档时工具条悬旧位至一秒）。 */
-    rc_syncSessionBarView();
+    /* 会话条视图区跟随已下沉框架(attachViewHost 锚定轮询, 2026-10-29):
+     * 跨档重排后宿主几何一变即被跟随拍重贴, 此处不再手动同步。 */
 }
 
 /** @brief 自适应重排（xgui_demo_pages.h 契约）：宽度分档唯一入口。

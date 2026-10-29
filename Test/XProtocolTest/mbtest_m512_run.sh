@@ -41,6 +41,15 @@ run_engine() {
 case "$ENGINE" in
   io)   run_engine io ;;
   epoll) run_engine epoll ;;
-  both) run_engine io && run_engine epoll && echo "=== M512 CLOSED-LOOP: ALL-PASS (both) ===" || echo "=== M512 CLOSED-LOOP: FAIL ===" ;;
+  both)
+    # 退出码必须如实上报：原实现 `run_engine io && run_engine epoll &&
+    # echo ALL-PASS || echo FAIL` 的收尾 echo 恒为退出码 0，门禁把失败
+    # 当成功。对齐 mbtest_campaign_run.sh 的 FAIL 累计口径。
+    FAIL=0
+    run_engine io    || FAIL=1
+    run_engine epoll || FAIL=1
+    echo "=== M512 CLOSED-LOOP: $([ $FAIL = 0 ] && echo ALL-PASS || echo FAIL) (both) ==="
+    exit $FAIL
+    ;;
   *) echo "usage: $0 [io|epoll|both]"; exit 2 ;;
 esac

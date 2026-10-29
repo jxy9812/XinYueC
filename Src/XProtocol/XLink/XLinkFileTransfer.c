@@ -9,8 +9,8 @@
  *             状态机（接收方）：
  *               Idle -(beginReceive)-> Active -(Finish 校验通过)-> Done
  *
- *             流控：发送方维护 m_credit（接收方授予的未确认字节额度）。
- *             接收方每消费一定量（半个窗口）回一次 ACK 并补充额度。
+ *             流控：发送方按窗口发数据——未确认字节（m_offset - m_ackOffset）
+ *             达到窗口即停发；接收方每块落盘即回 ACK，推进对端确认水位。
  *
  *             断点续传：接收方若发现 <目标>.part 已存在且小于总大小，
  *             以其大小为起始偏移写进 OpenAck；发送方从该偏移继续。
@@ -21,7 +21,7 @@
  */
 #include "XLinkFileTransfer.h"
 
-#if XLINK_ON && XLINK_FILE_ON
+#if XLINK_ON && XLINK_SESSION_ON && XLINK_FILE_ON
 
 #include "XLinkFile.h"
 #include "XString.h"
@@ -340,10 +340,6 @@ void XLinkFileTransfer_deinit(XLinkFileTransfer* transfer)
         XClassDelete((XClass*)transfer->m_remoteName);
         transfer->m_remoteName = NULL;
     }
-    if (transfer->m_partPath) {
-        XClassDelete((XClass*)transfer->m_partPath);
-        transfer->m_partPath = NULL;
-    }
     /* 会话是借用指针：解除引用，避免残留传输在下一轮 pump 里访问
        已销毁/更换的会话。回调**保留**（同一对象跨多次传输复用），
        由 setCallbacks 显式替换。 */
@@ -421,7 +417,6 @@ static bool xft_beginSender(XLinkFileTransfer* t, XLinkSession* session,
     t->m_offset = 0;
     t->m_chunkBytes = XLINK_FILE_CHUNK_BYTES;
     t->m_windowBytes = XLINK_FILE_WINDOW_BYTES;
-    t->m_credit = 0;
     t->m_flags = flags;
     t->m_localPath = XString_create_utf8(localPath);
     t->m_remoteName = XString_create_utf8(remoteName);
@@ -541,7 +536,6 @@ bool XLinkFileTransfer_beginSendFile(XLinkFileTransfer* transfer,
     transfer->m_chunkBytes = chunkBytes ? chunkBytes : XLINK_FILE_CHUNK_BYTES;
     transfer->m_windowBytes = windowBytes ? windowBytes
                                           : XLINK_FILE_WINDOW_BYTES;
-    transfer->m_credit = transfer->m_windowBytes;
     transfer->m_flags = flags;
     transfer->m_localPath = XString_create_utf8(localPath);
     transfer->m_remoteName = XString_create_utf8(remoteName);
@@ -598,7 +592,6 @@ bool XLinkFileTransfer_beginReceive(XLinkFileTransfer* transfer,
     transfer->m_chunkBytes = chunkBytes ? chunkBytes : XLINK_FILE_CHUNK_BYTES;
     transfer->m_windowBytes = windowBytes ? windowBytes
                                           : XLINK_FILE_WINDOW_BYTES;
-    transfer->m_credit = 0;
     transfer->m_flags = open->m_flags;
     transfer->m_localPath = XString_create_utf8(localPath);
     transfer->m_remoteName = XString_create_utf8(open->m_name);
@@ -689,7 +682,6 @@ static void xft_onOpenAck(XLinkFileTransfer* t, const uint8_t* payload,
     if (ack.m_windowBytes > 0)
         t->m_windowBytes = ack.m_windowBytes;
     t->m_offset = ack.m_startOffset;
-    t->m_credit = ack.m_windowBytes;
     /* 下载方向：本端在 Open 时不知道文件大小，由对端 OpenAck 告知。 */
     if (t->m_mode == XLinkFileMode_Download && ack.m_totalSize > 0)
         t->m_totalSize = ack.m_totalSize;
@@ -779,7 +771,6 @@ static void xft_onData(XLinkFileTransfer* t, const uint8_t* payload,
        相对 4KB 数据块可忽略。 */
     XFile_flush(t->m_file);
     xft_sendAck(t, t->m_windowBytes);
-    t->m_credit = 0;
     xft_progress(t);
 }
 
@@ -806,9 +797,9 @@ static void xft_onAck(XLinkFileTransfer* t, const uint8_t* payload,
         xft_sendAbortAndFail(t, XLinkFileStatus_Protocol, "ack beyond size");
         return;
     }
-    /* 对端确认进度 + 新授信。窗口以对端为准。 */
+    /* 对端确认进度（Ack 帧的 creditBytes 为线上兼容字段，保留编解码但
+       本端不再据此记额度——流控只看确认水位与窗口）。窗口以对端为准。 */
     t->m_ackOffset = confirmed;
-    t->m_credit = ack.m_creditBytes;
     t->m_lastActivityTick = 0;
     t->m_retryCount = 0;
     xft_progress(t);
@@ -1169,4 +1160,4 @@ uint64_t XLinkFileTransfer_totalBytes(const XLinkFileTransfer* transfer)
     return transfer ? transfer->m_totalSize : 0;
 }
 
-#endif /* XLINK_ON && XLINK_FILE_ON */
+#endif /* XLINK_ON && XLINK_SESSION_ON && XLINK_FILE_ON */

@@ -37,6 +37,7 @@
 #include "XLinkTest.h"
 #include "XLinkDemo.h"
 #include "XLinkCodec.h"
+#include "XMemory.h"
 #include "XLinkSession.h"
 #include "XLinkServer.h"
 #include "XLinkClient.h"
@@ -224,12 +225,16 @@ static void xlink_server_dispatch(XLinkSession* self,
         uint8_t ack = 0x77;
         /* topicId 在载荷首 4 字节（msgCode 只承载低 16 位） */
         if (payload && frame->m_payloadLen >= 4)
-            g_serverSawSubscribeTopic = XLinkCodec_getU32(payload);
+            XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                              (uint8_t*)&g_serverSawSubscribeTopic,
+                              sizeof(g_serverSawSubscribeTopic));
         /* 应答订阅：主动推送一条业务数据（sendPublish 会自行补 topicId） */
         XLinkSession_sendPublish(self, g_serverSawSubscribeTopic, &ack, 1);
     } else if (frame->m_msgClass == XLinkMsgClass_Unsubscribe) {
         if (payload && frame->m_payloadLen >= 4)
-            g_serverSawUnsubscribeTopic = XLinkCodec_getU32(payload);
+            XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                              (uint8_t*)&g_serverSawUnsubscribeTopic,
+                              sizeof(g_serverSawUnsubscribeTopic));
     }
 }
 
@@ -248,7 +253,9 @@ static void xlink_client_dispatch(XLinkSession* self,
         g_clientPublishCount++;
         /* 推送载荷 = [u32 topicId][业务字节...] */
         if (payload && frame->m_payloadLen >= 4) {
-            g_lastPublishTopic = XLinkCodec_getU32(payload);
+            XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                              (uint8_t*)&g_lastPublishTopic,
+                              sizeof(g_lastPublishTopic));
             g_lastPublishByte = (frame->m_payloadLen >= 5) ? payload[4] : 0;
         }
     }
@@ -345,28 +352,53 @@ static void xlink_test_codec(void)
 {
     XLINK_SECTION("一、编解码层 XLinkCodec");
 
-    /* --- 小端序列化原语：往返一致 + 已知字节序 --- */
+    /* --- 小端序列化原语（XMemory 直调版）：往返一致 + 已知字节序 --- */
     {
         uint8_t buf[4] = { 0 };
-        XLINK_CHECK(XLinkCodec_getU16(NULL) == 0, "getU16 对 NULL 返回 0");
-        XLINK_CHECK(XLinkCodec_getU32(NULL) == 0, "getU32 对 NULL 返回 0");
-        XLinkCodec_putU16(NULL, 1); /* 不应崩溃 */
-        XLinkCodec_putU32(NULL, 1); /* 不应崩溃 */
-        XLINK_CHECK(1, "putU16/putU32 对 NULL 安全空操作");
+        uint16_t v16 = 0;
+        uint32_t v32 = 0;
+        XLINK_CHECK(!XMemory_read_data(NULL, XBYTE_ORDER_LITTLE_ENDIAN,
+                                       (uint8_t*)&v16, sizeof(v16))
+                        && v16 == 0,
+                    "read_data 对 NULL 返回 false，输出保持 0");
+        XLINK_CHECK(!XMemory_read_data(NULL, XBYTE_ORDER_LITTLE_ENDIAN,
+                                       (uint8_t*)&v32, sizeof(v32))
+                        && v32 == 0,
+                    "read_data 对 NULL 返回 false，输出保持 0");
+        XLINK_CHECK(!XMemory_write_data(NULL, XBYTE_ORDER_LITTLE_ENDIAN,
+                                        (const uint8_t*)&v16, sizeof(v16)),
+                    "write_data 对 NULL 返回 false（安全空操作）");
+        XLINK_CHECK(!XMemory_write_data(NULL, XBYTE_ORDER_LITTLE_ENDIAN,
+                                        (const uint8_t*)&v32, sizeof(v32)),
+                    "write_data 对 NULL 返回 false（安全空操作）");
 
-        XLinkCodec_putU16(buf, 0x1234);
+        v16 = 0x1234;
+        XMemory_write_data(buf, XBYTE_ORDER_LITTLE_ENDIAN,
+                           (const uint8_t*)&v16, sizeof(v16));
         XLINK_CHECK(buf[0] == 0x34 && buf[1] == 0x12,
-                    "putU16 按小端写入（低字节在前）");
-        XLINK_CHECK(XLinkCodec_getU16(buf) == 0x1234, "putU16/getU16 往返一致");
+                    "u16 按小端写入（低字节在前）");
+        v16 = 0;
+        XMemory_read_data(buf, XBYTE_ORDER_LITTLE_ENDIAN,
+                          (uint8_t*)&v16, sizeof(v16));
+        XLINK_CHECK(v16 == 0x1234, "u16 写/读往返一致");
 
-        XLinkCodec_putU32(buf, 0x89ABCDEFu);
+        v32 = 0x89ABCDEFu;
+        XMemory_write_data(buf, XBYTE_ORDER_LITTLE_ENDIAN,
+                           (const uint8_t*)&v32, sizeof(v32));
         XLINK_CHECK(buf[0] == 0xEF && buf[3] == 0x89,
-                    "putU32 按小端写入（低字节在前）");
-        XLINK_CHECK(XLinkCodec_getU32(buf) == 0x89ABCDEFu,
-                    "putU32/getU32 往返一致");
+                    "u32 按小端写入（低字节在前）");
+        v32 = 0;
+        XMemory_read_data(buf, XBYTE_ORDER_LITTLE_ENDIAN,
+                          (uint8_t*)&v32, sizeof(v32));
+        XLINK_CHECK(v32 == 0x89ABCDEFu, "u32 写/读往返一致");
         /* topicId 高位不被截断的关键用例 */
-        XLinkCodec_putU32(buf, XLINK_TOPIC_USER_BASE + 1u);
-        XLINK_CHECK(XLinkCodec_getU32(buf) == 0x00010001u,
+        v32 = XLINK_TOPIC_USER_BASE + 1u;
+        XMemory_write_data(buf, XBYTE_ORDER_LITTLE_ENDIAN,
+                           (const uint8_t*)&v32, sizeof(v32));
+        v32 = 0;
+        XMemory_read_data(buf, XBYTE_ORDER_LITTLE_ENDIAN,
+                          (uint8_t*)&v32, sizeof(v32));
+        XLINK_CHECK(v32 == 0x00010001u,
                     "u32 往返保持 topic 高位（0x10001 不被截成 1）");
     }
 
@@ -662,6 +694,123 @@ static void xlink_test_state_machine(void)
                         "重新注册回调后恢复投递");
         }
         xlink_fixture_delete(f);
+    }
+
+    /* 超时空窗复用回归锁（阶段二修复 #2，setDevice 变体）：会话对象复用去
+       挂新链路时，收发时间戳必须随旧链路作废——否则解挂/重挂之间隔超
+       XLINK_HEARTBEAT_TIMEOUT_MS 的空窗后，新链路第一拍 pump 的静默判线
+       会拿旧链路的最后收发时刻套用（nowMs - 旧时刻 > 阈值），健康的会话
+       当场被误判 reset 断开。 */
+    {
+        XLinkTestFixture* f = xlink_fixture_create();
+        XGuiRemoteLoopbackDevice* nDev = NULL;
+        XGuiRemoteLoopbackDevice* nPeer = NULL;
+        XLinkSession* nOpponent = NULL;
+
+        if (!f) {
+            XLINK_CHECK(false, "夹具搭建成功");
+            return;
+        }
+        xlink_fixture_step(f, 3); /* 先走完一次握手：旧链路留下收发时刻 */
+        XLINK_CHECK(XLinkSession_isReady(f->m_server),
+                    "空窗复用前置：旧链路就绪");
+
+        /* 解挂并制造超阈值空窗：期间不驱动会话，旧时间戳原地停留 */
+        XLINK_CHECK(XLinkSession_setDevice(f->m_server, NULL),
+                    "空窗复用：解挂传输成功");
+        f->m_now += XLINK_HEARTBEAT_TIMEOUT_MS + 1000;
+
+        /* 重挂全新链路（新设备对 + 新对端会话） */
+        nDev = XGuiRemoteLoopbackDevice_createPair(8 * 1024, &nPeer);
+        nOpponent = nPeer ? XLinkSession_create_ex((XIODevice*)nPeer) : NULL;
+        XLINK_CHECK(nDev && nOpponent, "空窗复用：新链路夹具搭建成功");
+        if (nDev && nOpponent) {
+            XLinkSession_setDispatchCallback(f->m_server,
+                                             xlink_switch_dispatch, NULL);
+            g_switchHits = 0;
+            XLINK_CHECK(XLinkSession_setDevice(f->m_server,
+                                               (XIODevice*)nDev),
+                        "空窗复用：重挂新链路成功");
+            XLINK_CHECK(XLinkSession_state(f->m_server)
+                            == XLinkSessionState_Connected,
+                        "空窗复用：重挂后回 Connected");
+
+            /* 新链路第一拍：修复前残留的 m_lastReceiveTick 在此触发静默
+               判线误断（会话被 reset 成 Inactive）；修复后时间戳已随旧
+               链路归零，判线跳过，Hello 照常发出。 */
+            XLinkSession_pump(f->m_server, f->m_now);
+            XLINK_CHECK(XLinkSession_state(f->m_server)
+                            == XLinkSessionState_Connected,
+                        "超时空窗重挂：新链路第一拍不被静默判线误断");
+
+            /* 继续驱动若干拍：新链路照常握手，状态正常推进 */
+            XLinkSession_pump(nOpponent, f->m_now);
+            XLinkSession_pump(f->m_server, f->m_now + 10);
+            XLinkSession_pump(nOpponent, f->m_now + 10);
+            XLINK_CHECK(XLinkSession_isReady(f->m_server),
+                        "超时空窗重挂：新链路照常握手到 Ready");
+
+            /* 新链路真实投递一帧：复用的会话在新链路上收发无碍 */
+            XLinkSession_sendPublish(nOpponent, XLINK_TOPIC_USER_BASE + 4,
+                                     (const uint8_t*)"R", 1);
+            XLinkSession_pump(nOpponent, f->m_now + 20);
+            XLinkSession_pump(f->m_server, f->m_now + 20);
+            XLINK_CHECK(g_switchHits == 1,
+                        "超时空窗重挂：新链路帧正常投递");
+        }
+        if (nOpponent) XClassDelete((XClass*)nOpponent);
+        if (nDev) XClassDelete((XClass*)nDev);
+        if (nPeer) XClassDelete((XClass*)nPeer);
+        xlink_fixture_delete(f);
+        XLINK_CHECK(1, "空窗复用夹具销毁（会话与设备全部释放）");
+    }
+
+    /* 同一回归锁的 reset() 变体：协议违例/Goodbye 后会话对象同样常被复用
+       去挂新链路，reset 的时间戳作废口径必须与 setDevice 一致。 */
+    {
+        XLinkTestFixture* f = xlink_fixture_create();
+        XGuiRemoteLoopbackDevice* nDev = NULL;
+        XGuiRemoteLoopbackDevice* nPeer = NULL;
+        XLinkSession* nOpponent = NULL;
+
+        if (!f) {
+            XLINK_CHECK(false, "夹具搭建成功");
+            return;
+        }
+        xlink_fixture_step(f, 3);
+        XLINK_CHECK(XLinkSession_isReady(f->m_server),
+                    "reset 空窗复用前置：旧链路就绪");
+
+        /* 复位（传输仍挂着，状态回 Inactive）后再制造超阈值空窗 */
+        XLinkSession_reset(f->m_server);
+        XLINK_CHECK(XLinkSession_state(f->m_server)
+                        == XLinkSessionState_Inactive,
+                    "reset 空窗复用：复位后回 Inactive");
+        f->m_now += XLINK_HEARTBEAT_TIMEOUT_MS + 1000;
+
+        nDev = XGuiRemoteLoopbackDevice_createPair(8 * 1024, &nPeer);
+        nOpponent = nPeer ? XLinkSession_create_ex((XIODevice*)nPeer) : NULL;
+        XLINK_CHECK(nDev && nOpponent, "reset 空窗复用：新链路夹具搭建成功");
+        if (nDev && nOpponent) {
+            XLINK_CHECK(XLinkSession_setDevice(f->m_server,
+                                               (XIODevice*)nDev),
+                        "reset 空窗复用：重挂新链路成功");
+            /* 新链路第一拍：同上，不得拿旧链路时刻误判静默超时 */
+            XLinkSession_pump(f->m_server, f->m_now);
+            XLINK_CHECK(XLinkSession_state(f->m_server)
+                            == XLinkSessionState_Connected,
+                        "超时空窗 reset 复用：新链路第一拍不被静默判线误断");
+            XLinkSession_pump(nOpponent, f->m_now);
+            XLinkSession_pump(f->m_server, f->m_now + 10);
+            XLinkSession_pump(nOpponent, f->m_now + 10);
+            XLINK_CHECK(XLinkSession_isReady(f->m_server),
+                        "超时空窗 reset 复用：新链路照常握手到 Ready");
+        }
+        if (nOpponent) XClassDelete((XClass*)nOpponent);
+        if (nDev) XClassDelete((XClass*)nDev);
+        if (nPeer) XClassDelete((XClass*)nPeer);
+        xlink_fixture_delete(f);
+        XLINK_CHECK(1, "reset 空窗复用夹具销毁（会话与设备全部释放）");
     }
 }
 
@@ -1194,13 +1343,16 @@ static void xlink_test_defensive(void)
                 {
                     uint8_t frame[XLINK_HEADER_SIZE + 4 + 1];
                     XLinkFrameHeader h;
+                    uint32_t topicId = XLINK_TOPIC_USER_BASE;
                     h.m_payloadLen = 5; /* topicId(4) + 业务字节(1) */
                     h.m_msgClass = XLinkMsgClass_Publish;
                     h.m_msgCode = (uint16_t)(XLINK_TOPIC_USER_BASE & 0xFFFF);
                     h.m_requestId = 0;
                     XLinkCodec_encodeHeader(&h, frame);
-                    XLinkCodec_putU32(&frame[XLINK_HEADER_SIZE],
-                                      XLINK_TOPIC_USER_BASE);
+                    XMemory_write_data(&frame[XLINK_HEADER_SIZE],
+                                       XBYTE_ORDER_LITTLE_ENDIAN,
+                                       (const uint8_t*)&topicId,
+                                       sizeof(topicId));
                     frame[XLINK_HEADER_SIZE + 4] = payload;
                     /* 先只写帧头（12 字节），载荷尚未到达。
                        写 devA（本端发送侧）：回环设备「本端写入 = 入对端接收
@@ -1311,7 +1463,7 @@ static void xlink_test_server(void)
                 "setTickInterval 对 NULL 拒绝");
     XLINK_CHECK(XLinkServer_tickInterval(NULL) == 0,
                 "tickInterval 对 NULL 返回 0");
-    XLINK_CHECK(!XLinkServer_listen_base(NULL, "127.0.0.1", 0),
+    XLINK_CHECK(!XLinkServer_listen(NULL, "127.0.0.1", 0),
                 "listen 对 NULL 拒绝");
     XLINK_CHECK(1, "pump/close 对 NULL 安全空操作");
 
@@ -1351,7 +1503,7 @@ static void xlink_test_server(void)
         XLinkServer_setDispatchCallback(srv, xlink_srv_dispatch, NULL);
         XLinkServer_setNotifyCallback(srv, xlink_srv_notify);
 
-        if (XLinkServer_listen_base(srv, "127.0.0.1", 0)) {
+        if (XLinkServer_listen(srv, "127.0.0.1", 0)) {
             XTcpServer* listener = XLinkServer_tcpServer_const(srv);
             port = XTcpServer_serverPort(listener);
             XLINK_CHECK(port != 0, "自动分配端口监听成功");
@@ -1470,7 +1622,7 @@ static void xlink_test_server(void)
                     "sessionAt 越界下标返回 NULL");
 
         /* 首次监听 */
-        ok = XLinkServer_listen_base(srv, "127.0.0.1", 0);
+        ok = XLinkServer_listen(srv, "127.0.0.1", 0);
         XLINK_CHECK(ok, "复用测试首次监听成功");
         if (ok) {
             listener = XLinkServer_tcpServer_const(srv);
@@ -1478,7 +1630,7 @@ static void xlink_test_server(void)
             XLINK_CHECK(port1 != 0, "首次监听拿到端口");
 
             /* 重复 listen：语义为"关旧开新"，监听态保持 */
-            XLINK_CHECK(XLinkServer_listen_base(srv, "127.0.0.1", 0),
+            XLINK_CHECK(XLinkServer_listen(srv, "127.0.0.1", 0),
                         "重复 listen 关旧开新成功");
             listener = XLinkServer_tcpServer_const(srv);
             XLINK_CHECK(XTcpServer_isListening(listener),
@@ -1511,7 +1663,7 @@ static void xlink_test_server(void)
                     "close 后托管会话清空");
         XLINK_CHECK(XLinkServer_sessionAt(srv, 0) == NULL,
                     "close 后 sessionAt 返回 NULL");
-        XLINK_CHECK(XLinkServer_listen_base(srv, "127.0.0.1", 0),
+        XLINK_CHECK(XLinkServer_listen(srv, "127.0.0.1", 0),
                     "close 后重新监听成功");
         listener = XLinkServer_tcpServer_const(srv);
         XLINK_CHECK(XTcpServer_isListening(listener),
@@ -2061,7 +2213,7 @@ static XLinkServer* xlink_client_test_make_server(void)
     XLinkServer_setCapability(srv, XLinkCapability_Zlib);
     XLinkServer_setDispatchCallback(srv, xlink_client_test_srv_dispatch, NULL);
     XLinkServer_setNotifyCallback(srv, xlink_client_test_srv_notify);
-    if (!XLinkServer_listen_base(srv, "127.0.0.1", XCLIENT_TEST_PORT)) {
+    if (!XLinkServer_listen(srv, "127.0.0.1", XCLIENT_TEST_PORT)) {
         XClassDelete((XClass*)srv);
         return NULL;
     }
@@ -3193,7 +3345,7 @@ static void xauth_test_end_to_end(void)
         XLINK_CHECK(XLinkServer_authEnabled(srv), "authEnabled 回读为真");
         XLINK_CHECK(XLinkServer_userCount(srv) == 1, "服务端账户数为 1");
 
-        if (!XLinkServer_listen_base(srv, "127.0.0.1", XAUTH_TEST_PORT)) {
+        if (!XLinkServer_listen(srv, "127.0.0.1", XAUTH_TEST_PORT)) {
             XLINK_CHECK(false, "服务端监听成功");
             XClassDelete((XClass*)srv);
             return;
@@ -3282,7 +3434,7 @@ static void xauth_test_end_to_end(void)
                             XLinkAuthRole_User);
         XLinkServer_setAuthEnabled(srv, true);
         XLinkServer_setAuthFailureLimit(srv, 1);
-        if (!XLinkServer_listen_base(srv, "127.0.0.1", XAUTH_TEST_PORT)) {
+        if (!XLinkServer_listen(srv, "127.0.0.1", XAUTH_TEST_PORT)) {
             XLINK_CHECK(false, "服务端监听成功（错误口令用例）");
             XClassDelete((XClass*)srv);
             return;
@@ -3342,7 +3494,7 @@ static void xauth_test_end_to_end(void)
         XLinkServer_addUser(srv, XAUTH_TEST_USER, XAUTH_TEST_PASSWORD,
                             XLinkAuthRole_User);
         XLinkServer_setAuthEnabled(srv, true);
-        if (!XLinkServer_listen_base(srv, "127.0.0.1", XAUTH_TEST_PORT)) {
+        if (!XLinkServer_listen(srv, "127.0.0.1", XAUTH_TEST_PORT)) {
             XLINK_CHECK(false, "服务端监听成功（无凭据用例）");
             XClassDelete((XClass*)srv);
             return;
@@ -4048,7 +4200,7 @@ static void xfile_test_end_to_end(void)
         XLinkServer_setCapability(srv, XLinkCapability_Zlib);
         XLINK_CHECK(XLinkFileServer_attach(fs, srv),
                     "文件服务端挂接成功");
-        if (!XLinkServer_listen_base(srv, "127.0.0.1", XFILE_TEST_PORT)) {
+        if (!XLinkServer_listen(srv, "127.0.0.1", XFILE_TEST_PORT)) {
             XLINK_CHECK(false, "服务端监听成功（文件传输）");
             XLinkFileServer_deinit(fs);
             XFree_System(fs);
@@ -4190,6 +4342,178 @@ static void xfile_test_end_to_end(void)
     xfile_test_cleanup("xlink_ft_e2e");
 }
 
+/** @brief 受理失败拒绝锁测试端口（与十七·三/四/五错开，防监听互扰）。 */
+#define XFILE_TEST_REJ_PORT (XFILE_TEST_PORT + 3u)
+
+/** @brief 受理失败拒绝锁等待上限（毫秒）：刻意远小于 Open 静默丢弃的
+ *  兜底时长（XLINK_FILE_OPEN_RETRY_MAX=30 次 × 每秒 1 次 ≈ 30s）——
+ *  若服务端不回拒绝帧，观察窗耗尽时传输仍停在 Opening，断言必红。 */
+#define XFILE_TEST_REJ_BUDGET_MS 8000u
+
+/**
+ * @brief 子分组三·B：上传到不存在子目录必须回拒绝（阶段二修复 #5 回归锁）。
+ * @details 受理失败的 Open（本地落盘文件打不开等）必须回一帧 accepted=0
+ *          的拒绝 OpenAck——OpenAck 是 Open 的唯一应答，静默释放槽位后
+ *          对端只能每秒重发 Open 直到 XLINK_FILE_OPEN_RETRY_MAX 耗尽才
+ *          超时（见 XLinkFileServer.c xfs_onOpen 槽满/beginReceive 失败
+ *          分支的补帧注）。本锁把端到端事实钉死：
+ *            - 8s 内终局 Failed（静默路径此刻仍在 Opening 重发）；
+ *            - m_status == NoSpace：本树口径是 xfs_resolve 对可写目标
+ *              放行不存在的路径（POSIX Canonical 解析失败回退 Absolute），
+ *              beginReceive 打不开「父目录缺失」的落盘文件 →
+ *              xfs_rejectOpen(NoSpace, "cannot open local file")，状态码
+ *              经对端 OpenAck 透传到客户端；
+ *            - 被拒目标不落盘、服务端槽位释放、会话仍 Ready，随后正常
+ *              上传照常 Done（拒绝路径不搅扰链路与服务端）。
+ */
+static void xfile_test_reject_open(void)
+{
+    XLINK_SECTION("十七·三·B、上传到不存在子目录（受理失败回拒绝）");
+
+    char rootBuf[256];
+    const char* root = xfile_test_makeDir("reject", rootBuf,
+                                          sizeof(rootBuf));
+    if (!root) {
+        XLINK_CHECK(false, "拒绝锁测试目录创建成功");
+        return;
+    }
+    if (!xfile_test_writeFile("xlink_ft_reject/src.bin", 1024u + 11u,
+                              0xC3)) {
+        XLINK_CHECK(false, "拒绝锁源文件准备成功");
+        xfile_test_cleanup("xlink_ft_reject");
+        return;
+    }
+    XLINK_CHECK(1, "拒绝锁源文件准备成功（1KB+11）");
+
+    {
+        XLinkServer* srv = XLinkServer_create();
+        XLinkClient* cli = XLinkClient_create();
+        XLinkFileServer* fs = (XLinkFileServer*)XMalloc_System(
+            sizeof(XLinkFileServer));
+        XLinkFileClient* fc = XLinkFileClient_create();
+        uint32_t transferId = 0;
+        uint32_t waited;
+
+        XLINK_CHECK(srv && cli && fs && fc, "拒绝锁测试对象创建成功");
+        if (!srv || !cli || !fs || !fc) {
+            if (srv) XClassDelete((XClass*)srv);
+            if (cli) XClassDelete((XClass*)cli);
+            if (fs) XFree_System(fs);
+            if (fc) XClassDelete((XClass*)fc);
+            xfile_test_cleanup("xlink_ft_reject");
+            return;
+        }
+
+        XLinkFileServer_init(fs);
+        XLINK_CHECK(XLinkFileServer_setRootDir(fs, root),
+                    "拒绝锁沙箱根目录设置成功");
+        XLINK_CHECK(XLinkFileServer_setFlags(
+                        fs, XLINK_FILESRV_ALLOW_UPLOAD
+                                | XLINK_FILESRV_ALLOW_OVERWRITE),
+                    "拒绝锁服务端允许上传与覆盖");
+        XLinkFileServer_setMaxFileBytes(fs, 0);
+
+        XLinkServer_setCapability(srv, XLinkCapability_Zlib);
+        if (!XLinkFileServer_attach(fs, srv)
+            || !XLinkServer_listen(srv, "127.0.0.1",
+                                        XFILE_TEST_REJ_PORT)) {
+            XLINK_CHECK(false, "拒绝锁服务端监听成功");
+            XLinkFileServer_deinit(fs);
+            XFree_System(fs);
+            XClassDelete((XClass*)fc);
+            XClassDelete((XClass*)cli);
+            XClassDelete((XClass*)srv);
+            xfile_test_cleanup("xlink_ft_reject");
+            return;
+        }
+        XLINK_CHECK(1, "拒绝锁服务端监听成功");
+
+        XLinkClient_setHostPort(cli, "127.0.0.1", XFILE_TEST_REJ_PORT);
+        XLinkClient_setCapability(cli, XLinkCapability_Zlib
+                                       | XLinkCapability_FileTransfer);
+        g_client = cli;
+        XLINK_CHECK(XLinkClient_connectToServer(cli), "拒绝锁连接发起成功");
+        XLINK_CHECK(xauth_wait(xauth_cond_client_ready, 8000, srv),
+                    "拒绝锁前置：客户端 Ready");
+        XLINK_CHECK(XLinkFileClient_attach(fc, cli), "拒绝锁文件客户端挂接成功");
+
+        /* --- 上传到不存在的子目录：受理失败必须收到拒绝 OpenAck --- */
+        XLINK_CHECK(XLinkFileClient_upload(fc, "xlink_ft_reject/src.bin",
+                                           "no_such_dir/rejected.bin", 1,
+                                           &transferId),
+                    "不存在子目录的上传请求已发出");
+        waited = 0;
+        while (XLinkFileClient_isBusy(fc)
+               && waited < XFILE_TEST_REJ_BUDGET_MS) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            XLinkServer_pump(srv,
+                             (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            XLinkFileClient_pump(fc,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            XThread_msleep(5);
+            waited += 5;
+        }
+        XLINK_CHECK(XLinkFileClient_state(fc)
+                        == XLinkFileTransferState_Failed,
+                    "受理失败快速终局 Failed（拒绝帧到达，非重发耗尽超时）");
+        XLINK_CHECK(XLinkFileClient_transfer(fc)
+                        && XLinkFileClient_transfer(fc)->m_status
+                               == XLinkFileStatus_NoSpace,
+                    "拒绝 OpenAck 的状态码透传到客户端（NoSpace）");
+        {
+            uint8_t* junk = NULL;
+            XLINK_CHECK(xfile_test_readFile(
+                            "xlink_ft_reject/no_such_dir/rejected.bin",
+                            &junk) < 0,
+                        "被拒上传未在沙箱落盘（无残留文件）");
+        }
+
+        /* --- 拒绝后的健康检查：槽位已释放、会话仍 Ready、正常上传照常 --- */
+        XLINK_CHECK(XLinkClient_isReady(cli), "拒绝后会话仍 Ready（未误判回收）");
+        XLINK_CHECK(XLinkFileClient_upload(fc, "xlink_ft_reject/src.bin",
+                                           "recovered.bin", 1, &transferId),
+                    "拒绝后正常上传发起成功");
+        waited = 0;
+        while (XLinkFileClient_isBusy(fc)
+               && waited < XFILE_TEST_REJ_BUDGET_MS) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            XLinkServer_pump(srv,
+                             (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            XLinkFileClient_pump(fc,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            XThread_msleep(5);
+            waited += 5;
+        }
+        XLINK_CHECK(XLinkFileClient_state(fc)
+                        == XLinkFileTransferState_Done,
+                    "拒绝后正常上传完成（服务端槽位已释放）");
+        {
+            uint8_t* a = NULL;
+            uint8_t* b = NULL;
+            int64_t alen = xfile_test_readFile("xlink_ft_reject/src.bin", &a);
+            int64_t blen = xfile_test_readFile("xlink_ft_reject/recovered.bin",
+                                               &b);
+            XLINK_CHECK(alen > 0 && alen == blen && a && b
+                            && memcmp(a, b, (size_t)alen) == 0,
+                        "拒绝后正常上传文件逐字节一致");
+            if (a) XFree_System(a);
+            if (b) XFree_System(b);
+        }
+
+        XLinkClient_disconnectFromServer(cli);
+        XLinkFileClient_abort(fc, XLinkFileStatus_Aborted, "cleanup");
+        XClassDelete((XClass*)fc);
+        XLinkFileServer_deinit(fs);
+        XFree_System(fs);
+        XClassDelete((XClass*)cli);
+        XLinkServer_close(srv);
+        XClassDelete((XClass*)srv);
+        g_client = NULL;
+    }
+
+    xfile_test_cleanup("xlink_ft_reject");
+}
+
 /** @brief 激进双泵节奏测试端口（与十七·三错开，防监听互扰）。 */
 #define XFILE_TEST_DP_PORT (XFILE_TEST_PORT + 1u)
 
@@ -4279,7 +4603,7 @@ static void xfile_test_double_pump(void)
         XLinkFileServer_setMaxFileBytes(fs, 0);
         XLinkServer_setCapability(srv, XLinkCapability_Zlib);
         if (!XLinkFileServer_attach(fs, srv)
-            || !XLinkServer_listen_base(srv, "127.0.0.1",
+            || !XLinkServer_listen(srv, "127.0.0.1",
                                         XFILE_TEST_DP_PORT)) {
             XLINK_CHECK(false, "双泵节奏服务端监听成功");
             XLinkFileServer_deinit(fs);
@@ -4493,7 +4817,7 @@ static void xfile_test_drive_gate(void)
                                      | XLINK_FILESRV_ALLOW_OVERWRITE);
         XLinkServer_setCapability(srv, XLinkCapability_Zlib);
         if (!XLinkFileServer_attach(fs, srv)
-            || !XLinkServer_listen_base(srv, "127.0.0.1",
+            || !XLinkServer_listen(srv, "127.0.0.1",
                                         XFILE_TEST_GATE_PORT)) {
             XLINK_CHECK(false, "门控锁服务端监听成功");
             XLinkFileServer_deinit(fs);
@@ -4622,6 +4946,7 @@ static void xlink_test_file(void)
     xfile_test_codec();
     xfile_test_sandbox();
     xfile_test_end_to_end();
+    xfile_test_reject_open();
     xfile_test_double_pump();
     xfile_test_drive_gate();
 }

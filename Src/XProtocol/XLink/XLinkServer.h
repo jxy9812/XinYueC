@@ -34,7 +34,6 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "XLink_config.h"
 #include "XLinkSession.h"
 #include "XTcpServer.h"
 #if XLINK_AUTH_ON
@@ -46,9 +45,7 @@ extern "C" {
 /* ========================================================================== */
 
 XCLASS_DEFINE_BEGING(XLinkServer)
-/* 新增槽位从基类槽位总数开始编号，否则与 XObject 的槽位撞号（建表容量不足）。 */
-XCLASS_DEFINE_ENUM(XLinkServer, timerEvent) = XCLASS_VTABLE_GET_SIZE(XObject),
-XCLASS_DEFINE_END(XLinkServer)
+XCLASS_DEFINE_EXTEND_END(XLinkServer, XObject)
 
 /* ========================================================================== */
 /*                        类型定义                                           */
@@ -209,7 +206,7 @@ XLinkServer* XLinkServer_create(void);
  * @note       监听成功后启动内建节拍定时器并接线 newConnection 信号；
  *             重复 listen 会先关闭前一次监听。
  */
-bool XLinkServer_listen_base(XLinkServer* self, const char* host, uint16_t port);
+bool XLinkServer_listen(XLinkServer* self, const char* host, uint16_t port);
 
 /**
  * @brief      停止监听并回收全部托管会话（对象保持可用，可重新 listen）。

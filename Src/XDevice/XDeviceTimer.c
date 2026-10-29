@@ -15,6 +15,13 @@
 #include <string.h>
 
 static XDeviceTimer g_deviceTimer;
+/* HrTimerGroup 刻度源：XDateTime 单调纳秒。XHighResTimeFunc 契约返回
+ * uint64_t，而 XDateTime_currentNSecsSinceEpoch 返回 int64_t——单调纳秒
+ * 在 uint64 量程内恒正，包一层显式定宽转换消函数签名失配。 */
+static uint64_t device_timer_nsecs_source(void)
+{
+    return (uint64_t)XDateTime_currentNSecsSinceEpoch();
+}
 static XDeviceTimerOpenOptions g_defaultTimerOptions = {
     { 0 }, NULL, NULL, 0, XTimerType_CoarseTimer, 0, 0
 };
@@ -215,7 +222,7 @@ bool XDeviceTimer_schedule(XAbstractEventDispatcher* dispatcher, XTimerData* dat
         dispatcher->m_d_ptr->m_hrtimerGroup = XHrTimerGroup_create(1);
         if (!dispatcher->m_d_ptr->m_hrtimerGroup) return false;
         XHrTimerGroup_setHighResTimeFunc((XTimerGroupBase*)dispatcher->m_d_ptr->m_hrtimerGroup,
-            XDateTime_currentNSecsSinceEpoch);
+            device_timer_nsecs_source);
     }
     XTimerData_setTimeout(data, 0);
     XTimerData_setInterval(data, (size_t)intervalNs);

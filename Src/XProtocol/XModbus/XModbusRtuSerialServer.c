@@ -50,28 +50,16 @@ static inline int calculateInterFrameDelay(int baudRate)
     return delay < MODBUS_RTU_INTER_FRAME_DELAY_MIN_US ? MODBUS_RTU_INTER_FRAME_DELAY_MIN_US : delay;
 }
 
-/**
- * @brief 停止帧间延迟定时器
- */
-static inline void interFrameTimerStop(XModbusRtuSerialServer* server)
-{
-    if (server->m_interFrameTimer != XTIMER_INVALID_ID) {
-        XObject_killTimer((XObject*)server, server->m_interFrameTimer);
-        server->m_interFrameTimer = XTIMER_INVALID_ID;
-    }
-}
-
-/**
- * @brief 启动帧间延迟定时器
- */
-static inline void interFrameTimerStart(XModbusRtuSerialServer* server)
-{
-    interFrameTimerStop(server);
-    int interFrameDelayMs = (server->m_interFrameDelay + 999) / 1000;
-    if (interFrameDelayMs < 1) interFrameDelayMs = 1;
-    server->m_interFrameTimer = XObject_startTimer_ms((XObject*)server,
-        interFrameDelayMs, XTimerType_CoarseTimer);
-}
+/* [A9 复核后删除死代码 2026-10-28] interFrameTimerStart/Stop、
+ * turnaroundTimerStart/Stop 四个辅助函数连同 m_interFrameTimer /
+ * m_turnaroundTimer 成员一并移除：全文件对两个 Start 零调用（废案）。
+ * 取舍依据：
+ *   ①3.5 字符静默已由 receiveBufferTimer 正确接线（每次收包以
+ *     m_interFrameDelay+1ms 为空闲窗，静默到期才解析缓冲），帧间静默语义不缺位；
+ *   ②广播应答延迟属从站废案：广播请求本就不应答（processRtuFrame
+ *     isBroadcast 分支直接消化），普通请求从站按 RTU 规范应尽早应答，
+ *     人为插入 m_turnaroundDelay 延迟只会拖慢 485 轮询链路。
+ * m_turnaroundDelay 字段保留（对外结构成员、测试有断言），标注为预留。 */
 
 /**
  * @brief 停止接收缓冲区定时器
@@ -98,28 +86,7 @@ static inline void receiveBufferTimerStart(XModbusRtuSerialServer* server)
         timeoutMs, XTimerType_CoarseTimer);
 }
 
-/**
- * @brief 停止响应延迟定时器
- */
-static inline void turnaroundTimerStop(XModbusRtuSerialServer* server)
-{
-    if (server->m_turnaroundTimer != XTIMER_INVALID_ID) {
-        XObject_killTimer((XObject*)server, server->m_turnaroundTimer);
-        server->m_turnaroundTimer = XTIMER_INVALID_ID;
-    }
-}
-
-/**
- * @brief 启动响应延迟定时器
- */
-static inline void turnaroundTimerStart(XModbusRtuSerialServer* server)
-{
-    turnaroundTimerStop(server);
-    if (server->m_turnaroundDelay > 0) {
-        server->m_turnaroundTimer = XObject_startTimer_ms((XObject*)server,
-            server->m_turnaroundDelay, XTimerType_CoarseTimer);
-    }
-}
+/* [A9] turnaroundTimerStop/Start 已随死成员一并移除（见上）。 */
 
 /**
  * @brief 构建RTU响应帧并发送（使用 XModbusAdu 封装）
@@ -401,9 +368,7 @@ void XModbusRtuSerialServer_init(XModbusRtuSerialServer* server)
     server->m_receiveBuffer = XByteArray_create();
 
     // 初始化定时器ID
-    server->m_interFrameTimer = XTIMER_INVALID_ID;
     server->m_receiveBufferTimer = XTIMER_INVALID_ID;
-    server->m_turnaroundTimer = XTIMER_INVALID_ID;
 }
 
 // =============== 串口访问 ================
@@ -545,10 +510,8 @@ static void VXModbusRtuSerialServer_close(XModbusDevice* device)
     XModbusRtuSerialServer* server = (XModbusRtuSerialServer*)device;
     if (!server) return;
 
-    // 停止所有定时器
-    interFrameTimerStop(server);
+    // 停止接收定时器
     receiveBufferTimerStop(server);
-    turnaroundTimerStop(server);
 
     // 断开信号连接
     if (server->m_serialPort) {
@@ -583,22 +546,17 @@ static void VXModbusRtuSerialServer_timerEvent(XObject* obj, XTimerEvent* event)
 
     XTimerId timerId = event->timerId;
 
-    /* [触发即注销 2026-10-28] startTimer 注册的是**重复型**定时器：
-     * 触发≠注销，fd 槽位与调度节点都存续到 killTimer 才释放。三个分支
-     * 旧实现都只把存储 id 置 INVALID——下一次 *TimerStop 因 id 已失效
-     * 杀不掉它，而每轮收包又 start 新定时器 ⇒ 每轮收包永久泄漏一个
-     * ~5ms 重复定时器（fd 表仅 128 槽：485 轮询下几分钟占满，占满后
-     * 全应用再无定时器可用，从站因 processReceiveBuffer 永不触发而
-     * 哑掉；真机 10-28 普查 126/128 全是本类泄漏定时器）。消费触发时
-     * 显式 killTimer。迟到事件的旧 id 同理必须杀（id 槽位复用后误杀
-     * 新定时器无害：语义仍是"接收超时已到"，下轮收包会重启）。 */
-
-    // 帧间延迟定时器触发
-    if (timerId == server->m_interFrameTimer) {
-        XObject_killTimer(obj, timerId);
-        server->m_interFrameTimer = XTIMER_INVALID_ID;
-        return;
-    }
+    /* [触发即注销 2026-10-28 / A9 收窄 2026-10-28] startTimer 注册的是
+     * **重复型**定时器：触发≠注销，fd 槽位与调度节点都存续到 killTimer
+     * 才释放。旧实现只把存储 id 置 INVALID——下一次 receiveBufferTimerStop
+     * 因 id 已失效杀不掉它，而每轮收包又 start 新定时器 ⇒ 每轮收包永久
+     * 泄漏一个 ~5ms 重复定时器（fd 表仅 128 槽：485 轮询下几分钟占满，
+     * 占满后全应用再无定时器可用，从站因 processReceiveBuffer 永不触发
+     * 而哑掉；真机 10-28 普查 126/128 全是本类泄漏定时器）。消费触发时
+     * 显式 killTimer。迟到事件的旧 id 同理必须杀（id 槽位复用后误杀新
+     * 定时器无害：语义仍是"接收超时已到"，下轮收包会重启）。
+     * 本类唯一的 startTimer 调用点就是接收定时器（原帧间/响应延迟定时器
+     * 已按 A9 判定为废案删除），故只剩接收超时一个消费分支。 */
 
     // 接收缓冲区超时定时器触发
     if (timerId == server->m_receiveBufferTimer) {
@@ -606,13 +564,6 @@ static void VXModbusRtuSerialServer_timerEvent(XObject* obj, XTimerEvent* event)
         server->m_receiveBufferTimer = XTIMER_INVALID_ID;
         // 接收缓冲区超时，尝试处理缓冲区中的完整帧
         processReceiveBuffer(server);
-        return;
-    }
-
-    // 响应延迟定时器触发
-    if (timerId == server->m_turnaroundTimer) {
-        XObject_killTimer(obj, timerId);
-        server->m_turnaroundTimer = XTIMER_INVALID_ID;
         return;
     }
 
@@ -635,10 +586,8 @@ static void VXModbusRtuSerialServer_deinit(XModbusRtuSerialServer* server)
 {
     if (!server) return;
 
-    // 停止所有定时器
-    interFrameTimerStop(server);
+    // 停止接收定时器
     receiveBufferTimerStop(server);
-    turnaroundTimerStop(server);
 
     // 释放接收缓冲区
     if (server->m_receiveBuffer) {
@@ -698,10 +647,8 @@ static void XModbusRtuSerialServer_onErrorOccurred(XObject* receiver, XVarList* 
 
     XModbusDevice* device = (XModbusDevice*)server;
 
-    // 停止所有定时器
-    interFrameTimerStop(server);
+    // 停止接收定时器
     receiveBufferTimerStop(server);
-    turnaroundTimerStop(server);
 
     // 设置设备错误状态
     XModbusDevice_setError(device, XModbusDevice_ConnectionError, "Serial port error");

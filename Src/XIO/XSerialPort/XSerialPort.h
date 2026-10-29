@@ -275,6 +275,17 @@ XSerialPort_Error XSerialPort_error(const XSerialPort* port);
 void XSerialPort_clearError(XSerialPort* port);
 
 /*以下是API*/
+/**
+ * @brief 打开串口（委托 XIODevice_open_base 虚函数）
+ * @param self XSerialPort 实例指针
+ * @param mode 打开模式（Read/Write/ReadWrite 组合）
+ * @return 成功返回 true；失败返回 false 并置 error / 发 errorOccurred 信号
+ * @note [单开契约] 同一端口同一时刻只能被一个实例打开；同一 XSerialPort
+ *       实例已处于打开状态时再次调用 open 直接返回 false
+ *       （error = XSerialPort_OpenError，不发射 errorOccurred —— 拒绝性
+ *       双开不是端口故障），不会静默重开覆盖旧 fd。
+ *       内部需要重开路径（如重连）必须先显式 close 再 open。
+ */
 #define XSerialPort_open_base                                       XIODevice_open_base
 #define XSerialPort_close_base                                      XIODevice_close_base
 #define XSerialPort_write_base                                      XIODevice_write_1

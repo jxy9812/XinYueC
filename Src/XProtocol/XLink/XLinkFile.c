@@ -1,7 +1,10 @@
 /** @file       XLinkFile.c
  * @brief      XLink 文件传输扩展：载荷编解码与文件名安全校验实现。
- * @details    只依赖 XinYueC 抽象层（XStringUtils），禁止平台 API。
+ * @details    只依赖 XinYueC 抽象层（XStringUtils / XMemory），禁止平台 API。
  *             所有解析函数逐字段核对剩余长度后才推进，不信任线上长度字段。
+ *             多字节字段一律经 XMemory_write_data/read_data 按小端线序
+ *             逐字段读写（本机小端即 memcpy），字段偏移与字节宽与旧
+ *             手写移位实现逐位一致，属线上格式不得改动。
  * @author     XinYueC 团队
  */
 #include "XLinkFile.h"
@@ -9,53 +12,11 @@
 #if XLINK_ON && XLINK_FILE_ON
 
 #include "XStringUtils.h"
+#include "XMemory.h"
 #include <string.h>
 
 /** @brief DATA 载荷上限（偏移 + 业务数据）。 */
 #define XLINK_FILE_DATA_HEADER XLINK_FILE_DATA_OFFSET_BYTES
-
-/* ========================================================================== */
-/*                        小端读写原语                                       */
-/* ========================================================================== */
-
-static void xf_putU16(uint8_t* buf, uint16_t v)
-{
-    buf[0] = (uint8_t)(v & 0xFFu);
-    buf[1] = (uint8_t)((v >> 8) & 0xFFu);
-}
-
-static uint16_t xf_getU16(const uint8_t* buf)
-{
-    return (uint16_t)((uint16_t)buf[0] | ((uint16_t)buf[1] << 8));
-}
-
-static void xf_putU32(uint8_t* buf, uint32_t v)
-{
-    buf[0] = (uint8_t)(v & 0xFFu);
-    buf[1] = (uint8_t)((v >> 8) & 0xFFu);
-    buf[2] = (uint8_t)((v >> 16) & 0xFFu);
-    buf[3] = (uint8_t)((v >> 24) & 0xFFu);
-}
-
-static uint32_t xf_getU32(const uint8_t* buf)
-{
-    return (uint32_t)buf[0]
-           | ((uint32_t)buf[1] << 8)
-           | ((uint32_t)buf[2] << 16)
-           | ((uint32_t)buf[3] << 24);
-}
-
-static void xf_putU64(uint8_t* buf, uint64_t v)
-{
-    xf_putU32(&buf[0], (uint32_t)(v & 0xFFFFFFFFu));
-    xf_putU32(&buf[4], (uint32_t)((v >> 32) & 0xFFFFFFFFu));
-}
-
-static uint64_t xf_getU64(const uint8_t* buf)
-{
-    return (uint64_t)xf_getU32(&buf[0])
-           | ((uint64_t)xf_getU32(&buf[4]) << 32);
-}
 
 /* ========================================================================== */
 /*                        Open / OpenAck                                     */
@@ -92,11 +53,16 @@ bool XLinkFile_encodeOpen(const XLinkFileOpenPayload* msg, uint8_t* buf,
 
     buf[0] = msg->m_mode;
     buf[1] = msg->m_flags;
-    xf_putU16(&buf[2], msg->m_nameLen);
-    xf_putU32(&buf[4], msg->m_chunkBytes);
-    xf_putU32(&buf[8], msg->m_windowBytes);
-    xf_putU64(&buf[12], msg->m_totalSize);
-    xf_putU64(&buf[20], msg->m_startOffset);
+    XMemory_write_data(&buf[2], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&msg->m_nameLen, sizeof(msg->m_nameLen));
+    XMemory_write_data(&buf[4], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&msg->m_chunkBytes, sizeof(msg->m_chunkBytes));
+    XMemory_write_data(&buf[8], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&msg->m_windowBytes, sizeof(msg->m_windowBytes));
+    XMemory_write_data(&buf[12], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&msg->m_totalSize, sizeof(msg->m_totalSize));
+    XMemory_write_data(&buf[20], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&msg->m_startOffset, sizeof(msg->m_startOffset));
     memcpy(&buf[XLINK_FILE_OPEN_HEADER], msg->m_name, nameLen);
     if (outLen)
         *outLen = total;
@@ -106,13 +72,14 @@ bool XLinkFile_encodeOpen(const XLinkFileOpenPayload* msg, uint8_t* buf,
 bool XLinkFile_decodeOpen(const uint8_t* buf, size_t length,
                           XLinkFileOpenPayload* out)
 {
-    uint16_t nameLen;
+    uint16_t nameLen = 0;
 
     if (!buf || !out || length < XLINK_FILE_OPEN_HEADER)
         return false;
     if (buf[0] != XLinkFileMode_Upload && buf[0] != XLinkFileMode_Download)
         return false;
-    nameLen = xf_getU16(&buf[2]);
+    XMemory_read_data(&buf[2], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&nameLen, sizeof(nameLen));
     if (nameLen == 0 || nameLen >= XLINK_FILE_NAME_BYTES)
         return false;
     if (length < XLINK_FILE_OPEN_HEADER + (size_t)nameLen)
@@ -122,10 +89,14 @@ bool XLinkFile_decodeOpen(const uint8_t* buf, size_t length,
     out->m_mode = buf[0];
     out->m_flags = buf[1];
     out->m_nameLen = nameLen;
-    out->m_chunkBytes = xf_getU32(&buf[4]);
-    out->m_windowBytes = xf_getU32(&buf[8]);
-    out->m_totalSize = xf_getU64(&buf[12]);
-    out->m_startOffset = xf_getU64(&buf[20]);
+    XMemory_read_data(&buf[4], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&out->m_chunkBytes, sizeof(out->m_chunkBytes));
+    XMemory_read_data(&buf[8], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&out->m_windowBytes, sizeof(out->m_windowBytes));
+    XMemory_read_data(&buf[12], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&out->m_totalSize, sizeof(out->m_totalSize));
+    XMemory_read_data(&buf[20], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&out->m_startOffset, sizeof(out->m_startOffset));
     memcpy(out->m_name, &buf[XLINK_FILE_OPEN_HEADER], nameLen);
     out->m_name[nameLen] = '\0';
 
@@ -139,6 +110,7 @@ bool XLinkFile_decodeOpen(const uint8_t* buf, size_t length,
 bool XLinkFile_encodeOpenAck(const XLinkFileOpenAckPayload* msg, uint8_t* buf,
                              size_t capacity, size_t* outLen)
 {
+    uint16_t textLenU16;
     size_t textLen;
     size_t total;
 
@@ -153,11 +125,17 @@ bool XLinkFile_encodeOpenAck(const XLinkFileOpenAckPayload* msg, uint8_t* buf,
 
     buf[0] = msg->m_accepted;
     buf[1] = msg->m_status;
-    xf_putU16(&buf[2], (uint16_t)textLen);
-    xf_putU32(&buf[4], msg->m_chunkBytes);
-    xf_putU32(&buf[8], msg->m_windowBytes);
-    xf_putU64(&buf[12], msg->m_startOffset);
-    xf_putU64(&buf[20], msg->m_totalSize);
+    textLenU16 = (uint16_t)textLen;
+    XMemory_write_data(&buf[2], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&textLenU16, sizeof(textLenU16));
+    XMemory_write_data(&buf[4], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&msg->m_chunkBytes, sizeof(msg->m_chunkBytes));
+    XMemory_write_data(&buf[8], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&msg->m_windowBytes, sizeof(msg->m_windowBytes));
+    XMemory_write_data(&buf[12], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&msg->m_startOffset, sizeof(msg->m_startOffset));
+    XMemory_write_data(&buf[20], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&msg->m_totalSize, sizeof(msg->m_totalSize));
     if (textLen > 0)
         memcpy(&buf[XLINK_FILE_OPEN_ACK_HEADER], msg->m_text, textLen);
     if (outLen)
@@ -168,11 +146,12 @@ bool XLinkFile_encodeOpenAck(const XLinkFileOpenAckPayload* msg, uint8_t* buf,
 bool XLinkFile_decodeOpenAck(const uint8_t* buf, size_t length,
                              XLinkFileOpenAckPayload* out)
 {
-    uint16_t textLen;
+    uint16_t textLen = 0;
 
     if (!buf || !out || length < XLINK_FILE_OPEN_ACK_HEADER)
         return false;
-    textLen = xf_getU16(&buf[2]);
+    XMemory_read_data(&buf[2], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&textLen, sizeof(textLen));
     if (textLen > XLINK_FILE_TEXT_BYTES)
         return false;
     if (length < XLINK_FILE_OPEN_ACK_HEADER + (size_t)textLen)
@@ -182,10 +161,14 @@ bool XLinkFile_decodeOpenAck(const uint8_t* buf, size_t length,
     out->m_accepted = buf[0];
     out->m_status = buf[1];
     out->m_textLen = textLen;
-    out->m_chunkBytes = xf_getU32(&buf[4]);
-    out->m_windowBytes = xf_getU32(&buf[8]);
-    out->m_startOffset = xf_getU64(&buf[12]);
-    out->m_totalSize = xf_getU64(&buf[20]);
+    XMemory_read_data(&buf[4], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&out->m_chunkBytes, sizeof(out->m_chunkBytes));
+    XMemory_read_data(&buf[8], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&out->m_windowBytes, sizeof(out->m_windowBytes));
+    XMemory_read_data(&buf[12], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&out->m_startOffset, sizeof(out->m_startOffset));
+    XMemory_read_data(&buf[20], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&out->m_totalSize, sizeof(out->m_totalSize));
     if (textLen > 0)
         memcpy(out->m_text, &buf[XLINK_FILE_OPEN_ACK_HEADER], textLen);
     out->m_text[textLen < XLINK_FILE_TEXT_BYTES ? textLen
@@ -210,7 +193,8 @@ bool XLinkFile_encodeData(uint64_t offset, const uint8_t* data, uint32_t length,
     total = XLINK_FILE_DATA_HEADER + (size_t)length;
     if (capacity < total)
         return false;
-    xf_putU64(&buf[0], offset);
+    XMemory_write_data(&buf[0], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&offset, sizeof(offset));
     if (length > 0)
         memcpy(&buf[XLINK_FILE_DATA_HEADER], data, length);
     if (outLen)
@@ -225,7 +209,8 @@ bool XLinkFile_decodeData(const uint8_t* buf, size_t length,
     if (!buf || length < XLINK_FILE_DATA_HEADER)
         return false;
     if (offsetOut)
-        *offsetOut = xf_getU64(&buf[0]);
+        XMemory_read_data(&buf[0], XBYTE_ORDER_LITTLE_ENDIAN,
+                          (uint8_t*)offsetOut, sizeof(*offsetOut));
     if (dataOut)
         *dataOut = &buf[XLINK_FILE_DATA_HEADER];
     if (dataLenOut)
@@ -238,8 +223,10 @@ bool XLinkFile_encodeAck(const XLinkFileAckPayload* msg, uint8_t* buf,
 {
     if (!msg || !buf || capacity < 12u)
         return false;
-    xf_putU64(&buf[0], msg->m_nextOffset);
-    xf_putU32(&buf[8], msg->m_creditBytes);
+    XMemory_write_data(&buf[0], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&msg->m_nextOffset, sizeof(msg->m_nextOffset));
+    XMemory_write_data(&buf[8], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&msg->m_creditBytes, sizeof(msg->m_creditBytes));
     if (outLen)
         *outLen = 12u;
     return true;
@@ -250,8 +237,10 @@ bool XLinkFile_decodeAck(const uint8_t* buf, size_t length,
 {
     if (!buf || !out || length < 12u)
         return false;
-    out->m_nextOffset = xf_getU64(&buf[0]);
-    out->m_creditBytes = xf_getU32(&buf[8]);
+    XMemory_read_data(&buf[0], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&out->m_nextOffset, sizeof(out->m_nextOffset));
+    XMemory_read_data(&buf[8], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&out->m_creditBytes, sizeof(out->m_creditBytes));
     return true;
 }
 
@@ -264,7 +253,8 @@ bool XLinkFile_encodeFinish(const XLinkFileFinishPayload* msg, uint8_t* buf,
 {
     if (!msg || !buf || capacity < 40u)
         return false;
-    xf_putU64(&buf[0], msg->m_totalSize);
+    XMemory_write_data(&buf[0], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&msg->m_totalSize, sizeof(msg->m_totalSize));
     memcpy(&buf[8], msg->m_sha256, XLINK_AUTH_NONCE_BYTES);
     if (outLen)
         *outLen = 40u;
@@ -276,7 +266,8 @@ bool XLinkFile_decodeFinish(const uint8_t* buf, size_t length,
 {
     if (!buf || !out || length < 40u)
         return false;
-    out->m_totalSize = xf_getU64(&buf[0]);
+    XMemory_read_data(&buf[0], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&out->m_totalSize, sizeof(out->m_totalSize));
     memcpy(out->m_sha256, &buf[8], XLINK_AUTH_NONCE_BYTES);
     return true;
 }
@@ -284,6 +275,7 @@ bool XLinkFile_decodeFinish(const uint8_t* buf, size_t length,
 bool XLinkFile_encodeFinishAck(const XLinkFileFinishAckPayload* msg,
                                uint8_t* buf, size_t capacity, size_t* outLen)
 {
+    uint16_t textLenU16;
     size_t textLen;
     size_t total;
 
@@ -297,7 +289,9 @@ bool XLinkFile_encodeFinishAck(const XLinkFileFinishAckPayload* msg,
         return false;
     buf[0] = msg->m_ok;
     buf[1] = msg->m_status;
-    xf_putU16(&buf[2], (uint16_t)textLen);
+    textLenU16 = (uint16_t)textLen;
+    XMemory_write_data(&buf[2], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&textLenU16, sizeof(textLenU16));
     if (textLen > 0)
         memcpy(&buf[4], msg->m_text, textLen);
     if (outLen)
@@ -308,11 +302,12 @@ bool XLinkFile_encodeFinishAck(const XLinkFileFinishAckPayload* msg,
 bool XLinkFile_decodeFinishAck(const uint8_t* buf, size_t length,
                                XLinkFileFinishAckPayload* out)
 {
-    uint16_t textLen;
+    uint16_t textLen = 0;
 
     if (!buf || !out || length < 4u)
         return false;
-    textLen = xf_getU16(&buf[2]);
+    XMemory_read_data(&buf[2], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&textLen, sizeof(textLen));
     if (textLen > XLINK_FILE_TEXT_BYTES)
         return false;
     if (length < 4u + (size_t)textLen)
@@ -332,6 +327,7 @@ bool XLinkFile_decodeFinishAck(const uint8_t* buf, size_t length,
 bool XLinkFile_encodeAbort(const XLinkFileAbortPayload* msg, uint8_t* buf,
                            size_t capacity, size_t* outLen)
 {
+    uint16_t textLenU16;
     size_t textLen;
     size_t total;
 
@@ -345,7 +341,9 @@ bool XLinkFile_encodeAbort(const XLinkFileAbortPayload* msg, uint8_t* buf,
         return false;
     buf[0] = msg->m_status;
     buf[1] = msg->m_byPeer;
-    xf_putU16(&buf[2], (uint16_t)textLen);
+    textLenU16 = (uint16_t)textLen;
+    XMemory_write_data(&buf[2], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&textLenU16, sizeof(textLenU16));
     if (textLen > 0)
         memcpy(&buf[4], msg->m_text, textLen);
     if (outLen)
@@ -356,11 +354,12 @@ bool XLinkFile_encodeAbort(const XLinkFileAbortPayload* msg, uint8_t* buf,
 bool XLinkFile_decodeAbort(const uint8_t* buf, size_t length,
                            XLinkFileAbortPayload* out)
 {
-    uint16_t textLen;
+    uint16_t textLen = 0;
 
     if (!buf || !out || length < 4u)
         return false;
-    textLen = xf_getU16(&buf[2]);
+    XMemory_read_data(&buf[2], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&textLen, sizeof(textLen));
     if (textLen > XLINK_FILE_TEXT_BYTES)
         return false;
     if (length < 4u + (size_t)textLen)

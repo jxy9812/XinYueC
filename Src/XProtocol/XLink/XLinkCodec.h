@@ -1,6 +1,8 @@
 ﻿/** @file       XLinkCodec.h
- * @brief      XLink 帧编解码——小端序列化原语与帧头编解码公开 API。
+ * @brief      XLink 帧编解码——载荷与帧头编解码公开 API。
  * @details    对齐 MQTT 报文打包/解包的职责划分（字节序转换 + 帧头打包/校验）。
+ *             小端序列化原语已收敛到 XMemory_write_data/read_data（本机小端
+ *             即 memcpy），本层不再提供 put/get 转发函数。
  *             实现只依赖 XinYueC 抽象层，禁止调用 Win32、POSIX 或其他平台 API。
  *             本层无状态、无堆分配；载荷上限校验是唯一的协议违例入口，
  *             由会话层据此判线。
@@ -22,41 +24,6 @@ extern "C" {
 #include <stdbool.h>
 #include "XLinkProto.h"
 #include "XClass.h"
-
-/* ========================================================================== */
-/*                        小端序列化原语                                     */
-/* ========================================================================== */
-
-/**
- * @brief      将 16 位无符号整数按小端线序写入缓冲区。
- * @param      buf 输出缓冲区（调用方提供存储空间），至少 2 字节。
- * @param      value 待写入的数值。
- * @return     无。buf 为 NULL 时函数不执行任何操作。
- * @note       线上格式一律小端（fbdev/网络栈惯例，ARM 与 x86 一致）。
- */
-void XLinkCodec_putU16(uint8_t* buf, uint16_t value);
-
-/**
- * @brief      从缓冲区按小端线序读出 16 位无符号整数。
- * @param      buf 输入缓冲区（借用，不取得所有权），至少 2 字节。
- * @return     读出的数值；buf 为 NULL 时返回 0。
- */
-uint16_t XLinkCodec_getU16(const uint8_t* buf);
-
-/**
- * @brief      将 32 位无符号整数按小端线序写入缓冲区。
- * @param      buf 输出缓冲区（调用方提供存储空间），至少 4 字节。
- * @param      value 待写入的数值。
- * @return     无。buf 为 NULL 时函数不执行任何操作。
- */
-void XLinkCodec_putU32(uint8_t* buf, uint32_t value);
-
-/**
- * @brief      从缓冲区按小端线序读出 32 位无符号整数。
- * @param      buf 输入缓冲区（借用，不取得所有权），至少 4 字节。
- * @return     读出的数值；buf 为 NULL 时返回 0。
- */
-uint32_t XLinkCodec_getU32(const uint8_t* buf);
 
 /* ========================================================================== */
 /*                        会话载荷                                           */

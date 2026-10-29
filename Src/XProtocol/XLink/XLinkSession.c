@@ -135,25 +135,26 @@ static void VXLinkSession_deinit(XClass* object)
         XFree_System(obj->m_rxBuffer);
         obj->m_rxBuffer = NULL;
     }
+#if XLINK_TX_QUEUE_BYTES == 0
     if (obj->m_txBuffer) {
         XFree_System(obj->m_txBuffer);
         obj->m_txBuffer = NULL;
     }
+#endif
     if (obj->m_txQueue) {
         XFree_System(obj->m_txQueue);
         obj->m_txQueue = NULL;
     }
     obj->m_rxFilled = 0;
-    obj->m_rxExpected = 0;
     obj->m_txUsed = 0;
     obj->m_txHead = 0;
     obj->m_txTail = 0;
     obj->m_dispatchCallback = NULL;
     obj->m_userData = NULL;
-    obj->m_authLookup = NULL;
-    obj->m_authRespond = NULL;
     obj->m_fileCallback = NULL;
 #if XLINK_AUTH_ON
+    obj->m_authLookup = NULL;
+    obj->m_authRespond = NULL;
     if (obj->m_authUser) {
         XClassDelete((XClass*)obj->m_authUser);
         obj->m_authUser = NULL;
@@ -240,8 +241,10 @@ void XLinkSession_init(XLinkSession* obj)
     /* 收发缓冲全生命周期一次性申请，稳态收发零堆分配。 */
     obj->m_rxBuffer = (uint8_t*)XMalloc_System(
         (size_t)(XLINK_HEADER_SIZE + XLINK_MAX_PAYLOAD));
+#if XLINK_TX_QUEUE_BYTES == 0
     obj->m_txBuffer = (uint8_t*)XMalloc_System(
         (size_t)(XLINK_HEADER_SIZE + XLINK_MAX_PAYLOAD));
+#endif
 #if XLINK_TX_QUEUE_BYTES > 0
     obj->m_txQueue = (uint8_t*)XMalloc_System((size_t)XLINK_TX_QUEUE_BYTES);
     obj->m_txQueueCap = obj->m_txQueue ? (uint32_t)XLINK_TX_QUEUE_BYTES : 0;
@@ -263,12 +266,14 @@ void XLinkSession_init(XLinkSession* obj)
     obj->m_handshakeTimeoutMs = XLINK_HANDSHAKE_TIMEOUT_MS;
     obj->m_authTimeoutMs = XLINK_AUTH_TIMEOUT_MS;
     obj->m_authFailureLimit = XLINK_AUTH_FAILURE_LIMIT;
-    obj->m_authRole = XLinkAuthRole_Anonymous;
-    obj->m_authFailures = 0;
     obj->m_authRequired = false;
     obj->m_authPassed = false;
+#if XLINK_AUTH_ON
+    obj->m_authRole = XLinkAuthRole_Anonymous;
+    obj->m_authFailures = 0;
     obj->m_authUser = XString_create_utf8("");
     obj->m_authPendingUser = XString_create_utf8("");
+#endif
     memset(&obj->m_stats, 0, sizeof(obj->m_stats));
 }
 
@@ -331,6 +336,9 @@ static void XLinkSessionPrivate_clearTables(XLinkSession* self)
 {
     memset(self->m_pending, 0, sizeof(self->m_pending));
     memset(self->m_subscriptions, 0, sizeof(self->m_subscriptions));
+    /* 订阅占用位图随表一起作废：只清表不清位图，重挂后旧位残留会让
+       新订阅被误判"已占用"而静默丢失（订阅位图泄漏根修）。 */
+    self->m_subscriptionUsed = 0;
 }
 
 /**
@@ -483,14 +491,15 @@ static void XLinkSessionPrivate_authConclude(XLinkSession* self,
                                               buf, len);
     }
 
-    XLinkSession_authChanged_signal(self, false, status, 0);
-
     /* 客户端：服务端拒绝即终局断链（口令错误属永久失败，不该重试）。
        服务端：达到失败上限才断链，未达上限允许对端重试（换用户/换口令）。 */
     if (!notifyPeer) {
+        /* 终局断链路径由 authFail 统一发射失败信号，此处不再重复发射
+           （认证失败信号双发收敛：客户端收拒绝只报一次 authChanged）。 */
         XLinkSessionPrivate_authFail(self, status, false);
         return;
     }
+    XLinkSession_authChanged_signal(self, false, status, 0);
     if (self->m_authFailures >= self->m_authFailureLimit) {
         /* Goodbye 原因字节让对端区分「认证失败」与普通断开。 */
         uint8_t reason = XLinkGoodbyeReason_AuthFailed;
@@ -540,7 +549,6 @@ static void XLinkSessionPrivate_handleAuthRequest(XLinkSession* self,
     /* 重置本连接的挑战上下文（同一连接重试时换新盐与新 nonce）。 */
     memset(self->m_authHash, 0, sizeof(self->m_authHash));
     memset(self->m_authNonce, 0, sizeof(self->m_authNonce));
-    memset(self->m_authSalt, 0, sizeof(self->m_authSalt));
     self->m_authIterations = 0;
     self->m_authPendingRole = XLinkAuthRole_Anonymous;
     if (self->m_authPendingUser)
@@ -581,8 +589,6 @@ static void XLinkSessionPrivate_handleAuthRequest(XLinkSession* self,
             }
             challenge.m_iterations = XLINK_AUTH_HASH_ITERATIONS;
             memset(self->m_authHash, 0, sizeof(self->m_authHash));
-            memcpy(self->m_authSalt, challenge.m_salt,
-                   XLINK_AUTH_SALT_BYTES);
             memcpy(self->m_authNonce, challenge.m_nonce,
                    XLINK_AUTH_NONCE_BYTES);
             self->m_authIterations = challenge.m_iterations;
@@ -605,7 +611,6 @@ static void XLinkSessionPrivate_handleAuthRequest(XLinkSession* self,
            不同，应答必然不匹配。 */
         memcpy(challenge.m_salt, lookupSalt, XLINK_AUTH_SALT_BYTES);
         challenge.m_iterations = iterations;
-        memcpy(self->m_authSalt, challenge.m_salt, XLINK_AUTH_SALT_BYTES);
         memcpy(self->m_authNonce, challenge.m_nonce, XLINK_AUTH_NONCE_BYTES);
         self->m_authIterations = iterations;
         memcpy(self->m_authHash, lookupHash, XLINK_AUTH_NONCE_BYTES);
@@ -691,7 +696,6 @@ static void XLinkSessionPrivate_handleAuthResponse(XLinkSession* self,
     /* 服务端清理挑战临时态：只保留认证结果。 */
     XLinkAuth_secureZero(self->m_authHash, sizeof(self->m_authHash));
     XLinkAuth_secureZero(self->m_authNonce, sizeof(self->m_authNonce));
-    XLinkAuth_secureZero(self->m_authSalt, sizeof(self->m_authSalt));
     self->m_authIterations = 0;
     self->m_authChallengeSent = false;
     XLinkSessionPrivate_authConclude(self, XLinkAuthStatus_Ok, false,
@@ -727,7 +731,6 @@ static void XLinkSessionPrivate_handleAuthChallenge(XLinkSession* self,
     }
 
     /* 保存挑战上下文（用于校验服务端证明）。 */
-    memcpy(self->m_authSalt, challenge.m_salt, XLINK_AUTH_SALT_BYTES);
     memcpy(self->m_authNonce, challenge.m_nonce, XLINK_AUTH_NONCE_BYTES);
     self->m_authIterations = challenge.m_iterations;
 
@@ -1020,7 +1023,9 @@ static void XLinkSessionPrivate_onFrame(XLinkSession* self,
            订阅表——XLinkServer_publish 据此把消息一对多分发给订户，
            应用层无需自己维护"哪个客户端订了什么"。 */
         if (frame->m_payloadLen >= 4) {
-            uint32_t topic = XLinkCodec_getU32(payload);
+            uint32_t topic = 0;
+            XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                              (uint8_t*)&topic, sizeof(topic));
             if (topic >= XLINK_TOPIC_USER_BASE
                 && !XLinkSession_isSubscribed(self, topic))
                 XLinkSessionPrivate_addSub(self, topic);
@@ -1028,8 +1033,12 @@ static void XLinkSessionPrivate_onFrame(XLinkSession* self,
         break;
 
     case XLinkMsgClass_Unsubscribe:
-        if (frame->m_payloadLen >= 4)
-            XLinkSessionPrivate_removeSub(self, XLinkCodec_getU32(payload));
+        if (frame->m_payloadLen >= 4) {
+            uint32_t topic = 0;
+            XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                              (uint8_t*)&topic, sizeof(topic));
+            XLinkSessionPrivate_removeSub(self, topic);
+        }
         break;
 
 #if XLINK_FILE_ON
@@ -1055,10 +1064,6 @@ static void XLinkSessionPrivate_onFrame(XLinkSession* self,
 
     XLinkSession_dispatch_base(self, frame, payload);
 }
-
-/* 前向声明：consumeFrames 在协议违例/Goodbye 路径需调用 reset，
-   而 reset 的定义排在其后（随功能函数段统一编排）。 */
-void XLinkSession_reset(XLinkSession* self);
 
 /**
  * @brief 队列剩余空间（字节）。
@@ -1115,7 +1120,10 @@ static uint32_t XLinkSessionPrivate_txFlush(XLinkSession* self)
         total += (uint32_t)written;
     }
     if (total > 0) {
-        self->m_lastSendTick = self->m_nowTick;
+        /* 【心跳基准守卫】m_nowTick 为 0（本链路未取过时刻）时不写基准戳，
+           避免 m_lastSendTick 落 0 让心跳 base==0 分支逐拍空发。 */
+        if (self->m_nowTick != 0)
+            self->m_lastSendTick = self->m_nowTick;
         self->m_stats.m_bytesSent += total;
     }
     return total;
@@ -1194,18 +1202,39 @@ bool XLinkSession_setDevice(XLinkSession* self, XIODevice* device)
     XLinkSessionPrivate_stopTimer(self);
     XLinkSessionPrivate_clearTables(self);
     self->m_rxFilled = 0;
-    self->m_rxExpected = 0;
     self->m_remoteVersion = 0;
     self->m_remoteCapability = 0;
     self->m_peerDeclaredCapability = 0;
     self->m_helloSent = false;
     self->m_attachTick = 0;
     self->m_authStartTick = 0;
+    /* 【复用根修】收发时间戳必须随旧链路作废：静默判线（pump）只认
+       m_lastReceiveTick，会话对象复用（同一对象挂新传输）时若残留上一链路
+       的空闲时刻，新链路第一拍 pump 的 nowMs - 旧时刻 就会超过
+       XLINK_HEARTBEAT_TIMEOUT_MS，健康的链路会被立刻误判断开。
+       m_lastSendTick 是主动心跳基准，同理归零；m_nowTick 归零让"本链路
+       尚未取到过时刻"重新可识别（下面的 m_attachTick 取 0 起算即依赖它）。 */
+    self->m_lastReceiveTick = 0;
+    self->m_lastSendTick = 0;
+    self->m_nowTick = 0;
     self->m_authRequired = false;
     self->m_authPassed = false;
+#if XLINK_AUTH_ON
     self->m_authFailures = 0;
     self->m_authRole = XLinkAuthRole_Anonymous;
     if (self->m_authUser) XContainer_clear_base((XContainer*)self->m_authUser);
+    /* 挑战上下文同样随链路作废（与 reset() 同口径）：会话对象复用（同一
+       对象挂新传输或 setDevice(NULL) 摘除后重挂）时若残留上一链路的
+       H/nonce 与迭代次数，服务端重挂后重新 setAuthLookup 置回
+       m_authRequired，旧 AuthResponse 即可凭残留的 m_authChallengeSent/
+       m_authIterations 通过 handleAuthResponse 的门槛构成跨链路重放；
+       客户端侧残留的 H/nonce 同样能让重放的旧 AuthResult 通过
+       handleAuthResult 的服务端证明校验。 */
+    XLinkAuth_secureZero(self->m_authHash, sizeof(self->m_authHash));
+    XLinkAuth_secureZero(self->m_authNonce, sizeof(self->m_authNonce));
+    self->m_authIterations = 0;
+    self->m_authChallengeSent = false;
+#endif
     /* 换设备/断开：丢弃尚未写出的残余帧（旧链路的数据不该泄漏到新链路）。 */
     self->m_txHead = 0;
     self->m_txTail = 0;
@@ -1232,15 +1261,31 @@ void XLinkSession_reset(XLinkSession* self)
     XLinkSessionPrivate_stopTimer(self);
     XLinkSessionPrivate_clearTables(self);
     self->m_rxFilled = 0;
-    self->m_rxExpected = 0;
     self->m_helloSent = false;
     self->m_attachTick = 0;
     self->m_authStartTick = 0;
+    /* 【复用根修】收发时间戳随链路作废，理由同 setDevice：reset 后会话常被
+       复用去挂新传输，残留的 m_lastReceiveTick 会让新链路第一拍 pump 的
+       静默判线（nowMs - 旧时刻 > XLINK_HEARTBEAT_TIMEOUT_MS）立刻成立而
+       误判断开；m_lastSendTick 是主动心跳基准，m_nowTick 是本链路时刻快照，
+       一并归零，避免旧链路的时刻渗透进新链路的超时判定。 */
+    self->m_lastReceiveTick = 0;
+    self->m_lastSendTick = 0;
+    self->m_nowTick = 0;
     self->m_authRequired = false;
     self->m_authPassed = false;
+#if XLINK_AUTH_ON
     self->m_authFailures = 0;
     self->m_authRole = XLinkAuthRole_Anonymous;
     if (self->m_authUser) XContainer_clear_base((XContainer*)self->m_authUser);
+    /* 挑战上下文同样随链路作废：会话对象复用时若残留上一链路的 H/nonce
+       与迭代次数，新链路的应答会带着旧挑战通过 handleAuthResponse 的
+       m_authChallengeSent/m_authIterations 门槛，构成跨链路重放窗口。 */
+    XLinkAuth_secureZero(self->m_authHash, sizeof(self->m_authHash));
+    XLinkAuth_secureZero(self->m_authNonce, sizeof(self->m_authNonce));
+    self->m_authIterations = 0;
+    self->m_authChallengeSent = false;
+#endif
     /* 残帧随链路作废：未写出的队列内容不再属于任何连接。 */
     self->m_txHead = 0;
     self->m_txTail = 0;
@@ -1466,12 +1511,16 @@ static bool XLinkSessionPrivate_sendWithPrefix(XLinkSession* self,
     }
 #endif
 
-    /* 无发送队列（XLINK_TX_QUEUE_BYTES=0 或申请失败）：退回单次原子写。
-       缓冲优先用会话常驻发送缓冲（与接收缓冲对称），稳态零堆分配；
-       仅当常驻缓冲不可用且帧超大时才退回一次性堆申请。 */
+    /* 无发送队列（XLINK_TX_QUEUE_BYTES=0 或队列申请失败）：退回单次原子写。
+       缓冲优先用会话常驻发送缓冲（仅 XLINK_TX_QUEUE_BYTES=0 时存在，与
+       接收缓冲对称），稳态零堆分配；仅当常驻缓冲不可用且帧超大时才退回
+       一次性堆申请。 */
+#if XLINK_TX_QUEUE_BYTES == 0
     if (self->m_txBuffer) {
         buf = self->m_txBuffer;
-    } else if (total <= (int64_t)sizeof(stackBuf)) {
+    } else
+#endif
+    if (total <= (int64_t)sizeof(stackBuf)) {
         buf = stackBuf;
     } else {
         buf = (uint8_t*)XMalloc_System((size_t)total);
@@ -1486,12 +1535,19 @@ static bool XLinkSessionPrivate_sendWithPrefix(XLinkSession* self,
         memcpy(&buf[XLINK_HEADER_SIZE + prefixLen], payload, length);
 
     written = XIODevice_write_1(self->m_device, (const char*)buf, total);
+#if XLINK_TX_QUEUE_BYTES == 0
     if (buf != stackBuf && buf != self->m_txBuffer)
+#else
+    if (buf != stackBuf)
+#endif
         XFree_System(buf);
 
     if (written != total)
         return false;
-    self->m_lastSendTick = self->m_nowTick;
+    /* 【心跳基准守卫】同 txFlush：m_nowTick 为 0（本链路未取过时刻）时
+       不写心跳基准戳；统计照常累计。 */
+    if (self->m_nowTick != 0)
+        self->m_lastSendTick = self->m_nowTick;
     self->m_stats.m_bytesSent += (uint64_t)total;
     self->m_stats.m_framesSent++;
     return true;
@@ -1569,7 +1625,8 @@ bool XLinkSession_sendPublish(XLinkSession* self, uint32_t topicId,
     /* topicId 完整 u32 置于载荷首 4 字节（msgCode 只承载低 16 位，见 XLinkProto.h
        topicId 承载规则）：前缀与业务载荷由 sendWithPrefix 一次拼入常驻发送
        缓冲后单次原子写出——既不拆帧，也不多一次整帧拷贝。 */
-    XLinkCodec_putU32(&topicBuf[0], topicId);
+    XMemory_write_data(&topicBuf[0], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&topicId, sizeof(topicId));
 
     frame.m_msgClass = XLinkMsgClass_Publish;
     frame.m_msgCode = (uint16_t)(topicId & 0xFFFFu);
@@ -1607,7 +1664,8 @@ bool XLinkSession_subscribe(XLinkSession* self, uint32_t topicId)
         return false; /* 表满 */
 
     /* 完整 u32 topicId 走载荷首 4 字节（见 XLinkProto.h topicId 承载规则）。 */
-    XLinkCodec_putU32(&topicBuf[0], topicId);
+    XMemory_write_data(&topicBuf[0], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&topicId, sizeof(topicId));
     frame.m_payloadLen = 4;
     frame.m_msgClass = XLinkMsgClass_Subscribe;
     frame.m_msgCode = (uint16_t)(topicId & 0xFFFFu);
@@ -1631,7 +1689,8 @@ bool XLinkSession_unsubscribe(XLinkSession* self, uint32_t topicId)
     if (!XLinkSessionPrivate_removeSub(self, topicId))
         return false; /* 未订阅：不发无意义帧 */
 
-    XLinkCodec_putU32(&topicBuf[0], topicId);
+    XMemory_write_data(&topicBuf[0], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&topicId, sizeof(topicId));
     frame.m_payloadLen = 4;
     frame.m_msgClass = XLinkMsgClass_Unsubscribe;
     frame.m_msgCode = (uint16_t)(topicId & 0xFFFFu);

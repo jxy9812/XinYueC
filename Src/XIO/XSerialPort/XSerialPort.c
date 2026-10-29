@@ -53,6 +53,17 @@ static bool VXSerialPort_open(XIODevice* io, XIODeviceBaseMode mode)
         }
         return false;
     }
+    /* [A8 复核根修] 双开守卫：同一 XSerialPort 实例在已打开状态再次 open
+     * 直接拒绝（OpenError）。原实现无条件重开并覆盖 base.m_fd —— 旧 fd 泄漏、
+     * 接收轮询定时器被静默重启，且 485 单总线唯一仲裁点被架空：第二个
+     * open 调用方会悄悄抢走端口而无任何失败反馈。同一端口同一时刻只能被
+     * 一个实例打开（契约见 XSerialPort.h）。
+     * 只置 error 不发射 errorOccurred：拒绝性双开不是端口故障，发信号会
+     * 误触发上层（如 Modbus 客户端）的错误处理链、把健康连接拉倒。 */
+    if (port->isOpen || port->base.m_fd != XFD_INVALID) {
+        port->error = XSerialPort_OpenError;
+        return false;
+    }
     if (mode == XIODevice_NotOpen || (mode & (XIODevice_ReadOnly | XIODevice_WriteOnly)) == 0) {
         port->error = XSerialPort_OpenError;
         XSerialPort_errorOccurred_signal(port, port->error);

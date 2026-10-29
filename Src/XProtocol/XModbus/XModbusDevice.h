@@ -167,7 +167,9 @@ typedef struct XModbusDevice {
  /**
   * @brief 初始化XModbusDevice的虚函数表
   * @return 初始化完成的虚函数表指针
-  * @note 该函数是线程安全的，多次调用返回同一虚表实例
+  * @note 虚表在首次调用时初始化并缓存，此后返回同一实例。
+  *       本框架为单线程事件循环模型：class_init 无锁保护，
+  *       须在事件循环启动前（或同一线程内）调用，通常由 create 接口自动完成。
   */
 XVtable* XModbusDevice_class_init(void);
 

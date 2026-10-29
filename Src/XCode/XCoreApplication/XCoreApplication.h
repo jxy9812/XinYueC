@@ -353,6 +353,38 @@ void XCoreApplication_removePostedEvents(XObject* receiver, XEventType eventType
  */
 bool XCoreApplication_forwardEvent(XObject* receiver, XEvent* event, XEvent* originatingEvent);
 
+/* ==================== 跨线程调用投递（对标 QMetaObject::invokeMethod(接收者, 仿函数, Qt::QueuedConnection)） ==================== */
+
+/**
+ * @brief postInvoke 兑现回调类型：由接收者所在线程兑现。
+ * @param userData postInvoke 注册时传入的用户上下文（指针值原样回传）。
+ */
+typedef void (*XCoreApplicationInvokeCallback)(void* userData);
+
+/**
+ * @brief 跨线程回调投递原语（对标 QMetaObject::invokeMethod(接收者, 仿函数,
+ *        Qt::QueuedConnection) 的最小 C 形态）。
+ * @param receiver 接收者对象；回调在其所属线程的事件循环兑现（Qt 同款
+ *                 「事件必须在接收者所在线程兑现」编组语义）。
+ * @param callback 要投递的回调；不能为 NULL。
+ * @param userData 回调上下文；指针值经事件字节复制回传，所指对象所有权
+ *                 留在调用方——典型用法是调用方堆分配快照作为 userData，
+ *                 由回调兑现后释放；本原语返回 false 时回调永不兑现，
+ *                 调用方须自行回收 userData 所指资源。
+ * @return true 已入接收者所属线程事件队列（回调必然稍后兑现，除非接收者
+ *         先于兑现被析构——濒死接收者在途事件被清队且不再兑现，此时
+ *         userData 所指资源由调用方在析构路径兜底）；receiver/callback
+ *         非法或载荷分配失败返回 false。
+ * @note 内部经自定义事件（XEVENT_TYPE_FUNC_RUN）+ XCoreApplication_postEvent
+ *       投递：锁接收者所属线程的已投递事件表入队并唤醒其分发器（语义与
+ *       Qt QCoreApplication::postEvent 一致）；队列无界不丢弃（Qt 同口径），
+ *       调用方如需「满丢最旧/保最新」语义应自行压缩（如先覆盖快照槽再
+ *       投递）。
+ */
+bool XCoreApplication_postInvoke(XObject* receiver,
+                                 XCoreApplicationInvokeCallback callback,
+                                 void* userData);
+
 /* ==================== 事件分发器（对标 Qt QCoreApplication::eventDispatcher / setEventDispatcher） ==================== */
 
 /**

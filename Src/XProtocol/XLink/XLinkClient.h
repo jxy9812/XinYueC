@@ -46,9 +46,7 @@ extern "C" {
 /* ========================================================================== */
 
 XCLASS_DEFINE_BEGING(XLinkClient)
-/* 新增槽位从基类槽位总数开始编号，否则与 XObject 的槽位撞号（建表容量不足）。 */
-XCLASS_DEFINE_ENUM(XLinkClient, timerEvent) = XCLASS_VTABLE_GET_SIZE(XObject),
-XCLASS_DEFINE_END(XLinkClient)
+XCLASS_DEFINE_EXTEND_END(XLinkClient, XObject)
 
 /* ========================================================================== */
 /*                        类型定义                                           */

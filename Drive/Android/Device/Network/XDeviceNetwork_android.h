@@ -44,6 +44,20 @@ extern "C" {
 void XAndroidNetwork_applyInterfaceConfig(XDeviceNetworkInterfaceConfig* outConfig,
                                            const char* ifname);
 
+/**
+ * @brief  接口枚举的硬件地址（MAC）安卓兜底（[下沉 2026-10-29]）。
+ * @param  outMac  输出缓冲（"AA:BB:CC:DD:EE:FF" 文本）。
+ * @param  macCap  缓冲容量。
+ * @return 取到返回 true（outMac 已写非空文本）；取不到返回 false。
+ * @note   安卓应用域读不了 /sys/class/net（SELinux enforcing 下
+ *         Permission denied），接口枚举的 ioctl(SIOCGIFHWADDR) 恒失败。
+ *         本函数走 Java 桥（XNetAdapter.linkInfo：WifiInfo /
+ *         java.net.NetworkInterface）取系统认可的 MAC。原先以
+ *         `#if defined(__ANDROID__)` 内联在共享 POSIX 驱动与应用页面里，
+ *         按平台差异归平台层收口（同 applyInterfaceConfig 先例）。
+ */
+bool XAndroidNetwork_fillInterfaceMac(char* outMac, int macCap);
+
 /* ==================== 下发 ==================== */
 
 /**

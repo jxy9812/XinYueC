@@ -23,7 +23,8 @@ XTcpSocket* XModbusTcpClient_socket(const XModbusTcpClient* client);
  * @brief 获取下一个事务标识符
  * @param client XModbusTcpClient实例指针
  * @return 下一个可用的事务标识符（1-65535循环）
- * @note 该函数是线程安全的，每次调用自动递增事务ID
+ * @note 非线程安全：直接递增成员 m_transactionId，仅限拥有该客户端
+ *       事件循环的同一线程内调用
  */
 uint16_t XModbusTcpClient_nextTransactionId(XModbusTcpClient* client);
 

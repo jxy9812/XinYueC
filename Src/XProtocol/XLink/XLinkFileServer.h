@@ -23,7 +23,12 @@ extern "C" {
 
 #include "XLink_config.h"
 
-#if XLINK_ON && XLINK_FILE_ON
+/* 【门控补记】门控必须叠加 XLINK_SESSION_ON && XLINK_SERVER_ON：本头文件
+ * 内嵌 XLinkServer 指针成员（m_server），而 XLinkServer.h 自身按
+ * XLINK_SERVER_ON 门控——不叠加时该类型未声明，旧门控在
+ * -DXLINK_SERVER_ON=0（或 XLINK_SESSION_ON=0）下直接 error C2061，
+ * 文件服务端从未真正支持子开关裁剪。矩阵实测见 XLink.md §14.5。 */
+#if XLINK_ON && XLINK_SESSION_ON && XLINK_FILE_ON && XLINK_SERVER_ON
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -152,7 +157,7 @@ void XLinkFileServer_detach(XLinkFileServer* fs);
  */
 const char* XLinkFileServer_rootDir_const(const XLinkFileServer* fs);
 
-#endif /* XLINK_ON && XLINK_FILE_ON */
+#endif /* XLINK_ON && XLINK_SESSION_ON && XLINK_FILE_ON && XLINK_SERVER_ON */
 
 #ifdef __cplusplus
 }

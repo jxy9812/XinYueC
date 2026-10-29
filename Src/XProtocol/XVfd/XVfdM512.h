@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XVfdM512.h
  * @brief      511M/512M/513M 系列高性能矢量变频器子类公开 API。
  * @details    XVfdDevice/XVfdModbusBase 的 511M/512M/513M 实现（依据

@@ -20,11 +20,6 @@
 #include "XLinkAuth.h"
 #endif
 
-/* 会话层 stateChanged 信号由并行任务补入 XLinkSession.h/.c：本头文件尚未
-   声明时在此给出 extern 原型（签名对齐 XAbstractSocket_stateChanged_signal
-   惯例），链接期由会话层实现补齐。 */
-void* XLinkSession_stateChanged_signal(XLinkSession* self, XLinkSessionState state);
-
 /** @brief 优雅断开时排空写队列的最大轮数（每轮 waitForBytesWritten 至少
  *         推进一个写完成；防御写侧异常导致的死循环）。 */
 #define XLINK_CLIENT_DRAIN_MAX_ROUNDS 10
@@ -452,8 +447,6 @@ XVtable* XLinkClient_class_init(void)
     /* 先继承后重载（顺序颠倒重载会被继承覆盖，见风格指南）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXLinkClient_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXLinkClient_timerEvent);
-    /* 新增槽位（定时器事件）：预留派生类扩展点。 */
-    XVTABLE_OVERLOAD_DEFAULT(EXLinkClient_timerEvent, VXLinkClient_timerEvent);
     return XVTABLE_DEFAULT;
 }
 

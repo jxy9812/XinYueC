@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XModbusHub.h
  * @brief      Modbus 聚合设备：多从站虚拟合一（RTU/TCP × 串口/网口透明）。
  * @details    [XModbus 聚合设备 2026-10-26] 持有 N 个底层 XModbusClient（TCP
@@ -11,7 +11,14 @@
  *               - 底层断线自动重连复用 XModbusClient_setAutoReconnect，
  *                 设备恢复后自动恢复轮询并补写滞留写，对上层透明；
  *               - 信号面：设备状态变化 / 值变化（type 字段区分来源寄存器
- *                 类别）/ 写完成。
+ *                 类别）/ 写完成 / 从站失联恢复（unitLost/unitAlive，
+ *                 2026-10-28 单元退避）/ 写滞留提示（writeStalled，
+ *                 2026-10-28 写滞留可见性）。
+ *             [2026-10-28 单元退避] 轮询健康按 (设备, 从站) 粒度簿记
+ *             （XPoll/XPollScheduler，公共计划表组件）：连续失败达阈值
+ *             （setUnitBackoff，默认 3）的从站静默退避（默认 5000ms），
+ *             静默期间其映射段不再向 client 提交——RTU 共口多从站时把
+ *             总线让给活从站，静默到期自动探活恢复。
  *             Hub 是组合器不是协议设备（继承 XObject 而非 XModbusDevice），
  *             不发起未被映射驱动的 Modbus 事务。线程模型：单线程事件循环，
  *             零锁；计时一律 XDateTime_currentMSecsSinceEpoch()。
@@ -37,6 +44,7 @@ extern "C" {
 #include "XTimer.h"
 #include "XModbusClient.h"
 #include "XModbusMapping.h"
+#include "XPollScheduler.h"
 
 /** @brief 单条写意图内联值容量上限（FC16 单帧协议上限 123 寄存器，
  *  聚合场景单点/短块写为主；超限写入直接拒绝）。 */
@@ -54,6 +62,7 @@ typedef struct XModbusHubWriteIntent {
     uint16_t count;                     /**< 点数（1..XMODBUS_HUB_WRITE_MAX_VALUES）。 */
     uint16_t values[XMODBUS_HUB_WRITE_MAX_VALUES]; /**< 待写值。 */
     uint32_t attempts;                  /**< 已尝试次数（含失败重发）。 */
+    bool stallNotified;                 /**< writeStalled 提示已发（每意图至多一次）。 */
 } XModbusHubWriteIntent;
 
 /**
@@ -76,6 +85,8 @@ typedef struct XModbusHubDevice {
     uint32_t pollErrCount;              /**< 累计轮询失败段数。 */
     uint32_t reconnectCount;            /**< 累计重连成功次数（离线→在线跃迁）。 */
     uint64_t lastSuccessMs;             /**< 最后一次成功应答时刻（单调毫秒）。 */
+    XPollScheduler unitSched;           /**< 从站失联退避表（XPoll，按 unitId 簿记；
+                                         *   计划重建时随映射段去重重建）。 */
 } XModbusHubDevice;
 
 /** @brief 在途请求类别。 */
@@ -106,6 +117,9 @@ typedef struct XModbusHub {
     XTimerId m_retryTimer;              /**< 写重发周期定时器。 */
     size_t m_writeRetryIntervalMs;      /**< 写重发间隔毫秒。 */
     bool m_changedOnlySignals;          /**< valueChanged 仅在值确实变化时发射（默认 true）。 */
+    uint32_t m_unitMaxFails;            /**< 从站失联退避连续失败阈值（默认 3；setUnitBackoff）。 */
+    uint32_t m_unitMuteMs;              /**< 从站失联退避静默时长毫秒（默认 5000）。 */
+    int m_writeStallNoticeAt;           /**< 写滞留提示阈值 attempts（<1 关闭；默认 3）。 */
 } XModbusHub;
 
 /* ==================== 类初始化 / 构造 ==================== */
@@ -159,6 +173,15 @@ bool XModbusHub_setPollInterval(XModbusHub* hub, int deviceId, size_t ms);
 /** @brief 轮询区掩码（位 1<<XModbusRegisterType 枚举值：DI=bit1 Coils=bit2
  *  IR=bit3 HR=bit4；默认仅 DI|IR 输入区）。 */
 void XModbusHub_setPollAreas(XModbusHub* hub, unsigned areaMask);
+/**
+ * @brief 从站失联退避配置：连续失败达阈值进入静默（不再提交该从站轮询段，
+ *        RTU 共口多从站时把总线让给活从站），静默到期自动探活；跃迁发射
+ *        unitLost/unitAlive 信号。[2026-10-28 单元退避]
+ * @param maxFails 连续失败阈值（>=1 生效；默认 3）。
+ * @param muteMs 静默时长毫秒（>=1000 生效；默认 5000）。
+ * @note 已登记设备即时同步生效；映射刷新重建退避表时沿用本配置。
+ */
+void XModbusHub_setUnitBackoff(XModbusHub* hub, uint32_t maxFails, uint32_t muteMs);
 /** @brief 启动全部设备轮询（含写重发定时器）。 */
 void XModbusHub_startPolling(XModbusHub* hub);
 /** @brief 停止全部轮询与写重发（滞留写意图保留，重启后续发）。 */
@@ -197,6 +220,13 @@ bool XModbusHub_writeValues(XModbusHub* hub, XModbusRegisterType type,
 int XModbusHub_pendingWriteCount(const XModbusHub* hub);
 /** @brief 写重发间隔毫秒（默认 1000）。 */
 void XModbusHub_setWriteRetryInterval(XModbusHub* hub, size_t ms);
+/**
+ * @brief 写滞留提示阈值：写意图下发次数 attempts 首次达到该值时发射一次
+ *        writeStalled 信号（每意图至多一次）。[2026-10-28 写滞留可见性]
+ * @param attempts 阈值（<1 关闭提示；默认 3）。
+ * @note 只增可见性不改重发语义：失败仍静默留队周期重试直至成功。
+ */
+void XModbusHub_setWriteStallNotice(XModbusHub* hub, int attempts);
 
 /* ==================== 统计 ==================== */
 /** @brief 设备轮询成功段数。 */
@@ -229,6 +259,28 @@ void* XModbusHub_writeCompleted_signal(XModbusHub* hub, int type,
                                        int virtualStart, int count, bool ok);
 /** @brief 设备统计快照信号（可选挂接；每次 pollOk/pollErr/重连后发射）。 */
 void* XModbusHub_deviceStatsChanged_signal(XModbusHub* hub, int deviceId);
+/**
+ * @brief 从站失联信号：unitLost(int deviceId, int unitId)。
+ * @details [2026-10-28 单元退避] 某底层设备的某从站连续轮询失败达阈值
+ *          （setUnitBackoff）进入静默退避时发射一次（跃迁沿，静默期内
+ *          不重复发）；静默期间该从站的轮询段不再提交，静默到期自动探活。
+ */
+void* XModbusHub_unitLost_signal(XModbusHub* hub, int deviceId, int unitId);
+/**
+ * @brief 从站恢复信号：unitAlive(int deviceId, int unitId)。
+ * @details [2026-10-28 单元退避] 失联（静默中或静默到期探活在途）的从站
+ *          收到首个成功应答时发射一次。
+ */
+void* XModbusHub_unitAlive_signal(XModbusHub* hub, int deviceId, int unitId);
+/**
+ * @brief 写滞留提示信号：writeStalled(int type, int virtualStart, int count,
+ *        int attempts)。
+ * @details [2026-10-28 写滞留可见性] 写意图下发次数 attempts 首次达到
+ *          阈值（setWriteStallNotice，缺省 3）时发射一次；仅提升可见性，
+ *          重发语义不变（失败静默重发直至成功）。
+ */
+void* XModbusHub_writeStalled_signal(XModbusHub* hub, int type,
+                                     int virtualStart, int count, int attempts);
 
 #define XModbusHub_deleteLater     XObject_deleteLater
 #define XModbusHub_deinitLater     XObject_deinitLater

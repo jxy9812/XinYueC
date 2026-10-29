@@ -141,6 +141,25 @@ XGuiClient* XRemoteSessionBar_client(const XRemoteSessionBar* self);
 void XRemoteSessionBar_attachView(XRemoteSessionBar* self,
                                   const XRect* viewRect);
 
+/**
+ * @brief      锚定吸附参照到宿主控件(自跟随; 2026-10-29 新增)。
+ * @details    吸附矩形 = 宿主控件矩形映射到本条父坐标系(顶层条退
+ *             化为宿主全局矩形); 宿主 Move/Resize/Show/Hide 后自动
+ *             重贴。本框架内部几何事件经 XWidget_event_base 直发、
+ *             不经 XCoreApplication_notify 分发(事件过滤器收不到,
+ *             见 XFocusFrame.c 文件头 @details), 跟随以 30ms 轮询
+ *             定时器轻量等价承载(同 XFocusFrame 口径); 宿主销毁经
+ *             destroyed 连接自动解除并退化为最近矩形口径。收起球
+ *             已被用户拖动时重贴不摆位, 不抢用户摆放(attachView 同
+ *             口径)。与 attachView(矩形) 互斥: 后调者生效。
+ * @param      self 目标控件; 传入 NULL 时不执行任何操作。
+ * @param      host 宿主控件(借用, 生命周期归调用方); NULL 等价
+ *             attachView(NULL) 清零矩形并解除锚定。
+ * @return     无。
+ */
+void XRemoteSessionBar_attachViewHost(XRemoteSessionBar* self,
+                                      XWidget* host);
+
 /* ==================== 展开态与动作 ==================== */
 
 /**

@@ -28,7 +28,14 @@
  *                 清零(XWidget.c 重渲染从全透明画布开始), flush 经
  *                 XPainter_drawImage SourceOver 合成——alpha 填充即
  *                 与下层内容混色; 未用 XPAINTER_SHAPE_ON(XGuiConfig.h
- *                 1012 处裁 0), 悬浮球以叠矩形圆角近似绘制。
+ *                 1012 处裁 0), 悬浮球以叠矩形圆角近似绘制;
+ *               - 宿主锚定(2026-10-29): attachViewHost 把吸附参照锚
+ *                 到宿主控件, 宿主 Move/Resize/Show/Hide 自动重贴——
+ *                 本框架内部几何事件不经 notify 分发(事件过滤器收不
+ *                 到, XFocusFrame.c 文件头 @details), 跟随以 30ms 对
+ *                 象定时器轮询轻量等价承载(同 XFocusFrame 口径), 宿
+ *                 主销毁经 destroyed 连接解除并退化矩形口径; 与
+ *                 attachView(矩形) 互斥, 后调者生效。
  * @author     XinYueC 团队
  */
 #if XGUI_ON
@@ -70,6 +77,10 @@
 #define XRB_STATS_MS 500u
 /** @brief 按下-释放位移阈值(小于该值判点击展开, 否则判拖动)。 */
 #define XRB_DRAG_THRESHOLD 4
+/** @brief 宿主几何跟随轮询周期 ms(轻量等价 Qt eventFilter 的即时刻度;
+ *         同 XFocusFrame 30ms 口径——内部几何事件不经 notify 分发,
+ *         事件过滤器收不到, 见 XFocusFrame.c 文件头 @details)。 */
+#define XRB_FOLLOW_MS 30
 /** @brief 条面板填充(ARGB32_Premultiplied)。2026-10-05 二改 a=0xE8 深底→
  *         0xF0 浅底不透明+深色文字：用户实测深底叠在黑镜像上「全是黑
  *         的看不清」，改浅色面板任意远端内容上都可读；悬浮球无文字
@@ -90,6 +101,7 @@
 typedef struct XRemoteSessionBarPrivate {
     /* ---- 指针组(8 字节对齐前移) ---- */
     XGuiClient* m_client;        /**< 绑定的客户端(借用)。 */
+    XWidget* m_viewHost;         /**< 锚定宿主控件(借用; NULL=矩形口径)。 */
     XPushButton* m_disconnectBtn; /**< [断开连接](子控件, 自持于树)。 */
     XComboBox*   m_profileCombo;  /**< 档位 性能|资源。 */
     XLabel*      m_statsLabel;    /**< 统计: 帧数/RTT/丢帧。 */
@@ -98,9 +110,12 @@ typedef struct XRemoteSessionBarPrivate {
     XTimer* m_collapseTimer;     /**< 离开 2s 收起(单次, 拥有)。 */
     XTimer* m_hoverTimer;        /**< 球悬停展开(单次, 拥有)。 */
     XTimer* m_statsTimer;        /**< 统计刷新(周期, 拥有)。 */
+    XTimerId m_followTimer;      /**< 宿主几何跟随轮询定时器(对象定时器;
+                                      XTIMER_INVALID_ID=未启动)。 */
 
     /* ---- 4 字节组：几何/枚举/计数 ---- */
-    XRect     m_viewRect;        /**< 吸附参照视图区(parent 坐标)。 */
+    XRect     m_viewRect;        /**< 吸附参照视图区(父坐标系; 宿主锚定
+                                   *   口径下由跟随拍按宿主实测几何回填)。 */
     XPoint    m_ballPos;         /**< 悬浮球左上角(parent 坐标)。 */
     XPoint    m_pressLocal;      /**< 按下点(控件局部)。 */
     XPoint    m_grabOffset;      /**< 按下点-球左上角(拖动保形)。 */
@@ -115,6 +130,7 @@ typedef struct XRemoteSessionBarPrivate {
     uint8_t   m_dragging : 1;        /**< 球拖动进行中。 */
     uint8_t   m_dragMoved : 1;       /**< 本次按下已越过点击阈值。 */
     uint8_t   m_keyboardPopped : 1;  /**< 键盘钮 toggle 态(true=已请求弹出)。 */
+    uint8_t   m_hostHidden : 1;      /**< 宿主上次显式隐藏态(Show/Hide 变化检测)。 */
 } XRemoteSessionBarPrivate;
 
 /* ==================== 前置声明 ==================== */
@@ -123,6 +139,8 @@ static void xrb_expandInternal(XRemoteSessionBar* self);
 static void xrb_collapseInternal(XRemoteSessionBar* self);
 static void xrb_snapBarTopCenter(XRemoteSessionBar* self);
 static void xrb_defaultBallPos(XRemoteSessionBarPrivate* d);
+static void xrb_applyViewRect(XRemoteSessionBar* self);
+static void xrb_followStop(XRemoteSessionBar* self);
 static void xrb_refreshStatsText(XRemoteSessionBar* self);
 static void xrb_syncKeyboardBtnText(XRemoteSessionBar* self);
 
@@ -191,6 +209,99 @@ static void xrb_snapBarTopCenter(XRemoteSessionBar* self)
     if (y < 0) y = 0;
     XWidget_setGeometry((XWidget*)self, x, y, XRB_BAR_W, XRB_BAR_H);
 }
+
+/** @brief 按当前参照矩形重贴(展开条吸附; 未被用户摆位的球回默认位;
+ *         attachView/宿主跟随拍共用, 「不抢用户摆放」口径一处承载)。 */
+static void xrb_applyViewRect(XRemoteSessionBar* self)
+{
+    XRemoteSessionBarPrivate* d;
+    if (!self || !self->m_d) return;
+    d = (XRemoteSessionBarPrivate*)self->m_d;
+    if (d->m_expanded)
+        xrb_snapBarTopCenter(self);
+    else if (!d->m_ballUserPlaced) {
+        xrb_defaultBallPos(d);
+        XWidget_setGeometry((XWidget*)self, d->m_ballPos.x, d->m_ballPos.y,
+                            XRB_BALL_SIZE, XRB_BALL_SIZE);
+    }
+}
+
+/* ==================== 宿主锚定跟随(30ms 轮询, 同 XFocusFrame 口径) ==================== */
+
+/** @brief 宿主矩形 → 本条父坐标系吸附矩形(顶层条退化宿主全局矩形)。 */
+static void xrb_viewRectFromHost(XRemoteSessionBar* self, XRect* out)
+{
+    XRemoteSessionBarPrivate* d;
+    XWidget* host;
+    XWidget* anchor;
+    XPoint zero;
+    XPoint tl;
+    if (!self || !self->m_d || !out) return;
+    d = (XRemoteSessionBarPrivate*)self->m_d;
+    host = d->m_viewHost;
+    if (!host) return;
+    XPoint_init(&zero, 0, 0);
+    anchor = XWidget_parentWidget((XWidget*)self);
+    if (anchor)
+        tl = XWidget_mapTo(host, anchor, &zero);
+    else
+        tl = XWidget_mapToGlobal(host, &zero);
+    XRect_init(out, tl.x, tl.y, XWidget_width(host), XWidget_height(host));
+}
+
+/** @brief 跟随拍: 宿主几何/显隐变化 → 回填吸附矩形并自动重贴
+ *         (轻量等价 QFocusFrame::eventFilter 的 Move/Resize/Show/Hide
+ *         分支; 宿主已亡(m_viewHost=NULL)时静默)。 */
+static void xrb_followTick(XRemoteSessionBar* self)
+{
+    XRemoteSessionBarPrivate* d;
+    XRect rc;
+    bool hostHidden;
+    if (!self || !self->m_d || !self->m_d->m_viewHost) return;
+    d = (XRemoteSessionBarPrivate*)self->m_d;
+    xrb_viewRectFromHost(self, &rc);
+    hostHidden = XWidget_isHidden(d->m_viewHost);
+    if (rc.x != d->m_viewRect.x || rc.y != d->m_viewRect.y ||
+        rc.width != d->m_viewRect.width ||
+        rc.height != d->m_viewRect.height ||
+        hostHidden != (bool)d->m_hostHidden) {
+        d->m_viewRect = rc;
+        d->m_hostHidden = hostHidden ? 1u : 0u;
+        xrb_applyViewRect(self);
+    }
+}
+
+/** @brief 跟随轮询启停(对象定时器, XFocusFrame 同口径)。 */
+static void xrb_followStart(XRemoteSessionBar* self)
+{
+    if (!self || !self->m_d ||
+        self->m_d->m_followTimer != XTIMER_INVALID_ID)
+        return;
+    self->m_d->m_followTimer = XObject_startTimer_ms(
+        (XObject*)self, XRB_FOLLOW_MS, XTimerType_CoarseTimer);
+}
+
+static void xrb_followStop(XRemoteSessionBar* self)
+{
+    if (!self || !self->m_d ||
+        self->m_d->m_followTimer == XTIMER_INVALID_ID)
+        return;
+    XObject_killTimer((XObject*)self, self->m_d->m_followTimer);
+    self->m_d->m_followTimer = XTIMER_INVALID_ID;
+}
+
+/** @brief 宿主销毁槽: 解除锚定并停跟随(destroyed 在析构帧内同步发射,
+ *         先于内存归还); 吸附矩形不清——退化为最近矩形口径, 可见性
+ *         语义(连接期浮现)不受锚定解除影响。 */
+static void xrb_hostDestroyedSlot(XObject* receiver, XVarList* args)
+{
+    XRemoteSessionBar* self = (XRemoteSessionBar*)receiver;
+    (void)args;
+    if (!self || !self->m_d) return;
+    self->m_d->m_viewHost = NULL;
+    xrb_followStop(self);
+}
+
 
 /* ==================== 展开/收起 ==================== */
 
@@ -657,6 +768,20 @@ static void VX_xrb_wheelEvent(XWidget* self, XEvent* event)
     XEvent_accept(event); /* 本地控件: 滚轮消费不上传。 */
 }
 
+/** @brief 对象定时器拍: 仅消费宿主几何跟随拍(同 XFocusFrame 口径),
+ *         其余定时器事件交回基类。 */
+static void VX_xrb_timerEvent(XObject* object, XTimerEvent* event)
+{
+    XRemoteSessionBar* self = (XRemoteSessionBar*)object;
+    if (!self || !self->m_d || !event) return;
+    if (XTimerEvent_timerId(event) == self->m_d->m_followTimer) {
+        xrb_followTick(self);
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+    XEvent_ignore((XEvent*)event);
+}
+
 /* ==================== 生命周期 ==================== */
 
 static void VX_xrb_deinit(XRemoteSessionBar* self)
@@ -683,6 +808,14 @@ static void VX_xrb_deinit(XRemoteSessionBar* self)
                              (XObject*)self, xrb_onClientMeta);
         d->m_client = NULL;
     }
+    if (d->m_viewHost) {
+        /* 解除宿主锚定(destroyed 连接 + 对象定时器随析构收尾)。 */
+        XObject_disconnect_1((XObject*)d->m_viewHost,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)self, xrb_hostDestroyedSlot);
+        d->m_viewHost = NULL;
+    }
+    xrb_followStop(self);
     if (d->m_collapseTimer) {
         XTimer_stop_base(d->m_collapseTimer);
         /* 同步删除而非 deleteLater: 析构内清自己的成员必须同步释放
@@ -722,6 +855,7 @@ XVtable* XRemoteSessionBar_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_EnterEvent, VX_xrb_enterEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_LeaveEvent, VX_xrb_leaveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VX_xrb_wheelEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VX_xrb_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_xrb_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -745,6 +879,7 @@ void XRemoteSessionBar_init(XRemoteSessionBar* self, XWidget* parent,
     XRect_init(&d->m_viewRect, 0, 0, 0, 0);
     XPoint_init(&d->m_ballPos, 0, 0);
     d->m_profile = XGUI_REMOTE_PROFILE_PERFORMANCE;
+    d->m_followTimer = XTIMER_INVALID_ID; /* 宿主跟随未启动(attachViewHost 启)。 */
 
     /* 初始收起为悬浮球(缺省 0×0 视图区, attachView 后摆位)。 */
     XWidget_resize((XWidget*)self, XRB_BALL_SIZE, XRB_BALL_SIZE);
@@ -876,15 +1011,45 @@ void XRemoteSessionBar_attachView(XRemoteSessionBar* self,
     XRect zero;
     if (!self || !self->m_d) return;
     d = (XRemoteSessionBarPrivate*)self->m_d;
+    /* 矩形口径与宿主锚定互斥: 矩形调用解除宿主跟随(后调者生效)。 */
+    if (d->m_viewHost) {
+        XObject_disconnect_1((XObject*)d->m_viewHost,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)self, xrb_hostDestroyedSlot);
+        d->m_viewHost = NULL;
+    }
+    xrb_followStop(self);
     XRect_init(&zero, 0, 0, 0, 0);
     d->m_viewRect = viewRect ? *viewRect : zero;
-    if (d->m_expanded)
-        xrb_snapBarTopCenter(self);
-    else if (!d->m_ballUserPlaced) {
-        xrb_defaultBallPos(d);
-        XWidget_setGeometry((XWidget*)self, d->m_ballPos.x, d->m_ballPos.y,
-                            XRB_BALL_SIZE, XRB_BALL_SIZE);
+    xrb_applyViewRect(self);
+}
+
+void XRemoteSessionBar_attachViewHost(XRemoteSessionBar* self, XWidget* host)
+{
+    XRemoteSessionBarPrivate* d;
+    if (!self || !self->m_d) return;
+    d = (XRemoteSessionBarPrivate*)self->m_d;
+    if (d->m_viewHost == host) return; /* 同宿主重复锚定: 幂等(跟随已在拍)。 */
+    if (d->m_viewHost) {
+        XObject_disconnect_1((XObject*)d->m_viewHost,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)self, xrb_hostDestroyedSlot);
+        d->m_viewHost = NULL;
     }
+    if (!host) {
+        /* NULL 等价 attachView(NULL): 清零矩形并解除锚定。 */
+        xrb_followStop(self);
+        XRect_init(&d->m_viewRect, 0, 0, 0, 0);
+        xrb_applyViewRect(self);
+        return;
+    }
+    d->m_viewHost = host;
+    XObject_connect_1((XObject*)host,
+                      XSignal(XObject_destroyed_signal),
+                      (XObject*)self, xrb_hostDestroyedSlot,
+                      XConnectionType_Direct);
+    xrb_followStart(self);
+    xrb_followTick(self); /* 立即按宿主当前几何/显隐贴一次(不等首拍)。 */
 }
 
 void XRemoteSessionBar_expand(XRemoteSessionBar* self)

@@ -227,12 +227,13 @@ static void dlgpg_status(const char* text)
 #if XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON && \
     XSCROLLAREA_ON
 /* 页面根=滚动区，几何由主文件 demo_layout_content 的堆叠布局统一分配
-   （本文件 build 时窗口尺寸尚未定版，无法一次收口）；滚动区非
-   widgetResizable 路径不回写内容尺寸（XScrollArea.c
-   xsa_updateWidgetGeometry），故子类化在 resizeEvent/showEvent 重排：
-   按根宽决定是否让位——收口内容定尺与说明列宽（行尾文字被控件矩形
-   裁剪），并重新通告内容尺寸驱动滚动范围。XWidget_paintTree 对子控件
-   逐级按自身矩形裁剪（XWidget.c:7146），收窄即截断行尾文字。 */
+   （本文件 build 时窗口尺寸尚未定版，无法一次收口）；子类在
+   resizeEvent/showEvent 收口档位重排：按根宽决定是否让位——收口内容
+   定尺与说明列宽（行尾文字被控件矩形裁剪），宽/高约束落定后经
+   XScrollArea_updateWidgetGeometry 触发框架重排版（widgetResizable
+   内容几何与滚动范围归框架，XScrollArea.c xsa_updateWidgetGeometry）。
+   XWidget_paintTree 对子控件逐级按自身矩形裁剪（XWidget.c:7146），
+   收窄即截断行尾文字。 */
 
 /** @brief 重排内容定尺/说明列宽与行盒方向（宽度分档判断的唯一入口）。
  *  @details [布局容器化 2026-10-17] 原说明列逐行 setGeometry 手写排布
@@ -368,26 +369,13 @@ static void dlgpg_scrollRelayout(XScrollArea* scroll)
     }
     XWidget_setFixedWidth(content, contentW);
     XWidget_setFixedHeight(content, contentH);
-    /* [内容根定尺 2026-10-26] 固定宽/高在本框架是「约束归布局」：控件
-       自己挂了布局即被判定为托管，约束变更不直接改几何（XWidget.c
-       setMinimumSize/setMaximumSize 的 managed 判定）。而滚动区从不
-       resize 它的内容控件（XAbstractScrollArea 只摆 viewport/滚动条），
-       内容根的实际宽度便停在初值（本例 ~200px）——其子控件（说明列，
-       起点 x≈190、宽 396）超出父控件，绘制被父级裁成一字宽（真机：
-       说明列只余「非」字；切走再切回整页重绘后即完整）。这里按收口
-       后的尺寸显式定尺内容根，使其与页面布局解算出的子控件位置同源。 */
-    XWidget_resize((XWidget*)content, contentW, contentH);
-#if XLAYOUT_ON && XLAYOUT_BOX_ON
-    /* 兜底重激活：内容定尺未变时 setFixed* 不触发 resize/activate，
-       显式跑一遍解算保证行盒按最新档位/列宽/方向分配（幂等，零开销
-       量级）。 */
-    XLayout_activate((XLayout*)&s_dlgpg.m_pageLayout);
-#endif
-    /* 收口后重新通告内容尺寸（内容尺寸驱动滚动范围，XScrollArea.c
-       xsa_updateWidgetGeometry 尾注；窄根档只剩纵向滚动，横条随之撤
-       销）。 */
-    XAbstractScrollArea_setContentSize((XAbstractScrollArea*)scroll,
-                                       contentW, contentH);
+    /* [滚动壳下沉 2026-10-29] 内容几何与滚动范围归框架：上面落定的
+       定尺约束在框架重排版里经内容 min/max 钳口生效（历史注：旧框架
+       滚动区从不 resize 内容控件、约束「归布局不改几何」，须本页显式
+       XWidget_resize+activate+setContentSize 收口——widgetResizable
+       路径接管后由 XScrollArea_updateWidgetGeometry 统一收口，行盒
+       激活在其 setGeometry→内容 resize 链内完成）。 */
+    XScrollArea_updateWidgetGeometry(scroll);
 }
 
 /** @brief resizeEvent：先由基类重排视口/滚动条，再按新根宽让位收口。 */
@@ -1144,10 +1132,12 @@ XWidget* demo_page_dialogs_build(XWidget* parent,
             return NULL;
         }
         /* 内容定尺：宽度按右缘 HUD 让位带在 dlgpg_scrollRelayout 收口
-           （build 时窗口尺寸未定版，resize/show 联动，见子类注）。 */
+           （build 时窗口尺寸未定版，resize/show 联动，见子类注）；
+           widgetResizable(true) 后内容几何/滚动范围由框架按约束接管。 */
         XWidget_setFixedWidth(content, DLGPG_PAGE_WIDTH);
         XWidget_setFixedHeight(content, DLGPG_PAGE_HEIGHT + 40);
         XScrollArea_setWidget((XScrollArea*)scroll, content);
+        XScrollArea_setWidgetResizable((XScrollArea*)scroll, true);
         s_dlgpg.m_root = content;
         s_dlgpg.m_scroll = (XWidget*)scroll;
     }

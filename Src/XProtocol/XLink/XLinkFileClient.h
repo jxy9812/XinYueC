@@ -19,7 +19,7 @@ extern "C" {
 
 #include "XLink_config.h"
 
-#if XLINK_ON && XLINK_FILE_ON && XLINK_CLIENT_ON
+#if XLINK_ON && XLINK_SESSION_ON && XLINK_FILE_ON && XLINK_CLIENT_ON
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -32,9 +32,7 @@ extern "C" {
 /* ========================================================================== */
 
 XCLASS_DEFINE_BEGING(XLinkFileClient)
-/* 定时器事件槽（与 XLinkClient 同口径）。 */
-XCLASS_DEFINE_ENUM(XLinkFileClient, timerEvent) = XCLASS_VTABLE_GET_SIZE(XObject),
-XCLASS_DEFINE_END(XLinkFileClient)
+XCLASS_DEFINE_EXTEND_END(XLinkFileClient, XObject)
 
 /**
  * @brief 会话驱动模式（pump 是否代泵承载会话）。
@@ -251,7 +249,7 @@ void* XLinkFileClient_finished_signal(XLinkFileClient* self,
                                       uint32_t transferId, bool ok,
                                       uint8_t status, const char* text);
 
-#endif /* XLINK_ON && XLINK_FILE_ON && XLINK_CLIENT_ON */
+#endif /* XLINK_ON && XLINK_SESSION_ON && XLINK_FILE_ON && XLINK_CLIENT_ON */
 
 #ifdef __cplusplus
 }

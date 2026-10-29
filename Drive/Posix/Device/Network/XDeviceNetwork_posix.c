@@ -18,9 +18,9 @@
  * Drive/Android/Device/Network/XDeviceNetwork_android.c（与 WiFi 后端同处
  * 平台层），本驱动只保留基础实现与调用点。 */
 #include "XDeviceNetwork_android.h"
-/* [MAC 2026-10-25] 接口枚举的 ioctl(SIOCGIFHWADDR) 在安卓 SELinux 下恒
- * 失败（/sys/class/net 对应用 uid 不可读），MAC 改由 Java 桥取。 */
-#include "XAndroidJniChannels.h"
+/* [MAC 2026-10-25][下沉 2026-10-29] 接口枚举的 ioctl(SIOCGIFHWADDR) 在
+ * 安卓 SELinux 下恒失败（/sys/class/net 对应用 uid 不可读），MAC 兜底
+ * 在平台层 XDeviceNetwork_android.c（Java 桥），本驱动只留调用点。 */
 #endif
 #include "XIODevice.h"
 #include "XIODevice_Protected.h"
@@ -1882,14 +1882,16 @@ struct XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterf
             close(fd);
         }
 #if defined(__ANDROID__)
-        /* [MAC 2026-10-25] 安卓应用域读不了 /sys/class/net，SIOCGIFHWADDR
-         * 在 SELinux enforcing 下恒失败（真机实证 Permission denied），
-         * 上面这段取不到任何值。改由 Java 侧（XNetAdapter）取系统认可的
-         * MAC（WifiInfo / java.net.NetworkInterface）。 */
+        /* [MAC 2026-10-25][下沉 2026-10-29] 安卓应用域读不了
+         * /sys/class/net，SIOCGIFHWADDR 在 SELinux enforcing 下恒失败
+         * （真机实证 Permission denied），上面这段取不到任何值。兜底
+         * 实现在平台层（XDeviceNetwork_android.c，Java 桥取系统认可的
+         * MAC），共享驱动只保留调用点——与 applyInterfaceConfig 同款
+         * 分层写法。 */
         if (!iface->m_hardwareAddress) {
             char macText[32];
-            if (XAndroid_netLinkMac(macText, (int)sizeof(macText)) &&
-                macText[0]) {
+            if (XAndroidNetwork_fillInterfaceMac(macText,
+                                                 (int)sizeof(macText))) {
                 iface->m_hardwareAddress = XString_create_utf8(macText);
             }
         }

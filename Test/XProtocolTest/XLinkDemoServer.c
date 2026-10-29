@@ -1,7 +1,7 @@
 ﻿/** @file       XLinkDemoServer.c
  * @brief      XLink 实战案例·服务端程序。
  * @details    服务端角色的全部代码，读这个文件就是"服务端怎么写"的答案：
- *               - 启用协议 4 行：XLinkServer_create + 设模板 + listen_base，
+ *               - 启用协议 4 行：XLinkServer_create + 设模板 + listen，
  *                 之后 accept/握手/心跳/判线/回收全部异步托管；
  *               - 登录认证（v1.3 剧情）：addUser 建账户 + setAuthEnabled
  *                 开认证 + 审计回调打日志——握手完成后会话进 Authenticating，
@@ -97,21 +97,29 @@ static void demo_server_dispatch(XLinkSession* self,
     switch (frame->m_msgClass) {
     case XLinkMsgClass_Request:
         if (frame->m_msgCode == XLINK_DEMO_CMD_PING) {
-            uint32_t seq = (payload && frame->m_payloadLen >= 4)
-                               ? XLinkCodec_getU32(payload) : 0;
+            uint32_t seq = 0;
             uint8_t pong = 1;
+            if (payload && frame->m_payloadLen >= 4)
+                XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                                  (uint8_t*)&seq, sizeof(seq));
             DEMO_LOG("server", "CMD_PING seq=%u -> 回执 pong", seq);
             XLinkSession_sendResponse(self, frame->m_requestId,
                                       frame->m_msgCode, &pong, 1);
             ds->handled++;
         } else if (frame->m_msgCode == XLINK_DEMO_CMD_ADD) {
-            uint32_t a = (payload && frame->m_payloadLen >= 4)
-                             ? XLinkCodec_getU32(payload) : 0;
-            uint32_t b = (payload && frame->m_payloadLen >= 8)
-                             ? XLinkCodec_getU32(&payload[4]) : 0;
+            uint32_t a = 0;
+            uint32_t b = 0;
             uint8_t out[4];
+            if (payload && frame->m_payloadLen >= 4)
+                XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                                  (uint8_t*)&a, sizeof(a));
+            if (payload && frame->m_payloadLen >= 8)
+                XMemory_read_data(&payload[4], XBYTE_ORDER_LITTLE_ENDIAN,
+                                  (uint8_t*)&b, sizeof(b));
             DEMO_LOG("server", "CMD_ADD %u+%u -> 回执和", a, b);
-            XLinkCodec_putU32(out, a + b);
+            a += b;
+            XMemory_write_data(out, XBYTE_ORDER_LITTLE_ENDIAN,
+                               (const uint8_t*)&a, sizeof(a));
             XLinkSession_sendResponse(self, frame->m_requestId,
                                       frame->m_msgCode, out, 4);
             ds->handled++;
@@ -126,29 +134,39 @@ static void demo_server_dispatch(XLinkSession* self,
         }
         break;
 
-    case XLinkMsgClass_Subscribe:
+    case XLinkMsgClass_Subscribe: {
+        uint32_t topic = 0;
         ds->subCount++;
-        DEMO_LOG("server", "客户端订阅 topic=%u",
-                 (payload && frame->m_payloadLen >= 4)
-                     ? XLinkCodec_getU32(payload) : 0);
+        if (payload && frame->m_payloadLen >= 4)
+            XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                              (uint8_t*)&topic, sizeof(topic));
+        DEMO_LOG("server", "客户端订阅 topic=%u", topic);
         break;
+    }
 
-    case XLinkMsgClass_Unsubscribe:
+    case XLinkMsgClass_Unsubscribe: {
+        uint32_t topic = 0;
         ds->unsubCount++;
-        DEMO_LOG("server", "客户端退订 topic=%u",
-                 (payload && frame->m_payloadLen >= 4)
-                     ? XLinkCodec_getU32(payload) : 0);
+        if (payload && frame->m_payloadLen >= 4)
+            XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                              (uint8_t*)&topic, sizeof(topic));
+        DEMO_LOG("server", "客户端退订 topic=%u", topic);
         break;
+    }
 
-    case XLinkMsgClass_Publish:
+    case XLinkMsgClass_Publish: {
         /* 推送谁发都行：客户端也能向服务端推（反向推送观察点）。 */
+        uint32_t topic = 0;
         ds->clientPubs++;
+        if (payload && frame->m_payloadLen >= 4)
+            XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                              (uint8_t*)&topic, sizeof(topic));
         DEMO_LOG("server", "收到客户端推送 topic=%u 业务载荷 %u 字节",
-                 (payload && frame->m_payloadLen >= 4)
-                     ? XLinkCodec_getU32(payload) : 0,
+                 topic,
                  (unsigned)(frame->m_payloadLen >= 4
                                 ? frame->m_payloadLen - 4 : 0));
         break;
+    }
 
     default:
         break;
@@ -315,8 +333,12 @@ static void demo_server_tick(XLinkServer* self, void* userData)
     /* 状态快照：一对多发布给所有订阅了 TOPIC_STATE 的客户端。 */
     {
         uint8_t buf[8];
-        XLinkCodec_putU32(&buf[0], now % 100000u);
-        XLinkCodec_putU32(&buf[4], ++ds->stateCounter);
+        uint32_t tickBase = now % 100000u;
+        uint32_t counter = ++ds->stateCounter;
+        XMemory_write_data(&buf[0], XBYTE_ORDER_LITTLE_ENDIAN,
+                           (const uint8_t*)&tickBase, sizeof(tickBase));
+        XMemory_write_data(&buf[4], XBYTE_ORDER_LITTLE_ENDIAN,
+                           (const uint8_t*)&counter, sizeof(counter));
         XLinkServer_publish(ds->srv, XLINK_DEMO_TOPIC_STATE, buf, 8);
     }
 
@@ -460,7 +482,7 @@ static DemoServer* demo_server_start(uint16_t port)
     XLinkServer_setTickCallback(ds->srv, demo_server_tick, ds);
     XLinkServer_setTickInterval(ds->srv, XLINK_DEMO_STATE_MS);
     ds->bindHost = XLinkDemo_envOr(XLINK_DEMO_BIND_ENV, "127.0.0.1");
-    if (!XLinkServer_listen_base(ds->srv, ds->bindHost, port)) {
+    if (!XLinkServer_listen(ds->srv, ds->bindHost, port)) {
         DEMO_LOG("server", "监听 %s:%u 失败（端口被占？）",
                  ds->bindHost, (unsigned)port);
         demo_server_release(ds);
@@ -498,7 +520,7 @@ int XLinkDemoServer_run(void)
     g_serverStartTick = XDateTime_currentMSecsSinceEpoch();
 
     /* 主循环 = 框架标准入口。服务端有自己的内建节拍定时器
-       （listen_base 时启动）：事件循环每圈派发定时器事件 →
+       （listen 时启动）：事件循环每圈派发定时器事件 →
        XLinkServer_pump → tick 回调（状态推送/慢命令回执/文件引擎推进/
        超时检查）+ 会话回收 + accept 兜底，全程无需应用再建定时器驱动。
        客户端离开（notify）或超时（tick 回调）经 quit 请求退出。 */

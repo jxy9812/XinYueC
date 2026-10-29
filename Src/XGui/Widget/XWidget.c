@@ -3192,6 +3192,28 @@ static void xwidget_touchGestureUpdate(XWidget* top, const XTouchEvent* te,
  *         构成 tap）；长按未认领→不再合成任何鼠标事件。
  *         tap 收口记录跨序列 lastTapEnd（双击窗口基准）；末尾清全部
  *         单序列状态。 */
+/** @brief 收口前补派末段 MOUSE_MOVE（[末段保派 2026-10-29]）。
+ *  @details 输入泵帧界折叠期间（fbdev 触摸泵把帧界内纯 UPDATE 帧折为
+ *           单帧末态，重排频率钳到帧界），末段位移的 MOUSE_MOVE 可能
+ *           整段未派发——收口位与上次合成 MOVE 基准有差时，先按收口位
+ *           补一次 MOUSE_MOVE 再 RELEASE（Qt 压缩保末帧口径：压缩只丢
+ *           中间帧，release 前位置必达）。拖拽语义控件不必再用 release
+ *           自带坐标自行补偿（demo 分割条尾帧补偿段同拍退役）。同位
+ *           零动作；长按认领序列不适用（该序列 END 前不再合成事件）。 */
+static void xwidget_touchGestureDeliverPendingMove(XWidget* top,
+                                                   const XPoint* topLocal)
+{
+    if (!top || !topLocal) return;
+    if (!g_touchGesture.m_synthPressSent) return;
+    if (topLocal->x == g_touchGesture.m_lastX &&
+        topLocal->y == g_touchGesture.m_lastY) return;
+    XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_MOVE,
+                                     XMouseButton_NoButton,
+                                     XMouseButton_LeftButton, topLocal);
+    g_touchGesture.m_lastX = topLocal->x;
+    g_touchGesture.m_lastY = topLocal->y;
+}
+
 static void xwidget_touchGestureEnd(XWidget* top, const XTouchEvent* te,
                                     const XPoint* topLocal)
 {
@@ -3204,6 +3226,7 @@ static void xwidget_touchGestureEnd(XWidget* top, const XTouchEvent* te,
         /* 左键按住拖动仿真收口：当前位置 RELEASE（拖动面控件按位移
          * 落定终点；同真实鼠标拖拽语义，不构成 tap）。 */
         if (g_touchGesture.m_synthPressSent) {
+            xwidget_touchGestureDeliverPendingMove(top, topLocal);
             XWidget_synthesizeMouseFromTouch(top,
                 XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
                 XMouseButton_NoButton, topLocal);
@@ -3219,6 +3242,7 @@ static void xwidget_touchGestureEnd(XWidget* top, const XTouchEvent* te,
            滚轮模式（press 已远偏移关闭）synthPressSent 已 false，
            不受影响。 */
         if (g_touchGesture.m_synthPressSent) {
+            xwidget_touchGestureDeliverPendingMove(top, topLocal);
             XWidget_synthesizeMouseFromTouch(top,
                 XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
                 XMouseButton_NoButton, topLocal);

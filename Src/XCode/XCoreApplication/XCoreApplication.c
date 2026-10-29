@@ -3,6 +3,7 @@
 #include "XMemory.h"
 #include "XHashMap.h"
 #include "XEvent.h"
+#include "XVarList.h"
 #include "XCryptographic.h"
 #include "XHashSet.h"
 #include "XMutex.h"
@@ -499,6 +500,43 @@ bool XCoreApplication_forwardEvent(XObject* receiver, XEvent* event, XEvent* ori
     if (originatingEvent)
         event->m_spontaneous = originatingEvent->m_spontaneous;
     return XCoreApplication_notifyInternal2(receiver, event);
+}
+
+/* ==================== postInvoke（对标 Qt 6.8 QMetaObject::invokeMethod 队列编组） ==================== */
+
+/** @brief postInvoke 兑现蹦床：XEventFunc（XEVENT_TYPE_FUNC_RUN）在接收者
+ *  所属线程由 VXObject_event 派发（XObject.c）时解包「回调+上下文」并兑现。
+ *  载荷两参数均为指针宽度值字节复制，兑现后随事件析构释放（XEventFunc_deinit
+ *  删 argList），无跨线程共享存活期。 */
+static void XCoreApplication_postInvoke_trampoline(XVarList* args)
+{
+    XCoreApplicationInvokeCallback callback;
+    void* userData;
+    if (!args) return;
+    XVarList_start(args);
+    callback = XVarList_arg(args, XCoreApplicationInvokeCallback);
+    userData = XVarList_arg(args, void*);
+    if (callback) callback(userData);
+}
+
+bool XCoreApplication_postInvoke(XObject* receiver,
+                                 XCoreApplicationInvokeCallback callback,
+                                 void* userData)
+{
+    XVarList* args;
+    XEventFunc* event;
+    if (!receiver || !callback) return false;
+    args = XVarList_Create(XVar(XCoreApplicationInvokeCallback, callback),
+                           XVar(void*, userData));
+    if (!args) return false;
+    event = XEventFunc_create(XCoreApplication_postInvoke_trampoline, args, NULL);
+    if (!event) {
+        XVarList_delete(args);
+        return false;
+    }
+    /* 所有权移交事件队列：投递失败由 postEvent 内部删除事件（含 argList）。 */
+    XCoreApplication_postEvent(receiver, (XEvent*)event, XEVENT_PRIORITY_NORMAL);
+    return true;
 }
 
 /* ==================== notifyInternal2（对标 Qt 6.8 QCoreApplication::notifyInternal2） ==================== */

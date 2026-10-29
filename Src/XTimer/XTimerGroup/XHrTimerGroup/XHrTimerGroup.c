@@ -2,6 +2,7 @@
 #include "XMemory.h"
 #include "XDateTime.h"
 #include "XThreadData.h"
+#include "XPrintf.h" /* [TIMERLAG 2026-10-29 诊断] */
 #include "XCoreApplication.h"
 #include <string.h>
 #if defined(__ANDROID__)
@@ -223,6 +224,19 @@ static void VXHrTimerGroup_tick(XHrTimerGroup* group) {
         XRBTreeNode* next_expired = (XRBTreeNode*)XBTreeNode_GetRChild(current_expired);
 
         // 执行用户回调
+        /* [TIMERLAG 2026-10-29 诊断] 兑现迟滞对账：提取快照与应到期
+         * 差 >800ms 打点（主循环 921ms 冻结定位——判 HrTimer 提取层
+         * 迟滞 vs TimerCallback/postEvent 派发层迟滞）。 */
+        if (current_time_ns > data->m_expire_time_ns &&
+            current_time_ns - data->m_expire_time_ns > 800000000ULL)
+            /* [复核修正 2026-10-29] m_interval 是 uint64_t（XTimerData.h:34），
+             * %zu 在 32 位 armel 上按 32 位取参必错位——与 [CLK]/[WHEELCLK]
+             * 的"绕开板上 %zu"既有口径同规，改 %llu 显式宽化。 */
+            XPrintf("[TIMERLAG] late=%.1fms interval=%llu\n",
+                    (double)(current_time_ns - data->m_expire_time_ns) /
+                        1e6,
+                    (unsigned long long)data->m_timer_data.m_interval);
+
         if (data->m_timer_data.m_timerCallback) {
             data->m_timer_data.m_timerCallback(data->m_timer_data.m_userData, &data->m_timer_data);
         }

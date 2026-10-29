@@ -24,6 +24,12 @@ static bool mbNoLink(XVfdDevice* dev)
     return false;
 }
 
+/** @brief 已解绑判定：detach 后到达的在途应答一律静默丢弃，不再 parse+emit */
+static bool mbDetached(const XVfdModbusBase* base)
+{
+    return !base || !base->m_mblink || !base->m_base.m_link;
+}
+
 /* =============== 内部完成回调 =============== */
 
 /** @brief 忙碌收口后的统一续程：设备空闲且有挂起动作时补发（动作优先机制） */
@@ -68,10 +74,11 @@ static void mbPollDone(XObject* owner, void* userData, bool ok, const XModbusDat
     int groupIdx = (int)(intptr_t)userData;
     XVfdModbusParseFunc parse;
     if (!base) return;
+    if (mbDetached(base)) return; /* 已解绑：在途应答静默丢弃 */
     base->m_base.m_busy = false;
     if (ok && result && groupIdx >= 0 && groupIdx < XVFD_MODBUS_POLL_GROUP_CAP
         && base->m_groupUsed[groupIdx]) {
-        parse = (XVfdModbusParseFunc)base->m_groupParse[groupIdx];
+        parse = base->m_groupParse[groupIdx];
         if (parse) parse((XObject*)base, result);
         XVfdDevice_emitStatus(&base->m_base);
     }
@@ -85,6 +92,7 @@ static void mbParamReadDone(XObject* owner, void* userData, bool ok, const XModb
     uint16_t paramId = (uint16_t)(intptr_t)userData;
     int32_t raw = 0;
     if (!base) return;
+    if (mbDetached(base)) return; /* 已解绑：在途应答静默丢弃 */
     if (ok && result && XModbusDataUnit_valueCount(result) > 0) {
         raw = (int32_t)(int16_t)XModbusDataUnit_value(result, 0);
     }
@@ -101,20 +109,11 @@ static void mbParamWriteDone(XObject* owner, void* userData, bool ok, const XMod
     uint16_t paramId = (uint16_t)(intptr_t)userData;
     (void)result;
     if (!base) return;
+    if (mbDetached(base)) return; /* 已解绑：在途应答静默丢弃 */
     base->m_base.m_busy = false;
     base->m_paramWritePending = false;
     XVfdDevice_paramWriteDone_signal(&base->m_base, paramId, ok);
     mbAfterIdle(base);
-}
-
-/** @brief 单写动作收口：发 commandCompleted → 清忙 */
-static void mbActionDone(XObject* owner, void* userData, bool ok, const XModbusDataUnit* result)
-{
-    XVfdModbusBase* base = (XVfdModbusBase*)owner;
-    XVfdOperation op = (XVfdOperation)(intptr_t)userData;
-    (void)result;
-    if (!base) return;
-    XVfdDevice_emitDone(&base->m_base, op, ok);
 }
 
 /* =============== 虚函数实现（XVfdDevice 槽） =============== */
@@ -131,13 +130,19 @@ static bool VXVfdModbusBase_PollDue(XVfdDevice* dev)
         base->m_pollCursor = (base->m_pollCursor + 1) % XVFD_MODBUS_POLL_GROUP_CAP;
         if (!base->m_groupUsed[idx]) continue;
         if ((base->m_base.m_pollItems & base->m_groupMask[idx]) == 0) continue;
-        if (XVfdModbusBase_submitRead(base, base->m_groupAddr[idx], base->m_groupCount[idx],
-                                      mbPollDone, (void*)(intptr_t)idx, XModbusRequestPriority_Normal)) {
-            base->m_base.m_busy = true;
-            XVfdLink_markPollSent(XVfdDevice_link(&base->m_base), (XObject*)base);
-            return true;
+        /* 先置忙再提交：submit 内部可能同步终态收口（断链等，done 回调就地
+         * 清忙并补发挂起动作），提交后不得再置忙——否则再无收口路径，设备
+         * 单飞从下一拍起永久卡死。拒收则恢复空闲，下拍重试。 */
+        base->m_base.m_busy = true;
+        if (!XVfdModbusBase_submitRead(base, base->m_groupAddr[idx], base->m_groupCount[idx],
+                                       mbPollDone, (void*)(intptr_t)idx, XModbusRequestPriority_Normal)) {
+            base->m_base.m_busy = false;
+            return false; /* 链路拒收（忙/表满）：下拍重试 */
         }
-        return false; /* 链路拒收（忙/表满）：下拍重试 */
+        /* 受理即推进节拍：同步终态的健康失败已由链路记账（累计触发静默退避），
+         * 推进 lastSent 防同拍紧耦合重试。 */
+        XVfdLink_markPollSent(XVfdDevice_link(&base->m_base), (XObject*)base);
+        return true;
     }
     return false;
 }
@@ -155,14 +160,18 @@ static bool VXVfdModbusBase_ReadParam(XVfdDevice* dev, uint16_t paramId)
         dev->m_lastError = XVfdError_Busy;
         return false;
     }
-    if (!XVfdModbusBase_submitRead(base, base->m_params[paramId].m_addr, 1,
-                                   mbParamReadDone, (void*)(intptr_t)paramId, XModbusRequestPriority_Normal)) {
-        dev->m_lastError = XVfdError_Busy;
-        return false;
-    }
+    /* 先置忙与挂起标记再提交：同步终态收口时 mbParamReadDone 就地清忙、
+     * 清标记并发 paramReadDone；提交后被拒才回滚。提交后不得再置忙。 */
     dev->m_busy = true;
     base->m_paramReadPending = true;
     base->m_pendingParamId = paramId;
+    if (!XVfdModbusBase_submitRead(base, base->m_params[paramId].m_addr, 1,
+                                   mbParamReadDone, (void*)(intptr_t)paramId, XModbusRequestPriority_Normal)) {
+        dev->m_busy = false;
+        base->m_paramReadPending = false;
+        dev->m_lastError = XVfdError_Busy;
+        return false;
+    }
     return true;
 }
 
@@ -194,22 +203,50 @@ static bool VXVfdModbusBase_WriteParam(XVfdDevice* dev, uint16_t paramId, int32_
         dev->m_lastError = XVfdError_ParamRejected;
         return false;
     }
-    if (!XVfdModbusBase_submitWriteSingle(base, desc->m_addr, (uint16_t)(uint32_t)raw,
-                                          mbParamWriteDone, (void*)(intptr_t)paramId, XModbusRequestPriority_Normal)) {
-        dev->m_lastError = XVfdError_Busy;
-        return false;
-    }
+    /* 先置忙与挂起标记再提交：同步终态收口时 mbParamWriteDone 就地清忙、
+     * 清标记并发 paramWriteDone；提交后被拒才回滚。提交后不得再置忙。 */
     dev->m_busy = true;
     base->m_paramWritePending = true;
     base->m_pendingParamId = paramId;
+    if (!XVfdModbusBase_submitWriteSingle(base, desc->m_addr, (uint16_t)(uint32_t)raw,
+                                          mbParamWriteDone, (void*)(intptr_t)paramId, XModbusRequestPriority_Normal)) {
+        dev->m_busy = false;
+        base->m_paramWritePending = false;
+        dev->m_lastError = XVfdError_Busy;
+        return false;
+    }
     return true;
 }
 
 /* =============== 虚函数表 / 生命周期 =============== */
+
+/** @brief 析构收口：取消本设备在链路上的全部在途登记并注销轮询计划 */
+static void VXVfdModbusBase_deinit(XObject* obj)
+{
+    XVfdModbusBase* base = (XVfdModbusBase*)obj;
+    int i;
+    if (!base) return;
+    if (base->m_mblink) {
+        /* 设备销毁前先摘除链路侧全部在途登记：此后应答不再回调本设备
+         * （堵住"设备销毁后链路 pending 表仍回调悬垂 owner"的 UAF）。 */
+        XVfdModbusLink_cancelOwner(base->m_mblink, (XObject*)base);
+    }
+    XVfdDevice_detach(&base->m_base); /* 基类内注销链路轮询计划 */
+    base->m_mblink = NULL;
+    base->m_base.m_busy = false;
+    for (i = 0; i < XVFD_MODBUS_PENDING_CAP; ++i) {
+        base->m_pending[i].m_op = XVfdOperation_None;
+    }
+    base->m_pendingHead = 0;
+    base->m_pendingCount = 0;
+    XClass_Parent(XVfdDevice, EXClass_Deinit, void (*)(XObject*))((XObject*)base);
+}
+
 XVtable* XVfdModbusBase_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XVfdModbusBase)
     XVTABLE_INHERIT_XCLASS(XVfdDevice);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXVfdModbusBase_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_PollDue, VXVfdModbusBase_PollDue);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_ReadParam, VXVfdModbusBase_ReadParam);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_WriteParam, VXVfdModbusBase_WriteParam);
@@ -252,10 +289,20 @@ bool XVfdModbusBase_setLink(XVfdModbusBase* base, XVfdModbusLink* link, int unit
 
 void XVfdModbusBase_detach(XVfdModbusBase* base)
 {
+    int i;
     if (!base) return;
+    if (base->m_mblink) {
+        /* 摘除本设备的全部在途登记：此后应答不再回调已解绑设备 */
+        XVfdModbusLink_cancelOwner(base->m_mblink, (XObject*)base);
+    }
     XVfdDevice_detach(&base->m_base); /* 基类内注销链路计划 */
     base->m_mblink = NULL;
     base->m_base.m_busy = false;
+    for (i = 0; i < XVFD_MODBUS_PENDING_CAP; ++i) {
+        base->m_pending[i].m_op = XVfdOperation_None;
+    }
+    base->m_pendingHead = 0;
+    base->m_pendingCount = 0;
 }
 
 int XVfdModbusBase_paramCount(const XVfdModbusBase* base)
@@ -289,7 +336,7 @@ int XVfdModbusBase_addPollGroup(XVfdModbusBase* base, uint16_t addr, uint16_t co
         base->m_groupAddr[i] = addr;
         base->m_groupCount[i] = count;
         base->m_groupMask[i] = areaMask;
-        base->m_groupParse[i] = (void*)parse;
+        base->m_groupParse[i] = parse;
         base->m_groupUsed[i] = true;
         return i;
     }
@@ -372,6 +419,46 @@ int XVfdModbusBase_actionEntry(XVfdModbusBase* base, XVfdOperation op,
 XVfdOperation XVfdModbusBase_currentOp(XVfdModbusBase* base)
 {
     return base ? base->m_op : XVfdOperation_None;
+}
+
+/* =============== 品牌子类公共去重（Protected） =============== */
+
+void XVfdModbusBase_simpleWriteDone(XObject* owner, void* userData, bool ok,
+                                    const XModbusDataUnit* result)
+{
+    (void)userData;
+    (void)result;
+    if (!owner) return;
+    XVfdModbusBase_finishAction((XVfdModbusBase*)owner, ok);
+}
+
+const XVfdFaultEntry* XVfdModbusBase_faultEntry_const(const XVfdFaultEntry* table, int count,
+                                                      uint16_t code)
+{
+    int i;
+    if (!table || count <= 0) return NULL;
+    for (i = 0; i < count; ++i) {
+        if (table[i].m_code == code) return &table[i];
+    }
+    return NULL;
+}
+
+bool XVfdModbusBase_submitActionWrite(XVfdModbusBase* base, XVfdOperation op,
+                                      uint16_t addr, uint16_t value)
+{
+    if (!base) return false;
+    if (!base->m_mblink) {
+        base->m_base.m_lastError = XVfdError_NotAttached;
+        return false;
+    }
+    if (!XVfdModbusBase_busyStart(base, op)) return false;
+    if (!XVfdModbusBase_submitWriteSingle(base, addr, value,
+                                          XVfdModbusBase_simpleWriteDone, NULL,
+                                          XModbusRequestPriority_High)) {
+        XVfdModbusBase_finishAction(base, false);
+        return false;
+    }
+    return true;
 }
 
 #endif /* XVFD_DEVICE_ON */

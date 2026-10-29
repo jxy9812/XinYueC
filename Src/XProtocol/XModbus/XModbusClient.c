@@ -102,6 +102,19 @@ static void VXModbusClient_deinit(XModbusClient* client) {
     }
     if (client->m_poolMap)
     {
+        /* [A7 复核根修] 池内是 pollRawRequest 注册的重复型定时器：原实现直接
+         * 删容器不逐条 killTimer，定时器随事件循环存活到对象销毁才统一回收，
+         * 违反定时器纪律（kill 后 id 复位 XTIMER_INVALID_ID）。 */
+        for_each_iterator(client->m_poolMap, XHashMap, it)
+        {
+            XPair* pair = XHashMap_iterator_data(&it);
+            XTimerId* pollTimer = &XPair_First(pair, XTimerId);
+            if (pollTimer && *pollTimer != XTIMER_INVALID_ID) {
+                XObject_killTimer((XObject*)client, *pollTimer);
+                *pollTimer = XTIMER_INVALID_ID;
+            }
+        }
+        XHashMap_clear_base(client->m_poolMap);
         XClassDelete(client->m_poolMap);
         client->m_poolMap = NULL;
     }

@@ -108,14 +108,20 @@ static void demo_client_dispatch(XLinkSession* self,
         if (payload && g_cliRespLen)
             memcpy(g_cliRespBuf, payload, g_cliRespLen);
     } else if (frame->m_msgClass == XLinkMsgClass_Publish) {
-        uint32_t topic = (payload && frame->m_payloadLen >= 4)
-                             ? XLinkCodec_getU32(payload) : 0;
+        uint32_t topic = 0;
+        uint32_t tick = 0;
+        if (payload && frame->m_payloadLen >= 4)
+            XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                              (uint8_t*)&topic, sizeof(topic));
         if (topic == XLINK_DEMO_TOPIC_STATE && frame->m_payloadLen >= 12) {
             g_cliStateCount++;
-            g_cliLastStateCounter = XLinkCodec_getU32(&payload[8]);
+            XMemory_read_data(&payload[8], XBYTE_ORDER_LITTLE_ENDIAN,
+                              (uint8_t*)&g_cliLastStateCounter,
+                              sizeof(g_cliLastStateCounter));
+            XMemory_read_data(&payload[4], XBYTE_ORDER_LITTLE_ENDIAN,
+                              (uint8_t*)&tick, sizeof(tick));
             DEMO_LOG("client", "状态推送 #%d tick=%u counter=%u",
-                     g_cliStateCount, XLinkCodec_getU32(&payload[4]),
-                     g_cliLastStateCounter);
+                     g_cliStateCount, tick, g_cliLastStateCounter);
         } else if (topic == XLINK_DEMO_TOPIC_ALARM) {
             g_cliAlarmCount++;
             DEMO_LOG("client", "事件通知：%.*s",
@@ -352,6 +358,7 @@ int XLinkDemo_client_flow(uint16_t port)
     uint64_t start;
     uint64_t lastAttempt;
     uint32_t reqId = 0;
+    uint32_t wire32 = 0;
     uint8_t out[8];
     const char* host = XLinkDemo_envOr(XLINK_DEMO_HOST_ENV, "127.0.0.1");
 
@@ -443,7 +450,9 @@ int XLinkDemo_client_flow(uint16_t port)
 
     /* --- 1) PING：最小请求-应答 --- */
     g_cliRespCmd = 0;
-    XLinkCodec_putU32(out, 42u);
+    wire32 = 42u;
+    XMemory_write_data(out, XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&wire32, sizeof(wire32));
     if (!XLinkSession_sendRequest(session, XLINK_DEMO_CMD_PING, out, 4,
                                   &reqId)) {
         DEMO_LOG0("client", "PING 下发失败");
@@ -460,13 +469,23 @@ int XLinkDemo_client_flow(uint16_t port)
 
     /* --- 2) ADD：载荷序列化往返 --- */
     g_cliRespCmd = 0;
-    XLinkCodec_putU32(out, 3u);
-    XLinkCodec_putU32(&out[4], 4u);
+    wire32 = 3u;
+    XMemory_write_data(out, XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&wire32, sizeof(wire32));
+    wire32 = 4u;
+    XMemory_write_data(&out[4], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&wire32, sizeof(wire32));
     XLinkSession_sendRequest(session, XLINK_DEMO_CMD_ADD, out, 8, &reqId);
     DEMO_LOG("client", "CMD_ADD 3+4 已下发（reqId=%u）", reqId);
     if (!demo_client_wait(demo_cond_resp, 2000)
-        || g_cliRespCmd != XLINK_DEMO_CMD_ADD || g_cliRespLen < 4
-        || XLinkCodec_getU32(g_cliRespBuf) != 7u) {
+        || g_cliRespCmd != XLINK_DEMO_CMD_ADD || g_cliRespLen < 4) {
+        DEMO_LOG0("client", "ADD 未收到 3+4=7");
+        goto fail;
+    }
+    wire32 = 0;
+    XMemory_read_data(g_cliRespBuf, XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&wire32, sizeof(wire32));
+    if (wire32 != 7u) {
         DEMO_LOG0("client", "ADD 未收到 3+4=7");
         goto fail;
     }

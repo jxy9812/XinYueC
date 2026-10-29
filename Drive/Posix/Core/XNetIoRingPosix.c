@@ -44,6 +44,8 @@
 #include <stdio.h>
 #include <errno.h>
 #include <poll.h>
+#include <time.h>
+#include "XPrintf.h" /* [ILOOP 2026-10-29 诊断] stdout 通道对账打点。 */
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/eventfd.h>
@@ -1241,12 +1243,28 @@ static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self,
         struct epoll_event events[XNET_EPOLL_MAX_EVENTS];
         int n;
         int i;
+        /* [ILOOP 2026-10-29 诊断] epoll 等待对账：EINTR 次数 + 总时长
+         * （主循环 921ms 冻结定位——判 EINTR 重试风暴 vs 单次长睡）。 */
+        struct timespec itb, ite;
+        unsigned eintr = 0;
+        clock_gettime(CLOCK_MONOTONIC, &itb);
         uint64_t enterUs = xnet_wakeProfEnabled()
                                ? XAbstractNetIoRing_profNowUs() : 0;
         do {
             n = epoll_wait(posix->m_epollFd, events, XNET_EPOLL_MAX_EVENTS,
                            timeoutMs);
+            if (n < 0 && errno == EINTR)
+                ++eintr;
         } while (n < 0 && errno == EINTR);
+        clock_gettime(CLOCK_MONOTONIC, &ite);
+        if ((ite.tv_sec - itb.tv_sec) * 1e3 +
+                (double)(ite.tv_nsec - itb.tv_nsec) / 1e6 >
+            50.0)
+            XPrintf("[ILOOP] to=%d dur=%.1fms eintr=%u n=%d errno=%d\n",
+                    timeoutMs,
+                    (ite.tv_sec - itb.tv_sec) * 1e3 +
+                        (double)(ite.tv_nsec - itb.tv_nsec) / 1e6,
+                    eintr, n, errno);
         /* [wake] 段①: 网络 fd 就绪唤醒(wakeFd 纯唤醒不计); 超时醒计一轮。 */
         if (enterUs) {
             bool netReady = false;

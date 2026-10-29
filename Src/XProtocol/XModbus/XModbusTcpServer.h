@@ -5,6 +5,7 @@
 #include "XModbusPdu.h"
 #include "XTcpServer.h"
 #include "XTcpSocket.h"
+#include "XTimer.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -60,7 +61,14 @@ typedef struct XModbusTcpServer {
     XModbusServer m_base;                   ///< 继承自XModbusServer
     XTcpServer* m_tcpServer;                ///< TCP服务器对象
     XMap* m_connectedClients;               ///< 已连接客户端映射 (XTcpSocket* -> XByteArray*)
-    XModbusTcpConnectionObserver* m_observer; ///< 连接观察器（可选）
+    XModbusTcpConnectionObserver* m_observer; ///< 连接观察者（可选）
+    /* [死链巡检下沉 2026-10-29] 服务端内置 CLOSE-WAIT/半开连接巡检定时
+     * 器（1s；open 启动、close/deinit 停止，随父子链级联析构）。探测复用
+     * posix 平台「假 EOF 复核」手法（XDeviceNetwork_posix.c 同款
+     * recv(MSG_PEEK|MSG_DONTWAIT)，不消费字节与 IO 环在途读无竞态），
+     * Windows 探测通道未内置（原应用层机制即 _WIN32 裁剪），定时器不
+     * 启动、sweep 为空操作。 */
+    XTimer* m_sweepTimer;                   ///< 死链巡检定时器（内置）
 } XModbusTcpServer;
 
 /******************************************************************************************
@@ -97,6 +105,26 @@ void XModbusTcpServer_init(XModbusTcpServer* server);
  */
 void XModbusTcpServer_installConnectionObserver(XModbusTcpServer* server,
     XModbusTcpConnectionObserver* observer);
+
+/******************************************************************************************
+ * 死链巡检（[下沉 2026-10-29] 应用层 mb_slaveSweepDeadClients 机制收编）
+ ******************************************************************************************/
+
+/**
+ * @brief 立即执行一轮死链（CLOSE-WAIT/半开）巡检回收
+ * @param server XModbusTcpServer实例指针
+ * @details 对 m_connectedClients 逐条做 recv(MSG_PEEK|MSG_DONTWAIT)
+ *          假 EOF 复核（posix；Windows 空操作）：pr>0=有数据待读（活链，
+ *          交正常 readyRead 路径）；pr<0 且 EAGAIN/EWOULDBLOCK=空闲活链；
+ *          pr==0=对端真 FIN 或其余硬错误（ECONNRESET/ENOTSOCK/EBADF，
+ *          含已 close 残留表项）→ 摘映射表、断信号、发
+ *          modbusClientDisconnected、close+脱父链+deleteLater（同
+ *          onClientDisconnected 语义）。探测不消费字节，与 IO 环在途读
+ *          无竞态；表空零开销。
+ * @note 服务端已内置 1s 周期定时器（open 启动/close 停止）自动巡检，
+ *       本 API 供调用方按需手动触发或自管巡检节奏。
+ */
+void XModbusTcpServer_sweepDeadClients(XModbusTcpServer* server);
 
 /******************************************************************************************
  * 继承自父类的API（使用宏定义）

@@ -2129,9 +2129,9 @@ static void xr_test_sessionBar(void)
     xr_expect(XWidget_isVisible(barWidget) &&
                   XRemoteSessionBar_isExpanded(bar),
               "悬浮条: 连接后自动浮现并展开");
-    xr_expect(XWidget_width(barWidget) == 500 &&
+    xr_expect(XWidget_width(barWidget) == 576 &&
                   XWidget_height(barWidget) == 34,
-              "悬浮条: 展开态吸附几何(500x34)");
+              "悬浮条: 展开态吸附几何(576x34)");
 
     /* 2) 展开/收起形态切换(悬浮球 44x44)。 */
     XRemoteSessionBar_collapse(bar);
@@ -2181,6 +2181,48 @@ static void xr_test_sessionBar(void)
         xr_expect(XRemoteSessionBar_profile(bar) ==
                       XGUI_REMOTE_PROFILE_RESOURCE,
                   "悬浮条: 界面档位选择登记(resource)");
+    }
+
+    /* 4b) 宿主锚定自跟随(attachViewHost, 2026-10-29): 宿主 Move/Resize
+     *     → 条/球自动重贴(30ms 跟随拍, 同 XFocusFrame 口径); 宿主销毁
+     *     经 destroyed 解除不崩。矩形口径(上文 1))不经过此路径。 */
+    {
+        XWidget* host;
+        XRemoteSessionBar* bar2;
+        host = XWidget_create(e.top, 0);
+        bar2 = XRemoteSessionBar_create(e.top, 0);
+        xr_expect(host != NULL && bar2 != NULL, "悬浮条: 锚定场景宿主/条实例化");
+        if (host && bar2) {
+            XWidget_setGeometry(host, 10, 20, 300, 100);
+            XWidget_show(host);
+            XRemoteSessionBar_setClient(bar2, e.client); /* 已流式: 立即浮现展开。 */
+            XRemoteSessionBar_attachViewHost(bar2, host);
+            xr_pumpFor(150); /* ≥5 个 30ms 跟随拍。 */
+            /* 展开条吸附宿主矩形顶部居中: x=10+(300-576)/2→0, y=20+4。 */
+            xr_expect(XWidget_x((XWidget*)bar2) == 0 &&
+                          XWidget_y((XWidget*)bar2) == 24 &&
+                          XWidget_width((XWidget*)bar2) == 576 &&
+                          XRemoteSessionBar_isExpanded(bar2),
+                      "悬浮条: 宿主锚定展开条吸附(0,24,576)");
+            /* 宿主 Move+Resize → 下一跟随拍自动重贴。 */
+            XWidget_setGeometry(host, 0, 60, 320, 80);
+            xr_pumpFor(150);
+            xr_expect(XWidget_x((XWidget*)bar2) == 0 &&
+                          XWidget_y((XWidget*)bar2) == 64,
+                      "悬浮条: 宿主几何变化自动重贴(y=64)");
+            /* 收起球默认位=宿主矩形顶部居中(未用户摆位, 随宿主)。 */
+            XRemoteSessionBar_collapse(bar2);
+            xr_expect(XWidget_x((XWidget*)bar2) == (320 - 44) / 2 &&
+                          XWidget_y((XWidget*)bar2) == 64,
+                      "悬浮条: 锚定口径悬浮球默认位随宿主");
+            /* 宿主销毁: destroyed 解除锚定(退化最近矩形), 条存活不崩。 */
+            XClassDelete((XClass*)host);
+            xr_pumpFor(100);
+            xr_expect(XWidget_y((XWidget*)bar2) == 64,
+                      "悬浮条: 宿主销毁后条保持最近位不崩");
+            XRemoteSessionBar_setClient(bar2, NULL);
+            XClassDelete((XClass*)bar2);
+        }
     }
 
     /* 5) 断开按钮: 合成点击真实按钮路径 → BYE(NORMAL) → 会话断开、

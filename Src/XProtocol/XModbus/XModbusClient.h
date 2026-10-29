@@ -81,7 +81,9 @@ typedef struct XModbusClient {
 /**
  * @brief 初始化XModbusClient的虚函数表
  * @return 指向初始化完成的XVtable的指针
- * @note 该函数是线程安全的，多次调用返回同一虚表实例
+ * @note 虚表在首次调用时初始化并缓存，此后返回同一实例。
+ *       本框架为单线程事件循环模型：class_init 无锁保护，
+ *       须在事件循环启动前（或同一线程内）调用，通常由 create 接口自动完成。
  */
 XVtable* XModbusClient_class_init(void);
 
@@ -235,7 +237,8 @@ XModbusReply* XModbusClient_pollRawRequest_ref(XModbusClient* client,
  * @brief 取消指定客户端的当前轮询请求（如果有正在进行的轮询）
  * @param client 客户端实例指针
  * @return 成功找到并取消该Reply的轮询返回true；参数无效或该Reply不在轮询中返回false
- * @note 线程安全，可在另一个线程或信号处理函数中调用
+ * @note 非线程安全：内部直接遍历轮询池并 killTimer，只能在拥有该客户端
+ *       事件循环的同一线程内调用（不要在另一线程或信号处理函数中调用）
  * @note 被取消的轮询函数将返回 NULL，且不会产生 XModbusReply 对象
  */
 bool XModbusClient_cancelPoll(XModbusClient* client, XModbusReply*reply);

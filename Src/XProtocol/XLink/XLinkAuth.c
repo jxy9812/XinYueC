@@ -90,10 +90,9 @@ bool XLinkAuth_encodeChallenge(const XLinkAuthChallengePayload* msg,
     buf[1] = XLINK_AUTH_SALT_BYTES;
     buf[2] = 0;
     buf[3] = 0;
-    buf[4] = (uint8_t)(msg->m_iterations & 0xFFu);
-    buf[5] = (uint8_t)((msg->m_iterations >> 8) & 0xFFu);
-    buf[6] = (uint8_t)((msg->m_iterations >> 16) & 0xFFu);
-    buf[7] = (uint8_t)((msg->m_iterations >> 24) & 0xFFu);
+    XMemory_write_data(&buf[4], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&msg->m_iterations,
+                       sizeof(msg->m_iterations));
     memcpy(&buf[8], msg->m_salt, XLINK_AUTH_SALT_BYTES);
     memcpy(&buf[8 + XLINK_AUTH_SALT_BYTES], msg->m_nonce,
            XLINK_AUTH_NONCE_BYTES);
@@ -107,17 +106,15 @@ bool XLinkAuth_decodeChallenge(const uint8_t* buf, size_t length,
 {
     size_t need = XLINK_AUTH_CHALLENGE_HEADER
                   + XLINK_AUTH_SALT_BYTES + XLINK_AUTH_NONCE_BYTES;
-    uint32_t iterations;
+    uint32_t iterations = 0;
     if (!buf || !out || length < need)
         return false;
     if (buf[1] != XLINK_AUTH_SALT_BYTES)
         return false;
     if (buf[0] != (uint8_t)XLinkAuthMethod_IteratedHmac)
         return false;
-    iterations = (uint32_t)buf[4]
-                 | ((uint32_t)buf[5] << 8)
-                 | ((uint32_t)buf[6] << 16)
-                 | ((uint32_t)buf[7] << 24);
+    XMemory_read_data(&buf[4], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&iterations, sizeof(iterations));
     if (iterations == 0)
         return false;
     memset(out, 0, sizeof(*out));
@@ -134,13 +131,14 @@ bool XLinkAuth_decodeChallenge(const uint8_t* buf, size_t length,
 bool XLinkAuth_encodeResponse(const XLinkAuthResponsePayload* msg, uint8_t* buf,
                               size_t capacity, size_t* outLen)
 {
+    uint16_t respLen = (uint16_t)XLINK_AUTH_NONCE_BYTES;
     size_t total = XLINK_AUTH_RESPONSE_HEADER + XLINK_AUTH_NONCE_BYTES;
     if (!msg || !buf || capacity < total)
         return false;
     buf[0] = msg->m_method;
     buf[1] = 0;
-    buf[2] = (uint8_t)(XLINK_AUTH_NONCE_BYTES & 0xFFu);
-    buf[3] = (uint8_t)((XLINK_AUTH_NONCE_BYTES >> 8) & 0xFFu);
+    XMemory_write_data(&buf[2], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&respLen, sizeof(respLen));
     memcpy(&buf[4], msg->m_response, XLINK_AUTH_NONCE_BYTES);
     if (outLen)
         *outLen = total;
@@ -150,10 +148,11 @@ bool XLinkAuth_encodeResponse(const XLinkAuthResponsePayload* msg, uint8_t* buf,
 bool XLinkAuth_decodeResponse(const uint8_t* buf, size_t length,
                               XLinkAuthResponsePayload* out)
 {
-    uint16_t respLen;
+    uint16_t respLen = 0;
     if (!buf || !out || length < XLINK_AUTH_RESPONSE_HEADER)
         return false;
-    respLen = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
+    XMemory_read_data(&buf[2], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&respLen, sizeof(respLen));
     if (respLen != XLINK_AUTH_NONCE_BYTES)
         return false;
     if (length < XLINK_AUTH_RESPONSE_HEADER + (size_t)respLen)
@@ -170,6 +169,7 @@ bool XLinkAuth_encodeResult(const XLinkAuthResultPayload* msg, uint8_t* buf,
 {
     size_t textLen;
     size_t total;
+    uint16_t textLenU16;
     if (!msg || !buf)
         return false;
     textLen = msg->m_textLen;
@@ -180,8 +180,9 @@ bool XLinkAuth_encodeResult(const XLinkAuthResultPayload* msg, uint8_t* buf,
         return false;
     buf[0] = msg->m_status;
     buf[1] = msg->m_role;
-    buf[2] = (uint8_t)(textLen & 0xFFu);
-    buf[3] = (uint8_t)((textLen >> 8) & 0xFFu);
+    textLenU16 = (uint16_t)textLen;
+    XMemory_write_data(&buf[2], XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&textLenU16, sizeof(textLenU16));
     if (textLen > 0)
         memcpy(&buf[XLINK_AUTH_RESULT_HEADER], msg->m_text, textLen);
     memcpy(&buf[XLINK_AUTH_RESULT_HEADER + textLen], msg->m_serverProof,
@@ -194,11 +195,12 @@ bool XLinkAuth_encodeResult(const XLinkAuthResultPayload* msg, uint8_t* buf,
 bool XLinkAuth_decodeResult(const uint8_t* buf, size_t length,
                             XLinkAuthResultPayload* out)
 {
-    uint16_t textLen;
+    uint16_t textLen = 0;
     size_t need;
     if (!buf || !out || length < XLINK_AUTH_RESULT_HEADER)
         return false;
-    textLen = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
+    XMemory_read_data(&buf[2], XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&textLen, sizeof(textLen));
     if (textLen > XLINK_AUTH_TEXT_BYTES)
         return false;
     need = XLINK_AUTH_RESULT_HEADER + (size_t)textLen + XLINK_AUTH_NONCE_BYTES;

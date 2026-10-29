@@ -108,8 +108,11 @@ static void clearAllPendingRequests(XModbusTcpClient* client, XModbusDevice_Erro
                 XObject_killTimer((XObject*)client, pending->timeoutTimer);
             }
             if (pending->reply && error != XModbusDevice_NoError) {
+                /* [A5 复核根修] setError 已触发 finished（终态），状态机不再
+                 * 回拉 No_Started（终态复活）；对齐 Qt：进入终态不复活，
+                 * 批量清理统一落在 Finished 终态。 */
                 XModbusReply_setError(pending->reply, error, errorMsg);
-                XModbusReply_setState(pending->reply, XModbusReply_State_No_Started);
+                XModbusReply_setState(pending->reply, XModbusReply_State_Finished);
             }
         }
     }
@@ -500,7 +503,10 @@ static void processReceivedFrame(XModbusTcpClient* client)
 
         // Unit ID 检查
         if (unitId != pending->unitId) {
-            XModbusReply_setError(reply, XModbusReply_State_Finished, "Unit ID mismatch");
+            /* [A6 同族复核根修] 原实现把 XModbusReply_State_Finished(=4) 当
+             * 错误码传入 setError —— 数值上撞上 XModbusDevice_ConfigurationError，
+             * 类型跨用。对齐 RTU 客户端地址不匹配口径，改用 UnknownError。 */
+            XModbusReply_setError(reply, XModbusDevice_UnknownError, "Unit ID mismatch");
             XModbusReply_setState(reply, XModbusReply_State_Finished);
             XHashMap_remove_base(client->m_pendingRequests, &transactionId);
             XByteArray_remove_base(buffer, 0, expectedLen);

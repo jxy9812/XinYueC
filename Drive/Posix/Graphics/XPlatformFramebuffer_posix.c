@@ -65,6 +65,8 @@
 #include <linux/fb.h>
 
 #include "XImageFormat.h"
+#include "XPrintf.h" /* [FBTRACE 2026-10-29] stdout 通道打点（行缓冲已证
+                      * 实时落盘）——stderr 通道在冻结期零打点的对照实验。 */
 #include "XPlatformNativeWindow.h" /* isAvailable：反向时序防护。 */
 #include "XPlatformScreen.h"
 /* 屏幕登记（opt-in，XPLATFORM_FBDEV_REGISTER_SCREEN）：经公共层既有
@@ -265,22 +267,81 @@ static bool xpdfb_formatNegotiate(XImageFormat preferred,
 static bool xpdfb_cacheSync(XPlatformDisplayCacheMode mode, void* address,
                             size_t length);
 
+/* [FBTRACE 2026-10-29] pan 活性与慢调用计数（stdout 周期统计用）。 */
+static unsigned long g_xpdfbPanCalls = 0;
+static unsigned long g_xpdfbSlowHits = 0;
+static int g_xpdfbLastVsyncRc = -9999;
+static int g_xpdfbLastPanRc = -9999;
+
 static bool xpdfb_pan(int bufferIndex)
 {
     if (!g_xpdfbDeviceReady || g_xpdfbFd < 0) return false;
     if (!g_xpdfbInfo.m_doubleBuffered)
         return bufferIndex == 0; /* 单缓冲直写即可见；翻页不可用。 */
     if (bufferIndex < 0 || bufferIndex > 1) return false;
+    ++g_xpdfbPanCalls;
+    if (g_xpdfbPanCalls % 500 == 0)
+        XPrintf("[FBSTAT] pan n=%lu slow=%lu vsync_rc=%d pan_rc=%d\n",
+                g_xpdfbPanCalls, g_xpdfbSlowHits, g_xpdfbLastVsyncRc,
+                g_xpdfbLastPanRc);
     g_xpdfbVar.yoffset = (bufferIndex == 1) ? g_xpdfbVar.yres : 0;
     /* FB_ACTIVATE_VBL：翻页排队到下个垂直消隐生效，消除撕裂（主线 ABI
      * 的 pan+vsync 等价表达）。 */
     g_xpdfbVar.activate = FB_ACTIVATE_VBL;
 #ifdef FBIOPAN_VSYNC
     /* 厂商内核扩展（部分 BSP 提供 pan+等 VSYNC 一体 ioctl）优先。 */
-    if (ioctl(g_xpdfbFd, FBIOPAN_VSYNC, &g_xpdfbVar) == 0)
-        return true;
+    {
+        /* [FBTRACE 2026-10-28 诊断] 慢调用探针：>20ms 打点（内核 vblank
+         * 阻塞定位，昆仑通态 A33 主循环周期性冻结 ~0.92s 排查）。 */
+        struct timespec tb, te;
+        int rc;
+        clock_gettime(CLOCK_MONOTONIC, &tb);
+        rc = ioctl(g_xpdfbFd, FBIOPAN_VSYNC, &g_xpdfbVar);
+        clock_gettime(CLOCK_MONOTONIC, &te);
+        g_xpdfbLastVsyncRc = rc;
+        if ((te.tv_sec - tb.tv_sec) * 1e3 +
+                (double)(te.tv_nsec - tb.tv_nsec) / 1e6 >
+            20.0)
+        {
+            ++g_xpdfbSlowHits;
+            fprintf(stderr, "[FBTRACE] pan_vsync %.1f ms rc=%d\n",
+                    (te.tv_sec - tb.tv_sec) * 1e3 +
+                        (double)(te.tv_nsec - tb.tv_nsec) / 1e6,
+                    rc);
+            XPrintf("[FBTRACE-OUT] pan_vsync %.1f ms rc=%d\n",
+                    (te.tv_sec - tb.tv_sec) * 1e3 +
+                        (double)(te.tv_nsec - tb.tv_nsec) / 1e6,
+                    rc);
+        }
+        if (rc == 0)
+            return true;
+    }
 #endif
-    if (ioctl(g_xpdfbFd, FBIOPAN_DISPLAY, &g_xpdfbVar) == 0)
+    {
+        /* [FBTRACE] 同上：FBIOPAN_DISPLAY 慢调用打点。 */
+        struct timespec tb, te;
+        int rc;
+        clock_gettime(CLOCK_MONOTONIC, &tb);
+        rc = ioctl(g_xpdfbFd, FBIOPAN_DISPLAY, &g_xpdfbVar);
+        clock_gettime(CLOCK_MONOTONIC, &te);
+        g_xpdfbLastPanRc = rc;
+        if ((te.tv_sec - tb.tv_sec) * 1e3 +
+                (double)(te.tv_nsec - tb.tv_nsec) / 1e6 >
+            20.0)
+        {
+            ++g_xpdfbSlowHits;
+            fprintf(stderr, "[FBTRACE] pan %.1f ms rc=%d\n",
+                    (te.tv_sec - tb.tv_sec) * 1e3 +
+                        (double)(te.tv_nsec - tb.tv_nsec) / 1e6,
+                    rc);
+            XPrintf("[FBTRACE-OUT] pan %.1f ms rc=%d\n",
+                    (te.tv_sec - tb.tv_sec) * 1e3 +
+                        (double)(te.tv_nsec - tb.tv_nsec) / 1e6,
+                    rc);
+        }
+        if (rc != 0)
+            return false;
+    }
     {
         /* 翻页静默吞没自愈（2026-10-08 昆仑通态 A33 真屏「缺笔画」根修）：
          * sun4i-drmdrmfb 的 legacy FBIOPAN_DISPLAY 会更新 var.yoffset
@@ -292,7 +353,21 @@ static bool xpdfb_pan(int bufferIndex)
          * 开销）。校验读回的 yoffset 同步进软件态，保证后续 pan(0/1)
          * 的目标计算以硬件真实可见区为基准。 */
         struct fb_var_screeninfo chk = g_xpdfbVar;
-        if (ioctl(g_xpdfbFd, FBIOGET_VSCREENINFO, &chk) == 0 &&
+        /* [FBTRACE 2026-10-29 诊断] pan 后回读探针：>20ms 打点（未覆盖
+         * ioctl 全量取证——vblank 冻结窗口三处既有探针零打点）。 */
+        struct timespec tb, te;
+        int grc;
+        clock_gettime(CLOCK_MONOTONIC, &tb);
+        grc = ioctl(g_xpdfbFd, FBIOGET_VSCREENINFO, &chk);
+        clock_gettime(CLOCK_MONOTONIC, &te);
+        if ((te.tv_sec - tb.tv_sec) * 1e3 +
+                (double)(te.tv_nsec - tb.tv_nsec) / 1e6 >
+            20.0)
+            fprintf(stderr, "[FBTRACE] get_var %.1f ms rc=%d\n",
+                    (te.tv_sec - tb.tv_sec) * 1e3 +
+                        (double)(te.tv_nsec - tb.tv_nsec) / 1e6,
+                    grc);
+        if (grc == 0 &&
             chk.yoffset != g_xpdfbVar.yoffset)
         {
             size_t half = g_xpdfbInfo.m_frameBufferSize / 2;
@@ -360,8 +435,24 @@ static bool xpdfb_cacheSync(XPlatformDisplayCacheMode mode, void* address,
      * 调用后"逐步显影/整窗中间态"消失（昆仑通态 A33 2026-09-27）。 */
 #if defined(__arm__)
     {
-        long rc = syscall(0x0f0002, (unsigned long)base,
-                          (unsigned long)((char*)base + len), 0);
+        /* [FBTRACE 2026-10-29 诊断] cacheflush 私有 syscall 探针：>20ms
+         * 打点（A33 全区 4.8MB 清 DCache 的真实耗时取证）。 */
+        struct timespec tb, te;
+        long rc;
+        clock_gettime(CLOCK_MONOTONIC, &tb);
+        rc = syscall(0x0f0002, (unsigned long)base,
+                     (unsigned long)((char*)base + len), 0);
+        clock_gettime(CLOCK_MONOTONIC, &te);
+        if ((te.tv_sec - tb.tv_sec) * 1e3 +
+                (double)(te.tv_nsec - tb.tv_nsec) / 1e6 >
+            20.0)
+            /* [复核修正 2026-10-29] 板上 stderr 通道绕开 %zu（同 [CLK]/
+             * [WHEELCLK] 口径）：size_t→unsigned long 同宽直出。 */
+            fprintf(stderr,
+                    "[FBTRACE] cacheflush %.1f ms len=%lu rc=%ld\n",
+                    (te.tv_sec - tb.tv_sec) * 1e3 +
+                        (double)(te.tv_nsec - tb.tv_nsec) / 1e6,
+                    (unsigned long)len, rc);
         if (rc == 0) return true;
     }
 #endif
@@ -381,37 +472,73 @@ static bool xpdfb_waitVsync(int timeoutMilliseconds)
     bool haveRetraceBase = false;
     if (!g_xpdfbDeviceReady || g_xpdfbFd < 0) return false;
     /* 主线 ABI：FBIO_WAITFORVSYNC，参数为 VSYNC 号（面板取 0）。 */
-    if (ioctl(g_xpdfbFd, FBIO_WAITFORVSYNC, &zero) == 0)
-        return true;
+    {
+        /* [FBTRACE 2026-10-28 诊断] 无超时阻塞 ioctl：>20ms 打点。 */
+        struct timespec tb, te;
+        int rc;
+        clock_gettime(CLOCK_MONOTONIC, &tb);
+        rc = ioctl(g_xpdfbFd, FBIO_WAITFORVSYNC, &zero);
+        clock_gettime(CLOCK_MONOTONIC, &te);
+        if ((te.tv_sec - tb.tv_sec) * 1e3 +
+                (double)(te.tv_nsec - tb.tv_nsec) / 1e6 >
+            20.0)
+            fprintf(stderr, "[FBTRACE] waitforvsync %.1f ms rc=%d\n",
+                    (te.tv_sec - tb.tv_sec) * 1e3 +
+                        (double)(te.tv_nsec - tb.tv_nsec) / 1e6,
+                    rc);
+        if (rc == 0)
+            return true;
+    }
     /* 兜底：驱动不支持专用 ioctl 时按 FBIOGET_VBLANK 轮询等待——
      * 优先等垂直回扫计数变化沿（HAVE_COUNT），否则等 VSYNCING 置位
      * （HAVE_VSYNC）。1ms 步进，上限防呆（默认 100ms，约 6 帧@60Hz）。 */
     limit = timeoutMilliseconds > 0 ? (unsigned)timeoutMilliseconds : 100u;
-    while (elapsed < limit)
     {
-        memset(&vbl, 0, sizeof(vbl));
-        if (ioctl(g_xpdfbFd, FBIOGET_VBLANK, &vbl) == 0)
+        /* [FBTRACE 2026-10-29 诊断] 兜底轮询整体探针：>20ms 打点。 */
+        struct timespec tb, te;
+        bool ok = false;
+        clock_gettime(CLOCK_MONOTONIC, &tb);
+        while (elapsed < limit)
         {
-            if (vbl.flags & FB_VBLANK_HAVE_COUNT)
+            memset(&vbl, 0, sizeof(vbl));
+            if (ioctl(g_xpdfbFd, FBIOGET_VBLANK, &vbl) == 0)
             {
-                if (haveRetraceBase && vbl.count != retraceCount)
-                    return true; /* 垂直回扫计数前进：已跨过一帧。 */
-                retraceCount = vbl.count;
-                haveRetraceBase = true;
+                if (vbl.flags & FB_VBLANK_HAVE_COUNT)
+                {
+                    if (haveRetraceBase && vbl.count != retraceCount)
+                    {
+                        ok = true; /* 垂直回扫计数前进：已跨过一帧。 */
+                        break;
+                    }
+                    retraceCount = vbl.count;
+                    haveRetraceBase = true;
+                }
+                else if ((vbl.flags & FB_VBLANK_HAVE_VSYNC) &&
+                         (vbl.flags & FB_VBLANK_VSYNCING))
+                {
+                    ok = true;
+                    break;
+                }
             }
-            else if ((vbl.flags & FB_VBLANK_HAVE_VSYNC) &&
-                     (vbl.flags & FB_VBLANK_VSYNCING))
-                return true;
+            {
+                struct timespec ts;
+                ts.tv_sec = 0;
+                ts.tv_nsec = 1000000L; /* 1ms。 */
+                nanosleep(&ts, NULL);
+            }
+            ++elapsed;
         }
-        {
-            struct timespec ts;
-            ts.tv_sec = 0;
-            ts.tv_nsec = 1000000L; /* 1ms。 */
-            nanosleep(&ts, NULL);
-        }
-        ++elapsed;
+        clock_gettime(CLOCK_MONOTONIC, &te);
+        if ((te.tv_sec - tb.tv_sec) * 1e3 +
+                (double)(te.tv_nsec - tb.tv_nsec) / 1e6 >
+            20.0)
+            fprintf(stderr,
+                    "[FBTRACE] wait_vblank_fallback %.1f ms ok=%d\n",
+                    (te.tv_sec - tb.tv_sec) * 1e3 +
+                        (double)(te.tv_nsec - tb.tv_nsec) / 1e6,
+                    ok ? 1 : 0);
+        return ok;
     }
-    return false;
 }
 
 static size_t xpdfb_stride(int width, XImageFormat format)

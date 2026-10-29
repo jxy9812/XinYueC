@@ -17,19 +17,12 @@ extern "C" {
 #endif
 
 /**
- * @brief 轮询读组解析钩子：应答成功后由引擎调用，子类在此把寄存器值回填快照。
- * @param owner 设备实例（XVfdModbusBase*）
- * @param result 应答数据单元（只读借用）
- */
-typedef void (*XVfdModbusParseFunc)(XObject* owner, const XModbusDataUnit* result);
-
-/**
  * @brief 注册一个轮询读组（连续地址段）。
  * @param base 实例（非 NULL）
  * @param addr 起始地址（品牌编码已换算）
  * @param count 寄存器数
  * @param areaMask 归属轮询项掩码（XVfdPollItem 位或；PollDue 按设备掩码过滤）
- * @param parse 解析钩子（非 NULL）
+ * @param parse 解析钩子（非 NULL；类型见公开头 XVfdModbusParseFunc）
  * @return 组下标；表满返回 -1
  */
 int XVfdModbusBase_addPollGroup(XVfdModbusBase* base, uint16_t addr, uint16_t count,
@@ -105,6 +98,50 @@ int XVfdModbusBase_actionEntry(XVfdModbusBase* base, XVfdOperation op,
  * @return XVfdOperation
  */
 XVfdOperation XVfdModbusBase_currentOp(XVfdModbusBase* base);
+
+/**
+ * @brief 故障码表公共条目（品牌故障表统一布局，供线性查找 helper 使用）。
+ */
+typedef struct XVfdFaultEntry {
+    uint16_t m_code;        /**< 故障码（品牌寄存器原值） */
+    const char* m_name;     /**< 故障字母码（可为 NULL：手册未给的条目） */
+    const char* m_text;     /**< 中文说明（静态常量，禁释放） */
+} XVfdFaultEntry;
+
+/**
+ * @brief 故障码线性查找（品牌故障表去重公共 helper）。
+ * @param table 故障条目表（静态常量，借用）
+ * @param count 条目数
+ * @param code 故障码
+ * @return 命中条目指针（借用，禁释放）；未命中或参数非法返回 NULL
+ */
+const XVfdFaultEntry* XVfdModbusBase_faultEntry_const(const XVfdFaultEntry* table, int count,
+                                                      uint16_t code);
+
+/**
+ * @brief 简单单写动作共用收口钩子：直接 finishAction（发 commandCompleted+清忙+补发）。
+ * @param owner 设备实例（XVfdModbusBase*）
+ * @param userData 未使用（透传 NULL）
+ * @param ok 应答是否成功
+ * @param result 未使用（单写无回读数据）
+ * @note 供品牌子类作为 XVfdModbusLinkDoneFunc 提交单写动作时共用。
+ */
+void XVfdModbusBase_simpleWriteDone(XObject* owner, void* userData, bool ok,
+                                    const XModbusDataUnit* result);
+
+/**
+ * @brief 简单单写动作一站式提交：链路检查 + busyStart 起跑 + 高优先级单写提交，
+ *        提交失败即 finishAction(false) 收口（品牌动作样板去重公共 helper）。
+ * @param base 实例（非 NULL）
+ * @param op 动作类型（busyStart 登记、完成信号携带）
+ * @param addr 目标地址
+ * @param value 写入值
+ * @return 受理返回 true；未绑定/忙/提交失败返回 false（lastError 已置）
+ * @note 完成钩子固定为 XVfdModbusBase_simpleWriteDone；多段序列动作（如两步写）
+ *       不适用，仍由品牌子类自行 busyStart+提交。
+ */
+bool XVfdModbusBase_submitActionWrite(XVfdModbusBase* base, XVfdOperation op,
+                                      uint16_t addr, uint16_t value);
 
 #ifdef __cplusplus
 }

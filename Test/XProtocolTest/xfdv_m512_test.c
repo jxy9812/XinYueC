@@ -41,6 +41,18 @@
 #define M512_BASE "/tmp/mbsoak/m512"
 #endif
 
+/* 产物根运行期解析：M512_BASE 环境变量优先（mbtest_m512_run.sh 的 OUT 与
+ * asan_gate 等门禁都以该环境变量隔离各跑法产物根），缺省回落编译期宏。
+ * 原实现只认编译期宏——门禁以 M512_BASE 环境变量改根时，测试仍读写宏缺省
+ * 目录：fault_u1/mute 控制文件与 req_order.log 全部落错目录，从站永远收不到
+ * 故障/静默注入、优先级断言 grep 错日志，fault/priority/slaveLost 共 7 项
+ * 断言连环误报（2026-10-29 ASan 门实证；pty 路径因走 argv 侥幸不受影响）。 */
+static const char* m512BaseResolve(void)
+{
+    const char* env = getenv("M512_BASE");
+    return (env && env[0]) ? env : M512_BASE;
+}
+
 static int g_fail = 0;
 static const char* g_case = "";
 static uint64_t g_bootMs = 0;
@@ -196,6 +208,7 @@ static void writeFile(const char* path, const char* content)
 int main(int argc, char* argv[])
 {
     char ptyPath[256] = { 0 };
+    const char* m512Base = m512BaseResolve();
     XVfdM512* d1;
     XVfdM512* d2;
     XVfdDevice* v1;
@@ -211,7 +224,7 @@ int main(int argc, char* argv[])
         snprintf(ptyPath, sizeof(ptyPath), "%s", argv[1]);
     } else {
         char pathFile[256];
-        snprintf(pathFile, sizeof(pathFile), "%s/pty_path", M512_BASE);
+        snprintf(pathFile, sizeof(pathFile), "%s/pty_path", m512Base);
         FILE* f = fopen(pathFile, "r");
         if (f) {
             if (!fgets(ptyPath, sizeof(ptyPath), f)) ptyPath[0] = 0;
@@ -236,16 +249,38 @@ int main(int argc, char* argv[])
         XVfdLink_setTickMs(&link->m_base, 20);
 
         XModbusDevice* dev = (XModbusDevice*)client;
-        XVariant* var = XString_toVariant(XString_create_utf8(ptyPath));
-        if (var) XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialPortNameParameter, var);
+        /* setConnectionParameter_move 只搬内容：源壳（XVariant/XString）所有权
+         * 仍在调用方，用后必须删——ASan 门实证 384B/7 处泄漏全部源于此。 */
+        XVariant* var = NULL;
+        {
+            XString* ptyStr = XString_create_utf8(ptyPath);
+            var = ptyStr ? XString_toVariant(ptyStr) : NULL;
+            if (ptyStr) XClassDelete((XClass*)ptyStr);
+        }
+        if (var) {
+            XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialPortNameParameter, var);
+            XClassDelete((XClass*)var);
+        }
         var = XVariant_create_int(9600);
-        if (var) XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialBaudRateParameter, var);
+        if (var) {
+            XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialBaudRateParameter, var);
+            XClassDelete((XClass*)var);
+        }
         var = XVariant_create_int(XSerialPort_Data8);
-        if (var) XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialDataBitsParameter, var);
+        if (var) {
+            XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialDataBitsParameter, var);
+            XClassDelete((XClass*)var);
+        }
         var = XVariant_create_int(XSerialPort_NoParity);
-        if (var) XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialParityParameter, var);
+        if (var) {
+            XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialParityParameter, var);
+            XClassDelete((XClass*)var);
+        }
         var = XVariant_create_int(XSerialPort_OneStop);
-        if (var) XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialStopBitsParameter, var);
+        if (var) {
+            XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialStopBitsParameter, var);
+            XClassDelete((XClass*)var);
+        }
 
         g_case = "connect";
         CHECK(XModbusDevice_connectDevice(dev), "connectDevice 返回 true");
@@ -345,7 +380,7 @@ int main(int argc, char* argv[])
         g_case = "fault";
         {
             char path[256];
-            snprintf(path, sizeof(path), "%s/fault_u1", M512_BASE);
+            snprintf(path, sizeof(path), "%s/fault_u1", m512Base);
             writeFile(path, "3");   /* 8000H=3 减速过电流 */
         }
         WAIT_FN(XVfdDevice_status_const(v1)->m_faultCode == 3, 10000);
@@ -430,7 +465,7 @@ int main(int argc, char* argv[])
             char path[256];
             char line[64];
             /* 先数一遍动作前的请求行数 */
-            snprintf(path, sizeof(path), "%s/req_order.log", M512_BASE);
+            snprintf(path, sizeof(path), "%s/req_order.log", m512Base);
             of = fopen(path, "r");
             if (of) {
                 while (fgets(line, sizeof(line), of)) ++linesBefore;
@@ -467,7 +502,7 @@ int main(int argc, char* argv[])
         {
             char path[256];
             int status1Before;
-            snprintf(path, sizeof(path), "%s/mute", M512_BASE);
+            snprintf(path, sizeof(path), "%s/mute", m512Base);
             writeFile(path, "2");   /* 静默站 2 */
             status1Before = g_d[0].statusCount;
             WAIT_FN(g_lostUnit == 2, 20000);

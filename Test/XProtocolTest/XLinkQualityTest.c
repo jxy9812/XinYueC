@@ -135,7 +135,7 @@ static void xlink_q_server_churn_round(int* pass)
         *pass = 0;
         return;
     }
-    if (!XLinkServer_listen_base(srv, "127.0.0.1", 0)) {
+    if (!XLinkServer_listen(srv, "127.0.0.1", 0)) {
         *pass = 0;
         XClassDelete((XClass*)srv);
         return;
@@ -1074,7 +1074,7 @@ static bool xlink_q_file_setup(XLinkServer** outSrv, XLinkClient** outCli,
         ok = XLinkFileServer_attach(fs, srv);
     }
     if (ok)
-        ok = XLinkServer_listen_base(srv, "127.0.0.1", 0);
+        ok = XLinkServer_listen(srv, "127.0.0.1", 0);
     if (ok) {
         uint16_t port = XTcpServer_serverPort(XLinkServer_tcpServer_const(srv));
         XLinkClient_setHostPort(cli, "127.0.0.1", port);

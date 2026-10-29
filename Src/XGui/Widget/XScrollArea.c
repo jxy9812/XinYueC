@@ -22,7 +22,19 @@
 
 /* ==================== 内部工具 ==================== */
 
-/** @brief 依据 resizable/alignment 调整内容控件几何。 */
+/** @brief 依据 resizable/alignment 调整内容控件几何。
+ *  @note   resizable 分支对标 Qt QScrollArea widgetResizable 语义
+ *          （qscrollarea.cpp updateScrollBars：内容尺寸在视口与内容
+ *          合计最小/合计首选间取大，经内容自身 min/max 约束钳口，滚动
+ *          范围随内容）：此前把内容矩形直接钉成视口尺寸后提前返回，
+ *          无 minimumSizeHint/sizeHint 下界——内容高于视口即被裁剪且
+ *          不产生竖滚，迫使应用页各自子类化自管内容几何。两遍收敛：
+ *          第一遍 setGeometry 触发内容布局 activate 与内容 resizeEvent
+ *          （页内档位重排/换行）可能改合计提示，第二遍读实测收敛
+ *          （定长两遍、无递归，同应用页此前自管壳的收敛定式）。
+ *          重入安全：本函数几何写回会同步触发内容 resizeEvent，页内
+ *          钩子若再经公共入口请求重排版，以 m_inGeometryUpdate 挡住
+ *          （外层两遍收敛负责终态），防页钩子与几何写回互递归。 */
 static void xsa_updateWidgetGeometry(XScrollArea* self)
 {
     XWidget* viewport;
@@ -34,15 +46,48 @@ static void xsa_updateWidgetGeometry(XScrollArea* self)
     int x = 0;
     int y = 0;
     if (!self || !self->m_widget) return;
+    if (self->m_inGeometryUpdate) return;
     viewport = XAbstractScrollArea_viewport(self);
     if (!viewport) return;
     vw = XWidget_width(viewport);
     vh = XWidget_height(viewport);
     content = self->m_widget;
+    self->m_inGeometryUpdate = 1;
     if (self->m_resizable) {
-        XRect r;
-        XRect_init(&r, 0, 0, vw > 0 ? vw : 0, vh > 0 ? vh : 0);
-        XWidget_setGeometryRect(content, &r);
+        int pass;
+        for (pass = 0; pass < 2; ++pass) {
+            XSize hint;
+            XSize minHint;
+            int w;
+            int h;
+            XRect r;
+            /* 布局合计提示带缓存（XLayoutItem_sizeHint_base 读
+             * m_cachedHint）：失效后重读，同页壳自管时代的口径。 */
+            if (XWidget_layout(content))
+                XLayout_invalidate(XWidget_layout(content));
+            hint = XWidget_sizeHint(content);
+            minHint = XWidget_minimumSizeHint(content);
+            w = vw > 0 ? vw : 0;
+            h = vh > 0 ? vh : 0;
+            if (minHint.width > w) w = minHint.width;
+            if (hint.width > w) w = hint.width;
+            if (minHint.height > h) h = minHint.height;
+            if (hint.height > h) h = hint.height;
+            if (w < 0) w = 0;
+            if (h < 0) h = 0;
+            XRect_init(&r, 0, 0, w, h);
+            /* 经 XWidget_setGeometry 的 min/max 钳口：页面给内容定尺
+             * （setFixed*）时以页面约束为准（对标 Qt
+             * expandedTo(min).boundedTo(max)）。 */
+            XWidget_setGeometryRect(content, &r);
+        }
+        /* 滚动范围随内容（回读钳后实际尺寸，页面定尺约束优先）。 */
+        cw = XWidget_width(content);
+        ch = XWidget_height(content);
+        XAbstractScrollArea_setContentSize(
+            (XAbstractScrollArea*)self,
+            cw > vw ? cw : vw, ch > vh ? ch : vh);
+        self->m_inGeometryUpdate = 0;
         return;
     }
     cw = XWidget_width(content);
@@ -64,6 +109,7 @@ static void xsa_updateWidgetGeometry(XScrollArea* self)
     XAbstractScrollArea_setContentSize(
         (XAbstractScrollArea*)self,
         cw > vw ? cw : vw, ch > vh ? ch : vh);
+    self->m_inGeometryUpdate = 0;
 }
 
 /* ==================== 虚表与生命周期 ==================== */
@@ -292,6 +338,19 @@ void XScrollArea_setWidgetResizable(XScrollArea* self, bool resizable)
 {
     if (!self || self->m_resizable == resizable) return;
     self->m_resizable = resizable;
+    xsa_updateWidgetGeometry(self);
+}
+
+/** @brief 按当前视口/内容提示重排版内容几何与滚动范围（公共收口）。
+ *  @details 对标 QScrollAreaPrivate::updateWidgetPosition（Qt 为私有，
+ *           本框架 C API 无 friend 语义故公开）：内容提示在无几何事件
+ *           的前提下变化时（页内展开/收起、档位重排改子件约束），由
+ *           调用方触发一次重排版，替代应用页各自复制的「fit 内容宽高
+ *           + setContentSize」自管壳。内部即 resizable/alignment 排版
+ *           的唯一实现，幂等（几何未变时 setContentSize 值不变短路）。 */
+void XScrollArea_updateWidgetGeometry(XScrollArea* self)
+{
+    if (!self) return;
     xsa_updateWidgetGeometry(self);
 }
 

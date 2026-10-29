@@ -146,7 +146,7 @@ XLinkSession* session = XLinkSession_create_ex(conn);
 |------|------|
 | `XLink_config.h` | 协议开关与容量常量 |
 | `XLinkProto.h` | 线上格式定义：消息类枚举、能力位、帧头结构、认证/文件载荷 |
-| `XLinkCodec.h/.c` | 小端序列化原语、Hello 载荷编解码、帧头编解码 |
+| `XLinkCodec.h/.c` | Hello 载荷编解码、帧头编解码（小端序列化直调 XMemory） |
 | `XLinkSession.h/.c` | 会话对象：收发、分发、订阅表、待应答表、心跳、发送队列、认证内核；XObject 事件驱动 |
 | `XLinkServer.h/.c` | 服务端包装（可选，`XLINK_SERVER_ON`）：监听、自动建会话、会话回收、认证集成 |
 | `XLinkClient.h/.c` | 客户端包装（可选，`XLINK_CLIENT_ON`）：自动重连（默认关）、登录凭据 |
@@ -190,13 +190,16 @@ XLinkSession* session = XLinkSession_create_ex(conn);
 
 ### 3.3 载荷序列化规范
 
-**严禁 `memcpy` 结构体上线。** 编译器填充与端序差异会静默破坏线上格式。必须用 `XLinkCodec_putU16/putU32` 逐字段序列化：
+**严禁 `memcpy` 结构体上线。** 编译器填充与端序差异会静默破坏线上格式。必须用 `XMemory_write_data/read_data`（小端序）逐字段序列化：
 
 ```c
 /* ✅ 正确 */
 uint8_t buf[8];
-XLinkCodec_putU32(&buf[0], deviceId);
-XLinkCodec_putU32(&buf[4], temperature);
+uint32_t v;
+v = deviceId;
+XMemory_write_data(&buf[0], XBYTE_ORDER_LITTLE_ENDIAN, (const uint8_t*)&v, sizeof(v));
+v = temperature;
+XMemory_write_data(&buf[4], XBYTE_ORDER_LITTLE_ENDIAN, (const uint8_t*)&v, sizeof(v));
 
 /* ❌ 错误：结构体可能含填充字节，且未做字节序转换 */
 typedef struct { uint32_t a; uint32_t b; } DeviceState;
@@ -480,10 +483,14 @@ XLinkSession_subscribe(session, TOPIC_ALARM_EVENT);
 void publish_state(XLinkSession* s)
 {
     uint8_t buf[256];
+    uint32_t v;
     int n = 0;
-    XLinkCodec_putU32(&buf[n], running);        n += 4;
-    XLinkCodec_putU32(&buf[n], temperature);     n += 4;
-    XLinkCodec_putU32(&buf[n], pressure);        n += 4;
+    v = (uint32_t)running;
+    XMemory_write_data(&buf[n], XBYTE_ORDER_LITTLE_ENDIAN, (const uint8_t*)&v, sizeof(v));  n += 4;
+    v = (uint32_t)temperature;
+    XMemory_write_data(&buf[n], XBYTE_ORDER_LITTLE_ENDIAN, (const uint8_t*)&v, sizeof(v));  n += 4;
+    v = (uint32_t)pressure;
+    XMemory_write_data(&buf[n], XBYTE_ORDER_LITTLE_ENDIAN, (const uint8_t*)&v, sizeof(v));  n += 4;
     XLinkSession_sendPublish(s, TOPIC_DEVICE_STATE, buf, n);
 }
 
@@ -491,7 +498,8 @@ void publish_state(XLinkSession* s)
 void on_alarm(XLinkSession* s, int code)
 {
     uint8_t buf[4];
-    XLinkCodec_putU32(&buf[0], (uint32_t)code);
+    uint32_t v = (uint32_t)code;
+    XMemory_write_data(&buf[0], XBYTE_ORDER_LITTLE_ENDIAN, (const uint8_t*)&v, sizeof(v));
     XLinkSession_sendPublish(s, TOPIC_ALARM_EVENT, buf, 4);
 }
 ```
@@ -500,8 +508,10 @@ void on_alarm(XLinkSession* s, int code)
 
 ```c
 if (f->m_msgClass == XLinkMsgClass_Publish) {
-    uint32_t topic = XLinkCodec_getU32(payload);      /* 载荷首 4 字节 */
-    const uint8_t* data = payload + 4;                /* 业务载荷 */
+    uint32_t topic = 0;
+    XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                      (uint8_t*)&topic, sizeof(topic));  /* 载荷首 4 字节 */
+    const uint8_t* data = payload + 4;                   /* 业务载荷 */
     uint32_t len = f->m_payloadLen - 4;
 
     if (topic == TOPIC_DEVICE_STATE) update_state(data, len);
@@ -591,7 +601,7 @@ XLinkServer* srv = XLinkServer_create();
 XLinkServer_setCapability(srv, XLinkCapability_Zlib);      /* 新会话模板 */
 XLinkServer_setDispatchCallback(srv, on_frame, NULL);      /* 新会话模板 */
 XLinkServer_setNotifyCallback(srv, on_session_added_removed); /* 可选，2 参 */
-XLinkServer_listen_base(srv, "127.0.0.1", 45200);
+XLinkServer_listen(srv, "127.0.0.1", 45200);
 
 /* 事件循环里：什么都不用写。
    - newConnection 信号到达即自动建会话（套模板）；
@@ -706,7 +716,7 @@ XLinkServer_setAuthEnabled(srv, true);  /* 新会话须登录；存量会话不�
 XLinkServer_setAuthAuditCallback(srv, on_auth_audit, NULL);
 /* 可选：XLinkServer_setAuthAllowAnonymous(srv, true) 才允许不宣告 Auth 的
    老对端匿名接入——默认 false 是安全基线（防能力位降级绕过，见 §5）。 */
-XLinkServer_listen_base(srv, "0.0.0.0", 45200);
+XLinkServer_listen(srv, "0.0.0.0", 45200);
 ```
 
 要点：
@@ -935,8 +945,12 @@ static void on_frame(XLinkSession* s, const XLinkFrameHeader* f,
             break;
         case CMD_QUERY_STATE: {
             uint8_t buf[8];
-            XLinkCodec_putU32(&buf[0], (uint32_t)g_motorRunning);
-            XLinkCodec_putU32(&buf[4], g_temperature);
+            uint32_t v = (uint32_t)g_motorRunning;
+            XMemory_write_data(&buf[0], XBYTE_ORDER_LITTLE_ENDIAN,
+                               (const uint8_t*)&v, sizeof(v));
+            v = g_temperature;
+            XMemory_write_data(&buf[4], XBYTE_ORDER_LITTLE_ENDIAN,
+                               (const uint8_t*)&v, sizeof(v));
             XLinkSession_sendResponse(s, f->m_requestId, f->m_msgCode, buf, 8);
             break;
         }
@@ -1014,8 +1028,12 @@ int main(void)
             /* 状态快照周期推送（10Hz） */
             if (XLinkSession_isReady(session) && (now - lastPush) >= 100) {
                 uint8_t buf[8];
-                XLinkCodec_putU32(&buf[0], (uint32_t)g_motorRunning);
-                XLinkCodec_putU32(&buf[4], g_temperature);
+                uint32_t v = (uint32_t)g_motorRunning;
+                XMemory_write_data(&buf[0], XBYTE_ORDER_LITTLE_ENDIAN,
+                                   (const uint8_t*)&v, sizeof(v));
+                v = g_temperature;
+                XMemory_write_data(&buf[4], XBYTE_ORDER_LITTLE_ENDIAN,
+                                   (const uint8_t*)&v, sizeof(v));
                 XLinkSession_sendPublish(session,
                                          XLINK_TOPIC_USER_BASE + 1, buf, 8);
                 lastPush = now;
@@ -1054,11 +1072,17 @@ static void on_frame(XLinkSession* s, const XLinkFrameHeader* f,
                      const uint8_t* payload)
 {
     if (f->m_msgClass == XLinkMsgClass_Publish) {
-        uint32_t topic = XLinkCodec_getU32(payload);
+        uint32_t topic = 0;
+        uint32_t v = 0;
+        XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                          (uint8_t*)&topic, sizeof(topic));
         const uint8_t* data = payload + 4;
         if (topic == TOPIC_DEVICE_STATE && f->m_payloadLen >= 12) {
-            g_motorRunning = (int)XLinkCodec_getU32(&data[0]);
-            g_temperature  = XLinkCodec_getU32(&data[4]);
+            XMemory_read_data(&data[0], XBYTE_ORDER_LITTLE_ENDIAN,
+                              (uint8_t*)&v, sizeof(v));
+            g_motorRunning = (int)v;
+            XMemory_read_data(&data[4], XBYTE_ORDER_LITTLE_ENDIAN,
+                              (uint8_t*)&g_temperature, sizeof(g_temperature));
             update_ui(g_motorRunning, g_temperature);   /* 刷新界面 */
         }
         return;
@@ -1072,7 +1096,10 @@ static void on_frame(XLinkSession* s, const XLinkFrameHeader* f,
     }
 
     if (f->m_msgClass == XLinkMsgClass_Subscribe) {
-        XPrintf("[GUI] 已订阅 topic %u\n", XLinkCodec_getU32(payload));
+        uint32_t topic = 0;
+        XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                          (uint8_t*)&topic, sizeof(topic));
+        XPrintf("[GUI] 已订阅 topic %u\n", topic);
     }
 }
 
@@ -1281,7 +1308,7 @@ void ui_loop(XLinkSession* s)
 | API | 说明 |
 |-----|------|
 | `XLinkServer_create()` | 堆创建（内嵌 XTcpServer） |
-| `XLinkServer_listen_base(srv, host, port)` | 监听；port=0 自动分配 |
+| `XLinkServer_listen(srv, host, port)` | 监听；port=0 自动分配 |
 | `XLinkServer_close(srv)` | 停止监听并回收全部会话 |
 | `XLinkServer_setCapability(srv, cap)` | 新会话能力位模板 |
 | `XLinkServer_setDispatchCallback(srv, cb, ud)` | 新会话分发回调模板 |
@@ -1347,8 +1374,7 @@ void ui_loop(XLinkSession* s)
 
 | API | 说明 |
 |-----|------|
-| `XLinkCodec_putU16(buf, v)` / `getU16(buf)` | 小端 16 位序列化 |
-| `XLinkCodec_putU32(buf, v)` / `getU32(buf)` | 小端 32 位序列化 |
+| `XMemory_write_data(buf, XBYTE_ORDER_LITTLE_ENDIAN, ...)` / `read_data(...)` | 小端序列化原语（多字节字段逐字段读写，本模块不再提供 put/get 转发函数） |
 | `XLinkCodec_encodeHello(payload, buf, cap, &len)` | Hello 载荷编码 |
 | `XLinkCodec_decodeHello(buf, len, &out)` | Hello 载荷解码 |
 | `XLinkCodec_encodeHeader(frame, buf)` | 帧头打包（12 字节） |
@@ -1898,3 +1924,31 @@ XClassDelete((XClass*)session);
 | `XLinkFileClient.h/.c` | 客户端 upload/download/abort + 信号 |
 
 修改：`XLinkProto.h`（能力位 Auth/FileTransfer、会话子码 5~8、GoodbyeReason、消息类 File=6、认证/文件载荷结构、版本 0x0101）、`XLink_config.h`（新增开关与容量宏）、`XLinkSession.h/.c`（发送队列、Authenticating 态、认证内核、文件钩子、keepAlive、统计、握手超时、**接收缓冲越界根修**）、`XLinkServer.h/.c`（认证集成、File 回调、三钩子）、`XLinkClient.h/.c`（凭据、自动重登、authFailed）、`Test/XProtocolTest/XLinkTest.c`（分组十六/十七）。
+
+### 14.5 门控补记：文件三模块预处理门控叠加子开关（2026-10-28）
+
+> **补记说明**：本轮 diff 将文件三模块六处文件的预处理门控由
+> `XLINK_ON && XLINK_FILE_ON` 扩为叠加子开关——`XLinkFileServer.h/.c` 加
+> `XLINK_SESSION_ON && XLINK_SERVER_ON`（门控 `#if` 与文件尾 `#endif` 注释
+> 同步）、`XLinkFileClient.h/.c` 加
+> `XLINK_SESSION_ON && XLINK_CLIENT_ON`、`XLinkFileTransfer.h/.c` 加
+> `XLINK_SESSION_ON`。该改动未列入当轮改动说明（复核指出），此处补记；
+> 默认全开组合的编译产物零变化。
+>
+> **为什么必须扩**：三个模块的头文件把 `XLinkServer*`（`XLinkFileServer.h`
+> 的 `m_server`）与 `XLinkSession*`（`XLinkFileTransfer.h` 的 `m_session`）
+> 直接内嵌为结构体成员，而 `XLinkServer.h`/`XLinkSession.h` 自身按子开关
+> 门控——子开关为 0 时类型根本不声明，旧门控形同虚设：基线在
+> `-DXLINK_SERVER_ON=0` 下编 `XLinkFileServer.c` 即报
+> `XLinkFileServer.h(69): error C2061`（标识符 XLinkServer）；
+> `-DXLINK_SESSION_ON=0` 下三个 TU 全部报 `XLinkFileTransfer.h(80):
+> error C2061`（标识符 XLinkSession）。即文件模块此前从未真正支持
+> 服务端/客户端/会话级裁剪。
+>
+> **门控矩阵实测**（2026-10-28，本机 win32 + VS cl `/Zs` 语法检查；基线 =
+> HEAD 导出 `_baseline/XLink`（`/I` 首位遮蔽），对照本轮改动；7 组开关组合
+> × 3 个 TU，`_matrix.py`）：
+> - `SERVER_ON=0`：基线 FAIL（C2061 如上）→ 改后 PASS；
+> - `SESSION_ON=0`：基线 3 个 TU 全 FAIL（C2061 如上）→ 改后全 PASS；
+> - 其余组合（全开 / `CLIENT_ON=0` / `FILE_ON=0` / `XLINK_ON=0`）基线与
+>   改后同为 PASS，无回归。

@@ -149,12 +149,17 @@ static void XLinkServerPrivate_acceptPending(XLinkServer* self)
 #if XLINK_FILE_ON
         /* 文件传输：能力位补 FileTransfer（对端据此判断能否发 File 帧），
            并把 File 消息类转给引擎。注意必须在上面模板能力位设置之后做，
-           否则会被 setCapability 覆盖。 */
+           否则会被 setCapability 覆盖。Auth 位只在认证扩展编译进（XLINK_AUTH_ON）
+           且已启用认证时补——裁空构建里 m_authEnabled 成员不存在，且按约定
+           "关闭时能力位 Auth 不置位"，与上方 accept 主路径的
+           #if XLINK_AUTH_ON 分支同口径。 */
         if (self->m_fileHandler) {
             XLinkSession_setCapability(
                 session, (uint16_t)(self->m_capability
+#if XLINK_AUTH_ON
                                     | (self->m_authEnabled
                                            ? XLinkCapability_Auth : 0)
+#endif
                                     | XLinkCapability_FileTransfer));
             XLinkSession_setFileCallback(session, self->m_fileHandler,
                                          self->m_fileHandlerUserData);
@@ -287,8 +292,6 @@ XVtable* XLinkServer_class_init(void)
     /* 先继承后重载（顺序颠倒重载会被继承覆盖，见风格指南）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXLinkServer_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXLinkServer_timerEvent);
-    /* 新增槽位（定时器事件）：预留派生类扩展点。 */
-    XVTABLE_OVERLOAD_DEFAULT(EXLinkServer_timerEvent, VXLinkServer_timerEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -340,13 +343,13 @@ XLinkServer* XLinkServer_create(void)
 /*                        监听与模板                                         */
 /* ========================================================================== */
 
-bool XLinkServer_listen_base(XLinkServer* self, const char* host, uint16_t port)
+bool XLinkServer_listen(XLinkServer* self, const char* host, uint16_t port)
 {
     XHostAddress addr;
     bool ok;
 
-    if (ISNULL(self, "XLinkServer_listen_base self")
-        || ISNULL(self->m_listener, "XLinkServer_listen_base listener"))
+    if (ISNULL(self, "XLinkServer_listen self")
+        || ISNULL(self->m_listener, "XLinkServer_listen listener"))
         return false;
 
     /* 重复 listen：先停旧监听（会话保留——换端口不应踢掉在线客户端）。 */
@@ -464,7 +467,7 @@ bool XLinkServer_setTickInterval(XLinkServer* self, uint32_t intervalMs)
     self->m_tickIntervalMs = intervalMs;
 
     /* 正在监听（节拍在跑）：立即按新周期重启；置 0 即停节拍。
-       未监听时仅记录，下次 listen_base 按新周期启动。 */
+       未监听时仅记录，下次 listen 按新周期启动。 */
     XLinkServerPrivate_stopTimer(self);
     if (intervalMs > 0 && self->m_listener
         && XTcpServer_isListening(self->m_listener))

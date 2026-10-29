@@ -19,6 +19,11 @@
  *          调度节奏（实测 ~20ms），留足余量；旧缺陷的 900ms 整圈量化落在
  *          容差外。
  *
+ *          2026-10-29 增补「级联重落槽」确定性段（假时钟）：覆盖
+ *          cascade_timers→addTimer_lockfree 重分配路径——旧相位测试只覆盖
+ *          添加时落槽，板上 50ms 轮询定时器 921ms 冻结（级联时刻 remaining
+ *          恰等于低级轮全跨度）从该路径漏过。
+ *
  * @note 时间只取 XDateTime_currentMSecsSinceEpoch（框架时间源），等待只用
  *       XThread_msleep（跨平台），不引任何平台头文件——ESP8266/Win32 等
  *       各平台可编译运行。
@@ -28,6 +33,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
+#include <string.h>
 
 #include "CXinYueConfig.h"
 #include "XCoreApplication.h"
@@ -78,6 +84,198 @@ static void phase_register_wheel_timer(PhaseFireLog* log)
     XTimeWheelGroup_addTimerMs_base(wheel, data);
 }
 
+/* ==================== 级联重落槽回归（确定性假时钟 2026-10-29） ====================
+ * 回归缺陷：cascade_timers 对放不进低级轮的节点走 addTimer_lockfree 重分配，
+ * 相位修正在级联上下文算出 offset=0 时把节点放回「本次级联刚弹空、返回后
+ * 立即 ++m_tick 越过」的槽——节点滞留整圈（L1 槽 30 边界=900 刻度）才被再
+ * 扫。50ms 轮询定时器拍频游走到级联时刻 remaining 恰等于低级轮全跨度（30
+ * 刻度）即触发，板上实测 921ms 冻结周期自持振荡。缺陷复现时下述断言的迟到
+ * 量 ≈871 拍，远超界；根修后 ≤2 拍（兑现走"已到期直落低级轮"路径固有 +1 拍
+ * 加 1 拍余量）。假时钟逐拍驱动，无真实时序依赖，各平台可复现。 */
+#define CASC_FIRE_CAP 128
+#define CASC_PHASE_COUNT 30       /* 50ms 周期定时器播种相位全覆盖 */
+#define CASC_PERIOD_WINDOW 3000   /* 周期扫描驱动窗（刻度） */
+#define CASC_PERIOD_INTERVAL 50   /* 判决场景：50ms 轮询定时器 */
+#define CASC_PERIOD_MAXGAP 55     /* 根修后触发间隔恒 51 拍；缺陷冻结 ~901 拍 */
+#define CASC_PERIOD_MINFIRES 45   /* 窗内健康触发下限（≈3000/51） */
+#define CASC_LATE_LIMIT 2         /* L1 毒区单发迟到上限（拍）：兑现固有 +1 加余量 */
+#define CASC_L2_LATE_LIMIT 64     /* L2 毒区恢复链（过期→L1→过期→L0）有界迟到上限；
+                                   * 缺陷复现时 ≈26100 拍（27s 整圈滞留） */
+
+typedef struct CascFireLog
+{
+    uint64_t m_fires[CASC_FIRE_CAP]; /**< 每次触发的假时钟读数（=兑现刻度+1）。 */
+    int m_count;
+    uint64_t m_maxGap;          /**< 相邻触发最大间隔（报告用）。 */
+    int64_t m_late;             /**< 单发场景实测迟到（拍，报告用）。 */
+} CascFireLog;
+
+static uint64_t s_cascFakeMs;    /* 假时钟（=时间轮刻度，精度 1ms）。 */
+static CascFireLog s_cascSingleLogs[3];
+static CascFireLog s_cascPeriodicLogs[CASC_PHASE_COUNT];
+
+static uint64_t casc_fake_now(void)
+{
+    return s_cascFakeMs;
+}
+
+static void casc_callback(void* userData, XTimerData* timer)
+{
+    CascFireLog* log = (CascFireLog*)userData;
+    (void)timer;
+    if (log && log->m_count < CASC_FIRE_CAP)
+        log->m_fires[log->m_count++] = s_cascFakeMs;
+}
+
+/* 假时钟步进 1 刻度消费 1 拍，handler 恰推进一个全局刻度。 */
+static void casc_drive(XTimeWheelGroup* wheel, uint64_t untilMs)
+{
+    while (s_cascFakeMs < untilMs) {
+        ++s_cascFakeMs;
+        XTimeWheelGroup_handler_base(wheel);
+    }
+}
+
+/* 推进到 m_current_tick ≡ phase (mod mod)，保证毒区场景可精确构造。 */
+static void casc_drive_to_phase(XTimeWheelGroup* wheel, unsigned phase, unsigned mod)
+{
+    while (s_cascFakeMs % mod != phase)
+        casc_drive(wheel, s_cascFakeMs + 1);
+}
+
+/* 与全局轮同构：精度 1ms + 3 层 ×30 槽（L0=30/L1=900/L2=27000 刻度）。 */
+static XTimeWheelGroup* casc_group_create(void)
+{
+    XTimeWheelGroup* wheel = XTimeWheelGroup_create(1);
+    if (!wheel)
+        return NULL;
+    XTimeWheelGroup_addTimeWheel(wheel, 30);
+    XTimeWheelGroup_addTimeWheel(wheel, 30);
+    XTimeWheelGroup_addTimeWheel(wheel, 30);
+    XTimerGroupBase_setHighResTimeFunc((XTimerGroupBase*)wheel, casc_fake_now);
+    s_cascFakeMs = 0;
+    return wheel;
+}
+
+/* 单发毒区场景：phaseMod-1 相位注册 timeout 单发定时器，令某次级联时刻
+ * remaining 恰等于级联源轮一个边界的全局跨度——L1 毒区（timeout=30 首边界
+ * 直接入；60 经一次正常落槽后第二边界入）；L2 毒区（900，旧缺陷滞留 27s）。 */
+static int casc_single_shot_case(XTimeWheelGroup* wheel, size_t timeoutMs,
+                                 unsigned phaseMod, CascFireLog* log,
+                                 const char* name, int lateLimit)
+{
+    int failures = 0;
+    uint64_t addTick, expire;
+    int64_t late;
+    XTimerData data;
+
+    casc_drive_to_phase(wheel, phaseMod - 1, phaseMod);
+    addTick = s_cascFakeMs;
+    memset(&data, 0, sizeof(data));
+    XTimerData_setTimeout(&data, timeoutMs);
+    XTimerData_setSingleShot(&data, true);
+    XTimerData_setTimerCallback(&data, casc_callback);
+    XTimerData_setUserData(&data, log);
+    if (!XTimeWheelGroup_addTimerMs_base(wheel, data)) {
+        XPrintf("[级联重落槽][%s] 注册失败\n", name);
+        return 1;
+    }
+    expire = addTick + timeoutMs;
+    /* 驱动窗覆盖本级整圈滞留（缺陷复现时也必须等到兑现，红有实值）。 */
+    casc_drive(wheel, expire + phaseMod * 30 + 64);
+
+    if (log->m_count != 1) {
+        XPrintf("[级联重落槽][%s] 失败: 触发 %d 次（预期 1 次）\n",
+                name, log->m_count);
+        return 1;
+    }
+    /* fire 记录 = 兑现刻度+1（handler 拍后观测），迟到 = 记录-expire-1。 */
+    late = (int64_t)(log->m_fires[0] - expire) - 1;
+    log->m_late = late;
+    if (late < 0 || late > lateLimit) {
+        XPrintf("[级联重落槽][%s] 失败: 迟到 %lld 拍（上限 %d）\n",
+                name, (long long)late, lateLimit);
+        ++failures;
+    }
+    return failures;
+}
+
+/* 判决场景全景：50ms 周期定时器按 30 个播种相位全覆盖。级联时刻 remaining
+ * 由拍频游走决定，相位 p≡0(mod 3) 必走进 remaining==30 毒区——缺陷复现时
+ * 出现 ~901 拍冻结间隔；根修后所有相位触发间隔恒 51 拍。 */
+static int casc_periodic_case(XTimeWheelGroup* wheel)
+{
+    int failures = 0;
+    int p;
+    unsigned seedPhase = (unsigned)(s_cascFakeMs % 30);
+    uint64_t windowEnd;
+
+    for (p = 0; p < CASC_PHASE_COUNT; ++p) {
+        XTimerData data;
+        casc_drive(wheel, s_cascFakeMs + 1); /* 逐拍播种铺开 30 个相位 */
+        memset(&data, 0, sizeof(data));
+        XTimerData_setInterval(&data, CASC_PERIOD_INTERVAL);
+        XTimerData_setSingleShot(&data, false);
+        XTimerData_setTimerCallback(&data, casc_callback);
+        XTimerData_setUserData(&data, &s_cascPeriodicLogs[p]);
+        if (!XTimeWheelGroup_addTimerMs_base(wheel, data)) {
+            XPrintf("[级联重落槽][periodic-p%u] 注册失败\n",
+                    (unsigned)((seedPhase + p) % 30));
+            ++failures;
+        }
+    }
+    windowEnd = s_cascFakeMs + CASC_PERIOD_WINDOW;
+    casc_drive(wheel, windowEnd);
+
+    for (p = 0; p < CASC_PHASE_COUNT; ++p) {
+        CascFireLog* log = &s_cascPeriodicLogs[p];
+        unsigned phase = (unsigned)((seedPhase + p) % 30);
+        int j;
+        log->m_maxGap = 0;
+        for (j = 1; j < log->m_count; ++j) {
+            uint64_t gap = log->m_fires[j] - log->m_fires[j - 1];
+            if (gap > log->m_maxGap)
+                log->m_maxGap = gap;
+        }
+        if (log->m_count < CASC_PERIOD_MINFIRES) {
+            XPrintf("[级联重落槽][periodic-p%u] 失败: 触发 %d 次（下限 %d）\n",
+                    phase, log->m_count, CASC_PERIOD_MINFIRES);
+            ++failures;
+        }
+        if (log->m_maxGap > CASC_PERIOD_MAXGAP) {
+            XPrintf("[级联重落槽][periodic-p%u] 失败: 最大触发间隔 %llu 拍（上限 %d；整圈滞留缺陷≈901）\n",
+                    phase, (unsigned long long)log->m_maxGap, CASC_PERIOD_MAXGAP);
+            ++failures;
+        }
+    }
+    return failures;
+}
+
+static int casc_regression(void)
+{
+    int failures = 0;
+    XTimeWheelGroup* wheel = casc_group_create();
+    if (!wheel) {
+        XPrintf("[级联重落槽] 时间轮组创建失败\n");
+        return 1;
+    }
+    XPrintf("---------- 级联重落槽回归（确定性假时钟） ----------\n");
+    failures += casc_single_shot_case(wheel, 30, 30, &s_cascSingleLogs[0],
+                                      "single-30ms-L1首边界毒区", CASC_LATE_LIMIT);
+    failures += casc_single_shot_case(wheel, 60, 30, &s_cascSingleLogs[1],
+                                      "single-60ms-L1次边界毒区", CASC_LATE_LIMIT);
+    failures += casc_single_shot_case(wheel, 900, 900, &s_cascSingleLogs[2],
+                                      "single-900ms-L2毒区", CASC_L2_LATE_LIMIT);
+    failures += casc_periodic_case(wheel);
+    if (failures == 0)
+        XPrintf("[级联重落槽] 通过: 毒区单发实测迟到 %lld/%lld/%lld 拍, 50ms 周期 30 相位间隔≤%d 拍\n",
+                (long long)s_cascSingleLogs[0].m_late,
+                (long long)s_cascSingleLogs[1].m_late,
+                (long long)s_cascSingleLogs[2].m_late,
+                CASC_PERIOD_MAXGAP);
+    return failures;
+}
+
 int main(int argc, char** argv)
 {
     int failures = 0;
@@ -91,6 +289,9 @@ int main(int argc, char** argv)
         fprintf(stderr, "[phase-test] XCoreApplication 创建失败\n");
         return 1;
     }
+
+    /* 确定性段先行：不依赖真实时序，缺陷复现即红。 */
+    failures += casc_regression();
 
     /* ---- 错相注册：0/170/340ms 三相同 1000ms + 2500ms 跨边界 ----
      * 170/340 刻意取 L2 槽距 900ms 的非整分段：旧落槽下不同相位的亏欠量

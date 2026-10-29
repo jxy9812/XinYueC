@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XVfdAtv61.h
  * @brief      施耐德 Altivar 61 (ATV61) 变频器子类公开 API。
  * @details    XVfdDevice/XVfdModbusBase 的 ATV61 实现：内置 Modbus（RJ45/RS485

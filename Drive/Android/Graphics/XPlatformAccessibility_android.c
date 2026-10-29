@@ -157,6 +157,41 @@ static const char* xa11y_classNameOf(XWidget* widget)
     return "android.view.View";
 }
 
+/** @brief UTF-8 安全拷贝：截断回退字符边界，并弃掉 JNI 不收的四字节字。
+ *  @details [2026-10-28 根修] 原实现全是裸 strncpy：节点 text/description
+ *           缓冲只有 160 字节，而中文一行 64 个全角字约 192 字节，必然
+ *           在某个多字节字符中间截断。JNI 的 NewStringUTF 对非法 Modified
+ *           UTF-8 直接 Abort（真机实证：SIGABRT / "input is not valid
+ *           Modified UTF-8: illegal continuation byte 0"，读屏器或
+ *           uiautomator 一查询即崩）。
+ *           Modified UTF-8 只认 1~3 字节序列（增补平面须拆代理对，本层不
+ *           做拆对），故 4 字节序列（emoji 等）整字丢弃——宁可少一个字，
+ *           不能让读屏器把宿主进程 abort 掉。 */
+static void xa11y_copyUtf8(char* out, const char* src, size_t cap)
+{
+    size_t i = 0;
+    if (!out || cap == 0) return;
+    out[0] = '\0';
+    if (!src) return;
+    while (src[i] != '\0' && i + 1 < cap) {
+        unsigned char c = (unsigned char)src[i];
+        size_t len;
+        if ((c & 0x80u) == 0x00u) len = 1;
+        else if ((c & 0xE0u) == 0xC0u) len = 2;
+        else if ((c & 0xF0u) == 0xE0u) len = 3;
+        else if ((c & 0xF8u) == 0xF0u) len = 4;
+        else len = 1;   /* 孤立续字节：源数据本身有问题，按 1 字节放过。 */
+        if (len == 4) {          /* Modified UTF-8 无 4 字节形态：整字弃。 */
+            i += 4;
+            continue;
+        }
+        if (i + len + 1 > cap) break;   /* 整字放不下：舍弃，保 NUL 位。 */
+        memcpy(out + i, src + i, len);
+        i += len;
+    }
+    out[i] = '\0';
+}
+
 /** @brief 取控件文本（按类型分派；空串=无文本）。 */
 static void xa11y_readText(XWidget* widget, const char* className,
                             char* out, size_t cap)
@@ -167,8 +202,7 @@ static void xa11y_readText(XWidget* widget, const char* className,
         if (XClassGetVtable(widget) == XLineEdit_class_init()) {
             const char* text = XLineEdit_text((XLineEdit*)widget);
             if (text) {
-                strncpy(out, text, cap - 1u);
-                out[cap - 1] = '\0';
+                xa11y_copyUtf8(out, text, cap);
             }
         }
         return;
@@ -178,8 +212,7 @@ static void xa11y_readText(XWidget* widget, const char* className,
         if (text) {
             const char* utf8 = XString_toUtf8(text);
             if (utf8) {
-                strncpy(out, utf8, cap - 1u);
-                out[cap - 1] = '\0';
+                xa11y_copyUtf8(out, utf8, cap);
             }
         }
         return;
@@ -196,8 +229,7 @@ static void xa11y_readText(XWidget* widget, const char* className,
         if (text) {
             const char* utf8 = XString_toUtf8(text);
             if (utf8) {
-                strncpy(out, utf8, cap - 1u);
-                out[cap - 1] = '\0';
+                xa11y_copyUtf8(out, utf8, cap);
             }
         }
         return;
@@ -208,8 +240,7 @@ static void xa11y_readText(XWidget* widget, const char* className,
         if (name) {
             const char* utf8 = XString_toUtf8(name);
             if (utf8 && utf8[0]) {
-                strncpy(out, utf8, cap - 1u);
-                out[cap - 1] = '\0';
+                xa11y_copyUtf8(out, utf8, cap);
             }
         }
     }
@@ -225,8 +256,7 @@ static void xa11y_readDescription(XWidget* widget, char* out, size_t cap)
         if (desc) {
             const char* utf8 = XString_toUtf8(desc);
             if (utf8 && utf8[0]) {
-                strncpy(out, utf8, cap - 1u);
-                out[cap - 1] = '\0';
+                xa11y_copyUtf8(out, utf8, cap);
                 return;
             }
         }
@@ -239,8 +269,7 @@ static void xa11y_readDescription(XWidget* widget, char* out, size_t cap)
         if (desc) {
             const char* utf8 = XString_toUtf8(desc);
             if (utf8 && utf8[0]) {
-                strncpy(out, utf8, cap - 1u);
-                out[cap - 1] = '\0';
+                xa11y_copyUtf8(out, utf8, cap);
             }
         }
     }

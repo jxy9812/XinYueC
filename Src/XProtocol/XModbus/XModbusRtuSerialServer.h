@@ -44,20 +44,17 @@ XCLASS_DEFINE_EXTEND_END(XModbusRtuSerialServer, XModbusServer)
  * | m_base | XModbusServer | 基类，继承自XModbusServer |
  * | m_serialPort | XSerialPort* | 串口对象 |
  * | m_interFrameDelay | int | 帧间延迟（微秒），0表示自动计算 |
- * | m_turnaroundDelay | int | 响应延迟（毫秒） |
+ * | m_turnaroundDelay | int | 响应延迟（毫秒），预留字段（当前从站立即应答，不启用延迟） |
  * | m_receiveBuffer | XByteArray* | 接收缓冲区 |
- * | m_interFrameTimer | XTimerId | 帧间延迟定时器ID |
  * | m_receiveBufferTimer | XTimerId | 接收缓冲区定时器（用于帧超时检测） |
  */
 typedef struct XModbusRtuSerialServer {
     XModbusServer m_base;               ///< 继承自XModbusServer
     XSerialPort* m_serialPort;          ///< 串口对象
     int m_interFrameDelay;              ///< 帧间延迟（微秒），0表示自动计算
-    int m_turnaroundDelay;              ///< 响应延迟（毫秒）
+    int m_turnaroundDelay;              ///< 响应延迟（毫秒），预留字段（当前从站立即应答，不启用延迟）
     XByteArray* m_receiveBuffer;        ///< 接收缓冲区
-    XTimerId m_interFrameTimer;         ///< 帧间延迟定时器ID
     XTimerId m_receiveBufferTimer;      ///< 接收缓冲区定时器（用于帧超时检测）
-    XTimerId m_turnaroundTimer;         ///< 响应延迟定时器ID
 } XModbusRtuSerialServer;
 
 /******************************************************************************************
@@ -67,7 +64,9 @@ typedef struct XModbusRtuSerialServer {
 /**
  * @brief 初始化XModbusRtuSerialServer的虚函数表
  * @return 初始化完成的虚函数表指针
- * @note 该函数是线程安全的，多次调用返回同一虚表实例
+ * @note 虚表在首次调用时初始化并缓存，此后返回同一实例。
+ *       本框架为单线程事件循环模型：class_init 无锁保护，
+ *       须在事件循环启动前（或同一线程内）调用，通常由 create 接口自动完成。
  */
 XVtable* XModbusRtuSerialServer_class_init(void);
 

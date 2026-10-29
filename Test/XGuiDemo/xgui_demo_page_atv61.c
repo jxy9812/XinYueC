@@ -171,7 +171,6 @@ static void atv_refreshMonitor(void)
     if (!st || !st->m_valid) {
         if (s_atv.m_monitor) {
             XLabel_setText_2(s_atv.m_monitor, "监视：尚无数据（连接后链路自动轮询）");
-            XWidget_update((XWidget*)s_atv.m_monitor);
         }
         return;
     }
@@ -190,7 +189,6 @@ static void atv_refreshMonitor(void)
              st->m_outputPowerPercent);
     if (s_atv.m_monitor) {
         XLabel_setText_2(s_atv.m_monitor, buf);
-        XWidget_update((XWidget*)s_atv.m_monitor);
     }
 }
 
@@ -215,7 +213,6 @@ static void atv_refreshAlarm(void)
     }
     if (s_atv.m_alarm) {
         XLabel_setText_2(s_atv.m_alarm, buf);
-        XWidget_update((XWidget*)s_atv.m_alarm);
     }
 }
 
@@ -235,7 +232,6 @@ static void atv_refreshConnState(void)
              (s_atv.m_dev && XVfdDevice_isBusy(s_atv.m_dev)) ? "（事务中）" : "");
     if (s_atv.m_connState) {
         XLabel_setText_2(s_atv.m_connState, buf);
-        XWidget_update((XWidget*)s_atv.m_connState);
     }
 }
 
@@ -475,73 +471,11 @@ static void atv_refreshPorts(void)
 
 /* ---- 整页竖滚壳（2026-10-27 视觉走查立项②） ----
  * 窄档翻竖排后总高远超视口（rows 竖排+说明行换行），底部说明文字被
- * 页底缘裁断且无滚动条（真机/桌面截图实证）。套「页宿主=scroll、内容
- * 根宽恒跟随视口、高=内容首选高」壳（views 页 ViewsScroll 同款已验证
- * 模式）：resizeEvent → fit（定内容宽/高 + setContentSize 驱动竖滚范
- * 围）。本页 rows 池固定无双档互移，无 views 页的装配交互问题。 */
-XCLASS_DEFINE_BEGING(AtvScroll)
-XCLASS_DEFINE_EXTEND_END(AtvScroll, XScrollArea)
-
-typedef struct AtvScroll
-{
-    XScrollArea m_base; /**< 基类成员；必须是第一个。 */
-} AtvScroll;
-
-static void atv_fitScrollContent(XScrollArea* area);
-
-static void VAtvScroll_resizeEvent(XWidget* self, XEvent* event)
-{
-    if (!self) return;
-    XClass_Parent(XScrollArea, EXWidget_ResizeEvent,
-                  XWidgetEventSlot)(self, event);
-    atv_fitScrollContent((XScrollArea*)self);
-}
-
-XVtable* AtvScroll_class_init(void)
-{
-    XVTABLE_INIT_DEFAULT(AtvScroll)
-    XVTABLE_INHERIT_XCLASS(XScrollArea);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
-                             VAtvScroll_resizeEvent);
-    return XVTABLE_DEFAULT;
-}
-
-/** @brief 内容根定尺收口：宽=视口宽（水平恒不滚），高=布局合计首选/最
- *         小取大（定尺寸条目不被裁）。 */
-static void atv_fitScrollContent(XScrollArea* area)
-{
-    XWidget* viewport;
-    XWidget* content;
-    int vw;
-    int vh;
-    int pass;
-    if (!area) return;
-    viewport = XAbstractScrollArea_viewport(area);
-    content = XScrollArea_widget(area);
-    if (!viewport || !content) return;
-    vw = XWidget_width(viewport);
-    vh = XWidget_height(viewport);
-    if (vw < 1) return;   /* 视口未就位（堆叠未给几何）不猜。 */
-    XWidget_setFixedWidth(content, vw);
-    for (pass = 0; pass < 2; ++pass) {
-        XSize hint;
-        XSize minHint;
-        if (XWidget_layout(content))
-            XLayout_invalidate(XWidget_layout(content));
-        hint = XWidget_sizeHint(content);
-        minHint = XWidget_minimumSizeHint(content);
-        if (minHint.height > hint.height) hint.height = minHint.height;
-        if (minHint.width > hint.width) hint.width = minHint.width;
-        if (hint.width < 1) hint.width = vw;
-        if (hint.height < 1) hint.height = vh > 0 ? vh : 1;
-        XWidget_setFixedHeight(content, hint.height);
-        XWidget_setGeometry(content, 0, 0, hint.width, hint.height);
-        if (XWidget_layout(content))
-            XLayout_activate(XWidget_layout(content));
-    }
-    XAbstractScrollArea_setContentSize(area, vw,
-        XWidget_height(content) > vh ? XWidget_height(content) : vh);
-}
+ * 页底缘裁断且无滚动条（真机/桌面截图实证）。页宿主=scroll、内容根
+ * 挂其下：内容几何与滚动范围由框架 widgetResizable(true) 接管
+ * （XScrollArea.c xsa_updateWidgetGeometry resizable 分支，视口与内容
+ * 合计首选/最小取大），本页不再自管 fit；翻排改内容高时经
+ * XScrollArea_updateWidgetGeometry 触发一次框架重排版。 */
 
 /* ==================== 构建 ==================== */
 
@@ -558,16 +492,10 @@ XWidget* demo_page_atv61_build(XWidget* parent,
     {
         /* [整页竖滚 2026-10-27 立项②] 页宿主=scroll（返回值），内容根=
          * 原页面根：窄档翻竖排后总高远超视口，由竖滚条承担（底部说明
-         * 不再被页底缘裁断）。AtvScroll 壳 resizeEvent → fit 收口。 */
-        AtvScroll* scroll =
-            (AtvScroll*)XMemory_malloc(sizeof(AtvScroll),
-                                       XCLASS_DEFAULT_MEMORY_TYPE);
+         * 不再被页底缘裁断）。内容几何由框架 widgetResizable 接管。 */
+        XScrollArea* scroll = XScrollArea_create(parent, 0);
         if (!scroll) return NULL;
-        XMemset(scroll, 0, sizeof(*scroll));
-        XScrollArea_init(&scroll->m_base, parent, 0);
-        XClassSetVtable(scroll, AtvScroll);
-        Set_Class_Memory(scroll, XCLASS_DEFAULT_MEMORY_TYPE);
-        Set_Class_IsHeap(scroll, true);
+        XScrollArea_setWidgetResizable(scroll, true);
         XAbstractScrollArea_setVerticalScrollBarPolicy(
             (XAbstractScrollArea*)scroll, XScrollBarPolicy_AsNeeded);
         XAbstractScrollArea_setHorizontalScrollBarPolicy(
@@ -688,6 +616,11 @@ XWidget* demo_page_atv61_build(XWidget* parent,
             "[1.6 命令] CHCF=SIM 时 Fr1=Mdb。轮询由链路计划表统一排拍。");
         XBoxLayout_addWidget(&s_atv.m_rootLayout, (XWidget*)s_atv.m_hint);
     }
+    /* [滚动壳下沉 2026-10-29] 尾部收 stretch：widgetResizable(true) 下
+     * 内容高=视口与内容首选取大（桌面一屏装得下时内容件随视口升高），
+     * 余量必须沉底——否则本框架布局器把富余高度均摊进条目间距，行距
+     * 随窗口高度漂移（Modbus 页 2026-10-28 纵向布局收口同款定式）。 */
+    XBoxLayout_addStretch(&s_atv.m_rootLayout, 1);
 
     /* ---- 引擎对象（父=页根，随父子链级联析构） ---- */
     s_atv.m_client = XModbusRtuSerialClient_create();
@@ -849,10 +782,10 @@ void demo_page_atv61_adapt(XWidget* page)
     XBoxLayout_setDirection(&s_atv.m_rows[2],
         narrow ? XBoxLayoutDirection_TopToBottom
                : XBoxLayoutDirection_LeftToRight);
-    /* 翻排改变内容高：scroll 壳主动收口一次（resizeEvent 只盖窗口
+    /* 翻排改变内容高：触发框架重排版收口一次（resizeEvent 只盖窗口
      * 尺寸变化路径）。 */
     if (s_atv.m_scroll)
-        atv_fitScrollContent((XScrollArea*)s_atv.m_scroll);
+        XScrollArea_updateWidgetGeometry((XScrollArea*)s_atv.m_scroll);
     /* [HUD 让位 2026-10-27 视觉走查 P2-8] 底部说明行与右下锚定的 FPS
      * 悬浮层同落页底带，说明行尾部被遮（横屏截图实证）：hint 最大宽
      * 按悬浮层几何收窄（window 页 adapt 同款先例）；悬浮层隐藏/未解算

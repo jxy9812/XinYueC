@@ -27,19 +27,25 @@
  *             引擎逻辑零复制（设计文档 XUpgrade.md §12 UI 集成表）。
  *
  *             线程模型：XUpgrade listener 在引擎后台线程回调（XUpgrade.h
- *             契约注明）——本页 listener 只把事件快照压入互斥保护的 8 槽
- *             环形队列（满则丢最旧，进度类事件保持流动），UI 线程经
- *             120ms XTimer 泵出并落控件；定时器仅在引擎懒启动成功后开启，
- *             页面构建路径零引擎调用（版本列表只读两次指针文件，微秒级）。
+ *             契约注明）——本页 listener 只把事件快照堆拷贝后经框架编组
+ *             原语 XCoreApplication_postInvoke 投递到页根（内部=Qt 同款
+ *             XCoreApplication_postEvent 自定义事件：锁接收者所属线程的
+ *             已投递事件表入队并唤醒其分发器），回调在 UI 线程事件循环
+ *             兑现落控件；页内零自建队列、零轮询泵（2026-10-29 由「互斥
+ *             8 槽环形队列+120ms XTimer 泵」迁移——旧丢最旧策略是 120ms
+ *             批量泵的伴生需求，postEvent 编组按投递次序即时兑现无批量
+ *             窗口，Qt 口径队列无界不丢弃）。
  *
  *             autotest 口径：全程非阻塞、不触网络（不发起检查）；事件
- *             路径经真实 listener 入队 + 真实泵出回调验证——与引擎线程
- *             共用同一段队列/落控件代码，仅免去线程时序；引擎懒启动走
- *             真实 XUpgrade_init（工作区在临时目录，占用时按失败口径）。
+ *             路径经真实 listener 投递 + 定向 sendPostedEvents 冲刷验证
+ *             ——与引擎线程共用同一段编组/落控件代码，仅免去线程时序；
+ *             引擎懒启动走真实 XUpgrade_init（工作区在临时目录，占用时
+ *             按失败口径）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h> /* malloc/free：listener 事件快照（编组载荷）。 */
 #include "XGuiConfig.h"
 #include "XPrintf.h"
 #include "XObject.h"
@@ -52,9 +58,7 @@
 #include "XDialogButtonBox.h"
 #include "XPushButton.h"
 #include "XProgressBar.h"
-#include "XTimer.h"
-#include "XMutex.h"
-#include "XCoreApplication.h" /* sendPostedEvents：定向冲刷 DeferredDelete */
+#include "XCoreApplication.h" /* postInvoke 跨线程编组 + sendPostedEvents 定向冲刷 */
 #include "XProcess.h"        /* startDetached：重启弹窗「是」分离拉起新实例。 */
 #include "XSystem.h"      /* XSystem_environment: 环境变量唯一入口。 */
 #include "XString.h"      /* 版本列表文本断言（XLabel_text 读法）。 */
@@ -80,11 +84,6 @@ extern int XUpgradeApplyStub_main(int argc, char* argv[]);
 /* 页根装配基线常量（UPD_FIELD_X/UPD_BAR_X/UPD_ROW_PITCH/UPD_URL_Y/
  * UPD_BAR_Y0/UPD_BTN_Y）随 2026-10-17 页内布局容器化退场：几何分配
  * 全权移交页根 XBoxLayout（嵌套行/列盒边距复刻 776x458 设计稿间距）。 */
-
-/** @brief 事件队列容量（listener 后台线程生产、UI 泵消费；满丢最旧）。 */
-#define UPD_QUEUE_CAP  8
-/** @brief UI 泵周期（毫秒）：语义事件到控件的典型时延上界。 */
-#define UPD_PUMP_MS    120
 
 /** @brief 窄窗分档阈值（页根宽，逻辑像素）：决策行单行装配内容 694 + 根盒
  *         左右边距 24 ≈ 718，低于它的竖屏/窄分栏单行必然水平溢出——adapt
@@ -198,14 +197,7 @@ static struct
     XWidget*   m_hintGap;      /**< 提示行与状态行间固定空隙（2px，复刻原行距）。 */
 #endif
 
-    /* ---- 跨线程事件队列（listener 后台线程 → UI 泵） ---- */
-    XMutex*    m_queueMutex;   /**< 队列互斥（XLock_NonRecursive）。 */
-    XUpgradeEvent m_queue[UPD_QUEUE_CAP]; /**< 环形队列槽。 */
-    int        m_queueHead;    /**< 队头下标。 */
-    int        m_queueCount;   /**< 队列长度。 */
-
-    /* ---- UI 泵定时器（懒启动成功后才 start） ---- */
-    XTimer*    m_pumpTimer;    /**< UI 线程泵（UPD_PUMP_MS 周期）。 */
+    /* ---- 引擎懒启动幂等门 + 自测弹窗抑制 ---- */
     bool       m_engineStarted;/**< 引擎已懒启动（幂等门）。 */
     bool       m_dialogSuppress; /**< 自测抑制弹窗（autotest 注入 ReadyNeedRestart 时置位防模态挂死）。 */
 
@@ -506,8 +498,8 @@ static const char* upd_serverUrl(char* outBuf, size_t cap)
  *  @details autoCheck=false 仅手动检查；安装根=临时目录 xgui_demo_update
  *           （工作区不落 demo 目录）；URL 取界面输入行当前文本（预填
  *           XUPGRADE_DEMO_URL 环境变量或缺省部署地址；引擎 URL 在 init
- *           时固定，启动成功后输入行锁定）。启动成功才开 UI 泵定时器
- *           （后台线程事件 → 控件）。 */
+ *           时固定，启动成功后输入行锁定）。事件经 postInvoke 编组直达
+ *           UI 线程，启动后无需再开任何轮询泵。 */
 /** @brief 真实自替换残留清理：<exe>.old 保身副本。旧进程退出前删除必败
  *  （Windows 禁删运行中映像，且改名后旧进程仍从 .old 运行），故构建时与
  *  引擎懒启动时各试一次——旧进程退出后的任意时刻删除即可成功。 */
@@ -578,10 +570,6 @@ static bool upd_ensureStarted(void)
         /* 引擎 URL 在 init 时固定：启动成功后锁定输入行（改地址需重启 demo）。 */
         XWidget_setEnabled((XWidget*)s_upd.m_urlEdit, false);
     }
-    if (s_upd.m_pumpTimer) {
-        XTimer_setInterval(s_upd.m_pumpTimer, UPD_PUMP_MS);
-        XTimer_start_base(s_upd.m_pumpTimer);
-    }
     upd_refreshVersions();
     upd_refreshPolicy();
     upd_report("\xE5\x8D\x87\xE7\xBA\xA7\xE5\xBC\x95\xE6\x93\x8E\xE5\xB7"
@@ -591,27 +579,43 @@ static bool upd_ensureStarted(void)
     return true;
 }
 
-/* ==================== 事件队列（listener 生产 / UI 泵消费） ============ */
+/* ==================== 跨线程编组（listener 引擎线程 → 页根 UI 线程） ==== */
 
-/** @brief 引擎事件观察者（后台线程上下文）：快照入队后立即返回。
- *  @details 队列满丢最旧（进度/状态类后到事件更新，保持 UI 流动）；
- *           回调内不做任何 UI 操作、不调用引擎控制 API（XUpgrade.h 契约）。 */
+static void upd_applyEvent(const XUpgradeEvent* event); /* 落控件主体后置定义 */
+static void upd_applyEventCb(void* userData);
+
+/** @brief 引擎事件观察者（后台线程上下文）：快照堆拷贝后经框架编组原语
+ *  投递页根，随即返回。
+ *  @details XCoreApplication_postInvoke 内部=Qt 同款 postEvent 自定义事件
+ *           （锁页根所属线程已投递事件表入队 + 唤醒其分发器），回调在
+ *           UI 线程事件循环兑现；队列无界不丢弃、按投递次序兑现（旧
+ *           8 槽环形队列的「满丢最旧」是 120ms 批量泵的伴生需求，即时
+ *           兑现编组下不存在批量窗口）。快照分配失败按丢新处理（原队列
+ *           满丢旧对称口径）；回调内不做任何 UI 操作、不调用引擎控制
+ *           API（XUpgrade.h 契约）。 */
 static void upd_listener(void* userData, const XUpgradeEvent* event)
 {
+    XUpgradeEvent* snapshot;
     (void)userData;
-    if (!event || !s_upd.m_queueMutex) return;
-    XMutex_lock(s_upd.m_queueMutex);
-    if (s_upd.m_queueCount >= UPD_QUEUE_CAP) {
-        s_upd.m_queueHead = (s_upd.m_queueHead + 1) % UPD_QUEUE_CAP;
-        --s_upd.m_queueCount;
+    if (!event || !s_upd.m_root) return;
+    snapshot = (XUpgradeEvent*)malloc(sizeof(*snapshot));
+    if (!snapshot) return; /* 快照分配失败：丢本条（进度类后续事件自会补上）。 */
+    *snapshot = *event;
+    if (!XCoreApplication_postInvoke((XObject*)s_upd.m_root,
+                                     upd_applyEventCb, snapshot)) {
+        free(snapshot); /* 编组失败回调永不兑现：调用方自回收（原语契约）。 */
     }
-    s_upd.m_queue[(s_upd.m_queueHead + s_upd.m_queueCount) % UPD_QUEUE_CAP] =
-        *event;
-    ++s_upd.m_queueCount;
-    XMutex_unlock(s_upd.m_queueMutex);
 }
 
-static void upd_pumpCb(void* userData, XTimerData* timer);
+/** @brief 编组兑现入口（页根 UI 线程上下文）：落控件后回收快照。 */
+static void upd_applyEventCb(void* userData)
+{
+    XUpgradeEvent* snapshot = (XUpgradeEvent*)userData;
+    if (!snapshot) return;
+    upd_applyEvent(snapshot);
+    free(snapshot);
+}
+
 static bool upd_applyAndSwitch(void); /* 弹窗「是」分支先于定义调用（前向声明） */
 
 /** @brief 事件 → 控件落地（仅 UI 线程调用；纯观察口径）。 */
@@ -761,27 +765,6 @@ static void upd_applyEvent(const XUpgradeEvent* event)
                      upd_stateName(event->m_state)); /* 引擎状态: */
         if (!event->m_detail[0]) upd_report("%s", text);
         break;
-    }
-}
-
-/** @brief UI 泵（120ms 周期）：把队列里的事件逐条落地（UI 线程上下文）。 */
-static void upd_pumpCb(void* userData, XTimerData* timer)
-{
-    (void)userData;
-    (void)timer;
-    if (!s_upd.m_ready || !s_upd.m_queueMutex) return;
-    for (;;) {
-        XUpgradeEvent event;
-        XMutex_lock(s_upd.m_queueMutex);
-        if (s_upd.m_queueCount <= 0) {
-            XMutex_unlock(s_upd.m_queueMutex);
-            break;
-        }
-        event = s_upd.m_queue[s_upd.m_queueHead];
-        s_upd.m_queueHead = (s_upd.m_queueHead + 1) % UPD_QUEUE_CAP;
-        --s_upd.m_queueCount;
-        XMutex_unlock(s_upd.m_queueMutex);
-        upd_applyEvent(&event);
     }
 }
 
@@ -1348,14 +1331,6 @@ XWidget* demo_page_update_build(XWidget* parent,
     XWidget_setLayout(s_upd.m_root, (XLayout*)&s_upd.m_rootLayout);
 #endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 
-    /* ---- 跨线程事件队列 + UI 泵定时器（懒启动成功才 start） ---- */
-    s_upd.m_queueMutex = XMutex_create(XLock_NonRecursive);
-    s_upd.m_pumpTimer = XTimer_create();
-    if (s_upd.m_pumpTimer) {
-        XTimer_setTimerCallback(s_upd.m_pumpTimer, upd_pumpCb);
-        XTimer_setUserData(s_upd.m_pumpTimer, NULL);
-    }
-
     /* ---- 版本列表与策略区首轮回填（只读指针文件，零引擎调用） ---- */
     upd_refreshVersions();
     upd_refreshPolicy();
@@ -1519,31 +1494,32 @@ void demo_page_update_adapt(XWidget* page)
 void demo_page_update_shutdown(void)
 {
     if (!s_upd.m_ready) return; /* 页面未构建：零操作（含裁剪配置）。 */
-    /* 顺序：先停泵（UI 侧不再消费）→ 停引擎（join 后台线程，listener
-       不再入队）→ 回收队列互斥与定时器。UI 线程调用 deinit 合法（契约
-       只禁回调内调用）。 */
-    if (s_upd.m_pumpTimer) {
-        XTimer_stop_base(s_upd.m_pumpTimer);
-        XObject_deleteLater((XObject*)s_upd.m_pumpTimer);
-        /* 唯一生产调用方（xgui_window_demo）在事件循环退出（exec 返回）
-         * 之后才走到本收口，延迟删除事件此后永不再被投递——此处按接收者
-         * 定向冲刷，立即完成回收；循环期的防御性调用（页面重建）下同样
-         * 安全：sendPostedEvents 按投递次序处理，本对象在途事件先于删除
-         * 事件送达，且只冲刷本对象，不影响其他 deleteLater 的既有时序。 */
-        XCoreApplication_sendPostedEvents((XObject*)s_upd.m_pumpTimer,
-                                          XEVENT_TYPE_DEFERRED_DELETE);
-        s_upd.m_pumpTimer = NULL;
-    }
+    /* 顺序：注销观察者 → 停引擎（join 后台线程，listener 不再投递）→
+       定向冲刷页根在途编组事件（快照在回调内自回收）。UI 线程调用
+       deinit 合法（契约只禁回调内调用）；冲刷前置位弹窗抑制——在途
+       ReadyNeedRestart 若落弹窗会在 exec 退出后挂死收口（自测口径同一
+       开关）；冲刷后页根在途 FUNC_RUN 清零，其后销毁路径无残留载荷。 */
+    XUpgrade_setListener(NULL, NULL); /* 未启动时为空操作（契约：可先于 init 注册/清除）。 */
     if (s_upd.m_engineStarted)
-        XUpgrade_deinit(); /* 未启动时为空操作（契约）。 */
+        XUpgrade_deinit();
     s_upd.m_engineStarted = false;
-    if (s_upd.m_queueMutex) {
-        XMutex_delete(s_upd.m_queueMutex);
-        s_upd.m_queueMutex = NULL;
-    }
+    s_upd.m_dialogSuppress = true;
+    XCoreApplication_sendPostedEvents((XObject*)s_upd.m_root,
+                                      XEVENT_TYPE_FUNC_RUN);
 }
 
 /* ==================== autotest ==================== */
+
+/** @brief 探针哨兵（地址唯一稳定，仅供指针载荷一致性断言）。 */
+static const void* const upd_probeToken_sentinel = &upd_probeToken_sentinel;
+
+/** @brief postInvoke 探针：把已知哨兵写入调用方槽位（验证指针载荷经
+ *  编组原语字节复制后原值回传、且在页根线程兑现）。 */
+static void upd_probeCb(void* userData)
+{
+    if (userData)
+        *(const void**)userData = (const void*)&upd_probeToken_sentinel;
+}
 
 int demo_page_update_autotest(XWidget* page)
 {
@@ -1553,13 +1529,17 @@ int demo_page_update_autotest(XWidget* page)
 #define UPD_EXPECT(cond, what) \
     do { if (cond) XPrintf("XGuiAutoTest: [PASS] %s\n", what); \
          else { XPrintf("XGuiAutoTest: [FAIL] %s\n", what); ++failures; } } while (0)
+/** @brief autotest 注入：真实 listener 投递 + 页根定向冲刷（与引擎线程
+ *  共用同一段编组/落控件代码，仅免去线程时序）。 */
 #define UPD_INJECT(type_, state_, phase_, percent_, policy_, gray_, ver_) \
     do { memset(&event, 0, sizeof(event)); \
          event.m_type = (type_); event.m_state = (state_); \
          event.m_phase = (phase_); event.m_percent = (percent_); \
          event.m_policy = (policy_); event.m_gray = (gray_); \
          snprintf(event.m_version, sizeof(event.m_version), "%s", (ver_)); \
-         upd_listener(NULL, &event); upd_pumpCb(NULL, NULL); } while (0)
+         upd_listener(NULL, &event); \
+         XCoreApplication_sendPostedEvents((XObject*)s_upd.m_root, \
+                                           XEVENT_TYPE_FUNC_RUN); } while (0)
 
     if (!page || !s_upd.m_ready || page != s_upd.m_root)
         return -1;
@@ -1571,9 +1551,20 @@ int demo_page_update_autotest(XWidget* page)
                s_upd.m_phaseBar[1] && s_upd.m_phaseBar[2] &&
                s_upd.m_phaseBar[3] && s_upd.m_checkBtn &&
                s_upd.m_skipBtn &&
-               s_upd.m_hintLabel && s_upd.m_statusLabel &&
-               s_upd.m_queueMutex && s_upd.m_pumpTimer,
-               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE6\x8E\xA7\xE4\xBB\xB6\xE5\x85\xA8\xE9\x83\xA8\xE7\x99\xBB\xE8\xAE\xB0(\xE5\x90\xAB\xE5\x9B\x9B\xE6\xAE\xB5\xE8\xBF\x9B\xE5\xBA\xA6\xE6\x9D\xA1\xE4\xB8\x8E\xE9\x98\x9F\xE5\x88\x97/\xE6\xB3\xB5)");
+               s_upd.m_hintLabel && s_upd.m_statusLabel,
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE6\x8E\xA7\xE4\xBB\xB6\xE5\x85\xA8\xE9\x83\xA8\xE7\x99\xBB\xE8\xAE\xB0(\xE5\x90\xAB\xE5\x9B\x9B\xE6\xAE\xB5\xE8\xBF\x9B\xE5\xBA\xA6\xE6\x9D\xA1)");
+
+    /* ---- postInvoke 编组原语端到端：投递即在页根线程兑现（载荷指针
+     *      原值回传），兼验页根接收者线程亲和 ---- */
+    {
+        const void* probeGot = NULL;
+        XCoreApplication_postInvoke((XObject*)s_upd.m_root,
+                                    upd_probeCb, (void*)&probeGot);
+        XCoreApplication_sendPostedEvents((XObject*)s_upd.m_root,
+                                          XEVENT_TYPE_FUNC_RUN);
+        UPD_EXPECT(probeGot == upd_probeToken_sentinel,
+                   "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: postInvoke \xE7\xBC\x96\xE7\xBB\x84\xE5\x9C\xA8\xE9\xA1\xB5\xE6\xA0\xB9\xE7\xBA\xBF\xE7\xA8\x8B\xE5\x85\x91\xE7\x8E\xB0");
+    }
 
     /* ---- 程序版本行：应用名称+版本经 XCoreApplication 接线；版本随引擎
      *      激活版本同步（指针为空回退出厂宏），两处显示口径一致 ---- */
@@ -1614,7 +1605,7 @@ int demo_page_update_autotest(XWidget* page)
                    !XWidget_isEnabled((XWidget*)s_upd.m_installBtn),
                "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE5\x88\x9D\xE5\xA7\x8B\xE4\xBB\x85\xE6\xA3\x80\xE6\x9F\xA5\xE6\x9B\xB4\xE6\x96\xB0\xE5\x8F\xAF\xE7\x94\xA8");
 
-    /* ---- Progress 事件驱动四段进度条（真实 listener 入队 + 泵出） ---- */
+    /* ---- Progress 事件驱动四段进度条（真实 listener 投递 + 定向冲刷） ---- */
     UPD_INJECT(XUpgradeEventType_Progress, XUpgradeState_Downloading,
                XUpgradePhase_Download, 45, XUpgradePolicy_Optional,
                XUpgradeGrayDecision_NotEvaluated, "");
@@ -1668,7 +1659,8 @@ int demo_page_update_autotest(XWidget* page)
     event.m_type = XUpgradeEventType_CheckFailed;
     event.m_state = XUpgradeState_CheckFailed;
     upd_listener(NULL, &event);
-    upd_pumpCb(NULL, NULL);
+    XCoreApplication_sendPostedEvents((XObject*)s_upd.m_root,
+                                      XEVENT_TYPE_FUNC_RUN);
     UPD_EXPECT(strstr(s_upd.m_lastStatus, "\xE6\x9A\x82\xE6\x97\xA0\xE6\x9B\xB4\xE6\x96\xB0") != NULL,
                "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: CheckFailed \xE6\x97\xA0\xE8\xAF\xB4\xE6\x98\x8E\xE8\x90\xBD\xE3\x80\x8C\xE6\x9A\x82\xE6\x97\xA0\xE6\x9B\xB4\xE6\x96\xB0\xE3\x80\x8D"); /* 暂无更新 */
     memset(&event, 0, sizeof(event));
@@ -1676,7 +1668,8 @@ int demo_page_update_autotest(XWidget* page)
     event.m_state = XUpgradeState_CheckFailed;
     snprintf(event.m_detail, sizeof(event.m_detail), "%s", "url empty");
     upd_listener(NULL, &event);
-    upd_pumpCb(NULL, NULL);
+    XCoreApplication_sendPostedEvents((XObject*)s_upd.m_root,
+                                      XEVENT_TYPE_FUNC_RUN);
     UPD_EXPECT(strstr(s_upd.m_lastStatus,
                       "\xE6\xA3\x80\xE6\x9F\xA5\xE5\xA4\xB1\xE8\xB4\xA5") !=
                    NULL,

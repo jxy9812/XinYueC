@@ -543,12 +543,13 @@ XWidget* demo_page_timeddns_build(XWidget* parent,
         return (XWidget*)0;
     XAbstractScrollArea_setHorizontalScrollBarPolicy(
         (XAbstractScrollArea*)s_td.m_root, XScrollBarPolicy_AlwaysOff);
-    /* 内容件承载全部可见控件（widgetResizable 缺省 false=内容自管
-     * 几何，宽/高由 adapt 重排统一定）。 */
+    /* 内容件承载全部可见控件（widgetResizable(true)：内容几何与滚动
+     * 范围由框架接管；内容自然高经 td_mountContent 定尺约束表达）。 */
     s_td.m_content = XWidget_create(s_td.m_root, 0);
     if (!s_td.m_content)
         return (XWidget*)0;
     XScrollArea_setWidget((XScrollArea*)s_td.m_root, s_td.m_content);
+    XScrollArea_setWidgetResizable((XScrollArea*)s_td.m_root, true);
 
 #if XNTP_ON
     /* ---- 系统时间卡（最上段）----
@@ -901,16 +902,18 @@ static int td_reflowNarrow(int vw, int vh)
 
 /** @brief 按视口尺寸分档重排并把首选高落到内容件/滚动范围。
  *  @note  adapt 与 autotest（窄屏档回归验后还原）共用此唯一入口，
- *         保证两处口径永不漂移。 */
+ *         保证两处口径永不漂移。
+ *  @note  [滚动壳下沉 2026-10-29] 内容件无布局器（本页手工排布），合计
+ *         提示记 0——框架 widgetResizable 排版读不到自然高，改按定尺
+ *         约束表达：框架几何=视口与提示取大后经内容 min/max 钳口落在
+ *         contentH，再由其回读实际尺寸驱动滚动范围（同旧口径）。 */
 static void td_mountContent(int vw, int vh)
 {
     int contentH = (vw >= TD_TWO_COL_MIN_W) ? td_reflowWide(vw, vh)
                                             : td_reflowNarrow(vw, vh);
-    XWidget_setGeometry(s_td.m_content, 0, 0, vw, contentH);
-    /* 内容尺寸驱动滚动范围（宽=视口宽 ⇒ 水平恒无滚动需求，叠加
-     * AlwaysOff 双保险；高超出部分即竖滚量）。 */
-    XAbstractScrollArea_setContentSize((XAbstractScrollArea*)s_td.m_root,
-                                       vw, contentH > vh ? contentH : vh);
+    (void)vw; /* 内容宽由框架取视口宽（提示记 0 时即视口宽）。 */
+    XWidget_setFixedHeight(s_td.m_content, contentH);
+    XScrollArea_updateWidgetGeometry((XScrollArea*)s_td.m_root);
 }
 
 /**

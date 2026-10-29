@@ -12,6 +12,11 @@
 #include "XMap.h"
 #include "XString.h"
 #include <string.h>
+#include <errno.h>
+#if !defined(_WIN32)
+#include <sys/types.h>
+#include <sys/socket.h> /* [死链巡检下沉 2026-10-29] MSG_PEEK 假 EOF 复核探测。 */
+#endif
 
 // =============== 虚函数前置声明 ================
 static bool VXModbusTcpServer_open(XModbusDevice* device);
@@ -23,6 +28,7 @@ static XModbusResponse* VXModbusTcpServer_processRequest(XModbusServer* server, 
 static void XModbusTcpServer_onNewConnection(XObject* receiver, XVarList* args);
 static void XModbusTcpServer_onClientDisconnected(XObject* receiver, XVarList* args);
 static void XModbusTcpServer_onClientReadyRead(XObject* receiver, XVarList* args);
+static void XModbusTcpServer_onSweepTimer(void* userData, XTimerData* timer);
 
 static void XModbusTcpServer_deinitClientBuffer(void* value)
 {
@@ -197,12 +203,30 @@ void XModbusTcpServer_init(XModbusTcpServer* server)
     }
 
     server->m_observer = NULL;
+
+    // [死链巡检下沉 2026-10-29] 内置 1s 巡检定时器（open 启动/close 停止；
+    // 挂为服务器子对象随父子链级联析构；回调自守卫，无客户端表即零开销）。
+    server->m_sweepTimer = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (server->m_sweepTimer) {
+        XObject_setParent((XObject*)server->m_sweepTimer, (XObject*)server);
+        XTimer_setInterval(server->m_sweepTimer, 1000);
+        XTimer_setTimerCallback(server->m_sweepTimer,
+                                XModbusTcpServer_onSweepTimer);
+        XTimer_setUserData(server->m_sweepTimer, server);
+    }
 }
 
 // =============== 析构函数 ================
 static void VXModbusTcpServer_deinit(XModbusTcpServer* server)
 {
     if (!server) return;
+
+    // [死链巡检下沉 2026-10-29] 先停内置巡检定时器（防析构中途再触发）；
+    // 定时器为服务器子对象，随父子链级联析构，此处不重复删除。
+    if (server->m_sweepTimer) {
+        XTimer_stop_base(server->m_sweepTimer);
+        server->m_sweepTimer = NULL;
+    }
 
     // 关闭TCP服务器
     if (server->m_tcpServer) {
@@ -252,6 +276,11 @@ static bool VXModbusTcpServer_open(XModbusDevice* device)
     bool result = XTcpServer_listen(server->m_tcpServer, addr, port);
     if (result) {
         XModbusDevice_setState(device, XModbusDevice_ConnectedState);
+        // [死链巡检下沉 2026-10-29] 监听成功即启动内置死链巡检
+        // （posix 探测通道；Windows 未内置探测，定时器不启动）。
+#if !defined(_WIN32)
+        if (server->m_sweepTimer) XTimer_start_base(server->m_sweepTimer);
+#endif
     } else {
         XModbusDevice_setError(device, XModbusDevice_ConnectionError,
             "Failed to start TCP server");
@@ -265,6 +294,11 @@ static void VXModbusTcpServer_close(XModbusDevice* device)
 {
     XModbusTcpServer* server = (XModbusTcpServer*)device;
     if (!server) return;
+
+    // [死链巡检下沉 2026-10-29] 先停巡检定时器（防清表过程中再触发）。
+    if (server->m_sweepTimer) {
+        XTimer_stop_base(server->m_sweepTimer);
+    }
 
     // 断开所有客户端
     if (server->m_connectedClients) {
@@ -431,6 +465,59 @@ static void XModbusTcpServer_onClientDisconnected(XObject* receiver, XVarList* a
     // 处于信号发射链上，必须用延迟删除，避免其他连接方访问已释放内存
     XModbusTcpServer_modbusClientDisconnected_signal(server, client);
     XModbusTcpServer_releaseClientSocket(client);
+}
+
+// =============== 死链巡检（[下沉 2026-10-29] CLOSE-WAIT/半开回收） ===============
+// 对端 FIN 的 EOF 在 IO 环→XAbstractSocket 事件层被吞（0 字节读只
+// ContinueRead，不发 readyRead/disconnected/不置错），服务端
+// onClientDisconnected 永不触发 ⇒ accepted fd 滞留 CLOSE-WAIT。探测手法
+// 与 posix 平台「假 EOF 复核」同款（XDeviceNetwork_posix.c）：对裸 fd 做
+// recv(MSG_PEEK|MSG_DONTWAIT)——不消费字节，与 IO 环在途读无竞态：
+// pr>0=有数据待读（活链，交正常 readyRead 路径）；pr<0 且
+// EAGAIN/EWOULDBLOCK=连接存活空闲；pr==0=对端真 FIN（回收）；其余硬错误
+// （ECONNRESET/ENOTSOCK/EBADF 等，含已 close 残留表项）一并回收。回收
+// 动作=onClientDisconnected+releaseClientSocket 同语义：摘映射表
+// （return true 交 removeIf）→断本 socket 到服务器信号→发
+// modbusClientDisconnected（公开契约保持）→close+脱父链+deleteLater。
+#if !defined(_WIN32)
+static bool XModbusTcpServer_deadClientPred(const void* pvKey, void* pvValue,
+                                            void* args)
+{
+    XTcpSocket* client = *(XTcpSocket* const*)pvKey;
+    XModbusTcpServer* server = (XModbusTcpServer*)args;
+    intptr_t fd;
+    ssize_t pr;
+    unsigned char b;
+    (void)pvValue;
+    if (!client || !server) return false;
+    fd = XAbstractSocket_socketDescriptor_base((XAbstractSocket*)client);
+    if (fd <= 0) return false; /* 未持描述符（理论不达），保守不回收。 */
+    pr = recv((int)fd, &b, 1, MSG_PEEK | MSG_DONTWAIT);
+    if (pr > 0) return false;              /* 有数据：活链，交正常路径。 */
+    if (pr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        return false;                      /* 空闲活链。 */
+    /* 真 FIN（pr==0）或硬错误：回收。 */
+    XObject_disconnect_1((XObject*)client, 0, (XObject*)server, NULL);
+    XModbusTcpServer_modbusClientDisconnected_signal(server, client);
+    XModbusTcpServer_releaseClientSocket(client);
+    return true;
+}
+#endif /* !_WIN32 */
+
+void XModbusTcpServer_sweepDeadClients(XModbusTcpServer* server)
+{
+    if (!server || !server->m_connectedClients) return;
+#if !defined(_WIN32)
+    XMapBase_removeIf_base((XMapBase*)server->m_connectedClients,
+                           XModbusTcpServer_deadClientPred, server);
+#endif
+}
+
+/** @brief 内置死链巡检定时器槽（1s 周期；open 启动/close 停止）。 */
+static void XModbusTcpServer_onSweepTimer(void* userData, XTimerData* timer)
+{
+    (void)timer;
+    XModbusTcpServer_sweepDeadClients((XModbusTcpServer*)userData);
 }
 
 // =============== 信号 ================

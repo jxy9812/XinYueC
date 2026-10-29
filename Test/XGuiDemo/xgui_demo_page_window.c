@@ -861,14 +861,36 @@ static int wn_canvasApply(int deg, int* outW, int* outH)
         availW = avail.width;
         availH = avail.height;
     }
-    /* 0° 基准懒捕获：横屏取当前；当前已竖向则按对调推回。 */
-    bw = s_wn.m_savedW;
-    bh = s_wn.m_savedH;
-    if (bw <= 0 || bh <= 0) {
+    /* 0° 基准（2026-10-28 根修）：基准 = **0° 时的窗口几何**，按内容
+       旋转角判定，不看宽高比。旧实现用「宽<高即视为竖向、按对调推回」
+       的启发式——在安卓原生竖屏（711x1138）上把基准推成 1138x711，复位
+       回 0° 时再被竖屏可用宽 711 钳成 711x711 正方形（真机：窗口缩到
+       屏幕 62% 高，下方整片旧帧残留）。
+       当前角为 0°：窗口几何就是基准本身，每次刷新——桌面手动改窗后再
+       转、安卓系统转屏后基准都能跟随；当前角为 90/270：按角度逆推
+       （旋转态几何是基准的对调值，逆推即还原），不被旋转态反向污染。 */
+    {
         int cw = XWidget_width(top);
         int ch = XWidget_height(top);
-        if (cw >= ch) { bw = cw; bh = ch; }
-        else { bw = ch; bh = cw; }
+        int curDeg = XWidget_contentRotationDegrees(top);
+        if (cw > 0 && ch > 0) {
+            if (XWindow_rotationSwapsAxes(curDeg)) {
+                bw = ch;
+                bh = cw;
+            }
+            else {
+                bw = cw;
+                bh = ch;
+            }
+        }
+        else if (s_wn.m_savedW > 0 && s_wn.m_savedH > 0) {
+            bw = s_wn.m_savedW;
+            bh = s_wn.m_savedH;
+        }
+        else {
+            bw = 0;
+            bh = 0;
+        }
         s_wn.m_savedW = bw;
         s_wn.m_savedH = bh;
     }

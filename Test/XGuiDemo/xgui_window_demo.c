@@ -457,38 +457,6 @@ static void demo_applyWindowIcon(XWidget* win)
     XClassDeinit(&pm);
 }
 
-/* ==================== 顶栏系统时钟（品牌条/应用栏共用绘制） ==== */
-
-/** @brief 在品牌条/应用栏右端绘制本机系统时钟（HH:MM:SS，白字）。
- *  @details [顶栏时钟 2026-10-28] 顶部蓝色状态条右侧实时显示系统时间，
- *           1s 节奏由主窗 m_clockTimer 驱动（定时器只 invalid 顶栏小条，
- *           不牵动整窗）。时刻取绘制瞬间的 XDateTime_currentDateTime；
- *           文字沿用所在顶栏自身字体（与标题同源粗体），右缘留
- *           rightReserve 像素：品牌条给右端棋盘格装饰让位（装饰占
- *           [w-32, w-8] 再加间距），紧凑应用栏无装饰只留边距。 */
-static void demo_draw_clockText(XPainter* painter, const XWidget* self,
-                                int rightReserve)
-{
-    char buf[16];
-    XDateTime now;
-    XFont font;
-    XRect rect;
-    if (!painter || !self) return;
-    now = XDateTime_currentDateTime();
-    snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
-             XTime_hour(&now.m_time), XTime_minute(&now.m_time),
-             XTime_second(&now.m_time));
-    font = XWidget_font(self);
-    XPainter_setFont(painter, &font);
-    XClassDeinit(&font);
-    XRect_init(&rect, 0, 0, XWidget_width(self) - rightReserve,
-               XWidget_height(self));
-    XPainter_drawTextRect(painter, &rect,
-                          XPAINTER_TEXT_ALIGN_RIGHT |
-                          XPAINTER_TEXT_ALIGN_VCENTER,
-                          buf, 0xffffffffu);
-}
-
 /* ==================== 品牌条子类（蓝底+棋盘格+标题文字一体） ==== */
 
 XCLASS_DEFINE_BEGING(DemoBrandBar)
@@ -544,9 +512,8 @@ static void VDemoBrandBar_paintEvent(XWidget* self, XEvent* event)
         }
     }
     XLabel_drawContents((XLabel*)self, &painter);
-    /* 系统时钟（右端，1s 刷新）：右缘给棋盘格装饰让位（装饰起于
-     * w-32，再加 8px 间距）。 */
-    demo_draw_clockText(&painter, self, 40);
+    /* [时钟正规化 2026-10-29] 时钟改独立 XLabel 控件（右端锚定由时钟
+     * 定时器槽维护），品牌条自绘不再画时间。 */
     XPainter_end(&painter);
     XPainter_deinit(&painter);
 }
@@ -687,8 +654,8 @@ static void VDemoAppBar_paintEvent(XWidget* self, XEvent* event)
         }
     }
     XLabel_drawContents((XLabel*)self, &painter);
-    /* 系统时钟（右端，1s 刷新）：应用栏无右端装饰，只留边距。 */
-    demo_draw_clockText(&painter, self, 12);
+    /* [时钟正规化 2026-10-29] 同品牌条：时钟独立控件化，应用栏自绘
+     * 不再画时间。 */
     XPainter_end(&painter);
     XPainter_deinit(&painter);
 }
@@ -758,7 +725,11 @@ typedef struct DemoWin
     XHandle         m_framePump; /**< 事件循环轮询回调句柄（刷新不受定时器限制）。 */
     XTimerId        m_autoQuitTimer; /**< 自动退出定时器。 */
     XTimerId        m_lcdTimer;     /**< LCD 数码管自动更新定时器。 */
-    XTimerId        m_clockTimer;   /**< 顶栏系统时钟 1s 刷新定时器（品牌条/应用栏右端 HH:MM:SS）。 */
+    XTimerId        m_clockTimer;   /**< 顶栏系统时钟 1s 刷新定时器（驱动 m_clockLabel setText）。 */
+    XLabel*         m_clockLabel;   /**< 顶栏时钟控件（[时钟正规化 2026-10-29] XLabel+定时器
+                                      *   setText 的 Qt 同款写法：脏区/差带/是否推帧全部由
+                                      *   框架管线接管，APP 只管改文本。白字蓝底与顶栏一体，
+                                      *   鼠标穿透不挡顶栏点击。 */
     XTimerId        m_overlayTimer; /**< 空闲闸门下悬浮层降频自刷新定时器（XGUI_DEMO_IDLE_OVERLAY_MS，4Hz）。 */
     int             m_lcdValue;     /**< LCD 字符序列索引（循环段码表 30 字符）。 */
     bool            m_closed; /**< CloseEvent 被接受或自动退出后置真。 */
@@ -2356,12 +2327,47 @@ static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
         return;
     }
     if (timerId == self->m_clockTimer) {
-        /* 顶栏系统时钟 1s 刷新（品牌条/应用栏两形态互斥显示）：只
-         * invalid 可见顶栏的小条区域，不牵动整窗；隐藏件不投递。 */
-        if (XWidget_isVisible((XWidget*)&self->m_brandBar))
-            XWidget_update((XWidget*)&self->m_brandBar);
-        if (XWidget_isVisible((XWidget*)&self->m_appBar))
-            XWidget_update((XWidget*)&self->m_appBar);
+        /* [时钟正规化 2026-10-29] XLabel + 1s 定时器 + setText（Qt 同款
+         * 写法，约束见《代码风格…注意事项.md》框架/应用分层节）：文本
+         * 变更后的脏区、差带、是否真实推帧全部由框架管线接管，APP 不
+         * 手动 invalidation。格式含年月日；标签锚定跟随可见顶栏（品牌
+         * 条右缘让位棋盘格 40px，应用栏留 12px），几何未变不 move。 */
+        char buf[32];
+        XDateTime now = XDateTime_currentDateTime();
+        XWidget* bar = NULL;
+        int reserve = 0;
+        if (XWidget_isVisible((XWidget*)&self->m_brandBar)) {
+            bar = (XWidget*)&self->m_brandBar;
+            reserve = 40;
+        } else if (XWidget_isVisible((XWidget*)&self->m_appBar)) {
+            bar = (XWidget*)&self->m_appBar;
+            reserve = 12;
+        }
+        if (!bar || !self->m_clockLabel) {
+            if (self->m_clockLabel &&
+                XWidget_isVisible((XWidget*)self->m_clockLabel))
+                XWidget_hide((XWidget*)self->m_clockLabel);
+            XEvent_accept((XEvent*)event);
+            return;
+        }
+        snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+                 XDate_year(&now.m_date), XDate_month(&now.m_date),
+                 XDate_day(&now.m_date), XTime_hour(&now.m_time),
+                 XTime_minute(&now.m_time), XTime_second(&now.m_time));
+        {
+            int nx = XWidget_x(bar) + XWidget_width(bar) - reserve - 180;
+            int ny = XWidget_y(bar);
+            int nh = XWidget_height(bar);
+            if (XWidget_x((XWidget*)self->m_clockLabel) != nx ||
+                XWidget_y((XWidget*)self->m_clockLabel) != ny ||
+                XWidget_height((XWidget*)self->m_clockLabel) != nh ||
+                !XWidget_isVisible((XWidget*)self->m_clockLabel)) {
+                XWidget_move((XWidget*)self->m_clockLabel, nx, ny);
+                XWidget_resize((XWidget*)self->m_clockLabel, 180, nh);
+                XWidget_show((XWidget*)self->m_clockLabel);
+            }
+        }
+        XLabel_setText_2(self->m_clockLabel, buf);
         XEvent_accept((XEvent*)event);
         return;
     }
@@ -4631,6 +4637,7 @@ static DemoWin* DemoWin_create(void)
     self->m_autoQuitTimer = XTIMER_INVALID_ID;
     self->m_lcdTimer = XTIMER_INVALID_ID;
     self->m_clockTimer = XTIMER_INVALID_ID;
+    self->m_clockLabel = NULL;
     self->m_overlayTimer = XTIMER_INVALID_ID;
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     /* 底部状态栏文本（深灰背景由静态场景绘制，白字覆盖其上）。
@@ -6959,11 +6966,42 @@ int xgui_demo_main(int argc, char* argv[])
         if (win->m_lcdTimer == XTIMER_INVALID_ID) {
             XPrintf("XGuiWindowDemo: LCD 定时器创建失败\n");
         }
-        /* 顶栏系统时钟刷新定时器（1 秒：品牌条/应用栏右端 HH:MM:SS）。 */
+        /* 顶栏系统时钟刷新定时器（1 秒：驱动时钟 XLabel setText）。 */
         win->m_clockTimer = XObject_startTimer_ms(
             (XObject*)win, 1000u, XTimerType_CoarseTimer);
         if (win->m_clockTimer == XTIMER_INVALID_ID) {
             XPrintf("XGuiWindowDemo: 顶栏时钟定时器创建失败\n");
+        }
+        /* [时钟正规化 2026-10-29] 时钟本体=XLabel 控件（Qt 同款写法）：
+         * 蓝底白字与品牌条同色相接（180px 宽右对齐，余量左探与条底
+         * 无缝），字体沿用品牌条粗体同源；鼠标穿透不挡顶栏导航点击。
+         * 锚定与文本由 m_clockTimer 槽统一维护。 */
+        win->m_clockLabel = XLabel_create((XWidget*)&win->m_base, 0);
+        if (win->m_clockLabel) {
+            XPalette pal;
+            XColor color;
+            XFont font = XWidget_font((XWidget*)&win->m_brandBar);
+            XWidget_setFont((XWidget*)win->m_clockLabel, &font);
+            XClassDeinit(&font);
+            XPalette_init_default(&pal);
+            XColor_init_rgb(&color, 0x1f, 0x4e, 0x79, 0xff);
+            XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                              XPaletteColorRole_Window, color);
+            XColor_init_rgb(&color, 0xff, 0xff, 0xff, 0xff);
+            XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                              XPaletteColorRole_WindowText, color);
+            XWidget_setPalette((XWidget*)win->m_clockLabel, &pal);
+            XWidget_setForegroundRole((XWidget*)win->m_clockLabel,
+                                      XPaletteColorRole_WindowText);
+            XLabel_setAlignment(win->m_clockLabel,
+                                XAlignment_Right | XAlignment_VCenter);
+            XWidget_setAttribute((XWidget*)win->m_clockLabel,
+                                 XWidgetAttribute_TransparentForMouseEvents,
+                                 true);
+            XWidget_resize((XWidget*)win->m_clockLabel, 180, 40);
+            XWidget_hide((XWidget*)win->m_clockLabel); /* 首拍由时钟槽锚定显示。 */
+        } else {
+            XPrintf("XGuiWindowDemo: 顶栏时钟控件创建失败\n");
         }
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
         /* 空闲闸门开启时：悬浮层指标自刷新降频为独立 4Hz 定时器（帧泵

@@ -49,7 +49,11 @@ typedef struct XScrollArea
     int m_alignment;            /**< 对齐（XAlignment 位掩码，默认 0）。 */
     /* [内存治理 2026-10-11] 标志位字：单 bool 位域，填充指针后的 4B 洞。 */
     uint32_t m_resizable : 1;   /**< 内容随视口缩放（默认 false）。 */
-    uint32_t m_scrollAreaFlagsUnused : 31; /**< 保留位。 */
+    uint32_t m_inGeometryUpdate : 1; /**< 内容几何重排版进行中（重入
+                                          挡位：几何写回同步触发内容
+                                          resizeEvent，页内钩子经公共
+                                          入口再请求时由外层收敛）。 */
+    uint32_t m_scrollAreaFlagsUnused : 30; /**< 保留位。 */
 } XScrollArea;
 
 /* ==================== 生命周期 ==================== */
@@ -92,6 +96,12 @@ bool XScrollArea_widgetResizable(const XScrollArea* self);
  * @brief      设置内容可调整。
  */
 void XScrollArea_setWidgetResizable(XScrollArea* self, bool resizable);
+/** @brief 按当前视口/内容提示重排版内容几何与滚动范围（公共收口；
+ *         对标 QScrollAreaPrivate::updateWidgetPosition，Qt 为私有而
+ *         本框架 C API 无 friend 语义故公开）。内容提示在无几何事件的
+ *         前提下变化时（页内展开/收起、档位重排改子件约束）由此触发
+ *         一次重排版，幂等。 */
+void XScrollArea_updateWidgetGeometry(XScrollArea* self);
 /** @brief 查询内容对齐（对标 alignment()）。 */
 /**
  * @brief      获取对齐方式。

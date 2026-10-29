@@ -60,9 +60,6 @@
 #include "XTimer.h"        /* 无线扫描/连接状态轮询定时器 */
 #endif
 #include "XSystem.h" /* XSystem_environment: 环境变量唯一入口。 */
-#if defined(__ANDROID__)
-#include "XAndroidJniChannels.h" /* MAC 兜底：应用域读不到 /sys/class/net。 */
-#endif
 #include "xgui_demo_pages.h"
 
 /*
@@ -108,10 +105,11 @@
  * AsNeeded——**只在内容确实超高时才出现**，一屏装得下（桌面 1000x700）
  * 时完全不出条，桌面现状不变。
  *
- * widgetResizable 必须 false：true 会把内容几何钉成视口尺寸
- * （XScrollArea.c 的 xsa_updateWidgetGeometry），内容永远不超视口 ⇒ 竖滚
- * 无从发生。改由本壳 resizeEvent 自管内容宽高（高度取布局合计首选高，
- * 两遍收敛——第一遍 activate 可能改变行数/换行，第二遍读实测高）。
+ * 内容几何由框架接管（[滚动壳下沉 2026-10-29]）：widgetResizable(true)
+ * 下 XScrollArea 按视口与内容合计首选/合计最小取大回写内容尺寸并驱动
+ * 滚动范围（XScrollArea.c xsa_updateWidgetGeometry resizable 分支），
+ * 本页不再自管 fit；提示在无几何事件前提下变化时（展开/收起、行数
+ * 变化）调 XScrollArea_updateWidgetGeometry 触发一次重排版。
  */
 XCLASS_DEFINE_BEGING(NetPageHost)
 XCLASS_DEFINE_EXTEND_END(NetPageHost, XWidget)
@@ -121,16 +119,6 @@ typedef struct NetPageHost
     XWidget m_base;   /**< XWidget 基类；必须是第一个成员。 */
     XWidget* m_scroll;/**< 内嵌滚动区（借用；随父子链析构）。 */
 } NetPageHost;
-
-XCLASS_DEFINE_BEGING(NetPageScroll)
-XCLASS_DEFINE_EXTEND_END(NetPageScroll, XScrollArea)
-
-typedef struct NetPageScroll
-{
-    XScrollArea m_base; /**< XScrollArea 基类；必须是第一个成员。 */
-} NetPageScroll;
-
-static void net_fitScrollContent(XScrollArea* area);
 
 /** @brief 页宿主 resizeEvent：内嵌滚动区铺满宿主矩形。 */
 static void VNetPageHost_resizeEvent(XWidget* self, XEvent* event)
@@ -153,24 +141,6 @@ XVtable* NetPageHost_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-/** @brief 滚动区 resizeEvent：基类重排视口/滚动条后，按新视口宽重定
- *         内容宽高（宽=视口宽，高=布局合计首选高，超出部分即竖滚量）。 */
-static void VNetPageScroll_resizeEvent(XWidget* self, XEvent* event)
-{
-    if (!self) return;
-    XClass_Parent(XScrollArea, EXWidget_ResizeEvent,
-                  XWidgetEventSlot)(self, event);
-    net_fitScrollContent((XScrollArea*)self);
-}
-
-XVtable* NetPageScroll_class_init(void)
-{
-    XVTABLE_INIT_DEFAULT(NetPageScroll)
-    XVTABLE_INHERIT_XCLASS(XScrollArea);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VNetPageScroll_resizeEvent);
-    return XVTABLE_DEFAULT;
-}
-
 /** @brief 建页宿主（堆叠条目）。 */
 static XWidget* net_createPageHost(XWidget* parent)
 {
@@ -182,56 +152,14 @@ static XWidget* net_createPageHost(XWidget* parent)
     return &host->m_base;
 }
 
-/** @brief 建滚动壳（内容重承载钩子的 XScrollArea 子类实例）。 */
+/** @brief 建滚动区（普通 XScrollArea；widgetResizable(true) 后内容
+ *         几何与滚动范围由框架接管，见文件头滚动壳说明）。 */
 static XWidget* net_createScroll(XWidget* parent)
 {
-    NetPageScroll* scroll =
-        (NetPageScroll*)XMalloc_System(sizeof(NetPageScroll));
+    XScrollArea* scroll = XScrollArea_create(parent, 0);
     if (!scroll) return (XWidget*)0;
-    XMemset(scroll, 0, sizeof(*scroll));
-    XScrollArea_init(&scroll->m_base, parent, 0);
-    XClassSetVtable(scroll, NetPageScroll);
+    XScrollArea_setWidgetResizable(scroll, true);
     return (XWidget*)scroll;
-}
-
-/** @brief 内容根按视口宽定宽、按布局合计首选高定高（两遍收敛），并把
- *         最终尺寸提交给滚动区（驱动竖条显隐与滚动范围）。
- *  @details 落最小/首选取大：无显式 sizeHint 的定尺寸条目在合计首选里
- *           可能记 0，而合计最小会把 min=max 的条目按实高累计——两者取
- *           大才是「所有条目都不被裁」的内容高（Modbus 页同口径）。 */
-static void net_fitScrollContent(XScrollArea* area)
-{
-    XWidget* viewport;
-    XWidget* content;
-    int vw;
-    int vh;
-    int pass;
-    if (!area) return;
-    viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)area);
-    content = XScrollArea_widget(area);
-    if (!viewport || !content) return;
-    vw = XWidget_width(viewport);
-    vh = XWidget_height(viewport);
-    if (vw < 1) return; /* 视口未就位（堆叠未给几何）不猜，下一拍重入。 */
-    XWidget_setFixedWidth(content, vw);
-    for (pass = 0; pass < 2; ++pass) {
-        XSize hint;
-        XSize minHint;
-        if (XWidget_layout(content))
-            XLayout_invalidate(XWidget_layout(content));
-        hint = XWidget_sizeHint(content);
-        minHint = XWidget_minimumSizeHint(content);
-        if (minHint.height > hint.height) hint.height = minHint.height;
-        if (minHint.width > hint.width) hint.width = minHint.width;
-        if (hint.width < 1) hint.width = vw;
-        if (hint.height < 1) hint.height = vh > 0 ? vh : 1;
-        XWidget_setFixedHeight(content, hint.height);
-        XWidget_setGeometry(content, 0, 0, hint.width, hint.height);
-        if (XWidget_layout(content))
-            XLayout_activate(XWidget_layout(content));
-    }
-    XAbstractScrollArea_setContentSize((XAbstractScrollArea*)area, vw,
-        XWidget_height(content) > vh ? XWidget_height(content) : vh);
 }
 
 /* ==================== 页面内部控件登记（demo 单实例 static 自持） ==== */
@@ -464,13 +392,10 @@ static int net_collectLinkInfo(int ifIndex, char* mac, size_t macCap,
         hw = XNetworkInterface_hardwareAddress_const(iface);
         if (mac && hw && XString_toUtf8(hw) && XString_toUtf8(hw)[0])
             snprintf(mac, macCap, "%s", XString_toUtf8(hw));
-#if defined(__ANDROID__)
-        /* [MAC 2026-10-25] 接口枚举的 ioctl(SIOCGIFHWADDR) 在安卓 SELinux
-         * 下恒失败（/sys/class/net 对应用 uid 不可读），h 为空时再走一次
-         * Java 桥（WifiInfo / java.net.NetworkInterface）。 */
-        if (mac && (!hw || !XString_toUtf8(hw) || !XString_toUtf8(hw)[0]))
-            (void)XAndroid_netLinkMac(mac, macCap);
-#endif
+        /* [MAC 兜底下沉 2026-10-29] 安卓应用域 ioctl(SIOCGIFHWADDR) 恒
+         * 失败时的 Java 桥兜底已收编平台层接口枚举
+         * （XDeviceNetwork_android.c fillInterfaceMac），枚举即带 MAC，
+         * 本页不再补抄。 */
         entries = XNetworkInterface_addressEntries(iface);
         for (j = 0; entries && j < XVector_size_base(entries); ++j) {
             XNetworkAddressEntry* entry =
@@ -526,9 +451,9 @@ static void net_fillInfoFromInterface(int ifIndex)
         if (!iface || XNetworkInterface_index(iface) != ifIndex) continue;
         found = true;
         mac = XNetworkInterface_hardwareAddress_const(iface);
-        /* [MAC 2026-10-25] 后端接口枚举取不到 MAC 时（安卓 SELinux 下
-         * ioctl(SIOCGIFHWADDR) 恒失败）为空——由调用方 net_collectLinkInfo
-         * 再走一次 JNI 兜底。 */
+        /* [MAC 2026-10-25] 后端接口枚举取不到 MAC 时为空（安卓 SELinux
+         * 下的 Java 桥兜底已在平台层枚举内完成，见
+         * XDeviceNetwork_android.c fillInterfaceMac）——本页直读展示。 */
         entries = XNetworkInterface_addressEntries(iface);
         ipv4[0] = '\0';
         s_net.m_v6All[0] = '\0';
@@ -673,9 +598,10 @@ static void net_relayout(void)
          * 分区容器上——加在根布局的行索引上会让整段 IPv6 分区高度错位。 */
         XBoxLayout_setStretch(&s_net.m_ipCols, 1, 1);
         XBoxLayout_setStretch(&s_net.m_v6Section, 2, 1);
-        /* 展开/收起改变内容首选高（编辑区让位、列表变高）：重拟合滚动
-         * 范围，否则收起后仍能滚到已隐藏内容留下的空白、展开后滚不到底。 */
-        net_fitScrollContent(s_net.m_scroll);
+        /* 展开/收起改变内容首选高（编辑区让位、列表变高）：触发框架
+         * 重排版收敛滚动范围，否则收起后仍能滚到已隐藏内容留下的空白、
+         * 展开后滚不到底。 */
+        XScrollArea_updateWidgetGeometry(s_net.m_scroll);
         return;
     }
     /* ---- 折叠：编辑视图整体显形 + 标准行高 ---- */
@@ -721,8 +647,8 @@ static void net_relayout(void)
     XBoxLayout_setStretch(&s_net.m_ipCols, 1, 0);
     XBoxLayout_setStretch(&s_net.m_v6Section, 2, 0);
     net_updateV6Label();
-    /* 收起后内容高变小：同上重拟合滚动范围（避免残留可滚空白）。 */
-    net_fitScrollContent(s_net.m_scroll);
+    /* 收起后内容高变小：同上触发框架重排版（避免残留可滚空白）。 */
+    XScrollArea_updateWidgetGeometry(s_net.m_scroll);
 }
 
 /** @brief 「展开全部 IPv6 / 收起」开关槽：切态 → 重排。 */
@@ -1569,8 +1495,9 @@ XWidget* demo_page_network_build(XWidget* parent,
      * AsNeeded——只有内容确实超高时才出现。 */
     XAbstractScrollArea_setHorizontalScrollBarPolicy(
         (XAbstractScrollArea*)s_net.m_scroll, XScrollBarPolicy_AlwaysOff);
-    /* widgetResizable 保持 false：内容几何由 NetPageScroll::resizeEvent
-     * 自管（见 net_fitScrollContent 注释）。 */
+    /* widgetResizable(true)：内容几何与滚动范围由框架接管（见文件头
+     * 滚动壳说明）。 */
+    XScrollArea_setWidgetResizable(s_net.m_scroll, true);
     s_net.m_root = XWidget_create((XWidget*)s_net.m_scroll, 0);
     if (!s_net.m_root) return s_net.m_pageHost;
     XScrollArea_setWidget(s_net.m_scroll, s_net.m_root);
@@ -2394,10 +2321,10 @@ void demo_page_network_adapt(XWidget* page)
         /* 档位未变但方向可能变了（横竖屏切换）：宽度按新方向重算。 */
         net_adaptFieldWidths(compact);
     }
-    /* 档位未变也要重拟合内容高：展开/收起、信息区行数变化都不改档位，
-     * 但内容首选高变了——不重算则滚动范围停在旧值（收起后仍能滚到空白，
-     * 或展开后滚不到底部）。 */
-    net_fitScrollContent(s_net.m_scroll);
+    /* 档位未变也要触发框架重排版：展开/收起、信息区行数变化都不改档
+     * 位，但内容首选高变了——不重算则滚动范围停在旧值（收起后仍能滚
+     * 到空白，或展开后滚不到底部）。 */
+    XScrollArea_updateWidgetGeometry(s_net.m_scroll);
 }
 
 /** @brief 页面重新可见：无线会话未开时重试一次并恢复入口。

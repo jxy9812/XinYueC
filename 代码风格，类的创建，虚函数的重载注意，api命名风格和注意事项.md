@@ -1594,6 +1594,41 @@ if (obj->m_pollTimer != XTIMER_INVALID_ID) {
 
 ---
 
+## 框架/应用分层写法（2026-10-29 裁定）
+
+> **框架有框架的写法，APP 有 APP 的写法，两种必须明确区分；应用层 UI 一律
+> 对齐 Qt 的正规控件用法，禁止绕开控件体系自绘动态内容。**
+
+### 规则
+
+1. **应用显示动态文本（时钟/计数/状态值）：控件（XLabel）+ 定时器
+   `setText`，与 Qt 同款**。文本变更后的脏区计算、差带同步、是否真实推帧
+   全部由框架管线接管；APP 不手动 `XWidget_update`、不在自绘 paintEvent
+   里画会变的字符串。
+2. **自绘 paintEvent（自定义 chrome）只画静态或低频内容**；动态内容一律
+   控件化后交给框架。反例：顶栏时钟第一版画在品牌条/应用栏 paintEvent 里
+   + 1s 定时器手动 update 顶栏小条（2026-10-28），已重构为独立 XLabel +
+   定时器 setText（2026-10-29）。
+3. **文本色走调色板**（引擎控件自绘文本不消费 QSS color）：
+   `XWidget_setPalette` + `XWidget_setForegroundRole`；需要与所在 chrome
+   底色无缝时，把控件 palette 的 Window 角色设为同色即可（比透明度机制
+   简单可靠）。
+4. **框架级能力优先落在框架层**（如 present 差带同步、平台驱动信号），
+   应用不得为绕开框架缺陷而在应用层复制框架机制；框架缺陷在框架层根修。
+
+```c
+/* ✅ 应用层动态文本（Qt 同款） */
+label = XLabel_create(parent, 0);
+/* palette 设色 + 对齐 + 鼠标穿透（按需） */
+/* 定时器槽里： */
+XLabel_setText_2(label, buf);   /* 其余全部由框架接管 */
+
+/* ❌ 应用层自绘动态内容 */
+/* paintEvent 里 drawText(当前时间)；定时器里 XWidget_update(宿主) */
+```
+
+---
+
 ## 常见错误与最佳实践
 
 1. **忘记初始化/反初始化**：未 `init` 就使用是未定义行为，用完不 `XClassDeinit` 是内存泄漏；❌/✅ 写法见「对象生命周期管理 → init/deinit 成对原则」。

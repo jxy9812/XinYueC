@@ -31,6 +31,13 @@ extern "C" {
 /** @brief 挂起动作 FIFO 深度（轮询在途时连发动作的排队上限） */
 #define XVFD_MODBUS_PENDING_CAP 4
 
+/**
+ * @brief 轮询读组解析钩子：应答成功后由引擎调用，品牌子类在此把寄存器值回填快照。
+ * @param owner 设备实例（XVfdModbusBase*）
+ * @param result 应答数据单元（只读借用，回调返回后失效）
+ */
+typedef void (*XVfdModbusParseFunc)(XObject* owner, const XModbusDataUnit* result);
+
 XCLASS_DEFINE_BEGING(XVfdModbusBase)
 XCLASS_DEFINE_EXTEND_END(XVfdModbusBase, XVfdDevice)
 
@@ -64,7 +71,7 @@ typedef struct XVfdModbusBase {
     uint16_t m_groupAddr[XVFD_MODBUS_POLL_GROUP_CAP];   /**< 轮询组起始地址 */
     uint16_t m_groupCount[XVFD_MODBUS_POLL_GROUP_CAP];  /**< 轮询组寄存器数 */
     uint32_t m_groupMask[XVFD_MODBUS_POLL_GROUP_CAP];   /**< 轮询组归属项掩码 */
-    void* m_groupParse[XVFD_MODBUS_POLL_GROUP_CAP];     /**< 轮询组解析钩子（Protected 类型） */
+    XVfdModbusParseFunc m_groupParse[XVFD_MODBUS_POLL_GROUP_CAP]; /**< 轮询组解析钩子（品牌注册，引擎收口时调用） */
     bool m_groupUsed[XVFD_MODBUS_POLL_GROUP_CAP];       /**< 轮询组在用标记 */
 } XVfdModbusBase;
 

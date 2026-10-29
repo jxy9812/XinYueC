@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XVfdM512.c
  * @brief 511M/512M/513M 系列变频器子类实现。
  * @details 命令字/状态/故障走特殊地址（2000H/3000H/8000H），遥测走 1001H 快捷块，
@@ -37,14 +37,10 @@ static const XVfdParamDesc s_m512Params[] = {
 };
 #define M512_PARAM_COUNT (sizeof(s_m512Params) / sizeof(s_m512Params[0]))
 
-/* =============== 故障码表（8000H 通讯值；面板 Err 编号=值-1，见第五章） =============== */
-typedef struct XVfdM512FaultEntry {
-    uint16_t m_code;      /**< 8000H 寄存器数值 */
-    const char* m_name;   /**< 面板字母码（部分条目手册未给，NULL） */
-    const char* m_text;   /**< 中文说明 */
-} XVfdM512FaultEntry;
-
-static const XVfdM512FaultEntry s_m512Faults[] = {
+/* =============== 故障码表（8000H 通讯值；面板 Err 编号=值-1，见第五章） ===============
+ * 条目布局为公共 XVfdFaultEntry（XVfdModbusBase_Protected.h），查找走
+ * XVfdModbusBase_faultEntry_const。 */
+static const XVfdFaultEntry s_m512Faults[] = {
     { 0x0000, NULL,    "无故障" },
     { 0x0002, "E.tIGbt", "加速过电流" },
     { 0x0003, "E.oCdF",  "减速过电流" },
@@ -137,13 +133,6 @@ static void m512ParseTelemetry(XObject* owner, const XModbusDataUnit* result)
 }
 
 /* =============== 动作收口 =============== */
-static void m512SimpleWriteDone(XObject* owner, void* userData, bool ok, const XModbusDataUnit* result)
-{
-    (void)userData;
-    (void)result;
-    if (!owner) return;
-    XVfdModbusBase_finishAction((XVfdModbusBase*)owner, ok);
-}
 
 /** @brief 设定频率两阶段：阶段1 读 P0.10（最大频率）→ 阶段2 写 1000H 百分比 */
 static void m512OnMaxFreqDone(XObject* owner, void* userData, bool ok, const XModbusDataUnit* result)
@@ -165,7 +154,7 @@ static void m512OnMaxFreqDone(XObject* owner, void* userData, bool ok, const XMo
     if (percent < -10000.0) percent = -10000.0;
     if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdM512_AddrFreqSet,
                                           (uint16_t)(int16_t)(int32_t)percent,
-                                          m512SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
+                                          XVfdModbusBase_simpleWriteDone, NULL, XModbusRequestPriority_High)) {
         XVfdModbusBase_finishAction(&dev->m_base, false);
     }
 }
@@ -185,76 +174,61 @@ static void m512OnAccelDone(XObject* owner, void* userData, bool ok, const XModb
     /* P0.19 单位缺省 1=0.1s：秒 → 0.1s 原始码 */
     raw = (uint16_t)(dev->m_pendingDecelS * 10.0);
     if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdM512_AddrDecelTime,
-                                          raw, m512SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
+                                          raw, XVfdModbusBase_simpleWriteDone, NULL, XModbusRequestPriority_High)) {
         XVfdModbusBase_finishAction(&dev->m_base, false);
     }
 }
 
 /* =============== 业务虚函数实现（重载 XVfdDevice 槽） =============== */
-static bool m512NoLink(XVfdDevice* d)
-{
-    d->m_lastError = XVfdError_NotAttached;
-    return false;
-}
 
 static bool VXVfdM512_Start(XVfdDevice* d, bool reverse)
 {
     XVfdM512* dev = (XVfdM512*)d;
-    if (!d->m_link) return m512NoLink(d);
-    if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_Start)) return false;
-    if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdM512_AddrCmdWord,
-                                          reverse ? XVfdM512_CmdRunReverse : XVfdM512_CmdRunForward,
-                                          m512SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
-        XVfdModbusBase_finishAction(&dev->m_base, false);
-        return false;
-    }
-    return true;
+    int en = XVfdModbusBase_actionEntry(&dev->m_base, XVfdOperation_Start,
+                                        reverse, 0, 0.0, 0.0);
+    if (en != 0) return en > 0; /* 忙则挂起排队，收口后经虚槽补发 */
+    return XVfdModbusBase_submitActionWrite(&dev->m_base, XVfdOperation_Start,
+                                            XVfdM512_AddrCmdWord,
+                                            reverse ? XVfdM512_CmdRunReverse : XVfdM512_CmdRunForward);
 }
 
 static bool VXVfdM512_Stop(XVfdDevice* d)
 {
     XVfdM512* dev = (XVfdM512*)d;
-    if (!d->m_link) return m512NoLink(d);
-    if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_Stop)) return false;
-    if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdM512_AddrCmdWord,
-                                          XVfdM512_CmdDecelStop, m512SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
-        XVfdModbusBase_finishAction(&dev->m_base, false);
-        return false;
-    }
-    return true;
+    int en = XVfdModbusBase_actionEntry(&dev->m_base, XVfdOperation_Stop,
+                                        false, 0, 0.0, 0.0);
+    if (en != 0) return en > 0;
+    return XVfdModbusBase_submitActionWrite(&dev->m_base, XVfdOperation_Stop,
+                                            XVfdM512_AddrCmdWord, XVfdM512_CmdDecelStop);
 }
 
 static bool VXVfdM512_FreeStop(XVfdDevice* d)
 {
     XVfdM512* dev = (XVfdM512*)d;
-    if (!d->m_link) return m512NoLink(d);
-    if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_FreeStop)) return false;
-    if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdM512_AddrCmdWord,
-                                          XVfdM512_CmdFreeStop, m512SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
-        XVfdModbusBase_finishAction(&dev->m_base, false);
-        return false;
-    }
-    return true;
+    int en = XVfdModbusBase_actionEntry(&dev->m_base, XVfdOperation_FreeStop,
+                                        false, 0, 0.0, 0.0);
+    if (en != 0) return en > 0;
+    return XVfdModbusBase_submitActionWrite(&dev->m_base, XVfdOperation_FreeStop,
+                                            XVfdM512_AddrCmdWord, XVfdM512_CmdFreeStop);
 }
 
 static bool VXVfdM512_Jog(XVfdDevice* d, bool reverse)
 {
     XVfdM512* dev = (XVfdM512*)d;
-    if (!d->m_link) return m512NoLink(d);
-    if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_Jog)) return false;
-    if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdM512_AddrCmdWord,
-                                          reverse ? XVfdM512_CmdJogReverse : XVfdM512_CmdJogForward,
-                                          m512SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
-        XVfdModbusBase_finishAction(&dev->m_base, false);
-        return false;
-    }
-    return true;
+    int en = XVfdModbusBase_actionEntry(&dev->m_base, XVfdOperation_Jog,
+                                        reverse, 0, 0.0, 0.0);
+    if (en != 0) return en > 0;
+    return XVfdModbusBase_submitActionWrite(&dev->m_base, XVfdOperation_Jog,
+                                            XVfdM512_AddrCmdWord,
+                                            reverse ? XVfdM512_CmdJogReverse : XVfdM512_CmdJogForward);
 }
 
 static bool VXVfdM512_SetFrequency(XVfdDevice* d, double hz)
 {
     XVfdM512* dev = (XVfdM512*)d;
-    if (!d->m_link) return m512NoLink(d);
+    int en = XVfdModbusBase_actionEntry(&dev->m_base, XVfdOperation_SetFrequency,
+                                        false, 0, hz, 0.0);
+    if (en != 0) return en > 0; /* 未绑定在此返回 false（NotAttached） */
     if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_SetFrequency)) return false;
     dev->m_pendingFreqHz = hz;
     if (dev->m_maxFreqKnown) {
@@ -299,19 +273,13 @@ static bool VXVfdM512_SetPresetSpeedHz(XVfdDevice* d, int index, double hz)
                                             false, index, hz, 0.0);
         if (en != 0) return en > 0;
     }
-    if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_SetPresetSpeedHz)) return false;
     /* 多段指令以最大频率为 100%：与通讯设定值同口径（现场标定） */
     percent = hz / (dev->m_maxFreqKnown ? dev->m_maxFreqHz : 50.0) * 10000.0;
     if (percent > 10000.0) percent = 10000.0;
     if (percent < -10000.0) percent = -10000.0;
-    if (!XVfdModbusBase_submitWriteSingle(&dev->m_base,
-                                          (uint16_t)(XVfdM512_AddrPresetBase + index),
-                                          (uint16_t)(int16_t)(int32_t)percent,
-                                          m512SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
-        XVfdModbusBase_finishAction(&dev->m_base, false);
-        return false;
-    }
-    return true;
+    return XVfdModbusBase_submitActionWrite(&dev->m_base, XVfdOperation_SetPresetSpeedHz,
+                                            (uint16_t)(XVfdM512_AddrPresetBase + index),
+                                            (uint16_t)(int16_t)(int32_t)percent);
 }
 
 static bool VXVfdM512_SetPidTarget(XVfdDevice* d, double value)
@@ -322,14 +290,9 @@ static bool VXVfdM512_SetPidTarget(XVfdDevice* d, double value)
                                             false, 0, value, 0.0);
         if (en != 0) return en > 0;
     }
-    if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_SetPidTarget)) return false;
-    if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, 0xFA01,
-                                          (uint16_t)(int16_t)(int32_t)(value * 100.0),
-                                          m512SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
-        XVfdModbusBase_finishAction(&dev->m_base, false);
-        return false;
-    }
-    return true;
+    return XVfdModbusBase_submitActionWrite(&dev->m_base, XVfdOperation_SetPidTarget,
+                                            0xFA01,
+                                            (uint16_t)(int16_t)(int32_t)(value * 100.0));
 }
 
 static bool VXVfdM512_ResetFault(XVfdDevice* d)
@@ -340,13 +303,8 @@ static bool VXVfdM512_ResetFault(XVfdDevice* d)
                                             false, 0, 0.0, 0.0);
         if (en != 0) return en > 0;
     }
-    if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_ResetFault)) return false;
-    if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdM512_AddrCmdWord,
-                                          XVfdM512_CmdFaultReset, m512SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
-        XVfdModbusBase_finishAction(&dev->m_base, false);
-        return false;
-    }
-    return true;
+    return XVfdModbusBase_submitActionWrite(&dev->m_base, XVfdOperation_ResetFault,
+                                            XVfdM512_AddrCmdWord, XVfdM512_CmdFaultReset);
 }
 
 static bool VXVfdM512_SetDigitalOutput(XVfdDevice* d, int index, bool on)
@@ -360,14 +318,9 @@ static bool VXVfdM512_SetDigitalOutput(XVfdDevice* d, int index, bool on)
                                             on, index, 0.0, 0.0);
         if (en != 0) return en > 0;
     }
-    if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_SetDigitalOutput)) return false;
     bits = on ? (uint16_t)(1u << index) : 0;
-    if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdM512_AddrDoForce,
-                                          bits, m512SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
-        XVfdModbusBase_finishAction(&dev->m_base, false);
-        return false;
-    }
-    return true;
+    return XVfdModbusBase_submitActionWrite(&dev->m_base, XVfdOperation_SetDigitalOutput,
+                                            XVfdM512_AddrDoForce, bits);
 }
 
 static bool VXVfdM512_FactoryReset(XVfdDevice* d, int scope)
@@ -380,14 +333,9 @@ static bool VXVfdM512_FactoryReset(XVfdDevice* d, int scope)
                                             false, scope, 0.0, 0.0);
         if (en != 0) return en > 0;
     }
-    if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_FactoryReset)) return false;
     cmd = (scope == 0) ? 1 : 2; /* 1=恢复出厂不含电机 2=含电机参数 */
-    if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdM512_AddrParamInit,
-                                          cmd, m512SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
-        XVfdModbusBase_finishAction(&dev->m_base, false);
-        return false;
-    }
-    return true;
+    return XVfdModbusBase_submitActionWrite(&dev->m_base, XVfdOperation_FactoryReset,
+                                            XVfdM512_AddrParamInit, cmd);
 }
 
 static bool VXVfdM512_UnlockPassword(XVfdDevice* d, uint32_t password)
@@ -398,14 +346,9 @@ static bool VXVfdM512_UnlockPassword(XVfdDevice* d, uint32_t password)
                                             false, (int)(password & 0xFFFF), 0.0, 0.0);
         if (en != 0) return en > 0;
     }
-    if (!XVfdModbusBase_busyStart(&dev->m_base, XVfdOperation_UnlockPassword)) return false;
-    if (!XVfdModbusBase_submitWriteSingle(&dev->m_base, XVfdM512_AddrPassword,
-                                          (uint16_t)(password & 0xFFFF),
-                                          m512SimpleWriteDone, NULL, XModbusRequestPriority_High)) {
-        XVfdModbusBase_finishAction(&dev->m_base, false);
-        return false;
-    }
-    return true;
+    return XVfdModbusBase_submitActionWrite(&dev->m_base, XVfdOperation_UnlockPassword,
+                                            XVfdM512_AddrPassword,
+                                            (uint16_t)(password & 0xFFFF));
 }
 
 /* =============== 虚函数表 / 生命周期 =============== */

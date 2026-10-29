@@ -61,6 +61,14 @@ run_engine() {
 case "$ENGINE" in
   io)   run_engine io ;;
   epoll) run_engine epoll ;;
-  both) run_engine io && run_engine epoll && echo "=== BUS485 CLOSED-LOOP: ALL-PASS (both) ===" || echo "=== BUS485 CLOSED-LOOP: FAIL ===" ;;
+  both)
+    # 失败必须以非零退出码呈现（门禁以退出码定成败；echo 会掩蔽 rc）
+    if run_engine io && run_engine epoll; then
+      echo "=== BUS485 CLOSED-LOOP: ALL-PASS (both) ==="
+    else
+      echo "=== BUS485 CLOSED-LOOP: FAIL ==="
+      exit 1
+    fi
+    ;;
   *) echo "usage: $0 [io|epoll|both]"; exit 2 ;;
 esac

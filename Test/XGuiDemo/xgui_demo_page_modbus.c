@@ -41,9 +41,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#if !defined(_WIN32)
-#include <sys/socket.h> /* [CLOSE-WAIT 根修 2026-10-19] MSG_PEEK 死链探测。 */
-#include <errno.h>
+#include <time.h>    /* [POLLTRACE] clock_gettime（POSIX 支；标准 C 头，
+                      * Windows 侧 struct timespec 由下方 win32 分支绕开）。 */
+#include <stdarg.h>  /* [POLLTRACE] va_list（标准 C，全平台）。 */
+#if defined(_WIN32)
+#include <windows.h> /* [POLLTRACE] GetTickCount64：Windows 单调时钟
+                      * 兜底（同 XDeviceUsb_win32.c/XLinkQualityTest.c
+                      * 先例；clock_gettime 为 POSIX 专有）。 */
 #endif
 #include "XGuiConfig.h"
 #include "XPrintf.h"
@@ -121,6 +125,47 @@ static bool mb_envCopy(char* dst, size_t cap, const char* name)
     memcpy(dst, v, n);
     dst[n] = '\0';
     return true;
+}
+
+/* ==================== [POLLTRACE 2026-10-28 诊断] ====================
+ * 环境变量 XGUI_DEMO_MB_POLLTRACE=1 开启主站轮询链路追踪：stderr 直写
+ * （stdout 块缓冲会让时序证据失真）+ CLOCK_MONOTONIC 单调时间戳。
+ * 探针语义：
+ *   SEND / RECV(dt)  —— 请求发出与应答完成；dt 为发送→完成的在途时长，
+ *                       ≈1.0s 量级即「1s 超时+重试」路径（正常 LAN <50ms）；
+ *   SKIP             —— tick 到点但上一请求仍在途被门控跳过；
+ *   TICKGAP(gap)     —— 轮询 tick 实际间隔超出设定周期 200ms 以上：
+ *                       主循环冻结/时间轮失速在此现形（Modbus 在途
+ *                       挂起不影响 tick 节奏，二者互斥可分辨）；
+ *   STATE / ERR      —— 设备状态与错误事件（断连重连不再隐形）。 */
+static bool mb_pollTraceOn = false;
+
+static double mb_pollTraceNow(void)
+{
+#if defined(_WIN32)
+    /* Windows 无 clock_gettime：GetTickCount64=开机起单调毫秒
+     * （CLOCK_MONOTONIC 同语义，含系统睡眠；诊断打点够用）。 */
+    return (double)GetTickCount64() / 1e3;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+#endif
+}
+
+static double mb_traceLastSendT = 0.0;
+static double mb_traceLastTickT = 0.0;
+
+static void mb_pollTrace(const char* fmt, ...)
+{
+    va_list ap;
+    if (!mb_pollTraceOn) return;
+    fprintf(stderr, "[MBTRACE %010.3f] ", mb_pollTraceNow());
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fputc('\n', stderr);
+    fflush(stderr);
 }
 
 /* 串口兜底名（枚举失败/下拉为空时用）：按平台给合法形态的默认口名，
@@ -393,7 +438,6 @@ typedef struct MbMaster {
     XWidget*        pageRoot;         /* 内容根（layRoot 宿主；几何由 scroll 承载）。 */
     XScrollArea*    scroll;           /* 整页竖滚区（页宿主内，唯一滚动条）。 */
     XWidget*        pageHost;         /* 页宿主（堆叠条目；resize 铺满 scroll）。 */
-    int             viewportH;        /* scroll 视口高快照（显示行折算用）。 */
     /* [竖屏适配 2026-10-25] 当前档位快照（1=紧凑单列档）：只在档位翻
      * 转那一拍做布局动作（见 mb_masterApplyTier），fit 每拍幂等早退。 */
     int             compact;
@@ -484,7 +528,6 @@ typedef struct MbMaster {
     bool             coilSyncBack;    /* 回填勾选框时抑制写回环。 */
     XTimer*         pollTimer;        /* 轮询定时器（页根子对象级联析构）。 */
     XTimer*         disconnectTimer;  /* 断开回归联调定时器。 */
-    XTimer*         reclaimTimer;     /* Reply 回收定时器（1s 独立拍）。 */
     /* 远程 IO 配置副本（重建网格用）。 */
     int             inCount;
     int             outCount;
@@ -496,8 +539,18 @@ typedef struct MbMaster {
     unsigned        errCount;
     unsigned        timerTick;
     XString*        doAutoList;      /* env 预置的 DO 勾选序列(联调)。 */
-    XModbusReply*   retiredReply;    /* 已 finished 待回收的 Reply（延迟删）。 */
-    XModbusReply*   retiredWriteReply; /* 写应答延迟回收槽。 */
+    /* [回收机制退役 2026-10-29] 原 retiredReply/retiredWriteReply 回收槽
+     * +1s 回收拍整体退役：finished 槽内直接 XObject_deleteLater。安全性
+     * 依据（2026-10-29 核验）：①框架环深门控 XDeferredDeleteEvent_
+     * shouldDeliver（XEvent.c:430，派发侧 XAbstractEventDispatcher.c:684）
+     * 以 loopLevel+scopeLevel 合深比较，仅当当前上下文浅于投递上下文才
+     * 兑现——嵌套泵（裸 processEvents，全部位于事件投递链内）继承链上
+     * scopeLevel，currentLevel==eventLevel 即拦截，实证探针确认泵内不
+     * 兑现、posting 链返回后才兑现；②client 侧 A4 不变式（XModbusRtu
+     * SerialClient.c:393/431/715 先摘 m_currentReply 再发 finished，此后
+     * 不再解引用）保证 finished 返回后 client 零引用——旧 UAF 实为
+     * 「client 超时定时器持在途 Reply」类，已由 ff5f39f3 根修，非环深
+     * 门控可治（门控不知晓 client 持引用），本退役场景不属该类。 */
     /* [写让路 2026-10-15] 轮询读在途时到达的写请求暂存于此，待读应答
      * 完成后的空闲槽发出——远程 IO 类单事务从机忙于应答轮询时会丢弃
      * 交叠写帧，主站侧随后走 1s 超时×重试级联（轮询卡数秒+写未应用）。
@@ -605,14 +658,9 @@ typedef struct MbSlave {
     /* 引擎对象（常驻：停止只断连不销毁 ⇒ 停止期间仍可单机调点位）。 */
     XModbusServer*  server;           /* TcpServer 或 RtuSerialServer。 */
     bool            listening;        /* 监听中（与 server 存在解耦）。 */
-    /* [CLOSE-WAIT 根修 2026-10-19] 死链巡检定时器（1s）：对端 FIN 的
-     * EOF 在 IO 环→XAbstractSocket 事件层被吞（0 字节读只 ContinueRead，
-     * 不发 readyRead/disconnected/不置错，XAbstractSocket.c 读事件分支），
-     * 服务端 onClientDisconnected 永不触发 ⇒ accepted fd 成 CLOSE-WAIT。
-     * 框架三处修复点（XAbstractSocket.c/XNetIoRingPosix.c/
-     * XAbstractNetIoRing.c）均在并行 lane 未提交改动中，不可动；本页以
-     * 公开 API 自巡检回收（见 mb_slaveSweepDeadClients）。 */
-    XTimer*         reapTimer;        /* 死链巡检定时器（页根子对象级联析构）。 */
+    /* [死链巡检下沉 2026-10-29] CLOSE-WAIT/半开死链巡检由框架
+     * XModbusTcpServer 内置（1s 定时器 + sweepDeadClients API），原页内
+     * reapTimer 退役。 */
     /* 数据表类型键。 */
     XModbusRegisterType inEnum, outEnum, irEnum, hrEnum;
     /* [保值 2026-10-18] 四张数据单元的缓存指针。map 只在 server 建好时
@@ -1358,8 +1406,6 @@ static void mb_masterRegReplyDone(XObject* sender, XVarList* args)
     XObject_deleteLater((XObject*)reply);
 }
 
-static void mb_masterReclaimCb(void* userData, XTimerData* timer);
-
 static void mb_masterWriteCoil(int index, bool on);
 
 static uint16_t s_mbDoWritten[4]; /* 已写线圈位图（64 点=4×16bit）。 */
@@ -1568,8 +1614,9 @@ static void mb_masterDoSetAll(bool on)
     s_mb.coilSyncBack = true; /* 批量置位不触发差量写。 */
     for (i = 0; i < s_mb.outCount && i < MB_SLAVE_MAX_POINTS; ++i) {
         if (s_mb.outCells[i]) {
+            /* [冗余收口 2026-10-29] setChecked 框架已自刷
+             * （XAbstractButton.c setChecked 末尾 XWidget_update），删手动补。 */
             XAbstractButton_setChecked((XAbstractButton*)s_mb.outCells[i], on);
-            XWidget_update((XWidget*)s_mb.outCells[i]);
         }
         if (on) s_mbDoWritten[i >> 4] |= (uint16_t)(1u << (i & 15));
         else    s_mbDoWritten[i >> 4] &= (uint16_t)~(1u << (i & 15));
@@ -1723,7 +1770,11 @@ static void mb_masterPollOnce(void)
 {
     XModbusReply* reply;
     int phase;
-    if (!s_mb.device || s_mb.pendingReply) return; /* 上一请求在途。 */
+    if (!s_mb.device || s_mb.pendingReply) {
+        /* [POLLTRACE] 在途门控跳过：RECV dt 大时这里的 SKIP 会连发。 */
+        if (s_mb.pendingReply) mb_pollTrace("SKIP t=%.3f", mb_pollTraceNow());
+        return;
+    }
     /* 相位可用性轮转：DI 需输入点、DO 需输出点（[2026-10-13 DO 状态回读]
      * 模块勾选框回显），IR/HR 表行数>0 即参与。 */
     {
@@ -1799,6 +1850,9 @@ static void mb_masterPollOnce(void)
         ++s_mb.reqCount;
         s_mb.pollPhaseSent = phase;
         s_mb.pendingReply = reply;
+        /* [POLLTRACE] 记录发送时刻，RECV 端算在途时长。 */
+        mb_traceLastSendT = mb_pollTraceNow();
+        mb_pollTrace("SEND phase=%d", phase);
         XObject_connect_1((XObject*)reply,
                           (size_t)XModbusReply_finished_signal(reply),
                           (XObject*)s_mb.root, mb_masterOnReply,
@@ -1813,25 +1867,21 @@ static void mb_masterPollOnce(void)
 }
 
 /** @brief 轮询定时器回调（XTimer 显式对象）。 */
-/** @brief 1s 周期回收定时器：独立事件拍删 finished Reply——DeferredDelete
- *  会撞嵌套泵（repaint 内 readyRead 交错，ASan UAF 实证），改独立拍。 */
-static void mb_masterReclaimCb(void* userData, XTimerData* timer)
-{
-    (void)userData; (void)timer;
-    if (s_mb.retiredReply) {
-        XObject_deleteLater((XObject*)s_mb.retiredReply);
-        s_mb.retiredReply = NULL;
-    }
-    if (s_mb.retiredWriteReply) {
-        XObject_deleteLater((XObject*)s_mb.retiredWriteReply);
-        s_mb.retiredWriteReply = NULL;
-    }
-}
-
 static void mb_masterPollTimerCb(void* userData, XTimerData* timer)
 {
+    double now;
+    double expectMs;
     (void)userData; (void)timer;
     ++s_mb.timerTick;
+    /* [POLLTRACE] tick 间隔缺口检测（主循环冻结/时间轮失速探针）。 */
+    now = mb_pollTraceNow();
+    expectMs = s_mb.pollSpin ? (double)XSpinBox_value(s_mb.pollSpin) : 200.0;
+    if (mb_traceLastTickT > 0.0 &&
+        (now - mb_traceLastTickT) * 1000.0 > expectMs + 200.0)
+        mb_pollTrace("TICKGAP gap=%.3f expect=%.0fms pending=%d",
+                     now - mb_traceLastTickT, expectMs,
+                     s_mb.pendingReply ? 1 : 0);
+    mb_traceLastTickT = now;
     mb_masterPollOnce();
 }
 
@@ -1845,28 +1895,29 @@ static void mb_masterPollPeriodSlot(XObject* sender, XVarList* args)
                            (size_t)XSpinBox_value(s_mb.pollSpin));
 }
 
-/** @brief 写应答完成：回收一次性 Reply（防与 client 超时定时器竞争 UAF）。 */
+/** @brief 写应答完成：回收一次性 Reply。 */
 static void mb_masterWriteReplyDone(XObject* sender, XVarList* args)
 {
     (void)args;
     (void)sender;
-    /* [写应答回收 2026-10-28] 写应答 finished 后才入回收槽（1s 独立拍
-     * 删）：发送时入槽会在应答还没回来时被回收拍删掉——client 手里仍
-     * 引用它，删后即野指针。槽首参是接收者，真正的发出者用
-     * XObject_sender 取（框架 directEmit 传 receiver，见
-     * XSignalSlot.c:290）。 */
+    /* [回收机制退役 2026-10-29] 原「finished 后入回收槽、1s 独立拍删」
+     * 退役，改 finished 槽内直接 deleteLater。安全性依据见 s_mb 结构体
+     * 回收机制退役注（环深门控拦截嵌套泵内兑现 + client A4 不变式）。
+     * 槽首参是接收者，真正的发出者用 XObject_sender 取（框架 directEmit
+     * 传 receiver，见 XSignalSlot.c:290）。 */
     XObject* sigSender = XObject_sender((XObject*)s_mb.root);
     if (!sigSender) return;
-    if (s_mb.retiredWriteReply && s_mb.retiredWriteReply != sigSender) {
-        XObject_deleteLater((XObject*)s_mb.retiredWriteReply);
-    }
-    s_mb.retiredWriteReply = (XModbusReply*)sigSender;
+    XObject_deleteLater(sigSender);
 }
 
 /** @brief 收读应答：刷新输入点网格 + 回收 Reply。 */
 static void mb_masterOnReply(XObject* sender, XVarList* args)
 {
     (void)sender; (void)args;
+    /* [POLLTRACE] 在途时长：dt≈1.0s 量级=「1s 超时+重试」路径
+     * （正常 LAN 应答 <50ms）；配合 SKIP 连发与 TICKGAP 缺失即可分辨
+     * 「Modbus 在途挂起」与「主循环冻结」。 */
+    mb_pollTrace("RECV dt=%.3f", mb_pollTraceNow() - mb_traceLastSendT);
     {
         /* [reply 归属修复 2026-10-28] 本槽挂在**每个**读应答的 finished
          * 信号上，槽首参是接收者（框架 directEmit 传 receiver，见
@@ -1882,13 +1933,6 @@ static void mb_masterOnReply(XObject* sender, XVarList* args)
             /* 无可回收对象：仍要走下面的「写让路」补发逻辑，故不早退。 */
         } else {
         if (reply == s_mb.pendingReply) s_mb.pendingReply = NULL;
-        /* 回收槽只留一条：前一条若还没被回收拍删掉，先就地删（它已
-         * finished，client 侧已解引用，删安全），避免覆盖丢失=泄漏。 */
-        if (s_mb.retiredReply && s_mb.retiredReply != reply) {
-            XObject_deleteLater((XObject*)s_mb.retiredReply);
-            s_mb.retiredReply = NULL;
-        }
-        s_mb.retiredReply = reply; /* 延迟回收：嵌套泵（repaint）内不可删。 */
         if (XModbusReply_error(reply) == XModbusDevice_NoError) {
             const XModbusDataUnit* result = XModbusReply_result_const(reply);
             if (result && s_mb.pollPhaseSent == 2) {
@@ -1909,10 +1953,11 @@ static void mb_masterOnReply(XObject* sender, XVarList* args)
                     if (s_mb.outCells[i]) {
                         XAbstractButton_setChecked(
                             (XAbstractButton*)s_mb.outCells[i], v != 0);
-                        /* 位图同步：模块态即已写态。 */
+                        /* 位图同步：模块态即已写态。setChecked 框架
+                         * 已自刷（XAbstractButton.c setChecked 末尾
+                         * XWidget_update），手动 update 已删。 */
                         if (v) s_mbDoWritten[i >> 4] |= (uint16_t)(1u << (i & 15));
                         else    s_mbDoWritten[i >> 4] &= (uint16_t)~(1u << (i & 15));
-                        XWidget_update((XWidget*)s_mb.outCells[i]);
                     }
                 }
                 s_mb.coilSyncBack = false;
@@ -1929,9 +1974,13 @@ static void mb_masterOnReply(XObject* sender, XVarList* args)
         } else {
             ++s_mb.errCount;
         }
-        /* 回收统一走 retiredReply（1s 独立拍删）——此处**不再**立即
-         * deleteLater：与 retiredReply 机制重复释放同一 reply = 二次
-         * 释放（2026-10-28 主站崩溃的另一半根因）。 */
+        /* [回收机制退役 2026-10-29] 原 retiredReply 1s 独立拍删退役，改
+         * finished 槽内直接 deleteLater（与写应答槽同口径，亦消除两机制
+         * 并存的二次释放风险）。安全性依据见 s_mb 结构体回收机制退役注：
+         * 环深门控保证 DeferredDelete 不在嵌套泵内 posting 链存续期兑现
+         * （实证探针 2026-10-29：泵内帧持指针安全），client A4 不变式
+         * 保证 finished 返回后 client 零引用。 */
+        XObject_deleteLater((XObject*)reply);
         }
     }
     /* [写让路 2026-10-15] 读应答完成=空闲槽：补发暂存的写请求（全开/
@@ -2242,6 +2291,8 @@ static void mb_masterErrorSlot(XObject* sender, XVarList* args)
     (void)sender; (void)args;
     if (!dev) return;
     if (XModbusDevice_error(dev) == XModbusDevice_NoError) return;
+    /* [POLLTRACE] 设备错误事件（含通信错误/超时上抛）。 */
+    mb_pollTrace("ERR code=%d", (int)XModbusDevice_error(dev));
     es = XModbusDevice_errorString(dev); /* 副本，调用者释放。 */
     if (es) {
         const char* utf8 = XString_toUtf8(es);
@@ -2273,6 +2324,8 @@ static void mb_masterStateSlot(XObject* sender, XVarList* args)
 {
     (void)sender;
     if (!s_mb.device) return; /* 用户主动断开（引用已摘）：不进提示链。 */
+    /* [POLLTRACE] 状态事件：0=Unconnected 1=Connecting 2=Connected。 */
+    mb_pollTrace("STATE st=%d", (int)XModbusDevice_state(s_mb.device));
     if (args) {
         XVarList_args_1(args, int, state);
         (void)state;
@@ -2406,7 +2459,8 @@ static void mb_masterChannelSlot(XObject* sender, XVarList* args)
  * 返回给页堆叠的页根 = scroll（XScrollArea，水平条 AlwaysOff、竖条
  * AsNeeded——全页唯一滚动条）；内容件 = 内容根（root/pageRoot），
  * 宽恒跟随视口（水平跟随不滚）、高=内容首选高（超高由竖滚条承担，
- * 见 mb_slaveFitScrollContent）。内容根条目自上而下：
+ * widgetResizable(true) 下由框架重排版收口，见整页竖滚区段注）。
+ * 内容根条目自上而下：
  *   layRoot(TopToBottom)
  *     ├─ 标题行        「Modbus 从站调试」
  *     ├─ layChannel    参数合并行：通道/监听端口/串口(随通道显隐)/本站地址
@@ -2450,7 +2504,6 @@ static void mb_slaveSyncViewport(void);
 static void mb_slaveRebuildGrids(void);
 static void mb_slaveApplyRegGeometry(int availW);
 static void mb_slaveEchoAll(void);
-static void mb_slaveFitScrollContent(XScrollArea* area);
 static XWidget* mb_slaveCreateScroll(XWidget* parent);
 /* [10-19 框架编辑器迁移] 寄存器区可调行数；编辑/落库走框架委托编辑器
  * + cellChanged 桥（槽见双击链区域声明）。[2026-10-24] hex=值显示格式。 */
@@ -3296,10 +3349,12 @@ static void mb_slaveSyncViewport(void)
         mb_slaveEchoAll();
     }
     mb_slaveApplyRegGeometry(availW);
-    /* [10-18 二次追加] 换行行数/表定尺变化都会改内容首选高——整页竖滚
-     * 的内容高与滚动范围在此收敛（fit 内 setGeometry 无变化即幂等早退，
-     * 不会与 resize 入口成环；内容高是视口宽的纯函数，不振荡）。 */
-    mb_slaveFitScrollContent(s_mbSlave.scroll);
+    /* [滚动壳下沉 2026-10-29] 换行行数/表定尺变化都会改内容首选高——
+     * 触发框架重排版收敛内容高与滚动范围（几何写回无变化即幂等早退，
+     * 不会与 resize 入口成环；链内重入——本函数经内容 resizeEvent 被
+     * 框架重排版触发时——由框架挡位挡住，外层两遍收敛负责终态；内容
+     * 高是视口宽的纯函数，不振荡）。 */
+    XScrollArea_updateWidgetGeometry(s_mbSlave.scroll);
 }
 
 /** @brief 通道连接参数重刷（每次启动都跑 ⇒ 改端口后立即生效）。
@@ -3657,62 +3712,11 @@ static void mb_slaveHrCountSlot(XObject* sender, XVarList* args)
 }
 
 #if !defined(_WIN32) && XMODBUS_TCP_ON
-/** @brief [CLOSE-WAIT 根修 2026-10-19] 死链客户端判定+回收（removeIf 谓词）。
- *  @details 探测手法与 posix 后端 EOF 复核同款（XDeviceNetwork_posix.c
- *           「假 EOF 复核」MSG_PEEK 分支）：对 fd 做 recv(MSG_PEEK|
- *           MSG_DONTWAIT)——**不消费字节**，与 io 环在途读无竞态：
- *           pr>0=有数据待读（false，交给正常 readyRead 路径）；
- *           pr<0 且 EAGAIN/EWOULDBLOCK=连接存活空闲（false）；
- *           pr==0=对端真 FIN（true，回收）；其余硬错误（ECONNRESET/
- *           ENOTSOCK/EBADF 等，含已 close 残留表项）一并回收。
- *           回收动作逐条镜像框架 XModbusTcpServer_onClientDisconnected
- *           +releaseClientSocket（全部公开 API）：摘映射表（return true
- *           交 removeIf）→断开本 socket 到 server 的信号→发
- *           modbusClientDisconnected（公开契约保持）→close+脱离父链+
- *           deleteLater（XTcpServer_incomingConnection 把 socket 挂为
- *           服务器子对象，只 close 不脱链会随断连累积到服务器销毁）。 */
-static bool mb_slaveDeadClientPred(const void* pvKey, void* pvValue,
-                                   void* args)
-{
-    XTcpSocket* client = *(XTcpSocket* const*)pvKey;
-    XModbusServer* server = (XModbusServer*)args;
-    intptr_t fd;
-    ssize_t pr;
-    unsigned char b;
-    (void)pvValue;
-    if (!client || !server) return false;
-    fd = XTcpSocket_socketDescriptor_base((XAbstractSocket*)client);
-    if (fd <= 0) return false; /* 未持描述符（理论不达），保守不回收。 */
-    pr = recv((int)fd, &b, 1, MSG_PEEK | MSG_DONTWAIT);
-    if (pr > 0) return false;              /* 有数据：活链，交正常路径。 */
-    if (pr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-        return false;                      /* 空闲活链。 */
-    /* 真 FIN（pr==0）或硬错误：回收。 */
-    XObject_disconnect_1((XObject*)client, 0, (XObject*)server, NULL);
-    XModbusTcpServer_modbusClientDisconnected_signal((XModbusTcpServer*)server,
-                                                     client);
-    XTcpSocket_close_base((XIODevice*)client);
-    XObject_setParent((XObject*)client, NULL);
-    XObject_deleteLater((XObject*)client);
-    return true;
-}
-
-/** @brief 死链巡检定时器回调（1s 周期）：仅 TCP 服务器有意义（串口
- *  服务器无 m_connectedClients，强转读即垃圾——以通道是否 TCP 判别，
- *  server 类型恒随通道在 ensureServer 定型）。表空时 removeIf 零开销。 */
-static void mb_slaveSweepDeadClientsCb(void* userData, XTimerData* timer)
-{
-    XModbusServer* server = s_mbSlave.server;
-    XModbusTcpServer* tcp;
-    (void)userData; (void)timer;
-    if (!server || !s_mbSlave.channelCombo ||
-        XComboBox_currentIndex(s_mbSlave.channelCombo) != 0)
-        return;
-    tcp = (XModbusTcpServer*)server;
-    if (!tcp->m_connectedClients) return;
-    XMapBase_removeIf_base((XMapBase*)tcp->m_connectedClients,
-                           mb_slaveDeadClientPred, server);
-}
+/* [死链巡检下沉 2026-10-29] 应用层死链巡检机制（mb_slaveDeadClientPred
+ * 假 EOF 复核探测 + mb_slaveSweepDeadClientsCb 1s 定时器 + 页内
+ * reapTimer）整族收编框架：XModbusTcpServer 内置 1s 巡检定时器（open
+ * 启动/close 停止）与 XModbusTcpServer_sweepDeadClients 公开 API，探测
+ * 手法与回收动作逐条同源（见 XModbusTcpServer.c 死链巡检段注）。 */
 #endif /* !_WIN32 && XMODBUS_TCP_ON */
 
 /* ================================================================
@@ -3726,7 +3730,7 @@ static void mb_slaveSweepDeadClientsCb(void* userData, XTimerData* timer)
  * 再按原 adapt 口径重解算表格内部——仅列宽/行数，不涉子件坐标。 */
 static void mb_masterRegSyncViewport(void)
 {
-    /* [2026-10-24 两表布局] 表几何每拍跟随（mb_masterOnFit/扩容槽/构建
+    /* [2026-10-24 两表布局] 表几何每拍跟随（内容根 resize/扩容槽/构建
      * 末三入口）：宽=内容根宽（fit 链已设为视口宽），高=表头+行数×行高
      * （满高全展开，超页由整页竖滚承担），列宽 地址:值=45:55 铺满表宽
      * ——与从站 mb_slaveApplyRegGeometry 同套路。本框架实测
@@ -3775,6 +3779,9 @@ static void mb_masterRegSyncViewport(void)
                             XWidget_y((XWidget*)tbl), w, h);
         mb_slaveApplyRegColWidths(tbl, w);
     }
+    /* [滚动壳下沉 2026-10-29] 表定尺/扩容改内容首选高：触发框架重排版
+     * 收敛内容高与滚动范围（链内重入由框架挡位挡住，外层两遍收敛）。 */
+    XScrollArea_updateWidgetGeometry(s_mb.scroll);
 }
 
 /** @brief 主站灯格按当前档位重摆（仅在档位翻转那一拍被 applyTier 调用）
@@ -3885,22 +3892,46 @@ static XWidget* mb_masterCreateRoot(XWidget* parent)
     return &root->m_base;
 }
 
-typedef struct MbSlaveScroll MbSlaveScroll;
-static void mb_slaveScrollSetOnFit(XWidget* scroll,
-                                   void (*onFit)(MbSlaveScroll*));
+/** @brief 主站内容根：框架重排版（widgetResizable 几何写回）触发内容
+ *  resize 后，激活页根布局并重解算表几何（原 MbSlaveScroll onFit 回调
+ *  的等价锚点——在框架几何写回链内运行，重入由框架挡位收敛）。
+ *  [滚动壳下沉 2026-10-29] 与从站 MbSlaveRoot 同构。 */
+XCLASS_DEFINE_BEGING(MbMasterContent)
+XCLASS_DEFINE_EXTEND_END(MbMasterContent, XWidget)
 
-/** @brief 主站 fit 收敛回调：内容布局 activate + 显示行解算（行数随
- *  视口高折算，变化由主调补第二遍 fit 收敛）。 */
-static void mb_masterOnFit(MbSlaveScroll* scroll)
+typedef struct MbMasterContent
 {
-    XWidget* vp;
-    (void)scroll;
+    XWidget m_base;      /**< XWidget 基类；必须是第一个成员。 */
+} MbMasterContent;
 
-    if (XWidget_layout(s_mb.root))
-        XLayout_activate(XWidget_layout(s_mb.root));
-    vp = XAbstractScrollArea_viewport((XAbstractScrollArea*)s_mb.scroll);
-    s_mb.viewportH = vp ? XWidget_height(vp) : 0;
+static void VMbMasterContent_resizeEvent(XWidget* self, XEvent* event)
+{
+    (void)event;
+    if (!self) return;
+    if (XWidget_layout(self))
+        XLayout_activate(XWidget_layout(self));
     mb_masterRegSyncViewport();
+}
+
+XVtable* MbMasterContent_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(MbMasterContent)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
+                             VMbMasterContent_resizeEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 构建主站内容根（带 resize 重解算钩子的 XWidget 子类实例）。 */
+static XWidget* mb_masterCreateContent(XWidget* parent)
+{
+    MbMasterContent* root =
+        (MbMasterContent*)XMalloc_System(sizeof(MbMasterContent));
+    if (!root) return (XWidget*)0;
+    XMemset(root, 0, sizeof(*root));
+    XWidget_init(&root->m_base, parent, 0);
+    XClassSetVtable(root, MbMasterContent);
+    return &root->m_base;
 }
 
 /** @brief [布局容器化 2026-10-17] 行/列布局装配定式：初始化并按序挂入
@@ -3939,7 +3970,10 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
         /* [10-19 对齐从站] 堆叠条目 = 页宿主（MbMasterRoot,普通 XWidget
          * 条目——堆叠对 XScrollArea 条目的几何分配异常(实测只给
          * 184x150 且不再重摆),故滚动壳**内嵌页宿主内部**绕开）;页宿主
-         * resize 铺满 scroll,scroll fit 驱动内容根(pageRoot)宽高。 */
+         * resize 铺满 scroll,框架 widgetResizable 重排版驱动内容根
+         * (pageRoot)宽高。[滚动壳下沉 2026-10-29] 内容根带 resize 钩子
+         * （MbMasterContent）：框架几何写回触发的内容 resize 内重解算
+         * 表几何（原 onFit 回调等价锚点）。 */
         XWidget* pageHost = mb_masterCreateRoot(parent);
         XWidget* scrollRoot;
         XWidget* pageRoot;
@@ -3949,8 +3983,7 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
             XObject_deleteLater(pageHost);
             return (XWidget*)0;
         }
-        pageRoot = XWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                     scrollRoot, 0); /* 内容根(普通件)。 */
+        pageRoot = mb_masterCreateContent(scrollRoot); /* 内容根。 */
         if (!pageRoot) {
             XObject_deleteLater(scrollRoot);
             XObject_deleteLater(pageHost);
@@ -3960,7 +3993,6 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
         s_mb.scroll = (XScrollArea*)scrollRoot;
         s_mb.pageRoot = pageRoot;
         s_mb.root = pageRoot;
-        mb_slaveScrollSetOnFit(scrollRoot, mb_masterOnFit);
     }
 
     /* 页根纵向主布局：边距近似原装配 12/8；寄存器表 stretch 铺满余高
@@ -4146,6 +4178,12 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
             if (pv >= 10 && pv <= 5000)
                 XSpinBox_setValue(s_mb.pollSpin, pv);
         }
+    }
+    /* [POLLTRACE] env XGUI_DEMO_MB_POLLTRACE=1 开启轮询链路追踪。 */
+    {
+        char trEnv[16];
+        mb_envCopy(trEnv, sizeof(trEnv), "XGUI_DEMO_MB_POLLTRACE");
+        mb_pollTraceOn = (trEnv[0] == '1');
     }
     XBoxLayout_addSpacing(&s_mb.layPoll, 40);
     s_mb.connectBtn = XPushButton_create(s_mb.root, 0);
@@ -4472,6 +4510,24 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
                         : "(none)");
         }
     }
+    /* [端到端联调入口] env XGUI_DEMO_MB_AUTOCONNECT=1：程序化点连接按钮
+     * （XAbstractButton_click=用户点击等价路径，复用连接按钮槽），供
+     * 观测轮复现只用连接动作不带角色脚本。AUTOSTART 角色在场时让位，
+     * 防止同一按钮被连点两次（连上又断开）。 */
+    {
+        char autoConn[8];
+        char autoRoleGate[32];
+        mb_envCopy(autoConn, sizeof(autoConn), "XGUI_DEMO_MB_AUTOCONNECT");
+        mb_envCopy(autoRoleGate, sizeof(autoRoleGate), "XGUI_DEMO_MB_AUTOSTART");
+        if (autoConn[0] && strcmp(autoConn, "0") != 0 &&
+            !(autoRoleGate[0] && (strcmp(autoRoleGate, "master") == 0 ||
+                                  strcmp(autoRoleGate, "regread") == 0 ||
+                                  strcmp(autoRoleGate, "disconnect") == 0)) &&
+            s_mb.connectBtn) {
+            XAbstractButton_click((XAbstractButton*)s_mb.connectBtn);
+            XPrintf("XGuiWindowDemo: modbus autoconnect done\n");
+        }
+    }
     /* [端到端联调入口] env XGUI_DEMO_MB_AUTOSTART=master：构建后程序化
      * 连接（XAbstractButton_click 走完整激活流程；回环联调用）。
      * env XGUI_DEMO_MB_DO=索引列表(逗号分隔)：连接后 2 秒逐个勾选 DO——
@@ -4548,21 +4604,21 @@ int demo_page_modbus_master_autotest(XWidget* page)
     {
         int failures = 0;
         if (!s_mb.channelCombo || !s_mb.connectBtn || !s_mb.unitSpin)
-            ++failures;
+           ++failures;
         if (!s_mb.inCountSpin || !s_mb.outCountSpin || !s_mb.pollSpin)
-            ++failures;
-        if (s_mb.device) ++failures; /* 构建后应未连接。 */
+           ++failures;
+        if (s_mb.device)++failures; /* 构建后应未连接。 */
         /* [布局容器化 2026-10-17] 原几何相交断言改容器口径：行标签可见、
          * 输入框随布局分得非零尺寸、父子关系挂页根（坐标排布已移交
          * 布局器，读坐标不再构成契约）。 */
         if (!s_mb.tcpLbl || !XWidget_isVisible((XWidget*)s_mb.tcpLbl))
-            ++failures;
+           ++failures;
         if (!s_mb.tcpAddrEdit ||
             XWidget_width((XWidget*)s_mb.tcpAddrEdit) <= 0 ||
             XWidget_height((XWidget*)s_mb.tcpAddrEdit) <= 0 ||
             XWidget_parentWidget((XWidget*)s_mb.tcpAddrEdit) !=
                 s_mb.pageRoot) /* [10-19] 挂内容根(page=堆叠条目=页宿主)。 */
-            ++failures;
+           ++failures;
         /* ---- [10-19 框架编辑器迁移] 编辑器开合/提交端到端回归锁 ----
          * edit(0,1) 开值格编辑器 → 改文本 → 直发 Return（拦截→委托
          * commit/close 链）→ 断言会话关闭+16 进制规范化回写（未连接，
@@ -4573,16 +4629,16 @@ int demo_page_modbus_master_autotest(XWidget* page)
                只读 flags/提交规范化/防误改回写逐项锁（IR 表为主断言，
                HR 表补只读 flags 巡检）。 */
             XAbstractItemView* iv = &s_mb.irTable->m_base.m_base;
-            if (!XAbstractItemView_itemsEditable(iv)) ++failures;
+            if (!XAbstractItemView_itemsEditable(iv))++failures;
             if (!XAbstractItemView_itemsEditable(
                     &s_mb.hrTable->m_base.m_base))
-                ++failures;
+               ++failures;
             /* [10-19 对齐 Qt item flags] 地址列只读：edit() 门禁拒绝
              * （首格=有数据格;末行地址格=空占位格,两态都必须拒绝）。 */
-            if (XAbstractItemView_edit(iv, 0, 0)) ++failures;
+            if (XAbstractItemView_edit(iv, 0, 0))++failures;
             if (XAbstractItemView_edit(
                     iv, XTableWidget_rowCount(s_mb.irTable) - 1, 0))
-                ++failures;
+               ++failures;
             /* 全地址格 flags 巡检（IR/HR 各全行）:必须显式只读。 */
             {
                 int rr = XTableWidget_rowCount(s_mb.irTable);
@@ -4590,13 +4646,13 @@ int demo_page_modbus_master_autotest(XWidget* page)
                 for (r = 0; r < rr; ++r) {
                     uint32_t f = XTableWidget_itemFlags(s_mb.irTable, r, 0);
                     if ((f & XTableWidgetItemFlag_ItemIsEditable) || f == 0)
-                        ++failures; /* 地址格必须显式只读。 */
+                       ++failures; /* 地址格必须显式只读。 */
                 }
                 rr = XTableWidget_rowCount(s_mb.hrTable);
                 for (r = 0; r < rr; ++r) {
                     uint32_t f = XTableWidget_itemFlags(s_mb.hrTable, r, 0);
                     if ((f & XTableWidgetItemFlag_ItemIsEditable) || f == 0)
-                        ++failures;
+                       ++failures;
                 }
             }
             if (XAbstractItemView_edit(iv, 0, 1) && iv->m_editor) {
@@ -4609,12 +4665,12 @@ int demo_page_modbus_master_autotest(XWidget* page)
                                        (XEvent*)ke);
                     XClassDelete((XEvent*)ke);
                 }
-                if (XAbstractItemView_isEditing(iv)) ++failures;
+                if (XAbstractItemView_isEditing(iv))++failures;
                 {
                     const char* cellText =
                         XTableWidget_text(s_mb.irTable, 0, 1);
                     if (!cellText || strcmp(cellText, "0x007B") != 0)
-                        ++failures;
+                       ++failures;
                 }
                 /* 地址列防误改：写坏文本→桥回写正确地址（=行号 0 基）。 */
                 XTableWidget_setText(s_mb.irTable, 0, 0, "0xDEAD");
@@ -4622,10 +4678,10 @@ int demo_page_modbus_master_autotest(XWidget* page)
                     const char* addrText =
                         XTableWidget_text(s_mb.irTable, 0, 0);
                     if (!addrText || strcmp(addrText, "0x0000") != 0)
-                        ++failures;
+                       ++failures;
                 }
             } else {
-                ++failures;
+               ++failures;
             }
             /* [2026-10-24 显示格式] 切 10 进制档：编辑解析/规范化随档；
                切回 16 进制：现表重排（99 → 0x0063）。 */
@@ -4646,10 +4702,10 @@ int demo_page_modbus_master_autotest(XWidget* page)
                         const char* cellText =
                             XTableWidget_text(s_mb.irTable, 0, 1);
                         if (!cellText || strcmp(cellText, "99") != 0)
-                            ++failures; /* 10 进制档规范化。 */
+                           ++failures; /* 10 进制档规范化。 */
                     }
                 } else {
-                    ++failures;
+                   ++failures;
                 }
                 XComboBox_setCurrentIndex(s_mb.irFmtCombo, 0);
                 mb_masterIrFmtSlot(NULL, NULL);
@@ -4657,7 +4713,7 @@ int demo_page_modbus_master_autotest(XWidget* page)
                     const char* cellText =
                         XTableWidget_text(s_mb.irTable, 0, 1);
                     if (!cellText || strcmp(cellText, "0x0063") != 0)
-                        ++failures; /* 切回 16 进制重排。 */
+                       ++failures; /* 切回 16 进制重排。 */
                 }
             }
             /* [2026-10-24 起始地址] 改基址→地址列整列重写（行 i=起始+i）；
@@ -4669,16 +4725,16 @@ int demo_page_modbus_master_autotest(XWidget* page)
                     const char* a0 = XTableWidget_text(s_mb.irTable, 0, 0);
                     const char* a1 = XTableWidget_text(s_mb.irTable, 1, 0);
                     if (!a0 || strcmp(a0, "0x0F00") != 0)
-                        ++failures;
+                       ++failures;
                     if (!a1 || strcmp(a1, "0x0F01") != 0)
-                        ++failures;
+                       ++failures;
                 }
                 XSpinBox_setValue(s_mb.irAddrSpin, 0);
                 mb_masterIrAddrSlot(NULL, NULL);
                 {
                     const char* a0 = XTableWidget_text(s_mb.irTable, 0, 0);
                     if (!a0 || strcmp(a0, "0x0000") != 0)
-                        ++failures;
+                       ++failures;
                 }
             }
         }
@@ -4731,122 +4787,22 @@ static XWidget* mb_slaveCreateRoot(XWidget* parent)
  * [10-18 二次追加·滚动条纪律] 页根包一个只竖滚的 XScrollArea 挂入页
  * 堆叠：水平条 AlwaysOff、竖条 AsNeeded（默认）；内容宽恒=视口宽
  * （水平跟随不滚），内容高=内容首选高（超高只出右侧一条竖滚条）。
- * widgetResizable 必须保持 false：resizable=true 会把内容几何钉成
- * 视口尺寸（XScrollArea.c:40-45），内容永远不超视口 ⇒ 竖滚无从发生；
- * 改由本子类 resizeEvent 自管内容宽高（resizable=false 时基类按内容
- * 自身尺寸排版并 setContentSize，本钩子随后重定宽高+刷新滚动范围）。 */
-XCLASS_DEFINE_BEGING(MbSlaveScroll)
-XCLASS_DEFINE_EXTEND_END(MbSlaveScroll, XScrollArea)
+ * [滚动壳下沉 2026-10-29] 内容几何与滚动范围归框架：widgetResizable
+ * (true) 下框架按视口与内容合计首选/合计最小取大回写内容尺寸并驱动
+ * 滚动范围（XScrollArea.c xsa_updateWidgetGeometry resizable 分支，
+ * 自带两遍收敛与重入挡位）；提示在无几何事件前提下变化时（灯格换行/
+ * 表定尺/点数重建）由 syncViewport/regSync 尾调
+ * XScrollArea_updateWidgetGeometry 触发一次框架重排版。原
+ * MbSlaveScroll 子类（resizeEvent→fit 自管内容宽高+onFit 回调）整族
+ * 删除；主站表解算改挂内容根 resizeEvent（MbMasterContent，与从站
+ * MbSlaveRoot 同构）。 */
 
-typedef struct MbSlaveScroll
-{
-    XScrollArea m_base;  /**< XScrollArea 基类；必须是第一个成员。 */
-    /* [10-19 主站接入] fit 收敛后的页回调（主站：内容布局 activate +
-     * 表显示行解算——行数变化改内容首选高，回调返回后主调再补一遍
-     * fit 收敛；从站不设=NULL，行数解算走内容根 resizeEvent 既有链）。 */
-    void (*onFit)(struct MbSlaveScroll* scroll);
-} MbSlaveScroll;
-
-/** @brief 整页竖滚承载：内容宽=视口宽、高=内容首选高，两遍收敛。
- *  @details 第一遍 activate 可能触发内容根 resize→syncViewport→灯格
- *           换行行数变化（宿主高变）⇒ 首选高已陈旧；第二遍清合计
- *           缓存重读（XLayout 缓存须显式 invalidate，setFixed/setSizeHint
- *           均不清——同 applyRegGeometry 实测口径），两遍后列数必然
- *           稳定（列数只随视口宽），高度精确。 */
-static void mb_slaveFitScrollContent(XScrollArea* area)
-{
-    XWidget* viewport;
-    XWidget* content;
-    int vw;
-    int vh;
-    int pass;
-    if (!area) return;
-    viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)area);
-    content = XScrollArea_widget(area);
-    if (!viewport || !content) return;
-    vw = XWidget_width(viewport);
-    vh = XWidget_height(viewport);
-    if (vw < 1) return;   /* 视口未就位（堆叠未给几何）不猜。 */
-    XWidget_setFixedWidth(content, vw);
-    for (pass = 0; pass < 2; ++pass) {
-        XSize hint;
-        XSize minHint;
-        if (XWidget_layout(content))
-            XLayout_invalidate(XWidget_layout(content));
-        /* 有布局 ⇒ 布局合计首选/合计最小。[合计首选缺口 2026-10-18]
-         * 无显式 sizeHint 的**定尺寸**条目（满高寄存器表）在合计首选里
-         * 记 0（XLayoutItem.c:169-174 回退链 sizeHint<0→minSizeHint<0→0
-         * 再被 max 钳位），而合计最小把 min=max 的定尺寸条目按实高累计
-         * ——两者取大才是「所有条目都不被裁」的内容高。 */
-        hint = XWidget_sizeHint(content);
-        minHint = XWidget_minimumSizeHint(content);
-        if (minHint.height > hint.height) hint.height = minHint.height;
-        if (minHint.width > hint.width) hint.width = minHint.width;
-        if (hint.width < 1) hint.width = vw;
-        if (hint.height < 1) hint.height = vh > 0 ? vh : 1;
-        XWidget_setFixedHeight(content, hint.height);
-        /* setGeometry 内部先 activate 布局再派发 RESIZE（XWidget.c:
-         * 4703-4715），内容根 resizeEvent 随之跑 syncViewport。 */
-        XWidget_setGeometry(content, 0, 0, hint.width, hint.height);
-        if (XWidget_layout(content))
-            XLayout_activate(XWidget_layout(content));
-    }
-    /* 内容尺寸驱动滚动范围（同 XScrollArea.c:62-64 口径；宽=视口宽 ⇒
-     * 水平恒无滚动需求，hPolicy=AlwaysOff 再加一道保险）。 */
-    XAbstractScrollArea_setContentSize((XAbstractScrollArea*)area, vw,
-        XWidget_height(content) > vh ? XWidget_height(content) : vh);
-    /* 页回调（可空）：主站在此 activate 内容布局+解算显示行，随后由
-     * resizeEvent 补第二遍 fit 收敛行数变化的实测高（同从站两遍定式）。 */
-    {
-        MbSlaveScroll* shell = (MbSlaveScroll*)area;
-        if (shell && shell->onFit) shell->onFit(shell);
-    }
-}
-
-static void VMbSlaveScroll_resizeEvent(XWidget* self, XEvent* event)
-{
-    if (!self) return;
-    /* 先跑基类（视口/滚动条/内容件随新尺寸重排），再按新视口宽重定
-     * 内容宽高；onFit 中解算行数的页（主站）随后补第二遍 fit 收敛
-     * 实测高。 */
-    XClass_Parent(XScrollArea, EXWidget_ResizeEvent,
-                  XWidgetEventSlot)(self, event);
-    mb_slaveFitScrollContent((XScrollArea*)self);
-    {
-        MbSlaveScroll* shell = (MbSlaveScroll*)self;
-        if (shell->onFit) {
-            shell->onFit(shell);
-            mb_slaveFitScrollContent((XScrollArea*)self);
-        }
-    }
-}
-
-XVtable* MbSlaveScroll_class_init(void)
-{
-    XVTABLE_INIT_DEFAULT(MbSlaveScroll)
-    XVTABLE_INHERIT_XCLASS(XScrollArea);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
-                             VMbSlaveScroll_resizeEvent);
-    return XVTABLE_DEFAULT;
-}
-
-/** @brief 设置滚动壳 fit 收敛后的页回调（主站接入用；内部完整类型）。 */
-static void mb_slaveScrollSetOnFit(XWidget* scroll,
-                                   void (*onFit)(MbSlaveScroll* scroll))
-{
-    if (!scroll) return;
-    ((MbSlaveScroll*)scroll)->onFit = onFit;
-}
-
-/** @brief 构建整页竖滚区（带内容重承载钩子的 XScrollArea 子类实例）。 */
+/** @brief 构建整页竖滚区（普通 XScrollArea，widgetResizable(true)）。 */
 static XWidget* mb_slaveCreateScroll(XWidget* parent)
 {
-    MbSlaveScroll* scroll =
-        (MbSlaveScroll*)XMalloc_System(sizeof(MbSlaveScroll));
+    XScrollArea* scroll = XScrollArea_create(parent, 0);
     if (!scroll) return (XWidget*)0;
-    XMemset(scroll, 0, sizeof(*scroll));
-    XScrollArea_init(&scroll->m_base, parent, 0);
-    XClassSetVtable(scroll, MbSlaveScroll);
+    XScrollArea_setWidgetResizable(scroll, true);
     return (XWidget*)scroll;
 }
 
@@ -5336,7 +5292,7 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
     XBoxLayout_addStretch(&s_mbSlave.layRoot, 1);
     /* 装配收口：内容根挂布局器；scroll 装内容件并定滚动纪律（水平条
      * AlwaysOff，竖条默认 AsNeeded=全页唯一滚动条）。此后堆叠布局重贴
-     * scroll 几何即经 MbSlaveScroll resizeEvent→fitScrollContent→内容根
+     * scroll 几何即经框架 widgetResizable 重排版→内容根
      * resize→activate 自动重排 + 重解算档位。 */
     XWidget_setLayout(s_mbSlave.pageRoot, (XLayout*)&s_mbSlave.layRoot);
     XAbstractScrollArea_setHorizontalScrollBarPolicy(
@@ -5345,22 +5301,9 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
     /* 常驻 server：建好即挂 map/接信号/刷参数 ⇒ 启动前就能单机点灯、
      * 改寄存器（写路径不依赖连接态）。 */
     mb_slaveEnsureServer();
-#if !defined(_WIN32) && XMODBUS_TCP_ON
-    /* [CLOSE-WAIT 根修 2026-10-19] 死链巡检定时器（1s，页根子对象级联
-     * 析构；回调内自守卫：非 TCP 服务器即空转）。 */
-    if (!s_mbSlave.reapTimer) {
-        s_mbSlave.reapTimer = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-        if (s_mbSlave.reapTimer) {
-            XTimer_setInterval(s_mbSlave.reapTimer, 1000);
-            XTimer_setTimerCallback(s_mbSlave.reapTimer,
-                                    mb_slaveSweepDeadClientsCb);
-            XTimer_setUserData(s_mbSlave.reapTimer, NULL);
-            XObject_setParent((XObject*)s_mbSlave.reapTimer,
-                              (XObject*)s_mbSlave.root);
-            XTimer_start_base(s_mbSlave.reapTimer);
-        }
-    }
-#endif
+    /* [死链巡检下沉 2026-10-29] CLOSE-WAIT/半开死链巡检已收编框架：
+     * XModbusTcpServer 内置 1s 巡检定时器（open 启动/close 停止），本页
+     * 不再自挂 reapTimer。 */
     /* 尾拍含整页竖滚首拍（syncViewport 收口调 fitScrollContent；视口
      * 未就位时自退避，show/resize 路径再收敛）。 */
     mb_slaveSyncViewport();
@@ -5563,14 +5506,17 @@ int demo_page_modbus_slave_autotest(XWidget* page)
         if (s_mbSlave.hrCountSpin &&
             XWidget_parentWidget((XWidget*)s_mbSlave.hrCountSpin) !=
                 s_mbSlave.dataArea) ++failures;
+        /* [2026-10-29 断言对齐] min 期望 0：ff5f39f3「数量可归零」把
+         * 两表数量 SpinBox min 定为 0（无 IR/HR 区远程 IO 允许配 0），
+         * 本页断言未随改导致页 18 自检恒挂——按提交意图对齐。 */
         if (s_mbSlave.irCountSpin &&
-            (XSpinBox_minimum(s_mbSlave.irCountSpin) != 1 ||
+            (XSpinBox_minimum(s_mbSlave.irCountSpin) != 0 ||
              XSpinBox_maximum(s_mbSlave.irCountSpin) !=
                  MB_SLAVE_REG_MAX_ROWS ||
              XSpinBox_value(s_mbSlave.irCountSpin) != MB_SLAVE_REG_ROWS))
             ++failures;
         if (s_mbSlave.hrCountSpin &&
-            (XSpinBox_minimum(s_mbSlave.hrCountSpin) != 1 ||
+            (XSpinBox_minimum(s_mbSlave.hrCountSpin) != 0 ||
              XSpinBox_maximum(s_mbSlave.hrCountSpin) !=
                  MB_SLAVE_REG_MAX_ROWS ||
              XSpinBox_value(s_mbSlave.hrCountSpin) != MB_SLAVE_REG_ROWS))
@@ -5688,7 +5634,14 @@ int demo_page_modbus_slave_autotest(XWidget* page)
         /* ---- [CLOSE-WAIT 根修 2026-10-19] 死链巡检定时器已挂（页根
          *         子对象；回调自守卫，非 TCP 通道空转）---- */
 #if !defined(_WIN32) && XMODBUS_TCP_ON
-        if (!s_mbSlave.reapTimer) ++failures;
+        /* [死链巡检下沉 2026-10-29] 机制已收编框架：对 TCP 服务器手动
+         * 触发一轮框架 sweep 验证公开 API 链路（表空零开销，幂等安全）。 */
+        if (s_mbSlave.server && s_mbSlave.channelCombo &&
+            XComboBox_currentIndex(s_mbSlave.channelCombo) == 0)
+            XModbusTcpServer_sweepDeadClients(
+                (XModbusTcpServer*)s_mbSlave.server);
+        else
+            ++failures;
 #endif
         /* ---- 灯格写路径（评审④ 断点回归锁）----
          * 框架派发槽时给出的 sender 不是发射方（实测是页根），故本页全部

@@ -15,7 +15,10 @@
  */
 #include "XLinkFileServer.h"
 
-#if XLINK_ON && XLINK_FILE_ON
+/* 门控含 XLINK_SESSION_ON/XLINK_SERVER_ON 的原因见 XLinkFileServer.h
+ * 门控补记：头文件内嵌 XLinkServer/XLinkSession 指针成员，子开关关闭时
+ * 类型未声明，旧门控在裁剪组合下 error C2061（矩阵实测见 XLink.md §14.5）。 */
+#if XLINK_ON && XLINK_SESSION_ON && XLINK_FILE_ON && XLINK_SERVER_ON
 
 #include "XLinkFile.h"
 #include "XLinkSession.h"
@@ -186,9 +189,18 @@ static bool xfs_roleAllowed(XLinkFileServer* fs, XLinkSession* session)
         return false;
     if (!(fs->m_policy.m_flags & XLINK_FILESRV_REQUIRE_AUTH))
         return true;
+#if XLINK_AUTH_ON
     if (!XLinkSession_isAuthenticated(session))
         return false;
     return XLinkSession_authRole(session) >= fs->m_policy.m_minRole;
+#else
+    /* 认证扩展整体裁空：协议层无登录概念，无会话能"通过认证"，
+       REQUIRE_AUTH/minRole 无可执行语义——按未引入本扩展前的基线放行
+       （XLink_config.h 约定：关闭时协议行为与引入前完全一致）。同时避免
+       引用被裁空的 XLinkSession_isAuthenticated/authRole（声明与定义均
+       在 XLINK_AUTH_ON 门内）造成链接期未解析符号。 */
+    return true;
+#endif
 }
 
 /** @brief 向对端回一个拒绝 OpenAck（避免对端无限等待）。
@@ -285,8 +297,18 @@ static void xfs_onOpen(XLinkFileServer* fs, XLinkSession* session,
     }
 
     slot = xfs_slotOf(fs, session);
-    if (!slot)
-        return; /* 槽满 */
+    if (!slot) {
+        /* 槽满（XLINK_FILE_MAX_TRANSFERS 是**全局**上限，与本会话无关）：
+           这里必须回一帧，不能静默返回。OpenAck 是 Open 的唯一应答，
+           丢弃后对端只能一直重发 Open，直到 30 次重发耗尽才超时，表现为
+           “第 N 个并发传输入口卡死”；立即回 Rejected/"busy" 才能让对端
+           马上失败返回或择机重试。 */
+        if (resolved)
+            XClassDelete((XClass*)resolved);
+        xfs_rejectOpen(fs, session, frame, XLinkFileStatus_Rejected,
+                       "busy");
+        return;
+    }
     if (slot->m_used)
         xfs_releaseSlot(slot);
     slot->m_session = session;
@@ -297,6 +319,14 @@ static void xfs_onOpen(XLinkFileServer* fs, XLinkSession* session,
                 &slot->m_transfer, session, &open,
                 XString_toUtf8(resolved), frame->m_requestId,
                 fs->m_policy.m_chunkBytes, fs->m_policy.m_windowBytes)) {
+            /* 受理失败（创建/打开落盘文件失败等）：beginReceive 只在成功
+               路径发 OpenAck，其内部 xft_fail 明确"不发帧"（见
+               XLinkFileTransfer.c xft_fail 注），这里必须补一帧拒绝
+               OpenAck——OpenAck 是 Open 的唯一应答，静默释放槽位后对端
+               只能重发 Open 直到 XLINK_FILE_OPEN_RETRY_MAX（30 次）耗尽
+               才超时，与上面槽满分支是同一缺陷类。 */
+            xfs_rejectOpen(fs, session, frame, XLinkFileStatus_NoSpace,
+                           "cannot open local file");
             xfs_releaseSlot(slot);
         }
     }
@@ -309,15 +339,22 @@ static void xfs_onOpen(XLinkFileServer* fs, XLinkSession* session,
                       && stat.exists && stat.isFile;
         if (statOk)
             realSize = (uint64_t)(stat.size > 0 ? stat.size : 0);
-        if (!statOk
-            || !XLinkFileTransfer_beginSendFile(&slot->m_transfer, session,
-                                                XString_toUtf8(resolved),
-                                                open.m_name, open.m_nameLen,
-                                                open.m_flags, realSize,
-                                                frame->m_requestId,
-                                                fs->m_policy.m_chunkBytes,
-                                                fs->m_policy.m_windowBytes,
-                                                open.m_startOffset)) {
+        if (!statOk) {
+            /* resolve 已通过但 stat 失败：文件在两步之间消失或不再是
+               普通文件。同样必须回拒绝 OpenAck（理由同上）。 */
+            xfs_rejectOpen(fs, session, frame, XLinkFileStatus_NotFound,
+                           "file not found");
+            xfs_releaseSlot(slot);
+        }
+        else if (!XLinkFileTransfer_beginSendFile(
+                     &slot->m_transfer, session, XString_toUtf8(resolved),
+                     open.m_name, open.m_nameLen, open.m_flags, realSize,
+                     frame->m_requestId, fs->m_policy.m_chunkBytes,
+                     fs->m_policy.m_windowBytes, open.m_startOffset)) {
+            /* 打开本地文件/seek 失败：beginSendFile 也只在成功路径发
+               OpenAck，失败路径同样静默，必须补拒绝帧（理由同上）。 */
+            xfs_rejectOpen(fs, session, frame, XLinkFileStatus_NotFound,
+                           "cannot open local file");
             xfs_releaseSlot(slot);
         }
     }
@@ -579,4 +616,4 @@ const char* XLinkFileServer_rootDir_const(const XLinkFileServer* fs)
     return XString_toUtf8(fs->m_policy.m_rootDir);
 }
 
-#endif /* XLINK_ON && XLINK_FILE_ON */
+#endif /* XLINK_ON && XLINK_SESSION_ON && XLINK_FILE_ON && XLINK_SERVER_ON */

@@ -5,6 +5,8 @@
 #include <time.h>
 #include <sys/time.h>
 #include <stdio.h>
+#include <stdlib.h> /* [CLK 2026-10-29 诊断] getenv。 */
+#include <stdint.h> /* [CLK 2026-10-29 诊断] uint32_t 拆位。 */
 #include <unistd.h>
 // 辅助函数：从 time_t 和 timespec 提取本地 XTime
 static XTime create_time_from_timespec(const struct timespec* ts) {
@@ -93,7 +95,34 @@ int64_t XDateTime_currentMSecsSinceEpoch(void) {
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
         return 0;
     }
-    return (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000;
+    {
+        /* [CLK 2026-10-29 诊断] 刻度源原始读数对账：XGUI_WHEEL_TRACE=1
+         * 时每 500ms 至多一条，打印本函数返回的 MONOTONIC 毫秒（64 位
+         * 拆高低 32 位用 %lu，绕开板上 libc %zu 错位），并与
+         * MONOTONIC_RAW / REALTIME 同拍对照——判内核 clocksource 失速/
+         * 回绕/对时干扰。多线程调用方共享静态量，诊断打点容忍竞争。 */
+        static int s_clkEn = -1;
+        static int64_t s_clkLastMs = 0;
+        int64_t monoMs = (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000;
+        if (s_clkEn < 0) s_clkEn = getenv("XGUI_WHEEL_TRACE") ? 1 : 0;
+        if (s_clkEn && monoMs - s_clkLastMs >= 500) {
+            struct timespec rawTs;
+            struct timespec rtTs;
+            int hasRaw = 0;
+            int hasRt = (clock_gettime(CLOCK_REALTIME, &rtTs) == 0);
+#ifdef CLOCK_MONOTONIC_RAW
+            hasRaw = (clock_gettime(CLOCK_MONOTONIC_RAW, &rawTs) == 0);
+#endif
+            s_clkLastMs = monoMs;
+            fprintf(stderr, "[CLK] mono_hi=%lu mono_lo=%lu raw_s=%ld raw_ms=%ld rt_s=%ld\n",
+                    (unsigned long)(uint64_t)(monoMs >> 32),
+                    (unsigned long)(uint64_t)(uint32_t)monoMs,
+                    hasRaw ? (long)rawTs.tv_sec : -1L,
+                    hasRaw ? (long)(rawTs.tv_nsec / 1000000) : -1L,
+                    hasRt ? (long)rtTs.tv_sec : -1L);
+        }
+        return monoMs;
+    }
 }
 
 int64_t XDateTime_currentSecsSinceEpoch(void) {
