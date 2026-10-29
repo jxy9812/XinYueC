@@ -118,6 +118,21 @@ static void onWriteCompleted(XObject* sender, XVarList* args)
 }
 static void onStatsChanged(XObject* sender, XVarList* args) { (void)sender; (void)args; ++g_cnt.statsChanged; }
 
+/** @brief 写失败沿计数（writeCompleted ok=false；2026-10-29 缓存层战役）。 */
+static int g_writeFailCnt = 0;
+static void onWriteCompletedFail(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    if (!args) return;
+    XVarList_args_4(args, int, type, int, vStart, int, count, bool, ok);
+    if (!ok) {
+        ++g_writeFailCnt;
+        printf("  [SIG] writeCompleted(FAIL沿) type=%d v=%d n=%d\n",
+               type, vStart, count);
+        fflush(stdout);
+    }
+}
+
 /* ==================== 用例谓词上下文 ==================== */
 
 typedef struct { XModbusHub* hub; uint16_t addr; XModbusRegisterType type; uint16_t want; } PredVal;
@@ -199,6 +214,292 @@ static void testMappingLogic(void)
     CHECK(XModbusMapping_rangeAtVirtual_const(m, XModbusDiscreteInputs, 10) == NULL,
           "删除后 v10 不命中");
     XClassDelete(m); /* XClass 派生：统一 XClassDelete（无 deleteLater）。 */
+}
+
+/* ==================== 用例 ⑨⑩⑪：缓存层战役（2026-10-29） ==================== */
+
+/** @brief 读从站帧日志（mbtest_hub_slaves.py frames_<tag>.log），返回增量行数。 */
+static int frameLogCount(const char* tag, uint32_t minOffset)
+{
+    char path[256];
+    char line[256];
+    FILE* f;
+    int lines = 0;
+    uint32_t off = 0;
+    snprintf(path, sizeof(path), "/tmp/mbsoak/hub/frames_%s.log", tag);
+    f = fopen(path, "r");
+    if (!f) return 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (off >= minOffset) ++lines;
+        off += (uint32_t)strlen(line);
+    }
+    fclose(f);
+    return lines;
+}
+
+/** @brief 帧日志字节数（作为增量基线）。 */
+static uint32_t frameLogSize(const char* tag)
+{
+    char path[256];
+    FILE* f;
+    long sz;
+    snprintf(path, sizeof(path), "/tmp/mbsoak/hub/frames_%s.log", tag);
+    f = fopen(path, "r");
+    if (!f) return 0;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return 0; }
+    sz = ftell(f);
+    fclose(f);
+    return (sz > 0) ? (uint32_t)sz : 0;
+}
+
+/** @brief 在帧日志增量区间里找形如 "fc=<fc> start=<start> " 的行。 */
+static int frameLogHasLine(const char* tag, uint32_t minOffset,
+                           int fc, int start)
+{
+    char path[256];
+    char line[256];
+    FILE* f;
+    uint32_t off = 0;
+    int found = 0;
+    char want[64];
+    snprintf(path, sizeof(path), "/tmp/mbsoak/hub/frames_%s.log", tag);
+    f = fopen(path, "r");
+    if (!f) return 0;
+    snprintf(want, sizeof(want), "fc=%d start=%d ", fc, start);
+    while (fgets(line, sizeof(line), f)) {
+        if (off >= minOffset && strncmp(line, want, strlen(want)) == 0) {
+            found = 1;
+            break;
+        }
+        off += (uint32_t)strlen(line);
+    }
+    fclose(f);
+    return found;
+}
+
+/**
+ * @brief 用一个 TCP 从站建裸 Hub（无信号挂接差异：共用全局计数槽）。
+ * @return hub；失败 NULL（设备未登记）。
+ */
+static XModbusHub* cacheHubMake(int port, int* outDevId)
+{
+    XModbusHub* hub = XModbusHub_create();
+    XModbusTcpClient* tcp;
+    int id;
+    if (!hub) return NULL;
+    tcp = XModbusTcpClient_create();
+    if (!tcp) { XModbusHub_deleteLater(hub); return NULL; }
+    XModbusClient_setTimeout((XModbusClient*)tcp, 800);
+    XModbusClient_setReconnectInterval((XModbusClient*)tcp, 500);
+    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
+        XModbusDevice_NetworkAddressParameter, XVariant_create_utf8_str("127.0.0.1"));
+    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
+        XModbusDevice_NetworkPortParameter, XVariant_create_int(port));
+    id = XModbusHub_addDevice(hub, (XModbusClient*)tcp, "cacheA");
+    if (id <= 0) { XModbusHub_deleteLater(hub); return NULL; }
+    *outDevId = id;
+    XModbusHub_connectAll(hub);
+    if (!waitUntil(predOnline, hub, 10000)) { XModbusHub_deleteLater(hub); return NULL; }
+    return hub;
+}
+
+/**
+ * @brief 用例⑨：读合并（3 → 1 帧）+ 洞不跨 + 点级质量/按需刷新。
+ * @details 远端留洞：IR[0..7] 与 IR[16..23] 两段遥测（gap=8），中间无映射。
+ *          gap=0 时两段各一帧（2 帧）；gap=8 时并成一帧 [0..23]（1 帧）。
+ *          这是缓存层「按设备按远端地址合并」的核心收益断言。
+ */
+static void testReadMerge(int port)
+{
+    int dev = 0;
+    XModbusHub* hub;
+    XModbusMapping* map;
+    uint32_t base;
+    int i;
+    g_case = "read-merge";
+    printf("== 用例⑨ 读合并 + 点级质量 + 按需刷新 ==\n"); fflush(stdout);
+
+    hub = cacheHubMake(port, &dev);
+    CHECK(hub != NULL, "cache hub(单个 TCP A) 上线");
+    if (!hub) return;
+
+    map = XModbusMapping_create();
+    /* 两段同从站同区、远端相隔 8 个洞：虚拟地址连续（0..15）。 */
+    XModbusMapping_addRange(map, XModbusInputRegisters, 0, 8, dev, 1, 0);
+    XModbusMapping_addRange(map, XModbusInputRegisters, 8, 8, dev, 1, 16);
+    XModbusHub_setMapping(hub, map);
+    XModbusHub_setPollIntervalDefault(hub, 200);
+    /* 默认 gap=0：两段各一组。 */
+    CHECK(XModbusHub_readGroupCount(hub, dev) == 2, "gap=0 时读组=2（洞不跨）");
+
+    XModbusHub_setReadMergeGap(hub, 8);
+    CHECK(XModbusHub_readGroupCount(hub, dev) == 1, "gap=8 时读组=1（合并成单帧）");
+    XModbusHub_setReadMergeGap(hub, 0);
+    CHECK(XModbusHub_readGroupCount(hub, dev) == 2, "gap 回 0 读组回到 2");
+
+    /* 帧数断言：gap=8 窗口内读 [0..23] 单帧（远端 0 起，长度覆盖洞）。 */
+    XModbusHub_setReadMergeGap(hub, 8);
+    base = frameLogSize("A");
+    XModbusHub_startPolling(hub);
+    {
+        PredEq p1 = { hub, 0, XModbusInputRegisters, 7 };
+        PredEq p2 = { hub, 15, XModbusInputRegisters, 23 * 3 + 7 };
+        CHECK(waitUntil(predValEq, &p1, 5000), "IR v0 首轮回填=7");
+        CHECK(waitUntil(predValEq, &p2, 5000), "IR v15(=远端23) 回填=76（跨洞段同帧覆盖）");
+    }
+    XModbusHub_stopPolling(hub);
+    CHECK(frameLogHasLine("A", base, 4, 0), "读帧起址=远端0");
+    CHECK(frameLogCount("A", base) <= 8, "合并档帧数少（≤8 行增量）");
+
+    /* gap=0 对照：两段必须分两帧（远端 0 与 16 各一帧）。 */
+    {
+        uint32_t b0;
+        XModbusHub_setReadMergeGap(hub, 0);
+        b0 = frameLogSize("A");
+        XModbusHub_startPolling(hub);
+        {
+            PredEq p2 = { hub, 15, XModbusInputRegisters, 23 * 3 + 7 };
+            (void)waitUntil(predValEq, &p2, 3000);
+        }
+        XModbusHub_stopPolling(hub);
+        CHECK(frameLogHasLine("A", b0, 4, 0) && frameLogHasLine("A", b0, 4, 16),
+              "gap=0 时远端 0 与 16 各自成帧");
+    }
+
+    /* 点级质量：轮询过 ⇒ 新鲜且年龄有限；未映射 ⇒ valueAge 返回假。 */
+    {
+        uint64_t age = 0;
+        CHECK(XModbusHub_valueAge(hub, XModbusInputRegisters, 0, &age) && age < 5000,
+              "valueAge(v0) 命中且年龄 <5s");
+        CHECK(XModbusHub_pointValid(hub, XModbusInputRegisters, 0, 5000),
+              "pointValid(v0, 5s)=真（刚轮询过）");
+        CHECK(!XModbusHub_valueAge(hub, XModbusInputRegisters, 40, NULL),
+              "valueAge(未映射 v40)=假");
+        CHECK(!XModbusHub_pointValid(hub, XModbusInputRegisters, 40, 60000),
+              "pointValid(未映射 v40)=假");
+    }
+
+    /* 按需刷新：区域不在轮询掩码内也能因 requestRefresh 读一次。 */
+    XModbusHub_setPollAreas(hub, 1u << XModbusCoils);   /* 只轮询线圈 */
+    XModbusHub_startPolling(hub);
+    {
+        PredEq pc = { hub, 0, XModbusCoils, 0 };
+        (void)waitUntil(predValEq, &pc, 2000);          /* 线圈区回填（全 0）。 */
+    }
+    {
+        uint32_t rb = frameLogSize("A");
+        PredEq p1 = { hub, 0, XModbusInputRegisters, 7 };
+        CHECK(XModbusHub_requestRefresh(hub, XModbusInputRegisters, 0, 8),
+              "requestRefresh(IR v0..7) 受理（IR 不在轮询掩码内）");
+        CHECK(waitUntil(predValEq, &p1, 3000), "按需刷新后仍读到 v0=7");
+        CHECK(frameLogHasLine("A", rb, 4, 0), "按需刷新确实发了一帧 FC04");
+    }
+    XModbusHub_stopPolling(hub);
+    XModbusHub_deleteLater(hub);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+}
+
+/**
+ * @brief 用例⑩：写合并（FC15/FC16）+ 合并窗口 + 失败沿 + 在途新写不丢。
+ * @details 断言：
+ *          - 3 个相邻线圈一次写 → 从站只收到 1 帧 FC15（不是 3 帧 FC05）；
+ *          - 合并窗口内连写同一寄存器 5 次 → 只上 1 帧 FC16，且值为最后那次；
+ *          - 从站吞写（pauseA）→ attempts 达阈值发一次 writeCompleted(ok=false)，
+ *            解吞后补写成功并再发 ok=true（失败可见 + 语义不变）。
+ */
+static void testWriteMerge(int port)
+{
+    int dev = 0;
+    XModbusHub* hub;
+    XModbusMapping* map;
+    uint32_t base;
+    g_case = "write-merge";
+    printf("== 用例⑩ 写合并(FC15/FC16)+窗口+失败沿 ==\n"); fflush(stdout);
+
+    hub = cacheHubMake(port, &dev);
+    CHECK(hub != NULL, "cache hub 上线");
+    if (!hub) return;
+    map = XModbusMapping_create();
+    XModbusMapping_addRange(map, XModbusCoils, 0, 16, dev, 1, 0);
+    XModbusMapping_addRange(map, XModbusHoldingRegisters, 0, 8, dev, 1, 0);
+    XModbusHub_setMapping(hub, map);
+    XObject_connect_2((XObject*)hub, XSignal(XModbusHub_writeCompleted_signal),
+                      onWriteCompleted);
+    XObject_connect_2((XObject*)hub, XSignal(XModbusHub_writeCompleted_signal),
+                      onWriteCompletedFail);
+
+    /* —— ① 相邻线圈合并成 FC15：受理三笔，一次刷写只发 1 帧。—— */
+    XModbusHub_stopPolling(hub);
+    base = frameLogSize("A");
+    {
+        const int okBefore = g_cnt.writeOk;
+        CHECK(XModbusHub_writeValue(hub, XModbusCoils, 1, 1), "写线圈 v1=1 受理");
+        CHECK(XModbusHub_writeValue(hub, XModbusCoils, 2, 1), "写线圈 v2=1 受理");
+        CHECK(XModbusHub_writeValue(hub, XModbusCoils, 3, 0), "写线圈 v3=0 受理");
+        /* 受理阶段纯内存：帧日志尚未出现任何写帧（写未下发）。 */
+        CHECK(waitUntil(predPendingZero, hub, 4000), "三笔写全部落定");
+        CHECK(g_cnt.writeOk >= okBefore + 3, "writeCompleted 按切片逐条回发(≥3)");
+        CHECK(frameLogHasLine("A", base, 15, 0), "下发的是 FC15（合并写线圈）");
+        CHECK(!frameLogHasLine("A", base, 5, 1), "未逐点发 FC05");
+        CHECK(frameLogCount("A", base) == 1, "三笔线圈写只上 1 帧");
+    }
+
+    /* —— ② 合并窗口：同寄存器连写 5 次只上 1 帧、值为最后那次。—— */
+    XModbusHub_setWriteCoalesceMs(hub, 40);
+    base = frameLogSize("A");
+    {
+        const uint16_t last = 0x0BAD;
+        CHECK(XModbusHub_writeValue(hub, XModbusHoldingRegisters, 2, 1), "窗口写 #1");
+        CHECK(XModbusHub_writeValue(hub, XModbusHoldingRegisters, 2, 2), "窗口写 #2");
+        CHECK(XModbusHub_writeValue(hub, XModbusHoldingRegisters, 2, 3), "窗口写 #3");
+        CHECK(XModbusHub_writeValue(hub, XModbusHoldingRegisters, 2, 4), "窗口写 #4");
+        CHECK(XModbusHub_writeValue(hub, XModbusHoldingRegisters, 2, last), "窗口写 #5");
+        CHECK(waitUntil(predPendingZero, hub, 4000), "窗口到期后落定");
+        CHECK(frameLogHasLine("A", base, 6, 2), "合并窗口只上 1 帧（FC06 写单寄存器）");
+        CHECK(frameLogCount("A", base) == 1, "5 次连写只上 1 帧");
+        /* 回读：从站侧值=最后写入值（窗口内中间值不上总线）。 */
+        CHECK(XModbusHub_requestRefresh(hub, XModbusHoldingRegisters, 2, 1),
+              "请求刷新 HR v2");
+        XModbusHub_setPollAreas(hub, 1u << XModbusHoldingRegisters);
+        XModbusHub_startPolling(hub);
+        {
+            PredEq pe = { hub, 2, XModbusHoldingRegisters, last };
+            CHECK(waitUntil(predValEq, &pe, 3000), "从站侧 HR v2=最后写入值 0x0BAD");
+        }
+        XModbusHub_stopPolling(hub);
+        XModbusHub_setWriteCoalesceMs(hub, 0);
+    }
+
+    /* —— ③ 失败可见：吞写 → attempts 达阈值发一次 ok=false；解吞后补写成功。—— */
+    XModbusHub_setWriteStallNotice(hub, 2);
+    XModbusHub_setWriteRetryInterval(hub, 300);
+    g_writeFailCnt = 0;
+    ctrlWrite("pauseA", "1");
+    XModbusHub_startPolling(hub);
+    CHECK(XModbusHub_writeValue(hub, XModbusHoldingRegisters, 4, 0x1234),
+          "吞写期间写 HR v4 受理");
+    {
+        const uint64_t deadline = XDateTime_currentMSecsSinceEpoch() + 4000;
+        while (g_writeFailCnt == 0 && XDateTime_currentMSecsSinceEpoch() < deadline) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            {
+                const uint64_t spin = XDateTime_currentMSecsSinceEpoch() + 2;
+                while (XDateTime_currentMSecsSinceEpoch() < spin) { /* 2ms 节拍。 */ }
+            }
+        }
+        CHECK(g_writeFailCnt == 1, "attempts 达阈值发出一次 writeCompleted(ok=false)");
+        CHECK(XModbusHub_pendingWriteCount(hub) == 1, "失败后脏区间仍在（继续重发）");
+    }
+    ctrlRemove("pauseA");
+    CHECK(waitUntil(predPendingZero, hub, 6000), "解吞后补写落定");
+    CHECK(g_writeFailCnt == 1, "失败沿每意图至多一次（落定后不重复）");
+    {
+        PredEq pe = { hub, 4, XModbusHoldingRegisters, 0x1234 };
+        CHECK(waitUntil(predValEq, &pe, 3000), "补写后从站侧 HR v4=0x1234");
+    }
+    XModbusHub_stopPolling(hub);
+    XModbusHub_deleteLater(hub);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
 }
 
 /* ==================== 主流程 ==================== */
@@ -465,6 +766,10 @@ int main(int argc, char* argv[])
 
     XModbusHub_deleteLater(hub);
     XCoreApplication_processEvents(XEventLoop_AllEvents);
+
+    /* ---------- ⑨⑩⑪ 缓存层战役（2026-10-29，独立 hub，只用 TCP A） ---------- */
+    testReadMerge(portA);
+    testWriteMerge(portA);
 
     printf("=== 结果: 失败 %d 项 (valueChanged=%d writeOk=%d devState=%d) ===\n",
            g_fail, g_cnt.valueChanged, g_cnt.writeOk, g_cnt.devStateChanged);

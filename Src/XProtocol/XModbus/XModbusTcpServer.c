@@ -267,7 +267,11 @@ static bool VXModbusTcpServer_open(XModbusDevice* device)
     if (addrVar) {
         XString* addrStr = XVariant_toString(addrVar);
         if (addrStr) {
-            addr=XHostAddress_create_fromString(XString_constData(addrStr));
+            /* 必须走 toUtf8：XString_constData 是 XString_unicode 别名，返回
+             * UTF-16 的 const XChar*，强喂 const char* 形参后 "127.0.0.1" 在
+             * 首字符即被 \0 截断，listen 绑定非法地址恒败（2026-10-29 实锅；
+             * XModbusTcpClient 同路径 322/777 行即正确对照）。 */
+            addr=XHostAddress_create_fromString(XString_toUtf8(addrStr));
             XClassDelete(addrStr);
         }
     }

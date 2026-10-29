@@ -804,25 +804,34 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
             /* 主线程：阻塞在 IOCP 完成端口上（I/O 完成事件唤醒） */
             if (ioRing && XAbstractNetIoRing_isEnabled(ioRing))
             {
+#ifndef XEVENT_PUMPGAP_ON
+#define XEVENT_PUMPGAP_ON 0   /* 泵间隔对账诊断打点；排查事件泵睡死/时间轮失速时置 1 */
+#endif
+#if XEVENT_PUMPGAP_ON
                 /* [PUMPGAP 2026-10-29 诊断] 泵返回间隔对账：两次返回的
                  * MONOTONIC 间隔 >200ms 打点（判事件泵睡死 vs 时间轮
-                 * 兑现失速——主循环 921ms 冻结终审）。 */
-                static double s_pumpLastWake = 0.0;
+                 * 兑现失速——主循环 921ms 冻结终审）。时间源走
+                 * XDateTime_currentMSecsSinceEpoch（单调毫秒，跨平台；
+                 * 原 clock_gettime 直呼在 Windows 编不过——"Src/ 禁止
+                 * 直呼平台时间源"）。 */
+                static uint64_t s_pumpLastWakeMs = 0;
                 static int s_pumpGuard = 0;
-                struct timespec ptx;
-                double now0, now1;
-                clock_gettime(CLOCK_MONOTONIC, &ptx);
-                now0 = (double)ptx.tv_sec + ptx.tv_nsec * 1e-9;
-                if (!s_pumpGuard) { s_pumpLastWake = now0; s_pumpGuard = 1; }
+                uint64_t now0Ms, now1Ms;
+                now0Ms = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+                if (!s_pumpGuard) { s_pumpLastWakeMs = now0Ms; s_pumpGuard = 1; }
                 XAbstractEventDispatcher_aboutToBlock_signal(self);
                 XAbstractNetIoRing_waitForEvents_base(ioRing, timeoutMs);
                 XAbstractEventDispatcher_awake_signal(self);
-                clock_gettime(CLOCK_MONOTONIC, &ptx);
-                now1 = (double)ptx.tv_sec + ptx.tv_nsec * 1e-9;
-                if (now1 - s_pumpLastWake > 0.2)
-                    XPrintf("[PUMPGAP] %.1fms since last pump return\n",
-                            (now1 - s_pumpLastWake) * 1e3);
-                s_pumpLastWake = now1;
+                now1Ms = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+                if (now1Ms - s_pumpLastWakeMs > 200u)
+                    XPrintf("[PUMPGAP] %u ms since last pump return\n",
+                            (unsigned)(now1Ms - s_pumpLastWakeMs));
+                s_pumpLastWakeMs = now1Ms;
+#else
+                XAbstractEventDispatcher_aboutToBlock_signal(self);
+                XAbstractNetIoRing_waitForEvents_base(ioRing, timeoutMs);
+                XAbstractEventDispatcher_awake_signal(self);
+#endif
             }
         }
         else

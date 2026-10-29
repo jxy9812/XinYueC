@@ -486,10 +486,14 @@ typedef struct MbMaster {
     int             hrHex;            /* HR 当前格式。 */
     int             irAddr;           /* IR 当前起始地址（Spin 副本）。 */
     int             hrAddr;           /* HR 当前起始地址。 */
-    XTableWidget*   irTable;          /* IR 表（值格双击编辑=FC6 写；显示
-                                          格式随 irFmtCombo。[10-19 框架
-                                          编辑器迁移] 框架委托编辑器承担）。 */
-    XTableWidget*   hrTable;          /* HR 表（同上）。 */
+    XTableWidget*   irTable;          /* IR 表（**只读观察面**：[主站 IR
+                                          只读 2026-10-29 用户裁定] 输入
+                                          寄存器协议上只由 FC4 读，表级
+                                          编辑门禁关，双击不进编辑、不弹
+                                          键盘、不发 FC6；显示格式随
+                                          irFmtCombo）。 */
+    XTableWidget*   hrTable;          /* HR 表（值格双击编辑=FC6 写；显示
+                                          格式随 hrFmtCombo）。 */
     bool            regSuppress;      /* 回填抑制。 */
     XModbusReply*   regPendingWriteReply;   /* 寄存器写在途。 */
     XLabel*         stateLabel;       /* 状态行。 */
@@ -1098,9 +1102,17 @@ static const char* const kMbRegHeadCompact[2] = {
     "\xE5\x9C\xB0\xE5\x9D\x80",             /* 地址 */
     "\xE5\x80\xBC(\xE5\x8F\x8C\xE5\x87\xBB\xE7\xBC\x96\xE8\xBE\x91)" /* 值(双击编辑) */
 };
+/* [主站 IR 只读 2026-10-29] 只读表的值列表头：不得再出现「双击编辑」
+ * 字样（主站输入寄存器只由 FC4 回读，双击不进编辑）。 */
+static const char* const kMbRegHeadReadOnly[2] = {
+    "\xE5\x9C\xB0\xE5\x9D\x80",             /* 地址 */
+    "\xE5\x80\xBC"                          /* 值 */
+};
 
 /** @brief 两张寄存器表按档位套行高与表头（仅在档位翻转那一拍调用；
- *  行高变更后表满高由各页 sync 路径读实际行高重算，无需在此定尺）。 */
+ *  行高变更后表满高由各页 sync 路径读实际行高重算，无需在此定尺）。
+ *  表头按该表自身编辑门禁选文案：只读表（主站 IR）恒用「值」，
+ *  可写表按档位用全称/短称。 */
 static void mb_regTablesApplyTier(XTableWidget* irTbl, XTableWidget* hrTbl,
                                   int compact)
 {
@@ -1110,10 +1122,15 @@ static void mb_regTablesApplyTier(XTableWidget* irTbl, XTableWidget* hrTbl,
     tabs[1] = hrTbl;
     for (i = 0; i < 2; ++i) {
         XTableWidget* tbl = tabs[i];
+        const char* const* heads;
         if (!tbl) continue;
         XTableView_setRowHeight(&tbl->m_base, mb_regRowH(compact));
-        XTableWidget_setHorizontalHeaderLabels(
-            tbl, compact ? kMbRegHeadCompact : kMbRegHeadWide, 2);
+        /* 只读表恒用无「双击编辑」字样的文案（主站 IR）。 */
+        if (!XAbstractItemView_itemsEditable(&tbl->m_base.m_base))
+            heads = kMbRegHeadReadOnly;
+        else
+            heads = compact ? kMbRegHeadCompact : kMbRegHeadWide;
+        XTableWidget_setHorizontalHeaderLabels(tbl, heads, 2);
     }
 }
 
@@ -1251,7 +1268,11 @@ static void mb_masterHrAddrSlot(XObject* sender, XVarList* args)
  *    回写（"abc"/越界提交后显示收敛）；
  *  - 地址列（col==0）：防误改回写（地址=行号 0 基，与从站表口径一致；
  *    挂载已设只读 flags，此处为双保险），已正确时早退。
- *  regSuppress（回填/扩容挂载/规范化回写）置位期间早退断环。 */
+ *  regSuppress（回填/扩容挂载/规范化回写）置位期间早退断环。
+ *  [主站 IR 只读 2026-10-29] IR 表已关表级编辑门禁，用户侧进不了编辑，
+ *  本核心的 IR 分支实际只剩地址列防误改与回填侧理论上可达（表级门禁
+ *  + regSuppress 双保险）；协议层同样拒绝 IR 写（buildWriteRequest 只
+ *  认 Coils/HoldingRegisters），故 IR 分支不会再发 FC6。 */
 static void mb_masterRegCellChangedAt(XModbusRegisterType type, int row,
                                       int col)
 {
@@ -2002,6 +2023,26 @@ static void mb_masterOnReply(XObject* sender, XVarList* args)
         }
         XClassDelete(s_mb.deferredWriteUnit);
         s_mb.deferredWriteUnit = NULL;
+    }
+    /* [应答驱动续拍 2026-10-29] 上一拍已耗时≥设定周期时立即续拍，不再
+     * 干等定时器下一个边界。原实现是纯「定时器拍 + 在途门控」：若应答在
+     * 拍边界之后才回来（例如 50ms 周期、应答 60ms 到），本拍只能整拍空
+     * 转，下一拍要再等满 50ms ⇒ 实际周期退化成 2×设定值，链路上凭空多
+     * 出一整拍空闲。真机实测（桌面主站 ↔ RK3568 从站）请求间隔分布
+     * 47/94/110ms 三簇并存，正是「撞上边界」与「错过边界等整拍」的混
+     * 合。改为：应答收口后若已过设定周期即直接续拍（相位由应答对齐），
+     * 未到周期则仍由定时器在边界兑现（不打破限速语义）。
+     * 安全前提：本槽处于 reply finished 同步链内，client 的收口路径在
+     * `if (!client->m_currentReply) startNewRequest()` 之后才返回，此处
+     * 提交新请求会被 sendRawRequest 的内层泵立即发出并由 m_currentReply
+     * 占位，不会与「外层再泵」抢同一条队列（同 deferredWrite 写让路的
+     * 既有安全论证）。仅在无在途、无暂存写时续拍。 */
+    if (!s_mb.pendingReply && !s_mb.deferredWriteUnit && s_mb.device) {
+        double expectMs = s_mb.pollSpin
+                              ? (double)XSpinBox_value(s_mb.pollSpin) : 200.0;
+        if (mb_traceLastSendT > 0.0 &&
+            (mb_pollTraceNow() - mb_traceLastSendT) * 1000.0 >= expectMs)
+            mb_masterPollOnce();
     }
     /* 刷新统计行。 */
     mb_masterRefreshStats();
@@ -3077,16 +3118,23 @@ static void mb_slaveMountRegRow(XTableWidget* tbl, int i, int hex)
 }
 
 /** @brief 建一张寄存器表（2 列 × 当前行数，观察态纯文本）。
- *  [10-19 框架编辑器迁移] 表尾开视图级编辑门禁（对标 Qt item 缺省
- *  flags 含 ItemIsEditable；框架以视图开关承载，缺省 false 保持既有
- *  行为）并连 cellChanged→数据区落库槽（changedSlot 编译期定 IR/HR）。
+ *  [10-19 框架编辑器迁移] 观察态纯文本 + cellChanged→落库槽（
+ *  changedSlot 编译期定 IR/HR）。
  *  [常驻挂载 2026-10-18→已退役] 行数变化仍走 mb_slaveApplyRegCounts
  *  （扩容补行/收缩缩表），不整表重建。
  *  [10-18 三次追加] IR/HR 标识由**段标题行**承载（layIrTitle/layHrTitle）；
- *  表头口径随双击编辑更新为「值(双击编辑/回车生效)」。 */
+ *  表头口径随双击编辑更新为「值(双击编辑/回车生效)」。
+ *  [主站 IR 只读 2026-10-29 用户裁定] writable=false 时表级编辑门禁
+ *  关闭（m_itemsEditable=false）：双击/F2/Enter/任意键四条编辑入口全
+ *  由 XAbstractItemView_edit 的 ShouldEdit 门禁拦下，值格不进编辑器、
+ *  不弹屏幕键盘、不产生 FC6 写。Modbus 协议上输入寄存器只读（只由
+ *  FC4 读），该表恒为模块回读的观察面。协议层另有兜底：客户端
+ *  buildWriteRequest 只接受 Coils/HoldingRegisters，IR 写单元本就返
+ *  回 NULL，此处把不可写语义前移到用户可见面。 */
 static void mb_slaveBuildRegTable(XWidget* parent, XTableWidget** outTable,
                                   int rowCount, XObject* receiver,
-                                  int hex, XSlotFunc1 changedSlot)
+                                  int hex, XSlotFunc1 changedSlot,
+                                  int writable)
 {
     /* [竖屏适配 2026-10-25] 表头取全称常量（宽档口径）；紧凑档由
      * mb_regTablesApplyTier 在翻档时换短称「值(双击编辑)」。 */
@@ -3098,8 +3146,10 @@ static void mb_slaveBuildRegTable(XWidget* parent, XTableWidget** outTable,
     tbl = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, parent, 0);
     if (!tbl) return;
     XTableWidget_setColumnCount(tbl, 2);
-    XTableWidget_setHorizontalHeaderLabels(tbl, kMbRegHeadWide,
-            (int)(sizeof(kMbRegHeadWide) / sizeof(kMbRegHeadWide[0])));
+    /* 只读表（主站 IR）初装表头直接取无「双击编辑」字样的一版，
+     * 免得建表到首次翻档之间短暂显示可编辑口径。 */
+    XTableWidget_setHorizontalHeaderLabels(
+        tbl, writable ? kMbRegHeadWide : kMbRegHeadReadOnly, 2);
     XTableWidget_setRowCount(tbl, rowCount);
     /* [1019 晨 用户指令·表格零滚动条] 同主站寄存器表:AlwaysOff,
      * 尺寸自适应交由布局容器(表满高全展开,滚动壳纪律不变)。 */
@@ -3109,7 +3159,8 @@ static void mb_slaveBuildRegTable(XWidget* parent, XTableWidget** outTable,
         (XAbstractScrollArea*)tbl, XScrollBarPolicy_AlwaysOff);
     for (i = 0; i < rowCount; ++i)
         mb_slaveMountRegRow(tbl, i, hex);
-    XAbstractItemView_setItemsEditable(&tbl->m_base.m_base, true);
+    XAbstractItemView_setItemsEditable(&tbl->m_base.m_base,
+                                       writable ? true : false);
     XObject_connect_1((XObject*)tbl,
                       (size_t)XTableWidget_cellChanged_signal(
                           (XTableWidget*)NULL),
@@ -4361,8 +4412,9 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     }
     s_mb.irHex = 1;
     mb_rowPack(&s_mb.layIrTitle);
+    /* 只读：主站 IR 只能看（FC4 回读面），双击不进编辑。 */
     mb_slaveBuildRegTable(s_mb.root, &s_mb.irTable, 16, s_mb.root,
-                          s_mb.irHex, mb_masterIrCellChanged);
+                          s_mb.irHex, mb_masterIrCellChanged, 0);
     if (s_mb.irTable)
         XBoxLayout_addWidget(&s_mb.layRoot, (XWidget*)s_mb.irTable);
     s_mb.irCount = 16;
@@ -4429,8 +4481,9 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     }
     s_mb.hrHex = 1;
     mb_rowPack(&s_mb.layHrTitle);
+    /* 可写：主站 HR 值格双击=FC6 写。 */
     mb_slaveBuildRegTable(s_mb.root, &s_mb.hrTable, 16, s_mb.root,
-                          s_mb.hrHex, mb_masterHrCellChanged);
+                          s_mb.hrHex, mb_masterHrCellChanged, 1);
     if (s_mb.hrTable)
         XBoxLayout_addWidget(&s_mb.layRoot, (XWidget*)s_mb.hrTable);
     s_mb.hrCount = 16;
@@ -4619,64 +4672,55 @@ int demo_page_modbus_master_autotest(XWidget* page)
             XWidget_parentWidget((XWidget*)s_mb.tcpAddrEdit) !=
                 s_mb.pageRoot) /* [10-19] 挂内容根(page=堆叠条目=页宿主)。 */
            ++failures;
-        /* ---- [10-19 框架编辑器迁移] 编辑器开合/提交端到端回归锁 ----
-         * edit(0,1) 开值格编辑器 → 改文本 → 直发 Return（拦截→委托
-         * commit/close 链）→ 断言会话关闭+16 进制规范化回写（未连接，
-         * 写模块段由 device 判空跳过，只走规范化回写）；地址列防误改
-         * 回写同验。 */
+        /* ---- [主站 IR 只读 2026-10-29 用户裁定] 输入寄存器表恒观察面：
+         *  表级编辑门禁关（双击/F2/Enter/任意键四入口全拦）+ 值格不进
+         *  编辑器。HR 表仍可写，编辑器开合/提交/规范化/防误改回写全链
+         *  在 HR 上照旧端到端锁。 ---- */
         if (s_mb.irTable && s_mb.hrTable) {
-            /* [2026-10-24 两表布局] IR/HR 各一张同款表：编辑门禁/地址
-               只读 flags/提交规范化/防误改回写逐项锁（IR 表为主断言，
-               HR 表补只读 flags 巡检）。 */
-            XAbstractItemView* iv = &s_mb.irTable->m_base.m_base;
-            if (!XAbstractItemView_itemsEditable(iv))++failures;
-            if (!XAbstractItemView_itemsEditable(
-                    &s_mb.hrTable->m_base.m_base))
-               ++failures;
-            /* [10-19 对齐 Qt item flags] 地址列只读：edit() 门禁拒绝
-             * （首格=有数据格;末行地址格=空占位格,两态都必须拒绝）。 */
-            if (XAbstractItemView_edit(iv, 0, 0))++failures;
-            if (XAbstractItemView_edit(
-                    iv, XTableWidget_rowCount(s_mb.irTable) - 1, 0))
-               ++failures;
-            /* 全地址格 flags 巡检（IR/HR 各全行）:必须显式只读。 */
+            XAbstractItemView* irv = &s_mb.irTable->m_base.m_base;
+            XAbstractItemView* hrv = &s_mb.hrTable->m_base.m_base;
+            /* IR 只读、HR 可写（两张表语义相反，逐表断言防串）。 */
+            if (XAbstractItemView_itemsEditable(irv))++failures;
+            if (!XAbstractItemView_itemsEditable(hrv))++failures;
+            /* IR 任意格都不得进编辑：地址列/值列、首行/末行、程序化
+             * edit() 亦拒（四入口同一 ShouldEdit 门禁）。 */
             {
                 int rr = XTableWidget_rowCount(s_mb.irTable);
                 int r;
-                for (r = 0; r < rr; ++r) {
-                    uint32_t f = XTableWidget_itemFlags(s_mb.irTable, r, 0);
-                    if ((f & XTableWidgetItemFlag_ItemIsEditable) || f == 0)
-                       ++failures; /* 地址格必须显式只读。 */
+                if (rr > 0) {
+                    if (XAbstractItemView_edit(irv, 0, 0))++failures;
+                    if (XAbstractItemView_edit(irv, 0, 1))++failures;
+                    if (XAbstractItemView_edit(irv, rr - 1, 0))++failures;
+                    if (XAbstractItemView_edit(irv, rr - 1, 1))++failures;
                 }
-                rr = XTableWidget_rowCount(s_mb.hrTable);
-                for (r = 0; r < rr; ++r) {
+                for (r = 0; r < XTableWidget_rowCount(s_mb.hrTable); ++r) {
                     uint32_t f = XTableWidget_itemFlags(s_mb.hrTable, r, 0);
                     if ((f & XTableWidgetItemFlag_ItemIsEditable) || f == 0)
-                       ++failures;
+                       ++failures; /* 可写表的地址格也必须显式只读。 */
                 }
             }
-            if (XAbstractItemView_edit(iv, 0, 1) && iv->m_editor) {
+            if (XAbstractItemView_edit(hrv, 0, 1) && hrv->m_editor) {
                 XKeyEvent* ke = XKeyEvent_create_ex(
                     XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_KEY_PRESS,
                     (int)XKey_Return, 0);
-                XLineEdit_setText((XLineEdit*)iv->m_editor, "7b");
+                XLineEdit_setText((XLineEdit*)hrv->m_editor, "7b");
                 if (ke) {
-                    XObject_event_base((XObject*)iv->m_editor,
+                    XObject_event_base((XObject*)hrv->m_editor,
                                        (XEvent*)ke);
                     XClassDelete((XEvent*)ke);
                 }
-                if (XAbstractItemView_isEditing(iv))++failures;
+                if (XAbstractItemView_isEditing(hrv))++failures;
                 {
                     const char* cellText =
-                        XTableWidget_text(s_mb.irTable, 0, 1);
+                        XTableWidget_text(s_mb.hrTable, 0, 1);
                     if (!cellText || strcmp(cellText, "0x007B") != 0)
                        ++failures;
                 }
                 /* 地址列防误改：写坏文本→桥回写正确地址（=行号 0 基）。 */
-                XTableWidget_setText(s_mb.irTable, 0, 0, "0xDEAD");
+                XTableWidget_setText(s_mb.hrTable, 0, 0, "0xDEAD");
                 {
                     const char* addrText =
-                        XTableWidget_text(s_mb.irTable, 0, 0);
+                        XTableWidget_text(s_mb.hrTable, 0, 0);
                     if (!addrText || strcmp(addrText, "0x0000") != 0)
                        ++failures;
                 }
@@ -4684,34 +4728,35 @@ int demo_page_modbus_master_autotest(XWidget* page)
                ++failures;
             }
             /* [2026-10-24 显示格式] 切 10 进制档：编辑解析/规范化随档；
-               切回 16 进制：现表重排（99 → 0x0063）。 */
-            if (s_mb.irFmtCombo) {
-                XComboBox_setCurrentIndex(s_mb.irFmtCombo, 1);
-                mb_masterIrFmtSlot(NULL, NULL);
-                if (XAbstractItemView_edit(iv, 0, 1) && iv->m_editor) {
+               切回 16 进制：现表重排（99 → 0x0063）。写路径在可写表
+               （HR）上验；IR 只验重排（只读表同样要跟格式档走）。 */
+            if (s_mb.hrFmtCombo) {
+                XComboBox_setCurrentIndex(s_mb.hrFmtCombo, 1);
+                mb_masterHrFmtSlot(NULL, NULL);
+                if (XAbstractItemView_edit(hrv, 0, 1) && hrv->m_editor) {
                     XKeyEvent* ke = XKeyEvent_create_ex(
                         XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_KEY_PRESS,
                         (int)XKey_Return, 0);
-                    XLineEdit_setText((XLineEdit*)iv->m_editor, "99");
+                    XLineEdit_setText((XLineEdit*)hrv->m_editor, "99");
                     if (ke) {
-                        XObject_event_base((XObject*)iv->m_editor,
+                        XObject_event_base((XObject*)hrv->m_editor,
                                            (XEvent*)ke);
                         XClassDelete((XEvent*)ke);
                     }
                     {
                         const char* cellText =
-                            XTableWidget_text(s_mb.irTable, 0, 1);
+                            XTableWidget_text(s_mb.hrTable, 0, 1);
                         if (!cellText || strcmp(cellText, "99") != 0)
                            ++failures; /* 10 进制档规范化。 */
                     }
                 } else {
                    ++failures;
                 }
-                XComboBox_setCurrentIndex(s_mb.irFmtCombo, 0);
-                mb_masterIrFmtSlot(NULL, NULL);
+                XComboBox_setCurrentIndex(s_mb.hrFmtCombo, 0);
+                mb_masterHrFmtSlot(NULL, NULL);
                 {
                     const char* cellText =
-                        XTableWidget_text(s_mb.irTable, 0, 1);
+                        XTableWidget_text(s_mb.hrTable, 0, 1);
                     if (!cellText || strcmp(cellText, "0x0063") != 0)
                        ++failures; /* 切回 16 进制重排。 */
                 }
@@ -5217,7 +5262,7 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
         mb_rowPack(&s_mbSlave.layIrTitle);
         mb_slaveBuildRegTable(s_mbSlave.dataArea, &s_mbSlave.irTable,
                               s_mbSlave.irCount, s_mbSlave.root,
-                              s_mbSlave.irHex, mb_slaveIrCellChanged);
+                              s_mbSlave.irHex, mb_slaveIrCellChanged, 1);
         if (s_mbSlave.irTable)
             XBoxLayout_addWidget(&s_mbSlave.layData,
                                  (XWidget*)s_mbSlave.irTable);
@@ -5278,7 +5323,7 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
         mb_rowPack(&s_mbSlave.layHrTitle);
         mb_slaveBuildRegTable(s_mbSlave.dataArea, &s_mbSlave.hrTable,
                               s_mbSlave.hrCount, s_mbSlave.root,
-                              s_mbSlave.hrHex, mb_slaveHrCellChanged);
+                              s_mbSlave.hrHex, mb_slaveHrCellChanged, 1);
         if (s_mbSlave.hrTable)
             XBoxLayout_addWidget(&s_mbSlave.layData,
                                  (XWidget*)s_mbSlave.hrTable);

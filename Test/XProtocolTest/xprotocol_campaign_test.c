@@ -43,6 +43,7 @@
 #include <string.h>
 #include <stdarg.h>
 
+#include "XStringUtils.h"
 #include "XCoreApplication.h"
 #include "XEventLoop.h"
 #include "XDateTime.h"
@@ -187,8 +188,8 @@ static int sliceCountNeedle(const char* path, long from, long to, const char* ne
     buf[got] = 0;
     int count = 0;
     char* save = NULL;
-    for (char* line = strtok_r(buf, "\n", &save); line;
-         line = strtok_r(NULL, "\n", &save)) {
+    for (char* line = XStrtokReentrant(buf, "\n", &save); line;
+         line = XStrtokReentrant(NULL, "\n", &save)) {
         if (strstr(line, needle)) ++count;
     }
     return count;
@@ -211,8 +212,8 @@ static int sliceRxList(const char* path, long from, long to, LogRx* out, int cap
     buf[got] = 0;
     int n = 0;
     char* save = NULL;
-    for (char* line = strtok_r(buf, "\n", &save); line;
-         line = strtok_r(NULL, "\n", &save)) {
+    for (char* line = XStrtokReentrant(buf, "\n", &save); line;
+         line = XStrtokReentrant(NULL, "\n", &save)) {
         const char* rx = strstr(line, " RX addr=");
         if (!rx) continue;
         int addr = -1, fc = -1;

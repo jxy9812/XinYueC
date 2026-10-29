@@ -145,3 +145,127 @@ ASan 零报告。覆盖：映射纯逻辑（重叠/切片/按设备收集/回绕
 6. **B6** `XModbusHub.h`、`XModbusMapping.h` 补 UTF-8 BOM。
 7. 裁剪联动：`XPOLL_SCHEDULER_ON` 显式置 0 时须同时关 `XMODBUS_HUB_ON`
    （Hub 单元退避依赖该组件）。
+
+## 2026-10-29 修订（缓存层重构：每设备块缓存 + 读/写指令合并 + 点级质量）
+
+> 用户裁定：「缓存按需申请，其他按你的来」。目标是把 Hub 从「全局虚拟地址
+> 连续缓存图 + 逐段单帧轮询 + 逐点写」升级为**按设备组织的缓存层**，让
+> 一条 485 总线上的多点位、多从站场景把帧数压下来，同时补齐点级质量与
+> 写失败可见性——这是 Industry 通道层（`Industry/XChannel`）接总线底座的前置。
+
+### 一、数据模型（缓存坐标从虚拟地址改为远端地址）
+
+| 结构 | 作用 |
+| --- | --- |
+| `XModbusHubCacheBlock` | 一块 = 同 `(寄存器区, 从站)` 下**远端连续**的若干映射段合并（块内无洞）；持有 `data`（`XModbusDataUnit`，位区自动 XBitArray）、`segs`（块内映射切片）、`dirty`（脏区间表）、`lastOkMs`/`failCount`/`refreshRequested` |
+| `XModbusHubCacheSeg` | 块内切片 `{virtualStart, remoteStart, count}`——回填/写回显按切片拆段发 `valueChanged`，上层看到的粒度仍是「每条映射段一次」 |
+| `XModbusHubDirtyRange` | 块内待写区间 `{offset, count, attempts, stallNotified, failNotified}`；重叠/相邻写入即合并（窗口内多次写只留最终值） |
+| `XModbusHubReadGroup` | 合并后的轮询读帧 `{type, unitId, remoteStart, count, firstBlock, blockCount}` |
+| `XModbusHubCacheSlice` | Hub 每类型一张按 `virtualStart` 升序的**视图切片表**（二分定位 → 块内偏移），读写都经它翻译虚拟地址 |
+| `XModbusHubInflightWrite` | 在途写快照（远端绝对坐标 + 已发值数组）：在途期间上层再改同一点，收口按「缓存值 vs 快照值」逐点比较决定脏区间去留 |
+
+**块内无洞是写安全的前提**：块由远端连续的映射段合并而来，`writeValues`
+只接受「整段落在一个块内」的区间，跨块有洞一律拒绝（防把哨兵 0xFFFF
+写进设备）。读则允许跨洞合并（见下）。
+
+### 二、读路径
+
+- **读组合并**：块表按 `(区, 从站, 远端起点)` 有序；同区同从站、相邻块
+  远端间隔 ≤ `setReadMergeGap(gap)` 的并成一帧，再按单帧上限切分
+  （寄存器区 125、位区 2000）。`gap` 默认 **0（不跨洞）**，现场建议 4~8：
+  读洞只多几个字节，省一帧更划算。单块超上限时同块拆多组。
+- **每设备一个周期定时器**（沿用旧节拍语义：`pollIntervalMs` = 组发送节拍），
+  单飞：设备有在途应答则跳过本拍；收口**不**续泵（防轮询风暴，2026-10-26 根修语义不变）。
+- `pollAreas` 掩码内的组才自动轮询；`requestRefresh(type, vStart, count)`
+  可把任意映射块标 `refreshRequested` 供下一拍优先读（并按需即时泵一次），
+  上层不必自己发 Modbus 事务。
+- **回填**：一帧应答按组内各块的远端交集切分落块；变化检测按块内映射切片
+  做，**首次回填（`lastOkMs==0`）恒发一次 `valueChanged`**——否则首采为 0
+  的点永远收不到初值，违反 Industry 通道「挂接后至少推送一次供播种」契约。
+- **轮询不覆写未确认写点**：回填逐点跳过脏区间内的点，避免乐观回显被同区
+  轮询冲掉。
+- `valueChanged` 粒度保持「每条映射段一次」，与旧契约一致。
+
+### 三、写路径
+
+```text
+writeValue(s)
+  → 虚拟→(设备, 块, 块内偏移) 翻译；整段须落同一块且无洞
+  → 立即写块缓存（乐观回显，微秒级）+ 发 valueChanged
+  → 标脏区间（相邻/重叠合并；attempts 与提示沿复位）
+  → 返回 true（受理=内存写，不走总线）
+  → 刷写：设备空闲时取首条脏区间，按 FC15/FC16 一帧下发
+         （寄存器区单帧 ≤123、位区 ≤1968），超限按上限切分
+```
+
+- **写优先**：泵入口先写后轮询；写在传输层走 `High` 优先级插队（B3 语义不变）。
+- **失败语义**：脏区间保留、按 `m_writeRetryIntervalMs` 周期重发；下发次数
+  `attempts` 达阈值（`setWriteStallNotice`，缺省 3）时发一次
+  `writeStalled` **与一次 `writeCompleted(..., ok=false)` 失败沿**（各自每
+  意图至多一次）。失败沿是 Industry `XDigitalOutput_writeDone(false)` 的故障
+  判据——旧版 Hub 只在成功时发信号，接通道后阀只能等满监督超时才进 Fault。
+- **成功收口**：按快照逐点比较，相等的点从脏区间扣除（`hubDirtySubtract`
+  支持中间挖空切两段），在途期间被改过的点重新标脏；随后按视图切片逐段发
+  `writeCompleted(ok=true)`（上层分辨率仍是一条映射段一次）。
+- **合并窗口**：`setWriteCoalesceMs(ms)`，默认 0（受理即下发，行为与旧版
+  一致）；>0 时首笔写拉起一个单发窗口定时器，窗口内同块多次写只留最终值，
+  到期统一刷写。`flush()` 可立即结束窗口。Industry 高频滑条建议 20~50ms。
+
+### 四、点级质量
+
+- 块级 `lastOkMs`（成功读回时刻）、`failCount`（连续读失败）支撑：
+  - `valueAge(type, vAddr, &ageMs)`：命中映射返回 true；从未成功读回时
+    `ageMs = UINT64_MAX`；
+  - `pointValid(type, vAddr, maxAgeMs)`：命中且年龄 ≤ 门限。
+- `lastUpdateMs(type)` 改为「该区全部块 `lastOkMs` 最大值」。
+- `cacheCount(type)` 语义改为「该类型映射虚拟跨度」（仅跨度口径，实际数据
+  按块存放；测试用法不变）。
+
+### 五、API 变更一览
+
+| API | 处理 |
+| --- | --- |
+| `value` / `values` / `writeValue` / `writeValues` | 签名不变，实现改走块缓存 + 视图翻译 |
+| `cacheCount` | 语义=虚拟跨度（映射覆盖范围），不再是「连续缓存点数」 |
+| `lastUpdateMs` | 语义=该类型块 `lastOkMs` 最大值 |
+| `pendingWriteCount` | 改为「待写脏区间数（合并后）」 |
+| `writeCompleted` | **新增 ok=false 失败沿**（原先恒 true） |
+| 新增 | `setReadMergeGap` / `setWriteCoalesceMs` / `flush` / `requestRefresh` / `valueAge` / `pointValid` / `readGroupCount` |
+| 删除 | `m_cache[4]` / `m_cacheStart` / `m_cacheCount`（不留双缓存，避免双写不一致） |
+
+协议上限宏：`XMODBUS_HUB_WRITE_MAX_REGISTERS(123)` / `_BITS(1968)` /
+`_VALUES(=BITS)`、`XMODBUS_HUB_READ_MAX_REGISTERS(125)` / `_BITS(2000)`。
+
+### 六、验证状态（2026-10-29）
+
+- **编译**：WSL 原生 gcc + aarch64 交叉均通过（`libXinYueC.so` / 静态库 /
+  `XIndustryModbus_Test` / `XIndustryValve_Test` / `XModbusHubTest` /
+  `XProtocolCampaignTest` 全部链接成功）。**Windows MSVC 尚未构建**。
+- **既有 Hub 闭环回归（用例①~⑧）**：0 失败（三设备上线、轮询回填、跨段读、
+  写直通、写重发、宕机重连补写、映射刷新全绿）。
+- **战役回归 `XProtocolCampaignTest` S1..S13**：0 失败（io 引擎）。
+- **新增缓存层用例（⑨读合并 / ⑩写合并+失败沿）**：已写入
+  `Test/XProtocolTest/xmodbus_hub_test.c`（含帧日志断言工具
+  `frameLogSize/frameLogCount/frameLogHasLine`；从站脚本
+  `mbtest_hub_slaves.py` 配套新增 `frames_<tag>.log`、FC15 解包、
+  数组放大到 di/coils=32 / ir/hr=64）。**当前未收口：最新一轮 12 项失败**
+  （2026-10-29 收尾时按用户要求停止调试）。失败集中在：
+  1. **写合并断言全组失败（⑩前半）**——从站日志显示三笔线圈写最终是
+     **逐点 FC06/FC05 帧**而非一帧 FC15，且 `writeCompleted` 只回了
+     2 条（v=1 n=1、v=2 n=2）而非按切片 3 条。排查方向：
+     `hubMarkDirty` 的合并判据（相邻区间判定用了 `offset <= dEnd` 的
+     半开区间比较，正确）与写后是否**立刻**泵（`hubScheduleFlush`
+     窗口=0 时逐笔即时下发 ⇒ 第一笔已上线、后两笔来不及合并）。即
+     「默认无窗口时逐笔即时下发」与「合并成一帧」本身冲突：合并要么
+     依赖窗口（`setWriteCoalesceMs>0`），要么依赖设备忙时排队。用例应在
+     有窗口或设备忙碌的前提下断言合并。
+  2. **写落定/失败沿断言失败（⑩后半）**——`pendingWriteCount` 未归零、
+     解吞后仍不落定，说明 FC06 写应答被判失败并无限重发。`XModbusClient`
+     的 FC05/FC06 响应解析按「respData 不含功能码、需 4 字节」实现
+     （`XModbusClient.c:820`），从站脚本必须回 `pdu[:4]`（已按此写死）；
+     若仍失败，下一步查 TCP 从站 `length` 字段与 `tid` 回填是否匹配。
+  3. **帧日志断言（⑨后半）**——`frames_A.log` 按轮次累积，断言用
+     `frameLogSize()` 取基线字节偏移；`gap=0 时远端 0 与 16 各自成帧`
+     与 `按需刷新确实发了一帧 FC04` 失败更可能是**基线在进程内取到的是
+     上一轮残留文件**（从站启动时清理只在 `main()` 首次执行）或断言窗口
+     跨了多拍（帧数/起点匹配过严），需在断言前先 `truncate` 帧日志。

@@ -95,7 +95,7 @@
  *               编辑页）：方向/Home/End 经 xkb_sendKey 合成到绑定目标
  *               （选择态 m_editSelArmed 携带 ShiftModifier）、开始选
  *               择切换选择态（按下视觉保持）、全选=Ctrl+A、⌫=退格；
- *               复制/剪切/粘贴公开 API 优先（三编辑控件 vtable 识别直
+ *               复制/剪切/粘贴公开 API 优先（编辑控件族识别直
  *               调 xkb_editPanelClipboard，各受 X*_ON 门控），未识别
  *               目标回落合成 Ctrl+C/X/V；无绑定目标动作键禁用态（灰
  *               字）；返回箭头/再点图标回原布局，进入/退出不动弹层与
@@ -1327,44 +1327,112 @@ static void xkb_notifyObserver(const XVirtualKeyboard* self)
 #endif /* XVIRTUALKEYBOARD_ON */
 
 /**
+ * @brief 编辑控件族身份（写入链/类型判定的单一事实源）。
+ * @details 写入链此前逐处按虚表精确比对，派生类一律落入「类型不支持」
+ *          诊断分支——键盘即使弹出，多字节/IME 上屏文本仍被丢弃。改为
+ *          按族归类后，凡 xkb_isEditorFamily 放行的目标都能拿到对应
+ *          基类的公开写入 API。
+ */
+typedef enum XkbEditorKind
+{
+    XkbEditorKind_None = 0, /**< 非编辑控件族。 */
+    XkbEditorKind_Line,     /**< XLineEdit 族（含 XItemLineEditor/XComboEdit）。 */
+    XkbEditorKind_Plain,    /**< XPlainTextEdit 族。 */
+    XkbEditorKind_Text      /**< XTextEdit（富文本；不含只读 XTextBrowser）。 */
+} XkbEditorKind;
+
+/**
+ * @brief 行/多行/富文本编辑族归类（派生类兼容的单点类型识别）。
+ * @details 判据=共享某个**派生类不会覆写**的行为槽与基类 class_init 同
+ *          函数指针（XWidget.c:2405 xwidget_shortcutOverrideLineControl
+ *          同款先例）：XVTABLE_INHERIT_XCLASS 把基类槽位整表复制进派生
+ *          类表，子类只覆写自身关心的槽，未覆写的槽仍是基类实现——同
+ *          函数指针即 is-a 关系。
+ *          - 行编辑族取 EXClass_Copy：XItemLineEditor（表格单元格编辑
+ *            器，XItemDelegate.c:162）与 XComboEdit（可编辑下拉框内嵌
+ *            行编辑，XComboBox.c:1124）都只覆写按键/失焦槽。
+ *          - 多行族取 EXClass_Deinit：XPlainTextEdit 无库内派生类，此处
+ *            判据与精确匹配等价，留作未来派生的兜底。
+ *          - 富文本按精确匹配：唯一派生类 XTextBrowser 初始化即把内嵌
+ *            编辑器置只读（XTextBrowser.c:354），只读浏览区不该弹键盘，
+ *            故不纳入族判据。
+ * @note      旧口径的精确 vtable 相等会漏掉全部派生类：表格双击进编辑
+ *            后编辑器是 XItemLineEditor，不是 XLineEdit——键盘既不弹也
+ *            不认它做写入目标（真机无物理键盘时该单元格完全无法输入）。
+ *            三个族的结构体首成员均为基类（XComboEdit/XItemLineEditor
+ *            的 m_base、XTextBrowser 的 m_base），故 (基类*) 向下转换地
+ *            址不变，调用方可安全直调基类公开 API。
+ * @param      target 待判定控件借用指针；可为 NULL。
+ * @return     控件所属编辑族；非编辑控件族返回 XkbEditorKind_None。
+ */
+static XkbEditorKind xkb_editorKind(const XWidget* target)
+{
+    XVtable* vt;
+    if (!target) return XkbEditorKind_None;
+    vt = XClassGetVtable(target);
+    if (!vt) return XkbEditorKind_None;
+#if XLINEEDIT_ON
+    {
+        XVtable* base = XLineEdit_class_init();
+        if (vt == base ||
+            XVtableGetFunc(vt, EXClass_Copy, void*) ==
+                XVtableGetFunc(base, EXClass_Copy, void*))
+            return XkbEditorKind_Line;
+    }
+#endif
+#if XPLAINTEXTEDIT_ON
+    {
+        XVtable* base = XPlainTextEdit_class_init();
+        if (vt == base ||
+            XVtableGetFunc(vt, EXClass_Deinit, void*) ==
+                XVtableGetFunc(base, EXClass_Deinit, void*))
+            return XkbEditorKind_Plain;
+    }
+#endif
+#if XTEXTEDIT_ON
+    if (vt == XTextEdit_class_init()) return XkbEditorKind_Text;
+#endif
+    return XkbEditorKind_None;
+}
+
+/** @brief 是否属于任一编辑控件族（xkb_editorKind 的非 None 读法）。 */
+static bool xkb_isEditorFamily(const XWidget* target)
+{
+    return xkb_editorKind(target) != XkbEditorKind_None;
+}
+
+/**
  * @brief 判定目标控件是否为受支持的输入目标（适配层类型识别 + WA14
  *        放行回退）。
- * @details 双口径：①vtable 快路径——逐一比对三编辑控件（XCompleter.c:
- *          535 先例），直写+合成键双写入通道齐备；②WA_InputMethodEnabled
- *          放行回退——对齐 Qt inputMethodAccepted=WA14 口径
- *          （qwidget.cpp:9057-9057 同族），任意开了 WA14 的控件皆可绑
- *          定。修复「XDateEdit/XDateTimeEdit 字段壳获焦后面板闪退」：
- *          壳（XDateTimeEdit vtable）曾在此被拒（init 置 WA14+DigitsOnly，
- *          XDateTimeEdit.c:3067-3070）→popup 经 setTextArea 早退不弹/
- *          守护 ②′ 与 notifyPress 幂等收层。放行目标的写入面=合成键
- *          注入（xkb_sendKey 经 XObject_event_base 直发 m_target，类型
- *          无关）：单字节 ASCII 字符键/Return 照常可达——XDateTimeEdit
- *          壳的数字键由其 keyPressEvent 分段消化（xdt_typeDigit，按下
- *          即终结不转发行编辑），行为对齐无头 apitest 注入口径；多字节/
- *          IME 上屏直写仍仅认三编辑控件 vtable（writeText 尾部诊断忽
- *          略），+/- 符号翻转仍仅 XLineEdit——能力不对称在 writeText
- *          注释与本回退处双声明。三个适配开关全 0 时类型识别降级：
- *          恒返回 true（setTextArea 接受任意 XWidget*）。
+ * @details 双口径：①编辑控件族快路径——按族归类而非虚表精确比对
+ *          （xkb_editorKind；行编辑族含 XItemLineEditor/XComboEdit 等库
+ *          内派生类，见该函数注释），直写+合成键双写入通道齐备；
+ *          ②WA_InputMethodEnabled 放行回退——对齐 Qt inputMethodAccepted
+ *          =WA14 口径（qwidget.cpp:9057-9057 同族），任意开了 WA14 的控
+ *          件皆可绑定。修复「XDateEdit/XDateTimeEdit 字段壳获焦后面板闪
+ *          退」：壳（XDateTimeEdit vtable）曾在此被拒（init 置 WA14+
+ *          DigitsOnly，XDateTimeEdit.c:3067-3070）→popup 经 setTextArea
+ *          早退不弹/守护 ②′ 与 notifyPress 幂等收层。放行目标的写入面=
+ *          合成键注入（xkb_sendKey 经 XObject_event_base 直发 m_target，
+ *          类型无关）：单字节 ASCII 字符键/Return 照常可达——
+ *          XDateTimeEdit 壳的数字键由其 keyPressEvent 分段消化
+ *          （xdt_typeDigit，按下即终结不转发行编辑），行为对齐无头
+ *          apitest 注入口径；多字节/IME 上屏直写按族分派到基类公开 API
+ *          （writeText），+/- 符号翻转限行编辑族——WA14 回退目标无直写
+ *          通道的能力不对称仍在 writeText 尾部诊断与本处双声明。三个适
+ *          配开关全 0 时类型识别降级：恒返回 true（setTextArea 接受任意
+ *          XWidget*）。
  */
 static bool xkb_supportedTarget(const XWidget* target)
 {
-    XVtable* vt;
     if (!target) return true;
-    vt = XClassGetVtable(target);
-#if XLINEEDIT_ON
-    if (vt == XLineEdit_class_init()) return true;
-#endif
-#if XPLAINTEXTEDIT_ON
-    if (vt == XPlainTextEdit_class_init()) return true;
-#endif
-#if XTEXTEDIT_ON
-    if (vt == XTextEdit_class_init()) return true;
-#endif
 #if !XLINEEDIT_ON && !XPLAINTEXTEDIT_ON && !XTEXTEDIT_ON
-    (void)vt;
     return true; /* 类型识别降级：接受任意控件（合成键路径类型无关）。 */
 #else
-    /* WA14 放行回退：非三编辑控件但显式开启输入法属性（WA14）即接受
+    /* 编辑控件族（含 XItemLineEditor/XComboEdit 等库内派生类，见
+     * xkb_isEditorFamily）：直写+合成键双写入通道齐备。 */
+    if (xkb_isEditorFamily(target)) return true;
+    /* WA14 放行回退：非编辑控件但显式开启输入法属性（WA14）即接受
        绑定（合成键注入焦点路径承载写入；直写回退缺席见函数头）。 */
     return XWidget_testAttribute(target, XWidgetAttribute_InputMethodEnabled);
 #endif
@@ -1372,7 +1440,8 @@ static bool xkb_supportedTarget(const XWidget* target)
 
 /**
  * @brief 判定控件是否**要文本键盘**（与 xkb_supportedTarget 的「可绑定」分流）。
- * @details 三编辑控件（XLineEdit/XPlainTextEdit/XTextEdit）恒要；其余带
+ * @details 编辑控件族（XLineEdit/XPlainTextEdit/XTextEdit 及其派生类，
+ *          派生类经 xkb_editorKind 的族判定识别）恒要；其余带
  *          WA14 的控件**依 inputMethodHints 判**：明确 None（=不要文本
  *          输入法）不算，带文本类提示位才算。两者分流的原因：
  *          - WA14 单独开着**不代表要文本键盘**：远端镜像控件 XGuiClient
@@ -1387,22 +1456,15 @@ static bool xkb_supportedTarget(const XWidget* target)
  */
 static bool xkb_wantsTextKeyboard(const XWidget* target)
 {
-    XVtable* vt;
     if (!target) return false;
-    vt = XClassGetVtable(target);
-#if XLINEEDIT_ON
-    if (vt == XLineEdit_class_init()) return true;
-#endif
-#if XPLAINTEXTEDIT_ON
-    if (vt == XPlainTextEdit_class_init()) return true;
-#endif
-#if XTEXTEDIT_ON
-    if (vt == XTextEdit_class_init()) return true;
-#endif
 #if !XLINEEDIT_ON && !XPLAINTEXTEDIT_ON && !XTEXTEDIT_ON
-    (void)vt;
     return true; /* 类型识别降级：与 supportedTarget 同口径（任意控件）。 */
 #else
+    /* 编辑控件族恒要文本键盘（含 XItemLineEditor/XComboEdit 派生类）：
+     * 表格单元格双击进入编辑后的内嵌行编辑器即由此放行——旧口径按虚表
+     * 精确比对只认 XLineEdit 本体，派生编辑器的按下与守护轮询双双判定
+     * 「不要键盘」，无物理键盘的设备无法输入。 */
+    if (xkb_isEditorFamily(target)) return true;
     if (!XWidget_testAttribute(target, XWidgetAttribute_InputMethodEnabled))
         return false;
     return XWidget_inputMethodHints(target) != XInputMethodHint_None;
@@ -2597,8 +2659,8 @@ static bool xkb_editPanelEnabled(const XVirtualKeyboard* self, int slot)
     return self->m_target != NULL;
 }
 
-/** @brief 复制/剪切/粘贴动作（公开 API 优先：三编辑控件 vtable 识别
- *         直调，各受 X*_ON 门控；未识别目标回落合成 Ctrl+C/X/V 虚键
+/** @brief 复制/剪切/粘贴动作（公开 API 优先：编辑控件族识别直调，
+ *         各受 X*_ON 门控；未识别目标回落合成 Ctrl+C/X/V 虚键
  *         ——XLineControl/XTextControl 既有 Ctrl 组合处理链承接）。 */
 static void xkb_editPanelClipboard(XVirtualKeyboard* self, int slot)
 {
@@ -2613,7 +2675,7 @@ static void xkb_editPanelClipboard(XVirtualKeyboard* self, int slot)
     else
         key = XKey_V;
 #if XLINEEDIT_ON
-    if (XClassGetVtable(target) == XLineEdit_class_init()) {
+    if (xkb_editorKind(target) == XkbEditorKind_Line) {
         XLineEdit* le = (XLineEdit*)target;
         if (slot == XkbEditPanelSlot_Copy)
             XLineEdit_copy(le);
@@ -2625,7 +2687,7 @@ static void xkb_editPanelClipboard(XVirtualKeyboard* self, int slot)
     }
 #endif
 #if XPLAINTEXTEDIT_ON
-    if (XClassGetVtable(target) == XPlainTextEdit_class_init()) {
+    if (xkb_editorKind(target) == XkbEditorKind_Plain) {
         XPlainTextEdit* pe = (XPlainTextEdit*)target;
         if (slot == XkbEditPanelSlot_Copy)
             XPlainTextEdit_copy(pe);
@@ -2637,7 +2699,7 @@ static void xkb_editPanelClipboard(XVirtualKeyboard* self, int slot)
     }
 #endif
 #if XTEXTEDIT_ON
-    if (XClassGetVtable(target) == XTextEdit_class_init()) {
+    if (xkb_editorKind(target) == XkbEditorKind_Text) {
         XTextEdit* te = (XTextEdit*)target;
         if (slot == XkbEditPanelSlot_Copy)
             XTextEdit_copy_2(te);
@@ -3749,7 +3811,7 @@ static void xkb_sendKey(XVirtualKeyboard* self, int key, XKeyboardModifiers modi
     XObject_event_base((XObject*)self->m_target, (XEvent*)&ke);
 }
 
-/** @brief 数字模式 +/- 键：翻转目标文本首字符符号（仅 XLineEdit 目标）。
+/** @brief 数字模式 +/- 键：翻转目标文本首字符符号（仅行编辑族目标）。
  *  @details 主路径=光标 home → 原文首字符为 +/- 时选 1 删 → 行首插入
  *           新符号（全程公开 API，保留撤销栈与光标位，对标 LVGL 借临
  *           时移动光标的等价实现）；XLineEdit 适配缺席时仅诊断忽略。 */
@@ -3760,8 +3822,8 @@ static void xkb_signFlip(XVirtualKeyboard* self)
     char first;
     const char* flipped;
     if (!self || !self->m_target) return;
-    if (XClassGetVtable(self->m_target) != XLineEdit_class_init()) {
-        XPrintf("[XVirtualKeyboard] +/-: 目标类型不支持符号翻转（仅 XLineEdit）\n");
+    if (xkb_editorKind(self->m_target) != XkbEditorKind_Line) {
+        XPrintf("[XVirtualKeyboard] +/-: 目标类型不支持符号翻转（仅行编辑族）\n");
         return;
     }
     le = (XLineEdit*)self->m_target;
@@ -3816,19 +3878,22 @@ static void xkb_writeText(XVirtualKeyboard* self, const char* text)
         return;
     }
 #if XLINEEDIT_ON
-    if (XClassGetVtable(self->m_target) == XLineEdit_class_init()) {
+    if (xkb_editorKind(self->m_target) == XkbEditorKind_Line) {
+        /* 族内统一按 XLineEdit 公开 API 直写（结构首成员=基类，派生类
+         * 地址不变；XLineEdit_insert 经控制器写入，撤销栈/校验/掩码全套
+         * 语义照常）。 */
         XLineEdit_insert((XLineEdit*)self->m_target, text);
         return;
     }
 #endif
 #if XPLAINTEXTEDIT_ON
-    if (XClassGetVtable(self->m_target) == XPlainTextEdit_class_init()) {
+    if (xkb_editorKind(self->m_target) == XkbEditorKind_Plain) {
         XPlainTextEdit_insertPlainText((XPlainTextEdit*)self->m_target, text);
         return;
     }
 #endif
 #if XTEXTEDIT_ON
-    if (XClassGetVtable(self->m_target) == XTextEdit_class_init()) {
+    if (xkb_editorKind(self->m_target) == XkbEditorKind_Text) {
         XTextEdit_insertPlainText((XTextEdit*)self->m_target, text);
         return;
     }
@@ -3844,19 +3909,19 @@ static void xkb_sendNewline(XVirtualKeyboard* self)
 {
     if (!self || !self->m_target) return;
 #if XLINEEDIT_ON
-    if (XClassGetVtable(self->m_target) == XLineEdit_class_init()) {
+    if (xkb_editorKind(self->m_target) == XkbEditorKind_Line) {
         xkb_sendKey(self, XKey_Return, XKeyboardModifier_NoModifier);
         return;
     }
 #endif
 #if XPLAINTEXTEDIT_ON
-    if (XClassGetVtable(self->m_target) == XPlainTextEdit_class_init()) {
+    if (xkb_editorKind(self->m_target) == XkbEditorKind_Plain) {
         xkb_writeText(self, "\n");
         return;
     }
 #endif
 #if XTEXTEDIT_ON
-    if (XClassGetVtable(self->m_target) == XTextEdit_class_init()) {
+    if (xkb_editorKind(self->m_target) == XkbEditorKind_Text) {
         xkb_writeText(self, "\n");
         return;
     }
@@ -5958,7 +6023,7 @@ void XVirtualKeyboard_setTextArea(XVirtualKeyboard* self, XWidget* target)
     if (!self) return;
     if (target == self->m_target) return;
     if (target && !xkb_supportedTarget(target)) {
-        XPrintf("[XVirtualKeyboard] setTextArea: 不支持的目标类型（三编辑控件/"
+        XPrintf("[XVirtualKeyboard] setTextArea: 不支持的目标类型（编辑控件族/"
                 "WA_InputMethodEnabled 控件之外），保持原绑定\n");
         return;
     }
@@ -6498,7 +6563,7 @@ void XVirtualKeyboard_notifyPress(XVirtualKeyboard* self, XWidget* hit)
     if (!self->m_autoPopup) {
         /* autoPopup 关=应用全权接管（默认全不弹）。降级模式（editableOnly）
            例外：仅**要文本键盘的控件**放行（判据见 xkb_wantsTextKeyboard：
-           三编辑控件 + WA14 且 hints 非 None 的字段壳类），其余区域照旧
+           编辑控件族 + WA14 且 hints 非 None 的字段壳类），其余区域照旧
            不弹（保住「触摸点按钮/列表不被键盘打断」），已弹层时非编辑落点
            仍收层。 */
         if (!self->m_autoPopupEditableOnly) return;

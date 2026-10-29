@@ -311,10 +311,10 @@ void XExample_init(XExample* obj)
 
 XExample* XExample_create(void)
 {
-    XExample* obj = (XExample*)XMalloc_System(sizeof(XExample));
+    XExample* obj = (XExample*)XMemory_calloc(1, sizeof(XExample), XCLASS_DEFAULT_MEMORY_TYPE);
     if (!obj) return NULL;
     XExample_init(obj);
-    Set_Class_Memory(obj, XFree_System);   // 标记为堆分配（必做）
+    Set_Class_IsHeap(obj, true);   // 标记为堆对象（必做，配对 XClassDelete）
     return obj;
 }
 
@@ -1643,16 +1643,24 @@ XLabel_setText_2(label, buf);   /* 其余全部由框架接管 */
    XClassCopy(result, &temp);
    XClassDeinit(&temp);
    ```
-3. **忘记给堆对象设置释放函数**：`XMalloc_System` + `init` 之后缺少 `Set_Class_Memory`，`XClassDelete` 时无法正确释放。
+3. **堆对象的分配与堆标记必须用真实 API**（2026-10-29 裁定，此前文档示例有误）：
+   `Set_Class_Memory(Object, MemoryType)` 的第二参是 **XMemoryType 枚举**（经
+   `XMemory_method` 查表），**不是**函数指针——`Set_Class_Memory(obj, XFree_System)`
+   编译不过。堆对象的标准三步：`XMemory_calloc` 分配 → `_init` → `Set_Class_IsHeap(obj, true)`。
    ```c
-   XExample* obj = (XExample*)XMalloc_System(sizeof(XExample));
+   XExample* obj = (XExample*)XMemory_calloc(1, sizeof(XExample), XCLASS_DEFAULT_MEMORY_TYPE);
+   if (!obj) return NULL;
    XExample_init(obj);
-   Set_Class_Memory(obj, XFree_System);   // ✅ 必须设置！
+   Set_Class_IsHeap(obj, true);   // ✅ 必须标记堆所有权，配对 XClassDelete
    ```
 4. **在虚函数表中先重载后继承**：先 `XVTABLE_OVERLOAD_DEFAULT` 再 `XVTABLE_INHERIT_XCLASS` 会覆盖重载，必须先继承后重载（见「虚函数重载注意事项」）。
 5. **copy/move 不支持未初始化目标**：所有 `VXxxx_copy`/`VXxxx_move` 实现在第一行参数检查之后，必须用 `XClassIsVtableNull(dest)` 检查目标 vtable，为空则调用 `XType_init(dest)` 兜底完整初始化；只 `XClassSetVtable` 不分配成员是错误写法。规则与示例见「对象生命周期管理 → copy/move 目标初始化约束」。
 6. **用 memcpy 代替拷贝**：浅拷贝共享底层数据，导致双重释放/crash；必须用 `XClassCopy`。`XString` 还会共享编码缓存指针，见「内存管理注意事项 → 禁止使用 memcpy 复制对象」。
 7. **忘记检查虚函数表和 ISNULL**：`*_base` 函数中未做 `ISNULL(self, ...)` + `ISNULL(XClassGetVtable(self), ...)` 检查就直接分派，空指针会崩溃；正确写法见「虚函数表与虚函数重载 → `*_base` 调度入口」。
+8. **条件编译判宏早于给它赋值的 include**：模块开关定义在模块自己的 config 头（如 `XIndustry_config.h`）时，公开头里 `#if 模块开关_ON` 必须放在 `#include "CXinYueConfig.h"` / `#include "Xxxx_config.h"` **之后**——放在前面时宏未定义、`#if` 恒为假，**整个头被静默裁成空**（不报错、无符号，适配件"看起来编译通过实际不存在"，2026-10-29 Industry 层实锅 ×2）。
+9. **派生开关必须显式包含被派生的 config 头**：模块 config 里的开关默认值若从其他模块派生（如 `XINDUSTRY_MODBUS_ON` 按 `XMODBUS_ON` 派生），必须先 `#include "XProtocol_config.h"` 再 `#ifdef XMODBUS_ON`——本文件常被 CXinYueConfig.h **中途**包含（头保护挡住递归），被派生宏的定义点可能晚于本文件的包含点，不显式包含会恒派生为 0（2026-10-29 实锅）。
+10. **`XString_constData` 不是 `const char*`**：它是 `XString_unicode` 的宏别名，返回 **UTF-16 内部数据的 `const XChar*`**（uint16_t 流）。取 UTF-8 的 `const char*` 必须用 **`XString_toUtf8`**（另有 `toGbk`/`toLocal`）。把它喂给任何 `const char*` 形参，UTF-16 字节流按 char 读，**非 ASCII 区间内容在首个 `\0` 处被静默截断**——不崩溃、常无警告，纯数据错。实证（2026-10-29）：`XModbusTcpServer` 把 `XString_constData` 结果传给 `XHostAddress_create_fromString(const char*)`，"127.0.0.1" 截成 "1"，设 address 参数 listen 恒败；同文件 `XModbusTcpClient` 同路径用 `XString_toUtf8` 即正确对照。凡跨类传字符串指针，先核对访问器返回的真实类型。
+11. **诊断/对账打点必须被编译开关门包裹，时间源与打印走框架体系**（2026-10-29 裁定）：排查疑难时写入 Src/ 的临时打点（对账、间隔测量、状态追踪），必须按"模块名_ON"惯例做**默认 0 的专属开关门**（如 `XEVENT_PUMPGAP_ON`，代码处 `#ifndef` 兜底定义即可），保证正常运行零开销、异平台/嵌入式构建零影响；块内时间源一律 `XDateTime_currentMSecsSinceEpoch`（禁止 `clock_gettime`/`GetTickCount` 直呼——异平台编不过且违反时间源规则），打印优先 `XDEBUG_PRINTF`/`XERROR_PRINTF`（自带文件/函数/行号上下文，随构建口径归零）。实证：`XAbstractEventDispatcher` 的 [PUMPGAP] 泵间隔打点直呼 `clock_gettime` 无守卫，合入即 Windows 构建回归，已改 `XEVENT_PUMPGAP_ON` 门 + XDateTime。调试代码的价值在"需要时一键开启、平时完全不存在"——裸写的打点既污染构建，又逼着后人替你修编译。
 
 ---
 

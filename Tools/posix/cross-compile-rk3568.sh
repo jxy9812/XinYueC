@@ -9,8 +9,8 @@
 # 选项:
 #   --target T   构建目标（默认 XGuiWindowDemo_Test）
 #   --deploy     编译成功后部署到板子 /root/Desktop/XinYueC/bin/ 并重启 run_test.service
-#   --worktree   叠加工作区未提交改动参与编译（默认只编译 HEAD 已提交内容；
-#                工作区删掉的文件不会从 WSL 副本移除，见输出提示）
+#   --worktree   叠加工作区未提交改动与未跟踪新文件参与编译（默认只编译 HEAD
+#                已提交内容；工作区删掉的文件不会从 WSL 副本移除，见输出提示）
 #
 # 依赖: Windows 侧 Git Bash + WSL 发行版 Ubuntu(root)，
 #       内含 /root/toolchain-aarch64.cmake 与 /root/board-sysroot。
@@ -67,7 +67,14 @@ fi
 # `while read < <(git diff ...)`，首条 wsl 之后剩余清单行全部静默消失
 # （实测只叠加了清单第 1 个文件，2026-10-28）。
 if [[ $WORKTREE == 1 ]]; then
-    mapfile -t WT_FILES < <(git diff --name-only --diff-filter=d HEAD)
+    # 已跟踪改动 + 未跟踪新文件（git archive 两者都不含；未跟踪文件常在
+    # 新增子目录里，漏同步会在 cmake 配置期报 add_subdirectory 找不到目录）
+    # -z + read -d '': 中文等非 ASCII 路径在默认输出里是八进制转义串，
+    # 会被当成真实文件名（实测 mkdir 报 "File name too long"）
+    mapfile -d '' -t WT_FILES < <(
+        git -c core.quotepath=false diff --name-only --diff-filter=d HEAD -z
+        git -c core.quotepath=false ls-files --others --exclude-standard -z
+    )
     for f in "${WT_FILES[@]}"; do
         [[ -n "$f" ]] || continue
         wsl -d "$WSL_DISTRO" -u root -- bash -c \

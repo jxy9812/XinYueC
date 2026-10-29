@@ -181,6 +181,20 @@ extern "C" {
 #include"XProtocol_config.h"
 
 /* ========================================================================== */
+/** @brief 工业设备层（Industry/）总开关；置 0 时通道接口（XChannel）与
+ *         工业设备（XSolenoidValve 等）连同各传输适配器一并裁掉。
+ * @details 各子模块开关集中在 Industry/XIndustry_config.h（通道接口
+ *          XINDUSTRY_CHANNEL_ON、电磁阀 XSOLENOID_VALVE_ON、适配器
+ *          XINDUSTRY_GPIO_ON / XINDUSTRY_MODBUS_ON），与设备层同款裁剪口径。
+ * @note   必须排在 XProtocol_config.h 之后：XINDUSTRY_MODBUS_ON 的默认值
+ *         在 XIndustry_config.h 内按 XMODBUS_ON 派生，排前会因"头保护挡住
+ *         递归包含、派生点早于 XMODBUS_ON 定义"而恒派生为 0（2026-10-29 实锅）。 */
+#ifndef XINDUSTRY_ON
+#define XINDUSTRY_ON 1
+#endif
+#include"XIndustry_config.h"
+
+/* ========================================================================== */
 /*                             XConsoleShell 模块开关                             */
 /* ========================================================================== */
 /** @brief XConsoleShell 模块总开关；置 0 时裁剪整个 Shell 公共 API 和所有子功能。 */

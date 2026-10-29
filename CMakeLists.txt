@@ -229,6 +229,9 @@ include_directories(${INCLUDE_TEST_LIST})
 # 公共平台接口直接位于 Src/XPlatform 下。这里显式加入该目录，避免递归
 # 头文件目录收集器只记录父目录而在 Visual Studio 构建中遗漏此叶子目录。
 include_directories(${CMAKE_CURRENT_LIST_DIR}/Src/XPlatform)
+# 工业设备层根目录：CXinYueConfig.h 反向包含 Industry/XIndustry_config.h，
+# 需要能解析该头（子目录头由 XinYueIndustry 目标传播）。
+include_directories(${CMAKE_CURRENT_LIST_DIR}/Industry)
 #递归搜索目录下的文件添加到变量中
 # XDateEdit.c/XTimeEdit.c（XDateTimeEdit 同族子类控件，Src/XGui/Widget/）
 # 经本 glob 自动入列——新增/删除源文件后须触发重新配置（改动本文件即可）。
@@ -672,6 +675,12 @@ add_subdirectory(Library/pcre2)
 # 以子目录静态库方式集成，详见 Library/tinyusb/CMakeLists.txt
 # 默认不启用，仅嵌入式构建通过 XINYUE_C_HAS_TINYUSB 开启。
 add_subdirectory(Library/tinyusb)
+
+# ==================== Industry（工业设备层）====================
+# 以子目录静态库方式集成，详见 Industry/CMakeLists.txt
+# 通道接口（XChannel：XIoChannel + DI/DO/AI/AO + 适配器）与工业设备
+# （XSolenoidValve 电磁阀）；测试可执行 XIndustryValve_Test 随子目录注册。
+add_subdirectory(Industry)
 
 # ==================== SQLite（源码方式集成）====================
 # SQLite 作为可替换的源码组件编译，适配器不依赖系统 libsqlite3。

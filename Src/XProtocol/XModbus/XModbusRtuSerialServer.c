@@ -614,6 +614,56 @@ static void VXModbusRtuSerialServer_deinit(XModbusRtuSerialServer* server)
 // =============== 槽函数 ================
 
 /**
+ * @brief 尝试按已知帧长即时兑现（不等帧间静默窗）
+ * @return true = 缓冲区头部已有一帧可确定长度且 CRC 通过的完整帧，已被消费
+ * @note  [即时兑现 2026-10-29] 从站原实现把「解析」完全绑在接收静默定时器
+ *        到期上：每收到一段字节就 stop+start 一个 (帧间延迟+1ms) 的定时器，
+ *        只有静默窗到期才调 processReceiveBuffer。RTU 请求的功能码与长度
+ *        是自描述的——0x01~0x06 恒 8 字节、0x0F/0x10 由字节数字段给出、
+ *        其余同理（见 calculateRtuFrameLength）。因此**只要缓冲里已凑满
+ *        一帧且 CRC 正确，就没有任何理由再等静默**。
+ *        真机实证（RK3568 从站 ↔ 桌面主站，2026-10-29 strace）：板端
+ *        「收到请求 → 写回应答」p50 = 139ms、p95 = 193ms，而帧长 8 字节、
+ *        9600bps 传输仅 ~9ms；这 130ms 全部是静默定时器在主循环里排队兑现
+ *        的延迟（板端主循环一圈受 X11 提交影响可达 60~200ms，静默定时器
+ *        与它同拍）。即时兑现把从站应答拉回「收齐即答」，从站侧不再受
+ *        主循环节拍影响。
+ *        静默定时器**保留**：它仍是半帧/坏帧的唯一出口（未知功能码回退
+ *        扫描、长度字段未到齐、CRC 待定），到期仍走 processReceiveBuffer。
+ *        两条路径对 processReceiveBuffer 幂等（缓冲区空则空跑），不会
+ *        重复应答：即时兑现成功即消费掉该帧，定时器到期只剩空缓冲。 */
+static bool tryProcessCompleteFrameNow(XModbusRtuSerialServer* server)
+{
+    XByteArray* buffer;
+    const uint8_t* data;
+    size_t dataSize;
+    int frameLen;
+    XModbusAdu* adu;
+
+    if (!server || !server->m_receiveBuffer) return false;
+    buffer = server->m_receiveBuffer;
+    data = XContainerDataAddr(buffer);
+    dataSize = XByteArray_size_base(buffer);
+    if (dataSize < 4) return false;
+
+    frameLen = calculateRtuFrameLength(data, dataSize);
+    if (frameLen < 0) return false;      /* 功能码未知：留给静默窗回退扫描。 */
+    if ((size_t)frameLen > dataSize) return false; /* 帧未收全：等后续字节。 */
+
+    /* 长度已够但 CRC 不匹配时同样留给静默窗：滑窗重同步是它的职责，
+     * 这里提前消费只会把可恢复的错帧变成不可恢复。 */
+    adu = XModbusAdu_parseRtu(data, (size_t)frameLen);
+    if (!adu) return false;
+    if (!XModbusAdu_matchingChecksum(adu)) {
+        XModbusAdu_delete(adu);
+        return false;
+    }
+    XModbusAdu_delete(adu);
+    processReceiveBuffer(server);
+    return true;
+}
+
+/**
  * @brief 处理串口数据到达
  */
 static void XModbusRtuSerialServer_onReadyRead(XObject* receiver, XVarList* args)
@@ -630,6 +680,11 @@ static void XModbusRtuSerialServer_onReadyRead(XObject* receiver, XVarList* args
             (const uint8_t*)tempBuf, (size_t)bytesRead);
         bytesRead = XIODevice_read_1((XIODevice*)server->m_serialPort, tempBuf, sizeof(tempBuf));
     }
+
+    /* 即时兑现：缓冲里已有长度自洽且 CRC 正确的完整帧就直接解析应答，
+     * 不再等静默窗（见 tryProcessCompleteFrameNow 注记——真机 139ms
+     * 应答延迟的根修）。解析后缓冲可能仍有半帧，静默定时器照样布防。 */
+    (void)tryProcessCompleteFrameNow(server);
 
     // 启动接收缓冲区超时定时器
     // 当数据停止到达时，定时器触发后会尝试处理帧

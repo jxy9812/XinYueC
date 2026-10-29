@@ -990,8 +990,9 @@ bool XVirtualKeyboard_autoPopup(const XVirtualKeyboard* self);
  *             也点不出键盘**——而应用本意只是「触摸点按钮/列表不被屏幕
  *             键盘打断」，输入框仍需键盘。置位本模式后：即使
  *             m_autoPopup=false，指针按下落点为**要文本键盘的控件**时
- *             仍弹出/重绑面板——判据=三编辑控件（XLineEdit/XPlainTextEdit/
- *             XTextEdit）或「WA14 且 inputMethodHints 非 None」的字段壳
+ *             仍弹出/重绑面板——判据=编辑控件族（XLineEdit/XPlainTextEdit/
+ *             XTextEdit 及其派生类，如表格单元格编辑器 XItemLineEditor）
+ *             或「WA14 且 inputMethodHints 非 None」的字段壳
  *             类（如日期时间壳 DigitsOnly），且 isEnabled && 总开关开；
  *             落点为非编辑区域（页面空白/按钮/标签/**远端镜像画面**）
  *             照旧**不弹**，且已弹层时收层（dismiss 语义不变）。面板自身
@@ -1020,7 +1021,8 @@ bool XVirtualKeyboard_autoPopupEditableOnly(const XVirtualKeyboard* self);
  *             面板单例；XWidget 核心不依赖键盘类型）。契约：
  *             - hit 为键盘面板自身（或其子控件）→ 无操作（键盘自身按
  *               键 PRESS 不受影响，弹出态按键照常输入）；
- *             - hit 为**要文本键盘的控件**（三编辑控件，或 WA14 且
+ *             - hit 为**要文本键盘的控件**（编辑控件族——三编辑控件及
+ *               其派生类，或 WA14 且
  *               inputMethodHints 非 None 的字段壳类；仅开 WA14 而
  *               hints=None 的控件——如远端镜像控件只转发物理键盘——不算）
  *               且 isEnabled && WA_InputMethodEnabled && 总开关开（判据

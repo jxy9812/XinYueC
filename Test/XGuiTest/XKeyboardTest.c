@@ -30,6 +30,11 @@
 #if XPLAINTEXTEDIT_ON
 #include "XPlainTextEdit.h" /* ⑤e 文字编辑面板全选粘贴替换承载控件。 */
 #endif /* XPLAINTEXTEDIT_ON */
+#if XTABLEWIDGET_ON
+#include "XTableWidget.h" /* 表格单元格编辑器（XItemLineEditor 派生类）弹键盘回归。 */
+#include "XAbstractItemView.h"
+#include "XItemDelegate.h"
+#endif /* XTABLEWIDGET_ON */
 #if XVIRTUALKEYBOARD_ON
 /* 虚拟键盘框架（Src/XGui/VirtualKeyboard，设计 apiMapping#1-5/7）：
  * 门控未定义时（框架落地前）整段编译出，既有用例保持原样全绿；框架
@@ -4611,6 +4616,89 @@ bool XKeyboardTest_runAll(void)
 #else
     xkb_tierRestore(); /* 无编辑控件构建：仅复位（断言随 XLINEEDIT 裁剪）。 */
 #endif /* XLINEEDIT_ON */
+
+#if XTABLEWIDGET_ON && XLINEEDIT_ON
+    /* ---- 表格单元格编辑器弹键盘（真机无物理键盘的输入通路） ----
+     * 缺陷：键盘类型判定曾按虚表精确比对三编辑控件本体，而表格进编辑
+     * 后的单元格编辑器是 XLineEdit 的库内派生类 XItemLineEditor
+     * （XItemDelegate.c）——按下路径与守护轮询双双判「不要键盘」，触摸
+     * 设备双击单元格后无法输入。定版判据=xkb_editorKind 的族归类（行
+     * 编辑族按 EXClass_Copy 槽同函数识别派生类）。 ---- */
+    {
+        XVirtualKeyboard* kp = XGuiApplication_virtualKeyboard();
+        XWidget* win = XWidget_create(NULL, 0);
+        XTableWidget* tbl;
+        XAbstractItemView* view;
+        XWidget_setGeometry(win, 0, 0, 480, 360);
+        XWidget_show(win);
+        tbl = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, win, 0);
+        view = &tbl->m_base.m_base;
+        XWidget_setGeometry((XWidget*)tbl, 10, 10, 440, 200);
+        XTableWidget_setRowCount(tbl, 2);
+        XTableWidget_setColumnCount(tbl, 2);
+        XTableWidget_setText(tbl, 0, 0, "10");
+        XTableWidget_setText(tbl, 0, 1, "20");
+        XAbstractItemView_setItemsEditable(view, true);
+        XWidget_show((XWidget*)tbl);
+        if (kp) XVirtualKeyboard_closePopup(kp);
+        /* 前半套件（⑦.1b 收尾）为防守护把单例重挂到将销毁的编辑框而下
+         * 压了 autoPopup——notifyPress 在 !autoPopup 时整体早退，本节
+         * 须临时恢复；用例尾部再压回，不改动后续既有语义。 */
+        if (kp) XVirtualKeyboard_setAutoPopup(kp, true);
+
+        xkb_expect(kp != NULL, "表格编辑：默认面板单例可取");
+        xkb_expect(XAbstractItemView_edit(view, 0, 0),
+                   "表格编辑：edit(0,0) 开启编辑器会话");
+        {
+            XWidget* editor = view->m_editor;
+            xkb_expect(editor != NULL, "表格编辑：编辑器控件已创建");
+            /* 单元格编辑器不是 XLineEdit 本体而是其派生类：旧口径下
+             * 此处即为漏判点，族判定须放行。 */
+            xkb_expect(editor &&
+                           XClassGetVtable(editor) != XLineEdit_class_init(),
+                       "表格编辑：编辑器是派生类（非 XLineEdit 本体）");
+            if (editor) {
+                /* 按下路径：命中靶=编辑器 → 弹键盘并绑定为写入目标
+                 * （修复前 xkb_wantsTextKeyboard 判假，面板不弹）。 */
+                XVirtualKeyboard_notifyPress(kp, editor);
+                xkb_expect(kp->m_popped &&
+                               XVirtualKeyboard_textArea(kp) == editor,
+                           "表格编辑：按下单元格编辑器弹出键盘");
+                /* 绑定路径：派生编辑器须被 xkb_supportedTarget 接受。 */
+                XVirtualKeyboard_closePopup(kp);
+                XVirtualKeyboard_setTextArea(kp, editor);
+                xkb_expect(XVirtualKeyboard_textArea(kp) == editor,
+                           "表格编辑：派生编辑器可绑定为写入目标");
+                /* 守护轮询（焦点跟随兜底）路径：编辑器持焦点、无 PRESS
+                 * 也要在 tick 边沿弹出——同一 xkb_wantsTextKeyboard 判据
+                 * 的第二个消费点（物理 Tab/F2 进编辑即此路）。须先造焦点
+                 * 边沿：closePopup 会把 m_prevFocus 同步成当时焦点（此刻
+                 * 编辑器已由 edit() 授焦），故按「收层→焦点移到表体→采样
+                 * 一拍→焦点回编辑器」三步造边沿。tick 由直派工具合成
+                 * （与真实定时器同 vtable 路径，不赌 200ms 周期与调度器）。 */
+                XVirtualKeyboard_closePopup(kp);
+                XWidget_setFocus((XWidget*)tbl);
+                xkb_pumpGuardTick(kp); /* 采样基准：prevFocus=表体。 */
+                XWidget_setFocus(editor);
+                xkb_expect(XWidget_appFocusWidget() == editor,
+                           "表格编辑：编辑器持有应用焦点（守护前置）");
+                xkb_expect(kp->m_guardTimer != XTIMER_INVALID_ID,
+                           "表格编辑：守护定时器在跑（autoPopup 开）");
+                xkb_pumpGuardTick(kp);
+                xkb_expect(kp->m_popped &&
+                               XVirtualKeyboard_textArea(kp) == editor,
+                           "表格编辑：焦点跟随（守护 tick）弹出键盘");
+            }
+        }
+        XAbstractItemView_closeEditor(view, view->m_editor,
+                                      XItemDelegateEndEditHint_NoHint);
+        if (kp) {
+            XVirtualKeyboard_closePopup(kp);
+            XVirtualKeyboard_setAutoPopup(kp, false); /* 恢复既有惰性态。 */
+        }
+        XClassDelete(win);
+    }
+#endif /* XTABLEWIDGET_ON && XLINEEDIT_ON */
 
     {
         int failures = xkb_failures;

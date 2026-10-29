@@ -40,7 +40,12 @@
  *               -> 真触摸注入（对标 Qt qwindowspointerhandler.cpp：帧
  *               聚合 + PT_PEN 压力归一，消费后 OS 不再提升合成鼠标；
  *               拒掌/系统取消无独立消息，按 POINTER_FLAG_CANCELED 位随
- *               常规消息映射 TOUCH_CANCEL）；
+ *               常规消息映射 TOUCH_CANCEL）；WM_SIZE(SIZE_MINIMIZED) ->
+ *               iconic 期间不注入 (±32000,0×0) 哑几何，只回填
+ *               handleWindowStateChanged(Minimized)，还原/最大化按原生
+ *               实测（IsZoomed/平台全屏生效位）回填 NoState/Maximized/
+ *               FullScreen（对标 QWindowsWindow::handleResized 状态分支
+ *               与 posix xpwn_queryWmWindowState 上报）；
  *             - 消息泵：processPendingEvents 用 PeekMessage(PM_REMOVE)
  *               非阻塞泵空全部待决窗口消息（TranslateMessage +
  *               DispatchMessage），WM_QUIT 只记录不派发；waitForEvents 用
@@ -622,6 +627,24 @@ static void xpwn_mousePosToLogical(const XWNPendingEntry* entry, HWND hwnd,
 /** @brief 把按窗口样式调整后的窗口矩形转换为客户端恰好等于目标几何。 */
 static DWORD xpwn_windowExStyle(const XWindow* window);
 
+/**
+ * @brief      无边框窗（CSD 抑制/FramelessWindowHint）的原生样式。
+ * @details    WS_POPUP 去除原生装饰；任务栏集成三件套照常携带：
+ *             WS_MINIMIZEBOX 是 Win32 任务栏「点击任务栏按钮=最小化前台
+ *             窗」切换的判定位（shell 按 GetWindowLong(GWL_STYLE) 位测决
+ *             定是否投递 SC_MINIMIZE；缺位时点击只激活不最小化——mpv
+ *             w32_common.c 同注 "WS_MINIMIZEBOX is required for minimizing
+ *             from the taskbar to work"，Qt 无边框窗同款问题 QTBUG-8361；
+ *             还原路径不查该位，故症状恰为「可还原、不可最小化」）；
+ *             WS_SYSMENU/WS_MAXIMIZEBOX 让任务栏右键系统菜单（还原/移动/
+ *             最小化/最大化/关闭）与原生应用一致，选择项经
+ *             WM_SYSCOMMAND→DefWindowProc 落到既有 WM_CLOSE/WM_SIZE 通路。
+ *             三位在无 WS_CAPTION 的窗口上无可见装饰、不参与
+ *             AdjustWindowRectEx 外框换算，几何账本零扰动。
+ */
+#define XPWN_FRAMELESS_STYLE \
+    (WS_POPUP | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
+
 /** @brief 取窗口原生样式（创建/动态落地共用单一来源；客户端区恰好等
  *         于目标几何的换算见 xpwn_adjustWindowRect）。 */
 static DWORD xpwn_windowStyle(const XWindow* window)
@@ -635,18 +658,21 @@ static DWORD xpwn_windowStyle(const XWindow* window)
      * FramelessWindowHint 强制折入装饰组装；Qt 无边框窗同为 WS_POPUP）。
      * 缩放/拖拽由装饰层自有缩放区接管（XWindowDecoration xwd_resize-
      * ZoneAt），任务栏/Alt-Tab 不受 WS_POPUP 影响（对标 Qt 无边框窗仍
-     * 受 WM 管理语义）；无边框最大化的工作区钳制见 wndProc WM_GETMINMAXINFO。 */
+     * 受 WM 管理语义）；无边框最大化的工作区钳制见 wndProc WM_GETMINMAXINFO。
+     * 任务栏集成三件套（含「点击任务栏按钮最小化」判定位 WS_MINIMIZEBOX）
+     * 见 XPWN_FRAMELESS_STYLE——纯 WS_POPUP 缺位时任务栏点击不最小化
+     * （2026-10-29 用户实测）。 */
     if (window && XWindow_isCsdFrameSuppressed(window))
-        return WS_POPUP;
+        return XPWN_FRAMELESS_STYLE;
     /* 无边框提示（用户口径「显示边框」取消勾选）：与 CSD 抑制同款组装
        ——WS_POPUP 去除 WS_CAPTION/WS_THICKFRAME，原生装饰整体消失。此前
        本支只看 CSD 抑制位，FramelessWindowHint 在 Windows 上被静默忽略：
        取消边框后原生标题栏仍在，与框架自绘条并存 = 用户实测的双标题栏。
        判定读窗口侧 flags（XWindow_setFlags 先于本函数落位，见
-       XWidget_setWindowFlags 调用序）。 */
+       XWidget_setWindowFlags 调用序）。任务栏集成三件套同上。 */
     if (window && (XWindow_flags(window) &
                    (XWindowFlags)XWindowType_FramelessWindowHint))
-        return WS_POPUP;
+        return XPWN_FRAMELESS_STYLE;
     if (window && XWindow_type(window) == XWindowType_Tool)
     {
         /* 对标 Qt::Tool（qdockwidget.cpp:1203 浮动停靠面板窗口旗标）：
@@ -1748,6 +1774,20 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         XRect client;
         float dpr;
         if (!entry) return 0;
+        /* 【最小化几何豁免+状态回填 2026-10-29】shell 发起的最小化/还原
+           （任务栏点击切换、任务栏右键系统菜单）经 DefWindowProc 落地，
+           WM_SIZE 以 SIZE_MINIMIZED 到达，GetClientRect/ClientToScreen
+           给出 (±32000, 0×0) 哑几何——照单灌进框架会让整树零布局、去重
+           账本毒化。iconic 期间几何无意义：保持最小化前账本，只向框架
+           回填 Minimized 状态（对标 QWindowsWindow::handleResized 的
+           SIZE_MINIMIZED 分支只报状态不报几何），还原后 WM_SIZE 以真实
+           几何走下方通路补齐。 */
+        if (IsIconic(hwnd)) {
+            if (entry->m_window)
+                XWindowSystemInterface_handleWindowStateChanged(
+                    entry->m_window, XWindowState_Minimized);
+            return 0;
+        }
         /* 先维护后换算（R13）：归属/dpr 收敛在几何出框之前——跨屏拖动/
            WM_DPICHANGED 后首个几何事件在此完成指派（heal 经
            xpwn_setGeometryForced 豁免通道，R18）。 */
@@ -1828,6 +1868,20 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
                 (void)posChanged;
             }
         }
+        /* 状态回填（原生实测 → 框架）：posix 后端经 xpwn_queryWmWindowState
+           上报 WM 实测状态，win32 此前只出不进——shell 强制改态（任务栏
+           点击最小化/还原）后框架状态位永久失同步（demo 状态栏「已最大
+           化显示」类口径漂移）。report 通道不回写平台层（无注入回环），
+           同值由框架侧 before/after 判等静默。全屏生效期原生窗非 zoomed，
+           按平台事实报 FullScreen 而非 IsZoomed 实测（进全屏的
+           SetWindowPos 同步派发本消息，m_fullscreenApplied 已先行置位）。 */
+        if (entry->m_window)
+            XWindowSystemInterface_handleWindowStateChanged(
+                entry->m_window,
+                entry->m_fullscreenApplied
+                    ? XWindowState_FullScreen
+                    : (IsZoomed(hwnd) ? XWindowState_Maximized
+                                      : XWindowState_NoState));
         return 0;
     }
     case WM_SETCURSOR:
@@ -4030,6 +4084,11 @@ static void xpwn_applyFullscreen(XWNPendingEntry* entry, bool enter)
         entry->m_savedFsPlacement = placement;
         entry->m_savedFsStyle =
             (DWORD)GetWindowLongPtrW(hwnd, GWL_STYLE);
+        /* 生效标志先于样式换血/贴屏置位：SetWindowPos 同步派发 WM_SIZE，
+           WM_SIZE 侧状态回填按 m_fullscreenApplied 分流报 FullScreen——
+           后置会让首条 WM_SIZE 报 NoState，把框架刚请求的 FullScreen 位
+           冲掉（窗口实际已全屏、框架状态漂回普通，状态栏/复选框失同步）。 */
+        entry->m_fullscreenApplied = true;
         SetWindowLongPtrW(hwnd, GWL_STYLE,
                           (LONG_PTR)((entry->m_savedFsStyle &
                                       ~WS_OVERLAPPEDWINDOW) |
@@ -4038,7 +4097,6 @@ static void xpwn_applyFullscreen(XWNPendingEntry* entry, bool enter)
                      mi.rcMonitor.right - mi.rcMonitor.left,
                      mi.rcMonitor.bottom - mi.rcMonitor.top,
                      SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
-        entry->m_fullscreenApplied = true;
         if (IsIconic(hwnd)) ShowWindow(hwnd, SW_SHOW);
         return;
     }

@@ -57,10 +57,27 @@ void XTimer_setTimeout(XTimer* timer, size_t value)
 		XTimerData_setTimeout(&timer->m_timerData,value);
 }
 
+/* [改周期重装 2026-10-29] 运行中改 interval 必须重新向分发器装订，不能只
+ * 改对象字段：
+ *   ① 时间轮节点在 create_timer_node 里对 XTimerData 做的是**值拷贝**
+ *      （XTimeWheelGroup.c:158 `timer_data->m_data = *data`），周期重装
+ *      读的是节点副本的 m_interval，字段改了节点不变 ⇒ 实际周期仍是旧值；
+ *   ② VXObject_timerEvent 只在 m_firstTrigger==false 的首拍按字段值重装
+ *      一次，之后节点自持周期副本，不再回读对象。
+ * 原实现只赋值，调「轮询(ms)」这类运行期改周期的操作完全不生效（实测
+ * 主站页设 50ms 仍按建连时的 1000ms 跑，用户观感=「设了没用」）。此处
+ * 在运行态走 stop+start 重装：XTimer_start_base 会按新字段值重新注册，
+ * 时间轮重新按新周期落槽。未运行（或未启动）时只存字段，等 start 生效。 */
 void XTimer_setInterval(XTimer * timer, size_t value)
 {
-	if (timer)
-		XTimerData_setInterval(&timer->m_timerData, value);
+	bool wasRunning;
+	if (!timer)
+		return;
+	XTimerData_setInterval(&timer->m_timerData, value);
+	wasRunning = timer->m_isRun
+		&& timer->m_timerData.timerId != XTIMER_INVALID_ID;
+	if (wasRunning)
+		XTimer_start_base(timer);
 }
 
 void XTimer_setUserData(XTimer * timer, void* userData)

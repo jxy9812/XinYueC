@@ -36,13 +36,29 @@ def crc16(data):
     return struct.pack("<H", crc)
 
 class ModbusStore:
-    def __init__(self, tag, di_init=0, di_n=8, ir_n=16, coils_n=8, hr_n=10):
+    """单从站寄存器模型。
+
+    [2026-10-29 缓存层战役] 数组放大到 di/coils=32、ir/hr=64：缓存层回归要验
+    「相邻块按 gap 合并成少帧」（远端需留洞，如 remote 0..7 + 16..23），
+    8/10 点旧容量放不下洞后的高段。初值口径不变（ir/hr 初值 i*3+7），旧用例
+    断言（A DI=0xA5 / IR v0=7）不受影响。
+    """
+
+    def __init__(self, tag, di_init=0, di_n=32, ir_n=64, coils_n=32, hr_n=64):
         self.tag = tag
         self.di = [(di_init >> i) & 1 for i in range(di_n)]
         self.ir = [i * 3 + 7 for i in range(ir_n)]
         self.coils = [0] * coils_n
         self.hr = [0] * hr_n
         self.lock = threading.Lock()
+
+    def frame_log(self, fc, start, count):
+        """帧日志：[2026-10-29] 缓存层帧数断言依据（每请求一行，行缓冲）。"""
+        try:
+            with open(BASE + "/frames_" + self.tag + ".log", "a") as f:
+                f.write("fc=%d start=%d count=%d\n" % (fc, start, count))
+        except OSError:
+            pass
 
     def respond(self, addr, pdu):
         """pdu=请求 PDU（fc 起）。返回应答 PDU；None=静默吞（pause）。"""
@@ -52,6 +68,7 @@ class ModbusStore:
         with self.lock:
             if fc in (1, 2, 3, 4):
                 start, count = struct.unpack(">HH", pdu[1:5])
+                self.frame_log(fc, start, count)
                 if fc in (1, 2):
                     vals = self.coils if fc == 1 else self.di
                     nbytes = (count + 7) // 8
@@ -66,18 +83,33 @@ class ModbusStore:
                 return bytes([fc, count * 2]) + struct.pack(">%dH" % len(out), *out)
             if fc == 5:
                 start, val = struct.unpack(">HH", pdu[1:5])
+                self.frame_log(fc, start, 1)
                 if start < len(self.coils):
                     self.coils[start] = 1 if val else 0
                 log(self.tag, "WRITE COIL[%d]=%d" % (start, 1 if val else 0))
                 return pdu[:4]
             if fc == 6:
                 start, val = struct.unpack(">HH", pdu[1:5])
+                self.frame_log(fc, start, 1)
                 if start < len(self.hr):
                     self.hr[start] = val
                 log(self.tag, "WRITE HR[%d]=%d" % (start, val))
                 return pdu[:4]
+            if fc == 15:
+                # [2026-10-29 缓存层战役] FC15 写多线圈：缓存层把相邻脏点
+                # 合并成一帧下发，从站必须按位解包（旧脚本只认 FC5/6/16）。
+                start, qty, nbytes = struct.unpack(">HHB", pdu[1:6])
+                self.frame_log(fc, start, qty)
+                data = pdu[6:6 + nbytes]
+                for i in range(qty):
+                    bit = (data[i // 8] >> (i % 8)) & 1 if i // 8 < len(data) else 0
+                    if start + i < len(self.coils):
+                        self.coils[start + i] = bit
+                log(self.tag, "WRITE COILS[%d..%d]" % (start, start + qty - 1))
+                return pdu[:5]
             if fc == 16:
                 start, qty = struct.unpack(">HH", pdu[1:5])
+                self.frame_log(fc, start, qty)
                 vals = struct.unpack(">%dH" % qty, pdu[6:6 + qty * 2])
                 for i, v in enumerate(vals):
                     if start + i < len(self.hr):
@@ -213,7 +245,7 @@ def rtu_slave(store):
             fc = buf[1]
             if fc in (1, 2, 3, 4, 5, 6):
                 need = 8
-            elif fc == 16:
+            elif fc in (15, 16):
                 if len(buf) < 7:
                     break
                 need = 9 + buf[6]
@@ -238,6 +270,12 @@ def rtu_slave(store):
 
 def main():
     os.makedirs(BASE, exist_ok=True)
+    # [2026-10-29] 帧日志跨轮清理：帧数断言按「本轮增量」读，不混上轮残留。
+    for tag in ("A", "B", "C"):
+        try:
+            os.remove(BASE + "/frames_" + tag + ".log")
+        except OSError:
+            pass
     p1 = int(sys.argv[1]) if len(sys.argv) > 1 else 15331
     p2 = int(sys.argv[2]) if len(sys.argv) > 2 else 15332
 
