@@ -898,13 +898,18 @@ endif()
 # 验证 Linux 异步后端（XNetIoRingPosix）在 io_uring / epoll 双引擎下的
 # 被动 fd 注册—唤醒—重挂—注销链路（fbdev 触摸泵用的正是这条通道）。
 # 用法：XDeviceIoUPassiveProbe [epoll|iouring]（不带参数=按引擎默认）。
-add_executable(XDeviceIoUPassiveProbe
-    "./Test/XDeviceTest/xdevice_iou_passive_probe.c"
-)
+# [平台门 2026-10-30] 本探针**本质属 POSIX**：源文件直接用 pipe/read/write/
+# setenv（unistd.h）+ io_uring/epoll 引擎，Windows 无对应后端 ⇒ 目标只在
+# UNIX 下创建。此前它无条件进 Windows 构建 ⇒ 编译必挂 C1083「unistd.h」，
+# 是长期存在的 Windows 构建缺口（其 obj 目录一直为空 ⇒ 从未在 Windows
+# 上编出来过），本轮收口。
 if(UNIX)
+    add_executable(XDeviceIoUPassiveProbe
+        "./Test/XDeviceTest/xdevice_iou_passive_probe.c"
+    )
     target_link_libraries(XDeviceIoUPassiveProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
-    target_link_libraries(XDeviceIoUPassiveProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    message(STATUS "XDeviceIoUPassiveProbe：POSIX 专属（pipe/io_uring/epoll），Windows 构建跳过")
 endif()
 
 # ==================== 安卓真机 Modbus TCP 主站轮询探针（独立可执行） ====================
@@ -914,6 +919,11 @@ endif()
 # 不同、桌面全绿掩盖了 epoll 分支缺陷。本探针无 GUI，直接驱动库：
 # 连接 → 等 connected → 周期发读请求 → 打印每次结果，供复现与回归。
 # 用法：./xmodbus_android_probe.exe <host> <port> <unitId> <pointCount>
+# [跨平台 2026-10-30] 源文件的计时已从 POSIX 专属的 clock_gettime(CLOCK_
+# MONOTONIC) 换成框架统一单调时钟 XDateTime_currentMSecsSinceEpoch()
+# ⇒ 本探针在 Windows 上也能编译运行（Windows 侧走 IOCP 后端，本就是
+# 「另一条异步路径」的对照组）。此前 Windows 构建因 CLOCK_MONOTONIC
+# 未声明而编译必挂（C2065），是长期存在的 Windows 构建缺口，本轮收口。
 add_executable(XModbusAndroidProbe
     "./Test/XProtocolTest/xmodbus_android_probe.c"
 )

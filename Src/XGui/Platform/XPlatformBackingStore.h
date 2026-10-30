@@ -228,12 +228,6 @@ void XPlatformBackingStore_flushTileBatched(XPlatformBackingStore* self,
 void XPlatformBackingStore_flushPendingTiles(XPlatformBackingStore* self,
                                              XWindow* window);
 
-/**
- * @brief      查询是否存在已攒批、尚未上屏的 tile 内容。
- * @param      self 目标句柄；可为 NULL。
- * @return     攒批开启且有未提交批次返回 true；其余（含开关关闭）返回 false。
- */
-bool XPlatformBackingStore_hasPendingTiles(const XPlatformBackingStore* self);
 
 /**
  * @brief      按新尺寸重建后备缓冲（对标 QPlatformBackingStore::resize）。
@@ -301,27 +295,9 @@ void XPlatformBackingStore_setStaticContents(XPlatformBackingStore* self,
 XRegion XPlatformBackingStore_staticContents(
         const XPlatformBackingStore* self);
 
-/**
- * @brief      查询是否存在静态内容（对标 hasStaticContents）。
- * @param      self 目标句柄；可为 NULL。
- * @return     已设置非空静态内容区域返回 true。
- */
-bool XPlatformBackingStore_hasStaticContents(
-        const XPlatformBackingStore* self);
 
 /* ==================== 平台扩展（非 Qt API，仅平台/驱动层） ==================== */
 
-/**
- * @brief      登记原生目标窗口（平台契约扩展，非 Qt API）。
- * @details    Windows 后端把 nativeWindow 视为 HWND，flush 时经
- *             BitBlt 把后备缓冲合成到该窗口设备环境；其它平台仅记录
- *             借用指针，不影响软件提交流程。用于对接平台集成层的原生
- *             窗口句柄链（XPlatformWindow 持有真实 WId 的平台）。
- * @param      self          目标句柄；可为 NULL。
- * @param      nativeWindow  原生窗口句柄（Windows 为 HWND，借用）；可为 NULL。
- */
-void XPlatformBackingStore_setNativeTargetWindow(
-        XPlatformBackingStore* self, void* nativeWindow);
 
 /**
  * @brief      登记 present 回调（平台契约扩展，公共 XBackingStore 不暴露）。
@@ -366,6 +342,60 @@ bool XPlatformBackingStore_setBuffers(XPlatformBackingStore* self,
                                        size_t bufferSize);
 
 /**
+ * @brief      后备存储的**缓冲形态**（跨平台统一语义，2026-10-30）。
+ * @details    形态由两个正交维度决定——① 绘制表面的**归属**（框架自分配
+ *             ↔ 平台提供）与 ② 是否**交替帧**（单帧 ↔ 双帧轮转）：
+ *               - PlatformSurface：绘制表面由平台提供（Windows 的
+ *                 CreateDIBSection 内存 DIB）。painter 直接画进平台表面，
+ *                 present 按脏区把它搬到可见表面；**不交替**（平台表面
+ *                 只有一块，且始终持有完整窗口内容）。
+ *               - SoftwareDouble：框架自分配两块全窗帧，flush 把提交区
+ *                 同步进另一块后翻帧；下一帧画进另一块 ⇒ 另一块始终持有
+ *                 「至今所有已绘制像素的最新值」。
+ *               - SoftwareSingle：框架自分配一块全窗帧，不交替。
+ *             三形态的**可观测契约完全一致**（平台无关）：
+ *               (1) 绘制目标始终持有完整窗口内容（脏区外的像素是上一帧
+ *                   的最新值，不会被清零或错位）；
+ *               (2) present 提交的像素集**恰等于**本次脏区（不多不少）；
+ *               (3) 可见表面不会看到绘制期中间态（绘制目标不是可见
+ *                   表面：X11 走 XPutImage、Windows 走 BitBlt、fbdev 走
+ *                   影子缓冲搬运）。
+ *             差异只在**表面归属**与**是否交替**两点，判定规则两平台
+ *             同源（见 XPlatformBackingStore_bufferMode）。
+ */
+typedef enum XPlatformBackingStoreBufferMode
+{
+    XPlatformBackingStoreMode_SoftwareSingle = 0, /**< ③ 框架单帧（无交替）。 */
+    XPlatformBackingStoreMode_SoftwareDouble = 1, /**< ① 框架双帧（交替）。 */
+    XPlatformBackingStoreMode_PlatformSurface = 2 /**< ② 平台共享表面（无交替）。 */
+} XPlatformBackingStoreBufferMode;
+
+/**
+ * @brief      查询当前生效的缓冲形态（跨平台统一判定）。
+ * @details    判定规则（两平台同源，顺序固定）：
+ *               1. 平台提供了绘制表面（native 直写架接成功）⇒ ②
+ *                  平台共享表面（Windows DIB；fbdev 因「直写可见 fb 会把
+ *                  中间态扫上屏」的有意取舍不提供 ⇒ X11/fbdev 走软件帧）；
+ *               2. 外部缓冲绑定（调用方自带帧）⇒ 框架侧形态（③ 或 ①，
+ *                  取决于缓冲数配置）；
+ *               3. 框架侧：驱动自带硬件轮换（fbdev 面板）∨ 换轴 90/270
+ *                  旋转态 ⇒ ③ 单帧（第二帧在旋转态是纯冗余）；
+ *               4. 其余 ⇒ ① 双帧（缓冲数配置为 1 时恒 ③）。
+ * @param      self 目标句柄；可为 NULL（返回 ③）。
+ * @return     当前形态枚举。
+ */
+XPlatformBackingStoreBufferMode XPlatformBackingStore_bufferMode(
+        const XPlatformBackingStore* self);
+
+/**
+ * @brief      缓冲形态的稳定短名（诊断/日志/断言用，跨平台一致）。
+ * @param      mode 形态枚举。
+ * @return     "platform-surface" / "software-double" / "software-single"。
+ */
+const char* XPlatformBackingStore_bufferModeName(
+        XPlatformBackingStoreBufferMode mode);
+
+/**
  * @brief      计算指定尺寸所需的单块整屏缓冲字节数。
  * @details    格式为当前后备表面格式：默认编译期选择（ARGB32 预乘，RGB16
  *             选择器置 1 时为 RGB16/565）；有活动显示驱动时为协商出的面板
@@ -376,16 +406,6 @@ bool XPlatformBackingStore_setBuffers(XPlatformBackingStore* self,
  */
 size_t XPlatformBackingStore_requiredBufferSize(const XSize* size);
 
-/**
- * @brief      返回当前后备表面像素格式（运行期真值）。
- * @details    无活动显示驱动时恒为编译期选择器格式（与 XPBS_IMAGE_FORMAT
- *             一致）；有活动驱动时为 formatNegotiate 协商出的面板扫描
- *             格式（面板 565 而选择器为 ARGB32 时，缓冲按面板格式分配
- *             以避免逐帧转换——见消费点 1 注）。平台提交驱动经此查询做
- *             零拷贝（getNativeBuffer）的格式核对。
- * @return     当前后备表面格式（XImageFormat 枚举值）。
- */
-XImageFormat XPlatformBackingStore_surfaceFormat(void);
 
 /* ==================== 平台驱动契约（Drive 平台后端提供） ==================== */
 
@@ -477,15 +497,6 @@ void XPlatformBackingStoreDriver_setNativeTarget(void* nativeState,
 void XPlatformBackingStoreDriver_surfaceResized(void* nativeState,
                                                 int width, int height);
 
-/**
- * @brief      请求下次 present 前整面板清零（fbdev 合成 WM 场景专用）。
- * @details    fbdev 无窗口系统：顶层窗口几何变化（最大化切换/移动）后
- *             旧几何区域没有任何窗口重绘覆盖，残留像素会长期留在屏上。
- *             调用后下次提交先整段帧缓冲映射清零（双缓冲两块同清），
- *             窗口内容随后正常绘制，等价 WM 的整屏重铺。桌面平台由
- *             窗口系统负责重铺，本调用为 no-op。
- */
-void XPlatformBackingStore_requestPanelClear(void);
 
 /**
  * @brief      请求一次软件光标精灵的可见缓冲内原位搬运（fbdev 触摸

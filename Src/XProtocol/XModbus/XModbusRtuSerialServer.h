@@ -162,6 +162,7 @@ void XModbusRtuSerialServer_setInterFrameDelay(XModbusRtuSerialServer* server, i
 #define XModbusRtuSerialServer_setValue_move_base       XModbusServer_setValue_move_base
 #define XModbusRtuSerialServer_processesBroadcast_base  XModbusServer_processesBroadcast_base
 #define XModbusRtuSerialServer_dataWritten_signal       XModbusServer_dataWritten_signal
+#define XModbusRtuSerialServer_dataRead_signal          XModbusServer_dataRead_signal
 
 /******************************************************************************************
  * 设备操作接口（虚函数）

@@ -5053,6 +5053,20 @@ static void VXKeyboard_mouseMoveEvent(XWidget* self, XEvent* event)
     if (!kb || !event || XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) return;
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
+    /* [指针设备隔离 2026-10-30] 触摸来源的按下序列（m_pressFromTouch=1）
+     * 只接受**同源**（合成）鼠标移动参与「滑出键取消武装」判定：真实
+     * 物理鼠标的移动属于另一指针设备，无权撤销手指按住的键。
+     * 症状（Windows 桌面实测）：弹出的键盘窗恰好落在物理光标下 ⇒ 窗
+     * 出现即触发一次真实 WM_MOUSEMOVE ⇒ 滑出判定命中 NONE ⇒ 武装被
+     * 撤 ⇒ 长按连删首拍永不到（文本只删首字符，长按无连删）。
+     * 探针实测：按下后 ~160ms 内 armed 1→0，来者 pos=(86,-60)
+     * synth=0（物理光标位于键盘窗上方，非触摸合成）。
+     * Qt 对标：QPointerEvent 按指针类型分轨，鼠标移动不取消触摸点。
+     * 鼠标来源的按下序列不受此门约束（真实滑出仍取消武装）。 */
+    if (kb->m_pressFromTouch && !XMouseEvent_isSynthesized(me)) {
+        XEvent_accept(event);
+        return;
+    }
     if (kb->m_compactDrag) {
         /* 紧凑悬浮拖移：move 求 delta 移窗（全局=窗口左上+本地，锚点
            偏移恒定→窗口随指移动；几何跟随守卫期 reposition 不参与）。

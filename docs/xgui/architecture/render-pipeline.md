@@ -12,8 +12,32 @@
       ├─ 图形效果钩子（XGraphicsEffect_drawWidget，命中即整子树接管）
       ├─ 逐控件 paintEvent → XPainter 绘制指令
       └─ 落入后备存储（XPlatformBackingStore：DIRECT/FULL/PARTIAL tile）
-  → present：DIRECT 拷贝 / PARTIAL 逐 tile（+攒批合并）/ FULL 整帧
+  → present：DIRECT 按脏区逐矩形提交 / PARTIAL 逐 tile（+攒批合并）/
+            FULL 整帧
 ```
+
+- 三态语义与 LVGL v9 对齐（`lv_refr.c` 实证）：PARTIAL = 小块 tile 缓冲
+  + 逐片提交；DIRECT = 整屏双缓冲 + **脏区光栅 + 按脏区提交**（flush
+  回调逐个收到失效区域，最后一块刷完才换缓冲）；FULL = 整屏单缓冲 +
+  **整帧光栅 + 整屏提交**（LVGL 在 FULL 分支把失效区扩成整屏）。
+  ⇒ 脏区化需求由 DIRECT 承接；桌面（Windows / Linux X11）自
+  2026-10-30 起走 DIRECT（见 `Src/XGui/XGuiConfig.h` 的模式分支与
+  历史订正注释）。
+
+- **生效可见性闸**（对齐 Qt 6.8）：`update()`/`repaint()` 走
+  `XWidget_addDirtyRegion` 入顶层脏区，该入口按**生效可见性**
+  （`XWidget_effectiveVisible`：控件自身可见且父链可见）设闸——
+  隐藏控件的重绘请求是**完全空操作**：不记顶层脏区、不派发顶层
+  PAINT 事件。对标 Qt `QWidgetPrivate::update`（`qwidget.cpp:11303`）
+  与 `QWidgetPrivate::repaint`（`qwidget.cpp:11242`）的
+  `if (!q->isVisible() ...) return;`。
+  ⇒ 隐藏页的定时器刷新（文本更新、动画）不再抬高前台窗口的绘制
+  活动率，也不再重复重绘/上屏前台区域。
+  隐藏期内的改动**不丢**、残影**不留**，靠显隐两条补偿路径：
+  show 时补画自身整块（对标 Qt `show_sys` 的
+  `invalidateBackingStore(rect)`，走 `xwidget_invalidateOwnArea`
+  绕过闸）；hide 时作废父级上该控件占据的区域（对标 Qt `hide_sys`
+  的 `invalidateBackingStore(q->rect())`）。
 
 - 后备存储格式选择器：`XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16`（默认 0
   =ARGB32；=1 切 RGB565，present 走 `xpwn_copyRect16` 直拷，非 16 位

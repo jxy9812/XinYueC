@@ -1,4 +1,5 @@
 ﻿#include "XDeviceSerialPort.h"
+#include "XAbstractNetIoRing.h"  /* 串口 fd 注册进框架异步后端等待集（可读事件源）。 */
 
 #if defined(XSERIALPORT_USE_PLATFORM_API) && (defined(__linux__) || defined(__unix__) || defined(__APPLE__) || \
     defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
@@ -46,7 +47,54 @@ static XDeviceSerialPortPosixContext* posixContext(XFd fd)
     return (XDeviceSerialPortPosixContext*)XDevice_handle(fd);
 }
 
-static speed_t posixBaud(int32_t baudRate)
+/* ==================== [波特率编码 2026-10-30] ====================
+ * 交叉编译命中的头文件是**宿主 glibc**（gcc 内建 /usr/aarch64-linux-gnu/
+ * include 优先于 -I sysroot/usr/include，见工具链文件的老坑注），而运行
+ * 目标是**板端 glibc 2.31**——两者的 B* 常量取值不同：
+ *     宿主 glibc 2.39：B115200 = 115200
+ *     板端 glibc 2.31：B115200 = 0x1002 = 4098
+ * 传错编码值 ⇒ 板端 cfsetispeed 判非法返回 -1（EINVAL），而原实现
+ * **忽略返回值** ⇒ termios 保持旧速率 ⇒ 表现「选什么波特率都停在 9600」。
+ * 真机实证（RK3568 + Debian 11，2026-10-30）：
+ *     BAUDDIAG posix req=115200 speed_t=115200 ispeed=13 ospeed=13 set_rc=0
+ * —— 传入的是宿主编码值，cfsetispeed 静默失败，termios 仍是 13(B9600)，
+ * 而 tcsetattr 因「内容没变」返回 0。
+ * 修法（两层保险，不依赖编译期 B* 宏）：
+ *   ① 首选**内核传统编码**自备常量——各 glibc 版本一致、也是内核 termios
+ *      期望的编码（板端 glibc 2.31 的 B115200 正是这个值，stty 115200 在
+ *      板端可生效即为此证）；
+ *   ② 首选被目标 libc 拒绝（cfsetispeed 返回非 0）时，回落用编译期 B*
+ *      宏——覆盖「目标 libc 用新编码」的平台（宿主 glibc 2.39 一类）。
+ * 二者都以 cfsetispeed 的返回值为准，语义确定、无静默失败。
+ */
+#define XSP_BAUD_9600    13          /* 传统编码 0010005 */
+#define XSP_BAUD_19200   14          /* 0010006 */
+#define XSP_BAUD_38400   15          /* 0010007 */
+#define XSP_BAUD_57600   0010001     /* 4097 */
+#define XSP_BAUD_115200  0010002     /* 4098 */
+#define XSP_BAUD_230400  0010003     /* 4099 */
+#define XSP_BAUD_460800  0010004     /* 4100 */
+#define XSP_BAUD_921600  0010010     /* 4104 */
+
+/** @brief 内核传统编码的波特率常量（不依赖编译期 B* 宏）。
+ *  @return 0=不支持该速率 */
+static speed_t posixBaudTraditional(int32_t baudRate)
+{
+    switch (baudRate) {
+    case 9600:  return XSP_BAUD_9600;
+    case 19200: return XSP_BAUD_19200;
+    case 38400: return XSP_BAUD_38400;
+    case 57600: return XSP_BAUD_57600;
+    case 115200: return XSP_BAUD_115200;
+    case 230400: return XSP_BAUD_230400;
+    case 460800: return XSP_BAUD_460800;
+    case 921600: return XSP_BAUD_921600;
+    default: return 0;
+    }
+}
+
+/** @brief 编译期 glibc 的 B* 宏取值（宿主头口径，作为回落候选）。 */
+static speed_t posixBaudLibc(int32_t baudRate)
 {
     switch (baudRate) {
     case 0: return B0;
@@ -139,11 +187,23 @@ static bool posixApplyConfig(XDeviceSerialPortPosixContext* context)
 {
     struct termios termiosValue;
     speed_t baud;
+    speed_t cand[2];
+    int candCount = 0;
+    int ci;
+    bool applied = false;
     if (!context || context->m_nativeFd < 0 || !context->m_haveOriginalTermios) return false;
     if (context->m_base.m_dataBits == XSerialPort_Data9 ||
         context->m_base.m_stopBits == XSerialPort_OneAndHalfStop) return false;
-    baud = posixBaud(context->m_base.m_baudRate);
-    if (baud == 0) return false;
+    /* [波特率编码 2026-10-30] 候选序列：内核传统编码优先、编译期 B* 宏回落。
+     * 两者都被目标 libc 的 cfsetispeed 校验（返回值非 0 即该编码不被接受），
+     * 杜绝「静默失败 ⇒ 速率停在旧值」。详见文件上方编码说明。 */
+    baud = posixBaudTraditional(context->m_base.m_baudRate);
+    if (baud != 0) cand[candCount++] = baud;
+    {
+        speed_t libcBaud = posixBaudLibc(context->m_base.m_baudRate);
+        if (libcBaud != 0 && libcBaud != baud) cand[candCount++] = libcBaud;
+    }
+    if (candCount == 0) return false;
 
     termiosValue = context->m_originalTermios;
     cfmakeraw(&termiosValue);
@@ -179,9 +239,20 @@ static bool posixApplyConfig(XDeviceSerialPortPosixContext* context)
     if (context->m_base.m_flowControl == XSerialPort_SoftwareControl ||
         context->m_base.m_flowControl == XSerialPort_BothControl)
         termiosValue.c_iflag |= IXON | IXOFF | IXANY;
-    cfsetispeed(&termiosValue, baud);
-    cfsetospeed(&termiosValue, baud);
-    return tcsetattr(context->m_nativeFd, TCSANOW, &termiosValue) == 0;
+    /* [波特率编码 2026-10-30] 逐候选尝试：以 cfsetispeed/cfsetospeed 的
+     * 返回值判定该编码是否被目标 libc 接受（不接受时返回 -1/EINVAL 且不改
+     * 字段——原实现忽略返回值，故「选什么波特率都停在 9600」）。首个被接受
+     * 的候选即采用；全部被拒则保持原速率（open 仍成功，速率停在旧值）。 */
+    for (ci = 0; ci < candCount && !applied; ++ci) {
+        struct termios trial = termiosValue;
+        if (cfsetispeed(&trial, cand[ci]) != 0) continue;
+        if (cfsetospeed(&trial, cand[ci]) != 0) continue;
+        if (tcsetattr(context->m_nativeFd, TCSANOW, &trial) != 0) continue;
+        baud = cand[ci];
+        applied = true;
+    }
+    if (!applied) return false;
+    return true;
 }
 
 static bool readBool(const XVariant* value)
@@ -241,12 +312,81 @@ void XDeviceSerialPort_platformClose(XFd fd)
 {
     XDeviceSerialPortPosixContext* context = posixContext(fd);
     if (!context) return;
+    /* [可读事件源 2026-10-30] 先从框架等待集注销，再关 fd：等待集里留着
+     * 一个即将失效的 fd，事件循环在其他 fd 就绪时读到它会拿到 EBADF/
+     * 复用的 fd 号（与 fbdev 触摸通道同款纪律）。 */
+    XDeviceSerialPort_platformDisarmReadable(fd);
     if (context->m_nativeFd >= 0) {
         if (context->m_haveOriginalTermios)
             tcsetattr(context->m_nativeFd, TCSANOW, &context->m_originalTermios);
         close(context->m_nativeFd);
         context->m_nativeFd = -1;
     }
+}
+
+/* ================================================================
+ * 可读事件源（跨平台统一的等待集接入，2026-10-30）
+ *
+ * 串口 fd 注册进框架的异步后端等待集（XAbstractNetIoRing）：数据到达
+ * ⇒ 内核唤醒阻塞中的事件循环 ⇒ 回调属主发射 readyRead。**不再靠上层
+ * 毫秒级定时器轮询**（轮询拍只能在下一次「事件循环圈边界」才被发现，
+ * 板端主循环一圈 100+ms 时，RX 感知延迟同量级）。
+ *
+ * POSIX 侧复用框架既有的「被动可读 fd」通道（与 fbdev 触摸唤醒通道
+ * 同一套机制）：epoll 引擎直接 epoll_ctl(ADD)；io_uring 引擎走 POLL_ADD
+ * （≥5.13 multishot / 5.10~5.12 一次性+重挂，见 XNetIoRingPosix.c）。
+ * 两个引擎语义一致 ⇒ 跨设备（RK3568 / mcgs / 桌面 Linux）行为统一。
+ *
+ * 属主登记：框架的 XFd 表带 owner 字段（XFileDevice 的异步注册同款），
+ * 被动 fd 回调只带**裸 OS fd**（与 XFd 编号空间不同）⇒ 回调按裸 fd
+ * 反查 XFd 表里的 owner 上下文。
+ * ================================================================ */
+static void xserialPosixReadableNotify(int osFd)
+{
+    /* 被动 fd 回调只带裸 OS fd（与框架 XFd 是两套编号空间）⇒ 经框架 fd
+     * 表反查属主：XFd 的 m_deviceCtx 存本平台上下文，其裸 OS fd 字段即
+     * 回调参数 ⇒ 命中即取该上下文的可读回调（与 socket notifier 用
+     * XFd.object 找 owner 同款思路，只是这里认的是平台 fd 字段）。 */
+    int fd;
+    for (fd = 0; fd < XFD_TABLE_SIZE; ++fd) {
+        XDeviceSerialPortPosixContext* context;
+        if (XFd_type(fd) != XFD_TYPE_CLASS) continue;
+        context = (XDeviceSerialPortPosixContext*)XDevice_handle(fd);
+        if (!context || context->m_nativeFd != osFd) continue;
+        if (context->m_base.m_readableNotify)
+            context->m_base.m_readableNotify(context->m_base.m_readableCtx);
+        return;
+    }
+}
+
+bool XDeviceSerialPort_platformArmReadable(XFd fd,
+                                           void (*notify)(void* ctx),
+                                           void* ctx)
+{
+    XDeviceSerialPortPosixContext* context = posixContext(fd);
+    XAbstractNetIoRing* ring;
+    if (!context || context->m_nativeFd < 0 || !notify) return false;
+    ring = XAbstractNetIoRing_global();
+    if (!ring) return false;
+    if (!XAbstractNetIoRing_registerPassiveOsFd_base(
+            ring, context->m_nativeFd, xserialPosixReadableNotify))
+        return false;   /* 后端不支持被动 fd（io_uring 无 multishot 且一次性
+                         * 形态也失败）⇒ 调用方保留定时器轮询兜底。 */
+    context->m_base.m_readableNotify = notify;
+    context->m_base.m_readableCtx = ctx;
+    return true;
+}
+
+void XDeviceSerialPort_platformDisarmReadable(XFd fd)
+{
+    XDeviceSerialPortPosixContext* context = posixContext(fd);
+    XAbstractNetIoRing* ring;
+    if (!context || !context->m_base.m_readableNotify) return;
+    ring = XAbstractNetIoRing_global();
+    if (ring && context->m_nativeFd >= 0)
+        XAbstractNetIoRing_unregisterPassiveOsFd_base(ring, context->m_nativeFd);
+    context->m_base.m_readableNotify = NULL;
+    context->m_base.m_readableCtx = NULL;
 }
 
 int64_t XDeviceSerialPort_platformRead(XFd fd, void* buffer, int64_t size)

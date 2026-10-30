@@ -2290,22 +2290,6 @@ void XPlatformBackingStoreDriver_surfaceResized(void* nativeState,
     (void)nativeState; (void)width; (void)height;
 }
 
-void XPlatformBackingStore_requestPanelClear(void)
-{
-#if XGUI_ON && XPLATFORM_FBDEV_ON
-    /* 无 WM 的 fbdev：顶层窗口几何变化（最大化切换/移动）后，旧几何
-       区域没有任何窗口重绘覆盖，残留像素会长期留在屏上。置回首帧
-       标记，下次 present 先整段映射清零（两缓冲同清无失步），窗口
-       内容随后正常绘制——等价 WM 换桌面的整屏重铺。注意：本实现会
-       把「正在显示的缓冲」一并打黑（memset 即见），逐帧调用表现为
-       整屏频闪（昆仑通态 A33 拖动实测）——拖动等高频路径请改用
-       XPlatformBackingStore_fillPanelRects 只清暴露条带。 */
-    g_xpbsFbFirstPresent = true;
-#else
-    /* 非 fbdev 平台由窗口系统重铺：no-op。 */
-#endif
-}
-
 void XPlatformBackingStore_fillPanelRects(const XRect* rects, int count,
                                           uint32_t nativePixel)
 {

@@ -7,6 +7,10 @@
 #include "XVarList.h"
 #include "XString.h"
 #include "XSerialPort.h"
+#include "XAbstractNetIoRing.h" /* 全局事件环（IOCP 完成端口宿主） */
+#include "XRingBuffer.h"         /* 已完成异步读数据的落地缓冲 */
+#include <winsock2.h>           /* FD_READ/FD_WRITE 事件掩码（须先于 windows.h） */
+#include "XNetIoRingWin32.h"    /* IOCP 事件上下文与完成端口关联 */
 #include <windows.h>
 #include <devpropdef.h>
 #include <setupapi.h>
@@ -15,6 +19,74 @@
 #include <stdio.h>
 #include <string.h>
 #include <wchar.h>
+#include <stdlib.h>
+
+/* ================================================================
+ * IOCP 事件驱动接收（Windows 侧，2026-10-30，与 POSIX 侧同构）
+ *
+ * 串口句柄以 FILE_FLAG_OVERLAPPED 打开并关联到**框架的 IOCP 完成端口**：
+ * 常驻一个 OVERLAPPED ReadFile ⇒ 数据到达时内核把完成包投进完成端口
+ * ⇒ 主循环（MsgWaitForMultipleObjects 把 IOCP 句柄列入等待集）被唤醒
+ * ⇒ 完成回调把数据搬进接收环并通知属主发射 readyRead。
+ *
+ * 与 POSIX 侧（XAbstractNetIoRing 被动可读 fd）等价：
+ *   「数据就绪直接唤醒主循环」，不再靠毫秒级定时器轮询等待集。
+ *
+ * 三条与 POSIX 侧的对应关系：
+ *   POSIX：fd 注册进 ring 等待集（epoll/io_uring POLL_ADD）→ 就绪回调
+ *   Win32 ：HANDLE 关联进 IOCP + 常驻 OVERLAPPED ReadFile → 完成回调
+ *   两者都只做「通知」，数据落地都由属主自己的缓冲承担。
+ *
+ * 无 IOCP 后端（网络模块裁剪 / 全局环不可用）⇒ 句柄以同步方式打开，
+ * 走原 ReadFile 路径，调用方（XSerialPort）保留毫秒级轮询兜底，
+ * Windows 行为与本通道引入前逐位一致（不产生功能回退）。
+ * ================================================================ */
+
+/** @brief 常驻异步读的分片大小（字节）。Modbus RTU 帧 8~256 字节，
+ *  512 足以一次取走整帧又不至于让内核分片过多。 */
+#define XSPW32_READ_CHUNK 512
+/** @brief 关闭时取消在途异步读后回收完成包的尝试次数（每次等待一片）。 */
+#define XSPW32_CANCEL_RECLAIM_TRIES 50
+/** @brief 常驻读同步完成时的连续重挂上限（防止内核持续有数据时空转）。 */
+#define XSPW32_SYNC_REARM_LIMIT 8
+
+/* ================================================================
+ * Windows 定时器分辨率（2026-10-30）
+ *
+ * Windows 系统时钟默认分辨率 15.625ms（64Hz）：**所有**等待超时都被
+ * 这个节拍量化——框架时间轮的定时器（串口轮询拍、应答超时、UI 刷新）
+ * 设定 2ms 也只能按 15.625ms 步进唤醒。485 联调实测：主站在途时延
+ * 100% 落在 15.625ms 的整数倍上（16/31/125/187/234ms…），而同一条
+ * 链路用 pyserial 直连只有 2.9ms ⇒ 差值全在「唤醒被系统节拍量化」。
+ *
+ * 串口打开期间把分辨率提到 1ms（进程级副作用，作用域=串口打开期），
+ * 关闭时还原。用 ntdll 的 NtSetTimerResolution 动态取址，免去链接
+ * winmm.lib 的依赖。
+ * ================================================================ */
+typedef LONG (WINAPI *PFN_NtSetTimerResolution)(ULONG DesiredResolution,
+                                                BOOLEAN IncreaseResolution,
+                                                PULONG CurrentResolution);
+static int g_xspw32_timerResRefs = 0; /**< 抬分辨率的引用计数（多串口）。 */
+
+static void xspw32_setTimerResolution(bool raise)
+{
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    PFN_NtSetTimerResolution fn;
+    ULONG actual = 0;
+    if (!ntdll) return;
+    fn = (PFN_NtSetTimerResolution)GetProcAddress(ntdll, "NtSetTimerResolution");
+    if (!fn) return;
+    if (raise) {
+        if (g_xspw32_timerResRefs++ == 0) {
+            (void)fn(10000 /* 1ms，单位 100ns */, TRUE, &actual);
+            XPrintf("[XSerial] 系统定时器分辨率: 目标 1.000ms，实际 %.3fms\n",
+                    (double)actual / 10000.0);
+        }
+    } else if (g_xspw32_timerResRefs > 0) {
+        if (--g_xspw32_timerResRefs == 0)
+            (void)fn(10000, FALSE, &actual);
+    }
+}
 
 typedef struct XDeviceSerialPortWin32Context
 {
@@ -22,11 +94,151 @@ typedef struct XDeviceSerialPortWin32Context
     HANDLE m_handle;
     COMMTIMEOUTS m_originalTimeouts;
     bool m_haveOriginalTimeouts;
+    /* ---- IOCP 事件驱动接收（2026-10-30，与 POSIX 侧 ring 等待集同构）----
+     * 串口以 FILE_FLAG_OVERLAPPED 打开，常驻一个 OVERLAPPED ReadFile：
+     * 数据到达 ⇒ 内核把完成包投进**框架的 IOCP 完成端口** ⇒ 事件循环被
+     * 唤醒 ⇒ 完成回调取走数据并通知属主发射 readyRead。
+     * 与 POSIX 侧（XAbstractNetIoRing 被动可读 fd）的语义一致：
+     * 「数据就绪直接唤醒主循环」，不再靠毫秒级定时器轮询等待集。
+     * 无 IOCP 后端（如裁剪掉网络模块）⇒ 回落 2ms 轮询（行为不变）。 */
+    bool m_overlapped;                /**< 句柄以 FILE_FLAG_OVERLAPPED 打开（IOCP 模式）。 */
+    bool m_iocpAssociated;            /**< 句柄是否已关联框架 IOCP。 */
+    XEventContext_IOCP m_readContext; /**< 常驻异步读事件上下文（OVERLAPPED 为首成员）。 */
+    XEventContext_IOCP m_writeContext;/**< 写完成上下文（写也须带 OVERLAPPED）。 */
+    char* m_readBuffer;               /**< 常驻异步读缓冲（由上下文拥有）。 */
+    HANDLE m_writeEvent;              /**< 写完成事件（同步等待写完成用）。 */
+    XFd m_fd;                         /**< 本上下文的统一描述符（完成包回填用）。 */
+    bool m_readPending;               /**< 是否有在途异步读。 */
+    bool m_writePending;              /**< 是否有在途异步写（完成包待回收）。 */
 } XDeviceSerialPortWin32Context;
 
 static XDeviceSerialPortWin32Context* win32Context(XFd fd)
 {
     return (XDeviceSerialPortWin32Context*)XDevice_handle(fd);
+}
+
+/* 把一次异步读得到的字节交给属主（落地到接收环 + 通知可读）。 */
+static void xspw32_deliver(XDeviceSerialPortWin32Context* owner, size_t bytes)
+{
+    if (!owner || bytes == 0) return;
+    if (owner->m_base.m_readBuffer)
+        XRingBuffer_write(owner->m_base.m_readBuffer, owner->m_readBuffer, bytes);
+    if (owner->m_base.m_readableNotify)
+        owner->m_base.m_readableNotify(owner->m_base.m_readableCtx);
+}
+
+/* 挂起常驻异步读（定义见下，完成回调需要先挂起续读）。 */
+static void xspw32_armRead(XDeviceSerialPortWin32Context* owner);
+
+/* 异步读完成回调：框架从完成端口出队本读完成包后调用，
+   context->finishedBytes 已由事件环写入实际传输字节数。
+   返回 false = 不再把 CQ 条目分发给应用层（串口走 readyRead 信号路径，
+   与文件设备共享内存通道同款：内部接收不产生应用层 socket 事件）。 */
+static bool xspw32_readCompletion(XEventContext_IOCP* context, void* userData)
+{
+    XDeviceSerialPortWin32Context* owner = (XDeviceSerialPortWin32Context*)userData;
+    size_t bytes;
+    if (!owner) return false;
+    bytes = context->finishedBytes;
+    owner->m_readPending = false;
+    xspw32_deliver(owner, bytes);
+    /* 常驻读续挂：读始终在途 ⇒ 下一批数据到达即产生完成包。 */
+    xspw32_armRead(owner);
+    return false;
+}
+
+/* 写完成回调：句柄以 FILE_FLAG_OVERLAPPED 打开 ⇒ 写也走 OVERLAPPED，
+   完成包同样进框架完成端口。本回调只消费完成包（清在途标志），
+   不生成应用层事件。 */
+static bool xspw32_writeCompletion(XEventContext_IOCP* context, void* userData)
+{
+    XDeviceSerialPortWin32Context* owner = (XDeviceSerialPortWin32Context*)userData;
+    (void)context;
+    if (!owner) return false;
+    owner->m_writePending = false;
+    return false;
+}
+
+/* 挂起常驻异步读。
+   关键约定：**不使用** FILE_SKIP_COMPLETION_PORT_ON_SUCCESS —— 该标志会
+   让「成功完成」的 overlapped 读/写**不投完成包**，而串口驱动的读完成
+   恰好以 STATUS_SUCCESS 回报 ⇒ 完成包被吞 ⇒ 常驻读永远等不到通知
+   （真机实测：应答延迟劣化到 4s 级）。故本路径依赖「每次 overlapped
+   操作必投一个完成包」这一确定语义：
+     同步完成 ⇒ 完成包照投（只是晚一点出队），
+     异步完成（ERROR_IO_PENDING）⇒ 数据到达时投包。
+   两种情形统一由 xspw32_readCompletion 搬运数据并续挂下一次读。 */
+static void xspw32_armRead(XDeviceSerialPortWin32Context* owner)
+{
+    BOOL ok;
+    if (!owner || owner->m_readPending) return;
+    if (!owner->m_handle || owner->m_handle == INVALID_HANDLE_VALUE) return;
+    if (!owner->m_readBuffer) return;
+    memset(&owner->m_readContext, 0, sizeof(owner->m_readContext));
+    owner->m_readContext.base.type = XEventContextType_Type_File;
+    owner->m_readContext.base.fd = owner->m_fd;
+    owner->m_readContext.socket =
+        XSocketDescriptor_fromIntptr((intptr_t)owner->m_handle);
+    owner->m_readContext.eventMask = FD_READ;
+    owner->m_readContext.buffer = owner->m_readBuffer;
+    owner->m_readContext.bufferSize = XSPW32_READ_CHUNK;
+    owner->m_readContext.completionCallback = xspw32_readCompletion;
+    owner->m_readContext.completionUserData = owner;
+    ok = ReadFile(owner->m_handle, owner->m_readBuffer,
+                  (DWORD)XSPW32_READ_CHUNK, NULL,
+                  &owner->m_readContext.base.overlapped);
+    if (!ok && GetLastError() != ERROR_IO_PENDING) return; /* 读失败 */
+    owner->m_readPending = true;                            /* 等完成包 */
+}
+
+/* 把串口句柄关联到框架的 IOCP 完成端口（幂等）。 */
+static bool xspw32_associate(XDeviceSerialPortWin32Context* owner)
+{
+    XAbstractNetIoRing* ring;
+    if (!owner) return false;
+    if (owner->m_iocpAssociated) return true;
+    if (!owner->m_handle || owner->m_handle == INVALID_HANDLE_VALUE) return false;
+    ring = XAbstractNetIoRing_global();
+    if (!ring || !XAbstractNetIoRing_isEnabled(ring)) return false;
+    if (!XNetIoRingWin32_assocHandle((XNetIoRingWin32*)ring, owner->m_handle,
+                                     (ULONG_PTR)&owner->m_base))
+        return false;
+    owner->m_iocpAssociated = true;
+    return true;
+}
+
+/* ================================================================
+ * 可读事件源（跨平台统一的等待集接入，2026-10-30）
+ *
+ * Windows 侧与 POSIX 侧同构：句柄已关联框架 IOCP 且常驻异步读在途
+ * ⇒ 数据到达即产生完成包 ⇒ 事件循环被唤醒 ⇒ 完成回调通知属主。
+ * 无 IOCP 后端（句柄以同步方式打开）⇒ 返回 false，调用方（XSerialPort）
+ * 保留毫秒级轮询兜底，行为与本通道引入前逐位一致。
+ * ================================================================ */
+bool XDeviceSerialPort_platformArmReadable(XFd fd,
+                                           void (*notify)(void* ctx),
+                                           void* ctx)
+{
+    XDeviceSerialPortWin32Context* context = win32Context(fd);
+    if (!context) return false;
+    context->m_fd = fd;
+    context->m_base.m_readableNotify = notify;
+    context->m_base.m_readableCtx = ctx;
+    if (!context->m_overlapped) return false;
+    if (!xspw32_associate(context)) return false;
+    if (!context->m_readPending) xspw32_armRead(context);
+    return true;
+}
+
+void XDeviceSerialPort_platformDisarmReadable(XFd fd)
+{
+    XDeviceSerialPortWin32Context* context = win32Context(fd);
+    if (!context) return;
+    /* 与 POSIX 侧同款语义：只是「不再通知」，**不拆常驻读**——
+     * 常驻读继续把数据搬进接收环（否则数据会滞留在驱动缓冲里丢失，
+     * 而 POSIX 侧数据是留在内核缓冲里等 platformRead 取走的）。 */
+    context->m_base.m_readableNotify = NULL;
+    context->m_base.m_readableCtx = NULL;
 }
 
 static BYTE win32DataBits(XSerialPort_DataBits value)
@@ -98,8 +310,12 @@ bool XDeviceSerialPort_platformOpen(XFd fd, const XString* portName)
     const wchar_t* path;
     wchar_t fullPath[256];
     DWORD access = 0;
+    DWORD flags = FILE_ATTRIBUTE_NORMAL;
     COMMTIMEOUTS timeouts;
+    XAbstractNetIoRing* ring;
+    bool wantIocp;
     if (!context || !portName) return false;
+    context->m_fd = fd;
     path = (const wchar_t*)XString_toUtf16(portName);
     if (!path) return false;
     if (context->m_base.m_openMode & XIODevice_ReadOnly) access |= GENERIC_READ;
@@ -111,9 +327,57 @@ bool XDeviceSerialPort_platformOpen(XFd fd, const XString* portName)
         wcsncpy(fullPath + 4, path, sizeof(fullPath) / sizeof(fullPath[0]) - 5);
     }
     fullPath[sizeof(fullPath) / sizeof(fullPath[0]) - 1] = L'\0';
+    /* [IOCP 2026-10-30] 有框架 IOCP 后端 ⇒ 句柄以 FILE_FLAG_OVERLAPPED
+     * 打开并关联完成端口，走「常驻异步读 + 完成包唤醒主循环」；
+     * 无后端 ⇒ 同步打开（保留原 ReadFile 路径 + 调用方毫秒轮询兜底）。 */
+    ring = XAbstractNetIoRing_global();
+    wantIocp = (ring && XAbstractNetIoRing_isEnabled(ring));
+    {   /* 现场对照开关：XSERIAL_WIN32_SYNC=1 强制走同步读 + 毫秒轮询兜底
+         *（绕开 overlapped 完成包路径），用于判定 CH343 驱动对 overlapped
+         * 完成包的投递节奏 vs 同步读的数据可见时机。 */
+        const char* syncEnv = getenv("XSERIAL_WIN32_SYNC");
+        if (syncEnv && syncEnv[0] == '1') wantIocp = false;
+    }
+    if (wantIocp) flags |= FILE_FLAG_OVERLAPPED;
     context->m_handle = CreateFileW(fullPath, access, 0, NULL, OPEN_EXISTING,
-                                    FILE_ATTRIBUTE_NORMAL, NULL);
+                                    flags, NULL);
     if (context->m_handle == INVALID_HANDLE_VALUE) return false;
+    context->m_overlapped = wantIocp;
+    if (wantIocp) {
+        /* 注意：这里**不**设 FILE_SKIP_COMPLETION_PORT_ON_SUCCESS ——
+         * 该标志会吞掉「成功完成」的完成包，串口读完成恰以 STATUS_SUCCESS
+         * 回报 ⇒ 常驻读永远收不到通知（真机实测：应答延迟劣化到 4s 级）。 */
+        context->m_readBuffer = (char*)XCalloc_System(1, XSPW32_READ_CHUNK);
+        context->m_writeEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+        if (!context->m_readBuffer || !context->m_writeEvent) {
+            CloseHandle(context->m_handle);
+            context->m_handle = INVALID_HANDLE_VALUE;
+            context->m_overlapped = false;
+            if (context->m_readBuffer) {
+                XFree_System(context->m_readBuffer);
+                context->m_readBuffer = NULL;
+            }
+            if (context->m_writeEvent) {
+                CloseHandle(context->m_writeEvent);
+                context->m_writeEvent = NULL;
+            }
+            return false;
+        }
+        if (!xspw32_associate(context)) {
+            /* 关联失败 ⇒ 退回同步形态（重开一次）。 */
+            CloseHandle(context->m_handle);
+            context->m_handle = INVALID_HANDLE_VALUE;
+            XFree_System(context->m_readBuffer);
+            context->m_readBuffer = NULL;
+            CloseHandle(context->m_writeEvent);
+            context->m_writeEvent = NULL;
+            context->m_overlapped = false;
+            context->m_handle = CreateFileW(fullPath, access, 0, NULL,
+                                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+                                            NULL);
+            if (context->m_handle == INVALID_HANDLE_VALUE) return false;
+        }
+    }
     memset(&context->m_originalTimeouts, 0, sizeof(context->m_originalTimeouts));
     context->m_haveOriginalTimeouts = GetCommTimeouts(context->m_handle,
                                                        &context->m_originalTimeouts) != FALSE;
@@ -127,19 +391,75 @@ bool XDeviceSerialPort_platformOpen(XFd fd, const XString* portName)
         return false;
     }
     PurgeComm(context->m_handle, PURGE_RXCLEAR | PURGE_TXCLEAR);
+    /* 打开期间把系统定时器分辨率提到 1ms：框架时间轮的毫秒设定值
+     * 不再被 15.625ms 系统节拍量化（否则应答在途时延整体抬高一个
+     * 节拍，485 轮询周期也跟着漂）。 */
+    xspw32_setTimerResolution(true);
+    if (context->m_overlapped) xspw32_armRead(context);
     return true;
+}
+
+/* 取消在途异步读并回收完成包（关闭前调用）：
+   提交 CancelIoEx 后经事件环有界等待该读的完成包出队（完成回调清除
+   m_readPending），确保释放上下文前不存在悬垂 OVERLAPPED 完成包
+   （与文件设备共享内存通道的回收语义一致）。 */
+static void xspw32_cancelRead(XDeviceSerialPortWin32Context* context)
+{
+    XAbstractNetIoRing* ring;
+    int tries = 0;
+    if (!context || !context->m_readPending) return;
+    ring = XAbstractNetIoRing_global();
+    if (!ring) { context->m_readPending = false; return; }
+    if (context->m_handle && context->m_handle != INVALID_HANDLE_VALUE)
+        CancelIoEx(context->m_handle, &context->m_readContext.base.overlapped);
+    while (context->m_readPending && tries < XSPW32_CANCEL_RECLAIM_TRIES) {
+        XAbstractNetIoRing_waitForEvents_base(ring, 1);
+        ++tries;
+    }
+    context->m_readPending = false;
+}
+
+/* 回收残留的写完成包（写也走 OVERLAPPED，完成包指向写上下文；
+   关闭前必须等它出队，否则释放上下文后完成包会指向已释放内存）。 */
+static void xspw32_drainWrite(XDeviceSerialPortWin32Context* context)
+{
+    XAbstractNetIoRing* ring;
+    int tries = 0;
+    if (!context || !context->m_writePending) return;
+    ring = XAbstractNetIoRing_global();
+    if (!ring) { context->m_writePending = false; return; }
+    while (context->m_writePending && tries < XSPW32_CANCEL_RECLAIM_TRIES) {
+        XAbstractNetIoRing_waitForEvents_base(ring, 1);
+        ++tries;
+    }
+    context->m_writePending = false;
 }
 
 void XDeviceSerialPort_platformClose(XFd fd)
 {
     XDeviceSerialPortWin32Context* context = win32Context(fd);
     if (!context) return;
+    if (context->m_overlapped) {
+        xspw32_cancelRead(context);
+        xspw32_drainWrite(context);
+    }
+    if (context->m_readBuffer) {
+        XFree_System(context->m_readBuffer);
+        context->m_readBuffer = NULL;
+    }
+    if (context->m_writeEvent) {
+        CloseHandle(context->m_writeEvent);
+        context->m_writeEvent = NULL;
+    }
     if (context->m_handle != INVALID_HANDLE_VALUE) {
         if (context->m_haveOriginalTimeouts)
             SetCommTimeouts(context->m_handle, &context->m_originalTimeouts);
         CloseHandle(context->m_handle);
         context->m_handle = INVALID_HANDLE_VALUE;
     }
+    context->m_overlapped = false;
+    context->m_iocpAssociated = false;
+    xspw32_setTimerResolution(false);
 }
 
 int64_t XDeviceSerialPort_platformRead(XFd fd, void* buffer, int64_t size)
@@ -147,6 +467,15 @@ int64_t XDeviceSerialPort_platformRead(XFd fd, void* buffer, int64_t size)
     XDeviceSerialPortWin32Context* context = win32Context(fd);
     DWORD done = 0;
     if (!context || context->m_handle == INVALID_HANDLE_VALUE || !buffer || size <= 0) return -1;
+    if (context->m_overlapped) {
+        /* 常驻异步读已把数据搬进接收环（与 POSIX 侧 platformRead 优先读
+           m_readBuffer 同款语义）。 */
+        if (context->m_base.m_readBuffer &&
+            XRingBuffer_available(context->m_base.m_readBuffer) > 0)
+            return (int64_t)XRingBuffer_read(context->m_base.m_readBuffer, buffer,
+                                              (size_t)size);
+        return 0;
+    }
     if (!ReadFile(context->m_handle, buffer, (DWORD)size, &done, NULL)) return -1;
     return (int64_t)done;
 }
@@ -156,6 +485,40 @@ int64_t XDeviceSerialPort_platformWrite(XFd fd, const void* data, int64_t size)
     XDeviceSerialPortWin32Context* context = win32Context(fd);
     DWORD done = 0;
     if (!context || context->m_handle == INVALID_HANDLE_VALUE || !data || size <= 0) return -1;
+    if (context->m_overlapped) {
+        /* OVERLAPPED 句柄：写必须带 OVERLAPPED。提交后等完成，保持改造前
+         * 「写完才返回」的同步语义（写完成包由 xspw32_writeCompletion 消费）。 */
+        BOOL ok;
+        memset(&context->m_writeContext.base.overlapped, 0, sizeof(OVERLAPPED));
+        context->m_writeContext.base.overlapped.hEvent = context->m_writeEvent;
+        context->m_writeContext.base.type = XEventContextType_Type_File;
+        context->m_writeContext.base.fd = fd;
+        context->m_writeContext.socket =
+            XSocketDescriptor_fromIntptr((intptr_t)context->m_handle);
+        context->m_writeContext.eventMask = FD_WRITE;
+        context->m_writeContext.completionCallback = xspw32_writeCompletion;
+        context->m_writeContext.completionUserData = context;
+        ResetEvent(context->m_writeEvent);
+        context->m_writePending = true;
+        ok = WriteFile(context->m_handle, data, (DWORD)size, &done,
+                       &context->m_writeContext.base.overlapped);
+        if (!ok) {
+            if (GetLastError() != ERROR_IO_PENDING) {
+                context->m_writePending = false;
+                return -1;
+            }
+            if (!GetOverlappedResult(context->m_handle,
+                                     &context->m_writeContext.base.overlapped,
+                                     &done, TRUE)) {
+                context->m_writePending = false;
+                return -1;
+            }
+            /* 异步写：完成包已排入完成端口，由 xspw32_writeCompletion 消费。 */
+        }
+        /* 同步完成的写同样会投完成包（未设 SKIP_COMPLETION_PORT_ON_SUCCESS）
+         * ⇒ 在途标志由回调清除，关闭时统一回收。 */
+        return (int64_t)done;
+    }
     if (!WriteFile(context->m_handle, data, (DWORD)size, &done, NULL)) return -1;
     return (int64_t)done;
 }

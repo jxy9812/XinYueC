@@ -389,8 +389,9 @@ typedef struct XNetIoRingPosix {
         int  m_osFd;               /**< 裸 OS fd（内核编号空间）。 */
         void (*m_notify)(int);    /**< 就绪回调（NULL=仅唤醒不通知）。 */
         XEventContext m_ctx;      /**< 专属完成上下文（user_data 指向它）。 */
-        bool m_armed;              /**< multishot POLL_ADD 是否在飞。 */
-        bool m_multiFailed;        /**< multishot 被内核拒绝（5.10~5.12）⇒ 不再重试。 */
+        bool m_armed;              /**< POLL_ADD 是否在飞。 */
+        bool m_multiFailed;        /**< 一次性形态也被内核拒 ⇒ 彻底放弃该 fd。 */
+        bool m_multiUnsupported;   /**< 内核无 multishot（5.10~5.12）⇒ 改用一次性挂载+完成后重挂。 */
     } m_passiveIo[XNET_PASSIVE_MAX];
     int     m_passiveIoCount;     /**< 已注册被动 fd 数（io_uring 侧）。 */
 #endif /* XNET_BUILD_IO_URING */
@@ -495,30 +496,33 @@ static void ioAdvanceCq(XNetIoRingPosix* posix) {
 }
 
 /**
- * @brief  挂载一个 multishot POLL_ADD（io_uring 侧被动 fd 通道，2026-10-26）。
- * @details IORING_POLL_ADD_MULTI（内核 5.13+）：**一次挂载持续生效**——fd
- *          每次就绪产生一条 CQE（带 IORING_CQE_F_MORE），**无需重挂**。
+ * @brief  挂载一个 POLL_ADD（io_uring 侧被动 fd 通道，2026-10-26 触摸唤醒通道）。
+ * @details 两种挂载形态，按内核能力择一：
+ *          ① **multishot**（内核 ≥5.13）：`sqe->len = IORING_POLL_ADD_MULTI`，
+ *             一次挂载持续生效，fd 每次就绪产生一条 CQE（带 IORING_CQE_F_MORE），
+ *             **无需重挂**；也无「重挂时数据未读空 → 立即就绪 → CQ 风暴」问题。
+ *          ② **一次性 + 完成后重挂**（内核 5.10~5.12 无 multishot）：普通
+ *             POLL_ADD，**每次完成后必须重新挂载**，否则该 fd 永久失聪。
  *
- *          为什么不用一次性 POLL_ADD + 完成重挂（初版实现）：真机桌面
- *          （6.18）实测「同一 ring 上第 3 次挂等同 fd」不再触发（SQE
- *          字节级与裸程序一致、内核 enter 消费正常、CQE 却永不再来；
- *          同进程新建 ring 同序列正常；裸 ABI 复刻全序列正常）——一次性
- *          重挂路径在该内核上存在未定根因的坑。multishot 一次挂载绕开
- *          重挂语义，且天然无「重挂时数据未读空 → 立即就绪 → CQ 风暴」
- *          问题（每轮至多一条 CQE）。
+ *          ② 是本工程跨设备统一的必要形态：RK3568 板内核 5.10.209 无 multishot，
+ *          原实现下 `IORING_POLL_ADD_MULTI` 被内核拒（res=-EINVAL）⇒ 该 fd
+ *          在 io_uring 引擎上**注册成功但永不触发**（静默失聪），调用方只能
+ *          回落轮询兜底 ⇒ 串口无法接入事件等待集。改为②后，5.10 与 5.13+
+ *          行为一致（都是「就绪 ⇒ 通知 ⇒ 重挂」），epoll 引擎天然就是②的语义，
+ *          两个引擎就此统一（见 registerPassiveOsFd 的口径说明）。
  *
- *          版本兼容：multishot 需内核 ≥5.13；版本门 ≥5.10 的 5.10~5.12
- *          内核不支持 ⇒ ioArmPassive 失败（CQE res=-EINVAL）时回退登记
- *          为「不支持」，调用方保留轮询兜底。探测在首次挂载的 CQE 到达
- *          时完成（res<0 即 multishot 不可用）。
+ *          ② 的重挂纪律：完成分派里通知属主**之后**才重挂（属主先把数据读空
+ *          ⇒ 重挂不会立即就绪 ⇒ 无 CQ 风暴）；属主未读空时重挂会立即再就绪，
+ *          退化为与「不读空就一直有事件」等价的忙唤醒——属主侧必须读空
+ *          （串口路径读空后由 XDeviceSerialPort 的缓冲承接）。
  *
- * @return true=已提交；false=SQ 无空槽（下次尝试）。
+ * @return true=已提交；false=SQ 无空槽（下次再试）。
  */
 static bool ioArmPassive(XNetIoRingPosix* posix, int idx) {
     XNetSqe* sqe;
     if (!posix || idx < 0 || idx >= posix->m_passiveIoCount) return false;
     sqe = ioGetSqeSlot(posix);
-    if (!sqe) return false;               /* SQ 满：下次再挂。 */
+    if (!sqe) return false;               /* SQ 满：下次再试。 */
     memset(sqe, 0, sizeof(*sqe));
     sqe->opcode = IORING_OP_POLL_ADD;
     sqe->fd = posix->m_passiveIo[idx].m_osFd;
@@ -526,7 +530,11 @@ static bool ioArmPassive(XNetIoRingPosix* posix, int idx) {
 #ifndef IORING_POLL_ADD_MULTI
 #define IORING_POLL_ADD_MULTI (1U << 0)   /* 内核 5.13+；老工具链头缺失时补定义 */
 #endif
-    sqe->len = IORING_POLL_ADD_MULTI;     /* 内核 5.13+：POLL_ADD 命令标志存 sqe->len */
+    /* [multishot 探测 2026-10-30] 首次挂载按 multishot 试；内核不支持时
+     * （5.10~5.12，CQE res=-EINVAL）改用一次性挂载 + 完成后重挂（②），
+     * 语义与 epoll 引擎一致，跨设备统一（见本函数 @details）。 */
+    if (!posix->m_passiveIo[idx].m_multiUnsupported)
+        sqe->len = IORING_POLL_ADD_MULTI; /* 内核 5.13+：POLL_ADD 命令标志存 sqe->len */
     sqe->user_data = (uint64_t)(uintptr_t)&posix->m_passiveIo[idx].m_ctx;
     posix->m_passiveIo[idx].m_armed = true;
     ioSubmitEntries(posix, 1);
@@ -535,19 +543,33 @@ static bool ioArmPassive(XNetIoRingPosix* posix, int idx) {
 
 /**
  * @brief  分派一条「被动 fd 完成」CQE（io_uring 侧）。
- * @details multishot 下**无需重挂**：挂载持续生效，回调只清「待重挂」
- *          语义不存在——armed 保持 true。若该完成携带错误（multishot
- *          不被内核支持，res<0），置 m_multiFailed ⇒ 不再重试挂载，
- *          registerPassiveOsFd 的调用方语义退化为轮询兜底。
+ * @details multishot（内核 ≥5.13）：挂载持续生效，回调后**无需重挂**，
+ *          armed 保持 true。
+ *          一次性（内核 5.10~5.12 无 multishot）：首次 multishot 挂载被内核
+ *          拒（res=-EINVAL）⇒ 置 m_multiUnsupported 并**改用一次性挂载**；
+ *          此后每次完成都通知属主并**重挂**（一次性 POLL_ADD 完成后必须重挂，
+ *          否则 fd 永久失聪）。重挂在通知之后 ⇒ 属主已读空 ⇒ 不会立即就绪
+ *          ⇒ 无 CQ 风暴。
+ * @param flags CQE 标志（IORING_CQE_F_MORE 等）；用于判定 multishot 仍在生效。
  */
-static void ioDispatchPassive(XNetIoRingPosix* posix, int idx, int res) {
+static void ioDispatchPassive(XNetIoRingPosix* posix, int idx, int res, unsigned flags) {
     void (*notify)(int);
     int osFd;
     if (!posix || idx < 0 || idx >= posix->m_passiveIoCount) return;
     if (res < 0)
     {
-        /* multishot 不被支持（-EINVAL 等，内核 5.10~5.12）：登记失败，
-         * 注销该 fd 的等待（POLL_REMOVE），调用方语义回落轮询兜底。 */
+        /* multishot 不被内核支持（-EINVAL，5.10~5.12）：**不放弃该 fd**，
+         * 改用「一次性 POLL_ADD + 完成后重挂」形态（与 epoll 引擎同语义）。
+         * 原实现直接 POLL_REMOVE + m_multiFailed ⇒ 该 fd 在 io_uring 引擎上
+         * 永久失聪、调用方只能回落轮询兜底。 */
+        if (!posix->m_passiveIo[idx].m_multiUnsupported) {
+            posix->m_passiveIo[idx].m_multiUnsupported = true;
+            /* 一次性挂载重试（清 MULTI 标志由 ioArmPassive 依 m_multiUnsupported 决定）。 */
+            posix->m_passiveIo[idx].m_armed = false;
+            (void)ioArmPassive(posix, idx);
+            return;
+        }
+        /* 一次性形态也失败：彻底放弃该 fd，调用方语义回落轮询兜底。 */
         posix->m_passiveIo[idx].m_armed = false;
         posix->m_passiveIo[idx].m_multiFailed = true;
         if (posix->m_ringFd >= 0) {
@@ -567,6 +589,15 @@ static void ioDispatchPassive(XNetIoRingPosix* posix, int idx, int res) {
     notify = posix->m_passiveIo[idx].m_notify;
     osFd = posix->m_passiveIo[idx].m_osFd;
     if (notify) notify(osFd);
+    /* 一次性形态：通知完属主（属主已读空）后重挂，维持 fd 的持续监听。
+     * multishot 形态：CQE 带 IORING_CQE_F_MORE ⇒ 挂载仍在生效，无需重挂。 */
+    if (!posix->m_passiveIo[idx].m_multiUnsupported &&
+        !(flags & IORING_CQE_F_MORE)) {
+        /* multishot 却未带 F_MORE：内核按一次性处理 ⇒ 同样走重挂路径。 */
+        posix->m_passiveIo[idx].m_multiUnsupported = true;
+    }
+    if (posix->m_passiveIo[idx].m_multiUnsupported)
+        (void)ioArmPassive(posix, idx);
 }
 
 /* 非阻塞轮询 CQ（io 引擎） */
@@ -589,7 +620,7 @@ static void ioPollPlatform(XNetIoRingPosix* posix, XAbstractNetIoRing* self) {
             }
             ioAdvanceCq(posix);
             if (idx < posix->m_passiveIoCount)
-                ioDispatchPassive(posix, idx, (int)cqe->res);
+                ioDispatchPassive(posix, idx, (int)cqe->res, cqe->flags);
             ++batchCount;
             continue;
         }
@@ -1043,6 +1074,7 @@ static bool VXNetIoRingPosix_registerPassiveOsFd(XAbstractNetIoRing* self,
         posix->m_passiveIo[i].m_ctx.type = XEventContextType_Type_Custom;
         posix->m_passiveIo[i].m_ctx.fd = (XFd)osFd;
         posix->m_passiveIo[i].m_multiFailed = false;
+        posix->m_passiveIo[i].m_multiUnsupported = false;
         /* 立即挂载 multishot POLL_ADD：此后 fd 每次就绪即产生一条 CQE
          * 唤醒事件循环（无需重挂）。 */
         if (!ioArmPassive(posix, i)) {

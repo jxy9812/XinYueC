@@ -161,6 +161,19 @@ bool XModbusServer_setValue_move_base(XModbusServer* server, int option, XVarian
 * @param size 数据大小
 */
 void* XModbusServer_dataWritten_signal(XModbusServer* server, XModbusRegisterType table, int address, int size);
+/**
+* @brief 数据读取信号（网络读请求成功取数后发出）
+* @details 语义=**网络读事件**：仅在 processRequest 处理 FC01/FC02/FC03/FC04
+*          且取数成功（未走异常应答）时发出。本地读取接口
+*          （XModbusServer_data1/data2 → readData）**不发**此信号——否则
+*          上层用 data2 轮询回显会自造幽灵计数（写事件同口径见
+*          dataWritten 的无条件发出 + 调用侧抑制标志）。
+* @param server XModbusServer实例指针
+* @param table 寄存器类型
+* @param address 起始地址
+* @param size 读取数量
+*/
+void* XModbusServer_dataRead_signal(XModbusServer* server, XModbusRegisterType table, int address, int size);
 
 // =============== 内存管理宏 ===============
 

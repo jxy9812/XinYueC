@@ -68,6 +68,7 @@
 #include "XWidget_Protected.h"
 #include "XCoreApplication.h" /* paintImage/paintOffset（DI 指示灯自绘）。 */
 #include "XSystem.h"
+#include "XDateTime.h" /* [POLLTRACE] 统一单调时钟打点（Windows=QPC，POSIX=MONOTONIC）。 */
 #include "XAbstractButton.h"
 #include "xgui_demo_pages.h"
 
@@ -76,6 +77,8 @@
 #if XMODBUS_CORE_ON && XMODBUS_CLIENT_ON && XMODBUS_SERVER_ON
 #include "XModbusClient.h"
 #include "XModbusServer.h"
+#include "XModbusServer_Protected.h" /* processRequest_base：页自检走真 server
+                                      * 的网络读入口（读事件计数链路自检）。 */
 #include "XModbusDataUnit.h"
 #include "XModbusReply.h"
 #if XMODBUS_TCP_ON
@@ -142,15 +145,13 @@ static bool mb_pollTraceOn = false;
 
 static double mb_pollTraceNow(void)
 {
-#if defined(_WIN32)
-    /* Windows 无 clock_gettime：GetTickCount64=开机起单调毫秒
-     * （CLOCK_MONOTONIC 同语义，含系统睡眠；诊断打点够用）。 */
-    return (double)GetTickCount64() / 1e3;
-#else
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
-#endif
+    /* [打点精度 2026-10-30] 统一走框架单调时钟 XDateTime_currentMSecsSinceEpoch：
+     * Windows 侧该源已由 GetTickCount64（**15.625ms 刻度**）改为
+     * QueryPerformanceCounter（纳秒分辨率），POSIX 侧是 CLOCK_MONOTONIC。
+     * 旧实现直接用 GetTickCount64 打点 ⇒ 测出来的「在途时长」被自身
+     * 15.625ms 刻度量化，样本值只能是 0 或 15.625 的整数倍——真机排查
+     * 一度据此误判为「链路被 15.625ms 量化」，实为打点工具的假象。 */
+    return (double)XDateTime_currentMSecsSinceEpoch() / 1000.0;
 }
 
 static double mb_traceLastSendT = 0.0;
@@ -609,7 +610,7 @@ typedef struct MbSlave {
     XSpinBox*       outCountSpin;     /* 输出点数。 */
     XPushButton*    startBtn;         /* 启动/停止。 */
     XLabel*         stateLabel;       /* 状态行。 */
-    XLabel*         statLabel;        /* 请求计数行。 */
+    XLabel*         statLabel;        /* 事件计数行（写事件+读事件并排）。 */
     /* [10-18 用户追加规格⑤] 「按点数重建」拆两枚，分置①②首行紧挨
      * 各自点数 SpinBox；原独立重建行删除。槽分立（sender 不可信契约）
      * 但共用同一实现（重建按两个 SpinBox 全量解算，见 mb_slaveApplyCounts）。 */
@@ -681,7 +682,12 @@ typedef struct MbSlave {
     /* 数据区副本（重挂/重建灯格用）。 */
     int             inCount;
     int             outCount;
-    unsigned        writeEvents;      /* dataWritten 事件计数。 */
+    unsigned        writeEvents;      /* dataWritten 事件计数（网络写）。 */
+    unsigned        readEvents;       /* dataRead 事件计数（网络读）[10-30]。
+                                      * 口径=主站读请求成功取数次数（FC01/02/
+                                      * 03/04）；本地回显读走 data2 不经该
+                                      * 路径，不计入（与写事件同口径，防幽灵
+                                      * 计数——见 mb_slaveOnDataRead 注释）。 */
     /* [四区同屏 2026-10-18] 三个抑制标志——定性不同，勿混：
      *  - localWriteSuppress：**必需**。VXModbusServer_writeData 尾部
      *    无条件发 dataWritten（XModbusServer.c:942），本端 setData2 若不
@@ -2522,7 +2528,7 @@ static void mb_masterChannelSlot(XObject* sender, XVarList* args)
  *   layRoot(TopToBottom)
  *     ├─ 标题行        「Modbus 从站调试」
  *     ├─ layChannel    参数合并行：通道/监听端口/串口(随通道显隐)/本站地址
- *     ├─ layStart      启动/已停止/写事件行（页根上部不动）
+ *     ├─ layStart      启动/已停止/写事件/读事件行（页根上部不动）
  *     └─ dataArea      数据区（layData, TopToBottom）恒纵向单列：
  *         ├─ layDiTitle  「输入点 DI」+ 点数 SpinBox + 按点数重建(输入)
  *         │              + DI全开 + DI全关
@@ -2866,6 +2872,12 @@ static void mb_slaveEchoAll(void)
     /* [10-19 框架编辑器迁移] 回显单路：统一写值列**文本 item**——
      * 值格无常驻框；框架编辑器开着时 Qt 同语义（数据变化不回写编辑器，
      * 提交以编辑器内容为准）。 */
+    /* [差量回显 2026-10-30] 寄存器区（IR/HR）改「值变了才写」：原实现
+     * 每帧对**全部**行重设 item（每格 new 一个 XString + 触发表格重排），
+     * 而写事件在 485 高频轮询下密发 ⇒ 表格被反复整体重绘，挤占主循环，
+     * 表现为「连续快速请求后会卡一下」（真机 strace 实证：板端 X11 提交
+     * 45 次/秒、p90 间隔 14ms、最大 1330ms）。同值早退不产生脏区，代价
+     * 归零；仅真正变化的格子才 setItem。 */
     for (i = 0; i < s_mbSlave.irCount && i < MB_SLAVE_REG_MAX_ROWS; ++i) {
         uint16_t v = 0;
         char text[12];
@@ -2874,6 +2886,8 @@ static void mb_slaveEchoAll(void)
             continue;
         mb_regFormatText(text, sizeof(text), v, s_mbSlave.irHex);
         {
+            const char* cur = XTableWidget_text(s_mbSlave.irTable, i, 1);
+            if (cur && strcmp(cur, text) == 0) continue;  /* 值未变 ⇒ 不产生脏区。 */
             XTableWidgetItem item;
             XMemset(&item, 0, sizeof(item));
             item.text = XString_create_utf8(text);
@@ -2889,6 +2903,8 @@ static void mb_slaveEchoAll(void)
             continue;
         mb_regFormatText(text, sizeof(text), v, s_mbSlave.hrHex);
         {
+            const char* cur = XTableWidget_text(s_mbSlave.hrTable, i, 1);
+            if (cur && strcmp(cur, text) == 0) continue;
             XTableWidgetItem item;
             XMemset(&item, 0, sizeof(item));
             item.text = XString_create_utf8(text);
@@ -2897,6 +2913,25 @@ static void mb_slaveEchoAll(void)
         }
     }
     s_mbSlave.regEchoSuppress = 0;
+}
+
+/** @brief 从站事件计数行刷新（写事件 + 读事件，同一枚标签内并排）。
+ *  [合并标签 2026-10-30] 初版把读事件做成独立标签与写事件并排，但紧凑档
+ *  （页可用宽<800）整行 layStart 翻纵向 ⇒ 两计数变成上下叠，不是「边上」。
+ *  合并为一枚标签后两段文本恒在同一行内左右相邻，任何档位都满足「写事件
+ *  计数边上就是读事件计数」，且不新增控件条目。 */
+static void mb_slaveRefreshEventStats(void)
+{
+    if (!s_mbSlave.statLabel) return;
+    {
+        char buf[96];
+        snprintf(buf, sizeof(buf),
+                 "\xE5\x86\x99\xE4\xBA\x8B\xE4\xBB\xB6: %u  "
+                 "\xE8\xAF\xBB\xE4\xBA\x8B\xE4\xBB\xB6: %u",
+                 s_mbSlave.writeEvents, s_mbSlave.readEvents);
+                 /* 写事件: n  读事件: n */
+        XLabel_setText_2(s_mbSlave.statLabel, buf);
+    }
 }
 
 /** @brief 从站写事件（主站改写数据区）：计数 + 四区回显。 */
@@ -2910,14 +2945,22 @@ static void mb_slaveOnDataWritten(XObject* sender, XVarList* args)
      * 按点数重建再 +3）。抑制期内=本端写：不计数、也不回显。 */
     if (s_mbSlave.localWriteSuppress) return;
     ++s_mbSlave.writeEvents;
-    if (s_mbSlave.statLabel) {
-        char buf[64];
-        snprintf(buf, sizeof(buf),
-                 "\xE5\x86\x99\xE4\xBA\x8B\xE4\xBB\xB6: %u",
-                 s_mbSlave.writeEvents); /* 写事件: n */
-        XLabel_setText_2(s_mbSlave.statLabel, buf);
-    }
+    mb_slaveRefreshEventStats();
     mb_slaveEchoAll();
+}
+
+/** @brief 从站读事件（主站读数据区）：计数 + 上屏。[10-30 用户追加]
+ *  口径=**网络读事件**：框架在 XModbusServer.processRequest 内处理
+ *  FC01/FC02/FC03/FC04 取数成功后发 dataRead 信号（XModbusServer.c 读
+ *  分支），本地回显读（XModbusServer_data2 → readData）不经该路径 ⇒
+ *  不计入，与写事件的 localWriteSuppress 同口径（否则回显自读会把计数
+ *  刷成幽灵数）。
+ *  与写事件一致：计数不随「启动/停止」复位（页重建时归零）。 */
+static void mb_slaveOnDataRead(XObject* sender, XVarList* args)
+{
+    (void)sender; (void)args;
+    ++s_mbSlave.readEvents;
+    mb_slaveRefreshEventStats();
 }
 
 /** @brief 灯格翻转：按「索引硬编码」槽派发。
@@ -3539,6 +3582,10 @@ static void mb_slaveEnsureServer(void)
                       (size_t)XModbusServer_dataWritten_signal(NULL, 0, 0, 0),
                       (XObject*)s_mbSlave.root, mb_slaveOnDataWritten,
                       XConnectionType_Direct);
+    XObject_connect_1((XObject*)srv,
+                      (size_t)XModbusServer_dataRead_signal(NULL, 0, 0, 0),
+                      (XObject*)s_mbSlave.root, mb_slaveOnDataRead,
+                      XConnectionType_Direct);
     mb_slaveApplyChannelParams();
 }
 
@@ -3672,6 +3719,11 @@ static void mb_slaveOnChannelChanged(XObject* sender, XVarList* args)
                                  NULL, 0, 0, 0),
                              (XObject*)s_mbSlave.root,
                              mb_slaveOnDataWritten);
+        XObject_disconnect_1((XObject*)s_mbSlave.server,
+                             (size_t)XModbusServer_dataRead_signal(
+                                 NULL, 0, 0, 0),
+                             (XObject*)s_mbSlave.root,
+                             mb_slaveOnDataRead);
         XObject_deleteLater((XObject*)s_mbSlave.server);
         s_mbSlave.server = NULL;
         mb_slaveDropUnits();   /* map 随 server 释放，缓存指针必须清。 */
@@ -5015,9 +5067,13 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
     s_mbSlave.statLabel = XLabel_create(s_mbSlave.root, 0);
     if (s_mbSlave.statLabel) {
         XLabel_setText_2(s_mbSlave.statLabel,
-                         "\xE5\x86\x99\xE4\xBA\x8B\xE4\xBB\xB6: 0");
-                         /* 写事件: 0 */
-        XWidget_setFixedWidth((XWidget*)s_mbSlave.statLabel, 150);
+                         "\xE5\x86\x99\xE4\xBA\x8B\xE4\xBB\xB6: 0  "
+                         "\xE8\xAF\xBB\xE4\xBA\x8B\xE4\xBB\xB6: 0");
+                         /* 写事件: 0  读事件: 0 */
+        /* [读事件计数 2026-10-30] 宽度 150→230：两计数并排（写事件 + 读
+         * 事件）。宽档行总宽 = 90(启动)+10+120(状态)+10+230=460 ≤ 800 档
+         * 门槛；紧凑档整行翻纵向，单枚标签 230 < 页宽不裁。 */
+        XWidget_setFixedWidth((XWidget*)s_mbSlave.statLabel, 230);
         XWidget_setFixedHeight((XWidget*)s_mbSlave.statLabel, 22);
         XWidget_show((XWidget*)s_mbSlave.statLabel);
         XBoxLayout_addWidget(&s_mbSlave.layStart,
@@ -5704,6 +5760,56 @@ int demo_page_modbus_slave_autotest(XWidget* page)
         else
             ++failures;
 #endif
+        /* ---- [读事件计数 2026-10-30] 页内真 server 的读事件链路自检 ----
+         * 用页内**真 server 对象**走一次网络读请求（processRequest =
+         * TCP/RTU 服务端处理请求的同一入口），断言三件事：
+         *   ① 读事件计数 +1（框架 dataRead 信号 → 页内槽）；
+         *   ② 计数标签文本含「读事件: N」（写/读两计数并排在一枚标签里）；
+         *   ③ 本地读（data2）**不**加计数（回显自读不造幽灵计数）。
+         * 计数器为页内状态，断言前先记基线（自检可能重入）。 */
+        if (s_mbSlave.server && s_mbSlave.statLabel) {
+            unsigned baseRead = s_mbSlave.readEvents;
+            unsigned baseWrite = s_mbSlave.writeEvents;
+            uint8_t reqData[4];
+            XModbusRequest* req = NULL;
+            XModbusResponse* resp = NULL;
+            reqData[0] = 0; reqData[1] = 0;   /* 起始地址 0 */
+            reqData[2] = 0; reqData[3] = 1;   /* 数量 1 */
+            req = XModbusRequest_create_with_code(XModbusPdu_ReadHoldingRegisters);
+            if (req) {
+                XModbusPdu_setData((XModbusPdu*)req, reqData, 4);
+                resp = XModbusServer_processRequest_base(s_mbSlave.server, req);
+                if (!resp || XModbusPdu_isException((XModbusPdu*)resp))
+                    ++failures;
+                if (resp) XClassDelete(resp);
+                XClassDelete(req);
+            } else {
+                ++failures;
+            }
+            if (s_mbSlave.readEvents != baseRead + 1) ++failures;
+            if (s_mbSlave.writeEvents != baseWrite) ++failures; /* 读不增写计数 */
+            {
+                const char* txt = s_mbSlave.statLabel
+                    ? XString_toUtf8(XLabel_text(s_mbSlave.statLabel)) : NULL;
+                char want[64];
+                snprintf(want, sizeof(want),
+                         "\xE8\xAF\xBB\xE4\xBA\x8B\xE4\xBB\xB6: %u",
+                         s_mbSlave.readEvents); /* 读事件: N */
+                if (!txt || !strstr(txt, want)) ++failures;
+                /* 写事件计数文本（与读事件并排在一枚标签里）。 */
+                if (!txt || !strstr(txt,
+                        "\xE5\x86\x99\xE4\xBA\x8B\xE4\xBB\xB6")) ++failures;
+            }
+            /* 本地读不得加计数。 */
+            {
+                uint16_t v = 0;
+                XModbusServer_data2(s_mbSlave.server,
+                                    XModbusHoldingRegisters, 0, &v);
+                if (s_mbSlave.readEvents != baseRead + 1) ++failures;
+            }
+        } else {
+            ++failures;
+        }
         /* ---- 灯格写路径（评审④ 断点回归锁）----
          * 框架派发槽时给出的 sender 不是发射方（实测是页根），故本页全部
          * 索引槽都按「编译期行号」取参；此处直接调 mb_slaveSetBit 走同一条

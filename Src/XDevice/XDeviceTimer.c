@@ -255,7 +255,20 @@ void XDeviceTimer_process(XAbstractEventDispatcher* dispatcher, bool processGlob
     if (!dispatcher || !dispatcher->m_d_ptr) return;
     if (processGlobalWheel) {
         wheel = XDeviceTimer_timeWheel();
-        if (wheel && XTimeWheelGroup_count(wheel))
+        /* [轮刻度连续性 2026-10-30] 原实现带 count 门：轮里**没有**定时器
+           就不消费时间轮。但轮刻度 m_current_tick 是**绝对时间轴**（刻度源
+           = 单调毫秒），必须持续跟随真实时间：定时器到期刻度按
+           expire_ticks = m_current_tick + timeout_ticks 计算，刻度落后多少
+           就晚多少兑现。
+           真机证据（RK3568 从站，Modbus 从站页）：该页无 CoarseTimer ⇒
+           count 长期为 0 ⇒ 时间轮从不被消费 ⇒ 轮刻度稳态落后真实时间
+           ~195ms（板端日志 [WHEEL] lag=154~254，而 cur 与 tick 仍 1:1
+           跟随 ⇒ 是「冻结」不是「失速」）⇒ 板端所有短定时器（帧间静默窗、
+           UI 帧泵等）晚 ~200ms 兑现 ⇒ 485 应答出现 120~240ms 尖刺
+           （pyserial 直连实测 p99=213ms、p50=2.87ms）。
+           去掉 count 门：每圈按真实刻度推进（每圈 ~20 拍，成本仅槽链表
+           原子交换 + 空槽扫描），刻度恒等于真实时间，定时器按真实时刻兑现。 */
+        if (wheel)
             XTimeWheelGroup_handler_base((XTimerGroupBase*)wheel);
     }
     if (dispatcher->m_d_ptr->m_hrtimerGroup)

@@ -46,6 +46,7 @@
 
 #if XPBS_TILE_BATCHING_ON
 #include "XDateTime.h"
+#include "XPrintf.h"           /* [形态诊断] 缓冲形态变化时的一行诊断。 */
 /** @brief 攒批 16ms 帧界（60Hz 一帧，对标 Qt 高频局部更新按 vsync 合帧；
  *  批次首片入批起超过该时长即强制先上屏，防大脏区 repaint 首片延迟）。 */
 #define XPBS_TILE_BATCH_FRAME_MS 16
@@ -246,6 +247,9 @@ struct XPlatformBackingStore
                                                 跳过分配与脏区双帧同步，省一块全屏
                                                 缓冲（嵌入式 RAM 关键收益）。 */
     bool m_buffersInitialized;                /**< 外部绑定是否已完成一次。 */
+    int m_reportedMode;                       /**< 已上报的缓冲形态（-1=未上报）；
+                                                形态变化时打一行诊断，跨平台对照
+                                                缓冲语义用（见 resize 尾部）。 */
     bool m_capacityMode;                      /**< D1 容量化重建激活：m_image/
                                                     m_image2 为容量缓冲视图（非拥
                                                     有），逻辑尺寸变化不再重分配存
@@ -324,6 +328,83 @@ static bool xpbs_rotationSingleBuffer(const XPlatformBackingStore* self)
 }
 #define xpbs_effectiveSingleBuffer xpbs_rotationSingleBuffer
 #endif
+
+/* ==================== 缓冲形态统一模型（2026-10-30 跨平台对齐） ====================
+ *
+ * 三种形态是**两个正交维度**的组合，判定规则两平台同源（不再靠平台各自
+ * 的涌现行为）：绘制表面归属（框架自分配 ↔ 平台提供）× 是否交替帧。
+ *
+ *   ② PlatformSurface：平台提供绘制表面（Windows 的内存 DIB）。painter
+ *     直接画进平台表面，present 按脏区搬到可见表面；不交替（平台表面只
+ *     有一块，且始终持有完整窗口内容）。
+ *   ① SoftwareDouble：框架两块全窗帧，flush 同步提交区到另一块后翻帧。
+ *   ③ SoftwareSingle：框架一块全窗帧，不交替。
+ *
+ * 三形态的可观测契约一致（见 XPlatformBackingStore.h 的形态说明）：
+ *   (1) 绘制目标持有完整窗口内容；(2) present 提交像素集 == 本次脏区；
+ *   (3) 可见表面看不到绘制期中间态。
+ *
+ * 与旧标志位的关系（保持单一事实源，不新增并行状态）：
+ *   - m_nativeBufferMode ⇒ ② 的唯一来源（架接平台表面时置位）；
+ *   - m_softwareSingleBuffer / 旋转态钳制 ⇒ ③ 的两个触发条件；
+ *   - 缓冲数配置 BUFFER_COUNT=1 ⇒ 软件侧恒 ③。
+ * 形态查询只做**派生**（不改任何状态），故随时可问、不会与实现漂移。
+ */
+
+XPlatformBackingStoreBufferMode XPlatformBackingStore_bufferMode(
+        const XPlatformBackingStore* self)
+{
+    if (!self) return XPlatformBackingStoreMode_SoftwareSingle;
+    /* ① 平台提供绘制表面 ⇒ ②（外部缓冲绑定时平台表面不参与，见 resize
+       的 native 架接条件 !m_externalBuffers）。 */
+    if (self->m_nativeBufferMode)
+        return XPlatformBackingStoreMode_PlatformSurface;
+    /* ② 框架侧：驱动硬件轮换 ∨ 换轴 90/270 旋转态 ⇒ ③ 单帧。 */
+    if (xpbs_effectiveSingleBuffer(self))
+        return XPlatformBackingStoreMode_SoftwareSingle;
+    /* ③ 其余：缓冲数=1 ⇒ ③；=2 ⇒ ① 双帧交替。 */
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    return XPlatformBackingStoreMode_SoftwareDouble;
+#else
+    return XPlatformBackingStoreMode_SoftwareSingle;
+#endif
+}
+
+const char* XPlatformBackingStore_bufferModeName(
+        XPlatformBackingStoreBufferMode mode)
+{
+    switch (mode) {
+    case XPlatformBackingStoreMode_PlatformSurface: return "platform-surface";
+    case XPlatformBackingStoreMode_SoftwareDouble: return "software-double";
+    case XPlatformBackingStoreMode_SoftwareSingle: default:
+        return "software-single";
+    }
+}
+
+/** @brief 形态诊断上报：形态定案（resize 收口）后打一行，形态变化时才打。
+ *  @details 跨平台对照缓冲语义用——同一份代码在 Windows/X11 上报出的形态
+ *           名应与实际行为一致（形态=判定结果，不是平台硬编码）。两条
+ *           resize 出口（native 架接早退 / 常规重建）都调用本函数，否则
+ *           平台共享表面模式（Windows DIB）会因早退而漏报。 */
+static void xpbs_reportMode(XPlatformBackingStore* self, int w, int h)
+{
+    XPlatformBackingStoreBufferMode mode;
+    if (!self) return;
+    mode = XPlatformBackingStore_bufferMode(self);
+    if (self->m_reportedMode == (int)mode) return;
+    self->m_reportedMode = (int)mode;
+    fprintf(stderr, "[xpbs] buffer-mode=%s size=%dx%d surface=%s\n",
+            XPlatformBackingStore_bufferModeName(mode), w, h,
+            self->m_nativeBufferMode ? "platform"
+                : (self->m_externalBuffers ? "external" : "framework"));
+    /* 同一行同时走框架日志通道：Windows 演示是 GUI 子系统程序，stderr
+       无效（不继承标准句柄）⇒ 仅 fprintf 的诊断在桌面上不可见；XPrintf
+       走框架重定向链（控制台/日志），两平台都能看到。 */
+    XPrintf("[xpbs] buffer-mode=%s size=%dx%d surface=%s\n",
+            XPlatformBackingStore_bufferModeName(mode), w, h,
+            self->m_nativeBufferMode ? "platform"
+                : (self->m_externalBuffers ? "external" : "framework"));
+}
 
 /* ==================== 内部工具 ==================== */
 
@@ -671,11 +752,6 @@ size_t XPlatformBackingStore_requiredBufferSize(const XSize* size)
 #endif
 }
 
-XImageFormat XPlatformBackingStore_surfaceFormat(void)
-{
-    return xpbs_surfaceFormat();
-}
-
 static void xpbs_initConfiguredImage(XImage* image, int width, int height,
                                      void* buffer, size_t bufferSize)
 {
@@ -841,6 +917,7 @@ XPlatformBackingStore* XPlatformBackingStore_create(XWindow* window)
     store->m_window = window;
     store->m_nativeState = nativeState;
     store->m_capacityMode = false;
+    store->m_reportedMode = -1;   /* 首次形态定案必上报（-1=未上报）。 */
     store->m_nativeBufferNoBuf = false;
     store->m_nativeDroppedByRotation = false;
     store->m_windowRotation = 0;
@@ -1031,7 +1108,8 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
         if (full.width > 0 && full.height > 0)
             XRegion_addRect(&self->m_flushRegion, &full);
     }
-    /* FULL 始终提交整屏。 */
+    /* FULL 始终提交整屏（LVGL v9 语义：FULL 分支把失效区扩成整屏，
+       flush 回调收到的也是整屏；脏区化提交请走 DIRECT 模式）。 */
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
     XRegion_clear(&self->m_flushRegion);
     full.x = 0; full.y = 0;
@@ -1041,9 +1119,14 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
 #endif
     if (!XRegion_isEmpty(&self->m_flushRegion)) {
         /* DIRECT/PARTIAL：提交前把脏区同步到另一帧缓冲，保证下一帧只重绘
-           变化区域即可（FULL 恒整屏，无需备份）。 */
+           变化区域即可（FULL 恒整屏，无需备份）。
+           【形态统一 2026-10-30】判据统一取「当前形态 == ① 软件双帧」：
+           ② 平台共享表面（Windows DIB / 平台提供的表面）只有一块且始终
+           持有完整窗口内容，无需备份；③ 软件单帧没有第二块可同步。两平台
+           同一判据，不再各写各的标志位组合。 */
 #if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_FULL
-        if (!self->m_nativeBufferMode)
+        if (XPlatformBackingStore_bufferMode(self) ==
+            XPlatformBackingStoreMode_SoftwareDouble)
         {
         XImage* inactive = xpbs_inactiveImage(self);
         if (inactive)
@@ -1072,8 +1155,18 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     /* native 零拷贝模式单缓冲：active 恒指向 m_image，不翻转。
        软件单缓冲降级（驱动硬件轮换）同理不翻转——恒画同一软件帧，
-       撕裂防护由直写层的 fb 后台缓冲轮换 + pan 承担。 */
-    if (!self->m_nativeBufferMode && !self->m_softwareSingleBuffer)
+       撕裂防护由直写层的 fb 后台缓冲轮换 + pan 承担。
+       【双缓冲配对加固 2026-10-30】DIRECT 模式两块缓冲都持有「至今所有
+       已绘制像素的最新值」，靠的是每帧把提交区同步进 inactive 后再翻转
+       active 指针。翻转必须与该同步**严格配对**：此前翻转移在提交块之
+       外，空提交（本帧无像素提交）也会翻转——翻转本身不改内容，但会让
+       下一帧往另一块绘制，而另一块未必含有上一帧绘制的全部像素（本帧
+       绘制若未走到同步路径，两块就此分叉）。一旦分叉，后续「无重绘的
+       整窗提交」（如 XWindowDecoration 纯移动免重绘路径按整窗 region
+       提交）会把陈旧像素推上屏。故此处只在确有提交时翻转。 */
+    if (XPlatformBackingStore_bufferMode(self) ==
+            XPlatformBackingStoreMode_SoftwareDouble &&
+        !XRegion_isEmpty(&self->m_flushRegion))
         self->m_activeIndex ^= 1u;
 #endif
 }
@@ -1107,7 +1200,8 @@ static void xpbs_flushTileImmediate(XPlatformBackingStore* self,
     xpbs_invokePresent(self, &self->m_flushRegion, &origin);
     self->m_tileActive = false;
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
-    if (!self->m_nativeBufferMode && !self->m_softwareSingleBuffer)
+    if (XPlatformBackingStore_bufferMode(self) ==
+            XPlatformBackingStoreMode_SoftwareDouble)
         self->m_activeIndex ^= 1u;
 #endif
 }
@@ -1181,7 +1275,8 @@ void XPlatformBackingStore_flushTileBatched(XPlatformBackingStore* self,
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     /* 与即时路径同款缓冲轮转（PARTIAL 无 native 零拷贝，保持逐位一致的
        双缓冲生命周期语义；软件单缓冲降级时同样不翻转）。 */
-    if (!self->m_nativeBufferMode && !self->m_softwareSingleBuffer)
+    if (XPlatformBackingStore_bufferMode(self) ==
+            XPlatformBackingStoreMode_SoftwareDouble)
         self->m_activeIndex ^= 1u;
 #endif
 #else
@@ -1200,16 +1295,6 @@ void XPlatformBackingStore_flushPendingTiles(XPlatformBackingStore* self,
 #else
     (void)self;
     (void)window;
-#endif
-}
-
-bool XPlatformBackingStore_hasPendingTiles(const XPlatformBackingStore* self)
-{
-#if XPBS_TILE_BATCHING_ON
-    return self && self->m_batchOpen && !XRegion_isEmpty(&self->m_batchRegion);
-#else
-    (void)self;
-    return false;
 #endif
 }
 
@@ -1334,6 +1419,7 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
                     XRegion_copy(&cropped, &self->m_staticContents);
                     XRegion_deinit(&cropped);
                     XClassDeinit(&snapshot);
+                    xpbs_reportMode(self, w, h);
                     return;
                 }
                 XClassDeinit(&nativeImage);
@@ -1427,6 +1513,7 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
         XRegion_copy(&cropped, &self->m_staticContents);
         XRegion_deinit(&cropped);
         XPlatformBackingStoreDriver_surfaceResized(self->m_nativeState, w, h);
+        xpbs_reportMode(self, w, h);
         return;
     }
 #endif
@@ -1648,6 +1735,12 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
 #else
     XPlatformBackingStoreDriver_surfaceResized(self->m_nativeState, w, h);
 #endif
+    /* 【形态诊断 2026-10-30】形态定案后打一行（形态变化时才打）：跨平台
+       对照缓冲语义用——同一份代码在 Windows/X11 上报出的形态名应与实际
+       行为一致（形态=判定结果，不是平台硬编码）。两条 resize 出口（native
+       架接早退 / 常规重建）都经 xpbs_reportMode，否则平台共享表面模式
+       （Windows DIB）会因早退而漏报。 */
+    xpbs_reportMode(self, w, h);
 }
 
 bool XPlatformBackingStore_scroll(XPlatformBackingStore* self,
@@ -1814,11 +1907,6 @@ XRegion XPlatformBackingStore_staticContents(const XPlatformBackingStore* self)
     return out;
 }
 
-bool XPlatformBackingStore_hasStaticContents(const XPlatformBackingStore* self)
-{
-    return self && !XRegion_isEmpty(&self->m_staticContents);
-}
-
 /* ==================== 缓冲与平台扩展 ==================== */
 
 bool XPlatformBackingStore_setBuffers(XPlatformBackingStore* self,
@@ -1870,15 +1958,6 @@ void XPlatformBackingStore_setGlobalPresentCallback(
 {
     g_xpbsAnyPresent = callback;
     g_xpbsAnyPresentData = userData;
-}
-
-void XPlatformBackingStore_setNativeTargetWindow(
-        XPlatformBackingStore* self, void* nativeWindow)
-{
-    if (!self) return;
-    self->m_nativeTarget = nativeWindow;
-    XPlatformBackingStoreDriver_setNativeTarget(self->m_nativeState,
-                                                nativeWindow);
 }
 
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */

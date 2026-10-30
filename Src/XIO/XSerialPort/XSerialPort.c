@@ -7,6 +7,7 @@
 #include "XVariant.h"
 #include "XVarList.h"
 #include "XIODevicePrivate.h"
+#include "XPrintf.h" /* 接收布防模式诊断打印（事件驱动 / 轮询兜底）。 */
 #include <string.h>
 
 static bool VXSerialPort_event(XSerialPort* port, XEvent* event);
@@ -14,6 +15,7 @@ static void VXSerialPort_timerEvent(XObject* obj, XTimerEvent* event);
 static bool setIntProperty(XSerialPort* port, uint32_t property, int value);
 static bool setInt64Property(XSerialPort* port, uint32_t property, int64_t value);
 static bool setBoolProperty(XSerialPort* port, uint32_t property, bool value);
+static int64_t VXSerialPort_bytesAvailable(const XIODevice* io);
 
 /**
  * @brief 停止接收轮询定时器
@@ -37,6 +39,73 @@ static void VXSerialPort_rxTimerStart(XSerialPort* port)
     if (port->rxPollIntervalMs <= 0) return;
     port->m_rxTimer = XObject_startTimer_ms((XObject*)port,
         (uint64_t)port->rxPollIntervalMs, XTimerType_CoarseTimer);
+}
+
+/**
+ * @brief 可读事件源回调（平台层通知：串口 fd 已就绪）
+ * @details 事件驱动路径：数据到达由内核唤醒事件循环 ⇒ 回调里直接发射
+ *          readyRead，**不再等下一轮「毫秒级轮询拍」**。板端主循环一圈
+ *          100+ms 时，轮询拍的感知延迟同量级——这正是 485 轮询「卡一下」
+ *          的来源之一。
+ * @note 回调在事件循环线程（主线程）内被调用，与原定时器路径同线程 ⇒
+ *       信号发射的线程语义不变。
+ */
+static void VXSerialPort_onReadable(void* ctx)
+{
+    XSerialPort* port = (XSerialPort*)ctx;
+    if (!port || !port->isOpen) return;
+    if (port->base.m_fd == XFD_INVALID) return;
+    /* 与轮询路径同口径：有数据才发 readyRead（事件通知本身只说明「可读」，
+     * 读空属正常——对端刚好把数据取走）。 */
+    if (VXSerialPort_bytesAvailable((XIODevice*)port) <= 0) return;
+    port->readyReadTriggered = 1;
+    XIODevice_readyRead_signal((XIODevice*)port);
+}
+
+/**
+ * @brief 布防接收：优先事件驱动，失败则回落毫秒级轮询
+ * @details ① 事件驱动（跨平台统一）：把串口 fd/HANDLE 注册进**框架自己的
+ *          异步后端等待集**（POSIX：XAbstractNetIoRing 的 epoll / io_uring
+ *          双引擎；Windows：框架 IOCP）。数据到达 ⇒ 内核唤醒阻塞中的事件
+ *          循环 ⇒ 零轮询延迟。与 socket notifier、fbdev 触摸唤醒通道同一
+ *          套机制（跨设备风格统一）。
+ *          ② 回落：该平台/后端不支持被动 fd（如 Windows 同步 COM 句柄、
+ *          io_uring 一次性形态也失败）⇒ 保留原 2ms 轮询拍，行为与改造前
+ *          逐位一致（不产生功能回退）。
+ */
+static void VXSerialPort_rxArm(XSerialPort* port)
+{
+    static int s_rxModePrinted = 0;
+    bool armed;
+    if (!port) return;
+    VXSerialPort_rxTimerStop(port);
+    if (port->base.m_fd == XFD_INVALID) return;
+    armed = XDeviceSerialPort_platformArmReadable(port->base.m_fd,
+                                                  VXSerialPort_onReadable,
+                                                  port) != 0;
+    if (!s_rxModePrinted) {
+        s_rxModePrinted = 1;
+        /* 现场诊断：接收走事件驱动还是毫秒轮询兜底——两者的应答在途
+         * 时延差一个数量级（事件驱动≈USB 往返；轮询兜底受系统时钟
+         * 节拍量化，最小步进 15.625ms）。 */
+        XPrintf("[XSerial] RX 模式: %s\n",
+                armed ? "事件驱动（框架 ring/IOCP 等待集）"
+                      : "毫秒级轮询兜底");
+    }
+    if (armed)
+        return;   /* 事件驱动已布防 ⇒ 不再起轮询定时器。 */
+    VXSerialPort_rxTimerStart(port);
+}
+
+/**
+ * @brief 撤销接收布防（事件驱动 + 轮询拍都撤）
+ */
+static void VXSerialPort_rxDisarm(XSerialPort* port)
+{
+    if (!port) return;
+    VXSerialPort_rxTimerStop(port);
+    if (port->base.m_fd != XFD_INVALID)
+        XDeviceSerialPort_platformDisarmReadable(port->base.m_fd);
 }
 
 static bool VXSerialPort_open(XIODevice* io, XIODeviceBaseMode mode)
@@ -98,7 +167,7 @@ static bool VXSerialPort_open(XIODevice* io, XIODeviceBaseMode mode)
     port->base.m_openMode = (uint8_t)mode;
     port->isOpen = 1;
     port->error = XSerialPort_NoError;
-    VXSerialPort_rxTimerStart(port);
+    VXSerialPort_rxArm(port);
     return true;
 }
 
@@ -106,7 +175,7 @@ static void VXSerialPort_close(XIODevice* io)
 {
     XSerialPort* port = (XSerialPort*)io;
     if (!port) return;
-    VXSerialPort_rxTimerStop(port);
+    VXSerialPort_rxDisarm(port);
     if (port->base.m_fd != XFD_INVALID) {
         XDevice_close(port->base.m_fd);
         port->base.m_fd = XFD_INVALID;
@@ -455,7 +524,10 @@ void XSerialPort_setRxPollInterval(XSerialPort* port, int32_t intervalMs)
 {
     if (!port) return;
     port->rxPollIntervalMs = intervalMs;
-    if (port->isOpen) VXSerialPort_rxTimerStart(port);
+    /* 轮询间隔只影响**回落路径**（事件驱动不可用时的兜底拍）；事件驱动
+     * 已布防时改间隔不改变接收语义（内核唤醒，与间隔无关）。重新走一遍
+     * 布防：事件驱动仍可用 ⇒ 保持事件驱动；不可用 ⇒ 按新间隔重启轮询拍。 */
+    if (port->isOpen) VXSerialPort_rxArm(port);
 }
 
 int32_t XSerialPort_rxPollInterval(const XSerialPort* port)

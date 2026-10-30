@@ -307,7 +307,20 @@
  * 缓存命中会把过期瓦片搬上屏，交互后大块白屏/内容缺失（真机实测）。
  * 关闭后每次 PAINT 现绘整页，内容恒正确；成本由 HUD 1Hz 限频兜底。 */
 #ifndef XGUI_DEMO_STATIC_SCENE_CACHE_ON
+/* [静态场景缓存 2026-10-30] 默认**开**（X11/桌面），fbdev 直写平台保持关。
+ * 【昆仑通态 A33 fbdev 定版 = 0（09-28）】的理由在 fbdev 下依然成立：
+ * fbdev 双缓冲 pan + 差带同步下缓存命中会把过期瓦片搬上屏，交互后大块
+ * 白屏/内容缺失（真机实测）——fbdev 走 XPLATFORM_FBDEV_ON=1 分支保持 0。
+ * X11 后端是完整后备缓冲 + 局部 flush，缓存与增量语义一致 ⇒ 安全。
+ * 开启的收益：静态基底（窗口背景）只画一次，不再每次 PAINT 现绘整页
+ * 1280x800x4=4.1MB —— RK3568 真机实测这是每帧几十 ms 的填充开销，
+ * 与 485 应答 2.7% / 130~240ms 尖刺同源（见 docs/485轮询性能排查与修复
+ * _20261029.md §16）。 */
+#if XPLATFORM_FBDEV_ON
 #define XGUI_DEMO_STATIC_SCENE_CACHE_ON 0
+#else
+#define XGUI_DEMO_STATIC_SCENE_CACHE_ON 1
+#endif
 #endif
 
 /* 交互空闲治理（2026-09-25）：空闲闸门开启时帧泵不再逐轮强制重绘
@@ -721,7 +734,9 @@ typedef struct DemoWin
 {
     XWidget         m_base;  /**< 顶层控件基类；必须是第一个成员。 */
     XImage          m_staticScene; /**< 不含性能悬浮层的静态场景缓存。 */
-    bool            m_staticSceneDirty; /**< 静态场景需重新生成。 */
+    bool            m_staticSceneDirty; /**< 静态场景需**整窗**重新生成（背景整体可能变）。 */
+    XRect           m_staticSceneDirtyRect; /**< 静态场景**局部**失效矩形（窗口坐标；宽高<=0=无局部失效）。 */
+    uint32_t        m_staticSceneBgColor; /**< 缓存里写入的背景色（与当前调色板不一致 ⇒ 整窗重建）。 */
     XHandle         m_framePump; /**< 事件循环轮询回调句柄（刷新不受定时器限制）。 */
     XTimerId        m_autoQuitTimer; /**< 自动退出定时器。 */
     XTimerId        m_lcdTimer;     /**< LCD 数码管自动更新定时器。 */
@@ -740,6 +755,9 @@ typedef struct DemoWin
     int             m_autoTestFrames;   /**< 自动测试已渲染帧数。 */
     int             m_orientOpt;        /**< --orient：首帧切到的方向（-1=不切）。 */
     bool            m_orientApplied;    /**< --orient 是否已应用（只跑一次）。 */
+    int             m_switchPageOpt;    /**< --switch-page：延迟切到的页号（-1=不切）。 */
+    int             m_switchPageMs;     /**< --switch-page-ms：延迟毫秒（默认 3000）。 */
+    bool            m_switchPageDone;   /**< 延迟切页是否已执行。 */
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XPerformanceOverlay m_performanceOverlay; /**< 性能悬浮层控件。 */
     int             m_overlayAnchorW; /**< 上次锚定时的悬浮层宽度（尺寸自适应变化后触发重新锚定贴右边）。 */
@@ -1145,6 +1163,25 @@ static XLabel* demo_clockLabelCreate(XWidget* bar)
                          XWidgetAttribute_TransparentForMouseEvents, true);
     {
         char buf[32];
+        /* [定宽 2026-10-30] 时钟文本每秒变。按 sizeHint 自动宽度时，
+         * setText → updateGeometry → 顶栏盒式布局重排 → 顶层内容区几何
+         * 变化 → resizeEvent → 顶层整窗静态场景失效 ⇒ **每秒一次**整窗
+         * 重建（free+alloc 1280x800x4=4.1MB + 全窗填充）与整窗上屏
+         * （实测 3.6MB/s）⇒ Xorg 侧负担 ⇒ X11 写阻塞 ⇒ 485 应答出现
+         * 2% 的 130~240ms 尖刺（板端真机实测，docs §16）。
+         * 定宽（宽度按最宽文本预留 ⇒ setText 不再触发 updateGeometry）
+         * ⇒ 每次只重绘 label 自身矩形。
+         * 固定宽的裁剪坑（约束归布局：子控件超出父控件被 paint 裁掉）
+         * ⇒ 宽度必须 ≥ 最宽文本：这里先用「全 0」文本量一次 sizeHint
+         * 再留余量。 */
+        char widest[32];
+        snprintf(widest, sizeof(widest), "0000-00-00 00:00:00");
+        XLabel_setText_2(label, widest);
+        {
+            XSize hint = XWidget_sizeHint((XWidget*)label);
+            if (hint.width > 0)
+                XWidget_setFixedWidth((XWidget*)label, hint.width + 8);
+        }
         demo_clockFormatNow(buf, sizeof(buf));
         XLabel_setText_2(label, buf);
     }
@@ -1310,13 +1347,39 @@ static int demo_sysbarH(DemoWin* self)
 
 /* demo_drawStaticScene 无条件编译：静态场景缓存关闭（昆仑通态 fbdev
  * 定版=0）时，demo_paintScene 的 #else 分支仍需现绘整页静态基底。 */
-/** @brief 绘制不随性能采样变化的 Demo 场景：窗口背景、标题栏与状态栏基底。
- * @details 标题/状态文本与导航按钮由真实子控件接管；此处只画静态底色。
- *          标题栏右端的棋盘格脏区验证贴片（demo_draw_checker）已摘除：
- *          在当前窗口宽度下该贴片落进键盘页黄色说明行，观感为多余的
- *          圆角图标（调试遗留清理）；函数本身保留待脏区验证复用。 */
-static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
+/** @brief 取静态场景的窗口背景色（随配色方案深浅联动）。
+ * @details [皮肤深浅联动 2026-10-18] 窗口背景随颜色方案翻深浅：深色皮肤
+ *   下取应用调色板 Window 角色（对标 qt_fusionPalette 深底），浅色维持
+ *   品牌底 #F4F6F8。原硬编码浅底在深色皮肤下=全窗浅底，而文字已随调色板
+ *   翻浅 → 标题/行标/勾选框/下拉框文字与浅底同色不可见（10-18 真机截图
+ *   实证；导航/状态栏/按钮因自绘深底幸免）。 */
+static uint32_t demo_staticSceneBgColor(void)
 {
+    uint32_t bg = 0xfff4f6f8u;
+#if XPALETTE_ON
+    XStyleHints* hints = XGuiApplication_styleHints();
+    if (hints && XStyleHints_colorScheme(hints) ==
+                     XStyleHintsColorScheme_Dark) {
+        XPalette pal = XGuiApplication_palette();
+        XColor winBg = XPalette_color(&pal, XPaletteColorGroup_Current,
+                                      XPaletteColorRole_Window);
+        bg = 0xff000000u | ((uint32_t)(winBg.m_comp1 & 0xff) << 16) |
+             ((uint32_t)(winBg.m_comp2 & 0xff) << 8) |
+             (uint32_t)(winBg.m_comp3 & 0xff);
+    }
+#endif
+    return bg;
+}
+
+/** @brief 在静态场景里绘制 [clip] 指定的区域（裁剪到窗口内）。
+ * @details 增量更新用：局部失效时只重画该矩形，**不重新分配整窗 XImage**、
+ *   不做全窗填充——原实现每次失效都 free+alloc 整窗 1280x800x4=4.1MB 并
+ *   全窗填充一遍，在 RK3568 上是每帧几十 ms 的内存抖动（板端 485 联调
+ *   尖刺来源之一）。 */
+static void demo_drawStaticSceneRect(DemoWin* self, XPainter* painter,
+                                      int w, int h, const XRect* clip)
+{
+    XRect area;
     XFont painterFont;
     if (!self || !painter || w <= 0 || h <= 0) return;
     XFont_init(&painterFont);
@@ -1324,47 +1387,133 @@ static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
     XPainter_setFont(painter, &painterFont);
     XClassDeinit(&painterFont);
 
-    {
-        /* [皮肤深浅联动 2026-10-18] 窗口背景随颜色方案翻深浅：深色皮肤
-         * 下取应用调色板 Window 角色（对标 qt_fusionPalette 深底），
-         * 浅色维持品牌底 #F4F6F8。原硬编码浅底在深色皮肤下=全窗浅底，
-         * 而文字已随调色板翻浅 → 标题/行标/勾选框/下拉框文字与浅底
-         * 同色不可见（10-18 真机截图实证；导航/状态栏/按钮因自绘深底
-         * 幸免）。 */
-        uint32_t bg = 0xfff4f6f8u;
-#if XPALETTE_ON
-        XStyleHints* hints = XGuiApplication_styleHints();
-        if (hints && XStyleHints_colorScheme(hints) ==
-                         XStyleHintsColorScheme_Dark) {
-            XPalette pal = XGuiApplication_palette();
-            XColor winBg = XPalette_color(&pal, XPaletteColorGroup_Current,
-                                          XPaletteColorRole_Window);
-            bg = 0xff000000u | ((uint32_t)(winBg.m_comp1 & 0xff) << 16) |
-                 ((uint32_t)(winBg.m_comp2 & 0xff) << 8) |
-                 (uint32_t)(winBg.m_comp3 & 0xff);
-        }
-#endif
-        demo_fill_rect(painter, 0, 0, w, h, bg);       /* 窗口背景 */
+    if (clip) {
+        area = *clip;
+        if (area.x < 0) { area.width += area.x; area.x = 0; }
+        if (area.y < 0) { area.height += area.y; area.y = 0; }
+        if (area.x + area.width > w) area.width = w - area.x;
+        if (area.y + area.height > h) area.height = h - area.y;
+        if (area.width <= 0 || area.height <= 0) return;
+    } else {
+        XRect_init(&area, 0, 0, w, h);
     }
-    /* [下移取消 2026-10-25] 状态栏让位带已随 demo_topInset 一并回退：
-     * 沉浸式下状态栏隐藏、应用栏落 y=0，无需染色带。 */
-    /* 标题带/棋盘格由 DemoBrandBar 子控件自绘（布局化 chrome），静态
-     * 基底只剩窗口背景。导航为浮动面板（子控件自绘）。 */
-    /* 状态栏底色由 DemoStatusLabel 子控件自带（要盖在越界内容之上，
-     * 不能画在根背景里）。 */
-    /* 标题文本由 m_titleLabel 子控件绘制（深蓝底白字），静态场景不再重复画。 */
+    /* 窗口背景（静态基底唯一内容）：只填 [area]。 */
+    demo_fill_rect(painter, area.x, area.y, area.width, area.height,
+                   demo_staticSceneBgColor());
+}
+
+/** @brief 绘制不随性能采样变化的 Demo 场景：窗口背景、标题栏与状态栏基底。
+ * @details 标题/状态文本与导航按钮由真实子控件接管；此处只画静态底色。
+ *          标题栏右端的棋盘格脏区验证贴片（demo_draw_checker）已摘除：
+ *          在当前窗口宽度下该贴片落进键盘页黄色说明行，观感为多余的
+ *          圆角图标（调试遗留清理）；函数本身保留待脏区验证复用。 */
+static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
+{
+    demo_drawStaticSceneRect(self, painter, w, h, NULL);
 }
 
 #if XGUI_DEMO_STATIC_SCENE_CACHE_ON
-/** @brief 尺寸或控件状态变化后重建静态场景缓存。 */
+/** @brief 标记静态场景缓存失效。
+ * @param rect NULL = 整窗失效（背景整体可能变：配色方案/resize/切页）；
+ *        非 NULL = 仅该矩形失效（窗口坐标）。
+ * @details [按区域失效 2026-10-30] 原实现只有 bool 脏标记，任一局部事件
+ *   （如底部状态栏文本变化 demo_set_status）都置「整窗脏」⇒ 下次刷新
+ *   free+alloc 整窗 1280x800x4 = 4.1MB 并全窗填充一遍。RK3568 真机实测
+ *   该路径每秒触发数次 ⇒ 周期性内存抖动（分配/缺页/填充几十 ms）⇒ 与
+ *   485 应答的 2.7% / 130~240ms 尖刺同源。
+ *   改为「整窗标记 + 局部脏矩形」两档：局部事件只标自己的矩形，
+ *   刷新时也只重画那块（不再重分配整窗图）。 */
+/* [置脏来源诊断 2026-10-30] 板端实测：每秒 ~2 次整窗失效 ⇒ 每次整窗
+   重建 4.1MB + 整窗上屏 3.6MB ⇒ X11 写阻塞 ⇒ 485 应答 2% 的 150~200ms
+   尖刺。真凶定位用：按来源标签计数，随 HUD 刷新打印 top 命中。 */
+#define DEMO_SSD_SLOTS 12
+static const char* g_ssdSource[DEMO_SSD_SLOTS];
+static unsigned g_ssdCount[DEMO_SSD_SLOTS];
+
+static void demo_markStaticSceneDirty(DemoWin* self, const XRect* rect,
+                                      const char* source)
+{
+    if (!self) return;
+    if (source) {
+        int i;
+        for (i = 0; i < DEMO_SSD_SLOTS; ++i) {
+            if (g_ssdSource[i] == source) { ++g_ssdCount[i]; break; }
+            if (!g_ssdSource[i]) { g_ssdSource[i] = source; g_ssdCount[i] = 1; break; }
+        }
+    }
+    if (!rect) {
+        self->m_staticSceneDirty = true;
+        XRect_init(&self->m_staticSceneDirtyRect, 0, 0, 0, 0);
+        return;
+    }
+    if (self->m_staticSceneDirty) return;   /* 已是整窗失效，局部矩形无意义 */
+    if (rect->width <= 0 || rect->height <= 0) return;
+    {
+        XRect* cur = &self->m_staticSceneDirtyRect;
+        if (cur->width <= 0 || cur->height <= 0) {
+            *cur = *rect;
+        } else {
+            int left = cur->x < rect->x ? cur->x : rect->x;
+            int top = cur->y < rect->y ? cur->y : rect->y;
+            int right = (cur->x + cur->width) > (rect->x + rect->width)
+                            ? (cur->x + cur->width) : (rect->x + rect->width);
+            int bottom = (cur->y + cur->height) > (rect->y + rect->height)
+                             ? (cur->y + cur->height) : (rect->y + rect->height);
+            cur->x = left;
+            cur->y = top;
+            cur->width = right - left;
+            cur->height = bottom - top;
+        }
+    }
+}
+#else
+/* 静态场景缓存关闭：无缓存可失效，标记为空操作（保持调用点统一）。 */
+static void demo_markStaticSceneDirty(DemoWin* self, const XRect* rect,
+                                      const char* source)
+{
+    (void)self;
+    (void)rect;
+    (void)source;
+}
+#endif /* XGUI_DEMO_STATIC_SCENE_CACHE_ON */
+
+#if XGUI_DEMO_STATIC_SCENE_CACHE_ON
+/** @brief 尺寸或控件状态变化后更新静态场景缓存。
+ * @details 整窗失效（首次/resize/配色变化）⇒ 重建整窗图；
+ *   局部失效 ⇒ **复用已分配的整窗图**，只重画脏矩形（零分配）。 */
 static bool demo_updateStaticScene(DemoWin* self, int w, int h)
 {
     XPainter painter;
+    bool sizeMismatch;
+    uint32_t bgNow;
     if (!self || w <= 0 || h <= 0) return false;
-    if (!self->m_staticSceneDirty &&
-        XImage_width(&self->m_staticScene) == w &&
-        XImage_height(&self->m_staticScene) == h)
+    sizeMismatch = (XImage_width(&self->m_staticScene) != w ||
+                    XImage_height(&self->m_staticScene) != h);
+    /* 配色方案深浅切换会让窗口背景色变（demo_staticSceneBgColor）⇒ 缓存
+     * 里的背景色与当前不一致时必须整窗重建（demo 层未连 paletteChanged
+     * 信号，靠这里兜住：否则深色皮肤下背景仍是浅色，浅色文字不可见）。 */
+    bgNow = demo_staticSceneBgColor();
+    if (self->m_staticSceneBgColor != bgNow) {
+        self->m_staticSceneDirty = true;
+        self->m_staticSceneBgColor = bgNow;
+    }
+    if (!self->m_staticSceneDirty && !sizeMismatch &&
+        self->m_staticSceneDirtyRect.width <= 0)
+        return true;   /* 无脏区：什么都不用做（静态场景已是最新） */
+    if (!self->m_staticSceneDirty && !sizeMismatch) {
+        /* 局部失效：只重画脏矩形，不重新分配整窗图。 */
+        XRect area = self->m_staticSceneDirtyRect;
+        XPainter_init(&painter, NULL);
+        if (!XPainter_begin_image(&painter, &self->m_staticScene)) {
+            XPainter_deinit(&painter);
+            return false;
+        }
+        demo_drawStaticSceneRect(self, &painter, w, h, &area);
+        XPainter_end(&painter);
+        XPainter_deinit(&painter);
+        XRect_init(&self->m_staticSceneDirtyRect, 0, 0, 0, 0);
         return true;
+    }
     if (self->m_staticScene.m_data)
         XClassDeinit(&self->m_staticScene);
     XImage_init_ex(&self->m_staticScene, w, h, XImageFormat_ARGB32);
@@ -1378,6 +1527,7 @@ static bool demo_updateStaticScene(DemoWin* self, int w, int h)
     XPainter_end(&painter);
     XPainter_deinit(&painter);
     self->m_staticSceneDirty = false;
+    XRect_init(&self->m_staticSceneDirtyRect, 0, 0, 0, 0);
     return true;
 }
 
@@ -1428,6 +1578,9 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
     XPoint offset;
     XRect dirty;
     XRect tile;
+    XRegion region;
+    XRect fullRect;
+    int ri;
     int width;
     int height;
     if (!self) return;
@@ -1437,27 +1590,22 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
     device = XWidget_paintImage(&self->m_base);
     if (!device) return;
     offset = XWidget_paintOffset(&self->m_base);
-    if (event && XEvent_type(event) == XEVENT_TYPE_PAINT)
-        dirty = XPaintEvent_rect((const XPaintEvent*)event);
-    else
-        XRect_init(&dirty, 0, 0, width, height);
-    /* 事件脏区是控件本地坐标；转成静态场景坐标并裁剪到窗口内，
-       这样常态刷新只复制悬浮层所在小块，而不是整帧 memcpy。 */
-    dirty.x += offset.x;
-    dirty.y += offset.y;
-    if (dirty.x < 0) {
-        dirty.width += dirty.x;
-        dirty.x = 0;
+    /* [逐矩形脏区 2026-10-30] PAINT 事件携带的是**多矩形 region**
+     *（顶层 m_dirty 集合），此前取 XPaintEvent_rect() 的**外接矩形**：
+     * 几个分散的小脏区（HUD 右下 + 顶栏时钟右上 + 其它）⇒ 外接框几乎
+     * 覆盖整窗（板端实测 1280x774）⇒ 把这一整块改写进后备缓冲 ⇒ 上屏
+     * 3.96MB/次（X11 再按最大请求长度拆成 ~15 个条带）⇒ Xorg 负担 ⇒
+     * X11 写阻塞 ⇒ 485 应答 2% 的 130~240ms 尖刺。
+     * 改为**按 region 逐矩形**处理：每块各自拷贝静态场景/重绘，
+     * 上屏量回到真实脏区大小（框架层通病，各平台各控件同款）。 */
+    if (event && XEvent_type(event) == XEVENT_TYPE_PAINT) {
+        region = XPaintEvent_region((const XPaintEvent*)event);
+    } else {
+        XRect_init(&fullRect, 0, 0, width, height);
+        region.rects = &fullRect;
+        region.count = 1;
+        region.capacity = 1;
     }
-    if (dirty.y < 0) {
-        dirty.height += dirty.y;
-        dirty.y = 0;
-    }
-    if (dirty.x + dirty.width > width)
-        dirty.width = width - dirty.x;
-    if (dirty.y + dirty.height > height)
-        dirty.height = height - dirty.y;
-    if (dirty.width <= 0 || dirty.height <= 0) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, device)) {
         XPainter_deinit(&painter);
@@ -1465,30 +1613,51 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
     }
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
-    tile = dirty;
+    for (ri = 0; ri < region.count; ++ri) {
+        /* 事件脏区是控件本地坐标；转成静态场景坐标并裁剪到窗口内，
+           这样常态刷新只复制悬浮层所在小块，而不是整帧 memcpy。 */
+        dirty = region.rects[ri];
+        dirty.x += offset.x;
+        dirty.y += offset.y;
+        if (dirty.x < 0) {
+            dirty.width += dirty.x;
+            dirty.x = 0;
+        }
+        if (dirty.y < 0) {
+            dirty.height += dirty.y;
+            dirty.y = 0;
+        }
+        if (dirty.x + dirty.width > width)
+            dirty.width = width - dirty.x;
+        if (dirty.y + dirty.height > height)
+            dirty.height = height - dirty.y;
+        if (dirty.width <= 0 || dirty.height <= 0) continue;
+        tile = dirty;
 #if XGUI_DEMO_STATIC_SCENE_CACHE_ON
-    if (XPainter_rasterBackend(&painter) == XPainterRasterBackend_Gpu) {
-        /* GPU 直通：绘制目标是窗口 GL 帧缓冲而非 XImage，CPU memcpy
-           的静态场景拷贝不生效；直接用 GPU 原语重画静态场景。 */
-        demo_drawStaticScene(self, &painter, width, height);
-        /* 整帧重绘完成后清静态脏标记（对标软件路径 demo_updateStaticScene
-           的清位语义）：GPU 分支没有 CPU 缓存图像可更新，若不清位，
-           m_staticSceneDirty 在 GPU 模式永远为真，空闲帧泵的每次
-           demo_repaint 都退化为整窗重绘（提交链/读回/BitBlt 全开）。
-           仅当本次脏区已覆盖整窗时才清——FBO 基底随本次整帧刷新完毕；
-           部分脏区不改变基底判定，保留标记让后续补整帧。 */
-        if (dirty.x <= 0 && dirty.y <= 0 &&
-            dirty.x + dirty.width >= width &&
-            dirty.y + dirty.height >= height)
-            self->m_staticSceneDirty = false;
-    }
-    else if (!demo_updateStaticScene(self, width, height) ||
-             !demo_copyStaticTile(&self->m_staticScene, device, &tile,
-                                  &offset))
-        demo_drawStaticScene(self, &painter, width, height);
+        if (XPainter_rasterBackend(&painter) == XPainterRasterBackend_Gpu) {
+            /* GPU 直通：绘制目标是窗口 GL 帧缓冲而非 XImage，CPU memcpy
+               的静态场景拷贝不生效；直接用 GPU 原语重画静态场景。 */
+            demo_drawStaticScene(self, &painter, width, height);
+            /* 整帧重绘完成后清静态脏标记（对标软件路径 demo_updateStaticScene
+               的清位语义）：GPU 分支没有 CPU 缓存图像可更新，若不清位，
+               m_staticSceneDirty 在 GPU 模式永远为真，空闲帧泵的每次
+               demo_repaint 都退化为整窗重绘（提交链/读回/BitBlt 全开）。
+               仅当本次脏区已覆盖整窗时才清——FBO 基底随本次整帧刷新完毕；
+               部分脏区不改变基底判定，保留标记让后续补整帧。 */
+            if (dirty.x <= 0 && dirty.y <= 0 &&
+                dirty.x + dirty.width >= width &&
+                dirty.y + dirty.height >= height)
+                self->m_staticSceneDirty = false;
+            break;   /* GPU 基底整帧重画一次即可 */
+        }
+        else if (!demo_updateStaticScene(self, width, height) ||
+                 !demo_copyStaticTile(&self->m_staticScene, device, &tile,
+                                      &offset))
+            demo_drawStaticSceneRect(self, &painter, width, height, &tile);
 #else
-    demo_drawStaticScene(self, &painter, width, height);
+        demo_drawStaticSceneRect(self, &painter, width, height, &tile);
 #endif /* XGUI_DEMO_STATIC_SCENE_CACHE_ON */
+    }
     /* 性能悬浮层自改为顶层子控件后由 paintTree 最后绘制（见
        VXPerformanceOverlay_paintEvent），根背景阶段不再手动叠加，避免
        业务页面控件（如第 4 页 GroupBox）反向盖住浮层顶部。 */
@@ -2317,11 +2486,38 @@ static bool demo_framePumpBody(void* userData)
                 int h = (deg == 90 || deg == 270) ? bw : bh;
                 XWidget_setGeometry(top, XWidget_x(top), XWidget_y(top), w, h);
                 XWidget_setContentRotation(top, deg);
-                demo->m_staticSceneDirty = true;
+                demo_markStaticSceneDirty(demo, NULL, "orient");
                 XPrintf("XGuiWindowDemo: --orient %d -> %dx%d\n", deg, w, h);
             }
             else {
                 XPrintf("XGuiWindowDemo: --orient %d 平台不支持\n", deg);
+            }
+        }
+    }
+    /* --switch-page N：启动后延迟切到指定页（--switch-page-ms 控制
+       延迟，默认 3000ms）。用于**无头复刻「隐藏页后台刷新」场景**：
+       板端合成点击（XTEST）送不进 app，靠像素坐标点导航按钮太脆弱，
+       与 --orient 同款理由改为 CLI 驱动。典型用法：
+       --page 17（主站页构建即自动连接并轮询）→ 延迟切到 18（从站页
+       在前台、主站页隐藏但轮询继续）⇒ 量前台帧数是否被隐藏页抬高。
+       只跑一次（m_switchPageDone 标记），此后帧泵行为不变。 */
+    if (demo->m_switchPageOpt >= 0 && !demo->m_switchPageDone) {
+        int64_t nowUs = demo_monotonicUsecs();
+        if (demo->m_switchPageMs <= 0) {
+            demo->m_switchPageDone = true;
+            XPrintf("XGuiWindowDemo: delayed switch page=%d\n",
+                    demo->m_switchPageOpt);
+            demo_switchPage(demo, demo->m_switchPageOpt);
+        } else {
+            static int64_t startUs = 0;
+            if (startUs == 0) {
+                startUs = nowUs;
+            } else if ((nowUs - startUs) / 1000 >=
+                       (int64_t)demo->m_switchPageMs) {
+                demo->m_switchPageDone = true;
+                XPrintf("XGuiWindowDemo: delayed switch page=%d\n",
+                        demo->m_switchPageOpt);
+                demo_switchPage(demo, demo->m_switchPageOpt);
             }
         }
     }
@@ -2381,7 +2577,7 @@ static bool demo_framePumpBody(void* userData)
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
             demo_ext_pages_autotest(demo);
 #endif
-            demo->m_staticSceneDirty = true;
+            demo_markStaticSceneDirty(demo, NULL, "autotest");
             demo_repaint(demo);
         }
         else if (demo->m_autoTestFrames == 5) {
@@ -2402,7 +2598,7 @@ static bool demo_framePumpBody(void* userData)
             demo_ext_ensureBuilt(demo, 3);
             if (demo->m_extPages[3]) {
                 demo_switchPage(demo, 8);
-                demo->m_staticSceneDirty = true;
+                demo_markStaticSceneDirty(demo, NULL, "autotest-page");
                 demo_repaint(demo);
             }
 #endif
@@ -2550,6 +2746,20 @@ static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
            250ms（XGUI_PERFORMANCE_OVERLAY_UPDATE_MS），指标更新与
            重绘节奏一致。XGUI_DEMO_IDLE_GATE=0 时本定时器不启动。 */
         demo_repaint(self);
+        /* [置脏来源诊断 2026-10-30] 整窗失效来源计数（板端整窗重绘真凶
+           定位）：每 5 秒打印一次命中，避免刷屏。 */
+        {
+            static int s_ssdTick = 0;
+            if (++s_ssdTick >= 5) {
+                int i;
+                s_ssdTick = 0;
+                for (i = 0; i < DEMO_SSD_SLOTS; ++i) {
+                    if (g_ssdSource[i])
+                        XPrintf("[SSD] %-16s %u\n", g_ssdSource[i],
+                                g_ssdCount[i]);
+                }
+            }
+        }
         XEvent_accept((XEvent*)event);
         return;
     }
@@ -2604,7 +2814,12 @@ static void demo_set_status(DemoWin* self, const char* text)
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XLabel_setText_2((XLabel*)&self->m_statusLabel, text);
 #endif
-    self->m_staticSceneDirty = true;
+    /* [局部失效 2026-10-30] 状态栏底色由 DemoStatusLabel 子控件自带
+     * （不在静态场景里，见 demo_drawStaticScene 注），setText 后由控件
+     * 自己标脏重绘 ⇒ 此处**不必**作废整窗静态场景缓存。
+     * 原实现每次状态栏变化都置整窗脏 ⇒ 刷新时 free+alloc 整窗
+     * 1280x800x4=4.1MB 并全窗填充（RK3568 上是每帧几十 ms 的内存
+     * 抖动，485 应答 2.7% / 130~240ms 尖刺的来源之一）。 */
     demo_repaint(self);
 }
 
@@ -3659,7 +3874,7 @@ static void demo_switchPage(DemoWin* self, int index)
        内容留在后备缓冲（新页控件未覆盖处露出旧像素=叠印，2026-10-03
        目验 page7 多组文字重影根因）；静态场景缓存关（默认 0）时同样
        需要整页刷新。 */
-    self->m_staticSceneDirty = true;
+    demo_markStaticSceneDirty(self, NULL, "switchPage");
     {
         XRect full;
         XRect_init(&full, 0, 0, XWidget_width(&self->m_base),
@@ -4070,7 +4285,7 @@ void demo_main_sceneInvalidate(void* user)
 {
     DemoWin* win = (DemoWin*)user;
     if (!win) return;
-    win->m_staticSceneDirty = true;
+    demo_markStaticSceneDirty(win, NULL, "sceneInvalidate");
     demo_repaint(win);
 }
 
@@ -4430,7 +4645,7 @@ static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
     DemoWin* demo = (DemoWin*)self;
     XClass_Parent(XWidget, EXWidget_ResizeEvent,
                   void(*)(XWidget*, XEvent*))(self, event);
-    demo->m_staticSceneDirty = true;
+    demo_markStaticSceneDirty(demo, NULL, "resize");
 #if XWIDGET_ON && XLAYOUT_ON
     /* [跟随延迟兜底 2026-10-18] 显式重解算后再做 demo 侧排布：RESIZE 派
        发前平台路径已激活根布局（XWidget_applyWindowGeometry 平台路径
@@ -4490,7 +4705,7 @@ static void VDemoWin_changeEvent(XWidget* self, XEvent* event)
     if (XEvent_type(event) != XEVENT_TYPE_WINDOW_STATE_CHANGE) return;
     {
         DemoWin* demo = (DemoWin*)self;
-        demo->m_staticSceneDirty = true;
+        demo_markStaticSceneDirty(demo, NULL, "winstate");
     }
     /* 【关键】根布局 contentsMargins.top 是装饰保留边距的**快照**（见
      * demo_main_refreshChrome 注释）：框架全屏时把保留边距归零，但 demo
@@ -4883,7 +5098,7 @@ static DemoWin* DemoWin_create(void)
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, true);
     XImage_init(&self->m_staticScene);
-    self->m_staticSceneDirty = true;
+    demo_markStaticSceneDirty(self, NULL, "init");
     self->m_framePump = NULL;
     self->m_autoQuitTimer = XTIMER_INVALID_ID;
     self->m_lcdTimer = XTIMER_INVALID_ID;
@@ -6366,6 +6581,8 @@ int xgui_demo_main(int argc, char* argv[])
     bool openMenuOpt;
     int screenshotTab;
     int orientOpt;      /* --orient：截图前切到的窗口方向（0/90/180/270）。 */
+    int switchPageOpt;   /* --switch-page：启动后延迟切到的页号（-1=不切）。 */
+    int switchPageMs;    /* --switch-page-ms：延迟毫秒（默认 3000）。 */
     bool autoTest;
     bool apiTestSuite;
     const char* apiTestFamily;
@@ -6478,6 +6695,8 @@ int xgui_demo_main(int argc, char* argv[])
     openMenuOpt = false;
     screenshotTab = -1;
     orientOpt = -1;   /* 默认不切方向。 */
+    switchPageOpt = -1; /* 默认不延迟切页。 */
+    switchPageMs = 3000; /* 默认延迟 3s（给首帧/自动连接留时间）。 */
     memset(&remoteCli, 0, sizeof(remoteCli)); /* --remote-* 全默认。 */
     memset(&remoteClientCli, 0, sizeof(remoteClientCli)); /* --remote-client 族全默认。 */
     for (argi = 1; argi < argc; ++argi) {
@@ -6524,6 +6743,17 @@ int xgui_demo_main(int argc, char* argv[])
         }
         else if (strcmp(argv[argi], "--page") == 0 && argi + 1 < argc) {
             screenshotPage = atoi(argv[++argi]);
+        }
+        else if (strcmp(argv[argi], "--switch-page") == 0 &&
+                 argi + 1 < argc) {
+            /* 延迟切页（无头复刻「隐藏页后台刷新」场景用）：
+               --page 17（主站页自动连并轮询）→ --switch-page 18
+               ⇒ 从站页在前台、主站页隐藏但轮询继续。 */
+            switchPageOpt = atoi(argv[++argi]);
+        }
+        else if (strcmp(argv[argi], "--switch-page-ms") == 0 &&
+                 argi + 1 < argc) {
+            switchPageMs = atoi(argv[++argi]);
         }
         else if (strcmp(argv[argi], "--menu") == 0) {
             /* 启动即打开移动端菜单页（紧凑形态的导航页）：手机端无头/
@@ -7004,6 +7234,9 @@ int xgui_demo_main(int argc, char* argv[])
     win->m_autoTest = autoTest;
     win->m_autoTestFrames = 0;
     win->m_orientOpt = orientOpt;
+    win->m_switchPageOpt = switchPageOpt;
+    win->m_switchPageMs = switchPageMs;
+    win->m_switchPageDone = false;
     win->m_orientApplied = false;
     if (autoTest)
         demo_switchPage(win, 3); /* 自动测试固定切第 4 页 */

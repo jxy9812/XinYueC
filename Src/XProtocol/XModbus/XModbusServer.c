@@ -293,6 +293,9 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
+        /* 读事件：网络读请求成功取数（本地 data1/data2 读不经本函数，
+         * 故不发——语义=网络读事件，见 XModbusServer_dataRead_signal）。 */
+        XModbusServer_dataRead_signal(server, XModbusCoils, startAddress, quantity);
 
         uint8_t byteCount = (quantity + 7) / 8;
         XModbusResponse* response = XModbusResponse_create_with_code(code);
@@ -336,6 +339,8 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
+        /* 读事件（FC02 离散输入）：同 FC01 口径。 */
+        XModbusServer_dataRead_signal(server, XModbusDiscreteInputs, startAddress, quantity);
 
         uint8_t byteCount = (quantity + 7) / 8;
         XModbusResponse* response = XModbusResponse_create_with_code(code);
@@ -379,6 +384,8 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
+        /* 读事件（FC03 保持寄存器）：同 FC01 口径。 */
+        XModbusServer_dataRead_signal(server, XModbusHoldingRegisters, startAddress, quantity);
 
         uint8_t byteCount = (uint8_t)(quantity * 2);
         XModbusResponse* response = XModbusResponse_create_with_code(code);
@@ -420,6 +427,8 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
+        /* 读事件（FC04 输入寄存器）：同 FC01 口径。 */
+        XModbusServer_dataRead_signal(server, XModbusInputRegisters, startAddress, quantity);
 
         uint8_t byteCount = (uint8_t)(quantity * 2);
         XModbusResponse* response = XModbusResponse_create_with_code(code);
@@ -1067,8 +1076,16 @@ static void VXModbusServer_deinit(XModbusServer* server)
 // =============== 信号 ===============
 void* XModbusServer_dataWritten_signal(XModbusServer* server, XModbusRegisterType table, int address, int size)
 {
-    XEmitSignal(server, XModbusServer_dataWritten_signal, 
-                XVarList_Create(XVar(XModbusRegisterType, table), XVar(int, address), XVar(int, size)), 
+    XEmitSignal(server, XModbusServer_dataWritten_signal,
+                XVarList_Create(XVar(XModbusRegisterType, table), XVar(int, address), XVar(int, size)),
+                NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+/* =============== 信号 =============== */
+void* XModbusServer_dataRead_signal(XModbusServer* server, XModbusRegisterType table, int address, int size)
+{
+    XEmitSignal(server, XModbusServer_dataRead_signal,
+                XVarList_Create(XVar(XModbusRegisterType, table), XVar(int, address), XVar(int, size)),
                 NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 

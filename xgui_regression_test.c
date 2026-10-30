@@ -21660,6 +21660,135 @@ static void test_backingstore_shared_software_core(void)
     XPlatformBackingStore_delete(gpbs);
     XClassDelete(app);
 }
+
+/**
+ * @brief 缓冲形态**跨平台一致性契约**（2026-10-30）。
+ * @details 「三种形态在不同平台上功能与行为统一」的落地门禁：同一组断言
+ *          在 Windows / X11 / fbdev 上都必须成立，不按平台分叉。
+ *
+ *   ① 形态可查询、名字稳定：platform-surface / software-double /
+ *      software-single（跨平台同名，诊断与断言都靠它）。
+ *   ② 形态与**可观测行为**一致：software-double 交替（提交后绘制目标
+ *      地址互换）；platform-surface / software-single 不交替（地址恒定）。
+ *   ③ present 收到的提交区**恰等于**本次脏区（不多不少）——三形态同契约。
+ *   ④ 绘制目标始终持有完整窗口内容：脏区外的像素不被清零/错位。
+ *   ⑤ 外部缓冲绑定后形态必为软件侧（② 不参与）——平台能力差异（Windows
+ *      有共享表面、fbdev 有意不提供）不影响契约本身。
+ */
+static void test_backingstore_buffer_mode_contract(void)
+{
+    char argv0[] = "xgui_test";
+    char* argv[] = { argv0, NULL };
+    int argc = 1;
+    XGuiApplication* app;
+    XPlatformNativeInterface* native;
+    XPlatformIntegration* gpi;
+    XPlatformBackingStore* gpbs;
+    XPlatformBackingStoreBufferMode mode;
+    const char* modeName;
+    XSize size;
+    XImage* dev0;
+    XImage* dev1;
+    XRegion region;
+    XRect dirty;
+    size_t required;
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    unsigned char extBuffer1[512];
+    unsigned char extBuffer2[512];
+#else
+    unsigned char extBuffer1[512];
+#endif
+
+    app = XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, argc, argv);
+    expect_true(app != NULL, "形态契约：创建应用");
+    native = XGuiApplication_platformNativeInterface();
+    gpi = native ? XPlatformNativeInterface_integration(native) : NULL;
+    gpbs = gpi ? XPlatformIntegration_createPlatformBackingStore(gpi, NULL)
+               : NULL;
+    expect_true(gpbs != NULL, "形态契约：创建平台后端");
+
+    /* ---- ① 形态可查询、名字稳定 ---- */
+    mode = XPlatformBackingStore_bufferMode(gpbs);
+    modeName = XPlatformBackingStore_bufferModeName(mode);
+    expect_true(modeName != NULL &&
+                (strcmp(modeName, "platform-surface") == 0 ||
+                 strcmp(modeName, "software-double") == 0 ||
+                 strcmp(modeName, "software-single") == 0),
+                "形态契约：形态名跨平台稳定（三种之一）");
+    expect_true(XPlatformBackingStore_bufferModeName(
+                    XPlatformBackingStoreMode_PlatformSurface) != NULL &&
+                XPlatformBackingStore_bufferModeName(
+                    XPlatformBackingStoreMode_SoftwareDouble) != NULL &&
+                XPlatformBackingStore_bufferModeName(
+                    XPlatformBackingStoreMode_SoftwareSingle) != NULL,
+                "形态契约：三个形态名都可取（非 NULL）");
+
+    /* ---- ④ 绘制目标持有完整窗口内容（先在远处写像素） ---- */
+    XSize_init(&size, 8, 6);
+    XPlatformBackingStore_resize(gpbs, &size);
+    dev0 = XPlatformBackingStore_paintDevice(gpbs);
+    expect_true(dev0 != NULL, "形态契约：resize 后有绘制目标");
+    if (dev0) XImage_fillRect(dev0, &(XRect){5, 4, 1, 1}, 0xff334455u);
+
+    /* ---- ② 形态与可观测行为一致（交替 ⇔ software-double） ---- */
+    XRect_init(&dirty, 0, 0, 2, 2);
+    XRegion_init(&region);
+    XRegion_addRect(&region, &dirty);
+    XPlatformBackingStore_flush(gpbs, NULL, &region, NULL);
+    dev1 = XPlatformBackingStore_paintDevice(gpbs);
+    if (mode == XPlatformBackingStoreMode_SoftwareDouble)
+        expect_true(dev0 != NULL && dev1 != NULL && dev0 != dev1,
+                    "形态契约：software-double 提交后交替到另一帧");
+    else
+        expect_true(dev0 != NULL && dev1 != NULL && dev0 == dev1,
+                    "形态契约：platform-surface/software-single 不交替");
+    XRegion_deinit(&region);
+
+    /* ---- ③ 提交区恰等于本次脏区 + ④ 脏区外像素保持 ---- */
+    XRect_init(&dirty, 1, 1, 2, 3);
+    XRegion_init(&region);
+    XRegion_addRect(&region, &dirty);
+    g_backingStoreCorePresentCount = 0;
+    g_backingStoreCorePresentReentered = 1; /* 避免回调内重入污染计数 */
+    XPlatformBackingStore_setPresentCallback(
+        gpbs, gui_app_probe_backingStoreCorePresent, NULL);
+    XPlatformBackingStore_flush(gpbs, NULL, &region, NULL);
+    expect_true(g_backingStoreCorePresentCount == 1 &&
+                g_backingStoreCorePresentRect.x == dirty.x &&
+                g_backingStoreCorePresentRect.y == dirty.y &&
+                g_backingStoreCorePresentRect.width == dirty.width &&
+                g_backingStoreCorePresentRect.height == dirty.height,
+                "形态契约：present 收到的提交区恰等于脏区");
+    XPlatformBackingStore_setPresentCallback(gpbs, NULL, NULL);
+    g_backingStoreCorePresentReentered = 0;
+    XRegion_deinit(&region);
+    dev1 = XPlatformBackingStore_paintDevice(gpbs);
+    expect_true(dev1 != NULL &&
+                XImage_pixel(dev1, 5, 4) == 0xff334455u,
+                "形态契约：脏区外像素保持不变（目标持有完整窗口内容）");
+
+    /* ---- ⑤ 外部缓冲绑定 ⇒ 形态必为软件侧 ---- */
+    required = XPlatformBackingStore_requiredBufferSize(&size);
+    if (required > 0 && required <= sizeof(extBuffer1))
+    {
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+        expect_true(XPlatformBackingStore_setBuffers(gpbs, extBuffer1,
+                                                      extBuffer2,
+                                                      sizeof(extBuffer1)),
+                    "形态契约：外部双缓冲绑定成功");
+#else
+        expect_true(XPlatformBackingStore_setBuffers(gpbs, extBuffer1, NULL,
+                                                      sizeof(extBuffer1)),
+                    "形态契约：外部单缓冲绑定成功");
+#endif
+        mode = XPlatformBackingStore_bufferMode(gpbs);
+        expect_true(mode != XPlatformBackingStoreMode_PlatformSurface,
+                    "形态契约：外部缓冲绑定后形态为软件侧（不因平台而异）");
+    }
+
+    XPlatformBackingStore_delete(gpbs);
+    XClassDelete(app);
+}
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */
 
 static void test_window_event_payloads(void)
@@ -23116,6 +23245,205 @@ static void test_widget_contract(void)
         if (a) XClassDelete((XClass*)a);
     }
 #endif /* XWINDOW_ON && XACCESSIBLE_ON */
+}
+
+/** @brief 顶层脏区面积（矩形并集按矩形逐项累加，仅用于测试断言）。
+ *  @details XRegion_addRect 会把相邻/重叠矩形合并 ⇒ 脏区 count 不适合
+ *           做增量断言（可见控件 update 可能并入已有矩形而不改 count）。
+ *           面积口径对合并免疫：可见 update 必增、隐藏 update 必不变。 */
+static int test_topDirtyArea(const XWidget* top)
+{
+    int area = 0;
+    int i;
+    if (!top) return 0;
+    for (i = 0; i < top->m_dirty.count; ++i)
+        area += top->m_dirty.rects[i].width * top->m_dirty.rects[i].height;
+    return area;
+}
+
+/** @brief 隐藏控件的重绘请求不得影响可见顶层（对标 Qt 6.8 语义）。
+ *  @details Qt 的两条硬约束（本修复按其逐条对齐）：
+ *          ① QWidgetPrivate::update（qwidget.cpp:11303）与
+ *             QWidgetPrivate::repaint（qwidget.cpp:11242）都是
+ *             `if (!q->isVisible() ...) return;` —— 隐藏控件的
+ *             update()/repaint() 是**完全空操作**：不记顶层脏区、
+ *             不派发顶层 PAINT、不派发自身 paintEvent。
+ *             缺失该闸时，隐藏页的定时器回调（如 Modbus 主站页轮询
+ *             统计行 setText）会把前台顶层刷成 20+ 帧（读数虚高 +
+ *             真实重复重绘/重复上屏）。
+ *          ② 隐藏期内的改动不丢、残影不留：show 时补画自身整块
+ *             （Qt show_sys 的 invalidateBackingStore(rect)），hide 时
+ *             作废父级上该控件占据的区域（Qt hide_sys）。 */
+static void test_widget_hidden_update_no_frame_contract(void)
+{
+    TestWidget* root;
+    TestWidget* pageA;
+    TestWidget* label;
+    int areaBefore;
+    int paintBefore;
+
+    root = TestWidget_create(NULL);
+    pageA = root ? TestWidget_create(&root->m_base) : NULL;
+    label = pageA ? TestWidget_create(&pageA->m_base) : NULL;
+    if (!root || !pageA || !label) {
+        expect_true(false, "隐藏重绘契约测试控件创建");
+        if (label) XClassDelete((XClass*)label);
+        if (pageA) XClassDelete((XClass*)pageA);
+        if (root) XClassDelete((XClass*)root);
+        return;
+    }
+    XWidget_setGeometry(&pageA->m_base, 0, 0, 200, 100);
+    XWidget_setGeometry(&label->m_base, 10, 10, 80, 20);
+
+    /* ① 顶层首帧补画必须绕过可见性闸：show 之前顶层尚未可见，
+     *    若首帧补画被闸吃掉则新窗口首帧无内容（Qt show_sys 的
+     *    invalidateBackingStore(rect) 同款语义）。 */
+    XRegion_clear(&root->m_base.m_dirty);
+    XWidget_show(&root->m_base);
+    expect_true(test_topDirtyArea(&root->m_base) > 0,
+                "顶层首帧补画入顶层脏区（绕过可见性闸）");
+    expect_true(XWidget_isVisible(&root->m_base), "顶层 show 后可见");
+
+    XWidget_show(&pageA->m_base);
+    XWidget_show(&label->m_base);
+    expect_true(XWidget_isVisible(&label->m_base), "页内控件可见");
+
+    /* ② 可见控件的 update 仍并入顶层脏区（闸不得误伤可见路径）。 */
+    XRegion_clear(&root->m_base.m_dirty);
+    areaBefore = test_topDirtyArea(&root->m_base);
+    XWidget_update(&label->m_base);
+    expect_true(test_topDirtyArea(&root->m_base) > areaBefore,
+                "可见控件 update 并入顶层脏区");
+
+    /* ③ 隐藏页内的 update/repaint 是完全空操作：顶层脏区不变、
+     *    不派发 paintEvent（Qt QWidgetPrivate::update/repaint 的
+     *    !isVisible() 早退）。 */
+    XWidget_hide(&pageA->m_base);
+    expect_true(!XWidget_isVisible(&label->m_base),
+                "隐藏页连带子树生效不可见");
+    XRegion_clear(&root->m_base.m_dirty);
+    areaBefore = test_topDirtyArea(&root->m_base);
+    paintBefore = label->paintCount;
+    XWidget_update(&label->m_base);
+    expect_true(test_topDirtyArea(&root->m_base) == areaBefore,
+                "隐藏控件 update 不并入顶层脏区");
+    expect_true(label->paintCount == paintBefore,
+                "隐藏控件 update 不派发 paintEvent");
+    XWidget_repaint(&label->m_base);
+    expect_true(label->paintCount == paintBefore,
+                "隐藏控件 repaint 不派发 paintEvent");
+    expect_true(test_topDirtyArea(&root->m_base) == areaBefore,
+                "隐藏控件 repaint 不并入顶层脏区");
+
+    /* ④ 隐藏页的定时器式连续 setText 不得抬高顶层绘制活动率：
+     *    连续多次 update 后顶层脏区面积恒为 0。 */
+    {
+        int i;
+        for (i = 0; i < 32; ++i)
+            XWidget_update(&label->m_base);
+        expect_true(test_topDirtyArea(&root->m_base) == areaBefore,
+                    "隐藏控件连续 update 不产生顶层脏区");
+    }
+
+    /* ⑤ show 补画：隐藏期内的改动不丢——重新显示后该控件整块入脏区。 */
+    XRegion_clear(&root->m_base.m_dirty);
+    XWidget_show(&pageA->m_base);
+    expect_true(XWidget_isVisible(&label->m_base),
+                "重新 show 恢复生效可见");
+    expect_true(test_topDirtyArea(&root->m_base) > 0,
+                "重新 show 后补画入顶层脏区");
+
+    /* ⑥ hide 作废父级该区域：残影不留（Qt hide_sys 的
+     *    invalidateBackingStore(q->rect()) 语义）。 */
+    XRegion_clear(&root->m_base.m_dirty);
+    XWidget_hide(&label->m_base);
+    expect_true(test_topDirtyArea(&root->m_base) > 0,
+                "隐藏控件作废父级该区域（防残影）");
+
+    XClassDelete((XClass*)label);
+    XClassDelete((XClass*)pageA);
+    XClassDelete((XClass*)root);
+}
+
+/** @brief 端到端：隐藏页的后台刷新不得抬高可见顶层帧数（用户症状本体）。
+ *  @details 复刻真实场景：Modbus 主站页（隐藏）内的轮询统计行定时器
+ *           持续 setText → update()；前台是从站页。HUD 的「绘制活动率」
+ *           口径 = **顶层 paintEvent 派发次数/秒**，缺失可见性闸时隐藏页
+ *           的每次刷新都被记到前台窗口头上（读数从 2~3 跳到 20+）。
+ *           本用例在真实事件泵下直接数顶层 paintEvent：
+ *           ① 隐藏页连续刷新 → 顶层 paintEvent 增量必须为 0；
+ *           ② 可见控件刷新 → 顶层 paintEvent 必须增加（口径本身有效的
+ *              正对照，防止用例因「泵没派发」而恒真）。 */
+static void test_widget_hidden_page_no_frame_endtoend(void)
+{
+    XGuiApplication* app;
+    TestWidget* win;
+    TestWidget* visPage;
+    TestWidget* hidPage;
+    TestWidget* visLabel;
+    TestWidget* hidLabel;
+    int paintsBefore;
+    int i;
+
+    app = XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL);
+    expect_true(app != NULL, "端到端隐藏页帧数用例：应用创建");
+    win = TestWidget_create(NULL);
+    visPage = win ? TestWidget_create(&win->m_base) : NULL;
+    hidPage = win ? TestWidget_create(&win->m_base) : NULL;
+    visLabel = visPage ? TestWidget_create(&visPage->m_base) : NULL;
+    hidLabel = hidPage ? TestWidget_create(&hidPage->m_base) : NULL;
+    if (!app || !win || !visPage || !hidPage || !visLabel || !hidLabel) {
+        expect_true(false, "端到端隐藏页帧数用例：控件创建");
+        if (hidLabel) XClassDelete((XClass*)hidLabel);
+        if (visLabel) XClassDelete((XClass*)visLabel);
+        if (hidPage) XClassDelete((XClass*)hidPage);
+        if (visPage) XClassDelete((XClass*)visPage);
+        if (win) XClassDelete((XClass*)win);
+        if (app) XClassDelete(app);
+        return;
+    }
+    XWidget_resize(&win->m_base, 400, 300);
+    XWidget_setGeometry(&visPage->m_base, 0, 0, 400, 300);
+    XWidget_setGeometry(&hidPage->m_base, 0, 0, 400, 300);
+    XWidget_setGeometry(&visLabel->m_base, 10, 10, 120, 20);
+    XWidget_setGeometry(&hidLabel->m_base, 10, 10, 120, 20);
+    XWidget_show(&win->m_base);
+    XWidget_show(&visPage->m_base);
+    XWidget_show(&visLabel->m_base);
+    XWidget_show(&hidPage->m_base);
+    XWidget_show(&hidLabel->m_base);
+    /* 切到从站页：主站页隐藏但其定时器仍在跑。 */
+    XWidget_hide(&hidPage->m_base);
+    expect_true(XWidget_isVisible(&visLabel->m_base) &&
+                !XWidget_isVisible(&hidLabel->m_base),
+                "端到端：前台页可见、后台页不可见");
+    /* 首帧排空（窗口首显/首帧 paint 不计入本用例口径）。 */
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+
+    /* 正对照：可见控件刷新 → 顶层 paintEvent 增加。 */
+    paintsBefore = win->paintCount;
+    for (i = 0; i < 10; ++i) {
+        XWidget_update(&visLabel->m_base);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+    }
+    expect_true(win->paintCount > paintsBefore,
+                "正对照：可见控件刷新产生顶层 paintEvent");
+
+    /* 本体：隐藏页连续刷新 → 顶层 paintEvent 增量必须为 0。 */
+    paintsBefore = win->paintCount;
+    for (i = 0; i < 50; ++i) {
+        XWidget_update(&hidLabel->m_base);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+    }
+    expect_true(win->paintCount == paintsBefore,
+                "隐藏页连续刷新不产生顶层 paintEvent（前台帧数不虚高）");
+
+    XClassDelete((XClass*)hidLabel);
+    XClassDelete((XClass*)visLabel);
+    XClassDelete((XClass*)hidPage);
+    XClassDelete((XClass*)visPage);
+    XClassDelete((XClass*)win);
+    XClassDelete(app);
 }
 
 #if XLAYOUT_ON
@@ -39129,9 +39457,12 @@ int main(void)
 #endif /* XGUIAPPLICATION_ON */
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
     test_backingstore_shared_software_core();
+    test_backingstore_buffer_mode_contract();
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */
 #if XWIDGET_ON
     test_widget_contract();
+    test_widget_hidden_update_no_frame_contract();
+    test_widget_hidden_page_no_frame_endtoend();
     test_widget_zorder_contract();
     test_widget_focus_tab_order();
     test_widget_string_metadata_contract();

@@ -27,6 +27,38 @@ bool XDeviceSerialPort_platformControl(XFd fd, uint32_t command,
 bool XDeviceSerialPort_platformEnumeratePorts(XDeviceSerialPortPortCollector collector,
                                               void* userData);
 
+/* ================================================================
+ * 可读事件源（跨平台统一的等待集接入，2026-10-30）
+ *
+ * 语义：串口 fd 注册进**框架自己的异步后端等待集**（数据到达 ⇒ 内核
+ * 唤醒阻塞中的事件循环 ⇒ 回调属主发射 readyRead）。**不再等下一轮
+ * 「毫秒级轮询拍」**——板端主循环一圈 100+ms 时，轮询拍的感知延迟同
+ * 量级，是 485 轮询「卡一下」的来源之一。
+ *
+ * 与网络套接字同一套机制（socket notifier / fbdev 触摸通道）：
+ *   - POSIX：框架异步后端 XAbstractNetIoRing 的 **epoll / io_uring 双
+ *     引擎**（同一 fd 语义 ⇒ 跨设备行为统一）；
+ *   - Windows：框架 IOCP。
+ *
+ * 不支持事件驱动的平台（裸机 RTOS 等）⇒ 返回 false，调用方保留毫秒级
+ * 轮询兜底，行为与改造前逐位一致（不产生功能回退）。
+ * ================================================================ */
+#if !XPLATFORM_POSIX && !defined(_WIN32)
+/* 非 POSIX / 非 Windows（裸机 RTOS 等）：无框架异步后端 ⇒ 不支持。 */
+bool XDeviceSerialPort_platformArmReadable(XFd fd,
+                                           void (*notify)(void* ctx),
+                                           void* ctx)
+{
+    (void)fd; (void)notify; (void)ctx;
+    return false;
+}
+
+void XDeviceSerialPort_platformDisarmReadable(XFd fd)
+{
+    (void)fd;
+}
+#endif
+
 static XDeviceContext* VXDeviceSerialPort_open(XDevice* self,
     const XDeviceOpenOptions* options, int* error);
 static void VXDeviceSerialPort_close(XDevice* self, XDeviceContext* handle);

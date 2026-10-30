@@ -145,22 +145,40 @@
 #endif
 
 /* 后备存储渲染模式（参考 LVGL 9 的 PARTIAL/DIRECT/FULL）。
- * PARTIAL：使用小块 tile buffer，逐片绘制并提交；DIRECT：整屏双缓冲，
- * 绘制脏区后交换；FULL：每次绘制并提交整屏。 */
+ * 三态的差异在**缓冲架构**与**上屏范围**，语义与 LVGL v9 对齐
+ * （lv_refr.c 实证）：
+ * - PARTIAL：小块 tile buffer（可小于屏），逐片绘制并提交，flush 回调
+ *   收到当前失效子区域；
+ * - DIRECT：整屏双缓冲（两块整屏缓冲），**绘制脏区 + 按脏区提交**，
+ *   flush 回调逐个收到失效区域，最后一块刷完才换缓冲（LVGL 的
+ *   flushing_last 换页语义）；
+ * - FULL：整屏单缓冲，**每帧整帧光栅 + 整屏提交**，flush 回调收到的
+ *   是整屏（LVGL 在 FULL 分支主动把失效区扩成整屏：
+ *   disp->inv_areas[0] = scr_area）。
+ * ⇒ 要「脏区光栅化 + 脏区上屏」走 DIRECT；要「整帧全量」走 FULL。 */
 #define XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL 0
 #define XGUI_BACKINGSTORE_RENDER_MODE_DIRECT  1
 #define XGUI_BACKINGSTORE_RENDER_MODE_FULL    2
 #ifndef XGUI_BACKINGSTORE_RENDER_MODE
 #if defined(_WIN32) || (defined(__linux__) && XPLATFORMNATIVEWINDOW_ON && \
                         !XPLATFORM_FBDEV_ON)
-/* 桌面原生窗口需要持久整帧缓冲：先在完整帧上合成脏区，再一次提交，
- * 与 Qt QBackingStore 的可见帧边界一致。PARTIAL tile 会逐块 present，
- * 在 X11 的高频小区域更新中可见为闪烁。
- * 【合并裁决 2026-09-29 VK 夜战】桌面分支改回 FULL：DIRECT 桌面默认下
- * demo --benchmark 泵对所有后端（SW/GL/VK）空转挂死（CPU~0.2s 不泵帧，
- * 三复现），真机验证未覆盖桌面基准路径。桌面 DIRECT 的 Qt 对齐语义
- * 待上游修好桌面泵后再评估重落。 */
-#define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_FULL
+/* 桌面原生窗口（Windows 桌面 / Linux X11）走 DIRECT：LVGL 的高效增量
+ * 路径——脏区光栅化 + 按脏区上屏，帧上传量与窗口面积解耦。X11 上尤其
+ * 划算：旧 FULL 路径每帧整窗 XPutImage（1280×800×4B ≈ 4MB/帧），
+ * DIRECT 只提交脏区矩形。
+ * 【历史订正 2026-10-30】本分支原为 FULL，其注释记的「2026-09-29
+ * 桌面 DIRECT 泵空转挂死（SW/GL/VK 三后端通杀）」归因**是错的**：
+ * 真根因是 demo 的 setvbuf(stdout,NULL,_IOLBF,0) 触发 MSVC UCRT 断言
+ * （2<=size<=INT_MAX）弹模态框挡死 main()，发生在渲染模式被读取之前，
+ * 与 RENDER_MODE 无关；该断言已在 Test/XGuiDemo/xgui_window_demo.c 改为
+ * setvbuf(stdout,NULL,_IONBF,1024) 修复（提交 b404856c，其 commit message
+ * 已自述 setvbuf 为「真正根因」）。DIRECT 桌面此后于 2026-10-19 /
+ * 2026-10-28 在 Xvfb 上实测跑通并修掉两个 DIRECT 专属缺陷（换角整帧
+ * 脏闩统一点、多矩形 whole 归并为包围盒），本分支据此重落 DIRECT。
+ * 【Qt 对齐注】FULL 的「整帧全量」是 LVGL 语义，与 Qt QBackingStore
+ * 的「持久整帧 + 脏区 blit」不同——本框架以 LVGL 为三态参照，故脏区化
+ * 需求由 DIRECT 承接而非改造 FULL。 */
+#define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_DIRECT
 #else
 /* 嵌入式 fbdev 直写（XPLATFORM_FBDEV_ON）：与桌面同为 DIRECT——
  * 脏区绘制 + 硬件双缓冲轮换翻页（pan+FB_ACTIVATE_VBL 防撕裂）+
@@ -341,12 +359,29 @@
 #undef XGUI_REPAINT_MAX_FPS
 #define XGUI_REPAINT_MAX_FPS 0
 #endif
-/* fbdev 影子缓冲豁免：fb 直写无翻页轮换，双缓冲只会多分配一块
- * 1.2MB 影子并触发无意义的交替+整搬（昆仑通态 A7 实测）。 */
-#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_DIRECT && \
-    !XPLATFORM_FBDEV_ON && XGUI_BACKINGSTORE_BUFFER_COUNT < 2
+/* 【桌面缓冲形态定案 2026-10-30】**桌面不再强制双缓冲**，默认单缓冲。
+ *
+ * 依据（代码核对 + RK3568 板端实测）：
+ * ① 桌面的绘制目标**从来不是可见表面**——X11 是「软件 XImage → 逐矩形
+ *    XPutImage」，Windows 是「native DIB → 逐矩形 BitBlt」⇒ 绘制期的
+ *    中间态不会被屏幕看到 ⇒ **双缓冲在本框架里不提供任何撕裂防护**
+ *    （present 与绘制读同一块缓冲，见 flush 的 active 读取路径）。
+ * ② 双缓冲在本框架的唯一作用是「把提交区同步进第二块 + 翻帧」，而第二
+ *    块缓冲**没有任何「从它恢复」的用途**（全库仅 flush 的 inactive 拷贝
+ *    与翻帧两处引用）⇒ 对桌面是纯开销：一块全窗缓冲 + 每帧提交区拷贝。
+ * ③ 逐矩形上屏（docs/485轮询性能排查与修复_20261029.md §18）之后，每帧
+ *    提交区只有几十 KB ⇒ 拷贝成本几乎归零，但那块全窗缓冲仍在：板端
+ *    1280×800 ARGB32 = 4.1MB，实测进程 RSS 50.9MB → 45.3MB（-11%），
+ *    帧耗时/上屏量/485 时延三者持平（单缓冲实测帧 7.7~12.0ms、RTT
+ *    p99=10.8ms 无尖刺）。
+ * ④ fbdev 直写面**仍走影子缓冲**（fbdev 影子缓冲架构：painter 直写可见
+ *    fb 会把中间态扫上屏，昆仑通态 A7 白屏一闪即此），其单缓冲钳制判式
+ *    （驱动硬件轮换 ∨ 换轴 90/270 旋转态）保留在平台层，与缓冲数量无关。
+ *
+ * 需要双缓冲时：构建期 -DXGUI_BACKINGSTORE_BUFFER_COUNT=2。 */
+#if XGUI_BACKINGSTORE_BUFFER_COUNT < 1
 #undef XGUI_BACKINGSTORE_BUFFER_COUNT
-#define XGUI_BACKINGSTORE_BUFFER_COUNT 2
+#define XGUI_BACKINGSTORE_BUFFER_COUNT 1
 #endif
 
 /* 绘图与窗口基础模块。 */

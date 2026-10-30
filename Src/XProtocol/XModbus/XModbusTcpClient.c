@@ -539,7 +539,13 @@ static void processReceivedFrame(XModbusTcpClient* client)
 
         if (fc & XMODBUS_PDU_EXCEPTION_BYTE) {
             // 异常响应
-            XModbusPdu_setFunctionCode(response, (XModbusPdu_FunctionCode)(fc & 0x7F));
+            /* [异常位对齐 2026-10-30] 保留线上原始功能码（含异常位），与
+             * RTU 客户端同口径（XModbusRtuSerialClient.c 直接存 fc）：
+             * rawResult 上 XModbusPdu_isException() 才如实为真，
+             * XModbusPdu_dataSize() 也才按异常应答算出 1 字节异常码。
+             * 取原始 FC 的语义走 XModbusPdu_functionCode()（屏蔽异常位），
+             * 不受此影响。 */
+            XModbusPdu_setFunctionCode(response, (XModbusPdu_FunctionCode)fc);
             if (pduLen >= 2) {
                 uint8_t exceptionCode = pduData[1];
                 XModbusPdu_setData(response, &exceptionCode, 1);

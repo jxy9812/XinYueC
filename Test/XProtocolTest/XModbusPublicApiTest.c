@@ -417,13 +417,17 @@ static XModbusRequest *coverage_request(uint8_t fc, const uint8_t *data, size_t 
     return request;
 }
 
-/** 断言响应为指定异常码（返回 true=是；释放响应由调用方负责）。 */
+/** 断言响应为指定异常码（返回 true=是；释放响应由调用方负责）。
+ *  [根修 2026-10-30] 功能码取 **Raw**：XModbusPdu_functionCode() 按设计
+ *  屏蔽异常位（返回原始 FC），线上字节是 FC|0x80（ADU 编码走
+ *  functionCodeRaw，Modbus 规范要求）——旧写法拿 functionCode() 去比
+ *  (fc|0x80) 恒不成立，本组十余条异常断言长期假红。 */
 static int coverage_is_exception(XModbusResponse *response, uint8_t fc,
     XModbusPdu_ExceptionCode code)
 {
     if (!response) return 0;
     return XModbusPdu_isException((XModbusPdu *)response) &&
-        XModbusPdu_functionCode((XModbusPdu *)response) == (uint8_t)(fc | 0x80) &&
+        XModbusPdu_functionCodeRaw((XModbusPdu *)response) == (uint8_t)(fc | 0x80) &&
         XModbusPdu_exceptionCode((XModbusPdu *)response) == code;
 }
 
@@ -892,6 +896,156 @@ static void test_server_invalid_fc_and_map(void)
     XCoreApplication_processEvents(XEventLoop_AllEvents);
 }
 
+/* ==================== [异常应答线上功能码 2026-10-30] TCP 帧回归锁 ============
+ * Modbus 规范：异常应答的线上功能码必须是 FC|0x80，主站据此判异常。
+ * [根因] TCP 服务端拼响应帧时用了 XModbusPdu_functionCode()——该 API 按
+ * 设计屏蔽异常位（返回原始 FC）⇒ 线上发出 FC，主站把异常应答当正常应答
+ * （异常码被当数据解析，且不报异常错误）。RTU 路径走 XModbusAdu 编码、
+ * 用的是 functionCodeRaw，一直是对的。
+ * 直测帧构建器（不经 TCP 环回——本机环回有既有的传输停滞问题，见
+ * 「Windows 环回传输停滞」）。 */
+static void test_tcp_response_frame_fc(void)
+{
+    uint8_t buf[64];
+
+    /* ① 正常应答：线上 FC = 原始 FC（无异常位），MBAP 长度字段 = 2+数据长 */
+    {
+        XModbusResponse* resp = XModbusResponse_create_with_code(
+            XModbusPdu_ReadHoldingRegisters);
+        size_t n = 0;
+        if (resp) {
+            n = XModbusTcpServer_buildResponseFrame(buf, sizeof(buf),
+                0x1234, 1, resp);
+            XClassDelete(resp);
+        }
+        CHECK(n == 8 && buf[7] == 0x03,
+            "TCP 正常应答帧：线上功能码 = FC（无异常位）");
+        CHECK(n == 8 && buf[0] == 0x12 && buf[1] == 0x34 &&
+            buf[2] == 0x00 && buf[3] == 0x00 && buf[6] == 1,
+            "TCP 正常应答帧：MBAP 头（事务号/协议号/从站地址）原样回填");
+    }
+    /* ② 异常应答：线上 FC = FC|0x80，末字节 = 异常码 */
+    {
+        XModbusExceptionResponse* exc =
+            XModbusExceptionResponse_create_with_function_and_exception(
+                XModbusPdu_ReadHoldingRegisters, XModbusPdu_IllegalDataValue);
+        XModbusResponse* resp = (XModbusResponse*)exc;
+        size_t n = 0;
+        if (resp) {
+            n = XModbusTcpServer_buildResponseFrame(buf, sizeof(buf),
+                0x1234, 1, resp);
+            XClassDelete(resp);
+        }
+        CHECK(n == 9 && buf[7] == (uint8_t)(XModbusPdu_ReadHoldingRegisters | 0x80),
+            "TCP 异常应答帧：线上功能码 = FC|0x80（主站据此判异常）");
+        CHECK(n == 9 && buf[8] == (uint8_t)XModbusPdu_IllegalDataValue,
+            "TCP 异常应答帧：异常码字节在线上");
+    }
+    /* ③ 缓冲区不足 → 不写、返回 0（不越界） */
+    {
+        XModbusResponse* resp = XModbusResponse_create_with_code(
+            XModbusPdu_ReadHoldingRegisters);
+        size_t n = resp ? XModbusTcpServer_buildResponseFrame(buf, 4, 0, 1, resp)
+                        : 0;
+        if (resp) XClassDelete(resp);
+        CHECK(n == 0, "TCP 帧构建：缓冲区不足返回 0（不越界写）");
+    }
+}
+
+
+/* ==================== [读事件信号 2026-10-30] dataRead 语义回归 ====================
+ * XModbusServer_dataRead_signal 是从站「读事件计数」的数据源（XGuiDemo 从站
+ * 页在写事件计数边上显示读事件计数）。口径三条，缺一即计数不可信：
+ *   1. 网络读请求（FC01/FC02/FC03/FC04）取数成功 → 计数 +1；
+ *   2. 读请求走异常应答（数量非法/地址越界）→ **不**计数（没取到数）；
+ *   3. 本地读（data1/data2）→ 不计数——上层用 data2 回显自读，若计入即造出
+ *      幽灵计数（写事件侧同口径靠 localWriteSuppress 挡）。 */
+static int g_readEvents;
+
+static void on_data_read_slot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+    ++g_readEvents;
+}
+
+static void test_server_data_read_signal(void)
+{
+    XModbusServer *server = coverage_server_new();
+    uint8_t req[5];
+    XModbusRequest *request = NULL;
+    XModbusResponse *response = NULL;
+    uint16_t value = 0;
+    int i;
+
+    g_readEvents = 0;
+    if (server)
+        XObject_connect_1((XObject*)server,
+            (size_t)XModbusServer_dataRead_signal(NULL, 0, 0, 0),
+            (XObject*)server, on_data_read_slot, XConnectionType_Direct);
+
+    /* ① FC3 读保持寄存器 0..3 → 计数 1 */
+    if (server) {
+        req[0] = 0; req[1] = 0; req[2] = 0; req[3] = 4;
+        request = coverage_request(3, req, 4);
+        response = request ? XModbusServer_processRequest_base(server, request) : NULL;
+        CHECK(response && !XModbusPdu_isException((XModbusPdu *)response) &&
+            g_readEvents == 1, "FC3 读成功 → 读事件计数 1");
+        if (request) XClassDelete(request);
+        if (response) XClassDelete(response);
+        request = NULL; response = NULL;
+    }
+    /* ② FC1/FC2/FC4 各 +1（三种位型/寄存器型读都算读事件） */
+    if (server) {
+        req[0] = 0; req[1] = 0; req[2] = 0; req[3] = 8;
+        request = coverage_request(1, req, 4);
+        response = request ? XModbusServer_processRequest_base(server, request) : NULL;
+        if (request) XClassDelete(request);
+        if (response) XClassDelete(response);
+        request = NULL; response = NULL;
+        request = coverage_request(2, req, 4);
+        response = request ? XModbusServer_processRequest_base(server, request) : NULL;
+        if (request) XClassDelete(request);
+        if (response) XClassDelete(response);
+        request = NULL; response = NULL;
+        request = coverage_request(4, req, 4);
+        response = request ? XModbusServer_processRequest_base(server, request) : NULL;
+        if (request) XClassDelete(request);
+        if (response) XClassDelete(response);
+        request = NULL; response = NULL;
+        CHECK(g_readEvents == 4, "FC1/FC2/FC4 读成功各 +1（累计 4）");
+    }
+    /* ③ 异常应答的读请求（越界）→ 不计数 */
+    if (server) {
+        req[0] = 0; req[1] = 30; req[2] = 0; req[3] = 8;   /* 30+8 > 32 保持寄存器 */
+        request = coverage_request(3, req, 4);
+        response = request ? XModbusServer_processRequest_base(server, request) : NULL;
+        CHECK(coverage_is_exception(response, 3, XModbusPdu_IllegalDataAddress) &&
+            g_readEvents == 4, "越界读（异常应答）→ 读事件不计数");
+        if (request) XClassDelete(request);
+        if (response) XClassDelete(response);
+        request = NULL; response = NULL;
+    }
+    /* ④ 数量非法的读请求 → 不计数 */
+    if (server) {
+        req[0] = 0; req[1] = 0; req[2] = 0; req[3] = 0;
+        request = coverage_request(1, req, 4);
+        response = request ? XModbusServer_processRequest_base(server, request) : NULL;
+        CHECK(coverage_is_exception(response, 1, XModbusPdu_IllegalDataValue) &&
+            g_readEvents == 4, "数量非法读（异常应答）→ 读事件不计数");
+        if (request) XClassDelete(request);
+        if (response) XClassDelete(response);
+        request = NULL; response = NULL;
+    }
+    /* ⑤ 本地读（data2 回显自读）→ 不计数（防幽灵计数） */
+    if (server) {
+        for (i = 0; i < 8; ++i)
+            XModbusServer_data2(server, XModbusHoldingRegisters, (uint16_t)i, &value);
+        CHECK(g_readEvents == 4, "本地 data2 读 → 读事件不计数（无幽灵计数）");
+    }
+    if (server) XModbusServer_deleteLater(server);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+}
+
 /** TCP 回环：轮询读与 FC15 写交叠压力（远程 IO 场景回归锁）——框架侧保证
  *  每笔 FC15 在压力下仍完整应用（回读逐位一致），轮询读不丢不串。 */
 static void test_client_fc15_pressure_e2e(void)
@@ -1034,6 +1188,8 @@ void XModbusServerCoverageTest(XVariant* data)
     test_server_fc15_patterns();
     test_server_fc16_fc3();
     test_server_invalid_fc_and_map();
+    test_server_data_read_signal();
+    test_tcp_response_frame_fc();
     test_client_fc15_pressure_e2e();
     test_client_offline_error();
     XPrintf("========== Modbus 服务端 FC 全量覆盖测试结束：通过 %d，失败 %d ==========\n", g_pass, g_fail);

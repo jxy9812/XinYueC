@@ -90,6 +90,40 @@ static inline void buildMbapHeader(uint8_t* buffer, uint16_t transactionId,
 
 // =============== 辅助函数 ================
 /**
+ * @brief 构建 Modbus TCP 响应帧（MBAP 头 + PDU）到调用方缓冲区。
+ * @details [异常位根修 2026-10-30] 线上功能码取 **functionCodeRaw**：
+ *          Modbus 规范要求异常应答的功能码为 FC|0x80，而
+ *          XModbusPdu_functionCode() 按设计**屏蔽**异常位（返回原始 FC）
+ *          ——用后者拼帧，主站会把异常应答当成正常应答（异常码被当数据
+ *          解析，且不报异常错误）。RTU 路径走 XModbusAdu 编码、用的是
+ *          Raw，一直是对的；本函数是 TCP 路径的同一处口径。
+ * @param buf 输出缓冲区（至少 8 字节）
+ * @param bufSize 缓冲区容量（不足则不写）
+ * @param transactionId 请求事务号（原样回填）
+ * @param unitId 从站地址（原样回填）
+ * @param response 应答 PDU（普通应答或异常应答）
+ * @return 帧总长（字节）；参数非法或缓冲区不足返回 0
+ */
+size_t XModbusTcpServer_buildResponseFrame(uint8_t* buf, size_t bufSize,
+    uint16_t transactionId, uint8_t unitId, const XModbusResponse* response)
+{
+    XByteArray* respPdu;
+    size_t respPduSize;
+    size_t frameSize;
+    if (!buf || !response) return 0;
+    respPdu = ((const XModbusPdu*)response)->m_data;
+    respPduSize = respPdu ? XByteArray_size_base(respPdu) : 0;
+    frameSize = 7 + 1 + respPduSize;   /* MBAP(7) + FC(1) + data */
+    if (bufSize < frameSize) return 0;
+    buildMbapHeader(buf, transactionId, (uint16_t)(2 + respPduSize), unitId);
+    buf[7] = (uint8_t)XModbusPdu_functionCodeRaw((const XModbusPdu*)response);
+    if (respPduSize > 0) {
+        memcpy(buf + 8, XContainerDataAddr(respPdu), respPduSize);
+    }
+    return frameSize;
+}
+
+/**
  * @brief 处理接收到的完整TCP ADU帧
  */
 static void processTcpFrame(XModbusTcpServer* server, XTcpSocket* client, const uint8_t* frame, size_t frameLen)
@@ -125,21 +159,20 @@ static void processTcpFrame(XModbusTcpServer* server, XTcpSocket* client, const 
 
     // 如果有响应，发送回客户端
     if (response) {
-        // 构建响应帧：MBAP头部 + PDU
+        // 构建响应帧：MBAP头部 + PDU（帧构建口径见 buildResponseFrame：
+        // 异常应答的线上功能码必须是 FC|0x80）
         XByteArray* respPdu = ((XModbusPdu*)response)->m_data;
-        size_t respPduSize = XByteArray_size_base(respPdu);
+        size_t respPduSize = respPdu ? XByteArray_size_base(respPdu) : 0;
         size_t respFrameSize = 7 + 1 + respPduSize; // MBAP(7) + FC(1) + data
 
         uint8_t* respFrame = (uint8_t*)XMalloc_System(respFrameSize);
         if (respFrame) {
-            buildMbapHeader(respFrame, transactionId, (uint16_t)(2 + respPduSize), unitId);
-            respFrame[7] = (uint8_t)XModbusPdu_functionCode(&response->m_base);
-            if (respPduSize > 0) {
-                memcpy(respFrame + 8, XContainerDataAddr(respPdu), respPduSize);
+            size_t built = XModbusTcpServer_buildResponseFrame(respFrame,
+                respFrameSize, transactionId, unitId, response);
+            if (built) {
+                // 发送响应
+                XTcpSocket_write_1((XTcpSocket*)client, (const char*)respFrame, built);
             }
-
-            // 发送响应
-            XTcpSocket_write_1((XTcpSocket*)client, (const char*)respFrame, respFrameSize);
             XFree_System(respFrame);
         }
 

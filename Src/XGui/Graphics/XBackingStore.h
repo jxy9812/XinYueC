@@ -95,18 +95,6 @@ XVtable* XBackingStore_class_init(void);
  */
 void XBackingStore_init(XBackingStore* self, XWindow* window);
 
-/**
- * @brief      重新初始化已经存在的后备存储对象。
- * @details    本函数是显式的 init/reinit 分界：self 必须已经由
- *             XBackingStore_init 或 XBackingStore_create_ex 初始化且尚未
- *             反初始化。函数会先释放当前平台后端、静态区域和私有状态，
- *             再初始化新的对象；对象原有的 XMemory 方法和堆对象标记会被
- *             保留。未初始化存储不得传入本函数，应使用
- *             XBackingStore_init，避免读取未定义的对象字段。
- * @param      self   已初始化且仍然有效的对象。
- * @param      window 新绑定的 XWindow 借用指针；可为 NULL。
- */
-void XBackingStore_reinit(XBackingStore* self, XWindow* window);
 
 /**
  * @brief      使用默认内存类型创建绑定指定窗口的后备存储。
@@ -143,13 +131,6 @@ XWindow* XBackingStore_window(const XBackingStore* self);
 XImage* XBackingStore_paintImage(XBackingStore* self);
 
 #if XPAINTDEVICE_ON
-/**
- * @brief      返回可绘制设备描述（对标 QBackingStore::paintDevice 的
- *             QPaintDevice 语义；度量由内部活动缓冲提供）。
- * @param      self 目标后备存储。
- * @return     绘制设备借用指针；不可用返回 NULL。
- */
-XPaintDevice* XBackingStore_paintDevice(XBackingStore* self);
 #endif /* XPAINTDEVICE_ON */
 
 /** @brief 获取并准备下一块待绘制 tile；成功后 paintDevice() 指向该 tile。 */
@@ -263,9 +244,6 @@ void XBackingStore_endPaint(XBackingStore* self);
 void XBackingStore_flush(XBackingStore* self, const XRegion* region,
                          XWindow* window, const XPoint* offset);
 
-/** @brief 将当前 tile buffer 提交到窗口的 tileRect 位置。 */
-void XBackingStore_flushTile(XBackingStore* self, XWindow* window,
-                             const XRect* tileRect, const XPoint* offset);
 
 /* ==================== 静态内容（对标 QBackingStore） ==================== */
 

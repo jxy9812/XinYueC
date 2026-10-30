@@ -357,7 +357,9 @@ static void xpbs_win32_presentRegion(struct XWin32BackingStoreNative* state,
                                       true, scale);
     }
 #else
-    /* FULL 的语义是每次提交整屏：即使脏区很小也整帧上传。 */
+    /* FULL 的语义是每次提交整屏：即使脏区很小也整帧上传（LVGL v9
+       同款——FULL 分支把失效区扩成整屏，flush 回调收到的也是整屏）。
+       脏区化提交请走 DIRECT 模式。 */
     {
         if (state->m_width > 0 && state->m_height > 0 && state->m_dibBits) {
             XRect rect;

@@ -300,7 +300,34 @@ typedef struct XDeviceSerialPortContext
     uint32_t m_openMode          : 13;        /**< XIODeviceBaseMode 位组合。 */
     uint32_t m_flags             : 2;         /**< XDeviceOpenFlag 位组合。 */
     uint32_t m_enumerate         : 1;         /**< 枚举模式：只建立枚举上下文，未打开具体端口。 */
+    void (*m_readableNotify)(void* ctx);      /**< 可读事件回调（平台层注册，见下）。 */
+    void* m_readableCtx;                      /**< 可读事件回调的属主上下文。 */
 } XDeviceSerialPortContext;
+
+/**
+ * @brief 串口「可读事件源」平台钩子（跨平台统一的等待集接入）。
+ * @details 串口接收不再靠上层毫秒级定时器轮询（XSerialPort 的 2ms RX 轮询
+ *          拍），而是把串口 fd/HANDLE 注册进**框架自己的异步后端等待集**：
+ *          POSIX 侧走 XAbstractNetIoRing（epoll / io_uring 双引擎，语义一致：
+ *          「fd 就绪 ⇒ 唤醒阻塞中的事件循环 ⇒ 回调属主」）；
+ *          Windows 侧走框架 IOCP（OVERLAPPED 读完成）。
+ *          数据到达即唤醒主循环，不再等「下一圈边界」——这是把 485 轮询
+ *          从「等下一拍」变成「事件驱动」的关键。
+ *
+ * @param fd     串口设备上下文（XDevice 层的 fd 标识）。
+ * @param notify 可读回调（属主在回调里把数据取走并发射 readyRead）。
+ * @param ctx    回调属主上下文。
+ * @return true=已注册（此后由事件驱动）；false=该平台/配置不支持
+ *         （调用方须保留定时器轮询兜底，行为退化为改造前口径）。
+ */
+bool XDeviceSerialPort_platformArmReadable(XFd fd,
+                                           void (*notify)(void* ctx),
+                                           void* ctx);
+/**
+ * @brief 注销串口「可读事件源」（关闭串口前必须调用，避免等待集里留着
+ *        一个即将失效的 fd ⇒ 事件循环在其他 fd 就绪时读到已关闭 fd）。
+ */
+void XDeviceSerialPort_platformDisarmReadable(XFd fd);
 
 /** @brief XDeviceSerialPort 虚函数表；继承 XDevice，不新增虚槽。 */
 XCLASS_DEFINE_BEGING(XDeviceSerialPort)

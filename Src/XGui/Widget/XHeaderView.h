@@ -155,6 +155,19 @@ int XHeaderView_sectionSize(const XHeaderView* self, int section);
  * @return 无返回值。
  */
 void XHeaderView_resizeSection(XHeaderView* self, int logicalIndex, int size);
+/**
+ * @brief 直接设置区间尺寸（Qt setSectionSize 同名语义，不做 min/max 钳制）。
+ *
+ *        @note 与 resizeSection 的分工见上条注释：resizeSection 先按
+ *        minimumSectionSize/maximumSectionSize 钳制再转发到本函数，本函数
+ *        只做越界/非正值防护并改写尺寸表项。
+ *
+ * @param self 目标表头。
+ * @param section 区间号（越界忽略）。
+ * @param size 尺寸（像素；<=0 忽略）。
+ * @return 无返回值。
+ */
+void XHeaderView_setSectionSize(XHeaderView* self, int section, int size);
 /** @brief 查询默认区间尺寸。 @param self 目标表头。 @return 默认尺寸。 */
 int XHeaderView_defaultSectionSize(const XHeaderView* self);
 /** @brief 设置默认区间尺寸。 @param self 目标表头。 @param size 尺寸（像素）。 */

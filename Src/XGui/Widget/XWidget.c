@@ -151,6 +151,9 @@ static void xwidget_retainedDisable(XWidget* self);
 static void xwidget_retainedInvalidateForRect(XWidget* origin);
 static void xwidget_retainedInvalidateChain(XWidget* origin);
 static bool xwidget_paintRetainedLayer(XWidget* widget, const XRegion* paintRegion);
+static bool xwidget_flushFullFallbackRequested(void);
+static bool xwidget_flushBboxMergeRequested(void);
+static bool xwidget_dirtyVisibleClipDisabled(void);
 
 /** @brief 保留层 LRU 登记节点（双向链表；g_retainedHead=最近使用，
  *         g_retainedTail=最久未用，两端操作均 O(1)）。定义前置：失效
@@ -438,6 +441,9 @@ static void XWidget_propagateLayoutDirection(XWidget* self,
 static void XWidget_clearUnderMouseRepaintHover(XWidget* self);
 static void XWidget_addDirty(XWidget* self, const XRect* rect);
 static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region);
+static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
+                                     bool bypassVisible);
+static void xwidget_invalidateOwnArea(XWidget* self);
 static void XWidget_paintTree(XWidget* top, const XRegion* topRegion);
 static bool xwidget_drawWithGraphicsEffect(XWidget* widget,
                                            const XRegion* paintRegion);
@@ -1721,7 +1727,14 @@ static void XWidget_clearUnderMouseRepaintHover(XWidget* self)
 }
 
 /** @brief 把局部区域折算到顶层坐标后并入顶层脏区。 */
-static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
+/** @brief 脏区入队（生效可见性闸可绕过的内部变体）。
+ * @param bypassVisible 1=跳过生效可见性闸（对标 Qt 6.8
+ *        QWidgetPrivate::show_sys 的 invalidateBackingStore(rect) 补画
+ *        路径——该路径由框架在显隐切换时显式驱动，与控件此刻的生效
+ *        可见性无关；其余一切 update/repaint 请求都过闸）。
+ */
+static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
+                                     bool bypassVisible)
 {
     XWidget* top;
     int i;
@@ -1733,6 +1746,20 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
     /* [rprof] 门提前到入队循环前解析：首笔失效也计入归因（函数尾部
        的帧链戳沿用同一门状态，不多付一次解析）。 */
     int rprofOn = xwidget_wprof_gate();
+    /* [可见区域裁剪 2026-10-30] 脏区入队按**祖先裁剪后的可见区域**收敛，
+       而非控件自身的完整客户区。二者对「顶层自身或无裁剪祖先」等价，
+       但对「滚动容器内的内容件」差一个数量级：
+       Modbus 从站页内容根 MbSlaveRoot 的客户区是 1007×2284（整页内容
+       高度），而视口只有 ~774 高 ⇒ 按自身客户区入队会把 2,299,988
+       像素（视口外的内容）整块算进脏区。
+       XWidget_visibleRegion 逐级与父控件客户区/遮罩求交，正是
+       「该控件此刻真正可见的部分」；对标 Qt QWidgetPrivate::markDirty
+       的可见区域裁剪（Qt 的 update() 同样不把视口外的部分算进脏区）。
+       坐标口径：visibleRegion 与本函数入参 region **同为 self 局部坐标**
+       （visibleRegion 末段把祖先链累加的 offset 平移回自身局部），故可
+       直接求交，无需再做坐标折算。 */
+    XRegion visibleRegion;
+    bool visibleClipped;
     if (!self || !region || !self->m_updatesEnabled) return;
     self->m_contentCacheDirty = true;
     /* 保留层失效联动：update/updateRect/updateRegion/repaint 全部经此
@@ -1742,6 +1769,25 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
         xwidget_retainedInvalidateForRect(self);
     top = XWidget_topLevel(self);
     if (!top) return;
+    /* ★ 生效可见性闸（对标 Qt 6.8 QWidgetPrivate::update，
+     *   qwidget.cpp:11303：`if (!q->isVisible() || !q->updatesEnabled())
+     *   return;` —— 隐藏控件的 update()/repaint() 是**完全空操作**：
+     *   不记顶层脏区、不派发顶层 PAINT 事件、不置 PendingUpdate。
+     *   Qt 判 isVisible()（生效可见性：任一祖先隐藏即 false），本框架
+     *   对应 XWidget_effectiveVisible（= XWidget_isVisible 同判定）。
+     *   与本文件既有的「生效可见门控 2026-10-11」（几何变更路径
+     *   setGeometry 的 `if (self->m_visible)`）同口径：隐藏控件的一切
+     *   失效不入顶层脏区。
+     *   【为何必须有此闸】隐藏页内的定时器回调（如 Modbus 主站页的
+     *   轮询统计行 XLabel_setText）持续触发 update()，而 update() 走
+     *   本入口把矩形并入**可见顶层**的脏区并派发顶层 PAINT ⇒ 隐藏页
+     *   的后台刷新被整笔记到前台窗口头上，HUD「绘制活动率」FPS 读数
+     *   从 2~3 跳到 20+，且前台那块区域被重复重绘+重复上屏（真开销）。
+     *   隐藏期内的改动**不丢**：show 路径按 Qt show_sys 语义补画
+     *   （xwidget_invalidateOwnArea），hide 路径按 Qt hide_sys 语义
+     *   作废父级该区域（XWidget_setVisible 的 hide 分支）。 */
+    if (!bypassVisible && !XWidget_effectiveVisible(self))
+        return;
     /* 脏区恒按顶层后备存储坐标折算：render/grab 重定向期间 paintEvent
        内触发的 update() 也必须落到顶层真实脏区，而非临时快照坐标系。 */
     offset = xwidget_backingPaintOffset(self);
@@ -1757,9 +1803,52 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
         source = &sourceCopy;
         copiedSource = true;
     }
+    /* 可见区域：仅当存在裁剪祖先时才需要（顶层自身/无遮罩链的控件，
+       visibleRegion == 自身客户区，求交是恒等变换——省掉逐祖先遍历与
+       区域分配，热路径零额外开销）。判据：自身有遮罩，或父链上任一级
+       的客户区不完整包含本控件窗口矩形。 */
+    visibleClipped = false;
+    if (xwidget_dirtyVisibleClipDisabled()) {
+        /* 诊断回退：XGUI_DIRTY_NO_VISIBLE_CLIP=1 ⇒ 按旧口径（自身客户区）。 */
+    } else if (self->m_mask.count > 0) {
+        visibleClipped = true;
+    } else {
+        const XWidget* anc;
+        XRect probe = self->m_windowRect;
+        for (anc = (const XWidget*)XObject_parent((XObject*)self);
+             anc && !anc->m_isWindow; anc =
+                 (const XWidget*)XObject_parent((XObject*)anc)) {
+            XRect ancContents = anc->m_contentsRect;
+            /* 探针折算到祖先客户区坐标：逐级减去祖先原点。 */
+            XRect translated = probe;
+            const XWidget* up;
+            for (up = (const XWidget*)XObject_parent((XObject*)self);
+                 up && up != anc;
+                 up = (const XWidget*)XObject_parent((XObject*)up)) {
+                translated.x -= up->m_windowRect.x;
+                translated.y -= up->m_windowRect.y;
+            }
+            if (anc->m_mask.count > 0 ||
+                translated.x < ancContents.x ||
+                translated.y < ancContents.y ||
+                translated.x + translated.width > ancContents.x + ancContents.width ||
+                translated.y + translated.height > ancContents.y + ancContents.height) {
+                visibleClipped = true;
+                break;
+            }
+        }
+    }
+    if (visibleClipped) {
+        visibleRegion = XWidget_visibleRegion(self);
+    } else {
+        XRegion_init(&visibleRegion);
+    }
     for (i = 0; i < source->count; ++i) {
         XRect clipped = XRect_intersected(&source->rects[i], &contents);
-        if (!XRect_isEmpty(&clipped)) {
+        if (XRect_isEmpty(&clipped)) continue;
+        if (!visibleClipped) {
+            /* 无裁剪祖先：可见区域恒等于自身客户区，直接按原口径入队
+               （热路径零额外开销，也避免 visibleRegion 的区域分配）。 */
             XRect translated = XRect_translated(&clipped, offset.x, offset.y);
             XRegion_addRect(&top->m_dirty, &translated);
             /* [rprof] 入队归因：只在画像门开启时付类名/最大值维护成本。 */
@@ -1778,6 +1867,80 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
                         (vt && vt->m_name) ? vt->m_name : "?";
                     xwidget_rprof.maxEnqW = clipped.width;
                     xwidget_rprof.maxEnqH = clipped.height;
+                }
+                {
+                    static int btMinPix = -1;
+                    if (btMinPix < 0)
+                    {
+                        const char* bm =
+                            XSystem_environment("XGUI_RPROF_BT_MIN_PIX");
+                        btMinPix = bm && *bm ? (int)atoi(bm) : 0;
+                    }
+                    if (btMinPix > 0)
+                        rprofBtHit = pix >= (unsigned long long)btMinPix;
+                }
+                if (rprofBtHit && !xwidget_rprof.btPrinted) {
+                    void* bt[12];
+                    int bn = backtrace(bt, 12);
+                    char** syms = backtrace_symbols(bt, bn);
+                    int bi;
+                    const XWidget* anc;
+                    xwidget_rprof.btPrinted = 1;
+                    fprintf(stderr, "[rprof] full-enqueue %s %dx%d from:\n",
+                            xwidget_rprof.maxEnqSrc ? xwidget_rprof.maxEnqSrc
+                                                    : "?",
+                            clipped.width, clipped.height);
+                    for (anc = self; anc;
+                         anc = (const XWidget*)XObject_parent((XObject*)anc)) {
+                        XVtable* avt = XClassGetVtable(anc);
+                        fprintf(stderr, "[rprof]   self %p %dx%d%+d%+d %s q=%d vis=%d\n",
+                                (const void*)anc, anc->m_windowRect.width,
+                                anc->m_windowRect.height, anc->m_windowRect.x,
+                                anc->m_windowRect.y,
+                                (avt && avt->m_name) ? avt->m_name : "?",
+                                XWidget_attrTest(&anc->m_attributes,
+                                                 XWidgetAttribute_FocusOwnerQuiet),
+                                anc->m_visible);
+                    }
+                    for (bi = 0; bi < bn && bi < 12; ++bi)
+                        fprintf(stderr, "[rprof]   #%d %s\n", bi,
+                                syms ? syms[bi] : "?");
+                    free(syms);
+                }
+#endif /* XWIDGET_HAVE_BACKTRACE */
+            }
+            continue;
+        }
+        {
+            /* 与可见区域求交：视口外的部分不入队（该部分此刻不可见，
+               滚回视口时由滚动路径的视口重绘兜底——见
+               VXScrollArea_scrollContentsBy 的 XWidget_update(viewport)）。 */
+            XRegion visRect;
+            int vi;
+            XRegion_init(&visRect);
+            XRegion_intersectRectInto(&visibleRegion, &clipped, &visRect);
+            for (vi = 0; vi < visRect.count; ++vi) {
+                XRect vis = visRect.rects[vi];
+                if (XRect_isEmpty(&vis)) continue;
+                {
+            XRect translated = XRect_translated(&vis, offset.x, offset.y);
+            XRegion_addRect(&top->m_dirty, &translated);
+            /* [rprof] 入队归因：只在画像门开启时付类名/最大值维护成本。 */
+            if (rprofOn) {
+                unsigned long long pix =
+                    (unsigned long long)vis.width *
+                    (unsigned long long)vis.height;
+#ifdef XWIDGET_HAVE_BACKTRACE
+                int rprofBtHit = 0;
+                xwidget_rprof.enqPix += pix;
+                xwidget_rprof.enqHits += 1;
+                if (pix > xwidget_rprof.maxEnqPix) {
+                    XVtable* vt = XClassGetVtable(self);
+                    xwidget_rprof.maxEnqPix = pix;
+                    xwidget_rprof.maxEnqSrc =
+                        (vt && vt->m_name) ? vt->m_name : "?";
+                    xwidget_rprof.maxEnqW = vis.width;
+                    xwidget_rprof.maxEnqH = vis.height;
                 }
                 /* 大失效调用点归因（诊断态）：单笔≥窗面积一半时打一次
                    backtrace（走当前栈，非 ptrace；每 3s 窗最多一笔）。
@@ -1804,7 +1967,7 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
                     fprintf(stderr, "[rprof] full-enqueue %s %dx%d from:\n",
                             xwidget_rprof.maxEnqSrc ? xwidget_rprof.maxEnqSrc
                                                     : "?",
-                            clipped.width, clipped.height);
+                            vis.width, vis.height);
                     /* 控件身份链：地址+几何+类名，沿父四层——基类虚表
                        名相同（都叫 XWidget）时靠地址/几何区分本体。 */
                     for (anc = self; anc; anc = (const XWidget*)XObject_parent((XObject*)anc)) {
@@ -1825,8 +1988,13 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
                 }
 #endif /* XWIDGET_HAVE_BACKTRACE */
             }
+                }  /* 内层 vis 分支 */
+            }
+            XRegion_deinit(&visRect);
         }
     }
+    if (visibleClipped)
+        XRegion_deinit(&visibleRegion);
     if (copiedSource)
         XRegion_deinit(&sourceCopy);
     XWidget_attrSet(&top->m_attributes, XWidgetAttribute_PendingUpdate, true);
@@ -1864,6 +2032,34 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
         if (xwidget_wprofFrameStartNs == 0)
             xwidget_wprofFrameStartNs = nowNs;
     }
+}
+
+/** @brief 脏区入队公开入口（过生效可见性闸）。
+ * @details 对标 Qt QWidgetPrivate::update / repaint 的
+ *          `!isVisible()` 早退——隐藏控件的 update/repaint 不产生
+ *          任何顶层脏区与 PAINT 事件。 */
+static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
+{
+    xwidget_addDirtyRegionEx(self, region, false);
+}
+
+/** @brief 把控件自身内容矩形直写进顶层脏区（绕过生效可见性闸）。
+ * @details 对标 Qt 6.8 QWidgetPrivate::show_sys（qwidget.cpp:8123-8145）：
+ *          show 时 `postEvent(QUpdateLaterEvent(q->rect()))` +
+ *          `invalidateBackingStore(q->rect())` —— 补画是**整块**，
+ *          且与控件此刻的生效可见性解耦（顶层首帧补画时 m_visible
+ *          尚未置位，可见性闸会把它整条吃掉）。 */
+static void xwidget_invalidateOwnArea(XWidget* self)
+{
+    XRect rect;
+    XRegion region;
+    if (!self) return;
+    rect = self->m_contentsRect;
+    /* 与 XWidget_addDirty 同款单矩形栈上视图（避免临时 XRegion 分配）。 */
+    region.rects = &rect;
+    region.count = 1;
+    region.capacity = 1;
+    xwidget_addDirtyRegionEx(self, &region, true);
 }
 
 /** @brief 把局部矩形折算到顶层坐标后并入顶层脏区。 */
@@ -6913,7 +7109,7 @@ void XWidget_setVisible(XWidget* self, bool visible)
          * 此处仅在从隐藏转为可见时合并根客户区；随后仍由正常事件循环
          * 异步提交，后续高频 update 保持局部刷新。 */
         if (visible && !wasVisible)
-            XWidget_update(self);
+            xwidget_invalidateOwnArea(self);
         if (self->m_windowHandle && !self->m_inShow) {
             self->m_inShow = 1;
             XWindow_setVisible((XWindow*)self->m_windowHandle, visible);
@@ -6925,9 +7121,26 @@ void XWidget_setVisible(XWidget* self, bool visible)
         /* 子控件显隐同样驱动顶层脏区合成（对标 Qt show/hide 后的重绘
          * 语义）：parent+flags=0 的子控件形态对话框 show/hide 不标脏时，
          * 脏区合成器只重画已有脏矩形——show 后内容永不出现（"弹不出"）、
-         * hide 后残影永不消失。XWidget_update 按子控件矩形折算进顶层
-         * 脏区，show 与 hide 两个方向都需要。 */
-        XWidget_update(self);
+         * hide 后残影永不消失。 */
+        if (visible) {
+            /* show：补画自身整块（对标 Qt 6.8 QWidgetPrivate::show_sys，
+             * qwidget.cpp:8123-8145：`postEvent(QUpdateLaterEvent(q->rect()))`
+             * + `invalidateBackingStore(q->rect())`）。此刻 self 的生效
+             * 可见已翻转，可见性闸自然放行。 */
+            XWidget_update(self);
+        } else {
+            /* ★ hide：作废**父级**上该控件占据的区域（对标 Qt 6.8
+             * QWidgetPrivate::hide_sys，qwidget.cpp:8265-8274：非顶层控件
+             * 隐藏时作废其在窗口坐标下的原矩形）。
+             * 不能再用隐藏控件自身的 update()——此刻它生效不可见，可见性
+             * 闸（Qt 同款语义）整条丢弃 ⇒ 残影永不消失。
+             * 失效口径与几何变更路径同款（本文件 setGeometry 的
+             * `XWidget_updateRect(parent, &self->m_windowRect)`）：
+             * m_windowRect 是控件在**父控件坐标**下的矩形。 */
+            XWidget* parent = XWidget_parentWidget(self);
+            if (parent && XWidget_isVisible(parent))
+                XWidget_updateRect(parent, &self->m_windowRect);
+        }
     }
 #if XWINDOW_ON && XACCESSIBLE_ON
     XPlatformAccessibility_notifyWidget(XAccessibleEvent_StateChanged, self);
@@ -9294,6 +9507,12 @@ void XWidget_repaintRegion(XWidget* self, const XRegion* region)
 {
     XWidget* top;
     if (!self || !region) return;
+    /* 对标 Qt 6.8 QWidgetPrivate::repaint（qwidget.cpp:11242）：
+     *   `if (!q->isVisible() || !q->updatesEnabled() || r.isEmpty()) return;`
+     *   —— repaint() 对隐藏控件是**完全空操作**（同步 paintEvent 也不
+     *   派发）。隐藏控件的显隐切换由 XWidget_setVisible 的双向路径
+     *   兜底（show 补画 / hide 作废父级区域）。 */
+    if (!XWidget_effectiveVisible(self)) return;
     XWidget_addDirtyRegion(self, region);
     top = XWidget_topLevel(self);
     if (!top) return;
@@ -9685,6 +9904,8 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
         int r;
         XRect savedClip;
         XImage* clipImg;
+        int hadSaved = 0;
+        XPoint devOff;
         /* 遮罩求交可能重新引入多矩形：此处再拆，保证进入本控件的
            PAINT 恒携带单一矩形（递归重入遮罩裁剪为幂等交集）。
            擦白家族根修（2026-09-28）：拆分期间每个矩形组都会重发一次
@@ -9695,19 +9916,42 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
            本帧持续的后备存储里，flush 又按全部矩形提交，最终表现为
            「切页/滚动后内容区+状态栏整片擦白且空闲不自愈」。修法：拆
            分期间把表面裁剪收窄到当前矩形，任何越界绘制都被钳制在本次
-           事件区域内；拆分完成后恢复区域并集，后续矩形组各自再收窄。 */
+           事件区域内；拆分完成后恢复区域并集，后续矩形组各自再收窄。
+           [逐矩形上屏 2026-10-30] 拆分派发成为**常态路径**（多矩形脏
+           区不再收拢为包围盒）：表面裁剪逐块收窄 ⇒ 矩形间隙像素不被触
+           碰 ⇒ 「绘制像素集 == 提交像素集」恒等（提交亦按 region 逐块
+           提交），双缓冲两块内容不分叉。 */
         clipImg = g_paintTargetImage;
-        XRegion_boundingRect(paintRegion, &savedClip);
+        /* 保存调用方的表面裁剪并原样恢复（不重算包围盒：重算会丢掉
+           调用方更紧的裁剪，且旧口径在深层拆分时用的是**局部坐标**的
+           包围盒，与表面裁剪的设备坐标口径不同源）。 */
+        if (XPainter_surfaceClipRect()) {
+            savedClip = *XPainter_surfaceClipRect();
+            hadSaved = 1;
+        }
+        /* 逐块裁剪矩形须是**设备坐标**：paintRegion 的矩形是本控件的
+           局部坐标，设备坐标 = 局部 + 本控件绘制偏移（离屏重定向时
+           XWidget_paintOffset 给出目标图像内的原点）。 */
+        devOff = XWidget_paintOffset(widget);
         XRegion_init(&single);
         for (r = 0; r < paintRegion->count; ++r) {
+            XRect devRect;
             XRegion_clear(&single);
             XRegion_addRect(&single, &paintRegion->rects[r]);
-            if (clipImg)
-                XPainter_setSurfaceClipRect(&paintRegion->rects[r], clipImg);
+            if (clipImg) {
+                devRect = paintRegion->rects[r];
+                devRect.x += devOff.x;
+                devRect.y += devOff.y;
+                XPainter_setSurfaceClipRect(&devRect, clipImg);
+            }
             XWidget_paintTree(widget, &single);
         }
-        if (clipImg)
-            XPainter_setSurfaceClipRect(&savedClip, clipImg);
+        if (clipImg) {
+            if (hadSaved)
+                XPainter_setSurfaceClipRect(&savedClip, clipImg);
+            else
+                XPainter_clearSurfaceClipRect();
+        }
         XRegion_deinit(&single);
         XRegion_deinit(&clipped);
         XRegion_deinit(&maskClipped);
@@ -10233,6 +10477,58 @@ static int xwidget_presentThrottleAllow(XWidget* top,
 }
 #endif /* GPU && !PARTIAL */
 
+/** @brief  整窗退化逃生门（XGUI_FLUSH_FULLFALLBACK=1 生效）。
+ *  @details 帧区域计算在 FULL / DIRECT / PARTIAL 三腿共用同一套三级
+ *           回退（region → m_dirty 包围盒 → 整窗 contentsRect），本 helper
+ *           供三腿共用第 ② 级的「是否退化为整窗」判定：置任意非 "0" 值
+ *           时脏区回退改走整窗 contentsRect（诊断/对拍用）。
+ *           static 缓存，进程内只读一次环境变量（同 XGPU_PRESENT_MICRO /
+ *           XGPU_DEGRADED_FULL_REPRESENT 惯用法）。 */
+static bool xwidget_flushFullFallbackRequested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGUI_FLUSH_FULLFALLBACK");
+        requested = (value && *value &&
+                     !(value[0] == '0' && value[1] == 0)) ? 1 : 0;
+    }
+    return requested != 0;
+}
+
+/** @brief 是否把多矩形脏区收拢为外接矩形（旧口径，诊断回退用）。
+ *  @details 默认 0（新口径：逐矩形绘制 + 逐矩形提交）。置 1 恢复 2026-10-27
+ *           口径（绘制区/提交区双双退化为脏区外接矩形）。 */
+static bool xwidget_flushBboxMergeRequested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGUI_FLUSH_BBOX_MERGE");
+        requested = (value && *value &&
+                     !(value[0] == '0' && value[1] == 0)) ? 1 : 0;
+    }
+    return requested != 0;
+}
+
+/**
+ * @brief 是否把脏区入队回退到「按控件自身客户区」（旧口径，诊断回退用）。
+ * @details 默认 0（新口径：按 XWidget_visibleRegion 裁剪，滚动容器内容件
+ *          的视口外像素不入队）。置 1 恢复旧口径（只按自身客户区裁剪），
+ *          用于对照测量与异常回退。
+ */
+static bool xwidget_dirtyVisibleClipDisabled(void)
+{
+    static int disabled = -1;
+    if (disabled < 0)
+    {
+        const char* value = XSystem_environment("XGUI_DIRTY_NO_VISIBLE_CLIP");
+        disabled = (value && *value &&
+                    !(value[0] == '0' && value[1] == 0)) ? 1 : 0;
+    }
+    return disabled != 0;
+}
+
 volatile unsigned long g_flushBsCount;
 volatile unsigned long g_exposeEvtCount;
 volatile unsigned long g_postPaintCount;
@@ -10282,7 +10578,12 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     XRegion_init(&whole);
  #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
     {
-        /* m_contentsRect 已被 m_contentsMargins 扣掉 CSD 标题栏条带；
+        /* FULL 模式按 LVGL v9 定义为「整帧光栅 + 全屏刷」：帧区域恒为
+           整窗（丢弃传入 region）——lv_refr.c 在 FULL 分支把失效区主动
+           扩成整屏（disp->inv_areas[0] = scr_area），flush 回调收到的
+           也是整屏。桌面若要脏区化提交，请走 DIRECT 模式（LVGL 的高效
+           增量路径），不要改 FULL 的语义。
+           m_contentsRect 已被 m_contentsMargins 扣掉 CSD 标题栏条带；
            换角整帧覆盖统一在下方「整帧脏闩」单点完成（FULL/DIRECT 同点，
            见 g_xwidgetForceFullFrameFor 注）。 */
         contents = top->m_contentsRect;
@@ -10318,26 +10619,22 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
            全页帧对闪变与覆盖层（FPS 面板）被整帧重排的可见抖动。
            回退链尾部仍保留整窗（m_dirty 空且无 region=首显/resize）。
            XGUI_FLUSH_FULLFALLBACK=1 恢复整窗退化（诊断用）。 */
-        static int fullFallback = -1;
-        if (fullFallback < 0)
-        {
-            const char* ff = XSystem_environment("XGUI_FLUSH_FULLFALLBACK");
-            fullFallback = ff && *ff && !(ff[0] == '0' && ff[1] == 0) ? 1 : 0;
-        }
-        if (fullFallback)
+        if (xwidget_flushFullFallbackRequested())
         {
             contents = top->m_contentsRect;
             XRegion_addRect(&whole, &contents);
         }
         else
         {
-            /* 包围盒单矩形而非多矩形区域：paintTree 对区域逐矩形求交，
-               多矩形脏区会把每控件裁剪推入 O(控件×矩形) 慢路（实测曾有
-               benchmark-full 掉帧至 1/3），包围盒保持快路径且仍限绘。 */
-            XRect bb;
-            XRegion_boundingRect(&top->m_dirty, &bb);
-            XRegion_clear(&whole);
-            XRegion_addRect(&whole, &bb);
+            /* [逐矩形 2026-10-30] 脏区回退**保留多矩形**：与 PAINT 事件
+               携带的区域同口径（绘制/提交都按真实脏矩形走），不再退化
+               成外接矩形。旧口径下「几个分散小块」的外接框几乎覆盖整
+               窗 ⇒ 每次 popup/menu 的 flush(NULL) 都放大成整窗重绘 +
+               整窗上屏（板端 3.8MB/s 的另一条来源）。
+               慢路顾虑（O(控件×矩形)）已被「拆分派发时表面裁剪收窄到
+               单块矩形」化解：每块的实际绘制量∝该块面积，与整块 bbox
+               反复重画相比反而更省。 */
+            XRegion_copy(&top->m_dirty, &whole);
         }
     }
     else {
@@ -10442,28 +10739,36 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         wholeBbox.width = maxRx1 - wholeBbox.x;
         wholeBbox.height = maxRy1 - wholeBbox.y;
     }
-    /* 【多矩形 whole 归并为包围盒 2026-10-27 重绘节奏闸根修】DIRECT/
-     * PARTIAL 平台（安卓 fbdev 同构）的 PAINT 事件区域=入队时脏区快照，
-     * 拖动/滚动期恒为多矩形（滚动带+滚标+悬停翻转+HUD 标签等互不相交
-     * 矩形在同一闸窗内累积）。paintTree 对多矩形区域逐矩形组**整树重
-     * 派**（下方 count>1 拆分分支）：一次 flush 内顶层 paintEvent 跑 N
-     * 遍、全部子件 paintEvent 各跑 N 遍——重绘节奏闸（XGUI_REPAINT_
-     * MAX_FPS，XGuiConfig.h:244 闸在 postPaintEvent，只钳 flush 次数）
-     * 因此被整倍架空：真机实测安卓拖动 flush 已钳在 60/s 而 paintEvent
-     * 派发率 250+/s（HUD 读数即该口径，xgui_window_demo.c:4252 每
-     * paintEvent 计 1 帧），CPU 同倍放大（250×1.9ms≈48%，实测吻合）。
-     * 桌面 Xvfb 复现：DIRECT 构建 + 闸=60 + 3 矩形脏区 → flush=56/s、
-     * topPaint=168/s=3×闸值。
-     * 修法=绘制入口把 whole 收拢为**单包围盒矩形**（本仓 P0-4 脏区回退
-     * 路径同款纪律，见下方 dirty 分支 bbox 注；present 侧读回亦恒单包
-     * 围盒）：paintTree 收到单矩形 ⇒ 拆分分支不再触发，每 flush 恰好
-     * 一遍整树绘制，绘制活动率与 HUD 口径同时钳回 1000/fps。像素语义
-     * 变化=本帧多画各脏矩形间的间隙像素（bbox ⊇ 各矩形，重绘内容与
-     * 原值相同），与 FULL 模式整窗重绘同构，无正确性影响；2026-09-28
-     * 擦白根修的「表面裁剪收窄」仍生效（单组派发无组间互抹，裁剪=bbox）。
-     * 事件携带的原始多矩形区域不改动：m_dirty 消费扣减（下方 subtract）
-     * 以 whole ⊇ 各矩形为前提成立，超集扣减同为恒等清空。 */
-    if (whole.count > 1)
+    /* 【逐矩形绘制 + 逐矩形提交 2026-10-30 框架根修】多矩形脏区**不再**
+     * 收拢为包围盒。
+     *
+     * 旧口径（2026-10-27 引入）把 whole 收拢成单个外接矩形，代价是：
+     * 「绘制区」与「提交区」双双退化成**脏区外接矩形**——分散的小脏区
+     * （顶栏时钟 + 右下悬浮层 + 页内读数）外接框几乎覆盖整窗，于是每帧
+     * 整窗重绘 + 整窗上屏。RK3568 板端实测（Modbus 从站页，DIRECT 模式）：
+     * 稳态每帧 paint≈35ms + flush≈60~80ms ≈ 100ms，2 帧/秒 ⇒ 事件循环
+     * 每 0.5~1s 空洞 150~240ms ⇒ 485 应答出现 2% 的 149~250ms 尖刺
+     * （pyserial 直连 p50=2.9ms / p99=235ms），上屏量 3.8MB/s。
+     *
+     * 新口径：保留多矩形。
+     *   ① 绘制：paintTree 的多矩形分支**逐矩形派发**（XWidget_paintTree
+     *      的 count>1 拆分分支），每块把表面裁剪收窄到该矩形 ⇒ 矩形之间
+     *      的间隙像素**不被触碰**；
+     *   ② 提交：平台 present 按 region **逐矩形**提交（X11 每块一次
+     *      XPutImage，Drive/Posix/Graphics/XPlatformNativeWindow_posix.c
+     *      的 present 已是逐矩形循环），上屏量回落到真实脏区量级；
+     *   ③ 不变量「绘制像素集 == 提交像素集」恒等 ⇒ 双缓冲两块内容不再
+     *      分叉（提交区同步到另一块缓冲的也是同一批矩形），间隙像素既
+     *      不被重画也不被上屏 ⇒ 无残影/无陈旧像素上屏。
+     *
+     * 口径变化（须知）：① 顶层控件的 paintEvent 变为**每矩形一次**
+     *    （原为每 flush 一次）——「绘制活动率」口径（每 paintEvent 计
+     *    一帧）随之按矩形数放大，HUD 的 FPS 读数不再等于 flush 率；这是
+     *    「绘制活动」的真实计数，不是回归。② 2026-10-27 记录的「重绘
+     *    节奏闸被整倍架空」担忧同步缓解：拆分派发时表面裁剪收窄到单块
+     *    矩形，每块的实际绘制量∝该块面积（原先是整块 bbox 反复重画）。
+     * 诊断回退：XGUI_FLUSH_BBOX_MERGE=1 恢复旧口径（收拢为包围盒）。 */
+    if (whole.count > 1 && xwidget_flushBboxMergeRequested())
     {
         XRegion_clear(&whole);
         XRegion_addRect(&whole, &wholeBbox);

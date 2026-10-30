@@ -97,25 +97,32 @@ static void xkb_expect(bool cond, const char* what)
         ++xkb_failures;
     }
 }
-/** @brief 泵事件 ms 毫秒（非 win32；⑦.8 几何跟随时序适配）。
+/** @brief 泵事件 ms 毫秒（全平台；⑦.8 几何跟随 + ⑦.10/⑦.11 长按节拍）。
  *  @details 非 win32 平台宿主几何跟随为 Queued+30ms 合流单发定时器
  *           （XVirtualKeyboard.c XKB_GEOM_CONN_TYPE 平台分野，2026-10-03
  *           拖动感官裁定：键盘重绘有意滞后主窗一拍，防「键盘跑出父窗
- *           口」）；win32 为 Direct 同步（模态拖拽循环内唯一存活通道），
- *           无需泵。门禁（Xvfb/X11）断言前泵事件让跟随到位，语义对
- *           两平台等价：win32 空转即回。 */
+ *           口」）；win32 为 Direct 同步（模态拖拽循环内唯一存活通道）。
+ *           [win32 空转根修 2026-10-30] 原实现在 win32 直接空转（判据
+ *           「win32 跟随同步⇒无需泵」）——该判据只对**几何跟随**成立，
+ *           但本 helper 同时承载**长按重复节拍**的时间窗（⑦.10 连删
+ *           起振/跨间隔不断流、⑦.11 接触期零再删）：节拍由分发器定时器
+ *           兑现，不泵事件即时间窗不流逝 ⇒ win32 上这些断言恒不成立
+ *           （⑦.10 长按连删三断言恒失败、⑦.11 零再删恒空过）。
+ *           故改为全平台同口径泵：几何类断言不受影响（win32 同步跟随
+ *           泵后即到位），节拍类断言获得真实时间窗。 */
 static void xkb_pumpMs(int ms)
 {
-#ifndef _WIN32
-    int waited = 0;
-    while (waited < ms) {
+    /* [墙钟口径 2026-10-30] 原实现按 5ms 步进累加计数（waited += 5，不计
+     * 实际耗时）：一轮真实耗时 = 5ms 休眠 + processEvents 开销（Windows
+     * 实测 ~10.7ms/轮 ⇒ 整窗放大约 3 倍，750ms 名义实跨 ~2.3s）⇒ 长按
+     * 时间窗被撑爆（⑦.10 连删在窗口内把夹具删空 ⇒ 「跨间隔不断流」因
+     * 0<0 失配；⑦.11 接触窗越过长按保守档 1000ms ⇒ 多删一次）。
+     * 改为按统一单调毫秒墙钟设截止：窗口长度=真实毫秒，跨平台同口径。 */
+    int64_t deadline = XDateTime_currentMSecsSinceEpoch() + (int64_t)ms;
+    while (XDateTime_currentMSecsSinceEpoch() < deadline) {
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         XThread_msleep(5);
-        waited += 5;
     }
-#else
-    (void)ms;
-#endif
 }
 
 /** @brief 泵事件等待键盘几何到位 wantW×wantH（⑦.8 链路自证前等待）。

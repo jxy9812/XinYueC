@@ -62,6 +62,8 @@
 #include "XAlignment.h" /* XAlignment_Center（窗口图标居中绘制用）。 */
 #include "XPlatformDisplayDriver.h" /* 单屏互斥检查（XPLATFORM_FBDEV_ON=0 时为空头）。 */
 #include "XWindowRotation.h" /* 内容旋转换算（0/90/180/270 轴判定 + 点/矩形正逆变换）。 */
+#include "XSystem.h" /* XSystem_environment（XPWN_X11_FD_RING 开关读取）。 */
+#include "XDateTime.h" /* XDateTime_currentMSecsSinceEpoch（被动 fd 唤醒限幅节拍）。 */
 #include <stdio.h>
 
 /* Xlib 与 XinYueC 公共层存在以下命名冲突：
@@ -455,6 +457,8 @@ static Atom g_xpwnMultiple;       /* MULTIPLE 原子（ICCCM 2.6.2 批量转换�
 static int          g_xpwnWatchXfd = -1;    /**< 受监视的 X11 连接 fd。 */
 static pthread_t    g_xpwnWatchThread;      /**< 监视线程句柄（分离态）。 */
 static bool         g_xpwnWatchStarted = false; /**< 监视线程已启动（主线程写）。 */
+static bool         g_xpwnRingRegistered = false; /**< X11 fd 已注册进 ring 被动等待集。 */
+static bool         g_xpwnX11Dead = false;  /**< X11 连接已挂断（fd 恒可读）。 */
 static Window g_xpwnClipWin = None;      /* 专用剪贴板窗口（对标 QXcbClipboard::m_window，CLIPBOARD/PRIMARY 共用）。 */
 static Window g_xpwnClipReqWin = None;   /* 专用请求者窗口（对标 QXcbClipboard::m_requestor，读方向传输属性挂此窗口并监听 PropertyNotify）。 */
 
@@ -2438,6 +2442,16 @@ static bool xpwn_ensureConnection(void);
  *             数据一到即返回（唤醒延迟不受影响），把重唤醒频率封顶在
  *             250 次/秒；随后回到无限期阻塞。POLLERR/HUP/NVAL（连接
  *             死亡）退出线程，退化回主循环既有心跳节拍。
+ *
+ *             [2026-10-30 统一等待集收口] 本线程在 XPWN_X11_FD_RING=1
+ *             （默认）下**不再启动**：X11 连接 fd 直接注册进框架 ring 的
+ *             被动 fd 等待集（见 xpwn_x11WakeWatchRegister），由 ring 的
+ *             阻塞等待直接唤醒主线程，唤醒路径少一跳（X11 fd 可读 →
+ *             epoll_wait/io_uring POLL_ADD 返回，无需「线程 poll →
+ *             eventfd 写 → epoll_wait 醒来」两跳），且少一个常驻线程
+ *             （与触摸唤醒通道、串口通道同构）。
+ *             保留本线程作为 XPWN_X11_FD_RING=0 时的回退路径——注册失败
+ *             或需对比测量时仍可用旧机制，不改代码即可回退。
  * @param      arg 未用（pthread 签名要求）。
  * @return     NULL。
  */
@@ -2474,13 +2488,117 @@ static void* xpwn_x11WakeWatch(void* arg)
 }
 #endif /* XAbstractNetIoRing_ON */
 
-/** @brief 连接建立后惰性启动 X11 fd 监视线程（幂等；失败静默退化）。
+/**
+ * @brief      X11 连接 fd 就绪回调（ring 被动 fd 通道）。
+ * @details    由 ring 的被动 fd 分派在**主线程**上调用（阻塞等待路径
+ *             位于 dispatcher 的主线程分支，见 XAbstractEventDispatcher.c
+ *             的 isMainThread 判定），故此处触碰 Display* 不破 Xlib
+ *             单线程访问约定。
+ *
+ *             职责边界：**只做「唤醒」不做「消费」**——与旧监视线程同
+ *             语义。X11 事件的真正泵空仍在 dispatcher 的轮询回调链
+ *             （XGuiApplication_pumpNativeEvents → processPendingEvents）
+ *             中于圈边界执行。此处若直接泵空事件，会在 ring 的阻塞
+ *             等待路径内重入框架事件派发（C3 重入约束）。
+ *
+ *             level-triggered 限幅：X11 fd 常驻可读期间，若每次就绪都
+ *             立即唤醒，会与主线程的泵空节奏形成忙转。旧监视线程用
+ *             4ms 限幅再武装把重唤醒封顶在 250 次/秒；此处沿用同一
+ *             节拍——用时间戳记住上次唤醒，4ms 内不重复唤醒。
+ *
+ *             连接死亡（fd 挂断）：ring 的被动 fd 分派不区分 POLLHUP，
+ *             但 X11 连接死亡后 fd 恒可读 ⇒ 每次等待都返回 ⇒ 忙转。
+ *             故检测到「无待处理事件却仍被唤醒」时判定连接已死，注销
+ *             该 fd（从等待集摘除）并停用本通道，退化回心跳节拍。
+ * @param      osFd 就绪的 OS fd（X11 连接 fd）。
+ */
+#if XAbstractNetIoRing_ON
+static void xpwn_x11OnPassiveReady(int osFd)
+{
+    static int64_t lastWakeMs = 0;
+    int64_t nowMs;
+    (void)osFd;
+    /* 连接死亡检测：X11 事件泵空后仍被唤醒 ⇒ fd 恒可读而无可泵事件
+       ⇒ 连接已挂断（POLLHUP 语义）。此时注销 fd，避免忙转。 */
+    if (g_xpwnX11Dead)
+        return;
+    nowMs = XDateTime_currentMSecsSinceEpoch();
+    if (lastWakeMs != 0 && (nowMs - lastWakeMs) < 4)
+        return; /* 4ms 限幅：数据保持期间不重复唤醒（对标旧线程节拍）。 */
+    lastWakeMs = nowMs;
+    /* 只唤醒：真正的事件泵空在 dispatcher 圈边界（见函数头注释）。 */
+    {
+        XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+        if (ring && XAbstractNetIoRing_isEnabled(ring))
+            XAbstractNetIoRing_wakeUp_base(ring);
+    }
+}
+#endif /* XAbstractNetIoRing_ON */
+
+/**
+ * @brief      把 X11 连接 fd 注册进 ring 的被动 fd 等待集。
+ * @details    与触摸唤醒通道（XPlatformFbInput_posix.c 的 evdev fd）、
+ *             POSIX 串口通道同机制：注册成功后 ring 的阻塞等待会被
+ *             X11 fd 直接唤醒，无需常驻监视线程。
+ *
+ *             失败（ring 未启用 / 引擎不支持被动 fd / 表满）时静默
+ *             退化：调用方据此回退到旧监视线程路径，行为与改造前一致。
+ * @return     true=已注册（监视线程不再需要）；false=未注册（须回退）。
+ */
+#if XAbstractNetIoRing_ON
+static bool xpwn_x11WakeWatchRegister(void)
+{
+    XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+    int xfd;
+    if (!ring || !XAbstractNetIoRing_isEnabled(ring))
+        return false;
+    xfd = XConnectionNumber(g_xpwnDisplay);
+    if (xfd < 0)
+        return false;
+    if (!XAbstractNetIoRing_registerPassiveOsFd_base(ring, xfd,
+                                                      xpwn_x11OnPassiveReady))
+        return false;
+    g_xpwnWatchXfd = xfd; /* 供回退路径/注销使用。 */
+    return true;
+}
+#endif /* XAbstractNetIoRing_ON */
+
+/** @brief 连接建立后惰性启动 X11 输入唤醒通道（幂等；失败静默退化）。
+ *
+ *  [2026-10-30 统一等待集收口] 两条路径，默认走前者：
+ *  ① **ring 被动 fd 通道**（XPWN_X11_FD_RING=1，默认）：X11 连接 fd
+ *     注册进框架 ring 的被动 fd 等待集 ⇒ ring 的阻塞等待被 X11 fd 直接
+ *     唤醒 ⇒ **无常驻监视线程**。与触摸唤醒通道、串口通道同构。
+ *  ② **旧监视线程通道**（XPWN_X11_FD_RING=0，或 ① 注册失败时的回退）：
+ *     常驻线程 poll(X11 fd) → 写 ring 的 wake eventfd 唤醒主循环。
+ *
  *  @note  网络模块裁剪（XAbstractNetIoRing_ON=0）时 ring 阻塞等待同样
  *         整体缺席（dispatcher 主线程分支条件不成立），唤醒通道无意义，
  *         不起线程。 */
 static void xpwn_x11WakeWatchStart(void)
 {
 #if XAbstractNetIoRing_ON
+    /* 开关：XPWN_X11_FD_RING=0 强制走旧监视线程路径（回退/对比测量用）。
+       缺省 1 = 新路径。判据：变量存在且首字符为 '0' ⇒ 旧路径；否则新路径。 */
+    {
+        const char* ringMode = XSystem_environment("XPWN_X11_FD_RING");
+        int useRing = !(ringMode && ringMode[0] == '0' &&
+                        (ringMode[1] == 0 || ringMode[1] == '\0'));
+        if (useRing) {
+            /* 新路径：注册进 ring 被动 fd 等待集。成功则不建线程。
+               注册是幂等的（框架侧同 fd 重复注册只更新回调），但每帧
+               重入仍有额外开销 ⇒ 用 g_xpwnRingRegistered 标记一次性完成。 */
+            if (!g_xpwnRingRegistered) {
+                if (xpwn_x11WakeWatchRegister()) {
+                    g_xpwnRingRegistered = true;
+                    return;
+                }
+                /* 注册失败 → 落到下方旧路径（静默退化，行为同改造前）。 */
+            } else {
+                return; /* 已注册：不再重复尝试。 */
+            }
+        }
+    }
     if (g_xpwnWatchStarted || g_xpwnDisplay == NULL) return;
     g_xpwnWatchXfd = XConnectionNumber(g_xpwnDisplay);
     if (g_xpwnWatchXfd < 0) return;
@@ -2670,15 +2788,16 @@ static bool xpwn_ensureConnection(void)
     /* 光标后端注册：连接可用后 XCursor 的 pos/setPos/窗口光标接口即
        走真实 X11 通道（XQueryPointer/XWarpPointer/XDefineCursor）。 */
     xpwn_cursorBackendInstall();
-    /* 主循环统一等待桥：X11 fd 监视线程随连接建立惰性启动（幂等），
-       使 exec 标准主循环的 ring 阻塞等待能被 X11 输入即时唤醒（对标
-       QEventDispatcherGlib 把 X11 fd 并入主循环统一等待）。 */
-    xpwn_x11WakeWatchStart();
+    /* 主循环统一等待桥（X11 fd → ring 唤醒）**不在连接期接入**：
+       X11 连接建立于此（XGuiApplication 构造期），而 ring 全局单例在
+       dispatcher 构造期才创建 —— 连接早于 ring，此刻注册必然失败。
+       改为首次事件泵时惰性接入（见 XPlatformNativeWindow_processPendingEvents
+       的 xpwn_x11WakeWatchStart 调用），彼时 ring 必然已就绪。 */
     /* 屏幕接入不在这里初始化：连接可能早在 XGuiApplication 构造期间被
        平台集成（字体/主题等）间接建立，此时 GUI 单例尚未发布，
        screenAdded 的登记会丢失；改为首次事件泵时惰性接入（见
        XPlatformNativeWindow_processPendingEvents），彼时应用单例必然
-       有效（Qt 中平台屏幕接入同样发生在 QGuiApplication 构造完成之后）。 */
+       有效（Qt 中平台屏幕接入同样发生在 XGuiApplication 构造完成之后）。 */
     return true;
 }
 
@@ -5822,7 +5941,17 @@ bool XPlatformNativeWindow_create(XWindow* window)
                     XNFontSet, fontSet,
                     XNSpotLocation, &spot,
                     NULL);
-                if (missingList) XFreeStringList(missingList);
+                /* [XFreeStringList 宏污染 2026-10-30] 本文件的 XFree 被
+                   #define 成 XMemory_free（单指针释放）以兼容公共层内存
+                   纪律，但 XFreeStringList 收的是 char** —— 宏替换后变成
+                   XMemory_freeStringList，签名不匹配（板端交叉编译报
+                   「expected char** but argument is of type char*」）。
+                   此处临时恢复 Xlib 原型调用，再还原宏别名。 */
+                if (missingList) {
+#undef XFree
+                    XFreeStringList(missingList);
+#define XFree XMemory_free
+                }
                 /* 字体集为 entry 所有（XCreateIC 不接管；IC 存续期间须保持
                  * 有效，随窗口销毁在 XDestroyIC 后释放）。 */
                 entry->m_fontSet = fontSet;
@@ -6970,6 +7099,15 @@ bool XPlatformNativeWindow_processPendingEvents(void)
     /* 首次泵时惰性接入屏幕（枚举/登记/DPI 回填）；此后幂等。见
        xpwn_ensureConnection 注释——放在泵而非连接期，保证应用单例已发布。 */
     xpwn_screensInit();
+    /* [统一等待集 2026-10-30] 首次泵时惰性接入 X11 fd 的 ring 被动等待
+       通道。**必须放在泵而非连接期**：X11 连接在 XGuiApplication 构造期
+       （平台集成初始化）建立，而 ring 全局单例在 dispatcher 构造期才创建
+       ——连接早于 ring ⇒ 连接期注册必然失败（ring 为 NULL）⇒ 静默回退
+       到旧监视线程，新通道根本没生效（板端实测线程数仍为 2，暴露此缺陷）。
+       事件泵由 dispatcher 的轮询回调链驱动，此时 ring 必然已就绪。 */
+    if (!g_xpwnWatchStarted && !g_xpwnRingRegistered) {
+        xpwn_x11WakeWatchStart();
+    }
     xpwn_imePump(); /* 每帧抽取 fcitx5 的 CommitString 等信号。 */
     while (XPending(g_xpwnDisplay) > 0) {
         XNextEvent(g_xpwnDisplay, &event);

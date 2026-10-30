@@ -96,23 +96,6 @@ void XBackingStore_init(XBackingStore* self, XWindow* window)
     xBackingStore_ensureHandle(self);
 }
 
-void XBackingStore_reinit(XBackingStore* self, XWindow* window)
-{
-    XMemory* memory;
-    bool isHeap;
-    if (!self) return;
-
-    /* 这里只能由已初始化对象调用；不要通过读取 vtable 猜测对象状态。 */
-    memory = Class_Memory(self);
-    isHeap = Class_IsHeap(self);
-    XClassDeinit(self);
-    XBackingStore_init(self, window);
-
-    /* init 会清零并恢复默认 XObject 元数据，重建后恢复原有所有权契约。 */
-    if (memory) Class_Memory(self) = memory;
-    Class_IsHeap(self) = isHeap;
-}
-
 XBackingStore* XBackingStore_create_ex(XMemoryType memory, XWindow* window)
 {
     XBackingStore* self = (XBackingStore*)XMemory_malloc(sizeof(XBackingStore), memory);
@@ -134,18 +117,6 @@ XImage* XBackingStore_paintImage(XBackingStore* self)
     if (!platform) return NULL;
     return XPlatformBackingStore_paintDevice(platform);
 }
-
-#if XPAINTDEVICE_ON
-XPaintDevice* XBackingStore_paintDevice(XBackingStore* self)
-{
-    XPlatformBackingStore* platform = XBackingStore_handle(self);
-    XImage* image;
-    if (!platform) return NULL;
-    image = XPlatformBackingStore_paintDevice(platform);
-    if (!image) return NULL;
-    return XImage_paintDevice(image);
-}
-#endif /* XPAINTDEVICE_ON */
 
 bool XBackingStore_nextTile(XBackingStore* self, XRect* tileRect)
 {
@@ -254,15 +225,6 @@ void XBackingStore_flush(XBackingStore* self, const XRegion* region,
      * 非空 window 才表示一次子窗口提交；平台层不能替公共层补这个默认。 */
     if (!window) window = self->m_data->m_window;
     XPlatformBackingStore_flush(platform, window, region, offset);
-}
-
-void XBackingStore_flushTile(XBackingStore* self, XWindow* window,
-                             const XRect* tileRect, const XPoint* offset)
-{
-    XPlatformBackingStore* platform = XBackingStore_handle(self);
-    if (!platform || !tileRect) return;
-    if (!window) window = self->m_data->m_window;
-    XPlatformBackingStore_flushTile(platform, window, tileRect, offset);
 }
 
 void XBackingStore_setStaticContents(XBackingStore* self, const XRegion* region)

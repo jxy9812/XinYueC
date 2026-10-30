@@ -30,10 +30,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <stdarg.h>
 
 #include "XCoreApplication.h"
+#include "XDateTime.h"
 #include "XEventLoop.h"
 #include "XModbusTcpClient.h"
 #include "XModbusTcpClient_Protected.h"
@@ -89,9 +89,12 @@ static uint64_t g_lastStateMs = 0;  /* 上次状态变化时刻（恢复耗时�
 
 static uint64_t nowMs(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000u);
+    /* [跨平台 2026-10-30] 原实现用 clock_gettime(CLOCK_MONOTONIC)（POSIX
+       专属）⇒ 该探针在 Windows 构建里编译不过（既有缺口，本轮修复）。
+       改用框架统一单调时钟 XDateTime_currentMSecsSinceEpoch()：跨平台
+       同源，且与库内其余计时口径一致（Windows 侧已是 QPC 纳秒源，不是
+       GetTickCount64 的 15.625ms 刻度）。 */
+    return (uint64_t)XDateTime_currentMSecsSinceEpoch();
 }
 
 /* 前向声明。 */

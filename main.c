@@ -119,6 +119,12 @@ static int main_run_test_path(const char* testPath)
     if (strcmp(testPath, "xprotocol-campaign") == 0)
         return XProtocolCampaignTest_run() == 0 ? 0 : 1;
 #endif
+#if XPROTOCOL_ON && XMODBUS_ON
+    /* Modbus 服务端 FC 全量覆盖（含读事件信号口径回归）：进程内自跑，
+       无需外部虚拟从站，返回码=失败数。 */
+    if (strcmp(testPath, "xmodbus-coverage") == 0)
+        return XModbusCoverageTest_run() == 0 ? 0 : 1;
+#endif
 #if XPROTOCOL_ON && XVFD_ON
     /* XVfd 变频器闭环三件套（pty 路径走缺省文件回退）。 */
     if (strcmp(testPath, "xvfd-m512") == 0)
@@ -235,6 +241,7 @@ static void main_print_test_list(void)
     XPrintf("  --test xlink-all (全功能闸门) / all (全仓闸门)\n");
     XPrintf("  --test xlink-client (客户端包装·自动重连)\n");
     XPrintf("  --test xmodbus-hub / xprotocol-campaign (需先起虚拟从站)\n");
+    XPrintf("  --test xmodbus-coverage (Modbus 服务端 FC 全量覆盖，进程内自跑)\n");
     XPrintf("  --test xvfd-m512 / xvfd-bus485 / xvfd-atv61 (需先起虚拟从站)\n");
     XPrintf("  Test 菜单「协议栈 → XLink(xlink)」: 客户端包装 / 实战案例·服务端 / 实战案例·客户端\n");
     XPrintf("  Test 菜单「协议栈 → XModbus/XVfd」: Hub闭环 / 485战役 / 变频器三件套\n");
