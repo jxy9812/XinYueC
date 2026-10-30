@@ -489,12 +489,13 @@ void XListView_init(XListView* self, XWidget* parent, XWidgetFlags flags)
     self->m_spacing = 0;
     self->m_modelColumn = 0;
     self->m_rowHeight = XLISTVIEW_DEFAULT_ROW_H;
-    self->m_flow = XListViewFlow_TopDown;
+    self->m_flow = XListViewFlow_TopToBottom;
     self->m_gridWidth = -1;
     self->m_gridHeight = -1;
     self->m_wrapping = false;
     self->m_viewMode = XListViewViewMode_ListMode;
-    self->m_resizeMode = XListViewResizeMode_Static;
+    self->m_resizeMode = XListViewResizeMode_Fixed;
+    self->m_modeProperties = 0;
     self->m_layoutMode = XListViewLayoutMode_SinglePass;
     self->m_batchSize = XLISTVIEW_DEFAULT_BATCH_SIZE;
     self->m_itemAlignment = 0;
@@ -504,6 +505,11 @@ void XListView_init(XListView* self, XWidget* parent, XWidgetFlags flags)
     self->m_uniformItemSizes = false;
     self->m_rowHidden = NULL;
     self->m_rowStateCount = 0;
+    /* 对标 Qt QListView 构造即 setSelectionMode(SingleSelection)
+     * （qlistview.cpp:149 / 162）：列表视图缺省为单选（基类缺省
+     * ExtendedSelection，qabstractitemview.cpp 的 QAbstractItemView
+     * 构造不覆写）。 */
+    self->m_base.m_selectionMode = XAbstractItemViewSelectionMode_SingleSelection;
 }
 
 XListView* XListView_create_ex(XMemoryType memory, XWidget* parent,
@@ -530,8 +536,12 @@ static void VXListView_deinit(XListView* self)
 
 void XListView_setSpacing(XListView* self, int spacing)
 {
-    if (self && spacing >= 0) {
-        self->m_spacing = spacing;
+    /* 对标 Qt QListView::setSpacing（qlistview.cpp:338-344 +
+     * qlistview_p.h:352 `inline void setSpacing(int s) { space = s; }`）：
+     * 直接赋值、无非负校验；同时置位 Spacing 属性标志。 */
+    if (self) {
+        self->m_spacing = (int16_t)spacing;
+        self->m_modeProperties |= XLISTVIEW_PROP_SPACING;
         XWidget_update((XWidget*)self);
     }
 }
@@ -541,10 +551,14 @@ int XListView_spacing(const XListView* self)
 
 void XListView_setModelColumn(XListView* self, int column)
 {
-    if (self && column >= 0) {
-        self->m_modelColumn = column;
-        XWidget_update((XWidget*)self);
-    }
+    /* 对标 Qt QListView::setModelColumn（qlistview.cpp:1626-1639）：
+     * 越界（column < 0 或 >= 模型列数）直接返回、不改值。 */
+    if (!self || column < 0) return;
+    if (self->m_base.m_model &&
+        column >= XAbstractItemModel_columnCount(self->m_base.m_model))
+        return;
+    self->m_modelColumn = column;
+    XWidget_update((XWidget*)self);
 }
 
 int XListView_modelColumn(const XListView* self)
@@ -566,19 +580,24 @@ int XListView_rowHeight(const XListView* self)
 void XListView_setFlow(XListView* self, int flow)
 {
     if (!self) return;
-    if (flow != XListViewFlow_TopDown && flow != XListViewFlow_LeftToRight)
+    if (flow != XListViewFlow_TopToBottom && flow != XListViewFlow_LeftToRight)
         return;
+    /* 对标 Qt：setFlow 置位 Flow 属性标志（qlistview.cpp:231-238）——
+     * 置位后 setViewMode 不再复位该项。 */
+    self->m_modeProperties |= XLISTVIEW_PROP_FLOW;
     if (self->m_flow == flow) return;
     self->m_flow = flow;
     XWidget_update((XWidget*)self);
 }
 
 int XListView_flow(const XListView* self)
-{ return self ? self->m_flow : XListViewFlow_TopDown; }
+{ return self ? self->m_flow : XListViewFlow_TopToBottom; }
 
 void XListView_setGridSize(XListView* self, int width, int height)
 {
     if (!self) return;
+    /* 对标 Qt：setGridSize 置位 GridSize 属性标志（qlistview.cpp:393）。 */
+    self->m_modeProperties |= XLISTVIEW_PROP_GRIDSIZE;
     self->m_gridWidth = width > 0 ? width : -1;
     self->m_gridHeight = height > 0 ? height : -1;
     XWidget_update((XWidget*)self);
@@ -594,15 +613,11 @@ void XListView_gridSize(const XListView* self, int* width, int* height)
     if (height) *height = h;
 }
 
-int XListView_gridSizeWidth(const XListView* self)
-{ return self ? self->m_gridWidth : -1; }
-
-int XListView_gridSizeHeight(const XListView* self)
-{ return self ? self->m_gridHeight : -1; }
-
 void XListView_setWrapping(XListView* self, bool enable)
 {
     if (!self) return;
+    /* 对标 Qt：setWrapping 置位 Wrap 属性标志（qlistview.cpp:260-266）。 */
+    self->m_modeProperties |= XLISTVIEW_PROP_WRAP;
     if (self->m_wrapping == enable) return;
     self->m_wrapping = enable;
     XWidget_update((XWidget*)self);
@@ -619,15 +634,38 @@ void XListView_setViewMode(XListView* self, int mode)
         return;
     if (self->m_viewMode == mode) return;
     self->m_viewMode = mode;
-    /* 对齐 Qt setViewMode 联动：ListMode 复位换行/回退 TopDown；
-       IconMode 打开换行/切 LeftToRight。 */
+    /* 对标 Qt QListView::setViewMode（qlistview.cpp:422-471）：**只复位
+     * 用户未显式设置**的属性（modeProperties 位未置位者）；ListMode
+     * 复位换行(false)/回退 TopToBottom/movement=Static/resizeMode=Fixed/
+     * selectionRectVisible=false；IconMode 复位换行(true)/切
+     * LeftToRight/movement=Free/resizeMode=Fixed/
+     * selectionRectVisible=true。 */
     if (mode == XListViewViewMode_ListMode) {
-        self->m_wrapping = false;
-        self->m_flow = XListViewFlow_TopDown;
+        if (!(self->m_modeProperties & XLISTVIEW_PROP_WRAP))
+            self->m_wrapping = false;
+        if (!(self->m_modeProperties & XLISTVIEW_PROP_FLOW))
+            self->m_flow = XListViewFlow_TopToBottom;
+        if (!(self->m_modeProperties & XLISTVIEW_PROP_MOVEMENT))
+            self->m_movement = XListViewMovement_Static;
+        if (!(self->m_modeProperties & XLISTVIEW_PROP_RESIZEMODE))
+            self->m_resizeMode = XListViewResizeMode_Fixed;
+        if (!(self->m_modeProperties & XLISTVIEW_PROP_SELECTIONRECT))
+            self->m_selectionRectVisible = false;
     } else {
-        self->m_wrapping = true;
-        self->m_flow = XListViewFlow_LeftToRight;
+        if (!(self->m_modeProperties & XLISTVIEW_PROP_WRAP))
+            self->m_wrapping = true;
+        if (!(self->m_modeProperties & XLISTVIEW_PROP_FLOW))
+            self->m_flow = XListViewFlow_LeftToRight;
+        if (!(self->m_modeProperties & XLISTVIEW_PROP_MOVEMENT))
+            self->m_movement = XListViewMovement_Free;
+        if (!(self->m_modeProperties & XLISTVIEW_PROP_RESIZEMODE))
+            self->m_resizeMode = XListViewResizeMode_Fixed;
+        if (!(self->m_modeProperties & XLISTVIEW_PROP_SELECTIONRECT))
+            self->m_selectionRectVisible = true;
     }
+    /* Qt 联动：movement != Static 时开启拖放（qlistview.cpp:465-469）。 */
+    if (self->m_movement != XListViewMovement_Static)
+        XAbstractItemView_setDragEnabled(&self->m_base, true);
     XWidget_update((XWidget*)self);
 }
 
@@ -637,14 +675,17 @@ int XListView_viewMode(const XListView* self)
 void XListView_setResizeMode(XListView* self, int mode)
 {
     if (!self) return;
-    if (mode != XListViewResizeMode_Static
+    if (mode != XListViewResizeMode_Fixed
         && mode != XListViewResizeMode_Adjust)
         return;
+    /* 对标 Qt：setResizeMode 置位 ResizeMode 属性标志
+     * （qlistview.cpp:286-292）。 */
+    self->m_modeProperties |= XLISTVIEW_PROP_RESIZEMODE;
     self->m_resizeMode = mode;
 }
 
 int XListView_resizeMode(const XListView* self)
-{ return self ? self->m_resizeMode : XListViewResizeMode_Static; }
+{ return self ? self->m_resizeMode : XListViewResizeMode_Fixed; }
 
 void XListView_setLayoutMode(XListView* self, int mode)
 {
@@ -665,10 +706,15 @@ void XListView_setMovement(XListView* self, int movement)
         && movement != XListViewMovement_Free
         && movement != XListViewMovement_Snap)
         return;
+    /* 对标 Qt：setMovement 置位 Movement 属性标志（qlistview.cpp:194-206）
+     * 并联动 setDragEnabled(movement != Static)。 */
+    self->m_modeProperties |= XLISTVIEW_PROP_MOVEMENT;
     if (self->m_movement == movement) return;
     self->m_movement = movement;
     /* 对标 Qt：movement!=Static 联动 dragEnabled/acceptDrops 并延迟
        重排；XGui 平铺行模型下仅存状态并触发重绘，拖动移动本体未接。 */
+    XAbstractItemView_setDragEnabled(&self->m_base,
+                                      movement != XListViewMovement_Static);
     XWidget_update((XWidget*)self);
 }
 
@@ -696,10 +742,9 @@ bool XListView_uniformItemSizes(const XListView* self)
 
 void XListView_clearPropertyFlags(XListView* self)
 {
-    /* 对标 QListView::clearPropertyFlags：XGui 项目无属性标志
-       （modeProperties）体系，状态属性均为直接存取，无标志可清，
-       实现为无操作（对标接口存在性）。 */
-    (void)self;
+    /* 对标 Qt QListView::clearPropertyFlags（qlistview.cpp:488-492）：
+     * 清空 modeProperties = 0，使后续 setViewMode 的属性复位生效。 */
+    if (self) self->m_modeProperties = 0;
 }
 
 void XListView_setItemAlignment(XListView* self, int alignment)
@@ -715,7 +760,11 @@ int XListView_itemAlignment(const XListView* self)
 
 void XListView_setSelectionRectVisible(XListView* self, bool show)
 {
-    if (self) self->m_selectionRectVisible = show;
+    if (!self) return;
+    /* 对标 Qt：setSelectionRectVisible 置位 SelectionRectVisible 属性
+     * 标志（qlistview.cpp:1700 附近），使 setViewMode 不再复位该项。 */
+    self->m_modeProperties |= XLISTVIEW_PROP_SELECTIONRECT;
+    self->m_selectionRectVisible = show;
 }
 
 bool XListView_isSelectionRectVisible(const XListView* self)

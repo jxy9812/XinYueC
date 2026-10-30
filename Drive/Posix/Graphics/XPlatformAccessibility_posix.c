@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XPlatformAccessibility_posix.c
  * @brief      Linux AT-SPI D-Bus 辅助功能桥接。
  * @details    本后端在 AT-SPI bus 可用时注册 application root，并公开
@@ -370,10 +370,31 @@ static DBusHandlerResult xpa_handleMessage(DBusConnection* connection,
         dbus_message_append_args(reply, DBUS_TYPE_STRING, &roleName, DBUS_TYPE_INVALID);
     } else if (strcmp(interface, "org.a11y.atspi.Accessible") == 0 &&
                strcmp(member, "GetState") == 0) {
+        /* AT-SPI2 GetState 返回 uint32 状态位掩码数组（签名 "au"）：
+         * 每个元素是一段 32 位状态位，元素个数=需要多少段。
+         * 此前本实现开容器即关（零元素）→ 屏幕阅读器拿不到任何状态
+         * （无障碍实质失效）。现按 XAccessible_state() 的位集合逐段输出；
+         * 位序对齐 GNOME at-spi2-core 的 AtspiStateType（ACTIVE=1<<0 …）。 */
         DBusMessageIter array;
         DBusMessageIter stateArray;
+        XAccessibleState st = XAccessible_state(accessible);
+        dbus_uint32_t chunk[2];
+        int chunkCount = 0;
         dbus_message_iter_init_append(reply, &array);
         dbus_message_iter_open_container(&array, DBUS_TYPE_ARRAY, "u", &stateArray);
+        chunk[0] = (dbus_uint32_t)(st & 0xffffffffULL);
+        chunkCount = 1;
+        if (st >> 32) {
+            chunk[1] = (dbus_uint32_t)((st >> 32) & 0xffffffffULL);
+            chunkCount = 2;
+        }
+        {
+            int i;
+            for (i = 0; i < chunkCount; ++i) {
+                dbus_message_iter_append_basic(&stateArray, DBUS_TYPE_UINT32,
+                                               &chunk[i]);
+            }
+        }
         dbus_message_iter_close_container(&array, &stateArray);
     } else if (strcmp(interface, "org.a11y.atspi.Application") == 0 &&
                strcmp(member, "GetToolkitName") == 0) {

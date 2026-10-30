@@ -1,4 +1,4 @@
-/* xgui_demo_apitest_core.c —— 控件 API 测试族：core（基类与样式）。
+﻿/* xgui_demo_apitest_core.c —— 控件 API 测试族：core（基类与样式）。
  *
  * 覆盖控件（对标 Qt 6.8.3）：XWidget 基类（几何/显隐/启用/焦点/工具提示/
  * 字体/palette 角色/attribute 标志/windowTitle/minimumSize）+ XStyle +
@@ -891,8 +891,10 @@ int xapi_core_run(void)
     if (style) {
         XAPI_EXPECT(strcmp(xapi_cstr(XStyle_name(style)), "XStyle") == 0,
                     "XStyle::name 返回虚表类名（对标 QStyle::name）");
-        XAPI_EXPECT(XStyle_proxy(style) == NULL,
-                    "普通样式无代理（对标 QStyle::proxy）");
+        /* [Qt 对齐 2026-10-30] Qt 6.8 proxy() 无代理时返回**自身**
+         * （qstyle.cpp:2398-2402），旧断言 NULL 编码的是修复前行为。 */
+        XAPI_EXPECT(XStyle_proxy(style) == style,
+                    "普通样式无代理时 proxy 返回自身（qstyle.cpp:2398-2402）");
         /* NULL 安全（契约：样式指针可为 NULL）。 */
         XAPI_EXPECT(strcmp(xapi_cstr(XStyle_name(NULL)), "") == 0 &&
                         XStyle_proxy(NULL) == NULL,
@@ -913,10 +915,11 @@ int xapi_core_run(void)
             XAPI_EXPECT(XColor_red(&c) == 0 && XColor_green(&c) == 0,
                         "standardPalette WindowText=黑");
         }
-        /* 基类无 LayoutSpacing 实现：合并间距返回 0（实现文档裁定，
-         * 对标 Qt qMax(-1,0) 的下限行为）。 */
-        XAPI_EXPECT(XStyle_combinedLayoutSpacing(style, 0, 0, 0, NULL, NULL) == 0,
-                    "无实现注册时 combinedLayoutSpacing=0");
+        /* [Qt 对齐 2026-10-30] Qt 6.8 combinedLayoutSpacing 初值 -1
+         * （qstyle.cpp:2369-2389 `int result = -1`），基类未实现
+         * layoutSpacing 时合并结果为 -1——旧断言 0 编码修复前行为。 */
+        XAPI_EXPECT(XStyle_combinedLayoutSpacing(style, 0, 0, 0, NULL, NULL) == -1,
+                    "无实现注册时 combinedLayoutSpacing=-1（Qt qMax 初值）");
         /* polish/unpolish 基类空实现：调用不崩、控件状态不受扰。 */
         XStyle_polish(style, child);
         XStyle_unpolish(style, child);
@@ -1156,6 +1159,96 @@ int xapi_core_run(void)
         if (blur) XClassDelete(blur);
         if (shadow) XClassDelete(shadow);
         XAPI_EXPECT(0, "内置效果创建分配失败");
+    }
+
+    /* ---- 区域设置族（对标 QWidget locale/setLocale/unsetLocale）----
+     * [Qt 对齐补实现 2026-10-30] 本族此前头文件有声明、.c 无实现，
+     * m_locale/m_localeSet 是死字段——此处补齐真实调用点与语义断言。 */
+    {
+        XWidget* locW = XWidget_create(NULL, 0);
+        XWidget* locChild = XWidget_create(locW, 0);
+        XString* locName = XString_create_utf8("zh-CN");
+        XString* locName2 = XString_create_utf8("en-US");
+
+        XAPI_EXPECT(locW != NULL && locChild != NULL && locName && locName2,
+                    "区域设置用例：控件与名称创建成功");
+        if (locW && locChild && locName && locName2) {
+            /* 未显式设置：locale 返回 NULL（头文件契约）。 */
+            XAPI_EXPECT(XWidget_locale(locW) == NULL,
+                        "未显式设置区域时 XWidget_locale=NULL");
+            /* 显式设置后返回该名称（借用指针）。 */
+            XWidget_setLocale(locW, locName);
+            XAPI_EXPECT(XWidget_locale(locW) != NULL &&
+                            XString_equals(XWidget_locale(locW), locName,
+                                           XChar_CaseSensitive),
+                        "setLocale 后 locale 返回设置名称");
+            /* 子控件未显式设置 → 跟随父（父链解析）。 */
+            XAPI_EXPECT(XWidget_locale(locChild) != NULL &&
+                            XString_equals(XWidget_locale(locChild), locName,
+                                           XChar_CaseSensitive),
+                        "未显式设置的子控件 locale 跟随父控件（Qt 父链解析）");
+            /* 子控件显式设置 → 自身优先于父。 */
+            XWidget_setLocale(locChild, locName2);
+            XAPI_EXPECT(XWidget_locale(locChild) != NULL &&
+                            XString_equals(XWidget_locale(locChild), locName2,
+                                           XChar_CaseSensitive),
+                        "子控件显式设置后 locale 取自身值（优先于父）");
+            /* unsetLocale：清除显式设置 → 回到父链解析。 */
+            XWidget_unsetLocale(locChild);
+            XAPI_EXPECT(XWidget_locale(locChild) != NULL &&
+                            XString_equals(XWidget_locale(locChild), locName,
+                                           XChar_CaseSensitive),
+                        "unsetLocale 后子控件回到父控件区域（Qt 语义）");
+            /* 相同值重复设置：不动作（幂等）。 */
+            XWidget_setLocale(locW, locName);
+            XAPI_EXPECT(XWidget_locale(locW) != NULL &&
+                            XString_equals(XWidget_locale(locW), locName,
+                                           XChar_CaseSensitive),
+                        "重复设置相同区域=幂等保持");
+        }
+        if (locName) XClassDelete((XClass*)locName);
+        if (locName2) XClassDelete((XClass*)locName2);
+        if (locChild) XClassDelete((XClass*)locChild);
+        if (locW) XClassDelete((XClass*)locW);
+    }
+
+    /* ---- 辅助功能状态位（对标 QAccessibleInterface::state / AT-SPI2
+     *      AtspiStateType）----
+     * [无障碍补实现 2026-10-30] 此前 AT-SPI 桥接的 GetState 返回空数组
+     * （容器开着就关、零元素）→ 屏幕阅读器拿不到任何状态。本段验证新增的
+     * XAccessible_state() 位集合推导（可见/启用/焦点）。 */
+    {
+        XWidget* accW = XWidget_create(NULL, 0);
+        XAccessible* acc = NULL;
+        XAPI_EXPECT(accW != NULL, "辅助功能用例：控件创建成功");
+        if (accW) {
+            /* 可见性位需控件真正显示（XWidget_isVisible 口径）。 */
+            XWidget_show(accW);
+            acc = XAccessible_createForWidget(accW);
+            XAPI_EXPECT(acc != NULL, "辅助功能用例：为控件创建可访问节点");
+            if (acc) {
+                XAccessibleState st = XAccessible_state(acc);
+                XAPI_EXPECT((st & XACCESSIBLE_STATE_VISIBLE) != 0,
+                            "可见控件的状态含 VISIBLE 位");
+                XAPI_EXPECT((st & XACCESSIBLE_STATE_ENABLED) != 0,
+                            "启用控件的状态含 ENABLED 位");
+                XAPI_EXPECT((st & XACCESSIBLE_STATE_SHOWING) != 0,
+                            "可见控件的状态含 SHOWING 位");
+                XAPI_EXPECT((st & XACCESSIBLE_STATE_FOCUSED) == 0,
+                            "未获焦点控件的状态不含 FOCUSED 位");
+                XClassDelete((XClass*)acc);
+            }
+            /* 禁用控件：ENABLED 位应清零。 */
+            XWidget_setEnabled(accW, false);
+            acc = XAccessible_createForWidget(accW);
+            if (acc) {
+                XAccessibleState st = XAccessible_state(acc);
+                XAPI_EXPECT((st & XACCESSIBLE_STATE_ENABLED) == 0,
+                            "禁用控件的状态不含 ENABLED 位");
+                XClassDelete((XClass*)acc);
+            }
+            XClassDelete((XClass*)accW);
+        }
     }
 
     /* ---- 收尾：清焦点后级联析构（焦点全局登记不悬空）。 ---- */

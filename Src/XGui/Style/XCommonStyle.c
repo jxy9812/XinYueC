@@ -31,6 +31,16 @@ static void xcs_drawArrow(XStyle* self, const XStyleOption* option,
 static XIcon* xcs_standardIcon(XStyle* self, int sp,
                                const XStyleOption* option,
                                const XWidget* widget);
+static XPixmap* VXCommonStyle_standardPixmap(XStyle* self, int sp,
+                                             const XStyleOption* option,
+                                             const XWidget* widget);
+static int VXCommonStyle_layoutSpacing(XStyle* self, int control1, int control2,
+                                       int orientation,
+                                       const XStyleOption* option,
+                                       const XWidget* widget);
+static void VXCommonStyle_polish(XStyle* self, XWidget* widget);
+static void VXCommonStyle_unpolish(XStyle* self, XWidget* widget);
+static void VXCommonStyle_polishPalette(XStyle* self, XPalette* palette);
 static XRect VXCommonStyle_subControlRect(XStyle* self, int cc,
                                           const XStyleOption* opt, int sc,
                                           const XWidget* widget);
@@ -2161,6 +2171,7 @@ static void xcs_titleBarLayoutBars(XStyle* self, const XStyleOption* option,
                                    XcsTitleBarLayout* out)
 {
     const XStyleOptionTitleBar* tb;
+    XStyleOptionTitleBar tbLocal;
     uint32_t sc;
     XRect bar;
     int btn;
@@ -2170,7 +2181,16 @@ static void xcs_titleBarLayoutBars(XStyle* self, const XStyleOption* option,
     if (!out) return;
     XMemset(out, 0, sizeof(*out));
     if (!self || !option) return;
-    tb = (const XStyleOptionTitleBar*)option;
+    /* 向下转型守卫（对标 Qt 的 qstyleoption_cast<QStyleOptionComplex>
+       守卫，qstyleoption.h:661-672）：非复杂选项不得越界读派生字段——
+       改用零值副本兜底（子控件位全 0 = 无按钮条），确定性优先。 */
+    if (XStyleOption_isComplex(option)) {
+        tb = (const XStyleOptionTitleBar*)option;
+    } else {
+        XMemset(&tbLocal, 0, sizeof(tbLocal));
+        tbLocal.m_base.m_base = *option;
+        tb = &tbLocal;
+    }
     sc = tb->m_base.m_subControls;
     bar = option->m_rect;
     if (bar.width <= 0 || bar.height <= 0) return;
@@ -2225,13 +2245,23 @@ static void xcs_titleBarDrawButton(
     uint32_t group = (option->m_state & XStyleState_Active)
                          ? XPaletteColorGroup_Active
                          : XPaletteColorGroup_Inactive;
-    const XStyleOptionComplex* cx = (const XStyleOptionComplex*)option;
+    XStyleOptionComplex cxLocal;
+    const XStyleOptionComplex* cx;
     uint32_t glyph;
     int x = rect->x;
     int y = rect->y;
     bool hovered;
     bool pressed;
     (void)self; (void)widget;
+    /* 向下转型守卫（对标 Qt qstyleoption_cast 守卫）：非复杂选项改用
+       零值副本，避免越界读派生字段。 */
+    if (XStyleOption_isComplex(option)) {
+        cx = (const XStyleOptionComplex*)option;
+    } else {
+        XMemset(&cxLocal, 0, sizeof(cxLocal));
+        cxLocal.m_base = *option;
+        cx = &cxLocal;
+    }
     hovered = (option->m_state & XStyleState_MouseOver) != 0 &&
               (cx->m_activeSubControls & (uint32_t)sc) != 0;
     pressed = (option->m_state & XStyleState_Sunken) != 0 &&
@@ -2295,13 +2325,22 @@ static void xcs_drawTitleBar(XStyle* self, const XStyleOption* option,
                              XPainter* painter, const XWidget* widget)
 {
     const XStyleOptionTitleBar* tb;
+    XStyleOptionTitleBar tbLocal;
     XPalette palette;
     XPaletteColorGroup group;
     XcsTitleBarLayout layout;
     char buf[512];
     if (!self || !option || !painter) return;
     if (option->m_rect.width <= 0 || option->m_rect.height <= 0) return;
-    tb = (const XStyleOptionTitleBar*)option;
+    /* 向下转型守卫（对标 Qt qstyleoption_cast 守卫）：非复杂选项改用
+       零值副本，避免越界读派生字段。 */
+    if (XStyleOption_isComplex(option)) {
+        tb = (const XStyleOptionTitleBar*)option;
+    } else {
+        XMemset(&tbLocal, 0, sizeof(tbLocal));
+        tbLocal.m_base.m_base = *option;
+        tb = &tbLocal;
+    }
     palette = option->m_palette;
     group = (option->m_state & XStyleState_Active)
                 ? XPaletteColorGroup_Active
@@ -4565,6 +4604,97 @@ static XIcon* xcs_standardIcon(XStyle* self, int sp,
     }
 }
 
+/* ==================== QCommonStyle 覆盖族补齐 ==================== */
+
+/** @brief 标准位图（对标 QCommonStyle::standardPixmap）。
+ *
+ *  @details Qt 6.8 的实现（qcommonstyle.cpp:5527-5560）依次尝试
+ *           windows/application/mac/resource 四级主题图标，取其 16x16
+ *           位图；全空时回落内嵌 XPM 资源。X 侧无平台主题链，改由本类
+ *           的标准图标集（xcs_standardIcon）派生 16x16 位图——语义等价
+ *           于「同名标准图标 → 16x16 位图」，且与 Qt 的 16x16 尺寸
+ *           口径一致（qcommonstyle.cpp:5532 `icon.pixmap(QSize(16, 16), …)`）。
+ *
+ *  @param self  样式。
+ *  @param sp     标准位图枚举。
+ *  @param option 选项（可空）。
+ *  @param widget 关联控件（可空）。
+ *  @return 新建位图（调用方用 XClassDelete 释放）；无对应图标返回 NULL。 */
+static XPixmap* VXCommonStyle_standardPixmap(XStyle* self, int sp,
+                                             const XStyleOption* option,
+                                             const XWidget* widget)
+{
+    XIcon* icon;
+    XPixmap* pixmap;
+    if (!self) return NULL;
+    icon = xcs_standardIcon(self, sp, option, widget);
+    if (!icon) return NULL;
+    pixmap = XPixmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!pixmap) {
+        XClassDelete(icon);
+        return NULL;
+    }
+    XIcon_pixmap(icon, 16, 16, XIconMode_Normal, XIconState_Off, pixmap);
+    XClassDelete(icon);
+    if (XPixmap_isNull(pixmap)) {
+        XClassDelete(pixmap);
+        return NULL;
+    }
+    return pixmap;
+}
+
+/** @brief 布局间距（对标 QCommonStyle::layoutSpacing）。
+ *
+ *  @details Qt 6.8 的 QCommonStyle::layoutSpacing 直接返回 -1
+ *           （qcommonstyle.cpp:6229-6236，注释即「未实现」语义），
+ *           由布局层回落默认间距；X 侧同口径返回 -1。基类兜底本也是
+ *           -1（XStyle.c 的分派兜底），但**槽位缺失**意味着派生样式
+ *           无法覆写——补齐槽位后 XFusionStyle 等可按 Qt 方式覆写。 */
+static int VXCommonStyle_layoutSpacing(XStyle* self, int control1, int control2,
+                                       int orientation,
+                                       const XStyleOption* option,
+                                       const XWidget* widget)
+{
+    (void)self; (void)control1; (void)control2;
+    (void)orientation; (void)option; (void)widget;
+    return -1;
+}
+
+/** @brief 控件 polish（对标 QCommonStyle::polish(QWidget *)）。
+ *
+ *  @details Qt 6.8 的 QCommonStyle::polish(QWidget *) 转调
+ *           QStyle::polish(widget)（qcommonstyle.cpp:6249-6252，
+ *           基类为空实现）。X 侧同口径：沿父类链转调，基类无操作。 */
+static void VXCommonStyle_polish(XStyle* self, XWidget* widget)
+{
+    if (!self || !widget) return;
+    XClass_Parent(XStyle, EXStyle_Polish, void (*)(XStyle*, XWidget*))
+        (self, widget);
+}
+
+/** @brief 控件 unpolish（对标 QCommonStyle::unpolish(QWidget *)）。
+ *
+ *  @details Qt 6.8 的 QCommonStyle::unpolish(QWidget *) 转调
+ *           QStyle::unpolish(widget)（qcommonstyle.cpp:6257-6260）。 */
+static void VXCommonStyle_unpolish(XStyle* self, XWidget* widget)
+{
+    if (!self || !widget) return;
+    XClass_Parent(XStyle, EXStyle_Unpolish, void (*)(XStyle*, XWidget*))
+        (self, widget);
+}
+
+/** @brief 调色板 polish（对标 QCommonStyle::polish(QPalette &)）。
+ *
+ *  @details Qt 6.8 的 QCommonStyle::polish(QPalette &) 转调
+ *           QStyle::polish(pal)（qcommonstyle.cpp:6241-6244，基类为空
+ *           实现）。X 侧同口径：沿父类链转调，基类无操作。 */
+static void VXCommonStyle_polishPalette(XStyle* self, XPalette* palette)
+{
+    if (!self || !palette) return;
+    XClass_Parent(XStyle, EXStyle_PolishPalette, void (*)(XStyle*, XPalette*))
+        (self, palette);
+}
+
 XVtable* XCommonStyle_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XCommonStyle)
@@ -4589,6 +4719,20 @@ XVtable* XCommonStyle_class_init(void)
                              VXCommonStyle_hitTestComplexControl);
     XVTABLE_OVERLOAD_DEFAULT(EXStyle_StandardIcon,
                              xcs_standardIcon);
+    /* 对标 QCommonStyle 的其余覆盖族（qcommonstyle.h:43-56）：标准位图、
+       布局间距、polish/unpolish 三族。缺槽不是「未实现」而是「行为退化
+       为默认值」——基类兜底分别返回 NULL/0/-1，与 Qt 实际语义不等价，
+       故此处补齐槽位，使派生样式可覆写（Qt 侧同名 override 语义）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_StandardPixmap,
+                             VXCommonStyle_standardPixmap);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_LayoutSpacing,
+                             VXCommonStyle_layoutSpacing);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_Polish,
+                             VXCommonStyle_polish);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_Unpolish,
+                             VXCommonStyle_unpolish);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_PolishPalette,
+                             VXCommonStyle_polishPalette);
     return XVTABLE_DEFAULT;
 }
 

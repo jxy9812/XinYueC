@@ -2254,8 +2254,8 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
         return false;
     }
 
-    themePaths = XIcon_themeSearchPaths_2();
-    fallbackPaths = XIcon_fallbackSearchPaths_2();
+    themePaths = XIcon_themeSearchPaths();
+    fallbackPaths = XIcon_fallbackSearchPaths();
     themeName = XIcon_themeName();
     fallbackThemeName = XIcon_fallbackThemeName();
     if (themeName && !XString_isEmpty_base((const XContainer*)themeName))
@@ -2365,8 +2365,8 @@ bool XIconInternal_availableThemeSizes(const char* name, XVector* out)
     bool found = false;
     if (!name || !name[0] || !out) return false;
 
-    themePaths = XIcon_themeSearchPaths_2();
-    fallbackPaths = XIcon_fallbackSearchPaths_2();
+    themePaths = XIcon_themeSearchPaths();
+    fallbackPaths = XIcon_fallbackSearchPaths();
     themeName = XIcon_themeName();
     fallbackThemeName = XIcon_fallbackThemeName();
     if (themeName && !XString_isEmpty_base((const XContainer*)themeName))
@@ -2409,8 +2409,8 @@ bool XIconInternal_themeHasScalable(const char* name)
     bool found = false;
     if (!name || !name[0]) return false;
 
-    themePaths = XIcon_themeSearchPaths_2();
-    fallbackPaths = XIcon_fallbackSearchPaths_2();
+    themePaths = XIcon_themeSearchPaths();
+    fallbackPaths = XIcon_fallbackSearchPaths();
     themeName = XIcon_themeName();
     fallbackThemeName = XIcon_fallbackThemeName();
     if (themeName && !XString_isEmpty_base((const XContainer*)themeName))
@@ -2486,8 +2486,8 @@ bool XIconInternal_themeUsesScalableEntry(const char* name, int size)
     /* QIconThemeEngine 只接收主题名称；绝对路径由 XIcon 文件引擎处理，
        不应在这里把它当作主题外的 SVG 回退再解释一次。 */
     if (name[0] == '/' || name[0] == ':') return false;
-    themePaths = XIcon_themeSearchPaths_2();
-    fallbackPaths = XIcon_fallbackSearchPaths_2();
+    themePaths = XIcon_themeSearchPaths();
+    fallbackPaths = XIcon_fallbackSearchPaths();
     themeName = XIcon_themeName();
     fallbackThemeName = XIcon_fallbackThemeName();
     if (themeName && !XString_isEmpty_base((const XContainer*)themeName))
@@ -2528,8 +2528,8 @@ bool XIconInternal_themeHasIcon(const char* name)
     bool found = false;
     if (!name || !name[0]) return false;
 
-    themePaths = XIcon_themeSearchPaths_2();
-    fallbackPaths = XIcon_fallbackSearchPaths_2();
+    themePaths = XIcon_themeSearchPaths();
+    fallbackPaths = XIcon_fallbackSearchPaths();
     themeName = XIcon_themeName();
     fallbackThemeName = XIcon_fallbackThemeName();
     if (themeName && !XString_isEmpty_base((const XContainer*)themeName))
@@ -2584,8 +2584,8 @@ XString* XIconInternal_resolveThemeIconName(const char* name)
     bool primaryChecked = false;
 
     if (!name || !name[0] || name[0] == '/' || name[0] == ':') return NULL;
-    themePaths = XIcon_themeSearchPaths_2();
-    fallbackPaths = XIcon_fallbackSearchPaths_2();
+    themePaths = XIcon_themeSearchPaths();
+    fallbackPaths = XIcon_fallbackSearchPaths();
     themeName = XIcon_themeName();
     fallbackThemeName = XIcon_fallbackThemeName();
     if (themeName && !XString_isEmpty_base((const XContainer*)themeName))

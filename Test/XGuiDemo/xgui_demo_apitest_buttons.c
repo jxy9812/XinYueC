@@ -381,8 +381,13 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(XAbstractButton_group(&b) == NULL,
                     "AbstractButton 默认 group 未登记=NULL");
         isz = XAbstractButton_iconSize(&b);
-        XAPI_EXPECT(isz.width == 0 && isz.height == 0,
-                    "AbstractButton 默认 iconSize=(0,0) 未设置");
+        /* [Qt 对齐 D1 2026-10-30] 缺省 iconSize 返回样式生效值
+         * PM_ButtonIconSize（qabstractbutton.cpp:1234-1241：iconSize
+         * 无效时取 style()->pixelMetric），CommonStyle 缺省 16x16——
+         * 旧断言 (0,0) 编码的是修复前的非 Qt 行为。 */
+        XAPI_EXPECT(isz.width == 16 && isz.height == 16,
+                    "AbstractButton 默认 iconSize=样式生效值 16x16"
+                    "（PM_ButtonIconSize）");
         icon = XAbstractButton_icon(&b);
         XAPI_EXPECT(XIcon_isNull(&icon),
                     "AbstractButton 默认 icon=空图标");
@@ -415,13 +420,17 @@ int xapi_buttons_run(void)
                     "AbstractButton setIconSize(24,24) 往返");
         XAbstractButton_setIconSize(&b, NULL);
         isz = XAbstractButton_iconSize(&b);
-        XAPI_EXPECT(isz.width == 0 && isz.height == 0,
-                    "AbstractButton setIconSize(NULL) 复位默认 (0,0)");
+        /* [Qt 对齐 D1 2026-10-30] 复位后回落样式生效值（Qt：未显式
+         * 设置时 iconSize() 即取 PM_ButtonIconSize）。 */
+        XAPI_EXPECT(isz.width == 16 && isz.height == 16,
+                    "AbstractButton setIconSize(NULL) 复位默认=样式 16x16");
         XSize_init(&want, -3, 8);
         XAbstractButton_setIconSize(&b, &want);
         isz = XAbstractButton_iconSize(&b);
-        XAPI_EXPECT(isz.width == 0 && isz.height == 0,
-                    "AbstractButton 非正 iconSize 不被接受");
+        /* [Qt 对齐 D1 2026-10-30] 非正请求被拒后仍未显式设置 → 回落
+         * 样式生效值 16x16（同上口径）。 */
+        XAPI_EXPECT(isz.width == 16 && isz.height == 16,
+                    "AbstractButton 非正 iconSize 不被接受（回落样式 16x16）");
         /* setIcon 空图标=清除（QAbstractButton::setIcon 空图标语义） */
         XAbstractButton_setIcon(&b, NULL);
         icon = XAbstractButton_icon(&b);

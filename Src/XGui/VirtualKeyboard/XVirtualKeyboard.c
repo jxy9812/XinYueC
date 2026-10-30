@@ -127,7 +127,9 @@
 
 #include "XVirtualKeyboard.h"
 #include "XWidget_Protected.h"
+#if XGESTURE_ON
 #include "XGestureEvent.h"   /* 手势事件载荷（减负对齐 QTouchEvent）。 */
+#endif
 #include "XObject_Protected.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -5143,6 +5145,7 @@ static void VXKeyboard_touchDragEvent(XWidget* self, XEvent* event)
     XPoint pos;
     if (!kb || !event || XEvent_type(event) != XEVENT_TYPE_TOUCH_DRAG)
         return;
+#if XGESTURE_ON
     /* [减负对齐 QTouchEvent 2026-10-29] 手势载荷改 XGestureEvent。 */
     if (XGestureEvent_gestureType((const XGestureEvent*)event) ==
         (int)XGestureEventType_TapAndHold) {
@@ -5158,6 +5161,13 @@ static void VXKeyboard_touchDragEvent(XWidget* self, XEvent* event)
     pos = XGestureEvent_position((const XGestureEvent*)event);
     if (!xkb_touchDragClaimAt(kb, pos.x, pos.y)) return;
     XEvent_accept(event);
+#else
+    /* [裁剪安全 2026-10-30] XGESTURE_ON=0：TOUCH_DRAG 属统一手势通道
+     * （XWidget 的手势判定结果经该事件下发），手势模块关闭时该事件根本
+     * 不会产生 → 本函数无处理对象，直接返回即可（不可只包 include：
+     * 函数体引用 XGestureEvent 族会在裁剪构建下编译失败）。 */
+    (void)pos;
+#endif
 }
 
 /** @brief 鼠标释放：工具栏按住原格释放触发（滑动出格已取消武装）；

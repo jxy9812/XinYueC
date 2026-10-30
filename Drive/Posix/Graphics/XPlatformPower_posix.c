@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XPlatformPower_posix.c
  * @brief      XPlatformPower 契约的 POSIX 实现（fbdev 熄屏 + 系统挂起 +
  *             X11 DPMS 熄屏）。
@@ -126,7 +126,25 @@ static XPowerFbMode g_xpowFbMode = XPowerFbModeNone;
 static bool          g_xpowFbProbed = false;
 static char          g_xpowBrightPath[256]; /**< 背光节点路径。 */
 static int           g_xpowBrightValue = -1;/**< 熄屏前的背光亮度（唤醒写回）。 */
+static int           g_xpowBrightMax = 1;   /**< 背光量程（max_brightness，探测时缓存）。 */
 static bool          g_xpowFbBlanked = false;/**< 影子状态：是否已熄屏。 */
+
+/** @brief 读背光量程 max_brightness（读不到回 1，写 1 至少能点亮）。 */
+static int xpowFbBrightMax(void)
+{
+    char path[288];
+    char buf[32];
+    char* slash;
+    int value;
+    if (!g_xpowBrightPath[0]) return 1;
+    slash = strrchr(g_xpowBrightPath, '/');
+    if (!slash || slash == g_xpowBrightPath) return 1;
+    snprintf(path, sizeof(path), "%.*s/max_brightness",
+             (int)(slash - g_xpowBrightPath), g_xpowBrightPath);
+    if (!xpowReadText(path, buf, sizeof(buf))) return 1;
+    value = atoi(buf);
+    return value > 0 ? value : 1;
+}
 
 /** @brief 在 /sys/class/backlight 下查找可读 brightness 的背光节点。 */
 static bool xpowFbFindBacklight(char* outPath, size_t outLen)
@@ -162,12 +180,33 @@ static XPowerFbMode xpowFbProbe(void)
         char buf[32];
         if (xpowReadText(g_xpowBrightPath, buf, sizeof(buf)) &&
             atoi(buf) >= 0) {
+            int current = atoi(buf);
             g_xpowFbMode = XPowerFbModeBacklight;
+            g_xpowBrightMax = xpowFbBrightMax();
+            /* [前任遗留熄屏态自愈 2026-10-29] 进程初上电影子态恒为
+             * 「亮屏」（还没熄过屏）；若此刻硬件背光已是 0，说明是前任
+             * （旧程序熄屏后退出/被替换、面板自带的电源管理）留下的：
+             * 影子说亮、硬件却黑，触摸进 noteActivity 判「未熄屏」不
+             * 触发唤醒 → 屏幕永远黑着（mcgs 刷机场景实证，用户报障
+             * 「刷入新程序后屏幕原先关着就触摸唤不醒」）。首探时把硬件
+             * 拉回亮屏基线，shadow 与硬件对齐。 */
+            if (current == 0) {
+                char text[16];
+                snprintf(text, sizeof(text), "%d", g_xpowBrightMax);
+                if (xpowWriteText(g_xpowBrightPath, text))
+                    current = g_xpowBrightMax;
+            }
+            g_xpowBrightValue = current;
             return g_xpowFbMode;
         }
     }
     /* L2 blank sysfs 节点。 */
     if (access("/sys/class/graphics/fb0/blank", W_OK) == 0) {
+        /* 同 L1 的自愈语义：前任经 blank 节点熄的屏，首探写 0 拉回。 */
+        char buf[8];
+        if (xpowReadText("/sys/class/graphics/fb0/blank", buf, sizeof(buf)) &&
+            atoi(buf) != 0)
+            xpowWriteText("/sys/class/graphics/fb0/blank", "0");
         g_xpowFbMode = XPowerFbModeBlankSysfs;
         return g_xpowFbMode;
     }
@@ -226,10 +265,11 @@ static bool xpowFbUnblank(void)
         int value = g_xpowBrightValue;
         if (value <= 0) {
             /* 熄屏前亮度为 0（原就熄着）或未记录：重读当前值，仍为 0
-             * 则写 1（写 0 等于没唤醒，屏会继续黑着）。 */
+             * 则写量程上限（写 0 等于没唤醒，屏会继续黑着；量程未知时
+             * 至少写 1）。 */
             if (!xpowReadText(g_xpowBrightPath, buf, sizeof(buf))) return false;
             value = atoi(buf);
-            if (value <= 0) value = 1;
+            if (value <= 0) value = g_xpowBrightMax > 0 ? g_xpowBrightMax : 1;
         }
         {
             char text[16];

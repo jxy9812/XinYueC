@@ -17,6 +17,8 @@ extern "C" {
 typedef struct XIcon XIcon;   /**< 前向声明（对标 QIcon；借用指针）。 */
 typedef struct XPixmap XPixmap; /**< 前向声明（对标 QPixmap）。 */
 typedef struct XObject XObject; /**< 前向声明（对标 QObject）。 */
+typedef struct XFont XFont;   /**< 前向声明（对标 QFont；借用指针）。 */
+typedef struct XWidget XWidget; /**< 前向声明（对标 QWidget；借用指针）。 */
 
 /**
  * @brief      状态位（对标 Qt 6.8 QStyle::StateFlag，数值一致）。
@@ -600,6 +602,296 @@ typedef enum XStyleStandardPixmap
     XStyleSP_NStandardPixmap = 79         /**< 标准位图计数（NStandardPixmap）。 */
 } XStyleStandardPixmap;
 
+/* ==================== QStyleOption 族补齐（对标 Qt 6.8 qstyleoption.h） ==================== */
+
+/**
+ * @brief      样式选项类型（对标 Qt 6.8 QStyleOption::OptionType）。
+ * @details    数值与 Qt 逐位一致（qstyleoption.h:41-52）：前 16 项为
+ *             普通选项类，SO_Complex 起为「复杂控件」族（0xf0000 起
+ *             连续），SO_CustomBase=0xf00 / SO_ComplexCustomBase=0xf000000
+ *             为自定义起点。X 侧承载于 XStyleOption::m_optionType。
+ */
+typedef enum XStyleOptionType
+{
+    XStyleOptionType_Default = 0,          /**< 默认（SO_Default）。 */
+    XStyleOptionType_FocusRect = 1,        /**< 焦点矩形（SO_FocusRect）。 */
+    XStyleOptionType_Button = 2,           /**< 按钮（SO_Button）。 */
+    XStyleOptionType_Tab = 3,              /**< 页签（SO_Tab）。 */
+    XStyleOptionType_MenuItem = 4,         /**< 菜单项（SO_MenuItem）。 */
+    XStyleOptionType_Frame = 5,            /**< 边框（SO_Frame）。 */
+    XStyleOptionType_ProgressBar = 6,      /**< 进度条（SO_ProgressBar）。 */
+    XStyleOptionType_ToolBox = 7,          /**< 工具箱（SO_ToolBox）。 */
+    XStyleOptionType_Header = 8,           /**< 表头（SO_Header）。 */
+    XStyleOptionType_DockWidget = 9,       /**< 停靠窗（SO_DockWidget）。 */
+    XStyleOptionType_ViewItem = 10,        /**< 条目视图项（SO_ViewItem）。 */
+    XStyleOptionType_TabWidgetFrame = 11,  /**< 页签容器边框（SO_TabWidgetFrame）。 */
+    XStyleOptionType_TabBarBase = 12,      /**< 页签条基座（SO_TabBarBase）。 */
+    XStyleOptionType_RubberBand = 13,      /**< 橡皮筋（SO_RubberBand）。 */
+    XStyleOptionType_ToolBar = 14,         /**< 工具栏（SO_ToolBar）。 */
+    XStyleOptionType_GraphicsItem = 15,    /**< 图形项（SO_GraphicsItem）。 */
+    XStyleOptionType_Complex = 0xf0000,    /**< 复杂控件基类（SO_Complex）。 */
+    XStyleOptionType_Slider = 0xf0001,     /**< 滑块（SO_Slider）。 */
+    XStyleOptionType_SpinBox = 0xf0002,    /**< 微调框（SO_SpinBox）。 */
+    XStyleOptionType_ToolButton = 0xf0003, /**< 工具按钮（SO_ToolButton）。 */
+    XStyleOptionType_ComboBox = 0xf0004,   /**< 组合框（SO_ComboBox）。 */
+    XStyleOptionType_TitleBar = 0xf0005,   /**< 标题栏（SO_TitleBar）。 */
+    XStyleOptionType_GroupBox = 0xf0006,   /**< 分组框（SO_GroupBox）。 */
+    XStyleOptionType_SizeGrip = 0xf0007,   /**< 尺寸手柄（SO_SizeGrip）。 */
+    XStyleOptionType_CustomBase = 0xf00,        /**< 自定义起点（SO_CustomBase）。 */
+    XStyleOptionType_ComplexCustomBase = 0xf000000 /**< 复杂控件自定义起点（SO_ComplexCustomBase）。 */
+} XStyleOptionType;
+
+/**
+ * @brief      字体度量（对标 Qt 6.8 QFontMetrics）。
+ * @details    本仓库未建立 QFontMetrics 等价类（见 XWidget_fontMetrics
+ *             文档），度量以值结构承载：行高/上伸/下伸/行距取自
+ *             XPainter_textHeight/textAscent/textDescent，平均字宽与
+ *             空格宽取自 XPainter_textWidth。
+ */
+typedef struct XStyleFontMetrics
+{
+    int m_height;           /**< 行高（对标 QFontMetrics::height）。 */
+    int m_ascent;           /**< 上伸部（对标 ascent）。 */
+    int m_descent;          /**< 下伸部（对标 descent）。 */
+    int m_lineSpacing;      /**< 行间距（对标 lineSpacing）。 */
+    int m_averageCharWidth; /**< 平均字符宽（对标 averageCharWidth）。 */
+    int m_spaceWidth;       /**< 空格宽（对标 spaceWidth）。 */
+} XStyleFontMetrics;
+
+/**
+ * @brief      边框特征位（对标 QStyleOptionFrame::FrameFeature）。
+ */
+typedef enum XStyleOptionFrameFeature
+{
+    XStyleOptionFrameFeature_None = 0x00,    /**< 无（None）。 */
+    XStyleOptionFrameFeature_Flat = 0x01,    /**< 扁平（Flat）。 */
+    XStyleOptionFrameFeature_Rounded = 0x02  /**< 圆角（Rounded）。 */
+} XStyleOptionFrameFeature;
+
+/**
+ * @brief      边框形状（对标 QFrame::Shape；数值与 XFrameShape 一致）。
+ */
+typedef enum XStyleOptionFrameShape
+{
+    XStyleOptionFrameShape_NoFrame = 0x00,
+    XStyleOptionFrameShape_Box = 0x01,
+    XStyleOptionFrameShape_Panel = 0x02,
+    XStyleOptionFrameShape_WinPanel = 0x03,
+    XStyleOptionFrameShape_HLine = 0x04,
+    XStyleOptionFrameShape_VLine = 0x05,
+    XStyleOptionFrameShape_StyledPanel = 0x06
+} XStyleOptionFrameShape;
+
+/**
+ * @brief      页签条形状（对标 QTabBar::Shape）。
+ */
+typedef enum XStyleOptionTabBarShape
+{
+    XStyleOptionTabBarShape_RoundedNorth = 0,
+    XStyleOptionTabBarShape_RoundedSouth = 1,
+    XStyleOptionTabBarShape_TriangularNorth = 2,
+    XStyleOptionTabBarShape_TriangularSouth = 3
+} XStyleOptionTabBarShape;
+
+/**
+ * @brief      尺寸手柄角位（对标 Qt::Corner）。
+ */
+typedef enum XStyleOptionCorner
+{
+    XStyleOptionCorner_TopLeft = 0x00,
+    XStyleOptionCorner_TopRight = 0x01,
+    XStyleOptionCorner_BottomLeft = 0x02,
+    XStyleOptionCorner_BottomRight = 0x03
+} XStyleOptionCorner;
+
+/**
+ * @brief      表头段位置（对标 QStyleOptionHeader::SectionPosition）。
+ */
+typedef enum XStyleOptionHeaderSectionPosition
+{
+    XStyleOptionHeaderSectionPosition_Beginning = 0,
+    XStyleOptionHeaderSectionPosition_Middle = 1,
+    XStyleOptionHeaderSectionPosition_End = 2,
+    XStyleOptionHeaderSectionPosition_OnlyOneSection = 3
+} XStyleOptionHeaderSectionPosition;
+
+/**
+ * @brief      表头相邻选中位置（对标 QStyleOptionHeader::SelectedPosition）。
+ */
+typedef enum XStyleOptionHeaderSelectedPosition
+{
+    XStyleOptionHeaderSelectedPosition_NotAdjacent = 0,
+    XStyleOptionHeaderSelectedPosition_NextIsSelected = 1,
+    XStyleOptionHeaderSelectedPosition_PreviousIsSelected = 2,
+    XStyleOptionHeaderSelectedPosition_NextAndPreviousAreSelected = 3
+} XStyleOptionHeaderSelectedPosition;
+
+/**
+ * @brief      表头排序指示（对标 QStyleOptionHeader::SortIndicator）。
+ */
+typedef enum XStyleOptionHeaderSortIndicator
+{
+    XStyleOptionHeaderSortIndicator_None = 0,
+    XStyleOptionHeaderSortIndicator_SortUp = 1,
+    XStyleOptionHeaderSortIndicator_SortDown = 2
+} XStyleOptionHeaderSortIndicator;
+
+/**
+ * @brief      页签位置（对标 QStyleOptionTab::TabPosition）。
+ */
+typedef enum XStyleOptionTabPosition
+{
+    XStyleOptionTabPosition_Beginning = 0,
+    XStyleOptionTabPosition_Middle = 1,
+    XStyleOptionTabPosition_End = 2,
+    XStyleOptionTabPosition_OnlyOneTab = 3,
+    XStyleOptionTabPosition_Moving = 4
+} XStyleOptionTabPosition;
+
+/**
+ * @brief      页签相邻选中位置（对标 QStyleOptionTab::SelectedPosition）。
+ */
+typedef enum XStyleOptionTabSelectedPosition
+{
+    XStyleOptionTabSelectedPosition_NotAdjacent = 0,
+    XStyleOptionTabSelectedPosition_NextIsSelected = 1,
+    XStyleOptionTabSelectedPosition_PreviousIsSelected = 2
+} XStyleOptionTabSelectedPosition;
+
+/**
+ * @brief      页签角控件位（对标 QStyleOptionTab::CornerWidget）。
+ */
+typedef enum XStyleOptionTabCornerWidget
+{
+    XStyleOptionTabCornerWidget_None = 0x00,
+    XStyleOptionTabCornerWidget_Left = 0x01,
+    XStyleOptionTabCornerWidget_Right = 0x02
+} XStyleOptionTabCornerWidget;
+
+/**
+ * @brief      页签特征位（对标 QStyleOptionTab::TabFeature）。
+ */
+typedef enum XStyleOptionTabFeature
+{
+    XStyleOptionTabFeature_None = 0x00,
+    XStyleOptionTabFeature_HasFrame = 0x01
+} XStyleOptionTabFeature;
+
+/**
+ * @brief      工具栏位置（对标 QStyleOptionToolBar::ToolBarPosition）。
+ */
+typedef enum XStyleOptionToolBarPosition
+{
+    XStyleOptionToolBarPosition_Beginning = 0,
+    XStyleOptionToolBarPosition_Middle = 1,
+    XStyleOptionToolBarPosition_End = 2,
+    XStyleOptionToolBarPosition_OnlyOne = 3
+} XStyleOptionToolBarPosition;
+
+/**
+ * @brief      工具栏特征位（对标 QStyleOptionToolBar::ToolBarFeature）。
+ */
+typedef enum XStyleOptionToolBarFeature
+{
+    XStyleOptionToolBarFeature_None = 0x0,
+    XStyleOptionToolBarFeature_Movable = 0x1
+} XStyleOptionToolBarFeature;
+
+/**
+ * @brief      菜单项类型（对标 QStyleOptionMenuItem::MenuItemType）。
+ */
+typedef enum XStyleOptionMenuItemType
+{
+    XStyleOptionMenuItemType_Normal = 0,
+    XStyleOptionMenuItemType_DefaultItem = 1,
+    XStyleOptionMenuItemType_Separator = 2,
+    XStyleOptionMenuItemType_SubMenu = 3,
+    XStyleOptionMenuItemType_Scroller = 4,
+    XStyleOptionMenuItemType_TearOff = 5,
+    XStyleOptionMenuItemType_Margin = 6,
+    XStyleOptionMenuItemType_EmptyArea = 7
+} XStyleOptionMenuItemType;
+
+/**
+ * @brief      菜单项勾选类型（对标 QStyleOptionMenuItem::CheckType）。
+ */
+typedef enum XStyleOptionMenuItemCheckType
+{
+    XStyleOptionMenuItemCheckType_NotCheckable = 0,
+    XStyleOptionMenuItemCheckType_Exclusive = 1,
+    XStyleOptionMenuItemCheckType_NonExclusive = 2
+} XStyleOptionMenuItemCheckType;
+
+/**
+ * @brief      条目视图装饰位置（对标 QStyleOptionViewItem::Position）。
+ */
+typedef enum XStyleOptionViewItemPosition
+{
+    XStyleOptionViewItemPosition_Left = 0,
+    XStyleOptionViewItemPosition_Right = 1,
+    XStyleOptionViewItemPosition_Top = 2,
+    XStyleOptionViewItemPosition_Bottom = 3
+} XStyleOptionViewItemPosition;
+
+/**
+ * @brief      条目视图特性位（对标 QStyleOptionViewItem::ViewItemFeature）。
+ */
+typedef enum XStyleOptionViewItemFeature
+{
+    XStyleOptionViewItemFeature_None = 0x00,
+    XStyleOptionViewItemFeature_WrapText = 0x01,
+    XStyleOptionViewItemFeature_Alternate = 0x02,
+    XStyleOptionViewItemFeature_HasCheckIndicator = 0x04,
+    XStyleOptionViewItemFeature_HasDisplay = 0x08,
+    XStyleOptionViewItemFeature_HasDecoration = 0x10
+} XStyleOptionViewItemFeature;
+
+/**
+ * @brief      条目视图项位置（对标 QStyleOptionViewItem::ViewItemPosition）。
+ */
+typedef enum XStyleOptionViewItemViewItemPosition
+{
+    XStyleOptionViewItemViewItemPosition_Invalid = 0,
+    XStyleOptionViewItemViewItemPosition_Beginning = 1,
+    XStyleOptionViewItemViewItemPosition_Middle = 2,
+    XStyleOptionViewItemViewItemPosition_End = 3,
+    XStyleOptionViewItemViewItemPosition_OnlyOne = 4
+} XStyleOptionViewItemViewItemPosition;
+
+/**
+ * @brief      工具箱页位置（对标 QStyleOptionToolBox::TabPosition）。
+ */
+typedef enum XStyleOptionToolBoxTabPosition
+{
+    XStyleOptionToolBoxTabPosition_Beginning = 0,
+    XStyleOptionToolBoxTabPosition_Middle = 1,
+    XStyleOptionToolBoxTabPosition_End = 2,
+    XStyleOptionToolBoxTabPosition_OnlyOneTab = 3
+} XStyleOptionToolBoxTabPosition;
+
+/**
+ * @brief      工具箱相邻选中位置（对标 QStyleOptionToolBox::SelectedPosition）。
+ */
+typedef enum XStyleOptionToolBoxSelectedPosition
+{
+    XStyleOptionToolBoxSelectedPosition_NotAdjacent = 0,
+    XStyleOptionToolBoxSelectedPosition_NextIsSelected = 1,
+    XStyleOptionToolBoxSelectedPosition_PreviousIsSelected = 2
+} XStyleOptionToolBoxSelectedPosition;
+
+/**
+ * @brief      工具按钮特征位（对标 QStyleOptionToolButton::ToolButtonFeature）。
+ */
+typedef enum XStyleOptionToolButtonFeature
+{
+    XStyleOptionToolButtonFeature_None = 0x00,
+    XStyleOptionToolButtonFeature_Arrow = 0x01,
+    XStyleOptionToolButtonFeature_Menu = 0x04,
+    XStyleOptionToolButtonFeature_MenuButtonPopup = 0x04,
+    XStyleOptionToolButtonFeature_PopupDelay = 0x08,
+    XStyleOptionToolButtonFeature_HasMenu = 0x10
+} XStyleOptionToolButtonFeature;
+
 /**
  * @brief      样式选项（对标 QStyleOption 核心字段）。
  * @details    [内存治理 2026-10-11] 成员按对齐降序重排（指针→4B 值组→
@@ -625,6 +917,9 @@ typedef struct XStyleOption
     XRect m_rect;         /**< 目标矩形（控件局部坐标）。 */
     XPalette m_palette;   /**< 调色板（按需填充）。 */
     uint32_t m_textColor; /**< 文本色（0=调色板决定）。 */
+    XStyleFontMetrics m_fontMetrics; /**< 字体度量（对标 fontMetrics）。 */
+    int32_t m_optionType; /**< 选项类型（对标 QStyleOption::type；
+                             XStyleOptionType 值；Qt 的 OptionType 语义）。 */
     /* ---- 进度条 ---- */
     int m_progressMin;    /**< 进度最小值。 */
     int m_progressMax;    /**< 进度最大值。 */
@@ -644,7 +939,9 @@ typedef struct XStyleOption
     uint16_t m_tabIndex;       /**< 页签下标（≤65535；无 -1 哨兵）。 */
     uint16_t m_decorationAlignment; /**< 装饰对齐（XAlignment 位 ≤0x1ff）。 */
     uint8_t m_version;    /**< 版本（保留）。 */
-    uint8_t m_type;       /**< 基元/控件/复杂控件元素枚举（≤255）。 */
+    uint8_t m_type;       /**< 基元/控件/复杂控件元素枚举（≤255）。X 专有：
+                             承载「本次绘制针对哪个元素」；Qt 无此概念，
+                             Qt 的 OptionType 由 m_optionType 承载。 */
     uint8_t m_direction;  /**< 布局方向：0 左到右/1 右到左（对标 direction）。 */
     /* 标志位域组：无取址使用的 17 个 bool 连续合并为 1 位位域（每次绘制
      * 在栈上填充的临时选项对象，逐字段语义不变，仅存储位合拢；
@@ -718,6 +1015,9 @@ typedef struct XStyleOptionProgressBar
     XStyleOption m_base;          /**< 基类选项；必须是第一个。 */
     int m_orientation;            /**< 方向：0 水平/1 垂直（对标 orientation）。 */
     bool m_invertedAppearance;    /**< 反向外观（对标 invertedAppearance）。 */
+    bool m_bottomToTop;           /**< 自底向上（对标 bottomToTop）。 */
+    const char* m_text;           /**< 文本（借用；可空；对标 text）。 */
+    uint32_t m_textAlignment;     /**< 文本对齐（XAlignment 位；对标 textAlignment）。 */
 } XStyleOptionProgressBar;
 
 /**
@@ -730,6 +1030,9 @@ typedef struct XStyleOptionSlider
     uint32_t m_subControls;       /**< 子控件位组合（对标 subControls）。 */
     uint32_t m_activeSubControls; /**< 活动子控件位组合（对标 activeSubControls）。 */
     bool m_upsideDown;            /**< 反向（对标 upsideDown）。 */
+    int m_sliderPosition;         /**< 滑块像素位置（对标 sliderPosition）。 */
+    float m_notchTarget;          /**< 刻度吸附目标值（对标 notchTarget）。 */
+    uint32_t m_keyboardModifiers; /**< 键盘修饰键位组合（对标 keyboardModifiers）。 */
 } XStyleOptionSlider;
 
 /**
@@ -750,6 +1053,10 @@ typedef struct XStyleOptionComboBox
     bool m_popupOpen;             /**< 弹出打开（对标 popupOpen）。 */
     XIcon* m_currentIcon;         /**< 当前项图标（借用；可空）。 */
     XSize m_iconSize;             /**< 图标尺寸。 */
+    XRect m_popupRect;            /**< 弹出矩形（对标 popupRect）。 */
+    bool m_frame;                 /**< 有边框（对标 frame）。 */
+    const char* m_currentText;    /**< 当前文本（借用；可空；对标 currentText）。 */
+    uint32_t m_textAlignment;     /**< 文本对齐（XAlignment 位；对标 textAlignment）。 */
 } XStyleOptionComboBox;
 
 /**
@@ -758,12 +1065,15 @@ typedef struct XStyleOptionComboBox
 typedef struct XStyleOptionToolButton
 {
     XStyleOptionComplex m_base;   /**< 基类选项；必须是第一个。 */
-    uint32_t m_features;          /**< 特性位（对标 features）。 */
+    uint32_t m_features;          /**< 特性位（对标 features；XStyleOptionToolButtonFeature 值）。 */
     int m_toolButtonStyle;        /**< 样式：0 仅图标/1 仅文本/2 文本旁图标/3 文本下图标/4 跟随风格。 */
     int m_arrowType;              /**< 箭头类型：0 无/1 上/2 下/3 左/4 右。 */
     bool m_defaultButton;         /**< 默认按钮（对标 defaultButton）。 */
     XIcon* m_icon;                /**< 工具按钮图标（借用；可空）。 */
     XSize m_iconSize;             /**< 图标尺寸。 */
+    const char* m_text;           /**< 文本（借用；可空；对标 text）。 */
+    XPoint m_pos;                 /**< 位置（对标 pos）。 */
+    const XFont* m_font;          /**< 字体（借用；可空；对标 font）。 */
 } XStyleOptionToolButton;
 
 /**
@@ -781,6 +1091,212 @@ typedef struct XStyleOptionTitleBar
                                        仅承载语义，按钮集合由 m_subControls
                                        表达）。 */
 } XStyleOptionTitleBar;
+
+/* ---- QStyleOption 族补齐：以下 14 个结构体对标 Qt 6.8 qstyleoption.h
+        的对应类（A1-A5/A7-A15 档 1 缺失项）。各结构体首成员恒为
+        XStyleOption/XStyleOptionComplex m_base（对标 Qt 的继承基类），
+        派生字段一律为**值语义**（Qt 的 QString/QIcon/QFont/QBrush 在
+        X 侧分别以 const char*（借用）/XIcon*（借用）/const XFont*（借用）
+        /uint32_t 颜色承载），避免引入拥有型字段带来的析构义务。 ---- */
+
+/**
+ * @brief 焦点矩形选项（对标 QStyleOptionFocusRect）。
+ */
+typedef struct XStyleOptionFocusRect
+{
+    XStyleOption m_base;   /**< 基类选项；必须是第一个。 */
+    uint32_t m_backgroundColor; /**< 背景色（ARGB32；对标 backgroundColor）。 */
+} XStyleOptionFocusRect;
+
+/**
+ * @brief 边框选项（对标 QStyleOptionFrame）。
+ */
+typedef struct XStyleOptionFrame
+{
+    XStyleOption m_base;   /**< 基类选项；必须是第一个。 */
+    int m_lineWidth;        /**< 边框线宽（对标 lineWidth）。 */
+    int m_midLineWidth;     /**< 中线宽（对标 midLineWidth）。 */
+    uint32_t m_features;    /**< 特征位（XStyleOptionFrameFeature 值）。 */
+    int m_frameShape;       /**< 边框形状（XStyleOptionFrameShape 值）。 */
+} XStyleOptionFrame;
+
+/**
+ * @brief 页签容器边框选项（对标 QStyleOptionTabWidgetFrame）。
+ */
+typedef struct XStyleOptionTabWidgetFrame
+{
+    XStyleOption m_base;   /**< 基类选项；必须是第一个。 */
+    int m_lineWidth;        /**< 边框线宽（对标 lineWidth）。 */
+    int m_midLineWidth;     /**< 中线宽（对标 midLineWidth）。 */
+    int m_shape;            /**< 页签形状（XStyleOptionTabBarShape 值；对标 shape）。 */
+    XSize m_tabBarSize;     /**< 页签条尺寸（对标 tabBarSize）。 */
+    XSize m_rightCornerWidgetSize; /**< 右角控件尺寸（对标 rightCornerWidgetSize）。 */
+    XSize m_leftCornerWidgetSize;  /**< 左角控件尺寸（对标 leftCornerWidgetSize）。 */
+    XRect m_tabBarRect;     /**< 页签条矩形（对标 tabBarRect）。 */
+    XRect m_selectedTabRect; /**< 选中页签矩形（对标 selectedTabRect）。 */
+} XStyleOptionTabWidgetFrame;
+
+/**
+ * @brief 页签条基座选项（对标 QStyleOptionTabBarBase）。
+ */
+typedef struct XStyleOptionTabBarBase
+{
+    XStyleOption m_base;   /**< 基类选项；必须是第一个。 */
+    int m_shape;            /**< 页签形状（XStyleOptionTabBarShape 值；对标 shape）。 */
+    XRect m_tabBarRect;     /**< 页签条矩形（对标 tabBarRect）。 */
+    XRect m_selectedTabRect; /**< 选中页签矩形（对标 selectedTabRect）。 */
+    bool m_documentMode;    /**< 文档模式（对标 documentMode）。 */
+} XStyleOptionTabBarBase;
+
+/**
+ * @brief 表头选项（对标 QStyleOptionHeader）。
+ */
+typedef struct XStyleOptionHeader
+{
+    XStyleOption m_base;   /**< 基类选项；必须是第一个。 */
+    int m_section;          /**< 段号（对标 section）。 */
+    const char* m_text;     /**< 段文本（借用；可空；对标 text）。 */
+    uint32_t m_textAlignment; /**< 文本对齐（XAlignment 位；对标 textAlignment）。 */
+    XIcon* m_icon;          /**< 段图标（借用；可空；对标 icon）。 */
+    uint32_t m_iconAlignment; /**< 图标对齐（XAlignment 位；对标 iconAlignment）。 */
+    int m_position;         /**< 段位置（XStyleOptionHeaderSectionPosition 值）。 */
+    int m_selectedPosition; /**< 相邻选中位置（XStyleOptionHeaderSelectedPosition 值）。 */
+    int m_sortIndicator;    /**< 排序指示（XStyleOptionHeaderSortIndicator 值）。 */
+    int m_orientation;      /**< 方向：0 水平/1 垂直（对标 orientation）。 */
+} XStyleOptionHeader;
+
+/**
+ * @brief 页签选项（对标 QStyleOptionTab）。
+ */
+typedef struct XStyleOptionTab
+{
+    XStyleOption m_base;   /**< 基类选项；必须是第一个。 */
+    int m_shape;            /**< 页签形状（XStyleOptionTabBarShape 值；对标 shape）。 */
+    const char* m_text;     /**< 页签文本（借用；可空；对标 text）。 */
+    XIcon* m_icon;          /**< 页签图标（借用；可空；对标 icon）。 */
+    int m_row;              /**< 行号（对标 row）。 */
+    int m_position;         /**< 页签位置（XStyleOptionTabPosition 值）。 */
+    int m_selectedPosition; /**< 相邻选中位置（XStyleOptionTabSelectedPosition 值）。 */
+    uint32_t m_cornerWidgets; /**< 角控件位（XStyleOptionTabCornerWidget 值）。 */
+    XSize m_iconSize;       /**< 图标尺寸（对标 iconSize）。 */
+    bool m_documentMode;    /**< 文档模式（对标 documentMode）。 */
+    XSize m_leftButtonSize; /**< 左按钮尺寸（对标 leftButtonSize）。 */
+    XSize m_rightButtonSize;/**< 右按钮尺寸（对标 rightButtonSize）。 */
+    uint32_t m_features;    /**< 特征位（XStyleOptionTabFeature 值）。 */
+    int m_tabIndex;         /**< 页签下标（-1=未指定；对标 tabIndex）。 */
+} XStyleOptionTab;
+
+/**
+ * @brief 工具栏选项（对标 QStyleOptionToolBar）。
+ */
+typedef struct XStyleOptionToolBar
+{
+    XStyleOption m_base;   /**< 基类选项；必须是第一个。 */
+    int m_positionOfLine;   /**< 工具栏行位置（XStyleOptionToolBarPosition 值）。 */
+    int m_positionWithinLine; /**< 行内位置（XStyleOptionToolBarPosition 值）。 */
+    uint32_t m_toolBarArea; /**< 停靠区域位（对标 toolBarArea）。 */
+    uint32_t m_features;    /**< 特征位（XStyleOptionToolBarFeature 值）。 */
+    int m_lineWidth;        /**< 边框线宽（对标 lineWidth）。 */
+    int m_midLineWidth;     /**< 中线宽（对标 midLineWidth）。 */
+} XStyleOptionToolBar;
+
+/**
+ * @brief 菜单项选项（对标 QStyleOptionMenuItem）。
+ */
+typedef struct XStyleOptionMenuItem
+{
+    XStyleOption m_base;   /**< 基类选项；必须是第一个。 */
+    int m_menuItemType;     /**< 菜单项类型（XStyleOptionMenuItemType 值）。 */
+    int m_checkType;        /**< 勾选类型（XStyleOptionMenuItemCheckType 值）。 */
+    bool m_checked;         /**< 已勾选（对标 checked）。 */
+    bool m_menuHasCheckableItems; /**< 菜单含可勾选项（对标 menuHasCheckableItems）。 */
+    XRect m_menuRect;       /**< 菜单矩形（对标 menuRect）。 */
+    const char* m_text;     /**< 文本（借用；可空；对标 text）。 */
+    XIcon* m_icon;          /**< 图标（借用；可空；对标 icon）。 */
+    int m_maxIconWidth;     /**< 图标最大宽（对标 maxIconWidth）。 */
+    int m_reservedShortcutWidth; /**< 快捷键预留宽（对标 reservedShortcutWidth）。 */
+    const XFont* m_font;    /**< 字体（借用；可空；对标 font）。 */
+} XStyleOptionMenuItem;
+
+/**
+ * @brief 停靠窗选项（对标 QStyleOptionDockWidget）。
+ */
+typedef struct XStyleOptionDockWidget
+{
+    XStyleOption m_base;   /**< 基类选项；必须是第一个。 */
+    const char* m_title;    /**< 标题（借用；可空；对标 title）。 */
+    bool m_closable;        /**< 可关闭（对标 closable）。 */
+    bool m_movable;         /**< 可移动（对标 movable）。 */
+    bool m_floatable;       /**< 可浮动（对标 floatable）。 */
+    bool m_verticalTitleBar;/**< 垂直标题栏（对标 verticalTitleBar）。 */
+} XStyleOptionDockWidget;
+
+/**
+ * @brief 条目视图项选项（对标 QStyleOptionViewItem）。
+ */
+typedef struct XStyleOptionViewItem
+{
+    XStyleOption m_base;   /**< 基类选项；必须是第一个。 */
+    uint32_t m_displayAlignment;  /**< 文本对齐（XAlignment 位；对标 displayAlignment）。 */
+    uint32_t m_decorationAlignment; /**< 装饰对齐（XAlignment 位；对标 decorationAlignment）。 */
+    uint8_t m_textElideMode; /**< 文本省略模式（对标 textElideMode）。 */
+    int m_decorationPosition; /**< 装饰位置（XStyleOptionViewItemPosition 值）。 */
+    XSize m_decorationSize; /**< 装饰尺寸（对标 decorationSize）。 */
+    const XFont* m_font;    /**< 字体（借用；可空；对标 font）。 */
+    bool m_showDecorationSelected; /**< 装饰随选中高亮（对标 showDecorationSelected）。 */
+    uint32_t m_features;    /**< 特性位（XStyleOptionViewItemFeature 值）。 */
+    const XObject* m_widget; /**< 源控件（借用；可空；对标 widget）。 */
+    uint8_t m_checkState;   /**< 勾选状态（0 未选/1 部分/2 选中；对标 checkState）。 */
+    XIcon* m_icon;          /**< 图标（借用；可空；对标 icon）。 */
+    const char* m_text;     /**< 文本（借用；可空；对标 text）。 */
+    int m_viewItemPosition; /**< 条目位置（XStyleOptionViewItemViewItemPosition 值）。 */
+    uint32_t m_backgroundColor; /**< 背景色（ARGB32；对标 backgroundBrush 纯色）。 */
+} XStyleOptionViewItem;
+
+/**
+ * @brief 工具箱选项（对标 QStyleOptionToolBox）。
+ */
+typedef struct XStyleOptionToolBox
+{
+    XStyleOption m_base;   /**< 基类选项；必须是第一个。 */
+    const char* m_text;     /**< 页文本（借用；可空；对标 text）。 */
+    XIcon* m_icon;          /**< 页图标（借用；可空；对标 icon）。 */
+    int m_position;         /**< 页位置（XStyleOptionToolBoxTabPosition 值）。 */
+    int m_selectedPosition; /**< 相邻选中位置（XStyleOptionToolBoxSelectedPosition 值）。 */
+} XStyleOptionToolBox;
+
+/**
+ * @brief 橡皮筋选项（对标 QStyleOptionRubberBand）。
+ */
+typedef struct XStyleOptionRubberBand
+{
+    XStyleOption m_base;   /**< 基类选项；必须是第一个。 */
+    int m_shape;            /**< 形状（XRubberBandShape 值；对标 shape）。 */
+    bool m_opaque;          /**< 不透明（对标 opaque）。 */
+} XStyleOptionRubberBand;
+
+/**
+ * @brief 分组框选项（对标 QStyleOptionGroupBox : QStyleOptionComplex）。
+ */
+typedef struct XStyleOptionGroupBox
+{
+    XStyleOptionComplex m_base; /**< 基类选项；必须是第一个。 */
+    uint32_t m_features;    /**< 边框特征位（XStyleOptionFrameFeature 值）。 */
+    const char* m_text;     /**< 标题文本（借用；可空；对标 text）。 */
+    uint32_t m_textAlignment; /**< 标题对齐（XAlignment 位；对标 textAlignment）。 */
+    uint32_t m_textColor;   /**< 标题色（ARGB32；对标 textColor）。 */
+    int m_lineWidth;        /**< 边框线宽（对标 lineWidth）。 */
+    int m_midLineWidth;     /**< 中线宽（对标 midLineWidth）。 */
+} XStyleOptionGroupBox;
+
+/**
+ * @brief 尺寸手柄选项（对标 QStyleOptionSizeGrip : QStyleOptionComplex）。
+ */
+typedef struct XStyleOptionSizeGrip
+{
+    XStyleOptionComplex m_base; /**< 基类选项；必须是第一个。 */
+    int m_corner;           /**< 角位（XStyleOptionCorner 值；对标 corner）。 */
+} XStyleOptionSizeGrip;
 
 /**
  * @brief 初始化样式选项（QStyleOption 等价默认）。
@@ -859,10 +1375,201 @@ void XStyleOptionToolButton_init(XStyleOptionToolButton* option, int type);
  * @brief 初始化标题栏选项。
  *
  * @param option 目标选项指针，不能为空。
- * @param type 复杂控件枚举（通常 XStyleCC_TitleBar）。
+ * @param type 标题栏枚举（通常 XStyleCC_TitleBar）。
  * @return 无返回值。
  */
 void XStyleOptionTitleBar_init(XStyleOptionTitleBar* option, int type);
+
+/**
+ * @brief 初始化焦点矩形选项（对标 QStyleOptionFocusRect 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参；Qt 默认 SO_FocusRect）。
+ * @return 无返回值。
+ */
+void XStyleOptionFocusRect_init(XStyleOptionFocusRect* option, int type);
+
+/**
+ * @brief 初始化边框选项（对标 QStyleOptionFrame 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参）。
+ * @return 无返回值。
+ */
+void XStyleOptionFrame_init(XStyleOptionFrame* option, int type);
+
+/**
+ * @brief 初始化页签容器边框选项（对标 QStyleOptionTabWidgetFrame 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参）。
+ * @return 无返回值。
+ */
+void XStyleOptionTabWidgetFrame_init(XStyleOptionTabWidgetFrame* option, int type);
+
+/**
+ * @brief 初始化页签条基座选项（对标 QStyleOptionTabBarBase 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参）。
+ * @return 无返回值。
+ */
+void XStyleOptionTabBarBase_init(XStyleOptionTabBarBase* option, int type);
+
+/**
+ * @brief 初始化表头选项（对标 QStyleOptionHeader 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参）。
+ * @return 无返回值。
+ */
+void XStyleOptionHeader_init(XStyleOptionHeader* option, int type);
+
+/**
+ * @brief 初始化页签选项（对标 QStyleOptionTab 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参）。
+ * @return 无返回值。
+ */
+void XStyleOptionTab_init(XStyleOptionTab* option, int type);
+
+/**
+ * @brief 初始化工具栏选项（对标 QStyleOptionToolBar 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参）。
+ * @return 无返回值。
+ */
+void XStyleOptionToolBar_init(XStyleOptionToolBar* option, int type);
+
+/**
+ * @brief 初始化菜单项选项（对标 QStyleOptionMenuItem 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参）。
+ * @return 无返回值。
+ */
+void XStyleOptionMenuItem_init(XStyleOptionMenuItem* option, int type);
+
+/**
+ * @brief 初始化停靠窗选项（对标 QStyleOptionDockWidget 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参）。
+ * @return 无返回值。
+ */
+void XStyleOptionDockWidget_init(XStyleOptionDockWidget* option, int type);
+
+/**
+ * @brief 初始化条目视图项选项（对标 QStyleOptionViewItem 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参）。
+ * @return 无返回值。
+ */
+void XStyleOptionViewItem_init(XStyleOptionViewItem* option, int type);
+
+/**
+ * @brief 初始化工具箱选项（对标 QStyleOptionToolBox 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参）。
+ * @return 无返回值。
+ */
+void XStyleOptionToolBox_init(XStyleOptionToolBox* option, int type);
+
+/**
+ * @brief 初始化橡皮筋选项（对标 QStyleOptionRubberBand 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参）。
+ * @return 无返回值。
+ */
+void XStyleOptionRubberBand_init(XStyleOptionRubberBand* option, int type);
+
+/**
+ * @brief 初始化分组框选项（对标 QStyleOptionGroupBox 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参）。
+ * @return 无返回值。
+ */
+void XStyleOptionGroupBox_init(XStyleOptionGroupBox* option, int type);
+
+/**
+ * @brief 初始化尺寸手柄选项（对标 QStyleOptionSizeGrip 构造）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 元素枚举（对标 Qt 的 type 形参）。
+ * @return 无返回值。
+ */
+void XStyleOptionSizeGrip_init(XStyleOptionSizeGrip* option, int type);
+
+/**
+ * @brief 按控件填充样式选项（对标 QStyleOption::initFrom）。
+ *
+ *        Qt 6.8 的 initFrom（qstyleoption.cpp:38-72）按控件填 state /
+ *        direction / rect / palette / fontMetrics / styleObject 六项；
+ *        X 侧同口径实现（XStyleStateFlag 覆盖 Enabled/HasFocus/
+ *        MouseOver/Active/Window 五位——Qt 另有 KeyboardFocusChange 与
+ *        Small/Mini，X 侧无对应判据，未纳入）。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param widget 源控件（可空；NULL 时仅按默认值初始化）。
+ * @return 无返回值。
+ */
+void XStyleOption_initFrom(XStyleOption* option, const XWidget* widget);
+
+/**
+ * @brief 读取选项类型（对标 QStyleOption::type）。
+ *
+ * @param option 目标选项指针；可为 NULL。
+ * @return XStyleOptionType 值；option 为 NULL 时返回
+ *         XStyleOptionType_Default。
+ */
+int XStyleOption_optionType(const XStyleOption* option);
+
+/**
+ * @brief 写入选项类型（对标 QStyleOption::type 字段）。
+ *
+ * @param option 目标选项指针；可为 NULL（无操作）。
+ * @param optionType XStyleOptionType 值。
+ * @return 无返回值。
+ */
+void XStyleOption_setOptionType(XStyleOption* option, int optionType);
+
+/**
+ * @brief 判定选项是否为复杂控件选项（对标 Qt 的 qstyleoption_cast
+ *        &lt;QStyleOptionComplex&gt; 守卫）。
+ *
+ *        Qt 6.8 的判定式（qstyleoption.h:661-672）：`opt->type ==
+ *        SO_Complex || opt->type > SO_Complex`。X 侧按同一口径以
+ *        m_optionType 判定——普通选项（0..15）与自定义起点（0xf00）
+ *        均小于 SO_Complex（0xf0000），复杂族（0xf0000 起连续）为真。
+ *
+ * @param option 目标选项指针；可为 NULL。
+ * @return true=复杂控件选项；false=普通选项或空指针。
+ */
+bool XStyleOption_isComplex(const XStyleOption* option);
+
+/**
+ * @brief 读取字体度量（对标 QStyleOption::fontMetrics）。
+ *
+ * @param option 目标选项指针；可为 NULL。
+ * @return 字体度量值；option 为 NULL 时返回全零度量。
+ */
+XStyleFontMetrics XStyleOption_fontMetrics(const XStyleOption* option);
+
+/**
+ * @brief 写入字体度量（对标 QStyleOption::fontMetrics 字段）。
+ *
+ * @param option 目标选项指针；可为 NULL（无操作）。
+ * @param metrics 字体度量值。
+ * @return 无返回值。
+ */
+void XStyleOption_setFontMetrics(XStyleOption* option,
+                                  const XStyleFontMetrics* metrics);
 
 #endif /* XSTYLE_ON */
 #ifdef __cplusplus

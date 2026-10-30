@@ -122,6 +122,47 @@ bool XAccessible_isVisible(const XAccessible* self)
 #endif
     return XWindow_isVisible(self->m_window);
 }
+XAccessibleState XAccessible_state(const XAccessible* self)
+{
+    XAccessibleState st = 0;
+    if (!XAccessible_isValid(self)) return 0;
+    if (self->m_applicationRoot) {
+        /* 应用根：活跃 + 可见 + 可管理后代（AT-SPI Application 语义）。 */
+        return XACCESSIBLE_STATE_ACTIVE | XACCESSIBLE_STATE_VISIBLE |
+               XACCESSIBLE_STATE_SHOWING |
+               XACCESSIBLE_STATE_MANAGES_DESCENDANTS;
+    }
+#if XWIDGET_ON
+    if (self->m_widget) {
+        XWidget* w = self->m_widget;
+        if (XWidget_isVisible(w)) {
+            st |= XACCESSIBLE_STATE_VISIBLE;
+            /* showing=可见且父链可见（AT-SPI：showing 表示在屏上呈现）。 */
+            st |= XACCESSIBLE_STATE_SHOWING;
+        }
+        /* enabled：控件自身及其所有祖先均启用（AT-SPI 语义：禁用则不置位，
+           且不置 sensitive——禁用控件既不可用也不响应事件）。 */
+        if (XWidget_isEnabled(w)) {
+            st |= XACCESSIBLE_STATE_ENABLED;
+            st |= XACCESSIBLE_STATE_SENSITIVE;
+        }
+        if (XWidget_hasFocus(w)) st |= XACCESSIBLE_STATE_FOCUSED;
+        return st;
+    }
+#endif
+    if (self->m_window) {
+        if (XWindow_isVisible(self->m_window)) {
+            st |= XACCESSIBLE_STATE_VISIBLE | XACCESSIBLE_STATE_SHOWING;
+        }
+        if (XWindow_isActive(self->m_window)) st |= XACCESSIBLE_STATE_ACTIVE;
+        if (XWindow_isModal(self->m_window)) st |= XACCESSIBLE_STATE_MODAL;
+        /* 窗口默认可获焦点、可调整大小（顶层窗口语义）。 */
+        st |= XACCESSIBLE_STATE_FOCUSABLE | XACCESSIBLE_STATE_RESIZABLE;
+        st |= XACCESSIBLE_STATE_SENSITIVE | XACCESSIBLE_STATE_SELECTABLE;
+    }
+    return st;
+}
+
 XString* XAccessible_name(const XAccessible* self)
 {
     if (!XAccessible_isValid(self)) return XString_create_utf8("");

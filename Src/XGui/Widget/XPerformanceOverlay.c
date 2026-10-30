@@ -24,7 +24,9 @@ static bool performanceOverlay_drawContent(XWidget* widget,
                                            XPainter* painter,
                                            void* userData);
 static void VXPerformanceOverlay_paintEvent(XWidget* self, XEvent* event);
+#if XGESTURE_ON
 static void VXPerformanceOverlay_touchDragEvent(XWidget* self, XEvent* event);
+#endif
 
 /** @brief 网络行文本（默认逐行拼装与格式模板共用）。 */
 static size_t performanceOverlay_netText(const XPerformanceOverlay* self,
@@ -416,6 +418,7 @@ committed:
  *         持+MOVE 随行+RELEASE 收口），宿主既有的鼠标拖移管线
  *         （beginDrag/dragTo/endDrag）原样驱动；其余手势种类不认领
  *         （tap 等维持合成鼠标语义）。 */
+#if XGESTURE_ON
 static void VXPerformanceOverlay_touchDragEvent(XWidget* self, XEvent* event)
 {
     XPerformanceOverlay* overlay = (XPerformanceOverlay*)self;
@@ -433,6 +436,7 @@ static void VXPerformanceOverlay_touchDragEvent(XWidget* self, XEvent* event)
         return; /* 不可移/钉死：不认领（不构成滚动面的宿主区域回落滚轮）。 */
     XEvent_accept(event);
 }
+#endif /* XGESTURE_ON */
 
 static void VXPerformanceOverlay_copy(XPerformanceOverlay* self,
                                       const XPerformanceOverlay* other)
@@ -585,8 +589,10 @@ XVtable* XPerformanceOverlay_class_init(void)
        入口最后绘制，保证悬浮层永远在最上层。 */
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,
                              VXPerformanceOverlay_paintEvent);
+#if XGESTURE_ON
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_TouchDragEvent,
                              VXPerformanceOverlay_touchDragEvent);
+#endif
     return XVTABLE_DEFAULT;
 }
 

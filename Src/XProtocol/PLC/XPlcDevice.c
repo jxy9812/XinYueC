@@ -158,11 +158,16 @@ void XPlcDevice_setConnectionParameter_ref(XPlcDevice* dev, XPlcDevice_Connectio
     if (!dev || !value || parameter < 0 || parameter >= XPlcDevice_ParameterCount) {
         return;
     }
+    /* [UAF 根修 2026-10-30] 对标 Qt 6.8 QModbusDevice::setConnectionParameter
+     * （qmodbusdevice.cpp:352-360：参数表按值存 QVariant 拷贝）——设备**拥有**
+     * 参数副本，调用方变体设后即可释放。旧实现注释写「复制」实际存裸指针，
+     * 且覆盖时删除调用方内存：调用方先 set 后 delete 即 UAF（ASan 实证：
+     * XVariant_toInt 读已释放堆，FC 覆盖测试 22 败级联+关停段错误）。
+     * 全库 37 处调用皆为「set 后即忘」形态，深拷贝对齐事实契约。 */
     if (dev->m_params[parameter]) {
-        XClassDelete((XClass*)dev->m_params[parameter]);
+        XClassDelete(dev->m_params[parameter]);
     }
-    // 设置新值（引用）
-    dev->m_params[parameter] = value;
+    dev->m_params[parameter] = XVariant_create_copy(value);
 }
 
 // =============== 连接管理 API ===============

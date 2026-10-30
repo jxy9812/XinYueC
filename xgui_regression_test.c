@@ -904,7 +904,7 @@ static bool test_make_theme_dir(const char* root, const char* relative)
  */
 static void test_icon_default_theme_search_path(void)
 {
-    XStringList* oldPaths = XIcon_themeSearchPaths_2();
+    XStringList* oldPaths = XIcon_themeSearchPaths();
     XStringList* emptyPaths = XStringList_create();
     XStringList* explicitPaths = XStringList_create();
     XStringList* defaults = NULL;
@@ -913,7 +913,7 @@ static void test_icon_default_theme_search_path(void)
     bool hadPlatformPath = false;
 
     XIcon_setThemeSearchPaths(emptyPaths);
-    defaults = XIcon_themeSearchPaths_2();
+    defaults = XIcon_themeSearchPaths();
     if (defaults)
     {
         hasResourcePath = XStringList_contains_utf8(
@@ -934,7 +934,7 @@ static void test_icon_default_theme_search_path(void)
         XClassDelete((XClass*)defaults);
         defaults = NULL;
     }
-    defaults = XIcon_themeSearchPaths_2();
+    defaults = XIcon_themeSearchPaths();
     if (defaults)
     {
         hasResourcePath = XStringList_contains_utf8(
@@ -970,7 +970,7 @@ static void test_icon_platform_theme_defaults(void)
     bool hadFallbackThemeEnv = oldFallbackThemeEnv && oldFallbackThemeEnv[0];
     bool hadDataHomeEnv = oldDataHomeEnv && oldDataHomeEnv[0];
     XString* oldTheme = XIcon_themeName();
-    XStringList* oldPaths = XIcon_themeSearchPaths_2();
+    XStringList* oldPaths = XIcon_themeSearchPaths();
     XStringList* paths = NULL;
     bool foundThemePath = false;
 
@@ -991,7 +991,7 @@ static void test_icon_platform_theme_defaults(void)
     XIcon_setThemeName_2(NULL);
     expect_true(strcmp(XIcon_themeName_2(), "xgui-platform-theme") == 0,
                 "默认主题名来自平台主题钩子");
-    paths = XIcon_themeSearchPaths_2();
+    paths = XIcon_themeSearchPaths();
     if (paths)
         foundThemePath = XStringList_contains_utf8(
             paths, "/tmp/xgui-platform-data/icons", XChar_CaseSensitive);
@@ -1094,8 +1094,8 @@ static void test_icon_theme_index_inherits(void)
                     "index.theme fixture writes valid icon-theme.cache");
     }
 
-    oldPaths = XIcon_themeSearchPaths_2();
-    oldFallbackPaths = XIcon_fallbackSearchPaths_2();
+    oldPaths = XIcon_themeSearchPaths();
+    oldFallbackPaths = XIcon_fallbackSearchPaths();
     oldTheme = XIcon_themeName();
     oldFallback = XIcon_fallbackThemeName();
 
@@ -1430,8 +1430,8 @@ static void test_icon_theme_search_root_order(void)
     XString* secondRootString = XString_create_utf8(secondRoot);
     XDir* firstDir = firstRootString ? XDir_create_2(firstRootString) : NULL;
     XDir* secondDir = secondRootString ? XDir_create_2(secondRootString) : NULL;
-    XStringList* oldPaths = XIcon_themeSearchPaths_2();
-    XStringList* oldFallbackPaths = XIcon_fallbackSearchPaths_2();
+    XStringList* oldPaths = XIcon_themeSearchPaths();
+    XStringList* oldFallbackPaths = XIcon_fallbackSearchPaths();
     XString* oldTheme = XIcon_themeName();
     XString* oldFallback = XIcon_fallbackThemeName();
     XStringList* paths = XStringList_create();
@@ -1548,8 +1548,8 @@ static void test_icon_theme_fallback_legacy_search_path(void)
                 "传统 fallback 主题写入图标");
     XClassDeinit(&image);
 
-    oldPaths = XIcon_themeSearchPaths_2();
-    oldFallbackPaths = XIcon_fallbackSearchPaths_2();
+    oldPaths = XIcon_themeSearchPaths();
+    oldFallbackPaths = XIcon_fallbackSearchPaths();
     oldTheme = XIcon_themeName();
     oldFallback = XIcon_fallbackThemeName();
 
@@ -1650,8 +1650,8 @@ static void test_icon_theme_standalone_fallback_sizes(void)
                 "standalone fallback fixture writes fallback PNG");
     XClassDeinit(&image);
 
-    oldPaths = XIcon_themeSearchPaths_2();
-    oldFallbackPaths = XIcon_fallbackSearchPaths_2();
+    oldPaths = XIcon_themeSearchPaths();
+    oldFallbackPaths = XIcon_fallbackSearchPaths();
     oldTheme = XIcon_themeName();
     oldFallback = XIcon_fallbackThemeName();
     themePaths = XStringList_create();
@@ -1756,8 +1756,8 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                 "theme engine paint writes theme icon BMP");
     XClassDeinit(&source);
 
-    oldPaths = XIcon_themeSearchPaths_2();
-    oldFallbackPaths = XIcon_fallbackSearchPaths_2();
+    oldPaths = XIcon_themeSearchPaths();
+    oldFallbackPaths = XIcon_fallbackSearchPaths();
     oldTheme = XIcon_themeName();
     oldFallback = XIcon_fallbackThemeName();
     newPaths = XStringList_create();
@@ -2188,8 +2188,8 @@ static void test_icon_theme_scale_selection(void)
                 "scaled theme fixture writes 2x icon");
     XClassDeinit(&image);
 
-    oldPaths = XIcon_themeSearchPaths_2();
-    oldFallbackPaths = XIcon_fallbackSearchPaths_2();
+    oldPaths = XIcon_themeSearchPaths();
+    oldFallbackPaths = XIcon_fallbackSearchPaths();
     oldTheme = XIcon_themeName();
     oldFallback = XIcon_fallbackThemeName();
     newPaths = XStringList_create();
@@ -3361,7 +3361,7 @@ static void test_picture_play_contract(void)
         expect_true(XIODevice_open_base(&saveDevice, XIODevice_WriteOnly),
                     "invalid picture save short-write device opens");
         g_picture_save_short_write_calls = 0;
-        expect_true(XPicture_save_device(&picture, &saveDevice),
+        expect_true(XPicture_save_3(&picture, &saveDevice),
                     "picture save_device writes unvalidated setData bytes");
         expect_true(g_picture_save_short_write_calls == 1,
                     "invalid picture save_device still delegates write");
@@ -3395,7 +3395,7 @@ static void test_picture_play_contract(void)
         expect_true(XIODevice_open_base(&saveDevice, XIODevice_WriteOnly),
                     "picture save short-write device opens");
         g_picture_save_short_write_calls = 0;
-        expect_true(XPicture_save_device(&picture, &saveDevice),
+        expect_true(XPicture_save_3(&picture, &saveDevice),
                     "picture save_device ignores short write like Qt");
         expect_true(g_picture_save_short_write_calls == 1,
                     "picture save_device delegates one write");
@@ -4247,7 +4247,7 @@ static void test_painter_raster_contract(void)
 #endif /* XPAINTER_IMAGE_RECT_ON */
 #if XPAINTER_IMAGE_RECT_ON
     XImage_fillRect(&image, NULL, 0u);
-    expect_true(XPainter_drawPixmapRect(&painter, &pixmapTarget, &pixmap,
+    expect_true(XPainter_drawPixmap_4(&painter, &pixmapTarget, &pixmap,
                                         &pixmapSource),
                 "raster drawPixmap target/source overload");
     expect_true(XImage_pixel(&image, 0, 0) == 0xff00ff00u &&
@@ -4529,13 +4529,13 @@ static void test_painter_task211_contract(void)
             XImage gimg;
             XPainter gp;
             XPicture gpic;
-            expect_true(XPainter_begin_device(
+            expect_true(XPainter_begin(
                             &gp, XImage_paintDevice(&gimg)) == false,
                         "t211g: 未 init 绘制器拒绝绑定");
             memset(&gimg, 0, sizeof(gimg));
             XImage_init_ex(&gimg, 16, 12, XImageFormat_ARGB32);
             XPainter_init(&gp, NULL);
-            expect_true(XPainter_begin_device(
+            expect_true(XPainter_begin(
                             &gp, XImage_paintDevice(&gimg)),
                         "t211g: begin_device 绑定 XImage 设备");
             /* 后端契约（§10.3 勘误）：begin_device 后端中立——跟随所
@@ -4557,7 +4557,7 @@ static void test_painter_task211_contract(void)
                             XPainter_rasterBackend(&gp) == expectedBackend,
                             "t211g: 绑定后设备指针（堆外壳）与后端正确");
             }
-            expect_true(XPainter_begin_device(
+            expect_true(XPainter_begin(
                             &gp, XImage_paintDevice(&gimg)) == false,
                         "t211g: 已激活重复绑定拒绝");
             XPainter_fillRect(&gp, &(XRect){0, 0, 16, 12}, 0xFF00FF00u);
@@ -4567,7 +4567,7 @@ static void test_painter_task211_contract(void)
             /* Picture 设备（指令录制后端）。 */
             memset(&gpic, 0, sizeof(gpic));
             XPicture_init(&gpic, -1);
-            expect_true(XPainter_begin_device(
+            expect_true(XPainter_begin(
                             &gp, XPicture_paintDevice(&gpic)),
                         "t211g: begin_device 绑定 XPicture 设备");
             expect_true(XPainter_device(&gp) != NULL &&
@@ -4578,7 +4578,7 @@ static void test_painter_task211_contract(void)
             /* Widget 设备：未开放 begin 泛化，应拒绝。 */
             {
                 XWidget* gw = XWidget_create(NULL, 0);
-                expect_true(gw != NULL && XPainter_begin_device(
+                expect_true(gw != NULL && XPainter_begin(
                                               &gp, XWidget_paintDevice(gw)) ==
                                               false,
                             "t211g: Widget 设备不开放 begin 拒绝");
@@ -7323,7 +7323,7 @@ static void test_painter_picture_pixmap_record(void)
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
                 "pixmap record begins picture");
-    expect_true(XPainter_drawPixmapRect(&record, &targetRect, &pixmap,
+    expect_true(XPainter_drawPixmap_4(&record, &targetRect, &pixmap,
                                         &sourceRect),
                 "record drawPixmapRect stores dedicated command");
     expect_true(XPainter_end(&record), "pixmap record ends picture");
@@ -16348,7 +16348,7 @@ static void test_image_pixel_contract(void)
         uint32_t pixel;
         target = XColorSpace_create_ex(XColorSpacePrimaries_SRgb,
                                        XColorSpaceTransfer_Gamma, 2.2f);
-        XImage_convertedToColorSpace_ex(&transferSource, target,
+        XImage_convertedToColorSpace_2(&transferSource, target,
                                         XImageFormat_Grayscale8, 0,
                                         &transferTarget);
         pixel = XImage_pixel(&transferTarget, 0, 0);
@@ -16358,7 +16358,7 @@ static void test_image_pixel_contract(void)
         XClassDeinit(&transferTarget);
         XImage_init(&transferTarget);
         target = XColorSpace_create_named(XColorSpaceNamed_ProPhotoRgb);
-        XImage_convertedToColorSpace_ex(&transferSource, target,
+        XImage_convertedToColorSpace_2(&transferSource, target,
                                         XImageFormat_Grayscale8, 0,
                                         &transferTarget);
         pixel = XImage_pixel(&transferTarget, 0, 0);
@@ -16368,7 +16368,7 @@ static void test_image_pixel_contract(void)
         XClassDeinit(&transferTarget);
         XImage_init(&transferTarget);
         target = XColorSpace_create_named(XColorSpaceNamed_Bt2020);
-        XImage_convertedToColorSpace_ex(&transferSource, target,
+        XImage_convertedToColorSpace_2(&transferSource, target,
                                         XImageFormat_Grayscale8, 0,
                                         &transferTarget);
         pixel = XImage_pixel(&transferTarget, 0, 0);
@@ -16378,7 +16378,7 @@ static void test_image_pixel_contract(void)
         XClassDeinit(&transferTarget);
         XImage_init(&transferTarget);
         target = XColorSpace_create_named(XColorSpaceNamed_Bt2100Hlg);
-        XImage_convertedToColorSpace_ex(&transferSource, target,
+        XImage_convertedToColorSpace_2(&transferSource, target,
                                         XImageFormat_Grayscale8, 0,
                                         &transferTarget);
         pixel = XImage_pixel(&transferTarget, 0, 0);
@@ -16388,7 +16388,7 @@ static void test_image_pixel_contract(void)
         XClassDeinit(&transferTarget);
         XImage_init(&transferTarget);
         target = XColorSpace_create_named(XColorSpaceNamed_Bt2100Pq);
-        XImage_convertedToColorSpace_ex(&transferSource, target,
+        XImage_convertedToColorSpace_2(&transferSource, target,
                                         XImageFormat_Grayscale8, 0,
                                         &transferTarget);
         pixel = XImage_pixel(&transferTarget, 0, 0);
@@ -16470,7 +16470,7 @@ static void test_image_pixel_contract(void)
             XColorSpace explicitSpace;
             memset(&explicitFormat, 0, sizeof(explicitFormat));
             XImage_init(&explicitFormat);
-            XImage_convertedToColorSpace_ex(&premultiplied, targetGray,
+            XImage_convertedToColorSpace_2(&premultiplied, targetGray,
                                             XImageFormat_Grayscale8, 0,
                                             &explicitFormat);
             explicitSpace = XImage_colorSpace(&explicitFormat);
@@ -16479,13 +16479,13 @@ static void test_image_pixel_contract(void)
                         XColorSpace_colorModel(&explicitSpace) == XColorSpaceModel_Gray,
                         "QImage explicit color-space conversion selects requested grayscale format");
             XClassDeinit(&explicitFormat);
-            XImage_convertedToColorSpace_ex(&premultiplied, targetGray,
+            XImage_convertedToColorSpace_2(&premultiplied, targetGray,
                                             XImageFormat_ARGB32, 0,
                                             &explicitFormat);
             expect_true(XImage_isNull(&explicitFormat),
                         "QImage explicit color-space conversion rejects incompatible RGB format");
             explicitSpace = XImage_colorSpace(&premultiplied);
-            expect_true(!XImage_convertToColorSpace_ex(&premultiplied, targetGray,
+            expect_true(!XImage_convertToColorSpace_2(&premultiplied, targetGray,
                                                        XImageFormat_ARGB32, 0) &&
                         XImage_format(&premultiplied) == XImageFormat_ARGB32_Premultiplied &&
                         XColorSpace_isSRgb(&explicitSpace),
@@ -16745,7 +16745,7 @@ static void test_image_pixel_contract(void)
     expect_true(XImage_pixelIndex(&indexed, 0, 0) == 254 &&
                 XImage_pixel(&indexed, 0, 0) == 0u,
                 "indexed invertPixels complements indices without changing the palette");
-    XImage_convertToFormat_ex(&rgba, XImageFormat_Indexed8, customPalette, 2, 0, &indexed);
+    XImage_convertedToFormat(&rgba, XImageFormat_Indexed8, customPalette, 2, 0, &indexed);
     expect_true(XImage_colorCount(&indexed) == 2 &&
                 XImage_color(&indexed, 1) == customPalette[1],
                 "indexed conversion accepts an explicit color table");
@@ -16824,9 +16824,9 @@ static void test_image_color_transform_native_precision(void)
     XImage_setColorSpace(&source, XColorSpace_sRgb());
     target = XColorSpace_sRgbLinear();
 
-    XImage_convertedToColorSpace_ex(&source, target, XImageFormat_RGBA64,
+    XImage_convertedToColorSpace_2(&source, target, XImageFormat_RGBA64,
                                     0, &nativeResult);
-    XImage_convertedToColorSpace_ex(&source, target, XImageFormat_ARGB32,
+    XImage_convertedToColorSpace_2(&source, target, XImageFormat_ARGB32,
                                     0, &compatResult);
     XImage_convertToFormat(&compatResult, XImageFormat_RGBA64, 0, &compat64);
     if (!XImage_isNull(&nativeResult) && !XImage_isNull(&compat64))
@@ -16894,7 +16894,7 @@ static void test_image_color_transform_float_precision(void)
     memcpy(XImage_bits(&source), sourceChannels, sizeof(sourceChannels));
     XImage_setColorSpace(&source, XColorSpace_sRgb());
     target = XColorSpace_sRgbLinear();
-    XImage_convertedToColorSpace_ex(&source, target, XImageFormat_RGBA32FPx4,
+    XImage_convertedToColorSpace_2(&source, target, XImageFormat_RGBA32FPx4,
                                     0, &transformed);
     if (!XImage_isNull(&transformed))
         memcpy(transformedChannels, XImage_constBits(&transformed),
@@ -16917,7 +16917,7 @@ static void test_image_color_transform_float_precision(void)
     memcpy(XImage_bits(&extendedSource), extendedChannels,
            sizeof(extendedChannels));
     XImage_setColorSpace(&extendedSource, XColorSpace_sRgb());
-    XImage_convertedToColorSpace_ex(&extendedSource, target,
+    XImage_convertedToColorSpace_2(&extendedSource, target,
                                     XImageFormat_RGBA32FPx4, 0,
                                     &extendedResult);
     if (!XImage_isNull(&extendedResult))
@@ -16932,7 +16932,7 @@ static void test_image_color_transform_float_precision(void)
     XImage_init_ex(&packedSource, 1, 1, XImageFormat_ARGB32);
     XImage_setPixel(&packedSource, 0, 0, 0xff804020u);
     XImage_setColorSpace(&packedSource, XColorSpace_sRgb());
-    XImage_convertedToColorSpace_ex(&packedSource, target,
+    XImage_convertedToColorSpace_2(&packedSource, target,
                                     XImageFormat_RGBA32FPx4, 0,
                                     &packedResult);
     if (!XImage_isNull(&packedResult))
@@ -16945,7 +16945,7 @@ static void test_image_color_transform_float_precision(void)
                 fabsf(packedResultChannels[3] - 1.0f) < 1.0e-6f,
                 "QImage packed 8-bit source promotes through a floating transform");
 
-    XImage_convertedToColorSpace_ex(&source, target, XImageFormat_RGBA64,
+    XImage_convertedToColorSpace_2(&source, target, XImageFormat_RGBA64,
                                     0, &integerResult);
     if (!XImage_isNull(&integerResult))
         memcpy(integerResultChannels, XImage_constBits(&integerResult),
@@ -39249,11 +39249,13 @@ int main(void)
                 XObject_connect_2((XObject*)sel,
                     XSignal(XItemSelectionModel_selectionChanged_signal),
                     mSelSlot);
-                XItemSelectionModel_select(sel, 2, 1, true);
+                XItemSelectionModel_select(sel, 2, 1,
+                    XItemSelectionModelSelectionFlag_Select);
                 expect_true(XItemSelectionModel_isSelected(sel, 2, 1) &&
                             XItemSelectionModel_selectedCount(sel) == 1 &&
                             mSelSlotCount >= 1, "selection 选中+信号");
-                XItemSelectionModel_select(sel, 2, 1, false);
+                XItemSelectionModel_select(sel, 2, 1,
+                    XItemSelectionModelSelectionFlag_Deselect);
                 expect_true(XItemSelectionModel_selectedCount(sel) == 0,
                             "selection 取消");
                 XClassDelete(sel);

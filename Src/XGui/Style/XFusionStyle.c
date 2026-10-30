@@ -8,6 +8,7 @@
 #include "XPainter.h"
 #include "XPalette.h"
 #include "XColor.h"
+#include "XStyle_Protected.h"
 
 #if XSTYLE_ON
 
@@ -580,6 +581,9 @@ void XFusionStyle_init(XFusionStyle* self)
     XMemset(self, 0, sizeof(*self));
     XCommonStyle_init(&self->m_base);
     XClassSetVtable(self, XFusionStyle);
+    /* 样式键（对标 QStyleFactory::create("fusion") → setName("fusion")，
+       qtbase/src/widgets/styles/qstylefactory.cpp:78-80）。 */
+    XStyle_setName((XStyle*)&self->m_base, "fusion");
 }
 
 XFusionStyle* XFusionStyle_create_ex(XMemoryType memory)

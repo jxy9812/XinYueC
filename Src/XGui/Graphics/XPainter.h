@@ -656,21 +656,24 @@ XPainterRasterBackend XPainter_rasterBackend(const XPainter* self);
 bool XPainter_begin_picture(XPainter* self, XPicture* picture);
 
 /**
- * @brief      泛化设备绑定（§8.0g10：对标 QPainter::begin(QPaintDevice*)
- *             的设备侧派发）。
+ * @brief      泛化设备绑定（§8.0g10：对标 QPainter::begin(QPaintDevice*)，
+ *             Qt 6.8 qpainter.h:59）。
  * @details    经设备的 beginPainter 回调把绘制装配权交还设备：设备侧
  *             回调内部调用 begin_image/begin_picture（或未来其它后端）
  *             完成回调表装配，本入口不复制装配逻辑（单一事实源在设备）。
  *             XPaintDevice 五类接入（Image/Pixmap/Bitmap/Picture/Widget）
  *             中已启用 beginPainter 者可经此绑定；未启用（m_beginPainter
  *             ==NULL）返回 false。
+ *             命名按 Qt 对齐：本入口即 QPainter::begin 的泛化设备入口
+ *             （原名 XPainter_begin_device 已按「改名即删旧名」删除）。
  * @param self 绘制器指针。
  * @param device 目标绘制设备描述（*_paintDevice() 返回值）；NULL 返回 false。
  * @return 绑定成功返回 true。
- * @note       已有活动绑定时先拒绝（与 begin_image/begin_picture 同护栏，
+ * @note       已有活动绑定时先拒绝并告警（与 begin_image/begin_picture
+ *             同护栏，对标 Qt qpainter.cpp:1686-1689 的 qWarning 口径，
  *             需先 XPainter_end()）。设备所有权仍归调用方。
  */
-bool XPainter_begin_device(XPainter* self, XPaintDevice* device);
+bool XPainter_begin(XPainter* self, XPaintDevice* device);
 
 /**
  * @brief      结束绘制：解除设备绑定、清空状态栈并恢复默认状态。
@@ -896,15 +899,18 @@ bool XPainter_drawPixmap_2(XPainter* self, const XPixmap* pixmap,
  * @brief      把像素图源矩形缩放绘制到目标矩形（对标 Qt
  *             QPainter::drawPixmap(const QRect&, const QPixmap&, const QRect&)）。
  * @details    源矩形使用像素图物理像素坐标；目标矩形使用绘制器逻辑坐标。
- *             负目标尺寸、非正源尺寸和越界裁剪复用 drawImageRect 的 Qt
- *             规则。像素图设备像素比仅影响点位置重载的默认目标尺寸。
+ *             负目标尺寸、非正源尺寸和越界裁剪复用 XPainter_drawImageRect
+ *             的 Qt 规则。像素图设备像素比仅影响点位置重载的默认目标尺寸。
+ *             命名按 Qt 对齐：本入口即 QPainter::drawPixmap(QRectF, QPixmap,
+ *             QRectF) 的矩形重载（原名 XPainter_drawPixmapRect 已按
+ *             「改名即删旧名」删除）。
  * @param self       绘制器指针。
  * @param targetRect 逻辑目标矩形；NULL 返回 false。
  * @param pixmap     源像素图；NULL 返回 false。
  * @param sourceRect 源物理像素矩形；NULL 返回 false。
  * @return 绘制成功或空像素图无操作返回 true。
  */
-bool XPainter_drawPixmapRect(XPainter* self, const XRect* targetRect,
+bool XPainter_drawPixmap_4(XPainter* self, const XRect* targetRect,
                              const XPixmap* pixmap,
                              const XRect* sourceRect);
 
@@ -912,11 +918,11 @@ bool XPainter_drawPixmapRect(XPainter* self, const XRect* targetRect,
  * @brief      把像素图源矩形缩放绘制到目标矩形（对标 Qt 6.8
  *             QPainter::drawPixmap(int x, int y, int w, int h,
  *             const QPixmap&, int sx, int sy, int sw, int sh)）。
- * @details    与 drawPixmapRect 同构的 9 参整型便捷重载：目标
+ * @details    与 XPainter_drawPixmap_4 同构的 9 参整型便捷重载：目标
  *             (x,y,w,h) 为绘制器逻辑坐标，源 (sx,sy,sw,sh) 为像素图
  *             物理像素坐标；负目标尺寸、非正源尺寸与越界裁剪沿用
- *             drawImageRect 的 Qt 规则，缩放采样受 SmoothPixmapTransform
- *             渲染提示控制。
+ *             XPainter_drawImageRect 的 Qt 规则，缩放采样受
+ *             SmoothPixmapTransform 渲染提示控制。
  * @param self   绘制器指针。
  * @param x      目标左上角 X 坐标。
  * @param y      目标左上角 Y 坐标。
@@ -1218,6 +1224,17 @@ void XPainterPath_currentPosition(const XPainterPath* self,
 void XPainterPath_setFillRule(XPainterPath* self, XPainterFillRule rule);
 /** @brief 查询路径填充规则（对标 QPainterPath::fillRule）。 */
 XPainterFillRule XPainterPath_fillRule(const XPainterPath* self);
+/**
+ * @brief      计算路径的包围矩形（对标 QPainterPath::boundingRect，
+ *             Qt 6.8 qpainterpath.cpp:1444-1453 + 3291-3332）。
+ * @details    直线段与端点取精确坐标；三次贝塞尔曲线按导数极值求解
+ *             精确包围盒（Qt 侧 qt_painterpath_bezier_extrema 同口径），
+ *             而非控制点包围盒（后者是 controlPointRect 的口径）。
+ * @param self 路径指针；为空或无元素时输出零矩形。
+ * @param out  输出包围矩形；可为 NULL（此时不计算）。
+ * @return     无返回值。
+ */
+void XPainterPath_boundingRect(const XPainterPath* self, XRectF* out);
 
 /**
  * @brief      绘制路径：填充部分走当前画刷，轮廓走当前画笔（对标 drawPath）。
@@ -1257,6 +1274,24 @@ bool XPainter_strokePath(XPainter* self, const XPainterPath* path);
  */
 bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
                            const char* utf8, uint32_t color);
+/**
+ * @brief      在矩形区域内按对齐/换行标志绘制文本并回填文本包围矩形
+ *             （对标 Qt 6.8 QPainter::drawText(const QRectF&, int,
+ *             const QString&, QRectF *br)，qpainter.h:288-296）。
+ * @details    br 非空时回填「包住整段文本的包围矩形」（Qt 侧由
+ *             qt_format_text 与绘制同一次布局算出）；本实现复用
+ *             XPainter_boundingRect 的同一口径。br 为 NULL 时行为与
+ *             XPainter_drawTextRect 完全一致。
+ * @param self 绘制器指针。
+ * @param rect 文本布局矩形；NULL 或宽度/高度非正时直接返回 true。
+ * @param flags XPAINTER_TEXT_* 位组合（对齐、换行、裁剪标志）。
+ * @param utf8 UTF-8 文本；NULL 或空字符串返回 true。
+ * @param color ARGB32 文本颜色。
+ * @param br 文本包围矩形出参；可为 NULL。
+ * @return true 表示调用可接受；false 表示绘制器未绑定有效设备。
+ */
+bool XPainter_drawTextRect_2(XPainter* self, const XRect* rect, uint32_t flags,
+                              const char* utf8, uint32_t color, XRect* br);
 
 /**
  * @brief      绘制一行点阵文本（对标 QPainter::drawText 的单行子集）。

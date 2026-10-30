@@ -1,6 +1,7 @@
 ﻿#if XGUI_ON
 
 #include "XStyle.h"
+#include "XStyle_Protected.h"
 #include "XStringUtils.h"
 #include "XAlgorithm.h"
 #include "XCommonStyle.h"
@@ -159,11 +160,12 @@ static void xstyle_standardPalette(XPalette* out)
 
 XVtable* XStyle_class_init(void)
 {
-    /* 20 个样式槽位（DrawPrimitive/DrawControl/DrawComplexControl/
+    /* 21 个样式槽位（DrawPrimitive/DrawControl/DrawComplexControl/
        PixelMetric/SizeFromContents/Polish/Unpolish/StyleHint/
        SubElementRect/SubControlRect/HitTestComplexControl/StandardPixmap/
        StandardIcon/GeneratedIconPixmap/LayoutSpacing/DrawItemText/
-       DrawItemPixmap/ItemTextRect/ItemPixmapRect/StandardPalette）：
+       DrawItemPixmap/ItemTextRect/ItemPixmapRect/StandardPalette/
+       PolishPalette）：
        基类留空实现，由 XCommonStyle/XFusionStyle 覆盖。必须用
        ADD_FUNC_LIST 追加以推进 vtable size，否则子表继承时槽位丢失。 */
     void* table[XCLASS_VTABLE_GET_SIZE(XStyle) -
@@ -187,7 +189,8 @@ XVtable* XStyle_class_init(void)
         NULL, /* DrawItemPixmap */
         NULL, /* ItemTextRect */
         NULL, /* ItemPixmapRect */
-        NULL  /* StandardPalette */
+        NULL, /* StandardPalette */
+        NULL  /* PolishPalette */
     };
     XVTABLE_INIT_DEFAULT(XStyle)
     XVTABLE_INHERIT_XCLASS(XObject);
@@ -285,6 +288,16 @@ void XStyle_unpolish(XStyle* self, XWidget* widget)
         XClassGetVtable((XClass*)self), EXStyle_Unpolish,
         void (*)(XStyle*, XWidget*));
     if (fn) fn(self, widget);
+}
+
+void XStyle_polishPalette(XStyle* self, XPalette* palette)
+{
+    void (*fn)(XStyle*, XPalette*);
+    if (!self || !palette) return;
+    fn = (void (*)(XStyle*, XPalette*))XVtableGetFunc(
+        XClassGetVtable((XClass*)self), EXStyle_PolishPalette,
+        void (*)(XStyle*, XPalette*));
+    if (fn) fn(self, palette);
 }
 
 int XStyle_styleHint(XStyle* self, int hint, const XStyleOption* option,
@@ -404,27 +417,44 @@ const char* XStyle_name(const XStyle* self)
     XVtable* vt;
     const char* name;
     if (!self) return "";
+    /* Qt 口径：name() 返回样式键（QStyleFactory 建样式时写入的
+       "fusion"/"windows" 之类），未设键时回落虚表类名，保证非空。 */
+    if (self->m_name) return self->m_name;
     vt = XClassGetVtable((XClass*)self);
     name = vt ? XVTABLE_GET_NAME(vt) : NULL;
     return name ? name : "";
 }
 
+void XStyle_setName(XStyle* self, const char* name)
+{
+    if (!self) return;
+    self->m_name = name;
+}
+
 XStyle* XStyle_proxy(const XStyle* self)
 {
-    return self ? self->m_proxy : NULL;
+    /* 对标 Qt 6.8 QStyle::proxy（qstyle.cpp:2398-2402）：
+       `d->proxyStyle == this ? this : d->proxyStyle->proxy()`——
+       无代理时返回**自身**，有代理时沿代理链递归到末端。 */
+    if (!self) return NULL;
+    if (!self->m_proxy || self->m_proxy == self) return (XStyle*)self;
+    return XStyle_proxy(self->m_proxy);
 }
 
 int XStyle_combinedLayoutSpacing(XStyle* self, int controls1, int controls2,
                                  int orientation, const XStyleOption* option,
                                  const XWidget* widget)
 {
-    /* 对标 Qt QStyle::combinedLayoutSpacing：对两组控件类型位组合做
-     * 笛卡尔积逐对取 layoutSpacing，保留最大值（初始 0，故底层返回 -1
-     * 的“未实现”槽位不参与抬升，与 Qt 的 qMax(-1, 0) 结果一致）。 */
-    int maxSpacing = 0;
+    /* 对标 Qt 6.8 QStyle::combinedLayoutSpacing（qstyle.cpp:2369-2389）：
+       `int result = -1;` + `result = qMax(spacing, result);`——
+       初值 -1 而非 0：底层 layoutSpacing 未实现时返回 -1，合并结果
+       亦为 -1（布局层据此回落默认间距）。此前 X 取初值 0 且以
+       `spacing > maxSpacing` 抬升，等价于 qMax(spacing, 0)，把「未
+       实现」误表达成「间距 0」，控件间距塌成 0。 */
+    int result = -1;
     int i;
     int j;
-    if (!self) return 0;
+    if (!self) return -1;
     /* XWidgetSizePolicyControlType 共 15 个位（DefaultType..ToolButton），
      * 与 Qt QSizePolicy::NControlTypes 一致。 */
     for (i = 0; i < 15; ++i) {
@@ -436,10 +466,10 @@ int XStyle_combinedLayoutSpacing(XStyle* self, int controls1, int controls2,
             if ((controls2 & type2) == 0) continue;
             spacing = XStyle_layoutSpacing(self, type1, type2, orientation,
                                            option, widget);
-            if (spacing > maxSpacing) maxSpacing = spacing;
+            if (spacing > result) result = spacing;
         }
     }
-    return maxSpacing;
+    return result;
 }
 
 void XStyle_drawItemText(XStyle* self, XPainter* painter,
@@ -613,12 +643,30 @@ XPoint XStyle_visualPos(int direction, const XRect* boundingRect,
 
 int XStyle_visualAlignment(int direction, int alignment)
 {
-    if (direction == 1 /* RightToLeft */) {
-        if ((alignment & 0x1f) == 0) /* 无水平对齐位 → 默认右对齐。 */
-            alignment |= XAlignment_Right;
-        if ((alignment & (XAlignment_Left | XAlignment_Right)) &&
-            !(alignment & XAlignment_Absolute))
+    /* 对标 Qt 6.8 QGuiApplicationPrivate::visualAlignment
+       （qtbase/src/gui/kernel/qguiapplication_p.h:174-182）：
+         if (!(alignment & Qt::AlignHorizontal_Mask))
+             alignment |= Qt::AlignLeft;
+         if (!(alignment & Qt::AlignAbsolute) &&
+             (alignment & (Qt::AlignLeft | Qt::AlignRight))) {
+             if (direction == Qt::RightToLeft)
+                 alignment ^= (Qt::AlignLeft | Qt::AlignRight);
+             alignment |= Qt::AlignAbsolute;
+         }
+       三处与旧实现不同：① 无水平位时补的是 **AlignLeft**（旧实现补
+       AlignRight，且只在 RTL 生效）；② 翻转只在 RTL 发生，但补
+       AlignAbsolute 在两个方向都发生（旧实现从不补）；③ 水平掩码用
+       Qt::AlignHorizontal_Mask（qnamespace.h:152 = Left|Right|HCenter|
+       Justify|Absolute = 0x1f，与 XAlignment_HorizontalMask 逐位一致）。
+       旧实现的 RTL 默认对齐与 Qt 相反（补 Right 后又被自身 XOR 翻回
+       Left），LTR 方向则完全不补位。 */
+    if ((alignment & XAlignment_HorizontalMask) == 0)
+        alignment |= XAlignment_Left;
+    if ((alignment & XAlignment_Absolute) == 0 &&
+        (alignment & (XAlignment_Left | XAlignment_Right)) != 0) {
+        if (direction == 1 /* RightToLeft */)
             alignment ^= (XAlignment_Left | XAlignment_Right);
+        alignment |= XAlignment_Absolute;
     }
     return alignment;
 }
@@ -681,7 +729,12 @@ int XStyle_sliderValueFromPosition(int min, int max, int pos, int span,
     if (span <= 0 || pos <= 0) return upsideDown ? max : min;
     if (pos >= span) return upsideDown ? min : max;
     range = (int64_t)max - min;
-    if ((uint32_t)span > (uint64_t)range) {
+    /* 对标 Qt 6.8 QStyle::sliderValueFromPosition（qstyle.cpp:2277）：
+       `if ((uint)span > range)`——range 是 qint64（有符号），比较时
+       uint 被提升为 qint64；退化区间（max<min，range 为负）走「跨度
+       大于量程」分支。旧实现写作 `(uint32_t)span > (uint64_t)range`
+       （无符号比较），负 range 提升成巨值 → 分支走向相反。 */
+    if ((uint32_t)span > range) {
         int64_t tmp = (2 * range * pos + span) / ((int64_t)2 * span);
         return upsideDown ? (int)(max - tmp) : (int)(tmp + min);
     }

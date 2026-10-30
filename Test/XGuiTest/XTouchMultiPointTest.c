@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XTouchMultiPointTest.c
  * @brief      多点触摸回归测试（方案 B B1；对齐 Qt 6.8 QTouchEvent 多点形态）。
  * @details    覆盖：per-id 序列路由（双触点交错 BEGIN/UPDATE/END 各自
@@ -14,7 +14,9 @@
 #include "XTouchMultiPointTest.h"
 #include "XWidget.h"
 #include "XWindowEvent.h"
+#if XGESTURE_ON
 #include "XGestureEvent.h"   /* 手势事件载荷（减负对齐 QTouchEvent）。 */
+#endif
 #include "XWindowSystemInterface.h"
 #include "XMemory.h"
 #include "XDateTime.h"   /* 第 6 节：惯性速度采样墙钟间隔/泵拍限时刻。 */
@@ -117,6 +119,7 @@ typedef struct TpGestureSink
     int m_lastPhase;     /**< 最近一次滚轮 phase（XWheelEventPhase）。 */
     int m_lastReleaseX;  /**< 最近一次 release 位置（左键拖收口域诊断）。 */
     int m_lastReleaseY;
+#if XGESTURE_ON
     int m_gestureTap;    /**< TouchDrag: Tap 通知次数。 */
     int m_gestureDouble; /**< TouchDrag: DoubleTap 判定次数。 */
     int m_gestureLong;   /**< TouchDrag: LongPress 判定次数。 */
@@ -124,6 +127,7 @@ typedef struct TpGestureSink
     bool m_claimDrag;    /**< DragBegin 认领开关（true=接受→左键拖仿真）。 */
     bool m_claimLong;    /**< LongPress 认领开关（true=接受→免右键合成）。 */
     bool m_claimDouble;  /**< DoubleTap 认领开关（true=接受→免 DBL 合成）。 */
+#endif /* XGESTURE_ON */
 } TpGestureSink;
 
 XCLASS_DEFINE_BEGING(TpGestureSink)
@@ -178,6 +182,7 @@ static void TpGestureSink_wheel(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
+#if XGESTURE_ON
 static void TpGestureSink_touchDrag(XWidget* self, XEvent* event)
 {
     TpGestureSink* sink = (TpGestureSink*)self;
@@ -207,6 +212,7 @@ static void TpGestureSink_touchDrag(XWidget* self, XEvent* event)
         break;
     }
 }
+#endif /* XGESTURE_ON */
 
 XVtable* TpGestureSink_class_init(void)
 {
@@ -218,7 +224,9 @@ XVtable* TpGestureSink_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, TpGestureSink_mouseDoubleClick);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ContextMenuEvent, TpGestureSink_contextMenu);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, TpGestureSink_wheel);
+#if XGESTURE_ON
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_TouchDragEvent, TpGestureSink_touchDrag);
+#endif
     return XVTABLE_DEFAULT;
 }
 
@@ -382,6 +390,7 @@ int XTouchMultiPointTest_run(void)
      *    后入栈覆盖两既有 sink（childAt 逆序命中=最上层）；触摸保持未
      *    接受→整序列走合成路径。显式时间戳使长按走惰性兜底（无需真等
      *    800ms/事件环）；每断言组间注入 CANCEL 清状态。 */
+#if XGESTURE_ON
     {
         TpGestureSink gs;
         XWindow* xw = (XWindow*)XWidget_windowHandle(&top);
@@ -549,8 +558,9 @@ int XTouchMultiPointTest_run(void)
 
         XClassDeinit(&gs.m_base);
     }
+#endif /* XGESTURE_ON */
 
-#if XWIDGET_ON && XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+#if XGESTURE_ON && XWIDGET_ON && XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
     /* ==================== 第 6 节：滚动区触摸跟手+惯性（2026-10-29） ====
      * XAbstractScrollArea 触摸滚动通道（XGui 扩展）：DragBegin 认领标
      * XTouchDragMode_Track → DragUpdate 原始位移流按帧差分写滚动条
@@ -745,7 +755,7 @@ int XTouchMultiPointTest_run(void)
 
         XClassDeinit(&top2);
     }
-#endif /* XWIDGET_ON && XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON */
+#endif /* XGESTURE_ON && XWIDGET_ON && XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON */
 
     XClassDeinit(&sinkB.m_base);
     XClassDeinit(&sinkA.m_base);

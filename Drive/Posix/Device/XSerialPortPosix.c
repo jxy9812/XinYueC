@@ -1,4 +1,4 @@
-#include "XDeviceSerialPort.h"
+﻿#include "XDeviceSerialPort.h"
 
 #if defined(XSERIALPORT_USE_PLATFORM_API) && (defined(__linux__) || defined(__unix__) || defined(__APPLE__) || \
     defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
@@ -78,6 +78,61 @@ static speed_t posixBaud(int32_t baudRate)
 #endif
     default: return 0;
     }
+}
+
+/* ==================== [mcgs 5.2.9 内核串口探测原语全坏的能力门 2026-10-29] ====================
+ * 真机两案（dmesg 实证）：
+ *   ① FIONREAD → PC at tty_ioctl+0x20（RX 轮询每 2ms 探测，十几秒必触发）；
+ *   ② poll()   → PC at tty_poll+0x1c ← LR pserial_poll+0x20（sun8i 串口驱
+ *      动的 poll 方法自身调坏指针，秒级触发）。
+ * 即该平台 tty 的可用性探测两条标准原语（ioctl FIONREAD / poll-select）
+ * 全灭；唯一健壮原语只剩 read()。规避 = 「fd 恒 O_NONBLOCK + 可用性探测
+ * 改 read 泵」（泵进 m_readBuffer，platformRead 本就优先读 ring，语义对
+ * 消费方等效——BytesAvailable 全部消费方只用 >0 判据）。
+ * 能力门（对齐 XNET 引擎「内核版本门」先例，**健康平台零改动**）：
+ *   - /proc/device-tree/compatible 含 sunxi/sun8i（mcgs 这类全志板）→ 泵路径；
+ *   - 其余一律维持原 FIONREAD 路径**一字不改**：桌面 x86 无设备树、
+ *     RK3568 = rockchip compatible，全部走原路；
+ *   - XSERIAL_FORCE_READPUMP=1 强制走泵路径（跨平台测试与现场逃生口），
+ *     XSERIAL_FORCE_FIONREAD=1 反向强制（对照取证）。 */
+
+static int g_xserialReadPump = -1; /**< -1=未探测；0=FIONREAD；1=read 泵。 */
+
+/** @brief 判定本机串口是否必须走 read 泵（结果缓存，首探一次）。 */
+static bool xserialReadPumpNeeded(void)
+{
+    char compat[512];
+    int fd;
+    ssize_t n;
+    const char* force;
+    if (g_xserialReadPump >= 0) return g_xserialReadPump == 1;
+    g_xserialReadPump = 0;
+    force = getenv("XSERIAL_FORCE_READPUMP");
+    if (force && force[0] == '1') g_xserialReadPump = 1;
+    if (g_xserialReadPump == 0) {
+        force = getenv("XSERIAL_FORCE_FIONREAD");
+        if (force && force[0] == '1') { g_xserialReadPump = 0; return false; }
+        fd = open("/proc/device-tree/compatible", O_RDONLY);
+        if (fd >= 0) {
+            n = read(fd, compat, sizeof(compat) - 1);
+            close(fd);
+            if (n > 0) {
+                /* compatible 是 NUL 分隔的多段字符串表，逐段扫。 */
+                char* p = compat;
+                char* end = compat + n;
+                while (p < end) {
+                    size_t seg = strlen(p);
+                    if (seg == 0) { ++p; continue; }
+                    if (strstr(p, "sunxi") || strstr(p, "sun8i")) {
+                        g_xserialReadPump = 1;
+                        break;
+                    }
+                    p += seg + 1;
+                }
+            }
+        }
+    }
+    return g_xserialReadPump == 1;
 }
 
 static bool posixApplyConfig(XDeviceSerialPortPosixContext* context)
@@ -160,6 +215,9 @@ bool XDeviceSerialPort_platformOpen(XFd fd, const XString* portName)
     default: flags |= O_RDWR; break;
     }
     if (context->m_base.m_flags & XDeviceOpenFlag_NonBlocking) flags |= O_NONBLOCK;
+    /* [read 泵能力门] sunxi 老内核探测原语全坏，泵路径需要非阻塞 fd；
+     * 其余平台保持原有 open 旗标一字不改。 */
+    if (xserialReadPumpNeeded()) flags |= O_NONBLOCK;
     path = XString_toUtf8(portName);
     nativeFd = open(path ? path : "", flags);
     if (nativeFd < 0) return false;
@@ -264,7 +322,26 @@ bool XDeviceSerialPort_platformGetProperty(XFd fd, uint32_t property, XVariant* 
     case XDeviceProperty_NativeHandle:
         XVariant_setValue_ptr(value, (void*)(intptr_t)context->m_nativeFd); return true;
     case XDeviceSerialPortProperty_BytesAvailable:
-        if (ioctl(context->m_nativeFd, FIONREAD, &available) != 0) available = 0;
+        if (xserialReadPumpNeeded()) {
+            /* [mcgs 5.2.9 read 泵] 探测即泵：非阻塞 read 把内核 tty 缓冲
+             * 搬进 m_readBuffer（platformRead 本就优先读 ring），不碰
+             * FIONREAD/poll。单次泵上限 1KB×4 轮，防对端连发饿死主循环；
+             * 余量留内核缓冲，下个 2ms 节拍续泵。 */
+            char pumpBuf[256];
+            ssize_t nRead;
+            int round;
+            for (round = 0; round < 4; ++round) {
+                nRead = read(context->m_nativeFd, pumpBuf, sizeof(pumpBuf));
+                if (nRead <= 0) break;
+                if (context->m_base.m_readBuffer)
+                    XRingBuffer_write(context->m_base.m_readBuffer,
+                                      pumpBuf, (size_t)nRead);
+            }
+            available = context->m_base.m_readBuffer
+                ? (int)XRingBuffer_available(context->m_base.m_readBuffer) : 0;
+        } else {
+            if (ioctl(context->m_nativeFd, FIONREAD, &available) != 0) available = 0;
+        }
         XVariant_setValue_int64(value, available); return true;
     case XDeviceSerialPortProperty_PinoutSignals:
         if (ioctl(context->m_nativeFd, TIOCMGET, &modem) != 0) modem = 0;

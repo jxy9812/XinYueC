@@ -154,9 +154,12 @@ void XIconEngine_addFile_base(XIconEngine* self, const XString* fileName,
                               const XSize* size, XIconMode mode, XIconState state);
 
 /**
- * @brief 获取引擎的缓存键。
+ * @brief 获取引擎的缓存键（对标 Qt 6.8 QIconEngine::key()，
+ *        qiconengine.h:27——返回 QString 值语义）。
  * @param self 图标引擎指针。
  * @return 新建的引擎键字符串；调用方使用 XClassDelete() 释放。
+ * @note 所有权：Qt 的 QString 为值语义，C 侧对应形态是**返回新副本**
+ *       （调用方负责释放）；本接口与 XIconEngine_iconName_base 同口径。
  */
 XString* XIconEngine_key_base(const XIconEngine* self);
 
@@ -168,18 +171,24 @@ XString* XIconEngine_key_base(const XIconEngine* self);
 XIconEngine* XIconEngine_clone_base(const XIconEngine* self);
 
 /**
- * @brief 从设备读取引擎数据。
+ * @brief 从设备读取引擎数据（对标 Qt 6.8 QIconEngine::read(QDataStream &)，
+ *        qiconengine.h:29）。
  * @param self 图标引擎指针。
  * @param device 输入设备指针。
  * @return 读取成功返回 true，否则返回 false。
+ * @note 序列化后端：Qt 用 QDataStream（QtCore 的二进制流），X 侧无
+ *       QDataStream 等价类型，改用 XIODevice（XIO 的设备抽象）承载
+ *       同一条读写通道——承载类型差异，语义（读回引擎自身状态）一致。
  */
 bool XIconEngine_read_base(XIconEngine* self, XIODevice* device);
 
 /**
- * @brief 将引擎数据写入设备。
+ * @brief 将引擎数据写入设备（对标 Qt 6.8 QIconEngine::write(QDataStream &) const，
+ *        qiconengine.h:30）。
  * @param self 图标引擎指针。
  * @param device 输出设备指针。
  * @return 写入成功返回 true，否则返回 false。
+ * @note 序列化后端差异同 XIconEngine_read_base（QDataStream ↔ XIODevice）。
  */
 bool XIconEngine_write_base(const XIconEngine* self, XIODevice* device);
 

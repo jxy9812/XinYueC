@@ -59,35 +59,19 @@ void XIconEnginePlugin_init(XIconEnginePlugin* self);
 /** @brief 删除堆上的图标引擎插件。 @param self 待删除的插件指针。 */
 
 /**
- * @brief 通过 XString 文件名创建图标引擎。
+ * @brief 通过 XString 文件名创建图标引擎（虚函数调度入口；
+ *        对标 Qt 6.8 QIconEnginePlugin::create，
+ *        qtbase/src/gui/image/qiconengineplugin.h:18-26）。
  * @param self 插件指针。
  * @param fileName 图标文件名。
  * @return 新建图标引擎指针，未识别文件或创建失败时返回 NULL。
  * @note 返回对象所有权交给调用方。
  */
-XIconEngine* XIconEnginePlugin_createEngine_base(XIconEnginePlugin* self,
-                                                  const XString* fileName);
-
-/**
- * @brief 通过 UTF-8 文件名创建图标引擎的兼容重载。
- * @param self 插件指针。
- * @param fileName UTF-8 编码的图标文件名。
- * @return 新建图标引擎指针，未识别文件或创建失败时返回 NULL。
- */
-XIconEngine* XIconEnginePlugin_createEngine_2_base(XIconEnginePlugin* self,
-                                                    const char* fileName);
-
-/**
- * @brief 创建图标引擎的 XString 主 API。
- * @param self 插件指针。
- * @param fileName 图标文件名。
- * @return 新建图标引擎指针，未识别文件或创建失败时返回 NULL。
- */
 XIconEngine* XIconEnginePlugin_create_base(XIconEnginePlugin* self,
                                            const XString* fileName);
 
 /**
- * @brief 创建图标引擎的 UTF-8 兼容重载。
+ * @brief 创建图标引擎的 UTF-8 兼容重载（`_2` 约定：const char* 入参）。
  * @param self 插件指针。
  * @param fileName UTF-8 编码的图标文件名。
  * @return 新建图标引擎指针，未识别文件或创建失败时返回 NULL。

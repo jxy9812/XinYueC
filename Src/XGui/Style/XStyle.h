@@ -43,6 +43,9 @@ XCLASS_DEFINE_ENUM(XStyle, DrawItemPixmap),
 XCLASS_DEFINE_ENUM(XStyle, ItemTextRect),
 XCLASS_DEFINE_ENUM(XStyle, ItemPixmapRect),
 XCLASS_DEFINE_ENUM(XStyle, StandardPalette),
+/* 新增槽位一律追加在尾部：槽位序号 = 枚举顺序，改动既有顺序会位移
+   全部下游样式实现的虚表槽下标（ABI 破坏）。 */
+XCLASS_DEFINE_ENUM(XStyle, PolishPalette),
 XCLASS_DEFINE_END(XStyle)
 
 /**
@@ -61,6 +64,8 @@ typedef struct XStyle
     XObject m_base;   /**< 基类成员；必须是第一个。 */
     struct XStyle* m_proxy; /**< 被代理的底层样式（对标 QStyle 私有成员 proxyStyle；
                                  借用指针，包装样式（XStyleSheetStyle）设置，其余为 NULL）。 */
+    const char* m_name; /**< 样式键（对标 QStyle 私有成员 name；借用静态串，
+                            NULL=未设置，由 XStyle_name 回落虚表类名）。 */
 } XStyle;
 
 XVtable* XStyle_class_init(void);
@@ -89,25 +94,35 @@ XStyle* XStyle_create_ex(XMemoryType memory);
 /* ==================== 样式标识与代理（对标 QStyle::name/proxy） ==================== */
 
 /**
- * @brief 读取样式类名（对标 QStyle::name）。
+ * @brief 读取样式键（对标 QStyle::name）。
  *
- *        Qt 的 name() 返回 metaObject()->className()，此处等价取虚表类名
- *        （如 "XCommonStyle"/"XFusionStyle"/"XStyleSheetStyle"）；名称前缀
- *        为 X（XGui 类名），语义与 Qt 一一对应。
+ *        Qt 6.8 的 name() 返回**样式键**（QStyleFactory 建样式时
+ *        setName(style) 写入，"fusion"/"windows" 等），并非类名
+ *        （Qt 源码：qstyle.cpp:394-397 `return d->name;`、
+ *        qstyle.cpp:404-407 setName、qstylefactory.cpp:78-80
+ *        `ret->setName(style)`、qstyle_p.h:35 `QString name;`）。
+ *        X 侧以 m_name 承载样式键：内置样式在各自 init 中写入
+ *        "fusion"/"windows"；未设置键的样式回落虚表类名
+ *        （"XStyle"/"XCommonStyle"/…），保证调用方始终拿到非空标识。
  *
  * @param self 目标样式指针；可为 NULL。
- * @return UTF-8 类名字符串（静态/虚表存储，不得释放）；self 为 NULL 时返回 ""。
+ * @return 样式键/类名字符串（静态/虚表存储，不得释放）；self 为 NULL 时返回 ""。
  */
 const char* XStyle_name(const XStyle* self);
 
 /**
  * @brief 读取被代理的底层样式（对标 QStyle::proxy）。
  *
- *        多数样式无代理，返回 NULL；XStyleSheetStyle 包装底层样式时返回
- *        被包装样式，与 Qt 的 QStyleSheetStyle::proxy() 语义一致。
+ *        Qt 6.8 的 proxy() 在无代理时返回**自身**
+ *        （qstyle.cpp:2398-2402：`d->proxyStyle == this ? this :
+ *        d->proxyStyle->proxy()`；文档亦称 "By default most styles
+ *        will return themselves"）。X 侧同口径：无代理返回自身；
+ *        有代理（XStyleSheetStyle 包装底层样式）时沿代理链递归到
+ *        最末端样式，与 Qt 的递归解析一致。
  *
  * @param self 目标样式指针；可为 NULL。
- * @return 被代理样式借用指针（不转移所有权）；无代理时为 NULL。
+ * @return 代理样式借用指针（不转移所有权）；无代理时返回自身；
+ *         self 为 NULL 时返回 NULL。
  */
 XStyle* XStyle_proxy(const XStyle* self);
 
@@ -193,6 +208,20 @@ void XStyle_polish(XStyle* self, XWidget* widget);
  * @return 无返回值。
  */
 void XStyle_unpolish(XStyle* self, XWidget* widget);
+
+/**
+ * @brief 应用样式到调色板（分派 polish，对标 QStyle::polish(QPalette &)）。
+ *
+ *        Qt 6.8 的 QCommonStyle::polish(QPalette &) 转调
+ *        QStyle::polish(QPalette &)（qcommonstyle.cpp:6241-6244，
+ *        基类为空实现）；X 侧保留同一条分派链，使样式可在调色板
+ *        层做全局样式化（缺省实现为空，与 Qt 一致）。
+ *
+ * @param self 目标样式指针。
+ * @param palette 目标调色板（可空）。
+ * @return 无返回值。
+ */
+void XStyle_polishPalette(XStyle* self, XPalette* palette);
 
 /**
  * @brief 查询样式提示（分派 styleHint，对标 QStyle::styleHint）。
@@ -307,8 +336,12 @@ int XStyle_layoutSpacing(XStyle* self, int control1, int control2,
  *        QStyle::combinedLayoutSpacing）。
  *
  *        按 Qt 语义对两组控件类型位组合做笛卡尔积，逐对调用
- *        layoutSpacing 并取最大值（初始 0；因此无实现注册时返回 0，
- *        与 Qt 的 qMax(-1, 0) 行为一致）。
+ *        layoutSpacing 并取最大值；**初值为 -1**（对标
+ *        qstyle.cpp:2380 `int result = -1;` + qstyle.cpp:2386
+ *        `result = qMax(spacing, result);`）：底层 layoutSpacing
+ *        未实现时返回 -1（"未实现→回落默认间距"），合并结果亦为 -1，
+ *        布局层据此回落到默认间距；若无任何控件类型位组合参与
+ *        笛卡尔积，同样返回 -1。
  *
  * @param self 目标样式指针。
  * @param controls1 第一组控件类型位组合（XWidgetSizePolicyControlType 位或）。
@@ -316,7 +349,7 @@ int XStyle_layoutSpacing(XStyle* self, int control1, int control2,
  * @param orientation 方向：0 水平/1 垂直。
  * @param option 样式选项（可空）。
  * @param widget 关联控件（可空，借用）。
- * @return 两组之间最大间距；任一组为空位组合时返回 0。
+ * @return 两组之间最大间距；无配对（或底层未实现）时返回 -1。
  */
 int XStyle_combinedLayoutSpacing(XStyle* self, int controls1, int controls2,
                                  int orientation, const XStyleOption* option,

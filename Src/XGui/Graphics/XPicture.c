@@ -6,6 +6,7 @@
 #if XGUI_ON
 
 #include "XPicture.h"
+#include "XPicture_Protected.h" /* 记录协议内部入口（可见性下沉后须显式包含）。 */
 #include "XStringUtils.h"
 
 #include "XAlgorithm.h"
@@ -2536,7 +2537,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             sourceRect.width = (int)XPicture_getI32(payload + extraOffset + 16u);
             sourceRect.height = (int)XPicture_getI32(payload + extraOffset + 20u);
             drawOk = !XPixmap_isNull(&pixmap) &&
-                     XPainter_drawPixmapRect(painter, &targetRect, &pixmap,
+                     XPainter_drawPixmap_4(painter, &targetRect, &pixmap,
                                              &sourceRect);
             XClassDeinit(&pixmap);
             XClassDeinit(&image);
@@ -2672,7 +2673,7 @@ bool XPicture_load_2(XPicture* self, const char* fileName)
     return result;
 }
 
-bool XPicture_load_device(XPicture* self, XIODevice* device)
+bool XPicture_load_3(XPicture* self, XIODevice* device)
 {
     XByteArray* bytes;
     size_t size;
@@ -2699,7 +2700,7 @@ bool XPicture_save(const XPicture* self, const XString* fileName)
     XFile* file; bool success;
     if (!self || !self->m_data || !fileName || XContainer_isEmpty_base((const XContainer*)fileName)) return false;
     file = XFile_create_2(fileName); if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create)) { if (file) XClassDelete((XClass*)file); return false; }
-    success = XPicture_save_device(self, (XIODevice*)file);
+    success = XPicture_save_3(self, (XIODevice*)file);
     XIODevice_close_base((XIODevice*)file); XClassDelete((XClass*)file);
     return success;
 }
@@ -2712,7 +2713,7 @@ bool XPicture_save_2(const XPicture* self, const char* fileName)
     return result;
 }
 
-bool XPicture_save_device(const XPicture* self, XIODevice* device)
+bool XPicture_save_3(const XPicture* self, XIODevice* device)
 {
     uint32_t size;
     if (!self || !self->m_data || !device) return false;

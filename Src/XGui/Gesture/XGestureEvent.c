@@ -13,7 +13,10 @@
 #include "XEvent.h"
 #include "XGuiConfig.h"
 
-#if XGESTURE_ON
+/* [裁剪安全 2026-10-30] 本文件**不受 XGESTURE_ON 裁剪**：XGestureEvent 是框架
+ * 触摸仿真的事件载体（TOUCH_DRAG 载荷），属基础交互能力；被裁的只有识别器族
+ * （XGestureRecognizer.c 及其派生识别器）。头文件与本实现保持同一裁剪口径。 */
+
 
 /* ==================== 虚函数实现 ==================== */
 
@@ -219,6 +222,5 @@ void XGestureEvent_setDragMode(XGestureEvent* event, int mode)
     if (event) event->m_dragMode = (uint8_t)mode;
 }
 
-#endif /* XGESTURE_ON */
 
 #endif /* XGUI_ON */

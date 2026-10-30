@@ -15,7 +15,9 @@
  *               Started=1、Updated=2、Finished=3、Canceled=4）；
  *             - 位置为控件局部坐标（对标 QPanGesture::offset 等的
  *               widget-local 语义）。
- * @note       模块总开关 XGESTURE_ON 定义于 XGuiConfig.h。
+ * @note       本头**不受 XGESTURE_ON 裁剪**（枚举 + 事件对象都是框架触摸
+ *             仿真的基础载体）；受该开关裁剪的是识别器族
+ *             （XGestureRecognizer.h 及其派生识别器）。
  * @author     XinYueC 团队
  */
 #ifndef XGESTUREEVENT_H
@@ -31,7 +33,6 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XEvent.h"
 
-#if XGESTURE_ON
 
 /** @brief 手势类型（对标 Qt::GestureType，数值一致；框架扩展段见下）。 */
 typedef enum XGestureEventType
@@ -88,6 +89,13 @@ typedef enum XGestureDragMode
                                             手势的原始位移流（跟手滚动、
                                             惯性滑行由此承载）。 */
 } XGestureDragMode;
+/* [裁剪安全 2026-10-30] 上面的手势类型/状态/方向/拖动模式枚举是
+ * **轻量值类型**（无虚表、无堆成员），且被框架的触摸→鼠标仿真
+ * 路径使用（tap/dblclick/longpress/drag 的判定结果）——那属框架基础
+ * 交互能力，不应随手势识别器模块裁掉。故枚举留在 XGESTURE_ON 门
+ * **之外**，只裁手势事件对象与其函数（裁剪无收益却会连带炸
+ * 触摸仿真）。 */
+
 
 XCLASS_DEFINE_BEGING(XGestureEvent)
 XCLASS_DEFINE_ENUM(XGestureEvent, Clone) = XCLASS_VTABLE_GET_SIZE(XEvent),
@@ -198,7 +206,6 @@ void XGestureEvent_setDragMode(XGestureEvent* event, int mode);
 #ifdef __cplusplus
 }
 #endif
-#endif /* XGESTURE_ON */
 
 #endif /* XGUI_ON */
 

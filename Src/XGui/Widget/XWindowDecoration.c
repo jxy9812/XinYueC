@@ -2071,6 +2071,7 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
     barH = xwd_stripHeight(st); /* 条控件实际高度（自定义条可异高）。 */
     if (barH <= 0) return false;
     switch (XEvent_type(event)) {
+#if XGESTURE_ON
     case XEVENT_TYPE_TOUCH_DRAG: {
         const XGestureEvent* drag = (const XGestureEvent*)event;
         /* 触摸按住拖动手势判定（DragBegin）：起点落在条内空白→接受认领，
@@ -2093,6 +2094,7 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
         XEvent_accept(event);
         return true;
     }
+#endif /* XGESTURE_ON */
     case XEVENT_TYPE_WHEEL: {
         XWheelEvent* wheel = (XWheelEvent*)event;
         /* 输入三分流（条带内先 childAt）：命中条控件子控件（用户按钮

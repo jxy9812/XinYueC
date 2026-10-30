@@ -158,7 +158,7 @@ typedef struct XPaintDevice
     XPaintEngine m_engine;      /**< 引擎描述（paintEngine() 返回）。 */
     XPaintDeviceBeginFunc m_beginPainter; /**< 设备绘制入口（§8.0g10 可选；
                                                NULL=设备未开放 begin 泛化，
-                                               XPainter_begin_device 拒绝）。 */
+                                               XPainter_begin 拒绝）。 */
 } XPaintDevice;
 
 /* ==================== 引擎 ==================== */
@@ -184,7 +184,8 @@ bool XPaintEngine_hasFeature(const XPaintEngine* self,
  * @param self 目标绘制设备。
  * @param devType 设备类型码（XPaintDeviceType）。
  * @param userData 接入对象指针（借用）。
- * @param metric 度量回调；NULL 表示全 0 默认。
+ * @param metric 度量回调；NULL 时按 Qt 6.8 QPaintDevice::metric 基类
+ *        兜底表取值（PdmDpiX/PdmDpiY=72、PdmDevicePixelRatio=1，其余 0）。
  * @param engineType 引擎类型（XPaintEngineType）。
  * @param features 引擎能力位组合。
  * @return 无返回值。
@@ -222,10 +223,19 @@ int XPaintDevice_logicalDpiY(const XPaintDevice* self);
 int XPaintDevice_physicalDpiX(const XPaintDevice* self);
 /** @brief 物理 Y DPI（对标 physicalDpiY()）。 */
 int XPaintDevice_physicalDpiY(const XPaintDevice* self);
-/** @brief 设备像素比（对标 devicePixelRatio()）。 */
-int XPaintDevice_devicePixelRatio(const XPaintDevice* self);
-/** @brief 设备像素比浮点（对标 devicePixelRatioF()）。 */
-float XPaintDevice_devicePixelRatioF(const XPaintDevice* self);
+/** @brief 设备像素比（对标 QPaintDevice::devicePixelRatio()，Qt 返回
+ *         qreal，故本接口取浮点；原名 XPaintDevice_devicePixelRatio
+ *         返回 int，已按「改名即删旧名」让位给本浮点接口）。
+ * @note  取值口径同 Qt 6.8 qpaintdevice.cpp:43-57：由度量回调的
+ *         PdmDevicePixelRatioScaled 还原（未提供度量回调时兜底 1.0）。
+ */
+float XPaintDevice_devicePixelRatio(const XPaintDevice* self);
+/** @brief 设备像素比整数值（Qt 侧 QPaintDevice::devicePixelRatio() 返回
+ *         qreal，本库另给整型便捷口）。
+ * @note  命名按台账 §5 C1：整数版让出主名给浮点版（对齐 Qt），改用
+ *         devicePixelRatioInt 命名。
+ */
+int XPaintDevice_devicePixelRatioInt(const XPaintDevice* self);
 /** @brief 颜色数（对标 colorCount()）。 */
 int XPaintDevice_colorCount(const XPaintDevice* self);
 /** @brief 位深度（对标 depth()）。 */
@@ -233,7 +243,9 @@ int XPaintDevice_depth(const XPaintDevice* self);
 /** @brief 度量查询（对标 QPaintDevice::metric）。
  * @param self 目标绘制设备；可为 NULL。
  * @param metric 度量码（XPaintDeviceMetric）。
- * @return 度量值；无效参数返回 0。
+ * @return 度量值；设备未提供度量回调时按 Qt 6.8 qpaintdevice.cpp:82-117
+ *         的基类兜底表返回（PdmDpiX/PdmDpiY=72、PdmDevicePixelRatio=1、
+ *         PdmNumColors=0，其余 0）；无效参数返回 0。
  */
 int XPaintDevice_metric(const XPaintDevice* self, int metric);
 

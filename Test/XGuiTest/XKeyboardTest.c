@@ -4256,8 +4256,26 @@ bool XKeyboardTest_runAll(void)
                 xkb_expect(!kf13->m_pressHadSelection &&
                                strcmp(XLineEdit_text(ef13), "abcdefg") == 0,
                            "⑦.13 无选区按下：登记 false+删 1 字符");
-                /* 快档首拍窗口：520ms∈[500 已发、550 未到]。 */
-                xkb_pumpMs(520);
+                /* 快档首拍窗口：**轮询「首拍落地」而非固定泵 520ms**。
+                   [竞态根修 2026-10-30] 原按「泵 520ms 落在 [500 首拍
+                   已发、550 稳态拍未到]」建模，但 xkb_pumpMs 以 5ms 步进
+                   累加计数（waited += 5，不计实际耗时），一次 520ms 泵
+                   实跨 ~570ms 墙钟（实测 573ms）——把 550ms 的稳态拍也
+                   纳入窗口，恰删 2 字符（'abcde'）→ 期望落空；同一二进
+                   制实测时通时不通（1 通 3 不通），纯墙钟竞态。框架侧
+                   节拍无错（首拍 500ms 实测落点 511ms、稳态 50ms）。
+                   改为按「文本由 'abcdefg' 变为 'abcdef'」轮询收敛：首
+                   拍落地即停（5ms 步进，必在第二拍前 50ms 内收敛），
+                   上限 800ms < 保守档 1000ms，快/慢二值可分性不损。 */
+                {
+                    int64_t deadline = XDateTime_currentMSecsSinceEpoch()
+                                      + 800;
+                    while (XDateTime_currentMSecsSinceEpoch() < deadline &&
+                           strcmp(XLineEdit_text(ef13), "abcdefg") == 0) {
+                        XCoreApplication_processEvents(XEventLoop_AllEvents);
+                        XThread_msleep(5);
+                    }
+                }
                 xkb_expect(strcmp(XLineEdit_text(ef13), "abcdef") == 0,
                            "⑦.13 快档起振：500ms 首拍再删 1 字符（连删"
                            "不等 1000ms）");

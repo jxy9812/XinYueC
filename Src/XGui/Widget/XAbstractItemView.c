@@ -45,35 +45,71 @@ static void xaiv_setCurrentPreservingSelection(XAbstractItemView* view,
     view->m_currentRow = row;
     view->m_currentColumn = col;
     if (view->m_selectionModel)
-        XItemSelectionModel_setCurrentIndex(view->m_selectionModel, row,
-                                            col);
+        XItemSelectionModel_setCurrentIndex(
+            view->m_selectionModel, row, col,
+            XItemSelectionModelSelectionFlag_NoUpdate);
     XWidget_update((XWidget*)view);
 }
 
-/** @brief 选中/取消一个"单元"（按 selectionBehavior 展开整行/整列）。 */
-static void xaiv_selectCellExpanded(XAbstractItemView* view, int row,
-                                    int col, bool selected)
+/** @brief 选择行为标志（对标 Qt
+ *        QAbstractItemViewPrivate::selectionBehaviorFlags，
+ *        qabstractitemview_p.h:128-134）：SelectRows→Rows、
+ *        SelectColumns→Columns、SelectItems→NoUpdate）。 */
+static int xaiv_behaviorFlags(const XAbstractItemView* view)
+{
+    if (!view) return XItemSelectionModelSelectionFlag_NoUpdate;
+    switch (view->m_selectionBehavior) {
+    case XAbstractItemViewSelectionBehavior_SelectRows:
+        return XItemSelectionModelSelectionFlag_Rows;
+    case XAbstractItemViewSelectionBehavior_SelectColumns:
+        return XItemSelectionModelSelectionFlag_Columns;
+    default:
+        return XItemSelectionModelSelectionFlag_NoUpdate;
+    }
+}
+
+/** @brief 选择命令分派（对标 Qt QAbstractItemView::selectionCommand(
+ *        index, nullptr)，qabstractitemview.cpp:4140-4181）：
+ *        - NoSelection → NoUpdate（绝不修改选择模型）；
+ *        - SingleSelection → ClearAndSelect|behaviorFlags；
+ *        - MultiSelection → multiSelectionCommand(index, nullptr) 尾段
+ *          的 Toggle|behaviorFlags（qabstractitemview.cpp:4227）；
+ *        - ExtendedSelection / ContiguousSelection → 尾段的
+ *          ClearAndSelect|behaviorFlags（qabstractitemview.cpp:4277、
+ *          4335）。
+ *        索引无效（行/列 <0）时返回 NoUpdate：仅清当前项、不动选择
+ *        集合（XListWidget/XTreeWidget 的 clear 路径依赖此口径——其
+ *        在本调用之后显式清选择并按返回值发射 itemSelectionChanged）。 */
+static int xaiv_selectionCommand(const XAbstractItemView* view, int row,
+                                 int col)
+{
+    int flags;
+    if (!view) return XItemSelectionModelSelectionFlag_NoUpdate;
+    if (row < 0 || col < 0) return XItemSelectionModelSelectionFlag_NoUpdate;
+    flags = xaiv_behaviorFlags(view);
+    switch (view->m_selectionMode) {
+    case XAbstractItemViewSelectionMode_NoSelection:
+        return XItemSelectionModelSelectionFlag_NoUpdate;
+    case XAbstractItemViewSelectionMode_MultiSelection:
+        return XItemSelectionModelSelectionFlag_Toggle | flags;
+    case XAbstractItemViewSelectionMode_SingleSelection:
+    case XAbstractItemViewSelectionMode_ExtendedSelection:
+    case XAbstractItemViewSelectionMode_ContiguousSelection:
+    default:
+        return XItemSelectionModelSelectionFlag_ClearAndSelect | flags;
+    }
+}
+
+/** @brief 按选择命令施加于一个"单元"（行为标志由本视图的
+ *        selectionBehavior 决定，整行/整列展开在选择模型内完成，
+ *        对标 Qt 的 select(index, command|Rows|Columns)）。 */
+static void xaiv_selectCell(XAbstractItemView* view, int row, int col,
+                             int command)
 {
     XItemSelectionModel* sm = view ? view->m_selectionModel : NULL;
-    XAbstractItemModel* model = view ? view->m_model : NULL;
-    if (!sm) return;
-    if (selected &&
-        view->m_selectionBehavior ==
-            XAbstractItemViewSelectionBehavior_SelectRows && model) {
-        int c;
-        for (c = 0; c < model->m_cols; ++c)
-            XItemSelectionModel_select(sm, row, c, true);
-        return;
-    }
-    if (selected &&
-        view->m_selectionBehavior ==
-            XAbstractItemViewSelectionBehavior_SelectColumns && model) {
-        int r;
-        for (r = 0; r < model->m_rows; ++r)
-            XItemSelectionModel_select(sm, r, col, true);
-        return;
-    }
-    XItemSelectionModel_select(sm, row, col, selected);
+    if (!sm || row < 0 || col < 0) return;
+    XItemSelectionModel_select(sm, row, col, command |
+                                          xaiv_behaviorFlags(view));
 }
 
 /** @brief 清空选择并选中矩形区域（锚点→当前，行列归一）。 */
@@ -85,14 +121,17 @@ static void xaiv_selectRect(XAbstractItemView* view, int r1, int c1,
     int r;
     int c;
     if (!sm || !view) return;
-    XItemSelectionModel_clear(sm);
+    /* 对标 Qt 橡皮筋选择：覆盖旧选区但**保留当前索引**
+     * （clearSelection 语义，qitemselectionmodel.cpp:1369-1376）。 */
+    XItemSelectionModel_clearSelection(sm);
     if (r1 > r2) { int t = r1; r1 = r2; r2 = t; }
     if (c1 > c2) { int t = c1; c1 = c2; c2 = t; }
     for (r = r1; r <= r2; ++r) {
         for (c = c1; c <= c2; ++c) {
             if (model && (r >= model->m_rows || c >= model->m_cols))
                 continue;
-            xaiv_selectCellExpanded(view, r, c, true);
+            xaiv_selectCell(view, r, c,
+                            XItemSelectionModelSelectionFlag_Select);
         }
     }
 }
@@ -361,6 +400,7 @@ void XAbstractItemView_setCurrentIndex(XAbstractItemView* self, int row,
                                        int column)
 {
     XItemSelectionModel* selection;
+    int command;
     if (!self) return;
     self->m_currentRow = row;
     self->m_currentColumn = column;
@@ -368,34 +408,20 @@ void XAbstractItemView_setCurrentIndex(XAbstractItemView* self, int row,
      * 有效时按模式分派选择命令（对标 Qt
      * QAbstractItemView::setCurrentIndex(index) →
      * selectionCommand(index, nullptr) 的模式分派，
-     * qabstractitemview.cpp:2985-2992：
+     * qabstractitemview.cpp:1098-1106 + 4140-4181：
      *   - Single/Extended/Contiguous → ClearAndSelect|behaviorFlags
      *     （先清空旧选区再选中当前项——修复列表/视图点击换行后旧行
      *     高亮残留的双选缺陷）；
      *   - MultiSelection → multiSelectionCommand(index, nullptr) 尾段
-     *     返回 Toggle|behaviorFlags（qabstractitemview.cpp:4183-4229
-     *     的 event==nullptr 回落）：已选中则取消、未选中则追加，不
-     *     清空既有选择）。
+     *     返回 Toggle|behaviorFlags（qabstractitemview.cpp:4227）：
+     *     已选中则取消、未选中则追加，不清空既有选择）。
      * 索引无效（-1）仅清当前项、不动选择集合：XListWidget/XTreeWidget
      * 的 clear 路径在本调用之后显式 XItemSelectionModel_clear 并依赖
      * 其返回值发射 itemSelectionChanged，此处不得抢清。 */
     selection = self->m_selectionModel;
     if (!selection) return;
-    XItemSelectionModel_setCurrentIndex(selection, row, column);
-    if (row >= 0 && column >= 0 &&
-        self->m_selectionMode !=
-            XAbstractItemViewSelectionMode_NoSelection) {
-        if (self->m_selectionMode ==
-            XAbstractItemViewSelectionMode_MultiSelection) {
-            /* Toggle 语义：整行/整列行为经 xaiv_selectCellExpanded
-             * 展开（对标 Toggle|selectionBehaviorFlags）。 */
-            bool sel = XItemSelectionModel_isSelected(selection, row, column);
-            xaiv_selectCellExpanded(self, row, column, !sel);
-        } else {
-            XItemSelectionModel_clear(selection);
-            XItemSelectionModel_select(selection, row, column, true);
-        }
-    }
+    command = xaiv_selectionCommand(self, row, column);
+    XItemSelectionModel_setCurrentIndex(selection, row, column, command);
 }
 
 int XAbstractItemView_currentRow(const XAbstractItemView* self)
@@ -431,7 +457,8 @@ void XAbstractItemView_reset(XAbstractItemView* self)
     self->m_rootRow = -1;
     self->m_rootCol = -1;
     if (self->m_selectionModel) {
-        XItemSelectionModel_setCurrentIndex(self->m_selectionModel, -1, -1);
+        /* 对标 Qt reset：选择模型整体复位（清选择 + 清当前索引，
+         * qitemselectionmodel.cpp:1335-1339）。 */
         XItemSelectionModel_clear(self->m_selectionModel);
     }
     xaiv_persistentResetTable(self);
@@ -1559,32 +1586,42 @@ void XAbstractItemView_setSelectionModel(XAbstractItemView* self,
 void XAbstractItemView_clearSelection(XAbstractItemView* self)
 {
     if (!self || !self->m_selectionModel) return;
-    XItemSelectionModel_clear(self->m_selectionModel);
+    /* 对标 Qt QAbstractItemView::clearSelection（qabstractitemview.cpp
+     * :1243-1248）：仅清选择集合，**当前索引不变**
+     * （转发选择模型的 clearSelection，qitemselectionmodel.cpp
+     * :1369-1376）。 */
+    XItemSelectionModel_clearSelection(self->m_selectionModel);
 }
 
 void XAbstractItemView_selectAll(XAbstractItemView* self)
 {
     XItemSelectionModel* selection;
-    int row;
-    int col;
+    int command;
     if (!self) return;
     selection = self->m_selectionModel;
     if (!selection || !self->m_model) return;
-    if (self->m_selectionMode ==
-        XAbstractItemViewSelectionMode_NoSelection) return;
-    if (self->m_selectionMode ==
-        XAbstractItemViewSelectionMode_SingleSelection) {
-        /* 单选约束：仅选中当前项（无当前项时选首格）。 */
-        row = self->m_currentRow >= 0 ? self->m_currentRow : 0;
-        col = self->m_currentColumn >= 0 ? self->m_currentColumn : 0;
-        if (row < self->m_model->m_rows && col < self->m_model->m_cols)
-            XItemSelectionModel_select(selection, row, col, true);
+    /* 对标 Qt 6.8 QAbstractItemView::selectAll（qabstractitemview.cpp
+     * :1199-1218）：
+     *   - MultiSelection/ExtendedSelection → 一次性
+     *     ClearAndSelect|behaviorFlags 原子命令（:1204-1208）；
+     *   - NoSelection/ContiguousSelection → 走
+     *     selectionCommand(index(0,0,root))（:1209-1213），即
+     *     ClearAndSelect|behaviorFlags（NoSelection 时为 NoUpdate）；
+     *   - SingleSelection → **什么都不做**（:1214-1215 `break;`）。 */
+    switch (self->m_selectionMode) {
+    case XAbstractItemViewSelectionMode_NoSelection:
         return;
+    case XAbstractItemViewSelectionMode_SingleSelection:
+        /* Qt 单选模式 selectAll 为空操作（不选中当前项）。 */
+        return;
+    default:
+        command = XItemSelectionModelSelectionFlag_ClearAndSelect |
+                  xaiv_behaviorFlags(self);
+        break;
     }
-    for (row = 0; row < self->m_model->m_rows; ++row) {
-        for (col = 0; col < self->m_model->m_cols; ++col)
-            XItemSelectionModel_select(selection, row, col, true);
-    }
+    XItemSelectionModel_selectSelection(
+        selection, 0, 0, self->m_model->m_rows - 1, self->m_model->m_cols - 1,
+        command);
 }
 
 void XAbstractItemView_setRootIndex(XAbstractItemView* self, int row, int col)
@@ -1597,10 +1634,13 @@ void XAbstractItemView_setRootIndex(XAbstractItemView* self, int row, int col)
 bool XAbstractItemView_rootIndex(const XAbstractItemView* self,
                                  int* outRow, int* outCol)
 {
-    /* 平铺模型无层级：根索引恒 (0,0)；setRootIndex 存储的树预留偏移
-     * 不影响本查询（树形视图实现后再改为返回存储根）。 */
-    if (outRow) *outRow = 0;
-    if (outCol) *outCol = 0;
+    /* 对标 Qt 6.8 QAbstractItemView::rootIndex（qabstractitemview.cpp
+     * :1187-1190）：返回**存储的根索引**（d->root），缺省为无效索引；
+     * reset() 经 setRootIndex(QModelIndex()) 复位为无效
+     * （qabstractitemview.cpp:1146）。本库以 (row,col) 平面承载，
+     * 无效根索引记为 (-1,-1)。 */
+    if (outRow) *outRow = self ? self->m_rootRow : -1;
+    if (outCol) *outCol = self ? self->m_rootCol : -1;
     return self != NULL;
 }
 
@@ -1844,15 +1884,20 @@ static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event)
             view->m_currentRow = row;
             view->m_currentColumn = col;
             if (sm)
-                XItemSelectionModel_setCurrentIndex(sm, row, col);
+                XItemSelectionModel_setCurrentIndex(
+                    sm, row, col, XItemSelectionModelSelectionFlag_NoUpdate);
             XWidget_update((XWidget*)view);
         } else if (toggle && sm) {
-            bool sel = XItemSelectionModel_isSelected(sm, row, col);
-            xaiv_selectCellExpanded(view, row, col, !sel);
+            /* 对标 Qt extendedSelectionCommand / multiSelectionCommand
+             * 的 Toggle 分支（qabstractitemview.cpp:4227 / 4311-4315）：
+             * 逐格翻转选中态（Ctrl 点按）。 */
+            xaiv_selectCell(view, row, col,
+                            XItemSelectionModelSelectionFlag_Toggle);
             view->m_currentRow = row;
             view->m_currentColumn = col;
             if (sm)
-                XItemSelectionModel_setCurrentIndex(sm, row, col);
+                XItemSelectionModel_setCurrentIndex(
+                    sm, row, col, XItemSelectionModelSelectionFlag_NoUpdate);
             XWidget_update((XWidget*)view);
         } else {
             XAbstractItemView_setCurrentIndex(view, row, col);
@@ -2088,7 +2133,8 @@ static void VXAbstractItemView_keyPressEvent(XWidget* self, XEvent* event)
                 view->m_currentColumn = c;
                 if (view->m_selectionModel)
                     XItemSelectionModel_setCurrentIndex(
-                        view->m_selectionModel, r, c);
+                        view->m_selectionModel, r, c,
+                        XItemSelectionModelSelectionFlag_NoUpdate);
                 XWidget_update((XWidget*)view);
             } else if (view->m_selectionMode ==
                        XAbstractItemViewSelectionMode_MultiSelection) {

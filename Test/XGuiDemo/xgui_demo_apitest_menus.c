@@ -1,4 +1,4 @@
-/* xgui_demo_apitest_menus.c —— 控件 API 测试族：menus（框架杂项族）。
+﻿/* xgui_demo_apitest_menus.c —— 控件 API 测试族：menus（框架杂项族）。
  *
  * 覆盖控件（对标 Qt 6.8.3）：XMenu / XMenuBar / XToolBar / XStatusBar /
  * XAction / XActionGroup / XShortcut / XToolTip / XErrorMessage /
@@ -2335,6 +2335,102 @@ int xapi_menus_run(void)
             XClassDelete(rbh2);
         }
 #endif /* XWIDGET_ON && XRUBBERBAND_ON */
+
+        /* ============================================================
+         * 动作列表族（对标 Qt 6.8 QWidget actions/addAction 族）。
+         * [Qt 对齐补实现 2026-10-30] 本族此前头文件有声明、.c 无实现、
+         * 全仓零调用点（调用即链接失败）——此处补齐真实调用点与语义断言。
+         * ============================================================ */
+#if XWIDGET_ON
+        {
+            XAction* act1 = XAction_create();
+            XAction* act2 = XAction_create();
+            XAction* act3 = XAction_create();
+            XWidget* w = XWidget_create(NULL, 0);
+            XVector* acts = NULL;
+
+            XAPI_EXPECT(act1 && act2 && act3, "动作列表用例：三个 XAction 创建成功");
+            XAPI_EXPECT(w != NULL, "动作列表用例：宿主控件创建成功");
+
+            if (act1 && act2 && act3 && w) {
+                /* 初始为空。 */
+                acts = XWidget_actions(w);
+                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 0,
+                            "XWidget_actions 初始为空列表");
+                if (acts) XClassDelete((XClass*)acts);
+
+                /* addAction 追加。 */
+                XWidget_addAction(w, act1);
+                acts = XWidget_actions(w);
+                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 1 &&
+                                XVector_At_Base(acts, 0, XAction*) == act1,
+                            "addAction 后动作列表含该动作（QWidget::actions 口径）");
+                if (acts) XClassDelete((XClass*)acts);
+
+                /* 同一动作重复添加：Qt 语义=先移除再插入，列表仍只含一份。 */
+                XWidget_addAction(w, act1);
+                acts = XWidget_actions(w);
+                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 1,
+                            "重复 addAction 同一动作后仍只含一份（Qt：至多一份）");
+                if (acts) XClassDelete((XClass*)acts);
+
+                /* insertAction 插到指定动作之前。 */
+                XWidget_addAction(w, act2);
+                XWidget_insertAction(w, act1, act3);
+                acts = XWidget_actions(w);
+                /* Qt：insertAction(before, action) 把 action 插到 before
+                   **之前**（qwidget.cpp:3177-3180：pos=indexOf(before) 后
+                   QVector::insert(pos, action)）。原列表 [act1,act2] →
+                   insertAction(before=act1, act3) → [act3,act1,act2]。 */
+                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 3 &&
+                                XVector_At_Base(acts, 0, XAction*) == act3 &&
+                                XVector_At_Base(acts, 1, XAction*) == act1 &&
+                                XVector_At_Base(acts, 2, XAction*) == act2,
+                            "insertAction(before) 插到 before 之前（Qt 语义）");
+                if (acts) XClassDelete((XClass*)acts);
+
+                /* before 不在列 → 追加到尾部（Qt qwidget.cpp:3177-3181）。 */
+                XWidget_insertAction(w, act2, act1); /* act1 已在列 → 先移除再插尾部 */
+                acts = XWidget_actions(w);
+                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 3,
+                            "insertAction 已在列动作=先移除再插（Qt 同语义）");
+                if (acts) XClassDelete((XClass*)acts);
+
+                /* addAction_2：按文本创建并追加。 */
+                {
+                    XString* txt = XString_create_utf8("ActionFamily");
+                    XAction* made = XWidget_addAction_2(w, txt);
+                    XAPI_EXPECT(made != NULL, "addAction_2 按文本创建动作成功");
+                    if (made) {
+                        acts = XWidget_actions(w);
+                        XAPI_EXPECT(acts != NULL && XVector_size(acts) == 4 &&
+                                        XVector_At_Base(acts, 3, XAction*) == made,
+                                    "addAction_2 创建的动作已入列");
+                        if (acts) XClassDelete((XClass*)acts);
+                    }
+                    if (txt) XClassDelete((XClass*)txt);
+                }
+
+                /* removeAction 移除。 */
+                XWidget_removeAction(w, act2);
+                acts = XWidget_actions(w);
+                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 3,
+                            "removeAction 后列表少一项");
+                if (acts) XClassDelete((XClass*)acts);
+
+                /* 移除不在列的动作：列表不变（不误删）。 */
+                XWidget_removeAction(w, act2);
+                acts = XWidget_actions(w);
+                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 3,
+                            "removeAction 不在列的动作=列表不变");
+                if (acts) XClassDelete((XClass*)acts);
+            }
+            if (w) XClassDelete((XClass*)w);
+            if (act1) XClassDelete((XClass*)act1);
+            if (act2) XClassDelete((XClass*)act2);
+            if (act3) XClassDelete((XClass*)act3);
+        }
+#endif /* XWIDGET_ON */
 
         /* 全部小节完成：根控件级联析构（子控件/动作/快捷键注销）。 */
         XClassDelete(root);

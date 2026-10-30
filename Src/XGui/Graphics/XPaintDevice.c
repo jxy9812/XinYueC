@@ -72,7 +72,23 @@ int XPaintDevice_metric(const XPaintDevice* self, int metric)
     if (!self) return 0;
     if (self->m_metric && self->m_userData)
         return self->m_metric(self->m_userData, metric);
-    return 0;
+    /* 对标 Qt 6.8 QPaintDevice::metric 基类兜底（qpaintdevice.cpp:82-117）：
+       设备未实现度量时并非一律 0——PdmDpiX/PdmDpiY 给 72、
+       PdmDevicePixelRatio 给 1、PdmNumColors 给 0，其余给 0。
+       本实现此前一律返回 0，令未接度量回调的设备报出 0 DPI
+       （Qt 口径为 72），影响按 DPI 换算字号的调用方。 */
+    switch (metric)
+    {
+        case XPaintDeviceMetric_PdmDpiX:
+        case XPaintDeviceMetric_PdmDpiY:
+            return 72;
+        case XPaintDeviceMetric_PdmDevicePixelRatio:
+            return 1;
+        case XPaintDeviceMetric_PdmNumColors:
+            return 0;
+        default:
+            return 0;
+    }
 }
 
 int XPaintDevice_width(const XPaintDevice* self)
@@ -115,13 +131,18 @@ int XPaintDevice_physicalDpiY(const XPaintDevice* self)
     return XPaintDevice_metric(self, XPaintDeviceMetric_PdmPhysicalDpiY);
 }
 
-int XPaintDevice_devicePixelRatio(const XPaintDevice* self)
+int XPaintDevice_devicePixelRatioInt(const XPaintDevice* self)
 {
     return XPaintDevice_metric(self, XPaintDeviceMetric_PdmDevicePixelRatio);
 }
 
-float XPaintDevice_devicePixelRatioF(const XPaintDevice* self)
+float XPaintDevice_devicePixelRatio(const XPaintDevice* self)
 {
+    /* 对标 QPaintDevice::devicePixelRatio()（Qt 6.8 qpaintdevice.cpp:43-57）：
+       返回 qreal；Qt 由度量回调的 PdmDevicePixelRatioScaled 还原，
+       未实现时回退 PdmDevicePixelRatio。本库 PdmDevicePixelRatioScaled
+       的定标为「dpr×256」（见 XPaintDeviceMetric 枚举），故此处除以
+       256 还原；与度量提供方（XImage/XPicture/XWidget）同口径。 */
     if (!self) return 1.0f;
     if (self->m_metric && self->m_userData)
         return (float)self->m_metric(

@@ -211,3 +211,20 @@ export DISPLAY=:99
   `QLayout::activate`/`activateRecursiveHelper`。
 - `qlayoutengine.cpp`：`qGeomCalc`（**只算 size 不算 pos**，pos 由摆放循环累加）。
 - `qboxlayout.cpp`：`QBoxLayoutPrivate::setupGeom`（几何收集）、`setGeometry`（摆放）。
+
+---
+
+## 9. 收官补记（2026-10-30 换机续役闭环）
+
+§4 第三层按钮几何叠原点与 §7 任务清单已随 35d601ec 收口（尾部可伸展空白
+方案落地，autotest 含几何回归锁 g0.y/g1.y-g0.y 断言）；本日另补两件：
+
+1. **[动作运行回归锁]** 原回归锁只覆盖导航（进子菜单/返回上级），
+   「运行动作到结束」路径零覆盖（用户实测每项结束即崩的盲区）。现
+   autotest 内补永久锁：沿子菜单下行（每层重算父节点判定返回钮）
+   到首个叶动作、真实触发到结束、断言存活+输出捕获增长、回锁起始层。
+   Linux 实证：二分查找「主测试」跑完 buf 0→34 捕获正常、进程存活、
+   扩展页22 autotest PASS。
+2. **[全量矩阵]** Test 目录 57 项独立测试+五套件+all 构建全量跑完，
+   中断零发生；失败逐条 A/B 定责均为存量/环境（详见
+   docs/第二段施工编排方案_1030.md 与提交说明）。

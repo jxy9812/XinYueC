@@ -19,6 +19,7 @@
 16. [常见错误与最佳实践](#常见错误与最佳实践)
 17. [总结](#总结)
 - [定时器使用规范（2026-10-26 裁定）](#定时器使用规范2026-10-26-裁定)：XObject 派生类内禁内嵌独立 XTimer
+- [框架/应用分层写法（2026-10-29 裁定）](#框架应用分层写法2026-10-29-裁定)：框架/APP 写法分离，动态文本一律控件化
 
 ---
 
@@ -1318,17 +1319,99 @@ for (XVector_iterator it = XVector_begin(vec);
 for (XVector_reverse_iterator it = XVector_rbegin(vec); ...) { ... }
 ```
 
-### XString 编码缓存
+### XString 使用注意事项（2026-10-29 审计裁定）
+
+XString 内部以 **UTF-16** 存储（`XChar` = `uint16_t`），且首成员是容器基类
+`XContainer`（首字段为 vtable 指针）。本节全部约束都由这两条事实派生。
+全库审计（atoi 族 213 处 + 八类误用模式约 200 处）确认存量代码已符合本节规则，
+新代码必须维持。
+
+#### 对象指针禁止当 `char*` 使用
+
+`XString*` 喂给任何 `char*` 形参的函数（`atoi`/`strtol`/`strlen`/`strcmp`/
+`printf` 族 `%s`/`sscanf` 等），解析到的是 vtable 指针字节：数值解析恒失败
+返 0，打印输出乱码。C 编译器对此**只给一条警告**（`-Wincompatible-pointer-types`），
+照常出二进制，失败完全静默。实证（2026-10-29 ×2）：Modbus 波特率下拉把
+`XComboBox_currentText` 返回值直喂 `atoi`，恒返 0 走 9600 兜底（日志显示
+115200、实际 open 9600）；`XModbusTcpServer` 把 `XString_constData` 传给
+`XHostAddress_create_fromString`，"127.0.0.1" 被截成 "1"。
+
+数值解析必须走自带 API（带 `ok` 出参与进制基）：
 
 ```c
-// XString 内部使用 UTF-16 存储；访问不同编码时自动缓存（最多 6 个缓存槽）
-const char* utf8 = XString_data_utf8(str);
-const char* gbk = XString_data_gbk(str);
-const uint16_t* utf16 = XString_utf16Data_const(str);
-
-// 修改字符串后缓存自动失效
-XString_append_utf8(str, "追加内容");
+bool ok = false;
+int v       = XString_toInt(str, &ok, 10);
+long long l = XString_toLongLong(str, &ok, 16);
+double d    = XString_toDouble(str, &ok);
 ```
+
+需要 `const char*` 时经转换出口取（三者都返回**内部编码缓存指针**，生命周期见下）：
+
+| 需求 | API | 返回 |
+|---|---|---|
+| UTF-8 | `XString_toUtf8(str)` | `const char*` |
+| 本地编码 | `XString_toLocal(str)`（宏别名 `XString_c_str`） | `const char*` |
+| GBK | `XString_toGbk(str)` | `const char*` |
+
+#### UTF-16 访问器禁止喂 `char*` 函数
+
+以下访问器返回 **UTF-16 内部数据**（`XChar*`/`const XChar*`/`uint16_t*`），
+传给 `char*` 形参不是返 0 而是**乱码/静默截断**（ASCII 串第二个字符的高位
+`\0` 截断，短串"看起来正常"更难发现）：
+
+- `XString_data`（可写）、`XString_unicode`（宏别名 `XString_constData`）、
+  `XString_utf16`、`XString_toUtf16`，及 `XStringView_*` 同语义族；
+- 仅用于 UTF-16 互操作（如作为 `XString_create_utf16` 来源、宽字符 API 入参）。
+
+#### 内容比较必须走 `XString_equals`
+
+`==`/`!=` 比较的是**对象身份**（指针），不是内容。内容比较一律
+`XString_equals(l, r, cs)` / `XString_equals_utf8(str, utf8, cs)`。
+`==` 仅允许三种身份快路：①自赋值/自拷贝守卫；②排序比较器的 NULL/同对象
+快路；③getter「未命中时原样返回 default 指针」的身份协议（XDom 属性缓存模式）。
+
+#### 编码缓存与缓存指针生命周期
+
+编码访问按需转换并缓存（5 个槽：Local/Utf8/Utf16/Utf32/Gbk），转换结果由
+字符串对象持有。`toUtf8/toLocal/toGbk` 返回的**内部缓存指针**遵守：
+
+- 源串任何修改（`assign/append/prepend/insert/remove/slice/clear` 等）或对象
+  删除，缓存指针立即失效；
+- 禁止把该指针存入对象成员、容器或跨函数长期持有；禁止 `return` 它；
+  需要长期 `char*` 时用 `XStrdup` 自行分配并按 XMemory 规则释放。
+
+```c
+const char* s = XString_toUtf8(str);
+XString_append_utf8(str, "!");   /* ❌ 此刻起 s 已失效 */
+use(s);                           /* ❌ 悬空读 */
+```
+
+#### 新建对象必须由调用方删除
+
+生产者 API 返回**新建副本**，调用方负责 `XClassDelete`：`XString_create*`
+全族、`left/right/mid/toLower/toUpper/trimmed/fromVariant`，以及控件取值类
+如 `XComboBox_currentText`（借用版走 `*_const`/`_2` 后缀变体，见「字符串 API
+主次顺序与 UTF-8 兼容重载」）。移交所有权走 `*_move`/容器 `push_back_move`
+并注释说明。
+
+```c
+XString* text = XComboBox_currentText(combo);   /* 新建副本 */
+int baud = text ? XString_toInt(text, NULL, 10) : 0;
+if (text) XClassDelete((XClass*)text);           /* ✅ 用完即删 */
+```
+
+#### 按值内嵌成员必须逐构造路径 init
+
+结构体按值内嵌 `XString` 成员是合法模式（如 `XMqttStringPair::m_name`、
+`XDeviceRegistryEntry::m_className`），但所有者**每一条构造路径**（`_init`、
+`_create`、数组逐元素扩容、迭代器新建）都必须对该成员 `XString_init`，
+释放路径配对 `XClassDeinit`；未经 init 直接使用 = vtable 未就绪，未定义行为。
+
+#### 禁止结构体赋值浅拷贝
+
+`*a = *b` 绕过 COW 引用计数 ⇒ 双重释放/UAF；统一走 `XClassCopy`/`XClassMove`
+（见「对象生命周期管理」）。另见「常见错误与最佳实践」第 10 条
+（`XString_constData` 实锅）。
 
 ---
 
@@ -1659,7 +1742,7 @@ XLabel_setText_2(label, buf);   /* 其余全部由框架接管 */
 7. **忘记检查虚函数表和 ISNULL**：`*_base` 函数中未做 `ISNULL(self, ...)` + `ISNULL(XClassGetVtable(self), ...)` 检查就直接分派，空指针会崩溃；正确写法见「虚函数表与虚函数重载 → `*_base` 调度入口」。
 8. **条件编译判宏早于给它赋值的 include**：模块开关定义在模块自己的 config 头（如 `XIndustry_config.h`）时，公开头里 `#if 模块开关_ON` 必须放在 `#include "CXinYueConfig.h"` / `#include "Xxxx_config.h"` **之后**——放在前面时宏未定义、`#if` 恒为假，**整个头被静默裁成空**（不报错、无符号，适配件"看起来编译通过实际不存在"，2026-10-29 Industry 层实锅 ×2）。
 9. **派生开关必须显式包含被派生的 config 头**：模块 config 里的开关默认值若从其他模块派生（如 `XINDUSTRY_MODBUS_ON` 按 `XMODBUS_ON` 派生），必须先 `#include "XProtocol_config.h"` 再 `#ifdef XMODBUS_ON`——本文件常被 CXinYueConfig.h **中途**包含（头保护挡住递归），被派生宏的定义点可能晚于本文件的包含点，不显式包含会恒派生为 0（2026-10-29 实锅）。
-10. **`XString_constData` 不是 `const char*`**：它是 `XString_unicode` 的宏别名，返回 **UTF-16 内部数据的 `const XChar*`**（uint16_t 流）。取 UTF-8 的 `const char*` 必须用 **`XString_toUtf8`**（另有 `toGbk`/`toLocal`）。把它喂给任何 `const char*` 形参，UTF-16 字节流按 char 读，**非 ASCII 区间内容在首个 `\0` 处被静默截断**——不崩溃、常无警告，纯数据错。实证（2026-10-29）：`XModbusTcpServer` 把 `XString_constData` 结果传给 `XHostAddress_create_fromString(const char*)`，"127.0.0.1" 截成 "1"，设 address 参数 listen 恒败；同文件 `XModbusTcpClient` 同路径用 `XString_toUtf8` 即正确对照。凡跨类传字符串指针，先核对访问器返回的真实类型。
+10. **`XString_constData` 不是 `const char*`**：它是 `XString_unicode` 的宏别名，返回 **UTF-16 内部数据的 `const XChar*`**（uint16_t 流）。取 UTF-8 的 `const char*` 必须用 **`XString_toUtf8`**（另有 `toGbk`/`toLocal`）。把它喂给任何 `const char*` 形参，UTF-16 字节流按 char 读，**非 ASCII 区间内容在首个 `\0` 处被静默截断**——不崩溃、常无警告，纯数据错。实证（2026-10-29）：`XModbusTcpServer` 把 `XString_constData` 结果传给 `XHostAddress_create_fromString(const char*)`，"127.0.0.1" 截成 "1"，设 address 参数 listen 恒败；同文件 `XModbusTcpClient` 同路径用 `XString_toUtf8` 即正确对照。凡跨类传字符串指针，先核对访问器返回的真实类型（系统规则见「容器与数据结构规范 → XString 使用注意事项」）。
 11. **诊断/对账打点必须被编译开关门包裹，时间源与打印走框架体系**（2026-10-29 裁定）：排查疑难时写入 Src/ 的临时打点（对账、间隔测量、状态追踪），必须按"模块名_ON"惯例做**默认 0 的专属开关门**（如 `XEVENT_PUMPGAP_ON`，代码处 `#ifndef` 兜底定义即可），保证正常运行零开销、异平台/嵌入式构建零影响；块内时间源一律 `XDateTime_currentMSecsSinceEpoch`（禁止 `clock_gettime`/`GetTickCount` 直呼——异平台编不过且违反时间源规则），打印优先 `XDEBUG_PRINTF`/`XERROR_PRINTF`（自带文件/函数/行号上下文，随构建口径归零）。实证：`XAbstractEventDispatcher` 的 [PUMPGAP] 泵间隔打点直呼 `clock_gettime` 无守卫，合入即 Windows 构建回归，已改 `XEVENT_PUMPGAP_ON` 门 + XDateTime。调试代码的价值在"需要时一键开启、平时完全不存在"——裸写的打点既污染构建，又逼着后人替你修编译。
 
 ---

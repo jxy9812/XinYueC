@@ -1094,23 +1094,30 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
             actual.width, actual.height, dprThousand, out);
 }
 
+/** @brief 应用级设备像素比（对标 Qt 的 qApp->devicePixelRatio()）。
+ *  @details Qt 6.8 的 QIcon::pixmap/actualSize 均以应用级 DPR 为口径
+ *           （qicon.cpp:918 与 qicon.cpp:971）。X 侧取
+ *           XGuiApplication_devicePixelRatio()；应用层不可用时回落 1.0
+ *           （等价 Qt 的「不知目标 DPR」时的退化口径）。 */
+static float XIconPrivate_applicationDpr(void)
+{
+#if XGUIAPPLICATION_ON
+    float dpr = XGuiApplication_devicePixelRatio();
+    return (dpr > 0.0f) ? dpr : 1.0f;
+#else
+    return 1.0f;
+#endif
+}
+
 void XIcon_pixmap(const XIcon* self, int width, int height, XIconMode mode, XIconState state, XPixmap* out)
 {
-    if (!out) return;
-    /* 先把输出变成可用的空 XPixmap：既支持未初始化栈对象，也释放
-       调用方复用的旧数据。engine 只负责填充，不能要求每个 engine
-       实现自行初始化输出参数。 */
-    XIcon_preparePixmapOutput(out);
-    if (self && self->m_data && self->m_data->m_engine)
-    {
-        XSize requested = { width, height };
-        XIconEngine_pixmap_base(self->m_data->m_engine, &requested, mode, state, out);
-        return;
-    }
-    if (!self || !self->m_data || width <= 0 || height <= 0) return;
-    XIconPrivate_ensureWritableForLazyLoad((XIcon*)(uintptr_t)self);
-    XIconPrivate_scaledPixmap(self->m_data, width, height, 1.0f,
-                              mode, state, out);
+    /* 对标 Qt 6.8 QIcon::pixmap(const QSize &, Mode, State)
+       （qicon.cpp:868-873）：以 `dpr = -1`（"don't know target dpr"）
+       下沉到带 DPR 的重载，由后者取应用级 DPR
+       （qicon.cpp:917-919）。此前本接口固定 DPR=1（等���「只取 1x
+       资源」），与 Qt 语义不符——高 DPI 屏上取不到 2x 资源。 */
+    XIcon_pixmap_dpr(self, width, height, XIconPrivate_applicationDpr(),
+                     mode, state, out);
 }
 
 void XIcon_pixmapExtent(const XIcon* self, int extent, XIconMode mode, XIconState state, XPixmap* out)
@@ -1118,7 +1125,18 @@ void XIcon_pixmapExtent(const XIcon* self, int extent, XIconMode mode, XIconStat
     XIcon_pixmap(self, extent, extent, mode, state, out);
 }
 
-void XIcon_pixmapRatio(const XIcon* self, int width, int height, float devicePixelRatio,
+/* [Qt 同名兼容别名 2026-10-30] 对标 QIcon::pixmap(w, h, dpr, mode, state)。 */
+void XIcon_pixmapRatio(const XIcon* self, int width, int height,
+                       float devicePixelRatio, XIconMode mode,
+                       XIconState state, XPixmap* out)
+{
+    float dpr = devicePixelRatio;
+    if (dpr <= 0.0f)
+        dpr = XIconPrivate_applicationDpr();
+    XIcon_pixmap_dpr(self, width, height, dpr, mode, state, out);
+}
+
+void XIcon_pixmap_dpr(const XIcon* self, int width, int height, float devicePixelRatio,
                        XIconMode mode, XIconState state, XPixmap* out)
 {
     int targetWidth;
@@ -1166,7 +1184,11 @@ void XIcon_pixmapRatio(const XIcon* self, int width, int height, float devicePix
                               mode, state, out);
 }
 
-void XIcon_actualSize(const XIcon* self, int width, int height, XIconMode mode, XIconState state, XSize* out)
+/** @brief 普通 DPI 口径的实际尺寸内核（对标 Qt QIcon::actualSize 的
+ *         dpr≤1 分支：直接问引擎）。 */
+static void XIconPrivate_actualSizeNormalDpi(const XIcon* self, int width,
+                                             int height, XIconMode mode,
+                                             XIconState state, XSize* out)
 {
     if (!out) return;
     out->width = 0;
@@ -1217,6 +1239,19 @@ void XIcon_actualSize(const XIcon* self, int width, int height, XIconMode mode, 
 
 /* 对标 Qt 6.8 QIcon::actualSize() 的高 DPI 路径：引擎收到物理请求，
  * 返回的物理尺寸再按实际像素量修正 DPR，最后还原为逻辑尺寸。 */
+void XIcon_actualSize(const XIcon* self, int width, int height,
+                       XIconMode mode, XIconState state, XSize* out)
+{
+    /* 对标 Qt 6.8 QIcon::actualSize(const QSize &, Mode, State)
+       （qicon.cpp:968-979）：取**应用级** DPR（qApp->devicePixelRatio()，
+       qicon.cpp:971）——DPR≤1 直接问引擎；DPR>1 按物理尺寸问引擎再按
+       实际位图 DPR 回除。此前 X 固定 DPR=1（文档亦自述「内部按 DPR=1
+       搜索资源」），与 Qt 语义不符。 */
+    XIcon_actualSizeRatio(self, width, height,
+                          XIconPrivate_applicationDpr(),
+                          mode, state, out);
+}
+
 void XIcon_actualSizeRatio(const XIcon* self, int width, int height,
                            float devicePixelRatio, XIconMode mode,
                            XIconState state, XSize* out)
@@ -1228,13 +1263,21 @@ void XIcon_actualSizeRatio(const XIcon* self, int width, int height,
     if (!out) return;
     out->width = 0;
     out->height = 0;
-    if (!self || !self->m_data || width <= 0 || height <= 0)
+    if (!self || !self->m_data)
         return;
     /* NaN 与 Qt 的 !(ratio > 1) 分支一致；无穷值不能安全转换为尺寸。 */
     if (!(devicePixelRatio > 1.0f)) {
-        XIcon_actualSize(self, width, height, mode, state, out);
+        /* [Qt 对齐 2026-10-30] normal-DPI 路径**不得**按 0/负分量钳口：
+           Qt qicon.cpp actualSize 在 dpr≤1 时把请求原样交给引擎，引擎
+           缺省实现逐位透传（0/负分量保持可观察，回归 8465 段实证）——
+           此前的早退把请求拦在引擎之外，透传语义失效。引擎后备的
+           文件条目路径仍在内核内要求正数查找矩形（见其 width<=0 守卫）。 */
+        XIconPrivate_actualSizeNormalDpi(self, width, height, mode, state, out);
         return;
     }
+    /* 高 DPI 物理查找路径要求正数请求尺寸（0/负无物理目标）。 */
+    if (width <= 0 || height <= 0)
+        return;
     if (!isfinite(devicePixelRatio) ||
         !XIconPrivate_physicalTargetSize(width, height, devicePixelRatio,
                                          &targetWidth, &targetHeight))
@@ -1677,11 +1720,6 @@ XStringList* XIcon_themeSearchPaths()
     return copy;
 }
 
-XStringList* XIcon_themeSearchPaths_2()
-{
-    return XIcon_themeSearchPaths();
-}
-
 void XIcon_setThemeSearchPaths(const XStringList* source)
 {
     XStringList* destination = XIcon_paths(false);
@@ -1689,11 +1727,6 @@ void XIcon_setThemeSearchPaths(const XStringList* source)
     XStringList_clear_base((XContainer*)destination);
     if (source) XClassCopy((XClass*)destination, (const XClass*)source);
     XIconScaledPixmapCache_clear();
-}
-
-void XIcon_setThemeSearchPaths_2(const XStringList* paths)
-{
-    XIcon_setThemeSearchPaths(paths);
 }
 
 XStringList* XIcon_fallbackSearchPaths()
@@ -1708,11 +1741,6 @@ XStringList* XIcon_fallbackSearchPaths()
     return copy;
 }
 
-XStringList* XIcon_fallbackSearchPaths_2()
-{
-    return XIcon_fallbackSearchPaths();
-}
-
 void XIcon_setFallbackSearchPaths(const XStringList* source)
 {
     XStringList* destination = XIcon_paths(true);
@@ -1720,11 +1748,6 @@ void XIcon_setFallbackSearchPaths(const XStringList* source)
     XStringList_clear_base((XContainer*)destination);
     if (source) XClassCopy((XClass*)destination, (const XClass*)source);
     XIconScaledPixmapCache_clear();
-}
-
-void XIcon_setFallbackSearchPaths_2(const XStringList* paths)
-{
-    XIcon_setFallbackSearchPaths(paths);
 }
 
 XString* XIcon_themeName()

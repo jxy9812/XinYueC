@@ -452,11 +452,14 @@ bool XPixmap_saveDevice_2(const XPixmap* self, XIODevice* device, const char* fo
  */
 int XPixmap_devType(const XPixmap* self);
 /**
- * @brief 获取像素图绘制引擎句柄。
+ * @brief 获取像素图绘制引擎句柄（对标 QPixmap::paintEngine()，
+ *        Qt 6.8 qpixmap.h 返回强类型 QPaintEngine*）。
  * @param self 像素图对象指针。
  * @return 绘制引擎句柄；当前无原生绘制引擎时返回 NULL。
+ * @note  返回类型由 void* 收窄为强类型指针（struct XPaintEngine 前向
+ *        声明，完整定义见 XPaintDevice.h），消除调用方强制转换。
  */
-void* XPixmap_paintEngine(const XPixmap* self);
+struct XPaintEngine* XPixmap_paintEngine(const XPixmap* self);
 
 /* ========== 其他 ========== */
 

@@ -19,7 +19,9 @@
 
 #include "XAlgorithm.h"
 #include "XStringUtils.h" /* XStrtol：环境变量数值解析（对标 strtol，禁用 atoi）。 */
+#include "XPrintf.h" /* 越界/未激活告警（对标 Qt qWarning）。 */
 #include "XPainter.h"
+#include "XPicture_Protected.h" /* 录制后端的命令记录协议（可见性下沉后须显式包含）。 */
 #include "XMemory.h"
 #include "XDateTime.h"
 #if XPAINTDEVICE_ON
@@ -7978,6 +7980,31 @@ static int painterClampArcSpan(int spanAngle)
 
 /* ========== XPainter 公开 API ========== */
 
+/**
+ * @brief      把绘制器状态复位为 Qt 默认值（对标 QPainter::begin 的状态重置）。
+ * @details    QPainter::begin() 绑定设备时新建 QPainterState 并调用
+ *             QPainterState::init()（qpainter.cpp:1730-1731 + 7403-7429），
+ *             逐项复位 pen/brush/font/clipRegion/clipPath/transform/
+ *             renderHints/opacity/composition_mode；本实现此前 begin()
+ *             只挂后端回调、从不复位状态（painterDefaultState 仅在
+ *             init/end 两处被调用）。复位前先释放旧状态持有的资源
+ *             （字体串、裁剪区域、裁剪路径与路径掩码缓存），释放序列
+ *             与 XPainter_end 一致，避免复位造成重复释放或泄漏。
+ */
+static void painterResetStateToDefault(XPainter* self)
+{
+    if (!self) return;
+    XClassDeinit((XClass*)&self->m_state.m_font);
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+    XRegion_deinit(&self->m_state.m_clipRegion);
+#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+    painterClipPathStateClear(&self->m_state);
+    painterClipMaskCacheReset(self);
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
+    painterDefaultState(&self->m_state);
+}
+
 void XPainter_init(XPainter* self, void* userData)
 {
     if (!self) return;
@@ -8018,8 +8045,18 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
 {
     if (!self || !self->m_initialized || !image || XImage_isNull(image)) return false;
     /* QPainter::begin() 拒绝在同一绘制器已激活时再次绑定设备，并保持
-       原有设备与状态不变；调用方应先显式 end()。 */
-    if (self->m_deviceKind != XPainterDevice_None) return false;
+       原有设备与状态不变；调用方应先显式 end()。
+       对标 Qt 6.8 qpainter.cpp:1686-1689：Qt 走 qWarning("QPainter::begin:
+       Painter already active") 后 return false，本实现此前静默返回，
+       调用方无从得知「重复绑定被拒」。 */
+    if (self->m_deviceKind != XPainterDevice_None)
+    {
+        XPrintf("[XPainter] QPainter::begin: Painter already active\n");
+        return false;
+    }
+    /* 对标 QPainter::begin()：绑定设备时把绘制状态复位为默认值
+       （QPainterState::init，qpainter.cpp:7403-7429）。 */
+    painterResetStateToDefault(self);
     self->m_image = image;
     self->m_deviceKind = XPainterDevice_Image;
     self->m_drawLine = painterRaster_drawLine;
@@ -8356,8 +8393,15 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
 bool XPainter_begin_picture(XPainter* self, XPicture* picture)
 {
     if (!self || !self->m_initialized || !picture) return false;
-    /* 与 begin_image() 一致：活动绘制器不能被隐式切换到另一设备。 */
-    if (self->m_deviceKind != XPainterDevice_None) return false;
+    /* 与 begin_image() 一致：活动绘制器不能被隐式切换到另一设备。
+       对标 Qt 6.8 qpainter.cpp:1686-1689 的 qWarning 口径。 */
+    if (self->m_deviceKind != XPainterDevice_None)
+    {
+        XPrintf("[XPainter] QPainter::begin: Painter already active\n");
+        return false;
+    }
+    /* 对标 QPainter::begin()：绑定设备时复位绘制状态。 */
+    painterResetStateToDefault(self);
     self->m_picture = picture;
     self->m_deviceKind = XPainterDevice_Picture;
     self->m_drawLine = painterRecord_drawLine;
@@ -8382,12 +8426,17 @@ bool XPainter_begin_picture(XPainter* self, XPicture* picture)
     return true;
 }
 
-bool XPainter_begin_device(XPainter* self, XPaintDevice* device)
+bool XPainter_begin(XPainter* self, XPaintDevice* device)
 {
 #if XPAINTDEVICE_ON
     if (!self || !self->m_initialized || !device) return false;
-    /* 与 begin_image/begin_picture 同护栏：活动绘制器拒绝隐式换设备。 */
-    if (self->m_deviceKind != XPainterDevice_None) return false;
+    /* 与 begin_image/begin_picture 同护栏：活动绘制器拒绝隐式换设备。
+       对标 Qt 6.8 qpainter.cpp:1686-1689 的 qWarning 口径。 */
+    if (self->m_deviceKind != XPainterDevice_None)
+    {
+        XPrintf("[XPainter] QPainter::begin: Painter already active\n");
+        return false;
+    }
     /* 设备未开放 begin 泛化（未注册 beginPainter 回调）按不支持拒绝。 */
     if (!device->m_beginPainter) return false;
     /* 装配权交还设备（单一事实源）：设备回调内部调 begin_image/
@@ -9144,7 +9193,7 @@ bool XPainter_drawPixmap_2(XPainter* self, const XPixmap* pixmap,
 }
 
 #if XPAINTER_IMAGE_RECT_ON
-bool XPainter_drawPixmapRect(XPainter* self, const XRect* targetRect,
+bool XPainter_drawPixmap_4(XPainter* self, const XRect* targetRect,
                              const XPixmap* pixmap,
                              const XRect* sourceRect)
 {
@@ -9194,7 +9243,7 @@ bool XPainter_drawPixmap_3(XPainter* self, int x, int y, int width, int height,
     source.y = sy;
     source.width = sw;
     source.height = sh;
-    return XPainter_drawPixmapRect(self, &target, pixmap, &source);
+    return XPainter_drawPixmap_4(self, &target, pixmap, &source);
 }
 #endif /* XPAINTER_IMAGE_RECT_ON */
 
@@ -14947,6 +14996,129 @@ XPainterFillRule XPainterPath_fillRule(const XPainterPath* self)
     return XPainterFillRule_Winding;
 }
 
+/**
+ * @brief      三次贝塞尔单轴极值求解（对标 Qt
+ *             qt_painterpath_bezier_extrema，qpainterpath.cpp:3300-3332
+ *             的 computeBoundingRect 曲线分支）。
+ * @details    B(t)=(1-t)³p0+3(1-t)²t·p1+3(1-t)t²·p2+t³p3，
+ *             B'(t)=3[a·t²+b·t+c]，其中 a=-p0+3p1-3p2+p3、
+ *             b=2(p0-2p1+p2)、c=p1-p0；落在 (0,1) 的实根即极值候选。
+ * @param p0 起点坐标；p1/p2 控制点；p3 终点坐标。
+ * @param outMin 输出该轴最小值（含端点）。
+ * @param outMax 输出该轴最大值（含端点）。
+ */
+static void painterPathBezierExtrema(double p0, double p1, double p2,
+                                     double p3, double* outMin,
+                                     double* outMax)
+{
+    double a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
+    double b = 2.0 * (p0 - 2.0 * p1 + p2);
+    double c = p1 - p0;
+    double roots[2];
+    int rootCount = 0;
+    int i;
+    double v0 = p0;
+    double v3 = p3;
+    if (v0 < *outMin) *outMin = v0;
+    if (v0 > *outMax) *outMax = v0;
+    if (v3 < *outMin) *outMin = v3;
+    if (v3 > *outMax) *outMax = v3;
+    if (fabs(a) < 1e-12)
+    {
+        if (fabs(b) > 1e-12)
+            roots[rootCount++] = -c / b;
+    }
+    else
+    {
+        double disc = b * b - 4.0 * a * c;
+        if (disc >= 0.0)
+        {
+            double sq = sqrt(disc);
+            roots[rootCount++] = (-b + sq) / (2.0 * a);
+            roots[rootCount++] = (-b - sq) / (2.0 * a);
+        }
+    }
+    for (i = 0; i < rootCount; ++i)
+    {
+        double t = roots[i];
+        double mt;
+        double v;
+        if (!(t > 0.0 && t < 1.0)) continue;
+        mt = 1.0 - t;
+        v = mt * mt * mt * v0 + 3.0 * mt * mt * t * p1 +
+            3.0 * mt * t * t * p2 + t * t * t * v3;
+        if (v < *outMin) *outMin = v;
+        if (v > *outMax) *outMax = v;
+    }
+}
+
+void XPainterPath_boundingRect(const XPainterPath* self, XRectF* out)
+{
+    double minx;
+    double maxx;
+    double miny;
+    double maxy;
+    int i;
+    if (!out) return;
+    XRectF_init(out, 0.0f, 0.0f, 0.0f, 0.0f);
+    if (!self || self->m_elementCount <= 0 || !self->m_elements) return;
+    /* Qt 侧以首元素（MoveTo）为初值（qpainterpath.cpp:3300-3302）。 */
+    minx = maxx = self->m_elements[0].m_x1;
+    miny = maxy = self->m_elements[0].m_y1;
+    for (i = 1; i < self->m_elementCount; ++i)
+    {
+        const XPainterPathElement* e = &self->m_elements[i];
+        switch (e->m_type)
+        {
+            case XPainterPathElement_MoveTo:
+            case XPainterPathElement_LineTo:
+                if (e->m_x1 > maxx) maxx = e->m_x1;
+                else if (e->m_x1 < minx) minx = e->m_x1;
+                if (e->m_y1 > maxy) maxy = e->m_y1;
+                else if (e->m_y1 < miny) miny = e->m_y1;
+                break;
+            case XPainterPathElement_CurveTo:
+            {
+                double cminx;
+                double cmaxx;
+                double cminy;
+                double cmaxy;
+                double curX;
+                double curY;
+                double c1x;
+                double c1y;
+                double c2x;
+                double c2y;
+                double ex;
+                double ey;
+                if (i + 2 >= self->m_elementCount) break;
+                curX = self->m_elements[i - 1].m_x1;
+                curY = self->m_elements[i - 1].m_y1;
+                c1x = e->m_x1;
+                c1y = e->m_y1;
+                c2x = self->m_elements[i + 1].m_x1;
+                c2y = self->m_elements[i + 1].m_y1;
+                ex = self->m_elements[i + 2].m_x1;
+                ey = self->m_elements[i + 2].m_y1;
+                cminx = cmaxx = curX;
+                cminy = cmaxy = curY;
+                painterPathBezierExtrema(curX, c1x, c2x, ex, &cminx, &cmaxx);
+                painterPathBezierExtrema(curY, c1y, c2y, ey, &cminy, &cmaxy);
+                if (cminx < minx) minx = cminx;
+                if (cmaxx > maxx) maxx = cmaxx;
+                if (cminy < miny) miny = cminy;
+                if (cmaxy > maxy) maxy = cmaxy;
+                i += 2;
+                break;
+            }
+            default:
+                break;
+        }
+    }
+    XRectF_init(out, (float)minx, (float)miny,
+                (float)(maxx - minx), (float)(maxy - miny));
+}
+
 typedef struct PainterPathVertices
 {
     float* xs;
@@ -16209,11 +16381,17 @@ void XPainter_setPenWidth(XPainter* self, int width)
 {
     if (!self || self->m_deviceKind == XPainterDevice_None)
         return;
-    /* 对齐 QPen::setWidth：0 表示 cosmetic pen，负值和 15 位以上宽度
-       超出 Qt 允许范围时保持旧值不变；软件光栅绘制时再将 0 解释为
-       一像素宽，保证状态值与实际显示宽度分别符合 Qt 语义。 */
+    /* 对齐 QPen::setWidth（Qt 6.8 qpen.cpp:588-598）：0 表示 cosmetic
+       pen，负值和 15 位以上宽度超出 Qt 允许范围时保持旧值不变；软件
+       光栅绘制时再将 0 解释为一像素宽，保证状态值与实际显示宽度分别
+       符合 Qt 语义。越界时 Qt 走 qWarning 后 return，本实现此前静默
+       忽略（调用方无从区分「被拒」与「已生效」），现按 Qt 口径告警。 */
     if (width < 0 || width >= (1 << 15))
+    {
+        XPrintf("[XPainter] QPen::setWidth: Setting a pen width that is "
+                "out of range\n");
         return;
+    }
     self->m_state.m_penWidth = width;
     painterRecord_penState(self);
 }
@@ -16305,12 +16483,12 @@ XPainterPenJoinStyle XPainter_penJoinStyle(const XPainter* self)
 void XPainter_setMiterLimit(XPainter* self, float limit)
 {
     if (!self || self->m_deviceKind == XPainterDevice_None) return;
-    /* 对标 QPen::setMiterLimit：Qt（qpen.cpp）本身不钳位、阈值原样
-       存储；但 miter 长度/笔宽恒 ≥1，阈值 ≤1 时任何转角都超限回退
-       Bevel——与本处钳位到 1 殊途同归，可见行为一致（钳位仅令状态
-       观测值规范化）。非有限值 Qt 不做特判，此处统一钳位防御 NaN
-       破坏比较逻辑。 */
-    if (!(limit >= 1.0f)) limit = 1.0f;
+    /* 对标 QPen::setMiterLimit（Qt 6.8 qpen.cpp:540-544）：Qt 只做
+       detach() 后原样存储 d->miterLimit，既不钳位也不告警；本实现
+       此前钳位到 ≥1.0f，令状态观测值与 Qt 不一致（miterLimit() 回读
+       偏大）。现按 Qt 语义原样存储：阈值 ≤1（含 NaN）时后续转角
+       比较恒为「超限」，回退 Bevel——可见绘制结果不变，仅状态口径
+       与 Qt 对齐。 */
     self->m_state.m_miterLimit = limit;
     painterRecord_penState(self);
 }
@@ -17124,7 +17302,14 @@ float XPainter_opacity(const XPainter* self)
 
 void XPainter_setCompositionMode(XPainter* self, XPainterCompositionMode mode)
 {
-    if (!self || self->m_deviceKind == XPainterDevice_None) return;
+    /* 对标 QPainter::setCompositionMode（Qt 6.8 qpainter.cpp:2324-2333）：
+       绘制器未激活时 qWarning 提示后 return；本实现此前静默忽略。 */
+    if (!self || self->m_deviceKind == XPainterDevice_None)
+    {
+        XPrintf("[XPainter] QPainter::setCompositionMode: Painter not "
+                "active\n");
+        return;
+    }
     /* XImage 软件后端覆盖 Qt 6.8 的全部 38 个合成模式；枚举范围
        之外的值保持原状态。RasterOp 对完整 ARGB32 像素逐位运算。 */
     if (mode < XPainterCompositionMode_SourceOver ||
@@ -17146,8 +17331,15 @@ XPainterCompositionMode XPainter_compositionMode(const XPainter* self)
 void XPainter_setRenderHint(XPainter* self, XPainterRenderHint hint,
                             bool enabled)
 {
+    /* 对标 QPainter::setRenderHint（Qt 6.8 qpainter.cpp:6866-6873）：
+       绘制器未激活时 qWarning 提示后 return；本实现此前静默忽略，
+       调用方无从得知提示未生效。 */
     if (!self || self->m_deviceKind == XPainterDevice_None)
+    {
+        XPrintf("[XPainter] QPainter::setRenderHint: Painter must be "
+                "active to set rendering hints\n");
         return;
+    }
     if (enabled)
         self->m_state.m_renderHints |= (XPainterRenderHints)hint;
     else
@@ -17159,7 +17351,11 @@ void XPainter_setRenderHints(XPainter* self, XPainterRenderHints hints,
                              bool enabled)
 {
     if (!self || self->m_deviceKind == XPainterDevice_None)
+    {
+        XPrintf("[XPainter] QPainter::setRenderHint: Painter must be "
+                "active to set rendering hints\n");
         return;
+    }
     if (enabled)
         self->m_state.m_renderHints |= hints;
     else
@@ -17949,6 +18145,21 @@ textLayoutOOM:
         XPainter_restore(self);
 #endif /* XPAINTER_CLIP_ON */
     return false;
+}
+
+bool XPainter_drawTextRect_2(XPainter* self, const XRect* rect, uint32_t flags,
+                              const char* utf8, uint32_t color, XRect* br)
+{
+    /* 对标 QPainter::drawText(const QRectF&, int, const QString&, QRectF*)
+       （Qt 6.8 qpainter.cpp:5738-5755 + qpainter.h:288-296）：br 非空
+       时回填「包住整段文本的包围矩形」——Qt 侧由 qt_format_text 与绘制
+       同一次布局算出，与是否真正落笔无关；本实现复用
+       XPainter_boundingRect 的同一口径（按对齐标志在给定矩形内定位）。
+       旧入口 XPainter_drawTextRect 无 br 出参，Qt 侧对应能力由
+       XPainter_boundingRect 单独提供（能力拆分）。 */
+    if (br)
+        XPainter_boundingRect(self, rect, (int)flags, utf8, br);
+    return XPainter_drawTextRect(self, rect, flags, utf8, color);
 }
 #endif /* XPAINTER_TEXTLAYOUT_ON */
 

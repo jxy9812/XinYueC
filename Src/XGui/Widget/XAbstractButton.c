@@ -11,8 +11,14 @@
 #include "XAbstractButton.h"
 
 #include "XAlgorithm.h"
+#include <stdio.h>
 #include "XStringUtils.h"
 #include "XAbstractButton_Protected.h"
+#include "XStyle.h"            /* XStyle_defaultStyle/XStyle_pixelMetric 声明——
+                               * 缺它即 C 隐式声明：指针实参按 int 截断
+                               * （实证 0x569b00fcb600→0xfcb600 段错误）。
+                               * XStylePM_ButtonIconSize 取自下者。 */
+#include "XStyleOption.h"      /* XStylePM_ButtonIconSize（D1 iconSize 缺省对齐）。 */
 #include "XButtonGroup.h"
 #include "XShortcut.h"
 #include "XWidget_Protected.h"
@@ -535,6 +541,16 @@ XSize XAbstractButton_iconSize(const XAbstractButton* self)
     XSize_init(&size, 0, 0);
     if (self)
         size = self->m_iconSize;
+    /* [Qt 对齐 D1 2026-10-30] 未显式设置时返回样式生效值而非 (0,0)
+     * （qabstractbutton.cpp:1234-1241：iconSize 无效时取
+     * style()->pixelMetric(PM_ButtonIconSize)，桌面通常 16x16）——
+     * (0,0) 会让调用方按「无图标尺寸」分支误判。 */
+    if (size.width == 0 && size.height == 0 && XStyle_defaultStyle() != NULL) {
+        int pm = XStyle_pixelMetric(XStyle_defaultStyle(),
+                                    XStylePM_ButtonIconSize, NULL);
+        if (pm > 0)
+            XSize_init(&size, pm, pm);
+    }
     return size;
 }
 
@@ -787,6 +803,15 @@ void XAbstractButton_animateClick(XAbstractButton* self)
 {
     if (!self || !XWidget_isEnabled((XWidget*)self))
         return;
+
+    /* [Qt 对齐 D5 2026-10-30] Qt：checkable 且 ClickFocus 策略的按钮先
+     * setFocus（qabstractbutton.cpp:805-806：
+     *   if (d->checkable && focusPolicy() & Qt::ClickFocus) setFocus();）
+     * ——组内互斥选中需焦点随点击迁移，缺它则 animateClick 后焦点仍留
+     * 原控件，Tab 序与焦点高亮错位。 */
+    if (self->m_checkable &&
+        ((XWidget*)self)->m_focusPolicy & XWidgetFocusPolicy_ClickFocus)
+        XWidget_setFocus((XWidget*)self);
 
     XAbstractButton_setDown(self, true);
     if (self->m_animateTimer == XTIMER_INVALID_ID)

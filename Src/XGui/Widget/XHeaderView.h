@@ -81,12 +81,15 @@ typedef enum XHeaderViewSortOrder
     XHeaderViewSortOrder_Descending = 1  /**< 降序。 */
 } XHeaderViewSortOrder;
 
-/** @brief 区间调整模式（对标 Qt::HeaderViewResizeMode，数值一致）。 */
+/** @brief 区间调整模式（对标 QHeaderView::ResizeMode，数值逐项一致：
+ *         Interactive=0、Stretch=1、Fixed=2、ResizeToContents=3；
+ *         qheaderview.h:38-45，`Custom = Fixed`）。 */
 typedef enum XHeaderViewResizeMode
 {
     XHeaderViewResizeMode_Interactive = 0,      /**< 用户可交互调整（缺省）。 */
-    XHeaderViewResizeMode_Fixed = 1,            /**< 固定尺寸，用户不可调整。 */
-    XHeaderViewResizeMode_Stretch = 2,          /**< 随可用空间自动拉伸均分。 */
+    XHeaderViewResizeMode_Stretch = 1,          /**< 随可用空间自动拉伸均分。 */
+    XHeaderViewResizeMode_Fixed = 2,            /**< 固定尺寸，用户不可调整
+                                                     （对标 Qt `Custom = Fixed`）。 */
     XHeaderViewResizeMode_ResizeToContents = 3  /**< 按内容自适应（内容测算未接）。 */
 } XHeaderViewResizeMode;
 
@@ -134,16 +137,6 @@ void XHeaderView_setCount(XHeaderView* self, int count);
  * @return 区间尺寸（像素）。
  */
 int XHeaderView_sectionSize(const XHeaderView* self, int section);
-/** @brief 设置区间尺寸。
- * @param self 目标表头。
- * @param section 区间号（越界忽略）。
- * @param size 尺寸（像素；<=0 忽略）。
- * @note 全局模式为 Stretch 时 Qt 会重分配拉伸宽度；本项目仍直接存值
- *       （模式承载范围见 setSectionResizeMode）。
- * @note 尺寸实际变化时发射 sectionResized 与 geometriesChanged。
- * @return 无返回值。
- */
-void XHeaderView_setSectionSize(XHeaderView* self, int section, int size);
 /**
  * @brief 调整区间尺寸（对标 QHeaderView::resizeSection；程序化调整入口）。
  *
@@ -201,10 +194,8 @@ int XHeaderView_sectionViewportPosition(const XHeaderView* self, int section);
  * @return 无返回值。
  */
 void XHeaderView_setStretchLastSection(XHeaderView* self, bool stretch);
-/** @brief 查询末尾拉伸开关（对标 Qt 属性读取器 stretchLastSection；isStretchLastSection 的别名）。 @param self 目标表头。 @return 拉伸返回 true。 */
+/** @brief 查询末尾拉伸开关（对标 QHeaderView::stretchLastSection，qheaderview.h:116）。 @param self 目标表头。 @return 拉伸返回 true。 */
 bool XHeaderView_stretchLastSection(const XHeaderView* self);
-/** @brief 查询末尾拉伸开关（旧式命名，同 stretchLastSection）。 @param self 目标表头。 @return 拉伸返回 true。 */
-bool XHeaderView_isStretchLastSection(const XHeaderView* self);
 
 /* ==================== 段管理（对标 QHeaderView 段族） ==================== */
 

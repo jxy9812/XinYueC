@@ -1790,6 +1790,7 @@ void XWidget_insertAction(XWidget* self, XAction* before, XAction* action);
 void XWidget_insertActions(XWidget* self, XAction* before, const XVector* actions);
 
 /* ==================== 手势识别器订阅（对标 QWidget::grabGesture） ==================== */
+#if XGESTURE_ON
 
 /**
  * @brief      订阅手势识别器（对标 QWidget::grabGesture）。
@@ -1821,6 +1822,7 @@ void XWidget_removeGestureRecognizer(XWidget* self,
  * @return     无返回值；识别器对象所有权仍归调用方。
  */
 void XWidget_clearGestureRecognizers(XWidget* self);
+#endif /* XGESTURE_ON */
 
 /**
  * @brief      从动作列表移除动作（对标 QWidget::removeAction）。
@@ -1832,6 +1834,30 @@ void XWidget_clearGestureRecognizers(XWidget* self);
  * @return     无返回值。
  */
 void XWidget_removeAction(XWidget* self, XAction* action);
+
+/**
+ * @brief      查询动作列表（对标 QWidget::actions）。
+ * @details    Qt 返回内部动作列表的**值拷贝**（QList<QAction*>）；C 侧对应
+ *             返回**新建**的 XVector（元素类型为 XAction* 借用指针）。
+ *             控件不拥有通过 addAction 加入的动作对象，本函数也不转移元素
+ *             所有权——调用方可安全释放返回的向量，但不得释放其中元素。
+ * @param      self 目标控件；可为 NULL。
+ * @return     新建的动作指针向量；self 为 NULL 时返回 NULL。
+ * @note       **调用方负责**用 XClassDelete 释放返回的向量。
+ */
+XVector* XWidget_actions(const XWidget* self);
+
+/**
+ * @brief      查询动作列表（对标 QWidget::actions）。
+ * @details    Qt 返回内部动作列表的**值拷贝**（QList<QAction*>）；C 侧对应
+ *             返回**新建**的 XVector（元素类型为 XAction* 借用指针）。
+ *             控件不拥有通过 addAction 加入的动作对象，本函数也不转移元素
+ *             所有权——调用方可安全释放返回的向量，但不得释放其中元素。
+ * @param      self 目标控件；可为 NULL。
+ * @return     新建的动作指针向量；self 为 NULL 时返回 NULL。
+ * @note       **调用方负责**用 XClassDelete 释放返回的向量。
+ */
+XVector* XWidget_actions(const XWidget* self);
 
 /* ==================== 输入法查询与区域设置（对标 QWidget inputMethodQuery/locale） ==================== */
 

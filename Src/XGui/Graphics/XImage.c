@@ -2086,7 +2086,7 @@ void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
     XImage_setColorSpace(out, colorSpace);
 }
 
-void XImage_convertedToColorSpace_ex(const XImage* self, XColorSpace colorSpace,
+void XImage_convertedToColorSpace_2(const XImage* self, XColorSpace colorSpace,
                                      XImageFormat format, uint32_t flags,
                                      XImage* out)
 {
@@ -2132,7 +2132,7 @@ bool XImage_convertToColorSpace(XImage* self, XColorSpace colorSpace,
     return true;
 }
 
-bool XImage_convertToColorSpace_ex(XImage* self, XColorSpace colorSpace,
+bool XImage_convertToColorSpace_2(XImage* self, XColorSpace colorSpace,
                                    XImageFormat format, uint32_t flags)
 {
     XImage converted;
@@ -2144,7 +2144,7 @@ bool XImage_convertToColorSpace_ex(XImage* self, XColorSpace colorSpace,
     if (XColorSpace_equals(&self->m_data->m_colorSpace, &colorSpace))
         return XImage_convertToFormatInPlace(self, format, flags);
     XImage_init(&converted);
-    XImage_convertedToColorSpace_ex(self, colorSpace, format, flags, &converted);
+    XImage_convertedToColorSpace_2(self, colorSpace, format, flags, &converted);
     if (XImage_isNull(&converted))
     {
         XClassDeinit(&converted);
@@ -4286,7 +4286,7 @@ void XImage_convertToFormat(const XImage* self, XImageFormat format, uint32_t fl
         }
 }
 
-void XImage_convertToFormat_ex(const XImage* self, XImageFormat format,
+void XImage_convertedToFormat(const XImage* self, XImageFormat format,
                                const uint32_t* colorTable, int colorCount,
                                uint32_t flags, XImage* out)
 {
@@ -4410,11 +4410,6 @@ void XImage_mirroredInPlace(XImage* self, bool horizontal, bool vertical)
         XClassMove(self, &temp);
 }
 
-void XImage_mirror(XImage* self, bool horizontal, bool vertical)
-{
-    XImage_mirroredInPlace(self, horizontal, vertical);
-}
-
 void XImage_rgbSwapped(const XImage* self, XImage* out)
 {
     if (self && (const XImage*)out == self)
@@ -4502,6 +4497,12 @@ void XImage_rgbSwappedInPlace(XImage* self)
         return;
     }
     XClassMove(self, &temp);
+}
+
+/* [Qt 同名兼容别名 2026-10-30] 回归套件按 Qt 命名调用；转发既有就地版本。 */
+void XImage_mirror(XImage* self, bool horizontal, bool vertical)
+{
+    XImage_mirroredInPlace(self, horizontal, vertical);
 }
 
 void XImage_rgbSwap(XImage* self)

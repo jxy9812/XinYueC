@@ -309,8 +309,10 @@ void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
  * @param out 输出图像对象指针；参数无效或转换失败时输出空图像。
  * @note 对标 Qt 6.8 `QImage::convertedToColorSpace(colorSpace, format, flags)`；
  *       与不带格式的重载不同，Invalid 格式不会自动选择中间格式。
+ *       命名按 Qt 对齐：原名 XImage_convertedToColorSpace_ex 已按
+ *       「改名即删旧名」删除。
  */
-void XImage_convertedToColorSpace_ex(const XImage* self, XColorSpace colorSpace,
+void XImage_convertedToColorSpace_2(const XImage* self, XColorSpace colorSpace,
                                      XImageFormat format, uint32_t flags,
                                      XImage* out);
 /**
@@ -333,8 +335,10 @@ bool XImage_convertToColorSpace(XImage* self, XColorSpace colorSpace,
  *         且原图像保持不变。
  * @note 对标 Qt 6.8 `QImage::convertToColorSpace(colorSpace, format, flags)`；
  *       当目标空间与当前空间相同仍会执行指定格式转换。
+ *       命名按 Qt 对齐：原名 XImage_convertToColorSpace_ex 已按
+ *       「改名即删旧名」删除。
  */
-bool XImage_convertToColorSpace_ex(XImage* self, XColorSpace colorSpace,
+bool XImage_convertToColorSpace_2(XImage* self, XColorSpace colorSpace,
                                    XImageFormat format, uint32_t flags);
 
 /**
@@ -625,6 +629,8 @@ void XImage_convertToFormat(const XImage* self, XImageFormat format, uint32_t fl
 
 /**
  * @brief      将图像转换为指定格式（带颜色表）
+ * @note       命名按 Qt 对齐 QImage::convertedToFormat：原名
+ *             XImage_convertToFormat_ex 已按「改名即删旧名」删除。
  * @param self       目标 XImage 对象指针
  * @param format     目标像素格式
  * @param colorTable 颜色表指针
@@ -632,7 +638,7 @@ void XImage_convertToFormat(const XImage* self, XImageFormat format, uint32_t fl
  * @param flags      转换标志
  * @param out        输出结果图像指针
  */
-void XImage_convertToFormat_ex(const XImage* self, XImageFormat format,
+void XImage_convertedToFormat(const XImage* self, XImageFormat format,
                                const uint32_t* colorTable, int colorCount,
                                uint32_t flags, XImage* out);
 
@@ -669,14 +675,6 @@ void XImage_mirrored(const XImage* self, bool horizontal, bool vertical, XImage*
 void XImage_mirroredInPlace(XImage* self, bool horizontal, bool vertical);
 
 /**
- * @brief 就地镜像图像的兼容别名（对标 QImage::mirror）。
- * @param self 目标 XImage 对象指针。
- * @param horizontal 是否沿垂直轴镜像。
- * @param vertical 是否沿水平轴镜像。
- */
-void XImage_mirror(XImage* self, bool horizontal, bool vertical);
-
-/**
  * @brief      交换 RGB 和 BGR 通道
  * @param self 目标 XImage 对象指针
  * @param out  输出结果图像指针
@@ -690,8 +688,22 @@ void XImage_rgbSwapped(const XImage* self, XImage* out);
 void XImage_rgbSwappedInPlace(XImage* self);
 
 /**
- * @brief 就地交换 RGB 和 BGR 通道的兼容别名。
- * @param self 目标 XImage 对象指针。
+ * @brief      就地镜像图像（对标 QImage::mirror；XImage_mirroredInPlace 的
+ *             Qt 同名兼容别名）。
+ * @param      self 目标图像；NULL 时函数不执行任何操作。
+ * @param      horizontal true=水平镜像（左右翻转）。
+ * @param      vertical true=垂直镜像（上下翻转）。
+ * @return     无。两者皆为 false 时保持原样。
+ */
+void XImage_mirror(XImage* self, bool horizontal, bool vertical);
+
+/**
+ * @brief      就地交换红蓝通道（Qt QImage::rgbSwapped 的就地别名；
+ *             XImage_rgbSwappedInPlace 的 Qt 同名兼容别名）。
+ * @details    仅对含 RGB 通道的格式有意义（RGB32/ARGB32 族等）；
+ *             其他格式按 XImage_rgbSwappedInPlace 的既有口径处理。
+ * @param      self 目标图像；NULL 时函数不执行任何操作。
+ * @return     无。
  */
 void XImage_rgbSwap(XImage* self);
 

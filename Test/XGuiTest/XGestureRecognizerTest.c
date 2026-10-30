@@ -305,14 +305,20 @@ int main(void)
         XClassDelete((XClass*)rec);
     }
 
-    /* ⑦ 双指旋转：两指连线由水平转 90° → 旋转增量约 90°。 */
+    /* ⑦ 双指旋转：两指连线由水平转 90° → 旋转增量约 90°。
+       注：UPDATE 帧两指须仍构成一条**非退化**连线（两指不重合），
+       否则连线方向无定义、旋转增量不可导出。原数据把两指都放到
+       (100,200)（连线长度 0），atan2(0,0)=0 → 增量 0°，与「水平转
+       90°」的本意不符——此处改为绕原中点 (150,100) 的刚体旋转：
+       (100,100)→(150,50)、(200,100)→(150,150)，中点与指距（100）不变，
+       仅方向由水平转 90°，与本用例断言的契约一致。 */
     {
         XRotateGestureRecognizer* rec = XRotateGestureRecognizer_create(NULL);
         XWidget_addGestureRecognizer(&sink.m_base, &rec->m_base);
         sink.m_count = 0;
         gr_step2(xw, XEVENT_TYPE_TOUCH_BEGIN, 9, 100, 100, 10, 200, 100,
                  XTOUCHPOINT_STATE_PRESSED, ts + 8000);
-        gr_step2(xw, XEVENT_TYPE_TOUCH_UPDATE, 9, 100, 200, 10, 100, 200,
+        gr_step2(xw, XEVENT_TYPE_TOUCH_UPDATE, 9, 150, 50, 10, 150, 150,
                  XTOUCHPOINT_STATE_UPDATED, ts + 8016);
         gr_pump();
         gr_expect(sink.m_lastType == (int)XGestureEventType_Rotate &&

@@ -33,15 +33,31 @@ extern "C" {
 /* ==================== 枚举（对标 QListView 状态枚举，数值对齐 Qt） ==================== */
 
 /**
- * @brief      排列方向（对标 QListView::Flow，数值逐项一致）。
- * @details    TopDown 自上而下逐行排布（默认）；LeftToRight 自左向右
+ * @brief      模式属性标志位（对标 Qt QListViewPrivate::ModeProperties，
+ *             qlistview_p.h:399-407；数值逐位一致）。
+ * @details    记录"用户已显式设置"的属性：置位后 setViewMode 不再复位
+ *             该属性（对标 Qt 的 `if (!(d->modeProperties & ...))`
+ *             判定，qlistview.cpp:422-471）；clearPropertyFlags 清零。
+ */
+#define XLISTVIEW_PROP_WRAP           0x01 /**< Wrap（换行排布）。 */
+#define XLISTVIEW_PROP_SPACING        0x02 /**< Spacing（条目间距）。 */
+#define XLISTVIEW_PROP_GRIDSIZE       0x04 /**< GridSize（网格尺寸）。 */
+#define XLISTVIEW_PROP_FLOW           0x08 /**< Flow（排列方向）。 */
+#define XLISTVIEW_PROP_MOVEMENT       0x10 /**< Movement（移动模式）。 */
+#define XLISTVIEW_PROP_RESIZEMODE     0x20 /**< ResizeMode（尺寸调整模式）。 */
+#define XLISTVIEW_PROP_SELECTIONRECT  0x40 /**< SelectionRectVisible。 */
+
+/**
+ * @brief      排列方向（对标 QListView::Flow，数值逐项一致：
+ *             LeftToRight=0、TopToBottom=1；qlistview.h:37）。
+ * @details    TopToBottom 自上而下逐行排布（默认）；LeftToRight 自左向右
  *             换行排布。XGui 平铺行模型下存储该状态并参与命中/绘制的
  *             槽位计算；横向流式重排布局不实现（@note）。
  */
 typedef enum XListViewFlow
 {
-    XListViewFlow_TopDown = 0,      /**< 自上而下（对标 QListView::Flow_TopToBottom）。 */
-    XListViewFlow_LeftToRight = 1   /**< 自左向右（对标 QListView::Flow_LeftToRight）。 */
+    XListViewFlow_LeftToRight = 0,  /**< 自左向右（对标 QListView::Flow::LeftToRight）。 */
+    XListViewFlow_TopToBottom = 1   /**< 自上而下（对标 QListView::Flow::TopToBottom）。 */
 } XListViewFlow;
 
 /**
@@ -57,14 +73,15 @@ typedef enum XListViewViewMode
 } XListViewViewMode;
 
 /**
- * @brief      尺寸调整模式（对标 QListView::ResizeMode，数值逐项一致）。
- * @details    Static 视图尺寸变化不重排（默认）；Adjust 视图尺寸变化
+ * @brief      尺寸调整模式（对标 QListView::ResizeMode，数值逐项一致：
+ *             Fixed=0、Adjust=1；qlistview.h:39）。
+ * @details    Fixed 视图尺寸变化不重排（默认）；Adjust 视图尺寸变化
  *             时重排条目。XGui 为同步绘制模型，Adjust 仅作为状态声明
  *             供接入层读取（@note）。
  */
 typedef enum XListViewResizeMode
 {
-    XListViewResizeMode_Static = 0, /**< 不随视图尺寸重排（对标 Static）。 */
+    XListViewResizeMode_Fixed = 0,  /**< 不随视图尺寸重排（对标 Fixed）。 */
     XListViewResizeMode_Adjust = 1  /**< 随视图尺寸重排（对标 Adjust）。 */
 } XListViewResizeMode;
 
@@ -115,11 +132,15 @@ typedef struct XListView
     int16_t m_gridHeight;       /**< 网格高（像素；<=0 未启用，默认 -1）。 */
     uint16_t m_batchSize;       /**< 批式布局批量（>0，默认 100；setter 拒绝非正值）。 */
     /* ---- 1 字节组 ---- */
-    uint8_t m_flow;             /**< 排列方向（XListViewFlow，默认 TopDown）。 */
+    uint8_t m_flow;             /**< 排列方向（XListViewFlow，默认 TopToBottom）。 */
     uint8_t m_viewMode;         /**< 视图模式（XListViewViewMode，默认 ListMode）。 */
-    uint8_t m_resizeMode;       /**< 尺寸调整模式（XListViewResizeMode，默认 Static）。 */
+    uint8_t m_resizeMode;       /**< 尺寸调整模式（XListViewResizeMode，默认 Fixed）。 */
     uint8_t m_layoutMode;       /**< 布局模式（XListViewLayoutMode，默认 SinglePass）。 */
     uint8_t m_movement;         /**< 条目移动模式（XListViewMovement，默认 Static）。 */
+    /* ---- 模式属性标志（对标 Qt QListViewPrivate::ModeProperties，
+     *     qlistview_p.h:399-407）——记录"用户已显式设置"的状态位，
+     *     setViewMode 只复位未置位的那些属性。 ---- */
+    uint8_t m_modeProperties;   /**< 模式属性标志位集（默认 0=全部未显式设置）。 */
     /* ---- 位域组（4 个布尔打包 1 字节） ---- */
     uint8_t m_wrapping : 1;     /**< 换行排布（默认 false）。 */
     uint8_t m_selectionRectVisible : 1; /**< 橡皮筋选择框可见（默认 false）。 */
@@ -214,7 +235,7 @@ XRect XListView_visualRect(const XListView* self, int row);
 void XListView_setFlow(XListView* self, int flow);
 /** @brief 查询排列方向。
  * @param self 目标视图。
- * @return XListViewFlow 值；对象无效返回 0（TopDown）。
+ * @return XListViewFlow 值；对象无效返回 0（LeftToRight）。
  */
 int XListView_flow(const XListView* self);
 /** @brief 设置布局网格尺寸（对标 QListView::setGridSize；XGui 无 QSize，宽高分开）。
@@ -233,20 +254,10 @@ void XListView_setGridSize(XListView* self, int width, int height);
  * @param width 网格宽输出（像素；可为 NULL 忽略该维）。
  * @param height 网格高输出（像素；可为 NULL 忽略该维）。
  * @return 无返回值。
- * @note 未启用维度输出 -1（<=0 一律按 -1 存储，口径同 gridSizeWidth/
- *       gridSizeHeight）；self 为 NULL 时同样输出 -1。
+ * @note 未启用维度输出 -1（<=0 一律按 -1 存储）；self 为 NULL 时同样
+ *       输出 -1。
  */
 void XListView_gridSize(const XListView* self, int* width, int* height);
-/** @brief 查询网格宽。
- * @param self 目标视图。
- * @return 网格宽（像素；<=0 表示未启用）。
- */
-int XListView_gridSizeWidth(const XListView* self);
-/** @brief 查询网格高。
- * @param self 目标视图。
- * @return 网格高（像素；<=0 表示未启用）。
- */
-int XListView_gridSizeHeight(const XListView* self);
 /** @brief 设置换行排布（对标 QListView::setWrapping）。
  * @param self 目标视图。
  * @param enable true 允许条目换行排布。

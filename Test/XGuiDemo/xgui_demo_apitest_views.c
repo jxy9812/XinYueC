@@ -1177,10 +1177,13 @@ int xapi_views_run(void)
         XAbstractItemView_setCurrentIndex(&view, 0, 0);
         XAbstractItemView_clearSelection(&view);
         XAbstractItemView_selectAll(&view);
+        /* Qt 6.8 QAbstractItemView::selectAll：SingleSelection 分支
+         * 直接 break（qabstractitemview.cpp:1214-1215）——单选模式
+         * 全选**什么都不做**（既不选当前项也不清选区）。 */
         XAPI_EXPECT(XAbstractItemView_selectionModel(&view) != NULL &&
                     XItemSelectionModel_selectedCount(
-                        XAbstractItemView_selectionModel(&view)) == 1,
-                    "单选模式 selectAll 仅选当前项（Qt 单选约束）");
+                        XAbstractItemView_selectionModel(&view)) == 0,
+                    "单选模式 selectAll 为空操作（Qt qabstractitemview.cpp:1214-1215）");
         /* ---- selectAll 扩展模式全网格（Qt：全部可选单元格） ---- */
         XAbstractItemView_setSelectionMode(&view,
             XAbstractItemViewSelectionMode_ExtendedSelection);
@@ -1228,9 +1231,12 @@ int xapi_views_run(void)
         }
         r = -9;
         c = -9;
+        /* Qt 6.8 QAbstractItemView::rootIndex 返回**存储的**根索引
+         * （qabstractitemview.cpp:1187-1190），缺省为无效索引；
+         * 本库平铺承载为 (-1,-1) 表示无效。 */
         XAPI_EXPECT(XAbstractItemView_rootIndex(&view, &r, &c) &&
-                    r == 0 && c == 0,
-                    "平铺模型 rootIndex 恒 (0,0)");
+                    r == 2 && c == 1,
+                    "rootIndex 返回存储的根偏移（Qt rootIndex 语义）");
         XAbstractItemView_setRootIndex(&view, -1, -1);
 
         /* ---- visualRect/indexAt 基类固定网格（80x24） ---- */
@@ -1513,7 +1519,8 @@ int xapi_views_run(void)
         /* ---- setCurrentIndex 的 current 族发射（对标
          *      QItemSelectionModel::setCurrentIndex：currentChanged 先
          *      行、行/列分别变化再发射 row/column 版，载荷为当前/前值） */
-        XItemSelectionModel_setCurrentIndex(sm, 2, 3);
+        XItemSelectionModel_setCurrentIndex(sm, 2, 3,
+                                        XItemSelectionModelSelectionFlag_NoUpdate);
         XAPI_EXPECT(g_sig.ismCurrentChanged == 1 && g_sig.ismRow == 2 &&
                     g_sig.ismCol == 3 && g_sig.ismPrevRow == -1 &&
                     g_sig.ismPrevCol == -1,
@@ -1524,11 +1531,13 @@ int xapi_views_run(void)
         XAPI_EXPECT(g_sig.ismColChanged == 1 && g_sig.ismCol == 3 &&
                     g_sig.ismPrevCol == -1,
                     "列变化发射 currentColumnChanged(3,-1)");
-        XItemSelectionModel_setCurrentIndex(sm, 2, 3);
+        XItemSelectionModel_setCurrentIndex(sm, 2, 3,
+                                        XItemSelectionModelSelectionFlag_NoUpdate);
         XAPI_EXPECT(g_sig.ismCurrentChanged == 1 && g_sig.ismRowChanged == 1 &&
                     g_sig.ismColChanged == 1,
                     "同格重设不发射（索引未变化无操作，同 Qt）");
-        XItemSelectionModel_setCurrentIndex(sm, 2, 1);
+        XItemSelectionModel_setCurrentIndex(sm, 2, 1,
+                                        XItemSelectionModelSelectionFlag_NoUpdate);
         XAPI_EXPECT(g_sig.ismCurrentChanged == 2 && g_sig.ismRowChanged == 1 &&
                     g_sig.ismColChanged == 2 && g_sig.ismCol == 1 &&
                     g_sig.ismPrevCol == 3,
@@ -1537,14 +1546,16 @@ int xapi_views_run(void)
          *      区间全格置选、单次 selectionChanged 语义；本库以
          *      selectedCount 差分承载单次发射判定） ---- */
         vsig_reset();
-        XAPI_EXPECT(XItemSelectionModel_selectRange(sm, 0, 1, 2, 2) &&
+        XAPI_EXPECT(XItemSelectionModel_selectSelection(sm, 0, 1, 2, 2,
+                                              XItemSelectionModelSelectionFlag_Select) &&
                     XItemSelectionModel_selectedCount(sm) == 6,
                     "selectRange(0,1,2,2) 选中 3 行 x 2 列 = 6 格");
         XAPI_EXPECT(XItemSelectionModel_isSelected(sm, 0, 2) &&
                     XItemSelectionModel_isSelected(sm, 2, 1) &&
                     !XItemSelectionModel_isSelected(sm, 0, 0),
                     "区间端点选中、区间外未选");
-        XAPI_EXPECT(!XItemSelectionModel_selectRange(sm, 2, 2, 0, 1) &&
+        XAPI_EXPECT(!XItemSelectionModel_selectSelection(sm, 2, 2, 0, 1,
+                                               XItemSelectionModelSelectionFlag_Select) &&
                     XItemSelectionModel_selectedCount(sm) == 6,
                     "逆序区间归一后为幂等重选（集合不变返回 false）");
         XAPI_EXPECT(XItemSelectionModel_hasSelection(sm),
@@ -1552,14 +1563,19 @@ int xapi_views_run(void)
         /* ---- clearSelection 保留当前索引（对标 clearSelection 与
          *      clear 的语义区分：clear 同 Qt 清当前索引的既有收敛保留
          *      ——本库 clear 沿用不清当前的历史行为，见头文件注） ---- */
-        XItemSelectionModel_setCurrentIndex(sm, 1, 1);
+        XItemSelectionModel_setCurrentIndex(sm, 1, 1,
+                                        XItemSelectionModelSelectionFlag_NoUpdate);
         vsig_reset();
         XAPI_EXPECT(XItemSelectionModel_clearSelection(sm) &&
                     XItemSelectionModel_selectedCount(sm) == 0,
                     "clearSelection 清空选择集合");
-        XAPI_EXPECT(XItemSelectionModel_currentRow(sm) == 1 &&
-                    XItemSelectionModel_currentColumn(sm) == 1,
-                    "clearSelection 保留当前索引（同 Qt clearSelection）");
+        {
+            int curRow = -9;
+            int curCol = -9;
+            XAPI_EXPECT(XItemSelectionModel_currentIndex(sm, &curRow, &curCol) &&
+                        curRow == 1 && curCol == 1,
+                        "clearSelection 保留当前索引（同 Qt clearSelection）");
+        }
         XAPI_EXPECT(!XItemSelectionModel_hasSelection(sm),
                     "清空后 hasSelection 为 false");
         /* ---- 模型绑定 + selectRow/selectColumn（对标 model/setModel
@@ -1612,14 +1628,15 @@ int xapi_views_run(void)
         XAbstractItemView_setSelectionMode(
             &view, XAbstractItemViewSelectionMode_MultiSelection);
         XItemSelectionModel_select(XAbstractItemView_selectionModel(&view),
-                                   1, 1, true);
+                                   1, 1, XItemSelectionModelSelectionFlag_Select);
         XAbstractItemView_setCurrentIndex(&view, 1, 1);
         {
             XItemSelectionModel* smv = XAbstractItemView_selectionModel(&view);
             XAPI_EXPECT(!XItemSelectionModel_isSelected(smv, 1, 1),
                         "MultiSelection setCurrentIndex 对已选项 Toggle 取消");
             XAbstractItemView_setCurrentIndex(&view, 2, 2);
-            XItemSelectionModel_select(smv, 1, 1, true);
+            XItemSelectionModel_select(smv, 1, 1,
+                                   XItemSelectionModelSelectionFlag_Select);
             XAPI_EXPECT(XItemSelectionModel_isSelected(smv, 1, 1) &&
                         XItemSelectionModel_isSelected(smv, 2, 2),
                         "MultiSelection setCurrentIndex 追加不清理既有选择");
@@ -1687,17 +1704,21 @@ int xapi_views_run(void)
                     "默认 modelColumn=0（Qt 缺省）");
         XAPI_EXPECT(XListView_rowHeight(&lv) == 24,
                     "默认行高 24（本库扩展：统一行高）");
-        XAPI_EXPECT(XListView_flow(&lv) == XListViewFlow_TopDown,
-                    "默认 flow=TopDown（对标 Qt Flow_TopToBottom）");
-        XAPI_EXPECT(XListView_gridSizeWidth(&lv) == -1 &&
-                    XListView_gridSizeHeight(&lv) == -1,
-                    "默认 gridSize 未启用（-1；Qt QSize(-1,-1) 未启用语义）");
+        XAPI_EXPECT(XListView_flow(&lv) == XListViewFlow_TopToBottom,
+                    "默认 flow=TopToBottom（Qt Flow 缺省，qlistview.h:37）");
+        {
+            int gw = -9;
+            int gh = -9;
+            XListView_gridSize(&lv, &gw, &gh);
+            XAPI_EXPECT(gw == -1 && gh == -1,
+                        "默认 gridSize 未启用（-1；Qt QSize(-1,-1) 未启用语义）");
+        }
         XAPI_EXPECT(!XListView_isWrapping(&lv),
                     "默认 wrapping=false（Qt 缺省）");
         XAPI_EXPECT(XListView_viewMode(&lv) == XListViewViewMode_ListMode,
                     "默认 viewMode=ListMode（Qt 缺省）");
-        XAPI_EXPECT(XListView_resizeMode(&lv) == XListViewResizeMode_Static,
-                    "默认 resizeMode=Static（Qt 缺省）");
+        XAPI_EXPECT(XListView_resizeMode(&lv) == XListViewResizeMode_Fixed,
+                    "默认 resizeMode=Fixed（Qt 缺省，qlistview.h:39）");
         XAPI_EXPECT(XListView_layoutMode(&lv) ==
                     XListViewLayoutMode_SinglePass,
                     "默认 layoutMode=SinglePass（Qt 缺省）");
@@ -1733,15 +1754,17 @@ int xapi_views_run(void)
             int gw = -9;
             int gh = -9;
             XListView_gridSize(&lv, &gw, &gh);
-            XAPI_EXPECT(XListView_gridSizeWidth(&lv) == 60 &&
-                        XListView_gridSizeHeight(&lv) == 40 &&
-                        gw == 60 && gh == 40,
+            XAPI_EXPECT(gw == 60 && gh == 40,
                         "setGridSize/gridSize 往返（双输出同源）");
         }
         XListView_setGridSize(&lv, 0, -1);
-        XAPI_EXPECT(XListView_gridSizeWidth(&lv) == -1 &&
-                    XListView_gridSizeHeight(&lv) == -1,
-                    "setGridSize <=0 归 -1（未启用语义）");
+        {
+            int gw = -9;
+            int gh = -9;
+            XListView_gridSize(&lv, &gw, &gh);
+            XAPI_EXPECT(gw == -1 && gh == -1,
+                        "setGridSize <=0 归 -1（未启用语义）");
+        }
         XListView_setWrapping(&lv, true);
         XAPI_EXPECT(XListView_isWrapping(&lv),
                     "setWrapping 往返");
@@ -1771,7 +1794,8 @@ int xapi_views_run(void)
                     "uniformItemSizes/itemAlignment/选区框/词换行往返");
         XListView_clearPropertyFlags(&lv);
         XAPI_EXPECT(XListView_wordWrap(&lv),
-                    "clearPropertyFlags 为无操作（本库无属性标志体系）");
+                    "clearPropertyFlags 清属性标志位（不改属性本身，"
+                    "对标 qlistview.cpp:488-492）");
 
         /* ---- viewMode 联动（对标 Qt setViewMode 联动 wrapping/flow） ---- */
         XListView_setViewMode(&lv, XListViewViewMode_IconMode);
@@ -1782,8 +1806,8 @@ int xapi_views_run(void)
         XListView_setViewMode(&lv, XListViewViewMode_ListMode);
         XAPI_EXPECT(XListView_viewMode(&lv) == XListViewViewMode_ListMode &&
                     !XListView_isWrapping(&lv) &&
-                    XListView_flow(&lv) == XListViewFlow_TopDown,
-                    "ListMode 复位 wrapping=false、flow=TopDown");
+                    XListView_flow(&lv) == XListViewFlow_TopToBottom,
+                    "ListMode 复位 wrapping=false、flow=TopToBottom");
         XListView_setViewMode(&lv, 42);
         XAPI_EXPECT(XListView_viewMode(&lv) == XListViewViewMode_ListMode,
                     "setViewMode 非法值忽略");

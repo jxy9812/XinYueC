@@ -7,6 +7,7 @@
 #include "XClass.h"
 #include "XPalette.h"
 #include "XWidget.h"
+#include "XStyle_Protected.h"
 
 #if XSTYLE_ON
 
@@ -16,6 +17,9 @@ static int VXWindowsStyle_styleHint(XStyle* self, int hint,
                                     const XWidget* widget);
 static int VXWindowsStyle_pixelMetric(XStyle* self, int pm,
                                       const XStyleOption* option);
+static void VXWindowsStyle_polish(XStyle* self, XWidget* widget);
+static void VXWindowsStyle_unpolish(XStyle* self, XWidget* widget);
+static void VXWindowsStyle_polishPalette(XStyle* self, XPalette* palette);
 
 XVtable* XWindowsStyle_class_init(void)
 {
@@ -23,6 +27,15 @@ XVtable* XWindowsStyle_class_init(void)
     XVTABLE_INHERIT_XCLASS(XCommonStyle);
     XVTABLE_OVERLOAD_DEFAULT(EXStyle_StyleHint, VXWindowsStyle_styleHint);
     XVTABLE_OVERLOAD_DEFAULT(EXStyle_PixelMetric, VXWindowsStyle_pixelMetric);
+    /* polish/unpolish 族（对标 QWindowsStyle 的 polish(QWidget*)/
+       unpolish(QWidget*)/polish(QPalette&) 三个 override，
+       qwindowsstyle.cpp:1063-1090：均转调 QCommonStyle 同名实现）。
+       此前本类只覆写 StyleHint/PixelMetric 两槽，polish 家族全空
+       → QSS 链路（XStyleSheetStyle 继承本类）的 polish/unpolish 落空。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_Polish, VXWindowsStyle_polish);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_Unpolish, VXWindowsStyle_unpolish);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_PolishPalette,
+                             VXWindowsStyle_polishPalette);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXWindowsStyle_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -33,6 +46,9 @@ void XWindowsStyle_init(XWindowsStyle* self)
     XMemset(self, 0, sizeof(*self));
     XCommonStyle_init(&self->m_base);
     XClassSetVtable(self, XWindowsStyle);
+    /* 样式键（对标 QStyleFactory::create("windows") → setName("windows")，
+       qtbase/src/widgets/styles/qstylefactory.cpp:78-80）。 */
+    XStyle_setName((XStyle*)&self->m_base, "windows");
 }
 
 XWindowsStyle* XWindowsStyle_create_ex(XMemoryType memory)
@@ -143,6 +159,36 @@ static int VXWindowsStyle_pixelMetric(XStyle* self, int pm,
                              int(*)(XStyle*, int, const XStyleOption*))(
             (XStyle*)self, pm, option);
     }
+}
+
+/** @brief 控件 polish（对标 QWindowsStyle::polish(QWidget *)：
+ *         转调 QCommonStyle::polish(widget)，
+ *         qwindowsstyle.cpp:1063-1067）。 */
+static void VXWindowsStyle_polish(XStyle* self, XWidget* widget)
+{
+    if (!self || !widget) return;
+    XClass_Parent(XCommonStyle, EXStyle_Polish, void (*)(XStyle*, XWidget*))
+        ((XStyle*)self, widget);
+}
+
+/** @brief 控件 unpolish（对标 QWindowsStyle::unpolish(QWidget *)：
+ *         转调 QCommonStyle::unpolish(widget)，
+ *         qwindowsstyle.cpp:1069-1073）。 */
+static void VXWindowsStyle_unpolish(XStyle* self, XWidget* widget)
+{
+    if (!self || !widget) return;
+    XClass_Parent(XCommonStyle, EXStyle_Unpolish, void (*)(XStyle*, XWidget*))
+        ((XStyle*)self, widget);
+}
+
+/** @brief 调色板 polish（对标 QWindowsStyle::polish(QPalette &)：
+ *         转调 QCommonStyle::polish(pal)，
+ *         qwindowsstyle.cpp:1075-1079）。 */
+static void VXWindowsStyle_polishPalette(XStyle* self, XPalette* palette)
+{
+    if (!self || !palette) return;
+    XClass_Parent(XCommonStyle, EXStyle_PolishPalette,
+                  void (*)(XStyle*, XPalette*))((XStyle*)self, palette);
 }
 
 #endif /* XSTYLE_ON */

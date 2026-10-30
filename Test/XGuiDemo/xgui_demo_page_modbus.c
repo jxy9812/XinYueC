@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file    xgui_demo_page_modbus.c
  * @brief   XGuiDemo 扩展页：Modbus 主站/从站调试（双页拆分，串口 RTU /
  *          网络 TCP 双通道）。
@@ -845,6 +845,24 @@ static XComboBox* mb_buildBaudCombo(XWidget* parent, int w)
     XWidget_setFixedHeight((XWidget*)combo, 24);
     XWidget_show((XWidget*)combo);
     return combo;
+}
+
+/** @brief 读波特率下拉当前值（XString 自带 toInt 解析，base=10）。
+ *  [波特率不生效根修 2026-10-29] 原实现把 XComboBox_currentText 返回的
+ *  XString* 对象指针直接喂 atoi——XString 首成员是容器基类（vtable 指针），
+ *  按字符串解析恒败返回 0 ⇒ 走 9600 兜底，下拉/环境变量选什么波特率都不
+ *  生效（485 战役 §7 板端从站 115200 打不开的真根因：日志用 currentText_2
+ *  打出 115200，实际 open 用的却是兜底 9600）。顺手补 currentText 新建
+ *  副本的删除（原实现每读一次漏一个 XString）。 */
+static int mb_parseBaudCombo(XComboBox* combo)
+{
+    XString* text;
+    int baud;
+    if (!combo) return 0;
+    text = XComboBox_currentText(combo);
+    baud = text ? XString_toInt(text, NULL, 10) : 0;
+    if (text) XClassDelete((XClass*)text);
+    return baud;
 }
 
 /* ==================== 串口名下拉（每次弹出前重枚举） ==================== */
@@ -2196,8 +2214,7 @@ static void mb_masterStartEngine(void)
                 ? XComboBox_currentText_2(s_mb.serialNameCombo) : "";
             int baud = 9600;
             if (!name || !name[0]) name = MB_DEFAULT_SERIAL_NAME;
-            if (s_mb.serialBaudCombo)
-                baud = atoi(XComboBox_currentText(s_mb.serialBaudCombo));
+            baud = mb_parseBaudCombo(s_mb.serialBaudCombo);
             if (baud <= 0) baud = 9600;
             var = XString_toVariant(XString_create_utf8(name));
             if (var) {
@@ -3443,8 +3460,7 @@ static void mb_slaveApplyChannelParams(void)
                 ? XComboBox_currentText_2(s_mbSlave.serialNameCombo) : "";
         int baud = 9600;
         if (!name || !name[0]) name = MB_DEFAULT_SERIAL_NAME;
-        if (s_mbSlave.serialBaudCombo)
-            baud = atoi(XComboBox_currentText(s_mbSlave.serialBaudCombo));
+        baud = mb_parseBaudCombo(s_mbSlave.serialBaudCombo);
         if (baud <= 0) baud = 9600;
         var = XString_toVariant(XString_create_utf8(name));
         if (var) {
@@ -3611,7 +3627,7 @@ static void mb_slaveStartStop(void)
             if (channel == 1 && s_mbSlave.serialNameCombo)
                 port = XComboBox_currentText_2(s_mbSlave.serialNameCombo);
             if (channel == 1 && s_mbSlave.serialBaudCombo)
-                baud = atoi(XComboBox_currentText(s_mbSlave.serialBaudCombo));
+                baud = mb_parseBaudCombo(s_mbSlave.serialBaudCombo);
             XPrintf("XGuiWindowDemo: mbSlave start FAILED ch=%d port=%s baud=%d err=%s\n",
                     channel, port ? port : "", baud,
                     err ? XString_toUtf8(err) : "");

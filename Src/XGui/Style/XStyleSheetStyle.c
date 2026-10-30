@@ -9,6 +9,7 @@
 #include "XFont.h"
 #include "XObject.h"
 #include "XWidget.h" /* XWidget_styleSheet（级联控件级源）+ isWidgetType 守卫。 */
+#include "XStyle_Protected.h" /* XStyle_setName（样式键；受保护面）。 */
 #include "XVariant.h" /* XVariant_data 显式声明（此前隐式声明按 int 取返回，
                        * 64 位下指针截断，属实际隐患，顺带归位）。 */
 
@@ -2714,6 +2715,10 @@ void XStyleSheetStyle_init(XStyleSheetStyle* self)
     XMemset(self, 0, sizeof(*self));
     XWindowsStyle_init(&self->m_base);
     XClassSetVtable(self, XStyleSheetStyle);
+    /* 样式键：样式表风格是独立样式（Qt 侧 QStyleSheetStyle 亦非工厂
+       产物，name() 为空），不复用基类 XWindowsStyle 的 "windows" 键；
+       置 NULL → XStyle_name 回落虚表类名 "XStyleSheetStyle"。 */
+    XStyle_setName((XStyle*)&self->m_base, NULL);
     XCssStyleSheet_init(&self->m_sheet);
     self->m_source = NULL;
     /* 全局唯一起始代次：换样式实例（全新 installStyleSheet 建新对象）

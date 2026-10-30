@@ -4,8 +4,13 @@
  * @details    继承 XIconEngine，Pixmap 虚槽经 XImage_load（XIMAGECODEC_SVG_ON
  *             解码器）加载 SVG/SVGZ 文件；Key 返回 "svg"；IconName 返回
  *             空串（Qt SVG 引擎语义）；IsNull 按文件名是否为空判定。
- * @note       尺寸请求当前按解码固有尺寸返回（矢量按请求尺寸重新栅格化
- *             登记为已知偏差，Task 2.20）。
+ * @note       尺寸请求**按请求尺寸重新栅格化**（对标 Qt 6.8
+ *             QSvgIconEngine 经 QSvgRenderer::render(targetRect) 的
+ *             行为）：有效请求尺寸时读文件字节走 decodeSvg_ex 按目标
+ *             尺寸直渲出图（矢量级锐度，viewBox 几何按目标比例映射）；
+ *             直渲失败回退 XImage_load 缓存路径并按请求尺寸缩放。
+ *             （台账 L14 D-I6 记的「按解码固有尺寸返回」为过期结论——
+ *             实现已由 R-108 修正，仅本处文档未同步。）
  *             模块开关 XSVGICON_ON 定义于 XGuiConfig.h；置 0 时本文件
  *             整体裁剪（引擎与插件全仓零外部引用，可独立裁剪，见
  *             guard-review-0020 批次 1）。

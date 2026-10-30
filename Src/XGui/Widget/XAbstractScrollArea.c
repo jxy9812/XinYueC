@@ -389,6 +389,7 @@ static void xasa_velSampleVelocity(const XAbstractScrollArea* self,
  *         DragUpdate 按帧差分直接写滚动条（跟手无量化）；DragEnd 按采
  *         样速度给惯性；DragCancel 只停跟手。Tap/DoubleTap/LongPress 与
  *         非本区认领的位移流一律放行（嵌套滚动区/兄弟手势不受扰）。 */
+#if XGESTURE_ON
 static void VX_asa_touchDragEvent(XWidget* self, XEvent* event)
 {
     XAbstractScrollArea* area = (XAbstractScrollArea*)self;
@@ -441,7 +442,9 @@ static void VX_asa_touchDragEvent(XWidget* self, XEvent* event)
         area->m_dragLastY = pos.y;
         if (dy != 0) {
             bar = XAbstractScrollArea_verticalScrollBar(area);
-            if (bar) XScrollBar_setValue(bar, XScrollBar_value(bar) - dy);
+            if (bar) {
+                XScrollBar_setValue(bar, XScrollBar_value(bar) - dy);
+            }
         }
         if (dx != 0) {
             bar = XAbstractScrollArea_horizontalScrollBar(area);
@@ -474,6 +477,7 @@ static void VX_asa_touchDragEvent(XWidget* self, XEvent* event)
         return;
     }
 }
+#endif /* XGESTURE_ON */
 
 /** @brief 惯性定时器拍（id 守卫：只消费本区惯性拍；子类业务拍——如
  *         XPlainTextEdit 光标闪烁经 XClass_Parent 链入本类——原样链回
@@ -781,7 +785,9 @@ XVtable* XAbstractScrollArea_class_init(void)
                              VX_asa_scrollContentsBy);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VX_asa_wheelEvent);
     /* [触摸滚动 2026-10-29] Track 拖动模式消费 + 惯性拍 + 隐藏停滚。 */
+#if XGESTURE_ON
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_TouchDragEvent, VX_asa_touchDragEvent);
+#endif
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VX_asa_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_HideEvent, VX_asa_hideEvent);
     return XVTABLE_DEFAULT;

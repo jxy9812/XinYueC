@@ -133,13 +133,16 @@ static bool xlw_selectionShiftAfterRemove(XListWidget* self, int row,
     int i;
     if (!selection) return false;
     if (XItemSelectionModel_isSelected(selection, row, 0)) {
-        XItemSelectionModel_select(selection, row, 0, false);
+        XItemSelectionModel_select(selection, row, 0,
+                                        XItemSelectionModelSelectionFlag_Deselect);
         changed = true;
     }
     for (i = row + 1; i < rows; ++i) {
         if (XItemSelectionModel_isSelected(selection, i, 0)) {
-            XItemSelectionModel_select(selection, i, 0, false);
-            XItemSelectionModel_select(selection, i - 1, 0, true);
+            XItemSelectionModel_select(selection, i, 0,
+                                    XItemSelectionModelSelectionFlag_Deselect);
+            XItemSelectionModel_select(selection, i - 1, 0,
+                                        XItemSelectionModelSelectionFlag_Select);
             changed = true;
         }
     }
@@ -172,11 +175,10 @@ static void xlw_emitCurrentChanged(XListWidget* self, int row, int previous)
 static void xlw_modelDataChangedSlot(XObject* receiver, XVarList* args)
 {
     XListWidget* self = (XListWidget*)receiver;
-    int row;
-    int col;
     if (!self || !args) return;
-    row = XVarList_arg(args, int);
-    col = XVarList_arg(args, int);
+    /* 载荷读取用 XVarList_args_2 定式（XVarList_arg 裸读两次在
+     * GCC14 下曾错读第二参——统一走 args_2 宏读法定式）。 */
+    XVarList_args_2(args, int, row, int, col);
     /* 内部批量改写（插入平移/取出前移/排序写回）不逐行发
      * itemChanged；外部经模型 setData 的真实数据变化按列 0 定位。 */
     if (self->m_dataGuard) return;
@@ -471,29 +473,38 @@ void XListWidget_setCurrentRow(XListWidget* self, int row)
     XItemSelectionModel* selection;
     int previous;
     bool selectionChanged = false;
-    bool targetWasSelected = false;
+    int command;
+    int before;
     if (!self) return;
-    /* 越界忽略（row 负数=清除当前项与选中）。 */
+    /* 越界忽略（row 负数=清除当前项）。 */
     if (row >= XListWidget_count(self)) return;
     selection = self->m_base.m_base.m_selectionModel;
     previous = self->m_base.m_base.m_currentRow;
-    /* 选择集合变化判定：setCurrentIndex 携带 SelectCurrent 先行写入
-       目标行，其后的 select 同格必为无操作返回 false，不得以该返回值
-       判定集合变化——以下方进入前快照对照为准。 */
-    if (selection && row >= 0)
-        targetWasSelected = XItemSelectionModel_isSelected(selection, row, 0);
-    XAbstractItemView_setCurrentIndex(&self->m_base.m_base, row, 0);
+    /* 对标 Qt QListWidget::setCurrentRow（qlistwidget.cpp:1546-1556）：
+     * SingleSelection → ClearAndSelect；NoSelection → NoUpdate；
+     * 其余 → SelectCurrent（保留既有选区，仅追加当前行）。 */
+    switch (self->m_base.m_base.m_selectionMode) {
+    case XAbstractItemViewSelectionMode_SingleSelection:
+        command = XItemSelectionModelSelectionFlag_ClearAndSelect;
+        break;
+    case XAbstractItemViewSelectionMode_NoSelection:
+        command = XItemSelectionModelSelectionFlag_NoUpdate;
+        break;
+    default:
+        command = XItemSelectionModelSelectionFlag_SelectCurrent;
+        break;
+    }
+    /* 选择集合变化判定：进入前快照对照（命令路径含"当前格已选中"的
+       幂等情形，不可用返回值判定集合变化）。 */
+    /* 视图自身当前索引同步（选择命令由本控件按 Qt QListWidget 口径
+       分派，不走基类 setCurrentIndex 的模式分派）。 */
+    self->m_base.m_base.m_currentRow = row;
+    self->m_base.m_base.m_currentColumn = 0;
     if (selection) {
-        if (row >= 0) {
-            /* 选择联动（行模型单选语义）：当前行写入选择模型。 */
-            XItemSelectionModel_select(selection, row, 0, true);
-            XItemSelectionModel_setCurrentIndex(selection, row, 0);
-            selectionChanged = !targetWasSelected;
-        } else {
-            /* row<0：清除当前项时同步清空选中（对标 Qt
-             * setCurrentRow(-1) 的 ClearAndSelect 语义）。 */
-            selectionChanged = XItemSelectionModel_clear(selection);
-        }
+        before = XItemSelectionModel_selectedCount(selection);
+        XItemSelectionModel_setCurrentIndex(selection, row, 0, command);
+        selectionChanged =
+            XItemSelectionModel_selectedCount(selection) != before;
     }
     /* 真实发射点：当前行变化成对发射 currentRowChanged/
      * currentTextChanged（及 currentItemChanged）；选择集合变化发射

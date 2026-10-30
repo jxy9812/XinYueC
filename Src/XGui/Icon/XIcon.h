@@ -357,7 +357,13 @@ int64_t XIcon_cacheKey(const XIcon* self);
 /* ========== 像素图获取 ========== */
 
 /**
- * @brief      获取指定尺寸和模式的像素图
+ * @brief      获取指定尺寸和模式的像素图（对标 Qt 6.8
+ *             QIcon::pixmap(const QSize &, Mode, State)，qicon.cpp:868-873）。
+ * @details    Qt 侧以 `dpr = -1`（"don't know target dpr"）下沉到带 DPR
+ *             的重载，由后者取**应用级**设备像素比
+ *             （qicon.cpp:917-919：`if (devicePixelRatio == -1)
+ *             devicePixelRatio = qApp->devicePixelRatio();`）。
+ *             X 侧同口径——此前本接口固定 DPR=1，等价于「只取 1x 资源」。
  * @param self   目标 XIcon 对象指针
  * @param width  目标宽度
  * @param height 目标高度
@@ -366,6 +372,26 @@ int64_t XIcon_cacheKey(const XIcon* self);
  * @param out    输出像素图指针
  */
 void XIcon_pixmap(const XIcon* self, int width, int height, XIconMode mode, XIconState state, XPixmap* out);
+
+/**
+ * @brief      按「请求尺寸 × 设备像素比」取图标位图（对标 Qt 6.8
+ *             QIcon::pixmap(int width, int height, qreal devicePixelRatio,
+ *             Mode, State)；XIcon_pixmap_dpr 的 Qt 同名兼容别名）。
+ * @details    Qt 语义：实际寻找的候选尺寸为 width×dpr / height×dpr，
+ *             命中高倍资源（如 @2x）时返回位图带对应 devicePixelRatio 标记
+ *             （XPixmap_devicePixelRatio 可读回）。
+ * @param      self 图标；NULL 时输出空位图。
+ * @param      width 请求逻辑宽度（像素）。
+ * @param      height 请求逻辑高度（像素）。
+ * @param      devicePixelRatio 设备像素比（<=0 时按应用级 DPR 处理）。
+ * @param      mode 图标模式（Normal/Disabled/Active/Selected）。
+ * @param      state 图标状态（Off/On）。
+ * @param      out 输出位图；由调用方先 XPixmap_init 并负责 XClassDeinit。
+ * @return     无。找不到候选时输出空位图。
+ */
+void XIcon_pixmapRatio(const XIcon* self, int width, int height,
+                       float devicePixelRatio, XIconMode mode,
+                       XIconState state, XPixmap* out);
 
 /**
  * @brief      获取指定尺寸（正方形）的像素图
@@ -378,7 +404,9 @@ void XIcon_pixmap(const XIcon* self, int width, int height, XIconMode mode, XIco
 void XIcon_pixmapExtent(const XIcon* self, int extent, XIconMode mode, XIconState state, XPixmap* out);
 
 /**
- * @brief      获取带设备像素比的像素图，按 Qt 的 DPR 优先策略选择资源
+ * @brief      获取带设备像素比的像素图（对标 Qt 6.8
+ *             QIcon::pixmap(const QSize &, qreal devicePixelRatio, Mode, State)，
+ *             qicon.cpp:911-934）；按 Qt 的 DPR 优先策略选择资源
  * @param self             目标 XIcon 对象指针
  * @param width            目标逻辑宽度
  * @param height           目标逻辑高度
@@ -388,12 +416,19 @@ void XIcon_pixmapExtent(const XIcon* self, int extent, XIconMode mode, XIconStat
  * @param mode             图标模式
  * @param state            图标状态
  * @param out              输出像素图指针；调用方负责释放已有内容，返回空图时保持空对象
+ * @note 命名：`_dpr` 后缀表达「带设备像素比的重载」，不复用 `_2`——
+ *       `_2` 在本仓库已被「UTF-8 const char* 重载」约定占用。
  */
-void XIcon_pixmapRatio(const XIcon* self, int width, int height, float devicePixelRatio,
+void XIcon_pixmap_dpr(const XIcon* self, int width, int height, float devicePixelRatio,
                        XIconMode mode, XIconState state, XPixmap* out);
 
 /**
- * @brief      获取图标实际渲染逻辑尺寸；内部按 DPR=1 搜索资源
+ * @brief      获取图标实际渲染逻辑尺寸（对标 Qt 6.8 QIcon::actualSize，
+ *             qicon.cpp:968-979）。
+ * @details    Qt 侧取**应用级**设备像素比（`qApp->devicePixelRatio()`）：
+ *             DPR≤1 时直接问引擎；DPR>1 时按物理尺寸（size×dpr）问引擎，
+ *             再按实际位图 DPR 回除得到逻辑尺寸。X 侧同口径（应用级 DPR
+ *             取自 XGuiApplication_devicePixelRatio()）。
  * @param self   目标 XIcon 对象指针
  * @param width  目标宽度
  * @param height 目标高度
@@ -495,9 +530,16 @@ void XIcon_setIsMask(XIcon* self, bool isMask);
 bool XIcon_isMask(const XIcon* self);
 
 /**
- * @brief 获取图标名称。
+ * @brief 获取图标名称（对标 Qt 6.8 QIcon::name()，qicon.h:217——
+ *       返回 QString 值语义）。
  * @note 对于文件图标返回初始化时的文件名，对于主题图标返回主题名称；
- *       动态添加像素图的图标没有名称时返回空字符串。返回值由 XIcon 持有。
+ *       动态添加像素图的图标没有名称时返回空字符串。
+ * @note 所有权：Qt 的 QString 为值语义（拷贝即所得），C 侧对应形态是
+ *       **返回新副本**——调用方使用完毕后必须调用 XClassDelete() 释放
+ *       （与 XIcon_name_2 的 const char* 借用版、XIcon_name_const 的
+ *       内部借用版相区分）。此前本函数文档写作「返回值由 XIcon 持有」
+ *       与实现（XString_create_copy 返回新副本）自相矛盾，已按实现口径
+ *       修正。
  */
 XString* XIcon_name(const XIcon* self);
 
@@ -569,11 +611,6 @@ XString* XIcon_themeIconName(XIconThemeIcon icon);
  */
 XStringList* XIcon_themeSearchPaths();
 
-/**
- * @brief 获取主题搜索路径列表的副本。
- * @return 新建的 XStringList；调用者负责释放。
- */
-XStringList* XIcon_themeSearchPaths_2();
 
 /**
  * @brief      设置主题搜索路径
@@ -581,22 +618,12 @@ XStringList* XIcon_themeSearchPaths_2();
  */
 void XIcon_setThemeSearchPaths(const XStringList* paths);
 
-/**
- * @brief 设置主题搜索路径列表的兼容入口。
- * @param paths XStringList 路径列表；函数复制列表内容。
- */
-void XIcon_setThemeSearchPaths_2(const XStringList* paths);
 
 /**
  * @brief 获取主题后备搜索路径列表（返回新列表，调用者负责释放）。
  */
 XStringList* XIcon_fallbackSearchPaths();
 
-/**
- * @brief 获取后备主题搜索路径列表的副本。
- * @return 新建的 XStringList；调用者负责释放。
- */
-XStringList* XIcon_fallbackSearchPaths_2();
 
 /**
  * @brief 设置主题后备搜索路径列表。
@@ -604,11 +631,6 @@ XStringList* XIcon_fallbackSearchPaths_2();
  */
 void XIcon_setFallbackSearchPaths(const XStringList* paths);
 
-/**
- * @brief 设置后备主题搜索路径列表的兼容入口。
- * @param paths XStringList 路径列表；函数复制列表内容。
- */
-void XIcon_setFallbackSearchPaths_2(const XStringList* paths);
 
 /**
  * @brief      获取主题名称

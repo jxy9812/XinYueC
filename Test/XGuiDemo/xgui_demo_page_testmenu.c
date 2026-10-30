@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       xgui_demo_page_testmenu.c
  * @brief      XGuiWindowDemo「测试菜单」页（控制台 test 菜单树的 GUI 化）。
  * @details    页索引 22（第 18 扩展页，2026-10-29 收编；2026-10-29 二次
@@ -52,6 +52,8 @@
 /* ==================== 常量 ==================== */
 
 #define TM_BTN_H           40    /**< 菜单按钮高（触控口径）。 */
+#define TM_BTN_SPACING     4     /**< 菜单按钮行距（=容器布局 spacing）。 */
+#define TM_HOST_MARGIN     4     /**< 菜单容器内容边距（=容器布局 margins）。 */
 #define TM_WIDE_MIN_W      600   /**< 双栏门槛页宽（≥=横排，< =纵排）。 */
 #define TM_BUF_INIT        (64u * 1024u)  /**< 输出缓冲初容量。 */
 #define TM_BUF_MAX         (256u * 1024u) /**< 输出缓冲上限（超出丢增量）。 */
@@ -244,6 +246,26 @@ static void tm_buttonClicked(XObject* sender, XVarList* args)
     }
 }
 
+/** @brief 菜单按钮入容器布局（插在尾部可伸展空白之前）。
+ *  @details [Qt 对齐 2026-10-30] 容器布局末尾恒有一条可伸展空白
+ *           （XBoxLayout_addStretch(0)，对标 Qt QVBoxLayout::addStretch）：
+ *           菜单容器被滚动区拉满高度时，纵向余量全部由尾部空白吸收，
+ *           按钮保持自顶紧密排布。**不加**尾部空白时，Qt 的 qGeomCalc
+ *           会把余量摊进条目间距（Qt 6.8 实测：412x552 容器内两枚
+ *           40px 按钮落在 y=157/354；本框架同参数落点一致），按钮被
+ *           拉散到容器上下两端——这正是第三层「两按钮看着叠在一处/
+ *           实际隔了半个屏」的成因。加尾部空白后 Qt 落在 y=4/48
+ *           （内容区坐标 (0,0)/(0,44)），与本框架一致。
+ *           条目索引 = 条目数-1（空白恒为末位），保证按钮恒在空白前。 */
+static void tm_addMenuButton(XPushButton* btn)
+{
+    int idx;
+    if (!btn) return;
+    idx = XLayout_count_base((XLayout*)&s_tm.hostLay) - 1;
+    if (idx < 0) idx = 0;
+    XBoxLayout_insertWidget(&s_tm.hostLay, idx, (XWidget*)btn, 0);
+}
+
 /** @brief 重建当前层条目（返回上级/子菜单/动作）。
  *  @details [点击安全 2026-10-29] 容器 menuHost 持久只建一次；旧按钮
  *           逐个「摘出布局 + deleteLater」——绝不走
@@ -291,7 +313,7 @@ static void tm_rebuildHost(void)
                漏 show 的症状=该层按钮整片空白（父已 show 过，
                showChildren 传播只发生在父首次 show 时）。 */
             XWidget_show((XWidget*)btn);
-            XBoxLayout_addWidget(&s_tm.hostLay, (XWidget*)btn);
+            tm_addMenuButton(btn);
         }
     }
     /* 子菜单。 */
@@ -321,7 +343,7 @@ static void tm_rebuildHost(void)
                漏 show 的症状=该层按钮整片空白（父已 show 过，
                showChildren 传播只发生在父首次 show 时）。 */
             XWidget_show((XWidget*)btn);
-            XBoxLayout_addWidget(&s_tm.hostLay, (XWidget*)btn);
+            tm_addMenuButton(btn);
         }
         XClassDelete(menus);
     }
@@ -356,7 +378,7 @@ static void tm_rebuildHost(void)
                漏 show 的症状=该层按钮整片空白（父已 show 过，
                showChildren 传播只发生在父首次 show 时）。 */
             XWidget_show((XWidget*)btn);
-            XBoxLayout_addWidget(&s_tm.hostLay, (XWidget*)btn);
+            tm_addMenuButton(btn);
         }
         /* actions 为借用指针（菜单内部向量），不释放。 */
     }
@@ -456,8 +478,16 @@ XWidget* demo_page_testmenu_build(XWidget* parent,
     if (!s_tm.menuHost) goto fail;
     XBoxLayout_init(&s_tm.hostLay, XBoxLayoutDirection_TopToBottom);
     XWidget_setLayout(s_tm.menuHost, (XLayout*)&s_tm.hostLay);
-    XLayout_setContentsMargins((XLayout*)&s_tm.hostLay, 4, 4, 4, 4);
-    XLayout_setSpacing((XLayout*)&s_tm.hostLay, 4);
+    XLayout_setContentsMargins((XLayout*)&s_tm.hostLay,
+                               TM_HOST_MARGIN, TM_HOST_MARGIN,
+                               TM_HOST_MARGIN, TM_HOST_MARGIN);
+    XLayout_setSpacing((XLayout*)&s_tm.hostLay, TM_BTN_SPACING);
+    /* [Qt 对齐 2026-10-30] 尾部可伸展空白（对标 Qt QVBoxLayout::addStretch(0)）：
+       菜单容器被滚动区拉满高度时，纵向余量全部由尾部空白吸收——按钮
+       保持自顶紧密排布（内容区坐标 (0,0)/(0,44)）。不加空白时余量会被
+       qGeomCalc 摊进条目间距，按钮被拉散（Qt 6.8 实测 y=157/354，
+       本框架同参数一致）——见 tm_addMenuButton 注释。 */
+    XBoxLayout_addStretch(&s_tm.hostLay, 0);
     XScrollArea_setWidget(s_tm.menuScroll, s_tm.menuHost);
 
     /* 菜单树：控制台「测试代码」全量树（TEST_FILE 随 demo 目标链接）。 */
@@ -485,7 +515,6 @@ fail:
 int demo_page_testmenu_autotest(XWidget* page)
 {
     int fails = 0;
-    int i;
     XTestMenu* back;
     if (!page) return -1;
     if (!s_tm.root || !s_tm.pageScroll) ++fails;
@@ -510,24 +539,82 @@ int demo_page_testmenu_autotest(XWidget* page)
     } else {
         ++fails;
     }
-    /* [探针] 再进一层（库 → 查询算法）：两层连续翻层现场。 */
-    if (s_tm.itemCount > 1 && s_tm.items[1].btn) {
-        XAbstractButton_click((XAbstractButton*)s_tm.items[1].btn);
-        XCoreApplication_processEvents(XEventLoop_AllEvents);
-        XPrintf("[TM3] level3: items=%d path='%s'\n", s_tm.itemCount, s_tm.path);
-        XPrintf("[TM3] layCount=%d hostGeom=(%d,%d %dx%d) hostRect=(%d,%d %dx%d)\n",
-                XLayout_count_base((XLayout*)&s_tm.hostLay),
-                XLayoutItem_geometry_base((XLayoutItem*)&s_tm.hostLay).x,
-                XLayoutItem_geometry_base((XLayoutItem*)&s_tm.hostLay).y,
-                XLayoutItem_geometry_base((XLayoutItem*)&s_tm.hostLay).width,
-                XLayoutItem_geometry_base((XLayoutItem*)&s_tm.hostLay).height,
-                XWidget_rect(s_tm.menuHost).x, XWidget_rect(s_tm.menuHost).y,
-                XWidget_rect(s_tm.menuHost).width, XWidget_rect(s_tm.menuHost).height);
-        for (i = 0; i < s_tm.itemCount; ++i) {
-            XRect r = XWidget_rect((XWidget*)s_tm.items[i].btn);
-            XPrintf("[TM3] btn%d vis=%d rect=(%d,%d %dx%d)\n", i,
-                    XWidget_isVisible((XWidget*)s_tm.items[i].btn) ? 1 : 0,
-                    r.x, r.y, r.width, r.height);
+    /* [几何回归锁 2026-10-30] 子层按钮必须自顶紧密排布：首枚按钮落在
+       容器内容区原点（= 容器边距），相邻两枚的行距 = 按钮高 + 行距。
+       容器被滚动区拉满高度时，纵向余量须由容器布局**尾部可伸展空白**
+       吸收；若余量被摊进条目间距（qGeomCalc 的 extraspace 分摊），按钮
+       会被拉散到容器上下两端（Qt 6.8 实测：无尾部空白 y=157/354，
+       有尾部空白 y=4/48）——即交接单 §4 记的「几何叠/散」症状。
+       注意取位用 XWidget_geometry（父坐标）；XWidget_rect 是内容区
+       矩形（对标 QWidget::rect()，原点恒为自身左上角），读不到位置。 */
+    if (s_tm.itemCount > 1 && s_tm.items[0].btn && s_tm.items[1].btn) {
+        XRect g0 = XWidget_geometry((XWidget*)s_tm.items[0].btn);
+        XRect g1 = XWidget_geometry((XWidget*)s_tm.items[1].btn);
+        if (g0.y != TM_HOST_MARGIN) ++fails;                /* 首枚贴顶 */
+        if (g1.y - g0.y != TM_BTN_H + TM_BTN_SPACING) ++fails; /* 相邻 */
+        if (g0.width <= 0 || g1.width <= 0) ++fails;         /* 已铺开 */
+    }
+    /* [动作运行回归锁 2026-10-30] 沿子菜单下行到首个**叶动作**并真实
+       触发到结束（用户实测「测试菜单每运行一个项目结束即崩」——此前
+       回归锁只覆盖导航，动作运行+输出捕获路径零覆盖）。判据：动作
+       触发后进程存活 + 输出缓冲增长（捕获链路活着）。层深限 4。 */
+    {
+        int depth;
+        size_t bufBefore = s_tm.bufLen;
+        int ran = 0;
+        XTestMenu* startLayer = s_tm.menuCur; /* 锁起始层（原流程的「库」） */
+        for (depth = 0; depth < 4 && !ran; ++depth) {
+            int k;
+            int sub = -1;
+            /* 每层重算父节点：返回钮的 menu=本层之父，随层变化。 */
+            XTestMenu* parentMenu =
+                (XTestMenu*)XTreeNode_GetParent(s_tm.menuCur);
+            fprintf(stderr, "[TMLOCK] depth=%d layer='%s' items=%d buf=%zu\n",
+                    depth, XTestMenu_getTitle(s_tm.menuCur) ?
+                    XTestMenu_getTitle(s_tm.menuCur) : "?",
+                    s_tm.itemCount, s_tm.bufLen);
+            fflush(stderr);
+            for (k = 0; k < s_tm.itemCount; ++k) {
+                if (s_tm.items[k].action) {
+                    size_t outBefore = s_tm.bufLen;
+                    const XString* at = XAction_text_const(s_tm.items[k].action);
+                    fprintf(stderr, "[TMLOCK] run action='%s'\n",
+                            at ? XString_toUtf8(at) : "?");
+                    fflush(stderr);
+                    XAbstractButton_click((XAbstractButton*)s_tm.items[k].btn);
+                    XCoreApplication_processEvents(XEventLoop_AllEvents);
+                    fprintf(stderr, "[TMLOCK] done buf %zu -> %zu\n",
+                            outBefore, s_tm.bufLen);
+                    fflush(stderr);
+                    if (s_tm.bufLen <= outBefore) ++fails; /* 捕获零增长 */
+                    ran = 1;
+                    break;
+                }
+                /* 首个「非返回钮」的子菜单（返回钮的 menu=父节点）。 */
+                if (s_tm.items[k].menu && s_tm.items[k].menu != parentMenu &&
+                    sub < 0)
+                    sub = k;
+            }
+            if (!ran && sub >= 0) {
+                XAbstractButton_click((XAbstractButton*)s_tm.items[sub].btn);
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+            } else if (!ran) {
+                break; /* 本层无动作无子菜单（仅返回钮）：树到头。 */
+            }
+        }
+        if (!ran) ++fails; /* 未找到任何可运行动作 */
+        if (s_tm.bufLen == bufBefore && ran) ++fails;
+        /* 回锁起始层（原流程后续「返回上级」用例期望停在本层），不污染
+           后续用例状态。 */
+        {
+            int k;
+            for (k = 0; k < 4 && s_tm.menuCur != startLayer; ++k) {
+                if (s_tm.itemCount > 0 && s_tm.items[0].btn &&
+                    s_tm.items[0].menu) {
+                    XAbstractButton_click((XAbstractButton*)s_tm.items[0].btn);
+                    XCoreApplication_processEvents(XEventLoop_AllEvents);
+                }
+            }
         }
     }
     /* 返回上级（子层 items[0] 恒为返回钮）。 */

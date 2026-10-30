@@ -14,6 +14,7 @@ extern "C" {
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include "XGuiConfig.h"
 #include "XClass.h"
 #include "XObject.h"
@@ -35,6 +36,60 @@ typedef enum XAccessibleRole
     XAccessibleRole_Table,
     XAccessibleRole_Unknown
 } XAccessibleRole;
+
+/**
+ * @brief 辅助功能状态位（对标 AT-SPI2 AtspiStateType 位序）。
+ * @details 位序严格对齐 GNOME at-spi2-core 的 `atspi-constants.h`
+ *          （ATSPI_STATE_ACTIVE = 1<<0 … ATSPI_STATE_CHECKABLE = 1<<40），
+ *          使平台桥接层（AT-SPI 的 GetState 返回 uint32 掩码数组）可
+ *          直接按位翻译，无需中间映射表。
+ */
+typedef uint64_t XAccessibleState;
+
+/** @brief 状态位常量（位序同 AT-SPI2 AtspiStateType）。 */
+#define XACCESSIBLE_STATE_ACTIVE        (1ULL << 0)  /**< 活跃。 */
+#define XACCESSIBLE_STATE_ARMED         (1ULL << 1)  /**< armed（按下未释放）。 */
+#define XACCESSIBLE_STATE_BUSY          (1ULL << 2)  /**< 忙碌。 */
+#define XACCESSIBLE_STATE_CHECKED       (1ULL << 3)  /**< 已勾选（可勾选控件）。 */
+#define XACCESSIBLE_STATE_COLLAPSED     (1ULL << 4)  /**< 折叠。 */
+#define XACCESSIBLE_STATE_DEFUNCT       (1ULL << 5)  /**< 已失效。 */
+#define XACCESSIBLE_STATE_EDITABLE      (1ULL << 6)  /**< 可编辑。 */
+#define XACCESSIBLE_STATE_ENABLED       (1ULL << 7)  /**< 启用（未禁用）。 */
+#define XACCESSIBLE_STATE_EXPANDABLE    (1ULL << 8)  /**< 可展开。 */
+#define XACCESSIBLE_STATE_EXPANDED      (1ULL << 9)  /**< 已展开。 */
+#define XACCESSIBLE_STATE_FOCUSABLE     (1ULL << 10) /**< 可获焦点。 */
+#define XACCESSIBLE_STATE_FOCUSED       (1ULL << 11) /**< 已有焦点。 */
+#define XACCESSIBLE_STATE_HAS_TOOLTIP   (1ULL << 12) /**< 有工具提示。 */
+#define XACCESSIBLE_STATE_HORIZONTAL    (1ULL << 13) /**< 水平方向。 */
+#define XACCESSIBLE_STATE_ICONIFIED     (1ULL << 14) /**< 最小化。 */
+#define XACCESSIBLE_STATE_MODAL         (1ULL << 15) /**< 模态。 */
+#define XACCESSIBLE_STATE_MULTI_LINE    (1ULL << 16) /**< 多行文本。 */
+#define XACCESSIBLE_STATE_MULTISELECTABLE (1ULL << 17) /**< 可多选。 */
+#define XACCESSIBLE_STATE_OPAQUE        (1ULL << 18) /**< 不透明。 */
+#define XACCESSIBLE_STATE_PRESSED       (1ULL << 19) /**< 按下中。 */
+#define XACCESSIBLE_STATE_RESIZABLE     (1ULL << 20) /**< 可调整大小。 */
+#define XACCESSIBLE_STATE_SELECTABLE    (1ULL << 21) /**< 可选中。 */
+#define XACCESSIBLE_STATE_SELECTED      (1ULL << 22) /**< 已选中。 */
+#define XACCESSIBLE_STATE_SENSITIVE     (1ULL << 23) /**< 敏感（可响应）。 */
+#define XACCESSIBLE_STATE_SHOWING       (1ULL << 24) /**< 正在显示。 */
+#define XACCESSIBLE_STATE_SINGLE_LINE   (1ULL << 25) /**< 单行文本。 */
+#define XACCESSIBLE_STATE_STALE         (1ULL << 26) /**< 过期。 */
+#define XACCESSIBLE_STATE_TRANSIENT     (1ULL << 27) /**< 临时。 */
+#define XACCESSIBLE_STATE_VERTICAL      (1ULL << 28) /**< 垂直方向。 */
+#define XACCESSIBLE_STATE_VISIBLE       (1ULL << 29) /**< 可见。 */
+#define XACCESSIBLE_STATE_MANAGES_DESCENDANTS (1ULL << 30) /**< 管理后代节点。 */
+#define XACCESSIBLE_STATE_INDETERMINATE (1ULL << 31) /**< 勾选状态不定。 */
+#define XACCESSIBLE_STATE_REQUIRED      (1ULL << 32) /**< 必填。 */
+#define XACCESSIBLE_STATE_TRUNCATED     (1ULL << 33) /**< 文本被截断。 */
+#define XACCESSIBLE_STATE_ANIMATED      (1ULL << 34) /**< 含动画。 */
+#define XACCESSIBLE_STATE_INVALID_ENTRY (1ULL << 35) /**< 条目无效。 */
+#define XACCESSIBLE_STATE_SUPPORTS_AUTOCOMPLETION (1ULL << 36) /**< 支持自动补全。 */
+#define XACCESSIBLE_STATE_SELECTABLE_TEXT (1ULL << 37) /**< 文本可选。 */
+#define XACCESSIBLE_STATE_IS_DEFAULT    (1ULL << 38) /**< 默认项。 */
+#define XACCESSIBLE_STATE_VISITED       (1ULL << 39) /**< 已访问。 */
+#define XACCESSIBLE_STATE_CHECKABLE     (1ULL << 40) /**< 可勾选。 */
+#define XACCESSIBLE_STATE_HAS_POPUP     (1ULL << 41) /**< 有弹出层。 */
+#define XACCESSIBLE_STATE_READ_ONLY     (1ULL << 42) /**< 只读。 */
 
 typedef struct XAccessible XAccessible;
 
@@ -67,6 +122,15 @@ bool XAccessible_isValid(const XAccessible* self);
 XAccessibleRole XAccessible_role(const XAccessible* self);
 XRect XAccessible_rect(const XAccessible* self);
 bool XAccessible_isVisible(const XAccessible* self);
+/**
+ * @brief      查询节点当前状态位集合（对标 QAccessibleInterface::state）。
+ * @details    位序见 XAccessibleState 常量（对齐 AT-SPI2 AtspiStateType）。
+ *             当前实现按控件/窗口真实状态推导：可见性、启用态、焦点态、
+ *             可聚焦性、按下态（按钮）、可编辑性（文本控件）、方向性。
+ * @param      self 节点；可为 NULL。
+ * @return     状态位集合；节点无效时返回 0。
+ */
+XAccessibleState XAccessible_state(const XAccessible* self);
 XString* XAccessible_name(const XAccessible* self);
 void XAccessible_setName(XAccessible* self, const XString* name);
 XString* XAccessible_description(const XAccessible* self);

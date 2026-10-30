@@ -62,6 +62,7 @@
 #include "XGestureEvent.h"   /* [减负对齐 QTouchEvent 2026-10-29] 手势事件载荷。 */
 #include "XGestureRecognizer.h" /* 手势识别器订阅与帧投递。 */
 #include "XVector.h"           /* 手势识别器列表容器。 */
+#include "XAction.h"           /* 动作列表族（对标 QWidget actions/addAction）。 */
 #include "XShortcut.h"
 #include "XVarList.h"
 /* ShortcutOverride 询问接收侧（对标 QLineEdit/QPlainTextEdit::event 的
@@ -575,7 +576,6 @@ static int32_t xwidget_touchPrimaryId(const XTouchEvent* event)
  *          （对标鼠标抓取的同型兜底路由）。子事件只携带该靶触点，
  *          spontaneous 镜像源事件。
  * @return 子事件被接受返回 true；构造失败/无人接受返回 false。 */
-#if XGESTURE_ON
 /** @brief 手势识别器帧投递（Qt 风格 gestureContext 沿祖先链收集）：
  *         命中靶自身与其祖先链上订阅了识别器的控件各收到一份本帧，
  *         坐标换算为各自控件局部坐标（对标 Qt 的 widget-local 语义）。
@@ -585,6 +585,7 @@ static int32_t xwidget_touchPrimaryId(const XTouchEvent* event)
  * @param recv 命中靶（事件接收控件）；NULL 时零操作。
  * @param sub  本帧触摸事件（借用；坐标为 recv 局部坐标）。
  */
+#if XGESTURE_ON
 static void xwidget_feedGestureRecognizers(XWidget* chainStart,
                                            XWidget* coordBase,
                                            const XTouchEvent* sub)
@@ -606,9 +607,13 @@ static void xwidget_feedGestureRecognizers(XWidget* chainStart,
             size_t i;
             size_t n = XVector_size(w->m_gestureRecognizers);
             for (i = 0; i < n; ++i) {
+                /* XVector_at_base 返回**槽位地址**（元素存储处），必须经
+                   XVector_At_Base 解引用才是存进去的识别器指针——直接把
+                   槽位地址当对象用会写穿列表缓冲区（ASan：heap-buffer-
+                   overflow WRITE，触摸战役根修，勿回退）。 */
                 XGestureRecognizer* rec =
-                    (XGestureRecognizer*)XVector_at_base(w->m_gestureRecognizers,
-                                                         (int64_t)i);
+                    XVector_At_Base(w->m_gestureRecognizers, (int64_t)i,
+                                    XGestureRecognizer*);
                 XTouchPoint localPts[XGESTURE_MAX_POINTS];
                 int k;
                 int dx;
@@ -2128,10 +2133,18 @@ static XPoint XWidget_eventPosition(const XEvent* event)
         break;
     /* 触摸/数位板按主点坐标参与命中测试（对标 QWidgetWindow::handleTouchEvent
        的按触点位置 childAt 形态）。 */
+    /* [根修 2026-10-30] 触摸族与手势事件的 m_position **偏移不同**，
+       不得共用一条取值：此前 TOUCH_DRAG 顺连进触摸组后，全部触摸事件
+       透过 XGestureEvent 布局读位置 = 字段错位（x/y 互换实证：注入
+       (100,155) 读出 (155,100)，滚动探针 1/2a/5b/5c 与回归 TP 6.x 全
+       灭）。触摸族读 XTouchEvent::m_position，仅 TOUCH_DRAG 读
+       XGestureEvent::m_position。 */
     case XEVENT_TYPE_TOUCH_BEGIN:
     case XEVENT_TYPE_TOUCH_UPDATE:
     case XEVENT_TYPE_TOUCH_END:
     case XEVENT_TYPE_TOUCH_CANCEL:
+        out = ((const XTouchEvent*)event)->m_position;
+        break;
     /* [触摸滚动 2026-10-29 补口] TOUCH_DRAG 手势事件同按主点位置命中：
        此前缺席=手势事件恒以 (0,0) 命中——历史平移消费方（键盘/标题栏/
        悬浮窗）不用坐标靠冒泡兜底侥幸可用，跟手滚动的帧差分消费方依赖
@@ -2178,6 +2191,8 @@ static void XWidget_eventSetPosition(XEvent* event, const XPoint* pos)
     case XEVENT_TYPE_TOUCH_UPDATE:
     case XEVENT_TYPE_TOUCH_END:
     case XEVENT_TYPE_TOUCH_CANCEL:
+        ((XTouchEvent*)event)->m_position = *pos;
+        break;
     case XEVENT_TYPE_TOUCH_DRAG: /* [触摸滚动 2026-10-29 补口]，同上；
                                   载荷改由 XGestureEvent 承载。 */
         ((XGestureEvent*)event)->m_position = *pos;
@@ -4636,8 +4651,8 @@ static void VXWidget_deinit(XWidget* self)
         size_t n = XVector_size(self->m_gestureRecognizers);
         for (i = 0; i < n; ++i) {
             XGestureRecognizer* rec =
-                (XGestureRecognizer*)XVector_at_base(self->m_gestureRecognizers,
-                                                     (int64_t)i);
+                XVector_At_Base(self->m_gestureRecognizers, (int64_t)i,
+                                XGestureRecognizer*);
             if (rec && XGestureRecognizer_target(rec) == (XObject*)self)
                 XGestureRecognizer_setTarget(rec, NULL);
         }
@@ -4645,6 +4660,21 @@ static void VXWidget_deinit(XWidget* self)
         self->m_gestureRecognizers = NULL;
     }
 #endif /* XGESTURE_ON */
+    /* 动作列表容器析构自清：容器持有动作指针（借用，不拥有——Qt 语义
+     * QWidget 不拥有 addAction 加入的动作），只归还容器本身。
+     * [Qt 对齐补实现 2026-10-30] 容器为惰性创建，若不释放则每个用过
+     * 动作列表的控件都泄漏一个 XVector。 */
+    if (self->m_actions) {
+        XClassDelete(self->m_actions);
+        self->m_actions = NULL;
+    }
+    /* 显式区域设置名称（本控件拥有，深拷贝）：不释放则泄漏一个 XString。
+     * [Qt 对齐补实现 2026-10-30] */
+    if (self->m_locale) {
+        XClassDeinit(self->m_locale);
+        self->m_locale = NULL;
+    }
+    self->m_localeSet = 0;
     XWidget_freeContentCache(self);
     /* 保留层登记节点持有本控件借用指针，析构必须先摘除再释放缓存。 */
     xwidget_retainedDisable(self);
@@ -8029,8 +8059,8 @@ void XWidget_addGestureRecognizer(XWidget* self,
         size_t i;
         size_t n = XVector_size(self->m_gestureRecognizers);
         for (i = 0; i < n; ++i) {
-            if (XVector_at_base(self->m_gestureRecognizers, (int64_t)i) ==
-                (void*)recognizer)
+            if (XVector_At_Base(self->m_gestureRecognizers, (int64_t)i,
+                                XGestureRecognizer*) == recognizer)
                 return;
         }
     }
@@ -8051,8 +8081,8 @@ void XWidget_removeGestureRecognizer(XWidget* self,
     if (!self || !recognizer || !self->m_gestureRecognizers) return;
     n = XVector_size(self->m_gestureRecognizers);
     for (i = 0; i < n; ++i) {
-        if (XVector_at_base(self->m_gestureRecognizers, (int64_t)i) ==
-            (void*)recognizer) {
+        if (XVector_At_Base(self->m_gestureRecognizers, (int64_t)i,
+                            XGestureRecognizer*) == recognizer) {
             /* 容器按位删除（元素为指针值，无需析构）。 */
             XVector_remove_base(self->m_gestureRecognizers, (int64_t)i, 1);
             if (XGestureRecognizer_target(recognizer) == (XObject*)self)
@@ -8071,8 +8101,8 @@ void XWidget_clearGestureRecognizers(XWidget* self)
     n = XVector_size(self->m_gestureRecognizers);
     for (i = 0; i < n; ++i) {
         XGestureRecognizer* rec =
-            (XGestureRecognizer*)XVector_at_base(self->m_gestureRecognizers,
-                                                 (int64_t)i);
+            XVector_At_Base(self->m_gestureRecognizers, (int64_t)i,
+                            XGestureRecognizer*);
         if (rec && XGestureRecognizer_target(rec) == (XObject*)self)
             XGestureRecognizer_setTarget(rec, NULL);
     }
@@ -8096,6 +8126,239 @@ void XWidget_setLayout(XWidget* self, XLayout* layout)
     (void)self;
     (void)layout;
 #endif /* XLAYOUT_ON */
+}
+
+/* ==================== 动作列表族（对标 QWidget actions/addAction 族） ====================
+ *
+ * [Qt 对齐补实现 2026-10-30] 本族此前**头文件有声明、.c 无实现、全仓零调用点**
+ * （死字段 m_actions 亦零使用）——调用即链接失败。本段按 Qt 6.8.3
+ * `qwidget.cpp:3139-3215` 的语义补齐：
+ *   - addAction(action) ≡ insertAction(NULL, action)（qwidget.cpp:3139-3142）
+ *   - insertAction：action 为 NULL 直接返回；**已在列则先移除**（Qt：一个控件
+ *     至多持有一个同一动作实例）；before 不在列（含 NULL）则追加尾部；插入后
+ *     派发 XEVENT_TYPE_ACTION_ADDED（qwidget.cpp:3184-3187）
+ *   - removeAction：从列表移除并派发 XEVENT_TYPE_ACTION_REMOVED
+ *   - actions()：返回内部列表的**值拷贝**（Qt 返回 QList 值类型）→ C 侧返回
+ *     **新建** XVector*（元素为 XAction* 借用指针），调用方负责 XClassDelete
+ */
+
+/** @brief 在动作列表中查找动作下标；不在列返回 -1。 */
+static int64_t xwidget_actionIndex(const XWidget* self, const XAction* action)
+{
+    size_t i;
+    size_t n;
+    if (!self || !action || !self->m_actions) return -1;
+    n = XVector_size(self->m_actions);
+    for (i = 0; i < n; ++i) {
+        if (XVector_At_Base(self->m_actions, (int64_t)i, XAction*) == action)
+            return (int64_t)i;
+    }
+    return -1;
+}
+
+/** @brief 动作列表惰性创建（容器持有、元素借用）。 */
+static bool xwidget_actionListEnsure(XWidget* self)
+{
+    if (!self) return false;
+    if (!self->m_actions) {
+        self->m_actions =
+            XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(void*), true);
+        if (!self->m_actions) return false;
+    }
+    return true;
+}
+
+void XWidget_insertAction(XWidget* self, XAction* before, XAction* action)
+{
+    int64_t pos;
+    void* elem;
+    XEvent* event;
+    if (!self || !action) return;
+    /* Qt：一个控件至多持有一个同一动作实例 → 已在列先移除（qwidget.cpp:3174-3175）。 */
+    if (xwidget_actionIndex(self, action) >= 0)
+        XWidget_removeAction(self, action);
+    if (!xwidget_actionListEnsure(self)) return;
+    /* before 不在列（含 NULL）→ 追加到尾部（qwidget.cpp:3177-3181）。 */
+    pos = xwidget_actionIndex(self, before);
+    if (pos < 0) pos = (int64_t)XVector_size(self->m_actions);
+    elem = (void*)action;
+    if (!XVector_insert_1_base(self->m_actions, pos, &elem, 1)) return;
+    /* 派发 ACTION_ADDED（事件只携带类型，子类从控件侧读回当前动作列表）。 */
+    event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                             XEVENT_TYPE_ACTION_ADDED);
+    if (event) {
+        XWidget_sendEvent(self, event);
+        XClassDelete((XClass*)event);
+    }
+}
+
+void XWidget_addAction(XWidget* self, XAction* action)
+{
+    XWidget_insertAction(self, NULL, action);
+}
+
+XAction* XWidget_addAction_2(XWidget* self, const XString* text)
+{
+    XAction* action;
+    if (!self || !text) return NULL;
+    action = XAction_create();
+    if (!action) return NULL;
+    XAction_setText(action, text);
+    XWidget_insertAction(self, NULL, action);
+    return action;
+}
+
+void XWidget_addActions(XWidget* self, const XVector* actions)
+{
+    size_t i;
+    size_t n;
+    if (!self || !actions) return;
+    n = XVector_size(actions);
+    for (i = 0; i < n; ++i) {
+        XAction* action = XVector_At_Base(actions, (int64_t)i, XAction*);
+        if (action) XWidget_insertAction(self, NULL, action);
+    }
+}
+
+void XWidget_insertActions(XWidget* self, XAction* before, const XVector* actions)
+{
+    size_t i;
+    size_t n;
+    if (!self || !actions) return;
+    n = XVector_size(actions);
+    for (i = 0; i < n; ++i) {
+        XAction* action = XVector_At_Base(actions, (int64_t)i, XAction*);
+        if (action) XWidget_insertAction(self, before, action);
+    }
+}
+
+void XWidget_removeAction(XWidget* self, XAction* action)
+{
+    int64_t pos;
+    XEvent* event;
+    if (!self || !action) return;
+    pos = xwidget_actionIndex(self, action);
+    if (pos < 0) return;
+    /* 容器按位删除（元素为指针值，无析构需求）。 */
+    XVector_remove_base(self->m_actions, pos, 1);
+    event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                             XEVENT_TYPE_ACTION_REMOVED);
+    if (event) {
+        XWidget_sendEvent(self, event);
+        XClassDelete((XClass*)event);
+    }
+}
+
+XVector* XWidget_actions(const XWidget* self)
+{
+    XVector* out;
+    if (!self) return NULL;
+    out = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(void*), true);
+    if (!out) return NULL;
+    if (self->m_actions) {
+        size_t i;
+        size_t n = XVector_size(self->m_actions);
+        for (i = 0; i < n; ++i) {
+            void* elem = XVector_At_Base(self->m_actions, (int64_t)i, void*);
+            if (!XVector_push_back_1_base(out, &elem)) {
+                XClassDelete((XClass*)out);
+                return NULL;
+            }
+        }
+    }
+    return out;
+}
+
+/* ==================== 区域设置族（对标 QWidget locale/setLocale/unsetLocale） ====================
+ *
+ * [Qt 对齐补实现 2026-10-30] 本族此前头文件有声明、.c 无实现（全仓零调用点），
+ * 且 m_locale/m_localeSet 是零使用的死字段——按 Qt 6.8.3 语义补齐：
+ *   - setLocale：深拷贝保存名称 + 置 WA_SetLocale 位；派发
+ *     XEVENT_TYPE_LOCALE_CHANGE（进入 changeEvent）；并把新区域设置**传播给
+ *     未显式设置区域的子控件**（Qt：子控件未显式设置时跟随父控件）。
+ *   - unsetLocale：清除显式设置与状态位，重新按父链解析，并同样向未显式
+ *     设置的子控件传播。
+ *   - locale：显式设置则返回本控件的；否则沿父链向上找首个显式设置者；
+ *     都没有则返回 NULL（头文件契约：未设置且无父控件设置时返回 NULL）。
+ */
+
+/** @brief 向未显式设置区域设置的子控件传播区域设置变更（Qt 传播语义）。 */
+static void xwidget_localePropagate(XWidget* self)
+{
+    const XVector* children;
+    size_t i;
+    size_t n;
+    if (!self) return;
+    children = XObject_children((XObject*)self);
+    n = children ? XVector_size_base((const XContainer*)children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
+        XWidget* cw;
+        if (!child || !child->m_is_widget) continue;
+        cw = (XWidget*)child;
+        /* 已显式设置的子控件保留自身设置（Qt：显式设置优先于父传播）。 */
+        if (cw->m_localeSet) continue;
+        xwidget_localePropagate(cw);
+        {
+            XEvent event;
+            XEvent_init(&event, XEVENT_TYPE_LOCALE_CHANGE);
+            XWidget_changeEvent_base(cw, &event);
+        }
+    }
+}
+
+const XString* XWidget_locale(const XWidget* self)
+{
+    const XWidget* w = self;
+    if (!self) return NULL;
+    /* 显式设置优先；否则沿父链向上解析（Qt：QLocale::resolveLocale 口径）。 */
+    while (w) {
+        if (w->m_localeSet && w->m_locale) return w->m_locale;
+        w = (const XWidget*)XObject_parent((XObject*)w);
+    }
+    return NULL;
+}
+
+void XWidget_setLocale(XWidget* self, const XString* locale)
+{
+    XEvent event;
+    if (!self) return;
+    /* locale 为 NULL 等价 unsetLocale（头文件契约）。 */
+    if (!locale) {
+        XWidget_unsetLocale(self);
+        return;
+    }
+    /* 与当前值相同则不动作（头文件契约）。 */
+    if (self->m_localeSet && self->m_locale &&
+        XString_equals(self->m_locale, locale, XChar_CaseSensitive))
+        return;
+    if (self->m_locale) {
+        XClassDeinit(self->m_locale);
+        self->m_locale = NULL;
+    }
+    self->m_locale = XString_create_copy(locale);
+    if (!self->m_locale) return;
+    self->m_localeSet = 1;
+    /* 派发 LOCALE_CHANGE（进入 changeEvent）。 */
+    XEvent_init(&event, XEVENT_TYPE_LOCALE_CHANGE);
+    XWidget_changeEvent_base(self, &event);
+    /* 传播给未显式设置区域的子控件（Qt 语义）。 */
+    xwidget_localePropagate(self);
+}
+
+void XWidget_unsetLocale(XWidget* self)
+{
+    XEvent event;
+    if (!self) return;
+    if (!self->m_localeSet) return; /* 未显式设置过：不动作。 */
+    if (self->m_locale) {
+        XClassDeinit(self->m_locale);
+        self->m_locale = NULL;
+    }
+    self->m_localeSet = 0;
+    XEvent_init(&event, XEVENT_TYPE_LOCALE_CHANGE);
+    XWidget_changeEvent_base(self, &event);
+    xwidget_localePropagate(self);
 }
 
 XWidgetLayoutDirection XWidget_layoutDirection(const XWidget* self)

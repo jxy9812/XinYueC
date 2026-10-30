@@ -831,7 +831,7 @@ int XPixmap_devType(const XPixmap* self)
     return (self && self->m_data) ? 1 : 0;
 }
 
-void* XPixmap_paintEngine(const XPixmap* self)
+struct XPaintEngine* XPixmap_paintEngine(const XPixmap* self)
 {
     (void)self;
     return NULL;

@@ -50,31 +50,30 @@ void XIconEnginePlugin_init(XIconEnginePlugin* self)
     XClassSetVtable(self, XIconEnginePlugin);
 }
 
-XIconEngine* XIconEnginePlugin_createEngine_base(XIconEnginePlugin* self,
-                                                  const XString* fileName)
+XIconEngine* XIconEnginePlugin_create_base(XIconEnginePlugin* self,
+                                           const XString* fileName)
 {
+    /* 虚函数调度入口（对标 Qt 6.8 QIconEnginePlugin::create，
+       qtbase/src/gui/image/qiconengineplugin.h:18-26——Qt 侧唯一公开
+       名即 create）。此前本槽的调度入口叫 createEngine_base，
+       与「_base = 虚函数调度入口 + 与 Qt 同名」的命名约定双重不符，
+       且与 create_base 构成同签名同语义的一对别名（台账 B1/B2 判为
+       冗余）——已按「改名即删旧名」合并到 create_base。 */
     if (!self || XClassIsVtableNull(self)) return NULL;
     return XClassGetVirtualFunc(self, EXIconEnginePlugin_Create,
         XIconEngine*(*)(XIconEnginePlugin*, const XString*))(self, fileName);
 }
 
-XIconEngine* XIconEnginePlugin_createEngine_2_base(XIconEnginePlugin* self,
-                                                    const char* fileName)
+XIconEngine* XIconEnginePlugin_create_2_base(XIconEnginePlugin* self,
+                                             const char* fileName)
 {
+    /* UTF-8 兼容重载（`_2` 约定：const char* 入参）。 */
     XIconEngine* result;
     XString* value = fileName ? XString_create_utf8(fileName) : XString_create();
-    result = XIconEnginePlugin_createEngine_base(self, value);
+    result = XIconEnginePlugin_create_base(self, value);
     if (value) XClassDelete((XClass*)value);
     return result;
 }
-
-XIconEngine* XIconEnginePlugin_create_base(XIconEnginePlugin* self,
-                                           const XString* fileName)
-{ return XIconEnginePlugin_createEngine_base(self, fileName); }
-
-XIconEngine* XIconEnginePlugin_create_2_base(XIconEnginePlugin* self,
-                                             const char* fileName)
-{ return XIconEnginePlugin_createEngine_2_base(self, fileName); }
 
 /* ==================== Keys 虚槽与插件注册表（Task 2.15） ==================== */
 
@@ -167,7 +166,7 @@ XIconEngine* XIconEnginePlugin_createEngineForFile(const char* fileName)
                 (const XStringList*)keys, k);
             if (key && iconSuffixMatch(fileName, XString_toUtf8(key))) {
                 XIconEngine* engine =
-                    XIconEnginePlugin_createEngine_2_base(*item, fileName);
+                    XIconEnginePlugin_create_2_base(*item, fileName);
                 XClassDelete(keys);
                 return engine;
             }
