@@ -60,12 +60,9 @@ typedef enum XPlatformNativeWindowConnectionType
     XPlatformNativeWindowConnection_Win32     /**< Windows Win32（HINSTANCE 句柄）。 */
 } XPlatformNativeWindowConnectionType;
 
-/** @brief 窗口 id（WId）类型；XWindow.h 已定义时复用，避免重定义
- *         （本契约头不能包含 XWindow.h，因此独立提供守卫定义）。 */
-#ifndef XWINDOWID_DEFINED
-#define XWINDOWID_DEFINED 1
-typedef uintptr_t XWindowId;
-#endif
+/* XWindowId（WId）类型已归一定义于 XTypes.h（本头文件已包含）；
+ * 【2026-10-31】原"本契约头不能包含 XWindow.h 故独立守卫定义"的块随
+ * 重复宏合并收口，见 XTypes.h 的 XWindowId 归一注。 */
 
 /** @brief XWindow 前向声明（公共层只持有借用指针，不引用其内部）。 */
 typedef struct XWindow XWindow;

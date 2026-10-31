@@ -2011,6 +2011,78 @@ Qt 无此物、生产零调用，apitest 对应用例同步移除）；alignment
 >   软件（50~79 vs 15600 FPS），生产需峰值吞吐可 `--sw`/env 回
 >   软件——后续原语覆盖率提升后收敛差距。
 
+> **桌面默认 GPU 恢复（2026-10-31，用户指令落地）**：
+> - **时间线**：2026-09-23 首次启用默认 GPU（上节）→ 2026-09-24 子矩形
+>   批量化 WIP（87213b92）闪烁+帧率回退暂时回退软件默认（9292cb70b）→
+>   同日 WIP 即被「透明暂存画布 + 批脏区 SourceOver 混合提交」方案
+>   整体替换（d0c79214a），并经夜间三/四逐项根修：keep-open 默认关
+>   （跨批墨迹残留=拖动残影带根修）、降级帧整窗恢复
+>   （g_xgui_degradedFramePending，陈旧帧交替上屏根修）、读回+BitBlt
+>   呈现通道（远程栈 SwapBuffers 闪烁根修）、慢 begin 帧级原子自动降级
+>   （XGPU_VK_BEGIN_SLOW_MS）。**d0c79214a 同时误删了 requested() 的宏
+>   消费分支致 `XGPU_RUNTIME_DEFAULT_ON` 成死码**——"WIP 修完后恢复 1"
+>   的承诺因此一直悬置，本次一并补回。
+> - **本次落地**：① 宏默认恢复（桌面 1，裁剪构建 XGUI_ON=0 段同步钳 0）；
+>   ② `XGpuRenderBackend_requested()` 补回默认消费层——env 未设置时以
+>   `probeAvailable()`（1x1 离屏会话，进程内缓存 + XGPU_SESSION_RETRY
+>   3 次失败预算内自愈）为默认，**负结果不落缓存**（预算耗尽前可重探）；
+>   ③ `XGuiApplication_init` 启动第一件事完成裁决：`--gpu`/`--software`/
+>   `--sw` 命令行映射运行期覆盖（与宿主自解析幂等），否则预热
+>   requested() 并打印 `[xgui-gpu] startup default: …` 决策日志。
+> - **优先级不变**：`addRequestedOverride` > env（白名单，其余值含
+>   software 一律软件）> 桌面探测默认 > 软件回退；无 GPU 机器探测失败
+>   自动软件，行为与回退期完全一致。
+> - **测试矩阵**：plain `XGuiRegression` CTest 显式钉
+>   `XGUI_RENDER_BACKEND=software`（防默认翻转后 GPU 机器静默跳过
+>   ~30 个软件契约套件）；新增 `XGuiRegressionAuto` 无 env 变体端到端
+>   验证默认层；新增 t212a 用例锁三层级联契约（env 白名单映射 +
+>   默认层 requested==probeAvailable）。
+
+> **悬停/空闲噪声带根修（2026-10-31 同日）**：默认翻转后用户实测悬停
+> 按钮致导航栏横向字形碎片带驻留；复现实验证明空闲 demo 每 ~13s 必现
+> FPS 悬浮层底部噪声带（无需交互）。归因 A/B 定案：**场景自适应 PBO
+> 滞后通道**（XGPU_PBO_ADAPTIVE 默认开，无抓取态激活）在本地环境拷出
+> 半成品帧，噪声经 DIB→BitBlt 上屏驻留（FBO 全程干净，与持久 FBO
+> S1 家族无关）。处置：自适应默认 1→0（+35% 吞吐优化转显式 opt-in）；
+> 无 fence 能力强制同步直读；回归探针 t213h（FBO 侧 A-F + 呈现像素
+> G 阶段）+ 真实 demo computer-use 全流程验收干净。F1（FBO 帧重播种）
+> /F3（画布加固）经归因裁剪不实施，详见
+> docs/xgui/night3-readback-analysis.md §6 后记。
+
+> **重复配置宏合并 + 裁剪死区修复（2026-10-31）**：
+> - **死区修复（结构性 bug）**：XGuiConfig.h 的 `#if XGUI_ON`（:11）无顶层
+>   `#else`，文件尾 `#if !XGUI_ON` 总裁剪段（~290 行，含 XGPU/XPAINTER/
+>   控件全量钳 0 与 XGPU_RUNTIME_DEFAULT_ON 钳制）嵌套在活分支内条件恒假
+>   —— `-DXGUI_ON=0` 的文件内硬裁剪从未生效，全靠各 .c 文件守卫兜底。
+>   现转正为真 `#else` 分支；探针验证双口径：`=0` 时六关键宏已定义且为 0，
+>   `=1` 时（阴性对照）宏为 1。
+> - **同名双头合并（取值唯一权威=主配置）**：XPAINTER_ON+16 能力位
+>   （XGuiConfig.h ↔ XPainter_config.h，契约文档随迁主配置，子文件只留
+>   总关钳制+依赖钳制）；XLAYOUT_ON/XLAYOUT_STACKED_ON（↔XLayout_config.h）；
+>   XIMAGECODEC_ON（↔XImageCodec_config.h）；XTEXTCONTROL_ON（↔XTextControl.h）；
+>   XGUI_CUSTOM_TITLEBAR_ON（↔XWidget.h）；XGUI_ON（↔CXinYueConfig.h）；
+>   XWINDOWID_DEFINED 三处 typedef 归一至 XTypes.h（XWindowId）。
+>   合并前逐对验证零取值漂移、无独立包含场景。
+> - **钳制缺陷修复**：XPainter_config.h 的 CLIP_REGION 条件默认原被主配置
+>   无条件默认 1 击败（外部 -DXPAINTER_CLIP_ON=0 时区域开关残留 1），
+>   转正为无条件 `#undef+#define 0` 钳制。
+> - **XGui 域外速赢**：XLink_VERSION/HEADER_SIZE/TOPIC_USER_BASE 收口
+>   XLink_config.h（原 HEADER_SIZE/TOPIC 两侧无守卫双定义，C4005 隐患）；
+>   XNetwork_config.h/XFileSystem_config.h 死字面量兜底删除（与权威的
+>   设备派生定义语义漂移，后者补自举包含）；XConsoleShellConfig.h 中段
+>   19 对死别名块删除（文件尾无条件重导出恒覆盖之）；DEMOTEST 改为
+>   DEMOTEST_ON 派生别名（消除"两宏必须人肉同步否则 LNK2019"纪律）。
+> - **明确不合并（近义词甄别）**：XGUI_{PRESENT,REPAINT,RESIZE_REPAINT}_
+>   MAX_FPS（同机制不同挂点）；XBACKINGSTORE_ON/XPLATFORMBACKINGSTORE_ON/
+>   XPLATFORMBACKINGSTORE_SOFTWARE_ON（框架/平台/模板三层）；XPAINTER_CLIP_ON
+>   vs CLIP_REGION（嵌套子能力）；XGPU_ON vs XGPU_RUNTIME_DEFAULT_ON
+>   （能力 vs 策略）；XTUI_VIM_*↔XCONSOLE_SHELL_VIM_*（有意双命名空间
+>   别名设计）；协议族 11 模块 X*_ON 兜底（中央 1 与模块 XPROTOCOL_ON
+>   派生为互补表达、模块 .c 首行单包含依赖自举——统一为 M 级改造，缓行）。
+> - **验证**：四目标构建 221/221；四变体回归失败集与基线逐项一致
+>   （零新增）；covdiff digest 逐字符 `171AC901B15C751A`（逐位不变）；
+>   XGuiGpu 通过；XGUI_ON=0 硬裁剪双口径探针通过。
+
 ### 10.3.1 同批修复清单（2026-09-22）
 
 | 修复 | 文件 | 说明 |

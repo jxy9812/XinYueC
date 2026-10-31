@@ -16,16 +16,20 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* 自举包含总配置（对齐 XNetwork_config.h 口径）：确保 XFILE_ON 的设备
+ * 派生权威定义（XDEVICE_ON && XDEVICE_FILE_ON）在本文件任何开关求值
+ * 前先行生效——本文件自身无其它 include，独立包含场景（XDeviceFile.h
+ * 首行包含）此前依赖字面量 1 兜底，与权威语义漂移（无文件设备时仍
+ * 放行文件编译）。【2026-10-31 重复宏合并】兜底已删除。 */
+#include "CXinYueConfig.h"
+
 /* ========================================================================== */
 /*                        模块总开关                                        */
 /* ========================================================================== */
 /** @brief XFile 模块总开关；置 0 时裁剪整个 XFile 对外公开 API 及所有子功能。
- * @note 总开关在 CXinYueConfig.h 中统一定义，此处仅兜底默认值。
+ * @note 取值唯一权威 = CXinYueConfig.h 的设备派生定义（见上方自举注）。
  *       关闭后若仍有其它模块无条件引用 XFile 符号，需同步裁剪对应依赖。 */
-#ifndef XFILE_ON
-#define XFILE_ON 1
-#endif
-
 #if XFILE_ON
 
 /** @brief 目录操作模块开关；关闭后 XDir 相关 API 不编译。

@@ -23,6 +23,42 @@
 
 /* ==================== 内部工具 ==================== */
 
+/** @brief 内容矩形原点（对标 QScrollAreaPrivate::updateWidgetPosition，
+ *         qscrollarea.cpp:113-121）。
+ *  @details Qt 口径：某轴上内容尺寸 ≤ 视口时按 alignment 对齐；> 视口时
+ *           取「已滚动」偏移 −value（与 scrollContentsBy 的 -(-value) 同
+ *           一套值域）。此前此处两处一律把原点钉成 0/对齐位，并把
+ *           「> 视口」的情形也钉 0——滚到中途的内容在其后任意一次重排版
+ *           （视口 resize；2026-10-30 起内容 resize 同样触发）里被拽回
+ *           开头。content 尺寸变化时保护 scroll 位置，才能安全地把内容
+ *           resize 也纳入重排版入口。 */
+static void xsa_contentOrigin(const XScrollArea* self, int vw, int vh,
+                              int cw, int ch, int* outX, int* outY)
+{
+    XScrollBar* hsb = XAbstractScrollArea_horizontalScrollBar(
+        (const XAbstractScrollArea*)self);
+    XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(
+        (const XAbstractScrollArea*)self);
+    int hVal = hsb ? XScrollBar_value(hsb) : 0;
+    int vVal = vsb ? XScrollBar_value(vsb) : 0;
+    int x;
+    int y;
+    if (self->m_alignment & (int)XAlignment_Right)
+        x = cw > vw ? -hVal : vw - cw;
+    else if (self->m_alignment & (int)XAlignment_HCenter)
+        x = cw > vw ? -hVal : (vw - cw) / 2;
+    else
+        x = cw > vw ? -hVal : 0;
+    if (self->m_alignment & (int)XAlignment_Bottom)
+        y = ch > vh ? -vVal : vh - ch;
+    else if (self->m_alignment & (int)XAlignment_VCenter)
+        y = ch > vh ? -vVal : (vh - ch) / 2;
+    else
+        y = ch > vh ? -vVal : 0;
+    *outX = x;
+    *outY = y;
+}
+
 /** @brief 依据 resizable/alignment 调整内容控件几何。
  *  @note   resizable 分支对标 Qt QScrollArea widgetResizable 语义
  *          （qscrollarea.cpp updateScrollBars：内容尺寸在视口与内容
@@ -85,6 +121,16 @@ static void xsa_updateWidgetGeometry(XScrollArea* self)
         /* 滚动范围随内容（回读钳后实际尺寸，页面定尺约束优先）。 */
         cw = XWidget_width(content);
         ch = XWidget_height(content);
+        /* 位置尾部校正（对标 Qt：updateScrollBars 末尾
+         * updateWidgetPosition 才定位，尺寸与位置一次到位）：内容大于
+         * 视口时按已滚动偏移落位，不归零。仅位置变化触发 Move 事件，
+         * 不触发 Resize，无回到重排版入口的回路。 */
+        xsa_contentOrigin(self, vw, vh, cw, ch, &x, &y);
+        if (x != XWidget_x(content) || y != XWidget_y(content)) {
+            XRect tail;
+            XRect_init(&tail, x, y, cw, ch);
+            XWidget_setGeometryRect(content, &tail);
+        }
         XAbstractScrollArea_setContentSize(
             (XAbstractScrollArea*)self,
             cw > vw ? cw : vw, ch > vh ? ch : vh);
@@ -93,14 +139,7 @@ static void xsa_updateWidgetGeometry(XScrollArea* self)
     }
     cw = XWidget_width(content);
     ch = XWidget_height(content);
-    if (self->m_alignment & (int)XAlignment_Right)
-        x = cw > vw ? 0 : vw - cw;
-    else if (self->m_alignment & (int)XAlignment_HCenter)
-        x = (vw - cw) / 2;
-    if (self->m_alignment & (int)XAlignment_Bottom)
-        y = ch > vh ? 0 : vh - ch;
-    else if (self->m_alignment & (int)XAlignment_VCenter)
-        y = (vh - ch) / 2;
+    xsa_contentOrigin(self, vw, vh, cw, ch, &x, &y);
     {
         XRect r;
         XRect_init(&r, x, y, cw, ch);
@@ -145,9 +184,67 @@ static void VXScrollArea_scrollContentsBy(XAbstractScrollArea* self,
     if (viewport) XWidget_update(viewport);
 }
 
+/** @brief 内容件事件过滤器（对标 QScrollArea::eventFilter，
+ *         qscrollarea.cpp:275-291：`if (o == d->widget && e->type() ==
+ *         QEvent::Resize) d->updateScrollBars();`）。
+ *  @details Qt 的滚动区靠**内容件的 Resize 事件**维持续列表范围与显隐：
+ *           内容一改尺寸（页内增删行、换行重排、手风琴换分类后重算内容
+ *           高），过滤器重算范围。此前本框架无此环——内容件几何由业务
+ *           代码直接 resize，滚动区收不到任何通知，m_contentWidth/Height
+ *           停留在上一次（构造/show/滚动区自身 resize）算出的旧值：
+ *           AsNeeded 的条因而「该出现的出现不了、该消失的消不了」，只有
+ *           改窗大小触发滚动区 resizeEvent 才顺带刷新（2026-10-30 实测：
+ *           左侧导航矮分类→高分类后内容被裁却不出现竖滚条，高→矮后残
+ *           留的竖滚条也不消失）。
+ *  @return  恒 false（同 Qt：过滤器只旁路观察，从不吞掉内容件自身的
+ *           Resize，业务方的 resizeEvent 处理器照常收到）。 */
+static bool VXScrollArea_eventFilter(XObject* self, XObject* watched,
+                                     XEvent* event)
+{
+    XScrollArea* area = (XScrollArea*)self;
+    if (!area || !event) return false;
+    if (!area->m_widget || watched != (XObject*)area->m_widget)
+        return false;
+    if (XEvent_type(event) == XEVENT_TYPE_RESIZE)
+        xsa_updateWidgetGeometry(area);
+    return false;
+}
+
+/** @brief 事件入口：LayoutRequest/StyleChange → 重排版内容（对标
+ *         QScrollArea::event，qscrollarea.cpp:274-278：`if (e->type() ==
+ *         QEvent::StyleChange || e->type() == QEvent::LayoutRequest)
+ *         d->updateScrollBars();` 后仍交基类）。
+ *  @details 内容提示变化（标签文本增长/字体切换等）经「无布局父链」的
+ *           LayoutRequest 到达本槽（XWidget_updateGeometry else 分支
+ *           投递 + VXWidget_event 无布局分支上抛，Qt 侧为视口过滤器
+ *           转发同位），随后仍交基类走默认处理（Qt 同样不吞）。与内容
+ *           件 Resize 过滤器（上一函数，Qt 同位）互补：Resize 环覆盖
+ *           「内容几何被直接 resize」，本环覆盖「提示变化而内容几何
+ *           未动」——二者合并即 Qt 的两条通知路径全集。
+ *  @return  交基类 VXWidget_event 的结果（LayoutRequest 基类无布局即
+ *           空处理返回 true；StyleChange 走 ChangeEvent 段）。 */
+static bool VXScrollArea_event(XWidget* self, XEvent* event)
+{
+    XScrollArea* area = (XScrollArea*)self;
+    if (area && event) {
+        XEventType type = XEvent_type(event);
+        if (type == XEVENT_TYPE_LAYOUT_REQUEST ||
+            type == XEVENT_TYPE_STYLE_CHANGE)
+            xsa_updateWidgetGeometry(area);
+    }
+    return XClass_Parent(XAbstractScrollArea, EXObject_Event,
+                         bool (*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
 static void VXScrollArea_deinit(XScrollArea* self)
 {
     if (!self) return;
+    /* 内容件可能先于/晚于本控件销毁：显式摘过滤器，避免内容件再收到
+     * Resize 时向已析构的滚动区回调（Qt 由 QPointer<widget> 自动置空，
+     * 本框架无弱引用，需在析构前显式摘除）。 */
+    if (self->m_widget)
+        XObject_removeEventFilter((XObject*)self->m_widget,
+                                  (XObject*)self);
     XClass_Deinit_Parent(XAbstractScrollArea,
                          (XAbstractScrollArea*)self);
 }
@@ -257,6 +354,9 @@ XVtable* XScrollArea_class_init(void)
                              VXScrollArea_showEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent,
                              VXScrollArea_wheelEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_EventFilter,
+                             VXScrollArea_eventFilter);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXScrollArea_event);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXScrollArea_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -301,6 +401,9 @@ void XScrollArea_setWidget(XScrollArea* self, XWidget* widget)
     old = self->m_widget;
     if (old) {
         self->m_widget = NULL;
+        /* 摘过滤器先于销毁：Qt 用 QPointer 自动失效，本框架需显式拆
+         * 除，否则销毁期产生的几何变化会回调到正在析构的对象。 */
+        XObject_removeEventFilter((XObject*)old, (XObject*)self);
         XClassDelete((XClass*)old);
     }
     /* 对标 qscrollarea.cpp:239-240：换件即复位滚动位置。 */
@@ -315,6 +418,10 @@ void XScrollArea_setWidget(XScrollArea* self, XWidget* widget)
     XWidget_setParent(widget, viewport, 0);
     XWidget_setVisible(widget, true);
     self->m_widget = widget;
+    /* 对标 qscrollarea.cpp:250 `widget->installEventFilter(this)`：内容件
+     * 此后的每次尺寸变化都经 VXScrollArea_eventFilter 回流到本控件，
+     * 滚动范围/显隐随内容自动跟随（业务方不再需要手工触发重排版）。 */
+    XObject_installEventFilter((XObject*)widget, (XObject*)self);
     xsa_updateWidgetGeometry(self);
 }
 
@@ -323,6 +430,9 @@ XWidget* XScrollArea_takeWidget(XScrollArea* self)
     XWidget* widget;
     if (!self || !self->m_widget) return NULL;
     widget = self->m_widget;
+    /* 对标 Qt：交还所有权即不再监视该件（setParent(nullptr) 后其后续
+     * resize 与本控件无关）。 */
+    XObject_removeEventFilter((XObject*)widget, (XObject*)self);
     XWidget_setParent(widget, NULL, 0);
     self->m_widget = NULL;
     return widget;

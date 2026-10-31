@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XLabel.c
  * @brief      XLabel 标签控件实现（对标 Qt 6.8 QLabel 全部公开 API 的 C 适配）。
  * @details    实现要点：
@@ -1663,6 +1663,7 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
     const char* utf8;
     int i, utf16pos;
     int selStart, selEnd;
+    int visTopSelf = -0x40000000, visBotSelf = 0x3FFFFFFF;
     uint32_t textColor, hlBg, hlFg, linkColor;
     if (!self->m_isTextLabel || !self->m_displayText) return;
     label_computeLayout(self, cr, &layout);
@@ -1683,11 +1684,50 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
        审计 F6），且多付一次虚调用。 */
     }
     utf16pos = 0;
+    /* [视口外行剔除 2026-10-31] 长文本标签（滚动区内容，行数可达数百）
+     * 每帧对**全部行**逐字形发起 GPU draw call——视口外的行被裁剪丢弃
+     * 但 CPU 提交开销照付（实测 269 行 × ~30 字形 × ~7.5µs ≈ 60ms/帧，
+     * 移动/缩放窗口时整帧 paint 被其占满）。可见带取 painter 裁剪
+     * （clipRect→region→表面三级回退）经平移变换换算到行坐标系；
+     * 复杂变换保守不剔除。坐标全程 painter 状态直读，无跨层换算。 */
+    {
+        const XRect* dclip = &painter->m_state.m_clipRect;
+        XRect eff = *dclip;
+        XImageTransform ctr;
+        int visTop = -0x40000000, visBot = 0x3FFFFFFF;
+        if (eff.width <= 0 || eff.height <= 0)
+            XRegion_boundingRect(&painter->m_state.m_clipRegion, &eff);
+        XPainter_combinedTransform(painter, &ctr);
+        if (eff.width > 0 && eff.height > 0)
+        {
+            if (ctr.m11 == 1.0f && ctr.m22 == 1.0f &&
+                ctr.m12 == 0.0f && ctr.m21 == 0.0f)
+            {
+                /* 恒等或纯平移（dx/dy）：行坐标 = 设备 y - dy。 */
+                visTop = eff.y - (int)ctr.dy;
+                visBot = eff.y + eff.height - (int)ctr.dy;
+            }
+        }
+        visTopSelf = visTop;
+        visBotSelf = visBot;
+    }
     for (i = 0; i < layout.m_lineCount; ++i) {
         int x = label_lineX(&layout, i,
                             label_visualAlignment(self, self->m_alignment));
         int top = layout.m_rect.y + i * label_lineHeight(self);
         int baselineY = top + label_ascent(self);
+        /* 行带与可见带不相交 → 整行跳过（utf16pos 累计不变：选区/
+         * 链接命中按行内字节区间独立计算，与是否绘制无关）。 */
+        {
+            int lh = label_lineHeight(self);
+            if (top + lh <= visTopSelf || top >= visBotSelf)
+            {
+                utf16pos += label_utf16lenRange(utf8,
+                                                layout.m_lines[i].m_start,
+                                                layout.m_lines[i].m_end);
+                continue;
+            }
+        }
         label_drawLine(painter, utf8,
                        layout.m_lines[i].m_start, layout.m_lines[i].m_end,
                        x, baselineY, utf16pos, selStart, selEnd,

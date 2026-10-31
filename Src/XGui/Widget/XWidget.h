@@ -71,13 +71,10 @@ extern "C" {
 #include <stdbool.h>
 #include "XGuiConfig.h"
 
-/* 控件级自定义标题条开关：XGuiConfig.h 正式定义（XGUI_CUSTOM_TITLEBAR_ON
- * 置于窗口/装饰相关宏区）缺失时的文件内 #ifndef 兜底，与配置默认值 1
- * 幂等（谁先定义谁生效，命令行 -D 覆盖两者）。置 0 时成员与两条公开
- * API 整体裁剪，XDockWidget 自有标题条 API 回归原实现。 */
-#ifndef XGUI_CUSTOM_TITLEBAR_ON
-#define XGUI_CUSTOM_TITLEBAR_ON 1
-#endif
+/* 控件级自定义标题条开关：取值唯一权威 = XGuiConfig.h（XGUI_CUSTOM_
+ * TITLEBAR_ON，窗口/装饰相关宏区）。【2026-10-31 重复宏合并】本头文件
+ * 原 #ifndef 兜底已删除（位于主配置之后、从未生效）。置 0 时成员与
+ * 两条公开 API 整体裁剪，XDockWidget 自有标题条 API 回归原实现。 */
 
 #if XPAINTDEVICE_ON
 #include "XPaintDevice.h"
@@ -575,6 +572,8 @@ typedef struct XWidget
     uint32_t                m_enabled : 1;           /**< 启用状态。 */
     uint32_t                m_updatesEnabled : 1;    /**< 更新使能（默认 true）。 */
     uint32_t                m_autoFillBackground : 1;/**< 自动填充背景。 */
+    uint32_t                m_isOpaque : 1;          /**< 绘制后不留缝（缓存；对标 QWidgetPrivate::isOpaque）。 */
+    uint32_t                m_dirtyOpaque : 1;       /**< 不透明度缓存待重算（对标 dirtyOpaqueChildren 的置脏位）。 */
     uint32_t                m_paletteSet : 1;        /**< 是否已设置控件级调色板。 */
     uint32_t                m_mouseTracking : 1;     /**< 鼠标跟踪（无需按键即发移动事件）。 */
     uint32_t                m_tabletTracking : 1;    /**< 板绘跟踪。 */

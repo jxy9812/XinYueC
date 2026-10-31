@@ -1071,6 +1071,42 @@ if(UNIX)
 else()
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
+
+# 测试菜单全量遍历探针（2026-10-31）：把 XTestMenuTest_create() 整棵树的
+# **每个动作**逐个触发一遍，逐项打点定位「执行即崩 / 零输出」的动作。
+# GUI 测试菜单页的 autotest 只走一条路径，覆盖不足；本目标提供全量口径。
+# 菜单树 builder 全在 TEST_FILE（与 demo 收编同口径）；自带 main 的
+# 探针/测试源须剔除（防 main 重复定义）。
+add_executable(XGuiTestMenuSweep
+    "./xgui_testmenu_sweep.c"
+)
+if(NOT XINYUE_EMBEDDED)
+    set(XGUI_SWEEP_TESTTREE_SOURCES ${TEST_FILE})
+    list(REMOVE_ITEM XGUI_SWEEP_TESTTREE_SOURCES
+        # 自带 main 的独立可执行（与 demo 收编剔除清单同口径）。
+        "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XScrollTouchProbe.c"
+        "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGestureRecognizerTest.c")
+    target_sources(XGuiTestMenuSweep PRIVATE ${XGUI_SWEEP_TESTTREE_SOURCES})
+endif()
+if(UNIX)
+    target_link_libraries(XGuiTestMenuSweep ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype dbghelp ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XGuiTestMenuSweep mbedtls lwip zlib fatfs pcre2 sqlite freetype dbghelp ${EXPORT_NAME}S)
+endif()
+xinyue_force_include_config(XGuiTestMenuSweep)
+
+# Hover synthesis probe (2026-10-31): reproduces "delete the old hover
+# target then hover the new button" - asserts ENTER/LEAVE still dispatch
+# after the old target is destroyed (Qt QWidgetWindow::m_widget parity).
+add_executable(XGuiHoverProbe
+    "./xgui_hover_probe.c"
+)
+if(UNIX)
+    target_link_libraries(XGuiHoverProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XGuiHoverProbe mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+xinyue_force_include_config(XGuiHoverProbe)
 endif() # XGUI_ON
 
 # ==================== 滚动区触摸跟手+惯性独立探针 ====================
@@ -1204,14 +1240,25 @@ add_test(NAME XGuiRegression COMMAND XGuiRegression_Test
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/bin")
 # CTest 在受控运行环境下会以 ptrace 方式启动子进程；LeakSanitizer 无法在该
 # 环境工作。地址越界检查仍由 ASan 保留，泄漏检查在可直接运行的环境单独执行。
+# 显式钉 software：桌面默认已恢复 GPU 直通（XGPU_RUNTIME_DEFAULT_ON=1，
+# 2026-10-31），无 env 的 plain 运行在 GPU 机器上会静默翻成 GPU 模式并
+# 跳过 ~30 个软件契约套件（regression_gpuRequested() skip 门），故软件
+# 契约覆盖必须显式钉死；默认层（探测决定）由 XGuiRegressionAuto 覆盖。
 set_tests_properties(XGuiRegression PROPERTIES
-    ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
+    ENVIRONMENT "XGUI_RENDER_BACKEND=software;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
 # GPU 后端下的完整回归变体：无 GL 的环境由后端自动回退软件（断言按
 # 实际会话状态跳过降级项），有 GL 时逐用例覆盖 GPU 快速路径。
 add_test(NAME XGuiRegressionGpu COMMAND XGuiRegression_Test
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/bin")
 set_tests_properties(XGuiRegressionGpu PROPERTIES
     ENVIRONMENT "XGUI_RENDER_BACKEND=gpu;XGUI_GPU_SYNC=1;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
+# 默认层端到端变体：不设任何后端 env，验证桌面启动自动探测口径——
+# GPU 机器上 requested()=true（t211g 期望 Gpu、skip 门生效），无 GPU
+# 环境探测失败自动回退软件，两侧均应通过。
+add_test(NAME XGuiRegressionAuto COMMAND XGuiRegression_Test
+    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/bin")
+set_tests_properties(XGuiRegressionAuto PROPERTIES
+    ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
 
 # ==================== XGuiRemote 输入链路 + 视图适配缩放专项探针 ====================
 # mcgs 战役输入路(2026-10-04)独立可执行: 回环零网络拓扑下自证客户端 FIT

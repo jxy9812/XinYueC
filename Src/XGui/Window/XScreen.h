@@ -61,14 +61,8 @@ typedef enum XScreenOrientation
  */
 typedef struct XScreenPlatform XScreenPlatform;
 
-/**
- * @brief      窗口系统窗口/入口标识（对标 Qt 6.8 的 WId，即 quintptr）。
- * @details    用于 grabWindow() 指定要抓取内容的窗口；0 表示抓取整个屏幕。
- */
-#ifndef XWINDOWID_DEFINED
-#define XWINDOWID_DEFINED 1
-typedef uintptr_t XWindowId;
-#endif
+/* XWindowId（WId）类型已归一定义于 XTypes.h（本头文件已包含）；
+ * 【2026-10-31】原守卫块随重复宏合并收口，见 XTypes.h 的 XWindowId 归一注。 */
 
 /** @brief 私有实现前向声明；仅供实现访问。 */
 typedef struct XScreenPrivate XScreenPrivate;

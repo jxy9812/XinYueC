@@ -35,11 +35,11 @@ extern "C" {
 /*                        模块总开关                                          */
 /* ========================================================================== */
 /** @brief XLayout 模块总开关；置 0 时裁剪整个布局系统公共 API 与全部
- *  子布局类型。总开关在 XGuiConfig.h 中统一定义，此处仅兜底默认值。
+ *  子布局类型。【2026-10-31 重复宏合并】取值唯一权威 = XGuiConfig.h
+ *  （本文件原 #ifndef 兜底在"主配置先行"的包含序下从不生效，已删除；
+ *  XGuiConfig.h 内含 !XWIDGET/!XGUIAPPLICATION/!XWINDOW 级联钳制与
+ *  XStackedLayout→XLayout 依赖钳制）。
  */
-#ifndef XLAYOUT_ON
-#define XLAYOUT_ON 1
-#endif
 
 #if XLAYOUT_ON
 
@@ -64,10 +64,8 @@ extern "C" {
 
 /** @brief XStackedLayout 堆叠布局开关；置 0 时裁剪该类公共 API。
  *  XStackedLayout 对标 Qt 6.8 QStackedLayout，提供页面插入、当前页
- *  切换、StackOne/StackAll 可见性策略以及堆叠页面尺寸协商。 */
-#ifndef XLAYOUT_STACKED_ON
-#define XLAYOUT_STACKED_ON 1
-#endif
+ *  切换、StackOne/StackAll 可见性策略以及堆叠页面尺寸协商。
+ *  依赖 XLAYOUT_ON（钳制见 XGuiConfig.h !XLAYOUT_ON 段）。 */
 
 /** @brief 公开空白条目（XSpacerItem）工厂/查询开关。
  *  XSpacerItem 对标 Qt 6.8 QSpacerItem。置 1 时提供 XSpacerItem_create /

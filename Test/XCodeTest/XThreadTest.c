@@ -66,7 +66,7 @@ void XThreadTest()
 				
 			}
 		}
-		XCoreApplication_exec();
+		XCoreApplication_execBounded(15000);
 		//XThread_deleteLater(th);
 
 		XCoreApplication_processEvents(XEventLoop_AllEvents);

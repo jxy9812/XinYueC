@@ -72,7 +72,7 @@ void XModbusRtuSerialClientTest()
 
     //XModbusClient_pollWriteRequest(client, read, 1,10);
 
-    XCoreApplication_exec();
+    XCoreApplication_execBounded(15000);
 }
 static void tcpFinished(XObject* receiver, XVarList* args)
 {
@@ -145,7 +145,7 @@ void XModbusTcpClientTest()
     //    XModbusClient_pollWriteRequest(client, read, 1, 2);
     //}
 
-    XCoreApplication_exec();
+    XCoreApplication_execBounded(15000);
 }
 
 #include "XModbusCommEvent.h"

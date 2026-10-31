@@ -28,8 +28,9 @@
  *               + 连续键入合并），对标 QTextDocument 的 edit block 语义；
  *             - preedit 不入文档（与 Qt 一致），以 m_preedit 旁路承载并
  *               参与命中测试/绘制；无逐属性 IME 下划线（整段下划线）。
- * @note       模块总开关 XTEXTCONTROL_ON：默认回退定义于本头文件（待
- *             并入 XGuiConfig.h 统一管理）；实现文件以同一开关裁剪。
+ * @note       模块总开关 XTEXTCONTROL_ON：取值唯一权威 = XGuiConfig.h
+ *             （2026-10-31 重复宏合并，本头文件原 #ifndef 兜底已删除——
+ *             其位于 XGuiConfig.h 之后、从未生效）；实现文件以同一开关裁剪。
  * @author     XinYueC 团队
  */
 #ifndef XTEXTCONTROL_H
@@ -44,10 +45,6 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XGuiConfig.h"
-
-#ifndef XTEXTCONTROL_ON
-#define XTEXTCONTROL_ON 1
-#endif
 
 #if XTEXTCONTROL_ON
 

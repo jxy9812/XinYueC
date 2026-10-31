@@ -236,19 +236,20 @@ extern "C" {
 /*                        协议常量                                           */
 /* ========================================================================== */
 
-/** @brief 协议版本号（写入 Hello 载荷，线上为 u16）。高字节主版本、低字节次版本。
- *  @note  版本不匹配不致命：会话层仅记录到 m_remoteVersion，兼容策略由应用层定。
- *         正本定义在 XLinkProto.h（含 1.1 变更说明）；此处保留同名兜底宏，
- *         以 #ifndef 守护避免与 XLinkProto.h 冲突（C4005 宏重定义）。 */
+/** @brief 协议版本号（写入 HELLO 载荷，线上为 u16）。高字节为主版本、低字节为次版本。
+ *  @note  版本不匹配不致命：会话层仅记录到 m_peerVersion，兼容策略由应用层决定。
+ *         1.1：新增登录认证与文件传输两个可选项（能力位门控，帧格式不变）。
+ *  【2026-10-31 重复宏合并】常量唯一权威 = 本文件（XLinkProto.h :40 先包含
+ *  本文件，其原正本定义已删除；独立包含本文件的 XLinkClient.h 等亦自洽）。 */
 #ifndef XLINK_VERSION
 #define XLINK_VERSION 0x0101u
 #endif
 
 /** @brief 帧头固定长度（字节）：payloadLen(4) + msgClass(2) + msgCode(2) + requestId(4)。
- *  @note 全部字段小端线序（fbdev/网络栈惯例，ARM 与 x86 一致）。 */
+ *  @note  全部字段小端线序（fbdev/网络栈惯例，ARM 与 x86 一致）。 */
 #define XLINK_HEADER_SIZE 12u
 
-/** @brief 业务 topicId 起始值（u32）。低于此值保留给协议自身（如会话子类型）。
+/** @brief 业务 topicId 起始值（u32）。低于此值保留给协议自身（如 Session 子类型）。
  *  @note  topicId 用 u32 而非字符串：嵌入式端免去解析与分配。两端各自的业务
  *         topic 从 0x10000 起分配，框架层不解释其含义。 */
 #define XLINK_TOPIC_USER_BASE 0x00010000u

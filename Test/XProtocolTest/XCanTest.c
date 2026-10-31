@@ -1320,22 +1320,27 @@ static void XCanFrameProcessorTest(void)
         XVariant_init(&var, NULL, 0, XVariantType_Double);
         XVariant_setValue_double(&var, 255.0);
         XMapBase_insert_base((XMapBase*)signalValues, &sigName, &var);
-        XClassDeinit((XClass*)&var);
-        XClassDeinit((XClass*)&sigName);
-
-        // ç¼–ç å¸§
+                /* [2026-10-31 UAF root-fix] XMap is a BYTE container: the value
+         * side has no copy/deinit methods (XMapBase only has the key
+         * trio), insert shallow-byte-copies the variant -- the locals
+         * heap buffer is SHARED with the map copy. Deininit the locals
+         * before prepareFrame left the map copy dangling and
+         * XVariant_toDouble read freed heap (AV, cdb-verified). Locals
+         * must outlive the map consumption; the map never deinits
+         * values/keys so each local Deinits exactly once. */
+        // encode frame
         XCanBusFrame* encoded = XCanFrameProcessor_prepareFrame(&processor, 0x456, signalValues);
         if (encoded && XCanBusFrame_isValid(encoded)) {
-            XPrintf("  [é€šè¿‡] prepareFrame ç¼–ç æˆåŠŸ\n");
+            XPrintf("  [Í¨¹ı] prepareFrame ±àÂë³É¹¦\n");
             pass++;
         } else {
-            XPrintf("  [å¤±è´¥] prepareFrame ç¼–ç å¤±è´¥\n");
+            XPrintf("  [Ê§°Ü] prepareFrame ±àÂëÊ§°Ü\n");
             fail++;
         }
         XCanBusFrame_delete(encoded);
         XClassDelete(signalValues);
-        XCanMessageDescription_deinit(&msgDesc);
-        XCanFrameProcessor_deinit(&processor);
+        XClassDeinit((XClass*)&var);
+        XClassDeinit((XClass*)&sigName);
     }
 
     // ========== 6. é”™è¯¯/è­¦å‘ŠæŸ¥è¯¢æµ‹è¯• ==========

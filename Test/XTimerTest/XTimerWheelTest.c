@@ -261,7 +261,7 @@ void XTimerTimeWheelTest()
 		XHandle handle = XTimeWheelGroup_addTimerMs_base(wheel, data);
 		
 	}
-	XCoreApplication_exec();
+	XCoreApplication_execBounded(15000);
 	//while(true) XTimeWheelGroup_handler_base(wheel);
 }
 

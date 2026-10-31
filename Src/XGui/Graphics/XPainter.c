@@ -263,6 +263,8 @@ static bool painterDrawOutlineGlyph(XPainter* painter, int x, int baselineY,
                                     uint32_t cp, uint32_t color, float scale,
                                     XFontOutlineGlyphMetrics* outMetrics,
                                     XPainterPath* reusablePath);
+static bool painterOutlineGlyphBuildable(const XFont* font, uint32_t cp,
+                                         float scale);
 static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                                               int baselineY, uint32_t cp,
                                               uint32_t color, float scale,
@@ -10654,7 +10656,74 @@ static void painterOutlinePathReset(XPainterPath* path)
 /* gridFit: XFONT_TEXT_GRIDFIT grid snapping for the SW AA text path only.
    Every other caller (outline path cache build, GPU glyph raster) must
    pass false so cached/stored geometry stays bitwise unchanged. */
-static bool painterOutlineBuildPath(const XFontFace* face, const XFont* font,
+
+/* [outline 负缓存 2026-10-31] (face, cp) 级「轮廓不可构建」直映负缓存。
+ * 背景：紧凑点阵字库未覆盖的码点（ASCII/符号等）走 outline 路径；当
+ * outline 面未装上（FT resolve failed → falling back to bitmap）或字形
+ * 缺失时，每次构建都是注定失败的完整 FT resolve + 路径构建尝试，且该
+ * 失败是 (face, cp) 级**静态事实**（与 scale/origin/shear/gridFit 无关，
+ * 失败发生在字形加载层而非几何层）。无缓存时输出区每个字形每帧各试
+ * 一次：实测万字号输出区 paint 达 500-1070ms/帧（1-2fps），事件循环被
+ * 占满 → CPU 常驻 80%、拖动窗口巨卡、输出区显示跟不上。
+ * 键含 face 指针：运行期换 face 后旧负条目自然失配（键不命中即重建）。
+ * 正结果不缓存——正路径构建属逐次正常开销，GPU 字形光栅另有图集缓存。 */
+#define XPAINTER_OUTLINE_NEG_CACHE_SIZE 1024
+typedef struct XPainterOutlineNegKey
+{
+    const void* m_face;
+    uint32_t m_cp;
+    uint32_t m_pad;
+} XPainterOutlineNegKey;
+static XPainterOutlineNegKey
+    xpainter_outlineNegCache[XPAINTER_OUTLINE_NEG_CACHE_SIZE];
+
+static bool painterOutlineBuildPathUncached(
+    const XFontFace* face, const XFont* font,
+    uint32_t codepoint, float scale,
+    float originX, float baselineY,
+    XPainterPath* path,
+    XFontOutlineGlyphMetrics* metrics,
+    float shear, bool gridFit);
+
+static bool painterOutlineBuildPath(
+    const XFontFace* face, const XFont* font,
+    uint32_t codepoint, float scale,
+    float originX, float baselineY,
+    XPainterPath* path,
+    XFontOutlineGlyphMetrics* metrics,
+    float shear, bool gridFit)
+{
+    size_t slot;
+    XPainterOutlineNegKey key;
+    bool ok;
+    if (!face || !font)
+        return painterOutlineBuildPathUncached(
+            face, font, codepoint, scale, originX, baselineY, path,
+            metrics, shear, gridFit);
+    slot = ((size_t)face >> 4) * 2654435761u + codepoint * 40503u;
+    slot %= XPAINTER_OUTLINE_NEG_CACHE_SIZE;
+    key.m_face = face;
+    key.m_cp = codepoint;
+    key.m_pad = 0;
+    if (xpainter_outlineNegCache[slot].m_face == face &&
+        xpainter_outlineNegCache[slot].m_cp == codepoint)
+    {
+        /* 负缓存命中：保持与未命中失败相同的契约（path 已初始化、
+         * metrics 已清零），调用方失败分支无需区分。 */
+        XPainterPath_init(path);
+        XMemset(metrics, 0, sizeof(*metrics));
+        return false;
+    }
+    ok = painterOutlineBuildPathUncached(
+        face, font, codepoint, scale, originX, baselineY, path,
+        metrics, shear, gridFit);
+    if (!ok)
+        xpainter_outlineNegCache[slot] = key;
+    return ok;
+}
+
+static bool painterOutlineBuildPathUncached(
+    const XFontFace* face, const XFont* font,
                                     uint32_t codepoint, float scale,
                                     float originX, float baselineY,
                                     XPainterPath* path,
@@ -10857,28 +10926,35 @@ static uint32_t painterGlyphCacheHash(const void* face, uint32_t codepoint,
 }
 
 /**
- * @brief      字形 alpha 覆盖图缓存的哈希（笔点入键）。
- * @details    覆盖图不是位置无关的：拟合/吸附链的浮点阈值以**绝对**
- *             坐标求值（基线量级不同会在 roundf/0.35 邻界上翻向），
- *             同一字形在不同笔位产出的覆盖位图并不逐位相同。故缓存键
- *             必须含笔点——否则后存者毒化先存者，命中方显示他实例的
- *             字形（笔画错位/断裂，2026-10-26 真机首帧文字残缺实证：
- *             说明列只余首字、导航栏文字只剩零星笔画，切页重绘后恢复）。
- *             笔点入哈希是为让不同笔位各落一桶、索引快路径各自命中，
- *             完整键复核仍是最终依据。
+ * @brief      字形 alpha 覆盖图缓存的键口径开关与哈希。
+ * @details    键历史：2026-10-09 页 0「与」/2026-10-26 真机首帧残缺两案
+ *             实证「同键不同笔点位图互异」⇒ 笔点入键（后存者毒化先存
+ *             者：命中方显示他实例字形，笔画错位/断裂，切页重绘恢复）。
+ *             2026-10-31 复核终局：cacheable 路径笔点恒**整数**（x/
+ *             baselineY 为 int 参数 + 整数平移门），整数笔点下 snap/
+ *             配对/守卫链全部满足 roundf(pen+f) == pen+roundf(f) 与
+ *             「阈值只比差值」，位图与笔点平移无关——XGUI_ALPHA_INVARIANCE
+ *             探针在全量 autotest + 页 22 长文本负载实测同键异笔点
+ *             **0 不一致**（真实字库全 CJK 覆盖），两毒化案在当前代码
+ *             不复现。键默认剔除笔点（平移/滚动/缩放期不再整段重光
+ *             栅）；XGUI_ALPHA_KEY_POS=1 一键回退笔点入键旧口径。
  */
+static bool xpainter_alpha_key_pos_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGUI_ALPHA_KEY_POS");
+        requested = value && value[0] == '1' && value[1] == '\0';
+    }
+    return requested;
+}
+
 static uint32_t painterGlyphCacheHashOrigin(const void* face,
                                             uint32_t codepoint,
-                                            uint32_t scaleKey,
-                                            int originX, int originY)
+                                            uint32_t scaleKey)
 {
-    uint32_t h = painterGlyphCacheHash(face, codepoint, scaleKey);
-    h ^= (uint32_t)originX * 0x27D4EB2Fu;
-    h ^= (uint32_t)originY * 0x165667B1u;
-    h ^= h >> 16;
-    h *= 0x2545F491u;
-    h ^= h >> 15;
-    return h;
+    return painterGlyphCacheHash(face, codepoint, scaleKey);
 }
 
 /** @brief 由缩放因子导出缓存键（与 painterOutlineScaleKey 同式，
@@ -11036,15 +11112,15 @@ typedef struct PainterGlyphAlphaCacheEntry
     int m_top;    /**< 位图左上角相对基线 y 的偏移（像素）。 */
     int m_width;
     int m_height;
-    int m_originX; /**< 存入时的笔点绝对 x（x+translateX）。同一
-                       (face,cp,scaleKey) 在不同笔点产出的覆盖位图
-                       并不逐位相同：拟合/吸附链的浮点阈值以绝对
-                       坐标求值，基线量级不同会在 roundf/0.35 邻界
-                       上翻向（2026-10-09 页 0「与」双实例实证：
-                       (310,213) 实例横带齐整、(84,317) 实例同键
-                       却出弧形衰减行）。键不含笔点时后存者毒化
-                       先存者——命中方显示他实例字形（页 0 差异簇
-                       根因）。故笔点必须入键。 */
+    int m_originX; /**< 存入时的笔点绝对 x（x+translateX）。诊断/探针
+                       记录字段（XGUI_ALPHA_INVARIANCE 比对同键异笔点
+                       位图一致性；XGUI_ALPHA_KEY_POS=1 旧口径回滚时
+                       重新参与键复核）。历史注：2026-10-09 页 0「与」
+                       双实例（(310,213)/(84,317) 位图互异）与
+                       2026-10-26 真机首帧残缺两案曾迫使笔点入键；
+                       2026-10-31 探针实测当前代码同键异笔点 0 不一致
+                       （cacheable 路径笔点恒整数 ⇒ 吸附链平移不变），
+                       键默认剔除笔点（见 painterGlyphCacheHashOrigin 注）。 */
     int m_originY;
     uint8_t* m_alpha; /**< width*height 覆盖率，堆分配。 */
     bool m_valid;
@@ -11053,6 +11129,70 @@ typedef struct PainterGlyphAlphaCacheEntry
 static PainterGlyphAlphaCacheEntry
     g_glyphAlphaCache[XFONT_GLYPH_ALPHA_CACHE_ENTRIES];
 static uint32_t g_glyphAlphaCacheStamp;
+
+/* ========== 平移不变性取证探针（XGUI_ALPHA_INVARIANCE=1） ==========
+ * 2026-10-09 页 0「与」毒化案复核：同 (face,cp,scaleKey) 在不同整数
+ * 笔点光栅化的覆盖位图是否逐位一致（一致 ⇒ 位置可从缓存键剔除，
+ * 缩放/平移期不再整段重光栅）。探针在 store 时线性扫同键异位条目
+ * 比对（含尺寸），不改变任何行为；未设环境变量零开销。
+ * 解析预判：整数笔点下 snap/配对/守卫全可写为 pen + f(设计坐标)
+ * （roundf 对整数 pen 精确分配），位图应恒不变；若探针报错即为
+ * 反例，须先修不变性再动键。 */
+static int g_alphaInvMismatchCount;
+
+static bool xpainter_alpha_invariance_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGUI_ALPHA_INVARIANCE");
+        requested = value && value[0] == '1' && value[1] == '\0';
+    }
+    return requested;
+}
+
+static void painterGlyphAlphaCacheProbeInvariance(
+    const XFontFace* face, uint32_t codepoint, uint32_t scaleKey,
+    int originX, int originY, int width, int height, const uint8_t* alpha)
+{
+    int i;
+    if (!xpainter_alpha_invariance_requested()) return;
+    for (i = 0; i < XFONT_GLYPH_ALPHA_CACHE_ENTRIES; ++i)
+    {
+        const PainterGlyphAlphaCacheEntry* entry = &g_glyphAlphaCache[i];
+        if (!entry->m_valid || entry->m_face != face ||
+            entry->m_codepoint != codepoint ||
+            entry->m_scaleKey != scaleKey)
+            continue;
+        if (entry->m_originX == originX && entry->m_originY == originY)
+            continue; /* 同笔点复存：非不变性问题。 */
+        if (entry->m_width != width || entry->m_height != height)
+        {
+            ++g_alphaInvMismatchCount;
+            if (g_alphaInvMismatchCount <= 20)
+                fprintf(stderr,
+                        "ALPHA-INV-DIM cp=U+%04X scaleKey=%u "
+                        "pen=(%d,%d) vs (%d,%d) dim=%dx%d vs %dx%d\n",
+                        codepoint, scaleKey, originX, originY,
+                        entry->m_originX, entry->m_originY,
+                        width, height, entry->m_width, entry->m_height);
+            continue;
+        }
+        if (alpha && entry->m_alpha &&
+            XMemcmp(entry->m_alpha, alpha,
+                    (size_t)width * (size_t)height) != 0)
+        {
+            ++g_alphaInvMismatchCount;
+            if (g_alphaInvMismatchCount <= 20)
+                fprintf(stderr,
+                        "ALPHA-INV-MISMATCH cp=U+%04X scaleKey=%u "
+                        "pen=(%d,%d) vs (%d,%d) dim=%dx%d\n",
+                        codepoint, scaleKey, originX, originY,
+                        entry->m_originX, entry->m_originY,
+                        width, height);
+        }
+    }
+}
 
 /* 查找加速索引（对齐 Qt 字形缓存的哈希查找语义）：键哈希 → 槽位下标
    +1。索引陈旧无害——命中必须复核完整键，复核失败回退线性扫描并
@@ -11065,12 +11205,14 @@ static PainterGlyphAlphaCacheEntry* painterGlyphAlphaCacheFind(
 {
     uint32_t bucket;
     int i;
+    /* 键口径：默认位置无关（笔点参数仅作旧口径回滚与诊断记录用）；
+       XGUI_ALPHA_KEY_POS=1 回退「笔点入键」。 */
+    bool keyPos = xpainter_alpha_key_pos_requested();
     if (!face || scaleKey == 0u) return NULL;
-    bucket = painterGlyphCacheHashOrigin(face, codepoint, scaleKey,
-                                         originX, originY) &
+    bucket = painterGlyphCacheHashOrigin(face, codepoint, scaleKey) &
              (uint32_t)(sizeof(g_glyphAlphaIndex) /
                         sizeof(g_glyphAlphaIndex[0]) - 1u);
-    /* 快路径：索引指认的槽位键完全匹配（笔点含在内）。 */
+    /* 快路径：索引指认的槽位键完全匹配（旧口径含笔点）。 */
     if (g_glyphAlphaIndex[bucket])
     {
         PainterGlyphAlphaCacheEntry* entry =
@@ -11078,8 +11220,8 @@ static PainterGlyphAlphaCacheEntry* painterGlyphAlphaCacheFind(
         if (entry->m_valid && entry->m_face == face &&
             entry->m_codepoint == codepoint &&
             entry->m_scaleKey == scaleKey &&
-            entry->m_originX == originX &&
-            entry->m_originY == originY)
+            (!keyPos || (entry->m_originX == originX &&
+                         entry->m_originY == originY)))
         {
             entry->m_stamp = ++g_glyphAlphaCacheStamp;
             return entry;
@@ -11091,8 +11233,8 @@ static PainterGlyphAlphaCacheEntry* painterGlyphAlphaCacheFind(
         if (entry->m_valid && entry->m_face == face &&
             entry->m_codepoint == codepoint &&
             entry->m_scaleKey == scaleKey &&
-            entry->m_originX == originX &&
-            entry->m_originY == originY)
+            (!keyPos || (entry->m_originX == originX &&
+                         entry->m_originY == originY)))
         {
             entry->m_stamp = ++g_glyphAlphaCacheStamp;
             g_glyphAlphaIndex[bucket] = (uint16_t)(i + 1);
@@ -11147,6 +11289,9 @@ static bool painterGlyphAlphaCacheStore(PainterGlyphAlphaCacheEntry* slot,
     copy = (uint8_t*)XMalloc_System(bytes);
     if (!copy) return false;
     XMemcpy(copy, alpha, bytes);
+    painterGlyphAlphaCacheProbeInvariance(face, codepoint, scaleKey,
+                                          originX, originY, width, height,
+                                          alpha);
     if (slot->m_valid && slot->m_alpha)
     {
         XFree_System(slot->m_alpha);
@@ -11166,9 +11311,10 @@ static bool painterGlyphAlphaCacheStore(PainterGlyphAlphaCacheEntry* slot,
     slot->m_alpha = copy;
     slot->m_valid = true;
     /* 同步写加速索引（哈希桶只记最近一次写入的槽位；被覆盖的旧
-       索引项由命中时的键复核兜底）。哈希与查找同口径：笔点入键。 */
-    g_glyphAlphaIndex[painterGlyphCacheHashOrigin(face, codepoint, scaleKey,
-                                                   originX, originY) &
+       索引项由命中时的键复核兜底）。哈希与查找同口径：默认位置
+       无关，XGUI_ALPHA_KEY_POS=1 旧口径笔点入键（见键口径注）。 */
+    g_glyphAlphaIndex[painterGlyphCacheHashOrigin(face, codepoint,
+                                                  scaleKey) &
                       (uint32_t)(sizeof(g_glyphAlphaIndex) /
                                  sizeof(g_glyphAlphaIndex[0]) - 1u)] =
         (uint16_t)(slot - g_glyphAlphaCache + 1);
@@ -13912,6 +14058,19 @@ static bool painterGpuDrawText(XPainter* self, int x, int baselineY,
                 continue;
             }
             XMemset(&metrics, 0, sizeof(metrics));
+            /* [缺字不弃行 2026-10-31] 与 painterDrawCodepoint 的 GPU 分支
+             * 同口径：字形构建不出来（点阵字库无该码点且轮廓面不可用）
+             * 时按空字形跳过、advance 照推——**绝不 return false 弃整行**。
+             * 实测：输出区一行「create_gbk: gbk娴嫭瘟」在 U+5A34 后截断，
+             * 整行剩余字形全部丢失（GPU 路径对单个缺字 return false，
+             * 行内后继字形不再绘制）——这就是用户看到的「显示不全」。 */
+            if (!painterOutlineGlyphBuildable(&self->m_state.m_font, cp,
+                                              scale))
+            {
+                x += painterOutlineGlyphAdvance(&self->m_state.m_font, cp,
+                                                &table, scale);
+                continue;
+            }
             if (!painterGpuDrawOutlineGlyph(self, x, baselineY, cp, color,
                                             scale, &metrics))
                 return false;
@@ -14224,6 +14383,17 @@ int XPainter_drawGlyph(XPainter* self, int x, int baselineY,
 #if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
     if (table.m_bpp == 0)
     {
+        /* [缺字跳过 2026-10-31 · drawGlyph 补口] 与 painterDrawCodepoint
+         * GPU 分支同口径：字形构建不出来（点阵字库无该码点且轮廓面不可
+         * 用）时**直接跳过、绝不 painterGpuFallback 整帧降级**。
+         * drawGlyph 是文本控制器（XLabel 富文本/XTextControl 族）的
+         * 逐字形路径——输出区整段测试日志含 GBK 产物字符（娴嫭瘟等
+         * 点阵字库没有的码点），每帧每个缺字都触发一次整帧降级 →
+         * 帧呈现停摆，屏幕冻结在缺字出现前的旧帧（实测「显示不全」：
+         * 标签模型里 8028 字符/hint 4304px 全对，屏上只显示前 16 行
+         * 旧像素）。 */
+        if (!painterOutlineGlyphBuildable(&self->m_state.m_font, cp, scale))
+            return adv;
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
         if (self->m_gpuActive)
         {
@@ -17662,6 +17832,35 @@ static void painterDrawStrikeOverline(XPainter* self, int x, int advance,
     }
 }
 
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+/** @brief 该码点能否构建出轮廓字形（缺字 / 轮廓面不可用的判定）。
+ *  @details 只在 GPU 字形路径失败后调用（冷路径）：一次 build 的成本远小于
+ *           一次整帧降级，用它区分「GPU 做不到」与「这个字根本不存在」。
+ *  @param  font  当前画笔字体（借用）。
+ *  @param  cp    Unicode 码点。
+ *  @param  scale 字形缩放。
+ *  @return 可构建返回 true；缺字或轮廓面不可用返回 false。 */
+static bool painterOutlineGlyphBuildable(const XFont* font, uint32_t cp,
+                                         float scale)
+{
+    const XFontFace* face;
+    XPainterPath path;
+    XFontOutlineGlyphMetrics metrics;
+    bool ok;
+    if (!font || !(face = XFont_face(font)))
+        return false;
+    XMemset(&metrics, 0, sizeof(metrics));
+    ok = painterOutlineBuildPath(face, font, cp, scale, 0.0f, 0.0f, &path,
+                                 &metrics,
+                                 XFont_italic(font)
+                                     ? XPAINTER_SYNTHETIC_ITALIC_SHEAR : 0.0f,
+                                 false);
+    if (ok)
+        XPainterPath_deinit(&path);
+    return ok;
+}
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
+
 /** @brief 绘制一个字形（control 仅占位不画），underline 时画下划线。 */
 static int painterDrawCodepoint(XPainter* self,
                                  const PainterBitmapFontTable* table,
@@ -17708,7 +17907,37 @@ static int painterDrawCodepoint(XPainter* self,
                        painterFontExtraAdvance(&self->m_state.m_font,
                                                advance, cp);
             }
-            /* GPU 字形失败：合并已画内容并整帧降级后继续软件补画本字形。 */
+            /* GPU 字形失败分两类，处置必须分开（2026-10-31 用户实测「按钮
+               整枚空白」根修）：
+               ① GPU 做不到（图集/裁剪/驱动侧）→ 整帧降级后由下方软件
+                  路径补画本字形，代价大但正确；
+               ② **字形本身构建不出来**（字库无该码点、轮廓面不可用）→
+                  整帧降级毫无意义，而且会在每一帧按同一位置重演：实测
+                  U+25B6（▶）在点阵紧凑字库中不存在、被分配到 outline
+                  路径后恒失败 → 每次绘制都触发 painterGpuFallback →
+                  该窗口再没有出过新帧，表现就是「按钮整枚空白、输出区
+                  也一起空」（同一帧后续内容全部丢失）。
+                  处置对齐点阵路径的缺字口径：按空字形跳过、advance 照推，
+                  绝不降级整帧。 */
+            if (!painterOutlineGlyphBuildable(&self->m_state.m_font, cp,
+                                              scale))
+            {
+                static int d1 = 0;
+                if (d1++ < 12)
+                    fprintf(stderr, "[GX] skip unbuildable cp=U+%04X\n",
+                            (unsigned)cp);
+                {
+                    int blankAdvance =
+                        painterOutlineGlyphAdvance(&self->m_state.m_font, cp,
+                                                   table, scale);
+                    painterDrawStrikeOverline(self, x, blankAdvance,
+                                              baselineY, color, table, scale);
+                    return blankAdvance +
+                           painterFontExtraAdvance(&self->m_state.m_font,
+                                                   blankAdvance, cp);
+                }
+            }
+            /* GPU 做不到：整帧降级后由下方软件路径补画本字形。 */
             painterGpuFallback(self);
         }
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */

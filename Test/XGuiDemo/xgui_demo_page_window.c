@@ -97,9 +97,15 @@ static int wn_nativeStyleBits(XWidget* top)
     id = XWindow_winId((XWindow*)top->m_windowHandle);
     if (!id) return -1;
     style = (DWORD)GetWindowLongPtrW((HWND)(uintptr_t)id, GWL_STYLE);
-    /* 返回装饰位集合（非零=存在原生标题栏/边框）。 */
-    return (int)(style & (WS_CAPTION | WS_THICKFRAME | WS_SYSMENU |
-                          WS_MINIMIZEBOX | WS_MAXIMIZEBOX));
+    /* 返回装饰位集合（非零=存在原生标题栏/边框）。
+       [2026-10-31 口径修正] 只取原生标题栏/粗边框两位：无边框组装
+       （XPWN_FRAMELESS_STYLE，XPlatformNativeWindow_win32.c:645）**有意**
+       保留 WS_SYSMENU|WS_MINIMIZEBOX|WS_MAXIMIZEBOX 维持任务栏集成
+       （点击任务栏按钮最小化，2026-10-29 用户实测必需）。旧口径把这三位
+       一并算作「原生装饰残留」，导致单标题栏断言恒红——断言与设计脱节，
+       不是双层标题栏。判据仍成立：WS_CAPTION 覆盖 WS_BORDER|WS_DLGFRAME，
+       连同 WS_THICKFRAME 一起为 0 即「无原生标题栏/边框」。 */
+    return (int)(style & (WS_CAPTION | WS_THICKFRAME));
 }
 #endif
 

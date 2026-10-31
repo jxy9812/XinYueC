@@ -24,12 +24,11 @@ extern "C" {
 /*                        模块总开关                                        */
 /* ========================================================================== */
 /** @brief XNetwork 模块总开关；置 0 时裁剪整个 XNetwork 对外公开 API 及所有子功能。
- * @note 总开关在 CXinYueConfig.h 中统一定义，此处仅兜底默认值。
+ * @note 【2026-10-31 重复宏合并】取值唯一权威 = CXinYueConfig.h 的设备派生
+ *       定义（XDEVICE_ON && XDEVICE_NETWORK_ON；本文件 :18 自举包含后它
+ *       总是先行生效，原字面量 1 兜底已在所有路径下死亡且语义误导——
+ *       无网络设备时仍放行网络编译——已删除）。
  *       关闭后若仍有其它模块无条件引用 XNetwork 符号，需同步裁剪对应依赖。 */
-#ifndef XNETWORK_ON
-#define XNETWORK_ON 1
-#endif
-
 #if XNETWORK_ON
 
 /** @brief 抽象套接字模块开关；关闭后 XAbstractSocket / XTcpSocket 相关 API 不编译。 */

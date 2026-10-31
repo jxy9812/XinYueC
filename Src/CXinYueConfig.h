@@ -85,10 +85,16 @@ extern "C" {
 #define XERROR_ON						1//错误输出
 /** @brief 测试/演示代码总开关；置 1 时启用 Test/ 目录测试代码及 main.c 中的演示入口，置 0 时裁剪。 */
 #define DEMOTEST_ON						1//测试代码
-/** @brief 测试/演示代码开关（FreeType 字库战役侧命名，与 DEMOTEST_ON 同义同值）：
- *  XFontFtTest.{h,c} 等远端新增测试以此门控，两宏必须同时定义，缺一即整段
- *  测试定义编译出局而调用点仍在（LNK2019：XTestMenu_XFontFtTest 未解析）。 */
-#define DEMOTEST						1//测试代码
+/** @brief 测试/演示代码开关（FreeType 字库战役侧命名，XFontFtTest.{h,c}
+ *  等远端新增测试以此门控）。
+ *  【2026-10-31 同义宏合并】原为与 DEMOTEST_ON 平行的独立定义，要求两宏
+ *  人肉同步（缺一即整段测试定义编译出局而调用点仍在——LNK2019：
+ *  XTestMenu_XFontFtTest 未解析）；现改为 DEMOTEST_ON 的派生别名，单点
+ *  取值。外部仍可 -DDEMOTEST=0 单独关闭（#ifndef 守卫让位命令行；
+ *  消费点均为 #if DEMOTEST，别名展开语义等价，已核无 #ifdef 用法）。 */
+#ifndef DEMOTEST
+#define DEMOTEST DEMOTEST_ON
+#endif
 
 /* ========================================================================== */
 /*                                通用模块/编译开关配置                                 */

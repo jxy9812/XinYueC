@@ -239,16 +239,6 @@ void XWidget_markContentCacheReady(XWidget* self);
 /* ==================== 界外按下重放（悬浮弹层点外语义，内部） ==================== */
 
 /**
- * @brief      返回控件桥窗口归属的顶层控件（内部）。
- * @details    顶层控件经 XWidget_createWindow 内嵌 XWidgetWindow 桥接窗，
- *             本函数做 window→widget 反查（悬浮弹层界外收层重放链的
- *             落点解析步；XGuiApplication_topLevelAt 只给 XWindow*）。
- * @param      window 待反查窗口；可为 NULL。
- * @return     归属顶层控件（借用）；非桥窗口（纯 XWindow）或 NULL 实参
- *             返回 NULL。
- */
-XWidget* XWidget_widgetForWindow(const XWindow* window);
-/**
  * @brief      把一次界外按下转发到全局坐标下的顶层窗口（内部）。
  * @details    全局坐标解析顶层（XGuiApplication_topLevelAt→桥窗口反查
  *             控件）后经 XWindowSystemInterface_handleMouseEvent_ex 完整
@@ -311,6 +301,28 @@ XWidget* XWidget_applicationModalWidget(void);
  * @note 仅供框架内部与对话框收口路径使用，不对外公开。
  */
 void XWidget_deactivateInputRegistrations(XWidget* self);
+
+/* ==================== 布局失效投递（对标 Qt postEvent LayoutRequest） ==================== */
+
+/**
+ * @brief      向控件投递 LayoutRequest（队列事件，压缩合并同接收者）。
+ * @details    对标 Qt `QCoreApplication::postEvent(parent,
+ *             QEvent::LayoutRequest)`（qwidget.cpp:10527
+ *             updateGeometry_helper 无布局父级分支 / qlayout.cpp:1063
+ *             activate 尾部 mw->updateGeometry() 的同效段）：接收者在事件
+ *             分发中 activate 自身布局；无布局接收者沿父链上抛（视口转发
+ *             同位，QAbstractScrollAreaFilter→QScrollArea::event）。
+ * @param      receiver 接收控件；NULL 不操作。
+ * @note       仅供框架内部（XLayout_activate 尾部、显隐联动收口）使用。
+ * @note       压缩语义：走 `XCoreApplication_postEvent`，由 Qt 6.8 口径的
+ *             `compressEvent` 在**入队前**合并同接收者的重复纯通知事件
+ *             （同一接收者至多 1 个在飞）；不使用无锁 tryPostEvent（其
+ *             1024 槽环在长同步阶段会满并丢事件）。**不要**在接收者上加
+ *             「已投递」占位位——事件被丢弃时占位位不会复位，该控件此后
+ *             永久收不到布局请求（2026-10-31 实测：主窗标题栏/状态栏/
+ *             悬浮层布局停摆）。
+ */
+void XWidget_postLayoutRequest(XWidget* receiver);
 
 #ifdef __cplusplus
 }

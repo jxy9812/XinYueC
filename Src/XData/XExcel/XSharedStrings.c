@@ -34,6 +34,37 @@ static void XSharedStrings_shared_strings_clear(XSharedStrings* self)
     self->m_stringCount = 0;
 }
 
+/* [2026-10-31 UAF root-fix] identity-based table entry removal.
+ * The table key is the XString INSIDE an XRichString (XRichString_text),
+ * and the map compare function compares the pointed-to TEXT (not the
+ * pointer). Content-equality removal (XMapBase_remove_base) can therefore
+ * hit a DIFFERENT entry whose text happens to be equal, leaving the removed
+ * rich string's key pointer dangling in the table - the next lookup then
+ * compares a freed XString (UAF, Excel roundtrip crash: XString_compare ->
+ * XString_unicode on freed heap; cdb-verified).
+ * This helper removes the entry whose key POINTER is exactly `ownedKey`
+ * (identity) and lets a surviving same-text entry re-register, so no
+ * duplicate-text entry is created (duplicates are the ambiguity source). */
+static bool XSharedStrings_eraseEntryByKey(XSharedStrings* self, XString* ownedKey)
+{
+    XMap_iterator it;
+    bool erased = false;
+    if (!self || !self->m_stringTable || !ownedKey) return false;
+    it = XMap_begin(self->m_stringTable);
+    while (!XMap_iterator_isEnd(&it)) {
+        XPair* pair = XMap_iterator_data(&it);
+        XString** kp = pair ? (XString**)XPair_first(pair) : NULL;
+        if (kp && *kp == ownedKey) {
+            XMapBase_iterator next;
+            XMapBase_erase_base((XMapBase*)self->m_stringTable, &it, &next);
+            erased = true;
+            break;
+        }
+        XMap_iterator_add(self->m_stringTable, &it);
+    }
+    return erased;
+}
+
 static XlsxSharedStringInfo* XSharedStrings_shared_string_info(XSharedStrings* self,
                                                  const XString* string)
 {
@@ -210,18 +241,30 @@ void XSharedStrings_removeSharedString(XSharedStrings* self, const XString* stri
     if (self->m_stringCount > 0) self->m_stringCount--;
     if (--info->m_count <= 0) {
         int idx = info->m_index;
-        XString* key = (XString*)string;
-        XMap_remove_base((XMapBase*)self->m_stringTable, &key);
         XRichString* rich = *(XRichString**)XVector_at_base(self->m_stringList, idx);
-        if (rich) XRichString_delete(rich);
-        XVector_removeAt_base(self->m_stringList, (size_t)idx);
-        XMap_iterator it = XMap_begin(self->m_stringTable);
-        for (; !XMap_iterator_isEnd(&it); XMap_iterator_add(self->m_stringTable, &it)) {
-            XPair* pair = XMap_iterator_data(&it);
-            XlsxSharedStringInfo* current =
-                pair ? (XlsxSharedStringInfo*)XPair_second(pair) : NULL;
-            if (current && current->m_index > idx) current->m_index--;
+        /* Remove by IDENTITY (the key owned by the rich being deleted), not
+           by content equality - see XSharedStrings_eraseEntryByKey. */
+        if (rich) {
+            XString* ownedKey = (XString*)XRichString_text(rich);
+            XSharedStrings_eraseEntryByKey(self, ownedKey);
+            XRichString_delete(rich);
         }
+        XVector_removeAt_base(self->m_stringList, (size_t)idx);
+        /* Re-index the surviving entries (the removed slot shifts them). */
+        {
+            XMap_iterator it = XMap_begin(self->m_stringTable);
+            for (; !XMap_iterator_isEnd(&it); XMap_iterator_add(self->m_stringTable, &it)) {
+                XPair* pair = XMap_iterator_data(&it);
+                XlsxSharedStringInfo* current =
+                    pair ? (XlsxSharedStringInfo*)XPair_second(pair) : NULL;
+                if (current && current->m_index > idx) current->m_index--;
+            }
+        }
+        /* A surviving rich with the SAME text (same text loaded twice from
+           a file) must be re-registered so later lookups still find it - but
+           by identity: inserting by content would create a duplicate entry
+           (the map cannot hold two equal-text keys), re-introducing the
+           ambiguity that caused the UAF. */
         for (size_t i = XVector_size_base(self->m_stringList); i > 0; --i) {
             XRichString* candidate = *(XRichString**)XVector_at_base(
                 self->m_stringList, i - 1);
@@ -230,8 +273,15 @@ void XSharedStrings_removeSharedString(XSharedStrings* self, const XString* stri
             if (candidateText &&
                 XString_compare(candidateText, string) == XCompare_Equality) {
                 XString* candidateKey = (XString*)candidateText;
-                XlsxSharedStringInfo replacement = {(int)(i - 1), 0};
-                XMap_insert_base(self->m_stringTable, &candidateKey, &replacement);
+                XlsxSharedStringInfo* current =
+                    XSharedStrings_shared_string_info(self, candidateKey);
+                if (current) {
+                    current->m_index = (int)(i - 1);
+                    current->m_count = 0;
+                } else {
+                    XlsxSharedStringInfo replacement = {(int)(i - 1), 0};
+                    XMap_insert_base(self->m_stringTable, &candidateKey, &replacement);
+                }
                 break;
             }
         }

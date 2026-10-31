@@ -17,6 +17,21 @@
  *                 负责适配器识别、扫描、关联状态查询，以及开放/WEP 连接。
  *                 即便上层选了 NM/wpa，关联状态查询仍走 WEXT（只读、廉价）。
  *
+ *             ## 自举（无 NM 且无 wpa 控制口时，补齐 WPA 全系）
+ *               嵌入式板的常见形态：wpa_supplicant 装了，但既没有
+ *               NetworkManager，守护进程也没开机自启（rk3506 buildroot
+ *               实测即如此）。此时后端退化为 WEXT，而 **WEXT 只能连
+ *               开放/WEP**——WPA/WPA2/WPA3 全部被拒，用户侧表现为"密码明明
+ *               正确却连接发起失败"。故**发起 WPA 系连接而控制口缺失时**
+ *               先自举 wpa_supplicant（xdevwifi_wpaBootstrap），把 WPA 全系
+ *               补齐（自举只在 platformStartConnect 触发，不在后端探测里）：
+ *                 - 只在 NM 确认不在管时动手，不与 NM 的调度打架；
+ *                 - 每个槽位**只试一次**，失败不重试，绝不反复 fork；
+ *                 - 用 /tmp 下的最小配置，不读不写系统既有配置；
+ *                 - 全程超时兜底（等待 + 等控制口），不把调用者拖死；
+ *                 - 自举起的守护进程不在 platformClose 回收（系统级进程，
+ *                   可能已被别的应用共用；下次 open 直接复用其控制口）。
+ *
  *             ## 异步口径（与 win32 / android 后端一致，全部"发起即返回"）
  *               - 扫描：发起后立即返回；scanState 轮询收口，超时 4s；
  *                 结果在 takeScanResults 一次性交出；
@@ -123,6 +138,20 @@
 #define XDEVWIFI_WPA_CMD_MAX   512
 #define XDEVWIFI_WPA_REPLY_MAX (8u * 1024u)
 
+/** @brief 后端探测结果的复用时长（毫秒）。
+ *  @details 探测要 stat / 拉子进程，不能高频重复；但也不能一次定终身——
+ *           NM 或 wpa_supplicant 后来才起来（热启动）时必须能被发现。 */
+#define XDEVWIFI_PROBE_TTL_MS 3000
+
+/** @brief wpa_supplicant 自举：等待其完成 daemonize 退出的上限（毫秒）。 */
+#define XDEVWIFI_WPA_BOOT_WAIT_MS 2000
+
+/** @brief wpa_supplicant 自举：等待控制口出现的上限（毫秒）。 */
+#define XDEVWIFI_WPA_BOOT_SOCK_MS 3000
+
+/** @brief 自举用的临时配置文件路径模板（不写系统配置，不持久化凭据）。 */
+#define XDEVWIFI_WPA_BOOT_CONF_TMPL "/tmp/xdevwifi-wpa-%s.conf"
+
 /** @brief nmcli 单次执行等待上限（毫秒）；超时即 SIGKILL。 */
 #define XDEVWIFI_NM_TIMEOUT_MS 1500
 
@@ -156,6 +185,8 @@ typedef struct XDevWifiSlot
     bool wpaTried;                      /**< 是否已探测过控制口。 */
     bool wpaOk;                         /**< 控制口可用。 */
     char wpaPath[96];                   /**< 控制口路径。 */
+    int64_t wpaProbeMs;                 /**< 上次探测控制口的时刻（TTL 内复用）。 */
+    bool wpaBootTried;                  /**< 是否已尝试过自举（每槽位仅一次）。 */
 } XDevWifiSlot;
 
 /** @brief 打开的实例引用计数（先关闭的会话不释放他人仍在用的资源）。 */
@@ -627,6 +658,20 @@ static bool xdevwifi_runCapture(const char* const argv[], char* out,
     return exited && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+/**
+ * @brief 作废 NetworkManager 探测缓存，令下次查询重新拉一次 nmcli。
+ * @details 探测要拉子进程（nmcli 不在场时 execvp 立即失败，几乎零成本；
+ *          但 nmcli 在场而 NM 未运行时要等它碰 D-Bus，最坏
+ *          XDEVWIFI_NM_TIMEOUT_MS）。故**只允许动作类入口调用**（打开、
+ *          枚举、发起扫描/连接），250ms 的状态轮询路径绝不调用，否则会
+ *          周期性地把 UI 拖住。缓存因此不是"一次定终身"：NM 在系统运行
+ *          中途被拉起时，下一次用户动作即可发现并切换后端。
+ */
+static void xdevwifi_nmReprobe(void)
+{
+    s_nmRunning = -1;
+}
+
 /** @brief NetworkManager 是否在运行（结果缓存；探测失败按未运行处理）。 */
 static bool xdevwifi_nmAvailable(void)
 {
@@ -844,39 +889,221 @@ static bool xdevwifi_nmForget(const char* ssid)
  * 五、wpa_supplicant 控制接口
  * ========================================================================= */
 
+/** @brief wpa_supplicant 控制口目录的两条惯例路径（探测与自举共用）。 */
+static const char* const k_wpaCtrlDirs[] = {
+    "/run/wpa_supplicant", "/var/run/wpa_supplicant"
+};
+
+/** @brief 自举时查找 wpa_supplicant 可执行文件的候选路径。 */
+static const char* const k_wpaBinPaths[] = {
+    "/usr/sbin/wpa_supplicant",
+    "/sbin/wpa_supplicant",
+    "/usr/local/sbin/wpa_supplicant",
+    "/usr/bin/wpa_supplicant"
+};
+
+/* 前向声明：自举要用它做"就绪探活"（定义在下方控制口一节）。 */
+static bool xdevwifi_wpaCommand(XDevWifiSlot* slot, const char* cmd,
+                                char* reply, size_t cap);
+
+/** @brief 控制口客户端 socket 的本地地址序号（保证同进程内不撞名）。 */
+static unsigned s_ctrlSeq = 0;
+
+/**
+ * @brief 定位 wpa_supplicant 可执行文件。
+ * @return 首个可执行命中的绝对路径；全部缺失返回 NULL。
+ */
+static const char* xdevwifi_wpaBinary(void)
+{
+    size_t i;
+    for (i = 0; i < sizeof(k_wpaBinPaths) / sizeof(k_wpaBinPaths[0]); ++i) {
+        if (access(k_wpaBinPaths[i], X_OK) == 0) return k_wpaBinPaths[i];
+    }
+    return NULL;
+}
+
+/**
+ * @brief 写出自举用的最小配置。
+ * @details 只有控制口与"允许回写"两行：**不预置任何网络、不读也不写系统
+ *          既有配置**（/etc/wpa_supplicant.conf 之类），凭据经控制口
+ *          SET_NETWORK 下发后落在这个 /tmp 临时文件里，随 tmpfs 回收而不
+ *          持久化到磁盘。
+ * @return true=写成功。
+ */
+static bool xdevwifi_wpaWriteBootConf(const char* ifname, const char* ctrlDir,
+                                      char* confPath, size_t confCap)
+{
+    FILE* fp;
+    if (!ifname || !ctrlDir || !confPath || confCap == 0) return false;
+    snprintf(confPath, confCap, XDEVWIFI_WPA_BOOT_CONF_TMPL, ifname);
+    fp = fopen(confPath, "w");
+    if (!fp) return false;
+    fprintf(fp, "ctrl_interface=%s\n", ctrlDir);
+    fprintf(fp, "update_config=1\n");
+    fclose(fp);
+    return true;
+}
+
+/**
+ * @brief 自举：无 NetworkManager、无控制口、但 wpa_supplicant 在场时，
+ *        拉起守护进程并等其控制口出现。
+ * @details 嵌入式板的典型形态（rk3506 buildroot 实测即如此）：wpa_supplicant
+ *          二进制装了，但没有 NetworkManager，守护进程也没开机自启。此时
+ *          backendOf 退化为 WEXT，而 WEXT 只能连开放/WEP——WPA/WPA2/WPA3
+ *          全被拒，用户侧表现为"密码没错却连接发起失败"。本函数补上这条
+ *          通路，使 WPA 全系可用。
+ *
+ *          纪律（避免把"补功能"变成"制造副作用"）：
+ *           - 只在 NM 确认不在管时动手，不与 NM 的调度打架；
+ *           - 每个槽位**只试一次**，失败不重试，绝不反复 fork 系统进程；
+ *           - 全程有超时兜底，最坏 XDEVWIFI_WPA_BOOT_WAIT_MS +
+ *             XDEVWIFI_WPA_BOOT_SOCK_MS 后返回，不把调用者拖死；
+ *           - 不触碰系统既有配置（见 xdevwifi_wpaWriteBootConf）。
+ * @param slot 目标槽位；成功时其 wpaPath / wpaOk 已就绪。
+ * @return true=自举成功。
+ */
+static bool xdevwifi_wpaBootstrap(XDevWifiSlot* slot)
+{
+    const char* binary;
+    char confPath[128];
+    char sockPath[128];
+    char ctrlDir[64];
+    char ifArg[IFNAMSIZ];
+    struct stat st;
+    pid_t pid;
+    int status = 0;
+    bool exited = false;
+    int64_t deadline;
+
+    if (!slot || !slot->ifname[0]) return false;
+    /* 每槽位只试一次：自举要 fork 系统守护进程，不能因为失败就反复重试。 */
+    if (slot->wpaBootTried) return false;
+    slot->wpaBootTried = true;
+    /* NM 在管时 wpa_supplicant 由它带起，自举会与之冲突。 */
+    if (xdevwifi_nmAvailable()) return false;
+    binary = xdevwifi_wpaBinary();
+    if (!binary) return false;
+
+    xdevwifi_copyText(ctrlDir, sizeof(ctrlDir), k_wpaCtrlDirs[0]);
+    /* 控制口目录常在 /run（tmpfs）上，开机可能还没建；已存在时失败可忽略。 */
+    (void)mkdir(ctrlDir, 0755);
+    if (!xdevwifi_wpaWriteBootConf(slot->ifname, ctrlDir, confPath,
+                                   sizeof(confPath)))
+        return false;
+    xdevwifi_copyText(ifArg, sizeof(ifArg), slot->ifname);
+
+    pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) {
+        int devnull = open("/dev/null", O_RDWR);
+        if (devnull >= 0) {
+            dup2(devnull, STDIN_FILENO);
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            if (devnull > STDERR_FILENO) close(devnull);
+        }
+        /* -B：自行 daemonize 并让父进程退出，故父进程只需短暂等待。
+         * 不指定 -D，由 wpa_supplicant 按 nl80211 → wext 自行择优。 */
+        execl(binary, "wpa_supplicant", "-B", "-i", ifArg, "-c", confPath,
+              (char*)NULL);
+        _exit(127);
+    }
+    /* 等 daemonize 完成（父进程退出）；超时即强杀，绝不拖住调用者。 */
+    deadline = xdevwifi_nowMs() + XDEVWIFI_WPA_BOOT_WAIT_MS;
+    for (;;) {
+        pid_t r = waitpid(pid, &status, WNOHANG);
+        if (r == pid) {
+            exited = true;
+            break;
+        }
+        /* 子进程状态不可知（如 SIGCHLD 被宿主接管）：不再空等，继续探活。 */
+        if (r < 0) break;
+        if (xdevwifi_nowMs() >= deadline) {
+            kill(pid, SIGKILL);
+            while (waitpid(pid, &status, 0) < 0 && errno == EINTR) { }
+            break;
+        }
+        usleep(50 * 1000);
+    }
+    /* 启动即失败（含 execl 找不到的 127、配置不可读等）：不必再等控制口
+     * 空耗 XDEVWIFI_WPA_BOOT_SOCK_MS，直接判负。 */
+    if (exited && WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+        XPrintf("XDeviceWiFi_posix: 为 %s 启动 wpa_supplicant 失败"
+                "（%s，退出码 %d）\n",
+                slot->ifname, binary, WEXITSTATUS(status));
+        return false;
+    }
+
+    /* 等控制口**真正可用**：socket 文件出现 ≠ 守护进程已就绪——nl80211 初始化
+     * 完成前没人收命令，此时发 ADD_NETWORK 会撞上 wpaCommand 的 500ms 收包
+     * 超时而被误判为"连接发起失败"（rk3506 真机实测：自举日志打出来了，
+     * 紧接着连接却失败，即此处）。故每轮先置位再发 PING，收到 PONG 才算
+     * 自举成功。 */
+    snprintf(sockPath, sizeof(sockPath), "%s/%s", ctrlDir, slot->ifname);
+    deadline = xdevwifi_nowMs() + XDEVWIFI_WPA_BOOT_SOCK_MS;
+    for (;;) {
+        char reply[XDEVWIFI_WPA_REPLY_MAX];
+        if (stat(sockPath, &st) == 0 && S_ISSOCK(st.st_mode)) {
+            xdevwifi_copyText(slot->wpaPath, sizeof(slot->wpaPath), sockPath);
+            /* 先置位，让 wpaCommand 内部的控制口探测短路通过。 */
+            slot->wpaOk = true;
+            if (xdevwifi_wpaCommand(slot, "PING", reply, sizeof(reply)) &&
+                strncmp(reply, "PONG", 4) == 0) {
+                XPrintf("XDeviceWiFi_posix: 已为 %s 自举 wpa_supplicant，"
+                        "控制口 %s\n", slot->ifname, slot->wpaPath);
+                return true;
+            }
+        }
+        if (xdevwifi_nowMs() >= deadline) break;
+        usleep(100 * 1000);
+    }
+    /* 未就绪：如实复位，别让上层拿着一个应答不了的控制口去连。 */
+    slot->wpaOk = false;
+    slot->wpaPath[0] = '\0';
+    XPrintf("XDeviceWiFi_posix: 为 %s 自举 wpa_supplicant 失败"
+            "（控制口 %s 未见或不应答，WPA 系连接不可用）\n",
+            slot->ifname, sockPath);
+    return false;
+}
+
 /**
  * @brief 定位接口的控制口路径。
  * @details 优先接口专属口（/run 与 /var/run 两条惯例路径），其次全局控制口
- *          （此时命令需带 "IFNAME=<if> " 前缀）。
+ *          （此时命令需带 "IFNAME=<if> " 前缀）。本函数只做**探测**，不拉起
+ *          任何进程——自举由发起 WPA 系连接时按需触发（见
+ *          XDeviceWiFi_platformStartConnect），以免打开设备就凭空起系统进程。
  * @return true=找到。
  */
 static bool xdevwifi_wpaResolveCtrl(XDevWifiSlot* slot)
 {
-    static const char* const kDirs[] = {
-        "/run/wpa_supplicant", "/var/run/wpa_supplicant"
-    };
     size_t i;
 
     if (!slot) return false;
-    if (slot->wpaTried) return slot->wpaOk;
+    /* 探测只是 stat，成本可忽略，故允许 TTL 过期后重探：守护进程在会话期间
+     * 才起来（手工启动 / 开机竞态）时能被自动发现，而非一次探测定终身。 */
+    if (slot->wpaTried &&
+        xdevwifi_nowMs() - slot->wpaProbeMs < XDEVWIFI_PROBE_TTL_MS)
+        return slot->wpaOk;
     slot->wpaTried = true;
+    slot->wpaProbeMs = xdevwifi_nowMs();
     slot->wpaOk = false;
     slot->wpaPath[0] = '\0';
 
-    for (i = 0; i < sizeof(kDirs) / sizeof(kDirs[0]); ++i) {
+    for (i = 0; i < sizeof(k_wpaCtrlDirs) / sizeof(k_wpaCtrlDirs[0]); ++i) {
         struct stat st;
         char path[96];
-        snprintf(path, sizeof(path), "%s/%s", kDirs[i], slot->ifname);
+        snprintf(path, sizeof(path), "%s/%s", k_wpaCtrlDirs[i], slot->ifname);
         if (stat(path, &st) == 0 && S_ISSOCK(st.st_mode)) {
             xdevwifi_copyText(slot->wpaPath, sizeof(slot->wpaPath), path);
             slot->wpaOk = true;
             return true;
         }
     }
-    for (i = 0; i < sizeof(kDirs) / sizeof(kDirs[0]); ++i) {
+    for (i = 0; i < sizeof(k_wpaCtrlDirs) / sizeof(k_wpaCtrlDirs[0]); ++i) {
         struct stat st;
-        if (stat(kDirs[i], &st) == 0 && S_ISSOCK(st.st_mode)) {
-            xdevwifi_copyText(slot->wpaPath, sizeof(slot->wpaPath), kDirs[i]);
+        if (stat(k_wpaCtrlDirs[i], &st) == 0 && S_ISSOCK(st.st_mode)) {
+            xdevwifi_copyText(slot->wpaPath, sizeof(slot->wpaPath),
+                              k_wpaCtrlDirs[i]);
             slot->wpaOk = true;
             return true;
         }
@@ -896,6 +1123,12 @@ static bool xdevwifi_wpaIsGlobal(const XDevWifiSlot* slot)
 
 /**
  * @brief 向 wpa_supplicant 发一条命令并取应答。
+ * @details **客户端必须先 bind 一个本地地址**：Unix 数据报套接字不 bind 就没
+ *          有源地址，wpa_supplicant 无处回包，recv 必然撞 500ms 超时——官方
+ *          wpa_ctrl 同样先 bind 到 /tmp 下的私有路径再 connect。这是本通路能
+ *          收到应答的前提（rk3506 真机实测：不 bind 时 PING / SCAN 全部超时，
+ *          wpa 后端形同虚设——控制口存在、能力位也认，但一条命令都发不通）。
+ *          用完即 unlink，不在 /tmp 留残留文件。
  * @return true=取得应答（内容可能是 "FAIL"）；false=通信失败/超时。
  * @note 数据报套接字 connect 不产生网络往返；send/recv 全程受
  *       XDEVWIFI_WPA_TIMEOUT_MS 限制，不会拖住调用线程。
@@ -904,11 +1137,13 @@ static bool xdevwifi_wpaCommand(XDevWifiSlot* slot, const char* cmd,
                                 char* reply, size_t cap)
 {
     struct sockaddr_un address;
+    struct sockaddr_un local;
     struct pollfd pfd;
     char full[XDEVWIFI_WPA_CMD_MAX];
     int fd;
     ssize_t n;
     size_t cmdLen;
+    bool ok = false;
 
     if (!slot || !cmd || !reply || cap == 0) return false;
     if (!xdevwifi_wpaResolveCtrl(slot)) return false;
@@ -920,33 +1155,40 @@ static bool xdevwifi_wpaCommand(XDevWifiSlot* slot, const char* cmd,
 
     fd = socket(AF_UNIX, SOCK_DGRAM, 0);
     if (fd < 0) return false;
+
+    memset(&local, 0, sizeof(local));
+    local.sun_family = AF_UNIX;
+    snprintf(local.sun_path, sizeof(local.sun_path),
+             "/tmp/xdevwifi-ctrl-%ld-%u", (long)getpid(), ++s_ctrlSeq);
+    (void)unlink(local.sun_path);
+    if (bind(fd, (struct sockaddr*)&local, sizeof(local)) != 0) {
+        close(fd);
+        return false;
+    }
+
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
     xdevwifi_copyText(address.sun_path, sizeof(address.sun_path), slot->wpaPath);
-    if (connect(fd, (struct sockaddr*)&address, sizeof(address)) != 0) {
-        close(fd);
-        return false;
-    }
+    if (connect(fd, (struct sockaddr*)&address, sizeof(address)) != 0)
+        goto cleanup;
     cmdLen = strlen(full);
     n = send(fd, full, cmdLen, 0);
-    if (n < 0 || (size_t)n != cmdLen) {
-        close(fd);
-        return false;
-    }
+    if (n < 0 || (size_t)n != cmdLen) goto cleanup;
     pfd.fd = fd;
     pfd.events = POLLIN;
     pfd.revents = 0;
-    if (poll(&pfd, 1, XDEVWIFI_WPA_TIMEOUT_MS) <= 0) {
-        close(fd);
-        return false;
-    }
+    if (poll(&pfd, 1, XDEVWIFI_WPA_TIMEOUT_MS) <= 0) goto cleanup;
     n = recv(fd, reply, cap - 1, 0);
-    close(fd);
-    if (n < 0) return false;
+    if (n < 0) goto cleanup;
     reply[n] = '\0';
     while (n > 0 && (reply[n - 1] == '\n' || reply[n - 1] == '\r'))
         reply[--n] = '\0';
-    return true;
+    ok = true;
+
+cleanup:
+    close(fd);
+    (void)unlink(local.sun_path);
+    return ok;
 }
 
 /** @brief 应答是否为成功（"OK" 或 ADD_NETWORK 返回的纯数字 id）。 */
@@ -1276,7 +1518,7 @@ bool XDeviceWiFi_platformOpen(void)
         memset(s_slots, 0, sizeof(s_slots));
         for (i = 0; i < XDEVICE_WIFI_MAX_ADAPTERS; ++i)
             s_slots[i].nmChild = -1;
-        s_nmRunning = -1;
+        xdevwifi_nmReprobe();
 
         /* 无无线接口即打开失败：上层据此禁用无线入口，不出现"会话已开、
          * 列表空、按钮可点但没反应"的半可用状态。留痕区分两种零：常态
@@ -1310,7 +1552,9 @@ void XDeviceWiFi_platformClose(void)
     if (s_refs > 0) return;
     for (i = 0; i < XDEVICE_WIFI_MAX_ADAPTERS; ++i)
         xdevwifi_slotRelease(&s_slots[i]);
-    s_nmRunning = -1;
+    /* 注：自举拉起的 wpa_supplicant 不在此回收——它是系统级守护进程，别的
+     * 应用可能正在共用；且下次 platformOpen 会直接复用其控制口。 */
+    xdevwifi_nmReprobe();
 }
 
 bool XDeviceWiFi_platformCapabilities(uint32_t* outCapabilities)
@@ -1342,6 +1586,8 @@ bool XDeviceWiFi_platformEnumAdapters(XVector** outAdapters)
     *outAdapters = adapters;
     if (s_refs <= 0) return true;
     xdevwifi_refreshSlots();
+    /* 动作类入口：可能有新接口出现（USB 网卡热插拔），重探 NM 与后端。 */
+    xdevwifi_nmReprobe();
     for (i = 0; i < XDEVICE_WIFI_MAX_ADAPTERS; ++i) {
         XDevWifiSlot* slot = &s_slots[i];
         XDeviceWiFiAdapterInfo* info;
@@ -1369,6 +1615,8 @@ bool XDeviceWiFi_platformStartScan(const char* adapterId)
 
     if (!slot) return false;
     if (slot->scanState == XDeviceWiFi_ScanRunning) return false;
+    /* 动作类入口：重探 NM 与后端（见 xdevwifi_nmReprobe）。 */
+    xdevwifi_nmReprobe();
     if (slot->scanCache) {
         XDeviceWiFi_freeNetworks(slot->scanCache);
         slot->scanCache = NULL;
@@ -1476,6 +1724,20 @@ bool XDeviceWiFi_platformTakeScanResults(const char* adapterId,
     return true;
 }
 
+/** @brief 安全方式的文字名（仅用于诊断留痕）。 */
+static const char* xdevwifi_securityName(XDeviceWiFiSecurity security)
+{
+    switch (security) {
+    case XDeviceWiFi_SecurityOpen:          return "Open";
+    case XDeviceWiFi_SecurityWep:           return "WEP";
+    case XDeviceWiFi_SecurityWpaPsk:        return "WPA-PSK";
+    case XDeviceWiFi_SecurityWpa2Psk:       return "WPA2-PSK";
+    case XDeviceWiFi_SecurityWpa2Enterprise:return "WPA2-Enterprise";
+    case XDeviceWiFi_SecurityWpa3Sae:       return "WPA3-SAE";
+    default:                                return "Unknown";
+    }
+}
+
 bool XDeviceWiFi_platformStartConnect(const char* adapterId, const char* ssid,
                                       const char* passphrase,
                                       XDeviceWiFiSecurity security)
@@ -1484,6 +1746,9 @@ bool XDeviceWiFi_platformStartConnect(const char* adapterId, const char* ssid,
     bool accepted = false;
 
     if (!slot || !ssid || !ssid[0]) return false;
+    /* 动作类入口：重探 NM 与后端（见 xdevwifi_nmReprobe），使"NM / wpa
+     * 中途起来"在下一次用户动作上即生效，而不是等到重开设备。 */
+    xdevwifi_nmReprobe();
     switch (xdevwifi_backendOf(slot)) {
     case XDevWifi_BackendNm:
         accepted = xdevwifi_nmConnect(slot, ssid, passphrase);
@@ -1492,6 +1757,27 @@ bool XDeviceWiFi_platformStartConnect(const char* adapterId, const char* ssid,
         accepted = xdevwifi_wpaConnect(slot, ssid, passphrase, security);
         break;
     case XDevWifi_BackendWext:
+        /* WEXT 只有开放/WEP 的关联能力，WPA/WPA2/WPA3 必须由 wpa_supplicant
+         * 承担（rk3506 buildroot 板实测：无 NM、守护进程也没开机自启，后端
+         * 退化到 WEXT，密码正确却必然"连接发起失败"，即此分支）。
+         * 故这里**先尝试自举** wpa_supplicant，成则改走 wpa 通路——自举只
+         * 发生在此处（而非后端探测里），即"只有真要连 WPA 系时才拉起守护
+         * 进程"，避免打开设备就凭空起一个系统进程去和既有网络管理打架。
+         * 自举也不成才如实拒绝并留痕，免得上层笼统报"连接发起失败"让用户
+         * 拿着正确的密码无从下手。 */
+        if (security != XDeviceWiFi_SecurityOpen &&
+            security != XDeviceWiFi_SecurityWep) {
+            if (xdevwifi_wpaBootstrap(slot)) {
+                accepted = xdevwifi_wpaConnect(slot, ssid, passphrase,
+                                               security);
+                break;
+            }
+            XPrintf("XDeviceWiFi_posix: %s 拒绝连接 \"%s\"（%s）：WPA 系需"
+                    " wpa_supplicant，当前后端为 WEXT，仅支持 Open/WEP\n",
+                    slot->ifname, ssid, xdevwifi_securityName(security));
+            slot->connectState = XDeviceWiFi_ConnectFailed;
+            return false;
+        }
         accepted = xdevwifi_wextConnect(slot->ifname, ssid, passphrase,
                                         security);
         break;

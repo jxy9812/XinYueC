@@ -83,10 +83,14 @@ bool XGpuRenderBackend_presentToWindow(XGpuRenderBackend* self);
 /* ==================== 全局会话管理（阶段 2 直通接线） ==================== */
 
 /**
- * @brief      是否请求 GPU 渲染后端（读 XGUI_RENDER_BACKEND / XGPU_BACKEND
- *             环境变量，首次调用后缓存；addRequestedOverride 的运行期覆盖
- *             优先于环境变量）。
- * @return     true 请求 GPU；false 默认软件。
+ * @brief      是否请求 GPU 渲染后端。解析优先级（高→低）：
+ *             ① addRequestedOverride 运行期覆盖；② XGUI_RENDER_BACKEND /
+ *             XGPU_BACKEND 环境变量（白名单 gpu/opengl/vulkan/1/true/on，
+ *             其余值含 software 一律软件）；③ 编译期默认——桌面
+ *             （XGPU_RUNTIME_DEFAULT_ON=1）以 probeAvailable 探测结果
+ *             为默认（可用即 GPU、失败保持软件），其余平台恒软件。
+ *             首次解析后缓存；默认层探测失败不落负缓存（预算内重探自愈）。
+ * @return     true 请求 GPU；false 软件光栅。
  */
 bool XGpuRenderBackend_requested(void);
 

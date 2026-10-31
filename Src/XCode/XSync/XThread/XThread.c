@@ -75,7 +75,16 @@ void XThread_init(XThread* thread)
     thread->m_varList = NULL;
     thread->m_loop = NULL;
     thread->m_priority = XThread_NormalPriority;
-    thread->m_stackSize = 512;
+    /* [Qt 对齐 2026-10-31 QThread::stackSize 缺省 0] worker 栈大小缺省
+     * **0 = 交给系统缺省值**（Windows 主程序 PE reserve，通常 1MB）。
+     * 此前写死 512（字节）——CreateThread 的 dwStackSize 是**提交量**，
+     * 512 字节提交的栈连 VXThread_run→用户函数→XPrintf 的调用链都装
+     * 不下：工作线程一进稍深的调用链即踩穿栈保护页（AV 写在自身栈帧
+     * 上，cdb 实锚：memcpy dst≈rsp+0x13C），崩点随调度漂移——并发测试
+     * 「执行即崩/偶现不崩」、GUI 测试菜单随机闪退的一类根因。
+     * 对标 QThread::stackSize()：缺省 0 表示「由系统决定」，仅在调用方
+     * 显式 setStackSize 后才非 0（嵌入式可控内存下由具体平台约定）。 */
+    thread->m_stackSize = 0;
     thread->m_data = XThreadData_create(thread);  /* Qt: QThreadPrivate creates QThreadData in constructor */
     XTask_registerThread(thread);
 }

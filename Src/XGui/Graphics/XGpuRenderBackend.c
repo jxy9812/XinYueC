@@ -193,6 +193,50 @@ typedef struct XGpuGlyphAtlasEntry
     uint16_t m_y;       /**< 图集内 Y。 */
 } XGpuGlyphAtlasEntry;
 
+/* ==================== 图集键哈希索引（阶段 3.1，P-glyph-hash-index） ==================== */
+
+/** @brief 图集键哈希索引容量（2 的幂；条目上限 8192 的 2 倍，负载因子
+ *         ≤0.5 保证开放寻址探测期望 O(1)）。会话惰性分配。 */
+#define XGPU_GLYPH_HASH_SLOTS 16384u
+
+/** @brief 哈希索引槽：键+宽高联合比对 + 条目下标。
+ *  @note  m_widthHeight==0 即空槽（真实条目宽高恒 ≥1，0 不可为真值）；
+ *         条目只增不单删（图集整体重置时全表清零），无墓碑。索引存
+ *         下标而非指针——XVector push_back 扩容搬移元素后下标仍稳定，
+ *         指针会悬空。表在首个条目插入时惰性建立，此后每个 push 都
+ *         登记 ⇒ 表存在即覆盖全部条目，无「半程登记」陈旧缺口。 */
+typedef struct XGpuGlyphHashSlot
+{
+    uint64_t m_key;
+    uint32_t m_widthHeight; /**< (width<<16)|height；0=空槽。 */
+    uint32_t m_index;       /**< m_glyphEntries 下标。 */
+} XGpuGlyphHashSlot;
+
+/** @brief XGPU_GLYPH_INDEX 环境开关（严格 "0"=关回退线性扫，诊断 A/B
+ *         用；其余值/未设=启用哈希索引）。 */
+static bool xgpu_glyph_index_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_GLYPH_INDEX");
+        requested = !(value && value[0] == '0' && value[1] == '\0');
+    }
+    return requested != 0;
+}
+
+/** @brief 键哈希（64→32 位；键与宽高各自独立常量乘后混入，雪崩收尾
+ *         ——对齐 painter 备忘索引的「独立通道不 XOR 混叠」教训）。 */
+static uint32_t xgpu_glyph_hash_of(uint64_t key, uint32_t widthHeight)
+{
+    uint64_t h = key * 0x9E3779B97F4A7C15ULL;
+    h ^= (uint64_t)widthHeight * 0xC2B2AE3D27D4EB4FULL;
+    h ^= h >> 29;
+    h *= 0xBF58476D1CE4E5B9ULL;
+    h ^= h >> 32;
+    return (uint32_t)h;
+}
+
 /* ==================== 通用会话 ==================== */
 
 /** @note 内存压缩：按对齐重排（指针/容器 → int 组 → uint8/bool 尾组），
@@ -207,6 +251,9 @@ struct XGpuRenderBackend
     XVector m_glyphEntries;                /**< 图集条目容器（拥有；元素为
                                                 XGpuGlyphAtlasEntry，容量与
                                                 扩容由 XVector 管理）。 */
+    XGpuGlyphHashSlot* m_glyphHash;        /**< 图集键哈希索引（惰性分配；
+                                                键→条目下标 O(1) 查询；
+                                                reset 全清；NULL=线性回退）。 */
     int m_width;                     /**< 渲染缓冲宽度（像素，随窗口尺寸，不收窄）。 */
     int m_height;                    /**< 渲染缓冲高度（像素）。 */
     int m_glyphCursorX;              /**< shelf 装箱当前行游标。 */
@@ -421,14 +468,33 @@ bool XGpuRenderBackend_requested(void)
     }
     value = XSystem_environment("XGUI_RENDER_BACKEND");
     if (!value || !*value) value = XSystem_environment("XGPU_BACKEND");
-    g_xgpuRequested =
-        xgpu_text_equals(value, "gpu") ||
-        xgpu_text_equals(value, "opengl") ||
-        xgpu_text_equals(value, "vulkan") ||
-        xgpu_text_equals(value, "1") ||
-        xgpu_text_equals(value, "true") ||
-        xgpu_text_equals(value, "on") ? 1 : 0;
-    return g_xgpuRequested != 0;
+    if (value && *value)
+    {
+        g_xgpuRequested =
+            xgpu_text_equals(value, "gpu") ||
+            xgpu_text_equals(value, "opengl") ||
+            xgpu_text_equals(value, "vulkan") ||
+            xgpu_text_equals(value, "1") ||
+            xgpu_text_equals(value, "true") ||
+            xgpu_text_equals(value, "on") ? 1 : 0;
+        return g_xgpuRequested != 0;
+    }
+#if XGPU_RUNTIME_DEFAULT_ON
+    /* 桌面默认口径（XGPU_RUNTIME_DEFAULT_ON）：无任何外部设置时以
+       1x1 离屏会话探测本机 GPU 可用性——可用即默认 GPU 直通，失败
+       保持软件光栅（零回归契约）。探测结果由 probeAvailable 进程内
+       缓存（XGPU_SESSION_RETRY 预算内瞬断自愈）；此处负结果不落
+       g_xgpuRequested 负缓存，保留预算耗尽前的重探入口，预算耗尽
+       （probed=0 永久缓存）后本分支零开销。 */
+    if (XGpuRenderBackend_probeAvailable())
+    {
+        g_xgpuRequested = 1;
+        return true;
+    }
+    return false;
+#endif
+    g_xgpuRequested = 0;
+    return false;
 }
 
 XGpuRenderBackend* XGpuRenderBackend_current(void)
@@ -567,6 +633,9 @@ static void xgpu_glyph_atlas_reset(XGpuRenderBackend* self, bool resetCounters)
 {
     if (!self) return;
     XVector_clear_base((XContainer*)&self->m_glyphEntries);
+    if (self->m_glyphHash)
+        XMemset(self->m_glyphHash, 0,
+                (size_t)XGPU_GLYPH_HASH_SLOTS * sizeof(XGpuGlyphHashSlot));
     self->m_glyphCursorX = 0;
     self->m_glyphCursorY = 0;
     self->m_glyphRowHeight = 0;
@@ -617,10 +686,13 @@ static bool xgpu_glyph_atlas_alloc(XGpuRenderBackend* self, int width,
 }
 
 /**
- * @brief      在图集条目数组中查找键+尺寸完全匹配的条目。
- * @details    线性扫描：常规一帧的字形数远小于条目上限，比较成本相对
- *             每字形一次光栅化+上传可忽略；若后续 profiler 显示热点，
- *             再引入键哈希桶。
+ * @brief      在图集中查找键+尺寸完全匹配的条目。
+ * @details    哈希索引快速路径（O(1)，XGPU_GLYPH_INDEX=0 或表未就绪时
+ *             回退线性扫）：P-glyph-hash-index 2026-10-31——文本页每字形
+ *             1-2 次查询 × 条目数（上限 8192，512² 图集实测可积千级）的
+ *             线性扫是逐字形提交开销的主体，且随图集占用 O(N²) 恶化。
+ *             哈希探测 64 步上限仅在病态聚集时触发，此时落入线性扫作
+ *             权威判定（最坏退化为旧行为，绝不假阴性引发重复登记）。
  */
 static const XGpuGlyphAtlasEntry* xgpu_glyph_atlas_find(
     const XGpuRenderBackend* self, uint64_t key, int width, int height)
@@ -628,6 +700,26 @@ static const XGpuGlyphAtlasEntry* xgpu_glyph_atlas_find(
     int i;
     int count = (int)XVector_size_base(
         (XContainer*)&self->m_glyphEntries);
+    if (xgpu_glyph_index_requested() && self->m_glyphHash)
+    {
+        uint32_t widthHeight = ((uint32_t)width << 16) | (uint32_t)height;
+        const XGpuGlyphHashSlot* slots = self->m_glyphHash;
+        uint32_t slotI = xgpu_glyph_hash_of(key, widthHeight) &
+                         (XGPU_GLYPH_HASH_SLOTS - 1u);
+        uint32_t n;
+        for (n = 0; n < 64; ++n)
+        {
+            const XGpuGlyphHashSlot* slot = &slots[slotI];
+            if (!slot->m_widthHeight)
+                return NULL; /* 空槽即止：无墓碑 ⇒ 本键不在表中。 */
+            if (slot->m_key == key && slot->m_widthHeight == widthHeight)
+                return (const XGpuGlyphAtlasEntry*)XVector_at_base(
+                    &self->m_glyphEntries, (int64_t)slot->m_index);
+            slotI = (slotI + 1u) & (XGPU_GLYPH_HASH_SLOTS - 1u);
+        }
+        /* 探测超限（理论不可达：负载 ≤0.5 且无删除）：继续线性扫权威
+           判定，防假阴性导致同键重复登记。 */
+    }
     for (i = 0; i < count; ++i)
     {
         const XGpuGlyphAtlasEntry* entry =
@@ -638,6 +730,41 @@ static const XGpuGlyphAtlasEntry* xgpu_glyph_atlas_find(
             return entry;
     }
     return NULL;
+}
+
+/**
+ * @brief      哈希登记新条目（push_back 成功后调用）。
+ * @details    表惰性建立（首个条目触发 XCalloc）；分配失败静默保持
+ *             线性回退——只损查询加速，不损正确性。表满理论不可达
+ *             （条目上限 8192 < 槽 16384），防御性静默放弃本次登记。
+ */
+static void xgpu_glyph_hash_insert(XGpuRenderBackend* self, uint64_t key,
+                                   uint32_t widthHeight, uint32_t index)
+{
+    XGpuGlyphHashSlot* slots;
+    uint32_t i;
+    uint32_t n;
+    if (!xgpu_glyph_index_requested()) return;
+    if (!self->m_glyphHash)
+    {
+        self->m_glyphHash = (XGpuGlyphHashSlot*)XCalloc_System(
+            (size_t)XGPU_GLYPH_HASH_SLOTS, sizeof(XGpuGlyphHashSlot));
+        if (!self->m_glyphHash) return;
+    }
+    slots = self->m_glyphHash;
+    i = xgpu_glyph_hash_of(key, widthHeight) & (XGPU_GLYPH_HASH_SLOTS - 1u);
+    for (n = 0; n < XGPU_GLYPH_HASH_SLOTS; ++n)
+    {
+        XGpuGlyphHashSlot* slot = &slots[i];
+        if (!slot->m_widthHeight)
+        {
+            slot->m_key = key;
+            slot->m_widthHeight = widthHeight;
+            slot->m_index = index;
+            return;
+        }
+        i = (i + 1u) & (XGPU_GLYPH_HASH_SLOTS - 1u);
+    }
 }
 
 bool XGpuRenderBackend_glyphAtlasContains(const XGpuRenderBackend* self,
@@ -845,6 +972,8 @@ void XGpuRenderBackend_destroy(XGpuRenderBackend* self)
     if (!self) return;
     if (self->m_driver && self->m_session)
         self->m_driver->sessionDestroy(self->m_session);
+    if (self->m_glyphHash)
+        XFree_System(self->m_glyphHash);
     XClassDeinit((XClass*)&self->m_glyphEntries);
     XFree_System(self);
 }
@@ -1057,10 +1186,14 @@ bool XGpuRenderBackend_drawGlyphAlpha(XGpuRenderBackend* self,
     /* 覆盖图必须紧凑（stride == width）：图集子矩形上传按紧凑布局。
        painter 侧两条字形路径的缓冲均为自分配紧凑布局，恒满足。 */
     if (!XGpuRenderBackend_isValid(self) || width <= 0 ||
-        height <= 0 || stride != width || (!alpha && !xgpu_glyph_atlas_find(
-            self, key, width, height)))
+        height <= 0 || stride != width)
         return false;
+    /* 单次查询两用：命中取条目；alpha==NULL 且未命中即「备忘确认在
+       图集、条目却缺失」的契约失败（原实现校验+取条目两次线性扫，
+       P-glyph-hash-index 2026-10-31 收敛为一次）。 */
     entry = xgpu_glyph_atlas_find(self, key, width, height);
+    if (!entry && !alpha)
+        return false;
     /* alpha 非空 = 调用方提供了新鲜覆盖图数据（含非 AA 二值钳位）。
        命中图集缓存时仍需重新上传——图集可能存有旧的未钳位内容
        （实测铁证：非 AA 边缘 0x1b 残留导致 "disabling text
@@ -1103,6 +1236,12 @@ bool XGpuRenderBackend_drawGlyphAlpha(XGpuRenderBackend* self,
             stored.m_y = atlasY;
             if (!XVector_push_back_1_base(&self->m_glyphEntries, &stored))
                 return false;
+            /* 哈希登记（下标存取：XVector 扩容搬移不影响）。 */
+            xgpu_glyph_hash_insert(
+                self, key,
+                ((uint32_t)width << 16) | (uint32_t)height,
+                (uint32_t)XVector_size_base(
+                    (XContainer*)&self->m_glyphEntries) - 1u);
             entry = (const XGpuGlyphAtlasEntry*)XVector_at_base(
                 &self->m_glyphEntries,
                 (int64_t)XVector_size_base(

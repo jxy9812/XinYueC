@@ -2808,15 +2808,28 @@ static bool xgld_readback_region(XGpuRenderDriverSession* self,
                   !xgld_pbo_lag_fix_enabled();
     {
         static int adaptiveInit = -1;
-        static int adaptiveOn = 1;
+        /* 【默认关 2026-10-31】场景自适应曾默认开（XGPU_PBO_ADAPTIVE，无
+           抓取态激活滞后换 +35% 吞吐）：桌面默认 GPU 直通恢复后实测本机
+           （RX 6800 XT + 远程显示栈）空闲 demo 每 13s 必现悬浮层底部
+           噪声带、悬停导航条目后横向字形碎片带驻留屏幕——滞后拷出在
+           该环境产出半成品帧（与第三夜交互二分结论同族），噪声经
+           DIB→BitBlt 上屏后无后续重绘即长期驻留。fence 语义虽应保证
+           拷出完备，本机实证不等（归因与 A/B 见回归 t213h 注）。自适应
+           回归显式 opt-in：XGPU_PBO_ADAPTIVE=1。 */
+        static int adaptiveOn = 0;
         if (adaptiveInit < 0)
         {
             const char* value = XSystem_environment("XGPU_PBO_ADAPTIVE");
-            adaptiveOn = !(value && *value && value[0] == '0' &&
-                           value[1] == 0);
+            adaptiveOn = value && *value && !(value[0] == '0' &&
+                                              value[1] == 0);
             adaptiveInit = 1;
         }
-        if (adaptiveOn && g_xgldPointerGrabQuery)
+        /* 无 fence 能力（GL<3.2，glFenceSync/glClientWaitSync 缺失或
+           创建失败）时滞后通道的"fence 已信号"前提不成立——slot_ready
+           的直通 map 会读到未完成的异步读（半成品 PBO），强制同步直读。 */
+        if (!self->glFenceSync || !self->glClientWaitSync)
+            pboLag = false;
+        else if (adaptiveOn && g_xgldPointerGrabQuery)
         {
             /* 自适应语义：滞后通道的休眠/激活由【当前场景】决定——无
                抓取=非交互态激活滞后（覆盖 lag_fix 的全局休眠，这是本

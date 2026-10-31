@@ -5603,6 +5603,15 @@ void XVirtualKeyboard_init(XVirtualKeyboard* self, XWidget* parent, XWidgetFlags
     XMemset(self, 0, sizeof(*self));
     XWidget_init((XWidget*)self, parent, flags);
     XClassSetVtable(self, XVirtualKeyboard);
+    /* [不透明声明 2026-10-31] 面板绘制路径按整控件平涂主题底色（见
+       VXKeyboard_paintEvent「主题化面板 …平涂 0xF5F5F5、无凹边、无圆角；
+       唯一绘制路径」）⇒ 矩形内每个像素都被本控件覆盖，符合
+       XWidgetAttribute_OpaquePaintEvent 的语义。声明后框架的脏区遮挡裁剪
+       （XWidget.c xwidget_collectOccluders）即可把被键盘整块挡住的控件
+       （典型=右下角性能悬浮层）判为「无需刷新」：不再产生只重绘该块的
+       局部帧（GPU 呈现链上那类帧会漏内容、空闲闸门下长期驻留）。 */
+    XWidget_setAttribute((XWidget*)self,
+                         XWidgetAttribute_OpaquePaintEvent, true);
 
     self->m_mode = XKeyboardMode_TextLower;
     self->m_layoutKind = XKeyboardLayout_PinyinFull; /* 默认款型：搜狗全键。 */

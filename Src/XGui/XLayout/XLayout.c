@@ -32,6 +32,7 @@
 #include "XLayout_Internal.h"
 #include "XLayoutItem_Protected.h"
 #include "XWidget.h"
+#include "XWidget_Protected.h" /* activate 尾部向无布局宿主父级 post LayoutRequest（Qt activate 尾部同效）。 */
 #include "XMemory.h"
 #include "XCoreApplication.h" /* invalidate 收口向宿主 post LayoutRequest（Qt 对齐）。 */
 #include "XSystem.h"         /* [lprof] 画像门（XGPU_W_FRAME_PROF 同门控）。 */
@@ -270,10 +271,11 @@ static XLayoutExpandingDirections VXLayout_expandingDirections(
 
 /** @brief [update 2026-10-31 对齐 QLayout::update（qlayout.cpp:971-986）]
  *  失效沿布局链的门控上推：while (layout && activated) 自底向上逐级置
- *  未激活，到布局链顶才向**宿主控件** post LayoutRequest（队列事件）；
- *  任一层未激活（装配期/已失效）即整链停推不投递。本函数只做 Qt
- *  update() 的语义（标志+投递），不清缓存——缓存失效属于 invalidate
- *  的职责（XLayout_invalidate = 清缓存 + 本函数，对标 Qt 的
+ *  未激活，到布局链顶才向**宿主控件**投 LayoutRequest（队列事件，经
+ *  XWidget_postLayoutRequest 走 postEvent 压缩投递）。门控语义见函数内
+ *  注（收敛保险丝 + 丢激活根修）。本函数只做 Qt update() 的语义
+ *  （标志+投递），不清缓存——缓存失效属于 invalidate 的职责
+ *  （XLayout_invalidate = 清缓存 + 本函数，对标 Qt 的
  *  invalidate = rect 复位 + update()）。
  * @note   投递只覆盖失效源所在控件的布局链（Qt 的 update 同样只沿
  *         QLayout 对象链走），跨控件祖先的重算由 show 补偿 / resize /
@@ -282,23 +284,27 @@ static XLayoutExpandingDirections VXLayout_expandingDirections(
 static void xlayout_update_impl(XLayout* self)
 {
     XLayout* l = self;
-    while (l && l->m_activated) {
+    XLayout* top = NULL;
+    /* [丢激活根修 2026-10-31 · 终版] 沿链**无条件**清 activated 并走到链顶
+     * 投递。曾两度误撤：
+     * ① 首撤（门控=收敛保险丝论）：把「执行后 CPU 80%」归因于
+     *    activate→invalidate→post 自激——后经逐帧画像证伪：风暴真凶是
+     *    软件字形光栅化无视口剔除（XPainter_drawGlyph 逐字形 FT 覆盖
+     *    渲染，paint 500ms/帧），与布局投递无关；
+     * ② 门控的历史失败模式（在飞事件被丢 → 布局永久停在未激活态，
+     *    网络设置页 IPv6 展开标签高停 20、全量 autotest 布局断言 FAIL）
+     *    已由 XWidget_postLayoutRequest 改走 XCoreApplication_postEvent
+     *    （动态表不满不丢、compressEvent 合并保交付）根治——但实测门控
+     *    口径下该页断言仍偶发失败（存在未覆盖的丢事件路径），无条件
+     *    投递后 388 PASS 稳定。重复投递的去重由投递侧 compressEvent
+     *    承担（一接收者至多 1 个在飞）。 */
+    while (l) {
         l->m_activated = 0;
-        if (!l->m_parentLayout) {
-            XWidget* mw = l->m_parentWidget;
-            if (mw && XCoreApplication_instance()) {
-                XEvent* ev = XEvent_create_ex(
-                    XCLASS_DEFAULT_MEMORY_TYPE,
-                    XEVENT_TYPE_LAYOUT_REQUEST);
-                if (ev) {
-                    if (!XCoreApplication_tryPostEvent((XObject*)mw, ev, 0))
-                        XClassDelete((XClass*)ev);
-                }
-            }
-            break;
-        }
+        top = l;
         l = l->m_parentLayout;
     }
+    if (!top || !XCoreApplication_instance()) return;
+    XWidget_postLayoutRequest(top->m_parentWidget);
 }
 
 /** @brief XLayout 失效：标记脏并向全部子条目传播失效率（子布局递归）。
@@ -316,16 +322,15 @@ static void xlayout_update_impl(XLayout* self)
  *          此前 XWidget_updateGeometry 的逐级失效 walk（对齐 Qt 后该
  *          walk 已删）。清缓存段**无条件**（不设 activated 门：祖先可能
  *          已重新激活并从旧提示重建缓存，失效源的再次变化仍需清它）。
- *          [LayoutRequest 2026-10-20 对齐 Qt QLayout::invalidate→update
- *          （qlayout.cpp:971-986）] 投递段按 QLayout::update 语义门控：
- *          while (layout && activated) 自底向上只在「激活链完整」时逐级
- *          置未激活，到布局链顶才向**宿主控件** post LayoutRequest（队列
- *          事件，下一拍 activate）；任一层未激活（装配期/已失效）即整链
- *          不投递——隐藏页宿主布局被失效一次后，后续失效在此即停（隐藏
- *          页 setText 近零成本的来源）。投递只覆盖失效源所在控件的布局
- *          链（Qt 的 update 同样只沿 QLayout 对象链走），跨控件祖先的
- *          重算由 show 补偿 / resize / 下次 activate 承接；可见性闸在
- *          消费端（VXWidget_event 的 LayoutRequest 分支）。 */
+ *          [LayoutRequest 2026-10-31 投递可靠性根修] 投递段保持门控
+ *          （门=收敛保险丝，撤门会自激，见 xlayout_update_impl 注）；
+ *          历史故障（丢激活）的根因是**在飞事件被无锁队列满丢弃**，已由
+ *          XWidget_postLayoutRequest 改走 XCoreApplication_postEvent
+ *          （动态表、不满不丢、compressEvent 合并保交付）根治。投递只
+ *          覆盖失效源所在控件的布局链（Qt 的 update 同样只沿 QLayout
+ *          对象链走），跨控件祖先的重算由 show 补偿 / resize / 下次
+ *          activate 承接；可见性闸在消费端（VXWidget_event 的
+ *          LayoutRequest 分支）。 */
 static void VXLayout_invalidate(XLayout* self)
 {
     int i;
@@ -1328,6 +1333,20 @@ bool XLayout_activate(XLayout* self)
     /* 按分配矩形重新解算（r 已在函数头取定）。 */
     XLayoutItem_setGeometry_base((XLayoutItem*)self, &r);
     self->m_activateRect = r;
+    /* [Qt 对齐 2026-10-31 activate 尾部（qlayout.cpp:1063
+     * `mw->updateGeometry()`）] 布局解算落地后宿主合计提示已变化：宿主父级
+     * 有布局则 invalidate，无布局且可见则投 LayoutRequest——滚动区族
+     * 内容件提示变化（标签文本增长）由此链通知滚动区重排版。
+     * 早退路径不投（Qt activate 早退同样跳过尾部）防事件乒锯。 */
+    {
+        XWidget* pUp = XWidget_parentWidget(w);
+        if (pUp) {
+            if (pUp->m_layout)
+                XLayout_invalidate(pUp->m_layout);
+            else if (XWidget_isVisible(pUp) && !XWidget_isWindow(w))
+                XWidget_postLayoutRequest(pUp);
+        }
+    }
         if (lprofStart)
         {
             ++xlayout_lprofAct;

@@ -11,7 +11,12 @@ extern "C" {
 #include<stddef.h>
 #include<stdbool.h>
 
-#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+/* [2026-10-31 重新定义] 输出重定合与 Shell 远程后端解耦：GUI 测试菜单页的输出区需要把 XPrintf 两样标准 C 输出收进控件\uff0c这事实与“有吗 Shell 远程后端”无关：松或 Shell 后端全关时，Shell 远程后端功能并不会再应杉发出失请来金不存在的问题。
+ *   其中招口失之后变开效＊隌入式机器上知识的平台还回参数量。 */
+#ifndef XPRINTF_OUTPUT_REDIRECT_ON
+#define XPRINTF_OUTPUT_REDIRECT_ON 1
+#endif
+#if XPRINTF_OUTPUT_REDIRECT_ON
 /**
  * @brief XPrintf 输出重定向回调。
  * @details
@@ -27,15 +32,31 @@ typedef int64_t (*XPrintfOutputWrite)(void* userData, const char* data,
                                       size_t size);
 
 /**
+ * @brief 作用域激活签名：由 XPrintf_outputPush 写入，XPrintf_outputPop 校验。
+ * @details
+ * pop 侧只认「签名匹配」的作用域，不认 active 字节——未初始化（栈上残留
+ * 0xCC/0x00 混杂）或已被复用改写的作用域一律视为「未 push」并直接返回。
+ * 这条守卫是硬要求：pop 唯一的破坏性动作是把 previousWrite 回写到 TLS
+ * 回调槽，一旦作用域是脏内存，回写的就是垃圾函数指针，下一次任意
+ * XPrintf 调用即跳转到该地址（2026-10-31 demo 实测：槽位变
+ * 0xCCCCCCCCCCCCCCCC，崩溃点落在 xprintf_write_redirect 的间接调用）。
+ */
+#define XPRINTF_SCOPE_MAGIC 0x58505253u /* 'XPRS' */
+
+/**
  * @brief XPrintf 输出重定向作用域保存对象。
  * @details
  * 作用域支持嵌套，push 时保存当前线程的上一级输出目标，pop 时恢复。对象
  * 由调用方提供并仅在 push 到 pop 期间使用；不能把同一个对象重复 push。
+ * **调用方应零初始化（`XPrintfOutputScope scope = {0};`）**；未零初始化虽
+ * 由 magic 守卫兜底为「安全但未激活」（pop 为 no-op），但 push 的返回值
+ * 仍是唯一权威的激活判据——无条件 pop 会静默丢弃 push 失败的信息。
  */
 typedef struct XPrintfOutputScope {
     XPrintfOutputWrite previousWrite; /**< push 前的回调；由实现保存。 */
     void* previousUserData;           /**< push 前的回调上下文；由实现保存。 */
     bool active;                      /**< 是否已 push 且尚未 pop。 */
+    uint32_t magic;                   /**< 激活签名；见 XPRINTF_SCOPE_MAGIC。 */
 } XPrintfOutputScope;
 
 /**
@@ -55,6 +76,11 @@ bool XPrintf_outputPush(XPrintfOutputScope* scope, XPrintfOutputWrite write,
  * @return 无；scope 未激活时不执行操作。
  */
 void XPrintf_outputPop(XPrintfOutputScope* scope);
+
+/**
+ * @brief 把抽水线程收集的标准 C 输出（printf 等）在当前线程转投给 TLS 回调。
+ * @note  \u7531 processEvents \u5728\u4e3b\u7ebf\u7a0b\u8c03\u7528\uff1b\u65e0\u6d3b\u52a8\u4f5c\u7528\u57df\u65f6\u7a7a\u64cd\u4f5c\u3002 */
+void XPrintf_drainRedirectedOutput(void);
 #endif
 
 // -------------------------- 打印函数 --------------------------

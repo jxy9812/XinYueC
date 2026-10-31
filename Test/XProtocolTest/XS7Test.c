@@ -35,7 +35,7 @@
  * - 用例输出一行：[XS7][PLC] <用例名> PASS|FAIL|SKIP <细节>；
  *   地址映射开头打印 [XS7][PLC] MAP <addr,...>；每个读写地址最终值打印
  *   [XS7][PLC] RAW <addr> <hex字节>（供外部 python-snap7 交叉比对）
- * - 事件循环 XCoreApplication_exec()（仿 XModbusTcpClientTest）；
+ * - 事件循环 XCoreApplication_execBounded(15000)（仿 XModbusTcpClientTest）；
  *   结束时 disconnectDevice 并退出循环；run_stop 用例无论如何在测试
  *   结束前把 PLC 恢复为 RUN 态
  *
@@ -4363,7 +4363,7 @@ bool XS7Test_integration_run(void)
     if (!XPlcDevice_connectDevice((XPlcDevice*)g_integClient)) {
         XPrintf("[XS7][PLC] connectDevice 发起失败（实现未就绪或参数被拒，等待错误路径）\n");
     }
-    XCoreApplication_exec();
+    XCoreApplication_execBounded(15000);
 
     /* 事件循环退出：清理 */
     if (g_integClient != NULL) {
