@@ -421,7 +421,7 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top);
 static void XWidget_destroyWindow(XWidget* top, bool defer);
 static void XWidget_sendEvent(XWidget* self, XEvent* event);
 static void XWidget_sendShowHide(XWidget* self, bool visible);
-static void xwidget_postLayoutRequest(XWidget* receiver);
+void XWidget_postLayoutRequest(XWidget* receiver);
 static void xwidget_updateGeometry_helper(XWidget* self, bool forceUpdate);
 static void XWidget_clearFocusBase(XWidget* self, XFocusReason reason);
 static XWidget* XWidget_deepestFocusProxy(const XWidget* self);
@@ -818,19 +818,45 @@ static XEvent* XWidget_createPaintEvent(const XWidget* source)
 }
 
 /** @brief 向控件投递 LayoutRequest（队列事件，对标 Qt postEvent(
- *         parent, QEvent::LayoutRequest)）。压缩器合并同接收者重复项；
- *         接收者随后在事件分发中 activate 自身布局（见 VXWidget_event）。
- *         无应用实例（启动前/关闭后）或入队失败即丢弃事件，失效路径的
- *         m_isDirty 兜底保证后续 activate 不早退。 */
-static void xwidget_postLayoutRequest(XWidget* receiver)
+ *         parent, QEvent::LayoutRequest)）。
+ * @details [2026-10-31 定稿] 走 **XCoreApplication_postEvent**（互斥表 +
+ *          投递侧 compressEvent），不走无锁 tryPostEvent：
+ *          - tryPostEvent 的 MPSC 环容量 1024、生产者无法回扫，压缩只能
+ *            在出队时做——长同步阶段（autotest/动画批处理）先把环灌满再
+ *            丢事件，实测窗口设置页单页丢 348 条、全量 autotest 报
+ *            「队列满 480」且网络设置页布局断言失败；
+ *          - postEvent 在**入队时**按 Qt 6.8 QCoreApplication::compressEvent
+ *            合并同接收者的纯通知事件（一接收者至多 1 个在飞），表是
+ *            动态向量、不会满、不会丢；本事件无负载，被合并即语义已覆盖。
+ *          曾试过的两条路线及撤回原因（留档防重蹈）：
+ *          ① 接收者原子占位位（单飞闸）——「在飞」状态落在接收者上，
+ *             事件被 removePostedEvents/析构清走而不经派发时占位位永久
+ *             悬挂为 1，该控件此后收不到任何布局请求（用户实测：执行
+ *             全部测试后标题栏/状态栏/悬浮层布局停摆）；
+ *          ② 首次改走 postEvent 时曾报 xsss_widgetCache 处 AV——事后
+ *             全量清理重建证明该 AV 是 stash 实验遗留的混合目标文件
+ *             假象（结构体偏移错位读 0xCD），与 postEvent 无关，路线②
+ *             本身成立，本函数即其复活版。
+ *         无应用实例或入队失败即丢弃事件，失效路径的 m_isDirty 兜底保证
+ *          后续 activate 不早退。
+ *         保护头公开：XLayout_activate 尾部（qlayout.cpp:1063
+ *         mw->updateGeometry() 同效段）向无布局宿主父级投递用。 */
+void XWidget_postLayoutRequest(XWidget* receiver)
 {
     XEvent* event;
     if (!receiver || !XCoreApplication_instance()) return;
+    /* [析构闸 2026-10-31] 接收者已进入析构（VXObject_deinit 首行置位）
+     * 即不再受理布局请求：析构级联中子件的 updateGeometry→invalidate
+     * 仍会走到本入口，此时宿主布局链注定随宿主一起消亡，入队只会制造
+     * 「派发时接收者已释放」的悬空事件（实测：退出段错误，崩在分发循环
+     * 解引用已释放的 m_receiver）。未析构即销毁的正常路径由
+     * VXObject_deinit 里的 removePostedEvents 兜底清队。 */
+    if (((const XObject*)receiver)->m_was_deleted) return;
     event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                              XEVENT_TYPE_LAYOUT_REQUEST);
     if (!event) return;
-    if (!XCoreApplication_tryPostEvent((XObject*)receiver, event, 0))
-        XClassDelete((XClass*)event);
+    /* postEvent 接管所有权：失败路径（含压缩合并）由其内部释放。 */
+    XCoreApplication_postEvent((XObject*)receiver, event, 0);
 }
 
 /** @brief 在已占用 m_paintEventPosted 占位位的前提下构造并投递 PAINT。
@@ -1288,10 +1314,45 @@ static void XWidget_sendShowHide(XWidget* self, bool visible)
 #endif /* XWINDOWEVENT_ON */
 }
 
-/** @brief 发送事件到控件事件入口（事件由调用方持有并在派发后原地复用）。 */
+/** @brief 发送事件到控件事件入口（事件由调用方持有并在派发后原地复用）。
+ *  @note  [Qt 对齐 2026-10-30] 补上 QCoreApplication::sendEvent →
+ *         notifyInternal2/notify 的「接收者事件过滤器」段
+ *         （qcoreapplication.cpp）：装在控件上的事件过滤器必须先于控件
+ *         自身的 event() 观到事件，返回 true 即吞掉、不再投递给接收者。
+ *         此前本函数越过 notify 直投 XWidget_event_base，于是框架内部
+ *         自动派发的加工事件（Resize/Move/Show/Hide、鼠标与触摸传播链、
+ *         合成的 Enter/Leave…）一律逃过过滤器——Qt 里靠「子件加工事件
+ *         过滤器」维系的构件关系在本框架全部扑空，典型者 QScrollArea：
+ *         它对内容件装 Resize 过滤器来维护滚动条范围与显隐
+ *         （qscrollarea.cpp:250 installEventFilter、284-286 eventFilter
+ *         → updateScrollBars），本框架内容件被 resize 后滚动区收不到任何
+ *         通知，range/显隐停在旧值——左侧导航由高分类切到矮分类时滚条不
+ *         消失、矮切高时不出现（2026-10-30 截图实测），唯有改动窗口大小
+ *         触发滚动区自身 resize 才顺带刷新。仅当该控件确实装了过滤器时
+ *         才多走这一段；未装过滤器的控件与改前逐分支等价（零行为差、
+ *         零开销）。
+ *  @warning XVector_at_base 返回的是**槽位地址**（XVector_At_Base 宏才
+ *           解引用），取过滤器指针须再取一层；直接把槽位地址当对象指针
+ *           会在首次回调时跳到野地址。 */
 static void XWidget_sendEvent(XWidget* self, XEvent* event)
 {
+    XVector* filters;
     if (!self || !event) return;
+    filters = self->m_class.m_filters;
+    if (filters) {
+        size_t i;
+        for (i = 0; i < XVector_size_base(filters); ++i) {
+            XObject** slot = (XObject**)XVector_at_base(filters, (int64_t)i);
+            XObject* filter = slot ? *slot : NULL;
+            if (!filter) continue;
+            /* 同 Qt notify：过滤器吃掉事件即提前止步（返回 true）。 */
+            if (XObject_eventFilter_base(filter, (XObject*)self, event))
+                return;
+            /* 过滤器可能就地反注册自身甚至销毁接收者：每轮重取列表。 */
+            filters = self->m_class.m_filters;
+            if (!filters) break;
+        }
+    }
     XWidget_event_base(self, event);
 }
 
@@ -1728,6 +1789,237 @@ static void XWidget_clearUnderMouseRepaintHover(XWidget* self)
 }
 
 /** @brief 把局部区域折算到顶层坐标后并入顶层脏区。 */
+/* ==================== 遮挡裁剪（对标 Qt 的不透明覆盖语义） ====================
+ *
+ * 问题（2026-10-31 用户口径）：性能悬浮层被停靠的屏幕键盘整块挡住后，
+ * 它的 4Hz 自刷新仍按**自身矩形**入队脏区 ⇒ 每个刷新周期都产生一帧
+ * 「只重画那块」的局部帧。该矩形落在键盘覆盖带内，局部帧在 GPU 呈现链上
+ * 漏内容（实测：右下角整块回退成面板底色，键帽与悬浮层同时消失，空闲闸门
+ * 下长期驻留）。语义上正确且更省的做法：**被不透明控件挡住的像素不参与
+ * 刷新**。
+ *
+ * 三段实现与 Qt 6.8.3 逐项对应（qtbase/src/widgets/kernel/qwidget.cpp）：
+ *   ① 不透明度派生 xwidget_isOpaque ↔ QWidgetPrivate::updateIsOpaque:2164
+ *      （WA_OpaquePaintEvent / WA_PaintOnScreen / autoFillBackground+不透明
+ *      刷 / isWindow+不透明 Window 刷；有图形特效一律判非不透明）。
+ *   ② 不透明覆盖区 xwidget_appendOpaqueCoverage ↔ getOpaqueChildren:1997
+ *      （不透明者取客户区矩形 ∩ 遮罩；非不透明者递归取其子件的不透明覆盖）。
+ *   ③ 两处扣减：
+ *      - 脏区入队 subtractChildren + subtractSiblings
+ *        ↔ QWidget::visibleRegion:8716 = clipRect − opaqueChildren −
+ *          opaqueSiblings（subtractOpaqueChildren:2027 / :2038，后者带
+ *          「是窗口就不做」与 QT_NO_SUBTRACTOPAQUESIBLINGS 回退开关）；
+ *      - 绘制期 paintTree 子件循环里扣「Z 序在上的不透明兄弟」
+ *        ↔ QWidgetPrivate::paintSiblingsRecursive:5742 的 `wr -= crect`。
+ *
+ * 诊断回退：XGUI_DIRTY_NO_OCCLUSION=1（两处扣减同时停用，逐位回退旧口径）。
+ */
+/** @brief 遮挡裁剪诊断回退开关（=1 回退旧口径：不扣遮挡）。 */
+static bool xwidget_dirtyOcclusionDisabled(void)
+{
+    static int disabled = -1;
+    if (disabled < 0) {
+        const char* v = XSystem_environment("XGUI_DIRTY_NO_OCCLUSION");
+        disabled = (v && *v && !(v[0] == '0' && v[1] == 0)) ? 1 : 0;
+    }
+    return disabled != 0;
+}
+
+/** @brief 标记不透明度缓存失效（对标 Qt updateIsOpaque 的调用点分布）。 */
+static void xwidget_updateIsOpaque(XWidget* self)
+{
+    if (self) self->m_dirtyOpaque = 1;
+}
+
+/** @brief 取某角色在活动组下的颜色，判定其是否完全不透明（alpha==0xFF）。
+ * @details 本框架调色板存**纯色**（无 QBrush），故 Qt 的 brush.isOpaque()
+ *          等价于颜色 alpha 判定。 */
+static bool xwidget_roleColorOpaque(const XWidget* self, XPaletteColorRole role)
+{
+    XPalette palette;
+    XColor color;
+    if (!self) return false;
+    if (role == XPaletteColorRole_NoRole) return false;
+    palette = XWidget_palette(self);
+    color = XPalette_color(&palette, XPaletteColorGroup_Active, role);
+    return ((XColor_rgba(&color) >> 24) == 0xFFu);
+}
+
+/** @brief 控件是否「绘制后不留缝」（对标 QWidgetPrivate::updateIsOpaque）。
+ * @details 判据与 Qt 一致，顺序亦一致：
+ *          ① 启用图形特效 ⇒ 非不透明（特效输出尺寸/透明度不可预判）；
+ *          ② WA_OpaquePaintEvent / WA_PaintOnScreen ⇒ 不透明；
+ *          ③ autoFillBackground 且背景角色色不透明 ⇒ 不透明；
+ *          ④ 是窗口且未置 WA_NoSystemBackground 且 Window 角色色不透明
+ *             ⇒ 不透明。
+ *          结果缓存在 m_isOpaque，m_dirtyOpaque 置脏（setAttribute/
+ *          setAutoFillBackground/setPalette/setBackgroundRole/
+ *          setWindowFlags/setGraphicsEffect 六处失效）。
+ * @note    XGui 与 Qt 的一处差异：Qt 的 autoFillBackground 填充由绘制引擎
+ *          在 paintEvent **之前**保证（qwidget.cpp:2288 paintBackground），
+ *          本框架在默认绘制槽 XWidget_paintEvent_default:4185 内做。现存
+ *          5 处 setAutoFillBackground(true) 使用点（XDialog/XDockWidget/
+ *          XMainWindow/XToolTip）的绘制槽都自行铺底，故该派生成立；将来
+ *          新增「声明 autoFill 却不铺底」的控件需自行关掉 autoFill，或
+ *          按 Qt 把填充上提到 paintTree 派发前。 */
+static bool xwidget_isOpaque(XWidget* self)
+{
+    bool opaque = false;
+    if (!self) return false;
+    if (!self->m_dirtyOpaque) return self->m_isOpaque != 0;
+    if (self->m_graphicsEffect) {
+        /* Qt: `if (graphicsEffect) { setOpaque(false); return; }`——挂着效果
+           就判非不透明（不看 enabled，效果链改输出像素）。 */
+        opaque = false;
+    } else if (XWidget_attrTest(&self->m_attributes,
+                                XWidgetAttribute_OpaquePaintEvent) ||
+               XWidget_attrTest(&self->m_attributes,
+                                XWidgetAttribute_PaintOnScreen)) {
+        opaque = true;
+    } else if (self->m_autoFillBackground) {
+        opaque = xwidget_roleColorOpaque(self,
+                                         XWidget_backgroundRole(self));
+    } else if (self->m_isWindow &&
+               !XWidget_attrTest(&self->m_attributes,
+                                 XWidgetAttribute_NoSystemBackground)) {
+        opaque = xwidget_roleColorOpaque(self, XPaletteColorRole_Window);
+    }
+    self->m_isOpaque = opaque ? 1u : 0u;
+    self->m_dirtyOpaque = 0;
+    return opaque;
+}
+
+/** @brief 追加控件 w 的「不透明覆盖区」到 out（out 用 **w 的父坐标系**）。
+ * @details 对标 QWidgetPrivate::getOpaqueChildren：
+ *          - 自身不透明 ⇒ 取自身矩形；
+ *          - 自身不透明不足 ⇒ 递归取其可见子件的不透明覆盖（逐层累加）；
+ *          - 与客户区（Qt 的 clipRect）及遮罩求交（Qt 同款 r &= mask）；
+ *          - 最后平移到父坐标系（Qt: r.translate(offset)）。
+ *          depth 仅作防御：正常树深不会触发上限。 */
+static void xwidget_appendOpaqueCoverage(const XWidget* w, XRegion* out,
+                                        int depth)
+{
+    XRegion local;
+    XRegion clipped;
+    XRect rect;
+    if (!w || !out || depth > 64) return;
+    if (!w->m_visible || w->m_isWindow) return;
+    XRegion_init(&local);
+    XRegion_init(&clipped);
+    if (xwidget_isOpaque((XWidget*)w)) {
+        XRect_init(&rect, 0, 0, w->m_windowRect.width, w->m_windowRect.height);
+        if (rect.width > 0 && rect.height > 0) XRegion_addRect(&local, &rect);
+    } else {
+        const XVector* kids = XObject_children((XObject*)w);
+        size_t n = kids ? XVector_size_base((const XContainer*)kids) : 0;
+        size_t i;
+        for (i = 0; i < n; ++i) {
+            XObject* c = *(XObject**)XVector_at_base(kids, (int64_t)i);
+            if (!c || !c->m_is_widget) continue;
+            xwidget_appendOpaqueCoverage((const XWidget*)c, &local, depth + 1);
+        }
+    }
+    if (local.count > 0) {
+        XRegion_intersectRectInto(&local, &w->m_contentsRect, &clipped);
+        if (clipped.count > 0 && w->m_mask.count > 0) {
+            XRegion masked;
+            XRegion_init(&masked);
+            XRegion_intersectInto(&clipped, &w->m_mask, &masked);
+            XRegion_deinit(&clipped);
+            clipped = masked;
+        }
+        if (clipped.count > 0) {
+            XRegion_translateInline(&clipped, w->m_windowRect.x,
+                                    w->m_windowRect.y);
+            {
+                int i;
+                for (i = 0; i < clipped.count; ++i)
+                    XRegion_addRect(out, &clipped.rects[i]);
+            }
+        }
+    }
+    XRegion_deinit(&clipped);
+    XRegion_deinit(&local);
+}
+
+/** @brief 收集**本控件自己**不透明子件的覆盖区（self 局部坐标）到 out。
+ * @details 对标 QWidgetPrivate::getOpaqueChildren 的父侧用法
+ *          （subtractOpaqueChildren, qwidget.cpp:2027）：子件恒在父之后绘制
+ *          ⇒ 其覆盖区内父自身的像素不可见。out 由调用方初始化。 */
+static void xwidget_collectOpaqueChildren(const XWidget* self, XRegion* out)
+{
+    const XVector* kids;
+    size_t n;
+    size_t i;
+    if (!self || !out) return;
+    kids = XObject_children((XObject*)self);
+    n = kids ? XVector_size_base((const XContainer*)kids) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* c = *(XObject**)XVector_at_base(kids, (int64_t)i);
+        if (!c || !c->m_is_widget) continue;
+        xwidget_appendOpaqueCoverage((const XWidget*)c, out, 0);
+    }
+}
+
+/** @brief 从 region 扣掉**祖先链上 Z 序在本控件之上**的不透明兄弟覆盖区。
+ * @details 对标 QWidgetPrivate::subtractOpaqueSiblings（qwidget.cpp:2038）：
+ *          逐级上溯，每级把「位于当前节点之后」的兄弟的不透明覆盖区按累加
+ *          偏移 acc 折算回 self 局部。Qt 的两条纪律照搬：窗口层不做（顶层
+ *          兄弟是别的窗口，各走各的表面）、扣空即提前返回。 */
+static void xwidget_collectOpaqueSiblings(const XWidget* self, XRegion* out)
+{
+    const XWidget* node;
+    XPoint acc;
+    if (!self || !out) return;
+    /* Qt: `if (q->isWindow()) return;`——顶层兄弟是别的窗口，各走各的表面。 */
+    if (self->m_isWindow) return;
+    XPoint_init(&acc, 0, 0);
+    node = self;
+    while (node) {
+        XObject* parent;
+        const XVector* kids;
+        size_t n;
+        size_t i;
+        size_t idx;
+        XRegion occl;
+        if (node->m_isWindow) break;
+        parent = XObject_parent((XObject*)node);
+        if (!parent) break;
+        acc.x -= node->m_windowRect.x;
+        acc.y -= node->m_windowRect.y;
+        kids = XObject_children(parent);
+        n = kids ? XVector_size_base((const XContainer*)kids) : 0;
+        if (n <= 1) {
+            node = (const XWidget*)parent;
+            continue;
+        }
+        idx = n;
+        for (i = 0; i < n; ++i) {
+            if (*(XObject**)XVector_at_base(kids, (int64_t)i) == (XObject*)node) {
+                idx = i;
+                break;
+            }
+        }
+        {
+            XRegion occl;
+            int oi;
+            XRegion_init(&occl);
+            for (i = idx + 1; i < n; ++i) {
+                XObject* c = *(XObject**)XVector_at_base(kids, (int64_t)i);
+                if (!c || !c->m_is_widget) continue;
+                xwidget_appendOpaqueCoverage((const XWidget*)c, &occl, 0);
+            }
+            if (occl.count > 0) {
+                XRegion_translateInline(&occl, acc.x, acc.y);
+                for (oi = 0; oi < occl.count; ++oi)
+                    XRegion_addRect(out, &occl.rects[oi]);
+            }
+            XRegion_deinit(&occl);
+        }
+        node = (const XWidget*)parent;
+    }
+}
+
 /** @brief 脏区入队（生效可见性闸可绕过的内部变体）。
  * @param bypassVisible 1=跳过生效可见性闸（对标 Qt 6.8
  *        QWidgetPrivate::show_sys 的 invalidateBackingStore(rect) 补画
@@ -1843,6 +2135,31 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
         visibleRegion = XWidget_visibleRegion(self);
     } else {
         XRegion_init(&visibleRegion);
+    }
+    /* [遮挡裁剪 2026-10-31] 对标 QWidget::visibleRegion（qwidget.cpp:8716）：
+       clipRect − opaqueChildren − opaqueSiblings。两段都在本控件局部坐标上
+       做（visibleRegion 与 region 同坐标系）。扣空 ⇒ 本次 update 不入队
+       （不派发 PAINT、不产生只重画那块的局部帧）。fast-path 判定
+       （visibleClipped=false）只看祖先，故遮挡命中时必须切到通用路径——
+       visibleRegion 在无裁剪祖先时与 contentsRect 等价，切换是纯等价变换。 */
+    if (!xwidget_dirtyOcclusionDisabled()) {
+        XRegion occl;
+        XRegion_init(&occl);
+        xwidget_collectOpaqueChildren(self, &occl);
+        xwidget_collectOpaqueSiblings(self, &occl);
+        if (occl.count > 0) {
+            XRegion remain;
+            if (!visibleClipped) {
+                XRegion_deinit(&visibleRegion);
+                visibleRegion = XWidget_visibleRegion(self);
+                visibleClipped = true;
+            }
+            XRegion_init(&remain);
+            XRegion_subtracted(&visibleRegion, &occl, &remain);
+            XRegion_deinit(&visibleRegion);
+            visibleRegion = remain;
+        }
+        XRegion_deinit(&occl);
     }
     for (i = 0; i < source->count; ++i) {
         XRect clipped = XRect_intersected(&source->rects[i], &contents);
@@ -4510,6 +4827,9 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_layoutDirection = XWidgetLayoutDirection_LeftToRight;
     self->m_enabled = 1;
     self->m_updatesEnabled = 1;
+    /* [遮挡裁剪 2026-10-31] 不透明度缓存初值=待重算（XMemset 已清零，
+       置脏保证首次 xwidget_isOpaque 按真实属性/调色板算一次）。 */
+    self->m_dirtyOpaque = 1;
     /* QWidgetPrivate::init 设置 WA_WState_Hidden：新控件在显式
      * show() 前保持隐藏，父控件首次显示时不会误显示该子控件。 */
     /* 对标 Qt：顶层控件初始 Hidden（需显式 show），子控件不 Hidden
@@ -4736,6 +5056,26 @@ static void XFocusProxy_cleanupFor(XWidget* self)
 static void VXWidget_deinit(XWidget* self)
 {
     if (!self) return;
+    /* [Qt 对齐 2026-10-31 ~QWidget → setDirtyOpaqueRegion
+     * （qwidget.cpp:1510 + 1974-1998）] 控件销毁时作废其在**父控件**上
+     * 占据的像素：Qt 在析构里把自身及父链的 dirtyOpaqueChildren 置脏，
+     * 父控件重绘时不再认为那块区域是不透明子件的覆盖区，从而擦除残留。
+     * 本框架此前**完全缺失**这条链——动态控件（demo 测试菜单翻层时旧
+     * 按钮 deleteLater）销毁后，父容器不会重绘其占位区域，旧按钮像素永久
+     * 停留在屏上：根层 10 个按钮切到子层 5 个后，底部 5 个旧按钮残影不
+     * 消失，只有失焦/切页触发整窗重绘才被带走（2026-10-31 用户实测截图）。
+     * 失效口径与 hide 分支同款（XWidget_setVisible 的 hide：
+     * XWidget_updateRect(parent, &rect)）：m_windowRect 是控件在父坐标下
+     * 的矩形。必须在摘父链**之前**取父指针与本控件矩形——析构链后续
+     * （destroyWindow/removeChild）会���它们清掉。顶层（m_isWindow）不走：
+     * 其像素由窗口系统回收（Qt 同为 isWindow() 早退）。 */
+    if (!self->m_isWindow && XWidget_isVisible(self)) {
+        XWidget* dparent = XWidget_parentWidget(self);
+        if (dparent && XWidget_isVisible(dparent)) {
+            XRect drect = self->m_windowRect;
+            XWidget_updateRect(dparent, &drect);
+        }
+    }
     /* 重绘补投表摘项（登记非空即活对象纪律，同焦点/抓取/长按靶）：控件
        先于补投定时器到期消亡时，表内悬垂借用指针会在到期回调被解引用。
        未登记控件线性扫无命中即返，零开销。 */
@@ -5389,9 +5729,21 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
          * LayoutRequest（Resize 路径由 XLayout_activate 的 enabled 早退
          * 同口径拦截）。 */
 #if XLAYOUT_ON
-        if (self->m_layout && self->m_layout->m_enabled &&
-            XWidget_isVisible(self))
-            XLayout_activate(self->m_layout);
+        if (self->m_layout) {
+            /* Qt QLayout::widgetEvent：宿主可见才 activate，隐藏即跳过
+             * （不上抛——隐藏宿主的重排等其 show 分支兜底）。 */
+            if (self->m_layout->m_enabled && XWidget_isVisible(self))
+                XLayout_activate(self->m_layout);
+        } else if (!self->m_isWindow && XWidget_parentWidget(self)) {
+            /* [无布局父链上抛 2026-10-31 对标 QAbstractScrollAreaFilter →
+             * viewportEvent 默认段（qabstractscrollarea.cpp:1061-1063）]
+             * 滚动区族的内容提示变化（标签文本增长等）由此沿「视口(无布局) →
+             * 滚动区事件槽」链到达重排版入口（QScrollArea::event →
+             * updateScrollBars）。顶层（m_isWindow）不上抛（Qt
+             * updateGeometry_helper 的 isWindow 门同口径）。 */
+            XWidget_sendEvent(XWidget_parentWidget(self), event);
+            return true;
+        }
 #endif
         return true;
     case XEVENT_TYPE_LOCALE_CHANGE:
@@ -5439,6 +5791,13 @@ void XWidget_setAttribute(XWidget* self, XWidgetAttribute attribute, bool on)
 {
     if (!self) return;
     XWidget_attrSet(&self->m_attributes, attribute, on);
+    /* [遮挡裁剪 2026-10-31] 不透明度缓存失效（对标 Qt 在 setAttribute 里
+       调 updateIsOpaque 的分布）：OpaquePaintEvent / PaintOnScreen /
+       NoSystemBackground 三个属性都参与判定，一律置脏重算。 */
+    if (attribute == XWidgetAttribute_OpaquePaintEvent ||
+        attribute == XWidgetAttribute_PaintOnScreen ||
+        attribute == XWidgetAttribute_NoSystemBackground)
+        xwidget_updateIsOpaque(self);
     /* 这些属性在 QWidget 中同时驱动对应的便捷查询接口；保持字段与
      * 位集一致，避免通过 setAttribute() 设置后读到旧状态。 */
     switch (attribute) {
@@ -5497,6 +5856,9 @@ void XWidget_setWindowFlags(XWidget* self, XWidgetFlags flags)
     self->m_isWindow = (!(XObject_parent((XObject*)self)) ||
                         (flags & (XWidgetFlags)XWindowType_Window) ||
                         (flags & (XWidgetFlags)XWindowType_Popup)) ? 1 : 0;
+    /* [遮挡裁剪 2026-10-31] isWindow 参与不透明派生（窗口且 Window 角色色
+       不透明 ⇒ 不透明）：改窗口身份让缓存重算。 */
+    xwidget_updateIsOpaque(self);
     /* 从顶层降级为子控件时释放其桥接窗口；setWindowFlags 可在控件自身
        事件/信号发射帧内被调用，窗口结构体延迟回收（defer=true），
        同步删 UAF（对标 Qt deleteLater 语义）。 */
@@ -5884,7 +6246,7 @@ static void xwidget_updateGeometry_helper(XWidget* self, bool forceUpdate)
     if (parent && parent->m_layout)
         XLayout_invalidate(parent->m_layout);
     else if (parent && XWidget_isVisible(parent))
-        xwidget_postLayoutRequest(parent);
+        XWidget_postLayoutRequest(parent);
 #else
     (void)forceUpdate;
 #endif /* XLAYOUT_ON */
@@ -7256,7 +7618,7 @@ void XWidget_setVisible(XWidget* self, bool visible)
                 if (parent->m_layout)
                     XLayout_invalidate(parent->m_layout);
                 else if (XWidget_isVisible(parent))
-                    xwidget_postLayoutRequest(parent);
+                    XWidget_postLayoutRequest(parent);
             }
         }
     }
@@ -9474,6 +9836,7 @@ void XWidget_setPalette(XWidget* self, const XPalette* palette)
     if (!self || !palette) return;
     xwidget_paletteStore(self, palette);
     self->m_paletteSet = 1;
+    xwidget_updateIsOpaque(self); /* 背景角色色可能变透明/不透明。 */
     XWidget_update(self);
 #endif /* XPALETTE_ON */
 }
@@ -9488,6 +9851,7 @@ void XWidget_setBackgroundRole(XWidget* self, XPaletteColorRole role)
     if (!self) return;
     if (self->m_backgroundRole == role) return;
     self->m_backgroundRole = role;
+    xwidget_updateIsOpaque(self); /* 背景角色换 ⇒ 可能影响不透明判定。 */
     XWidget_update(self);
 }
 
@@ -9530,6 +9894,7 @@ void XWidget_setAutoFillBackground(XWidget* self, bool enable)
 {
     if (!self) return;
     self->m_autoFillBackground = enable ? 1 : 0;
+    xwidget_updateIsOpaque(self); /* autoFill 是 Qt 不透明判据的一支。 */
     XWidget_update(self);
 }
 
@@ -10110,6 +10475,35 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
                                                   &widget->m_contentsRect);
             if (visibleRect.width > 0 && visibleRect.height > 0) {
                 XRegion_intersectRectInto(paintRegion, &visibleRect, &clipped);
+                /* [绘制期遮挡裁剪 2026-10-31] 对标 Qt
+                 * QWidgetPrivate::paintSiblingsRecursive（qwidget.cpp:5742）：
+                 * 倒序遍历兄弟，遇到不透明者把它的矩形从「下层的绘制区域」
+                 * 里减掉（Qt: `wr -= wd->crect`）。这里正序遍历，等价做法=
+                 * 每个子件扣掉「Z 序在它之上（下标更大）的不透明兄弟」的
+                 * 覆盖区；扣空即整块跳过（不派发它的 PAINT）。
+                 * 只扣不透明的是 Qt 的同款纪律：非不透明兄弟不构成遮挡，
+                 * 它们内部的不透明后代由它们自己的子树循环处理。 */
+                if (clipped.count > 0 && i + 1 < n &&
+                    !xwidget_dirtyOcclusionDisabled()) {
+                    XRegion occl;
+                    size_t j;
+                    XRegion_init(&occl);
+                    for (j = i + 1; j < n; ++j) {
+                        XObject* sc = *(XObject**)XVector_at_base(children,
+                                                                 (int64_t)j);
+                        if (!sc || !sc->m_is_widget) continue;
+                        if (!xwidget_isOpaque((XWidget*)sc)) continue;
+                        xwidget_appendOpaqueCoverage((const XWidget*)sc, &occl, 0);
+                    }
+                    if (occl.count > 0) {
+                        XRegion remain;
+                        XRegion_init(&remain);
+                        XRegion_subtracted(&clipped, &occl, &remain);
+                        XRegion_deinit(&clipped);
+                        clipped = remain;
+                    }
+                    XRegion_deinit(&occl);
+                }
                 if (clipped.count > 0) {
                     /* [框架层父容器裁剪 2026-10-27 根修] 子控件**部分**
                      * 伸出父客户区时，把 surface clip（表面裁剪）收窄到
@@ -11434,6 +11828,9 @@ void XWidget_setGraphicsEffect(XWidget* self, XGraphicsEffect* effect)
             effect, XGraphicsEffectChange_ContentsChanged |
                         XGraphicsEffectChange_GeometryChanged);
     }
+    /* [遮挡裁剪 2026-10-31] 有特效一律判非不透明（Qt updateIsOpaque 首支）：
+       安装/卸载效果都让缓存重算。 */
+    xwidget_updateIsOpaque(self);
 }
 
 /**

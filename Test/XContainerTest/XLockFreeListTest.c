@@ -681,7 +681,7 @@ static void XLockFreeListConcurrentTest(void)
 			XVarList_Create(XVar(XLFLThreadCtx*, cctxPtr)));
 		XThread_start(t);
 	}
-	XCoreApplication_exec();
+	XCoreApplication_execBounded(15000);
 
 	XPrintf("并发结束: produced=%zu consumed=%zu remain_size=%zu (期望:%d/%d/0)\n",
 		XAtomic_load_size_t(&produced, XAtomic_MemoryOrder_Relaxed),

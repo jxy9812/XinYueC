@@ -34,6 +34,7 @@
    XWidget.c 不在本修复改动面内（N5-2 硬约束），仅经公共头引用。 */
 #include "XWidget.h"
 #include "XWidget_Protected.h"
+#include "XGuiApplication.h" /* 顶层控件注册表：windowHandle 反查顶层（回退⑤）。 */
 #endif /* XWIDGET_ON */
 
 /** @brief 当前同步派发中的触摸事件时间戳（毫秒）；仅 handleTouchEvent(_ex)
@@ -63,27 +64,44 @@ static XWidget* g_hoverEnterWidget = NULL;
  *         在册 + 子树指针扫描」验活，全程不解引用失放对象（UAF 防护）。 */
 static XWidget* g_hoverEnterTop = NULL;
 
-/** @brief 原生窗 → 顶层控件：优先经控件域三个活登记锚正向解析——应用
- *         焦点控件（点击/Tab 编辑控件后即活）、应用模态控件、鼠标抓取
- *         控件；三锚由 XWidget 析构链自清理（VXWidget_deinit →
- *         clearFocusBase / grab 清位 / setApplicationModalWidget(NULL)），
- *         恒为活对象。
- * @note   回退④（第八轮 R1 悬停收口）：三锚全空（或皆不指向本窗）时改
- *         用合成器登记靶 g_hoverEnterWidget 解析——该靶由 XWidget.c 的
- *         桥实投 ENTER 落点回报钩子
- *         （XWindowSystemInterface_setHoverTarget）在投递现场登记（回报
- *         即活对象），并由 VXWidget_deinit 析构链自清位
- *         （XWindowSystemInterface_clearHoverTarget）保证恒不悬空。
- *         「纯悬停冷会话（无焦点/模态/抓取交互）」此前无锚不换靶的残界
- *         由此收口：原生窗边界 ENTER 先经桥命中实投（钩子登记），窗内
- *         后续移动合成器即可解析换靶。窗口域反向注册表仍不可用：
- *         XApplication 顶层表依赖子类 XApplication 才置位的 g_xapp
- *         （XApplication.c:89），基类 XGuiApplication 用法下恒空。 */
+/** @brief 原生窗 → 顶层控件：主路径按顶层控件注册表经 windowHandle 反查
+ *         （对标 Qt QWidgetWindow::m_widget 反向指针，qwidgetwindow.cpp——
+ *         桥接窗与顶层控件一一对应，Qt 的 dispatchEnterLeave 由此恒可
+ *         解析靶顶；本框架 XWidgetWindow 的 m_widget 为 XWidget.c 私有，
+ *         以注册表扫描同位实现），注册表由 XWidget 析构链自注销
+ *         （VXWidget_deinit → XApplication_unregisterTopLevelWidget），
+ *         在册恒活对象——**不依赖任何瞬态锚**。
+ * @note   回退锚仅作注册表缺席时的兜底：①三个活登记锚——应用焦点控件
+ *         （点击/Tab 编辑控件后即活）、应用模态控件、鼠标抓取控件；②
+ *         合成器登记靶 g_hoverEnterWidget（桥实投 ENTER 落点回报钩子
+ *         XWindowSystemInterface_setHoverTarget 登记、析构自清位）。
+ *         [2026-10-31 根修] 此前锚全空即解析失败——点击翻层类交互
+ *         （demo 测试菜单翻子菜单）把焦点锚控件 deleteLater 后三锚全空
+ *         且登记靶清位，合成器拿不到 top、ENTER 永不再派发，悬浮样式
+ *         整页失效直至切页重建锚；主路径化后不依赖交互史，恒可解析。
+ *         （旧注「窗口域反向注册表不可用」已过时：注册表 2026-10-26 起
+ *         在基类 XGuiApplication，只建基类的应用同样登记。） */
 static XWidget* XWindowSystemInterface_hoverTopForWindow(XWindow* window)
 {
     XWidget* anchors[3];
     int i;
     if (!window) return NULL;
+    /* 主路径：经桥接窗的 m_widget 反查（对标 Qt QWidgetWindow::m_widget）。
+       XWidget_widgetForWindow 判定「本窗是否为 XWidgetWindow 桥接窗」并返回
+       其归属控件——窗口与控件同生共死，**构造上恒活**。
+       [2026-10-31 根修] 此前改用「顶层控件注册表按 windowHandle 扫描」：
+       注册表条目仅在控件析构时注销，而栈上顶层控件（测试里 XWidget top 出
+       作用域却从未析构）永远留在表中——扫描即解引用悬垂条目（回归套件
+       实测 AV：XWindowSystemInterface_hoverTopForWindow）。桥接窗反查无此
+       风险。 */
+    {
+        XWidget* owner = XWidget_widgetForWindow(window);
+        if (owner) {
+            XWidget* top = XWidget_topLevelWidget(owner);
+            if (top) return top;
+            return owner;
+        }
+    }
     anchors[0] = XWidget_appFocusWidget();
     anchors[1] = XWidget_applicationModalWidget();
     anchors[2] = XWidget_mouseGrabber();

@@ -696,11 +696,73 @@ static void XBoxLayout_calcMetrics(const XBoxLayout* self, XSize* minOut,
     XFree_Hybrid(geom);
 }
 
+/**
+ * @brief      取盒式布局自身的合计度量（一次算全、四处复用）。
+ * @details    板端实测（RK3568，page 18/19）：布局重算 act=3535 次/秒、
+ *             失效 49472 次/秒、CPU 恒 99%，同栈采样热点全在
+ *             XBoxLayout_collectGeom / XBoxLayout_calcMetrics；而无滚动区
+ *             的 page 0 仅 act=6 次、CPU 4%。
+ *
+ *             成因：一次 collectGeom 对每个子项连问 5 个指标（hint/min/
+ *             max/expanding/isEmpty）。子项若是**盒式布局**，前三个各有
+ *             独立缓存槽（m_cachedHint/Min/Max），但 expandingDirections
+ *             **完全没有缓存槽** ⇒ 每个子布局被完整下钻 4~5 次，
+ *             复杂度 O(5^嵌套深度)。
+ *
+ *             本函数把四个度量合并为**一次** calcMetrics（它本就能一次
+ *             出全部结果），结果存进 XBoxLayout 自身的度量缓存，四处
+ *             复用 ⇒ 每个子布局只下钻一次，复杂度回到 O(深度)。
+ *             取值与原逐项查询**完全一致**（同一份 calcMetrics 结果），
+ *             只是不再重复计算。
+ */
+static void XBoxLayout_ownMetrics(const XBoxLayout* self,
+                                   XSize* hintOut, XSize* minOut,
+                                   XSize* maxOut,
+                                   XLayoutExpandingDirections* expOut)
+{
+    if (!self) {
+        if (hintOut) XSize_init(hintOut, 0, 0);
+        if (minOut) XSize_init(minOut, 0, 0);
+        if (maxOut) XSize_init(maxOut, XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
+        if (expOut) *expOut = XLayoutExpandingDirection_None;
+        return;
+    }
+    if (!self->m_base.m_metricsValid) {
+        XSize hint, min, max;
+        bool mainExp = false;
+        bool crossExp = false;
+        XLayoutExpandingDirections exp = XLayoutExpandingDirection_None;
+        /* 一次算全：四个输出同时取，calcMetrics 内部只做一次 collectGeom。 */
+        XBoxLayout_calcMetrics(self, &min, &hint, &max, &mainExp, &crossExp);
+        if (XBoxLayout_isHorizontal(self)) {
+            if (mainExp) exp |= XLayoutExpandingDirection_Horizontal;
+            if (crossExp) exp |= XLayoutExpandingDirection_Vertical;
+        } else {
+            if (mainExp) exp |= XLayoutExpandingDirection_Vertical;
+            if (crossExp) exp |= XLayoutExpandingDirection_Horizontal;
+        }
+        /* 写缓存：self 为 const（度量查询不改布局语义），经可写副本写入。
+           缓存在基类 m_base，与 m_base 的尺寸缓存同生命周期。 */
+        {
+            XBoxLayout* w = (XBoxLayout*)self;
+            w->m_base.m_metricsHint = hint;
+            w->m_base.m_metricsMin = min;
+            w->m_base.m_metricsMax = max;
+            w->m_base.m_metricsExpanding = (uint32_t)exp;
+            w->m_base.m_metricsValid = 1;
+        }
+    }
+    if (hintOut) *hintOut = self->m_base.m_metricsHint;
+    if (minOut) *minOut = self->m_base.m_metricsMin;
+    if (maxOut) *maxOut = self->m_base.m_metricsMax;
+    if (expOut) *expOut = (XLayoutExpandingDirections)self->m_base.m_metricsExpanding;
+}
+
 static XSize VXBoxLayout_sizeHint(const XLayoutItem* item)
 {
     XSize out;
     XSize_init(&out, 0, 0);
-    XBoxLayout_calcMetrics((const XBoxLayout*)item, NULL, &out, NULL, NULL, NULL);
+    XBoxLayout_ownMetrics((const XBoxLayout*)item, &out, NULL, NULL, NULL);
     return out;
 }
 
@@ -709,7 +771,7 @@ static XSize VXBoxLayout_minimumSize(const XLayoutItem* item)
 {
     XSize out;
     XSize_init(&out, 0, 0);
-    XBoxLayout_calcMetrics((const XBoxLayout*)item, &out, NULL, NULL, NULL, NULL);
+    XBoxLayout_ownMetrics((const XBoxLayout*)item, NULL, &out, NULL, NULL);
     return out;
 }
 
@@ -720,7 +782,7 @@ static XSize VXBoxLayout_maximumSize(const XLayoutItem* item)
     XSize out;
     XLayoutAlignments align;
     XSize_init(&out, XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
-    XBoxLayout_calcMetrics(self, NULL, NULL, &out, NULL, NULL);
+    XBoxLayout_ownMetrics(self, NULL, NULL, &out, NULL);
     align = XLayoutItem_alignment(item);
     if (align & XLayoutAlignment_HorizontalMask)
         out.width = XWIDGET_MAX_SIZE;
@@ -734,18 +796,11 @@ static XLayoutExpandingDirections VXBoxLayout_expandingDirections(
     const XLayoutItem* item)
 {
     const XBoxLayout* self = (const XBoxLayout*)item;
-    bool mainExp = false;
-    bool crossExp = false;
     XLayoutExpandingDirections out = XLayoutExpandingDirection_None;
     if (!item) return out;
-    XBoxLayout_calcMetrics(self, NULL, NULL, NULL, &mainExp, &crossExp);
-    if (XBoxLayout_isHorizontal(self)) {
-        if (mainExp) out |= XLayoutExpandingDirection_Horizontal;
-        if (crossExp) out |= XLayoutExpandingDirection_Vertical;
-    } else {
-        if (mainExp) out |= XLayoutExpandingDirection_Vertical;
-        if (crossExp) out |= XLayoutExpandingDirection_Horizontal;
-    }
+    /* 走共享度量缓存（不再单独下钻）——见 XBoxLayout_ownMetrics 注：
+       此处原本无缓存槽，是 O(5^深度) 爆炸的主要来源。 */
+    XBoxLayout_ownMetrics(self, NULL, NULL, NULL, &out);
     return out;
 }
 
@@ -1089,6 +1144,8 @@ XVtable* XBoxLayout_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_MaximumSize, VXBoxLayout_maximumSize);
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_ExpandingDirections,
                              VXBoxLayout_expandingDirections);
+    /* 失效覆盖：无需——合并度量缓存在基类 XLayout（m_metrics*），
+       由基类清缓存段统一清（XLayout.c 的 xlayout_clearCaches）。 */
     /* IsEmpty 不覆盖：继承基类 itemAt 扫描语义（对标 QLayout::isEmpty）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_SetGeometry, VXBoxLayout_setGeometry);
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_HasHeightForWidth,

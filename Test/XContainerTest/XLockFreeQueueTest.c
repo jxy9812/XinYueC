@@ -192,7 +192,7 @@ static void XLFQConcurrentTest(void)
             XVarList_Create(XVar(XLFQCtx*, pctx)));
         XThread_start(t);
     }
-    XCoreApplication_exec();
+    XCoreApplication_execBounded(15000);
 
     size_t total = (size_t)XLFQ_PRODUCERS * (size_t)XLFQ_PER_PROD;
     XPrintf("并发结束: produced=%zu consumed=%zu remain=%zu (期望:%zu/%zu/0)\n",

@@ -174,6 +174,29 @@ void XLayout_linkItem(XLayout* self, XLayoutItem* item);
 void XLayout_profilerReadAndReset(long* act, long* skip, long* inval,
                                   int64_t* solveNs);
 
+/**
+ * @brief      只清尺寸缓存与脏位，**不投递 LayoutRequest**（框架内部）。
+ * @details    与 XLayout_invalidate 的差别仅在「投递段」：本函数不调用
+ *             xlayout_update_impl，故不产生 LayoutRequest 事件。
+ *
+ *             用途（RK3568 板端实测的布局活锁根修，2026-11-01）：
+ *             XScrollArea 的几何更新需要**重新读取**内容的合计提示
+ *             （提示带缓存，须先失效才能重算），但它并不需要**安排重排版**
+ *             ——它自己就是重排版的发起方。若用 XLayout_invalidate，
+ *             失效会投一个 LayoutRequest；该事件回到滚动区 ⇒ 再次几何
+ *             更新 ⇒ 再次失效 ⇒ 再次投递，形成自我维持的活锁：
+ *             板端实测 act=3535 次/秒、inval=49472 次/秒、CPU 恒 99%
+ *             （有滚动区的 page 18/19）；无滚动区的 page 0 仅 act=6、CPU 4%。
+ *
+ *             语义等价性：本函数同样清自身/子条目/祖先的尺寸缓存与脏位，
+ *             故后续 sizeHint/minimumSize 读取会重算（与 invalidate 后
+ *             立刻重读同口径）；唯一去掉的是「投递一次重排版请求」——
+ *             发起方自己已经在做重排版，无需再被通知。
+ *
+ * @param      self 目标布局；可为 NULL。
+ */
+void XLayout_invalidateCacheOnly(XLayout* self);
+
 #endif /* XLAYOUT_ON */
 
 #ifdef __cplusplus

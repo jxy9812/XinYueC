@@ -10,12 +10,6 @@
 #include "CXinYueConfig.h"
 #if XGUI_ON
 
-
-
-#ifndef XGUI_ON
-#define XGUI_ON 1
-#endif
-
 /* 图像与窗口基础模块。 */
 #ifndef XIMAGECODEC_ON
 #define XIMAGECODEC_ON 1
@@ -104,10 +98,14 @@
  * 软件、=opengl 强制 GPU（运行期设置优先于本默认值）。 */
 #ifndef XGPU_RUNTIME_DEFAULT_ON
 #if XGPU_ON && XPLATFORMINTEGRATION_ON && XPLATFORM_DESKTOP
-/* 暂时回退软件默认（2026-09-24 用户指令）：GPU 子矩形批量化 WIP
- * （87213b92）存在闪烁 + 帧率回退（数百帧），修复并发专项完成前
- * 桌面默认保持软件光栅；WIP 修完后恢复 1。 */
-#define XGPU_RUNTIME_DEFAULT_ON 0
+/* 恢复桌面默认 GPU（2026-10-31 用户指令）。历史：2026-09-24 曾因子矩形
+ * 批量化 WIP（87213b92）的闪烁 + 帧率回退（数百帧）暂时回退软件默认；
+ * 该 WIP 当晚即被「透明暂存画布 + 批脏区 SourceOver 混合提交」方案
+ * （d0c79214a）整体替换，并经夜间三/四逐项根修（keep-open 默认关、
+ * 降级帧整窗恢复、读回+BitBlt 呈现通道、慢 begin 帧级原子自动降级），
+ * d0c79214a 同时误删了 requested() 的宏消费分支致本宏成死码——本次
+ * 随默认恢复一并补回（见 XGpuRenderBackend_requested）。 */
+#define XGPU_RUNTIME_DEFAULT_ON 1
 #else
 #define XGPU_RUNTIME_DEFAULT_ON 0
 #endif
@@ -426,54 +424,102 @@
 #ifndef XRENDERKERNEL_GRAYSCALE8_ON
 #define XRENDERKERNEL_GRAYSCALE8_ON 1
 #endif
+/* XPainter 绘制能力开关（2026-10-31 重复宏合并：取值唯一权威=本文件；
+ * 依赖钳制见 Graphics/XPainter_config.h。原 XPainter_config.h 的兜底
+ * 默认在本文件先行的包含序下从不生效，已删除；逐开关 API 契约文档
+ * 随合并迁入本块。 */
+/** @brief 绘图器总开关；置 0 时裁剪整个绘图器公共 API 与全部扩展能力，
+ *  并由 XPainter_config.h 的总关钳制把全部能力位归零。布局、控件
+ *  （XWidget/XLabel 等）依赖绘制能力，裁剪时应同步裁剪这些依赖项。 */
+#ifndef XPAINTER_ON
+#define XPAINTER_ON 1
+#endif
+/** @brief 形状绘制开关；置 0 时裁剪椭圆、圆弧、扇形、弦与圆角矩形绘制
+ *  API（XPainter_drawEllipse / drawArc / drawPie / drawChord /
+ *  drawRoundedRect）。保留基础 drawRect/drawLine/fillRect。 */
 #ifndef XPAINTER_SHAPE_ON
 #define XPAINTER_SHAPE_ON 1
 #endif
+/** @brief 多边形/折线/点集绘制开关；置 0 时裁剪 XPainter_drawPolygon /
+ *  drawPolyline / drawPoints。 */
 #ifndef XPAINTER_POLYGON_ON
 #define XPAINTER_POLYGON_ON 1
 #endif
+/** @brief 画笔样式开关；置 0 时裁剪画笔样式（实线/虚线/点线等）与
+ *  端点/拐角样式相关 API；画笔颜色与宽度仍保留。 */
 #ifndef XPAINTER_PENSTYLE_ON
 #define XPAINTER_PENSTYLE_ON 1
 #endif
+/** @brief 画刷体系开关；置 0 时裁剪画刷样式（无/实心、Qt 图案）与线性、
+ *  径向、锥形渐变色画刷 API；XPainter_setBrush（颜色版）仍保留。 */
 #ifndef XPAINTER_BRUSH_ON
 #define XPAINTER_BRUSH_ON 1
 #endif
+/** @brief 画刷原点状态开关；置 0 时裁剪 brushOrigin/setBrushOrigin 状态及
+ *  渐变坐标偏移，适合完全不使用图案画刷的嵌入式界面。 */
 #ifndef XPAINTER_BRUSH_ORIGIN_ON
 #define XPAINTER_BRUSH_ORIGIN_ON 1
 #endif
+/** @brief 背景模式开关；置 0 时裁剪 QPainter::setBackgroundMode/
+ *  backgroundMode 对应状态，背景颜色接口仍保留。 */
 #ifndef XPAINTER_BACKGROUND_ON
 #define XPAINTER_BACKGROUND_ON 1
 #endif
+/** @brief 像素图绘制适配开关；置 0 时裁剪 QPixmap 兼容的
+ *  XPainter_drawPixmap/XPainter_drawPixmap_2 以及矩形重载。
+ *  开启后仅通过 XPixmap_toImage 复用现有无平台图像后端，不引入平台 API。 */
 #ifndef XPAINTER_PIXMAP_ON
 #define XPAINTER_PIXMAP_ON 1
 #endif
+/** @brief 图像目标/源矩形绘制开关；置 0 时裁剪
+ *  XPainter_drawImageRect，保留按位置绘制的 drawImage。 */
 #ifndef XPAINTER_IMAGE_RECT_ON
 #define XPAINTER_IMAGE_RECT_ON 1
 #endif
+/** @brief 像素图平铺绘制开关；置 0 时裁剪
+ *  XPainter_drawTiledPixmap。实现通过 drawImageRect 逐 tile 绘制，
+ *  因此同时依赖 XPAINTER_PIXMAP_ON 与 XPAINTER_IMAGE_RECT_ON
+ *  （依赖钳制见 XPainter_config.h）。 */
 #ifndef XPAINTER_TILED_PIXMAP_ON
 #define XPAINTER_TILED_PIXMAP_ON 1
 #endif
+/** @brief 路径绘制开关；置 0 时裁剪 QPainterPath 风格的路径对象
+ *  （XPainterPath / drawPath / fillPath / strokePath）。 */
 #ifndef XPAINTER_PATH_ON
 #define XPAINTER_PATH_ON 1
 #endif
+/** @brief 文本布局开关；置 0 时裁剪边界矩形内对齐/自动换行/多行绘制
+ *  API（XPainter_drawTextRect）；单行基线绘制 drawText 仍保留。 */
 #ifndef XPAINTER_TEXTLAYOUT_ON
 #define XPAINTER_TEXTLAYOUT_ON 1
 #endif
+/** @brief 文本布局方向开关；置 0 时不保存绘制器方向状态，文本按从左到右
+ * 处理；置 1 时提供 QPainter::setLayoutDirection/layoutDirection 对应 API。 */
 #ifndef XPAINTER_LAYOUT_DIRECTION_ON
 #define XPAINTER_LAYOUT_DIRECTION_ON 1
 #endif
+/** @brief 渲染提示开关；置 0 时裁剪 RenderHint 状态及其查询/修改 API。 */
 #ifndef XPAINTER_RENDERHINT_ON
 #define XPAINTER_RENDERHINT_ON 1
 #endif
+/** @brief 世界变换状态开关；置 0 时始终应用当前变换矩阵，并裁剪矩阵启用查询/修改 API。 */
 #ifndef XPAINTER_WORLD_MATRIX_ON
 #define XPAINTER_WORLD_MATRIX_ON 1
 #endif
+/** @brief window/viewport 视图变换开关；置 0 时裁剪逻辑窗口、设备视口及
+ *  视图变换状态 API，绘制仅使用世界变换，适合坐标固定的嵌入式界面。 */
 #ifndef XPAINTER_VIEW_TRANSFORM_ON
 #define XPAINTER_VIEW_TRANSFORM_ON 1
 #endif
+/** @brief 矩形裁剪开关；置 0 时裁剪 ClipOperation、裁剪状态及对应公共 API，
+ *  软件光栅后端不执行逐像素裁剪，适合无需局部重绘保护的嵌入式界面。
+ *  置 0 时区域裁剪（CLIP_REGION）经 XPainter_config.h 钳制连带归零。 */
 #ifndef XPAINTER_CLIP_ON
 #define XPAINTER_CLIP_ON 1
 #endif
+/** @brief 区域裁剪开关；置 0 时仅保留矩形裁剪，置 1 时提供
+ *  QPainter::setClipRegion/clipRegion 对应的 XRegion API。
+ *  依赖 XPAINTER_CLIP_ON（钳制见 XPainter_config.h）。 */
 #ifndef XPAINTER_CLIP_REGION_ON
 #define XPAINTER_CLIP_REGION_ON 1
 #endif
@@ -1013,8 +1059,23 @@
 #define XAPPLICATION_ON 0
 #endif
 
-/* XGui 总开关关闭时，所有 GUI 子模块统一裁剪。 */
-#if !XGUI_ON
+#include "Graphics/XImageCodec/XImageCodec_config.h"
+
+/* ==================== 调试跟踪（临时；问题关闭后移除） ==================== */
+/* 停靠拖放链路跟踪：置 1 时 XMainWindow/XDockWidget 关键决策点向 stdout
+ * 打一行 [DOCK] 日志（带 fflush）。默认 0（零开销）；需复现时以
+ * -DXGUI_DOCK_TRACE=1 翻案，勿改此缺省。 */
+#ifndef XGUI_DOCK_TRACE
+#define XGUI_DOCK_TRACE 0
+#endif
+
+#else /* !XGUI_ON —— 总开关关闭：所有 GUI 子模块统一硬裁剪。 */
+/* 【死区修复 2026-10-31】本段原为嵌套在上方 #if XGUI_ON 分支内部的
+ * #if !XGUI_ON 块，条件恒假、从不执行——:5 文档承诺的 "-DXGUI_ON=0
+ * 即可裁剪整个 GUI" 实际全靠各 .c 文件级 #if XGUI_ON 守卫兜底，且
+ * XPainter_config.h 等子系统兜底默认在 XGUI_ON=0 时反而全部落 1。
+ * 现转正为 #if XGUI_ON 的真 #else 分支，硬裁剪语义回归文件内表达
+ * （随重复宏合并一并落地，见 XGui.md 合并清单）。 */
 #undef XIMAGECODEC_ON
 #define XIMAGECODEC_ON 0
 #undef XIMAGECACHE_ON
@@ -1057,6 +1118,10 @@
 #define XPLATFORMINPUTCTX_ON 0
 #undef XGPU_ON
 #define XGPU_ON 0
+/* XGUI_ON=0 裁剪构建：GPU 默认口径同步钳 0（上方宏定义段早于本段，
+ * 桌面条件在其时仍按裁剪前 XGPU_ON=1 求值，须在此强制归零）。 */
+#undef XGPU_RUNTIME_DEFAULT_ON
+#define XGPU_RUNTIME_DEFAULT_ON 0
 #undef XBACKINGSTORE_ON
 #define XBACKINGSTORE_ON 0
 #undef XPLATFORMBACKINGSTORE_ON
@@ -1299,17 +1364,6 @@
 #define XPLATFORMACCESSIBILITY_ATSPI_ON 0
 #undef XPLATFORMACCESSIBILITY_UIA_ON
 #define XPLATFORMACCESSIBILITY_UIA_ON 0
-#endif
-
-#include "Graphics/XImageCodec/XImageCodec_config.h"
-
-/* ==================== 调试跟踪（临时；问题关闭后移除） ==================== */
-/* 停靠拖放链路跟踪：置 1 时 XMainWindow/XDockWidget 关键决策点向 stdout
- * 打一行 [DOCK] 日志（带 fflush）。默认 0（零开销）；需复现时以
- * -DXGUI_DOCK_TRACE=1 翻案，勿改此缺省。 */
-#ifndef XGUI_DOCK_TRACE
-#define XGUI_DOCK_TRACE 0
-#endif
 
 #endif /* XGUI_ON */
 

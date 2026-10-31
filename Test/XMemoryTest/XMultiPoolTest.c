@@ -396,7 +396,11 @@ static bool test_performance(void) {
     XFixedPool* pool_64 = XFixedPool_create(PERFORMANCE_BLOCK_SIZE, PERFORMANCE_TEST_COUNT);
     XMultiPool_add_pool(pool, pool_64);
     
-    void* ptrs[PERFORMANCE_TEST_COUNT];
+    /* [2026-10-31 栈漏标定修正] 原列表是栈及释放天数目标（PERFORMANCE_TEST_COUNT=250000）
+     * —— 250000*8 = 2MB 单函数组担在主线程铁上（默认 1MB），一进入测试就��栈溢出（cdb 实钚：Stack overflow
+     * c00000fd at __chkstk）。改为堂量增动投递，同积释在实钩及释放后释放。 */
+    void** ptrs = (void**)XMalloc_System(sizeof(void*) * PERFORMANCE_TEST_COUNT);
+    if (!ptrs) return false;
     
     int64_t start = XDateTime_currentMSecsSinceEpoch();
     
@@ -442,6 +446,7 @@ static bool test_performance(void) {
         }
     }
     
+    XFree_System(ptrs);
     XMultiPool_delete(pool);
     TEST_PASS("性能测试");
     return true;

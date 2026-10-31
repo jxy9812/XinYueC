@@ -45,7 +45,7 @@ void XThreadPoolTest()
 		}
 	
 	
-		XCoreApplication_exec();
+		XCoreApplication_execBounded(15000);
 		
 		//XThreadPool_deleteLater(pool);
 		XCoreApplication_processEvents(XEventLoop_AllEvents);

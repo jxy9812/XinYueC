@@ -45,16 +45,29 @@ wsl -d "$WSL_DISTRO" -u root -- bash -c \
     "test -f /root/toolchain-aarch64.cmake && test -d /root/board-sysroot" \
     || { echo "错误: WSL/$WSL_DISTRO 不可用或缺 /root/toolchain-aarch64.cmake、/root/board-sysroot（见 docs/cross-compile-rk3568.md §2/§3）"; exit 1; }
 
-# ---------- 1. 同步源码: git archive HEAD → WSL ----------
+# ---------- 1. 同步源码: git archive <快照> → WSL ----------
+# 快照来源：--worktree 时取**暂存区快照**（git write-tree），
+# 否则取 HEAD。
+#   理由：新增文件在 `git add` 后已入暂存区但不在 HEAD 里，
+#   `git archive HEAD` 不含它们 ⇒ 副本少文件 ⇒ 下方完整性验收失败
+#   （实测 2026-11-01：3713 != 3716）。write-tree 生成的树对象
+#   含暂存区全部内容，既满足验收，又**不产生任何提交**
+#   （用户要求「暂存但不提交」）。
 echo "[1/4] 同步源码到 $WSL_SRC ..."
-git archive --format=tar HEAD | wsl -d "$WSL_DISTRO" -u root -- bash -c \
+if [[ $WORKTREE == 1 ]]; then
+    SNAPSHOT=$(git write-tree)
+    echo "    快照源: 暂存区 tree=$SNAPSHOT（含新增文件，不产生提交）"
+else
+    SNAPSHOT=HEAD
+fi
+git archive --format=tar "$SNAPSHOT" | wsl -d "$WSL_DISTRO" -u root -- bash -c \
     "rm -rf $WSL_SRC && mkdir -p $WSL_SRC && tar xf - -C $WSL_SRC"
 
-# 完整性验收: 文件数必须与 git 跟踪数一致（防静默丢文件复发；
+# 完整性验收: 文件数必须与快照内的文件数一致（防静默丢文件复发；
 # 须在补 CMake_Config 等本地文件之前做，否则多 1 个对不上）
-EXPECT=$(git ls-files | wc -l)
+EXPECT=$(git ls-tree -r --name-only "$SNAPSHOT" | wc -l)
 HAVE=$(wsl -d "$WSL_DISTRO" -u root -- bash -c "find $WSL_SRC -type f | wc -l")
-[[ "$HAVE" == "$EXPECT" ]] || { echo "错误: WSL 副本文件数 $HAVE != git 跟踪数 $EXPECT，同步不完整"; exit 1; }
+[[ "$HAVE" == "$EXPECT" ]] || { echo "错误: WSL 副本文件数 $HAVE != 快照文件数 $EXPECT，同步不完整"; exit 1; }
 
 # gitignore 的本地配置不在 git archive 里，单独补（缺了 cmake 配置期即挂）
 if [[ -f CMake_Config.cmake ]]; then
@@ -67,12 +80,16 @@ fi
 # `while read < <(git diff ...)`，首条 wsl 之后剩余清单行全部静默消失
 # （实测只叠加了清单第 1 个文件，2026-10-28）。
 if [[ $WORKTREE == 1 ]]; then
-    # 已跟踪改动 + 未跟踪新文件（git archive 两者都不含；未跟踪文件常在
-    # 新增子目录里，漏同步会在 cmake 配置期报 add_subdirectory 找不到目录）
+    # 已跟踪改动 + 未跟踪新文件。
+    # 注：上一步的快照（git write-tree）已含**暂存区**内容（含已 add 的
+    # 新增文件）；本段只补「工作区相对暂存区还有的差异」与未跟踪文件。
+    # 清单先 mapfile 进数组再循环：wsl.exe 会吸走 stdin，若直接
+    # `while read < <(git diff ...)`，首条 wsl 之后剩余清单行全部静默消失
+    # （实测只叠加了清单第 1 个文件，2026-10-28）。
     # -z + read -d '': 中文等非 ASCII 路径在默认输出里是八进制转义串，
     # 会被当成真实文件名（实测 mkdir 报 "File name too long"）
     mapfile -d '' -t WT_FILES < <(
-        git -c core.quotepath=false diff --name-only --diff-filter=d HEAD -z
+        git -c core.quotepath=false diff --name-only --diff-filter=d -z
         git -c core.quotepath=false ls-files --others --exclude-standard -z
     )
     for f in "${WT_FILES[@]}"; do

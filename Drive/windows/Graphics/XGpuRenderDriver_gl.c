@@ -170,6 +170,12 @@ struct XGpuRenderDriverSession
     int m_height;                            /**< 渲染缓冲高度（像素）。 */
     bool m_firstFrame;                       /**< 窗口会话：首帧需初始化内容。 */
     bool m_valid;                            /**< 初始化是否成功（销毁时决定是否清理 GL 资源）。 */
+    bool m_isGles;                           /**< true=GLES 上下文（OpenGL ES）。
+                                               桌面 GL 专有组合（GL_BGRA +
+                                               GL_UNSIGNED_INT_8_8_8_8_REV、
+                                               unsized internalformat）在 GLES 上
+                                               非法（GL_INVALID_ENUM），纹理上传须走
+                                               RGBA + UNSIGNED_BYTE 慢路径。 */
 
     XglUInt m_framebuffer;                   /**< 离屏 FBO（窗口会话同样使用离屏 FBO）。 */
     XglUInt m_colorTexture;                  /**< 渲染目标颜色纹理。 */
@@ -1000,13 +1006,16 @@ static bool xgpu_upload_image_flip(XGpuRenderDriverSession* self,
        与预乘布局一致，逐行直拷并做 R/B 交换（ARGB32 小端 B,G,R,A →
        GL 上传字节序 R,G,B,A），避免逐像素 XImage_pixel/mul255 的函数
        调用开销（520x360 静态场景每帧约 19 万像素）。 */
-    if (!flipY && !uploadPremul &&
+    if (!flipY && !uploadPremul && !self->m_isGles &&
         (XImage_format(image) == XImageFormat_ARGB32 ||
          XImage_format(image) == XImageFormat_ARGB32_Premultiplied) &&
         XImage_width(image) == width && XImage_height(image) == height)
     {
         /* P0-3（2026-09-25）：整幅直传（无翻转时 ARGB32 内存序与
-           GL_BGRA+UINT_8_8_8_8_REV 逐字节一致），免暂存+交换。 */
+           GL_BGRA+UINT_8_8_8_8_REV 逐字节一致），免暂存+交换。
+           【GLES 例外】该组合是桌面 GL 专有：GLES 无 GL_BGRA 外部格式、
+           无 GL_UNSIGNED_INT_8_8_8_8_REV 类型 ⇒ 走下方慢路径
+           （RGBA + UNSIGNED_BYTE + 逐行 R/B 交换）。 */
         const uint8_t* src = XImage_constBits(image);
         int bpl = XImage_bytesPerLine(image);
         if (src && bpl >= width * 4)
@@ -2067,6 +2076,20 @@ static bool xgld_initialize(XGpuRenderDriverSession* self, int width, int height
     XGPU_LOAD(glGetProgramiv); XGPU_LOAD(glDeleteProgram); XGPU_LOAD(glUseProgram);
     XGPU_LOAD(glGetUniformLocation); XGPU_LOAD(glUniform1i); XGPU_LOAD(glUniform4f);
     XGPU_LOAD(glGetString);
+    /* 【GLES 识别】OpenGL ES 上下文的 GL_VERSION 以 "OpenGL ES" 开头。
+       桌面 GL 专有的纹理上传组合（GL_BGRA + GL_UNSIGNED_INT_8_8_8_8_REV、
+       unsized internalformat GL_RGBA）在 GLES 上会 GL_INVALID_ENUM，
+       故据此切到 RGBA + UNSIGNED_BYTE 慢路径（见纹理上传处）。
+       EGL 后端（Mali 等仅供 EGL/GLES 的 BSP）建的是 GLES 上下文，
+       走本分支；桌面 GLX 上下文保持既有快路径。 */
+    if (self->glGetString)
+    {
+        const char* glVersion = (const char*)self->glGetString(XGL_VERSION);
+        /* strstr 返回 char*，与 NULL 比较时显式取指针避免 MSVC 的
+           int/void* 间接级别告警（C4047）。 */
+        const char* esMarker = glVersion ? strstr(glVersion, "OpenGL ES") : NULL;
+        self->m_isGles = (esMarker != NULL);
+    }
 
     self->glGenFramebuffers(1, &self->m_framebuffer);
     self->glGenTextures(1, &self->m_colorTexture);
@@ -2808,15 +2831,28 @@ static bool xgld_readback_region(XGpuRenderDriverSession* self,
                   !xgld_pbo_lag_fix_enabled();
     {
         static int adaptiveInit = -1;
-        static int adaptiveOn = 1;
+        /* 【默认关 2026-10-31】场景自适应曾默认开（XGPU_PBO_ADAPTIVE，无
+           抓取态激活滞后换 +35% 吞吐）：桌面默认 GPU 直通恢复后实测本机
+           （RX 6800 XT + 远程显示栈）空闲 demo 每 13s 必现悬浮层底部
+           噪声带、悬停导航条目后横向字形碎片带驻留屏幕——滞后拷出在
+           该环境产出半成品帧（与第三夜交互二分结论同族），噪声经
+           DIB→BitBlt 上屏后无后续重绘即长期驻留。fence 语义虽应保证
+           拷出完备，本机实证不等（归因与 A/B 见回归 t213h 注）。自适应
+           回归显式 opt-in：XGPU_PBO_ADAPTIVE=1。 */
+        static int adaptiveOn = 0;
         if (adaptiveInit < 0)
         {
             const char* value = XSystem_environment("XGPU_PBO_ADAPTIVE");
-            adaptiveOn = !(value && *value && value[0] == '0' &&
-                           value[1] == 0);
+            adaptiveOn = value && *value && !(value[0] == '0' &&
+                                              value[1] == 0);
             adaptiveInit = 1;
         }
-        if (adaptiveOn && g_xgldPointerGrabQuery)
+        /* 无 fence 能力（GL<3.2，glFenceSync/glClientWaitSync 缺失或
+           创建失败）时滞后通道的"fence 已信号"前提不成立——slot_ready
+           的直通 map 会读到未完成的异步读（半成品 PBO），强制同步直读。 */
+        if (!self->glFenceSync || !self->glClientWaitSync)
+            pboLag = false;
+        else if (adaptiveOn && g_xgldPointerGrabQuery)
         {
             /* 自适应语义：滞后通道的休眠/激活由【当前场景】决定——无
                抓取=非交互态激活滞后（覆盖 lag_fix 的全局休眠，这是本

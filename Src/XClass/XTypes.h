@@ -13,6 +13,12 @@ extern "C" {
 #endif
 #include<stdint.h>
 typedef  void* XHandle;//句柄
+/** @brief 窗口系统窗口/入口标识（对标 Qt 6.8 的 WId，即 quintptr）。
+ *  用于 grabWindow() 指定要抓取内容的窗口；0 表示抓取整个屏幕。
+ *  【2026-10-31 归一】原 XScreen.h / XWindow.h / XPlatformNativeWindow.h
+ *  三处相同守卫块（XWINDOWID_DEFINED）收口至此——XScreen.h 与
+ *  XPlatformNativeWindow.h 均直接包含本头，XWindow.h 经 XScreen.h 传递。 */
+typedef uintptr_t XWindowId;
 typedef struct XEpoll XEpoll;
 typedef struct XTimer XTimer;
 typedef struct XClass XClass;

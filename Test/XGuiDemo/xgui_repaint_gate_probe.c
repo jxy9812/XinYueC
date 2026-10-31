@@ -96,12 +96,15 @@ static void VProbeWin_paintEvent(XWidget* self, XEvent* event)
     XImage* image;
     XRect rect;
     XPoint offset;
-    XRegion region;
+    const XRegion* region;
     if (!event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
     ++win->m_paintCount;
-    region = XPaintEvent_region((const XPaintEvent*)event);
-    if (region.count > win->m_maxRects)
-        win->m_maxRects = region.count;
+    /* [零拷贝借用 2026-10-31] 原先 XPaintEvent_region() 深拷贝出的堆区域
+       从未 XRegion_deinit ⇒ 每个 PAINT 事件泄漏一块矩形数组。改为借用
+       事件内部区域（不拥有、不可释放），与 demo_paintScene 同款修法。 */
+    region = XPaintEvent_region_const((const XPaintEvent*)event);
+    if (region && region->count > win->m_maxRects)
+        win->m_maxRects = region->count;
     image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
@@ -282,7 +285,17 @@ int main(int argc, char* argv[])
     XWidget_init(&g_win->m_base, NULL, (XWidgetFlags)XWindowType_Window);
     XClassSetVtable(g_win, ProbeWin);
     XWidget_resize(&g_win->m_base, 700, 320);
-    XWidget_setWindowTitle(&g_win->m_base, XString_create_utf8("闸取证探针"));
+    /* [所有权 2026-11-01] setWindowTitle 内部走 XWidget_copyString **深拷贝**，
+       不接管入参所有权 ⇒ 临时 XString 必须由调用方释放。此前直接内联
+       XString_create_utf8(...) 传入，临时对象无人持有 ⇒ 泄漏整个 XString。
+       范式对齐 demo 主程序（xgui_window_demo.c 的标题设置）。 */
+    {
+        XString* title = XString_create_utf8("闸取证探针");
+        if (title) {
+            XWidget_setWindowTitle(&g_win->m_base, title);
+            XClassDelete((XClass*)title);
+        }
+    }
     g_win->m_panel = (XWidget*)XMemory_malloc(sizeof(XWidget),
                                               XCLASS_DEFAULT_MEMORY_TYPE);
     if (!g_win->m_panel) return 1;
@@ -323,6 +336,22 @@ int main(int argc, char* argv[])
 
     XGuiApplication_exec();
     printf("[probe] exit\n");
+    /* [所有权 2026-11-01] 退出路径释放此前创建但无人持有的对象：
+       注入定时器（堆 XObject，须先停表再释放，否则事件循环里留悬挂条目）、
+       面板与窗口（XMemory_malloc 的裸块，须走各自的释放入口）。
+       探针是一次性进程，但探针常被反复拉起做对照测量，
+       不释放会让每次运行都留一批常驻内存。 */
+    if (g_injectTimer) {
+        XTimer_stop_base(g_injectTimer);
+        XClassDelete((XClass*)g_injectTimer);
+        g_injectTimer = NULL;
+    }
+    if (g_win) {
+        XClassDeinit(&g_win->m_base);
+        XFree_System(g_win->m_panel);
+        XFree_System(g_win);
+        g_win = NULL;
+    }
     return 0;
 }
 

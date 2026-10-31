@@ -1578,7 +1578,10 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
     XPoint offset;
     XRect dirty;
     XRect tile;
-    XRegion region;
+    XRegion region;       /**< 兜底单矩形视图：rects 借用栈上 fullRect，禁止 deinit。 */
+    const XRegion* regionPtr = NULL; /**< 只读借用的绘制区域；不拥有、不可释放；
+                                       必须初始化：非 PAINT 事件路径不经过
+                                       下面的借用赋值，靠初值 NULL 触发兜底。 */
     XRect fullRect;
     int ri;
     int width;
@@ -1599,12 +1602,26 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
      * 改为**按 region 逐矩形**处理：每块各自拷贝静态场景/重绘，
      * 上屏量回到真实脏区大小（框架层通病，各平台各控件同款）。 */
     if (event && XEvent_type(event) == XEVENT_TYPE_PAINT) {
-        region = XPaintEvent_region((const XPaintEvent*)event);
-    } else {
+        /* [零拷贝借用 2026-10-31] 原先取 XPaintEvent_region() 的**深拷贝**
+         *（新分配的堆 XRect 数组；契约要求调用方 XRegion_deinit 释放，见
+         * XWindowEvent.h 的 XPaintEvent_region 注释）。本函数此前在失败
+         * 出口（begin_image 失败）与正常出口都**没有**释放 ⇒ 每个 PAINT
+         * 事件泄漏一块 capacity*sizeof(XRect)（≤4 矩形即 64B），随运行时长
+         * 线性增长。改为零拷贝借用事件内部区域：既无分配也无所有权，从根上
+         * 消除"漏掉 deinit 即泄漏"的陷阱；与框架内部既有做法一致
+         * （XWidget.c 派发 PAINT 时同样借用 m_region，注释写明"省掉
+         * XPaintEvent_region 的深拷贝 + XRegion_deinit —— 每帧固定 1 次
+         * malloc/free"）。借用指针仅在本函数内只读使用，不跨调用持有。 */
+        regionPtr = XPaintEvent_region_const((const XPaintEvent*)event);
+    }
+    if (!regionPtr) {
+        /* 非 PAINT 事件兜底：栈上单矩形视图（借用 fullRect，不拥有、
+           不可释放；与框架 XWidget_repaintRect 同款写法）。 */
         XRect_init(&fullRect, 0, 0, width, height);
         region.rects = &fullRect;
         region.count = 1;
         region.capacity = 1;
+        regionPtr = &region;
     }
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, device)) {
@@ -1613,10 +1630,10 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
     }
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
-    for (ri = 0; ri < region.count; ++ri) {
+    for (ri = 0; ri < regionPtr->count; ++ri) {
         /* 事件脏区是控件本地坐标；转成静态场景坐标并裁剪到窗口内，
            这样常态刷新只复制悬浮层所在小块，而不是整帧 memcpy。 */
-        dirty = region.rects[ri];
+        dirty = regionPtr->rects[ri];
         dirty.x += offset.x;
         dirty.y += offset.y;
         if (dirty.x < 0) {

@@ -70,6 +70,9 @@ XCLASS_DEFINE_EXTEND_END(XBoxLayout, XLayout)
  *             - m_direction：主轴方向；
  *             - m_stretches：与条目数组一一平行的伸展因子数组（0=不参与
  *               多余空间分配；越大分配比例越高），插入/取出条目时同步维护。
+ *             - 合计度量的合并缓存在基类 XLayout（m_metrics*）：一次算全、
+ *               多处复用，避免子布局被重复下钻（板端实测布局重算
+ *               3535 次/秒、CPU 99%）。放基类是因其失效路径全在基类。
  */
 typedef struct XBoxLayout
 {

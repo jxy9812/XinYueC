@@ -11,6 +11,7 @@
 #include "XObject_Protected.h"
 #include "XString.h"
 #include "XTimeWheelGroup.h"
+#include "XDateTime.h" /* execBounded 单调时钟（XDateTime_currentMSecsSinceEpoch）。 */
 #include "XEventLoop.h"
 #include "XLockFreeQueue.h"
 #include "XThreadData.h"
@@ -332,6 +333,11 @@ int64_t XCoreApplication_applicationPid(void)
 void XCoreApplication_processEvents(XEventLoopProcessEventsFlags flags)
 {
     XThreadData* data = XThreadData_current();
+#if XPRINTF_OUTPUT_REDIRECT_ON
+    /* [2026-10-31] 抽水线程收集的标准 C 输出在主线程排空到当前回调
+     * （GUI 安全：抽水线程不得直调非线程安全的捕获回调）。 */
+    XPrintf_drainRedirectedOutput();
+#endif
     if (data && data->m_eventDispatcher)
         XAbstractEventDispatcher_processEvents_base(data->m_eventDispatcher, flags);
 }
@@ -431,6 +437,85 @@ int XCoreApplication_exec()
     return result;
 }
 
+/* ==================== execBounded（限时事件循环；测试域专用） ==================== */
+
+int XCoreApplication_execBounded(int timeoutMs)
+{
+    XCoreApplication* app = XCoreApplication_instance();
+    XThread* currentThread;
+    XThreadData* data;
+    XEventLoop eventLoop;
+    int64_t deadlineMs;
+    int result = 1; /* 缺省=超时强制返回。 */
+    bool pushed = false;
+
+    if (!app || timeoutMs < 0)
+        return -1;
+    currentThread = XThread_currentThread();
+    if (currentThread != g_mainThread) {
+        XERROR_PRINTF(
+            "XCoreApplication::execBounded: 必须在主线程中调用\n");
+        return -1;
+    }
+    data = XObject_threadData((XObject*)app);
+
+    if (data)
+        data->m_quitNow = false;
+    app->m_in_exec = true;
+    app->m_aboutToQuitEmitted = false;
+
+    /* 嵌套限时循环（对标 Qt QEventLoop::exec 的嵌套语义，区别于
+       QCoreApplication::exec 的不可重入）：GUI 主循环在场时动作内
+       依旧可以跑一层局部循环等线程收尾——UI 事件照常流转（嵌套层
+       processEvents 消费），线程的收尾打印仍落在重定向窗口内。
+       [g_execLoop 最内层接管 2026-10-31] 测试动作里的
+       XCoreApplication_quit()（线程收尾信号，如 XStackTest 大量数据项）
+       走 XCoreApplication_exit 的 g_execLoop 分支——**只退出本限时层**
+       ：外层主循环（GUI demo）与全局 quitNow/aboutToQuit 一概不动。
+       此前 quit() 落到全局分支：GUI demo 直接退出主循环（用户实测
+       「执行后程序意外关闭」），扫雷探针里 aboutToQuit 全局收尾破坏
+       后续动作的信号设施（AV on freed queue node）。保存/恢复实现
+       LIFO 嵌套，与 Qt QEventLoop::quit 只退本层的语义一致。 */
+    XEventLoop* prevExecLoop = g_execLoop;
+    XEventLoop_init(&eventLoop);
+    g_execLoop = &eventLoop;
+    if (data) {
+        XThreadData_pushEventloop(data, &eventLoop);
+        pushed = true;
+    }
+    deadlineMs = XDateTime_currentMSecsSinceEpoch() + (int64_t)timeoutMs;
+    while (!XAtomic_load_bool(&eventLoop.m_exit, XAtomic_MemoryOrder_Acquire)) {
+        int64_t remain = deadlineMs - XDateTime_currentMSecsSinceEpoch();
+        if (remain <= 0) {
+            /* 超时强制收口：测试线程未 quit（收尾调用被注释）不再拖死
+               宿主；告警走 XError 通道（stderr/日志），不污染重定向。 */
+            XERROR_PRINTF(
+                "XCoreApplication::execBounded: timeout %dms, forcing exit\n",
+                timeoutMs);
+            result = 1;
+            break;
+        }
+        XEventLoop_processEvents(
+            &eventLoop,
+            (XEventLoopProcessEventsFlags)(
+                XEventLoop_WaitForMoreEvents | XEventLoop_EventLoopExec));
+    }
+    if (XAtomic_load_bool(&eventLoop.m_exit, XAtomic_MemoryOrder_Acquire))
+        result = 0; /* 正常退出优先于超时判定。 */
+    g_execLoop = prevExecLoop; /* LIFO 恢复外层 exec 循环指针。 */
+    if (pushed)
+        XThreadData_popEventloop(data, &eventLoop);
+    eventLoop.inExec = false;
+    eventLoop.m_state = XEventLoop_Quit;
+    /* 限时层内收到的 quit 只指向本层（g_execLoop 分支），不会置全局
+       quitNow——此处防御性复位不变。 */
+    if (data)
+        data->m_quitNow = false;
+    app->m_in_exec = false;
+    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+    return result;
+}
+
 /* ==================== exit（对标 Qt 6.8 QCoreApplication::exit） ==================== */
 
 void XCoreApplication_exit(int returnCode)
@@ -449,6 +534,13 @@ void XCoreApplication_exit(int returnCode)
     if (!app->m_aboutToQuitEmitted) {
         app->m_aboutToQuitEmitted = true;
         XCoreApplication_aboutToQuit_signal(app);
+        /* [2026-10-31] 非 exec 路径发完即复位：此分支只在「无活动 exec
+         * 循环」时进入（g_execLoop LIFO 分支已提前返回），每次 quit 独立
+         * 成对发一次。此前标志持久不复位——测试域先前的动作 quit 过一次
+         * 后，后续所有 quit（含 XCoreApplicationTest 的信号顺序用例）
+         * 静默不发，断言 g_aboutToQuitCount==1 失败（全量扫雷 188 实锚）。
+         * exec 路径的入口复位（exec/execBounded 置 false）不受影响。 */
+        app->m_aboutToQuitEmitted = false;
     }
 
     /* Qt 6.8: 设置 quitNow 标志，通知所有事件循环退出 */

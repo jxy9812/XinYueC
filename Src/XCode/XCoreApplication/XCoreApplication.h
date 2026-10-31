@@ -303,6 +303,23 @@ void XCoreApplication_quit();
  */
 int XCoreApplication_exec();
 
+/**
+ * @brief 限时版主事件循环（测试域专用；XGui 扩展）。
+ * @details
+ * 测试动作（XTestMenu 叶项）里普遍存在「启动工作线程后 exec() 等线程收尾」
+ * 的写法，但线程完成路径上的 XCoreApplication_quit() 多被注释——控制台宿主
+ * 靠 stdin EOF 兜底退出，GUI/遍历场景下动作内 exec() 将**永久接管主事件
+ * 循环**（用户实测「点测试项程序假死/意外关闭」的一类根因，2026-10-31
+ * 全量遍历第 79 项 XLockFreeList 并发测试实证）。本入口以 **timeoutMs 为
+ * 上限** 跑事件循环：quit()/exit() 正常触发即提前返回（正常收尾语义不变），
+ * 到期无人退出则强制返回（返回 1 并打印告警），杜绝动作把宿主事件循环
+ * 带走。约定：≥0 时长上限毫秒；0 等价「只冲刷一拍事件后返回」。
+ * @param timeoutMs 循环时长上限（毫秒）。
+ * @return 0=因 quit/exit 提前正常退出；1=超时强制返回；-1=参数/场景无效
+ *         （无实例、非主线程、已有外层事件循环在跑——与 exec 同门）。
+ */
+int XCoreApplication_execBounded(int timeoutMs);
+
 /* ==================== 事件发送/投递（对标 Qt QCoreApplication::sendEvent / postEvent / sendPostedEvents / removePostedEvents / forwardEvent） ==================== */
 
 /**

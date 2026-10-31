@@ -64,27 +64,38 @@ static void XContentTypes_addDefault_cstr(XContentTypes* self, const char* key, 
     XString_append_utf8(vstr, value);
     intptr_t pk = (intptr_t)kstr;
     intptr_t pv = (intptr_t)vstr;
-    /* 键已存在时先释放旧条目持有的两个 XString 再覆盖（本 map 未注册
-       Key/DataDeinit 回调，覆盖分支不会自动释放旧值） */
+    /* 键已存在时**先插入（覆盖键值指针）再释放旧对象**——释放顺序是硬约束：
+       insert 的查重步骤会对表内已存键做内容比较/哈希（XString_compare /
+       XString_hash），此刻若旧键已被释放，表里就是一根悬垂指针，比较即读
+       已释放堆块（UAF：Excel 往返用例实测崩在 XString_hash →
+       XStringView_at → XString_utf16 读已释放 XString）。
+       本 map 未注册 Key/DataDeinit 回调，旧对象由本文件显式释放；插入成功后
+       pair 持有的是**新**键值指针，故在此释放捕获下来的旧指针即可。 */
     {
         XMap_iterator it;
+        XString* oldKey = NULL;
+        XString* oldValue = NULL;
         if (XMapBase_find_base((XMapBase*)self->m_defaults, &pk, (XMapBase_iterator*)&it))
         {
             XPair* pair = XMap_iterator_data(&it);
             if (pair)
             {
-                XStringContainer_deinit(XPair_first(pair));
-                XStringContainer_deinit(XPair_second(pair));
+                oldKey = (XString*)XPair_First(pair, XString*);
+                oldValue = (XString*)XPair_Second(pair, XString*);
             }
         }
-    }
-    /* 本 map 未注册 Key/DataDeinit 回调，insert 的任一失败出口（含节点分配失败
-       路径经 XMap_deinit_pair）都不会释放键值且 map 状态不变：失败时 kstr/vstr
-       仍归调用方，需在此释放，否则泄漏（仅 OOM 路径）。 */
-    if (!XMapBase_insert_base((XMapBase*)self->m_defaults, &pk, &pv))
-    {
-        XClassDelete(kstr);
-        XClassDelete(vstr);
+        /* 本 map 未注册 Key/DataDeinit 回调，insert 的任一失败出口（含节点分配
+           失败路径经 XMap_deinit_pair）都不会释放键值且 map 状态不变：失败时
+           kstr/vstr 仍归调用方，需在此释放，否则泄漏（仅 OOM 路径）。 */
+        if (!XMapBase_insert_base((XMapBase*)self->m_defaults, &pk, &pv))
+        {
+            XClassDelete(kstr);
+            XClassDelete(vstr);
+            return;
+        }
+        /* 覆盖完成：pair 现持有新键值；释放旧的（若确有旧条目）。 */
+        if (oldKey) XClassDelete(oldKey);
+        if (oldValue) XClassDelete(oldValue);
     }
 }
 
@@ -106,27 +117,38 @@ static void XContentTypes_addOverride_cstr(XContentTypes* self, const char* key,
     XString_append_utf8(vstr, value);
     intptr_t pk = (intptr_t)kstr;
     intptr_t pv = (intptr_t)vstr;
-    /* 键已存在时先释放旧条目持有的两个 XString 再覆盖（本 map 未注册
-       Key/DataDeinit 回调，覆盖分支不会自动释放旧值） */
+    /* 键已存在时**先插入（覆盖键值指针）再释放旧对象**——释放顺序是硬约束：
+       insert 的查重步骤会对表内已存键做内容比较/哈希（XString_compare /
+       XString_hash），此刻若旧键已被释放，表里就是一根悬垂指针，比较即读
+       已释放堆块（UAF：Excel 往返用例实测崩在 XString_hash →
+       XStringView_at → XString_utf16 读已释放 XString）。
+       本 map 未注册 Key/DataDeinit 回调，旧对象由本文件显式释放；插入成功后
+       pair 持有的是**新**键值指针，故在此释放捕获下来的旧指针即可。 */
     {
         XMap_iterator it;
+        XString* oldKey = NULL;
+        XString* oldValue = NULL;
         if (XMapBase_find_base((XMapBase*)self->m_overrides, &pk, (XMapBase_iterator*)&it))
         {
             XPair* pair = XMap_iterator_data(&it);
             if (pair)
             {
-                XStringContainer_deinit(XPair_first(pair));
-                XStringContainer_deinit(XPair_second(pair));
+                oldKey = (XString*)XPair_First(pair, XString*);
+                oldValue = (XString*)XPair_Second(pair, XString*);
             }
         }
-    }
-    /* 本 map 未注册 Key/DataDeinit 回调，insert 的任一失败出口（含节点分配失败
-       路径经 XMap_deinit_pair）都不会释放键值且 map 状态不变：失败时 kstr/vstr
-       仍归调用方，需在此释放，否则泄漏（仅 OOM 路径）。 */
-    if (!XMapBase_insert_base((XMapBase*)self->m_overrides, &pk, &pv))
-    {
-        XClassDelete(kstr);
-        XClassDelete(vstr);
+        /* 本 map 未注册 Key/DataDeinit 回调，insert 的任一失败出口（含节点分配
+           失败路径经 XMap_deinit_pair）都不会释放键值且 map 状态不变：失败时
+           kstr/vstr 仍归调用方，需在此释放，否则泄漏（仅 OOM 路径）。 */
+        if (!XMapBase_insert_base((XMapBase*)self->m_overrides, &pk, &pv))
+        {
+            XClassDelete(kstr);
+            XClassDelete(vstr);
+            return;
+        }
+        /* 覆盖完成：pair 现持有新键值；释放旧的（若确有旧条目）。 */
+        if (oldKey) XClassDelete(oldKey);
+        if (oldValue) XClassDelete(oldValue);
     }
 }
 

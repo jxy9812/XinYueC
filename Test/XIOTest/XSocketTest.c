@@ -91,7 +91,7 @@ void XSocketTest_Baidu()
 
 	/*
 	 * 测试可能从菜单动作或其他已经运行的事件循环中调用，不能再次
-	 * 启动 XCoreApplication_exec()。使用 processEvents 等待响应，既能
+	 * 启动 XCoreApplication_execBounded(15000)。使用 processEvents 等待响应，既能
 	 * 驱动网络回调，也不会退出宿主应用的事件循环。
 	 */
 	XPrintf("[百度] 处理事件并等待HTTP响应...\n");
@@ -214,7 +214,7 @@ void XSocketTest()
 	XSocketNotifier* notifier = XSocketNotifier_createWithSocket(fd, XSocketNotifier_Read);
 	XObject_connect_2(notifier, XSignal(XSocketNotifier_activated_signal), XSocketNotifierSlot);
 	XTcpSocket_write_1(socket,"hello",6);
-	XCoreApplication_exec();
+	XCoreApplication_execBounded(15000);
 }
 void XTestMenu_XSocketTest(XTestMenu* root)
 {

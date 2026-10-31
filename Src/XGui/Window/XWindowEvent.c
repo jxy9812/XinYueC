@@ -498,6 +498,15 @@ XRegion XPaintEvent_region(const XPaintEvent* event)
     return out;
 }
 
+const XRegion* XPaintEvent_region_const(const XPaintEvent* event)
+{
+    /* 借用事件内部区域：initBorrow 时是对外部存储的浅别名（事件不拥有），
+       init/createRecycled 时是事件自有的深拷贝存储；两者在事件生命周期内
+       都只读有效。调用方不取得所有权，不得 XRegion_deinit。 */
+    if (!event) return NULL;
+    return &event->m_region;
+}
+
 XRect XPaintEvent_rect(const XPaintEvent* event)
 {
     XRect out;

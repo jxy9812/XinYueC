@@ -528,6 +528,53 @@ XRegion_addRect(&region, &rect);
 
 该规则同样适用于 `XImage`、`XPixmap`、容器和绘制状态等可复用资源，但必须先确认对应类型提供的 `clear`、容量复用或移动接口及其初始化前提；没有明确生命周期保证时，不得仅凭减少一次释放就修改代码。
 
+### 按值返回带堆资源的结构体：所有权归属
+
+有些 API **按值返回一个结构体**，而该结构体内部持有堆指针（如 `XRegion` 的 `XRect* rects`）。这类返回值是**一次深拷贝**：函数内部新分配了堆内存，把指针塞进返回值里。此时**所有权转移给调用方**，调用方必须负责释放。
+
+```c
+// XRegion 的 rects 是堆指针，XRegion_copy 用 XRealloc_System 分配
+typedef struct XRegion
+{
+    XRect* rects;   // 堆内存，由对象拥有
+    int    count;
+    int    capacity;
+} XRegion;
+
+// 按值返回深拷贝：调用方拿到 rects 的所有权，必须 XRegion_deinit
+XRegion XPaintEvent_region(const XPaintEvent* event);
+```
+
+**硬性要求**：
+
+- **返回值的所有权必须写进头文件注释**。凡是按值返回带堆资源的结构体的 API，注释必须写明「返回值是深拷贝／调用方负责 `Xxx_deinit`」或「返回值是借用／调用方不得释放」，二者必居其一，**不许留白**。函数名和返回类型本身表达不了所有权——`XRegion` 只是一层薄壳，看不出里面有没有堆指针。
+- **取到返回值就必须释放**，且**每条出口都要释放**：正常返回路径、`early return`、错误分支，一个都不能漏。
+- **高频路径优先用借用版 API**。如果每帧都要用这个区域，应提供一个只读借用版（返回 `const XRegion*`，零拷贝、不转移所有权），让调用方根本拿不到需要释放的东西——**从根上消除"忘了 deinit 即泄漏"**，而不是靠每次记得写对。
+- **确实需要独占副本时**：先用 `XRegion_clear()` 复用已有容量，再 `XRegion_copy()` 写入；用完 `XRegion_deinit()`。见上一节「已初始化区域的清空与容量复用」。
+
+```c
+// ❌ 错误：取了深拷贝却不释放 ⇒ 每帧泄漏一块矩形数组
+//    （实测 RK3568 板端 27 次/秒 × 64 字节 ≈ 107 KB/min 线性增长）
+XRegion region = XPaintEvent_region(event);
+for (int i = 0; i < region.count; ++i) { /* ... 只读 ... */ }
+// 函数返回，region.rects 的所有权随栈帧一起消失 ⇒ 泄漏
+
+// ✅ 正确 A：高频路径用借用版，零分配、零释放
+const XRegion* region = XPaintEvent_region_const(event);
+for (int i = 0; i < region->count; ++i) { /* ... 只读 ... */ }
+
+// ✅ 正确 B：确需独占副本时，复用容量 + 末尾释放
+XRegion region;
+XRegion_init(&region);
+XRegion_copy(event->m_region, &region);   // 写入已初始化的 region
+/* ... 使用 ... */
+XRegion_deinit(&region);                   // 无论从哪个出口返回都要走到
+```
+
+**借用版的借用期**：只读借用指针在**事件（或被借用对象）的生命周期内**有效，不得跨调用长期持有；事件销毁后即失效。借用版必须返回 `const` 指针，让误写成为编译错误。
+
+**自检**：新增或修改此类 API 时，问三个问题——① 返回值的所有权在头文件注释里写清了吗？② 调用方的**每一条**出口都释放了吗？③ 这是高频路径吗（能否换成零拷贝借用版）？
+
 ### 快速初始化宏
 
 对于简单场景，可以使用快捷宏：

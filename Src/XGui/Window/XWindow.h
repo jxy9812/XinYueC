@@ -256,11 +256,8 @@ typedef enum XWindowEdges
     XWindowEdge_Bottom = 0x00008        /**< 下边缘。 */
 } XWindowEdges;
 
-/** @brief 窗口 id（WId）类型；XScreen 已定义时复用，避免重定义。 */
-#ifndef XWINDOWID_DEFINED
-#define XWINDOWID_DEFINED 1
-typedef uintptr_t XWindowId;
-#endif
+/* XWindowId（WId）类型已归一定义于 XTypes.h（经 XScreen.h 包含）；
+ * 【2026-10-31】原守卫块随重复宏合并收口，见 XTypes.h 的 XWindowId 归一注。 */
 
 /** @brief 平台窗口句柄（对标 QWindow::handle() 返回的 QPlatformWindow*）。
  * @details 不透明借用指针，XWindow 不拥有、不释放它；无平台后端时为 NULL。 */

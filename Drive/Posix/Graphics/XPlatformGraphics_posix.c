@@ -10,8 +10,10 @@
     (defined(XINYUE_C_HAS_OPENGL) || defined(XINYUE_C_HAS_VULKAN))
 
 #include "XPlatformNativeWindow.h"
+#include "XPlatformGraphicsBackend.h"
 #include "XWindow.h"
 #include "XMemory.h"
+#include "XSystem.h"
 #include <string.h>
 
 #if defined(XINYUE_C_HAS_OPENGL) && defined(XINYUE_C_HAS_X11)
@@ -36,14 +38,14 @@
 
 typedef struct XPosixOpenGLState
 {
-    Display* m_display;
+    XPlatformGlStateHead m_head; /**< 公共首部（display + backend tag）。 */
     GLXContext m_context;
     GLXDrawable m_drawable;
 } XPosixOpenGLState;
 
 typedef struct XPosixOffscreenState
 {
-    Display* m_display;
+    XPlatformGlStateHead m_head; /**< 公共首部（display + backend tag）。 */
     GLXPbuffer m_pbuffer;
     GLXContext m_context;
 } XPosixOffscreenState;
@@ -56,7 +58,7 @@ static void xpgraphics_xFree(void* pointer)
 #define XFree XMemory_free
 }
 
-bool XPlatformGraphicsDriver_openGLAvailable(void)
+bool xpgraphics_glx_openGLAvailable(void)
 {
     XPlatformNativeWindowConnectionType type;
     Display* display;
@@ -68,7 +70,7 @@ bool XPlatformGraphicsDriver_openGLAvailable(void)
            (major > 1 || (major == 1 && minor >= 2));
 }
 
-bool XPlatformGraphicsDriver_createOpenGL(XWindow* window, void** nativeState)
+bool xpgraphics_glx_createOpenGL(XWindow* window, void** nativeState)
 {
     XPlatformNativeWindowConnectionType type;
     XPosixOpenGLState* state;
@@ -98,7 +100,8 @@ bool XPlatformGraphicsDriver_createOpenGL(XWindow* window, void** nativeState)
         return false;
     }
     memset(state, 0, sizeof(*state));
-    state->m_display = display;
+    state->m_head.m_display = display;
+    state->m_head.m_backendTag = XPLATFORM_GL_BACKEND_TAG_GLX;
     state->m_drawable = drawable;
     state->m_context = glXCreateContext(display, visualInfo, NULL, True);
     xpgraphics_xFree(visualInfo);
@@ -110,60 +113,60 @@ bool XPlatformGraphicsDriver_createOpenGL(XWindow* window, void** nativeState)
     return true;
 }
 
-void XPlatformGraphicsDriver_destroyOpenGL(void* nativeState)
+void xpgraphics_glx_destroyOpenGL(void* nativeState)
 {
     XPosixOpenGLState* state = (XPosixOpenGLState*)nativeState;
     if (!state) return;
-    if (state->m_display && state->m_context)
-        glXDestroyContext(state->m_display, state->m_context);
+    if (state->m_head.m_display && state->m_context)
+        glXDestroyContext(state->m_head.m_display, state->m_context);
     XFree_System(state);
 }
 
-bool XPlatformGraphicsDriver_makeCurrentOpenGL(void* nativeState)
+bool xpgraphics_glx_makeCurrentOpenGL(void* nativeState)
 {
     XPosixOpenGLState* state = (XPosixOpenGLState*)nativeState;
-    return state && state->m_display && state->m_context && state->m_drawable &&
-           glXMakeCurrent(state->m_display, state->m_drawable, state->m_context);
+    return state && state->m_head.m_display && state->m_context && state->m_drawable &&
+           glXMakeCurrent(state->m_head.m_display, state->m_drawable, state->m_context);
 }
 
-void XPlatformGraphicsDriver_doneCurrentOpenGL(void* nativeState)
+void xpgraphics_glx_doneCurrentOpenGL(void* nativeState)
 {
     XPosixOpenGLState* state = (XPosixOpenGLState*)nativeState;
-    if (state && state->m_display)
-        (void)glXMakeCurrent(state->m_display, None, NULL);
+    if (state && state->m_head.m_display)
+        (void)glXMakeCurrent(state->m_head.m_display, None, NULL);
 }
 
-bool XPlatformGraphicsDriver_swapBuffersOpenGL(void* nativeState)
+bool xpgraphics_glx_swapBuffersOpenGL(void* nativeState)
 {
     XPosixOpenGLState* state = (XPosixOpenGLState*)nativeState;
-    if (!state || !state->m_display || !state->m_drawable) return false;
-    glXSwapBuffers(state->m_display, state->m_drawable);
-    XFlush(state->m_display);
+    if (!state || !state->m_head.m_display || !state->m_drawable) return false;
+    glXSwapBuffers(state->m_head.m_display, state->m_drawable);
+    XFlush(state->m_head.m_display);
     return true;
 }
 
-void* XPlatformGraphicsDriver_openGLProcAddress(void* nativeState,
+void* xpgraphics_glx_openGLProcAddress(void* nativeState,
                                                  const char* name)
 {
     (void)nativeState;
     return name ? (void*)glXGetProcAddressARB((const GLubyte*)name) : NULL;
 }
 #else
-bool XPlatformGraphicsDriver_openGLAvailable(void) { return false; }
-bool XPlatformGraphicsDriver_createOpenGL(XWindow* window, void** nativeState)
+bool xpgraphics_glx_openGLAvailable(void) { return false; }
+bool xpgraphics_glx_createOpenGL(XWindow* window, void** nativeState)
 { (void)window; if (nativeState) *nativeState = NULL; return false; }
-void XPlatformGraphicsDriver_destroyOpenGL(void* nativeState) { (void)nativeState; }
-bool XPlatformGraphicsDriver_makeCurrentOpenGL(void* nativeState)
+void xpgraphics_glx_destroyOpenGL(void* nativeState) { (void)nativeState; }
+bool xpgraphics_glx_makeCurrentOpenGL(void* nativeState)
 { (void)nativeState; return false; }
-void XPlatformGraphicsDriver_doneCurrentOpenGL(void* nativeState) { (void)nativeState; }
-bool XPlatformGraphicsDriver_swapBuffersOpenGL(void* nativeState)
+void xpgraphics_glx_doneCurrentOpenGL(void* nativeState) { (void)nativeState; }
+bool xpgraphics_glx_swapBuffersOpenGL(void* nativeState)
 { (void)nativeState; return false; }
-void* XPlatformGraphicsDriver_openGLProcAddress(void* nativeState, const char* name)
+void* xpgraphics_glx_openGLProcAddress(void* nativeState, const char* name)
 { (void)nativeState; (void)name; return NULL; }
 #endif
 
 #if defined(XINYUE_C_HAS_OPENGL) && defined(XINYUE_C_HAS_X11)
-bool XPlatformGraphicsDriver_createOffscreen(uint32_t width, uint32_t height,
+bool xpgraphics_glx_createOffscreen(uint32_t width, uint32_t height,
                                              void** nativeState)
 {
     XPlatformNativeWindowConnectionType type;
@@ -210,49 +213,218 @@ bool XPlatformGraphicsDriver_createOffscreen(uint32_t width, uint32_t height,
         return false;
     }
     memset(state, 0, sizeof(*state));
-    state->m_display = display;
+    state->m_head.m_display = display;
+    state->m_head.m_backendTag = XPLATFORM_GL_BACKEND_TAG_GLX;
     state->m_pbuffer = pbuffer;
     state->m_context = context;
     *nativeState = state;
     return true;
 }
 
-void XPlatformGraphicsDriver_destroyOffscreen(void* nativeState)
+void xpgraphics_glx_destroyOffscreen(void* nativeState)
 {
     XPosixOffscreenState* state = (XPosixOffscreenState*)nativeState;
     if (!state) return;
-    if (state->m_display && state->m_context) {
+    if (state->m_head.m_display && state->m_context) {
         if (glXGetCurrentContext() == state->m_context)
-            (void)glXMakeCurrent(state->m_display, None, NULL);
-        glXDestroyContext(state->m_display, state->m_context);
+            (void)glXMakeCurrent(state->m_head.m_display, None, NULL);
+        glXDestroyContext(state->m_head.m_display, state->m_context);
     }
-    if (state->m_display && state->m_pbuffer)
-        glXDestroyPbuffer(state->m_display, state->m_pbuffer);
+    if (state->m_head.m_display && state->m_pbuffer)
+        glXDestroyPbuffer(state->m_head.m_display, state->m_pbuffer);
     XFree_System(state);
+}
+
+bool xpgraphics_glx_makeCurrentOffscreen(void* nativeState)
+{
+    XPosixOffscreenState* state = (XPosixOffscreenState*)nativeState;
+    return state && state->m_head.m_display && state->m_pbuffer && state->m_context &&
+           glXMakeCurrent(state->m_head.m_display, state->m_pbuffer, state->m_context);
+}
+
+void xpgraphics_glx_doneCurrentOffscreen(void* nativeState)
+{
+    XPosixOffscreenState* state = (XPosixOffscreenState*)nativeState;
+    if (state && state->m_head.m_display)
+        (void)glXMakeCurrent(state->m_head.m_display, None, NULL);
+}
+#else
+bool xpgraphics_glx_createOffscreen(uint32_t width, uint32_t height,
+                                             void** nativeState)
+{ (void)width; (void)height; if (nativeState) *nativeState = NULL; return false; }
+void xpgraphics_glx_destroyOffscreen(void* nativeState) { (void)nativeState; }
+bool xpgraphics_glx_makeCurrentOffscreen(void* nativeState)
+{ (void)nativeState; return false; }
+void xpgraphics_glx_doneCurrentOffscreen(void* nativeState) { (void)nativeState; }
+#endif
+
+/* ==================== GLX / EGL 后端分派 ==================== */
+
+/**
+ * @brief 是否选用 EGL 后端（运行期开关）。
+ * @details XGUI_GL_BACKEND=egl|glx 显式指定；未指定时 EGL 优先
+ *          （EGL 能拿到厂商 GPU 驱动；GLX 在只提供 EGL/GLES 的 BSP 上
+ *          静默回退软件光栅）。首次解析后缓存。
+ */
+bool xpgraphics_useEgl(void)
+{
+    static int s_resolved = 0;
+    static bool s_useEgl = false;
+    if (!s_resolved) {
+        const char* mode = XSystem_environment("XGUI_GL_BACKEND");
+        s_resolved = 1;
+        if (mode && *mode) {
+            if (strcmp(mode, "glx") == 0 || strcmp(mode, "GLX") == 0) {
+                s_useEgl = false;
+            } else {
+                s_useEgl = true;
+            }
+        } else {
+#if defined(XINYUE_C_HAS_EGL)
+            s_useEgl = true;
+#else
+            s_useEgl = false;
+#endif
+        }
+    }
+    return s_useEgl;
+}
+
+/** @brief 取出原生状态的 backend 标签（分派用）。 */
+static uint32_t xpgraphics_stateTag(const void* nativeState)
+{
+    const XPlatformGlStateHead* head = (const XPlatformGlStateHead*)nativeState;
+    return head ? head->m_backendTag : 0u;
+}
+
+bool XPlatformGraphicsDriver_openGLAvailable(void)
+{
+#if defined(XINYUE_C_HAS_EGL)
+    if (xpgraphics_useEgl())
+        return xpgraphics_egl_openGLAvailable();
+#endif
+    return xpgraphics_glx_openGLAvailable();
+}
+
+bool XPlatformGraphicsDriver_createOpenGL(XWindow* window, void** nativeState)
+{
+#if defined(XINYUE_C_HAS_EGL)
+    if (xpgraphics_useEgl())
+        return xpgraphics_egl_createOpenGL(window, nativeState);
+#endif
+    return xpgraphics_glx_createOpenGL(window, nativeState);
+}
+
+void XPlatformGraphicsDriver_destroyOpenGL(void* nativeState)
+{
+    if (!nativeState) return;
+    if (xpgraphics_stateTag(nativeState) == XPLATFORM_GL_BACKEND_TAG_EGL) {
+#if defined(XINYUE_C_HAS_EGL)
+        xpgraphics_egl_destroyOpenGL(nativeState);
+        return;
+#endif
+    }
+    xpgraphics_glx_destroyOpenGL(nativeState);
+}
+
+bool XPlatformGraphicsDriver_makeCurrentOpenGL(void* nativeState)
+{
+    if (!nativeState) return false;
+    if (xpgraphics_stateTag(nativeState) == XPLATFORM_GL_BACKEND_TAG_EGL) {
+#if defined(XINYUE_C_HAS_EGL)
+        return xpgraphics_egl_makeCurrentOpenGL(nativeState);
+#else
+        return false;
+#endif
+    }
+    return xpgraphics_glx_makeCurrentOpenGL(nativeState);
+}
+
+void XPlatformGraphicsDriver_doneCurrentOpenGL(void* nativeState)
+{
+    if (!nativeState) return;
+    if (xpgraphics_stateTag(nativeState) == XPLATFORM_GL_BACKEND_TAG_EGL) {
+#if defined(XINYUE_C_HAS_EGL)
+        xpgraphics_egl_doneCurrentOpenGL(nativeState);
+        return;
+#endif
+    }
+    xpgraphics_glx_doneCurrentOpenGL(nativeState);
+}
+
+bool XPlatformGraphicsDriver_swapBuffersOpenGL(void* nativeState)
+{
+    if (!nativeState) return false;
+    if (xpgraphics_stateTag(nativeState) == XPLATFORM_GL_BACKEND_TAG_EGL) {
+#if defined(XINYUE_C_HAS_EGL)
+        return xpgraphics_egl_swapBuffersOpenGL(nativeState);
+#else
+        return false;
+#endif
+    }
+    return xpgraphics_glx_swapBuffersOpenGL(nativeState);
+}
+
+void* XPlatformGraphicsDriver_openGLProcAddress(void* nativeState,
+                                                 const char* name)
+{
+    if (!nativeState) return NULL;
+    if (xpgraphics_stateTag(nativeState) == XPLATFORM_GL_BACKEND_TAG_EGL) {
+#if defined(XINYUE_C_HAS_EGL)
+        return xpgraphics_egl_openGLProcAddress(nativeState, name);
+#else
+        return NULL;
+#endif
+    }
+    return xpgraphics_glx_openGLProcAddress(nativeState, name);
+}
+
+bool XPlatformGraphicsDriver_createOffscreen(uint32_t width, uint32_t height,
+                                             void** nativeState)
+{
+#if defined(XINYUE_C_HAS_EGL)
+    if (xpgraphics_useEgl())
+        return xpgraphics_egl_createOffscreen(width, height, nativeState);
+#endif
+    return xpgraphics_glx_createOffscreen(width, height, nativeState);
+}
+
+void XPlatformGraphicsDriver_destroyOffscreen(void* nativeState)
+{
+    if (!nativeState) return;
+    if (xpgraphics_stateTag(nativeState) == XPLATFORM_GL_BACKEND_TAG_EGL) {
+#if defined(XINYUE_C_HAS_EGL)
+        xpgraphics_egl_destroyOffscreen(nativeState);
+        return;
+#endif
+    }
+    xpgraphics_glx_destroyOffscreen(nativeState);
 }
 
 bool XPlatformGraphicsDriver_makeCurrentOffscreen(void* nativeState)
 {
-    XPosixOffscreenState* state = (XPosixOffscreenState*)nativeState;
-    return state && state->m_display && state->m_pbuffer && state->m_context &&
-           glXMakeCurrent(state->m_display, state->m_pbuffer, state->m_context);
+    if (!nativeState) return false;
+    if (xpgraphics_stateTag(nativeState) == XPLATFORM_GL_BACKEND_TAG_EGL) {
+#if defined(XINYUE_C_HAS_EGL)
+        return xpgraphics_egl_makeCurrentOffscreen(nativeState);
+#else
+        return false;
+#endif
+    }
+    return xpgraphics_glx_makeCurrentOffscreen(nativeState);
 }
 
 void XPlatformGraphicsDriver_doneCurrentOffscreen(void* nativeState)
 {
-    XPosixOffscreenState* state = (XPosixOffscreenState*)nativeState;
-    if (state && state->m_display)
-        (void)glXMakeCurrent(state->m_display, None, NULL);
-}
-#else
-bool XPlatformGraphicsDriver_createOffscreen(uint32_t width, uint32_t height,
-                                             void** nativeState)
-{ (void)width; (void)height; if (nativeState) *nativeState = NULL; return false; }
-void XPlatformGraphicsDriver_destroyOffscreen(void* nativeState) { (void)nativeState; }
-bool XPlatformGraphicsDriver_makeCurrentOffscreen(void* nativeState)
-{ (void)nativeState; return false; }
-void XPlatformGraphicsDriver_doneCurrentOffscreen(void* nativeState) { (void)nativeState; }
+    if (!nativeState) return;
+    if (xpgraphics_stateTag(nativeState) == XPLATFORM_GL_BACKEND_TAG_EGL) {
+#if defined(XINYUE_C_HAS_EGL)
+        xpgraphics_egl_doneCurrentOffscreen(nativeState);
+        return;
 #endif
+    }
+    xpgraphics_glx_doneCurrentOffscreen(nativeState);
+}
 
 #if defined(XINYUE_C_HAS_VULKAN)
 /* 窗口表面实现需要 Xlib 平台扩展：vulkan_xlib.h 会拉入 Xlib.h，Xlib

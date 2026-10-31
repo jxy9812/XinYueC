@@ -124,7 +124,7 @@ void XHrTimerTest()
     }
 
     return 0;
-	XCoreApplication_exec();
+	XCoreApplication_execBounded(15000);
 	//while(true) XTimeWheelGroup_handler_base(wheel);
 }
 

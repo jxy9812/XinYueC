@@ -48,6 +48,9 @@
 
 #include "XGuiApplication.h"
 #include "XPlatformNativeWindow.h"
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+#include "XGpuRenderBackend.h" /* 桌面默认 GPU 直通启动决策（init 钩子）。 */
+#endif
 
 #include "XAlgorithm.h"
 #include "XStringUtils.h"
@@ -530,6 +533,42 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
        显式调色板标志保持 memset 的 false（对标 AA_SetPalette 未置位）。 */
     app->m_paletteSchemeFollow = true;
 #endif /* XPALETTE_ON */
+#if XGPU_ON && XPLATFORMINTEGRATION_ON && XGPU_RUNTIME_DEFAULT_ON && XPLATFORM_DESKTOP
+    /* 桌面默认 GPU 直通启动决策（XGPU_RUNTIME_DEFAULT_ON，2026-10-31
+       恢复；应用初始化第一件事完成渲染后端裁决）：
+       1. 命令行 --gpu / --software(--sw) 映射为运行期覆盖（与宿主自
+          解析幂等，同 xgui_window_demo 口径；仅 flag 实际出现时写
+          覆盖，re-init 不会清掉宿主预设的覆盖值）；
+       2. 无命令行设置时预热 requested()——覆盖/环境变量优先级由其
+          统一裁决，此处不复制逻辑；二者皆无时默认层即刻完成 1x1
+          离屏 GPU 探测并缓存（可用即 GPU 直通，失败保持软件光栅，
+          零回归契约），首帧绘制直接命中结论，不必等首个 beginPaint
+          再探。 */
+    {
+        int xgpuArgi;
+        int xgpuFlag = 0; /* 0=命令行未设置 1=--gpu 2=--software/--sw。 */
+        for (xgpuArgi = 0; argv && xgpuArgi < argc; ++xgpuArgi)
+        {
+            const char* xgpuArg = argv[xgpuArgi];
+            if (!xgpuArg) continue;
+            if (XStrcmp(xgpuArg, "--gpu") == 0)
+                xgpuFlag = 1;
+            else if (XStrcmp(xgpuArg, "--software") == 0 ||
+                     XStrcmp(xgpuArg, "--sw") == 0)
+                xgpuFlag = 2;
+        }
+        if (xgpuFlag == 1)
+            XGpuRenderBackend_addRequestedOverride(true);
+        else if (xgpuFlag == 2)
+            XGpuRenderBackend_addRequestedOverride(false);
+        else
+        {
+            bool xgpuWanted = XGpuRenderBackend_requested();
+            XPrintf("[xgui-gpu] startup default: %s\n",
+                    xgpuWanted ? "GPU direct" : "software fallback");
+        }
+    }
+#endif /* XGPU_ON && XPLATFORMINTEGRATION_ON && XGPU_RUNTIME_DEFAULT_ON && XPLATFORM_DESKTOP */
 #if XPLATFORMINTEGRATION_ON
     app->m_platformIntegration =
         XPlatformIntegration_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);

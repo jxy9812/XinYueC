@@ -2807,7 +2807,10 @@ XFtp_State XFtp_state(const XFtp* ftp)
 
 XFtp_Error XFtp_error(const XFtp* ftp)
 {
-    return ftp ? ftp->m_error : XFtp_Error_Unknown;
+    /* [Qt 对齐 2026-10-31] NULL 对象查询=无错误状态（未发生过任何操作），
+     * 返回 NoError 而非 Unknown——对齐 XFtpTest 非法参数校验契约
+     * （XFtpTest.c:188）。 */
+    return ftp ? ftp->m_error : XFtp_Error_NoError;
 }
 
 const char* XFtp_errorString(const XFtp* ftp)

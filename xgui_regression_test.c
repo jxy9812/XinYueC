@@ -83,6 +83,9 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XWidget.h"
 #include "XWidget_Protected.h"
 #endif /* XWIDGET_ON */
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+#include "XGpuRenderBackend.h" /* t213h 悬停稳定性探针：GPU 会话 readback 真值。 */
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
 #include "XLabel.h"
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
@@ -98,6 +101,9 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XLineEdit.h"
 #include "XLineControl.h"
 #include "XThread.h" /* r1#4d 时序锁：真睡过 200ms 守护定时器 deadline。 */
+#include "XAbstractOOXmlFile.h"
+#include "XSharedStrings.h" /* 扫雷根因回归锁\uff1a\u5171\u4eab\u5b57\u7b26\u4e32\u8868\u6309\u6307\u9488\u8eab\u4efd\u5220\u9664\u3002 */
+#include "XContentTypes.h" /* \u626b\u96f7\u6839\u56e0\u56de\u5f52\u9501\uff1a\u5185\u5bb9\u7c7b\u578b\u8868\u8986\u76d6\u4e0d\u5f97 UAF\u3002 */
 #include "XLineEditTest.h"
 #include "XSliderTest.h"
 #include "XSpinBoxTest.h"
@@ -31433,6 +31439,212 @@ static void sa_expect(bool cond, const char* what)
     }
 }
 
+/* ==================== 扫雷根因回归锁（2026-10-31） ====================
+ * 全量遍历 Test 菜单树的 463 个动作时挖出的三类根因，逐条锁死：
+ *  ① XSharedStrings：表键是 XRichString 内部的 XString，按**内容**删条目
+ *     会命中同文本的另一条目，被删 rich 的键指针就此悬垂 → 后续查表比较
+ *     已释放 XString（UAF）。现按**指针身份**删除。
+ *  ② XContentTypes：旧键旧值在 insert **之前**释放，而 insert 的查重步骤
+ *     要比较/哈希表内已存键 → 读已释放堆块（UAF）。现先 insert 再释放旧。
+ *  ③ worker 线程栈：缺省 512 字节提交量，调用链稍深即踩穿栈保护页
+ *     （AV 写在自身栈帧上）。现缺省 0 = 系统缺省。
+ * 另：XPrintf 输出重定向 API 与 Shell 远程后端解耦——桌面构建下后端全关
+ *     时该能力曾整个不存在（printf 不进 GUI 输出区）。 */
+
+static void sweep_regression_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[SWEEP-REG-FAIL] %s\n", what ? what : "");
+    }
+}
+
+/* ① 共享字符串表：同文本条目 + 删除后查表不得读悬垂键。 */
+static void test_xsharedstrings_identity_removal(void)
+{
+#if XEXCEL_ON
+    XSharedStrings* ss = XSharedStrings_create(XAbstractOOXmlFile_F_NewFromScratch);
+    XString* a;
+    sweep_regression_expect(ss != NULL, "shared-strings: 创建");
+    if (!ss) return;
+    a = XString_create_utf8("dup-text");
+    if (a) {
+        int i1 = XSharedStrings_addSharedString(ss, a);
+        int i2 = XSharedStrings_addSharedString(ss, a);  /* 同文本 → 复用条目 */
+        sweep_regression_expect(i1 == i2, "shared-strings: 同文本复用同一索引");
+        /* 删除到计数归零后，表内不得残留指向已释放 rich 的键。
+           查表走公开索引接口（内部 shared_string_info 为静态函数）。 */
+        XSharedStrings_removeSharedString(ss, a);
+        sweep_regression_expect(
+            XSharedStrings_getSharedStringIndex(ss, a) >= 0,
+            "shared-strings: 删除后查表不崩（悬垂键即崩）");
+        XClassDelete(a);
+    }
+    XClassDelete(ss);
+#endif
+}
+
+/* ② 内容类型表：同键覆盖不得 UAF（先 insert 后释放旧）。 */
+static void test_xcontenttypes_overwrite_no_uaf(void)
+{
+#if XEXCEL_ON
+    XContentTypes* ct = XContentTypes_create();
+    sweep_regression_expect(ct != NULL, "content-types: 创建");
+    if (!ct) return;
+    /* 同键多次写入（覆盖路径）：旧实现「先释放旧键再 insert」会在 insert
+       的查重步骤读已释放键 —— 同一进程内连续覆盖即触发。 */
+    {
+        XString* ck = XString_create_utf8("ct-key");
+        XString* cv = XString_create_utf8("value-1");
+        if (ck && cv) {
+            XContentTypes_addDefault(ct, ck, cv);
+            XContentTypes_addDefault(ct, ck, cv);
+            XContentTypes_addDefault(ct, ck, cv);
+        }
+        if (ck) XClassDelete(ck);
+        if (cv) XClassDelete(cv);
+    }
+    sweep_regression_expect(true, "content-types: 同键连续覆盖不崩（UAF 即崩）");
+    /* XContentTypes 是纯结构体（无 XClass vtable），必须用专用析构。 */
+    XContentTypes_delete(ct);
+#endif
+}
+
+/* ③ worker 线程栈缺省：不得是 512 字节提交量（踩保护页即崩）。 */
+static void sweep_stackNoopThread(XThread* thread, XVarList* args)
+{
+    (void)thread;
+    (void)args;
+}
+
+static void test_worker_thread_stack_default(void)
+{
+#if XTHREAD_ON
+    XThread* t = XThread_create_func(sweep_stackNoopThread, NULL);
+    sweep_regression_expect(t != NULL, "thread: 创建");
+    if (!t) return;
+    sweep_regression_expect(XThread_stackSize(t) == 0,
+        "thread: worker 栈缺省为 0（系统缺省），非 512B 提交量");
+    XClassDelete(t);
+#endif
+}
+
+/* ④ 悬停合成：旧靶销毁后新靶仍须收到 ENTER（Qt QWidgetWindow::m_widget
+ *    同位）。背景（2026-10-31 用户实测）：demo 测试菜单点进子菜单后，悬浮
+ *    新按钮样式不再变化。根因：合成器用「焦点/模态/抓取」三个瞬态锚反解
+ *    窗口→顶层；翻层把带焦点的旧按钮销毁后锚全空 → 解析不到顶层 → ENTER
+ *    永不再派发。修复：主路径改用桥接窗 m_widget 反查（窗口与控件同生
+ *    共死，构造上恒活）。本用例即该链的回归锁：旧靶销毁（焦点锚随之
+ *    清空）后，窗内移动到新靶，新靶必须收到 enterEvent。 */
+typedef struct SweepHoverButton
+{
+    XWidget m_base;   /**< 基类成员；必须是第一个。 */
+    int m_enterCount; /**< 收到的 enterEvent 次数。 */
+} SweepHoverButton;
+
+XCLASS_DEFINE_BEGING(SweepHoverButton)
+XCLASS_DEFINE_EXTEND_END(SweepHoverButton, XWidget)
+
+static void SweepHoverButton_enterEvent(XWidget* self, XEvent* event)
+{
+    SweepHoverButton* b = (SweepHoverButton*)self;
+    if (b) b->m_enterCount++;
+    XClass_Parent(XWidget, EXWidget_EnterEvent,
+                  void (*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
+static XVtable* SweepHoverButton_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(SweepHoverButton)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_EnterEvent, SweepHoverButton_enterEvent);
+    return XVTABLE_DEFAULT;
+}
+
+static SweepHoverButton* sweepHoverButton_create(XWidget* parent, int x, int y)
+{
+    SweepHoverButton* b =
+        (SweepHoverButton*)XMalloc_System(sizeof(SweepHoverButton));
+    if (!b) return NULL;
+    memset(b, 0, sizeof(*b));
+    XWidget_init(&b->m_base, parent, 0);
+    XClassSetVtable(&b->m_base, SweepHoverButton);
+    Set_Class_Memory(&b->m_base, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(&b->m_base, true);
+    XWidget_setGeometry(&b->m_base, x, y, 100, 40);
+    return b;
+}
+
+static void test_hover_synthesis_after_target_destroyed(void)
+{
+#if XWIDGET_ON && XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
+    XWidget* top;
+    SweepHoverButton* oldBtn;
+    SweepHoverButton* newBtn;
+    XWindow* win;
+    XPoint pos;
+
+    top = XWidget_create(NULL, 0);
+    if (!top) return;
+    XWidget_setGeometry(top, 0, 0, 400, 300);
+    oldBtn = sweepHoverButton_create(top, 10, 10);
+    newBtn = sweepHoverButton_create(top, 10, 60);
+    if (!oldBtn || !newBtn) {
+        if (oldBtn) XClassDelete((XClass*)oldBtn);
+        if (newBtn) XClassDelete((XClass*)newBtn);
+        XClassDelete((XClass*)top);
+        return;
+    }
+    XWidget_show(top);
+    XWidget_show(&oldBtn->m_base);
+    XWidget_show(&newBtn->m_base);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+
+    win = (XWindow*)XWidget_windowHandle(top);
+    if (win) {
+        /* 原生窗边界 ENTER（平台 EnterNotify 等价物）：让桥接路径把命中靶
+         * 回报给悬停合成器（XWidget.c 回报钩子），此后**窗内移动**由合成
+         * 器换靶（Qt dispatchEnterLeave 同款）。 */
+        pos.x = 50; pos.y = 30;
+        XWindowSystemInterface_handleEnterEvent(win, pos, NULL);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        XWindowSystemInterface_handleMouseEvent_ex(
+            win, XEVENT_TYPE_MOUSE_MOVE, XMouseButton_NoButton,
+            XMouseButton_NoButton, XKeyboardModifier_NoModifier, pos, NULL, 0);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+
+        /* 旧靶带焦点后销毁 → 焦点锚随之清空（锚全空 = 缺陷触发条件）。 */
+        XWidget_setFocusReason(&oldBtn->m_base, XFocusReason_Mouse);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        XClassDelete((XClass*)&oldBtn->m_base);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        sweep_regression_expect(XWidget_appFocusWidget() == NULL,
+            "hover: 旧靶销毁后焦点锚已清空（缺陷触发前提）");
+
+        /* 移动到新靶 → 必须收到 ENTER（UnderMouse 置位）。 */
+        pos.x = 50; pos.y = 80;
+        XWindowSystemInterface_handleMouseEvent_ex(
+            win, XEVENT_TYPE_MOUSE_MOVE, XMouseButton_NoButton,
+            XMouseButton_NoButton, XKeyboardModifier_NoModifier, pos, NULL, 0);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        sweep_regression_expect(newBtn->m_enterCount >= 1,
+            "hover: 旧靶销毁后新靶仍收到 ENTER（合成链未断）");
+        sweep_regression_expect(
+            XWidget_testAttribute(&newBtn->m_base, XWidgetAttribute_UnderMouse),
+            "hover: 新靶 UnderMouse 置位（悬停样式可生效）");
+    }
+    XClassDelete((XClass*)newBtn);
+    XClassDelete((XClass*)top);
+#endif
+}
+
+static void test_sweep_regression_locks(void)
+{
+    test_xsharedstrings_identity_removal();
+    test_xcontenttypes_overwrite_no_uaf();
+    test_worker_thread_stack_default();
+    test_hover_synthesis_after_target_destroyed();
+}
+
 static void test_scrollarea_contract(void)
 {
     XScrollArea* area = XScrollArea_create(NULL, 0);
@@ -31479,6 +31691,100 @@ static void test_scrollarea_contract(void)
     XClassDelete(area);
     XClassDelete(content);
 }
+
+/* ============ XScrollArea 提示变化环（Qt LayoutRequest 主触发链） ==========
+ * [2026-10-31 回归] 对标 Qt「内容提示变化→滚动范围跟随」主链：
+ *   QLabel::setText → updateGeometry →（父有布局）invalidate+activate
+ *   →（qlayout.cpp:1063 activate 尾部 mw->updateGeometry）宿主父级无布局
+ *   → postEvent(viewport, LayoutRequest) → QAbstractScrollAreaFilter 转发
+ *   → QScrollArea::event(LayoutRequest) → updateScrollBars
+ *   （qscrollarea.cpp:274-278）。框架同位：XWidget_updateGeometry else
+ *   分支/XLayout_activate 尾部投递 + VXWidget_event 无布局父链上抛 +
+ *   VXScrollArea_event 重排版。此前内容提示变化（标签文本增长）后内容
+ *   几何无人重算——widgetResizable 滚动区装多行文本标签「文字超出视口
+ *   没有滚动条」（2026-10-30 用户实测：测试菜单页输出区）。
+ *   与上一用例（内容 Resize 回流环）互补：本环覆盖「提示变化而内容
+ *   几何未动」——全程不直接 resize 内容控件，仅改标签文本。
+ *   观测口径同上用例：滚动条 maximum（宿主树 show 过，isVisible 亦可用，
+ *   但 maximum 与上用例同口径可比对）。 */
+#if XGUIAPPLICATION_ON && XWIDGET_ON && XLAYOUT_ON && XLAYOUT_BOX_ON && \
+    XLABEL_ON && XSCROLLAREA_ON
+#include "XCoreApplication.h" /* sendPostedEvents：无事件循环下同步冲刷队列。 */
+static void test_scrollarea_hint_reflow(void)
+{
+    char* argv0 = (char*)"xgui_regression";
+    char* argv[2];
+    int argc = 1;
+    XGuiApplication* app;
+    bool appCreatedHere = false;
+    XScrollArea* area;
+    XWidget* host;
+    XBoxLayout* lay;
+    XLabel* label;
+    XScrollBar* vsb;
+    int i;
+
+    argv[0] = argv0;
+    argv[1] = NULL;
+    /* 队列投递依赖应用单例（XWidget_postLayoutRequest 无实例即丢弃，
+     * Qt postEvent 同门）；此前用例未建则此处建、退出前归还。 */
+    app = XGuiApplication_instance();
+    if (!app) {
+        app = XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, argc, argv);
+        appCreatedHere = app != NULL;
+    }
+    if (!app) {
+        fprintf(stderr, "[SA-HINT-SKIP] 应用实例创建失败，跳过\n");
+        return;
+    }
+
+    area = XScrollArea_create(NULL, 0);
+    host = XWidget_create(NULL, 0);
+    sa_expect(area != NULL && host != NULL, "hint-reflow: 宿主创建");
+    if (!area || !host) {
+        if (area) XClassDelete(area);
+        if (host) XClassDelete(host);
+        return;
+    }
+    lay = XBoxLayout_create(XBoxLayoutDirection_TopToBottom, host);
+    label = XLabel_create(host, 0);
+    XBoxLayout_addWidget(lay, (XWidget*)label);
+    XWidget_resize((XWidget*)area, 200, 200);
+    XAbstractScrollArea_setVerticalScrollBarPolicy(
+        (XAbstractScrollArea*)area, XScrollBarPolicy_AsNeeded);
+    XScrollArea_setWidgetResizable(area, true);
+    XScrollArea_setWidget(area, host);
+    /* 生效可见门（Qt updateGeometry_helper 的 parent->isVisible() 同门）：
+       提示变化环只对可见树投递，测试树须 show。 */
+    XWidget_show((XWidget*)area);
+    vsb = XAbstractScrollArea_verticalScrollBar((XAbstractScrollArea*)area);
+    sa_expect(XScrollBar_maximum(vsb) == 0,
+              "hint-reflow: 初值单行文本，竖条范围 0");
+
+    /* 标签文本增长（30 行）：无任何 resize 直改内容几何，滚动范围须经
+       「提示变化→LayoutRequest 链→滚动区重排版」自动放大。 */
+    {
+        char big[1024];
+        big[0] = '\0';
+        for (i = 0; i < 30; ++i)
+            strncat(big, "L\n", sizeof(big) - 1 - strlen(big));
+        XLabel_setText_2(label, big);
+        XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_LAYOUT_REQUEST);
+        sa_expect(XScrollBar_maximum(vsb) > 0,
+                  "hint-reflow: 文本增高后竖条范围自动放大（LayoutRequest 链）");
+    }
+    /* 文本回缩：范围自动回收（反向环，防残留）。 */
+    XLabel_setText_2(label, "L");
+    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_LAYOUT_REQUEST);
+    sa_expect(XScrollBar_maximum(vsb) == 0,
+              "hint-reflow: 文本回缩后竖条范围自动回收");
+
+    XClassDelete(area); /* 内容 host（含 label、lay）随滚动区释放。 */
+    if (appCreatedHere)
+        XClassDelete((XClass*)app);
+}
+#endif /* XGUIAPPLICATION_ON && XWIDGET_ON && XLAYOUT_ON && XLAYOUT_BOX_ON &&
+
 /* ============ XAbstractScrollArea 扩展契约测试（Task 2.9） ========= */
 
 static void sa_ext_expect(bool cond, const char* what)
@@ -35514,7 +35820,12 @@ static void test_xgui_widgets(void)
     test_menubar_ext_contract();
     test_splitter_contract();
     test_toolbox_contract();
+    test_sweep_regression_locks();
     test_scrollarea_contract();
+#if XGUIAPPLICATION_ON && XWIDGET_ON && XLAYOUT_ON && XLAYOUT_BOX_ON && \
+    XLABEL_ON && XSCROLLAREA_ON
+    test_scrollarea_hint_reflow();
+#endif
     test_abstractscrollarea_ext_contract();
     test_small_widgets_contract();
     test_datetimeedit_contract();
@@ -39438,6 +39749,408 @@ static void xrot_pump(void)
     }
 }
 
+/* GPU 请求三层级联契约（t212a，桌面默认 GPU 直通 2026-10-31）：
+ * ① 外部设置层——XGUI_RENDER_BACKEND / XGPU_BACKEND 白名单
+ *   （gpu/opengl/vulkan/1/true/on→GPU，其余值含 software 一律软件，
+ *   大小写不敏感同 xgpu_text_equals 口径）；
+ * ② 默认层（XGPU_RUNTIME_DEFAULT_ON 桌面口径）——无外部设置时
+ *   requested() 必须与 probeAvailable() 探测结论一致：可用即 GPU
+ *   直通，失败回退软件光栅（零回归契约）。
+ * addRequestedOverride 覆盖层无读取/恢复 API，本用例不得触碰——
+ * 进程内一旦写入即污染后续用例的层级口径。 */
+static bool t212a_whitelisted(const char* value)
+{
+    static const char* const kNames[] = {
+        "gpu", "opengl", "vulkan", "1", "true", "on"
+    };
+    size_t i;
+    for (i = 0; i < sizeof(kNames) / sizeof(kNames[0]); ++i) {
+        const char* a = value;
+        const char* b = kNames[i];
+        while (*a && *b) {
+            if (XToLower((unsigned char)*a++) != *b++) goto next;
+        }
+        if (*a == '\0' && *b == '\0') return true;
+next:   ;
+    }
+    return false;
+}
+
+static void test_gpu_backend_request_tiers(void)
+{
+#if XGPU_ON && XPLATFORMINTEGRATION_ON
+    const char* backend = getenv("XGUI_RENDER_BACKEND");
+    extern bool XGpuRenderBackend_requested(void);
+    extern bool XGpuRenderBackend_probeAvailable(void);
+    if (!backend || !*backend) backend = getenv("XGPU_BACKEND");
+    if (backend && *backend)
+    {
+        expect_true(XGpuRenderBackend_requested() == t212a_whitelisted(backend),
+                    "t212a: env 白名单映射与 requested 一致");
+    }
+    else
+    {
+        /* 默认层：先 probe（缓存结论）再 requested（消费缓存），两读
+           必一致——无 GL 环境恒软件，有 GL 环境恒 GPU。 */
+        bool probed = XGpuRenderBackend_probeAvailable();
+        expect_true(XGpuRenderBackend_requested() == probed,
+                    "t212a: 默认层 requested==probeAvailable");
+    }
+#else
+    (void)t212a_whitelisted;
+#endif /* XGPU_ON && XPLATFORMINTEGRATION_ON */
+}
+
+/* GPU 悬停稳定性契约（t213h，2026-10-31）：合成鼠标掠过按钮（ENTER/LEAVE
+ * 悬停态翻转 → 脏区局部重绘 → GPU 批提交 → FBO → 脏区读回呈现）后，
+ * FBO 内【不相关控件行】的像素必须逐位不变，且悬停离开后本行必须精确
+ * 复原基线。背景：GPU 直通的持久 FBO + 脏区读回呈现链，任何一次进入
+ * FBO 的垃圾跨帧存活（用户实测：悬停内容按钮后导航栏出现横向噪声带
+ * 且不自愈）。像素真值取 GPU 会话 readback（与呈现链 readbackRect
+ * 同源），不依赖交互桌面；合成鼠标经 XWindowSystemInterface 通道与
+ * 原生事件走同一悬停合成器。软件口径（无 GL 会话）整段跳过。
+ * 归因矩阵：外层设 XGPU_PBO_ADAPTIVE / XGPU_BEGIN_CLEAR_SAFE /
+ * XGPU_CANVAS_TRACE_CLEAR / XGUI_FLUSH_FULLFALLBACK / XGPU_FBO_PERSIST
+ * 重跑本用例即可 A/B 定位注入通道。 */
+static int xhov_diff_rect(const XImage* a, const XImage* b,
+                          int x0, int y0, int x1, int y1,
+                          int* firstBadY, int* firstBadX)
+{
+    const uint8_t* ba = XImage_constBits(a);
+    const uint8_t* bb = XImage_constBits(b);
+    int bpl = XImage_bytesPerLine(a);
+    int w = XImage_width(a);
+    int h = XImage_height(a);
+    int bad = 0;
+    int y;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > w) x1 = w;
+    if (y1 > h) y1 = h;
+    *firstBadY = -1;
+    *firstBadX = -1;
+    for (y = y0; y < y1; ++y)
+    {
+        const uint8_t* ra = ba + (size_t)y * (size_t)bpl + (size_t)x0 * 4u;
+        const uint8_t* rb = bb + (size_t)y * (size_t)bpl + (size_t)x0 * 4u;
+        int x;
+        for (x = x0; x < x1; ++x)
+        {
+            if (ra[0] != rb[0] || ra[1] != rb[1] ||
+                ra[2] != rb[2] || ra[3] != rb[3])
+            {
+                ++bad;
+                if (*firstBadY < 0) { *firstBadY = y; *firstBadX = x; }
+            }
+            ra += 4;
+            rb += 4;
+        }
+    }
+    return bad;
+}
+
+static bool xhov_snapshot(XWidget* top, XImage* out)
+{
+    XGpuRenderBackend* session;
+    bool ok;
+    /* 显式 extern（对齐文件内 t211g/t212a 局部声明风格）：C 隐式声明
+       返回 int 会把 64 位指针截断符号扩展成垃圾（实测
+       acquire=FFFFFFFFD1568F60 → beginFrame 解引用 AV）。 */
+    extern XGpuRenderBackend* XGpuRenderBackend_acquireForWindow(
+        XWindow* window, int width, int height);
+    extern bool XGpuRenderBackend_beginFrame(XGpuRenderBackend* self);
+    extern bool XGpuRenderBackend_readback(XGpuRenderBackend* self,
+                                           XImage* target);
+    extern void XGpuRenderBackend_endWindowFrame(void);
+    XImage_init_ex(out, XWidget_width(top), XWidget_height(top),
+                   XImageFormat_ARGB32);
+    session = XGpuRenderBackend_acquireForWindow(
+        XWidget_windowHandle(top), XWidget_width(top), XWidget_height(top));
+    fprintf(stderr, "[XHOV]   snap: acquire=%p\n", (void*)session);
+    if (!session) return false;
+    XGpuRenderBackend_beginFrame(session);
+    fprintf(stderr, "[XHOV]   snap: beginFrame done\n");
+    ok = XGpuRenderBackend_readback(session, out);
+    fprintf(stderr, "[XHOV]   snap: readback ok=%d\n", (int)ok);
+    XGpuRenderBackend_endWindowFrame();
+    return ok;
+}
+
+static void xhov_move(XWindow* win, int x, int y)
+{
+    (void)XWindowSystemInterface_handleMouseEvent(
+        win, XEVENT_TYPE_MOUSE_MOVE, XMouseButton_NoButton,
+        XMouseButton_NoButton, XKeyboardModifier_NoModifier,
+        (XPoint){ x, y });
+}
+
+static void test_gpu_hover_stability(void)
+{
+#if XGPU_ON && XPLATFORMINTEGRATION_ON && XWIDGET_ON
+    XWidget* top;
+    XPushButton* nav[4];
+    XWidget* spacers[3];
+    XPushButton* hover;
+    XWindow* win;
+    XPalette pal;
+    XImage snapA;
+    XImage snapB;
+    int i;
+    int bad;
+    int fbY;
+    int fbX;
+    bool haveA = false;
+    bool haveB = false;
+    extern bool XGpuRenderBackend_requested(void);
+
+    if (!XGpuRenderBackend_requested())
+    {
+        fprintf(stderr, "[XHOV] skip: GPU 未请求（软件口径）\n");
+        return;
+    }
+    if (!XGuiApplication_instance())
+        (void)XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL);
+
+    top = XWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+    if (!top) { expect_true(0, "xhov: 顶层创建"); return; }
+    XWidget_setGeometry(top, 40, 40, 400, 300);
+    pal = XWidget_palette(top);
+    XPalette_setColor(&pal, XPaletteColorGroup_Current,
+                      XPaletteColorRole_Window,
+                      XColor_create_argb(0xFF202040u));
+    XWidget_setPalette(top, &pal);
+    XWidget_setAutoFillBackground(top, true);
+
+    /* 左列导航条目（按钮族自带 Hover 属性）+ 行间隔离条（纯色件，
+       悬停路径永不触碰——本契约的"不相关行"真值锚点）。 */
+    for (i = 0; i < 4; ++i)
+    {
+        nav[i] = XPushButton_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, top, 0);
+        if (nav[i])
+        {
+            char label[16];
+            XPalette npal;
+            snprintf(label, sizeof(label), "NAV%d", i);
+            XAbstractButton_setText_2((XAbstractButton*)nav[i], label);
+            npal = XWidget_palette((XWidget*)nav[i]);
+            XPalette_setColor(&npal, XPaletteColorGroup_Current,
+                              XPaletteColorRole_Button,
+                              XColor_create_argb(0xFF303048u));
+            XWidget_setPalette((XWidget*)nav[i], &npal);
+            XWidget_setAutoFillBackground((XWidget*)nav[i], true);
+            XWidget_setGeometry((XWidget*)nav[i], 12, 40 + i * 32, 120, 24);
+        }
+    }
+    for (i = 0; i < 3; ++i)
+    {
+        spacers[i] = XWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, top, 0);
+        if (spacers[i])
+        {
+            XPalette spal = XWidget_palette(spacers[i]);
+            XPalette_setColor(&spal, XPaletteColorGroup_Current,
+                              XPaletteColorRole_Window,
+                              XColor_create_argb((uint32_t)(0xFF001830u +
+                                                            (uint32_t)i *
+                                                            0x00040404u)));
+            XWidget_setPalette(spacers[i], &spal);
+            XWidget_setAutoFillBackground(spacers[i], true);
+            XWidget_setGeometry(spacers[i], 12, 66 + i * 32, 120, 4);
+        }
+    }
+    /* 右侧内容按钮：悬停靶（其自身矩形变化合法，不进比对区）。 */
+    hover = XPushButton_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, top, 0);
+    if (hover)
+    {
+        XAbstractButton_setText_2((XAbstractButton*)hover, "HOVER");
+        XWidget_setGeometry((XWidget*)hover, 250, 100, 100, 32);
+    }
+
+    XWidget_show(top);
+    for (i = 0; i < 4; ++i)
+        if (nav[i]) XWidget_show((XWidget*)nav[i]);
+    for (i = 0; i < 3; ++i)
+        if (spacers[i]) XWidget_show(spacers[i]);
+    if (hover) XWidget_show((XWidget*)hover);
+    XWidget_raise(top);
+    win = XWidget_windowHandle(top);
+    xrot_pump();
+    fprintf(stderr, "[XHOV] step: window shown win=%p\n", (void*)win);
+
+    if (!win || !XGpuRenderBackend_acquireForWindow(
+                    win, XWidget_width(top), XWidget_height(top)))
+    {
+        fprintf(stderr, "[XHOV] skip: 无 GPU 窗口会话（离屏/未挂接）\n");
+        XWidget_setVisible(top, false);
+        if (hover) XClassDelete((XClass*)hover);
+        for (i = 0; i < 3; ++i)
+            if (spacers[i]) XClassDelete((XClass*)spacers[i]);
+        for (i = 0; i < 4; ++i)
+            if (nav[i]) XClassDelete((XClass*)nav[i]);
+        XClassDelete((XClass*)top);
+        xrot_pump();
+        return;
+    }
+
+    /* A：静止基线。 */
+    haveA = xhov_snapshot(top, &snapA);
+    fprintf(stderr, "[XHOV] step: snapshot A ok=%d\n", (int)haveA);
+    expect_true(haveA, "xhov: 基线快照 readback");
+    if (!haveA)
+    {
+        XClassDeinit(&snapA);
+        XWidget_setVisible(top, false);
+        if (hover) XClassDelete((XClass*)hover);
+        for (i = 0; i < 3; ++i)
+            if (spacers[i]) XClassDelete((XClass*)spacers[i]);
+        for (i = 0; i < 4; ++i)
+            if (nav[i]) XClassDelete((XClass*)nav[i]);
+        XClassDelete((XClass*)top);
+        xrot_pump();
+        return;
+    }
+
+    /* B：掠过内容按钮（无导航路径）。 */
+    xhov_move(win, 200, 80);
+    xrot_pump();
+    fprintf(stderr, "[XHOV] step: move1 pumped\n");
+    xhov_move(win, 300, 116);
+    xrot_pump();
+    fprintf(stderr, "[XHOV] step: move2 pumped\n");
+    haveB = xhov_snapshot(top, &snapB);
+    expect_true(haveB, "xhov: 悬停后快照 readback");
+    if (haveB)
+    {
+        bad = xhov_diff_rect(&snapA, &snapB, 12, 36, 132, 162, &fbY, &fbX);
+        expect_true(bad == 0,
+                    "xhov: 悬停内容按钮后导航列逐位不变");
+        if (bad)
+            fprintf(stderr,
+                    "[XHOV] B 阶段导航列差异 %d 像素，首个 (%d,%d)\n",
+                    bad, fbX, fbY);
+        XClassDeinit(&snapB);
+    }
+
+    /* C：继续空泵 5 帧——差异若跨帧存活即"沉积"实锤。 */
+    xrot_pump();
+    if (xhov_snapshot(top, &snapB))
+    {
+        bad = xhov_diff_rect(&snapA, &snapB, 12, 36, 132, 162, &fbY, &fbX);
+        expect_true(bad == 0, "xhov: 空泵 5 帧后导航列仍逐位不变");
+        if (bad)
+            fprintf(stderr,
+                    "[XHOV] C 阶段导航列差异 %d 像素（跨帧沉积），首个 (%d,%d)\n",
+                    bad, fbX, fbY);
+        XClassDeinit(&snapB);
+    }
+
+    /* D：进入 NAV1（其自身矩形合法变化），其余行不得被牵连。 */
+    xhov_move(win, 72, 84);
+    xrot_pump();
+    if (xhov_snapshot(top, &snapB))
+    {
+        bad = 0;
+        for (i = 0; i < 4; ++i)
+        {
+            if (i == 1) continue; /* NAV1 自身悬停态合法。 */
+            bad += xhov_diff_rect(&snapA, &snapB, 12, 40 + i * 32,
+                                  132, 40 + i * 32 + 24, &fbY, &fbX);
+        }
+        for (i = 0; i < 3; ++i)
+            bad += xhov_diff_rect(&snapA, &snapB, 12, 66 + i * 32,
+                                  132, 66 + i * 32 + 4, &fbY, &fbX);
+        expect_true(bad == 0, "xhov: 悬停 NAV1 时其余行逐位不变");
+        if (bad)
+            fprintf(stderr, "[XHOV] D 阶段牵连差异 %d 像素，首个 (%d,%d)\n",
+                    bad, fbX, fbY);
+        XClassDeinit(&snapB);
+    }
+
+    /* E：离开 NAV1 回内容按钮——NAV1 必须精确复原基线（用户症状：
+       行带花屏后不自愈）。 */
+    xhov_move(win, 300, 116);
+    xrot_pump();
+    if (xhov_snapshot(top, &snapB))
+    {
+        bad = xhov_diff_rect(&snapA, &snapB, 12, 36, 132, 162, &fbY, &fbX);
+        expect_true(bad == 0, "xhov: 离开 NAV1 后全导航列精确复原");
+        if (bad)
+            fprintf(stderr,
+                    "[XHOV] E 阶段复原差异 %d 像素（不自愈实锤），首个 (%d,%d)\n",
+                    bad, fbX, fbY);
+        XClassDeinit(&snapB);
+    }
+
+    /* F：连续掠过全部条目再回内容按钮——整列最终必须回到基线。 */
+    for (i = 0; i < 4; ++i)
+    {
+        xhov_move(win, 72, 52 + i * 32);
+        xrot_pump();
+    }
+    xhov_move(win, 300, 116);
+    xrot_pump();
+    if (xhov_snapshot(top, &snapB))
+    {
+        bad = xhov_diff_rect(&snapA, &snapB, 12, 36, 132, 162, &fbY, &fbX);
+        expect_true(bad == 0, "xhov: 全列扫过后整列精确复原");
+        if (bad)
+            fprintf(stderr, "[XHOV] F 阶段复原差异 %d 像素，首个 (%d,%d)\n",
+                    bad, fbX, fbY);
+        XClassDeinit(&snapB);
+    }
+
+    /* G：呈现真值稳定性（t213h 锁 XGPU_PBO_ADAPTIVE 默认关，2026-10-31）。
+       周期切换 NAV0 文本 = 悬浮层同款"固定 bbox 周期重绘"（默认口径下
+       命中呈现链 readbackRect），经 GetPixel 采样按钮 padding 点（文本
+       不触碰）——滞后拷出半成品帧曾把噪声写进 DIB→BitBlt 上屏且驻留
+       （真实 demo 13s 空闲必现；归因与验收记录见 night3 台账补记）。
+       参考点自校准（取首个更新后的像素为基准），后续 8 次更新必须逐位
+       稳定。已知敏感度局限：噪声在该进程内合成事件口径下未复现
+       （真实 demo + 桌面合成器时序敏感）——本阶段锁定"默认口径呈现
+       像素稳定"契约，opt-in 口径（XGPU_PBO_ADAPTIVE=1）的复现需真实
+       交互环境；FBO 侧契约由 A-F 阶段锁定。 */
+    {
+        XPoint padLocal;
+        XPoint padGlobal;
+        COLORREF ref = 0;
+        int unstable = 0;
+        padLocal.x = 22;  /* NAV0 (12,40,120x24) 左 padding，文本行外。 */
+        padLocal.y = 52;
+        padGlobal = XWidget_mapToGlobal((XWidget*)nav[0], &padLocal);
+        for (i = 0; i < 9; ++i)
+        {
+            COLORREF c2 = 0;
+            XAbstractButton_setText_2((XAbstractButton*)nav[0],
+                                      (i & 1) ? "NAV0" : "N0");
+            xrot_pump();
+            if (!xrot_capturePixelScreen(padGlobal.x, padGlobal.y, &c2))
+                continue;
+            if (i == 0) { ref = c2; continue; }
+            if (c2 != ref) ++unstable;
+        }
+        XAbstractButton_setText_2((XAbstractButton*)nav[0], "NAV0");
+        xrot_pump();
+        expect_true(unstable == 0,
+                    "xhov: 周期文本更新的呈现像素逐位稳定（呈现链无噪声）");
+        if (unstable)
+            fprintf(stderr,
+                    "[XHOV] G 阶段呈现像素不稳定 %d/8 次（样本 %06lX）\n",
+                    unstable, (unsigned long)ref);
+    }
+
+    XClassDeinit(&snapA);
+    XWidget_setVisible(top, false);
+    if (hover) XClassDelete((XClass*)hover);
+    for (i = 0; i < 3; ++i)
+        if (spacers[i]) XClassDelete((XClass*)spacers[i]);
+    for (i = 0; i < 4; ++i)
+        if (nav[i]) XClassDelete((XClass*)nav[i]);
+    XClassDelete((XClass*)top);
+    xrot_pump();
+    fprintf(stderr, "[XHOV] hover stability executed (s_failures=%d)\n",
+            s_failures);
+#endif /* XGPU_ON && XPLATFORMINTEGRATION_ON && XWIDGET_ON */
+}
+
 static void test_win32_rotation_live(void)
 {
     XWidget* top;
@@ -39605,6 +40318,10 @@ int main(void)
                            _CRTDBG_CHECK_ALWAYS_DF);
     }
 #endif
+    /* GPU 请求层级契约压首：默认层（Auto 变体无 env）首调即触发
+       桌面启动探测路径，对齐应用 init 钩子的"启动第一件事"时序；
+       且必须先于任何会话消费用例落定 requested 口径。 */
+    test_gpu_backend_request_tiers();
     test_svg_target_size_rasterize();
     test_geometry_contract();
     test_pixmap_scroll_and_bitmap_alias();
@@ -40160,6 +40877,10 @@ int main(void)
        不可信）。 */
     test_xgui_widgets();
 #if defined(_WIN32)
+    /* GPU 悬停稳定性契约（t213h）：合成鼠标悬停局部重绘后，FBO 不相关
+       行必须逐位不变。置于 xrot 之前——同样需要真原生窗（自带应用
+       保活护栏），但不得在 xrot 之后（xrot 压轴纪律见下）。 */
+    test_gpu_hover_stability();
     /* [2026-10-24] xrot 是真窗口+真 present+真 SendInput 的实机契约，
        **必须压轴**：①前序测试组会销毁应用单例（instance==NULL 断言见
        各 contract 尾），无应用则平台集成层缺位、createHandle 落虚拟

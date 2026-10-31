@@ -123,13 +123,40 @@ typedef struct XLayout
     XSize               m_cachedMin;       /**< 最小尺寸缓存（失效后由子类重算）。 */
     XSize               m_cachedMax;       /**< 最大尺寸缓存。 */
     XSize               m_cachedHint;      /**< 首选尺寸缓存。 */
-    XRect               m_activateRect;    /**< 上次 activate 的分配矩形（幂等早退比对用；
+XRect               m_activateRect;    /**< 上次 activate 的分配矩形（幂等早退比对用；
                                             *   与 m_geometry 区分：堆叠布局 m_geometry
-                                            *   存 margins 内缩后矩形，此字段存外接矩形）。 */
+                                            *   存 margins 内缩后矩形，本字段存外接矩形）。 */
     uint32_t            m_isDirty : 1;     /**< 尺寸缓存失效标志。 */
     uint32_t            m_activated : 1;   /**< 已成功激活标志。 */
     uint32_t            m_enabled : 1;     /**< 布局启用标志（默认 true）。 */
-    uint32_t            m_reservedLayout : 29; /**< 保留位。 */
+    uint32_t            m_reservedLayout : 28; /**< 保留位。 */
+    /* [合计度量合并缓存 2026-11-01] 本布局**自身**的合计度量（首选/最小/
+     * 最大/伸展方向），一次算全、多处复用。放在基类而非子类：失效路径
+     * （XLayout.c 的清缓存段：自身 / 祖先链 / 跨控件父链 / takeAt）都在
+     * 基类，集中在此才能被统一清掉。
+     *
+     * 存在理由（板端实测 RK3568，page 18/19）：布局重算 act=3535 次/秒、
+     * 失效 49472 次/秒、CPU 恒 99%，同栈采样热点全在盒式布局的
+     * collectGeom/calcMetrics（度量遍历），绘制侧仅约 2%；无滚动区的
+     * page 0 仅 act=6 次、CPU 4%。
+     *
+     * 成因：一次 collectGeom 对每个子项连问 5 个指标；子项若是布局，
+     * 前三个各有独立缓存槽、expandingDirections **无缓存槽** ⇒ 每个子
+     * 布局被完整下钻 4~5 次，复杂度 O(5^嵌套深度)。合并为一次算全后
+     * 复杂度回到 O(深度)。取值与原逐项查询完全一致（同一份结果），
+     * 只是不再重复计算。 */
+    XSize               m_metricsHint;    /**< 合并缓存：自身合计首选尺寸。 */
+    XSize               m_metricsMin;     /**< 合并缓存：自身合计最小尺寸。 */
+    XSize               m_metricsMax;     /**< 合并缓存：自身合计最大尺寸。 */
+    uint32_t            m_metricsExpanding; /**< 合并缓存：自身伸展方向。 */
+    uint32_t            m_metricsValid : 1; /**< 合并缓存有效位（失效时清 0）。 */
+    /* [解算前提示快照 2026-11-01] activate 尾部据此判断「本次解算是否改变
+     * 了合计提示」，只有改变才通知父级（父级关心的是合计提示）。未改变
+     * ⇒ 父级缓存仍有效 ⇒ 不 invalidate、不投 LayoutRequest ⇒ 断开
+     * 「activate → invalidate → 投事件 → 再 activate」的自激闭环
+     * （板端实测 act≈9300 次/秒、CPU 恒 99%）。 */
+    XSize               m_hintBeforeActivate; /**< 上次 activate 前的合计提示。 */
+    uint32_t            m_hintBeforeValid : 1; /**< 上次快照有效位（首次为 0）。 */
 } XLayout;
 
 /* ==================== 类初始化与生命周期 ==================== */

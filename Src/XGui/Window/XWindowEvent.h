@@ -344,10 +344,36 @@ XPaintEvent* XPaintEvent_createRecycled(XMemoryType memory, XEventType type,
                                         const XRegion* region);
 /**
  * @brief      获取绘制区域（对标 QPaintEvent::region）。
+ * @details    返回**深拷贝**：矩形数组是 `region_reserve` 用
+ *             `XRealloc_System` 新分配的堆内存，**所有权转移给调用方**。
+ *             调用方必须在**每一条出口**（正常返回与所有 early return /
+ *             错误分支）调用一次 `XRegion_deinit(&region)` 释放，
+ *             否则每次调用泄漏一块矩形数组（不可回收）。
  * @param      event 目标事件。
- * @return     区域的深拷贝；调用方负责 XRegion_deinit。
+ * @return     区域的深拷贝；**调用方负责 XRegion_deinit**（不得直接释放
+ *             其内部的 `rects` 指针）。
+ * @note       每帧 PAINT 等高频路径请改用 XPaintEvent_region_const()
+ *             零拷贝借用：本接口每次调用产生一次 malloc，忘记
+ *             XRegion_deinit 即造成不可回收的堆泄漏（RK3568 板端实测
+ *             27 次/秒 × 64 字节 ≈ 107 KB/min 线性增长）。
+ * @see        约束文档「按值返回带堆资源的结构体：所有权归属」一节。
  */
 XRegion XPaintEvent_region(const XPaintEvent* event);
+/**
+ * @brief      借用绘制区域（只读、零拷贝；对标 Qt 6.8
+ *             `QPaintEvent::region()` 返回 `const QRegion&`）。
+ * @details    直接返回事件内部区域的地址，不复制、不分配。
+ * @param      event 目标事件；调用者没有提供对象时传 NULL。
+ * @return     指向事件内部绘制区域的只读指针；event 为 NULL 时返回 NULL
+ *             （空句柄）。返回区域可能为空（count 为 0）。
+ * @note       返回值**不转移所有权**：调用方不得 XRegion_deinit、不得修改
+ *             其内容，也不得长期持有（事件销毁后即失效）。借用有效期覆盖
+ *             事件的同步使用期：框架派发 PAINT 时用 XPaintEvent_initBorrow()
+ *             借用区域存储（Src/XGui/Widget/XWidget.c 的 paintTree 递归期间
+ *             稳定），事件自有区域时同样在事件生命周期内有效。
+ * @warning    借用指针只读；写入事件内部区域会破坏事件状态。
+ */
+const XRegion* XPaintEvent_region_const(const XPaintEvent* event);
 /** @brief 获取绘制区域的外接矩形（对标 QPaintEvent::rect）。 */
 XRect XPaintEvent_rect(const XPaintEvent* event);
 /** @brief 释放方式沿用 XEvent；事件内部 XRegion 由 deinit 虚槽释放。 */

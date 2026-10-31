@@ -68,7 +68,11 @@
 
 /** @brief 轮廓灰度图缓存项数量；设为 0 或关闭开关可裁剪缓存。 */
 #ifndef XFONT_GLYPH_ALPHA_CACHE_ENTRIES
-#define XFONT_GLYPH_ALPHA_CACHE_ENTRIES 512 /* 实验 AB 终档：去位置键后 512 槽 */
+#define XFONT_GLYPH_ALPHA_CACHE_ENTRIES 16384 /* [2026-10-31 扩容] 位置键
+   仍必需（13~19px 档 GRIDFIT 关闭，亚像素相位影响位图），而长文本页
+   单帧字形实例数可达数千：512 槽被单帧工作集冲刷 → 逐帧全量 FT 覆盖
+   光栅化（实测 paint 500-1070ms/帧、CPU 80%）。扩到 16384 槽（桌面
+   内存代价 ~3MB 上限）后单帧工作集全驻留，第二帧起全命中。 */
 #endif
 
 /** @brief 单个灰度图缓存项的像素上限（宽*高）；超过则只绘制不缓存，

@@ -29,10 +29,12 @@
 #include "XString.h"
 #include "XCoreApplication.h"
 #include "XGuiConfig.h"
+#include "XDateTime.h"
 #include "XWidget.h"
 #include "XBoxLayout.h"
 #include "XLabel.h"
 #include "XPushButton.h"
+#include "XGpuRenderBackend.h"
 #include "XScrollArea.h"
 #include "XAbstractScrollArea.h"
 #include "XAction.h"
@@ -131,6 +133,8 @@ static struct {
 
 /* ==================== 输出缓冲 ==================== */
 
+static void tm_setTextSanitized(void);
+
 /** @brief 追加带长文本；必要时扩容（256KB 上限，超出丢增量保头）。 */
 static void tm_appendLen(const char* text, size_t len)
 {
@@ -156,7 +160,93 @@ static void tm_appendLen(const char* text, size_t len)
     memcpy(s_tm.buf + s_tm.bufLen, text, len);
     s_tm.bufLen += len;
     s_tm.buf[s_tm.bufLen] = '\0';
-    XLabel_setText_2(&s_tm.output, s_tm.buf);
+    /* [节流 2026-10-31] 每条打印都整缓冲 setText → 文本控件全量重排
+     * O(N²)（输出越长每条越慢，实测批次后半段每次追加数十毫秒、UI
+     * 卡住且显示跟不上）。改为 100ms 节流：缓冲恒为最新，标签刷新
+     * 限频；动作结束经 tm_flushOutput 强制补刷，不丢末段。 */
+    {
+        static int64_t s_lastNs;
+        int64_t now = XDateTime_currentNSecsSinceEpoch();
+        if (now - s_lastNs >= 100000000LL)
+        {
+            s_lastNs = now;
+            tm_setTextSanitized();
+        }
+    }
+}
+
+/** @brief 强制把当前缓冲刷进输出标签（动作结束/批次结束收口用）。 */
+static void tm_flushOutput(void);
+
+/** @brief 消毒后刷标签：缓冲里的非法 UTF-8 字节（GBK/二进制打印产物，
+ *         如 create_gbk 用例输出「gbk测试」的 GBK 原始字节）会使文本
+ *         控件的 UTF-8 解码器在该字节处停摆 → 标签只渲染到无效字节
+ *         为止（实测显示恒截断于「gbk娴」）。无效字节统一替换 '?'
+ *         后再入标签。 */
+static void tm_setTextSanitized(void)
+{
+    static char* s_clean;
+    static size_t s_cleanCap;
+    const unsigned char* p = (const unsigned char*)s_tm.buf;
+    size_t need = s_tm.bufLen + 1;
+    size_t o = 0;
+    size_t i = 0;
+    if (!s_tm.buf) return;
+    if (s_cleanCap < need)
+    {
+        size_t cap = s_cleanCap ? s_cleanCap : TM_BUF_INIT;
+        char* grown;
+        while (cap < need) cap *= 2u;
+        grown = XRealloc_System(s_clean, cap);
+        if (!grown) return;
+        s_clean = grown;
+        s_cleanCap = cap;
+    }
+    while (i < s_tm.bufLen)
+    {
+        unsigned char c = p[i];
+        size_t seqLen = 0;
+        /* [NUL 防截断 2026-10-31] 二进制打印产物（如 create_gbk 用例的
+         * GBK 原始字节）可能含 0x00：XLabel_setText_2 走 C 字符串接口，
+         * 标签文本在首个 NUL 处截断（实测 8028 字符缓冲只显示前 ~500
+         * 字符，恰停在 create_gbk 行）——NUL 一并替换 '?'。 */
+        if (c == 0x00u)
+        {
+            s_clean[o++] = '?';
+            i += 1;
+            continue;
+        }
+        if (c < 0x80u) seqLen = 1;
+        else if ((c & 0xE0u) == 0xC0u) seqLen = 2;
+        else if ((c & 0xF0u) == 0xE0u) seqLen = 3;
+        else if ((c & 0xF8u) == 0xF0u) seqLen = 4;
+        if (seqLen >= 2 && i + seqLen <= s_tm.bufLen)
+        {
+            size_t k;
+            for (k = 1; k < seqLen; ++k)
+                if ((p[i + k] & 0xC0u) != 0x80u) { seqLen = 0; break; }
+        }
+        else if (seqLen >= 2 && i + seqLen > s_tm.bufLen)
+            seqLen = 0; /* 截断的序列（块边界切割产物）。 */
+        if (seqLen == 0)
+        {
+            /* 无效/截断序列：单字节替换 '?'（含跨块切割产物），robust。 */
+            s_clean[o++] = '?';
+            i += 1;
+            continue;
+        }
+        memcpy(s_clean + o, p + i, seqLen);
+        o += seqLen;
+        i += seqLen;
+    }
+    s_clean[o] = '\0';
+    XLabel_setText_2(&s_tm.output, s_clean);
+}
+
+/** @brief 强制把当前缓冲刷进输出标签（动作结束/批次结束收口用）。 */
+static void tm_flushOutput(void)
+{
+    tm_setTextSanitized();
 }
 
 /** @brief 追加 NUL 结尾文本。 */
@@ -229,17 +319,25 @@ static void tm_buttonClicked(XObject* sender, XVarList* args)
         } else if (s_tm.items[i].action) {
             XAction* action = s_tm.items[i].action;
             const XString* text = XAction_text_const(action);
-            XPrintfOutputScope scope;
+            /* [作用域必须零初始化 2026-10-31] 未初始化栈对象在 Debug 下是
+             * 0xCC 填充：push 被 active 字节误判为「已激活」而静默失败，
+             * 随后无条件 pop 把 0xCCCCCCCCCCCCCCCC 回写进 TLS 回调槽 →
+             * 下一次任意 XPrintf 跳转该地址即崩（实测栈：
+             * VXTimerGroupBase_handler → XPrintf → xprintf_write_redirect）。
+             * 现在 pop 由 push 返回值门控，且 XPrintf 侧有 magic 签名兜底。 */
+            XPrintfOutputScope scope = {0};
+            bool captured;
             tm_append("\n========== ");
             tm_append(text ? XString_toUtf8(text) : "?");
             tm_append(" ==========\n");
             if (s_tm.status)
                 s_tm.status(s_tm.statusUser,
                             text ? XString_toUtf8(text) : "running");
-            XPrintf_outputPush(&scope, tm_captureWrite, NULL);
+            captured = XPrintf_outputPush(&scope, tm_captureWrite, NULL);
             XAction_trigger(action);
-            XPrintf_outputPop(&scope);
+            if (captured) XPrintf_outputPop(&scope);
             tm_append("\n");
+            tm_flushOutput(); /* 动作结束强制补刷（节流可能压住末段）。 */
             if (s_tm.status) s_tm.status(s_tm.statusUser, "");
         }
         return;
@@ -318,6 +416,10 @@ static void tm_rebuildHost(void)
     }
     /* 子菜单。 */
     menus = XTestMenu_getMenus(s_tm.menuCur);
+    fprintf(stderr, "[TMDBG] rebuild layer='%s' menus=%s actions=%d\n",
+            XTestMenu_getTitle(s_tm.menuCur) ? XTestMenu_getTitle(s_tm.menuCur) : "?",
+            menus ? "ok" : "NULL",
+            (int)XVector_size_base(XTestMenu_getActions(s_tm.menuCur)));
     if (menus) {
         n = XVector_size_base(menus);
         for (i = 0; i < (int)n; ++i) {
@@ -381,8 +483,20 @@ static void tm_rebuildHost(void)
             tm_addMenuButton(btn);
         }
         /* actions 为借用指针（菜单内部向量），不释放。 */
+
+        fprintf(stderr, "[TMDBG] layer='%s' created buttons=%d\n",
+                XTestMenu_getTitle(s_tm.menuCur) ? XTestMenu_getTitle(s_tm.menuCur) : "?",
+                s_tm.itemCount);
     }
     tm_updateBreadcrumb();
+    {
+        int k;
+        for (k = 0; k < s_tm.itemCount && k < 4; ++k) {
+            XRect g = XWidget_geometry((XWidget*)s_tm.items[k].btn);
+            fprintf(stderr, "[TMDBG] btn[%d] geo=(%d,%d,%dx%d)\n", k,
+                    g.x, g.y, g.width, g.height);
+        }
+    }
 }
 
 /* ==================== 构建 / 自测 ==================== */
@@ -627,6 +741,223 @@ int demo_page_testmenu_autotest(XWidget* page)
         if (s_tm.path[0]) ++fails;                   /* 面包屑已弹段 */
     } else {
         ++fails;
+    }
+    /* [空标题回归锁 2026-10-31] 用户实测「某一层只渲染出一个空白按钮、
+       本该是多枚带标题的按钮」。标题由 tm_rebuildHost 从菜单标题/动作
+       文本拼装，出现空标题意味着读到了失效的 XString（历史成因：堆破坏，
+       见 XPrintf 输出作用域污染根修 + 无锁队列 LayoutRequest 洪水）。
+       本锁下潜到用户报告的确切路径「容器 → 字符串(XString)」，逐枚校验
+       标题非空且几何非退化；路径缺失时退化为通用两层下潜，保证任何树
+       形态下都有覆盖。 */
+    {
+        static const char* kPathUtf8[2] = {
+            "\xE5\xAE\xB9\xE5\x99\xA8",              /* 容器 */
+            "\xE5\xAD\x97\xE7\xAC\xA6\xE4\xB8\xB2"   /* 字符串(…) 前缀 */
+        };
+        int level;
+        for (level = 0; level < 2; ++level) {
+            XTestMenu* parentMenu =
+                (XTestMenu*)XTreeNode_GetParent(s_tm.menuCur);
+            XTestMenu* target = NULL;
+            int k;
+            int sub = -1;
+            int nonEmpty = 0;
+            const XString* wanted = NULL;
+            for (k = 0; k < s_tm.itemCount; ++k) {
+                const XString* t;
+                if (!s_tm.items[k].btn) continue;
+                t = XAbstractButton_text(
+                    (const XAbstractButton*)s_tm.items[k].btn);
+                if (!t || XString_size_base(t) == 0)
+                    ++fails;                    /* 空标题按钮 */
+                else
+                    ++nonEmpty;
+                if (s_tm.items[k].menu &&
+                    s_tm.items[k].menu != parentMenu) {
+                    if (sub < 0) sub = k;
+                    if (t && level < 2 &&
+                        XString_contains_utf8(t, kPathUtf8[level],
+                                              XChar_CaseSensitive)) {
+                        target = s_tm.items[k].menu;
+                        sub = k;
+                    }
+                }
+            }
+            (void)target;
+            if (nonEmpty <= 0) ++fails;         /* 整层无一枚带标题按钮 */
+            if (sub < 0) break;                 /* 已到叶层 */
+            XAbstractButton_click((XAbstractButton*)s_tm.items[sub].btn);
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            if (s_tm.itemCount <= 0) { ++fails; break; }
+        }
+        /* 回根层（每层 items[0] 恒为返回钮）。 */
+        {
+            int k;
+            for (k = 0; k < 4 && s_tm.menuCur != s_tm.menuRoot; ++k) {
+                if (s_tm.itemCount > 0 && s_tm.items[0].btn &&
+                    s_tm.items[0].menu) {
+                    XAbstractButton_click((XAbstractButton*)s_tm.items[0].btn);
+                    XCoreApplication_processEvents(XEventLoop_AllEvents);
+                }
+            }
+        }
+        if (s_tm.menuCur != s_tm.menuRoot) ++fails;
+    }
+    /* [缺字不整帧降级 · 回归锁 2026-10-31] 用户实测：切到「库/查询算法/
+       XBinarySearch」层，唯一那枚动作按钮（标题 "\xE2\x96\xB6 主测试"）整枚
+       空白，连带同帧右侧输出区、右下 FPS 浮层一起不出——不是文字数据错，
+       而是 GPU 文本路径：点阵紧凑字库没有 U+25B6，该码点被分配到 outline
+       路径后恒构建失败，每帧都触发 painterGpuFallback 整帧降级，窗口从此
+       再没出过新帧。注意 XWidget_grab 是离屏重绘，看不出这个问题（离屏
+       走的是软件补画），只有查「本帧是否降级」才抓得住。
+       锁口径：下潜到动作层（该层必然含 "\xE2\x96\xB6 …" 标题）→ 强制一帧
+       真实绘制 → 断言本帧未被降级。 */
+    {
+        int lvl;
+        for (lvl = 0; lvl < 3; ++lvl) {
+            XTestMenu* parentMenu =
+                (XTestMenu*)XTreeNode_GetParent(s_tm.menuCur);
+            int k;
+            int sub = -1;
+            for (k = 0; k < s_tm.itemCount; ++k) {
+                if (s_tm.items[k].menu && s_tm.items[k].menu != parentMenu) {
+                    sub = k;
+                    break;
+                }
+            }
+            if (sub < 0) break;
+            XAbstractButton_click((XAbstractButton*)s_tm.items[sub].btn);
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+        }
+        XWidget_repaint((XWidget*)s_tm.root);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+#if XGPU_ON
+        if (XGpuRenderBackend_frameDegraded()) ++fails;
+#endif
+        {
+            int k;
+            for (k = 0; k < 4 && s_tm.menuCur != s_tm.menuRoot; ++k) {
+                if (s_tm.itemCount > 0 && s_tm.items[0].btn &&
+                    s_tm.items[0].menu) {
+                    XAbstractButton_click((XAbstractButton*)s_tm.items[0].btn);
+                    XCoreApplication_processEvents(XEventLoop_AllEvents);
+                }
+            }
+        }
+    }
+    /* [临时取证 · 待删] XGUI_TM_XSTR=1：走用户路径「容器 → 字符串(XString)」
+       并触发【全部测试】，然后停留 15 秒供外部抓真实窗口像素，定位
+       「执行后界面布局出问题」。 */
+    if (getenv("XGUI_TM_XSTR")) {
+        int step;
+        for (step = 0; step < 2; ++step) {
+            static const char* kWanted[2] = {
+                "\xE5\xAE\xB9\xE5\x99\xA8",             /* 容器 */
+                "\xE5\xAD\x97\xE7\xAC\xA6\xE4\xB8\xB2"  /* 字符串 */
+            };
+            int k;
+            int hit = -1;
+            for (k = 0; k < s_tm.itemCount; ++k) {
+                const XString* t = s_tm.items[k].btn
+                    ? XAbstractButton_text(
+                          (const XAbstractButton*)s_tm.items[k].btn)
+                    : NULL;
+                if (t && XString_contains_utf8(t, kWanted[step],
+                                               XChar_CaseSensitive)) {
+                    hit = k;
+                    break;
+                }
+            }
+            if (hit < 0) break;
+            XAbstractButton_click((XAbstractButton*)s_tm.items[hit].btn);
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+        }
+        fprintf(stderr, "[XSTR] layer='%s' items=%d\n",
+                XTestMenu_getTitle(s_tm.menuCur) ?
+                    XTestMenu_getTitle(s_tm.menuCur) : "?", s_tm.itemCount);
+        {
+            int k;
+            int withAction = !(getenv("XGUI_TM_XSTR") &&
+                               strcmp(getenv("XGUI_TM_XSTR"), "2") == 0);
+            int hold;
+            /* 阶段 A：点击前先停 6 秒（外部抓「执行前」基准）。 */
+            {
+                XWidget* wr = (XWidget*)s_tm.root;
+                XSize hint = XWidget_sizeHint(wr);
+                XSize minHint = XWidget_minimumSizeHint(wr);
+                fprintf(stderr,
+                        "[XGEO] A root=(%d,%d %dx%d) hint=%dx%d minHint=%dx%d\n",
+                        XWidget_x(wr), XWidget_y(wr), XWidget_width(wr),
+                        XWidget_height(wr), hint.width, hint.height,
+                        minHint.width, minHint.height);
+                if (s_tm.menuScroll) {
+                    XWidget* w = (XWidget*)s_tm.menuScroll;
+                    fprintf(stderr, "[XGEO] A menu=(%d,%d %dx%d)\n",
+                            XWidget_x(w), XWidget_y(w), XWidget_width(w),
+                            XWidget_height(w));
+                }
+                if (s_tm.outputScroll) {
+                    XWidget* w = (XWidget*)s_tm.outputScroll;
+                    fprintf(stderr, "[XGEO] A out=(%d,%d %dx%d)\n",
+                            XWidget_x(w), XWidget_y(w), XWidget_width(w),
+                            XWidget_height(w));
+                }
+            }
+            for (hold = 0; hold < 60; ++hold) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XThread_msleep(100);
+            }
+            for (k = 0; k < s_tm.itemCount; ++k) {
+                const XString* t = s_tm.items[k].btn
+                    ? XAbstractButton_text(
+                          (const XAbstractButton*)s_tm.items[k].btn)
+                    : NULL;
+                fprintf(stderr, "[XSTR] k=%d '%s'\n", k,
+                        t ? XString_toUtf8(t) : "(null)");
+                if (withAction && s_tm.items[k].action && k == 1) {
+                    fprintf(stderr, "[XSTR] click action\n");
+                    XAbstractButton_click((XAbstractButton*)s_tm.items[k].btn);
+                    break;
+                }
+            }
+            /* 阶段 B：执行后停 12 秒（外部抓「执行后」）。 */
+            {
+                XWidget* wr = (XWidget*)s_tm.root;
+                XSize hint = XWidget_sizeHint(wr);
+                XSize minHint = XWidget_minimumSizeHint(wr);
+                fprintf(stderr,
+                        "[XGEO] B root=(%d,%d %dx%d) hint=%dx%d minHint=%dx%d\n",
+                        XWidget_x(wr), XWidget_y(wr), XWidget_width(wr),
+                        XWidget_height(wr), hint.width, hint.height,
+                        minHint.width, minHint.height);
+                if (s_tm.menuScroll) {
+                    XWidget* w = (XWidget*)s_tm.menuScroll;
+                    fprintf(stderr, "[XGEO] B menu=(%d,%d %dx%d)\n",
+                            XWidget_x(w), XWidget_y(w), XWidget_width(w),
+                            XWidget_height(w));
+                }
+                if (s_tm.outputScroll) {
+                    XWidget* w = (XWidget*)s_tm.outputScroll;
+                    fprintf(stderr, "[XGEO] B out=(%d,%d %dx%d)\n",
+                            XWidget_x(w), XWidget_y(w), XWidget_width(w),
+                            XWidget_height(w));
+                }
+            }
+            for (hold = 0; hold < 120; ++hold) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XThread_msleep(100);
+            }
+        }
+        {
+            int hold = 15;
+            while (hold-- > 0) {
+                int t;
+                for (t = 0; t < 10; ++t) {
+                    XCoreApplication_processEvents(XEventLoop_AllEvents);
+                    XThread_msleep(100);
+                }
+            }
+        }
     }
     return fails;
 }
