@@ -277,7 +277,18 @@ typedef enum XWidgetAttribute
                                                 *   格高亮等子矩形路径自管），焦点迁移时
                                                 *   setFocusReason 的宿主补 update 循环
                                                 *   跳过它，免整件失效进顶层脏区。 */
-    XWidgetAttribute_AttributeCount          = 132  /**< 属性计数（保留位上限）。 */
+    XWidgetAttribute_RetainSizeWhenHiddenChanged = 132, /**< 内部：retainSizeWhenHidden
+                                                *   策略位本次刚翻转（对标 Qt 6.8
+                                                *   QWidgetPrivate::retainSizeWhenHiddenChanged，
+                                                *   qwidget.cpp:141；非 Qt 公开属性）。
+                                                *   仅在 setSizePolicy 翻转 retain 位
+                                                *   期间置位：令隐藏控件的 updateGeometry
+                                                *   守卫（isHidden && !retain &&
+                                                *   !retainChanged）放行——隐藏但保留
+                                                *   尺寸语义刚变化的控件仍占布局空间，
+                                                *   必须通知布局重算（qwidget.cpp:
+                                                *   10379-10392 同口径），调用后即清位。 */
+    XWidgetAttribute_AttributeCount          = 133  /**< 属性计数（保留位上限）。 */
 } XWidgetAttribute;
 
 /** @brief 键盘焦点策略（对标 Qt 6.8 Qt::FocusPolicy，数值一致）。 */
@@ -840,6 +851,17 @@ void XWidget_setGeometry(XWidget* self, int x, int y, int w, int h);
 void XWidget_setGeometryRect(XWidget* self, const XRect* rect);
 /**
  * @brief      通知布局系统几何或尺寸约束可能变化（对标 QWidget::updateGeometry）。
+ * @details    对齐 Qt 6.8（qwidget.cpp:10506 updateGeometry_helper 原样移植）：
+ *             **显式隐藏且未保留隐藏尺寸**（retainSizeWhenHidden，且 retain
+ *             策略位未在本次 setSizePolicy 中刚翻转）的控件，本函数是
+ *             **真 no-op**——Qt 文档原话："For explicitly hidden widgets,
+ *             updateGeometry() is a no-op. The layout system will be
+ *             notified as soon as the widget is shown."。布局欠账由
+ *             XWidget_setVisible 的 show 分支补齐（wasHidden → 失效父布局
+ *             + 自身激活 + 沿可见父链激活，对标 qwidget.cpp:8335-8361）。
+ *             可见控件：失效直接父布局（其失效收口沿布局链自动上推并按
+ *             门控投递 LayoutRequest），并按宿主可见性同步激活布局（XGui
+ *             同步扩展，闸口径与 LayoutRequest 消费端一致）。
  * @param      self 目标控件；可为 NULL。
  * @return     无返回值；已挂接布局时请求重新布局。
  */

@@ -1280,13 +1280,17 @@ int XDialog_exec(XDialog* self)
        ApplicationModal），不受 modal 属性默认值影响。 */
     XWidget_setApplicationModalWidget(selfw);
     /* CSD 内容避让（装饰条让位）：show 返回时建窗已完成、frameMargins
-       已落盘，赶在下方 updateGeometry 布局激活前套用——布局挂载对话
-       框按新边距解算，显式几何对话框子控件已位移。幂等（showEvent
-       已套用则增量零短路）。 */
+       已落盘，赶在布局激活前套用——布局挂载对话框按新边距解算，显式
+       几何对话框子控件已位移。幂等（showEvent 已套用则增量零短路）。 */
     xdlg_applyContentAvoidance(self);
     /* show 后强制激活布局：布局的挂起激活不保证随 show 走到
-       （XBoxLayout 子控件曾零几何不绘制）。幂等。 */
-    XWidget_updateGeometry(selfw);
+       （XBoxLayout 子控件曾零几何不绘制）。幂等。
+       [纯异步 2026-10-31] updateGeometry 已对齐 Qt 纯异步口径（只失效+
+       投递 LayoutRequest，不同步激活），本处改用**显式激活**——应用层
+       直接调 XLayout_activate（对标 QLayout::activate() 公开用法），
+       CSD 避让边距仍当拍生效，行为不变。 */
+    if (selfw->m_layout)
+        XLayout_activate(selfw->m_layout);
     /* 对标 QDialog::exec：阻塞于事件循环直到 done()。WaitForMoreEvents
        防忙等空转（复扫 R-23）。 */
     dialog_grabInitialFocus(self);
@@ -1395,11 +1399,14 @@ void XDialog_open(XDialog* self)
      * 复标脏，保证面板/文本/按钮下一帧真实上屏。 */
     XWidget_update(selfw);
     /* CSD 内容避让（装饰条让位，同 exec 注）：open 路径无 exec 的
-     * updateGeometry 收尾，而 XWidget_show 内的布局激活先于本套用
-     * ——此处补一次强制激活，让改写后的根布局顶边距当帧生效（增量
-     * 幂等，显式几何对话框子控件此时已位移，激活对其无副作用）。 */
+     * 收尾，而 XWidget_show 内的布局激活先于本套用——此处补一次强制
+     * 激活，让改写后的根布局顶边距当帧生效（增量幂等，显式几何对话框
+     * 子控件此时已位移，激活对其无副作用）。
+     * [纯异步 2026-10-31] 同 exec 注：显式 XLayout_activate 取代
+     * updateGeometry 的同步激活依赖。 */
     xdlg_applyContentAvoidance(self);
-    XWidget_updateGeometry(selfw);
+    if (selfw->m_layout)
+        XLayout_activate(selfw->m_layout);
     /* 项目模态门（应用模态为窗口模态阻塞的既定等价物，demo 约定
        "模态门照常生效"）：open 显示期间登记，done/close 解除。
        例外=进度对话框（账本 dialogs-r2 #4，对标 Qt 6.8.3

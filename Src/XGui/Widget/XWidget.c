@@ -422,6 +422,7 @@ static void XWidget_destroyWindow(XWidget* top, bool defer);
 static void XWidget_sendEvent(XWidget* self, XEvent* event);
 static void XWidget_sendShowHide(XWidget* self, bool visible);
 static void xwidget_postLayoutRequest(XWidget* receiver);
+static void xwidget_updateGeometry_helper(XWidget* self, bool forceUpdate);
 static void XWidget_clearFocusBase(XWidget* self, XFocusReason reason);
 static XWidget* XWidget_deepestFocusProxy(const XWidget* self);
 /** @brief 触摸事件槽入口（对标 QWidget::touchEvent 虚函数调用形态）。 */
@@ -5382,9 +5383,14 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
         /* [LayoutRequest 2026-10-20 对齐 QLayout::widgetEvent（qlayout.cpp:
          * 548-551）] 布局失效收口/子控件显隐联动向**布局宿主**投递本事件，
          * 宿主可见时 activate 自身布局（整树失效+重解算+几何写回）；
-         * 隐藏宿主跳过（Qt 同口径），待其 show 分支沿父链激活兜底。 */
+         * 隐藏宿主跳过（Qt 同口径），待其 show 分支沿父链激活兜底。
+         * [enabled 拦截 2026-10-31 对齐 qlayout.cpp:523 `if (!d->enabled
+         * && type != ChildRemoved) return;`]：禁用布局不响应
+         * LayoutRequest（Resize 路径由 XLayout_activate 的 enabled 早退
+         * 同口径拦截）。 */
 #if XLAYOUT_ON
-        if (self->m_layout && XWidget_isVisible(self))
+        if (self->m_layout && self->m_layout->m_enabled &&
+            XWidget_isVisible(self))
             XLayout_activate(self->m_layout);
 #endif
         return true;
@@ -5818,43 +5824,75 @@ void XWidget_setGeometryRect(XWidget* self, const XRect* rect)
     XWidget_setGeometry(self, rect->x, rect->y, rect->width, rect->height);
 }
 
-void XWidget_updateGeometry(XWidget* self)
+/** @brief XWidget_updateGeometry 的实现核（对标 Qt 6.8
+ *  QWidgetPrivate::updateGeometry_helper，qwidget.cpp:10506-10520 原样移植）。
+ * @details 逐条对应关系：
+ *          ① `widgetItem->invalidateSizeCache()`：XGui 的 XWidgetItem 不缓存
+ *             度量（XLayoutItem_sizeHint_base 直读控件），无对应缓存可清，
+ *             等价空操作；
+ *          ② isHidden 守卫（qwidget.cpp:10513 三合取）：显式隐藏且未保留
+ *             隐藏尺寸（retainSizeWhenHidden 的隐藏控件仍占布局空间，提示
+ *             变化仍需通知）且 retain 策略位未在本次 setSizePolicy 中刚翻转
+ *             → **真 no-op**（Qt 文档原话："For explicitly hidden widgets,
+ *             updateGeometry() is a no-op. The layout system will be
+ *             notified as soon as the widget is shown."）。布局欠账由
+ *             XWidget_setVisible 的 show 分支补齐（wasHidden → 失效父布局
+ *             + 自身激活 + 沿可见父链激活，对标 qwidget.cpp:8335-8361；
+ *             Qt 的 show 路径在**清 Hidden 位之后**调 helper(true)，守卫
+ *             自然放行，XGui 同构故无需 forceUpdate 参与守卫判断）；
+ *          ②b 定尺外门（qwidget.cpp:10514）：forceUpdate 或控件非定尺
+ *             （minw!=maxw || minh!=maxh，含从未设约束的默认态）才通知；
+ *             定尺控件（min==max 两轴）的提示变化对布局无意义——布局按
+ *             显式 min/max 钳位，Qt 对其跳过通知。setMinimumSize/
+ *             setMaximumSize 按 Qt 口径传「改后是否定尺」作 forceUpdate
+ *             （qwidget.cpp:3984/4043），setFixedSize 经 min/max 路径自动
+ *             获得同口径；
+ *          ③ 父通知两分支（qwidget.cpp:10515-10518）：父挂布局 → invalidate
+ *             （激活交给 invalidate 收口的门控 LayoutRequest 与消费端可见性
+ *             闸）；父无布局且父可见 → post LayoutRequest。跨控件祖先缓存
+ *             的一致性由 XLayout 失效收口的向上传播承担（VXLayout_invalidate，
+ *             对标 Qt「布局无缓存、activate 全量重测」不变量）；
+ *          ④ **纯异步**（2026-10-31 定稿，移除曾有的同步激活扩展）：本函数
+ *             不激活任何布局——几何经 invalidate→门控 LayoutRequest→消费端
+ *             （VXWidget_event，宿主可见性闸）→activate 的事件链在下一拍
+ *             落地，与 Qt 完全同口径。需要当拍几何的调用方（如 XDialog 的
+ *             CSD 避让收尾）显式调 XLayout_activate（应用层显式 activate，
+ *             对标 QLayout::activate() 公开用法）；窗口态控件自身布局的
+ *             重算由 show 分支（qwidget.cpp:8349 同步激活，Qt 自有）与
+ *             resize 路径（widgetEvent Resize→activate，Qt 自有）承接。
+ * @param  self 目标控件；不可为 NULL。
+ * @param  forceUpdate Qt 语义：绕过定尺外门（show 补偿/定尺重设路径）。 */
+static void xwidget_updateGeometry_helper(XWidget* self, bool forceUpdate)
 {
     XWidget* parent;
     if (!self) return;
 #if XLAYOUT_ON
-    /* [度量缓存 2026-10-17] 先失效再激活（对标 Qt QWidget::updateGeometry
-     * → invalidateSizeHints 沿父链清缓存 + layout->invalidate()）：
-     * 本控件尺寸提示变化（文本/字体/尺寸约束）使**每一级祖先控件的
-     * 布局**合计度量缓存陈旧——invalidate 只沿 m_parentLayout（嵌套
-     * 布局）与子条目级联，跨控件边界（页根布局→中段→根布局分属不同
-     * 控件）不传播，故沿父控件链逐级失效。随后 activate 的幂等早退
-     * 据 m_isDirty 强制重解算——若只 activate 不失效，早退会带着旧
-     * 缓存跳过本应重算的度量。 */
-    {
-        XWidget* w;
-        /* [LayoutRequest 2026-10-20] 不按 Qt updateGeometry_helper 的
-         * isHidden 守卫跳过失效：Qt 的 activate 每次 LayoutRequest 都全量
-         * 重算，而本框架 activate 按「activated+几何未变」幂等早退，且
-         * show 沿父链的激活同样受早退约束——隐藏控件改尺寸提示后若不清
-         * 祖先缓存，show 时重算会命中陈旧合计度量（r1#4 exec 定尺实证）。
-         * 失效本身廉价（仅清缓存+置脏位），保持全量失效。 */
-        for (w = self; w; w = XWidget_parentWidget(w)) {
-            if (w->m_layout)
-                XLayout_invalidate(w->m_layout);
-        }
-    }
-    if (self->m_layout) {
-        XLayout_activate(self->m_layout);
+    /* ② 三合取隐藏守卫（qwidget.cpp:10513）。 */
+    if (!self->m_isWindow &&
+        XWidget_testAttribute(self, XWidgetAttribute_WState_Hidden) &&
+        !XWidgetSizePolicy_retainSizeWhenHidden(&self->m_sizePolicy) &&
+        !XWidget_testAttribute(self,
+                               XWidgetAttribute_RetainSizeWhenHiddenChanged))
         return;
-    }
+    /* ②b 定尺外门（qwidget.cpp:10514）：定尺控件提示变化不通知父布局。 */
+    if (!forceUpdate &&
+        self->m_minimumSize.width == self->m_maximumSize.width &&
+        self->m_minimumSize.height == self->m_maximumSize.height)
+        return;
+    /* ③ 父通知两分支（qwidget.cpp:10515-10518）。 */
     parent = XWidget_parentWidget(self);
     if (parent && parent->m_layout)
-        XLayout_activate(parent->m_layout);
+        XLayout_invalidate(parent->m_layout);
+    else if (parent && XWidget_isVisible(parent))
+        xwidget_postLayoutRequest(parent);
 #else
-    parent = XWidget_parentWidget(self);
-    (void)parent;
+    (void)forceUpdate;
 #endif /* XLAYOUT_ON */
+}
+
+void XWidget_updateGeometry(XWidget* self)
+{
+    xwidget_updateGeometry_helper(self, false);
 }
 
 void XWidget_move(XWidget* self, int x, int y)
@@ -6134,8 +6172,13 @@ void XWidget_setMinimumSize(XWidget* self, int w, int h)
      * setMinimumSize→updateGeometrySize→layout invalidate）：约束参与
      * 布局度量（min/max 参与 collectGeom 钳位），不通知则布局幂等早退
      * 跳过重分布——demo_navUpdatePanel「先 activate 后 setMin/Max 再
-     * activate」的二次激活即被早退吞掉，下停靠导航条错位实证。 */
-    XWidget_updateGeometry(self);
+     * activate」的二次激活即被早退吞掉，下停靠导航条错位实证。
+     * [定尺外门 2026-10-31 对齐 qwidget.cpp:3984] forceUpdate=「改后是否
+     * 定尺」：定尺控件（min==max 两轴）按 Qt 口径强制通知，非定尺控件
+     * 走 helper 的外门常规放行。 */
+    xwidget_updateGeometry_helper(
+        self, self->m_minimumSize.width == self->m_maximumSize.width &&
+              self->m_minimumSize.height == self->m_maximumSize.height);
 }
 
 void XWidget_setMinimumSizeSize(XWidget* self, const XSize* size)
@@ -6196,8 +6239,11 @@ void XWidget_setMaximumSize(XWidget* self, int w, int h)
             XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Resized, resized);
         }
     }
-    /* [度量缓存 2026-10-17] 同 setMinimumSize：约束变化通知布局重排。 */
-    XWidget_updateGeometry(self);
+    /* [度量缓存 2026-10-17] 同 setMinimumSize：约束变化通知布局重排。
+     * [定尺外门 2026-10-31] forceUpdate=「改后是否定尺」（qwidget.cpp:4043）。 */
+    xwidget_updateGeometry_helper(
+        self, self->m_minimumSize.width == self->m_maximumSize.width &&
+              self->m_minimumSize.height == self->m_maximumSize.height);
 }
 
 void XWidget_setMaximumSizeSize(XWidget* self, const XSize* size)
@@ -6363,13 +6409,34 @@ void XWidget_setSizePolicy(XWidget* self,
     XWidget_setAttribute(self, XWidgetAttribute_WState_OwnSizePolicy, true);
     self->m_sizePolicy.m_horizontalPolicy = (uint8_t)horizontal;
     self->m_sizePolicy.m_verticalPolicy = (uint8_t)vertical;
+    /* [Qt 对齐 2026-10-31 setSizePolicy→updateGeometry（qwidget.cpp:10390）]
+     * 策略参与条目 isEmpty/尺寸度量，变化须通知布局重算。 */
+    XWidget_updateGeometry(self);
 }
 
 void XWidget_setSizePolicyFull(XWidget* self, const XWidgetSizePolicy* policy)
 {
+    bool retainChanged;
     if (!self || !policy) return;
     XWidget_setAttribute(self, XWidgetAttribute_WState_OwnSizePolicy, true);
+    /* [Qt 对齐 2026-10-31 retainSizeWhenHiddenChanged 口径（qwidget.cpp:
+     * 10379-10392）]：retain 位翻转期间置内部标志，让**隐藏**控件的
+     * updateGeometry 三合取守卫（isHidden && !retain && !retainChanged）
+     * 放行——隐藏但保留尺寸语义刚变化的控件仍占布局空间，必须通知；
+     * updateGeometry 返回后即清位（Qt 同样调用后立即清）。 */
+    retainChanged =
+        XWidgetSizePolicy_retainSizeWhenHidden(&self->m_sizePolicy) !=
+        XWidgetSizePolicy_retainSizeWhenHidden(policy);
+    if (retainChanged)
+        XWidget_setAttribute(self,
+                             XWidgetAttribute_RetainSizeWhenHiddenChanged,
+                             true);
     self->m_sizePolicy = *policy;
+    XWidget_updateGeometry(self);
+    if (retainChanged)
+        XWidget_setAttribute(self,
+                             XWidgetAttribute_RetainSizeWhenHiddenChanged,
+                             false);
 }
 
 /* ==================== 控件树与命中测试 ==================== */
@@ -7159,8 +7226,15 @@ void XWidget_setVisible(XWidget* self, bool visible)
         XWidget* parent = XWidget_parentWidget(self);
         if (parent) {
             if (visible) {
-                if (wasHidden && parent->m_layout)
-                    XLayout_invalidate(parent->m_layout);
+                /* [对齐 qwidget.cpp:8335-8340] wasHidden → 清 Hidden 位后
+                 * 走 updateGeometry_helper(true)：守卫自然放行（Hidden 已
+                 * 清），forceUpdate 绕过定尺外门，父通知走 helper 的两分支
+                 * （父挂布局 invalidate / 父无布局且可见 post
+                 * LayoutRequest——后者为此前缺失的口径）。本分支位于
+                 * setExplicitVisibleRecursive 之后，生效可见已翻转，helper
+                 * 的同步激活扩展（宿主可见性闸）按 show 后口径工作。 */
+                if (wasHidden)
+                    xwidget_updateGeometry_helper(self, true);
                 if (self->m_layout) {
                     self->m_inShow = 1;
                     XLayout_activate(self->m_layout);
@@ -10387,6 +10461,23 @@ static void xwidget_wprof_add(int leg, int64_t startNs)
         xwidget_rprof.srcDirty = 0;
         xwidget_rprof.srcExpose = 0;
         xwidget_rprof.srcFull = 0;
+        /* [lprof] 布局画像行（计数在 XLayout.c，同门控）：act=activate 真
+           重解算（未早退）次数 skip=幂等早退 inval=失效事件数 solveAvg=
+           单次真重解算平均耗时——「谁在全量重算布局」直接读这一行；隐藏
+           页 setText 若仍有布局重算会在此显形（act 应不随隐藏页轮询速率
+           变化）。 */
+        {
+            long lprofAct;
+            long lprofSkip;
+            long lprofInval;
+            int64_t lprofNs;
+            XLayout_profilerReadAndReset(&lprofAct, &lprofSkip,
+                                         &lprofInval, &lprofNs);
+            XPrintf("[lprof] act=%ld skip=%ld inval=%ld solveAvg=%.3fms\n",
+                    lprofAct, lprofSkip, lprofInval,
+                    lprofAct > 0
+                        ? (double)lprofNs / 1.0e6 / (double)lprofAct : 0.0);
+        }
         xwidget_wprof.lastPrintNs = nowNs;
     }
 }

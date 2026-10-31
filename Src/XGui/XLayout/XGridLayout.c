@@ -775,12 +775,9 @@ static XLayoutExpandingDirections VXGridLayout_expandingDirections(
     return out;
 }
 
-/** @brief 网格布局空判定：没有任何条目即为空。 */
-static bool VXGridLayout_isEmpty(const XLayoutItem* item)
-{
-    if (!item) return true;
-    return ((const XLayout*)item)->m_itemCount == 0;
-}
+/* 网格布局不覆盖 isEmpty（对标 Qt——QGridLayout 无 isEmpty 覆盖，继承
+ * qlayout.cpp:422 的 QLayout::isEmpty：itemAt 扫描，全部条目都空才为空）；
+ * 空判定由基类 VXLayout_isEmpty 提供（XLayout.c）。 */
 
 /** @brief 查询网格布局是否支持 heightForWidth。 */
 static bool VXGridLayout_hasHeightForWidth(const XLayoutItem* item)
@@ -1324,7 +1321,7 @@ XVtable* XGridLayout_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_MaximumSize, VXGridLayout_maximumSize);
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_ExpandingDirections,
                              VXGridLayout_expandingDirections);
-    XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_IsEmpty, VXGridLayout_isEmpty);
+    /* IsEmpty 不覆盖：继承基类 itemAt 扫描语义（对标 QLayout::isEmpty）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_SetGeometry, VXGridLayout_setGeometry);
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_HasHeightForWidth,
                              VXGridLayout_hasHeightForWidth);

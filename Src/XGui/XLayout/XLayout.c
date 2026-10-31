@@ -34,8 +34,49 @@
 #include "XWidget.h"
 #include "XMemory.h"
 #include "XCoreApplication.h" /* invalidate 收口向宿主 post LayoutRequest（Qt 对齐）。 */
+#include "XSystem.h"         /* [lprof] 画像门（XGPU_W_FRAME_PROF 同门控）。 */
+#include "XDateTime.h"       /* [lprof] 真重解算耗时计时。 */
 
 #if XLAYOUT_ON
+
+/* ==================== [lprof] 布局激活/失效画像（诊断） ==================== */
+
+/* XGPU_W_FRAME_PROF=1 同门控（与 XWidget.c 的 wprof/rprof 共用一个 env，
+ * 打印挂在同一 3 秒画像窗，见 XWidget.c 的 [lprof] 行）。计数仅在门开时
+ * 累积：act=activate 真重解算（未走幂等早退）次数、skip=幂等早退次数、
+ * inval=失效事件数、solveNs=真重解算累计耗时（纳秒）。门解析与
+ * xwidget_wprof_gate 同款惰性单次。 */
+static int xlayout_lprofInited;
+static int xlayout_lprofOn;
+static long xlayout_lprofAct;
+static long xlayout_lprofActSkip;
+static long xlayout_lprofInval;
+static int64_t xlayout_lprofSolveNs;
+
+static int xlayout_lprof_gate(void)
+{
+    if (!xlayout_lprofInited)
+    {
+        const char* env = XSystem_environment("XGPU_W_FRAME_PROF");
+        xlayout_lprofOn =
+            env && *env && !(env[0] == '0' && env[1] == 0) ? 1 : 0;
+        xlayout_lprofInited = 1;
+    }
+    return xlayout_lprofOn;
+}
+
+void XLayout_profilerReadAndReset(long* act, long* skip, long* inval,
+                                  int64_t* solveNs)
+{
+    if (act) *act = xlayout_lprofAct;
+    if (skip) *skip = xlayout_lprofActSkip;
+    if (inval) *inval = xlayout_lprofInval;
+    if (solveNs) *solveNs = xlayout_lprofSolveNs;
+    xlayout_lprofAct = 0;
+    xlayout_lprofActSkip = 0;
+    xlayout_lprofInval = 0;
+    xlayout_lprofSolveNs = 0;
+}
 
 /* ==================== 静态辅助函数 ==================== */
 
@@ -196,12 +237,18 @@ void XLayout_linkItem(XLayout* self, XLayoutItem* item)
 
 /* ==================== 虚函数表与生命周期 ==================== */
 
-/** @brief XLayout 空判定：没有任何条目即为空。 */
+/** @brief XLayout 空判定（对标 QLayout::isEmpty，qlayout.cpp:422）：
+ *  itemAt 扫描——**所有条目都空才为空**（子布局条目递归有效）。 */
 static bool VXLayout_isEmpty(const XLayoutItem* item)
 {
     const XLayout* self = (const XLayout*)item;
+    int i;
     if (!self) return true;
-    return self->m_itemCount == 0;
+    for (i = 0; i < self->m_itemCount; ++i) {
+        if (self->m_items[i] && !XLayoutItem_isEmpty_base(self->m_items[i]))
+            return false;
+    }
+    return true;
 }
 
 /** @brief XLayout 本身就是布局条目：返回自身。 */
@@ -210,29 +257,95 @@ static XLayout* VXLayout_layout(const XLayoutItem* item)
     return (XLayout*)item;
 }
 
+/** @brief [对齐 qlayout.h:80 `Qt::Orientations expandingDirections()
+ *  const override`] Qt QLayout 基类默认两轴可伸展（子类按条目策略覆盖）；
+ *  XGui 基类此前继承 XLayoutItem 的 None 默认，与 Qt 同名不同义，已修复
+ *  （盒式/网格的本类覆盖不受影响）。 */
+static XLayoutExpandingDirections VXLayout_expandingDirections(
+    const XLayoutItem* item)
+{
+    (void)item;
+    return XLayoutExpandingDirection_Both;
+}
+
+/** @brief [update 2026-10-31 对齐 QLayout::update（qlayout.cpp:971-986）]
+ *  失效沿布局链的门控上推：while (layout && activated) 自底向上逐级置
+ *  未激活，到布局链顶才向**宿主控件** post LayoutRequest（队列事件）；
+ *  任一层未激活（装配期/已失效）即整链停推不投递。本函数只做 Qt
+ *  update() 的语义（标志+投递），不清缓存——缓存失效属于 invalidate
+ *  的职责（XLayout_invalidate = 清缓存 + 本函数，对标 Qt 的
+ *  invalidate = rect 复位 + update()）。
+ * @note   投递只覆盖失效源所在控件的布局链（Qt 的 update 同样只沿
+ *         QLayout 对象链走），跨控件祖先的重算由 show 补偿 / resize /
+ *         下次 activate 承接；可见性闸在消费端（VXWidget_event 的
+ *         LayoutRequest 分支）。 */
+static void xlayout_update_impl(XLayout* self)
+{
+    XLayout* l = self;
+    while (l && l->m_activated) {
+        l->m_activated = 0;
+        if (!l->m_parentLayout) {
+            XWidget* mw = l->m_parentWidget;
+            if (mw && XCoreApplication_instance()) {
+                XEvent* ev = XEvent_create_ex(
+                    XCLASS_DEFAULT_MEMORY_TYPE,
+                    XEVENT_TYPE_LAYOUT_REQUEST);
+                if (ev) {
+                    if (!XCoreApplication_tryPostEvent((XObject*)mw, ev, 0))
+                        XClassDelete((XClass*)ev);
+                }
+            }
+            break;
+        }
+        l = l->m_parentLayout;
+    }
+}
+
 /** @brief XLayout 失效：标记脏并向全部子条目传播失效率（子布局递归）。
  * @details [度量缓存 2026-10-17] 失效同时清三级尺寸缓存（对标 Qt
  *          QLayout::invalidate 清 totalMin/Max）；并沿父布局链向上清
- *          祖先缓存（对标 Qt invalidate 级联父布局）——子控件尺寸提示
- *          变化后祖先布局的合计度量同步陈旧须一并清除。向上段只清
- *          祖先自身（缓存+脏位）**不再回入向下级联**：否则 父失效→
- *          遍历子条目→子失效→回父 死循环栈溢出（启动段错误实证）。
- *          [LayoutRequest 2026-10-20 对齐 Qt QLayout::invalidate→update]
- *          收尾按 QLayout::update 语义把顶层布局标未激活并向**宿主控件**
- *          post LayoutRequest（队列事件，压缩器去重，下一拍 activate）——
- *          子控件显隐/尺寸提示变更经此自动重排，调用方无需手工
- *          updateGeometry。宿主未定（嵌套中间层布局）只置未激活继续
- *          上溯，与 Qt 一致。 */
+ *          祖先缓存——子控件尺寸提示变化后祖先布局的合计度量同步陈旧
+ *          须一并清除。向上段只清祖先自身（缓存+脏位）**不再回入向下
+ *          级联**：否则 父失效→遍历子条目→子失效→回父 死循环栈溢出
+ *          （启动段错误实证）。
+ *          [跨控件上推 2026-10-31 对齐 Qt 不变量] Qt 里跨控件一致性由
+ *          「布局无缓存 + activate 全量重测 + updateGeometry_helper 清
+ *          QWidgetItemV2 缓存」（qwidget.cpp:10509）保证；XGui 的三级
+ *          缓存跨控件存续，失效必须越过控件边界——沿父控件链继续清
+ *          祖先控件布局（含各自 m_parentLayout 链）的缓存与脏位，替代
+ *          此前 XWidget_updateGeometry 的逐级失效 walk（对齐 Qt 后该
+ *          walk 已删）。清缓存段**无条件**（不设 activated 门：祖先可能
+ *          已重新激活并从旧提示重建缓存，失效源的再次变化仍需清它）。
+ *          [LayoutRequest 2026-10-20 对齐 Qt QLayout::invalidate→update
+ *          （qlayout.cpp:971-986）] 投递段按 QLayout::update 语义门控：
+ *          while (layout && activated) 自底向上只在「激活链完整」时逐级
+ *          置未激活，到布局链顶才向**宿主控件** post LayoutRequest（队列
+ *          事件，下一拍 activate）；任一层未激活（装配期/已失效）即整链
+ *          不投递——隐藏页宿主布局被失效一次后，后续失效在此即停（隐藏
+ *          页 setText 近零成本的来源）。投递只覆盖失效源所在控件的布局
+ *          链（Qt 的 update 同样只沿 QLayout 对象链走），跨控件祖先的
+ *          重算由 show 补偿 / resize / 下次 activate 承接；可见性闸在
+ *          消费端（VXWidget_event 的 LayoutRequest 分支）。 */
 static void VXLayout_invalidate(XLayout* self)
 {
     int i;
     if (!self) return;
+    if (xlayout_lprof_gate()) ++xlayout_lprofInval;
     self->m_isDirty = 1;
+    /* [几何快照复位 2026-10-31 对齐 QLayout::invalidate（qlayout.cpp:471
+     * `d->rect = QRect();`）]：失效后布局几何快照清零，geometry()/
+     * contentsRect() 读到空矩形，直到下一次 setGeometry/activate 重解算
+     * 才恢复——与 Qt 同口径（「失效 ⇒ 几何未定」）。XStackedLayout 切页
+     * 回贴读此字段：宿主可见时 show 链先重激活（setGeometry 写回新鲜
+     * 几何）再读，行为不变；宿主隐藏时回贴跳过、留待 show 激活补齐
+     * （Qt 同为无激活即无几何）。 */
+    XRect_init(&self->m_base.m_geometry, 0, 0, 0, 0);
     XSize_init(&self->m_cachedMin, -1, -1);
     XSize_init(&self->m_cachedMax, -1, -1);
     XSize_init(&self->m_cachedHint, -1, -1);
     for (i = 0; i < self->m_itemCount; ++i)
         XLayoutItem_invalidate_base(self->m_items[i]);
+    /* 向上清缓存段（无条件）：本控件布局链 → 跨控件父控件链逐级。 */
     {
         XLayout* p = self->m_parentLayout;
         while (p) {
@@ -242,32 +355,28 @@ static void VXLayout_invalidate(XLayout* self)
             XSize_init(&p->m_cachedHint, -1, -1);
             p = p->m_parentLayout;
         }
-    }
-    /* 对标 QLayout::update（qlayout.cpp:971-984）：while (layout &&
-     * activated) —— 自底向上只在「激活链完整」时逐级置未激活，到顶层
-     * 布局才向宿主控件投递 LayoutRequest。任一层未激活（装配期/已失效）
-     * 即整链不投递，与 Qt 一致；激活早退（XLayout_activate）以 m_isDirty
-     * 兜底，压缩器去重重复投递。 */
-    {
-        XLayout* l = self;
-        while (l && l->m_activated) {
-            l->m_activated = 0;
-            if (!l->m_parentLayout) {
-                XWidget* mw = l->m_parentWidget;
-                if (mw && XCoreApplication_instance()) {
-                    XEvent* ev = XEvent_create_ex(
-                        XCLASS_DEFAULT_MEMORY_TYPE,
-                        XEVENT_TYPE_LAYOUT_REQUEST);
-                    if (ev) {
-                        if (!XCoreApplication_tryPostEvent((XObject*)mw, ev, 0))
-                            XClassDelete((XClass*)ev);
+        {
+            XWidget* pw = self->m_parentWidget
+                              ? XWidget_parentWidget(self->m_parentWidget)
+                              : NULL;
+            while (pw) {
+                if (pw->m_layout) {
+                    XLayout* q = pw->m_layout;
+                    while (q) {
+                        q->m_isDirty = 1;
+                        XSize_init(&q->m_cachedMin, -1, -1);
+                        XSize_init(&q->m_cachedMax, -1, -1);
+                        XSize_init(&q->m_cachedHint, -1, -1);
+                        q = q->m_parentLayout;
                     }
                 }
-                break;
+                pw = XWidget_parentWidget(pw);
             }
-            l = l->m_parentLayout;
         }
     }
+    /* 投递段（门控）：委托 xlayout_update_impl（Qt 的 update() 语义），
+     * 只在失效源所在控件的布局链上走，到链顶按门控结果投递一次。 */
+    xlayout_update_impl(self);
 }
 
 /** @brief XLayout 通用几何分配：内容矩形整块交给每个子条目，
@@ -319,7 +428,13 @@ static XLayoutItem* VXLayout_takeAt(XLayout* self, int index)
             sub->m_parentLayout = NULL;
         }
     }
+    /* 置脏同时清三级缓存：条目移除改变合计度量，缓存不清则下一次
+       activate 前的读穿（XLayoutItem_*_base 命中 width>=0）返回旧值
+       （takeAt 此前只置脏不清缓存，2026-10-31 修）。 */
     self->m_isDirty = 1;
+    XSize_init(&self->m_cachedMin, -1, -1);
+    XSize_init(&self->m_cachedMax, -1, -1);
+    XSize_init(&self->m_cachedHint, -1, -1);
     return item;
 }
 
@@ -453,6 +568,8 @@ XVtable* XLayout_class_init(void)
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_IsEmpty, VXLayout_isEmpty);
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_Layout, VXLayout_layout);
+    XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_ExpandingDirections,
+                             VXLayout_expandingDirections);
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_SetGeometry, VXLayout_setGeometry);
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_Invalidate, VXLayout_invalidate);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXLayout_deinit);
@@ -616,13 +733,8 @@ XRect XLayout_contentsRectForRect(const XLayout* self, const XRect* rect)
     return out;
 }
 
-XMargins XLayout_layoutMargins(const XLayout* self)
-{
-    XMargins out;
-    XMargins_init(&out, 0, 0, 0, 0);
-    if (!self) return out;
-    return self->m_contentsMargins;
-}
+/* [已删除 2026-10-31] XLayout_layoutMargins：Qt 无此 API 且全仓零调用，
+ * 定义随之移除（内容边距读取走 XLayout_contentsMargins/resolveMargins）。 */
 
 /* ==================== 通用条目管理（对标 QLayout） ==================== */
 
@@ -635,7 +747,7 @@ void XLayout_removeWidget(XLayout* self, XWidget* widget)
     idx = XLayout_indexOf(self, widget);
     if (idx < 0) return;
     /* takeAt 会清零 m_ownedByLayout（VXLayout_takeAt），属主必须在取出
-       前判定（与 XLayout_deleteAllItems 同判据）：本入口创建的内部条目
+       前判定（与 XLayout_releaseItems 同判据）：本入口创建的内部条目
        （addWidget 包装，owned=1）取出后就地释放，杜绝丢弃句柄造成的
        泄漏；经 addItem 显式传入的借用条目释放责任仍在调用方。 */
     item = self->m_items[idx];
@@ -666,60 +778,36 @@ int XLayout_indexOf(const XLayout* self, const XWidget* widget)
     return -1;
 }
 
-XLayoutItem* XLayout_itemForWidget(const XLayout* self, const XWidget* widget)
+/* [setAlignment 2026-10-31 对齐 qlayout.h:58-59 `bool setAlignment(
+ * QWidget, Alignment)` / `bool setAlignment(QLayout, Alignment)`]：返回
+ * 是否找到条目并设置成功（Qt 语义）；此前返回 void 且经已删除的
+ * itemForWidget 间接寻址，现内联 indexOf 查找。Qt 无「任意条目」公开
+ * 重载，setAlignmentItem 已随 itemForWidget 一并删除（零调用方）。 */
+bool XLayout_setAlignmentWidget(XLayout* self, XWidget* widget,
+                                XLayoutAlignments alignment)
 {
     int idx;
-    if (!self || !widget) return NULL;
+    if (!self || !widget) return false;
     idx = XLayout_indexOf(self, widget);
-    if (idx < 0) return NULL;
-    return self->m_items[idx];
-}
-
-void XLayout_setAlignmentWidget(XLayout* self, XWidget* widget,
-                                XLayoutAlignments alignment)
-{
-    XLayoutItem* item;
-    if (!self || !widget) return;
-    item = XLayout_itemForWidget(self, widget);
-    if (item)
-        XLayoutItem_setAlignment(item, alignment);
-}
-
-void XLayout_setAlignmentLayout(XLayout* self, XLayout* child,
-                                XLayoutAlignments alignment)
-{
-    int idx;
-    if (!self || !child) return;
-    idx = XLayout_indexOfItem(self, (const XLayoutItem*)child);
-    if (idx >= 0)
-        XLayoutItem_setAlignment(self->m_items[idx], alignment);
-}
-
-bool XLayout_setAlignmentItem(XLayout* self, XLayoutItem* item,
-                              XLayoutAlignments alignment)
-{
-    int idx;
-    if (!self || !item) return false;
-    idx = XLayout_indexOfItem(self, item);
     if (idx < 0) return false;
     XLayoutItem_setAlignment(self->m_items[idx], alignment);
     return true;
 }
 
-void XLayout_deleteAllItems(XLayout* self)
+bool XLayout_setAlignmentLayout(XLayout* self, XLayout* child,
+                                XLayoutAlignments alignment)
 {
-    int i;
-    if (!self) return;
-    for (i = self->m_itemCount - 1; i >= 0; --i) {
-        XLayoutItem* item = self->m_items[i];
-        bool owned = item && item->m_ownedByLayout;
-        XLayoutItem* taken = XLayout_takeAt_base(self, i);
-        (void)taken;
-        if (owned && item)
-            XClassDelete(item);
-    }
-    self->m_isDirty = 1;
+    int idx;
+    if (!self || !child) return false;
+    idx = XLayout_indexOfItem(self, (const XLayoutItem*)child);
+    if (idx < 0) return false;
+    XLayoutItem_setAlignment(self->m_items[idx], alignment);
+    return true;
 }
+
+/* [删除 2026-10-31] XLayout_deleteAllItems：Qt QLayout 无此 API（doc 曾
+ * 错标「对标 QLayout::deleteAllItems」——Qt 无此公开接口），且全仓零调用；
+ * 条目清理走 releaseItems（deinit）或 takeAt 逐条取出。 */
 
 /* ==================== 内容边距 / 间距 / 对齐矩形 ==================== */
 
@@ -798,9 +886,11 @@ void XLayout_setSpacing(XLayout* self, int spacing)
 
 int XLayout_spacing(const XLayout* self)
 {
-    /* 文档一致：NULL 布局按未初始化返回 -1（对标 Qt 布局间距未设置语义）。 */
-    if (!self) return -1;
-    return self->m_spacing;
+    /* [行为修复 2026-10-31 对齐 QLayout::spacing（qlayout.cpp:255）]：
+     * Qt 从不返回 -1——未显式设置时解出样式默认间距（X 无样式 → 0，
+     * 沿父布局链回退为 XGui 的等效解析）。此前返回原始 -1「未设置」
+     * 哨兵，与 Qt 同名不同义；需要原始值读 m_spacing 字段。 */
+    return XLayout_effectiveSpacing(self);
 }
 
 XRect XLayout_alignmentRect(const XLayout* self, const XRect* rect)
@@ -1158,8 +1248,19 @@ bool XLayout_activate(XLayout* self)
     XWidget* w;
     XRect r;
     if (!self) return false;
+    /* [enabled 早退 2026-10-31 对齐 qlayout.cpp:1000 `if (!d->enabled ||
+     * !parent()) return false;`]：禁用布局不重解算（Qt widgetEvent 同样
+     * 在事件入口按 enabled 拦截，见 VXWidget_event 的 LayoutRequest 分支）。
+     * m_enabled 默认 true，未调用 setEnabled 的布局行为不变。 */
+    if (!self->m_enabled) return false;
     w = XLayout_parentWidget(self);
     if (!w) return false;
+    /* [子布局上推委托 2026-10-31 对齐 qlayout.cpp:1002 `if (!d->topLevel)
+     * return static_cast<QLayout*>(parent())->activate();`]：对子布局调
+     * activate 即委托父布局激活（整树自顶重解算），子布局从不独立解算
+     * ——此前本函数对子布局只做局部重解算，与 Qt 同名不同义，已修复。 */
+    if (self->m_parentLayout)
+        return XLayout_activate(self->m_parentLayout);
     /* 以控件客户区（自身坐标）为分配矩形。 */
     r = XWidget_geometry(w);
     r.x = 0;
@@ -1175,8 +1276,15 @@ bool XLayout_activate(XLayout* self)
         self->m_activateRect.x == r.x && self->m_activateRect.y == r.y &&
         self->m_activateRect.width == r.width &&
         self->m_activateRect.height == r.height)
+    {
+        if (xlayout_lprof_gate()) ++xlayout_lprofActSkip;
         return true;
-    /* 按尺寸约束把布局尺寸写回挂接控件（对标 QLayout::activate）。 */
+    }
+    /* [lprof] 真重解算计时：覆盖约束写回 + 整树度量 + 几何分配全程。 */
+    {
+        int64_t lprofStart = xlayout_lprof_gate()
+                                 ? XDateTime_currentNSecsSinceEpoch() : 0;
+        /* 按尺寸约束把布局尺寸写回挂接控件（对标 QLayout::activate）。 */
     switch (self->m_sizeConstraint) {
     case XLayoutSizeConstraint_SetDefault:
         /* [Qt 对齐 2026-10-17] SetDefault 不做尺寸回写——Qt
@@ -1220,23 +1328,28 @@ bool XLayout_activate(XLayout* self)
     /* 按分配矩形重新解算（r 已在函数头取定）。 */
     XLayoutItem_setGeometry_base((XLayoutItem*)self, &r);
     self->m_activateRect = r;
+        if (lprofStart)
+        {
+            ++xlayout_lprofAct;
+            xlayout_lprofSolveNs +=
+                XDateTime_currentNSecsSinceEpoch() - lprofStart;
+        }
+    }
     return true;
 }
 
 void XLayout_update(XLayout* self)
 {
-    int i;
+    /* [行为修复 2026-10-31 对齐 QLayout::update（qlayout.cpp:971）]：
+     * Qt 的 update() 是**失效沿布局链的门控上推**（逐级置未激活 + 到链
+     * 顶向宿主 post LayoutRequest），不是重画——此前本函数被错标成
+     * 「重画所有条目」（走条目逐个 XWidget_update 的重绘遍历），与 Qt
+     * 同名不同义，已按 Qt 语义修复。需要重画的调用方用
+     * XWidget_update(宿主)；需要失效+重取度量的调用方用
+     * XLayout_invalidate（Qt 惯用口令：改条目后 invalidate 再读
+     * totalSizeHint）。 */
     if (!self) return;
-    for (i = 0; i < self->m_itemCount; ++i) {
-        XLayoutItem* item = self->m_items[i];
-        XWidget* w;
-        XLayout* sub;
-        if (!item) continue;
-        w = XLayoutItem_widget_base(item);
-        if (w) XWidget_update(w);
-        sub = XLayoutItem_layout_base(item);
-        if (sub && sub != self) XLayout_update(sub);
-    }
+    xlayout_update_impl(self);
 }
 
 void XLayout_invalidate(XLayout* self)

@@ -197,8 +197,10 @@ XLayoutExpandingDirections XLayoutItem_expandingDirections_base(const XLayoutIte
 
 /**
  * @brief      查询条目是否为空（对标 QLayoutItem::isEmpty）。
- * @details    控件条目在控件隐藏时为空；布局条目在没有任何子条目时为
- *             空；空白条目始终为空。
+ * @details    控件条目在控件隐藏（且未 retainSizeWhenHidden）或为窗口时
+ *             为空；布局条目按 itemAt 扫描——**全部子条目都空才为空**
+ *             （对标 QLayout::isEmpty，qlayout.cpp:422，子布局递归有效）；
+ *             空白条目始终为空。
  * @param      self 目标条目；可为 NULL。
  * @return     空返回 true；失败返回 true。
  */

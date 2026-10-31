@@ -155,12 +155,24 @@ XRect XLayout_contentsRectForRect(const XLayout* self, const XRect* rect);
  */
 void XLayout_linkItem(XLayout* self, XLayoutItem* item);
 
+/* [已删除 2026-10-31] XLayout_layoutMargins：Qt 无此 API 且全仓零调用
+ * （内容边距读取走 XLayout_contentsMargins/resolveMargins）。 */
+
 /**
- * @brief      返回条目内边距（受保护；对齐解算使用）。
- * @param      self 目标布局；可为 NULL。
- * @return     布局内容边距。
+ * @brief      读取并清零布局激活/失效画像计数（诊断；XGPU_W_FRAME_PROF=1
+ *             同门控，计数仅在门开时累积，打印由 XWidget.c 的 3 秒画像窗
+ *             承担——[lprof] 行）。
+ * @details    act=XLayout_activate 真重解算（未走幂等早退）次数；
+ *             skip=activate 幂等早退次数；inval=VXLayout_invalidate 失效
+ *             事件数；solveNs=真重解算累计耗时（纳秒）。「谁在全量重算
+ *             布局」直接读 [lprof] 行。
+ * @param      act 真重解算次数输出；可为 NULL。
+ * @param      skip 幂等早退次数输出；可为 NULL。
+ * @param      inval 失效事件数输出；可为 NULL。
+ * @param      solveNs 真重解算累计耗时输出；可为 NULL。
  */
-XMargins XLayout_layoutMargins(const XLayout* self);
+void XLayout_profilerReadAndReset(long* act, long* skip, long* inval,
+                                  int64_t* solveNs);
 
 #endif /* XLAYOUT_ON */
 

@@ -24901,6 +24901,309 @@ static void test_layout_widget_integration(void)
 #endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 }
 
+/** @brief 布局异步契约测试助手：确保存在应用实例。
+ * @details LayoutRequest 是队列事件——xwidget_postLayoutRequest 在
+ *          XCoreApplication_instance() 为空时按既有契约丢弃投递（启动前/
+ *          关闭后），「泵后落地」断言必须先有实例。本助手惰性创建、由
+ *          调用方在测试收尾释放（先于其它创建 app 的用例，避免单例冲突）。 */
+static XCoreApplication* g_layoutTestApp = NULL;
+static void layout_test_ensure_app(void)
+{
+    if (!XCoreApplication_instance())
+        g_layoutTestApp = XCoreApplication_create_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL);
+}
+static void layout_test_release_app(void)
+{
+    if (g_layoutTestApp) {
+        XClassDelete((XClass*)g_layoutTestApp);
+        g_layoutTestApp = NULL;
+    }
+}
+
+/** @brief 隐藏控件 updateGeometry 真 no-op + retainSizeWhenHidden 例外 +
+ *  show 补偿（对标 Qt 6.8 updateGeometry_helper，qwidget.cpp:10506-10520）。
+ * @details 守卫公式（qwidget.cpp:10513）：
+ *          isHidden && !retainSizeWhenHidden && !retainSizeWhenHiddenChanged
+ *          → no-op。show 补偿走 XWidget_setVisible 的 wasHidden 分支。
+ *          可观测性：守卫用例期把**父控件隐藏**——updateGeometry 的同步
+ *          激活扩展带宿主可见性闸，父隐藏时「通知」留下 dirty=1、「真
+ *          no-op」保持 dirty=0，二者可区分（父可见时通知会被同步激活
+ *          立刻清脏，不可观测）。show 补偿段恢复父可见走真实补偿链。 */
+static void test_layout_updategeometry_qt_align(void)
+{
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    TestWidget* parent;
+    TestWidget* c0;
+    TestWidget* c1;
+    XBoxLayout* laid;
+    int w0;
+
+    parent = TestWidget_create(NULL);
+    c0 = layout_make_growable_widget(40, 20);
+    c1 = layout_make_fixed_widget(30, 20);
+    expect_true(parent && c0 && c1, "ug: 控件创建");
+    /* 宽度 110 = c0 新约束 80 + c1 固定 30：show 补偿段几何可精确断言。 */
+    XWidget_setGeometry(&parent->m_base, 0, 0, 110, 120);
+    laid = XBoxLayout_create(XBoxLayoutDirection_LeftToRight,
+                             &parent->m_base);
+    XBoxLayout_addWidget(laid, &c0->m_base);
+    XBoxLayout_addWidget(laid, &c1->m_base);
+    XWidget_show(&parent->m_base);
+    expect_true(XLayout_activate((XLayout*)laid), "ug: show 后激活");
+
+    /* ---------- ⓪ 纯异步契约：updateGeometry 不同步出几何 ---------- */
+    layout_test_ensure_app();
+    {
+        int wBefore = XWidget_width(&c0->m_base);
+        /* 可见控件改约束：helper 只失效+投递 LayoutRequest（Qt 纯异步
+           口径）——当拍几何不变。 */
+        XWidget_setMinimumSize(&c0->m_base, 90, 20);
+        expect_true(XWidget_width(&c0->m_base) == wBefore,
+                    "ug: 可见控件约束变化不同步激活布局（纯异步）");
+        expect_true(((XLayout*)laid)->m_isDirty,
+                    "ug: 失效已置位（等待泵激活）");
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        expect_true(XWidget_width(&c0->m_base) == 90,
+                    "ug: LayoutRequest 泵后几何按新约束落地");
+        XWidget_setMinimumSize(&c0->m_base, 40, 20);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        expect_true(XWidget_width(&c0->m_base) == wBefore,
+                    "ug: 泵后恢复首选分布");
+    }
+
+    /* ---------- ①②③ 守卫观测期：父隐藏（同步激活被闸拦下） ---------- */
+    XWidget_hide(&c0->m_base);
+    XWidget_hide(&parent->m_base);
+    expect_true(XLayout_activate((XLayout*)laid), "ug: 隐藏后激活（条目空）");
+    expect_true(!((XLayout*)laid)->m_isDirty, "ug: 重解算后缓存干净");
+
+    /* ① 显式隐藏 → 真 no-op：父布局缓存保持干净。 */
+    XWidget_updateGeometry(&c0->m_base);
+    expect_true(!((XLayout*)laid)->m_isDirty,
+                "ug: 隐藏控件 updateGeometry 不失效父布局（Qt no-op）");
+
+    /* ② retainSizeWhenHidden 例外。 */
+    {
+        XWidgetSizePolicy policy = XWidget_sizePolicy(&c0->m_base);
+        /* 翻转开启：RetainSizeWhenHiddenChanged 位放行守卫
+           （qwidget.cpp:10379-10392 retainSizeWhenHiddenChanged 口径）。 */
+        XWidgetSizePolicy_setRetainSizeWhenHidden(&policy, true);
+        XWidget_setSizePolicyFull(&c0->m_base, &policy);
+        expect_true(((XLayout*)laid)->m_isDirty,
+                    "ug: retain 翻转的隐藏控件通知布局");
+        expect_true(XLayout_activate((XLayout*)laid), "ug: retain 后激活");
+        expect_true(!((XLayout*)laid)->m_isDirty, "ug: retain 后缓存干净");
+        /* retain 已置（未再翻转）：隐藏 + retain → 守卫仍放行（占空间）。 */
+        XWidget_updateGeometry(&c0->m_base);
+        expect_true(((XLayout*)laid)->m_isDirty,
+                    "ug: retain 隐藏控件 updateGeometry 仍通知");
+        expect_true(XLayout_activate((XLayout*)laid), "ug: 复位激活");
+        /* 翻转关闭：retainChanged 位再次放行（否则三合取守卫会吞掉）。 */
+        XWidgetSizePolicy_setRetainSizeWhenHidden(&policy, false);
+        XWidget_setSizePolicyFull(&c0->m_base, &policy);
+        expect_true(((XLayout*)laid)->m_isDirty,
+                    "ug: retain 翻转关闭同样通知（retainChanged 位）");
+        expect_true(XLayout_activate((XLayout*)laid), "ug: 关闭后激活");
+    }
+
+    /* ---------- ③ show 补偿：隐藏期间改约束，show 后按新约束重排 ---------- */
+    w0 = XWidget_width(&c0->m_base);
+    /* 隐藏控件 setMinimumSize→updateGeometry：守卫拦截（真 no-op），
+       父布局缓存与控件几何都保持原样。 */
+    XWidget_setMinimumSize(&c0->m_base, 80, 20);
+    expect_true(!((XLayout*)laid)->m_isDirty,
+                "ug: 隐藏控件 setMinimumSize 不失效父布局");
+    expect_true(XWidget_width(&c0->m_base) == w0,
+                "ug: 隐藏期几何不变（空条目不改控件几何）");
+    /* 恢复父可见并解算一次（c0 仍隐藏：按空条目收缩）。 */
+    XWidget_show(&parent->m_base);
+    expect_true(XLayout_activate((XLayout*)laid), "ug: 父恢复后激活");
+    /* show 补偿（对标 qwidget.cpp:8335-8361）：wasHidden → 失效父布局
+       + 沿可见父链激活 → 新约束当次生效。 */
+    XWidget_show(&c0->m_base);
+    expect_true(XWidget_width(&c0->m_base) == 80,
+                "ug: show 补偿后按新约束重排");
+    expect_true(XWidget_width(&c1->m_base) == 30,
+                "ug: show 补偿不影响固定条目");
+
+    /* ---------- ④ 定尺外门（qwidget.cpp:10514，父隐藏观测） ---------- */
+    XWidget_hide(&parent->m_base);
+    expect_true(XLayout_activate((XLayout*)laid), "ug: 定尺段激活");
+    expect_true(!((XLayout*)laid)->m_isDirty, "ug: 定尺段缓存干净");
+    {
+        XSize hint;
+        XSize_init(&hint, 10, 10);
+        /* 定尺控件（c1：min=max=30x20）setMinimumSizeHint→updateGeometry：
+           外门拦截（定尺控件提示变化对布局无意义），真 no-op。 */
+        XWidget_setMinimumSizeHint(&c1->m_base, &hint);
+        expect_true(!((XLayout*)laid)->m_isDirty,
+                    "ug: 定尺控件提示变化不通知（定尺外门，qwidget.cpp:10514）");
+        /* 解除定尺（max→MAX）：改后非定尺 → nowFixed=false → 常规通知。 */
+        XWidget_setMaximumSize(&c1->m_base,
+                               XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
+        expect_true(((XLayout*)laid)->m_isDirty,
+                    "ug: 解除定尺的 setMaximumSize 通知（nowFixed=false）");
+        expect_true(XLayout_activate((XLayout*)laid), "ug: 复位激活");
+        /* 定尺控件 setMaximumSize（改后仍定尺）→ forceUpdate=true 强制通知
+           （qwidget.cpp:4043 口径）。 */
+        XWidget_setMaximumSize(&c1->m_base, 30, 20);
+        expect_true(((XLayout*)laid)->m_isDirty,
+                    "ug: 定尺控件 setMaximumSize 强制通知（forceUpdate=true）");
+        expect_true(XLayout_activate((XLayout*)laid), "ug: 复位激活2");
+    }
+
+    XWidget_hide(&parent->m_base);
+    XClassDelete((XClass*)c0);
+    XClassDelete((XClass*)c1);
+    XClassDelete((XClass*)parent);
+    XClassDelete((XLayout*)laid);
+    layout_test_release_app();
+#endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
+}
+
+/** @brief 失效跨控件上推 + 布局 isEmpty 的 Qt 口径 + takeAt 清缓存。 */
+static void test_layout_invalidate_propagation(void)
+{
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    TestWidget* top;
+    TestWidget* mid;
+    TestWidget* leaf;
+    XBoxLayout* outer;
+    XBoxLayout* inner;
+    XBoxLayout box;
+    XBoxLayout outerBox;
+    XBoxLayout innerBox;
+    TestWidget* w;
+
+    /* ---------- ① 跨控件上推：叶子变化失效祖先控件布局缓存 ---------- */
+    layout_test_ensure_app();
+    top = TestWidget_create(NULL);
+    mid = TestWidget_create(&top->m_base);
+    leaf = layout_make_growable_widget(40, 20);
+    expect_true(top && mid && leaf, "prop: 控件创建");
+    XWidget_setParentPlain(&leaf->m_base, &mid->m_base);
+    XWidget_setGeometry(&top->m_base, 0, 0, 300, 200);
+    XWidget_setGeometry(&mid->m_base, 0, 0, 300, 200);
+    outer = XBoxLayout_create(XBoxLayoutDirection_TopToBottom, &top->m_base);
+    XBoxLayout_addWidget(outer, &mid->m_base);
+    inner = XBoxLayout_create(XBoxLayoutDirection_LeftToRight, &mid->m_base);
+    XBoxLayout_addWidget(inner, &leaf->m_base);
+    XWidget_show(&top->m_base);
+    expect_true(XLayout_activate((XLayout*)outer), "prop: show 后激活外层");
+    /* 盒布局 addWidget 后惰性置脏（对标 Qt：addItem 不自动激活，靠
+     * 失效收口/后续激活解算）；mid 尺寸未变不触发 resize → inner 保持
+     * 惰性脏（Qt 同口径：父布局激活 → 子控件 resize → 子布局激活），
+     * 其缓存已清（-1），读穿即新值。外层经 show/显式激活是干净的。 */
+    expect_true(!((XLayout*)outer)->m_isDirty,
+                "prop: show 后外层缓存干净");
+
+    /* 可见叶子改约束 → updateGeometry：失效直接父布局（inner），并沿
+       父控件链上推清 outer 缓存（对标 Qt「无缓存不变量」的 XGui 等价）。
+       [纯异步 2026-10-31] 失效后当拍无人激活——几何经 LayoutRequest 泵
+       在下一拍落地（Qt 口径）。 */
+    XWidget_setMinimumSize(&leaf->m_base, 60, 20);
+    expect_true(((XLayout*)inner)->m_isDirty &&
+                !((XLayout*)inner)->m_activated,
+                "prop: inner 已失效未激活（纯异步，等泵）");
+    expect_true(((XLayout*)outer)->m_isDirty,
+                "prop: 祖先控件布局缓存被跨控件上推清掉");
+    /* 泵 LayoutRequest：mid 宿主可见 → 消费端激活 inner 重解算。 */
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    expect_true(!((XLayout*)inner)->m_isDirty && ((XLayout*)inner)->m_activated,
+                "prop: 泵后 inner 经消费端激活重解算");
+    expect_true(XLayout_activate((XLayout*)outer), "prop: 外层补激活");
+    expect_true(!((XLayout*)outer)->m_isDirty, "prop: 外层激活后缓存干净");
+    expect_true(XWidget_minimumSize(&leaf->m_base).width == 60,
+                "prop: 叶子新约束生效");
+
+    /* ---------- ①b XLayout_update Qt 失效语义（qlayout.cpp:971）---------- */
+    expect_true(((XLayout*)inner)->m_activated, "upd: 前置激活态");
+    XLayout_update((XLayout*)inner);
+    expect_true(!((XLayout*)inner)->m_activated,
+                "upd: update() 置未激活（失效上推，非重画）");
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    expect_true(((XLayout*)inner)->m_activated,
+                "upd: 泵后经 LayoutRequest 消费端重新激活");
+    /* 已失效链再 update()：门即停（幂等，Qt 门控语义）。 */
+    XLayout_update((XLayout*)inner);
+    expect_true(!((XLayout*)inner)->m_activated,
+                "upd: 已失效链 update 即停不重复投递");
+
+    /* ---------- ①c 子布局 activate 上推委托（qlayout.cpp:1002）---------- */
+#if XLAYOUT_TOTAL_ON
+    {
+        XBoxLayout subBox;
+        TestWidget* subW = layout_make_growable_widget(50, 20);
+        XBoxLayout_init(&subBox, XBoxLayoutDirection_LeftToRight);
+        XBoxLayout_addWidget(&subBox, &subW->m_base);
+        XBoxLayout_addLayout(inner, (XLayout*)&subBox);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        /* 顶层布局禁用时，子布局 activate 经委托同样被拒——证明走的是
+           上推委托而非子布局局部解算。 */
+        XLayout_setEnabled((XLayout*)inner, false);
+        expect_true(!XLayout_activate((XLayout*)&subBox),
+                    "deleg: 子布局 activate 上推委托，顶层禁用即拒");
+        XLayout_setEnabled((XLayout*)inner, true);
+        expect_true(XLayout_activate((XLayout*)&subBox),
+                    "deleg: 恢复后经委托激活成功");
+        XClassDelete((XClass*)subW);
+    }
+#endif /* XLAYOUT_TOTAL_ON */
+
+    XWidget_hide(&top->m_base);
+    XClassDelete((XClass*)leaf);
+    XClassDelete((XClass*)mid);
+    XClassDelete((XClass*)top);
+    XClassDelete((XLayout*)outer);
+    XClassDelete((XLayout*)inner);
+
+    /* ---------- ② 布局 isEmpty：itemAt 扫描，全空才空（QLayout::isEmpty）---- */
+    w = layout_make_growable_widget(40, 20);
+    XBoxLayout_init(&box, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_addWidget(&box, &w->m_base);
+    expect_true(!XLayoutItem_isEmpty_base((XLayoutItem*)&box),
+                "prop: 含可见条目的布局非空");
+    XWidget_hide(&w->m_base);
+    expect_true(XLayoutItem_isEmpty_base((XLayoutItem*)&box),
+                "prop: 全部条目隐藏的布局为空（Qt 口径，非 itemCount==0）");
+    XWidget_show(&w->m_base);
+    expect_true(!XLayoutItem_isEmpty_base((XLayoutItem*)&box),
+                "prop: 恢复可见后布局非空");
+
+    /* 子布局递归有效：嵌套子布局全空 → 外层也为空（QLayout::isEmpty
+       沿 itemAt 递归；QBoxLayout 无 isEmpty 覆盖，继承基类实现）。 */
+    XBoxLayout_init(&outerBox, XBoxLayoutDirection_TopToBottom);
+    XBoxLayout_init(&innerBox, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_addWidget(&innerBox, &w->m_base);
+    XWidget_hide(&w->m_base);
+    XBoxLayout_addLayout(&outerBox, (XLayout*)&innerBox);
+    expect_true(XLayoutItem_isEmpty_base((XLayoutItem*)&outerBox),
+                "prop: 嵌套子布局全空 → 外层布局为空（递归有效）");
+    XWidget_show(&w->m_base);
+    expect_true(!XLayoutItem_isEmpty_base((XLayoutItem*)&outerBox),
+                "prop: 子条目恢复可见 → 外层布局非空");
+    XClassDelete((XClass*)w);
+
+    /* ---------- ③ takeAt 清三级缓存（置脏同时清，堵读穿旧值） ---------- */
+    w = layout_make_fixed_widget(40, 20);
+    XBoxLayout_init(&box, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_addWidget(&box, &w->m_base);
+    (void)XLayoutItem_sizeHint_base((XLayoutItem*)&box);
+    (void)XLayoutItem_minimumSize_base((XLayoutItem*)&box);
+    expect_true(((XLayout*)&box)->m_cachedHint.width >= 0 && ((XLayout*)&box)->m_cachedMin.width >= 0,
+                "prop: 度量读穿后缓存生效");
+    {
+        XLayoutItem* taken = XLayout_takeAt_base((XLayout*)&box, 0);
+        expect_true(taken != NULL, "prop: takeAt 取出条目");
+        expect_true(((XLayout*)&box)->m_cachedHint.width < 0 && ((XLayout*)&box)->m_cachedMin.width < 0,
+                    "prop: takeAt 同步清三级缓存");
+    }
+    XClassDelete((XClass*)w);
+    layout_test_release_app();
+#endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
+}
+
 /** @brief XLayout 顶层合计契约：内容边距/启用开关/菜单栏/
  *  closestAcceptableSize（对标 Qt 6.8 QLayout 其余公开 API）。 */
 static void test_layout_total_extended(void)
@@ -24935,15 +25238,69 @@ static void test_layout_total_extended(void)
     XLayout_getContentsMargins((XLayout*)&box, &l, &t, &r, &b);
     expect_true(l == 0 && t == 0 && r == 0 && b == 0,
                 "unsetContentsMargins 后全部解析为 0");
+    /* [对齐 qlayout.cpp:471 d->rect=QRect] unset 触发 invalidate 已复位
+       几何快照；contentsRect 以「最近一次 setGeometry」为基准，故先重设
+       几何再读（Qt 模型：失效 ⇒ geometry() 为空，直到下一次 setGeometry）。 */
+    XLayoutItem_setGeometry_base((XLayoutItem*)&box, &rect);
     got = XLayout_contentsRect((XLayout*)&box);
     expect_true(got.x == 10 && got.y == 20 && got.width == 100 &&
                 got.height == 60, "unset 后 contentsRect=(10,20,100,60)");
 
-    /* ---------- setEnabled / isEnabled ---------- */
-    XLayout_setEnabled((XLayout*)&box, false);
-    expect_true(!XLayout_isEnabled((XLayout*)&box), "setEnabled(false) 生效");
-    XLayout_setEnabled((XLayout*)&box, true);
-    expect_true(XLayout_isEnabled((XLayout*)&box), "setEnabled(true) 生效");
+    /* [几何快照复位 2026-10-31 对齐 qlayout.cpp:471] ---------- */
+    got = XLayoutItem_geometry_base((XLayoutItem*)&box);
+    expect_true(got.width == 100 && got.height == 60,
+                "setGeometry 后 geometry 快照生效");
+    XLayout_invalidate((XLayout*)&box);
+    got = XLayoutItem_geometry_base((XLayoutItem*)&box);
+    expect_true(got.width == 0 && got.height == 0,
+                "invalidate 复位布局几何快照（d->rect=QRect 对齐）");
+    XLayoutItem_setGeometry_base((XLayoutItem*)&box, &rect);
+    got = XLayoutItem_geometry_base((XLayoutItem*)&box);
+    expect_true(got.width == 100 && got.height == 60,
+                "重设几何后快照恢复");
+
+    /* [spacing 行为修复 2026-10-31 对齐 qlayout.cpp:255] Qt 从不返回 -1。 */
+    expect_true(XLayout_spacing((XLayout*)&box) == 0,
+                "spacing() 未设置时解析为 0（不对齐返回 -1 哨兵的旧口径）");
+    XLayout_setSpacing((XLayout*)&box, 6);
+    expect_true(XLayout_spacing((XLayout*)&box) == 6,
+                "spacing() 显式值透传");
+    XLayout_setSpacing((XLayout*)&box, -1);
+
+    /* ---------- setEnabled / isEnabled（含 activate enabled 早退） ---------- */
+    {
+        TestWidget* host = TestWidget_create(NULL);
+        XBoxLayout* laid = XBoxLayout_create(XBoxLayoutDirection_LeftToRight,
+                                             &host->m_base);
+        expect_true(host && laid, "enabled 测试布局创建");
+        XLayout_setEnabled((XLayout*)laid, false);
+        expect_true(!XLayout_isEnabled((XLayout*)laid),
+                    "setEnabled(false) 生效");
+        /* [对齐 qlayout.cpp:1000] 禁用布局 activate 早退返回 false
+           （enabled 检查先于 parent 检查，挂接宿主后仍返回 false）。 */
+        expect_true(!XLayout_activate((XLayout*)laid),
+                    "禁用布局 activate 返回 false（qlayout.cpp:1000 对齐）");
+        XLayout_setEnabled((XLayout*)laid, true);
+        expect_true(XLayout_isEnabled((XLayout*)laid),
+                    "setEnabled(true) 生效");
+        expect_true(XLayout_activate((XLayout*)laid),
+                    "恢复启用后 activate 正常");
+        /* [setAlignment bool 2026-10-31 对齐 qlayout.h:58-59] */
+        {
+            TestWidget* aw = layout_make_growable_widget(30, 30);
+            XBoxLayout_addWidget(laid, &aw->m_base);
+            expect_true(XLayout_setAlignmentWidget(
+                            (XLayout*)laid, &aw->m_base,
+                            XLayoutAlignment_HCenter),
+                        "setAlignmentWidget 命中返回 true");
+            expect_true(!XLayout_setAlignmentWidget(
+                            (XLayout*)laid, &host->m_base, 0),
+                        "setAlignmentWidget 未命中返回 false");
+            XClassDelete((XClass*)aw);
+        }
+        XClassDelete((XClass*)laid);
+        XClassDelete((XClass*)host);
+    }
 
     /* ---------- 菜单栏：total* 把菜单栏高度附加到顶部 ---------- */
     menu = layout_make_fixed_widget(100, 25);
@@ -39522,6 +39879,8 @@ int main(void)
 #if XLAYOUT_ON
     test_layout_item_contract();
     test_layout_widget_integration();
+    test_layout_updategeometry_qt_align();
+    test_layout_invalidate_propagation();
     test_layout_total_extended();
 #if XLAYOUT_STACKED_ON
     test_stacked_layout_contract();

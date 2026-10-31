@@ -749,12 +749,9 @@ static XLayoutExpandingDirections VXBoxLayout_expandingDirections(
     return out;
 }
 
-/** @brief 盒式布局空判定：完全委托基类（没有任何条目即为空）。 */
-static bool VXBoxLayout_isEmpty(const XLayoutItem* item)
-{
-    if (!item) return true;
-    return ((const XLayout*)item)->m_itemCount == 0;
-}
+/* 盒式布局不覆盖 isEmpty（对标 Qt——QBoxLayout 无 isEmpty 覆盖，继承
+ * qlayout.cpp:422 的 QLayout::isEmpty：itemAt 扫描，全部条目都空才为空）；
+ * 空判定由基类 VXLayout_isEmpty 提供（XLayout.c）。 */
 
 /** @brief 查询盒式布局是否支持 heightForWidth。 */
 static bool VXBoxLayout_hasHeightForWidth(const XLayoutItem* item)
@@ -1092,7 +1089,7 @@ XVtable* XBoxLayout_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_MaximumSize, VXBoxLayout_maximumSize);
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_ExpandingDirections,
                              VXBoxLayout_expandingDirections);
-    XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_IsEmpty, VXBoxLayout_isEmpty);
+    /* IsEmpty 不覆盖：继承基类 itemAt 扫描语义（对标 QLayout::isEmpty）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_SetGeometry, VXBoxLayout_setGeometry);
     XVTABLE_OVERLOAD_DEFAULT(EXLayoutItem_HasHeightForWidth,
                              VXBoxLayout_hasHeightForWidth);

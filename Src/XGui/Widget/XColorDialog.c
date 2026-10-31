@@ -856,8 +856,11 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
      * 预览 224x36、按钮盒 176x34）与字体度量（标签行高随字模），任
      * 何字体/DPI 下不溢出；装饰条高预测补 CSD 平台（Windows 框架自
      * 绘标题条）SHOW 期写入根布局顶边距的增量，exec 首帧即合尺，
-     * SHOW 精修（VXColorDialog_showEvent）按真实条高兜底校正。 */
-    XLayout_update((XLayout*)root);
+     * SHOW 精修（VXColorDialog_showEvent）按真实条高兜底校正。
+     * [update→invalidate 2026-10-31] XLayout_update 已对齐 Qt 失效语义
+     * （不再重画）；此处意图是「失效度量缓存后重取 totalSizeHint」——
+     * Qt 惯用口令即 invalidate（qlayout.cpp:469 清缓存 + update）。 */
+    XLayout_invalidate((XLayout*)root);
     xcd_applyLayoutSize(dlg, true);
     xcd_centerOnScreen((XWidget*)dlg);
     /* 阻塞模态执行（复用 XDialog exec：应用模态 + Escape→reject）。 */

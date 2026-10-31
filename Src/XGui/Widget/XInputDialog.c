@@ -685,9 +685,12 @@ static void xid_applyExecSize(XInputDialog* dlg, int w, int h)
             }
         }
         /* totalSizeHint 为解算缓存（XLayout.h 缓存口径）——改写控件
-         * sizeHint 后需 update 失效重取。exec 预定尺与 SHOW 精修重复
-         * 调用天然幂等（标签行高修正单调：已 ≥ 行高则不再改写）。 */
-        XLayout_update(root);
+         * sizeHint 后需失效重取。exec 预定尺与 SHOW 精修重复调用天然
+         * 幂等（标签行高修正单调：已 ≥ 行高则不再改写）。
+         * [update→invalidate 2026-10-31] XLayout_update 已对齐 Qt 失效
+         * 语义（不再承担缓存清理）；「失效+重取度量」的 Qt 惯用口令是
+         * invalidate（qlayout.cpp:469 清缓存 + update）。 */
+        XLayout_invalidate(root);
         XSize hint = XLayout_totalSizeHint(root);
         int needW = hint.width > 0 ? hint.width : 0;
         int base = (hint.height > 0 ? hint.height : 0) +

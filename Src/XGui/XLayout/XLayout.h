@@ -18,8 +18,8 @@
  *               下一次几何分配时生效；
  *             - 尺寸约束：setSizeConstraint()/sizeConstraint()（对标
  *               QLayout::SizeConstraint，作用于挂接控件的最小/最大尺寸）；
- *             - 对齐：setAlignment()（控件/子布局/条目三个重载）、
- *               alignmentRect()；
+ *             - 对齐：setAlignment()（控件/子布局两个重载，返回是否
+ *               命中，qlayout.h:58-59 同口径）、alignmentRect()；
  *             - 挂接：parentWidget()（含子布局，沿父布局链上溯）；
  *             - 条目数组与挂接字段公开仅供实现读取，调用方不得直接修改。
  *             本类与 QLayout 一样为抽象基类：库内仅提供 XBoxLayout 与
@@ -277,49 +277,35 @@ XLayoutItem* XLayout_replaceWidget(XLayout* self, XWidget* from,
 #endif /* XLAYOUT_TOTAL_ON */
 
 /**
- * @brief      查找并返回包装指定控件的条目（对标 QLayout::itemAt(indexOf)）。
- * @param      self 目标布局；可为 NULL。
- * @param      widget 目标控件借用指针。
- * @return     控件条目借用指针；未找到或失败返回 NULL。
+ * @brief      查找并返回包装指定控件的条目。
+ * @note       [已删除 2026-10-31] Qt QLayout 无 itemForWidget API 且全仓
+ *             零外部调用（内部查找已内联进 setAlignmentWidget）——条目
+ *             查找用 XLayout_indexOf（Qt 对标）+ itemAt。
  */
-XLayoutItem* XLayout_itemForWidget(const XLayout* self, const XWidget* widget);
 
 /**
  * @brief      为挂接控件设置对齐（对标 QLayout::setAlignment(QWidget*, ...)）。
- * @details    之后该控件的条目按给定对齐摆放；affects 后续几何分配。
+ * @details    [对齐 2026-10-31 qlayout.h:58] Qt 返回 bool（是否找到条目
+ *             并设置成功），本函数同口径返回。之后该控件的条目按给定
+ *             对齐摆放，影响后续几何分配。
  * @param      self 目标布局；可为 NULL。
  * @param      widget 目标控件借用指针；可为 NULL。
  * @param      alignment 对齐标志组合。
+ * @return     条目属于本布局且设置成功返回 true；否则 false。
  */
-void XLayout_setAlignmentWidget(XLayout* self, XWidget* widget,
+bool XLayout_setAlignmentWidget(XLayout* self, XWidget* widget,
                                 XLayoutAlignments alignment);
 
 /**
  * @brief      为挂接的子布局设置对齐（对标 QLayout::setAlignment(QLayout*, ...)）。
+ * @details    [对齐 2026-10-31 qlayout.h:59] 返回是否找到条目并设置成功。
  * @param      self 目标布局；可为 NULL。
  * @param      child 子布局借用指针；可为 NULL。
  * @param      alignment 对齐标志组合。
+ * @return     条目属于本布局且设置成功返回 true；否则 false。
  */
-void XLayout_setAlignmentLayout(XLayout* self, XLayout* child,
+bool XLayout_setAlignmentLayout(XLayout* self, XLayout* child,
                                 XLayoutAlignments alignment);
-
-/**
- * @brief      为任意条目设置对齐并返回是否成功（内部增强）。
- * @param      self 目标布局；可为 NULL。
- * @param      item 目标条目借用指针；可为 NULL。
- * @param      alignment 对齐标志组合。
- * @return     条目属于本布局且设置成功返回 true；否则返回 false。
- */
-bool XLayout_setAlignmentItem(XLayout* self, XLayoutItem* item,
-                              XLayoutAlignments alignment);
-
-/**
- * @brief      删除布局中所有条目（对标 QLayout::deleteAllItems）。
- * @details    布局内部创建的条目对象被释放；调用方创建的借用条目只从
- *             数组移除。布局本身保持不变，可继续使用。
- * @param      self 目标布局；可为 NULL。
- */
-void XLayout_deleteAllItems(XLayout* self);
 
 /* ==================== 内容边距 / 间距 / 对齐矩形（对标 QLayout） ==================== */
 
@@ -382,10 +368,12 @@ XRect XLayout_contentsRect(const XLayout* self);
 void XLayout_setSpacing(XLayout* self, int spacing);
 
 /**
- * @brief      返回布局间距（对标 QLayout::spacing）。
+ * @brief      返回布局条目间距（对标 QLayout::spacing）。
+ * @details    [行为修复 2026-10-31 对齐 qlayout.cpp:255] Qt 从不返回 -1：
+ *             未显式设置时解出样式默认（X 无样式 → 0，沿父布局链回退）。
+ *             需要原始设置值（-1=未设置哨兵）直接读 m_spacing 字段。
  * @param      self 目标布局；可为 NULL。
- * @return     间距像素；未设置(-1)或失败时返回 -1（可用
- *             XLayout_effectiveSpacing 取得生效值）。
+ * @return     生效间距像素；失败返回 0。
  */
 int XLayout_spacing(const XLayout* self);
 
@@ -542,9 +530,14 @@ XWidget* XLayout_parentWidget(const XLayout* self);
 bool XLayout_activate(XLayout* self);
 
 /**
- * @brief      重画所有条目（对标 QLayout::update）。
- * @details    对布局挂接及包含的所有控件调用 update 请求重绘；布局
- *             本身未挂接控件时是 no-op。
+ * @brief      失效沿布局链上推并安排重算（对标 QLayout::update，
+ *             qlayout.cpp:971）。
+ * @details    [行为修复 2026-10-31] Qt 的 update() 是**失效语义**：沿
+ *             布局链门控逐级置未激活（activated==false 即停），到链顶向
+ *             宿主控件 post LayoutRequest（队列事件，消费端按可见性闸
+ *             activate）——不是重画。此前本函数被错标为「重画所有条目」，
+ *             已按 Qt 语义修复。需要重画用 XWidget_update(宿主)；需要
+ *             失效+清缓存+重取度量用 XLayout_invalidate（Qt 惯用口令）。
  * @param      self 目标布局；可为 NULL。
  */
 void XLayout_update(XLayout* self);
