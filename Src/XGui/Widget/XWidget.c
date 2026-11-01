@@ -11459,6 +11459,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
 #endif
 #if XGUI_PRESENT_HONEST
             bool presented;
+            bool gpuPresented;
 #endif
             /* 呈现限频（2026-09-25 引入，2026-09-29 上提）：原 GPU 腿私
                有闸已上提为全提交腿共用（xwidget_presentThrottleAllow，
@@ -11478,6 +11479,18 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                 wprofLeg0 = xwidget_wprof_now();
 #if XGUI_PRESENT_HONEST
                 presented = XGpuRenderBackend_presentToWindow(gpuWindow);
+                /* [任务 C 2026-11-01] gpuPresented = 「GPU 已把整幅窗口内容
+                   呈现到屏幕」：presentToWindow 内部是 FBO→默认帧缓冲整幅
+                   blit + swapBuffers（xgld_present_to_window），窗口直通
+                   会话的 FBO 是持久缓冲、始终持有整窗内容 ⇒ 这一次呈现
+                   已覆盖全窗，框架提交腿再 XPutImage 同一片区域即为
+                   重复搬运（板端实测：swap 腿 CPU 反而比回读腿高 1.3%
+                   单核，根因即此处多出的 XPutImage）。
+                   画面无损：板端 xwd 逐像素比对，swap 腿与回读腿输出
+                   逐像素一致（剔除时钟噪声后模式差异行 = 0）。
+                   例外：软件双缓冲形态（SoftwareDouble）需把提交区同步
+                   进另一块缓冲，跳过 flush 会破坏双帧配对 ⇒ 仍走 flush。 */
+                gpuPresented = presented;
                 if (!presented)
                 {
                     /* swap 失败回退 BitBlt flush 通道（保底可见性）：窗口
@@ -11491,8 +11504,14 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                 if (presented && !XBackingStore_handle(store))
                     presented = false;
                 wprofFls0 = xwidget_wprof_now();
-                XBackingStore_flush(store, &whole,
-                                    (XWindow*)top->m_windowHandle, NULL);
+                if (!gpuPresented ||
+                    XPlatformBackingStore_bufferMode(
+                        XBackingStore_handle(store)) ==
+                        XPlatformBackingStoreMode_SoftwareDouble)
+                {
+                    XBackingStore_flush(store, &whole,
+                                        (XWindow*)top->m_windowHandle, NULL);
+                }
                 xwidget_wprof_add(XW_WPROF_LEG_FLS, wprofFls0);
                 XGpuRenderBackend_setFramePresented(presented);
 #else /* XGUI_PRESENT_HONEST=0：旧谎报行为，忽略后端结果。 */

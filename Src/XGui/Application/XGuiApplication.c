@@ -533,17 +533,17 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
        显式调色板标志保持 memset 的 false（对标 AA_SetPalette 未置位）。 */
     app->m_paletteSchemeFollow = true;
 #endif /* XPALETTE_ON */
-#if XGPU_ON && XPLATFORMINTEGRATION_ON && XGPU_RUNTIME_DEFAULT_ON && XPLATFORM_DESKTOP
-    /* 桌面默认 GPU 直通启动决策（XGPU_RUNTIME_DEFAULT_ON，2026-10-31
-       恢复；应用初始化第一件事完成渲染后端裁决）：
+#if XGPU_ON && XPLATFORM_INTEGRATION_ON && XPLATFORM_DESKTOP
+    /* 渲染后端启动裁决（应用初始化第一件事完成）：
        1. 命令行 --gpu / --software(--sw) 映射为运行期覆盖（与宿主自
           解析幂等，同 xgui_window_demo 口径；仅 flag 实际出现时写
           覆盖，re-init 不会清掉宿主预设的覆盖值）；
        2. 无命令行设置时预热 requested()——覆盖/环境变量优先级由其
-          统一裁决，此处不复制逻辑；二者皆无时默认层即刻完成 1x1
-          离屏 GPU 探测并缓存（可用即 GPU 直通，失败保持软件光栅，
-          零回归契约），首帧绘制直接命中结论，不必等首个 beginPaint
-          再探。 */
+          统一裁决，此处不复制逻辑。
+       注：本块守卫已与 XGPU_RUNTIME_DEFAULT_ON **解耦**（2026-11-01）。
+       默认口径改为「软件光栅，GPU 按需启用」（见 XGuiConfig.h 该宏注：
+       板端实测 GPU 直通进程 CPU 是软件光栅的 2~4 倍），但命令行显式
+       开关仍须在任何默认口径下生效。 */
     {
         int xgpuArgi;
         int xgpuFlag = 0; /* 0=命令行未设置 1=--gpu 2=--software/--sw。 */
@@ -568,7 +568,7 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
                     xgpuWanted ? "GPU direct" : "software fallback");
         }
     }
-#endif /* XGPU_ON && XPLATFORMINTEGRATION_ON && XGPU_RUNTIME_DEFAULT_ON && XPLATFORM_DESKTOP */
+#endif /* XGPU_ON && XPLATFORMINTEGRATION_ON && XPLATFORM_DESKTOP */
 #if XPLATFORMINTEGRATION_ON
     app->m_platformIntegration =
         XPlatformIntegration_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);

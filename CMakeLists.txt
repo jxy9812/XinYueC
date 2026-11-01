@@ -1278,21 +1278,25 @@ add_test(NAME XGuiRegression COMMAND XGuiRegression_Test
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/bin")
 # CTest 在受控运行环境下会以 ptrace 方式启动子进程；LeakSanitizer 无法在该
 # 环境工作。地址越界检查仍由 ASan 保留，泄漏检查在可直接运行的环境单独执行。
-# 显式钉 software：桌面默认已恢复 GPU 直通（XGPU_RUNTIME_DEFAULT_ON=1，
-# 2026-10-31），无 env 的 plain 运行在 GPU 机器上会静默翻成 GPU 模式并
-# 跳过 ~30 个软件契约套件（regression_gpuRequested() skip 门），故软件
-# 契约覆盖必须显式钉死；默认层（探测决定）由 XGuiRegressionAuto 覆盖。
+# 显式钉 software：默认层口径 2026-11-01 起为「软件光栅，GPU 按需启用」
+# （XGPU_RUNTIME_DEFAULT_ON=0，板端实测 GPU 直通进程 CPU 是软件光栅的
+# 2~4 倍），但显式钉死仍是必要的——CI 若在带 env 的环境跑本用例，
+# 须保证软件契约套件不被 GPU 快速路径的 skip 门跳过。
 set_tests_properties(XGuiRegression PROPERTIES
     ENVIRONMENT "XGUI_RENDER_BACKEND=software;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
 # GPU 后端下的完整回归变体：无 GL 的环境由后端自动回退软件（断言按
 # 实际会话状态跳过降级项），有 GL 时逐用例覆盖 GPU 快速路径。
+# 注：XGUI_GPU_SYNC=1 走「命令级同步读回」像素契约口径，该口径下斜线
+# 快速路径（XGPU_FASTPATH_EXT 缺省开）按设计不走（保持画布路径的
+# 逐像素一致），故**非 SYNC** 的 GPU 运行是覆盖该默认值的必需变体
+# （板端/桌面手工口径：XGUI_RENDER_BACKEND=gpu 不带 SYNC）。
 add_test(NAME XGuiRegressionGpu COMMAND XGuiRegression_Test
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/bin")
 set_tests_properties(XGuiRegressionGpu PROPERTIES
     ENVIRONMENT "XGUI_RENDER_BACKEND=gpu;XGUI_GPU_SYNC=1;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
-# 默认层端到端变体：不设任何后端 env，验证桌面启动自动探测口径——
-# GPU 机器上 requested()=true（t211g 期望 Gpu、skip 门生效），无 GPU
-# 环境探测失败自动回退软件，两侧均应通过。
+# 默认层端到端变体：不设任何后端 env，验证**默认口径**本身——当前默认层
+# 为软件光栅（requested()==false），GPU 路径由上面的 XGuiRegressionGpu
+# 变体覆盖。
 add_test(NAME XGuiRegressionAuto COMMAND XGuiRegression_Test
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/bin")
 set_tests_properties(XGuiRegressionAuto PROPERTIES

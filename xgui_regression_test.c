@@ -38751,8 +38751,14 @@ static void r6_reclaimHostClosure(XVarList* args)
  *  静态分配后取在用字节基线，宿主 exec 派发栈内四连开+排空析构，
  *  覆写回收缺失时 3 轮×7 对象（6 布局句柄+导航模型）使在用字节
  *  线性抬升（远超噪声带）；修复态覆写前即时回收旧登记，在用字节
- *  回落基线（有界断言；统计宏裁剪时两侧快照恒零，断言退化为
- *  恒真——结构序列仍由 destroyed 计数承担）。 */
+ *  回落基线。
+ *  断言口径（2026-11-01 订正）：改为**两批次增量比对**——本用例要抓
+ *  的是「按轮线性」泄漏，故可观测量是第二批的增量（按轮泄漏⇒第二批
+ *  与第一批同量增长）；首开存在一次性惰性初始化残留（恒定、与轮数
+ *  无关，实测 4 轮与 8 轮批内增量同为 1054B），落在第一批里，第二批
+ *  增量≈0。原单批次「增量<1024B」口径会把该恒定残留误判为泄漏。
+ *  （统计宏裁剪时两侧快照恒零，断言退化为恒真——结构序列仍由
+ *  destroyed 计数承担。） */
 static void test_dialog_r6_pending_reclaim_lock(void)
 {
 #if XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON
@@ -38762,6 +38768,7 @@ static void test_dialog_r6_pending_reclaim_lock(void)
     XMemoryStatistics snap1;
     long inUse0;
     long inUse1;
+    int r6Batch;
     bool quitOnLast;
     if (!XCoreApplication_instance() && !XGuiApplication_instance())
         (void)XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL);
@@ -38793,33 +38800,57 @@ static void test_dialog_r6_pending_reclaim_lock(void)
     s_r6DestroyedCount = 0;
     snap0 = XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
     inUse0 = (long)(snap0.systemBytes + snap0.poolUsedBytes);
-    /* 宿主对话框 exec：四连开闭包与退场闭包均在宿主循环派发栈内
-     * 兑现（loopLevel>=1 前提，缺陷乙触发形态）。 */
-    host = XDialog_create(NULL, 0);
-    expect_true(host != NULL, "r6-b 宿主对话框创建");
-    s_r6ReclaimHostDlg = host;
-    if (host) {
-        XCoreApplication* app2 = XCoreApplication_instance();
-        if (app2) {
-            XEventFunc* closure =
-                XEventFunc_create(r6_reclaimHostClosure, NULL, NULL);
-            if (closure)
-                XCoreApplication_postEvent((XObject*)app2, (XEvent*)closure,
-                                           XEVENT_PRIORITY_NORMAL);
+    /* 三批次同形态连跑（2026-11-01 断言口径订正）：本用例要抓的泄漏是
+     * **按轮线性**的（登记覆写缺失 ⇒ 每轮 7 个对象随下一轮 teardown
+     * 泄漏，3 轮即远超噪声带）。单批次「增量 < 阈值」口径有两类误判：
+     *   ① 对话框首开的一次性惰性初始化残留（首轮建、此后复用；实测
+     *      4 轮与 8 轮的批内增量恒为 1054 字节 —— 与轮数无关 ⇒ 恒定
+     *      残留而非线性泄漏；实测恒定残留 1054B vs 阈值 1024B，仅差
+     *      30B 即判红）；
+     *   ② GPU 后端大块瞬时分配（会话/FBO/暂存画布）的**归属时点**台阶
+     *      （实测 GPU 模式：第 0→1 批之间一次性 +285832 字节，此后第
+     *      1~4 批在用字节逐批完全相同 ⇒ 非泄漏）。
+     * 故改为**三批次增量比对**，断言落在记账已稳定的第 3 批：按轮泄漏
+     * 会让每批同量增长；恒定残留与一次性台阶都只落在前两批，第 3 批
+     * 增量≈0。阈值口径（1024B）不变。 */
+    for (r6Batch = 0; r6Batch < 3; ++r6Batch) {
+        /* 宿主对话框 exec：四连开闭包与退场闭包均在宿主循环派发栈内
+         * 兑现（loopLevel>=1 前提，缺陷乙触发形态）。 */
+        host = XDialog_create(NULL, 0);
+        expect_true(host != NULL, "r6-b 宿主对话框创建");
+        s_r6ReclaimHostDlg = host;
+        if (host) {
+            XCoreApplication* app2 = XCoreApplication_instance();
+            if (app2) {
+                XEventFunc* closure =
+                    XEventFunc_create(r6_reclaimHostClosure, NULL, NULL);
+                if (closure)
+                    XCoreApplication_postEvent((XObject*)app2, (XEvent*)closure,
+                                               XEVENT_PRIORITY_NORMAL);
+            }
+            (void)XDialog_exec(host);
+            XClassDelete((XClass*)host);
         }
-        (void)XDialog_exec(host);
-        XClassDelete((XClass*)host);
+        s_r6ReclaimHostDlg = NULL;
+        /* 排空四轮 DeferredDelete（loopLevel==1 在册，此刻 loopLevel 已
+         * 落 0，shouldDeliver 首条件成立）——destroyed 探针应恰好 4 次
+         * （四轮各自建/收口/析构一次；护栏拒绝导致的开窗失败在此显红）。 */
+        XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+        expect_true(s_r6DestroyedCount == 4, "r6-b 四连开各自恰好一次析构");
+        s_r6DestroyedCount = 0;
+        snap1 = XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
+        inUse1 = (long)(snap1.systemBytes + snap1.poolUsedBytes);
+        XPrintf("[r6-b-diag] batch=%d inUse=%ld delta=%ld\n",
+                r6Batch, inUse1, inUse1 - inUse0);
+        if (r6Batch == 2) {
+            /* 断言落在最后一批：与**上一批**终值比（inUse0 每批滚动为
+               上一批终值）。按轮泄漏 => 末批与前批同量增长；恒定残留与
+               一次性台阶都已在更早批次落地，末批增量 ~ 0。 */
+            expect_true(inUse1 - inUse0 < 1024,
+                        "r6-b 登记覆写不按轮泄漏（末批在用字节不增长）");
+        }
+        inUse0 = inUse1; /* 下一批的基线 = 本批终值。 */
     }
-    s_r6ReclaimHostDlg = NULL;
-    /* 排空四轮 DeferredDelete（loopLevel==1 在册，此刻 loopLevel 已
-     * 落 0，shouldDeliver 首条件成立）——destroyed 探针应恰好 4 次
-     * （四轮各自建/收口/析构一次；护栏拒绝导致的开窗失败在此显红）。 */
-    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
-    expect_true(s_r6DestroyedCount == 4, "r6-b 四连开各自恰好一次析构");
-    snap1 = XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
-    inUse1 = (long)(snap1.systemBytes + snap1.poolUsedBytes);
-    expect_true(inUse1 - inUse0 < 1024,
-                "r6-b 登记覆写不泄漏（在用字节回落基线）");
     XGuiApplication_setQuitOnLastWindowClosed(quitOnLast);
 #endif /* XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON */
 }
@@ -39749,13 +39780,17 @@ static void xrot_pump(void)
     }
 }
 
-/* GPU 请求三层级联契约（t212a，桌面默认 GPU 直通 2026-10-31）：
+/* GPU 请求三层级联契约（t212a，2026-11-01 口径变更：默认软件光栅、
+ * GPU 按需启用；原 2026-10-31 口径为「桌面默认 GPU 直通」）：
  * ① 外部设置层——XGUI_RENDER_BACKEND / XGPU_BACKEND 白名单
  *   （gpu/opengl/vulkan/1/true/on→GPU，其余值含 software 一律软件，
  *   大小写不敏感同 xgpu_text_equals 口径）；
- * ② 默认层（XGPU_RUNTIME_DEFAULT_ON 桌面口径）——无外部设置时
- *   requested() 必须与 probeAvailable() 探测结论一致：可用即 GPU
- *   直通，失败回退软件光栅（零回归契约）。
+ * ② 默认层（XGPU_RUNTIME_DEFAULT_ON）——当前缺省 0：无外部设置时
+ *   requested() 恒为 false（软件光栅；板端实测 GPU 直通路径进程 CPU
+ *   是软件光栅的 2~4 倍，无零拷贝呈现链时默认 GPU 是净亏损）；
+ *   编译期显式置 1（恢复旧口径）时，requested() 必须与
+ *   probeAvailable() 探测结论一致：可用即 GPU 直通，失败回退软件
+ *   光栅（零回归契约）。
  * addRequestedOverride 覆盖层无读取/恢复 API，本用例不得触碰——
  * 进程内一旦写入即污染后续用例的层级口径。 */
 static bool t212a_whitelisted(const char* value)
@@ -39790,11 +39825,21 @@ static void test_gpu_backend_request_tiers(void)
     }
     else
     {
-        /* 默认层：先 probe（缓存结论）再 requested（消费缓存），两读
-           必一致——无 GL 环境恒软件，有 GL 环境恒 GPU。 */
+        /* 默认层（2026-11-01 口径变更：默认软件光栅，GPU 按需启用）。
+           XGPU_RUNTIME_DEFAULT_ON=0（当前默认）时 requested() 恒为
+           false——探测结论与默认层无关（板端实测：GPU 直通路径的进程
+           CPU 是软件光栅的 2~4 倍，无零拷贝呈现链时「探测到 GPU 就
+           默认 GPU」是净亏损）；=1（编译期显式恢复旧口径）时
+           requested() 必须与 probeAvailable() 一致（可用即 GPU 直通，
+           失败回退软件光栅的零回归契约）。 */
+#if XGPU_RUNTIME_DEFAULT_ON
         bool probed = XGpuRenderBackend_probeAvailable();
         expect_true(XGpuRenderBackend_requested() == probed,
                     "t212a: 默认层 requested==probeAvailable");
+#else
+        expect_true(XGpuRenderBackend_requested() == false,
+                    "t212a: 默认层 requested==false（默认软件，GPU 按需启用）");
+#endif
     }
 #else
     (void)t212a_whitelisted;

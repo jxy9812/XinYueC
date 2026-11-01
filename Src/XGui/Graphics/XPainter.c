@@ -299,6 +299,18 @@ enum { XPAINTER_STATE_INITIAL_CAPACITY = 8 };
 static inline void painterGpuBatchFlush(void) { }
 #endif
 
+/* 表面裁剪（surface clip）：paintTree 派发 paintEvent 前按脏区设置，
+ * 控件内创建的 painter 经 begin_image 自动继承为初始裁剪；putPixel/
+ * fillRect/blit 的独立判定防止 setClipRect(Replace) 逃逸。对齐 Qt
+ * 绘制引擎的 systemClip（drawWidget → setSystemClip(toBePainted)）。
+ * 绘制固定单线程，文件级状态即可。
+ * 定义位置：GPU 守卫区之前——GPU 的 scissor 同步（painterGpuApplyStateClip）
+ * 同样消费该状态（GPU 侧此前只取 painter 状态裁剪，脏区外的笔画会多画，
+ * 2026-11-01 订正）。 */
+static XRect g_surfaceClipRect;
+static XImage* g_surfaceClipImage;
+static int g_surfaceClipActive = 0;
+
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 
 /* ==================== painter CPU 侧分段计时（XGPU_PAINTER_PROF=1） ==================== */
@@ -908,15 +920,21 @@ static bool painterGpuSyncRequested(void)
 }
 
 /**
- * @brief 读取斜线 quad 快速路径扩展开关（XGPU_FASTPATH_EXT，默认关）。
- * @details 与 painterGpuSyncRequested 同解析式，但注意语义：env 未设时
- *          本开关恒为关（表达式 value&&... 未设即 0），注释此前误标
- *          「默认开」与实现矛盾（六波 XGUI_QUAD_PROF 实测 diagExt=0、
- *          斜线段全部落画布通道，2026-09-30 勘误）。设 "1" 显式开启：
+ * @brief 读取斜线 quad 快速路径扩展开关（XGPU_FASTPATH_EXT，缺省开）。
+ * @details 与 xgpu_flush_lean_requested 同解析式（缺省开；显式 "0"=关）。
+ *          语义与代价（2026-11-01 RK3568 板端实测）：
  *          扩展路由把非轴
  *          对齐 SolidLine 硬边线段（椭圆描边 32 段折线、箭头、对角
- *          连线等命令族）从批量画布回退改经 drawSolidQuad 提交；
- *          设 0 回退既有画布路径（行为回退开关）。
+ *          连线等命令族）从批量画布回退改经 drawSolidQuad 提交。
+ *          画布回退路径的代价：斜线落进软件暂存画布后，与相邻直绘原语
+ *          交错时**每命令触发一次暂存画布冲批上传**（5.3s 窗口 3610 次
+ *          × ~0.73ms ≈ 2.6s），板端进程 CPU 因此是软件光栅的 2~4 倍
+ *          （软件 3.8% 单核 vs GPU 默认 15.0%，四臂同批对照）；改走
+ *          quad 后 diagCanvas 2613→0、CPU 15.0%→6.8%。
+ *          代价：quad 是**硬边**光栅，与软件 Bresenham 覆盖非逐位一致
+ *          （实测圆弧/按钮圆角出现锯齿）。后续由「Bresenham 覆盖图 →
+ *          drawAlphaBitmap 直传」路径替换（与软件同源、逐像素一致）。
+ *          回退口：XGPU_FASTPATH_EXT=0 恢复既有画布路径。
  */
 static bool painterGpuFastPathExtRequested(void)
 {
@@ -924,9 +942,9 @@ static bool painterGpuFastPathExtRequested(void)
     if (requested < 0)
     {
         const char* value = XSystem_environment("XGPU_FASTPATH_EXT");
-        requested = value && *value &&
-                            !(value[0] == '0' && value[1] == 0)
-                        ? 1 : 0;
+        /* 缺省开（2026-11-01 板端实测订正）：显式 "0"=关（回退画布路径）。
+           与 xgpu_flush_lean_requested 同解析式（缺省开 / 显式 0 关）。 */
+        requested = !(value && *value && value[0] == '0' && value[1] == 0);
     }
     return requested != 0;
 }
@@ -1741,8 +1759,43 @@ static bool painterGpuApplyStateClip(XPainter* self)
     if (hasClip && self->m_state.m_clipRegion.count == 1)
         clipDevice = self->m_state.m_clipRegion.rects[0];
 #endif /* XPAINTER_CLIP_REGION_ON */
-    XGpuRenderBackend_setClipRect(self->m_gpuBackend,
-                                  hasClip ? &clipDevice : NULL);
+    /* 表面裁剪（帧脏区包围盒）也须在 GPU 侧生效（2026-11-01 订正）：
+       SW 侧由 putPixel/fillRect/blend 逐点限幅（XPainter.c:3226/3392/
+       3502/3652 查 g_surfaceClipRect），GPU 侧此前**只取 painter 状态
+       裁剪** ⇒ 脏区外的笔画在 GPU 路径会多画（板端实测：SW 缺墨而
+       GPU 有墨的整段底横，65 px 结构性差异）。
+       无状态裁剪时以整幅为目标（再与表面裁剪求交）；表面裁剪经
+       g_surfaceClipImage 身份核对（与 SW 侧同一护栏，避免嵌套窗口
+       绘制时误用他窗的裁剪框）。 */
+    {
+        bool surfaceClipped = 0;
+        if (g_surfaceClipActive && self->m_image &&
+            self->m_image == g_surfaceClipImage)
+        {
+            XRect surface = g_surfaceClipRect;
+            if (!hasClip)
+            {
+                clipDevice.x = 0;
+                clipDevice.y = 0;
+                clipDevice.width = XImage_width(self->m_image);
+                clipDevice.height = XImage_height(self->m_image);
+            }
+            clipDevice = XRect_intersected(&clipDevice, &surface);
+            surfaceClipped = 1;
+        }
+        if (surfaceClipped && (clipDevice.width <= 0 ||
+                               clipDevice.height <= 0))
+        {
+            /* 表面裁剪与目标无交集 ⇒ 本次绘制无可见输出：置空矩形
+               （scissor 宽高为 0 ⇒ 硬件丢弃全部片元），与 SW 侧
+               「逐点限幅后无像素写入」等价。 */
+            clipDevice.width = 0;
+            clipDevice.height = 0;
+        }
+        XGpuRenderBackend_setClipRect(self->m_gpuBackend,
+                                      (hasClip || surfaceClipped)
+                                          ? &clipDevice : NULL);
+    }
     if (xpainter_prof_requested())
     {
         /* 计成功路径（含驱动 setClipRect 调用）；上方不支持形态的
@@ -1788,14 +1841,9 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
  * @brief      恢复 XPainterState 的默认值。
  * @param state 待初始化的状态指针。
  */
-/* 表面裁剪（surface clip）：paintTree 派发 paintEvent 前按脏区设置，
- * 控件内创建的 painter 经 begin_image 自动继承为初始裁剪；putPixel/
- * fillRect/blit 的独立判定防止 setClipRect(Replace) 逃逸。对齐 Qt
- * 绘制引擎的 systemClip（drawWidget → setSystemClip(toBePainted)）。
- * 绘制固定单线程，文件级状态即可。 */
-static XRect g_surfaceClipRect;
-static XImage* g_surfaceClipImage;
-static int g_surfaceClipActive = 0;
+/* 表面裁剪（surface clip）文件级状态：**定义已迁至 GPU 守卫区之前**
+   （2026-11-01，迁位理由见该处块注：GPU 的 scissor 同步亦消费此状态）。
+   此处仅留指针注释，勿重复定义（C2374）。 */
 
 void XPainter_setSurfaceClipRect(const XRect* rect, XImage* target)
 {
@@ -13659,6 +13707,20 @@ static bool painterLoadGlyph(const XFont* font, uint32_t cp,
  *             避免坐标双重平移或遗漏平移。
  * @return     true 已换算；false 变换不受支持（调用方应降级）。
  */
+/** @brief GPU 文本亚像素相位守恒闸（XGPU_TEXT_PHASE，缺省开）。
+ * @details 缺省开=分数平移下 GPU 文本回退软件路径（与 SW 逐像素同源）；
+ *          显式 "0" 恢复旧行为（截断平移取整相位，省 CPU 但像素不同源）。 */
+static bool xpainter_gpu_text_phase_guard_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_TEXT_PHASE");
+        requested = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return requested != 0;
+}
+
 static bool painterGpuTextDevicePoint(const XPainter* self, int x, int y,
                                       int* outX, int* outY)
 {
@@ -13676,6 +13738,20 @@ static bool painterGpuTextDevicePoint(const XPainter* self, int x, int y,
         float dx = 0.0f;
         float dy = 0.0f;
         if (!painterMatrixTranslation(&transform, &dx, &dy))
+            return false;
+        /* 亚像素相位守恒（2026-11-01 订正）：GPU 字形图集按**整数相位**
+           光栅（轮廓在 (0,0) 建、覆盖图与落点无关），分数平移若直接
+           截断（`(int)dx`）会丢掉相位 ⇒ 与 SW 路径（在笔点位置光栅、
+           覆盖率含相位）渲染出不同像素（板端实测：残差结构性差异的
+           字形末行整段缺失/多出）。
+           SW 侧对同一情形同样拒绝缓存（「小数平移移动亚像素原点，覆盖
+           率逐像素不同」）⇒ 口径统一：**分数平移下 GPU 文本回退软件
+           路径**（与 SW 逐像素同源），不在 GPU 侧伪造整数相位。
+           代价：分数落点的字形走软件路径（经暂存画布），GPU 臂 CPU
+           回升（板端 6.2%→7.6% 单核）。回退口 XGPU_TEXT_PHASE=0
+           恢复「截断相位」旧行为（省 CPU、像素不同源）。 */
+        if (xpainter_gpu_text_phase_guard_requested() &&
+            (dx != (float)(int)dx || dy != (float)(int)dy))
             return false;
         *outX = x + (int)dx;
         *outY = y + (int)dy;
@@ -13730,10 +13806,60 @@ static uint64_t painterGpuGlyphKey(const void* face, uint32_t codepoint,
     return hash;
 }
 
-/** @brief 键 flags 装配：bit0=AA 灰度覆盖，bit1=合成斜体（见键注）。 */
+/** @brief 键 flags 装配：bit0=AA 灰度覆盖，bit1=合成斜体，
+ *         bit2+ = 文本对比曲线的 dpr 分档（见键注）。 */
 static uint32_t painterGpuGlyphFlags(bool antialias, bool italic)
 {
-    return (antialias ? 1u : 0u) | (italic ? 2u : 0u);
+    /* bit2+ = 文本对比曲线的 dpr 分档（painterTextBoostBand）：GPU 侧
+       把对比曲线**烘进图集覆盖**（GPU 侧无混合端可查表，见
+       painterApplyTextContrastToCoverage 注）⇒ 档位变化时图集里的旧
+       条目存的是旧档曲线，若不入键，换屏/改缩放后会沿用旧档浓淡。
+       SW 侧在混合端实时查表（painterTextContrastLut 内按 dpr 分档
+       重建），天然跟随；GPU 侧必须靠键把档位显式带进去。 */
+    return (antialias ? 1u : 0u) | (italic ? 2u : 0u) |
+           ((uint32_t)painterTextBoostBand() << 2);
+}
+
+/** @brief GPU 字形覆盖是否施加文本对比曲线（XGPU_TEXT_CONTRAST，缺省开）。
+ * @details 缺省开=与 SW 侧同口径；显式 "0" 回退到「GPU 用原始 FT 覆盖」
+ *          （= 2026-11-01 之前的旧行为：GPU 文本比软件浅一档）。 */
+static bool xpainter_gpu_text_contrast_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_TEXT_CONTRAST");
+        requested = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return requested != 0;
+}
+
+/** @brief 把文本对比曲线就地施加到字形覆盖图（覆盖率→覆盖率映射）。
+ * @details 口径根因（2026-11-01 板端实测）：SW 侧三条字形链路都经
+ *          **文本对比曲线**（painterTextContrastLut：γ + 带内提升包络，
+ *          dpr 分档）：轮廓字混合端直写分支（XPainter.c:11437）与
+ *          fallback 分支（11633）、点阵字 AA 链（10045）。GPU 侧此前
+ *          **上传原始 FT 覆盖**、不查该表 ⇒ 每个 AA 边缘像素系统性地
+ *          浅一档（板端实测：SW↔GPU 文本像素差 29775px，边缘有效覆盖
+ *          差 ~0.26；实测样例 SW 灰 67/108 vs GPU 灰 128/161）。
+ *          本函数把 GPU 侧补齐到与 SW 同曲线；dpr 分档随键进图集
+ *          （painterGpuGlyphFlags bit2+），档位变化即换键换条目。
+ * @param alpha 覆盖图（就地改写）；可为 NULL。
+ * @param width/height 覆盖图尺寸（像素）。
+ */
+static void painterApplyTextContrastToCoverage(uint8_t* alpha,
+                                                int width, int height)
+{
+    const uint8_t* lut;
+    size_t count;
+    size_t i;
+    if (!alpha || width <= 0 || height <= 0) return;
+    if (!xpainter_gpu_text_contrast_requested()) return;
+    lut = painterTextContrastLut();
+    if (!lut) return;
+    count = (size_t)width * (size_t)height;
+    for (i = 0; i < count; ++i)
+        alpha[i] = lut[alpha[i]];
 }
 
 /* ========== 图集查找备忘索引（XGPU_GLYPH_HASH；默认开，"0"=关回退线性） ==========
@@ -13996,6 +14122,9 @@ static bool painterGpuDrawBitmapGlyph(XPainter* self, uint32_t codepoint,
                 else alpha[row * width + column] = (uint8_t)(coverage * 255.0f + 0.5f);
             }
         }
+        /* 文本对比曲线（与 SW 点阵 AA 链同曲线，10045 行同款口径）——
+           见 painterApplyTextContrastToCoverage 注。 */
+        painterApplyTextContrastToCoverage(alpha, width, height);
     }
     if (!XGpuRenderBackend_drawGlyphAlpha(
             self->m_gpuBackend, glyphKey,
@@ -15769,6 +15898,10 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
                                         &contourCapacity);
             return false;
         }
+        /* 文本对比曲线（与 SW 混合端同曲线，见
+           painterApplyTextContrastToCoverage 注）：图集条目存的就是
+           施加后的覆盖 ⇒ 命中图集时无需再处理（键含 dpr 档位）。 */
+        painterApplyTextContrastToCoverage(alpha, width, height);
     }
     painterPathFillContoursFree(&contours, &contourCount, &contourCapacity);
     ok = XGpuRenderBackend_drawGlyphAlpha(

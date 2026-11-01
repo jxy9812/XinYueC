@@ -89,26 +89,25 @@
 /* GPU 运行时默认口径：在没有任何外部设置（XGUI_RENDER_BACKEND /
  * XGPU_BACKEND 环境变量、--gpu/--software 命令行、宿主
  * addRequestedOverride 运行期覆盖）时，是否默认请求 GPU 直通。
- *   桌面系统（Windows/Linux/macOS/BSD）默认 1 —— 启动即请求 GPU，
- *     平台探测失败（无 GL/Vulkan 上下文、FBO 不完整）自动回退
- *     软件光栅（零回归契约，见 XGpuRenderBackend_requested 注）；
- *   裸机 / RTOS / 裁剪构建（XGPU_ON=0）默认 0 —— 纯软件渲染。
- * 外部覆盖：编译期 #define XGPU_RUNTIME_DEFAULT_ON 0/1（先于本
- * 头文件定义即生效）；运行期设 XGUI_RENDER_BACKEND=software 强制
- * 软件、=opengl 强制 GPU（运行期设置优先于本默认值）。 */
+ *   **默认 0（软件光栅）** —— 2026-11-01 板端实测订正：本口径原为
+ *     「桌面默认 1（探测到 GL 即 GPU 直通）」，但 RK3568 上实测
+ *     GPU 直通路径的进程 CPU 是软件光栅的 2~4 倍（软件 3.8% 单核 vs
+ *     GPU 默认 15.0%；见 docs/GPU呈现层直通与文本测量卸载CPU_立项_
+ *     20261101.md 补记），即「探测到 GPU 就默认 GPU」在文本/表格型
+ *     HMI 上是净亏损（GPU 路径的像素仍需经 CPU 回读再上屏，X11 侧
+ *     呈��链无法零拷贝）。故默认改为软件，GPU 按需启用。
+ *   启用方式（优先级高→低）：宿主 addRequestedOverride(true)；
+ *     命令行 --gpu；环境变量 XGUI_RENDER_BACKEND=gpu|opengl|vulkan|1|
+ *     true|on（或 XGPU_BACKEND 同义）；编译期
+ *     #define XGPU_RUNTIME_DEFAULT_ON 1（恢复旧口径，先于本头文件
+ *     定义即生效）。
+ *   运行期 XGUI_RENDER_BACKEND=software 强制软件（最高优先级的
+ *     显式关闭口，任何构建都保留）。 */
 #ifndef XGPU_RUNTIME_DEFAULT_ON
-#if XGPU_ON && XPLATFORMINTEGRATION_ON && XPLATFORM_DESKTOP
-/* 恢复桌面默认 GPU（2026-10-31 用户指令）。历史：2026-09-24 曾因子矩形
- * 批量化 WIP（87213b92）的闪烁 + 帧率回退（数百帧）暂时回退软件默认；
- * 该 WIP 当晚即被「透明暂存画布 + 批脏区 SourceOver 混合提交」方案
- * （d0c79214a）整体替换，并经夜间三/四逐项根修（keep-open 默认关、
- * 降级帧整窗恢复、读回+BitBlt 呈现通道、慢 begin 帧级原子自动降级），
- * d0c79214a 同时误删了 requested() 的宏消费分支致本宏成死码——本次
- * 随默认恢复一并补回（见 XGpuRenderBackend_requested）。 */
-#define XGPU_RUNTIME_DEFAULT_ON 1
-#else
+/* 默认 0（软件）。历史：2026-10-31 曾恢复为桌面默认 1（当时口径是
+ * 「桌面默认 GPU 直通」）；2026-11-01 按板端实测数据改回 0——GPU 直通
+ * 在无零拷贝呈现链的平台上比软件光栅更耗 CPU。 */
 #define XGPU_RUNTIME_DEFAULT_ON 0
-#endif
 #endif
 #ifndef XPIXMAP_ON
 #define XPIXMAP_ON 1
