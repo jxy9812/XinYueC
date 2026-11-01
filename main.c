@@ -27,6 +27,7 @@
 #include "XCryptographicPrimitiveTest.h"
 #include "XSslTest.h"
 #include "XProtocolTest.h"
+#include "XIndustryTest.h"
 #include "XLinkTest.h"
 #include "XLinkDemo.h"
 #include "XNtpTest.h"
@@ -124,6 +125,10 @@ static int main_run_test_path(const char* testPath)
        无需外部虚拟从站，返回码=失败数。 */
     if (strcmp(testPath, "xmodbus-coverage") == 0)
         return XModbusCoverageTest_run() == 0 ? 0 : 1;
+    /* XModbus 核心值类型组合（Pdu/Adu/DataUnit/CommEvent/DeviceIdent/
+     * Reply）：纯逻辑、无传输依赖，任意平台直跑，返回码=失败数。 */
+    if (strcmp(testPath, "xmodbus-core") == 0)
+        return XModbusCoreTest_run() == 0 ? 0 : 1;
 #endif
 #if XPROTOCOL_ON && XVFD_ON
     /* XVfd 变频器闭环三件套（pty 路径走缺省文件回退）。 */
@@ -133,6 +138,18 @@ static int main_run_test_path(const char* testPath)
         return XVfdBus485Test_run() == 0 ? 0 : 1;
     if (strcmp(testPath, "xvfd-atv61") == 0)
         return XVfdAtv61Test_run() == 0 ? 0 : 1;
+#endif
+#if XINDUSTRY_ON && XSOLENOID_VALVE_ON
+    /* Industry 电磁阀状态机 mock 回归（原独立 main 可执行收编，2026-11-01；
+       进程内自跑，无硬件依赖，返回码=失败数）。 */
+    if (strcmp(testPath, "xindustry-valve") == 0)
+        return XIndustryValveTest_run() == 0 ? 0 : 1;
+#endif
+#if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON && XINDUSTRY_MODBUS_ON
+    /* Industry Modbus 适配器闭环（TCP 环回进程内自跑；RTU 组合经
+       INDUSTRY_RTU_PTY 环境变量由驱动脚本驱动，返回码=失败数）。 */
+    if (strcmp(testPath, "xindustry-modbus") == 0)
+        return XIndustryModbusTest_run() == 0 ? 0 : 1;
 #endif
 #if XPROTOCOL_ON && XLINK_ON
     /* XLink 私有应用层协议（控制进程 <-> GUI 进程 消息互通）全量回归。 */
@@ -243,6 +260,7 @@ static void main_print_test_list(void)
     XPrintf("  --test xmodbus-hub / xprotocol-campaign (需先起虚拟从站)\n");
     XPrintf("  --test xmodbus-coverage (Modbus 服务端 FC 全量覆盖，进程内自跑)\n");
     XPrintf("  --test xvfd-m512 / xvfd-bus485 / xvfd-atv61 (需先起虚拟从站)\n");
+    XPrintf("  --test xindustry-valve (电磁阀 mock) / xindustry-modbus (TCP 环回；RTU 组合需脚本起从站)\n");
     XPrintf("  Test 菜单「协议栈 → XLink(xlink)」: 客户端包装 / 实战案例·服务端 / 实战案例·客户端\n");
     XPrintf("  Test 菜单「协议栈 → XModbus/XVfd」: Hub闭环 / 485战役 / 变频器三件套\n");
 }

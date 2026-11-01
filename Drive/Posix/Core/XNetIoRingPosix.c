@@ -426,6 +426,27 @@ static void  VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self, int timeou
 static void  VXNetIoRingPosix_wakeUp(XAbstractNetIoRing* self);
 static void  VXNetIoRingPosix_deinit(XAbstractNetIoRing* obj);
 
+/* [S4 排查打点 2026-10-31] 被动 fd 通道（串口/触摸）的 ring 内部行为探针。
+ * 默认 0：正常运行零开销（约束文档「诊断打点必须编译开关门」）。
+ * 排查编译：-DXNET_RINGDBG_ON=1。根修后应整段移除。 */
+#ifndef XNET_RINGDBG_ON
+#define XNET_RINGDBG_ON 0
+#endif
+#if XNET_RINGDBG_ON
+#include "XPrintf.h"
+#define RINGDBG(fmt, ...) XPrintf("[RINGDBG] %s(): " fmt "\n", __func__, ##__VA_ARGS__)
+#else
+#define RINGDBG(fmt, ...)
+#endif
+/* [S4 根修 2026-10-31] io_uring 区引用 epoll 事件位（EPOLLHUP/EPOLLIN）：
+ * sys/epoll.h 挂在 XNET_BUILD_EPOLL 下，单 io_uring 构建时补内核字面值。 */
+#ifndef EPOLLIN
+#define EPOLLIN 0x0001
+#endif
+#ifndef EPOLLHUP
+#define EPOLLHUP 0x0010
+#endif
+
 /* ================================================================
  * io_uring 引擎（XNET_BUILD_IO_URING 时编译）
  * ================================================================ */
@@ -556,8 +577,21 @@ static void ioDispatchPassive(XNetIoRingPosix* posix, int idx, int res, unsigned
     void (*notify)(int);
     int osFd;
     if (!posix || idx < 0 || idx >= posix->m_passiveIoCount) return;
+    RINGDBG("dispatch idx=%d osFd=%d res=%d flags=%u more=%d",
+            idx, posix->m_passiveIo[idx].m_osFd, res, (unsigned)flags,
+            (int)(flags & IORING_CQE_F_MORE));
     if (res < 0)
     {
+        /* [S4 根修 2026-10-31] res=-ECANCELED 是「我们自己 POLL_REMOVE 的
+         * 取消完成」（unregister 提交，CQE 复用被取消 poll 的 user_data=&ctx），
+         * 不是内核能力信号。fd 号复用 + ctx 地址复用会让它落到新注册记录
+         * 头上：原实现落入下方「一次性也失败」分支 ⇒ m_multiFailed +
+         * POLL_REMOVE 把新连接刚挂的监听撤掉 ⇒ 新连接永久失聪（S4 恢复读
+         * 超时实证：恢复读已上总线、从站已应答、客户端永远收不到）。 */
+        if (res == -ECANCELED) {
+            posix->m_passiveIo[idx].m_armed = false;
+            return;
+        }
         /* multishot 不被内核支持（-EINVAL，5.10~5.12）：**不放弃该 fd**，
          * 改用「一次性 POLL_ADD + 完成后重挂」形态（与 epoll 引擎同语义）。
          * 原实现直接 POLL_REMOVE + m_multiFailed ⇒ 该 fd 在 io_uring 引擎上
@@ -588,7 +622,18 @@ static void ioDispatchPassive(XNetIoRingPosix* posix, int idx, int res, unsigned
     }
     notify = posix->m_passiveIo[idx].m_notify;
     osFd = posix->m_passiveIo[idx].m_osFd;
+    RINGDBG("notify osFd=%d", osFd);
     if (notify) notify(osFd);
+    /* [S4 根修 2026-10-31] 纯 HUP/ERR（对端已关闭、无 IN）：multishot 被
+     * 内核终止（CQE 无 F_MORE 属正常语义而非「内核不支持」），且对持续
+     * HUP 的 fd 一次性重挂会立即再完成 ⇒ 无限重挂风暴（S4 实证：单场景
+     * 万次级循环）。置 armed=false 停止重挂；fd 的收尾由属主
+     * close→unregister 的 POLL_REMOVE 统一清理。IN|HUP 并存（有真数据）
+     * 仍走原路径照常重挂。 */
+    if ((res & EPOLLHUP) && !(res & EPOLLIN)) {
+        posix->m_passiveIo[idx].m_armed = false;
+        return;
+    }
     /* 一次性形态：通知完属主（属主已读空）后重挂，维持 fd 的持续监听。
      * multishot 形态：CQE 带 IORING_CQE_F_MORE ⇒ 挂载仍在生效，无需重挂。 */
     if (!posix->m_passiveIo[idx].m_multiUnsupported &&
@@ -618,6 +663,9 @@ static void ioPollPlatform(XNetIoRingPosix* posix, XAbstractNetIoRing* self) {
             for (idx = 0; idx < posix->m_passiveIoCount; ++idx) {
                 if (&posix->m_passiveIo[idx].m_ctx == ctx) break;
             }
+            RINGDBG("cqe custom ctx=%p res=%d flags=%u matchIdx=%d count=%d",
+                    (void*)ctx, (int)cqe->res, (unsigned)cqe->flags,
+                    idx, posix->m_passiveIoCount);
             ioAdvanceCq(posix);
             if (idx < posix->m_passiveIoCount)
                 ioDispatchPassive(posix, idx, (int)cqe->res, cqe->flags);
@@ -933,6 +981,26 @@ static void epPollPlatform(XNetIoRingPosix* posix, XAbstractNetIoRing* self) {
             continue;
         }
         {
+            /* [S4 根修 2026-10-31] 被动可读 fd（串口/触摸等待集通道）分派：
+             * registerPassiveOsFd 的 epoll 分支把 fd 记账进 m_passive 表并
+             * epoll_ctl ADD 成功，但事件分派此前缺失——EPOLLIN 到达后
+             * epTakePending 查无网络 pending 即被静默丢弃，串口在 epoll
+             * 引擎上永久失聪且无轮询兜底（S4@WSL2 实证：帧上线、从站
+             * 应答、客户端收不到）。epoll 水平触发无需重挂，按表反查
+             * data.fd 通知属主即可。 */
+            int pi;
+            bool passiveFd = false;
+            for (pi = 0; pi < posix->m_passiveCount; ++pi) {
+                if (posix->m_passive[pi].m_osFd == fd) {
+                    if (posix->m_passive[pi].m_notify)
+                        posix->m_passive[pi].m_notify(fd);
+                    passiveFd = true;
+                    break;
+                }
+            }
+            if (passiveFd) continue;
+        }
+        {
             XNetPendingOp* op = epTakePending(posix, fd, XNET_EPOLL_WANT_IN);
             if (op) epExecutePending(posix, op, self);
         }
@@ -1058,6 +1126,7 @@ static bool VXNetIoRingPosix_registerPassiveOsFd(XAbstractNetIoRing* self,
         if (posix->m_ringFd < 0) return false;
         for (i = 0; i < posix->m_passiveIoCount; ++i) {
             if (posix->m_passiveIo[i].m_osFd == osFd) {
+                RINGDBG("register osFd=%d 幂等更新 idx=%d", osFd, i);
                 posix->m_passiveIo[i].m_notify = notify; /* 幂等。 */
                 return true;
             }
@@ -1067,6 +1136,9 @@ static bool VXNetIoRingPosix_registerPassiveOsFd(XAbstractNetIoRing* self,
         posix->m_passiveIo[i].m_osFd = osFd;
         posix->m_passiveIo[i].m_notify = notify;
         posix->m_passiveIo[i].m_armed = false;
+        RINGDBG("register osFd=%d 新增 idx=%d count=%d ctx=%p",
+                osFd, i, posix->m_passiveIoCount,
+                (void*)&posix->m_passiveIo[i].m_ctx);
         /* 专属完成上下文：type=Custom 标识「非网络完成」（被动 fd），
          * fd 字段存 OS fd 号（供回调定位）。 */
         memset(&posix->m_passiveIo[i].m_ctx, 0,
@@ -1103,6 +1175,7 @@ static bool VXNetIoRingPosix_registerPassiveOsFd(XAbstractNetIoRing* self,
         if (epoll_ctl(posix->m_epollFd, EPOLL_CTL_ADD, osFd, &ev) != 0) {
             if (errno == EEXIST) {
                 /* 已被别的路径注册（如网络提交路径）：兴趣已含 IN，直接记账。 */
+                if (posix->m_passiveCount >= XNET_PASSIVE_MAX) return false;
                 posix->m_passive[posix->m_passiveCount].m_osFd = osFd;
                 posix->m_passive[posix->m_passiveCount].m_notify = notify;
                 ++posix->m_passiveCount;
@@ -1136,6 +1209,8 @@ static bool VXNetIoRingPosix_unregisterPassiveOsFd(XAbstractNetIoRing* self,
         int i;
         for (i = 0; i < posix->m_passiveIoCount; ++i) {
             if (posix->m_passiveIo[i].m_osFd != osFd) continue;
+            RINGDBG("unregister osFd=%d idx=%d armed=%d", osFd, i,
+                    (int)posix->m_passiveIo[i].m_armed);
             /* 撤销在飞的 POLL_ADD：POLL_REMOVE 用 user_data 定位请求。
              * 已在飞的一次性 POLL_ADD 若不撤销，其 CQE 仍会到达——但记录
              * 已被移除，ioPollPlatform 的 ctx 匹配找不到 idx ⇒ 只推进 CQ

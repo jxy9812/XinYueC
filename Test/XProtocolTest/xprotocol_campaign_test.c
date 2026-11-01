@@ -332,10 +332,10 @@ static XModbusRtuSerialClient* rtuMake(const char* ptyPath, int timeoutMs,
     XModbusClient_setNumberOfRetries((XModbusClient*)c, (uint8_t)retries);
     XModbusClient_setAutoReconnect((XModbusClient*)c, autoReconnect);
     XModbusRtuSerialClient_setTurnaroundDelay(c, 60);
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)c,
-        XModbusDevice_SerialPortNameParameter, XVariant_create_utf8_str(ptyPath));
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)c,
-        XModbusDevice_SerialBaudRateParameter, XVariant_create_int(9600));
+    do { XVariant* vParam = XVariant_create_utf8_str(ptyPath); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)c,
+        XModbusDevice_SerialPortNameParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
+    do { XVariant* vParam = XVariant_create_int(9600); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)c,
+        XModbusDevice_SerialBaudRateParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
     return c;
 }
 
@@ -451,7 +451,7 @@ static XModbusHub* hubMake(const char* ptyPath, int timeoutMs, int* outDevId)
     if (!c || !rtuOpen(c)) { rtuClose(c); return NULL; }
     XModbusHub* hub = XModbusHub_create();
     if (!hub) { rtuClose(c); return NULL; }
-    const int id = XModbusHub_addDevice(hub, (XModbusClient*)c, "rtu");
+    const int id = XModbusHub_addDevice_2(hub, (XModbusClient*)c, "rtu");
     if (id <= 0) { XModbusHub_deleteLater((XObject*)hub); rtuClose(c); return NULL; }
     if (outDevId) *outDevId = id;
     return hub;
@@ -627,8 +627,8 @@ static void testS4(void)
     ctrlClear("bus2_closem");
     pumpForMs(100);
     XModbusDevice_disconnectDevice((XModbusDevice*)c);
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)c,
-        XModbusDevice_SerialPortNameParameter, XVariant_create_utf8_str(g_pty3));
+    do { XVariant* vParam = XVariant_create_utf8_str(g_pty3); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)c,
+        XModbusDevice_SerialPortNameParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
     CHECK(XModbusDevice_connectDevice((XModbusDevice*)c) &&
           waitUntil(predConnected, c, 3000), "B 切 bus3 重连");
     {
@@ -655,15 +655,25 @@ static void testS4(void)
 
     /* —— 恢复：切回 bus1 活链路 → 普通读照常（设备单飞可恢复）。 —— */
     XModbusDevice_disconnectDevice((XModbusDevice*)c);
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)c,
-        XModbusDevice_SerialPortNameParameter, XVariant_create_utf8_str(g_pty1));
+    do { XVariant* vParam = XVariant_create_utf8_str(g_pty1); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)c,
+        XModbusDevice_SerialPortNameParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
     CHECK(XModbusDevice_connectDevice((XModbusDevice*)c) &&
           waitUntil(predConnected, c, 3000), "切回 bus1 重连");
     XModbusReply* r2 = sendReadHr((XModbusClient*)c, 1, 0, 2,
                                   XModbusRequestPriority_Normal);
     watchLate(4, r2);
-    CHECK(waitUntil(predWatchDoneOk, &g_watches[4], 3000),
-          "恢复后读应答（设备单飞可恢复）");
+    {
+        const int failBase4 = g_fail;
+        CHECK(waitUntil(predWatchDoneOk, &g_watches[4], 3000),
+              "恢复后读应答（设备单飞可恢复）");
+        if (g_fail > failBase4) {
+            if (g_watches[4].finished)
+                tlog("S4diag 恢复读已终结 error=%d replyState=%d",
+                     g_watches[4].lastError, (int)XModbusReply_state(r2));
+            else
+                diagClient("S4diag 恢复读挂死", c, r2);
+        }
+    }
 
     ctrlClear("bus2_closem");
     ctrlClear("bus3_closem");
@@ -921,10 +931,10 @@ static void testS10(void)
     if (!tcp || !rtu) { rtuClose(rtu); sceneEnd(); return; }
     XModbusClient_setTimeout((XModbusClient*)tcp, 300);
     XModbusClient_setAutoReconnect((XModbusClient*)tcp, false);
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
-        XModbusDevice_NetworkAddressParameter, XVariant_create_utf8_str("127.0.0.1"));
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
-        XModbusDevice_NetworkPortParameter, XVariant_create_int(g_tcpPort));
+    do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
+        XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
+    do { XVariant* vParam = XVariant_create_int(g_tcpPort); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
+        XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
     CHECK(rtuOpen(rtu), "RTU 客户端连接 bus1");
 
     const int rounds = 50;
@@ -1045,7 +1055,7 @@ static void testS12(void)
     XModbusHub* hub = XModbusHub_create();
     CHECK(hub != NULL, "hub 创建");
     if (!c || !hub) { rtuClose(c); sceneEnd(); return; }
-    const int id = XModbusHub_addDevice(hub, (XModbusClient*)c, "rtu");
+    const int id = XModbusHub_addDevice_2(hub, (XModbusClient*)c, "rtu");
     CHECK(id > 0, "设备注入（所有权转移 Hub）");
     if (id <= 0) { XModbusHub_deleteLater((XObject*)hub); sceneEnd(); return; }
     XModbusMapping* map = XModbusMapping_create();
@@ -1186,19 +1196,40 @@ int XProtocolCampaignTest_runEx(const char* baseDir, int tcpPort)
         return g_fail;
     }
 
-    testS1();
-    testS2();
-    testS3();
-    testS6();
-    testS5();
-    testS7();
-    testS8();
-    testS4();
-    testS9();
-    testS11();
-    testS12();
-    testS13();
-    testS10();
+    /* 场景过滤器：XPROTOCOL_CAMPAIGN_ONLY=S4 只跑名字匹配的场景（调试用，
+     * 缺省跑全矩阵）。 */
+    {
+        const char* only = getenv("XPROTOCOL_CAMPAIGN_ONLY");
+        if (only && only[0]) {
+            if (strstr(only, "S1")) testS1();
+            if (strstr(only, "S2")) testS2();
+            if (strstr(only, "S3")) testS3();
+            if (strstr(only, "S6")) testS6();
+            if (strstr(only, "S5")) testS5();
+            if (strstr(only, "S7")) testS7();
+            if (strstr(only, "S8")) testS8();
+            if (strstr(only, "S4")) testS4();
+            if (strstr(only, "S9")) testS9();
+            if (strstr(only, "S11")) testS11();
+            if (strstr(only, "S12")) testS12();
+            if (strstr(only, "S13")) testS13();
+            if (strstr(only, "S10")) testS10();
+        } else {
+            testS1();
+            testS2();
+            testS3();
+            testS6();
+            testS5();
+            testS7();
+            testS8();
+            testS4();
+            testS9();
+            testS11();
+            testS12();
+            testS13();
+            testS10();
+        }
+    }
 
     XCoreApplication_processEvents(XEventLoop_AllEvents);
     printf("=== 结果: 失败 %d 项 (S1..S13 全矩阵) ===\n", g_fail);

@@ -109,6 +109,14 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
     } else if (strcmp(name, "xprotocol-campaign") == 0) {
         result = XProtocolCampaignTest_run() == 0;
 #endif
+#if XPROTOCOL_ON && XMODBUS_HUB_ON
+    /* XModbus 核心值类型组合（Pdu/Adu/DataUnit/CommEvent/DeviceIdent/
+     * Reply）：纯逻辑、无传输依赖，任意平台直跑。守卫沿用 HUB_ON——
+     * 本翻译单元内 XMODBUS_CORE_ON 宏不可见（XModbus_config.h 不在
+     * 包含链上），HUB_ON 蕴含 CORE_ON。 */
+    } else if (strcmp(name, "xmodbus-core") == 0) {
+        result = XModbusCoreTest_run() == 0;
+#endif
 #if XPROTOCOL_ON && XVFD_ON
     /* XVfd 变频器闭环三件套（pty 路径走缺省文件回退）。 */
     } else if (strcmp(name, "xvfd-m512") == 0) {
@@ -117,6 +125,18 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
         result = XVfdBus485Test_run() == 0;
     } else if (strcmp(name, "xvfd-atv61") == 0) {
         result = XVfdAtv61Test_run() == 0;
+#endif
+#if XINDUSTRY_ON && XSOLENOID_VALVE_ON
+    /* Industry 电磁阀状态机 mock 回归（原独立 main 可执行收编，2026-11-01；
+       进程内自跑，无硬件依赖）。 */
+    } else if (strcmp(name, "xindustry-valve") == 0) {
+        result = XIndustryValveTest_run() == 0;
+#endif
+#if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON && XINDUSTRY_MODBUS_ON
+    /* Industry Modbus 适配器闭环（TCP 环回进程内自跑；RTU 组合经
+       INDUSTRY_RTU_PTY 环境变量由驱动脚本 mbtest_industry_run.sh 驱动）。 */
+    } else if (strcmp(name, "xindustry-modbus") == 0) {
+        result = XIndustryModbusTest_run() == 0;
 #endif
 #if XPROTOCOL_ON && XLINK_ON
     /* XLink 私有应用层协议（控制进程 <-> GUI 进程 消息互通）。 */

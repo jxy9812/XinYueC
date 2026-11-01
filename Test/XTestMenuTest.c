@@ -20,6 +20,7 @@
 #include"XMemoryTest.h"
 #include"XDataTest.h"
 #include"XPropertyTest.h"
+#include"XIndustryTest.h"
 XTestMenu* XTestMenuTest_create()
 {
 	XTestMenu* root = XTestMenu_create("测试代码");
@@ -29,6 +30,7 @@ XTestMenu* XTestMenuTest_create()
 	XTestMenu_XIOTest(root);
 	XTestMenu_XDeviceTest(root);
 	XTestMenu_XProtocolTest(root);
+	XTestMenu_XIndustryTest(root);
 	XTestMenu_XTimerTest(root);
 	XTestMenu_XMemoryTest(root);
 	XTestMenu_XDataTest(root);

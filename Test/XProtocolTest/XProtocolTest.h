@@ -48,6 +48,9 @@ extern "C" {
 	int XProtocolCampaignTest_run(void);
 	void XProtocolCampaignTest(XVariant* data);
 #endif
+#if XPROTOCOL_ON && XMODBUS_CORE_ON
+	int XModbusCoreTest_run(void);
+#endif
 #if XPROTOCOL_ON && XVFD_ON
 	int XVfdM512Test_runEx(const char* ptyPath);
 	int XVfdM512Test_run(void);

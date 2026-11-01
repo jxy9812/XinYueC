@@ -213,6 +213,62 @@ static void testMappingLogic(void)
     CHECK(XModbusMapping_removeRange(m, XModbusDiscreteInputs, 8), "remove DI v8..15");
     CHECK(XModbusMapping_rangeAtVirtual_const(m, XModbusDiscreteInputs, 10) == NULL,
           "删除后 v10 不命中");
+
+    /* [组合补充 2026-10-31] addRange 全拒绝矩阵 / 段表查询 / 清空。 */
+    {
+        XModbusMapping* m2 = XModbusMapping_create();
+        CHECK(m2 != NULL, "mapping2 create");
+        CHECK(!XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0, 0, 1, 1, 0),
+              "count==0 拒绝");
+        CHECK(!XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0, 8, -1, 1, 0),
+              "deviceId<0 拒绝");
+        CHECK(!XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0, 8, 1, 70000, 0),
+              "unitId>65535 拒绝（uint16 存储，2026-10-31 新校验）");
+        CHECK(XModbusMapping_addRange(m2, XModbusHoldingRegisters, 0xFFFE, 2, 1, 1, 0xFFFE),
+              "恰满 16 位空间合法（虚拟/远端同占 0xFFFE..0xFFFF）");
+        CHECK(!XModbusMapping_addRange(m2, XModbusHoldingRegisters, 0xFFFF, 2, 1, 1, 0),
+              "虚拟回绕拒绝（0xFFFF+2 溢出）");
+        CHECK(!XModbusMapping_addRange(m2, XModbusHoldingRegisters, 0, 2, 1, 1, 0xFFFF),
+              "远端回绕拒绝（remote 0xFFFF+2 溢出）");
+        CHECK(!XModbusMapping_addRange(m2, XModbusInvalid, 0, 8, 1, 1, 0),
+              "非法 type 拒绝");
+        CHECK(XModbusMapping_rangeCount_const(m2, XModbusDiscreteInputs) == 0,
+              "全拒绝后段数为 0");
+        /* 回绕边界内合法：恰满 0xFFFF 结尾可收。 */
+        CHECK(XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0xFFF0, 0x10, 1, 247, 0xFFF0),
+              "段恰满到 0xFFFF 合法（unitId=247 边界）");
+        /* 四区隔离：同虚拟地址各区独立。 */
+        CHECK(XModbusMapping_addRange(m2, XModbusCoils, 0, 8, 2, 1, 0), "Coils v0..7 独立登记");
+        CHECK(XModbusMapping_rangeCount_const(m2, XModbusCoils) == 1 &&
+              XModbusMapping_rangeCount_const(m2, XModbusDiscreteInputs) == 1 &&
+              XModbusMapping_rangeCount_const(m2, XModbusInputRegisters) == 0,
+              "区隔离计数");
+        /* 按下标取段 + 越界。 */
+        CHECK(XModbusMapping_rangeAt_const(m2, XModbusCoils, 0) != NULL &&
+              XModbusMapping_rangeAt_const(m2, XModbusCoils, 1) == NULL,
+              "rangeAt 下标 0 命中/1 越界");
+        /* removeRange 未命中。 */
+        CHECK(!XModbusMapping_removeRange(m2, XModbusCoils, 99), "removeRange 未命中 false");
+        /* 段中/段尾地址的包含查询。 */
+        CHECK(XModbusMapping_rangeAtVirtual_const(m2, XModbusCoils, 5) != NULL,
+              "段中部地址包含查询命中");
+        CHECK(XModbusMapping_rangeAtVirtual_const(m2, XModbusCoils, 7) != NULL,
+              "段末地址包含查询命中");
+        CHECK(XModbusMapping_rangeAtVirtual_const(m2, XModbusCoils, 8) == NULL,
+              "段后一地址不命中");
+        /* 清空：单区与全清。 */
+        XModbusMapping_clearAreas(m2, XModbusCoils);
+        CHECK(XModbusMapping_rangeCount_const(m2, XModbusCoils) == 0 &&
+              XModbusMapping_rangeCount_const(m2, XModbusDiscreteInputs) == 1,
+              "clearAreas 单区清空且他区保留");
+        XModbusMapping_clearAreas(m2, XModbusInvalid);
+        CHECK(XModbusMapping_rangeCount_const(m2, XModbusDiscreteInputs) == 0,
+              "clearAreas(Invalid) 全清");
+        /* 清空后容器可复用（容量保留）。 */
+        CHECK(XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0, 8, 1, 1, 0),
+              "清空后再添加正常");
+        XClassDelete(m2);
+    }
     XClassDelete(m); /* XClass 派生：统一 XClassDelete（无 deleteLater）。 */
 }
 
@@ -306,11 +362,11 @@ static XModbusHub* cacheHubMake(int port, int* outDevId)
     if (!tcp) { XModbusHub_deleteLater(hub); return NULL; }
     XModbusClient_setTimeout((XModbusClient*)tcp, 800);
     XModbusClient_setReconnectInterval((XModbusClient*)tcp, 500);
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
-        XModbusDevice_NetworkAddressParameter, XVariant_create_utf8_str("127.0.0.1"));
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
-        XModbusDevice_NetworkPortParameter, XVariant_create_int(port));
-    id = XModbusHub_addDevice(hub, (XModbusClient*)tcp, "cacheA");
+    do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
+        XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
+    do { XVariant* vParam = XVariant_create_int(port); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
+        XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
+    id = XModbusHub_addDevice_2(hub, (XModbusClient*)tcp, "cacheA");
     if (id <= 0) { XModbusHub_deleteLater(hub); return NULL; }
     *outDevId = id;
     XModbusHub_connectAll(hub);
@@ -571,22 +627,22 @@ int XModbusHubTest_runEx(int portA, int portB)
     XModbusClient_setReconnectInterval((XModbusClient*)tcpA, 500);
     XModbusClient_setReconnectInterval((XModbusClient*)tcpB, 500);
 
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcpA,
-        XModbusDevice_NetworkAddressParameter, XVariant_create_utf8_str("127.0.0.1"));
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcpA,
-        XModbusDevice_NetworkPortParameter, XVariant_create_int(portA));
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcpB,
-        XModbusDevice_NetworkAddressParameter, XVariant_create_utf8_str("127.0.0.1"));
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcpB,
-        XModbusDevice_NetworkPortParameter, XVariant_create_int(portB));
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)rtuC,
-        XModbusDevice_SerialPortNameParameter, XVariant_create_utf8_str(ptyPath));
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)rtuC,
-        XModbusDevice_SerialBaudRateParameter, XVariant_create_int(9600));
+    do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcpA,
+        XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
+    do { XVariant* vParam = XVariant_create_int(portA); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcpA,
+        XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
+    do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcpB,
+        XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
+    do { XVariant* vParam = XVariant_create_int(portB); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcpB,
+        XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
+    do { XVariant* vParam = XVariant_create_utf8_str(ptyPath); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)rtuC,
+        XModbusDevice_SerialPortNameParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
+    do { XVariant* vParam = XVariant_create_int(9600); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)rtuC,
+        XModbusDevice_SerialBaudRateParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
 
-    const int idA = XModbusHub_addDevice(hub, (XModbusClient*)tcpA, "tcpA");
-    const int idB = XModbusHub_addDevice(hub, (XModbusClient*)tcpB, "tcpB");
-    const int idC = XModbusHub_addDevice(hub, (XModbusClient*)rtuC, "rtuC");
+    const int idA = XModbusHub_addDevice_2(hub, (XModbusClient*)tcpA, "tcpA");
+    const int idB = XModbusHub_addDevice_2(hub, (XModbusClient*)tcpB, "tcpB");
+    const int idC = XModbusHub_addDevice_2(hub, (XModbusClient*)rtuC, "rtuC");
     CHECK(idA > 0 && idB > 0 && idC > 0 && idA != idB && idB != idC, "addDevice 句柄唯一");
     CHECK(XModbusHub_deviceCount(hub) == 3, "设备数=3");
 
@@ -796,6 +852,42 @@ int XModbusHubTest_runEx(int portA, int portB)
     /* ---------- ⑨⑩⑪ 缓存层战役（2026-10-29，独立 hub，只用 TCP A） ---------- */
     testReadMerge(portA);
     testWriteMerge(portA);
+
+    /* ---------- ⑫ 生命周期补充（2026-10-31 组合补测） ---------- */
+    {
+        XModbusHub* hub2;
+        XModbusTcpClient* tcp;
+        XString* name;
+        int id;
+        g_case = "lifecycle-extras";
+        printf("== 用例⑫ removeDevice 滞留写作废 + addDevice XString 主版本 ==\n"); fflush(stdout);
+        hub2 = XModbusHub_create();
+        tcp = XModbusTcpClient_create();
+        CHECK(hub2 != NULL && tcp != NULL, "⑫ hub/client 创建");
+        name = XString_create_utf8("主版本设备");
+        id = XModbusHub_addDevice(hub2, (XModbusClient*)tcp, name);
+        XClassDelete((XClass*)name); /* 主版本深拷贝：入参可立即释放。 */
+        CHECK(id > 0, "⑫ addDevice XString 主版本受理");
+        CHECK(XModbusHub_deviceName_const(hub2, id) != NULL &&
+              strcmp(XModbusHub_deviceName_const(hub2, id), "主版本设备") == 0,
+              "⑫ 设备名深拷贝存活（入参释放后仍可读）");
+        {
+            XModbusMapping* mp = XModbusMapping_create();
+            XModbusMapping_addRange(mp, XModbusHoldingRegisters, 0, 8, id, 1, 0);
+            XModbusHub_setMapping(hub2, mp); /* 接管所有权。 */
+        }
+        /* 滞留写作废：从站不在场（未 connect）→ 写意图滞留 → removeDevice
+         * 必须逐脏区间回 writeCompleted(ok=false) 并清表。 */
+        CHECK(XModbusHub_writeValue(hub2, XModbusHoldingRegisters, 0, 42),
+              "⑫ 离线写受理（乐观回显）");
+        CHECK(XModbusHub_pendingWriteCount(hub2) >= 1, "⑫ 滞留脏区间在表");
+        CHECK(XModbusHub_removeDevice(hub2, id), "⑫ removeDevice 成功");
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        CHECK(XModbusHub_pendingWriteCount(hub2) == 0, "⑫ 滞留写作废后归零");
+        CHECK(!XModbusHub_deviceClient(hub2, id), "⑫ 句柄失效");
+        XModbusHub_deleteLater(hub2);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+    }
 
     printf("=== 结果: 失败 %d 项 (valueChanged=%d writeOk=%d devState=%d) ===\n",
            g_fail, g_cnt.valueChanged, g_cnt.writeOk, g_cnt.devStateChanged);

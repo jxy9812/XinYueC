@@ -3,6 +3,18 @@ cmake_minimum_required(VERSION 3.5)
 #设置项目名称
 project(Xin_Yue_C VERSION 0.1 LANGUAGES C)
 
+# ==================== CMP0079 NEW（跨目录链接落地，单条精确开启） ====================
+# 平台/第三方系统库的 target_link_libraries 落地统一在本文件（探测、
+# Library/* 注册、链接三段同居一处），而 XinYueCS/XinYueC 创建于 Src/XCore
+# 子目录——旧策略禁止跨目录改目标（min 3.5 下 CMP0079 默认 OLD，实测报
+# "not built in this directory"）。单条开启 NEW：仅放宽跨目录
+# target_link_libraries，其余策略语义不变（存量调用全部同目录，不受影响；
+# 装有 CMake <3.13 的环境 POLICY(CMP0079) 探测为假，自动跳过——彼时按旧
+# 布局回退即可，不影响同目录调用）。
+if(POLICY CMP0079)
+    cmake_policy(SET CMP0079 NEW)
+endif()
+
 # ---- 裁剪开关转发：命令行 -DX?_ON=0/1 转为全局编译定义 ----
 # （否则 -D 仅入缓存为 UNINITIALIZED，不产生编译定义，"裁剪构建"实际全量编译。）
 #
@@ -58,15 +70,16 @@ if(DEFINED XGUI_BACKINGSTORE_RENDER_MODE)
 endif()
 
 # ==================== fbdev 显示驱动模板（嵌入式 RGB565 直写铺路） ====================
-# 新增源文件 Drive/Posix/Graphics/XPlatformFramebuffer_posix.c（及其 .h）经上方
-# file(GLOB_RECURSE DRIVE_FILE "Drive/*.c") 自动入列——新增/删除源文件后须触发
-# 重新配置（touch 本文件即可），glob 才会重扫。功能受 XPLATFORM_FBDEV_ON 控制
-# （默认 0，XPlatformDisplayDriver.h 内 #ifndef 兜底；嵌入式目标以
-# -DXPLATFORM_FBDEV_ON=ON 开启）。默认关闭时该文件经预处理守卫整段裁剪，
-# 桌面 X11 路径零变化；无需额外链接库（fbdev 经 sys/ioctl.h + mmap 即可）。
+# 新增源文件 Drive/Posix/Graphics/XPlatformFramebuffer_posix.c（及其 .h）经
+# Drive 模块的 file(GLOB_RECURSE DRIVE_FILE) 自动入列——新增/删除源文件后
+# 须触发重新配置（touch Drive/CMakeLists.txt 即可），glob 才会重扫。
+# 功能受 XPLATFORM_FBDEV_ON 控制（默认 0，XPlatformDisplayDriver.h 内
+# #ifndef 兜底；嵌入式目标以 -DXPLATFORM_FBDEV_ON=ON 开启）。默认关闭时该
+# 文件经预处理守卫整段裁剪，桌面 X11 路径零变化；无需额外链接库（fbdev 经
+# sys/ioctl.h + mmap 即可）。
 
 # ==================== DRM/KMS 显示驱动（无 fbdev 现代嵌入式板） ====================
-# Drive/Posix/Graphics/XPlatformFramebuffer_drm.c（及其 .h）同经上方 glob 自动
+# Drive/Posix/Graphics/XPlatformFramebuffer_drm.c（及其 .h）同经 glob 自动
 # 入列。功能受 XPLATFORM_DRM_ON 控制（默认 0；嵌入式目标以
 # -DXPLATFORM_DRM_ON=ON 开启，注册表符号随 fbdev 编译单元，FBDEV 开关须同
 # 开）。板上引导先试 DRM（/dev/dri/card0 dumb buffer 直写）失败再试 fbdev，
@@ -79,19 +92,18 @@ endif()
 # XGuiRemoteCodecNeon.h 以 __ARM_NEON__ 感知，桌面 x86/无 NEON 产物整头裁空
 # 恒标量——输出逐字节等价由 verify/perf9 rle_bench NEON 版 0 mismatch 红线
 # 自证（out/perf9/neon-bench.txt），未初始化安全由行内夹取+尾块标量回退保证。
+# [2026-11-01 模块化拆分] set_source_files_properties 是目录作用域的：该源
+# 文件已随 XGui 模块归 XinYueGui 目标编译，属性必须落在 Src/XGui/CMakeLists.txt
+# （目标定义目录）才生效——留在根会静默失效（搬库时的坑，已随迁）。
 option(XGUI_REMOTE_NEON
     "XGuiRemote 编解码热循环 NEON 加速（仅 ARM 交叉目标有意义）" ON)
-if(XGUI_REMOTE_NEON AND CMAKE_C_COMPILER_ID STREQUAL "GNU"
-        AND CMAKE_SYSTEM_PROCESSOR MATCHES "^arm")
-    # 仅 ARM32 加此参：aarch64 NEON 为标配且 gcc 拒绝 -mfpu（RK3568 板端/交叉实测报错）。
-    set_source_files_properties(
-        "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiRemoteCodec.c"
-        PROPERTIES COMPILE_OPTIONS "-mfpu=neon")
-endif()
 
 set(EXPORT_NAME XinYueC)
-#set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -O0  -Wall")
-#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0  -Wall")
+# 仓库根目录锚（2026-11-01 模块化拆分）：仅根函数 xinyue_force_include_config
+# 使用——函数体内的 CMAKE_CURRENT_LIST_DIR 取**调用者**目录（Src/XCore、
+# Drive、Test 模块各不相同），定位根下 CXinYueConfig.h 必须用根锚定变量；
+# 各模块自身文件一律用模块相对路径，不依赖本变量。
+set(XINYUE_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 set(CMAKE_C_STANDARD 99)
@@ -218,234 +230,34 @@ set(XUPGRADE_PRODUCT_VERSION "1.2.0")
 string(REPLACE "." "," XUPGRADE_PRODUCT_VERSION_RC "${XUPGRADE_PRODUCT_VERSION}")
 add_compile_definitions(XUPGRADE_PRODUCT_VERSION="${XUPGRADE_PRODUCT_VERSION}")
 include(CMake_Config.cmake)
-#查找include目录下的所有*.hpp,*.h头文件并路径列表保存到变量中
-FIND_INCLUDE_DIR(INCLUDE_SRC_LIST "Src")			#调用函数，指定参数
-FIND_INCLUDE_DIR(INCLUDE_DRIVE_LIST "Drive")			#调用函数，指定参数
-FIND_INCLUDE_DIR(INCLUDE_TEST_LIST "Test")			#调用函数，指定参数
-#将INCLUDE中路径列表加入工程	
-include_directories(${INCLUDE_SRC_LIST})
-include_directories(${INCLUDE_DRIVE_LIST})
-include_directories(${INCLUDE_TEST_LIST})
-# 公共平台接口直接位于 Src/XPlatform 下。这里显式加入该目录，避免递归
-# 头文件目录收集器只记录父目录而在 Visual Studio 构建中遗漏此叶子目录。
-include_directories(${CMAKE_CURRENT_LIST_DIR}/Src/XPlatform)
-# 工业设备层根目录：CXinYueConfig.h 反向包含 Industry/XIndustry_config.h，
-# 需要能解析该头（子目录头由 XinYueIndustry 目标传播）。
-include_directories(${CMAKE_CURRENT_LIST_DIR}/Industry)
-#递归搜索目录下的文件添加到变量中
-# XDateEdit.c/XTimeEdit.c（XDateTimeEdit 同族子类控件，Src/XGui/Widget/）
-# 经本 glob 自动入列——新增/删除源文件后须触发重新配置（改动本文件即可）。
-file(GLOB_RECURSE SRC_FILE "Src/*.c" )
-file(GLOB_RECURSE TEST_FILE "Test/*.c" )
-# 拼音 IME 翻译单元显式登记（XKEYBOARD_IME_ON 门控）：GLOB 列表在
-# 配置期固化，既有构建树不重配时 glob 感知不到新增文件（XPinyinEngine.c/
-# XPinyinTable.c 不入列即 LNK2019，第 1 轮门禁实锅）；REMOVE_
-# DUPLICATES 兜底——重配置后 glob 收编同名路径时去重，防双列入库。
-# 词组库 TU（XPinyinPhrase.c，XKEYBOARD_IME_PHRASE_ON=
-# XKEYBOARD_IME_ON&&XFILE_ON 门控）同批登记。词库资产
-# （Library/VirtualKeyboard/phrases_zh.txt 及解析夹具）不拷贝不入构建树：
-# 默认路径 ../Library/VirtualKeyboard 按 XFont 外挂字库同款三段解析——
-# CTest WORKING_DIRECTORY=bin（下方 add_test）直跑命中 ../ 前缀；
-# 非 bin 工作目录经 ../ 剥前缀重试；安装布局经 exe 目录兜底拼接。
-list(APPEND SRC_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XPinyinEngine.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XPinyinTable.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XPinyinPhrase.c"
-    # Qt Virtual Keyboard 对齐类族（XVIRTUALKEYBOARD_ON 门控）：显式登记
-    # 不 glob（glob 在配置期固化，构建树不重配时感知不到新增文件——
-    # XPinyinEngine.c LNK2019 同款教训）。
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardAbstractInputMethod.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardTrace.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardSelectionListModel.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardInputEngine.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardInputContext.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardSettings.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardDictionary.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardDictionaryManager.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardObserver.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardPlatformInputContext.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardPlainInputMethod.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardPinyinInputMethod.c")
-# XGuiRemote 远程窗口模块（XGuiRemoteProto/Codec/Loopback/Server/Client）：
-# 显式登记同因 glob 配置期固化——既有构建树不重配时 glob 感知不到
-# Src/XGui/Remote/ 新增文件（XPinyinEngine.c LNK2019 同款教训）；
-# REMOVE_DUPLICATES 兜底——重配置后 glob 收编同名路径时去重防双列入库。
-list(APPEND SRC_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiRemoteProto.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiRemoteCodec.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiRemoteLoopback.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiRemoteAuth.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiRemoteUdpChannel.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiServer.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiClient.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XRemoteSessionBar.c")
-list(REMOVE_DUPLICATES SRC_FILE)
-# XGuiDemo 是自带 main() 的独立演示可执行（见下方 XGuiWindowDemo_Test 目标），
-# 不能被卷进 Static/Dynamic 主程序（会与 main.c 重复定义 main）。
-file(GLOB_RECURSE XGUI_DEMO_FILE "Test/XGuiDemo/*.c" )
-if(XGUI_DEMO_FILE)
-    list(REMOVE_ITEM TEST_FILE ${XGUI_DEMO_FILE})
-endif()
-# XGuiApiTest 同理：自带 main 的独立 API 测试套件（XGuiApi_Test 目标，
-# 接线见文件尾注释），不得卷入主程序。
-file(GLOB_RECURSE XGUI_API_TEST_FILE "Test/XGuiApiTest/*.c" )
-if(XGUI_API_TEST_FILE)
-    list(REMOVE_ITEM TEST_FILE ${XGUI_API_TEST_FILE})
-endif()
-# xgui_font_scan_tool 同理：自带 main 的独立离屏字库巡检工具（
-# xgui_font_scan_tool 目标，接线见 XGuiGpu_Test 前注释），与主程序
-# main.c 双 main 冲突，必须从 Test/*.c glob 列表剔除。
-file(GLOB_RECURSE XGUI_FONT_SCAN_TOOL_FILE "Test/XGuiTest/xgui_font_scan_tool.c" )
-if(XGUI_FONT_SCAN_TOOL_FILE)
-    list(REMOVE_ITEM TEST_FILE ${XGUI_FONT_SCAN_TOOL_FILE})
-endif()
-# xgui_glyph_coverage_diff_tool 同理：自带 main 的 P2.5 门禁独立工具
-# （SW/GPU 两消费点字形覆盖图逐像素 diff + provider 新旧槽位逐位对照，
-# xgui_glyph_coverage_diff_tool 目标，见 XGuiGpu_Test 前接线），与
-# main.c 双 main 冲突，必须从 Test/*.c glob 列表剔除。
-file(GLOB_RECURSE XGUI_COVDIFF_TOOL_FILE
-    "Test/XGuiTest/xgui_glyph_coverage_diff_tool.c" )
-if(XGUI_COVDIFF_TOOL_FILE)
-    list(REMOVE_ITEM TEST_FILE ${XGUI_COVDIFF_TOOL_FILE})
-endif()
-# XGuiRemoteAuthTest 同理：自带 main 的访问口令认证矩阵测试（
-# XGuiRemoteAuth_Test 目标，见 XGuiRegression_Test 后接线），不得卷入主程序。
-file(GLOB_RECURSE XGUI_REMOTE_AUTH_TEST_FILE "Test/XGuiTest/XGuiRemoteAuthTest.c" )
-if(XGUI_REMOTE_AUTH_TEST_FILE)
-    list(REMOVE_ITEM TEST_FILE ${XGUI_REMOTE_AUTH_TEST_FILE})
-endif()
-# x_timer_coarse_repro 同理：自带 main 的 CoarseTimer（时间轮）最小复现
-# 探针（2026-10-22，定位 ESP8266 上框架定时器路径崩溃，见
-# platforms/esp8266/docs/PROGRESS.md §0-Y.6），与主程序双 main 冲突，必须剔除。
-file(GLOB_RECURSE XGUI_COARSE_REPRO_FILE
-    "Test/XGuiTest/x_timer_coarse_repro.c" )
-if(XGUI_COARSE_REPRO_FILE)
-    list(REMOVE_ITEM TEST_FILE ${XGUI_COARSE_REPRO_FILE})
-endif()
-# XGuiRemoteInputViewTest 同理：自带 main 的独立专项探针
-# （XGuiRemoteInputView_Test 目标，mcgs 战役输入路 2026-10-04），
-# 不得卷入主程序（与 main.c 重复定义 main）。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGuiRemoteInputViewTest.c")
-# XGuiDialogMoveTest 同理：自带 main 的 fbdev 弹层拖动条带归位离屏测试
-# （XGuiDialogMove_Test 目标，对话框拖动白块根修 2026-10-05 的回归锁；
-# 须 -DXPLATFORM_FBDEV_ON=ON 构建才激活，见文件头注），不得卷入主程序。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGuiDialogMoveTest.c")
-# XGuiMirrorFidelityTest 同理：自带 main 的 fbdev 镜像保真回环离屏测试
-# （XGuiMirrorFidelity_Test 目标，perf9 路2 白块时序口/换页脏区完整性/
-#  热切换/FB_REQUEST 首帧实效的回归锁；须 -DXPLATFORM_FBDEV_ON=ON 构建
-#  才激活，见文件头注），不得卷入主程序。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGuiMirrorFidelityTest.c")
-# XGuiRemoteAdaptTest 同理：自带 main 的 Xvfb 会话直跑测试（XGuiRemoteAdapt_
-# Test 目标，perf9 路4 自适应降档阶梯单元+回环量化；见文件头注），不得
-# 卷入主程序（与 main.c 重复定义 main）。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGuiRemoteAdaptTest.c")
-# XGuiKeyboardDragTest 同理：自带 main 的键盘紧凑拖动专项测试（
-# XGuiKeyboardDrag_Test 目标，1eb98412 键盘紧凑拖动战役新增；当时漏加
-# 本剔除致 XinYueC_Static/Dynamic 与 main.c 重复定义 main、all 目标
-# 链接失败），不得卷入主程序。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGuiKeyboardDragTest.c")
-# bold_ab_tool 同理：自带 main 的粗体真字体 A/B 离屏验证（xgui_font_bold_ab
-# 目标，2026-10-08 字重变体战役新增；当时漏加本剔除致 all 目标再次断链
-# ——同一坑第二次踩， TEST_FILE 剔除三查已写入构建协议），不得卷入主程序。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/bold_ab_tool.c")
-# xntp_min_repro 同理：自带 main 的 XNtp 最小复现独立可执行
-# （XNtpMinRepro_Test 目标，2026-10-22 NTP 应答超时根修车道诊断工具），
-# 不得卷入主程序（与 main.c 重复定义 main）。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xntp_min_repro.c")
-# xmodbus_android_probe 同理：自带 main 的安卓真机 Modbus TCP 主站轮询
-# 探针独立可执行（XModbusAndroidProbe 目标，2026-10-25 安卓 seccomp 拒
-# io_uring_setup 根修车道诊断工具），不得卷入主程序（与 main.c 重复定义
-# main）——TEST_FILE 剔除三查同款坑第五次。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xmodbus_android_probe.c")
-# XScrollTouchProbe / XGestureRecognizerTest 同理：自带 main 的独立可执行
-# （XScrollTouchProbe_Test / XGestureRecognizer_Test 目标，2026-10-29 触摸
-# 跟手滚动与手势识别器战役新增），不得卷入主程序（与 main.c 重复定义
-# main）——TEST_FILE 剔除三查同款坑第六次（漏加即 XinYueC_Static/_Dynamic
-# 链接失败）。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XScrollTouchProbe.c"
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGestureRecognizerTest.c")
-# xmodbus_hub_test / xfdv_atv61_test / xfdv_m512_test / xfdv_bus485_test /
-# xprotocol_campaign_test 五个闭环测试原先各自带 main、按独立可执行剔除；
-# 2026-10-29 去 main 收编进主程序（菜单 + --test/Test 命令分派），随
-# TEST_FILE 编译，不再需要剔除（无 main，不会与 main.c 重复定义）。
-# XTimerWheelPhaseTest 同理：自带 main 的时间轮「相位落槽」回归测试独立
-# 可执行（2026-10-28 顶栏时钟 1s 变 1.8s 根修的回归锁：错相注册 1000/
-# 2500ms Coarse 定时器并逐次断言触发间隔），不得卷入主程序。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XTimerTest/XTimerWheelPhaseTest.c")
-# xgui_dialog_portrait_probe 同理：自带 main 的对话框族竖屏适配探针
-# （XDialogPortraitProbe 目标，2026-10-26 对话框竖屏适配战役目验工具）。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiDemo/xgui_dialog_portrait_probe.c")
-# xdevice_wifi_probe 同理：自带 main 的无线契约探针独立可执行
-# （XDeviceWiFiProbe 目标，2026-10-24 无线平台抽象 L0 实测工具），
-# 不得卷入主程序（与 main.c 重复定义 main）。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XDeviceTest/xdevice_wifi_probe.c")
-# xspinbox_geometry_probe 同理：自带 main 的步进列几何四方口径探针
-# （XSpinBoxGeometryProbe 目标，2026-10-27 微调框步进列几何单源化战役
-# 的可复现证据工具），不得卷入主程序（与 main.c 重复定义 main）。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/xspinbox_geometry_probe.c")
-# xscroll_clip_probe 同理：自带 main 的滚动区子控件越界裁剪探针
-# （XScrollClipProbe 目标，2026-10-27 滚动区子控件越界绘制根修的可复现
-# 证据工具），不得卷入主程序（与 main.c 重复定义 main）——TEST_FILE 剔除
-# 同款坑。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/xscroll_clip_probe.c")
-# 高精度定时器组压测原为自带 main 的独立驱动（Test/XTimerTest/
-# hr_stress_driver.c），2026-10-25 该文件已删除：压测改从测试菜单进入
-# （「定时器 → XHrTimer(高精度定时器组) → 压测(随机增删+句柄回收)」，
-# 实现见 Test/XTimerTest/XHrTimerTest.c），随 TEST_FILE 编译进主程序，
-# 不再需要剔除（无 main，不会与 main.c 重复定义）。
-# xdevice_wifi_posix_parsers_test 同理：自带 main 的 POSIX 无线后端解析器
-# 单元测试独立可执行（XDeviceWiFiParsers_Test 目标，2026-10-25 Linux
-# 无线适配补齐），不得卷入主程序（与 main.c 重复定义 main）。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XDeviceTest/xdevice_wifi_posix_parsers_test.c")
-# xdevice_iou_passive_probe 同理：自带 main 的异步后端「被动可读 fd」通道
-# 探针独立可执行（XDeviceIoUPassiveProbe 目标，2026-10-26 触摸唤醒通道
-# io_uring 侧验证工具），不得卷入主程序（与 main.c 重复定义 main）。
-list(REMOVE_ITEM TEST_FILE
-    "${CMAKE_CURRENT_LIST_DIR}/Test/XDeviceTest/xdevice_iou_passive_probe.c")
-# xprotocol_campaign_test 的旧剔除项随 2026-10-29 去 main 收编一并移除
-# （见上方五个闭环测试收编说明）。
-file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
-# 桌面（非交叉）构建排除嵌入式移植层（2026-10-05 回归门修复）：FreeRTOS
-# portmacro.h/tasks.c 含 ARM CMSIS 内联汇编（mrs/msr basepri、isb），x86
-# cc1 直接汇编报错；STM32 cmsis 头无器件宏同样 #error。历史上门禁 build/
-# 目录的 glob 快照未含这两个目录（配置早于其入库），全量重配置即暴露。
-# 交叉构建同理排除（perf9 上屏部署修复）：非 FreeRTOS 平台的交叉构建
-# （如 armel/A33）glob 到 ARM_CM4F port 同样汇编失败（msr psp/basepri 为
-# Cortex-M 专有寄存器）；仅当未来恢复 XINYUE_PLATFORM_FREERTOS 分支时
-# 才放开由其自管源集。
-if(NOT CMAKE_CROSSCOMPILING OR NOT XINYUE_PLATFORM_FREERTOS)
-    list(FILTER DRIVE_FILE EXCLUDE REGEX ".*/FreeRTOS/.*")
-    list(FILTER DRIVE_FILE EXCLUDE REGEX ".*/STM32/.*")
-endif()
-# Espressif/ESP8266 移植层（2026-10-16 入库）：源文件依赖 ESP-IDF SDK 头
-# （c_types.h 等），桌面/MSVC 编译期即缺头报错；其构建入口是 platforms/esp8266/
-# 子工程（独立根 CMakeLists + 自带 toolchain），不与本根 glob 共存。
-list(FILTER DRIVE_FILE EXCLUDE REGEX ".*/Espressif/.*")
-# android_main.c 是 demo APK 的 NativeActivity 壳接线（引用 demo 入口
-# xgui_window_demo_main，定义 ANativeActivity_onCreate），归 xguidemo
-# 目标所有（该目标已显式登记此文件）；留在框架库里会让动态库
-# --no-undefined 链接因找不到 demo 入口失败，且与壳目标重复编译。
-if(ANDROID)
-    list(REMOVE_ITEM DRIVE_FILE "${CMAKE_CURRENT_LIST_DIR}/Drive/Android/android_main.c")
-endif()
-add_library(${EXPORT_NAME}S  STATIC  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE})
-add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE} ${PUBLIC_HDRS})
 
+# ==================== 模块化拆分（2026-11-01） ====================
+# 源文件搜集与头目录自采已下放各模块（模块自己的头文件自己包含）：
+#   Src/XCore/CMakeLists.txt  核心框架模块（XinYueCore；最小系统裁剪单元，
+#                        只含自己的头/源），抬升 INCLUDE_XCORE_LIST_LIFT
+#   Drive/CMakeLists.txt  平台组合模块（主库 XinYueCS/XinYueC = Drive 源树
+#                        + 挂 XinYueCore/XGuiLayer；只含自己的头/源），抬升
+#                        INCLUDE_DRIVE_LIST
+#   Src/XGui/CMakeLists.txt  GUI 框架模块（XinYueGui，2026-11-01 回迁 Src/
+#                        与 XCore 平级；头目录走链接图传递，不抬升）
+#   Src/Industry/CMakeLists.txt  工业设备层模块（XinYueIndustry，2026-11-01
+#                        迁入 Src/ 与 XCore/XGui 平级；自带测试可执行）
+#   HighSpeedFilter/CMakeLists.txt（模板/演示项目，自带 main，留仓库根）
+#   Test/CMakeLists.txt  测试/工具/demo 可执行模块（TEST_FILE 及全部 exe）
+# 根保留：全局配置/编译定义、平台依赖探测与**链接落地**（探测段只探测+
+# 注入编译定义+注入目录；链接在接线段对 Drive 模块的主库目标兑现，跨目录
+# 改目标经 CMP0079 NEW）、第三方子目录、模块接线与安装收尾。
+# 目录级 include_directories 在接线段按模块抬升的清单落地（先于 Library/
+# 等子目录注册，保持原「根目录级快照」语义——Library/zlib 的 TU 引用
+# XMemory.h/XCrc.h，依赖该目录级路径）。
+
+# ==================== 强制包含配置头（各模块共用） ====================
+# [原 449-464 迁此 2026-11-01] 函数只在其定义作用域及子目录可见——XCore、
+# Drive、Test 都是根的子目录，放根全部可见；定义在任一模块内则其余模块
+# 不可见。
+# [修路径] 函数体内的 CMAKE_CURRENT_LIST_DIR 取**调用者**目录，拆分后从
+# 模块调用会解析成 "…/Test/Src/CXinYueConfig.h" 错路径，改用根锚定
+# 变量 XINYUE_SOURCE_DIR。
 # ESP8266 移植给大量 .h/.c 补了 #if MODULE_ON 文件顶部守卫，开关默认值在
 # CXinYueConfig.h（及其拉入的模块 config）。桌面原先没有强制包含，TU 首行
 # 的 #if 因宏未定义按 0 求值，整文件被裁空（实测 mbedtls 引用
@@ -454,38 +266,32 @@ add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE} ${
 function(xinyue_force_include_config target)
     if(MSVC)
         target_compile_options(${target} PRIVATE
-            "/FI${CMAKE_CURRENT_LIST_DIR}/Src/CXinYueConfig.h")
+            "/FI${XINYUE_SOURCE_DIR}/Src/CXinYueConfig.h")
     else()
         target_compile_options(${target} PRIVATE
-            "-include" "${CMAKE_CURRENT_LIST_DIR}/Src/CXinYueConfig.h")
+            "-include" "${XINYUE_SOURCE_DIR}/Src/CXinYueConfig.h")
     endif()
 endfunction()
-xinyue_force_include_config(${EXPORT_NAME}S)
-xinyue_force_include_config(${EXPORT_NAME})
 
-# ==================== 外部库（以静态库方式构建，合并到 XinYueC 动态库中）====================
-# 注意：外部库（lwip/zlib/fatfs）内部引用了 XinYueC 核心符号（XMalloc_*、XCrc32_*、
-# XRandomGenerator_*、XTimerData_* 等），与 XinYueC 存在双向依赖，无法独立为动态库。
-# 因此保持为静态库，由 XinYueC 动态库统一链接。
-
-# ==================== X11（Linux 原生窗口后端） =====================
+# ==================== X11（Linux 原生窗口后端，探测+定义注入） =====================
 # XPlatformNativeWindow_posix.c 需要 Xlib 头与运行库。检测到 X11 时注入
-# XINYUE_C_HAS_X11=1 编译宏并公开链接 X11 库（静态库 PUBLIC 传播给可执行程序，
-# 动态库 PRIVATE 仅自身链接阶段解析）；未检出时 Posix 原生窗口文件整段被
-# 守卫裁剪，由 Drive/XPlatformNativeWindow_unsupported.c 兜底，XWindow 回落
-# 虚拟 WId 行为，嵌入式构建不受影响。
+# XINYUE_C_HAS_X11=1 编译宏并链接 X11 库（链接在下方"平台/第三方链接落地"
+# 段兑现：静态库 PUBLIC 传播给可执行程序，动态库 PRIVATE 仅自身链接阶段
+# 解析）；未检出时
+# Posix 原生窗口文件整段被守卫裁剪，由 Drive/XPlatformNativeWindow_unsupported.c
+# 兜底，XWindow 回落虚拟 WId 行为，嵌入式构建不受影响。
 # Android 排除（整段）：安卓交叉构建（NDK）在 Linux 宿主上会把宿主
 # X11/OpenGL/pkg-config 依赖（dbus/fontconfig 等）误探进来——头文件
 # 侥幸能编、链接的是宿主 x86_64 库必炸；Windows 宿主因探不到而隐式
 # 跳过，本条件把该事实显式化。安卓图形/输入/字体一律走 Drive/Android
 # 平台层（字体=APK assets 外挂目录），不吃本段任何宏。
+# [接线契约] XGui 模块（XGpuRenderBackend.c 等消费 XINYUE_C_HAS_*）在
+# add_subdirectory(Src/XGui) 时快照本段定义——探测必须先于全部模块接线。
 if(UNIX AND NOT APPLE AND NOT ANDROID)
     find_package(X11)
     if(X11_FOUND)
         add_compile_definitions(XINYUE_C_HAS_X11=1)
         include_directories(${X11_INCLUDE_DIRS})
-        target_link_libraries(${EXPORT_NAME}S PUBLIC ${X11_LIBRARIES})
-        target_link_libraries(${EXPORT_NAME} PRIVATE ${X11_LIBRARIES})
         # RandR（屏幕枚举/几何变化，XPlatformNativeWindow_posix.c 屏幕段）：
         # 优先 dev 安装的 Xrandr 链接名；仅有运行库（libXrandr.so.2）时按
         # 版本名兜底（函数声明内联在平台文件中，无需 libxrandr-dev 头）。
@@ -496,8 +302,6 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
         endif()
         if(XINYUE_XRANDR_LIBRARY)
             add_compile_definitions(XINYUE_C_HAS_XRANDR=1)
-            target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_XRANDR_LIBRARY})
-            target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_XRANDR_LIBRARY})
         endif()
         # XI2（触摸/平滑滚轮，XPlatformNativeWindow_posix.c XI2 段）：
         # 优先 dev 链接名 Xi；仅有运行库（libXi.so.6）时按版本名兜底
@@ -513,8 +317,6 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
         check_include_files("X11/extensions/XI2.h" XINYUE_XI2_HEADER)
         if(XINYUE_XI_LIBRARY AND XINYUE_XI2_HEADER)
             add_compile_definitions(XINYUE_C_HAS_XI2=1)
-            target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_XI_LIBRARY})
-            target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_XI_LIBRARY})
         endif()
         # DPMS（显示器电源管理，Drive/Posix/Graphics/XPlatformPower_posix.c）：
         # DPMSForceLevel 位于 libXext（**不是** libXss），本机通常只有运行库
@@ -528,8 +330,6 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
         endif()
         if(XINYUE_XEXT_LIBRARY)
             add_compile_definitions(XINYUE_C_HAS_DPMS=1)
-            target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_XEXT_LIBRARY})
-            target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_XEXT_LIBRARY})
         endif()
     endif()
 
@@ -538,46 +338,6 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
     find_package(OpenGL QUIET)
     if(X11_FOUND AND OPENGL_FOUND)
         add_compile_definitions(XINYUE_C_HAS_OPENGL=1)
-        target_link_libraries(${EXPORT_NAME}S PUBLIC ${OPENGL_gl_LIBRARY})
-        target_link_libraries(${EXPORT_NAME} PRIVATE ${OPENGL_gl_LIBRARY})
-    endif()
-    # XPlatformGraphics 的 EGL/GLES 后端（Drive/Posix/Graphics/
-    # XPlatformGraphics_egl.c）：与 GLX 后端等价并列，由运行期开关
-    # XGUI_GL_BACKEND=egl|glx 选择（默认 EGL 优先）。
-    # 存在理由：嵌入式 BSP 常只提供 EGL/GLES 用户态库而不提供 GLX DRI
-    # 驱动（RK3568 厂商 BSP 即如此），此时 GLX 路径会静默回退软件光栅，
-    # 而 EGL 路径能拿到厂商 GPU。EGL 不可用时自动回落 GLX，行为不变。
-    # 交叉构建注意：Debian multiarch 把 EGL 放在 <sysroot>/lib/<arch>/
-    # 而非 <sysroot>/usr/lib/<arch>/，且 CMAKE_FIND_ROOT_PATH_MODE_LIBRARY
-    # 为 ONLY ⇒ find_package(EGL) 找不到库；显式补候选路径再探测。
-    if(X11_FOUND)
-        find_package(EGL QUIET)
-        if(NOT EGL_FOUND)
-            foreach(_egl_dir
-                    ${CMAKE_SYSROOT}/lib/${CMAKE_LIBRARY_ARCHITECTURE}
-                    ${CMAKE_SYSROOT}/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}
-                    ${CMAKE_SYSROOT}/lib
-                    ${CMAKE_SYSROOT}/usr/lib)
-                find_library(XINYUE_EGL_LIBRARY NAMES EGL
-                             PATHS ${_egl_dir} NO_DEFAULT_PATH)
-                if(XINYUE_EGL_LIBRARY)
-                    set(EGL_FOUND TRUE)
-                    set(EGL_INCLUDE_DIR ${CMAKE_SYSROOT}/usr/include)
-                    set(EGL_LIBRARIES ${XINYUE_EGL_LIBRARY})
-                    break()
-                endif()
-            endforeach()
-        endif()
-        if(EGL_FOUND)
-            add_compile_definitions(XINYUE_C_HAS_EGL=1)
-            if(TARGET EGL::EGL)
-                target_link_libraries(${EXPORT_NAME}S PUBLIC EGL::EGL)
-                target_link_libraries(${EXPORT_NAME} PRIVATE EGL::EGL)
-            else()
-                target_link_libraries(${EXPORT_NAME}S PUBLIC ${EGL_LIBRARIES})
-                target_link_libraries(${EXPORT_NAME} PRIVATE ${EGL_LIBRARIES})
-            endif()
-        endif()
     endif()
     # Android 排除：NDK sysroot 带 libvulkan 存根会误启用 X11 窗口 surface
     # 路径（XPlatformGraphics_posix.c 的 VK_USE_PLATFORM_XLIB_KHR 需要 Xlib）。
@@ -587,8 +347,6 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
     endif()
     if(XINYUE_VULKAN_LIBRARY)
         add_compile_definitions(XINYUE_C_HAS_VULKAN=1)
-        target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_VULKAN_LIBRARY})
-        target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_VULKAN_LIBRARY})
     endif()
 
     # Linux AT-SPI 辅助功能后端使用 dbus-1；缺失开发包时自动回退 Drive
@@ -608,16 +366,12 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
             add_compile_definitions(XINYUE_C_HAS_DBUS=1)
             include_directories(${XINYUE_DBUS_INCLUDE_DIRS})
             link_directories(${XINYUE_DBUS_LIBRARY_DIRS})
-            target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_DBUS_LIBRARIES})
-            target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_DBUS_LIBRARIES})
         endif()
         pkg_check_modules(XINYUE_FONTCONFIG QUIET fontconfig)
         if(XINYUE_FONTCONFIG_FOUND)
             add_compile_definitions(XINYUE_C_HAS_FONTCONFIG=1)
             include_directories(${XINYUE_FONTCONFIG_INCLUDE_DIRS})
             link_directories(${XINYUE_FONTCONFIG_LIBRARY_DIRS})
-            target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_FONTCONFIG_LIBRARIES})
-            target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_FONTCONFIG_LIBRARIES})
         endif()
     endif()
 endif()
@@ -635,16 +389,12 @@ if(UNIX AND NOT ANDROID)
         add_compile_definitions(XINYUE_C_HAS_LIBUSB=1)
         include_directories(${XINYUE_LIBUSB_INCLUDE_DIRS})
         link_directories(${XINYUE_LIBUSB_LIBRARY_DIRS})
-        target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_LIBUSB_LIBRARIES})
-        target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_LIBUSB_LIBRARIES})
     else()
         find_path(XINYUE_LIBUSB_INCLUDE_DIR libusb-1.0/libusb.h)
         find_library(XINYUE_LIBUSB_LIBRARY NAMES usb-1.0 libusb-1.0)
         if(XINYUE_LIBUSB_INCLUDE_DIR AND XINYUE_LIBUSB_LIBRARY)
             add_compile_definitions(XINYUE_C_HAS_LIBUSB=1)
             include_directories(${XINYUE_LIBUSB_INCLUDE_DIR})
-            target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_LIBUSB_LIBRARY})
-            target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_LIBUSB_LIBRARY})
         endif()
     endif()
 endif()
@@ -656,6 +406,8 @@ endif()
 # 逻辑（pcap.h 仅在 LWIP_USE_PHYSICAL 手动开启时才被包含，跳过链接不影响
 # 任何现有功能）。FIND_ROOT_PATH_MODE_LIBRARY=ONLY 限定探测只搜 sysroot，
 # 不会误抓宿主 x86 的 libpcap。
+# 【模块契约】XINYUE_UNIX_EXTRA_LIBS / XINYUE_UNIX_THREAD_LIBS 必须在根定义
+# （Industry/HighSpeedFilter/Test 模块的可执行目标链接行都引用）。
 set(XINYUE_UNIX_EXTRA_LIBS "")
 if(UNIX)
     find_library(XINYUE_PCAP_LIBRARY NAMES pcap)
@@ -686,122 +438,13 @@ else()
     set(XINYUE_UNIX_THREAD_LIBS m pthread)
 endif()
 
-# ==================== zlib（压缩库）====================
-# 以子目录静态库方式集成，详见 Library/zlib/CMakeLists.txt
-add_subdirectory(Library/zlib)
-# ==================== FatFs（FAT/exFAT 文件系统）====================
-# 以子目录静态库方式集成，详见 Library/Fatfs/CMakeLists.txt
-add_subdirectory(Library/Fatfs)
-# ==================== lwIP（轻量级 TCP/IP 协议栈）====================
-# 以子目录静态库方式集成，详见 Library/lwip/CMakeLists.txt
-add_subdirectory(Library/lwip)
-# ==================== mbedTLS（XinYueC SSL/TLS 后端）====================
-# 以子目录静态库方式集成，详见 Library/mbedtls/CMakeLists.txt
-add_subdirectory(Library/mbedtls)
-# ==================== PCRE2（Qt 6.8 正则表达式引擎）====================
-add_subdirectory(Library/pcre2)
-# ==================== TinyUSB（嵌入式 USB 协议栈）====================
-# 以子目录静态库方式集成，详见 Library/tinyusb/CMakeLists.txt
-# 默认不启用，仅嵌入式构建通过 XINYUE_C_HAS_TINYUSB 开启。
-add_subdirectory(Library/tinyusb)
-
-# ==================== Industry（工业设备层）====================
-# 以子目录静态库方式集成，详见 Industry/CMakeLists.txt
-# 通道接口（XChannel：XIoChannel + DI/DO/AI/AO + 适配器）与工业设备
-# （XSolenoidValve 电磁阀）；测试可执行 XIndustryValve_Test 随子目录注册。
-add_subdirectory(Industry)
-
-# ==================== SQLite（源码方式集成）====================
-# SQLite 作为可替换的源码组件编译，适配器不依赖系统 libsqlite3。
-add_subdirectory(Library/sqlite)
-
-# ==================== FreeType（字体光栅化库，最小集合）====================
-# 以子目录静态库方式集成，详见 Library/freetype/CMakeLists.txt
-add_subdirectory(Library/freetype)
-
-# 轮廓字 FT 模块（XFONT_FT_ON，见 XFont_config.h）的包含前置：
-# 根工程经 fontconfig 检测把 -I/usr/include/freetype2（系统 FreeType，
-# 本机 26.2.20 与捆绑 2.13 不同源）目录级注入，而目录级 include 先于
-# target 传播 include 命中——不前置的话 XPainter.c/XFontFt.c 的
-# <ft2build.h> 会吃到系统头、链的却是捆绑 .a（跨版本混编）。构建目录在
-# 前：生成的最小 ftmodule.h（只注册 smooth 渲染器）必须先于捆绑全量
-# ftmodule.h 命中，否则未编译字体驱动的模块声明落成链接缺符号。
-include_directories(BEFORE
-    "${CMAKE_BINARY_DIR}/Library/freetype/include"
-    "${CMAKE_SOURCE_DIR}/Library/freetype/include")
-
-# 链接 FreeType 静态库（接线方式同 zlib：静态库 PRIVATE 依赖经
-# LINK_ONLY 传给最终可执行文件）
-target_link_libraries(${EXPORT_NAME}S PRIVATE freetype)
-target_link_libraries(${EXPORT_NAME} PRIVATE freetype)
-# ==================== xxHash（非密码学哈希库）====================
-# 上游 xxHash（Yann Collet，BSD-2-Clause），XCryptographicHash_XxHash64 的实现。
-# 以子目录静态库方式集成，详见 Library/xxHash/CMakeLists.txt
-add_subdirectory(Library/xxHash)
-
-# [2026-10-26 armel 交叉构建固化] 32 位 ARM（gnueabi soft-float）的
-# 64 位原子操作（XAtomic_GCC 的 __atomic_store_8 等）需链 libatomic——
-# 此前以手配链接器旗标方式加过（分割条拖拽限帧战役 1018 记录"armel
-# 交叉链必须 -latomic"），本次入库固化：仅交叉编译时追加。非交叉
-# 桌面/安卓构建不受影响。
-if(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm")
-    # [2026-10-26 落点修正] link_libraries 会把 -latomic 放在
-    # libXinYueCS.a 之前（首试实证 undefined __atomic_store_8）——
-    # 必须挂静态库 PUBLIC 依赖，消费端链接行才落在库后可解析。
-    target_link_libraries(${EXPORT_NAME}S PUBLIC atomic)
-endif()
-
-# ==================== 平台模板（platforms/）====================
-# ⚠ 2026-10-22 起，平台模板**不作为本根工程的子目录**（2026-10-24 迁入
-#   platforms/ 后结论不变）。
-#   实测把 ESP8266 模板 add_subdirectory 进来后，VS 的启动目标列表里会出现
-#   两个 esp8266_nonos_fw.slnx（VS 的 CMake 扩展对"同一工程被独立打开 + 又被
-#   父工程纳入"这种双份 .sln 识别不了），两个都点不动、无法切换执行。
-#   结论：platforms/esp8266/ 保持【独立子工程】，用下面的方式单独打开。
-#
-#   独立打开（推荐，VS 一键可用）：
-#       cmake -S platforms/esp8266 -B build_esp
-#       cmake --build build_esp                  # 构建固件
-#       cmake --build build_esp --target flash   # 烧录
-#       cmake --build build_esp --target monitor # 串口日志
-#   VS 里：File > Open > Folder... 选 platforms/esp8266/，或直接 Open
-#   build_esp\ 里的 .sln。
-#
-#   底层构建其实不依赖 CMake：直接
-#       bash platforms/esp8266/nonos/tools/build_fw_final.sh
-#   即可产出 platforms/esp8266/nonos/fw_final.bin（CMake 只是编排层）。
-#
-#   ⚠ platforms/android/ 只是打包脚本，没有 CMakeLists——安卓的编译由本文件
-#   的 xguidemo 目标承担，打包另跑 platforms/android/build_apk.sh。
-#   项目结构与边界见 platforms/README.md。
-
-# 链接 mbedTLS 静态库
-target_link_libraries(${EXPORT_NAME}S PRIVATE mbedtls)
-target_link_libraries(${EXPORT_NAME} PRIVATE mbedtls)
-# 链接 PCRE2 16-bit 静态库
-target_link_libraries(${EXPORT_NAME}S PRIVATE pcre2)
-target_link_libraries(${EXPORT_NAME} PRIVATE pcre2)
-# 链接 SQLite 源码静态库
-target_link_libraries(${EXPORT_NAME}S PRIVATE sqlite)
-target_link_libraries(${EXPORT_NAME} PRIVATE sqlite)
-# 链接 xxHash 静态库
-target_link_libraries(${EXPORT_NAME}S PRIVATE xxhash)
-target_link_libraries(${EXPORT_NAME} PRIVATE xxhash)
-# 链接 lwIP 静态库
-target_link_libraries(${EXPORT_NAME}S PRIVATE lwip)
-target_link_libraries(${EXPORT_NAME} PRIVATE lwip)
-# 链接 zlib 静态库
-target_link_libraries(${EXPORT_NAME}S PRIVATE zlib)
-target_link_libraries(${EXPORT_NAME} PRIVATE zlib)
-# 链接 FatFs 静态库
-target_link_libraries(${EXPORT_NAME}S PRIVATE fatfs)
-target_link_libraries(${EXPORT_NAME} PRIVATE fatfs)
-# Windows 平台依赖：
+# ==================== Windows 平台依赖（探测 + 库清单组装） ====================
 # - Advapi32：XSystem 后端调整关机权限；
 # - User32：窗口类注册/句柄操作/消息泵（XPlatformNativeWindow_win32.c）；
 # - Gdi32：DIB 后备缓冲 + BitBlt/SetDIBitsToDevice 上屏
 #   （XPlatformBackingStore_win32.c / XPlatformNativeWindow_win32.c）。
-# 静态库将依赖公开给最终可执行文件，动态库在自身链接阶段解析。
+# 链接在下方"平台/第三方链接落地"段兑现：静态库将依赖公开给最终可执行
+# 文件，动态库在自身链接阶段解析。
 if(WIN32)
     # Vulkan：优先 SDK（find_package）；无 SDK 时回退仓库内 vendored
     # Vulkan-Headers + 由系统 vulkan-1.dll 导出生成的导入库
@@ -846,10 +489,262 @@ if(WIN32)
     if(XINYUE_WIN32_VULKAN_VAR)
         list(APPEND XINYUE_WIN32_LIBS ${XINYUE_WIN32_VULKAN_VAR})
     endif()
+endif()
+
+# ==================== 平台模板（platforms/）====================
+# ⚠ 2026-10-22 起，平台模板**不作为本根工程的子目录**（2026-10-24 迁入
+#   platforms/ 后结论不变）。
+#   实测把 ESP8266 模板 add_subdirectory 进来后，VS 的启动目标列表里会出现
+#   两个 esp8266_nonos_fw.slnx（VS 的 CMake 扩展对"同一工程被独立打开 + 又被
+#   父工程纳入"这种双份 .sln 识别不了），两个都点不动、无法切换执行。
+#   结论：platforms/esp8266/ 保持【独立子工程】，用下面的方式单独打开。
+#
+#   独立打开（推荐，VS 一键可用）：
+#       cmake -S platforms/esp8266 -B build_esp
+#       cmake --build build_esp                  # 构建固件
+#       cmake --build build_esp --target flash   # 烧录
+#       cmake --build build_esp --target monitor # 串口日志
+#   VS 里：File > Open > Folder... 选 platforms/esp8266/，或直接 Open
+#   build_esp\ 里的 .sln。
+#
+#   底层构建其实不依赖 CMake：直接
+#       bash platforms/esp8266/nonos/tools/build_fw_final.sh
+#   即可产出 platforms/esp8266/nonos/fw_final.bin（CMake 只是编排层）。
+#
+#   ⚠ platforms/android/ 只是打包脚本，没有 CMakeLists——安卓的编译由
+#   Drive/Src/XCore/Test 模块承担（xguidemo 目标在 Test 模块），打包另跑
+#   platforms/android/build_apk.sh。项目结构与边界见 platforms/README.md。
+
+# ==================== FreeType 包含前置（先于全部模块接线） ====================
+# 轮廓字 FT 模块（XFONT_FT_ON，见 XFont_config.h）的包含前置：
+# 根工程经 fontconfig 检测把 -I/usr/include/freetype2（系统 FreeType，
+# 本机 26.2.20 与捆绑 2.13 不同源）目录级注入，而目录级 include 先于
+# target 传播 include 命中——不前置的话 XPainter.c/XFontFt.c 的
+# <ft2build.h> 会吃到系统头、链的却是捆绑 .a（跨版本混编）。构建目录在
+# 前：生成的最小 ftmodule.h（只注册 smooth 渲染器）必须先于捆绑全量
+# ftmodule.h 命中，否则未编译字体驱动的模块声明落成链接缺符号。
+# [拆分注意] 路径注入必须在 add_subdirectory(Src/XCore)/add_subdirectory(Drive)
+# **之前**：模块子目录的目录级快照才含这两条前置路径。
+include_directories(BEFORE
+    "${CMAKE_BINARY_DIR}/Library/freetype/include"
+    "${CMAKE_SOURCE_DIR}/Library/freetype/include")
+
+# ==================== 模块接线 ====================
+# 顺序契约（动了会炸，见各注释）：
+#   1. Src/XCore 最先（核心库）→ Drive（主库组合，挂 XCore/XGuiLayer）；
+#      各模块自采头目录并抬升根作用域，后续模块经链接图拿框架头。
+#   2. 根 include_directories 落地抬升清单：Library/*（zlib TU 引用
+#      XMemory.h/XCrc.h）、XGui（TU 经 CXinYueConfig.h 反向含框架头）等
+#      子目录注册时快照到 XCore/Drive 头目录。
+#   3. XGui 在平台探测定义之后（XINYUE_C_HAS_* 对 XinYueGui 生效——模块
+#      头注释的接线契约）。
+#   4. 平台/第三方链接落地段在 Library/* 注册之后：对 Drive 模块目标
+#      （XinYueCS/XinYueC）兑现（CMP0079 NEW 跨目录）。
+#   5. XGuiLayer 在 add_subdirectory(Src/XGui) 之后定义：Drive 模块以纯
+#      目标名预挂 XGuiLayer（generate 期解析），此处接通 XinYueGui。
+#   6. enable_testing() 在根：顶层 ctest 可见 Test 模块注册的全部用例。
+
+# 工业设备层根目录（Src/Industry）：CXinYueConfig.h 反向包含
+# Industry/XIndustry_config.h，需要能解析该头。
+# [快照语义实证 2026-11-01] 目录级 INCLUDE_DIRECTORIES 是 add_subdirectory
+# 时刻的快照、之后对根的追加不下发已注册子目录——必须先于
+# add_subdirectory(Src/XCore) 入根（核心/主库 TUs 全量 /FI CXinYueConfig.h，
+# 快照缺这条即 C1083 XIndustry_config.h）。
+# [清理 2026-11-01] 原同位置的仓库根 -I 兜底已删：全仓唯一根前缀包含
+# "XGui/XGuiConfig.h" 由 Src 根解析（XCore 模块抬升的 /.. 项；XGui 居
+# Src/XGui 后仓库根下已无 XGui/ 目录），仓库根 -I 零消费。
+include_directories(${XINYUE_SOURCE_DIR}/Src/Industry)
+
+add_subdirectory(Src/XCore)
+# 抬升落地：XCore 模块自采的头目录 + 上级 Src 根（CXinYueConfig.h →
+# "XGui/XGuiConfig.h"/"Industry/XIndustry_config.h" 反向包含链，先注册的
+# Library/* 与后续模块的目录级快照依赖）。
+include_directories(${INCLUDE_XCORE_LIST_LIFT})
+add_subdirectory(Drive)
+# 抬升落地：Drive 模块自采的 Drive 头目录。
+include_directories(${INCLUDE_DRIVE_LIST})
+
+# ==================== 外部库（以静态库方式构建，合并到 XinYueC 动态库中）====================
+# 注意：外部库（lwip/zlib/fatfs）内部引用了 XinYueC 核心符号（XMalloc_*、XCrc32_*、
+# XRandomGenerator_*、XTimerData_* 等），与 XinYueC 存在双向依赖，无法独立为动态库。
+# 因此保持为静态库，由 XinYueC 动态库统一链接。
+
+# ==================== zlib（压缩库）====================
+# 以子目录静态库方式集成，详见 Library/zlib/CMakeLists.txt
+add_subdirectory(Library/zlib)
+# ==================== FatFs（FAT/exFAT 文件系统）====================
+# 以子目录静态库方式集成，详见 Library/Fatfs/CMakeLists.txt
+add_subdirectory(Library/Fatfs)
+# ==================== lwIP（轻量级 TCP/IP 协议栈）====================
+# 以子目录静态库方式集成，详见 Library/lwip/CMakeLists.txt
+add_subdirectory(Library/lwip)
+# ==================== mbedTLS（XinYueC SSL/TLS 后端）====================
+# 以子目录静态库方式集成，详见 Library/mbedtls/CMakeLists.txt
+add_subdirectory(Library/mbedtls)
+# ==================== PCRE2（Qt 6.8 正则表达式引擎）====================
+add_subdirectory(Library/pcre2)
+# ==================== TinyUSB（嵌入式 USB 协议栈）====================
+# 以子目录静态库方式集成，详见 Library/tinyusb/CMakeLists.txt
+# 默认不启用，仅嵌入式构建通过 XINYUE_C_HAS_TINYUSB 开启。
+add_subdirectory(Library/tinyusb)
+# ==================== SQLite（源码方式集成）====================
+# SQLite 作为可替换的源码组件编译，适配器不依赖系统 libsqlite3。
+add_subdirectory(Library/sqlite)
+# ==================== FreeType（字体光栅化库，最小集合）====================
+# 以子目录静态库方式集成，详见 Library/freetype/CMakeLists.txt
+add_subdirectory(Library/freetype)
+# ==================== xxHash（非密码学哈希库）====================
+# 上游 xxHash（Yann Collet，BSD-2-Clause），XCryptographicHash_XxHash64 的实现。
+# 以子目录静态库方式集成，详见 Library/xxHash/CMakeLists.txt
+add_subdirectory(Library/xxHash)
+
+# ==================== 平台/第三方系统库链接落地 ====================
+# [2026-11-01 自原 Src 层上提] 探测段、Library/* 注册、链接三段同居本文件；
+# XinYueCS/XinYueC 创建于 Drive 子目录，跨目录改目标经 CMP0079 NEW
+# （见文件头）。静态库 PUBLIC 传播给可执行程序，动态库 PRIVATE 仅自身
+# 链接阶段解析。XinYueCore 自身 TU 直接消费的外部库（zlib/lwip/pcre2/
+# sqlite/xxhash/mbedtls）使用需求在 XCore 模块自带，此处不重复承担。
+
+# ---- X11（Linux 原生窗口后端） ----
+if(X11_FOUND)
+    target_link_libraries(${EXPORT_NAME}S PUBLIC ${X11_LIBRARIES})
+    target_link_libraries(${EXPORT_NAME} PRIVATE ${X11_LIBRARIES})
+    # RandR（屏幕枚举/几何变化）：根已按 dev 链接名/版本名两段式探测。
+    if(XINYUE_XRANDR_LIBRARY)
+        target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_XRANDR_LIBRARY})
+        target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_XRANDR_LIBRARY})
+    endif()
+    # XI2（触摸/平滑滚轮）：头（xorgproto）与运行库同时存在才链。
+    if(XINYUE_XI_LIBRARY AND XINYUE_XI2_HEADER)
+        target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_XI_LIBRARY})
+        target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_XI_LIBRARY})
+    endif()
+    # DPMS（显示器电源管理）：libXext（不是 libXss）。
+    if(XINYUE_XEXT_LIBRARY)
+        target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_XEXT_LIBRARY})
+        target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_XEXT_LIBRARY})
+    endif()
+endif()
+
+# XPlatformGraphics 的 GLX 后端：X11 与 OpenGL 同时检出才启用。
+if(X11_FOUND AND OPENGL_FOUND)
+    target_link_libraries(${EXPORT_NAME}S PUBLIC ${OPENGL_gl_LIBRARY})
+    target_link_libraries(${EXPORT_NAME} PRIVATE ${OPENGL_gl_LIBRARY})
+endif()
+# XPlatformGraphics 的 EGL/GLES 后端（Drive/Posix/Graphics/
+# XPlatformGraphics_egl.c）：与 GLX 后端等价并列，由运行期开关
+# XGUI_GL_BACKEND=egl|glx 选择（默认 EGL 优先）。
+# 存在理由：嵌入式 BSP 常只提供 EGL/GLES 用户态库而不提供 GLX DRI
+# 驱动（RK3568 厂商 BSP 即如此），此时 GLX 路径会静默回退软件光栅，
+# 而 EGL 路径能拿到厂商 GPU。EGL 不可用时自动回落 GLX，行为不变。
+# 交叉构建注意：Debian multiarch 把 EGL 放在 <sysroot>/lib/<arch>/
+# 而非 <sysroot>/usr/lib/<arch>/，且 CMAKE_FIND_ROOT_PATH_MODE_LIBRARY
+# 为 ONLY ⇒ find_package(EGL) 找不到库；显式补候选路径再探测。
+if(X11_FOUND)
+    find_package(EGL QUIET)
+    if(NOT EGL_FOUND)
+        foreach(_egl_dir
+                ${CMAKE_SYSROOT}/lib/${CMAKE_LIBRARY_ARCHITECTURE}
+                ${CMAKE_SYSROOT}/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}
+                ${CMAKE_SYSROOT}/lib
+                ${CMAKE_SYSROOT}/usr/lib)
+            find_library(XINYUE_EGL_LIBRARY NAMES EGL
+                         PATHS ${_egl_dir} NO_DEFAULT_PATH)
+            if(XINYUE_EGL_LIBRARY)
+                set(EGL_FOUND TRUE)
+                set(EGL_INCLUDE_DIR ${CMAKE_SYSROOT}/usr/include)
+                set(EGL_LIBRARIES ${XINYUE_EGL_LIBRARY})
+                break()
+            endif()
+        endforeach()
+    endif()
+    if(EGL_FOUND)
+        add_compile_definitions(XINYUE_C_HAS_EGL=1)
+        if(TARGET EGL::EGL)
+            target_link_libraries(${EXPORT_NAME}S PUBLIC EGL::EGL)
+            target_link_libraries(${EXPORT_NAME} PRIVATE EGL::EGL)
+        else()
+            target_link_libraries(${EXPORT_NAME}S PUBLIC ${EGL_LIBRARIES})
+            target_link_libraries(${EXPORT_NAME} PRIVATE ${EGL_LIBRARIES})
+        endif()
+    endif()
+endif()
+# Vulkan（UNIX）：按库存在性启用（Android 排除已在探测段处理）。
+if(XINYUE_VULKAN_LIBRARY)
+    target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_VULKAN_LIBRARY})
+    target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_VULKAN_LIBRARY})
+endif()
+
+# Linux AT-SPI 后端 dbus-1 与 fontconfig（fbdev 交叉构建排除已在探测段处理）。
+if(XINYUE_DBUS_FOUND)
+    target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_DBUS_LIBRARIES})
+    target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_DBUS_LIBRARIES})
+endif()
+if(XINYUE_FONTCONFIG_FOUND)
+    target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_FONTCONFIG_LIBRARIES})
+    target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_FONTCONFIG_LIBRARIES})
+endif()
+
+# POSIX USB Host 后端 libusb-1.0（pkg-config 与 find_path/find_library 两
+# 段探测在根，链接按同一变量兑现）。
+if(XINYUE_LIBUSB_FOUND)
+    target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_LIBUSB_LIBRARIES})
+    target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_LIBUSB_LIBRARIES})
+elseif(XINYUE_LIBUSB_INCLUDE_DIR AND XINYUE_LIBUSB_LIBRARY)
+    target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_LIBUSB_LIBRARY})
+    target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_LIBUSB_LIBRARY})
+endif()
+
+# [2026-10-26 armel 交叉构建固化] 32 位 ARM（gnueabi soft-float）的
+# 64 位原子操作（XAtomic_GCC 的 __atomic_store_8 等）需链 libatomic——
+# 仅交叉编译时追加。非交叉桌面/安卓构建不受影响。
+# 必须挂静态库 PUBLIC 依赖，消费端链接行才落在库后可解析（link_libraries
+# 前置会导致 undefined __atomic_store_8，1018 战役实证）。
+if(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm")
+    target_link_libraries(${EXPORT_NAME}S PUBLIC atomic)
+endif()
+
+# ---- 第三方静态库链接（接线方式同 zlib：PRIVATE 依赖经 LINK_ONLY 传给
+#      最终可执行文件） ----
+# 链接 FreeType 静态库（轮廓字 FT 模块 XFONT_FT_ON，见 XFont_config.h；
+# 包含路径由上方 include_directories(BEFORE) 前置防系统头混编）
+target_link_libraries(${EXPORT_NAME}S PRIVATE freetype)
+target_link_libraries(${EXPORT_NAME} PRIVATE freetype)
+# 链接 mbedTLS 静态库
+target_link_libraries(${EXPORT_NAME}S PRIVATE mbedtls)
+target_link_libraries(${EXPORT_NAME} PRIVATE mbedtls)
+# 链接 PCRE2 16-bit 静态库
+target_link_libraries(${EXPORT_NAME}S PRIVATE pcre2)
+target_link_libraries(${EXPORT_NAME} PRIVATE pcre2)
+# 链接 SQLite 源码静态库
+target_link_libraries(${EXPORT_NAME}S PRIVATE sqlite)
+target_link_libraries(${EXPORT_NAME} PRIVATE sqlite)
+# 链接 xxHash 静态库
+target_link_libraries(${EXPORT_NAME}S PRIVATE xxhash)
+target_link_libraries(${EXPORT_NAME} PRIVATE xxhash)
+# 链接 lwIP 静态库
+target_link_libraries(${EXPORT_NAME}S PRIVATE lwip)
+target_link_libraries(${EXPORT_NAME} PRIVATE lwip)
+# 链接 zlib 静态库
+target_link_libraries(${EXPORT_NAME}S PRIVATE zlib)
+target_link_libraries(${EXPORT_NAME} PRIVATE zlib)
+# 链接 FatFs 静态库
+target_link_libraries(${EXPORT_NAME}S PRIVATE fatfs)
+target_link_libraries(${EXPORT_NAME} PRIVATE fatfs)
+
+# ---- Windows 平台依赖 ----
+# - Advapi32：XSystem 后端调整关机权限；
+# - User32：窗口类注册/句柄操作/消息泵（XPlatformNativeWindow_win32.c）；
+# - Gdi32：DIB 后备缓冲 + BitBlt/SetDIBitsToDevice 上屏。
+# 库清单（含 Vulkan SDK/vendored 两形态择一）在探测段组装
+# （XINYUE_WIN32_LIBS），静态库将依赖公开给最终可执行文件，动态库在自身
+# 链接阶段解析。
+if(WIN32)
     target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_WIN32_LIBS})
     target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_WIN32_LIBS})
 endif()
-# Android 平台依赖（bionic 系统库）：
+
+# ---- Android 平台依赖（bionic 系统库） ----
 # - log：平台层诊断输出（__android_log_print）；
 # - android：ANativeWindow/NativeActivity（XPlatformWindowAndroid.c、
 #   android_main.c）。动态库为 --no-undefined 语义，必须在本体链接
@@ -858,787 +753,41 @@ if(ANDROID)
     target_link_libraries(${EXPORT_NAME}S PUBLIC android log)
     target_link_libraries(${EXPORT_NAME} PRIVATE android log)
 endif()
-# Windows(MSVC): mbedtls_platform_get_entropy() 调用 BCryptGenRandom（需 bcrypt.lib）。
-# 已开启 MBEDTLS_PSA_CRYPTO_EXTERNAL_RNG，TLS/PSA 运行时随机数走 XRandomGenerator，
-# 但 platform_util.c 仍被编译并链接，故 Windows 上必须链接 bcrypt 解析符号。
-# Linux 用 getrandom()/urandom，无需额外库。
 
-# ==================== 静态链接的可执行程序 ====================
-# 链接 XinYueCS 静态库，生成的可执行文件不依赖外部动态库（除系统库外）
-# XGUI_ON=0（嵌入式全裁剪）时与回归测试同口径排除：demo（main.c）与
-# Test/*.c 控件测试源引用 GUI 类型，裁剪构建无法编译。
-if(XGUI_ON)
-add_executable(${EXPORT_NAME}_Static
-${TEST_FILE}
-"./main.c"
-)
-set_target_properties(${EXPORT_NAME}_Static PROPERTIES
-    OUTPUT_NAME "${EXPORT_NAME}_Static"
-)
-xinyue_force_include_config(${EXPORT_NAME}_Static)
-# Windows(MSVC): 数学函数内置在 C 运行时，线程使用 Drive/windows 的 Win32 实现，无需链接 m/pthread
-# Unix(Linux/macOS/BSD): 需链接数学库 m 与线程库 pthread（对应 Drive/Posix 实现，源码已用
-#                         __linux__/__APPLE__/__BSD__ 宏守护，仅在这些平台编译）
-# 追加 freetype 直链：测试菜单 XFontFtTest.c 在 XFONT_FT_FACE_ON 下直接调用
-# FT_* API——共享库 ${EXPORT_NAME} 的 PRIVATE 依赖不进导入库（Windows 导入库
-# 不携带 FT_* 符号，动态 exe 链接必缺）；静态库经 LINK_ONLY 本已传递，重复
-# 列出无害。
-if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
-else()
-    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
+# ==================== XGui（GUI 框架模块）====================
+# XinYueGui 静态库；平台探测定义已注入（契约见 Src/XGui/CMakeLists.txt 头注释）。
+# XGui 头目录不抬升：传递全走链接图（XinYueCS PUBLIC XGuiLayer → XinYueGui
+# 的 PUBLIC 头目录），反向包含链走上级 Src 根（XCore 模块抬升）。
+add_subdirectory(Src/XGui)
+
+# XGuiLayer 接口胶水：Drive 模块已对 XinYueCS/XinYueC 预挂 PUBLIC/PRIVATE
+# XGuiLayer（彼时 XinYueGui 未定义，纯目标名 generate 期解析）；此处接通。
+# 消费目标链接 ${EXPORT_NAME}S 即随链获得 XinYueGui 及其头目录——XGui 拆库
+# 后测试/demo 链接行零改动。XGUI_ON=0/嵌入式：XinYueGui 不建，XGuiLayer
+# 恒存在但为空 INTERFACE，零链接残留。
+add_library(XGuiLayer INTERFACE)
+if(TARGET XinYueGui)
+    target_link_libraries(XGuiLayer INTERFACE XinYueGui)
 endif()
 
-# ==================== 动态链接的可执行程序 ====================
-# 链接 XinYueC 动态库，生成的可执行文件运行时需附带 XinYueC.dll（Windows）或 libXinYueC.so（Linux）
-add_executable(${EXPORT_NAME}_Dynamic
-${TEST_FILE}
-"./main.c"
-)
-set_target_properties(${EXPORT_NAME}_Dynamic PROPERTIES
-    OUTPUT_NAME "${EXPORT_NAME}_Dynamic"
-)
-xinyue_force_include_config(${EXPORT_NAME}_Dynamic)
-if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype)
-else()
-    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} mbedtls lwip zlib fatfs pcre2 sqlite freetype)
-endif()
-endif() # XGUI_ON（demo 可执行排除）
+# ==================== Industry（工业设备层）====================
+# 以子目录静态库方式集成，详见 Src/Industry/CMakeLists.txt
+# 通道接口（XChannel：XIoChannel + DI/DO/AI/AO + 适配器）与工业设备
+# （XSolenoidValve 电磁阀）；测试可执行 XIndustryValve_Test 随子目录注册。
+add_subdirectory(Src/Industry)
 
-# ==================== XNtp 最小复现程序（独立可执行） ====================
-# 「应答超时」根修车道诊断工具：绕开 GUI 直连 ntp.aliyun.com，
-# stderr 分阶段探针（DNS/裸 POSIX 对照/XNtpClient 全链路心跳）。
-# 仅 UNIX 构建：工具主体是 POSIX 裸套接字对照组（netdb.h/unistd.h 等），
-# Windows 下无对应头，2026-10-24 全量构建门修复（此前该目标在 Windows
-# 恒编译失败：netdb.h 找不到）。
-if(UNIX)
-add_executable(XNtpMinRepro_Test
-    "./Test/XProtocolTest/xntp_min_repro.c"
-)
-target_link_libraries(XNtpMinRepro_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
+# ==================== HighSpeedFilter（高速过滤器模板项目）====================
+# HsfServer/HsfClient 双可执行，依赖主库 ${EXPORT_NAME}S（必须在主库定义
+# 之后接线——模块头注释的契约）。
+add_subdirectory(HighSpeedFilter)
 
-# ==================== 无线契约探针（独立可执行） ====================
-# 无线平台抽象（L0）实测：枚举无线适配器 → 发起扫描 → 轮询扫描状态机 →
-# 取回结果清单 →（可选）连接并回读连接状态。无 GUI、无事件循环依赖，
-# 状态机以阻塞轮询驱动（与上层定时器轮询同形）。
-add_executable(XDeviceWiFiProbe
-    "./Test/XDeviceTest/xdevice_wifi_probe.c"
-)
-if(UNIX)
-    target_link_libraries(XDeviceWiFiProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XDeviceWiFiProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# 异步后端「被动可读 fd」通道探针（独立可执行，2026-10-26 触摸唤醒通道）：
-# 验证 Linux 异步后端（XNetIoRingPosix）在 io_uring / epoll 双引擎下的
-# 被动 fd 注册—唤醒—重挂—注销链路（fbdev 触摸泵用的正是这条通道）。
-# 用法：XDeviceIoUPassiveProbe [epoll|iouring]（不带参数=按引擎默认）。
-# [平台门 2026-10-30] 本探针**本质属 POSIX**：源文件直接用 pipe/read/write/
-# setenv（unistd.h）+ io_uring/epoll 引擎，Windows 无对应后端 ⇒ 目标只在
-# UNIX 下创建。此前它无条件进 Windows 构建 ⇒ 编译必挂 C1083「unistd.h」，
-# 是长期存在的 Windows 构建缺口（其 obj 目录一直为空 ⇒ 从未在 Windows
-# 上编出来过），本轮收口。
-if(UNIX)
-    add_executable(XDeviceIoUPassiveProbe
-        "./Test/XDeviceTest/xdevice_iou_passive_probe.c"
-    )
-    target_link_libraries(XDeviceIoUPassiveProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    message(STATUS "XDeviceIoUPassiveProbe：POSIX 专属（pipe/io_uring/epoll），Windows 构建跳过")
-endif()
-
-# ==================== 安卓真机 Modbus TCP 主站轮询探针（独立可执行） ====================
-# [2026-10-25] 安卓真机（小米 25102RKBEC）上 Modbus 主站连真实远程 IO 设备
-# 时 TCP 层 ESTABLISHED 但一个应答都收不回来——安卓 seccomp 拒
-# io_uring_setup（EACCES）故须走 epoll 引擎，而桌面走 io_uring，两条路径
-# 不同、桌面全绿掩盖了 epoll 分支缺陷。本探针无 GUI，直接驱动库：
-# 连接 → 等 connected → 周期发读请求 → 打印每次结果，供复现与回归。
-# 用法：./xmodbus_android_probe.exe <host> <port> <unitId> <pointCount>
-# [跨平台 2026-10-30] 源文件的计时已从 POSIX 专属的 clock_gettime(CLOCK_
-# MONOTONIC) 换成框架统一单调时钟 XDateTime_currentMSecsSinceEpoch()
-# ⇒ 本探针在 Windows 上也能编译运行（Windows 侧走 IOCP 后端，本就是
-# 「另一条异步路径」的对照组）。此前 Windows 构建因 CLOCK_MONOTONIC
-# 未声明而编译必挂（C2065），是长期存在的 Windows 构建缺口，本轮收口。
-add_executable(XModbusAndroidProbe
-    "./Test/XProtocolTest/xmodbus_android_probe.c"
-)
-if(UNIX)
-    target_link_libraries(XModbusAndroidProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XModbusAndroidProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== XSpinBox 步进按钮列几何四方口径探针（独立可执行） ====================
-# [2026-10-27] XSpinBox 步进按钮列几何在本库有四处独立实现：样式几何
-# （XStyle_subControlRect，Qt 口径）／底层绘制（恒 16px）／QSS 子控件镜像
-# （随绘制）／命中判定（恒 16px）。四方不一致会让「箭头压输入框右边框」
-# 一类观感问题在改一处、坏另一处。本探针在给定控件宽高下打印四方
-# 数值，量化是否一致（诊断用，不参与门禁）。
-# 用法：./xspinbox_geometry_probe [width] [height]
-add_executable(XSpinBoxGeometryProbe
-    "./Test/XGuiTest/xspinbox_geometry_probe.c"
-)
-if(UNIX)
-    target_link_libraries(XSpinBoxGeometryProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XSpinBoxGeometryProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== 滚动区子控件越界裁剪探针（独立可执行） ====================
-# [2026-10-27 滚动越界根修] 滚动区内控件移出 viewport 边界后未被父容器
-# 裁剪（越到品牌条/标题栏上）。本探针复刻结构并打印几何/全局坐标，
-# 区分「几何越界」与「绘制未裁剪」（诊断用，不参与门禁）。
-# 用法：./xscroll_clip_probe [scrollValue] [winW] [winH]
-add_executable(XScrollClipProbe
-    "./Test/XGuiTest/xscroll_clip_probe.c"
-)
-if(UNIX)
-    target_link_libraries(XScrollClipProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XScrollClipProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== 对话框族竖屏适配探针（独立可执行） ====================
-# [2026-10-26 竖屏适配战役] 竖屏 Xvfb 下逐个打开 xguidemo 对话框族
-# （文件打开/另存为/目录选择/输入/颜色/进度/消息框），文件驱动相位，
-# 供外部 xwd 截图目验布局与美化效果。
-add_executable(XDialogPortraitProbe
-    "./Test/XGuiDemo/xgui_dialog_portrait_probe.c"
-)
-if(UNIX)
-    target_link_libraries(XDialogPortraitProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XDialogPortraitProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== 五个闭环测试：已去 main 收编主程序（2026-10-29） ====================
-# 原 XModbusHubTest / XProtocolCampaignTest / XVfdAtv61Test / XVfdM512Test /
-# XVfdBus485Test 五个独立 main 可执行目标在本节；现统一改为
-#   int XxxTest_run(void)（--test/<name> 分派，返回失败数）
-#   void XxxTest(XVariant*)（测试菜单动作）
-# 随 TEST_FILE 编译进 XinYueC_Static/_Dynamic（声明在 XProtocolTest.h，
-# 菜单接线在 XTestMenu_XModbusTest，命令分派在 main.c 与 XTestCommand.c）。
-# 跑法不变：驱动脚本（mbtest_*_run.sh）起好虚拟从站后调
-#   ./bin/XinYueC_Static --test xmodbus-hub|xprotocol-campaign|xvfd-m512|xvfd-bus485|xvfd-atv61
-
-# ==================== 高精度定时器组压测（菜单入口） ====================
-# [两孩子删除句柄身份压测 2026-10-25] 原先本节为独立可执行
-# XHrTimerStress_Test（自带 main 的 hr_stress_driver.c，供 CI / 桌面闸门
-# 直跑）。该驱动文件已删除、目标已下线：压测改从测试菜单进入
-#   「测试代码 → 定时器 → XHrTimer(高精度定时器组) → 压测(随机增删+句柄回收)」
-# 菜单入口见 Test/XTimerTest/XHrTimerTest.c，测试主体见
-# XHrTimerStressTest.c，与 XGuiWindowDemo_Test 的 --hr-stress 入口同源共用。
-
-# 无线后端解析器单元测试（纯函数，无需无线硬件）：WEXT 事件流（展开/紧凑
-# 两种内核布局）、wpa_supplicant SCAN_RESULTS、nmcli -t 转义、STATUS 键值。
-add_executable(XDeviceWiFiParsers_Test
-    "./Test/XDeviceTest/xdevice_wifi_posix_parsers_test.c"
-)
-if(UNIX)
-    target_link_libraries(XDeviceWiFiParsers_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XDeviceWiFiParsers_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== XFtp 端到端真服务器联调测试 ====================
-# 独立可执行文件 ftp_e2e_test.exe，搭配 ftp_test_server.py 跑完整 FTP 协议测试
-add_executable(FtpE2E_Test
-    "./ftp_e2e_test.c"
-)
-if(UNIX)
-    target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== XUpgrade 端到端联调测试（独立可执行 xupgrade_e2e_test.exe，自升级模块全流程联调：23 用例含版本边界/manifest 拒绝矩阵/断电矩阵 1-7/回滚限流/引擎锁/A-B 模拟） ====================
-if(NOT XINYUE_EMBEDDED)
-add_executable(XUpgradeE2E_Test
-    "./xupgrade_e2e_test.c"
-)
-if(UNIX)
-    target_link_libraries(XUpgradeE2E_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XUpgradeE2E_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-endif() # NOT XINYUE_EMBEDDED
-
-# ==================== XUpgrade 打包签名工具（服务端发版用，XUpgrade.md §4/§5） ====================
-# pack（目录→.pak）/ seal（补 size+sha256 并按 canonical+P-256 签名+自验）/ verify（设备侧
-# 同源验签+组件哈希核对）/ keygen（生成产品钥对，替换内嵌测试钥）。全程复用库内实现零口径漂移；
-# 仅宿主平台可执行（嵌入式端只解包不打包）。
-if(NOT XINYUE_EMBEDDED)
-add_executable(XUpgradePack
-    "./xupgrade_pack.c"
-)
-if(UNIX)
-    target_link_libraries(XUpgradePack ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XUpgradePack ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-endif() # NOT XINYUE_EMBEDDED
-
-# ==================== XGui 对齐回归测试 ====================
-# XGUI_ON=0（嵌入式全裁剪）时 GUI 类型全部消失，回归测试(引用 GUI 类型)
-# 与 GUI 控件测试源一并排除。
-if(XGUI_ON)
-add_executable(XGuiRegression_Test
-    "./xgui_regression_test.c"
-    "./Test/XGuiTest/XLineEditTest.c"
-    "./Test/XGuiTest/XSliderTest.c"
-    "./Test/XGuiTest/XSpinBoxTest.c"
-    "./Test/XGuiTest/XGroupBoxTest.c"
-    "./Test/XGuiTest/XProgressBarTest.c"
-    "./Test/XGuiTest/XDialTest.c"
-    "./Test/XGuiTest/XComboBoxTest.c"
-    "./Test/XGuiTest/XTabBarTest.c"
-    "./Test/XGuiTest/XLcdNumberTest.c"
-    "./Test/XGuiTest/XScrollBarTest.c"
-    "./Test/XGuiTest/XStackedWidgetTest.c"
-    "./Test/XGuiTest/XButtonGroupTest.c"
-    "./Test/XGuiTest/XKeyboardTest.c"
-    "./Test/XGuiTest/XPinyinT9Test.c"
-    "./Test/XGuiTest/XTouchMultiPointTest.c"
-    "./Test/XGuiTest/XGuiRemoteTest.c"
-)
-if(UNIX)
-    target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# 测试菜单全量遍历探针（2026-10-31）：把 XTestMenuTest_create() 整棵树的
-# **每个动作**逐个触发一遍，逐项打点定位「执行即崩 / 零输出」的动作。
-# GUI 测试菜单页的 autotest 只走一条路径，覆盖不足；本目标提供全量口径。
-# 菜单树 builder 全在 TEST_FILE（与 demo 收编同口径）；自带 main 的
-# 探针/测试源须剔除（防 main 重复定义）。
-add_executable(XGuiTestMenuSweep
-    "./xgui_testmenu_sweep.c"
-)
-if(NOT XINYUE_EMBEDDED)
-    set(XGUI_SWEEP_TESTTREE_SOURCES ${TEST_FILE})
-    list(REMOVE_ITEM XGUI_SWEEP_TESTTREE_SOURCES
-        # 自带 main 的独立可执行（与 demo 收编剔除清单同口径）。
-        "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XScrollTouchProbe.c"
-        "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGestureRecognizerTest.c")
-    target_sources(XGuiTestMenuSweep PRIVATE ${XGUI_SWEEP_TESTTREE_SOURCES})
-endif()
-if(UNIX)
-    target_link_libraries(XGuiTestMenuSweep ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype dbghelp ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiTestMenuSweep mbedtls lwip zlib fatfs pcre2 sqlite freetype dbghelp ${EXPORT_NAME}S)
-endif()
-xinyue_force_include_config(XGuiTestMenuSweep)
-
-# Hover synthesis probe (2026-10-31): reproduces "delete the old hover
-# target then hover the new button" - asserts ENTER/LEAVE still dispatch
-# after the old target is destroyed (Qt QWidgetWindow::m_widget parity).
-add_executable(XGuiHoverProbe
-    "./xgui_hover_probe.c"
-)
-if(UNIX)
-    target_link_libraries(XGuiHoverProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiHoverProbe mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-xinyue_force_include_config(XGuiHoverProbe)
-endif() # XGUI_ON
-
-# ==================== 滚动区触摸跟手+惯性独立探针 ====================
-# 自带 main：注入式验证 XAbstractScrollArea 触摸滚动通道（跟手 1:1+方向/
-# 惯性 fling 停稳/不可滚不认领/tap 零滚动/开关关闭回落滚轮量化），脱离
-# 整包回归单独跑（整包回归含机器环境相关段，CI 定位诊断用）。
-if(XGUI_ON)
-add_executable(XScrollTouchProbe_Test
-    "./Test/XGuiTest/XScrollTouchProbe.c"
-)
-if(UNIX)
-    target_link_libraries(XScrollTouchProbe_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XScrollTouchProbe_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-endif()
-
-# ==================== 手势识别器回归测试 ====================
-# 独立可执行(自带 main): 注入式验证 XGestureRecognizer 族（点按/长按/
-# 双击/平移/轻扫/缩放/旋转/甩动）——原始触摸帧注入 → 识别 → 状态机迁移
-# → XGestureEvent 经事件循环投递 → 控件 GestureEvent 槽消费。
-if(XGUI_ON)
-add_executable(XGestureRecognizer_Test
-    "./Test/XGuiTest/XGestureRecognizerTest.c"
-)
-if(UNIX)
-    target_link_libraries(XGestureRecognizer_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGestureRecognizer_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-endif()
-
-# ==================== XGuiRemote 访问口令认证矩阵测试 ====================
-# 独立可执行(自带 main): 回环对 + 127.0.0.1 真 TCP(MITM 抓包)跑 XGuiRemote.md
-# §3.8 认证矩阵——匿名基线/无口令快速失败/错口令拒绝/对口令准入/运行期设清
-# (存量会话不断)/nonce 逐连接随机/失败上限可配/口令明文不过网。
-# Windows 无 POSIX 头（unistd.h/poll.h），认证矩阵测试为 POSIX CI 直跑口径，
-# 仅在 UNIX 族配置（Xvfb 会话执行），避免拖垮全树 ninja。
-if(XGUI_ON AND NOT WIN32)
-add_executable(XGuiRemoteAuth_Test
-    "./Test/XGuiTest/XGuiRemoteAuthTest.c"
-)
-if(UNIX)
-    target_link_libraries(XGuiRemoteAuth_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiRemoteAuth_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
-endif()
-endif() # XGUI_ON && NOT WIN32（认证矩阵测试）
-
-
-# ==================== XGuiRemote 自适应降档阶梯测试(perf9 路4) ====================
-# 独立可执行(自带 main): (a) XGuiRemoteAdapt.h 纯状态机单元(阶梯映射/迟滞/
-# 换档重置); (b) 回环量化——latency 档 60fps 持续伤害流下 XGUI_REMOTE_ADAPT_
-# BUDGET_MS=1 强制超预算, 断言交付批率沉底 ~15fps; --adapt-baseline 反证组
-# (关阶梯≈60fps)。需显示环境, 由 Xvfb 会话直跑口径执行(同认证矩阵测试)。
-# 测试体用 setenv/unsetenv 等 POSIX 接口，仅 UNIX 族配置（Windows 跳过）。
-if(XGUI_ON AND NOT WIN32)
-add_executable(XGuiRemoteAdapt_Test
-    "./Test/XGuiTest/XGuiRemoteAdaptTest.c"
-)
-if(UNIX)
-    target_link_libraries(XGuiRemoteAdapt_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiRemoteAdapt_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
-endif()
-endif() # XGUI_ON && NOT WIN32（自适应降档阶梯测试）
-
-# ==================== fbdev 弹层拖动条带归位测试 ====================
-# 独立可执行(自带 main)：伪 fbdev 显示驱动（RAM 帧缓冲，双缓冲+行距
-# 垫高）离屏跑「弹层出现→拖动→拖回→松手」全帧合成模型断言——对话框
-# 拖动白块根修（2026-10-05）的回归锁。须 fbdev 构建才激活（驱动契约
-# 与 XWindowDecoration fbdev 分支均受 XPLATFORM_FBDEV_ON 门控）；桌面
-# 默认构建编出 SKIP 壳（恒 0 退出，不扰门禁）。BUFFER_COUNT=2 镜像真
-# 机 DIRECT+2 双缓冲差带账本路径。
-if(XGUI_ON AND XPLATFORM_FBDEV_ON)
-add_executable(XGuiDialogMove_Test
-    "./Test/XGuiTest/XGuiDialogMoveTest.c"
-)
-if(UNIX)
-    target_link_libraries(XGuiDialogMove_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiDialogMove_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-endif() # XGUI_ON && XPLATFORM_FBDEV_ON（弹层拖动条带归位测试）
-
-# ==================== fbdev 键盘紧凑悬浮拖移测试 ====================
-# 独立可执行(自带 main)：伪 fbdev 显示驱动离屏跑「停靠弹出→悬浮切换→
-# 工具栏空白拖移→拖回→松手」全帧合成模型断言——键盘拖动残影+逐 MOVE
-# 重绘风暴（昆仑通态 A33 真机 2026-10-06，FPS 5.9）的回归锁。构建组合
-# 同 XGuiDialogMove_Test（FBDEV+BUFFER_COUNT=2+RGB16 真机 DIRECT+2 trio）。
-if(XGUI_ON AND XPLATFORM_FBDEV_ON)
-add_executable(XGuiKeyboardDrag_Test
-    "./Test/XGuiTest/XGuiKeyboardDragTest.c"
-)
-if(UNIX)
-    target_link_libraries(XGuiKeyboardDrag_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiKeyboardDrag_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-endif() # XGUI_ON && XPLATFORM_FBDEV_ON（键盘紧凑悬浮拖移测试）
-
-if(XGUI_ON AND XPLATFORM_FBDEV_ON)
-add_executable(XGuiMirrorFidelity_Test
-    "./Test/XGuiTest/XGuiMirrorFidelityTest.c"
-)
-if(UNIX)
-    target_link_libraries(XGuiMirrorFidelity_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiMirrorFidelity_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-endif() # XGUI_ON && XPLATFORM_FBDEV_ON（镜像保真回环测试）
-
-if(XGUI_ON)
-add_executable(XLineControl_Acceptance_Test
-    "./xgui_linecontrol_acceptance_test.c"
-    "./Test/XGuiTest/XLineControlAcceptance.c"
-)
-if(UNIX)
-    target_link_libraries(XLineControl_Acceptance_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XLineControl_Acceptance_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-add_test(NAME XLineControlAcceptance COMMAND XLineControl_Acceptance_Test)
-
-endif() # XGUI_ON
 enable_testing()
-# 测试以相对路径访问仓库资源（assets/、../Library/XFont 等），其直跑口径
-# 是仓库 bin/ 目录（./bin/XGuiRegression_Test）；CTest 显式对齐该工作目录，
-# 避免构建目录层级（如 out/build/x64-Debug）破坏 ../ 回退。
-add_test(NAME XGuiRegression COMMAND XGuiRegression_Test
-    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/bin")
-# CTest 在受控运行环境下会以 ptrace 方式启动子进程；LeakSanitizer 无法在该
-# 环境工作。地址越界检查仍由 ASan 保留，泄漏检查在可直接运行的环境单独执行。
-# 显式钉 software：默认层口径 2026-11-01 起为「软件光栅，GPU 按需启用」
-# （XGPU_RUNTIME_DEFAULT_ON=0，板端实测 GPU 直通进程 CPU 是软件光栅的
-# 2~4 倍），但显式钉死仍是必要的——CI 若在带 env 的环境跑本用例，
-# 须保证软件契约套件不被 GPU 快速路径的 skip 门跳过。
-set_tests_properties(XGuiRegression PROPERTIES
-    ENVIRONMENT "XGUI_RENDER_BACKEND=software;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
-# GPU 后端下的完整回归变体：无 GL 的环境由后端自动回退软件（断言按
-# 实际会话状态跳过降级项），有 GL 时逐用例覆盖 GPU 快速路径。
-# 注：XGUI_GPU_SYNC=1 走「命令级同步读回」像素契约口径，该口径下斜线
-# 快速路径（XGPU_FASTPATH_EXT 缺省开）按设计不走（保持画布路径的
-# 逐像素一致），故**非 SYNC** 的 GPU 运行是覆盖该默认值的必需变体
-# （板端/桌面手工口径：XGUI_RENDER_BACKEND=gpu 不带 SYNC）。
-add_test(NAME XGuiRegressionGpu COMMAND XGuiRegression_Test
-    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/bin")
-set_tests_properties(XGuiRegressionGpu PROPERTIES
-    ENVIRONMENT "XGUI_RENDER_BACKEND=gpu;XGUI_GPU_SYNC=1;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
-# 默认层端到端变体：不设任何后端 env，验证**默认口径**本身——当前默认层
-# 为软件光栅（requested()==false），GPU 路径由上面的 XGuiRegressionGpu
-# 变体覆盖。
-add_test(NAME XGuiRegressionAuto COMMAND XGuiRegression_Test
-    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/bin")
-set_tests_properties(XGuiRegressionAuto PROPERTIES
-    ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
 
-# ==================== XGuiRemote 输入链路 + 视图适配缩放专项探针 ====================
-# mcgs 战役输入路(2026-10-04)独立可执行: 回环零网络拓扑下自证客户端 FIT
-# 信箱缩放、输入逆映射、键盘/滚轮链与服务端注入多顶层命中。不进 CTest
-# (需图形显示, 由 Xvfb 会话直跑口径执行)。
-if(XGUI_ON)
-add_executable(XGuiRemoteInputView_Test
-    "./Test/XGuiTest/XGuiRemoteInputViewTest.c"
-)
-if(UNIX)
-    target_link_libraries(XGuiRemoteInputView_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiRemoteInputView_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-endif() # XGUI_ON
-
-# ==================== Linux X11 XDND 跨客户端端到端测试 ====================
-# 用独立 Xlib 客户端模拟拖放源，验证 XDND 状态应答、Selection 数据传输和
-# XDropEvent 负载。仅 Linux 且已找到 X11 时构建，嵌入式裁剪不引入平台依赖。
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND X11_FOUND)
-    add_executable(XGuiXdnd_Test
-        "./xgui_xdnd_test.c"
-    )
-    target_link_libraries(XGuiXdnd_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${X11_LIBRARIES} ${EXPORT_NAME}S)
-endif()
-
-# ==================== XGui 统一可视化控件测试程序 ====================
-# 桌面原生窗口控件验收入口：XWindow + XGuiApplication + XBackingStore 走完整的
-# 「平台原生窗口（X11/Win32）-> 事件注入 -> 重绘 -> 上屏」链路。
-# 运行：无参数常驻，带参数可传入自动退出秒数（供无窗口管理器环境截图）。
-# 安卓排除：demo 由 xguidemo 共享库（NativeActivity 壳）承载，本可执行
-# 是桌面窗口系统专用；安卓下 main 已改名 xgui_window_demo_main 且诊断
-# 依赖壳里的 XGuiDemo_debugLog，独立可执行无入口可链。
-if(XGUI_ON AND NOT ANDROID)
-if(WIN32)
-enable_language(RC)
-# exe 图标（demo 品牌条棋盘格导出的多尺寸 ico），经 configure_file 注入
-# rc 模板；绝对路径正斜杠形式，rc.exe 对引号内正斜杠路径接受。
-set(XGUI_DEMO_ICON_FILE "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiDemo/res/xgui.ico")
-configure_file("${CMAKE_CURRENT_LIST_DIR}/Test/XGuiDemo/xgui_window_demo.rc.in"
-               "${CMAKE_CURRENT_BINARY_DIR}/xgui_window_demo.rc" @ONLY)
-set(XGUI_WINDOW_DEMO_RC "${CMAKE_CURRENT_BINARY_DIR}/xgui_window_demo.rc")
-else()
-set(XGUI_WINDOW_DEMO_RC)
-endif()
-add_executable(XGuiWindowDemo_Test
-    "./Test/XGuiDemo/xgui_window_demo.c"
-    ${XGUI_WINDOW_DEMO_RC}
-    "./Test/XGuiDemo/xgui_demo_splitter.c"
-    "./Test/XGuiDemo/xgui_demo_page_views.c"
-    "./Test/XGuiDemo/xgui_demo_page_dialogs.c"
-    "./Test/XGuiDemo/xgui_demo_page_advanced.c"
-    "./Test/XGuiDemo/xgui_demo_page_keyboard.c"
-    "./Test/XGuiDemo/xgui_demo_page_effects.c"
-    "./Test/XGuiDemo/xgui_demo_page_remote_server.c"
-    "./Test/XGuiDemo/xgui_demo_page_remote_client.c"
-    "./Test/XGuiDemo/xgui_demo_page_network.c"
-    "./Test/XGuiDemo/xgui_demo_page_overlay_settings.c"
-    "./Test/XGuiDemo/xgui_demo_page_qrcode.c"
-    "./Test/XGuiDemo/xgui_demo_page_update.c"
-    "./Test/XGuiDemo/xgui_demo_page_modbus.c"
-    "./Test/XGuiDemo/xgui_demo_page_window.c"
-    "./Test/XGuiDemo/xgui_demo_page_timeddns.c"
-    "./Test/XGuiDemo/xgui_demo_page_atv61.c"
-    "./Test/XGuiDemo/xgui_demo_page_testmenu.c"
-    "./Test/XGuiDemo/xgui_demo_page_shell.c"
-    # [两孩子删除句柄身份压测 2026-10-25] --hr-stress 入口
-    "./Test/XTimerTest/XHrTimerStressTest.c"
-    "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
-    "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
-    "./Test/XGuiDemo/xgui_demo_apitest_input.c"
-    "./Test/XGuiDemo/xgui_demo_apitest_text.c"
-    "./Test/XGuiDemo/xgui_demo_apitest_views.c"
-    "./Test/XGuiDemo/xgui_demo_apitest_containers.c"
-    "./Test/XGuiDemo/xgui_demo_apitest_dialogs.c"
-    "./Test/XGuiDemo/xgui_demo_apitest_menus.c"
-    "./Test/XGuiDemo/xgui_demo_apitest_core.c"
-)
-# [测试菜单页收编 2026-10-29] xgui_demo_page_testmenu 的菜单树来自
-# XTestMenuTest_create（XTestMenuTest.c + 各域 builder，全在 TEST_FILE）。
-# 非嵌入式构建把整棵测试树链进 GUI demo（与控制台宿主 XinYueC_Static
-# 同口径）；XHrTimerStressTest 已显式在上方源列表，剔除防重复。嵌入式
-# （F407）不链——页面自身按 XINYUE_EMBEDDED 降级为提示桩。
-if(NOT XINYUE_EMBEDDED)
-    set(XGUI_DEMO_TESTTREE_SOURCES ${TEST_FILE})
-    list(REMOVE_ITEM XGUI_DEMO_TESTTREE_SOURCES
-        "${CMAKE_CURRENT_LIST_DIR}/Test/XTimerTest/XHrTimerStressTest.c"
-        # [触摸滚动探针 2026-10-29] 自带 main 的独立可执行（与
-        # XHrTimerStressTest 同款剔除防重复）。
-        "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XScrollTouchProbe.c"
-        # [手势识别器测试 2026-10-29] 自带 main 的独立可执行。
-        "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGestureRecognizerTest.c")
-    target_sources(XGuiWindowDemo_Test PRIVATE ${XGUI_DEMO_TESTTREE_SOURCES})
-endif()
-if(UNIX)
-    # [链接序对齐 2026-10-29] 与 XinYueC_Static 同口径（sqlite 夹在两份主
-    # 库之间）：测试树收编后 demo 也从 sqlite3_xin_vfs 反向要 XReadWriteLock
-    # 等主库符号——sqlite 排在末位时符号无法回解（链接序根修）。
-    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
-endif()
-# Linux 桌面图标/启动器接线（安卓不装桌面文件；Windows 图标走 rc 资源）：
-# exe 入 bin，hicolor 四档 PNG 入系统图标主题（freedesktop 惯例，文件名
-# xguidemo 与 .desktop Icon= 一致），.desktop 入 applications——安装后
-# 桌面环境应用列表/收藏栏即带品牌棋盘格图标；运行期窗口图标（任务栏/
-# Alt-Tab）另由 demo 的 XWidget_setWindowIcon→_NET_WM_ICON 通道落地。
-if(UNIX AND NOT ANDROID)
-    install(TARGETS XGuiWindowDemo_Test RUNTIME DESTINATION bin)
-    foreach(_sz 48 64 128 256)
-        install(FILES "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiDemo/res/icons/xguidemo-${_sz}.png"
-                DESTINATION "share/icons/hicolor/${_sz}x${_sz}/apps"
-                RENAME "xguidemo.png")
-    endforeach()
-    install(FILES "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiDemo/res/xguidemo.desktop"
-            DESTINATION "share/applications")
-endif()
-
-# ==================== XGuiRemote 远程窗口双进程演示 ====================
-# 单文件双角色（xgui_demo_remote.c 自带 main）：--server 起最小控件树 +
-# XGuiServer 共存镜像（默认端口 46000），--client 另进程连接显示；
-# --profile performance|resource 运行期切档，--tls 走 XSslSocket 加密档。
-# 安卓排除同 XGuiWindowDemo_Test：demo 为桌面窗口系统专用独立可执行。
-if(XGUI_ON AND NOT ANDROID)
-add_executable(XGuiRemoteDemo_Test
-    "./Test/XGuiDemo/xgui_demo_remote.c"
-)
-if(UNIX)
-    target_link_libraries(XGuiRemoteDemo_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiRemoteDemo_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-endif() # XGUI_ON AND NOT ANDROID（XGuiRemoteDemo_Test）
-endif() # XGUI_ON AND NOT ANDROID
-
-# ==================== XGuiWindowDemo 安卓 APK 壳（共享库） ====================
-# NativeActivity 壳：android_main.c 生命周期接线 + 平台层（窗口/输入）。
-# demo main 重命名为 xgui_window_demo_main（__ANDROID__ 下）并入本目标，
-# 导出 ANativeActivity_onCreate。打包脚本
-# （platforms/android/build_apk.sh）以 libxguidemo.so 为载体组 APK。
-#
-# 注意：2026-10-24 安卓模板迁入 platforms/android/ 后，**只搬了平台差异层**
-# （打包脚本 / 清单 / 资源 / 签名）。下面这些源文件是框架平台层与 demo 的
-# 公共部分，仍由本文件统管编译——不要因为"模板在 platforms/"就把它们也
-# 搬走，否则三个平台（桌面/安卓/ESP8266）的公共源码会分裂成多份副本。
-if(XGUI_ON AND ANDROID)
-    add_library(xguidemo SHARED
-        "./Drive/Android/android_main.c"
-        "./Test/XGuiDemo/xgui_window_demo.c"
-        "./Test/XGuiDemo/xgui_demo_page_views.c"
-        "./Test/XGuiDemo/xgui_demo_page_dialogs.c"
-        "./Test/XGuiDemo/xgui_demo_page_advanced.c"
-        "./Test/XGuiDemo/xgui_demo_page_keyboard.c"
-        "./Test/XGuiDemo/xgui_demo_page_effects.c"
-        # [安卓 demo 页补齐 2026-10-24] 下列 9 个扩展页与桌面
-        # XGuiWindowDemo_Test 目标同集：xgui_window_demo.c 无条件引用它们的
-        # build/adapt/shutdown 符号（守卫是 XGUI_REMOTE_ON 等特性宏，不是
-        # 平台宏），故安卓目标必须一并编译。此前本列表只列了 5 个基础页，
-        # 链接期报 undefined symbol: demo_page_remote_client_adapt 等 20+
-        # 个（arm64 全新配置目录必现；x86_64 侥幸能过是因为其 build.ninja
-        # 生成于工作区曾有完整列表的窗口期，重新配置即会同样失败）。
-        "./Test/XGuiDemo/xgui_demo_page_remote_server.c"
-        "./Test/XGuiDemo/xgui_demo_page_remote_client.c"
-        "./Test/XGuiDemo/xgui_demo_page_network.c"
-        "./Test/XGuiDemo/xgui_demo_page_overlay_settings.c"
-        "./Test/XGuiDemo/xgui_demo_page_qrcode.c"
-        "./Test/XGuiDemo/xgui_demo_page_update.c"
-        "./Test/XGuiDemo/xgui_demo_page_modbus.c"
-        "./Test/XGuiDemo/xgui_demo_page_window.c"
-        "./Test/XGuiDemo/xgui_demo_page_timeddns.c"
-        # [2026-10-26 补漏] ATV61 页（xgui_window_demo.c 无条件引用其
-        # build/adapt/autotest 符号）此前只进了桌面目标列表，安卓目标
-        # 漏列 → 链接期 undefined symbol: demo_page_atv61_build 等三个
-        # （与上方 remote 页同款漏列的复发，按同一纪律补齐）。
-        "./Test/XGuiDemo/xgui_demo_page_atv61.c"
-        "./Test/XGuiDemo/xgui_demo_splitter.c"
-        "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
-        "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
-        "./Test/XGuiDemo/xgui_demo_apitest_input.c"
-        "./Test/XGuiDemo/xgui_demo_apitest_text.c"
-        "./Test/XGuiDemo/xgui_demo_apitest_views.c"
-        "./Test/XGuiDemo/xgui_demo_apitest_containers.c"
-        "./Test/XGuiDemo/xgui_demo_apitest_dialogs.c"
-        "./Test/XGuiDemo/xgui_demo_apitest_menus.c"
-        "./Test/XGuiDemo/xgui_demo_apitest_core.c"
-    )
-    target_link_libraries(xguidemo ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
-    target_link_libraries(xguidemo android log)
-    # [2026-10-24 安卓无障碍接入] 保活 JNI_OnLoad：链接参数含
-    # -Wl,--gc-sections，未被引用的符号（含 JNI_OnLoad）会被裁掉，
-    # ART 加载 .so 时找不到 JNI_OnLoad → RegisterNatives 不执行 →
-    # Java 侧 native 方法报 "No implementation found"（真机实证崩溃）。
-    # --undefined 把符号标记为外部引用，阻止裁剪。
-    target_link_options(xguidemo PRIVATE
-        "LINKER:--undefined=JNI_OnLoad")
-endif()
-
-# ==================== 安卓真机 Modbus 主站轮询探针 ====================
-# [2026-10-25] 安卓真机 Modbus 主站「连上了但不轮询」的复现/回归工具：
-# 无 GUI，直接驱动库（连接 → 等 connected → 周期发读请求 → 打印每次
-# 结果）。安卓 seccomp 拒 io_uring_setup（实测 EACCES）故强制走
-# XNetIoRingPosix 的 epoll 引擎，而桌面走 io_uring——两条路径不同，
-# 桌面用例覆盖不到 epoll 分支的缺陷（Modbus 应答收不回来的根因所在）。
-# 探针独立可执行，改完 epoll 引擎可直推手机验证，无需打包 APK 跑 UI。
-#   用法：./xmodbus_android_probe <host> <port> <unitId> <pointCount>
-if(ANDROID)
-    add_executable(xmodbus_android_probe
-        "./Test/XProtocolTest/xmodbus_android_probe.c"
-    )
-    target_link_libraries(xmodbus_android_probe ${EXPORT_NAME}S
-        ${XINYUE_UNIX_THREAD_LIBS} mbedtls lwip zlib fatfs pcre2)
-    target_link_libraries(xmodbus_android_probe android log)
-endif()
-
-# ==================== XGui 字库离屏巡检工具 ====================
-# 全字库离屏扫描（ASCII + GB2312 汉字，16px 轮廓 XFont -> 32x32 内存
-# XImage，走与窗口后备缓冲一致的 XPainterDevice_Image SW-AA 字形管线）：
-# 三道判据（零墨/墨量塌陷/横画叠带）筛坏字，产出 out/scan_bad_1.txt 与
-# out/scan_bad/*.png 样图；退出码 = min(坏字数, 250)。仅新增文件与目标，
-# 不触碰现有源码逻辑。仅桌面可执行（无窗口依赖，任何平台均可构建）。
-add_executable(xgui_font_scan_tool
-    "./Test/XGuiTest/xgui_font_scan_tool.c"
-)
-# 粗体真字体 A/B 离屏验证（2026-10-08）：Normal vs Bold 字重同句渲染
-# PPM，验证字重变体槽（XFontFt_ensureFamilyWeighted）命中 -Bold 文件。
-add_executable(xgui_font_bold_ab
-    "./Test/XGuiTest/bold_ab_tool.c"
-)
-if(UNIX)
-    target_link_libraries(xgui_font_scan_tool ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(xgui_font_scan_tool ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-if(UNIX)
-    target_link_libraries(xgui_font_bold_ab ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(xgui_font_bold_ab ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== XGui GPU 阶段 1 冒烟测试 ====================
-add_executable(XGuiGpu_Test
-    "./xgui_gpu_test.c"
-)
-if(UNIX)
-    target_link_libraries(XGuiGpu_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiGpu_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-add_test(NAME XGuiGpu COMMAND XGuiGpu_Test)
-set_tests_properties(XGuiGpu PROPERTIES
-    ENVIRONMENT "XGUI_RENDER_BACKEND=gpu;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
-
-# ==================== 阶段二 P2.5 字形覆盖图逐像素 diff 工具 ====================
-# 自带 main 的独立离屏工具（仿 xgui_font_scan_tool 口径，无窗口依赖）：
-# A 段 provider 旧/新槽位逐位对照（改动前 vs 改动后）；
-# B 段 SW 与 GPU 两消费点真实渲染逐像素 diff（字形光栅化两挂点——
-# XFONT_FT_RASTER 双档门已移除，两挂点恒走 FT smooth 光栅化器）；
-# 全部录音流与像素折叠成 FNV-1a digest——对改动前基线与改动后两次
-# 运行做 digest 逐字节比对即换点逐位一致性证据（设计 §8 P2.5 门禁）。
-add_executable(xgui_glyph_coverage_diff_tool
-    "./Test/XGuiTest/xgui_glyph_coverage_diff_tool.c"
-)
-if(UNIX)
-    target_link_libraries(xgui_glyph_coverage_diff_tool ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(xgui_glyph_coverage_diff_tool ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== CoarseTimer（时间轮）路径最小复现探针 ====================
-# 2026-10-22：定位 ESP8266 NONOS3 固件上"框架定时器路径"的崩溃
-# （Fatal exception 0 / epc1=XAtomic_exchange_bool+3 / excvaddr 指向 rodata
-#  数据符号 = 野指针/坏 vtable）。桌面端跑同一场景：
-#   · 崩 → 纯框架 bug，可直接 gdb 定位；
-#   · 不崩 → 与 32 位裸机路径相关。
-# 详见 platforms/esp8266/docs/PROGRESS.md §0-Y.6。
-add_executable(x_timer_coarse_repro
-    "./Test/XGuiTest/x_timer_coarse_repro.c"
-)
-if(UNIX)
-    target_link_libraries(x_timer_coarse_repro ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(x_timer_coarse_repro ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== 时间轮相位落槽回归测试（独立可执行） ====================
-# [2026-10-28 顶栏时钟战役] addTimer_lockfree 高层轮旧落槽忽视注册相位：
-# 1000ms CoarseTimer 落 L2（槽距 900ms）后固定 1800ms 触发（顶栏时钟
-# 「1s 刷新变 1.8s」实证）。本测试错相注册 1000/2500ms 定时器并逐次
-# 断言触发间隔（容差 -120/+150ms），缺陷复现即红。
-# 用法：XTimerWheelPhaseTest [运行毫秒]
-add_executable(XTimerWheelPhaseTest
-    "./Test/XTimerTest/XTimerWheelPhaseTest.c"
-)
-if(UNIX)
-    target_link_libraries(XTimerWheelPhaseTest ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XTimerWheelPhaseTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-endif()
-
-# ==================== 测试/工具目标统一强制包含配置头 ====================
-# 布局分裂根修（2026-10-21）：核心库经 xinyue_force_include_config 强制
-# /FI CXinYueConfig.h，而本文件尾部的测试/工具可执行目标此前没有——
-# 它们的 TU 在首个 XGuiConfig.h 到达时 XGUI_ON 未定义，整个缺省定义体
-# 被跳空，XPAINTDEVICE_ON/XLAYOUT_ON 等影响 XWidget 结构体布局的宏与
-# 库 TU 取值不一致 → 同一二进制内两套 XWidget 布局（sizeof 552 vs 更
-# 小）。实测后果：测试 TU 读 m_sssStyleCache（库视图偏移 544）命中别
-# 的字段，析构/拷贝把运行期数据当指针 free → _CrtIsValidHeapPointer
-# 断言崩溃（xgui_regression_test 的 abstractbutton/frame 契约测试实
-# 锚）。凡链接核心库的可执行目标一律与库同口径强制包含，一次性闭环。
-set(XINYUE_EXEC_TARGETS
-    FtpE2E_Test
-    XUpgradeE2E_Test
-    XUpgradePack
-    XGuiRegression_Test
-    XGuiRemoteAuth_Test
-    XGuiRemoteAdapt_Test
-    XGuiDialogMove_Test
-    XGuiKeyboardDrag_Test
-    XGuiMirrorFidelity_Test
-    XLineControl_Acceptance_Test
-    XGuiRemoteInputView_Test
-    XGuiWindowDemo_Test
-    XGuiRemoteDemo_Test
-    xgui_font_scan_tool
-    xgui_font_bold_ab
-    XGuiGpu_Test
-    xgui_glyph_coverage_diff_tool
-    x_timer_coarse_repro
-    XTimerWheelPhaseTest
-)
-foreach(_tgt IN LISTS XINYUE_EXEC_TARGETS)
-    if(TARGET ${_tgt})
-        xinyue_force_include_config(${_tgt})
-    endif()
-endforeach()
-if(TARGET XGuiXdnd_Test)
-    xinyue_force_include_config(XGuiXdnd_Test)
-endif()
+# ==================== Test（测试/工具/demo 可执行模块）====================
+# TEST_FILE 收集（含自带 main 独立可执行的剔除清单）、主程序双 exe、全部
+# 专项探针/回归测试、add_test/CTest 注册、XUpgradePack、xguidemo 安卓 APK
+# 壳与 exe 安装，全部在 Test/CMakeLists.txt。
+add_subdirectory(Test)
 
 #安装
 include(CMake_Install.cmake)

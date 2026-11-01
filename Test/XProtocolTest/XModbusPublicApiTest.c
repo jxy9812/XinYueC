@@ -205,7 +205,7 @@ static void test_reply_device(void)
         XModbusReply_setRawResult(reply, response);
         XModbusReply_addIntermediateError(reply, XModbusDevice_ResponseCrcError);
         errors = XModbusReply_intermediateErrors(reply);
-        XModbusReply_setError(reply, XModbusDevice_ProtocolError, "协议错误测试");
+        XModbusReply_setError_2(reply, XModbusDevice_ProtocolError, "协议错误测试");
         errorText = XModbusReply_errorString(reply);
         CHECK(XModbusReply_result_const(reply) && XModbusReply_result(reply) &&
             XModbusReply_result(reply)->m_startAddress == 2, "Reply 结构化结果深拷贝");
@@ -325,10 +325,10 @@ static void test_tcp_loopback(void)
     if (server && server->m_tcpServer) actualPort = XTcpServer_serverPort(server->m_tcpServer);
     CHECK(actualPort != 0, "TCP 服务端自动端口");
     if (client && actualPort) {
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice *)client,
-            XModbusDevice_NetworkAddressParameter, XVariant_create_utf8_str("127.0.0.1"));
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice *)client,
-            XModbusDevice_NetworkPortParameter, XVariant_create_int(actualPort));
+        do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter_ref((XModbusDevice *)client,
+            XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
+        do { XVariant* vParam = XVariant_create_int(actualPort); XModbusDevice_setConnectionParameter_ref((XModbusDevice *)client,
+            XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
         connected = XModbusDevice_connectDevice((XModbusDevice *)client);
         for (i = 0; i < 100 && XModbusDevice_state((XModbusDevice *)client) != XModbusDevice_ConnectedState; ++i) {
             XCoreApplication_processEventsWithMaxTime(XEventLoop_AllEvents, 10);
@@ -1074,10 +1074,10 @@ static void test_client_fc15_pressure_e2e(void)
     if (server && server->m_tcpServer)
         actualPort = XTcpServer_serverPort(server->m_tcpServer);
     if (client && actualPort) {
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice *)client,
-            XModbusDevice_NetworkAddressParameter, XVariant_create_utf8_str("127.0.0.1"));
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice *)client,
-            XModbusDevice_NetworkPortParameter, XVariant_create_int(actualPort));
+        do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter_ref((XModbusDevice *)client,
+            XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
+        do { XVariant* vParam = XVariant_create_int(actualPort); XModbusDevice_setConnectionParameter_ref((XModbusDevice *)client,
+            XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
         XModbusDevice_connectDevice((XModbusDevice *)client);
         for (i = 0; i < 200 && XModbusDevice_state((XModbusDevice *)client) !=
             XModbusDevice_ConnectedState; ++i)
