@@ -1175,22 +1175,48 @@ bool XKeyboardTest_runAll(void)
                        "换行键触发 returnPressed 信号");
         }
 
-        /* 确认键 → ready 信号；确认不自动收层（确认键为 FLAGS 组合含
-         * CLICK_TRIG：释放触发，合成事件须按压+释放成对）。确认键同
-         * 样只在 User1 既有回落表（款型主表行 4 以搜索键替代）。
-         * 弹层状态断言用 m_popped 弹出态标志（popup 置位、仅收层路径
-         * 复位）：无头回归环境编辑框为未 show 顶层，有效可见性
-         * （popupVisible=XWidget_isVisible）恒假（探针实测 popped=1/
-         * visible=0），GUI 环境（demo 页）两者同真——m_popped 两环境
-         * 语义一致。 */
+        /* 确认键（2026-10-31 语义升级）：ready 信号照发 + 单行编辑器
+         * 目标合成 XKey_Return（returnPressed 计数递增，与搜索/换行键
+         * 同链）+ 弹层收层=「确认=提交并收起」（m_popped 口径，headless
+         * 与 GUI 语义一致）。确认键为 FLAGS 组合含 CLICK_TRIG：释放触
+         * 发，合成事件须按压+释放成对。确认键只在 User1 既有回落表
+         * （款型主表行 4 以搜索键替代）。
+         * 收层后重新弹出：后续几何断言段沿用「弹层仍开」前提。 */
         {
             int okIdx = xkb_findButton(kb, XKEYBOARD_LBL_OK);
+            const char* textBefore;
             XWidget_setFocus((XWidget*)edit);
             XVirtualKeyboard_popup(kb, (XWidget*)edit);
             xkb_expect(kb->m_popped, "popup 后弹层为弹出态（m_popped）");
+            textBefore = XLineEdit_text(edit);
             xkb_clickAt(kb, okIdx, true);
             xkb_expect(xkb_readyCount == 1, "确认键发 ready 信号");
-            xkb_expect(kb->m_popped, "确认键不自动收层（弹出态保持）");
+            xkb_expect(xkb_returnPressedCount == 3,
+                       "确认键合成 Return（returnPressed 信号）");
+            xkb_expect(!kb->m_popped, "确认键收层（提交并收起）");
+            xkb_expect(strcmp(textBefore, XLineEdit_text(edit)) == 0,
+                       "确认键不写入字符");
+            /* 复原：后续几何断言段要求弹层仍开且绑定在 edit。 */
+            XWidget_setFocus((XWidget*)edit);
+            XVirtualKeyboard_popup(kb, (XWidget*)edit);
+            xkb_expect(kb->m_popped, "确认键收层后可再弹出（链复原）");
+        }
+
+        /* 数字盘确认键同语义（Number 模式 OK=键 7）：ready + Return +
+         * 收层；随后切回 User1 槽位（主链后续段依赖 User1 回落表）。 */
+        {
+            int numOk;
+            XWidget_setFocus((XWidget*)edit);
+            XVirtualKeyboard_popup(kb, (XWidget*)edit);
+            XVirtualKeyboard_setMode(kb, XKeyboardMode_Number);
+            numOk = xkb_findButton(kb, XKEYBOARD_LBL_OK);
+            xkb_expect(numOk >= 0, "数字盘可定位确认键");
+            xkb_clickAt(kb, (uint32_t)numOk, true);
+            xkb_expect(xkb_readyCount == 2, "数字盘确认键发 ready 信号");
+            xkb_expect(xkb_returnPressedCount == 4,
+                       "数字盘确认键合成 Return");
+            xkb_expect(!kb->m_popped, "数字盘确认键收层（提交并收起）");
+            XVirtualKeyboard_setMode(kb, XKeyboardMode_User1);
         }
 
         /* 弹层几何（host=顶层编辑框自身 200x30 → 上界钳位生效）。 */
@@ -1466,6 +1492,41 @@ bool XKeyboardTest_runAll(void)
         XClassDelete(edit6);
         XClassDelete(kb6);
     }
+        /* 多行编辑器（XPlainTextEdit）确认键（2026-10-31）：确认≠换行
+         * ——不插 \n（文本不变），ready 照发、收层照常（ready-only+收层
+         * 口径）。**独立键盘实例**：多行目标回绑主链会污染后续几何断言
+         * （弹层宽按新目标算+焦点迁移）；且多行控件须显式给几何（宽度
+         * 为 0 时弹层宽 0→命中落空→键点不到）。 */
+        {
+            XVirtualKeyboard* kb7 = XVirtualKeyboard_create(NULL, 0);
+            XPlainTextEdit* pte2 = XPlainTextEdit_create(NULL, 0);
+            char* plainBefore;
+            int okIdx7;
+            XWidget_setGeometry((XWidget*)pte2, 0, 0, 300, 80);
+            /* User1 槽位=内置小写表（含确认键）——TextLower 槽位已被款
+               型主表覆写（PinyinFull 行 4 无 OK 键）。多行 hints 不在
+               applyFocusHints 映射表内→落「无互斥 hints」分支：当前在
+               User1 槽位=保持（不进回落），故 User1 布局得以保留。 */
+            XVirtualKeyboard_setMode(kb7, XKeyboardMode_User1);
+            XWidget_setFocus((XWidget*)pte2);
+            XVirtualKeyboard_popup(kb7, (XWidget*)pte2);
+            okIdx7 = xkb_findButton(kb7, XKEYBOARD_LBL_OK);
+            xkb_expect(okIdx7 >= 0, "多行目标可定位确认键");
+            plainBefore = XPlainTextEdit_toPlainText(pte2);
+            xkb_clickAt(kb7, (uint32_t)(okIdx7 < 0 ? 0 : okIdx7), true);
+            {
+                char* plainAfter = XPlainTextEdit_toPlainText(pte2);
+                xkb_expect(strcmp(plainBefore ? plainBefore : "",
+                                  plainAfter ? plainAfter : "") == 0,
+                           "多行确认键不插入换行（文本不变）");
+                if (plainAfter) XFree_System(plainAfter);
+            }
+            xkb_expect(!kb7->m_popped, "多行确认键收层（提交并收起）");
+            if (plainBefore) XFree_System(plainBefore);
+            XVirtualKeyboard_setTextArea(kb7, NULL);
+            XClassDelete(pte2);
+            XClassDelete(kb7);
+        }
 #endif /* XLINEEDIT_ON && XPLAINTEXTEDIT_ON */
 #else
     /* 无编辑控件适配时仅验证键盘核心（布局/切换/控制字）。 */
@@ -1901,10 +1962,12 @@ bool XKeyboardTest_runAll(void)
             XClassDelete(kb3);
         }
 
-        /* ---- ⑤c 键盘选择面板（Sogou 改版三阶段）：工具栏「键盘选择」
-           图标（第 2 等分）开合 + 三行点选 setLayoutKind 并关闭 + 面板
-           外/再点图标关闭。面板几何=菜单条下方键区三等分行（与
-           xkb_layoutSelectorLayout 同源边界算式复算坐标）。 ---- */
+        /* ---- ⑤c 键盘选择面板（Sogou 改版三阶段；2026-10-31 补数字
+           键盘行）：工具栏「键盘选择」图标（第 2 等分）开合 + 四行点
+           选（行 0..2=setLayoutKind、行 3=数字键盘 setMode(Number)）
+           并关闭 + 窄盘态点文本行回 TextLower + 面板外/再点图标关闭。
+           面板几何=菜单条下方键区四等分行（与 xkb_layoutSelectorLayout
+           同源边界算式复算坐标）。 ---- */
         {
             XVirtualKeyboard* kb4 = XVirtualKeyboard_create(NULL, 0);
             XPoint pos;
@@ -1934,12 +1997,12 @@ bool XKeyboardTest_runAll(void)
             XKB_T_SELICON();
             xkb_expect(!kb4->m_layoutSelectorOpen, "再点图标关闭面板");
             /* 行 1（拼音九键）点选：setLayoutKind 并关闭。行中心 y=
-               面板 y + panelH*i/3 + 行高/2（边界累进行几何中线）。 */
+               面板 y + panelH*i/4 + 行高/2（边界累进行几何中线）。 */
             XKB_T_SELICON();
             xkb_expect(kb4->m_layoutSelectorOpen, "⑤c 前置：面板再开");
             pos.x = kb4->m_menuBarRect.x + kb4->m_menuBarRect.width / 2;
-            pos.y = 2 + barH + panelH / 3 +
-                    (panelH * 2 / 3 - panelH / 3) / 2;
+            pos.y = 2 + barH + panelH / 4 +
+                    (panelH * 2 / 4 - panelH / 4) / 2;
             XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
                              XMouseButton_LeftButton, 0, pos);
             XObject_event_base((XObject*)kb4, (XEvent*)&me);
@@ -1953,7 +2016,8 @@ bool XKeyboardTest_runAll(void)
                        "点选拼音九键行：setLayoutKind 并关闭");
             /* 行 2（英文全键）→ 行 0（拼音全键）往返。 */
             XKB_T_SELICON();
-            pos.y = 2 + barH + panelH * 2 / 3 + (panelH - panelH * 2 / 3) / 2;
+            pos.y = 2 + barH + panelH * 2 / 4 +
+                    (panelH * 3 / 4 - panelH * 2 / 4) / 2;
             XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
                              XMouseButton_LeftButton, 0, pos);
             XObject_event_base((XObject*)kb4, (XEvent*)&me);
@@ -1966,7 +2030,7 @@ bool XKeyboardTest_runAll(void)
                            XVirtualKeyboard_buttonCount(kb4) == 35,
                        "点选英文全键行：setLayoutKind 并关闭");
             XKB_T_SELICON();
-            pos.y = 2 + barH + (panelH / 3) / 2;
+            pos.y = 2 + barH + (panelH / 4) / 2;
             XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
                              XMouseButton_LeftButton, 0, pos);
             XObject_event_base((XObject*)kb4, (XEvent*)&me);
@@ -1978,6 +2042,43 @@ bool XKeyboardTest_runAll(void)
                                XKeyboardLayout_PinyinFull &&
                            XVirtualKeyboard_buttonCount(kb4) == 35,
                        "点选拼音全键行：setLayoutKind 并关闭");
+            /* 行 3（数字键盘，2026-10-31）：点选=setMode(Number) 并关
+               闭（款型不动，Number 布局 4 行 17 键）。 */
+            XKB_T_SELICON();
+            xkb_expect(kb4->m_layoutSelectorOpen, "⑤c 前置：面板四开");
+            pos.y = 2 + barH + panelH * 3 / 4 +
+                    (panelH - panelH * 3 / 4) / 2;
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb4, (XEvent*)&me);
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb4, (XEvent*)&me);
+            xkb_expect(!kb4->m_layoutSelectorOpen &&
+                           XVirtualKeyboard_mode(kb4) ==
+                               XKeyboardMode_Number &&
+                           XVirtualKeyboard_layoutKind(kb4) ==
+                               XKeyboardLayout_PinyinFull &&
+                           XVirtualKeyboard_buttonCount(kb4) == 17,
+                       "点选数字键盘行：setMode(Number) 并关闭（款型保"
+                       "留）");
+            /* 窄盘态点行 0（拼音全键）：同时回落 TextLower——面板即
+               回文本盘的对称口（setLayoutKind 不动模式，留在窄盘则款
+               型不可见=面板像失灵）。 */
+            XKB_T_SELICON();
+            xkb_expect(kb4->m_layoutSelectorOpen, "⑤c 前置：面板五开");
+            pos.y = 2 + barH + (panelH / 4) / 2;
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb4, (XEvent*)&me);
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb4, (XEvent*)&me);
+            xkb_expect(!kb4->m_layoutSelectorOpen &&
+                           XVirtualKeyboard_mode(kb4) ==
+                               XKeyboardMode_TextLower &&
+                           XVirtualKeyboard_buttonCount(kb4) == 35,
+                       "窄盘态点拼音全键行：回 TextLower（款型不变）");
             /* 面板外点击（键区上方菜单条空白=第 1 等分悬浮槽位）关闭。 */
             XKB_T_SELICON();
             xkb_expect(kb4->m_layoutSelectorOpen, "⑤c 前置：面板三开");
@@ -2929,6 +3030,10 @@ bool XKeyboardTest_runAll(void)
             int iconX0;
             int iconY;
             int dockedH;
+            int baseX;   /**< 紧凑态基线位（客户区口径，回打落地后取）。 */
+            int baseY;
+            int pressX;  /**< 拖移按下时的窗位（拖移增量基准）。 */
+            int pressY;
             XWidget_setGeometry(win, 0, 0, 400, 300);
             XWidget_setGeometry((XWidget*)ed, 20, 20, 200, 28);
             XWidget_show(win);
@@ -2977,22 +3082,53 @@ bool XKeyboardTest_runAll(void)
                             (XWidgetFlags)XWindowType_TypeMask) ==
                                (XWidgetFlags)XWindowType_Popup,
                        "悬浮切换：转独立顶层 Popup 紧凑态");
-            xkb_expect(XVirtualKeyboard_width(kf) == 500 * 45 / 100 &&
-                           XVirtualKeyboard_height(kf) ==
-                               dockedH * (500 * 45 / 100) / 500 &&
-                           XWidget_x((XWidget*)kf) ==
-                               500 - 500 * 45 / 100 &&
-                           XWidget_y((XWidget*)kf) == 360 - dockedH *
-                               (500 * 45 / 100) / 500,
-                       "紧凑几何：宽 min(宿主宽45%,420) 高同比例宿主右下");
+            /* [2026-11-01 平台口径收口] 紧凑几何期望按「宿主客户区原点 +
+             *   右下锚定」推导，不写死绝对坐标：
+             *   ① 宿主客户区原点经 XWidget_mapToGlobal 读（= 框架记账的
+             *      客户区绝对位；有 WM 时其客户区由平台层在映射后对齐到
+             *      请求位——见 XPlatformNativeWindow_posix.c 的
+             *      xpwn_frameTargetFor / MapNotify 对齐，桌面会话与裸
+             *      Xvfb 同口径）。
+             *   ② 锚定偏移 = 宿主尺寸 - 紧凑尺寸（右下角）。
+             *   ③ 平台层已把「X 请求是 frame 口径、框架语义是客户区口径」
+             *      的换算内化（否则每次几何变更叠加一次 WM 装饰内缩：
+             *      宿主客户区 (1,41)→(2,82)，紧凑浮动态随之偏离右下角），
+             *      故此处不再叠加任何边框偏移补偿。
+             * 断言前先泵到 ConfigureNotify 回打落地：位置在回打前后是
+             * 两种口径（请求值 vs 客户区实际值），口径错位会误判。 */
+            xkb_pumpMs(60); /* 等 ConfigureNotify 回打：位置口径落定 */
+            {
+                XPoint hostOrg;
+                XPoint zero;
+                int expW = 500 * 45 / 100;
+                int expH = dockedH * expW / 500;
+                zero.x = 0;
+                zero.y = 0;
+                hostOrg = XWidget_mapToGlobal(win, &zero);
+                xkb_expect(XVirtualKeyboard_width(kf) == expW &&
+                               XVirtualKeyboard_height(kf) == expH,
+                           "紧凑几何：宽 min(宿主宽45%,420) 高同比例");
+                xkb_expect(XWidget_x((XWidget*)kf) ==
+                               hostOrg.x + (500 - expW) &&
+                               XWidget_y((XWidget*)kf) ==
+                               hostOrg.y + (360 - expH),
+                           "紧凑几何：落位宿主右下角");
+                /* 基线位（客户区口径）：守卫与拖移的基准。 */
+                baseX = XWidget_x((XWidget*)kf);
+                baseY = XWidget_y((XWidget*)kf);
+            }
             /* 几何守卫：宿主 resize 期间 reposition 不覆盖紧凑矩形。
                先泵一拍（40ms>30ms 合流周期）让 Queued 几何槽+定时器真
-               走完，守卫在「reposition 真被调用」前提下受检，非空转。 */
+               走完，守卫在「reposition 真被调用」前提下受检，非空转。
+               [2026-11-01 口径修正] 期望改为「与 resize 前的基线位相同
+               + 尺寸不变」——不写死绝对坐标（宿主客户区原点随 WM 边框
+               偏移变化，见上），且基线取自回打落地后的客户区口径，与
+               resize 后的读数同口径。 */
             XWidget_setGeometry(win, 0, 0, 640, 480);
             xkb_pumpMs(40);
             xkb_expect(kf->m_compactFloat &&
-                           XWidget_x((XWidget*)kf) == 275 &&
-                           XWidget_y((XWidget*)kf) == 279 &&
+                           XWidget_x((XWidget*)kf) == baseX &&
+                           XWidget_y((XWidget*)kf) == baseY &&
                            XVirtualKeyboard_width(kf) == 225 &&
                            XVirtualKeyboard_height(kf) == 81,
                        "几何守卫：宿主 resize 不覆盖紧凑矩形");
@@ -3015,13 +3151,20 @@ bool XKeyboardTest_runAll(void)
             XObject_event_base((XObject*)kf, (XEvent*)&me);
             xkb_expect(kf->m_compactDrag && kf->m_pressedTool < 0,
                        "工具栏空白按下启动拖移（不武装图标）");
+            /* [2026-11-01 口径修正] 拖移契约=「窗随指针 delta 平移」，
+               基准取**按下时的实际窗位**（pressX/pressY），不写死绝对
+               坐标——宿主客户区原点随 WM 边框偏移变化，绝对坐标不可测；
+               基准取实测值后，断言仍严格锁住 delta（+30,-20 / 累计
+               +70,-30），偏移量本身由平台决定、不由测试假设。 */
+            pressX = XWidget_x((XWidget*)kf);
+            pressY = XWidget_y((XWidget*)kf);
             pos.x = (short)(kf->m_menuBarRect.x + 33);
             pos.y = (short)(kf->m_menuBarRect.y + barH / 2 - 20);
             XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_MOVE,
                              XMouseButton_LeftButton, 0, pos);
             XObject_event_base((XObject*)kf, (XEvent*)&me);
-            xkb_expect(XWidget_x((XWidget*)kf) == 305 &&
-                           XWidget_y((XWidget*)kf) == 259,
+            xkb_expect(XWidget_x((XWidget*)kf) == pressX + 30 &&
+                           XWidget_y((XWidget*)kf) == pressY - 20,
                        "拖移 move：窗口随 delta 移动（+30,-20）");
             /* 光标再 +40,-10（累计 +70,-30）：局部位=上次局部位+位移。 */
             pos.x = (short)(kf->m_menuBarRect.x + 43);
@@ -3029,8 +3172,8 @@ bool XKeyboardTest_runAll(void)
             XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_MOVE,
                              XMouseButton_LeftButton, 0, pos);
             XObject_event_base((XObject*)kf, (XEvent*)&me);
-            xkb_expect(XWidget_x((XWidget*)kf) == 345 &&
-                           XWidget_y((XWidget*)kf) == 249,
+            xkb_expect(XWidget_x((XWidget*)kf) == pressX + 70 &&
+                           XWidget_y((XWidget*)kf) == pressY - 30,
                        "拖移 move 增量跟随（累计 +70,-30）");
             XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
                              XMouseButton_LeftButton, 0, pos);
@@ -4407,6 +4550,18 @@ bool XKeyboardTest_runAll(void)
                        204, 205, 138, 755,
                        "档位窄盘⑧b：480x960 手机拨号盘 rowH=40 kbW=4×50+4"
                        "=204 居中（竖盘零漂移：KEYW 5/4 与 dp40 均未改）");
+    /* 数字键盘行落地补锁（2026-10-31）：Number 竖屏（此前仅横屏断言）
+       与 Digits 竖屏 cap 钳定（自然宽 304 超 hostW×60%=288 被钳）。 */
+    xkb_tierDockAssert(480, 960, XKeyboardMode_Number,
+                       XKeyboardLayout_PinyinFull,
+                       254, 205, 113, 755,
+                       "档位窄盘：480x960 Number 竖屏 kbW=5×50+4=254 居中"
+                       " x=113（cap 288 不绑）");
+    xkb_tierDockAssert(480, 960, XKeyboardMode_Digits,
+                       XKeyboardLayout_PinyinFull,
+                       288, 205, 96, 755,
+                       "档位窄盘：480x960 Digits 竖屏自然宽 6×50+4=304 被"
+                       " cap 288（hostW×60%）钳定居中 x=96");
     xkb_tierSetenv("tablet", "160");
     xkb_tierDockAssert(800, 1280, XKeyboardMode_TextLower,
                        XKeyboardLayout_PinyinFull,

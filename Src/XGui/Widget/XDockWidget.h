@@ -103,8 +103,7 @@ typedef struct XDockWidget
                               *   中不吸附宿主落点、释放不落位（对标
                               *   QDockWidgetPrivate::DragState::ctrlDrag，
                               *   qdockwidget_p.h:50；按下时按 Ctrl 修饰键
-                              *   判定，qdockwidget.cpp:934）。 */
-    uint8_t m_announcedVisible : 1; /**< 上次广播 visibilityChanged 的值（去重）。 */
+                              *   判定，qdockwidget.cpp:933-935 的两子句）。 */
     uint8_t m_undockedValid : 1; /**< m_undockedGeometry 是否已记录（对标
                               *   QRect::isValid 的有效性判定，
                               *   qdockwidget.cpp:1466）。 */
@@ -176,15 +175,6 @@ void XDockWidget_setFeatures(XDockWidget* self, int features);
  * @return 返回当前特性位集合（XDockWidgetFeature 位组合）。
  */
 int XDockWidget_features(const XDockWidget* self);
-/** @brief X停靠控件setFeature（对标 QDockWidget::setFeature(feature, on)）。
- * @details 单特性开关：on=true 置位、false 清位，其余特性保持不变；
- *          实际变化时经 setFeatures 发射 featuresChanged(int)。
- * @param self 目标控件指针。
- * @param feature 单个特性位（XDockWidgetFeature_*，仅低 4 位有效）。
- * @param on true 置位该特性，false 清除。
- * @return 无返回值。
- */
-void XDockWidget_setFeature(XDockWidget* self, int feature, bool on);
 /** @brief X停靠控件setFloating（对标 Qt QDockWidget::setFloating）。
  * @details floating=true 时面板脱离宿主主窗口布局，转成独立顶层窗口
  *          （对标 Qt：拖出主窗成独立顶层窗；顶层标题栏显示面板标题，
@@ -293,8 +283,9 @@ void* XDockWidget_allowedAreasChanged_signal(XDockWidget* self, int areas);
  */
 void* XDockWidget_visibilityChanged_signal(XDockWidget* self, bool visible);
 /** @brief dockLocationChanged(int) 信号（对标 QDockWidget::dockLocationChanged；
- *         载荷：停靠区域码。TODO：拖拽重停靠落地后由主窗口布局在
- *         区域变化时真发射；当前仅保留信号标识）。 */
+ *         载荷：停靠区域码。转浮动时携带 NoDockWidgetArea、回归停靠时
+ *         携带宿主登记区域（xdw_setFloatingImpl 与浮/停切���成对发射，
+ *         对标 qdockwidget.cpp:1234-1242）。 */
 void* XDockWidget_dockLocationChanged_signal(XDockWidget* self, int area);
 
 #endif /* XWIDGET_ON && XDOCKWIDGET_ON */

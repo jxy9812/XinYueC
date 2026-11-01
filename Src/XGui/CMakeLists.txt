@@ -20,6 +20,13 @@
 # ---- 头文件目录自动采集（本模块自管）----
 FIND_INCLUDE_DIR(XGUI_INCLUDE_DIRS ".")
 
+# ---- 头目录导出清单（模块自持，单一真值源）----
+# 本模块的导出清单由 XGuiHeaders.cmake 定义，根 CMakeLists.txt 在
+# add_subdirectory(Drive) 之前 include 它并落地到根作用域（快照语义要求
+# 早于 Drive/Library/* 目标注册）。本文件内再 include 一次，使模块自身
+# 的 target_include_directories 与根共用同一份清单，不两处各写一份路径。
+include(XGuiHeaders.cmake)
+
 file(GLOB_RECURSE XGUI_FILE "${CMAKE_CURRENT_LIST_DIR}/*.c")
 
 if(NOT XINYUE_EMBEDDED)
@@ -29,7 +36,7 @@ if(NOT XINYUE_EMBEDDED)
     # 的 #include "XGui/XGuiConfig.h" 相对路径口径；XGui 居 Src/ 后 /.. 恰为
     # Src 根，"XGui/..." 前缀包含同口径覆盖）。
     target_include_directories(XinYueGui PUBLIC
-        ${CMAKE_CURRENT_LIST_DIR}
+        ${XGUI_HEADER_EXPORT_DIRS}
         ${CMAKE_CURRENT_LIST_DIR}/..
         ${XGUI_INCLUDE_DIRS})
 
@@ -55,10 +62,23 @@ if(NOT XINYUE_EMBEDDED)
     endif()
 endif()
 
-# [历史 2026-10-31 → 2026-11-01 移除抬升] 原将模块头目录抬回父作用域
-# （INCLUDE_XGUI_AFTER_LIST），设计假设"目录属性生成期解析，根随后
-# include_directories 对先注册的 Library 目标同样生效"——实测为误：目录级
-# INCLUDE_DIRECTORIES 是 add_subdirectory 时刻的快照，先注册者拿不到后落的
-# 根清单（Src 曾因快照语义 C1083 实证）。现 XGui 头目录的传递全走链接图
-# （XinYueCS PUBLIC XGuiLayer → 本库 PUBLIC 头目录），"XGui/XGuiConfig.h"
-# 反向包含链走上级 Src 根（XCore 模块抬升），本模块不再抬升。
+# [历史 2026-10-31 → 2026-11-01 移除抬升 → 2026-11-01 改为「模块自持导出
+# 清单 + 根提前落地」] 原将模块头目录抬回父作用域（INCLUDE_XGUI_AFTER_LIST），
+# 设计假设"目录属性生成期解析，根随后 include_directories 对先注册的 Library
+# 目标同样生效"——实测为误：目录级 INCLUDE_DIRECTORIES 是 add_subdirectory
+# 时刻的快照，先注册者拿不到后落的根清单（Src 曾因快照语义 C1083 实证）。
+# 现 XGui 头目录的传递主体仍走链接图（XinYueCS PUBLIC XGuiLayer → 本库
+# PUBLIC 头目录），"XGui/XGuiConfig.h" 反向包含链走上级 Src 根（XCore 模块
+# 抬升），本模块不再向父作用域抬升整份头目录清单。
+#
+# 但「不抬升」不能覆盖全局强制包含链上的一处硬依赖：裸名 "XGuiConfig.h"
+# （XImageCodec_config.h:44）的解析点在本模块目录内，而走该链的
+# Drive/Library/* 目标（zlib TU 等）既不链接 XinYueGui、又先于本模块注册，
+# 拿不到本模块的 PUBLIC 头目录 —— 表现为 Library/zlib 三个 TU 编译期
+# "fatal error: XGuiConfig.h: 没有那个文件或目录"（纯净上游树 768e3de3
+# 实测复现，与本地改动无关）。
+# 收口口径：**模块自持导出清单**（XGuiHeaders.cmake，单一真值源），根在
+# add_subdirectory(Drive) 之前 include 并落地（早于 Drive/Library/* 注册，
+# 满足快照语义）。落地的只有模块根目录（XGuiConfig.h / XAlignment.h 两
+# 个顶层头），叶子目录仍由本模块 PUBLIC 接口传给消费目标，不全局扩散。
+# 详见 Src/XGui/XGuiHeaders.cmake 头注。

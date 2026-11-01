@@ -115,6 +115,11 @@ typedef struct XMainWindow
     uint16_t m_iconSize;         /**< 工具栏图标尺寸（像素；默认 16）。 */
     uint16_t m_corner;           /**< 角控件位置位集（对标 corner；4 角
                                   *   × 4 位半字节）。 */
+    uint16_t m_stateVersion;     /**< 应用侧状态版本（对标 Qt
+                                  *   saveState(version)/restoreState(
+                                  *   state, version) 的 version 参数：
+                                  *   应用自定义的存档代次，用于判定陈旧
+                                  *   存档；框架内建格式版本另计）。 */
     /* ---- 1 字节组 ---- */
     uint8_t m_dockOptions;       /**< 停靠选项（XMainWindowDockOption 位
                                   *   组合，最大 0x20）。 */
@@ -125,8 +130,12 @@ typedef struct XMainWindow
                                   *   setGeometry/show/raise，拖动中每条
                                   *   移动都调用 hoverDrop，冗余的同步
                                   *   SetWindowPos 往返会放大呈现压力）。 */
-    uint8_t m_tabPosition;       /**< 页签位置（对标 tabPosition）。 */
     uint8_t m_tabShape;          /**< 页签形状（对标 tabShape）。 */
+    uint8_t m_tabPositions[4];   /**< 逐停靠区页签位置（对标 Qt
+                                  *   QMainWindowLayout::tabPositions[]：
+                                  *   下标序=左/右/顶/底，setTabPosition
+                                  *   按区域掩码逐区写入、tabPosition 按区
+                                  *   读取；Qt 语义为逐区而非全局单值）。 */
     /* ---- 位域组（9 个连续布尔打包 2 字节） ---- */
     uint8_t m_menuBarOwned : 1;  /**< 菜单栏是否内部创建。 */
     uint8_t m_statusBarOwned : 1;/**< 状态栏是否内部创建。 */
@@ -141,7 +150,8 @@ typedef struct XMainWindow
     uint8_t m_animated : 1;      /**< 动画（对标 animated）。 */
     uint8_t m_dockNestingEnabled : 1; /**< 停靠嵌套（对标 dockNestingEnabled）。 */
     uint8_t m_unifiedTitleAndToolBarOnMac : 1; /**< 统一标题栏（属性存储）。 */
-    uint8_t m_separator : 1;     /**< 工具栏分隔线（对标 setSeparator）。 */
+    /* 位域组：9 个布尔打包 2 字节（末位 m_separator 已随冗余 API
+       setSeparator 删除——该位只写不读，无任何行为，纯冗余）。 */
 } XMainWindow;
 
 /** @brief XMainWindowclassinit（对标 Qt 同名接口）。
@@ -215,12 +225,20 @@ XWidget* XMainWindow_takeCentralWidget(XMainWindow* self);
  * @return 无返回值。
  */
 void XMainWindow_addToolBar(XMainWindow* self, int area, XWidget* toolbar);
+/** @brief X主窗口addToolBar（对标 Qt QMainWindow::addToolBar(QToolBar*)）。
+ * @details 无区域重载：工具栏加入顶部区域（对标 Qt：缺省加到
+ *          Qt::TopToolBarArea）。
+ * @param self 目标主窗口。
+ * @param toolbar 工具栏控件（借用；挂入本窗口）。
+ * @return 无返回值。
+ */
+void XMainWindow_addToolBar_2(XMainWindow* self, XWidget* toolbar);
 /** @brief XMainWindowadd工具条2（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param utf8Title const char 参数。
  * @return 返回对象指针；无效时返回 NULL。
  */
-XWidget* XMainWindow_addToolBar_2(XMainWindow* self, const char* utf8Title);
+XWidget* XMainWindow_addToolBar_3(XMainWindow* self, const char* utf8Title);
 /** @brief 查询全局工具栏图标尺寸（对标 QMainWindow::iconSize）。
  * @param self 目标主窗口；可为 NULL。
  * @return 图标方边像素值（默认 16）；self 为 NULL 时返回 16。
@@ -298,6 +316,19 @@ int XMainWindow_toolButtonStyle(const XMainWindow* self);
  */
 void XMainWindow_addDockWidget(XMainWindow* self, int area,
                                XWidget* dock);
+/** @brief X主窗口addDockWidget（对标 Qt QMainWindow::addDockWidget(area,
+ *             dockwidget, orientation)）。
+ * @details 拆分布局重载：面板先按区域接入，再与同区中位于它之前的
+ *          那个面板按指定跨向拆分（对标 Qt：面板被拆到同区前一个面板
+ *          旁边）。同区无前序面板时退化为普通 addDockWidget。
+ * @param self 目标主窗口。
+ * @param area 停靠区域码（XDockWidgetArea_*）。
+ * @param dock 停靠面板控件。
+ * @param orientation 跨向（0=纵向、1=横向，对标 Qt::Orientation）。
+ * @return 无返回值。
+ */
+void XMainWindow_addDockWidget_2(XMainWindow* self, int area, XWidget* dock,
+                                 int orientation);
 /** @brief XMainWindowremove停靠控件（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param dock 停靠窗指针。
@@ -432,7 +463,6 @@ int XMainWindow_dockWidgetArea(const XMainWindow* self,
  * @param sep true 显示分隔线。
  * @return 无返回值。
  */
-void XMainWindow_setSeparator(XMainWindow* self, bool sep);
 /** @brief 设置文档模式（对标 setDocumentMode）。
  * @param self 目标主窗口。
  * @param enable true 开启。
@@ -476,14 +506,20 @@ bool XMainWindow_isUnifiedTitleAndToolBarOnMac(const XMainWindow* self);
  *       既有行为保持一致。
  */
 #define XMainWindow_unifiedTitleAndToolBarOnMac(self) XMainWindow_isUnifiedTitleAndToolBarOnMac((self))
-/** @brief 设置页签位置（对标 setTabPosition）。
+/** @brief 设置页签位置（对标 QMainWindow::setTabPosition(areas, position)）。
+ * @details 按停靠区掩码逐区写入（对标 Qt：掩码内每个区的页签位置一并
+ *          改写，qmainwindowlayout.cpp:1803-1822）。
  * @param self 目标主窗口。
+ * @param areas 停靠区域掩码（XDockWidgetArea_* 位组合）。
  * @param position 位置码。
  * @return 无返回值。
  */
-void XMainWindow_setTabPosition(XMainWindow* self, int position);
-/** @brief 查询页签位置。 @param self 目标主窗口。 @return 位置码。 */
-int XMainWindow_tabPosition(const XMainWindow* self);
+void XMainWindow_setTabPosition(XMainWindow* self, int areas, int position);
+/** @brief 查询页签位置（对标 QMainWindow::tabPosition(area)）。
+ * @param self 目标主窗口。
+ * @param area 停靠区域码（XDockWidgetArea_*）。
+ * @return 位置码；区域非法返回 0（缺省 North）。 */
+int XMainWindow_tabPosition(const XMainWindow* self, int area);
 /** @brief 设置页签形状（对标 setTabShape）。
  * @param self 目标主窗口。
  * @param shape 形状码。
@@ -501,11 +537,13 @@ int XMainWindow_tabShape(const XMainWindow* self);
 void XMainWindow_setCorner(XMainWindow* self, int corner, int area);
 /** @brief 查询角控件位置。 @param self 目标主窗口。 @param corner 角位码。 @return 区域码。 */
 int XMainWindow_corner(const XMainWindow* self, int corner);
-/** @brief 工具栏中断（对标 addToolBarBreak）。
+/** @brief 工具栏中断（对标 QMainWindow::addToolBarBreak(area)）。
+ * @details 断点归属该区域：其后工具栏自该区起排（对标 Qt 语义）。
  * @param self 目标主窗口。
+ * @param area 断点所属区域码（XDockWidgetArea_*）。
  * @return 无返回值。
  */
-void XMainWindow_addToolBarBreak(XMainWindow* self);
+void XMainWindow_addToolBarBreak(XMainWindow* self, int area);
 /** @brief 插入工具栏（对标 insertToolBar）。
  * @param self 目标主窗口。
  * @param before 插入基准工具栏借用指针。
@@ -533,7 +571,7 @@ void XMainWindow_removeToolBar(XMainWindow* self, XWidget* toolbar);
  * @param self 目标主窗口。
  * @return 新建 XString*；失败返回 NULL。
  */
-XString* XMainWindow_saveState(const XMainWindow* self);
+XString* XMainWindow_saveState(XMainWindow* self, int version);
 /** @brief 恢复窗口布局状态（对标 QMainWindow::restoreState）。
  * @details 解析 saveState 快照并按登记顺序回放：工具栏区域、停靠面板
  *          区域/显隐/浮动状态/跨向覆盖、四区几何尺寸、标签组编组
@@ -547,7 +585,8 @@ XString* XMainWindow_saveState(const XMainWindow* self);
  * @param state 借用 XString* 快照；可为 NULL（重置）。
  * @return 恢复成功返回 true；快照无效返回 false。
  */
-bool XMainWindow_restoreState(XMainWindow* self, const XString* state);
+bool XMainWindow_restoreState(XMainWindow* self, const XString* state,
+                              int version);
 
 /* ==================== 信号 ==================== */
 

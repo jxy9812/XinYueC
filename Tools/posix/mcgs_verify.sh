@@ -74,7 +74,7 @@ if want sleep; then
         off=$(cat /sys/class/backlight/$BL/brightness 2>/dev/null)
         # 熄屏后注入触摸，框架应收到并唤醒（亮度被拉回）
         $INJ tap 500 300 >/dev/null 2>&1
-        sleep 1
+        sleep 2
         after=$(cat /sys/class/backlight/$BL/brightness 2>/dev/null)
         if [ "$off" = "0" ] && [ "$after" != "0" ]; then
             emit "SLEEP_WAKE" PASS "熄屏后触摸唤醒（亮度拉回）" "off=$off after=$after"
@@ -82,6 +82,12 @@ if want sleep; then
             emit "SLEEP_WAKE" SKIP "熄屏后触摸唤醒" "亮度写 0 未生效（before=$before）"
         else
             emit "SLEEP_WAKE" FAIL "熄屏后触摸唤醒" "熄屏后触摸未唤醒（after=$after）"
+        fi
+        # [现场事故 2026-10-30] FAIL 分支退出时屏幕留黑（亮度 0 滞留），
+        # 是 10-29 晚「触摸唤不醒」现场的直接肇事者——无论判定结果如何，
+        # 用例结束后把亮度恢复到用例前值，不再把黑屏留给下一位。
+        if [ "$after" = "0" ] && [ -n "$before" ]; then
+            echo "$before" > /sys/class/backlight/$BL/brightness 2>/dev/null
         fi
     fi
 fi

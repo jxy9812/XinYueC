@@ -12,8 +12,11 @@
  *             RS-d 阻塞记录。2026-10-17 布局容器化: 页内手写坐标排布
  *             全部删除, 几何改由页根盒式布局协商; 2026-10-25 adapt 增
  *             竖屏单列档: 页根宽 <RC_STACK_MAX_W 时翻垂直单列并抬触控
- *             目标到 40 逻辑像素, 见 adapt 段注记）：
- *              - 视图区（页根水平布局左段, 伸缩占满余宽, 普通容器控件）:
+ *             目标到 40 逻辑像素, 见 adapt 段注记。2026-10-31 分栏改
+ *             框架分割条: 视图区/控制列两页挂 XSplitter, 自造
+ *             DemoSplitter 退役（拖拽/双击收展/方向光标/贴缘命中/
+ *             折叠迟滞全框架接管））：
+ *              - 视图区（框架分割条页 0, 伸缩占满余宽, 普通容器控件）:
  *                XGuiClient 1:1 镜像视图宿主。FB_META 后客户端
  *                setFixedSize(远端尺寸)（冻结语义保留, 布局按最值约束
  *                放行溢出）, 超出宿主的部分经绘制裁剪
@@ -21,8 +24,10 @@
  *                （XWidget_childAt 矩形链）收窄到宿主矩形——不覆盖任何
  *                本地控件; 断开后把视图复位为宿主尺寸, 占位文本
  *                （「未连接远端服务器」）在视图区可见;
- *              - 控制列（定宽容器, 垂直盒布局贴右）: IP/端口/连接/断开/
- *                档位/TLS/认证/口令/「模拟触摸」/实时统计, 全部本地可达;
+ *              - 控制列（框架分割条页 1, 垂直盒布局贴右; 列宽由分割
+ *                条拖拽/记忆, 收起=框架折叠位零宽+把手贴右缘）: IP/
+ *                端口/连接/断开/档位/TLS/认证/口令/「模拟触摸」/实时
+ *                统计, 全部本地可达;
  *                口令经 XGuiClient_setAccessPassword/clearAccessPassword
  *                接入连接流程（2026-10-04 访问口令: 空输入=显式清除,
  *                连接自动适配服务端挑战要求, 要求认证而无口令快速失败）;
@@ -77,7 +82,8 @@
 #include "XDateTime.h"    /* 单调毫秒时间戳(采样行 t= 字段)。 */
 #include "XSystem.h"      /* XSystem_environment: 环境变量唯一入口。 */
 #include "xgui_demo_pages.h"
-#include "xgui_demo_splitter.h" /* 视图区/控制列分割条（拖宽/双击收/单击展）。 */
+#include "XSplitter.h"       /* 框架分割条（2026-10-31 迁移：视图区|控制列分栏）。 */
+#include "XSplitterHandle.h" /* 把手部件（贴缘可点/命中让位）。 */
 #include "xgui_demo_page_remote_client.h"
 
 /*
@@ -96,9 +102,17 @@
 /** @brief 视图区设计高（会话条初始附着矩形用; 800x600 镜像 1:1 超出
  *         部分经祖先矩形链裁剪, 不越出视图区, 不覆盖本地控件）。 */
 #define RC_VIEW_H 458
-/** @brief 控制列定宽（布局化后=列容器固定宽; 分割条回调仍按此报默认
- *         列宽, 拖宽语义随 adapt 收空一并冻结）。 */
+/** @brief 控制列默认宽（框架分割条下的列宽记忆初值；拖拽后由
+ *         splitterMoved 记忆改写，resize 后按 px 意图重申）。 */
 #define RC_COL_W 252
+/** @brief 视图区保底宽（列宽上限由此反推：列再宽也不能把镜像视图压
+ *         没；拖拽区间由框架 getRange 按此钳定）。 */
+#define RC_VIEW_MIN_W 160
+/** @brief 视图区保底高（竖屏单列档：控制列吃内容高、视图区保底）。 */
+#define RC_VIEW_MIN_H 100
+/** @brief 分栏把手宽（框架 XSplitter 把手条带宽度；竖屏单列档置 0
+ *         即无把手——单列下上下拖分无意义，对标导航面板紧凑档口径）。 */
+#define RC_SPLIT_W 6
 /** @brief 竖屏单列档阈值（页根有效宽低于此值切单列, 见 adapt）。手机
  *         竖屏逻辑宽 360~440 主流, 左右切分下视图段余宽（宽-272）被压
  *         成百像素级窄条——占位文本两端裁切、左条整条空白; 桌面
@@ -177,9 +191,15 @@ static struct
                                *   连接期浮现/断开隐藏; 断开=「退出会话
                                *   不退出应用」入口, 2026-10-03）。 */
     XGuiClient* m_client;     /**< 客户端对象（父挂视图区宿主）。 */
-    XWidget*    m_split;      /**< 视图区/控制列分割条（拖宽/双击收列/单击展）。 */
-    int         m_colW;       /**< 控制列宽（分割条可拖 200..420，默认 RC_COL_W）。 */
-    bool        m_colCollapsed; /**< 控制列收起态（细条单击展开）。 */
+    XSplitter*  m_splitter;   /**< 框架分割条（2026-10-31 迁移替代自造
+                               *   DemoSplitter）：页序=[视图区|控制列]，
+                               *   把手居两页之间（拖左=列变宽），拖拽/
+                               *   双击收展/方向光标/贴缘命中全框架接管。 */
+    int         m_colW;       /**< 控制列宽记忆值（拖拽后由 splitterMoved
+                               *   改写；默认 RC_COL_W，resize 后按 px 意图
+                               *   重申，不随窗等比漂移）。 */
+    bool        m_colCollapsed; /**< 控制列收起态（框架折叠位=列零宽，
+                               *   把手贴右缘；单击把手展开）。 */
     bool        m_stackLayout; /**< 竖屏单列档生效中（宽度分档见 adapt;
                                 *   留档避免每轮 adapt 重复套档）。 */
     XWidget*    m_topLevel;   /**< 主窗口顶层（借用; build 时的 parent）。 */
@@ -213,10 +233,9 @@ static struct
                                  *   约 1s 后必崩）。 */
 } s_rc;
 
-/* 分割条回调前置声明（定义在 adapt 段；装配点在其之前使用）。 */
-static int  rc_splitSizeFor(void* owner);
-static void rc_splitApplySize(void* owner, int size);
-static void rc_splitToggle(void* owner);
+/* 框架分割条槽前置声明（定义在文件尾段；装配点在其之前使用）。 */
+static void rc_splitHandleClickedSlot(XObject* receiver, XVarList* args);
+static void rc_splitMovedSlot(XObject* receiver, XVarList* args);
 
 /* ==================== 内部辅助 ==================== */
 
@@ -697,6 +716,16 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     s_rc.m_root = XWidget_create(parent, 0);
     if (!s_rc.m_root) return (XWidget*)0;
 
+    /* ---- 框架分割条（2026-10-31 迁移: 视图区|控制列分栏改由框架
+     *     XSplitter 承担——把手拖拽/双击收展/方向光标/贴缘命中/折叠
+     *     迟滞全框架接管, demo 侧不再自造分割条）。页序=[视图区,
+     *     控制列], 把手居两页之间（拖左=列变宽, 对标 QSplitter）。 */
+    s_rc.m_splitter = XSplitter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                           s_rc.m_root, 0);
+    if (!s_rc.m_splitter) return s_rc.m_root;
+    XSplitter_setHandleWidth(s_rc.m_splitter, RC_SPLIT_W);
+    XWidget_show((XWidget*)s_rc.m_splitter);
+
     /* ---- 视图区宿主（RS-d 改造: 镜像视图进页面容器, 1:1 超出部分经
      *     祖先矩形链收窄——绘制裁剪 XWidget_paintTree / 命中隔离
      *     XWidget_childAt 均按父链矩形, 无需遮罩; 先建=z 底, 后建控件
@@ -704,13 +733,20 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
      *     水平布局左段伸缩协商, 不再手写坐标）。 ---- */
     s_rc.m_viewHost = XWidget_create(s_rc.m_root, 0);
     if (!s_rc.m_viewHost) return s_rc.m_root;
+    /* 入分割条为页 0（视图区）：addWidget 同步改父到分割条并登记页序。 */
+    XSplitter_addWidget(s_rc.m_splitter, s_rc.m_viewHost);
+    /* 视图区保底宽（宽屏档口径；竖屏档由 rc_applyLayoutTier 改为主轴
+     * 保底高）——拖拽列宽时镜像视图不被压没。 */
+    XWidget_setMinimumSize(s_rc.m_viewHost, RC_VIEW_MIN_W, 0);
     XWidget_show(s_rc.m_viewHost);
 
     /* ---- 控制列容器（2026-10-17 布局容器化: 列内控件统一挂此容器,
-     *     容器定宽贴右; 显隐即整列收展——分割条双击收起/单击展开的
-     *     承载点, 见 rc_splitToggle）。 ---- */
+     *     收展=框架折叠位（列零宽, 把手贴右缘）——双击把手收起/单击
+     *     把手展开的承载点, 见 rc_splitHandleClickedSlot）。 ---- */
     s_rc.m_col = XWidget_create(s_rc.m_root, 0);
     if (!s_rc.m_col) return s_rc.m_root;
+    /* 入分割条为页 1（控制列）：第二页入列即生成把手部件（分隔点 0）。 */
+    XSplitter_addWidget(s_rc.m_splitter, s_rc.m_col);
     XWidget_show(s_rc.m_col);
 
     /* ---- 标题 + 连接状态行（控制列顶部; 布局容器化: 定高行, 宽随列）。 ---- */
@@ -915,22 +951,24 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
         XWidget_hide((XWidget*)s_rc.m_sessionBar); /* 未连接: 隐藏。 */
     }
 
-    /* ---- 分割条：视图区/控制列之间（双击收列/单击展开; 布局容器化后
-     *     定宽 6px 参与页根水平布局, 拖宽语义随 adapt 收空一并冻结）。 */
+    /* ---- 分割条接线（框架 XSplitter）：把手贴缘命中让位 + 两槽。
+     *     收起态列零宽、把手贴右缘——桌面 CSD 改尺寸带会吞掉贴缘命中
+     *     件（唯一展开入口），声明 HitEdgeBand 让装饰层边缘带让位
+     *     （对标导航面板同款处置）。 ---- */
+    s_rc.m_colW = RC_COL_W;
+    s_rc.m_colCollapsed = false;
     {
-        static const DemoSplitterCallbacks kRcSplitCbs = {
-            rc_splitSizeFor, rc_splitApplySize, rc_splitToggle
-        };
-        s_rc.m_colW = RC_COL_W;
-        s_rc.m_colCollapsed = false;
-        s_rc.m_split = DemoSplitter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                              s_rc.m_root, 1,
-                                              &kRcSplitCbs, &s_rc);
-        if (s_rc.m_split) {
-            XWidget_setFixedWidth(s_rc.m_split, 6);
-            XWidget_show(s_rc.m_split);
-        }
+        XSplitterHandle* h = XSplitter_handle(s_rc.m_splitter, 0);
+        if (h)
+            XWidget_setAttribute((XWidget*)h,
+                                 XWidgetAttribute_HitEdgeBand, true);
     }
+    XObject_connect_2((XObject*)s_rc.m_splitter,
+                      (size_t)XSplitter_handleClicked_signal(NULL, 0, 0),
+                      rc_splitHandleClickedSlot);
+    XObject_connect_2((XObject*)s_rc.m_splitter,
+                      (size_t)XSplitter_splitterMoved_signal(NULL, 0, 0),
+                      rc_splitMovedSlot);
 
     /* ---- 页面布局装配（2026-10-17 布局容器化: 页内不再手写坐标,
      *     几何全部由盒式布局协商; 装配式参照 xgui_window_demo 页根
@@ -995,23 +1033,24 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
      * 富余均匀摊进条目空档(含链首), 无空白则 8px 行距被均匀撑大、
      * 统计块离开列顶(与旧 adapt 顶置口径不符)。 */
     XBoxLayout_addStretch(&s_rc.m_layCol, 1);
-    /* 控制列容器: 定宽贴右, 收展=容器显隐（rc_splitToggle）; 列内
-     * 垂直布局挂容器——容器几何随页根布局到位后内部自动级联激活。 */
+    /* 控制列容器: 列宽交框架分割条管理（拖拽可调, 意图由
+     * rc_applySplitSizes 按 px 重申）——此处不设定宽（定宽会把分割条
+     * 的页几何钳死, 拖拽失效）; 列内垂直布局挂容器——容器几何随分割
+     * 条落位后内部自动级联激活。 */
     if (s_rc.m_col) {
-        XWidget_setFixedWidth(s_rc.m_col, RC_COL_W);
+        XWidget_setMinimumSize((XWidget*)s_rc.m_col, 0, 0);
+        XWidget_setMaximumSize((XWidget*)s_rc.m_col, XWIDGET_MAX_SIZE,
+                               XWIDGET_MAX_SIZE);
         XWidget_setLayout(s_rc.m_col, (XLayout*)&s_rc.m_layCol);
     }
-    /* 页根水平布局: 视图区伸缩 | 6px 间隙 | 分割条(定宽 6) | 控制列
-     * (定宽 RC_COL_W), 右缘留 8px——旧 adapt 横向节奏
-     * (hostW=colX-12, colX=rootW-colW-8) 的布局化等价。 */
+    /* 页根水平布局: 单条目=框架分割条（其内页序=[视图区|控制列],
+     * 把手居两页之间分隔）; 右缘留 8px——旧 adapt 横向节奏
+     * (colX=rootW-colW-8) 的布局化等价。 */
     XBoxLayout_init(&s_rc.m_layRoot, XBoxLayoutDirection_LeftToRight);
     XLayout_setSpacing((XLayout*)&s_rc.m_layRoot, 0);
     XLayout_setContentsMargins((XLayout*)&s_rc.m_layRoot, 0, 0, 8, 0);
-    XBoxLayout_addWidget(&s_rc.m_layRoot, s_rc.m_viewHost);
-    XBoxLayout_addSpacing(&s_rc.m_layRoot, 6);
-    XBoxLayout_addWidget(&s_rc.m_layRoot, s_rc.m_split);
-    XBoxLayout_addWidget(&s_rc.m_layRoot, s_rc.m_col);
-    XBoxLayout_setStretch(&s_rc.m_layRoot, 0, 1); /* 视图区吃掉全部余宽。 */
+    XBoxLayout_addWidget(&s_rc.m_layRoot, (XWidget*)s_rc.m_splitter);
+    XBoxLayout_setStretch(&s_rc.m_layRoot, 0, 1); /* 分割条吃掉全部余宽。 */
     XWidget_setLayout(s_rc.m_root, (XLayout*)&s_rc.m_layRoot);
 
     /* ---- 虚拟键盘接管（历史记录）: RC 页曾在此全局关断应用虚拟键盘
@@ -1078,41 +1117,106 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     return s_rc.m_root;
 }
 
-/* ---- 分割条回调（直接操作 s_rc 单例；owner 借用不另行解引用） ---- */
-static int rc_splitSizeFor(void* owner)
-{
-    (void)owner;
-    return s_rc.m_colW;
-}
+/* ---- 框架分割条辅助（直接操作 s_rc 单例） ---- */
 
-static void rc_splitApplySize(void* owner, int size)
+/** @brief 依当前档位重申分割条尺寸意图（列宽记忆/收起态）。
+ *  @details 框架 setSizes=像素意图（按 contentLen=轴长−把手条带 归一落
+ *           位），故意图之和必须等于 contentLen，否则每轮重申累积
+ *           漂移；意图先钳到框架钳位区间之外沿（列宽≥列内容最小宽、
+ *           视图区≥保底宽），避免框架二次钳位再打折。
+ *           - 宽屏档：意图=[视图区余宽|列宽记忆]；收起态=[全长|0]
+ *             （列页折叠位→零宽，把手贴右缘可点可展开）；
+ *           - 竖屏档：意图=[视图区余高|列内容高]（列内容优先、视图
+ *             区保底）。 */
+static void rc_applySplitSizes(void)
 {
-    (void)owner;
-    /* 布局容器化(2026-10-17): 列宽由控制列容器定宽承担, 拖宽不再改排;
-     * 状态照记, adapt 调用点按契约保留（空实现）。 */
-    if (size < 236) size = 236;
-    if (size > 420) size = 420;
-    if (size == s_rc.m_colW) return;
-    s_rc.m_colW = size;
-    demo_page_remote_client_adapt(s_rc.m_root);
-}
-
-static void rc_splitToggle(void* owner)
-{
-    (void)owner;
-    s_rc.m_colCollapsed = !s_rc.m_colCollapsed;
-    /* 布局容器化收口: 控制列容器显隐即整列收展——隐藏条目在盒式布局
-     * 按 0 尺寸参与分配, 视图区(伸缩段)自动占满余宽; 显隐经
-     * updateGeometry 触发页根布局重激活, 无需手工重排。分割条内部
-     * 收起态在此同步（决定单击语义=展开 vs 拖拽, 旧 adapt 每次重排
-     * setState 的等价搬迁）。 */
-    if (s_rc.m_split)
-        DemoSplitter_setState(s_rc.m_split, 1, s_rc.m_colCollapsed);
-    if (s_rc.m_col) {
-        if (s_rc.m_colCollapsed) XWidget_hide(s_rc.m_col);
-        else XWidget_show(s_rc.m_col);
+    XSplitter* sp = s_rc.m_splitter;
+    int total;
+    int sizes[2];
+    bool vertical;
+    if (!sp) return;
+    vertical = (XSplitter_orientation(sp) == XOrientation_Vertical);
+    total = vertical ? XWidget_height((XWidget*)sp)
+                     : XWidget_width((XWidget*)sp);
+    total -= XSplitter_handleWidth(sp); /* contentLen 口径。 */
+    if (total < 1) return;
+    if (vertical) {
+        int colH = s_rc.m_col ? XWidget_sizeHint((XWidget*)s_rc.m_col).height
+                              : 0;
+        if (colH < 0) colH = 0;
+        if (colH > total - RC_VIEW_MIN_H) colH = total - RC_VIEW_MIN_H;
+        if (colH < 0) colH = 0;
+        sizes[0] = total - colH;
+        sizes[1] = colH;
     }
-    demo_page_remote_client_adapt(s_rc.m_root);
+    else {
+        int colW = s_rc.m_colW;
+        int colMin = s_rc.m_col
+                         ? XWidget_minimumSizeHint((XWidget*)s_rc.m_col).width
+                         : 0;
+        if (colMin < 1) colMin = 1;
+        /* 列宽下限=列内容最小宽（表单可读），上限=视图区保底宽。 */
+        if (colW < colMin) colW = colMin;
+        if (colW > total - RC_VIEW_MIN_W) colW = total - RC_VIEW_MIN_W;
+        if (colW < 0) colW = 0;
+        if (s_rc.m_colCollapsed) {
+            sizes[0] = total;
+            sizes[1] = 0; /* 列页折叠（框架折叠位）→ 零宽。 */
+        }
+        else {
+            sizes[0] = total - colW;
+            sizes[1] = colW;
+        }
+    }
+    XSplitter_setSizes(sp, sizes, 2);
+}
+
+/** @brief 置位/切换控制列收起态（框架折叠位落位：列零宽、把手贴缘）。 */
+static void rc_splitSetCollapsed(bool collapsed)
+{
+    s_rc.m_colCollapsed = collapsed;
+    if (!collapsed && s_rc.m_colW < 1) s_rc.m_colW = RC_COL_W;
+    rc_applySplitSizes();
+}
+
+/** @brief 框架分割条把手点击（handleClicked 信号）：双击=收起/展开切换；
+ *  空闲点击=仅收起态展开（对标导航面板口径——框架只发信号不内置折
+ *  叠策略，列零宽/折叠位由本页落位）。 */
+static void rc_splitHandleClickedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    if (!args) return;
+    XVarList_args_2(args, int, index, int, doubleClick);
+    (void)index;
+    if (doubleClick) rc_splitSetCollapsed(!s_rc.m_colCollapsed);
+    else if (s_rc.m_colCollapsed) rc_splitSetCollapsed(false);
+}
+
+/** @brief 框架分割条拖拽落位（splitterMoved 信号，仅真实拖拽触发）：记忆
+ *  控制列宽（框架已按 getRange 钳位：下限=列内容最小宽、上限=视图区
+ *  保底宽），供 resize 后按 px 意图重申——不记忆则每轮重申按旧意图
+ *  把拖拽结果掰回（闪烁源）。 */
+static void rc_splitMovedSlot(XObject* receiver, XVarList* args)
+{
+    int sizes[2] = {0, 0};
+    (void)receiver;
+    if (!args) return;
+    XVarList_args_2(args, int, pos, int, index);
+    (void)pos;
+    (void)index;
+    if (!s_rc.m_splitter) return;
+    if (XSplitter_orientation(s_rc.m_splitter) == XOrientation_Vertical)
+        return; /* 竖屏单列档无列宽概念。 */
+    XSplitter_sizes(s_rc.m_splitter, sizes, 2);
+    if (sizes[1] > 0) {
+        s_rc.m_colW = sizes[1];
+        if (s_rc.m_colCollapsed) s_rc.m_colCollapsed = false;
+    }
+    else {
+        /* 拖到零宽=框架 farMin 迟滞吸附折叠：记收起态，避免下次重申
+         * 按记忆宽把列弹回（弹回=拖拽结果被覆盖）。 */
+        s_rc.m_colCollapsed = true;
+    }
 }
 
 /** @brief 套用指定档位的布局口径（越档时由 adapt 调用一次）。
@@ -1138,35 +1242,30 @@ static void rc_applyLayoutTier(bool stack)
     XWidget* fields[5];
     int i;
 
-    /* 页根: 水平左右切分 ↔ 垂直单列。setDirection 对 magic 空白自动
-     * 横纵翻转、条目顺序不变——视图区仍居首, 竖屏档即「画布在上吃
-     * 余高、设置列在下铺全宽」。 */
-    XBoxLayout_setDirection(&s_rc.m_layRoot,
-                            stack ? XBoxLayoutDirection_TopToBottom
-                                  : XBoxLayoutDirection_LeftToRight);
-
-    if (s_rc.m_split) {
-        if (stack) XWidget_hide(s_rc.m_split);
-        else XWidget_show(s_rc.m_split);
+    /* 分割条方向: 宽屏档=水平（视图区|控制列左右分栏），竖屏档=垂直
+     * （视图区在上、控制列在下）——页序不变，换向由框架 setOrientation
+     * 承担（把手方向光标/绘制随之切换）；竖屏档把手宽置 0 即无把手
+     * （单列下上下拖分无意义，对标导航面板紧凑档口径）。 */
+    if (s_rc.m_splitter) {
+        XSplitter_setOrientation(s_rc.m_splitter,
+                                 stack ? XOrientation_Vertical
+                                       : XOrientation_Horizontal);
+        XSplitter_setHandleWidth(s_rc.m_splitter, stack ? 0 : RC_SPLIT_W);
     }
-
+    /* 视图区主轴保底（拖拽区间由框架 getRange 按 smartMin 钳定；竖屏
+     * 档视图区保底高=列内容不被压没的前提）。 */
+    if (s_rc.m_viewHost) {
+        if (stack) XWidget_setMinimumSize(s_rc.m_viewHost, 0, RC_VIEW_MIN_H);
+        else XWidget_setMinimumSize(s_rc.m_viewHost, RC_VIEW_MIN_W, 0);
+    }
     if (s_rc.m_col) {
-        if (stack) {
-            if (s_rc.m_colCollapsed) {
-                s_rc.m_colCollapsed = false;
-                if (s_rc.m_split)
-                    DemoSplitter_setState(s_rc.m_split, 1, false);
-            }
-            XWidget_show(s_rc.m_col);
-            XWidget_setMinimumSize(s_rc.m_col, 0, 0);
-            XWidget_setMaximumSize(s_rc.m_col, XWIDGET_MAX_SIZE,
-                                   XWIDGET_MAX_SIZE);
-            XLayout_setContentsMargins((XLayout*)&s_rc.m_layCol, 8, 8, 8, 0);
-        }
-        else {
-            XWidget_setFixedWidth(s_rc.m_col, RC_COL_W);
-            XLayout_setContentsMargins((XLayout*)&s_rc.m_layCol, 0, 8, 0, 0);
-        }
+        /* 列宽/列高一律交框架分割条管理（定宽会把页几何钳死，拖拽失
+         * 效）；竖屏档强制展开（单列下表单不可达即死态）。 */
+        if (stack && s_rc.m_colCollapsed) s_rc.m_colCollapsed = false;
+        XWidget_setMinimumSize(s_rc.m_col, 0, 0);
+        XWidget_setMaximumSize(s_rc.m_col, XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
+        XLayout_setContentsMargins((XLayout*)&s_rc.m_layCol,
+                                    stack ? 8 : 0, 8, stack ? 8 : 0, 0);
     }
 
     fields[0] = (XWidget*)s_rc.m_hostEdit;
@@ -1213,13 +1312,14 @@ static void rc_applyLayoutTier(bool stack)
  *           页根盒式布局协商; [2026-10-25 竖屏分档] 在此按页根有效宽
  *           分档（主文件 demo_layout_content 在切页/resize/startup/
  *           停靠全路径的几何分配之后调用本函数, 根尺寸保证新鲜）:
- *           - 宽屏档（≥RC_STACK_MAX_W）: 保持装配口径——视图区|分割条|
- *             控制列水平切分, 桌面 1000x700 视觉零变化;
- *           - 竖屏单列档（<RC_STACK_MAX_W, 手机 ≈400 逻辑宽）: 页根翻
- *             垂直单列+触控目标抬 RC_TOUCH_H, 见 rc_applyLayoutTier。
- *           档位留档 m_stackLayout, 未越档时短路零开销（拖拽期每像素
- *           一轮 adapt, 布局器自管同档内几何）; 宽 0（几何未分配）时
- *           等下一轮有效宽再套档。 */
+ *           - 宽屏档（≥RC_STACK_MAX_W）: 框架分割条水平分栏——视图区|
+ *             把手|控制列, 桌面 1000x700 视觉零变化;
+ *           - 竖屏单列档（<RC_STACK_MAX_W, 手机 ≈400 逻辑宽）: 分割条
+ *             转垂直（视图区在上、控制列在下铺全宽, 把手宽置 0 无把
+ *             手）+ 触控目标抬 RC_TOUCH_H, 见 rc_applyLayoutTier。
+ *           档位留档 m_stackLayout, 未越档时只重申分割条尺寸意图（列
+ *           宽记忆/收起态, 按 px 落位不随窗等比漂移）; 宽 0（几何未
+ *           分配）时等下一轮有效宽再套档。 */
 void demo_page_remote_client_adapt(XWidget* page)
 {
     int w;
@@ -1229,9 +1329,16 @@ void demo_page_remote_client_adapt(XWidget* page)
     w = XWidget_width(s_rc.m_root);
     if (w <= 0) return;
     stack = w < RC_STACK_MAX_W;
-    if (stack == s_rc.m_stackLayout) return;
-    s_rc.m_stackLayout = stack;
-    rc_applyLayoutTier(stack);
+    if (stack != s_rc.m_stackLayout) {
+        s_rc.m_stackLayout = stack;
+        rc_applyLayoutTier(stack);
+        /* 档位切换改了视图区/控制列的主轴约束 → 页根布局度量缓存作废,
+         * 显式重激活一次（否则跨档瞬间分割条仍按旧最小宽撑出页根）。 */
+        XLayout_activate((XLayout*)&s_rc.m_layRoot);
+    }
+    /* 每轮重申分割条尺寸意图（列宽记忆/收起态）——框架 setSizes 为
+     * 像素语义, 不重申则窗口缩放时列宽按比例漂移。 */
+    rc_applySplitSizes();
 }
 
 /* ==================== 首帧自动连接（--remote-client 预置） ============= */
@@ -1357,6 +1464,17 @@ int demo_page_remote_client_autotest(XWidget* page)
                   XWidget_width((XWidget*)s_rc.m_touchBtn) > 0 &&
                   XWidget_height((XWidget*)s_rc.m_touchBtn) > 0,
               "远程客户端页: 模拟触摸按钮可见挂列且尺寸有效(可达)");
+
+    /* ---- 框架分割条装配（2026-10-31 迁移: 自造分割条退役, 分栏由
+     *     框架 XSplitter 承担——两页 + 把手部件就位即契约成立）。 ---- */
+    RC_EXPECT(s_rc.m_splitter &&
+                  XSplitter_count(s_rc.m_splitter) == 2 &&
+                  XSplitter_widget(s_rc.m_splitter, 0) == s_rc.m_viewHost &&
+                  XSplitter_widget(s_rc.m_splitter, 1) == s_rc.m_col,
+              "远程客户端页: 框架分割条就位(视图区|控制列两页)");
+    RC_EXPECT(s_rc.m_splitter &&
+                  XSplitter_handle(s_rc.m_splitter, 0) != NULL,
+              "远程客户端页: 分割条把手部件就位(拖拽/双击收展入口)");
 
     /* ---- 初始默认值 ---- */
     RC_EXPECT(strcmp(XLineEdit_text(s_rc.m_hostEdit), "127.0.0.1") == 0,

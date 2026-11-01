@@ -328,6 +328,12 @@ typedef struct XWNPendingEntry
     bool m_deferGeometry;              /**< 几何挂起臂（拖拽改尺寸手势期）：
                                             setGeometry 只记账不落窗，落窗
                                             改由 present 与内容同批执行。 */
+    int m_reqFrameX;                   /**< 最近一次发给 X 的 **frame** 位置
+                                            （物理像素）：WM 装饰内缩量的
+                                            学习基准（客户区位 - frame 位）。 */
+    int m_reqFrameY;
+    bool m_reqFrameValid;              /**< m_reqFrame* 已发出过几何请求
+                                            （建窗/挂起/setGeometry 三路）。 */
     bool m_hasPendingGeom;             /**< 有挂起几何待 present 批内落地。 */
     XRect m_pendingGeom;               /**< 挂起待落地几何（钳边后【物理】
                                             口径，与 XMoveResizeWindow 实参
@@ -3803,6 +3809,67 @@ static bool xpwn_imeCommitIsDirectKey(const char* committed, int bytes,
     return true;
 }
 
+/* ==================== frame/客户区坐标换算（WM 装饰口径）==================== */
+
+/* WM 装饰内缩（物理像素，全局一份）：同一 WM 对其所有普通顶层窗的装饰
+   一致（1px 边框 + 标题栏）。全局化是为了让「后创建的窗在首次定位请求
+   时就已知内缩」——否则该窗的首个请求按直通发出，客户区会落在 目标+内缩
+   （一次性的偏位，非漂移，但锚定类断言会读到偏值）。
+   首个 WM 托管窗落位时学得（见 MapNotify 分支）；无 WM 场景恒 0。 */
+static int g_xpwnWmInsetX = 0;
+static int g_xpwnWmInsetY = 0;
+static bool g_xpwnWmInsetKnown = false;
+
+/** @brief 取窗口客户区的当前绝对位置（物理像素，root 坐标）。
+ *  @details XTranslateCoordinates 口径：与 WM 是否把客户区重父化进 frame
+ *           窗无关（ConfigureNotify 的 x/y 在不同 WM 上语义不一：有的报
+ *           绝对位、有的报 frame 内偏移），跨 WM 稳定的只有「换算到
+ *           root 的绝对位」。 */
+static void xpwn_clientAbsPos(Display* dpy, Window win, Window root,
+                              int* outX, int* outY)
+{
+    int rx = 0, ry = 0;
+    Window dummy;
+    *outX = 0;
+    *outY = 0;
+    if (XTranslateCoordinates(dpy, win, root, 0, 0, &rx, &ry, &dummy)) {
+        *outX = rx;
+        *outY = ry;
+    }
+}
+
+/** @brief 把「客户区绝对目标位置」换算为「X 请求用 frame 位置」。
+ *  @details X 协议里窗口坐标是 **frame** 位置（WM 管理的顶层窗被重父化进
+ *           frame 窗，装饰——1px 边框 + 标题栏——把客户区相对 frame 内缩），
+ *           而框架对外的几何语义是**客户区**位置（用户看到的窗内容位）。
+ *           实测该 WM 恒定把请求当 frame 位：请求 (100,150) → 客户区落
+ *           (101,191)，即客户区 = 请求 + 常量内缩 (1,41)；且内缩是常量
+ *           （两次探测一致）。
+ *           直接发客户区坐标 ⇒ 客户区落在 目标+内缩；框架又按客户区口径
+ *           记账 ⇒ 下次把记账值当 frame 坐标再发 ⇒ **每次几何变更叠加
+ *           一次内缩**（实测宿主客户区 (1,41)→(2,82)，紧凑浮动态随之偏离
+ *           宿主右下角）。
+ *           本函数按已学得的常量内缩换算：frame 目标 = 客户区目标 - 内缩。
+ *           内缩由本窗口的首个配置事件学得（建窗请求位与落位后客户区
+ *           绝对位之差），故换算是**常量精确**的：无需任何纠正移动 ⇒
+ *           无「请求在途、纠正与原请求竞态」的时序坑。
+ *           无 WM 场景（窗口直挂 root）：内缩学得为 0，换算退化为直通。 */
+static void xpwn_frameTargetFor(XWNPendingEntry* entry,
+                                int targetClientX, int targetClientY,
+                                int* outFrameX, int* outFrameY)
+{
+    int insetX = 0;
+    int insetY = 0;
+    /* 旁路窗（override-redirect，绕过 WM）无装饰内缩；其余窗用全局学得
+       的 WM 装饰内缩（同一 WM 对其普通顶层窗装饰一致）。 */
+    if (entry && !entry->m_bypassWm && g_xpwnWmInsetKnown) {
+        insetX = g_xpwnWmInsetX;
+        insetY = g_xpwnWmInsetY;
+    }
+    *outFrameX = targetClientX - insetX;
+    *outFrameY = targetClientY - insetY;
+}
+
 static bool xpwn_dispatchEvent(const X11_XEvent* ev)
 {
     /* XI2 触摸事件（GenericEvent cookie）：先于核心事件分派。 */
@@ -3850,6 +3917,50 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             XSetInputFocus(g_xpwnDisplay, entry->m_win,
                            RevertToParent, CurrentTime);
             delivered = true;
+        }
+        /* [WM 装饰内缩学习 2026-11-01] 映射完成时 WM 的放置已定（事件序
+           Reparent→Configure→Map）：客户区绝对位 - 本窗最近一次 frame
+           请求位 = 该窗的装饰内缩（实测该 WM 恒为 (1,41)：1px 边框 +
+           40px 标题栏；无 WM 场景学得 0）。学得后所有几何请求按
+           「客户区目标 - 内缩」换算成 frame 位发出 ⇒ 客户区精确落在目标
+           位、且不再随每次几何变更叠加内缩（原缺陷：宿主客户区
+           (1,41)→(2,82)，紧凑浮动态随之偏离宿主右下角）。
+           放在 MapNotify 而非首个 ConfigureNotify：映射前 WM 尚未落位，
+           此时学到的是「未加装饰」的假内缩（学得 0 ⇒ 后续请求全偏一个
+           装饰量）。只学一次（装饰尺寸对同一窗恒定）。 */
+        if (entry && entry->m_win && entry->m_reqFrameValid &&
+            !g_xpwnWmInsetKnown && !entry->m_bypassWm) {
+            Window root = DefaultRootWindow(g_xpwnDisplay);
+            Window child = 0, parent = 0, *kids = NULL;
+            unsigned int nk = 0;
+            int absX = 0, absY = 0;
+            int dx, dy;
+            if (XQueryTree(g_xpwnDisplay, entry->m_win, &root, &parent,
+                            &kids, &nk)) {
+                if (kids) xpwn_xFree(kids);
+                /* 仅采信 **WM 托管** 的窗（parent!=root ⇒ 确由 WM 装饰内缩；
+                   override-redirect / 无 WM 场景内缩为 0，不是装饰值）。 */
+                if (parent && parent != root) {
+                    xpwn_clientAbsPos(g_xpwnDisplay, entry->m_win, root,
+                                      &absX, &absY);
+                    dx = absX - entry->m_reqFrameX;
+                    dy = absY - entry->m_reqFrameY;
+                    /* 合理性闸：装饰内缩是小量（1px 边框 + 标题栏，实测
+                       (1,41)）。偏差过大 ⇒ 该窗的落位与本请求无关（未映射/
+                       落位被 WM 改写/请求位陈旧）⇒ 不采信，避免把垃圾值
+                       教给全局。 */
+                    if ((dx != 0 || dy != 0) && dx > -64 && dx < 64 &&
+                        dy > -160 && dy < 160) {
+                        /* 只学**非零**偏差：偏差为零说明该窗此刻的客户区
+                           位与请求位相同（未映射/未装饰/无装饰 WM）——那
+                           正是默认值 0，无需学；否则会把「零偏差」当装饰
+                           值锁死全局，后续所有窗都不带补偿。 */
+                        g_xpwnWmInsetX = dx;
+                        g_xpwnWmInsetY = dy;
+                        g_xpwnWmInsetKnown = true;
+                    }
+                }
+            }
         }
         /* 对标 Qt xcb：新映射的顶层窗口置顶。无 WM 环境下 show() 后
          * 的对话框若不主动 raise，将停在主窗口之下被永久遮盖——实测
@@ -3929,8 +4040,19 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             /* 先更新本后端记录，再注入几何变化：setGeometry 去重比对以
                此为准，从源头切断「setGeometry -> ConfigureNotify ->
                handleGeometryChange -> setGeometry」回环。 */
-            native.x = ev->xconfigure.x;
-            native.y = ev->xconfigure.y;
+            /* 位置取**客户区绝对位**（root 坐标）：ConfigureNotify 的
+               x/y 在不同 WM 上语义不一（有的报绝对位、有的报 frame 内
+               偏移），跨 WM 稳定的只有 XTranslateCoordinates 的换算值——
+               而框架的几何语义本就是客户区位（用户看到的窗内容位）。
+               尺寸仍用事件值。 */
+            {
+                int absX = 0, absY = 0;
+                xpwn_clientAbsPos(g_xpwnDisplay, entry->m_win,
+                                  DefaultRootWindow(g_xpwnDisplay),
+                                  &absX, &absY);
+                native.x = absX;
+                native.y = absY;
+            }
             native.width = ev->xconfigure.width;
             native.height = ev->xconfigure.height;
             /* 几何入框（物理→逻辑）：记账 m_client 与 WSI 注入恒逻辑
@@ -5796,6 +5918,14 @@ bool XPlatformNativeWindow_create(XWindow* window)
     entry->m_gc = XCreateGC(g_xpwnDisplay, xwin, 0, NULL);
     entry->m_bypassWm = (attr.override_redirect != False);
     entry->m_client = geom;
+    /* 记本次请求的**客户区**目标（物理）：XCreateWindow 的 x/y 是 frame
+       口径（WM 装饰内缩，客户区落在 +内缩），映射后的一次性对齐据此把
+       客户区拉回请求位（见 MapNotify 分支）。 */
+    /* 建窗请求位（frame 口径）：WM 落位后客户区绝对位与之之差即装饰内缩
+       （首个配置事件据此学习，见 ConfigureNotify 分支）。 */
+    entry->m_reqFrameX = nativeGeom.x;
+    entry->m_reqFrameY = nativeGeom.y;
+    entry->m_reqFrameValid = true;
     /* [弹窗随转·方案B 2026-10-18] 建窗 footprint（上方
        xpwn_applyRotationFootprint）按本角对调，随记账，供 setGeometry
        双维去重比对。 */
@@ -6142,9 +6272,17 @@ void XPlatformNativeWindow_destroy(XWindow* window)
 /** @brief 把挂起几何落入 X 请求缓冲（调用方负责同批提交内容后再冲刷）。 */
 static void xpwn_applyPendingGeometry(XWNPendingEntry* entry)
 {
+    int frameX = 0, frameY = 0;
     if (!entry->m_hasPendingGeom) return;
+    /* 挂起几何是**客户区**口径（记账同源），发 X 请求前换算为 frame 口径
+       （WM 装饰内缩，见 xpwn_frameTargetFor）。 */
+    xpwn_frameTargetFor(entry, entry->m_pendingGeom.x, entry->m_pendingGeom.y,
+                        &frameX, &frameY);
+    entry->m_reqFrameX = frameX;
+    entry->m_reqFrameY = frameY;
+    entry->m_reqFrameValid = true;
     XMoveResizeWindow(g_xpwnDisplay, entry->m_win,
-                      entry->m_pendingGeom.x, entry->m_pendingGeom.y,
+                      frameX, frameY,
                       (unsigned)entry->m_pendingGeom.width,
                       (unsigned)entry->m_pendingGeom.height);
     entry->m_hasPendingGeom = false;
@@ -6258,9 +6396,11 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     /* [弹窗随转·方案B 2026-10-18] 记账本次实际采用的旋转角（立即落地与
        挂起记账两路共用本行；挂起路 footprint 已烘进 m_pendingGeom，角随
        记账值走）。 */
-    entry->m_appliedRotation = XWindow_contentRotationDegrees(window);
+entry->m_appliedRotation = XWindow_contentRotationDegrees(window);
+    /* 记本次请求的**客户区**目标（物理）：帧映射后的一次性对齐与后续
+       换算都以它为目标（frame 口径另由 xpwn_frameTargetFor 现算）。 */
     if (entry->m_deferGeometry) {
-        /* 拖拽改尺寸手势期：只记账不落窗，几何由 present 与整窗内容同批
+        /* 拖拽改尺寸手势期：只记账不落窗，几何由 present 与内容同批
            落地（根因见 deferGeometry 注）。挂起值存钳边后【物理】口径，
            与立即路 XMoveResizeWindow 实参逐字段一致（见 m_pendingGeom
            注）；挂起期内重复 setGeometry 以最新值为准（覆盖式），
@@ -6275,13 +6415,25 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     }
     /* 立即路径作废可能残留的挂起几何（解挂后的即时几何已覆盖其语义）。 */
     entry->m_hasPendingGeom = false;
-    XMoveResizeWindow(g_xpwnDisplay, entry->m_win,
-                      nativeGeom.x, nativeGeom.y,
-                      (unsigned)nativeGeom.width,
-                      (unsigned)nativeGeom.height);
+    {
+        /* X 请求是 frame 口径、框架语义是客户区口径：发请求前按 delta
+           换算（xpwn_frameTargetFor），否则每次几何变更叠加一次 WM
+           装饰内缩（实测宿主客户区 (1,41)→(2,82)）。 */
+        int frameX = 0, frameY = 0;
+        xpwn_frameTargetFor(entry, nativeGeom.x, nativeGeom.y,
+                            &frameX, &frameY);
+        entry->m_reqFrameX = frameX;
+        entry->m_reqFrameY = frameY;
+        entry->m_reqFrameValid = true;
+        XMoveResizeWindow(g_xpwnDisplay, entry->m_win,
+                          frameX, frameY,
+                          (unsigned)nativeGeom.width,
+                          (unsigned)nativeGeom.height);
+    }
     XFlush(g_xpwnDisplay);
     return true;
 }
+
 
 bool XPlatformNativeWindow_deferGeometry(XWindow* window, bool deferred)
 {
@@ -6971,8 +7123,16 @@ bool XPlatformNativeWindow_setTransientParent(XWindow* window,
         if (devW != nat.width || devH != nat.height) {
             nat.width = devW;
             nat.height = devH;
-            XMoveResizeWindow(g_xpwnDisplay, entry->m_win,
-                              nat.x, nat.y, nat.width, nat.height);
+            /* 同 setGeometry：客户区口径 → frame 口径换算后再发请求。 */
+            {
+                int frameX = 0, frameY = 0;
+                xpwn_frameTargetFor(entry, nat.x, nat.y, &frameX, &frameY);
+                entry->m_reqFrameX = frameX;
+                entry->m_reqFrameY = frameY;
+                entry->m_reqFrameValid = true;
+                XMoveResizeWindow(g_xpwnDisplay, entry->m_win,
+                                  frameX, frameY, nat.width, nat.height);
+            }
         }
     }
     XFlush(g_xpwnDisplay);

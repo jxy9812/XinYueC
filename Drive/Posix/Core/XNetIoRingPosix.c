@@ -551,6 +551,9 @@ static bool ioArmPassive(XNetIoRingPosix* posix, int idx) {
 #ifndef IORING_POLL_ADD_MULTI
 #define IORING_POLL_ADD_MULTI (1U << 0)   /* 内核 5.13+；老工具链头缺失时补定义 */
 #endif
+#ifndef IORING_CQE_F_MORE
+#define IORING_CQE_F_MORE (1U << 1)       /* multishot 续存标志；老工具链头缺失时补定义（armel stretch 头同缺） */
+#endif
     /* [multishot 探测 2026-10-30] 首次挂载按 multishot 试；内核不支持时
      * （5.10~5.12，CQE res=-EINVAL）改用一次性挂载 + 完成后重挂（②），
      * 语义与 epoll 引擎一致，跨设备统一（见本函数 @details）。 */

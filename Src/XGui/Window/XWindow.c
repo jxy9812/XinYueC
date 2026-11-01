@@ -2538,7 +2538,9 @@ void XWindow_setVisible(XWindow* self, bool visible)
      * 可见层），向它注入本地坐标的 expose 事件驱动重绘上屏。 */
     if (!visible && XPlatformDisplayDriver_active())
     {
-        XVector* tops = XGuiApplication_topLevelWindows();
+        /* 【子窗口同列 2026-10-31】下层窗口查找须含子窗口（demo 主窗即
+         * 演示主窗的子窗口）：只看无父顶层会越过真正的下层窗。 */
+        XVector* tops = XGuiApplication_allWindows();
         if (tops)
         {
             /* [旋转随转·footprint 化 2026-10-22] 隐藏矩形/相交判定/恢复

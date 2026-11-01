@@ -87,6 +87,12 @@ list(REMOVE_ITEM TEST_FILE
 # 卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XGuiRemoteAdaptTest.c")
+# XGuiDockDragTest 同理：自带 main 的停靠面板拖出浮动让位区残留离屏
+# 测试（XGuiDockDrag_Test 目标，2026-10-31 昆仑通态屏「浮动面板拖动
+# 旧位残留」根修的回归锁；须 -DXPLATFORM_FBDEV_ON=ON 构建才激活，见
+# 文件头注），不得卷入主程序（TEST_FILE 剔除三查同款坑）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XGuiDockDragTest.c")
 # XGuiKeyboardDragTest 同理：自带 main 的键盘紧凑拖动专项测试（
 # XGuiKeyboardDrag_Test 目标，1eb98412 键盘紧凑拖动战役新增；当时漏加
 # 本剔除致 XinYueC_Static/Dynamic 与 main.c 重复定义 main、all 目标
@@ -428,7 +434,7 @@ if(NOT XINYUE_EMBEDDED)
     target_sources(XGuiTestMenuSweep PRIVATE ${XGUI_SWEEP_TESTTREE_SOURCES})
 endif()
 if(UNIX)
-    target_link_libraries(XGuiTestMenuSweep ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype dbghelp ${EXPORT_NAME}S)
+    target_link_libraries(XGuiTestMenuSweep ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
 else()
     target_link_libraries(XGuiTestMenuSweep mbedtls lwip zlib fatfs pcre2 sqlite freetype dbghelp ${EXPORT_NAME}S)
 endif()
@@ -530,6 +536,22 @@ else()
     target_link_libraries(XGuiDialogMove_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 endif() # XGUI_ON && XPLATFORM_FBDEV_ON（弹层拖动条带归位测试）
+
+# ==================== fbdev 停靠面板拖出浮动让位区残留测试 ====================
+# 独立可执行(自带 main)：伪 fbdev 显示驱动离屏跑「停靠面板按下→越过脱
+# 靠阈值→脱靠浮动→移出宿主→松手」全链，让位区逐像素比对「拖动帧 vs
+# 强制宿主重绘帧」（合成器语义判据）。构建组合同 XGuiDialogMove_Test
+# （FBDEV+BUFFER_COUNT=2+RGB16 真机 DIRECT+2 trio）。
+if(XGUI_ON AND XPLATFORM_FBDEV_ON)
+add_executable(XGuiDockDrag_Test
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XGuiDockDragTest.c"
+)
+if(UNIX)
+    target_link_libraries(XGuiDockDrag_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XGuiDockDrag_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+endif() # XGUI_ON && XPLATFORM_FBDEV_ON（停靠面板拖出浮动让位区残留测试）
 
 # ==================== fbdev 键盘紧凑悬浮拖移测试 ====================
 # 独立可执行(自带 main)：伪 fbdev 显示驱动离屏跑「停靠弹出→悬浮切换→
@@ -652,7 +674,6 @@ endif()
 add_executable(XGuiWindowDemo_Test
     "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_window_demo.c"
     ${XGUI_WINDOW_DEMO_RC}
-    "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_splitter.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_page_views.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_page_dialogs.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_page_advanced.c"
@@ -779,7 +800,6 @@ if(XGUI_ON AND ANDROID)
         # 漏列 → 链接期 undefined symbol: demo_page_atv61_build 等三个
         # （与上方 remote 页同款漏列的复发，按同一纪律补齐）。
         "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_page_atv61.c"
-        "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_splitter.c"
         "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_apitest_buttons.c"
         "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_apitest_labels.c"
         "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_apitest_input.c"
@@ -959,3 +979,16 @@ install(TARGETS ${EXPORT_NAME}_Dynamic
         RUNTIME DESTINATION bin
 )
 endif() # XGUI_ON AND NOT XINYUE_EMBEDDED
+
+# ==================== 静态归档环依赖收口（模块化拆分遗留）====================
+# 判据与机制见根 CMakeLists 的 xinyue_link_rescan_group()：框架链与第三方
+# 归档间存在双向符号依赖（zlib↔Core、Gui↔Core），静态链接单遍扫描无法解析，
+# 需 LINK_GROUP:RESCAN（--start-group/--end-group）组内反复重扫。本模块
+# 的全部可执行（含主程序双 exe、专项探针/回归测试）统一收口。
+get_property(_test_exe_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_t IN LISTS _test_exe_targets)
+    get_target_property(_tt ${_t} TYPE)
+    if(_tt STREQUAL "EXECUTABLE")
+        xinyue_link_rescan_group(${_t})
+    endif()
+endforeach()

@@ -89,6 +89,11 @@ int demo_page_keyboard_autotest(XWidget* page);
  *          几何重排无需向调用方报错）。 */
 void demo_page_views_adapt(XWidget* page);          /**< 条目视图：状态行贴底。 */
 void demo_page_advanced_adapt(XWidget* page);       /**< 高级控件：SizeGrip 贴右下角。 */
+int demo_page_advanced_probeDrag(const char* phase); /**< 高级控件：可见浮动态拖动自检
+                                                     *   （设备端残影量化；相位文件）。 */
+int demo_page_advanced_probeDragTouch(const char* phase); /**< 高级控件：浮动态拖动自检（**触摸**路径：注入触摸帧→框架合成鼠标→命中派发，与真人手指同链）。 */
+int demo_page_advanced_probeDragReal(const char* phase);
+int demo_page_advanced_probeDragMem(const char* phase, int rounds); /**< 高级控件：反复拖出/拖回 N 轮并打印 RSS（定位「拖几次后卡死」＝内存累积/OOM）。 */ /**< 高级控件：浮动态拖动自检（demo **真实主窗**（子窗口宿主）+ 真实左右面板，触摸路径）。 */
 void demo_page_effects_adapt(XWidget* page);        /**< 图形效果：组③启/禁按钮贴底。 */
 void demo_page_remote_client_adapt(XWidget* page);  /**< 远程客户端：统计块贴底。 */
 

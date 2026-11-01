@@ -2494,6 +2494,21 @@ int demo_page_network_autotest(XWidget* page)
      * 折叠分支 show 路径沿可见父链同步激活兜底，泵入是让两态断言
      * 同走「切换→队列重排完成」契约，不依赖激活时机细节。 */
     XCoreApplication_processEvents(XEventLoop_AllEvents);
+    /* [几何 settle 2026-10-31] 布局失效链改为纯异步后（远端 e378c8bb），
+     * 几何落定依赖「失效→门控 LayoutRequest→消费端 activate」链路；宿主
+     * 不可见/链路未激活时该链路不投递（Qt qlayout.cpp:548 同款可见性闸），
+     * 断言几何前需显式 settle（对标 Qt QTRY_* 的 processEvents+比几何）。
+     * TODO(框架)：页内布局链在「show 之后才装配条目」时 activated 恒 0，
+     * 失效上推 walk 首层即停 → LayoutRequest 永不投递 → 几何不落定
+     * （网络设置页 IPv6 展开态实测：显式 activate 即刻正确）。框架侧
+     * 需按 Qt QLayout::addItem（qlayout.cpp:1663-1672）「宿主可见即 post
+     * LayoutRequest」补齐装配期投递。 */
+    {
+        XLayout* lay = s_net.m_root
+                           ? (XLayout*)XWidget_layout((XWidget*)s_net.m_root)
+                           : NULL;
+        if (lay) XLayout_activate(lay);
+    }
     NET_EXPECT(s_net.m_v6Expanded &&
                    XWidget_height(s_net.m_v6Label) > 30 &&
                    !XWidget_isVisible((XWidget*)s_net.m_v4ModeCombo),

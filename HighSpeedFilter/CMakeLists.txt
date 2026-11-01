@@ -52,3 +52,11 @@ else()
     target_link_libraries(HsfClient
         mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
 endif()
+
+# ==================== 静态归档环依赖收口（模块化拆分遗留）====================
+# 判据与机制见根 CMakeLists 的 xinyue_link_rescan_group()：框架链与第三方
+# 归档间存在双向符号依赖（zlib↔Core、Gui↔Core），静态链接单遍扫描无法解析
+# （HsfServer/HsfClient 实测 undefined reference: atan2/floor/log10 等数学
+# 符号与 Core 符号），需 LINK_GROUP:RESCAN 组内反复重扫。
+xinyue_link_rescan_group(HsfServer)
+xinyue_link_rescan_group(HsfClient)

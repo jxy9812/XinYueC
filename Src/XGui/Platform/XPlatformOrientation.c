@@ -24,14 +24,35 @@
 #include "XPlatformOrientation.h"
 
 typedef struct {
+    /* —— 位域内存态表示：本结构体为 .c 内静态单例，不落盘/跨进程，
+     *    无序列化面（纪律与 XPlatformPowerState 一致）。 —— */
+    unsigned int m_defaultsApplied : 1; /**< 缺省影子值是否已建立。 */
+    unsigned int m_lastRequested : 3;   /**< 影子值，偏置编码：0=AUTO
+                                         *   （跟随系统），1..4=0°/90°/
+                                         *   180°/270°——3 位位域装不下
+                                         *   AUTO 的 -1，故存编码不存原值。 */
     unsigned m_caps;            /**< 能力位缓存（0=尚未就绪，每次重探）。 */
-    bool     m_defaultsApplied; /**< 缺省影子值是否已建立。 */
-    int      m_lastRequested;    /**< 影子值：最近一次成功受理的申请角
-                                 *   （XPLATFORM_ORIENTATION_AUTO=跟随
-                                 *   系统）。 */
 } XPlatformOrientationState;
 
+/* 布局锁：12→8B（旗标+角度编码 4B + 能力 4B）。 */
+_Static_assert(sizeof(XPlatformOrientationState) == 8,
+               "XPlatformOrientationState 布局变化：旗标/角度编码/能力排布被改动");
+
 static XPlatformOrientationState g_xori;
+
+/** @brief 影子值编码：AUTO→0，角度→角度/90+1（3 位位域装不下 -1）。 */
+static unsigned xori_encodeRequested(int degrees)
+{
+    return (degrees == XPLATFORM_ORIENTATION_AUTO)
+               ? 0u : (unsigned)(degrees / 90) + 1u;
+}
+
+/** @brief 影子值解码（xori_encodeRequested 的逆）。 */
+static int xori_decodeRequested(unsigned code)
+{
+    return (code == 0u) ? XPLATFORM_ORIENTATION_AUTO
+                        : (int)(code - 1u) * 90;
+}
 
 /** @brief 首次使用时建立缺省影子值。
  *  @details 静态结构体是**零初始化**，而「零」在本契约不是缺省语义：
@@ -44,7 +65,7 @@ static void xori_ensureDefaults(void)
 {
     if (g_xori.m_defaultsApplied) return;
     g_xori.m_defaultsApplied = true;
-    g_xori.m_lastRequested = XPLATFORM_ORIENTATION_AUTO;
+    g_xori.m_lastRequested = xori_encodeRequested(XPLATFORM_ORIENTATION_AUTO);
 }
 
 /** @brief 角度是否合法（0/90/180/270 或 AUTO）。 */
@@ -90,7 +111,7 @@ bool XPlatformOrientation_setOrientation(int degrees)
     if (!XPlatformOrientationDriver_setOrientation(degrees)) return false;
     /* 影子只在受理成功后更新：平台拒绝时不得让界面回显一个没生效的
      * 值（否则界面显示「已转竖屏」而屏幕纹丝不动）。 */
-    g_xori.m_lastRequested = degrees;
+    g_xori.m_lastRequested = xori_encodeRequested(degrees);
     return true;
 }
 
@@ -105,7 +126,7 @@ int XPlatformOrientation_currentOrientation(void)
 int XPlatformOrientation_lastRequested(void)
 {
     xori_ensureDefaults();
-    return g_xori.m_lastRequested;
+    return xori_decodeRequested(g_xori.m_lastRequested);
 }
 
 #endif /* XGUI_ON */

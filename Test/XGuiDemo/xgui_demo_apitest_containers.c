@@ -2922,6 +2922,12 @@ static int containers_dock(void)
                 "XDockWidget isAreaAllowed 按位掩码判定（Qt 对标）");
     XAPI_EXPECT(g_dkAllowedChanged == 1,
                 "XDockWidget setAllowedAreas 发射 allowedAreasChanged");
+    /* [Qt 行为对标 2026-10-31] Qt setAllowedAreas 先按
+       Qt::DockWidgetArea_Mask 裁剪高位（qdockwidget.cpp:1518），高位
+       垃圾不进记账。 */
+    XDockWidget_setAllowedAreas(&dock, (int)XDockWidgetArea_All | 0xF0);
+    XAPI_EXPECT(XDockWidget_allowedAreas(&dock) == (int)XDockWidgetArea_All,
+                "XDockWidget setAllowedAreas 按区域掩码裁剪高位（Qt 同）");
     XDockWidget_setAllowedAreas(&dock, (int)XDockWidgetArea_All);
 
     /* ================================================================
@@ -2959,6 +2965,14 @@ static int containers_dock(void)
                 "XDockWidget 未显示时切换动作未选中（Qt checked 随显隐）");
     XAPI_EXPECT(XDockWidget_toggleViewAction(&dock) == action,
                 "XDockWidget toggleViewAction 单例（Qt 同）");
+    /* [Qt 行为对标 2026-10-31] Qt 的切换动作可用意随 Closable 特性联动
+     *（qdockwidget.cpp:1413：面板不可关闭时禁用「显示/隐藏」入口）。 */
+    XAPI_EXPECT(XAction_isEnabled(action),
+                "XDockWidget 切换动作在 Closable 特性下可用（Qt 同）");
+    XDockWidget_setFeatures(&dock, 0x2 | 0x4); /* 去 Closable */
+    XAPI_EXPECT(!XAction_isEnabled(action),
+                "XDockWidget 去 Closable 后切换动作禁用（Qt 同）");
+    XDockWidget_setFeatures(&dock, 0x1 | 0x2 | 0x4);
     {
         XString* text = XAction_text(action);
         XAPI_EXPECT(text != NULL && strcmp(xapi_u8(text), "面板甲") == 0,
@@ -3068,14 +3082,25 @@ static int containers_mainwindow(void)
     XAPI_EXPECT(XMainWindow_takeCentralWidget(&mw) == NULL,
                 "XMainWindow 无中央控件时 take 返回 NULL（边界）");
     XMainWindow_setCentralWidget(&mw, &central);
+    /* [Qt 行为对标 2026-10-31] 替换中央控件时**旧控件隐藏并销毁**
+     * （qmainwindow.cpp:594-602：旧控件 hide + deleteLater；本框架用
+     * 等价即时销毁——控件析构即从父链摘除）。 */
+    {
+        XWidget* heapCentral = XWidget_create(NULL, 0);
+        XMainWindow_setCentralWidget(&mw, heapCentral);
+        XMainWindow_setCentralWidget(&mw, &central);
+        XAPI_EXPECT(XMainWindow_centralWidget(&mw) == &central,
+                    "XMainWindow 替换中央控件：旧控件销毁、新控件接管"
+                    "（Qt 同）");
+    }
 
     /* ================================================================
      * C. 工具栏（addToolBar_2 创建登记 / toolBarArea / 断行 / 插入移
      *    除 / 全局图标尺寸与按钮样式信号）。
      * ================================================================ */
 #if XTOOLBAR_ON && XACTION_ON && XTOOLBUTTON_ON
-    tb1 = XMainWindow_addToolBar_2(&mw, "工具甲");
-    tb2 = XMainWindow_addToolBar_2(&mw, "工具乙");
+    tb1 = XMainWindow_addToolBar_3(&mw, "工具甲");
+    tb2 = XMainWindow_addToolBar_3(&mw, "工具乙");
     XAPI_EXPECT(tb1 != NULL && tb2 != NULL,
                 "XMainWindow addToolBar_2 按标题创建工具栏");
     XAPI_EXPECT(XMainWindow_toolBarArea(&mw, tb1) == (int)XDockWidgetArea_Top,
@@ -3198,7 +3223,7 @@ static int containers_mainwindow(void)
     /* ================================================================
      * F. 布局快照（saveState/restoreState 往返；损坏快照拒收）。
      * ================================================================ */
-    state = XMainWindow_saveState(&mw);
+    state = XMainWindow_saveState(&mw, 0);
     XAPI_EXPECT(state != NULL, "XMainWindow saveState 返回快照");
     stateUtf8 = state ? xapi_u8(state) : NULL;
     XAPI_EXPECT(stateUtf8 && strncmp(stateUtf8, "XMWSTATE:", 9) == 0,
@@ -3208,16 +3233,16 @@ static int containers_mainwindow(void)
     XAPI_EXPECT(XMainWindow_dockWidgetArea(&mw, (XWidget*)&dock1) ==
                     (int)XDockWidgetArea_Right,
                 "XMainWindow 快照后移动 dock1 到右列");
-    XAPI_EXPECT(XMainWindow_restoreState(&mw, state),
+    XAPI_EXPECT(XMainWindow_restoreState(&mw, state, 0),
                 "XMainWindow restoreState 接受自身快照");
     XAPI_EXPECT(XMainWindow_dockWidgetArea(&mw, (XWidget*)&dock1) ==
                     (int)XDockWidgetArea_Left,
                 "XMainWindow restoreState 恢复 dock1 原区域（Qt 同）");
-    XAPI_EXPECT(XMainWindow_restoreState(&mw, NULL),
+    XAPI_EXPECT(XMainWindow_restoreState(&mw, NULL, 0),
                 "XMainWindow restoreState(NULL) 视为重置返回 true（头文件口径）");
     {
         XString* junk = XString_create_utf8("junk-state");
-        XAPI_EXPECT(junk && !XMainWindow_restoreState(&mw, junk),
+        XAPI_EXPECT(junk && !XMainWindow_restoreState(&mw, junk, 0),
                     "XMainWindow restoreState 损坏快照返回 false（Qt 同）");
         if (junk) XClassDelete((XClass*)junk);
     }
@@ -3251,18 +3276,27 @@ static int containers_mainwindow(void)
     XAPI_EXPECT(XMainWindow_documentMode(&mw),
                 "XMainWindow setDocumentMode 往返");
     XMainWindow_setDocumentMode(&mw, false);
-    XMainWindow_setTabPosition(&mw, 1);
-    XAPI_EXPECT(XMainWindow_tabPosition(&mw) == 1,
-                "XMainWindow setTabPosition 往返");
-    XMainWindow_setTabPosition(&mw, 0);
+    /* setTabPosition/tabPosition 逐区语义（对标 Qt：按停靠区掩码写入、
+       按区读取）。 */
+    XMainWindow_setTabPosition(&mw, (int)XDockWidgetArea_Left, 1);
+    XAPI_EXPECT(XMainWindow_tabPosition(&mw, (int)XDockWidgetArea_Left) == 1 &&
+                    XMainWindow_tabPosition(&mw, (int)XDockWidgetArea_Right) == 0,
+                "XMainWindow setTabPosition 逐区写入/读取往返");
+    XMainWindow_setTabPosition(&mw, (int)XDockWidgetArea_Left, 0);
     XMainWindow_setTabShape(&mw, 1);
     XAPI_EXPECT(XMainWindow_tabShape(&mw) == 1,
                 "XMainWindow setTabShape 往返");
     XMainWindow_setTabShape(&mw, 0);
-    XMainWindow_setSeparator(&mw, false);
+    /* [Qt 行为对标 2026-10-31] Qt setCorner 校验角位×区域组合，非法组合
+     * 忽略（qmainwindow.cpp:setCorner：TopLeft 只接 Top/Left、TopRight
+     * 只接 Top/Right、BottomLeft 只接 Bottom/Left、BottomRight 只接
+     * Bottom/Right，非法即告警不改布局）。 */
     XMainWindow_setCorner(&mw, 0 /* TopLeft */, (int)XDockWidgetArea_Bottom);
-    XAPI_EXPECT(XMainWindow_corner(&mw, 0) == (int)XDockWidgetArea_Bottom,
-                "XMainWindow setCorner/corner 往返");
+    XAPI_EXPECT(XMainWindow_corner(&mw, 0) == 0,
+                "XMainWindow setCorner 非法角位×区域组合被忽略（Qt 同）");
+    XMainWindow_setCorner(&mw, 0 /* TopLeft */, (int)XDockWidgetArea_Left);
+    XAPI_EXPECT(XMainWindow_corner(&mw, 0) == (int)XDockWidgetArea_Left,
+                "XMainWindow setCorner/corner 合法组合往返（Qt 同）");
     XMainWindow_setCorner(&mw, 0, 0);
     /* menuWidget 不惰性创建（Qt menuWidget 对标位）。 */
     XAPI_EXPECT(XMainWindow_menuWidget(&mw) == NULL,
@@ -3282,7 +3316,9 @@ static int containers_mainwindow(void)
         XMainWindow_setMenuBar(&mw, NULL);
         XAPI_EXPECT(XMainWindow_menuWidget(&mw) == NULL,
                     "XMainWindow setMenuBar(NULL) 清空菜单栏位置");
-        if (extBar) XClassDelete((XClass*)extBar);
+        /* [Qt 行为对标 2026-10-31] 替换时旧菜单栏由框架销毁（Qt
+         * deleteLater ≡ 本框架即时销毁，qmainwindow.cpp:527-534）——
+         * extBar 已被 setMenuBar(NULL) 销毁，此处不得再释放。 */
 #endif /* XMENUBAR_ON && XMENU_ON */
     }
 #endif /* XMENUBAR_ON */

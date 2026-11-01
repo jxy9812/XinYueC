@@ -3241,3 +3241,73 @@ demo --autotest rc=0、扩展页9(键盘演示) PASS；全量 [FAIL] 仅剩「�
 设置页: 边框开态框架自绘标题栏生效」1 条——window 装饰子系统断言，
 与本战役改动面（XVirtualKeyboard.{h,c}/XKeyboardTest.c/demo 键盘页/
 目验脚本）无交集，如实记录不归属。
+
+### 8.0g29 远端合并收口 + 回归修复 + 内存缺陷根治 + X11 位置口径统一 ✓（2026-11-01）
+
+**远端合并**：远端强推重写历史（`5bb09ef6` → `9093919d`/`6c96f42e`/`768e3de3`
+「模块化拆分 + Industry 迁移」），本地以「stash -u → 备份分支 → reset 到远端 →
+stash apply → 手工裁决 3 处冲突」免提交合并（备份：`backup/pre-remote-merge-768e3de3-20261101`
+钉旧 HEAD、`backup/local-dirty-20261101` 钉脏态、`stash@{0}`）。裁决：`XPrintf.c` 取上游
+（同一 `dup` 遮蔽 bug 双方各修）；`xgui_regression_test.c` 的 t212a 保留本地「定义在
+`_WIN32` 块外」+ 采上游「2026-11-01 默认软件光栅」语义（上游把定义裹进块内 ⇒ Linux
+链接期 undefined reference）；根 `CMakeLists.txt` 取上游版，本地 4 处语义迁到
+`Test/CMakeLists.txt` 新模块架构（剔除 `XGuiDockDragTest.c` 的 main、新增
+`XGuiDockDrag_Test` 目标、UNIX 分支摘 `dbghelp`、移除 `xgui_demo_splitter.c` 源文件）。
+
+**上游自带构建断裂三处（纯净树复现，非本地引入）**：① 头文件导出洞——XGuiConfig.h 裸名
+位于全局强制包含链（`-FI CXinYueConfig.h` → `XGui/XGuiConfig.h` →
+`XImageCodec_config.h` → 裸名 `XGuiConfig.h`），模块化拆分后 XGui/Industry 头目录不再
+抬升、共享库对模块是 PRIVATE 链接 ⇒ zlib 三个 TU 与 Test 侧 `XButtonGroup.h`/
+`XIoChannel.h` 全部解析失败 ⇒ 新增 `Src/XGui/XGuiHeaders.cmake`（XGui 模块自持头目录
+导出清单，根在 Drive/Library 注册前落地）+ `Src/Industry/CMakeLists.txt` 加
+`INCLUDE_INDUSTRY_LIST_LIFT` 抬升；② 静态归档环依赖（zlib↔Core、Gui↔Core）⇒ 根加
+`xinyue_link_rescan_group()`（`$<LINK_GROUP:RESCAN,...>` + `$<TARGET_FILE:>` 文件路径
+入组，避开既有目标级环依赖）；③ t212a 的 `_WIN32` 位置 bug（见上）。
+
+**X11 平台层位置口径（本轮真缺陷）**：探针实测（`DISPLAY=:0` 有 WM）——该 WM **恒定把 X
+请求当 frame 位**：请求 (100,150) → 客户区落 (101,191)，即客户区 = 请求 + **常量内缩
+(1,41)**（1px 边框 + 40px 标题栏，两次探测一致；无 WM 的 `:99` 下为 0）。而框架记账用
+**客户区**口径、下次却把记账值当 **frame** 坐标回发 ⇒ **每次几何变更叠加一次内缩**（宿主
+客户区 (1,41)→(2,82)，紧凑浮动态随之偏离宿主右下角）。修法：记账改客户区绝对位
+（`XTranslateCoordinates(win→root)`，跨 WM 稳定——ConfigureNotify 的 x/y 在不同 WM 上
+语义不一）、全局学得内缩常量（带合理性闸：偏差需非零且 |dx|<64、|dy|<160，且只采信
+WM 托管窗）、三处 `XMoveResizeWindow` 统一按「客户区目标 − 内缩」换算成 frame 位。
+踩坑留档：delta 换算在刚建窗（WM 尚未落位）时不可靠；MapNotify 上做一次性对齐纠正会与
+在途请求竞态；`&DefaultRootWindow(dpy)` 取函数返回值地址是 UB；每窗学内缩会采到陈旧
+请求的垃圾值。
+
+**回归 8 条全绿（断言口径，非框架违约）**：XKB 4 条写死了宿主原点 (0,0) ⇒ 改为「宿主客户区
+原点 + 右下锚定」（平台层换算已内化，不再叠加任何边框补偿）；TP 2 条滚轮量化期望
+`vBefore+60` 未钳值域（6.2 惯性 fling 后 value 停在 556、上限 600，+60 越界被钳口吃掉
+⇒ 期望 616 不可达、断言恒假）⇒ 前置复位到 0 + 期望取 `min(vBefore+60, max)`。
+
+**隐藏页时序假红（上游继承，约 1/12 命中）**：真因不是框架违反生效可见性闸（见
+`docs/xgui/architecture/render-pipeline.md`：隐藏控件的重绘请求 = 完全空操作），而是 **WM
+映射期异步事件**（Expose/配置/激活）引发与隐藏页无关的顶层重绘、到达时刻不定——同一批
+3 次 paint 落在「不碰隐藏页」的基线循环时 baseDelta=3、落在隐藏页循环时 hiddenDelta=3
+（`:0` 约 1/4 命中，`:99` 无 WM 下 0 命中）。修法：**测量前让 WM 落定**（泵到顶层 paint
+计数连续 8 拍不再增且已过 400ms 墙钟），**严格断言（增量为 0）保留**。
+
+**ASan 硬门挖出两处真内存缺陷**：① **栈上悬垂引用**——`addLayout` 契约是借用不接管
+（`XBoxLayout.h:21`），测试却把**栈对象**注册进堆布局并让其出作用域 ⇒ 父布局反初始化时
+`XLayout_releaseItems` 解引用悬垂栈对象（子布局提到函数作用域 + 父布局释放后才反初始化，
+次序反了即 UAF；顺带补齐该用例全部栈布局的反初始化与 takeAt 条目归还）；② **堆上
+use-after-free**——顶层控件登记表只在 `m_isWindow` 为真时注销，而 `XClassMove` 的源对象
+move 后字段被 memset 归零（含 `m_isWindow`）⇒ 源控件析构跳过注销、顶层表留悬垂指针
+（无障碍驱动遍历即踩）⇒ 析构路径改为**无条件注销**（入口幂等），并补 move 后目标接管顶层
+身份时的登记转移。
+
+**构建面收口**：fbdev 是同机 native 变体配置，与桌面默认配置共用 `bin/` 会互相覆盖二进制
+（编完 fbdev 再跑桌面套件 ⇒ 一整族与代码无关的 backing store 假失败）⇒ fbdev 默认输出
+`bin-fbdev/`（`.gitignore` 同步登记）；armel 交叉构建的共享库补 `PRIVATE atomic`（32 位
+ARM 的 64 位原子符号此前只给静态库链，`libXinYueC.so` 带未定义原子符号出库 ⇒ 消费端
+`XinYueC_Dynamic` 链接失败）。
+
+**门禁结果行**：桌面 / fbdev / armel 三构建 0 错误；`XGuiRegression_Test` /
+`XLineControl_Acceptance_Test` / `XGuiGpu_Test` 三套件在 `DISPLAY=:0`（有 WM）与 `:99`
+（裸 Xvfb）**双显示全绿**（回归 0 失败）；ASan 回归 **0 内存错误**、泄漏 103139B/475 分配
+与基线**逐项一致**（Mesa/GLX 连接级 100956B + fontconfig 630B + 测试夹具退出持有 1553B）
+⇒ 零新增泄漏；`git diff --check` 干净。**屏上**：昆仑通态 192.168.1.252 实包 md5
+`f3a29888018c4517dce28040bb0a01b8`（strip 10875672 B）已部署，参数原样保留
+（`--page 6 --fullscreen --remote-server --remote-port 46300 --remote-profile resource`）、
+46300 监听、fbsnap 抓帧目验整页全绘且 CJK 无缺笔、MemAvailable 20MB。

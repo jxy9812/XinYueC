@@ -43,6 +43,8 @@
 #include <fcntl.h>
 #include <dirent.h>
 
+#include "XDateTime.h" /* XDateTime_currentMSecsSinceEpoch（探测冷却节拍，框架自有单调时钟，不引 time.h）。 */
+
 /* ---- fbdev 面编译开关 ---- */
 #if defined(XPLATFORM_FBDEV_ON) && XPLATFORM_FBDEV_ON
 #include <sys/ioctl.h>
@@ -62,7 +64,28 @@
 
 /* ---- X11 面编译开关 ---- */
 #if defined(XINYUE_C_HAS_X11)
+/* Xlib 与 XinYueC 公共层命名冲突（纪律同 XPlatformNativeWindow_posix.c）：
+ * 本文件经 XDateTime.h 包含链拉进公共层，XTypes.h 的 XPoint/XEvent
+ * 前向 typedef、XMemory.h 的 XFree 宏别名与 Xlib 同名符号撞车
+ *（conflicting types / 吞并 extern 声明）。包含 X11 头期间用预处理宏
+ * 把 Xlib 侧符号统一改名（X11_Xxx），包含结束立即 #undef 并恢复公共
+ * XFree 宏别名；本文件只用到 Display/XOpenDisplay 与 DPMS 内联原型，
+ * 不直接引用被改名符号。 */
+#undef XFree
+#define XImage X11_XImage
+#define XPoint X11_XPoint
+#define XEvent X11_XEvent
+#define XColor X11_XColor
+#define XKeyEvent X11_XKeyEvent
+#define XExposeEvent X11_XExposeEvent
 #include <X11/Xlib.h>
+#undef XImage
+#undef XPoint
+#undef XEvent
+#undef XColor
+#undef XKeyEvent
+#undef XExposeEvent
+#define XFree XMemory_free /* 恢复公共内存释放宏别名。 */
 #define XPOWER_X11_ON 1
 #else
 #define XPOWER_X11_ON 0
@@ -123,7 +146,8 @@ typedef enum {
 } XPowerFbMode;
 
 static XPowerFbMode g_xpowFbMode = XPowerFbModeNone;
-static bool          g_xpowFbProbed = false;
+static bool          g_xpowFbProbed = false;   /**< 探测已成功（手段定型）。 */
+static bool          g_xpowFbProbeFailed = false; /**< 探测落空（可冷却重试）。 */
 static char          g_xpowBrightPath[256]; /**< 背光节点路径。 */
 static int           g_xpowBrightValue = -1;/**< 熄屏前的背光亮度（唤醒写回）。 */
 static int           g_xpowBrightMax = 1;   /**< 背光量程（max_brightness，探测时缓存）。 */
@@ -170,11 +194,16 @@ static bool xpowFbFindBacklight(char* outPath, size_t outLen)
     return found;
 }
 
-/** @brief 探测本机可用的 fbdev 熄屏手段（结果缓存）。 */
+/** @brief 探测本机可用的 fbdev 熄屏手段（成功后缓存定型；落空可重试）。
+ *  @details [开机竞态 2026-10-30] 探测在设备早期可能全部落空（sysfs/
+ *           设备节点尚未挂载就绪），旧版把 None 一并永久缓存 = 开机自启
+ *           场景熄屏能力在本次进程内永不生效。现在 None 标记为「落空
+ *           待重试」，由 xpowFbProbeRetry（冷却节流）在后续动作时重探；
+ *           一旦成功即 g_xpowFbProbed=true 定型。 */
 static XPowerFbMode xpowFbProbe(void)
 {
     if (g_xpowFbProbed) return g_xpowFbMode;
-    g_xpowFbProbed = true;
+    g_xpowFbProbeFailed = false;
     /* L1 背光 PWM：真正断电降耗，嵌入式首选。 */
     if (xpowFbFindBacklight(g_xpowBrightPath, sizeof(g_xpowBrightPath))) {
         char buf[32];
@@ -197,6 +226,7 @@ static XPowerFbMode xpowFbProbe(void)
                     current = g_xpowBrightMax;
             }
             g_xpowBrightValue = current;
+            g_xpowFbProbed = true;
             return g_xpowFbMode;
         }
     }
@@ -208,21 +238,43 @@ static XPowerFbMode xpowFbProbe(void)
             atoi(buf) != 0)
             xpowWriteText("/sys/class/graphics/fb0/blank", "0");
         g_xpowFbMode = XPowerFbModeBlankSysfs;
+        g_xpowFbProbed = true;
         return g_xpowFbMode;
     }
     /* L3 FBIOBLANK ioctl 兜底（节点存在即可尝试，能力由实际 ioctl 判定）。 */
     if (access(XPLATFORM_FBDEV_DEVICE, R_OK) == 0) {
         g_xpowFbMode = XPowerFbModeIoctl;
+        g_xpowFbProbed = true;
         return g_xpowFbMode;
     }
     g_xpowFbMode = XPowerFbModeNone;
+    g_xpowFbProbeFailed = true;
     return g_xpowFbMode;
+}
+
+/** @brief 首探入口 + 落空后的冷却重试（节流：两次重探间隔 ≥10s）。
+ *  @return 当前可用手段（可能仍为 None）。
+ *  @details [首次必探 2026-10-30] 上一版在「从未探测过」的初始态
+ *           （probeFailed=false && probed=false）直接返回 None——首探
+ *           永远不执行，开机自愈整条链失效（真机实证：部署后触摸唤
+ *           不醒）。现改为：已定型走缓存；落空过走冷却；**初始态必探**。 */
+static XPowerFbMode xpowFbProbeRetry(void)
+{
+    static int64_t s_lastFailMs = INT64_MIN;
+    if (g_xpowFbProbed) return g_xpowFbMode;
+    if (g_xpowFbProbeFailed) {
+        int64_t now = XDateTime_currentMSecsSinceEpoch();
+        if (s_lastFailMs != INT64_MIN && now - s_lastFailMs < 10000)
+            return g_xpowFbMode;
+        s_lastFailMs = now;
+    }
+    return xpowFbProbe();
 }
 
 /** @brief fbdev 熄屏。 */
 static bool xpowFbBlank(void)
 {
-    switch (xpowFbProbe()) {
+    switch (xpowFbProbeRetry()) {
     case XPowerFbModeBacklight: {
         char buf[32];
         int value;
@@ -259,7 +311,7 @@ static bool xpowFbBlank(void)
 /** @brief fbdev 唤醒。 */
 static bool xpowFbUnblank(void)
 {
-    switch (xpowFbProbe()) {
+    switch (xpowFbProbeRetry()) {
     case XPowerFbModeBacklight: {
         char buf[32];
         int value = g_xpowBrightValue;
@@ -301,7 +353,32 @@ static bool xpowFbUnblank(void)
 /** @brief fbdev 是否可用（探测到任一熄屏手段）。 */
 static bool xpowFbAvailable(void)
 {
-    return xpowFbProbe() != XPowerFbModeNone;
+    return xpowFbProbeRetry() != XPowerFbModeNone;
+}
+
+/** @brief 读屏幕硬件实况（影子/硬件对账数据源；读不回恒 Unknown）。
+ *  @details 读回口径按当前生效手段：背光读 brightness（>0=亮）；
+ *           blank 节点读 0=亮 1=熄；FBIOBLANK 兜底通道无 sysfs 读回
+ *           （内核不回显 blank 态），报 Unknown——对账层对 Unknown
+ *           不动作，误报风险为零。 */
+static XPlatformPowerScreenActual xpowFbQueryActual(void)
+{
+    char buf[32];
+    switch (xpowFbProbeRetry()) {
+    case XPowerFbModeBacklight:
+        if (!xpowReadText(g_xpowBrightPath, buf, sizeof(buf)))
+            return XPlatformPowerScreenActual_Unknown;
+        return atoi(buf) > 0 ? XPlatformPowerScreenActual_On
+                             : XPlatformPowerScreenActual_Off;
+    case XPowerFbModeBlankSysfs:
+        if (!xpowReadText("/sys/class/graphics/fb0/blank", buf, sizeof(buf)))
+            return XPlatformPowerScreenActual_Unknown;
+        return atoi(buf) == 0 ? XPlatformPowerScreenActual_On
+                              : XPlatformPowerScreenActual_Off;
+    case XPowerFbModeIoctl:
+    default:
+        return XPlatformPowerScreenActual_Unknown;
+    }
 }
 
 /** @brief 系统挂起是否可用：/sys/power/state 存在且含 mem 或 freeze。 */
@@ -331,6 +408,8 @@ static bool xpowFbSuspend(void)
 static bool xpowFbAvailable(void)     { return false; }
 static bool xpowFbBlank(void)         { return false; }
 static bool xpowFbUnblank(void)       { return false; }
+static XPlatformPowerScreenActual xpowFbQueryActual(void)
+                                      { return XPlatformPowerScreenActual_Unknown; }
 static bool xpowFbSuspendAvailable(void) { return false; }
 static bool xpowFbSuspend(void)       { return false; }
 
@@ -414,6 +493,14 @@ unsigned XPlatformPowerDriver_capabilities(void)
     if (xpowFbSuspendAvailable())
         caps |= (unsigned)XPlatformPowerCap_SystemSuspend;
     return caps;
+}
+
+XPlatformPowerScreenActual XPlatformPowerDriver_queryScreenState(void)
+{
+    /* fbdev 背光/blank 节点可读回（真值）；DPMS 无服务端查询面（本文件
+     * 只内联了 ForceLevel，未挂 DPMSCapable/DPMSInfo），X11 侧报 Unknown
+     * ——对账层对 Unknown 不动作。 */
+    return xpowFbQueryActual();
 }
 
 bool XPlatformPowerDriver_setScreenState(XPlatformPowerScreenState state)

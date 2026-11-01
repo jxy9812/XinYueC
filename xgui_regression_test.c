@@ -23390,6 +23390,8 @@ static void test_widget_hidden_page_no_frame_endtoend(void)
     TestWidget* hidLabel;
     int paintsBefore;
     int i;
+    int hiddenDelta = 0;
+    int hiddenBefore = 0;
 
     app = XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL);
     expect_true(app != NULL, "端到端隐藏页帧数用例：应用创建");
@@ -23435,13 +23437,40 @@ static void test_widget_hidden_page_no_frame_endtoend(void)
     expect_true(win->paintCount > paintsBefore,
                 "正对照：可见控件刷新产生顶层 paintEvent");
 
-    /* 本体：隐藏页连续刷新 → 顶层 paintEvent 增量必须为 0。 */
-    paintsBefore = win->paintCount;
+    /* [2026-11-01 时序假红根修·让 WM 落定] 有 WM 的桌面会话里，窗口映射
+     *   会引发 WM 侧的**异步**事件（Expose / 配置 / 激活），它们带来与隐藏
+     *   页无关的顶层重绘，且到达时刻不定——实测同一批 3 次 paint 落在
+     *   「不碰隐藏页」的基线循环时 baseDelta=3、落在隐藏页循环时
+     *   hiddenDelta=3（:0 下约 1/4 概率命中 ⇒ 假红；:99 无 WM 下 0 命中）。
+     *   那不是隐藏页刷新造成的：render-pipeline.md 的生效可见性闸契约
+     *   是「隐藏控件的重绘请求 = 完全空操作」，框架侧行为正确。
+     *   本用例测的正是该契约 ⇒ 断言保持严格（增量为 0），改为**测量前让
+     *   WM 的映射期事件落定**：泵到顶层 paint 计数连续多拍不再增、且已过
+     *   一段墙钟，再开始采样。 */
+    {
+        int64_t settleUntil = XDateTime_currentMSecsSinceEpoch() + 400;
+        int stable = 0;
+        int lastPaint = win->paintCount;
+        while (XDateTime_currentMSecsSinceEpoch() < settleUntil) {
+            XGuiApplication_processEvents(XEventLoop_AllEvents);
+            if (win->paintCount == lastPaint) {
+                if (++stable >= 8) break;
+            } else {
+                stable = 0;
+                lastPaint = win->paintCount;
+            }
+            XThread_msleep(5);
+        }
+    }
+
+    /* 本体：隐藏页连续刷新 → 顶层 paintEvent 增量必须为 0（严格契约）。 */
+    hiddenBefore = win->paintCount;
     for (i = 0; i < 50; ++i) {
         XWidget_update(&hidLabel->m_base);
         XGuiApplication_processEvents(XEventLoop_AllEvents);
     }
-    expect_true(win->paintCount == paintsBefore,
+    hiddenDelta = win->paintCount - hiddenBefore;
+    expect_true(hiddenDelta == 0,
                 "隐藏页连续刷新不产生顶层 paintEvent（前台帧数不虚高）");
 
     XClassDelete((XClass*)hidLabel);
@@ -25080,7 +25109,15 @@ static void test_layout_invalidate_propagation(void)
     XBoxLayout box;
     XBoxLayout outerBox;
     XBoxLayout innerBox;
+    /* [2026-11-01 所有权修正] subBox：①c 段挂进 inner 的**借用**子布局
+     *   （XBoxLayout.h 契约：addLayout 不取所有权，子布局须活到父布局
+     *   释放之后）。原先它声明在内层块里、出作用域后 inner 仍持有该
+     *   条目 → inner 反初始化时 releaseItems 解引用悬垂栈对象（ASan：
+     *   stack-use-after-scope @XLayoutItem_layout_base）。故提到函数
+     *   作用域，收尾在 inner 释放之后（见下方）。 */
+    XBoxLayout subBox;
     TestWidget* w;
+    TestWidget* subW = NULL;
 
     /* ---------- ① 跨控件上推：叶子变化失效祖先控件布局缓存 ---------- */
     layout_test_ensure_app();
@@ -25139,8 +25176,7 @@ static void test_layout_invalidate_propagation(void)
     /* ---------- ①c 子布局 activate 上推委托（qlayout.cpp:1002）---------- */
 #if XLAYOUT_TOTAL_ON
     {
-        XBoxLayout subBox;
-        TestWidget* subW = layout_make_growable_widget(50, 20);
+        subW = layout_make_growable_widget(50, 20);
         XBoxLayout_init(&subBox, XBoxLayoutDirection_LeftToRight);
         XBoxLayout_addWidget(&subBox, &subW->m_base);
         XBoxLayout_addLayout(inner, (XLayout*)&subBox);
@@ -25153,7 +25189,8 @@ static void test_layout_invalidate_propagation(void)
         XLayout_setEnabled((XLayout*)inner, true);
         expect_true(XLayout_activate((XLayout*)&subBox),
                     "deleg: 恢复后经委托激活成功");
-        XClassDelete((XClass*)subW);
+        /* subBox 由 inner 借用（不取所有权），subW 亦须活到 subBox 反
+           初始化之后——两者均不在本块收尾，见下方 inner 释放之后。 */
     }
 #endif /* XLAYOUT_TOTAL_ON */
 
@@ -25163,6 +25200,11 @@ static void test_layout_invalidate_propagation(void)
     XClassDelete((XClass*)top);
     XClassDelete((XLayout*)outer);
     XClassDelete((XLayout*)inner);
+    /* ①c 借用子布局收尾：inner 释放（releaseItems 清 subBox 的
+       m_parentLayout）之后才可反初始化 subBox——次序反了即悬垂解引用
+       （ASan: stack-use-after-scope @XLayoutItem_layout_base）。 */
+    XClassDelete((XClass*)&subBox);
+    XClassDelete((XClass*)subW);
 
     /* ---------- ② 布局 isEmpty：itemAt 扫描，全空才空（QLayout::isEmpty）---- */
     w = layout_make_growable_widget(40, 20);
@@ -25176,6 +25218,11 @@ static void test_layout_invalidate_propagation(void)
     XWidget_show(&w->m_base);
     expect_true(!XLayoutItem_isEmpty_base((XLayoutItem*)&box),
                 "prop: 恢复可见后布局非空");
+    /* [2026-11-01 所有权修正] 栈布局反初始化：布局自有条目（addWidget
+       创建的内部条目归布局所有）在此释放——否则其条目数组与条目对象随
+       栈帧消亡即成泄漏（ASan/LSan 可见）。XClassDelete 对栈对象只做反
+       初始化不释放结构体（XClass.h 契约），是此处正解。 */
+    XClassDelete((XClass*)&box);
 
     /* 子布局递归有效：嵌套子布局全空 → 外层也为空（QLayout::isEmpty
        沿 itemAt 递归；QBoxLayout 无 isEmpty 覆盖，继承基类实现）。 */
@@ -25189,6 +25236,11 @@ static void test_layout_invalidate_propagation(void)
     XWidget_show(&w->m_base);
     expect_true(!XLayoutItem_isEmpty_base((XLayoutItem*)&outerBox),
                 "prop: 子条目恢复可见 → 外层布局非空");
+    /* 借用子布局收尾：outer 先释放（releaseItems 清 innerBox 的
+       m_parentLayout），再释放 innerBox——次序反了 innerBox 的父指针
+       会指向已释放的 outerBox。 */
+    XClassDelete((XClass*)&outerBox);
+    XClassDelete((XClass*)&innerBox);
     XClassDelete((XClass*)w);
 
     /* ---------- ③ takeAt 清三级缓存（置脏同时清，堵读穿旧值） ---------- */
@@ -25204,7 +25256,11 @@ static void test_layout_invalidate_propagation(void)
         expect_true(taken != NULL, "prop: takeAt 取出条目");
         expect_true(((XLayout*)&box)->m_cachedHint.width < 0 && ((XLayout*)&box)->m_cachedMin.width < 0,
                     "prop: takeAt 同步清三级缓存");
+        /* takeAt 把条目所有权移交给调用方（Qt 同款）——取出即须释放，
+           否则条目对象泄漏。 */
+        XClassDelete((XClass*)taken);
     }
+    XClassDelete((XClass*)&box);
     XClassDelete((XClass*)w);
     layout_test_release_app();
 #endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
@@ -32450,11 +32506,11 @@ static void test_mainwindow_contract(void)
     /* ---- Task 2.4：布局 API ---- */
     {
         XMainWindow* win = XMainWindow_create(NULL, 0);
-        XWidget* tb1 = XMainWindow_addToolBar_2(win, "工具1");
-        XWidget* tb2 = XMainWindow_addToolBar_2(win, "工具2");
+        XWidget* tb1 = XMainWindow_addToolBar_3(win, "工具1");
+        XWidget* tb2 = XMainWindow_addToolBar_3(win, "工具2");
         mw_expect(tb1 != NULL && tb2 != NULL, "addToolBar 创建");
         if (tb1 && tb2) {
-            XWidget* tb3 = XMainWindow_addToolBar_2(win, "工具3");
+            XWidget* tb3 = XMainWindow_addToolBar_3(win, "工具3");
             mw_expect(XMainWindow_toolBarArea(win, tb1) != 0,
                       "toolBarArea 登记");
             XMainWindow_insertToolBar(win, tb1, tb3);
@@ -32475,17 +32531,17 @@ static void test_mainwindow_contract(void)
         XMainWindow_setUnifiedTitleAndToolBarOnMac(win, true);
         mw_expect(XMainWindow_isUnifiedTitleAndToolBarOnMac(win),
                   "unifiedTitleAndToolBarOnMac");
-        XMainWindow_setTabPosition(win, 3);
-        mw_expect(XMainWindow_tabPosition(win) == 3, "tabPosition");
+        XMainWindow_setTabPosition(win, (int)XDockWidgetArea_Left, 3);
+        mw_expect(XMainWindow_tabPosition(win, (int)XDockWidgetArea_Left) == 3,
+                  "tabPosition");
         XMainWindow_setTabShape(win, 1);
         mw_expect(XMainWindow_tabShape(win) == 1, "tabShape");
-        XMainWindow_setSeparator(win, false);
         XMainWindow_setCorner(win, 0, 1);
         mw_expect(XMainWindow_corner(win, 0) == 1, "corner 设置");
         {
-            XString* state = XMainWindow_saveState(win);
+            XString* state = XMainWindow_saveState(win, 0);
             mw_expect(state != NULL, "saveState 生成快照");
-            mw_expect(XMainWindow_restoreState(win, state),
+            mw_expect(XMainWindow_restoreState(win, state, 0),
                       "restoreState 接受快照");
             if (state) XClassDelete(state);
         }
@@ -39678,6 +39734,73 @@ static void test_style_engine_contract(void)
 }
 
 
+/* GPU 请求三层级联契约（t212a，2026-11-01 口径变更：默认软件光栅、
+ * GPU 按需启用；原 2026-10-31 口径为「桌面默认 GPU 直通」）：
+ * ① 外部设置层——XGUI_RENDER_BACKEND / XGPU_BACKEND 白名单
+ *   （gpu/opengl/vulkan/1/true/on→GPU，其余值含 software 一律软件，
+ *   大小写不敏感同 xgpu_text_equals 口径）；
+ * ② 默认层（XGPU_RUNTIME_DEFAULT_ON）——当前缺省 0：无外部设置时
+ *   requested() 恒为 false（软件光栅；板端实测 GPU 直通路径进程 CPU
+ *   是软件光栅的 2~4 倍，无零拷贝呈现链时默认 GPU 是净亏损）；
+ *   编译期显式置 1（恢复旧口径）时，requested() 必须与
+ *   probeAvailable() 探测结论一致：可用即 GPU 直通，失败回退软件
+ *   光栅（零回归契约）。
+ * addRequestedOverride 覆盖层无读取/恢复 API，本用例不得触碰——
+ * 进程内一旦写入即污染后续用例的层级口径。 */
+static bool t212a_whitelisted(const char* value)
+{
+    static const char* const kNames[] = {
+        "gpu", "opengl", "vulkan", "1", "true", "on"
+    };
+    size_t i;
+    for (i = 0; i < sizeof(kNames) / sizeof(kNames[0]); ++i) {
+        const char* a = value;
+        const char* b = kNames[i];
+        while (*a && *b) {
+            if (XToLower((unsigned char)*a++) != *b++) goto next;
+        }
+        if (*a == '\0' && *b == '\0') return true;
+next:   ;
+    }
+    return false;
+}
+
+static void test_gpu_backend_request_tiers(void)
+{
+#if XGPU_ON && XPLATFORMINTEGRATION_ON
+    const char* backend = getenv("XGUI_RENDER_BACKEND");
+    extern bool XGpuRenderBackend_requested(void);
+    extern bool XGpuRenderBackend_probeAvailable(void);
+    if (!backend || !*backend) backend = getenv("XGPU_BACKEND");
+    if (backend && *backend)
+    {
+        expect_true(XGpuRenderBackend_requested() == t212a_whitelisted(backend),
+                    "t212a: env 白名单映射与 requested 一致");
+    }
+    else
+    {
+        /* 默认层（2026-11-01 口径变更：默认软件光栅，GPU 按需启用）。
+           XGPU_RUNTIME_DEFAULT_ON=0（当前默认）时 requested() 恒为
+           false——探测结论与默认层无关（板端实测：GPU 直通路径的进程
+           CPU 是软件光栅的 2~4 倍，无零拷贝呈现链时「探测到 GPU 就
+           默认 GPU」是净亏损）；=1（编译期显式恢复旧口径）时
+           requested() 必须与 probeAvailable() 一致（可用即 GPU 直通，
+           失败回退软件光栅的零回归契约）。 */
+#if XGPU_RUNTIME_DEFAULT_ON
+        bool probed = XGpuRenderBackend_probeAvailable();
+        expect_true(XGpuRenderBackend_requested() == probed,
+                    "t212a: 默认层 requested==probeAvailable");
+#else
+        expect_true(XGpuRenderBackend_requested() == false,
+                    "t212a: 默认层 requested==false（默认软件，GPU 按需启用）");
+#endif
+    }
+#else
+    (void)t212a_whitelisted;
+#endif /* XGPU_ON && XPLATFORMINTEGRATION_ON */
+}
+
+
 #if defined(_WIN32)
 /* ==================== win32 内容旋转端到端契约（TEMP-ROT-TEST） ====================
  * 真实窗口 + 真实 present + 真实 SendInput 输入的闭环验证（2026-10-21
@@ -39778,72 +39901,6 @@ static void xrot_pump(void)
         XPlatformNativeWindow_processPendingEvents();
         Sleep(40);
     }
-}
-
-/* GPU 请求三层级联契约（t212a，2026-11-01 口径变更：默认软件光栅、
- * GPU 按需启用；原 2026-10-31 口径为「桌面默认 GPU 直通」）：
- * ① 外部设置层——XGUI_RENDER_BACKEND / XGPU_BACKEND 白名单
- *   （gpu/opengl/vulkan/1/true/on→GPU，其余值含 software 一律软件，
- *   大小写不敏感同 xgpu_text_equals 口径）；
- * ② 默认层（XGPU_RUNTIME_DEFAULT_ON）——当前缺省 0：无外部设置时
- *   requested() 恒为 false（软件光栅；板端实测 GPU 直通路径进程 CPU
- *   是软件光栅的 2~4 倍，无零拷贝呈现链时默认 GPU 是净亏损）；
- *   编译期显式置 1（恢复旧口径）时，requested() 必须与
- *   probeAvailable() 探测结论一致：可用即 GPU 直通，失败回退软件
- *   光栅（零回归契约）。
- * addRequestedOverride 覆盖层无读取/恢复 API，本用例不得触碰——
- * 进程内一旦写入即污染后续用例的层级口径。 */
-static bool t212a_whitelisted(const char* value)
-{
-    static const char* const kNames[] = {
-        "gpu", "opengl", "vulkan", "1", "true", "on"
-    };
-    size_t i;
-    for (i = 0; i < sizeof(kNames) / sizeof(kNames[0]); ++i) {
-        const char* a = value;
-        const char* b = kNames[i];
-        while (*a && *b) {
-            if (XToLower((unsigned char)*a++) != *b++) goto next;
-        }
-        if (*a == '\0' && *b == '\0') return true;
-next:   ;
-    }
-    return false;
-}
-
-static void test_gpu_backend_request_tiers(void)
-{
-#if XGPU_ON && XPLATFORMINTEGRATION_ON
-    const char* backend = getenv("XGUI_RENDER_BACKEND");
-    extern bool XGpuRenderBackend_requested(void);
-    extern bool XGpuRenderBackend_probeAvailable(void);
-    if (!backend || !*backend) backend = getenv("XGPU_BACKEND");
-    if (backend && *backend)
-    {
-        expect_true(XGpuRenderBackend_requested() == t212a_whitelisted(backend),
-                    "t212a: env 白名单映射与 requested 一致");
-    }
-    else
-    {
-        /* 默认层（2026-11-01 口径变更：默认软件光栅，GPU 按需启用）。
-           XGPU_RUNTIME_DEFAULT_ON=0（当前默认）时 requested() 恒为
-           false——探测结论与默认层无关（板端实测：GPU 直通路径的进程
-           CPU 是软件光栅的 2~4 倍，无零拷贝呈现链时「探测到 GPU 就
-           默认 GPU」是净亏损）；=1（编译期显式恢复旧口径）时
-           requested() 必须与 probeAvailable() 一致（可用即 GPU 直通，
-           失败回退软件光栅的零回归契约）。 */
-#if XGPU_RUNTIME_DEFAULT_ON
-        bool probed = XGpuRenderBackend_probeAvailable();
-        expect_true(XGpuRenderBackend_requested() == probed,
-                    "t212a: 默认层 requested==probeAvailable");
-#else
-        expect_true(XGpuRenderBackend_requested() == false,
-                    "t212a: 默认层 requested==false（默认软件，GPU 按需启用）");
-#endif
-    }
-#else
-    (void)t212a_whitelisted;
-#endif /* XGPU_ON && XPLATFORMINTEGRATION_ON */
 }
 
 /* GPU 悬停稳定性契约（t213h，2026-10-31）：合成鼠标掠过按钮（ENTER/LEAVE

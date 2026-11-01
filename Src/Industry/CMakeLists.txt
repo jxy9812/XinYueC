@@ -30,6 +30,23 @@ target_include_directories(XinYueIndustry PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/XChannel"
     "${CMAKE_CURRENT_SOURCE_DIR}/XSolenoidValve")
 
+# ---- 头目录导出清单（抬升父作用域，根在 Test 模块注册前落地）----
+# [2026-11-01 模块化拆分收口] 与 XCore/Drive/XGui 同款：模块自持头目录清单
+# 并经 PARENT_SCOPE 交给根落地。落地点在 add_subdirectory(Src/Industry) 之
+# 后、add_subdirectory(Test) 之前（目录属性快照语义：先注册者拿不到后落
+# 的根清单）。
+# 必需的原因：消费目标 XinYueC_Dynamic 链的是**共享库** ${EXPORT_NAME}，
+# 而共享库对本库是 PRIVATE 链接（不能改 PUBLIC：会把未导出的
+# XinYueIndustry 带进 install(EXPORT) 导出集，破坏安装包生成），故共享库
+# 的消费者拿不到本库的 PUBLIC 头目录 → Test/XIndustryTest/
+# xindustry_modbus_test.c / xindustry_valve_test.c 的 #include "XIoChannel.h"
+# 解析失败（裸名包含，XIoChannel.h 在 XChannel/ 子目录）。
+set(INCLUDE_INDUSTRY_LIST_LIFT
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XChannel"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XSolenoidValve"
+    PARENT_SCOPE)
+
 # ---- 主库反向边（环依赖） ----
 # 本库 TU 引用主库符号（XObject/XMemory 等）：挂 XinYueCS 让 CMake 在消费
 # 端链接行把两库按依赖序排布/按需重复（彼时 XinYueCS 已由 Drive 模块创建，

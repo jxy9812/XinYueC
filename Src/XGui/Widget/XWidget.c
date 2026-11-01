@@ -54,6 +54,7 @@
 #include "XGuiConfig.h"
 #if XGUI_ON
 
+#include <stdio.h>
 #include "XWidget.h"
 #include "XMemory.h"
 
@@ -418,6 +419,7 @@ static void XWidget_updateContentsRect(XWidget* self);
 static void XWidget_propagateVisibility(XWidget* self, bool parentVisible);
 static XWidget* XWidget_topLevel(const XWidget* self);
 static XWidgetWindow* XWidget_createWindow(XWidget* top);
+static void XWidget_syncWindowGeometry(XWidget* self);
 static void XWidget_destroyWindow(XWidget* top, bool defer);
 static void XWidget_sendEvent(XWidget* self, XEvent* event);
 static void XWidget_sendShowHide(XWidget* self, bool visible);
@@ -2879,6 +2881,16 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
      *掉）；边缘改尺寸带仅在无子控件接住按下时接管（子控件优先，模块
      * 内自行 childAt 判定）。置于局部抓取分支之前：装饰拖拽经
      * grabMouse 收敛的 MOVE/RELEASE 仍须先到这里推进状态机。 */
+    /* 【抓取优先 2026-10-31 真机残留根修】显式鼠标抓取在位且抓取者
+     * 不是本窗口自身 ⇒ 事件归抓取者，装饰**不得**按条带吞掉。fbdev
+     * 无 WM、标题条由框架自绘（CSD）：停靠面板脱靠成浮动态后，抓取在
+     * 面板控件上，而手指正落在 CSD 标题条带内 ⇒ 装饰吞掉 MOVE/RELEASE
+     * ⇒ ①面板不跟手（浮动后每步 MOVE 到不了面板控件）；②抬起时的
+     * RELEASE 也被吞 ⇒ 拖动永不收口、落点指示器留屏＝真机「拖动有
+     * 残留、脱手不重绘」根因。桌面 WM 态装饰不接管（原生标题条由 WM
+     * 画）⇒ 桌面不复现，与「桌面无残留、fbdev 屏有残留」现场一致。
+     * 装饰自身拖动/改尺寸的抓取者即本窗口（XWidget_grabMouse(top)），
+     * 不受此门影响（其 MOVE/RELEASE 仍须先到装饰推进状态机）。 */
     if (XWindowDecoration_activeFor(top) &&
         XWindowDecoration_handlePointer(top, event))
         return true;
@@ -5109,8 +5121,16 @@ static void VXWidget_deinit(XWidget* self)
     /* 析构路径：窗口结构体同步归还（defer=false）。 */
     XWidget_destroyWindow(self, false);
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
-    if (self->m_isWindow)
-        XApplication_unregisterTopLevelWidget(self);
+    /* [2026-11-01 悬垂指针根修] 无条件摘顶层登记表（unregister 入口
+       幂等：查表命中才摘，未登记者空转）。
+       原守卫 `if (self->m_isWindow)` 会漏摘：XClassMove 的源对象在
+       move 后字段被 memset 归零（含 m_isWindow，见 VXWidget_move 末段
+       「源对象归零字段」），其析构时 m_isWindow 已为 0 → 顶层登记仍留
+       在表里 → 控件释放后任何遍历该表的路径都踩悬垂指针（实测 ASan：
+       heap-use-after-free @xpa_registerWidgetTree —— 无障碍驱动
+       registerAllWidgets 遍历顶层控件树；XApplication_widgetAt / 调色板
+       广播同源）。 */
+    XApplication_unregisterTopLevelWidget(self);
 #endif
 #if XWINDOW_ON && XACCESSIBLE_ON
     XPlatformAccessibility_notifyWidget(XAccessibleEvent_ObjectDestroyed, self);
@@ -5400,8 +5420,12 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
 /** @brief 移动语义：先释放目标资源，再转移源拥有指针（源归零）。 */
 static void VXWidget_move(XWidget* self, XWidget* other)
 {
+    bool wasWindow = false;
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XWidget_init(self, NULL, 0);
+    /* 源控件此刻的顶层身份（move 会把 m_isWindow 转移给目标并把源归零，
+       故须在归零前留存：顶层表的登记项要随之转移，见函数末尾）。 */
+    wasWindow = other->m_isWindow;
     VXWidget_deinit(self);
     /* 拥有指针转移 */
     self->m_toolTip = other->m_toolTip;         other->m_toolTip = NULL;
@@ -5534,6 +5558,24 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     XFont_init(&other->m_font);
     XIcon_init(&other->m_icon);
     other->m_windowFlags = 0;
+    /* [2026-11-01 顶层表登记补齐] move 的语义是「状态整体转移到目标」：
+       源控件的 m_isWindow 已被目标接管（上方 `self->m_isWindow =
+       other->m_isWindow`），源控件归零后不再是顶层窗 ⇒ 必须把顶层表
+       的登记也一并转移，否则：① 目标成为顶层窗却不在表里（调色板广播
+       / widgetAt 漏掉它）；② 源控件的旧登记项仍指向它 → 其析构时虽已
+       跳过注销（m_isWindow 已归零），表里仍留悬垂指针（顶层表遍历即
+       踩 UAF —— 与「move 后源控件析构不注销」同源，见析构路径无条件
+       注销的注释）。 */
+#if XAPPLICATION_ON && XGUIAPPLICATION_ON
+    if (wasWindow) {
+        /* 源退出顶层表（其 m_isWindow 已被清零，注销入口按指针查表摘除） */
+        XApplication_unregisterTopLevelWidget(other);
+        /* 目标接管顶层身份：按目标自身状态登记（其 m_isWindow 此刻已
+           等于源的值）。 */
+        if (self->m_isWindow)
+            XApplication_registerTopLevelWidget(self);
+    }
+#endif
 }
 
 /** @brief 控件事件总入口（EXObject_Event 重载槽，按事件类型分派）。 */
@@ -6858,7 +6900,25 @@ void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
     if (wasWindow && !self->m_isWindow)
         XApplication_unregisterTopLevelWidget(self);
     else if (!wasWindow && self->m_isWindow)
+    {
+        /* [顶层化建窗 2026-10-31] 脱靠转顶层（parent==NULL）时桥接窗口
+         * 尚未创建（建窗惰性，XWidget_createWindow），而顶层窗口登记取
+         * 的是**当时的窗口对象** ⇒ 登记进表的是建窗前的旧窗口（或 NULL）：
+         *   ①present 用陈旧窗口落板（真机铁证：present 轨迹
+         *     fbOrigin=(632,140) 恒为停靠旧位，而控件句柄几何已同步到
+         *     新位）⇒ 旧位每帧被重画 ⇒ 拖动残影；
+         *   ②句柄缺失使「腾空区还原」等按句柄取源的路径整段早退
+         *     （真机：restoreExposeStrips 从未被调用）。
+         * 修法：**先建窗并同步几何，再登记顶层窗口**——登记必须拿到
+         * 当前句柄。对标 Qt：QWidget 转窗口时 native window 随之创建、
+         * 几何立即生效（qwidget.cpp setParent_sys → createWindow +
+         * setGeometry_sys）。 */
+        if (!self->m_windowHandle)
+            XWidget_createWindow(self);
+        if (self->m_windowHandle)
+            XWidget_syncWindowGeometry(self);
         XApplication_registerTopLevelWidget(self);
+    }
 #endif
     XObject_setParent((XObject*)self, parent ? (XObject*)parent : NULL);
     if (parentChanged && parent) {

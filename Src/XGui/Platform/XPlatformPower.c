@@ -25,14 +25,23 @@
 #include "XDateTime.h"
 
 typedef struct {
-    bool     m_screenOff;      /**< 影子状态：当前是否已熄屏。 */
-    bool     m_hasBaseline;    /**< 空闲计时基线是否已建立。 */
-    bool     m_defaultsApplied;/**< 缺省策略是否已建立。 */
-    int64_t  m_lastActivityMs; /**< 最近一次用户活动时刻（单调毫秒）。 */
-    XPlatformPowerPolicy m_policy; /**< 策略影子（应用设定值）。 */
+    /* —— 1-bit 旗标组（位域内存态表示：本结构体为 .c 内静态单例，
+     *    不落盘/跨进程，无序列化面；不用 bool:1——实现定义行为，
+     *    挂 unsigned int 底型）—— */
+    unsigned int m_screenOff : 1;       /**< 影子状态：当前是否已熄屏。 */
+    unsigned int m_hasBaseline : 1;     /**< 空闲计时基线是否已建立。 */
+    unsigned int m_defaultsApplied : 1; /**< 缺省策略是否已建立。 */
+    unsigned int m_reconcileArmed : 1;  /**< 对账armed：首次 tick 前的启动同步待执行。 */
+    unsigned int m_capsProbed : 1;      /**< 能力位是否已探测。 */
     unsigned m_caps;           /**< 能力位缓存（首次查询时探测）。 */
-    bool     m_capsProbed;     /**< 能力位是否已探测。 */
+    int64_t  m_lastActivityMs; /**< 最近一次用户活动时刻（单调毫秒）。 */
+    int64_t  m_lastReprobeMs;  /**< 上次能力重探时刻（None 冷却节流用）。 */
+    XPlatformPowerPolicy m_policy; /**< 策略影子（应用设定值）。 */
 } XPlatformPowerState;
+
+/* 布局锁：56→48B（旗标+能力 8B + 时间戳 16B + 策略 24B）。 */
+_Static_assert(sizeof(XPlatformPowerState) == 48,
+               "XPlatformPowerState 布局变化：旗标组/能力/时间戳/策略四段排布被改动");
 
 static XPlatformPowerState g_xpow;
 
@@ -59,6 +68,62 @@ static void xpow_ensureDefaults(void)
     g_xpow.m_policy.m_screenOffMs = 0;      /* 从不自动熄屏。 */
     g_xpow.m_policy.m_systemSuspendMs = 0;  /* 从不自动挂起。 */
     g_xpow.m_policy.m_wakeInputs = (unsigned)XPlatformPowerInputAll;
+    /* 启动同步armed：首次 tick（应用首个 1Hz 巡检）时做一次影子/硬件
+     * 对账——把「前任遗留熄屏态」（旧程序熄屏后退出/被替换、验证脚本
+     * 写黑、面板电源管理）拉回亮屏。此处只置位不动作：capabilities()
+     * 在驱动层可能触发文件系统探测（fbdev 背光节点扫描），放在 init
+     * 路径有启动竞态（sysfs 尚未挂载全）；1Hz tick 已是事件循环稳态。 */
+    g_xpow.m_reconcileArmed = true;
+}
+
+/** @brief 能力位重探冷却（毫秒）：探测失败后按此间隔重试。
+ *  @details fbdev 熄屏手段探测在设备早期可能全部落空（sysfs/设备节点
+ *           尚未就绪），但静态缓存会让「不支持」在本次进程生命周期内
+ *           永久成立——开机自启场景下熄屏能力永远失效。失败结果按
+ *           冷却间隔重试（10s 量级：覆盖慢挂载，又不会高频扫盘）。 */
+#define XPOW_REPROBE_COOLDOWN_MS 10000
+
+/** @brief 影子/硬件对账（含能力重探）。
+ *  @details 数据源是平台实况查询（fbdev 读背光/blank 节点；无读回
+ *           原语的平台恒 Unknown）。三件事按序执行：
+ *           1. 能力位为 0 且距上次重探超过冷却 → 重探一次（开机竞态
+ *              自愈：节点就绪后能力在 10s 内生效）；
+ *           2. 实况 Unknown → 平台读不回，什么都不做（不得把「读不到」
+ *              当「熄屏」误点亮）；
+ *           3. 影子说亮、硬件已熄 → 立即点亮并把影子拉齐（自愈）。
+ *           影子说熄、硬件亮的情况**不动**：本契约熄屏是应用主动行为
+ *           （影子说熄=应用要求黑着），外部点亮不改变应用意图，等应用
+ *           自己的唤醒路径（允许的输入）走 setScreenState 收口。 */
+static void xpow_reconcileLocked(void)
+{
+    XPlatformPowerScreenActual actual;
+    if ((g_xpow.m_caps == 0u || !g_xpow.m_capsProbed) &&
+        xpow_nowMs() - g_xpow.m_lastReprobeMs >= XPOW_REPROBE_COOLDOWN_MS) {
+        g_xpow.m_lastReprobeMs = xpow_nowMs();
+        g_xpow.m_capsProbed = false;
+        g_xpow.m_caps = XPlatformPower_capabilities();
+    }
+    actual = XPlatformPowerDriver_queryScreenState();
+    if (actual == XPlatformPowerScreenActual_Unknown) return;
+    if (actual == XPlatformPowerScreenActual_Off && !g_xpow.m_screenOff) {
+        /* 影子说亮、硬件已黑：触摸唤醒判「未熄屏」会放行不唤醒——
+         * 立即点亮自愈（点亮成功会同步影子并重置空闲基线）。 */
+        XPlatformPower_setScreenState(XPlatformPowerScreenState_On);
+    }
+}
+
+/** @brief 对账入口（含启动 armed 消费）。 */
+static void xpow_reconcile(void)
+{
+    if (g_xpow.m_reconcileArmed) {
+        g_xpow.m_reconcileArmed = false;
+        /* 首次对账前先把能力探一次（armed 场景下 capabilities 可能
+         * 还没被任何人问过）。 */
+        g_xpow.m_lastReprobeMs = xpow_nowMs();
+        g_xpow.m_caps = XPlatformPower_capabilities();
+        g_xpow.m_capsProbed = true;
+    }
+    xpow_reconcileLocked();
 }
 
 /** @brief 建立/刷新空闲计时基线。 */
@@ -109,6 +174,17 @@ bool XPlatformPower_setScreenState(XPlatformPowerScreenState state)
 bool XPlatformPower_isScreenOff(void)
 {
     return g_xpow.m_screenOff;
+}
+
+bool XPlatformPower_reconcile(void)
+{
+    XPlatformPowerScreenActual actual;
+    xpow_ensureDefaults();
+    xpow_reconcile();
+    actual = XPlatformPowerDriver_queryScreenState();
+    if (actual == XPlatformPowerScreenActual_Off && g_xpow.m_screenOff)
+        return false; /* 对账后仍黑：点亮失败（或不支持）。 */
+    return actual == XPlatformPowerScreenActual_On;
 }
 
 bool XPlatformPower_setPolicy(const XPlatformPowerPolicy* policy)
@@ -167,6 +243,11 @@ void XPlatformPower_tick(void)
 {
     int64_t idle;
     bool delegated = xpow_delegatesTimeout();
+
+    xpow_ensureDefaults();
+    /* 影子/硬件对账先行（含启动同步与能力重探）：1Hz 一次，读回路径
+     * 是 sysfs 节点小文本读，开销可忽略。 */
+    xpow_reconcile();
 
     if (!g_xpow.m_hasBaseline) {
         /* 首次推进：建立基线而非立即判定超时（否则启动即熄屏）。 */

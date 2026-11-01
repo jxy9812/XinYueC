@@ -160,8 +160,22 @@ endif()
 
 #设置可执行文件的输出目录（可用 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=... 覆盖，
 #供 Release 门等旁路构建输出到独立目录，避免覆盖 bin/ 的既有产物）
+#
+# [2026-11-01] fbdev 变体构建输出隔离：fbdev 是**同机 native 变体配置**
+#（XPLATFORM_FBDEV_ON=ON），与桌面默认配置共用 bin/ 时会互相覆盖二进制：
+# 编完 fbdev 再跑桌面套件，跑到的是 fbdev 产物 ⇒ 冒出一整族与代码无关的
+# 假失败（本轮实测 8 条：「resize 保留旧内容」「setBuffers 使用调用方提供
+# 的帧缓冲」「平台后端 resize 后绘制设备有效」等 backing store 族断言全红，
+# 而纯净树是绿的）。交叉构建防呆门只覆盖 CMAKE_CROSSCOMPILING（armel/
+# rk3568 等），覆盖不到 fbdev 这个 native 变体 ⇒ 此处补同款隔离：fbdev
+# 默认落 bin-fbdev/（显式 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY 仍优先；门脚本
+# 与部署流程用的都是桌面构建的 bin/，不受影响）。
 if(NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/bin)
+    if(XPLATFORM_FBDEV_ON)
+        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/bin-fbdev)
+    else()
+        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/bin)
+    endif()
 endif()
 
 # ==================== 交叉构建防呆（configure 期硬门） ====================
@@ -270,6 +284,41 @@ function(xinyue_force_include_config target)
     else()
         target_compile_options(${target} PRIVATE
             "-include" "${XINYUE_SOURCE_DIR}/Src/CXinYueConfig.h")
+    endif()
+endfunction()
+
+# ==================== 静态归档环依赖收口（模块化拆分遗留）====================
+# [2026-11-01] 框架链（XinYueCore / XinYueIndustry / XinYueGui）与第三方
+# 归档（Library/*）之间存在**双向**符号依赖，静态链接下单遍扫描无法解析：
+#   ① zlib ↔ Core：vendored zlib 的 zutil.h 用框架 CRC（XCrc32_update），
+#      而 Core 的 XZipWriter/XZipReader 又调 zlib；
+#   ② Gui → Core：Gui 归档成员引用 XAction_create 等 Core 符号；
+#   ③ Core → Gui：Core 侧工具亦引用 Gui 符号。
+# 拆库前所有核心对象同在 ${EXPORT_NAME}S 一个归档内，靠「双列主库」惯例
+# （链接行首尾各列一次）解决；拆库后该惯例失效——CMake 把传递依赖排在直接
+# 项之后，框架链不再位于行尾，后扫到的归档无法回溯满足先前归档成员的引用
+# （实测 undefined reference: XAction_create / XCrc32_update）。
+# 收口：把相关归档按**文件路径**放进 LINK_GROUP:RESCAN（链接器
+# --start-group/--end-group，组内反复重扫直到无新符号，与顺序无关）。
+# 用 $<TARGET_FILE:> 而非目标名：目标名会带上接口依赖，与既有目标级环依赖
+# （XinYueCore↔XinYueCS、XinYueIndustry↔XinYueCS）叠加成 "Cyclic
+# dependencies" 生成期错误；文件路径只建立文件级依赖，不成环。
+# 线程/数学库（-lm -lpthread）置于组后：--as-needed 下共享库只在「处理到
+# 它时确有未决符号」才被标记为 needed，而数学符号的引用来自组内 Core 归档
+# 成员（XChar.c/XStringUtils.c），故 -lm 必须排在组之后。
+function(xinyue_link_rescan_group target)
+    set(_archives "")
+    foreach(_arc IN ITEMS XinYueCore XinYueIndustry XinYueGui
+                          zlib mbedtls lwip pcre2 sqlite freetype fatfs xxhash)
+        if(TARGET ${_arc})
+            list(APPEND _archives "$<TARGET_FILE:${_arc}>")
+        endif()
+    endforeach()
+    if(_archives)
+        string(REPLACE ";" "," _group "${_archives}")
+        target_link_libraries(${target}
+            "$<LINK_GROUP:RESCAN,${_group}>"
+            ${XINYUE_UNIX_THREAD_LIBS})
     endif()
 endfunction()
 
@@ -560,6 +609,16 @@ add_subdirectory(Src/XCore)
 # "XGui/XGuiConfig.h"/"Industry/XIndustry_config.h" 反向包含链，先注册的
 # Library/* 与后续模块的目录级快照依赖）。
 include_directories(${INCLUDE_XCORE_LIST_LIFT})
+# 抬升落地：XGui 模块自持的头目录导出清单（Src/XGui/XGuiHeaders.cmake）。
+# [2026-11-01 模块化拆分收口] 落地时点必须在 Drive/Library/* 目标注册**之前**
+# ——目录级 INCLUDE_DIRECTORIES 是 add_subdirectory 时刻的快照，先注册者拿
+# 不到后落的根清单（Src 曾因快照语义 C1083 实证）。XGui 模块自身排在
+# Library/* 之后（它要 PUBLIC 链 zlib，zlib 目标须先存在），其
+# PARENT_SCOPE 抬升来不及给先注册的目标，故改为「模块提供导出清单、根在
+# 消费者注册前提前落地」。具体链路与判据见 Src/XGui/XGuiHeaders.cmake 头注
+# （裸名 "XGuiConfig.h" 的解析点：XGuiConfig.h → XImageCodec_config.h）。
+include(${XINYUE_SOURCE_DIR}/Src/XGui/XGuiHeaders.cmake)
+include_directories(${XGUI_HEADER_EXPORT_DIRS})
 add_subdirectory(Drive)
 # 抬升落地：Drive 模块自采的 Drive 头目录。
 include_directories(${INCLUDE_DRIVE_LIST})
@@ -702,6 +761,12 @@ endif()
 # 前置会导致 undefined __atomic_store_8，1018 战役实证）。
 if(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm")
     target_link_libraries(${EXPORT_NAME}S PUBLIC atomic)
+    # [2026-11-01] 共享库同样要链：共享库内的 64 位原子符号若不显式链
+    # libatomic，其 .so 会带着未定义原子符号出库（undefined reference to
+    # __atomic_load_8@LIBATOMIC_1.0）——消费端（XinYueC_Dynamic 等）链接
+    # 该 .so 时连带解析失败。设备侧运行时库 /root/xguidemo/lib/
+    # libatomic.so.1 已在位（10-31 实证），此处只补链接期需求。
+    target_link_libraries(${EXPORT_NAME} PRIVATE atomic)
 endif()
 
 # ---- 第三方静态库链接（接线方式同 zlib：PRIVATE 依赖经 LINK_ONLY 传给
@@ -775,6 +840,15 @@ endif()
 # 通道接口（XChannel：XIoChannel + DI/DO/AI/AO + 适配器）与工业设备
 # （XSolenoidValve 电磁阀）；测试可执行 XIndustryValve_Test 随子目录注册。
 add_subdirectory(Src/Industry)
+# 抬升落地：Industry 模块自持的头目录清单（XChannel/XSolenoidValve 供
+# 裸名 include）。[2026-11-01 模块化拆分收口] 落地点必须早于
+# add_subdirectory(Test)（目录属性是 add_subdirectory 时刻的快照，先注册
+# 的目标拿不到后落的根清单）：Test 模块的 XinYueC_Dynamic 链共享库
+# ${EXPORT_NAME}，而共享库对本库是 PRIVATE 链接（不能改 PUBLIC：会把未
+# 导出的 XinYueIndustry 带进 install(EXPORT) 导出集），故其消费者拿不到
+# 本库 PUBLIC 头目录 → Test/XIndustryTest/*.c 的 #include "XIoChannel.h"
+# 解析失败。判据详见 Src/Industry/CMakeLists.txt 头注。
+include_directories(${INCLUDE_INDUSTRY_LIST_LIFT})
 
 # ==================== HighSpeedFilter（高速过滤器模板项目）====================
 # HsfServer/HsfClient 双可执行，依赖主库 ${EXPORT_NAME}S（必须在主库定义

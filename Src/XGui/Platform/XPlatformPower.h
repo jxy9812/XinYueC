@@ -22,9 +22,9 @@
  *             平台 API 只允许出现在 Drive（见 Drive/README.md）；本头
  *             是公共层唯一可依赖的电源面，公共层不出现任何平台调用。
  *
- *             API 形状说明：公共面压到 9 个入口，超时阈值统一收进一个
+ *             API 形状说明：公共面 10 个入口，超时阈值统一收进一个
  *             策略结构体——避免出现「一组 set/get 配对函数」把契约面
- *             撑大。驱动面 5 个钩子。**本头只放类型与声明**（仓库头
+ *             撑大。驱动面 6 个钩子。**本头只放类型与声明**（仓库头
  *             文件结构规范），实现一律在同名 .c 与 Drive 侧。
  * @note       本契约只受 XGUI_ON 门控（对标 XPlatformScreen），**不受
  *             XPLATFORMINTEGRATION_ON 门控**——桌面集成面在嵌入式裁剪
@@ -48,6 +48,15 @@ typedef enum {
     XPlatformPowerScreenState_On  = 0, /**< 正常显示。 */
     XPlatformPowerScreenState_Off = 1  /**< 熄屏：屏幕关闭，系统继续运行。 */
 } XPlatformPowerScreenState;
+
+/** @brief 屏幕**硬件实况**（对账用，与影子状态 XPlatformPowerScreenState
+ *          分属两个维度：影子=「本契约最近一次动作的目标态」，实况=
+ *          「硬件此刻的真实态」）。 */
+typedef enum {
+    XPlatformPowerScreenActual_Unknown = 0, /**< 平台无读回原语或读数失败。 */
+    XPlatformPowerScreenActual_On      = 1, /**< 硬件确认在输出（背光>0 等）。 */
+    XPlatformPowerScreenActual_Off     = 2  /**< 硬件确认已熄（背光=0 等）。 */
+} XPlatformPowerScreenActual;
 
 /** @brief 系统电源状态（两档）。 */
 typedef enum {
@@ -102,6 +111,18 @@ unsigned XPlatformPowerDriver_capabilities(void);
  *  @return true=状态已切换；false=平台不支持或切换失败。 */
 bool XPlatformPowerDriver_setScreenState(XPlatformPowerScreenState state);
 
+/** @brief 读屏幕**硬件实况**（影子/硬件对账的数据源）。
+ *  @return XPlatformPowerScreenActual 档位；**Unknown=平台无读回原语或
+ *          本次读数失败**——公共层对 Unknown 不得做任何矫正（否则会把
+ *          「读不到」当成「熄屏」误点亮）。
+ *  @details 为什么需要本钩子：影子状态只记录「本契约最后一次动作的
+ *           目标态」，而背光会被前任进程遗留熄灭（刷机/推新版场景）、
+ *           被外部写黑（验证脚本/面板电源管理）、也可能被面板自行调整
+ *           ——影子说亮、硬件已黑时，触摸进 noteActivity 判「未熄屏」
+ *           不触发唤醒，屏幕永远黑着。fbdev 背光/blank 节点可读回，
+ *           win32/安卓无读回原语，恒回 Unknown。 */
+XPlatformPowerScreenActual XPlatformPowerDriver_queryScreenState(void);
+
 /** @brief 设置系统电源状态。
  *  @param state 目标状态（Active=继续运行，Suspend=整机挂起）。
  *  @return true=已切换；false=平台不支持或切换失败。
@@ -140,8 +161,17 @@ bool XPlatformPower_supports(XPlatformPowerCapability cap);
  *           早已超阈值」而被下一轮巡检立刻再次熄屏。 */
 bool XPlatformPower_setScreenState(XPlatformPowerScreenState state);
 
-/** @brief 当前屏幕是否处于熄屏状态（影子状态）。 */
+/** @brief 当前屏幕是否处于熄屏状态（影子状态）。
+ *  @note   影子=「本契约最近一次动作的目标态」，非硬件实况；硬件被外部
+ *          改写时两者可能短暂失配（巡检对账会拉齐）。 */
 bool XPlatformPower_isScreenOff(void);
+
+/** @brief 读屏幕硬件实况并做影子/硬件对账。
+ *  @details 与 isScreenOff 的差异：本函数直询平台实况。发现「影子说
+ *           亮、硬件已熄」（前任遗留/外部写黑）时立即点亮自愈——这是
+ *           「息屏后推送新版本自启，触摸唤不醒」的运行期兜底通道
+ *           （fbdev 平台有效；无读回原语的平台恒 false）。 */
+bool XPlatformPower_reconcile(void);
 
 /** @brief 设置电源策略（一次性提交两个阈值）。
  *  @param policy 策略（NULL 视为「两项都从不」）。

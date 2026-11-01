@@ -258,6 +258,35 @@ void XWindowDecoration_restoreExposeStrips(const XRect* oldG,
                                            const XRect* newG,
                                            XWindow* selfWindow);
 
+/**
+ * @brief      让位条带归位还原（旧位是否「归属顶层后备缓冲里还留着本窗
+ *             旧像素」的显式闸）。
+ * @details    fbdev 单屏没有服务器侧 Expose，框架自己当合成器：窗口移开
+ *             后旧位要么由归属顶层**重绘**（标脏给归属顶层 = Expose 等
+ *             价物），要么由归属顶层后备缓冲**直搬**（条带归位）。直搬
+ *             搬的是归属顶层当前后备缓冲的内容——若该内容本就是「本窗
+ *             移走前的旧像素」（本窗此前是归属顶层的**子控件**，像素被
+ *             烘进了归属顶层的后备缓冲），直搬只会把鬼影搬回来 ⇒ 必
+ *             须补一次标脏逼归属顶层重绘。
+ *
+ *             本参数声明「本窗的像素是否可能仍留在归属顶层的后备缓冲
+ *             里」：
+ *             - true：可能（脱靠前的子控件像素尚在归属顶层后备缓冲里）
+ *             ⇒ 旧位标脏给归属顶层（fbdev Expose 等价物）；
+ *             - false：不可能（本窗是独立顶层，像素只在本窗自己的后备
+ *             缓冲里；归属顶层后备缓冲该区本就是当前内容）⇒ 标脏纯属
+ *             多余重绘（旧位由直搬即可还原正确），跳过它以保住拖动
+ *             路径的零重绘（屏幕键盘紧凑悬浮拖移的 FPS 战役锁）。
+ * @param      oldG 移动前窗口几何（全局/面板坐标）。
+ * @param      newG 移动后窗口几何（须先落几何再调用）。
+ * @param      selfWindow 移动中的顶层窗口（归属遍历时剔除自身）；可 NULL。
+ * @param      ownerMayHoldMovedPixels 见 @details；true=可能残留。
+ */
+void XWindowDecoration_restoreExposeStripsEx(const XRect* oldG,
+                                             const XRect* newG,
+                                             XWindow* selfWindow,
+                                             bool ownerMayHoldMovedPixels);
+
 #endif /* XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON */
 
 #ifdef __cplusplus

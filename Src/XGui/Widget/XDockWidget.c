@@ -17,6 +17,12 @@
 #include "XPainter.h"
 #include "XTextUtf8.h"
 #include "XWidget_Protected.h"
+#include "XWindow.h"              /* 浮动态顶层窗口句柄（移窗条带归位）。 */
+#include "XWindowDecoration.h"    /* 浮动态让位条带归位（fbdev 单屏残影）。 */
+#include "XBackingStore.h"        /* 浮动态自身内容直搬（fbdev 免重绘移窗）。 */
+#include "XPlatformBackingStore.h"
+#include "XGuiApplication.h"      /* visibilityChanged 载荷的屏幕可用区原点。 */
+#include "XScreen.h"              /* 同上（XScreen_availableGeometry）。 */
 
 #if XWIDGET_ON && XDOCKWIDGET_ON
 
@@ -106,6 +112,136 @@ static void xdw_emitBool(XDockWidget* self, size_t signal, bool value)
 }
 
 /**
+ * @brief      指针设备全局坐标（浮动态跟指的唯一可信坐标源）。
+ * @details    优先取事件的屏幕全局坐标（平台后端注入：X11 取根坐标、
+ *             fbdev 取面板坐标、win32 取屏幕坐标）；平台未注入（恒
+ *             (0,0)）时回落控件局部→全局映射（XWidget_mapToGlobal 契约
+ *             = 设备全局）。
+ *             **不可**改用事件局部坐标：拖出脱靠时面板会换原生窗口
+ *             （停靠态是宿主窗的子控件、浮动态是独立顶层窗），脱靠后
+ *             事件的局部坐标仍停留在旧宿主窗的坐标系（桌面端实测：
+ *             脱靠后事件局部坐标 = 旧宿主窗口局部，面板跟指方程每步
+ *             又把窗口自身原点加回一次 → 位置逐事件放大数百倍，浮动
+ *             面板被甩到屏幕外「一点击就消失」= 本次根修对象）。
+ * @param      self 目标控件（回落映射用）。
+ * @param      me 鼠标事件（取全局坐标）。
+ * @param      local 事件局部坐标（回落映射用）。
+ * @return     设备全局坐标。
+ */
+static XPoint xdw_pointerGlobal(const XWidget* self, const XMouseEvent* me,
+                                const XPoint* local)
+{
+    XPoint g = XMouseEvent_globalPosition(me);
+    if (g.x == 0 && g.y == 0)
+        g = XWidget_mapToGlobal(self, local);
+    return g;
+}
+
+/**
+ * @brief      浮动态移窗后的让位条带归位 + 自身内容直搬（fbdev 无 WM）。
+ * @details    fbdev 单屏无 WM：顶层窗共用同一面板缓冲，窗口移开后旧位
+ *             像素无人重绘=残影永留（昆仑通态屏实测）。两步（对标键盘
+ *             紧凑悬浮拖移 xkb_compactDragMovePresent 同款机制）：
+ *             ①让位条带按归属归位还原（XWindowDecoration_restoreExpose-
+ *             Strips：条带与其他可见顶层的交集自各归属后备缓冲直搬，
+ *             裸露面板余部填桌面底色）；②本窗既有后备缓冲整窗直搬两缓
+ *             冲（纯移动内容零变化，零重绘零翻页）。后备缺位（未首绘等
+ *             罕见态）退化为整窗 update（旧行为，慢但无残影）。
+ * @param      dock 目标停靠面板。
+ * @param      oldG 移窗前几何（全局坐标）。
+ * @param      newG 移窗后几何（须先落几何再调用）。
+ * @return     无返回值。
+ */
+static void xdw_restoreMovedArea(XDockWidget* dock, const XRect* oldG,
+                                 const XRect* newG)
+{
+    XWindow* win;
+    if (!dock || !oldG || !newG) return;
+    win = (XWindow*)XWidget_windowHandle((XWidget*)dock);
+    if (!win) return;
+    /* ①让位条带归位（桌面 WM 环境为 no-op；fbdev 单屏必需）。 */
+    XWindowDecoration_restoreExposeStrips(oldG, newG, win);
+#if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
+    /* ②自身内容直搬（fbdev 免重绘移窗；桌面环境面板直写为 no-op）。
+     * [悬垂绑定闸] XBackingStore 的 m_window 是**借用**指针，创建于首次
+     * flush（XWidget.c 的 `XBackingStore_create_ex(..., top->m_windowHandle)`）
+     * 且此后不重绑；浮→停这一跳 XWidget_setParent 会销毁桥接窗
+     * （XWidget_destroyWindow），再次浮出时重建的是**另一个**窗口对象
+     * ——旧绑定随即悬垂。blitPanelRects 内部按该绑定读旋转角/几何
+     * （XPlatformBackingStore_posix.c:2503 → XWindow_contentRotationDegrees），
+     * 悬垂即段错误（实测：XGuiDockDrag_Test 第二轮拖出稳定 AV，栈
+     * xdw_restoreMovedArea ← VX_dockWidget_mouseMoveEvent）。
+     * 绑定与当前句柄不一致时跳过直搬，退化为整窗 update 让常规管线
+     * 补画（后备绑定随下一次 flush 重建）。 */
+    {
+        XBackingStore* bs = XWidget_backingStore((XWidget*)dock);
+        XPlatformBackingStore* pbs = bs ? XBackingStore_handle(bs) : NULL;
+        XImage* img = pbs ? XPlatformBackingStore_paintDevice(pbs) : NULL;
+        if (pbs && img && !XImage_isNull(img) &&
+            XBackingStore_window(bs) == win)
+        {
+            XRect whole;
+            XPoint origin;
+            XRect_init(&whole, newG->x, newG->y, newG->width, newG->height);
+            XPoint_init(&origin, newG->x, newG->y);
+            XPlatformBackingStore_blitPanelRects(pbs, &whole, 1, &origin);
+            return;
+        }
+    }
+#endif
+    /* 罕见退化（后备缺位/绑定悬垂/裁剪构建）：整窗 update 让常规管线补画。 */
+    XWidget_update((XWidget*)dock);
+}
+
+/**
+ * @brief      停靠落位后同步重绘宿主（合成器语义的当帧收口）。
+ * @details    对标 Qt QDockWidgetPrivate::setWindowState 的两处失效
+ *             （qdockwidget.cpp:1198-1201 `if (q->isVisible()) q->hide();`
+ *             → QWidgetPrivate::hide_sys 作废旧位、
+ *             qwidget.cpp:7326-7336 setGeometry_sys 的旧∪新双失效）。
+ *             Qt 由窗口系统/合成器保证失效区当帧重合成；本框架的 fbdev
+ *             单屏模型里框架自己就是合成器，而落位链的标脏全部是**异步**
+ *             的：
+ *             - XDockWidget setFloating(false) → setParent + 宿主
+ *               xmw_layout → 每个面板的 XWidget_setGeometry →
+ *               XWidget_recomputeGeometry 的 XWidget_updateRect(parent,…)
+ *               只是并入宿主 m_dirty 并投递 PAINT；
+ *             - 而该 PAINT 在投递时刻就把 m_dirty 深拷贝进事件
+ *               （XWidget_createPaintEvent），随后 xmw_layout 里其余面板的
+ *               几何变更产生的矩形落在**这份快照之外**，只能等下一拍。
+ *             实测（XGuiDockDrag_Test cycle 场景）：面板已回到停靠位，
+ *             可见缓冲在该矩形上仍是宿主底色，强制整窗重绘后才出现。
+ *             故此处按 X11 合成器语义当帧同步收口：宿主整窗同步重绘一次
+ *             （XWidget_repaint 的同步绘制+提交），旧浮动态矩形与新停靠
+ *             矩形都包含在内，无需逐矩形。旋转态（宿主或面板 rot≠0）两域
+ *             不一致，跳过同步收口交常规异步失效兜底（rotate 分支本身会
+ *             整帧提交，无此缺口）。
+ *             代价=每次浮/停切换一次整窗重绘（切换是低频操作，非逐移动
+ *             路径）；根治（PAINT 快照与 m_dirty 的增量合并）在
+ *             XWidget.c，非本文件可改（见交付报告 unresolved）。
+ * @param      dock 目标停靠面板；可为 NULL。
+ * @return     无返回值。
+ */
+static void xdw_syncRepaintHostArea(XDockWidget* dock)
+{
+    XWidget* selfw;
+    XWidget* host;
+    XWindow* hostWin;
+    XWindow* dockWin;
+    if (!dock) return;
+    selfw = (XWidget*)dock;
+    host = dock->m_host;
+    if (!host) return;
+    if (!XWidget_isVisible(host) || !XWidget_isVisible(selfw)) return;
+    hostWin = (XWindow*)XWidget_windowHandle(host);
+    dockWin = (XWindow*)XWidget_windowHandle(selfw);
+    if ((hostWin && XWindow_contentRotationDegrees(hostWin) != 0) ||
+        (dockWin && XWindow_contentRotationDegrees(dockWin) != 0))
+        return;
+    XWidget_repaint(host);
+}
+
+/**
  * @brief      判断面板是否启用垂直标题条。
  * @details    对标 Qt QStyleOptionDockWidget::verticalTitleBar（绘制经
  *             transposed 转置，qcommonstyle.cpp:2171-2179；布局经
@@ -119,21 +255,52 @@ static bool xdw_vertical(const XDockWidget* dock)
 }
 
 /**
+ * @brief      平台是否支持由窗口管理器绘制停靠浮窗的原生装饰。
+ * @details    对标 Qt QDockWidgetLayout::wmSupportsNativeWindowDeco
+ *             （qdockwidget.cpp:222-231）：
+ *             - Android（`__ANDROID__`）恒 false（qdockwidget.cpp:222-224）；
+ *             - xcb / wayland 平台名恒 false（qdockwidget.cpp:226-230）；
+ *             - 其余后端（win32 等）true（qdockwidget.cpp:231）。
+ *             本框架后端口径：win32（`_WIN32`，原生工具窗带系统标题条）
+ *             ⇒ true；其余（fbdev 直写单屏、X11/posix、Android）⇒ false。
+ *             纯编译期判定，无运行时探测开销。fbdev 直写单屏没有窗口
+ *             管理器，X11 由平台层按 _MOTIF_WM_HINTS 交 WM 而控件自绘
+ *             标题条（与 Qt xcb 分支同口径）——两者都是 false。
+ * @return     平台可绘制原生停靠浮窗装饰返回 true。
+ */
+static bool xdw_wmSupportsNativeWindowDeco(void)
+{
+#if defined(_WIN32) && !defined(__ANDROID__)
+    /* qdockwidget.cpp:231 的「非 Android 且非 xcb/wayland」分支。 */
+    return true;
+#else
+    /* qdockwidget.cpp:222-230：Android / xcb / wayland 恒 false。 */
+    return false;
+#endif
+}
+
+/**
  * @brief      浮动态是否由原生标题条装饰（nativeDeco 路径）。
- * @details    对标 Qt QDockWidgetLayout::nativeWindowDeco（qdockwidget.cpp:
- *             246-250）：wmSupportsNativeWindowDeco 在 Windows 恒真，故即
- *             "浮动态且无自定义标题条"。此形态下标题由原生工具窗标题承载
- *             （Tool 窗型，见 xdw_setFloatingImpl），控件不绘标题带、不布
- *             局标题区、不保留按钮命中区（qdockwidget.cpp:684-685
+ * @details    对标 Qt QDockWidgetLayout::nativeWindowDeco
+ *             （qdockwidget.cpp:246-250）：`wmSupportsNativeWindowDeco()
+ *             && floating && 无自定义标题条`。**平台门不可省**：Qt 在
+ *             xcb/wayland/Android 上恒 false ⇒ 自绘标题条 + FramelessWindowHint；
+ *             旧实现只判 `m_floating && !titleBar`，在 X11 上会错误宣称
+ *             原生装饰（不绘标题条、也不设无边框位 ⇒ 与 WM 标题条叠成
+ *             双标题，且控件侧标题拖动/关闭命中全被门掉）。
+ *             原生装饰形态下标题由原生工具窗标题承载（Tool 窗型 + 定制
+ *             标题位，见 xdw_setFloatingImpl），控件不绘标题带、不布局
+ *             标题区、不保留按钮命中区（qdockwidget.cpp:684-685
  *             hideButtons = nativeDeco）。
  * @param      dock 目标停靠面板；可为 NULL。
- * @return     浮动且无自定义标题条返回 true。
+ * @return     平台支持原生装饰、浮动且无自定义标题条时返回 true。
  */
 static XWidget* xdw_titleBar(const XDockWidget* dock);
 
 static bool xdw_nativeDeco(const XDockWidget* dock)
 {
-    return dock && dock->m_floating && !xdw_titleBar(dock);
+    return dock && xdw_wmSupportsNativeWindowDeco() && dock->m_floating &&
+           !xdw_titleBar(dock);
 }
 
 /**
@@ -164,12 +331,42 @@ static bool xdw_closeHit(const XDockWidget* dock, const XPoint* pos)
            pos->x >= w - XDW_CLOSE_BOX && pos->x < w;
 }
 
-/** @brief 判断局部坐标是否落在浮动按钮内（关闭钮左侧一格/垂直条底部
- *         上一格；Floatable 时两种状态都显示，点击切换停靠/浮动）。
- *         垂直命中区与关闭钮同口径转置（对标 qcommonstyle.cpp:3095-3111
- *         close 占右缘、float 占其左一格的转置几何）。 */
-/* [死码清理] xdw_floatHit 已删除：全仓无调用点（见审计清单）。
+/**
+ * @brief      判断局部坐标是否落在浮动按钮内（关闭钮左侧一格/垂直条底部
+ *             上一格；Floatable 时两种状态都显示，点击切换停靠/浮动）。
+ * @details    对标 Qt QDockWidgetPrivate::init 创建 Float 与 Close 两个
+ *             QDockWidgetTitleButton（qdockwidget.cpp:602-618），布局期
+ *             按 style 的 SE_DockWidgetFloatButton/SE_DockWidgetCloseButton
+ *             定位（qdockwidget.cpp:518-536）。本框架的点阵/公共风格把
+ *             两格定在标题条右缘各 18px（close 最右、float 次之，见
+ *             XCommonStyle.c 的 xcs_drawDockTitle 按钮几何），故命中区
+ *             取同一格：水平标题条 [w-36, w-18)；垂直标题条与关闭钮同
+ *             口径转置（close 沉底，float 占其上一格）。
+ *             原生装饰浮动态无自定义标题带（xdw_nativeDeco），按钮由
+ *             原生标题条承载，控件侧命中区不复存在（对标 Qt
+ *             updateButtons 的 hideButtons = nativeDeco 分支）。
+ * @param      dock 目标停靠面板；可为 NULL。
+ * @param      pos 面板局部坐标；可为 NULL。
+ * @return     命中浮动按钮区返回 true。
  */
+static bool xdw_floatHit(const XDockWidget* dock, const XPoint* pos)
+{
+    int w;
+    int h;
+    if (!dock || !pos) return false;
+    if (xdw_nativeDeco(dock)) return false;
+    /* 自定义标题条在位时标题区交互归其子控件（见 mousePressEvent 门）。 */
+    if (xdw_titleBar(dock)) return false;
+    if (xdw_vertical(dock)) {
+        h = XWidget_height((XWidget*)dock);
+        return pos->x >= 0 && pos->x < XDW_TITLE_H &&
+               pos->y >= h - XDW_CLOSE_BOX * 2 &&
+               pos->y < h - XDW_CLOSE_BOX;
+    }
+    w = XWidget_width((XWidget*)dock);
+    return pos->y >= 0 && pos->y < XDW_TITLE_H &&
+           pos->x >= w - XDW_CLOSE_BOX * 2 && pos->x < w - XDW_CLOSE_BOX;
+}
 
 /**
  * @brief      判断局部坐标是否落在标题条内。
@@ -192,67 +389,74 @@ static bool xdw_titleHit(const XDockWidget* dock, const XPoint* pos)
 }
 
 /**
- * @brief      控件局部点 → 逻辑全局坐标（浮动顶层落位/拖动跟指专用）。
- * @details    [弹窗随转·逻辑全局 2026-10-22] XWidget_mapToGlobal 自
- *             旋转战役起返回**设备全局**坐标（XWidget.c:5863 契约：
- *             窗口局部先施旋转正变换 R 再加顶层原点，供 fbinput 输入/
- *             光标链使用）；而浮动态顶层经 XWidget_move 落位的几何账本
- *             （m_windowRect → XWindow_setGeometry → 平台 setGeometry）
- *             是**逻辑全局**域——XWindow.c:1929 立契「瞬态弹层顶层几何
- *             账本恒逻辑全局」，X11 平台层弹层落位门
- *             （XPlatformNativeWindow_posix.c Popup+rot≠0+瞬态父）把
- *             Popup 几何按逻辑全局再施一次正变换，喂设备值即双重变换
- *             错位；fbdev 无窗口系统环境下窗口按逻辑域落面板。同族收
- *             口（XComboBox xcombo_popupReposition/XMenu 子菜单/
- *             XDateTimeEdit 日历弹层，2026-10-22）均改父链逻辑累加，
- *             本函数同口径：父链逻辑偏移累加（与 XWidget_accumulateOffset
- *             同式，不施 R）+顶层逻辑原点+局部点。rot==0 时与
- *             mapToGlobal 逐位一致；mapToGlobal 既有契约不动。宿主落
- *             点链（hoverDrop/finishDrop→xmw_dropAreaAt 的
- *             mapFromGlobal）仍吃设备全局，调用方各自取域。
- * @param      w 起始控件；可为 NULL。
- * @param      local 控件局部点；可为 NULL。
- * @return     逻辑全局坐标；入参 NULL 返回 (0,0)。
+ * @brief      Show 事件的 visibilityChanged 载荷（对标 Qt 的几何可见性
+ *             表达式）。
+ * @details    对标 Qt QDockWidget::event 的 Show 分支
+ *             （qdockwidget.cpp:1638-1650）：
+ *             `emit visibilityChanged(geometry().right() >= parentTopLeft.x()
+ *              && geometry().bottom() >= parentTopLeft.y());`
+ *             其中 parentTopLeft 在浮动态取关联屏（无则主屏）的
+ *             availableVirtualGeometry().topLeft()，停靠态恒 (0,0)。
+ *             语义=「窗口右下角至少落在屏幕可用区内」——完全移出屏幕左上
+ *             之外的浮窗报 false。**不是** isVisible 的复读（Qt 的 Hide
+ *             分支载荷恒 false，见 qdockwidget.cpp:1636-1637）。
+ * @param      dock 目标停靠面板；可为 NULL。
+ * @return     几何与屏幕可用区相交返回 true。
  */
-static XPoint xdw_logicalGlobal(const XWidget* w, const XPoint* local)
+static bool xdw_visiblePayload(const XDockWidget* dock)
 {
-    XPoint g;
-    XWidget* top;
-    XPoint_init(&g, 0, 0);
-    if (!w || !local) return g;
-    top = XWidget_topLevelWidget((XWidget*)w);
-    while (w && !w->m_isWindow) {
-        g.x += w->m_windowRect.x;
-        g.y += w->m_windowRect.y;
-        w = (const XWidget*)XObject_parent((XObject*)w);
+    XPoint origin;
+    int right;
+    int bottom;
+    int topLeftX = 0;
+    int topLeftY = 0;
+    if (!dock) return false;
+    if (dock->m_floating) {
+#if XGUIAPPLICATION_ON && XSCREEN_ON
+        XScreen* screen = XGuiApplication_primaryScreen();
+        if (screen) {
+            XRect avail = XScreen_availableGeometry(screen);
+            topLeftX = avail.x;
+            topLeftY = avail.y;
+        }
+#endif /* XGUIAPPLICATION_ON && XSCREEN_ON */
     }
-    if (top) {
-        g.x += top->m_windowRect.x;
-        g.y += top->m_windowRect.y;
-    }
-    g.x += local->x;
-    g.y += local->y;
-    return g;
+    XPoint_init(&origin, 0, 0);
+    origin = XWidget_mapToGlobal((const XWidget*)dock, &origin);
+    right = origin.x + XWidget_width((const XWidget*)dock) - 1;
+    bottom = origin.y + XWidget_height((const XWidget*)dock) - 1;
+    /* Qt 的 geometry().right()/bottom() 是闭区间末像素。 */
+    return right >= topLeftX && bottom >= topLeftY;
 }
 
 /**
  * @brief      广播可见性变化并联动宿主与切换动作。
- * @details    对标 Qt：QDockWidget::visibilityChanged 随真实显隐发射，
- *             同时按 QDockWidgetPrivate::syncViewAction 同步
- *             toggleViewAction 的 checked 位；显隐改变停靠区占位时经
- *             宿主回链请求主窗口重排（对标 QMainWindowLayout::update）。
+ * @details    对标 Qt QDockWidget::event 的 Hide/Show 分支
+ *             （qdockwidget.cpp:1634-1650）：
+ *             - Hide：`layout->keepSize(this); toggleViewAction->
+ *               setChecked(false); emit visibilityChanged(false);`
+ *             - Show：`toggleViewAction->setChecked(true);
+ *               emit visibilityChanged(<几何可见性表达式>);`
+ *             Qt **不做去重**（事件驱动逐次发射）；旧实现用
+ *             m_announcedVisible 去重且载荷恒传 isVisible，与 Qt 两处
+ *             都不一致。
+ *             keepSize 的等价物：本框架无 KeepSize 标志（全仓 grep 零
+ *             命中），停靠区尺寸由 XMainWindow 的 m_dockHeights 记账，
+ *             隐藏面板时 xmw_layout 会跳过它并把空间让给同区其余面板
+ *             ——与 Qt keepSize「保留该面板占位」不同，属已知差异（需要
+ *             改 XMainWindow.c，见交付报告 unresolved）。
  * @param      dock 目标停靠面板；可为 NULL。
- * @param      visible 最新生效可见状态。
+ * @param      visible 事件来源（true=Show 分支，false=Hide 分支）。
  * @return     无返回值。
  */
 static void xdw_announceVisible(XDockWidget* dock, bool visible)
 {
+    bool payload;
     if (!dock) return;
     if (dock->m_toggleAction)
         XAction_setChecked(dock->m_toggleAction, visible);
-    if (dock->m_announcedVisible == visible) return;
-    dock->m_announcedVisible = visible;
-    xdw_emitBool(dock, (size_t)XDockWidget_visibilityChanged_signal, visible);
+    payload = visible ? xdw_visiblePayload(dock) : false;
+    xdw_emitBool(dock, (size_t)XDockWidget_visibilityChanged_signal, payload);
     if (dock->m_host)
         XMainWindow_updateDockLayout((XMainWindow*)dock->m_host);
 }
@@ -443,8 +647,13 @@ static void xdw_paintVerticalTitle(XDockWidget* dock, XPainter* painter,
         font = XPainter_font(painter);
         advance = XPainter_textHeight(font);
         if (advance < 1) advance = 1;
+        /* 底部按钮区让位：关闭钮占最后一格，浮动钮占其上一格
+         * （与 xdw_closeHit/xdw_floatHit 的垂直分支同几何）。 */
         limitY = h - ((dock->m_features & XDockWidgetFeature_Closable)
-                          ? XDW_CLOSE_BOX : 0) - XDW_TITLE_SLACK;
+                          ? XDW_CLOSE_BOX : 0) -
+                 ((dock->m_features & XDockWidgetFeature_Floatable)
+                          ? XDW_CLOSE_BOX : 0) -
+                 XDW_TITLE_SLACK;
         len = (int)XStrlen(utf8);
         baseline = 14;
         p = 0;
@@ -460,6 +669,18 @@ static void xdw_paintVerticalTitle(XDockWidget* dock, XPainter* painter,
             p += glyphLen;
             baseline += advance;
         }
+    }
+    if (dock->m_features & XDockWidgetFeature_Floatable) {
+        /* 浮动标记：关闭钮上一格（命中区见 xdw_floatHit 垂直分支）。 */
+        int fy = h - XDW_CLOSE_BOX * 2 + 4;
+        XRect_init(&line, 5, fy, 10, 1);
+        XPainter_fillRect(painter, &line, windowText);
+        XRect_init(&line, 5, fy + 8, 10, 1);
+        XPainter_fillRect(painter, &line, windowText);
+        XRect_init(&line, 5, fy, 1, 9);
+        XPainter_fillRect(painter, &line, windowText);
+        XRect_init(&line, 14, fy, 1, 9);
+        XPainter_fillRect(painter, &line, windowText);
     }
     if (dock->m_features & XDockWidgetFeature_Closable) {
         /* 关闭标记沉底（命中区见 xdw_closeHit 垂直分支）。 */
@@ -593,6 +814,21 @@ static void VX_dockWidget_paintEvent(XWidget* self, XEvent* event)
                        w - XDW_CLOSE_BOX * 2 - XDW_TITLE_LEFT_PAD -
                            XDW_TITLE_SLACK,
                        windowText);
+    if (dock->m_features & XDockWidgetFeature_Floatable) {
+        /* 浮动钮（关闭钮左侧一格，与 xdw_floatHit 命中区同几何；对标
+         * Qt 标题条的 Float 按钮 SP_TitleBarNormalButton，
+         * qdockwidget.cpp:604-608/706）。手绘路径画方框，与样式路径
+         * XCommonStyle.c 的 xcs_drawDockTitle 浮动框同形。 */
+        int bx = w - XDW_CLOSE_BOX * 2 + 4;
+        XRect_init(&line, bx, 6, 10, 1);
+        XPainter_fillRect(&painter, &line, windowText);
+        XRect_init(&line, bx, 14, 10, 1);
+        XPainter_fillRect(&painter, &line, windowText);
+        XRect_init(&line, bx, 6, 1, 9);
+        XPainter_fillRect(&painter, &line, windowText);
+        XRect_init(&line, bx + 9, 6, 1, 9);
+        XPainter_fillRect(&painter, &line, windowText);
+    }
     if (dock->m_features & XDockWidgetFeature_Closable) {
         /* Closable：绘制关闭标记（对标 Qt 标题条）。 */
         XPainter_drawText(&painter, w - XDW_CLOSE_BOX + 4, 14, "×",
@@ -627,6 +863,8 @@ static void VX_dockWidget_mousePressEvent(XWidget* self, XEvent* event)
     XDockWidget* dock = (XDockWidget*)self;
     XMouseEvent* me;
     XPoint pos;
+    XPoint pos0;
+    XPoint_init(&pos0, 0, 0);
     if (!dock || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) {
         xdw_callParent(self, MousePressEvent, event);
@@ -634,18 +872,36 @@ static void VX_dockWidget_mousePressEvent(XWidget* self, XEvent* event)
     }
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
-    /* 复扫 R-83：自定义标题条接管标题区交互——关闭钮/拖动属默认标题
-     * 条行为；自定义条在位时按下事件归其子控件（子 ignore 才落到本
-     * 处理），此处一律不再按默认条命中处理。 */
+    /* 复扫 R-83：自定义标题条接管标题区交互——关闭钮/浮动钮/拖动属
+     * 默认标题条行为；自定义条在位时按下事件归其子控件（子 ignore 才
+     * 落到本处理），此处一律不再按默认条命中处理。 */
     if (!xdw_titleBar(dock) && xdw_closeHit(dock, &pos) &&
-        (dock->m_features & 0x1)) {
-        /* 对标 Qt：标题条关闭按钮关闭面板；简化为隐藏（保持登记）。 */
-        XWidget_setVisible(self, false);
+        (dock->m_features & XDockWidgetFeature_Closable)) {
+        /* 对标 Qt：标题条关闭钮接 QDockWidget::close（qdockwidget.cpp:617
+         * 的 connect(button, clicked, q, &QDockWidget::close)）——关闭
+         * 走 closeEvent 的 Closable 判定，而非无条件隐藏（旧实现直接
+         * setVisible(false)，非 Closable 面板也能「关闭」，与 Qt 相反）。 */
+        XDW_TRACE("title close button: close()");
+        (void)XWidget_close(self);
         XEvent_accept(event);
         return;
     }
+    if (xdw_floatHit(dock, &pos) &&
+        (dock->m_features & XDockWidgetFeature_Floatable) &&
+        XMouseEvent_button(me) == XMouseButton_LeftButton) {
+        /* 对标 Qt：标题条浮动钮 clicked→toggleTopLevel
+         * （qdockwidget.cpp:605-608、qdockwidget.cpp:706 的
+         * `button->setVisible(canFloat && !hideButtons)`）。 */
+        XDW_TRACE("title float button: toggleTopLevel");
+        XDockWidget_setFloating(dock, !dock->m_floating);
+        XEvent_accept(event);
+        return;
+    }
+    /* 本分支只处理浮动态：对标 Qt qdockwidget.cpp:918-920 的
+     * `(!Movable && !isFloating()) ⇒ return false`——Movable 关闭只挡
+     * **停靠态**起拖；浮窗无论 Movable 与否都可拖动（旧实现把 Movable
+     * 设为硬门，Movable 关闭的浮窗完全拖不动）。 */
     if (!xdw_titleBar(dock) && dock->m_floating && xdw_titleHit(dock, &pos) &&
-        (dock->m_features & 0x2 /* Movable：标题条可拖动 */) &&
         XMouseEvent_button(me) == XMouseButton_LeftButton) {
         /* 原生装饰浮动态（nativeDeco）时 xdw_titleHit 恒假：标题条在
          * 客户区上方（局部 y<0 的负带），驱动已把 Tool 窗
@@ -653,25 +909,29 @@ static void VX_dockWidget_mousePressEvent(XWidget* self, XEvent* event)
          * nativeDeco 路径 NonClientAreaMouseButtonPress → initDrag
          * (nca=true)+startDrag，qdockwidget.cpp:1097-1111）——按下即
          * 拖动，无 startDragDistance 阈值（拖回停靠走 hover/finishDrop）。 */
-        XPoint g = XWidget_mapToGlobal(self, &pos);
+        XPoint g = xdw_pointerGlobal(self, me, &pos);
+        XPoint org = XWidget_mapToGlobal(self, &pos0);
         XDW_TRACE("float-drag start pos=(%d,%d) global=(%d,%d) nc=%d",
                   pos.x, pos.y, g.x, g.y, xdw_nativeDeco(dock));
         dock->m_dragging = true;
-        /* Ctrl 拖动判定（对标 Qt qdockwidget.cpp:934：Floatable 且
-         * ControlModifier → ctrlDrag；置位时移动不吸附、释放不落位）。 */
+        /* Ctrl 拖动判定（对标 Qt qdockwidget.cpp:933-935：
+         *   `ctrlDrag = (Floatable && ControlModifier) ||
+         *               (!Movable && isFloating);`
+         * 第二个子句是「Movable 关闭的浮窗拖动永不重停靠」——旧实现
+         * 只按 Floatable&&Control 判定，该子句缺失。置位时移动不吸附、
+         * 释放不落位。 */
         dock->m_ctrlDrag =
-            (dock->m_features & XDockWidgetFeature_Floatable) != 0 &&
-            (XMouseEvent_modifiers(me) &
-             XKeyboardModifier_ControlModifier) != 0;
-        /* [弹窗随转·逻辑全局 2026-10-22] m_dragOffset 语义=抓取点相对
-         * 浮动窗口原点的偏移，只供 mouseMoveEvent 的 XWidget_move 跟指
-         * 方程（逻辑域，见 xdw_logicalGlobal 注）；按设备全局 mapToGlobal
-         * 与逻辑账本 x/y 混域相减，rot≠0 下 R 换轴后偏移失真。 */
-        {
-            XPoint lg = xdw_logicalGlobal(self, &pos);
-            dock->m_dragOffset.x = lg.x - XWidget_x(self);
-            dock->m_dragOffset.y = lg.y - XWidget_y(self);
-        }
+            (((dock->m_features & XDockWidgetFeature_Floatable) != 0 &&
+              (XMouseEvent_modifiers(me) &
+               XKeyboardModifier_ControlModifier) != 0) ||
+             ((dock->m_features & XDockWidgetFeature_Movable) == 0 &&
+              dock->m_floating));
+        /* 抓取偏移 = 按下点 − 面板全局原点（对标 Qt QDockWidget 的
+         * dragOffset：抓取点相对浮动面板原点的偏移，跟指期恒定，
+         * 面板随指针平移而抓取点不动）。设备全局域，与跟指方程
+         * （mouseMoveEvent 的 g−m_dragOffset）同域。 */
+        dock->m_dragOffset.x = g.x - org.x;
+        dock->m_dragOffset.y = g.y - org.y;
         dock->m_pressGlobal = g; /* 释放时与当前点比较过滤原地单击 */
         XWidget_raise(self); /* 对标 Qt：拖动前激活提升浮动窗口 */
         /* 全局鼠标抓取：指针拖出窗口后事件仍转投本控件（win32 普通
@@ -687,21 +947,23 @@ static void VX_dockWidget_mousePressEvent(XWidget* self, XEvent* event)
         XMouseEvent_button(me) == XMouseButton_LeftButton) {
         /* 停靠态拖出（对标 Qt initDrag）：按下仅记录起始全局点并抓
          * 取鼠标，移动越过 startDragDistance 阈值才脱靠。 */
-        XPoint armG = XWidget_mapToGlobal(self, &pos);
+        XPoint armG = xdw_pointerGlobal(self, me, &pos);
+        XPoint org = XWidget_mapToGlobal(self, &pos0);
         XDW_TRACE("docked-drag arm pos=(%d,%d) global=(%d,%d)",
                   pos.x, pos.y, armG.x, armG.y);
         dock->m_dragging = true;
-        /* Ctrl 拖动判定（对标 Qt qdockwidget.cpp:934；分支条件已保证
-         * Floatable，此处只看 ControlModifier）。 */
+        /* Ctrl 拖动判定（对标 Qt qdockwidget.cpp:933-935；分支条件已保证
+         * Floatable 与 Movable，此处只看 ControlModifier）。 */
         dock->m_ctrlDrag =
             (XMouseEvent_modifiers(me) &
              XKeyboardModifier_ControlModifier) != 0;
-        /* [弹窗随转·域注 2026-10-22] 停靠态 m_dragOffset 只供脱靠阈值
-         * 判定（mouseMoveEvent 的 g−m_dragOffset，两侧同为设备全局）；
-         * 脱靠成顶层后偏移在 784 段按逻辑域重算，跨态不共用域。 */
-        dock->m_dragOffset = XWidget_mapToGlobal(self, &pos);
-        /* 脱靠后释放的落位阈值过滤（g−m_pressGlobal）同域基准：此前
-         * 本分支未置 m_pressGlobal，拖出释放与陈旧值比较。 */
+        /* 抓取偏移 = 按下点 − 面板全局原点（停靠态面板的全局原点 =
+         * 其在宿主窗内的位置 + 宿主窗原点；脱靠后浮动面板按同一全局
+         * 原点原位落出，抓取偏移跨态不变——指针相对标题条的落点保持
+         * 不变，脱靠瞬间面板不跳位）。 */
+        dock->m_dragOffset.x = armG.x - org.x;
+        dock->m_dragOffset.y = armG.y - org.y;
+        /* 脱靠阈值与释放落位阈值的同域基准（设备全局）。 */
         dock->m_pressGlobal = armG;
         XWidget_grabMouse(self);
         XEvent_accept(event);
@@ -754,21 +1016,22 @@ static void VX_dockWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event)
  *             浮动 QDockWidget 移动顶层窗口）；停靠态拖动越过阈值先
  *             脱靠（setFloating(true)）再继续跟随；浮动拖动期间衔接
  *             宿主落点指示器。
- * @details    跟随坐标双域分流（[弹窗随转·逻辑全局 2026-10-22]）：
- *             跟指落位经 xdw_logicalGlobal 求**逻辑全局**（浮动态顶层
- *             XWidget_move 的账本域，同 XComboBox 弹层收口；事件全局
- *             坐标在 win32 普通移动消息中不携带），脱靠后窗口按逻辑
- *             原位映射，抓取点相对窗口的偏移保持不变；脱靠阈值与宿主
- *             落点链（hoverDrop/finishDrop→xmw_dropAreaAt 的
- *             mapFromGlobal）仍吃 mapToGlobal 的**设备全局**。脱靠调
- *             用走内部实现体（不消费 undockedGeometry，对标 Qt
- *             startDrag→unplug 用当前几何原地脱靠，qdockwidget.cpp:
- *             767；公共 setFloating 才恢复 undockedGeometry，
- *             qdockwidget.cpp:1465）。浮动拖动的每次移动在
- *             XWidget_move 之后调用 XMainWindow_hoverDrop 更新宿主落
- *             点指示器（对标 qdockwidget.cpp:1051-1052：!ctrlDrag 时
+ * @details    跟指坐标源=指针**设备全局**（XMouseEvent_globalPosition，
+ *             见 xdw_pointerGlobal 注：浮动态跨原生窗口切换后事件局部
+ *             坐标失效，必须走全局坐标）。落位方程=指针全局 − 抓取
+ *             偏移（对标 Qt QDockWidget::startDrag 的 dragOffset 语义：
+ *             抓取点相对面板原点的偏移恒定，面板随指针平移）。脱靠
+ *             阈值与宿主落点链（hoverDrop/finishDrop→xmw_dropAreaAt 的
+ *             mapFromGlobal）同吃设备全局。脱靠调用走内部实现体（不消费
+ *             undockedGeometry，对标 Qt startDrag→unplug 用当前几何原地
+ *             脱靠，qdockwidget.cpp:767；公共 setFloating 才恢复
+ *             undockedGeometry，qdockwidget.cpp:1465）。浮动拖动的每次
+ *             移动在落位之后调用 XMainWindow_hoverDrop 更新宿主落点
+ *             指示器（对标 qdockwidget.cpp:1051-1052：!ctrlDrag 时
  *             mwlayout->hover(widgetItem, globalPos)）；Ctrl 拖动
- *             （m_ctrlDrag）与无宿主时跳过。
+ *             （m_ctrlDrag）与无宿主时跳过。移窗落位后另经
+ *             xdw_restoreMovedArea 做让位条带归位 + 自身内容直搬
+ *             （fbdev 单屏无 WM：旧位像素无人重绘=残影永留）。
  * @param      self 目标控件。
  * @param      event 鼠标移动事件。
  * @return     无返回值。
@@ -784,9 +1047,8 @@ static void VX_dockWidget_mouseMoveEvent(XWidget* self, XEvent* event)
     }
     if (dock->m_dragging) {
         XPoint g;
-        XPoint lg;
         me = (XMouseEvent*)event;
-        if (!(XMouseEvent_buttons(me) & XMouseButton_LeftButton)) {
+                if (!(XMouseEvent_buttons(me) & XMouseButton_LeftButton)) {
             /* 按键已释放：安全终止拖动；浮动态顺带按当前位置收尾
              * （finishDrop 内部隐藏落点指示器，悬停宿主内则落位），
              * 防止指示器残留与拖动悬挂。 */
@@ -794,7 +1056,7 @@ static void VX_dockWidget_mouseMoveEvent(XWidget* self, XEvent* event)
             XWidget_releaseMouse(self);
             if (dock->m_floating && dock->m_host && !dock->m_ctrlDrag) {
                 XPoint lp = XMouseEvent_position(me);
-                XPoint gg = XWidget_mapToGlobal(self, &lp);
+                XPoint gg = xdw_pointerGlobal(self, me, &lp);
                 XMainWindow_finishDrop((XMainWindow*)dock->m_host,
                                        self, &gg);
             }
@@ -803,9 +1065,9 @@ static void VX_dockWidget_mouseMoveEvent(XWidget* self, XEvent* event)
         }
         {
             XPoint local = XMouseEvent_position(me);
-            g = XWidget_mapToGlobal(self, &local);
-            /* 跟指落位域：逻辑全局（顶层账本域，见函数 @details）。 */
-            lg = xdw_logicalGlobal(self, &local);
+            /* 跟指坐标源=指针设备全局坐标（浮动态跨原生窗口切换后事件
+             * 局部坐标失效，见 xdw_pointerGlobal 注）。 */
+            g = xdw_pointerGlobal(self, me, &local);
         }
         /* 移动压缩（对标 Qt 鼠标事件压缩，QWidgetWindow 聚合移动）：
          * 拖动跟随是绝对定位，高频移动（真实游戏鼠标 1kHz、远端批量
@@ -827,9 +1089,10 @@ static void VX_dockWidget_mouseMoveEvent(XWidget* self, XEvent* event)
         if (!dock->m_floating) {
             /* 停靠态拖出阈值（对标 Qt qdockwidget.cpp:982-985）：按下
              * 点到当前点的曼哈顿距离严格大于 QApplication::
-             * startDragDistance 才启动拖动并脱靠，单击不误浮动。 */
-            int dx = g.x - dock->m_dragOffset.x;
-            int dy = g.y - dock->m_dragOffset.y;
+             * startDragDistance 才启动拖动并脱靠，单击不误浮动。
+             * 基准=按下点（设备全局，见 m_pressGlobal）。 */
+            int dx = g.x - dock->m_pressGlobal.x;
+            int dy = g.y - dock->m_pressGlobal.y;
             if (dx < 0) dx = -dx;
             if (dy < 0) dy = -dy;
             if (dx + dy <= XApplication_startDragDistance()) {
@@ -837,22 +1100,34 @@ static void VX_dockWidget_mouseMoveEvent(XWidget* self, XEvent* event)
                 return;
             }
             XDW_TRACE("undock: dist=(%d,%d) -> setFloating(true)", dx, dy);
-            xdw_setFloatingImpl(dock, true, false);
-            /* 实现体内部按"程序性浮动"清了 m_dragging 并解除了抓取：
+                        xdw_setFloatingImpl(dock, true, false);
+                        /* 实现体内部按"程序性浮动"清了 m_dragging 并解除了抓取：
              * 本路径是拖出延续，需重新置位拖动态并重新抓取鼠标，否则
              * 跟随中断、释放时回归停靠判定因 !m_dragging 早退。 */
             dock->m_dragging = true;
             XWidget_grabMouse(self);
-            /* 脱靠窗口已按逻辑全局映射到拖出前位置：重算抓取偏移
-             * （逻辑域，与跟指方程同域）保持抓取点相对窗口不动。 */
-            dock->m_dragOffset.x = lg.x - XWidget_x(self);
-            dock->m_dragOffset.y = lg.y - XWidget_y(self);
+            /* 脱靠后面板按停靠位原位落出（全局原点不变），抓取偏移
+             * （按下点−面板原点）跨态不变——指针相对标题条的落点保持
+             * 不变，脱靠瞬间面板不跳位。 */
         }
-        XWidget_move(self, lg.x - dock->m_dragOffset.x,
-                     lg.y - dock->m_dragOffset.y);
-        XDW_TRACE("move global=(%d,%d) logical=(%d,%d) win=(%d,%d)",
-                  g.x, g.y, lg.x, lg.y,
-                  XWidget_x(self), XWidget_y(self));
+        if (dock->m_floating) {
+            /* 浮动态跟指：面板原点 = 指针全局坐标 − 抓取偏移（对标 Qt
+             * QDockWidget::startDrag 的 dragOffset 语义）。绝对定位式
+             * （非增量式）：节流丢弃的中间位置由下一条移动按最新指针
+             * 位置重算，末位永远精确落位。 */
+            XRect oldG = XWidget_geometry(self);
+            int nx = g.x - dock->m_dragOffset.x;
+            int ny = g.y - dock->m_dragOffset.y;
+            if (nx != oldG.x || ny != oldG.y) {
+                XRect newG;
+                XRect_init(&newG, nx, ny, oldG.width, oldG.height);
+                XWidget_setGeometryRect(self, &newG);
+                /* 让位条带归位 + 自身内容直搬（fbdev 单屏残影根修）。 */
+                xdw_restoreMovedArea(dock, &oldG, &newG);
+            }
+        }
+        XDW_TRACE("move global=(%d,%d) win=(%d,%d)",
+                  g.x, g.y, XWidget_x(self), XWidget_y(self));
         if (dock->m_floating && dock->m_host && !dock->m_ctrlDrag) {
             /* 拖动中衔接宿主落点预览（qdockwidget.cpp:1051-1052）。 */
             XMainWindow_hoverDrop((XMainWindow*)dock->m_host, self, &g);
@@ -861,6 +1136,68 @@ static void VX_dockWidget_mouseMoveEvent(XWidget* self, XEvent* event)
         return;
     }
     xdw_callParent(self, MouseMoveEvent, event);
+}
+
+/**
+ * @brief      结束拖动：清除拖出期间的 X11BypassWindowManagerHint 并收口
+ *             浮动态（对标 Qt endDrag 的浮动保留分支）。
+ * @details    对标 Qt QDockWidgetPrivate::endDrag（qdockwidget.cpp:806-856）：
+ *             `if (mode == Abort || !mwLayout->plug(state->widgetItem)) {
+ *                if (hasFeature(Floatable)) {
+ *                  ... if (!nativeWindowDeco) {
+ *                        flags &= ~X11BypassWindowManagerHint;
+ *                        q->setWindowFlags(flags);
+ *                        setResizerActive(q->isFloating());
+ *                        q->show();
+ *                      } ...
+ *                  if (q->isFloating()) undockedGeometry = q->geometry();
+ *                  q->activateWindow();
+ *                } else {
+ *                  mwLayout->revert(state->widgetItem);  // 不可浮动：回退原状态
+ *                }
+ *              }`
+ *             即「plug 失败（无落点）」这一支：可浮动 ⇒ 保持浮动态、清
+ *             bypass 位、记录 undockedGeometry（拖动结束的**第二个**记录
+ *             点，qdockwidget.cpp:841-842——旧实现只在 resizeEvent 记录，
+ *             拖出后未 resize 则快照不是最终浮动态几何）、激活窗口；
+ *             不可浮动 ⇒ 回退原停靠状态。
+ * @param      dock 目标停靠面板；可为 NULL。
+ * @return     无返回值。
+ */
+static void xdw_endDragKeepFloating(XDockWidget* dock)
+{
+    XWidget* selfw;
+    XWidgetFlags flags;
+    if (!dock) return;
+    selfw = (XWidget*)dock;
+    if (!dock->m_floating) return; /* 已落位：plug 成功分支无需收口。 */
+    if ((dock->m_features & XDockWidgetFeature_Floatable) == 0) {
+        /* 不可浮动（qdockwidget.cpp:852-855 的 revert 分支）：回到停靠态。
+         * 本框架的等价动作=setFloating(false)（宿主重排把面板摆回登记
+         * 区域），revert 的「布局快照回滚」由 xmw_layout 的登记区域重算
+         * 承载。 */
+        XDW_TRACE("endDrag: not floatable -> revert to docked");
+        XDockWidget_setFloating(dock, false);
+        return;
+    }
+    /* 清 X11BypassWindowManagerHint（qdockwidget.cpp:830-838）：拖动期间
+     * 追加的绕过 WM 位在收口时必须摘掉，否则窗口在 X11 上脱离 WM 管理
+     * （无装饰/无焦点策略/永在最上层）。 */
+    flags = (XWidgetFlags)XWidget_windowFlags(selfw);
+    if (flags & (XWidgetFlags)XWindowType_BypassWindowManagerHint) {
+        flags &= ~(XWidgetFlags)XWindowType_BypassWindowManagerHint;
+        XWidget_setWindowFlags(selfw, flags);
+        XDW_TRACE("endDrag: cleared BypassWindowManagerHint");
+    }
+    /* undockedGeometry = q->geometry()（qdockwidget.cpp:841-842）：拖动
+     * 结束的第二个记录点。 */
+    {
+        XRect geo = XWidget_geometry(selfw);
+        dock->m_undockedGeometry = geo;
+        dock->m_undockedValid = true;
+    }
+    XWidget_show(selfw);          /* qdockwidget.cpp:837 */
+    XWidget_activateWindow(selfw);/* qdockwidget.cpp:856 */
 }
 
 /**
@@ -873,9 +1210,9 @@ static void VX_dockWidget_mouseMoveEvent(XWidget* self, XEvent* event)
  *             setFloating(false)+重排，对标 plug→setWindowState）；
  *             返回 NoDockWidgetArea 表示无有效落点，面板保持浮动
  *             （对标 plug 失败分支：stay in the floating state，
- *             qdockwidget.cpp:822-824）。Ctrl 拖动（m_ctrlDrag）跳过
- *             落位（对标 qdockwidget.cpp:934 置位 ctrlDrag 后 endDrag
- *             经 layout->restore 保持浮动）。
+ *             qdockwidget.cpp:822-824，收口见 xdw_endDragKeepFloating）。
+ *             Ctrl 拖动（m_ctrlDrag）跳过落位（对标 qdockwidget.cpp:933-935
+ *             置位 ctrlDrag 后 endDrag 经 layout->restore 保持浮动）。
  * @param      self 目标控件。
  * @param      event 鼠标释放事件。
  * @return     无返回值。
@@ -899,7 +1236,7 @@ static void VX_dockWidget_mouseReleaseEvent(XWidget* self, XEvent* event)
     if (dock->m_floating && dock->m_host && !dock->m_ctrlDrag) {
         me = (XMouseEvent*)event;
         local = XMouseEvent_position(me);
-        g = XWidget_mapToGlobal(self, &local);
+        g = xdw_pointerGlobal(self, me, &local);
         /* 对标 Qt：仅真实拖动（位移超过 startDragDistance）才尝试落位
          * ——原地单击（无位移）不落位，面板保持浮动；否则双击标题条
          * 的首击释放即回停靠、双击事件再浮出，净效果浮着不动（实测
@@ -919,8 +1256,14 @@ static void VX_dockWidget_mouseReleaseEvent(XWidget* self, XEvent* event)
         XDW_TRACE("release: finishDrop global=(%d,%d)", g.x, g.y);
         area = XMainWindow_finishDrop((XMainWindow*)dock->m_host, self, &g);
         XDW_TRACE("release: finishDrop area=%d", area);
-        (void)area;
     }
+    /* endDrag 收口（qdockwidget.cpp:806-856）：落位成功时面板已回停靠态
+     * （m_floating=false），无需收口；其余一切仍处于浮动态的情形
+     * ——plug 失败（无落点）、Ctrl 拖动、无宿主——统一走浮动保留分支
+     * （清 bypass 位 + 记录 undockedGeometry + 激活；不可浮动则回退
+     * 停靠态）。 */
+    if (dock->m_floating)
+        xdw_endDragKeepFloating(dock);
     /* 拖动状态复位（对标 Qt 拖动结束销毁 DragState：ctrlDrag=false，
      * qdockwidget.cpp:744；下次按下重新判定）。 */
     dock->m_ctrlDrag = false;
@@ -945,26 +1288,53 @@ static void VX_dockWidget_hideEvent(XWidget* self, XEvent* event)
 }
 
 /**
- * @brief      关闭事件：隐藏面板并拒绝关闭（对标 Qt QDockWidget 关闭
- *             语义）。
- * @details    对标 Qt：QDockWidget 关闭即隐藏（closeEvent→hide），面板
- *             保持登记与浮动态，toggleViewAction 可复显。本框架驱动侧
- *             约定"关闭事件被接受→隐藏并销毁原生窗口"——浮动态若走该
- *             路径，原生工具窗被销毁后 toggleViewAction 复显将落空。
- *             故此处在控件侧完成隐藏后拒绝事件：控件隐藏经可见性传播
- *             收起原生窗（窗对象保留），驱动侧 accept→destroy 分支不
- *             触发。停靠态被关闭时同样只隐藏（面板保持登记可复显，与
- *             既有标题条关闭钮的"隐藏"语义一致）。
+ * @brief      关闭事件：按 Closable 特性决定是否接受（对标 Qt）。
+ * @details    对标 Qt QDockWidget::closeEvent（qdockwidget.cpp:1576-1587）：
+ *             `if (d->state) d->endDrag(Abort);`
+ *             `const bool canClose = (features & DockWidgetClosable)
+ *                                    || (!win || !win->isVisible());`
+ *             `event->setAccepted(canClose);`
+ *             即：Closable 面板接受关闭（Qt 关闭即隐藏，QWidget::close →
+ *             hide）；**非 Closable 面板拒绝关闭**，唯一例外是宿主主窗
+ *             已不可见（否则应用无法退出）。旧实现无条件隐藏后 ignore——
+ *             非 Closable 面板照样能「关闭」，且 accept/ignore 语义与 Qt
+ *             相反（Qt 接受关闭时事件被 accept）。
+ *             本框架驱动侧的约定（XPlatformNativeWindow_posix.c:4482 /
+ *             win32.c:1960：handleCloseEvent 被 accept 后隐藏并销毁原生
+ *             窗）针对**浮动态顶层**——原生窗销毁后 toggleViewAction 复显
+ *             会落空，故浮动态在此先自行隐藏（可见性传播收起原生窗，
+ *             窗对象保留）再接受事件，驱动侧 destroy 分支因窗已不可见
+ *             自然收敛。
  * @param      self 目标控件。
  * @param      event 关闭事件。
  * @return     无返回值。
  */
 static void VX_dockWidget_closeEvent(XWidget* self, XEvent* event)
 {
-    if (!self || !event) return;
-    XDW_TRACE("closeEvent: hide + ignore");
+    XDockWidget* dock = (XDockWidget*)self;
+    XWidget* host;
+    bool canClose;
+    if (!dock || !event) return;
+    /* 对标 Qt：关闭时先终止进行中的拖动（qdockwidget.cpp:1579-1580
+     * `if (d->state) d->endDrag(Abort);`）。 */
+    if (dock->m_dragging) {
+        dock->m_dragging = false;
+        dock->m_ctrlDrag = false;
+        XWidget_releaseMouse(self);
+    }
+    host = dock->m_host;
+    canClose = ((dock->m_features & XDockWidgetFeature_Closable) != 0) ||
+               (!host || !XWidget_isVisible(host));
+    XDW_TRACE("closeEvent: canClose=%d", canClose ? 1 : 0);
+    if (!canClose) {
+        /* 非 Closable 且宿主可见：拒绝关闭（qdockwidget.cpp:1586-1587）。 */
+        XEvent_ignore(event);
+        return;
+    }
+    /* 接受关闭：Qt 的 close 语义即 hide（QWidget::close → setVisible(false)）。
+     * 浮动态在此先行隐藏，避免驱动侧 accept→destroy 销毁原生窗。 */
     XWidget_setVisible(self, false);
-    XEvent_ignore(event);
+    XEvent_accept(event);
 }
 
 /**
@@ -1125,25 +1495,30 @@ XWidget* XDockWidget_widget(const XDockWidget* self)
 
 void XDockWidget_setFeatures(XDockWidget* self, int features)
 {
+    int mask = (int)XDockWidgetFeature_FeatureMask;
+    bool verticalChanged;
     if (!self) return;
     /* 对标 Qt setFeatures：先按 FeatureMask 裁剪无效高位。 */
-    features &= (int)XDockWidgetFeature_FeatureMask;
+    features &= mask;
     if (self->m_features == features) return;
+    verticalChanged = ((self->m_features ^ features) &
+                       (int)XDockWidgetFeature_VerticalTitleBar) != 0;
     self->m_features = features;
+    /* 对标 Qt（qdockwidget.cpp:1413）：切换动作的可用意随 Closable 特性
+     * 联动——面板不可关闭时「显示/隐藏」入口无意义（Qt 禁用该动作）。 */
+    if (self->m_toggleAction)
+        XAction_setEnabled(self->m_toggleAction,
+                           (features & (int)XDockWidgetFeature_Closable) ==
+                           (int)XDockWidgetFeature_Closable);
     xdw_emitInt(self, (size_t)XDockWidget_featuresChanged_signal,
                 features);
-}
-
-void XDockWidget_setFeature(XDockWidget* self, int feature, bool on)
-{
-    int features;
-    if (!self) return;
-    /* 对标 QDockWidget::setFeature(feature, on)：单特性开关，其余
-     * 特性保持不变。 */
-    features = on
-        ? (self->m_features | (feature & (int)XDockWidgetFeature_FeatureMask))
-        : (self->m_features & ~(feature & (int)XDockWidgetFeature_FeatureMask));
-    XDockWidget_setFeatures(self, features);
+    /* 对标 Qt（qdockwidget.cpp:1415 `update()`）：特性变化后重绘面板
+     * （标题条按钮集随之变化）。 */
+    XWidget_update((XWidget*)self);
+    /* 竖排标题条特性变化会改标题条区几何（竖条 vs 横条），需宿主重排
+     * （Qt 对标 layout->setVerticalTitleBar → 布局重解算）。 */
+    if (verticalChanged && self->m_host)
+        XMainWindow_updateDockLayout((XMainWindow*)self->m_host);
 }
 
 int XDockWidget_features(const XDockWidget* self)
@@ -1153,13 +1528,32 @@ int XDockWidget_features(const XDockWidget* self)
 
 /**
  * @brief      setFloating 实现体（公共入口与拖出路径共用）。
- * @details    useUndockedGeometry=true 时（公共 setFloating）转浮动
- *             优先恢复上次浮动态几何（对标 Qt 公共 setFloating 用
- *             undockedGeometry，qdockwidget.cpp:1464-1468）；false 时
- *             （拖出路径）用当前几何原地脱靠（对标 Qt startDrag→
- *             unplug，qdockwidget.cpp:767）。转浮动先 move 后 resize：
- *             浮动态 ResizeEvent 记录 undockedGeometry（resizeEvent）
- *             时位置已定，避免把 reparent 瞬间的过渡坐标存进快照。
+ * @details    对标 Qt QDockWidgetPrivate::setFloating + setWindowState
+ *             （qdockwidget.cpp:1447-1498 / 1183-1246），步骤与次序逐条
+ *             对应：
+ *             ① `if (!floating && parent) { ... dockWidgetArea==NoDockWidgetArea
+ *                ⇒ return; }`（1188-1193，不可重停靠守卫）；
+ *             ② `wasFloating` / `hidden` 快照（1196-1199）；
+ *             ③ `if (q->isVisible()) q->hide();`（1200-1201）——先隐藏再
+ *                改窗型，Qt 借此在旧父后备存储上作废旧矩形
+ *                （QWidgetPrivate::hide_sys）；
+ *             ④ `setWindowFlags(flags)`（1218）——`floating ? Qt::Tool
+ *                : Qt::Widget`，非原生装饰再 `|= Qt::FramelessWindowHint`
+ *                （1203-1215）；unplug 期间追加 X11BypassWindowManagerHint
+ *                （1216-1221）；
+ *             ⑤ `if (!rect.isNull()) q->setGeometry(rect);`（1223-1224）
+ *                ——一次几何落位（不再拆 move+resize 两次几何事件）；
+ *             ⑥ `updateButtons()`（1226）——按钮可见性随特性/装饰形态；
+ *             ⑦ `if (!hidden) q->show();`（1228-1229）；
+ *             ⑧ `topLevelChanged` + `dockLocationChanged`（1231-1242）；
+ *             ⑨ `setResizerActive(!unplug && floating && !nativeDeco)`
+ *                （1245）——浮动态边缘改尺寸由框架装饰层的 8 向带承担
+ *                （XWindowDecoration，见 xdw_setFloatingImpl 的注释），
+ *                此处只需保证浮窗窗型不带 Frameless 抑制（无原生边框时
+ *                装饰层才会接管边缘带）。
+ *             拖出路径（useUndockedGeometry=false，对标 startDrag→unplug，
+ *             qdockwidget.cpp:1164-1170）用当前几何原地脱靠；公共入口
+ *             （true）优先恢复 undockedGeometry（qdockwidget.cpp:1464-1468）。
  * @param      self 目标停靠面板；可为 NULL。
  * @param      floating true 转浮动，false 回归停靠。
  * @param      useUndockedGeometry true 恢复保存的浮动几何（有效时）。
@@ -1174,32 +1568,45 @@ static void xdw_setFloatingImpl(XDockWidget* self, bool floating,
     XPoint globalPos;
     int w;
     int h;
-    bool wasVisible;
-    if (!self || self->m_floating == floating) return;
-    XDW_TRACE("setFloating %d (undocked=%d)", floating ? 1 : 0,
-              useUndockedGeometry ? 1 : 0);
+    bool hidden;
+    if (!self) return;
     selfw = (XWidget*)self;
     host = self->m_host;
+    /* ① 不可重停靠守卫（qdockwidget.cpp:1188-1193）：
+     *    `if (!floating && parent) { ... dockWidgetArea(q) ==
+     *     NoDockWidgetArea ⇒ return; // this dockwidget can't be redocked }`
+     *    面板已登记宿主、登记区域为 NoDockWidgetArea、且**当前不是浮动
+     *    态**时不得强行挂回（旧实现只判 host 非空，已登记但区域为 0 时
+     *    仍 setParent 挂回宿主，与 Qt 拒绝重停靠语义相反）。
+     *    `!m_floating` 是 Qt `parent` 判据的等价物：Qt 里浮动面板的
+     *    parentWidget() 恒 NULL（顶层窗），故守卫对「浮动 → 回归停靠」这
+     *    一跳天然不生效；C 的浮动位与父链是两个账本，必须显式排除浮动
+     *    态，否则公共 setFloating(false) 与 XMainWindow_addDockWidget 的
+     *    重停靠（面板刚从 removeDockWidget 摘除、区域查询归 0）都会被
+     *    这条守卫误拦，面板永远停在浮动态。 */
+    if (!floating && !self->m_floating && host &&
+        XMainWindow_dockWidgetArea((const XMainWindow*)host, selfw) ==
+            (int)XDockWidgetArea_NoDockWidgetArea)
+        return;
+    if (self->m_floating == floating) return;
+    XDW_TRACE("setFloating %d (undocked=%d)", floating ? 1 : 0,
+              useUndockedGeometry ? 1 : 0);
     /* 注意：不设「无宿主即早退」守卫——浮动态翻转与 topLevelChanged
      * 发射不依赖宿主登记（qdockwidget.cpp:1188-1193 的无可回归区守卫
-     * 由下方宿主分支跳过承载）：无宿主面板 setFloating(false) 仍须
-     * 复位 m_floating 并发射信号（回归契约，apitest D 段口径），
-     * 提前返回会同时吞掉状态翻转与信号。 */
-    /* 记录当前几何与全局位置（对标 Qt：浮动时窗口保持屏幕位置尺寸）。
+     * 由上方分支承载）：无宿主面板 setFloating(false) 仍须复位
+     * m_floating 并发射信号（回归契约，apitest D 段口径），提前返回会
+     * 同时吞掉状态翻转与信号。 */
+    /* ② 快照：当前几何/全局位置/可见性（qdockwidget.cpp:1196-1199）。
      * 必须在重设父对象前完成，子控件坐标经父链映射才有意义。
-     * [弹窗随转·逻辑全局 2026-10-22] 落位值走 xdw_logicalGlobal 的**逻
-     * 辑全局**（浮动顶层 XWidget_move 账本域；X11 平台层弹层落位门把
-     * Popup 几何按逻辑全局再施正变换，喂 mapToGlobal 的设备全局即双
-     * 重变换错位——同 XComboBox/XMenu/XDateTimeEdit 收口），不施 R：
-     * rot==0 与 mapToGlobal 逐位一致，90/270 旋转态按逻辑域落位。下方
-     * undockedGeometry 恢复分支同域（浮动态快照取自 XWidget_x/y 账本，
-     * resizeEvent 记录处，逻辑全局）。 */
+     * 落位值走 XWidget_mapToGlobal 的**设备全局**（浮动顶层几何账本
+     * 域；与跟指方程的指针全局坐标同域——跨态一致才不跳位）。rot==0
+     * 与旧的逻辑全局口径逐位一致；下方 undockedGeometry 恢复分支同域
+     * （浮动态快照取自 XWidget_x/y 账本，resizeEvent 记录处）。 */
     XPoint_init(&origin, 0, 0);
-    globalPos = xdw_logicalGlobal(selfw, &origin);
+    globalPos = XWidget_mapToGlobal(selfw, &origin);
     w = XWidget_width(selfw);
     h = XWidget_height(selfw);
-    wasVisible = XWidget_isVisible(selfw);
-    self->m_floating = floating;
+    hidden = !XWidget_isVisible(selfw); /* qdockwidget.cpp:1199 的 `hidden` 快照。 */
     /* 对标 Qt setFloating 首行的 endDrag(Abort)（qdockwidget.cpp:1461）：
      * 状态切换必须终止进行中的拖动并解除本控件持有的全局鼠标抓取——
      * 否则双击切换（press 已抓取）后抓取泄漏，后续所有窗口的鼠标事件
@@ -1209,16 +1616,29 @@ static void xdw_setFloatingImpl(XDockWidget* self, bool floating,
         XWidget_releaseMouse(selfw);
     }
     self->m_ctrlDrag = false;
+    /* ③ 先隐藏（qdockwidget.cpp:1200-1201）：子控件形态的 hide 由
+     *    XWidget_setVisible 的 hide 分支作废**父级**上该控件的原矩形
+     *    （XWidget.c 的 hide_sys 等价物），旧位像素在改窗型/换父之前
+     *    就进入宿主脏区。顶层形态的 hide 走 XWindow_setVisible 的
+     *    fbdev 腾空区恢复（XWindow.c 的 hide 恢复链）。 */
+    if (!hidden)
+        XWidget_setVisible(selfw, false);
+    self->m_floating = floating;
     if (floating) {
         /* 对标 Qt：setFloating(true) 脱离主窗布局，转成独立顶层窗口。
-         * 窗型对标 qdockwidget.cpp:1203-1222：默认标题条（无自定义条）
-         * 走原生装饰路径（Qt::Tool+WindowTitleHint+CloseButtonHint，
-         * wmSupportsNativeWindowDeco 在 Windows 恒真）——映射 Tool 窗
-         * 型（细标题条仅关闭钮，标题文本由原生标题承载）；设了自定义
-         * 标题条走 Qt::Tool|FramelessWindowHint——映射 Popup 无框窗，
-         * 自定义条继续自绘。几何来源对标 qdockwidget.cpp:1464-1468：
-         * undockedGeometry 有效（qdockwidget_p.h:88）则恢复上次浮动
-         * 几何，否则保留当前尺寸并映射到原全局位置。 */
+         * ④ 窗型（qdockwidget.cpp:1203-1222）：
+         *    `Qt::WindowFlags flags = floating ? Qt::Tool : Qt::Widget;`
+         *    nativeDeco 时补 CustomizeWindowHint|WindowTitleHint
+         *    （+Closable 时 WindowCloseButtonHint），否则
+         *    `flags |= Qt::FramelessWindowHint`；unplug 期间再追加
+         *    X11BypassWindowManagerHint（1216-1221）。
+         *    旧实现把「Tool+Frameless」降级成 Popup——Qt::Popup 是另一类
+         *    窗口（无任务栏/自动关闭/override-redirect 语义），与本面板
+         *    语义不符。几何来源对标 qdockwidget.cpp:1464-1468：
+         *    undockedGeometry 有效（qdockwidget_p.h:88）则恢复上次浮动
+         *    几何，否则保留当前尺寸并映射到原全局位置。 */
+        bool nativeDeco;
+        XWidgetFlags flags = (XWidgetFlags)XWindowType_Tool;
         if (useUndockedGeometry && self->m_undockedValid) {
             if (self->m_undockedGeometry.width > 0)
                 w = self->m_undockedGeometry.width;
@@ -1227,10 +1647,27 @@ static void xdw_setFloatingImpl(XDockWidget* self, bool floating,
             globalPos.x = self->m_undockedGeometry.x;
             globalPos.y = self->m_undockedGeometry.y;
         }
-        XWidget_setParent(selfw, NULL,
-                          (XWidgetFlags)(xdw_titleBar(self)
-                                             ? XWindowType_Popup
-                                             : XWindowType_Tool));
+        nativeDeco = xdw_nativeDeco(self);
+        if (nativeDeco) {
+            /* qdockwidget.cpp:1206-1210：原生装饰只保留标题 + 关闭钮。 */
+            flags |= (XWidgetFlags)(XWindowType_CustomizeWindowHint |
+                                    XWindowType_WindowTitleHint);
+            if (self->m_features & XDockWidgetFeature_Closable)
+                flags |= (XWidgetFlags)XWindowType_WindowCloseButtonHint;
+        } else {
+            /* qdockwidget.cpp:1212-1214：无原生装饰 ⇒ 无边框位，标题由
+             * 控件自绘（Qt::Tool|FramelessWindowHint 的同构映射）。 */
+            flags |= (XWidgetFlags)XWindowType_FramelessWindowHint;
+        }
+        /* qdockwidget.cpp:1216-1221：拖出（unplug）期间追加
+         * X11BypassWindowManagerHint，拖动结束（endDrag 落位成功或保持
+         * 浮动收口）再清除（见 xdw_endDragKeepFloating）。 */
+        if (!useUndockedGeometry)
+            flags |= (XWidgetFlags)XWindowType_BypassWindowManagerHint;
+        /* setParent(NULL, flags) 同时完成「脱离宿主」与「落窗型」：空父
+         * 即顶层（XWidget_setParent 的 m_isWindow 规则），flags 原样写入
+         * 控件侧并同步到桥接窗。 */
+        XWidget_setParent(selfw, NULL, flags);
         /* 标题同值跳过（对标 Qt QWidget::setWindowTitle 对同值标题的
          * 幂等语义）：反复浮/停切换传同一标题时不再重建平台窗口标题
          * 字符串——旧实现每轮无条件重设，驱动 XWidget 侧堆字符串整建
@@ -1244,15 +1681,22 @@ static void xdw_setFloatingImpl(XDockWidget* self, bool floating,
         }
         if (w <= 0) w = 200; /* 无宿主几何时的兜底尺寸 */
         if (h <= 0) h = 150;
-        /* 先 move 后 resize：浮动态 ResizeEvent 记录 undockedGeometry
-         * 时位置已定（见实现体 @details）。 */
-        XWidget_move(selfw, globalPos.x, globalPos.y);
-        XWidget_resize(selfw, w, h);
-        if (wasVisible) {
+        /* ⑤ 一次几何落位（qdockwidget.cpp:1223-1224 的
+         *    `q->setGeometry(rect)`）：不再拆 move+resize——两次几何事件
+         *    会让浮动态 ResizeEvent 与 MoveEvent 各跑一遍，且中间态几何
+         *    会被 undockedGeometry 快照误记。 */
+        XWidget_setGeometry(selfw, globalPos.x, globalPos.y, w, h);
+        /* ⑦ `if (!hidden) q->show();`（qdockwidget.cpp:1228-1229）：
+         *    浮动态还需提升/激活（Qt::Tool 浮窗的默认前台语义）。 */
+        if (!hidden) {
             XWidget_show(selfw);
             XWidget_raise(selfw);
             XWidget_activateWindow(selfw); /* 对标 Qt：浮动窗获得焦点 */
         }
+        /* 宿主侧旧位（面板在宿主内的停靠矩形）随浮出腾空：子控件已
+         * 脱离宿主父链，宿主后备缓冲里该区仍是面板旧像素——按合成器
+         * 语义当帧重绘（见 xdw_syncRepaintHostArea）。 */
+        xdw_syncRepaintHostArea(self);
     } else {
         /* 对标 Qt：setFloating(false) 回归停靠区，重新挂回宿主主窗口，
          * 几何交还主窗口停靠布局（随后统一重排）。无宿主登记（从未
@@ -1260,13 +1704,26 @@ static void xdw_setFloatingImpl(XDockWidget* self, bool floating,
          * 承载（见函数首注）；此时不得走 setParent(selfw, NULL, 0)，
          * 否则面板被错误转成普通顶层窗口、浮/停语义失真。 */
         if (host) {
-            XWidget_setParent(selfw, host, 0);
-            if (wasVisible) XWidget_show(selfw);
+            /* ④ 回归停靠的窗型是 Qt::Widget（qdockwidget.cpp:1203），即
+             *    普通子控件（无窗口标志位）。 */
+            XWidget_setParent(selfw, host, (XWidgetFlags)XWindowType_Widget);
+            if (!hidden) XWidget_show(selfw);
         }
     }
     if (host)
         XMainWindow_updateDockLayout((XMainWindow*)host);
+    /* 落位后同步重绘宿主（合成器语义的当帧收口，见
+     * xdw_syncRepaintHostArea 注）。浮/停两向都做：浮出时清掉宿主内的
+     * 面板旧像素，回归时把新停靠矩形画出来（该矩形由 xmw_layout 的
+     * setGeometry 异步标脏，而本次 PAINT 事件在投递时刻已把当时的
+     * m_dirty 深拷贝成快照，随后 xmw_layout 里其余面板的几何变更落在
+     * 快照之外，只能等下一拍——实测：面板已回停靠位，屏上仍是宿主
+     * 底色）。 */
+    if (host)
+        xdw_syncRepaintHostArea(self);
     XDW_TRACE("setFloating done -> %d", self->m_floating ? 1 : 0);
+    /* ⑧ `topLevelChanged` + `dockLocationChanged`（qdockwidget.cpp:1231-1242）：
+     *    两者都在 show 之后、setResizerActive 之前发射。 */
     xdw_emitBool(self, (size_t)XDockWidget_topLevelChanged_signal,
                  floating);
     /* 对标 Qt：floating 与 dockLocationChanged 在同一切换点成对发射
@@ -1296,7 +1753,12 @@ bool XDockWidget_isFloating(const XDockWidget* self)
 
 void XDockWidget_setAllowedAreas(XDockWidget* self, int areas)
 {
-    if (!self || self->m_allowedAreas == areas) return;
+    if (!self) return;
+    /* 对标 Qt（qdockwidget.cpp:1518 `areas &= Qt::DockWidgetArea_Mask`）：
+     * 只保留有效停靠区位（QDockWidgetArea 掩码 = 0xF，与本框架
+     * XDockWidgetArea_All 同值），高位垃圾不进入记账。 */
+    areas &= (int)XDockWidgetArea_All;
+    if (self->m_allowedAreas == areas) return;
     self->m_allowedAreas = areas;
     xdw_emitInt(self, (size_t)XDockWidget_allowedAreasChanged_signal,
                 areas);

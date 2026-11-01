@@ -52,6 +52,13 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include <stdio.h>
+#include "XThread.h"   /* XThread_sleep：自检相位间的抓帧静默期。 */
+#include "XCursor.h"
+#include "XWindowSystemInterface.h" /* 触摸注入（真机路径等价：触摸→合成鼠标）。 */
+#include "XWindowEvent.h"        /* XTouchPoint 触点载荷。 */
+#include "XWindow.h"             /* 浮动态顶层窗口句柄（触摸投递目标切换）。 */
+#include "XCoreApplication.h"
+#include "XSystem.h"   /* XSystem_environment：设备端拖动自检相位文件路径。 */
 #include "XObject_Protected.h"
 #include <string.h>
 #include <stdint.h>
@@ -260,6 +267,8 @@ typedef struct AdvState
 #endif
 #if ADV_MAINWIN_ON
     XMainWindow* mainWindow;           /**< 独立主窗口（演示期常驻复用）。 */
+    XDockWidget* dockRight;            /**< 独立主窗口右侧停靠面板（浮动态自检用）。 */
+    XDockWidget* dockLeft;             /**< 独立主窗口左侧停靠面板（真机自检用）。 */
 #endif
 #if ADV_LABEL_ON
     XLabel* completerStatus;           /**< 补全状态行。 */
@@ -644,6 +653,23 @@ static void adv_btnSplashSlot(XObject* receiver, XVarList* args)
 
 /* ==================== 槽：XMainWindow 独立主窗口 ================== */
 #if ADV_MAINWIN_ON
+/* 独立主窗口子类：仅重挂钩关闭事件槽实现「关闭即销毁」（对标 Qt
+ * QMainWindow 的 closeEvent(QCloseEvent*) protected 虚槽——应用侧覆写
+ * 它做关闭后的资源释放；本框架的等价位= EXWidget_CloseEvent 虚槽，
+ * 由 XWidget_close 派发）。关闭即销毁的必要性：框架驱动侧在关闭被
+ * 接受后销毁原生窗（X11 WM_DELETE 路径：hide + XWindow_destroy，
+ * XPlatformNativeWindow_posix.c），旧实例再 show 复现不出来（实测
+ * 「关闭后再点打开主窗口」毫无反应——原生窗已毁、控件却还活着）。
+ * 销毁走延迟释放（XObject_deleteLater，对标 Qt deleteLater）：避开
+ * 关闭事件派发栈上的悬垂访问。 */
+typedef struct AdvMainWindow
+{
+    XMainWindow m_base;   /**< 基类成员；必须是第一个。 */
+} AdvMainWindow;
+
+XCLASS_DEFINE_BEGING(AdvMainWindow)
+XCLASS_DEFINE_EXTEND_END(AdvMainWindow, XMainWindow)
+
 /** @brief 菜单动作反馈（对标 QMenu 触发路径）。 */
 static void adv_mwOpenActionSlot(XObject* receiver, XVarList* args)
 {
@@ -659,6 +685,49 @@ static void adv_mwExitActionSlot(XObject* receiver, XVarList* args)
     if (receiver)
         XWidget_hide((XWidget*)receiver);
     adv_status("XMainWindow: 菜单动作 退出(X) 触发（窗口隐藏）");
+}
+
+/** @brief 关闭事件槽：接受关闭并销毁本窗口对象（关闭即销毁，下次重建）。
+ * @details 关闭被接受后先摘全局登记（避免下次「打开主窗口」复现已死
+ *          实例），再延迟释放对象（XObject_deleteLater 对标 Qt
+ *          deleteLater：避开关闭事件派发栈）。对象析构级联释放菜单/
+ *          停靠面板/中央标签（均为子控件）。
+ * @param  self 目标控件。
+ * @param  event 关闭事件。
+ * @return 无返回值。
+ */
+static void VAdvMainWindow_closeEvent(XWidget* self, XEvent* event)
+{
+    XClass_Parent(XMainWindow, EXWidget_CloseEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+    if (s_adv.mainWindow == (XMainWindow*)self)
+        s_adv.mainWindow = NULL;
+    XObject_deleteLater((XObject*)self);
+    XEvent_accept(event);
+}
+
+/** @brief 独立主窗口子类虚表：仅重载关闭事件槽。 */
+static XVtable* AdvMainWindow_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(AdvMainWindow)
+    XVTABLE_INHERIT_XCLASS(XMainWindow);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_CloseEvent,
+                             VAdvMainWindow_closeEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 创建独立主窗口对象并套用子类虚表（堆对象，父链级联析构）。 */
+static XMainWindow* AdvMainWindow_create(XWidget* parent)
+{
+    AdvMainWindow* self = (AdvMainWindow*)XMemory_malloc(
+        sizeof(AdvMainWindow), XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!self) return NULL;
+    memset(self, 0, sizeof(AdvMainWindow));
+    XMainWindow_init(&self->m_base, parent, (XWidgetFlags)XWindowType_Window);
+    XClassSetVtable(self, AdvMainWindow);
+    Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(self, true);
+    return &self->m_base;
 }
 
 /** @brief 惰性创建演示主窗口：菜单栏 + 菜单、中央标签、左右停靠面板。
@@ -682,10 +751,16 @@ static void adv_ensureMainWindow(void)
     XLabel* leftContent;
     XLabel* rightContent;
 
-    if (s_adv.mainWindow) return;
-    s_adv.mainWindow = XMainWindow_create(
-        (XWidget*)XWidget_topLevelWidget((XWidget*)s_adv.page),
-        (XWidgetFlags)XWindowType_Window);
+    if (s_adv.mainWindow) {
+        /* 活实例复用（对标 Qt：同一实例可反复 show/hide）。已关闭的
+         * 陈旧实例（原生窗已在关闭路径被销毁）必须销毁后重建——留着
+         * 只会「点开毫无反应」。 */
+        if (XWidget_isVisible((XWidget*)s_adv.mainWindow)) return;
+        XClassDelete((XClass*)s_adv.mainWindow);
+        s_adv.mainWindow = NULL;
+    }
+    s_adv.mainWindow = AdvMainWindow_create(
+        (XWidget*)XWidget_topLevelWidget((XWidget*)s_adv.page));
     if (!s_adv.mainWindow) return;
     XWidget_resize((XWidget*)s_adv.mainWindow, 560, 420);
     {
@@ -748,6 +823,8 @@ static void adv_ensureMainWindow(void)
         XDockWidget_setWidget(dockRight, (XWidget*)rightContent);
         XMainWindow_addDockWidget(s_adv.mainWindow, XDockWidgetArea_Right,
                                   (XWidget*)dockRight);
+        s_adv.dockRight = dockRight;
+        s_adv.dockLeft = dockLeft;
     }
 }
 
@@ -777,7 +854,7 @@ static void adv_btnMainWindowSlot(XObject* receiver, XVarList* args)
     }
     XWidget_show((XWidget*)s_adv.mainWindow);
     XWidget_activateWindow((XWidget*)s_adv.mainWindow);
-    adv_status("XMainWindow: 独立主窗口已显示（重复点击复用实例）");
+    adv_status("XMainWindow: 独立主窗口已显示（关闭后销毁，下次重建）");
 }
 #endif /* ADV_MAINWIN_ON */
 
@@ -1668,14 +1745,617 @@ int demo_page_advanced_autotest(XWidget* page)
             ADV_EXPECT(dockLeft && XDockWidget_widget(dockLeft) ==
                        (XWidget*)leftContent,
                        "XDockWidget 内容控件 getter 一致");
+
+            /* ---- 7b. 浮动拖动跟指：停靠面板拖出成浮动态，面板原点 =
+             *       指针全局坐标 − 抓取偏移（对标 Qt QDockWidget::
+             *       startDrag 的 dragOffset 语义）。合成事件按平台后端
+             *       口径投递全局坐标（XMouseEvent_setGlobalPosition）；
+             *       移动事件的**局部坐标刻意给陈旧值**——真机复现的正是
+             *       「脱靠后事件局部坐标仍停留在旧宿主窗坐标系」那条路径
+             *       （桌面端跟指跑飞根因：旧实现把局部坐标加面板原点、
+             *       每步再叠一次面板原点，位置逐事件放大数百倍飞出屏幕）。
+             *       断言浮动态原点=停靠原点+指针位移，且不受陈旧局部
+             *       坐标影响。 ---- */
+            if (dockRight) {
+                XPoint zero;
+                XPoint origin;
+                XPoint pressGlobal;
+                XPoint moveGlobal;
+                XPoint pressLocal;
+                XPoint moveLocal;
+                XMouseEvent me;
+                XPoint_init(&zero, 0, 0);
+                origin = XWidget_mapToGlobal((XWidget*)dockRight, &zero);
+                /* 按下：面板标题条内（面板局部 x=70 命中标题条带）。 */
+                XPoint_init(&pressLocal, 70, 0);
+                XPoint_init(&pressGlobal, origin.x + 70, origin.y);
+                XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                                 XMouseButton_LeftButton,
+                                 XKeyboardModifier_NoModifier, pressLocal);
+                XMouseEvent_setGlobalPosition(&me, &pressGlobal);
+                XObject_event_base((XObject*)dockRight, (XEvent*)&me);
+                /* 移动：指针位移 (+40,+30)；局部坐标给**陈旧值**（旧宿主
+                 * 窗口系的坐标——真机上脱靠后正是这样失效的），跟指必须
+                 * 只吃全局坐标。 */
+                /* 位移 (+300,+500)：落点在宿主主窗之外——释放点若落在
+                 * 宿主内，Qt 语义是「拖回停靠」（XMainWindow_finishDrop
+                 * 落位），面板会被重新停靠而非保持浮动。 */
+                XPoint_init(&moveLocal, origin.x + 370, origin.y + 500);
+                XPoint_init(&moveGlobal, pressGlobal.x + 300,
+                            pressGlobal.y + 500);
+                XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_MOVE,
+                                 XMouseButton_NoButton,
+                                 XKeyboardModifier_NoModifier, moveLocal);
+                XMouseEvent_setGlobalPosition(&me, &moveGlobal);
+                XMouseEvent_setButtons(&me, XMouseButton_LeftButton);
+                XObject_event_base((XObject*)dockRight, (XEvent*)&me);
+                /* 释放：结束拖动（解鼠标抓取）。 */
+                XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                                 XMouseButton_LeftButton,
+                                 XKeyboardModifier_NoModifier, moveLocal);
+                XMouseEvent_setGlobalPosition(&me, &moveGlobal);
+                XObject_event_base((XObject*)dockRight, (XEvent*)&me);
+                {
+                    XPoint now;
+                    XPoint_init(&zero, 0, 0);
+                    now = XWidget_mapToGlobal((XWidget*)dockRight, &zero);
+                    ADV_EXPECT(XDockWidget_isFloating(dockRight),
+                               "XDockWidget 拖出后转浮动态");
+                    ADV_EXPECT(XDockWidget_isFloating(dockRight) &&
+                               now.x == origin.x + 300 && now.y == origin.y + 500,
+                               "XDockWidget 浮动态原点=停靠原点+指针位移"
+                               "（全局坐标跟指，不受陈旧局部坐标影响）");
+                    /* 复位：回归停靠（随主窗级联销毁，不留顶层实例）。 */
+                    if (XDockWidget_isFloating(dockRight))
+                        XDockWidget_setFloating(dockRight, false);
+                }
+            }
+
             XClassDelete(win); /* 级联销毁菜单/停靠/标签 */
         }
     }
+
 #endif /* ADV_MAINWIN_ON */
+
 
 #undef ADV_EXPECT
     XPrintf("XGuiAutoTest: %s\n", failures == 0 ? "PASS" : "FAIL");
     return failures;
+}
+
+
+/**
+ * @brief 抽事件若干轮（每轮之间小睡：限频重绘的补投定时器需到期才上屏）。
+ * @details 框架重绘受 XGUI_REPAINT_MAX_FPS 限频，超窗的绘制请求走补投
+ *          定时器延后投递 ⇒ 只抽一次事件不够，必须「抽事件 + 小睡」多轮
+ *          让补投到期，屏幕才是最新态。
+ * @param rounds 抽事件轮数。
+ * @param msleepMs 每轮之间休眠毫秒数。
+ * @return 无返回值。
+ */
+static void adv_probePump(int rounds, uint32_t msleepMs)
+{
+    int k;
+    for (k = 0; k < rounds; ++k)
+    {
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        XThread_msleep(msleepMs);
+    }
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+}
+
+/**
+ * @brief 写相位标记文件（屏外抓帧器的同步点）。
+ * @param phase 相位文件路径。
+ * @param value 相位值（1=停靠态 / 2=跟手拖动中 / 3=松手后 / 4=强制重绘
+ *             基准帧 / 5=光标走位后）。
+ * @return 无返回值。
+ */
+static void adv_probePhase(const char* phase, int value)
+{
+    FILE* pf = fopen(phase, "w");
+    if (pf) { fprintf(pf, "%d\n", value); fclose(pf); }
+}
+
+/**
+ * @brief 往几何文件追加一行（让位区/宿主/面板矩形，供屏外逐像素量化）。
+ * @param geomPath 几何文件路径。
+ * @param tag 行首标签。
+ * @param x 左。
+ * @param y 上。
+ * @param w 宽。
+ * @param h 高。
+ * @return 无返回值。
+ */
+static void adv_probeGeom(const char* geomPath, const char* tag, int x,
+                          int y, int w, int h)
+{
+    FILE* gf = fopen(geomPath, "a");
+    if (gf)
+    {
+        fprintf(gf, "%s %d %d %d %d\n", tag ? tag : "", x, y, w, h);
+        fclose(gf);
+    }
+}
+
+/**
+ * @brief 可见浮动态拖动自检（设备端残影量化；独立轻量路径）。
+ * @details 用真实主窗 + 真实右侧停靠面板做一次「脱靠 + 跟手拖动」，并写
+ *          相位标记文件：1=停靠态（拖动前基准）、2=跟手拖动中、3=松手后、
+ *          4=强制宿主整窗重绘（让位区「应有内容」基准帧）、5=光标走位后。
+ *          屏外用 fbsnap 抓帧，比对「让位区＝旧停靠位矩形」在相位 2/3 与
+ *          相位 4 的逐像素差异——判据与离屏回归锁 XGuiDockDrag_Test 同款
+ *          （相位 2/3 必须当场呈现宿主当前内容，不能等宿主被别的路径重绘
+ *          才补上）。无需触摸注入（设备无 /dev/uinput，注入器不可用）。
+ *          独立于 autotest（设备内存余量极小，autotest 多窗叠加会触发
+ *          OOM kill）。
+ * @param phase 相位标记文件路径；为空则不执行。
+ * @return 实际执行了拖动返回 true；否则 false。
+ */
+/** @brief 触摸投递目标：手指落在哪个顶层窗口上（停靠态=宿主窗；脱靠成
+ *         浮动态后=浮动面板自身——真机口径：触摸按坐标命中顶层窗投递）。 */
+static XWindow* adv_probeTouchTarget(XMainWindow* host, XDockWidget* dock)
+{
+    if (dock && XDockWidget_isFloating(dock))
+    {
+        XWindow* w = (XWindow*)XWidget_windowHandle((XWidget*)dock);
+        if (w) return w;
+    }
+    return host ? (XWindow*)XWidget_windowHandle((XWidget*)host) : NULL;
+}
+
+/** @brief 注入一帧触摸（设备全局坐标 → 目标窗局部坐标）。 */
+static void adv_probeTouch(XWindow* win, int devX, int devY, int state,
+                            XEventType type)
+{
+    XTouchPoint p;
+    XRect wg;
+    if (!win) return;
+    wg = XWindow_geometry(win);
+    p.m_id = 1;
+    p.m_state = state;
+    p.m_position.x = (short)(devX - wg.x);
+    p.m_position.y = (short)(devY - wg.y);
+    p.m_globalPosition = p.m_position;
+    p.m_pressure = 1.0f;
+    XWindowSystemInterface_handleTouchPoints_ex(win, type, &p, 1, 0);
+}
+
+static int adv_probeDragImpl(const char* phase, int useTouch)
+{
+#if ADV_MAINWIN_ON
+    XMouseEvent me;
+    XPoint p;
+    XPoint zero;
+    XPoint g0;
+    XPoint dockOrigin;
+    char gp[512];
+    int i;
+    XMainWindow* host = NULL;
+    XDockWidget* dock = NULL;
+    XLabel* central = NULL;
+    XLabel* content = NULL;
+    int pressDevX = 0;
+    int pressDevY = 0;
+    if (!phase || !phase[0]) return false;
+    XPoint_init(&zero, 0, 0);
+    /* [真机复验 2026-10-31] 探针自建**顶层**宿主主窗（parent=NULL）：
+     * 与离屏回归锁 XGuiDockDrag_Test 同构（宿主=顶层窗 ⇒ 脱靠前面板的
+     * 像素在宿主自己的后备缓冲里 ⇒ 面板离位时让位区归位只能搬回**旧
+     * 快照** = 残留成因）。demo 页的「打开主窗口」是顶层窗的**子窗口**
+     * （XWindowType_Window 子控件）：宿主重排会把让位区连同中央控件
+     * 一起重画 ⇒ 真机上让位区当场被补画，修复前/修复后逐像素一致，
+     * 根本复现不出残留（已实测：两版二进制同帧同像素）。 */
+    /* [真机复验 2026-10-31] 隐藏 demo 自己的顶层窗：让位区归位按「每个
+     * **可见**顶层的后备缓冲」逐个直搬（XWindowDecoration.c
+     * xwd_restoreExposeStrips 遍历 XGuiApplication_topLevelWindows）⇒
+     * demo 的全屏顶层也覆盖让位区，它后备缓冲里是 demo 页面底图（与宿主
+     * 底色同色）⇒ 修复前面板的旧像素被这层底图盖掉，真机复现不出残留。
+     * 隐藏它＝回到「单顶层应用」的真实场景（离屏回归锁 XGuiDockDrag_Test
+     * 同款：宿主是唯一顶层）。探针收尾再显示回来。 */
+    {
+        XWidget* demoTop = XWidget_topLevelWidget((XWidget*)s_adv.page);
+        if (demoTop)
+            XWidget_hide(demoTop);
+    }
+    host = XMainWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL,
+                                 (XWidgetFlags)XWindowType_Window);
+    if (!host) return false;
+    XWidget_setGeometry((XWidget*)host, 232, 90, 560, 420);
+    central = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)host, 0);
+    if (central) {
+        XLabel_setText_2(central, "中央显示区（XLabel）");
+        XMainWindow_setCentralWidget(host, (XWidget*)central);
+    }
+    dock = XDockWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "停靠-右",
+                                 (XWidget*)host, 0);
+    if (dock) {
+        content = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                   (XWidget*)dock, 0);
+        if (content)
+            XLabel_setText_2(content, "右面板内容（可拖出浮动）");
+        XDockWidget_setWidget(dock, (XWidget*)content);
+        XMainWindow_addDockWidget(host, XDockWidgetArea_Right,
+                                  (XWidget*)dock);
+    }
+    if (!dock) return false;
+    XWidget_show((XWidget*)host);
+    XWidget_update((XWidget*)host);
+    /* [真机复验 2026-10-31] 探针跑在事件循环**之前**：不主动抽事件则窗口
+     * 从未绘制（相位 1 抓到的还是 demo 页面底图，停靠面板根本没上屏 ⇒
+     * 让位区无从比对）。抽事件 + 小睡若干轮让限频重绘真正落到屏上。 */
+    adv_probePump(8, 100);
+    /* 让位区（旧停靠位矩形，设备全局坐标）与宿主矩形落盘：屏外按此矩形
+     * 做逐像素量化，不再靠肉眼估位。 */
+    snprintf(gp, sizeof(gp), "%s.geom", phase);
+    {
+        FILE* gf = fopen(gp, "w");
+        if (gf) fclose(gf);
+    }
+    g0 = XWidget_mapToGlobal((XWidget*)dock, &zero);
+    dockOrigin = g0;
+    adv_probeGeom(gp, "dockOld", g0.x, g0.y,
+                  XWidget_width((XWidget*)dock),
+                  XWidget_height((XWidget*)dock));
+    g0 = XWidget_mapToGlobal((XWidget*)host, &zero);
+    adv_probeGeom(gp, "host", g0.x, g0.y,
+                  XWidget_width((XWidget*)host),
+                  XWidget_height((XWidget*)host));
+    /* 相位 1 = 停靠态（拖动前基准帧）。 */
+    adv_probePhase(phase, 1);
+    XThread_sleep(2); /* 给屏外抓帧留窗口（相位 1 → 相位 2）。 */
+    /* 与真机操作同路径：按**停靠态**面板的自绘标题条 → 移动（越过阈值
+     * 即脱靠成浮动态）→ 继续跟手移动 → 抬起。浮动态面板走 CSD 装饰、
+     * 没有自绘标题条，故必须从停靠态起手（先前探针「先浮动再按」根本
+     * 落不到停靠面板的 mousePressEvent ⇒ 合成拖动从未生效）。
+     * 位移刻意取「水平向左出宿主」：①释放点落在宿主停靠区外 ⇒ 不触发
+     * 回停靠，宿主布局在相位 2/3/4 三帧保持一致（基准帧可比）；②拖动
+     * 途中指针不落在停靠区内 ⇒ 无落点指示器像素干扰比对。 */
+    /* 按下点取**停靠面板**标题条（面板全局原点 + 面板内 (70,4)）——不是
+     * 宿主原点：宿主原点 + (70,4) 落在中央控件上，触摸命中中央控件 ⇒
+     * 合成 press 到不了停靠面板 ⇒ 拖动根本不起步（探针自身坐标错，
+     * 2026-10-31 真机复验修正）。 */
+    pressDevX = dockOrigin.x + 70;
+    pressDevY = dockOrigin.y + 4;
+    if (useTouch) {
+        /* 真机路径等价：注入触摸帧 → 框架手势状态机合成左键 press →
+         * 命中派发（与真人手指完全同链，含 CSD 条带拦截）。 */
+        adv_probeTouch(adv_probeTouchTarget(host, dock), pressDevX, pressDevY,
+                       XTOUCHPOINT_STATE_PRESSED, XEVENT_TYPE_TOUCH_BEGIN);
+        /* 触摸帧走「自发事件投递」= 入队派发（真机 fbinput 同一路径）：
+         * 不抽事件则整帧滞留队列 ⇒ 合成 press 永不发生 ⇒ 拖动不起步。 */
+        adv_probePump(1, 0);
+    } else {
+    XPoint_init(&p, 70, 4);
+    XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                     XMouseButton_LeftButton, XKeyboardModifier_NoModifier, p);
+    XMouseEvent_setButtons(&me, XMouseButton_LeftButton);
+    XObject_event_base((XObject*)dock, (XEvent*)&me);
+    }
+    for (i = 1; i <= 8; ++i) {
+        if (useTouch) {
+            adv_probeTouch(adv_probeTouchTarget(host, dock),
+                           pressDevX + i * 5, pressDevY + i,
+                           XTOUCHPOINT_STATE_UPDATED, XEVENT_TYPE_TOUCH_UPDATE);
+            adv_probePump(1, 0);
+        } else {
+        XPoint_init(&p, 70 + i * 5, 4 + i);
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_MOVE, XMouseButton_NoButton,
+                         XKeyboardModifier_NoModifier, p);
+        XMouseEvent_setButtons(&me, XMouseButton_LeftButton);
+        XObject_event_base((XObject*)dock, (XEvent*)&me);
+        }
+        /* [真机复验 2026-10-31] 步间只**睡**不抽事件：①跟指有 16ms
+         * 移动压缩（XDockWidget.c「距上次跟随 <16ms 直接丢弃」），步间
+         * 必须 ≥16ms 否则中间位置被丢弃；②不抽事件 ⇒ 宿主重排的绘制
+         * 事件在拖动期间不落地，归属顶层后备缓冲仍是旧快照 ⇒ 面板离位
+         * 时让位区归位只能搬回**旧像素**（残留成因，与真人拖动一致：
+         * 指针快、宿主重排还没来得及落屏）。离屏回归锁 XGuiDockDrag_Test
+         * 同款手法（步间 XThread_sleep(24) + 移动后 processEvents）。 */
+        XThread_msleep(24);
+    }
+    g0 = XWidget_mapToGlobal((XWidget*)dock, &zero);
+    adv_probeGeom(gp, "panelAfterDrag", g0.x, g0.y,
+                  XWidget_width((XWidget*)dock),
+                  XWidget_height((XWidget*)dock));
+    adv_probeGeom(gp, "floatingAfterDrag",
+                  XDockWidget_isFloating(dock) ? 1 : 0, 0, 0, 0);
+    adv_probeGeom(gp, "draggingAfterDrag", dock->m_dragging, 0, 0, 0);
+    /* 相位 2 = 面板刚离位（鼠标仍按下、宿主重排尚未上屏）：让位区必须
+     * 当场已是宿主当前内容（不得留旧面板像素）。此刻不抽事件 ⇒ 屏面冻结
+     * 在离位瞬间，屏外抓到的就是「离位后第一刻」。 */
+    adv_probePhase(phase, 2);
+    XThread_sleep(2); /* 给屏外抓帧留窗口（相位 2 → 相位 3）。 */
+    /* 相位 3 = 拖动中、宿主重排已上屏（抽事件后）：让位区仍须是宿主内容。 */
+    adv_probePump(8, 100);
+    adv_probePhase(phase, 3);
+    XThread_sleep(2); /* 给屏外抓帧留窗口（相位 3 → 相位 4）。 */
+    /* 松手：释放点落在宿主停靠区外 ⇒ 面板保持浮动态（宿主布局不变）。 */
+    if (useTouch) {
+        adv_probeTouch(adv_probeTouchTarget(host, dock),
+                       pressDevX + 8 * 5, pressDevY + 8,
+                       XTOUCHPOINT_STATE_RELEASED, XEVENT_TYPE_TOUCH_END);
+        adv_probePump(1, 0);
+    } else {
+    XPoint_init(&p, 70 + 8 * 5, 4 + 8);
+    XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                     XMouseButton_LeftButton, XKeyboardModifier_NoModifier, p);
+    XMouseEvent_setButtons(&me, XMouseButton_NoButton);
+    XObject_event_base((XObject*)dock, (XEvent*)&me);
+    }
+    adv_probePump(4, 100);
+    g0 = XWidget_mapToGlobal((XWidget*)dock, &zero);
+    adv_probeGeom(gp, "panelAfterRelease", g0.x, g0.y,
+                  XWidget_width((XWidget*)dock),
+                  XWidget_height((XWidget*)dock));
+    adv_probeGeom(gp, "floatingAfterRelease",
+                  XDockWidget_isFloating(dock) ? 1 : 0, 0, 0, 0);
+    /* 相位 4 = 松手后（用户症状「脱手也没重新渲染」）。 */
+    adv_probePhase(phase, 4);
+    XThread_sleep(2); /* 给屏外抓帧留窗口（相位 4 → 相位 5）。 */
+    /* 相位 5 = 强制宿主整窗重绘：得到「让位区应有的内容」基准帧（离屏
+     * 回归锁 XGuiDockDrag_Test 同款基准帧：强制宿主整窗重绘后的让位区
+     * 内容 = 宿主当前内容）。 */
+    XWidget_repaint((XWidget*)host);
+    adv_probePump(8, 100);
+    adv_probePhase(phase, 5);
+    XThread_sleep(2); /* 给屏外抓帧留窗口（相位 5 → 相位 6）。 */
+    /* [残留自检] 程序化移动软件光标走一条路径——fbdev 无触摸注入依赖，
+     * 光标移动即触发「精灵原位搬运」链；屏外抓帧比对路径上是否留下
+     * 光标鬼影（多箭头残留 = 旧位未还原/被跨缓冲翻页带出）。
+     * 相位 5 = 光标走完路径（屏外此刻抓帧）。 */
+    {
+        int k;
+        for (k = 0; k < 12; ++k) {
+            XCursor_setPos(300 + k * 20, 200 + k * 12);
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+        }
+        for (k = 11; k >= 0; --k) {
+            XCursor_setPos(300 + k * 20, 200 + k * 12);
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+        }
+        XCursor_setPos(300, 200);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        adv_probePhase(phase, 6);
+    }
+    /* 探针宿主收尾：销毁顶层窗（连带中央控件/停靠面板/浮动窗）。 */
+    XClassDelete((XClass*)host);
+    {
+        XWidget* demoTop = XWidget_topLevelWidget((XWidget*)s_adv.page);
+        if (demoTop)
+            XWidget_show(demoTop);
+    }
+    return true;
+#else
+    (void)phase;
+    (void)useTouch;
+    return false;
+#endif /* ADV_MAINWIN_ON */
+}
+
+/** @brief 真机拖动自检（鼠标直投路径；历史行为，保留）。 */
+int demo_page_advanced_probeDrag(const char* phase)
+{
+    return adv_probeDragImpl(phase, 0);
+}
+
+/** @brief 真机拖动自检（**触摸**路径：注入触摸帧 → 框架手势状态机合成
+ *         左键 → 命中派发，与真人手指同链，含 fbdev 框架自绘 CSD 标题
+ *         条带的事件拦截）。 */
+int demo_page_advanced_probeDragTouch(const char* phase)
+{
+    return adv_probeDragImpl(phase, 1);
+}
+
+/** @brief 真机内存自检：反复「拖出右面板 → 拖回」N 轮，每轮打印本进程
+ *         RSS（/proc/self/status）与窗口数，定位「拖几次后卡死」是否内存
+ *         累积（昆仑通态 54MB 小板：demo 基线已 ~15MB，几 MB 泄漏即 OOM
+ *         kill ⇒ 现象=进程被杀=屏黑=用户侧「卡死」）。 */
+int demo_page_advanced_probeDragMem(const char* phase, int rounds)
+{
+#if ADV_MAINWIN_ON
+    XMainWindow* host = NULL;
+    XDockWidget* dock = NULL;
+    XPoint zero;
+    XPoint g0;
+    int pressDevX;
+    int pressDevY;
+    int round;
+    if (!phase || !phase[0] || rounds <= 0) return false;
+    XPoint_init(&zero, 0, 0);
+    adv_ensureMainWindow();
+    host = s_adv.mainWindow;
+    dock = s_adv.dockRight;
+    if (!host || !dock) return false;
+    XWidget_show((XWidget*)host);
+    XWidget_update((XWidget*)host);
+    adv_probePump(8, 100);
+    for (round = 1; round <= rounds; ++round)
+    {
+        int step;
+        XWindow* w;
+        g0 = XWidget_mapToGlobal((XWidget*)dock, &zero);
+        pressDevX = g0.x + 40;
+        pressDevY = g0.y + 4;
+        w = (XWindow*)XWidget_windowHandle((XWidget*)host);
+        adv_probeTouch(w, pressDevX, pressDevY, XTOUCHPOINT_STATE_PRESSED,
+                       XEVENT_TYPE_TOUCH_BEGIN);
+        adv_probePump(1, 0);
+        for (step = 1; step <= 4; ++step)
+        {
+            XThread_msleep(24);
+            w = XDockWidget_isFloating(dock)
+                    ? (XWindow*)XWidget_windowHandle((XWidget*)dock)
+                    : (XWindow*)XWidget_windowHandle((XWidget*)host);
+            adv_probeTouch(w, pressDevX + step * 20, pressDevY + step * 2,
+                           XTOUCHPOINT_STATE_UPDATED,
+                           XEVENT_TYPE_TOUCH_UPDATE);
+            adv_probePump(1, 0);
+        }
+        w = XDockWidget_isFloating(dock)
+                ? (XWindow*)XWidget_windowHandle((XWidget*)dock)
+                : (XWindow*)XWidget_windowHandle((XWidget*)host);
+        adv_probeTouch(w, pressDevX + 4 * 20, pressDevY + 4 * 2,
+                       XTOUCHPOINT_STATE_RELEASED, XEVENT_TYPE_TOUCH_END);
+        adv_probePump(2, 0);
+        /* 拖回：面板已浮动态，从浮动面板的 CSD 标题条按住拖回宿主停靠区。
+         * （探针注：浮动面板的 CSD 条带由装饰接管，指针拖不回停靠区，
+         *   故本探针的「出→回」循环靠**释放点落在宿主停靠区**实现回停靠：
+         *   拖出距离取 4×20=80，释放点 = 停靠位右移 120 ⇒ 落在宿主右侧
+         *   停靠区（最右 160px）⇒ finishDrop 回停靠 ⇒ 下一轮从停靠态起手，
+         *   构成与真人一致的「出→回→出→回」循环。） */
+        if (0 && XDockWidget_isFloating(dock))
+        {
+            g0 = XWidget_mapToGlobal((XWidget*)dock, &zero);
+            pressDevX = g0.x + 40;
+            pressDevY = g0.y + 4;
+            w = (XWindow*)XWidget_windowHandle((XWidget*)dock);
+            adv_probeTouch(w, pressDevX, pressDevY, XTOUCHPOINT_STATE_PRESSED,
+                           XEVENT_TYPE_TOUCH_BEGIN);
+            adv_probePump(1, 0);
+            for (step = 1; step <= 4; ++step)
+            {
+                XThread_msleep(24);
+                w = (XWindow*)XWidget_windowHandle((XWidget*)dock);
+                adv_probeTouch(w, pressDevX - step * 30, pressDevY + step * 2,
+                               XTOUCHPOINT_STATE_UPDATED,
+                               XEVENT_TYPE_TOUCH_UPDATE);
+                adv_probePump(1, 0);
+            }
+            w = (XWindow*)XWidget_windowHandle((XWidget*)dock);
+            adv_probeTouch(w, pressDevX - 4 * 30, pressDevY + 4 * 2,
+                           XTOUCHPOINT_STATE_RELEASED, XEVENT_TYPE_TOUCH_END);
+            adv_probePump(2, 0);
+        }
+        {
+            FILE* sf = fopen("/proc/self/status", "r");
+            char line[256];
+            long rss = 0;
+            long vsz = 0;
+            if (sf) {
+                while (fgets(line, (int)sizeof(line), sf)) {
+                    if (strncmp(line, "VmRSS:", 6) == 0)
+                        sscanf(line + 6, "%ld", &rss);
+                    else if (strncmp(line, "VmSize:", 7) == 0)
+                        sscanf(line + 7, "%ld", &vsz);
+                }
+                fclose(sf);
+            }
+            XPrintf("[MEM] round=%d rss=%ldkB vsz=%ldkB floating=%d "
+                    "drag=%d\n", round, rss, vsz,
+                    XDockWidget_isFloating(dock) ? 1 : 0, dock->m_dragging);
+        }
+        adv_probePump(4, 50);
+    }
+    return true;
+#else
+    (void)phase; (void)rounds;
+    return false;
+#endif /* ADV_MAINWIN_ON */
+}
+
+/** @brief 真机拖动自检（**demo 真实主窗 + 真实面板**场景）：用「打开主窗
+ *         口」那条路径创建的独立主窗（宿主=演示主窗的**子窗口**，带菜单
+ *         栏、中央标签、左右两个真实停靠面板），触摸路径把**右侧**面板
+ *         拖出浮动态，落盘两面板/菜单栏/宿主的几何，供屏外逐像素比对与
+ *         几何核对（用户现场症状：另一侧面板标题条被拉成整宽、压住菜单
+ *         栏；拖动后旧位留画面）。
+ *  @note  与 probeDragTouch 的差别：后者自建顶层宿主（离屏锁同构），本
+ *         函数用 demo 真实场景（子窗口宿主 + 菜单栏 + 双面板）。 */
+int demo_page_advanced_probeDragReal(const char* phase)
+{
+#if ADV_MAINWIN_ON
+    XMainWindow* host = NULL;
+    XDockWidget* dock = NULL;
+    XDockWidget* left = NULL;
+    XPoint zero;
+    XPoint g0;
+    XRect mg;
+    char gp[512];
+    int pressDevX;
+    int pressDevY;
+    int step;
+    XWindow* target;
+    if (!phase || !phase[0]) return false;
+    XPoint_init(&zero, 0, 0);
+    adv_ensureMainWindow();
+    host = s_adv.mainWindow;
+    dock = s_adv.dockRight;
+    left = s_adv.dockLeft;
+    if (!host || !dock) return false;
+    XWidget_show((XWidget*)host);
+    XWidget_update((XWidget*)host);
+    adv_probePump(8, 100);
+    snprintf(gp, sizeof(gp), "%s.geom", phase);
+    g0 = XWidget_mapToGlobal((XWidget*)dock, &zero);
+    adv_probeGeom(gp, "dockOld", g0.x, g0.y, XWidget_width((XWidget*)dock),
+                  XWidget_height((XWidget*)dock));
+    if (left)
+    {
+        g0 = XWidget_mapToGlobal((XWidget*)left, &zero);
+        adv_probeGeom(gp, "leftOld", g0.x, g0.y, XWidget_width((XWidget*)left),
+                      XWidget_height((XWidget*)left));
+    }
+    g0 = XWidget_mapToGlobal((XWidget*)host, &zero);
+    adv_probeGeom(gp, "host", g0.x, g0.y, XWidget_width((XWidget*)host),
+                  XWidget_height((XWidget*)host));
+    mg = XWidget_geometry((XWidget*)XMainWindow_menuBar(host));
+    adv_probeGeom(gp, "menuBar", mg.x, mg.y, mg.width, mg.height);
+    adv_probePhase(phase, 1);
+    XThread_sleep(2);
+    /* 触摸拖出右侧面板（脱靠后手指落在浮动面板自身 ⇒ 投递目标切换）。 */
+    pressDevX = g0.x + 0; /* 占位，下面按面板原点重算 */
+    pressDevX = XWidget_mapToGlobal((XWidget*)dock, &zero).x + 40;
+    pressDevY = XWidget_mapToGlobal((XWidget*)dock, &zero).y + 4;
+    target = (XWindow*)XWidget_windowHandle((XWidget*)host);
+    adv_probeTouch(target, pressDevX, pressDevY, XTOUCHPOINT_STATE_PRESSED,
+                   XEVENT_TYPE_TOUCH_BEGIN);
+    adv_probePump(1, 0);
+    for (step = 1; step <= 6; ++step)
+    {
+        XWindow* w;
+        XThread_msleep(24);
+        w = XDockWidget_isFloating(dock)
+                ? (XWindow*)XWidget_windowHandle((XWidget*)dock)
+                : (XWindow*)XWidget_windowHandle((XWidget*)host);
+        adv_probeTouch(w, pressDevX + step * 30, pressDevY + step * 2,
+                       XTOUCHPOINT_STATE_UPDATED, XEVENT_TYPE_TOUCH_UPDATE);
+        adv_probePump(1, 0);
+    }
+    {
+        XWindow* w = XDockWidget_isFloating(dock)
+                         ? (XWindow*)XWidget_windowHandle((XWidget*)dock)
+                         : (XWindow*)XWidget_windowHandle((XWidget*)host);
+        adv_probeTouch(w, pressDevX + 6 * 30, pressDevY + 6 * 2,
+                       XTOUCHPOINT_STATE_RELEASED, XEVENT_TYPE_TOUCH_END);
+        adv_probePump(1, 0);
+    }
+    g0 = XWidget_mapToGlobal((XWidget*)dock, &zero);
+    adv_probeGeom(gp, "panelAfterDrag", g0.x, g0.y,
+                  XWidget_width((XWidget*)dock), XWidget_height((XWidget*)dock));
+    adv_probeGeom(gp, "floatingAfterDrag",
+                  XDockWidget_isFloating(dock) ? 1 : 0, 0, 0, 0);
+    adv_probeGeom(gp, "draggingAfterDrag", dock->m_dragging, 0, 0, 0);
+    if (left)
+    {
+        g0 = XWidget_mapToGlobal((XWidget*)left, &zero);
+        adv_probeGeom(gp, "leftAfter", g0.x, g0.y, XWidget_width((XWidget*)left),
+                      XWidget_height((XWidget*)left));
+    }
+    adv_probePhase(phase, 2);
+    XThread_sleep(2);
+    adv_probePump(8, 100);
+    adv_probePhase(phase, 3);
+    XThread_sleep(2);
+    XWidget_repaint((XWidget*)host);
+    adv_probePump(8, 100);
+    adv_probePhase(phase, 4);
+    XThread_sleep(2);
+    return true;
+#else
+    (void)phase;
+    return false;
+#endif /* ADV_MAINWIN_ON */
 }
 
 #else /* !XWIDGET_ON */

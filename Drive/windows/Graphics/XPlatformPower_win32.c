@@ -52,6 +52,13 @@ bool XPlatformPowerDriver_setScreenState(XPlatformPowerScreenState state)
     return xpow_monitorPower(0);     /* SC_MONITORPOWER: 0=恢复点亮。 */
 }
 
+XPlatformPowerScreenActual XPlatformPowerDriver_queryScreenState(void)
+{
+    /* SC_MONITORPOWER 是单向命令，无读回原语（GetMonitorInfo 不含电源
+     * 态）——恒 Unknown，公共层对账对 Unknown 不动作。 */
+    return XPlatformPowerScreenActual_Unknown;
+}
+
 bool XPlatformPowerDriver_setSystemState(XPlatformPowerSystemState state)
 {
     if (state == XPlatformPowerSystemState_Suspend) {

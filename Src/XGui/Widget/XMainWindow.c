@@ -17,7 +17,6 @@
 /* ==================== 调试跟踪（XGUI_DOCK_TRACE，问题关闭后移除） ==================== */
 
 #if XGUI_DOCK_TRACE
-#include <stdio.h>
 #include "XDateTime.h"
 /* 与 XDockWidget.c 的 XDW_TRACE 同口径（毫秒时间戳 + 函数名 + 即刷）。 */
 #define XMW_TRACE(...)                                                    \
@@ -90,7 +89,9 @@ static bool xmw_isBreakEntry(const XMainWindow* self, int64_t index)
         return false;
     tb = XVector_At_Base(self->m_toolBars, index, XWidget*);
     area = (int*)XVector_at_base(self->m_toolBarAreas, index);
-    return tb == NULL && area != NULL && *area == 0;
+    (void)area;
+    /* 断行哨兵=工具栏条目为空（区域位现承载断点所属区域，不再以 0 判）。 */
+    return tb == NULL;
 }
 
 /**
@@ -136,7 +137,14 @@ static int xmw_topUsed(const XMainWindow* self)
     int used = 0;
     int64_t i;
     int64_t n;
+    XMargins fm;
     if (!self) return 0;
+    /* [预落位置/命中带同源 2026-10-31] 顶部占用须含 CSD 装饰条让位
+     * （xmw_layout 以 fm.top 起算菜单栏与停靠区；此处按原始客户区起算
+     * 会让分隔带命中带上移一条装饰条高度、把装饰条行误判为可命中）。
+     */
+    fm = XWindowDecoration_marginsFor((const XWidget*)self);
+    used += fm.top;
     if (self->m_menuBar && XWidget_isVisible(self->m_menuBar))
         used += xmw_menuHeight();
     if (!self->m_toolBars) return used;
@@ -744,9 +752,14 @@ void XMainWindow_init(XMainWindow* self, XWidget* parent,
     self->m_animated = true;
     self->m_dockNestingEnabled = false;
     self->m_unifiedTitleAndToolBarOnMac = false;
-    self->m_tabPosition = 0;
+    /* 逐区页签位置：对标 Qt QMainWindowLayout::tabPositions[]（缺省
+       全部为 0=North）。 */
+    self->m_tabPositions[0] = 0;
+    self->m_tabPositions[1] = 0;
+    self->m_tabPositions[2] = 0;
+    self->m_tabPositions[3] = 0;
     self->m_tabShape = 0;
-    self->m_separator = true;
+    self->m_stateVersion = 0;
     self->m_corner = 0;
 }
 
@@ -780,9 +793,20 @@ XWidget* XMainWindow_menuBar(XMainWindow* self)
 
 void XMainWindow_setMenuBar(XMainWindow* self, XWidget* menuBar)
 {
+    XWidget* old;
     if (!self) return;
-    if (self->m_menuBarOwned && self->m_menuBar)
-        XClassDelete((XClass*)self->m_menuBar);
+    old = self->m_menuBar;
+    if (old && old != menuBar) {
+        /* 对标 Qt（qmainwindow.cpp:527-534 setMenuWidget / 566-575
+         * setStatusBar / 594-602 setCentralWidget）：替换时**旧控件隐藏
+         * 并销毁**（Qt 用 deleteLater；本框架用等价即时销毁——控件析构
+         * 即从父链摘除，主窗析构级联不会二次释放）。
+         * 旧实现「仅内部创建的才删、外部控件保留」与 Qt 不一致：外部
+         * 控件经 setParent 已挂到本窗（所有权已转移），替换后留着即成
+         * 无主控件（泄漏 + 调用方持陈旧指针）。 */
+        XWidget_hide(old);
+        XClassDelete((XClass*)old);
+    }
     self->m_menuBar = menuBar;
     self->m_menuBarOwned = false;
     if (menuBar) {
@@ -862,9 +886,15 @@ XWidget* XMainWindow_statusBar(XMainWindow* self)
 
 void XMainWindow_setStatusBar(XMainWindow* self, XWidget* statusBar)
 {
+    XWidget* old;
     if (!self) return;
-    if (self->m_statusBarOwned && self->m_statusBar)
-        XClassDelete((XClass*)self->m_statusBar);
+    old = self->m_statusBar;
+    if (old && old != statusBar) {
+        /* 对标 Qt（qmainwindow.cpp:566-575）：替换时旧状态栏隐藏并
+         * 销毁（Qt deleteLater ≡ 本框架即时销毁，理由同 setMenuBar）。 */
+        XWidget_hide(old);
+        XClassDelete((XClass*)old);
+    }
     self->m_statusBar = statusBar;
     self->m_statusBarOwned = false;
     if (statusBar) {
@@ -878,9 +908,18 @@ void XMainWindow_setStatusBar(XMainWindow* self, XWidget* statusBar)
 
 void XMainWindow_setCentralWidget(XMainWindow* self, XWidget* widget)
 {
+    XWidget* old;
     if (!self) return;
-    if (self->m_central)
-        XWidget_setVisible(self->m_central, false);
+    old = self->m_central;
+    if (old && old != widget) {
+        /* 对标 Qt（qmainwindow.cpp:594-602 setCentralWidget）：替换时旧
+         * 中央控件隐藏并销毁（Qt deleteLater ≡ 本框架即时销毁，理由同
+         * setMenuBar）；「QMainWindow takes ownership of the widget
+         * pointer and deletes it at the appropriate time」——所有权随
+         * setParent 转移，替换即销毁，不留无主控件。 */
+        XWidget_hide(old);
+        XClassDelete((XClass*)old);
+    }
     self->m_central = widget;
     if (widget) {
         XWidget_setParent(widget, (XWidget*)self, 0);
@@ -915,7 +954,13 @@ void XMainWindow_addToolBar(XMainWindow* self, int area, XWidget* toolbar)
     xmw_layout(self);
 }
 
-XWidget* XMainWindow_addToolBar_2(XMainWindow* self,
+void XMainWindow_addToolBar_2(XMainWindow* self, XWidget* toolbar)
+{
+    /* 对标 Qt QMainWindow::addToolBar(QToolBar*)：缺省加到顶部区域。 */
+    XMainWindow_addToolBar(self, (int)XDockWidgetArea_Top, toolbar);
+}
+
+XWidget* XMainWindow_addToolBar_3(XMainWindow* self,
                                   const char* utf8Title)
 {
     XWidget* toolbar = NULL;
@@ -1241,6 +1286,32 @@ void XMainWindow_removeDockWidget(XMainWindow* self, XWidget* dock)
     }
 }
 
+void XMainWindow_addDockWidget_2(XMainWindow* self, int area, XWidget* dock,
+                                 int orientation)
+{
+    /* 对标 Qt QMainWindow::addDockWidget(area, dockwidget, orientation)：
+     * 面板先按区域接入，再与同区中位于它之前的那个面板按指定跨向拆分
+     * （qmainwindow.cpp：拆分基准=同区前序面板）。同区无前序面板时
+     * 退化为普通 addDockWidget（无基准可拆）。 */
+    XDockWidget* prev = NULL;
+    int64_t i;
+    int64_t n;
+    if (!self || !dock || !self->m_docks) return;
+    /* 先按区域接入（面板不在布局中时才接入，已在则仅更新区域）。 */
+    if (xmw_dockIndex(self, (XDockWidget*)dock) < 0)
+        XMainWindow_addDockWidget(self, area, dock);
+    /* 找同区前序面板（登记顺序里位于本面板之前的最后一个同区面板）。 */
+    n = XVector_size_base((const XContainer*)self->m_docks);
+    for (i = 0; i < n; ++i) {
+        XDockWidget* d = XVector_At_Base(self->m_docks, i, XDockWidget*);
+        int a = XVector_At_Base(self->m_dockAreas, i, int);
+        if (d == (XDockWidget*)dock) break;
+        if (d && a == area) prev = d;
+    }
+    if (!prev) return;
+    XMainWindow_splitDockWidget(self, prev, (XDockWidget*)dock, orientation);
+}
+
 void XMainWindow_splitDockWidget(XMainWindow* self, XDockWidget* after,
                                  XDockWidget* dock, int orientation)
 {
@@ -1473,15 +1544,28 @@ static void xmw_dockAreaRect(const XMainWindow* self, XRect* out)
     int h;
     int top;
     int bottom;
+    int left;
+    int right;
     int64_t i;
     int64_t n;
+    XMargins fm;
     if (!out) return;
     w = self ? XWidget_width((const XWidget*)self) : 0;
     h = self ? XWidget_height((const XWidget*)self) : 0;
     XRect_init(out, 0, 0, w, h);
     if (!self || w <= 0 || h <= 0) return;
-    top = 0;
-    bottom = 0;
+    /* [预落位置渲染范围 2026-10-31] 停靠区矩形须与 xmw_layout 同源：
+     * CSD 装饰条（保留边距 fm.top/fm.left/fm.right/fm.bottom）是内容区
+     * 的硬边界——xmw_layout 以 fm.top 起算菜单栏/停靠区，本函数此前按
+     * 原始客户区(0,0,w,h)起算，**漏掉装饰条让位**，落点指示器（预落位置
+     * 渲染框）整体上移一条装饰条高度、正好框住菜单栏行（桌面目验：预落
+     * 位框含菜单栏，而实际停靠区在菜单栏之下），落点判定带也随之错位。
+     */
+    fm = XWindowDecoration_marginsFor((const XWidget*)self);
+    left = fm.left;
+    right = fm.right;
+    top = fm.top;
+    bottom = fm.bottom;
     if (self->m_menuBar && XWidget_isVisible(self->m_menuBar))
         top += xmw_menuHeight();
     if (self->m_toolBars) {
@@ -1492,9 +1576,11 @@ static void xmw_dockAreaRect(const XMainWindow* self, XRect* out)
         }
     }
     if (self->m_statusBar && XWidget_isVisible(self->m_statusBar))
-        bottom = XWidget_height(self->m_statusBar);
+        bottom += XWidget_height(self->m_statusBar);
     if (top + bottom > h) return; /* 预留超出客户区：保持全空（0 高） */
-    XRect_init(out, 0, top, w, h - top - bottom);
+    XRect_init(out, left, top,
+               w - left - right > 0 ? w - left - right : 0,
+               h - top - bottom);
 }
 
 /**
@@ -1596,6 +1682,30 @@ static int xmw_dropAreaAt(const XMainWindow* self, const XDockWidget* dock,
 }
 
 /**
+ * @brief      落点指示器所在区当帧重合成（fbdev 单屏无服务器侧 Expose）。
+ * @details    落点指示器是宿主子控件，其像素被**烘进宿主后备缓冲**；
+ *             隐藏/移位只走「作废父级区域」的异步失效路径（XWidget 的
+ *             hide 分支），而 fbdev 无合成器替它擦除 ⇒ 宿主下一次
+ *             present 会把指示器的陈旧像素重新吐上屏（真机症状：让位区
+ *             残留上一帧画面）。对标 Qt 6.8 QWidgetPrivate::hide_sys
+ *             （qwidget.cpp:8254-8261）：隐藏即 invalidateBackingStore
+ *             (BufferInvalid) → 该区按控件树整块重绘。本函数在隐藏/
+ *             移位后**同步**重合成该区（XWidget_repaintRect = 标脏 +
+ *             立即 flushBackingStore），使陈旧像素当帧被宿主当前内容覆
+ *             盖，不再被 present 反复吐上屏。
+ * @param      self 目标主窗口；可为 NULL。
+ * @param      rect 指示器此前占据的矩形（宿主客户区坐标）；可为 NULL。
+ */
+static void xmw_syncRepaintIndicatorArea(XMainWindow* self, const XRect* rect)
+{
+    XRect r;
+    if (!self || !rect) return;
+    r = *rect;
+    if (r.width <= 0 || r.height <= 0) return;
+    XWidget_repaintRect((XWidget*)self, &r);
+}
+
+/**
  * @brief      拖动落点预览：按全局落点更新落点指示器并返回目标区域
  *             （XMainWindow_Protected.h 冻结契约的实现）。
  * @details    分区与 allowedAreas 过滤见 xmw_dropAreaAt。命中时惰性创
@@ -1629,7 +1739,17 @@ int XMainWindow_hoverDrop(XMainWindow* self, XWidget* dock,
         /* 无落点：隐藏指示器（指示器未创建则无事可做）。 */
         if (self->m_dropAreaShown != 0) {
             if (self->m_dropIndicator)
+            {
+                XRect old = XWidget_geometry(self->m_dropIndicator);
+                bool wasVisible =
+                    XWidget_isVisible(self->m_dropIndicator) ? true : false;
                 XWidget_hide(self->m_dropIndicator);
+                /* fbdev 单屏无合成器：隐藏只作废父级区域（异步失效），
+                 * 指示器像素会留在宿主后备缓冲里被 present 反复吐上屏
+                 * ⇒ 隐藏后当帧同步重合成该区。 */
+                if (wasVisible)
+                    xmw_syncRepaintIndicatorArea(self, &old);
+            }
             self->m_dropAreaShown = 0;
         }
         return area;
@@ -1651,10 +1771,19 @@ int XMainWindow_hoverDrop(XMainWindow* self, XWidget* dock,
 #endif
         if (!self->m_dropIndicator) return area;
     }
-    XWidget_setGeometryRect(self->m_dropIndicator, &r);
-    XWidget_show(self->m_dropIndicator);
-    XWidget_raise(self->m_dropIndicator);
-    self->m_dropAreaShown = area;
+    {
+        XRect old = XWidget_geometry(self->m_dropIndicator);
+        bool wasVisible =
+            XWidget_isVisible(self->m_dropIndicator) ? true : false;
+        XWidget_setGeometryRect(self->m_dropIndicator, &r);
+        XWidget_show(self->m_dropIndicator);
+        XWidget_raise(self->m_dropIndicator);
+        /* 指示器换分区/移位：旧位像素同样残留在宿主后备缓冲 ⇒ 当帧
+         * 同步重合成旧位（Qt hide_sys/BufferInvalid 口径）。 */
+        if (wasVisible)
+            xmw_syncRepaintIndicatorArea(self, &old);
+    }
+        self->m_dropAreaShown = area;
     return area;
 }
 
@@ -1695,8 +1824,17 @@ int XMainWindow_finishDrop(XMainWindow* self, XWidget* dock,
     /* 对标 Qt plug 收尾：落位/无落点都收掉落点指示器（指示器保留复
      * 用，仅隐藏；qmainwindowlayout.cpp:2494 清 gapRect 后经
      * updateGapIndicator 的 hide 分支隐藏）。 */
-    if (self->m_dropIndicator)
+        if (self->m_dropIndicator)
+    {
+        XRect old = XWidget_geometry(self->m_dropIndicator);
+        bool wasVisible =
+            XWidget_isVisible(self->m_dropIndicator) ? true : false;
         XWidget_hide(self->m_dropIndicator);
+        /* 同 hoverDrop：隐藏后当帧同步重合成指示器旧位（fbdev 无
+         * 合成器，异步失效会让指示器像素残留到下一次 present）。 */
+        if (wasVisible)
+            xmw_syncRepaintIndicatorArea(self, &old);
+    }
     self->m_dropAreaShown = 0;
     if (area == (int)XDockWidgetArea_NoDockWidgetArea)
         return area; /* 无落点：面板保持浮动态，不改状态 */
@@ -1910,9 +2048,6 @@ int XMainWindow_dockWidgetArea(const XMainWindow* self, const XWidget* dock)
     return 0;
 }
 
-void XMainWindow_setSeparator(XMainWindow* self, bool sep)
-{ if (self) self->m_separator = sep; }
-
 void XMainWindow_setDocumentMode(XMainWindow* self, bool enable)
 { if (self) self->m_documentMode = enable; }
 bool XMainWindow_documentMode(const XMainWindow* self)
@@ -1934,10 +2069,28 @@ void XMainWindow_setUnifiedTitleAndToolBarOnMac(XMainWindow* self,
 bool XMainWindow_isUnifiedTitleAndToolBarOnMac(const XMainWindow* self)
 { return self ? self->m_unifiedTitleAndToolBarOnMac : false; }
 
-void XMainWindow_setTabPosition(XMainWindow* self, int position)
-{ if (self) self->m_tabPosition = position; }
-int XMainWindow_tabPosition(const XMainWindow* self)
-{ return self ? self->m_tabPosition : 0; }
+void XMainWindow_setTabPosition(XMainWindow* self, int areas, int position)
+{
+    /* 对标 Qt QMainWindow::setTabPosition(areas, position)：按区域掩码
+     * 逐区写入（qmainwindowlayout.cpp:1803-1822 遍历四个 DockPosition）。
+     * 下标序=左/右/顶/底（与 m_tabPositions[] 一致）。 */
+    if (!self) return;
+    if (areas & (int)XDockWidgetArea_Left)  self->m_tabPositions[0] = (uint8_t)position;
+    if (areas & (int)XDockWidgetArea_Right) self->m_tabPositions[1] = (uint8_t)position;
+    if (areas & (int)XDockWidgetArea_Top)   self->m_tabPositions[2] = (uint8_t)position;
+    if (areas & (int)XDockWidgetArea_Bottom)self->m_tabPositions[3] = (uint8_t)position;
+}
+int XMainWindow_tabPosition(const XMainWindow* self, int area)
+{
+    /* 对标 Qt QMainWindow::tabPosition(area)：逐区读取；区域非法返回
+     * 缺省 0（Qt 对越界值告警并返回 North）。 */
+    if (!self) return 0;
+    if (area == (int)XDockWidgetArea_Left)   return self->m_tabPositions[0];
+    if (area == (int)XDockWidgetArea_Right)  return self->m_tabPositions[1];
+    if (area == (int)XDockWidgetArea_Top)    return self->m_tabPositions[2];
+    if (area == (int)XDockWidgetArea_Bottom) return self->m_tabPositions[3];
+    return 0;
+}
 
 void XMainWindow_setTabShape(XMainWindow* self, int shape)
 { if (self) self->m_tabShape = shape; }
@@ -1949,6 +2102,35 @@ void XMainWindow_setCorner(XMainWindow* self, int corner, int area)
     int shift;
     if (!self || corner < 0 || corner > 3) return;
     if (area < 0 || area > 0xF) return;
+    /* 对标 Qt（qmainwindow.cpp:setCorner）：角位与区域组合非法即**忽略**
+     * （Qt 告警后不改布局）：TopLeft 只接 Top/Left、TopRight 只接
+     * Top/Right、BottomLeft 只接 Bottom/Left、BottomRight 只接
+     * Bottom/Right。本框架角位码序与 Qt::Corner 一致（0=TopLeft、
+     * 1=TopRight、2=BottomLeft、3=BottomRight）。 */
+    {
+        bool valid = false;
+        switch (corner) {
+        case 0: /* TopLeft */
+            valid = (area == (int)XDockWidgetArea_Top ||
+                     area == (int)XDockWidgetArea_Left);
+            break;
+        case 1: /* TopRight */
+            valid = (area == (int)XDockWidgetArea_Top ||
+                     area == (int)XDockWidgetArea_Right);
+            break;
+        case 2: /* BottomLeft */
+            valid = (area == (int)XDockWidgetArea_Bottom ||
+                     area == (int)XDockWidgetArea_Left);
+            break;
+        case 3: /* BottomRight */
+            valid = (area == (int)XDockWidgetArea_Bottom ||
+                     area == (int)XDockWidgetArea_Right);
+            break;
+        default:
+            break;
+        }
+        if (!valid) return;
+    }
     /* 每角 4bit 承载停靠区域码（0..0xF，可完整往返 setCorner/corner；
      * 旧实现按 1bit 置位，corner() 恒返回 0/1，偏离头文件“返回区域
      * 码”契约——如 Bottom=8 无法表示）。 */
@@ -1963,11 +2145,13 @@ int XMainWindow_corner(const XMainWindow* self, int corner)
     return (self->m_corner >> (corner * 4)) & 0xF;
 }
 
-void XMainWindow_addToolBarBreak(XMainWindow* self)
+void XMainWindow_addToolBarBreak(XMainWindow* self, int area)
 {
-    /* 布局中断：工具栏顺序数组中以 area=0 记录断点（内部标记）。 */
+    /* 布局中断：工具栏顺序数组中以「工具栏条目为空」记录断点（内部
+     * 标记）；断点带所属区域（对标 Qt addToolBarBreak(area)：断点归属
+     * 该区域，其后工具栏自该区起排）。 */
     if (self && self->m_toolBarAreas) {
-        int v = 0;
+        int v = area;
         XWidget* dummy = NULL;
         if (self->m_toolBars)
             XVector_push_back_1_base(self->m_toolBars, &dummy);
@@ -2114,13 +2298,16 @@ static bool xmw_scanChar(const char** cursor, char ch)
     return false;
 }
 
-XString* XMainWindow_saveState(const XMainWindow* self)
+XString* XMainWindow_saveState(XMainWindow* self, int version)
 {
     XString* out;
     size_t i;
     size_t n;
     char buf[64];
     if (!self) return NULL;
+    /* 应用侧状态版本（对标 Qt saveState(version)）：记入本窗，供后续
+     * restoreState 比对陈旧存档。 */
+    self->m_stateVersion = (uint16_t)version;
     out = XString_create();
     if (!out) return NULL;
     XSnprintf(buf, sizeof(buf), "XMWSTATE:%d;", XMW_STATE_VERSION);
@@ -2198,12 +2385,16 @@ XString* XMainWindow_saveState(const XMainWindow* self)
     return out;
 }
 
-bool XMainWindow_restoreState(XMainWindow* self, const XString* state)
+bool XMainWindow_restoreState(XMainWindow* self, const XString* state,
+                              int version)
 {
     const char* p;
-    int version = 0;
+    int fmtVersion = 0;
     int toolBarIdx = 0;
     int dockIdx = 0;
+    /* 应用侧状态版本（对标 Qt restoreState(state, version)）：记入本窗
+     * 供后续 saveState 续用；框架内建格式版本另计（下方 fmtVersion）。 */
+    if (self) self->m_stateVersion = (uint16_t)version;
     if (!state) {
         /* 对齐既有约定：NULL 视为重置请求；当前无可重置字段。 */
         return true;
@@ -2214,9 +2405,9 @@ bool XMainWindow_restoreState(XMainWindow* self, const XString* state)
     if (XStrncmp(p, XMW_STATE_MAGIC, sizeof(XMW_STATE_MAGIC) - 1) != 0)
         return false; /* 对齐 Qt：快照不识别返回 false */
     p += sizeof(XMW_STATE_MAGIC) - 1;
-    if (!xmw_scanInt(&p, &version) || !xmw_scanChar(&p, ';'))
+    if (!xmw_scanInt(&p, &fmtVersion) || !xmw_scanChar(&p, ';'))
         return false;
-    if (version < 1 || version > XMW_STATE_VERSION) return false;
+    if (fmtVersion < 1 || fmtVersion > XMW_STATE_VERSION) return false;
     /* 对标 Qt restoreState 重建整个布局：编组先全部解散后按快照重建。
      * 旧快照（v1 或缺 p 段的 v2）没有组条目时即恢复为无组（任务裁定：
      * 旧快照缺段 = 无组），组结构只记录成组关系，不影响面板显隐。 */
@@ -2248,7 +2439,7 @@ bool XMainWindow_restoreState(XMainWindow* self, const XString* state)
                                        (int64_t)toolBarIdx) = area;
             }
             ++toolBarIdx;
-        } else if (tag == 'g' && version >= 2) {
+        } else if (tag == 'g' && fmtVersion >= 2) {
             /* 四区几何尺寸。 */
             int l, r, t, b;
             ++p;
@@ -2261,7 +2452,7 @@ bool XMainWindow_restoreState(XMainWindow* self, const XString* state)
             if (r > 0) self->m_rightDockWidth = r;
             if (t > 0) self->m_topDockHeight = t;
             if (b > 0) self->m_bottomDockHeight = b;
-        } else if (tag == 'd' && version >= 2) {
+        } else if (tag == 'd' && fmtVersion >= 2) {
             /* 停靠面板：区域/显隐/浮动/跨向覆盖，按登记顺序回放。 */
             int area, visible, floating, size;
             ++p;
@@ -2288,7 +2479,7 @@ bool XMainWindow_restoreState(XMainWindow* self, const XString* state)
                 }
             }
             ++dockIdx;
-        } else if (tag == 'p' && version >= 2) {
+        } else if (tag == 'p' && fmtVersion >= 2) {
             /* 标签组：p<成员数>:<下标0>,<下标1>,...;（v2 追加段；对标
              * restoreState 还原 tabified groups）。按下标取回面板后依次
              * 编组——首成员建组，其余成员逐个挂入（复用 tabify 的内部

@@ -33,6 +33,10 @@
 #include "XPrintf.h"
 #include "XObject.h"
 #include "XEvent.h"
+#include "XMainWindow.h"   /* [临时探针] 浮动态拖动自检场景。 */
+#include "XDockWidget.h"   /* [临时探针] 同上。 */
+#include "XLabel.h"       /* [临时探针] 同上。 */
+#include "XVector.h"      /* [临时探针] 同上。 */
 #include "XAbstractEventDispatcher.h"
 #include "XDateTime.h"
 #include "XSystem.h" /* XSystem_environment：环境变量唯一入口。 */
@@ -63,7 +67,6 @@
 #include "XWindow.h"
 #include "XWindowEvent.h"
 #include "xgui_demo_pages.h"
-#include "xgui_demo_splitter.h" /* 通用分割条：导航面板/RC 控制列拖宽收展。 */
 #include "xgui_demo_theme.h" /* fusion-css 缺省主题样式表（xgui_demo_theme_css）。 */
 #include "XFusionStyle.h" /* XFusionStyle_installDefault：缺省 fusion 样式安装（XSTYLE_ON 样式矩阵），补声明消除 C4013 隐式声明。 */
 #include "XStyle.h" /* XStyle_installStyleSheet：全局样式表装载，补声明消除 C4013 隐式声明。 */
@@ -747,6 +750,10 @@ typedef struct DemoWin
                                       *   顶栏一体，鼠标穿透不挡顶栏点击。 */
     XLabel*         m_clockLabelApp;/**< 应用栏时钟控件（紧凑形态，同品牌条；显隐随父栏）。 */
     XTimerId        m_overlayTimer; /**< 空闲闸门下悬浮层降频自刷新定时器（XGUI_DEMO_IDLE_OVERLAY_MS，4Hz）。 */
+    XTimerId        m_probeTimer;   /**< [临时探针 2026-10-31] 顶层移动残影自检定时器
+                                      *   （XGUI_DEMO_PROBE_MOVE=1 开启）。 */
+    XWidget*        m_probeWin;     /**< [临时探针] 参与移动的顶层窗（真顶层，无父控件）。 */
+    int             m_probeTick;    /**< [临时探针] 定时器拍数（2=显示、5=移动）。 */
     int             m_lcdValue;     /**< LCD 字符序列索引（循环段码表 30 字符）。 */
     bool            m_closed; /**< CloseEvent 被接受或自动退出后置真。 */
     const char*     m_screenshotPath; /**< 非空时渲染数帧后保存一帧截图并退出（借用指针）。 */
@@ -807,7 +814,9 @@ typedef struct DemoWin
                                   *   [导航面板|内容区]，换边=setOrientation
                                   *   +条目顺序翻转，拖拽/手柄/方向光标/
                                   *   手柄点击信号由框架接管，替代原四方向
-                                  *   盒式布局器+DemoSplitter 组合。 */
+                                  *   盒式布局器+DemoSplitter 组合。
+                                  *   [2026-10-31] DemoSplitter 全量退役
+                                  *   （远程客户端页亦改用本框架分割条）。 */
 #endif
     bool            m_statusBarVisible; /**< 状态栏可见（窗口设置页开关；
                                           *   隐藏时布局自动收回其空间）。 */
@@ -2752,6 +2761,73 @@ static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
         XEvent_accept((XEvent*)event);
         return;
     }
+    if (timerId == self->m_probeTimer) {
+        /* [临时探针 2026-10-31] 两种探针场景：
+         * ①XGUI_DEMO_PROBE_MOVE：顶层窗显示 → 右移 150px（顶层移动的
+         *   腾空区还原自检）；
+         * ②XGUI_DEMO_PROBE_DRAG：浮动态面板的 CSD 标题条拖动（跟手
+         *   残影自检）——拍 2 面板转浮动态、拍 5 按压标题条、拍 6~7 移动、
+         *   拍 8 抬起。 */
+        self->m_probeTick++;
+        if (XSystem_environment("XGUI_DEMO_PROBE_DRAG")) {
+            XMainWindow* pmw = (XMainWindow*)self->m_probeWin;
+            XDockWidget* pdk = pmw && pmw->m_docks
+                                   ? (XDockWidget*)XVector_At_Base(
+                                         pmw->m_docks, 0, XDockWidget*)
+                                   : NULL;
+            if (self->m_probeTick == 2 && pdk) {
+                XDockWidget_setFloating(pdk, true);
+                XPrintf("XGuiWindowDemo: [探针] 面板转浮动态\n");
+            } else if (self->m_probeTick == 5 && pdk) {
+                XMouseEvent me;
+                XPoint_init(&me.m_position, 60, 12);
+                XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                                 XMouseButton_LeftButton,
+                                 XKeyboardModifier_NoModifier, me.m_position);
+                XMouseEvent_setButtons(&me, XMouseButton_LeftButton);
+                XObject_event_base((XObject*)pdk, (XEvent*)&me);
+                XPrintf("XGuiWindowDemo: [探针] 按压浮动态标题条\n");
+            } else if (self->m_probeTick >= 6 && self->m_probeTick <= 7 &&
+                       pdk) {
+                XMouseEvent me;
+                XPoint p;
+                int dx = (self->m_probeTick == 6) ? 40 : 120;
+                XPoint_init(&p, 60 + dx, 12 + dx / 2);
+                XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_MOVE,
+                                 XMouseButton_NoButton,
+                                 XKeyboardModifier_NoModifier, p);
+                XMouseEvent_setButtons(&me, XMouseButton_LeftButton);
+                XObject_event_base((XObject*)pdk, (XEvent*)&me);
+            } else if (self->m_probeTick == 8 && pdk) {
+                XMouseEvent me;
+                XPoint p;
+                XPoint_init(&p, 180, 72);
+                XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                                 XMouseButton_LeftButton,
+                                 XKeyboardModifier_NoModifier, p);
+                XMouseEvent_setButtons(&me, XMouseButton_NoButton);
+                XObject_event_base((XObject*)pdk, (XEvent*)&me);
+                XPrintf("XGuiWindowDemo: [探针] 抬起\n");
+            } else if (self->m_probeTick >= 12) {
+                XObject_killTimer((XObject*)self, self->m_probeTimer);
+                self->m_probeTimer = XTIMER_INVALID_ID;
+            }
+            XEvent_accept((XEvent*)event);
+            return;
+        }
+        if (self->m_probeTick == 2 && self->m_probeWin) {
+            XWidget_show(self->m_probeWin);
+            XPrintf("XGuiWindowDemo: [探针] 顶层窗显示于 400,300\n");
+        } else if (self->m_probeTick == 5 && self->m_probeWin) {
+            XWidget_move(self->m_probeWin, 550, 300);
+            XPrintf("XGuiWindowDemo: [探针] 顶层窗移动到 550,300\n");
+        } else if (self->m_probeTick >= 8) {
+            XObject_killTimer((XObject*)self, self->m_probeTimer);
+            self->m_probeTimer = XTIMER_INVALID_ID;
+        }
+        XEvent_accept((XEvent*)event);
+        return;
+    }
     if (timerId == self->m_overlayTimer) {
         {
             extern volatile unsigned long g_overlayTimerFires;
@@ -2763,8 +2839,11 @@ static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
            250ms（XGUI_PERFORMANCE_OVERLAY_UPDATE_MS），指标更新与
            重绘节奏一致。XGUI_DEMO_IDLE_GATE=0 时本定时器不启动。 */
         demo_repaint(self);
+#if XGUI_DEMO_STATIC_SCENE_CACHE_ON
         /* [置脏来源诊断 2026-10-30] 整窗失效来源计数（板端整窗重绘真凶
-           定位）：每 5 秒打印一次命中，避免刷屏。 */
+           定位）：每 5 秒打印一次命中，避免刷屏。计数表本身在
+           XGUI_DEMO_STATIC_SCENE_CACHE_ON 门内定义（fbdev 平台为 0），
+           门外引用会编译失败——本段必须同门。 */
         {
             static int s_ssdTick = 0;
             if (++s_ssdTick >= 5) {
@@ -2777,6 +2856,7 @@ static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
                 }
             }
         }
+#endif /* XGUI_DEMO_STATIC_SCENE_CACHE_ON */
         XEvent_accept((XEvent*)event);
         return;
     }
@@ -3230,7 +3310,8 @@ static void demo_navUpdatePanel(DemoWin* self)
     }
     bottomH = self->m_statusBarVisible ? DEMO_STATUS_H : 0;
     /* [XSplitter 迁移 2026-10-17] 中段=框架分割条（替代四方向盒式布局
-     * +DemoSplitter 组合）：方向随停靠（左右=水平 1/上下=垂直 2），条目
+     * +DemoSplitter 组合；DemoSplitter 已于 2026-10-31 全量退役）：
+     * 方向随停靠（左右=水平 1/上下=垂直 2），条目
      * 顺序=停靠侧（面板左/上=索引 0，右/下=索引 1），面板尺寸=setSizes
      * 比例意图（拖拽由框架手柄原生接管并记忆，随窗缩放保比例，对标
      * Qt）；收起=面板零宽、把手贴窗口缘。 */
@@ -7545,6 +7626,73 @@ int xgui_demo_main(int argc, char* argv[])
                 XPrintf("XGuiWindowDemo: 悬浮层定时器已创建\n");
         }
 #endif
+        /* [临时探针 2026-10-31] XGUI_DEMO_PROBE_MOVE=1：造一个真顶层窗，
+         * 稍后由定时器显示并右移——屏上抓帧比对旧位像素，验证 fbdev 顶层
+         * 移动的腾空区还原（残影自检）。诊断用，默认不启用。 */
+        if (XSystem_environment("XGUI_DEMO_PROBE_MOVE")) {
+            XLabel* probe = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                             NULL,
+                                             (XWidgetFlags)XWindowType_Tool);
+            if (probe) {
+                XLabel_setText_2(probe, "PROBE-MOVE");
+                XWidget_setFixedSize((XWidget*)probe, 200, 80);
+                XWidget_move((XWidget*)probe, 400, 300);
+                win->m_probeWin = (XWidget*)probe;
+                win->m_probeTick = 0;
+                win->m_probeTimer = XObject_startTimer_ms(
+                    (XObject*)win, 1000, XTimerType_CoarseTimer);
+                XPrintf("XGuiWindowDemo: [探针] 已装载（PROBE-MOVE）\n");
+            }
+        }
+        /* [临时探针 2026-10-31] XGUI_DEMO_DRAG_PHASE=<路径>：首帧后跑一次
+         * 「高级控件页真实主窗 + 真实停靠面板的可见浮动态拖动」，并在拖动
+         * 前后写相位文件——屏外用 fbsnap 前后抓帧比对旧位像素，量化 fbdev
+         * 单屏下的拖动残影（无需触摸注入：设备无 /dev/uinput）。诊断用，
+         * 默认不启用。 */
+        {
+            const char* dragPhase =
+                XSystem_environment("XGUI_DEMO_DRAG_PHASE");
+            if (dragPhase && dragPhase[0] && win &&
+                win->m_extPages[2]) {
+                /* XGUI_DEMO_DRAG_TOUCH=1：走**触摸**路径自检（注入触摸帧
+                 * → 框架手势状态机合成左键 → 命中派发，与真人手指同链；
+                 * 默认 0 = 鼠标直投路径，历史行为）。 */
+                const char* dragTouch =
+                    XSystem_environment("XGUI_DEMO_DRAG_TOUCH");
+                if (dragTouch && dragTouch[0] && dragTouch[0] == '3')
+                    demo_page_advanced_probeDragMem(dragPhase, 12);
+                else if (dragTouch && dragTouch[0] && dragTouch[0] == '2')
+                    demo_page_advanced_probeDragReal(dragPhase);
+                else if (dragTouch && dragTouch[0] && dragTouch[0] != '0')
+                    demo_page_advanced_probeDragTouch(dragPhase);
+                else
+                    demo_page_advanced_probeDrag(dragPhase);
+            }
+        }
+        if (XSystem_environment("XGUI_DEMO_PROBE_DRAG")) {
+            XMainWindow* pmw = XMainWindow_create(NULL, 0);
+            if (pmw) {
+                XDockWidget* pdk = XDockWidget_create_ex(
+                    XCLASS_DEFAULT_MEMORY_TYPE, "探针面板", (XWidget*)pmw, 0);
+                XWidget_resize((XWidget*)pmw, 560, 420);
+                XWidget_move((XWidget*)pmw, 180, 80);
+                if (pdk) {
+                    XLabel* pc = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                  (XWidget*)pdk, 0);
+                    if (pc)
+                        XLabel_setText_2(pc, "探针内容");
+                    XDockWidget_setWidget(pdk, (XWidget*)pc);
+                    XMainWindow_addDockWidget(pmw, XDockWidgetArea_Right,
+                                              (XWidget*)pdk);
+                }
+                XWidget_show((XWidget*)pmw);
+                win->m_probeWin = (XWidget*)pmw;
+                win->m_probeTick = 0;
+                win->m_probeTimer = XObject_startTimer_ms(
+                    (XObject*)win, 1000, XTimerType_CoarseTimer);
+                XPrintf("XGuiWindowDemo: [探针] 已装载（PROBE-DRAG）\n");
+            }
+        }
         if (eventLoopResult == 0)
             eventLoopResult = XGuiApplication_exec();
     }

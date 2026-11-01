@@ -46,6 +46,14 @@ bool XPlatformPowerDriver_setScreenState(XPlatformPowerScreenState state)
     return false;
 }
 
+XPlatformPowerScreenActual XPlatformPowerDriver_queryScreenState(void)
+{
+    /* 息屏是系统行为，应用无读回原语（PowerManager.isInteractive 需要
+     * 桥接扩展且语义是「交互态」非「背光态」）——恒 Unknown，公共层
+     * 对账对 Unknown 不动作。 */
+    return XPlatformPowerScreenActual_Unknown;
+}
+
 bool XPlatformPowerDriver_setSystemState(XPlatformPowerSystemState state)
 {
     (void)state;

@@ -1484,7 +1484,7 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
         occluderCount = 0;
         if (window)
         {
-            XVector* tops = XGuiApplication_topLevelWindows();
+            XVector* tops = XGuiApplication_allWindows();
             if (tops)
             {
                 int selfIndex = -1;
@@ -2956,7 +2956,7 @@ bool XPlatformBackingStore_blitSnapshotPanelRects(const XImage* snapshot,
     occluderCount = 0;
     if (selfWindow)
     {
-        XVector* tops = XGuiApplication_topLevelWindows();
+        XVector* tops = XGuiApplication_allWindows();
         if (tops)
         {
             int selfIndex = -1;

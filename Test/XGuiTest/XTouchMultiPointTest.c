@@ -720,12 +720,19 @@ int XTouchMultiPointTest_run(void)
             tp_expect(!XAbstractScrollArea_touchScrollEnabled(
                           (XAbstractScrollArea*)sa),
                       "6.5 开关回读 false");
+            /* [2026-11-01 口径修正] 前置复位滚动位置到 0：6.2 惯性 fling
+             *   后 value 停在 556（值域上限 600 附近），随后的 +60 会被
+             *   钳口吃掉（期望 616 不可达 → 断言恒假，量化语义验不实）。
+             *   复位到 0 让「滚轮量化 60px/格」精确可达且可验。 */
+            XScrollBar_setValue(vsb, 0);
             ts = 80000;
             tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_BEGIN, 25, 100, 180,
                            XTOUCHPOINT_STATE_PRESSED, ts);
             {
                 int frame;
                 int vBefore = XScrollBar_value(vsb);
+                int vMax = XScrollBar_maximum(vsb);
+                int vExpect;
                 for (frame = 0; frame < 4; ++frame) {
                     ts += 16;
                     tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_UPDATE, 25, 100,
@@ -735,15 +742,20 @@ int XTouchMultiPointTest_run(void)
                 tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_END, 25, 100, 80,
                                XTOUCHPOINT_STATE_RELEASED, ts += 16);
                 /* 滚轮量化：100px 手指=整格 1 格=60px（余数 40px 收口
-                 * 携带但不足一格不滚）；随后泵拍确认无惯性漂移。 */
-                tp_expect(XScrollBar_value(vsb) == vBefore + 60,
+                 * 携带但不足一格不滚）；随后泵拍确认无惯性漂移。
+                 * 期望值按值域钳口取 min(vBefore+60, max)——语义不变
+                 * （量化 60px/格 + 末端钳口封顶），复位生效时 vBefore=0
+                 * 该式即 vBefore+60。 */
+                vExpect = vBefore + 60;
+                if (vExpect > vMax) vExpect = vMax;
+                tp_expect(XScrollBar_value(vsb) == vExpect,
                           "6.5 关闭：回落滚轮量化滚动（+60 而非 +100）");
                 {
                     int64_t deadline =
                         XDateTime_currentMSecsSinceEpoch() + 200;
                     while (XDateTime_currentMSecsSinceEpoch() < deadline)
                         XGuiApplication_processEvents(XEventLoop_AllEvents);
-                    tp_expect(XScrollBar_value(vsb) == vBefore + 60,
+                    tp_expect(XScrollBar_value(vsb) == vExpect,
                               "6.5 关闭：无惯性漂移");
                 }
             }

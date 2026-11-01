@@ -776,6 +776,12 @@ void demo_page_keyboard_headless_hook(void)
         XVirtualKeyboard_setPopovers(s_kbd.keyboard, true);
         XVirtualKeyboard_setMode(s_kbd.keyboard, XKeyboardMode_TextLower);
     }
+    /* 数字键盘档位目验入口（2026-10-31 选择面板数字键盘行配套）：窄盘
+       竖/横屏停靠几何（kbW=最大行单位×rowH×5/4+4 钳 hostW×60% 居中）
+       此前仅 XKeyboardTest ⑨ 节断言可达，无头截图走本值直落 Number
+       模式（与面板数字行点击同落态：款型/中英态保留）。 */
+    if (env && strcmp(env, "number") == 0)
+        XVirtualKeyboard_setMode(s_kbd.keyboard, XKeyboardMode_Number);
     /* 中文态候选带（bandH=contentH/(rows+1) 预留顶行；setImeChinese
        声明受 XVIRTUALKEYBOARD_ON 门控，与页面 build 同组合门控）。 */
 #if XKEYBOARD_IME_ON && XVIRTUALKEYBOARD_ON
@@ -908,6 +914,29 @@ void demo_page_keyboard_headless_hook(void)
     if (env && env[0]) {
         if (strcmp(env, "selector") == 0)
             kbd_clickBarSlot(s_kbd.keyboard, 1);
+        else if (strcmp(env, "selector_numeric") == 0)
+        {
+            /* 开面板后点末行（数字键盘，2026-10-31）：行几何与
+               xkb_layoutSelectorLayout 同源边界累进式（四等分），命中
+               走面板 hit 真路径（setMode(Number)+关闭）——截图落数字
+               盘停靠形态。 */
+            XMouseEvent me;
+            XPoint pos;
+            XRect bar = s_kbd.keyboard->m_menuBarRect;
+            int panelY = bar.y + bar.height;
+            int panelH =
+                XWidget_height((XWidget*)s_kbd.keyboard) - 4 - panelY;
+            kbd_clickBarSlot(s_kbd.keyboard, 1);
+            pos.x = bar.x + bar.width / 2;
+            pos.y = panelY + panelH * 3 / 4 +
+                    (panelH - panelH * 3 / 4) / 2;
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)s_kbd.keyboard, (XEvent*)&me);
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)s_kbd.keyboard, (XEvent*)&me);
+        }
         else if (strcmp(env, "edit") == 0)
             kbd_clickBarSlot(s_kbd.keyboard, 2);
         else if (strcmp(env, "float") == 0)

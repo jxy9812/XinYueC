@@ -786,9 +786,15 @@ static XRect xwd_footprintRect(int rot, const XRect* g)
  *  expose 兜底（罕见：可见但从未画过的顶层）；桌面无 fbdev 显示驱动
  *  时整体短路（调用方分流），X11 行为不变。工作集（12 槽）溢出降
  *  级：不填余部、已处理归属保留（绝不洗其他窗），残带留待松手清扫
- *  自愈。 */
+ *  自愈。
+ *  @param    ownerMayHoldMovedPixels 本窗的旧像素是否可能仍留在归属顶层
+ *             的后备缓冲里（脱靠前的子控件像素）——true ⇒ 旧位另标脏给
+ *             归属顶层（fbdev Expose 等价物，逼其重绘该区）；false ⇒
+ *             本窗像素只在本窗后备缓冲里，归属顶层该区本就是当前内容，
+ *             标脏纯属多余重绘（拖动路径零重绘/FPS 战役锁），跳过。 */
 static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
-                                    XWindow* self)
+                                    XWindow* self,
+                                    bool ownerMayHoldMovedPixels)
 {
     XRect strips[4];
     XRect hits[12];
@@ -809,13 +815,35 @@ static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
     newF = xwd_footprintRect(rot, newG);
     n = xwd_exposeStrips(&oldF, &newF, strips);
     for (i = 0; i < n && wn < 12; ++i) work[wn++] = strips[i];
-    tops = XGuiApplication_topLevelWindows();
+    /* 【子窗口同列 2026-10-31】归属枚举必须含**子窗口**（XWindowType_Window
+     * 挂父的独立窗，如 demo「打开主窗口」= 演示主窗的子窗口）：只看无父
+     * 顶层看不见它 ⇒ 腾空区找不到归属 ⇒ 被当「裸露面板余部」填桌面底色
+     * （真机：让位区一片桌面灰 / 灰白底+半截文字）。对标 X11：子窗口与
+     * 顶层窗口同在一个窗口树里按 Z 序合成（子窗口恒在其父之上），fbdev
+     * 无合成器、框架自任合成器 ⇒ 枚举口径必须含子窗口（登记序=Z 序）。 */
+    tops = XGuiApplication_allWindows();
     if (tops)
     {
         size_t ti;
+        int tiI;
         size_t topCount = XVector_size_base(tops);
-        for (ti = 0; ti < topCount && !truncated; ++ti)
+        size_t selfIndex = topCount; /* 本窗在 Z 序中的位次（下方=更靠上层）。 */
+        for (ti = 0; ti < topCount; ++ti) {
+            if (*(XWindow**)XVector_at_base(tops, (int64_t)ti) == self) {
+                selfIndex = ti;
+                break;
+            }
+        }
+        /* 【Z 序归属 2026-10-31】让位区的归属必须取**盖在它上面的最上
+         * 层窗口**（本窗之下、覆盖该条带者中 Z 序最高者），而不是登记序
+         * 最靠前者：旧实现自下（低 Z）向上遍历并在命中后把该区域从工作集
+         * 扣除 ⇒ 最底层窗口独占该区、其上的窗口再无机会覆写 ⇒ 真机让位区
+         * 显示的是演示主窗（最底层全屏窗）的页面底色/文字，而非主窗口
+         * 自己的内容（用户现场「灰白底+半截文字」＝demo 页面文字被搬进
+         * 让位区）。对标 X11：露出区显示的是该处最上层的窗口内容。 */
+        for (tiI = (int)selfIndex - 1; tiI >= 0 && !truncated; --tiI)
         {
+            ti = (size_t)tiI;
             XWindow* other = *(XWindow**)XVector_at_base(tops, (int64_t)ti);
             XRect og;
             XRect fo;
@@ -864,6 +892,51 @@ static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
                  * A33 单核；真机 demo 与离屏测试 2026-10-06 同链实证，
                  * 对话框/标题栏/键盘拖拽三路同缺陷）。 */
                 XWidget* ownerTop = XWidget_widgetForWindow(other);
+                /* [fbdev 腾空区还原 2026-10-31] 旧位**标脏给下层顶层**
+                 * （对标桌面 X11 语义：窗口移开 → Expose → 下层窗自绘）。
+                 * 缓冲层「备份搬运」不能替代它：备份是搬移时刻的快照，
+                 * 含被搬走内容的旧像素（真机实证：浮动面板移走后旧位留下
+                 * 面板自身的灰白底 + 半截文字 ⇒ 还原成鬼影）。标脏后由
+                 * present 用下层窗的后备缓冲重绘该区 ⇒ 旧位显示真实下层
+                 * 内容。仅 fbdev 直写面需要（X11 由 X 服务器负责腾空区重绘，
+                 * 不重复请求）。
+                 * 【窄门 2026-10-31】本步只在「本窗旧像素可能仍留在归属
+                 * 顶层后备缓冲里」时才有必要（ownerMayHoldMovedPixels）：
+                 * 本窗是独立顶层时（屏幕键盘紧凑悬浮拖移）像素只在本窗
+                 * 自己的后备缓冲里，归属顶层该区本就是当前内容、直搬即
+                 * 可还原正确，标脏纯属多余重绘——紧凑拖移每步多一次宿
+                 * 主 flush（A33 FPS 5.9 战役锁）。 */
+                if (ownerMayHoldMovedPixels && xwd_fbdevPanelDirect() &&
+                    ownerTop)
+                {
+                    int hi;
+                    XPoint zeroOrg;
+                    /* 【域一致性闸 2026-10-31】命中矩形 hits 在**面板
+                     * 设备域**（B 域，见 xwd_footprintRect 正映射），而
+                     * zeroOrg 是归属顶层的**逻辑**全局原点（mapToGlobal）：
+                     * 只有两侧旋转角都为 0 时两域才逐字段相等（footprint
+                     * 恒等退化）。rot≠0 时两者相减得到的是**错位**矩形
+                     * ⇒ 归属顶层被标脏到无关位置（既修不到让位区，又白
+                     * 白重画一块不相干区域）。此时**跳过标脏**，让位区还
+                     * 原交给下方 rot≠0 直搬路径（restorePanelRects 目标
+                     * 锚定逆变换），不得标错位。 */
+                    if (XWindow_contentRotationDegrees(self) == 0 &&
+                        XWindow_contentRotationDegrees(other) == 0)
+                    {
+                        XPoint_init(&zeroOrg, 0, 0);
+                        zeroOrg = XWidget_mapToGlobal(ownerTop, &zeroOrg);
+                        for (hi = 0; hi < hitCount; ++hi)
+                        {
+                            XRect local;
+                            local.x = hits[hi].x - zeroOrg.x;
+                            local.y = hits[hi].y - zeroOrg.y;
+                            local.width = hits[hi].width;
+                            local.height = hits[hi].height;
+                            if (local.width > 0 && local.height > 0)
+                                XWidget_updateRect(ownerTop, &local);
+                        }
+                    }
+                }
                 {
                     XBackingStore* bs =
                         ownerTop ? XWidget_backingStore(ownerTop) : NULL;
@@ -872,6 +945,7 @@ static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
                     XImage* img =
                         pbs ? XPlatformBackingStore_paintDevice(pbs) : NULL;
                     if (pbs && img)
+
                     {
                         if (XWindow_contentRotationDegrees(other) != 0)
                         {
@@ -949,8 +1023,22 @@ void XWindowDecoration_restoreExposeStrips(const XRect* oldG,
                                            XWindow* selfWindow)
 {
     /* 让位条带按归属归位还原（装饰拖拽同款机制；消费方=非装饰拖移路径
-     * 屏幕键盘紧凑悬浮拖移）。调用契约见头注：先落几何后调用。 */
-    xwd_restoreExposeStrips(oldG, newG, selfWindow);
+     * 屏幕键盘紧凑悬浮拖移）。调用契约见头注：先落几何后调用。
+     * 旧位标脏默认开启（ownerMayHoldMovedPixels=true）：本窗的旧像素
+     * 可能仍留在归属顶层的后备缓冲里（脱靠前的子控件像素）——保守
+     * 口径，宁多一次重绘不可留鬼影。 */
+    xwd_restoreExposeStrips(oldG, newG, selfWindow, true);
+}
+
+void XWindowDecoration_restoreExposeStripsEx(const XRect* oldG,
+                                             const XRect* newG,
+                                             XWindow* selfWindow,
+                                             bool ownerMayHoldMovedPixels)
+{
+    /* 同上，但旧位标脏由调用方显式声明（见头注）：本窗像素不可能留在
+     * 归属顶层后备缓冲里时传 false——归属顶层该区本就是当前内容，直搬
+     * 即可还原正确，标脏纯属多余重绘（拖动路径零重绘/FPS 战役锁）。 */
+    xwd_restoreExposeStrips(oldG, newG, selfWindow, ownerMayHoldMovedPixels);
 }
 
 /** @brief 拖拽/改尺寸结束的兜底清扫：窗口外全部面板区域填桌面底色
@@ -999,7 +1087,7 @@ static void xwd_clearOutsideWindow(XWindowDecorationState* st)
         if (bands[i].width > 0 && bands[i].height > 0 && wn < 12)
             work[wn++] = bands[i];
     }
-    tops = XGuiApplication_topLevelWindows();
+    tops = XGuiApplication_allWindows();
     if (tops)
     {
         size_t ti;
@@ -1495,7 +1583,10 @@ static void xwd_applyMove(XWindowDecorationState* st, int dx, int dy)
     if (stripCount > 0)
     {
         if (xwd_fbdevPanelDirect()) /* fbdev 无 WM：条带按归属归位。 */
-            xwd_restoreExposeStrips(&g, &newG, st->m_window);
+            /* 装饰窗是独立顶层：其像素只在本窗后备缓冲里，归属顶层
+             * 后备缓冲该区本就是当前内容——但本路径非热路径（弹窗
+             * 拖拽），保守口径仍标脏（true），不动既有行为。 */
+            xwd_restoreExposeStrips(&g, &newG, st->m_window, true);
         else /* 桌面 WM 环境：旧实现口径（fill 桌面本就 no-op）。 */
             XPlatformBackingStore_fillPanelRects(exposed, stripCount,
                                            XWD_DESKTOP_PIXEL);
@@ -1652,7 +1743,10 @@ static void xwd_applyResize(XWindowDecorationState* st, int dx, int dy)
     if (stripCount > 0)
     {
         if (xwd_fbdevPanelDirect()) /* fbdev 无 WM：条带按归属归位。 */
-            xwd_restoreExposeStrips(&g, &newG, st->m_window);
+            /* 装饰窗是独立顶层：其像素只在本窗后备缓冲里，归属顶层
+             * 后备缓冲该区本就是当前内容——但本路径非热路径（弹窗
+             * 拖拽），保守口径仍标脏（true），不动既有行为。 */
+            xwd_restoreExposeStrips(&g, &newG, st->m_window, true);
         else /* 桌面 WM 环境：旧实现口径（fill 桌面本就 no-op）。 */
             XPlatformBackingStore_fillPanelRects(exposed, stripCount,
                                            XWD_DESKTOP_PIXEL);
@@ -2064,6 +2158,21 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
     if (XTitleBar_defaultHeight() <= 0) return false;
     st = xwd_ensureState(top);
     if (!st) return false;
+    /* 【抓取优先 2026-10-31 真机残留根修】显式鼠标抓取在位、而装饰自身
+     * 没有拖拽/改尺寸/最大化待定状态 ⇒ 事件归抓取者，装饰**不得**按
+     * 条带吞掉。fbdev 无 WM、标题条由框架自绘（CSD）：停靠面板脱靠成
+     * 浮动态后（此时面板自身即顶层窗、装饰挂在它身上），抓取在面板控件
+     * 上，而手指正落在 CSD 标题条带内 ⇒ 装饰吞掉 MOVE/RELEASE ⇒
+     * ①面板不跟手（浮动后每步 MOVE 到不了面板控件）；②抬起时的 RELEASE
+     * 也被吞 ⇒ 拖动永不收口、落点指示器留屏＝真机「拖动有残留、脱手不
+     * 重绘」根因。桌面 WM 态装饰不接管（原生标题条由 WM 画）⇒ 桌面不
+     * 复现，与「桌面无残留、fbdev 屏有残留」的现场一致。
+     * 装饰自身发起的拖拽/改尺寸：其抓取者即本窗口且 m_dragging/
+     * m_resizing 为真 ⇒ 不受此门影响（MOVE/RELEASE 仍须先到装饰推进
+     * 状态机）。 */
+    if (XWidget_mouseGrabber() != NULL && !st->m_dragging &&
+        !st->m_resizing && !st->m_maxRestorePending)
+        return false;
     /* 承载条控件确保（ensureState 后）：每次指针事件先兜底重钉条区几
      * 何（宽度随宿主 resize 自愈，挂点核实见 xwd_pinBarGeometry 注；
      * 同值幂等，常态零开销）。 */

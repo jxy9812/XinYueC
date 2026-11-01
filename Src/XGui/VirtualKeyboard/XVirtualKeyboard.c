@@ -73,13 +73,19 @@
  *               搜狗，画笔线条/矩形自绘随条高缩放，按压态视觉与键面
  *               一致；命中在 xkb_hitTest 之前，按压武装释放触发；收起
  *               =closePopup 直连，文字编辑/悬浮切换为桩）；
- *             - 键盘选择面板（Sogou 改版三阶段）：xkb_openLayoutSelector
- *               开合面板本地自绘选择面板（xkb_layoutSelectorLayout/
- *               Paint/Hit，覆盖键区不改窗口）：拼音全键/拼音九键/英文
- *               全键三行、当前项打勾（勾线），点选项=setLayoutKind 并
- *               关闭（IME 启用且停 User1 槽位时随行落 TextLower 让款
- *               型主表可见——引擎与候选链不重启），点面板外/再点图标
- *               =关闭（面板开启期点击一律先经面板命中消费）；
+ *             - 键盘选择面板（Sogou 改版三阶段；2026-10-31 补数字键
+ *               盘行）：xkb_openLayoutSelector 开合面板本地自绘选择
+ *               面板（xkb_layoutSelectorLayout/Paint/Hit，覆盖键区不
+ *               改窗口）：拼音全键/拼音九键/英文全键/数字键盘四行、
+ *               当前项打勾（勾线）。前三行点选=setLayoutKind 并关闭
+ *               （IME 启用且停 User1 槽位时随行落 TextLower 让款型主
+ *               表可见——引擎与候选链不重启）；数字键盘行点选=
+ *               setMode(Number) 并关闭（款型/中英态原样保留，窄盘几
+ *               何走既有档位口径），窄盘态（Number/Digits/Dialpad）
+ *               点前三行同时回落 TextLower——Number 无 abc 回路，本
+ *               面板即回文本盘的对称口。高亮口径：窄盘态只勾数字行，
+ *               文本态按款型勾对应行。点面板外/再点图标=关闭（面板
+ *               开启期点击一律先经面板命中消费）；
  *             - 九键路由（Sogou 改版三阶段，XVK∧IME 门控）：T9 款型
  *               且中文态时数字组键/分词/重输经 xkb_t9RouteKey 单点接
  *               引擎九键数字通道（feedT9Digit/feedDigitSeparator/
@@ -2316,10 +2322,13 @@ static bool xkb_menuBarHit(XVirtualKeyboard* self, int x, int y)
 
 /* ==================== 键盘选择面板（Sogou 改版三阶段；工具栏「键盘
  *                       选择」图标开合，面板内部自绘覆盖键区，非独立
- *                       窗口。行序=款型序，命中/绘制共用同一几何） ==== */
+ *                       窗口。行序=面板自上而下，命中/绘制共用同一几
+ *                       何） ==== */
 
-/** @brief 选择面板行数（拼音全键/拼音九键/英文全键）。 */
-#define XKB_SELECTOR_ROW_COUNT 3
+/** @brief 选择面板行数（拼音全键/拼音九键/英文全键/数字键盘）。 */
+#define XKB_SELECTOR_ROW_COUNT 4
+/** @brief 数字键盘行下标（末行特例：命中走模式层分流，不占款型槽）。 */
+#define XKB_SELECTOR_ROW_NUMERIC 3
 /** @brief 选择面板行 0 标签（拼音全键）。 */
 #define XKB_SELECTOR_LBL_ROW0 \
     "\xE6\x8B\xBC\xE9\x9F\xB3\xE5\x85\xA8\xE9\x94\xAE" /* 拼音全键 */
@@ -2329,15 +2338,21 @@ static bool xkb_menuBarHit(XVirtualKeyboard* self, int x, int y)
 /** @brief 选择面板行 2 标签（英文全键）。 */
 #define XKB_SELECTOR_LBL_ROW2 \
     "\xE8\x8B\xB1\xE6\x96\x87\xE5\x85\xA8\xE9\x94\xAE" /* 英文全键 */
+/** @brief 选择面板行 3 标签（数字键盘）。 */
+#define XKB_SELECTOR_LBL_ROW3 \
+    "\xE6\x95\xB0\xE5\xAD\x97\xE9\x94\xAE\xE7\x9B\x98" /* 数字键盘 */
 
-/** @brief 选择面板行→款型映射（行序=面板自上而下，对标任务书列序）。 */
-static const XKeyboardLayoutKind kSelectorRowKinds[XKB_SELECTOR_ROW_COUNT] = {
-    XKeyboardLayout_PinyinFull, XKeyboardLayout_PinyinT9,
-    XKeyboardLayout_EnglishFull
-};
-/** @brief 选择面板行标签（与 kSelectorRowKinds 一一对应）。 */
+/** @brief 选择面板行 0..2→款型映射（行序=面板自上而下；末行数字键盘
+ *        为模式层特例不经本表，见 xkb_layoutSelectorHit 分流）。 */
+static const XKeyboardLayoutKind
+    kSelectorRowKinds[XKB_SELECTOR_ROW_COUNT - 1] = {
+        XKeyboardLayout_PinyinFull, XKeyboardLayout_PinyinT9,
+        XKeyboardLayout_EnglishFull
+    };
+/** @brief 选择面板行标签（与行序一一对应；末行=数字键盘）。 */
 static const char* const kSelectorRowLabels[XKB_SELECTOR_ROW_COUNT] = {
-    XKB_SELECTOR_LBL_ROW0, XKB_SELECTOR_LBL_ROW1, XKB_SELECTOR_LBL_ROW2
+    XKB_SELECTOR_LBL_ROW0, XKB_SELECTOR_LBL_ROW1, XKB_SELECTOR_LBL_ROW2,
+    XKB_SELECTOR_LBL_ROW3
 };
 
 /** @brief 选择面板内部子区域几何（布局/绘制/命中三方共用同一几何函数
@@ -2346,7 +2361,7 @@ typedef struct XkbLayoutSelectorGeo
 {
     XRect panel;                   /**< 整面板矩形（键区=菜单条下方内容
                                         区，覆盖键位不改窗口）。 */
-    XRect row[XKB_SELECTOR_ROW_COUNT]; /**< 三行选项（边界累进，末行含
+    XRect row[XKB_SELECTOR_ROW_COUNT]; /**< 四行选项（边界累进，末行含
                                         余数）。 */
 } XkbLayoutSelectorGeo;
 
@@ -2383,7 +2398,7 @@ static void xkb_layoutSelectorLayout(const XVirtualKeyboard* self,
     }
 }
 
-/** @brief 面板命中 → 行下标（面板内必返 0..2；面板外返回 -1）。与
+/** @brief 面板命中 → 行下标（面板内必返 0..3；面板外返回 -1）。与
  *         xkb_layoutSelectorLayout 同源边界（所见即所点）。 */
 static int xkb_layoutSelectorRowAt(const XVirtualKeyboard* self, int x, int y)
 {
@@ -2402,11 +2417,15 @@ static int xkb_layoutSelectorRowAt(const XVirtualKeyboard* self, int x, int y)
 
 /**
  * @brief 选择面板命中（mousePressEvent 在菜单条/键区命中之前调用）。
- * @details 面板开启期点击一律消费：行内=点选项 setLayoutKind 并关闭
- *          （IME 启用且停 User1 槽位的拼音会话形态时随行落 TextLower
+ * @details 面板开启期点击一律消费：行 0..2=点选项 setLayoutKind 并关
+ *          闭（IME 启用且停 User1 槽位的拼音会话形态时随行落 TextLower
  *          ——款型主表即刻可见，九键路由/英文直写判据都以款型为准，
- *          引擎与落地契约连接不重启）；面板外（含菜单条/再点工具栏
- *          图标）=关闭——两向都吃掉本拍点击，不透键区不重触发。
+ *          引擎与落地契约连接不重启）；窄盘态（Number/Digits/Dialpad）
+ *          点前三行同时回落 TextLower——款型换了显示仍是窄盘=面板像
+ *          失灵，且 Number 无 abc 回路，本面板即回文本盘的对称口；
+ *          行 3=数字键盘 setMode(Number) 并关闭（款型/中英态原样保
+ *          留，窄盘几何走既有档位口径）。面板外（含菜单条/再点工具
+ *          栏图标）=关闭——两向都吃掉本拍点击，不透键区不重触发。
  * @return 面板开启（事件已消费）返回 true；面板关闭返回 false。
  */
 static bool xkb_layoutSelectorHit(XVirtualKeyboard* self, int x, int y)
@@ -2415,7 +2434,17 @@ static bool xkb_layoutSelectorHit(XVirtualKeyboard* self, int x, int y)
     if (!self || !self->m_layoutSelectorOpen) return false;
     row = xkb_layoutSelectorRowAt(self, x, y);
     if (row >= 0) {
-        XVirtualKeyboard_setLayoutKind(self, kSelectorRowKinds[row]);
+        if (row >= XKB_SELECTOR_ROW_NUMERIC) {
+            /* 数字键盘行：款型层保持，模式层切 Number（17 键数字盘；
+               Digits/Dialpad 仅 hints 自动切换可达，面板统一落 Number）。 */
+            XVirtualKeyboard_setMode(self, XKeyboardMode_Number);
+        } else {
+            XVirtualKeyboard_setLayoutKind(self, kSelectorRowKinds[row]);
+            /* 窄盘态选文本行=同时退出数字盘（setLayoutKind 不动模式，
+               留在窄盘则款型不可见）。 */
+            if (xkb_isNarrowPadMode(self->m_mode))
+                XVirtualKeyboard_setMode(self, XKeyboardMode_TextLower);
+        }
 #if XVIRTUALKEYBOARD_ON
         if (self->m_imeEnabled && self->m_mode == XKeyboardMode_User1)
             XVirtualKeyboard_setMode(self, XKeyboardMode_TextLower);
@@ -2427,22 +2456,28 @@ static bool xkb_layoutSelectorHit(XVirtualKeyboard* self, int x, int y)
 }
 
 /** @brief 选择面板绘制（覆盖键区最后绘制：整面先铺面板底色盖住底层
- *         键帽——三行卡片间/四周缝隙透出键位残影的割裂感根修，口径同
- *         编辑面板面板底；三行卡白圆角水平内缩 8px 成面板上的浮卡，
- *         当前端型行 GREY 高亮+左侧勾线，标签行内居中；勾线画笔自绘，
- *         字库无 ✓ 字形口径同键位文案）。 */
+ *         键帽——四行卡片间/四周缝隙透出键位残影的割裂感根修，口径同
+ *         编辑面板面板底；四行卡白圆角水平内缩 8px 成面板上的浮卡，
+ *         高亮口径=窄盘态只勾数字行（Number/Digits/Dialpad 任一）、
+ *         文本态按款型勾对应行，标签行内居中；勾线画笔自绘，字库无
+ *         ✓ 字形口径同键位文案）。 */
 static void xkb_layoutSelectorPaint(XVirtualKeyboard* self, XPainter* painter)
 {
     XkbLayoutSelectorGeo geo;
     int i;
+    bool narrowNow;
     if (!self || !painter || !self->m_layoutSelectorOpen) return;
     xkb_layoutSelectorLayout(self, &geo);
     if (geo.panel.width <= 0 || geo.panel.height <= 0) return;
+    narrowNow = xkb_isNarrowPadMode(self->m_mode);
     /* 面板底=SCR 平涂（覆盖键区，先于行卡——编辑面板同款口径）。 */
     XPainter_fillRect(painter, &geo.panel, XKB_LVGL_SCR);
     for (i = 0; i < XKB_SELECTOR_ROW_COUNT; ++i) {
         XRect face = geo.row[i];
-        bool checked = (self->m_layoutKind == kSelectorRowKinds[i]);
+        bool checked = (i >= XKB_SELECTOR_ROW_NUMERIC)
+                           ? narrowNow
+                           : (!narrowNow &&
+                              self->m_layoutKind == kSelectorRowKinds[i]);
         uint32_t fill = checked ? XKB_LVGL_GREY : XKB_LVGL_CARD;
         int radius = 8;
         if (radius > face.height / 2) radius = face.height / 2;
@@ -4079,7 +4114,13 @@ static bool xkb_activateButton(XVirtualKeyboard* self, uint32_t buttonId)
         XVirtualKeyboard_setMode(self, XKeyboardMode_Number);
         return true;
     }
-    /* 确认键：仅发 ready 信号不自动收层（对标 LVGL 默认无动作）。 */
+    /* 确认键：ready 信号照发（XDateTimeEdit/XCalendarWidget 既有接线
+       口径不变）——单行编辑器（XLineEdit 类）目标追加合成 XKey_Return
+       触发 accepted→returnPressed/editingFinished 提交链（Qt VK Done
+       键口径；LVGL OK 只发 READY 是因其无 Return 提交链可走），随后弹
+       层可见即收层——「确认=提交并收起」（XDateTimeEdit 提交槽兜底收
+       层同款语义，ready 槽先行收层时此处幂等 no-op）；多行/文本/未知
+       类目标不发 Return（确认≠换行，不插 \n），维持 ready-only。 */
     if (XStrcmp(text, XKEYBOARD_LBL_OK) == 0) {
         XVarList* empty = XVarList_create(0);
         if (empty) {
@@ -4091,6 +4132,14 @@ static bool xkb_activateButton(XVirtualKeyboard* self, uint32_t buttonId)
             else
                 XVarList_delete(empty);
         }
+#if XLINEEDIT_ON
+        if (self->m_target &&
+            xkb_editorKind(self->m_target) == XkbEditorKind_Line)
+            xkb_sendKey(self, XKey_Return, XKeyboardModifier_NoModifier);
+#endif
+        /* m_popped 口径（closeOnReturn 分支同款）：headless 无头环境
+           popupVisible 恒假，按弹出挂接态判定两环境语义一致。 */
+        if (self->m_popped) XVirtualKeyboard_closePopup(self);
         return true;
     }
     /* 关闭/收起键：发 cancel 信号；弹层可见即自动收层（XGui 扩展行为）。
@@ -5019,7 +5068,13 @@ static void xkb_compactDragMovePresent(XVirtualKeyboard* self,
     if (!self || !oldG || !newG) return;
     win = (XWindow*)XWidget_windowHandle((XWidget*)self);
     if (!win) return;
-    XWindowDecoration_restoreExposeStrips(oldG, newG, win);
+    /* 【旧位标脏闸 2026-10-31】紧凑悬浮态的键盘是**独立顶层**（像素只
+     * 在本窗自己的后备缓冲里；离开宿主时宿主已按布局重绘过该区），归
+     * 属顶层后备缓冲该区本就是当前内容 ⇒ 旧位由条带直搬即可还原正确，
+     * 「标脏给归属顶层」纯属多余重绘：它让紧凑拖移每步多一次宿主
+     * flush（A33 FPS 5.9 战役锁的性能回退，KD_GATE 计数 8 vs HEAD 2）。
+     * 故显式传 false 跳过标脏，保住零重绘路径。 */
+    XWindowDecoration_restoreExposeStripsEx(oldG, newG, win, false);
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
     {
         XBackingStore* bs = XWidget_backingStore((XWidget*)self);

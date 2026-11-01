@@ -33,6 +33,12 @@ bool XPlatformPowerDriver_setScreenState(XPlatformPowerScreenState state)
     return false;
 }
 
+XPlatformPowerScreenActual XPlatformPowerDriver_queryScreenState(void)
+{
+    /* 无平台实现，恒 Unknown（对账层对 Unknown 不动作）。 */
+    return XPlatformPowerScreenActual_Unknown;
+}
+
 bool XPlatformPowerDriver_setSystemState(XPlatformPowerSystemState state)
 {
     (void)state;
