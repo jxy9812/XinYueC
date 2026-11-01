@@ -1,11 +1,13 @@
 ﻿/**
  * @file       XSolenoidValve.c
  * @brief      电磁阀设备抽象实现。
- * @details    只依赖通道接口族（XDigitalOutput/XDigitalInput），不含任何
- *             具体传输逻辑；阀位状态机 + 在途动作监督定时器 + 双限位矛盾
- *             检测全部在本文件。信号槽遵守框架红线：槽经 connect_1 订阅，
- *             槽内以 XObject_sender(receiver) 取回真正的信号发送者比对，
- *             禁止把槽第 1 参强转成通道类型。
+ * @details    [2026-11-01 通道组重构] 只依赖通道组（XIoChannelGroup）+ 点
+ *             id：动作出口=组内 DigitalOutput 点（写经组受理，落定经组
+ *             writeDone(id, ok) 通知）；到位反馈=组内 DigitalInput 点（变化
+ *             经组 inputChanged(id, v) 通知，重读经组 readDigitalInput）。
+ *             阀位状态机 + 在途动作监督定时器 + 双限位矛盾检测全部在本文件。
+ *             信号槽遵守框架红线：槽经 connect_1 订阅组信号，槽内按
+ *             channelId 过滤本阀关注点。
  */
 #include "XSolenoidValve.h"
 
@@ -80,10 +82,15 @@ static void valve_reevaluate(XSolenoidValve* valve)
 
     if (valve->m_feedbackMode != XSolenoidValveFeedbackMode_DualLimit)
         return;
-    if (valve->m_openLimit)
-        openOk = XDigitalInput_read_base(valve->m_openLimit, &openActive);
-    if (valve->m_closeLimit)
-        closeOk = XDigitalInput_read_base(valve->m_closeLimit, &closeActive);
+    if (!valve->m_group) return;
+    if (valve->m_openLimitPt)
+        openOk = XIoChannelGroup_readDigitalInput(valve->m_group,
+                                                  valve->m_openLimitPt,
+                                                  &openActive);
+    if (valve->m_closeLimitPt)
+        closeOk = XIoChannelGroup_readDigitalInput(valve->m_group,
+                                                   valve->m_closeLimitPt,
+                                                   &closeActive);
 
     if (openOk && closeOk && openActive && closeActive) {
         valve_fault(valve, XSolenoidValveError_LimitContradiction);
@@ -107,50 +114,47 @@ static void valve_reevaluate(XSolenoidValve* valve)
 
 static void valve_detachOutputInternal(XSolenoidValve* valve)
 {
-    if (!valve->m_output) return;
-    XObject_disconnect_1((XObject*)valve->m_output,
-                         XSignal(XDigitalOutput_writeDone_signal),
+    if (!valve->m_group || !valve->m_outputPt) return;
+    XObject_disconnect_1((XObject*)valve->m_group,
+                         XSignal(XIoChannelGroup_writeDone_signal),
                          (XObject*)valve, VXSolenoidValve_onWriteDone);
-    valve->m_output = NULL;
+    valve->m_outputPt = NULL;
+    valve->m_group = NULL;
 }
 
 static bool valve_detachFeedbackInternal(XSolenoidValve* valve)
 {
     bool detached = false;
-    if (valve->m_openLimit) {
-        XObject_disconnect_1((XObject*)valve->m_openLimit,
-                             XSignal(XDigitalInput_inputChanged_signal),
+    if (!valve->m_group) return false;
+    if (valve->m_openLimitPt || valve->m_closeLimitPt) {
+        XObject_disconnect_1((XObject*)valve->m_group,
+                             XSignal(XIoChannelGroup_inputChanged_signal),
                              (XObject*)valve, VXSolenoidValve_onLimitChanged);
-        valve->m_openLimit = NULL;
+        valve->m_openLimitPt = NULL;
+        valve->m_closeLimitPt = NULL;
         detached = true;
     }
-    if (valve->m_closeLimit) {
-        XObject_disconnect_1((XObject*)valve->m_closeLimit,
-                             XSignal(XDigitalInput_inputChanged_signal),
-                             (XObject*)valve, VXSolenoidValve_onLimitChanged);
-        valve->m_closeLimit = NULL;
-        detached = true;
-    }
+    if (!valve->m_outputPt) valve->m_group = NULL; /* 出口也未挂：彻底解组。 */
     return detached;
 }
 
-/* ==================== 虚函数实现（static，仅供 class_init 注册） ==================== */
+/* ==================== 组信号槽（经 connect_1 连接，receiver=阀） ==================== */
 
-/* 动作出口 writeDone 订阅槽：第 1 参是 receiver（本阀），sender 经
- * XObject_sender 取回——框架信号槽红线（2026-10-25 实证陷阱）。 */
+/**
+ * @brief 组写落定槽：按出口点指针过滤本阀，None 口径下推进到位。
+ * @param receiver 连接的接收者（即本阀）；**不是** 组，禁止直接强转。
+ * @param args 信号参数（XIoPoint* point, bool ok）。
+ * @return 无。
+ */
 static void VXSolenoidValve_onWriteDone(XObject* receiver, XVarList* args)
 {
     XSolenoidValve* valve;
-    XObject* sender;
-    bool ok = false;
 
     if (!receiver || !args) return;
     valve = (XSolenoidValve*)receiver;
-    sender = XObject_sender(receiver);
-    if (!sender || sender != (XObject*)valve->m_output) return;
-
-    XVarList_start(args);
-    ok = XVarList_arg(args, bool);
+    XVarList_args_2(args, XIoPoint*, point, bool, ok);
+    (void)point;
+    if (point != valve->m_outputPt) return;
 
     if (!ok) {
         /* 异步写入失败只在在途动作上判故障；稳态下仅上报不动状态 */
@@ -170,19 +174,21 @@ static void VXSolenoidValve_onWriteDone(XObject* receiver, XVarList* args)
     }
 }
 
-/* 到位反馈 inputChanged 订阅槽：sender 比对过滤非本阀反馈 */
+/**
+ * @brief 组输入变化槽：按限位点指针过滤本阀，统一重读双限位。
+ * @param receiver 连接的接收者（即本阀）；**不是** 组，禁止直接强转。
+ * @param args 信号参数（XIoPoint* point, int32_t value）。
+ * @return 无。
+ */
 static void VXSolenoidValve_onLimitChanged(XObject* receiver, XVarList* args)
 {
     XSolenoidValve* valve;
-    XObject* sender;
 
-    (void)args;
-    if (!receiver) return;
+    if (!args) return;
     valve = (XSolenoidValve*)receiver;
-    sender = XObject_sender(receiver);
-    if (!sender) return;
-    if (sender != (XObject*)valve->m_openLimit &&
-        sender != (XObject*)valve->m_closeLimit)
+    XVarList_args_2(args, XIoPoint*, point, int32_t, value);
+    (void)value;
+    if (point != valve->m_openLimitPt && point != valve->m_closeLimitPt)
         return;
     /* 统一重读双限位：播种、到位、矛盾、位置丢失一条判定路径 */
     valve_reevaluate(valve);
@@ -238,9 +244,10 @@ void XSolenoidValve_init(XSolenoidValve* obj)
     memset(obj, 0, sizeof(XSolenoidValve));
     XObject_init((XObject*)obj);
     XClassSetVtable(obj, XSolenoidValve);
-    obj->m_output = NULL;
-    obj->m_openLimit = NULL;
-    obj->m_closeLimit = NULL;
+    obj->m_group = NULL;
+    obj->m_outputPt = NULL;
+    obj->m_openLimitPt = NULL;
+    obj->m_closeLimitPt = NULL;
     obj->m_feedbackMode = XSolenoidValveFeedbackMode_None;
     obj->m_state = XSolenoidValveState_Unknown;
     obj->m_timeoutMs = XSOLENOIDVALVE_DEFAULT_TIMEOUT_MS;
@@ -258,51 +265,55 @@ XSolenoidValve* XSolenoidValve_create(void)
 
 /* ==================== 装配 ==================== */
 
-bool XSolenoidValve_attachOutput(XSolenoidValve* valve, XDigitalOutput* output)
+bool XSolenoidValve_attachOutput(XSolenoidValve* valve, XIoChannelGroup* group,
+                                 XIoPoint* outputPt)
 {
     XConnection* conn;
 
     if (ISNULL(valve, "XSolenoidValve")) return false;
-    if (!output) return false;
-    if (valve->m_output) valve_detachOutputInternal(valve);
-    valve->m_output = output;
-    conn = XObject_connect_1((XObject*)output,
-                             XSignal(XDigitalOutput_writeDone_signal),
+    if (!group || !outputPt) return false;
+    if (valve->m_group == group && valve->m_outputPt == outputPt) return true;
+    valve_detachOutputInternal(valve);
+    valve->m_group = group;
+    valve->m_outputPt = outputPt;
+    conn = XObject_connect_1((XObject*)group,
+                             XSignal(XIoChannelGroup_writeDone_signal),
                              (XObject*)valve, VXSolenoidValve_onWriteDone,
                              XConnectionType_Direct);
     if (!conn) {
-        valve->m_output = NULL;
+        valve->m_group = NULL;
+        valve->m_outputPt = NULL;
         return false;
     }
     valve_setState(valve, XSolenoidValveState_Unknown);
     return true;
 }
 
-bool XSolenoidValve_attachFeedback_2(XSolenoidValve* valve,
-                                     XDigitalInput* openLimit,
-                                     XDigitalInput* closeLimit)
+bool XSolenoidValve_attachFeedback_2(XSolenoidValve* valve, XIoChannelGroup* group,
+                                     XIoPoint* openLimitPt, XIoPoint* closeLimitPt)
 {
     bool attached = false;
 
     if (ISNULL(valve, "XSolenoidValve")) return false;
-    if (!openLimit && !closeLimit) return false;
+    if (!group || (!openLimitPt && !closeLimitPt)) return false;
     valve_detachFeedbackInternal(valve);
-    if (openLimit) {
-        if (!XObject_connect_1((XObject*)openLimit,
-                               XSignal(XDigitalInput_inputChanged_signal),
+    valve->m_group = group;
+    if (openLimitPt) {
+        if (!XObject_connect_1((XObject*)group,
+                               XSignal(XIoChannelGroup_inputChanged_signal),
                                (XObject*)valve, VXSolenoidValve_onLimitChanged,
-                               XConnectionType_Direct))
+                               XConnectionType_Auto))
             return false;
-        valve->m_openLimit = openLimit;
+        valve->m_openLimitPt = openLimitPt;
         attached = true;
     }
-    if (closeLimit) {
-        if (!XObject_connect_1((XObject*)closeLimit,
-                               XSignal(XDigitalInput_inputChanged_signal),
+    if (closeLimitPt) {
+        if (!XObject_connect_1((XObject*)group,
+                               XSignal(XIoChannelGroup_inputChanged_signal),
                                (XObject*)valve, VXSolenoidValve_onLimitChanged,
-                               XConnectionType_Direct))
+            XConnectionType_Auto))
             return false;
-        valve->m_closeLimit = closeLimit;
+        valve->m_closeLimitPt = closeLimitPt;
         attached = true;
     }
     if (attached)
@@ -313,7 +324,7 @@ bool XSolenoidValve_attachFeedback_2(XSolenoidValve* valve,
 bool XSolenoidValve_detachOutput(XSolenoidValve* valve)
 {
     if (ISNULL(valve, "XSolenoidValve")) return false;
-    if (!valve->m_output) return false;
+    if (!valve->m_group || !valve->m_outputPt) return false;
     valve_detachOutputInternal(valve);
     return true;
 }
@@ -361,7 +372,7 @@ uint32_t XSolenoidValve_timeoutMs(const XSolenoidValve* valve)
 bool XSolenoidValve_open(XSolenoidValve* valve)
 {
     if (ISNULL(valve, "XSolenoidValve")) return false;
-    if (!valve->m_output) {
+    if (!valve->m_group || !valve->m_outputPt) {
         XSolenoidValve_errorOccurred_signal(valve, XSolenoidValveError_NotAttached);
         return false;
     }
@@ -373,7 +384,8 @@ bool XSolenoidValve_open(XSolenoidValve* valve)
     valve_startGuard(valve);
     if (valve->m_state == XSolenoidValveState_Fault)
         return false;   /* startGuard 失败已判故障 */
-    if (!XDigitalOutput_write_base(valve->m_output, true)) {
+    if (!XIoChannelGroup_writeDigitalOutput(valve->m_group,
+                                            valve->m_outputPt, true)) {
         valve_stopGuard(valve);
         XSolenoidValve_errorOccurred_signal(valve, XSolenoidValveError_WriteRejected);
         valve_setState(valve, XSolenoidValveState_Fault);
@@ -385,7 +397,7 @@ bool XSolenoidValve_open(XSolenoidValve* valve)
 bool XSolenoidValve_close(XSolenoidValve* valve)
 {
     if (ISNULL(valve, "XSolenoidValve")) return false;
-    if (!valve->m_output) {
+    if (!valve->m_group || !valve->m_outputPt) {
         XSolenoidValve_errorOccurred_signal(valve, XSolenoidValveError_NotAttached);
         return false;
     }
@@ -395,7 +407,8 @@ bool XSolenoidValve_close(XSolenoidValve* valve)
     valve_startGuard(valve);
     if (valve->m_state == XSolenoidValveState_Fault)
         return false;
-    if (!XDigitalOutput_write_base(valve->m_output, false)) {
+    if (!XIoChannelGroup_writeDigitalOutput(valve->m_group,
+                                            valve->m_outputPt, false)) {
         valve_stopGuard(valve);
         XSolenoidValve_errorOccurred_signal(valve, XSolenoidValveError_WriteRejected);
         valve_setState(valve, XSolenoidValveState_Fault);

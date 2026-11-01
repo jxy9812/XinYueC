@@ -78,8 +78,8 @@ void XSignalSlot_deinit(XSignalSlot* manager)
 		for_each_iterator(signal->connList, XVector, cit)
 		{
 			XConnection* conn = *(XConnection**)XVector_iterator_data(&cit);
-			if (conn && conn->receiver && conn->receiver->m_signalSlot)
-			{//在接收者中删除指向
+			if (conn && conn->receiver && !(conn->type & XConnectionType_RawReceiver) && conn->receiver->m_signalSlot)
+			{//在接收者中删除指向(RawReceiver 的 receiver 非 XObject,无簿记可清)
 				XSignalSlot* recvSS = conn->receiver->m_signalSlot;
 				XVector_remove_base(recvSS->bindSignalList, XVector_indexOf(recvSS->bindSignalList, &conn,0),1);
 			}
@@ -137,6 +137,8 @@ XConnection* XSignalSlot_connect1(XSignalSlot* manager,size_t signal, XObject* r
 		return NULL;
 	if (receiver == NULL && ((type & 0x3) == XConnectionType_Queued || (type & 0x3) == XConnectionType_BlockingQueued))
 		return NULL;//没有接收对象不允许用队列的方式
+	if ((type & XConnectionType_RawReceiver) && ((type & 0x3) != XConnectionType_Direct))
+		return NULL;//RawReceiver 只允许 Direct(队列投递需访问 receiver->m_*)
 	XMutex_lock(manager->mutex);  // 加锁
 	XSignal* signalObj= XMapBase_value_base(manager->signalMap,&signal);
 	if (signalObj == NULL)
@@ -183,8 +185,8 @@ XConnection* XSignalSlot_connect1(XSignalSlot* manager,size_t signal, XObject* r
 	bool needNotify = false;
 	XObject* notifyReceiver = NULL;
 	size_t notifySignal = 0;
-	if (receiver&&receiver!= manager->obj)
-	{//存在接收对象 添加绑定的信号
+	if (receiver && receiver != manager->obj && !(type & XConnectionType_RawReceiver))
+	{//存在接收对象 添加绑定的信号(RawReceiver 除外:receiver 非 XObject,不可写其 m_signalSlot)
 		if(receiver->m_signalSlot==NULL)
 			receiver->m_signalSlot = XSignalSlot_create(receiver);
 		if (receiver->m_signalSlot)
@@ -214,8 +216,8 @@ static bool XConnection_disconnect(XConnection* conn, XObject** outNotifyReceive
 	XSignal* signalObj = conn->signal;
 	if (signalObj == NULL)
 		return false;
-	if (conn->receiver)
-	{//存在接收对象
+	if (conn->receiver && !(conn->type & XConnectionType_RawReceiver))
+	{//存在接收对象(RawReceiver 的 receiver 非 XObject,只做发送者侧移除)
 		if (conn->receiver->m_signalSlot)
 		{
 			//必须在释放连接前捕获通知信息(下方移除会释放conn堆内存)
@@ -430,7 +432,7 @@ static void XSignalSlot_emitLocked(XSignalSlot* manager, size_t signal, XVarList
 			continue;
 		}
 		//从接收者绑定表中移除指向(全局连接锁已持有,自连接时即本锁,无需重复加锁)
-		if (conn->receiver && conn->receiver->m_signalSlot)
+		if (conn->receiver && !(conn->type & XConnectionType_RawReceiver) && conn->receiver->m_signalSlot)
 		{
 			XSignalSlot* recvSS = conn->receiver->m_signalSlot;
 			XVector_remove_base(recvSS->bindSignalList, XVector_indexOf(recvSS->bindSignalList, &conn, 0), 1);

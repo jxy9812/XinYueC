@@ -307,6 +307,15 @@ endfunction()
 # 它时确有未决符号」才被标记为 needed，而数学符号的引用来自组内 Core 归档
 # 成员（XChar.c/XStringUtils.c），故 -lm 必须排在组之后。
 function(xinyue_link_rescan_group target)
+    # 平台闸：LINK_GROUP:RESCAN 依赖平台模块声明 CMAKE_<LANG>_LINK_GROUP_USING_
+    # FEATURE_RESCAN（仅 Platform/GNU.cmake、Linux.cmake 等 GNU 系声明）。
+    # Windows-MSVC.cmake 不声明——MSVC link.exe 本就多遍重扫归档，单遍扫描
+    # 问题不存在；MSVC 工具链下套组会在 generate 期报
+    # "Feature 'RESCAN' ... is not supported for the 'C' link language"
+    # ⇒ configure 直接失败（2026-11-01 远端合并回归根因，复现于 x64-Debug）。
+    if(MSVC)
+        return()
+    endif()
     set(_archives "")
     foreach(_arc IN ITEMS XinYueCore XinYueIndustry XinYueGui
                           zlib mbedtls lwip pcre2 sqlite freetype fatfs xxhash)

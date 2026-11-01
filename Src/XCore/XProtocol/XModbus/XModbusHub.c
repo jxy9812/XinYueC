@@ -458,6 +458,37 @@ static void hubMigrateBlockState(const XModbusHubDevice* dev,
 }
 
 /**
+ * @brief 块物化时把映射段默认值播种进缓存（仅未初始化点）。
+ * @details [2026-11-01 输出上线对齐] 缓存是输出意图的事实源，默认值只在
+ *          「还没有任何值」时入场：寄存器区哨兵 0xFFFF（从未写过/未回填）
+ *          替换为段默认值；位区哨兵 0 处按段默认值置位（默认 0 则保持）。
+ *          调用时机在 hubMigrateBlockState 之后——迁移来的旧缓存值优先于
+ *          默认值（重建不丢值契约）；位区旧 0 与未初始化同形，会被非零
+ *          默认值覆盖（重建=重配置时刻按默认复位，可接受并在此声明）。
+ */
+static void hubSeedBlockDefaults(XModbusHubCacheBlock* block,
+                                 const XModbusMapRange* ranges, int n)
+{
+    int i;
+    if (!block || !ranges) return;
+    for (i = 0; i < n; ++i) {
+        const bool isBit = hubTypeIsBit(block->type);
+        const uint16_t sentinel = isBit ? 0u : 0xFFFFu;
+        const uint16_t def = isBit ? (ranges[i].defValue ? 1u : 0u)
+                                   : ranges[i].defValue;
+        const int64_t off =
+            (int64_t)ranges[i].remoteStart - (int64_t)block->remoteStart;
+        uint16_t k;
+        if (off < 0 || (uint32_t)off + ranges[i].count > block->count) continue;
+        if (def == sentinel) continue;      /* 默认值与哨兵同形：无需播种。 */
+        for (k = 0; k < ranges[i].count; ++k) {
+            if (XModbusDataUnit_value(block->data, (size_t)(off + k)) == sentinel)
+                XModbusDataUnit_setValue(block->data, (size_t)(off + k), def);
+        }
+    }
+}
+
+/**
  * @brief 重建某设备的缓存块表（同区同从站远端连续的映射段合并成一块）。
  * @return true=成功（失败保留旧表）。
  */
@@ -518,6 +549,9 @@ static bool hubRebuildDeviceBlocks(XModbusHub* hub, XModbusHubDevice* dev)
                     }
                     hubSortSegs(b->segs);
                     hubMigrateBlockState(dev, b);
+                    /* [输出上线对齐] 迁移后播种默认值：仅哨兵点入场，
+                     * 首启缓存即默认值，重建时旧缓存值优先。 */
+                    hubSeedBlockDefaults(b, &arr[i], j - i);
                     XVector_push_back_1_base(newBlocks, &b);
                 }
                 i = j;
@@ -702,11 +736,18 @@ static void hubRebuildAll(XModbusHub* hub)
 
 /**
  * @brief 回填一帧读应答到读组覆盖的各块（按远端交集切分）。
- * @details 变化检测在回填前完成（逐切片比对旧值）；首次回填（块从未成功
- *          读过）**恒发**一次 valueChanged——否则首采为 0 的点永远收不到
- *          初值，违反「挂接后至少推送一次供播种」的通道契约。
+ * @details 变化检测在写入前完成（逐切片比对旧值），发射在写入后——槽内
+ *          XModbusHub_value/values 读到的必须是本帧新值（与写路径「乐观
+ *          写入块缓存+变化发射」同款契约；先发后写会让上层值通知恒滞后
+ *          一拍，2026-11-01 修正）。首次回填（块从未成功读过）**恒发**
+ *          一次 valueChanged——否则首采为 0 的点永远收不到初值，违反
+ *          「挂接后至少推送一次供播种」的通道契约。
  *          写未确认的点（脏区间内）不被轮询覆写。
+ *          切片按批处理（检测→写入→发射）：块内切片互不重叠且铺满块
+ *          区间（块=远端连续映射段合并），批间点集不相交，分批与单批
+ *          语义一致；栈上标志数组容量见 HUB_FILL_SEG_CHUNK。
  */
+#define HUB_FILL_SEG_CHUNK 16
 static void hubFillGroupResult(XModbusHub* hub, XModbusHubDevice* dev,
                                const XModbusHubReadGroup* group,
                                const XModbusDataUnit* result)
@@ -718,7 +759,7 @@ static void hubFillGroupResult(XModbusHub* hub, XModbusHubDevice* dev,
         XModbusHubCacheBlock* b;
         uint32_t lo, hi;
         bool firstFill;
-        size_t si;
+        size_t si, base;
         if (bi >= XVector_size_base(dev->blocks)) break;
         b = *(XModbusHubCacheBlock**)XVector_at_base(dev->blocks, (int64_t)bi);
         if (!b || b->type != group->type || b->unitId != group->unitId) continue;
@@ -731,42 +772,74 @@ static void hubFillGroupResult(XModbusHub* hub, XModbusHubDevice* dev,
         if (hi <= lo) continue;
         firstFill = (b->lastOkMs == 0);
 
-        /* ① 变化检测（按块内映射切片；脏点跳过）。 */
-        for (si = 0; si < XVector_size_base(b->segs); ++si) {
-            const XModbusHubCacheSeg* seg =
-                (const XModbusHubCacheSeg*)XVector_at_base(b->segs, (int64_t)si);
-            uint32_t sStart, sEnd, cLo, cHi;
-            bool changed = false;
-            if (!seg) continue;
-            sStart = seg->remoteStart;
-            sEnd = sStart + seg->count;
-            cLo = (sStart > lo) ? sStart : lo;
-            cHi = (sEnd < hi) ? sEnd : hi;
-            if (cHi <= cLo) continue;
-            for (uint32_t r = cLo; r < cHi; ++r) {
-                const uint16_t off = (uint16_t)(r - b->remoteStart);
-                const uint16_t newVal =
-                    XModbusDataUnit_value(result, (size_t)(r - group->remoteStart));
-                if (hubDirtyHasOffset(b, off)) continue;
-                if (newVal != XModbusDataUnit_value(b->data, off)) {
-                    changed = true;
-                    break;
+        for (base = 0; base < XVector_size_base(b->segs);
+             base += HUB_FILL_SEG_CHUNK) {
+            uint8_t fire[HUB_FILL_SEG_CHUNK];
+            size_t chunkEnd = base + HUB_FILL_SEG_CHUNK;
+            if (chunkEnd > XVector_size_base(b->segs))
+                chunkEnd = XVector_size_base(b->segs);
+
+            /* ① 变化检测（按块内映射切片；脏点跳过；写入前比对旧值）。 */
+            for (si = base; si < chunkEnd; ++si) {
+                const XModbusHubCacheSeg* seg =
+                    (const XModbusHubCacheSeg*)XVector_at_base(b->segs, (int64_t)si);
+                uint32_t sStart, sEnd, cLo, cHi;
+                bool changed = false;
+                if (!seg) { fire[si - base] = 0; continue; }
+                sStart = seg->remoteStart;
+                sEnd = sStart + seg->count;
+                cLo = (sStart > lo) ? sStart : lo;
+                cHi = (sEnd < hi) ? sEnd : hi;
+                if (cHi <= cLo) { fire[si - base] = 0; continue; }
+                for (uint32_t r = cLo; r < cHi; ++r) {
+                    const uint16_t off = (uint16_t)(r - b->remoteStart);
+                    const uint16_t newVal =
+                        XModbusDataUnit_value(result, (size_t)(r - group->remoteStart));
+                    if (hubDirtyHasOffset(b, off)) continue;
+                    if (newVal != XModbusDataUnit_value(b->data, off)) {
+                        changed = true;
+                        break;
+                    }
+                }
+                fire[si - base] = (uint8_t)(changed || firstFill);
+            }
+            /* ② 写入本批切片覆盖的点（脏点保留写意图值）。 */
+            for (si = base; si < chunkEnd; ++si) {
+                const XModbusHubCacheSeg* seg =
+                    (const XModbusHubCacheSeg*)XVector_at_base(b->segs, (int64_t)si);
+                uint32_t sStart, sEnd, cLo, cHi;
+                if (!seg) continue;
+                sStart = seg->remoteStart;
+                sEnd = sStart + seg->count;
+                cLo = (sStart > lo) ? sStart : lo;
+                cHi = (sEnd < hi) ? sEnd : hi;
+                if (cHi <= cLo) continue;
+                for (uint32_t r = cLo; r < cHi; ++r) {
+                    const uint16_t off = (uint16_t)(r - b->remoteStart);
+                    const uint16_t newVal =
+                        XModbusDataUnit_value(result, (size_t)(r - group->remoteStart));
+                    if (hubDirtyHasOffset(b, off)) continue;
+                    if (newVal != XModbusDataUnit_value(b->data, off))
+                        XModbusDataUnit_setValue(b->data, off, newVal);
                 }
             }
-            if (changed || firstFill) {
+            /* ③ 发射（此刻缓存已是本帧新值）；changedOnly=false 时每次
+             *    回填都发（与写路径同款契约，供上层周期刷新/播种）。 */
+            for (si = base; si < chunkEnd; ++si) {
+                const XModbusHubCacheSeg* seg =
+                    (const XModbusHubCacheSeg*)XVector_at_base(b->segs, (int64_t)si);
+                uint32_t sStart, sEnd, cLo, cHi;
+                if (!seg) continue;
+                if (!fire[si - base] && hub->m_changedOnlySignals) continue;
+                sStart = seg->remoteStart;
+                sEnd = sStart + seg->count;
+                cLo = (sStart > lo) ? sStart : lo;
+                cHi = (sEnd < hi) ? sEnd : hi;
+                if (cHi <= cLo) continue;
                 XModbusHub_valueChanged_signal(
                     hub, (XModbusRegisterType)b->type,
                     (int)(seg->virtualStart + (cLo - sStart)), (int)(cHi - cLo));
             }
-        }
-        /* ② 写入（脏点保留写意图值）。 */
-        for (uint32_t r = lo; r < hi; ++r) {
-            const uint16_t off = (uint16_t)(r - b->remoteStart);
-            const uint16_t newVal =
-                XModbusDataUnit_value(result, (size_t)(r - group->remoteStart));
-            if (hubDirtyHasOffset(b, off)) continue;
-            if (newVal != XModbusDataUnit_value(b->data, off))
-                XModbusDataUnit_setValue(b->data, off, newVal);
         }
         b->lastOkMs = now;
         b->failCount = 0;
@@ -1086,12 +1159,22 @@ static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev)
     if (dev->inflight) return;                                   /* 单飞占用。 */
     if (dev->state != XModbusDevice_ConnectedState) return;      /* 离线安静跳过。 */
 
-    /* ① 写优先：该设备有脏区间；合并窗口未到期时等窗口（flush 定时器）。 */
+    /* ① 写优先（带饥饿保护）：该设备有脏区间；合并窗口未到期时等窗口。
+     *    [2026-11-01 失败交替] 从站失联后写恒超时重发会把单飞总线永久占住
+     *    （脏区间失败不放弃是写语义），轮询组再也提交不出去——unitLost 的
+     *    失败计数无从累计（现场实证：pollErr 冻结在 1，21s 零流动）。
+     *    处方：最近一笔事务失败期间读/写交替让路（偶数拍轮询先走），
+     *    恢复成功即回到写优先；健康总线行为零变化。 */
     if (hubDeviceHasDirty(dev)) {
         const bool windowOpen = (hub->m_writeCoalesceMs > 0 &&
                                  hub->m_flushTimer != XTIMER_INVALID_ID);
-        if (!windowOpen) {
-            if (hubSendNextWrite(hub, dev)) return;
+        const bool writeTurn =
+            (dev->lastTxOk || (dev->txAlternateTurn & 1u) != 0);
+        if (!windowOpen && writeTurn) {
+            if (hubSendNextWrite(hub, dev)) {
+                if (!dev->lastTxOk) ++dev->txAlternateTurn;  /* 失败期：本次让给了写。 */
+                return;
+            }
         }
     }
     /* ② 轮询：总闸开且读组非空；groupCursor 回卷。[2026-10-28 单元退避]
@@ -1113,6 +1196,7 @@ static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev)
             if (!hubGroupReadable(hub, dev, g)) continue;
             if (hubSendPollGroup(hub, dev, g)) {
                 dev->groupCursor = (idx + 1) % gn;
+                if (!dev->lastTxOk) ++dev->txAlternateTurn;  /* 失败期：本次让给了轮询。 */
                 return;
             }
         }
@@ -1228,6 +1312,7 @@ void XModbusHub_init(XModbusHub* hub)
     hub->m_retryTimer = XTIMER_INVALID_ID;
     hub->m_writeRetryIntervalMs = 1000;
     hub->m_changedOnlySignals = true;
+    hub->m_outputSyncMode = (uint16_t)XModbusHub_OutputSync_Cache;   /* 缺省缓存回灌。 */
     /* [2026-10-28 单元退避/写滞留可见性] 缺省对齐 XPollScheduler 缺省值。 */
     hub->m_unitMaxFails = XPOLL_SCHED_DEFAULT_MAX_FAILS;
     hub->m_unitMuteMs = XPOLL_SCHED_DEFAULT_MUTE_MS;
@@ -1263,6 +1348,8 @@ int XModbusHub_addDevice(XModbusHub* hub, XModbusClient* client, const XString* 
     dev.pollTimer = XTIMER_INVALID_ID;
     dev.inflight = NULL;
     dev.inflightKind = XModbusHubInflight_None;
+    dev.lastTxOk = true;      /* 健康起点：写优先。 */
+    dev.txAlternateTurn = 0;
     dev.blocks = NULL;
     dev.groups = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                    sizeof(XModbusHubReadGroup), false);
@@ -1793,7 +1880,10 @@ bool XModbusHub_writeValues(XModbusHub* hub, XModbusRegisterType type,
             changed = true;
         }
     }
-    if (!hub->m_changedOnlySignals || changed) {
+    /* [2026-11-01 首推恒发] 与读路径 hubFillGroupResult 的 firstFill 恒发
+     * 对称：changedOnly 下播种值恰与写值相同（无变化沿）会吞掉首笔发射，
+     * 未轮询输出区（上线对齐写是唯一推送源）的挂接点将永收不到初值。 */
+    if (!hub->m_changedOnlySignals || changed || !block->firstEmitDone) {
         const uint32_t lo = (uint32_t)block->remoteStart + blockOffset;
         const uint32_t hi = lo + count;
         for (size_t k = (size_t)vi; k < XVector_size_base(hub->m_view[t]); ++k) {
@@ -1810,6 +1900,7 @@ bool XModbusHub_writeValues(XModbusHub* hub, XModbusRegisterType type,
                                            (int)(s2->virtualStart + (cLo - sStart)),
                                            (int)(cHi - cLo));
         }
+        block->firstEmitDone = true;
     }
     /* ② 标脏（合并窗口内多次写只留最终值）+ 调度刷写。 */
     hubMarkDirty(block, blockOffset, count);
@@ -1902,6 +1993,86 @@ parent_call:
 
 /* ==================== 槽 ==================== */
 
+/**
+ * @brief 设备上线输出对齐：未轮询的输出区（Coils/HR）各段一帧统一下发。
+ * @details [2026-11-01 输出上线对齐] 输出区不轮询时外部状态无人兜底：
+ *          程序重启残留、从站掉电恢复后的随机态都会让映射与外部不一致。
+ *          设备每次跃迁 Connected 即按映射段表取该设备的输出区间整段
+ *          下发（同设备同从站远端连续段即一帧，FC15/FC16），取值来源由
+ *          m_outputSyncMode 选择：
+ *            - Cache（缺省）：缓存回灌——首启缓存已由段默认值播种
+ *              （hubSeedBlockDefaults），下发即默认值清残留；重连回灌
+ *              最后写入值，恢复意图状态。
+ *            - Default：映射段默认值覆盖设备与缓存（现场强制复位）。
+ *          区在轮询掩码内则跳过（轮询自会比对对齐）。缓存回灌模式下
+ *          寄存器区哨兵 0xFFFF 防御性置 0（播种已覆盖，双保险不写垃圾）。
+ */
+static void hubPushUnpolledOutputs(XModbusHub* hub, XModbusHubDevice* dev)
+{
+    const bool useDefault =
+        (hub->m_outputSyncMode == (uint16_t)XModbusHub_OutputSync_Default);
+    int t;
+    if (!hub || !dev || !hub->m_mapping) return;
+    for (t = XModbusCoils; t <= XModbusHoldingRegisters; ++t) {
+        const XModbusRegisterType type = (XModbusRegisterType)t;
+        XModbusMapRange* ranges;
+        int got, i;
+        size_t total;
+        if (hub->m_pollAreas & (1u << t)) continue;  /* 轮询区交轮询对齐。 */
+        total = XModbusMapping_rangeCount_const(hub->m_mapping, type);
+        if (total == 0) continue;
+        ranges = (XModbusMapRange*)XMalloc_System(sizeof(XModbusMapRange) * total);
+        if (!ranges) continue;
+        got = XModbusMapping_segmentsForDevice_const(hub->m_mapping, dev->id,
+                                                     type, ranges, (int)total);
+        for (i = 0; i < ((got < 0) ? 0 : got); ++i) {
+            uint16_t* vals;
+            if (ranges[i].count == 0) continue;
+            vals = (uint16_t*)XMalloc_System(sizeof(uint16_t) * ranges[i].count);
+            if (!vals) break;
+            if (useDefault) {
+                /* 默认值覆盖：整段按段默认值（位区非 0 视为 1）。 */
+                const uint16_t v = hubTypeIsBit((uint16_t)t)
+                                       ? (ranges[i].defValue ? 1u : 0u)
+                                       : ranges[i].defValue;
+                for (uint16_t k = 0; k < ranges[i].count; ++k) vals[k] = v;
+            } else {
+                /* 缓存回灌：读缓存下发（缓存是输出意图的事实源）。 */
+                if (!XModbusHub_values(hub, type, ranges[i].virtualStart,
+                                       ranges[i].count, vals)) {
+                    XFree_System(vals);
+                    continue;
+                }
+                if (!hubTypeIsBit((uint16_t)t)) {
+                    for (uint16_t k = 0; k < ranges[i].count; ++k)
+                        if (vals[k] == 0xFFFFu) vals[k] = 0;
+                }
+            }
+            XModbusHub_writeValues(hub, type, ranges[i].virtualStart,
+                                   ranges[i].count, vals);
+            XFree_System(vals);
+        }
+        XFree_System(ranges);
+    }
+}
+
+/** @brief 设置上线输出对齐模式（缓存回灌=缺省 / 默认值覆盖）。 */
+void XModbusHub_setOutputSyncMode(XModbusHub* hub, XModbusHub_OutputSyncMode mode)
+{
+    if (!hub) return;
+    if (mode != XModbusHub_OutputSync_Cache && mode != XModbusHub_OutputSync_Default)
+        return;
+    hub->m_outputSyncMode = (uint16_t)mode;
+}
+
+XModbusHub_OutputSyncMode XModbusHub_outputSyncMode(const XModbusHub* hub)
+{
+    if (!hub) return XModbusHub_OutputSync_Cache;
+    return (hub->m_outputSyncMode == (uint16_t)XModbusHub_OutputSync_Default)
+               ? XModbusHub_OutputSync_Default
+               : XModbusHub_OutputSync_Cache;
+}
+
 /** @brief 设备状态变化（connect_2：第一参=真 sender=client）。 */
 static void XModbusHub_onDeviceStateChanged(XObject* sender, XVarList* args)
 {
@@ -1925,6 +2096,9 @@ static void XModbusHub_onDeviceStateChanged(XObject* sender, XVarList* args)
             XModbusHub_deviceStateChanged_signal(hub, d->id, newStateInt);
             if (newState == XModbusDevice_ConnectedState) {
                 ++d->reconnectCount;
+                /* [输出上线对齐] 未轮询输出区先标脏（初装/最后确认值），
+                 * 随下面的泵与写队列同周期一帧统一下发。 */
+                hubPushUnpolledOutputs(hub, d);
                 /* 恢复在线：立即续泵轮询 + 补写滞留脏区间（不等下一拍）。 */
                 hubPumpDevice(hub, d);
                 hubPumpWriteQueue(hub);
@@ -1969,6 +2143,8 @@ static void XModbusHub_onReplyFinished(XObject* sender, XVarList* args)
     {
         const uint64_t now = XDateTime_currentMSecsSinceEpoch();
         const bool ok = (XModbusReply_error(reply) == XModbusDevice_NoError);
+
+        dev->lastTxOk = ok;   /* 饥饿交替判据：失败期读写交替让路（见泵①）。 */
 
         if (dev->inflightKind == XModbusHubInflight_Poll) {
             /* [2026-10-28 单元退避] 组/从站定位提前到成败分支之前，结果先

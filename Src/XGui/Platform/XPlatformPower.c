@@ -39,9 +39,19 @@ typedef struct {
     XPlatformPowerPolicy m_policy; /**< 策略影子（应用设定值）。 */
 } XPlatformPowerState;
 
-/* 布局锁：56→48B（旗标+能力 8B + 时间戳 16B + 策略 24B）。 */
-_Static_assert(sizeof(XPlatformPowerState) == 48,
-               "XPlatformPowerState 布局变化：旗标组/能力/时间戳/策略四段排布被改动");
+/* 布局锁：56→48B（旗标+能力 8B + 时间戳 16B + 策略 24B）。
+ * 静态断言分编译器收敛（与 XAtomic.h 的 XATOMIC_THREAD_LOCAL/XALIGNAS 同款）：
+ * MSVC 默认 C 模式不认 C11 的 _Static_assert（需 /std:c11+），裸用会被当
+ * 隐式函数声明 ⇒ sizeof 前语法错误（2026-11-01 远端合并回归）；GNU/Clang
+ * 及声明 C11 的编译器用真断言，MSVC 兼容路径降级为空（布局约束以注释锁）。 */
+#if defined(__GNUC__) || defined(__clang__) || \
+    (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L)
+#define XPOW_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+#else
+#define XPOW_STATIC_ASSERT(cond, msg)
+#endif
+XPOW_STATIC_ASSERT(sizeof(XPlatformPowerState) == 48,
+                   "XPlatformPowerState 布局变化：旗标组/能力/时间戳/策略四段排布被改动");
 
 static XPlatformPowerState g_xpow;
 

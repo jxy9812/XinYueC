@@ -206,7 +206,16 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
         }
 
         uint16_t address = (uint16_t)XModbusDataUnit_startAddress(unit);
-        uint16_t byteCount = (count % 8 == 0) ? (count / 8) : (count / 8 + 1);
+        /* [2026-11-01 byteCount 根修] 字节计数按区取法：线圈=ceil(count/8)
+         *（位打包），寄存器=count×2（每寄存器 2 字节）。原先寄存器误用
+         * 线圈公式，FC16 请求 byteCount 与数据长度不符——严格服务端按
+         * IllegalDataValue 回异常，写恒失败并经写优先泵饿死轮询。 */
+        uint16_t byteCount;
+        if (unit->m_type == XModbusCoils)
+            byteCount = (uint16_t)((count % 8 == 0) ? (count / 8)
+                                                    : (count / 8 + 1));
+        else
+            byteCount = (uint16_t)(count * 2);
 
         uint8_t header[5];
         writeUint16BE(header, 0, address);

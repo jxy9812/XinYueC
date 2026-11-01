@@ -279,14 +279,12 @@ static void ctb_swConnect(XObject* sender)
 
 /*---- XStatusBar：messageChanged（showMessage 超时/同文早退采样） ---- */
 #if XWIDGET_ON && XSTATUSBAR_ON
-/** @brief 忙等泵：反复单次派发直至墙钟走满 ms（XCoreApplication_
- *  processEventsWithMaxTime 忽略 maxtime，且 WaitForMoreEvents 在无
- *  定时器时会无限阻塞——无头套件用带界忙等驱动定时器到期）。 */
+/** @brief 定时器到期驱动：墙钟走满 ms 内持续泵送（原「忙等绕过」折中
+ *  已废弃——2026-11-01 maxtime 兑现根修后，processEventsWithMaxTime
+ *  按 deadline 真实等待+泵送，定时器随真实时间兑现，直接委托即可）。 */
 static void ctb_pumpMs(int ms)
 {
-    int64_t start = XDateTime_currentMSecsSinceEpoch();
-    while (XDateTime_currentMSecsSinceEpoch() - start < ms)
-        XCoreApplication_processEvents(XEventLoop_AllEvents);
+    XCoreApplication_processEventsWithMaxTime(XEventLoop_AllEvents, ms);
 }
 
 static int g_sbmMessageChanged;

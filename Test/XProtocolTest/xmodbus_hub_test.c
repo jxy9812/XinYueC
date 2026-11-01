@@ -177,11 +177,11 @@ static void testMappingLogic(void)
     XModbusMapping* m = XModbusMapping_create();
     CHECK(m != NULL, "mapping create");
 
-    CHECK(XModbusMapping_addRange(m, XModbusDiscreteInputs, 0, 8, 1, 1, 0), "add DI v0..7←dev1");
-    CHECK(!XModbusMapping_addRange(m, XModbusDiscreteInputs, 7, 3, 2, 1, 0), "重叠拒绝(v7 撞 v0..7)");
-    CHECK(XModbusMapping_addRange(m, XModbusDiscreteInputs, 8, 8, 2, 1, 0), "add DI v8..15←dev2");
-    CHECK(XModbusMapping_addRange(m, XModbusHoldingRegisters, 0, 10, 3, 5, 100), "add HR v0..9←dev3(unit5)");
-    CHECK(!XModbusMapping_addRange(m, XModbusHoldingRegisters, 0xFFFF, 2, 3, 5, 0), "跨 0xFFFF 回绕拒绝");
+    CHECK(XModbusMapping_addRange(m, XModbusDiscreteInputs, 0, 8, 1, 1, 0, 0), "add DI v0..7←dev1");
+    CHECK(!XModbusMapping_addRange(m, XModbusDiscreteInputs, 7, 3, 2, 1, 0, 0), "重叠拒绝(v7 撞 v0..7)");
+    CHECK(XModbusMapping_addRange(m, XModbusDiscreteInputs, 8, 8, 2, 1, 0, 0), "add DI v8..15←dev2");
+    CHECK(XModbusMapping_addRange(m, XModbusHoldingRegisters, 0, 10, 3, 5, 100, 0), "add HR v0..9←dev3(unit5)");
+    CHECK(!XModbusMapping_addRange(m, XModbusHoldingRegisters, 0xFFFF, 2, 3, 5, 0, 0), "跨 0xFFFF 回绕拒绝");
 
     /* 切片：v4..13 横跨 dev1[4..7]+dev2[0..5]，应拆 2 片。 */
     XModbusMapSegment segs[4];
@@ -218,27 +218,27 @@ static void testMappingLogic(void)
     {
         XModbusMapping* m2 = XModbusMapping_create();
         CHECK(m2 != NULL, "mapping2 create");
-        CHECK(!XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0, 0, 1, 1, 0),
+        CHECK(!XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0, 0, 1, 1, 0, 0),
               "count==0 拒绝");
-        CHECK(!XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0, 8, -1, 1, 0),
+        CHECK(!XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0, 8, -1, 1, 0, 0),
               "deviceId<0 拒绝");
-        CHECK(!XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0, 8, 1, 70000, 0),
+        CHECK(!XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0, 8, 1, 70000, 0, 0),
               "unitId>65535 拒绝（uint16 存储，2026-10-31 新校验）");
-        CHECK(XModbusMapping_addRange(m2, XModbusHoldingRegisters, 0xFFFE, 2, 1, 1, 0xFFFE),
+        CHECK(XModbusMapping_addRange(m2, XModbusHoldingRegisters, 0xFFFE, 2, 1, 1, 0xFFFE, 0),
               "恰满 16 位空间合法（虚拟/远端同占 0xFFFE..0xFFFF）");
-        CHECK(!XModbusMapping_addRange(m2, XModbusHoldingRegisters, 0xFFFF, 2, 1, 1, 0),
+        CHECK(!XModbusMapping_addRange(m2, XModbusHoldingRegisters, 0xFFFF, 2, 1, 1, 0, 0),
               "虚拟回绕拒绝（0xFFFF+2 溢出）");
-        CHECK(!XModbusMapping_addRange(m2, XModbusHoldingRegisters, 0, 2, 1, 1, 0xFFFF),
+        CHECK(!XModbusMapping_addRange(m2, XModbusHoldingRegisters, 0, 2, 1, 1, 0xFFFF, 0),
               "远端回绕拒绝（remote 0xFFFF+2 溢出）");
-        CHECK(!XModbusMapping_addRange(m2, XModbusInvalid, 0, 8, 1, 1, 0),
+        CHECK(!XModbusMapping_addRange(m2, XModbusInvalid, 0, 8, 1, 1, 0, 0),
               "非法 type 拒绝");
         CHECK(XModbusMapping_rangeCount_const(m2, XModbusDiscreteInputs) == 0,
               "全拒绝后段数为 0");
         /* 回绕边界内合法：恰满 0xFFFF 结尾可收。 */
-        CHECK(XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0xFFF0, 0x10, 1, 247, 0xFFF0),
+        CHECK(XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0xFFF0, 0x10, 1, 247, 0xFFF0, 0),
               "段恰满到 0xFFFF 合法（unitId=247 边界）");
         /* 四区隔离：同虚拟地址各区独立。 */
-        CHECK(XModbusMapping_addRange(m2, XModbusCoils, 0, 8, 2, 1, 0), "Coils v0..7 独立登记");
+        CHECK(XModbusMapping_addRange(m2, XModbusCoils, 0, 8, 2, 1, 0, 0), "Coils v0..7 独立登记");
         CHECK(XModbusMapping_rangeCount_const(m2, XModbusCoils) == 1 &&
               XModbusMapping_rangeCount_const(m2, XModbusDiscreteInputs) == 1 &&
               XModbusMapping_rangeCount_const(m2, XModbusInputRegisters) == 0,
@@ -265,7 +265,7 @@ static void testMappingLogic(void)
         CHECK(XModbusMapping_rangeCount_const(m2, XModbusDiscreteInputs) == 0,
               "clearAreas(Invalid) 全清");
         /* 清空后容器可复用（容量保留）。 */
-        CHECK(XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0, 8, 1, 1, 0),
+        CHECK(XModbusMapping_addRange(m2, XModbusDiscreteInputs, 0, 8, 1, 1, 0, 0),
               "清空后再添加正常");
         XClassDelete(m2);
     }
@@ -371,6 +371,10 @@ static XModbusHub* cacheHubMake(int port, int* outDevId)
     *outDevId = id;
     XModbusHub_connectAll(hub);
     if (!waitUntil(predOnline, hub, 10000)) { XModbusHub_deleteLater(hub); return NULL; }
+    /* [2026-11-01 输出上线对齐] 设备 Connected 即按映射段默认值下发
+     * 未轮询输出区（FC15/FC16）。此处等其全部落定，后续用例的帧日志
+     * 基点/写计数不受对齐帧干扰（无输出映射时此等待立即通过）。 */
+    if (!waitUntil(predPendingZero, hub, 4000)) { XModbusHub_deleteLater(hub); return NULL; }
     return hub;
 }
 
@@ -396,8 +400,8 @@ static void testReadMerge(int port)
 
     map = XModbusMapping_create();
     /* 两段同从站同区、远端相隔 8 个洞：虚拟地址连续（0..15）。 */
-    XModbusMapping_addRange(map, XModbusInputRegisters, 0, 8, dev, 1, 0);
-    XModbusMapping_addRange(map, XModbusInputRegisters, 8, 8, dev, 1, 16);
+    XModbusMapping_addRange(map, XModbusInputRegisters, 0, 8, dev, 1, 0, 0);
+    XModbusMapping_addRange(map, XModbusInputRegisters, 8, 8, dev, 1, 16, 0);
     XModbusHub_setMapping(hub, map);
     XModbusHub_setPollIntervalDefault(hub, 200);
     /* 默认 gap=0：两段各一组。 */
@@ -495,8 +499,8 @@ static void testWriteMerge(int port)
     CHECK(hub != NULL, "cache hub 上线");
     if (!hub) return;
     map = XModbusMapping_create();
-    XModbusMapping_addRange(map, XModbusCoils, 0, 16, dev, 1, 0);
-    XModbusMapping_addRange(map, XModbusHoldingRegisters, 0, 8, dev, 1, 0);
+    XModbusMapping_addRange(map, XModbusCoils, 0, 16, dev, 1, 0, 0);
+    XModbusMapping_addRange(map, XModbusHoldingRegisters, 0, 8, dev, 1, 0, 0);
     XModbusHub_setMapping(hub, map);
     XObject_connect_2((XObject*)hub, XSignal(XModbusHub_writeCompleted_signal),
                       onWriteCompleted);
@@ -648,14 +652,14 @@ int XModbusHubTest_runEx(int portA, int portB)
 
     /* ---------- 映射 ---------- */
     XModbusMapping* map = XModbusMapping_create();
-    XModbusMapping_addRange(map, XModbusDiscreteInputs, 0, 8, idA, 1, 0);
-    XModbusMapping_addRange(map, XModbusDiscreteInputs, 8, 8, idB, 1, 0);
-    XModbusMapping_addRange(map, XModbusDiscreteInputs, 16, 8, idC, 5, 0);
-    XModbusMapping_addRange(map, XModbusInputRegisters, 0, 16, idA, 1, 0);
-    XModbusMapping_addRange(map, XModbusInputRegisters, 16, 16, idC, 5, 0);
-    XModbusMapping_addRange(map, XModbusCoils, 0, 8, idA, 1, 0);
-    XModbusMapping_addRange(map, XModbusHoldingRegisters, 0, 10, idC, 5, 0);
-    XModbusMapping_addRange(map, XModbusHoldingRegisters, 20, 10, idA, 1, 0); /* 跨段写用例用 */
+    XModbusMapping_addRange(map, XModbusDiscreteInputs, 0, 8, idA, 1, 0, 0);
+    XModbusMapping_addRange(map, XModbusDiscreteInputs, 8, 8, idB, 1, 0, 0);
+    XModbusMapping_addRange(map, XModbusDiscreteInputs, 16, 8, idC, 5, 0, 0);
+    XModbusMapping_addRange(map, XModbusInputRegisters, 0, 16, idA, 1, 0, 0);
+    XModbusMapping_addRange(map, XModbusInputRegisters, 16, 16, idC, 5, 0, 0);
+    XModbusMapping_addRange(map, XModbusCoils, 0, 8, idA, 1, 0, 0);
+    XModbusMapping_addRange(map, XModbusHoldingRegisters, 0, 10, idC, 5, 0, 0);
+    XModbusMapping_addRange(map, XModbusHoldingRegisters, 20, 10, idA, 1, 0, 0); /* 跨段写用例用 */
     XModbusHub_setMapping(hub, map);
     printf("  [dbg] cacheCount DI=%u IR=%u Coils=%u HR=%u\n",
            XModbusHub_cacheCount(hub, XModbusDiscreteInputs),
@@ -873,7 +877,7 @@ int XModbusHubTest_runEx(int portA, int portB)
               "⑫ 设备名深拷贝存活（入参释放后仍可读）");
         {
             XModbusMapping* mp = XModbusMapping_create();
-            XModbusMapping_addRange(mp, XModbusHoldingRegisters, 0, 8, id, 1, 0);
+            XModbusMapping_addRange(mp, XModbusHoldingRegisters, 0, 8, id, 1, 0, 0);
             XModbusHub_setMapping(hub2, mp); /* 接管所有权。 */
         }
         /* 滞留写作废：从站不在场（未 connect）→ 写意图滞留 → removeDevice

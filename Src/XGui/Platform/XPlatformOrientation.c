@@ -34,9 +34,19 @@ typedef struct {
     unsigned m_caps;            /**< 能力位缓存（0=尚未就绪，每次重探）。 */
 } XPlatformOrientationState;
 
-/* 布局锁：12→8B（旗标+角度编码 4B + 能力 4B）。 */
-_Static_assert(sizeof(XPlatformOrientationState) == 8,
-               "XPlatformOrientationState 布局变化：旗标/角度编码/能力排布被改动");
+/* 布局锁：12→8B（旗标+角度编码 4B + 能力 4B）。
+ * 静态断言分编译器收敛（与 XAtomic.h 的 XATOMIC_THREAD_LOCAL/XALIGNAS 同款）：
+ * MSVC 默认 C 模式不认 C11 的 _Static_assert（需 /std:c11+），裸用会被当
+ * 隐式函数声明 ⇒ sizeof 前语法错误（2026-11-01 远端合并回归）；GNU/Clang
+ * 及声明 C11 的编译器用真断言，MSVC 兼容路径降级为空（布局约束以注释锁）。 */
+#if defined(__GNUC__) || defined(__clang__) || \
+    (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L)
+#define XORI_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+#else
+#define XORI_STATIC_ASSERT(cond, msg)
+#endif
+XORI_STATIC_ASSERT(sizeof(XPlatformOrientationState) == 8,
+                   "XPlatformOrientationState 布局变化：旗标/角度编码/能力排布被改动");
 
 static XPlatformOrientationState g_xori;
 

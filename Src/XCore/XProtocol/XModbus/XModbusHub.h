@@ -23,9 +23,16 @@
   *             （XPoll/XPollScheduler）：连续失败达阈值（setUnitBackoff，
   *             默认 3）的从站静默退避（默认 5000ms），静默期间其读组不再
   *             提交——RTU 共口多从站时把总线让给活从站，静默到期自动探活。
-  *             Hub 是组合器不是协议设备（继承 XObject 而非 XModbusDevice），
-  *             不发起未被映射驱动的 Modbus 事务。线程模型：单线程事件循环，
-  *             零锁；计时一律 XDateTime_currentMSecsSinceEpoch()。
+ *             [2026-11-01 输出上线对齐] 输出区（Coils/HR）不在轮询掩码
+ *             内时，设备每次跃迁 Connected（含重连）自动按映射段一帧
+ *             统一下发（一段一帧，FC15/FC16），取值来源由
+ *             setOutputSyncMode 选择：缓存回灌（缺省——映射段默认值在
+ *             块首次物化时播种进缓存，故首启下发即默认值清外部残留，
+ *             重连回灌最后写入值恢复意图状态）或默认值覆盖（现场强制
+ *             复位）。区在轮询掩码内则交轮询对齐，不重复下发。
+ *             Hub 是组合器不是协议设备（继承 XObject 而非 XModbusDevice），
+ *             不发起未被映射驱动的 Modbus 事务。线程模型：单线程事件循环，
+ *             零锁；计时一律 XDateTime_currentMSecsSinceEpoch()。
   *             定时器一律 XObject 自带机制（startTimer_ms/killTimer +
   *             EXObject_TimerEvent 重载分发），不内嵌独立 XTimer 实例
   *             （约束文档「定时器使用规范 2026-10-26 裁定」）。
@@ -112,6 +119,11 @@ typedef struct XModbusHubCacheBlock {
     uint64_t lastOkMs;          /**< 整块最近一次读回成功时刻（单调毫秒；0=从未）。 */
     uint32_t failCount;         /**< 连续读失败次数（质量观测；成功清零）。 */
     bool refreshRequested;      /**< 已被 requestRefresh 标脏，下一拍优先读。 */
+    bool firstEmitDone;         /**< [2026-11-01 首推恒发] 本块写路径已发过首笔
+                                     valueChanged——与读路径 firstFill 恒发对称：
+                                     未轮询输出区（对齐写）播种值恰与写值相同时
+                                     无变化沿，不补首推则挂接点永收不到初值
+                                     （违反「挂接后至少推送一次供播种」契约）。 */
 } XModbusHubCacheBlock;
 
 /**
@@ -188,6 +200,14 @@ typedef struct XModbusHubDevice {
     uint32_t pollErrCount;              /**< 累计轮询失败组数。 */
     uint32_t reconnectCount;            /**< 累计重连成功次数（离线→在线跃迁）。 */
     uint64_t lastSuccessMs;             /**< 最后一次成功应答时刻（单调毫秒）。 */
+    bool lastTxOk;                      /**< 最近一笔总线事务成败（写/轮询共用；
+                                             失败后读写交替的饥饿保护判据，
+                                             2026-11-01：从站失联后写恒超时重发
+                                             会永久饿死轮询，unitLost 失败计数
+                                             无从累计——现场实证 pollErr 冻结）。 */
+    uint16_t txAlternateTurn;           /**< 失败交替计数：偶数=轮询先走、
+                                             奇数=写先走（仅 lastTxOk=false 期间
+                                             生效；成功后恢复写优先）。 */
     XPollScheduler unitSched;           /**< 从站失联退避表（XPoll，按 unitId 簿记；
                                          *   块表重建时随块去重重建）。 */
 } XModbusHubDevice;
@@ -221,7 +241,9 @@ typedef struct XModbusHub {
      * 主要为后续布尔配置集中登记留位、消散落 padding）。 */
     uint16_t m_polling : 1;             /**< 轮询总闸（startPolling/stopPolling）。 */
     uint16_t m_changedOnlySignals : 1;  /**< valueChanged 仅在值确实变化时发射（默认 true）。 */
-    uint16_t m_hubFlagsReserved : 14;   /**< 保留位，必须为 0。 */
+    uint16_t m_outputSyncMode : 2;      /**< 上线输出对齐来源（XModbusHub_OutputSyncMode：
+                                             0=缓存回灌(缺省) 1=映射段默认值覆盖）。 */
+    uint16_t m_hubFlagsReserved : 12;   /**< 保留位，必须为 0。 */
     XTimerId m_retryTimer;              /**< 写重发周期定时器。 */
     size_t m_writeRetryIntervalMs;      /**< 写重发间隔毫秒。 */
     uint32_t m_unitMaxFails;            /**< 从站失联退避连续失败阈值（默认 3；setUnitBackoff）。 */
@@ -331,6 +353,36 @@ XModbusMapping* XModbusHub_mapping(const XModbusHub* hub);
   */
 void XModbusHub_refreshMapping(XModbusHub* hub);
 
+/* ==================== 输出上线对齐 ==================== */
+
+/**
+  * @brief 上线输出对齐的取值来源
+  */
+typedef enum {
+    XModbusHub_OutputSync_Cache = 0,    /**< 缓存回灌（缺省）：上线把缓存值下发
+                                             设备——首启缓存已由映射段默认值播种
+                                             （下发即默认值），重连回灌最后写入
+                                             值（恢复意图状态）。 */
+    XModbusHub_OutputSync_Default = 1   /**< 默认值覆盖：上线把映射段默认值
+                                             下发设备与缓存（现场强制复位）。 */
+} XModbusHub_OutputSyncMode;
+
+/**
+  * @brief 设置上线输出对齐模式（缺省 缓存回灌）
+  * @param hub XModbusHub实例指针（非NULL）
+  * @param mode XModbusHub_OutputSyncMode
+  * @note 作用于「未纳入轮询区的输出区（Coils/HR）在设备每次跃迁
+  *       Connected（含重连）时的一段一帧统一下发」；轮询区内的输出
+  *       交轮询对齐，不受本模式影响。运行期改值对下一次上线生效
+  */
+void XModbusHub_setOutputSyncMode(XModbusHub* hub, XModbusHub_OutputSyncMode mode);
+/**
+  * @brief 查询上线输出对齐模式
+  * @param hub XModbusHub实例指针（非NULL）
+  * @return XModbusHub_OutputSyncMode（未设置=Cache）
+  */
+XModbusHub_OutputSyncMode XModbusHub_outputSyncMode(const XModbusHub* hub);
+
 /* ==================== 轮询（输入区自动更新） ==================== */
 /**
   * @brief 设置新设备缺省轮询间隔毫秒（默认 1000）
@@ -351,6 +403,9 @@ bool XModbusHub_setPollInterval(XModbusHub* hub, int deviceId, size_t ms);
   * @param hub XModbusHub实例指针（非NULL）
   * @param areaMask 位 1<<XModbusRegisterType 枚举值：DI=bit1 Coils=bit2
   *        IR=bit3 HR=bit4（默认仅 DI|IR 输入区）
+ * @note 输出区（Coils/HR）不在掩码内时，设备每次上线（含重连）自动
+ *       按映射段一帧统一下发（输出上线对齐，取值来源见
+ *       setOutputSyncMode）；纳入掩码则交轮询对齐、不自动下发
   */
 void XModbusHub_setPollAreas(XModbusHub* hub, unsigned areaMask);
 /**

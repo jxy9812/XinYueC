@@ -110,6 +110,13 @@ typedef struct XDeviceSerialPortWin32Context
     XFd m_fd;                         /**< 本上下文的统一描述符（完成包回填用）。 */
     bool m_readPending;               /**< 是否有在途异步读。 */
     bool m_writePending;              /**< 是否有在途异步写（完成包待回收）。 */
+    /* 关闭拆除中：完成回调在此期间**禁止续挂**常驻读。否则 cancelRead
+     * 的回收循环（以 m_readPending==false 为完成条件）永不再满足：空转
+     * 耗尽后强清标志 ⇒ 带着在途读 CloseHandle ⇒ OS 取消读并把完成包投
+     * 进完成端口 ⇒ 上下文此刻已释放 ⇒ 下一轮 pollPlatform 出队该包即在
+     * 已释放内存上解引用（2026-11-01「主站点击断开即崩」回归，cdb 实锤
+     * 崩点 processOneCompletion+0x77 读 ctx->type）。 */
+    bool m_closing;                   /**< 关闭拆除中（禁续挂+启用确定性回收）。 */
 } XDeviceSerialPortWin32Context;
 
 static XDeviceSerialPortWin32Context* win32Context(XFd fd)
@@ -172,6 +179,7 @@ static void xspw32_armRead(XDeviceSerialPortWin32Context* owner)
 {
     BOOL ok;
     if (!owner || owner->m_readPending) return;
+    if (owner->m_closing) return; /* 关闭拆除中：不得续挂在途读（见 m_closing 注） */
     if (!owner->m_handle || owner->m_handle == INVALID_HANDLE_VALUE) return;
     if (!owner->m_readBuffer) return;
     memset(&owner->m_readContext, 0, sizeof(owner->m_readContext));
@@ -316,6 +324,7 @@ bool XDeviceSerialPort_platformOpen(XFd fd, const XString* portName)
     bool wantIocp;
     if (!context || !portName) return false;
     context->m_fd = fd;
+    context->m_closing = false; /* 同上下文重开（自动重连）恢复续挂资格 */
     path = (const wchar_t*)XString_toUtf16(portName);
     if (!path) return false;
     if (context->m_base.m_openMode & XIODevice_ReadOnly) access |= GENERIC_READ;
@@ -408,6 +417,9 @@ static void xspw32_cancelRead(XDeviceSerialPortWin32Context* context)
     XAbstractNetIoRing* ring;
     int tries = 0;
     if (!context || !context->m_readPending) return;
+    /* 先置拆除标记再取消：取消失败包出队时完成回调不得再续挂读，
+     * 回收循环据此在首个完成包后确定性收口（详见 m_closing 注）。 */
+    context->m_closing = true;
     ring = XAbstractNetIoRing_global();
     if (!ring) { context->m_readPending = false; return; }
     if (context->m_handle && context->m_handle != INVALID_HANDLE_VALUE)
@@ -428,6 +440,18 @@ static void xspw32_drainWrite(XDeviceSerialPortWin32Context* context)
     if (!context || !context->m_writePending) return;
     ring = XAbstractNetIoRing_global();
     if (!ring) { context->m_writePending = false; return; }
+    /* 先给自然完成一个有界窗口（小帧毫秒级落线，避免无谓丢帧）；
+     * 仍挂起（驱动卡死/大帧慢线）则取消——取消保证完成包必投，
+     * 再有界回收之。不取消而强清标志 ⇒ 悬垂写完成包指向已释放
+     * 上下文（与读侧同款 UAF，只是更罕见）。 */
+    while (context->m_writePending && tries < XSPW32_CANCEL_RECLAIM_TRIES) {
+        XAbstractNetIoRing_waitForEvents_base(ring, 1);
+        ++tries;
+    }
+    if (context->m_writePending &&
+        context->m_handle && context->m_handle != INVALID_HANDLE_VALUE)
+        CancelIoEx(context->m_handle, &context->m_writeContext.base.overlapped);
+    tries = 0;
     while (context->m_writePending && tries < XSPW32_CANCEL_RECLAIM_TRIES) {
         XAbstractNetIoRing_waitForEvents_base(ring, 1);
         ++tries;
@@ -439,6 +463,7 @@ void XDeviceSerialPort_platformClose(XFd fd)
 {
     XDeviceSerialPortWin32Context* context = win32Context(fd);
     if (!context) return;
+    context->m_closing = true; /* 读侧无在途时 cancelRead 早退，标记在此兜底 */
     if (context->m_overlapped) {
         xspw32_cancelRead(context);
         xspw32_drainWrite(context);
@@ -459,6 +484,8 @@ void XDeviceSerialPort_platformClose(XFd fd)
     }
     context->m_overlapped = false;
     context->m_iocpAssociated = false;
+    context->m_readPending = false;
+    context->m_writePending = false;
     xspw32_setTimerResolution(false);
 }
 

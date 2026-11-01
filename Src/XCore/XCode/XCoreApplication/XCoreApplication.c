@@ -345,10 +345,43 @@ void XCoreApplication_processEvents(XEventLoopProcessEventsFlags flags)
 /* Qt 6.8: QCoreApplication::processEvents(QEventLoop::ProcessEventsFlags flags, int ms) */
 void XCoreApplication_processEventsWithMaxTime(XEventLoopProcessEventsFlags flags, int maxtime)
 {
-    (void)maxtime;
     XThreadData* data = XThreadData_current();
-    if (data && data->m_eventDispatcher) {
+    if (!data || !data->m_eventDispatcher)
+        return;
+    if (maxtime <= 0) {
+        /* maxtime<=0 维持纯非阻塞泵（历史契约；调用方传 0 即"只清当前
+         * 积压，不等"）。 */
         XAbstractEventDispatcher_processEvents_base(data->m_eventDispatcher, flags);
+        return;
+    }
+    /* [2026-11-01 maxtime 兑现根修] 原实现 (void)maxtime 退化为单次非
+     * 阻塞泵——"处理至多 ms"语义（Qt 6.8 processEvents(flags, ms)：至
+     * ms 或无更多事件）从未兑现。后果：调用方以 (0,10) 节拍等待注册
+     * 定时器到期时，500 次"5s"在 ~5ms 真实时间内烧完，50ms 级定时器
+     * 永不兑现（Modbus 50ms 轮询回归 DI/AI 全 FAIL 的根因；XGuiDemo
+     * 无头套件被迫自写 ctb_pumpMs 忙等同款绕过——本收口后可废弃）。
+     * 处方：deadline 前循环「非阻塞泵 + ≤10ms 真实睡眠小片」，注册
+     * 定时器随真实时间被 processEvents 第 1 步的时间轮消费。刻意不用
+     * WaitForMoreEvents：无定时器/事件时其阻塞等待不可控（
+     * nextPreciseDeadline=UINT64_MAX 时按 -1 永等，见派发器注释），
+     * 睡眠小片保证 deadline 后必然返回。 */
+    {
+        const uint64_t deadlineMs =
+            (uint64_t)XDateTime_currentMSecsSinceEpoch() + (uint64_t)maxtime;
+        do {
+            XAbstractEventDispatcher_processEvents_base(
+                data->m_eventDispatcher, flags);
+            {
+                const uint64_t nowMs =
+                    (uint64_t)XDateTime_currentMSecsSinceEpoch();
+                if (nowMs >= deadlineMs)
+                    break;
+                {
+                    const uint64_t remainMs = deadlineMs - nowMs;
+                    XThread_msleep((remainMs < 10u) ? (uint32_t)remainMs : 10u);
+                }
+            }
+        } while (1);
     }
 }
 

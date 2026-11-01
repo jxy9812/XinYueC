@@ -33,6 +33,11 @@ typedef enum XConnectionType
     XConnectionType_BlockingQueued = 3,
     XConnectionType_Unique = 0x80,
     XConnectionType_SingleShot = 0x100,
+    /* [2026-11-01 RawReceiver] receiver 仅为上下文指针（如 XIoPoint 等非
+     * XObject 轻量类，布局与 XObject 不兼容）：连接/断开不做
+     * receiver->m_signalSlot 簿记，仅允许 Direct 派发（pushSender 只存
+     * 指针不解引用）。 */
+    XConnectionType_RawReceiver = 0x200,
 }XConnectionType;
 //槽
 typedef struct XConnection

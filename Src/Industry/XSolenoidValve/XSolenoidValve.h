@@ -3,7 +3,8 @@
  * @brief      电磁阀设备抽象公开 API。
  * @details    对齐 Qt 无直接对应类（语义对标工业现场电磁阀/气动阀设备）。
  *             XSolenoidValve 是纯业务层设备：只依赖通道接口族
- *             （XDigitalOutput 动作出口 + XDigitalInput 开/关到位反馈），
+ *             （通道组登记的输出点 + 输入点，全部 XIoPoint* 直传，信号
+ *             经 XIoChannelGroup 分发按点指针过滤），
  *             **不关心动作发往何处、信号来自何处**——GPIO、Modbus 或未来
  *             任何传输都经 Industry/XChannel 的适配器在装配期注入
  *             （attach，借用不拥有）。类内实现阀位状态机、动作超时监督
@@ -25,8 +26,8 @@ extern "C" {
 #include "CXinYueConfig.h"
 #include "XIndustry_config.h"
 #include "XObject.h"
-#include "XChannel/XDigitalInput.h"
-#include "XChannel/XDigitalOutput.h"
+#include "XChannel/XIoChannelGroup.h"
+
 #if XINDUSTRY_ON && XSOLENOID_VALVE_ON
 
 /**
@@ -77,9 +78,10 @@ XCLASS_DEFINE_EXTEND_END(XSolenoidValve, XObject)
  */
 typedef struct XSolenoidValve {
     XObject m_class;                              /**< 第一个成员，基类 XObject，由 XClass 管理，禁止手工修改。 */
-    XDigitalOutput* m_output;                     /**< 动作出口（借用，可为 NULL=未挂接）；true=开阀，false=关阀。 */
-    XDigitalInput* m_openLimit;                   /**< 开到位反馈（借用，可为 NULL）；DualLimit 模式参与到位判定。 */
-    XDigitalInput* m_closeLimit;                  /**< 关到位反馈（借用，可为 NULL）；DualLimit 模式参与到位判定。 */
+    XIoChannelGroup* m_group;                     /**< 通道组（借用，可为 NULL=未挂接）；写与信号经组分发。 */
+    XIoPoint* m_outputPt;                         /**< 动作出口点（组内 DigitalOutput 点）；true=开阀，false=关阀；NULL=未挂接。 */
+    XIoPoint* m_openLimitPt;                      /**< 开到位反馈点（组内 DigitalInput 点）；NULL=无该限位。 */
+    XIoPoint* m_closeLimitPt;                     /**< 关到位反馈点（组内 DigitalInput 点）；NULL=无该限位。 */
     XSolenoidValveFeedbackMode m_feedbackMode;    /**< 到位反馈口径，默认 None。 */
     XSolenoidValveState m_state;                  /**< 当前阀位状态，默认 Unknown。 */
     uint32_t m_timeoutMs;                         /**< 在途动作监督超时（毫秒）；0=不监督。默认 5000。 */
@@ -114,27 +116,31 @@ XSolenoidValve* XSolenoidValve_create(void);
 /**
  * @brief 挂接动作出口。
  * @param valve 目标电磁阀；不能为 NULL。
- * @param output 动作出口通道；借用，不取得所有权，不能为 NULL（解挂用
- *               XSolenoidValve_detachOutput）。true 写入=开阀，false=关阀。
+ * @param group 通道组；借用，不能为 NULL。
+ * @param outputPt 动作出口点（组内已登记的 DigitalOutput 点）；借用，不
+ *                 取得所有权，不能为 NULL（解挂用 XSolenoidValve_detachOutput）。
+ *                 true 写入=开阀，false=关阀。
  * @return 挂接并完成信号订阅返回 true；参数非法或信号订阅失败返回 false，
  *         阀保持未挂接状态。
  * @note 重复挂接先自动解挂旧出口。挂接后阀位状态复位为 Unknown。
  */
-bool XSolenoidValve_attachOutput(XSolenoidValve* valve, XDigitalOutput* output);
+bool XSolenoidValve_attachOutput(XSolenoidValve* valve, XIoChannelGroup* group,
+                                 XIoPoint* outputPt);
 
 /**
  * @brief 挂接到位反馈（开/关到位两个输入，可任一为 NULL）。
  * @param valve 目标电磁阀；不能为 NULL。
- * @param openLimit 开到位输入通道；借用，可为 NULL（无该限位）。
- * @param closeLimit 关到位输入通道；借用，可为 NULL（无该限位）。
- * @return 至少一个通道非 NULL 且信号订阅全部成功返回 true；两通道均为
- *         NULL 或任一订阅失败返回 false，订阅失败的通道不生效。
+ * @param group 通道组；借用，不能为 NULL。
+ * @param openLimitPt 开到位输入点（组内已登记的 DigitalInput 点）；借用，
+ *                    可为 NULL（无该限位）。
+ * @param closeLimitPt 关到位输入点；借用，可为 NULL（无该限位）。
+ * @return 至少一个点非 NULL 且信号订阅全部成功返回 true；两点均为 NULL
+ *         或任一订阅失败返回 false，订阅失败的点不生效。
  * @note 重复挂接先自动解挂旧反馈。挂接成功后立即同步读取各限位播种阀位
  *       状态（DualLimit 模式下可直接落 Open/Closed）。
  */
-bool XSolenoidValve_attachFeedback_2(XSolenoidValve* valve,
-                                     XDigitalInput* openLimit,
-                                     XDigitalInput* closeLimit);
+bool XSolenoidValve_attachFeedback_2(XSolenoidValve* valve, XIoChannelGroup* group,
+                                     XIoPoint* openLimitPt, XIoPoint* closeLimitPt);
 
 /**
  * @brief 解挂动作出口并断开其信号订阅。

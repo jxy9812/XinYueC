@@ -696,8 +696,8 @@ static void testS5(void)
     XModbusHub_setUnitBackoff(hub, 1, 1000);   /* 1 次失败即静默，静默 1s（库下限） */
     XModbusHub_setPollIntervalDefault(hub, 150);
     XModbusMapping* map = XModbusMapping_create();
-    XModbusMapping_addRange(map, XModbusInputRegisters, 0, 2, id, 5, 0);
-    XModbusMapping_addRange(map, XModbusInputRegisters, 10, 2, id, 6, 0);
+    XModbusMapping_addRange(map, XModbusInputRegisters, 0, 2, id, 5, 0, 0);
+    XModbusMapping_addRange(map, XModbusInputRegisters, 10, 2, id, 6, 0, 0);
     XModbusHub_setMapping(hub, map);
     /* 设备已随 hubMake 登记，缺省间隔只影响新设备——对已登记设备显式改拍。 */
     CHECK(XModbusHub_setPollInterval(hub, id, 150), "轮询拍改 150ms（已登记设备即时生效）");
@@ -796,7 +796,7 @@ static void testS7(void)
     XModbusHub_setWriteRetryInterval(hub, 300);
     XModbusHub_setWriteStallNotice(hub, 2);
     XModbusMapping* map = XModbusMapping_create();
-    XModbusMapping_addRange(map, XModbusHoldingRegisters, 0, 4, id, 4, 10);
+    XModbusMapping_addRange(map, XModbusHoldingRegisters, 0, 4, id, 4, 10, 0);
     XModbusHub_setMapping(hub, map);
     CHECK_EQ(XModbusHub_cacheCount(hub, XModbusHoldingRegisters), 4, "HR 缓存跨度=4");
 
@@ -1059,7 +1059,7 @@ static void testS12(void)
     CHECK(id > 0, "设备注入（所有权转移 Hub）");
     if (id <= 0) { XModbusHub_deleteLater((XObject*)hub); sceneEnd(); return; }
     XModbusMapping* map = XModbusMapping_create();
-    XModbusMapping_addRange(map, XModbusInputRegisters, 0, 2, id, 1, 0);
+    XModbusMapping_addRange(map, XModbusInputRegisters, 0, 2, id, 1, 0, 0);
     XModbusHub_setMapping(hub, map);
     CHECK(XModbusHub_setPollInterval(hub, id, 100), "轮询拍 100ms");
     XModbusHub_startPolling(hub);

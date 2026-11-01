@@ -1,16 +1,21 @@
 ﻿/**
  * @file       xindustry_valve_test.c
- * @brief      Industry 工业设备层电磁阀状态机测试（mock 通道，无硬件依赖）。
- * @details    覆盖：XIoChannel 公共状态与接口默认槽、None 口径同步到位、
+ * @brief      Industry 工业设备层电磁阀状态机测试（通道组+测试点，无硬件依赖）。
+ * @details    [2026-11-01 通道组重构移植] 原 XIoChannel/XMockDigital* 通道
+ *             模型已由 XIoChannelGroup + XIoPoint 轻量点模型取代。覆盖：
+ *             XIoPoint 基础（tag/valid/默认槽拒绝）、None 口径同步到位、
  *             DualLimit 口径限位推进与播种、双限位矛盾、在途超时转故障、
- *             同步写拒绝、异步写失败、未挂接拒绝、解挂信号隔离。mock 通道
- *             以真实子类化路径（虚表重载）实现，兼作适配器接入样例。
+ *             同步写拒绝、异步写失败、未挂接拒绝、解挂信号隔离。测试点以
+ *             真实子类化路径（虚表重载 WriteRaw）实现：动作出口点记录写值
+ *             并可注入同步拒绝/异步失败；限位输入点经 xIoPointFeedValue
+ *             驱动（组信号按点指针分发）。兼作点子类接入样例。
  *             运行依赖事件循环（XObject 定时器），进程退出码 0=全绿。
+ *             [口径变化] 原用例 test_ioChannelBasics 的通道错误码部分
+ *             （errorOccurred/lastError）随 XIoChannel 概念一并移除——
+ *             轻量点模型无错误码，故障语义由业务层（阀）承载。
  */
-#include "XIoChannel.h"
-#include "XIoChannel_Protected.h"
-#include "XDigitalInput.h"
-#include "XDigitalOutput.h"
+#include "XChannel/XIoChannelGroup.h"
+#include "XChannel/XIoPoint_Protected.h"
 #include "XSolenoidValve.h"
 #include "XObject.h"
 #include "XCoreApplication.h"
@@ -41,10 +46,6 @@ static bool g_timedOut = false;
 static bool g_errorSeen = false;
 static int g_lastError = 0;
 
-/* 通道 errorOccurred 信号记录 */
-static bool g_channelErrorSeen = false;
-static int g_channelLastError = 0;
-
 static void resetFlags(void)
 {
     g_lastState = XSolenoidValveState_Unknown;
@@ -53,8 +54,6 @@ static void resetFlags(void)
     g_timedOut = false;
     g_errorSeen = false;
     g_lastError = 0;
-    g_channelErrorSeen = false;
-    g_channelLastError = 0;
 }
 
 static void onStateChanged2(XObject* sender, XVarList* args)
@@ -90,14 +89,6 @@ static void onError2(XObject* sender, XVarList* args)
     g_errorSeen = true;
 }
 
-static void onChannelError2(XObject* sender, XVarList* args)
-{
-    (void)sender;
-    XVarList_start(args);
-    g_channelLastError = XVarList_arg(args, int);
-    g_channelErrorSeen = true;
-}
-
 static void spinMs(int64_t ms)
 {
     int64_t t0 = XDateTime_currentMSecsSinceEpoch();
@@ -107,217 +98,203 @@ static void spinMs(int64_t ms)
     }
 }
 
-/* ==================== mock 数字输出通道 ==================== */
+/* ==================== 测试用动作出口点（XIoPoint 直派生） ==================== */
 
-typedef struct XMockDigitalOutput {
-    XDigitalOutput m_class;   /**< 第一个成员，接口基类。 */
+typedef struct XTestOutputPoint {
+    XIoPoint m_base;          /**< 第一个成员，基点继承（基/派生指针可互转）。 */
     bool m_last;              /**< 最近一次成功写入的逻辑值。 */
     bool m_failSync;          /**< 置位时下一次写同步拒绝（返回 false）。 */
     bool m_failAsync;         /**< 置位时下一次写受理后确认失败（writeDone(false)）。 */
-} XMockDigitalOutput;
+} XTestOutputPoint;
 
-XCLASS_DEFINE_BEGING(XMockDigitalOutput)
-XCLASS_DEFINE_EXTEND_END(XMockDigitalOutput, XDigitalOutput)
+XCLASS_DEFINE_BEGING(XTestOutputPoint)
+XCLASS_DEFINE_ENUM(XTestOutputPoint, ReadRaw) = XCLASS_VTABLE_GET_SIZE(XIoPoint),
+XCLASS_DEFINE_ENUM(XTestOutputPoint, WriteRaw),
+XCLASS_DEFINE_END(XTestOutputPoint)
 
-static bool VXMockDigitalOutput_write(XDigitalOutput* self, bool active)
+static bool VXTestOutputPoint_writeRaw(XTestOutputPoint* self, int32_t value)
 {
-    XMockDigitalOutput* mock = (XMockDigitalOutput*)self;
-
-    if (mock->m_failSync) {
-        mock->m_failSync = false;
+    if (self->m_failSync) {
+        self->m_failSync = false;
         return false;                       /* 同步拒绝：不发完成信号 */
     }
-    if (mock->m_failAsync) {
-        mock->m_failAsync = false;
-        XDigitalOutput_writeDone_signal(self, false);  /* 异步失败确认 */
+    if (self->m_failAsync) {
+        self->m_failAsync = false;
+        xIoPointWriteDone(&self->m_base, false);   /* 异步失败确认 */
         return true;
     }
-    mock->m_last = active;
-    XDigitalOutput_writeDone_signal(self, true);       /* 同步成功确认 */
+    self->m_last = (value != 0);
+    xIoPointWriteDone(&self->m_base, true);        /* 同步成功确认 */
     return true;
 }
 
-XVtable* XMockDigitalOutput_class_init(void)
+XVtable* XTestOutputPoint_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(XMockDigitalOutput)
-    XVTABLE_INHERIT_XCLASS(XDigitalOutput);
-    XVTABLE_OVERLOAD_DEFAULT(EXDigitalOutput_Write, VXMockDigitalOutput_write);
+    XVTABLE_INIT_DEFAULT(XTestOutputPoint)
+    XVTABLE_INHERIT_XCLASS(XIoPoint);
+    XVTABLE_OVERLOAD_DEFAULT(EXIoPoint_WriteRaw, VXTestOutputPoint_writeRaw);
+    XCLASS_SHOW_SIZE_DEFAULT(XTestOutputPoint);
     return XVTABLE_DEFAULT;
 }
 
-static void XMockDigitalOutput_init(XMockDigitalOutput* obj)
+static void XTestOutputPoint_init(XTestOutputPoint* obj)
 {
     if (!obj) return;
-    memset(obj, 0, sizeof(XMockDigitalOutput));
-    XDigitalOutput_init((XDigitalOutput*)obj);
-    XClassSetVtable(obj, XMockDigitalOutput);
+    XIoPoint_init(&obj->m_base);
+    XClassGetVtable(obj) = XTestOutputPoint_class_init();
+    /* 尾段清零锚点=首个派生成员（与成员排布解耦，防插位越界复发）。 */
+    memset(&obj->m_last, 0, sizeof(XTestOutputPoint) - sizeof(XIoPoint));
+    obj->m_base.m_type = (uint16_t)XIoPoint_DigitalOutput;
 }
 
-/* ==================== mock 数字输入通道 ==================== */
+/* ==================== 测试用限位输入点（基点直用，feed 驱动） ==================== */
 
-typedef struct XMockDigitalInput {
-    XDigitalInput m_class;    /**< 第一个成员，接口基类。 */
-    bool m_active;            /**< 当前逻辑值；经 mockInputSet 变更并推送。 */
-} XMockDigitalInput;
-
-XCLASS_DEFINE_BEGING(XMockDigitalInput)
-XCLASS_DEFINE_EXTEND_END(XMockDigitalInput, XDigitalInput)
-
-static bool VXMockDigitalInput_read(XDigitalInput* self, bool* active)
+static void testInputPointInit(XIoPoint* pt, const char* tag)
 {
-    XMockDigitalInput* mock = (XMockDigitalInput*)self;
-
-    if (!active) return false;
-    *active = mock->m_active;
-    return true;
+    XIoPoint_init(pt);
+    pt->m_type = (uint16_t)XIoPoint_DigitalInput;
+    pt->m_tag = tag;
 }
 
-XVtable* XMockDigitalInput_class_init(void)
+/* 限位驱动：喂新值（组信号按点指针分发 → 阀重读双限位） */
+static void mockInputSet(XIoPoint* pt, bool active)
 {
-    XVTABLE_INIT_DEFAULT(XMockDigitalInput)
-    XVTABLE_INHERIT_XCLASS(XDigitalInput);
-    XVTABLE_OVERLOAD_DEFAULT(EXDigitalInput_Read, VXMockDigitalInput_read);
-    return XVTABLE_DEFAULT;
-}
-
-static void XMockDigitalInput_init(XMockDigitalInput* obj)
-{
-    if (!obj) return;
-    memset(obj, 0, sizeof(XMockDigitalInput));
-    XDigitalInput_init((XDigitalInput*)obj);
-    XClassSetVtable(obj, XMockDigitalInput);
-}
-
-static void mockInputSet(XMockDigitalInput* mock, bool active)
-{
-    if (mock->m_active == active) return;
-    mock->m_active = active;
-    XDigitalInput_inputChanged_signal((XDigitalInput*)mock, active);
+    xIoPointFeedValue(pt, active ? 1 : 0);
 }
 
 /* ==================== 用例 ==================== */
 
-static void test_ioChannelBasics(void)
+static void test_ioPointBasics(void)
 {
-    XDigitalInput* di = XDigitalInput_create();
+    XIoPoint pt;
     bool value = true;
 
-    resetFlags();
-    XObject_connect_2((XObject*)di, XSignal(XIoChannel_errorOccurred_signal),
-                      onChannelError2);
-    XIoChannel_setTag((XIoChannel*)di, "DI0");
-    CHECK("tag 保存", strcmp(XIoChannel_tag_const((XIoChannel*)di), "DI0") == 0);
-    CHECK("默认无效", !XIoChannel_isValid((XIoChannel*)di));
-    XIoChannel_setValid((XIoChannel*)di, true);
-    CHECK("setValid 生效", XIoChannel_isValid((XIoChannel*)di));
-    XIoChannel_setError((XIoChannel*)di, XIoChannelError_Timeout);
-    CHECK("错误码记录", XIoChannel_lastError((XIoChannel*)di) == XIoChannelError_Timeout);
-    CHECK("出错清 valid", !XIoChannel_isValid((XIoChannel*)di));
-    CHECK("errorOccurred 信号", g_channelErrorSeen &&
-          g_channelLastError == XIoChannelError_Timeout);
+    XIoPoint_init(&pt);
+    pt.m_tag = "DI0";
+    CHECK("tag 保存", strcmp(XIoPoint_tag(&pt), "DI0") == 0);
+    CHECK("默认无效", !XIoPoint_isValid(&pt));
+    XIoPoint_setValid(&pt, true);
+    CHECK("setValid 生效", XIoPoint_isValid(&pt));
     value = true;
-    CHECK("接口默认槽拒绝读", !XDigitalInput_read_base(di, &value) && value == true);
-    XClassDelete(di);
+    CHECK("接口默认槽拒绝读", !XIoPoint_readRaw_base(&pt, &value) && value == true);
+    XClassDeinit((XClass*)&pt);
+}
+
+/* 组+三点装配：出口/开限位/关限位（栈上点登记 autoDelete=false） */
+typedef struct ValveFixture {
+    XIoChannelGroup* grp;
+    XTestOutputPoint out;
+    XIoPoint mol;
+    XIoPoint mcl;
+} ValveFixture;
+
+static void fixtureInit(ValveFixture* fx)
+{
+    memset(fx, 0, sizeof(*fx));
+    fx->grp = XIoChannelGroup_create();
+    XTestOutputPoint_init(&fx->out);
+    testInputPointInit(&fx->mol, "openLimit");
+    testInputPointInit(&fx->mcl, "closeLimit");
+    XIoChannelGroup_addPoint(fx->grp, (XIoPoint*)&fx->out, false);
+    XIoChannelGroup_addPoint(fx->grp, &fx->mol, false);
+    XIoChannelGroup_addPoint(fx->grp, &fx->mcl, false);
+}
+
+static void fixtureDeinit(ValveFixture* fx)
+{
+    /* 阀由用例先行删除（借用了组与点指针） */
+    XClassDeinit((XClass*)&fx->out);
+    XClassDeinit((XClass*)&fx->mol);
+    XClassDeinit((XClass*)&fx->mcl);
+    XClassDelete(fx->grp);
 }
 
 static void test_noneModeSync(void)
 {
-    XMockDigitalOutput mout;
+    ValveFixture fx;
     XSolenoidValve* valve = XSolenoidValve_create();
 
-    XMockDigitalOutput_init(&mout);
+    fixtureInit(&fx);
     resetFlags();
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_stateChanged_signal), onStateChanged2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_opened_signal), onOpened2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_closed_signal), onClosed2);
 
-    CHECK("挂接出口", XSolenoidValve_attachOutput(valve, (XDigitalOutput*)&mout));
+    CHECK("挂接出口", XSolenoidValve_attachOutput(valve, fx.grp, (XIoPoint*)&fx.out));
     CHECK("挂接后 Unknown", g_lastState == XSolenoidValveState_Unknown);
     CHECK("开阀受理", XSolenoidValve_open(valve));
     CHECK("None 口径同步开到位", g_lastState == XSolenoidValveState_Open && g_opened);
-    CHECK("mock 已驱动有效态", mout.m_last == true);
+    CHECK("测试点已驱动有效态", fx.out.m_last == true);
     CHECK("关阀受理", XSolenoidValve_close(valve));
     CHECK("None 口径同步关到位", g_lastState == XSolenoidValveState_Closed && g_closed);
-    CHECK("mock 已驱动无效态", mout.m_last == false);
+    CHECK("测试点已驱动无效态", fx.out.m_last == false);
     CHECK("开位幂等", XSolenoidValve_open(valve) &&
           g_lastState == XSolenoidValveState_Open);
     CHECK("isFullyOpen/isFullyClosed", XSolenoidValve_isFullyOpen(valve) == true &&
           XSolenoidValve_isFullyClosed(valve) == false);
-    XClassDeinit((XClass*)&mout);
     XClassDelete(valve);
+    fixtureDeinit(&fx);
 }
 
 static void test_dualLimitProgress(void)
 {
-    XMockDigitalOutput mout;
-    XMockDigitalInput mol;
-    XMockDigitalInput mcl;
+    ValveFixture fx;
     XSolenoidValve* valve = XSolenoidValve_create();
 
-    XMockDigitalOutput_init(&mout);
-    XMockDigitalInput_init(&mol);
-    XMockDigitalInput_init(&mcl);
+    fixtureInit(&fx);
     resetFlags();
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_stateChanged_signal), onStateChanged2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_opened_signal), onOpened2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_closed_signal), onClosed2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_errorOccurred_signal), onError2);
 
-    CHECK("双限位挂接", XSolenoidValve_attachFeedback_2(valve,
-          (XDigitalInput*)&mol, (XDigitalInput*)&mcl));
+    CHECK("双限位挂接", XSolenoidValve_attachFeedback_2(valve, fx.grp,
+          (XIoPoint*)&fx.mol, (XIoPoint*)&fx.mcl));
     CHECK("反馈口径切换", XSolenoidValve_setFeedbackMode(valve,
           XSolenoidValveFeedbackMode_DualLimit));
     XSolenoidValve_setTimeoutMs(valve, 0);   /* 本用例关监督，专心测限位 */
-    CHECK("挂接出口", XSolenoidValve_attachOutput(valve, (XDigitalOutput*)&mout));
+    CHECK("挂接出口", XSolenoidValve_attachOutput(valve, fx.grp, (XIoPoint*)&fx.out));
     CHECK("播种：双限位无效为 Unknown", g_lastState == XSolenoidValveState_Unknown);
 
     CHECK("开阀受理进入 Opening", XSolenoidValve_open(valve) &&
           g_lastState == XSolenoidValveState_Opening);
-    mockInputSet(&mol, true);
+    mockInputSet(&fx.mol, true);
     CHECK("开到位输入推进 Open", g_lastState == XSolenoidValveState_Open && g_opened);
 
     CHECK("关阀受理进入 Closing", XSolenoidValve_close(valve) &&
           g_lastState == XSolenoidValveState_Closing);
-    mockInputSet(&mol, false);
+    mockInputSet(&fx.mol, false);
     CHECK("在途双无效保持 Closing", g_lastState == XSolenoidValveState_Closing);
-    mockInputSet(&mcl, true);
+    mockInputSet(&fx.mcl, true);
     CHECK("关到位输入推进 Closed", g_lastState == XSolenoidValveState_Closed && g_closed);
 
-    mockInputSet(&mcl, false);
+    mockInputSet(&fx.mcl, false);
     CHECK("稳态位置丢失转 Unknown", g_lastState == XSolenoidValveState_Unknown);
-    mockInputSet(&mol, true);
+    mockInputSet(&fx.mol, true);
     CHECK("外部造成开位同样发布", g_lastState == XSolenoidValveState_Open && g_opened);
-    mockInputSet(&mcl, true);
-    XPrintf("[diag] state=%d errorSeen=%d lastError=%d\n",
-            (int)XSolenoidValve_state(valve), (int)g_errorSeen, g_lastError);
+    mockInputSet(&fx.mcl, true);
     CHECK("双限位矛盾上报错误", g_errorSeen &&
           g_lastError == XSolenoidValveError_LimitContradiction);
     CHECK("双限位矛盾转 Fault", g_lastState == XSolenoidValveState_Fault);
-    XClassDeinit((XClass*)&mout);
-    XClassDeinit((XClass*)&mol);
-    XClassDeinit((XClass*)&mcl);
     XClassDelete(valve);
+    fixtureDeinit(&fx);
 }
 
 static void test_commandTimeout(void)
 {
-    XMockDigitalOutput mout;
-    XMockDigitalInput mol;
-    XMockDigitalInput mcl;
+    ValveFixture fx;
     XSolenoidValve* valve = XSolenoidValve_create();
 
-    XMockDigitalOutput_init(&mout);
-    XMockDigitalInput_init(&mol);
-    XMockDigitalInput_init(&mcl);
+    fixtureInit(&fx);
     resetFlags();
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_stateChanged_signal), onStateChanged2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_commandTimeout_signal), onTimeout2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_errorOccurred_signal), onError2);
 
-    XSolenoidValve_attachFeedback_2(valve, (XDigitalInput*)&mol, (XDigitalInput*)&mcl);
+    XSolenoidValve_attachFeedback_2(valve, fx.grp, (XIoPoint*)&fx.mol, (XIoPoint*)&fx.mcl);
     XSolenoidValve_setFeedbackMode(valve, XSolenoidValveFeedbackMode_DualLimit);
     CHECK("设置监督超时", XSolenoidValve_setTimeoutMs(valve, 60));
-    XSolenoidValve_attachOutput(valve, (XDigitalOutput*)&mout);
+    XSolenoidValve_attachOutput(valve, fx.grp, (XIoPoint*)&fx.out);
 
     CHECK("开阀受理", XSolenoidValve_open(valve));
     spinMs(300);
@@ -326,46 +303,44 @@ static void test_commandTimeout(void)
     CHECK("Timeout 错误上报", g_errorSeen &&
           g_lastError == XSolenoidValveError_Timeout);
     CHECK("Fault 后可复位重试（关阀）", XSolenoidValve_close(valve));
-    mockInputSet(&mcl, true);
+    mockInputSet(&fx.mcl, true);
     CHECK("重试后关到位", g_lastState == XSolenoidValveState_Closed);
-    XClassDeinit((XClass*)&mout);
-    XClassDeinit((XClass*)&mol);
-    XClassDeinit((XClass*)&mcl);
     XClassDelete(valve);
+    fixtureDeinit(&fx);
 }
 
 static void test_writeFailures(void)
 {
-    XMockDigitalOutput mout;
+    ValveFixture fx;
     XSolenoidValve* valve = XSolenoidValve_create();
 
-    XMockDigitalOutput_init(&mout);
+    fixtureInit(&fx);
     resetFlags();
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_stateChanged_signal), onStateChanged2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_errorOccurred_signal), onError2);
-    XSolenoidValve_attachOutput(valve, (XDigitalOutput*)&mout);
+    XSolenoidValve_attachOutput(valve, fx.grp, (XIoPoint*)&fx.out);
 
-    mout.m_failSync = true;
+    fx.out.m_failSync = true;
     CHECK("同步拒绝返回 false", !XSolenoidValve_open(valve));
     CHECK("同步拒绝转 Fault", g_lastState == XSolenoidValveState_Fault);
     CHECK("WriteRejected 上报", g_errorSeen &&
           g_lastError == XSolenoidValveError_WriteRejected);
 
     XSolenoidValve_setFeedbackMode(valve, XSolenoidValveFeedbackMode_DualLimit);
-    mout.m_failAsync = true;
+    fx.out.m_failAsync = true;
     CHECK("异步失败仍算受理", XSolenoidValve_open(valve));
     CHECK("writeDone(false) 在途判 Fault", g_lastState == XSolenoidValveState_Fault &&
           g_lastError == XSolenoidValveError_WriteFailed);
-    XClassDeinit((XClass*)&mout);
     XClassDelete(valve);
+    fixtureDeinit(&fx);
 }
 
 static void test_notAttachedAndDetach(void)
 {
-    XMockDigitalOutput mout;
+    ValveFixture fx;
     XSolenoidValve* valve = XSolenoidValve_create();
 
-    XMockDigitalOutput_init(&mout);
+    fixtureInit(&fx);
     resetFlags();
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_stateChanged_signal), onStateChanged2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_errorOccurred_signal), onError2);
@@ -374,43 +349,42 @@ static void test_notAttachedAndDetach(void)
     CHECK("NotAttached 上报", g_errorSeen &&
           g_lastError == XSolenoidValveError_NotAttached);
 
-    CHECK("挂接出口", XSolenoidValve_attachOutput(valve, (XDigitalOutput*)&mout));
+    CHECK("挂接出口", XSolenoidValve_attachOutput(valve, fx.grp, (XIoPoint*)&fx.out));
     CHECK("开阀", XSolenoidValve_open(valve));
     CHECK("解挂出口", XSolenoidValve_detachOutput(valve));
     {
         XSolenoidValveState before = XSolenoidValve_state(valve);
-        XDigitalOutput_writeDone_signal((XDigitalOutput*)&mout, false);
+        /* 解挂后出口落定信号仍会经组发射（点还在组内），但阀已退订 → 隔离 */
+        xIoPointWriteDone((XIoPoint*)&fx.out, false);
         CHECK("解挂后出口信号被隔离",
               XSolenoidValve_state(valve) == before &&
               XSolenoidValve_state(valve) == XSolenoidValveState_Open);
     }
     CHECK("重复解挂返回 false", !XSolenoidValve_detachOutput(valve));
-    XClassDeinit((XClass*)&mout);
     XClassDelete(valve);
+    fixtureDeinit(&fx);
 }
 
 /* 边界补充：单限位挂接、双空拒绝、模式切换推断、关位幂等 */
 static void test_feedbackEdgeCases(void)
 {
-    XMockDigitalOutput mout;
-    XMockDigitalInput mol;
+    ValveFixture fx;
     XSolenoidValve* valve = XSolenoidValve_create();
 
-    XMockDigitalOutput_init(&mout);
-    XMockDigitalInput_init(&mol);
+    fixtureInit(&fx);
     resetFlags();
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_stateChanged_signal), onStateChanged2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_opened_signal), onOpened2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_closed_signal), onClosed2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_errorOccurred_signal), onError2);
 
-    CHECK("双空反馈挂接拒绝", !XSolenoidValve_attachFeedback_2(valve, NULL, NULL));
-    CHECK("单限位挂接成功", XSolenoidValve_attachFeedback_2(valve,
-          (XDigitalInput*)&mol, NULL));
+    CHECK("双空反馈挂接拒绝", !XSolenoidValve_attachFeedback_2(valve, fx.grp, NULL, NULL));
+    CHECK("单限位挂接成功", XSolenoidValve_attachFeedback_2(valve, fx.grp,
+          (XIoPoint*)&fx.mol, NULL));
     CHECK("反馈口径切换", XSolenoidValve_setFeedbackMode(valve,
           XSolenoidValveFeedbackMode_DualLimit));
     XSolenoidValve_setTimeoutMs(valve, 0);
-    CHECK("挂接出口", XSolenoidValve_attachOutput(valve, (XDigitalOutput*)&mout));
+    CHECK("挂接出口", XSolenoidValve_attachOutput(valve, fx.grp, (XIoPoint*)&fx.out));
     CHECK("播种：单限位无效为 Unknown", g_lastState == XSolenoidValveState_Unknown);
 
     /* DualLimit 下无限位推不开：writeDone 不判到位 */
@@ -424,14 +398,12 @@ static void test_feedbackEdgeCases(void)
     CHECK("None 口径关到位", g_lastState == XSolenoidValveState_Closed && g_closed);
     CHECK("关位幂等", XSolenoidValve_close(valve) &&
           g_lastState == XSolenoidValveState_Closed);
-    XClassDeinit((XClass*)&mout);
-    XClassDeinit((XClass*)&mol);
     XClassDelete(valve);
+    fixtureDeinit(&fx);
 }
 
-/* ==================== 收编入口（2026-11-01 去 main 收编，XModbusHubTest
- * 同款：_run 供 --test/Test 命令分派并回失败数，菜单动作签名同
- * XModbusPublicApiTest。进程内自跑，无硬件依赖） ==================== */
+/* ==================== 收编入口（_run 供 --test/Test 命令分派并回失败数。
+ * 进程内自跑，无硬件依赖） ==================== */
 
 int XIndustryValveTest_run(void)
 {
@@ -443,7 +415,7 @@ int XIndustryValveTest_run(void)
         return 1;
     }
 
-    test_ioChannelBasics();
+    test_ioPointBasics();
     test_noneModeSync();
     test_dualLimitProgress();
     test_commandTimeout();

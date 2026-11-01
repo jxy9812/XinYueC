@@ -83,7 +83,8 @@ XModbusMapping* XModbusMapping_create_ex(XMemoryType memory)
 
 bool XModbusMapping_addRange(XModbusMapping* map, XModbusRegisterType type,
                              uint16_t virtualStart, uint16_t count,
-                             int deviceId, int unitId, uint16_t remoteStart)
+                             int deviceId, int unitId, uint16_t remoteStart,
+                             uint16_t defaultValue)
 {
     if (!map || !XClassGetVtable(map)) return false;
     const int idx = mappingTypeIndex(type);
@@ -112,6 +113,7 @@ bool XModbusMapping_addRange(XModbusMapping* map, XModbusRegisterType type,
     added.deviceId = deviceId;
     added.unitId = unitId;
     added.remoteStart = remoteStart;
+    added.defValue = defaultValue;
     if (!XVector_insert_1_base(vec, insertAt, &added, 1)) return false;
     return true;
 }

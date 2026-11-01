@@ -36,6 +36,12 @@ typedef struct XModbusMapRange {
     int deviceId;               /**< 底层设备句柄（XModbusHub_addDevice 返回值）。 */
     uint16_t unitId;            /**< 底层从站地址（Modbus unit id；uint16 收紧段表布局）。 */
     uint16_t remoteStart;       /**< 远端起始地址。 */
+    uint16_t defValue;          /**< 段默认值（输出上线对齐用）：块首次物化时
+                                     播种进缓存（仅未初始化点），故首启缓存
+                                     即默认值、上线下发即默认值清残留；位区
+                                     非 0 视为 1，addRange 末参指定，缺省 0。
+                                     重连默认走缓存回灌（Hub setOutputSyncMode
+                                     可改默认值覆盖）。 */
 } XModbusMapRange;
 
 /**
@@ -107,6 +113,11 @@ XModbusMapping* XModbusMapping_create_ex(XMemoryType memory);
  * @param unitId 底层从站地址（Modbus unit id）；0..65535 之外的值拒绝
  *        （本层按 uint16 存储，广播等语义由上层约束）。
  * @param remoteStart 远端起始地址。
+ * @param defaultValue 段默认值：块首次物化时播种进缓存（仅未初始化点），
+ *        故首启上线下发的缓存即默认值，清掉外部残留（输出上线对齐，
+ *        2026-11-01；重连缺省回灌缓存最后写入值，Hub setOutputSyncMode
+ *        可改默认值覆盖模式）；位区非 0 视为 1。每段独立——同一映射里
+ *        不同设备可设不同默认值；输入区不消费该值，传 0 即可。
  * @return 成功 true；参数非法 / count==0 / deviceId<0 / 虚拟或远端区间
  *         跨 0xFFFF 回绕（段须完整落在 16 位地址空间内）/ 与同类型既有
  *         段重叠 false，段表保持原状（失败路径零副作用）。
@@ -115,7 +126,8 @@ XModbusMapping* XModbusMapping_create_ex(XMemoryType memory);
  */
 bool XModbusMapping_addRange(XModbusMapping* map, XModbusRegisterType type,
                              uint16_t virtualStart, uint16_t count,
-                             int deviceId, int unitId, uint16_t remoteStart);
+                             int deviceId, int unitId, uint16_t remoteStart,
+                             uint16_t defaultValue);
 /**
  * @brief 删除虚拟起点为 virtualStart 的段。
  * @param map 目标映射管理器；NULL 拒绝。

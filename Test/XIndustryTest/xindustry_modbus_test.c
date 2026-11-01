@@ -1,34 +1,36 @@
 ﻿/**
  * @file       xindustry_modbus_test.c
- * @brief      Industry 工业设备层 Modbus 通道适配器端到端测试（同进程 TCP 环回）。
- * @details    XModbusTcpServer（自动端口）作从站、XModbusTcpClient 挂四个
- *             适配器（DI/DO/AI/AO），走真实 Modbus/TCP 帧回路：DI 离散量
- *             轮询初值与翻转推送、AI 输入寄存器标度换算、AO 写保持寄存器
- *             writeDone 确认 + 服务端读回、DO 写线圈 writeDone 确认 +
- *             服务端读回、AI(useHolding) 对 AO 写入的全链读回闭环、通道
- *             valid 标志。骨架对齐 Test/XProtocolTest/XModbusPublicApiTest
- *             的 test_tcp_loopback 先例。
+ * @brief      Industry 工业设备层通道组（XIoChannelGroup + XIoPoint）端到端
+ *             测试（同进程 TCP 环回）。
+ * @details    [2026-11-01 通道组重构] 原 XModbus* 四适配器（每通道自带
+ *             轮询/单飞的 XObject）已由 XIoChannelGroup + XIoPoint 轻量点
+ *             模型取代：XModbusTcpServer（自动端口）作从站、Hub 聚合轮询
+ *             DI/Coils/HR 三区、XIoChannelGroup 承载四种点（XModbusPoint
+ *             数据源点，组内全部 XIoPoint* 直传，无 id）。覆盖：
+ *               - 上线对齐/播种：登记即从 Hub 缓存取初值（默认值结果）；
+ *               - DI：server 翻转 → inputChanged(pt,1) + read；
+ *               - AI：server 改 HR → requestRefresh 回填 → inputChanged；
+ *               - DO/AO：write 受理 → writeDone(pt,true) + 从站侧读回；
+ *               - remove(autoDelete 点)：摘除即销毁 + contains/recordCount。
+ *             [同泵粘性命中] HR 区段推送按地址分发会连带喂到 aoPt（如
+ *             段内其它地址的回灌值），同一次泵内多信号相继到达——判定
+ *             目标 (pt,value) 对在槽内逐帧比对（g_hit*），泵间隙只看
+ *             "最近一帧"会漏。
+ *             骨架对齐 Test/XProtocolTest/XModbusPublicApiTest 的
+ *             test_tcp_loopback 先例；RTU 总线场景由 Hub 层测试覆盖
+ *             （Test/XProtocolTest/xmodbus_hub_test.c）。
  */
-#include "XIoChannel.h"
-#include "XDigitalInput.h"
-#include "XDigitalOutput.h"
-#include "XChannel/XModbusDigitalInput.h"
-#include "XChannel/XModbusDigitalOutput.h"
-#include "XChannel/XModbusAnalogInput.h"
-#include "XChannel/XModbusAnalogOutput.h"
+#include "XChannel/XIoChannelGroup.h"
+#include "XChannel/XModbusPoint.h"
 #include "XModbusTcpServer.h"
 #include "XModbusTcpClient.h"
-#include "XModbusRtuSerialClient.h"
-#include "XModbusClient.h"
+#include "XModbusHub.h"
 #include "XModbusServer.h"
 #include "XModbusDataUnit.h"
 #include "XTcpServer.h"
-#include "XHostAddress.h"
 #include "XObject.h"
 #include "XCoreApplication.h"
-#include "XThread.h"
 #include "XDeviceNetwork.h"
-#include "XString.h"
 #include "XPrintf.h"
 #include <string.h>
 #include <stdlib.h>
@@ -47,586 +49,260 @@ static int g_fail = 0;
         else      { g_fail++; XPrintf("[FAIL] %s\n", desc); } \
     } while (0)
 
-/* 通道信号记录（connect_2：第 1 参即 sender） */
-static bool g_diValue = false;
-static int  g_diChanges = 0;
-static int32_t g_aiValue = 0;
-static int  g_aiChanges = 0;
-static int32_t g_aiHoldValue = 0;
-static bool g_aoWriteOk = false;
-static bool g_doWriteOk = false;
+/* 组级信号记录（XIoPoint* 直传） */
+static int  g_inChanged = 0;          /* inputChanged 次数 */
+static XIoPoint* g_inLastPt = NULL;   /* 最近一次 inputChanged 的点 */
+static int32_t g_inLastValue = -1;
+static XIoPoint* g_doneLastPt = NULL; /* 最近一次 writeDone(ok=true) 的点 */
+static int  g_doneCount = 0;
 
-static void resetFlags(void)
-{
-    g_diValue = false; g_diChanges = 0;
-    g_aiValue = 0;     g_aiChanges = 0;
-    g_aiHoldValue = 0;
-    g_aoWriteOk = false;
-    g_doWriteOk = false;
-}
+/* 同泵粘性命中目标（见文件头 [同泵粘性命中] 注记） */
+static XIoPoint* g_hitTargetPt = NULL;
+static int32_t g_hitTargetVal = 0;
+static int g_hitFlag = 0;
 
-static void onDiChanged2(XObject* sender, XVarList* args)
+static void onGroupInputChanged(XObject* sender, XVarList* args)
 {
+    if (!args) return;
+    XVarList_args_2(args, XIoPoint*, point, int32_t, value);
     (void)sender;
-    XVarList_start(args);
-    g_diValue = XVarList_arg(args, bool);
-    g_diChanges++;
+    ++g_inChanged;
+    g_inLastPt = point;
+    g_inLastValue = value;
+    if (g_hitTargetPt && point == g_hitTargetPt && value == g_hitTargetVal)
+        g_hitFlag = 1;
 }
 
-static void onAiChanged2(XObject* sender, XVarList* args)
+static void onGroupWriteDone(XObject* sender, XVarList* args)
 {
+    if (!args) return;
+    XVarList_args_2(args, XIoPoint*, point, bool, ok);
     (void)sender;
-    XVarList_start(args);
-    g_aiValue = XVarList_arg(args, int32_t);
-    g_aiChanges++;
+    if (ok) {
+        g_doneLastPt = point;
+        ++g_doneCount;
+    }
 }
 
-static void onAiHoldChanged2(XObject* sender, XVarList* args)
-{
-    (void)sender;
-    XVarList_start(args);
-    g_aiHoldValue = XVarList_arg(args, int32_t);
-}
-
-static void onAoWriteDone2(XObject* sender, XVarList* args)
-{
-    (void)sender;
-    XVarList_start(args);
-    g_aoWriteOk = XVarList_arg(args, bool);
-}
-
-static void onDoWriteDone2(XObject* sender, XVarList* args)
-{
-    (void)sender;
-    XVarList_start(args);
-    g_doWriteOk = XVarList_arg(args, bool);
-}
-
-/* 非阻塞泵直到条件成立或超时。
- * @note 必须用 processEvents(0)+msleep 泵法：processEventsWithMaxTime
- *       的短超时模式不派发 XObject 对象定时器事件（实测适配器轮询全哑）。 */
-static int waitUntil(int* flag, int timeoutMs)
+/**
+ * @brief 泵事件循环直至条件成立或超时。
+ * @return 条件成立 true；超时 false。
+ */
+static int waitCond(int* flag, int expect, int timeoutMs)
 {
     int waited = 0;
-    while (!(*flag) && waited < timeoutMs) {
-        XCoreApplication_processEvents(0);
-        XThread_msleep(2);
-        waited += 2;
+    while (*flag != expect && waited < timeoutMs) {
+        XCoreApplication_processEventsWithMaxTime(0, 10);
+        waited += 10;
     }
-    return *flag;
+    return *flag == expect;
 }
 
-/* 服务端数据映射：四张表一次配齐（先例 configure_holding_registers 同型） */
-static bool configureServerMaps(XModbusServer* server)
+/* ==================== 主用例：通道组 × Hub 端到端 ==================== */
+
+static void test_channel_group_hub(void)
 {
-    XModbusDataUnitMap* map = XModbusDataUnitMap_create();
-    XModbusDataUnit* di = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-        XModbusDiscreteInputs, 0, 8);
-    XModbusDataUnit* coils = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-        XModbusCoils, 0, 8);
-    XModbusDataUnit* ir = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-        XModbusInputRegisters, 0, 8);
-    XModbusDataUnit* hr = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-        XModbusHoldingRegisters, 0, 16);
-    XModbusRegisterType tDi = XModbusDiscreteInputs;
-    XModbusRegisterType tCoils = XModbusCoils;
-    XModbusRegisterType tIr = XModbusInputRegisters;
-    XModbusRegisterType tHr = XModbusHoldingRegisters;
-    bool ok = false;
+    XCoreApplication* app = NULL;
+    XModbusTcpServer* slave = NULL;
+    XModbusPoint* diPt = NULL;
+    XModbusPoint* doPt = NULL;
+    XModbusPoint* aiPt = NULL;
+    XModbusPoint* aoPt = NULL;
+    XModbusTcpClient* client = NULL;
+    XModbusHub* hub = NULL;
+    XIoChannelGroup* group = NULL;
+    XModbusMapping* map = NULL;
+    XModbusDataUnitMap* smap = NULL;
+    XModbusDataUnit* unit = NULL;
+    XModbusRegisterType area = XModbusDiscreteInputs;
+    uint16_t port = 0;
+    int devId = -1;
+    uint16_t v = 0;
+    int i = 0;
+    bool b = false;
+    int32_t eng = -1;
 
-    if (map && di && coils && ir && hr &&
-        XMap_insert_base(map, &tDi, di) &&
-        XMap_insert_base(map, &tCoils, coils) &&
-        XMap_insert_base(map, &tIr, ir) &&
-        XMap_insert_base(map, &tHr, hr))
-        ok = XModbusServer_setMap_base(server, map);
-    if (di) XClassDelete(di);
-    if (coils) XClassDelete(coils);
-    if (ir) XClassDelete(ir);
-    if (hr) XClassDelete(hr);
-    if (map) XClassDelete(map);
-    return ok;
-}
-
-/* ==================== 用例 ==================== */
-
-static void test_modbus_adapters_e2e(void)
-{
-    XModbusTcpServer* server = XModbusTcpServer_create();
-    XModbusTcpClient* client = XModbusTcpClient_create();
-    XModbusDigitalInput* di = NULL;
-    XModbusAnalogInput* ai = NULL;
-    XModbusAnalogInput* aiHold = NULL;
-    XModbusAnalogOutput* ao = NULL;
-    XModbusDigitalOutput* dop = NULL;
-    uint16_t actualPort = 0;
-    uint16_t regValue = 0;
-    int i;
-
-    resetFlags();
-
-    /* --- 服务端：数据映射 + 初值 + 本机监听（自动端口） --- */
-    {
-        bool mapOk = false, listenOk = false;
-        if (server) {
-            mapOk = configureServerMaps((XModbusServer*)server);
-            XModbusServer_setData2((XModbusServer*)server, XModbusDiscreteInputs, 0, 1);
-            XModbusServer_setData2((XModbusServer*)server, XModbusInputRegisters, 0, 2530);
-            do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter((XModbusDevice*)server,
-                XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-            do { XVariant* vParam = XVariant_create_int(0); XModbusDevice_setConnectionParameter((XModbusDevice*)server,
-                XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-            listenOk = XModbusDevice_connectDevice((XModbusDevice*)server);
-        }
-        CHECK("服务端数据映射+监听", mapOk && listenOk && server &&
-            XModbusDevice_state((XModbusDevice*)server) == XModbusDevice_ConnectedState);
-    }
-    if (server && server->m_tcpServer)
-        actualPort = XTcpServer_serverPort(server->m_tcpServer);
-    CHECK("服务端自动端口", actualPort != 0);
-
-    /* --- 客户端连接 --- */
-    if (client && actualPort) {
-        do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,
-            XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-        do { XVariant* vParam = XVariant_create_int(actualPort); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,
-            XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-        XModbusDevice_connectDevice((XModbusDevice*)client);
-    }
-    for (i = 0; client && i < 500 &&
-         XModbusDevice_state((XModbusDevice*)client) != XModbusDevice_ConnectedState; ++i) {
-        XCoreApplication_processEvents(0);
-        XThread_msleep(2);
-    }
-    CHECK("客户端本机连接", client &&
-        XModbusDevice_state((XModbusDevice*)client) == XModbusDevice_ConnectedState);
-    if (!client || actualPort == 0 ||
-        XModbusDevice_state((XModbusDevice*)client) != XModbusDevice_ConnectedState) {
-        if (server) XModbusTcpServer_deleteLater(server);
-        if (client) XModbusTcpClient_deleteLater(client);
+    app = XCoreApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL);
+    if (!app) {
+        XPrintf("[FAIL] 事件循环创建失败\n");
         return;
     }
 
-    /* --- 挂四个适配器（轮询 120ms，AI 标度 2530 raw -> 25 工程） --- */
-    di = XModbusDigitalInput_create_ex((XModbusClient*)client, 1, 0, 120);
-    ai = XModbusAnalogInput_create_ex((XModbusClient*)client, 1, 0, false,
-                                      1, 100, 0, 0, 120);
-    aiHold = XModbusAnalogInput_create_ex((XModbusClient*)client, 1, 10, true,
-                                          1, 1, 0, 0, 120);
-    ao = XModbusAnalogOutput_create_ex((XModbusClient*)client, 1, 10, 1, 1, 0);
-    dop = XModbusDigitalOutput_create_ex((XModbusClient*)client, 1, 5);
-    CHECK("四适配器创建", di && ai && aiHold && ao && dop);
-    if (!di || !ai || !aiHold || !ao || !dop) {
-        if (di) XClassDelete(di);
-        if (ai) XClassDelete(ai);
-        if (aiHold) XClassDelete(aiHold);
-        if (ao) XClassDelete(ao);
-        if (dop) XClassDelete(dop);
-        XModbusTcpServer_deleteLater(server);
-        XModbusTcpClient_deleteLater(client);
-        return;
-    }
-    XObject_connect_2((XObject*)di, XSignal(XDigitalInput_inputChanged_signal), onDiChanged2);
-    XObject_connect_2((XObject*)ai, XSignal(XAnalogInput_inputChanged_signal), onAiChanged2);
-    XObject_connect_2((XObject*)aiHold, XSignal(XAnalogInput_inputChanged_signal), onAiHoldChanged2);
-    XObject_connect_2((XObject*)ao, XSignal(XAnalogOutput_writeDone_signal), onAoWriteDone2);
-    XObject_connect_2((XObject*)dop, XSignal(XDigitalOutput_writeDone_signal), onDoWriteDone2);
-
-    /* --- DI：初值推送（服务端离散量 0 = 1） --- */
+    /* ---- 从站：DI 0..11 + Coils 0..15 + HR 0..15（XMap 键 static 区） ---- */
+    slave = XModbusTcpServer_create();
     {
-        int flag = (g_diChanges > 0);
-        waitUntil(&flag, 2000);
-        CHECK("DI 初值轮询推送", g_diChanges >= 1 && g_diValue == true);
-        CHECK("DI 通道 valid", XIoChannel_isValid((XIoChannel*)di));
+        static XModbusRegisterType key0 = XModbusDiscreteInputs;
+        static XModbusRegisterType key1 = XModbusCoils;
+        static XModbusRegisterType key2 = XModbusHoldingRegisters;
+        XVariant* a = XVariant_create_utf8_str("127.0.0.1");
+        XVariant* p = XVariant_create_int(0);
+        XModbusDevice_setConnectionParameter_ref((XModbusDevice*)slave,
+            XModbusDevice_NetworkAddressParameter, a);
+        XModbusDevice_setConnectionParameter_ref((XModbusDevice*)slave,
+            XModbusDevice_NetworkPortParameter, p);
+        XClassDelete((XClass*)a);
+        XClassDelete((XClass*)p);
+        smap = XModbusDataUnitMap_create();
+        unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                         key0, 0, 12);
+        if (unit) { XMap_insert_base((XMapBase*)smap, &key0, unit); XClassDelete(unit); }
+        unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                         key1, 0, 16);
+        if (unit) { XMap_insert_base((XMapBase*)smap, &key1, unit); XClassDelete(unit); }
+        unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                         key2, 0, 16);
+        if (unit) { XMap_insert_base((XMapBase*)smap, &key2, unit); XClassDelete(unit); }
+        XModbusServer_setMap_ref_base((XModbusServer*)slave, smap); /* 所有权移交。 */
+        XModbusDevice_connectDevice((XModbusDevice*)slave);
+        if (slave->m_tcpServer) port = XTcpServer_serverPort(slave->m_tcpServer);
+        CHECK("从站监听", port != 0);
     }
 
-    /* --- AI：初值 2530 raw * 1/100 = 25 工程 --- */
+    /* ---- Hub：DI/Coils/HR 三区映射（默认值 0/0x00AA 供播种断言） ---- */
+    client = XModbusTcpClient_create();
+    hub = XModbusHub_create();
+    CHECK("Hub/客户端创建", client != NULL && hub != NULL);
+    if (!client || !hub) goto cleanup;
     {
-        int flag = (g_aiChanges > 0);
-        waitUntil(&flag, 2000);
-        CHECK("AI 标度换算初值", g_aiChanges >= 1 && g_aiValue == 25);
-        CHECK("AI 通道 valid", XIoChannel_isValid((XIoChannel*)ai));
-    }
-
-    /* --- DI 翻转：服务端改值 -> 下一拍推送 false --- */
-    XModbusServer_setData2((XModbusServer*)server, XModbusDiscreteInputs, 0, 0);
-    {
-        int flag = (g_diValue == false && g_diChanges >= 2);
-        waitUntil(&flag, 2000);
-        CHECK("DI 翻转推送", g_diValue == false && g_diChanges >= 2);
-    }
-
-    /* --- AO：写保持寄存器 10 = 777 -> writeDone + 服务端读回 --- */
-    CHECK("AO 写受理", XAnalogOutput_write_base((XAnalogOutput*)ao, 777));
-    {
-        int flag = g_aoWriteOk;
-        waitUntil(&flag, 3000);
-        CHECK("AO writeDone(true)", g_aoWriteOk);
-    }
-    regValue = 0;
-    CHECK("AO 服务端读回 777",
-        XModbusServer_data2((XModbusServer*)server, XModbusHoldingRegisters, 10, &regValue) &&
-        regValue == 777);
-
-    /* --- AI(useHolding) 读回 AO 写入值：全链闭环 --- */
-    {
-        int flag = (g_aiHoldValue == 777);
-        waitUntil(&flag, 3000);
-        CHECK("AI(holding) 全链读回 777", g_aiHoldValue == 777);
-    }
-
-    /* --- DO：写线圈 5 = true -> writeDone + 服务端读回 --- */
-    CHECK("DO 写受理", XDigitalOutput_write_base((XDigitalOutput*)dop, true));
-    {
-        int flag = g_doWriteOk;
-        waitUntil(&flag, 3000);
-        CHECK("DO writeDone(true)", g_doWriteOk);
-    }
-    regValue = 0;
-    CHECK("DO 服务端读回 1",
-        XModbusServer_data2((XModbusServer*)server, XModbusCoils, 5, &regValue) &&
-        regValue == 1);
-
-    XClassDelete(di);
-    XClassDelete(ai);
-    XClassDelete(aiHold);
-    XClassDelete(ao);
-    XClassDelete(dop);
-    XModbusTcpServer_deleteLater(server);
-    XModbusTcpClient_deleteLater(client);
-}
-
-/* ==================== RTU 组合用例（2026-10-31，hub 从站拓扑） ====================
- * 依赖环境变量 INDUSTRY_RTU_PTY 指向从站 pty（mbtest_industry_run.sh 起
- * mbtest_hub_slaves.py 后传入）。初值口径：RTU 总线侧 DI0=1、IR0=7
- * （与 TCP 面板的 IR0=2530 寄存器独立）；HR10/12/13 可写。覆盖：RTU 四适配器全链、AI den=0 视 1（同址
- * 参照比对）、AO 负值/越界钳位读回、DO 广播受理即完成、AO 广播效果读回、
- * DO 单飞 Busy 拒绝、大死区首拍恒发且静态不重复推。 */
-
-static int g_rdiVal = 0;  static int g_rdiN = 0;
-static int g_raiVal = 0;  static int g_raiN = 0;
-static int g_rdnVal = 0;  static int g_rdnN = 0;   /* den=0 视 1 */
-static int g_rdrVal = 0;  static int g_rdrN = 0;   /* den=1 同址参照 */
-static int g_ra10Val = 0; static int g_ra10N = 0;  /* HR10 读回 */
-static int g_ra12Val = 0; static int g_ra12N = 0;  /* HR12 读回（钳位） */
-static int g_ra13Val = 0; static int g_ra13N = 0;  /* HR13 读回（广播） */
-static int g_rai0Val = 0; static int g_rai0N = 0;  /* IR0 标度 1/1 对照 */
-static int g_ra12Base = 0;                         /* HR12 钳位轮询基线 */
-static int g_ra13Base = 0;                         /* HR13 广播轮询基线 */
-static int g_raoOk = 0;   static int g_raoN = 0;
-static int g_rdoOk = 0;   static int g_rdoN = 0;
-static int g_rbyOk = 0;   static int g_rbyN = 0;
-
-static void rOnDi2(XObject* sender, XVarList* args)
-{ (void)sender; XVarList_start(args); g_rdiVal = XVarList_arg(args, bool); g_rdiN++; }
-static void rOnAi2(XObject* sender, XVarList* args)
-{ (void)sender; XVarList_start(args); g_raiVal = XVarList_arg(args, int32_t); g_raiN++; }
-static void rOnDn2(XObject* sender, XVarList* args)
-{ (void)sender; XVarList_start(args); g_rdnVal = XVarList_arg(args, int32_t); g_rdnN++; }
-static void rOnDr2(XObject* sender, XVarList* args)
-{ (void)sender; XVarList_start(args); g_rdrVal = XVarList_arg(args, int32_t); g_rdrN++; }
-static int g_rdbVal = 0;  static int g_rdbN = 0;   /* 大死区首拍语义 */
-static void rOnDb2(XObject* sender, XVarList* args)
-{ (void)sender; XVarList_start(args); g_rdbVal = XVarList_arg(args, int32_t); g_rdbN++; }
-static void rOnA12(XObject* sender, XVarList* args)
-{ (void)sender; XVarList_start(args); g_ra12Val = XVarList_arg(args, int32_t); g_ra12N++; }
-static void rOnA13(XObject* sender, XVarList* args)
-{ (void)sender; XVarList_start(args); g_ra13Val = XVarList_arg(args, int32_t); g_ra13N++; }
-static void rOnAi0(XObject* sender, XVarList* args)
-{ (void)sender; XVarList_start(args); g_rai0Val = XVarList_arg(args, int32_t); g_rai0N++; }
-static void rOnA10(XObject* sender, XVarList* args)
-{ (void)sender; XVarList_start(args); g_ra10Val = XVarList_arg(args, int32_t); g_ra10N++; }
-static void rOnAo2(XObject* sender, XVarList* args)
-{ (void)sender; XVarList_start(args); g_raoOk = XVarList_arg(args, bool) ? 1 : 0; g_raoN++; }
-static void rOnDo2(XObject* sender, XVarList* args)
-{ (void)sender; XVarList_start(args); g_rdoOk = XVarList_arg(args, bool) ? 1 : 0; g_rdoN++; }
-static void rOnBy2(XObject* sender, XVarList* args)
-{ (void)sender; XVarList_start(args); g_rbyOk = XVarList_arg(args, bool) ? 1 : 0; g_rbyN++; }
-
-static void test_modbus_adapters_rtu(const char* pty)
-{
-    XModbusRtuSerialClient* client;
-    XModbusDigitalInput* di;
-    XModbusAnalogInput* ai;
-    XModbusAnalogInput* aiDen;
-    XModbusAnalogInput* aiRef;
-    XModbusAnalogInput* aiDb;
-    XModbusAnalogInput* aiRef0;
-    XModbusAnalogInput* aiHold10;
-    XModbusAnalogInput* aiHold12;
-    XModbusAnalogInput* aiHold13;
-    XModbusAnalogOutput* ao10;
-    XModbusAnalogOutput* ao12;
-    XModbusAnalogOutput* aoBc;
-    XModbusDigitalOutput* dop;
-    XModbusDigitalOutput* dob;
-    XModbusDigitalOutput* dbusy;
-    int flag = 0;
-    int i;
-
-    printf("== RTU 组合：四适配器/广播/Busy/钳位/死区首拍 ==\n"); fflush(stdout);
-    client = XModbusRtuSerialClient_create();
-    CHECK("RTU client 创建", client != NULL);
-    if (!client) return;
-    XModbusClient_setTimeout((XModbusClient*)client, 1000);
-    XModbusClient_setNumberOfRetries((XModbusClient*)client, 0);
-    XModbusRtuSerialClient_setTurnaroundDelay(client, 60);
-    {
-        XVariant* v1 = XVariant_create_utf8_str(pty);
+        XVariant* a = XVariant_create_utf8_str("127.0.0.1");
+        XVariant* p = XVariant_create_int((int)port);
         XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,
-            XModbusDevice_SerialPortNameParameter, v1);
-        XClassDelete((XClass*)v1);
-    }
-    {
-        XVariant* v2 = XVariant_create_int(9600);
+            XModbusDevice_NetworkAddressParameter, a);
         XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,
-            XModbusDevice_SerialBaudRateParameter, v2);
-        XClassDelete((XClass*)v2);
+            XModbusDevice_NetworkPortParameter, p);
+        XClassDelete((XClass*)a);
+        XClassDelete((XClass*)p);
     }
-    CHECK("RTU 连接发起", XModbusDevice_connectDevice((XModbusDevice*)client));
-    for (i = 0; i < 1500 && XModbusDevice_state((XModbusDevice*)client) !=
-         XModbusDevice_ConnectedState; ++i) {
-        XCoreApplication_processEvents(0);
-        XThread_msleep(2);
+    XModbusClient_setTimeout((XModbusClient*)client, 500);
+    devId = XModbusHub_addDevice_2(hub, (XModbusClient*)client, "slave1");
+    map = XModbusMapping_create();
+    CHECK("设备注入/映射创建", devId > 0 && map != NULL);
+    if (devId <= 0 || !map) goto cleanup;
+    CHECK("映射登记 DI/Coils/HR",
+          XModbusMapping_addRange(map, XModbusDiscreteInputs, 0, 12, devId, 1, 0, 0) &&
+          XModbusMapping_addRange(map, XModbusCoils, 0, 16, devId, 1, 0, 0x0000) &&
+          XModbusMapping_addRange(map, XModbusHoldingRegisters, 0, 16, devId, 1, 0, 0x00AA));
+    XModbusHub_setMapping(hub, map);
+    XModbusHub_setPollInterval(hub, devId, 50);
+    XModbusHub_setUnitBackoff(hub, 1000, 1000); /* 测试免退避干扰。 */
+
+    /* ---- 通道组：XModbusPoint 数据源点 + 组登记（组无定时器，推送制；
+     *      四点 autoDelete=true 交组托管，清理时先删组（点析构断开 Hub
+     *      订阅，彼时 Hub 仍在）再收 Hub ---- */
+    group = XIoChannelGroup_create();
+    CHECK("通道组创建", group != NULL);
+    if (!group) goto cleanup;
+    diPt = XModbusPoint_createDigitalInput(hub, 3, "DI3");
+    doPt = XModbusPoint_createDigitalOutput(hub, 0, "DO0");
+    aiPt = XModbusPoint_createAnalogInput(hub, 0, true, 1, 1, 0, 0, "AI0");
+    aoPt = XModbusPoint_createAnalogOutput(hub, 5, 1, 1, 0, "AO5");
+    CHECK("四点创建", diPt && doPt && aiPt && aoPt);
+    CHECK("四点登记",
+          XIoChannelGroup_addPoint(group, (XIoPoint*)diPt, true) &&
+          XIoChannelGroup_addPoint(group, (XIoPoint*)doPt, true) &&
+          XIoChannelGroup_addPoint(group, (XIoPoint*)aiPt, true) &&
+          XIoChannelGroup_addPoint(group, (XIoPoint*)aoPt, true));
+    XObject_connect_2((XObject*)group, XSignal(XIoChannelGroup_inputChanged_signal),
+                      onGroupInputChanged);
+    XObject_connect_2((XObject*)group, XSignal(XIoChannelGroup_writeDone_signal),
+                      onGroupWriteDone);
+
+    /* ---- ① 联动在线：上线对齐写两段落定 + 首轮回填推送初值 ---- */
+    XModbusHub_connectAll(hub);
+    XModbusHub_startPolling(hub);
+    {
+        int writeOk = 0;
+        /* 从站 Coil/HR 初值 0 → 对齐写落定后从站侧即默认值，无独立可观测
+         * 沿——以首轮 AI 回填（0x00AA）作为"对齐+轮询已活"的综合判据。 */
+        g_hitTargetPt = (XIoPoint*)aiPt;
+        g_hitTargetVal = 0x00AA;
+        g_hitFlag = 0;
+        (void)writeOk;
     }
-    CHECK("RTU 连接 pty 就绪",
-          XModbusDevice_state((XModbusDevice*)client) == XModbusDevice_ConnectedState);
+    for (i = 0; i < 500 && !g_hitFlag; ++i)
+        XCoreApplication_processEventsWithMaxTime(0, 10);
+    CHECK("AI 回填推送（默认值 0x00AA）", g_hitFlag);
+    CHECK("AI read=0x00AA",
+          XIoChannelGroup_readAnalogInput(group, (XIoPoint*)aiPt, &eng) && eng == 0x00AA);
 
-    di = XModbusDigitalInput_create_ex((XModbusClient*)client, 1, 0, 120);
-    ai = XModbusAnalogInput_create_ex((XModbusClient*)client, 1, 0, false, 10, 1, 0, 0, 120);
-    aiRef0 = XModbusAnalogInput_create_ex((XModbusClient*)client, 1, 0, false, 1, 1, 0, 0, 120);
-    aiDen = XModbusAnalogInput_create_ex((XModbusClient*)client, 1, 1, false, 1, 0, 0, 0, 150);
-    aiRef = XModbusAnalogInput_create_ex((XModbusClient*)client, 1, 1, false, 1, 1, 0, 0, 150);
-    aiDb = XModbusAnalogInput_create_ex((XModbusClient*)client, 1, 2, false, 1, 1, 0, 60000, 150);
-    aiHold10 = XModbusAnalogInput_create_ex((XModbusClient*)client, 1, 10, true, 1, 1, 0, 0, 150);
-    aiHold12 = XModbusAnalogInput_create_ex((XModbusClient*)client, 1, 12, true, 1, 1, 0, 0, 150);
-    aiHold13 = XModbusAnalogInput_create_ex((XModbusClient*)client, 1, 13, true, 1, 1, 0, 0, 150);
-    ao10 = XModbusAnalogOutput_create_ex((XModbusClient*)client, 1, 10, 1, 1, 0);
-    ao12 = XModbusAnalogOutput_create_ex((XModbusClient*)client, 1, 12, 1, 1, 0);
-    aoBc = XModbusAnalogOutput_create_ex((XModbusClient*)client, 0, 13, 1, 1, 0);
-    dop = XModbusDigitalOutput_create_ex((XModbusClient*)client, 1, 5);
-    dob = XModbusDigitalOutput_create_ex((XModbusClient*)client, 0, 6);
-    dbusy = XModbusDigitalOutput_create_ex((XModbusClient*)client, 1, 7);
-    CHECK("RTU 十四适配器创建",
-          di && ai && aiRef0 && aiDen && aiRef && aiDb && aiHold10 && aiHold12 && aiHold13 &&
-          ao10 && ao12 && aoBc && dop && dob && dbusy);
-    if (!di || !ai || !aiRef0 || !aiDen || !aiRef || !aiDb || !aiHold10 || !aiHold12 ||
-        !aiHold13 || !ao10 || !ao12 || !aoBc || !dop || !dob || !dbusy) {
-        XModbusDevice_disconnectDevice((XModbusDevice*)client);
-        XObject_deleteLater((XObject*)client);
-        XCoreApplication_processEvents(XEventLoop_AllEvents);
-        return;
-    }
-    XObject_connect_2((XObject*)di, XSignal(XDigitalInput_inputChanged_signal), rOnDi2);
-    XObject_connect_2((XObject*)ai, XSignal(XAnalogInput_inputChanged_signal), rOnAi2);
-    XObject_connect_2((XObject*)aiRef0, XSignal(XAnalogInput_inputChanged_signal), rOnAi0);
-    XObject_connect_2((XObject*)aiDen, XSignal(XAnalogInput_inputChanged_signal), rOnDn2);
-    XObject_connect_2((XObject*)aiRef, XSignal(XAnalogInput_inputChanged_signal), rOnDr2);
-    XObject_connect_2((XObject*)aiDb, XSignal(XAnalogInput_inputChanged_signal), rOnDb2);
-    XObject_connect_2((XObject*)aiHold10, XSignal(XAnalogInput_inputChanged_signal), rOnA10);
-    XObject_connect_2((XObject*)aiHold12, XSignal(XAnalogInput_inputChanged_signal), rOnA12);
-    XObject_connect_2((XObject*)aiHold13, XSignal(XAnalogInput_inputChanged_signal), rOnA13);
-    XObject_connect_2((XObject*)ao10, XSignal(XAnalogOutput_writeDone_signal), rOnAo2);
-    XObject_connect_2((XObject*)ao12, XSignal(XAnalogOutput_writeDone_signal), rOnAo2);
-    XObject_connect_2((XObject*)aoBc, XSignal(XAnalogOutput_writeDone_signal), rOnAo2);
-    XObject_connect_2((XObject*)dop, XSignal(XDigitalOutput_writeDone_signal), rOnDo2);
-    XObject_connect_2((XObject*)dob, XSignal(XDigitalOutput_writeDone_signal), rOnDo2);
-    XObject_connect_2((XObject*)dbusy, XSignal(XDigitalOutput_writeDone_signal), rOnBy2);
+    /* ---- ③ DI 翻转：server DI3=1 → inputChanged(diPt, 1) + read ---- */
+    XModbusServer_setData2((XModbusServer*)slave, XModbusDiscreteInputs, 3, 1);
+    g_inChanged = 0;
+    g_hitTargetPt = (XIoPoint*)diPt;
+    g_hitTargetVal = 1;
+    g_hitFlag = 0;
+    CHECK("DI 翻转推送", waitCond(&g_hitFlag, 1, 5000) &&
+                         g_inLastPt == (XIoPoint*)diPt && g_inLastValue == 1);
+    CHECK("DI read=1", XIoChannelGroup_readDigitalInput(group, (XIoPoint*)diPt, &b) && b);
 
-    /* 1) DI 初值推送（hub 从站 DI0=1）。 */
-    flag = (g_rdiN > 0);
-    waitUntil(&flag, 2000);
-    CHECK("RTU DI 初值推送 true", g_rdiN >= 1 && g_rdiVal == true);
+    /* ---- ④ AI：server HR0=0x0777 → requestRefresh 回填推送 ---- */
+    XModbusServer_setData2((XModbusServer*)slave, XModbusHoldingRegisters, 0, 0x0777);
+    XModbusHub_requestRefresh(hub, XModbusHoldingRegisters, 0, 1);
+    g_hitTargetPt = (XIoPoint*)aiPt;
+    g_hitTargetVal = 0x0777;
+    g_hitFlag = 0;
+    for (i = 0; i < 500 && !g_hitFlag; ++i)
+        XCoreApplication_processEventsWithMaxTime(0, 10);
+    CHECK("AI 刷新推送 0x0777", g_hitFlag);
+    CHECK("AI read=0x0777",
+          XIoChannelGroup_readAnalogInput(group, (XIoPoint*)aiPt, &eng) && eng == 0x0777);
+    g_hitTargetPt = NULL;
 
-    /* 2) AI 标度初值：RTU 总线寄存器与 TCP 面板不同源——hub 从站 RTU 侧
-     * IR0=7（已知初值），×10 → 70；同址 1/1 对照应为原始码 7。 */
-    flag = (g_raiN > 0 && g_rai0N > 0);
-    waitUntil(&flag, 2500);
-    CHECK("RTU AI 标度初值 70（RTU 侧 IR0=7 × 10）",
-          g_raiN >= 1 && g_raiVal == 70 && g_rai0Val == 7);
+    /* ---- ⑤ DO：write → writeDone(doPt,true) + 从站侧读回 ---- */
+    CHECK("DO write 受理", XIoChannelGroup_writeDigitalOutput(group, (XIoPoint*)doPt, true));
+    g_doneLastPt = NULL;
+    for (i = 0; i < 500 && g_doneLastPt != (XIoPoint*)doPt; ++i)
+        XCoreApplication_processEventsWithMaxTime(0, 10);
+    CHECK("DO writeDone(doPt,true)", g_doneLastPt == (XIoPoint*)doPt && g_doneCount >= 1);
+    CHECK("从站侧 Coil0=1",
+          XModbusServer_data2((XModbusServer*)slave, XModbusCoils, 0, &v) && v == 1);
 
-    /* 3) AI den=0 视为 1：同址 den=0 与 den=1 两路推送值恒等。 */
-    flag = (g_rdnN > 0 && g_rdrN > 0);
-    waitUntil(&flag, 2500);
-    CHECK("AI den=0 与 den=1 同址同值（视 1）",
-          g_rdnN >= 1 && g_rdrN >= 1 && g_rdnVal == g_rdrVal);
+    /* ---- ⑥ AO：write(1000) → writeDone(aoPt,true) + 从站侧读回 ---- */
+    CHECK("AO write 受理", XIoChannelGroup_writeAnalogOutput(group, (XIoPoint*)aoPt, 1000));
+    g_doneLastPt = NULL;
+    for (i = 0; i < 500 && g_doneLastPt != (XIoPoint*)aoPt; ++i)
+        XCoreApplication_processEventsWithMaxTime(0, 10);
+    CHECK("AO writeDone(aoPt,true)", g_doneLastPt == (XIoPoint*)aoPt && g_doneCount >= 2);
+    CHECK("从站侧 HR5=1000",
+          XModbusServer_data2((XModbusServer*)slave, XModbusHoldingRegisters, 5, &v) && v == 1000);
 
-    /* 4) 大死区首拍恒发 + 静态不重复推。 */
-    XThread_msleep(400);
+    /* ---- ⑦ remove(autoDelete)：摘除即销毁、contains/recordCount、读写拒绝 ---- */
+    CHECK("remove(doPt)", XIoChannelGroup_remove(group, (XIoPoint*)doPt));
+    CHECK("摘除后 contains=false", !XIoChannelGroup_contains(group, (XIoPoint*)doPt));
+    CHECK("摘除后记录数=3", XIoChannelGroup_recordCount(group) == 3);
+    CHECK("摘除后 read 拒绝", !XIoChannelGroup_readDigitalInput(group, (XIoPoint*)doPt, &b));
+
+cleanup:
+    g_hitTargetPt = NULL;
+    if (group) XClassDelete((XClass*)group);       /* autoDelete 点随组释放 */
+    if (hub) XModbusHub_stopPolling(hub);
+    if (hub) XModbusHub_deleteLater((XModbusHub*)hub);
+    if (slave) XModbusDevice_disconnectDevice((XModbusDevice*)slave);
+    if (slave) XModbusTcpServer_deleteLater(slave);
     XCoreApplication_processEvents(0);
-    CHECK("AI 大死区仅首拍推送一次", g_rdbN == 1);
-    XThread_msleep(300);
-    XCoreApplication_processEvents(0);
-    CHECK("AI 大死区静态不重复推送", g_rdbN == 1);
-
-    /* 5) AO 写 HR10=777 → writeDone → aiHold 全链读回。 */
-    g_raoN = 0;
-    CHECK("RTU AO 写 777 受理", XAnalogOutput_write_base((XAnalogOutput*)ao10, 777));
-    flag = (g_raoN > 0);
-    waitUntil(&flag, 3000);
-    CHECK("RTU AO writeDone(true) 恰一次", g_raoN == 1 && g_raoOk == 1);
-    flag = (g_ra10N > 0 && g_ra10Val == 777);
-    waitUntil(&flag, 3000);
-    CHECK("RTU AO→aiHold 全链读回 777", g_ra10Val == 777);
-
-    /* 6) AO 钳位：-5→0、70000→65535（HR12）。等待口径=「写落定后的下一次
-     * 轮询推送」（基线计数），防 HR12 初值 0 抢跑 + 单飞 Busy。 */
-    g_ra12Base = g_ra12N;
-    CHECK("AO 写 500 建基线", XAnalogOutput_write_base((XAnalogOutput*)ao12, 500));
-    flag = (g_ra12N > g_ra12Base && g_ra12Val == 500);
-    waitUntil(&flag, 4000);
-    CHECK("AO 基线 500 读回", g_ra12N > g_ra12Base && g_ra12Val == 500);
-    g_ra12Base = g_ra12N;
-    CHECK("AO 写 -5 受理", XAnalogOutput_write_base((XAnalogOutput*)ao12, -5));
-    flag = (g_ra12N > g_ra12Base && g_ra12Val == 0);
-    waitUntil(&flag, 4000);
-    CHECK("AO 负值钳 0 读回", g_ra12N > g_ra12Base && g_ra12Val == 0);
-    g_ra12Base = g_ra12N;
-    CHECK("AO 写 70000 受理", XAnalogOutput_write_base((XAnalogOutput*)ao12, 70000));
-    flag = (g_ra12N > g_ra12Base && g_ra12Val == 65535);
-    waitUntil(&flag, 4000);
-    CHECK("AO 越界钳 65535 读回", g_ra12N > g_ra12Base && g_ra12Val == 65535);
-
-    /* 7) DO 写线圈 writeDone（RTU 应答）。 */
-    g_rdoN = 0;
-    CHECK("RTU DO 写受理", XDigitalOutput_write_base((XDigitalOutput*)dop, true));
-    flag = (g_rdoN > 0);
-    waitUntil(&flag, 3000);
-    CHECK("RTU DO writeDone(true) 恰一次", g_rdoN == 1 && g_rdoOk == 1);
-
-    /* 8) DO 单飞 Busy：第一写在途时第二写立即拒绝；随后第一写正常落定。 */
-    g_rbyN = 0;
-    CHECK("Busy 写①受理", XDigitalOutput_write_base((XDigitalOutput*)dbusy, true));
-    CHECK("Busy 写②在途被拒",
-          !XDigitalOutput_write_base((XDigitalOutput*)dbusy, false));
-    flag = (g_rbyN > 0);
-    waitUntil(&flag, 3000);
-    CHECK("Busy 写①正常落定恰一次（仅一笔上总线）", g_rbyN == 1 && g_rbyOk == 1);
-
-    /* 9) DO/AO 广播：受理即完成（writeDone(true) 同步发出）。 */
-    g_rdoN = 0;
-    CHECK("DO 广播受理", XDigitalOutput_write_base((XDigitalOutput*)dob, true));
-    CHECK("DO 广播同步 writeDone(true)", g_rdoN == 1 && g_rdoOk == 1);
-    g_ra13Base = g_ra13N;
-    CHECK("AO 广播受理", XAnalogOutput_write_base((XAnalogOutput*)aoBc, 999));
-    flag = (g_ra13N > g_ra13Base && g_ra13Val == 999);
-    waitUntil(&flag, 4000);
-    CHECK("AO 广播效果读回 HR13=999（unit1 命中）",
-          g_ra13N > g_ra13Base && g_ra13Val == 999);
-
-    XClassDelete(di);
-    XClassDelete(ai);
-    XClassDelete(aiDen);
-    XClassDelete(aiRef);
-    XClassDelete(aiDb);
-    XClassDelete(aiHold10);
-    XClassDelete(aiHold12);
-    XClassDelete(aiHold13);
-    XClassDelete(ao10);
-    XClassDelete(ao12);
-    XClassDelete(aoBc);
-    XClassDelete(dop);
-    XClassDelete(dob);
-    XClassDelete(dbusy);
-    fprintf(stderr,
-            "[rtu-diag] di=%d/%d ai=%d(%d) rai0=%d den=%d db=%d a10=%d/%d "
-            "a12=%d/%d a13=%d/%d ao=%d/%d do=%d/%d\n",
-            g_rdiVal, g_rdiN, g_raiVal, g_raiN, g_rai0Val, g_rdnVal, g_rdbVal,
-            g_ra10Val, g_ra10N, g_ra12Val, g_ra12N, g_ra13Val, g_ra13N,
-            g_raoOk, g_raoN, g_rdoOk, g_rdoN);
-    XModbusDevice_disconnectDevice((XModbusDevice*)client);
-    XObject_deleteLater((XObject*)client);
-    XCoreApplication_processEvents(XEventLoop_AllEvents);
+    if (app) XClassDelete(app);
 }
 
-/* ==================== 定时器环境探针 ==================== */
-
-typedef struct XProbeTimer {
-    XObject m_class;          /**< 第一个成员，基类 XObject。 */
-    XTimerId m_timerId;       /**< 本探针的周期定时器 id。 */
-    int m_ticks;              /**< 收到的 timerEvent 次数。 */
-} XProbeTimer;
-
-XCLASS_DEFINE_BEGING(XProbeTimer)
-XCLASS_DEFINE_EXTEND_END(XProbeTimer, XObject)
-
-static void VXProbeTimer_timerEvent(XObject* obj, XTimerEvent* event)
-{
-    XProbeTimer* p = (XProbeTimer*)obj;
-    if (!p || !event) return;
-    if (XTimerEvent_timerId(event) == p->m_timerId) {
-        p->m_ticks++;
-    }
-    XEvent_accept(event);
-}
-
-XVtable* XProbeTimer_class_init(void)
-{
-    XVTABLE_INIT_DEFAULT(XProbeTimer)
-    XVTABLE_INHERIT_XCLASS(XObject);
-    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXProbeTimer_timerEvent);
-    return XVTABLE_DEFAULT;
-}
-
-static void XProbeTimer_init(XProbeTimer* obj)
-{
-    if (!obj) return;
-    memset(obj, 0, sizeof(XProbeTimer));
-    XObject_init((XObject*)obj);
-    XClassSetVtable(obj, XProbeTimer);
-    obj->m_timerId = XTIMER_INVALID_ID;
-    obj->m_ticks = 0;
-}
-
-/* ==================== 收编入口（2026-11-01 去 main 收编，XModbusHubTest
- * 同款：_run 供 --test/Test 命令分派并回失败数，菜单动作签名同
- * XModbusPublicApiTest。TCP 环回进程内自跑；RTU 组合经 INDUSTRY_RTU_PTY
- * 环境变量由驱动脚本 mbtest_industry_run.sh 起从站后驱动） ==================== */
+/* ==================== 测试入口（收编签名） ==================== */
 
 int XIndustryModbusTest_run(void)
 {
     XCoreApplication* app;
+    XDeviceNetwork_ensureInit();
 
-    app = XCoreApplication_create(0, NULL);
+    app = XCoreApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL);
     if (!app) {
         XPrintf("[FAIL] 事件循环创建失败\n");
         return 1;
     }
-    /* Windows 依赖 winsock：TCP 环回前必须显式初始化平台网络子系统
-     * （主程序由启动链隐式完成，独立可执行需自管；引用计数式，可多调）。 */
-    XDeviceNetwork_ensureInit();
 
-    {   /* 定时器环境探针：本 exe 中 XObject 周期定时器是否 tick */
-        XProbeTimer probe;
-        int waited = 0;
-        XProbeTimer_init(&probe);
-        probe.m_timerId = XObject_startTimer_ms((XObject*)&probe, 50, XTimerType_CoarseTimer);
-        while (waited < 500 && probe.m_ticks < 3) {
-            XCoreApplication_processEvents(0);
-            XThread_msleep(2);
-            waited += 2;
-        }
-        XPrintf("[probe] object timer ticks=%d (id valid=%d)\n",
-                probe.m_ticks, (int)(probe.m_timerId != XTIMER_INVALID_ID));
-        if (probe.m_timerId != XTIMER_INVALID_ID)
-            XObject_killTimer((XObject*)&probe, probe.m_timerId);
-    }
-
-    test_modbus_adapters_e2e();
-
-    /* RTU 组合用例：由驱动脚本起好从站后经环境变量传入 pty 路径。 */
-    {
-        const char* rtuPty = getenv("INDUSTRY_RTU_PTY");
-        fprintf(stderr, "[main] rtuPty=%p val=%s\n",
-                (void*)rtuPty, rtuPty ? rtuPty : "(null)");
-        if (rtuPty && rtuPty[0]) test_modbus_adapters_rtu(rtuPty);
-        else printf("[skip] INDUSTRY_RTU_PTY 未设置，RTU 组合用例跳过\n");
-    }
+    test_channel_group_hub();
 
     XPrintf("\n===== XIndustryModbusTest: %d passed, %d failed =====\n",
             g_pass, g_fail);
-    XDeviceNetwork_cleanup();
+    XCoreApplication_processEvents(0);
     XClassDelete(app);
+    XDeviceNetwork_cleanup();
     return g_fail == 0 ? 0 : 1;
 }
 
