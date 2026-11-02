@@ -2,7 +2,7 @@
  * @file       XVfdM512.h
  * @brief      511M/512M/513M 系列高性能矢量变频器子类公开 API。
  * @details    [2026-11-02 说明书核对重构] 品牌子类只承担"协议知识"：
- *               - 通信组表（XVfdM512_commGroups）：手册条目级的远端地址区间。
+ *               - 通信组表 / 从站约束 / 地址：**不在本文件**，见 XVfdM512_Modbus.c
  *                 该系列只支持 FC03/FC06 且「一帧读不得跨过本功能码组的最后
  *                 一个功能码」——组边界是**手册条目**，不是地址连续性（例：
  *                 1000H「通讯设定值」与 1001H~1020H「运行/停机参数」是两条
@@ -13,7 +13,7 @@
  *               - 参数描述表（XVfdM512_paramDescs）：P/A/C/d/PP 组核心参数，
  *                 含「只改 RAM 不落 EEPROM」地址变体（手册附录1：P 组写
  *                 EEPROM 用 FxxxH、只改 RAM 用 0xxxH；A 组 AxxxH/4xxxH）。
- *               - 从站协议约束（XVfdM512_unitProtocol）：单帧读上限 12 字、
+ *               - 从站协议约束（见绑定层）：单帧读上限 12 字、
  *                 不跨组、只允许 FC06 单寄存器写。
  *               - 故障表：手册附录1 的 8000H 故障码表（41 条）+ 面板显示码
  *                 附表（两套编号不可互推）。
@@ -38,6 +38,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XVfdDevice.h"
+#include "XVfdBind.h"
 #include "XVfdCommandEnum.h"
 
 /* ========================================================================== */
@@ -166,11 +167,13 @@ void XVfdM512_init(XVfdM512* dev);
 const XVfdPointSpec* XVfdM512_pointSpecs(int* count);
 
 /**
- * @brief 取 511M 族通信组表（静态 const，禁释放）。
- * @param count 输出条目数；可为 NULL。
- * @return 组表首地址；装配期按组切映射段（每组一段），读帧因此不跨组。
+ * @brief 取 M512 的 Modbus 绑定表（地址知识，定义在 XVfdM512_Modbus.c）。
+ * @return 静态常量绑定表指针；不可释放。
+ * @details 含点绑定（role → 寄存器）、参数绑定（paramId → 寄存器）、
+ *          通信组（功能码组边界）、从站约束。品牌主文件不含任何地址。
  */
-const XVfdCommGroup* XVfdM512_commGroups(int* count);
+const XVfdBindTable* XVfdM512_modbusBinding(void);
+
 
 /**
  * @brief 取 511M 族参数描述表（静态 const，禁释放）。
@@ -179,12 +182,6 @@ const XVfdCommGroup* XVfdM512_commGroups(int* count);
  */
 const XVfdParamDesc* XVfdM512_paramDescs(int* count);
 
-/**
- * @brief 取 511M 族从站协议约束（静态 const，禁释放）。
- * @return 约束内容指针；装配层按字段翻译成传输层配置后登记到该从站。
- * @note 作用域是**从站**：一条 RTU 总线上的其它从站不受本约束影响。
- */
-const XVfdUnitProtocol* XVfdM512_unitProtocol(void);
 
 /* ==================== 配置 ==================== */
 

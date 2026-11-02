@@ -32,6 +32,7 @@
 #include "XChannel/XModbusLink.h"
 #include "XChannel/XChannelAssembly.h"
 #include "XVfd/XVfdDevice.h"
+#include "XVfd/XVfdBind.h"
 
 /** @brief 单次装配可处理的规格条目上限。 */
 #define XVFD_HARNESS_SPEC_CAP 64
@@ -64,6 +65,7 @@ typedef struct XvfdHarnessStation {
     XModbusLink* m_link;             /**< 本站独立链路（共用 Hub，但 role 表独立） */
     int m_devId;                     /**< 设备句柄（-1=未用） */
     int m_unitId;                    /**< 从站地址 */
+    const XVfdBindTable* m_bind;     /**< 绑定表（借用；地址 + 组表 + 约束） */
     const XVfdCommGroup* m_groups;   /**< 通信组表（借用） */
     int m_groupCount;                /**< 组数 */
     uint16_t m_groupVbase[XVFD_HARNESS_GROUP_CAP]; /**< 已建组的虚拟起点 */
@@ -278,17 +280,21 @@ static int xvfdHarnessAddStation(XvfdHarness* h, XModbusClient* client, int unit
  * @return 全部建成并绑定返回 true。
  */
 static bool xvfdHarnessMount(XvfdHarness* h, XVfdDevice* dev, int devId, int unitId,
-                             const XVfdPointSpec* specs, int n)
+                             const XVfdPointSpec* specs, int n, const XVfdBindTable* bind)
 {
     XvfdHarnessSpec idx[XVFD_HARNESS_SPEC_CAP];
     XvfdHarnessStation* st;
     int i, j;
-    if (!h || !dev || !specs || n <= 0 || n > XVFD_HARNESS_SPEC_CAP) return false;
+    if (!h || !dev || !specs || !bind || n <= 0 || n > XVFD_HARNESS_SPEC_CAP) return false;
     st = xvfdHarnessStationOf(h, devId, unitId, NULL, 0);
     if (!st || !st->m_group || !st->m_link) return false;
+    st->m_bind = bind;
+    /* [2026-11-02 分层收口] 点规格只存语义，地址从绑定表按 role 取。 */
     for (i = 0; i < n; ++i) {
+        XVfdPointBinding pb;
+        if (!XVfdBind_findPoint(bind, specs[i].m_role, &pb)) return false;
         idx[i].m_area = (uint8_t)xvfdHarnessAreaOf(specs[i].m_type);
-        idx[i].m_addr = specs[i].m_address;
+        idx[i].m_addr = pb.m_address;
         idx[i].m_idx = i;
     }
     qsort(idx, (size_t)n, sizeof(idx[0]), xvfdHarnessSpecCmp);
@@ -311,7 +317,10 @@ static bool xvfdHarnessMount(XvfdHarness* h, XVfdDevice* dev, int devId, int uni
         }
         for (j = i; j <= runEnd; ++j) {
             const XVfdPointSpec* sp = &specs[idx[j].m_idx];
-            uint16_t vaddr = (uint16_t)(vbase + (sp->m_address - runStart));
+            XVfdPointBinding pb;
+            uint16_t vaddr;
+            (void)XVfdBind_findPoint(bind, sp->m_role, &pb);
+            vaddr = (uint16_t)(vbase + (pb.m_address - runStart));
             XIoPoint* pt = xvfdHarnessMakePoint(h, sp, vaddr,
                                                 xvfdHarnessLinkArea((int)idx[j].m_area));
             if (!pt) return false;
@@ -342,7 +351,8 @@ static bool xvfdHarnessMount(XvfdHarness* h, XVfdDevice* dev, int devId, int uni
  * @return 成功返回 true。
  */
 static bool xvfdHarnessMountParam(XvfdHarness* h, XVfdDevice* dev, int devId, int unitId,
-                                  const XVfdParamDesc* desc, uint16_t paramId)
+                                  const XVfdParamDesc* desc, uint16_t paramId,
+                                  const XVfdBindTable* bind)
 {
     uint16_t vbase;
     XIoPoint* pt;
@@ -350,10 +360,12 @@ static bool xvfdHarnessMountParam(XvfdHarness* h, XVfdDevice* dev, int devId, in
     if (!h || !dev || !desc) return false;
     st = xvfdHarnessStationOf(h, devId, unitId, NULL, 0);
     if (!st || !st->m_group || !st->m_link) return false;
-    vbase = xvfdHarnessBump(h, XModbusHoldingRegisters, 1);
-    if (!XModbusMapping_addRange(h->m_map, XModbusHoldingRegisters, vbase, 1, devId, unitId,
-                                 desc->m_addr, 0)) {
-        return false;
+    {
+        XVfdParamBinding pb;
+        if (!bind || !XVfdBind_findParam(bind, paramId, &pb)) return false;
+        vbase = xvfdHarnessBump(h, XModbusHoldingRegisters, 1);
+        if (!XModbusMapping_addRange(h->m_map, XModbusHoldingRegisters, vbase, 1,
+                                     devId, unitId, pb.m_addr, 0)) return false;
     }
     pt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!pt) return false;
@@ -549,7 +561,8 @@ static bool xvfdHarnessSetRef(XvfdHarnessStation* st, uint16_t remote, XIoPoint*
 static bool xvfdHarnessMountBrand(XvfdHarness* h, XVfdDevice* dev, int devId, int unitId,
                                    const XVfdCommGroup* groups, int groupCount,
                                    const XVfdPointSpec* specs, int specCount,
-                                   const XVfdUnitProtocol* protocol)
+                                   const XVfdUnitProtocol* protocol,
+                                   const XVfdBindTable* bind)
 {
     XvfdHarnessStation* st;
     int i;
@@ -558,21 +571,25 @@ static bool xvfdHarnessMountBrand(XvfdHarness* h, XVfdDevice* dev, int devId, in
     if (!specs || specCount <= 0) return false;
     st = xvfdHarnessStationOf(h, devId, unitId, groups, groupCount);
     if (!st) return false;
+    st->m_bind = bind;
     for (i = 0; i < specCount; ++i) {
-        const int gi = xvfdHarnessFindGroup(groups, groupCount, specs[i].m_address);
+        XVfdPointBinding pb;
+        if (!XVfdBind_findPoint(bind, specs[i].m_role, &pb)) return false;
+        {
+        int gi = xvfdHarnessFindGroup(groups, groupCount, pb.m_address);
         uint16_t vbase = 0;
         uint16_t vaddr;
         XIoPoint* pt;
         if (gi < 0) {
             XPrintf("[xvfd-harness] 点 %s 的远端地址 0x%04X 不在任何通信组内\n",
-                    specs[i].m_tag ? specs[i].m_tag : "?", specs[i].m_address);
+                    specs[i].m_tag ? specs[i].m_tag : "?", pb.m_address);
             return false;
         }
         if (!xvfdHarnessEnsureGroup(h, st, gi, &vbase)) {
-        return false;
-    }
-        vaddr = (uint16_t)(vbase + (specs[i].m_address - groups[gi].m_remoteStart));
-        pt = xvfdHarnessFindRef(st, specs[i].m_address);
+            return false;
+        }
+        vaddr = (uint16_t)(vbase + (pb.m_address - groups[gi].m_remoteStart));
+        pt = xvfdHarnessFindRef(st, pb.m_address);
         if (!pt) {
             pt = xvfdHarnessMakePoint(h, &specs[i], vaddr,
                                       XModbusLink_areaOfType((int)specs[i].m_type,
@@ -590,8 +607,9 @@ static bool xvfdHarnessMountBrand(XvfdHarness* h, XVfdDevice* dev, int devId, in
                                            (int)specs[i].m_type, true))) {
                 return false;
             }
-            if (!xvfdHarnessSetRef(st, specs[i].m_address, pt)) return false;
+            if (!xvfdHarnessSetRef(st, pb.m_address, pt)) return false;
             ++h->m_pointCount;
+        }
         }
     }
     /* 从站协议约束（品牌层中立表达 → 传输层配置，逐字段翻译不靠布局巧合）。 */
@@ -632,21 +650,27 @@ static bool xvfdHarnessMountParamBrand(XvfdHarness* h, XVfdDevice* dev, int devI
     int gi;
     uint16_t vbase = 0;
     uint16_t vaddr;
+    uint16_t paramAddr = 0;
     XIoPoint* pt;
     if (!h || !dev || !desc || !groups) return false;
     st = xvfdHarnessStationOf(h, devId, unitId, groups, groupCount);
     if (!st) return false;
-    gi = xvfdHarnessFindGroup(groups, groupCount, desc->m_addr);
-    if (gi < 0) {
-        XPrintf("[xvfd-harness] param %s addr 0x%04X not in any comm group",
-                desc->m_name ? desc->m_name : "?", desc->m_addr);
-        return false;
+    {
+        XVfdParamBinding pb;
+        if (!XVfdBind_findParam(st->m_bind, paramId, &pb)) return false;
+        gi = xvfdHarnessFindGroup(groups, groupCount, pb.m_addr);
+        if (gi < 0) {
+            XPrintf("[xvfd-harness] param %s addr 0x%04X not in any comm group",
+                    desc->m_name ? desc->m_name : "?", pb.m_addr);
+            return false;
+        }
+        paramAddr = pb.m_addr;
     }
     if (!xvfdHarnessEnsureGroup(h, st, gi, &vbase)) {
         return false;
     }
-    vaddr = (uint16_t)(vbase + (desc->m_addr - groups[gi].m_remoteStart));
-    pt = xvfdHarnessFindRef(st, desc->m_addr);
+    vaddr = (uint16_t)(vbase + (paramAddr - groups[gi].m_remoteStart));
+    pt = xvfdHarnessFindRef(st, paramAddr);
     if (!pt) {
         XIoPoint* np = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         uint16_t prole = (uint16_t)(XVFD_HARNESS_PARAM_ROLE_BASE + paramId);
@@ -663,7 +687,7 @@ static bool xvfdHarnessMountParamBrand(XvfdHarness* h, XVfdDevice* dev, int devI
         if (!XIoLink_bindRole_base((XIoLink*)st->m_link, prole, vaddr, 2)) {
             return false;
         }
-        if (!xvfdHarnessSetRef(st, desc->m_addr, pt)) return false;
+        if (!xvfdHarnessSetRef(st, paramAddr, pt)) return false;
         ++h->m_pointCount;
     }
     return XVfdDevice_bindParamPoint(dev, paramId, pt);

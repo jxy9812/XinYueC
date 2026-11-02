@@ -565,3 +565,10 @@ verify/exitcode.bat
 verify/runtest.bat
 verify/runtest2.bat
 verify/flushprobe/
+
+# 工作流 subagent 的一次性编译门禁脚本（当轮定位用）
+verify/build_err.bat
+verify/gate_build.bat
+verify/gate_link.bat
+verify/make_gate_rsp.py
+verify/xlink_gate_main.c

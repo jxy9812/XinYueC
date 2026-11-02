@@ -34,6 +34,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XVfdCiA402.h"
+#include "XVfdBind.h"
 
 /* ========================================================================== */
 /*                寄存器逻辑地址（= Modbus PDU 地址，不减 1）                  */
@@ -154,6 +155,12 @@ void XVfdAtv61_init(XVfdAtv61* dev);
  *       建在 8502 即可，设备层零改动。
  */
 const XVfdPointSpec* XVfdAtv61_pointSpecs(int* count);
+
+/**
+ * @brief 取 ATV61 的 Modbus 绑定表（地址知识，定义在 XVfdAtv61_Modbus.c）。
+ * @return 静态常量绑定表指针；不可释放。
+ */
+const XVfdBindTable* XVfdAtv61_modbusBinding(void);
 
 /* ==================== 配置 ==================== */
 

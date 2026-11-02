@@ -56,11 +56,47 @@ grep -rn "XModbus" Src/Industry/XVfd/*.h Src/Industry/XVfd/*.c
 
 ---
 
-## 3. 如何新增一个变频器品牌
+## 3. 三层职责（2026-11-02 地址剥离后）
+
+| 层 | 文件 | 只放什么 |
+|---|---|---|
+| 语义层 | `XVfdDevice.h/.c` | role 驱动的数据流、动作监督、状态快照。**无地址** |
+| 语义表 | `XVfdM512.c` / `XVfdAtv61.c` | `XVfdPointSpec`（role/type/div/tag/caps/signed）+ 参数语义 + 命令码 + 故障码 |
+| **绑定层** | `XVfdM512_Modbus.c` / `XVfdAtv61_Modbus.c` | **地址**：`XVfdPointBinding`（role→寄存器）、`XVfdParamBinding`、`XVfdCommGroup`、`XVfdUnitProtocol` |
+
+关键结构（`XVfdBind.h`）：
+
+```c
+typedef struct XVfdPointBinding {
+    uint16_t m_role;       /* 与语义表的 role 配对 */
+    uint16_t m_address;    /* 总线原生地址 */
+    uint8_t  m_bitOffset, m_bitWidth;
+} XVfdPointBinding;
+
+typedef struct XVfdBindTable {
+    const XVfdPointBinding* m_points;  int m_pointCount;
+    const XVfdParamBinding* m_params;  int m_paramCount;
+    const XVfdCommGroup* m_groups;     int m_groupCount;
+    const XVfdUnitProtocol* m_protocol;
+} XVfdBindTable;
+
+const XVfdBindTable* XVfdM512_modbusBinding(void);   /* 品牌 × 总线 */
+```
+
+**换总线只换这份表**：接 EtherCAT 就新增 `XVfdM512_EtherCAT.c` 提供另一份
+`XVfdBindTable`，`XVfdM512.c` 一行不用改。
+
+验证（品牌主文件不应含地址）：
+
+```bash
+grep -c "m_address\|0x[0-9A-F][0-9A-F][0-9A-F]" Src/Industry/XVfd/XVfdM512.c   # 应极少/仅注释
+```
+
+## 4. 如何新增一个变频器品牌
 
 以新品牌 `XVfdXxx` 为例，需要做三件事：
 
-### 3.1 语义表（品牌主文件）
+### 4.1 语义表（品牌主文件）
 
 ```c
 static const XVfdPointSpec s_xxxSpecs[] = {
@@ -76,7 +112,7 @@ static const XVfdPointSpec s_xxxSpecs[] = {
 
 沿用 `XVfdPointRole` 的 68 个标准语义角色，不要自造。
 
-### 3.2 绑定表（`XVfdXxx_Modbus.c`）
+### 4.2 绑定表（`XVfdXxx_Modbus.c`）
 
 ```c
 static const XVfdPointBinding s_xxxPointBindings[] = {
@@ -103,7 +139,7 @@ static const XVfdUnitProtocol s_xxxProtocol = {
 const XVfdBindTable* XVfdXxx_modbusBinding(void) { ... }
 ```
 
-### 3.3 类骨架
+### 4.3 类骨架
 
 ```c
 typedef struct XVfdXxx {
@@ -124,9 +160,9 @@ void XVfdXxx_init(XVfdXxx* dev)
 
 ---
 
-## 4. 零遍历设计
+## 5. 零遍历设计
 
-### 4.1 语义槽按 role 下标
+### 5.1 语义槽按 role 下标
 
 ```c
 typedef struct XVfdSlot {
@@ -141,7 +177,7 @@ typedef struct XVfdSlot {
 
 `m_spec` 仍保留，供品牌自定义 `DecodePoint` 读取其它字段（如 `m_caps`）。
 
-### 4.2 参数绑定按 paramId 下标
+### 5.2 参数绑定按 paramId 下标
 
 ```c
 XIoPoint** m_paramPoints;   /* 长度 = m_paramCount，paramId 直接作下标 */
@@ -151,7 +187,7 @@ XIoPoint** m_paramPoints;   /* 长度 = m_paramCount，paramId 直接作下标 *
 
 **惰性分配**：表在首次 `bindParamPoint` 时才分配。理由：部分品牌在 `init` 期就设参数表（此时设备尚未挂接通道组），提前分配只是徒增一次堆交互；且「表设了但没有点」是一个合法状态。
 
-### 4.3 绑定数用计数器
+### 5.3 绑定数用计数器
 
 ```c
 int m_boundCount;   /* bind/unbind 时增减 */
@@ -159,7 +195,7 @@ int m_boundCount;   /* bind/unbind 时增减 */
 
 旧实现 `XVfdDevice_boundCount()` 每次扫 96 个槽。
 
-### 4.4 已删除的函数
+### 5.4 已删除的函数
 
 | 函数 | 原复杂度 | 删除理由 |
 |---|---|---|
@@ -169,9 +205,9 @@ int m_boundCount;   /* bind/unbind 时增减 */
 
 ---
 
-## 5. 与 XChannel 的接口
+## 6. 与 XChannel 的接口
 
-### 5.1 挂接
+### 6.1 挂接
 
 ```c
 XVfdDevice_attach(dev, group);   /* 订阅组的 inputChanged / writeDone */
@@ -179,7 +215,7 @@ XVfdDevice_attach(dev, group);   /* 订阅组的 inputChanged / writeDone */
 
 **注意**：一个设备只挂一个组。多台设备（多从站）时**每台各挂自己的组**——role 是组内下标，共用组会导致同名语义槽冲突。
 
-### 5.2 绑定点
+### 6.2 绑定点
 
 ```c
 bool XVfdDevice_bindRole(dev, role, point);              /* 推荐 */
@@ -187,7 +223,7 @@ bool XVfdDevice_bindSpec(dev, spec, point);              /* 带规格（内联 d
 bool XVfdDevice_bindPoint(dev, spec, point);             /* 旧签名，委托给 bindSpec */
 ```
 
-### 5.3 读写
+### 6.3 读写
 
 ```c
 /* 读：优先读组内缓存，缓存为空时回落链路直接读一次 */
@@ -197,7 +233,7 @@ XVfdDevice_readRole(dev, role, &value);
 XVfdDevice_writeRole(dev, role, nativeValue);
 ```
 
-### 5.4 动作监督
+### 6.4 动作监督
 
 异步链路的写要等应答，设备层用 `writeDone(role, ok)` 信号收口，超时由 `m_actionTimer` 判定。
 
@@ -205,9 +241,9 @@ XVfdDevice_writeRole(dev, role, nativeValue);
 
 ---
 
-## 6. 踩坑记录
+## 7. 踩坑记录
 
-### 6.1 结构体增大导致增量编译踩堆
+### 7.1 结构体增大导致增量编译踩堆
 
 `XVfdSlot` 从 16B 增到 24B（加了 `m_div`/`m_signed`），`XVfdDevice` 结构体随之变大。
 
@@ -221,19 +257,19 @@ XVfdDevice_writeRole(dev, role, nativeValue);
 
 **教训**：Windows/Ninja 主库 obj 依赖记录不全，**改公共结构体后必须全量重编**。
 
-### 6.2 多站共用通道组导致 role 冲突
+### 7.2 多站共用通道组导致 role 冲突
 
 两台 M512 都有 `StatusWord`(4)、`FaultCode`(5) 等同名语义槽。共用一个通道组时，`addPoint` 第二个就失败（role 位已占用）。
 
 **修复**：每台设备一个通道组 + 一个链路（链路可共用同一个 Hub）。
 
-### 6.3 读值回流
+### 7.3 读值回流
 
 纯推送模型下，点只有被喂过才有值。但业务判断（「命令源未配置时拒绝 start」）依赖「首拍已回、值为默认 0」而非「完全无数据」。
 
 **修复**：`xvfdReadPoint` 在缓存为空时回落 `XIoLink_readRoleBase` 向链路要一次。
 
-### 6.4 有符号量两处归一（本次收口）
+### 7.4 有符号量两处归一（本次收口）
 
 旧实现：点层 `xIoAnalogPointToRaw` 钳 0..65535 且抹负号；设备层 `m_signed` 分支做补码归一。**同一语义两处实现、行为不同、走哪条路径结果不同。**
 
@@ -241,13 +277,13 @@ XVfdDevice_writeRole(dev, role, nativeValue);
 
 ---
 
-## 7. 框架语义对齐
+## 8. 框架语义对齐
 
 本次**零框架改动**。所有改动在 `Src/Industry/XVfd/` 内。
 
 ---
 
-## 8. 领域 API 清单（保持不变）
+## 9. 领域 API 清单（保持不变）
 
 约 50 个领域操作全部保留签名与语义：
 

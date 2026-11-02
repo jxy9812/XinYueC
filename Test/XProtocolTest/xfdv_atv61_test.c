@@ -333,7 +333,8 @@ int XVfdAtv61Test_runEx(const char* ptyOverride)
     CHECK(XVfdDevice_attach(base, xvfdHarnessStationGroup(&harness, devId, 1)),
           "设备挂接通道组");
     specs = XVfdAtv61_pointSpecs(&specCount);
-    CHECK(xvfdHarnessMount(&harness, base, devId, 1, specs, specCount),
+    CHECK(xvfdHarnessMount(&harness, base, devId, 1, specs, specCount,
+                           XVfdAtv61_modbusBinding()),
           "按品牌点表建点并绑定全部语义槽");
     CHECK(XVfdDevice_boundCount(base) == specCount, "语义槽绑定数 = 点表条目数");
     CHECK(XVfdDevice_hasCapability(base, XVfdCap_Reverse), "能力位图：反转");

@@ -216,9 +216,10 @@ static bool xvfdM512CheckRequest(const XVfdCommGroup* groups, int groupCount,
 static bool xvfdM512CheckRequestBrand(uint8_t fc, uint16_t addr, uint16_t count,
                                       uint8_t* outExc, uint8_t* outExcFc)
 {
-    int n = 0;
-    const XVfdCommGroup* g = XVfdM512_commGroups(&n);
-    return xvfdM512CheckRequest(g, n, fc, addr, count, outExc, outExcFc);
+    /* [2026-11-02 分层收口] 组表从绑定层取（品牌主文件只存语义）。 */
+    const XVfdBindTable* b = XVfdM512_modbusBinding();
+    return xvfdM512CheckRequest(b->m_groups, b->m_groupCount, fc, addr, count,
+                                outExc, outExcFc);
 }
 
 #endif /* XVFD_ON && XVFD_M512_ON */

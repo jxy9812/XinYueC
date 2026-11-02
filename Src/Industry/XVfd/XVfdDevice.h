@@ -300,7 +300,6 @@ typedef enum XVfdParamAccess {
  * @brief 参数描述表条目（品牌提供 const 数组；支撑通用参数页自动生成）。
  */
 typedef struct XVfdParamDesc {
-    uint16_t m_addr;                /**< 参数通道地址（品牌原生地址；装配期换算虚拟地址） */
     const char* m_name;             /**< 参数中文名（静态常量，禁释放） */
     const char* m_unit;             /**< 单位文本（可 NULL） */
     uint8_t m_decimals;             /**< 小数位数（raw / 10^decimals 为工程值） */
@@ -309,10 +308,6 @@ typedef struct XVfdParamDesc {
     int32_t m_default;              /**< 出厂值（原始码） */
     uint8_t m_access;               /**< 存取约束（XVfdParamAccess） */
     uint8_t m_group;                /**< 分组编号（品牌自定义，UI 分组显示用） */
-    uint16_t m_addrRam;             /**< 「只改 RAM 不落盘」地址变体（0=无变体）。
-                                     *   部分变频器把同一参数暴露成两个地址：写
-                                     *   EEPROM 地址与只改 RAM 地址（后者省 EEPROM
-                                     *   寿命）。品牌子类按手册填 0 即只支持前者。 */
 } XVfdParamDesc;
 
 /**
@@ -437,46 +432,12 @@ typedef struct XVfdPointSpec {
     uint16_t m_role;            /**< 语义角色（XVfdPointRole） */
     uint8_t m_type;             /**< 建议点类型（XIoPointType；装配期建点用） */
     int32_t m_div;              /**< 原生单位除率：工程值 = 原生值 / div（0 视为 1） */
-    uint16_t m_address;         /**< 品牌原生通道地址（装配期换算虚拟地址；语义层不用） */
     const char* m_tag;          /**< 点名（借用，静态常量；装配期建点用） */
     uint32_t m_caps;            /**< 绑定该点即置位的能力位（XVfdCapability 位或；0=无） */
     uint8_t m_signed;           /**< 原生量为 16 位有符号（补码）：1=负值写通道前
                                  *   按 0xFFFF 归一（否则无符号通道会把负值钳成 0） */
-    uint8_t m_bitOffset;        /**< 位域起始位（0=整字；>0 表示该点占用
-                                 *   m_address 字的 bit[m_bitOffset, +m_bitWidth)） */
-    uint8_t m_bitWidth;         /**< 位域宽度（0=整字） */
 } XVfdPointSpec;
 
-/**
- * @brief 通信组描述：从站「功能码组」的远端地址区间（品牌手册知识）。
- * @details 部分变频器只支持 FC03/FC06，且规定「一帧读不得跨过本功能码组的
- *          最后一个功能码」——功能码组是**手册条目**，不是地址连续性：两条
- *          地址相邻的寄存器也可能分属不同条目（如某机型的「通讯设定值」与
- *          「快捷遥测」各是一条）。组描述把这条手册知识交给品牌子类声明，
- *          装配层按组切映射段（每组一段），协议层据此规划读帧——读帧因此
- *          天然不跨组，无需在协议层硬编码品牌规则。
- * @note 组内允许一次读帧跨多个组内切分；组间绝不合并。
- */
-typedef struct XVfdCommGroup {
-    uint16_t m_remoteStart;     /**< 组起始远端地址。 */
-    uint16_t m_count;           /**< 组长度（点数；寄存器区=字，位区=位）。 */
-    uint8_t m_area;             /**< 组所属区（XIoPointType 口径：DI=离散输入、
-                                 *   DO=线圈、AI/AO=保持寄存器）；组内点类型须一致。 */
-} XVfdCommGroup;
-
-/**
- * @brief 从站协议约束（中立表达；装配层翻译成传输层配置）。
- * @details 描述「这个从站比通用 Modbus 更严」的哪些方面。本结构刻意**不含
- *          任何传输层类型**，设备层（XVfd）因此仍不认识 Modbus；装配层按字段
- *          逐项翻译成传输层（如 Modbus）的约束配置后登记。
- * @note 作用域是**从站**不是链路：一条 RTU 串口下可挂多个从站，各从站能力
- *       互不相同，约束必须与映射目标一一对应。
- */
-typedef struct XVfdUnitProtocol {
-    uint16_t m_maxReadRegisters; /**< 单次读帧寄存器数上限（0=不限，按传输层默认）。 */
-    bool     m_rangeBarrier;     /**< 一帧读不得跨通信组边界（组由组表给出）。 */
-    bool     m_singleWriteOnly;  /**< 只支持单寄存器写（多写会被传输层拒绝）。 */
-} XVfdUnitProtocol;
 
 /**
  * @brief 语义槽登记项（设备内部：点 + 规格高频字段内联）。

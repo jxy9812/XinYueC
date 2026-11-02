@@ -21,25 +21,25 @@
 /* ==================== 点规格表（语义角色 → ATV61 逻辑地址 + 原生单位） ==================== */
 
 static const XVfdPointSpec s_atv61Specs[] = {
-    /* role                    type                   div  addr                          tag     caps */
-    { XVfdRole_StatusWord,     XIoPoint_AnalogInput,   1, XVfdAtv61_AddrEta,  "ETA",  0 },
-    { XVfdRole_AuxStateWord,   XIoPoint_AnalogInput,   1, XVfdAtv61_AddrEti,  "ETI",  0 },
-    { XVfdRole_FaultCode,      XIoPoint_AnalogInput,   1, XVfdAtv61_AddrLft,  "LFT",  0 },
-    { XVfdRole_OutputFreq,     XIoPoint_AnalogInput,  10, XVfdAtv61_AddrRfr,  "RFR",  0 },
-    { XVfdRole_SetFreq,        XIoPoint_AnalogInput,  10, XVfdAtv61_AddrFrh,  "FRH",  0 },
-    { XVfdRole_OutputCurrent,  XIoPoint_AnalogInput,   1, XVfdAtv61_AddrLcr,  "LCR",  0 },
-    { XVfdRole_OutputVoltage,  XIoPoint_AnalogInput,   1, XVfdAtv61_AddrUop,  "UOP",  0 },
-    { XVfdRole_MainsVoltage,   XIoPoint_AnalogInput,  10, XVfdAtv61_AddrUln,  "ULN",  0 },
-    { XVfdRole_BusVoltage,     XIoPoint_AnalogInput,  10, XVfdAtv61_AddrVbus, "VBUS", 0 },
-    { XVfdRole_Torque,         XIoPoint_AnalogInput,  10, XVfdAtv61_AddrOtr,  "OTR",  XVfdCap_TorqueReport },
-    { XVfdRole_SpeedRpm,       XIoPoint_AnalogInput,   1, XVfdAtv61_AddrRfrd, "RFRD", 0 },
-    { XVfdRole_DriveThermal,   XIoPoint_AnalogInput,   1, XVfdAtv61_AddrThd,  "THD",  XVfdCap_ThermalReport },
-    { XVfdRole_MotorThermal,   XIoPoint_AnalogInput,   1, XVfdAtv61_AddrThr,  "THR",  0 },
-    { XVfdRole_CommandWord,    XIoPoint_AnalogOutput,  1, XVfdAtv61_AddrCmd,  "CMD",  0 },
-    { XVfdRole_FreqSet,        XIoPoint_AnalogOutput, 10, XVfdAtv61_AddrLfr1, "LFR1", 0 },
-    { XVfdRole_SpeedSet,       XIoPoint_AnalogOutput,  1, XVfdAtv61_AddrLfrd, "LFRD", XVfdCap_SpeedRpmGiven },
-    { XVfdRole_AccelTime,      XIoPoint_AnalogOutput, 100, XVfdAtv61_AddrAcc,  "ACC",  0 },
-    { XVfdRole_DecelTime,      XIoPoint_AnalogOutput, 100, XVfdAtv61_AddrDec,  "DEC",  0 }
+    /* role                    type                   div  tag     caps */
+    { XVfdRole_StatusWord,     XIoPoint_AnalogInput,   1, "ETA",   0 },
+    { XVfdRole_AuxStateWord,   XIoPoint_AnalogInput,   1, "ETI",   0 },
+    { XVfdRole_FaultCode,      XIoPoint_AnalogInput,   1, "LFT",   0 },
+    { XVfdRole_OutputFreq,     XIoPoint_AnalogInput,  10, "RFR",   0 },
+    { XVfdRole_SetFreq,        XIoPoint_AnalogInput,  10, "FRH",   0 },
+    { XVfdRole_OutputCurrent,  XIoPoint_AnalogInput,   1, "LCR",   0 },
+    { XVfdRole_OutputVoltage,  XIoPoint_AnalogInput,   1, "UOP",   0 },
+    { XVfdRole_MainsVoltage,   XIoPoint_AnalogInput,  10, "ULN",   0 },
+    { XVfdRole_BusVoltage,     XIoPoint_AnalogInput,  10, "VBUS",  0 },
+    { XVfdRole_Torque,         XIoPoint_AnalogInput,  10, "OTR",   XVfdCap_TorqueReport },
+    { XVfdRole_SpeedRpm,       XIoPoint_AnalogInput,   1, "RFRD",  0 },
+    { XVfdRole_DriveThermal,   XIoPoint_AnalogInput,   1, "THD",   XVfdCap_ThermalReport },
+    { XVfdRole_MotorThermal,   XIoPoint_AnalogInput,   1, "THR",   0 },
+    { XVfdRole_CommandWord,    XIoPoint_AnalogOutput,  1, "CMD",   0 },
+    { XVfdRole_FreqSet,        XIoPoint_AnalogOutput, 10, "LFR1",  0 },
+    { XVfdRole_SpeedSet,       XIoPoint_AnalogOutput,  1, "LFRD",  XVfdCap_SpeedRpmGiven },
+    { XVfdRole_AccelTime,      XIoPoint_AnalogOutput, 100, "ACC",   0 },
+    { XVfdRole_DecelTime,      XIoPoint_AnalogOutput, 100, "DEC",   0 },
 };
 
 #define ATV61_SPEC_COUNT ((int)(sizeof(s_atv61Specs) / sizeof(s_atv61Specs[0])))

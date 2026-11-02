@@ -185,6 +185,7 @@ int XVfdM512Test_runEx(const char* ptyOverride)
     const XVfdParamDesc* params = NULL;
     const XVfdCommGroup* groups = NULL;
     const XVfdUnitProtocol* protocol = NULL;
+    const XVfdBindTable* bind = NULL;
     int specCount = 0;
     int paramCount = 0;
     int groupCount = 0;
@@ -255,21 +256,27 @@ int XVfdM512Test_runEx(const char* ptyOverride)
     specs = XVfdM512_pointSpecs(&specCount);
     specs = XVfdM512_pointSpecs(&specCount);
     params = XVfdM512_paramDescs(&paramCount);
-    groups = XVfdM512_commGroups(&groupCount);
-    protocol = XVfdM512_unitProtocol();
+    /* [2026-11-02 分层收口] 地址/组表/约束来自绑定层（品牌主文件只存语义）。 */
+    bind = XVfdM512_modbusBinding();
+    groups = bind->m_groups;
+    groupCount = bind->m_groupCount;
+    protocol = bind->m_protocol;
     CHECK(groupCount > 0 && protocol != NULL, "品牌通信组表与从站约束可取");
     /* 按通信组装配：组段惰性建（只建用到的组）+ 语义点 + 从站约束。 */
     CHECK(xvfdHarnessMountBrand(&harness, g_dev[0], devId[0], 1, groups, groupCount,
-                                specs, specCount, protocol),
+                                specs, specCount, protocol, bind),
           "站1 按通信组装配（组段+点+约束）");
     CHECK(xvfdHarnessMountBrand(&harness, g_dev[1], devId[1], 2, groups, groupCount,
-                                specs, specCount, protocol),
+                                specs, specCount, protocol, bind),
           "站2 按通信组装配（虚拟地址隔离）");
     CHECK(paramCount >= 12, "参数描述表规模（核心集）");
-    /* 参数下标按地址定位（表可重排，断言不写死下标）。 */
+    /* 参数下标按**绑定表地址**定位（表可重排，断言不写死下标；
+     * [2026-11-02 分层收口] 参数描述表不再存地址，地址在绑定层）。 */
     for (i = 0; i < paramCount; ++i) {
-        if (params[i].m_addr == XVfdM512_AddrMaxFreq) idMaxFreq = i;
-        if (params[i].m_addr == XVfdM512_AddrJogFreq) idJogFreq = i;
+        XVfdParamBinding pb;
+        if (!XVfdBind_findParam(bind, (uint16_t)i, &pb)) continue;
+        if (pb.m_addr == XVfdM512_AddrMaxFreq) idMaxFreq = i;
+        if (pb.m_addr == XVfdM512_AddrJogFreq) idJogFreq = i;
     }
     CHECK(idMaxFreq >= 0 && idJogFreq >= 0, "参数表含 P0.10 最大频率与 P8.00 点动频率");
     /* 参数点**按需**绑定：全量映射会把读帧数撑爆（本型号 28 组 → 29 帧/圈）。 */
