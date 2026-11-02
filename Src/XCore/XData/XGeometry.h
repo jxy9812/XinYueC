@@ -330,6 +330,32 @@ XSize XSize_transposed(const XSize* self);
 void XSize_scale(XSize* self, int width, int height, uint32_t mode);
 
 /**
+ * @brief      比较两个 XSize
+ * @param lhs  左操作数
+ * @param rhs  右操作数
+ * @return     XCompare_Equality / XCompare_Less / XCompare_Greater
+ */
+int32_t XSize_compare(const XSize* lhs, const XSize* rhs);
+
+/** @brief 深复制创建存储 XSize 的 XVariant。 */
+XVariant* XSize_toVariant(XSize size);
+/** @brief 从同类型 XVariant 取得 XSize 值副本。 */
+XSize XSize_fromVariant(const XVariant* variant);
+/** @brief 从同类型 XVariant 借用取得 XSize 指针。 */
+XSize* XSize_fromVariant_ref(const XVariant* variant);
+/** @brief 设置 XVariant 的 XSize 值。 */
+void XSize_setVariant(XVariant* variant, XSize size);
+
+/**
+ * @brief 兼容旧的 XVariant XSize 扩展 API 名称。
+ * @details 以下宏仅保留源代码兼容性，实际实现均归属 XSize。
+ */
+#define XVariant_create_Size    XSize_toVariant
+#define XVariant_toSize         XSize_fromVariant
+#define XVariant_toSize_ref     XSize_fromVariant_ref
+#define XVariant_setValue_Size  XSize_setVariant
+
+/**
  * @brief      初始化 XRect 对象
  * @param self  目标 XRect 对象指针
  * @param x     左上角 X 坐标
@@ -487,6 +513,32 @@ void XRect_translate(XRect* self, int dx, int dy);
  * @param center 目标中心点
  */
 void XRect_moveCenter(XRect* self, const XPoint* center);
+
+/**
+ * @brief      比较两个 XRect
+ * @param lhs  左操作数
+ * @param rhs  右操作数
+ * @return     XCompare_Equality / XCompare_Less / XCompare_Greater
+ */
+int32_t XRect_compare(const XRect* lhs, const XRect* rhs);
+
+/** @brief 深复制创建存储 XRect 的 XVariant。 */
+XVariant* XRect_toVariant(XRect rect);
+/** @brief 从同类型 XVariant 取得 XRect 值副本。 */
+XRect XRect_fromVariant(const XVariant* variant);
+/** @brief 从同类型 XVariant 借用取得 XRect 指针。 */
+XRect* XRect_fromVariant_ref(const XVariant* variant);
+/** @brief 设置 XVariant 的 XRect 值。 */
+void XRect_setVariant(XVariant* variant, XRect rect);
+
+/**
+ * @brief 兼容旧的 XVariant XRect 扩展 API 名称。
+ * @details 以下宏仅保留源代码兼容性，实际实现均归属 XRect。
+ */
+#define XVariant_create_Rect    XRect_toVariant
+#define XVariant_toRect         XRect_fromVariant
+#define XVariant_toRect_ref     XRect_fromVariant_ref
+#define XVariant_setValue_Rect  XRect_setVariant
 
 /**
  * @brief      初始化 XSizeF 对象

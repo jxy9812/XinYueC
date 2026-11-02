@@ -21,6 +21,9 @@ void XTestMenu_XCodeTest(XTestMenu* root)
 	XTestMenu_XCoreApplicationTest(menu);
 	XTestMenu_XCommandLineParserTest(menu);
 	XTestMenu_XRegularExpressionTest(menu);
+#if XSETTINGS_ON
+	XTestMenu_XSettingsTest(menu);
+#endif
 	XTestMenu_XProcessTest(menu);
 	XTestMenu_XConsoleShellTest(menu);
 	XTestMenu_XConsoleShellBackendTest(menu);

@@ -50,6 +50,8 @@ typedef enum XVariantType
 	XVariantType_BsonArray,
 	XVariantType_BsonDocument,
 	XVariantType_BsonValue,
+	XVariantType_Rect,
+	XVariantType_Size,
 	XVariantType_User,
 	XVariantType_ExtensionFirst = XVariantType_Pair,
 	XVariantType_ExtensionCount = XVariantType_User - XVariantType_ExtensionFirst

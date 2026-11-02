@@ -39,6 +39,10 @@ void XTestMenu_XCommandLineParserTest(XTestMenu* root);
  * @param root 测试根菜单对象；不能传入 NULL。
  */
 void XTestMenu_XRegularExpressionTest(XTestMenu* root);
+/** @brief 添加 XSettings（对标 Qt 6.8 QSettings）全量测试菜单。 */
+void XTestMenu_XSettingsTest(XTestMenu* root);
+/** @brief 运行 XSettings 全量测试（供 Test 命令 `Test xsettings` 自动化调用）。 */
+bool XSettingsTest_runAll(void);
 /** @brief 添加 XProcess 公共 API 全量测试菜单。 */
 void XTestMenu_XProcessTest(XTestMenu* root);
 /** @brief 添加 XConsoleShell 全量测试菜单。 */

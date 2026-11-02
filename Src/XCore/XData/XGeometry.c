@@ -267,6 +267,57 @@ void XSize_scale(XSize* self, int width, int height, uint32_t mode)
     }
 }
 
+int32_t XSize_compare(const XSize* lhs, const XSize* rhs)
+{
+    if (lhs == rhs) return XCompare_Equality;
+    if (!lhs) return XCompare_Less;
+    if (!rhs) return XCompare_Greater;
+    if (lhs->width < rhs->width) return XCompare_Less;
+    if (lhs->width > rhs->width) return XCompare_Greater;
+    if (lhs->height < rhs->height) return XCompare_Less;
+    if (lhs->height > rhs->height) return XCompare_Greater;
+    return XCompare_Equality;
+}
+
+XVARIANT_TYPE_OPS_DEFINE(XSize, sizeof(XSize), NULL, NULL, NULL, NULL,
+	XSize_compare, "XSize");
+
+XVariant* XSize_toVariant(XSize size)
+{
+    return XVariant_create((void*)&size, sizeof(XSize), XVariantType_Size);
+}
+
+XSize XSize_fromVariant(const XVariant* variant)
+{
+    XSize size = {0, 0};
+    XSize* source = XSize_fromVariant_ref(variant);
+    if (source)
+        size = *source;
+    return size;
+}
+
+XSize* XSize_fromVariant_ref(const XVariant* variant)
+{
+    return (XSize*)XVariant_toRef(variant, XVariantType_Size);
+}
+
+void XSize_setVariant(XVariant* variant, XSize size)
+{
+    if (!variant)
+        return;
+    if (variant->m_type != XVariantType_Size || !variant->m_data ||
+        variant->m_dataSize != sizeof(XSize)) {
+        if (variant->m_data)
+            XClassDeinit(variant);
+        variant->m_data = XMalloc_System(sizeof(XSize));
+        if (!variant->m_data)
+            return;
+        variant->m_dataSize = sizeof(XSize);
+        variant->m_type = XVariantType_Size;
+    }
+    *(XSize*)variant->m_data = size;
+}
+
 void XRect_init(XRect* self, int x, int y, int width, int height)
 {
     if (!self) return;
@@ -487,6 +538,61 @@ void XRect_moveCenter(XRect* self, const XPoint* center)
     if (!self || !center) return;
     self->x = clamp_int64_to_int((int64_t)center->x - self->width / 2);
     self->y = clamp_int64_to_int((int64_t)center->y - self->height / 2);
+}
+
+int32_t XRect_compare(const XRect* lhs, const XRect* rhs)
+{
+    if (lhs == rhs) return XCompare_Equality;
+    if (!lhs) return XCompare_Less;
+    if (!rhs) return XCompare_Greater;
+    if (lhs->x < rhs->x) return XCompare_Less;
+    if (lhs->x > rhs->x) return XCompare_Greater;
+    if (lhs->y < rhs->y) return XCompare_Less;
+    if (lhs->y > rhs->y) return XCompare_Greater;
+    if (lhs->width < rhs->width) return XCompare_Less;
+    if (lhs->width > rhs->width) return XCompare_Greater;
+    if (lhs->height < rhs->height) return XCompare_Less;
+    if (lhs->height > rhs->height) return XCompare_Greater;
+    return XCompare_Equality;
+}
+
+XVARIANT_TYPE_OPS_DEFINE(XRect, sizeof(XRect), NULL, NULL, NULL, NULL,
+	XRect_compare, "XRect");
+
+XVariant* XRect_toVariant(XRect rect)
+{
+    return XVariant_create((void*)&rect, sizeof(XRect), XVariantType_Rect);
+}
+
+XRect XRect_fromVariant(const XVariant* variant)
+{
+    XRect rect = {0, 0, 0, 0};
+    XRect* source = XRect_fromVariant_ref(variant);
+    if (source)
+        rect = *source;
+    return rect;
+}
+
+XRect* XRect_fromVariant_ref(const XVariant* variant)
+{
+    return (XRect*)XVariant_toRef(variant, XVariantType_Rect);
+}
+
+void XRect_setVariant(XVariant* variant, XRect rect)
+{
+    if (!variant)
+        return;
+    if (variant->m_type != XVariantType_Rect || !variant->m_data ||
+        variant->m_dataSize != sizeof(XRect)) {
+        if (variant->m_data)
+            XClassDeinit(variant);
+        variant->m_data = XMalloc_System(sizeof(XRect));
+        if (!variant->m_data)
+            return;
+        variant->m_dataSize = sizeof(XRect);
+        variant->m_type = XVariantType_Rect;
+    }
+    *(XRect*)variant->m_data = rect;
 }
 
 void XSizeF_init(XSizeF* self, float width, float height)

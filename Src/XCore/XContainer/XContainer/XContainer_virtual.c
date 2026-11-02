@@ -85,6 +85,13 @@ void VXClass_copy(XContainer* dst, const XContainer* src)
     if (target_uninitialized) {
         XContainer_init(dst, XContainerTypeSize(src), XContainerIsCow(src));
         Class_Memory(dst) = Class_Memory(src);
+        /* 【2026-11-02 根修】init 契约未显式保证 m_data 清零：当 dst 为
+         * XCalloc/栈未清零的裸存储（XVariant 扩展类型 ops->copy 的
+         * 标准入口）时，下方"释放目标原有资源"会拿脏 m_data 当共享块
+         * 释放，refcount 减到栈垃圾直接段错误。init 后强制置空。 */
+        dst->m_data = NULL;
+        dst->m_size = 0;
+        dst->m_capacity = 0;
     }
     else if (XContainerIsCow(src) &&
         XContainer_memory(dst) != XContainer_memory(src)) {
@@ -135,6 +142,11 @@ void VXClass_move(XContainer* dst, XContainer* src)
     bool target_uninitialized = XClassIsVtableNull(dst);
     if (target_uninitialized) {
         XContainer_init(dst, XContainerTypeSize(src), XContainerIsCow(src));
+        /* 同 VXClass_copy 的 2026-11-02 根修：init 后强制置空，
+         * 杜绝"释放目标原有资源"路径读到未清零存储的脏 m_data。 */
+        dst->m_data = NULL;
+        dst->m_size = 0;
+        dst->m_capacity = 0;
     }
     else if (XContainerIsCow(dst)) {
         if (dst->m_data)

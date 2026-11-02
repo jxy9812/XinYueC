@@ -722,6 +722,22 @@ bool XMap_isDetached(const XMap* this_map)
     return shared == NULL || !XSharedData_isShared(shared);
 }
 
+/**
+ * @brief      创建 QMap&lt;QString, QVariant&gt; 对齐映射。
+ * @details    槽为「按值内联存储」：键槽是 XString 对象、值槽是 XVariant
+ *             对象（XMap_Create(XString, XVariant, ...) 即
+ *             sizeof(XString)/sizeof(XVariant) 槽）；注册的
+ *             XClass_copy_base/XClass_move_base/XClass_deinit_base 为
+ *             对象级方法，因两类型首成员均为 XClass 基类（对象地址 ==
+ *             类地址），以槽地址为 this 的虚拷贝/析构即按值深拷贝与自动
+ *             释放，对齐 Qt 按值存储语义。
+ * @warning    调用方契约（2026-11-02 契约注释根修）：insert/查找必须传
+ *             「局部对象的地址」（XString key; XString_init(&key); ...
+ *             XMapBase_insert_base(map, &key, &value); 用后 XClassDeinit），
+ *             禁止传「对象指针变量的地址」（&keyPtr，keyPtr 为 XString*）
+ *             ——后者会让按值槽拷到指针+栈垃圾，对象级方法解引用即段
+ *             错误（2026-11-02 XSettings 首接即踩此坑）。
+ */
 XVariantMap* XMap_create_XVariantMap()
 {
     XMap* map = XMap_Create(XString, XVariant, XString_compare);

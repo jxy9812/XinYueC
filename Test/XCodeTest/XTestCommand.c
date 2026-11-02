@@ -23,6 +23,7 @@
 #include "XSshTelnetClientTest.h"
 #include "XProcessTest.h"
 #include "XTestMenuTest.h"
+#include "XCodeTest.h"
 #include "XPrintf.h"
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
 #include "XMemory.h"
@@ -80,6 +81,10 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
         result = XConsoleShellTest_runAll();
     } else if (strcmp(name, "xconsole-shell-backend") == 0) {
         result = XConsoleShellBackendTest_runAll();
+#if XSETTINGS_ON
+    } else if (strcmp(name, "xsettings") == 0) {
+        result = XSettingsTest_runAll();
+#endif
     } else if (strcmp(name, "ssh-telnet-client") == 0) {
         result = XSshTelnetClientTest_runAll();
     } else if (strcmp(name, "xcryptographic") == 0) {
