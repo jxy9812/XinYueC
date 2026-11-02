@@ -555,3 +555,13 @@ verify/fix_fixed.py
 
 # XLink 文件传输测试的运行时产物（bench/dl/ul 等二进制，测试重跑即再生）
 /xlink_ft_q/
+
+# 工作流 subagent 的一次性构建/调试脚本与探针（当轮定位用）
+verify/build.bat
+verify/buildstatic.bat
+verify/catch2.bat
+verify/catchcrash.bat
+verify/exitcode.bat
+verify/runtest.bat
+verify/runtest2.bat
+verify/flushprobe/
