@@ -60,6 +60,7 @@ static void tlog(const char* fmt, ...)
 /* 从站模拟器（测试全局，泵循环内 tick）。 */
 static XvfdSlaveEmu g_emu;
 static XModbusHub* g_hub = NULL;        /* 调试用：Hub 缓存直读 */
+static XModbusLink* g_link = NULL;      /* 调试用：role → 地址反查 */
 static int g_netReads = 0;              /* 调试：从站被网络读次数 */
 static int g_netWrites = 0;             /* 调试：从站被网络写次数 */
 static char g_devErr[128] = { 0 };      /* 调试：客户端最近错误 */
@@ -79,8 +80,11 @@ static bool waitStatus(StatusCond cond, int timeoutMs)
             dbgAt = XDateTime_currentMSecsSinceEpoch();
             XIoPoint* pt = XVfdDevice_point(g_devbase, XVfdRole_StatusWord);
             uint16_t hv = 0;
-            if (pt) (void)XModbusHub_value(g_hub, XModbusHoldingRegisters,
-                                           ((XModbusPoint*)pt)->m_address, &hv);
+            uint16_t va1 = 0;
+            int ar1 = 0;
+            /* [2026-11-02] 点不再持有链路地址：改由链路反查。 */
+            if (pt && g_link && XModbusLink_queryBinding(g_link, XIoPoint_role(pt), &ar1, &va1))
+                (void)XModbusHub_value(g_hub, XModbusLink_hubAreaType(ar1), va1, &hv);
             printf("[dbg-ws] hubETA=0x%04X devRaw=0x%04X running=%d emuState=%d emuCmd=0x%04X\n",
                    (unsigned)hv, (unsigned)XVfdDevice_status_const(g_devbase)->m_rawStateWord,
                    (int)XVfdDevice_status_const(g_devbase)->m_running,
@@ -137,7 +141,12 @@ static void pump(int ms)
         if (XDateTime_currentMSecsSinceEpoch() - dbgAt >= 500) {
             dbgAt = XDateTime_currentMSecsSinceEpoch();
             XIoPoint* pt = g_devbase ? XVfdDevice_point(g_devbase, XVfdRole_StatusWord) : NULL;
-            uint16_t va = pt ? ((XModbusPoint*)pt)->m_address : 0;
+            uint16_t va = 0;
+            {
+                int ar2 = 0;
+                if (pt && g_link)
+                    (void)XModbusLink_queryBinding(g_link, XIoPoint_role(pt), &ar2, &va);
+            }
             uint16_t hv = 0;
             bool ok = (g_hub && pt) ? XModbusHub_value(g_hub, XModbusHoldingRegisters, va, &hv) : false;
             uint16_t hvRemote = 0;
@@ -321,7 +330,8 @@ int XVfdAtv61Test_runEx(const char* ptyOverride)
     CHECK(drive != NULL, "XVfdAtv61 创建");
     if (!drive) goto cleanup;
     base = (XVfdDevice*)drive;
-    CHECK(XVfdDevice_attach(base, harness.m_group), "设备挂接通道组");
+    CHECK(XVfdDevice_attach(base, xvfdHarnessStationGroup(&harness, devId, 1)),
+          "设备挂接通道组");
     specs = XVfdAtv61_pointSpecs(&specCount);
     CHECK(xvfdHarnessMount(&harness, base, devId, 1, specs, specCount),
           "按品牌点表建点并绑定全部语义槽");
@@ -337,6 +347,7 @@ int XVfdAtv61Test_runEx(const char* ptyOverride)
 
     xvfdHarnessStart(&harness, 100);
     g_hub = harness.m_hub;
+    g_link = harness.m_stations[0].m_link;   /* [2026-11-02 多站] 本站链路 */
     g_devbase = base;
     XObject_connect_2((XObject*)g_emu.m_server,
                       XSignal(XModbusServer_dataRead_signal), onNetRead);

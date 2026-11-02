@@ -29,7 +29,8 @@
 #include "XModbusMapping.h"
 #include "XModbusClient.h"
 #include "XChannel/XIoChannelGroup.h"
-#include "XChannel/XModbusPoint.h"
+#include "XChannel/XModbusLink.h"
+#include "XChannel/XChannelAssembly.h"
 #include "XVfd/XVfdDevice.h"
 
 /** @brief 单次装配可处理的规格条目上限。 */
@@ -40,6 +41,9 @@
 #define XVFD_HARNESS_GROUP_CAP 96
 /** @brief 单次装配可处理的远端地址索引上限（点 + 参数去重）。 */
 #define XVFD_HARNESS_REF_CAP 192
+/** @brief 参数点占用的 role 段起点（语义 role 到 XVfdRole_Count 为止，参数从 128 起）。
+ *  @note 角色上限 XIOCHANNELGROUP_ROLE_CAP=256，故参数可用 128 个槽位。 */
+#define XVFD_HARNESS_PARAM_ROLE_BASE 128
 
 /**
  * @brief 远端地址索引项（装配期去重：语义点与参数点同址时共用一个通道点）。
@@ -56,6 +60,8 @@ typedef struct XvfdHarnessRef {
  *       数暴涨（读帧越多，总线占用越大、写应答越容易被读挤掉）。
  */
 typedef struct XvfdHarnessStation {
+    XIoChannelGroup* m_group;        /**< 本站独立通道组（role 在组内唯一） */
+    XModbusLink* m_link;             /**< 本站独立链路（共用 Hub，但 role 表独立） */
     int m_devId;                     /**< 设备句柄（-1=未用） */
     int m_unitId;                    /**< 从站地址 */
     const XVfdCommGroup* m_groups;   /**< 通信组表（借用） */
@@ -72,6 +78,7 @@ typedef struct XvfdHarnessStation {
 typedef struct XvfdHarness {
     XModbusHub* m_hub;              /**< 聚合设备（拥有映射） */
     XIoChannelGroup* m_group;       /**< 通道组（托管点） */
+    XModbusLink* m_link;            /**< 通道链路（Hub 的唯一订阅者；组持有） */
     XModbusMapping* m_map;          /**< 映射（setMapping 后归 Hub 所有） */
     int m_devIds[XVFD_HARNESS_STATION_CAP]; /**< 已注入设备句柄 */
     int m_devCount;                 /**< 设备数 */
@@ -91,6 +98,24 @@ typedef struct XvfdHarnessSpec {
     uint16_t m_addr;                /**< 品牌原生地址 */
     int m_idx;                      /**< 原规格下标 */
 } XvfdHarnessSpec;
+
+/**
+ * @brief XModbusRegisterType(1..4) → XModbusLink 区下标(0..3)。
+ * @param regType XModbusRegisterType 值。
+ * @return 区下标；未知返回 2（HR）。
+ * @note [2026-11-02] 两套编号不同：寄存器类型从 1 起（DI=1/Coils=2/IR=3/HR=4），
+ *       链路区下标从 0 起（DI=0/DO=1/AI=2/AO=3）。直接传会越界。
+ */
+static int xvfdHarnessLinkArea(int regType)
+{
+    switch (regType) {
+    case (int)XModbusDiscreteInputs:  return 0;
+    case (int)XModbusCoils:           return 1;
+    case (int)XModbusHoldingRegisters: return 2;
+    case (int)XModbusInputRegisters:  return 3;
+    default: return 2;
+    }
+}
 
 /**
  * @brief 点类型 → 寄存器区。
@@ -148,28 +173,39 @@ static int xvfdHarnessSpecCmp(const void* a, const void* b)
 }
 
 /**
- * @brief 按规格建一个通道点（借用组托管释放）。
+ * @brief 按规格建一个通道点（组托管释放）。
  * @param h 脚手架。
  * @param spec 点规格（类型/点名）。
  * @param vaddr 虚拟地址。
+ * @param area 区下标（XModbusLink_areaOfType 口径）。
  * @return 新点；失败返回 NULL。
+ * @note [2026-11-02 通道层重写] 点退化为纯数据容器，链路登记改由
+ *       XModbusLink_bindRole 完成，故这里只建点、不碰 Hub。
  */
-static XIoPoint* xvfdHarnessMakePoint(XvfdHarness* h, const XVfdPointSpec* spec, uint16_t vaddr)
+/* 前向声明：装配函数在前、站上下文写在后（逼近使用点）。 */
+static XvfdHarnessStation* xvfdHarnessStationOf(XvfdHarness* h, int devId, int unitId,
+                                                const XVfdCommGroup* groups, int groupCount);
+
+static XIoPoint* xvfdHarnessMakePoint(XvfdHarness* h, const XVfdPointSpec* spec,
+                                      uint16_t vaddr, int area)
 {
-    switch (spec->m_type) {
-    case (uint8_t)XIoPoint_AnalogInput:
-        return (XIoPoint*)XModbusPoint_createAnalogInput(h->m_hub, (int)vaddr, true,
-                                                         1, 1, 0, 0, spec->m_tag);
-    case (uint8_t)XIoPoint_AnalogOutput:
-        return (XIoPoint*)XModbusPoint_createAnalogOutput(h->m_hub, (int)vaddr, 1, 1, 0,
-                                                          spec->m_tag);
-    case (uint8_t)XIoPoint_DigitalInput:
-        return (XIoPoint*)XModbusPoint_createDigitalInput(h->m_hub, (int)vaddr, spec->m_tag);
-    case (uint8_t)XIoPoint_DigitalOutput:
-        return (XIoPoint*)XModbusPoint_createDigitalOutput(h->m_hub, (int)vaddr, spec->m_tag);
-    default:
-        return NULL;
+    XIoPoint* pt;
+    (void)h;
+    if (!spec) return NULL;
+    pt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!pt) return NULL;
+    XIoPoint_setRole(pt, spec->m_role);
+    XIoPoint_setType(pt, (XIoPointType)spec->m_type);
+    XIoPoint_setTag(pt, spec->m_tag);
+    XIoPoint_setSigned(pt, spec->m_signed != 0);
+    if (spec->m_type == (uint8_t)XIoPoint_AnalogInput) {
+        XIoPoint_setUseHolding(pt, area == 2);   /* AI 落 HR 区（本工程口径）。 */
     }
+    /* [2026-11-02 标度归属] 语义点不在通道层标度：XVfdDevice 的 DecodePoint 需要原生量
+     * 自己做 double 换算（如转矩 69/10 = 6.9），而 XIoPoint_toEngineering 返回 int32_t 会截断成 6。
+     * 故这里一律 div=1（不标度），标度仅用于非语义点（参数点等）。 */
+    XIoPoint_setScale(pt, 1, 1, 0, 0);
+    return pt;
 }
 
 /**
@@ -184,6 +220,10 @@ static bool xvfdHarnessInit(XvfdHarness* h)
     h->m_hub = XModbusHub_create();
     h->m_map = XModbusMapping_create();
     h->m_group = XIoChannelGroup_create();
+    h->m_link = XModbusLink_create(h->m_hub);
+    if (h->m_group && h->m_link) {
+        XIoChannelGroup_setLink(h->m_group, (XIoLink*)h->m_link);
+    }
     h->m_devCount = 0;
     h->m_identity = false;
     h->m_bumpHr = 0;
@@ -193,7 +233,7 @@ static bool xvfdHarnessInit(XvfdHarness* h)
     for (i = 0; i < XVFD_HARNESS_STATION_CAP; ++i) {
         h->m_stations[i].m_devId = -1;   /* 站上下文槽位空闲标记 */
     }
-    return (h->m_hub && h->m_map && h->m_group);
+    return (h->m_hub && h->m_map && h->m_group && h->m_link);
 }
 
 /**
@@ -241,8 +281,11 @@ static bool xvfdHarnessMount(XvfdHarness* h, XVfdDevice* dev, int devId, int uni
                              const XVfdPointSpec* specs, int n)
 {
     XvfdHarnessSpec idx[XVFD_HARNESS_SPEC_CAP];
+    XvfdHarnessStation* st;
     int i, j;
     if (!h || !dev || !specs || n <= 0 || n > XVFD_HARNESS_SPEC_CAP) return false;
+    st = xvfdHarnessStationOf(h, devId, unitId, NULL, 0);
+    if (!st || !st->m_group || !st->m_link) return false;
     for (i = 0; i < n; ++i) {
         idx[i].m_area = (uint8_t)xvfdHarnessAreaOf(specs[i].m_type);
         idx[i].m_addr = specs[i].m_address;
@@ -269,15 +312,23 @@ static bool xvfdHarnessMount(XvfdHarness* h, XVfdDevice* dev, int devId, int uni
         for (j = i; j <= runEnd; ++j) {
             const XVfdPointSpec* sp = &specs[idx[j].m_idx];
             uint16_t vaddr = (uint16_t)(vbase + (sp->m_address - runStart));
-            XIoPoint* pt = xvfdHarnessMakePoint(h, sp, vaddr);
+            XIoPoint* pt = xvfdHarnessMakePoint(h, sp, vaddr,
+                                                xvfdHarnessLinkArea((int)idx[j].m_area));
             if (!pt) return false;
-            if (!XIoChannelGroup_addPoint(h->m_group, pt, true)) return false;
+            if (!XIoChannelGroup_addPoint(st->m_group, pt, true)) {
+                return false;
+            }
+            /* 链路登记：role → 虚拟地址（区由点类型决定）。 */
+            if (!XIoLink_bindRole_base((XIoLink*)st->m_link, sp->m_role, vaddr,
+                                       (uint32_t)xvfdHarnessLinkArea((int)idx[j].m_area))) {
+                return false;
+            }
+            /* 设备绑定：把点挂到语义槽上（此时 div/signed/caps 一并内联进槽）。 */
             if (!XVfdDevice_bindPoint(dev, sp, pt)) return false;
             ++h->m_pointCount;
         }
         i = runEnd + 1;
     }
-    return true;
 }
 
 /**
@@ -294,17 +345,34 @@ static bool xvfdHarnessMountParam(XvfdHarness* h, XVfdDevice* dev, int devId, in
                                   const XVfdParamDesc* desc, uint16_t paramId)
 {
     uint16_t vbase;
-    XModbusPoint* pt;
+    XIoPoint* pt;
+    XvfdHarnessStation* st;
     if (!h || !dev || !desc) return false;
+    st = xvfdHarnessStationOf(h, devId, unitId, NULL, 0);
+    if (!st || !st->m_group || !st->m_link) return false;
     vbase = xvfdHarnessBump(h, XModbusHoldingRegisters, 1);
     if (!XModbusMapping_addRange(h->m_map, XModbusHoldingRegisters, vbase, 1, devId, unitId,
                                  desc->m_addr, 0)) {
         return false;
     }
-    pt = XModbusPoint_createAnalogOutput(h->m_hub, (int)vbase, 1, 1, 0, desc->m_name);
+    pt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!pt) return false;
-    if (!XIoChannelGroup_addPoint(h->m_group, (XIoPoint*)pt, true)) return false;
-    if (!XVfdDevice_bindParamPoint(dev, paramId, (XIoPoint*)pt)) return false;
+    /* 参数点的 role 用「参数槽基址 + paramId」，避免与语义 role 冲突。
+     * 参数 role 段起点由 XVFD_HARNESS_PARAM_ROLE_BASE 给定（见文件头常量）。 */
+    XIoPoint_setRole(pt, (uint16_t)(XVFD_HARNESS_PARAM_ROLE_BASE + paramId));
+    XIoPoint_setType(pt, XIoPoint_AnalogOutput);
+    XIoPoint_setTag(pt, desc->m_name);
+    XIoPoint_setScale(pt, 1, 1, 0, 0);
+    if (!XIoChannelGroup_addPoint(st->m_group, pt, true)) {
+        XClassDelete((XClass*)pt);
+        return false;
+    }
+    if (!XIoLink_bindRole_base((XIoLink*)st->m_link,
+                               (uint16_t)(XVFD_HARNESS_PARAM_ROLE_BASE + paramId),
+                               vbase, 2)) {
+        return false;
+    }
+    if (!XVfdDevice_bindParamPoint(dev, paramId, pt)) return false;
     ++h->m_pointCount;
     return true;
 }
@@ -338,6 +406,7 @@ static int xvfdHarnessFindGroup(const XVfdCommGroup* groups, int n, uint16_t rem
  * @param groupCount 组数。
  * @return 站上下文；槽位用尽返回 NULL。
  */
+
 static XvfdHarnessStation* xvfdHarnessStationOf(XvfdHarness* h, int devId, int unitId,
                                                  const XVfdCommGroup* groups, int groupCount)
 {
@@ -358,10 +427,35 @@ static XvfdHarnessStation* xvfdHarnessStationOf(XvfdHarness* h, int devId, int u
         st->m_unitId = unitId;
         st->m_groups = groups;
         st->m_groupCount = groupCount;
+        /* [2026-11-02 多站] 每站独立一个通道组 + 一个链路：
+         * role 是组内下标，若多站共用一组则同名 role 必然冲突
+         * （两台变频器都有 StatusWord 等同名语义槽）。链路可共用 Hub，
+         * 但 role→地址反查表必须每站一份。 */
+        st->m_group = XIoChannelGroup_create();
+        st->m_link = XModbusLink_create(h->m_hub);
+        if (st->m_group && st->m_link) {
+            XIoChannelGroup_setLink(st->m_group, (XIoLink*)st->m_link);
+        }
         return st;
     }
     return NULL;
 }
+
+/**
+ * @brief 取某站的通道组（设备 attach 用；未建则建立）。
+ * @param h 脚手架。
+ * @param devId 设备句柄。
+ * @param unitId 从站地址。
+ * @return 该站的通道组；失败返回 NULL。
+ * @note [2026-11-02 多站] 每站独立一个组：role 是组内下标，
+ *       多站共用一组会因同名语义槽（StatusWord 等）直接冲突。
+ */
+static XIoChannelGroup* xvfdHarnessStationGroup(XvfdHarness* h, int devId, int unitId)
+{
+    XvfdHarnessStation* st = xvfdHarnessStationOf(h, devId, unitId, NULL, 0);
+    return st ? st->m_group : NULL;
+}
+
 
 /**
  * @brief 惰性建组段（幂等）：按需为某个通信组建映射段。
@@ -474,17 +568,31 @@ static bool xvfdHarnessMountBrand(XvfdHarness* h, XVfdDevice* dev, int devId, in
                     specs[i].m_tag ? specs[i].m_tag : "?", specs[i].m_address);
             return false;
         }
-        if (!xvfdHarnessEnsureGroup(h, st, gi, &vbase)) return false;
+        if (!xvfdHarnessEnsureGroup(h, st, gi, &vbase)) {
+        return false;
+    }
         vaddr = (uint16_t)(vbase + (specs[i].m_address - groups[gi].m_remoteStart));
         pt = xvfdHarnessFindRef(st, specs[i].m_address);
         if (!pt) {
-            pt = xvfdHarnessMakePoint(h, &specs[i], vaddr);
+            pt = xvfdHarnessMakePoint(h, &specs[i], vaddr,
+                                      XModbusLink_areaOfType((int)specs[i].m_type,
+                                                             true));
             if (!pt) return false;
-            if (!XIoChannelGroup_addPoint(h->m_group, pt, true)) return false;
+            if (!XIoChannelGroup_addPoint(st->m_group, pt, true)) return false;
+            if (!XVfdDevice_bindPoint(dev, &specs[i], pt)) {
+                /* 绑定失败时把点从组里摘掉并释放，避免 role 位被脏点占住。 */
+                (void)XIoChannelGroup_removeRole(st->m_group, specs[i].m_role);
+                return false;
+            }
+            /* 链路登记 role → 虚拟地址（区由点类型 + AI 区选决定）。 */
+            if (!XIoLink_bindRole_base((XIoLink*)st->m_link, specs[i].m_role, vaddr,
+                                       (uint32_t)XModbusLink_areaOfType(
+                                           (int)specs[i].m_type, true))) {
+                return false;
+            }
             if (!xvfdHarnessSetRef(st, specs[i].m_address, pt)) return false;
             ++h->m_pointCount;
         }
-        if (!XVfdDevice_bindPoint(dev, &specs[i], pt)) return false;
     }
     /* 从站协议约束（品牌层中立表达 → 传输层配置，逐字段翻译不靠布局巧合）。 */
     if (protocol) {
@@ -534,15 +642,27 @@ static bool xvfdHarnessMountParamBrand(XvfdHarness* h, XVfdDevice* dev, int devI
                 desc->m_name ? desc->m_name : "?", desc->m_addr);
         return false;
     }
-    if (!xvfdHarnessEnsureGroup(h, st, gi, &vbase)) return false;
+    if (!xvfdHarnessEnsureGroup(h, st, gi, &vbase)) {
+        return false;
+    }
     vaddr = (uint16_t)(vbase + (desc->m_addr - groups[gi].m_remoteStart));
     pt = xvfdHarnessFindRef(st, desc->m_addr);
     if (!pt) {
-        XModbusPoint* mp = XModbusPoint_createAnalogOutput(h->m_hub, (int)vaddr, 1, 1, 0,
-                                                            desc->m_name);
-        if (!mp) return false;
-        pt = (XIoPoint*)mp;
-        if (!XIoChannelGroup_addPoint(h->m_group, pt, true)) return false;
+        XIoPoint* np = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        uint16_t prole = (uint16_t)(XVFD_HARNESS_PARAM_ROLE_BASE + paramId);
+        if (!np) return false;
+        XIoPoint_setRole(np, prole);
+        XIoPoint_setType(np, XIoPoint_AnalogOutput);
+        XIoPoint_setTag(np, desc->m_name);
+        XIoPoint_setScale(np, 1, 1, 0, 0);
+        pt = np;
+        if (!XIoChannelGroup_addPoint(st->m_group, pt, true)) {
+            XClassDelete((XClass*)pt);
+            return false;
+        }
+        if (!XIoLink_bindRole_base((XIoLink*)st->m_link, prole, vaddr, 2)) {
+            return false;
+        }
         if (!xvfdHarnessSetRef(st, desc->m_addr, pt)) return false;
         ++h->m_pointCount;
     }
@@ -578,6 +698,15 @@ static void xvfdHarnessStart(XvfdHarness* h, unsigned pollMs)
         }
     }
     XModbusHub_setUnitBackoff(h->m_hub, 1000, 1000); /* 测试免退避干扰 */
+    /* [2026-11-02] 每站链路必须 Start：它负责订阅 Hub 的
+     * valueChanged / writeCompleted（点类已退化为纯数据，订阅由链路承担）。 */
+    for (i = 0; i < XVFD_HARNESS_STATION_CAP; ++i) {
+        if (h->m_stations[i].m_link) {
+            if (!XIoLink_start_base((XIoLink*)h->m_stations[i].m_link)) {
+                XPrintf("[xvfd-harness] 站 %d 链路启动失败\n", i);
+            }
+        }
+    }
     XModbusHub_connectAll(h->m_hub);
     XModbusHub_startPolling(h->m_hub);
 }
@@ -589,10 +718,31 @@ static void xvfdHarnessStart(XvfdHarness* h, unsigned pollMs)
  */
 static void xvfdHarnessDestroy(XvfdHarness* h)
 {
+    int i;
     if (!h) return;
+    /* [2026-11-02 多站] 每站独立的组与链路先回收（组持有 link 的借用指针，
+     * 故先摘 link 再删组，最后删 link）。 */
+    for (i = 0; i < XVFD_HARNESS_STATION_CAP; ++i) {
+        XvfdHarnessStation* st = &h->m_stations[i];
+        if (st->m_group) {
+            XIoChannelGroup_setLink(st->m_group, NULL);
+            XClassDelete((XClass*)st->m_group);
+            st->m_group = NULL;
+        }
+        if (st->m_link) {
+            XClassDelete((XClass*)st->m_link);
+            st->m_link = NULL;
+        }
+    }
     if (h->m_group) {
+        /* 组持有 link 的借用指针：先把组摘掉 link，再删组，再删 link。 */
+        XIoChannelGroup_setLink(h->m_group, NULL);
         XClassDelete((XClass*)h->m_group);
         h->m_group = NULL;
+    }
+    if (h->m_link) {
+        XClassDelete((XClass*)h->m_link);
+        h->m_link = NULL;
     }
     if (h->m_hub) {
         XModbusHub_stopPolling(h->m_hub);

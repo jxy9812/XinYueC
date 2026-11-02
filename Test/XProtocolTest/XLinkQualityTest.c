@@ -34,6 +34,7 @@
 #include "XThread.h"
 #include "XPrintf.h"
 #include <string.h>
+#include <stdio.h>
 #if defined(_WIN32)
 #include <windows.h>   /* QueryPerformanceCounter：仅基准统计用 */
 #endif
@@ -54,6 +55,11 @@ static int g_qFailed = 0;
         } else {                                                             \
             g_qFailed++;                                                     \
             XPrintf("  [FAIL] %s\n", desc);                                 \
+            /* 失败项同时走 stderr：XPrintf 的 stdout relay 是异步线程，      \
+               进程退出时管道内未转发的尾部会丢（本机实测日志尾随机截断，     \
+               连带吞掉汇总行）。stderr 不经改道，失败名单始终可见。 */      \
+            fprintf(stderr, "  [FAIL] %s\n", desc);                         \
+            fflush(stderr);                                                  \
         }                                                                    \
     } while (0)
 
@@ -1342,6 +1348,11 @@ int XLinkQualityTest_run(void)
 
     XPrintf("\n========== XLink 质量门禁完成: %d 通过, %d 失败 ==========\n",
             g_qPassed, g_qFailed);
+    /* 汇总同时走 stderr（理由同 XLINK_QCHECK 处注）。 */
+    fprintf(stderr,
+            "========== XLink 质量门禁完成: %d 通过, %d 失败 ==========\n",
+            g_qPassed, g_qFailed);
+    fflush(stderr);
     return g_qFailed;
 }
 

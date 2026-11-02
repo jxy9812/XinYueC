@@ -38,7 +38,8 @@
 #include "XModbusDevice.h"
 #include "XVariant.h"
 #include "XString.h"
-#include "XChannel/XModbusPoint.h"
+#include "XChannel/XModbusLink.h"
+#include "XChannel/XChannelAssembly.h"
 #include "xvfd_harness.h"
 #include "xvfd_slave_emu.h"
 #include "XVfd/XVfdM512.h"
@@ -246,8 +247,11 @@ int XVfdM512Test_runEx(const char* ptyOverride)
     g_devObj[0] = (XObject*)m1;
     g_devObj[1] = (XObject*)m2;
 
-    CHECK(XVfdDevice_attach(g_dev[0], harness.m_group) &&
-          XVfdDevice_attach(g_dev[1], harness.m_group), "两设备挂接同一通道组");
+    /* [2026-11-02 多站] 每台设备挂自己的通道组：role 是组内下标，两台变频器
+     * 都有 StatusWord/FaultCode 等同名语义槽，共用一组必然冲突。 */
+    CHECK(XVfdDevice_attach(g_dev[0], xvfdHarnessStationGroup(&harness, devId[0], 1)) &&
+          XVfdDevice_attach(g_dev[1], xvfdHarnessStationGroup(&harness, devId[1], 2)),
+          "两设备各自挂接独立通道组");
     specs = XVfdM512_pointSpecs(&specCount);
     specs = XVfdM512_pointSpecs(&specCount);
     params = XVfdM512_paramDescs(&paramCount);
@@ -431,11 +435,21 @@ int XVfdM512Test_runEx(const char* ptyOverride)
         CHECK(XVfdDevice_writeRole(g_dev[0], XVfdRole_FreqSet, raw),
               "写负频率给定（语义槽写）");
         {
-            XModbusPoint* fp = (XModbusPoint*)XVfdDevice_point(g_dev[0], XVfdRole_FreqSet);
+            /* [2026-11-02] 点不再持有链路地址：改由链路反查 role → (区, 地址)。 */
+            XIoPoint* fp = XVfdDevice_point(g_dev[0], XVfdRole_FreqSet);
             uint16_t cache = 0;
+            uint16_t faddr = 0;
+            int farea = 0;
+            /* [2026-11-02 多站] 每站独立链路：取站1 自己的 link。 */
+            XModbusLink* l0 = harness.m_stations[0].m_link;
+            bool haveBind = (fp && l0 &&
+                             XModbusLink_queryBinding(l0, XIoPoint_role(fp),
+                                                      &farea, &faddr));
             CHECK(fp != NULL, "FreqSet 语义点已绑定");
-            if (fp && XModbusHub_value(harness.m_hub, XModbusHoldingRegisters,
-                                       fp->m_address, &cache)) {
+            CHECK(haveBind, "FreqSet 角色已在链路上绑定地址");
+            if (haveBind &&
+                XModbusHub_value(harness.m_hub,
+                                 XModbusLink_hubAreaType(farea), faddr, &cache)) {
                 CHECK(cache != 0, "负频率未被无符号钳位吞成 0");
                 CHECK(cache == (uint16_t)(raw & 0xFFFF),
                       "回读是 16 位补码（0xF830 之类），不是 0");

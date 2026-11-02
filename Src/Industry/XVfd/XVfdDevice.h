@@ -479,20 +479,18 @@ typedef struct XVfdUnitProtocol {
 } XVfdUnitProtocol;
 
 /**
- * @brief 语义槽登记项（设备内部：规格 + 点，均为借用）。
+ * @brief 语义槽登记项（设备内部：点 + 规格高频字段内联）。
+ * @details [2026-11-02 零遍历] 旧实现只存 spec 指针，每次解码都要经指针再取
+ *          div/signed（多一次缓存访问）。现在把解码路径真正用到的两个字段
+ *          内联进槽；完整的 spec 仍保留指针，仅在品牌自定义 DecodePoint
+ *          需要读其它字段时经 XVfdDevice_spec(dev, role) 取。
  */
 typedef struct XVfdSlot {
-    const XVfdPointSpec* m_spec; /**< 规格（静态 const，借用）；NULL=该槽未绑定 */
-    XIoPoint* m_point;           /**< 通道点（借用，不拥有） */
+    const XVfdPointSpec* m_spec; /**< 规格（静态 const，借用）；NULL=该槽无规格 */
+    XIoPoint* m_point;           /**< 通道点（借用，不拥有）；NULL=该槽未绑定 */
+    int32_t m_div;               /**< 规格内联：原生单位除率（0 视为 1） */
+    uint8_t m_signed;            /**< 规格内联：16 位补码标记 */
 } XVfdSlot;
-
-/**
- * @brief 参数点登记项（设备内部：参数描述表下标 ↔ 通道点）。
- */
-typedef struct XVfdParamBinding {
-    uint16_t m_id;               /**< 参数描述表下标（0 基） */
-    XIoPoint* m_point;           /**< 参数通道点（借用；读/写均经它） */
-} XVfdParamBinding;
 
 /* ========================================================================== */
 /*                      虚函数表                                              */
@@ -540,8 +538,9 @@ typedef struct XVfdDevice {
     XObject m_class;                /**< 基类（第一成员，由 XClass 管理，禁止手工修改） */
     XIoChannelGroup* m_group;       /**< 挂接的通道组（借用；NULL=未挂接） */
     XVfdSlot m_slots[XVFD_ROLE_CAP];/**< 语义槽表（按角色下标；未绑定为 NULL） */
-    XVfdParamBinding m_paramBinds[XVFD_PARAM_BIND_CAP]; /**< 参数点绑定表 */
-    int m_paramBindCount;           /**< 参数点绑定数 */
+    XIoPoint** m_paramPoints;       /**< 参数点表：paramId 直接作下标（O(1)；
+                                     *   长度 = m_paramCount，由 setParamTable 分配）。 */
+    int m_boundCount;               /**< 已绑定语义槽数（计数器，免 O(96) 扫描）。 */
     const XVfdParamDesc* m_params;  /**< 品牌参数描述表（const，借用；品牌 init 设置） */
     int m_paramCount;               /**< 描述表条目数（0=无参数通道） */
     XVfdStatus m_status;            /**< 最近状态快照（解码路径回填） */
@@ -627,6 +626,37 @@ XIoChannelGroup* XVfdDevice_channelGroup(const XVfdDevice* dev);
  *       同一角色重复绑定以新点覆盖（旧点不退订，调用方自行解绑）。
  */
 bool XVfdDevice_bindPoint(XVfdDevice* dev, const XVfdPointSpec* spec, XIoPoint* point);
+
+/**
+ * @brief 按语义槽号绑定点（不要求规格；规格高频字段由点自身提供）。
+ * @param dev 目标设备；不能为 NULL。
+ * @param role 语义角色。
+ * @param point 通道点（须已登记于设备挂接的通道组）。
+ * @return 成功 true。
+ * @note 新代码推荐用本函数或 bindSpec；bindPoint 是 bindSpec 的薄封装，为
+ *       既有调用点保留。
+ */
+bool XVfdDevice_bindRole(XVfdDevice* dev, uint16_t role, XIoPoint* point);
+
+/**
+ * @brief 带规格绑定点（规格的 div/signed/caps 内联进槽）。
+ * @param dev 目标设备；不能为 NULL。
+ * @param spec 点规格（静态 const，借用；设备保留指针供品牌自定义解码用）。
+ * @param point 通道点（须已登记于设备挂接的通道组）。
+ * @return 成功 true。
+ * @note 这是 bindPoint 的实现体；绑定后 XPainter 解码路径用槽内联字段，
+ *       不再经 spec 指针取 div/signed（少一次缓存访问）。
+ */
+bool XVfdDevice_bindSpec(XVfdDevice* dev, const XVfdPointSpec* spec, XIoPoint* point);
+
+/**
+ * @brief 取某角色的点规格（借用）。
+ * @param dev 设备；NULL 返回 NULL。
+ * @param role 语义角色。
+ * @return 规格指针；该槽未绑定或未带规格返回 NULL。
+ * @note 供品牌子类自定义 DecodePoint 读取内联字段之外的规格内容。
+ */
+const XVfdPointSpec* XVfdDevice_spec(const XVfdDevice* dev, XVfdPointRole role);
 
 /**
  * @brief 解绑一个语义槽。

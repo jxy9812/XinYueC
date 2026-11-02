@@ -124,7 +124,13 @@ static void VXLinkFileClient_deinit(XClass* object)
        XLinkClient_session ← xfc_sessionValid ← xfc_onFileFrame ←
        XLinkSessionPrivate_onFrame ← pump ← onReadyRead）。守卫口径下
        （client 仍是会话的当前借用）先摘回调，再释放引擎。 */
-    if (xfc_sessionValid(obj))
+    /* 【空会话守卫】xfc_sessionValid 对「无借用引用」返回 true——那是它
+       作为 pump 守卫的正确口径（空闲态无需收尾）。但此处需要的是「有没
+       有会话可以摘回调」，语义不同：直接复用会把 NULL 传进
+       XLinkSession_setFileCallback，触发 XError 参数报错。本机实测每次
+       收尾刷一条（xlink-all 5 次 / xlink-quality 12 次），噪声会淹没真实
+       告警。先判非空，再判有效性。 */
+    if (obj->m_transfer.m_session != NULL && xfc_sessionValid(obj))
         XLinkSession_setFileCallback(obj->m_transfer.m_session, NULL, NULL);
     XLinkFileTransfer_deinit(&obj->m_transfer);
     obj->m_client = NULL;

@@ -64,6 +64,7 @@
 #include "XPrintf.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 /* ========================================================================== */
 /*                        断言与统计                                         */
@@ -87,6 +88,11 @@ static int g_failed = 0;
         } else {                                                             \
             g_failed++;                                                      \
             XPrintf("  [FAIL] %s\n", desc);                                 \
+            /* 失败项同时走 stderr：XPrintf 的 stdout relay 是异步线程，      \
+               进程退出时管道内未转发的尾部会丢（本机实测日志尾随机截断，     \
+               连带吞掉汇总行，曾把「断言失败」误判成「崩溃」）。 */         \
+            fprintf(stderr, "  [FAIL] %s\n", desc);                         \
+            fflush(stderr);                                                  \
         }                                                                    \
     } while (0)
 
@@ -5003,6 +5009,11 @@ int XLinkTest_run(void)
 
     XPrintf("\n========== XLink 测试完成: %d 通过, %d 失败 ==========\n",
             g_passed, g_failed);
+    /* 汇总同时走 stderr：stdout relay 在退出时可能丢尾部，导致「跑了但
+       看不到结果」。stderr 不经改道，是唯一可靠的落点。 */
+    fprintf(stderr, "========== XLink 测试完成: %d 通过, %d 失败 ==========\n",
+            g_passed, g_failed);
+    fflush(stderr);
     return g_failed;
 }
 

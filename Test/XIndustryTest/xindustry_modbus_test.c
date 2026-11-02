@@ -21,7 +21,8 @@
  *             （Test/XProtocolTest/xmodbus_hub_test.c）。
  */
 #include "XChannel/XIoChannelGroup.h"
-#include "XChannel/XModbusPoint.h"
+#include "XChannel/XModbusLink.h"
+#include "XChannel/XChannelAssembly.h"
 #include "XModbusTcpServer.h"
 #include "XModbusTcpClient.h"
 #include "XModbusHub.h"
@@ -51,35 +52,35 @@ static int g_fail = 0;
 
 /* 组级信号记录（XIoPoint* 直传） */
 static int  g_inChanged = 0;          /* inputChanged 次数 */
-static XIoPoint* g_inLastPt = NULL;   /* 最近一次 inputChanged 的点 */
+static uint16_t g_inLastRole = 0xFFFFu; /* 最近一次 inputChanged 的 role */
 static int32_t g_inLastValue = -1;
-static XIoPoint* g_doneLastPt = NULL; /* 最近一次 writeDone(ok=true) 的点 */
+static uint16_t g_doneLastRole = 0xFFFFu; /* 最近一次 writeDone(ok=true) 的 role */
 static int  g_doneCount = 0;
 
 /* 同泵粘性命中目标（见文件头 [同泵粘性命中] 注记） */
-static XIoPoint* g_hitTargetPt = NULL;
+static uint16_t g_hitTargetRole = 0xFFFFu;  /* 目标 role（信号已改为携带 role） */
 static int32_t g_hitTargetVal = 0;
 static int g_hitFlag = 0;
 
 static void onGroupInputChanged(XObject* sender, XVarList* args)
 {
     if (!args) return;
-    XVarList_args_2(args, XIoPoint*, point, int32_t, value);
+    XVarList_args_2(args, uint16_t, role, int32_t, value);
     (void)sender;
     ++g_inChanged;
-    g_inLastPt = point;
+    g_inLastRole = role;
     g_inLastValue = value;
-    if (g_hitTargetPt && point == g_hitTargetPt && value == g_hitTargetVal)
+    if (role == g_hitTargetRole && value == g_hitTargetVal)
         g_hitFlag = 1;
 }
 
 static void onGroupWriteDone(XObject* sender, XVarList* args)
 {
     if (!args) return;
-    XVarList_args_2(args, XIoPoint*, point, bool, ok);
+    XVarList_args_2(args, uint16_t, role, bool, ok);
     (void)sender;
     if (ok) {
-        g_doneLastPt = point;
+        g_doneLastRole = role;
         ++g_doneCount;
     }
 }
@@ -104,14 +105,15 @@ static void test_channel_group_hub(void)
 {
     XCoreApplication* app = NULL;
     XModbusTcpServer* slave = NULL;
-    XModbusPoint* diPt = NULL;
-    XModbusPoint* doPt = NULL;
-    XModbusPoint* aiPt = NULL;
-    XModbusPoint* aoPt = NULL;
-    XModbusPoint* keepPt = NULL;
+    XIoPoint* diPt = NULL;
+    XIoPoint* doPt = NULL;
+    XIoPoint* aiPt = NULL;
+    XIoPoint* aoPt = NULL;
+    XIoPoint* keepPt = NULL;
     XModbusTcpClient* client = NULL;
     XModbusHub* hub = NULL;
     XIoChannelGroup* group = NULL;
+    XModbusLink* link = NULL;
     XModbusMapping* map = NULL;
     XModbusDataUnitMap* smap = NULL;
     XModbusDataUnit* unit = NULL;
@@ -196,29 +198,48 @@ static void test_channel_group_hub(void)
     group = XIoChannelGroup_create();
     CHECK("通道组创建", group != NULL);
     if (!group) goto cleanup;
-    diPt = XModbusPoint_createDigitalInput(hub, 3, "DI3");
-    doPt = XModbusPoint_createDigitalOutput(hub, 0, "DO0");
-    aiPt = XModbusPoint_createAnalogInput(hub, 0, true, 1, 1, 0, 0, "AI0");
-    aoPt = XModbusPoint_createAnalogOutput(hub, 5, 1, 1, 0, "AO5");
+    /* [2026-11-02 通道层重写] 点退化为纯数据容器，链路能力在 XModbusLink：
+     *   role 分配 DI3=0 / DO0=1 / AI0=2 / AO5=3（本用例自定，组内作下标）。 */
+    link = XModbusLink_create(hub);
+    CHECK("链路创建", link != NULL);
+    if (!link) goto cleanup;
+    XIoChannelGroup_setLink(group, (XIoLink*)link);
+    diPt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    doPt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    aiPt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    aoPt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (diPt) { XIoPoint_setRole(diPt, 0); XIoPoint_setType(diPt, XIoPoint_DigitalInput); XIoPoint_setTag(diPt, "DI3"); }
+    if (doPt) { XIoPoint_setRole(doPt, 1); XIoPoint_setType(doPt, XIoPoint_DigitalOutput); XIoPoint_setTag(doPt, "DO0"); }
+    if (aiPt) { XIoPoint_setRole(aiPt, 2); XIoPoint_setType(aiPt, XIoPoint_AnalogInput); XIoPoint_setTag(aiPt, "AI0"); XIoPoint_setScale(aiPt, 1, 1, 0, 0); XIoPoint_setUseHolding(aiPt, true); }
+    if (aoPt) { XIoPoint_setRole(aoPt, 3); XIoPoint_setType(aoPt, XIoPoint_AnalogOutput); XIoPoint_setTag(aoPt, "AO5"); XIoPoint_setScale(aoPt, 1, 1, 0, 0); }
     CHECK("四点创建", diPt && doPt && aiPt && aoPt);
     CHECK("四点登记",
-          XIoChannelGroup_addPoint(group, (XIoPoint*)diPt, true) &&
-          XIoChannelGroup_addPoint(group, (XIoPoint*)doPt, true) &&
-          XIoChannelGroup_addPoint(group, (XIoPoint*)aiPt, true) &&
-          XIoChannelGroup_addPoint(group, (XIoPoint*)aoPt, true));
+          XIoChannelGroup_addPoint(group, diPt, true) &&
+          XIoChannelGroup_addPoint(group, doPt, true) &&
+          XIoChannelGroup_addPoint(group, aiPt, true) &&
+          XIoChannelGroup_addPoint(group, aoPt, true));
+    /* 链路登记：role → 虚拟地址（区由类型决定；本用例虚拟地址=原生地址）。 */
+    CHECK("链路绑定",
+          XIoLink_bindRole_base((XIoLink*)link, 0, 3, 0) &&   /* DI3 → DI 区 */
+          XIoLink_bindRole_base((XIoLink*)link, 1, 0, 1) &&   /* DO0 → Coils */
+          XIoLink_bindRole_base((XIoLink*)link, 2, 0, 2) &&   /* AI0 → HR */
+          XIoLink_bindRole_base((XIoLink*)link, 3, 5, 2));    /* AO5 → HR */
     XObject_connect_2((XObject*)group, XSignal(XIoChannelGroup_inputChanged_signal),
                       onGroupInputChanged);
     XObject_connect_2((XObject*)group, XSignal(XIoChannelGroup_writeDone_signal),
                       onGroupWriteDone);
 
     /* ---- ① 联动在线：上线对齐写两段落定 + 首轮回填推送初值 ---- */
+    /* [2026-11-02] 链路必须先 Start：它才负责订阅 Hub 的 valueChanged/
+     * writeCompleted（旧实现是每个点各自订阅，点类删除后订阅由链路统一承担）。 */
+    CHECK("链路启动", XIoLink_start_base((XIoLink*)link));
     XModbusHub_connectAll(hub);
     XModbusHub_startPolling(hub);
     {
         int writeOk = 0;
         /* 从站 Coil/HR 初值 0 → 对齐写落定后从站侧即默认值，无独立可观测
          * 沿——以首轮 AI 回填（0x00AA）作为"对齐+轮询已活"的综合判据。 */
-        g_hitTargetPt = (XIoPoint*)aiPt;
+        g_hitTargetRole = XIoPoint_role(aiPt);
         g_hitTargetVal = 0x00AA;
         g_hitFlag = 0;
         (void)writeOk;
@@ -227,46 +248,46 @@ static void test_channel_group_hub(void)
         XCoreApplication_processEventsWithMaxTime(0, 10);
     CHECK("AI 回填推送（默认值 0x00AA）", g_hitFlag);
     CHECK("AI read=0x00AA",
-          XIoChannelGroup_readAnalogInput(group, (XIoPoint*)aiPt, &eng) && eng == 0x00AA);
+          XIoChannelGroup_readAnalogInput(group, XIoPoint_role(aiPt), &eng) && eng == 0x00AA);
 
     /* ---- ③ DI 翻转：server DI3=1 → inputChanged(diPt, 1) + read ---- */
     XModbusServer_setData2((XModbusServer*)slave, XModbusDiscreteInputs, 3, 1);
     g_inChanged = 0;
-    g_hitTargetPt = (XIoPoint*)diPt;
+    g_hitTargetRole = XIoPoint_role(diPt);
     g_hitTargetVal = 1;
     g_hitFlag = 0;
     CHECK("DI 翻转推送", waitCond(&g_hitFlag, 1, 5000) &&
-                         g_inLastPt == (XIoPoint*)diPt && g_inLastValue == 1);
-    CHECK("DI read=1", XIoChannelGroup_readDigitalInput(group, (XIoPoint*)diPt, &b) && b);
+                         g_inLastRole == XIoPoint_role(diPt) && g_inLastValue == 1);
+    CHECK("DI read=1", XIoChannelGroup_readDigitalInput(group, XIoPoint_role(diPt), &b) && b);
 
     /* ---- ④ AI：server HR0=0x0777 → requestRefresh 回填推送 ---- */
     XModbusServer_setData2((XModbusServer*)slave, XModbusHoldingRegisters, 0, 0x0777);
     XModbusHub_requestRefresh(hub, XModbusHoldingRegisters, 0, 1);
-    g_hitTargetPt = (XIoPoint*)aiPt;
+    g_hitTargetRole = XIoPoint_role(aiPt);
     g_hitTargetVal = 0x0777;
     g_hitFlag = 0;
     for (i = 0; i < 500 && !g_hitFlag; ++i)
         XCoreApplication_processEventsWithMaxTime(0, 10);
     CHECK("AI 刷新推送 0x0777", g_hitFlag);
     CHECK("AI read=0x0777",
-          XIoChannelGroup_readAnalogInput(group, (XIoPoint*)aiPt, &eng) && eng == 0x0777);
-    g_hitTargetPt = NULL;
+          XIoChannelGroup_readAnalogInput(group, XIoPoint_role(aiPt), &eng) && eng == 0x0777);
+    g_hitTargetRole = 0xFFFFu;
 
     /* ---- ⑤ DO：write → writeDone(doPt,true) + 从站侧读回 ---- */
-    CHECK("DO write 受理", XIoChannelGroup_writeDigitalOutput(group, (XIoPoint*)doPt, true));
-    g_doneLastPt = NULL;
-    for (i = 0; i < 500 && g_doneLastPt != (XIoPoint*)doPt; ++i)
+    CHECK("DO write 受理", XIoChannelGroup_writeDigitalOutput(group, XIoPoint_role(doPt), true));
+    g_doneLastRole = 0xFFFFu;
+    for (i = 0; i < 500 && g_doneLastRole != XIoPoint_role(doPt); ++i)
         XCoreApplication_processEventsWithMaxTime(0, 10);
-    CHECK("DO writeDone(doPt,true)", g_doneLastPt == (XIoPoint*)doPt && g_doneCount >= 1);
+    CHECK("DO writeDone(doPt,true)", g_doneLastRole == XIoPoint_role(doPt) && g_doneCount >= 1);
     CHECK("从站侧 Coil0=1",
           XModbusServer_data2((XModbusServer*)slave, XModbusCoils, 0, &v) && v == 1);
 
     /* ---- ⑥ AO：write(1000) → writeDone(aoPt,true) + 从站侧读回 ---- */
-    CHECK("AO write 受理", XIoChannelGroup_writeAnalogOutput(group, (XIoPoint*)aoPt, 1000));
-    g_doneLastPt = NULL;
-    for (i = 0; i < 500 && g_doneLastPt != (XIoPoint*)aoPt; ++i)
+    CHECK("AO write 受理", XIoChannelGroup_writeAnalogOutput(group, XIoPoint_role(aoPt), 1000));
+    g_doneLastRole = 0xFFFFu;
+    for (i = 0; i < 500 && g_doneLastRole != XIoPoint_role(aoPt); ++i)
         XCoreApplication_processEventsWithMaxTime(0, 10);
-    CHECK("AO writeDone(aoPt,true)", g_doneLastPt == (XIoPoint*)aoPt && g_doneCount >= 2);
+    CHECK("AO writeDone(aoPt,true)", g_doneLastRole == XIoPoint_role(aoPt) && g_doneCount >= 2);
     CHECK("从站侧 HR5=1000",
           XModbusServer_data2((XModbusServer*)slave, XModbusHoldingRegisters, 5, &v) && v == 1000);
 
@@ -277,23 +298,24 @@ static void test_channel_group_hub(void)
        heap-use-after-free（XIoChannelGroup.c:29 groupOwns 读已释放内存）。
        「摘除后组不再承认该点」这条语义必须用**仍然存活的指针**验证，
        故另建一个非托管点做身份断言。 */
-    CHECK("remove(doPt)", XIoChannelGroup_remove(group, (XIoPoint*)doPt));
+    CHECK("remove(doPt)", XIoChannelGroup_removeRole(group, XIoPoint_role(doPt)));
     doPt = NULL;                       /* autoDelete：点已随摘除销毁，不可再引用 */
     CHECK("摘除后记录数=3", XIoChannelGroup_recordCount(group) == 3);
-    keepPt = XModbusPoint_createDigitalOutput(hub, 1, "DO1");
+    keepPt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (keepPt) { XIoPoint_setRole(keepPt, 4); XIoPoint_setType(keepPt, XIoPoint_DigitalOutput); XIoPoint_setTag(keepPt, "DO1"); }
     CHECK("建非托管点", keepPt != NULL);
     if (keepPt) {
-        CHECK("加入组(非托管)", XIoChannelGroup_addPoint(group, (XIoPoint*)keepPt, false));
+        CHECK("加入组(非托管)", XIoChannelGroup_addPoint(group, keepPt, false));
         /* takePoint：摘出但**不销毁**，点仍存活 → 下面的身份断言安全。 */
-        CHECK("takePoint 取出", XIoChannelGroup_takePoint(group, (XIoPoint*)keepPt) == (XIoPoint*)keepPt);
-        CHECK("取出后 contains=false", !XIoChannelGroup_contains(group, (XIoPoint*)keepPt));
-        CHECK("取出后 read 拒绝", !XIoChannelGroup_readDigitalInput(group, (XIoPoint*)keepPt, &b));
+        CHECK("takePoint 取出", XIoChannelGroup_takePoint(group, keepPt) == keepPt);
+        CHECK("取出后 contains=false", !XIoChannelGroup_contains(group, keepPt));
+        CHECK("取出后 read 拒绝", !XIoChannelGroup_readDigitalInput(group, XIoPoint_role(keepPt), &b));
         XClassDelete((XClass*)keepPt);  /* 非托管：自己释放 */
         keepPt = NULL;
     }
 
 cleanup:
-    g_hitTargetPt = NULL;
+    g_hitTargetRole = 0xFFFFu;
     if (group) XClassDelete((XClass*)group);       /* autoDelete 点随组释放 */
     if (hub) XModbusHub_stopPolling(hub);
     if (hub) XModbusHub_deleteLater((XModbusHub*)hub);

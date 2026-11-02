@@ -1,12 +1,12 @@
 ﻿/**
  * @file       XIoChannelGroup.c
- * @brief      工业通道组实现：纯「点管理 + 信号分发」。
- * @details    [2026-11-01 轻量化] 全组仅本对象是 XObject。分发两路：
- *               - 推（点子类）：推送型数据源（如 Hub 点自订阅缓存信号）
- *                 数据到达时自行调 xIoPointFeedValue（组内发射 inputChanged）；
- *               - 写落定（点子类）：经 xIoPointWriteDone 转发组 writeDone。
- *             寻址一律 XIoPoint*：登记校验 point->m_group==self（O(1)），
- *             无 id 遍历。所有权：点由调用方创建/释放；组只维护注册表。
+ * @brief      工业通道组实现（role 作下标的 O(1) 点表 + 链路挂接）。
+ * @details    [2026-11-02 XChannel 重写] 本文件内**没有任何按点查找的循环**：
+ *             点的身份是 m_role，存放与读取都是 m_points[role] 一次数组取址。
+ *             唯一的遍历在析构里（生命周期终点的一次性开销，不在数据路径上）。
+ *
+ *             数据流：链路子类数据到达 → feedRole(role, raw) → 标度换算
+ *             → 存值 → 发射 inputChanged(role, eng)。写落定反向同理。
  */
 #include "XIoChannelGroup.h"
 
@@ -14,75 +14,96 @@
 
 #include "XMemory.h"
 #include "XEvent.h"
-#include "XVector.h"
+#include <string.h>
 
-/* ==================== 内部实现（static，仅供本文件使用） ==================== */
+/* ==================== 内部实现 ==================== */
 
 /**
- * @brief 校验点已登记本组（指针即身份：m_group 反查 O(1)）。
+ * @brief 按 role 取点（内部；不做类型校验）。
  * @param self 目标通道组；可为 NULL。
- * @param point 待查点；可为 NULL。
- * @return 已登记 true。
+ * @param role 语义槽号。
+ * @return 点指针；越界或无点返回 NULL。
  */
-static bool groupOwns(const XIoChannelGroup* self, const XIoPoint* point)
+static XIoPoint* groupPoint(const XIoChannelGroup* self, uint16_t role)
 {
-    return (self && point && point->m_group == self) ? true : false;
+    if (!self || role >= (uint16_t)XIOCHANNELGROUP_ROLE_CAP) return NULL;
+    return self->m_points[role];
 }
 
-/* ==================== 虚函数实现（static，仅供 class_init 注册） ==================== */
-
 /**
- * @brief 组析构：清注册表。autoDelete 点一并 XClassDelete 释放；其余点为
- *        调用方所有，仅摘除登记。
- * @param self 目标通道组；可为 NULL。
+ * @brief 析构：按 autoDelete 释放全部点，然后走父类链。
+ * @note 这是全文件唯一的遍历，且只在对象生命周期终点发生一次。
  */
 static void VXIoChannelGroup_deinit(XIoChannelGroup* self)
 {
-    size_t i;
+    int i;
     if (!self) return;
-    if (self->m_records) {
-        for (i = 0; i < XVector_size_base(self->m_records); ++i) {
-            XIoPoint* p = *(XIoPoint**)XVector_at_base(self->m_records, (int64_t)i);
-            if (!p) continue;
-            p->m_group = NULL;
-            if (p->m_flags.bits.m_autoDelete) XClassDelete((XClass*)p);
+    for (i = 0; i < (int)XIOCHANNELGROUP_ROLE_CAP; ++i) {
+        XIoPoint* pt = self->m_points[i];
+        bool autoDel;
+        if (!pt) continue;
+        /* 先读后清：clear 之后就读不到了（旧实现曾有这个顺序坑）。 */
+        autoDel = (pt->m_flags.bits.m_autoDelete != 0);
+        self->m_points[i] = NULL;
+        pt->m_flags.bits.m_autoDelete = 0;
+        if (autoDel) {
+            XClassDelete((XClass*)pt);
         }
-        XClassDelete((XClass*)self->m_records);
-        self->m_records = NULL;
     }
+    self->m_link = NULL;
+    self->m_pointCount = 0;
     XClass_Deinit_Parent(XObject, (XObject*)self);
 }
 
-/* ==================== 虚函数表初始化（单例） ==================== */
+/* ==================== 类初始化 ==================== */
 
 XVtable* XIoChannelGroup_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XIoChannelGroup)
     XVTABLE_INHERIT_XCLASS(XObject);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIoChannelGroup_deinit);
+    XCLASS_SHOW_SIZE_DEFAULT(XIoChannelGroup);
     return XVTABLE_DEFAULT;
 }
-
-/* ==================== 构造函数 ==================== */
 
 void XIoChannelGroup_init(XIoChannelGroup* obj)
 {
     if (!obj) return;
-    memset(obj, 0, sizeof(XIoChannelGroup));
     XObject_init(&obj->m_class);
-    XClassSetVtable(obj, XIoChannelGroup);
-    obj->m_records = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                       sizeof(XIoPoint*), false);
+    XClassGetVtable(obj) = XIoChannelGroup_class_init();
+    memset(obj->m_points, 0, sizeof(obj->m_points));
+    obj->m_link = NULL;
+    obj->m_pointCount = 0;
 }
 
 XIoChannelGroup* XIoChannelGroup_create(void)
 {
-    XIoChannelGroup* obj =
-        (XIoChannelGroup*)XMalloc_System(sizeof(XIoChannelGroup));
+    XIoChannelGroup* obj = (XIoChannelGroup*)XMemory_malloc(
+        sizeof(XIoChannelGroup), XCLASS_DEFAULT_MEMORY_TYPE);
     if (!obj) return NULL;
     XIoChannelGroup_init(obj);
+    Set_Class_Memory(obj, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(obj, true);
     return obj;
+}
+
+/* ==================== 链路挂接 ==================== */
+
+bool XIoChannelGroup_setLink(XIoChannelGroup* self, XIoLink* link)
+{
+    if (!self) return false;
+    if (self->m_link && self->m_link != link) {
+        /* 解绑旧链路：只清反向指针，不调 stop（生命周期归调用方）。 */
+        XIoLink_setGroup(self->m_link, NULL);
+    }
+    self->m_link = link;
+    if (link) XIoLink_setGroup(link, self);
+    return true;
+}
+
+XIoLink* XIoChannelGroup_link(const XIoChannelGroup* self)
+{
+    return self ? self->m_link : NULL;
 }
 
 /* ==================== 点管理 ==================== */
@@ -90,118 +111,167 @@ XIoChannelGroup* XIoChannelGroup_create(void)
 bool XIoChannelGroup_addPoint(XIoChannelGroup* self, XIoPoint* point,
                               bool autoDelete)
 {
-    if (!self || !self->m_records || !point) return false;
-    if (point->m_group != NULL) {
-        /* 已登记于某组：一通道一会一组，防串信号。 */
-        return false;
-    }
-    if (!XVector_push_back_1_base(self->m_records, &point)) return false;
-    point->m_group = self;
+    uint16_t role;
+    if (!self || !point) return false;
+    role = point->m_role;
+    if (role >= (uint16_t)XIOCHANNELGROUP_ROLE_CAP) return false;
+    if (self->m_points[role]) return false;   /* role 位已占用：装配错误必须暴露。 */
+    self->m_points[role] = point;
     point->m_flags.bits.m_autoDelete = autoDelete ? 1u : 0u;
+    ++self->m_pointCount;
     return true;
 }
 
 XIoPoint* XIoChannelGroup_takePoint(XIoChannelGroup* self, XIoPoint* point)
 {
-    size_t i;
-    if (!self || !self->m_records || !point || point->m_group != self) return NULL;
-    for (i = 0; i < XVector_size_base(self->m_records); ++i) {
-        if (*(XIoPoint**)XVector_at_base(self->m_records, (int64_t)i) == point) {
-            XVector_remove_base(self->m_records, (int64_t)i, 1);
-            point->m_group = NULL;
-            return point;
-        }
-    }
-    return NULL;
+    uint16_t role;
+    if (!self || !point) return NULL;
+    role = point->m_role;
+    if (role >= (uint16_t)XIOCHANNELGROUP_ROLE_CAP) return NULL;
+    if (self->m_points[role] != point) return NULL;
+    self->m_points[role] = NULL;
+    point->m_flags.bits.m_autoDelete = 0;     /* 所有权移交调用方。 */
+    --self->m_pointCount;
+    return point;
 }
 
-bool XIoChannelGroup_remove(XIoChannelGroup* self, XIoPoint* point)
+bool XIoChannelGroup_removeRole(XIoChannelGroup* self, uint16_t role)
 {
-    XIoPoint* taken = XIoChannelGroup_takePoint(self, point);
-    if (!taken) return false;
-    if (taken->m_flags.bits.m_autoDelete) {
-        /* 自动内存管理：点交由组释放，摘除即销毁。
-         * [所有权陷阱] 点已被销毁，**调用方手里那份指针随即悬垂**——本函数
-         * 按值收参，无法置空调用方的变量（C 里要影响调用方只能传二级指针）。
-         * 调用方必须自己把指针置 NULL，之后不得再解引用。 */
-        XClassDelete((XClass*)taken);
+    XIoPoint* pt;
+    bool autoDel;
+    if (!self || role >= (uint16_t)XIOCHANNELGROUP_ROLE_CAP) return false;
+    pt = self->m_points[role];
+    if (!pt) return false;
+    autoDel = (pt->m_flags.bits.m_autoDelete != 0);
+    self->m_points[role] = NULL;
+    --self->m_pointCount;
+    if (autoDel) {
+        pt->m_flags.bits.m_autoDelete = 0;
+        XClassDelete((XClass*)pt);
     }
     return true;
 }
 
 int XIoChannelGroup_recordCount(const XIoChannelGroup* self)
 {
-    if (!self || !self->m_records) return 0;
-    return (int)XVector_size_base(self->m_records);
+    return self ? self->m_pointCount : 0;
 }
 
-const XIoPoint* XIoChannelGroup_pointAt(const XIoChannelGroup* self, int index)
+XIoPoint* XIoChannelGroup_pointAt(const XIoChannelGroup* self, uint16_t role)
 {
-    if (!self || !self->m_records || index < 0 ||
-        (size_t)index >= XVector_size_base(self->m_records)) return NULL;
-    return *(XIoPoint**)XVector_at_base(self->m_records, (int64_t)index);
+    return groupPoint(self, role);
 }
 
 bool XIoChannelGroup_contains(const XIoChannelGroup* self, const XIoPoint* point)
 {
-    return groupOwns(self, point);
+    uint16_t role;
+    if (!self || !point) return false;
+    role = point->m_role;
+    if (role >= (uint16_t)XIOCHANNELGROUP_ROLE_CAP) return false;
+    return self->m_points[role] == point;
 }
 
 /* ==================== 读写 ==================== */
 
-bool XIoChannelGroup_readDigitalInput(XIoChannelGroup* self, XIoPoint* point, bool* active)
+bool XIoChannelGroup_readDigitalInput(XIoChannelGroup* self, uint16_t role, bool* active)
 {
-    if (!groupOwns(self, point) ||
-        point->m_type != (uint16_t)XIoPoint_DigitalInput) return false;
-    if (!point->m_flags.bits.m_valid && !point->m_flags.bits.m_hasValue) return false;
-    if (active) *active = (point->m_flags.bits.m_valueB != 0);
+    const XIoPoint* pt;
+    if (!self || !active) return false;
+    pt = groupPoint(self, role);
+    if (!pt || pt->m_type != (uint16_t)XIoPoint_DigitalInput) return false;
+    if (!pt->m_flags.bits.m_valid && !pt->m_flags.bits.m_hasValue) return false;
+    *active = (pt->m_flags.bits.m_valueB != 0);
     return true;
 }
 
-bool XIoChannelGroup_writeDigitalOutput(XIoChannelGroup* self, XIoPoint* point, bool active)
+bool XIoChannelGroup_writeDigitalOutput(XIoChannelGroup* self, uint16_t role, bool active)
 {
-    if (!groupOwns(self, point) ||
-        point->m_type != (uint16_t)XIoPoint_DigitalOutput) return false;
-    /* 经点虚槽写受理；落定由点子类经 xIoPointWriteDone 转发组 writeDone。 */
-    return XIoPoint_writeRaw_base(point, active ? 1 : 0);
+    XIoPoint* pt;
+    if (!self) return false;
+    pt = groupPoint(self, role);
+    if (!pt || pt->m_type != (uint16_t)XIoPoint_DigitalOutput) return false;
+    if (!self->m_link) return false;
+    return XIoLink_writeRole_base(self->m_link, role, active ? 1 : 0);
 }
 
-bool XIoChannelGroup_readAnalogInput(XIoChannelGroup* self, XIoPoint* point, int32_t* value)
+bool XIoChannelGroup_readAnalogInput(XIoChannelGroup* self, uint16_t role, int32_t* value)
 {
-    if (!groupOwns(self, point) ||
-        point->m_type != (uint16_t)XIoPoint_AnalogInput) return false;
-    if (!point->m_flags.bits.m_valid && !point->m_flags.bits.m_hasValue) return false;
-    if (value) *value = point->m_value;
+    const XIoPoint* pt;
+    if (!self || !value) return false;
+    pt = groupPoint(self, role);
+    if (!pt || pt->m_type != (uint16_t)XIoPoint_AnalogInput) return false;
+    if (!pt->m_flags.bits.m_valid && !pt->m_flags.bits.m_hasValue) return false;
+    *value = pt->m_value;
     return true;
 }
 
-bool XIoChannelGroup_writeAnalogOutput(XIoChannelGroup* self, XIoPoint* point, int32_t value)
+bool XIoChannelGroup_writeAnalogOutput(XIoChannelGroup* self, uint16_t role, int32_t value)
 {
-    if (!groupOwns(self, point) ||
-        point->m_type != (uint16_t)XIoPoint_AnalogOutput) return false;
-    /* 点值口径=工程值；标度换算由点子类（XIoAnalogPoint 派生）在 WriteRaw
-     * 内完成。落定由点子类经 xIoPointWriteDone 转发组 writeDone。 */
-    return XIoPoint_writeRaw_base(point, value);
+    XIoPoint* pt;
+    uint16_t raw;
+    if (!self) return false;
+    pt = groupPoint(self, role);
+    if (!pt || pt->m_type != (uint16_t)XIoPoint_AnalogOutput) return false;
+    if (!self->m_link) return false;
+    raw = XIoPoint_toRaw(pt, value);
+    return XIoLink_writeRole_base(self->m_link, role, (int32_t)raw);
 }
 
-bool XIoChannelGroup_isValid(const XIoChannelGroup* self, const XIoPoint* point)
+bool XIoChannelGroup_isValid(const XIoChannelGroup* self, uint16_t role)
 {
-    return (groupOwns(self, point) && point->m_flags.bits.m_valid) ? true : false;
+    const XIoPoint* pt = groupPoint(self, role);
+    return (pt && pt->m_flags.bits.m_valid) ? true : false;
+}
+
+/* ==================== 链路 → 组的数据入口 ==================== */
+
+bool XIoChannelGroup_feedRole(XIoChannelGroup* self, uint16_t role, int32_t raw)
+{
+    XIoPoint* pt;
+    int32_t eng;
+    if (!self) return false;
+    pt = groupPoint(self, role);
+    if (!pt) return false;
+    eng = XIoPoint_toEngineering(pt, raw);
+    pt->m_flags.bits.m_valid = 1;
+    if (pt->m_flags.bits.m_hasValue && pt->m_value == eng) {
+        return false;                    /* 值未变：静默（不发射）。 */
+    }
+    pt->m_value = eng;
+    pt->m_flags.bits.m_hasValue = 1;
+    if (pt->m_type == (uint16_t)XIoPoint_DigitalInput ||
+        pt->m_type == (uint16_t)XIoPoint_DigitalOutput) {
+        pt->m_flags.bits.m_valueB = (eng != 0) ? 1u : 0u;
+    }
+    XIoChannelGroup_inputChanged_signal(self, role, eng);
+    return true;
+}
+
+bool XIoChannelGroup_completeWrite(XIoChannelGroup* self, uint16_t role, bool ok)
+{
+    XIoPoint* pt;
+    if (!self) return false;
+    pt = groupPoint(self, role);
+    if (!pt) return false;
+    if (ok) pt->m_flags.bits.m_valid = 1;
+    XIoChannelGroup_writeDone_signal(self, role, ok);
+    return true;
 }
 
 /* ==================== 信号 ==================== */
 
-void* XIoChannelGroup_inputChanged_signal(XIoChannelGroup* self, XIoPoint* point, int32_t value)
+void* XIoChannelGroup_inputChanged_signal(XIoChannelGroup* self, uint16_t role,
+                                          int32_t value)
 {
     XEmitSignal(self, XIoChannelGroup_inputChanged_signal,
-        XVarList_Create(XVar(XIoPoint*, point), XVar(int, value)),
+        XVarList_Create(XVar(uint16_t, role), XVar(int32_t, value)),
         NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-void* XIoChannelGroup_writeDone_signal(XIoChannelGroup* self, XIoPoint* point, bool ok)
+void* XIoChannelGroup_writeDone_signal(XIoChannelGroup* self, uint16_t role, bool ok)
 {
     XEmitSignal(self, XIoChannelGroup_writeDone_signal,
-        XVarList_Create(XVar(XIoPoint*, point), XVar(bool, ok)),
+        XVarList_Create(XVar(uint16_t, role), XVar(bool, ok)),
         NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 

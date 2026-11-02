@@ -43,26 +43,13 @@ static bool xvfdRoleValid(int role)
 }
 
 /**
- * @brief 在语义槽表中按点指针反查槽（数据进路径）。
- * @param dev 设备实例；不能为 NULL。
- * @param point 触发信号的点；不能为 NULL。
- * @return 命中槽指针；未命中返回 NULL。
- */
-static XVfdSlot* xvfdSlotByPoint(XVfdDevice* dev, const XIoPoint* point)
-{
-    int i;
-    if (!dev || !point) return NULL;
-    for (i = 0; i < XVFD_ROLE_CAP; ++i) {
-        if (dev->m_slots[i].m_point == point) return &dev->m_slots[i];
-    }
-    return NULL;
-}
-
-/**
- * @brief 取语义槽（角色 → 槽）。
+ * @brief 取语义槽（角色 → 槽；O(1) 数组下标）。
  * @param dev 设备实例；不能为 NULL。
  * @param role 角色。
  * @return 槽指针；未绑定返回 NULL。
+ * @note [2026-11-02 零遍历] 旧实现另有 xvfdSlotByPoint 按点指针线性扫 68 槽
+ *       （每次数据到达都扫一遍）。现在组信号直接携带 role，本函数一步到位，
+ *       那个扫描函数已删除。
  */
 static XVfdSlot* xvfdSlot(XVfdDevice* dev, int role)
 {
@@ -72,50 +59,50 @@ static XVfdSlot* xvfdSlot(XVfdDevice* dev, int role)
 }
 
 /**
- * @brief 参数点反查登记项。
- * @param dev 设备实例；不能为 NULL。
- * @param paramId 参数下标。
- * @return 登记项指针；未绑定返回 NULL。
- */
-static XVfdParamBinding* xvfdParamBinding(XVfdDevice* dev, uint16_t paramId)
-{
-    int i;
-    if (!dev) return NULL;
-    for (i = 0; i < dev->m_paramBindCount; ++i) {
-        if (dev->m_paramBinds[i].m_id == paramId) return &dev->m_paramBinds[i];
-    }
-    return NULL;
-}
-
-/**
  * @brief 写一个点（按点类型选组写 API）。
  * @param dev 设备实例；不能为 NULL。
  * @param point 目标点；不能为 NULL。
  * @param value 点单位值。
  * @return 通道受理返回 true。
+ * @note [2026-11-02] 组写入口已改 role 口径：点指针转 role 后下发。
  */
 static bool xvfdWritePoint(XVfdDevice* dev, XIoPoint* point, int32_t value)
 {
+    uint16_t role;
     if (!dev || !dev->m_group || !point) return false;
+    role = XIoPoint_role(point);
     if (XIoPoint_type(point) == XIoPoint_AnalogOutput) {
-        return XIoChannelGroup_writeAnalogOutput(dev->m_group, point, value);
+        return XIoChannelGroup_writeAnalogOutput(dev->m_group, role, value);
     }
     if (XIoPoint_type(point) == XIoPoint_DigitalOutput) {
-        return XIoChannelGroup_writeDigitalOutput(dev->m_group, point, value != 0);
+        return XIoChannelGroup_writeDigitalOutput(dev->m_group, role, value != 0);
     }
     return false;
 }
 
 /**
- * @brief 读一个点（经 ReadRaw 虚槽，不发起传输）。
+ * @brief 读一个点（读本地缓存，不发起传输）。
  * @param point 目标点；不能为 NULL。
  * @param outValue 输出点单位值；不能为 NULL。
  * @return 取到有效值返回 true。
+ * @note [2026-11-02] 点不再有 ReadRaw 虚槽，读的是组喂进来的缓存值。
  */
-static bool xvfdReadPoint(XIoPoint* point, int32_t* outValue)
+static bool xvfdReadPoint(XIoChannelGroup* group, XIoPoint* point, int32_t* outValue)
 {
-    if (!point || !outValue) return false;
-    return XIoPoint_readRaw_base(point, outValue);
+    /* 优先读组内缓存（链路推过来的已标度工程值）。
+     * 缓存无值时（首拍前/刚绑定）回落到链路当前值，与旧实现
+     * 「直接读 Hub 缓存」一致：部分业务判定（如命令源未配置时拒绝 start）
+     * 依赖「首拍已回、值为默认 0」而非「完全无数据」。 */
+    if (XIoPoint_value(point, outValue)) return true;
+    if (!point || !group) return false;
+    {
+        XIoLink* link = XIoChannelGroup_link(group);
+        int32_t raw = 0;
+        if (!link) return false;
+        if (!XIoLink_readRole_base(link, XIoPoint_role(point), &raw)) return false;
+        *outValue = XIoPoint_toEngineering(point, raw);
+        return true;
+    }
 }
 
 /**
@@ -137,31 +124,37 @@ static void xvfdStatusTimerStart(XVfdDevice* dev)
 /* ==================== 数据进：组信号槽 ==================== */
 
 /**
- * @brief 组 inputChanged 槽：命中语义槽 → DecodePoint 虚槽分派。
+ * @brief 组 inputChanged 槽：role 直达语义槽 → DecodePoint 虚槽分派。
  * @param receiver 连接的接收者（即本设备）；**不是**组，禁止按组强转。
- * @param args 信号参数（XIoPoint* point, int32_t value）。
+ * @param args 信号参数（uint16_t role, int32_t value）。
  * @return 无。
+ * @note [2026-11-02 零遍历] 信号带 role，直接 m_slots[role] 取址；
+ *       旧实现带点指针再线性扫 68 槽匹配，已删除。
  */
 static void xvfdOnInputChanged(XObject* receiver, XVarList* args)
 {
     XVfdDevice* dev = (XVfdDevice*)receiver;
     XVfdSlot* slot;
-    XIoPoint* point;
+    uint16_t role;
     int32_t value;
     if (!dev || !args) return;
-    XVarList_args_2(args, XIoPoint*, pointArg, int32_t, valueArg);
-    point = (XIoPoint*)pointArg;
+    XVarList_args_2(args, uint16_t, roleArg, int32_t, valueArg);
+    role = roleArg;
     value = valueArg;
-    slot = xvfdSlotByPoint(dev, point);
-    if (!slot || !slot->m_spec) return;
+    if (!xvfdRoleValid((int)role)) return;
+    slot = &dev->m_slots[role];
+    if (!slot->m_point) return;
     XClassGetVirtualFunc(dev, EXVfdDevice_DecodePoint,
         void (*)(XVfdDevice*, const XVfdPointSpec*, int32_t))(dev, slot->m_spec, value);
 }
 
+/* 前向声明：参数写落定信号定义在本文件后段（信号区）。 */
+void* XVfdDevice_paramWriteDone_signal(XVfdDevice* dev, uint16_t paramId, bool ok);
+
 /**
  * @brief 组 writeDone 槽：动作在途时交 ActionWriteDone 虚槽分派。
  * @param receiver 连接的接收者（即本设备）；**不是**组。
- * @param args 信号参数（XIoPoint* point, bool ok）。
+ * @param args 信号参数（uint16_t role, bool ok）。
  * @return 无。
  * @note 无动作在途的 writeDone（例如业务层直接写点）静默丢弃。
  */
@@ -169,11 +162,23 @@ static void xvfdOnWriteDone(XObject* receiver, XVarList* args)
 {
     XVfdDevice* dev = (XVfdDevice*)receiver;
     XIoPoint* point;
+    uint16_t role;
     bool ok;
     if (!dev || !args || !dev->m_busy) return;
-    XVarList_args_2(args, XIoPoint*, pointArg, bool, okArg);
-    point = (XIoPoint*)pointArg;
+    XVarList_args_2(args, uint16_t, roleArg, bool, okArg);
+    role = roleArg;
     ok = okArg;
+    /* [2026-11-02 参数点收口] 参数点的 role 是 128+paramId，不属于语义角色域
+     * （<XVfdRole_Count）。若在在途动作是参数写，直接走参数写落定收口，不经语义槽。 */
+    if (!xvfdRoleValid((int)role)) {
+        if (dev->m_op == XVfdOperation_WriteParam) {
+            XVfdDevice_finishAction(dev, ok);
+            XVfdDevice_paramWriteDone_signal(dev, dev->m_opParamId, ok);
+        }
+        return;
+    }
+    point = dev->m_slots[role].m_point;
+    if (!point) return;
     XClassGetVirtualFunc(dev, EXVfdDevice_ActionWriteDone,
         void (*)(XVfdDevice*, XIoPoint*, bool))(dev, point, ok);
 }
@@ -265,6 +270,25 @@ static bool VXVfdDevice_ReadFaultHistory(XVfdDevice* dev) { return xvfdNotSuppor
 
 /* ==================== 虚函数表 ==================== */
 
+/**
+ * @brief 析构：释放参数点表（唯一堆成员）后走父类链。
+ * @param dev 设备实例；可为 NULL。
+ * @return 无。
+ * @note [2026-11-02] 参数点表由 setParamTable 按 paramCount 分配，
+ *       必须在这里回收，否则每次换参数表都泄漏一块。
+ */
+static void VXVfdDevice_deinit(XVfdDevice* dev)
+{
+    if (!dev) return;
+    if (dev->m_paramPoints) {
+        XMemory_free(dev->m_paramPoints, XCLASS_DEFAULT_MEMORY_TYPE);
+        dev->m_paramPoints = NULL;
+    }
+    dev->m_paramCount = 0;
+    dev->m_params = NULL;
+    XClass_Deinit_Parent(XObject, (XObject*)dev);
+}
+
 XVtable* XVfdDevice_class_init(void)
 {
     void* table[] = {
@@ -282,6 +306,7 @@ XVtable* XVfdDevice_class_init(void)
     };
     XVTABLE_INIT_DEFAULT(XVfdDevice)
     XVTABLE_INHERIT_XCLASS(XObject);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXVfdDevice_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXVfdDevice_timerEvent);
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XCLASS_SET_CLASS_NAME_DEFAULT("XVfdDevice");
@@ -360,8 +385,10 @@ void XVfdDevice_detach(XVfdDevice* dev)
     }
     XVfdDevice_stopActionTimer(dev);
     memset(dev->m_slots, 0, sizeof(dev->m_slots));
-    memset(dev->m_paramBinds, 0, sizeof(dev->m_paramBinds));
-    dev->m_paramBindCount = 0;
+    if (dev->m_paramPoints) {
+        memset(dev->m_paramPoints, 0, sizeof(XIoPoint*) * (size_t)dev->m_paramCount);
+    }
+    dev->m_boundCount = 0;
     dev->m_busy = false;
     dev->m_op = XVfdOperation_None;
 }
@@ -378,6 +405,40 @@ XIoChannelGroup* XVfdDevice_channelGroup(const XVfdDevice* dev)
 
 bool XVfdDevice_bindPoint(XVfdDevice* dev, const XVfdPointSpec* spec, XIoPoint* point)
 {
+    /* [2026-11-02] 保留旧签名：内部委托给 bindSpec（规格字段内联进槽）。
+     * 新代码应直接用 XVfdDevice_bindSpec / XVfdDevice_bindRole。 */
+    return XVfdDevice_bindSpec(dev, spec, point);
+}
+
+bool XVfdDevice_bindRole(XVfdDevice* dev, uint16_t role, XIoPoint* point)
+{
+    int32_t seed = 0;
+    if (!dev || !point) return false;
+    if (!dev->m_group) {
+        dev->m_lastError = XVfdError_NotAttached;
+        return false;
+    }
+    if (!xvfdRoleValid((int)role)) return false;
+    if (!XIoChannelGroup_contains(dev->m_group, point)) {
+        dev->m_lastError = XVfdError_NotAttached;
+        return false;
+    }
+    if (!dev->m_slots[role].m_point) ++dev->m_boundCount;  /* 计数器维护。 */
+    dev->m_slots[role].m_point = point;
+    /* [2026-11-02 零遍历] 高频字段内联进槽：解码路径不再经 spec 指针取值。 */
+    dev->m_slots[role].m_div = 0;
+    dev->m_slots[role].m_signed = XIoPoint_isSigned(point) ? 1u : 0u;
+    /* 播种：点若已有数据（数据源已首拍）立即入快照，避免"绑定后等下一拍"。 */
+    if (xvfdReadPoint(dev->m_group, point, &seed)) {
+        XClassGetVirtualFunc(dev, EXVfdDevice_DecodePoint,
+            void (*)(XVfdDevice*, const XVfdPointSpec*, int32_t))(
+                dev, dev->m_slots[role].m_spec, seed);
+    }
+    return true;
+}
+
+bool XVfdDevice_bindSpec(XVfdDevice* dev, const XVfdPointSpec* spec, XIoPoint* point)
+{
     int32_t seed = 0;
     if (!dev || !spec || !point) return false;
     if (!dev->m_group) {
@@ -389,15 +450,24 @@ bool XVfdDevice_bindPoint(XVfdDevice* dev, const XVfdPointSpec* spec, XIoPoint* 
         dev->m_lastError = XVfdError_NotAttached;
         return false;
     }
+    if (!dev->m_slots[spec->m_role].m_point) ++dev->m_boundCount;
     dev->m_slots[spec->m_role].m_spec = spec;
     dev->m_slots[spec->m_role].m_point = point;
+    /* 规格高频字段内联：解码路径零间接。 */
+    dev->m_slots[spec->m_role].m_div = spec->m_div;
+    dev->m_slots[spec->m_role].m_signed = spec->m_signed;
     dev->m_caps |= spec->m_caps;
-    /* 播种：点若已有数据（数据源已首拍）立即入快照，避免"绑定后等下一拍"。 */
-    if (xvfdReadPoint(point, &seed)) {
+    if (xvfdReadPoint(dev->m_group, point, &seed)) {
         XClassGetVirtualFunc(dev, EXVfdDevice_DecodePoint,
             void (*)(XVfdDevice*, const XVfdPointSpec*, int32_t))(dev, spec, seed);
     }
     return true;
+}
+
+const XVfdPointSpec* XVfdDevice_spec(const XVfdDevice* dev, XVfdPointRole role)
+{
+    if (!dev || !xvfdRoleValid((int)role)) return NULL;
+    return dev->m_slots[role].m_spec;
 }
 
 bool XVfdDevice_unbindPoint(XVfdDevice* dev, XVfdPointRole role)
@@ -406,6 +476,9 @@ bool XVfdDevice_unbindPoint(XVfdDevice* dev, XVfdPointRole role)
     if (!dev->m_slots[role].m_point) return false;
     dev->m_slots[role].m_spec = NULL;
     dev->m_slots[role].m_point = NULL;
+    dev->m_slots[role].m_div = 0;
+    dev->m_slots[role].m_signed = 0;
+    --dev->m_boundCount;
     return true;
 }
 
@@ -423,42 +496,43 @@ XIoPoint* XVfdDevice_point(const XVfdDevice* dev, XVfdPointRole role)
 
 int XVfdDevice_boundCount(const XVfdDevice* dev)
 {
-    int i;
-    int n = 0;
-    if (!dev) return 0;
-    for (i = 0; i < XVFD_ROLE_CAP; ++i) {
-        if (dev->m_slots[i].m_point) ++n;
-    }
-    return n;
+    /* [2026-11-02 零遍历] 改读 bind/unbind 维护的计数器，不再扫 96 槽。 */
+    return dev ? dev->m_boundCount : 0;
 }
 
 bool XVfdDevice_bindParamPoint(XVfdDevice* dev, uint16_t paramId, XIoPoint* point)
 {
-    XVfdParamBinding* b;
     if (!dev || !point) return false;
     if (!dev->m_group || !XIoChannelGroup_contains(dev->m_group, point)) {
         dev->m_lastError = XVfdError_NotAttached;
         return false;
     }
-    b = xvfdParamBinding(dev, paramId);
-    if (b) {
-        b->m_point = point;
-        return true;
-    }
-    if (dev->m_paramBindCount >= XVFD_PARAM_BIND_CAP) {
+    /* [2026-11-02 零遍历] paramId 是参数表连续下标，直接作数组下标；
+     * 旧实现是「扫 m_paramBinds 找 id」。 */
+    if (paramId >= (uint16_t)dev->m_paramCount) {
         dev->m_lastError = XVfdError_ParamRejected;
         return false;
     }
-    dev->m_paramBinds[dev->m_paramBindCount].m_id = paramId;
-    dev->m_paramBinds[dev->m_paramBindCount].m_point = point;
-    ++dev->m_paramBindCount;
+    /* [惰性分配] 首次绑定参数点时才分配下标表（见 setParamTable 注）。 */
+    if (!dev->m_paramPoints) {
+        size_t bytes = sizeof(XIoPoint*) * (size_t)dev->m_paramCount;
+        dev->m_paramPoints = (XIoPoint**)XMemory_malloc(bytes,
+                                                        XCLASS_DEFAULT_MEMORY_TYPE);
+        if (!dev->m_paramPoints) {
+            dev->m_lastError = XVfdError_ParamRejected;
+            return false;
+        }
+        memset(dev->m_paramPoints, 0, bytes);
+    }
+    dev->m_paramPoints[paramId] = point;
     return true;
 }
 
 XIoPoint* XVfdDevice_paramPoint(const XVfdDevice* dev, uint16_t paramId)
 {
-    XVfdParamBinding* b = xvfdParamBinding((XVfdDevice*)dev, paramId);
-    return b ? b->m_point : NULL;
+    if (!dev || !dev->m_paramPoints) return NULL;
+    if (paramId >= (uint16_t)dev->m_paramCount) return NULL;
+    return dev->m_paramPoints[paramId];
 }
 
 /* ==================== 状态与配置 ==================== */
@@ -560,6 +634,15 @@ double XVfdDevice_rawToFrequency(const XVfdDevice* dev, XVfdFreqBasis basis,
 void XVfdDevice_setParamTable(XVfdDevice* dev, const XVfdParamDesc* table, int count)
 {
     if (!dev) return;
+    /* [2026-11-02 零遍历] 参数点表按 paramId 直接下标，随参数表规模一次性分配。
+     * 旧实现是定长 m_paramBinds[64] + 线性查 id。
+     * [惰性分配] 分配推迟到首次 bindParamPoint：部分品牌在 init 期就设参数表
+     * （此时设备尚未挂接通道组），提前分配只是徒增一次堆交互，且掩盖了
+     * 「表设了但没有点」这层语义。 */
+    if (dev->m_paramPoints) {
+        XMemory_free(dev->m_paramPoints, XCLASS_DEFAULT_MEMORY_TYPE);
+        dev->m_paramPoints = NULL;
+    }
     dev->m_params = table;
     dev->m_paramCount = (table && count > 0) ? count : 0;
 }
@@ -577,16 +660,16 @@ const XVfdParamDesc* XVfdDevice_paramDesc_const(const XVfdDevice* dev, uint16_t 
 
 bool XVfdDevice_readParam_base(XVfdDevice* dev, uint16_t paramId)
 {
-    XVfdParamBinding* b;
+    XIoPoint* pt;
     int32_t raw = 0;
     if (!dev) return false;
-    b = xvfdParamBinding(dev, paramId);
-    if (!b) {
+    pt = XVfdDevice_paramPoint(dev, paramId);   /* O(1) 下标直达 */
+    if (!pt) {
         dev->m_lastError = XVfdError_ParamRejected;
         XVfdDevice_emitError(dev, "参数点未绑定：请先 bindParamPoint");
         return false;
     }
-    if (!xvfdReadPoint(b->m_point, &raw)) {
+    if (!xvfdReadPoint(dev->m_group, pt, &raw)) {
         dev->m_lastError = XVfdError_NoData;
         XVfdDevice_paramReadDone_signal(dev, paramId, 0, false);
         return true;
@@ -598,11 +681,11 @@ bool XVfdDevice_readParam_base(XVfdDevice* dev, uint16_t paramId)
 
 bool XVfdDevice_writeParam_base(XVfdDevice* dev, uint16_t paramId, int32_t raw)
 {
-    XVfdParamBinding* b;
+    XIoPoint* pt;
     const XVfdParamDesc* desc;
     if (!dev) return false;
-    b = xvfdParamBinding(dev, paramId);
-    if (!b) {
+    pt = XVfdDevice_paramPoint(dev, paramId);   /* O(1) 下标直达 */
+    if (!pt) {
         dev->m_lastError = XVfdError_ParamRejected;
         XVfdDevice_emitError(dev, "参数点未绑定：请先 bindParamPoint");
         return false;
@@ -623,7 +706,7 @@ bool XVfdDevice_writeParam_base(XVfdDevice* dev, uint16_t paramId, int32_t raw)
     }
     if (!XVfdDevice_beginAction(dev, XVfdOperation_WriteParam)) return false;
     dev->m_opParamId = paramId;
-    if (!xvfdWritePoint(dev, b->m_point, raw)) {
+    if (!xvfdWritePoint(dev, pt, raw)) {
         dev->m_lastError = XVfdError_WriteRejected;
         XVfdDevice_finishAction(dev, false);
         return false;
@@ -853,7 +936,7 @@ bool XVfdDevice_readRole(XVfdDevice* dev, XVfdPointRole role, int32_t* outValue)
         if (dev) dev->m_lastError = XVfdError_NotAttached;
         return false;
     }
-    if (!xvfdReadPoint(slot->m_point, outValue)) {
+    if (!xvfdReadPoint(dev->m_group, slot->m_point, outValue)) {
         if (dev) dev->m_lastError = XVfdError_NoData;
         return false;
     }
@@ -867,13 +950,10 @@ bool XVfdDevice_writeRole(XVfdDevice* dev, XVfdPointRole role, int32_t nativeVal
         if (dev) dev->m_lastError = XVfdError_NotAttached;
         return false;
     }
-    /* [有符号原生量] 部分从站的给定寄存器是 16 位补码（如「通讯设定值」
-     *   -10000~+10000 表示 ±100%）。通道层的 AO 写路径是无符号 16 位钳位
-     *   （0..65535），负值会被钳成 0（反转给负频率静默失效）。这里按点规格
-     *   的 m_signed 先做补码归一，通道层拿到的就是正确�� 16 位码。 */
-    if (slot->m_spec && slot->m_spec->m_signed && nativeValue < 0) {
-        nativeValue &= 0xFFFF;
-    }
+    /* [有符号原生量 2026-11-02 归口] 补码归一已下沉到 XIoPoint_toRaw：
+     *   有符号点（点上的 m_signed=1）负值输出 16 位补码原码，无符号点钳 0。
+     *   本层不再做符号处理——同一语义只在通道层定义一次（旧实现两处各有一套，
+     *   走设备层与走组层结果不同）。 */
     if (!xvfdWritePoint(dev, slot->m_point, nativeValue)) {
         if (dev) dev->m_lastError = XVfdError_WriteRejected;
         return false;
@@ -988,6 +1068,9 @@ void XVfdDevice_decodePoint_base(XVfdDevice* dev, const XVfdPointSpec* spec, int
     double eng;
     if (!dev || !spec) return;
     st = &dev->m_status;
+    /* [2026-11-02 标度归属] 语义点在通道层不标度（点标度恒为 1/1），故这里
+     * 拿到的就是原生量，标度换算在本层用 double 做（保留小数，如 69/10=6.9）。
+     * 通道层的 XIoPoint_toEngineering 返回 int32_t，做不了小数标度。 */
     eng = XVfdDevice_rawToEngineering(raw, spec->m_div);
     switch (spec->m_role) {
     case XVfdRole_StatusWord:

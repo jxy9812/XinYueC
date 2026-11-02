@@ -123,8 +123,10 @@ int XVfdBus485Test_runEx(const char* masterPathOverride)
     d2 = XVfdM512_create();
     CHECK(d1 != NULL && d2 != NULL, "两台 XVfdM512 创建");
     if (!d1 || !d2) goto cleanup;
-    CHECK(XVfdDevice_attach((XVfdDevice*)d1, harness.m_group) &&
-          XVfdDevice_attach((XVfdDevice*)d2, harness.m_group), "两设备挂接同一通道组");
+    /* [2026-11-02 多站] 每台设备挂自己的通道组。 */
+    CHECK(XVfdDevice_attach((XVfdDevice*)d1, xvfdHarnessStationGroup(&harness, devId[0], 1)) &&
+          XVfdDevice_attach((XVfdDevice*)d2, xvfdHarnessStationGroup(&harness, devId[1], 2)),
+          "两设备各自挂接独立通道组");
     specs = XVfdM512_pointSpecs(&specCount);
     groups = XVfdM512_commGroups(&groupCount);
     protocol = XVfdM512_unitProtocol();

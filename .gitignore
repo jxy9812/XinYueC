@@ -552,3 +552,6 @@ verify/hsf_shots/
 # 一次性文本补丁脚本（把「浮层默认 fixed=true」写进 HsfUi.c 后即用完，
 # 改动已落在 HighSpeedFilter/client/ui/HsfUi.c 内）：留磁盘备查，不入库。
 verify/fix_fixed.py
+
+# XLink 文件传输测试的运行时产物（bench/dl/ul 等二进制，测试重跑即再生）
+/xlink_ft_q/

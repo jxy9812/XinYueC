@@ -764,12 +764,23 @@ static void xft_onData(XLinkFileTransfer* t, const uint8_t* payload,
         return;
     }
     t->m_offset += dataLen;
-    /* 每块必回 ACK：把 ACK 当作「已落盘水位」的即时通告。
+    /* 每块必回 ACK：把 ACK 当作「已收水位」的即时通告。
        攒够半个窗口再回会在「发送方额度刚好耗尽」时形成一次往返停顿，
        且末块 ACK 的边界条件容易让双方互等（实测下载方向会卡住）。
        每块一 ACK 的额外开销只有 12 字节帧头 + 8 + 4 字节载荷，
-       相对 4KB 数据块可忽略。 */
-    XFile_flush(t->m_file);
+       相对 4KB 数据块可忽略。
+
+       【性能根修·2026-11-02】此处**不再逐块 flush**。原实现每收一块就
+       XFile_flush（Win32 = FlushFileBuffers，强制同步落盘）。本机实测
+       （verify/flushprobe/flushprobe.c）：4MB 分 1024 块，逐块 flush
+       26775ms（26.15ms/次），只写不刷 5.8ms——慢 4600 倍。4MB 上传/
+       下载因此必然超过一切合理时限；同时每次 26ms 的同步阻塞还会卡住
+       事件循环，反过来触发会话静默判线。
+       flush 的语义归位：ACK 只代表「已写入内核文件缓冲」，真正落盘由
+       终局路径各做一次（xft_succeed 关文件前、xft_onFinish 校验前）——
+       那两处本来就有 flush，SHA-256 校验也必须看到完整数据。
+       代价：进程在传输中途崩溃时，最近若干块可能只在内核缓冲里（OS
+       回写兜底，进程崩溃不丢内核缓冲）；与三个数量级的吞吐相比可接受。 */
     xft_sendAck(t, t->m_windowBytes);
     xft_progress(t);
 }

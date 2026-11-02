@@ -85,11 +85,11 @@ static void valve_reevaluate(XSolenoidValve* valve)
     if (!valve->m_group) return;
     if (valve->m_openLimitPt)
         openOk = XIoChannelGroup_readDigitalInput(valve->m_group,
-                                                  valve->m_openLimitPt,
+                                                  XIoPoint_role(valve->m_openLimitPt),
                                                   &openActive);
     if (valve->m_closeLimitPt)
         closeOk = XIoChannelGroup_readDigitalInput(valve->m_group,
-                                                   valve->m_closeLimitPt,
+                                                   XIoPoint_role(valve->m_closeLimitPt),
                                                    &closeActive);
 
     if (openOk && closeOk && openActive && closeActive) {
@@ -141,9 +141,9 @@ static bool valve_detachFeedbackInternal(XSolenoidValve* valve)
 /* ==================== 组信号槽（经 connect_1 连接，receiver=阀） ==================== */
 
 /**
- * @brief 组写落定槽：按出口点指针过滤本阀，None 口径下推进到位。
+ * @brief 组写落定槽：按出口点 role 过滤本阀，None 口径下推进到位。
  * @param receiver 连接的接收者（即本阀）；**不是** 组，禁止直接强转。
- * @param args 信号参数（XIoPoint* point, bool ok）。
+ * @param args 信号参数（uint16_t role, bool ok）。
  * @return 无。
  */
 static void VXSolenoidValve_onWriteDone(XObject* receiver, XVarList* args)
@@ -152,9 +152,9 @@ static void VXSolenoidValve_onWriteDone(XObject* receiver, XVarList* args)
 
     if (!receiver || !args) return;
     valve = (XSolenoidValve*)receiver;
-    XVarList_args_2(args, XIoPoint*, point, bool, ok);
-    (void)point;
-    if (point != valve->m_outputPt) return;
+    XVarList_args_2(args, uint16_t, role, bool, ok);
+    if (!valve->m_outputPt) return;
+    if (role != XIoPoint_role(valve->m_outputPt)) return;
 
     if (!ok) {
         /* 异步写入失败只在在途动作上判故障；稳态下仅上报不动状态 */
@@ -175,9 +175,9 @@ static void VXSolenoidValve_onWriteDone(XObject* receiver, XVarList* args)
 }
 
 /**
- * @brief 组输入变化槽：按限位点指针过滤本阀，统一重读双限位。
+ * @brief 组输入变化槽：按限位点 role 过滤本阀，统一重读双限位。
  * @param receiver 连接的接收者（即本阀）；**不是** 组，禁止直接强转。
- * @param args 信号参数（XIoPoint* point, int32_t value）。
+ * @param args 信号参数（uint16_t role, int32_t value）。
  * @return 无。
  */
 static void VXSolenoidValve_onLimitChanged(XObject* receiver, XVarList* args)
@@ -186,9 +186,10 @@ static void VXSolenoidValve_onLimitChanged(XObject* receiver, XVarList* args)
 
     if (!args) return;
     valve = (XSolenoidValve*)receiver;
-    XVarList_args_2(args, XIoPoint*, point, int32_t, value);
+    XVarList_args_2(args, uint16_t, role, int32_t, value);
     (void)value;
-    if (point != valve->m_openLimitPt && point != valve->m_closeLimitPt)
+    if ((!valve->m_openLimitPt || role != XIoPoint_role(valve->m_openLimitPt)) &&
+        (!valve->m_closeLimitPt || role != XIoPoint_role(valve->m_closeLimitPt)))
         return;
     /* 统一重读双限位：播种、到位、矛盾、位置丢失一条判定路径 */
     valve_reevaluate(valve);
@@ -385,7 +386,7 @@ bool XSolenoidValve_open(XSolenoidValve* valve)
     if (valve->m_state == XSolenoidValveState_Fault)
         return false;   /* startGuard 失败已判故障 */
     if (!XIoChannelGroup_writeDigitalOutput(valve->m_group,
-                                            valve->m_outputPt, true)) {
+                                            XIoPoint_role(valve->m_outputPt), true)) {
         valve_stopGuard(valve);
         XSolenoidValve_errorOccurred_signal(valve, XSolenoidValveError_WriteRejected);
         valve_setState(valve, XSolenoidValveState_Fault);
@@ -408,7 +409,7 @@ bool XSolenoidValve_close(XSolenoidValve* valve)
     if (valve->m_state == XSolenoidValveState_Fault)
         return false;
     if (!XIoChannelGroup_writeDigitalOutput(valve->m_group,
-                                            valve->m_outputPt, false)) {
+                                            XIoPoint_role(valve->m_outputPt), false)) {
         valve_stopGuard(valve);
         XSolenoidValve_errorOccurred_signal(valve, XSolenoidValveError_WriteRejected);
         valve_setState(valve, XSolenoidValveState_Fault);

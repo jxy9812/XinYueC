@@ -15,7 +15,7 @@
  *             轻量点模型无错误码，故障语义由业务层（阀）承载。
  */
 #include "XChannel/XIoChannelGroup.h"
-#include "XChannel/XIoPoint_Protected.h"
+#include "XChannel/XIoLink.h"
 #include "XSolenoidValve.h"
 #include "XObject.h"
 #include "XCoreApplication.h"
@@ -98,68 +98,112 @@ static void spinMs(int64_t ms)
     }
 }
 
-/* ==================== 测试用动作出口点（XIoPoint 直派生） ==================== */
+/* ==================== 测试用假链路（XIoLink 子类） ==================== */
 
-typedef struct XTestOutputPoint {
-    XIoPoint m_base;          /**< 第一个成员，基点继承（基/派生指针可互转）。 */
+/**
+ * @brief 测试假链路：记录写值、可注入同步拒绝/异步失败。
+ * @details [2026-11-02 通道层重写] 旧测试用 XIoPoint 的 WriteRaw 虚槽注入
+ *          这些行为；现在点退化为纯数据容器，链路能力在 XIoLink 上，故本
+ *          测试改为实现一个假链路。
+ */
+XCLASS_DEFINE_BEGING(XTestLink)
+XCLASS_DEFINE_ENUM(XTestLink, BindRole) = XCLASS_VTABLE_GET_SIZE(XIoLink),
+XCLASS_DEFINE_ENUM(XTestLink, ReadRole),
+XCLASS_DEFINE_ENUM(XTestLink, WriteRole),
+XCLASS_DEFINE_ENUM(XTestLink, IsAsync),
+XCLASS_DEFINE_END(XTestLink)
+
+typedef struct XTestLink {
+    XIoLink m_base;           /**< 第一个成员，基类继承。 */
     bool m_last;              /**< 最近一次成功写入的逻辑值。 */
     bool m_failSync;          /**< 置位时下一次写同步拒绝（返回 false）。 */
-    bool m_failAsync;         /**< 置位时下一次写受理后确认失败（writeDone(false)）。 */
-} XTestOutputPoint;
+    bool m_failAsync;         /**< 置位时下一次写受理后确认失败。 */
+    bool m_async;             /**< 是否声明为异步链路。 */
+    int32_t m_values[8];      /**< role → 喂入值（读路径用）。 */
+    bool m_hasValue[8];       /**< 该 role 是否已有值。 */
+} XTestLink;
 
-XCLASS_DEFINE_BEGING(XTestOutputPoint)
-XCLASS_DEFINE_ENUM(XTestOutputPoint, ReadRaw) = XCLASS_VTABLE_GET_SIZE(XIoPoint),
-XCLASS_DEFINE_ENUM(XTestOutputPoint, WriteRaw),
-XCLASS_DEFINE_END(XTestOutputPoint)
-
-static bool VXTestOutputPoint_writeRaw(XTestOutputPoint* self, int32_t value)
+static bool VXTestLink_bindRole(XTestLink* self, uint16_t role, uint32_t addr, uint32_t aux)
 {
+    (void)addr;
+    (void)aux;
+    return self && role < 8;
+}
+
+static bool VXTestLink_readRole(XTestLink* self, uint16_t role, int32_t* outRaw)
+{
+    if (!self || !outRaw || role >= 8 || !self->m_hasValue[role]) return false;
+    *outRaw = self->m_values[role];
+    return true;
+}
+
+static bool VXTestLink_writeRole(XTestLink* self, uint16_t role, int32_t raw)
+{
+    XIoChannelGroup* group;
+    (void)role;
+    if (!self) return false;
     if (self->m_failSync) {
         self->m_failSync = false;
         return false;                       /* 同步拒绝：不发完成信号 */
     }
+    group = (XIoChannelGroup*)XIoLink_group(&self->m_base);
     if (self->m_failAsync) {
         self->m_failAsync = false;
-        xIoPointWriteDone(&self->m_base, false);   /* 异步失败确认 */
+        if (group) XIoChannelGroup_completeWrite(group, 1, false);  /* 异步失败确认 */
         return true;
     }
-    self->m_last = (value != 0);
-    xIoPointWriteDone(&self->m_base, true);        /* 同步成功确认 */
+    self->m_last = (raw != 0);
+    if (group) XIoChannelGroup_completeWrite(group, 1, true);      /* 同步成功确认 */
     return true;
 }
 
-XVtable* XTestOutputPoint_class_init(void)
+static bool VXTestLink_isAsync(const XTestLink* self)
 {
-    XVTABLE_INIT_DEFAULT(XTestOutputPoint)
-    XVTABLE_INHERIT_XCLASS(XIoPoint);
-    XVTABLE_OVERLOAD_DEFAULT(EXIoPoint_WriteRaw, VXTestOutputPoint_writeRaw);
-    XCLASS_SHOW_SIZE_DEFAULT(XTestOutputPoint);
+    return self ? self->m_async : false;
+}
+
+XVtable* XTestLink_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XTestLink)
+    XVTABLE_INHERIT_XCLASS(XIoLink);
+    XVTABLE_OVERLOAD_DEFAULT(EXIoLink_BindRole, VXTestLink_bindRole);
+    XVTABLE_OVERLOAD_DEFAULT(EXIoLink_ReadRole, VXTestLink_readRole);
+    XVTABLE_OVERLOAD_DEFAULT(EXIoLink_WriteRole, VXTestLink_writeRole);
+    XVTABLE_OVERLOAD_DEFAULT(EXIoLink_IsAsync, VXTestLink_isAsync);
+    XCLASS_SHOW_SIZE_DEFAULT(XTestLink);
     return XVTABLE_DEFAULT;
 }
 
-static void XTestOutputPoint_init(XTestOutputPoint* obj)
+static void XTestLink_init(XTestLink* obj, bool asyncMode)
 {
     if (!obj) return;
-    XIoPoint_init(&obj->m_base);
-    XClassGetVtable(obj) = XTestOutputPoint_class_init();
-    /* 尾段清零锚点=首个派生成员（与成员排布解耦，防插位越界复发）。 */
-    memset(&obj->m_last, 0, sizeof(XTestOutputPoint) - sizeof(XIoPoint));
-    obj->m_base.m_type = (uint16_t)XIoPoint_DigitalOutput;
+    XIoLink_init(&obj->m_base);
+    XClassGetVtable(obj) = XTestLink_class_init();
+    memset(&obj->m_last, 0, sizeof(XTestLink) - sizeof(XIoLink));
+    obj->m_async = asyncMode;
 }
 
-/* ==================== 测试用限位输入点（基点直用，feed 驱动） ==================== */
+/* ==================== 测试用点初始化（纯数据容器） ==================== */
 
-static void testInputPointInit(XIoPoint* pt, const char* tag)
+static void testInputPointInit(XIoPoint* pt, uint16_t role, const char* tag)
 {
     XIoPoint_init(pt);
     pt->m_type = (uint16_t)XIoPoint_DigitalInput;
+    pt->m_role = role;
     pt->m_tag = tag;
 }
 
-/* 限位驱动：喂新值（组信号按点指针分发 → 阀重读双限位） */
-static void mockInputSet(XIoPoint* pt, bool active)
+static void testOutputPointInit(XIoPoint* pt, uint16_t role)
 {
-    xIoPointFeedValue(pt, active ? 1 : 0);
+    XIoPoint_init(pt);
+    pt->m_type = (uint16_t)XIoPoint_DigitalOutput;
+    pt->m_role = role;
+}
+
+/* 限位驱动：经组喂新值（组按 role 分发 → 阀重读双限位） */
+static void mockInputSet(XIoChannelGroup* grp, uint16_t role, bool active)
+{
+    if (grp) XIoChannelGroup_feedRole(grp, role, active ? 1 : 0);
 }
 
 /* ==================== 用例 ==================== */
@@ -167,45 +211,53 @@ static void mockInputSet(XIoPoint* pt, bool active)
 static void test_ioPointBasics(void)
 {
     XIoPoint pt;
-    bool value = true;
+    int32_t value = 0;
 
     XIoPoint_init(&pt);
-    pt.m_tag = "DI0";
+    XIoPoint_setTag(&pt, "DI0");
     CHECK("tag 保存", strcmp(XIoPoint_tag(&pt), "DI0") == 0);
     CHECK("默认无效", !XIoPoint_isValid(&pt));
-    XIoPoint_setValid(&pt, true);
-    CHECK("setValid 生效", XIoPoint_isValid(&pt));
-    value = true;
-    CHECK("接口默认槽拒绝读", !XIoPoint_readRaw_base(&pt, &value) && value == true);
+    CHECK("无值时不返回", !XIoPoint_value(&pt, &value));
+    XIoPoint_setType(&pt, XIoPoint_DigitalInput);
+    CHECK("类型设置生效", XIoPoint_type(&pt) == XIoPoint_DigitalInput);
+    CHECK("role 默认 0", XIoPoint_role(&pt) == 0);
+    CHECK("role 设置生效", XIoPoint_setRole(&pt, 7) && XIoPoint_role(&pt) == 7);
+    CHECK("role 越界拒绝", !XIoPoint_setRole(&pt, 9999));
     XClassDeinit((XClass*)&pt);
 }
 
-/* 组+三点装配：出口/开限位/关限位（栈上点登记 autoDelete=false） */
+/* 组+三点装配：出口(role=1)/开限位(role=2)/关限位(role=3) */
 typedef struct ValveFixture {
     XIoChannelGroup* grp;
-    XTestOutputPoint out;
+    XTestLink* link;
+    XIoPoint out;
     XIoPoint mol;
     XIoPoint mcl;
 } ValveFixture;
 
-static void fixtureInit(ValveFixture* fx)
+static void fixtureInit(ValveFixture* fx, bool asyncMode)
 {
     memset(fx, 0, sizeof(*fx));
     fx->grp = XIoChannelGroup_create();
-    XTestOutputPoint_init(&fx->out);
-    testInputPointInit(&fx->mol, "openLimit");
-    testInputPointInit(&fx->mcl, "closeLimit");
-    XIoChannelGroup_addPoint(fx->grp, (XIoPoint*)&fx->out, false);
+    fx->link = (XTestLink*)XMemory_malloc(sizeof(XTestLink), XCLASS_DEFAULT_MEMORY_TYPE);
+    XTestLink_init(fx->link, asyncMode);
+    Set_Class_IsHeap(fx->link, true);
+    testOutputPointInit(&fx->out, 1);
+    testInputPointInit(&fx->mol, 2, "openLimit");
+    testInputPointInit(&fx->mcl, 3, "closeLimit");
+    XIoChannelGroup_addPoint(fx->grp, &fx->out, false);
     XIoChannelGroup_addPoint(fx->grp, &fx->mol, false);
     XIoChannelGroup_addPoint(fx->grp, &fx->mcl, false);
+    XIoChannelGroup_setLink(fx->grp, (XIoLink*)fx->link);
+    XIoLink_start_base((XIoLink*)fx->link);
 }
 
 static void fixtureDeinit(ValveFixture* fx)
 {
-    /* 阀由用例先行删除（借用了组与点指针） */
     XClassDeinit((XClass*)&fx->out);
     XClassDeinit((XClass*)&fx->mol);
     XClassDeinit((XClass*)&fx->mcl);
+    XClassDelete((XClass*)fx->link);
     XClassDelete(fx->grp);
 }
 
@@ -214,7 +266,7 @@ static void test_noneModeSync(void)
     ValveFixture fx;
     XSolenoidValve* valve = XSolenoidValve_create();
 
-    fixtureInit(&fx);
+    fixtureInit(&fx, false);
     resetFlags();
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_stateChanged_signal), onStateChanged2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_opened_signal), onOpened2);
@@ -224,10 +276,10 @@ static void test_noneModeSync(void)
     CHECK("挂接后 Unknown", g_lastState == XSolenoidValveState_Unknown);
     CHECK("开阀受理", XSolenoidValve_open(valve));
     CHECK("None 口径同步开到位", g_lastState == XSolenoidValveState_Open && g_opened);
-    CHECK("测试点已驱动有效态", fx.out.m_last == true);
+    CHECK("测试点已驱动有效态", fx.link->m_last == true);
     CHECK("关阀受理", XSolenoidValve_close(valve));
     CHECK("None 口径同步关到位", g_lastState == XSolenoidValveState_Closed && g_closed);
-    CHECK("测试点已驱动无效态", fx.out.m_last == false);
+    CHECK("测试点已驱动无效态", fx.link->m_last == false);
     CHECK("开位幂等", XSolenoidValve_open(valve) &&
           g_lastState == XSolenoidValveState_Open);
     CHECK("isFullyOpen/isFullyClosed", XSolenoidValve_isFullyOpen(valve) == true &&
@@ -241,7 +293,7 @@ static void test_dualLimitProgress(void)
     ValveFixture fx;
     XSolenoidValve* valve = XSolenoidValve_create();
 
-    fixtureInit(&fx);
+    fixtureInit(&fx, false);
     resetFlags();
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_stateChanged_signal), onStateChanged2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_opened_signal), onOpened2);
@@ -258,21 +310,21 @@ static void test_dualLimitProgress(void)
 
     CHECK("开阀受理进入 Opening", XSolenoidValve_open(valve) &&
           g_lastState == XSolenoidValveState_Opening);
-    mockInputSet(&fx.mol, true);
+    mockInputSet(fx.grp, 2, true);
     CHECK("开到位输入推进 Open", g_lastState == XSolenoidValveState_Open && g_opened);
 
     CHECK("关阀受理进入 Closing", XSolenoidValve_close(valve) &&
           g_lastState == XSolenoidValveState_Closing);
-    mockInputSet(&fx.mol, false);
+    mockInputSet(fx.grp, 2, false);
     CHECK("在途双无效保持 Closing", g_lastState == XSolenoidValveState_Closing);
-    mockInputSet(&fx.mcl, true);
+    mockInputSet(fx.grp, 3, true);
     CHECK("关到位输入推进 Closed", g_lastState == XSolenoidValveState_Closed && g_closed);
 
-    mockInputSet(&fx.mcl, false);
+    mockInputSet(fx.grp, 3, false);
     CHECK("稳态位置丢失转 Unknown", g_lastState == XSolenoidValveState_Unknown);
-    mockInputSet(&fx.mol, true);
+    mockInputSet(fx.grp, 2, true);
     CHECK("外部造成开位同样发布", g_lastState == XSolenoidValveState_Open && g_opened);
-    mockInputSet(&fx.mcl, true);
+    mockInputSet(fx.grp, 3, true);
     CHECK("双限位矛盾上报错误", g_errorSeen &&
           g_lastError == XSolenoidValveError_LimitContradiction);
     CHECK("双限位矛盾转 Fault", g_lastState == XSolenoidValveState_Fault);
@@ -285,7 +337,7 @@ static void test_commandTimeout(void)
     ValveFixture fx;
     XSolenoidValve* valve = XSolenoidValve_create();
 
-    fixtureInit(&fx);
+    fixtureInit(&fx, false);
     resetFlags();
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_stateChanged_signal), onStateChanged2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_commandTimeout_signal), onTimeout2);
@@ -303,7 +355,7 @@ static void test_commandTimeout(void)
     CHECK("Timeout 错误上报", g_errorSeen &&
           g_lastError == XSolenoidValveError_Timeout);
     CHECK("Fault 后可复位重试（关阀）", XSolenoidValve_close(valve));
-    mockInputSet(&fx.mcl, true);
+    mockInputSet(fx.grp, 3, true);
     CHECK("重试后关到位", g_lastState == XSolenoidValveState_Closed);
     XClassDelete(valve);
     fixtureDeinit(&fx);
@@ -314,20 +366,20 @@ static void test_writeFailures(void)
     ValveFixture fx;
     XSolenoidValve* valve = XSolenoidValve_create();
 
-    fixtureInit(&fx);
+    fixtureInit(&fx, false);
     resetFlags();
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_stateChanged_signal), onStateChanged2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_errorOccurred_signal), onError2);
     XSolenoidValve_attachOutput(valve, fx.grp, (XIoPoint*)&fx.out);
 
-    fx.out.m_failSync = true;
+    fx.link->m_failSync = true;
     CHECK("同步拒绝返回 false", !XSolenoidValve_open(valve));
     CHECK("同步拒绝转 Fault", g_lastState == XSolenoidValveState_Fault);
     CHECK("WriteRejected 上报", g_errorSeen &&
           g_lastError == XSolenoidValveError_WriteRejected);
 
     XSolenoidValve_setFeedbackMode(valve, XSolenoidValveFeedbackMode_DualLimit);
-    fx.out.m_failAsync = true;
+    fx.link->m_failAsync = true;
     CHECK("异步失败仍算受理", XSolenoidValve_open(valve));
     CHECK("writeDone(false) 在途判 Fault", g_lastState == XSolenoidValveState_Fault &&
           g_lastError == XSolenoidValveError_WriteFailed);
@@ -340,7 +392,7 @@ static void test_notAttachedAndDetach(void)
     ValveFixture fx;
     XSolenoidValve* valve = XSolenoidValve_create();
 
-    fixtureInit(&fx);
+    fixtureInit(&fx, false);
     resetFlags();
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_stateChanged_signal), onStateChanged2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_errorOccurred_signal), onError2);
@@ -355,7 +407,7 @@ static void test_notAttachedAndDetach(void)
     {
         XSolenoidValveState before = XSolenoidValve_state(valve);
         /* 解挂后出口落定信号仍会经组发射（点还在组内），但阀已退订 → 隔离 */
-        xIoPointWriteDone((XIoPoint*)&fx.out, false);
+        XIoChannelGroup_completeWrite(fx.grp, 1, false);
         CHECK("解挂后出口信号被隔离",
               XSolenoidValve_state(valve) == before &&
               XSolenoidValve_state(valve) == XSolenoidValveState_Open);
@@ -371,7 +423,7 @@ static void test_feedbackEdgeCases(void)
     ValveFixture fx;
     XSolenoidValve* valve = XSolenoidValve_create();
 
-    fixtureInit(&fx);
+    fixtureInit(&fx, false);
     resetFlags();
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_stateChanged_signal), onStateChanged2);
     XObject_connect_2((XObject*)valve, XSignal(XSolenoidValve_opened_signal), onOpened2);
