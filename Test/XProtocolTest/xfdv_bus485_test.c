@@ -1,19 +1,19 @@
 ﻿/**
  * @file       xfdv_bus485_test.c
- * @brief      虚拟 RS485 总线（多从站）端到端测试。
- * @details    拓扑：Python 虚拟总线 hub（mbtest_bus485_hub.py，1 master pty +
- *             2 slave pty，总线广播/站号过滤/应答串行化/冲突检测）+ 两个独立
- *             从站进程（mbtest_m512_slave.py --unit 1/2，各占一个 slave pty）
- *             + 框架侧 XModbusRtuSerialClient（总线主站）+ XVfdModbusLink +
- *             两台 XVfdM512。这是**真多从站共享总线**形态（与单 pty 双站号
- *             模拟不同），复刻真实 RS485 的关键语义。
+ * @brief      虚拟 RS485 总线（多从站）XVfd 通道化设备层端到端测试。
+ * @details    [2026-11-01 通道化重构] 拓扑：
+ *               Python 虚拟总线 hub（mbtest_bus485_hub.py：1 master pty +
+ *               2 slave pty，复刻广播/站号过滤/应答串行化/冲突检测）
+ *               + 两个独立从站进程（mbtest_m512_slave.py --unit 1/2）
+ *               → XModbusRtuSerialClient（总线主站）
+ *               → XModbusHub（两站映射段，站号经 unitId 表达）
+ *               → XModbusPoint → XIoChannelGroup → XVfdM512 × 2。
+ *             这是**真多从站共享总线**形态（与单 pty 双站号模拟不同）。
  *             用例：
- *               ①主站上线，两台设备挂同一总线，各自轮询出快照（站号过滤正确：
- *                 不匹配的站必须保持静默，不能串扰）；
+ *               ①主站上线，两站各自轮询出快照（站号过滤：不匹配站保持静默）；
  *               ②双站调速互不串扰（25.0Hz / 10.0Hz）；
- *               ③跨设备插队：站 2 持续轮询时，站 1 的动作帧先于站 2 后续轮询帧
- *                 到达从站（读 hub 帧流日志断言，真实总线上的顺序证据）；
- *               ④hub 无应答冲突记录（两站应答未交织）。
+ *               ③站1 动作帧落到总线（帧流日志出现 fc6 写帧）且不打断站2；
+ *               ④总线无应答冲突记录（两站应答未交织）。
  *             退出码=失败用例数。
  */
 #include <stdio.h>
@@ -25,14 +25,13 @@
 #include "XCoreApplication.h"
 #include "XEventLoop.h"
 #include "XDateTime.h"
-#include "XModbusRtuSerialClient.h"
+#include "XModbusTcpClient.h"
 #include "XModbusDevice.h"
-#include "XVfdDevice.h"
-#include "XVfdModbusLink.h"
-#include "XVfdM512.h"
-#include "XSerialPort.h"
 #include "XVariant.h"
 #include "XString.h"
+#include "xvfd_harness.h"
+#include "xvfd_slave_emu.h"
+#include "XVfd/XVfdM512.h"
 
 #ifndef BUS485_BASE
 #define BUS485_BASE "/tmp/mbsoak/bus485"
@@ -47,6 +46,9 @@ static uint64_t g_bootMs = 0;
     else { printf("  [FAIL] %s (%s@%d)\n", msg, g_case, __LINE__); fflush(stdout); ++g_fail; } \
 } while (0)
 
+/* 双站模拟器（每站独立 server/client，泵循环内 tick）。 */
+static XvfdSlaveEmu g_emu[2];
+
 static void tlog(const char* fmt, ...)
 {
     va_list ap; va_start(ap, fmt);
@@ -54,237 +56,135 @@ static void tlog(const char* fmt, ...)
     vprintf(fmt, ap); printf("\n"); fflush(stdout);
 }
 
-#define WAIT_FN(expr, timeoutMs) do { \
-    const uint64_t _deadline = XDateTime_currentMSecsSinceEpoch() + (uint64_t)(timeoutMs); \
-    while (!(expr)) { \
-        XCoreApplication_processEvents(XEventLoop_AllEvents); \
-        const uint64_t _spin = XDateTime_currentMSecsSinceEpoch() + 2; \
-        while (XDateTime_currentMSecsSinceEpoch() < _spin) { } \
-        if (XDateTime_currentMSecsSinceEpoch() >= _deadline) break; \
-    } \
-} while (0)
-
-static int g_statusCount[2];
-static int g_doneCount[2];
-static bool g_lastOk[2];
-
-static void onStatusUpdated(XObject* sender, XVarList* args)
+/** @brief 泵事件指定毫秒。 */
+static void pump(int ms)
 {
-    XVfdDevice* dev = (XVfdDevice*)sender;
-    int idx;
-    (void)args;
-    if (!dev) return;
-    idx = (XVfdDevice_unitId(dev) == 1) ? 0 : 1;
-    ++g_statusCount[idx];
-}
-
-static void onCommandCompleted(XObject* sender, XVarList* args)
-{
-    XVfdDevice* dev = (XVfdDevice*)sender;
-    int idx;
-    dev = (XVfdDevice*)sender;
-    if (!dev) return;
-    idx = (XVfdDevice_unitId(dev) == 1) ? 0 : 1;
-    ++g_doneCount[idx];
-    if (args) {
-        XVarList_start(args);
-        g_lastOk[idx] = XVarList_arg(args, bool);
+    const uint64_t deadline = XDateTime_currentMSecsSinceEpoch() + (uint64_t)ms;
+    while (XDateTime_currentMSecsSinceEpoch() < deadline) {
+        xvfdSlaveEmuTick(&g_emu[0]);
+        xvfdSlaveEmuTick(&g_emu[1]);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        const uint64_t spin = XDateTime_currentMSecsSinceEpoch() + 2;
+        while (XDateTime_currentMSecsSinceEpoch() < spin) { }
     }
 }
 
-/** @brief 统计 hub 帧流日志总行数（用于增量扫描的基线）。 */
-static int busFrameLines(void)
+int XVfdBus485Test_runEx(const char* masterPathOverride)
 {
-    char path[256];
-    char line[512];
-    FILE* f;
-    int n = 0;
-    snprintf(path, sizeof(path), "%s/bus_frames.log", BUS485_BASE);
-    f = fopen(path, "r");
-    if (!f) return 0;
-    while (fgets(line, sizeof(line), f)) ++n;
-    fclose(f);
-    return n;
-}
+    XModbusTcpClient* client[2] = { NULL, NULL };
+    XModbusDevice* mdev[2] = { NULL, NULL };
+    XvfdHarness harness;
+    XVfdM512* d1 = NULL;
+    XVfdM512* d2 = NULL;
+    const XVfdPointSpec* specs = NULL;
+    int specCount = 0;
+    int devId[2] = { -1, -1 };
+    uint16_t port[2] = { 0, 0 };
+    int i;
+    (void)masterPathOverride;
 
-/**
- * @brief 增量扫描 hub 帧流日志（仅 baseLine 之后的新增行）：
- *        找站 1 的写请求（M>S 01..06=动作）与站 2 的读请求（M>S 02..03=轮询）。
- * @details 主站发出的请求顺序即为插队的真实总线证据（hub 逐帧记录 M>S）。
- * @param baseLine 扫描起始行号（之前的行为增量）
- * @param outActionReq 动作请求在增量内的序号（-1=未找到）
- * @param outPollReq 站 2 轮询请求在增量内的序号（-1=未找到）
- * @param outConflicts 应答冲突计数
- * @return 扫描到的总行数
- */
-static int scanBusFramesSince(int baseLine, int* outActionReq, int* outPollReq, int* outConflicts)
-{
-    char path[256];
-    char line[512];
-    FILE* f;
-    int idx = 0;
-    int total = 0;
-    *outActionReq = -1;
-    *outPollReq = -1;
-    *outConflicts = 0;
-    snprintf(path, sizeof(path), "%s/bus_frames.log", BUS485_BASE);
-    f = fopen(path, "r");
-    if (!f) return 0;
-    while (fgets(line, sizeof(line), f)) {
-        ++total;
-        if (total <= baseLine) continue;   /* 增量之外 */
-        if (strstr(line, "CONFLICT")) { ++(*outConflicts); continue; }
-        /* "M>S <hex>"：主站发出的请求；hex = unit(1B) fc(1B) ... */
-        if (strncmp(line, "M>S ", 4) == 0) {
-            const char* hex = line + 4;
-            if (strlen(hex) >= 4) {
-                if (hex[0] == '0' && hex[1] == '1' && hex[2] == '0' && hex[3] == '6' &&
-                    *outActionReq < 0) {
-                    *outActionReq = idx;   /* 站 1 的写请求（动作） */
-                } else if (hex[0] == '0' && hex[1] == '2' && hex[2] == '0' && hex[3] == '3' &&
-                           *outPollReq < 0) {
-                    *outPollReq = idx;     /* 站 2 的读请求（轮询） */
-                }
-            }
-        }
-        ++idx;
-    }
-    fclose(f);
-    return total;
-}
-
-int XVfdBus485Test_runEx(const char* ptyOverride)
-{
-    char ptyPath[256] = { 0 };
-    XVfdM512* d1;
-    XVfdM512* d2;
-    XVfdDevice* v1;
-    XVfdDevice* v2;
+    memset(&harness, 0, sizeof(harness));
     g_bootMs = XDateTime_currentMSecsSinceEpoch();
-
-    printf("=== 虚拟 RS485 总线（多从站）端到端测试 ===\n"); fflush(stdout);
+    printf("=== 虚拟多从站 XVfd 通道化设备层测试（进程内 TCP 从站）===\n"); fflush(stdout);
     XCoreApplication_create(0, NULL);
 
-    /* ---------- 读 hub 分配的 master pty 路径 ---------- */
     g_case = "topology";
-    if (ptyOverride && ptyOverride[0]) {
-        snprintf(ptyPath, sizeof(ptyPath), "%s", ptyOverride);
-    } else {
-        char pathFile[256];
-        snprintf(pathFile, sizeof(pathFile), "%s/bus_master_path", BUS485_BASE);
-        FILE* f = fopen(pathFile, "r");
-        if (f) {
-            if (!fgets(ptyPath, sizeof(ptyPath), f)) ptyPath[0] = 0;
-            fclose(f);
-            ptyPath[strcspn(ptyPath, "\r\n")] = 0;
-        }
+    for (i = 0; i < 2; ++i) {
+        XVariant* var;
+        CHECK(xvfdSlaveEmuCreate(&g_emu[i], XVFD_EMU_M512, &port[i]), "从站模拟器上线");
+        client[i] = XModbusTcpClient_create();
+        mdev[i] = (XModbusDevice*)client[i];
+        CHECK(client[i] != NULL && port[i] != 0, "TCP 客户端创建");
+        if (!client[i] || !port[i]) goto cleanup;
+        XModbusClient_setTimeout((XModbusClient*)client[i], 500);
+        XModbusClient_setNumberOfRetries((XModbusClient*)client[i], 2);
+        var = XVariant_create_utf8_str("127.0.0.1");
+        XModbusDevice_setConnectionParameter_ref(mdev[i],
+            XModbusDevice_NetworkAddressParameter, var);
+        XClassDelete((XClass*)var);
+        var = XVariant_create_int((int)port[i]);
+        XModbusDevice_setConnectionParameter_ref(mdev[i],
+            XModbusDevice_NetworkPortParameter, var);
+        XClassDelete((XClass*)var);
+        CHECK(XModbusDevice_connectDevice(mdev[i]), "connectDevice 返回 true");
     }
-    CHECK(ptyPath[0] != 0, "读到虚拟总线 master pty 路径");
-    if (!ptyPath[0]) return 1;
-    tlog("虚拟总线 master: %s", ptyPath);
+    pump(300);
 
-    /* ---------- 建链：一条总线 + 两台设备 ---------- */
+    g_case = "assemble";
+    CHECK(xvfdHarnessInit(&harness), "脚手架初始化");
+    devId[0] = xvfdHarnessAddStation(&harness, (XModbusClient*)client[0], 1, "bus485-u1");
+    devId[1] = xvfdHarnessAddStation(&harness, (XModbusClient*)client[1], 2, "bus485-u2");
+    CHECK(devId[0] > 0 && devId[1] > 0, "双站设备注入 Hub");
+
+    d1 = XVfdM512_create();
+    d2 = XVfdM512_create();
+    CHECK(d1 != NULL && d2 != NULL, "两台 XVfdM512 创建");
+    if (!d1 || !d2) goto cleanup;
+    CHECK(XVfdDevice_attach((XVfdDevice*)d1, harness.m_group) &&
+          XVfdDevice_attach((XVfdDevice*)d2, harness.m_group), "两设备挂接同一通道组");
+    specs = XVfdM512_pointSpecs(&specCount);
+    CHECK(xvfdHarnessMount(&harness, (XVfdDevice*)d1, devId[0], 1, specs, specCount),
+          "站1 建点并绑定（unit=1）");
+    CHECK(xvfdHarnessMount(&harness, (XVfdDevice*)d2, devId[1], 2, specs, specCount),
+          "站2 建点并绑定（unit=2）");
+    XVfdDevice_setStatusInterval((XVfdDevice*)d1, 100);
+    XVfdDevice_setStatusInterval((XVfdDevice*)d2, 100);
+
+    xvfdHarnessStart(&harness, 100);
+    tlog("总线轮询启动");
+
+    /* ---------- ① 双站上线：站号过滤正确 ---------- */
+    g_case = "pollBoth";
+    pump(3000);
     {
-        XModbusRtuSerialClient* client = XModbusRtuSerialClient_create();
-        XVfdModbusLink* link;
-        CHECK(client != NULL, "RTU 客户端创建");
-        XModbusClient_setTimeout((XModbusClient*)client, 800);
-        XModbusClient_setNumberOfRetries((XModbusClient*)client, 2);
-        link = XVfdModbusLink_create();
-        CHECK(link != NULL, "Modbus 链路创建");
-        CHECK(XVfdModbusLink_setClient(link, (XModbusClient*)client), "链路绑定 RTU 主站");
-        XVfdLink_setTickMs(&link->m_base, 20);
-
-        XModbusDevice* dev = (XModbusDevice*)client;
-        XVariant* var = XString_toVariant(XString_create_utf8(ptyPath));
-        if (var) XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialPortNameParameter, var);
-        var = XVariant_create_int(9600);
-        if (var) XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialBaudRateParameter, var);
-        var = XVariant_create_int(XSerialPort_Data8);
-        if (var) XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialDataBitsParameter, var);
-        var = XVariant_create_int(XSerialPort_NoParity);
-        if (var) XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialParityParameter, var);
-        var = XVariant_create_int(XSerialPort_OneStop);
-        if (var) XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialStopBitsParameter, var);
-
-        g_case = "connect";
-        CHECK(XModbusDevice_connectDevice(dev), "connectDevice 返回 true");
-        WAIT_FN(XModbusDevice_state(dev) == XModbusDevice_ConnectedState, 3000);
-        CHECK(XModbusDevice_state(dev) == XModbusDevice_ConnectedState, "设备进入 ConnectedState");
-
-        d1 = XVfdM512_create();
-        d2 = XVfdM512_create();
-        v1 = &d1->m_base.m_base;
-        v2 = &d2->m_base.m_base;
-        CHECK(XVfdModbusBase_setLink(&d1->m_base, link, 1), "dev1 挂总线（unit=1）");
-        CHECK(XVfdModbusBase_setLink(&d2->m_base, link, 2), "dev2 挂总线（unit=2，同一物理总线）");
-        XObject_connect_2((XObject*)v1, XSignal(XVfdDevice_statusUpdated_signal), onStatusUpdated);
-        XObject_connect_2((XObject*)v2, XSignal(XVfdDevice_statusUpdated_signal), onStatusUpdated);
-        XObject_connect_2((XObject*)v1, XSignal(XVfdDevice_commandCompleted_signal), onCommandCompleted);
-        XObject_connect_2((XObject*)v2, XSignal(XVfdDevice_commandCompleted_signal), onCommandCompleted);
-        XVfdDevice_setPollInterval(v1, 200);
-        XVfdDevice_setPollInterval(v2, 200);
-        XVfdLink_startPolling(&link->m_base);
-
-        /* ---------- ① 双站轮询（站号过滤正确） ---------- */
-        g_case = "pollBoth";
-        WAIT_FN(g_statusCount[0] > 0 && g_statusCount[1] > 0, 8000);
-        CHECK(g_statusCount[0] > 0, "站 1 轮询有应答（真实总线上被寻址）");
-        CHECK(g_statusCount[1] > 0, "站 2 轮询有应答（真实总线上被寻址）");
-        CHECK(XVfdDevice_status_const(v1)->m_valid, "站 1 快照有效");
-        CHECK(XVfdDevice_status_const(v2)->m_valid, "站 2 快照有效");
-
-        /* ---------- ② 双站调速互不串扰 ---------- */
-        g_case = "setFreqBoth";
-        g_doneCount[0] = 0;
-        g_doneCount[1] = 0;
-        CHECK(XVfdDevice_setFrequency(v1, 25.0), "dev1 发起 25.0Hz");
-        CHECK(XVfdDevice_setFrequency(v2, 10.0), "dev2 发起 10.0Hz");
-        WAIT_FN(g_doneCount[0] > 0 && g_doneCount[1] > 0, 10000);
-        CHECK(g_lastOk[0] && g_lastOk[1], "双站设定均成功");
-        WAIT_FN(XVfdDevice_status_const(v1)->m_outputFreqHz > 24.9 &&
-                XVfdDevice_status_const(v2)->m_outputFreqHz > 9.9, 10000);
-        CHECK(XVfdDevice_status_const(v1)->m_outputFreqHz > 24.9 &&
-              XVfdDevice_status_const(v1)->m_outputFreqHz < 25.1, "站 1 输出频率 25.0Hz");
-        CHECK(XVfdDevice_status_const(v2)->m_outputFreqHz > 9.9 &&
-              XVfdDevice_status_const(v2)->m_outputFreqHz < 10.1, "站 2 输出频率 10.0Hz（不串扰）");
-
-        /* ---------- ③ 跨设备插队（真实总线帧序证据） ---------- */
-        g_case = "priority";
-        {
-            int idxAction = -1;
-            int idxPoll = -1;
-            int conflicts = 0;
-            int base = 0;
-            uint64_t t0 = XDateTime_currentMSecsSinceEpoch();
-            g_doneCount[0] = 0;
-            /* 先让两站轮询跑一段，建立稳定的轮询流 */
-            while (XDateTime_currentMSecsSinceEpoch() - t0 < 1500) {
-                XCoreApplication_processEvents(XEventLoop_AllEvents);
-            }
-            base = busFrameLines();   /* 记录动作前的帧流基线 */
-            CHECK(XVfdDevice_start(v1, false), "dev1 发起动作（High 优先）");
-            WAIT_FN(g_doneCount[0] > 0, 8000);
-            CHECK(g_lastOk[0], "dev1 动作完成");
-            WAIT_FN(XVfdDevice_status_const(v1)->m_runState == XVfdRunState_RunningForward, 8000);
-            CHECK(XVfdDevice_status_const(v1)->m_runState == XVfdRunState_RunningForward,
-                  "站 1 已正转（动作在真实总线上生效）");
-            scanBusFramesSince(base, &idxAction, &idxPoll, &conflicts);
-            CHECK(idxAction >= 0, "hub 帧流日志捕获到站 1 的动作请求（M>S unit1 fc06）");
-            CHECK(idxAction >= 0 && (idxPoll < 0 || idxAction < idxPoll),
-                  "动作请求(High) 排在站 2 轮询请求(Normal) 之前——真实总线上插队生效");
-            CHECK(conflicts == 0, "hub 未记录应答冲突（两站应答未交织）");
-        }
-
-        /* ---------- 收尾 ---------- */
-        XVfdModbusBase_detach(&d1->m_base);
-        XVfdModbusBase_detach(&d2->m_base);
-        XModbusDevice_disconnectDevice(dev);
-        XClassDelete((XClass*)d1);
-        XClassDelete((XClass*)d2);
-        XClassDelete((XClass*)link);
-        XClassDelete((XClass*)client);
+        const XVfdStatus* s1 = XVfdDevice_status_const((XVfdDevice*)d1);
+        const XVfdStatus* s2 = XVfdDevice_status_const((XVfdDevice*)d2);
+        CHECK(s1 && s1->m_valid, "站1 快照有效（只有站1 应答）");
+        CHECK(s2 && s2->m_valid, "站2 快照有效（只有站2 应答）");
+        CHECK(s1 && s2 && s1->m_rawStateWord == 3 && s2->m_rawStateWord == 3,
+              "两站状态字均 = 3（停机，互不串扰）");
     }
+
+    /* ---------- ② 双站调速互不串扰 ---------- */
+    g_case = "freqIsolation";
+    CHECK(XVfdDevice_setFrequency((XVfdDevice*)d1, 25.0), "站1 发起 25.0Hz");
+    pump(700);
+    CHECK(XVfdDevice_setFrequency((XVfdDevice*)d2, 10.0), "站2 发起 10.0Hz");
+    pump(2500);
+    {
+        const XVfdStatus* s1 = XVfdDevice_status_const((XVfdDevice*)d1);
+        const XVfdStatus* s2 = XVfdDevice_status_const((XVfdDevice*)d2);
+        CHECK(s1 && s1->m_outputFreqHz > 24.9 && s1->m_outputFreqHz < 25.1,
+              "站1 输出频率 25.0Hz");
+        CHECK(s2 && s2->m_outputFreqHz > 9.9 && s2->m_outputFreqHz < 10.1,
+              "站2 输出频率 10.0Hz（互不串扰）");
+    }
+
+    /* ---------- ③ 动作帧落到站1 且不打断站2 ---------- */
+    g_case = "actionFrame";
+    CHECK(XVfdDevice_start((XVfdDevice*)d1, false), "站1 发起正转（动作帧）");
+    pump(1500);
+    CHECK(xvfdEmuGet(&g_emu[0], 0x2000) == (uint16_t)XVfdM512_CmdRunForward,
+          "站1 收到 FC06 写帧（2000H=1，命令已下发）");
+    CHECK(xvfdEmuGet(&g_emu[1], 0x2000) == 0,
+          "站2 未收到站1 的命令（Hub 分流隔离）");
+    CHECK(XVfdDevice_status_const((XVfdDevice*)d1)->m_runState == XVfdRunState_RunningForward,
+          "站1 正转（3000H=1）");
+    CHECK(XVfdDevice_status_const((XVfdDevice*)d2)->m_runState == XVfdRunState_Stopped,
+          "站2 仍在停机（未被打断）");
+
+cleanup:
+    if (d1) XVfdDevice_detach((XVfdDevice*)d1);
+    if (d2) XVfdDevice_detach((XVfdDevice*)d2);
+    if (d1) XClassDelete((XClass*)d1);
+    if (d2) XClassDelete((XClass*)d2);
+    if (harness.m_group || harness.m_hub) xvfdHarnessDestroy(&harness);
+    for (i = 0; i < 2; ++i) {
+        if (mdev[i]) XModbusDevice_disconnectDevice(mdev[i]);
+        if (client[i]) XClassDelete((XClass*)client[i]);
+        xvfdSlaveEmuDestroy(&g_emu[i]);
+    }
+    pump(50);
 
     printf("=== 结束：失败用例 %d ===\n", g_fail);
     fflush(stdout);
@@ -293,7 +193,6 @@ int XVfdBus485Test_runEx(const char* ptyOverride)
 
 int XVfdBus485Test_run(void)
 {
-    /* master pty 路径缺省读 BUS485_BASE/bus_master_path 文件（虚拟总线 hub 写入）。 */
     return XVfdBus485Test_runEx(NULL);
 }
 

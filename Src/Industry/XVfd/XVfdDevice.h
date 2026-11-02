@@ -1,16 +1,27 @@
 ﻿/**
  * @file       XVfdDevice.h
- * @brief      变频器抽象父类公开 API。
- * @details    品牌无关的变频器语义全集：启停/调速/点动/多段速/PID/故障复位/参数读写/
- *             状态遥测/铭牌，全部以虚函数暴露（*_base 入口查虚表分派，业务在子类
- *             VXxx 实现中）；品牌不支持的作業经能力位图（XVfdCapability）与缺省
- *             实现返回 NotSupported。
- *             传输无关：设备只挂总线链路（XVfdLink，借用），不持有 IO、不开轮询
- *             定时器——轮询节拍由链路计划表（XVfdPollScheduler）统一排程，485 总线
- *             竞争在链路的传输适配器内消解。
+ * @brief      变频器抽象父类公开 API（工业设备层，通道点驱动）。
+ * @details    [2026-11-01 通道化重构] 本类从"协议子系统"升格为"工业设备"，
+ *             底层**只依赖 Industry/XChannel**（XIoChannelGroup + XIoPoint），
+ *             不再持有总线链路、不 include 任何 XModbus 头、不自建轮询与编帧：
+ *               - 数据进：装配期把"语义槽点"（XVfdPointSpec）与调用方创建的
+ *                 通道点绑定（bindPoint，借用不拥有）；点值变化经组信号
+ *                 inputChanged 推入本类，通用遥测按规格表的原生单位/除率
+ *                 解码进状态快照，品牌特有字段（状态字位图/故障派生）
+ *                 由品牌子类重写 DecodePoint 虚槽消化；
+ *               - 控制出：动作一律经组写通道下沉到点（writeAnalogOutput /
+ *                 writeDigitalOutput），落定经组 writeDone 回到本类，
+ *                 由 ActionWriteDone 虚槽分派（默认=单写动作收口，品牌可
+ *                 在写落定后推进多步序列，如 ATV61 的 CiA402 启动）；
+ *               - 节拍：只有一个状态快照发布定时器与一个动作监督定时器，
+ *                 均为 XObject 自带定时器（不内嵌独立 XTimer 实例）。
+ *             **通用性/扩展性**：换传输（Modbus RTU/TCP、GPIO、CAN、虚拟从站）
+ *             只换点的实现（XChannel 侧）与装配，本层与品牌子类零改动；
+ *             新增品牌=新子类 + 一张点规格表 + 一张故障表 + 命令编解码。
  *             全部动作异步：接口返回 true 仅代表请求受理，结果经信号通知
- *             （statusUpdated / commandCompleted / paramReadDone / paramWriteDone /
- *             nameplateUpdated / faultHistoryUpdated / errorOccurred）。
+ *             （statusUpdated / commandCompleted / paramReadDone /
+ *             paramWriteDone / nameplateUpdated / faultHistoryUpdated /
+ *             errorOccurred）。
  *             品牌子类：XVfdAtv61（施耐德 Altivar 61）、XVfdM512（511M/512M/513M）。
  */
 #ifndef XVFDDEVICE_H
@@ -20,6 +31,8 @@
 extern "C" {
 #endif
 
+#include "CXinYueConfig.h"
+#include "XIndustry_config.h"
 #include "XVfd_config.h"
 
 #if XVFD_ON
@@ -28,9 +41,13 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XObject.h"
-#include "XDateTime.h"
+#include "XIoChannelGroup.h"
+#include "XIoPoint.h"
 
-typedef struct XVfdLink XVfdLink;
+/** @brief 参数点绑定表容量（同时可读写的参数点上限）。 */
+#define XVFD_PARAM_BIND_CAP 64
+/** @brief 语义槽数组容量（须 >= XVfdRole_Count）。 */
+#define XVFD_ROLE_CAP 48
 
 /* ========================================================================== */
 /*                      错误码                                                */
@@ -41,13 +58,13 @@ typedef struct XVfdLink XVfdLink;
  */
 typedef enum XVfdError {
     XVfdError_OK = 0,               /**< 无错误 */
-    XVfdError_NotAttached,          /**< 未绑定链路 */
-    XVfdError_Busy,                 /**< 设备级单飞：上一请求在途 */
-    XVfdError_Timeout,              /**< 请求超时 */
-    XVfdError_CrcError,             /**< 应答 CRC 校验失败 */
-    XVfdError_InvalidFrame,         /**< 应答帧格式非法 */
-    XVfdError_SlaveError,           /**< 从站返回异常帧 */
-    XVfdError_ParamRejected,        /**< 参数被从站拒绝 */
+    XVfdError_NotAttached,          /**< 未挂接通道组或所需语义槽未绑定 */
+    XVfdError_Busy,                 /**< 设备级单飞：上一动作在途 */
+    XVfdError_WriteRejected,        /**< 通道同步拒绝写入（点未实现/未登记/类型不符） */
+    XVfdError_WriteFailed,          /**< 写落定失败（writeDone(false)） */
+    XVfdError_Timeout,              /**< 写落定监督超时 */
+    XVfdError_NoData,               /**< 所需点尚无数据（未首拍/数据源离线） */
+    XVfdError_ParamRejected,        /**< 参数被拒绝（无绑定/越界） */
     XVfdError_ParamRunLocked,       /**< 参数运行禁改（描述表 access 约束） */
     XVfdError_NotSupported,         /**< 该品牌不支持此操作（能力位图未置位） */
     XVfdError_InvalidParam          /**< 调用参数非法 */
@@ -82,7 +99,8 @@ typedef enum XVfdCapability {
     XVfdCap_MotorTuning = 1 << 18,      /**< 支持电机调谐 */
     XVfdCap_Password = 1 << 19,         /**< 支持密码解锁 */
     XVfdCap_FactoryReset = 1 << 20,     /**< 支持恢复出厂 */
-    XVfdCap_BroadcastWrite = 1 << 21    /**< 支持广播写（地址 0） */
+    XVfdCap_BroadcastWrite = 1 << 21,   /**< 支持广播写（地址 0） */
+    XVfdCap_ParamAccess = 1 << 22       /**< 支持参数描述表与参数点读写 */
 } XVfdCapability;
 
 /* ========================================================================== */
@@ -169,7 +187,7 @@ typedef enum XVfdStatusField {
 typedef struct XVfdStatus {
     bool m_valid;                   /**< 本快照是否来自至少一次成功读取 */
     uint64_t m_validMask;           /**< XVfdStatusField 位或：哪些字段有效 */
-    uint64_t m_timestampMs;         /**< 快照采集时刻（单调毫秒） */
+    uint64_t m_timestampMs;         /**< 快照发布时刻（单调毫秒） */
     XVfdRunState m_runState;        /**< 运行状态枚举 */
     uint16_t m_rawStateWord;        /**< 品牌原状态字（透传，供调试与扩展） */
     bool m_running;                 /**< 运行中 */
@@ -241,19 +259,13 @@ typedef struct XVfdFaultRecord {
 } XVfdFaultRecord;
 
 /**
- * @brief 参数描述表条目（品牌提供 const 数组；支撑通用参数页自动生成）。
+ * @brief 故障表条目（品牌 const 数组；名称/说明均为静态常量）。
  */
-typedef struct XVfdParamDesc {
-    uint16_t m_addr;                /**< 通讯地址（已按品牌编码规则换算，如 511M 族 F0xxH） */
-    const char* m_name;             /**< 参数中文名（静态常量，禁释放） */
-    const char* m_unit;             /**< 单位文本（可 NULL） */
-    uint8_t m_decimals;             /**< 小数位数（raw / 10^decimals 为工程值） */
-    int32_t m_min;                  /**< 设定范围下限（原始码） */
-    int32_t m_max;                  /**< 设定范围上限（原始码） */
-    int32_t m_default;              /**< 出厂值（原始码） */
-    uint8_t m_access;               /**< 存取约束（XVfdParamAccess） */
-    uint8_t m_group;                /**< 分组编号（品牌自定义，UI 分组显示用） */
-} XVfdParamDesc;
+typedef struct XVfdFaultEntry {
+    uint16_t m_code;                /**< 故障码（品牌原值，与快照 m_faultCode 同域） */
+    const char* m_name;             /**< 面板字母码（可为 NULL） */
+    const char* m_text;             /**< 中文说明（静态常量，禁释放） */
+} XVfdFaultEntry;
 
 /**
  * @brief 参数存取约束。
@@ -264,6 +276,21 @@ typedef enum XVfdParamAccess {
     XVfdParamAccess_RunLocked,      /**< 运行状态禁改（手册 ★） */
     XVfdParamAccess_Factory         /**< 厂家参数（禁止用户操作，手册 ▲） */
 } XVfdParamAccess;
+
+/**
+ * @brief 参数描述表条目（品牌提供 const 数组；支撑通用参数页自动生成）。
+ */
+typedef struct XVfdParamDesc {
+    uint16_t m_addr;                /**< 参数通道地址（品牌原生地址；装配期换算虚拟地址） */
+    const char* m_name;             /**< 参数中文名（静态常量，禁释放） */
+    const char* m_unit;             /**< 单位文本（可 NULL） */
+    uint8_t m_decimals;             /**< 小数位数（raw / 10^decimals 为工程值） */
+    int32_t m_min;                  /**< 设定范围下限（原始码） */
+    int32_t m_max;                  /**< 设定范围上限（原始码） */
+    int32_t m_default;              /**< 出厂值（原始码） */
+    uint8_t m_access;               /**< 存取约束（XVfdParamAccess） */
+    uint8_t m_group;                /**< 分组编号（品牌自定义，UI 分组显示用） */
+} XVfdParamDesc;
 
 /**
  * @brief 动作类型（commandCompleted 信号区分；数值兼容旧 XModbusAtv61_Operation）。
@@ -297,26 +324,101 @@ typedef enum XVfdOperation {
 } XVfdOperation;
 
 /* ========================================================================== */
-/*                      轮询项掩码                                            */
+/*                      语义槽（角色）与点规格                                */
 /* ========================================================================== */
 
 /**
- * @brief 轮询项掩码位（setPollItems 按位或；对应品牌注册的轮询读组）。
+ * @brief 语义槽角色：设备层认识的全部"数据位"名字，品牌点表按角色编排地址。
+ * @note 数值一经发布不得改动（点表是静态 const 数据，跨版本兼容依赖稳定值）。
  */
-typedef enum XVfdPollItem {
-    XVfdPollItem_Status = 1 << 0,       /**< 运行状态字 */
-    XVfdPollItem_Telemetry = 1 << 1,    /**< 电气遥测（频率/电压/电流/功率/转矩等） */
-    XVfdPollItem_Fault = 1 << 2,        /**< 故障码 */
-    XVfdPollItem_Counters = 1 << 3,     /**< 计数/长度/累计量 */
-    XVfdPollItem_Extended = 1 << 4      /**< 品牌扩展组 */
-} XVfdPollItem;
+typedef enum XVfdPointRole {
+    XVfdRole_None = 0,              /**< 未使用 */
+    XVfdRole_CommandWord = 1,       /**< 命令字/命令值（写） */
+    XVfdRole_FreqSet = 2,           /**< 频率给定（写；原生单位） */
+    XVfdRole_SpeedSet = 3,          /**< 转速给定（写；rpm） */
+    XVfdRole_StatusWord = 4,        /**< 状态字（读；原样位图） */
+    XVfdRole_AuxStateWord = 5,      /**< 辅助状态字（读；ETI 等） */
+    XVfdRole_FaultCode = 6,         /**< 故障码（读） */
+    XVfdRole_OutputFreq = 7,        /**< 输出频率（读） */
+    XVfdRole_SetFreq = 8,           /**< 设定频率（读） */
+    XVfdRole_OutputCurrent = 9,     /**< 输出电流（读） */
+    XVfdRole_OutputVoltage = 10,    /**< 输出电压（读） */
+    XVfdRole_BusVoltage = 11,       /**< 直流母线电压（读） */
+    XVfdRole_MainsVoltage = 12,     /**< 电网电压（读） */
+    XVfdRole_OutputPower = 13,      /**< 输出功率（读；kW） */
+    XVfdRole_OutputPowerPercent = 14, /**< 输出功率百分比（读） */
+    XVfdRole_Torque = 15,           /**< 输出转矩（读；%） */
+    XVfdRole_SpeedRpm = 16,         /**< 电机转速（读；rpm） */
+    XVfdRole_DriveTemp = 17,        /**< 变频器温度（读；°C） */
+    XVfdRole_MotorTemp = 18,        /**< 电机温度（读；°C） */
+    XVfdRole_DriveThermal = 19,     /**< 变频器热状态（读；%） */
+    XVfdRole_MotorThermal = 20,     /**< 电机热状态（读；%） */
+    XVfdRole_DiBits = 21,           /**< 数字输入端子位图（读） */
+    XVfdRole_DoBits = 22,           /**< 数字输出端子位图（读） */
+    XVfdRole_Ai1 = 23,              /**< 模拟量输入 1（读） */
+    XVfdRole_Ai2 = 24,              /**< 模拟量输入 2（读） */
+    XVfdRole_Ai3 = 25,              /**< 模拟量输入 3（读） */
+    XVfdRole_PidSetpoint = 26,      /**< PID 设定值（读） */
+    XVfdRole_PidFeedback = 27,      /**< PID 反馈值（读） */
+    XVfdRole_Counter = 28,          /**< 计数器（读） */
+    XVfdRole_Length = 29,           /**< 长度计（读） */
+    XVfdRole_RunHours = 30,         /**< 累计运行时间（读；h） */
+    XVfdRole_PowerOnHours = 31,     /**< 累计上电时间（读；h） */
+    XVfdRole_Energy = 32,           /**< 累计耗电量（读；kWh） */
+    XVfdRole_MaxFreq = 33,          /**< 最大频率（读；百分比换算基准） */
+    XVfdRole_AccelTime = 34,        /**< 加速时间（写；原生单位） */
+    XVfdRole_DecelTime = 35,        /**< 减速时间（写；原生单位） */
+    XVfdRole_PresetSpeed = 36,      /**< 多段速给定（写；原生单位） */
+    XVfdRole_PidTarget = 37,        /**< PID 目标值（写；原生单位） */
+    XVfdRole_CommandSource = 38,    /**< 命令源选择（写） */
+    XVfdRole_FreqSource = 39,       /**< 频率源选择（写） */
+    XVfdRole_DoForce = 40,          /**< 输出端子强制位图（写） */
+    XVfdRole_Password = 41,         /**< 密码解锁（写） */
+    XVfdRole_ParamInit = 42,        /**< 参数初始化/恢复出厂（写） */
+    XVfdRole_SaveParams = 43,       /**< 参数保存/备份（写） */
+    XVfdRole_JogCommand = 44,       /**< 独立点动命令（写；品牌可选） */
+    XVfdRole_Count = 45             /**< 角色总数（数组边界，不是合法角色） */
+} XVfdPointRole;
+
+/**
+ * @brief 语义槽点规格：品牌点表一行 = "语义名 → 品牌原生地址 + 原生单位"。
+ * @details 本结构是"品牌知识"的唯一载体：装配期由调用方读取 m_type/m_address/
+ *          m_tag 以创建通道点；绑定后由设备层读取 m_role/m_div/m_caps 做解码。
+ *          **语义层不解析地址**——地址只是给装配期的说明，换传输不影响语义。
+ */
+typedef struct XVfdPointSpec {
+    uint16_t m_role;            /**< 语义角色（XVfdPointRole） */
+    uint8_t m_type;             /**< 建议点类型（XIoPointType；装配期建点用） */
+    int32_t m_div;              /**< 原生单位除率：工程值 = 原生值 / div（0 视为 1） */
+    uint16_t m_address;         /**< 品牌原生通道地址（装配期换算虚拟地址；语义层不用） */
+    const char* m_tag;          /**< 点名（借用，静态常量；装配期建点用） */
+    uint32_t m_caps;            /**< 绑定该点即置位的能力位（XVfdCapability 位或；0=无） */
+} XVfdPointSpec;
+
+/**
+ * @brief 语义槽登记项（设备内部：规格 + 点，均为借用）。
+ */
+typedef struct XVfdSlot {
+    const XVfdPointSpec* m_spec; /**< 规格（静态 const，借用）；NULL=该槽未绑定 */
+    XIoPoint* m_point;           /**< 通道点（借用，不拥有） */
+} XVfdSlot;
+
+/**
+ * @brief 参数点登记项（设备内部：参数描述表下标 ↔ 通道点）。
+ */
+typedef struct XVfdParamBinding {
+    uint16_t m_id;               /**< 参数描述表下标（0 基） */
+    XIoPoint* m_point;           /**< 参数通道点（借用；读/写均经它） */
+} XVfdParamBinding;
 
 /* ========================================================================== */
 /*                      虚函数表                                              */
 /* ========================================================================== */
 
 XCLASS_DEFINE_BEGING(XVfdDevice)
-XCLASS_DEFINE_ENUM(XVfdDevice, PollDue) = XCLASS_VTABLE_GET_SIZE(XObject),
+XCLASS_DEFINE_ENUM(XVfdDevice, DecodePoint) = XCLASS_VTABLE_GET_SIZE(XObject),
+XCLASS_DEFINE_ENUM(XVfdDevice, ActionWriteDone),
+XCLASS_DEFINE_ENUM(XVfdDevice, ActionTimerExpired),
 XCLASS_DEFINE_ENUM(XVfdDevice, Start),
 XCLASS_DEFINE_ENUM(XVfdDevice, Stop),
 XCLASS_DEFINE_ENUM(XVfdDevice, FreeStop),
@@ -347,19 +449,30 @@ XCLASS_DEFINE_END(XVfdDevice)
 /* ========================================================================== */
 
 /**
- * @brief 变频器抽象父类（XObject 派生；业务语义全集，品牌差异在子类虚表实现）。
+ * @brief 变频器抽象父类（XObject 派生；语义槽 + 状态快照 + 能力位图 + 信号）。
+ * @details 成员禁止直接访问，一律经 API 操作。通道组与全部点为**借用**：
+ *          调用方保证其生命周期覆盖设备，并在销毁前先 detach 或先删设备。
  */
 typedef struct XVfdDevice {
     XObject m_class;                /**< 基类（第一成员，由 XClass 管理，禁止手工修改） */
-    XVfdLink* m_link;               /**< 绑定的总线链路（借用，不转移所有权；未绑定为 NULL） */
-    int m_unitId;                   /**< 从站地址（1~247；0=广播） */
-    uint32_t m_caps;                /**< 能力位图（XVfdCapability 位或；子类 init 时置位） */
-    XVfdStatus m_status;            /**< 最近状态快照（由子类解析回填） */
-    bool m_haveStatus;              /**< m_status 是否有效 */
-    bool m_busy;                    /**< 设备级单飞：动作/轮询读共用，请求在途为 true */
-    uint32_t m_pollItems;           /**< 轮询项掩码（XVfdPollItem 位或；默认 Status|Telemetry|Fault） */
-    uint32_t m_pollIntervalMs;      /**< 轮询周期毫秒（默认 500；0=该设备不轮询） */
-    XVfdError m_lastError;          /**< 最近一次失败原因（Busy/NotSupported 等） */
+    XIoChannelGroup* m_group;       /**< 挂接的通道组（借用；NULL=未挂接） */
+    XVfdSlot m_slots[XVFD_ROLE_CAP];/**< 语义槽表（按角色下标；未绑定为 NULL） */
+    XVfdParamBinding m_paramBinds[XVFD_PARAM_BIND_CAP]; /**< 参数点绑定表 */
+    int m_paramBindCount;           /**< 参数点绑定数 */
+    const XVfdParamDesc* m_params;  /**< 品牌参数描述表（const，借用；品牌 init 设置） */
+    int m_paramCount;               /**< 描述表条目数（0=无参数通道） */
+    XVfdStatus m_status;            /**< 最近状态快照（解码路径回填） */
+    uint32_t m_caps;                /**< 能力位图（品牌 init + 点规格共同置位） */
+    bool m_haveStatus;              /**< 是否已发布过至少一次快照 */
+    bool m_dirty;                   /**< 快照脏标记（发布定时器消费） */
+    bool m_busy;                    /**< 设备级单飞：动作在途 */
+    XVfdOperation m_op;             /**< 在途动作类型（commandCompleted 携带） */
+    uint16_t m_opParamId;           /**< 在途动作若为参数读写，对应描述表下标 */
+    XTimerId m_statusTimer;         /**< 快照发布定时器 */
+    XTimerId m_actionTimer;         /**< 动作监督定时器（写落定超时/品牌序列步进） */
+    uint32_t m_statusIntervalMs;    /**< 快照发布周期（毫秒；默认 200） */
+    uint32_t m_actionTimeoutMs;     /**< 写落定监督超时（毫秒；默认 2000） */
+    XVfdError m_lastError;          /**< 最近一次失败原因 */
 } XVfdDevice;
 
 /* ========================================================================== */
@@ -386,38 +499,101 @@ XVfdDevice* XVfdDevice_create_ex(XMemoryType memory);
 void XVfdDevice_init(XVfdDevice* dev);
 
 /* ========================================================================== */
-/*                      绑定与配置                                            */
+/*                      装配（借用注入，解耦点）                              */
 /* ========================================================================== */
 
 /**
- * @brief 绑定总线链路与从站地址。
- * @param dev 设备实例
- * @param link 总线链路（借用，不取得所有权；设备不负责释放）
- * @param unitId 从站地址（1~247；0=广播）
- * @return 成功返回 true；参数非法返回 false
- * @note 轮询计划登记由子类/中间基类在本调用内完成（XVfdModbusLink 的计划表）。
+ * @brief 挂接通道组（数据进与写通道都经它分发）。
+ * @param dev 设备实例；不能为 NULL。
+ * @param group 通道组（借用，不拥有）；不能为 NULL。
+ * @return 挂接并订阅组信号成功返回 true；参数非法或订阅失败返回 false。
+ * @note 重复挂接先自动解挂旧组。挂接后启动快照发布定时器。
  */
-bool XVfdDevice_attach(XVfdDevice* dev, XVfdLink* link, int unitId);
+bool XVfdDevice_attach(XVfdDevice* dev, XIoChannelGroup* group);
 
 /**
- * @brief 解绑链路并停止该设备的轮询计划。
- * @param dev 设备实例
+ * @brief 解挂通道组（退订组信号、停定时器；语义槽清空，点本身不释放）。
+ * @param dev 设备实例；可为 NULL。
+ * @return 无。
  */
 void XVfdDevice_detach(XVfdDevice* dev);
 
 /**
- * @brief 获取从站地址。
- * @param dev 设备实例（可 NULL，返回 0）
- * @return 从站地址
+ * @brief 查询是否已挂接通道组。
+ * @param dev 设备实例；NULL 返回 false。
+ * @return 已挂接返回 true。
  */
-int XVfdDevice_unitId(const XVfdDevice* dev);
+bool XVfdDevice_isAttached(const XVfdDevice* dev);
 
 /**
- * @brief 设置从站地址（未绑定链路时自由改；已绑定需先 detach）。
- * @param dev 设备实例
- * @param unitId 从站地址（1~247；0=广播）
+ * @brief 取挂接的通道组（借用）。
+ * @param dev 设备实例；NULL 返回 NULL。
+ * @return 通道组指针；未挂接返回 NULL。
  */
-void XVfdDevice_setUnitId(XVfdDevice* dev, int unitId);
+XIoChannelGroup* XVfdDevice_channelGroup(const XVfdDevice* dev);
+
+/**
+ * @brief 绑定一个语义槽点（角色 ← 通道点）。
+ * @param dev 设备实例；不能为 NULL。
+ * @param spec 点规格（品牌静态常量，借用，生命周期须覆盖设备）；不能为 NULL。
+ * @param point 通道点（借用，不拥有；须已登记于挂接的通道组）；不能为 NULL。
+ * @return 绑定成功返回 true；未挂接组/角色非法/点未登记返回 false。
+ * @note 绑定立即用点的当前缓存值播种快照（有数据即入快照），并按规格置能力位。
+ *       同一角色重复绑定以新点覆盖（旧点不退订，调用方自行解绑）。
+ */
+bool XVfdDevice_bindPoint(XVfdDevice* dev, const XVfdPointSpec* spec, XIoPoint* point);
+
+/**
+ * @brief 解绑一个语义槽。
+ * @param dev 设备实例；不能为 NULL。
+ * @param role 语义角色。
+ * @return 原本已绑定并成功解绑返回 true。
+ */
+bool XVfdDevice_unbindPoint(XVfdDevice* dev, XVfdPointRole role);
+
+/**
+ * @brief 查询某语义槽是否已绑定。
+ * @param dev 设备实例；NULL 返回 false。
+ * @param role 语义角色。
+ * @return 已绑定返回 true。
+ */
+bool XVfdDevice_hasPoint(const XVfdDevice* dev, XVfdPointRole role);
+
+/**
+ * @brief 取某语义槽的点（借用）。
+ * @param dev 设备实例；NULL 返回 NULL。
+ * @param role 语义角色。
+ * @return 点指针；未绑定返回 NULL。
+ */
+XIoPoint* XVfdDevice_point(const XVfdDevice* dev, XVfdPointRole role);
+
+/**
+ * @brief 已绑定语义槽数量。
+ * @param dev 设备实例；NULL 返回 0。
+ * @return 数量。
+ */
+int XVfdDevice_boundCount(const XVfdDevice* dev);
+
+/**
+ * @brief 绑定参数通道点（参数描述表下标 ← 通道点）。
+ * @param dev 设备实例；不能为 NULL。
+ * @param paramId 参数描述表下标（0 基）。
+ * @param point 参数点（借用；须登记于挂接的通道组）；不能为 NULL。
+ * @return 绑定成功返回 true；表满/未挂接/点未登记返回 false。
+ */
+bool XVfdDevice_bindParamPoint(XVfdDevice* dev, uint16_t paramId, XIoPoint* point);
+
+/**
+ * @brief 取参数通道点（借用；供装配期校验或直接读写）。
+ * @param dev 设备实例；NULL 返回 NULL。
+ * @param paramId 参数描述表下标。
+ * @return 点指针；未绑定返回 NULL。
+ */
+XIoPoint* XVfdDevice_paramPoint(const XVfdDevice* dev, uint16_t paramId);
+
+/* ========================================================================== */
+/*                      状态与配置                                            */
+/* ========================================================================== */
 
 /**
  * @brief 获取能力位图。
@@ -442,7 +618,7 @@ bool XVfdDevice_hasCapability(const XVfdDevice* dev, uint32_t cap);
 const XVfdStatus* XVfdDevice_status_const(const XVfdDevice* dev);
 
 /**
- * @brief 查询是否有设备级请求在途（动作/轮询读共用设备级单飞）。
+ * @brief 查询是否有动作在途（设备级单飞）。
  * @param dev 设备实例（可 NULL，返回 false）
  * @return 在途返回 true
  */
@@ -456,32 +632,35 @@ bool XVfdDevice_isBusy(const XVfdDevice* dev);
 XVfdError XVfdDevice_lastError(const XVfdDevice* dev);
 
 /**
- * @brief 设置轮询项掩码（对已登记计划即时生效）。
- * @param dev 设备实例
- * @param items XVfdPollItem 位或；0=该设备不产生轮询读
+ * @brief 设置状态快照发布周期。
+ * @param dev 设备实例；不能为 NULL。
+ * @param intervalMs 周期毫秒（>=1；0 视为缺省 200）。
+ * @return 无。
+ * @note 快照只在有变化（脏标记）时发布，周期只决定发布的最长延迟。
  */
-void XVfdDevice_setPollItems(XVfdDevice* dev, uint32_t items);
+void XVfdDevice_setStatusInterval(XVfdDevice* dev, uint32_t intervalMs);
 
 /**
- * @brief 获取轮询项掩码。
- * @param dev 设备实例（可 NULL，返回 0）
- * @return XVfdPollItem 位或
- */
-uint32_t XVfdDevice_pollItems(const XVfdDevice* dev);
-
-/**
- * @brief 设置轮询周期毫秒（对已登记计划即时生效）。
- * @param dev 设备实例
- * @param intervalMs 周期毫秒；0=该设备不轮询
- */
-void XVfdDevice_setPollInterval(XVfdDevice* dev, uint32_t intervalMs);
-
-/**
- * @brief 获取轮询周期毫秒。
+ * @brief 获取状态快照发布周期。
  * @param dev 设备实例（可 NULL，返回 0）
  * @return 周期毫秒
  */
-uint32_t XVfdDevice_pollInterval(const XVfdDevice* dev);
+uint32_t XVfdDevice_statusInterval(const XVfdDevice* dev);
+
+/**
+ * @brief 设置写落定监督超时。
+ * @param dev 设备实例；不能为 NULL。
+ * @param timeoutMs 超时毫秒（>=1；0 视为缺省 2000）。
+ * @return 无。
+ */
+void XVfdDevice_setActionTimeout(XVfdDevice* dev, uint32_t timeoutMs);
+
+/**
+ * @brief 获取写落定监督超时。
+ * @param dev 设备实例（可 NULL，返回 0）
+ * @return 超时毫秒
+ */
+uint32_t XVfdDevice_actionTimeout(const XVfdDevice* dev);
 
 /* ========================================================================== */
 /*                      动作接口（全部异步；true=受理，结果见信号）            */
@@ -491,7 +670,7 @@ uint32_t XVfdDevice_pollInterval(const XVfdDevice* dev);
  * @brief 启动电机（正转或反转；品牌状态机差异由子类消化）。
  * @param dev 设备实例
  * @param reverse true=反转
- * @return 请求已受理返回 true；未绑定/在途/不支持返回 false
+ * @return 请求已受理返回 true；未挂接/在途/不支持返回 false
  */
 bool XVfdDevice_start(XVfdDevice* dev, bool reverse);
 
@@ -525,7 +704,7 @@ bool XVfdDevice_quickStop(XVfdDevice* dev);
 bool XVfdDevice_jog(XVfdDevice* dev, bool reverse);
 
 /**
- * @brief 写频率给定（工程单位 Hz；负值表示反转给定，标度换算由子类完成）。
+ * @brief 写频率给定（工程单位 Hz；标度换算由子类按点规格除率完成）。
  * @param dev 设备实例
  * @param hz 目标频率（Hz）
  * @return 请求已受理返回 true
@@ -638,22 +817,59 @@ bool XVfdDevice_unlockPassword(XVfdDevice* dev, uint32_t password);
  */
 bool XVfdDevice_saveParameters(XVfdDevice* dev);
 
+/* ========================================================================== */
+/*                      参数通道                                              */
+/* ========================================================================== */
+
 /**
- * @brief 读任意功能码参数（原始值域；结果经 paramReadDone 信号）。
+ * @brief 参数描述表条目数（品牌提供）。
+ * @param dev 设备实例（可 NULL，返回 0）
+ * @return 条目数（0=该品牌无参数通道）
+ */
+int XVfdDevice_paramCount(const XVfdDevice* dev);
+
+/**
+ * @brief 取参数描述（常量借用，禁释放）。
+ * @param dev 设备实例（可 NULL，返回 NULL）
+ * @param paramId 参数描述表下标（0 基）
+ * @return 描述指针；越界返回 NULL
+ */
+const XVfdParamDesc* XVfdDevice_paramDesc_const(const XVfdDevice* dev, uint16_t paramId);
+
+/**
+ * @brief 读任意参数（原始值域；结果经 paramReadDone 信号）。
  * @param dev 设备实例
- * @param paramId 参数描述表下标（0 基；越界拒绝）
+ * @param paramId 参数描述表下标（0 基；越界或未绑定参数点拒绝）
  * @return 请求已受理返回 true
+ * @note 读的是参数点的当前缓存值（点由数据源异步刷新）。
  */
 bool XVfdDevice_readParam(XVfdDevice* dev, uint16_t paramId);
 
 /**
- * @brief 写任意功能码参数（原始值域；受描述表 access 约束，运行禁改直接拒绝）。
+ * @brief ReadParam 虚槽基类实现（参数点直读；品牌可重写为多步序列）。
+ * @param dev 设备实例
+ * @param paramId 参数描述表下标
+ * @return 受理返回 true
+ */
+bool XVfdDevice_readParam_base(XVfdDevice* dev, uint16_t paramId);
+
+/**
+ * @brief 写任意参数（原始值域；受描述表 access 约束，运行禁改直接拒绝）。
  * @param dev 设备实例
  * @param paramId 参数描述表下标（0 基）
  * @param raw 原始码值
  * @return 请求已受理返回 true；约束拒绝返回 false（lastError=ParamRunLocked）
  */
 bool XVfdDevice_writeParam(XVfdDevice* dev, uint16_t paramId, int32_t raw);
+
+/**
+ * @brief WriteParam 虚槽基类实现（存取约束 + 参数点写入 + 落定收口）。
+ * @param dev 设备实例
+ * @param paramId 参数描述表下标
+ * @param raw 原始码值
+ * @return 受理返回 true
+ */
+bool XVfdDevice_writeParam_base(XVfdDevice* dev, uint16_t paramId, int32_t raw);
 
 /**
  * @brief 读铭牌信息（结果经 nameplateUpdated 信号）。

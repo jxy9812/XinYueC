@@ -71,7 +71,7 @@ extern "C" {
 #define XMODBUS_HUB_ON XMODBUS_MAPPING_ON
 #endif
 
-/* 变频器驱动已迁出至 Src/XProtocol/XVfd/（XVfdDevice 抽象父类 + XVfdAtv61/
+/* 变频器驱动已迁出至 Src/Industry/XVfd/（XVfdDevice 抽象父类 + XVfdAtv61/
  * XVfdM512 品牌子类），裁剪开关见 XVfd_config.h（XVFD_ATV61_ON 等）。 */
 
 #endif /* XMODBUS_ON */

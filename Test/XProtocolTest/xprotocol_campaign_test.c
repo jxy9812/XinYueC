@@ -31,6 +31,8 @@
  *                  在途登记（广播写断链不假报 ok，回归检查次序前移）；
  *               S12 Hub 断链重连：在途终结不滞留 inflight（断开→重连后
  *                  pollOk 恢复增长，守卫单飞闸不被滞留在途挡死）；
+ *               （S8/S10/S13 链路层用例随 2026-11-01 XVfd 通道化重构下线：
+ *               XVfdModbusLink/XVfdModbusBase 已删除，等价覆盖转 Hub 用例）
  *               S13 设备层断链续拍：断链 PollDue 不卡死（单飞不被同步收口
  *                  复置忙）→静默退避→重连轮询解析恢复。
  *             全部用例走统一事件循环（单线程，与库同款）；断言失败累计。
@@ -55,8 +57,6 @@
 #include "XModbusReply.h"
 #include "XSerialPort.h"
 #include "XIODevice.h"
-#include "XVfdModbusLink.h"
-#include "XVfdModbusBase_Protected.h"
 #include "XVariant.h"
 
 /* ==================== 基础设施 ==================== */
@@ -468,19 +468,6 @@ static void hubShutdown(XModbusHub* hub)
     XCoreApplication_processEvents(XEventLoop_AllEvents);
 }
 
-/* ==================== S8 链路完成回调计数 ==================== */
-
-typedef struct { int n; int lastOk; } DoneCtx;
-static void onLinkDone(XObject* owner, void* userData, bool ok,
-                       const XModbusDataUnit* result)
-{
-    (void)owner; (void)result;
-    DoneCtx* ctx = (DoneCtx*)userData;
-    if (!ctx) return;
-    ++ctx->n; ctx->lastOk = ok ? 1 : 0;
-}
-static bool predDoneN(void* ctx) { return ((DoneCtx*)ctx)->n >= 1; }
-
 /* ==================== S9 串口错误信号计数 ==================== */
 
 static int g_serialErrCnt;
@@ -821,70 +808,6 @@ static void testS7(void)
     sceneEnd();
 }
 
-/* ==================== S8 XVfd 生命周期 ==================== */
-
-static void testS8(void)
-{
-    sceneBegin("S8", "XVfd 生命周期（detach 旧应答不回调 + 在途销毁设备/链路不崩）");
-    XModbusRtuSerialClient* c = rtuMake(g_pty1, 400, 0, false);
-    CHECK(c != NULL && rtuOpen(c), "bus1 连接");
-    if (!c) { sceneEnd(); return; }
-    XVfdModbusLink* link = XVfdModbusLink_create();
-    CHECK(link != NULL && XVfdModbusLink_setClient(link, (XModbusClient*)c),
-          "链路创建并绑定客户端");
-    if (!link) { rtuClose(c); sceneEnd(); return; }
-
-    /* —— 基线：owner 提交→回调到达。 —— */
-    static DoneCtx ctxA;
-    ctxA.n = 0; ctxA.lastOk = -1;
-    XObject* ownerA = XObject_create();
-    CHECK(ownerA != NULL, "owner 设备对象创建");
-    CHECK(XVfdModbusLink_submitRead(link, ownerA, 1, 0, 2, onLinkDone, &ctxA,
-                                    XModbusRequestPriority_Normal),
-          "基线读提交");
-    CHECK(waitUntil(predDoneN, &ctxA, 2000), "基线回调到达");
-    CHECK_EQ(ctxA.lastOk, 1, "基线回调 ok");
-
-    /* —— detach：在途（帧已上线未回）时 cancelOwner + 销毁设备 ——
-     * 应答随后到达：不得回调已销毁 owner（计数断言），ASan 下无 UAF。 */
-    CHECK(XVfdModbusLink_submitRead(link, ownerA, 1, 2, 2, onLinkDone, &ctxA,
-                                    XModbusRequestPriority_Normal),
-          "在途读提交（unit1 addr=2）");
-    CHECK_EQ(XVfdModbusLink_outstanding(link), 1, "在途登记=1");
-    CHECK_EQ(XVfdModbusLink_cancelOwner(link, ownerA), 1, "cancelOwner 摘除 1 条");
-    CHECK_EQ(XVfdModbusLink_outstanding(link), 0, "摘除后在途=0");
-    XObject_deleteLater(ownerA);                 /* 在途时销毁设备 */
-    XCoreApplication_processEvents(XEventLoop_AllEvents);
-    pumpForMs(600);                              /* 让在途应答自然终结走孤儿路径 */
-    CHECK_EQ(ctxA.n, 1, "detach 后旧应答不回调（回调计数不增）");
-
-    /* —— 在途时销毁链路：静默位防应答（保证真正在途）→ deleteLater 链路 ——
-     * 崩溃随本进程存活核查；泄漏随进程退出交 ASan 核查。 */
-    ctrlSet("bus1_mute_u1");
-    XObject* ownerB = XObject_create();
-    CHECK(ownerB != NULL, "ownerB 创建");
-    CHECK(XVfdModbusLink_submitRead(link, ownerB, 1, 4, 2, onLinkDone, ownerB,
-                                    XModbusRequestPriority_Normal),
-          "链路销毁前在途提交");
-    CHECK_EQ(XVfdModbusLink_outstanding(link), 1, "链路在途=1");
-    XObject_deleteLater((XObject*)link);         /* 在途时销毁链路 */
-    XCoreApplication_processEvents(XEventLoop_AllEvents);
-    pumpForMs(1200);                             /* 客户端超时终结在途应答 */
-    CHECK(true, "在途销毁链路后事件泵存活（零崩溃；泄漏交 ASan 退出核查）");
-    ctrlClear("bus1_mute_u1");
-    XObject_deleteLater(ownerB);
-    XCoreApplication_processEvents(XEventLoop_AllEvents);
-
-    /* —— 存活 sanity：client 仍可用。 —— */
-    XModbusReply* s = sendReadHr((XModbusClient*)c, 1, 0, 1,
-                                 XModbusRequestPriority_Normal);
-    watchLate(7, s);
-    CHECK(waitUntil(predWatchDoneOk, &g_watches[7], 2000), "事后 sanity 读应答");
-
-    rtuClose(c);
-    sceneEnd();
-}
-
 /* ==================== S9 串口双开守卫 ==================== */
 
 static void testS9(void)
@@ -917,115 +840,6 @@ static void testS9(void)
     XSerialPort_close_base((XIODevice*)p1);
     CHECK(!XSerialPort_isOpen((XIODevice*)p1), "close 后端口已关");
     XClassDelete((XClass*)p1);
-    sceneEnd();
-}
-
-/* ==================== S10 微浸泡 ==================== */
-
-static void testS10(void)
-{
-    sceneBegin("S10", "微浸泡（TCP 连接抖动 + RTU CRC 注入循环 50 轮，零崩溃）");
-    XModbusTcpClient* tcp = XModbusTcpClient_create();
-    XModbusRtuSerialClient* rtu = rtuMake(g_pty1, 200, 0, false);
-    CHECK(tcp != NULL && rtu != NULL, "TCP/RTU 客户端创建");
-    if (!tcp || !rtu) { rtuClose(rtu); sceneEnd(); return; }
-    XModbusClient_setTimeout((XModbusClient*)tcp, 300);
-    XModbusClient_setAutoReconnect((XModbusClient*)tcp, false);
-    do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
-        XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-    do { XVariant* vParam = XVariant_create_int(g_tcpPort); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
-        XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-    CHECK(rtuOpen(rtu), "RTU 客户端连接 bus1");
-
-    const int rounds = 50;
-    int okCnt = 0, crcErrCnt = 0, connFail = 0;
-    for (int i = 0; i < rounds; ++i) {
-        /* ① 连接抖动：TCP 连上→读→断开。 */
-        if (!XModbusDevice_connectDevice((XModbusDevice*)tcp) ||
-            !waitUntil(predConnected, tcp, 1000)) { ++connFail; }
-        else {
-            XModbusReply* r = sendReadHr((XModbusClient*)tcp, 1, 0, 2,
-                                         XModbusRequestPriority_Normal);
-            watchLate(0, r);
-            if (waitUntil(predWatchDoneOk, &g_watches[0], 1000)) ++okCnt;
-        }
-        XModbusDevice_disconnectDevice((XModbusDevice*)tcp);
-        waitUntil(predUnconnected, tcp, 500);
-        /* ② CRC 注入：RTU 读坏 CRC 从站 → 应答 error 终结。 */
-        ctrlSet("bus1_badcrc_u3");
-        XModbusReply* cr = sendReadHr((XModbusClient*)rtu, 3, 0, 2,
-                                      XModbusRequestPriority_Normal);
-        watchLate(1, cr);
-        if (waitUntil(predWatchDone, &g_watches[1], 1500) &&
-            g_watches[1].lastError != (int)XModbusDevice_NoError) ++crcErrCnt;
-        ctrlClear("bus1_badcrc_u3");
-    }
-    CHECK_EQ(connFail, 0, "50 轮 TCP 连接全部成功（零连接失败）");
-    CHECK_EQ(okCnt, rounds, "50 轮 TCP 读全部应答");
-    CHECK_EQ(crcErrCnt, rounds, "50 轮 CRC 注入全部以 error 终结");
-
-    /* 终态 sanity：坏 CRC 撤除后 RTU 恢复正常应答。 */
-    XModbusReply* fin = sendReadHr((XModbusClient*)rtu, 1, 0, 2,
-                                   XModbusRequestPriority_Normal);
-    watchLate(2, fin);
-    CHECK(waitUntil(predWatchDone, &g_watches[2], 2000), "浸泡终态 sanity 读终结");
-    if (!g_watches[2].finished) diagClient("S10 挂死", rtu, fin);
-    tlog("S10 sanity 终态: finished=%d lastError=%d",
-         g_watches[2].finished, g_watches[2].lastError);
-    CHECK(waitUntil(predWatchDoneOk, &g_watches[2], 2000), "浸泡终态 sanity 读应答");
-
-    rtuClose(rtu);
-    XObject_deleteLater((XObject*)tcp);
-    XCoreApplication_processEvents(XEventLoop_AllEvents);
-    sceneEnd();
-}
-
-/* ==================== S11 未连接同步终态收口 ==================== */
-/* 复核建议 (a)：断链（未连接）下经链路提交——submit 内部同步终态路径必须
- * 就地 done(false) 且不占在途登记；广播写不得因分支次序假报 ok。 */
-
-static void testS11(void)
-{
-    sceneBegin("S11", "未连接同步终态收口（读/写/广播写同步 done(false) 且不占在途）");
-    XModbusRtuSerialClient* c = rtuMake(g_pty1, 300, 0, false); /* 刻意不连接 */
-    CHECK(c != NULL, "RTU 客户端创建（保持未连接）");
-    XVfdModbusLink* link = XVfdModbusLink_create();
-    CHECK(link != NULL && XVfdModbusLink_setClient(link, (XModbusClient*)c),
-          "链路创建并绑定未连接客户端");
-    if (!c || !link) { rtuClose(c); sceneEnd(); return; }
-    static DoneCtx ctx;
-    ctx.n = 0; ctx.lastOk = -1;
-    XObject* owner = XObject_create();
-    CHECK(owner != NULL, "owner 创建");
-
-    CHECK(XVfdModbusLink_submitRead(link, owner, 1, 0, 2, onLinkDone, &ctx,
-                                    XModbusRequestPriority_Normal),
-          "未连接读受理");
-    CHECK_EQ(ctx.n, 1, "读同步 done 恰好一次");
-    CHECK_EQ(ctx.lastOk, 0, "读同步 done ok=false");
-    CHECK_EQ(XVfdModbusLink_outstanding(link), 0, "读不占在途登记");
-
-    ctx.n = 0;
-    CHECK(XVfdModbusLink_submitWriteSingle(link, owner, 1, 0, 0x55, onLinkDone,
-                                           &ctx, XModbusRequestPriority_Normal),
-          "未连接写受理");
-    CHECK_EQ(ctx.n, 1, "写同步 done 恰好一次");
-    CHECK_EQ(ctx.lastOk, 0, "写同步 done ok=false");
-    CHECK_EQ(XVfdModbusLink_outstanding(link), 0, "写不占在途登记");
-
-    ctx.n = 0;
-    CHECK(XVfdModbusLink_submitWriteSingle(link, owner, 0, 0, 0x55, onLinkDone,
-                                           &ctx, XModbusRequestPriority_Normal),
-          "未连接广播写受理");
-    CHECK_EQ(ctx.n, 1, "广播写同步 done 恰好一次");
-    CHECK_EQ(ctx.lastOk, 0, "断链广播写不假报 ok（终态检查先于广播分支）");
-    CHECK_EQ(XVfdModbusLink_outstanding(link), 0, "广播写不占在途登记");
-
-    XObject_deleteLater(owner);
-    XObject_deleteLater((XObject*)link);
-    XCoreApplication_processEvents(XEventLoop_AllEvents);
-    XCoreApplication_processEvents(XEventLoop_AllEvents);
-    rtuClose(c);
     sceneEnd();
 }
 
@@ -1083,65 +897,6 @@ static void testS12(void)
           "重连后 pollOk 恢复增长（inflight 无滞留）");
 
     hubShutdown(hub);
-    sceneEnd();
-}
-
-/* ==================== S13 设备层断链续拍 ==================== */
-/* 复核建议 (c)+终审 blocking 回归：设备级单飞在断链拍不得被同步收口路径
- * 复置忙（PollDue 先置忙次序根修）——断链多拍后不忙、链路无滞留，重连后
- * 轮询解析恢复增长。 */
-
-static int g_parseCnt13;
-static void onParse13(XObject* owner, const XModbusDataUnit* result)
-{
-    (void)owner; (void)result;
-    ++g_parseCnt13;
-}
-static bool predParse13(void* ctx) { return g_parseCnt13 >= (int)(intptr_t)ctx; }
-
-static void testS13(void)
-{
-    sceneBegin("S13", "设备层断链续拍（断链 PollDue 不卡死→静默退避→重连轮询恢复）");
-    g_parseCnt13 = 0;
-    XModbusRtuSerialClient* c = rtuMake(g_pty1, 300, 0, false);
-    CHECK(c != NULL && rtuOpen(c), "bus1 连接");
-    if (!c) { sceneEnd(); return; }
-    XVfdModbusLink* link = XVfdModbusLink_create();
-    CHECK(link != NULL && XVfdModbusLink_setClient(link, (XModbusClient*)c),
-          "链路创建并绑定客户端");
-    XVfdModbusBase* dev = XVfdModbusBase_create();
-    CHECK(dev != NULL, "Modbus 语义设备创建（骨架直建，测试轮询引擎）");
-    if (!link || !dev) {
-        if (link) XObject_deleteLater((XObject*)link);
-        if (dev) XObject_deleteLater((XObject*)dev);
-        rtuClose(c); sceneEnd(); return;
-    }
-    CHECK(XVfdModbusBase_setLink(dev, link, 1), "设备绑定链路(unit1)→登记轮询计划");
-    CHECK(XVfdModbusBase_addPollGroup(dev, 0, 2, (uint32_t)XVfdPollItem_Status,
-                                      onParse13) >= 0,
-          "注册轮询读组（addr=0 count=2 Status）");
-    XVfdLink_setBackoff(link, 2, 1000); /* 2 次失败即静默 1s，缩短观测窗 */
-    CHECK(waitUntil(predParse13, (void*)1, 2000), "在线基线：轮询解析到达");
-
-    /* 断链：只断开（不销毁客户端）。此后每拍 PollDue 提交同步终态、done
-     * 就地清忙——设备不得被复置忙卡死；失败记账进静默退避。 */
-    XModbusDevice_disconnectDevice((XModbusDevice*)c);
-    CHECK(waitUntil(predUnconnected, c, 1000), "断开串口（进入 Unconnected）");
-    pumpForMs(1200);
-    CHECK(!XVfdDevice_isBusy(&dev->m_base), "断链多拍后设备不忙（单飞无卡死）");
-    CHECK(!XVfdModbusLink_isBusy(link), "断链多拍后链路无滞留在途");
-
-    /* 重连：静默到期探活成功→轮询恢复（解析计数继续增长）。 */
-    CHECK(rtuOpen(c), "重开串口");
-    CHECK(waitUntil(predParse13, (void*)(intptr_t)(g_parseCnt13 + 1), 4000),
-          "重连后轮询恢复（解析继续增长）");
-
-    XVfdLink_stopPolling(link);
-    XVfdModbusBase_detach(dev);
-    XObject_deleteLater((XObject*)dev);
-    XObject_deleteLater((XObject*)link);
-    rtuClose(c);
-    XCoreApplication_processEvents(XEventLoop_AllEvents);
     sceneEnd();
 }
 
@@ -1207,13 +962,9 @@ int XProtocolCampaignTest_runEx(const char* baseDir, int tcpPort)
             if (strstr(only, "S6")) testS6();
             if (strstr(only, "S5")) testS5();
             if (strstr(only, "S7")) testS7();
-            if (strstr(only, "S8")) testS8();
             if (strstr(only, "S4")) testS4();
             if (strstr(only, "S9")) testS9();
-            if (strstr(only, "S11")) testS11();
             if (strstr(only, "S12")) testS12();
-            if (strstr(only, "S13")) testS13();
-            if (strstr(only, "S10")) testS10();
         } else {
             testS1();
             testS2();
@@ -1221,13 +972,9 @@ int XProtocolCampaignTest_runEx(const char* baseDir, int tcpPort)
             testS6();
             testS5();
             testS7();
-            testS8();
             testS4();
             testS9();
-            testS11();
             testS12();
-            testS13();
-            testS10();
         }
     }
 

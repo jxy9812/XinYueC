@@ -41,7 +41,6 @@
 #include "XVector.h"
 #include "XString.h"
 #include "XDateTime.h"
-#include <stdio.h>
 #include <string.h>
 
 /* ==================== 槽前置声明 ==================== */

@@ -1041,6 +1041,15 @@ void* XScreen_refreshRateChanged_signal(XScreen* self, float refreshRate)
     return (void*)(size_t)XScreen_refreshRateChanged_signal;
 }
 
+void* XScreen_powerStateChanged_signal(XScreen* self,
+                                       XPlatformPowerScreenState state)
+{
+    if (!self) return (void*)(size_t)XScreen_powerStateChanged_signal;
+    XScreen_emit(self, (size_t)XScreen_powerStateChanged_signal,
+                 XVarList_Create(XVar(XPlatformPowerScreenState, state)));
+    return (void*)(size_t)XScreen_powerStateChanged_signal;
+}
+
 #endif /* XSCREEN_ON */
 
 #endif /* XGUI_ON */

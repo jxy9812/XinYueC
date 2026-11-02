@@ -44,7 +44,7 @@
  *             空实现/返回 NULL。
  * @author     XinYueC 团队
  ******************************************************************************/
-#if XGUI_ON
+//#if XGUI_ON
 
 #include "XGuiApplication.h"
 #include "XPlatformNativeWindow.h"
@@ -298,6 +298,23 @@ static bool VXGuiApplication_notify(XObject* receiver, XEvent* event)
             return true; /* 输入法消费：事件不再下发。 */
     }
 #endif /* XINPUTMETHOD_ON || (XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON) */
+    /* 屏幕电源态变化（平台上报或 1Hz 对账检出）：转成屏幕对象的
+     * powerStateChanged 信号 ⇒ 任意继承自 XObject 的类都可自主 connect
+     * 监听（订阅范式对标 Qt 6.8 QScreen::powerStateChanged）。
+     * 事件本身无载荷（通知语义），当前态经电源契约读影子态。 */
+    if (event && event->m_type == XEVENT_TYPE_SCREEN_POWER_STATE_CHANGED) {
+#if XSCREEN_ON
+        XScreen* screen = XGuiApplication_primaryScreen();
+        if (screen) {
+            XScreen_powerStateChanged_signal(
+                screen, XPlatformPower_isScreenOff()
+                            ? XPlatformPowerScreenState_Off
+                            : XPlatformPowerScreenState_On);
+        }
+#endif
+        XEvent_accept(event);
+        return true; /* 已转成信号消费：不再下沉到默认事件处理。 */
+    }
     return XClass_Parent(XCoreApplication, EXCoreApplication_Notify,
                          bool (*)(XObject*, XEvent*))(receiver, event);
 }
@@ -2103,4 +2120,4 @@ void* XGuiApplication_fontChanged_signal(XGuiApplication* app, XFont* font)
 
 #endif /* XGUIAPPLICATION_ON */
 
-#endif /* XGUI_ON */
+//#endif /* XGUI_ON */

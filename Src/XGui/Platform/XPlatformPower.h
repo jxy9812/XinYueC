@@ -170,8 +170,26 @@ bool XPlatformPower_isScreenOff(void);
  *  @details 与 isScreenOff 的差异：本函数直询平台实况。发现「影子说
  *           亮、硬件已熄」（前任遗留/外部写黑）时立即点亮自愈——这是
  *           「息屏后推送新版本自启，触摸唤不醒」的运行期兜底通道
- *           （fbdev 平台有效；无读回原语的平台恒 false）。 */
+ *           （fbdev 平台有效；无读回原语的平台恒 false）。
+ *  @note   发现「影子说熄、硬件已亮」（外部唤醒：VNC/xset/面板电源
+ *          管理把屏点亮，且不经应用输入通道）时**采信硬件**：影子归位
+ *          为亮并记一次活动（空闲基线重置）。否则影子会永久卡在「熄」，
+ *          自动熄屏分支被 !m_screenOff 门死 ⇒ 应用之后再也无法休眠。 */
 bool XPlatformPower_reconcile(void);
+
+/** @brief 平台上报入口：屏幕电源态被平台侧观测到变化（外部唤醒/外部熄灭）。
+ *  @param actual 平台观测到的硬件实况（Unknown=平台读不到，不动作）。
+ *  @details 这是「平台 → 框架」的唯一上行口（沿用仓库 X*_report* 上报
+ *           约定，对标 XWindow_reportWindowStateChanged）。平台驱动观测到
+ *           屏幕电源态变化时调用本函数，公共层据此：
+ *           1. 把影子态拉齐到硬件真值（外部唤醒 ⇒ 影子=亮 + 记一次活动；
+ *              外部熄灭 ⇒ 按既有自愈规则点亮）；
+ *           2. 把这次变化**转成框架事件**（XEVENT_TYPE_SCREEN_POWER_
+ *              STATE_CHANGED）投进事件队列 ⇒ 应用层转发为屏幕对象的
+ *              powerStateChanged 信号 ⇒ 任何继承自 XObject 的类都可
+ *              自主选择是否监听。
+ *  @note   幂等：影子与硬件一致时什么都不做（不产生事件、不打扰订阅者）。 */
+void XPlatformPower_reportScreenStateChanged(XPlatformPowerScreenActual actual);
 
 /** @brief 设置电源策略（一次性提交两个阈值）。
  *  @param policy 策略（NULL 视为「两项都从不」）。

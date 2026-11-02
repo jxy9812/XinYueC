@@ -1,57 +1,40 @@
 ﻿/**
  * @file       xfdv_m512_test.c
- * @brief      511M/512M/513M 变频器 XVfd 抽象层闭环测试（双站混合总线端到端）。
- * @details    拓扑：Python 模拟从站（mbtest_m512_slave.py，os.openpty 虚拟串口，
- *             unit1/unit2 双站独立状态机）+ XModbusRtuSerialClient（总线主站）
- *             + XVfdModbusLink + 两台 XVfdM512 挂同一条链路——验证共享 485 总线
- *             仲裁与按站隔离。用例：
- *               ①建链上线 → 双站轮询各自出快照（Stopped）；
- *               ②双站调速互不串扰：dev1=25.0Hz / dev2=10.0Hz（经 P0.10 百分比
- *                 换算，1000H ±10000 口径），轮询回读各自输出频率；
- *               ③双站启动隔离：dev1 正转 / dev2 反转 → 3000H 各自 1/2；
- *               ④dev1 受控停机 → 3000H=3；
- *               ⑤故障注入 u1（8000H=3 减速过电流）→ dev1 故障 + 名称映射，
- *                 dev2 无故障（隔离）；
- *               ⑥dev1 故障复位 → 2000H=7 → 清除；
- *               ⑦dev2 参数读 P0.10（raw=5000）+ 参数写 P8.00=300 回读一致；
- *               ⑧从站静默：mute 站 2 → 链路 slaveLost(2)（连续超时退避），
- *                 站 1 轮询不受牵连；解除静默 → slaveAlive(2) + 轮询恢复。
- *             全部用例走统一事件循环；退出码=失败用例数。
+ * @brief      511M/512M/513M 双站混合总线 XVfd 通道化设备层闭环测试。
+ * @details    [2026-11-01 通道化重构] 拓扑：
+ *               Python 双站模拟器（mbtest_m512_slave.py，一条 pty 上两个站号）
+ *               → XModbusRtuSerialClient（一个总线主站）
+ *               → XModbusHub（两站各自映射段，虚拟地址隔离）
+ *               → XModbusPoint × N → XIoChannelGroup → XVfdM512 × 2。
+ *             覆盖：
+ *               ①上线 + 双站快照（站号隔离）；
+ *               ②调速：Hz→最大频率百分比→1000H（P0.10 换算）双站独立；
+ *               ③启停：2000H 命令字 1/2/6 + 3000H 状态回读；
+ *               ④故障：8000H 故障码 → 故障名映射 + 站间隔离；
+ *               ⑤复位：2000H=7 → 故障清零；
+ *               ⑥参数通道：P0.10 读（id=3）、P8.00 写后回读（id=11）；
+ *               ⑦能力位/参数表/约束标注。
+ *             退出码=失败用例数。
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-#include <stdint.h>
 
 #include "XCoreApplication.h"
 #include "XEventLoop.h"
 #include "XDateTime.h"
-#include "XModbusRtuSerialClient.h"
+#include "XModbusTcpClient.h"
 #include "XModbusDevice.h"
-#include "XVfdDevice.h"
-#include "XVfdDevice_Protected.h"
-#include "XVfdModbusLink.h"
-#include "XVfdM512.h"
-#include "XSerialPort.h"
 #include "XVariant.h"
 #include "XString.h"
+#include "xvfd_harness.h"
+#include "xvfd_slave_emu.h"
+#include "XVfd/XVfdM512.h"
 
 #ifndef M512_BASE
 #define M512_BASE "/tmp/mbsoak/m512"
 #endif
-
-/* 产物根运行期解析：M512_BASE 环境变量优先（mbtest_m512_run.sh 的 OUT 与
- * asan_gate 等门禁都以该环境变量隔离各跑法产物根），缺省回落编译期宏。
- * 原实现只认编译期宏——门禁以 M512_BASE 环境变量改根时，测试仍读写宏缺省
- * 目录：fault_u1/mute 控制文件与 req_order.log 全部落错目录，从站永远收不到
- * 故障/静默注入、优先级断言 grep 错日志，fault/priority/slaveLost 共 7 项
- * 断言连环误报（2026-10-29 ASan 门实证；pty 路径因走 argv 侥幸不受影响）。 */
-static const char* m512BaseResolve(void)
-{
-    const char* env = getenv("M512_BASE");
-    return (env && env[0]) ? env : M512_BASE;
-}
 
 static int g_fail = 0;
 static const char* g_case = "";
@@ -62,25 +45,12 @@ static uint64_t g_bootMs = 0;
     else { printf("  [FAIL] %s (%s@%d)\n", msg, g_case, __LINE__); fflush(stdout); ++g_fail; } \
 } while (0)
 
-static void tlog(const char* fmt, ...)
-{
-    va_list ap; va_start(ap, fmt);
-    printf("[%8.3fs] ", (double)(XDateTime_currentMSecsSinceEpoch() - g_bootMs) / 1000.0);
-    vprintf(fmt, ap); printf("\n"); fflush(stdout);
-}
+/* 站点表（信号槽按 sender 区分站点）。 */
+static XObject* g_devObj[2] = { NULL, NULL };
+static XVfdDevice* g_dev[2] = { NULL, NULL };
+/* 双站模拟器（每站独立 server/client，泵循环内 tick）。 */
+static XvfdSlaveEmu g_emu[2];
 
-/** @brief 事件循环内自旋等待谓词成立。 */
-#define WAIT_FN(expr, timeoutMs) do { \
-    const uint64_t _deadline = XDateTime_currentMSecsSinceEpoch() + (uint64_t)(timeoutMs); \
-    while (!(expr)) { \
-        XCoreApplication_processEvents(XEventLoop_AllEvents); \
-        const uint64_t _spin = XDateTime_currentMSecsSinceEpoch() + 2; \
-        while (XDateTime_currentMSecsSinceEpoch() < _spin) { } \
-        if (XDateTime_currentMSecsSinceEpoch() >= _deadline) break; \
-    } \
-} while (0)
-
-/* ==================== 信号计数 ==================== */
 typedef struct {
     int statusCount;
     int doneCount;
@@ -93,449 +63,297 @@ typedef struct {
     int paramWriteCount;
     uint16_t paramWriteId;
     bool paramWriteOk;
-} DevCounters;
+    int errorCount;
+} DrvCounters;
 
-static DevCounters g_d[2];          /* [0]=unit1 [1]=unit2 */
-static uint64_t g_lastStatusMs[2] = { 0, 0 };
-static uint64_t g_statusGapMs[2] = { 0, 0 };
-static int g_lostUnit = -1;         /* 链路 slaveLost 最近站号 */
-static int g_aliveUnit = -1;        /* 链路 slaveAlive 最近站号 */
+static DrvCounters g_d[2];
+
+static void tlog(const char* fmt, ...)
+{
+    va_list ap; va_start(ap, fmt);
+    printf("[%8.3fs] ", (double)(XDateTime_currentMSecsSinceEpoch() - g_bootMs) / 1000.0);
+    vprintf(fmt, ap); printf("\n"); fflush(stdout);
+}
+
+/** @brief 泵事件指定毫秒（单线程事件循环；两站模拟器同拍推进）。 */
+static void pump(int ms)
+{
+    const uint64_t deadline = XDateTime_currentMSecsSinceEpoch() + (uint64_t)ms;
+    while (XDateTime_currentMSecsSinceEpoch() < deadline) {
+        xvfdSlaveEmuTick(&g_emu[0]);
+        xvfdSlaveEmuTick(&g_emu[1]);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        const uint64_t spin = XDateTime_currentMSecsSinceEpoch() + 2;
+        while (XDateTime_currentMSecsSinceEpoch() < spin) { }
+    }
+}
+
+/** @brief sender → 站点下标。 */
+static int devIndex(XObject* sender)
+{
+    if (sender && sender == g_devObj[1]) return 1;
+    return 0;
+}
 
 static void onStatusUpdated(XObject* sender, XVarList* args)
 {
-    XVfdDevice* dev;
-    int idx;
     (void)args;
-    dev = (XVfdDevice*)sender; /* connect_2：第一参=真 sender */
-    if (!dev) return;
-    idx = (XVfdDevice_unitId(dev) == 1) ? 0 : 1;
-    {
-        uint64_t now = XDateTime_currentMSecsSinceEpoch();
-        if (g_lastStatusMs[idx] != 0) {
-            uint64_t gap = now - g_lastStatusMs[idx];
-            if (g_statusGapMs[idx] == 0 || gap < g_statusGapMs[idx]) g_statusGapMs[idx] = gap;
-        }
-        g_lastStatusMs[idx] = now;
-    }
-    ++g_d[idx].statusCount;
-    if ((g_d[idx].statusCount % 8) == 1) {
-        const XVfdStatus* st = XVfdDevice_status_const(dev);
-        tlog("  u%d 快照: raw=0x%04X state=%d f=%.2fHz I=%.2fA P=%.1fkW fault=%u",
-             idx + 1, st->m_rawStateWord, (int)st->m_runState, st->m_outputFreqHz,
-             st->m_outputCurrentA, st->m_outputPowerKw, st->m_faultCode);
-    }
+    ++g_d[devIndex(sender)].statusCount;
 }
 
 static void onCommandCompleted(XObject* sender, XVarList* args)
 {
-    XVfdDevice* dev;
-    int idx;
-    dev = (XVfdDevice*)sender; /* connect_2：第一参=真 sender */
-    if (!dev) return;
-    idx = (XVfdDevice_unitId(dev) == 1) ? 0 : 1;
-    ++g_d[idx].doneCount;
-    if (args) {
-        XVarList_start(args);
-        g_d[idx].lastOp = (int)XVarList_arg(args, XVfdOperation);
-        g_d[idx].lastOk = XVarList_arg(args, bool);
-    }
-    tlog("  u%d 动作完成: op=%d ok=%d", idx + 1, g_d[idx].lastOp, (int)g_d[idx].lastOk);
+    DrvCounters* c = &g_d[devIndex(sender)];
+    if (!args) return;
+    XVarList_start(args);
+    ++c->doneCount;
+    c->lastOp = (int)XVarList_arg(args, XVfdOperation);
+    c->lastOk = XVarList_arg(args, bool);
+    tlog("  dev%d 动作完成 op=%d ok=%d", devIndex(sender) + 1, c->lastOp, (int)c->lastOk);
 }
 
 static void onParamReadDone(XObject* sender, XVarList* args)
 {
-    XVfdDevice* dev;
-    int idx;
-    dev = (XVfdDevice*)sender; /* connect_2：第一参=真 sender */
-    if (!dev) return;
-    idx = (XVfdDevice_unitId(dev) == 1) ? 0 : 1;
-    ++g_d[idx].paramReadCount;
-    if (args) {
-        XVarList_start(args);
-        g_d[idx].paramReadId = XVarList_arg(args, uint16_t);
-        g_d[idx].paramReadRaw = XVarList_arg(args, int32_t);
-        g_d[idx].paramReadOk = XVarList_arg(args, bool);
-    }
-    tlog("  u%d 参数读: id=%u raw=%d ok=%d", idx + 1,
-         g_d[idx].paramReadId, g_d[idx].paramReadRaw, (int)g_d[idx].paramReadOk);
+    DrvCounters* c = &g_d[devIndex(sender)];
+    if (!args) return;
+    XVarList_start(args);
+    ++c->paramReadCount;
+    c->paramReadId = XVarList_arg(args, uint16_t);
+    c->paramReadRaw = XVarList_arg(args, int32_t);
+    c->paramReadOk = XVarList_arg(args, bool);
 }
 
 static void onParamWriteDone(XObject* sender, XVarList* args)
 {
-    XVfdDevice* dev;
-    int idx;
-    dev = (XVfdDevice*)sender; /* connect_2：第一参=真 sender */
-    if (!dev) return;
-    idx = (XVfdDevice_unitId(dev) == 1) ? 0 : 1;
-    ++g_d[idx].paramWriteCount;
-    if (args) {
-        XVarList_start(args);
-        g_d[idx].paramWriteId = XVarList_arg(args, uint16_t);
-        g_d[idx].paramWriteOk = XVarList_arg(args, bool);
-    }
-    tlog("  u%d 参数写: id=%u ok=%d", idx + 1, g_d[idx].paramWriteId, (int)g_d[idx].paramWriteOk);
+    DrvCounters* c = &g_d[devIndex(sender)];
+    if (!args) return;
+    XVarList_start(args);
+    ++c->paramWriteCount;
+    c->paramWriteId = XVarList_arg(args, uint16_t);
+    c->paramWriteOk = XVarList_arg(args, bool);
 }
 
-static void onSlaveLost(XObject* sender, XVarList* args)
+static void onErrorOccurred(XObject* sender, XVarList* args)
 {
-    (void)sender;
-    if (args) {
-        XVarList_start(args);
-        g_lostUnit = (int)XVarList_arg(args, int);
-        tlog("  链路事件: slaveLost(unit=%d)", g_lostUnit);
+    DrvCounters* c = &g_d[devIndex(sender)];
+    if (!args) return;
+    XVarList_start(args);
+    ++c->errorCount;
+    {
+        const char* msg = XVarList_arg(args, const char*);
+        if (msg) tlog("  dev%d 错误: %s", devIndex(sender) + 1, msg);
     }
-}
-
-static void onSlaveAlive(XObject* sender, XVarList* args)
-{
-    (void)sender;
-    if (args) {
-        XVarList_start(args);
-        g_aliveUnit = (int)XVarList_arg(args, int);
-        tlog("  链路事件: slaveAlive(unit=%d)", g_aliveUnit);
-    }
-}
-
-/** @brief 写控制文件（故障注入/静默）。 */
-static void writeFile(const char* path, const char* content)
-{
-    FILE* f = fopen(path, "w");
-    if (!f) return;
-    if (content) fputs(content, f);
-    fclose(f);
 }
 
 int XVfdM512Test_runEx(const char* ptyOverride)
 {
-    char ptyPath[256] = { 0 };
-    const char* m512Base = m512BaseResolve();
-    XVfdM512* d1;
-    XVfdM512* d2;
-    XVfdDevice* v1;
-    XVfdDevice* v2;
-    g_bootMs = XDateTime_currentMSecsSinceEpoch();
+    XModbusTcpClient* client[2] = { NULL, NULL };
+    XModbusDevice* mdev[2] = { NULL, NULL };
+    XvfdHarness harness;
+    XVfdM512* m1 = NULL;
+    XVfdM512* m2 = NULL;
+    const XVfdPointSpec* specs = NULL;
+    const XVfdParamDesc* params = NULL;
+    int specCount = 0;
+    int paramCount = 0;
+    int devId[2] = { -1, -1 };
+    uint16_t port[2] = { 0, 0 };
+    int i;
+    (void)ptyOverride;
 
-    printf("=== 511M/512M/513M XVfd 抽象层闭环测试（双站混合总线） ===\n"); fflush(stdout);
+    memset(&harness, 0, sizeof(harness));
+    memset(g_d, 0, sizeof(g_d));
+    g_bootMs = XDateTime_currentMSecsSinceEpoch();
+    printf("=== 511M/512M/513M 双站 XVfd 通道化设备层闭环测试（进程内 TCP 从站）===\n");
+    fflush(stdout);
     XCoreApplication_create(0, NULL);
 
-    /* ---------- 读从端 pty 路径 ---------- */
+    /* ---------- 双站模拟器 + 客户端 ---------- */
     g_case = "topology";
-    if (ptyOverride && ptyOverride[0]) {
-        snprintf(ptyPath, sizeof(ptyPath), "%s", ptyOverride);
-    } else {
-        char pathFile[256];
-        snprintf(pathFile, sizeof(pathFile), "%s/pty_path", m512Base);
-        FILE* f = fopen(pathFile, "r");
-        if (f) {
-            if (!fgets(ptyPath, sizeof(ptyPath), f)) ptyPath[0] = 0;
-            fclose(f);
-            ptyPath[strcspn(ptyPath, "\r\n")] = 0;
-        }
+    for (i = 0; i < 2; ++i) {
+        XVariant* var;
+        char name[32];
+        CHECK(xvfdSlaveEmuCreate(&g_emu[i], XVFD_EMU_M512, &port[i]), "从站模拟器上线");
+        client[i] = XModbusTcpClient_create();
+        mdev[i] = (XModbusDevice*)client[i];
+        CHECK(client[i] != NULL && port[i] != 0, "TCP 客户端创建");
+        if (!client[i] || !port[i]) goto cleanup;
+        XModbusClient_setTimeout((XModbusClient*)client[i], 500);
+        XModbusClient_setNumberOfRetries((XModbusClient*)client[i], 2);
+        var = XVariant_create_utf8_str("127.0.0.1");
+        XModbusDevice_setConnectionParameter_ref(mdev[i],
+            XModbusDevice_NetworkAddressParameter, var);
+        XClassDelete((XClass*)var);
+        var = XVariant_create_int((int)port[i]);
+        XModbusDevice_setConnectionParameter_ref(mdev[i],
+            XModbusDevice_NetworkPortParameter, var);
+        XClassDelete((XClass*)var);
+        snprintf(name, sizeof(name), "m512-u%d", i + 1);
+        CHECK(XModbusDevice_connectDevice(mdev[i]), "connectDevice 返回 true");
+        (void)name;
     }
-    CHECK(ptyPath[0] != 0, "读到从站 pty 路径");
-    if (!ptyPath[0]) return 1;
-    tlog("从站串口: %s", ptyPath);
+    pump(300);
 
-    /* ---------- ① 建链：一条 485 总线 + 两台设备 ---------- */
+    /* ---------- 装配：一 Hub 两站 + 两组点 + 两台设备 ---------- */
+    g_case = "assemble";
+    CHECK(xvfdHarnessInit(&harness), "脚手架初始化");
+    devId[0] = xvfdHarnessAddStation(&harness, (XModbusClient*)client[0], 1, "m512-u1");
+    devId[1] = xvfdHarnessAddStation(&harness, (XModbusClient*)client[1], 2, "m512-u2");
+    CHECK(devId[0] > 0 && devId[1] > 0, "双站设备注入 Hub（独立 server/client 对）");
+
+    m1 = XVfdM512_create();
+    m2 = XVfdM512_create();
+    CHECK(m1 != NULL && m2 != NULL, "两台 XVfdM512 创建");
+    if (!m1 || !m2) goto cleanup;
+    g_dev[0] = (XVfdDevice*)m1;
+    g_dev[1] = (XVfdDevice*)m2;
+    g_devObj[0] = (XObject*)m1;
+    g_devObj[1] = (XObject*)m2;
+
+    CHECK(XVfdDevice_attach(g_dev[0], harness.m_group) &&
+          XVfdDevice_attach(g_dev[1], harness.m_group), "两设备挂接同一通道组");
+    specs = XVfdM512_pointSpecs(&specCount);
+    params = XVfdM512_paramDescs(&paramCount);
+    CHECK(xvfdHarnessMount(&harness, g_dev[0], devId[0], 1, specs, specCount),
+          "站1 按点表建点并绑定");
+    CHECK(xvfdHarnessMount(&harness, g_dev[1], devId[1], 2, specs, specCount),
+          "站2 按点表建点并绑定（虚拟地址隔离）");
+    CHECK(paramCount >= 12, "参数描述表规模（核心集）");
+    CHECK(xvfdHarnessMountParam(&harness, g_dev[1], devId[1], 2, &params[3], 3),
+          "站2 装配 P0.10 参数点（id=3）");
+    CHECK(xvfdHarnessMountParam(&harness, g_dev[1], devId[1], 2, &params[11], 11),
+          "站2 装配 P8.00 参数点（id=11）");
+    CHECK(XVfdDevice_hasCapability(g_dev[0], XVfdCap_Jog), "能力位图：点动（511M 族特有）");
+    CHECK(XVfdDevice_hasCapability(g_dev[1], XVfdCap_ParamAccess), "能力位图：参数通道");
+
+    XObject_connect_2(g_devObj[0], XSignal(XVfdDevice_statusUpdated_signal), onStatusUpdated);
+    XObject_connect_2(g_devObj[1], XSignal(XVfdDevice_statusUpdated_signal), onStatusUpdated);
+    XObject_connect_2(g_devObj[0], XSignal(XVfdDevice_commandCompleted_signal), onCommandCompleted);
+    XObject_connect_2(g_devObj[1], XSignal(XVfdDevice_commandCompleted_signal), onCommandCompleted);
+    XObject_connect_2(g_devObj[1], XSignal(XVfdDevice_paramReadDone_signal), onParamReadDone);
+    XObject_connect_2(g_devObj[1], XSignal(XVfdDevice_paramWriteDone_signal), onParamWriteDone);
+    XObject_connect_2(g_devObj[0], XSignal(XVfdDevice_errorOccurred_signal), onErrorOccurred);
+    XObject_connect_2(g_devObj[1], XSignal(XVfdDevice_errorOccurred_signal), onErrorOccurred);
+    XVfdDevice_setStatusInterval(g_dev[0], 100);
+    XVfdDevice_setStatusInterval(g_dev[1], 100);
+
+    xvfdHarnessStart(&harness, 100);
+    tlog("Hub 双站段轮询启动（100ms）");
+
+    /* ---------- ① 双站快照 ---------- */
+    g_case = "pollStatus";
+    pump(2500);
+    CHECK(g_d[0].statusCount > 0, "站1 出快照");
+    CHECK(g_d[1].statusCount > 0, "站2 出快照");
+    CHECK(XVfdDevice_status_const(g_dev[0])->m_runState == XVfdRunState_Stopped,
+          "站1 初始 Stopped（3000H=3）");
+    CHECK(XVfdDevice_status_const(g_dev[1])->m_runState == XVfdRunState_Stopped,
+          "站2 初始 Stopped");
+
+    /* ---------- ② 调速（Hz → 百分比 → 1000H） ---------- */
+    g_case = "setFrequency";
+    g_d[0].doneCount = 0;
+    g_d[1].doneCount = 0;
+    CHECK(XVfdDevice_setFrequency(g_dev[0], 25.0), "站1 发起 25.0Hz");
+    pump(600);
+    CHECK(XVfdDevice_setFrequency(g_dev[1], 10.0), "站2 发起 10.0Hz");
+    pump(1500);
+    CHECK(g_d[0].lastOk && g_d[0].lastOp == (int)XVfdOperation_SetFrequency, "站1 设定完成");
+    CHECK(g_d[1].lastOk && g_d[1].lastOp == (int)XVfdOperation_SetFrequency, "站2 设定完成");
+    pump(800);
+    CHECK(XVfdDevice_status_const(g_dev[0])->m_outputFreqHz > 24.9 &&
+          XVfdDevice_status_const(g_dev[0])->m_outputFreqHz < 25.1,
+          "站1 输出频率 25.0Hz（0.01Hz × 最大频率百分比）");
+    CHECK(XVfdDevice_status_const(g_dev[1])->m_outputFreqHz > 9.9 &&
+          XVfdDevice_status_const(g_dev[1])->m_outputFreqHz < 10.1,
+          "站2 输出频率 10.0Hz（站间隔离）");
+
+    /* ---------- ③ 启停 ---------- */
+    g_case = "startBoth";
+    CHECK(XVfdDevice_start(g_dev[0], false), "站1 发起正转");
+    pump(500);
+    CHECK(XVfdDevice_start(g_dev[1], true), "站2 发起反转");
+    pump(1500);
+    CHECK(XVfdDevice_status_const(g_dev[0])->m_runState == XVfdRunState_RunningForward,
+          "站1 正转（3000H=1）");
+    CHECK(XVfdDevice_status_const(g_dev[1])->m_runState == XVfdRunState_RunningReverse,
+          "站2 反转（3000H=2）");
+
+    g_case = "stop";
+    g_d[0].doneCount = 0;
+    CHECK(XVfdDevice_stop(g_dev[0]), "站1 发起受控停机（2000H=6）");
+    pump(1500);
+    CHECK(g_d[0].lastOk, "站1 停机完成");
+    CHECK(XVfdDevice_status_const(g_dev[0])->m_runState == XVfdRunState_Stopped,
+          "站1 回到 Stopped");
+    CHECK(XVfdDevice_status_const(g_dev[1])->m_runState == XVfdRunState_RunningReverse,
+          "站2 仍在反转（站间隔离）");
+
+    /* ---------- ④ 故障 ---------- */
+    g_case = "fault";
+    xvfdEmuM512InjectFault(&g_emu[0], 3);   /* E.oCdF 减速过电流 */
+    pump(2500);
+    CHECK(XVfdDevice_status_const(g_dev[0])->m_faulted, "站1 故障置位");
+    CHECK(XVfdDevice_status_const(g_dev[0])->m_faultCode == 3, "站1 故障码 = 3");
+    CHECK(XVfdM512_faultName(3) && strcmp(XVfdM512_faultName(3), "E.oCdF") == 0,
+          "故障名映射 E.oCdF");
+    CHECK(XVfdM512_faultText(3) && strcmp(XVfdM512_faultText(3), "减速过电流") == 0,
+          "故障说明映射");
+    CHECK(!XVfdDevice_status_const(g_dev[1])->m_faulted, "站2 无故障（隔离）");
+
+    /* ---------- ⑤ 复位 ---------- */
+    g_case = "resetFault";
+    g_d[0].doneCount = 0;
+    CHECK(XVfdDevice_resetFault(g_dev[0]), "站1 发起故障复位（2000H=7）");
+    pump(2000);
+    CHECK(g_d[0].lastOk, "站1 复位完成");
+    CHECK(XVfdDevice_status_const(g_dev[0])->m_faultCode == 0, "站1 故障清除");
+
+    /* ---------- ⑥ 参数通道 ---------- */
+    g_case = "paramRead";
+    g_d[1].paramReadOk = false;
+    g_d[1].paramReadCount = 0;
+    CHECK(XVfdDevice_readParam(g_dev[1], 3), "站2 发起参数读 P0.10（id=3）");
+    pump(500);
+    CHECK(g_d[1].paramReadOk && g_d[1].paramReadId == 3, "站2 参数读完成");
+    CHECK(g_d[1].paramReadRaw == 5000, "P0.10 回读 raw=5000（50.00Hz）");
+
+    g_case = "paramWrite";
+    g_d[1].paramWriteOk = false;
+    g_d[1].paramWriteCount = 0;
+    CHECK(XVfdDevice_writeParam(g_dev[1], 11, 300), "站2 发起参数写 P8.00=300（3.00Hz）");
+    pump(1500);
+    CHECK(g_d[1].paramWriteOk && g_d[1].paramWriteId == 11, "站2 参数写完成");
+    g_d[1].paramReadOk = false;
+    CHECK(XVfdDevice_readParam(g_dev[1], 11), "站2 回读 P8.00");
+    pump(1000);
+    CHECK(g_d[1].paramReadOk && g_d[1].paramReadRaw == 300, "P8.00 回读 = 300（写入一致）");
+
+    /* ---------- ⑦ 约束标注 ---------- */
+    g_case = "paramAccess";
     {
-        XModbusRtuSerialClient* client = XModbusRtuSerialClient_create();
-        XVfdModbusLink* link;
-        CHECK(client != NULL, "RTU 客户端创建");
-        XModbusClient_setTimeout((XModbusClient*)client, 800);
-        XModbusClient_setNumberOfRetries((XModbusClient*)client, 2);
-        link = XVfdModbusLink_create();
-        CHECK(link != NULL, "Modbus 链路创建");
-        CHECK(XVfdModbusLink_setClient(link, (XModbusClient*)client), "链路绑定 RTU 主站");
-        XVfdLink_setTickMs(&link->m_base, 20);
-
-        XModbusDevice* dev = (XModbusDevice*)client;
-        /* setConnectionParameter_move 只搬内容：源壳（XVariant/XString）所有权
-         * 仍在调用方，用后必须删——ASan 门实证 384B/7 处泄漏全部源于此。 */
-        XVariant* var = NULL;
-        {
-            XString* ptyStr = XString_create_utf8(ptyPath);
-            var = ptyStr ? XString_toVariant(ptyStr) : NULL;
-            if (ptyStr) XClassDelete((XClass*)ptyStr);
-        }
-        if (var) {
-            XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialPortNameParameter, var);
-            XClassDelete((XClass*)var);
-        }
-        var = XVariant_create_int(9600);
-        if (var) {
-            XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialBaudRateParameter, var);
-            XClassDelete((XClass*)var);
-        }
-        var = XVariant_create_int(XSerialPort_Data8);
-        if (var) {
-            XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialDataBitsParameter, var);
-            XClassDelete((XClass*)var);
-        }
-        var = XVariant_create_int(XSerialPort_NoParity);
-        if (var) {
-            XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialParityParameter, var);
-            XClassDelete((XClass*)var);
-        }
-        var = XVariant_create_int(XSerialPort_OneStop);
-        if (var) {
-            XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialStopBitsParameter, var);
-            XClassDelete((XClass*)var);
-        }
-
-        g_case = "connect";
-        CHECK(XModbusDevice_connectDevice(dev), "connectDevice 返回 true");
-        WAIT_FN(XModbusDevice_state(dev) == XModbusDevice_ConnectedState, 3000);
-        CHECK(XModbusDevice_state(dev) == XModbusDevice_ConnectedState, "设备进入 ConnectedState");
-
-        d1 = XVfdM512_create();
-        d2 = XVfdM512_create();
-        v1 = &d1->m_base.m_base;
-        v2 = &d2->m_base.m_base;
-        CHECK(d1 && d2, "两台 XVfdM512 创建");
-        CHECK(XVfdDevice_hasCapability(v2, XVfdCap_Jog), "能力位图：点动（511M 族特有）");
-        CHECK(XVfdModbusBase_setLink(&d1->m_base, link, 1), "dev1 挂链路（unit=1）");
-        CHECK(XVfdModbusBase_setLink(&d2->m_base, link, 2), "dev2 挂链路（unit=2，同一条 485 总线）");
-        XObject_connect_2((XObject*)v1, XSignal(XVfdDevice_statusUpdated_signal), onStatusUpdated);
-        XObject_connect_2((XObject*)v2, XSignal(XVfdDevice_statusUpdated_signal), onStatusUpdated);
-        XObject_connect_2((XObject*)v1, XSignal(XVfdDevice_commandCompleted_signal), onCommandCompleted);
-        XObject_connect_2((XObject*)v2, XSignal(XVfdDevice_commandCompleted_signal), onCommandCompleted);
-        XObject_connect_2((XObject*)v1, XSignal(XVfdDevice_paramReadDone_signal), onParamReadDone);
-        XObject_connect_2((XObject*)v2, XSignal(XVfdDevice_paramReadDone_signal), onParamReadDone);
-        XObject_connect_2((XObject*)v1, XSignal(XVfdDevice_paramWriteDone_signal), onParamWriteDone);
-        XObject_connect_2((XObject*)v2, XSignal(XVfdDevice_paramWriteDone_signal), onParamWriteDone);
-        XObject_connect_2((XObject*)link, XSignal(XVfdLink_slaveLost_signal), onSlaveLost);
-        XObject_connect_2((XObject*)link, XSignal(XVfdLink_slaveAlive_signal), onSlaveAlive);
-        XVfdDevice_setPollInterval(v1, 150);
-        XVfdDevice_setPollInterval(v2, 150);
-        XVfdLink_startPolling(&link->m_base);
-
-        /* ---------- ② 双站轮询（计划表统一排拍） ---------- */
-        g_case = "pollBoth";
-        WAIT_FN(g_d[0].statusCount > 0 && g_d[1].statusCount > 0, 6000);
-        CHECK(g_d[0].statusCount > 0 && g_d[1].statusCount > 0, "双站轮询均出快照（同链路排拍）");
-        CHECK(XVfdDevice_status_const(v1)->m_runState == XVfdRunState_Stopped &&
-              XVfdDevice_status_const(v2)->m_runState == XVfdRunState_Stopped,
-              "双站初始状态 = Stopped");
-
-        /* ---- 实测：链路在途深度（跨设备动作排队长度）+ 轮询实际周期 ---- */
-        {
-            uint64_t t0 = XDateTime_currentMSecsSinceEpoch();
-            int c0 = g_d[0].statusCount + g_d[1].statusCount;
-            int peak = 0;
-            while (XDateTime_currentMSecsSinceEpoch() - t0 < 2000) {
-                XCoreApplication_processEvents(XEventLoop_AllEvents);
-                if (XVfdModbusLink_outstanding(link) > peak) peak = XVfdModbusLink_outstanding(link);
-            }
-            tlog("实测: 2s 内双站状态更新 %d 次（单站最小间隔 %llu/%llu ms）"
-                 " 链路在途峰值=%d（表深 %d）",
-                 g_d[0].statusCount + g_d[1].statusCount - c0,
-                 (unsigned long long)g_statusGapMs[0], (unsigned long long)g_statusGapMs[1],
-                 peak, XVFD_MODBUS_LINK_PENDING_CAP);
-        }
-
-        /* ---------- ③ 双站调速互不串扰 ---------- */
-        g_case = "setFreqBoth";
-        g_d[0].doneCount = 0;
-        g_d[1].doneCount = 0;
-        CHECK(XVfdDevice_setFrequency(v1, 25.0), "dev1 发起 25.0Hz（先读 P0.10 再写 1000H）");
-        CHECK(XVfdDevice_setFrequency(v2, 10.0), "dev2 发起 10.0Hz");
-        WAIT_FN(g_d[0].doneCount > 0 && g_d[1].doneCount > 0, 8000);
-        CHECK(g_d[0].lastOk && g_d[0].lastOp == (int)XVfdOperation_SetFrequency, "dev1 设定完成");
-        CHECK(g_d[1].lastOk && g_d[1].lastOp == (int)XVfdOperation_SetFrequency, "dev2 设定完成");
-        WAIT_FN(XVfdDevice_status_const(v1)->m_outputFreqHz > 24.9 &&
-                XVfdDevice_status_const(v1)->m_outputFreqHz < 25.1 &&
-                XVfdDevice_status_const(v2)->m_outputFreqHz > 9.9 &&
-                XVfdDevice_status_const(v2)->m_outputFreqHz < 10.1, 8000);
-        CHECK(XVfdDevice_status_const(v1)->m_outputFreqHz > 24.9 &&
-              XVfdDevice_status_const(v1)->m_outputFreqHz < 25.1, "dev1 输出频率回读 25.0Hz");
-        CHECK(XVfdDevice_status_const(v2)->m_outputFreqHz > 9.9 &&
-              XVfdDevice_status_const(v2)->m_outputFreqHz < 10.1, "dev2 输出频率回读 10.0Hz（隔离）");
-
-        /* ---------- ④ 双站启动隔离 ---------- */
-        g_case = "startBoth";
-        g_d[0].doneCount = 0;
-        g_d[1].doneCount = 0;
-        CHECK(XVfdDevice_start(v1, false), "dev1 发起正转");
-        CHECK(XVfdDevice_start(v2, true), "dev2 发起反转");
-        WAIT_FN(g_d[0].doneCount > 0 && g_d[1].doneCount > 0, 8000);
-        CHECK(g_d[0].lastOk, "dev1 启动受理");
-        CHECK(g_d[1].lastOk, "dev2 启动受理");
-        WAIT_FN(XVfdDevice_status_const(v1)->m_runState == XVfdRunState_RunningForward &&
-                XVfdDevice_status_const(v2)->m_runState == XVfdRunState_RunningReverse, 8000);
-        CHECK(XVfdDevice_status_const(v1)->m_runState == XVfdRunState_RunningForward, "dev1 正转（3000H=1）");
-        CHECK(XVfdDevice_status_const(v2)->m_runState == XVfdRunState_RunningReverse, "dev2 反转（3000H=2，隔离）");
-
-        /* ---------- ⑤ dev1 停机 ---------- */
-        g_case = "stop";
-        g_d[0].doneCount = 0;
-        CHECK(XVfdDevice_stop(v1), "dev1 发起受控停机");
-        WAIT_FN(g_d[0].doneCount > 0, 6000);
-        CHECK(g_d[0].lastOk, "dev1 停机完成");
-        WAIT_FN(XVfdDevice_status_const(v1)->m_runState == XVfdRunState_Stopped, 6000);
-        CHECK(XVfdDevice_status_const(v1)->m_runState == XVfdRunState_Stopped, "dev1 回到 Stopped");
-        CHECK(XVfdDevice_status_const(v2)->m_runState == XVfdRunState_RunningReverse,
-              "dev2 仍反转（停机不越站）");
-
-        /* ---------- ⑥ 故障注入 u1 ---------- */
-        g_case = "fault";
-        {
-            char path[256];
-            snprintf(path, sizeof(path), "%s/fault_u1", m512Base);
-            writeFile(path, "3");   /* 8000H=3 减速过电流 */
-        }
-        WAIT_FN(XVfdDevice_status_const(v1)->m_faultCode == 3, 10000);
-        CHECK(XVfdDevice_status_const(v1)->m_faulted, "dev1 故障置位");
-        CHECK(XVfdDevice_status_const(v1)->m_faultCode == 3, "dev1 故障码 = 3");
-        {
-            const char* name = XVfdM512_faultName(3);
-            const char* text = XVfdM512_faultText(3);
-            CHECK(name && strcmp(name, "E.oCdF") == 0, "故障名映射 E.oCdF");
-            CHECK(text && strcmp(text, "减速过电流") == 0, "故障说明映射");
-        }
-        CHECK(!XVfdDevice_status_const(v2)->m_faulted, "dev2 无故障（隔离）");
-
-        /* ---------- ⑦ dev1 故障复位 ---------- */
-        g_case = "resetFault";
-        g_d[0].doneCount = 0;
-        CHECK(XVfdDevice_resetFault(v1), "dev1 发起故障复位（2000H=7）");
-        WAIT_FN(g_d[0].doneCount > 0, 6000);
-        CHECK(g_d[0].lastOk, "dev1 复位完成");
-        WAIT_FN(XVfdDevice_status_const(v1)->m_faultCode == 0, 8000);
-        CHECK(XVfdDevice_status_const(v1)->m_faultCode == 0, "dev1 故障清除");
-
-        /* ---------- ⑧ dev2 参数读 P0.10 ---------- */
-        g_case = "readParam";
-        g_d[1].paramReadCount = 0;
-        CHECK(XVfdDevice_readParam(v2, 3), "dev2 发起参数读 P0.10（id=3）");
-        WAIT_FN(g_d[1].paramReadCount > 0, 6000);
-        CHECK(g_d[1].paramReadOk && g_d[1].paramReadId == 3, "dev2 参数读完成");
-        CHECK(g_d[1].paramReadRaw == 5000, "P0.10 回读 raw=5000（50.00Hz）");
-
-        /* ---------- ⑨ dev2 参数写 P8.00=300 并回读 ---------- */
-        g_case = "writeParam";
-        g_d[1].paramWriteCount = 0;
-        CHECK(XVfdDevice_writeParam(v2, 11, 300), "dev2 发起参数写 P8.00=300（3.00Hz）");
-        WAIT_FN(g_d[1].paramWriteCount > 0, 6000);
-        CHECK(g_d[1].paramWriteOk && g_d[1].paramWriteId == 11, "dev2 参数写完成");
-        g_d[1].paramReadCount = 0;
-        CHECK(XVfdDevice_readParam(v2, 11), "dev2 回读 P8.00");
-        WAIT_FN(g_d[1].paramReadCount > 0, 6000);
-        CHECK(g_d[1].paramReadOk && g_d[1].paramReadRaw == 300, "P8.00 回读 = 300（写入一致）");
-
-        /* ---------- ⑩a 任意优先级：父类队列有序插入语义 ---------- */
-        g_case = "priorityAny";
-        {
-            /* 直接对父类队列验证：任意整数优先级，值越大越先出，同级 FIFO。
-             * （经 XModbusClient_serialQueuePush/Pop 公共 API，与传输无关） */
-            /* 用独立 client 实例测队列语义（不碰在用的主站）；
-             * 以 serverAddress 作顺序标记，request/reply 传 NULL（安全）。 */
-            XModbusClient* qc = XModbusClient_create();
-            int order[4];
-            int i2;
-            CHECK(qc != NULL, "队列语义测试用 client 创建");
-            if (qc) {
-                XModbusClient_serialQueuePush(qc, NULL, NULL, 11, 5);
-                XModbusClient_serialQueuePush(qc, NULL, NULL, 22, 100);
-                XModbusClient_serialQueuePush(qc, NULL, NULL, 33, 5);
-                XModbusClient_serialQueuePush(qc, NULL, NULL, 44, 50);
-                CHECK(XModbusClient_serialQueueCount(qc) == 4, "队列入队 4 条");
-                for (i2 = 0; i2 < 4; ++i2) {
-                    int addr = 0;
-                    if (!XModbusClient_serialQueuePop(qc, NULL, NULL, &addr)) break;
-                    order[i2] = addr;
-                }
-                CHECK(order[0] == 22 && order[1] == 44 && order[2] == 11 && order[3] == 33,
-                      "出队顺序 = 优先级降序(100,50,5,5)，同级 FIFO");
-                XClassDelete((XClass*)qc);
-            }
-        }
-
-        /* ---------- ⑩ 跨设备插队：动作(High) 优先于轮询(Normal) ---------- */
-        g_case = "priority";
-        {
-            /* 站 2 持续轮询制造排队；此时向站 1 下发动作（High）：
-             * 断言站 1 的动作在站 2 的下一条轮询之前被从站收到
-             * （模拟器按到达顺序记录请求日志，动作行应先于其后轮询行）。 */
-            uint64_t t0 = XDateTime_currentMSecsSinceEpoch();
-            int linesBefore = 0;
-            int idxAction = -1;
-            int idxPollAfter = -1;
-            int i;
-            FILE* of;
-            char path[256];
-            char line[64];
-            /* 先数一遍动作前的请求行数 */
-            snprintf(path, sizeof(path), "%s/req_order.log", m512Base);
-            of = fopen(path, "r");
-            if (of) {
-                while (fgets(line, sizeof(line), of)) ++linesBefore;
-                fclose(of);
-            }
-            while (XDateTime_currentMSecsSinceEpoch() - t0 < 1200) {
-                XCoreApplication_processEvents(XEventLoop_AllEvents);
-            }
-            g_d[0].doneCount = 0;
-            CHECK(XVfdDevice_start(v1, false), "dev1 发起动作（High 优先）");
-            WAIT_FN(g_d[0].doneCount > 0, 6000);
-            CHECK(g_d[0].lastOk, "dev1 动作完成（High 插队未被轮询拖死）");
-            /* 断言：动作帧(u1 fc6) 出现在其后第一条站 2 轮询帧(u2 fc3) 之前 */
-            of = fopen(path, "r");
-            if (of) {
-                i = 0;
-                while (fgets(line, sizeof(line), of)) {
-                    if (i >= linesBefore) {
-                        if (idxAction < 0 && strstr(line, "u1 fc6")) idxAction = i - linesBefore;
-                        else if (idxAction >= 0 && idxPollAfter < 0 && strstr(line, "u2 fc3"))
-                            idxPollAfter = i - linesBefore;
-                    }
-                    ++i;
-                }
-                fclose(of);
-            }
-            CHECK(idxAction >= 0, "从站收到站 1 的动作帧（u1 fc6）");
-            CHECK(idxAction >= 0 && (idxPollAfter < 0 || idxAction < idxPollAfter),
-                  "动作帧(High) 排在站 2 轮询帧(Normal) 之前——优先级插队生效");
-        }
-
-        /* ---------- ⑩ 从站静默：离线退避 + 隔离 + 恢复 ---------- */
-        g_case = "slaveLost";
-        {
-            char path[256];
-            int status1Before;
-            snprintf(path, sizeof(path), "%s/mute", m512Base);
-            writeFile(path, "2");   /* 静默站 2 */
-            status1Before = g_d[0].statusCount;
-            WAIT_FN(g_lostUnit == 2, 20000);
-            CHECK(g_lostUnit == 2, "链路 slaveLost(2)（连续超时退避）");
-            CHECK(g_d[0].statusCount > status1Before, "站 1 轮询不受牵连（离线隔离）");
-            {
-                int status2Stall = g_d[1].statusCount;
-                uint64_t snap = XDateTime_currentMSecsSinceEpoch() + 1500;
-                while (XDateTime_currentMSecsSinceEpoch() < snap) {
-                    XCoreApplication_processEvents(XEventLoop_AllEvents);
-                }
-                CHECK(g_d[1].statusCount == status2Stall, "站 2 轮询静默暂停（退避跳拍）");
-            }
-            /* 解除静默 → 退避到期探活 → slaveAlive(2) + 轮询恢复 */
-            unlink(path);
-            g_aliveUnit = -1;
-            WAIT_FN(g_aliveUnit == 2, 15000);
-            CHECK(g_aliveUnit == 2, "链路 slaveAlive(2)（探活恢复）");
-            WAIT_FN(XVfdDevice_status_const(v2)->m_outputFreqHz > 9.9 &&
-                    XVfdDevice_status_const(v2)->m_outputFreqHz < 10.1, 8000);
-            CHECK(XVfdDevice_status_const(v2)->m_outputFreqHz > 9.9 &&
-                  XVfdDevice_status_const(v2)->m_outputFreqHz < 10.1, "站 2 轮询恢复");
-        }
-
-        /* ---------- 收尾 ---------- */
-        XVfdModbusBase_detach(&d1->m_base);
-        XVfdModbusBase_detach(&d2->m_base);
-        XModbusDevice_disconnectDevice(dev);
-        XClassDelete((XClass*)d1);
-        XClassDelete((XClass*)d2);
-        XClassDelete((XClass*)link);
-        XClassDelete((XClass*)client);
+        const XVfdParamDesc* pd = XVfdDevice_paramDesc_const(g_dev[1], 3);
+        CHECK(pd && pd->m_access == (uint8_t)XVfdParamAccess_RunLocked,
+              "P0.10 标注为运行禁改（★）");
+        CHECK(XVfdDevice_paramCount(g_dev[1]) == paramCount, "参数表条目数一致");
     }
+
+cleanup:
+    if (g_dev[0]) XVfdDevice_detach(g_dev[0]);
+    if (g_dev[1]) XVfdDevice_detach(g_dev[1]);
+    if (m1) XClassDelete((XClass*)m1);
+    if (m2) XClassDelete((XClass*)m2);
+    if (harness.m_group || harness.m_hub) xvfdHarnessDestroy(&harness);
+    for (i = 0; i < 2; ++i) {
+        if (mdev[i]) XModbusDevice_disconnectDevice(mdev[i]);
+        if (client[i]) XClassDelete((XClass*)client[i]);
+        xvfdSlaveEmuDestroy(&g_emu[i]);
+    }
+    g_devObj[0] = NULL;
+    g_devObj[1] = NULL;
+    g_dev[0] = NULL;
+    g_dev[1] = NULL;
+    pump(50);
 
     printf("=== 结束：失败用例 %d ===\n", g_fail);
     fflush(stdout);
@@ -544,7 +362,6 @@ int XVfdM512Test_runEx(const char* ptyOverride)
 
 int XVfdM512Test_run(void)
 {
-    /* pty 路径缺省读 m512Base/pty_path 文件（驱动脚本先行启动从站时写入）。 */
     return XVfdM512Test_runEx(NULL);
 }
 

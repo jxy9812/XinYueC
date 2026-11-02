@@ -42,6 +42,10 @@ A_LFT = 7121
 A_THR = 9630
 A_LFRD = 8602
 A_LFR1 = 8521
+A_VBUS = 3243          # 直流母线电压（0.1V）
+A_RFRD = 8604          # 输出转速（1rpm）
+A_ACC = 9001           # 加速时间（0.01s，写多为读少）
+A_DEC = 9002           # 减速时间
 
 # ---- Drivecom 状态 ----
 ST_DISABLED = 2
@@ -71,6 +75,8 @@ class Atv61:
         self.motor_thermal = 30
         self.drive_thermal = 25
         self.reverse = False
+        self.acc_raw = 300        # ACC 加速时间 3.00s（0.01s 定点）
+        self.dec_raw = 300        # DEC 减速时间 3.00s
 
     # ---------- 寄存器视图 ----------
     def read_reg(self, addr):
@@ -105,6 +111,14 @@ class Atv61:
             return self.fault
         if addr == A_THR:
             return self.motor_thermal
+        if addr == A_VBUS:
+            return 0x0BB8            # 母线电压 300.0V（0.1V）
+        if addr == A_RFRD:
+            return self.ref_rpm & 0xFFFF
+        if addr == A_ACC:
+            return self.acc_raw
+        if addr == A_DEC:
+            return self.dec_raw
         return None
 
     def eta(self):
@@ -143,6 +157,14 @@ class Atv61:
         if addr == A_LFRD:
             self.ref_rpm = struct.unpack(">h", struct.pack(">H", value))[0]
             log("REFRPM <- %d rpm" % self.ref_rpm)
+            return True
+        if addr == A_ACC:
+            self.acc_raw = value
+            log("ACC <- %d (0.01s)" % value)
+            return True
+        if addr == A_DEC:
+            self.dec_raw = value
+            log("DEC <- %d (0.01s)" % value)
             return True
         return False
 

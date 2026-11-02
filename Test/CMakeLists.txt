@@ -132,6 +132,15 @@ list(REMOVE_ITEM TEST_FILE
 # 2500ms Coarse 定时器并逐次断言触发间隔），不得卷入主程序。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/XTimerTest/XTimerWheelPhaseTest.c")
+# XPlatformPowerTest 同理：自带 main 的平台电源契约回归测试独立可执行
+# （2026-11-02 外部唤醒根修的回归锁：影子态卡在「熄」⇒ 再也无法休眠），
+# 不得卷入主程序（与 main.c 重复定义 main）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/XPlatformPowerTest/XPlatformPowerTest.c")
+# XPlatformPowerBoardProbe 同理：自带 main 的板端电源契约探针独立可执行
+# （真实驱动路径的 A/B 实证工具），不得卷入主程序。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/XPlatformPowerTest/XPlatformPowerBoardProbe.c")
 # xgui_dialog_portrait_probe 同理：自带 main 的对话框族竖屏适配探针
 # （XDialogPortraitProbe 目标，2026-10-26 对话框竖屏适配战役目验工具）。
 list(REMOVE_ITEM TEST_FILE
@@ -592,6 +601,10 @@ else()
 endif()
 add_test(NAME XLineControlAcceptance COMMAND XLineControl_Acceptance_Test)
 
+# 平台电源契约回归（外部唤醒根修的回归锁）：白盒桩驱动，跑得快、无屏
+# 依赖，可进 CI 门禁。
+add_test(NAME XPlatformPower COMMAND XPlatformPowerTest)
+
 endif() # XGUI_ON
 
 # 测试以相对路径访问仓库资源（assets/、../Library/XFont 等），其直跑口径
@@ -923,6 +936,36 @@ else()
     target_link_libraries(XTimerWheelPhaseTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
+# ==================== 平台电源契约回归测试（独立可执行） ====================
+# [2026-11-02 外部唤醒根修] 「被 VNC 唤醒后再也无法休眠」的回归锁：
+# 影子态永久卡在「熄」⇒ 自动熄屏分支被 !m_screenOff 永久门死。
+# 白盒编译：框架实现（Src/XGui/Platform/XPlatformPower.c）直接编入本
+# 目标 + 测试内桩驱动（替掉平台层 6 个 Driver_ 钩子）⇒ 宿主上即可精确
+# 驱动「影子态 ↔ 硬件实况」状态机。框架实现在本目标自带一份 ⇒ 链接时
+# 库内同名成员不会被拉入（符号已由本目标提供），桩驱动同理。
+# XGUI_ON=0（嵌入式全裁剪）时电源契约整段裁掉，本测试无对象 ⇒ 排除。
+if(XGUI_ON)
+add_executable(XPlatformPowerTest
+    "${CMAKE_CURRENT_LIST_DIR}/XPlatformPowerTest/XPlatformPowerTest.c"
+    "${XINYUE_SOURCE_DIR}/Src/XGui/Platform/XPlatformPower.c"
+)
+if(UNIX)
+    target_link_libraries(XPlatformPowerTest ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XPlatformPowerTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+endif() # XGUI_ON（电源契约回归测试）
+
+# 板端电源契约探针（真实驱动路径）：X11/DPMS 专属，Windows 无此路径 ⇒
+# 仅 UNIX 构建。用法：XPlatformPowerBoardProbe [熄屏超时毫秒]，
+# 运行中用 `xset dpms force on` 模拟外部唤醒，观测「影子归位 + 能再休眠」。
+if(UNIX AND XGUI_ON)
+add_executable(XPlatformPowerBoardProbe
+    "${CMAKE_CURRENT_LIST_DIR}/XPlatformPowerTest/XPlatformPowerBoardProbe.c"
+)
+target_link_libraries(XPlatformPowerBoardProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
 # ==================== 测试/工具目标统一强制包含配置头 ====================
 # 布局分裂根修（2026-10-21）：核心库经 xinyue_force_include_config 强制
 # /FI CXinYueConfig.h，而测试/工具可执行目标此前没有——它们的 TU 在首个
@@ -955,6 +998,7 @@ set(XINYUE_EXEC_TARGETS
     xgui_glyph_coverage_diff_tool
     x_timer_coarse_repro
     XTimerWheelPhaseTest
+    XPlatformPowerTest
 )
 foreach(_tgt IN LISTS XINYUE_EXEC_TARGETS)
     if(TARGET ${_tgt})

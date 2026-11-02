@@ -121,10 +121,24 @@ static bool VXVectorEnlargeCapacity(XVector* this_vector)
             else {
                 memcpy(newShared->data, oldData, oldSize * typeSize);
             }
-            /* 扩容前已完成 COW 分离，此时旧块由当前容器独占，释放前必须析构元素。 */
-            XSharedData_release_with((XSharedData*)XContainerDataPtr(this_vector),
-                (XCDataDeinitMethod)VXVectorDataDelete, this_vector,
-                XContainer_memory(this_vector));
+            /* 元素所有权随块转移：**深拷贝**（设了拷贝方法）时新块持有独立
+             * 副本，旧块的元素仍归旧块所有 → 释放旧块前逐个析构（否则泄漏）；
+             * **浅拷贝**（未设拷贝方法，走 memcpy）时新旧块共用同一批元素
+             * 指针，所有权已随新块转移 → 旧块释放时**不得**析构元素，否则
+             * 新块指针悬垂（use-after-free）。
+             * [2026-11-02 实锅] XSignalSlot 的 connList（XConnection* 指针向量，
+             * 只设 deinit 不设拷贝方法）扩容到第 3 个元素即踩：旧块析构把已
+             * 拷进新块的连接对象释放 → 连接表悬垂 → 信号发射时调到已释放连接
+             * → 段错误。本处与 resize 路径同步修正，行为对齐 COW 分离路径
+             * （VXVectorDetachIfNeeded 从不析构旧块元素）。 */
+            if (copy) {
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(this_vector),
+                    (XCDataDeinitMethod)VXVectorDataDelete, this_vector,
+                    XContainer_memory(this_vector));
+            } else {
+                XSharedData_release((XSharedData*)XContainerDataPtr(this_vector),
+                    XContainer_memory(this_vector));
+            }
             XContainerSetDataPtr(this_vector, newShared);
         }
         else {
@@ -337,10 +351,16 @@ static bool VXVector_resizeCore(XVector* this_vector, size_t size, bool zeroFill
                 if (oldData && oldSize > 0)
                     memcpy(newShared->data, oldData, oldSize * typeSize);
             }
-            /* resize 的深拷贝完成后，旧块中的非 POD 元素仍需逐个释放。 */
-            XSharedData_release_with((XSharedData*)XContainerDataPtr(this_vector),
-                (XCDataDeinitMethod)VXVectorDataDelete, this_vector,
-                XContainer_memory(this_vector));
+            /* 元素所有权随块转移，规则同扩容路径：深拷贝才析构旧块元素，
+             * 浅拷贝（未设拷贝方法）不得析构——否则新块指针悬垂。 */
+            if (copy) {
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(this_vector),
+                    (XCDataDeinitMethod)VXVectorDataDelete, this_vector,
+                    XContainer_memory(this_vector));
+            } else {
+                XSharedData_release((XSharedData*)XContainerDataPtr(this_vector),
+                    XContainer_memory(this_vector));
+            }
             XContainerSetDataPtr(this_vector, newShared);
         }
         else {

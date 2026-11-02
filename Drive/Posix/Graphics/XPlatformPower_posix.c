@@ -29,6 +29,18 @@
  *                对任一客户端连接强制置屏即生效，故本文件自开一条惰性
  *                连接（不复用窗口后端的单连接，避免跨文件耦合）。
  *
+ *             ③ 读回面（2026-11-02 新增）：**屏幕实况读回 + 状态跃迁
+ *                推送**。X11 面读服务端 DPMS 档位（DPMSInfo，三参
+ *                签名见段内注释；服务端档位是共享真值——任一客户端改
+ *                它都生效，板端实测与 connector 的 dpms 属性、与面板
+ *                背光供电三者一致）；DPMS 扩展不可用时回落 sysfs 的
+ *                DRM connector dpms 属性（只认 status=connected 的
+ *                connector）。本平台**没有**可用的服务端通知源（板端
+ *                实测：DPMS 扩展零事件、DPMS 置屏也不派发 RandR 事件）
+ *                ⇒ 平台侧自观测：节流轮询（200ms）到跃迁即调
+ *                XPlatformPower_reportScreenStateChanged 上行，公共层
+ *                改影子态并转成框架事件 ⇒ 订阅者即时收到。
+ *
  * @note       平台 API 只允许出现在 Drive（见 Drive/README.md）。
  * @author     XinYueC 团队
  ******************************************************************************/
@@ -43,7 +55,8 @@
 #include <fcntl.h>
 #include <dirent.h>
 
-#include "XDateTime.h" /* XDateTime_currentMSecsSinceEpoch（探测冷却节拍，框架自有单调时钟，不引 time.h）。 */
+#include "XDateTime.h" /* XDateTime_currentMSecsSinceEpoch（探测冷却节拍/推送节流，框架自有单调时钟，不引 time.h）。 */
+#include "XAbstractEventDispatcher.h" /* addPollCallback（平台侧状态跃迁推送的挂载点）。 */
 
 /* ---- fbdev 面编译开关 ---- */
 #if defined(XPLATFORM_FBDEV_ON) && XPLATFORM_FBDEV_ON
@@ -61,6 +74,8 @@
  * 开发头的依赖；两个档位在非 X11 构建下同样需要，故置于开关之外）。 */
 #define XPOWER_DPMS_MODE_ON  0
 #define XPOWER_DPMS_MODE_OFF 3
+/* DPMS 读回档位：0=On / 1=Standby / 2=Suspend / 3=Off（dpmsconst.h）。 */
+#define XPOWER_DPMS_LEVEL_ON 0
 
 /* ---- X11 面编译开关 ---- */
 #if defined(XINYUE_C_HAS_X11)
@@ -423,9 +438,17 @@ static Display* g_xpowDisplay = NULL; /**< 惰性自开的 X 连接。 */
 
 #if XPOWER_DPMS_ON
 /* DPMS 最小原型（dpms.h 开发头缺失时的内联 ABI 声明，纪律同
- * XPlatformNativeWindow_posix.c 的 RandR/XI2 段）。 */
+ * XPlatformNativeWindow_posix.c 的 RandR/XI2 段）。
+ * ⚠【真机教训 2026-11-02】DPMSInfo 的**真实签名是三参**：
+ *   Status DPMSInfo(Display *dpy, CARD16 *power_level, BOOL *enabled)
+ * （见 dpms.h / dpmsproto.h）。按两参调用会因栈上少传一个出参而
+ * 段错误（板端实测崩在 libXext 内），别再"简化"成两参。
+ * 同理 DPMSForceLevel 的真实返回是 Status（不是 void）——原声明写成
+ * void 与真实 ABI 不符（调用方忽略返回值，行为无碍，但已按真实签名
+ * 校正，避免再被当作 void 函数误用）。 */
 extern int  DPMSQueryExtension(Display* display, int* eventBase, int* errorBase);
-extern void DPMSForceLevel(Display* display, int powerLevel);
+extern int  DPMSInfo(Display* display, unsigned short* powerLevel, int* enabled);
+extern int  DPMSForceLevel(Display* display, unsigned short powerLevel);
 
 static bool     g_xpowDpmsProbed = false;
 static bool     g_xpowDpmsUsable = false;
@@ -463,21 +486,168 @@ static bool xpowDpmsForce(int level)
     Display* dpy = xpowX11Display();
     if (!dpy) return false;
     if (!xpowDpmsAvailable()) return false;
-    DPMSForceLevel(dpy, level);
+    DPMSForceLevel(dpy, (unsigned short)level);
     XFlush(dpy);
     return true;
+}
+
+/** @brief 读服务端 DPMS 当前档位（读回屏幕实况的主通道）。
+ *  @param outLevel 出参：0=On / 1=Standby / 2=Suspend / 3=Off。
+ *  @return true=读到；false=扩展不可用或读失败。
+ *  @details 服务端 DPMS 档位是**共享真值**：任一客户端（应用自己、
+ *           x11vnc、`xset dpms force on/off`、面板电源管理代理）改它，
+ *           服务端就改它 ⇒ 读它即知屏幕此刻亮/灭。板端实测：force off
+ *           ⇒ level=3 且 /sys/class/drm/card0-DSI-1/dpms=Off（面板真灭）；
+ *           force on ⇒ level=0 且 dpms=On。 */
+static bool xpowDpmsQueryLevel(int* outLevel)
+{
+    Display* dpy = xpowX11Display();
+    unsigned short level = 0;
+    int enabled = 0;
+    if (!dpy) return false;
+    if (!xpowDpmsAvailable()) return false;
+    /* 三参签名（见上方原型注释）：少传 enabled 出参会段错误。 */
+    if (!DPMSInfo(dpy, &level, &enabled)) return false;
+    if (outLevel) *outLevel = (int)level;
+    return true;
+}
+
+/** @brief X11 面屏幕实况读回（DPMS 档位）。
+ *  @return On / Off / Unknown（读不到）。
+ *  @details 非 On 档位（Standby/Suspend/Off）一律判为「熄」——契约只有
+ *           On/Off 两档（刻意不设降亮中间档，见 XPlatformPower.h）。 */
+static XPlatformPowerScreenActual xpowDpmsQueryActual(void)
+{
+    int level = 0;
+    if (!xpowDpmsQueryLevel(&level)) return XPlatformPowerScreenActual_Unknown;
+    return (level == XPOWER_DPMS_LEVEL_ON) ? XPlatformPowerScreenActual_On
+                                           : XPlatformPowerScreenActual_Off;
 }
 #else /* !XPOWER_DPMS_ON */
 
 static bool xpowDpmsAvailable(void) { return false; }
 static bool xpowDpmsForce(int level) { (void)level; return false; }
+static bool xpowDpmsQueryLevel(int* outLevel) { (void)outLevel; return false; }
+static XPlatformPowerScreenActual xpowDpmsQueryActual(void)
+                                      { return XPlatformPowerScreenActual_Unknown; }
 
 #endif /* XPOWER_DPMS_ON */
+
+/* ==================== X11 面：sysfs DRM connector 兜底读回 ==================== */
+
+/** @brief 经 /sys/class/drm 的 connector dpms 属性读屏幕实况（兜底通道）。
+ *  @return On / Off / Unknown（读不到）。
+ *  @details DPMS 扩展不可用时（老服务端/无 DPMS 的 X server）走这条：
+ *           X server 的 DPMS 置屏会落到 connector 的 dpms 属性（板端
+ *           实测 force off ⇒ card0-DSI-1/dpms=Off），面板供电与背光
+ *           bl_power 同步翻转（4=暗）。
+ *  @note  **只认 status=connected 的 connector**：未接的 HDMI 口常年
+ *          报 On/Off 与实际亮灭无关，若把它算进来会把「屏幕亮着」
+ *          误判成「屏幕黑着」（进而误触发点亮自愈）。板端三个 connector
+ *          实测：DSI-1=connected、HDMI-A-1=disconnected、
+ *          Writeback-1=unknown，只有 connected 的那个会随置屏翻转。 */
+static XPlatformPowerScreenActual xpowDrmQueryActual(void)
+{
+    DIR* dir;
+    struct dirent* ent;
+    XPlatformPowerScreenActual result = XPlatformPowerScreenActual_Unknown;
+    dir = opendir("/sys/class/drm");
+    if (!dir) return XPlatformPowerScreenActual_Unknown;
+    while ((ent = readdir(dir)) != NULL) {
+        char statusPath[288];
+        char dpmsPath[288];
+        char buf[32];
+        if (ent->d_name[0] == '.') continue;
+        snprintf(statusPath, sizeof(statusPath), "/sys/class/drm/%s/status",
+                 ent->d_name);
+        snprintf(dpmsPath, sizeof(dpmsPath), "/sys/class/drm/%s/dpms",
+                 ent->d_name);
+        /* 只有 connector 目录才有 status 节点（cardN/renderD* 没有）。 */
+        if (!xpowReadText(statusPath, buf, sizeof(buf))) continue;
+        if (strcmp(buf, "connected") != 0) continue;
+        if (!xpowReadText(dpmsPath, buf, sizeof(buf))) continue;
+        if (strcmp(buf, "Off") == 0) {
+            result = XPlatformPowerScreenActual_Off;
+            break;
+        }
+        if (strcmp(buf, "On") == 0)
+            result = XPlatformPowerScreenActual_On;
+    }
+    closedir(dir);
+    return result;
+}
+
+/** @brief X11 面屏幕实况读回总入口（DPMS 档位优先，sysfs DRM 兜底）。 */
+static XPlatformPowerScreenActual xpowX11QueryActual(void)
+{
+    XPlatformPowerScreenActual actual = xpowDpmsQueryActual();
+    if (actual != XPlatformPowerScreenActual_Unknown) return actual;
+    return xpowDrmQueryActual();
+}
+
+/* ==================== 平台侧推送（状态跃迁 → 框架事件） ==================== */
+
+/* 轮询节流（毫秒）：板端实测服务端 DPMS 档位随置屏**即时**翻转，200ms
+ * 轮询足以在肉眼不可感知的时延内捕捉到外部唤醒；5Hz 的开销（一次 X
+ * 往返）相对板端 CPU 预算可忽略（对比逐帧轮询会徒增事件泵负担）。 */
+#define XPOWER_PUSH_INTERVAL_MS 200
+
+static XHandle g_xpowPushHandle = NULL;              /**< 轮询回调句柄。 */
+static XPlatformPowerScreenActual g_xpowLastActual =
+    XPlatformPowerScreenActual_Unknown;              /**< 上次观测到的实况。 */
+static int64_t g_xpowLastPushMs = 0;                 /**< 上次轮询时刻。 */
+
+/** @brief 平台侧轮询回调：观测屏幕实况，跃迁即向上报（平台推送）。
+ *  @details 本平台**没有**可用的服务端通知源（板端实测：DPMS 扩展零
+ *           事件（DPMSNumberEvents=0），且 DPMS 置屏不派发 RandR 事件）
+ *           ⇒ 平台只能自观测。观测到跃迁即调 XPlatformPower_report
+ *           ScreenStateChanged（平台→框架的唯一上行口），由公共层改影子
+ *           态并转成框架事件 ⇒ 订阅者即时收到。
+ *  @note   幂等：实况未变则不上报（平台轮询会以固定节拍重复读到同一
+ *           实况，不得反复打扰订阅者）。 */
+static bool xpowPushPoll(void* userData)
+{
+    XPlatformPowerScreenActual actual;
+    int64_t now;
+    (void)userData;
+    now = XDateTime_currentMSecsSinceEpoch();
+    if (now - g_xpowLastPushMs < XPOWER_PUSH_INTERVAL_MS) return true;
+    g_xpowLastPushMs = now;
+    actual = xpowX11QueryActual();
+    if (actual == XPlatformPowerScreenActual_Unknown) return true;
+    if (actual == g_xpowLastActual) return true;
+    g_xpowLastActual = actual;
+    XPlatformPower_reportScreenStateChanged(actual);
+    return true;
+}
+
+/** @brief 惰性注册平台侧轮询推送（事件分发器就绪后一次）。
+ *  @note  两处前置条件（缺一则推送不发生，已板端实证）：
+ *         ① 轮询回调挂在事件分发器的 processEvents 上 ⇒ 应用须泵事件
+ *            （应用侧由主事件循环天然满足）；
+ *         ② 分发器的取得**经应用单例**（XAbstractEventDispatcher_instance
+ *            → XCoreApplication_eventDispatcher → g_app）⇒ 应用实例须
+ *            先于本注册存在，否则本函数静默跳过（下轮再试）。
+ *         即便始终注册不上，公共层的 1Hz 对账仍会读到真值并走同一上行
+ *         口（功能闭环不依赖本推送，推送只决定时效）。 */
+static void xpowEnsurePushRegistered(void)
+{
+    if (g_xpowPushHandle) return;
+    if (XAbstractEventDispatcher_instance(NULL) == NULL) return;
+    g_xpowPushHandle =
+        XAbstractEventDispatcher_addPollCallback(xpowPushPoll, NULL);
+}
 
 #else /* !XPOWER_X11_ON */
 
 static bool xpowDpmsAvailable(void) { return false; }
 static bool xpowDpmsForce(int level) { (void)level; return false; }
+static bool xpowDpmsQueryLevel(int* outLevel) { (void)outLevel; return false; }
+static XPlatformPowerScreenActual xpowDpmsQueryActual(void)
+                                      { return XPlatformPowerScreenActual_Unknown; }
+static XPlatformPowerScreenActual xpowX11QueryActual(void)
+                                      { return XPlatformPowerScreenActual_Unknown; }
+static void xpowEnsurePushRegistered(void) { }
 
 #endif /* XPOWER_X11_ON */
 
@@ -492,15 +662,28 @@ unsigned XPlatformPowerDriver_capabilities(void)
         caps |= (unsigned)XPlatformPowerCap_ScreenControl;
     if (xpowFbSuspendAvailable())
         caps |= (unsigned)XPlatformPowerCap_SystemSuspend;
+    /* 平台侧推送（状态跃迁 → 框架事件）：能力探测是应用起来后最早会
+     * 走到的驱动入口，借此惰性挂上轮询推送（分发器就绪后一次）。 */
+    xpowEnsurePushRegistered();
     return caps;
 }
 
 XPlatformPowerScreenActual XPlatformPowerDriver_queryScreenState(void)
 {
-    /* fbdev 背光/blank 节点可读回（真值）；DPMS 无服务端查询面（本文件
-     * 只内联了 ForceLevel，未挂 DPMSCapable/DPMSInfo），X11 侧报 Unknown
+    XPlatformPowerScreenActual actual;
+    /* 平台侧推送的惰性注册也挂在这里：公共层的 1Hz 对账**每拍**都问一次
+     * 实况 ⇒ 分发器就绪后最迟 1s 内注册上（只挂能力探测会漏：首次探测
+     * 可能早于分发器就绪，而能力位非 0 后不再重探）。 */
+    xpowEnsurePushRegistered();
+    /* fbdev 背光/blank 节点可读回（真值，嵌入式构建的主通道）。 */
+    actual = xpowFbQueryActual();
+    if (actual != XPlatformPowerScreenActual_Unknown) return actual;
+    /* X11 面：服务端 DPMS 档位（共享真值，任一客户端改它都生效），
+     * 扩展不可用时回落 sysfs connector 的 dpms 属性。读不到则 Unknown
      * ——对账层对 Unknown 不动作。 */
-    return xpowFbQueryActual();
+    actual = xpowX11QueryActual();
+    if (actual != XPlatformPowerScreenActual_Unknown) return actual;
+    return XPlatformPowerScreenActual_Unknown;
 }
 
 bool XPlatformPowerDriver_setScreenState(XPlatformPowerScreenState state)

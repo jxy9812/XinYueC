@@ -34,6 +34,22 @@
 #define XINDUSTRY_CHANNEL_ON 1
 #endif
 
+/** @brief 变频器设备层（XVfd）子模块开关；随工业设备层与通道接口派生。
+ *  @note   派生点必须留在本文件（而非 XVfd/XVfd_config.h）：XVFD_ON 是**全局
+ *          可见**的模块开关——Test 侧 main.c / XTestCommand.c / XProtocolTest.h
+ *          的 XVfd 闭环测试派发块用 `#if XPROTOCOL_ON && XVFD_ON` 裁剪，派发
+ *          一旦被裁掉，三个闭环测试会「静默不再运行」（2026-11-02 实锅：
+ *          XVfd 迁出 XProtocol 时 XVfd_config.h 不再随 XProtocol_config.h
+ *          进入全局包含链，XVFD_ON 不可见 → 派发块整体编译掉 → 派发串在
+ *          二进制里消失 → `--test xvfd-atv61` 报「未知测试命令」）。
+ *          另：派生表达式惰性求值，故本处只需保证 XINDUSTRY_ON 与
+ *          XINDUSTRY_CHANNEL_ON 均已定义（排在其后即可），设备级细开关
+ *          （XVFD_DEVICE_ON / XVFD_ATV61_ON / XVFD_M512_ON）仍在
+ *          XVfd/XVfd_config.h 内按本开关派生。 */
+#ifndef XVFD_ON
+#define XVFD_ON (XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON)
+#endif
+
 /** @brief 电磁阀设备（XSolenoidValve）；依赖 XINDUSTRY_CHANNEL_ON（经 XChannel 通道接口）。 */
 #ifndef XSOLENOID_VALVE_ON
 #define XSOLENOID_VALVE_ON 1

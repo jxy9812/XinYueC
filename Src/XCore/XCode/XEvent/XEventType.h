@@ -240,6 +240,11 @@ typedef enum
     // 按住拖动判定，见 XTouchDragEvent）
     XEVENT_TYPE_TOUCH_DRAG = 228,                              // 触摸手势事件
 
+    // 屏幕电源状态（XGui 扩展：平台观测到屏幕电源态变化时上报，载荷为
+    // 无——接收方经 XPlatformPower 契约读当前态；对标 Qt 6.8
+    // QScreen::powerStateChanged 的可订阅通道）
+    XEVENT_TYPE_SCREEN_POWER_STATE_CHANGED = 230,              // 屏幕电源状态变更
+
     // Reserved for Qt Jambi
     // 512: MetaCall
     // 513: DeleteOnMainThread

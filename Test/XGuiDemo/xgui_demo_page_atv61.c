@@ -1,9 +1,9 @@
 ﻿/**
  * @file       xgui_demo_page_atv61.c
  * @brief      XGuiDemo 扩展页 21：施耐德 ATV61 变频器（XVfd 抽象层 + Modbus RTU）。
- * @details    把 XModbusRtuSerialClient（总线主站）+ XVfdModbusLink 链路 +
- *             XVfdAtv61 品牌子类接入 GUI（2026-10-27 XVfd 子系统落地迁移，
- *             原 XModbusAtv61 直挂模式已删除）：
+ * @details    把 XModbusRtuSerialClient（总线主站）+ XModbusHub（聚合轮询）+
+ *             通道点（XModbusPoint）+ XIoChannelGroup + XVfdAtv61 设备层接入 GUI
+ *             （2026-11-01 通道化重构：设备层只依赖 Industry/XChannel，页面负责装配）：
  *
  *   ① 通信配置行：串口名下拉（每次弹出重枚举本机串口）+ 波特率下拉
  *      （4800/9600/19200/38400，默认 38400）+ 从站地址 +【连接/断开】；
@@ -13,7 +13,7 @@
  *   ④ 监视区：ETA 状态字、输出频率、给定、电流、转矩、电网电压、热态；
  *   ⑤ 报警区：故障码 + 字母码 + 中文说明；
  *   ⑥ 轮询由链路计划表统一排拍（页内无定时器）：轮询开关/周期直接映射
- *      设备轮询配置（XVfdDevice_setPollInterval），动作优先于轮询
+ *      设备轮询配置（Hub 每设备周期），动作优先于轮询
  *      （轮询在途时动作自动挂起补发）。
  *
  *   线程口径：全部同线程直连（XConnectionType_Direct），槽内只触碰控件与
@@ -51,15 +51,16 @@
 #include "XSerialPortInfo.h"
 
 #include "XModbus_config.h"
-#include "XVfd_config.h"
+#include "XVfd/XVfd_config.h"
 #if XMODBUS_CORE_ON && XMODBUS_CLIENT_ON && XMODBUS_RTU_ON && \
-    XVFD_ON && XVFD_DEVICE_ON && XVFD_LINK_ON && XVFD_ATV61_ON
+    XVFD_ON && XVFD_DEVICE_ON && XVFD_ATV61_ON
 #include "XModbusRtuSerialClient.h"
 #include "XModbusDevice.h"
-#include "XVfdDevice.h"
-#include "XVfdDevice_Protected.h"
-#include "XVfdModbusLink.h"
-#include "XVfdAtv61.h"
+#include "XVfd/XVfdDevice.h"
+#include "XVfd/XVfdDevice_Protected.h"
+#include "XModbusHub.h"
+#include "xvfd_harness.h"
+#include "XVfd/XVfdAtv61.h"
 #define ATV_PAGE_ENABLED (XLAYOUT_ON && XLAYOUT_BOX_ON && XWIDGET_ON && \
                          XLABEL_ON && XCOMBOBOX_ON && XLINEEDIT_ON && \
                          XPUSHBUTTON_ON && XCHECKBOX_ON && XSPINBOX_ON)
@@ -108,7 +109,8 @@ typedef struct Atv61Page {
 
     /* 引擎 */
     XModbusRtuSerialClient* m_client; /**< RTU 主站客户端（总线主站）。 */
-    XVfdModbusLink* m_link;      /**< Modbus 链路适配器。 */
+    XvfdHarness m_harness;       /**< 装配脚手架（Hub + 映射 + 通道组 + 点）。 */
+    bool m_assembled;            /**< 脚手架是否已装配。 */
     XVfdAtv61* m_drive;          /**< ATV61 品牌子类。 */
     XVfdDevice* m_dev;           /**< 设备基类视图（= &m_drive->m_base.m_base）。 */
     bool m_connected;            /**< 是否已连接。 */
@@ -161,6 +163,19 @@ static uint32_t atv_pollIntervalFromUi(void)
     ms = s_atv.m_pollMs ? XSpinBox_value(s_atv.m_pollMs) : 500;
     if (ms < 100) ms = 100;
     return (uint32_t)ms;
+}
+
+/** @brief 把 UI 轮询配置下发到 Hub（每设备周期）与设备快照周期。 */
+static void atv_applyPollConfig(void)
+{
+    uint32_t ms = atv_pollIntervalFromUi();
+    if (!s_atv.m_harness.m_hub || !s_atv.m_dev) return;
+    if (s_atv.m_harness.m_devCount > 0) {
+        XModbusHub_setPollInterval(s_atv.m_harness.m_hub,
+                                   s_atv.m_harness.m_devIds[0],
+                                   ms ? ms : 500);
+    }
+    XVfdDevice_setStatusInterval(s_atv.m_dev, (ms && ms < 200) ? ms : 200);
 }
 
 /** @brief 刷新监视区与报警区显示。 */
@@ -292,7 +307,12 @@ static void atv_onConnClicked(XObject* receiver, XVarList* args)
     if (!s_atv.m_client) return;
     XModbusDevice* dev = (XModbusDevice*)s_atv.m_client;
     if (s_atv.m_connected) {
-        XVfdModbusBase_detach(&s_atv.m_drive->m_base); /* 注销链路轮询计划 */
+        XVfdDevice_detach(s_atv.m_dev);            /* 退订通道组信号、停定时器 */
+        if (s_atv.m_assembled) {
+            xvfdHarnessDestroy(&s_atv.m_harness);  /* 收组（托管点随之释放）+ 收 Hub */
+            memset(&s_atv.m_harness, 0, sizeof(s_atv.m_harness));
+            s_atv.m_assembled = false;
+        }
         XModbusDevice_disconnectDevice(dev);
         s_atv.m_connected = false;
         if (s_atv.m_connBtn) XPushButton_setText_2(s_atv.m_connBtn, "连接");
@@ -350,17 +370,35 @@ static void atv_onConnClicked(XObject* receiver, XVarList* args)
         atv_refreshConnState();
         return;
     }
-    /* 串口已通：设备挂链路（登记轮询计划，周期取 UI 当前配置） */
-    if (s_atv.m_drive && s_atv.m_link) {
+    /* 串口已通：装配（Hub 注入 → 通道组 → 点 → 语义槽绑定 → 启动轮询） */
+    if (s_atv.m_drive) {
         int unit = s_atv.m_unit ? XSpinBox_value(s_atv.m_unit) : 1;
+        const XVfdPointSpec* specs = NULL;
+        int specCount = 0;
+        int devId;
         if (unit < 1 || unit > 247) unit = 1;
-        XVfdDevice_setPollInterval(s_atv.m_dev, atv_pollIntervalFromUi());
-        if (!XVfdModbusBase_setLink(&s_atv.m_drive->m_base, s_atv.m_link, unit)) {
-            atv_status("设备挂链路失败");
+        if (!xvfdHarnessInit(&s_atv.m_harness)) {
+            atv_status("装配失败（Hub/映射/通道组）");
             XModbusDevice_disconnectDevice(dev);
             atv_refreshConnState();
             return;
         }
+        s_atv.m_assembled = true;
+        devId = xvfdHarnessAddStation(&s_atv.m_harness, (XModbusClient*)s_atv.m_client,
+                                      unit, "atv61");
+        specs = XVfdAtv61_pointSpecs(&specCount);
+        if (devId <= 0 || !XVfdDevice_attach(s_atv.m_dev, s_atv.m_harness.m_group) ||
+            !xvfdHarnessMount(&s_atv.m_harness, s_atv.m_dev, devId, unit, specs, specCount)) {
+            atv_status("装配失败（设备/点绑定）");
+            xvfdHarnessDestroy(&s_atv.m_harness);
+            memset(&s_atv.m_harness, 0, sizeof(s_atv.m_harness));
+            s_atv.m_assembled = false;
+            XModbusDevice_disconnectDevice(dev);
+            atv_refreshConnState();
+            return;
+        }
+        xvfdHarnessStart(&s_atv.m_harness, atv_pollIntervalFromUi() ? atv_pollIntervalFromUi() : 500);
+        atv_applyPollConfig();
     }
     s_atv.m_connected = true;
     if (s_atv.m_connBtn) XPushButton_setText_2(s_atv.m_connBtn, "断开");
@@ -418,7 +456,7 @@ static void atv_onPollToggled(XObject* receiver, XVarList* args)
 {
     (void)receiver; (void)args;
     if (!s_atv.m_dev || !s_atv.m_connected) return;
-    XVfdDevice_setPollInterval(s_atv.m_dev, atv_pollIntervalFromUi());
+    atv_applyPollConfig();
 }
 
 /** @brief 轮询周期变更 → 映射设备轮询配置。 */
@@ -426,7 +464,7 @@ static void atv_onPollMsChanged(XObject* receiver, XVarList* args)
 {
     (void)receiver; (void)args;
     if (!s_atv.m_dev || !s_atv.m_connected) return;
-    XVfdDevice_setPollInterval(s_atv.m_dev, atv_pollIntervalFromUi());
+    atv_applyPollConfig();
 }
 
 /** @brief 重枚举串口下拉（保留原选择）。 */
@@ -631,15 +669,9 @@ XWidget* demo_page_atv61_build(XWidget* parent,
         XModbusClient_setReconnectInterval((XModbusClient*)s_atv.m_client, 2000);
         XObject_setParent((XObject*)s_atv.m_client, (XObject*)root);
     }
-    s_atv.m_link = XVfdModbusLink_create();
-    if (s_atv.m_link) {
-        XVfdModbusLink_setClient(s_atv.m_link, (XModbusClient*)s_atv.m_client);
-        XVfdLink_setTickMs(&s_atv.m_link->m_base, 50);
-        XObject_setParent((XObject*)s_atv.m_link, (XObject*)root);
-    }
     s_atv.m_drive = XVfdAtv61_create();
     if (s_atv.m_drive) {
-        s_atv.m_dev = &s_atv.m_drive->m_base.m_base;
+        s_atv.m_dev = &s_atv.m_drive->m_base;
         XObject_setParent((XObject*)s_atv.m_drive, (XObject*)root);
         XObject_connect_1((XObject*)s_atv.m_drive,
                           XSignal(XVfdDevice_statusUpdated_signal),
@@ -729,11 +761,11 @@ int demo_page_atv61_autotest(XWidget* page)
         if (txt) XClassDelete(txt);
     }
 
-    if (!s_atv.m_drive || !s_atv.m_link || !s_atv.m_dev) {
-        printf("XGuiAutoTest: [FAIL] ATV61 引擎缺失（设备/链路）\n");
+    if (!s_atv.m_drive || !s_atv.m_dev || !s_atv.m_client) {
+        printf("XGuiAutoTest: [FAIL] ATV61 引擎缺失（设备/主站）\n");
         ++fail;
     } else {
-        printf("XGuiAutoTest: [PASS] ATV61 引擎已建（XVfdAtv61 + XVfdModbusLink）\n");
+        printf("XGuiAutoTest: [PASS] ATV61 引擎已建（XVfdAtv61 + Hub 装配脚手架）\n");
         if (!XVfdDevice_hasCapability(s_atv.m_dev, XVfdCap_Reverse)) {
             printf("XGuiAutoTest: [FAIL] 能力位图缺反转位\n");
             ++fail;

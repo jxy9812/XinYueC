@@ -14,6 +14,7 @@
  *               AnalogInput→IR/HR(useHolding)；AnalogOutput→HR。
  */
 #include "XModbusPoint.h"
+#include <time.h>
 
 #if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON && XINDUSTRY_MODBUS_ON && XMODBUS_HUB_ON
 

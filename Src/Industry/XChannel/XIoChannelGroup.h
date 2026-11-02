@@ -83,16 +83,6 @@ XIoChannelGroup* XIoChannelGroup_create(void);
  * @param self 目标通道组；传入 NULL 返回 false。
  * @param point 点对象（调用方创建：XModbusPoint_createXxx 等子类工厂）；
  *              不能为 NULL，且须未登记过其他组。
- * @return 登记成功 true；参数非法/已登记于其他组/入表失败返回 false。
- */
-bool XIoChannelGroup_addPoint(XIoChannelGroup* self, XIoPoint* point,
-                              bool autoDelete);
-
-/**
- * @brief 登记一个点（组回填点内 m_group）。
- * @param self 目标通道组；传入 NULL 返回 false。
- * @param point 点对象（调用方创建：XModbusPoint_createXxx 等子类工厂）；
- *              不能为 NULL，且须未登记过其他组。
  * @param autoDelete 自动内存管理：true=内存交由组自动释放（remove/组析构
  *              时 XClassDelete，调用方不得再删）；false=调用方自管（缺省）。
  * @return 登记成功 true；参数非法/已登记于其他组/入表失败返回 false。

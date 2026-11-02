@@ -23,6 +23,8 @@
 #include "XPlatformPower.h"
 
 #include "XDateTime.h"
+#include "XCoreApplication.h" /* XCoreApplication_instance / postEvent（框架事件上行口）。 */
+#include "XEvent.h"           /* XEvent_create_ex（基础框架事件）。 */
 
 typedef struct {
     /* —— 1-bit 旗标组（位域内存态表示：本结构体为 .c 内静态单例，
@@ -54,6 +56,10 @@ XPOW_STATIC_ASSERT(sizeof(XPlatformPowerState) == 48,
                    "XPlatformPowerState 布局变化：旗标组/能力/时间戳/策略四段排布被改动");
 
 static XPlatformPowerState g_xpow;
+
+/* 前置声明：影子同步与事件广播（实现体在 xpow_markActivity 之后）。 */
+static bool xpow_shadowSyncToHardware(XPlatformPowerScreenActual actual);
+static void xpow_postScreenStateEvent(void);
 
 /** @brief 取当前单调毫秒。 */
 static int64_t xpow_nowMs(void)
@@ -94,16 +100,17 @@ static void xpow_ensureDefaults(void)
 #define XPOW_REPROBE_COOLDOWN_MS 10000
 
 /** @brief 影子/硬件对账（含能力重探）。
- *  @details 数据源是平台实况查询（fbdev 读背光/blank 节点；无读回
- *           原语的平台恒 Unknown）。三件事按序执行：
+ *  @details 数据源是平台实况查询（fbdev 读背光/blank 节点；X11 读服务端
+ *           DPMS 档位；无读回原语的平台恒 Unknown）。三件事按序执行：
  *           1. 能力位为 0 且距上次重探超过冷却 → 重探一次（开机竞态
  *              自愈：节点就绪后能力在 10s 内生效）；
  *           2. 实况 Unknown → 平台读不回，什么都不做（不得把「读不到」
  *              当「熄屏」误点亮）；
- *           3. 影子说亮、硬件已熄 → 立即点亮并把影子拉齐（自愈）。
- *           影子说熄、硬件亮的情况**不动**：本契约熄屏是应用主动行为
- *           （影子说熄=应用要求黑着），外部点亮不改变应用意图，等应用
- *           自己的唤醒路径（允许的输入）走 setScreenState 收口。 */
+ *           3. 影子与硬件失配 → 采信硬件（xpow_shadowSyncToHardware）：
+ *              影子说亮、硬件已熄 → 立即点亮自愈；影子说熄、硬件已亮
+ *              （**外部唤醒**：VNC/x11vnc、`xset dpms force on`、面板
+ *              电源管理）→ 影子归位为亮并记一次活动。
+ *           失配收口后把变化转成框架事件（powerStateChanged 信号）。 */
 static void xpow_reconcileLocked(void)
 {
     XPlatformPowerScreenActual actual;
@@ -114,12 +121,8 @@ static void xpow_reconcileLocked(void)
         g_xpow.m_caps = XPlatformPower_capabilities();
     }
     actual = XPlatformPowerDriver_queryScreenState();
-    if (actual == XPlatformPowerScreenActual_Unknown) return;
-    if (actual == XPlatformPowerScreenActual_Off && !g_xpow.m_screenOff) {
-        /* 影子说亮、硬件已黑：触摸唤醒判「未熄屏」会放行不唤醒——
-         * 立即点亮自愈（点亮成功会同步影子并重置空闲基线）。 */
-        XPlatformPower_setScreenState(XPlatformPowerScreenState_On);
-    }
+    if (xpow_shadowSyncToHardware(actual))
+        xpow_postScreenStateEvent();
 }
 
 /** @brief 对账入口（含启动 armed 消费）。 */
@@ -141,6 +144,60 @@ static void xpow_markActivity(void)
 {
     g_xpow.m_lastActivityMs = xpow_nowMs();
     g_xpow.m_hasBaseline = true;
+}
+
+/* ==================== 影子跟随硬件（外部唤醒的唯一收口点） ==================== */
+
+/** @brief 把影子态拉齐到硬件真值。
+ *  @param actual 硬件实况（Unknown=平台读不到 ⇒ 不动作）。
+ *  @return true=影子态发生了变化（外部可见的跃迁 ⇒ 需广播框架事件）。
+ *  @details 两个方向，缺一不可：
+ *           - **硬件=熄、影子=亮** ⇒ 外部把屏写黑（前任遗留/验证脚本/
+ *             面板电源管理）⇒ 点亮自愈。触摸唤醒闸判「未熄屏」会放行不
+ *             唤醒 ⇒ 屏幕永远黑着（刷入新程序后唤不醒的根因）。
+ *           - **硬件=亮、影子=熄** ⇒ **外部唤醒**（VNC/x11vnc、
+ *             `xset dpms force on`、面板电源管理；且不经应用输入通道）
+ *             ⇒ 采信硬件：影子归位为亮并**记一次活动**（空闲基线重置）。
+ *             这一支是「被 VNC 唤醒后再也无法休眠」的根修：旧口径对
+ *             这一支刻意不动作（理由是「外部点亮不改变应用意图，等应用
+ *             自己的唤醒路径收口」），但唤醒不一定经过应用输入通道
+ *             ⇒ 影子永久卡在「熄」⇒ 自动熄屏分支被 !m_screenOff 永久
+ *             门死 ⇒ 应用之后再也发不出熄屏指令，且此后每个输入事件都
+ *             会重复触发一次无谓的「点亮」往返。 */
+static bool xpow_shadowSyncToHardware(XPlatformPowerScreenActual actual)
+{
+    if (actual == XPlatformPowerScreenActual_Unknown) return false;
+    if (actual == XPlatformPowerScreenActual_Off && !g_xpow.m_screenOff) {
+        /* 点亮自愈：只有真点亮成功才改影子（失败保持原状，下轮重试）。 */
+        return XPlatformPower_setScreenState(XPlatformPowerScreenState_On);
+    }
+    if (actual == XPlatformPowerScreenActual_On && g_xpow.m_screenOff) {
+        g_xpow.m_screenOff = false;
+        /* 外部唤醒计为一次活动：有人把屏点亮了 ⇒ 此刻「屏亮着」是合理
+           状态，空闲计时重新起算。若不重置，下一拍巡检（空闲时长早已
+           超阈值）会立刻再熄 ⇒ VNC 用户刚唤醒就被灭掉。 */
+        xpow_markActivity();
+        return true;
+    }
+    return false;
+}
+
+/** @brief 屏幕电源态变化 → 框架事件（投递到应用对象）。
+ *  @details 平台上报与 1Hz 对账共用本出口：状态跃迁一律转成框架事件
+ *           （XEVENT_TYPE_SCREEN_POWER_STATE_CHANGED），由应用层转发为
+ *           屏幕对象的 powerStateChanged 信号 ⇒ 任何继承自 XObject 的
+ *           类都可以自主选择是否监听。 */
+static void xpow_postScreenStateEvent(void)
+{
+    XCoreApplication* app;
+    XEvent* event;
+    app = XCoreApplication_instance();
+    if (!app) return;
+    event = XEvent_create_ex(XMEMORY_TYPE_MULTIPOOL,
+                             XEVENT_TYPE_SCREEN_POWER_STATE_CHANGED);
+    if (!event) return;
+    /* 所有权移交事件队列：投递失败由 postEvent 内部删除事件。 */
+    XCoreApplication_postEvent(app, event, XEVENT_PRIORITY_NORMAL);
 }
 
 /** @brief 平台是否支持「委托平台自己计时」（安卓：系统「屏幕超时」）。 */
@@ -195,6 +252,18 @@ bool XPlatformPower_reconcile(void)
     if (actual == XPlatformPowerScreenActual_Off && g_xpow.m_screenOff)
         return false; /* 对账后仍黑：点亮失败（或不支持）。 */
     return actual == XPlatformPowerScreenActual_On;
+}
+
+void XPlatformPower_reportScreenStateChanged(XPlatformPowerScreenActual actual)
+{
+    bool changed;
+    xpow_ensureDefaults();
+    /* 影子拉齐硬件真值（外部唤醒 ⇒ 影子=亮 + 记一次活动）。 */
+    changed = xpow_shadowSyncToHardware(actual);
+    /* 状态真的变了才广播：平台轮询会以固定节拍重复上报同一实况，
+       无变化时不得打扰订阅者。 */
+    if (changed)
+        xpow_postScreenStateEvent();
 }
 
 bool XPlatformPower_setPolicy(const XPlatformPowerPolicy* policy)

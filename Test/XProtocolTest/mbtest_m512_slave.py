@@ -47,6 +47,7 @@ P_DECEL = 0xF012        # P0.18 减速时间1
 P_JOG = 0xF800          # P8.00 点动运行频率
 P_PRESET0 = 0xFC00      # PC.00 多段指令0
 P_LOCAL = 0xFD02        # Pd.02 本机地址
+P_PIDTGT = 0xFA01       # PA.01 PID 数字给定（0.01%）
 
 
 def log(fmt, *args):
@@ -80,6 +81,7 @@ class M512:
             P_JOG: 200,             # 2.00Hz
             P_PRESET0: 0,
             P_LOCAL: unit_id,
+            P_PIDTGT: 0,
         }
         self.cmd = 0
         self.init_cmd = 0
@@ -145,7 +147,7 @@ class M512:
             self.init_cmd = value
             log("u%d INIT <- %d" % (self.unit, value))
             return True
-        if addr in (P_MAXFREQ, P_ACCEL, P_DECEL, P_JOG, P_LOCAL) or \
+        if addr in (P_MAXFREQ, P_ACCEL, P_DECEL, P_JOG, P_LOCAL, P_PIDTGT) or \
            P_PRESET0 <= addr < P_PRESET0 + 16:
             self.params[addr] = value
             log("u%d PARAM 0x%04X <- %d" % (self.unit, addr, value))

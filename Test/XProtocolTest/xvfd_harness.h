@@ -1,0 +1,331 @@
+﻿/**
+ * @file       xvfd_harness.h
+ * @brief      变频器端到端测试/演示装配脚手架（头文件内联，仅 Test 域使用）。
+ * @details    [2026-11-01 通道化重构] XVfd 设备层只认通道点；本脚手架把
+ *             「品牌点规格表 → 虚拟地址段 → 通道点 → 通道组 → 设备绑定」
+ *             这套装配流程固化成一个可复用小工具，供三套 VFD 测试与面板页
+ *             共用（测试/演示专属，不进产品库）：
+ *               1) 虚拟地址**按区 bump 分配**（HR/Coils/DI 各自独立计数）：
+ *                  品牌地址只在段内做偏移，多站共总线不会撞虚拟地址；
+ *               2) 规格表先按 (区, 地址) 排序再合并连续段——一次轮询帧读回
+ *                  一整块寄存器（与真实 VFD 轮询形态一致）；
+ *               3) 参数点用 AO 点承载（AO 的 ReadRaw 同样读 Hub 缓存，
+ *                  写走 FC06），故一个点即可读可写。
+ *             依赖方向：本脚手架可 include XModbus（测试域特权），XVfd 库本身
+ *             不 include 任何 XModbus 头。
+ */
+#ifndef XVFD_HARNESS_H
+#define XVFD_HARNESS_H
+
+#include "CXinYueConfig.h"
+#include "XIndustry_config.h"
+#include "XModbus_config.h"
+
+#if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON && XINDUSTRY_MODBUS_ON && XMODBUS_HUB_ON
+
+#include <stdlib.h>
+#include "XModbusHub.h"
+#include "XPrintf.h"
+#include "XModbusMapping.h"
+#include "XModbusClient.h"
+#include "XChannel/XIoChannelGroup.h"
+#include "XChannel/XModbusPoint.h"
+#include "XVfd/XVfdDevice.h"
+
+/** @brief 单次装配可处理的规格条目上限。 */
+#define XVFD_HARNESS_SPEC_CAP 64
+/** @brief 单链路可挂从站数上限。 */
+#define XVFD_HARNESS_STATION_CAP 8
+
+/**
+ * @brief 装配脚手架。
+ */
+typedef struct XvfdHarness {
+    XModbusHub* m_hub;              /**< 聚合设备（拥有映射） */
+    XIoChannelGroup* m_group;       /**< 通道组（托管点） */
+    XModbusMapping* m_map;          /**< 映射（setMapping 后归 Hub 所有） */
+    int m_devIds[XVFD_HARNESS_STATION_CAP]; /**< 已注入设备句柄 */
+    int m_devCount;                 /**< 设备数 */
+    bool m_identity;                /**< true=虚拟地址=品牌地址（单站直挂） */
+    uint16_t m_bumpHr;              /**< HR 区虚拟地址分配游标 */
+    uint16_t m_bumpCoil;            /**< Coils 区虚拟地址分配游标 */
+    uint16_t m_bumpDi;              /**< DI 区虚拟地址分配游标 */
+    int m_pointCount;               /**< 已建点数 */
+} XvfdHarness;
+
+/**
+ * @brief 规格排序索引项。
+ */
+typedef struct XvfdHarnessSpec {
+    uint8_t m_area;                 /**< XModbusRegisterType（按区排序） */
+    uint16_t m_addr;                /**< 品牌原生地址 */
+    int m_idx;                      /**< 原规格下标 */
+} XvfdHarnessSpec;
+
+/**
+ * @brief 点类型 → 寄存器区。
+ * @param type XIoPointType。
+ * @return 对应 XModbusRegisterType。
+ */
+static XModbusRegisterType xvfdHarnessAreaOf(uint8_t type)
+{
+    switch (type) {
+    case (uint8_t)XIoPoint_DigitalInput: return XModbusDiscreteInputs;
+    case (uint8_t)XIoPoint_DigitalOutput: return XModbusCoils;
+    default: return XModbusHoldingRegisters;
+    }
+}
+
+/**
+ * @brief 按区分配虚拟地址（bump）。
+ * @param h 脚手架。
+ * @param area 寄存器区。
+ * @param count 段长。
+ * @return 段起始虚拟地址。
+ */
+static uint16_t xvfdHarnessBump(XvfdHarness* h, XModbusRegisterType area, uint16_t count)
+{
+    uint16_t base;
+    switch (area) {
+    case XModbusDiscreteInputs:
+        base = h->m_bumpDi;
+        h->m_bumpDi = (uint16_t)(h->m_bumpDi + count);
+        break;
+    case XModbusCoils:
+        base = h->m_bumpCoil;
+        h->m_bumpCoil = (uint16_t)(h->m_bumpCoil + count);
+        break;
+    default:
+        base = h->m_bumpHr;
+        h->m_bumpHr = (uint16_t)(h->m_bumpHr + count);
+        break;
+    }
+    return base;
+}
+
+/**
+ * @brief 规格排序比较（区升序，再地址升序）。
+ * @param a 左项。
+ * @param b 右项。
+ * @return 比较结果。
+ */
+static int xvfdHarnessSpecCmp(const void* a, const void* b)
+{
+    const XvfdHarnessSpec* x = (const XvfdHarnessSpec*)a;
+    const XvfdHarnessSpec* y = (const XvfdHarnessSpec*)b;
+    if (x->m_area != y->m_area) return (int)x->m_area - (int)y->m_area;
+    return (int)x->m_addr - (int)y->m_addr;
+}
+
+/**
+ * @brief 按规格建一个通道点（借用组托管释放）。
+ * @param h 脚手架。
+ * @param spec 点规格（类型/点名）。
+ * @param vaddr 虚拟地址。
+ * @return 新点；失败返回 NULL。
+ */
+static XIoPoint* xvfdHarnessMakePoint(XvfdHarness* h, const XVfdPointSpec* spec, uint16_t vaddr)
+{
+    switch (spec->m_type) {
+    case (uint8_t)XIoPoint_AnalogInput:
+        return (XIoPoint*)XModbusPoint_createAnalogInput(h->m_hub, (int)vaddr, true,
+                                                         1, 1, 0, 0, spec->m_tag);
+    case (uint8_t)XIoPoint_AnalogOutput:
+        return (XIoPoint*)XModbusPoint_createAnalogOutput(h->m_hub, (int)vaddr, 1, 1, 0,
+                                                          spec->m_tag);
+    case (uint8_t)XIoPoint_DigitalInput:
+        return (XIoPoint*)XModbusPoint_createDigitalInput(h->m_hub, (int)vaddr, spec->m_tag);
+    case (uint8_t)XIoPoint_DigitalOutput:
+        return (XIoPoint*)XModbusPoint_createDigitalOutput(h->m_hub, (int)vaddr, spec->m_tag);
+    default:
+        return NULL;
+    }
+}
+
+/**
+ * @brief 初始化脚手架（Hub + 映射 + 通道组）。
+ * @param h 脚手架；不能为 NULL。
+ * @return 成功返回 true。
+ */
+static bool xvfdHarnessInit(XvfdHarness* h)
+{
+    if (!h) return false;
+    h->m_hub = XModbusHub_create();
+    h->m_map = XModbusMapping_create();
+    h->m_group = XIoChannelGroup_create();
+    h->m_devCount = 0;
+    h->m_identity = false;
+    h->m_bumpHr = 0;
+    h->m_bumpCoil = 0;
+    h->m_bumpDi = 0;
+    h->m_pointCount = 0;
+    return (h->m_hub && h->m_map && h->m_group);
+}
+
+/**
+ * @brief 注入一条总线上的从站（同一 client 可挂多站号）。
+ * @param h 脚手架。
+ * @param client Modbus 客户端（借用）。
+ * @param unitId 从站地址。
+ * @param name 设备名（借用）。
+ * @return 设备句柄（>0）；失败返回 -1。
+ */
+/**
+ * @brief 设为恒等映射（虚拟地址=品牌地址；单站直挂用）。
+ * @param h 脚手架。
+ * @return 无。
+ * @note 多站共 Hub 时不可用（品牌地址会重叠）；多站走 bump 偏移方案。
+ */
+static void xvfdHarnessSetIdentity(XvfdHarness* h)
+{
+    if (h) h->m_identity = true;
+}
+
+static int xvfdHarnessAddStation(XvfdHarness* h, XModbusClient* client, int unitId,
+                                 const char* name)
+{
+    int devId;
+    if (!h || !client || h->m_devCount >= XVFD_HARNESS_STATION_CAP) return -1;
+    devId = XModbusHub_addDevice_2(h->m_hub, client, name);
+    if (devId <= 0) return -1;
+    h->m_devIds[h->m_devCount++] = devId;
+    (void)unitId;
+    return devId;
+}
+
+/**
+ * @brief 按品牌点规格表装配一个设备的全部语义槽点。
+ * @param h 脚手架。
+ * @param dev 设备（须已 attach 到本脚手架通道组）。
+ * @param devId 设备句柄（addStation 返回）。
+ * @param unitId 从站地址。
+ * @param specs 品牌点规格表（静态 const）。
+ * @param n 条目数。
+ * @return 全部建成并绑定返回 true。
+ */
+static bool xvfdHarnessMount(XvfdHarness* h, XVfdDevice* dev, int devId, int unitId,
+                             const XVfdPointSpec* specs, int n)
+{
+    XvfdHarnessSpec idx[XVFD_HARNESS_SPEC_CAP];
+    int i, j;
+    if (!h || !dev || !specs || n <= 0 || n > XVFD_HARNESS_SPEC_CAP) return false;
+    for (i = 0; i < n; ++i) {
+        idx[i].m_area = (uint8_t)xvfdHarnessAreaOf(specs[i].m_type);
+        idx[i].m_addr = specs[i].m_address;
+        idx[i].m_idx = i;
+    }
+    qsort(idx, (size_t)n, sizeof(idx[0]), xvfdHarnessSpecCmp);
+    i = 0;
+    while (i < n) {
+        int runEnd = i;
+        XModbusRegisterType area = (XModbusRegisterType)idx[i].m_area;
+        uint16_t runStart = idx[i].m_addr;
+        uint16_t count;
+        uint16_t vbase;
+        while ((runEnd + 1) < n && idx[runEnd + 1].m_area == idx[i].m_area &&
+               ((uint32_t)idx[runEnd].m_addr + 1u) == (uint32_t)idx[runEnd + 1].m_addr) {
+            ++runEnd;
+        }
+        count = (uint16_t)(idx[runEnd].m_addr - runStart + 1);
+        vbase = h->m_identity ? runStart : xvfdHarnessBump(h, area, count);
+        if (!XModbusMapping_addRange(h->m_map, area, vbase, count, devId, unitId,
+                                     runStart, 0)) {
+            return false;
+        }
+        for (j = i; j <= runEnd; ++j) {
+            const XVfdPointSpec* sp = &specs[idx[j].m_idx];
+            uint16_t vaddr = (uint16_t)(vbase + (sp->m_address - runStart));
+            XIoPoint* pt = xvfdHarnessMakePoint(h, sp, vaddr);
+            if (!pt) return false;
+            if (!XIoChannelGroup_addPoint(h->m_group, pt, true)) return false;
+            if (!XVfdDevice_bindPoint(dev, sp, pt)) return false;
+            ++h->m_pointCount;
+        }
+        i = runEnd + 1;
+    }
+    return true;
+}
+
+/**
+ * @brief 装配一个参数点（AO 承载：读走 Hub 缓存、写走 FC06）。
+ * @param h 脚手架。
+ * @param dev 设备（须已 attach）。
+ * @param devId 设备句柄。
+ * @param unitId 从站地址。
+ * @param desc 参数描述（取地址与名称）。
+ * @param paramId 参数描述表下标。
+ * @return 成功返回 true。
+ */
+static bool xvfdHarnessMountParam(XvfdHarness* h, XVfdDevice* dev, int devId, int unitId,
+                                  const XVfdParamDesc* desc, uint16_t paramId)
+{
+    uint16_t vbase;
+    XModbusPoint* pt;
+    if (!h || !dev || !desc) return false;
+    vbase = xvfdHarnessBump(h, XModbusHoldingRegisters, 1);
+    if (!XModbusMapping_addRange(h->m_map, XModbusHoldingRegisters, vbase, 1, devId, unitId,
+                                 desc->m_addr, 0)) {
+        return false;
+    }
+    pt = XModbusPoint_createAnalogOutput(h->m_hub, (int)vbase, 1, 1, 0, desc->m_name);
+    if (!pt) return false;
+    if (!XIoChannelGroup_addPoint(h->m_group, (XIoPoint*)pt, true)) return false;
+    if (!XVfdDevice_bindParamPoint(dev, paramId, (XIoPoint*)pt)) return false;
+    ++h->m_pointCount;
+    return true;
+}
+
+/**
+ * @brief 提交映射并启动轮询（装配完成后调用一次）。
+ * @param h 脚手架。
+ * @param pollMs 每设备轮询周期（毫秒；0 按 50）。
+ * @return 无。
+ * @note 映射所有权移交 Hub；Hub 析构时一并释放。
+ */
+static void xvfdHarnessStart(XvfdHarness* h, unsigned pollMs)
+{
+    int i;
+    if (!h || !h->m_hub || !h->m_map) return;
+    XModbusHub_setMapping(h->m_hub, h->m_map);
+    h->m_map = NULL; /* 所有权已移交 */
+    /* 命令字同址连写（如 CiA402 序列 0x0006→0x0007→0x000F）不允许被
+     * 写合并窗口折叠，关闭合并（受理即下发）。 */
+    XModbusHub_setWriteCoalesceMs(h->m_hub, 0);
+    /* Hub 缺省只轮询输入区（DI|IR）；VFD 全部用址在 HR，放开四区。 */
+    XModbusHub_setPollAreas(h->m_hub,
+                            (1u << XModbusDiscreteInputs) |
+                            (1u << XModbusCoils) |
+                            (1u << XModbusInputRegisters) |
+                            (1u << XModbusHoldingRegisters));
+    XModbusHub_setPollIntervalDefault(h->m_hub, pollMs ? pollMs : 50);
+    for (i = 0; i < h->m_devCount; ++i) {
+        if (!XModbusHub_setPollInterval(h->m_hub, h->m_devIds[i], pollMs ? pollMs : 50)) {
+            XPrintf("[xvfd-harness] setPollInterval(dev=%d) 失败\n", h->m_devIds[i]);
+        }
+    }
+    XModbusHub_setUnitBackoff(h->m_hub, 1000, 1000); /* 测试免退避干扰 */
+    XModbusHub_connectAll(h->m_hub);
+    XModbusHub_startPolling(h->m_hub);
+}
+
+/**
+ * @brief 拆除脚手架（先删组：autoDelete 点随之析构并退订 Hub，再收 Hub）。
+ * @param h 脚手架。
+ * @return 无。
+ */
+static void xvfdHarnessDestroy(XvfdHarness* h)
+{
+    if (!h) return;
+    if (h->m_group) {
+        XClassDelete((XClass*)h->m_group);
+        h->m_group = NULL;
+    }
+    if (h->m_hub) {
+        XModbusHub_stopPolling(h->m_hub);
+        XObject_deleteLater((XObject*)h->m_hub);
+        h->m_hub = NULL;
+    }
+}
+
+#endif /* XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON && XINDUSTRY_MODBUS_ON && XMODBUS_HUB_ON */
+#endif /* XVFD_HARNESS_H */

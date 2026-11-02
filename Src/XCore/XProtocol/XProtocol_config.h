@@ -109,12 +109,13 @@ extern "C" {
 #endif
 
 /** @brief 通用总线轮询计划表（XPoll：XPollScheduler 纯逻辑排拍/退避表，
- *  XVfd 链路与 XModbus 聚合设备共用；缺省随任一使用方开启）。
- *  @note 缺省表达式引用 XMODBUS_HUB_ON 与 XVFD_ON（见下方子配置 include，
- *  宏展开惰性求值，与 include 顺序无关）。显式置 0 时须同时关闭
- *  XMODBUS_HUB_ON——Hub 的 (设备,从站) 失联退避依赖本组件。 */
+ *  XModbus 聚合设备使用；缺省随其开启）。
+ *  @note [2026-11-02 XVfd 迁出 Industry] XVfd 不再自建轮询，排拍改由
+ *  XChannel 通道组承担，故缺省表达式不再引用 XVFD_ON，仅随
+ *  XMODBUS_HUB_ON 开启（Hub 的 (设备,从站) 失联退避依赖本组件）。
+ *  显式置 0 时须同时关闭 XMODBUS_HUB_ON。 */
 #ifndef XPOLL_SCHEDULER_ON
-#define XPOLL_SCHEDULER_ON (XMODBUS_HUB_ON || XVFD_ON)
+#define XPOLL_SCHEDULER_ON XMODBUS_HUB_ON
 #endif
 
 /* 引入各协议子配置文件 */
@@ -129,8 +130,6 @@ extern "C" {
 #include "XNtp_config.h"
 #include "XDdns_config.h"
 #include "XLink_config.h"
-/* XVfd 子系统配置：XPOLL_SCHEDULER_ON 缺省引用 XVFD_ON，须在此可见。 */
-#include "XVfd_config.h"
 
 #endif /* XPROTOCOL_ON */
 

@@ -1,15 +1,17 @@
 ﻿/**
  * @file       XVfdM512.h
  * @brief      511M/512M/513M 系列高性能矢量变频器子类公开 API。
- * @details    XVfdDevice/XVfdModbusBase 的 511M/512M/513M 实现（依据
- *             《511M/512M/513M 高性能矢量变频器使用说明书》2020-05-03 附录1）：
- *             标准 Modbus-RTU 从站，仅 FC03/FC06；地址编排 P0~PE 组=F0xxH(写
- *             EEPROM)/0xxxH(仅 RAM)、A0~AC 组=Ax xxH/4x xxH、U 组监视=7000H+序号；
- *             特殊地址 2000H 命令字（1正转/2反转/3正点动/4反点动/5自由停机/
- *             6减速停机/7故障复位）、3000H 运行状态、8000H 故障码、1000H 通讯
- *             设定值（±10000=±100%，经最大频率 P0.10 换算 Hz）、2001H 数字输出
- *             强制位图、1F00H 密码校验（回 8888H=通过）、1F01H 参数初始化。
- *             非标准应答模式（Pd.05=0，应答多 1 字节）以双长度解析兼容。
+ * @details    [2026-11-01 通道化重构] 品牌子类只承担"协议知识"：
+ *               - 点规格表（XVfdM512_pointSpecs）：语义角色 → 品牌地址
+ *                 （2000H 命令字/3000H 状态/8000H 故障/1000H 设定值/7000H 监视）
+ *                 + 原生单位除率；
+ *               - 参数描述表（XVfdM512_paramDescs）：P/A/C/d 组核心参数，
+ *                 装配期按 m_addr 建参数点后经 bindParamPoint 绑定；
+ *               - 状态/故障解码、命令字编码、频率百分比换算（经最大频率 P0.10）。
+ *             数据来源与写通道全部经基类下沉到通道点，本文件不含传输符号。
+ *             手册依据：《511M/512M/513M 高性能矢量变频器使用说明书》
+ *             2020-05-03 附录1（仅 FC03/FC06；地址编排 F0xxH=写 EEPROM、
+ *             0xxxH=仅 RAM、AxH/4xH、U 组=7000H+序号）。
  */
 #ifndef XVFDM512_H
 #define XVFDM512_H
@@ -18,6 +20,8 @@
 extern "C" {
 #endif
 
+#include "CXinYueConfig.h"
+#include "XIndustry_config.h"
 #include "XVfd_config.h"
 
 #if XVFD_ON
@@ -25,7 +29,7 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "XVfdModbusBase.h"
+#include "XVfdDevice.h"
 
 /* ========================================================================== */
 /*                特殊地址（附录1：非功能码数据 / 快捷遥测）                   */
@@ -41,10 +45,18 @@ extern "C" {
 #define XVfdM512_AddrTelemetry      0x1001  /**< 快捷遥测块起点：运行频率(0.01Hz) */
 #define XVfdM512_TelemetryCount     6       /**< 1001~1006：频率/母线电压/输出电压/电流/功率/转矩 */
 #define XVfdM512_AddrJogFreq        0xF800  /**< P8.00 点动运行频率（写 EEPROM） */
-#define XVfdM512_AddrMaxFreq        0xF00A  /**< P0.10 最大频率（Hz） */
+#define XVfdM512_AddrMaxFreq        0xF00A  /**< P0.10 最大频率（Hz，两位小数） */
 #define XVfdM512_AddrAccelTime      0xF011  /**< P0.17 加速时间 1 */
 #define XVfdM512_AddrDecelTime      0xF012  /**< P0.18 减速时间 1 */
 #define XVfdM512_AddrPresetBase     0xFC00  /**< PC.00 多段指令 0（-10000~10000 = ±100%） */
+#define XVfdM512_AddrPidTarget      0xFA01  /**< PA.01 PID 数字给定（0.01%） */
+
+/** @brief 通讯设定值原生单位除率（±10000 = ±100.00%）。 */
+#define XVfdM512_FreqPercentDiv     100
+/** @brief 最大频率原生单位除率（5000 = 50.00Hz）。 */
+#define XVfdM512_MaxFreqDiv         100
+/** @brief 加减速时间原生单位除率（P0.19 缺省 1 = 0.1s）。 */
+#define XVfdM512_TimeDiv            10
 
 /**
  * @brief 控制命令字（2000H 写入值，附录1 控制命令通讯地址表）。
@@ -60,22 +72,17 @@ typedef enum XVfdM512_Command {
 } XVfdM512_Command;
 
 /**
- * @brief 511M/512M/513M 子类结构体（继承 XVfdModbusBase）。
+ * @brief 511M/512M/513M 子类结构体（继承 XVfdDevice）。
  */
 XCLASS_DEFINE_BEGING(XVfdM512)
-XCLASS_DEFINE_EXTEND_END(XVfdM512, XVfdModbusBase)
+XCLASS_DEFINE_EXTEND_END(XVfdM512, XVfdDevice)
 
 typedef struct XVfdM512 {
-    XVfdModbusBase m_base;          /**< 基类子对象（第一成员） */
-    bool m_nonStdReply;             /**< Pd.05=0 非标准应答模式（应答多 1 字节，双长度解析） */
+    XVfdDevice m_base;              /**< 基类子对象（第一成员） */
     double m_maxFreqHz;             /**< 最大频率缓存（P0.10；0=未读取，缺省按 50Hz） */
     bool m_maxFreqKnown;            /**< m_maxFreqHz 是否来自设备读取 */
-    int m_freqStage;                /**< 设定频率两阶段：0=直接写 1=先读 P0.10 */
-    double m_pendingFreqHz;         /**< 待写频率（Hz） */
-    int m_accelStage;               /**< 加减速两步：0=写加速 1=写减速 */
-    double m_pendingDecelS;         /**< 待写减速时间（秒） */
-    int m_pendingAccelIdx;          /**< 待写加减速组号 */
-    uint16_t m_lastRaw;             /**< 最近一次原始应答寄存器（非标准模式解析用） */
+    int m_stage;                    /**< 多步动作阶段（0=首步 1=第二步） */
+    uint16_t m_pendingRaw;          /**< 第二步待写原始码 */
 } XVfdM512;
 
 /* ==================== 类生命周期 ==================== */
@@ -90,7 +97,7 @@ XVtable* XVfdM512_class_init(void);
  * @brief 在堆上创建并初始化 511M/512M/513M 设备实例。
  * @param memory 内存类型（XCLASS_DEFAULT_MEMORY_TYPE 使用系统默认内存）
  * @return 成功返回新对象（用 XClassDelete/XObject_deleteLater 释放），失败返回 NULL
- * @note 能力位图：反转/点动/自由停车/多段速值/输出端子强制/密码/恢复出厂。
+ * @note 能力位图：反转/点动/自由停车/多段速/输出端子强制/密码/恢复出厂。
  */
 XVfdM512* XVfdM512_create_ex(XMemoryType memory);
 
@@ -100,21 +107,37 @@ XVfdM512* XVfdM512_create_ex(XMemoryType memory);
  */
 void XVfdM512_init(XVfdM512* dev);
 
+/* ==================== 点规格表与参数表（装配期用） ==================== */
+
+/**
+ * @brief 取 511M 族点规格表（静态 const，禁释放）。
+ * @param count 输出条目数；可为 NULL。
+ * @return 规格表首地址。
+ */
+const XVfdPointSpec* XVfdM512_pointSpecs(int* count);
+
+/**
+ * @brief 取 511M 族参数描述表（静态 const，禁释放）。
+ * @param count 输出条目数；可为 NULL。
+ * @return 描述表首地址；装配期按 m_addr 建参数点后经 bindParamPoint 绑定。
+ */
+const XVfdParamDesc* XVfdM512_paramDescs(int* count);
+
 /* ==================== 配置 ==================== */
 
 /**
- * @brief 设置非标准应答模式（Pd.05=0 出厂缺省：应答比标准 Modbus 多 1 字节）。
+ * @brief 设置最大频率缓存（百分比换算基准；跳过 P0.10 读取）。
  * @param dev 实例（非 NULL）
- * @param nonStd true=非标准模式（双长度解析），false=标准 Modbus-RTU
+ * @param hz 最大频率（Hz；<=0 忽略）
  */
-void XVfdM512_setNonStdReply(XVfdM512* dev, bool nonStd);
+void XVfdM512_setMaxFrequency(XVfdM512* dev, double hz);
 
 /**
- * @brief 查询非标准应答模式。
- * @param dev 实例（可 NULL，返回 false）
- * @return 非标准模式返回 true
+ * @brief 取最大频率缓存。
+ * @param dev 实例（可 NULL，返回 0）
+ * @return 最大频率（Hz）；未读取时为 0（换算按 50Hz 兜底）
  */
-bool XVfdM512_nonStdReply(const XVfdM512* dev);
+double XVfdM512_maxFrequency(const XVfdM512* dev);
 
 /**
  * @brief 查故障码对应名称（面板字母码，如 E.tIGbt；8000H 数值键）。

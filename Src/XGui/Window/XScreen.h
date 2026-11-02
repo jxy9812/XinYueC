@@ -30,6 +30,7 @@ extern "C" {
 #include "XVector.h"
 #include "XTypes.h"
 #include "XMemory.h"
+#include "XPlatformPower.h" /* XPlatformPowerScreenState（屏幕电源态载荷，单一真源）。 */
 
 #if XSCREEN_ON
 
@@ -656,6 +657,16 @@ void* XScreen_primaryOrientationChanged_signal(XScreen* self, XScreenOrientation
 void* XScreen_orientationChanged_signal(XScreen* self, XScreenOrientation orientation);
 /** @brief 刷新率变化信号（对标 QScreen::refreshRateChanged）。 @param self 目标屏幕。 @param refreshRate 新刷新率。 */
 void* XScreen_refreshRateChanged_signal(XScreen* self, float refreshRate);
+/** @brief 屏幕电源状态变化信号（对标 Qt 6.8 QScreen::powerStateChanged）。
+ *  @param self 目标屏幕。 @param state 新电源状态（On/Off，契约两档）。
+ *  @details 平台观测到屏幕电源态变化（应用自己熄屏/唤醒、或**外部
+ *           唤醒**：VNC/x11vnc、xset dpms force on、面板电源管理）时
+ *           发射。载荷类型复用电源契约的 XPlatformPowerScreenState
+ *           （单一真源，不另造一套状态枚举）。
+ *  @note   任意继承自 XObject 的类都可 connect 本信号、自主决定是否
+ *           监听（订阅范式同 QScreen::powerStateChanged）。 */
+void* XScreen_powerStateChanged_signal(XScreen* self,
+                                       XPlatformPowerScreenState state);
 
 #endif /* XSCREEN_ON */
 

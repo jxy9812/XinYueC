@@ -467,6 +467,20 @@ static void wn_refreshPowerState(void)
         XLabel_setText_2(s_wn.m_powerStateLabel, buf);
 }
 
+/** @brief 屏幕电源态变化（平台观测到的外部变化）→ 刷新状态行。
+ *  @details 订阅 XScreen 的 powerStateChanged 信号（平台上报/1Hz 对账
+ *           检出后经框架事件转发而来）。此前状态行只在页面刷新或手动
+ *           熄屏后刷新：外部唤醒（VNC/x11vnc、`xset dpms force on`、
+ *           面板电源管理）后行内仍显示旧态，需切页才刷新。
+ *  @note   这是「任意继承自 XObject 的类自主选择是否监听」的示范：只
+ *           需要一行 connect，无需改动框架。 */
+static void wn_powerStateChangedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    (void)args;
+    wn_refreshPowerState();
+}
+
 /** @brief 「窗口方向」档位 ↔ 下拉索引互转。
  *  @param degrees 角度（0/90/180/270）或 XPLATFORM_ORIENTATION_AUTO。
  *  @return 下拉索引（0=跟随系统，1..4=四方位）；角度非法返回 0。 */
@@ -1614,6 +1628,19 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
         XLabel_setTextPixelSize(s_wn.m_powerStateLabel, 12);
         XWidget_setFixedHeight((XWidget*)s_wn.m_powerStateLabel, 22);
         XWidget_show((XWidget*)s_wn.m_powerStateLabel);
+    }
+    /* 订阅屏幕电源态变化（平台观测）：外部唤醒（VNC/xset/面板电源管理）
+     * 后状态行实时刷新，不必切页。屏幕对象是应用级长寿命对象，本页只
+     * 建一次（demo 的扩展页在启动时构建），connect 一次即可。 */
+    {
+        static bool s_powerSignalConnected = false;
+        XScreen* screen = XGuiApplication_primaryScreen();
+        if (screen && !s_powerSignalConnected) {
+            if (XObject_connect_2((XObject*)screen,
+                                  XSignal(XScreen_powerStateChanged_signal),
+                                  wn_powerStateChangedSlot))
+                s_powerSignalConnected = true;
+        }
     }
 
     /* ---- 操作与反馈 ---- */
