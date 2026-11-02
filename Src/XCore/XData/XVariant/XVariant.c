@@ -554,6 +554,12 @@ void VXVariant_copy(XVariant* var, const XVariant* src)
 	if (XClassIsVtableNull(var))
 	{
 		XVariant_init(var, NULL,0, XVariantType_NULL);
+		/* 【2026-11-02 根修】未初始化目标（XCalloc/栈裸存储）经 init 后
+		 * 强制清空三元组：下方按 m_type/m_data 分支决定释放/分配，
+		 * 脏值会走到错误分支（XString 嵌套时 refcount 减到栈垃圾段错）。 */
+		var->m_type = XVariantType_NULL;
+		var->m_data = NULL;
+		var->m_dataSize = 0;
 	}
 	else if (var->m_type != src->m_type || var->m_dataSize != src->m_dataSize)
 	{

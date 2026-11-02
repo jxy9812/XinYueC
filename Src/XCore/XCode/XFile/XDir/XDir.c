@@ -258,11 +258,17 @@ XString* XDir_dirName(const XDir* dir)
 XString* XDir_filePath(const XDir* dir, const XString* fileName)
 {
     if (!dir || !dir->m_path || !fileName) return NULL;
-    
+
+    /* 对齐 QDir::filePath 语义：fileName 为绝对路径时原样返回
+     * （2026-11-02 根修：此前无条件拼接，绝对名产出"盘符路径+绝对路径"
+     * 的非法拼接串，下游 mkdir/exists 全数落空）。 */
+    if (XDir_isAbsolutePath(fileName))
+        return XString_create_copy(fileName);
+
     const char* pathUtf8 = XString_toUtf8(dir->m_path);
     const char* fileUtf8 = XString_toUtf8(fileName);
     if (!pathUtf8 || !fileUtf8) return NULL;
-    
+
     size_t pathLen = strlen(pathUtf8);
     size_t fileLen = strlen(fileUtf8);
     
@@ -1101,7 +1107,19 @@ bool XDir_mkpath(XDir* dir, const XString* dirPath)
     if (!dir || !dirPath) return false;
     XString* fullPath = XDir_filePath(dir, dirPath);
     if (!fullPath) return false;
-    bool result = XDeviceFile_mkdir(fullPath, true);
+    /* 对齐 QDir::mkpath 语义：目录已存在时返回 true（2026-11-02 根修，
+     * 此前对已存在目录返回 false，导致"确保目录存在"类调用全数误判）。
+     * 存在性判断用目录对象自身口径（XFileInfo_exists_static 对目录返回
+     * false；XDir_exists_2 会把传入路径当相对名再拼接）。 */
+    bool result = true;
+    {
+        XDir* target = XDir_create_2(fullPath);
+        bool exists = target ? XDir_exists_1(target) : false;
+        if (target)
+            XClassDelete(target);
+        if (!exists)
+            result = XDeviceFile_mkdir(fullPath, true);
+    }
     XClassDelete(fullPath);
     return result;
 }

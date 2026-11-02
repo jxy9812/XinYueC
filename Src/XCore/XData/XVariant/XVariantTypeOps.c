@@ -18,6 +18,8 @@ extern const XVariantTypeOps XJsonValue_variantTypeOps;
 extern const XVariantTypeOps XBsonArray_variantTypeOps;
 extern const XVariantTypeOps XBsonDocument_variantTypeOps;
 extern const XVariantTypeOps XBsonValue_variantTypeOps;
+extern const XVariantTypeOps XRect_variantTypeOps;
+extern const XVariantTypeOps XSize_variantTypeOps;
 
 static const XVariantTypeOps* const g_variantTypeOps[XVariantType_ExtensionCount] =
 {
@@ -38,7 +40,9 @@ static const XVariantTypeOps* const g_variantTypeOps[XVariantType_ExtensionCount
 	&XJsonValue_variantTypeOps,
 	&XBsonArray_variantTypeOps,
 	&XBsonDocument_variantTypeOps,
-	&XBsonValue_variantTypeOps
+	&XBsonValue_variantTypeOps,
+	&XRect_variantTypeOps,
+	&XSize_variantTypeOps
 };
 
 const XVariantTypeOps* XVariantTypeOps_forType(int type)

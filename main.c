@@ -123,6 +123,11 @@ static int main_run_test_dispatch(const char* testPath)
 #endif
     if (strcmp(testPath, "xprocess") == 0)
         return XProcessTest_runAll() ? 0 : 1;
+#if DEMOTEST_ON && XSETTINGS_ON
+    /* XSettings（对标 Qt 6.8 QSettings）全量测试（含内存平衡口径）。 */
+    if (strcmp(testPath, "xsettings") == 0)
+        return XSettingsTest_runAll() ? 0 : 1;
+#endif
     if (strcmp(testPath, "xconsole-shell") == 0)
         return XConsoleShellTest_runAll() ? 0 : 1;
     if (strcmp(testPath, "xconsole-shell-backend") == 0)
