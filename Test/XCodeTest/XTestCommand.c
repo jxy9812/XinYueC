@@ -126,6 +126,9 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
      * 数据丢失环境下仍可判定。 */
     } else if (strcmp(name, "xvfd-hub-limits") == 0) {
         result = XVfdHubLimitsTest_run() == 0;
+    /* XChannel 通道层专项单元测试：进程内假链路，不依赖传输层。 */
+    } else if (strcmp(name, "xchannel") == 0) {
+        result = XChannelTest_run() == 0;
 #endif
 #if XPROTOCOL_ON && XVFD_ON
     /* XVfd 变频器闭环三件套（pty 路径走缺省文件回退）。 */

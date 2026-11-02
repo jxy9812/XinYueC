@@ -57,6 +57,12 @@ extern "C" {
 	int XVfdHubLimitsTest_run(void);
 	void XVfdHubLimitsTest(XVariant* data);
 #endif
+#if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON
+	//XChannel 通道层专项单元测试（点容器/链路虚槽/	//地址映射边界/装配失败路径）：进程内假链路，
+	//**不依赖传输层**（实现于 xchannel_test.c）
+	int XChannelTest_run(void);
+	void XChannelTest(XVariant* data);
+#endif
 #if XPROTOCOL_ON && XVFD_ON
 	int XVfdM512Test_runEx(const char* ptyPath);
 	int XVfdM512Test_run(void);

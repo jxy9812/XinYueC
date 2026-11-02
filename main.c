@@ -161,6 +161,10 @@ static int main_run_test_dispatch(const char* testPath)
        进程内假从站载体，**不依赖传输层**（无 socket/pty），返回码=失败数。 */
     if (strcmp(testPath, "xvfd-hub-limits") == 0)
         return XVfdHubLimitsTest_run() == 0 ? 0 : 1;
+    /* XChannel 通道层专项单元测试（点容器/链路虚槽/地址映射边界/
+       装配失败路径）：进程内假链路载体，不依赖传输层。 */
+    if (strcmp(testPath, "xchannel") == 0)
+        return XChannelTest_run() == 0 ? 0 : 1;
 #endif
 #if XPROTOCOL_ON && XMODBUS_ON
     /* Modbus 服务端 FC 全量覆盖（含读事件信号口径回归）：进程内自跑，

@@ -56,7 +56,7 @@ make -C "$BUILD_DIR" -j"$(nproc)" XinYueC_Static > "$LOG_MAKE" 2>&1 || {
 
 echo "=== TESTS (io_uring 然后 epoll) ==="
 # 六条闭环全覆盖：VFD 三件套 + Industry 两件 + Hub 从站约束单测。
-LOOPS="xvfd-m512 xvfd-atv61 xvfd-bus485 xvfd-hub-limits xindustry-valve xindustry-modbus"
+LOOPS="xvfd-m512 xvfd-atv61 xvfd-bus485 xvfd-hub-limits xchannel xindustry-valve xindustry-modbus"
 cd "$DST/bin" || exit 2
 TOTAL_FAIL=0
 for eng in io epoll; do

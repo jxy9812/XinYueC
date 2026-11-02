@@ -294,6 +294,19 @@ int XVfdM512Test_runEx(const char* ptyOverride)
     XVfdDevice_setStatusInterval(g_dev[1], 100);
 
     xvfdHarnessStart(&harness, 20);
+    /* [零遍历取证] 旧实现每个点各订阅一次 Hub 信号，M512 单设备 66 点
+     * 即 66 条连接、每次值变化 66 次回调。现由 XModbusLink 统一订阅：
+     * 无论挂多少点，每设备恒为 2 条（valueChanged + writeCompleted）。
+     * 注意时机：订阅在链路 Start 时建立，Start 在 xvfdHarnessStart 里发生。 */
+    {
+        int si;
+        for (si = 0; si < 2; ++si) {
+            XModbusLink* lk = harness.m_stations[si].m_link;
+            CHECK(lk && XModbusLink_subscriptionCount(lk) == 2,
+                  si == 0 ? "站1 链路订阅数 = 2（非 66）"
+                          : "站2 链路订阅数 = 2（非 66）");
+        }
+    }
     tlog("Hub 双站段轮询启动（20ms；M512 通信组多，读组轮转一圈需数百 ms）");
 
     /* ---------- ⑧ 本轮语义修复回归（**不依赖「写落定」**） ---------- */
