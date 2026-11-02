@@ -3353,10 +3353,34 @@ static void VXDateTimeEdit_deinit(XDateTimeEdit* self)
     XClass_Deinit_Parent(XAbstractSpinBox, (XAbstractSpinBox*)self);
 }
 
+/* update 函数定义在后段，此处先声明供槽桥接调用。 */
+static void xdatetimeedit_updateSizeHint(XDateTimeEdit* self);
+
+/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）：先按当前内容
+   重算缓存，再读回，等价「查询时重算」语义。 */
+static XSize VXDateTimeEdit_sizeHintSlot(const XWidget* self);
+static XSize VXDateTimeEdit_minimumSizeHintSlot(const XWidget* self);
+
+static XSize VXDateTimeEdit_sizeHintSlot(const XWidget* self)
+{
+    if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
+    xdatetimeedit_updateSizeHint((XDateTimeEdit*)self);
+    return XWidget_sizeHint_base(self);
+}
+
+static XSize VXDateTimeEdit_minimumSizeHintSlot(const XWidget* self)
+{
+    if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
+    xdatetimeedit_updateSizeHint((XDateTimeEdit*)self);
+    return XWidget_minimumSizeHint_base(self);
+}
+
 XVtable* XDateTimeEdit_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XDateTimeEdit)
     XVTABLE_INHERIT_XCLASS(XAbstractSpinBox);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXDateTimeEdit_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXDateTimeEdit_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_StepBy,
                              VXDateTimeEdit_stepBy);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_StepEnabled,
@@ -3874,6 +3898,7 @@ void XDateTimeEdit_setDisplayFormat(XDateTimeEdit* self,
         }
     }
     xdt_refreshText(self);
+    xdatetimeedit_updateSizeHint((XDateTimeEdit*)self);
 }
 
 const char* XDateTimeEdit_displayFormat(const XDateTimeEdit* self)

@@ -309,6 +309,42 @@ static void xfs_onOpen(XLinkFileServer* fs, XLinkSession* session,
                        "busy");
         return;
     }
+    /* 【重发幂等根修】同会话、同 transferId 的重复 Open 是**重发**，不是
+       新请求：发起方在 Opening 态每秒重发一次 Open（OpenAck 迟到/丢失
+       时），此时本端多半已经受理并开始传输——若按新请求重新受理，会把
+       进行中的传输整个重置（下载方向 beginSend 清零 m_offset），而接收方
+       已按首轮 ACK 出高水位 ⇒ 发送方立刻 "ack beyond sent" 误判协议违例
+       （实测：Open 重发修好名字后，E2E 下载 id=3 与 Force 上传 id=5 稳定
+       复现此失败）。正确语义＝幂等重答一枚 OpenAck（沿用槽内引擎记录的
+       协商结果），传输状态原样保留。 */
+    if (slot->m_used
+        && slot->m_transfer.m_transferId == frame->m_requestId
+        && slot->m_transfer.m_session == session) {
+        XLinkFileOpenAckPayload ackAgain;
+        uint8_t ackBuf[XLINK_FILE_OPEN_ACK_HEADER + XLINK_FILE_TEXT_BYTES];
+        size_t ackLen = 0;
+        if (resolved)
+            XClassDelete((XClass*)resolved);
+        memset(&ackAgain, 0, sizeof(ackAgain));
+        ackAgain.m_accepted = 1;
+        ackAgain.m_status = XLinkFileStatus_Ok;
+        ackAgain.m_textLen = 0;
+        ackAgain.m_chunkBytes = slot->m_transfer.m_chunkBytes;
+        ackAgain.m_windowBytes = slot->m_transfer.m_windowBytes;
+        ackAgain.m_startOffset = 0;
+        ackAgain.m_totalSize = slot->m_transfer.m_totalSize;
+        if (XLinkFile_encodeOpenAck(&ackAgain, ackBuf, sizeof(ackBuf),
+                                    &ackLen)) {
+            XLinkFrameHeader out;
+            memset(&out, 0, sizeof(out));
+            out.m_payloadLen = (uint32_t)ackLen;
+            out.m_msgClass = XLinkMsgClass_File;
+            out.m_msgCode = XLinkFileCode_OpenAck;
+            out.m_requestId = frame->m_requestId;
+            (void)XLinkSession_send(session, &out, ackBuf);
+        }
+        return;
+    }
     if (slot->m_used)
         xfs_releaseSlot(slot);
     slot->m_session = session;

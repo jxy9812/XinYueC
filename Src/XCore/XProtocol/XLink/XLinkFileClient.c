@@ -118,6 +118,14 @@ static void VXLinkFileClient_deinit(XClass* object)
         XObject_killTimer((XObject*)obj, obj->m_timerId);
         obj->m_timerId = XTIMER_INVALID_ID;
     }
+    /* 【UAF 根修】本对象先于会话死亡时（如 demo fail 路径 abort+delete 后
+       client 仍活），会话侧 m_fileCallback 仍指向本对象——链路上滞留的
+       File 帧一到就经悬垂回调调进已释放内存（cdb 实测段错误，栈：
+       XLinkClient_session ← xfc_sessionValid ← xfc_onFileFrame ←
+       XLinkSessionPrivate_onFrame ← pump ← onReadyRead）。守卫口径下
+       （client 仍是会话的当前借用）先摘回调，再释放引擎。 */
+    if (xfc_sessionValid(obj))
+        XLinkSession_setFileCallback(obj->m_transfer.m_session, NULL, NULL);
     XLinkFileTransfer_deinit(&obj->m_transfer);
     obj->m_client = NULL;
     XClass_Deinit_Parent(XObject, (XObject*)obj);

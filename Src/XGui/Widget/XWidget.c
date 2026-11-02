@@ -4759,6 +4759,10 @@ static XVariant* XWidget_inputMethodQuery_default(const XWidget* self,
 }
 #endif /* XINPUTMETHOD_ON */
 
+/* SizeHint / MinimumSizeHint 虚槽默认实现（定义在本文件尺寸查询段）。 */
+XSize XWidget_sizeHint_base(const XWidget* self);
+XSize XWidget_minimumSizeHint_base(const XWidget* self);
+
 XVtable* XWidget_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XWidget)
@@ -4795,6 +4799,8 @@ XVtable* XWidget_class_init(void)
 #endif /* XINPUTMETHOD_ON */
         ,XWidget_ignoreEvent_default       /* TouchDragEvent（XGui 扩展：默认忽略→沿父链传播；接受=控件认领手势） */
         ,XWidget_ignoreEvent_default       /* GestureEvent（手势事件；默认忽略→沿父链传播，对标 QWidget::gestureEvent） */
+        ,(void*)XWidget_sizeHint_base      /* SizeHint（对标 QWidget::sizeHint） */
+        ,(void*)XWidget_minimumSizeHint_base /* MinimumSizeHint（对标 QWidget::minimumSizeHint） */
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXWidget_deinit);
@@ -6710,7 +6716,10 @@ void XWidget_setSizeIncrementSize(XWidget* self, const XSize* size)
     XWidget_setSizeIncrement(self, size->width, size->height);
 }
 
-XSize XWidget_sizeHint(const XWidget* self)
+/** @brief SizeHint 虚槽默认实现（对标 QWidget::sizeHint 基类行为）：
+ *         有布局取布局合计提示，否则读 m_sizeHint 缓存（既有控件的
+ *         推送式写法由此保持兼容）。内容驱动的控件覆盖本槽实时计算。 */
+XSize XWidget_sizeHint_base(const XWidget* self)
 {
     XSize out;
     if (!self) { XSize_init(&out, -1, -1); return out; }
@@ -6722,7 +6731,27 @@ XSize XWidget_sizeHint(const XWidget* self)
     return out;
 }
 
-XSize XWidget_minimumSizeHint(const XWidget* self)
+/** @brief 虚槽桥接：经 vtable 分派到子类覆盖的 SizeHint。 */
+static XSize XWidget_sizeHint_slot(XWidget* self)
+{
+    return XWidget_sizeHint((const XWidget*)self);
+}
+
+XSize XWidget_sizeHint(const XWidget* self)
+{
+    XSize out;
+    if (!self) { XSize_init(&out, -1, -1); return out; }
+    {
+        XSize (*fn)(const XWidget*) =
+            (XSize (*)(const XWidget*))XClassGetVirtualFunc(
+                (void*)self, EXWidget_SizeHint, XSize (*)(const XWidget*));
+        if (fn && fn != XWidget_sizeHint_base)
+            return fn(self);
+    }
+    return XWidget_sizeHint_base(self);
+}
+
+XSize XWidget_minimumSizeHint_base(const XWidget* self)
 {
     XSize out;
     if (!self) { XSize_init(&out, -1, -1); return out; }
@@ -6732,6 +6761,21 @@ XSize XWidget_minimumSizeHint(const XWidget* self)
 #endif /* XLAYOUT_ON */
     out = self->m_minimumSizeHint;
     return out;
+}
+
+XSize XWidget_minimumSizeHint(const XWidget* self)
+{
+    XSize out;
+    if (!self) { XSize_init(&out, -1, -1); return out; }
+    {
+        XSize (*fn)(const XWidget*) =
+            (XSize (*)(const XWidget*))XClassGetVirtualFunc(
+                (void*)self, EXWidget_MinimumSizeHint,
+                XSize (*)(const XWidget*));
+        if (fn && fn != XWidget_minimumSizeHint_base)
+            return fn(self);
+    }
+    return XWidget_minimumSizeHint_base(self);
 }
 
 void XWidget_setSizeHint(XWidget* self, const XSize* hint)

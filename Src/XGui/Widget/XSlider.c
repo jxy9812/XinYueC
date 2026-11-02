@@ -562,10 +562,34 @@ static void xslider_updateSizeHint(XSlider* self)
 
 /* ==================== 生命周期 ==================== */
 
+/* update 函数定义在后段，此处先声明供槽桥接调用。 */
+static void xslider_updateSizeHint(XSlider* self);
+
+/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）：先按当前内容
+   重算缓存，再读回，等价「查询时重算」语义。 */
+static XSize VXSlider_sizeHintSlot(const XWidget* self);
+static XSize VXSlider_minimumSizeHintSlot(const XWidget* self);
+
+static XSize VXSlider_sizeHintSlot(const XWidget* self)
+{
+    if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
+    xslider_updateSizeHint((XSlider*)self);
+    return XWidget_sizeHint_base(self);
+}
+
+static XSize VXSlider_minimumSizeHintSlot(const XWidget* self)
+{
+    if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
+    xslider_updateSizeHint((XSlider*)self);
+    return XWidget_minimumSizeHint_base(self);
+}
+
 XVtable* XSlider_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSlider)
     XVTABLE_INHERIT_XCLASS(XAbstractSlider);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXSlider_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXSlider_minimumSizeHintSlot);
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VXSlider_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VXSlider_mouseMoveEvent);

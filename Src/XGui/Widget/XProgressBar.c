@@ -520,10 +520,34 @@ static void VXProgressBar_deinit(XProgressBar* self)
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
+/* update 函数定义在后段，此处先声明供槽桥接调用。 */
+static void xprogressbar_updateSizeHint(XProgressBar* self);
+
+/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）：先按当前内容
+   重算缓存，再读回，等价「查询时重算」语义。 */
+static XSize VXProgressBar_sizeHintSlot(const XWidget* self);
+static XSize VXProgressBar_minimumSizeHintSlot(const XWidget* self);
+
+static XSize VXProgressBar_sizeHintSlot(const XWidget* self)
+{
+    if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
+    xprogressbar_updateSizeHint((XProgressBar*)self);
+    return XWidget_sizeHint_base(self);
+}
+
+static XSize VXProgressBar_minimumSizeHintSlot(const XWidget* self)
+{
+    if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
+    xprogressbar_updateSizeHint((XProgressBar*)self);
+    return XWidget_minimumSizeHint_base(self);
+}
+
 XVtable* XProgressBar_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XProgressBar)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXProgressBar_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXProgressBar_minimumSizeHintSlot);
 
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXProgressBar_event);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXProgressBar_paintEvent);
@@ -711,6 +735,7 @@ void XProgressBar_setOrientation(XProgressBar* self, int orientation)
         return;
     self->m_orientation = orientation;
     XWidget_update((XWidget*)self);
+    xprogressbar_updateSizeHint((XProgressBar*)self);
 }
 
 bool XProgressBar_invertedAppearance(const XProgressBar* self)

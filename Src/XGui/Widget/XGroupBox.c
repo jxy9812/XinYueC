@@ -516,6 +516,39 @@ XVtable* XGroupBox_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
+/** @brief 按当前标题计算最小尺寸提示（对标 QGroupBox::minimumSizeHint：
+ *         标题文本宽 + 一个空格，高取字体高）。纯函数，不写缓存。 */
+static XSize xgroupbox_computeMinHint(const XGroupBox* self)
+{
+    XSize out;
+    XFont font;
+    const char* title;
+    int baseW = 0;
+    int baseH = 0;
+    if (!self) { XSize_init(&out, 0, 0); return out; }
+    font = XWidget_font((XWidget*)self);
+    title = self->m_title ? XString_toUtf8(self->m_title) : NULL;
+    if (title && title[0]) {
+        baseW = XPainter_textWidth(&font, title) +
+                XPainter_textWidth(&font, " ");
+    }
+    baseH = XPainter_textHeight(&font);
+    XClassDeinit(&font);
+    if (baseH <= 0) baseH = 14;
+    XSize_init(&out, baseW, baseH);
+    return out;
+}
+
+/** @brief 刷新基类尺寸缓存（init 与 setTitle 共用；Qt 里 setTitle 会
+ *         updateGeometry 并重算 minimumSizeHint）。 */
+static void xgroupbox_refreshSizeHints(XGroupBox* self)
+{
+    XSize minHint;
+    if (!self) return;
+    minHint = xgroupbox_computeMinHint(self);
+    XWidget_setMinimumSizeHint((XWidget*)self, &minHint);
+}
+
 void XGroupBox_init(XGroupBox* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
@@ -537,23 +570,7 @@ void XGroupBox_init(XGroupBox* self, XWidget* parent, XWidgetFlags flags)
      * （qgroupbox.cpp:456-480）：标题文本宽 + 空格宽（可勾选时另加
      * 指示器宽与标签间距），高取字高（可勾选时取指示器高较大者）。
      * 补齐后布局竖排收缩有真实下界（此前 min=0，容器可被压塌）。 */
-    {
-        XSize minHint;
-        XFont font = XWidget_font((XWidget*)self);
-        const char* title = self->m_title
-                                ? XString_toUtf8(self->m_title) : NULL;
-        int baseW = 0;
-        int baseH = 0;
-        if (title && title[0]) {
-            baseW = XPainter_textWidth(&font, title) +
-                    XPainter_textWidth(&font, " ");
-        }
-        baseH = XPainter_textHeight(&font);
-        XClassDeinit(&font);
-        if (baseH <= 0) baseH = 14;
-        XSize_init(&minHint, baseW, baseH);
-        XWidget_setMinimumSizeHint((XWidget*)self, &minHint);
-    }
+    xgroupbox_refreshSizeHints(self);
 }
 
 XGroupBox* XGroupBox_create_ex(XMemoryType memory, XWidget* parent,
@@ -580,6 +597,11 @@ void XGroupBox_setTitle(XGroupBox* self, const char* title)
     if (!self->m_title) self->m_title = XString_create();
     if (self->m_title)
         XString_assign_utf8(self->m_title, title ? title : "");
+    /* [Qt 对齐 2026-11-02] Qt 的 setTitle 会 updateGeometry() 并按新标题
+       重算 minimumSizeHint；此前只 update() 不刷 hint → 标题变长后最小
+       尺寸仍是旧值，布局按旧宽排。 */
+    xgroupbox_refreshSizeHints(self);
+    XWidget_updateGeometry((XWidget*)self);
     XWidget_update((XWidget*)self);
 }
 

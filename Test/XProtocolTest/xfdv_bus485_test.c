@@ -77,7 +77,10 @@ int XVfdBus485Test_runEx(const char* masterPathOverride)
     XVfdM512* d1 = NULL;
     XVfdM512* d2 = NULL;
     const XVfdPointSpec* specs = NULL;
+    const XVfdCommGroup* groups = NULL;
+    const XVfdUnitProtocol* protocol = NULL;
     int specCount = 0;
+    int groupCount = 0;
     int devId[2] = { -1, -1 };
     uint16_t port[2] = { 0, 0 };
     int i;
@@ -123,10 +126,18 @@ int XVfdBus485Test_runEx(const char* masterPathOverride)
     CHECK(XVfdDevice_attach((XVfdDevice*)d1, harness.m_group) &&
           XVfdDevice_attach((XVfdDevice*)d2, harness.m_group), "两设备挂接同一通道组");
     specs = XVfdM512_pointSpecs(&specCount);
-    CHECK(xvfdHarnessMount(&harness, (XVfdDevice*)d1, devId[0], 1, specs, specCount),
-          "站1 建点并绑定（unit=1）");
-    CHECK(xvfdHarnessMount(&harness, (XVfdDevice*)d2, devId[1], 2, specs, specCount),
-          "站2 建点并绑定（unit=2）");
+    groups = XVfdM512_commGroups(&groupCount);
+    protocol = XVfdM512_unitProtocol();
+    /* [2026-11-02] 按**通信组**装配（组段惰性建 + 从站约束）：M512 从站模拟器
+     * 按手册附录 1 强制「一帧读不得跨功能码组 / 单帧 ≤ 12 字 / 只 FC06」，
+     * 主站若按「点地址相邻」合并映射段就会发出跨组读帧 → 从站回 83H/02。
+     * 故此处与 xvfd-m512 闭环一致，改用按组切段的品牌装配入口。 */
+    CHECK(xvfdHarnessMountBrand(&harness, (XVfdDevice*)d1, devId[0], 1, groups, groupCount,
+                                specs, specCount, protocol),
+          "站1 按通信组装配（组段+点+从站约束）");
+    CHECK(xvfdHarnessMountBrand(&harness, (XVfdDevice*)d2, devId[1], 2, groups, groupCount,
+                                specs, specCount, protocol),
+          "站2 按通信组装配（虚拟地址隔离）");
     XVfdDevice_setStatusInterval((XVfdDevice*)d1, 100);
     XVfdDevice_setStatusInterval((XVfdDevice*)d2, 100);
 

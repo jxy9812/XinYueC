@@ -34,6 +34,7 @@
 
 #include "XComboBox.h"
 #include "XCompleter.h"
+#include "XCommonStyle.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XString.h"
@@ -216,8 +217,27 @@ xcombo_style_text: {}
         if (combo->m_currentIndex >= 0 &&
             combo->m_currentIndex < combo->m_itemCount &&
             combo->m_items[combo->m_currentIndex]) {
-            XPainter_drawText(&painter, 6, (r.height - 14) / 2 + 12,
-                              XString_toUtf8(combo->m_items[combo->m_currentIndex]), text);
+            /* [Qt 对齐 2026-11-02] 闭态文本按**可用宽**省略（Qt
+               QComboBox 走 QCommonStyle CE_ComboBoxLabel → elidedText）：
+               此前直绘全文，控件被布局收窄后文字溢出画到相邻控件上
+               （窄窗下无线下拉的长 SSID 压住「扫描」钮）。 */
+            {
+                const char* cur =
+                    XString_toUtf8(combo->m_items[combo->m_currentIndex]);
+                const XFont* cfont = &((XWidget*)combo)->m_font;
+                int avail = r.width - 6 - XCOMBOBOX_BUTTON_W - 8;
+                if (avail > 0 && cur) {
+                    char elided[256];
+                    const char* shown =
+                        XCommonStyle_elideText(elided, (int)sizeof(elided),
+                                               cur, 1, avail, cfont);
+                    XPainter_drawText(&painter, 6, (r.height - 14) / 2 + 12,
+                                      shown, text);
+                } else {
+                    XPainter_drawText(&painter, 6, (r.height - 14) / 2 + 12,
+                                      cur, text);
+                }
+            }
         } else if (combo->m_placeholderText &&
                    XString_toUtf8(combo->m_placeholderText) &&
                    XString_toUtf8(combo->m_placeholderText)[0]) {
@@ -528,10 +548,34 @@ static void VXComboBox_keyPressEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
+/* update 函数定义在后段，此处先声明供槽桥接调用。 */
+static void xcombo_updateSizeHint(XComboBox* self);
+
+/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）：先按当前内容
+   重算缓存，再读回，等价「查询时重算」语义。 */
+static XSize VXComboBox_sizeHintSlot(const XWidget* self);
+static XSize VXComboBox_minimumSizeHintSlot(const XWidget* self);
+
+static XSize VXComboBox_sizeHintSlot(const XWidget* self)
+{
+    if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
+    xcombo_updateSizeHint((XComboBox*)self);
+    return XWidget_sizeHint_base(self);
+}
+
+static XSize VXComboBox_minimumSizeHintSlot(const XWidget* self)
+{
+    if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
+    xcombo_updateSizeHint((XComboBox*)self);
+    return XWidget_minimumSizeHint_base(self);
+}
+
 XVtable* XComboBox_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XComboBox)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXComboBox_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXComboBox_minimumSizeHintSlot);
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXComboBox_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VXComboBox_mousePressEvent);
@@ -827,7 +871,13 @@ static void xcombo_updateSizeHint(XComboBox* self)
         char probe[2] = { 'M', '\0' };
         int mw = XPainter_textWidth(font, probe);
         charsW = mw * self->m_minimumContentsLength;
-        if (charsW > maxW) maxW = charsW;
+        /* [Qt 对齐 2026-11-02] 该策略下**只**按最小内容长度定尺（Qt
+           qcombobox.cpp recomputeSizeHint：AdjustToMinimumContents-
+           LengthWithIcon 取 minimumContentsLength，不看项文本）。此前取
+           「项文本最大宽与最小内容长的较大者」→ 长文本项（网卡名/SSID）
+           把 sizeHint/minimumSizeHint 撑大 → 所在行最小宽超视口 → 窄窗
+           下整行被裁（网络页窄窗横向截断根因之一）。 */
+        maxW = charsW;
     }
     XStyleOption_init(&opt, XStyleCT_ComboBox);
     opt.m_rect.width = maxW + XCOMBOBOX_BUTTON_W + 8; /* 文本+按钮+余量。 */
@@ -1976,6 +2026,11 @@ void XComboBox_insertItem(XComboBox* self, int index, const XString* text)
         while (self->m_itemCount > self->m_maxCount)
             XComboBox_removeItem(self, self->m_itemCount - 1);
     }
+    /* [Qt 对齐 2026-11-02] Qt 的 insertItem 内部经 rowsInserted 触发
+       sizeHint 刷新；此前本实现只在 addItem* 外层补刷 → 直接调
+       insertItem/insertItem_2 时首选尺寸不更新（后续布局按旧宽排）。
+       刷新收到本函数内，addItem* 外层那两处补刷随之删除。 */
+    xcombo_updateSizeHint(self);
     XWidget_update((XWidget*)self);
 }
 void XComboBox_insertItem_2(XComboBox* self, int index, const char* text)
@@ -2010,12 +2065,12 @@ void XComboBox_addItem(XComboBox* self, const XString* text)
 {
     /* 对标 Qt addItem：追加到尾部。 */
     XComboBox_insertItem(self, self ? self->m_itemCount : 0, text);
-    xcombo_updateSizeHint(self); /* [sizeHint] 随内容刷新。 */
+    /* sizeHint 刷新已收进 insertItem（Qt 同口径），此处不重复。 */
 }
 void XComboBox_addItem_2(XComboBox* self, const char* text)
 {
     XComboBox_insertItem_2(self, self ? self->m_itemCount : 0, text);
-    xcombo_updateSizeHint(self); /* [sizeHint] 随内容刷新。 */
+    /* sizeHint 刷新已收进 insertItem（Qt 同口径），此处不再补刷。 */
 }
 
 void XComboBox_addItems(XComboBox* self, const XStringList* texts)
@@ -2079,7 +2134,7 @@ void XComboBox_removeItem(XComboBox* self, int index)
         xcombo_changeCurrentIndex(self, re);
     }
     /* index > oldCurrent：当前项在移除点之前，不受影响不发射（Qt 同）。 */
-    xcombo_updateSizeHint(self); /* [sizeHint] 随内容刷新。 */
+    /* sizeHint 刷新已收进 insertItem（Qt 同口径），此处不重复。 */
     XWidget_update((XWidget*)self);
 }
 

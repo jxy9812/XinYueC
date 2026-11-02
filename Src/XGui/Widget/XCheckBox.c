@@ -548,10 +548,24 @@ static void VXCheckBox_move(XCheckBox* self, XCheckBox* other)
 
 /* ==================== 类虚表 ==================== */
 
+/** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
+ *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
+static XSize VXCheckBox_sizeHintSlot(const XWidget* self)
+{
+    return XCheckBox_sizeHint((const XCheckBox*)self);
+}
+
+static XSize VXCheckBox_minimumSizeHintSlot(const XWidget* self)
+{
+    return XCheckBox_minimumSizeHint((const XCheckBox*)self);
+}
+
 XVtable* XCheckBox_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XCheckBox)
     XVTABLE_INHERIT_XCLASS(XAbstractButton);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXCheckBox_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXCheckBox_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_CheckStateSet,
                              VXCheckBox_checkStateSet);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_NextCheckState,

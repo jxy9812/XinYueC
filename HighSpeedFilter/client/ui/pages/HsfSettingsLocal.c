@@ -1,0 +1,20 @@
+﻿/**
+ * @file       HsfSettingsLocal.c
+ * @brief      本地设置叶子页实现：复用 HsfPlaceHolder 占位承载。
+ */
+#include "HsfSettingsLocal.h"
+
+#include "HsfPlaceHolder.h"
+
+#if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON
+
+XWidget* HsfSettingsLocal_create(XWidget* parent, HsfMenuNavFn navFn,
+                           void* userData)
+{
+    /* TODO(本地设置): 占位骨架，真实页面内容在此替换实现。 */
+    return HsfPlaceHolder_create(parent,
+                            "\xE6\x9C\xAC\xE5\x9C\xB0\xE8\xAE\xBE\xE7\xBD\xAE", "\xE6\x9C\xAC\xE6\x9C\xBA\xE5\x8F\x82\xE6\x95\xB0\xEF\xBC\x9A\xE6\xBB\xA4\xE6\xB3\xA2\xE7\xB3\xBB\xE6\x95\xB0\xE3\x80\x81\xE9\x87\x87\xE6\xA0\xB7\xE5\x91\xA8\xE6\x9C\x9F\xE4\xB8\x8E\xE6\x9C\xAC\xE5\x9C\xB0\xE5\x81\x8F\xE5\xA5\xBD", "\xE5\xBE\x85\xE6\x8E\xA5\xE5\x85\xA5\xEF\xBC\x9A\xE5\x8F\x82\xE6\x95\xB0\xE6\x8C\x81\xE4\xB9\x85\xE5\x8C\x96",
+                            HSF_PAGE_SETTINGS_MENU, navFn, userData);
+}
+
+#endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */

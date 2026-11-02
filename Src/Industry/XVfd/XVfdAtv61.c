@@ -1,8 +1,12 @@
-﻿/**
+/**
  * @file       XVfdAtv61.c
  * @brief      施耐德 Altivar 61 (ATV61) 变频器子类实现（通道点驱动）。
- * @details    本文件只含 ATV61 的协议知识：点规格表、CiA402/Drivecom 状态字
- *             解码、命令编解码、启动序列推进、109 条故障表。
+ * @details    本文件只含 ATV61 的协议知识：点规格表、CiA402/Drivecom 画像表
+ *             （ETA/CMD 常量 + 时序常量）、ETI 品牌专有位解码、给定量标度
+ *             换算、故障表。
+ *             CiA402 状态机骨架（启动序列逐级推进、期望态轮询、停机族命令、
+ *             故障复位两步序列、状态字解码）已在通用基类 XVfdCiA402，本文件
+ *             只给一张 XVfdCiA402Profile 与品牌专有辅助位语义。
  *             数据来源与写通道一律经基类（XVfdDevice_*Role）下沉到通道点，
  *             本文件不出现任何传输/编帧符号。
  */
@@ -10,6 +14,7 @@
 #if XVFD_ON
 #if XVFD_ATV61_ON
 
+#include "XVfdCiA402_Protected.h"
 #include "XVfdDevice_Protected.h"
 #include <string.h>
 
@@ -33,71 +38,151 @@ static const XVfdPointSpec s_atv61Specs[] = {
     { XVfdRole_CommandWord,    XIoPoint_AnalogOutput,  1, XVfdAtv61_AddrCmd,  "CMD",  0 },
     { XVfdRole_FreqSet,        XIoPoint_AnalogOutput, 10, XVfdAtv61_AddrLfr1, "LFR1", 0 },
     { XVfdRole_SpeedSet,       XIoPoint_AnalogOutput,  1, XVfdAtv61_AddrLfrd, "LFRD", XVfdCap_SpeedRpmGiven },
-    { XVfdRole_AccelTime,      XIoPoint_AnalogOutput, 100, XVfdAtv61_AddrAcc, "ACC",  0 },
-    { XVfdRole_DecelTime,      XIoPoint_AnalogOutput, 100, XVfdAtv61_AddrDec, "DEC",  0 }
+    { XVfdRole_AccelTime,      XIoPoint_AnalogOutput, 100, XVfdAtv61_AddrAcc,  "ACC",  0 },
+    { XVfdRole_DecelTime,      XIoPoint_AnalogOutput, 100, XVfdAtv61_AddrDec,  "DEC",  0 }
 };
 
 #define ATV61_SPEC_COUNT ((int)(sizeof(s_atv61Specs) / sizeof(s_atv61Specs[0])))
 
+/* ==================== CiA402 / Drivecom 画像表 ====================
+ * 把 ATV61 的 ETA/CMD 常量与时序常量交给通用骨架 XVfdCiA402：
+ * 状态域掩码、六个状态码、命令字、状态位、序列时序全部由本表驱动。
+ * 命令字位定义与状态字位定义见 XVfdAtv61.h（公开常量，外部在用）。 */
+static const XVfdCiA402Profile s_atv61Profile = {
+    /* m_stateMask      */ XVfdAtv61_EtaMask,
+    /* m_states         */ { XVfdAtv61_EtaStateDisabled,
+                             XVfdAtv61_EtaStateReady,
+                             XVfdAtv61_EtaStateSwitched,
+                             XVfdAtv61_EtaStateRunning,
+                             XVfdAtv61_EtaStateQuickStop,
+                             XVfdAtv61_EtaStateFault },
+    /* m_cmdShutdown    */ XVfdAtv61_CmdShutdown,
+    /* m_cmdSwitchOn    */ XVfdAtv61_CmdSwitchOnState,
+    /* m_cmdRun         */ XVfdAtv61_CmdRun,
+    /* m_cmdDisableOp   */ XVfdAtv61_CmdDisableOperation,
+    /* m_cmdDisableVoltage */ XVfdAtv61_CmdDisableVoltage,
+    /* m_cmdQuickStop   */ XVfdAtv61_CmdQuickStopCmd,
+    /* m_cmdFaultReset  */ XVfdAtv61_CmdFaultResetCmd,
+    /* m_cmdReverse     */ XVfdAtv61_CmdReverse,
+    /* m_bitRunning     */ XVfdAtv61_EtaOperationEnabled,
+    /* m_bitFault       */ XVfdAtv61_EtaFault,
+    /* m_bitWarning     */ XVfdAtv61_EtaWarning,
+    /* m_bitRemote      */ XVfdAtv61_EtaRemote,
+    /* m_bitTargetReached */ XVfdAtv61_EtaTargetReached,
+    /* m_bitReverse     */ XVfdAtv61_EtaReverse,
+    /* m_maxStep        */ XVfdAtv61_StartMaxStep,
+    /* m_stepDelayMs    */ XVfdAtv61_DefaultStepDelayMs,
+    /* m_pollLimit      */ XVfdAtv61_StartWaitPolls,
+    /* m_pollIntervalMs */ 60
+};
+
 /* ==================== 故障码表 ====================
- * 数值与字母码取自施耐德官方《ATV610 通信参数表》LFT 枚举（EAV64394），
- * 与 ATV61/ATV71 同属一个逻辑地址家族，故障字母码一致。
- * 现场若遇不一致，以 HMI [1.10 诊断] 当前故障列表为准并修订本表。 */
+ *
+ * 【字母码口径】《ATV61 编程手册》V5.8 p.242–247 的故障字母码全表（手册面板
+ * 显示的就是这个混合大小写写法，如 CnF / InFb / ObF / tnF）。本表 A 组按手册
+ * 写法逐条给出字母码与中文含义。
+ *
+ * 【数值码口径】手册**只给字母码，不给数值码**（ATV61 的 LFT 寄存器无公开的
+ * 数值枚举）。故数值码沿用旧表（其出处为《ATV610 通信参数表》EAV64394 的 LFT
+ * 枚举，与 ATV61 同属一个逻辑地址家族）；旧表没有的手册条目在旧表未占用的
+ * 保留号段内新分配（新增条目见行尾 “（手册新增）” 标注）。
+ *
+ * 【分组】A 组 = ATV61 编程手册列出的故障（参与 XVfdAtv61_faultName/faultText
+ * 的显示）；B 组 = 其它产品族（ATV610 / AFE / 泵控）条目，**ATV61 手册未列**，
+ * 不是 ATV61 的故障，只保留供现场对照与后续移植查阅，不参与 ATV61 故障显示。
+ *
+ * 【复位分档】A = 不能自动复位（须先断电再上电清除原因）｜B = 原因消失后可用
+ * 自动重起动复位｜C = 原因一消失即可复位（手册分档）。 */
+
 static const XVfdFaultEntry s_atv61Faults[] = {
-    { 0, "NOF", "无故障" },
-    { 2, "EEF1", "控制存储器故障" },
-    { 3, "CFF", "配置不正确" },
-    { 4, "CFI", "配置无效" },
-    { 5, "SLF1", "Modbus 通信中断" },
-    { 6, "ILF", "内部通信中断（选件卡）" },
-    { 7, "CNF", "现场总线通信中断" },
-    { 8, "EPF1", "外部故障" },
-    { 9, "OCF", "过流" },
-    { 10, "CRF1", "预充电故障" },
-    { 13, "LFF2", "AI2 4-20mA 信号丢失" },
-    { 15, "IHF", "输入过热" },
-    { 16, "OHF", "变频器过热" },
-    { 17, "OLF", "电机过载" },
-    { 18, "OBF", "直流母线过压" },
-    { 19, "OSF", "电源过压" },
-    { 20, "OPF1", "输出缺 1 相" },
-    { 21, "PHF", "输入主电源故障" },
-    { 22, "USF", "电源欠压" },
-    { 23, "SCF1", "电机短路" },
-    { 24, "SOF", "超速" },
-    { 25, "TNF", "自整定故障" },
-    { 26, "INF1", "内部故障 1（额定值）" },
-    { 27, "INF2", "内部故障 2（软件）" },
-    { 28, "INF3", "内部故障 3（内部通信）" },
-    { 29, "INF4", "内部故障 4（生产）" },
-    { 30, "EEF2", "功率存储器故障" },
-    { 32, "SCF3", "接地短路" },
-    { 33, "OPF2", "电机缺 3 相" },
-    { 34, "COF", "CANopen 通信中断" },
-    { 37, "INF7", "内部故障 7（初始化）" },
-    { 38, "EPF2", "现场总线检测到的外部故障" },
-    { 40, "INF8", "内部故障 8（开关电源）" },
-    { 42, "SLF2", "PowerSuite 通信中断" },
-    { 45, "SLF3", "图形终端通信中断" },
-    { 51, "INF9", "内部故障 9（电流测量）" },
-    { 52, "INFA", "内部故障 10（主电源）" },
-    { 53, "INFB", "内部故障 11（温度）" },
-    { 54, "TJF", "IGBT 过热" },
-    { 55, "SCF4", "IGBT 短路" },
-    { 56, "SCF5", "电机短路" },
-    { 60, "INFC", "内部故障 12（内部电流源）" },
-    { 64, "LCF", "输入接触器故障" },
-    { 68, "INF6", "内部故障 6（选件）" },
-    { 69, "INFE", "内部故障 14（CPU）" },
-    { 71, "LFF3", "AI3 4-20mA 信号丢失" },
-    { 72, "LFF4", "AI4 4-20mA 信号丢失" },
-    { 73, "HCF", "板卡不兼容" },
-    { 77, "CFI2", "配置传送故障" },
-    { 79, "LFF5", "AI5 4-20mA 信号丢失" },
-    { 99, "CSF", "通道切换故障" },
-    { 100, "ULF", "过程欠载" },
-    { 101, "OLC", "过程过载" },
-    { 105, "ASF", "角度故障" },
+    { 0,   "NOF",  "无故障" },
+    { 2,   "EEF1", "控制卡存储器故障（A 档）" },
+    { 3,   "CFF",  "错误的设置（卡被更换/拆掉）（C 档）" },
+    { 4,   "CFI",  "无效设置（总线加载的设置不一致）（C 档）" },
+    { 5,   "SLF1", "Modbus 通信中断（B 档）" },
+    { 6,   "ILF",  "选件卡内部连接故障（A 档）" },
+    { 7,   "CnF",  "网络故障（通信卡）（B 档）" },
+    { 8,   "EPF1", "LI/位输入的外部故障（B 档）" },
+    { 9,   "OCF",  "过流（A 档）" },
+    { 10,  "CrF1", "预充电故障（负载继电器控制故障/充电电阻损坏）（A 档）" },
+    { 11,  "AI2F", "AI2 输入信号不一致（模拟输入 AI2）（A 档，手册新增）" },
+    { 12,  "bOF",  "制动电阻过载（A 档，手册新增）" },
+    { 13,  "LFF2", "AI2 4-20mA 信号损失（B 档）" },
+    { 14,  "bUF",  "制动单元短路（A 档，手册新增）" },
+    { 16,  "OHF",  "变频器过热（B 档）" },
+    { 17,  "OLF",  "电机过载（B 档）" },
+    { 18,  "ObF",  "制动过速（B 档）；注：ATV61 手册无「直流母线过压」故障，本数值码沿用旧表" },
+    { 19,  "OSF",  "输入过电压（B 档）" },
+    { 20,  "OPF1", "输出缺 1 相（B 档）" },
+    { 21,  "PHF",  "输入缺相（C 档）" },
+    { 22,  "USF",  "欠压（C 档）" },
+    { 23,  "SCF1", "电机短路（A 档）" },
+    { 24,  "SOF",  "超速（A 档）" },
+    { 25,  "tnF",  "自整定（A 档）" },
+    { 26,  "InF1", "额定功率错误（功率卡与存储的卡不同）（A 档）" },
+    { 27,  "InF2", "不兼容的电源板（A 档）" },
+    { 28,  "InF3", "内部串行连接（A 档）" },
+    { 29,  "InF4", "生产专用区域（A 档）" },
+    { 30,  "EEF2", "功率卡存储器故障（A 档）" },
+    { 31,  "CrF2", "晶闸管充电回路故障（直流母线充电故障）（A 档，手册新增）" },
+    { 32,  "SCF3", "接地短路（A 档）" },
+    { 33,  "OPF2", "电机缺 3 相（B 档）" },
+    { 34,  "COF",  "CANopen 通信中断（B 档）" },
+    { 35,  "EnF",  "编码器反馈故障（A 档，手册新增）" },
+    { 36,  "FCF1", "输出接触器未打开（A 档，手册新增）" },
+    { 37,  "InF7", "硬件初始化（A 档）" },
+    { 38,  "EPF2", "网络输入的外部故障（B 档）" },
+    { 39,  "FCF2", "输出接触器未关闭（B 档，手册新增）" },
+    { 40,  "InF8", "内部控制电源故障（A 档）" },
+    { 41,  "Fd1",  "阻尼器卡住（B 档，手册新增）" },
+    { 42,  "SLF2", "PowerSuite 通信中断（B 档）" },
+    { 43,  "Fd2",  "阻尼器开启（A 档，手册新增）" },
+    { 44,  "HdF",  "IGBT 去饱和（A 档，手册新增）" },
+    { 45,  "SLF3", "控制面板通信中断（图形显示终端）（B 档）" },
+    { 46,  "PrF",  "电源切除失效（「断电」安全功能故障）（A 档，手册新增）" },
+    { 47,  "PrtF", "电源确认故障（C 档，手册新增）" },
+    { 48,  "SCF2", "有阻抗短路（A 档，手册新增）" },
+    { 49,  "SPF",  "速度反馈丢失（B 档，手册新增）" },
+    { 50,  "APF",  "程序故障（Controller Inside 卡）（B 档，手册新增）" },
+    { 51,  "InF9", "内部电流测量故障（A 档）" },
+    { 52,  "InFA", "内部输入电源故障（A 档）" },
+    { 53,  "InFb", "内部温度传感器（A 档）" },
+    { 54,  "tJF",  "IGBT 过热（B 档）" },
+    { 55,  "SCF4", "IGBT 短路（B 档）" },
+    { 56,  "SCF5", "电机短路（B 档）" },
+    { 57,  "nFF",  "无流体故障（B 档，手册新增）" },
+    { 58,  "OtF1", "PTC1 过热（B 档，手册新增）" },
+    { 59,  "OtF2", "PTC2 过热（B 档，手册新增）" },
+    { 60,  "InFC", "内部时钟故障（A 档）" },
+    { 61,  "OtFL", "LI6=PTC 过热（B 档，手册新增）" },
+    { 62,  "PtF1", "PTC1 探头（B 档，手册新增）" },
+    { 63,  "PtF2", "PTC2 探头（B 档，手册新增）" },
+    { 64,  "LCF",  "输入接触器（B 档）" },
+    { 65,  "PtFL", "LI6=PTC 探头（B 档，手册新增）" },
+    { 66,  "SPIF", "PI 反馈故障（B 档，手册新增）" },
+    { 67,  "SSF",  "转矩/电流限幅（B 档，手册新增）" },
+    { 68,  "InF6", "选项卡故障（A 档）" },
+    { 69,  "InFE", "内部 CPU 故障（A 档）" },
+    { 71,  "LFF3", "AI3 4-20mA 信号损失（B 档）" },
+    { 72,  "LFF4", "AI4 4-20mA 信号损失（B 档）" },
+    { 73,  "HCF",  "卡匹配（C 档）" },
+    { 100, "ULF",  "过程欠载故障（B 档）" },
+    { 101, "OLC",  "过载故障（过程过载）（B 档）" }
+};
+
+#define ATV61_FAULT_COUNT ((int)(sizeof(s_atv61Faults) / sizeof(s_atv61Faults[0])))
+
+/* ---- 其它产品族（ATV610 / AFE / 泵控）：ATV61 编程手册未列 ----
+ * 这些条目出自《ATV610 通信参数表》EAV64394 的 LFT 枚举，带 AFE 前端、泵控、
+ * 以太网特征，**ATV61 编程手册 p.242–247 的故障全表里根本没有它们**，
+ * 因此它们不是 ATV61 的故障：单列一组保留（现场对照/后续移植用），
+ * 不参与 XVfdAtv61_faultName/faultText 的 ATV61 故障显示。 */
+static const XVfdFaultEntry s_atv61OtherFaults[] = {
+    { 15,  "IHF",  "输入过热" },
+    { 77,  "CFI2", "配置传送故障" },
+    { 79,  "LFF5", "AI5 4-20mA 信号丢失" },
+    { 99,  "CSF",  "通道切换故障" },
+    { 105, "ASF",  "角度故障" },
     { 106, "LFF1", "AI1 4-20mA 信号丢失" },
     { 107, "SAFF", "安全功能故障" },
     { 110, "TH2F", "AI2 热保护等级故障" },
@@ -126,7 +211,7 @@ static const XVfdFaultEntry s_atv61Faults[] = {
     { 143, "INFH", "内部故障 17（IO 模块-标准）" },
     { 144, "INF0", "内部故障 0（IPC）" },
     { 146, "INFD", "内部故障 13（差动电流）" },
-    { 148, "STF", "电机堵转故障" },
+    { 148, "STF",  "电机堵转故障" },
     { 149, "INFL", "内部故障 21（RTC）" },
     { 150, "ETHF", "以太网通信中断" },
     { 151, "INFF", "内部故障 15（Flash）" },
@@ -139,15 +224,15 @@ static const XVfdFaultEntry s_atv61Faults[] = {
     { 159, "SCF6", "AFE 短路" },
     { 160, "OBF2", "AFE 母线不平衡" },
     { 161, "INFS", "内部故障 28（AFE）" },
-    { 173, "CHF", "柜内过热" },
-    { 174, "URF", "AFE 电源欠压" },
+    { 173, "CHF",  "柜内过热" },
+    { 174, "URF",  "AFE 电源欠压" },
     { 175, "INFV", "内部故障 31（缺功率砖）" },
     { 176, "INFT", "内部故障 29（逆变器）" },
     { 177, "INFU", "内部故障 30（整流器）" },
     { 179, "TJF2", "AFE IGBT 过热" },
     { 180, "CRF3", "AFE 接触器反馈故障" },
     { 181, "CFI3", "预设值传送故障" },
-    { 182, "CBF", "断路器故障" },
+    { 182, "CBF",  "断路器故障" },
     { 200, "FDR1", "FDR 内置以太网故障" },
     { 201, "FDR2", "FDR 以太网模块故障" },
     { 206, "DCRE", "直流母线纹波故障" },
@@ -155,231 +240,33 @@ static const XVfdFaultEntry s_atv61Faults[] = {
     { 220, "AFLF", "高级功能被锁定" }
 };
 
-#define ATV61_FAULT_COUNT ((int)(sizeof(s_atv61Faults) / sizeof(s_atv61Faults[0])))
+#define ATV61_OTHER_FAULT_COUNT ((int)(sizeof(s_atv61OtherFaults) / sizeof(s_atv61OtherFaults[0])))
 
-/* ==================== 前置声明 ==================== */
-static bool atv61Step(XVfdAtv61* dev);
-
-/* ==================== 状态字解码 ==================== */
+/* ==================== 品牌专有解码（ETI 辅助位） ==================== */
 
 /**
- * @brief 由 ETA 原始值刷新快照运行态字段。
- * @param dev 实例；不能为 NULL。
- * @param eta ETA 原始值。
+ * @brief 品牌重载解码：ETI 的加速/减速/直流制动位与运行态细分。
+ * @param base 通用骨架实例。
+ * @param status 状态字原始值（通用部分已解完；此处不用）。
+ * @param aux 辅助状态字 ETI 原始值。
+ * @param st 可变状态快照（就地改写）。
  * @return 无。
  */
-static void atv61ApplyEta(XVfdAtv61* dev, uint16_t eta)
+static void VXVfdAtv61_DecodeBrand(XVfdCiA402* base, uint16_t status, uint16_t aux,
+                                   XVfdStatus* st)
 {
-    XVfdStatus* st;
-    uint8_t state;
-    if (!dev) return;
-    st = XVfdDevice_status(&dev->m_base);
-    state = (uint8_t)(eta & XVfdAtv61_EtaMask);
-    dev->m_etaCache = eta;
-    st->m_rawStateWord = eta;
-    st->m_validMask |= XVfdField_RawStateWord;
-    st->m_running = (eta & XVfdAtv61_EtaOperationEnabled) != 0;
-    st->m_faulted = (eta & XVfdAtv61_EtaFault) != 0;
-    st->m_warning = (eta & XVfdAtv61_EtaWarning) != 0;
-    st->m_reverse = (eta & XVfdAtv61_EtaReverse) != 0;
-    st->m_targetReached = (eta & XVfdAtv61_EtaTargetReached) != 0;
-    st->m_remote = (eta & XVfdAtv61_EtaRemote) != 0;
-    st->m_dcBraking = (dev->m_etiCache & XVfdAtv61_EtiDcBrake) != 0;
-    st->m_validMask |= XVfdField_Running | XVfdField_Faulted | XVfdField_Warning
-                     | XVfdField_Reverse | XVfdField_TargetReached | XVfdField_Remote
-                     | XVfdField_DcBraking;
-    switch (state) {
-    case XVfdAtv61_EtaStateDisabled: st->m_runState = XVfdRunState_Stopped; break;
-    case XVfdAtv61_EtaStateReady:
-    case XVfdAtv61_EtaStateSwitched: st->m_runState = XVfdRunState_Ready; break;
-    case XVfdAtv61_EtaStateRunning:
-        if (dev->m_etiCache & XVfdAtv61_EtiAccel) st->m_runState = XVfdRunState_Accelerating;
-        else if (dev->m_etiCache & XVfdAtv61_EtiDecel) st->m_runState = XVfdRunState_Decelerating;
-        else st->m_runState = st->m_reverse ? XVfdRunState_RunningReverse
-                                            : XVfdRunState_RunningForward;
-        break;
-    case XVfdAtv61_EtaStateQuickStop: st->m_runState = XVfdRunState_QuickStopping; break;
-    default:
-        st->m_runState = st->m_faulted ? XVfdRunState_Fault : XVfdRunState_Unknown;
-        break;
+    (void)status;
+    if (!base || !st) return;
+    st->m_dcBraking = (aux & XVfdAtv61_EtiDcBrake) != 0;
+    st->m_validMask |= XVfdField_DcBraking;
+    if (st->m_runState == XVfdRunState_RunningForward ||
+        st->m_runState == XVfdRunState_RunningReverse) {
+        if (aux & XVfdAtv61_EtiAccel) st->m_runState = XVfdRunState_Accelerating;
+        else if (aux & XVfdAtv61_EtiDecel) st->m_runState = XVfdRunState_Decelerating;
     }
-    st->m_validMask |= XVfdField_RunState;
-    XVfdDevice_markDirty(&dev->m_base);
 }
 
-/**
- * @brief 由 ETI 原始值刷新（加速/减速/直流制动位）；随后按缓存 ETA 重解码。
- * @param dev 实例；不能为 NULL。
- * @param eti ETI 原始值。
- * @return 无。
- */
-static void atv61ApplyEti(XVfdAtv61* dev, uint16_t eti)
-{
-    if (!dev) return;
-    dev->m_etiCache = eti;
-    atv61ApplyEta(dev, dev->m_etaCache);
-}
-
-/**
- * @brief DecodePoint 重载：状态字/辅助字/故障码走 ATV61 语义，其余交基类。
- * @param d 设备实例。
- * @param spec 点规格。
- * @param raw 原生值。
- * @return 无。
- */
-static void VXVfdAtv61_DecodePoint(XVfdDevice* d, const XVfdPointSpec* spec, int32_t raw)
-{
-    XVfdAtv61* dev = (XVfdAtv61*)d;
-    if (!dev || !spec) return;
-    switch (spec->m_role) {
-    case XVfdRole_StatusWord:
-        atv61ApplyEta(dev, (uint16_t)raw);
-        return;
-    case XVfdRole_AuxStateWord:
-        atv61ApplyEti(dev, (uint16_t)raw);
-        return;
-    case XVfdRole_FaultCode: {
-        XVfdStatus* st = XVfdDevice_status(d);
-        st->m_faultCode = (uint16_t)raw;
-        st->m_validMask |= XVfdField_FaultCode;
-        XVfdDevice_markDirty(d);
-        return;
-    }
-    default:
-        break;
-    }
-    XVfdDevice_decodePoint_base(d, spec, raw);
-}
-
-/* ==================== CiA402 启动序列 ==================== */
-
-/**
- * @brief 由当前 ETA 推导下一步命令字与期望状态。
- * @param eta ETA 原始值。
- * @param reverse true=反转。
- * @param outExpect 输出该步写完后应到达的 ETA 状态码（CiA402 掩码域）。
- * @return 命令字（含方向位）。
- * @note 期望状态用于步进等待：命令字写完 ≠ 从站状态已迁移，序列按
- *       “写 → 轮询缓存 ETA 到期望态 → 下一步”推进（每步有等待上限）。
- */
-static uint16_t atv61NextCmd(uint16_t eta, bool reverse, uint16_t* outExpect)
-{
-    uint16_t cmd;
-    switch ((uint8_t)(eta & XVfdAtv61_EtaMask)) {
-    case XVfdAtv61_EtaStateDisabled:
-        cmd = XVfdAtv61_CmdShutdown;      *outExpect = XVfdAtv61_EtaStateReady;    break;
-    case XVfdAtv61_EtaStateReady:
-        cmd = XVfdAtv61_CmdSwitchOnState; *outExpect = XVfdAtv61_EtaStateSwitched; break;
-    case XVfdAtv61_EtaStateSwitched:
-        cmd = XVfdAtv61_CmdRun;           *outExpect = XVfdAtv61_EtaStateRunning; break;
-    default:
-        cmd = XVfdAtv61_CmdRun;           *outExpect = XVfdAtv61_EtaStateRunning; break;
-    }
-    if (reverse) cmd |= XVfdAtv61_CmdReverse;
-    return cmd;
-}
-
-/**
- * @brief 启动序列单步：读状态字 → 判定 → 写下一命令字（写落定后由定时器继续）。
- * @param dev 实例；不能为 NULL。
- * @return 序列仍在推进返回 true；已判失败返回 false（动作已收口）。
- */
-static bool atv61Step(XVfdAtv61* dev)
-{
-    XVfdDevice* d;
-    XVfdStatus* st;
-    int32_t eta = 0;
-    if (!dev) return false;
-    d = &dev->m_base;
-    st = XVfdDevice_status(d);
-    if (!XVfdDevice_readRole(d, XVfdRole_StatusWord, &eta)) {
-        XVfdDevice_emitError(d, "启动序列读取状态字失败（状态点无数据）");
-        XVfdDevice_finishAction(d, false);
-        return false;
-    }
-    atv61ApplyEta(dev, (uint16_t)eta);
-    if (st->m_faulted) {
-        XVfdDevice_setLastError(d, XVfdError_WriteRejected);
-        XVfdDevice_emitError(d, "变频器处于故障态，请先复位故障");
-        XVfdDevice_finishAction(d, false);
-        return false;
-    }
-    if (st->m_running) {
-        XVfdDevice_finishAction(d, true);
-        return false;
-    }
-    if (dev->m_step >= XVfdAtv61_StartMaxStep) {
-        XVfdDevice_setLastError(d, XVfdError_Timeout);
-        XVfdDevice_emitError(d, "启动超时：变频器未进入运行状态");
-        XVfdDevice_finishAction(d, false);
-        return false;
-    }
-    dev->m_pendingCmd = atv61NextCmd((uint16_t)eta, dev->m_reverse, &dev->m_expectEta);
-    dev->m_waitPolls = 0;
-    ++dev->m_step;
-    dev->m_waitingWrite = true;
-    if (!XVfdDevice_writeRole(d, XVfdRole_CommandWord, (int32_t)dev->m_pendingCmd)) {
-        dev->m_waitingWrite = false;
-        XVfdDevice_finishAction(d, false);
-        return false;
-    }
-    XVfdDevice_armActionTimer(d, XVfdDevice_actionTimeout(d));
-    return true;
-}
-
-/* ==================== 动作实现 ==================== */
-
-/**
- * @brief 启动：CiA402 状态机推进（读 ETA → 逐级写命令字）。
- * @param d 设备实例。
- * @param reverse true=反转。
- * @return 受理返回 true。
- */
-static bool VXVfdAtv61_Start(XVfdDevice* d, bool reverse)
-{
-    XVfdAtv61* dev = (XVfdAtv61*)d;
-    bool progressing;
-    if (!XVfdDevice_beginAction(d, XVfdOperation_Start)) return false;
-    dev->m_reverse = reverse;
-    dev->m_step = 0;
-    dev->m_waitingWrite = false;
-    progressing = atv61Step(dev);
-    if (!progressing && XVfdDevice_lastError(d) != XVfdError_OK) return false;
-    return true;
-}
-
-/**
- * @brief 受控停机：写 Disable operation(0x0007)。
- * @param d 设备实例。
- * @return 受理返回 true。
- */
-static bool VXVfdAtv61_Stop(XVfdDevice* d)
-{
-    return XVfdDevice_actionWrite(d, XVfdOperation_Stop, XVfdRole_CommandWord,
-                                  (int32_t)XVfdAtv61_CmdDisableOperation);
-}
-
-/**
- * @brief 自由停车：写 Disable voltage(0x0000)。
- * @param d 设备实例。
- * @return 受理返回 true。
- */
-static bool VXVfdAtv61_FreeStop(XVfdDevice* d)
-{
-    return XVfdDevice_actionWrite(d, XVfdOperation_FreeStop, XVfdRole_CommandWord,
-                                  (int32_t)XVfdAtv61_CmdDisableVoltage);
-}
-
-/**
- * @brief 快速停机：写 Quick stop(0x0002)。
- * @param d 设备实例。
- * @return 受理返回 true。
- */
-static bool VXVfdAtv61_QuickStop(XVfdDevice* d)
-{
-    return XVfdDevice_actionWrite(d, XVfdOperation_QuickStop, XVfdRole_CommandWord,
-                                  (int32_t)XVfdAtv61_CmdQuickStopCmd);
-}
+/* ==================== 动作实现（品牌专有标度与两步写） ==================== */
 
 /**
  * @brief 写频率给定（Hz → 0.1Hz 定点）。
@@ -427,7 +314,7 @@ static bool VXVfdAtv61_SetAccelDecel(XVfdDevice* d, int index, double accelS, do
     acc = XVfdDevice_engineeringToRaw(accelS, XVfdAtv61_TimeDiv, -32768, 32767);
     dec = XVfdDevice_engineeringToRaw(decelS, XVfdAtv61_TimeDiv, -32768, 32767);
     if (!XVfdDevice_beginAction(d, XVfdOperation_SetAccelDecel)) return false;
-    dev->m_pendingCmd = (uint16_t)dec;   /* 复用字段暂存待写减速值 */
+    dev->m_pendingDecel = (int16_t)dec;   /* 暂存待写减速值 */
     if (!XVfdDevice_writeRole(d, XVfdRole_AccelTime, acc)) {
         XVfdDevice_finishAction(d, false);
         return false;
@@ -437,26 +324,7 @@ static bool VXVfdAtv61_SetAccelDecel(XVfdDevice* d, int index, double accelS, do
 }
 
 /**
- * @brief 故障复位：0x0080 上升沿 → 归位 0x0000（两步序列）。
- * @param d 设备实例。
- * @return 受理返回 true。
- */
-static bool VXVfdAtv61_ResetFault(XVfdDevice* d)
-{
-    XVfdAtv61* dev = (XVfdAtv61*)d;
-    if (!XVfdDevice_beginAction(d, XVfdOperation_ResetFault)) return false;
-    dev->m_pendingReset = true;
-    if (!XVfdDevice_writeRole(d, XVfdRole_CommandWord, (int32_t)XVfdAtv61_CmdFaultResetCmd)) {
-        dev->m_pendingReset = false;
-        XVfdDevice_finishAction(d, false);
-        return false;
-    }
-    XVfdDevice_armActionTimer(d, XVfdDevice_actionTimeout(d));
-    return true;
-}
-
-/**
- * @brief ActionWriteDone 重载：启动序列/复位序列的多步推进，其余默认收口。
+ * @brief ActionWriteDone 重载：加减速两步写的第二跳；其余交 CiA402 基类。
  * @param d 设备实例。
  * @param point 落定的点（未用）。
  * @param ok 写落定结果。
@@ -466,92 +334,28 @@ static void VXVfdAtv61_ActionWriteDone(XVfdDevice* d, XIoPoint* point, bool ok)
 {
     XVfdAtv61* dev = (XVfdAtv61*)d;
     XVfdOperation op = XVfdDevice_currentOp(d);
-    (void)point;
     if (!dev) return;
-    if (op == XVfdOperation_Start) {
-        if (!ok) {
-            dev->m_waitingWrite = false;
-            XVfdDevice_finishAction(d, false);
-            return;
-        }
-        dev->m_waitingWrite = false;
-        XVfdDevice_armActionTimer(d, dev->m_stepDelayMs); /* 等状态迁移后继续推进 */
-        return;
-    }
     if (op == XVfdOperation_SetAccelDecel) {
         if (!ok) {
             XVfdDevice_finishAction(d, false);
             return;
         }
-        if (!XVfdDevice_writeRole(d, XVfdRole_DecelTime, (int32_t)(int16_t)dev->m_pendingCmd)) {
+        if (!XVfdDevice_writeRole(d, XVfdRole_DecelTime, (int32_t)dev->m_pendingDecel)) {
             XVfdDevice_finishAction(d, false);
             return;
         }
         XVfdDevice_armActionTimer(d, XVfdDevice_actionTimeout(d));
         return;
     }
-    if (op == XVfdOperation_ResetFault && dev->m_pendingReset) {
-        dev->m_pendingReset = false;
-        if (!ok) {
-            XVfdDevice_finishAction(d, false);
-            return;
-        }
-        if (!XVfdDevice_writeRole(d, XVfdRole_CommandWord,
-                                  (int32_t)XVfdAtv61_CmdDisableVoltage)) {
-            XVfdDevice_finishAction(d, false);
-            return;
-        }
-        XVfdDevice_armActionTimer(d, XVfdDevice_actionTimeout(d));
-        return;
-    }
-    XVfdDevice_finishAction(d, ok);
-}
-
-/**
- * @brief ActionTimerExpired 重载：启动序列按“期望状态轮询”推进 /
- *        写落定超时判定，其余交基类。
- * @param d 设备实例。
- * @return 无。
- * @note 步进节拍不再盲等固定毫秒：写落定后周期性读缓存 ETA，直到状态
- *       迁移到期望态（总线上读/写排队延迟不影响序列正确性）；等待超过
- *       XVfdAtv61_StartWaitPolls 拍判超时。
- */
-static void VXVfdAtv61_ActionTimerExpired(XVfdDevice* d)
-{
-    XVfdAtv61* dev = (XVfdAtv61*)d;
-    if (!dev) return;
-    if (XVfdDevice_currentOp(d) == XVfdOperation_Start) {
-        if (dev->m_waitingWrite) {
-            dev->m_waitingWrite = false;
-            XVfdDevice_setLastError(d, XVfdError_Timeout);
-            XVfdDevice_emitError(d, "命令字写落定超时（启动序列中止）");
-            XVfdDevice_finishAction(d, false);
-            return;
-        }
-        {
-            int32_t eta = 0;
-            if (!XVfdDevice_readRole(d, XVfdRole_StatusWord, &eta)) {
-                XVfdDevice_emitError(d, "启动序列读取状态字失败（状态点无数据）");
-                XVfdDevice_finishAction(d, false);
-                return;
-            }
-            atv61ApplyEta(dev, (uint16_t)eta);
-            if ((dev->m_etaCache & XVfdAtv61_EtaMask) == dev->m_expectEta) {
-                atv61Step(dev);          /* 状态已迁移：推进下一步 */
-                return;
-            }
-            if (++dev->m_waitPolls > XVfdAtv61_StartWaitPolls) {
-                XVfdDevice_setLastError(d, XVfdError_Timeout);
-                XVfdDevice_emitError(d, "启动超时：状态未按序列迁移");
-                XVfdDevice_finishAction(d, false);
-                return;
-            }
-            XVfdDevice_armActionTimer(d, 60);   /* 未迁移：继续等 */
-            return;
-        }
-    }
-    XClass_Parent(XVfdDevice, EXVfdDevice_ActionTimerExpired,
-                  void (*)(XVfdDevice*))(d);
+    /* 启动序列 / 故障复位序列等由通用 CiA402 骨架推进。
+     * [签名根修] 此前按 `void (*)(XVfdDevice*)` 单参调用三参虚槽
+     * （XVfdDevice* , XIoPoint* , bool）：x86-64 SysV 下 point/ok 从寄存器
+     * 读出的实为 R7 之后的残留值，`ok` 恒为垃圾（实测 ok=189/230，非 0/1）。
+     * CiA402 序列因此把「写失败」当成功继续推进，ATV61 启动/复位序列永不
+     * 收口（xvfd-atv61 的 6 条失败用例）。按虚槽真实原型转发，三个参数原样
+     * 透传，品牌层与会话层语义不变。 */
+    XClass_Parent(XVfdCiA402, EXVfdDevice_ActionWriteDone,
+                  void (*)(XVfdDevice*, XIoPoint*, bool))(d, point, ok);
 }
 
 /* ==================== 虚函数表 / 生命周期 ==================== */
@@ -559,18 +363,12 @@ static void VXVfdAtv61_ActionTimerExpired(XVfdDevice* d)
 XVtable* XVfdAtv61_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XVfdAtv61)
-    XVTABLE_INHERIT_XCLASS(XVfdDevice);
-    XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_DecodePoint, VXVfdAtv61_DecodePoint);
+    XVTABLE_INHERIT_XCLASS(XVfdCiA402);
+    XVTABLE_OVERLOAD_DEFAULT(EXVfdCiA402_DecodeBrand, VXVfdAtv61_DecodeBrand);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_ActionWriteDone, VXVfdAtv61_ActionWriteDone);
-    XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_ActionTimerExpired, VXVfdAtv61_ActionTimerExpired);
-    XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_Start, VXVfdAtv61_Start);
-    XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_Stop, VXVfdAtv61_Stop);
-    XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_FreeStop, VXVfdAtv61_FreeStop);
-    XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_QuickStop, VXVfdAtv61_QuickStop);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_SetFrequency, VXVfdAtv61_SetFrequency);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_SetSpeedRpm, VXVfdAtv61_SetSpeedRpm);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_SetAccelDecel, VXVfdAtv61_SetAccelDecel);
-    XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_ResetFault, VXVfdAtv61_ResetFault);
     XCLASS_SET_CLASS_NAME_DEFAULT("XVfdAtv61");
     XCLASS_SHOW_SIZE_DEFAULT(XVfdAtv61);
     return XVTABLE_DEFAULT;
@@ -590,12 +388,12 @@ void XVfdAtv61_init(XVfdAtv61* dev)
 {
     if (!dev) return;
     memset(dev, 0, sizeof(XVfdAtv61));
-    XVfdDevice_init(&dev->m_base);
+    XVfdCiA402_init(&dev->m_base);
     XClassGetVtable(dev) = XVfdAtv61_class_init();
-    dev->m_stepDelayMs = XVfdAtv61_DefaultStepDelayMs;
-    XVfdDevice_setCapability(&dev->m_base, XVfdCap_Reverse);
-    XVfdDevice_setCapability(&dev->m_base, XVfdCap_FreeStop);
-    XVfdDevice_setCapability(&dev->m_base, XVfdCap_QuickStop);
+    XVfdCiA402_setProfile(&dev->m_base, &s_atv61Profile);
+    XVfdDevice_setCapability(&dev->m_base.m_base, XVfdCap_Reverse);
+    XVfdDevice_setCapability(&dev->m_base.m_base, XVfdCap_FreeStop);
+    XVfdDevice_setCapability(&dev->m_base.m_base, XVfdCap_QuickStop);
 }
 
 /* ==================== 点规格表 / 配置 ==================== */
@@ -609,12 +407,12 @@ const XVfdPointSpec* XVfdAtv61_pointSpecs(int* count)
 void XVfdAtv61_setStepDelay(XVfdAtv61* dev, uint32_t delayMs)
 {
     if (!dev) return;
-    dev->m_stepDelayMs = (delayMs == 0) ? XVfdAtv61_DefaultStepDelayMs : delayMs;
+    XVfdCiA402_setStepDelay(&dev->m_base, delayMs);
 }
 
 uint32_t XVfdAtv61_stepDelay(const XVfdAtv61* dev)
 {
-    return dev ? dev->m_stepDelayMs : 0;
+    return dev ? XVfdCiA402_stepDelay(&dev->m_base) : 0;
 }
 
 /* ==================== 故障码查询 ==================== */
@@ -629,6 +427,11 @@ const char* XVfdAtv61_faultText(uint16_t code)
 {
     const XVfdFaultEntry* e = XVfdDevice_faultEntry_const(s_atv61Faults, ATV61_FAULT_COUNT, code);
     return e ? e->m_text : NULL;
+}
+
+const XVfdFaultEntry* XVfdAtv61_otherFaultEntry(uint16_t code)
+{
+    return XVfdDevice_faultEntry_const(s_atv61OtherFaults, ATV61_OTHER_FAULT_COUNT, code);
 }
 
 #endif /* XVFD_ATV61_ON */

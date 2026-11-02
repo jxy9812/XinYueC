@@ -876,10 +876,26 @@ static XSplitterHandle* VX_splitter_createHandle(XSplitter* self, int index)
     return h;
 }
 
+/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）。 */
+static XSize VXSplitter_sizeHintSlot(const XWidget* self);
+static XSize VXSplitter_minimumSizeHintSlot(const XWidget* self);
+
+static XSize VXSplitter_sizeHintSlot(const XWidget* self)
+{
+    return XSplitter_sizeHint((const XSplitter*)self);
+}
+
+static XSize VXSplitter_minimumSizeHintSlot(const XWidget* self)
+{
+    return XSplitter_minimumSizeHint((const XSplitter*)self);
+}
+
 XVtable* XSplitter_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSplitter)
     XVTABLE_INHERIT_XCLASS(XFrame);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXSplitter_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXSplitter_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VX_splitter_event);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_splitter_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VX_splitter_changeEvent);
@@ -1005,60 +1021,22 @@ static void xsp_moveSlot(XSplitter* self, int cur, int index)
 /** @brief 刷新尺寸提示（对标 Qt QSplitter）。
  *  @details Qt 6.8.3（qsplitter.cpp:1490-1507）：sizeHint = 全部可见子项
  *           sizeHint 沿主轴累加、交叉轴取最大。 */
+XSize XSplitter_sizeHint(const XSplitter* self);
+XSize XSplitter_minimumSizeHint(const XSplitter* self);
+
+/** @brief 刷新尺寸缓存：直接复用公开的 sizeHint/minimumSizeHint
+ *         （[统一口径 2026-11-02] 原先本函数另有一套实现，可见性判据
+ *         用 XWidget_isVisible、且不算把手带，与公开版
+ *         （XWidget_isHidden || 折叠 + 把手宽）结果不一致 → 同一控件
+ *         两套首选尺寸。Qt 只有一套（QSplitter::sizeHint），此处对齐。 */
 static void xsplitter_updateSizeHint(XSplitter* self)
 {
     XSize hint;
-    int count;
-    int i;
-    int mainAcc = 0;
-    int crossMax = 0;
-    bool horizontal;
     if (!self) return;
-    horizontal = XSplitter_orientation(self) == XOrientation_Horizontal;
-    count = XSplitter_count(self);
-    for (i = 0; i < count; ++i) {
-        XWidget* w = XSplitter_widget(self, i);
-        XSize sh;
-        if (!w || !XWidget_isVisible(w)) continue;
-        sh = XWidget_sizeHint(w);
-        if (sh.width <= 0 && sh.height <= 0) continue;
-        if (horizontal) {
-            mainAcc += sh.width;
-            if (sh.height > crossMax) crossMax = sh.height;
-        } else {
-            mainAcc += sh.height;
-            if (sh.width > crossMax) crossMax = sh.width;
-        }
-    }
-    if (horizontal) XSize_init(&hint, mainAcc, crossMax);
-    else XSize_init(&hint, crossMax, mainAcc);
+    hint = XSplitter_sizeHint(self);
     XWidget_setSizeHint((XWidget*)self, &hint);
-    /* Qt QSplitter 另 override minimumSizeHint（qsplitter.cpp:1514+）：各子项
-     * 最小尺寸的累加——本类按子项 minimumSizeHint 同口径取（缺省 0 时
-     * 回落 sizeHint，保证布局竖排有真实下界）。 */
-    {
-        XSize minHint;
-        int minAcc = 0;
-        int minCross = 0;
-        for (i = 0; i < count; ++i) {
-            XWidget* w = XSplitter_widget(self, i);
-            XSize mh;
-            if (!w || !XWidget_isVisible(w)) continue;
-            mh = XWidget_minimumSizeHint(w);
-            if (mh.width <= 0 && mh.height <= 0)
-                mh = XWidget_sizeHint(w);
-            if (horizontal) {
-                minAcc += mh.width;
-                if (mh.height > minCross) minCross = mh.height;
-            } else {
-                minAcc += mh.height;
-                if (mh.width > minCross) minCross = mh.width;
-            }
-        }
-        if (horizontal) XSize_init(&minHint, minAcc, minCross);
-        else XSize_init(&minHint, minCross, minAcc);
-        XWidget_setMinimumSizeHint((XWidget*)self, &minHint);
-    }
+    hint = XSplitter_minimumSizeHint(self);
+    XWidget_setMinimumSizeHint((XWidget*)self, &hint);
 }
 
 void XSplitter_init(XSplitter* self, XWidget* parent, XWidgetFlags flags)

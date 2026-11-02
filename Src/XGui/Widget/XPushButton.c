@@ -779,10 +779,24 @@ static void VXPushButton_contentChanged(XAbstractButton* base)
 
 /* ==================== 类虚表 ==================== */
 
+/** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
+ *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
+static XSize VXPushButton_sizeHintSlot(const XWidget* self)
+{
+    return XPushButton_sizeHint((const XPushButton*)self);
+}
+
+static XSize VXPushButton_minimumSizeHintSlot(const XWidget* self)
+{
+    return XPushButton_minimumSizeHint((const XPushButton*)self);
+}
+
 XVtable* XPushButton_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XPushButton)
     XVTABLE_INHERIT_XCLASS(XAbstractButton);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXPushButton_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXPushButton_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_ContentChanged,
                              VXPushButton_contentChanged);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXPushButton_paintEvent);

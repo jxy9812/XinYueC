@@ -85,6 +85,16 @@ void XVfdDevice_setCapability(XVfdDevice* dev, uint32_t cap);
  */
 void XVfdDevice_setParamTable(XVfdDevice* dev, const XVfdParamDesc* table, int count);
 
+/**
+ * @brief 预设最大频率（相对口径频率换算基准）。
+ * @param dev 设备实例；不能为 NULL。
+ * @param hz 最大频率（Hz；须 >0）。
+ * @return 无。
+ * @note 解码路径读到 MaxFreq 槽时也会自动更新基准；本接口供品牌 init 时
+ *       按手册缺省值预设（从站尚未上电时也能正确换算）。
+ */
+void XVfdDevice_setMaxFrequency(XVfdDevice* dev, double hz);
+
 /* ========================================================================== */
 /*                      语义槽读写（子类动作实现用）                          */
 /* ========================================================================== */

@@ -514,6 +514,13 @@ XCLASS_DEFINE_ENUM(XWidget, HideEvent),
                                       分派，载荷 XGestureEvent——手势识别器
                                       识别成功后经事件循环投递，默认忽略→
                                       沿父链传播）。 */
+    XCLASS_DEFINE_ENUM(XWidget, SizeHint), /**< 首选尺寸查询槽（对标
+                                      QWidget::sizeHint 虚函数）。默认读
+                                      m_sizeHint 缓存（既有控件推送式兼容）；
+                                      内容驱动的控件（XLabel 等）覆盖本槽
+                                      实时计算，避免缓存落后于文本。 */
+    XCLASS_DEFINE_ENUM(XWidget, MinimumSizeHint), /**< 最小尺寸查询槽（对标
+                                      QWidget::minimumSizeHint 虚函数）。 */
     XCLASS_DEFINE_END(XWidget)
 
 /**
@@ -1041,6 +1048,24 @@ void XWidget_setSizeIncrementSize(XWidget* self, const XSize* size);
  * @return     挂接布局的总尺寸提示，或控件保存的尺寸提示；空指针返回 (-1,-1)。
  */
 XSize XWidget_sizeHint(const XWidget* self);
+
+/**
+ * @brief 首选尺寸的**基类（非虚）**读取：跳过 vtable 分派，直接按
+ *        布局合计 / m_sizeHint 缓存求值。
+ * @details 对标 Qt 中显式写 `QWidget::sizeHint()` 调用基类实现的用法。
+ *          覆盖 SizeHint 槽的类若需「其余情况回落基类」，必须调本函数——
+ *          调 XWidget_sizeHint 会再次分派到自身槽 → 无限递归。
+ * @param self 目标控件；NULL 返回 (-1,-1)。
+ * @return 首选尺寸。
+ */
+XSize XWidget_sizeHint_base(const XWidget* self);
+
+/**
+ * @brief 最小尺寸的**基类（非虚）**读取（同上，供覆盖类回落用）。
+ * @param self 目标控件；NULL 返回 (-1,-1)。
+ * @return 最小尺寸。
+ */
+XSize XWidget_minimumSizeHint_base(const XWidget* self);
 /**
  * @brief      查询最小尺寸提示（对标 QWidget::minimumSizeHint）。
  * @param      self 目标控件；可为 NULL。

@@ -1057,8 +1057,8 @@ static void VXCommonStyle_drawPrimitive(XStyle* self, int pe,
 /** @brief 文本省略（§8.0g11）：按 mode 在文本内插入省略号使宽度不超
  *         maxW（对标 Qt fontMetrics elidedText；单行字节口径）。
  *  @return 栈缓冲指针（调用方直接使用；maxW 内原样返回入参）。 */
-static const char* xcs_elideText(char* buf, int bufCap, const char* text,
-                                 int mode, int maxW, const XFont* font)
+const char* XCommonStyle_elideText(char* buf, int bufCap, const char* text,
+                                    int mode, int maxW, const XFont* font)
 {
     int fullW;
     int len;
@@ -1192,7 +1192,7 @@ static void xcs_drawTabLabel(XStyle* self, const XStyleOption* option,
         char elided[256];
         const char* shown = option->m_text;
         if (option->m_tabElideMode != 0 && r.width > 4) {
-            shown = xcs_elideText(elided, (int)sizeof(elided),
+            shown = XCommonStyle_elideText(elided, (int)sizeof(elided),
                                   option->m_text, option->m_tabElideMode,
                                   r.width - 6, font);
         }
@@ -2363,7 +2363,7 @@ static void xcs_drawTitleBar(XStyle* self, const XStyleOption* option,
         tb->m_base.m_base.m_text && tb->m_base.m_base.m_text[0] &&
         layout.m_label.width > 8) {
         const char* text =
-            xcs_elideText(buf, (int)sizeof(buf), tb->m_base.m_base.m_text, 1,
+            XCommonStyle_elideText(buf, (int)sizeof(buf), tb->m_base.m_base.m_text, 1,
                           layout.m_label.width - 8, XPainter_font(painter));
         XStyle_drawItemText(self, painter, &layout.m_label,
                             XAlignment_Center, &palette, true, text,

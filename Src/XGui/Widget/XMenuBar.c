@@ -463,10 +463,26 @@ static void VX_menuBar_leaveEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
+/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）。 */
+static XSize VXMenuBar_sizeHintSlot(const XWidget* self);
+static XSize VXMenuBar_minimumSizeHintSlot(const XWidget* self);
+
+static XSize VXMenuBar_sizeHintSlot(const XWidget* self)
+{
+    return XMenuBar_sizeHint((const XMenuBar*)self);
+}
+
+static XSize VXMenuBar_minimumSizeHintSlot(const XWidget* self)
+{
+    return XMenuBar_minimumSizeHint((const XMenuBar*)self);
+}
+
 XVtable* XMenuBar_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMenuBar)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXMenuBar_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXMenuBar_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_menuBar_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VX_menuBar_mousePressEvent);
@@ -594,6 +610,8 @@ XAction* XMenuBar_addAction(XMenuBar* self, const XString* text)
     xmb_pushOwnedFlag(self, true);
     XWidget_update((XWidget*)self);
     return action;
+    /* [Qt 对齐 2026-11-02] addAction 触发 itemsChanged（更新几何）。 */
+    XWidget_updateGeometry((XWidget*)self);
 }
 
 XAction* XMenuBar_addAction_2(XMenuBar* self, const char* utf8Text)
@@ -609,6 +627,8 @@ XAction* XMenuBar_addAction_2(XMenuBar* self, const char* utf8Text)
     xmb_pushOwnedFlag(self, true);
     XWidget_update((XWidget*)self);
     return action;
+    /* [Qt 对齐 2026-11-02] addAction 触发 itemsChanged（更新几何）。 */
+    XWidget_updateGeometry((XWidget*)self);
 }
 
 XAction* XMenuBar_insertMenu(XMenuBar* self, XAction* before, XMenu* menu)

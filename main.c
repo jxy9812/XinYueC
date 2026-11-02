@@ -48,7 +48,40 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* 内存账本（门禁用）：XMemory_statistics 给出「系统堆在用」与「池已分配给用户」
+   两个口径——后者**不含池的空闲块保留**，正是区分「池保留」与「用户真泄漏」
+   的干净判据（LSan 会把池空闲块也报成 leak，噪声大）。 */
+#include "XMemory.h"
+
+
+static int main_run_test_dispatch(const char* testPath);
+
 static int main_run_test_path(const char* testPath)
+{
+    /* [内存账本门禁] 派发前后各取一次 XMemory 统计：差值即本次测试的净遗留。
+       口径：systemBytes=系统堆在用（malloc 未 free）；poolUsedBytes=内存池已
+       分配给用户的字节（**不含池的空闲块保留**）。两者任一为正 ⇒ 真泄漏。
+       开关 XTEST_MEMSTAT=1（默认关，不干扰既有测试输出与解析）。 */
+    const bool memStat = (getenv("XTEST_MEMSTAT") != NULL);
+    XMemoryStatistics before;
+    int rc;
+    if (memStat) {
+        XMemory_setStatisticsEnabled(true);
+        before = XMemory_statistics(XMEMORY_TYPE_HYBRID);
+    }
+    rc = main_run_test_dispatch(testPath);
+    if (memStat) {
+        XMemoryStatistics after = XMemory_statistics(XMEMORY_TYPE_HYBRID);
+        XPrintf("[memstat] sysDelta=%lld poolDelta=%lld poolTotal=%llu sysPeak=%llu\n",
+                (long long)(after.systemBytes - before.systemBytes),
+                (long long)(after.poolUsedBytes - before.poolUsedBytes),
+                (unsigned long long)after.poolTotalBytes,
+                (unsigned long long)after.systemPeakBytes);
+    }
+    return rc;
+}
+
+static int main_run_test_dispatch(const char* testPath)
 {
     if (!testPath) return 1;
     if (strcmp(testPath, "esp8266-auto") == 0) {
@@ -119,6 +152,10 @@ static int main_run_test_path(const char* testPath)
         return XModbusHubTest_run() == 0 ? 0 : 1;
     if (strcmp(testPath, "xprotocol-campaign") == 0)
         return XProtocolCampaignTest_run() == 0 ? 0 : 1;
+    /* XVfd 从站级约束单测（Hub 单帧读上限 / 功能码组边界 / 只 FC06）：
+       进程内假从站载体，**不依赖传输层**（无 socket/pty），返回码=失败数。 */
+    if (strcmp(testPath, "xvfd-hub-limits") == 0)
+        return XVfdHubLimitsTest_run() == 0 ? 0 : 1;
 #endif
 #if XPROTOCOL_ON && XMODBUS_ON
     /* Modbus 服务端 FC 全量覆盖（含读事件信号口径回归）：进程内自跑，
@@ -260,6 +297,7 @@ static void main_print_test_list(void)
     XPrintf("  --test xmodbus-hub / xprotocol-campaign (需先起虚拟从站)\n");
     XPrintf("  --test xmodbus-coverage (Modbus 服务端 FC 全量覆盖，进程内自跑)\n");
     XPrintf("  --test xvfd-m512 / xvfd-bus485 / xvfd-atv61 (需先起虚拟从站)\n");
+    XPrintf("  --test xvfd-hub-limits (Hub 从站级约束单测, 进程内自跑)\n");
     XPrintf("  --test xindustry-valve (电磁阀 mock) / xindustry-modbus (TCP 环回；RTU 组合需脚本起从站)\n");
     XPrintf("  Test 菜单「协议栈 → XLink(xlink)」: 客户端包装 / 实战案例·服务端 / 实战案例·客户端\n");
     XPrintf("  Test 菜单「协议栈 → XModbus/XVfd」: Hub闭环 / 485战役 / 变频器三件套\n");

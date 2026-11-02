@@ -775,10 +775,28 @@ void XAbstractScrollArea_resizeEvent_base(XAbstractScrollArea* self)
 /* [死码清理] VX_asa_deinit 已删除：全仓无调用点（见审计清单）。
  */
 
+/* SizeHint 虚槽桥接（定义见下）。 */
+static XSize VXAbstractScrollArea_sizeHintSlot(const XWidget* self);
+static XSize VXAbstractScrollArea_minimumSizeHintSlot(const XWidget* self);
+
+/** @brief SizeHint 虚槽（对标 QAbstractScrollArea::sizeHint）。 */
+static XSize VXAbstractScrollArea_sizeHintSlot(const XWidget* self)
+{
+    return XAbstractScrollArea_sizeHint((const XAbstractScrollArea*)self);
+}
+
+static XSize VXAbstractScrollArea_minimumSizeHintSlot(const XWidget* self)
+{
+    return XAbstractScrollArea_minimumSizeHint(
+        (const XAbstractScrollArea*)self);
+}
+
 XVtable* XAbstractScrollArea_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XAbstractScrollArea)
     XVTABLE_INHERIT_XCLASS(XFrame);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXAbstractScrollArea_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXAbstractScrollArea_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_asa_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_asa_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy,
@@ -1137,7 +1155,8 @@ XSize XAbstractScrollArea_sizeHint(const XAbstractScrollArea* self)
      *   d->sizeHint 缓存），策略变更时由 setSizeAdjustPolicy 清除。 */
     if (self->m_sizeAdjustPolicy ==
         XAbstractScrollAreaSizeAdjustPolicy_AdjustIgnored) {
-        return XWidget_sizeHint((const XWidget*)self);
+        /* 回落基类：非虚读取（否则槽 → 本函数 → 槽 死循环）。 */
+        return XWidget_sizeHint_base((const XWidget*)self);
     }
     if (self->m_sizeAdjustPolicy ==
             XAbstractScrollAreaSizeAdjustPolicy_AdjustToContentsOnFirstShow &&

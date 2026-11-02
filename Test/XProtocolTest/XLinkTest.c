@@ -758,7 +758,12 @@ static void xlink_test_state_machine(void)
             XLINK_CHECK(g_switchHits == 1,
                         "超时空窗重挂：新链路帧正常投递");
         }
+        /* 【UAF 根修】会话仍借用 nDev（m_device 悬垂风险）：释放设备前必须
+           先解挂。设备是借用对象（XLinkSession.c deinit 只对存活设备摘
+           readyRead 接线），谁先释放谁负责——此处会话比新设备活得久，
+           先 setDevice(NULL) 摘掉接线与指针，再释放设备对。 */
         if (nOpponent) XClassDelete((XClass*)nOpponent);
+        XLinkSession_setDevice(f->m_server, NULL);
         if (nDev) XClassDelete((XClass*)nDev);
         if (nPeer) XClassDelete((XClass*)nPeer);
         xlink_fixture_delete(f);
@@ -806,7 +811,9 @@ static void xlink_test_state_machine(void)
             XLINK_CHECK(XLinkSession_isReady(f->m_server),
                         "超时空窗 reset 复用：新链路照常握手到 Ready");
         }
+        /* 【UAF 根修】同 setDevice 变体：释放设备前先解挂（m_device 悬垂）。 */
         if (nOpponent) XClassDelete((XClass*)nOpponent);
+        XLinkSession_setDevice(f->m_server, NULL);
         if (nDev) XClassDelete((XClass*)nDev);
         if (nPeer) XClassDelete((XClass*)nPeer);
         xlink_fixture_delete(f);

@@ -1831,10 +1831,24 @@ static XVariant* VXLineEdit_inputMethodQuery(const XWidget* self,
 }
 #endif /* XINPUTMETHOD_ON */
 
+/** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
+ *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
+static XSize VXLineEdit_sizeHintSlot(const XWidget* self)
+{
+    return XLineEdit_sizeHint((const XLineEdit*)self);
+}
+
+static XSize VXLineEdit_minimumSizeHintSlot(const XWidget* self)
+{
+    return XLineEdit_minimumSizeHint((const XLineEdit*)self);
+}
+
 XVtable* XLineEdit_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XLineEdit)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXLineEdit_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXLineEdit_minimumSizeHintSlot);
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXLineEdit_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodEvent, VXLineEdit_inputMethodEvent);

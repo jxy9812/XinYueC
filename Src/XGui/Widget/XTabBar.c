@@ -907,10 +907,34 @@ static void VXTabBar_deinit(XTabBar* self)
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
+/* update 函数定义在后段，此处先声明供槽桥接调用。 */
+static void xtabbar_updateSizeHint(XTabBar* self);
+
+/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）：先按当前内容
+   重算缓存，再读回，等价「查询时重算」语义。 */
+static XSize VXTabBar_sizeHintSlot(const XWidget* self);
+static XSize VXTabBar_minimumSizeHintSlot(const XWidget* self);
+
+static XSize VXTabBar_sizeHintSlot(const XWidget* self)
+{
+    if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
+    xtabbar_updateSizeHint((XTabBar*)self);
+    return XWidget_sizeHint_base(self);
+}
+
+static XSize VXTabBar_minimumSizeHintSlot(const XWidget* self)
+{
+    if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
+    xtabbar_updateSizeHint((XTabBar*)self);
+    return XWidget_minimumSizeHint_base(self);
+}
+
 XVtable* XTabBar_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XTabBar)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXTabBar_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXTabBar_minimumSizeHintSlot);
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXTabBar_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VXTabBar_mousePressEvent);
@@ -1103,6 +1127,7 @@ int XTabBar_insertTab(XTabBar* self, int index, const XString* text)
     xtabbar_autoHideTabs(self); /* 对标 qtabbar.cpp:999 autoHideTabs。 */
     XWidget_update((XWidget*)self);
     return index;
+    xtabbar_updateSizeHint((XTabBar*)self);
 }
 int XTabBar_insertTab_2(XTabBar* self, int index, const char* text)
 {
@@ -1253,6 +1278,7 @@ void XTabBar_setTabText(XTabBar* self, int index, const XString* text)
     if (!self || !text || index < 0 || index >= self->m_count) return;
     XString_assign(self->m_titles[index], text);
     XWidget_update((XWidget*)self);
+    xtabbar_updateSizeHint((XTabBar*)self);
 }
 void XTabBar_setTabText_2(XTabBar* self, int index, const char* text)
 {

@@ -91,10 +91,27 @@ bool XIoChannelGroup_addPoint(XIoChannelGroup* self, XIoPoint* point,
                               bool autoDelete);
 
 /**
+ * @brief 摘除登记（不释放）。点从注册表摘出、m_group 清空，**所有权移交调用方**。
+ * @param self 目标通道组；传入 NULL 返回 NULL。
+ * @param point 待摘除的点。
+ * @return 摘出的点（所有权移交调用方，须自行释放）；未登记返回 NULL。
+ * @details 用于「摘除后组不再承认该点」这类需要**继续持有活指针**的语义：
+ *         摘出后点仍存活，可安全地验证 contains=false / 读写拒绝。
+ *         与 remove 的差别：remove 对 autoDelete 点会当场销毁，调用方指针随即悬垂。
+ */
+XIoPoint* XIoChannelGroup_takePoint(XIoChannelGroup* self, XIoPoint* point);
+
+/**
  * @brief 摘除登记。autoDelete 点随摘除一并 XClassDelete 释放。
  * @param self 目标通道组；传入 NULL 返回 false。
  * @param point 待摘除的点。
  * @return 摘除成功 true；点未登记返回 false（autoDelete 点保持原状）。
+ * @warning [所有权陷阱] autoDelete=1 时点被**销毁**，调用方手里的指针随即悬垂。
+ *          本函数按值收参，**无法置空调用方的指针**（C 里要影响调用方只能传
+ *          `XIoPoint**`）⇒ 调用方必须自己立即把指针置 NULL，之后不得再解引用，
+ *          否则是 use-after-free（ASan 实测：摘除后再拿该指针查 contains 即报
+ *          heap-use-after-free）。
+ *          需要「摘除后仍持有活指针」时请改用 XIoChannelGroup_takePoint。
  */
 bool XIoChannelGroup_remove(XIoChannelGroup* self, XIoPoint* point);
 

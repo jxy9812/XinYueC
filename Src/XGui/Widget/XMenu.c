@@ -224,6 +224,9 @@ static void xmenu_placeAction(XMenu* self, XAction* before,
 }
 
 /* ==================== 动作容器（对标 QMenu） ==================== */
+/* [Qt 对齐] sizeHint 重算（定义见后段；addAction 等先于此调用）。 */
+static void xmenu_updateSizeHint(XMenu* self);
+
 
 XAction* XMenu_addAction(XMenu* self, const XString* text)
 {
@@ -236,7 +239,10 @@ XAction* XMenu_addAction(XMenu* self, const XString* text)
         return NULL;
     if (text)
         XAction_setText(action, text);
-    return xmenu_addActionInternal(self, action);
+    action = xmenu_addActionInternal(self, action);
+    /* [Qt 对齐] addAction→itemsChanged→sizeHint 重算（须在入列之后）。 */
+    xmenu_updateSizeHint((XMenu*)self);
+    return action;
 }
 
 XAction* XMenu_addAction_2(XMenu* self, const char* utf8)
@@ -248,7 +254,10 @@ XAction* XMenu_addAction_2(XMenu* self, const char* utf8)
     action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, utf8);
     if (!action)
         return NULL;
-    return xmenu_addActionInternal(self, action);
+    action = xmenu_addActionInternal(self, action);
+    /* [Qt 对齐] addAction→itemsChanged→sizeHint 重算（须在入列之后）。 */
+    xmenu_updateSizeHint((XMenu*)self);
+    return action;
 }
 
 XAction* XMenu_addSeparator(XMenu* self)
@@ -1566,10 +1575,26 @@ static void VXMenu_deinit(XMenu* self)
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
+/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）。 */
+static XSize VXMenu_sizeHintSlot(const XWidget* self);
+static XSize VXMenu_minimumSizeHintSlot(const XWidget* self);
+
+static XSize VXMenu_sizeHintSlot(const XWidget* self)
+{
+    return XMenu_sizeHint((const XMenu*)self);
+}
+
+static XSize VXMenu_minimumSizeHintSlot(const XWidget* self)
+{
+    return XWidget_minimumSizeHint_base(self);
+}
+
 XVtable* XMenu_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMenu)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXMenu_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXMenu_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXMenu_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VXMenu_mousePressEvent);
@@ -1801,6 +1826,8 @@ void XMenu_addActionAction(XMenu* self, XAction* action)
     /* 对标 QMenu 经 `using QWidget::addAction` 继承的
        addAction(QAction*)（qmenu.h:42）：追加既有动作，借用不接管。 */
     xmenu_placeAction(self, NULL, action, false);
+    /* [Qt 对齐 2026-11-02] addAction 触发 itemsChanged（更新几何）。 */
+    xmenu_updateSizeHint((XMenu*)self);
 }
 
 void XMenu_insertAction(XMenu* self, XAction* before, XAction* action)

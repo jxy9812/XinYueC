@@ -101,22 +101,32 @@ bool XIoChannelGroup_addPoint(XIoChannelGroup* self, XIoPoint* point,
     return true;
 }
 
-bool XIoChannelGroup_remove(XIoChannelGroup* self, XIoPoint* point)
+XIoPoint* XIoChannelGroup_takePoint(XIoChannelGroup* self, XIoPoint* point)
 {
     size_t i;
-    if (!self || !self->m_records || !point || point->m_group != self) return false;
+    if (!self || !self->m_records || !point || point->m_group != self) return NULL;
     for (i = 0; i < XVector_size_base(self->m_records); ++i) {
         if (*(XIoPoint**)XVector_at_base(self->m_records, (int64_t)i) == point) {
             XVector_remove_base(self->m_records, (int64_t)i, 1);
             point->m_group = NULL;
-            if (point->m_flags.bits.m_autoDelete) {
-                /* 自动内存管理：点交由组释放，摘除即销毁。 */
-                XClassDelete((XClass*)point);
-            }
-            return true;
+            return point;
         }
     }
-    return false;
+    return NULL;
+}
+
+bool XIoChannelGroup_remove(XIoChannelGroup* self, XIoPoint* point)
+{
+    XIoPoint* taken = XIoChannelGroup_takePoint(self, point);
+    if (!taken) return false;
+    if (taken->m_flags.bits.m_autoDelete) {
+        /* 自动内存管理：点交由组释放，摘除即销毁。
+         * [所有权陷阱] 点已被销毁，**调用方手里那份指针随即悬垂**——本函数
+         * 按值收参，无法置空调用方的变量（C 里要影响调用方只能传二级指针）。
+         * 调用方必须自己把指针置 NULL，之后不得再解引用。 */
+        XClassDelete((XClass*)taken);
+    }
+    return true;
 }
 
 int XIoChannelGroup_recordCount(const XIoChannelGroup* self)

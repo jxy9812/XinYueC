@@ -558,10 +558,28 @@ static void VXFrame_move(XFrame* self, XFrame* other)
 
 /* ==================== 生命周期（对标 QFrame 构造/析构） ==================== */
 
+/* SizeHint 虚槽桥接（定义见下）。 */
+static XSize VXFrame_sizeHintSlot(const XWidget* self);
+static XSize VXFrame_minimumSizeHintSlot(const XWidget* self);
+
+/** @brief SizeHint 虚槽（对标 QFrame::sizeHint）：HLine/VLine 现场定尺，
+ *         其余形状回落基类（非虚读取，避免递归）。 */
+static XSize VXFrame_sizeHintSlot(const XWidget* self)
+{
+    return XFrame_sizeHint((const XFrame*)self);
+}
+
+static XSize VXFrame_minimumSizeHintSlot(const XWidget* self)
+{
+    return XWidget_minimumSizeHint_base(self);
+}
+
 XVtable* XFrame_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XFrame)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXFrame_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXFrame_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXFrame_event);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXFrame_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXFrame_changeEvent);
@@ -760,7 +778,9 @@ XSize XFrame_sizeHint(const XFrame* self)
     shape = self->m_frameStyle & XFrameStyleMask_Shape;
     if (shape == XFrameShape_HLine) { XSize_init(&out, -1, 3); return out; }
     if (shape == XFrameShape_VLine) { XSize_init(&out, 3, -1); return out; }
-    return XWidget_sizeHint(&self->m_base);
+    /* 回落基类：必须用**非虚**读取（调 XWidget_sizeHint 会再次
+       分派到本类的槽 → 无限递归）。 */
+    return XWidget_sizeHint_base(&self->m_base);
 }
 
 void XFrame_drawFrame(XFrame* self, XPainter* painter)

@@ -1,107 +1,271 @@
-﻿/**
+/**
  * @file       XVfdM512.c
  * @brief      511M/512M/513M 系列变频器子类实现（通道点驱动）。
- * @details    本文件只含品牌协议知识：点规格表、参数描述表、状态/故障解码、
- *             命令字编码、频率百分比换算（P0.10 基准）。数据进/控制出一律经
- *             基类（XVfdDevice_readRole/writeRole/actionWrite）下沉到通道点。
+ * @details    本文件只含品牌协议知识：通信组表、点规格表、参数描述表、故障表、
+ *             命令码表、状态/故障解码、命令字编码、频率百分比换算（P0.10
+ *             基准）与通讯通道前置检查。数据进/控制出一律经基类
+ *             （XVfdDevice_readRole/writeRole/actionWrite）下沉到通道点。
+ *             手册依据：《511M/512M/513M 高性能矢量变频器使用说明书》
+ *             2020-05-03 附录1（通信）+ 第三/四/五章（参数与故障）。
  */
 #include "XVfdM512.h"
 #if XVFD_ON
 #if XVFD_M512_ON
 
 #include "XVfdDevice_Protected.h"
+#include "XVfdCommandEnum_Protected.h"
 #include <string.h>
+
+/* ==================== 通信组表 ====================
+ * 手册条目级的远端地址区间。**组边界不是地址连续性**：1000H「通讯设定值」
+ * 与 1001H~1020H「运行/停机参数」地址相邻却分属两条条目，一帧不得同时读。
+ * 装配层按组切映射段（每组一段），读帧因此天然不跨组。
+ * 组内只列「本实现用到的连续子区间」：手册若干组内部有未印的空洞
+ * （P0.20 / U0.48 前 / U0.50~U0.57），空洞处不映射即不读。 */
+
+/* ==================== 通信组表 ====================
+ * 手册条目级的远端地址区间。**组边界不是地址连续性**：1000H「通讯设定值」
+ * 与 1001H~1020H「运行/停机参数」地址相邻却分属两条条目，一帧不得同时读。
+ * 装配层按组切映射段（每组一段），读帧因此天然不跨组。
+ *
+ * 每条只覆盖「本实现实际用到的那一段连续地址」——**不整段铺开**：手册条目
+ * 内含大量未用地址（U 组 0x7000~0x7074 有 75 字，本实现只用电机温度一处），
+ * 整段映射会让读帧数暴涨（本型号地址天然分散：严格按功能码组边界读，
+ * 读帧数 ≈ 用到的连续子区间数）。手册未印的空洞地址一律不映射、不读。
+ */
+
+static const XVfdCommGroup s_m512Groups[] = {
+    /* remoteStart count  area(区)                 手册条目 */
+    { 0x1000,  1,  XIoPoint_AnalogOutput,  }, /* 1000H 通讯设定值 */
+    { 0x1001,  8,  XIoPoint_AnalogInput,   }, /* 1001H~1008H 频率/母线/电压/电流/功率/转矩/DI/DO */
+    { 0x1009,  3,  XIoPoint_AnalogInput,   }, /* 1009H~100BH AI1~AI3 */
+    { 0x1010,  4,  XIoPoint_AnalogInput,   }, /* 1010H~1013H PID设定/反馈/PLC阶段/脉冲频率 */
+    { 0x1019,  3,  XIoPoint_AnalogInput,   }, /* 1019H~101BH 线速度/上电时间/运行时间 */
+    { 0x101F,  2,  XIoPoint_AnalogInput,   }, /* 101FH~1020H 主频率X/辅频率Y 显示 */
+    { 0x1F00,  1,  XIoPoint_AnalogOutput,  }, /* 1F00H 用户密码校验 */
+    { 0x1F01,  1,  XIoPoint_AnalogOutput,  }, /* 1F01H 参数初始化 */
+    { 0x2000,  5,  XIoPoint_AnalogOutput,  }, /* 2000H~2004H 命令/DO强制/AO1/AO2/FMP强制 */
+    { 0x3000,  1,  XIoPoint_AnalogInput,   }, /* 3000H 变频器运行状态 */
+    { 0x7022,  1,  XIoPoint_AnalogInput,   }, /* U0.34 电机温度（U 组只取用到的这一址） */
+    { 0x8000,  1,  XIoPoint_AnalogInput,   }, /* 8000H 变频器故障描述 */
+    { 0xF001,  4,  XIoPoint_AnalogOutput,  }, /* P0.01~P0.04 控制方式/命令源/频率源/辅频源 */
+    { 0xF008,  8,  XIoPoint_AnalogOutput,  }, /* P0.08~P0.15 预置频率/最大频率/上下限/载波 */
+    { 0xF011,  3,  XIoPoint_AnalogOutput,  }, /* P0.17~P0.19 加减速时间与时间单位 */
+    { 0xF016,  1,  XIoPoint_AnalogOutput,  }, /* P0.22 频率指令分辨率 */
+    { 0xF019,  1,  XIoPoint_AnalogOutput,  }, /* P0.25 加减速时间基准频率 */
+    { 0xF01B,  2,  XIoPoint_AnalogOutput,  }, /* P0.27~P0.28 命令源捆绑与通讯协议 */
+    { 0xF100,  6,  XIoPoint_AnalogOutput,  }, /* P1.00~P1.05 电机参数 */
+    { 0xF800,  3,  XIoPoint_AnalogOutput,  }, /* P8.00~P8.02 点动频率与点动时间 */
+    { 0xF900,  2,  XIoPoint_AnalogOutput,  }, /* P9.00~P9.01 电机过载保护 */
+    { 0xF909,  1,  XIoPoint_AnalogOutput,  }, /* P9.09 故障自动复位次数 */
+    { 0xFA00,  5,  XIoPoint_AnalogOutput,  }, /* PA.00~PA.04 PID */
+    { 0xFC00, 16,  XIoPoint_AnalogOutput,  }, /* PC.00~PC.15 多段指令 0~15 */
+    { 0xFD00,  6,  XIoPoint_AnalogOutput,  }, /* Pd.00~Pd.05 通信参数 */
+    { 0xFF00,  2,  XIoPoint_AnalogOutput,  }, /* PP.00~PP.01 密码与参数初始化 */
+    { 0xA001,  1,  XIoPoint_AnalogOutput,  }, /* A0.01 转矩设定源 */
+    { 0xA003,  1,  XIoPoint_AnalogOutput,  }  /* A0.03 转矩数字设定 */
+};
+
+#define M512_GROUP_COUNT ((int)(sizeof(s_m512Groups) / sizeof(s_m512Groups[0])))
 
 /* ==================== 点规格表 ==================== */
 
 static const XVfdPointSpec s_m512Specs[] = {
-    /* role                    type                   div  addr                     tag        caps */
-    { XVfdRole_StatusWord,     XIoPoint_AnalogInput,   1, XVfdM512_AddrRunState, "STATE",   0 },
-    { XVfdRole_FaultCode,      XIoPoint_AnalogInput,   1, XVfdM512_AddrFault,    "FAULT",   0 },
-    { XVfdRole_OutputFreq,     XIoPoint_AnalogInput, 100, XVfdM512_AddrTelemetry + 0, "RFR", 0 },
-    { XVfdRole_BusVoltage,     XIoPoint_AnalogInput,  10, XVfdM512_AddrTelemetry + 1, "VBUS", 0 },
-    { XVfdRole_OutputVoltage,  XIoPoint_AnalogInput,  10, XVfdM512_AddrTelemetry + 2, "UOP", 0 },
-    { XVfdRole_OutputCurrent,  XIoPoint_AnalogInput, 100, XVfdM512_AddrTelemetry + 3, "LCR", 0 },
-    { XVfdRole_OutputPower,    XIoPoint_AnalogInput,  10, XVfdM512_AddrTelemetry + 4, "OPR", XVfdCap_PowerReport },
-    { XVfdRole_Torque,         XIoPoint_AnalogInput,  10, XVfdM512_AddrTelemetry + 5, "OTR", XVfdCap_TorqueReport },
-    { XVfdRole_MaxFreq,        XIoPoint_AnalogInput, 100, XVfdM512_AddrMaxFreq,   "MAXF",    0 },
-    { XVfdRole_CommandWord,    XIoPoint_AnalogOutput,  1, XVfdM512_AddrCmdWord,  "CMD",     0 },
-    { XVfdRole_FreqSet,        XIoPoint_AnalogOutput, 100, XVfdM512_AddrFreqSet, "FREQ%",   0 },
-    { XVfdRole_AccelTime,      XIoPoint_AnalogOutput, 10, XVfdM512_AddrAccelTime, "ACC",    0 },
-    { XVfdRole_DecelTime,      XIoPoint_AnalogOutput, 10, XVfdM512_AddrDecelTime, "DEC",    0 },
-    { XVfdRole_JogCommand,     XIoPoint_AnalogOutput, 100, XVfdM512_AddrJogFreq, "JOGF",    0 },
-    { XVfdRole_PresetSpeed,    XIoPoint_AnalogOutput, 100, XVfdM512_AddrPresetBase, "PC00", XVfdCap_MultiSpeed },
-    { XVfdRole_PidTarget,      XIoPoint_AnalogOutput, 100, XVfdM512_AddrPidTarget, "PA01",   0 },
-    { XVfdRole_DoForce,        XIoPoint_AnalogOutput,  1, XVfdM512_AddrDoForce,  "DOF",     XVfdCap_DoForce },
-    { XVfdRole_Password,       XIoPoint_AnalogOutput,  1, XVfdM512_AddrPassword, "PWD",     XVfdCap_Password },
-    { XVfdRole_ParamInit,      XIoPoint_AnalogOutput,  1, XVfdM512_AddrParamInit, "PINIT",  XVfdCap_FactoryReset }
+    /* role                    type                   div  addr                            tag      caps                 signed bitOff bitW */
+    /* ---- 读点（遥测） ---- */
+    { XVfdRole_StatusWord,     XIoPoint_AnalogInput,   1, XVfdM512_AddrRunState,          "STATE", 0,                    0, 0, 0 },
+    { XVfdRole_FaultCode,      XIoPoint_AnalogInput,   1, XVfdM512_AddrFault,             "FAULT", 0,                    0, 0, 0 },
+    { XVfdRole_OutputFreq,     XIoPoint_AnalogInput, 100, XVfdM512_AddrTelemetry + 0,     "RFR",   0,                    0, 0, 0 },
+    { XVfdRole_BusVoltage,     XIoPoint_AnalogInput,  10, XVfdM512_AddrTelemetry + 1,     "VBUS",  0,                    0, 0, 0 },
+    { XVfdRole_OutputVoltage,  XIoPoint_AnalogInput,   1, XVfdM512_AddrTelemetry + 2,     "UOP",   0,                    0, 0, 0 },
+    { XVfdRole_OutputCurrent,  XIoPoint_AnalogInput, 100, XVfdM512_AddrTelemetry + 3,     "LCR",   0,                    0, 0, 0 },
+    { XVfdRole_OutputPower,    XIoPoint_AnalogInput,  10, XVfdM512_AddrTelemetry + 4,     "OPR",   XVfdCap_PowerReport,   0, 0, 0 },
+    { XVfdRole_Torque,         XIoPoint_AnalogInput,  10, XVfdM512_AddrTelemetry + 5,     "OTR",   XVfdCap_TorqueReport,  0, 0, 0 },
+    { XVfdRole_DiBits,         XIoPoint_AnalogInput,   1, XVfdM512_AddrTelemetry + 6,     "DI",    XVfdCap_DiDoStatus,    0, 0, 0 },
+    { XVfdRole_DoBits,         XIoPoint_AnalogInput,   1, XVfdM512_AddrTelemetry + 7,     "DO",    XVfdCap_DiDoStatus,    0, 0, 0 },
+    { XVfdRole_Ai1,            XIoPoint_AnalogInput, 100, XVfdM512_AddrTelemetry + 8,     "AI1",   XVfdCap_AiMonitor,     0, 0, 0 },
+    { XVfdRole_Ai2,            XIoPoint_AnalogInput, 100, XVfdM512_AddrTelemetry + 9,     "AI2",   XVfdCap_AiMonitor,     0, 0, 0 },
+    { XVfdRole_Ai3,            XIoPoint_AnalogInput, 100, XVfdM512_AddrTelemetry + 10,    "AI3",   XVfdCap_AiMonitor,     0, 0, 0 },
+    { XVfdRole_PidSetpoint,    XIoPoint_AnalogInput,   1, XVfdM512_AddrTelemetry + 15,    "PIDS",  XVfdCap_PidMonitor,    0, 0, 0 },
+    { XVfdRole_PidFeedback,    XIoPoint_AnalogInput,   1, XVfdM512_AddrTelemetry + 16,    "PIDF",  XVfdCap_PidMonitor,    0, 0, 0 },
+    { XVfdRole_PlcStep,        XIoPoint_AnalogInput,   1, XVfdM512_AddrTelemetry + 17,    "PLC",   0,                    0, 0, 0 },
+    { XVfdRole_PulseFreq,      XIoPoint_AnalogInput, 100, XVfdM512_AddrTelemetry + 18,    "PULSE", 0,                    0, 0, 0 },
+    { XVfdRole_LoadSpeed,      XIoPoint_AnalogInput,   1, XVfdM512_AddrTelemetry + 24,    "LOAD",  0,                    0, 0, 0 },
+    { XVfdRole_PowerOnHours,   XIoPoint_AnalogInput,  60, XVfdM512_AddrTelemetry + 25,    "PON",   XVfdCap_RuntimeStats,  0, 0, 0 },
+    { XVfdRole_RunHours,       XIoPoint_AnalogInput, 600, XVfdM512_AddrTelemetry + 26,    "RUN",   XVfdCap_RuntimeStats,  0, 0, 0 },
+    { XVfdRole_SetFreq,        XIoPoint_AnalogInput, 100, XVfdM512_AddrTelemetry + 30,    "FRQ",   0,                    0, 0, 0 },
+    { XVfdRole_MotorTemp,      XIoPoint_AnalogInput,   1, XVfdM512_AddrMonitorBase + 34,  "MTMP",  XVfdCap_MotorTemp,     0, 0, 0 },
+    /* 最大频率既是遥测又是可调参数（P0.10）：用 AO 承载——AO 的 ReadRaw 同样
+     * 读 Hub 缓存，故一点即可读可写（AI 点不可写，会挡住参数写入）。 */
+    { XVfdRole_MaxFreq,        XIoPoint_AnalogOutput,100, XVfdM512_AddrMaxFreq,           "MAXF",  0,                    0, 0, 0 },
+    /* ---- 写点（控制） ---- */
+    { XVfdRole_CommandWord,    XIoPoint_AnalogOutput,  1, XVfdM512_AddrCmdWord,           "CMD",   0,                    0, 0, 0 },
+    /* 1000H 通讯设定值是 16 位补码（-10000~+10000 = ±100.00%）：必须标有符号，
+     * 否则通道层的无符号钳位会把反转给负频率写成 0。 */
+    { XVfdRole_FreqSet,        XIoPoint_AnalogOutput, 100, XVfdM512_AddrFreqSet,          "FREQ%", 0,                    1, 0, 0 },
+    { XVfdRole_DoForce,        XIoPoint_AnalogOutput,  1, XVfdM512_AddrDoForce,           "DOF",   XVfdCap_DoForce,       0, 0, 0 },
+    { XVfdRole_AoForce,        XIoPoint_AnalogOutput,  1, XVfdM512_AddrAoForce,           "AOF1",  XVfdCap_AoForce,       0, 0, 0 },
+    { XVfdRole_AoForce2,       XIoPoint_AnalogOutput,  1, XVfdM512_AddrAoForce2,          "AOF2",  XVfdCap_AoForce,       0, 0, 0 },
+    { XVfdRole_PulseForce,     XIoPoint_AnalogOutput,  1, XVfdM512_AddrPulseForce,        "PULOF", XVfdCap_PulseForce,    0, 0, 0 },
+    /* PC.00~PC.15 多段指令同样是 ±100% 的补码量。 */
+    { XVfdRole_PresetSpeed,    XIoPoint_AnalogOutput, 100, XVfdM512_AddrPresetBase,        "PC00",  XVfdCap_MultiSpeed | XVfdCap_PresetSpeed16, 1, 0, 0 },
+    { XVfdRole_PidTarget,      XIoPoint_AnalogOutput,  1, XVfdM512_AddrPidTarget,         "PA01",  0,                    0, 0, 0 },
+    { XVfdRole_Password,       XIoPoint_AnalogOutput,  1, XVfdM512_AddrPassword,          "PWD",   XVfdCap_Password,      0, 0, 0 },
+    { XVfdRole_ParamInit,      XIoPoint_AnalogOutput,  1, XVfdM512_AddrParamInit,         "PINIT", XVfdCap_FactoryReset,  0, 0, 0 },
+    { XVfdRole_CommandSource,  XIoPoint_AnalogOutput,  1, XVfdM512_AddrCmdSource,         "CMDSRC", 0,                   0, 0, 0 },
+    { XVfdRole_FreqSource,     XIoPoint_AnalogOutput,  1, XVfdM512_AddrFreqSource,        "FRQSRC", 0,                   0, 0, 0 },
+    { XVfdRole_PidSource,      XIoPoint_AnalogOutput,  1, XVfdM512_AddrPidSource,         "PIDSRC", 0,                   0, 0, 0 },
+    { XVfdRole_AccelTime,      XIoPoint_AnalogOutput, 10, XVfdM512_AddrAccelTime,         "ACC",   0,                    0, 0, 0 },
+    { XVfdRole_DecelTime,      XIoPoint_AnalogOutput, 10, XVfdM512_AddrDecelTime,         "DEC",   0,                    0, 0, 0 }
 };
 
 #define M512_SPEC_COUNT ((int)(sizeof(s_m512Specs) / sizeof(s_m512Specs[0])))
 
-/* ==================== 参数核心描述表（地址=品牌 EEPROM 编码） ==================== */
+/* ==================== 命令码表（离散命令枚举骨架用） ==================== */
+
+static const XVfdCommandEnumItem s_m512Commands[] = {
+    { XVfdM512_CmdRunForward, XVfdOperation_Start,        false },
+    { XVfdM512_CmdRunReverse, XVfdOperation_Start,        true  },
+    { XVfdM512_CmdJogForward, XVfdOperation_Jog,          false },
+    { XVfdM512_CmdJogReverse, XVfdOperation_Jog,          true  },
+    { XVfdM512_CmdFreeStop,   XVfdOperation_FreeStop,     false },
+    { XVfdM512_CmdDecelStop,  XVfdOperation_Stop,         false },
+    { XVfdM512_CmdFaultReset, XVfdOperation_ResetFault,   false }
+};
+
+#define M512_COMMAND_COUNT ((int)(sizeof(s_m512Commands) / sizeof(s_m512Commands[0])))
+
+/* ==================== 参数描述表 ====================
+ * m_addr = 手册原始地址；m_addrRam = 「只改 RAM 不落 EEPROM」地址变体
+ * （附录1：P 组 FxxxH→0xxxH、A 组 AxxxH→4xxxH；PP/其它组手册未给变体）。 */
 
 static const XVfdParamDesc s_m512Params[] = {
-    /* addr    name               unit     dec  min     max     def     access            group */
-    { 0xF001, "P0.01 控制方式",        NULL,  0,  0,      2,      2,      XVfdParamAccess_RunLocked, 0 },
-    { 0xF002, "P0.02 命令源选择",      NULL,  0,  0,      2,      0,      XVfdParamAccess_RW,        0 },
-    { 0xF003, "P0.03 主频率源X选择",   NULL,  0,  0,      9,      1,      XVfdParamAccess_RunLocked, 0 },
-    { 0xF00A, "P0.10 最大频率",       "Hz",   2,  5000,   500000, 5000,   XVfdParamAccess_RunLocked, 0 },
-    { 0xF00C, "P0.12 上限频率",       "Hz",   2,  0,      500000, 5000,   XVfdParamAccess_RunLocked, 0 },
-    { 0xF00E, "P0.14 下限频率",       "Hz",   2,  0,      500000, 0,      XVfdParamAccess_RunLocked, 0 },
-    { 0xF011, "P0.17 加速时间1",      "s",    1,  0,      650000, 0,      XVfdParamAccess_RW,        0 },
-    { 0xF012, "P0.18 减速时间1",      "s",    1,  0,      650000, 0,      XVfdParamAccess_RW,        0 },
-    { 0xF013, "P0.19 加减速时间单位",  NULL,  0,  0,      2,      1,      XVfdParamAccess_RunLocked, 0 },
-    { 0xF01B, "P0.27 命令源捆绑频率源", NULL, 0,  0,      999,    0,      XVfdParamAccess_RW,        0 },
-    { 0xF01C, "P0.28 串口通讯协议选择", NULL, 0,  0,      3,      0,      XVfdParamAccess_RunLocked, 0 },
-    { 0xF800, "P8.00 点动运行频率",    "Hz",  2,  0,      500000, 200,    XVfdParamAccess_RW,        8 },
-    { 0xFC00, "PC.00 多段指令0",       "%",   2, -10000, 10000,  0,      XVfdParamAccess_RW,        12 },
-    { 0xFD00, "Pd.00 通讯波特率",      NULL,  0,  0,      11,     5,      XVfdParamAccess_RunLocked, 13 },
-    { 0xFD02, "Pd.02 本机地址",        NULL,  0,  0,      247,    1,      XVfdParamAccess_RunLocked, 13 },
-    { 0xFD04, "Pd.04 串口通讯超时时间", "s",  1,  0,      6000,   0,      XVfdParamAccess_RW,        13 },
-    { 0xFA01, "PA.01 PID数字给定",     "%",   2,  0,      10000,  0,      XVfdParamAccess_RW,        10 }
+    /* addr    name                     unit   dec  min     max     def     access            group addrRam */
+    { 0xF001, "P0.01 控制方式",         NULL,   0,  0,      2,      2,      XVfdParamAccess_RunLocked, 0,  0x0001 },
+    { 0xF002, "P0.02 命令源选择",       NULL,   0,  0,      2,      0,      XVfdParamAccess_RW,        0,  0x0002 },
+    { 0xF003, "P0.03 主频率源X选择",    NULL,   0,  0,      9,      1,      XVfdParamAccess_RunLocked, 0,  0x0003 },
+    { 0xF004, "P0.04 辅助频率源Y选择",  NULL,   0,  0,      9,      0,      XVfdParamAccess_RunLocked, 0,  0x0004 },
+    { 0xF008, "P0.08 预置频率",         "Hz",   2,  0,      500000, 5000,   XVfdParamAccess_RW,        0,  0x0008 },
+    { 0xF00A, "P0.10 最大频率",         "Hz",   2,  5000,   500000, 5000,   XVfdParamAccess_RunLocked, 0,  0x000A },
+    { 0xF00C, "P0.12 上限频率",         "Hz",   2,  0,      500000, 5000,   XVfdParamAccess_RunLocked, 0,  0x000C },
+    { 0xF00E, "P0.14 下限频率",         "Hz",   2,  0,      500000, 0,      XVfdParamAccess_RunLocked, 0,  0x000E },
+    { 0xF00F, "P0.15 载波频率",         "kHz",  1,  5,      160,    0,      XVfdParamAccess_RW,        0,  0x000F },
+    { 0xF011, "P0.17 加速时间1",        "s",    1,  0,      650000, 0,      XVfdParamAccess_RW,        0,  0x0011 },
+    { 0xF012, "P0.18 减速时间1",        "s",    1,  0,      650000, 0,      XVfdParamAccess_RW,        0,  0x0012 },
+    { 0xF013, "P0.19 加减速时间单位",   NULL,   0,  0,      2,      1,      XVfdParamAccess_RunLocked, 0,  0x0013 },
+    { 0xF016, "P0.22 频率指令分辨率",   NULL,   0,  1,      2,      1,      XVfdParamAccess_RunLocked, 0,  0x0016 },
+    { 0xF019, "P0.25 加减速时间基准频率", NULL, 0,  0,      2,      0,      XVfdParamAccess_RunLocked, 0,  0x0019 },
+    { 0xF01B, "P0.27 命令源捆绑频率源",  NULL,   0,  0,      999,    0,      XVfdParamAccess_RW,        0,  0x001B },
+    { 0xF01C, "P0.28 串口通讯协议选择",  NULL,   0,  0,      3,      0,      XVfdParamAccess_RunLocked, 0,  0x001C },
+    { 0xF100, "P1.00 电机类型选择",     NULL,   0,  0,      2,      0,      XVfdParamAccess_RunLocked, 1,  0x0100 },
+    { 0xF101, "P1.01 电机额定功率",     "kW",   1,  10,     10000,  0,      XVfdParamAccess_RunLocked, 1,  0x0101 },
+    { 0xF102, "P1.02 电机额定电压",     "V",    0,  1,      2000,   0,      XVfdParamAccess_RunLocked, 1,  0x0102 },
+    { 0xF103, "P1.03 电机额定电流",     "A",    2,  1,      65535,  0,      XVfdParamAccess_RunLocked, 1,  0x0103 },
+    { 0xF104, "P1.04 电机额定频率",     "Hz",   2,  1,      500000, 0,      XVfdParamAccess_RunLocked, 1,  0x0104 },
+    { 0xF105, "P1.05 电机额定转速",     "rpm",  0,  1,      65535,  0,      XVfdParamAccess_RunLocked, 1,  0x0105 },
+    { 0xF900, "P9.00 电机过载保护选择", NULL,   0,  0,      1,      1,      XVfdParamAccess_RW,        9,  0x0900 },
+    { 0xF901, "P9.01 电机过载保护增益", NULL,   2,  20,     1000,   100,    XVfdParamAccess_RW,        9,  0x0901 },
+    { 0xF909, "P9.09 故障自动复位次数", NULL,   0,  0,      20,     0,      XVfdParamAccess_RW,        9,  0x0909 },
+    { 0xF800, "P8.00 点动运行频率",     "Hz",   2,  0,      500000, 200,    XVfdParamAccess_RW,        8,  0x0800 },
+    { 0xF801, "P8.01 点动加速时间",     "s",    1,  0,      65000,  200,    XVfdParamAccess_RW,        8,  0x0801 },
+    { 0xF802, "P8.02 点动减速时间",     "s",    1,  0,      65000,  200,    XVfdParamAccess_RW,        8,  0x0802 },
+    { 0xFA00, "PA.00 PID 给定源",       NULL,   0,  0,      7,      7,      XVfdParamAccess_RunLocked, 10, 0x0A00 },
+    { 0xFA01, "PA.01 PID 数字给定",     NULL,   0,  0,      100,    3,      XVfdParamAccess_RW,        10, 0x0A01 },
+    { 0xFA02, "PA.02 PID 反馈源",       NULL,   0,  0,      8,      0,      XVfdParamAccess_RW,        10, 0x0A02 },
+    { 0xFA03, "PA.03 PID 作用方向",     NULL,   0,  0,      1,      0,      XVfdParamAccess_RW,        10, 0x0A03 },
+    { 0xFA04, "PA.04 PID 给定反馈量程", NULL,   0,  0,      100,    10,     XVfdParamAccess_RW,        10, 0x0A04 },
+    { 0xFC00, "PC.00 多段指令0",        "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C00 },
+    { 0xFC01, "PC.01 多段指令1",        "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C01 },
+    { 0xFC02, "PC.02 多段指令2",        "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C02 },
+    { 0xFC03, "PC.03 多段指令3",        "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C03 },
+    { 0xFC04, "PC.04 多段指令4",        "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C04 },
+    { 0xFC05, "PC.05 多段指令5",        "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C05 },
+    { 0xFC06, "PC.06 多段指令6",        "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C06 },
+    { 0xFC07, "PC.07 多段指令7",        "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C07 },
+    { 0xFC08, "PC.08 多段指令8",        "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C08 },
+    { 0xFC09, "PC.09 多段指令9",        "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C09 },
+    { 0xFC0A, "PC.10 多段指令10",       "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C0A },
+    { 0xFC0B, "PC.11 多段指令11",       "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C0B },
+    { 0xFC0C, "PC.12 多段指令12",       "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C0C },
+    { 0xFC0D, "PC.13 多段指令13",       "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C0D },
+    { 0xFC0E, "PC.14 多段指令14",       "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C0E },
+    { 0xFC0F, "PC.15 多段指令15",       "%",    2,  -10000, 10000,  0,      XVfdParamAccess_RW,        12, 0x0C0F },
+    { 0xFD00, "Pd.00 通讯波特率",       NULL,   0,  0,      65535,  6005,   XVfdParamAccess_RunLocked, 13, 0x0D00 },
+    { 0xFD01, "Pd.01 MODBUS数据格式",   NULL,   0,  0,      3,      0,      XVfdParamAccess_RunLocked, 13, 0x0D01 },
+    { 0xFD02, "Pd.02 本机地址",         NULL,   0,  0,      247,    1,      XVfdParamAccess_RunLocked, 13, 0x0D02 },
+    { 0xFD03, "Pd.03 MODBUS应答延时",   "ms",   0,  0,      20,     2,      XVfdParamAccess_RW,        13, 0x0D03 },
+    { 0xFD04, "Pd.04 串口通讯超时时间", "s",    1,  0,      600,    0,      XVfdParamAccess_RW,        13, 0x0D04 },
+    { 0xFD05, "Pd.05 通讯数据格式",     NULL,   0,  0,      31,     0,      XVfdParamAccess_RunLocked, 13, 0x0D05 },
+    { 0xFF00, "PP.00 用户密码",         NULL,   0,  0,      65535,  0,      XVfdParamAccess_RW,        14, 0 },
+    { 0xFF01, "PP.01 参数初始化",       NULL,   0,  0,      501,    0,      XVfdParamAccess_RunLocked, 14, 0 },
+    { 0xA001, "A0.01 转矩设定源",       NULL,   0,  0,      7,      0,      XVfdParamAccess_RunLocked, 14, 0x4001 },
+    { 0xA003, "A0.03 转矩数字设定",     "%",    1,  -2000,  2000,   1500,   XVfdParamAccess_RW,        14, 0x4003 }
 };
 
 #define M512_PARAM_COUNT ((int)(sizeof(s_m512Params) / sizeof(s_m512Params[0])))
 
-/* ==================== 故障码表（8000H 通讯值；面板 Err 编号=值-1，见第五章） ==================== */
+/* ==================== 故障码表 ====================
+ * 附录1「8000H 变频器故障描述」原文 41 条（权威）。m_name 是**人工对应**的
+ * 面板显示码：手册第五章的 Err nn 与 8000H 是**两套编号**（例：面板
+ * Err01=E.Igbt 在 8000H 表里根本没有对应项；面板 Err08=E.CPF 在 8000H 里
+ * 是 0x0008=缓冲电阻过载），因此不可按数值互推，本表的字母码仅供现场
+ * 人工核对；无确定对应的条目留 NULL。 */
 
 static const XVfdFaultEntry s_m512Faults[] = {
     { 0x0000, NULL,      "无故障" },
-    { 0x0002, "E.tIGbt", "加速过电流" },
-    { 0x0003, "E.oCdF",  "减速过电流" },
-    { 0x0004, "E.oCAC",  "恒速过电流" },
+    { 0x0001, NULL,      "保留" },
+    { 0x0002, "E.oCAC",  "加速过电流" },
+    { 0x0003, "E.oCdE",  "减速过电流" },
+    { 0x0004, "E.oCCo",  "恒速过电流" },
     { 0x0005, "E.oUAC",  "加速过电压" },
     { 0x0006, "E.oUdE",  "减速过电压" },
     { 0x0007, "E.oUCo",  "恒速过电压" },
-    { 0x0008, NULL,      "瞬停过压" },
-    { 0x0009, NULL,      "缓冲电阻过载故障" },
-    { 0x000A, "E.iLF",   "输入缺相" },
-    { 0x000B, "E.oLF",   "输出缺相" },
-    { 0x000C, "E.oH1",   "模块过热" },
-    { 0x000F, "E.EIOF",  "外部设备故障" },
-    { 0x0010, "E.CoF1",  "通讯故障" },
-    { 0x0011, "E.HALL",  "电流检测故障" },
-    { 0x0012, "E.oLt",   "电机过载" },
+    { 0x0008, NULL,      "缓冲电阻过载故障" },
+    { 0x0009, "E.LU",    "欠压故障" },
+    { 0x000A, "E.oL1",   "变频器过载" },
+    { 0x000B, "E.oLt",   "电机过载" },
+    { 0x000C, "E.ILF",   "输入缺相" },
+    { 0x000D, "E.oLF",   "输出缺相" },
+    { 0x000E, "E.oH1",   "模块过热" },
+    { 0x000F, "E.EIOF",  "外部故障" },
+    { 0x0010, "E.CoF1",  "通讯异常" },
+    { 0x0011, "E.rECF",  "接触器异常" },
+    { 0x0012, "E.HALL",  "电流检测故障" },
+    { 0x0013, "E.tUnE",  "电机调谐故障" },
     { 0x0014, "E.PG1",   "编码器/PG卡故障" },
-    { 0x0015, NULL,      "参数故障异常" },
-    { 0x0016, NULL,      "参数拷贝操作故障" },
+    { 0x0015, "E.EEP",   "参数读写异常" },
+    { 0x0016, "E.HArd",  "变频器硬件故障" },
     { 0x0017, "E.SHot",  "电机对地短路故障" },
-    { 0x0019, "E.ARA",   "累计运行时间到达故障" },
-    { 0x001A, "E.US1",   "用户自定义故障1" },
-    { 0x001B, "E.US2",   "用户自定义故障2" },
-    { 0x001C, "E.EPA",   "累计上电时间到达故障" },
-    { 0x001D, "E.PID",   "运行时PID反馈丢失故障" },
-    { 0x001E, "E.SFr",   "运行时切换电机故障" },
-    { 0x0028, "E.Sdl",   "速度偏差过大故障" },
-    { 0x0029, NULL,      "电机超速" },
-    { 0x002A, "E.oHt",   "电机过温故障" },
-    { 0x005A, NULL,      "编码器通讯错误" },
-    { 0x005B, NULL,      "传感器故障" },
-    { 0x005E, "E.PoSF",  "初始位置错误" }
+    { 0x0018, NULL,      "保留" },
+    { 0x0019, NULL,      "保留" },
+    { 0x001A, "E.ArA",   "运行时间到达" },
+    { 0x001B, "E.USt1",  "用户自定义故障1" },
+    { 0x001C, "E.USt2",  "用户自定义故障2" },
+    { 0x001D, "E.APA",   "上电时间到达" },
+    { 0x001E, "E.ULF",   "堵载" },
+    { 0x001F, "E.PID",   "运行时PID反馈丢失" },
+    { 0x0028, "E.CbC",   "快速限流超时故障" },
+    { 0x0029, "E.tSr",   "运行时切换电机故障" },
+    { 0x002A, "E.SdL",   "速度偏差过大" },
+    { 0x002B, "E.oSF",   "电机超速度" },
+    { 0x002D, "E.oHt",   "电机过温" },
+    { 0x005A, NULL,      "编码器线数设定错误" },
+    { 0x005B, NULL,      "未接编码器" },
+    { 0x005C, "E.PoSF",  "初始位置错误" },
+    { 0x005E, NULL,      "速度反馈错误" }
 };
 
 #define M512_FAULT_COUNT ((int)(sizeof(s_m512Faults) / sizeof(s_m512Faults[0])))
+
+/* ==================== 从站协议约束 ====================
+ * 附录1：只支持 FC03（读）与 FC06（写）；单次读 n 最大 12；一帧读不得跨过
+ * 本功能码组的最后一个功能码。 */
+
+static const XVfdUnitProtocol s_m512Protocol = {
+    XVfdM512_MaxReadRegisters,   /* 单帧读上限 12 字 */
+    true,                        /* 组边界为读帧硬边界 */
+    true                         /* 只允许单寄存器写（FC06） */
+};
 
 /* ==================== 解码 ==================== */
 
@@ -140,6 +304,7 @@ static void VXVfdM512_DecodePoint(XVfdDevice* d, const XVfdPointSpec* spec, int3
             break;
         default:
             st->m_runState = XVfdRunState_Unknown;
+            st->m_running = false;
             break;
         }
         if (st->m_faulted) st->m_runState = XVfdRunState_Fault;
@@ -161,7 +326,7 @@ static void VXVfdM512_DecodePoint(XVfdDevice* d, const XVfdPointSpec* spec, int3
 /* ==================== 频率换算 ==================== */
 
 /**
- * @brief 取频率换算基准（最大频率）：优先设备读取，其次缓存，最后 50Hz 兜底。
+ * @brief 取频率换算基准（最大频率）：先读点刷新缓存，缺失按 50Hz 兜底。
  * @param dev 实例；不能为 NULL。
  * @return 最大频率（Hz，>0）。
  */
@@ -169,11 +334,13 @@ static double m512MaxFreq(XVfdM512* dev)
 {
     int32_t raw = 0;
     if (!dev) return 50.0;
-    if (XVfdDevice_readRole(&dev->m_base, XVfdRole_MaxFreq, &raw) && raw > 0) {
-        dev->m_maxFreqHz = XVfdDevice_rawToEngineering(raw, XVfdM512_MaxFreqDiv);
-        dev->m_maxFreqKnown = true;
+    if (XVfdDevice_readRole(&dev->m_base.m_base, XVfdRole_MaxFreq, &raw) && raw > 0) {
+        XVfdDevice_setMaxFrequency(&dev->m_base.m_base,
+                                    XVfdDevice_rawToEngineering(raw, XVfdM512_MaxFreqDiv));
     }
-    if (dev->m_maxFreqHz > 0.0) return dev->m_maxFreqHz;
+    if (XVfdDevice_maxFrequency(&dev->m_base.m_base) > 0.0) {
+        return XVfdDevice_maxFrequency(&dev->m_base.m_base);
+    }
     return 50.0;
 }
 
@@ -190,45 +357,83 @@ static int32_t m512FreqToRaw(XVfdM512* dev, double hz)
     return XVfdDevice_engineeringToRaw(percent, XVfdM512_FreqPercentDiv, -10000, 10000);
 }
 
+/* ==================== 通讯通道前置检查 ==================== */
+
+/**
+ * @brief 校验「源选择」是否已指向通讯通道（附录1 的功能可用性前提）。
+ * @param d 设备实例。
+ * @param role 源选择语义槽。
+ * @param required 通讯通道枚举值。
+ * @param message 未配置时的提示（静态常量）。
+ * @return 已配置（或无法校验）返回 true；明确未配置返回 false。
+ * @note 槽未绑定或点尚无数据时**放行**：无法校验不等于未配置，交由现场与
+ *       手册兜底；一旦读到且不是通讯通道，立即报错——否则命令会被从站静默
+ *       忽略（2000H 仅在命令源=通讯时生效，1000H 仅在主频率源=通讯给定时生效）。
+ */
+static bool m512CheckSource(XVfdDevice* d, XVfdPointRole role, int32_t required,
+                            const char* message)
+{
+    int32_t v = 0;
+    if (!XVfdDevice_readRole(d, role, &v)) return true;
+    if (v == required) return true;
+    XVfdDevice_setLastError(d, XVfdError_WriteRejected);
+    XVfdDevice_emitError(d, message);
+    return false;
+}
+
 /* ==================== 动作实现 ==================== */
 
 /**
- * @brief 命令字单写动作。
+ * @brief 命令字单写动作（走通用离散命令枚举骨架）。
  * @param dev 实例。
  * @param op 动作类型。
- * @param cmd 命令字（XVfdM512_Command）。
+ * @param reverse 是否反转方向。
  * @return 受理返回 true。
  */
-static bool m512Command(XVfdM512* dev, XVfdOperation op, int cmd)
+static bool m512Command(XVfdM512* dev, XVfdOperation op, bool reverse)
 {
-    return XVfdDevice_actionWrite(&dev->m_base, op, XVfdRole_CommandWord, (int32_t)cmd);
+    return XVfdCommandEnum_write(&dev->m_base, op, reverse, XVfdRole_CommandWord);
 }
 
 static bool VXVfdM512_Start(XVfdDevice* d, bool reverse)
 {
-    return m512Command((XVfdM512*)d, XVfdOperation_Start,
-                       reverse ? XVfdM512_CmdRunReverse : XVfdM512_CmdRunForward);
+    XVfdM512* dev = (XVfdM512*)d;
+    if (!dev) return false;
+    /* [前置] 2000H 命令字仅在「命令源=通讯」时生效；未配置时从站会静默忽略。 */
+    if (!m512CheckSource(d, XVfdRole_CommandSource, XVfdM512_CmdSourceComm,
+                         "命令源未切到通讯（P0.02=2）：从站会忽略命令字，"
+                         "请先调用 XVfdM512_setCommandSourceComm")) {
+        return false;
+    }
+    return m512Command(dev, XVfdOperation_Start, reverse);
 }
 
 static bool VXVfdM512_Stop(XVfdDevice* d)
 {
-    return m512Command((XVfdM512*)d, XVfdOperation_Stop, XVfdM512_CmdDecelStop);
+    XVfdM512* dev = (XVfdM512*)d;
+    if (!dev) return false;
+    return m512Command(dev, XVfdOperation_Stop, false);
 }
 
 static bool VXVfdM512_FreeStop(XVfdDevice* d)
 {
-    return m512Command((XVfdM512*)d, XVfdOperation_FreeStop, XVfdM512_CmdFreeStop);
+    XVfdM512* dev = (XVfdM512*)d;
+    if (!dev) return false;
+    return m512Command(dev, XVfdOperation_FreeStop, false);
 }
 
 static bool VXVfdM512_Jog(XVfdDevice* d, bool reverse)
 {
-    return m512Command((XVfdM512*)d, XVfdOperation_Jog,
-                       reverse ? XVfdM512_CmdJogReverse : XVfdM512_CmdJogForward);
+    XVfdM512* dev = (XVfdM512*)d;
+    if (!dev) return false;
+    return m512Command(dev, XVfdOperation_Jog, reverse);
 }
 
 static bool VXVfdM512_ResetFault(XVfdDevice* d)
 {
-    return m512Command((XVfdM512*)d, XVfdOperation_ResetFault, XVfdM512_CmdFaultReset);
+    XVfdM512* dev = (XVfdM512*)d;
+    if (!dev) return false;
+    return m512Command(dev, XVfdOperation_ResetFault, false);
 }
 
 /**
@@ -240,7 +445,15 @@ static bool VXVfdM512_ResetFault(XVfdDevice* d)
 static bool VXVfdM512_SetFrequency(XVfdDevice* d, double hz)
 {
     XVfdM512* dev = (XVfdM512*)d;
-    int32_t raw = m512FreqToRaw(dev, hz);
+    int32_t raw;
+    if (!dev) return false;
+    /* [前置] 1000H 通讯设定值仅在「主频率源=通讯给定」时生效。 */
+    if (!m512CheckSource(d, XVfdRole_FreqSource, XVfdM512_FreqSourceComm,
+                         "主频率源未切到通讯给定（P0.03=9）：从站会忽略频率给定，"
+                         "请先调用 XVfdM512_setFrequencySourceComm")) {
+        return false;
+    }
+    raw = m512FreqToRaw(dev, hz);
     return XVfdDevice_actionWrite(d, XVfdOperation_SetFrequency, XVfdRole_FreqSet, raw);
 }
 
@@ -256,12 +469,14 @@ static bool VXVfdM512_SetAccelDecel(XVfdDevice* d, int index, double accelS, dou
 {
     XVfdM512* dev = (XVfdM512*)d;
     int32_t acc;
+    if (!dev) return false;
     if (index != 0) {
         XVfdDevice_setLastError(d, XVfdError_InvalidParam);
         return false;
     }
     acc = XVfdDevice_engineeringToRaw(accelS, XVfdM512_TimeDiv, 0, 650000);
-    dev->m_pendingRaw = (uint16_t)XVfdDevice_engineeringToRaw(decelS, XVfdM512_TimeDiv, 0, 650000);
+    dev->m_pendingRaw = (uint16_t)XVfdDevice_engineeringToRaw(decelS, XVfdM512_TimeDiv,
+                                                                0, 650000);
     dev->m_stage = 0;
     if (!XVfdDevice_beginAction(d, XVfdOperation_SetAccelDecel)) return false;
     if (!XVfdDevice_writeRole(d, XVfdRole_AccelTime, acc)) {
@@ -273,9 +488,9 @@ static bool VXVfdM512_SetAccelDecel(XVfdDevice* d, int index, double accelS, dou
 }
 
 /**
- * @brief 写多段速值（PC.00~15；本接口仅 0 段经点表，其余段经参数通道）。
+ * @brief 写多段速值（PC.00~PC.15；原生是「最大频率百分数」）。
  * @param d 设备实例。
- * @param index 段号（0 基；非 0 段返回 NotSupported）。
+ * @param index 段号（0~15）。
  * @param hz 段速（Hz）。
  * @return 受理返回 true。
  */
@@ -283,28 +498,39 @@ static bool VXVfdM512_SetPresetSpeedHz(XVfdDevice* d, int index, double hz)
 {
     XVfdM512* dev = (XVfdM512*)d;
     int32_t raw;
-    if (index < 0 || index > 15) {
+    if (!dev) return false;
+    if (index < 0 || index >= XVfdM512_AddrPresetCount) {
         XVfdDevice_setLastError(d, XVfdError_InvalidParam);
         return false;
     }
-    if (index != 0) {
-        XVfdDevice_setLastError(d, XVfdError_NotSupported);
-        XVfdDevice_emitError(d, "多段速 1~15 段请经参数通道写（PC.01~PC.15）");
-        return false;
-    }
     raw = m512FreqToRaw(dev, hz);
-    return XVfdDevice_actionWrite(d, XVfdOperation_SetPresetSpeedHz, XVfdRole_PresetSpeed, raw);
+    /* 16 段速各占一个 PC.xx 地址：点表只绑了 0 段，其余段经参数通道写。 */
+    if (index == 0) {
+        return XVfdDevice_actionWrite(d, XVfdOperation_SetPresetSpeedHz,
+                                      XVfdRole_PresetSpeed, raw);
+    }
+    XVfdDevice_setLastError(d, XVfdError_NotSupported);
+    XVfdDevice_emitError(d, "多段速 1~15 段请经参数通道写（PC.01~PC.15）");
+    return false;
 }
 
 /**
- * @brief 写 PID 数字给定（PA.01，0.01%）。
+ * @brief 写 PID 数字给定（PA.01；单位是「量程」不是 %）。
  * @param d 设备实例。
- * @param value 目标值（%）。
+ * @param value 目标值（量程单位）。
  * @return 受理返回 true。
  */
 static bool VXVfdM512_SetPidTarget(XVfdDevice* d, double value)
 {
-    int32_t raw = XVfdDevice_engineeringToRaw(value, XVfdM512_FreqPercentDiv, 0, 10000);
+    XVfdM512* dev = (XVfdM512*)d;
+    int32_t raw;
+    if (!dev) return false;
+    if (!m512CheckSource(d, XVfdRole_PidSource, XVfdM512_PidSourceComm,
+                         "PID 给定源未切到通讯给定（PA.00=5）：从站会忽略 PID 给定，"
+                         "请先调用 XVfdM512_setPidSourceComm")) {
+        return false;
+    }
+    raw = XVfdDevice_engineeringToRaw(value, 1, 0, 100);
     return XVfdDevice_actionWrite(d, XVfdOperation_SetPidTarget, XVfdRole_PidTarget, raw);
 }
 
@@ -324,6 +550,23 @@ static bool VXVfdM512_SetDigitalOutput(XVfdDevice* d, int index, bool on)
     }
     bits = on ? (int32_t)(1u << index) : 0;
     return XVfdDevice_actionWrite(d, XVfdOperation_SetDigitalOutput, XVfdRole_DoForce, bits);
+}
+
+/**
+ * @brief 模拟输出强制（2002H/2003H；0~0x7FFF 对应 0~100%）。
+ * @param dev 实例。
+ * @param which 0=AO1 1=AO2。
+ * @param percent 百分比（0~100）。
+ * @return 受理返回 true。
+ */
+static bool m512SetAoForce(XVfdM512* dev, int which, double percent)
+{
+    int32_t raw;
+    XVfdPointRole role = (which == 0) ? XVfdRole_AoForce : XVfdRole_AoForce2;
+    if (!dev) return false;
+    raw = XVfdDevice_engineeringToRaw(percent, 1, 0, 0x7FFF);
+    return XVfdDevice_actionWrite(&dev->m_base.m_base, XVfdOperation_SetDigitalOutput,
+                                  role, raw);
 }
 
 /**
@@ -390,7 +633,7 @@ static void VXVfdM512_ActionWriteDone(XVfdDevice* d, XIoPoint* point, bool ok)
 XVtable* XVfdM512_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XVfdM512)
-    XVTABLE_INHERIT_XCLASS(XVfdDevice);
+    XVTABLE_INHERIT_XCLASS(XVfdCommandEnum);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_DecodePoint, VXVfdM512_DecodePoint);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_ActionWriteDone, VXVfdM512_ActionWriteDone);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_Start, VXVfdM512_Start);
@@ -424,21 +667,30 @@ void XVfdM512_init(XVfdM512* dev)
 {
     if (!dev) return;
     memset(dev, 0, sizeof(XVfdM512));
-    XVfdDevice_init(&dev->m_base);
+    XVfdCommandEnum_init(&dev->m_base);
     XClassGetVtable(dev) = XVfdM512_class_init();
-    XVfdDevice_setParamTable(&dev->m_base, s_m512Params, M512_PARAM_COUNT);
-    XVfdDevice_setCapability(&dev->m_base, XVfdCap_Reverse);
-    XVfdDevice_setCapability(&dev->m_base, XVfdCap_Jog);
-    XVfdDevice_setCapability(&dev->m_base, XVfdCap_FreeStop);
-    XVfdDevice_setCapability(&dev->m_base, XVfdCap_ParamAccess);
+    XVfdCommandEnum_setCommands(&dev->m_base, s_m512Commands, M512_COMMAND_COUNT);
+    XVfdDevice_setParamTable(&dev->m_base.m_base, s_m512Params, M512_PARAM_COUNT);
+    XVfdDevice_setCapability(&dev->m_base.m_base, XVfdCap_Reverse);
+    XVfdDevice_setCapability(&dev->m_base.m_base, XVfdCap_Jog);
+    XVfdDevice_setCapability(&dev->m_base.m_base, XVfdCap_FreeStop);
+    XVfdDevice_setCapability(&dev->m_base.m_base, XVfdCap_ParamAccess);
+    /* 手册缺省：最大频率 50Hz（P0.10 出厂值），先预设可让首次调频即正确换算。 */
+    XVfdDevice_setMaxFrequency(&dev->m_base.m_base, 50.0);
 }
 
-/* ==================== 点表 / 参数表 / 配置 ==================== */
+/* ==================== 点表 / 组表 / 参数表 / 配置 ==================== */
 
 const XVfdPointSpec* XVfdM512_pointSpecs(int* count)
 {
     if (count) *count = M512_SPEC_COUNT;
     return s_m512Specs;
+}
+
+const XVfdCommGroup* XVfdM512_commGroups(int* count)
+{
+    if (count) *count = M512_GROUP_COUNT;
+    return s_m512Groups;
 }
 
 const XVfdParamDesc* XVfdM512_paramDescs(int* count)
@@ -447,17 +699,62 @@ const XVfdParamDesc* XVfdM512_paramDescs(int* count)
     return s_m512Params;
 }
 
+const XVfdUnitProtocol* XVfdM512_unitProtocol(void)
+{
+    return &s_m512Protocol;
+}
+
 void XVfdM512_setMaxFrequency(XVfdM512* dev, double hz)
 {
-    if (!dev || hz <= 0.0) return;
-    dev->m_maxFreqHz = hz;
-    dev->m_maxFreqKnown = true;
+    if (!dev) return;
+    XVfdDevice_setMaxFrequency(&dev->m_base.m_base, hz);
 }
 
 double XVfdM512_maxFrequency(const XVfdM512* dev)
 {
     if (!dev) return 0.0;
-    return dev->m_maxFreqKnown ? dev->m_maxFreqHz : 0.0;
+    return XVfdDevice_maxFrequency(&dev->m_base.m_base);
+}
+
+/* ==================== 通讯通道前置（附录1 的功能可用性前提） ==================== */
+
+bool XVfdM512_setCommandSourceComm(XVfdM512* dev)
+{
+    if (!dev) return false;
+    return XVfdDevice_actionWrite(&dev->m_base.m_base, XVfdOperation_SetCommandSource,
+                                  XVfdRole_CommandSource, XVfdM512_CmdSourceComm);
+}
+
+bool XVfdM512_setFrequencySourceComm(XVfdM512* dev)
+{
+    if (!dev) return false;
+    return XVfdDevice_actionWrite(&dev->m_base.m_base, XVfdOperation_SetFrequencySource,
+                                  XVfdRole_FreqSource, XVfdM512_FreqSourceComm);
+}
+
+bool XVfdM512_setPidSourceComm(XVfdM512* dev)
+{
+    if (!dev) return false;
+    return XVfdDevice_actionWrite(&dev->m_base.m_base, XVfdOperation_SetPidSource,
+                                  XVfdRole_PidSource, XVfdM512_PidSourceComm);
+}
+
+/**
+ * @brief 模拟输出通讯强制（附录1：2002H=AO1、2003H=AO2）。
+ * @param dev 实例（不能为 NULL）。
+ * @param which 0=AO1 1=AO2。
+ * @param percent 百分比（0~100）。
+ * @return 受理返回 true；参数非法返回 false。
+ * @note 对应输出端子的功能选择须为「通讯控制」时才生效。
+ */
+bool XVfdM512_setAnalogOutputForce(XVfdM512* dev, int which, double percent)
+{
+    if (!dev) return false;
+    if (which < 0 || which > 1) {
+        XVfdDevice_setLastError(&dev->m_base.m_base, XVfdError_InvalidParam);
+        return false;
+    }
+    return m512SetAoForce(dev, which, percent);
 }
 
 /* ==================== 故障码查询 ==================== */

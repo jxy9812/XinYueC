@@ -2817,10 +2817,26 @@ static void label_updateMouseTracking(XLabel* self)
 
 /* ==================== 生命周期（对标 QLabel 构造/析构） ==================== */
 
+/** @brief SizeHint 虚槽实现（对标 QLabel::sizeHint：按**当前文本**实时
+ *         计算，不走缓存）——供 XWidget_sizeHint 虚分派调用。 */
+static XSize VXLabel_sizeHintSlot(const XWidget* self)
+{
+    return XLabel_sizeHint((const XLabel*)self);
+}
+
+/** @brief MinimumSizeHint 虚槽实现（对标 QLabel::minimumSizeHint）。 */
+static XSize VXLabel_minimumSizeHintSlot(const XWidget* self)
+{
+    return XLabel_minimumSizeHint((const XLabel*)self);
+}
+
 XVtable* XLabel_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XLabel)
     XVTABLE_INHERIT_XCLASS(XFrame);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXLabel_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint,
+                             VXLabel_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXLabel_event);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXLabel_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXLabel_changeEvent);

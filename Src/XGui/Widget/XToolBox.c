@@ -543,6 +543,9 @@ void XToolBox_setItemText(XToolBox* self, int index, const char* utf8)
             (*item)->text = XString_create();
         if ((*item)->text)
             XString_assign_utf8((*item)->text, utf8 ? utf8 : "");
+        /* [Qt 对齐 2026-11-02] Qt 的 setItemText 会 updateGeometry 并按新
+           文本重算 sizeHint；此前只 update() → 标题变长后布局仍按旧宽。 */
+        XWidget_updateGeometry((XWidget*)self);
         XWidget_update((XWidget*)self);
     }
 }

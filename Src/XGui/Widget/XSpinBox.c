@@ -960,10 +960,16 @@ static void VXSpinBox_deinit(XClass* obj)
 
 /* ==================== 生命周期 ==================== */
 
+/* SizeHint 虚槽桥接（定义在本文件尺寸计算段）。 */
+static XSize VXSpinBox_sizeHintSlot(const XWidget* self);
+static XSize VXSpinBox_minimumSizeHintSlot(const XWidget* self);
+
 XVtable* XSpinBox_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSpinBox)
     XVTABLE_INHERIT_XCLASS(XAbstractSpinBox);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXSpinBox_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXSpinBox_minimumSizeHintSlot);
 
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_StepBy, VXSpinBox_stepBy);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_Validate, VXSpinBox_validate);
@@ -1030,6 +1036,18 @@ static XSize spinbox_computeSizeHint(const XSpinBox* self)
     XSize_init(&out, textW + stepW + frame * 2, textH + frame * 2);
     return out;
 }
+
+/** @brief SizeHint 虚槽（对标 QSpinBox::sizeHint）：转发实时计算。 */
+static XSize VXSpinBox_sizeHintSlot(const XWidget* self)
+{
+    return spinbox_computeSizeHint((const XSpinBox*)self);
+}
+
+static XSize VXSpinBox_minimumSizeHintSlot(const XWidget* self)
+{
+    return spinbox_computeSizeHint((const XSpinBox*)self);
+}
+
 
 /** @brief 刷新基类 XWidget 的 sizeHint/minimumSizeHint 存储位。 */
 static void spinbox_refreshSizeHint(XSpinBox* self)

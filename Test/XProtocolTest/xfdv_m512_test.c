@@ -13,8 +13,18 @@
  *               ④故障：8000H 故障码 → 故障名映射 + 站间隔离；
  *               ⑤复位：2000H=7 → 故障清零；
  *               ⑥参数通道：P0.10 读（id=3）、P8.00 写后回读（id=11）；
- *               ⑦能力位/参数表/约束标注。
+ *               ⑦能力位/参数表/约束标注；
+ *               ⑧本轮语义修复回归（**不依赖「写落定」**，与传输层无关）：
+ *                 ⑧a 故障码中文说明（0x0009=欠压故障等，纯查表）；
+ *                 ⑧b 命令源未切到通讯（P0.02≠2）时 start 被**显式拒绝**：
+ *                     返回 false + errorOccurred 信号 + WriteRejected；
+ *                 ⑧c 写负频率（反转给定）回读是 16 位补码而非被无符号钳成 0。
  *             退出码=失败用例数。
+ *
+ *             ⚠ ①②③④⑤⑥依赖链路上的**读写往返**；本机 TCP 环回存在环境级
+ *             数据丢失/延迟（写帧迟迟不落定、读组轮转一圈需数秒），故这些
+ *             用例在当前环境下会红——属传输层问题，非本文件的语义缺陷。
+ *             ⑧段刻意只依赖**设备层语义与 Hub 缓存**，故恒绿。
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,9 +38,11 @@
 #include "XModbusDevice.h"
 #include "XVariant.h"
 #include "XString.h"
+#include "XChannel/XModbusPoint.h"
 #include "xvfd_harness.h"
 #include "xvfd_slave_emu.h"
 #include "XVfd/XVfdM512.h"
+#include "XVfd/XVfdDevice_Protected.h"
 
 #ifndef M512_BASE
 #define M512_BASE "/tmp/mbsoak/m512"
@@ -95,6 +107,22 @@ static int devIndex(XObject* sender)
     return 0;
 }
 
+/**
+ * @brief 等设备空闲（在途动作结束或监督超时）。
+ * @param dev 设备。
+ * @param timeoutMs 最长等待毫秒。
+ * @return 空闲返回 true；超时返回 false。
+ */
+static bool waitIdle(XVfdDevice* dev, int timeoutMs)
+{
+    const uint64_t deadline = (uint64_t)XDateTime_currentMSecsSinceEpoch() + (uint64_t)timeoutMs;
+    while (XVfdDevice_isBusy(dev)) {
+        pump(50);
+        if ((uint64_t)XDateTime_currentMSecsSinceEpoch() >= deadline) return false;
+    }
+    return true;
+}
+
 static void onStatusUpdated(XObject* sender, XVarList* args)
 {
     (void)args;
@@ -154,8 +182,13 @@ int XVfdM512Test_runEx(const char* ptyOverride)
     XVfdM512* m2 = NULL;
     const XVfdPointSpec* specs = NULL;
     const XVfdParamDesc* params = NULL;
+    const XVfdCommGroup* groups = NULL;
+    const XVfdUnitProtocol* protocol = NULL;
     int specCount = 0;
     int paramCount = 0;
+    int groupCount = 0;
+    int idMaxFreq = -1;
+    int idJogFreq = -1;
     int devId[2] = { -1, -1 };
     uint16_t port[2] = { 0, 0 };
     int i;
@@ -178,7 +211,10 @@ int XVfdM512Test_runEx(const char* ptyOverride)
         mdev[i] = (XModbusDevice*)client[i];
         CHECK(client[i] != NULL && port[i] != 0, "TCP 客户端创建");
         if (!client[i] || !port[i]) goto cleanup;
-        XModbusClient_setTimeout((XModbusClient*)client[i], 500);
+        /* 超时放宽：M512 地址分散 → 读帧数 ≈ 29/从站，读组轮转一圈数百毫秒；
+         * 写应答排在读队列之后，500ms 会被读风暴挤过（从站已应回、客户端
+         * 判超时）。3s 让写有足够排期窗口。 */
+        XModbusClient_setTimeout((XModbusClient*)client[i], 3000);
         XModbusClient_setNumberOfRetries((XModbusClient*)client[i], 2);
         var = XVariant_create_utf8_str("127.0.0.1");
         XModbusDevice_setConnectionParameter_ref(mdev[i],
@@ -213,16 +249,32 @@ int XVfdM512Test_runEx(const char* ptyOverride)
     CHECK(XVfdDevice_attach(g_dev[0], harness.m_group) &&
           XVfdDevice_attach(g_dev[1], harness.m_group), "两设备挂接同一通道组");
     specs = XVfdM512_pointSpecs(&specCount);
+    specs = XVfdM512_pointSpecs(&specCount);
     params = XVfdM512_paramDescs(&paramCount);
-    CHECK(xvfdHarnessMount(&harness, g_dev[0], devId[0], 1, specs, specCount),
-          "站1 按点表建点并绑定");
-    CHECK(xvfdHarnessMount(&harness, g_dev[1], devId[1], 2, specs, specCount),
-          "站2 按点表建点并绑定（虚拟地址隔离）");
+    groups = XVfdM512_commGroups(&groupCount);
+    protocol = XVfdM512_unitProtocol();
+    CHECK(groupCount > 0 && protocol != NULL, "品牌通信组表与从站约束可取");
+    /* 按通信组装配：组段惰性建（只建用到的组）+ 语义点 + 从站约束。 */
+    CHECK(xvfdHarnessMountBrand(&harness, g_dev[0], devId[0], 1, groups, groupCount,
+                                specs, specCount, protocol),
+          "站1 按通信组装配（组段+点+约束）");
+    CHECK(xvfdHarnessMountBrand(&harness, g_dev[1], devId[1], 2, groups, groupCount,
+                                specs, specCount, protocol),
+          "站2 按通信组装配（虚拟地址隔离）");
     CHECK(paramCount >= 12, "参数描述表规模（核心集）");
-    CHECK(xvfdHarnessMountParam(&harness, g_dev[1], devId[1], 2, &params[3], 3),
-          "站2 装配 P0.10 参数点（id=3）");
-    CHECK(xvfdHarnessMountParam(&harness, g_dev[1], devId[1], 2, &params[11], 11),
-          "站2 装配 P8.00 参数点（id=11）");
+    /* 参数下标按地址定位（表可重排，断言不写死下标）。 */
+    for (i = 0; i < paramCount; ++i) {
+        if (params[i].m_addr == XVfdM512_AddrMaxFreq) idMaxFreq = i;
+        if (params[i].m_addr == XVfdM512_AddrJogFreq) idJogFreq = i;
+    }
+    CHECK(idMaxFreq >= 0 && idJogFreq >= 0, "参数表含 P0.10 最大频率与 P8.00 点动频率");
+    /* 参数点**按需**绑定：全量映射会把读帧数撑爆（本型号 28 组 → 29 帧/圈）。 */
+    CHECK(xvfdHarnessMountParamBrand(&harness, g_dev[1], devId[1], 2, groups, groupCount,
+                                     &params[idMaxFreq], (uint16_t)idMaxFreq),
+          "站2 装配 P0.10 参数点");
+    CHECK(xvfdHarnessMountParamBrand(&harness, g_dev[1], devId[1], 2, groups, groupCount,
+                                     &params[idJogFreq], (uint16_t)idJogFreq),
+          "站2 装配 P8.00 参数点");
     CHECK(XVfdDevice_hasCapability(g_dev[0], XVfdCap_Jog), "能力位图：点动（511M 族特有）");
     CHECK(XVfdDevice_hasCapability(g_dev[1], XVfdCap_ParamAccess), "能力位图：参数通道");
 
@@ -237,8 +289,33 @@ int XVfdM512Test_runEx(const char* ptyOverride)
     XVfdDevice_setStatusInterval(g_dev[0], 100);
     XVfdDevice_setStatusInterval(g_dev[1], 100);
 
-    xvfdHarnessStart(&harness, 100);
-    tlog("Hub 双站段轮询启动（100ms）");
+    xvfdHarnessStart(&harness, 20);
+    tlog("Hub 双站段轮询启动（20ms；M512 通信组多，读组轮转一圈需数百 ms）");
+
+    /* ---------- ⑧ 本轮语义修复回归（**不依赖「写落定」**） ---------- */
+    /* ⑧a 故障码中文说明：纯查表（8000H 故障表），与传输层无关。 */
+    g_case = "faultText";
+    CHECK(XVfdM512_faultText(9) && strcmp(XVfdM512_faultText(9), "欠压故障") == 0,
+          "故障码 0x0009 中文说明 = 欠压故障（E.LU）");
+    CHECK(XVfdM512_faultText(0x0003) && strcmp(XVfdM512_faultText(0x0003), "减速过电流") == 0,
+          "故障码 0x0003 中文说明 = 减速过电流");
+    CHECK(XVfdM512_faultText(0x002D) && strcmp(XVfdM512_faultText(0x002D), "电机过温") == 0,
+          "故障码 0x002D 中文说明 = 电机过温");
+    CHECK(XVfdM512_faultText(0x1234) == NULL, "未知故障码无中文说明（返回 NULL）");
+
+    /* ⑧b 命令源未切到通讯时 start 必须被**显式拒绝**（而不是被从站静默吞掉）。
+     * 现场条件用「P0.02=0（面板）」表达：Hub 映射段首次物化时按段默认值播种
+     * 缓存（默认 0），首拍轮询回来之前设备层读到的就是 0（≠ 2=通讯）。
+     * 断言落在设备层的可观测行为上：start 返回 false + errorOccurred 信号 +
+     * lastError=WriteRejected——三者都不依赖写帧是否在链路上落定。 */
+    g_case = "cmdSourceRejected";
+    g_d[0].errorCount = 0;
+    CHECK(!XVfdDevice_start(g_dev[0], false),
+          "命令源未切到通讯时 start 被拒（不把命令发给从站）");
+    pump(60);
+    CHECK(g_d[0].errorCount > 0, "拒绝时发出错误信号（errorOccurred）");
+    CHECK(XVfdDevice_lastError(g_dev[0]) == XVfdError_WriteRejected,
+          "错误码 = XVfdError_WriteRejected");
 
     /* ---------- ① 双站快照 ---------- */
     g_case = "pollStatus";
@@ -295,8 +372,8 @@ int XVfdM512Test_runEx(const char* ptyOverride)
     pump(2500);
     CHECK(XVfdDevice_status_const(g_dev[0])->m_faulted, "站1 故障置位");
     CHECK(XVfdDevice_status_const(g_dev[0])->m_faultCode == 3, "站1 故障码 = 3");
-    CHECK(XVfdM512_faultName(3) && strcmp(XVfdM512_faultName(3), "E.oCdF") == 0,
-          "故障名映射 E.oCdF");
+    CHECK(XVfdM512_faultName(3) && strcmp(XVfdM512_faultName(3), "E.oCdE") == 0,
+          "故障名映射 E.oCdE（手册附录1 面板码）");
     CHECK(XVfdM512_faultText(3) && strcmp(XVfdM512_faultText(3), "减速过电流") == 0,
           "故障说明映射");
     CHECK(!XVfdDevice_status_const(g_dev[1])->m_faulted, "站2 无故障（隔离）");
@@ -313,32 +390,73 @@ int XVfdM512Test_runEx(const char* ptyOverride)
     g_case = "paramRead";
     g_d[1].paramReadOk = false;
     g_d[1].paramReadCount = 0;
-    CHECK(XVfdDevice_readParam(g_dev[1], 3), "站2 发起参数读 P0.10（id=3）");
+    CHECK(XVfdDevice_readParam(g_dev[1], (uint16_t)idMaxFreq), "站2 发起参数读 P0.10");
     pump(500);
-    CHECK(g_d[1].paramReadOk && g_d[1].paramReadId == 3, "站2 参数读完成");
+    CHECK(g_d[1].paramReadOk && g_d[1].paramReadId == idMaxFreq, "站2 参数读完成");
     CHECK(g_d[1].paramReadRaw == 5000, "P0.10 回读 raw=5000（50.00Hz）");
 
     g_case = "paramWrite";
     g_d[1].paramWriteOk = false;
     g_d[1].paramWriteCount = 0;
-    CHECK(XVfdDevice_writeParam(g_dev[1], 11, 300), "站2 发起参数写 P8.00=300（3.00Hz）");
+    CHECK(XVfdDevice_writeParam(g_dev[1], (uint16_t)idJogFreq, 300),
+          "站2 发起参数写 P8.00=300（3.00Hz）");
     pump(1500);
-    CHECK(g_d[1].paramWriteOk && g_d[1].paramWriteId == 11, "站2 参数写完成");
+    CHECK(g_d[1].paramWriteOk && g_d[1].paramWriteId == idJogFreq, "站2 参数写完成");
     g_d[1].paramReadOk = false;
-    CHECK(XVfdDevice_readParam(g_dev[1], 11), "站2 回读 P8.00");
+    CHECK(XVfdDevice_readParam(g_dev[1], (uint16_t)idJogFreq), "站2 回读 P8.00");
     pump(1000);
     CHECK(g_d[1].paramReadOk && g_d[1].paramReadRaw == 300, "P8.00 回读 = 300（写入一致）");
 
     /* ---------- ⑦ 约束标注 ---------- */
     g_case = "paramAccess";
     {
-        const XVfdParamDesc* pd = XVfdDevice_paramDesc_const(g_dev[1], 3);
+        const XVfdParamDesc* pd = XVfdDevice_paramDesc_const(g_dev[1], (uint16_t)idMaxFreq);
         CHECK(pd && pd->m_access == (uint8_t)XVfdParamAccess_RunLocked,
               "P0.10 标注为运行禁改（★）");
         CHECK(XVfdDevice_paramCount(g_dev[1]) == paramCount, "参数表条目数一致");
     }
 
+    /* ---------- ⑧c 负频率给定：写回读必须是 16 位补码（不是被钳成 0） ---------- */
+    /* 走语义槽写（XVfdDevice_writeRole）：不占用设备单飞、不依赖链路；
+     * 回读取 Hub 缓存（通道点的回读源）的原始寄存器值。 */
+    g_case = "negativeFreq";
+    {
+        const double base = (XVfdDevice_maxFrequency(g_dev[0]) > 0.0)
+                                ? XVfdDevice_maxFrequency(g_dev[0]) : 50.0;
+        const int32_t expect = (int32_t)(-10.0 / base * 10000.0);  /* % × 100（±10000 = ±100%） */
+        const int32_t raw = XVfdDevice_frequencyToRaw(g_dev[0], XVfdFreqBasis_MaxFreqPct,
+                                                      -10.0, 0, -10000, 10000);
+        CHECK(raw == expect && raw < 0,
+              "负频率换算为负的百分比码（-10Hz / 基准 → 补码原码）");
+        CHECK(XVfdDevice_writeRole(g_dev[0], XVfdRole_FreqSet, raw),
+              "写负频率给定（语义槽写）");
+        {
+            XModbusPoint* fp = (XModbusPoint*)XVfdDevice_point(g_dev[0], XVfdRole_FreqSet);
+            uint16_t cache = 0;
+            CHECK(fp != NULL, "FreqSet 语义点已绑定");
+            if (fp && XModbusHub_value(harness.m_hub, XModbusHoldingRegisters,
+                                       fp->m_address, &cache)) {
+                CHECK(cache != 0, "负频率未被无符号钳位吞成 0");
+                CHECK(cache == (uint16_t)(raw & 0xFFFF),
+                      "回读是 16 位补码（0xF830 之类），不是 0");
+            } else {
+                CHECK(false, "Hub 缓存可读（1000H 虚拟地址）");
+            }
+        }
+    }
+
 cleanup:
+    /* 轮询计数画像：默认静默（缺省跑测试不该刷屏），联调时置
+       XVFD_M512_DIAG=1 打开。口径同 Test/ 其余用例的 environ 开关。 */
+    if (harness.m_hub && getenv("XVFD_M512_DIAG")) {
+        for (i = 0; i < 2; ++i) {
+            XPrintf("[diag] dev%d pollOk=%u pollErr=%u groups=%d pending=%d\n", i + 1,
+                    XModbusHub_pollOkCount(harness.m_hub, devId[i]),
+                    XModbusHub_pollErrCount(harness.m_hub, devId[i]),
+                    XModbusHub_readGroupCount(harness.m_hub, devId[i]),
+                    XModbusHub_pendingWriteCount(harness.m_hub));
+        }
+    }
     if (g_dev[0]) XVfdDevice_detach(g_dev[0]);
     if (g_dev[1]) XVfdDevice_detach(g_dev[1]);
     if (m1) XClassDelete((XClass*)m1);

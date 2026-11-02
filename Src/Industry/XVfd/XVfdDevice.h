@@ -47,7 +47,7 @@ extern "C" {
 /** @brief 参数点绑定表容量（同时可读写的参数点上限）。 */
 #define XVFD_PARAM_BIND_CAP 64
 /** @brief 语义槽数组容量（须 >= XVfdRole_Count）。 */
-#define XVFD_ROLE_CAP 48
+#define XVFD_ROLE_CAP 96
 
 /* ========================================================================== */
 /*                      错误码                                                */
@@ -100,7 +100,15 @@ typedef enum XVfdCapability {
     XVfdCap_Password = 1 << 19,         /**< 支持密码解锁 */
     XVfdCap_FactoryReset = 1 << 20,     /**< 支持恢复出厂 */
     XVfdCap_BroadcastWrite = 1 << 21,   /**< 支持广播写（地址 0） */
-    XVfdCap_ParamAccess = 1 << 22       /**< 支持参数描述表与参数点读写 */
+    XVfdCap_ParamAccess = 1 << 22,      /**< 支持参数描述表与参数点读写 */
+    XVfdCap_FaultSnapshot = 1 << 23,    /**< 支持故障历史与故障时快照读取 */
+    XVfdCap_AoForce = 1 << 24,          /**< 支持模拟输出通讯强制 */
+    XVfdCap_PulseForce = 1 << 25,       /**< 支持脉冲输出通讯强制 */
+    XVfdCap_ParamRamWrite = 1 << 26,    /**< 支持「只改 RAM 不落盘」写（保护 EEPROM 寿命） */
+    XVfdCap_TorqueSet = 1 << 27,        /**< 支持转矩给定 */
+    XVfdCap_MultiParamSet = 1 << 28,    /**< 支持多组加减速时间 */
+    XVfdCap_PidSourceSel = 1 << 29,     /**< 支持 PID 给定/反馈源切换 */
+    XVfdCap_PresetSpeed16 = 1 << 30     /**< 支持 16 段多段速 */
 } XVfdCapability;
 
 /* ========================================================================== */
@@ -126,6 +134,17 @@ typedef enum XVfdRunState {
     XVfdRunState_QuickStopping,     /**< 快速停机中 */
     XVfdRunState_Fault              /**< 故障 */
 } XVfdRunState;
+
+/**
+ * @brief 频率给定的原生口径（品牌差异；接口层一律工程单位 Hz）。
+ * @details 有的品牌频率给定直接是 Hz（绝对口径），有的以「最大频率的百分比」
+ *          给出（相对口径，需读最大频率参数做基准）。接口对外统一 Hz，差异
+ *          由本枚举声明并在基类统一换算。
+ */
+typedef enum XVfdFreqBasis {
+    XVfdFreqBasis_Absolute = 0,     /**< 原生值即绝对频率（除率见点规格 m_div） */
+    XVfdFreqBasis_MaxFreqPct = 1   /**< 原生值为最大频率百分比（raw/100 即 %） */
+} XVfdFreqBasis;
 
 /* ========================================================================== */
 /*                      状态快照字段位                                        */
@@ -290,6 +309,10 @@ typedef struct XVfdParamDesc {
     int32_t m_default;              /**< 出厂值（原始码） */
     uint8_t m_access;               /**< 存取约束（XVfdParamAccess） */
     uint8_t m_group;                /**< 分组编号（品牌自定义，UI 分组显示用） */
+    uint16_t m_addrRam;             /**< 「只改 RAM 不落盘」地址变体（0=无变体）。
+                                     *   部分变频器把同一参数暴露成两个地址：写
+                                     *   EEPROM 地址与只改 RAM 地址（后者省 EEPROM
+                                     *   寿命）。品牌子类按手册填 0 即只支持前者。 */
 } XVfdParamDesc;
 
 /**
@@ -320,7 +343,8 @@ typedef enum XVfdOperation {
     XVfdOperation_ReadParam,        /**< 参数读取 */
     XVfdOperation_WriteParam,       /**< 参数写入 */
     XVfdOperation_ReadNameplate,    /**< 铭牌读取 */
-    XVfdOperation_ReadFaultHistory  /**< 故障历史读取 */
+    XVfdOperation_ReadFaultHistory, /**< 故障历史读取 */
+    XVfdOperation_SetPidSource      /**< PID 给定源切换 */
 } XVfdOperation;
 
 /* ========================================================================== */
@@ -377,7 +401,30 @@ typedef enum XVfdPointRole {
     XVfdRole_ParamInit = 42,        /**< 参数初始化/恢复出厂（写） */
     XVfdRole_SaveParams = 43,       /**< 参数保存/备份（写） */
     XVfdRole_JogCommand = 44,       /**< 独立点动命令（写；品牌可选） */
-    XVfdRole_Count = 45             /**< 角色总数（数组边界，不是合法角色） */
+    XVfdRole_StatusBitmap = 45,     /**< 状态位图（读；多 bit 状态汇总，如 DP 卡状态字） */
+    XVfdRole_AoForce = 46,          /**< 模拟输出强制（写；0~0x7FFF 对应 0~100%） */
+    XVfdRole_AoForce2 = 47,         /**< 第二路模拟输出强制（写） */
+    XVfdRole_PulseForce = 48,       /**< 脉冲输出强制（写；0~0x7FFF 对应 0~100%） */
+    XVfdRole_TorqueSet = 49,        /**< 转矩给定（写；%） */
+    XVfdRole_LoadSpeed = 50,        /**< 负载速度（读） */
+    XVfdRole_PlcStep = 51,          /**< PLC 阶段（读） */
+    XVfdRole_PulseFreq = 52,        /**< 脉冲输入频率（读） */
+    XVfdRole_AccelTime2 = 53,       /**< 第 2 加速时间（写；原生单位） */
+    XVfdRole_DecelTime2 = 54,       /**< 第 2 减速时间（写；原生单位） */
+    XVfdRole_AccelTime3 = 55,       /**< 第 3 加速时间（写） */
+    XVfdRole_DecelTime3 = 56,       /**< 第 3 减速时间（写） */
+    XVfdRole_AccelTime4 = 57,       /**< 第 4 加速时间（写） */
+    XVfdRole_DecelTime4 = 58,       /**< 第 4 减速时间（写） */
+    XVfdRole_FirstFault = 59,       /**< 第一次故障码（读） */
+    XVfdRole_SecondFault = 60,      /**< 第二次故障码（读） */
+    XVfdRole_LastFault = 61,        /**< 最近一次故障码（读） */
+    XVfdRole_RatedPower = 62,       /**< 电机额定功率（读；kW） */
+    XVfdRole_RatedVoltage = 63,     /**< 电机额定电压（读；V） */
+    XVfdRole_RatedCurrent = 64,     /**< 电机额定电流（读；A） */
+    XVfdRole_RatedFreq = 65,        /**< 电机额定频率（读；Hz） */
+    XVfdRole_RatedSpeed = 66,       /**< 电机额定转速（读；rpm） */
+    XVfdRole_PidSource = 67,        /**< PID 给定源选择（写） */
+    XVfdRole_Count = 68             /**< 角色总数（数组边界，不是合法角色） */
 } XVfdPointRole;
 
 /**
@@ -393,7 +440,43 @@ typedef struct XVfdPointSpec {
     uint16_t m_address;         /**< 品牌原生通道地址（装配期换算虚拟地址；语义层不用） */
     const char* m_tag;          /**< 点名（借用，静态常量；装配期建点用） */
     uint32_t m_caps;            /**< 绑定该点即置位的能力位（XVfdCapability 位或；0=无） */
+    uint8_t m_signed;           /**< 原生量为 16 位有符号（补码）：1=负值写通道前
+                                 *   按 0xFFFF 归一（否则无符号通道会把负值钳成 0） */
+    uint8_t m_bitOffset;        /**< 位域起始位（0=整字；>0 表示该点占用
+                                 *   m_address 字的 bit[m_bitOffset, +m_bitWidth)） */
+    uint8_t m_bitWidth;         /**< 位域宽度（0=整字） */
 } XVfdPointSpec;
+
+/**
+ * @brief 通信组描述：从站「功能码组」的远端地址区间（品牌手册知识）。
+ * @details 部分变频器只支持 FC03/FC06，且规定「一帧读不得跨过本功能码组的
+ *          最后一个功能码」——功能码组是**手册条目**，不是地址连续性：两条
+ *          地址相邻的寄存器也可能分属不同条目（如某机型的「通讯设定值」与
+ *          「快捷遥测」各是一条）。组描述把这条手册知识交给品牌子类声明，
+ *          装配层按组切映射段（每组一段），协议层据此规划读帧——读帧因此
+ *          天然不跨组，无需在协议层硬编码品牌规则。
+ * @note 组内允许一次读帧跨多个组内切分；组间绝不合并。
+ */
+typedef struct XVfdCommGroup {
+    uint16_t m_remoteStart;     /**< 组起始远端地址。 */
+    uint16_t m_count;           /**< 组长度（点数；寄存器区=字，位区=位）。 */
+    uint8_t m_area;             /**< 组所属区（XIoPointType 口径：DI=离散输入、
+                                 *   DO=线圈、AI/AO=保持寄存器）；组内点类型须一致。 */
+} XVfdCommGroup;
+
+/**
+ * @brief 从站协议约束（中立表达；装配层翻译成传输层配置）。
+ * @details 描述「这个从站比通用 Modbus 更严」的哪些方面。本结构刻意**不含
+ *          任何传输层类型**，设备层（XVfd）因此仍不认识 Modbus；装配层按字段
+ *          逐项翻译成传输层（如 Modbus）的约束配置后登记。
+ * @note 作用域是**从站**不是链路：一条 RTU 串口下可挂多个从站，各从站能力
+ *       互不相同，约束必须与映射目标一一对应。
+ */
+typedef struct XVfdUnitProtocol {
+    uint16_t m_maxReadRegisters; /**< 单次读帧寄存器数上限（0=不限，按传输层默认）。 */
+    bool     m_rangeBarrier;     /**< 一帧读不得跨通信组边界（组由组表给出）。 */
+    bool     m_singleWriteOnly;  /**< 只支持单寄存器写（多写会被传输层拒绝）。 */
+} XVfdUnitProtocol;
 
 /**
  * @brief 语义槽登记项（设备内部：规格 + 点，均为借用）。
@@ -473,6 +556,8 @@ typedef struct XVfdDevice {
     uint32_t m_statusIntervalMs;    /**< 快照发布周期（毫秒；默认 200） */
     uint32_t m_actionTimeoutMs;     /**< 写落定监督超时（毫秒；默认 2000） */
     XVfdError m_lastError;          /**< 最近一次失败原因 */
+    double m_maxFreqHz;             /**< 最大频率缓存（相对口径频率换算基准；Hz） */
+    bool m_maxFreqKnown;            /**< m_maxFreqHz 是否已从 MaxFreq 槽读得 */
 } XVfdDevice;
 
 /* ========================================================================== */
@@ -661,6 +746,44 @@ void XVfdDevice_setActionTimeout(XVfdDevice* dev, uint32_t timeoutMs);
  * @return 超时毫秒
  */
 uint32_t XVfdDevice_actionTimeout(const XVfdDevice* dev);
+
+/* ========================================================================== */
+/*                      频率换算（绝对口径 / 最大频率百分比口径）              */
+/* ========================================================================== */
+
+/**
+ * @brief 取最大频率（相对口径频率换算基准）。
+ * @param dev 设备实例（可 NULL，返回 0）
+ * @return 最大频率（Hz）；未读到且未预设时返回 0
+ * @note 来源：MaxFreq 语义槽的缓存值（解码路径自动更新），或品牌 init 时的
+ *       预设值。绝对口径品牌不需要此值。
+ */
+double XVfdDevice_maxFrequency(const XVfdDevice* dev);
+
+/**
+ * @brief 工程频率（Hz）→ 品牌原生频率码。
+ * @param dev 设备实例；不能为 NULL。
+ * @param basis 原生口径（XVfdFreqBasis）。
+ * @param hz 目标频率（Hz）。
+ * @param div 原生单位除率（绝对口径用：0.1Hz 品牌填 10；相对口径忽略）。
+ * @param minRaw 原生码下限（钳位）。
+ * @param maxRaw 原生码上限（钳位）。
+ * @return 原生码（int32）。
+ * @note 相对口径需最大频率基准；基准未知时按 50Hz 兜底（与品牌历史行为一致）。
+ */
+int32_t XVfdDevice_frequencyToRaw(XVfdDevice* dev, XVfdFreqBasis basis, double hz,
+                                   int32_t div, int32_t minRaw, int32_t maxRaw);
+
+/**
+ * @brief 品牌原生频率码 → 工程频率（Hz）。
+ * @param dev 设备实例；不能为 NULL。
+ * @param basis 原生口径（XVfdFreqBasis）。
+ * @param raw 原生码。
+ * @param div 原生单位除率（0 视为 1）。
+ * @return 频率（Hz）。
+ */
+double XVfdDevice_rawToFrequency(const XVfdDevice* dev, XVfdFreqBasis basis,
+                                  int32_t raw, int32_t div);
 
 /* ========================================================================== */
 /*                      动作接口（全部异步；true=受理，结果见信号）            */

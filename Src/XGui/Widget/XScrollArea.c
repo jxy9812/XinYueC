@@ -117,7 +117,14 @@ static void xsa_updateWidgetGeometry(XScrollArea* self)
             w = vw > 0 ? vw : 0;
             h = vh > 0 ? vh : 0;
             if (minHint.width > w) w = minHint.width;
-            if (hint.width > w) w = hint.width;
+            /* [Qt 对齐 2026-11-02] 首选宽**不**阻止收窄：Qt 的
+               widgetResizable 语义是「内容随视口宽收缩，只受最小宽
+               约束」（qscrollarea.cpp updateScrollBars /
+               QScrollArea::resizeEvent → widget->resize(viewport)，
+               下方 boundedTo(max) 收口）。此前把 sizeHint 也当硬下限
+               → 内容恒保持首选宽（如窄窗 400 时网络页内容仍 564）
+               → 视口裁切、控件右侧被切（无头截图实测）。 */
+            (void)hint;
             if (minHint.height > h) h = minHint.height;
             if (hint.height > h) h = hint.height;
             if (w < 0) w = 0;
@@ -351,10 +358,26 @@ static void VXScrollArea_wheelEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
+/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）。 */
+static XSize VXScrollArea_sizeHintSlot(const XWidget* self);
+static XSize VXScrollArea_minimumSizeHintSlot(const XWidget* self);
+
+static XSize VXScrollArea_sizeHintSlot(const XWidget* self)
+{
+    return XScrollArea_sizeHint((const XScrollArea*)self);
+}
+
+static XSize VXScrollArea_minimumSizeHintSlot(const XWidget* self)
+{
+    return XWidget_minimumSizeHint_base(self);
+}
+
 XVtable* XScrollArea_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XScrollArea)
     XVTABLE_INHERIT_XCLASS(XAbstractScrollArea);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXScrollArea_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXScrollArea_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(
         EXAbstractScrollArea_ScrollContentsBy,
         VXScrollArea_scrollContentsBy);

@@ -408,7 +408,15 @@ static void test_feedbackEdgeCases(void)
 int XIndustryValveTest_run(void)
 {
     XCoreApplication* app;
+    bool owned;
 
+    /* [单例所有权] XCoreApplication 是进程单例：create 在已有实例时**原样
+     * 返回 g_app**（XCoreApplication.c:115-116）。--test 路径下 main 已在
+     * 入口建好实例并对它负责（main.c:376 的 XClassDelete(app)），本函数若
+     * 无条件 XClassDelete 会把同一个对象删两次——实测退出时段错误，栈为
+     * XClass_deinit_base ← XClass_delete_base ← main+0x4ac。故只删除自己
+     * 创建的实例（创建前 instance() 为空），借用的实例留给 main 收。 */
+    owned = (XCoreApplication_instance() == NULL);
     app = XCoreApplication_create(0, NULL);
     if (!app) {
         XPrintf("[FAIL] 事件循环创建失败\n");
@@ -425,7 +433,7 @@ int XIndustryValveTest_run(void)
 
     XPrintf("\n===== XIndustryValveTest: %d passed, %d failed =====\n",
             g_pass, g_fail);
-    XClassDelete(app);
+    if (owned) XClassDelete(app);
     return g_fail == 0 ? 0 : 1;
 }
 

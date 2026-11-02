@@ -511,6 +511,50 @@ uint32_t XVfdDevice_actionTimeout(const XVfdDevice* dev)
     return dev ? dev->m_actionTimeoutMs : 0;
 }
 
+/* ==================== 频率换算（绝对口径 / 最大频率百分比口径） ==================== */
+
+double XVfdDevice_maxFrequency(const XVfdDevice* dev)
+{
+    return dev ? dev->m_maxFreqHz : 0.0;
+}
+
+void XVfdDevice_setMaxFrequency(XVfdDevice* dev, double hz)
+{
+    if (!dev || hz <= 0.0) return;
+    dev->m_maxFreqHz = hz;
+    dev->m_maxFreqKnown = true;
+}
+
+int32_t XVfdDevice_frequencyToRaw(XVfdDevice* dev, XVfdFreqBasis basis, double hz,
+                                  int32_t div, int32_t minRaw, int32_t maxRaw)
+{
+    double base;
+    double percent;
+    if (!dev) return 0;
+    if (basis == XVfdFreqBasis_Absolute) {
+        /* 绝对口径：原生码 = Hz ÷ 除率（除率由品牌点规格给出：0.1Hz 的品牌填 10）。 */
+        return XVfdDevice_engineeringToRaw(hz, div, minRaw, maxRaw);
+    }
+    /* 相对口径：原生码表示「最大频率的百分数 × 100」。基准未知时 50Hz 兜底
+     * （与 M512 历史行为一致：未读到 P0.10 时按 50Hz 算）。 */
+    base = dev->m_maxFreqHz;
+    if (!(base > 0.0)) base = 50.0;
+    percent = hz / base * 100.0;
+    return XVfdDevice_engineeringToRaw(percent, 100, minRaw, maxRaw);
+}
+
+double XVfdDevice_rawToFrequency(const XVfdDevice* dev, XVfdFreqBasis basis,
+                                  int32_t raw, int32_t div)
+{
+    double base;
+    if (!dev) return 0.0;
+    if (basis == XVfdFreqBasis_Absolute) return XVfdDevice_rawToEngineering(raw, div);
+    base = dev->m_maxFreqHz;
+    if (!(base > 0.0)) base = 50.0;
+    /* 原生码 = 百分数 × 100 → % = raw/100 → Hz = % × 基准/100 */
+    return XVfdDevice_rawToEngineering(raw, div) / 100.0 * base;
+}
+
 /* ==================== 参数通道（表 + 读写基类实现） ==================== */
 
 void XVfdDevice_setParamTable(XVfdDevice* dev, const XVfdParamDesc* table, int count)
@@ -823,6 +867,13 @@ bool XVfdDevice_writeRole(XVfdDevice* dev, XVfdPointRole role, int32_t nativeVal
         if (dev) dev->m_lastError = XVfdError_NotAttached;
         return false;
     }
+    /* [有符号原生量] 部分从站的给定寄存器是 16 位补码（如「通讯设定值」
+     *   -10000~+10000 表示 ±100%）。通道层的 AO 写路径是无符号 16 位钳位
+     *   （0..65535），负值会被钳成 0（反转给负频率静默失效）。这里按点规格
+     *   的 m_signed 先做补码归一，通道层拿到的就是正确�� 16 位码。 */
+    if (slot->m_spec && slot->m_spec->m_signed && nativeValue < 0) {
+        nativeValue &= 0xFFFF;
+    }
     if (!xvfdWritePoint(dev, slot->m_point, nativeValue)) {
         if (dev) dev->m_lastError = XVfdError_WriteRejected;
         return false;
@@ -1051,8 +1102,13 @@ void XVfdDevice_decodePoint_base(XVfdDevice* dev, const XVfdPointSpec* spec, int
         st->m_energyKwhTotal = eng;
         st->m_validMask |= XVfdField_EnergyKwh;
         break;
+    case XVfdRole_MaxFreq:
+        /* [换算基准] 最大频率不进快照，但缓存下来供相对口径频率换算。 */
+        dev->m_maxFreqHz = eng;
+        dev->m_maxFreqKnown = true;
+        break;
     default:
-        return; /* 写角色/辅助字/换算基准：不进快照，由品牌自行读取。 */
+        return; /* 写角色/辅助字/铭牌与故障历史角色：由品牌读编排消费。 */
     }
     dev->m_dirty = true;
 }

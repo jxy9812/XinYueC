@@ -386,10 +386,34 @@ static void VXTabWidget_deinit(XTabWidget* self)
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
+/* update 函数定义在后段，此处先声明供槽桥接调用。 */
+static void xtabwidget_updateSizeHint(XTabWidget* self);
+
+/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）：先按当前内容
+   重算缓存，再读回，等价「查询时重算」语义。 */
+static XSize VXTabWidget_sizeHintSlot(const XWidget* self);
+static XSize VXTabWidget_minimumSizeHintSlot(const XWidget* self);
+
+static XSize VXTabWidget_sizeHintSlot(const XWidget* self)
+{
+    if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
+    xtabwidget_updateSizeHint((XTabWidget*)self);
+    return XWidget_sizeHint_base(self);
+}
+
+static XSize VXTabWidget_minimumSizeHintSlot(const XWidget* self)
+{
+    if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
+    xtabwidget_updateSizeHint((XTabWidget*)self);
+    return XWidget_minimumSizeHint_base(self);
+}
+
 XVtable* XTabWidget_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XTabWidget)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXTabWidget_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXTabWidget_minimumSizeHintSlot);
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VXTabWidget_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXTabWidget_changeEvent);
@@ -542,6 +566,7 @@ int XTabWidget_insertTab(XTabWidget* self, int index, XWidget* page,
         xtabwidget_showCurrent(self);
         return index;
     }
+    xtabwidget_updateSizeHint((XTabWidget*)self);
 }
 
 int XTabWidget_insertTab_2(XTabWidget* self, int index, XWidget* page,
@@ -584,6 +609,7 @@ void XTabWidget_removeTab(XTabWidget* self, int index)
     XTabBar_removeTab(&self->m_tabBar, index);
     xtabwidget_layout(self);
     xtabwidget_showCurrent(self);
+    xtabwidget_updateSizeHint((XTabWidget*)self);
 }
 
 int XTabWidget_count(const XTabWidget* self) { return self ? self->m_count : 0; }

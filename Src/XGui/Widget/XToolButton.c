@@ -912,10 +912,24 @@ static void VXToolButton_deinit(XToolButton* self)
 
 /* ==================== 类初始化与生命周期 ==================== */
 
+/** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
+ *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
+static XSize VXToolButton_sizeHintSlot(const XWidget* self)
+{
+    return XToolButton_sizeHint((const XToolButton*)self);
+}
+
+static XSize VXToolButton_minimumSizeHintSlot(const XWidget* self)
+{
+    return XToolButton_minimumSizeHint((const XToolButton*)self);
+}
+
 XVtable* XToolButton_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XToolButton)
     XVTABLE_INHERIT_XCLASS(XAbstractButton);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXToolButton_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXToolButton_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_ContentChanged,
                              VXToolButton_contentChanged);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXToolButton_paintEvent);

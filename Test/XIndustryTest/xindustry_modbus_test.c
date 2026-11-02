@@ -108,6 +108,7 @@ static void test_channel_group_hub(void)
     XModbusPoint* doPt = NULL;
     XModbusPoint* aiPt = NULL;
     XModbusPoint* aoPt = NULL;
+    XModbusPoint* keepPt = NULL;
     XModbusTcpClient* client = NULL;
     XModbusHub* hub = NULL;
     XIoChannelGroup* group = NULL;
@@ -127,6 +128,9 @@ static void test_channel_group_hub(void)
         XPrintf("[FAIL] 事件循环创建失败\n");
         return;
     }
+    /* [单例所有权] 本函数只借用事件循环，**不在此删除**：XCoreApplication
+     * 是进程单例，create 在已有实例时原样返回 g_app
+     * （XCoreApplication.c:115-116），释放统一由 _run 按 owned 判定收口。 */
 
     /* ---- 从站：DI 0..11 + Coils 0..15 + HR 0..15（XMap 键 static 区） ---- */
     slave = XModbusTcpServer_create();
@@ -266,11 +270,27 @@ static void test_channel_group_hub(void)
     CHECK("从站侧 HR5=1000",
           XModbusServer_data2((XModbusServer*)slave, XModbusHoldingRegisters, 5, &v) && v == 1000);
 
-    /* ---- ⑦ remove(autoDelete)：摘除即销毁、contains/recordCount、读写拒绝 ---- */
+    /* ---- ⑦ remove：autoDelete（摘除即销毁）与非托管（摘除后组不再承认） ---- */
+    /* [ASan 根修] autoDelete 点被摘除时即销毁（XIoChannelGroup.c:114 的
+       XClassDelete），**摘除后不能再拿它的指针做任何查询**——旧写法在
+       remove 之后接着用 doPt 调 contains/readDigitalInput，ASan 报
+       heap-use-after-free（XIoChannelGroup.c:29 groupOwns 读已释放内存）。
+       「摘除后组不再承认该点」这条语义必须用**仍然存活的指针**验证，
+       故另建一个非托管点做身份断言。 */
     CHECK("remove(doPt)", XIoChannelGroup_remove(group, (XIoPoint*)doPt));
-    CHECK("摘除后 contains=false", !XIoChannelGroup_contains(group, (XIoPoint*)doPt));
+    doPt = NULL;                       /* autoDelete：点已随摘除销毁，不可再引用 */
     CHECK("摘除后记录数=3", XIoChannelGroup_recordCount(group) == 3);
-    CHECK("摘除后 read 拒绝", !XIoChannelGroup_readDigitalInput(group, (XIoPoint*)doPt, &b));
+    keepPt = XModbusPoint_createDigitalOutput(hub, 1, "DO1");
+    CHECK("建非托管点", keepPt != NULL);
+    if (keepPt) {
+        CHECK("加入组(非托管)", XIoChannelGroup_addPoint(group, (XIoPoint*)keepPt, false));
+        /* takePoint：摘出但**不销毁**，点仍存活 → 下面的身份断言安全。 */
+        CHECK("takePoint 取出", XIoChannelGroup_takePoint(group, (XIoPoint*)keepPt) == (XIoPoint*)keepPt);
+        CHECK("取出后 contains=false", !XIoChannelGroup_contains(group, (XIoPoint*)keepPt));
+        CHECK("取出后 read 拒绝", !XIoChannelGroup_readDigitalInput(group, (XIoPoint*)keepPt, &b));
+        XClassDelete((XClass*)keepPt);  /* 非托管：自己释放 */
+        keepPt = NULL;
+    }
 
 cleanup:
     g_hitTargetPt = NULL;
@@ -280,7 +300,7 @@ cleanup:
     if (slave) XModbusDevice_disconnectDevice((XModbusDevice*)slave);
     if (slave) XModbusTcpServer_deleteLater(slave);
     XCoreApplication_processEvents(0);
-    if (app) XClassDelete(app);
+    (void)app;   /* 单例不在此释放（见上方所有权说明）。 */
 }
 
 /* ==================== 测试入口（收编签名） ==================== */
@@ -288,8 +308,15 @@ cleanup:
 int XIndustryModbusTest_run(void)
 {
     XCoreApplication* app;
+    bool owned;
     XDeviceNetwork_ensureInit();
 
+    /* [单例所有权] create 在已有实例时原样返回 g_app（XCoreApplication.c:115-116）。
+     * --test 路径下 main 已建实例并负责释放（main.c:376），此处若无条件删除
+     * 会二次释放同一对象——实测退出段错误，栈为
+     * XClass_deinit_base ← XClass_delete_base ← main+0x4ac。
+     * 故只在本次真正创建了实例时才释放。 */
+    owned = (XCoreApplication_instance() == NULL);
     app = XCoreApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL);
     if (!app) {
         XPrintf("[FAIL] 事件循环创建失败\n");
@@ -301,7 +328,7 @@ int XIndustryModbusTest_run(void)
     XPrintf("\n===== XIndustryModbusTest: %d passed, %d failed =====\n",
             g_pass, g_fail);
     XCoreApplication_processEvents(0);
-    XClassDelete(app);
+    if (owned) XClassDelete(app);
     XDeviceNetwork_cleanup();
     return g_fail == 0 ? 0 : 1;
 }

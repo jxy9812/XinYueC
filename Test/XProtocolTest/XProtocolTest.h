@@ -51,6 +51,12 @@ extern "C" {
 #if XPROTOCOL_ON && XMODBUS_CORE_ON
 	int XModbusCoreTest_run(void);
 #endif
+#if XPROTOCOL_ON && XMODBUS_HUB_ON
+	//Hub 从站级通讯约束单测（读帧上限 / 功能码组边界 / 只 FC06）：
+	//进程内假从站载体，**不依赖传输层**（实现于 xfdv_hub_limits_test.c）
+	int XVfdHubLimitsTest_run(void);
+	void XVfdHubLimitsTest(XVariant* data);
+#endif
 #if XPROTOCOL_ON && XVFD_ON
 	int XVfdM512Test_runEx(const char* ptyPath);
 	int XVfdM512Test_run(void);

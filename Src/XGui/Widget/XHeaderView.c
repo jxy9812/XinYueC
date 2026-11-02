@@ -645,6 +645,7 @@ void XHeaderView_resizeSection(XHeaderView* self, int logicalIndex, int size)
      * setSectionSize 统一发射 sectionResized 与 geometriesChanged（隐藏
      * 段在本实现仍持有尺寸表项，直接改写该表项即可，无需独立隐藏表）。 */
     XHeaderView_setSectionSize(self, logicalIndex, xhv_clampSize(self, size));
+    xheaderview_updateSizeHint((XHeaderView*)self);
 }
 
 /** @brief 查询区间是否隐藏（对标 isSectionHidden）。 */
@@ -1453,6 +1454,7 @@ void XHeaderView_setSectionSize(XHeaderView* self, int section, int size)
     xhv_emitInt3(self, (size_t)XHeaderView_sectionResized_signal(
                       self, section, oldSize, size), section, oldSize, size);
     xhv_emitVoid(self, (size_t)XHeaderView_geometriesChanged_signal(self));
+    xheaderview_updateSizeHint((XHeaderView*)self);
 }
 
 int XHeaderView_defaultSectionSize(const XHeaderView* self)

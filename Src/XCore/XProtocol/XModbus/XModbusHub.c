@@ -41,7 +41,9 @@
 #include "XVector.h"
 #include "XString.h"
 #include "XDateTime.h"
+#include "XPrintf.h"
 #include <string.h>
+#include <stdio.h>
 
 /* ==================== 槽前置声明 ==================== */
 static void XModbusHub_onDeviceStateChanged(XObject* sender, XVarList* args);
@@ -119,6 +121,51 @@ static inline uint16_t hubReadLimitOfType(uint16_t type)
 {
     return hubTypeIsBit(type) ? (uint16_t)XMODBUS_HUB_READ_MAX_BITS
                               : (uint16_t)XMODBUS_HUB_READ_MAX_REGISTERS;
+}
+/**
+ * @brief 查某从站的协议约束（设备内按 unitId 簿记；未配置返回 NULL）。
+ * @note 约束作用域是**从站**而非链路：一条 RTU 串口下可挂多个从站，各从站
+ *       能力互不相同（限 12 字 / 只支持 FC06 / 有功能码组边界…）。
+ */
+static const XModbusHubUnitLimits* hubUnitLimitsOf(const XModbusHubDevice* dev,
+                                                    int unitId)
+{
+    size_t i;
+    if (!dev || !dev->m_unitLimits) return NULL;
+    for (i = 0; i < XVector_size_base(dev->m_unitLimits); ++i) {
+        const XModbusHubUnitLimitEntry* e =
+            (const XModbusHubUnitLimitEntry*)XVector_at_base(dev->m_unitLimits,
+                                                              (int64_t)i);
+        if (e && e->unitId == unitId) return &e->m_limits;
+    }
+    return NULL;
+}
+/**
+ * @brief 从站级单帧读点数上限（叠加从站约束；位区不适用从站上限）。
+ * @details 部分从站只允许单帧读 N 个寄存器（如某变频器限 12）。从站上限
+ *          只收紧不放宽：取「从站上限」与「协议全局上限」的较小者。
+ */
+static inline uint16_t hubReadLimitForUnit(const XModbusHubDevice* dev, int unitId,
+                                           uint16_t type)
+{
+    const uint16_t base = hubReadLimitOfType(type);
+    const XModbusHubUnitLimits* lim;
+    if (!dev || hubTypeIsBit(type)) return base;
+    lim = hubUnitLimitsOf(dev, unitId);
+    if (!lim || lim->m_maxReadRegisters == 0) return base;
+    return (lim->m_maxReadRegisters < base) ? lim->m_maxReadRegisters : base;
+}
+/** @brief 该从站是否启用「映射段边界为读帧硬边界」。 */
+static inline bool hubUnitHasRangeBarrier(const XModbusHubDevice* dev, int unitId)
+{
+    const XModbusHubUnitLimits* lim = hubUnitLimitsOf(dev, unitId);
+    return (lim && lim->m_rangeBarrier) ? true : false;
+}
+/** @brief 该从站是否只允许单寄存器写（FC06）。 */
+static inline bool hubUnitSingleWriteOnly(const XModbusHubDevice* dev, int unitId)
+{
+    const XModbusHubUnitLimits* lim = hubUnitLimitsOf(dev, unitId);
+    return (lim && lim->m_singleWriteOnly) ? true : false;
 }
 
 /* ==================== 缓存块生命周期 ==================== */
@@ -529,10 +576,16 @@ static bool hubRebuildDeviceBlocks(XModbusHub* hub, XModbusHubDevice* dev)
                 const uint32_t start = arr[i].remoteStart;
                 uint32_t end = start + arr[i].count;
                 int j = i + 1;
-                while (j < got && arr[j].unitId == unit &&
-                       (uint32_t)arr[j].remoteStart == end) {
-                    end += arr[j].count;
-                    ++j;
+                /* [从站级约束] rangeBarrier：映射段边界为硬边界——远端连续的
+                 * 相邻映射段也**不合并成同一块**，从块层就保住「功能码组」边界
+                 * （否则组边界在读帧规划里不可见，见 hubRebuildGroups）。
+                 * 约束按**从站**取：同一条 RTU 链路上的其它从站不受影响。 */
+                if (!hubUnitHasRangeBarrier(dev, unit)) {
+                    while (j < got && arr[j].unitId == unit &&
+                           (uint32_t)arr[j].remoteStart == end) {
+                        end += arr[j].count;
+                        ++j;
+                    }
                 }
                 {
                     XModbusHubCacheBlock* b = hubBlockCreate((uint16_t)enumType, unit,
@@ -670,11 +723,11 @@ static void hubRebuildGroups(XModbusHub* hub, XModbusHubDevice* dev)
         g.count = b->count;
         g.firstBlock = (uint32_t)first;
         g.blockCount = 1;
-        /* 单块超单帧上限：同块拆多组。 */
-        if (b->count > hubReadLimitOfType(b->type)) {
+        /* 单块超单帧上限：同块拆多组（从站级上限优先于协议全局上限）。 */
+        if (b->count > hubReadLimitForUnit(dev, g.unitId, b->type)) {
             uint32_t off = 0;
             while (off < b->count) {
-                const uint32_t n = (uint32_t)hubReadLimitOfType(b->type);
+                const uint32_t n = (uint32_t)hubReadLimitForUnit(dev, g.unitId, b->type);
                 const uint32_t take = (b->count - off > n) ? n : (b->count - off);
                 XModbusHubReadGroup part = g;
                 part.remoteStart = (uint16_t)(b->remoteStart + off);
@@ -693,12 +746,15 @@ static void hubRebuildGroups(XModbusHub* hub, XModbusHubDevice* dev)
             uint32_t gap;
             uint32_t newCount;
             if (!nb || nb->type != g.type || nb->unitId != g.unitId) break;
+            /* [从站级约束] rangeBarrier：块即映射段，块间不并组——保住
+             * 「一帧不跨功能码组」的硬边界（其它从站仍按 gap 并组）。 */
+            if (hubUnitHasRangeBarrier(dev, g.unitId)) break;
             gEnd = (uint32_t)g.remoteStart + g.count;
             if (nb->remoteStart < gEnd) break;              /* 重叠不该发生：保守断开。 */
             gap = (uint32_t)nb->remoteStart - gEnd;
             if (gap > (uint32_t)hub->m_readMergeGap) break;
             newCount = (uint32_t)nb->remoteStart + nb->count - g.remoteStart;
-            if (newCount > hubReadLimitOfType(g.type)) break;
+            if (newCount > hubReadLimitForUnit(dev, g.unitId, g.type)) break;
             g.count = (uint16_t)newCount;
             ++g.blockCount;
             ++next;
@@ -1043,6 +1099,12 @@ static bool hubSendDirtyRange(XModbusHub* hub, XModbusHubDevice* dev,
     if (!hub || !dev || !dev->client || !block || !dirty || dirty->count == 0) return false;
     limit = hubWriteLimitOfType(block->type);
     n = (dirty->count > limit) ? limit : dirty->count;
+    /* [从站级约束] singleWriteOnly：只支持 FC06 的从站拒绝 FC16/FC15。
+     * 脏区间仍可因「相邻写合并」变成多字，但下发时逐字切（n=1）：首字
+     * 成功后 hubDirtySubtract 只摘掉首字，剩余继续排队——每个虚拟地址
+     * 仍各收一次 writeDone(ok)，通道层逐点落定语义不变。
+     * 约束按**从站**取：同一条 RTU 链路上的其它从站仍可走 FC16。 */
+    if (hubUnitSingleWriteOnly(dev, block->unitId) && n > 1) n = 1;
 
     /* 统一空间起点：块内远端 → 切片 → 虚拟地址。 */
     for (si = 0; si < XVector_size_base(block->segs); ++si) {
@@ -1063,9 +1125,9 @@ static bool hubSendDirtyRange(XModbusHub* hub, XModbusHubDevice* dev,
                                  XModbusDataUnit_value(block->data, dirty->offset + k));
     /* [2026-10-28 写优先级] 写走 High 队列在传输层插队（轮询读保持 Normal）；
      * 即时下发与滞留重发共用本入口，一处收口。 */
-    reply = XModbusClient_sendWriteRequest(dev->client, &unit, block->unitId,
+        reply = XModbusClient_sendWriteRequest(dev->client, &unit, block->unitId,
                                            XModbusRequestPriority_High);
-    XClassDeinit(&unit);
+        XClassDeinit(&unit);
     if (!reply) return false;
 
     XObject_setParent((XObject*)reply, (XObject*)hub);
@@ -1125,7 +1187,7 @@ static bool hubSendNextWrite(XModbusHub* hub, XModbusHubDevice* dev)
         if (!b || !b->dirty || XVector_size_base(b->dirty) == 0) continue;
         d = (XModbusHubDirtyRange*)XVector_at_base(b->dirty, 0);
         if (!d) continue;
-        ++d->attempts;                                  /* 下发次数（失败重发累计）。 */
+                ++d->attempts;                                  /* 下发次数（失败重发累计）。 */
         if (hub->m_writeStallNoticeAt >= 1 &&
             d->attempts >= (uint32_t)hub->m_writeStallNoticeAt) {
             const int virtualStart = hubDirtyVirtualStart(b, d);
@@ -1155,7 +1217,7 @@ static bool hubSendNextWrite(XModbusHub* hub, XModbusHubDevice* dev)
 static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev)
 {
     if (!hub || !dev || !dev->client) return;
-    if (dev->inflight) return;                                   /* 单飞占用。 */
+        if (dev->inflight) return;                                   /* 单飞占用。 */
     if (dev->state != XModbusDevice_ConnectedState) return;      /* 离线安静跳过。 */
 
     /* ① 写优先（带饥饿保护）：该设备有脏区间；合并窗口未到期时等窗口。
@@ -1352,6 +1414,7 @@ int XModbusHub_addDevice(XModbusHub* hub, XModbusClient* client, const XString* 
     dev.blocks = NULL;
     dev.groups = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                    sizeof(XModbusHubReadGroup), false);
+    dev.m_unitLimits = NULL;    /* 从站约束表惰性建（setUnitLimits 时建）。 */
     /* XString 主版本：深拷贝入参（调用方传入的串可随即释放）；_2 为
      * UTF-8 const char* 兼容重载（约束文档「字符串 API 主次顺序」）。 */
     if (name && XString_size_base(name) > 0) dev.name = XString_create_copy(name);
@@ -1436,6 +1499,10 @@ bool XModbusHub_removeDevice(XModbusHub* hub, int deviceId)
     if (dev->groups) {
         XClassDelete(dev->groups);
         dev->groups = NULL;
+    }
+    if (dev->m_unitLimits) {
+        XClassDelete(dev->m_unitLimits);
+        dev->m_unitLimits = NULL;
     }
     XPollScheduler_deinit(&dev->unitSched); /* 槽位摘除前清表。 */
     {
@@ -1581,6 +1648,58 @@ void XModbusHub_setReadMergeGap(XModbusHub* hub, uint16_t gap)
             (XModbusHubDevice*)XVector_at_base(hub->m_devices, (int64_t)i);
         if (d) hubRebuildGroups(hub, d);
     }
+}
+
+bool XModbusHub_setUnitLimits(XModbusHub* hub, int deviceId, int unitId,
+                               const XModbusHubUnitLimits* limits)
+{
+    XModbusHubDevice* dev;
+    size_t i;
+    if (!hub) return false;
+    dev = hubDeviceById(hub, deviceId);
+    if (!dev) return false;
+    if (!dev->m_unitLimits) {
+        dev->m_unitLimits = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                               sizeof(XModbusHubUnitLimitEntry), false);
+        if (!dev->m_unitLimits) return false;
+    }
+    for (i = 0; i < XVector_size_base(dev->m_unitLimits); ++i) {
+        XModbusHubUnitLimitEntry* e =
+            (XModbusHubUnitLimitEntry*)XVector_at_base(dev->m_unitLimits, (int64_t)i);
+        if (!e || e->unitId != unitId) continue;
+        if (!limits) {
+            XVector_remove_base(dev->m_unitLimits, (int64_t)i, 1);
+        } else {
+            e->m_limits = *limits;
+        }
+        hubRebuildAll(hub);
+        return true;
+    }
+    if (!limits) return true;                    /* 本就未配置：清除即无操作。 */
+    {
+        XModbusHubUnitLimitEntry e;
+        e.unitId = unitId;
+        e.m_limits = *limits;
+        if (!XVector_push_back_1_base(dev->m_unitLimits, &e)) return false;
+    }
+    /* 屏障约束会改块结构（映射段不再合并），必须整表重建；只重建读组
+     * 会留下旧块结构，边界仍被吃掉。 */
+    hubRebuildAll(hub);
+    return true;
+}
+
+bool XModbusHub_getUnitLimits(const XModbusHub* hub, int deviceId, int unitId,
+                               XModbusHubUnitLimits* outLimits)
+{
+    XModbusHubDevice* dev;
+    const XModbusHubUnitLimits* lim;
+    if (!hub || !outLimits) return false;
+    dev = hubDeviceById((XModbusHub*)hub, deviceId);
+    if (!dev) return false;
+    lim = hubUnitLimitsOf(dev, unitId);
+    if (!lim) return false;
+    *outLimits = *lim;
+    return true;
 }
 
 void XModbusHub_setUnitBackoff(XModbusHub* hub, uint32_t maxFails, uint32_t muteMs)
@@ -1902,7 +2021,7 @@ bool XModbusHub_writeValues(XModbusHub* hub, XModbusRegisterType type,
         block->firstEmitDone = true;
     }
     /* ② 标脏（合并窗口内多次写只留最终值）+ 调度刷写。 */
-    hubMarkDirty(block, blockOffset, count);
+        hubMarkDirty(block, blockOffset, count);
     hub->m_lastWriteMs = XDateTime_currentMSecsSinceEpoch();
     hubScheduleFlush(hub, s->deviceId);
     return true;
@@ -2120,7 +2239,7 @@ static void XModbusHub_onReplyFinished(XObject* sender, XVarList* args)
     (void)args;
     if (!reply) return;
     hub = (XModbusHub*)XObject_parent((XObject*)reply);
-    if (!hub || !XClassGetVtable(hub) ||
+        if (!hub || !XClassGetVtable(hub) ||
         XClassGetVtable(hub) != XModbusHub_class_init()) {
         XObject_deleteLater((XObject*)reply);
         return;
@@ -2133,7 +2252,7 @@ static void XModbusHub_onReplyFinished(XObject* sender, XVarList* args)
             if (d && d->inflight == reply) { dev = d; break; }
         }
     }
-    if (!dev) {
+        if (!dev) {
         /* 非 Hub 在途登记的 Reply（如设备被移除前的遗留）：直接回收。 */
         XObject_deleteLater((XObject*)reply);
         return;
@@ -2210,7 +2329,6 @@ static void XModbusHub_onReplyFinished(XObject* sender, XVarList* args)
             } else if (b) {
                 /* 失败：脏区间原样保留，重发定时器周期重试；提示沿由发送端
                  * 按 attempts 阈值发过一次，这里不重复。 */
-                (void)0;
             }
             dev->inflightPayload.write.values = NULL;   /* 快照内存随收口释放。 */
             if (snap.values) XFree_System(snap.values);

@@ -1064,6 +1064,14 @@ void XLinkFileTransfer_pump(XLinkFileTransfer* transfer, uint32_t nowMs)
             open.m_windowBytes = transfer->m_windowBytes;
             open.m_totalSize = transfer->m_totalSize;
             open.m_startOffset = 0;
+            /* 【重发根修】必须把文件名拷进载荷：首发的 Open 在 xft_begin
+               里 memcpy 过 m_name，但本重发路径只填了 m_nameLen——于是重发
+               出去的 Open 名字区全零，服务端按 isSafeName 直接回
+               "unsafe file name" 拒绝，一次本可自愈的重发反而把传输判死
+               （实测：Force 上传 154ms 即 Failed、done=0，而首发 Open 若未
+               受理就会走到这里）。 */
+            if (name && nameLen > 0)
+                memcpy(open.m_name, name, nameLen);
             if (name && nameLen > 0 && nameLen < XLINK_FILE_NAME_BYTES
                 && XLinkFile_encodeOpen(&open, buf, sizeof(buf), &len)
                 && xft_send(transfer, XLinkFileCode_Open, buf, (uint32_t)len)) {

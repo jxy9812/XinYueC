@@ -401,10 +401,24 @@ static void VXRadioButton_paintEvent(XWidget* self, XEvent* event)
 
 /* ==================== 类虚表 ==================== */
 
+/** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
+ *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
+static XSize VXRadioButton_sizeHintSlot(const XWidget* self)
+{
+    return XRadioButton_sizeHint((const XRadioButton*)self);
+}
+
+static XSize VXRadioButton_minimumSizeHintSlot(const XWidget* self)
+{
+    return XRadioButton_minimumSizeHint((const XRadioButton*)self);
+}
+
 XVtable* XRadioButton_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XRadioButton)
     XVTABLE_INHERIT_XCLASS(XAbstractButton);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXRadioButton_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXRadioButton_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_HitButton,
                              VXRadioButton_hitButton);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_ContentChanged,

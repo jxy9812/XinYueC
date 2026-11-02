@@ -77,6 +77,36 @@ extern "C" {
 #define XMODBUS_HUB_READ_MAX_BITS 2000
 
 /**
+  * @brief 从站级通讯协议约束（作用域 = (设备, 从站)；表达「从站比通用 Modbus 更严」）
+  * @details 部分变频器/仪表只支持 FC03+FC06、单次读数量有上限、且不允许
+  *           一帧跨过其「功能码组」边界。通用 Hub 的读帧规划以「远端连续
+  *           映射段」为最小单位、映射段边界对读帧不可见，写侧相邻区间
+  *           无条件合并（会走 FC16）——这三条约束在通用配置下无法表达。
+  *           本结构把约束下沉到**从站**粒度。
+  * @note 作用域是「从站」不是「链路」：一条 RTU 串口链路下可挂多个从站，
+  *       各从站能力互不相同（如从站1 限 12 字、只支持 FC06，从站2 通用
+  *       Modbus）。把约束挂在链路上会误伤同总线的其它从站——**约束必须
+  *       与映射目标（从站）一一对应**，装配期随 addRange 同批声明。
+  */
+typedef struct XModbusHubUnitLimits {
+    uint16_t m_maxReadRegisters;  /**< 单次读帧寄存器数上限（0=不限制，按全局 125）；
+                                  *   位区不适用（位区上限恒为 2000）。 */
+    bool     m_rangeBarrier;      /**< 映射段边界为读帧硬边界：块表按映射段切分、
+                                  *   读帧不跨段合并（等价于该从站的 gap 恒为 0
+                                  *   且不合并远端连续的相邻映射段）。 */
+    bool     m_singleWriteOnly;   /**< 只允许单寄存器写（FC06）：脏区间逐字下发，
+                                  *   相邻写不并成一帧 FC16。 */
+} XModbusHubUnitLimits;
+
+/**
+  * @brief 从站约束表条目（Hub 内部；设备槽内按 unitId 簿记）
+  */
+typedef struct XModbusHubUnitLimitEntry {
+    int unitId;                            /**< 从站地址（Modbus unit id）。 */
+    XModbusHubUnitLimits m_limits;         /**< 约束内容。 */
+} XModbusHubUnitLimitEntry;
+
+/**
   * @brief 缓存块内的映射切片：把块内远端区间翻译回统一虚拟地址
   * @note 一个块由同 (区, 从站) 下远端连续的若干映射段合并而成，切片是
   *       块内一段与某条映射段的交集——回填事件按切片发射（上层看到的
@@ -210,6 +240,8 @@ typedef struct XModbusHubDevice {
                                              生效；成功后恢复写优先）。 */
     XPollScheduler unitSched;           /**< 从站失联退避表（XPoll，按 unitId 簿记；
                                          *   块表重建时随块去重重建）。 */
+    struct XVector* m_unitLimits;       /**< 从站约束表（XModbusHubUnitLimitEntry，
+                                         *   按 unitId 簿记；NULL=该设备无约束）。 */
 } XModbusHubDevice;
 
 /**
@@ -416,6 +448,37 @@ void XModbusHub_setPollAreas(XModbusHub* hub, unsigned areaMask);
   * @note 只影响读；写绝不跨洞（块内无洞是写安全前提）
   */
 void XModbusHub_setReadMergeGap(XModbusHub* hub, uint16_t gap);
+/**
+  * @brief 设置从站级通讯协议约束
+  * @param hub XModbusHub实例指针（非NULL）
+  * @param deviceId 设备句柄（addDevice 返回）
+  * @param unitId 从站地址（Modbus unit id；RTU 下的从站站号）
+  * @param limits 约束配置（非NULL）；传 NULL 等价于清除该从站的约束
+  * @return true=已设置；设备句柄非法或分配失败返回 false
+  * @details 生效项：
+  *          - m_maxReadRegisters>0：单次读帧寄存器数按该值切分（位区不适用）；
+  *          - m_rangeBarrier：映射段边界为读帧硬边界（块表按映射段切分，
+  *            读帧不跨段合并）；
+  *          - m_singleWriteOnly：脏区间逐字下发（FC06），不并成 FC16。
+  * @note **作用域是从站**：一条 RTU 链路下的各从站能力互不相同，约束必须
+  *       与映射目标（从站）一一对应；挂在链路上会误伤同总线的其它从站。
+  *       建议在 addRange 建立该从站映射时同批声明，startPolling 之前完成。
+  * @note 设置后立即重建块表与读组表（改 barrier 会改块结构，必须重建）。
+  */
+bool XModbusHub_setUnitLimits(XModbusHub* hub, int deviceId, int unitId,
+                               const XModbusHubUnitLimits* limits);
+/**
+  * @brief 查询从站级通讯协议约束
+  * @param hub XModbusHub实例指针（非NULL）
+  * @param deviceId 设备句柄
+  * @param unitId 从站地址
+  * @param outLimits 输出约束内容（非NULL）
+  * @return 该从站已配置约束返回 true；未配置或参数非法返回 false
+  * @note 按值返回（不出内部指针）：约束表增删会让内部存储搬家，裸指针
+  *       交给调用方会悬垂。
+  */
+bool XModbusHub_getUnitLimits(const XModbusHub* hub, int deviceId, int unitId,
+                               XModbusHubUnitLimits* outLimits);
 /**
   * @brief 设置从站失联退避参数
   * @param hub XModbusHub实例指针（非NULL）

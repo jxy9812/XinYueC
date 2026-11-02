@@ -491,10 +491,26 @@ static void VX_mdiSubWindow_deinit(XMdiSubWindow* self)
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
+/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）。 */
+static XSize VXMdiSubWindow_sizeHintSlot(const XWidget* self);
+static XSize VXMdiSubWindow_minimumSizeHintSlot(const XWidget* self);
+
+static XSize VXMdiSubWindow_sizeHintSlot(const XWidget* self)
+{
+    return XMdiSubWindow_sizeHint((const XMdiSubWindow*)self);
+}
+
+static XSize VXMdiSubWindow_minimumSizeHintSlot(const XWidget* self)
+{
+    return XMdiSubWindow_minimumSizeHint((const XMdiSubWindow*)self);
+}
+
 XVtable* XMdiSubWindow_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMdiSubWindow)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXMdiSubWindow_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXMdiSubWindow_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,
                              VX_mdiSubWindow_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,

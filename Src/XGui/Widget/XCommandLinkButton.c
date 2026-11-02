@@ -543,10 +543,24 @@ static void VXCommandLinkButton_deinit(XCommandLinkButton* self)
 
 /* ==================== 类虚表 ==================== */
 
+/** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
+ *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
+static XSize VXCommandLinkButton_sizeHintSlot(const XWidget* self)
+{
+    return XCommandLinkButton_sizeHint((const XCommandLinkButton*)self);
+}
+
+static XSize VXCommandLinkButton_minimumSizeHintSlot(const XWidget* self)
+{
+    return XCommandLinkButton_minimumSizeHint((const XCommandLinkButton*)self);
+}
+
 XVtable* XCommandLinkButton_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XCommandLinkButton)
     XVTABLE_INHERIT_XCLASS(XPushButton);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXCommandLinkButton_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXCommandLinkButton_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_ContentChanged,
                              VXCommandLinkButton_contentChanged);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,

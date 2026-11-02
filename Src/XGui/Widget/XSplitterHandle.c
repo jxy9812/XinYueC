@@ -274,10 +274,26 @@ static void VX_handle_mouseDoubleClickEvent(XWidget* self, XEvent* event)
 
 /* ==================== 生命周期与虚表 ==================== */
 
+/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）。 */
+static XSize VXSplitterHandle_sizeHintSlot(const XWidget* self);
+static XSize VXSplitterHandle_minimumSizeHintSlot(const XWidget* self);
+
+static XSize VXSplitterHandle_sizeHintSlot(const XWidget* self)
+{
+    return XSplitterHandle_sizeHint((const XSplitterHandle*)self);
+}
+
+static XSize VXSplitterHandle_minimumSizeHintSlot(const XWidget* self)
+{
+    return XWidget_minimumSizeHint_base(self);
+}
+
 XVtable* XSplitterHandle_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSplitterHandle)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXSplitterHandle_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXSplitterHandle_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_handle_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_EnterEvent, VX_handle_enterEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_LeaveEvent, VX_handle_leaveEvent);

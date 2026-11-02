@@ -5,10 +5,13 @@
  *               - 点规格表（XVfdAtv61_pointSpecs）：语义角色 → ATV61 逻辑地址
  *                 + 原生单位除率。装配期由调用方按表建通道点（Modbus/其它
  *                 传输均可），再经 XVfdDevice_bindPoint 绑定；
- *               - 状态字解码（CiA402/Drivecom ETA、ETI 位图）；
- *               - 命令编解码与 CiA402 启动序列（读 ETA → 0x0006/0x0007/0x000F
- *                 逐级推进，最多 6 步，每步经动作监督定时器节拍）；
- *               - 109 条故障表（LFT 数值 → 字母码/中文说明）。
+ *               - 状态字解码的**品牌专有**部分（ETI 的加速/减速/直流制动位）；
+ *                 CiA402/Drivecom 状态机骨架（读 ETA → 0x0006/0x0007/0x000F
+ *                 逐级推进，最多 6 步，每步经动作监督定时器节拍）已上提为
+ *                 通用基类 XVfdCiA402，本类只给一张 XVfdCiA402Profile
+ *                 （ETA/CMD 常量 + 时序常量）；
+ *               - 故障表（LFT 数值 → 字母码/中文说明），字母码以《ATV61 编程
+ *                 手册》p.242–247 为准。
  *             地址体系：施耐德"逻辑地址"就是 Modbus PDU 地址，**不做 -1 偏移**
  *             （例：写 ACC=9001 → PDU 地址 0x2329=9001）。
  * @note       现场前置条件见 docs/ATV61_485变频器面板改造与调试指南.md §2
@@ -30,7 +33,7 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "XVfdDevice.h"
+#include "XVfdCiA402.h"
 
 /* ========================================================================== */
 /*                寄存器逻辑地址（= Modbus PDU 地址，不减 1）                  */
@@ -107,23 +110,14 @@ extern "C" {
 /* ========================================================================== */
 
 /**
- * @brief ATV61 子类结构体（继承 XVfdDevice）。
+ * @brief ATV61 子类结构体（继承 XVfdCiA402 → XVfdDevice）。
  */
 XCLASS_DEFINE_BEGING(XVfdAtv61)
-XCLASS_DEFINE_EXTEND_END(XVfdAtv61, XVfdDevice)
+XCLASS_DEFINE_EXTEND_END(XVfdAtv61, XVfdCiA402)
 
 typedef struct XVfdAtv61 {
-    XVfdDevice m_base;              /**< 基类子对象（第一成员） */
-    int m_step;                     /**< 启动序列步进计数 */
-    bool m_reverse;                 /**< 启动方向（true=反转） */
-    bool m_waitingWrite;            /**< 已发命令字、等写落定（区分步进定时用途） */
-    bool m_pendingReset;            /**< 故障复位序列：待写 Disable voltage 归位 */
-    uint16_t m_pendingCmd;          /**< 待写命令字（加减速两步时暂存减速值） */
-    uint16_t m_etaCache;            /**< 最近 ETA 原始值（ETI 到达时重解码用） */
-    uint16_t m_expectEta;           /**< 当前步期望的 ETA 状态码（CiA402 掩码域） */
-    int m_waitPolls;                /**< 当前步等待状态迁移的轮询次数 */
-    uint16_t m_etiCache;            /**< 最近 ETI 原始值 */
-    uint32_t m_stepDelayMs;         /**< 序列步进延时（毫秒；默认 120） */
+    XVfdCiA402 m_base;              /**< 基类子对象（第一成员） */
+    int16_t m_pendingDecel;         /**< 加减速两步写：暂存待写减速值 */
 } XVfdAtv61;
 
 /* ==================== 类生命周期 ==================== */
@@ -181,6 +175,8 @@ uint32_t XVfdAtv61_stepDelay(const XVfdAtv61* dev);
  * @brief 查故障码对应名称（ATV61 字母码，如 OCF）。
  * @param code LFT 寄存器原始值
  * @return 名称（静态常量，禁释放）；未知返回 NULL
+ * @note 字母码以《ATV61 编程手册》p.242–247 的写法为准（混合大小写）；
+ *       只查手册列出的故障；其它产品族条目见 XVfdAtv61_otherFaultEntry。
  */
 const char* XVfdAtv61_faultName(uint16_t code);
 
@@ -188,8 +184,20 @@ const char* XVfdAtv61_faultName(uint16_t code);
  * @brief 查故障码对应中文说明。
  * @param code LFT 寄存器原始值
  * @return 说明（静态常量，禁释放）；未知返回 NULL
+ * @note 只查 ATV61 编程手册 p.242–247 列出的故障；其它产品族条目见
+ *       XVfdAtv61_otherFaultEntry。
  */
 const char* XVfdAtv61_faultText(uint16_t code);
+
+/**
+ * @brief 查「其它产品族」故障条目（ATV610 / AFE / 泵控；ATV61 手册未列）。
+ * @param code LFT 寄存器原始值
+ * @return 条目指针（静态常量，禁释放）；未命中返回 NULL
+ * @note 这些条目出自《ATV610 通信参数表》EAV64394，**不是 ATV61 的故障**，
+ *       不参与 XVfdAtv61_faultName/faultText 的显示；本接口只供现场对照与
+ *       后续移植查阅。
+ */
+const XVfdFaultEntry* XVfdAtv61_otherFaultEntry(uint16_t code);
 
 #endif /* XVFD_ATV61_ON */
 #endif /* XVFD_ON */

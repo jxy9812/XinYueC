@@ -60,6 +60,23 @@ void XCommonStyle_init(XCommonStyle* self);
 XCommonStyle* XCommonStyle_create_ex(XMemoryType memory);
 #define XCommonStyle_create() XCommonStyle_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
+/**
+ * @brief 文本省略（按 mode 插入省略号使宽度不超 maxW；对标 Qt
+ *        fontMetrics elidedText；UTF-8 码点边界切割）。
+ * @param buf 调用方栈缓冲（承载省略结果）。
+ * @param bufCap buf 容量（字节）。
+ * @param text 原文（UTF-8）。
+ * @param mode 0=截断不加点 1=右省略（尾部…）2=左省略（头部…）。
+ * @param maxW 可用宽（px）。
+ * @param font 字体。
+ * @return 省略后的文本指针（入参原样返回或 buf）。
+ * @note 声明必须留在本守卫块内（extern "C" + XSTYLE_ON + XGUI_ON）：放到
+ *       include guard 之后会让 C++ 侧拿到 C++ 链接性而实现是 C 口径，
+ *       且 XGUI_ON=0 时 XFont 未定义。
+ */
+const char* XCommonStyle_elideText(char* buf, int bufCap, const char* text,
+                                    int mode, int maxW, const XFont* font);
+
 #endif /* XSTYLE_ON */
 #ifdef __cplusplus
 }

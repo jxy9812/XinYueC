@@ -11,8 +11,10 @@
  *              换传输只换点、不改设备层。
  *          子功能裁剪开关：
  *   1. XVFD_DEVICE_ON - 变频器抽象父类（XVfdDevice：语义槽/状态快照/能力位图）
- *   2. XVFD_ATV61_ON  - 施耐德 ATV61 品牌子类
- *   3. XVFD_M512_ON   - 511M/512M/513M 系列品牌子类
+ *   2. XVFD_CIA402_ON - 通用 CiA402/Drivecom 状态机骨架基类（XVfdCiA402）
+ *   3. XVFD_COMMANDENUM_ON - 通用离散命令枚举骨架基类（XVfdCommandEnum）
+ *   4. XVFD_ATV61_ON  - 施耐德 ATV61 品牌子类（依赖 XVFD_CIA402_ON）
+ *   5. XVFD_M512_ON   - 511M/512M/513M 系列品牌子类（依赖 XVFD_COMMANDENUM_ON）
  * @note 开关一律由工业设备层总开关派生，不反向引用协议层开关（避免环）。
  */
 #ifndef XVFD_CONFIG_H
@@ -37,14 +39,24 @@ extern "C" {
 #define XVFD_DEVICE_ON 1
 #endif
 
+/** @brief 通用 CiA402/Drivecom 状态机骨架基类（XVfdCiA402）。 */
+#ifndef XVFD_CIA402_ON
+#define XVFD_CIA402_ON XVFD_DEVICE_ON
+#endif
+
+/** @brief 通用离散命令枚举骨架基类（XVfdCommandEnum）。 */
+#ifndef XVFD_COMMANDENUM_ON
+#define XVFD_COMMANDENUM_ON XVFD_DEVICE_ON
+#endif
+
 /** @brief 施耐德 ATV61 品牌子类（XVfdAtv61）。 */
 #ifndef XVFD_ATV61_ON
-#define XVFD_ATV61_ON XVFD_DEVICE_ON
+#define XVFD_ATV61_ON (XVFD_DEVICE_ON && XVFD_CIA402_ON)
 #endif
 
 /** @brief 511M/512M/513M 系列品牌子类（XVfdM512）。 */
 #ifndef XVFD_M512_ON
-#define XVFD_M512_ON XVFD_DEVICE_ON
+#define XVFD_M512_ON (XVFD_DEVICE_ON && XVFD_COMMANDENUM_ON)
 #endif
 
 #endif /* XVFD_ON */

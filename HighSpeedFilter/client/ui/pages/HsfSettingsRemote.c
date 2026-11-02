@@ -1,0 +1,20 @@
+﻿/**
+ * @file       HsfSettingsRemote.c
+ * @brief      远端设置叶子页实现：复用 HsfPlaceHolder 占位承载。
+ */
+#include "HsfSettingsRemote.h"
+
+#include "HsfPlaceHolder.h"
+
+#if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON
+
+XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
+                           void* userData)
+{
+    /* TODO(远端设置): 占位骨架，真实页面内容在此替换实现。 */
+    return HsfPlaceHolder_create(parent,
+                            "\xE8\xBF\x9C\xE7\xAB\xAF\xE8\xAE\xBE\xE7\xBD\xAE", "\xE8\xBF\x9C\xE7\xAB\xAF\xE5\x8F\x82\xE6\x95\xB0\xEF\xBC\x9A\xE6\x9C\x8D\xE5\x8A\xA1\xE7\xAB\xAF\xE5\x9C\xB0\xE5\x9D\x80\xE3\x80\x81\xE7\xAB\xAF\xE5\x8F\xA3\xE4\xB8\x8E\xE6\x8E\xA5\xE5\x85\xA5\xE5\x87\xAD\xE6\x8D\xAE", "\xE5\xBE\x85\xE6\x8E\xA5\xE5\x85\xA5\xEF\xBC\x9A\xE6\x9C\x8D\xE5\x8A\xA1\xE7\xAB\xAF\xE8\xBF\x9E\xE6\x8E\xA5\xE9\x85\x8D\xE7\xBD\xAE",
+                            HSF_PAGE_SETTINGS_MENU, navFn, userData);
+}
+
+#endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */

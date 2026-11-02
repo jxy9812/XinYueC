@@ -36,6 +36,35 @@
 #define XVFD_HARNESS_SPEC_CAP 64
 /** @brief 单链路可挂从站数上限。 */
 #define XVFD_HARNESS_STATION_CAP 8
+/** @brief 单次装配可处理的通信组上限。 */
+#define XVFD_HARNESS_GROUP_CAP 96
+/** @brief 单次装配可处理的远端地址索引上限（点 + 参数去重）。 */
+#define XVFD_HARNESS_REF_CAP 192
+
+/**
+ * @brief 远端地址索引项（装配期去重：语义点与参数点同址时共用一个通道点）。
+ */
+typedef struct XvfdHarnessRef {
+    uint16_t m_remote;               /**< 远端地址 */
+    XIoPoint* m_point;               /**< 通道点（NULL=未建） */
+} XvfdHarnessRef;
+
+/**
+ * @brief 单站的装配上下文（组段惰性建 + 同址点复用）。
+ * @note 组段**按需**建：只有被语义点或已绑定参数用到的组才建映射段——本型号
+ *       地址天然分散（P0~PE 各功能码组 + 特殊条目共 28 组），全量建段会让读帧
+ *       数暴涨（读帧越多，总线占用越大、写应答越容易被读挤掉）。
+ */
+typedef struct XvfdHarnessStation {
+    int m_devId;                     /**< 设备句柄（-1=未用） */
+    int m_unitId;                    /**< 从站地址 */
+    const XVfdCommGroup* m_groups;   /**< 通信组表（借用） */
+    int m_groupCount;                /**< 组数 */
+    uint16_t m_groupVbase[XVFD_HARNESS_GROUP_CAP]; /**< 已建组的虚拟起点 */
+    uint8_t m_groupBuilt[XVFD_HARNESS_GROUP_CAP];  /**< 组是否已建段（0=未建） */
+    XvfdHarnessRef m_refs[XVFD_HARNESS_REF_CAP];   /**< 远端地址 → 通道点 */
+    int m_refCount;                  /**< 索引条目数 */
+} XvfdHarnessStation;
 
 /**
  * @brief 装配脚手架。
@@ -51,6 +80,7 @@ typedef struct XvfdHarness {
     uint16_t m_bumpCoil;            /**< Coils 区虚拟地址分配游标 */
     uint16_t m_bumpDi;              /**< DI 区虚拟地址分配游标 */
     int m_pointCount;               /**< 已建点数 */
+    XvfdHarnessStation m_stations[XVFD_HARNESS_STATION_CAP]; /**< 各站装配上下文 */
 } XvfdHarness;
 
 /**
@@ -149,6 +179,7 @@ static XIoPoint* xvfdHarnessMakePoint(XvfdHarness* h, const XVfdPointSpec* spec,
  */
 static bool xvfdHarnessInit(XvfdHarness* h)
 {
+    int i;
     if (!h) return false;
     h->m_hub = XModbusHub_create();
     h->m_map = XModbusMapping_create();
@@ -159,6 +190,9 @@ static bool xvfdHarnessInit(XvfdHarness* h)
     h->m_bumpCoil = 0;
     h->m_bumpDi = 0;
     h->m_pointCount = 0;
+    for (i = 0; i < XVFD_HARNESS_STATION_CAP; ++i) {
+        h->m_stations[i].m_devId = -1;   /* 站上下文槽位空闲标记 */
+    }
     return (h->m_hub && h->m_map && h->m_group);
 }
 
@@ -273,6 +307,246 @@ static bool xvfdHarnessMountParam(XvfdHarness* h, XVfdDevice* dev, int devId, in
     if (!XVfdDevice_bindParamPoint(dev, paramId, (XIoPoint*)pt)) return false;
     ++h->m_pointCount;
     return true;
+}
+
+/**
+ * @brief 找通信组（含指定远端地址的组）。
+ * @param groups 组表（静态 const）。
+ * @param n 组数。
+ * @param remote 远端地址。
+ * @return 组下标；未命中返回 -1。
+ */
+static int xvfdHarnessFindGroup(const XVfdCommGroup* groups, int n, uint16_t remote)
+{
+    int i;
+    if (!groups || n <= 0) return -1;
+    for (i = 0; i < n; ++i) {
+        const XVfdCommGroup* g = &groups[i];
+        if (!g) continue;
+        if (remote >= g->m_remoteStart &&
+            (uint32_t)remote < (uint32_t)g->m_remoteStart + g->m_count) return i;
+    }
+    return -1;
+}
+
+/**
+ * @brief 取（或建）某站的装配上下文。
+ * @param h 脚手架。
+ * @param devId 设备句柄。
+ * @param unitId 从站地址。
+ * @param groups 通信组表（借用）；可为 NULL（沿用已有）。
+ * @param groupCount 组数。
+ * @return 站上下文；槽位用尽返回 NULL。
+ */
+static XvfdHarnessStation* xvfdHarnessStationOf(XvfdHarness* h, int devId, int unitId,
+                                                 const XVfdCommGroup* groups, int groupCount)
+{
+    int i;
+    if (!h) return NULL;
+    for (i = 0; i < XVFD_HARNESS_STATION_CAP; ++i) {
+        XvfdHarnessStation* st = &h->m_stations[i];
+        if (st->m_devId == devId && st->m_unitId == unitId) {
+            if (groups) { st->m_groups = groups; st->m_groupCount = groupCount; }
+            return st;
+        }
+    }
+    for (i = 0; i < XVFD_HARNESS_STATION_CAP; ++i) {
+        XvfdHarnessStation* st = &h->m_stations[i];
+        if (st->m_devId != -1) continue;
+        memset(st, 0, sizeof(*st));
+        st->m_devId = devId;
+        st->m_unitId = unitId;
+        st->m_groups = groups;
+        st->m_groupCount = groupCount;
+        return st;
+    }
+    return NULL;
+}
+
+/**
+ * @brief 惰性建组段（幂等）：按需为某个通信组建映射段。
+ * @param h 脚手架。
+ * @param st 站上下文。
+ * @param gi 组下标。
+ * @param outVbase 输出组的虚拟起点。
+ * @return 成功返回 true。
+ * @note 组段**按需**建：只有被语义点或已绑定参数用到的组才建映射段——本型号
+ *       地址天然分散（P0~PE 各功能码组 + 特殊条目共 28 组），全量建段会让读帧
+ *       数暴涨（读帧越多，总线占用越大、写应答越容易被读挤掉）。
+ */
+static bool xvfdHarnessEnsureGroup(XvfdHarness* h, XvfdHarnessStation* st, int gi,
+                                    uint16_t* outVbase)
+{
+    XModbusRegisterType area;
+    uint16_t vbase;
+    if (!h || !st || !st->m_groups || gi < 0 || gi >= st->m_groupCount) return false;
+    if (gi >= XVFD_HARNESS_GROUP_CAP) return false;
+    if (st->m_groupBuilt[gi]) { if (outVbase) *outVbase = st->m_groupVbase[gi]; return true; }
+    area = xvfdHarnessAreaOf(st->m_groups[gi].m_area);
+    vbase = h->m_identity ? st->m_groups[gi].m_remoteStart
+                          : xvfdHarnessBump(h, area, st->m_groups[gi].m_count);
+    if (!XModbusMapping_addRange(h->m_map, area, vbase, st->m_groups[gi].m_count,
+                                 st->m_devId, st->m_unitId,
+                                 st->m_groups[gi].m_remoteStart, 0)) {
+        XPrintf("[xvfd-harness] addRange(group=%d remote=0x%04X) 失败\n",
+                gi, st->m_groups[gi].m_remoteStart);
+        return false;
+    }
+    st->m_groupVbase[gi] = vbase;
+    st->m_groupBuilt[gi] = 1;
+    if (outVbase) *outVbase = vbase;
+    return true;
+}
+
+/**
+ * @brief 查同址已建点（语义点与参数点复用）。
+ * @param st 站上下文。
+ * @param remote 远端地址。
+ * @return 通道点；未建返回 NULL。
+ */
+static XIoPoint* xvfdHarnessFindRef(const XvfdHarnessStation* st, uint16_t remote)
+{
+    int i;
+    if (!st) return NULL;
+    for (i = 0; i < st->m_refCount; ++i)
+        if (st->m_refs[i].m_remote == remote) return st->m_refs[i].m_point;
+    return NULL;
+}
+
+/**
+ * @brief 登记远端地址 → 通道点。
+ * @param st 站上下文。
+ * @param remote 远端地址。
+ * @param pt 通道点。
+ * @return 成功返回 true（索引满返回 false）。
+ */
+static bool xvfdHarnessSetRef(XvfdHarnessStation* st, uint16_t remote, XIoPoint* pt)
+{
+    if (!st) return false;
+    if (st->m_refCount >= XVFD_HARNESS_REF_CAP) return false;
+    st->m_refs[st->m_refCount].m_remote = remote;
+    st->m_refs[st->m_refCount].m_point = pt;
+    ++st->m_refCount;
+    return true;
+}
+
+/**
+ * @brief 按通信组装配一个品牌的语义点 + 从站约束（组段按需建）。
+ * @param h 脚手架。
+ * @param dev 设备（须已 attach 到本脚手架通道组）。
+ * @param devId 设备句柄（addStation 返回）。
+ * @param unitId 从站地址。
+ * @param groups 品牌通信组表（静态 const）。
+ * @param groupCount 组数。
+ * @param specs 品牌点规格表（静态 const）。
+ * @param specCount 点数。
+ * @param protocol 品牌从站协议约束（静态 const）；可为 NULL（不登记约束）。
+ * @return 全部建成并绑定返回 true；任一步失败返回 false。
+ * @details 装配顺序：
+ *          1) 语义点：按远端地址落在哪个组 → **惰性建该组的映射段**（每组一段，
+ *             不是「按地址相邻」合并；组边界即从站的「功能码组」边界，读帧
+ *             规划据此不跨组）→ 虚拟地址 = 组虚拟起点 + 组内偏移；
+ *          2) 登记从站约束（单帧读上限 / 组边界硬约束 / 只允许单寄存器写）。
+ * @note **参数点不在此装配**：参数是低频按需操作，全量映射会把读帧数撑爆
+ *       （本型号 28 组 → 每圈 29 帧）。参数点用 xvfdHarnessMountParamBrand
+ *       按需绑定，届时才惰性建其所属组段。
+ * @note 约束作用域是**从站**：同一 RTU 链路上的其它从站各自独立登记。
+ */
+static bool xvfdHarnessMountBrand(XvfdHarness* h, XVfdDevice* dev, int devId, int unitId,
+                                   const XVfdCommGroup* groups, int groupCount,
+                                   const XVfdPointSpec* specs, int specCount,
+                                   const XVfdUnitProtocol* protocol)
+{
+    XvfdHarnessStation* st;
+    int i;
+    if (!h || !dev || !groups || groupCount <= 0 ||
+        groupCount > XVFD_HARNESS_GROUP_CAP) return false;
+    if (!specs || specCount <= 0) return false;
+    st = xvfdHarnessStationOf(h, devId, unitId, groups, groupCount);
+    if (!st) return false;
+    for (i = 0; i < specCount; ++i) {
+        const int gi = xvfdHarnessFindGroup(groups, groupCount, specs[i].m_address);
+        uint16_t vbase = 0;
+        uint16_t vaddr;
+        XIoPoint* pt;
+        if (gi < 0) {
+            XPrintf("[xvfd-harness] 点 %s 的远端地址 0x%04X 不在任何通信组内\n",
+                    specs[i].m_tag ? specs[i].m_tag : "?", specs[i].m_address);
+            return false;
+        }
+        if (!xvfdHarnessEnsureGroup(h, st, gi, &vbase)) return false;
+        vaddr = (uint16_t)(vbase + (specs[i].m_address - groups[gi].m_remoteStart));
+        pt = xvfdHarnessFindRef(st, specs[i].m_address);
+        if (!pt) {
+            pt = xvfdHarnessMakePoint(h, &specs[i], vaddr);
+            if (!pt) return false;
+            if (!XIoChannelGroup_addPoint(h->m_group, pt, true)) return false;
+            if (!xvfdHarnessSetRef(st, specs[i].m_address, pt)) return false;
+            ++h->m_pointCount;
+        }
+        if (!XVfdDevice_bindPoint(dev, &specs[i], pt)) return false;
+    }
+    /* 从站协议约束（品牌层中立表达 → 传输层配置，逐字段翻译不靠布局巧合）。 */
+    if (protocol) {
+        XModbusHubUnitLimits lim;
+        lim.m_maxReadRegisters = protocol->m_maxReadRegisters;
+        lim.m_rangeBarrier = protocol->m_rangeBarrier;
+        lim.m_singleWriteOnly = protocol->m_singleWriteOnly;
+        if (!XModbusHub_setUnitLimits(h->m_hub, devId, unitId, &lim)) {
+            XPrintf("[xvfd-harness] setUnitLimits(dev=%d unit=%d) 失败\n", devId, unitId);
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief 按需装配一个参数点（AO 承载：读走 Hub 缓存、写走 FC06）。
+ * @param h 脚手架。
+ * @param dev 设备（须已 attach）。
+ * @param devId 设备句柄。
+ * @param unitId 从站地址。
+ * @param groups 品牌通信组表（静态 const）。
+ * @param groupCount 组数。
+ * @param desc 参数描述（取地址与名称）。
+ * @param paramId 参数描述表下标。
+ * @return 成功返回 true。
+ * @details 参数地址若落在已建组内 → 复用该组的映射段与虚拟地址空间；否则
+ *          **惰性建该组**（参数是低频按需操作，不预建全部参数组——那会让
+ *          读帧数暴涨）。
+ */
+static bool xvfdHarnessMountParamBrand(XvfdHarness* h, XVfdDevice* dev, int devId,
+                                       int unitId, const XVfdCommGroup* groups,
+                                       int groupCount, const XVfdParamDesc* desc,
+                                       uint16_t paramId)
+{
+    XvfdHarnessStation* st;
+    int gi;
+    uint16_t vbase = 0;
+    uint16_t vaddr;
+    XIoPoint* pt;
+    if (!h || !dev || !desc || !groups) return false;
+    st = xvfdHarnessStationOf(h, devId, unitId, groups, groupCount);
+    if (!st) return false;
+    gi = xvfdHarnessFindGroup(groups, groupCount, desc->m_addr);
+    if (gi < 0) {
+        XPrintf("[xvfd-harness] param %s addr 0x%04X not in any comm group",
+                desc->m_name ? desc->m_name : "?", desc->m_addr);
+        return false;
+    }
+    if (!xvfdHarnessEnsureGroup(h, st, gi, &vbase)) return false;
+    vaddr = (uint16_t)(vbase + (desc->m_addr - groups[gi].m_remoteStart));
+    pt = xvfdHarnessFindRef(st, desc->m_addr);
+    if (!pt) {
+        XModbusPoint* mp = XModbusPoint_createAnalogOutput(h->m_hub, (int)vaddr, 1, 1, 0,
+                                                            desc->m_name);
+        if (!mp) return false;
+        pt = (XIoPoint*)mp;
+        if (!XIoChannelGroup_addPoint(h->m_group, pt, true)) return false;
+        if (!xvfdHarnessSetRef(st, desc->m_addr, pt)) return false;
+        ++h->m_pointCount;
+    }
+    return XVfdDevice_bindParamPoint(dev, paramId, pt);
 }
 
 /**

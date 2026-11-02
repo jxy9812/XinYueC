@@ -116,6 +116,11 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
      * 包含链上），HUB_ON 蕴含 CORE_ON。 */
     } else if (strcmp(name, "xmodbus-core") == 0) {
         result = XModbusCoreTest_run() == 0;
+    /* XVfd 从站级约束单测（Hub 单帧读上限 / 功能码组边界 / 只 FC06）：
+     * 进程内假从站载体，**不依赖传输层**（无 socket/pty），本机环回
+     * 数据丢失环境下仍可判定。 */
+    } else if (strcmp(name, "xvfd-hub-limits") == 0) {
+        result = XVfdHubLimitsTest_run() == 0;
 #endif
 #if XPROTOCOL_ON && XVFD_ON
     /* XVfd 变频器闭环三件套（pty 路径走缺省文件回退）。 */
@@ -322,6 +327,7 @@ static int xtest_execute(XConsoleShell* shell, XConsoleShellSession* session,
                            "  Test xssl\n"
                            "  Test xmqtt\n"
                            "  Test xmodbus-hub / xprotocol-campaign (需虚拟从站)\n"
+                           "  Test xvfd-hub-limits (Hub 从站约束, 进程内自跑)\n"
                            "  Test xvfd-m512 / xvfd-bus485 / xvfd-atv61 (需虚拟从站)\n"
                            "  Test all\n")
                    ? XConsoleResult_Ok : XConsoleResult_IoError;
