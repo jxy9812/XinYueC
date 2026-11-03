@@ -362,9 +362,9 @@ static XModbusHub* cacheHubMake(int port, int* outDevId)
     if (!tcp) { XModbusHub_deleteLater(hub); return NULL; }
     XModbusClient_setTimeout((XModbusClient*)tcp, 800);
     XModbusClient_setReconnectInterval((XModbusClient*)tcp, 500);
-    do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
+    do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter((XModbusDevice*)tcp,
         XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-    do { XVariant* vParam = XVariant_create_int(port); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
+    do { XVariant* vParam = XVariant_create_int(port); XModbusDevice_setConnectionParameter((XModbusDevice*)tcp,
         XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
     id = XModbusHub_addDevice_2(hub, (XModbusClient*)tcp, "cacheA");
     if (id <= 0) { XModbusHub_deleteLater(hub); return NULL; }
@@ -631,17 +631,17 @@ int XModbusHubTest_runEx(int portA, int portB)
     XModbusClient_setReconnectInterval((XModbusClient*)tcpA, 500);
     XModbusClient_setReconnectInterval((XModbusClient*)tcpB, 500);
 
-    do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcpA,
+    do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter((XModbusDevice*)tcpA,
         XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-    do { XVariant* vParam = XVariant_create_int(portA); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcpA,
+    do { XVariant* vParam = XVariant_create_int(portA); XModbusDevice_setConnectionParameter((XModbusDevice*)tcpA,
         XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-    do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcpB,
+    do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter((XModbusDevice*)tcpB,
         XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-    do { XVariant* vParam = XVariant_create_int(portB); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcpB,
+    do { XVariant* vParam = XVariant_create_int(portB); XModbusDevice_setConnectionParameter((XModbusDevice*)tcpB,
         XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-    do { XVariant* vParam = XVariant_create_utf8_str(ptyPath); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)rtuC,
+    do { XVariant* vParam = XVariant_create_utf8_str(ptyPath); XModbusDevice_setConnectionParameter((XModbusDevice*)rtuC,
         XModbusDevice_SerialPortNameParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-    do { XVariant* vParam = XVariant_create_int(9600); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)rtuC,
+    do { XVariant* vParam = XVariant_create_int(9600); XModbusDevice_setConnectionParameter((XModbusDevice*)rtuC,
         XModbusDevice_SerialBaudRateParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
 
     const int idA = XModbusHub_addDevice_2(hub, (XModbusClient*)tcpA, "tcpA");

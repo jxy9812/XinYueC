@@ -316,13 +316,16 @@ void XByteArray_setVariant(XVariant* var, const XByteArray* array);
 /**
  * @brief 移动设置 XVariant 的 XByteArray 值。
  * @param var 目标 XVariant；不能为 NULL。
- * @param array 源字节数组；成功后由 XVariant 接管其资源。
+ * @param array 源字节数组；函数内抽取其堆资源，返回后 array 变为空壳——
+ *        **外壳仍由调用方按原分配方式释放**（create 用 XClassDelete，init 用 XClassDeinit），
+ *        此后不得再解引用其内容。
  */
 void XByteArray_setVariant_move(XVariant* var, XByteArray* array);
 /**
  * @brief 将已有 XByteArray 直接交给 XVariant 管理。
  * @param var 目标 XVariant；不能为 NULL。
- * @param array 源字节数组；成功后由 XVariant 负责其生命周期。
+ * @param array 源字节数组；**所有权完全转移**，成功后由 XVariant 负责释放，
+ *        调用方不得再释放或访问（再释放即双重释放）；必须是 XClassDelete 可释放的堆对象。
  */
 void XByteArray_setVariant_ref(XVariant* var, XByteArray* array);
 /**

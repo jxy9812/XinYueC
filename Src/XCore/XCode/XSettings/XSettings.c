@@ -542,17 +542,7 @@ static bool xconfParseSection(XSettingsConfFile* conf, const XString* sectionNam
             XClassDelete(fullKey);
             return false;
         }
-        if (variant->m_type == XVariantType_String) {
-            const XString* vs = XString_fromVariant_ref(variant);
-        }
         bool ok = xmapSet(conf->originalKeys, fullKey, variant);
-#if 1  /* DBG */
-        {
-            XVariant* back = NULL;
-            bool got = xmapGetValue(conf->originalKeys, fullKey, &back);
-        }
-#else
-#endif
         XClassDelete(variant);
         XClassDelete(fullKey);
         if (!ok)

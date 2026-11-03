@@ -313,10 +313,10 @@ int main(int argc, char* argv[])
     /* [复刻 demo 主站页] 自动重连开启 + 2000ms 间隔。 */
     XModbusClient_setAutoReconnect((XModbusClient*)g_client, true);
     XModbusClient_setReconnectInterval((XModbusClient*)g_client, 2000);
-    XModbusDevice_setConnectionParameter_ref(
+    XModbusDevice_setConnectionParameter(
         (XModbusDevice*)g_client, XModbusDevice_NetworkAddressParameter,
         XVariant_create_utf8_str(g_host));
-    XModbusDevice_setConnectionParameter_ref(
+    XModbusDevice_setConnectionParameter(
         (XModbusDevice*)g_client, XModbusDevice_NetworkPortParameter,
         XVariant_create_int(g_port));
 

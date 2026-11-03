@@ -261,7 +261,7 @@ int XMqttPublicApiTest_run(void)
         XMqttServerConnectionProperties_isValid(
             XMqttClient_serverConnectionProperties_const(client)),
         "CONNACK 驱动连接状态与服务端属性有效标志");
-    XMqttClient_setHostname(client, "should-not-change");
+    XMqttClient_setHostname_utf8(client, "should-not-change");
     MQTT_CHECK(XString_toUtf8_length(XMqttClient_hostname_const(client)) == 0,
                "连接期间拒绝修改连接配置");
 
@@ -362,7 +362,7 @@ int XMqttPublicApiTest_run(void)
     XMqttClient_setConnectionProperties(client, cp);
     XClassDelete(cp);
     XMqttClient_setProtocolVersion(client, XMqttClient_MQTT_5_0);
-    XMqttClient_setClientId(client, "");
+    XMqttClient_setClientId_utf8(client, "");
     XMqttClient_setAutoKeepAlive(client, false);
     XMqttClient_setTransport(client, mock, XMqttClient_IODevice);
     XMqttClient_connectToHost_base(client);

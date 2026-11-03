@@ -219,9 +219,15 @@ XBsonDocument* XBsonDocument_fromVariant(const XVariant* variant);
 XBsonDocument* XBsonDocument_fromVariant_ref(const XVariant* variant);
 /** @brief 深复制设置 XVariant 的 BSON 文档值。 */
 void XBsonDocument_setVariant(XVariant* variant, const XBsonDocument* doc);
-/** @brief 移动设置 XVariant 的 BSON 文档值。 */
+/**
+ * @brief 移动设置 XVariant 的 BSON 文档值（抽取资源，源文档变空壳）。
+ * @warning 源文档的堆资源已转移；**外壳仍由调用方释放**，此后不得再解引用。
+ */
 void XBsonDocument_setVariant_move(XVariant* variant, XBsonDocument* doc);
-/** @brief 将已有 BSON 文档直接交给 XVariant 管理。 */
+/**
+ * @brief 将已有 BSON 文档直接交给 XVariant 管理（指针接管，零拷贝）。
+ * @warning 所有权完全转移：登记后调用方不得再释放或访问，再释放即双重释放。
+ */
 void XBsonDocument_setVariant_ref(XVariant* variant, XBsonDocument* doc);
 
 /**

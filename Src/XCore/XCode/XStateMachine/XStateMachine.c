@@ -3,6 +3,7 @@
 #include "XCoreApplication.h"
 #include "XMemory.h"
 #include "XString.h"
+#include "XStringUtils.h"
 #include "XStateMachine_p.h"
 #include "XStateMachine_Protected.h"
 
@@ -21,6 +22,28 @@ typedef struct XStateMachine_SignalConnection {
     XConnection* m_connection;
     size_t m_referenceCount;
 } XStateMachine_SignalConnection;
+
+/**
+ * @brief 一条属性恢复记录（对标 QStateMachinePrivate::RestorableId + 保存值）。
+ * @details 元素由 computePendingRestorables_internal 产出、由调用方释放。
+ */
+typedef struct XStateMachine_Restorable {
+    XObject* m_object;       ///< 属性所属对象，不转移所有权。
+    char* m_propertyName; ///< 属性名 UTF-8 文本，由记录拥有。
+    XVariant* m_value;       ///< 需要恢复的旧值，由记录拥有。
+} XStateMachine_Restorable;
+
+/**
+ * @brief 一条恢复表项：某对象某属性在进入某状态前的旧值。
+ * @note 对标 QStateMachinePrivate::registeredRestorablesForState 的
+ *       QHash&lt;RestorableId, QVariant&gt; 单条记录。
+ */
+typedef struct XStateMachine_RestorableEntry {
+    XAbstractState* m_state; ///< 归属状态（登记时的进入状态），不取得所有权。
+    XObject* m_object;       ///< 属性所属对象，不转移所有权。
+    char* m_propertyName; ///< 属性名 UTF-8 文本，由表项拥有。
+    XVariant* m_value;       ///< 进入该状态前的旧值，由表项拥有。
+} XStateMachine_RestorableEntry;
 
 static XEventType g_processEventType = XEVENT_TYPE_NONE;
 static XEventType g_zeroDelayedEventType = XEVENT_TYPE_NONE;
@@ -240,6 +263,327 @@ static void XStateMachine_clearHistoryRecursive(XState* state)
     }
 }
 
+/* ==================== 属性赋值与恢复（对标 Qt 的 assignProperty 机制） ==================== */
+
+/**
+ * @brief 深拷贝属性名（XString_create_copy 与源共享底层缓冲，源释放后不可依赖）。
+ */
+static char* XStateMachine_copyUtf8(const char* text)
+{
+    return XStrdup(text);
+}
+
+/** @brief 按 UTF-8 文本比较属性名。 */
+static bool XStateMachine_samePropertyName(const char* left, const char* right)
+{
+    if (!left || !right)
+        return false;
+    return XStrcmp(left, right) == 0;
+}
+
+/** @brief 释放属性名文本。 */
+static void XStateMachine_freePropertyName(char* name)
+{
+    if (name)
+        XMemory_free(name, XCLASS_DEFAULT_MEMORY_TYPE);
+}
+
+/**
+ * @brief 查找某状态的恢复记录（对标 QStateMachinePrivate::hasRestorable）。
+ * @param machine 状态机。
+ * @param state 目标状态。
+ * @param object 属性所属对象。
+ * @param name 属性名。
+ * @return 表项指针；未登记时返回 NULL。
+ */
+static XStateMachine_RestorableEntry* XStateMachine_findRestorable(
+    XStateMachine* machine, XAbstractState* state, XObject* object,
+    const char* name)
+{
+    if (!machine || !machine->m_restorables || !state || !object || !name)
+        return NULL;
+    for (int64_t i = 0;
+         i < (int64_t)XVector_size_base((const XContainer*)machine->m_restorables); ++i) {
+        XStateMachine_RestorableEntry* entry = XVector_at_base(machine->m_restorables, i);
+        if (entry->m_state == state && entry->m_object == object
+            && XStateMachine_samePropertyName(entry->m_propertyName, name)) {
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+void XStateMachine_registerRestorable_internal(XStateMachine* machine, XAbstractState* state,
+                                               XObject* object, const char* propertyName,
+                                               const XVariant* value)
+{
+    if (!machine || !machine->m_restorables || !state || !object || !propertyName)
+        return;
+    if (XStateMachine_findRestorable(machine, state, object, propertyName))
+        return; /* 同一状态同一属性只保存第一份旧值（对标 Qt 的 contains 判断）。 */
+
+    XStateMachine_RestorableEntry entry;
+    entry.m_state = state;
+    entry.m_object = object;
+    entry.m_propertyName = XStateMachine_copyUtf8(propertyName);
+    entry.m_value = value ? XVariant_create_copy(value) : NULL;
+    if (!entry.m_propertyName || (value && !entry.m_value)
+        || !XVector_push_back_1_base(machine->m_restorables, &entry)) {
+        if (entry.m_propertyName)
+            XClassDelete((XClass*)entry.m_propertyName);
+        if (entry.m_value)
+            XClassDelete((XClass*)entry.m_value);
+    }
+}
+
+void XStateMachine_unregisterRestorables_internal(XStateMachine* machine, const XVector* states,
+                                                  XObject* object, const char* propertyName)
+{
+    if (!machine || !machine->m_restorables || !states || !object || !propertyName)
+        return;
+    for (int64_t i = (int64_t)XVector_size_base((const XContainer*)machine->m_restorables) - 1;
+         i >= 0; --i) {
+        XStateMachine_RestorableEntry* entry = XVector_at_base(machine->m_restorables, i);
+        if (entry->m_object != object
+            || !XStateMachine_samePropertyName(entry->m_propertyName, propertyName)) {
+            continue;
+        }
+        bool listed = false;
+        for (int64_t j = 0; j < (int64_t)XVector_size_base((const XContainer*)states); ++j) {
+            if (XVector_At_Base(states, j, XAbstractState*) == entry->m_state) {
+                listed = true;
+                break;
+            }
+        }
+        if (!listed)
+            continue;
+        if (entry->m_propertyName)
+            XStateMachine_freePropertyName(entry->m_propertyName);
+        if (entry->m_value)
+            XClassDelete((XClass*)entry->m_value);
+        XVector_removeAt_base(machine->m_restorables, i);
+    }
+}
+
+void XStateMachine_dropRestorablesForState_internal(XStateMachine* machine, XAbstractState* state)
+{
+    if (!machine || !machine->m_restorables || !state)
+        return;
+    for (int64_t i = (int64_t)XVector_size_base((const XContainer*)machine->m_restorables) - 1;
+         i >= 0; --i) {
+        XStateMachine_RestorableEntry* entry = XVector_at_base(machine->m_restorables, i);
+        if (entry->m_state != state)
+            continue;
+        if (entry->m_propertyName)
+            XStateMachine_freePropertyName(entry->m_propertyName);
+        if (entry->m_value)
+            XClassDelete((XClass*)entry->m_value);
+        XVector_removeAt_base(machine->m_restorables, i);
+    }
+}
+
+/**
+ * @brief 收集退出集合需要恢复的旧值（对标 computePendingRestorables）。
+ * @details 从最外层被退出的状态往回找：同一 (对象, 属性) 只保留最外层登记的旧值。
+ * @return 元素类型为 XStateMachine_Restorable 的容器，调用方用
+ *         XStateMachine_restorablesRelease_internal 释放。
+ */
+XVector* XStateMachine_computePendingRestorables_internal(const XStateMachine* machine,
+                                                          const XVector* statesToExit)
+{
+    XVector* restorables = XVector_Create(XStateMachine_Restorable);
+    if (!restorables || !machine || !machine->m_restorables || !statesToExit)
+        return restorables;
+
+    const int64_t exitCount = (int64_t)XVector_size_base((const XContainer*)statesToExit);
+    for (int64_t i = exitCount - 1; i >= 0; --i) {
+        XAbstractState* state = XVector_At_Base(statesToExit, i, XAbstractState*);
+        for (int64_t j = 0;
+             j < (int64_t)XVector_size_base((const XContainer*)machine->m_restorables); ++j) {
+            XStateMachine_RestorableEntry* entry = XVector_at_base(machine->m_restorables, j);
+            if (entry->m_state != state)
+                continue;
+            bool exists = false;
+            for (int64_t k = 0;
+                 k < (int64_t)XVector_size_base((const XContainer*)restorables); ++k) {
+                XStateMachine_Restorable* candidate = XVector_at_base(restorables, k);
+                if (candidate->m_object == entry->m_object
+                    && XStateMachine_samePropertyName(candidate->m_propertyName,
+                                                     entry->m_propertyName)) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (exists)
+                continue;
+            XStateMachine_Restorable restorable;
+            restorable.m_object = entry->m_object;
+            restorable.m_propertyName = XStateMachine_copyUtf8(entry->m_propertyName);
+            restorable.m_value = entry->m_value ? XVariant_create_copy(entry->m_value) : NULL;
+            if (!restorable.m_propertyName
+                || (entry->m_value && !restorable.m_value)
+                || !XVector_push_back_1_base(restorables, &restorable)) {
+                if (restorable.m_propertyName)
+                    XStateMachine_freePropertyName(restorable.m_propertyName);
+                if (restorable.m_value)
+                    XClassDelete((XClass*)restorable.m_value);
+            }
+        }
+    }
+    return restorables;
+}
+
+void XStateMachine_restorablesRelease_internal(XVector* restorables)
+{
+    if (!restorables)
+        return;
+    for (int64_t i = 0;
+         i < (int64_t)XVector_size_base((const XContainer*)restorables); ++i) {
+        XStateMachine_Restorable* restorable = XVector_at_base(restorables, i);
+        if (restorable->m_propertyName)
+            XStateMachine_freePropertyName(restorable->m_propertyName);
+        if (restorable->m_value)
+            XClassDelete((XClass*)restorable->m_value);
+    }
+    XClassDelete((XClass*)restorables);
+}
+
+/**
+ * @brief 把一条属性赋值写进对象（对标 QPropertyAssignment::write）。
+ * @param object 目标对象。
+ * @param name 属性名 UTF-8 文本。
+ * @param value 赋值；内部会被 XObject_setProperty 接管所有权。
+ * @return 写入成功返回 true；失败时 value 所有权仍在调用方。
+ */
+static bool XStateMachine_writeProperty(XObject* object, const char* name, XVariant* value)
+{
+    if (!object || !name)
+        return false;
+    XString* key = XString_create_utf8(name);
+    if (!key)
+        return false;
+    bool ok = XObject_setProperty(object, key, value);
+    XClassDelete((XClass*)key);
+    return ok;
+}
+
+/**
+ * @brief 取出某状态登记的属性赋值（对标 QStatePrivate::propertyAssignments）。
+ * @param state 目标状态。
+ * @param index 记录下标。
+ * @return 记录指针；越界或 state 非标准状态时返回 NULL。
+ */
+static XState_PropertyAssignment* XStateMachine_propertyAssignmentAt(
+    const XAbstractState* state, int64_t index)
+{
+    if (!state || (state->m_kind != XAbstractState_StandardState
+                   && state->m_kind != XAbstractState_StateMachine)) {
+        return NULL;
+    }
+    const XVector* assignments = XState_propertyAssignments_const((const XState*)state);
+    if (!assignments || index < 0
+        || index >= (int64_t)XVector_size_base((const XContainer*)assignments)) {
+        return NULL;
+    }
+    return XVector_At_Base(assignments, index, XState_PropertyAssignment*);
+}
+
+/**
+ * @brief 进入状态时执行属性赋值，并按全局恢复策略登记旧值。
+ * @details 对标 QStateMachinePrivate::enterStates 中"立即设置未动画属性"的整段逻辑。
+ * @param machine 状态机。
+ * @param state 即将进入的状态。
+ * @param exitedStates 本次退出的状态集合（用于把旧值的来源交给新状态）。
+ */
+static void XStateMachine_applyPropertyAssignments(XStateMachine* machine,
+                                                   XAbstractState* state,
+                                                   const XVector* exitedStates)
+{
+    if (!machine || !state)
+        return;
+    /* 只有 XState 与状态机根节点带属性赋值表；最终/历史状态没有该成员，
+     * 直接读会把后续成员当成容器指针（曾在此踩到段错误）。 */
+    if (state->m_kind != XAbstractState_StandardState
+        && state->m_kind != XAbstractState_StateMachine) {
+        return;
+    }
+    const XVector* assignments = XState_propertyAssignments_const((const XState*)state);
+    if (!assignments)
+        return;
+
+    for (int64_t i = 0;
+         i < (int64_t)XVector_size_base((const XContainer*)assignments); ++i) {
+        XState_PropertyAssignment* assignment = XStateMachine_propertyAssignmentAt(state, i);
+        if (!assignment || !assignment->m_object || !assignment->m_propertyName)
+            continue;
+
+        if (machine->m_globalRestorePolicy == XState_RestoreProperties) {
+            if (!XStateMachine_findRestorable(machine, state, assignment->m_object,
+                                              assignment->m_propertyName)) {
+                /* 旧值优先取更外层被退出状态登记的记录，否则取对象当前值。 */
+                XVariant* saved = NULL;
+                for (int64_t j = (int64_t)XVector_size_base((const XContainer*)exitedStates) - 1;
+                     j >= 0 && !saved; --j) {
+                    XAbstractState* exited = XVector_At_Base(exitedStates, j, XAbstractState*);
+                    XStateMachine_RestorableEntry* entry = XStateMachine_findRestorable(
+                        machine, exited, assignment->m_object, assignment->m_propertyName);
+                    if (entry && entry->m_value)
+                        saved = XVariant_create_copy(entry->m_value);
+                }
+                if (!saved) {
+                    XString* key = XString_create_utf8(assignment->m_propertyName);
+                    XVariant* current = key
+                        ? XObject_property(assignment->m_object, key)
+                        : NULL;
+                    saved = current ? XVariant_create_copy(current) : NULL;
+                    if (key)
+                        XClassDelete((XClass*)key);
+                }
+                XStateMachine_registerRestorable_internal(
+                    machine, state, assignment->m_object,
+                    assignment->m_propertyName, saved);
+                if (saved)
+                    XClassDelete((XClass*)saved);
+                /* 被新状态接管的旧值记录从已退出状态上移除，避免陈旧副本复活。 */
+                XStateMachine_unregisterRestorables_internal(
+                    machine, exitedStates, assignment->m_object,
+                    assignment->m_propertyName);
+            }
+        }
+
+        XVariant* value = assignment->m_value
+            ? XVariant_create_copy(assignment->m_value)
+            : NULL;
+        if (!XStateMachine_writeProperty(assignment->m_object,
+                                         assignment->m_propertyName, value)) {
+            if (value)
+                XClassDelete((XClass*)value);
+        }
+    }
+}
+
+/**
+ * @brief 把需要恢复的旧值写回对象（对标 restorablesToPropertyList 的写入阶段）。
+ * @param machine 状态机。
+ * @param pending 由 computePendingRestorables_internal 产出的待恢复集合。
+ */
+static void XStateMachine_restoreProperties(XStateMachine* machine, const XVector* pending)
+{
+    if (!machine || !pending)
+        return;
+    for (int64_t i = 0;
+         i < (int64_t)XVector_size_base((const XContainer*)pending); ++i) {
+        XStateMachine_Restorable* restorable = XVector_at_base(pending, i);
+        if (!restorable->m_value || !restorable->m_object || !restorable->m_propertyName)
+            continue;
+        XVariant* value = XVariant_create_copy(restorable->m_value);
+        if (value && !XStateMachine_writeProperty(restorable->m_object,
+                                                  restorable->m_propertyName, value)) {
+            XClassDelete((XClass*)value);
+        }
+    }
+}
+
 static XAbstractState* XStateMachine_findErrorState(XAbstractState* context)
 {
     for (XAbstractState* current = context; current; current = (XAbstractState*)current->m_parentState) {
@@ -278,11 +622,23 @@ static XAbstractState* XStateMachine_setError(XStateMachine* machine,
         break;
     }
     /* 错误描述按 XString 主版本存储（对标 Qt QString errorString）；
-     * 字面量仅在此转换为库内字符串，禁止以 char* 长期保存。 */
-    if (machine->m_errorString)
-        XString_assign_utf8(machine->m_errorString, errorText);
-    else
-        machine->m_errorString = XString_create_utf8(errorText);
+     * 字面量仅在此转换为库内字符串，禁止以 char* 长期保存。
+     * 对标 Qt 的 tr(...).arg(context->objectName())：有对象名时把状态名拼进文本，
+     * 便于现场定位是哪个状态缺初始状态 / 缺历史默认状态。 */
+    XString* text = XString_create_utf8(errorText);
+    if (text) {
+        const XString* contextName = context
+            ? XObject_objectName((const XObject*)context)
+            : NULL;
+        if (contextName && !XString_isEmpty_base((const XContainer*)contextName)) {
+            XString_append_utf8(text, " '");
+            XString_append(text, contextName);
+            XString_append_utf8(text, "'");
+        }
+        if (machine->m_errorString)
+            XClassDelete((XClass*)machine->m_errorString);
+        machine->m_errorString = text;
+    }
 
     XAbstractState* errorState = XStateMachine_findErrorState(context);
     machine->m_pendingErrorState = errorState;
@@ -790,7 +1146,8 @@ bool XStateMachine_isConfigured_internal(const XStateMachine* machine, const XAb
     return XStateMachine_vectorContains(machine->m_configuration, state);
 }
 
-static void XStateMachine_enterStates(XStateMachine* machine, XEvent* event, XVector* entries)
+static void XStateMachine_enterStates(XStateMachine* machine, XEvent* event, XVector* entries,
+                                      const XVector* exitedStates)
 {
     for (int64_t i = 0; entries && i < (int64_t)XVector_size_base((const XContainer*)entries); ++i) {
         XAbstractState* state = XVector_At_Base(entries, i, XAbstractState*);
@@ -808,6 +1165,8 @@ static void XStateMachine_enterStates(XStateMachine* machine, XEvent* event, XVe
             }
         }
 
+        /* 属性赋值必须在 onEntry 之前写入，与 Qt 的 enterStates 次序一致。 */
+        XStateMachine_applyPropertyAssignments(machine, state, exitedStates);
         XAbstractState_onEntry_base(state, event);
         XAbstractState_entered_signal(state);
         XAbstractState_setActive_internal(state, true);
@@ -869,6 +1228,10 @@ static bool XStateMachine_emitFinishedStates(XStateMachine* machine, XVector* en
 static bool XStateMachine_microstep(XStateMachine* machine, XEvent* event, XVector* transitions)
 {
     XVector* exitSet = XStateMachine_computeExitSet(machine, transitions);
+    /* 退出前先取恢复集合：被退出的状态登记着进入时的旧值（对标
+     * microstep 里 computePendingRestorables 早于 exitStates 的次序）。 */
+    XVector* pendingRestorables =
+        XStateMachine_computePendingRestorables_internal(machine, exitSet);
     XStateMachine_exitStates(machine, event, exitSet);
 
     for (int64_t i = 0; transitions && i < (int64_t)XVector_size_base((const XContainer*)transitions); ++i) {
@@ -878,9 +1241,13 @@ static bool XStateMachine_microstep(XStateMachine* machine, XEvent* event, XVect
     }
 
     XVector* entries = XStateMachine_computeEntrySet(machine, event, transitions, NULL);
-    XStateMachine_enterStates(machine, event, entries);
+    /* Qt 把"隐式恢复赋值"挂到最外层进入状态上：这里在进入前统一写回，
+     * 让随后 enterStates 的属性赋值能够覆盖它（后者优先级更高）。 */
+    XStateMachine_restoreProperties(machine, pendingRestorables);
+    XStateMachine_enterStates(machine, event, entries, exitSet);
     bool finished = XStateMachine_emitFinishedStates(machine, entries);
 
+    XStateMachine_restorablesRelease_internal(pendingRestorables);
     if (exitSet)
         XClassDelete((XClass*)exitSet);
     if (entries)
@@ -1060,7 +1427,8 @@ static void XStateMachine_startInternal(XStateMachine* machine)
             machine, entries, &errorTarget, &nullEvent);
     }
     XStateMachine_sortStates(entries, false);
-    XStateMachine_enterStates(machine, &nullEvent, entries);
+    /* 启动路径没有退出集合，隐式恢复集合必然为空。 */
+    XStateMachine_enterStates(machine, &nullEvent, entries, NULL);
     bool finished = XStateMachine_emitFinishedStates(machine, entries);
     XClassDeinit((XClass*)&nullEvent);
     XClassDelete((XClass*)entries);
@@ -1152,6 +1520,18 @@ static void VXStateMachine_deinit(XStateMachine* machine)
     XClassDelete((XClass*)machine->m_externalEventQueue);
     XClassDelete((XClass*)machine->m_delayedEvents);
     XClassDelete((XClass*)machine->m_signalConnections);
+    if (machine->m_restorables) {
+        for (int64_t i = 0;
+             i < (int64_t)XVector_size_base((const XContainer*)machine->m_restorables); ++i) {
+            XStateMachine_RestorableEntry* entry = XVector_at_base(machine->m_restorables, i);
+            if (entry->m_propertyName)
+                XStateMachine_freePropertyName(entry->m_propertyName);
+            if (entry->m_value)
+                XClassDelete((XClass*)entry->m_value);
+        }
+        XClassDelete((XClass*)machine->m_restorables);
+        machine->m_restorables = NULL;
+    }
     if (machine->m_errorString) {
         XClassDelete((XClass*)machine->m_errorString);
         machine->m_errorString = NULL;
@@ -1221,6 +1601,8 @@ void XStateMachine_init_ex(XStateMachine* machine, XState_ChildMode childMode)
     XAssert(machine->m_delayedEvents, "Memory allocation failed");
     machine->m_signalConnections = XVector_Create(XStateMachine_SignalConnection*);
     XAssert(machine->m_signalConnections, "Memory allocation failed");
+    machine->m_restorables = XVector_Create(XStateMachine_RestorableEntry);
+    XAssert(machine->m_restorables, "Memory allocation failed");
     machine->m_pendingErrorState = NULL;
     machine->m_state = XStateMachine_NotRunning;
     machine->m_error = XStateMachine_NoError;
@@ -1229,11 +1611,17 @@ void XStateMachine_init_ex(XStateMachine* machine, XState_ChildMode childMode)
     machine->m_processing = false;
     machine->m_processingScheduled = false;
     machine->m_stopRequested = false;
+    machine->m_globalRestorePolicy = XState_DontRestoreProperties;
 }
 
 bool XStateMachine_addState(XStateMachine* machine, XAbstractState* state)
 {
-    return machine && state && XState_addChild_internal((XState*)machine, state);
+    if (!machine || !state)
+        return false;
+    /* 对标 Qt：已属于本机的状态不重复挂接（Qt 侧发 qWarning 后返回）。 */
+    if (state->m_parentState == (XState*)machine)
+        return false;
+    return XState_addChild_internal((XState*)machine, state);
 }
 
 bool XStateMachine_removeState(XStateMachine* machine, XAbstractState* state)
@@ -1251,14 +1639,14 @@ XStateMachine_Error XStateMachine_error(const XStateMachine* machine)
     return machine ? machine->m_error : XStateMachine_NoError;
 }
 
-const XString* XStateMachine_errorString_const(const XStateMachine* machine)
+const XString* XStateMachine_errorString(const XStateMachine* machine)
 {
     return (machine && machine->m_errorString) ? machine->m_errorString : NULL;
 }
 
-const char* XStateMachine_errorString(const XStateMachine* machine)
+const char* XStateMachine_errorString_utf8(const XStateMachine* machine)
 {
-    /* 兼容视图：文本来自内部 XString 的 UTF-8 转换缓存，核心存储是 errorString_const 的 XString。 */
+    /* 兼容视图：文本来自内部 XString 的 UTF-8 转换缓存，核心存储是 errorString 的 XString。 */
     return (machine && machine->m_errorString) ? XString_toUtf8(machine->m_errorString) : NULL;
 }
 
@@ -1266,12 +1654,25 @@ void XStateMachine_clearError(XStateMachine* machine)
 {
     if (!machine)
         return;
+    /* 对标 Qt：只清错误码与描述，不动活动配置、运行状态和已排队的错误状态。 */
     machine->m_error = XStateMachine_NoError;
     if (machine->m_errorString) {
         XClassDelete((XClass*)machine->m_errorString);
         machine->m_errorString = NULL;
     }
-    machine->m_pendingErrorState = NULL;
+}
+
+XState_RestorePolicy XStateMachine_globalRestorePolicy(const XStateMachine* machine)
+{
+    return machine ? machine->m_globalRestorePolicy : XState_DontRestoreProperties;
+}
+
+void XStateMachine_setGlobalRestorePolicy(XStateMachine* machine,
+                                          XState_RestorePolicy restorePolicy)
+{
+    if (!machine)
+        return;
+    machine->m_globalRestorePolicy = restorePolicy;
 }
 
 bool XStateMachine_isRunning(const XStateMachine* machine)

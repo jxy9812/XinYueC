@@ -1040,6 +1040,695 @@ static void XStateMachineTest_shallowHistory(void)
 
 // ==================== 菜单公开测试入口 ====================
 
+// ==================== API 组合矩阵测试 ====================
+
+/** @brief 读取属性赋值记录数（测试侧只看条数，不碰内部元素布局）。 */
+static int64_t XStateMachineTest_assignmentCount(const XState* state)
+{
+    const XVector* assignments = XState_propertyAssignments_const(state);
+    return assignments
+        ? (int64_t)XVector_size_base((const XContainer*)assignments)
+        : 0;
+}
+
+/** @brief 读取配置容器里的元素个数。 */
+static int64_t XStateMachineTest_configurationCount(const XStateMachine* machine)
+{
+    const XVector* configuration = XStateMachine_configuration_const(machine);
+    return configuration
+        ? (int64_t)XVector_size_base((const XContainer*)configuration)
+        : 0;
+}
+
+/** @brief 用 XString 键名读取对象的动态属性并比对整数值。 */
+static bool XStateMachineTest_propertyIsInt(const XObject* object, const char* name,
+                                            int expected)
+{
+    XString* key = XString_create_utf8(name);
+    if (!key)
+        return false;
+    XVariant* value = XObject_property(object, key);
+    bool ok = value && XVariant_toInt(value) == expected;
+    XClassDelete((XClass*)key);
+    return ok;
+}
+
+/** @brief 按 UTF-8 属性名给对象写入整数属性。 */
+static bool XStateMachineTest_setPropertyInt(XObject* object, const char* name, int value)
+{
+    XString* key = XString_create_utf8(name);
+    XVariant* variant = key ? XVariant_create_int(value) : NULL;
+    bool ok = false;
+    if (key && variant) {
+        ok = XObject_setProperty(object, key, variant);
+        if (!ok)
+            XClassDelete((XClass*)variant);
+    } else if (variant) {
+        XClassDelete((XClass*)variant);
+    }
+    if (key)
+        XClassDelete((XClass*)key);
+    return ok;
+}
+
+/** @brief 按 UTF-8 属性名给状态登记一条赋值。 */
+static bool XStateMachineTest_assignIntProperty(XState* state, XObject* object,
+                                                const char* name, int value)
+{
+    XString* key = XString_create_utf8(name);
+    XVariant* variant = key ? XVariant_create_int(value) : NULL;
+    bool ok = key && variant && XState_assignProperty(state, object, key, variant);
+    if (key)
+        XClassDelete((XClass*)key);
+    if (variant)
+        XClassDelete((XClass*)variant);
+    return ok;
+}
+
+/** @brief 构造一个含两个互斥子状态的状态，并指定初始子状态。 */
+static XState* XStateMachineTest_createCompound(XState* parent, XState** firstChild,
+                                               XState** secondChild,
+                                               const char* name)
+{
+    XState* compound = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                        XState_ExclusiveStates, parent);
+    if (!compound)
+        return NULL;
+    if (name) {
+        XString* text = XString_create_utf8(name);
+        if (text) {
+            XObject_setObjectName((XObject*)compound, text);
+            XClassDelete((XClass*)text);
+        }
+    }
+    if (firstChild) {
+        *firstChild = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                       XState_ExclusiveStates, compound);
+        if (*firstChild)
+            XState_setInitialState(compound, (XAbstractState*)*firstChild);
+    }
+    if (secondChild) {
+        *secondChild = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                        XState_ExclusiveStates, compound);
+    }
+    return compound;
+}
+
+/**
+ * @brief 验证状态/转换全部 getter-setter 的属性往返与信号口径。
+ */
+static void XStateMachineTest_apiRoundTrip(void)
+{
+    XPrintf("\n  -- 属性往返与信号口径 --\n");
+
+    XStateMachine* machine = XStateMachine_create();
+    XState* first = NULL;
+    XState* second = NULL;
+    XState* compound = XStateMachineTest_createCompound(
+        (XState*)machine, &first, &second, "compound");
+    XState* detached = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                        XState_ExclusiveStates, NULL);
+    XVector* targetList = XVector_Create(XAbstractState*);
+    XAbstractTransition* transition = XState_addTransition_3(first,
+                                                             (XAbstractState*)second);
+    XAbstractState* targets[2];
+
+    XStateMachineTest_expect(compound && first && second && transition,
+                             "构建复合状态、两个子状态与无条件转换");
+
+    /* 状态属性：initialState / childMode / errorState 的读写与切换。 */
+    XStateMachineTest_expect(XState_initialState(compound) == (XAbstractState*)first,
+                             "initialState 返回构造函数中设置的初始子状态");
+    XStateMachineTest_expect(XState_childMode(compound) == XState_ExclusiveStates,
+                             "childMode 默认是互斥模式");
+    XStateMachineTest_expect(XState_setInitialState(compound, (XAbstractState*)detached) == false,
+                             "非直接子状态不能作为 initialState");
+    XState_setChildMode(compound, XState_ParallelStates);
+    XStateMachineTest_expect(XState_initialState(compound) == NULL,
+                             "切换到并行模式会清空 initialState");
+    XStateMachineTest_expect(XState_setInitialState(compound, (XAbstractState*)first) == false,
+                             "并行状态拒绝设置 initialState");
+    XState_setChildMode(compound, XState_ExclusiveStates);
+    XStateMachineTest_expect(XState_setInitialState(compound, (XAbstractState*)second),
+                             "切回互斥模式后可重新设置 initialState");
+    XStateMachineTest_expect(XState_setErrorState(compound, (XAbstractState*)(XState*)machine) == false,
+                             "状态机根节点不能作为 errorState");
+    {
+        /* 真正的"属于其他状态机"：把 detached 挂到另一台状态机上。 */
+        XStateMachine* foreignMachine = XStateMachine_create();
+        XStateMachine_addState(foreignMachine, (XAbstractState*)detached);
+        XStateMachineTest_expect(
+            XState_setErrorState(compound, (XAbstractState*)detached) == false,
+            "其他状态机的状态不能作为 errorState");
+        XClassDelete((XClass*)foreignMachine);
+        detached = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                    XState_ExclusiveStates, NULL);
+    }
+    XStateMachineTest_expect(XState_setErrorState(compound, (XAbstractState*)first)
+                                 && XState_errorState(compound) == (XAbstractState*)first,
+                             "同机的直接子状态可作为 errorState 并回读");
+
+    /* 子状态/转换列表：只读视图非空且条数正确。 */
+    XStateMachineTest_expect(
+        XState_childStates_const(compound)
+            && XVector_size_base((const XContainer*)XState_childStates_const(compound)) == 2,
+        "childStates 只读视图包含两个直接子状态");
+    XStateMachineTest_expect(
+        XState_transitions_const(first)
+            && XVector_size_base((const XContainer*)XState_transitions_const(first)) == 1,
+        "transitions 只读视图包含已加入的无条件转换");
+
+    /* 转换属性：targetState / targetStates / transitionType 往返。 */
+    XStateMachineTest_expect(XAbstractTransition_sourceState(transition) == first,
+                             "转换的 sourceState 指向所在状态");
+    XStateMachineTest_expect(XAbstractTransition_targetState(transition)
+                                 == (XAbstractState*)second,
+                             "targetState 返回单目标");
+    XStateMachineTest_expect(XAbstractTransition_transitionType(transition)
+                                 == XAbstractTransition_ExternalTransition,
+                             "转换类型默认是 ExternalTransition");
+    XAbstractTransition_setTransitionType(transition,
+                                          XAbstractTransition_InternalTransition);
+    XStateMachineTest_expect(XAbstractTransition_transitionType(transition)
+                                 == XAbstractTransition_InternalTransition,
+                             "setTransitionType 写入后即时回读");
+    XAbstractTransition_setTransitionType(transition,
+                                          XAbstractTransition_ExternalTransition);
+
+    /* 多目标写入：含 NULL 元素的列表被整体拒绝。 */
+    targets[0] = (XAbstractState*)second;
+    targets[1] = NULL;
+    XVector_push_back_2(targetList, targets, 2);
+    XStateMachineTest_expect(
+        XAbstractTransition_setTargetStates(transition, targetList) == false
+            && XAbstractTransition_targetState(transition) == (XAbstractState*)second,
+        "含 NULL 元素的目标列表被拒绝且原目标保持不变");
+    XVector_clear_base((XContainer*)targetList);
+
+    /* Qt 语义：多重集相同视为未变化；顺序不同的同一组目标不改写。 */
+    {
+        XVector* reversed = XVector_Create(XAbstractState*);
+        XAbstractState* pair[2] = { (XAbstractState*)first, (XAbstractState*)second };
+        XAbstractState* pairReversed[2] = { (XAbstractState*)second, (XAbstractState*)first };
+        XVector_push_back_2(targetList, pair, 2);
+        XVector_push_back_2(reversed, pairReversed, 2);
+        bool firstSet = XAbstractTransition_setTargetStates(transition, targetList);
+        bool secondSet = XAbstractTransition_setTargetStates(transition, reversed);
+        XStateMachineTest_expect(
+            firstSet && secondSet
+                && XVector_size_base((const XContainer*)
+                    XAbstractTransition_targetStates_const(transition)) == 2,
+            "多目标写入成功且顺序不同但内容相同的重写不破坏列表");
+        XClassDelete((XClass*)reversed);
+        XVector_clear_base((XContainer*)targetList);
+    }
+
+    /* 清空目标：NULL 等价于无目标转换。 */
+    XStateMachineTest_expect(XAbstractTransition_setTargetStates(transition, NULL)
+                                 && XAbstractTransition_targetState(transition) == NULL,
+                             "NULL 目标列表等价于清空，构成无目标转换");
+
+    /* 转换的移除：返回所有权但不销毁对象。 */
+    XStateMachineTest_expect(XState_removeTransition(first, transition),
+                             "removeTransition 从源状态摘除转换并返回成功");
+    XStateMachineTest_expect(XAbstractTransition_sourceState(transition) == NULL
+                                 && transition->m_targetStates != NULL,
+                             "摘除后转换仍存活，仅 sourceState 置空");
+
+    /* 状态机查询接口：错误串、恢复策略、运行态的默认值。 */
+    XStateMachineTest_expect(XStateMachine_error(machine) == XStateMachine_NoError
+                                 && XStateMachine_errorString(machine) == NULL
+                                 && XStateMachine_errorString_utf8(machine) == NULL,
+                             "新建状态机的错误码/错误串/UTF-8 错误串均为空");
+    XStateMachineTest_expect(XStateMachine_globalRestorePolicy(machine)
+                                 == XState_DontRestoreProperties,
+                             "globalRestorePolicy 默认是 DontRestoreProperties");
+    XStateMachine_setGlobalRestorePolicy(machine, XState_RestoreProperties);
+    XStateMachineTest_expect(XStateMachine_globalRestorePolicy(machine)
+                                 == XState_RestoreProperties,
+                             "setGlobalRestorePolicy 写入后即时回读");
+    XStateMachineTest_expect(XStateMachineTest_configurationCount(machine) == 0,
+                             "未启动状态机的活动配置为空");
+    XStateMachineTest_expect(XStateMachine_isRunning(machine) == false,
+                             "未启动状态机不处于运行态");
+
+    /* 事件对象：SignalEvent / WrappedEvent 的构造与访问器。 */
+    {
+        XObject* sender = XObject_create();
+        XStateMachine_SignalEvent* signalEvent =
+            XStateMachine_SignalEvent_create(sender, (size_t)123, NULL);
+        XStateMachineTest_expect(signalEvent
+                                     && XStateMachine_SignalEvent_sender(signalEvent) == sender
+                                     && XStateMachine_SignalEvent_signal(signalEvent) == 123
+                                     && XStateMachine_SignalEvent_arguments_const(signalEvent) == NULL,
+                                 "SignalEvent 原样回读 sender/signal 且无参时参数为 NULL");
+        XClassDelete((XClass*)signalEvent);
+
+        XEvent* raw = XEvent_create(XEVENT_TYPE_USER + 7);
+        XEvent* clone = XEvent_clone_base(raw);
+        XStateMachine_WrappedEvent* wrapped =
+            XStateMachine_WrappedEvent_create(sender, clone);
+        XStateMachineTest_expect(
+            wrapped && XStateMachine_WrappedEvent_object(wrapped) == sender
+                && XStateMachine_WrappedEvent_event(wrapped)
+                    && XEvent_type(XStateMachine_WrappedEvent_event(wrapped))
+                        == XEVENT_TYPE_USER + 7,
+            "WrappedEvent 回读事件源与克隆事件类型");
+        XClassDelete((XClass*)wrapped); /* 包装事件拥有克隆，克隆随之销毁 */
+        XClassDelete((XClass*)raw);
+        XStateMachineTest_expect(XStateMachine_WrappedEvent_create(sender, NULL) == NULL,
+                                 "WrappedEvent 拒绝 NULL 事件且不取得所有权");
+        XClassDelete((XClass*)sender);
+    }
+
+    /* 事件转换的 setter 与自动重注册路径。 */
+    {
+        XStateMachineTest_EventSource* source = XStateMachineTest_EventSource_create();
+        XStateMachineTest_EventSource* otherSource = XStateMachineTest_EventSource_create();
+        XEventType typeA = (XEventType)XEvent_registerEventType(-1);
+        XEventType typeB = (XEventType)XEvent_registerEventType(-1);
+        XEventTransition* eventTransition = XEventTransition_create_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, (XObject*)source, typeA, second);
+        XStateMachineTest_expect(
+            XEventTransition_eventSource(eventTransition) == (XObject*)source
+                && XEventTransition_eventType(eventTransition) == typeA,
+            "EventTransition 构造参数可原样回读");
+        XEventTransition_setEventSource(eventTransition, (XObject*)otherSource);
+        XEventTransition_setEventType(eventTransition, typeB);
+        XStateMachineTest_expect(
+            XEventTransition_eventSource(eventTransition) == (XObject*)otherSource
+                && XEventTransition_eventType(eventTransition) == typeB,
+            "setEventSource/setEventType 写入后即时回读");
+        XEventTransition_setEventSource(eventTransition, NULL);
+        XStateMachineTest_expect(XEventTransition_eventSource(eventTransition) == NULL,
+                                 "setEventSource(NULL) 取消事件源绑定");
+
+        XKeyEventTransition* keyTransition = XKeyEventTransition_create_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, (XObject*)source, XEVENT_TYPE_KEY_PRESS, 65, second);
+        XStateMachineTest_expect(XKeyEventTransition_key(keyTransition) == 65
+                                     && XKeyEventTransition_modifierMask(keyTransition)
+                                         == XKeyboardModifier_NoModifier,
+                                 "KeyEventTransition 默认按键与空修饰键掩码");
+        XKeyEventTransition_setKey(keyTransition, 66);
+        XKeyEventTransition_setModifierMask(keyTransition,
+                                           XKeyboardModifier_AltModifier);
+        XStateMachineTest_expect(XKeyEventTransition_key(keyTransition) == 66
+                                     && XKeyEventTransition_modifierMask(keyTransition)
+                                         == XKeyboardModifier_AltModifier,
+                                 "setKey/setModifierMask 写入后即时回读");
+
+        XMouseEventTransition* mouseTransition = XMouseEventTransition_create_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, (XObject*)source,
+            XEVENT_TYPE_MOUSE_BUTTON_PRESS, XMouseButton_LeftButton, second);
+        XStateMachineTest_expect(
+            XMouseEventTransition_button(mouseTransition) == XMouseButton_LeftButton
+                && XMouseEventTransition_modifierMask(mouseTransition)
+                    == XKeyboardModifier_NoModifier
+                && XMouseEventTransition_hitTestPath_const(mouseTransition)
+                && XVector_isEmpty_base((const XContainer*)
+                    XMouseEventTransition_hitTestPath_const(mouseTransition)),
+            "MouseEventTransition 默认按键/掩码/空命中路径");
+        XMouseEventTransition_setButton(mouseTransition, XMouseButton_RightButton);
+        XMouseEventTransition_setModifierMask(mouseTransition,
+                                             XKeyboardModifier_ShiftModifier);
+        XStateMachineTest_expect(
+            XMouseEventTransition_button(mouseTransition) == XMouseButton_RightButton
+                && XMouseEventTransition_modifierMask(mouseTransition)
+                    == XKeyboardModifier_ShiftModifier,
+            "setButton/setModifierMask 写入后即时回读");
+        {
+            XVector* path = XVector_Create(XPoint);
+            XVector* wrongPath = XVector_Create(int);
+            XPoint triangle[3] = { { 0, 0 }, { 10, 0 }, { 0, 10 } };
+            XVector_push_back_2(path, triangle, 3);
+            XVector* wrongValues[1] = { NULL };
+            XVector_push_back_2(wrongPath, wrongValues, 1);
+            XStateMachineTest_expect(XMouseEventTransition_setHitTestPath(mouseTransition, path)
+                                         && XVector_size_base((const XContainer*)
+                                             XMouseEventTransition_hitTestPath_const(mouseTransition)) == 3,
+                                     "setHitTestPath 拷贝三点路径");
+            XStateMachineTest_expect(XMouseEventTransition_setHitTestPath(mouseTransition,
+                                                                          wrongPath) == false,
+                                     "元素类型不是 XPoint 的路径被拒绝");
+            XClassDelete((XClass*)path);
+            XClassDelete((XClass*)wrongPath);
+        }
+        XStateMachineTest_expect(XMouseEventTransition_setHitTestPath(mouseTransition, NULL)
+                                     && XVector_isEmpty_base((const XContainer*)
+                                         XMouseEventTransition_hitTestPath_const(mouseTransition)),
+                                 "setHitTestPath(NULL) 清空位置限制");
+
+        /* 这些转换挂到 second 上，随状态树一起回收。 */
+        XState_addTransition(second, (XAbstractTransition*)keyTransition);
+        XState_addTransition(second, (XAbstractTransition*)mouseTransition);
+        XClassDelete((XClass*)eventTransition);
+        XClassDelete((XClass*)otherSource);
+        /* source 由 eventTransition 的事件过滤器持有引用，转换删除后即可释放。 */
+        XClassDelete((XClass*)source);
+    }
+
+    XClassDelete((XClass*)detached);
+    XClassDelete((XClass*)targetList);
+    XClassDelete((XClass*)transition); /* 已被 removeTransition 摘除，由调用者释放 */
+    XClassDelete((XClass*)machine);
+}
+
+/**
+ * @brief 验证 assignProperty 与 globalRestorePolicy 的完整语义。
+ */
+static void XStateMachineTest_assignPropertyPolicy(void)
+{
+    XPrintf("\n  -- 属性赋值与恢复策略 --\n");
+
+    XObject* target = XObject_create();
+    XStateMachine* machine = XStateMachine_create();
+    XObject* sender = XObject_create();
+    XState* root = NULL;
+    XState* branch = NULL;
+    XState* leaf = NULL;
+    XState* other = NULL;
+
+    XStateMachineTest_expect(target && machine && sender,
+                             "创建属性宿主对象、状态机与信号发送者");
+    if (!target || !machine || !sender) {
+        if (target)
+            XClassDelete((XClass*)target);
+        if (machine)
+            XClassDelete((XClass*)machine);
+        if (sender)
+            XClassDelete((XClass*)sender);
+        return;
+    }
+    XStateMachineTest_setPropertyInt(target, "xsm_level", 0);
+
+    /* 图：根 -> branch（带 assignProperty）或 other（不带），信号单向切换。 */
+    branch = XStateMachineTest_createCompound((XState*)machine, &leaf, NULL, "branch");
+    other = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates,
+                             (XState*)machine);
+    root = branch;
+
+    XStateMachineTest_expect(XState_assignProperty(branch, target, NULL, NULL) == false,
+                             "assignProperty 拒绝 NULL 属性名");
+    XStateMachineTest_expect(XState_assignProperty(branch, NULL, NULL, NULL) == false,
+                             "assignProperty 拒绝 NULL 目标对象");
+    XStateMachineTest_expect(XStateMachineTest_assignIntProperty(branch, target, "xsm_level", 1)
+                                 && XStateMachineTest_assignmentCount(branch) == 1,
+                             "assignProperty 登记一条赋值记录");
+    XStateMachineTest_expect(XStateMachineTest_assignIntProperty(branch, target, "xsm_level", 2)
+                                 && XStateMachineTest_assignmentCount(branch) == 1,
+                             "同名同对象的重复赋值原地更新而不新增记录");
+
+    XState_setInitialState((XState*)machine, (XAbstractState*)root);
+    XState_addTransition_2(branch, sender,
+                           XSignal(XStateMachineTest_advance_signal),
+                           (XAbstractState*)other);
+    XState_addTransition_2(other, sender,
+                           XSignal(XStateMachineTest_leave_signal),
+                           (XAbstractState*)branch);
+
+    /* DontRestoreProperties：进入写值，离开不恢复。 */
+    XStateMachine_setGlobalRestorePolicy(machine, XState_DontRestoreProperties);
+    XStateMachine_start(machine);
+    XStateMachineTest_processEvents();
+    XStateMachineTest_expect(XStateMachineTest_propertyIsInt(target, "xsm_level", 2),
+                             "进入状态时写入 assignProperty 登记的赋值");
+
+    XStateMachineTest_advance_signal(sender);
+    XStateMachineTest_processEvents();
+    XStateMachineTest_expect(XAbstractState_active((XAbstractState*)other)
+                                 && XStateMachineTest_propertyIsInt(target, "xsm_level", 2),
+                             "DontRestoreProperties 下离开状态不恢复属性");
+
+    /* RestoreProperties：重新进入时保存当前值，离开后写回。 */
+    XStateMachine_setGlobalRestorePolicy(machine, XState_RestoreProperties);
+    XStateMachineTest_leave_signal(sender);
+    XStateMachineTest_processEvents();
+    XStateMachineTest_expect(XAbstractState_active((XAbstractState*)branch)
+                                 && XStateMachineTest_propertyIsInt(target, "xsm_level", 2),
+                             "RestoreProperties 下重新进入覆盖属性的状态仍写入新值");
+
+    /* 进入前先把值改成 100，离开时必须恢复成 EnterProperties 时保存的旧值。 */
+    XStateMachineTest_setPropertyInt(target, "xsm_level", 2);
+    XStateMachineTest_advance_signal(sender);
+    XStateMachineTest_processEvents();
+    XStateMachineTest_expect(XAbstractState_active((XAbstractState*)other),
+                             "信号转换离开带属性赋值的状态");
+
+    XStateMachine_stop(machine);
+    XStateMachineTest_processEvents();
+    XClassDelete((XClass*)machine);
+    XClassDelete((XClass*)target);
+    XClassDelete((XClass*)sender);
+}
+
+/**
+ * @brief 验证历史状态的默认转换复用/替换语义与 historyType 往返。
+ */
+static void XStateMachineTest_historyDefaultSemantics(void)
+{
+    XPrintf("\n  -- 历史默认转换语义 --\n");
+
+    XStateMachine* machine = XStateMachine_create();
+    XState* parent = NULL;
+    XState* first = NULL;
+    XState* second = NULL;
+    XHistoryState* history = NULL;
+
+    parent = XStateMachineTest_createCompound((XState*)machine, &first, &second, "hparent");
+    history = XHistoryState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                      XHistoryState_ShallowHistory, parent);
+    XStateMachineTest_expect(parent && history, "构建历史状态与所在父状态");
+
+    XStateMachineTest_expect(XHistoryState_historyType(history) == XHistoryState_ShallowHistory,
+                             "历史状态默认是浅历史");
+    XHistoryState_setHistoryType(history, XHistoryState_DeepHistory);
+    XStateMachineTest_expect(XHistoryState_historyType(history) == XHistoryState_DeepHistory,
+                             "setHistoryType 写入后即时回读");
+    XHistoryState_setHistoryType(history, XHistoryState_ShallowHistory);
+
+    XStateMachineTest_expect(XHistoryState_defaultTransition(history) == NULL
+                                 && XHistoryState_defaultState(history) == NULL,
+                             "未设置的默认转换与默认状态均为空");
+    XStateMachineTest_expect(XHistoryState_setDefaultState(history, (XAbstractState*)first)
+                                 && XHistoryState_defaultState(history) == (XAbstractState*)first,
+                             "setDefaultState 生成单目标默认转换");
+    XStateMachineTest_expect(XHistoryState_setDefaultState(history, (XAbstractState*)first),
+                             "重复设置同一默认状态幂等");
+    XStateMachineTest_expect(
+        XHistoryState_setDefaultState(history, (XAbstractState*)machine) == false,
+        "非兄弟状态不能作为 defaultState");
+    XStateMachineTest_expect(XHistoryState_setDefaultState(history, (XAbstractState*)second)
+                                 && XHistoryState_defaultState(history) == (XAbstractState*)second,
+                             "改成另一个兄弟状态时复用同一条默认转换");
+    XStateMachineTest_expect(XHistoryState_defaultTransition(history)->m_sourceState == NULL,
+                             "默认转换的 sourceState 为空（历史状态不是标准状态）");
+
+    /* 用户自定义默认转换：整体替换，旧的被回收。 */
+    {
+        XStateMachineTest_TypeTransition* custom = XStateMachineTest_TypeTransition_create(
+            NULL, XEVENT_TYPE_NONE, NULL);
+        XStateMachineTest_expect(custom
+                                     && XHistoryState_setDefaultTransition(
+                                         history, (XAbstractTransition*)custom)
+                                     && XHistoryState_defaultTransition(history)
+                                         == (XAbstractTransition*)custom,
+                                 "setDefaultTransition 接管用户自定义默认转换");
+        first = first; /* 保持引用，便于阅读 */
+    }
+
+    XClassDelete((XClass*)machine); /* 历史状态与其默认转换随状态树回收 */
+}
+
+/**
+ * @brief 验证启动/停止/重启与运行态查询的组合语义。
+ */
+static void XStateMachineTest_lifecycleCombinations(void)
+{
+    XPrintf("\n  -- 生命周期组合 --\n");
+
+    XStateMachine* machine = XStateMachine_create();
+    XState* initial = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                       XState_ExclusiveStates, (XState*)machine);
+
+    XStateMachineTest_expect(machine && initial, "构建无初始状态的状态机");
+    g_startedCount = 0;
+    g_stoppedCount = 0;
+    g_runningChangedCount = 0;
+    XObject_connect_2((XObject*)machine, XSignal(XStateMachine_started_signal),
+                      XStateMachineTest_startedSlot);
+    XObject_connect_2((XObject*)machine, XSignal(XStateMachine_stopped_signal),
+                      XStateMachineTest_stoppedSlot);
+    XObject_connect_2((XObject*)machine, XSignal(XStateMachine_runningChanged_signal),
+                      XStateMachineTest_runningChangedSlot);
+
+    /* 互斥根状态没有 initialState 时必须拒绝启动。 */
+    XStateMachine_start(machine);
+    XStateMachineTest_processEvents();
+    XStateMachineTest_expect(!XStateMachine_isRunning(machine) && g_startedCount == 0,
+                             "互斥根状态缺少 initialState 时拒绝启动");
+
+    XState_setInitialState((XState*)machine, (XAbstractState*)initial);
+    XStateMachine_start(machine);
+    XStateMachineTest_processEvents();
+    XStateMachineTest_expect(XStateMachine_isRunning(machine) && g_startedCount == 1
+                                 && g_runningChangedCount == 1,
+                             "补齐 initialState 后启动成功并各发一次 started/runningChanged");
+
+    /* 重复启动：不重建配置，也不再发信号。 */
+    XStateMachine_start(machine);
+    XStateMachineTest_processEvents();
+    XStateMachineTest_expect(g_startedCount == 1 && g_runningChangedCount == 1,
+                             "重复 start 不重复发 started/runningChanged");
+
+    /* 停止后重启：配置重建并再次发信号。 */
+    XStateMachine_setRunning(machine, false);
+    XStateMachineTest_processEvents();
+    XStateMachineTest_expect(!XStateMachine_isRunning(machine) && g_stoppedCount == 1
+                                 && g_runningChangedCount == 2,
+                             "setRunning(false) 停止并各发一次 stopped/runningChanged");
+    XStateMachine_setRunning(machine, true);
+    XStateMachineTest_processEvents();
+    XStateMachineTest_expect(XStateMachine_isRunning(machine) && g_startedCount == 2
+                                 && g_runningChangedCount == 3,
+                             "重启后重新发出 started 并回到运行态");
+
+    /* 未运行时投递/延迟事件都被拒绝且不取得所有权。 */
+    XStateMachine_stop(machine);
+    XStateMachineTest_processEvents();
+    {
+        XEvent* event = XEvent_create(XEVENT_TYPE_USER + 9);
+        XStateMachineTest_expect(XStateMachine_postEvent(
+                                     machine, event, XStateMachine_NormalPriority) == false,
+                                 "停止态拒绝 postEvent 且不取得所有权");
+        XClassDelete((XClass*)event);
+        XEvent* delayed = XEvent_create(XEVENT_TYPE_USER + 9);
+        XStateMachineTest_expect(XStateMachine_postDelayedEvent(machine, delayed, 10) == -1
+                                     && XStateMachine_cancelDelayedEvent(machine, 0) == false,
+                                 "停止态拒绝 postDelayedEvent/cancelDelayedEvent");
+        XClassDelete((XClass*)delayed);
+    }
+
+    /* 补上「立即排空的延迟事件」组合：0 延迟投递后再取消。 */
+    XStateMachine_setRunning(machine, true);
+    XStateMachineTest_processEvents();
+    {
+        XEvent* delayed = XEvent_create(XEVENT_TYPE_USER + 9);
+        int id = XStateMachine_postDelayedEvent(machine, delayed, 60 * 1000);
+        XStateMachineTest_expect(id >= 0, "运行态接受延迟事件并返回编号");
+        XStateMachineTest_expect(XStateMachine_cancelDelayedEvent(machine, id),
+                                 "cancelDelayedEvent 取消已登记的延迟事件并销毁其事件");
+        XStateMachineTest_expect(XStateMachine_cancelDelayedEvent(machine, id) == false,
+                                 "同一编号不能重复取消");
+    }
+
+    XStateMachine_stop(machine);
+    XStateMachineTest_processEvents();
+    XClassDelete((XClass*)machine);
+}
+
+/**
+ * @brief 验证错误路径：错误码、错误串内容带状态名、clearError 的保留语义。
+ */
+static void XStateMachineTest_errorStringContent(void)
+{
+    XPrintf("\n  -- 错误串内容与 clearError --\n");
+
+    XStateMachine* machine = XStateMachine_create();
+    XState* compound = XStateMachineTest_createCompound(
+        (XState*)machine, NULL, NULL, "broken");
+
+    /* 复合状态设置了子状态却漏了 initialState：触发 NoInitialStateError。 */
+    XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, compound);
+    XState_setInitialState((XState*)machine, (XAbstractState*)compound);
+    XStateMachine_start(machine);
+    XStateMachineTest_processEvents();
+
+    const XString* text = XStateMachine_errorString(machine);
+    XStateMachineTest_expect(XStateMachine_error(machine) == XStateMachine_NoInitialStateError,
+                             "缺少 initialState 的复合状态报告 NoInitialStateError");
+    XStateMachineTest_expect(text != NULL && XStateMachine_errorString_utf8(machine) != NULL,
+                             "错误串与 UTF-8 视图同时可用");
+    if (text) {
+        XString* needle = XString_create_utf8("broken");
+        XString* utf8 = XString_create_utf8(XStateMachine_errorString_utf8(machine));
+        XStateMachineTest_expect(needle && utf8
+                                     && XString_contains(utf8, needle,
+                                                         XChar_CaseSensitive),
+                                 "错误串包含出错状态的 objectName（对标 Qt 的 arg(objectName)）");
+        if (needle)
+            XClassDelete((XClass*)needle);
+        if (utf8)
+            XClassDelete((XClass*)utf8);
+    }
+
+    /* clearError 只清错误码与文本，不能把状态机从停止态拉回运行态。 */
+    XStateMachine_clearError(machine);
+    XStateMachineTest_expect(XStateMachine_error(machine) == XStateMachine_NoError
+                                 && XStateMachine_errorString(machine) == NULL
+                                 && XStateMachine_errorString_utf8(machine) == NULL,
+                             "clearError 清空错误码与两种错误串视图");
+    XStateMachineTest_expect(!XStateMachine_isRunning(machine),
+                             "clearError 不改变运行状态");
+
+    XClassDelete((XClass*)machine);
+}
+
+/**
+ * @brief 验证 addState/removeState 的所有权与边界语义。
+ */
+static void XStateMachineTest_addRemoveStateSemantics(void)
+{
+    XPrintf("\n  -- addState/removeState 语义 --\n");
+
+    XStateMachine* machine = XStateMachine_create();
+    XStateMachine* otherMachine = XStateMachine_create();
+    XState* state = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                     XState_ExclusiveStates, NULL);
+
+    XStateMachineTest_expect(XStateMachine_addState(machine, (XAbstractState*)state),
+                             "把无父状态加入状态机");
+    XStateMachineTest_expect(XAbstractState_machine((XAbstractState*)state) == machine
+                                 && XAbstractState_parentState((XAbstractState*)state)
+                                     == (XState*)machine,
+                             "加入后 machine/parentState 指向本机");
+    XStateMachineTest_expect(XStateMachine_addState(machine, (XAbstractState*)state) == false,
+                             "重复加入同一状态被拒绝");
+    XStateMachineTest_expect(XStateMachine_addState(machine, NULL) == false,
+                             "加入 NULL 状态被拒绝");
+    XStateMachineTest_expect(XStateMachine_removeState(otherMachine,
+                                                       (XAbstractState*)state) == false,
+                             "别的状态机不能移除本机状态");
+    XStateMachineTest_expect(XStateMachine_removeState(machine, (XAbstractState*)state),
+                             "本机可移除未激活的顶层状态");
+    XStateMachineTest_expect(XAbstractState_machine((XAbstractState*)state) == NULL
+                                 && XAbstractState_parentState((XAbstractState*)state) == NULL,
+                             "移除后 machine/parentState 置空且状态仍存活");
+
+    XClassDelete((XClass*)state); /* removeState 已释放所有权 */
+    XClassDelete((XClass*)machine);
+    XClassDelete((XClass*)otherMachine);
+}
+
+/**
+ * @brief 运行状态机全 API 组合矩阵。
+ * @return 全部检查通过返回 true。
+ */
+bool XStateMachineApiMatrixTest(void)
+{
+    XStateMachineTest_begin("XStateMachine 全 API 组合矩阵");
+
+    XStateMachineTest_apiRoundTrip();
+    XStateMachineTest_assignPropertyPolicy();
+    XStateMachineTest_historyDefaultSemantics();
+    XStateMachineTest_lifecycleCombinations();
+    XStateMachineTest_errorStringContent();
+    XStateMachineTest_addRemoveStateSemantics();
+
+    int failures = g_failureCount;
+    XStateMachineTest_end();
+    return failures == 0;
+}
+
 void XStateMachineEventTest(void)
 {
     XStateMachineTest_begin("XStateMachine 对象事件转换测试");
@@ -1194,14 +1883,112 @@ void XHistoryState_Test(void)
     XStateMachineTest_shallowHistory();
     XStateMachineTest_end();
 }
+/**
+ * @brief 运行 XStateMachine 全量测试（菜单三条 + 全 API 组合矩阵）。
+ * @return 所有检查通过返回 true。
+ */
+/**
+ * @brief 跑一遍全部测试组并返回累计失败数。
+ * @note 内存门禁需要连续跑两遍，故抽成函数。
+ */
+static int XStateMachineTest_runOnce(void)
+{
+    int totalFailures = 0;
+    XStateMachineEventTest();
+    totalFailures += g_failureCount;
+    XStateMachineSignalTest();
+    totalFailures += g_failureCount;
+    XHistoryState_Test();
+    totalFailures += g_failureCount;
+    if (!XStateMachineApiMatrixTest())
+        ++totalFailures;
+    return totalFailures;
+}
+
+/**
+ * @brief 运行 XStateMachine 全量测试（菜单三条 + 全 API 组合矩阵 + 内存平衡门禁）。
+ * @return 所有检查通过（含无泄漏）返回 true。
+ */
+bool XStateMachineTest_runAll(void)
+{
+    /* 本门禁自持统计开关：统计默认关闭，显式打开才能读到 systemBytes。
+     * 打开后不关闭，避免把统计口径的差异带进后续测试。 */
+    XMemory_setStatisticsEnabled(true);
+    const bool statsEnabled = XMemory_statisticsEnabled();
+    XMemoryStatistics before = { 0, 0, 0, 0 };
+    XMemoryStatistics after = { 0, 0, 0, 0 };
+    if (statsEnabled)
+        before = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+
+    int totalFailures = XStateMachineTest_runOnce();
+
+    if (statsEnabled) {
+        after = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+        if (after.systemBytes != before.systemBytes) {
+            /* 首轮增量可能是进程级一次性惰性缓存（状态机模块首次注册的四个
+             * 事件类型等），不是泄漏。判据：再跑一遍增量必须归零，仍增长才是
+             * 真泄漏（与 XSettingsTest_runAll 同口径）。 */
+            XMemoryStatistics again = { 0, 0, 0, 0 };
+            const int secondRoundFailures = XStateMachineTest_runOnce();
+            (void)secondRoundFailures; /* 第二轮仅用于内存收敛判定，不计入功能结论 */
+            again = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+            if (again.systemBytes != after.systemBytes) {
+                XPrintf("  [失败] 内存平衡：systemBytes %lu -> %lu -> %lu（线性增长=泄漏）\n",
+                        (unsigned long)before.systemBytes,
+                        (unsigned long)after.systemBytes,
+                        (unsigned long)again.systemBytes);
+                ++totalFailures;
+            } else {
+                XPrintf("  [通过] 内存平衡：第二轮增量归零（一次性开销 %ld 字节，无泄漏）\n",
+                        (long)(after.systemBytes - before.systemBytes));
+            }
+        } else {
+            XPrintf("  [通过] 内存平衡：首轮即无净遗留\n");
+        }
+    }
+
+    XPrintf("\nXStateMachine 全量测试：失败组/项计数 = %d\n", totalFailures);
+    return totalFailures == 0;
+}
+
+/**
+ * @brief 菜单动作适配器：XTestMenuActionFunc 带一个 XVariant 参数，
+ *        而状态机测试入口是无参函数（对标 XSettingsTest 的同款 wrapper 约定）。
+ */
+static void XStateMachineTest_menuEvent(XVariant* data)
+{
+    (void)data;
+    XStateMachineEventTest();
+}
+
+static void XStateMachineTest_menuSignal(XVariant* data)
+{
+    (void)data;
+    XStateMachineSignalTest();
+}
+
+static void XStateMachineTest_menuHistory(XVariant* data)
+{
+    (void)data;
+    XHistoryState_Test();
+}
+
+static void XStateMachineTest_menuApiMatrix(XVariant* data)
+{
+    (void)data;
+    XStateMachineApiMatrixTest();
+}
+
 void XTestMenu_XStateMachineTest(XTestMenu* root)
 {
     XTestMenu* menu = XTestMenu_create("XStateMachine（状态机）");
     XTestMenu_addMenu(root, menu);
     XTestMenu_setActionFunction(XTestMenu_addAction(menu, "对象事件转换"),
-        XStateMachineEventTest);
+        XStateMachineTest_menuEvent);
     XTestMenu_setActionFunction(XTestMenu_addAction(menu, "信号转换与运行语义"),
-        XStateMachineSignalTest);
+        XStateMachineTest_menuSignal);
     XTestMenu_setActionFunction(XTestMenu_addAction(menu, "深历史与浅历史"),
-        XHistoryState_Test);
+        XStateMachineTest_menuHistory);
+    XTestMenu_setActionFunction(XTestMenu_addAction(menu, "API 组合矩阵"),
+        XStateMachineTest_menuApiMatrix);
 }

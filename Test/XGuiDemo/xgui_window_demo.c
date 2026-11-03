@@ -7659,7 +7659,11 @@ int xgui_demo_main(int argc, char* argv[])
                  * 默认 0 = 鼠标直投路径，历史行为）。 */
                 const char* dragTouch =
                     XSystem_environment("XGUI_DEMO_DRAG_TOUCH");
-                if (dragTouch && dragTouch[0] && dragTouch[0] == '3')
+                if (dragTouch && dragTouch[0] && dragTouch[0] == '5')
+                    demo_page_advanced_probeDragSweep(dragPhase);
+                else if (dragTouch && dragTouch[0] && dragTouch[0] == '4')
+                    demo_page_advanced_probeDropGeom(dragPhase);
+                else if (dragTouch && dragTouch[0] && dragTouch[0] == '3')
                     demo_page_advanced_probeDragMem(dragPhase, 12);
                 else if (dragTouch && dragTouch[0] && dragTouch[0] == '2')
                     demo_page_advanced_probeDragReal(dragPhase);

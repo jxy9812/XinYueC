@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file main.c
  * @brief XinYueC 默认控制台入口。
  * @details
@@ -128,6 +128,11 @@ static int main_run_test_dispatch(const char* testPath)
     if (strcmp(testPath, "xsettings") == 0)
         return XSettingsTest_runAll() ? 0 : 1;
 #endif
+#if DEMOTEST_ON
+    /* XStateMachine（对标 Qt 6.8 QStateMachine）全 API 组合矩阵。 */
+    if (strcmp(testPath, "xstatemachine") == 0)
+        return XStateMachineTest_runAll() ? 0 : 1;
+#endif
     if (strcmp(testPath, "xconsole-shell") == 0)
         return XConsoleShellTest_runAll() ? 0 : 1;
     if (strcmp(testPath, "xconsole-shell-backend") == 0)
@@ -170,7 +175,7 @@ static int main_run_test_dispatch(const char* testPath)
     /* Modbus 服务端 FC 全量覆盖（含读事件信号口径回归）：进程内自跑，
        无需外部虚拟从站，返回码=失败数。 */
     if (strcmp(testPath, "xmodbus-coverage") == 0)
-        return XModbusCoverageTest_run() == 0 ? 0 : 1;
+        return XModbusCoverageTest_run() ? 0 : 1;
     /* XModbus 核心值类型组合（Pdu/Adu/DataUnit/CommEvent/DeviceIdent/
      * Reply）：纯逻辑、无传输依赖，任意平台直跑，返回码=失败数。 */
     if (strcmp(testPath, "xmodbus-core") == 0)
@@ -299,6 +304,8 @@ static void main_print_test_list(void)
     XPrintf("  --test xdevice-network\n");
     XPrintf("  --test xdevice-serial-port\n");
     XPrintf("  --test xdata\n");
+    XPrintf("  --test xsettings\n");
+    XPrintf("  --test xstatemachine\n");
     XPrintf("  --test xlink (功能) / xlink-quality (质量) / xlink-demo (案例联调)\n");
     XPrintf("  --test xlink-demo-server + xlink-demo-client (双进程联调)\n");
     XPrintf("  --test xlink-all (全功能闸门) / all (全仓闸门)\n");

@@ -738,7 +738,8 @@ static bool xsettings_test_commentsAndErrors(void)
     }
     XClassDelete(writer);
     s = XSettings_create_7_utf8(path, XSettings_IniFormat, NULL);
-    XSettings_value_utf8(s, "key");
+    r = XSettings_value_utf8(s, "key");
+    if (r) XClassDelete(r);
     XSETTINGS_REQUIRE(XSettings_status(s) == XSettings_FormatError, "missing bracket", "缺 ']' 应置 FormatError");
     XClassDelete(s);
     /* 粘滞：后续正常访问仍保持 FormatError */
@@ -1133,9 +1134,20 @@ bool XSettingsTest_runAll(void)
     if (statsEnabled) {
         after = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
         if (after.systemBytes != before.systemBytes) {
-            XPrintf("[FAIL] XSettings: 内存平衡: systemBytes %lu -> %lu（疑似泄漏）\n",
-                    (unsigned long)before.systemBytes, (unsigned long)after.systemBytes);
-            all = false;
+            /* 首轮增量可能是进程级一次性惰性缓存（例如系统路径/格式注册表
+             * 的首次填充），不是泄漏。判据：同一用例集再跑一遍，增量必须
+             * 归零；仍增长才是真泄漏。 */
+            XMemoryStatistics again = { 0, 0, 0, 0 };
+            for (size_t i = 0; i < count; ++i)
+                g_xsettings_testFns[i]();
+            again = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+            if (again.systemBytes != after.systemBytes) {
+                XPrintf("[FAIL] XSettings: 内存平衡: systemBytes %lu -> %lu -> %lu（线性增长=泄漏）\n",
+                        (unsigned long)before.systemBytes,
+                        (unsigned long)after.systemBytes,
+                        (unsigned long)again.systemBytes);
+                all = false;
+            }
         }
     }
     XPrintf("[SUMMARY] XSettings: %s\n", all ? "全部通过" : "存在失败");

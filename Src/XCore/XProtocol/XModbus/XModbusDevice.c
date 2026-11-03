@@ -158,16 +158,22 @@ void XModbusDevice_setConnectionParameter_ref(XModbusDevice* dev, XModbusDevice_
     if (!dev || !value || parameter < 0 || parameter >= XModbusDevice_ParameterCount) {
         return;
     }
-    /* [UAF 根修 2026-10-30] 对标 Qt 6.8 QModbusDevice::setConnectionParameter
-     * （qmodbusdevice.cpp:352-360：参数表按值存 QVariant 拷贝）——设备**拥有**
-     * 参数副本，调用方变体设后即可释放。旧实现注释写「复制」实际存裸指针，
-     * 且覆盖时删除调用方内存：调用方先 set 后 delete 即 UAF（ASan 实证：
-     * XVariant_toInt 读已释放堆，FC 覆盖测试 22 败级联+关停段错误）。
-     * 全库 37 处调用皆为「set 后即忘」形态，深拷贝对齐事实契约。 */
-    if (dev->m_params[parameter]) {
-        XClassDelete(dev->m_params[parameter]);
+    /* 指针接管（零拷贝）：直接登记调用方传入的 XVariant 对象，所有权随之
+     * 转移给设备，此后由本设备析构统一释放。调用方在登记后不得再释放或
+     * 访问 value，否则即双重释放。
+     *
+     * 与「深拷贝」的区别只在成本：本变体不动任何内存，适合调用方本就为
+     * 本次设置创建了对象、且之后不再使用的场景。
+     * 历史教训（2026-10-30）：旧实现把调用方指针存下后覆盖时 XClassDelete
+     * 了它，而调用方仍按"设完即可释放"的旧注释释放同一个对象 → UAF。
+     * 根因是**注释与语义不符**，不是 _ref 不可实现；此处按契约实现并写明义务。 */
+    if (dev->m_params[parameter] == value) {
+        return; /* 同一对象重复设置：幂等，切勿删除后重挂。 */
     }
-    dev->m_params[parameter] = XVariant_create_copy(value);
+    if (dev->m_params[parameter]) {
+        XClassDelete(dev->m_params[parameter]); /* 只释放自己此前接管的对象。 */
+    }
+    dev->m_params[parameter] = value;
 }
 
 // =============== 连接管理 API ===============

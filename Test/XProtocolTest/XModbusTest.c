@@ -53,8 +53,8 @@ void XModbusRtuSerialClientTest()
 {
     XModbusRtuSerialClient* client = XModbusRtuSerialClient_create();
     XModbusClient_setAutoReconnect(client, true);
-    do { XVariant* vParam = XVariant_create_utf8_str("COM26"); XModbusDevice_setConnectionParameter_ref(client, XModbusDevice_SerialPortNameParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-    do { XVariant* vParam = XVariant_create_int(9600); XModbusDevice_setConnectionParameter_ref(client, XModbusDevice_SerialBaudRateParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
+    do { XVariant* vParam = XVariant_create_utf8_str("COM26"); XModbusDevice_setConnectionParameter(client, XModbusDevice_SerialPortNameParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
+    do { XVariant* vParam = XVariant_create_int(9600); XModbusDevice_setConnectionParameter(client, XModbusDevice_SerialBaudRateParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
     if (!XModbusDevice_connectDevice(client))
     {
         XPrintf("失败\n");
@@ -125,9 +125,9 @@ void XModbusTcpClientTest()
      // 创建TCP客户端
     XModbusTcpClient* client = XModbusTcpClient_create();
     XModbusClient_setAutoReconnect(client,true);
-    do { XVariant* vParam = XVariant_create_utf8_str("192.168.1.117"); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,
+    do { XVariant* vParam = XVariant_create_utf8_str("192.168.1.117"); XModbusDevice_setConnectionParameter((XModbusDevice*)client,
     XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-    do { XVariant* vParam = XVariant_create_int(502); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,
+    do { XVariant* vParam = XVariant_create_int(502); XModbusDevice_setConnectionParameter((XModbusDevice*)client,
     XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
   
     if (!XModbusDevice_connectDevice(client))

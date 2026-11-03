@@ -142,9 +142,9 @@ static void test_channel_group_hub(void)
         static XModbusRegisterType key2 = XModbusHoldingRegisters;
         XVariant* a = XVariant_create_utf8_str("127.0.0.1");
         XVariant* p = XVariant_create_int(0);
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice*)slave,
+        XModbusDevice_setConnectionParameter((XModbusDevice*)slave,
             XModbusDevice_NetworkAddressParameter, a);
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice*)slave,
+        XModbusDevice_setConnectionParameter((XModbusDevice*)slave,
             XModbusDevice_NetworkPortParameter, p);
         XClassDelete((XClass*)a);
         XClassDelete((XClass*)p);
@@ -172,9 +172,9 @@ static void test_channel_group_hub(void)
     {
         XVariant* a = XVariant_create_utf8_str("127.0.0.1");
         XVariant* p = XVariant_create_int((int)port);
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,
+        XModbusDevice_setConnectionParameter((XModbusDevice*)client,
             XModbusDevice_NetworkAddressParameter, a);
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,
+        XModbusDevice_setConnectionParameter((XModbusDevice*)client,
             XModbusDevice_NetworkPortParameter, p);
         XClassDelete((XClass*)a);
         XClassDelete((XClass*)p);

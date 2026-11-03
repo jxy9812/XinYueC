@@ -309,7 +309,10 @@ int64_t XIODevice_read_2(XIODevice* self, XByteArray* buff, int64_t maxlen, bool
 	else
 		XByteArray_resize_base(buff, maxlen);
 	int64_t n = XIODevice_read_1(self, isAppend? &XByteArray_at_base(buff, count): XContainerDataAddr(buff), maxlen);
-	XContainerSize(buff) = isAppend ? (n + count) : n;
+	/* 读失败（-1）不能写进容器尺寸：size_t 下会变成 SIZE_MAX，后续遍历越界
+	 * （对标 Qt：QIODevice::read 出错返回 -1，缓冲内容不增长）。 */
+	XContainerSize(buff) = (n > 0) ? (isAppend ? ((size_t)n + count) : (size_t)n)
+	                               : (isAppend ? count : 0);
 	return n;
 }
 

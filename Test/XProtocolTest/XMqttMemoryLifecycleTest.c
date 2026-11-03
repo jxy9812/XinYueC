@@ -31,8 +31,8 @@ void XMqttMemoryLifecycleTest(void)
         bool ok = client && filter && topic && message && publish && connection &&
                   subscription && authentication;
         if (client) {
-            XMqttClient_setHostname(client, "127.0.0.1");
-            XMqttClient_setWillTopic(client, "lifecycle/will");
+            XMqttClient_setHostname_utf8(client, "127.0.0.1");
+            XMqttClient_setWillTopic_utf8(client, "lifecycle/will");
             XMqttClient_setWillMessage(client, payload, sizeof(payload) - 1);
             XMqttClient_setWillQoS(client, 1);
         }

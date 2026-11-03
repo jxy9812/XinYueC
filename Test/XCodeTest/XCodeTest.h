@@ -52,6 +52,10 @@ void XTestMenu_XConsoleShellBackendTest(XTestMenu* root);
 void XStateMachineEventTest();
 void XStateMachineSignalTest();
 void XHistoryState_Test();
+/** @brief 运行 XStateMachine 全 API 组合矩阵测试；返回 true 表示全部通过。 */
+bool XStateMachineApiMatrixTest(void);
+/** @brief 运行 XStateMachine 全量测试（供 `--test xstatemachine` 自动化调用）。 */
+bool XStateMachineTest_runAll(void);
 #endif // DEMOTEST_ON
 
 #ifdef __cplusplus

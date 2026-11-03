@@ -173,9 +173,18 @@ XPair* XPair_fromVariant(const XVariant* variant);
 XPair* XPair_fromVariant_ref(const XVariant* variant);
 /** @brief 深复制设置 XVariant 的 XPair 值。 */
 void XPair_setVariant(XVariant* variant, const XPair* pair);
-/** @brief 移动设置 XVariant 的 XPair 值。 */
+/**
+ * @brief 移动设置 XVariant 的 XPair 值（抽取资源，XPair 变空壳）。
+ * @warning 返回后源 XPair 的堆资源已转移，内容不可再用；
+ *          **外壳仍由调用方按原分配方式释放**（create 出来的用 XClassDelete，
+ *          init 出来的用 XClassDeinit）。
+ */
 void XPair_setVariant_move(XVariant* variant, XPair* pair);
-/** @brief 将已有 XPair 直接交给 XVariant 管理。 */
+/**
+ * @brief 将已有 XPair 直接交给 XVariant 管理（指针接管，零拷贝）。
+ * @warning 所有权完全转移：登记后**调用方不得再释放或访问**该 XPair，
+ *          再释放即双重释放。传入的必须是可由 XClassDelete 释放的堆对象。
+ */
 void XPair_setVariant_ref(XVariant* variant, XPair* pair);
 
 /**

@@ -219,11 +219,11 @@ int XVfdM512Test_runEx(const char* ptyOverride)
         XModbusClient_setTimeout((XModbusClient*)client[i], 3000);
         XModbusClient_setNumberOfRetries((XModbusClient*)client[i], 2);
         var = XVariant_create_utf8_str("127.0.0.1");
-        XModbusDevice_setConnectionParameter_ref(mdev[i],
+        XModbusDevice_setConnectionParameter(mdev[i],
             XModbusDevice_NetworkAddressParameter, var);
         XClassDelete((XClass*)var);
         var = XVariant_create_int((int)port[i]);
-        XModbusDevice_setConnectionParameter_ref(mdev[i],
+        XModbusDevice_setConnectionParameter(mdev[i],
             XModbusDevice_NetworkPortParameter, var);
         XClassDelete((XClass*)var);
         snprintf(name, sizeof(name), "m512-u%d", i + 1);

@@ -1,10 +1,73 @@
 # XSettings（Qt 6.8 QSettings 全量对齐）进度与交接
 
-> 状态：**功能已全部打通，19/19 测试通过；剩 4 处小量线性内存泄漏待修**
+> 状态：**全部完成——19/19 功能测试通过，ASan 零泄漏，全量回归 331 项零失败**
 > 分支：`codex/xdevice-file-platform`
-> HEAD：`45b790c9`（与远端最新提交一致；XSettings 全部工作在未提交的工作区，共 17 项）
-> 交接日期：2026-11-02
+> HEAD：`67fb5003`（已含 XSettings 全部提交）
+> 交接日期：2026-11-02（Linux 侧收尾）
 > 接续环境：Linux（本文档第七节给出迁移、构建与验证步骤）
+
+## 0. Linux 侧收尾记录（2026-11-02 晚，新增）
+
+在 Linux 上继续时，基线并非文档原记的「只剩 4 处泄漏」——`--test xsettings`
+在 case 14 直接**段错误**（Windows 侧不复现）。以下为本次全部收尾工作：
+
+### 0.1 新发现的框架缺陷（严重度高于泄漏，已根修）
+
+| # | 缺陷 | 文件 | 违反的 Qt 语义 |
+|---|---|---|---|
+| 6 | `XIODevice_read_2` 把读失败的 `-1` 直接写进容器尺寸 | `Src/XCore/XIO/XIODevice/XIODevice.c:303` | `QIODevice::read` 出错返回 -1，缓冲内容不增长。原实现 `XContainerSize(buff) = n` 在 `size_t` 下把 `-1` 变成 `SIZE_MAX`，随后行扫描越界段错误 |
+
+**触发条件**：把**目录**当配置文件读。Linux 上 `open()` 对目录成功、`read()` 才返回
+`EISDIR`；Windows 上 `open()` 就失败，所以只在 Linux 复现。`XSettings_test_writability`
+用 `XDir_homePath()`（目录）构造 `XSettings` 正好踩中。
+
+### 0.2 4 处泄漏的真实根因（与交接文档原推测不同）
+
+原文档推测在 TLV 编解码/转义函数的内部临时对象上。ASan 实测是**同一类系统性错误**：
+
+> `XString_toVariant_move` / `XByteArray_toVariant_move` / `XStringList_toVariant_move` /
+> `XVariantList_toVariant_move` / `XMap_toVariant_move` 以及 `*_push_back_move_base`
+> 只**转移内容**，**源壳对象仍须调用方 `XClassDelete`**。
+> 原代码写成 `if (!variant) XClassDelete(src);`——即只在失败时才释放，成功路径必然泄漏。
+
+修复点（`Src/XCore/XCode/XSettings/XSettings_ini.c` 共 11 处）：
+`xtrReadVariant` 的 String/ByteArray/StringList/List/Map 五个分支、
+`xsettingsStringToVariant` 的 @ByteArray/@String/@@ 三处、
+`xsettingsStringListToVariantList` 的两处、
+`xsettingsSplitArgs`、`xsettingsUnescapedStringList` 的逗号分隔分支。
+
+测试侧另有一处：`xsettings_test_commentsAndErrors` 里 `XSettings_value_utf8()` 返回值被丢弃（48B）。
+
+**结果**：LeakSanitizer 1704 字节 / 18 处分配 → **0**。
+
+### 0.3 内存平衡断言口径修正
+
+`XSettingsTest_runAll` 原来断言「首轮前后 systemBytes 严格相等」。但首轮存在
+**进程级一次性惰性缓存**（+312 字节，系统路径/格式注册表首次填充），二次运行归零。
+已改为**两遍收敛判据**：首轮有增量时再跑一遍，增量归零即判通过，仍增长才失败。
+这既保留了对真泄漏的检出能力，也不再误报一次性缓存。
+
+### 0.4 清理
+
+- 删除 `XSettings.c` 中残留的 `#if 1 /* DBG */` 调试块，以及其上的空 `if`
+  （只取引用不使用的死代码）
+- 全程复核 `[XSettings][DBG]` / `[MEM]` 打点为 0 处（提交版已无，文档第八节的 43 处是过期记录）
+
+### 0.5 收尾验证（Linux）
+
+```
+cmake --build build --target XinYueC_Static            # Debug
+./bin/XinYueC_Static --test xsettings                  # RC=0，20/20 全绿
+
+cmake --build build-asan-xs --target XinYueC_Static    # ASan
+ASAN_OPTIONS=detect_leaks=1 ./bin/XinYueC_Static --test xsettings
+                                                       # RC=0，零泄漏，全绿
+
+./bin/XinYueC_Static --test all                        # RC=0，331 项零失败
+```
+
+> 注意：`bin/` 是两个构建目录的共用输出。跑完 ASan 后必须重建 Debug 版，
+> 否则留在盘上的是 ASan 二进制（体积 68MB vs 30MB，可据此判断）。
 
 ---
 
@@ -23,7 +86,7 @@
 | XRect / XSize 接入 XVariant（原缺失） | ✅ 完成 |
 | 测试接入 Test 菜单 + `Test xsettings` 自动化 | ✅ 完成 |
 | 19 项功能测试 | ✅ 全部通过 |
-| 内存零泄漏 | ⚠️ 修复 10504 → 2016 字节，剩 4 处待修 |
+| 内存零泄漏 | ✅ ASan 零泄漏（1704B → 0） |
 
 ---
 
@@ -130,10 +193,14 @@ main.c                                            --test xsettings 入口
 
 ---
 
-## 六、剩余工作：4 处线性内存泄漏
+## 六、4 处线性内存泄漏（已全部修复，本节保留排查记录）
 
-### 现状
-内存平衡断言仍报 `systemBytes 220040 → 222056`（**+2016 字节**），因此 `--test xsettings` 返回码为 1。
+> **状态：已闭环。** 真实根因不是本节原推测的「TLV/转义函数内部临时对象」，
+> 而是 `*_move` 转移后源壳未释放这一类系统性错误。ASan 定位与修复详情见
+> 第 0.2 节；LeakSanitizer 已从 1704 字节 / 18 处分配降到 **0**。
+> 下方原始排查记录保留，供后续同类问题参考。
+
+### 原记录（修复前）
 
 已用"同一用例连跑两遍"的方法区分真泄漏与惰性缓存：
 
@@ -264,29 +331,22 @@ ASAN_OPTIONS=detect_leaks=1 ./bin/XinYueC_Static --test xsettings
 ```
 LeakSanitizer 会直接给出泄漏点的调用栈，四个 case 的根因应能一次定位。
 
-### 5. 修复后的验证清单
-- [ ] 四个 case 的 `[MEM][case N]` 均为 `+0`
-- [ ] 最终 `systemBytes` 前后相等，`--test xsettings` 返回 0
-- [ ] 清理全部调试打点（第八节）
-- [ ] 全量回归：`./bin/XinYueC_Static --test all`
+### 5. 修复后的验证清单（全部完成 ✅）
+- [x] LeakSanitizer 零泄漏（1704B → 0）
+- [x] `--test xsettings` 返回 0，20/20 全绿
+- [x] 清理全部调试打点（第八节）
+- [x] 全量回归：`./bin/XinYueC_Static --test all` → 331 项零失败
 
 ---
 
-## 八、清理清单（修完泄漏后必做）
+## 八、清理清单（已完成）
 
-当前源码中有 **43 处调试打点**，分布在：
-```
-Src/XCore/XCode/XSettings/XSettings.c        21 处 [XSettings][DBG]
-Src/XCore/XCode/XSettings/XSettings_ini.c     4 处 [XSettings][DBG]
-Test/XCodeTest/XSettingsTest.c               18 处 [XSettings][DBG] / [MEM]
-```
+> **状态：已完成。** 提交版 `67fb5003` 里的 `[XSettings][DBG]` / `[MEM]` 打点为
+> **0 处**（本节原记的 43 处是 Windows 开发中途的状态，提交前已清）。
+> Linux 侧收尾时额外删除了 `XSettings.c` 中残留的 `#if 1 /* DBG */` 死代码块
+> 及其上方只取引用不使用的空 `if`。
 
-清理方式：
-```bash
-grep -n "\[XSettings\]\[DBG\]\|\[MEM\]" \
-     Src/XCore/XCode/XSettings/*.c Test/XCodeTest/XSettingsTest.c
-```
-逐条删除；`XSettingsTest_runAll` 里的逐用例增量打印与 `xsettings_test_memoryBalance` 的四段探针属于调试设施，应还原为简洁的最终断言。
+以下为原始清理说明（保留备查）：
 
 同时可移除的临时守卫（保留与否自行判断，保留也无害）：
 - `xsettingsReadIniLine` 的 `dbgRestarts` 循环保护

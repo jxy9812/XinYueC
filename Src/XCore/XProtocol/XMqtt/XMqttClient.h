@@ -368,11 +368,17 @@ const XString* XMqttClient_username_const(const XMqttClient* client);
  */
 XString* XMqttClient_username(const XMqttClient* client);
 /**
- * @brief 设置用户名
+ * @brief 设置用户名（XString 主版本：内部深拷贝）
  * @param client 客户端实例指针（非 NULL）
- * @param username 用户名字符串（UTF-8，可为 NULL 表示清除）
+ * @param username 用户名字符串；借用，函数内深拷贝，调用方保留所有权；NULL 表示清除
  */
-void XMqttClient_setUsername(XMqttClient* client, const char* username);
+void XMqttClient_setUsername(XMqttClient* client, const XString* username);
+/**
+ * @brief 设置用户名（UTF-8 便捷重载，转发到 XString 主版本）
+ * @param client 客户端实例指针（非 NULL）
+ * @param usernameUtf8 用户名的 UTF-8 文本；借用，可为 NULL 表示清除
+ */
+void XMqttClient_setUsername_utf8(XMqttClient* client, const char* usernameUtf8);
 
 /**
  * @brief 获取密码（常量引用）
@@ -387,11 +393,17 @@ const XString* XMqttClient_password_const(const XMqttClient* client);
  */
 XString* XMqttClient_password(const XMqttClient* client);
 /**
- * @brief 设置密码
+ * @brief 设置密码（XString 主版本：内部深拷贝）
  * @param client 客户端实例指针（非 NULL）
- * @param password 密码字符串（UTF-8，可为 NULL 表示清除）
+ * @param password 密码字符串；借用，函数内深拷贝，调用方保留所有权；NULL 表示清除
  */
-void XMqttClient_setPassword(XMqttClient* client, const char* password);
+void XMqttClient_setPassword(XMqttClient* client, const XString* password);
+/**
+ * @brief 设置密码（UTF-8 便捷重载，转发到 XString 主版本）
+ * @param client 客户端实例指针（非 NULL）
+ * @param passwordUtf8 密码的 UTF-8 文本；借用，可为 NULL 表示清除
+ */
+void XMqttClient_setPassword_utf8(XMqttClient* client, const char* passwordUtf8);
 
 /**
  * @brief 是否使用清洁会话
@@ -419,11 +431,17 @@ const XString* XMqttClient_willTopic_const(const XMqttClient* client);
  */
 XString* XMqttClient_willTopic(const XMqttClient* client);
 /**
- * @brief 设置遗嘱主题
+ * @brief 设置遗嘱主题（XString 主版本：内部深拷贝）
  * @param client 客户端实例指针（非 NULL）
- * @param willTopic 遗嘱主题字符串（UTF-8，可为 NULL 表示清除）
+ * @param willTopic 遗嘱主题字符串；借用，函数内深拷贝，调用方保留所有权；NULL 表示清除
  */
-void XMqttClient_setWillTopic(XMqttClient* client, const char* willTopic);
+void XMqttClient_setWillTopic(XMqttClient* client, const XString* willTopic);
+/**
+ * @brief 设置遗嘱主题（UTF-8 便捷重载，转发到 XString 主版本）
+ * @param client 客户端实例指针（非 NULL）
+ * @param willTopicUtf8 遗嘱主题的 UTF-8 文本；借用，可为 NULL 表示清除
+ */
+void XMqttClient_setWillTopic_utf8(XMqttClient* client, const char* willTopicUtf8);
 
 /**
  * @brief 获取遗嘱消息的 QoS 等级
@@ -485,11 +503,17 @@ bool XMqttClient_autoKeepAlive(const XMqttClient* client);
 void XMqttClient_setAutoKeepAlive(XMqttClient* client, bool autoKeepAlive);
 
 /**
- * @brief 设置 Broker 主机名
+ * @brief 设置 Broker 主机名（XString 主版本：内部深拷贝）
  * @param client 客户端实例指针（非 NULL）
- * @param hostname 主机名字符串（UTF-8，可为 NULL 表示清除）
+ * @param hostname 主机名字符串；借用，函数内深拷贝，调用方保留所有权；NULL 表示清除
  */
-void XMqttClient_setHostname(XMqttClient* client, const char* hostname);
+void XMqttClient_setHostname(XMqttClient* client, const XString* hostname);
+/**
+ * @brief 设置 Broker 主机名（UTF-8 便捷重载）
+ * @param client 客户端实例指针（非 NULL）
+ * @param hostnameUtf8 主机名的 UTF-8 文本；借用，可为 NULL 表示清除
+ */
+void XMqttClient_setHostname_utf8(XMqttClient* client, const char* hostnameUtf8);
 /**
  * @brief 设置 Broker 端口
  * @param client 客户端实例指针（非 NULL）
@@ -497,11 +521,17 @@ void XMqttClient_setHostname(XMqttClient* client, const char* hostname);
  */
 void XMqttClient_setPort(XMqttClient* client, uint16_t port);
 /**
- * @brief 设置客户端 ID
+ * @brief 设置客户端 ID（XString 主版本：内部深拷贝）
  * @param client 客户端实例指针（非 NULL）
- * @param clientId 客户端 ID 字符串（UTF-8，可为 NULL 表示清除）
+ * @param clientId 客户端 ID 字符串；借用，函数内深拷贝，调用方保留所有权；NULL 表示清除
  */
-void XMqttClient_setClientId(XMqttClient* client, const char* clientId);
+void XMqttClient_setClientId(XMqttClient* client, const XString* clientId);
+/**
+ * @brief 设置客户端 ID（UTF-8 便捷重载）
+ * @param client 客户端实例指针（非 NULL）
+ * @param clientIdUtf8 客户端 ID 的 UTF-8 文本；借用，可为 NULL 表示清除
+ */
+void XMqttClient_setClientId_utf8(XMqttClient* client, const char* clientIdUtf8);
 /**
  * @brief 设置保活间隔
  * @param client 客户端实例指针（非 NULL）

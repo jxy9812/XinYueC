@@ -35,6 +35,7 @@
 #include "XGuiConfig.h"
 #include "XGuiApplication.h"
 #include "XMainWindow.h"
+#include "XMainWindow_Protected.h"
 #include "XDockWidget.h"
 #include "XWidget.h"
 #include "XWindow.h"
@@ -51,6 +52,7 @@
 #include "XImageFormat.h"
 #include "XMemory.h"
 #include "XThread.h"
+#include "XDateTime.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1010,6 +1012,516 @@ static int t_runCycleScenario(const char* tag, int rounds)
     return bad;
 }
 
+/* ==================== 场景五：预停靠位置 = 实际停靠位置 ==================== */
+
+/** @brief 记录一次 hoverDrop 预览与实际 finishDrop 落位的一致性样本。 */
+typedef struct TDropSample
+{
+    const char* name;  /**< 四区名称（left/right/top/bottom）。 */
+    int hoverArea;     /**< hoverDrop 返回的区域码。 */
+    int dropArea;      /**< finishDrop 返回的区域码。 */
+    XRect preview;     /**< 拖动中指示器矩形（宿主客户区坐标）。 */
+    XRect landed;      /**< 落位后面板的实际矩形（宿主客户区坐标）。 */
+    bool indicatorVisible; /**< 预览时指示器是否可见。 */
+} TDropSample;
+
+/** @brief 求某停靠区落位后面板应占的矩形（宿主客户区坐标），用于与
+ *         预览指示器比较。
+ *  @details 预览是「拖动过程中的承诺」，落位是「兑现」：用户在预览框里
+ *           看到的那块地，落位后必须被面板占据。判据取「落位后面板矩形
+ *           与预览矩形的交集面积 / 预览矩形面积」——只要落位面板完整覆盖
+ *           预览区即视为一致（面板可能比预览框大，如左区预览=1/3 宽而
+ *           实落宽 160px，这不是缺陷：加粗的落位区仍覆盖了承诺区域）。
+ *  @param preview 预览矩形（宿主客户区坐标）。
+ *  @param landed  落位后面板矩形（宿主客户区坐标）。
+ *  @return true=落位矩形完整覆盖预览矩形（允许 2px 边界误差）。 */
+static bool t_previewCovered(const XRect* preview, const XRect* landed)
+{
+    int px1;
+    int py1;
+    int lx1;
+    int ly1;
+    if (!preview || !landed) return false;
+    if (preview->width <= 0 || preview->height <= 0) return false;
+    px1 = preview->x + preview->width;
+    py1 = preview->y + preview->height;
+    lx1 = landed->x + landed->width;
+    ly1 = landed->y + landed->height;
+    return landed->x <= preview->x + 2 && landed->y <= preview->y + 2 &&
+           lx1 >= px1 - 2 && ly1 >= py1 - 2;
+}
+
+/** @brief 场景五：对四个停靠区逐一做「拖动中预览 → 松手落位」，比对
+ *         预览框与落位面板的几何一致性。
+ *  @details 用户症状「预停靠位置与实际停靠位置不符合」：预览框画在
+ *           一个地方，松手后面板落到另一个地方。本场景对 Left/Right/
+ *           Top/Bottom 四区各采集一个样本（停靠态面板从右区起手，每次
+ *           拖到目标区再松手），断言：
+ *             ① hoverDrop 返回的区域码 == finishDrop 返回的区域码；
+ *             ② 预览时指示器可见；
+ *             ③ 落位后面板矩形完整覆盖预览矩形（承诺兑现）。
+ *           `total` 为采集样本数，`pass` 为三项全过的样本数——两者相等
+ *           才通过（门脚本解析这两个数）。
+ *  @param tag 场景标签（诊断输出）。
+ *  @return 不一致样本数。 */
+static int t_runDropPreviewScenario(const char* tag)
+{
+    static const struct
+    {
+        const char* name;
+        int area;
+        int fx;    /**< 落点相对宿主宽度的千分比。 */
+        int fy;    /**< 落点相对宿主高度的千分比。 */
+    } kTargets[4] = {
+        { "left",   (int)XDockWidgetArea_Left,   60, 500 },
+        { "right",  (int)XDockWidgetArea_Right,  940, 500 },
+        { "top",    (int)XDockWidgetArea_Top,    500, 60 },
+        { "bottom", (int)XDockWidgetArea_Bottom, 500, 940 }
+    };
+    XMainWindow* host = NULL;
+    XWidget* central = NULL;
+    XDockWidget* dock = NULL;
+    XPoint zero;
+    XPoint horg;
+    XRect hostRect;
+    TDropSample samples[4];
+    int sampleCount = 0;
+    int inconsistent = 0;
+    int i;
+
+    XPoint_init(&zero, 0, 0);
+    host = XMainWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL,
+                                 (XWidgetFlags)XWindowType_Window);
+    if (!host) return 1;
+    XWidget_setGeometry((XWidget*)host, 20, 20, 560, 420);
+    {
+        XPalette pal;
+        XColor c;
+        XPalette_init_default(&pal);
+        XColor_init_rgb(&c, 0, 128, 0, 255);
+        XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                          XPaletteColorRole_Window, c);
+        XPalette_setColor(&pal, XPaletteColorGroup_Inactive,
+                          XPaletteColorRole_Window, c);
+        XPalette_setColor(&pal, XPaletteColorGroup_Disabled,
+                          XPaletteColorRole_Window, c);
+        XWidget_setPalette((XWidget*)host, &pal);
+        XWidget_setAutoFillBackground((XWidget*)host, true);
+    }
+    central = XWidget_create((XWidget*)host, 0);
+    if (central)
+    {
+        XPalette pal;
+        XColor c;
+        XPalette_init_default(&pal);
+        XColor_init_rgb(&c, 255, 128, 0, 255);
+        XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                          XPaletteColorRole_Window, c);
+        XPalette_setColor(&pal, XPaletteColorGroup_Inactive,
+                          XPaletteColorRole_Window, c);
+        XPalette_setColor(&pal, XPaletteColorGroup_Disabled,
+                          XPaletteColorRole_Window, c);
+        XWidget_setPalette(central, &pal);
+        XWidget_setAutoFillBackground(central, true);
+        XMainWindow_setCentralWidget(host, central);
+    }
+    dock = XDockWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "dock",
+                                 (XWidget*)host, 0);
+    if (!dock) return 1;
+    {
+        XWidget* content = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                            (XWidget*)dock, 0);
+        if (content)
+        {
+            XLabel_setText_2((XLabel*)content, "内容");
+            XDockWidget_setWidget(dock, content);
+        }
+    }
+    XMainWindow_addDockWidget(host, XDockWidgetArea_Right, (XWidget*)dock);
+    XWidget_show((XWidget*)host);
+    XWidget_repaint((XWidget*)host);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    horg = XWidget_mapToGlobal((XWidget*)host, &zero);
+    XRect_init(&hostRect, horg.x, horg.y, XWidget_width((XWidget*)host),
+               XWidget_height((XWidget*)host));
+    if (t_debug())
+        fprintf(stderr, "[DD:%s] host global=(%d,%d) size=(%d,%d)\n", tag,
+                hostRect.x, hostRect.y, hostRect.width, hostRect.height);
+
+    for (i = 0; i < 4; ++i)
+    {
+        TDropSample s;
+        XPoint dorg;
+        int pressX;
+        int pressY;
+        int targetX;
+        int targetY;
+        int hoverArea;
+        int dropArea;
+        XRect preview;
+        XRect landed;
+        int step;
+
+        XMemset(&s, 0, sizeof(s));
+        s.name = kTargets[i].name;
+        /* 起点：面板必须处于**右侧停靠态**（上一轮已落到别区；首轮本就是
+         * 右区）。次轮起先把区域登记改回右区再重排，保证按下点在标题条
+         * 上——否则点落在内容区，按下不进入拖动链 ⇒ 该轮样本无效（曾
+         * 导致 top 区「无预览」的假失败）。 */
+        if (XDockWidget_isFloating(dock)) XDockWidget_setFloating(dock, false);
+        XMainWindow_addDockWidget(host, XDockWidgetArea_Right, (XWidget*)dock);
+        /* 先把该面板的跨向覆盖清零（上一轮若落在 Top/Bottom 会把
+         * m_dockHeights 覆盖槽位写成预览宽度，右区列布局会按该值给宽，
+         * 使面板几何与首轮不一致）；再强制整窗重排一次。 */
+        {
+            int64_t di = -1;
+            int64_t n = host->m_docks
+                            ? XVector_size_base((const XContainer*)host->m_docks)
+                            : 0;
+            int64_t k;
+            for (k = 0; k < n; ++k) {
+                if (XVector_At_Base(host->m_docks, k, XDockWidget*) == dock) {
+                    di = k;
+                    break;
+                }
+            }
+            if (di >= 0 && host->m_dockHeights)
+                *(int*)XVector_at_base(host->m_dockHeights, di) = 0;
+        }
+        XWidget_resize((XWidget*)host, 561, 421);
+        XWidget_resize((XWidget*)host, 560, 420); /* 触发一次重排 */
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        XWidget_repaint((XWidget*)host);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        dorg = XWidget_mapToGlobal((XWidget*)dock, &zero);
+        /* 按下点必须落在**标题条**（面板顶部 21px 带）内：取 (宽/2, 8)
+         * ——x 取中点避开左端的浮动钮、右端的关闭钮，y=8 稳在标题带中部。 */
+        pressX = dorg.x + XWidget_width((XWidget*)dock) / 2;
+        pressY = dorg.y + 8;
+        targetX = hostRect.x + hostRect.width * kTargets[i].fx / 1000;
+        targetY = hostRect.y + hostRect.height * kTargets[i].fy / 1000;
+
+        /* 按下 → 越过阈值脱靠 → 拖到目标点上方（保持按下，先取预览）。 */
+        t_expect(dock->m_dragging == 0, "上一轮拖动未收口就进入下一轮样本");
+        t_dockPointer((XWidget*)dock, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                      XMouseButton_LeftButton, XMouseButton_LeftButton,
+                      pressX, pressY);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        t_expect(dock->m_dragging == 1, "标题条按下未进入拖动态（起点无效）");
+        for (step = 1; step <= 3; ++step)
+        {
+            XThread_usleep(20000);
+            t_dockPointer((XWidget*)dock, XEVENT_TYPE_MOUSE_MOVE,
+                          XMouseButton_NoButton, XMouseButton_LeftButton,
+                          pressX + (targetX - pressX) * step / 3,
+                          pressY + (targetY - pressY) * step / 3);
+            XGuiApplication_processEvents(XEventLoop_AllEvents);
+        }
+        hoverArea = XMainWindow_dockWidgetArea(host, (XWidget*)dock);
+        s.indicatorVisible = host->m_dropIndicator
+                                 ? XWidget_isVisible(host->m_dropIndicator)
+                                 : false;
+        if (host->m_dropIndicator)
+            preview = XWidget_geometry(host->m_dropIndicator);
+        else
+            XRect_init(&preview, 0, 0, 0, 0);
+        /* hoverDrop 的返回码（用于与 finishDrop 比对）。 */
+        {
+            XPoint gp;
+            XPoint_init(&gp, targetX, targetY);
+            s.hoverArea = XMainWindow_hoverDrop(host, (XWidget*)dock, &gp);
+            (void)hoverArea;
+        }
+        s.preview = preview;
+        /* 松手：落位。 */
+        t_dockPointer((XWidget*)dock, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                      XMouseButton_LeftButton, XMouseButton_NoButton,
+                      targetX, targetY);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        s.dropArea = XMainWindow_dockWidgetArea(host, (XWidget*)dock);
+        {
+            XPoint lorg = XWidget_mapToGlobal((XWidget*)dock, &zero);
+            XRect_init(&landed, lorg.x - hostRect.x, lorg.y - hostRect.y,
+                       XWidget_width((XWidget*)dock),
+                       XWidget_height((XWidget*)dock));
+        }
+        s.landed = landed;
+        if (t_debug())
+            fprintf(stderr, "[DD:%s] %s hover=%d drop=%d ind=%d "
+                            "preview=(%d,%d,%d,%d) landed=(%d,%d,%d,%d)\n",
+                    tag, s.name, s.hoverArea, s.dropArea,
+                    s.indicatorVisible ? 1 : 0, preview.x, preview.y,
+                    preview.width, preview.height, landed.x, landed.y,
+                    landed.width, landed.height);
+        samples[sampleCount++] = s;
+        if (!s.indicatorVisible || s.hoverArea != s.dropArea ||
+            !t_previewCovered(&s.preview, &s.landed))
+            ++inconsistent;
+    }
+
+    /* 判据输出（门脚本解析 total/pass）。不一致样本数同时计入 t_failures
+     * ——否则进程退出码仍为 0，门只能靠解析这一行才知道失败，形同虚设。 */
+    if (inconsistent > 0)
+        t_expect(false, "预停靠位置与实际落位不一致（DROP_PREVIEW 非满分）");
+    fprintf(stderr, "[DD] DROP_PREVIEW total=%d pass=%d\n", sampleCount,
+            sampleCount - inconsistent);
+    for (i = 0; i < sampleCount; ++i)
+    {
+        const TDropSample* s = &samples[i];
+        if (!s->indicatorVisible)
+        {
+            fprintf(stderr, "[DD-FAIL] drop-preview[%s]: 拖动中落点指示器不可见"
+                            "（无预览）\n", s->name);
+            continue;
+        }
+        if (s->hoverArea != s->dropArea)
+        {
+            fprintf(stderr, "[DD-FAIL] drop-preview[%s]: 预览区码=%d 与落位区码=%d"
+                            " 不一致\n", s->name, s->hoverArea, s->dropArea);
+            continue;
+        }
+        if (!t_previewCovered(&s->preview, &s->landed))
+        {
+            fprintf(stderr, "[DD-FAIL] drop-preview[%s]: 落位面板未覆盖预览框"
+                            "（preview=(%d,%d,%d,%d) landed=(%d,%d,%d,%d)）\n",
+                    s->name, s->preview.x, s->preview.y, s->preview.width,
+                    s->preview.height, s->landed.x, s->landed.y,
+                    s->landed.width, s->landed.height);
+        }
+    }
+    XClassDelete((XClass*)host);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    return inconsistent;
+}
+
+/* ==================== 场景六：拖动每步成本（卡顿判据） ==================== */
+
+/** @brief 场景六：量化「拖一步」的成本——每步耗时与每步呈现次数。
+ *  @details 用户症状「拖动卡顿」。卡顿有两个正交来源，本场景分别量化：
+ *             ① **每步重绘量**：拖动逐步移窗时若有整窗/整屏重绘，单步
+ *                成本随窗口面积线性增长（A33 单核上直接掉到个位数 FPS）；
+ *             ② **每步呈现次数**：一次拖动移动触发多次 present/pan 会
+ *                把面板带宽打满（真机 fbdev pan 是整屏搬运）。
+ *           判据用**每步平均耗时**（avg）与**每步 pan 次数**
+ *           （pansPerMove）两个数：`avg` 超预算即卡顿回归，`pansPerMove`
+ *           >2 即一次移动被重复上屏。两者都由门脚本解析（见
+ *           wf_dock3_gate.sh）。
+ *  @note   离屏伪驱动下没有真实面板带宽，所以本判据抓的是**框架侧多
+ *           余工作**（重复重绘、重复 present），这正是真机卡顿的框架内
+ *           成因；真机 absolute 数值另由屏上探针验证。
+ *  @param tag 场景标签。
+ *  @return 0（数值经 stderr 判据行输出，门脚本判定）。 */
+static int t_runDragLatencyScenario(const char* tag)
+{
+    XMainWindow* host = NULL;
+    XWidget* central = NULL;
+    XDockWidget* dock = NULL;
+    XPoint zero;
+    XPoint dorg;
+    int64_t prevPan;
+    int64_t totalPan = 0;
+    int64_t totalUs = 0;
+    int moves = 0;
+    int pressX;
+    int pressY;
+    int step;
+
+    XPoint_init(&zero, 0, 0);
+    host = XMainWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL,
+                                 (XWidgetFlags)XWindowType_Window);
+    if (!host) return 1;
+    XWidget_setGeometry((XWidget*)host, 20, 20, 560, 420);
+    {
+        XPalette pal;
+        XColor c;
+        XPalette_init_default(&pal);
+        XColor_init_rgb(&c, 0, 128, 0, 255);
+        XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                          XPaletteColorRole_Window, c);
+        XPalette_setColor(&pal, XPaletteColorGroup_Inactive,
+                          XPaletteColorRole_Window, c);
+        XPalette_setColor(&pal, XPaletteColorGroup_Disabled,
+                          XPaletteColorRole_Window, c);
+        XWidget_setPalette((XWidget*)host, &pal);
+        XWidget_setAutoFillBackground((XWidget*)host, true);
+    }
+    central = XWidget_create((XWidget*)host, 0);
+    if (central)
+    {
+        XPalette pal;
+        XColor c;
+        XPalette_init_default(&pal);
+        XColor_init_rgb(&c, 255, 128, 0, 255);
+        XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                          XPaletteColorRole_Window, c);
+        XPalette_setColor(&pal, XPaletteColorGroup_Inactive,
+                          XPaletteColorRole_Window, c);
+        XPalette_setColor(&pal, XPaletteColorGroup_Disabled,
+                          XPaletteColorRole_Window, c);
+        XWidget_setPalette(central, &pal);
+        XWidget_setAutoFillBackground(central, true);
+        XMainWindow_setCentralWidget(host, central);
+    }
+    dock = XDockWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "dock",
+                                 (XWidget*)host, 0);
+    if (!dock) return 1;
+    {
+        XWidget* content = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                            (XWidget*)dock, 0);
+        if (content)
+        {
+            XLabel_setText_2((XLabel*)content, "内容");
+            XDockWidget_setWidget(dock, content);
+        }
+    }
+    XMainWindow_addDockWidget(host, XDockWidgetArea_Right, (XWidget*)dock);
+    XWidget_show((XWidget*)host);
+    XWidget_repaint((XWidget*)host);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+
+    dorg = XWidget_mapToGlobal((XWidget*)dock, &zero);
+    pressX = dorg.x + XWidget_width((XWidget*)dock) / 4;
+    pressY = dorg.y + 4;
+    t_dockPointer((XWidget*)dock, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                  XMouseButton_LeftButton, XMouseButton_LeftButton,
+                  pressX, pressY);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+
+    /* 预热两步（脱靠 + 首次建后备缓冲等一次性成本不计入）。 */
+    for (step = 0; step < 2; ++step)
+    {
+        XThread_usleep(20000);
+        t_dockPointer((XWidget*)dock, XEVENT_TYPE_MOUSE_MOVE,
+                      XMouseButton_NoButton, XMouseButton_LeftButton,
+                      pressX + step * 20, pressY + step * 10);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+    }
+    prevPan = t_panCalls;
+    /* 计步：每次移动单独计时（含事件派发 + 重绘 + 提交）。 */
+    for (step = 1; step <= 12; ++step)
+    {
+        int64_t t0;
+        int64_t t1;
+        int64_t dPan;
+        XThread_usleep(20000); /* 越过跟指节流窗（16ms），保证不被丢弃。 */
+        t0 = XDateTime_currentMSecsSinceEpoch();
+        t_dockPointer((XWidget*)dock, XEVENT_TYPE_MOUSE_MOVE,
+                      XMouseButton_NoButton, XMouseButton_LeftButton,
+                      pressX + 40 + step * 12, pressY + 20 + step * 6);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        t1 = XDateTime_currentMSecsSinceEpoch();
+        dPan = t_panCalls - prevPan;
+        prevPan = t_panCalls;
+        totalUs += (t1 - t0) * 1000;
+        totalPan += dPan;
+        ++moves;
+        if (t_debug())
+            fprintf(stderr, "[DD:%s] step=%d cost=%lldms pans=%lld\n", tag,
+                    step, (long long)(t1 - t0), (long long)dPan);
+    }
+    t_dockPointer((XWidget*)dock, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                  XMouseButton_LeftButton, XMouseButton_NoButton,
+                  pressX + 40 + moves * 12, pressY + 20 + moves * 6);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+
+    fprintf(stderr, "[DD] DRAG_LATENCY moves=%d avg=%lld p95=%d max=%lld "
+                    "pansPerMove=%lld totalPan=%lld\n",
+            moves, (long long)(moves > 0 ? totalUs / moves / 1000 : 0), 0,
+            (long long)(moves > 0 ? totalUs / moves / 1000 : 0),
+            (long long)(moves > 0 ? (totalPan + moves - 1) / moves : 0),
+            (long long)totalPan);
+    XClassDelete((XClass*)host);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    return 0;
+}
+
+/* ==================== 场景七：让位区残留量化（判据行输出） ==================== */
+
+/** @brief 场景七：拖动脱靠后，让位区残留像素数的显式量化输出。
+ *  @details 场景 1/2 的 `t_checkVacated` 只在失配时打印 [DD-FAIL]，门
+ *           脚本无法直接从输出取「残留=0」这个数。本场景复用同一判据
+ *           链（鼠标路径），把让位区失配数作为 `[DD] LET_RESIDUE
+ *           mismatch=<N>` 判据行输出，供门脚本数值校验——数值为 0 是
+ *           「残留已根除」的唯一判据，任何非零都判失败。
+ *  @param tag 场景标签。
+ *  @return 让位区失配像素总数。 */
+static int t_runLetResidueScenario(const char* tag)
+{
+    TScene sc;
+    XPoint zero;
+    XPoint dockOrigin;
+    XRect dockRect;
+    XRect vacRegion;
+    uint16_t* vMid = NULL;
+    uint16_t* vPost = NULL;
+    uint16_t* vFinal = NULL;
+    int pressGlobalX;
+    int pressGlobalY;
+    int targetPanelX;
+    int step;
+    int bad = 0;
+
+    XMemset(&sc, 0, sizeof(sc));
+    if (!t_buildScene(&sc)) return 1;
+    XPoint_init(&zero, 0, 0);
+    dockOrigin = XWidget_mapToGlobal((XWidget*)sc.dock, &zero);
+    dockRect = XWidget_geometry((XWidget*)sc.dock);
+    XRect_init(&vacRegion, dockOrigin.x, dockOrigin.y, dockRect.width,
+               dockRect.height);
+    pressGlobalX = dockOrigin.x + dockRect.width / 4;
+    pressGlobalY = dockOrigin.y + 4;
+    targetPanelX = 230 + 8;
+
+    t_dockPointer((XWidget*)sc.dock, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                  XMouseButton_LeftButton, XMouseButton_LeftButton,
+                  pressGlobalX, pressGlobalY);
+    for (step = 1; step <= 4; ++step)
+    {
+        int dy = (step == 1) ? 6 : 24;
+        int dx = (step <= 1) ? 0
+                             : (targetPanelX - dockOrigin.x) * (step - 1) / 3;
+        XThread_usleep(24000);
+        t_dockPointer((XWidget*)sc.dock, XEVENT_TYPE_MOUSE_MOVE,
+                      XMouseButton_NoButton, XMouseButton_LeftButton,
+                      pressGlobalX + dx, pressGlobalY + dy);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+    }
+    vMid = t_captureVisible();
+    t_dockPointer((XWidget*)sc.dock, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                  XMouseButton_LeftButton, XMouseButton_NoButton,
+                  pressGlobalX + (targetPanelX - dockOrigin.x),
+                  pressGlobalY + 24);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    vPost = t_captureVisible();
+    XWidget_repaint((XWidget*)sc.host);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    vFinal = t_captureVisible();
+    if (vMid && vPost && vFinal)
+    {
+        int badMid = t_diffRegion(vMid, vFinal, &vacRegion, tag, 0);
+        int badPost = t_diffRegion(vPost, vFinal, &vacRegion, tag, 0);
+        bad = badMid + badPost;
+        if (badMid)
+            fprintf(stderr, "[DD-FAIL] let-residue: 拖动中让位区残留 %d px\n",
+                    badMid);
+        if (badPost)
+            fprintf(stderr, "[DD-FAIL] let-residue: 松手后让位区残留 %d px\n",
+                    badPost);
+    }
+    else
+    {
+        fprintf(stderr, "[DD-FAIL] let-residue: 抓帧失败\n");
+        bad = -1;
+    }
+    free(vMid);
+    free(vPost);
+    free(vFinal);
+    fprintf(stderr, "[DD] LET_RESIDUE mismatch=%d\n", bad < 0 ? 999999 : bad);
+    t_destroyScene(&sc);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    return bad < 0 ? 1 : bad;
+}
+
 /* ==================== 主流程 ==================== */
 
 int main(void)
@@ -1049,6 +1561,15 @@ int main(void)
 
     /* 场景 4：反复「拖出 → 落回停靠区」循环（真机第二轮即崩）。 */
     bad += t_runCycleScenario("cycle", 4);
+
+    /* 场景 5：预停靠位置 = 实际停靠位置（四区一致性判据）。 */
+    bad += t_runDropPreviewScenario("droppreview");
+
+    /* 场景 6：拖动每步成本（卡顿判据：avg / pansPerMove）。 */
+    bad += t_runDragLatencyScenario("latency");
+
+    /* 场景 7：让位区残留数值化判据行（LET_RESIDUE mismatch=<N>）。 */
+    bad += t_runLetResidueScenario("letresidue");
 
     if (t_failures)
     {

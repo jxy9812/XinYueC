@@ -22,7 +22,10 @@ static void VXAbstractState_deinit(XAbstractState* state)
         return;
 
     if (state->m_machine)
+    {
+        XStateMachine_dropRestorablesForState_internal(state->m_machine, state);
         XStateMachine_removeTargetState_internal(state->m_machine, state);
+    }
     if (state->m_parentState)
         XState_removeChild_internal(state->m_parentState, state);
 
@@ -71,7 +74,7 @@ XStateMachine* XAbstractState_machine(const XAbstractState* state)
 
 bool XAbstractState_active(const XAbstractState* state)
 {
-    return state ? state->m_active : false;
+    return state ? state->m_active != 0 : false;
 }
 
 void XAbstractState_onEntry_base(XAbstractState* state, XEvent* event)

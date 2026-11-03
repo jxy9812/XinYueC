@@ -205,9 +205,9 @@ bool XMqttTcpClientProcess_run(void)
     g_mqttInteropPingReady = false;
     g_mqttInteropTopic[0] = '\0';
     g_mqttInteropPayload[0] = '\0';
-    XMqttClient_setHostname(client, "127.0.0.1");
+    XMqttClient_setHostname_utf8(client, "127.0.0.1");
     XMqttClient_setPort(client, XMqttInteropPort);
-    XMqttClient_setClientId(client, "interop-client");
+    XMqttClient_setClientId_utf8(client, "interop-client");
     XMqttClient_setKeepAlive(client, 60);
     XMqttClient_setAutoKeepAlive(client, false);
     XObject_connect_1((XObject*)client,
@@ -629,9 +629,9 @@ static XMqttClient* tcp_api_create_client(uint16_t port, const char* clientId)
 {
     XMqttClient* client = XMqttClient_create();
     if (!client) return NULL;
-    XMqttClient_setHostname(client, "127.0.0.1");
+    XMqttClient_setHostname_utf8(client, "127.0.0.1");
     XMqttClient_setPort(client, port);
-    XMqttClient_setClientId(client, clientId);
+    XMqttClient_setClientId_utf8(client, clientId);
     XMqttClient_setKeepAlive(client, 60);
     XMqttClient_setAutoKeepAlive(client, false);
     XObject_connect_1((XObject*)client,
@@ -845,8 +845,8 @@ cleanup:
             XMqttClient* bad = tcp_api_create_client(XMqttTcpApiAuthPort, "tcpapi-bad");
             TCPAPI_CHECK(bad != NULL, "创建错误凭据客户端");
             if (bad) {
-                XMqttClient_setUsername(bad, "tcpapi-user");
-                XMqttClient_setPassword(bad, "wrong-pass");
+                XMqttClient_setUsername_utf8(bad, "tcpapi-user");
+                XMqttClient_setPassword_utf8(bad, "wrong-pass");
                 XMqttClient_connectToHost_base(bad);
                 /* 等待连接被拒绝：状态回到 Disconnected 且产生 NotAuthorized */
                 {
@@ -867,8 +867,8 @@ cleanup:
                 XMqttClient* good = tcp_api_create_client(XMqttTcpApiAuthPort, "tcpapi-good");
                 TCPAPI_CHECK(good != NULL, "创建正确凭据客户端");
                 if (good) {
-                    XMqttClient_setUsername(good, "tcpapi-user");
-                    XMqttClient_setPassword(good, "tcpapi-pass");
+                    XMqttClient_setUsername_utf8(good, "tcpapi-user");
+                    XMqttClient_setPassword_utf8(good, "tcpapi-pass");
                     XMqttClient_connectToHost_base(good);
                     ok = tcp_api_wait_client_state(good, XMqttClient_Connected, 5000);
                     TCPAPI_CHECK(ok, "正确凭据连接成功");

@@ -397,9 +397,9 @@ static bool xvfdSlaveEmuCreate(XvfdSlaveEmu* em, int brand, uint16_t* outPort)
     if (!em->m_server) return false;
     a = XVariant_create_utf8_str("127.0.0.1");
     p = XVariant_create_int(0);
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)em->m_server,
+    XModbusDevice_setConnectionParameter((XModbusDevice*)em->m_server,
         XModbusDevice_NetworkAddressParameter, a);
-    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)em->m_server,
+    XModbusDevice_setConnectionParameter((XModbusDevice*)em->m_server,
         XModbusDevice_NetworkPortParameter, p);
     XClassDelete((XClass*)a);
     XClassDelete((XClass*)p);

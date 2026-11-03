@@ -4169,7 +4169,7 @@ static void integ_onStateChanged(XObject* receiver, XVarList* args)
             ++g_integSlotIdx;
             XPrintf("[XS7][PLC] slot=%d 握手失败，改试 slot=%d\n",
                     g_integSlotSeq[g_integSlotIdx - 1], g_integSlotSeq[g_integSlotIdx]);
-            XPlcDevice_setConnectionParameter_ref(
+            XPlcDevice_setConnectionParameter(
                 (XPlcDevice*)g_integClient, XPlcDevice_SlotParameter,
                 XVariant_create_int(g_integSlotSeq[g_integSlotIdx]));
             XTimer_singleShot2(300, integ_retryConnect);
@@ -4325,16 +4325,16 @@ bool XS7Test_integration_run(void)
         xs7fakeStop();
         return false;
     }
-    XPlcDevice_setConnectionParameter_ref((XPlcDevice*)g_integClient,
+    XPlcDevice_setConnectionParameter((XPlcDevice*)g_integClient,
                                           XPlcDevice_NetworkAddressParameter,
                                           XVariant_create_utf8_str(g_integIp));
-    XPlcDevice_setConnectionParameter_ref((XPlcDevice*)g_integClient,
+    XPlcDevice_setConnectionParameter((XPlcDevice*)g_integClient,
                                           XPlcDevice_NetworkPortParameter,
                                           XVariant_create_int((int)g_integPort));
-    XPlcDevice_setConnectionParameter_ref((XPlcDevice*)g_integClient,
+    XPlcDevice_setConnectionParameter((XPlcDevice*)g_integClient,
                                           XPlcDevice_RackParameter,
                                           XVariant_create_int(0));
-    XPlcDevice_setConnectionParameter_ref((XPlcDevice*)g_integClient,
+    XPlcDevice_setConnectionParameter((XPlcDevice*)g_integClient,
                                           XPlcDevice_SlotParameter,
                                           XVariant_create_int(g_integSlotSeq[0]));
     XPlcClient_setTimeout((XPlcClient*)g_integClient, 2000);

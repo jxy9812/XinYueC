@@ -249,31 +249,31 @@ int main(int argc, char** argv)
     }
     {
         XVariant* v = XVariant_create_utf8_str(comName);
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice*)rtu,
+        XModbusDevice_setConnectionParameter((XModbusDevice*)rtu,
             XModbusDevice_SerialPortNameParameter, v);
         XClassDelete((XClass*)v);
     }
     {
         XVariant* v = XVariant_create_int(9600);   /* 8N1@9600：远程 IO 常规缺省 */
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice*)rtu,
+        XModbusDevice_setConnectionParameter((XModbusDevice*)rtu,
             XModbusDevice_SerialBaudRateParameter, v);
         XClassDelete((XClass*)v);
     }
     {
         XVariant* v = XVariant_create_int(XSerialPort_Data8);
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice*)rtu,
+        XModbusDevice_setConnectionParameter((XModbusDevice*)rtu,
             XModbusDevice_SerialDataBitsParameter, v);
         XClassDelete((XClass*)v);
     }
     {
         XVariant* v = XVariant_create_int(XSerialPort_NoParity);
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice*)rtu,
+        XModbusDevice_setConnectionParameter((XModbusDevice*)rtu,
             XModbusDevice_SerialParityParameter, v);
         XClassDelete((XClass*)v);
     }
     {
         XVariant* v = XVariant_create_int(XSerialPort_OneStop);
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice*)rtu,
+        XModbusDevice_setConnectionParameter((XModbusDevice*)rtu,
             XModbusDevice_SerialStopBitsParameter, v);
         XClassDelete((XClass*)v);
     }
@@ -309,13 +309,13 @@ int main(int argc, char** argv)
     }
     {
         XVariant* v = XVariant_create_utf8_str(tcpHost);
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
+        XModbusDevice_setConnectionParameter((XModbusDevice*)tcp,
             XModbusDevice_NetworkAddressParameter, v);
         XClassDelete((XClass*)v);
     }
     {
         XVariant* v = XVariant_create_int(tcpPort);
-        XModbusDevice_setConnectionParameter_ref((XModbusDevice*)tcp,
+        XModbusDevice_setConnectionParameter((XModbusDevice*)tcp,
             XModbusDevice_NetworkPortParameter, v);
         XClassDelete((XClass*)v);
     }

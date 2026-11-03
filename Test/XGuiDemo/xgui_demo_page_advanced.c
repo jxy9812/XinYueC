@@ -52,6 +52,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include <stdio.h>
+#include <stdlib.h>
 #include "XThread.h"   /* XThread_sleep：自检相位间的抓帧静默期。 */
 #include "XCursor.h"
 #include "XWindowSystemInterface.h" /* 触摸注入（真机路径等价：触摸→合成鼠标）。 */
@@ -183,10 +184,12 @@
 #if ADV_SPLASH_ON
 #include "XSplashScreen.h"
 #include "XGuiApplication.h"   /* 主屏查询（启动画面居屏） */
+#include "XDateTime.h"         /* 扫掠探针每步耗时（框架自有单调时钟）。 */
 #include "XScreen.h"           /* 屏幕几何 */
 #endif
 #if ADV_MAINWIN_ON
 #include "XMainWindow.h"
+#include "XMainWindow_Protected.h" /* probeDropGeom 的 hoverDrop（拖动落点预览内部接口）。 */
 #include "XDockWidget.h"
 #include "XMenu.h"
 #include "XMenuBar.h"
@@ -2145,6 +2148,444 @@ int demo_page_advanced_probeDrag(const char* phase)
 int demo_page_advanced_probeDragTouch(const char* phase)
 {
     return adv_probeDragImpl(phase, 1);
+}
+
+/** @brief 真机「预停靠位置 = 实际停靠位置」自检（用户症状：拖动时预览框
+ *         画在一处、松手后落位到另一处）。
+ *  @details 在**真实 demo 主窗**上把右侧面板往宿主内的目标区拖，拖动中
+ *           记录落点指示器矩形（预览承诺），松手后记录面板实际矩形（兑
+ *           现），把两者与区码一并落盘到 <phase>.geom。屏外判据按
+ *           `previewArea`/`dropArea` 与两个矩形比对（见 wf_mcgs_dock3_ab.sh
+ *           的 DROP_PREVIEW 段）。
+ *           相位约定（复用 cap.sh 抓帧器）：
+ *             1 = 停靠态基准；2 = 拖动中（指示器可见，预览帧）；
+ *             3 = 松手落位后；4 = 强制重绘基准；5 = 指示器残留检查点。
+ *  @param phase 相位/几何文件前缀路径；为空则不执行。
+ *  @return 执行了拖动返回 true。
+ *  @note  释放点刻意落在宿主**内**的停靠区（演示「预览→兑现」链，与
+ *         probeDragReal 的「拖到宿主外保持浮动」互补）。 */
+int demo_page_advanced_probeDropGeom(const char* phase)
+{
+#if ADV_MAINWIN_ON
+    XMainWindow* host = NULL;
+    XDockWidget* dock = NULL;
+    XPoint zero;
+    XPoint dorg;
+    XPoint horg;
+    XRect hostRect;
+    XRect preview;
+    XRect landed;
+    char gp[512];
+    int pressX;
+    int pressY;
+    int targetX;
+    int targetY;
+    int hoverArea = 0;
+    int step;
+    if (!phase || !phase[0]) return false;
+    XPoint_init(&zero, 0, 0);
+    adv_ensureMainWindow();
+    host = s_adv.mainWindow;
+    dock = s_adv.dockRight;
+    if (!host || !dock) return false;
+    XWidget_show((XWidget*)host);
+    XWidget_update((XWidget*)host);
+    adv_probePump(8, 100);
+    snprintf(gp, sizeof(gp), "%s.geom", phase);
+    { FILE* gf = fopen(gp, "w"); if (gf) fclose(gf); }
+    /* 保证起手是**右侧停靠态**（上一轮探针可能把它拖出浮动）。 */
+    if (XDockWidget_isFloating(dock)) XDockWidget_setFloating(dock, false);
+    XMainWindow_addDockWidget(host, XDockWidgetArea_Right, (XWidget*)dock);
+    adv_probePump(4, 50);
+    horg = XWidget_mapToGlobal((XWidget*)host, &zero);
+    XRect_init(&hostRect, horg.x, horg.y, XWidget_width((XWidget*)host),
+               XWidget_height((XWidget*)host));
+    adv_probeGeom(gp, "host", hostRect.x, hostRect.y, hostRect.width,
+                  hostRect.height);
+    dorg = XWidget_mapToGlobal((XWidget*)dock, &zero);
+    adv_probeGeom(gp, "dockDocked", dorg.x, dorg.y,
+                  XWidget_width((XWidget*)dock),
+                  XWidget_height((XWidget*)dock));
+    adv_probePhase(phase, 1);
+    XThread_sleep(2);
+    /* 目标：宿主**左侧**停靠区（拖回宿主内 ⇒ 落位可兑现）。 */
+    targetX = hostRect.x + hostRect.width / 8;
+    targetY = hostRect.y + hostRect.height / 2;
+    pressX = dorg.x + XWidget_width((XWidget*)dock) / 4;
+    pressY = dorg.y + 4;
+    adv_probeTouch(adv_probeTouchTarget(host, dock), pressX, pressY,
+                   XTOUCHPOINT_STATE_PRESSED, XEVENT_TYPE_TOUCH_BEGIN);
+    adv_probePump(1, 0);
+    for (step = 1; step <= 8; ++step)
+    {
+        XThread_msleep(24);
+        adv_probeTouch(adv_probeTouchTarget(host, dock),
+                       pressX + (targetX - pressX) * step / 8,
+                       pressY + (targetY - pressY) * step / 8,
+                       XTOUCHPOINT_STATE_UPDATED, XEVENT_TYPE_TOUCH_UPDATE);
+        adv_probePump(1, 0);
+    }
+    /* 拖动中：记录落点指示器矩形（预览承诺）与区码。 */
+    {
+        XPoint g;
+        XPoint_init(&g, targetX, targetY);
+        hoverArea = XMainWindow_hoverDrop(host, (XWidget*)dock, &g);
+        if (host->m_dropIndicator)
+            preview = XWidget_geometry(host->m_dropIndicator);
+        else
+            XRect_init(&preview, 0, 0, 0, 0);
+        adv_probeGeom(gp, "previewArea", hoverArea, 0, 0, 0);
+        adv_probeGeom(gp, "previewRect", preview.x, preview.y, preview.width,
+                      preview.height);
+        adv_probeGeom(gp, "previewVisible",
+                      (host->m_dropIndicator &&
+                       XWidget_isVisible(host->m_dropIndicator)) ? 1 : 0,
+                      0, 0, 0);
+    }
+    adv_probePhase(phase, 2);
+    XThread_sleep(2);
+    /* 松手 → 落位。 */
+    adv_probeTouch(adv_probeTouchTarget(host, dock), targetX, targetY,
+                   XTOUCHPOINT_STATE_RELEASED, XEVENT_TYPE_TOUCH_END);
+    adv_probePump(6, 60);
+    {
+        XPoint lorg = XWidget_mapToGlobal((XWidget*)dock, &zero);
+        XRect_init(&landed, lorg.x - hostRect.x, lorg.y - hostRect.y,
+                   XWidget_width((XWidget*)dock),
+                   XWidget_height((XWidget*)dock));
+        adv_probeGeom(gp, "landedRect", landed.x, landed.y, landed.width,
+                      landed.height);
+        adv_probeGeom(gp, "dropArea",
+                      XMainWindow_dockWidgetArea(host, (XWidget*)dock), 0, 0, 0);
+        adv_probeGeom(gp, "floatingAfterDrop",
+                      XDockWidget_isFloating(dock) ? 1 : 0, 0, 0, 0);
+        adv_probeGeom(gp, "draggingAfterDrop", dock->m_dragging, 0, 0, 0);
+        adv_probeGeom(gp, "indicatorAfterDrop",
+                      (host->m_dropIndicator &&
+                       XWidget_isVisible(host->m_dropIndicator)) ? 1 : 0,
+                      0, 0, 0);
+        /* 指示器矩形（隐藏后仍在同一位置；判据取该矩形检查是否有残留像素）。 */
+        if (host->m_dropIndicator)
+        {
+            XRect ir = XWidget_geometry(host->m_dropIndicator);
+            adv_probeGeom(gp, "indicatorRect", ir.x, ir.y, ir.width,
+                          ir.height);
+        }
+    }
+    adv_probePhase(phase, 3);
+    XThread_sleep(2);
+    /* 相位 4 = 强制整窗重绘基准（让位区/指示器区「应有内容」）。 */
+    XWidget_repaint((XWidget*)host);
+    adv_probePump(8, 100);
+    adv_probePhase(phase, 4);
+    XThread_sleep(2);
+    /* 相位 5 = 再睡一拍后抓一帧：检查指示器区是否残留（异步失效兜底）。 */
+    adv_probePump(8, 100);
+    adv_probePhase(phase, 5);
+    XThread_sleep(2);
+    return true;
+#else
+    (void)phase;
+    return false;
+#endif /* ADV_MAINWIN_ON */
+}
+
+/* ==================== 连续扫掠探针（真机连续逐帧验证） ==================== */
+
+#if ADV_MAINWIN_ON
+/** @brief 扫掠路径航点（宿主客户区相对坐标，千分比）。
+ *  @details 一条穿过全部四个停靠带 + 中央带的长路径：右区起手 → 横穿
+ *           中央 → 左区 → 顶带 → 右沿顶 → 右区下潜 → 底带 → 左区收尾
+ *           （释放点落在左区 ⇒ 回停靠）。覆盖用户真实拖动的全部落点
+ *           预览跨区切换与让位条带形态。 */
+static const int kSweepWpts[][2] = {
+    { 550, 500 }, { 300, 500 }, { 120, 500 },  /* 右→中→左 */
+    { 120, 100 },                              /* 左区上潜（进顶带） */
+    { 500, 80 },  { 880, 120 },                /* 顶带横扫 → 右上 */
+    { 880, 500 }, { 860, 900 },                /* 右区下潜 → 底带 */
+    { 500, 920 }, { 120, 850 }, { 120, 500 }   /* 底带横扫 → 左区收尾 */
+};
+#define SWEEP_WPT_N (int)(sizeof(kSweepWpts) / sizeof(kSweepWpts[0]))
+#define SWEEP_LEG_STEPS 4   /**< 每段航点间插值步数。 */
+#define SWEEP_FBSNAP "/root/xguidemo/fbsnap"
+#define SWEEP_CMP    "/root/xguidemo/mcgs_fb_cmp"
+#define SWEEP_DIR    "/root/xguidemo/dock3"
+#endif /* ADV_MAINWIN_ON */
+
+/** @brief 真机连续扫掠自检（用户症状「拖动卡顿 + 残影」的连续逐帧验证）。
+ *  @details 与 probeDragReal/probeDropGeom 的**相位抽帧**本质不同：本探针
+ *           对扫掠的**每一步**都做一次「现状帧 vs 全屏强制重绘基准帧」的
+ *           屏上逐像素比对（fbsnap 抓屏 → 遍历可见顶层强制重绘 → 再抓
+ *           一帧 → 板侧 mcgs_fb_cmp 扣除面板足迹后全屏比对），任何一步
+ *           有陈旧像素立即记账——连续验证，不依赖稀疏相位抽样。每步另
+ *           记录「注入→事件沉降」的耗时（真机卡顿的框架侧成本）。
+ *           每隔 8 步把现状帧留档为 strip_N.raw（拉回宿主目验用）。
+ *           路径见 kSweepWpts：右区起手，横穿中央/左区/顶带/底带，释放
+ *           点落在左区 ⇒ 回停靠。几何与汇总写 <phase>.geom / stdout：
+ *           `[SWEEP] steps=N avgMs=A maxMs=M totalMismatch=T worst=k`。
+ *  @param phase 相位/几何文件前缀路径；为空则不执行。
+ *  @return 完整跑完返回 true。
+ *  @note   fbsnap/mcgs_fb_cmp 经 system() 调用（板侧外部工具）；缺失时
+ *          比对退化为「只计时」，残影判据由门脚本按 CMP 行存在性把关。 */
+int demo_page_advanced_probeDragSweep(const char* phase)
+{
+#if ADV_MAINWIN_ON
+    XMainWindow* host = NULL;
+    XDockWidget* dock = NULL;
+    XPoint zero;
+    XPoint dorg;
+    XPoint horg;
+    XRect hostRect;
+    char gp[512];
+    char cmd[768];
+    FILE* lf = NULL;
+    FILE* gf = NULL;
+    int pressX;
+    int pressY;
+    int step;
+    int totalSteps = 0;
+    int64_t totalMs = 0;
+    int64_t maxMs = 0;
+    int worstStep = 0;
+    long totalMismatch = 0;
+    int haveTools = 0;
+    int exRects[3][4] = { { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 } };
+    int exN = 0;
+    int i;
+    char exArgs[128];
+    if (!phase || !phase[0]) return false;
+    XPoint_init(&zero, 0, 0);
+    adv_ensureMainWindow();
+    host = s_adv.mainWindow;
+    dock = s_adv.dockRight;
+    if (!host || !dock) return false;
+    XWidget_show((XWidget*)host);
+    XWidget_update((XWidget*)host);
+    adv_probePump(8, 100);
+    snprintf(gp, sizeof(gp), "%s.geom", phase);
+    gf = fopen(gp, "w");
+    lf = fopen(SWEEP_DIR "/sweep.log", "w");
+    /* 起手：右侧停靠态。 */
+    if (XDockWidget_isFloating(dock)) XDockWidget_setFloating(dock, false);
+    XMainWindow_addDockWidget(host, XDockWidgetArea_Right, (XWidget*)dock);
+    adv_probePump(4, 50);
+    horg = XWidget_mapToGlobal((XWidget*)host, &zero);
+    XRect_init(&hostRect, horg.x, horg.y, XWidget_width((XWidget*)host),
+               XWidget_height((XWidget*)host));
+    if (gf) {
+        fprintf(gf, "host %d %d %d %d\n", hostRect.x, hostRect.y,
+                hostRect.width, hostRect.height);
+        fclose(gf);
+        gf = NULL;
+    }
+    dorg = XWidget_mapToGlobal((XWidget*)dock, &zero);
+    pressX = dorg.x + XWidget_width((XWidget*)dock) / 2;
+    pressY = dorg.y + 8;
+    /* 工具齐备性：fbsnap + cmp 任一缺失 ⇒ 只计时（残影判据由门判 CMP 缺行）。
+     * XGUI_SWEEP_NOTOOLS=1 ⇒ 显式只计时（timing 模式：无 fbsnap 阻塞，
+     * 排除抓帧 IO 对事件环的干扰）。 */
+    if (XSystem_environment("XGUI_SWEEP_NOTOOLS")) {
+        haveTools = 0;
+    } else {
+        FILE* t = fopen(SWEEP_FBSNAP, "rb");
+        FILE* c = fopen(SWEEP_CMP, "rb");
+        haveTools = (t != NULL && c != NULL);
+        if (t) fclose(t);
+        if (c) fclose(c);
+    }
+    /* [时钟/HUD 自更新区排除 2026-11-03] demo 页右上角时钟与右下角性能
+     * HUD 在两帧之间**自己会更新**（走秒/统计刷新），逐步 A/B 比对会把
+     * 这类正常更新误记为失配（实测首失配恒为 (975,40)=时钟角落、每步
+     * ~700px 全部落在两块 chrome 内）。排除矩形经
+     * XGUI_SWEEP_EXCLUDE="x,y,w,h;x,y,w,h" 注入（屏面设备坐标），默认
+     * 给本机 chrome 两块；最多 2 块（+面板足迹 ≤4，见 mcgs_fb_cmp）。 */
+    {
+        const char* ex = XSystem_environment("XGUI_SWEEP_EXCLUDE");
+        if (ex && ex[0]) {
+            int vals[8];
+            int n = 0;
+            const char* q = ex;
+            while (*q && n < 12) {
+                char* end;
+                long v = strtol(q, &end, 10);
+                if (end == q) break;
+                vals[n++] = (int)v;
+                q = (*end == ',' || *end == ';') ? end + 1 : end;
+            }
+            exN = n / 4;
+            if (exN > 3) exN = 3;
+            for (i = 0; i < exN; ++i) {
+                exRects[i][0] = vals[i * 4];
+                exRects[i][1] = vals[i * 4 + 1];
+                exRects[i][2] = vals[i * 4 + 2];
+                exRects[i][3] = vals[i * 4 + 3];
+            }
+        }
+    }
+    /* 按下 → 逐航点插值扫掠。每步：注入（含 3 子步模拟真实高速流）→
+     * 沉降 → 抓现状帧 → 全屏强制重绘 → 抓基准帧 → 板侧逐像素比对。 */
+    adv_probeTouch(adv_probeTouchTarget(host, dock), pressX, pressY,
+                   XTOUCHPOINT_STATE_PRESSED, XEVENT_TYPE_TOUCH_BEGIN);
+    adv_probePump(1, 0);
+    for (step = 0; step < SWEEP_WPT_N - 1; ++step) {
+        int leg;
+        for (leg = 1; leg <= SWEEP_LEG_STEPS; ++leg) {
+            int j;
+            int64_t t0;
+            int64_t procMs;
+            long mm = -1;
+            int fx = -1;
+            int fy = -1;
+            int px = 0;
+            int py = 0;
+            /* 本步 3 个子步注入（模拟真实手指的高速事件流，部分子步
+             * 落进 16ms 跟指节流窗被丢弃——与真人拖动同构）。 */
+            for (j = 0; j < 3; ++j) {
+                int tx = hostRect.x + hostRect.width *
+                         (kSweepWpts[step][0] + (kSweepWpts[step + 1][0] -
+                          kSweepWpts[step][0]) * (leg - 1 + (j + 1) / 3.0f)
+                          / SWEEP_LEG_STEPS) / 1000;
+                int ty = hostRect.y + hostRect.height *
+                         (kSweepWpts[step][1] + (kSweepWpts[step + 1][1] -
+                          kSweepWpts[step][1]) * (leg - 1 + (j + 1) / 3.0f)
+                          / SWEEP_LEG_STEPS) / 1000;
+                XThread_msleep(8);
+                adv_probeTouch(adv_probeTouchTarget(host, dock), tx, ty,
+                               XTOUCHPOINT_STATE_UPDATED,
+                               XEVENT_TYPE_TOUCH_UPDATE);
+            }
+            t0 = XDateTime_currentMSecsSinceEpoch();
+            adv_probePump(2, 0);    /* 紧抽：纯事件处理耗时（卡顿判据） */
+            procMs = XDateTime_currentMSecsSinceEpoch() - t0;
+            adv_probePump(3, 25);   /* 宽沉降：≥4 个帧间隔，限频重绘落屏 */
+            {
+                XPoint p = XWidget_mapToGlobal((XWidget*)dock, &zero);
+                px = p.x;
+                py = p.y;
+            }
+            if (haveTools) {
+                int cx0 = px - 1;
+                int cy0 = py - 1;
+                int cw = XWidget_width((XWidget*)dock) + 2;
+                int ch = XWidget_height((XWidget*)dock) + 2;
+                snprintf(cmd, sizeof(cmd),
+                         "%s " SWEEP_DIR "/sw_a.raw " SWEEP_DIR "/sw_b.raw",
+                         SWEEP_FBSNAP);
+                if (system(cmd) != 0) mm = -2;
+                if (mm != -2) {
+                    /* 全屏强制重绘（所有可见顶层）= 基准帧。 */
+                    {
+                        XVector* tops = XGuiApplication_allWindows();
+                        int64_t ti;
+                        int64_t tn = tops
+                            ? XVector_size_base((const XContainer*)tops) : 0;
+                        for (ti = 0; ti < tn; ++ti) {
+                            XWindow* w = *(XWindow**)XVector_at_base(
+                                tops, ti);
+                            XWidget* tw = w ? XWidget_widgetForWindow(w)
+                                            : NULL;
+                            if (tw && XWidget_isVisible(tw))
+                                XWidget_repaint(tw);
+                        }
+                    }
+                    adv_probePump(4, 30);
+                    snprintf(cmd, sizeof(cmd),
+                             "%s " SWEEP_DIR "/sw_b.raw", SWEEP_FBSNAP);
+                    if (system(cmd) != 0) mm = -2;
+                }
+                if (mm != -2) {
+                    /* 面板足迹（外扩 1px）作为排除矩形：面板自身像素在
+                     * 两帧间本就同内容，排除后剩余失配=屏面陈旧像素。 */
+                    FILE* pf;
+                    int ai;
+                    exArgs[0] = 0;
+                    for (ai = 0; ai < exN; ++ai) {
+                        char one[64];
+                        snprintf(one, sizeof(one), " %d %d %d %d",
+                                 exRects[ai][0], exRects[ai][1],
+                                 exRects[ai][2], exRects[ai][3]);
+                        strncat(exArgs, one, sizeof(exArgs) -
+                                            strlen(exArgs) - 1);
+                    }
+                    snprintf(cmd, sizeof(cmd),
+                             "cd " SWEEP_DIR " && ../mcgs_fb_cmp sw_a.raw "
+                             "sw_b.raw %d %d %d %d%s 2>/dev/null",
+                             cx0, cy0, cw, ch, exArgs);
+                    pf = popen(cmd, "r");
+                    if (pf) {
+                        char line[256];
+                        while (fgets(line, sizeof(line), pf)) {
+                            if (strncmp(line, "CMP total=", 10) == 0) {
+                                sscanf(line + 10, "%ld first=(%d,%d)",
+                                       &mm, &fx, &fy);
+                            }
+                        }
+                        pclose(pf);
+                    }
+                    if (mm < 0) mm = -3;
+                }
+            }
+            ++totalSteps;
+            totalMs += procMs;
+            if (procMs > maxMs) { maxMs = procMs; worstStep = totalSteps; }
+            if (mm > 0) totalMismatch += mm;
+            if (lf) {
+                fprintf(lf, "STEP %d px=%d py=%d ms=%lld mm=%ld first=(%d,%d)\n",
+                        totalSteps, px, py, (long long)procMs, mm, fx, fy);
+                fflush(lf);
+            }
+            if (gf) {
+                fprintf(gf, "step%d %d %d %d %d\n", totalSteps, px, py,
+                        XWidget_width((XWidget*)dock),
+                        XWidget_height((XWidget*)dock));
+                fflush(gf);
+            }
+            /* 胶片帧：每 8 步留档一帧（目验用；上限 8 帧 ~10MB）。 */
+            if (haveTools && totalSteps % 8 == 1 && totalSteps <= 57) {
+                snprintf(cmd, sizeof(cmd),
+                         "cp " SWEEP_DIR "/sw_a.raw " SWEEP_DIR
+                         "/strip_%02d.raw", totalSteps);
+                (void)system(cmd);
+            }
+        }
+    }
+    /* 收尾：释放点=最后航点（左区）⇒ 回停靠。 */
+    adv_probeTouch(adv_probeTouchTarget(host, dock),
+                   hostRect.x + hostRect.width * kSweepWpts[SWEEP_WPT_N - 1][0]
+                                / 1000,
+                   hostRect.y + hostRect.height * kSweepWpts[SWEEP_WPT_N - 1][1]
+                                / 1000,
+                   XTOUCHPOINT_STATE_RELEASED, XEVENT_TYPE_TOUCH_END);
+    adv_probePump(6, 60);
+    {
+        XPoint lorg = XWidget_mapToGlobal((XWidget*)dock, &zero);
+        gf = fopen(gp, "a");
+        if (gf) {
+            fprintf(gf, "landedRect %d %d %d %d\n",
+                    lorg.x - hostRect.x, lorg.y - hostRect.y,
+                    XWidget_width((XWidget*)dock),
+                    XWidget_height((XWidget*)dock));
+            fprintf(gf, "dropArea %d 0 0 0\n",
+                    XMainWindow_dockWidgetArea(host, (XWidget*)dock));
+            fprintf(gf, "floatingAfterDrop %d 0 0 0\n",
+                    XDockWidget_isFloating(dock) ? 1 : 0);
+            fprintf(gf, "draggingAfterDrop %d 0 0 0\n", dock->m_dragging);
+            fclose(gf);
+        }
+    }
+    XPrintf("[SWEEP] steps=%d avgMs=%lld maxMs=%lld worst=%d "
+            "totalMismatch=%ld tools=%d\n",
+            totalSteps,
+            (long long)(totalSteps > 0 ? totalMs / totalSteps : 0),
+            (long long)maxMs, worstStep, totalMismatch, haveTools);
+    if (lf) fclose(lf);
+    adv_probePhase(phase, 5);
+    XThread_sleep(2);
+    return true;
+#else
+    (void)phase;
+    return false;
+#endif /* ADV_MAINWIN_ON */
 }
 
 /** @brief 真机内存自检：反复「拖出右面板 → 拖回」N 轮，每轮打印本进程

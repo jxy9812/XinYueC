@@ -55,6 +55,7 @@ void XEventTransition_init_ex(XEventTransition* transition, XObject* object, XEv
  * @brief 获取事件源。
  * @param transition 事件转换。
  * @return 当前被监听对象；未设置或 transition 为 NULL 时返回 NULL。
+ * @warning 借用语义：事件源不归转换所有，调用者不得释放。
  */
 XObject* XEventTransition_eventSource(const XEventTransition* transition);
 /**

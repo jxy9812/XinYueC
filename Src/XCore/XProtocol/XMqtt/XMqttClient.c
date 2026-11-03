@@ -431,6 +431,12 @@ static bool mqtt_configurable(const XMqttClient* client)
     return client && client->m_state == XMqttClient_Disconnected;
 }
 
+static bool mqtt_string_equals_x(const XString* value, const XString* other)
+{
+    if (!value && !other) return true;
+    if (!value || !other) return false;
+    return XString_compare(value, other) == XCompare_Equality;
+}
 static bool mqtt_string_equals_utf8(const XString* value, const char* utf8)
 {
     return value && XString_equals_utf8(value, utf8 ? utf8 : "", XChar_CaseSensitive);
@@ -444,7 +450,23 @@ static void mqtt_set_string(XString** target, const char* value)
     *target = replacement;
 }
 
-void XMqttClient_setHostname(XMqttClient* c, const char* value)
+/* XString 主版本：COW 共享，必须取独立副本（XString_create_copy 与源共享底层缓冲）。 */
+static void mqtt_set_string_x(XString** target, const XString* value)
+{
+    XString* replacement = value
+        ? XString_create_utf8(XString_toUtf8(value))
+        : XString_create_utf8("");
+    if (!replacement) return;
+    if (*target) XClassDelete(*target);
+    *target = replacement;
+}
+
+void XMqttClient_setHostname(XMqttClient* c, const XString* value)
+{
+    if (!mqtt_configurable(c) || mqtt_string_equals_x(c->m_hostname, value)) return;
+    mqtt_set_string_x(&c->m_hostname, value); XMqttClient_hostnameChanged_signal(c, c->m_hostname);
+}
+void XMqttClient_setHostname_utf8(XMqttClient* c, const char* value)
 {
     if (!mqtt_configurable(c) || mqtt_string_equals_utf8(c->m_hostname, value)) return;
     mqtt_set_string(&c->m_hostname, value); XMqttClient_hostnameChanged_signal(c, c->m_hostname);
@@ -454,7 +476,12 @@ void XMqttClient_setPort(XMqttClient* c, uint16_t value)
     if (!mqtt_configurable(c) || c->m_port == value) return;
     c->m_port = value; XMqttClient_portChanged_signal(c, value);
 }
-void XMqttClient_setClientId(XMqttClient* c, const char* value)
+void XMqttClient_setClientId(XMqttClient* c, const XString* value)
+{
+    if (!mqtt_configurable(c) || mqtt_string_equals_x(c->m_clientId, value)) return;
+    mqtt_set_string_x(&c->m_clientId, value); XMqttClient_clientIdChanged_signal(c, c->m_clientId);
+}
+void XMqttClient_setClientId_utf8(XMqttClient* c, const char* value)
 {
     if (!mqtt_configurable(c) || mqtt_string_equals_utf8(c->m_clientId, value)) return;
     mqtt_set_string(&c->m_clientId, value); XMqttClient_clientIdChanged_signal(c, c->m_clientId);
@@ -484,12 +511,22 @@ void XMqttClient_setError(XMqttClient* c, XMqttClient_Error value)
     if (!c || c->m_error == value) return;
     c->m_error = value; XMqttClient_errorChanged_signal(c, value);
 }
-void XMqttClient_setUsername(XMqttClient* c, const char* value)
+void XMqttClient_setUsername(XMqttClient* c, const XString* value)
+{
+    if (!mqtt_configurable(c) || mqtt_string_equals_x(c->m_username, value)) return;
+    mqtt_set_string_x(&c->m_username, value); XMqttClient_usernameChanged_signal(c, c->m_username);
+}
+void XMqttClient_setUsername_utf8(XMqttClient* c, const char* value)
 {
     if (!mqtt_configurable(c) || mqtt_string_equals_utf8(c->m_username, value)) return;
     mqtt_set_string(&c->m_username, value); XMqttClient_usernameChanged_signal(c, c->m_username);
 }
-void XMqttClient_setPassword(XMqttClient* c, const char* value)
+void XMqttClient_setPassword(XMqttClient* c, const XString* value)
+{
+    if (!mqtt_configurable(c) || mqtt_string_equals_x(c->m_password, value)) return;
+    mqtt_set_string_x(&c->m_password, value); XMqttClient_passwordChanged_signal(c, c->m_password);
+}
+void XMqttClient_setPassword_utf8(XMqttClient* c, const char* value)
 {
     if (!mqtt_configurable(c) || mqtt_string_equals_utf8(c->m_password, value)) return;
     mqtt_set_string(&c->m_password, value); XMqttClient_passwordChanged_signal(c, c->m_password);
@@ -499,7 +536,12 @@ void XMqttClient_setCleanSession(XMqttClient* c, bool value)
     if (!mqtt_configurable(c) || c->m_cleanSession == value) return;
     c->m_cleanSession = value; XMqttClient_cleanSessionChanged_signal(c, value);
 }
-void XMqttClient_setWillTopic(XMqttClient* c, const char* value)
+void XMqttClient_setWillTopic(XMqttClient* c, const XString* value)
+{
+    if (!mqtt_configurable(c) || mqtt_string_equals_x(c->m_willTopic, value)) return;
+    mqtt_set_string_x(&c->m_willTopic, value); XMqttClient_willTopicChanged_signal(c, c->m_willTopic);
+}
+void XMqttClient_setWillTopic_utf8(XMqttClient* c, const char* value)
 {
     if (!mqtt_configurable(c) || mqtt_string_equals_utf8(c->m_willTopic, value)) return;
     mqtt_set_string(&c->m_willTopic, value); XMqttClient_willTopicChanged_signal(c, c->m_willTopic);

@@ -81,17 +81,18 @@ bool XAbstractTransition_setTargetState(XAbstractTransition* transition, XAbstra
         return false;
 
     XAbstractState* previous = XAbstractTransition_targetState(transition);
-    if (previous == target
-        && XVector_size_base(
-            (const XContainer*)transition->m_targetStates) <= 1)
+    const int64_t size = (int64_t)XVector_size_base(
+        (const XContainer*)transition->m_targetStates);
+    /* 对标 Qt：单目标且与现状相同（含"都为空"）时直接返回，不发信号。 */
+    if (previous == target && (target ? size == 1 : size == 0))
         return true;
 
     XVector_clear_base((XContainer*)transition->m_targetStates);
     if (target && !XVector_push_back_1_base(transition->m_targetStates, &target))
         return false;
 
+    /* Qt 此时只发 targetStateChanged；targetStatesChanged 由 setTargetStates 转出。 */
     XAbstractTransition_targetStateChanged_signal(transition);
-    XAbstractTransition_targetStatesChanged_signal(transition);
     return true;
 }
 
@@ -118,20 +119,56 @@ bool XAbstractTransition_setTargetStates(XAbstractTransition* transition, const 
         }
     }
 
+    /* 对标 Qt 的多重集比较：顺序不同但内容一致视为未变化，不发信号。 */
+    const int64_t targetCount = targets
+        ? (int64_t)XVector_size_base((const XContainer*)targets)
+        : 0;
+    const int64_t currentCount = (int64_t)XVector_size_base(
+        (const XContainer*)transition->m_targetStates);
+    bool sameList = true;
+    if (targetCount == currentCount) {
+        for (int64_t i = 0; i < targetCount && sameList; ++i) {
+            XAbstractState* candidate = XVector_At_Base(targets, i, XAbstractState*);
+            bool matched = false;
+            for (int64_t j = 0; j < currentCount; ++j) {
+                if (XVector_At_Base(transition->m_targetStates, j, XAbstractState*) != candidate)
+                    continue;
+                /* 同一元素只能配对一次：已配对过就跳过，避免 [a,a] 与 [a,b] 判等。 */
+                bool alreadyPaired = false;
+                for (int64_t k = 0; k < i && !alreadyPaired; ++k) {
+                    if (XVector_At_Base(targets, k, XAbstractState*) == candidate)
+                        alreadyPaired = true;
+                }
+                if (alreadyPaired)
+                    continue;
+                matched = true;
+                break;
+            }
+            if (!matched)
+                sameList = false;
+        }
+    } else {
+        sameList = false;
+    }
+    if (sameList)
+        return true;
+
     XAbstractState* previous = XAbstractTransition_targetState(transition);
     XVector_clear_base((XContainer*)transition->m_targetStates);
     if (targets && !XVector_push_back_3(transition->m_targetStates, targets))
         return false;
 
-    if (previous != XAbstractTransition_targetState(transition))
-        XAbstractTransition_targetStateChanged_signal(transition);
+    /* Qt 的 setTargetStates 只发 targetStatesChanged；targetStateChanged 属于
+     * setTargetState 的路径。C 侧保持同一分工，避免一次写入两条通知。 */
+    (void)previous;
     XAbstractTransition_targetStatesChanged_signal(transition);
     return true;
 }
 
 XAbstractTransition_TransitionType XAbstractTransition_transitionType(const XAbstractTransition* transition)
 {
-    return transition ? transition->m_transitionType : XAbstractTransition_ExternalTransition;
+    return transition ? transition->m_transitionType
+                      : XAbstractTransition_ExternalTransition;
 }
 
 void XAbstractTransition_setTransitionType(XAbstractTransition* transition, XAbstractTransition_TransitionType type)
@@ -142,9 +179,20 @@ void XAbstractTransition_setTransitionType(XAbstractTransition* transition, XAbs
 
 XStateMachine* XAbstractTransition_machine(const XAbstractTransition* transition)
 {
-    return transition && transition->m_sourceState
-        ? XAbstractState_machine((XAbstractState*)transition->m_sourceState)
-        : NULL;
+    if (!transition)
+        return NULL;
+    if (transition->m_sourceState)
+        return XAbstractState_machine((XAbstractState*)transition->m_sourceState);
+    /* 对标 QAbstractTransitionPrivate::machine：源状态缺失时，历史状态的默认
+     * 转换挂在该历史状态下，归属要沿父对象回推。其余情况（无源状态的普通
+     * 转换）与 Qt 一致返回 NULL。 */
+    if (transition->m_kind == XAbstractTransition_CustomTransition) {
+        XObject* parent = XObject_parent((XObject*)transition);
+        XAbstractState* state = (XAbstractState*)parent;
+        if (state && state->m_kind == XAbstractState_HistoryState)
+            return XAbstractState_machine(state);
+    }
+    return NULL;
 }
 
 bool XAbstractTransition_eventTest_base(XAbstractTransition* transition, XEvent* event)

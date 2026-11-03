@@ -21,11 +21,11 @@
  * @par 使用示例
  * @code
  * XS7TcpClient* client = XS7TcpClient_create();
- * XPlcDevice_setConnectionParameter_ref((XPlcDevice*)client,
+ * XPlcDevice_setConnectionParameter((XPlcDevice*)client,
  *     XPlcDevice_NetworkAddressParameter, XVariant_create_utf8_str("192.168.0.1"));
- * XPlcDevice_setConnectionParameter_ref((XPlcDevice*)client,
+ * XPlcDevice_setConnectionParameter((XPlcDevice*)client,
  *     XPlcDevice_RackParameter, XVariant_create_int(0));
- * XPlcDevice_setConnectionParameter_ref((XPlcDevice*)client,
+ * XPlcDevice_setConnectionParameter((XPlcDevice*)client,
  *     XPlcDevice_SlotParameter, XVariant_create_int(1));
  * XPlcDevice_connectDevice((XPlcDevice*)client);
  * // stateChanged → Handshaking → Connected 后：

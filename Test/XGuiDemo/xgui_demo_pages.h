@@ -93,6 +93,8 @@ int demo_page_advanced_probeDrag(const char* phase); /**< 高级控件：可见�
                                                      *   （设备端残影量化；相位文件）。 */
 int demo_page_advanced_probeDragTouch(const char* phase); /**< 高级控件：浮动态拖动自检（**触摸**路径：注入触摸帧→框架合成鼠标→命中派发，与真人手指同链）。 */
 int demo_page_advanced_probeDragReal(const char* phase);
+int demo_page_advanced_probeDropGeom(const char* phase); \
+int demo_page_advanced_probeDragSweep(const char* phase); /**< 高级控件：真机连续扫掠自检（长路径全屏拖动，每步「现状帧 vs 全屏重绘基准」板侧逐像素比对 + 每步耗时）。 */ /**< 高级控件：真机「预停靠位置=实际落位」自检（拖动中记录指示器矩形、松手记录实际矩形，落盘供屏外比对）。 */
 int demo_page_advanced_probeDragMem(const char* phase, int rounds); /**< 高级控件：反复拖出/拖回 N 轮并打印 RSS（定位「拖几次后卡死」＝内存累积/OOM）。 */ /**< 高级控件：浮动态拖动自检（demo **真实主窗**（子窗口宿主）+ 真实左右面板，触摸路径）。 */
 void demo_page_effects_adapt(XWidget* page);        /**< 图形效果：组③启/禁按钮贴底。 */
 void demo_page_remote_client_adapt(XWidget* page);  /**< 远程客户端：统计块贴底。 */

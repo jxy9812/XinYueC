@@ -140,7 +140,11 @@ void XEventTransition_setEventType(XEventTransition* transition, XEventType type
 {
     if (!transition || transition->m_eventType == type)
         return;
+    /* 对标 Qt：先注销旧事件类型的过滤器登记，再按新类型重新登记（过滤器的
+     * 安装本身与类型无关，但登记状态要跟着变）。 */
+    XEventTransition_unregister_internal(transition);
     transition->m_eventType = type;
+    XEventTransition_register_internal(transition);
 }
 
 void XEventTransition_register_internal(XEventTransition* transition)

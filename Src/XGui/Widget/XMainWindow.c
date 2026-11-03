@@ -191,22 +191,84 @@ static bool xmw_dockAreaUsed(const XMainWindow* self, int area)
 }
 
 /**
+ * @brief      布局探针（落点预览专用，非 Qt API）。
+ * @details    落点预览与真实落位必须同一把尺（「预停靠位置≠实际落位」
+ *             的根修，2026-11-02）：把「拖动中的面板」按假想区域参与一
+ *             次**只读**布局计算，得到它落位后将占据的矩形；真实布局
+ *             与控件几何完全不受影响。对标 Qt 的 gapRect 语义——
+ *             QMainWindowLayout::updateGapIndicator 的橡皮筋矩形取自
+ *             布局态本身（qmainwindowlayout.cpp:2978-2983 的
+ *             setGeometry(gapRect)，与 plug 落位 qmainwindowlayout.cpp:
+ *             2475 同源），预览承诺=落位兑现。
+ */
+typedef struct XmwDockProbe
+{
+    const XDockWidget* m_dock; /**< 拖动中的面板（假想落位于 m_area）。 */
+    int m_area;                /**< 假想落位区域码（XDockWidgetArea）。 */
+    XRect m_rect;              /**< 输出：假想落位矩形（宿主客户区坐标）。 */
+    bool m_found;              /**< 输出：模拟中是否命中该面板。 */
+} XmwDockProbe;
+
+/**
+ * @brief      判断第 i 个登记面板是否参与 area 的行/列布局。
+ * @details    真实布局（probe==NULL）：区域匹配 + 非浮动 + 显式显示
+ *             （标签组非活动成员已被隐藏，因此不占行）。探针模式：拖动
+ *             中的面板按**假想区域**参与并豁免浮动/隐藏位——落位链
+ *             （finishDrop→addDockWidget）只改区域码并 show，登记下标
+ *             不变 ⇒ 行/列次序与真实落位逐位一致；其跨向覆盖按落位后
+ *             口径取值（换区落位时 addDockWidget 清零，见
+ *             XMainWindow_addDockWidget 已登记分支；同区保留）。
+ * @param      self 目标主窗口。
+ * @param      i 登记表下标。
+ * @param      area 行/列区域码。
+ * @param      probe 布局探针；NULL=真实布局口径。
+ * @param      out 参与面板输出（可 NULL）。
+ * @param      outOverride 跨向覆盖值输出（0=均分；可 NULL）。
+ * @return     参与布局返回 true。
+ */
+static bool xmw_dockMemberAt(const XMainWindow* self, int64_t i, int area,
+                             const XmwDockProbe* probe, XDockWidget** out,
+                             int* outOverride)
+{
+    int* a = (int*)XVector_at_base(self->m_dockAreas, i);
+    XDockWidget** d = (XDockWidget**)XVector_at_base(self->m_docks, i);
+    int* oh = self->m_dockHeights
+                  ? (int*)XVector_at_base(self->m_dockHeights, i) : NULL;
+    if (!a || !d || !*d) return false;
+    if (probe && *d == (XDockWidget*)probe->m_dock) {
+        if (out) *out = *d;
+        if (outOverride)
+            *outOverride = (*a == probe->m_area && oh && *oh > 0) ? *oh : 0;
+        return probe->m_area == area;
+    }
+    if (*a != area) return false;
+    if ((*d)->m_floating) return false;
+    if (XWidget_isHidden((XWidget*)*d)) return false;
+    if (out) *out = *d;
+    if (outOverride) *outOverride = (oh && *oh > 0) ? *oh : 0;
+    return true;
+}
+
+/**
  * @brief      布局一条停靠列（左/右）内的可见面板行。
  * @details    参与布局的行 = 已登记、区域匹配、非浮动且显式显示的面板
- *             （标签组非活动成员已被隐藏，因此不占行）。行高优先取
- *             m_dockHeights 的覆盖值（对标 resizeDocks 的垂直尺寸），
- *             未覆盖的行均分剩余高度；覆盖值总和超过可用高度时按比例
- *             压缩。
+ *             （标签组非活动成员已被隐藏，因此不占行；探针面板按假想
+ *             区域参与，见 xmw_dockMemberAt）。行高优先取 m_dockHeights
+ *             的覆盖值（对标 resizeDocks 的垂直尺寸），未覆盖的行均分
+ *             剩余高度；覆盖值总和超过可用高度时按比例压缩。探针非空
+ *             时为**只读模拟**：不写任何控件几何，仅回填探针面板将占
+ *             据的矩形（落点预览的唯一尺子，与真实落位同源）。
  * @param      self 目标主窗口。
  * @param      area 列区域码（Left/Right）。
  * @param      x 列左边界。
  * @param      colW 列宽。
  * @param      top 列顶边界。
  * @param      bottom 列底边界。
+ * @param      probe 布局探针；NULL=真实布局（写几何）。
  * @return     无返回值。
  */
 static void xmw_layoutDockColumn(XMainWindow* self, int area, int x, int colW,
-                                 int top, int bottom)
+                                 int top, int bottom, XmwDockProbe* probe)
 {
     XRect r;
     int64_t i;
@@ -219,21 +281,22 @@ static void xmw_layoutDockColumn(XMainWindow* self, int area, int x, int colW,
     int autoHeight = 0;
     int y;
     if (!self || !self->m_docks || colW <= 0) return;
+    if (probe) {
+        probe->m_found = false;
+        XRect_init(&probe->m_rect, 0, 0, 0, 0);
+    }
     if (bottom < top) bottom = top;
     avail = bottom - top;
     n = XVector_size_base((const XContainer*)self->m_docks);
     for (i = 0; i < n; ++i) {
-        int* a = (int*)XVector_at_base(self->m_dockAreas, i);
-        XDockWidget** d = (XDockWidget**)XVector_at_base(self->m_docks, i);
-        int* oh = self->m_dockHeights
-                      ? (int*)XVector_at_base(self->m_dockHeights, i) : NULL;
-        if (!a || !d || !*d || *a != area || (*d)->m_floating) continue;
-        if (XWidget_isHidden((XWidget*)*d)) continue;
+        XDockWidget* w;
+        int oh;
+        if (!xmw_dockMemberAt(self, i, area, probe, &w, &oh)) continue;
         ++rows;
         lastIndex = i;
-        if (oh && *oh > 0) {
+        if (oh > 0) {
             ++fixed;
-            fixedSum += *oh;
+            fixedSum += oh;
         }
     }
     if (rows <= 0) return;
@@ -245,19 +308,14 @@ static void xmw_layoutDockColumn(XMainWindow* self, int area, int x, int colW,
             autoHeight = (avail - fixedSum) / (rows - fixed);
         y = top;
         for (i = 0; i < n; ++i) {
-            int* a = (int*)XVector_at_base(self->m_dockAreas, i);
-            XDockWidget** d =
-                (XDockWidget**)XVector_at_base(self->m_docks, i);
-            int* oh = self->m_dockHeights
-                          ? (int*)XVector_at_base(self->m_dockHeights, i)
-                          : NULL;
+            XDockWidget* w;
+            int oh;
             int h;
-            if (!a || !d || !*d || *a != area || (*d)->m_floating) continue;
-            if (XWidget_isHidden((XWidget*)*d)) continue;
-            if (oh && *oh > 0 && !compressed)
-                h = *oh;
-            else if (oh && *oh > 0)
-                h = (int)((int64_t)*oh * avail / fixedSum);
+            if (!xmw_dockMemberAt(self, i, area, probe, &w, &oh)) continue;
+            if (oh > 0 && !compressed)
+                h = oh;
+            else if (oh > 0)
+                h = (int)((int64_t)oh * avail / fixedSum);
             else if (i == lastIndex)
                 h = bottom - y; /* 最后一行吃掉整数均分的余量 */
             else
@@ -265,7 +323,14 @@ static void xmw_layoutDockColumn(XMainWindow* self, int area, int x, int colW,
             if (h < 0) h = 0;
             if (h > bottom - y) h = bottom - y;
             XRect_init(&r, x, y, colW, h);
-            XWidget_setGeometryRect((XWidget*)*d, &r);
+            if (probe) {
+                if (w == (XDockWidget*)probe->m_dock) {
+                    probe->m_rect = r;
+                    probe->m_found = true;
+                }
+            } else {
+                XWidget_setGeometryRect((XWidget*)w, &r);
+            }
             y += h;
         }
     }
@@ -277,17 +342,20 @@ static void xmw_layoutDockColumn(XMainWindow* self, int area, int x, int colW,
  *             顺序从左到右排列，宽度优先取 m_dockHeights 的覆盖值
  *             （resizeDocks Horizontal 对 Top/Bottom 面板的结果），未覆盖
  *             的均分剩余宽度；覆盖值总和超过可用宽度时按比例压缩。行高
- *             由调用方给定（m_topDockHeight/m_bottomDockHeight）。
+ *             由调用方给定（m_topDockHeight/m_bottomDockHeight）。探针
+ *             非空时为只读模拟（与 xmw_layoutDockColumn 同口径，不写几
+ *             何、仅回填探针矩形）。
  * @param      self 目标主窗口。
  * @param      area 行区域码（Top/Bottom）。
  * @param      y 行顶边界。
  * @param      rowH 行高。
  * @param      left 行左边界。
  * @param      right 行右边界。
+ * @param      probe 布局探针；NULL=真实布局（写几何）。
  * @return     无返回值。
  */
 static void xmw_layoutDockRow(XMainWindow* self, int area, int y, int rowH,
-                              int left, int right)
+                              int left, int right, XmwDockProbe* probe)
 {
     XRect r;
     int64_t i;
@@ -300,21 +368,22 @@ static void xmw_layoutDockRow(XMainWindow* self, int area, int y, int rowH,
     int autoWidth = 0;
     int x;
     if (!self || !self->m_docks || rowH <= 0) return;
+    if (probe) {
+        probe->m_found = false;
+        XRect_init(&probe->m_rect, 0, 0, 0, 0);
+    }
     if (right < left) right = left;
     avail = right - left;
     n = XVector_size_base((const XContainer*)self->m_docks);
     for (i = 0; i < n; ++i) {
-        int* a = (int*)XVector_at_base(self->m_dockAreas, i);
-        XDockWidget** d = (XDockWidget**)XVector_at_base(self->m_docks, i);
-        int* ow = self->m_dockHeights
-                      ? (int*)XVector_at_base(self->m_dockHeights, i) : NULL;
-        if (!a || !d || !*d || *a != area || (*d)->m_floating) continue;
-        if (XWidget_isHidden((XWidget*)*d)) continue;
+        XDockWidget* w;
+        int ow;
+        if (!xmw_dockMemberAt(self, i, area, probe, &w, &ow)) continue;
         ++cols;
         lastIndex = i;
-        if (ow && *ow > 0) {
+        if (ow > 0) {
             ++fixed;
-            fixedSum += *ow;
+            fixedSum += ow;
         }
     }
     if (cols <= 0) return;
@@ -326,28 +395,30 @@ static void xmw_layoutDockRow(XMainWindow* self, int area, int y, int rowH,
             autoWidth = (avail - fixedSum) / (cols - fixed);
         x = left;
         for (i = 0; i < n; ++i) {
-            int* a = (int*)XVector_at_base(self->m_dockAreas, i);
-            XDockWidget** d =
-                (XDockWidget**)XVector_at_base(self->m_docks, i);
-            int* ow = self->m_dockHeights
-                          ? (int*)XVector_at_base(self->m_dockHeights, i)
-                          : NULL;
-            int w;
-            if (!a || !d || !*d || *a != area || (*d)->m_floating) continue;
-            if (XWidget_isHidden((XWidget*)*d)) continue;
-            if (ow && *ow > 0 && !compressed)
-                w = *ow;
-            else if (ow && *ow > 0)
-                w = (int)((int64_t)*ow * avail / fixedSum);
+            XDockWidget* w;
+            int ow;
+            int wdt;
+            if (!xmw_dockMemberAt(self, i, area, probe, &w, &ow)) continue;
+            if (ow > 0 && !compressed)
+                wdt = ow;
+            else if (ow > 0)
+                wdt = (int)((int64_t)ow * avail / fixedSum);
             else if (i == lastIndex)
-                w = right - x; /* 最后一列吃掉整数均分的余量 */
+                wdt = right - x; /* 最后一列吃掉整数均分的余量 */
             else
-                w = autoWidth;
-            if (w < 0) w = 0;
-            if (w > right - x) w = right - x;
-            XRect_init(&r, x, y, w, rowH);
-            XWidget_setGeometryRect((XWidget*)*d, &r);
-            x += w;
+                wdt = autoWidth;
+            if (wdt < 0) wdt = 0;
+            if (wdt > right - x) wdt = right - x;
+            XRect_init(&r, x, y, wdt, rowH);
+            if (probe) {
+                if (w == (XDockWidget*)probe->m_dock) {
+                    probe->m_rect = r;
+                    probe->m_found = true;
+                }
+            } else {
+                XWidget_setGeometryRect((XWidget*)w, &r);
+            }
+            x += wdt;
         }
     }
 }
@@ -594,13 +665,13 @@ static void xmw_layout(XMainWindow* self)
     xmw_layoutDockRow(self, (int)XDockWidgetArea_Top, top, topRowH,
                       fm.left, w - fm.left - fm.right > 0
                                    ? w - fm.left - fm.right
-                                   : 0);
+                                   : 0, NULL);
     top += topRowH;
     xmw_layoutDockRow(self, (int)XDockWidgetArea_Bottom,
                       h - bottom - bottomRowH, bottomRowH,
                       fm.left,
                       w - fm.left - fm.right > 0 ? w - fm.left - fm.right
-                                                 : 0);
+                                                 : 0, NULL);
     bottom += bottomRowH;
     /* 左/右停靠列：列宽可经 resizeDocks 覆盖，列内可见面板行堆叠。 */
     leftW = xmw_dockAreaUsed(self, (int)XDockWidgetArea_Left)
@@ -608,11 +679,11 @@ static void xmw_layout(XMainWindow* self)
     rightW = xmw_dockAreaUsed(self, (int)XDockWidgetArea_Right)
                  ? self->m_rightDockWidth : 0;
     xmw_layoutDockColumn(self, (int)XDockWidgetArea_Left, fm.left, leftW,
-                         top, h - bottom);
+                         top, h - bottom, NULL);
     xmw_layoutDockColumn(self, (int)XDockWidgetArea_Right,
                          w - fm.right - rightW > 0 ? w - fm.right - rightW
                                                    : 0,
-                         rightW, top, h - bottom);
+                         rightW, top, h - bottom, NULL);
     if (self->m_central) {
         XRect_init(&r, fm.left + leftW, top,
                    w - fm.left - leftW - rightW - fm.right > 0
@@ -1241,9 +1312,20 @@ void XMainWindow_addDockWidget(XMainWindow* self, int area,
     if (d->m_floating) XDockWidget_setFloating(d, false);
     existing = xmw_dockIndex(self, d);
     if (existing >= 0) {
+        int* oldArea = (int*)XVector_at_base(self->m_dockAreas, existing);
         /* 对标 Qt：重复登记视为移动，仅更新区域（避免重复条目破坏
          * saveState/restoreState 的按下标映射）。 */
-        *(int*)XVector_at_base(self->m_dockAreas, existing) = areaVal;
+        if (oldArea && *oldArea != areaVal) {
+            /* 换区落位清跨向覆盖（2026-11-02 根修）：m_dockHeights 槽位
+             * 的语义随区域种类翻转——列区（Left/Right）=行高、行区
+             * （Top/Bottom）=行内宽。旧值跨区保留会被新区域按另一轴向
+             * 解释（Top 行的行内宽覆盖被左列当行高用），面板按旧域尺
+             * 寸错排（实测：预停靠位置≠实际落位的伴生根因之一）。同区
+             * 重复登记不清零，保留 resizeDocks 的用户覆盖。 */
+            if (self->m_dockHeights)
+                *(int*)XVector_at_base(self->m_dockHeights, existing) = 0;
+        }
+        if (oldArea) *oldArea = areaVal;
         XWidget_setParent(dock, (XWidget*)self, 0);
         XWidget_show(dock);
         xmw_layout(self);
@@ -1584,6 +1666,79 @@ static void xmw_dockAreaRect(const XMainWindow* self, XRect* out)
 }
 
 /**
+ * @brief      计算面板落入 area 后将占据的矩形（布局模拟，唯一尺子）。
+ * @details    「预停靠位置=实际落位」的唯一真值来源：把拖动中的面板按
+ *             假想区域参与一次只读布局（XmwDockProbe），行高/列宽/行内
+ *             均分/覆盖压缩全部走 xmw_layoutDockColumn/Row 本体——预览
+ *             与落位共用同一份分配算术，杜绝两把尺漂移。行高与行内跨
+ *             向均按「落位后」口径：目标行/列落位后必然被占用
+ *             （xmw_dockAreaUsed 对浮动态不计，落位后 non-floating），
+ *             故直接取 m_topDockHeight/m_bottomDockHeight/
+ *             m_leftDockWidth/m_rightDockWidth，可用范围钳制与
+ *             xmw_layout 同口径。
+ * @param      self 目标主窗口；可为 NULL。
+ * @param      dock 拖动中的停靠面板；可为 NULL。
+ * @param      area 假想落位区域码（Left/Right/Top/Bottom）。
+ * @param      ar 停靠区矩形（xmw_dockAreaRect 口径，客户区坐标）。
+ * @param      out 落位矩形输出（客户区坐标）。
+ * @return     模拟成功返回 true；退化态（探针未命中/尺寸非法）返回
+ *             false，调用方回退旧 1/3 带矩形。
+ */
+static bool xmw_dropSlotRect(XMainWindow* self, const XDockWidget* dock,
+                             int area, const XRect* ar, XRect* out)
+{
+    XmwDockProbe probe;
+    int topRowH = 0;
+    int bottomRowH = 0;
+    int spanH;
+    if (!self || !dock || !ar || !out) return false;
+    if (ar->width <= 0 || ar->height <= 0) return false;
+    probe.m_dock = dock;
+    probe.m_area = area;
+    probe.m_found = false;
+    XRect_init(&probe.m_rect, 0, 0, 0, 0);
+    /* 行高按落位后口径（与 xmw_layout 的 topRowH/bottomRowH 同源：
+     * 目标区被本面板占用 ⇒ 该行必然参与）。 */
+    if (xmw_dockAreaUsed(self, (int)XDockWidgetArea_Top) ||
+        area == (int)XDockWidgetArea_Top)
+        topRowH = self->m_topDockHeight;
+    if (xmw_dockAreaUsed(self, (int)XDockWidgetArea_Bottom) ||
+        area == (int)XDockWidgetArea_Bottom)
+        bottomRowH = self->m_bottomDockHeight;
+    /* 可用高度钳制与 xmw_layout 同口径（行高不超出停靠区高度）。 */
+    spanH = ar->height;
+    if (topRowH > spanH) topRowH = spanH;
+    if (bottomRowH > spanH - topRowH) bottomRowH = spanH - topRowH;
+    if (area == (int)XDockWidgetArea_Left ||
+        area == (int)XDockWidgetArea_Right) {
+        int colW = (area == (int)XDockWidgetArea_Left)
+                       ? self->m_leftDockWidth : self->m_rightDockWidth;
+        /* 列起点与 xmw_layout 同式（右列贴右缘，越界钳 0）。 */
+        int x = (area == (int)XDockWidgetArea_Right)
+                    ? ar->x + ar->width - colW : ar->x;
+        if (area == (int)XDockWidgetArea_Right && x < 0) x = 0;
+        if (colW <= 0) return false;
+        xmw_layoutDockColumn(self, area, x, colW,
+                             ar->y + topRowH, ar->y + spanH - bottomRowH,
+                             &probe);
+    } else if (area == (int)XDockWidgetArea_Top ||
+               area == (int)XDockWidgetArea_Bottom) {
+        int rowH = (area == (int)XDockWidgetArea_Top)
+                       ? topRowH : bottomRowH;
+        int y = (area == (int)XDockWidgetArea_Bottom)
+                    ? ar->y + spanH - rowH : ar->y;
+        if (rowH <= 0) return false;
+        xmw_layoutDockRow(self, area, y, rowH,
+                          ar->x, ar->x + ar->width, &probe);
+    } else {
+        return false; /* 中央带不适用（tab 化矩形另有口径） */
+    }
+    if (!probe.m_found) return false;
+    *out = probe.m_rect;
+    return true;
+}
+
+/**
  * @brief      按三分分区求拖动落点的目标区域与指示器矩形。
  * @details    分区规则（任务裁定，对标 Qt QDockAreaLayout
  *             dockPosHelper 的三分分区注释图，qdockarealayout.cpp:651-733：
@@ -1593,11 +1748,25 @@ static void xmw_dockAreaRect(const XMainWindow* self, XRect* out)
  *             中央带 = All（调用方转 tab 化）。落点先经
  *             XWidget_mapFromGlobal 折算到主窗口客户区坐标，再以停靠区
  *             矩形（xmw_dockAreaRect，扣除菜单栏/顶部工具栏与状态栏）
- *             为界——区外（含菜单栏/状态栏条带）无落点。目标区域经
- *             XDockWidget_isAreaAllowed 过滤：不允许时
+ *             为界——菜单栏/工具栏/状态栏条带仍无落点（2026-10-31 契约
+ *             保持）。**CSD 标题条带例外（2026-11-02 根修）**：fbdev 自
+ *             绘标题条是窗内 chrome（XTitleBar 子控件占客户区顶部
+ *             fm.top 带，xmw_layout/marginsFor 的保留边距），落在该条带
+ *             上的拖动按 Top 区处理——对标 Qt 窗内 titleBarWidget（其
+ *             矩形在 QMainWindow::rect() 之内，dockPosHelper 的纵向外
+ *             带覆盖它）；预览/落位矩形仍锚定停靠区矩形，不把面板吸进
+ *             条带。目标区域经 XDockWidget_isAreaAllowed 过滤：不允许时
  *             回退该 dock 当前登记区域（XMainWindow_dockWidgetArea 查
  *             询）；回退区域也无效（未登记的 NoDockWidgetArea，或非单
  *             一边缘位、或同样不被允许）时无落点。
+ *             指示器矩形=**真实落位矩形**（xmw_dropSlotRect 布局模拟，
+ *             与落位共用 xmw_layout 的同一把尺；2026-11-02 根修：旧实
+ *             现用「停靠区 1/3」带宽，落位用 m_leftDockWidth 等另一把
+ *             尺，预览承诺与兑现永久错位）。模拟退化（探针未命中/尺寸
+ *             非法）时回退旧 1/3 带矩形（左/右区 = 停靠区横向 1/3 全高
+ *             条；上/下区 = 停靠区纵向 1/3 全宽条）；中央带 = 停靠区中
+ *             央 1/3x1/3 矩形（tab 化落点，落位面板与组内面板同矩形，
+ *             与其它区不同尺，维持原状）。
  * @param      self 目标主窗口；可为 NULL。
  * @param      dock 拖动中的停靠面板；可为 NULL。
  * @param      globalPos 落点全局坐标；可为 NULL。
@@ -1606,12 +1775,13 @@ static void xmw_dockAreaRect(const XMainWindow* self, XRect* out)
  * @return     有效目标区域码（Left/Right/Top/Bottom/All）；无落点返回
  *             XDockWidgetArea_NoDockWidgetArea（此时不写 outIndicator）。
  */
-static int xmw_dropAreaAt(const XMainWindow* self, const XDockWidget* dock,
+static int xmw_dropAreaAt(XMainWindow* self, const XDockWidget* dock,
                           const XPoint* globalPos, XRect* outIndicator)
 {
     XRect r;
     XRect ar;
     XPoint local;
+    XMargins fm;
     int aw;
     int ah;
     int x3;
@@ -1630,25 +1800,34 @@ static int xmw_dropAreaAt(const XMainWindow* self, const XDockWidget* dock,
     ah = ar.height;
     if (aw <= 0 || ah <= 0)
         return (int)XDockWidgetArea_NoDockWidgetArea;
-    /* 落点在停靠区外：无落点（横纵各 ×3 后比较，避免整除截断把
-     * 边界点划错带，与 XDockWidget 释放链同口径）。 */
-    if (local.x < ar.x || local.x >= ar.x + aw ||
-        local.y < ar.y || local.y >= ar.y + ah)
-        return (int)XDockWidgetArea_NoDockWidgetArea;
-    lx = local.x - ar.x;
-    ly = local.y - ar.y;
-    x3 = lx * 3;
-    y3 = ly * 3;
-    if (x3 < aw)
-        hit = (int)XDockWidgetArea_Left;
-    else if (x3 >= aw * 2)
-        hit = (int)XDockWidgetArea_Right;
-    else if (y3 < ah)
+    if (local.x >= ar.x && local.x < ar.x + aw &&
+        local.y >= ar.y && local.y < ar.y + ah) {
+        /* 落点在停靠区内：三分分区（横纵各 ×3 后比较，避免整除截断
+         * 把边界点划错带，与 XDockWidget 释放链同口径）。 */
+        lx = local.x - ar.x;
+        ly = local.y - ar.y;
+        x3 = lx * 3;
+        y3 = ly * 3;
+        if (x3 < aw)
+            hit = (int)XDockWidgetArea_Left;
+        else if (x3 >= aw * 2)
+            hit = (int)XDockWidgetArea_Right;
+        else if (y3 < ah)
+            hit = (int)XDockWidgetArea_Top;
+        else if (y3 >= ah * 2)
+            hit = (int)XDockWidgetArea_Bottom;
+        else
+            hit = (int)XDockWidgetArea_All; /* 横纵双中带 = 中央带（tab 化） */
+    } else {
+        /* 停靠区外：默认无落点；唯 CSD 标题条带（客户区顶部 fm.top
+         * 带，窗内 chrome）按 Top 区处理——预览/落位矩形仍锚定停靠区
+         * 矩形（xmw_dropSlotRect 的行起点=ar.y），条带本身不进预览。 */
+        fm = XWindowDecoration_marginsFor((const XWidget*)self);
+        if (!(fm.top > 0 && local.y >= 0 && local.y < fm.top &&
+              local.x >= ar.x && local.x < ar.x + aw))
+            return (int)XDockWidgetArea_NoDockWidgetArea;
         hit = (int)XDockWidgetArea_Top;
-    else if (y3 >= ah * 2)
-        hit = (int)XDockWidgetArea_Bottom;
-    else
-        hit = (int)XDockWidgetArea_All; /* 横纵双中带 = 中央带（tab 化） */
+    }
     /* allowedAreas 过滤：不允许时回退该 dock 当前登记区域。 */
     if (XDockWidget_isAreaAllowed(dock, hit)) {
         fallback = hit;
@@ -1661,21 +1840,22 @@ static int xmw_dropAreaAt(const XMainWindow* self, const XDockWidget* dock,
             !XDockWidget_isAreaAllowed(dock, fallback))
             return (int)XDockWidgetArea_NoDockWidgetArea;
     }
-    /* 指示器矩形按有效区域给出（左/右区 = 停靠区横向 1/3 全高条；上/
-     * 下区 = 停靠区纵向 1/3 全宽条；中央带 = 停靠区中央 1/3x1/3 矩形；
-     * 均相对停靠区原点 ar.x/ar.y 偏移）。 */
-    if (fallback == (int)XDockWidgetArea_Left) {
-        XRect_init(&r, ar.x, ar.y, aw / 3, ah);
-    } else if (fallback == (int)XDockWidgetArea_Right) {
-        XRect_init(&r, ar.x + aw - aw / 3, ar.y, aw / 3, ah);
-    } else if (fallback == (int)XDockWidgetArea_Top) {
-        XRect_init(&r, ar.x, ar.y, aw, ah / 3);
-    } else if (fallback == (int)XDockWidgetArea_Bottom) {
-        XRect_init(&r, ar.x, ar.y + ah - ah / 3, aw, ah / 3);
-    } else if (fallback == (int)XDockWidgetArea_All) {
-        XRect_init(&r, ar.x + aw / 3, ar.y + ah / 3, aw / 3, ah / 3);
-    } else {
-        return (int)XDockWidgetArea_NoDockWidgetArea;
+    /* 指示器矩形 = 真实落位矩形（布局模拟，唯一尺子）；模拟退化时回
+     * 退旧 1/3 带矩形（相对停靠区原点 ar.x/ar.y 偏移）。 */
+    if (!xmw_dropSlotRect(self, dock, fallback, &ar, &r)) {
+        if (fallback == (int)XDockWidgetArea_Left) {
+            XRect_init(&r, ar.x, ar.y, aw / 3, ah);
+        } else if (fallback == (int)XDockWidgetArea_Right) {
+            XRect_init(&r, ar.x + aw - aw / 3, ar.y, aw / 3, ah);
+        } else if (fallback == (int)XDockWidgetArea_Top) {
+            XRect_init(&r, ar.x, ar.y, aw, ah / 3);
+        } else if (fallback == (int)XDockWidgetArea_Bottom) {
+            XRect_init(&r, ar.x, ar.y + ah - ah / 3, aw, ah / 3);
+        } else if (fallback == (int)XDockWidgetArea_All) {
+            XRect_init(&r, ar.x + aw / 3, ar.y + ah / 3, aw / 3, ah / 3);
+        } else {
+            return (int)XDockWidgetArea_NoDockWidgetArea;
+        }
     }
     if (outIndicator) *outIndicator = r;
     return fallback;
@@ -1706,19 +1886,87 @@ static void xmw_syncRepaintIndicatorArea(XMainWindow* self, const XRect* rect)
 }
 
 /**
+ * @brief      矩形差分：求 a 中不被 b 覆盖的部分，拆成至多 4 条带。
+ *  @details   指示器移位的**当帧重合成面积优化**（2026-11-03 真机卡顿
+ *             归因）：旧∪新并集矩形在垂直跨区时≈整个停靠区（如左区条
+ *             →顶区条并集=560x392），fbdev 上一次同步重绘就是一次整宿
+ *             主区重绘（A33 实测单步峰值 102ms 的主项）。差带语义等价
+ *             ——每个发生变化的像素都在某条带内，交集部分两帧内容相同
+ *             无需重画——面积小一个量级。
+ *  @param     a 被减矩形（旧位或新位）。
+ *  @param     b 减数矩形（新位或旧位）。
+ *  @param     out 输出条带（至多 4 条，裁剪到 a 内）。
+ *  @return    写入 out 的条带数（0=a⊆b 或空）。
+ */
+static int xmw_rectDiffStrips(const XRect* a, const XRect* b, XRect out[4])
+{
+    int n = 0;
+    int aX1;
+    int aY1;
+    int bX1;
+    int bY1;
+    int top;
+    int bottom;
+    int left;
+    int right;
+    if (!a || !b || a->width <= 0 || a->height <= 0) return 0;
+    aX1 = a->x + a->width;
+    aY1 = a->y + a->height;
+    bX1 = b->x + b->width;
+    bY1 = b->y + b->height;
+    top = (b->y > a->y ? b->y : a->y);
+    bottom = (bY1 < aY1 ? bY1 : aY1);
+    left = (b->x > a->x ? b->x : a->x);
+    right = (bX1 < aX1 ? bX1 : aX1);
+    /* 上带：a 顶边到 b 顶边（若 b 在 a 内则从 b.y 起，否则整高）。 */
+    if (b->y > a->y)
+        XRect_init(&out[n++], a->x, a->y, a->width,
+                   (b->y < aY1 ? b->y : aY1) - a->y);
+    /* 下带：b 底边到 a 底边。 */
+    if (bY1 < aY1)
+        XRect_init(&out[n++], a->x, (bY1 > a->y ? bY1 : a->y), a->width,
+                   aY1 - (bY1 > a->y ? bY1 : a->y));
+    /* 左带：竖向重叠区间内、b 左边界之左。 */
+    if (b->x > a->x && bottom > top)
+        XRect_init(&out[n++], a->x, top,
+                   (b->x < aX1 ? b->x : aX1) - a->x, bottom - top);
+    /* 右带：竖向重叠区间内、b 右边界之右。 */
+    if (bX1 < aX1 && bottom > top)
+        XRect_init(&out[n++], (bX1 > a->x ? bX1 : a->x), top,
+                   aX1 - (bX1 > a->x ? bX1 : a->x), bottom - top);
+    /* 退化条带（宽/高≤0）剔除。 */
+    {
+        int i;
+        int m = 0;
+        for (i = 0; i < n; ++i) {
+            if (out[i].width > 0 && out[i].height > 0) {
+                if (m != i) out[m] = out[i];
+                ++m;
+            }
+        }
+        n = m;
+    }
+    return n;
+}
+
+/**
  * @brief      拖动落点预览：按全局落点更新落点指示器并返回目标区域
  *             （XMainWindow_Protected.h 冻结契约的实现）。
  * @details    分区与 allowedAreas 过滤见 xmw_dropAreaAt。命中时惰性创
  *             建一次 XRubberBand(XRubberBandShape_Rectangle) 主窗口子控
- *             件并跨拖拽复用，show+raise+setGeometry 到目标分区矩形
- *             （对标 Qt QMainWindowLayout::updateGapIndicator：橡皮筋
+ *             件并跨拖拽复用，setGeometry/show/raise 到目标落位矩形
+ *             （矩形=布局模拟的真实落位，见 xmw_dropSlotRect；对标 Qt
+ *             QMainWindowLayout::updateGapIndicator：橡皮筋
  *             为 QRubberBand(QRubberBand::Rectangle, parentWidget()) 惰
  *             性创建 qmainwindowlayout.cpp:2963-2964，setGeometry/show/
  *             raise qmainwindowlayout.cpp:2978-2983；hover 主路径
  *             qmainwindowlayout.cpp:2995，落点→gapRect→刷新指示器
  *             qmainwindowlayout.cpp:3161、3169）。无落点（客户区外/区
  *             域不允许且回退无效）时隐藏指示器（对标同函数 hide 分支
- *             qmainwindowlayout.cpp:2985-2987）。重复调用安全（幂等）。
+ *             qmainwindowlayout.cpp:2985-2987）。重复调用安全（幂等）：
+ *             幂等门同时比对区域码与指示器矩形，同区同形拖动零窗口操
+ *             作；setGeometry 只在矩形变化、show/raise 只在显形跳变时
+ *             执行；移位后旧∪新矩形当帧同步重合成（fbdev 无合成器）。
  * @param      self 目标主窗口；可为 NULL，NULL 时不执行操作。
  * @param      dock 拖动中的停靠面板（借用；用于 allowedAreas 过滤）。
  * @param      globalPos 拖动点全局坐标（应用全局坐标，非局部）。
@@ -1754,13 +2002,20 @@ int XMainWindow_hoverDrop(XMainWindow* self, XWidget* dock,
         }
         return area;
     }
-    /* 幂等门（拖动中每条移动都调用本接口）：区域与几何未变时不重复
-     * setGeometry/show/raise——raise 是同步 SetWindowPos 往返，逐移动
-     * 冗余调用会在 OrayIdd+AMD 栈上放大呈现侧秒级停顿（实测拖动中
-     * 帧不上屏的放大器之一）。 */
+    /* 幂等门（拖动中每条移动都调用本接口）：区域码与**指示器矩形**都
+     * 未变且指示器可见 ⇒ 零窗口操作直接返回（2026-11-02 根修：旧门只
+     * 比对 m_dropAreaShown==area，矩形随落点/布局态变化时仍走
+     * setGeometry+show+raise——raise 是同步 SetWindowPos 往返，逐移动
+     * 冗余调用会在 OrayIdd+AMD 栈上放大呈现侧秒级停顿，实测拖动中帧
+     * 不上屏的放大器之一；指示器矩形改由布局模拟给出后同区恒定，本门
+     * 把同区拖动的窗口操作压到零）。 */
     if (self->m_dropAreaShown == area && self->m_dropIndicator &&
-        XWidget_isVisible(self->m_dropIndicator))
-        return area;
+        XWidget_isVisible(self->m_dropIndicator)) {
+        XRect cur = XWidget_geometry(self->m_dropIndicator);
+        if (cur.x == r.x && cur.y == r.y &&
+            cur.width == r.width && cur.height == r.height)
+            return area;
+    }
     /* 惰性创建落点指示器（创建一次后存 m_dropIndicator 复用；失败时
      * 降级为无预览，不影响区域码返回）。 */
     if (!self->m_dropIndicator) {
@@ -1775,15 +2030,40 @@ int XMainWindow_hoverDrop(XMainWindow* self, XWidget* dock,
         XRect old = XWidget_geometry(self->m_dropIndicator);
         bool wasVisible =
             XWidget_isVisible(self->m_dropIndicator) ? true : false;
-        XWidget_setGeometryRect(self->m_dropIndicator, &r);
-        XWidget_show(self->m_dropIndicator);
-        XWidget_raise(self->m_dropIndicator);
-        /* 指示器换分区/移位：旧位像素同样残留在宿主后备缓冲 ⇒ 当帧
-         * 同步重合成旧位（Qt hide_sys/BufferInvalid 口径）。 */
-        if (wasVisible)
-            xmw_syncRepaintIndicatorArea(self, &old);
+        bool sameRect = old.x == r.x && old.y == r.y &&
+                        old.width == r.width && old.height == r.height;
+        /* setGeometry 只在矩形变化时做；show/raise 只在显形跳变时做
+         * （可见态下 setGeometry 不改子控件 Z 序，raise 逐移动冗余调用
+         * 是真机卡顿源；2026-11-02 收敛）。 */
+        if (!sameRect)
+            XWidget_setGeometryRect(self->m_dropIndicator, &r);
+        if (!wasVisible) {
+            XWidget_show(self->m_dropIndicator);
+            XWidget_raise(self->m_dropIndicator);
+        }
+        /* 旧\新 + 新\旧 **差带**当帧同步重合成（fbdev 单屏无合成器）：
+         * 旧位像素残留会被 present 反复吐上屏，新位在异步 PAINT 前的
+         * present 会短暂缺框——两向一并收口（Qt setGeometry_sys 的旧∪
+         * 新双失效口径 qwidget.cpp:7326-7336 的差带化实现）。并集矩形
+         * 在垂直跨区时≈整个停靠区（A33 实测单步峰值 102ms 的主项），
+         * 差带语义等价（每个变化像素都在带内）且面积小一个量级
+         * （xmw_rectDiffStrips，2026-11-03）。 */
+        if (wasVisible && !sameRect) {
+            XRect diff[8];
+            int dn = xmw_rectDiffStrips(&old, &r, diff);
+            dn += xmw_rectDiffStrips(&r, &old, diff + dn);
+            if (dn > 0) {
+                XRegion region;
+                region.rects = diff;
+                region.count = dn;
+                region.capacity = dn;
+                XWidget_repaintRegion((XWidget*)self, &region);
+            }
+        } else if (!wasVisible) {
+            xmw_syncRepaintIndicatorArea(self, &r); /* 首显/复显合入新位 */
+        }
     }
-        self->m_dropAreaShown = area;
+    self->m_dropAreaShown = area;
     return area;
 }
 

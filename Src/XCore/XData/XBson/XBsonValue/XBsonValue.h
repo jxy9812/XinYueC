@@ -151,7 +151,10 @@ void XBsonValue_setInt32(XBsonValue* value, int32_t i);
 void XBsonValue_setInt64(XBsonValue* value, int64_t i);
 /** @brief 深拷贝设置字符串值。 */
 void XBsonValue_setString(XBsonValue* value, const XString* str);
-/** @brief 移动设置字符串值，源字符串变为空。 */
+/**
+ * @brief 移动设置字符串值（抽取资源，源字符串变空壳）。
+ * @warning 源 XString 的堆资源已转移；**外壳仍由调用方释放**，此后不得再解引用。
+ */
 void XBsonValue_setString_move(XBsonValue* value, XString* str);
 /** @brief 从 UTF-8 字符串设置字符串值。 */
 void XBsonValue_setString_utf8(XBsonValue* value, const char* utf8);
@@ -159,11 +162,17 @@ void XBsonValue_setString_utf8(XBsonValue* value, const char* utf8);
 void XBsonValue_setSymbol(XBsonValue* value, const XString* str);
 /** @brief 深拷贝设置嵌套文档值。 */
 void XBsonValue_setDocument(XBsonValue* value, const XBsonDocument* doc);
-/** @brief 移动设置嵌套文档值。 */
+/**
+ * @brief 移动设置嵌套文档值（抽取资源，源文档变空壳）。
+ * @warning 源 XBsonDocument 的堆资源已转移；**外壳仍由调用方释放**，此后不得再解引用。
+ */
 void XBsonValue_setDocument_move(XBsonValue* value, XBsonDocument* doc);
 /** @brief 深拷贝设置嵌套数组值。 */
 void XBsonValue_setArray(XBsonValue* value, const XBsonArray* arr);
-/** @brief 移动设置嵌套数组值。 */
+/**
+ * @brief 移动设置嵌套数组值（抽取资源，源数组变空壳）。
+ * @warning 源 XBsonArray 的堆资源已转移；**外壳仍由调用方释放**，此后不得再解引用。
+ */
 void XBsonValue_setArray_move(XBsonValue* value, XBsonArray* arr);
 /** @brief 深拷贝设置二进制值。 */
 void XBsonValue_setBinary(XBsonValue* value, XBsonBinarySubtype subtype,
@@ -322,7 +331,11 @@ XBsonValue* XBsonValue_fromVariant(const XVariant* variant);
 XBsonValue* XBsonValue_fromVariant_ref(const XVariant* variant);
 /** @brief 深复制设置 XVariant 的 BSON 值。 */
 void XBsonValue_setVariant(XVariant* variant, const XBsonValue* value);
-/** @brief 移动设置 XVariant 的 BSON 值。 */
+/**
+ * @brief 移动设置 XVariant 的 BSON值（抽取资源，源对象变空壳）。
+ * @warning 源对象的堆资源已转移；**外壳仍由调用方按原分配方式释放**
+ *          （create 用 XClassDelete，init 用 XClassDeinit），此后不得再解引用。
+ */
 void XBsonValue_setVariant_move(XVariant* variant, XBsonValue* value);
 /** @brief 将已有 BSON 值直接交给 XVariant 管理。 */
 void XBsonValue_setVariant_ref(XVariant* variant, XBsonValue* value);

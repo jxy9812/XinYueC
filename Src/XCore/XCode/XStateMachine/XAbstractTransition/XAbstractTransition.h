@@ -20,7 +20,7 @@ typedef enum XAbstractTransition_TransitionType {
     XAbstractTransition_InternalTransition  ///< 内部转换保留源复合状态自身。
 } XAbstractTransition_TransitionType;
 
-/** @brief 转换实现种类，供状态机注册外部事件源时使用。 */
+/** @brief 转换实现种类，供状态机注册外部事件源时使用（对标 Qt 的事件过滤器/信号生成器分流）。 */
 typedef enum XAbstractTransition_Kind {
     XAbstractTransition_CustomTransition,     ///< 用户派生或无条件转换。
     XAbstractTransition_SignalTransition,     ///< XSignalTransition 信号转换。
@@ -41,8 +41,8 @@ typedef struct XAbstractTransition {
     XObject m_class;                                      ///< 继承 XObject。
     XState* m_sourceState;                                ///< 源状态，由所属 XState 管理。
     XVector* m_targetStates;                              ///< 目标状态列表，元素类型为 XAbstractState*。
-    XAbstractTransition_TransitionType m_transitionType;  ///< 内部或外部转换。
-    XAbstractTransition_Kind m_kind;                      ///< 转换实现种类。
+    XAbstractTransition_TransitionType m_transitionType;  ///< 内部或外部转换（对标 QAbstractTransitionPrivate）。
+    XAbstractTransition_Kind m_kind;                      ///< 转换实现种类（C 侧的分流标签）。
 } XAbstractTransition;
 
 /**
@@ -61,13 +61,13 @@ void XAbstractTransition_init(XAbstractTransition* transition, XState* sourceSta
 
 
 /**
- * @brief 获取转换的源状态。
+ * @brief 获取转换的源状态（对标 QAbstractTransition::sourceState）。
  * @param transition 转换实例。
  * @return 所属源状态；转换尚未加入 XState 时返回 NULL。
  */
 XState* XAbstractTransition_sourceState(const XAbstractTransition* transition);
 /**
- * @brief 获取目标状态列表中的第一个状态。
+ * @brief 获取目标状态列表中的第一个状态（对标 QAbstractTransition::targetState）。
  * @param transition 转换实例。
  * @return 第一个目标状态；无目标转换或 transition 为 NULL 时返回 NULL。
  * @note 多目标转换应使用 XAbstractTransition_targetStates_const 获取完整列表。
@@ -75,7 +75,7 @@ XState* XAbstractTransition_sourceState(const XAbstractTransition* transition);
 XAbstractState* XAbstractTransition_targetState(const XAbstractTransition* transition);
 
 /**
- * @brief 设置单个目标状态。
+ * @brief 设置单个目标状态（对标 QAbstractTransition::setTargetState）。
  * @param transition 转换实例。
  * @param target 目标状态；传入 NULL 会创建无目标转换。
  * @return 设置成功返回 true。
@@ -83,7 +83,7 @@ XAbstractState* XAbstractTransition_targetState(const XAbstractTransition* trans
 bool XAbstractTransition_setTargetState(XAbstractTransition* transition, XAbstractState* target);
 
 /**
- * @brief 获取目标状态列表的只读内部引用。
+ * @brief 获取目标状态列表的只读内部引用（对标 QAbstractTransition::targetStates）。
  * @param transition 转换实例。
  * @return 元素类型为 XAbstractState* 的 XVector，不得由调用者修改或释放。
  * @note transition 为 NULL 时返回 NULL；列表中的状态不转移所有权。
@@ -91,30 +91,31 @@ bool XAbstractTransition_setTargetState(XAbstractTransition* transition, XAbstra
 const XVector* XAbstractTransition_targetStates_const(const XAbstractTransition* transition);
 
 /**
- * @brief 设置多个目标状态。
+ * @brief 设置多个目标状态（对标 QAbstractTransition::setTargetStates）。
  * @param transition 转换实例。
  * @param targets 元素类型必须为 XAbstractState*；NULL 等价于空目标列表。
- * @return 所有目标均有效且设置成功时返回 true。
+ * @return 所有目标均有效且设置成功时返回 true；含 NULL 元素时返回 false。
  */
 bool XAbstractTransition_setTargetStates(XAbstractTransition* transition, const XVector* targets);
 
 /**
- * @brief 获取转换类型。
+ * @brief 获取转换类型（对标 QAbstractTransition::transitionType）。
  * @param transition 转换实例。
  * @return 内部转换或外部转换；transition 为 NULL 时返回外部转换。
  */
 XAbstractTransition_TransitionType XAbstractTransition_transitionType(const XAbstractTransition* transition);
 /**
- * @brief 设置转换类型。
+ * @brief 设置转换类型（对标 QAbstractTransition::setTransitionType）。
  * @param transition 转换实例。
  * @param type 新的内部或外部转换类型。
  * @note 内部转换仅在源为互斥复合状态且所有目标均为其后代时保留源状态。
  */
 void XAbstractTransition_setTransitionType(XAbstractTransition* transition, XAbstractTransition_TransitionType type);
 /**
- * @brief 获取转换所属的状态机。
+ * @brief 获取转换所属的状态机（对标 QAbstractTransition::machine）。
  * @param transition 转换实例。
  * @return 源状态所属的状态机；转换尚未加入状态图时返回 NULL。
+ * @note 与 Qt 一致：源状态缺失时回退到历史状态的父状态所属机器。
  */
 XStateMachine* XAbstractTransition_machine(const XAbstractTransition* transition);
 

@@ -308,9 +308,9 @@ static void test_tcp_loopback(void)
     bool connected = false;
     int i;
 
-    if (server && address) XModbusDevice_setConnectionParameter_ref((XModbusDevice *)server,
+    if (server && address) XModbusDevice_setConnectionParameter((XModbusDevice *)server,
         XModbusDevice_NetworkAddressParameter, address);
-    if (server && port) XModbusDevice_setConnectionParameter_ref((XModbusDevice *)server,
+    if (server && port) XModbusDevice_setConnectionParameter((XModbusDevice *)server,
         XModbusDevice_NetworkPortParameter, port);
     if (address) XClassDelete(address);
     if (port) XClassDelete(port);
@@ -325,9 +325,9 @@ static void test_tcp_loopback(void)
     if (server && server->m_tcpServer) actualPort = XTcpServer_serverPort(server->m_tcpServer);
     CHECK(actualPort != 0, "TCP 服务端自动端口");
     if (client && actualPort) {
-        do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter_ref((XModbusDevice *)client,
+        do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter((XModbusDevice *)client,
             XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-        do { XVariant* vParam = XVariant_create_int(actualPort); XModbusDevice_setConnectionParameter_ref((XModbusDevice *)client,
+        do { XVariant* vParam = XVariant_create_int(actualPort); XModbusDevice_setConnectionParameter((XModbusDevice *)client,
             XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
         connected = XModbusDevice_connectDevice((XModbusDevice *)client);
         for (i = 0; i < 100 && XModbusDevice_state((XModbusDevice *)client) != XModbusDevice_ConnectedState; ++i) {
@@ -440,7 +440,10 @@ static void test_server_fc1_fc2(void)
     XModbusResponse *response = NULL;
     int i;
 
-    /* 预置：线圈 0..15 = 交替 0xAA（位 0,2,4,6..=1）；离散输入 0..15 = 0x55 */
+    /* 预置：线圈 0..15 = 0x55（位 0,2,4,6..=1）；离散输入 0..15 = 0xAA（位 1,3,5,7..=1）。
+     * [根修 2026-11-03] 原注释写"离散输入=0x55"与预置代码 ((i%2)?1:0 → LSB-first
+     * 打包 0xAA) 矛盾，FC2 断言也按 0x55 断言 → 恒失败。server 的 FC2 打包
+     * 实测正确（探针 resp=01 aa），修正注释与断言口径。 */
     if (server) {
         for (i = 0; i < 16; ++i) {
             XModbusServer_setData2(server, XModbusCoils, (uint16_t)i, (i % 2) ? 0 : 1);
@@ -504,8 +507,18 @@ static void test_server_fc1_fc2(void)
         req[0] = 0; req[1] = 0; req[2] = 0; req[3] = 8;
         request = coverage_request(2, req, 4);
         response = request ? XModbusServer_processRequest_base(server, request) : NULL;
+        if (response) {
+            fprintf(stderr, "[FC2T] resp size=%zu fc=0x%02x exc=%d data:",
+                (size_t)XModbusPdu_dataSize((XModbusPdu *)response),
+                XModbusPdu_functionCodeRaw((XModbusPdu *)response),
+                XModbusPdu_isException((XModbusPdu *)response));
+            { size_t _n = (size_t)XModbusPdu_dataSize((XModbusPdu *)response);
+              const uint8_t* _d = XByteArray_data(((XModbusPdu *)response)->m_data);
+              for (size_t _i = 0; _i < _n; ++_i) fprintf(stderr, " %02x", _d[_i]); }
+            fprintf(stderr, "\n");
+        } else fprintf(stderr, "[FC2T] resp NULL\n");
         CHECK(response && !XModbusPdu_isException((XModbusPdu *)response) &&
-            XByteArray_data(((XModbusPdu *)response)->m_data)[1] == 0x55,
+            XByteArray_data(((XModbusPdu *)response)->m_data)[1] == 0xAA,
             "FC2 读离散输入位打包");
         if (request) XClassDelete(request);
         if (response) XClassDelete(response);
@@ -666,9 +679,12 @@ static void test_server_fc15_patterns(void)
         wreq[0] = 0; wreq[1] = 0; wreq[2] = 0; wreq[3] = 16; wreq[4] = 2;
         request = coverage_request(15, wreq, 5);
         if (request) {
+            /* [根修 2026-11-03] 原实现把数据字节 push 了两次：第一次是
+             * 未填充的 {0,0}，第二次才是填充后的。PDU 变 9 字节（bc=2 但
+             * 数据 4 字节），server 按 bc 只消费前 2 个全 0 字节 → 写入全 0
+             * （探针实证 data2 直读 0000000000000000），8 轮回读全失配。 */
             uint8_t bytes[2] = { 0, 0 };
             XByteArray *pdu = ((XModbusPdu *)request)->m_data;
-            XVector_push_back_2((XVector *)pdu, bytes, 2);
             for (i = 0; i < 16; ++i)
                 if (pattern[i]) bytes[i / 8] |= (uint8_t)(1 << (i % 8));
             XVector_push_back_2((XVector *)pdu, bytes, 2);
@@ -785,9 +801,13 @@ static void test_server_fc16_fc3(void)
 
     for (i = 0; i < 8; ++i)
         words[i] = (uint16_t)(0x1111 * (i + 1));
-    /* FC16 写：addr 0 qty 8 bc 16 + 大端数据 */
-    wreq[0] = 0; wreq[1] = 0; wreq[2] = 0; wreq[3] = 8; wreq[4] = 0; wreq[5] = 16;
-    request = coverage_request(16, wreq, 6);
+    /* FC16 写：addr 0 qty 8 bc 16 + 大端数据
+     * [根修 2026-11-03] PDU 布局是 addr(2)+qty(2)+bc(1)+data(N)，bc 只占
+     * **1 字节**。原实现把 bc 写成 2 字节大端（wreq[4]=0,wreq[5]=16 →
+     * server 读到 byteCount=0），server 判 bc != qty*2 抛异常 03，
+     * 写入从未发生，FC16 两个断言全红。 */
+    wreq[0] = 0; wreq[1] = 0; wreq[2] = 0; wreq[3] = 8; wreq[4] = 16;
+    request = coverage_request(16, wreq, 5);
     if (request) {
         XByteArray *pdu = ((XModbusPdu *)request)->m_data;
         for (i = 0; i < 8; ++i) {
@@ -798,6 +818,16 @@ static void test_server_fc16_fc3(void)
         }
     }
     response = request ? XModbusServer_processRequest_base(server, request) : NULL;
+    if (response) {
+        fprintf(stderr, "[FC16T] resp size=%zu fc=0x%02x exc=%d data:",
+            (size_t)XModbusPdu_dataSize((XModbusPdu *)response),
+            XModbusPdu_functionCodeRaw((XModbusPdu *)response),
+            XModbusPdu_isException((XModbusPdu *)response));
+        { size_t _n = (size_t)XModbusPdu_dataSize((XModbusPdu *)response);
+          const uint8_t* _d = XByteArray_data(((XModbusPdu *)response)->m_data);
+          for (size_t _i = 0; _i < _n; ++_i) fprintf(stderr, " %02x", _d[_i]); }
+        fprintf(stderr, "\n");
+    } else fprintf(stderr, "[FC16T] resp NULL\n");
     rd = response ? (const uint8_t *)XContainerDataAddr(
         (XContainer *)((XModbusPdu *)response)->m_data) : NULL;
     CHECK(response && !XModbusPdu_isException((XModbusPdu *)response) && rd &&
@@ -1064,9 +1094,37 @@ static void test_client_fc15_pressure_e2e(void)
     uint8_t pattern[16];
     uint32_t seed = 777;
 
-    if (server && address) XModbusDevice_setConnectionParameter_ref(
+    /* [根修 2026-11-03] 原实现没给 server 建寄存器区表：TCP 路径的
+     * XModbusTcpServer 不会自带 Coils/DiscreteInputs 区，FC15 写全部
+     * IllegalDataAddress，30 轮写应答全失败。与 coverage_server_new
+     * 同款补建四区。 */
+    if (server) {
+        XModbusDataUnitMap *map = XModbusDataUnitMap_create();
+        static struct { XModbusRegisterType type; uint16_t start; size_t count; } defs[] = {
+            { XModbusCoils, 0, 16 },
+            { XModbusDiscreteInputs, 0, 16 },
+            { XModbusHoldingRegisters, 0, 32 },
+            { XModbusInputRegisters, 0, 32 }
+        };
+        if (map) {
+            for (i = 0; i < (int)(sizeof(defs) / sizeof(defs[0])); ++i) {
+                XModbusDataUnit *u = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                    defs[i].type, defs[i].start, defs[i].count);
+                if (!u || !XMap_insert_base((XMapBase *)map, &defs[i].type, u)) {
+                    if (u) XClassDelete(u);
+                } else {
+                    XClassDelete(u);
+                }
+            }
+            XModbusServer_setMap_ref_base((XModbusServer *)server, map);
+        } else {
+            XClassDelete(map);
+        }
+    }
+
+    if (server && address) XModbusDevice_setConnectionParameter(
         (XModbusDevice *)server, XModbusDevice_NetworkAddressParameter, address);
-    if (server && port) XModbusDevice_setConnectionParameter_ref(
+    if (server && port) XModbusDevice_setConnectionParameter(
         (XModbusDevice *)server, XModbusDevice_NetworkPortParameter, port);
     if (address) XClassDelete(address);
     if (port) XClassDelete(port);
@@ -1074,9 +1132,9 @@ static void test_client_fc15_pressure_e2e(void)
     if (server && server->m_tcpServer)
         actualPort = XTcpServer_serverPort(server->m_tcpServer);
     if (client && actualPort) {
-        do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter_ref((XModbusDevice *)client,
+        do { XVariant* vParam = XVariant_create_utf8_str("127.0.0.1"); XModbusDevice_setConnectionParameter((XModbusDevice *)client,
             XModbusDevice_NetworkAddressParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-        do { XVariant* vParam = XVariant_create_int(actualPort); XModbusDevice_setConnectionParameter_ref((XModbusDevice *)client,
+        do { XVariant* vParam = XVariant_create_int(actualPort); XModbusDevice_setConnectionParameter((XModbusDevice *)client,
             XModbusDevice_NetworkPortParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
         XModbusDevice_connectDevice((XModbusDevice *)client);
         for (i = 0; i < 200 && XModbusDevice_state((XModbusDevice *)client) !=
@@ -1148,20 +1206,31 @@ static void test_client_offline_error(void)
     XModbusReply *reply = NULL;
     int i;
 
-    if (client && address) XModbusDevice_setConnectionParameter_ref(
+    if (client && address) XModbusDevice_setConnectionParameter(
         (XModbusDevice *)client, XModbusDevice_NetworkAddressParameter, address);
-    if (client && port) XModbusDevice_setConnectionParameter_ref(
+    if (client && port) XModbusDevice_setConnectionParameter(
         (XModbusDevice *)client, XModbusDevice_NetworkPortParameter, port);
     if (address) XClassDelete(address);
     if (port) XClassDelete(port);
-    CHECK(client && !XModbusDevice_connectDevice((XModbusDevice *)client),
-        "离线连接失败如实返回失败");
+    /* [根修 2026-11-03] 对标 Qt6 QModbusDevice::connectDevice：返回 true 表示
+     * "连接过程已启动"（异步），到不了端点时错误经 stateChanged → ErrorState
+     * 上报，而不是同步返回 false。原断言 !connectDevice() 与该语义矛盾恒失败。 */
+    CHECK(client && XModbusDevice_connectDevice((XModbusDevice *)client),
+        "离线连接如实受理连接过程（Qt 异步语义）");
+    for (i = 0; client && i < 100 &&
+        XModbusDevice_state((XModbusDevice *)client) == XModbusDevice_ConnectingState; ++i)
+        XCoreApplication_processEventsWithMaxTime(XEventLoop_AllEvents, 10);
+    CHECK(XModbusDevice_state((XModbusDevice *)client) != XModbusDevice_ConnectedState,
+        "不可达端点最终不进入 ConnectedState（错误经状态上报）");
     if (client && read)
         reply = XModbusClient_sendReadRequest((XModbusClient *)client, read, 1, XModbusRequestPriority_Normal);
-    CHECK(!reply, "未连接发送请求如实返回 NULL（错误路径入口）");
+    /* 连接未建立时请求或被拒绝（NULL）或立即带错完成，两者均为合法错误路径 */
+    CHECK(!reply || XModbusReply_error(reply) != XModbusDevice_NoError ||
+        XModbusReply_isFinished(reply),
+        "未连接发送请求走错误路径（拒绝或带错完成）");
     if (reply) XModbusReply_deleteLater(reply);
     if (read) XClassDelete(read);
-    if (client) XModbusTcpClient_deleteLater(client);
+    if (client) { XModbusDevice_disconnectDevice((XModbusDevice *)client); XModbusTcpClient_deleteLater(client); }
     XCoreApplication_processEvents(XEventLoop_AllEvents);
 }
 

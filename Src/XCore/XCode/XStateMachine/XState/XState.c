@@ -3,7 +3,62 @@
 #include "XMemory.h"
 #include "XSignalTransition.h"
 #include "XStateMachine_p.h"
+#include "XString.h"
+#include "XStringUtils.h"
 
+#include <string.h>
+
+/** @brief 复制属性名的独立 UTF-8 文本（记录自持，避免与调用方共享 COW 缓冲）。 */
+static char* XState_PropertyAssignment_copyName(const XString* name)
+{
+    if (!name)
+        return NULL;
+    /* XString_create_copy 与源共享底层数据、XString_toUtf8 返回内部缓存，两者都
+     * 不能跨调用方释放存活；XStrdup 走库内分配器给出独立副本。 */
+    return XStrdup(XString_toUtf8(name));
+}
+
+/** @brief 按 UTF-8 文本比较属性名。 */
+static bool XState_PropertyAssignment_sameName(const char* left, const char* right)
+{
+    if (!left || !right)
+        return false;
+    return XStrcmp(left, right) == 0;
+}
+
+/** @brief 分配一条属性赋值记录（记录本身由容器持有指针）。 */
+static XState_PropertyAssignment* XState_PropertyAssignment_create(
+    XObject* object, const XString* name, const XVariant* value)
+{
+    XState_PropertyAssignment* assignment =
+        XMemory_malloc(sizeof(XState_PropertyAssignment), XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!assignment)
+        return NULL;
+    assignment->m_object = object;
+    assignment->m_propertyName = XState_PropertyAssignment_copyName(name);
+    assignment->m_value = value ? XVariant_create_copy(value) : NULL;
+    if (!assignment->m_propertyName || (value && !assignment->m_value)) {
+        if (assignment->m_propertyName)
+            XMemory_free(assignment->m_propertyName, XCLASS_DEFAULT_MEMORY_TYPE);
+        if (assignment->m_value)
+            XClassDelete((XClass*)assignment->m_value);
+        XMemory_free(assignment, XCLASS_DEFAULT_MEMORY_TYPE);
+        return NULL;
+    }
+    return assignment;
+}
+
+/** @brief 释放一条属性赋值记录及其持有的属性名与赋值副本。 */
+static void XState_PropertyAssignment_delete(XState_PropertyAssignment* assignment)
+{
+    if (!assignment)
+        return;
+    if (assignment->m_propertyName)
+        XMemory_free(assignment->m_propertyName, XCLASS_DEFAULT_MEMORY_TYPE);
+    if (assignment->m_value)
+        XClassDelete((XClass*)assignment->m_value);
+    XMemory_free(assignment, XCLASS_DEFAULT_MEMORY_TYPE);
+}
 
 static void VXState_deinit(XState* state)
 {
@@ -20,6 +75,18 @@ static void VXState_deinit(XState* state)
         }
         XClassDelete((XClass*)state->m_transitions);
         state->m_transitions = NULL;
+    }
+
+    if (state->m_propertyAssignments) {
+        for (int64_t i = 0;
+             i < (int64_t)XVector_size_base(
+                 (const XContainer*)state->m_propertyAssignments); ++i) {
+            XState_PropertyAssignment* assignment = XVector_At_Base(
+                state->m_propertyAssignments, i, XState_PropertyAssignment*);
+            XState_PropertyAssignment_delete(assignment);
+        }
+        XClassDelete((XClass*)state->m_propertyAssignments);
+        state->m_propertyAssignments = NULL;
     }
 
     if (state->m_childStates) {
@@ -74,6 +141,8 @@ void XState_init_ex(XState* state, XState_ChildMode childMode, XState* parent)
     XAssert(state->m_childStates, "Memory allocation failed");
     state->m_transitions = XVector_Create(XAbstractTransition*);
     XAssert(state->m_transitions, "Memory allocation failed");
+    state->m_propertyAssignments = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XState_PropertyAssignment*), false);
+    XAssert(state->m_propertyAssignments, "Memory allocation failed");
     state->m_initialState = NULL;
     state->m_errorState = NULL;
     state->m_childMode = childMode;
@@ -137,7 +206,13 @@ void XState_removeChild_internal(XState* parent, XAbstractState* child)
 
 const XVector* XState_childStates_const_internal(const XState* state)
 {
-    return state ? state->m_childStates : NULL;
+    /* 只有 XState 与状态机根节点持有子状态表。 */
+    if (!state
+        || (state->m_class.m_kind != XAbstractState_StandardState
+            && state->m_class.m_kind != XAbstractState_StateMachine)) {
+        return NULL;
+    }
+    return state->m_childStates;
 }
 
 XAbstractState* XState_errorState(const XState* state)
@@ -254,7 +329,18 @@ bool XState_removeTransition(XState* state, XAbstractTransition* transition)
 
 const XVector* XState_transitions_const(const XState* state)
 {
-    return state ? state->m_transitions : NULL;
+    /* 只有 XState 与状态机根节点持有出站转换表。 */
+    if (!state
+        || (state->m_class.m_kind != XAbstractState_StandardState
+            && state->m_class.m_kind != XAbstractState_StateMachine)) {
+        return NULL;
+    }
+    return state->m_transitions;
+}
+
+const XVector* XState_childStates_const(const XState* state)
+{
+    return state ? XState_childStates_const_internal(state) : NULL;
 }
 
 XAbstractState* XState_initialState(const XState* state)
@@ -291,6 +377,54 @@ void XState_setChildMode(XState* state, XState_ChildMode mode)
     }
     state->m_childMode = mode;
     XState_childModeChanged_signal(state);
+}
+
+bool XState_assignProperty(XState* state, XObject* object, const XString* name,
+                           const XVariant* value)
+{
+    if (!state || !object || !name || !state->m_propertyAssignments)
+        return false;
+
+    /* 同名同对象原地更新赋值（对标 QPropertyAssignment::hasTarget 分支） */
+    for (int64_t i = 0;
+         i < (int64_t)XVector_size_base(
+             (const XContainer*)state->m_propertyAssignments); ++i) {
+        XState_PropertyAssignment* assignment = XVector_At_Base(
+            state->m_propertyAssignments, i, XState_PropertyAssignment*);
+        if (!assignment || assignment->m_object != object
+            || !XState_PropertyAssignment_sameName(assignment->m_propertyName,
+                                                   XString_toUtf8(name))) {
+            continue;
+        }
+        XVariant* copy = value ? XVariant_create_copy(value) : NULL;
+        if (value && !copy)
+            return false;
+        if (assignment->m_value)
+            XClassDelete((XClass*)assignment->m_value);
+        assignment->m_value = copy;
+        return true;
+    }
+
+    XState_PropertyAssignment* assignment =
+        XState_PropertyAssignment_create(object, name, value);
+    if (!assignment)
+        return false;
+    if (!XVector_push_back_1_base(state->m_propertyAssignments, &assignment)) {
+        XState_PropertyAssignment_delete(assignment);
+        return false;
+    }
+    return true;
+}
+
+const XVector* XState_propertyAssignments_const(const XState* state)
+{
+    /* 最终/历史状态的存储布局没有该成员，非标准状态一律视为无赋值表。 */
+    if (!state
+        || (state->m_class.m_kind != XAbstractState_StandardState
+            && state->m_class.m_kind != XAbstractState_StateMachine)) {
+        return NULL;
+    }
+    return state->m_propertyAssignments;
 }
 
 void* XState_finished_signal(XState* state)

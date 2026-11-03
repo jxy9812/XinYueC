@@ -332,9 +332,9 @@ static XModbusRtuSerialClient* rtuMake(const char* ptyPath, int timeoutMs,
     XModbusClient_setNumberOfRetries((XModbusClient*)c, (uint8_t)retries);
     XModbusClient_setAutoReconnect((XModbusClient*)c, autoReconnect);
     XModbusRtuSerialClient_setTurnaroundDelay(c, 60);
-    do { XVariant* vParam = XVariant_create_utf8_str(ptyPath); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)c,
+    do { XVariant* vParam = XVariant_create_utf8_str(ptyPath); XModbusDevice_setConnectionParameter((XModbusDevice*)c,
         XModbusDevice_SerialPortNameParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
-    do { XVariant* vParam = XVariant_create_int(9600); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)c,
+    do { XVariant* vParam = XVariant_create_int(9600); XModbusDevice_setConnectionParameter((XModbusDevice*)c,
         XModbusDevice_SerialBaudRateParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
     return c;
 }
@@ -614,7 +614,7 @@ static void testS4(void)
     ctrlClear("bus2_closem");
     pumpForMs(100);
     XModbusDevice_disconnectDevice((XModbusDevice*)c);
-    do { XVariant* vParam = XVariant_create_utf8_str(g_pty3); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)c,
+    do { XVariant* vParam = XVariant_create_utf8_str(g_pty3); XModbusDevice_setConnectionParameter((XModbusDevice*)c,
         XModbusDevice_SerialPortNameParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
     CHECK(XModbusDevice_connectDevice((XModbusDevice*)c) &&
           waitUntil(predConnected, c, 3000), "B 切 bus3 重连");
@@ -642,7 +642,7 @@ static void testS4(void)
 
     /* —— 恢复：切回 bus1 活链路 → 普通读照常（设备单飞可恢复）。 —— */
     XModbusDevice_disconnectDevice((XModbusDevice*)c);
-    do { XVariant* vParam = XVariant_create_utf8_str(g_pty1); XModbusDevice_setConnectionParameter_ref((XModbusDevice*)c,
+    do { XVariant* vParam = XVariant_create_utf8_str(g_pty1); XModbusDevice_setConnectionParameter((XModbusDevice*)c,
         XModbusDevice_SerialPortNameParameter, vParam); XClassDelete((XClass*)vParam); } while (0);
     CHECK(XModbusDevice_connectDevice((XModbusDevice*)c) &&
           waitUntil(predConnected, c, 3000), "切回 bus1 重连");

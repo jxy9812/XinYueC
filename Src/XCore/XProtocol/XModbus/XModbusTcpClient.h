@@ -39,9 +39,9 @@ extern "C" {
  * XModbusTcpClient* client = XModbusTcpClient_create();
  *
  * // 设置连接参数
- * XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,
+ * XModbusDevice_setConnectionParameter((XModbusDevice*)client,
  *     XModbusDevice_NetworkAddressParameter, XVariant_create_utf8_str("192.168.1.100"));
- * XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,
+ * XModbusDevice_setConnectionParameter((XModbusDevice*)client,
  *     XModbusDevice_NetworkPortParameter, XVariant_create_int(502));
  *
  * // 连接设备

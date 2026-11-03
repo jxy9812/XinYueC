@@ -17,6 +17,7 @@
 #include "XModbusCommEvent.h"
 #include "XModbusDeviceIdentification.h"
 #include "XModbusReply.h"
+#include "XModbusReply_Protected.h"
 #include "XModbusDevice.h"
 #include <string.h>
 #include <stdlib.h>
@@ -319,6 +320,83 @@ static void testReply(void)
     if (r) XClassDelete(r);
 }
 
+
+/* ==================== setter 三态所有权契约（copy / move / ref） ==================== */
+/*
+ * 锁住 2026-11-03 裁定并写入文档的 setter 三态语义：
+ *   - setResult       ：深拷贝，入参仍归调用方，调用方必须释放
+ *   - setResult_move  ：抽取资源，入参变空壳，**外壳仍由调用方释放**
+ *   - setResult_ref   ：指针接管，所有权转移，调用方**不得再释放**
+ * 三种形态各跑一遍，配合 ASan/LSan 即可证明：既不泄漏也不双重释放。
+ * 任何一条语义被改错，ASan 会直接报 leak 或 double-free。
+ */
+static void testSetterOwnershipTriple(void)
+{
+    /* ---- 1. copy：设备/回复持有副本，调用方保留所有权 ---- */
+    {
+        XModbusReply* r = XModbusReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                 XModbusReply_Common, 301);
+        XModbusDataUnit* u = XModbusDataUnit_create();
+        CHECK(r != NULL && u != NULL, "copy: 创建回复与数据单元");
+        XModbusReply_setResult(r, u);
+        /* 副本已登记，原始 u 仍归调用方 */
+        CHECK(XModbusReply_result_const(r) != NULL, "copy: 结果已登记");
+        XClassDelete((XClass*)u);   /* 调用方释放自己的对象：不得影响回复内的副本 */
+        CHECK(XModbusReply_result_const(r) != NULL, "copy: 释放入参后回复副本仍有效");
+        XClassDelete((XClass*)r);   /* 回复析构释放副本 */
+    }
+
+    /* ---- 2. move：资源转移，外壳由调用方释放 ---- */
+    {
+        XModbusReply* r = XModbusReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                 XModbusReply_Common, 302);
+        XModbusDataUnit* u = XModbusDataUnit_create();
+        CHECK(r != NULL && u != NULL, "move: 创建回复与数据单元");
+        XModbusReply_setResult_move(r, u);
+        CHECK(XModbusReply_result_const(r) != NULL, "move: 结果已接管");
+        /* 空壳必须由调用方释放（不释放即泄漏，ASan 直接抓） */
+        XClassDelete((XClass*)u);
+        CHECK(XModbusReply_result_const(r) != NULL, "move: 释放空壳后回复结果仍有效");
+        XClassDelete((XClass*)r);
+    }
+
+    /* ---- 3. ref：指针接管，调用方不得再释放 ---- */
+    {
+        XModbusReply* r = XModbusReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                 XModbusReply_Common, 303);
+        XModbusDataUnit* u = XModbusDataUnit_create();
+        CHECK(r != NULL && u != NULL, "ref: 创建回复与数据单元");
+        XModbusReply_setResult_ref(r, u);
+        CHECK(XModbusReply_result_const(r) == u, "ref: 回复直接持有传入指针本身（零拷贝）");
+        /* u 不得释放：由回复析构负责（此处释放即 double-free，ASan 抓） */
+        XClassDelete((XClass*)r);
+    }
+
+    /* ---- 4. ref 覆盖：只释放自己此前接管的对象 ---- */
+    {
+        XModbusReply* r = XModbusReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                 XModbusReply_Common, 304);
+        XModbusDataUnit* first = XModbusDataUnit_create();
+        XModbusDataUnit* second = XModbusDataUnit_create();
+        CHECK(r && first && second, "ref 覆盖: 创建回复与两个数据单元");
+        XModbusReply_setResult_ref(r, first);
+        XModbusReply_setResult_ref(r, second);   /* 内部应释放 first，登记 second */
+        CHECK(XModbusReply_result_const(r) == second, "ref 覆盖: 登记新指针");
+        XClassDelete((XClass*)r);                /* 析构释放 second */
+    }
+
+    /* ---- 5. ref 传 NULL：仅清空 ---- */
+    {
+        XModbusReply* r = XModbusReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                 XModbusReply_Common, 305);
+        XModbusDataUnit* u = XModbusDataUnit_create();
+        XModbusReply_setResult_ref(r, u);
+        XModbusReply_setResult_ref(r, NULL);
+        CHECK(XModbusReply_result_const(r) == NULL, "ref(NULL): 仅清空结果");
+        XClassDelete((XClass*)r);
+    }
+}
+
 /* ==================== 入口 ==================== */
 
 int XModbusCoreTest_run(void)
@@ -337,6 +415,7 @@ int XModbusCoreTest_run(void)
     testCommEvent();
     testDeviceIdentification();
     testReply();
+    testSetterOwnershipTriple();
 
     printf("\n===== XModbusCoreTest: %d passed, %d failed =====\n",
            g_pass, g_fail); fflush(stdout);

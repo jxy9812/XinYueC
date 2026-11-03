@@ -42,6 +42,8 @@ extern "C" {
  *     XPlcDevice_RackParameter, XVariant_create_int(0));
  * XPlcDevice_setConnectionParameter_ref((XPlcDevice*)client,
  *     XPlcDevice_SlotParameter, XVariant_create_int(2));
+ * // 注意：_ref 为指针接管，上述 XVariant 所有权已转移给 client，
+ * //       不要再单独释放；client 析构时统一回收。
  * if (XPlcDevice_connectDevice((XPlcDevice*)client)) {
  *     // 连接发起成功（异步），需等待 stateChanged 到 ConnectedState
  * }
@@ -235,10 +237,13 @@ void XPlcDevice_setConnectionParameter(XPlcDevice* dev, XPlcDevice_ConnectionPar
 void XPlcDevice_setConnectionParameter_move(XPlcDevice* dev, XPlcDevice_ConnectionParameter parameter, XVariant* value);
 
 /**
- * @brief 设置连接参数（引用语义）
+ * @brief 设置连接参数（指针接管：零拷贝，所有权转移给设备）
  * @param dev 设备指针（非NULL）
  * @param parameter 参数类型
- * @param value 参数值（引用，函数内不释放；调用者不得在设备释放前自行释放）
+ * @param value 参数值（XVariant*；直接登记该对象，不拷贝）
+ * @warning 所有权完全转移：登记后由设备在析构/覆盖时释放，**调用方不得再释放
+ *          或访问**，否则即双重释放。必须是可由 XClassDelete 释放的堆对象。
+ * @note 覆盖同一参数时只释放设备此前接管的对象；重复登记同一指针为幂等。
  */
 void XPlcDevice_setConnectionParameter_ref(XPlcDevice* dev, XPlcDevice_ConnectionParameter parameter, XVariant* value);
 

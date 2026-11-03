@@ -11,15 +11,15 @@ typedef struct XState XState;
 typedef struct XStateMachine XStateMachine;
 
 /**
- * @brief 状态节点的内部种类。
+ * @brief 状态节点的内部种类（对标 QAbstractStatePrivate::StateType）。
  * @note 该枚举仅用于状态机算法区分标准状态、伪状态和根状态机。
  */
 typedef enum XAbstractState_Kind {
-    XAbstractState_AtomicState,   ///< 不包含子状态的内部原子状态种类。
-    XAbstractState_StandardState, ///< 可包含子状态和转换的 XState。
-    XAbstractState_FinalState,    ///< 表示父状态完成的 XFinalState。
-    XAbstractState_HistoryState,  ///< 恢复历史配置的 XHistoryState 伪状态。
-    XAbstractState_StateMachine   ///< 作为状态图根节点的 XStateMachine。
+    XAbstractState_AtomicState,   ///< 内部占位（对标 QAbstractStatePrivate::AbstractState）。
+    XAbstractState_StandardState, ///< 可包含子状态和转换的 XState（对标 StandardState）。
+    XAbstractState_FinalState,    ///< 表示父状态完成的 XFinalState（对标 FinalState）。
+    XAbstractState_HistoryState,  ///< 恢复历史配置的 XHistoryState 伪状态（对标 HistoryState）。
+    XAbstractState_StateMachine   ///< 作为状态图根节点的 XStateMachine（对标 isMachine 标志）。
 } XAbstractState_Kind;
 
 XCLASS_DEFINE_BEGING(XAbstractState)
@@ -33,10 +33,10 @@ XCLASS_DEFINE_END(XAbstractState)
  */
 typedef struct XAbstractState {
     XObject m_class;                  ///< 继承 XObject，必须位于结构体第一位。
-    XAbstractState_Kind m_kind;       ///< 状态节点种类。
-    bool m_active;                    ///< 当前是否位于状态机活动配置中。
     XState* m_parentState;            ///< 父状态，顶层状态的父状态为状态机根节点。
     XStateMachine* m_machine;         ///< 所属状态机，未加入状态图时为 NULL。
+    XAbstractState_Kind m_kind;       ///< 状态节点种类（对标 QAbstractStatePrivate::stateType）。
+    bool m_active;                    ///< 当前是否位于状态机活动配置中（对标 active）。
 } XAbstractState;
 
 /**
@@ -56,21 +56,23 @@ void XAbstractState_init(XAbstractState* state, XAbstractState_Kind kind, XState
 
 
 /**
- * @brief 获取父状态。
+ * @brief 获取父状态（对标 QAbstractState::parentState）。
  * @param state 状态实例。
  * @return 父状态；无父状态时返回 NULL。
+ * @warning 借用语义：返回值归状态树所有，调用者不得释放。
  */
 XState* XAbstractState_parentState(const XAbstractState* state);
 
 /**
- * @brief 获取状态所属的状态机。
+ * @brief 获取状态所属的状态机（对标 QAbstractState::machine）。
  * @param state 状态实例。
  * @return 所属状态机；状态不在状态图中时返回 NULL。
+ * @warning 借用语义：返回值不转移所有权，调用者不得释放。
  */
 XStateMachine* XAbstractState_machine(const XAbstractState* state);
 
 /**
- * @brief 查询状态是否活动。
+ * @brief 查询状态是否活动（对标 QAbstractState::active）。
  * @param state 状态实例。
  * @return 状态位于当前活动配置中时返回 true。
  */
@@ -93,21 +95,21 @@ void XAbstractState_onEntry_base(XAbstractState* state, XEvent* event);
 void XAbstractState_onExit_base(XAbstractState* state, XEvent* event);
 
 /**
- * @brief 状态完成 onEntry 后发出的 entered 信号。
+ * @brief 状态完成 onEntry 后发出的 entered 信号（对标 QAbstractState::entered）。
  * @param state 已经完成进入动作的状态。
  * @return 信号标识，供 XSignal 宏和信号槽连接使用。
  * @note 发出该信号时 active 属性尚未切换为 true，与 Qt 的时序一致。
  */
 void* XAbstractState_entered_signal(XAbstractState* state);
 /**
- * @brief 状态完成 onExit 后发出的 exited 信号。
+ * @brief 状态完成 onExit 后发出的 exited 信号（对标 QAbstractState::exited）。
  * @param state 已经完成退出动作的状态。
  * @return 信号标识，供 XSignal 宏和信号槽连接使用。
  * @note 发出该信号前 active 属性已经切换为 false。
  */
 void* XAbstractState_exited_signal(XAbstractState* state);
 /**
- * @brief 状态活动属性变化时发出的 activeChanged 信号。
+ * @brief 状态活动属性变化时发出的 activeChanged 信号（对标 QAbstractState::activeChanged）。
  * @param state 活动属性发生变化的状态。
  * @param active 新的活动状态；true 表示已进入 configuration。
  * @return 信号标识，供 XSignal 宏和信号槽连接使用。

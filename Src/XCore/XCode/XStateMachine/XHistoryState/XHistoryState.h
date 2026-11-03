@@ -31,8 +31,8 @@ XCLASS_DEFINE_EXTEND_END(XHistoryState, XAbstractState);
 typedef struct XHistoryState {
     XAbstractState m_class;                   ///< 继承 XAbstractState。
     XAbstractTransition* m_defaultTransition; ///< 尚无历史记录时使用的默认转换。
-    XHistoryState_HistoryType m_historyType;  ///< 浅历史或深历史。
     XVector* m_configuration;                 ///< 保存的状态配置，元素类型为 XAbstractState*。
+    XHistoryState_HistoryType m_historyType;  ///< 浅历史或深历史（对标 QHistoryStatePrivate::historyType）。
 } XHistoryState;
 
 /**
@@ -66,42 +66,45 @@ void XHistoryState_init_ex(XHistoryState* state, XHistoryState_HistoryType type,
 
 
 /**
- * @brief 获取无历史配置时使用的默认转换。
+ * @brief 获取无历史配置时使用的默认转换（对标 QHistoryState::defaultTransition）。
  * @param state 历史状态实例。
  * @return 默认转换；未设置或 state 为 NULL 时返回 NULL。
- * @note 返回内部引用，不转移所有权。
+ * @warning 借用语义：返回值归历史状态所有，调用者不得释放。
  */
 XAbstractTransition* XHistoryState_defaultTransition(const XHistoryState* state);
 /**
- * @brief 设置默认转换并取得其所有权。
+ * @brief 设置默认转换并取得其所有权（对标 QHistoryState::setDefaultTransition）。
  * @param state 历史状态实例。
  * @param transition 无历史记录时执行的转换；NULL 表示清除默认转换。
  * @return 设置成功返回 true。
  * @note 默认转换的 eventTest 不会被调用，其 onTransition 会收到触发历史入口的事件。
+ * @note 转换的源状态被置为 NULL，父对象改为历史状态，与 Qt 的 setParent(this) 等价。
  */
 bool XHistoryState_setDefaultTransition(XHistoryState* state, XAbstractTransition* transition);
 /**
- * @brief 获取默认转换的第一个目标状态。
+ * @brief 获取默认转换的第一个目标状态（对标 QHistoryState::defaultState）。
  * @param state 历史状态实例。
  * @return 默认目标状态；未设置默认转换时返回 NULL。
  */
 XAbstractState* XHistoryState_defaultState(const XHistoryState* state);
 /**
- * @brief 设置默认状态。
+ * @brief 设置默认状态（对标 QHistoryState::setDefaultState）。
  * @param state 历史状态实例。
  * @param defaultState 历史状态的直接兄弟状态；NULL 表示空目标默认转换。
  * @return 默认状态是历史状态的直接兄弟状态或为 NULL 时返回 true。
+ * @note 与 Qt 一致：仅在默认转换缺失或已是本函数生成的单目标转换时复用，
+ *       用户自行设置的默认转换会被整体替换。
  */
 bool XHistoryState_setDefaultState(XHistoryState* state, XAbstractState* defaultState);
 
 /**
- * @brief 获取历史记录深度。
+ * @brief 获取历史记录深度（对标 QHistoryState::historyType）。
  * @param state 历史状态实例。
  * @return 浅历史或深历史；state 为 NULL 时返回浅历史。
  */
 XHistoryState_HistoryType XHistoryState_historyType(const XHistoryState* state);
 /**
- * @brief 设置历史记录深度。
+ * @brief 设置历史记录深度（对标 QHistoryState::setHistoryType）。
  * @param state 历史状态实例。
  * @param type 新的浅历史或深历史类型。
  * @note 修改类型会清空已经保存的历史配置。
@@ -109,19 +112,19 @@ XHistoryState_HistoryType XHistoryState_historyType(const XHistoryState* state);
 void XHistoryState_setHistoryType(XHistoryState* state, XHistoryState_HistoryType type);
 
 /**
- * @brief 默认转换变化信号。
+ * @brief 默认转换变化信号（对标 QHistoryState::defaultTransitionChanged）。
  * @param state 默认转换发生变化的历史状态。
  * @return 信号标识，供 XSignal 宏和信号槽连接使用。
  */
 void* XHistoryState_defaultTransitionChanged_signal(XHistoryState* state);
 /**
- * @brief 默认状态变化信号。
+ * @brief 默认状态变化信号（对标 QHistoryState::defaultStateChanged）。
  * @param state 默认状态发生变化的历史状态。
  * @return 信号标识，供 XSignal 宏和信号槽连接使用。
  */
 void* XHistoryState_defaultStateChanged_signal(XHistoryState* state);
 /**
- * @brief 历史记录深度变化信号。
+ * @brief 历史记录深度变化信号（对标 QHistoryState::historyTypeChanged）。
  * @param state 历史类型发生变化的历史状态。
  * @return 信号标识，供 XSignal 宏和信号槽连接使用。
  */

@@ -11,8 +11,10 @@
 extern "C" {
 #endif
 
+#include "CXinYueConfig.h"
 #include "XAbstractState.h"
 #include "XAbstractTransition.h"
+#include "XVariant.h"
 #include "XVector.h"
 
 typedef struct XSignalTransition XSignalTransition;
@@ -33,15 +35,27 @@ XCLASS_DEFINE_BEGING(XState)
 XCLASS_DEFINE_EXTEND_END(XState, XAbstractState);
 
 /**
+ * @brief 一条属性赋值记录（对标 QStatePrivate 的 QPropertyAssignment）。
+ * @note 属性名以 UTF-8 文本自持副本保存（避免与调用方 XString 共享 COW 缓冲），
+ *       目标对象不转移所有权。
+ */
+typedef struct XState_PropertyAssignment {
+    XObject* m_object;    ///< 目标对象，不转移所有权。
+    char* m_propertyName; ///< 属性名 UTF-8 文本，由记录拥有（NULL 终止）。
+    XVariant* m_value;    ///< 赋值，由记录拥有。
+} XState_PropertyAssignment;
+
+/**
  * @brief 可包含子状态和转换的标准状态，对应 Qt 6.8 的 QState。
  */
 typedef struct XState {
     XAbstractState m_class;          ///< 继承 XAbstractState。
     XVector* m_childStates;          ///< 直接子状态列表，元素类型为 XAbstractState*。
     XVector* m_transitions;          ///< 出站转换列表，元素类型为 XAbstractTransition*。
+    XVector* m_propertyAssignments;  ///< 属性赋值记录，元素类型为 XState_PropertyAssignment。
     XAbstractState* m_initialState;  ///< 互斥模式的初始子状态。
     XAbstractState* m_errorState;    ///< 本状态及其后代发生错误时进入的状态。
-    XState_ChildMode m_childMode;    ///< 子状态模式。
+    XState_ChildMode m_childMode;    ///< 子状态模式（对标 QStatePrivate::childMode）。
 } XState;
 
 /**
@@ -50,12 +64,8 @@ typedef struct XState {
  */
 XVtable* XState_class_init(void);
 /**
- * @brief 创建无父状态的互斥状态。
- * @return 新状态；内存分配失败时返回 NULL。
- * @note 返回对象由调用者拥有，加入父状态后由父状态取得所有权。
- */
-/**
- * @brief 创建指定模式和父状态的状态。
+ * @brief 创建指定模式和父状态的状态（对标 QState(ChildMode, QState*)）。
+ * @param memory 内存类型。
  * @param childMode 子状态模式。
  * @param parent 父状态，可为 NULL。
  * @return 新状态，失败返回 NULL。
@@ -63,46 +73,47 @@ XVtable* XState_class_init(void);
  */
 XState* XState_create_ex(XMemoryType memory, XState_ChildMode childMode, XState* parent);
 /**
- * @brief 初始化无父状态的互斥状态。
+ * @brief 初始化无父状态的互斥状态（对标 QState(QState* parent = nullptr)）。
  * @param state 调用者提供的未初始化存储。
  * @note 适用于栈对象或嵌入其他结构体的对象，不设置内存释放器。
  */
 void XState_init(XState* state);
 /**
- * @brief 初始化指定模式和父状态的状态。
+ * @brief 初始化指定模式和父状态的状态（对标 QState(ChildMode, QState*)）。
  * @param state 调用者提供的未初始化存储。
  * @param childMode 互斥或并行子状态模式。
  * @param parent 父状态，可为 NULL；非 NULL 时取得该状态的所有权。
+ * @note 传入 XState_ExclusiveStates 即等价于 Qt 的 QState(QState*) 构造。
  */
 void XState_init_ex(XState* state, XState_ChildMode childMode, XState* parent);
 
 
 /**
- * @brief 获取本状态配置的错误状态。
+ * @brief 获取本状态配置的错误状态（对标 QState::errorState）。
  * @param state 状态实例。
  * @return 错误状态；未配置或 state 为 NULL 时返回 NULL。
- * @note 返回的是内部引用，不转移所有权。
+ * @warning 借用语义：返回值归状态树所有，调用者不得释放。
  */
 XAbstractState* XState_errorState(const XState* state);
 /**
- * @brief 设置错误状态。
+ * @brief 设置错误状态（对标 QState::setErrorState）。
  * @param state 发生本状态或后代入口错误时的上下文状态。
  * @param errorState 发生错误后进入的状态；传入 NULL 表示清除。
- * @return 错误状态属于同一状态机或为 NULL 时返回 true。
+ * @return 错误状态有效时返回 true；状态机根节点或属于其他状态机时返回 false。
  * @note errorState 不由 state 取得所有权，其生命周期仍由状态树管理。
  */
 bool XState_setErrorState(XState* state, XAbstractState* errorState);
 
 /**
- * @brief 添加出站转换并取得其所有权。
+ * @brief 添加出站转换并取得其所有权（对标 QState::addTransition）。
  * @param state 作为转换源的状态。
  * @param transition 待添加的转换。
  * @return 添加成功返回 true。
+ * @note Qt 该接口返回 void 并以 qWarning 报告非法参数；C 侧以 false 报告同一情形。
  */
 bool XState_addTransition(XState* state, XAbstractTransition* transition);
-
 /**
- * @brief 创建并添加信号转换。
+ * @brief 创建并添加信号转换（对标 QState::addTransition(sender, signal, target)）。
  * @param state 转换的源状态，同时取得新转换的所有权。
  * @param sender 信号发送对象，不转移所有权且不可为 NULL。
  * @param signal 由 XSignal 取得的非零信号标识。
@@ -110,9 +121,8 @@ bool XState_addTransition(XState* state, XAbstractTransition* transition);
  * @return 新建的 XSignalTransition，失败返回 NULL。
  */
 XSignalTransition* XState_addTransition_2(XState* state, const XObject* sender, size_t signal, XAbstractState* target);
-
 /**
- * @brief 创建并添加无条件转换。
+ * @brief 创建并添加无条件转换（对标 QState::addTransition(QAbstractState* target)）。
  * @param state 转换的源状态，同时取得新转换的所有权。
  * @param target 目标状态，不转移所有权且不可为 NULL。
  * @return 新建的转换，失败返回 NULL。
@@ -121,76 +131,102 @@ XSignalTransition* XState_addTransition_2(XState* state, const XObject* sender, 
 XAbstractTransition* XState_addTransition_3(XState* state, XAbstractState* target);
 
 /**
- * @brief 移除转换并释放状态对它的所有权。
+ * @brief 移除转换并释放状态对它的所有权（对标 QState::removeTransition）。
  * @param state 当前拥有该转换的源状态。
  * @param transition 待移除的转换。
  * @return 找到且成功移除时返回 true，否则返回 false。
- * @note 该函数不会销毁转换。
+ * @note 该函数不会销毁转换，与 Qt 释放所有权的语义一致。
  */
 bool XState_removeTransition(XState* state, XAbstractTransition* transition);
 /**
- * @brief 获取出站转换列表的只读内部引用。
+ * @brief 获取出站转换列表的只读内部引用（对标 QState::transitions）。
  * @param state 状态实例。
  * @return 元素类型为 XAbstractTransition* 的内部 XVector；state 为 NULL 时返回 NULL。
  * @note 调用者不得修改或释放返回的容器和其中的转换。
  */
 const XVector* XState_transitions_const(const XState* state);
+/**
+ * @brief 获取直接子状态列表的只读内部引用（对标 QStatePrivate::childStates）。
+ * @param state 状态实例。
+ * @return 元素类型为 XAbstractState* 的内部 XVector；state 为 NULL 时返回 NULL。
+ * @note 历史伪状态不在该列表中，与 Qt 的 childStates() 过滤口径一致。
+ */
+const XVector* XState_childStates_const(const XState* state);
 
 /**
- * @brief 获取互斥状态的初始子状态。
+ * @brief 获取互斥状态的初始子状态（对标 QState::initialState）。
  * @param state 状态实例。
  * @return 初始直接子状态；未设置或 state 为 NULL 时返回 NULL。
  */
 XAbstractState* XState_initialState(const XState* state);
 /**
- * @brief 设置互斥状态的初始直接子状态。
+ * @brief 设置互斥状态的初始直接子状态（对标 QState::setInitialState）。
  * @param state 待配置的互斥状态。
  * @param initialState state 的直接子状态或历史状态；NULL 表示清除。
- * @return 参数有效时返回 true；并行状态拒绝设置初始状态。
+ * @return 参数有效时返回 true；并行状态或非直接子状态时返回 false。
  */
 bool XState_setInitialState(XState* state, XAbstractState* initialState);
 
 /**
- * @brief 获取子状态模式。
+ * @brief 获取子状态模式（对标 QState::childMode）。
  * @param state 状态实例。
  * @return 互斥或并行模式；state 为 NULL 时返回互斥模式。
  */
 XState_ChildMode XState_childMode(const XState* state);
 /**
- * @brief 设置子状态模式。
+ * @brief 设置子状态模式（对标 QState::setChildMode）。
  * @param state 待修改的状态。
  * @param mode 新的互斥或并行模式。
- * @note 切换到并行模式时会清除已经设置的初始状态。
+ * @note 切换到并行模式时会清除已经设置的初始状态，与 Qt 一致。
  */
 void XState_setChildMode(XState* state, XState_ChildMode mode);
 
 /**
- * @brief 进入直接最终子状态时发出的 finished 信号。
+ * @brief 登记一条进入本状态时执行的属性赋值（对标 QState::assignProperty）。
+ * @param state 目标状态。
+ * @param object 属性所属对象，不转移所有权；NULL 会被拒绝。
+ * @param name 属性名；NULL 会被拒绝。
+ * @param value 赋值；由记录深拷贝，调用方保留所有权。
+ * @return 登记成功返回 true。
+ * @note 同名同对象的重复登记会原地更新赋值，与 Qt 的一致性处理相同。
+ * @note 只有状态机运行且状态进入时才会真正写入对象属性。
+ */
+bool XState_assignProperty(XState* state, XObject* object, const XString* name, const XVariant* value);
+/**
+ * @brief 获取属性赋值记录的只读内部引用（对标 QStatePrivate::propertyAssignments）。
+ * @param state 状态实例。
+ * @return 元素类型为 XState_PropertyAssignment 的内部 XVector；state 为 NULL 时返回 NULL。
+ * @warning 返回容器随 assignProperty 变化，调用者不得修改、缓存元素或释放容器。
+ */
+const XVector* XState_propertyAssignments_const(const XState* state);
+
+/**
+ * @brief 进入直接最终子状态时发出的 finished 信号（对标 QState::finished）。
  * @param state 已经完成的复合状态。
  * @return 信号标识，供 XSignal 宏和信号槽连接使用。
  */
 void* XState_finished_signal(XState* state);
 /**
- * @brief 本状态完成进入处理后发出的 propertiesAssigned 信号。
+ * @brief 本状态完成进入处理后发出的 propertiesAssigned 信号（对标 QState::propertiesAssigned）。
  * @param state 已经完成进入处理的标准状态。
  * @return 信号标识，供 XSignal 宏和信号槽连接使用。
- * @note 当前项目未启用对象属性系统，因此该信号紧随 entered/activeChanged 发出。
+ * @note 该信号在属性赋值写入完成之后发出，与 Qt 的时序一致。
  */
 void* XState_propertiesAssigned_signal(XState* state);
 /**
- * @brief 子状态模式变化信号。
+ * @brief 子状态模式变化信号（对标 QState::childModeChanged）。
  * @param state childMode 已发生变化的状态。
  * @return 信号标识，供 XSignal 宏和信号槽连接使用。
  */
 void* XState_childModeChanged_signal(XState* state);
 /**
- * @brief 初始状态变化信号。
+ * @brief 初始状态变化信号（对标 QState::initialStateChanged）。
  * @param state initialState 已发生变化的状态。
  * @return 信号标识，供 XSignal 宏和信号槽连接使用。
  */
 void* XState_initialStateChanged_signal(XState* state);
 /**
- * @brief 错误状态变化信号。
+ * @brief 错误状态变化信号（对标 QState::errorStateChanged）。
  * @param state errorState 已发生变化的状态。
  * @return 信号标识，供 XSignal 宏和信号槽连接使用。
  */

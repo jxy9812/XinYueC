@@ -306,11 +306,11 @@ int XVfdAtv61Test_runEx(const char* ptyOverride)
     XModbusClient_setNumberOfRetries((XModbusClient*)client, 2);
     {
         XVariant* var = XVariant_create_utf8_str("127.0.0.1");
-        if (var) XModbusDevice_setConnectionParameter_ref(mdev,
+        if (var) XModbusDevice_setConnectionParameter(mdev,
             XModbusDevice_NetworkAddressParameter, var);
         XClassDelete((XClass*)var);
         var = XVariant_create_int((int)port);
-        if (var) XModbusDevice_setConnectionParameter_ref(mdev,
+        if (var) XModbusDevice_setConnectionParameter(mdev,
             XModbusDevice_NetworkPortParameter, var);
         XClassDelete((XClass*)var);
     }

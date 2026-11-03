@@ -10,7 +10,13 @@ static void VXHistoryState_deinit(XHistoryState* state)
     if (!state)
         return;
 
-    state->m_defaultTransition = NULL;
+    /* 默认转换挂在历史状态下（对标 Qt 的 setParent(this)），析构时要一并回收；
+     * 它没有源状态，走不到 XState 的转换回收路径。 */
+    if (state->m_defaultTransition) {
+        XAbstractTransition* transition = state->m_defaultTransition;
+        state->m_defaultTransition = NULL;
+        XClassDelete((XClass*)transition);
+    }
     if (state->m_configuration) {
         XClassDelete((XClass*)state->m_configuration);
         state->m_configuration = NULL;
@@ -66,12 +72,17 @@ bool XHistoryState_setDefaultTransition(XHistoryState* state, XAbstractTransitio
     if (state->m_defaultTransition == transition)
         return true;
 
+    XAbstractTransition* previous = state->m_defaultTransition;
     state->m_defaultTransition = transition;
     if (transition) {
         if (transition->m_sourceState)
             XState_removeTransition(transition->m_sourceState, transition);
         XObject_setParent((XObject*)transition, (XObject*)state);
     }
+    /* Qt 用 setParent 表达所有权：被替换的旧转换随父对象销毁一并回收。
+     * 这里旧转换已不挂在任何状态上，删除权必须显式交还。 */
+    if (previous)
+        XClassDelete((XClass*)previous);
     XHistoryState_defaultTransitionChanged_signal(state);
     XHistoryState_defaultStateChanged_signal(state);
     return true;
@@ -84,24 +95,82 @@ XAbstractState* XHistoryState_defaultState(const XHistoryState* state)
         : NULL;
 }
 
+/** @brief setDefaultState 生成的单目标默认转换（对标 Qt 的 DefaultStateTransition）。 */
+typedef struct XHistoryState_DefaultTransition {
+    XAbstractTransition m_class; ///< 继承 XAbstractTransition。
+} XHistoryState_DefaultTransition;
+
+XCLASS_DEFINE_BEGING(XHistoryState_DefaultTransition)
+XCLASS_DEFINE_EXTEND_END(XHistoryState_DefaultTransition, XAbstractTransition)
+
+static bool VXHistoryState_DefaultTransition_eventTest(XAbstractTransition* transition,
+                                                       XEvent* event)
+{
+    (void)transition;
+    (void)event;
+    /* 永不参与事件匹配：历史入口由状态机当作特例直接展开。 */
+    return false;
+}
+
+static void VXHistoryState_DefaultTransition_onTransition(XAbstractTransition* transition,
+                                                          XEvent* event)
+{
+    (void)transition;
+    (void)event;
+}
+
+XVtable* XHistoryState_DefaultTransition_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XHistoryState_DefaultTransition)
+    XVTABLE_INHERIT_XCLASS(XAbstractTransition);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractTransition_EventTest,
+                             VXHistoryState_DefaultTransition_eventTest);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractTransition_OnTransition,
+                             VXHistoryState_DefaultTransition_onTransition);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 判断转换是否为本模块 setDefaultState 生成的单目标默认转换。 */
+static bool XHistoryState_isDefaultTransition(const XAbstractTransition* transition)
+{
+    return transition
+        && XClassGetVtable(transition) == XHistoryState_DefaultTransition_class_init();
+}
+
 bool XHistoryState_setDefaultState(XHistoryState* state, XAbstractState* defaultState)
 {
     if (!state)
         return false;
+    /* 对标 Qt：state 必须是历史状态的兄弟（同属一个父状态）。 */
     if (defaultState && defaultState->m_parentState != state->m_class.m_parentState)
         return false;
-    if (XHistoryState_defaultState(state) == defaultState)
+    if (XHistoryState_defaultState(state) == defaultState
+        && state->m_defaultTransition
+        && XVector_size_base(
+            (const XContainer*)state->m_defaultTransition->m_targetStates) == 1) {
         return true;
+    }
+
+    XAbstractTransition* current = state->m_defaultTransition;
+    if (current && XHistoryState_isDefaultTransition(current)) {
+        /* 复用自己生成的转换，只换目标（对标 Qt 的 defaultTransition->setTargetState）。 */
+        if (!XAbstractTransition_setTargetState(current, defaultState))
+            return false;
+        XHistoryState_defaultStateChanged_signal(state);
+        return true;
+    }
 
     XAbstractTransition* transition = XClass_Malloc(XAbstractTransition);
     if (!transition)
         return false;
     XAbstractTransition_init(transition, NULL);
     Set_Class_IsHeap(transition, true);
+    XClassGetVtable(transition) = XHistoryState_DefaultTransition_class_init();
     if (!XAbstractTransition_setTargetState(transition, defaultState)) {
         XClassDelete((XClass*)transition);
         return false;
     }
+    /* setDefaultTransition 会连旧转换一起回收并发 defaultTransitionChanged。 */
     XHistoryState_setDefaultTransition(state, transition);
     return true;
 }

@@ -532,6 +532,7 @@ XStringList* xsettingsUnescapedStringList(const char* bytes, size_t len, bool* i
                     XClassDelete(current);
                     goto fail;
                 }
+                XClassDelete(current);   /* move 后源壳仍须释放 */
                 current = XString_create();
                 if (!current)
                     goto fail;
@@ -1009,8 +1010,7 @@ static XVariant* xtrReadVariant(XSettingsTlvReader* r)
         if (!r->ok || !str)
             return NULL;
         XVariant* variant = XString_toVariant_move(str);   /* 变体接管字符串 */
-        if (!variant)
-            XClassDelete(str);
+        XClassDelete(str);   /* move 后源壳仍须释放 */
         return variant;
     }
     case XVariantType_ByteArray: {
@@ -1024,8 +1024,7 @@ static XVariant* xtrReadVariant(XSettingsTlvReader* r)
         if (!array)
             return NULL;
         XVariant* variant = XByteArray_toVariant_move(array);
-        if (!variant)
-            XClassDelete(array);
+        XClassDelete(array);   /* move 后源壳仍须释放 */
         return variant;
     }
     case XVariantType_StringList: {
@@ -1049,8 +1048,7 @@ static XVariant* xtrReadVariant(XSettingsTlvReader* r)
             return NULL;
         }
         XVariant* variant = XStringList_toVariant_move(list);
-        if (!variant)
-            XClassDelete(list);
+        XClassDelete(list);   /* move 后源壳仍须释放 */
         return variant;
     }
     case XVariantType_Point: {
@@ -1136,8 +1134,7 @@ static XVariant* xtrReadVariant(XSettingsTlvReader* r)
             return NULL;
         }
         XVariant* variant = XVariantList_toVariant_move(list);
-        if (!variant)
-            XClassDelete(list);
+        XClassDelete(list);   /* move 后源壳仍须释放 */
         return variant;
     }
     case XVariantType_Map:
@@ -1176,8 +1173,7 @@ static XVariant* xtrReadVariant(XSettingsTlvReader* r)
             return NULL;
         }
         XVariant* variant = XMap_toVariant_move(map);
-        if (!variant)
-            XClassDelete(map);
+        XClassDelete(map);   /* move 后源壳仍须释放 */
         return variant;
     }
     default:
@@ -1502,6 +1498,7 @@ static XStringList* xsettingsSplitArgs(const XString* content)
                 XClassDelete(args);
                 return NULL;
             }
+            XClassDelete(arg);   /* move 后源壳仍须释放 */
         }
     }
     return args;
@@ -1573,8 +1570,7 @@ XVariant* xsettingsStringToVariant(const XString* s)
                 }
             }
             XVariant* variant = XByteArray_toVariant_move(array);
-            if (!variant)
-                XClassDelete(array);
+            XClassDelete(array);   /* move 后源壳仍须释放 */
             return variant;
         }
         if (XString_startsWith_utf8(s, "@String(", XChar_CaseSensitive)) {
@@ -1582,8 +1578,7 @@ XVariant* xsettingsStringToVariant(const XString* s)
             if (!content)
                 return NULL;
             XVariant* variant = XString_toVariant_move(content);
-            if (!variant)
-                XClassDelete(content);
+            XClassDelete(content);   /* move 后源壳仍须释放 */
             return variant;
         }
         if (XString_startsWith_utf8(s, "@Variant(", XChar_CaseSensitive) ||
@@ -1615,8 +1610,7 @@ XVariant* xsettingsStringToVariant(const XString* s)
         if (!content)
             return NULL;
         XVariant* variant = XString_toVariant_move(content);
-        if (!variant)
-            XClassDelete(content);
+        XClassDelete(content);   /* move 后源壳仍须释放 */
         return variant;
     }
     return XString_toVariant(s);
@@ -1653,6 +1647,7 @@ XVariant* xsettingsStringListToVariantList(const XStringList* list)
                     XClassDelete(clean);
                     return NULL;
                 }
+                XClassDelete(stripped);   /* move 后源壳仍须释放 */
             }
             else if (item) {
                 XString* copy = XString_create_copy(item);
@@ -1661,11 +1656,11 @@ XVariant* xsettingsStringListToVariantList(const XStringList* list)
                     XClassDelete(clean);
                     return NULL;
                 }
+                XClassDelete(copy);   /* move 后源壳仍须释放 */
             }
         }
         XVariant* variant = XStringList_toVariant_move(clean);
-        if (!variant)
-            XClassDelete(clean);
+        XClassDelete(clean);   /* move 后源壳仍须释放 */
         return variant;
     }
     /* 逐元素 stringToVariant → List 变体 */
@@ -1682,8 +1677,7 @@ XVariant* xsettingsStringListToVariantList(const XStringList* list)
         }
     }
     XVariant* variant = XVariantList_toVariant_move(outList);
-    if (!variant)
-        XClassDelete(outList);
+    XClassDelete(outList);   /* move 后源壳仍须释放 */
     return variant;
 }
 

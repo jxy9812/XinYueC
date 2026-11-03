@@ -354,9 +354,15 @@ XJsonValue* XJsonValue_fromVariant_copy(const XVariant* variant);
 XJsonValue* XJsonValue_fromVariant_ref(const XVariant* variant);
 /** @brief 深复制设置 XVariant 的 JSON 值。 */
 void XJsonValue_setVariant(XVariant* variant, const XJsonValue* value);
-/** @brief 移动设置 XVariant 的 JSON 值。 */
+/**
+ * @brief 移动设置 XVariant 的 JSON 值（抽取资源，源值变空壳）。
+ * @warning 源 XJsonValue 的堆资源已转移；**外壳仍由调用方释放**，此后不得再解引用。
+ */
 void XJsonValue_setVariant_move(XVariant* variant, XJsonValue* value);
-/** @brief 将已有 JSON 值直接交给 XVariant 管理。 */
+/**
+ * @brief 将已有 JSON 值直接交给 XVariant 管理（指针接管，零拷贝）。
+ * @warning 所有权完全转移：登记后调用方不得再释放或访问，再释放即双重释放。
+ */
 void XJsonValue_setVariant_ref(XVariant* variant, XJsonValue* value);
 
 /**

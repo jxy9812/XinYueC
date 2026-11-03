@@ -1030,7 +1030,7 @@ void XMqttClientTest(void)
     /* ---------- 2. setHostname / hostname ---------- */
     {
         XMqttClient* client = XMqttClient_create();
-        XMqttClient_setHostname(client, "mqtt.eclipseprojects.io");
+        XMqttClient_setHostname_utf8(client, "mqtt.eclipseprojects.io");
         const XString* hn = XMqttClient_hostname_const(client);
         if (hn && XString_equals_utf8(hn, "mqtt.eclipseprojects.io", XChar_CaseSensitive)) {
             XPrintf("  [通过] setHostname/hostname_const 正确\n"); pass++;
@@ -1051,7 +1051,7 @@ void XMqttClientTest(void)
     /* ---------- 4. setClientId / clientId ---------- */
     {
         XMqttClient* client = XMqttClient_create();
-        XMqttClient_setClientId(client, "my-client-001");
+        XMqttClient_setClientId_utf8(client, "my-client-001");
         const XString* cid = XMqttClient_clientId_const(client);
         if (cid && XString_equals_utf8(cid, "my-client-001", XChar_CaseSensitive)) {
             XPrintf("  [通过] setClientId 正确\n"); pass++;
@@ -1082,8 +1082,8 @@ void XMqttClientTest(void)
     /* ---------- 7. setUsername / setPassword ---------- */
     {
         XMqttClient* client = XMqttClient_create();
-        XMqttClient_setUsername(client, "admin");
-        XMqttClient_setPassword(client, "secret");
+        XMqttClient_setUsername_utf8(client, "admin");
+        XMqttClient_setPassword_utf8(client, "secret");
         const XString* user = XMqttClient_username_const(client);
         const XString* pass = XMqttClient_password_const(client);
         if (user && pass &&
@@ -1107,7 +1107,7 @@ void XMqttClientTest(void)
     /* ---------- 9. 遗嘱消息设置 ---------- */
     {
         XMqttClient* client = XMqttClient_create();
-        XMqttClient_setWillTopic(client, "client/lastwill");
+        XMqttClient_setWillTopic_utf8(client, "client/lastwill");
         XMqttClient_setWillQoS(client, 1);
         uint8_t willPayload[] = "offline";
         XMqttClient_setWillMessage(client, willPayload, 7);

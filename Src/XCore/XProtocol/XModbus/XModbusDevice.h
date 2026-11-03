@@ -261,17 +261,19 @@ void XModbusDevice_setConnectionParameter(XModbusDevice* dev, XModbusDevice_Conn
  */
 void XModbusDevice_setConnectionParameter_move(XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter, XVariant* value);
 /**
- * @brief 设置连接参数（引用形态入参：设备登记自己的深拷贝）。
+ * @brief 设置连接参数（指针接管：零拷贝，所有权转移给设备）。
  * @param dev XModbusDevice实例指针；NULL、value 为 NULL 或 parameter
- *        非法下标时不执行任何操作，设备保持不变。
+ *        非法下标时不执行任何操作（value 所有权仍归调用方）。
  * @param parameter 参数类型（XModbusDevice_ConnectionParameter枚举）。
- * @param value 参数值（XVariant，借用：设备登记自己的深拷贝；调用方
- *        在函数返回后即可释放 value，不会悬垂）。
+ * @param value 参数值（XVariant*；直接登记该对象本身，不拷贝）。
  * @return 无。
- * @note [UAF 根修 2026-10-30] 对标 Qt6 QModbusDevice::setConnectionParameter
- *       （参数表按值存副本）：已有值先释放旧副本再登记新深拷贝。旧实现
- *       存裸指针且覆盖时删除调用方内存，调用方「set 后 delete」即 UAF；
- *       本变体与 copy 变体在调用方视角已等价。
+ * @warning 所有权完全转移：登记后 value 由设备持有并在析构/覆盖时释放，
+ *          **调用方不得再释放或访问**，否则即双重释放。传入的必须是可由
+ *          XClassDelete 释放的堆对象。
+ * @note 覆盖同一参数时只释放设备此前接管的对象，不触碰调用方其他内存；
+ *       重复登记同一指针为幂等操作。
+ * @note 与 copy/move 变体的取舍：本变体不动任何内存，适合"为本次设置专门
+ *       创建对象、之后不再使用"的场景（性能最优）。
  */
 void XModbusDevice_setConnectionParameter_ref(XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter, XVariant* value);
 /******************************************************************************************

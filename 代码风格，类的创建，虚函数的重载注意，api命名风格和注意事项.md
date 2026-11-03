@@ -20,6 +20,9 @@
 17. [总结](#总结)
 - [定时器使用规范（2026-10-26 裁定）](#定时器使用规范2026-10-26-裁定)：XObject 派生类内禁内嵌独立 XTimer
 - [框架/应用分层写法（2026-10-29 裁定）](#框架应用分层写法2026-10-29-裁定)：框架/APP 写法分离，动态文本一律控件化
+- **`_const` 所有权契约（2026-11-03 裁定）**：带 `_const` = 借用（禁止释放），不带 `_const` = 拷贝（调用方必须释放），见「获取函数的所有权契约」
+- **`set*` 三态所有权契约（2026-11-03 裁定）**：`setXxx` 拷贝 / `setXxx_move` 抽取资源留空壳（外壳调用方释放）/ `setXxx_ref` 指针接管（所有权全转），见「`set*` 三态所有权契约」
+- **字符串后缀契约（2026-11-03 裁定）**：带 `_utf8` = `char*`，不带 = `XString*`；存储优先 `XString`，仅"只记录不加工"用 `char*`，见「字符串 API 后缀契约」
 
 ---
 
@@ -78,14 +81,18 @@
 | `_utf8` | UTF-8 编码版本 | `XString_append_utf8()` |
 | `_gbk` | GBK 编码版本 | `XString_create_gbk()` |
 | `_utf16` | UTF-16 编码版本 | 编码缓存相关 |
-| `_move` | 移动语义（转移资源所有权） | `XExample_setData_move()`、`XContainer_create_move()` |
+| `_move` | 移动语义：抽取入参内部堆资源，入参变空壳（**外壳仍由调用方释放**） | `XExample_setData_move()`、`XContainer_create_move()` |
 | `_copy` | 深拷贝创建 | `XContainer_create_copy()` |
-| `_const` | 返回内部引用（非拷贝），const 语义 | `const char* XExample_data_const(...)` |
-| `_ref` | 引用语义（不拷贝，直接引用传入数据） | `XExample_setData_ref_2(obj, char* value)` |
+| `_const` | 返回内部引用（**借用**，调用者禁止释放） | `const char* XExample_data_const(...)` |
+| `_ref` | 指针接管：直接存传入指针，**所有权完全转移给被设对象**，调用方不得再释放或访问 | `XModbusReply_setResult_ref()` |
 | `_ref_2` | 带引用的重载版本（ref + 数字后缀） | |
 | `_2`、`_3`... | 同功能不同参数的重载版本 | `XExample_setData_2()` |
 | `_ex` | 扩展构造函数（比默认多参数） | `XContainer_create_ex(typeSize, useCow)` |
 | `_later` | 延迟操作（通过事件循环执行） | `XObject_deleteLater()` |
+
+> `_const`（借用，不转移）与 `_ref`（接管，转移所有权）在语义上相反但都节省拷贝，
+> 区别是**谁负责最终释放**：`_const` 归原对象，`_ref` 归接收方。
+> 完整的 setter 三态契约见「`set*` 三态所有权契约」。
 
 ### 类型别名
 - 用 `typedef` 给泛型容器定义语义化别名：
@@ -698,28 +705,155 @@ static void VXView_onClose(XView* self, XVarList* args) {
 | 函数名 | 用途 |
 |--------|------|
 | `XType_setXxx(XType*, value)` | 设置属性（拷贝语义，默认行为） |
-| `XType_setXxx_move(XType*, value)` | 移动语义版本 |
+| `XType_setXxx_move(XType*, value)` | 移动语义版本（抽取资源，留下空壳） |
+| `XType_setXxx_ref(XType*, ptr)` | 指针接管（所有权转移给被设对象） |
 | `XType_setXxx_2(XType*, other_type)` | 不同参数类型的重载 |
-| `XType_setXxx_ref_2(XType*, ptr)` | 引用语义的重载（不拷贝） |
 | `XType_setXxx_utf8(XType*, const char*)` | UTF-8 编码版本 |
 | `XType_setXxx_gbk(XType*, const char*)` | GBK 编码版本 |
 
-### 字符串 API 主次顺序与 UTF-8 兼容重载
+### `set*` 三态所有权契约（拷贝 / 移动 / 指针接管）
 
-库内字符串对象统一使用 `XString`，对外 API 的主版本必须优先采用 `XString`：
+> **这是硬约束。三种形态存在的唯一目的是性能：能不动内存就不动。**
+> 选错形态会直接导致内存泄漏、双重释放或 UAF，三者代价相同，都不可接受。
+
+| 形态 | 命名 | 入参 | 内部动作 | 函数返回后调用方的义务 |
+|------|------|------|----------|----------------------|
+| **拷贝** | `setXxx` | `const T*` | 深拷贝一份，被设对象持有副本 | 原参数**仍归调用方**，用完自行释放 |
+| **移动** | `setXxx_move` | `T*` | 抽取参数内部堆资源，参数变**空壳** | **必须释放外壳本身**（`XClassDelete`），但不得再解引用其内容 |
+| **指针接管** | `setXxx_ref` | `T*` | 直接存指针，被设对象持有该对象 | **不得释放、不得访问**（所有权已完全交出） |
+
+#### 三者对照（以 `XVariant` 参数为例）
 
 ```c
-void XImage_setText(XImage* self, const XString* key, const XString* value);
-void XImage_setText_2(XImage* self, const char* key, const char* value);
+/* ---------- 1. 拷贝：最安全，成本最高 ---------- */
+XVariant* v = XVariant_create_int(1);
+XModbusDevice_setConnectionParameter(dev, XModbusDevice_SerialBaudRateParameter, v);
+XClassDelete((XClass*)v);           /* ✅ 调用方保留所有权，必须释放 */
+
+/* ---------- 2. 移动：省掉深拷贝，外壳仍要自己清 ---------- */
+XVariant* v = XVariant_create_int(1);
+XModbusDevice_setConnectionParameter_move(dev, XModbusDevice_SerialBaudRateParameter, v);
+XClassDelete((XClass*)v);           /* ✅ 内部资源已被抽走，只剩空壳需要释放 */
+/* ❌ 不能写 XVariant_toInt(v) —— 已被抽空，读到的是空值 */
+
+/* ---------- 3. 指针接管：零拷贝零分配 ---------- */
+XModbusDataUnit* unit = XModbusDataUnit_create();
+XModbusReply_setResult_ref(reply, unit);
+/* ✅ 什么都不做 —— 所有权已转移给 reply */
+/* ❌ 绝不能 XClassDelete(unit);  double free */
+/* ❌ 绝不能 XModbusDataUnit_read(unit, ...);  可能已被 reply 释放 */
 ```
 
-- 原名（无数字后缀）是 `XString` 版本，负责实际逻辑、复制和生命周期管理；`_2` 是 `const char*` UTF-8 兼容重载，只负责创建临时 `XString` 并转发到原名版本，禁止直接维护另一份字符串状态。
-- `char*` 参数均按 UTF-8 解码，不得把它当作本地编码、GBK 或可写缓冲区。
-- 字符串成员、私有状态和容器元素禁止以 `char*` 长期保存；需要字符串所有权时使用 `XString*`，需要多个字符串时使用 `XStringList`。
-- 返回字符串时，原名优先返回新建的 `XString*`；需要借用内部对象时使用 `*_const`，并在注释中明确禁止释放和修改。`const char*` 兼容返回值只能来自临时转换缓存或 `_2` 包装，不得成为核心存储。
-- 不要用 `_2` 表示 XString 版本；`_2` 只表示 UTF-8 `const char*` 兼容参数或返回值。
+#### 落地要求
 
-构造函数、静态工厂、文件名、格式名、主题名、错误描述、文本元数据、缓存键和 MIME 类型均遵循此规则。新增重载时先实现 XString 主版本，再实现 UTF-8 `_2` 转发版本。
+1. **`_move` 必写"外壳由调用方释放"**：这是全库最容易误解的一条。`_move` 转移的是**容器内部的堆资源**（`m_data`、`m_children` 等），不是对象本身。对象头（`XClass` 壳）仍在调用方栈/堆上，必须按原分配方式释放：
+   - 堆对象（`Xxx_create` 出来的）→ `XClassDelete`
+   - 栈对象（`Xxx_init` 出来的）→ `XClassDeinit`
+
+   ```c
+   /* 头文件注释必须这样写 */
+   * @param value 参数值（XVariant；函数内经 XClassMove/create_move 抽取其资源，
+    *        返回后 value 变为空壳——内存仍由调用方按原分配方式释放，
+    *        此后不得再解引用其内容）。
+   ```
+
+2. **`_ref` 是所有权转移，不是"引用"**：名字里的 ref 指"直接把传入指针交给内部持有"，调用方交出的不只是访问权而是**完整的释放责任**。头文件必须写 `@warning`：
+   ```c
+   * @warning unit 必须是可由 XClassDelete 释放的堆对象；登记后调用方再释放即双重释放。
+   ```
+
+3. **`_ref` 只接受堆对象**：被设对象最终会用 `XClassDelete` 释放它，传栈对象必然崩。文档里的"引用"二字**不表示可以传借用指针**。
+
+4. **`setXxx`（拷贝）入参必须 `const`**：拷贝语义不改变入参，加 `const` 让编译器兜住误改；`_move`/`_ref` 会改变所有权，入参必须是可写 `T*`。
+
+5. **同一属性需要多形态时必须成对/成套提供**，禁止只给 `_move` 不给 `setXxx`（调用方没有安全退路）。典型成套参考（全库 20 处三件套）：
+   `XModbusReply_setResult{,_move,_ref}`、`XJsonValue_setVariant{,_move,_ref}`、
+   `XMap_setVariant{,_move,_ref}`、`XString_setVariant{,_move,_ref}`。
+
+6. **`_ref` 覆盖语义**：内部已有旧值时先释放旧值再登记新指针（`XModbusReply_setResult_ref` 即此形态）。传 `NULL` 表示仅清空，不登记。
+
+7. **性能取向的默认选择**：
+   - 小标量 / 需要长期独立保存 → 拷贝（`setXxx`）
+   - 大块数据（字符串、数组、容器、PDU）从临时对象转移 → 移动（`_move`）
+   - 调用方本就把对象造好且不再使用 → 指针接管（`_ref`）
+
+#### 全库现状与已修正的历史分歧（2026-11-03 扫描）
+
+- 2927 个 setter 基名中，仅 **36 个**带 `_move`、**18 个**带 `_ref`；真正三件套齐全的 18 个集中在
+  `XModbus*`、`XPlc*` 与 `XVariant` 转换族（`XJson*`/`XBson*`/`XMap`/`XHashMap`/`XPair`/
+  `XString`/`XStringList`/`XByteArray`/`XVariantList`）。
+- **已修正**：`XModbusDevice_setConnectionParameter_ref` 与 `XPlcDevice_setConnectionParameter_ref`
+  原本名为 `_ref` 但实现是深拷贝（2026-10-30 UAF 根修时改的），与本节契约冲突。
+  两个函数与无后缀的 `setConnectionParameter` 行为完全等价，属纯冗余且语义误导，
+  **已连同声明一并删除**，全库 60 余处调用点统一改用无后缀拷贝版。教训：
+  修语义时先看名字是否还成立——名字错了就改名字，不要留一个名不副实的导出函数。
+
+> **新增 `_move` / `_ref` 前请先自问**：这个属性的拷贝成本真的高到需要加变体吗？
+> 库里 2927 个 setter 只有 36 个带 `_move`，说明绝大多数属性不需要。三态并存会增加
+> 调用方的心智负担与误用风险，只有在**大块数据 + 高频调用**时才值得。
+
+---
+### 字符串 API 后缀契约：`_utf8`（设置）/ `_toUtf8`（获取）= `char*`，无后缀 = `XString`
+
+> **2026-11-03 裁定：后缀决定参数/返回值的字符串类型，这是硬约束。**
+> **设置方向的 `char*` 用 `_utf8`，获取方向的 `char*` 用 `_toUtf8`，两端都不带后缀则是 `XString*`。**
+
+```c
+/* ✅ 正确：无后缀 = XString */
+void        XWidget_setTitle(XWidget* self, const XString* title);
+const XString* XWidget_title_const(const XWidget* self);
+XString*    XWidget_title(const XWidget* self);          /* 拷贝版，调用方释放 */
+
+/* ✅ 正确：设置侧 char* 用 _utf8 */
+void        XWidget_setTitle_utf8(XWidget* self, const char* titleUtf8);
+
+/* ✅ 正确：获取侧 char* 用 _toUtf8 */
+const char* XWidget_title_toUtf8(const XWidget* self);   /* 借用视图，禁止释放 */
+```
+
+```c
+/* ❌ 错误：无后缀却是 char*（两个方向都违规） */
+void        XWidget_setTitle(XWidget* self, const char* title);   /* 应为 _utf8 */
+const char* XWidget_title(const XWidget* self);                   /* 应为 _toUtf8 */
+void        XWidget_setTitle_2(XWidget* self, const char* title); /* _2 不表达 UTF-8 */
+```
+
+#### 落盘要求
+
+1. **无后缀一律 `XString*`**：`XType_setName(XType*, const XString*)`、`XType_getName(const XType*)` 返回 `XString*`。
+2. **设置方向 `char*` 用 `_utf8`**：`XType_setName_utf8(XType*, const char*)`。
+3. **获取方向 `char*` 用 `_toUtf8`**：`const char* XType_name_toUtf8(const XType*)`。命名遵循库内既有的 `XString_toUtf8` 惯例（"转换到 UTF-8 视图"），语义是**借用视图，调用者不得释放**。
+4. **禁止用 `_2` / `_3` 表示字符串类型差异**：`_2`/`_3` 只表示"同语义、不同参数个数或不同参数类型"的重载（例如 `setRect(x,y,w,h)` 的两个重载）。**凡是参数/返回值是 `char*` 与 `XString*` 的差异，必须用 `_utf8`（写）/ `_toUtf8`（读）后缀区分。**
+5. **可以同时提供两个版本**：鼓励成对提供 `setName`（XString）与 `setName_utf8`（char*）、`name`（XString 拷贝）/ `name_const`（XString 借用）/ `name_toUtf8`（char* 借用）。`_utf8`/`_toUtf8` 只做"临时 XString ↔ 文本"的转换转发，禁止维护第二份字符串状态。
+6. **编解码**：`_utf8` / `_toUtf8` 一律按 UTF-8 处理，不得当作本地编码、GBK 或可写缓冲区；需要 GBK 时用 `_gbk`。
+
+#### 内部存储选型（性能取向）
+
+**字符串成员尽量直接用 `XString`**，只有"基本不需要字符串操作、只是原样记录"的场景才用 `char*`。
+
+| 场景 | 存储 | 理由 |
+|------|------|------|
+| 需要比较/拼接/查找/截取/大小写转换 | `XString*` | 库内字符串算法齐全，免得每次转换 |
+| 需要多次读取、跨调用保持 | `XString*` | 长度与编码已知，读写零转换 |
+| 需要作为容器元素/键值保存 | `XString*` / `XStringList` | 统一所有权与生命周期 |
+| **只管原样保存和回读、从不做字符串运算** | `char*`（UTF-8，NULL 终止） | 省一层对象头与转换，最省内存 |
+| 协议字段、固定枚举名、路径常量 | `char*` | 只记录不再操作 |
+
+```c
+/* 例：状态机属性赋值记录只按名字匹配（比较时现场构造 XString 或 XStrcmp），
+ * 从不做字符串运算 → 用 char* 更省。 */
+typedef struct XState_PropertyAssignment {
+    XObject*  m_object;
+    char*     m_propertyName;   /* UTF-8 文本，记录自持；不再当字符串加工 */
+    XVariant* m_value;
+} XState_PropertyAssignment;
+```
+
+#### 与其他约定叠加时的优先级
+
+- 借用 vs 拷贝：先按 `_const` 契约判断（`_const` 借用禁止释放 / 无 `_const` 拷贝须释放），再按本节的 `_utf8` 判断类型。
+- 借用版 UTF-8：`const char* XType_name_utf8(const XType*)` —— 既是 `_utf8`（char*）又是借用（禁止释放），两条约束同时适用。
+- 拷贝版 XString：`XString* XType_name(const XType*)` —— 无 `_utf8`（XString）且无 `_const`（拷贝，调用方必须释放）。
 
 ### 获取函数命名
 
@@ -730,11 +864,75 @@ void XImage_setText_2(XImage* self, const char* key, const char* value);
 | `XType_toXxx(const XType*)` | 转换为其他类型（返回新对象） |
 | `XType_isXxx(const XType*)` | 布尔判断函数 |
 
+### 获取函数的所有权契约（`_const` 后缀 = 借用，非 `_const` = 拷贝）
+
+> **这是硬约束，不是风格偏好。带不带 `_const` 决定调用方要不要释放返回值。**
+
+| 形态 | 返回物 | 所有权 | 调用方义务 |
+|------|--------|--------|-----------|
+| `const XType* XFoo_bar_const(...)` | 对象内部持有者的**借用指针** | 归对象所有 | **禁止释放**，禁止缓存后跨调用使用 |
+| `const char* XFoo_bar_utf8(...)` 等借用视图 | 内部缓存区的**借用视图** | 归对象所有 | **禁止释放**，内容随下次写入/析构失效 |
+| `XType* XFoo_bar(...)`（无 `_const`） | **新分配的拷贝** | 归调用方 | **必须释放**（`XClassDelete`），否则泄漏 |
+
+**`_const` 版（借用）**
+
+```c
+/* 头文件：返回内部引用，随 foo 一起失效 */
+const XString* XFoo_errorString_const(const XFoo* foo);
+```
+
+```c
+/* 调用方：只读，不释放。用完即弃，不要长期持有。
+ * 目标对象一旦 clearError/析构，这个指针立刻悬垂。 */
+const XString* text = XFoo_errorString_const(foo);
+XPrintf("%s\n", XString_toUtf8(text));
+/* 绝不能写 XClassDelete((XClass*)text); */
+```
+
+**非 `_const` 版（拷贝）**
+
+```c
+/* 头文件：返回新建副本，调用方接管 */
+XString* XFoo_errorString(const XFoo* foo);
+```
+
+```c
+/* 调用方：必须释放，且每个出口都要释放 */
+XString* text = XFoo_errorString(foo);
+if (!text) { return; }
+/* ... 使用 ... */
+XClassDelete((XClass*)text);   /* 漏了这行就是泄漏 */
+```
+
+**落地要求**
+
+1. **同名成对提供**：同一属性若要同时支持借用与拷贝，必须成对声明
+   `XFoo_bar_const`（借用）与 `XFoo_bar`（拷贝），并在注释里分别写明
+   "调用者不得释放" 与 "由调用者释放"。禁止只给其中一个让调用方猜。
+2. **注释必须写明所有权**：借用版写 `@warning 返回值归对象所有，随 X/Y/析构失效，
+   调用者不得释放或修改`；拷贝版写 `@return 新建副本，调用方用 XClassDelete 释放`。
+3. **借用版禁止返回可变指针**：返回类型必须是 `const T*`（或 `const char*` 视图），
+   让编译器协助阻止调用方就地改写内部状态。
+4. **借用视图不可跨写缓存**：`XString_toUtf8` 一类视图指针在下次写入或对象析构后失效；
+   需要长期保存时必须 `XStrdup` 或转成拷贝版。
+5. **不要把借用的指针塞进容器或对象字段**：容器/字段的生命周期通常长于被借用对象，
+   这是悬垂指针的典型来源。确需保存就取拷贝版，并自己管理释放。
+
+**真实踩坑案例（2026-11-03，XStateMachine 属性赋值）**
+
+`XState_assignProperty` 曾用 `XString_create_copy` 保存属性名，随后调用方释放了原键名。
+`XString_create_copy` 走 COW，与源**共享底层缓冲**，源对象释放后记录里的名字指针指向
+已回收的共享块 —— 第二次登记同一属性时必然段错误。教训：
+
+- **"看起来像拷贝"的 API 不一定是拷贝**，`XString_create_copy` 是 COW 共享；
+- 需要真正独立的副本时用 `XStrdup`（独立缓冲），或立刻把内容取走（`XString_toUtf8` + `XStrdup`）；
+- 写这类代码前先读一遍本节的借用/拷贝二分表，别靠函数名猜。
+
 ### 返回值规范
 
 - **创建函数**：成功返回对象指针，失败返回 `NULL`
 - **设置函数**：成功返回 `true`，失败返回 `false`
-- **获取函数**：返回值或指针，失败返回默认值（0/NULL/false）
+- **获取函数**：返回值或指针，失败返回默认值（0/NULL/false）；**所有权按上一节的 `_const` 契约判定**
 - **判断函数**：返回 `bool` 类型
 
 ### 容器 API 设计
