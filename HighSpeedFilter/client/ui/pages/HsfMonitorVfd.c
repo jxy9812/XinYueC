@@ -1126,7 +1126,8 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     self->m_trendChart = XChart_create();
     self->m_trendSeries = XLineSeries_create();
     if (self->m_trendChart && self->m_trendSeries) {
-        XChart_setTitleVisible(self->m_trendChart, false);
+        /* Qt 无 setTitleVisible；隐藏标题 = 标题文本置空（对标 QChart::setTitle("")）。 */
+        XChart_setTitle_2(self->m_trendChart, "");
         XAbstractSeries_setName_2((XAbstractSeries*)self->m_trendSeries,
                                   "\xE8\xBE\x93\xE5\x87\xBA\xE9\xA2\x91\xE7\x8E\x87"); /* 输出频率 */
         XChart_addSeries(self->m_trendChart, self->m_trendSeries,

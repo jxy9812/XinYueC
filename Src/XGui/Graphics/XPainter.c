@@ -21,6 +21,7 @@
 #include "XStringUtils.h" /* XStrtol：环境变量数值解析（对标 strtol，禁用 atoi）。 */
 #include "XPrintf.h" /* 越界/未激活告警（对标 Qt qWarning）。 */
 #include "XPainter.h"
+#include "XFontFace.h"
 #include "XPicture_Protected.h" /* 录制后端的命令记录协议（可见性下沉后须显式包含）。 */
 #include "XMemory.h"
 #include "XDateTime.h"
@@ -15308,6 +15309,831 @@ void XPainterPath_setFillRule(XPainterPath* self, XPainterFillRule rule)
         rule = XPainterFillRule_OddEven;
     self->m_fillRule = rule;
 }
+
+/* ==================== 路径补齐 API（对标 QPainterPath 全量） ==================== */
+
+void XPainterPath_clear(XPainterPath* self)
+{
+    if (!self) return;
+    /* 保留已分配缓冲（与 Qt 的 clear 只复位计数一致）。 */
+    self->m_elementCount = 0;
+    self->m_currentX = 0.0f;
+    self->m_currentY = 0.0f;
+    self->m_subpathStartX = 0.0f;
+    self->m_subpathStartY = 0.0f;
+    self->m_requireMoveTo = false;
+}
+
+void XPainterPath_reserve(XPainterPath* self, int size)
+{
+    XPainterPathElement* grown;
+    if (!self || size <= self->m_elementCapacity) return;
+    grown = (XPainterPathElement*)XMalloc_System(
+        sizeof(XPainterPathElement) * (size_t)size);
+    if (!grown) return;
+    if (self->m_elements && self->m_elementCount > 0)
+        XMemcpy(grown, self->m_elements,
+                sizeof(XPainterPathElement) * (size_t)self->m_elementCount);
+    if (self->m_elements) XFree_System(self->m_elements);
+    self->m_elements = grown;
+    self->m_elementCapacity = size;
+}
+
+int XPainterPath_capacity(const XPainterPath* self)
+{ return self ? self->m_elementCapacity : 0; }
+
+bool XPainterPath_isEmpty(const XPainterPath* self)
+{ return !self || self->m_elementCount <= 0; }
+
+/* ---- 圆弧：把椭圆弧离散为三次贝塞尔链 ---- */
+
+/** @brief 追加一段椭圆弧（角度制、逆时针为正），内部转 CubicTo 链。
+ * @param self 目标路径。
+ * @param rect 椭圆包围盒。
+ * @param startDeg 起始角（度）。
+ * @param sweepDeg 扫掠角（度）。
+ * @param moveFirst 是否先 moveTo 到起点。
+ * @return 无返回值。
+ */
+static void painterPathAppendArc(XPainterPath* self, const XRect* rect,
+                                 float startDeg, float sweepDeg,
+                                 bool moveFirst)
+{
+    double PI = 3.14159265358979323846;
+    double cx;
+    double cy;
+    double rx;
+    double ry;
+    double a0;
+    double sweep;
+    int segs;
+    int i;
+    if (!self || !rect) return;
+    if (rect->width <= 0 || rect->height <= 0) return;
+    cx = rect->x + rect->width / 2.0;
+    cy = rect->y + rect->height / 2.0;
+    rx = rect->width / 2.0;
+    ry = rect->height / 2.0;
+    a0 = (double)startDeg * PI / 180.0;
+    sweep = (double)sweepDeg * PI / 180.0;
+    /* 每段 <= 90°，与 Qt 的 arcTo 细分口径一致（保证精度）。 */
+    segs = (int)(fabs(sweep) / (PI / 2.0));
+    if (segs < 1) segs = 1;
+    if (fabs(sweep) > 0.0) segs = (int)(fabs(sweep) / (PI / 2.0)) + 1;
+    {
+        double d = sweep / (double)segs;
+        /* 三次贝塞尔逼近圆弧的控制点系数。 */
+        double k = (4.0 / 3.0) * tan(d / 4.0);
+        double t0 = a0;
+        double px = cx + rx * cos(t0);
+        double py = cy - ry * sin(t0);
+        if (moveFirst) XPainterPath_moveTo(self, (float)px, (float)py);
+        for (i = 0; i < segs; ++i) {
+            double t1 = t0 + d;
+            double p1x = px - k * rx * sin(t0);
+            double p1y = py - k * ry * cos(t0);
+            double p3x = cx + rx * cos(t1);
+            double p3y = cy - ry * sin(t1);
+            double p2x = p3x + k * rx * sin(t1);
+            double p2y = p3y + k * ry * cos(t1);
+            XPainterPath_cubicTo(self, (float)p1x, (float)p1y,
+                                 (float)p2x, (float)p2y,
+                                 (float)p3x, (float)p3y);
+            px = p3x;
+            py = p3y;
+            t0 = t1;
+        }
+    }
+}
+
+void XPainterPath_arcMoveTo(XPainterPath* self, const XRect* rect, float angle)
+{
+    double PI = 3.14159265358979323846;
+    double cx;
+    double cy;
+    double rx;
+    double ry;
+    if (!self || !rect || rect->width <= 0 || rect->height <= 0) return;
+    cx = rect->x + rect->width / 2.0;
+    cy = rect->y + rect->height / 2.0;
+    rx = rect->width / 2.0;
+    ry = rect->height / 2.0;
+    XPainterPath_moveTo(self,
+                        (float)(cx + rx * cos((double)angle * PI / 180.0)),
+                        (float)(cy - ry * sin((double)angle * PI / 180.0)));
+}
+
+void XPainterPath_arcTo(XPainterPath* self, const XRect* rect,
+                        float startAngle, float arcLength)
+{
+    painterPathAppendArc(self, rect, startAngle, arcLength, true);
+}
+
+/* ---- 图元追加 ---- */
+
+void XPainterPath_addPolygon(XPainterPath* self, const XPointF* points,
+                             int count, bool close)
+{
+    int i;
+    if (!self || !points || count <= 0) return;
+    XPainterPath_moveTo(self, points[0].x, points[0].y);
+    for (i = 1; i < count; ++i)
+        XPainterPath_lineTo(self, points[i].x, points[i].y);
+    if (close) XPainterPath_closeSubpath(self);
+}
+
+void XPainterPath_addPath(XPainterPath* self, const XPainterPath* other)
+{
+    int i;
+    if (!self || !other || !other->m_elements) return;
+    if (other == self) return;   /* 自加为空操作（Qt 同语义） */
+    for (i = 0; i < other->m_elementCount; ++i) {
+        const XPainterPathElement* e = &other->m_elements[i];
+        switch (e->m_type) {
+        case XPainterPathElement_MoveTo:
+            XPainterPath_moveTo(self, e->m_x1, e->m_y1);
+            break;
+        case XPainterPathElement_LineTo:
+            XPainterPath_lineTo(self, e->m_x1, e->m_y1);
+            break;
+        case XPainterPathElement_CurveTo:
+            /* CurveTo 后跟两个 CurveToData，一次性读三点。 */
+            if (i + 2 < other->m_elementCount) {
+                XPainterPath_cubicTo(self, e->m_x1, e->m_y1,
+                                     other->m_elements[i + 1].m_x1,
+                                     other->m_elements[i + 1].m_y1,
+                                     other->m_elements[i + 2].m_x1,
+                                     other->m_elements[i + 2].m_y1);
+                i += 2;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+void XPainterPath_connectPath(XPainterPath* self, const XPainterPath* other)
+{
+    if (!self || !other || other->m_elementCount <= 0) return;
+    /* 先连到对方起点（隐式 LineTo），再整条追加。 */
+    XPainterPath_lineTo(self, other->m_elements[0].m_x1,
+                        other->m_elements[0].m_y1);
+    {
+        XPainterPath* cp = (XPainterPath*)XMalloc_System(sizeof(XPainterPath));
+        if (!cp) return;
+        XPainterPath_init(cp);
+        XPainterPath_addPath(cp, other);
+        /* 跳过对方的首个 MoveTo（已用 LineTo 连过）。 */
+        if (cp->m_elementCount > 0)
+            XPainterPath_addPath(self, cp);
+        XPainterPath_deinit(cp);
+        XFree_System(cp);
+    }
+}
+
+void XPainterPath_addRoundedRect(XPainterPath* self, const XRect* rect,
+                                 float xRadius, float yRadius)
+{
+    float x0;
+    float y0;
+    float x1;
+    float y1;
+    float rx;
+    float ry;
+    if (!self || !rect || rect->width <= 0 || rect->height <= 0) return;
+    x0 = (float)rect->x;
+    y0 = (float)rect->y;
+    x1 = x0 + (float)rect->width;
+    y1 = y0 + (float)rect->height;
+    rx = xRadius < 0.0f ? 0.0f : xRadius;
+    ry = yRadius < 0.0f ? 0.0f : yRadius;
+    /* 圆角不得大于半宽/半高（Qt 同约束）。 */
+    if (rx > (x1 - x0) / 2.0f) rx = (x1 - x0) / 2.0f;
+    if (ry > (y1 - y0) / 2.0f) ry = (y1 - y0) / 2.0f;
+    if (rx <= 0.0f && ry <= 0.0f) {
+        XPainterPath_addRect(self, rect);
+        return;
+    }
+    {
+        double PI = 3.14159265358979323846;
+        double kx = rx * (1.0 - 0.5522847498307936);
+        double ky = ry * (1.0 - 0.5522847498307936);
+        (void)PI;
+        XPainterPath_moveTo(self, x0 + rx, y0);
+        XPainterPath_lineTo(self, x1 - rx, y0);
+        XPainterPath_cubicTo(self, (float)(x1 - kx), y0, x1, (float)(y0 + ky),
+                             x1, y0 + ry);
+        XPainterPath_lineTo(self, x1, y1 - ry);
+        XPainterPath_cubicTo(self, x1, (float)(y1 - ky),
+                             (float)(x1 - kx), y1, x1 - rx, y1);
+        XPainterPath_lineTo(self, x0 + rx, y1);
+        XPainterPath_cubicTo(self, (float)(x0 + kx), y1, x0,
+                             (float)(y1 - ky), x0, y1 - ry);
+        XPainterPath_lineTo(self, x0, y0 + ry);
+        XPainterPath_cubicTo(self, x0, (float)(y0 + ky),
+                             (float)(x0 + kx), y0, x0 + rx, y0);
+        XPainterPath_closeSubpath(self);
+    }
+}
+
+/* ---- 变换与度量 ---- */
+
+void XPainterPath_translate(XPainterPath* self, float dx, float dy)
+{
+    int i;
+    if (!self || !self->m_elements) return;
+    for (i = 0; i < self->m_elementCount; ++i) {
+        self->m_elements[i].m_x1 += dx;
+        self->m_elements[i].m_y1 += dy;
+    }
+    self->m_currentX += dx;
+    self->m_currentY += dy;
+    self->m_subpathStartX += dx;
+    self->m_subpathStartY += dy;
+}
+
+void XPainterPath_controlPointRect(const XPainterPath* self, XRectF* out)
+{
+    /* 对标 QPainterPath::computeControlPointRect：**遍历全部元素**的
+     * x/y 取极值——包含贝塞尔控制点，故比 boundingRect 大（后者只算
+     * 曲线真实极值）。 */
+    double minx;
+    double maxx;
+    double miny;
+    double maxy;
+    int i;
+    if (!out) return;
+    XRectF_init(out, 0.0f, 0.0f, 0.0f, 0.0f);
+    if (!self || self->m_elementCount <= 0 || !self->m_elements) return;
+    minx = maxx = self->m_elements[0].m_x1;
+    miny = maxy = self->m_elements[0].m_y1;
+    for (i = 1; i < self->m_elementCount; ++i) {
+        const XPainterPathElement* e = &self->m_elements[i];
+        if (e->m_x1 > maxx) maxx = e->m_x1;
+        else if (e->m_x1 < minx) minx = e->m_x1;
+        if (e->m_y1 > maxy) maxy = e->m_y1;
+        else if (e->m_y1 < miny) miny = e->m_y1;
+    }
+    XRectF_init(out, (float)minx, (float)miny,
+                (float)(maxx - minx), (float)(maxy - miny));
+}
+
+/** @brief 把路径离散成折线点（每段曲线固定细分），供长度/命中/多边形用。
+ * @param self 目标路径。
+ * @param out 输出点缓冲（可空，用于只计数）。
+ * @param maxPoints 容量。
+ * @param counts 子路径点数（可空）。
+ * @param maxSubpaths counts 容量。
+ * @param subpathOnly true=每子路径独立，false=合并为一段。
+ * @return 实际写入总点数。
+ */
+static int painterPathFlatten(const XPainterPath* self, XPointF* out,
+                              int maxPoints, int* counts, int maxSubpaths,
+                              bool subpathOnly)
+{
+    int i;
+    int used = 0;
+    int sub = 0;
+    int subStart = 0;
+    float cx = 0.0f;
+    float cy = 0.0f;
+    float sx = 0.0f;
+    float sy = 0.0f;
+    bool moved = false;
+    const int SUBDIV = 12;
+    if (!self || !self->m_elements || self->m_elementCount <= 0) return 0;
+    /* out==NULL 表示「只计数」：此时 maxPoints 无意义，按无上限处理，
+     * 否则计数分支会被 used>=maxPoints 截断成 0（length/pointAtPercent
+     * 恒 0 的根因）。 */
+    if (!out) maxPoints = 0x7FFFFFF;
+    for (i = 0; i < self->m_elementCount; ++i) {
+        const XPainterPathElement* e = &self->m_elements[i];
+        if (e->m_type == XPainterPathElement_MoveTo) {
+            if (moved && subpathOnly && counts && sub < maxSubpaths) {
+                counts[sub] = used - subStart;
+                ++sub;
+                subStart = used;
+            }
+            cx = e->m_x1;
+            cy = e->m_y1;
+            sx = cx;
+            sy = cy;
+            moved = true;
+            if (out && used < maxPoints) {
+                out[used].x = cx;
+                out[used].y = cy;
+            }
+            ++used;
+        } else if (e->m_type == XPainterPathElement_LineTo) {
+            cx = e->m_x1;
+            cy = e->m_y1;
+            if (out && used < maxPoints) {
+                out[used].x = cx;
+                out[used].y = cy;
+            }
+            ++used;
+        } else if (e->m_type == XPainterPathElement_CurveTo) {
+            if (i + 2 < self->m_elementCount) {
+                float c1x = e->m_x1;
+                float c1y = e->m_y1;
+                float c2x = self->m_elements[i + 1].m_x1;
+                float c2y = self->m_elements[i + 1].m_y1;
+                float ex = self->m_elements[i + 2].m_x1;
+                float ey = self->m_elements[i + 2].m_y1;
+                int k;
+                for (k = 1; k <= SUBDIV; ++k) {
+                    float t = (float)k / (float)SUBDIV;
+                    float u = 1.0f - t;
+                    float px = u * u * u * cx + 3.0f * u * u * t * c1x +
+                               3.0f * u * t * t * c2x + t * t * t * ex;
+                    float py = u * u * u * cy + 3.0f * u * u * t * c1y +
+                               3.0f * u * t * t * c2y + t * t * t * ey;
+                    if (out && used < maxPoints) {
+                        out[used].x = px;
+                        out[used].y = py;
+                    }
+                    ++used;
+                }
+                cx = ex;
+                cy = ey;
+                i += 2;
+            }
+        }
+    }
+    if (moved && subpathOnly && counts && sub < maxSubpaths) {
+        counts[sub] = used - subStart;
+        ++sub;
+    }
+    (void)sx;
+    (void)sy;
+    return used;
+}
+
+int XPainterPath_toSubpathPolygons(const XPainterPath* self, XPointF* out,
+                                   int maxPoints, int* counts, int maxSubpaths)
+{
+    return painterPathFlatten(self, out, maxPoints, counts, maxSubpaths, true);
+}
+
+int XPainterPath_toFillPolygons(const XPainterPath* self, XPointF* out,
+                                int maxPoints, int* counts, int maxSubpaths)
+{
+    /* 对标 QPainterPath::toFillPolygons（qpainterpath.cpp）：**不拆分自交**，
+     * 而是把包围盒相交的子路径**合并成一条多边形**——OddEven 填充规则下
+     * 内层子路径自然形成孔洞。 */
+    enum { MAX_SUB = 16 };
+    static XPointF pts[4096];
+    int subCounts[MAX_SUB];
+    XRectF bounds[MAX_SUB];
+    int group[MAX_SUB];
+    int n;
+    int nSub = 0;
+    int i;
+    int j;
+    int acc;
+    int written = 0;
+    int groups = 0;
+
+    if (!self || self->m_elementCount <= 0) return 0;
+    n = painterPathFlatten(self, pts, 4096, subCounts, MAX_SUB, true);
+    if (n <= 0) return 0;
+    acc = 0;
+    while (nSub < MAX_SUB && acc < n) {
+        if (subCounts[nSub] <= 0) break;
+        acc += subCounts[nSub];
+        ++nSub;
+    }
+    if (nSub <= 0) return 0;
+
+    /* 各子路径包围盒 + 并查集初始化。 */
+    acc = 0;
+    for (i = 0; i < nSub; ++i) {
+        float minx = pts[acc].x;
+        float maxx = pts[acc].x;
+        float miny = pts[acc].y;
+        float maxy = pts[acc].y;
+        for (j = 1; j < subCounts[i]; ++j) {
+            const XPointF* q = &pts[acc + j];
+            if (q->x < minx) minx = q->x;
+            if (q->x > maxx) maxx = q->x;
+            if (q->y < miny) miny = q->y;
+            if (q->y > maxy) maxy = q->y;
+        }
+        XRectF_init(&bounds[i], minx, miny, maxx - minx, maxy - miny);
+        group[i] = i;
+        acc += subCounts[i];
+    }
+
+    /* 包围盒相交归并（并查集）。 */
+    for (i = 0; i < nSub; ++i) {
+        for (j = i + 1; j < nSub; ++j) {
+            int hit = 0;
+            if (bounds[i].width > 0.0f && bounds[i].height > 0.0f &&
+                bounds[j].width > 0.0f && bounds[j].height > 0.0f) {
+                hit = bounds[i].x < bounds[j].x + bounds[j].width &&
+                      bounds[j].x < bounds[i].x + bounds[i].width &&
+                      bounds[i].y < bounds[j].y + bounds[j].height &&
+                      bounds[j].y < bounds[i].y + bounds[i].height;
+            }
+            if (hit && group[i] != group[j]) group[group[j]] = group[i];
+        }
+    }
+
+    /* 逐组输出：组内各子路径顺序拼接，每条补首点闭合。 */
+    {
+        int baseOf[MAX_SUB];
+        int b = 0;
+        for (i = 0; i < nSub; ++i) {
+            baseOf[i] = b;
+            b += subCounts[i];
+        }
+        for (i = 0; i < nSub; ++i) {
+            int before = written;
+            if (group[i] != i) continue;   /* 只处理组长。 */
+            for (j = 0; j < nSub; ++j) {
+                int m;
+                if (group[j] != i) continue;
+                for (m = 0; m < subCounts[j]; ++m) {
+                    if (out && written < maxPoints)
+                        out[written] = pts[baseOf[j] + m];
+                    ++written;
+                }
+                /* 闭合：补该子路径首点。 */
+                if (subCounts[j] > 0) {
+                    if (out && written < maxPoints)
+                        out[written] = pts[baseOf[j]];
+                    ++written;
+                }
+            }
+            if (counts && groups < maxSubpaths)
+                counts[groups] = written - before;
+            ++groups;
+        }
+    }
+    return written;
+}
+
+/* ==================== addText / addRegion（对标 QPainterPath） ==================== */
+
+/** @brief 轮廓 sink 的上下文：把字形轮廓写进 XPainterPath。 */
+typedef struct PainterPathTextSink
+{
+    XPainterPath* path;   /**< 目标路径（借用）。 */
+    float offsetX;        /**< 当前字形原点 X。 */
+    float offsetY;        /**< 当前字形原点 Y。 */
+    bool wrote;           /**< 是否写入过任何元素。 */
+} PainterPathTextSink;
+
+static bool painterPathTextMoveTo(void* userData, float x, float y)
+{
+    PainterPathTextSink* s = (PainterPathTextSink*)userData;
+    if (!s || !s->path) return false;
+    s->wrote = true;
+    return XPainterPath_moveTo(s->path, s->offsetX + x, s->offsetY - y);
+}
+
+static bool painterPathTextLineTo(void* userData, float x, float y)
+{
+    PainterPathTextSink* s = (PainterPathTextSink*)userData;
+    if (!s || !s->path) return false;
+    return XPainterPath_lineTo(s->path, s->offsetX + x, s->offsetY - y);
+}
+
+static bool painterPathTextQuadTo(void* userData, float cx, float cy,
+                                  float x, float y)
+{
+    PainterPathTextSink* s = (PainterPathTextSink*)userData;
+    if (!s || !s->path) return false;
+    return XPainterPath_quadTo(s->path, s->offsetX + cx, s->offsetY - cy,
+                               s->offsetX + x, s->offsetY - y);
+}
+
+static bool painterPathTextCubicTo(void* userData, float c1x, float c1y,
+                                   float c2x, float c2y, float x, float y)
+{
+    PainterPathTextSink* s = (PainterPathTextSink*)userData;
+    if (!s || !s->path) return false;
+    return XPainterPath_cubicTo(s->path, s->offsetX + c1x, s->offsetY - c1y,
+                                s->offsetX + c2x, s->offsetY - c2y,
+                                s->offsetX + x, s->offsetY - y);
+}
+
+static bool painterPathTextClose(void* userData)
+{
+    PainterPathTextSink* s = (PainterPathTextSink*)userData;
+    if (!s || !s->path) return false;
+    return XPainterPath_closeSubpath(s->path);
+}
+
+/** @brief 从一个 UTF-8 串解出下一个码点（含字节数）。 */
+static uint32_t painterPathNextCodepoint(const char** cursor)
+{
+    const unsigned char* p = (const unsigned char*)*cursor;
+    uint32_t cp;
+    int extra;
+    int i;
+    if (!p || *p == 0) return 0;
+    if (p[0] < 0x80) {
+        *cursor += 1;
+        return p[0];
+    } else if ((p[0] & 0xE0) == 0xC0) {
+        cp = p[0] & 0x1F;
+        extra = 1;
+    } else if ((p[0] & 0xF0) == 0xE0) {
+        cp = p[0] & 0x0F;
+        extra = 2;
+    } else if ((p[0] & 0xF8) == 0xF0) {
+        cp = p[0] & 0x07;
+        extra = 3;
+    } else {
+        *cursor += 1;
+        return 0xFFFD;
+    }
+    for (i = 1; i <= extra; ++i) {
+        if ((p[i] & 0xC0) != 0x80) {
+            *cursor += 1;
+            return 0xFFFD;
+        }
+        cp = (cp << 6) | (p[i] & 0x3F);
+    }
+    *cursor += (1 + extra);
+    return cp;
+}
+
+bool XPainterPath_addText(XPainterPath* self, float x, float y,
+                          const XFont* font, const char* utf8)
+{
+    const XFontFace* face;
+    const char* cursor = utf8;
+    PainterPathTextSink sink;
+    float penX = x;
+    float scale;
+    int pxSize;
+    if (!self || !font || !utf8 || utf8[0] == 0) return false;
+    face = XFont_face(font);
+    if (!face) return false;
+    /* 必须先用 info 判定是否为轮廓 face（点阵 face 无轮廓可提取）；
+     * 与 XPainter 内部 layout 的既有用法一致。 */
+    {
+        XFontFaceInfo faceInfo;
+        XMemset(&faceInfo, 0, sizeof(faceInfo));
+        {
+            bool iok = XFontFace_info_base(face, font, &faceInfo);
+            if (!iok || faceInfo.m_kind != XFontFace_Outline) return false;
+        }
+        pxSize = XFont_pixelSize(font);
+        if (pxSize <= 0) pxSize = XFont_pointSize(font);
+        if (pxSize <= 0) pxSize = 12;
+        /* scale 只在 upem 可读时才有意义；upem==0 时走非 scaled 版本
+         * （该版本从 XFont 自身取字号，不依赖 upem）。 */
+        if (faceInfo.m_outline.unitsPerEm >= 1)
+            scale = (float)pxSize / (float)faceInfo.m_outline.unitsPerEm;
+        else
+            scale = 0.0f;
+    }
+    sink.path = self;
+    sink.offsetX = 0.0f;
+    sink.offsetY = 0.0f;
+    sink.wrote = false;
+    {
+        XFontOutlineSink outSink;
+        outSink.userData = &sink;
+        outSink.moveTo = painterPathTextMoveTo;
+        outSink.lineTo = painterPathTextLineTo;
+        outSink.quadTo = painterPathTextQuadTo;
+        outSink.cubicTo = painterPathTextCubicTo;
+        outSink.close = painterPathTextClose;
+        while (cursor && *cursor) {
+            uint32_t cp = painterPathNextCodepoint(&cursor);
+            XFontOutlineGlyphMetrics metrics;
+            if (cp == 0) break;
+            XMemset(&metrics, 0, sizeof(metrics));
+            sink.offsetX = penX;
+            sink.offsetY = y;
+            {
+                bool loaded;
+                if (scale > 0.0f)
+                    loaded = XFontFace_loadOutlineGlyphScaled_base(
+                        face, font, scale, cp, &metrics, &outSink);
+                else
+                    loaded = XFontFace_loadOutlineGlyph_base(
+                        face, font, cp, &metrics, &outSink);
+                if (loaded) {
+                    /* 按字形 advance 推进笔位；advance 为 0（部分是
+                     * 点阵/异常字形）时按半个字高兜底。 */
+                    float adv = (float)metrics.advance;
+                    if (adv <= 0.0f) adv = (float)pxSize * 0.5f;
+                    penX += adv;
+                } else {
+                    /* 该字形无轮廓（空格或点阵字形）：仅推进笔位。 */
+                    penX += (float)pxSize * 0.5f;
+                }
+            }
+        }
+    }
+    return sink.wrote;
+}
+
+void XPainterPath_addRegion(XPainterPath* self, const XRegion* region)
+{
+    int i;
+    if (!self || !region || !region->rects || region->count <= 0) return;
+    for (i = 0; i < region->count; ++i) {
+        XPainterPath_addRect(self, &region->rects[i]);
+    }
+}
+
+float XPainterPath_length(const XPainterPath* self)
+{
+    XPointF* pts;
+    int n;
+    int i;
+    double len = 0.0;
+    if (!self || self->m_elementCount <= 0) return 0.0f;
+    n = painterPathFlatten(self, NULL, 0, NULL, 0, false);
+    if (n < 2) return 0.0f;
+    pts = (XPointF*)XMalloc_System(sizeof(XPointF) * (size_t)n);
+    if (!pts) return 0.0f;
+    n = painterPathFlatten(self, pts, n, NULL, 0, false);
+    for (i = 1; i < n; ++i) {
+        double dx = pts[i].x - pts[i - 1].x;
+        double dy = pts[i].y - pts[i - 1].y;
+        len += sqrt(dx * dx + dy * dy);
+    }
+    XFree_System(pts);
+    return (float)len;
+}
+
+float XPainterPath_percentAtLength(const XPainterPath* self, float t)
+{
+    float total = XPainterPath_length(self);
+    if (total <= 0.0f) return 0.0f;
+    if (t <= 0.0f) return 0.0f;
+    if (t >= total) return 1.0f;
+    return t / total;
+}
+
+void XPainterPath_pointAtPercent(const XPainterPath* self, float t,
+                                 float* x, float* y)
+{
+    XPointF* pts;
+    int n;
+    int i;
+    double target;
+    double total = 0.0;
+    if (x) *x = 0.0f;
+    if (y) *y = 0.0f;
+    if (!self || self->m_elementCount <= 0) return;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    n = painterPathFlatten(self, NULL, 0, NULL, 0, false);
+    if (n < 2) return;
+    pts = (XPointF*)XMalloc_System(sizeof(XPointF) * (size_t)n);
+    if (!pts) return;
+    n = painterPathFlatten(self, pts, n, NULL, 0, false);
+    for (i = 1; i < n; ++i) {
+        double dx = pts[i].x - pts[i - 1].x;
+        double dy = pts[i].y - pts[i - 1].y;
+        total += sqrt(dx * dx + dy * dy);
+    }
+    target = total * (double)t;
+    total = 0.0;
+    for (i = 1; i < n; ++i) {
+        double dx = pts[i].x - pts[i - 1].x;
+        double dy = pts[i].y - pts[i - 1].y;
+        double seg = sqrt(dx * dx + dy * dy);
+        if (total + seg >= target && seg > 0.0) {
+            double r = (target - total) / seg;
+            if (x) *x = (float)(pts[i - 1].x + dx * r);
+            if (y) *y = (float)(pts[i - 1].y + dy * r);
+            break;
+        }
+        total += seg;
+        if (i == n - 1) {
+            if (x) *x = pts[i].x;
+            if (y) *y = pts[i].y;
+        }
+    }
+    XFree_System(pts);
+}
+
+float XPainterPath_angleAtPercent(const XPainterPath* self, float t)
+{
+    float total = XPainterPath_length(self);
+    float d = 0.01f;
+    float x0;
+    float y0;
+    float x1;
+    float y1;
+    if (total <= 0.0f) return 0.0f;
+    XPainterPath_pointAtPercent(self, t - d < 0.0f ? 0.0f : t - d, &x0, &y0);
+    XPainterPath_pointAtPercent(self, t + d > 1.0f ? 1.0f : t + d, &x1, &y1);
+    {
+        double ang = atan2((double)(y1 - y0), (double)(x1 - x0));
+        return (float)(ang * 180.0 / 3.14159265358979323846);
+    }
+}
+
+float XPainterPath_slopeAtPercent(const XPainterPath* self, float t)
+{
+    float total = XPainterPath_length(self);
+    float d = 0.01f;
+    float x0;
+    float y0;
+    float x1;
+    float y1;
+    if (total <= 0.0f) return 0.0f;
+    XPainterPath_pointAtPercent(self, t - d < 0.0f ? 0.0f : t - d, &x0, &y0);
+    XPainterPath_pointAtPercent(self, t + d > 1.0f ? 1.0f : t + d, &x1, &y1);
+    if (x1 == x0) return 0.0f;
+    return (y1 - y0) / (x1 - x0);
+}
+
+/* ---- 元素访问 ---- */
+
+bool XPainterPath_elementAt(const XPainterPath* self, int index,
+                            XPainterPathElement* out)
+{
+    if (!self || !out || !self->m_elements) return false;
+    if (index < 0 || index >= self->m_elementCount) return false;
+    *out = self->m_elements[index];
+    return true;
+}
+
+bool XPainterPath_setElementPositionAt(XPainterPath* self, int index,
+                                       float x, float y)
+{
+    if (!self || !self->m_elements) return false;
+    if (index < 0 || index >= self->m_elementCount) return false;
+    self->m_elements[index].m_x1 = x;
+    self->m_elements[index].m_y1 = y;
+    return true;
+}
+
+/* ---- 命中测试 ---- */
+
+bool XPainterPath_containsPoint(const XPainterPath* self, float x, float y)
+{
+    XPointF* pts;
+    int n;
+    int i;
+    int j;
+    int crossings = 0;
+    if (!self || self->m_elementCount <= 0) return false;
+    n = painterPathFlatten(self, NULL, 0, NULL, 0, false);
+    if (n < 3) return false;
+    pts = (XPointF*)XMalloc_System(sizeof(XPointF) * (size_t)n);
+    if (!pts) return false;
+    n = painterPathFlatten(self, pts, n, NULL, 0, false);
+    /* 射线法（奇偶规则）。 */
+    for (i = 0, j = n - 1; i < n; j = i++) {
+        if (((pts[i].y > y) != (pts[j].y > y)) &&
+            (x < (pts[j].x - pts[i].x) * (y - pts[i].y) /
+                     (pts[j].y - pts[i].y) + pts[i].x))
+            ++crossings;
+    }
+    XFree_System(pts);
+    return (crossings & 1) != 0;
+}
+
+bool XPainterPath_intersectsRect(const XPainterPath* self, const XRect* rect)
+{
+    XPointF* pts;
+    int n;
+    int i;
+    if (!self || !rect || self->m_elementCount <= 0) return false;
+    n = painterPathFlatten(self, NULL, 0, NULL, 0, false);
+    if (n < 1) return false;
+    pts = (XPointF*)XMalloc_System(sizeof(XPointF) * (size_t)n);
+    if (!pts) return false;
+    n = painterPathFlatten(self, pts, n, NULL, 0, false);
+    for (i = 0; i < n; ++i) {
+        if (pts[i].x >= rect->x && pts[i].x <= rect->x + rect->width &&
+            pts[i].y >= rect->y && pts[i].y <= rect->y + rect->height) {
+            XFree_System(pts);
+            return true;
+        }
+    }
+    XFree_System(pts);
+    /* 无顶点落入矩形时，用矩形中心做内部判定兜底。 */
+    return XPainterPath_containsPoint(self,
+        (float)(rect->x + rect->width / 2.0),
+        (float)(rect->y + rect->height / 2.0));
+}
+
+bool XPainterPath_containsRect(const XPainterPath* self, const XRect* rect)
+{
+    if (!self || !rect) return false;
+    return XPainterPath_containsPoint(self, (float)rect->x, (float)rect->y) &&
+           XPainterPath_containsPoint(self, (float)(rect->x + rect->width),
+                                      (float)rect->y) &&
+           XPainterPath_containsPoint(self, (float)rect->x,
+                                      (float)(rect->y + rect->height)) &&
+           XPainterPath_containsPoint(self, (float)(rect->x + rect->width),
+                                      (float)(rect->y + rect->height));
+}
+
 
 XPainterFillRule XPainterPath_fillRule(const XPainterPath* self)
 {

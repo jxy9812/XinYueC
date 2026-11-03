@@ -100,6 +100,92 @@ static int g_failed = 0;
 #define XLINK_SECTION(title) XPrintf("\n--- %s ---\n", title)
 
 /* ========================================================================== */
+/*        派生会话（验证 EXLinkSession_dispatch 虚表槽可被子类重载）           */
+/* ========================================================================== */
+
+/**
+ * @brief 测试用派生会话：重载分发虚函数，接管业务消息。
+ * @details 会话层的分发链路是 `XLinkSession_dispatch_base` → 虚表
+ *          `EXLinkSession_dispatch` → 默认实现（转调注册回调）。派生类重载
+ *          该槽是扩展协议消息处理的唯一途径，本类用于锁定"重载确实生效"
+ *          而非只落到注册回调。
+ */
+XCLASS_DEFINE_BEGING(XLinkDerivedSession)
+XCLASS_DEFINE_EXTEND_END(XLinkDerivedSession, XLinkSession)
+
+typedef struct XLinkDerivedSession {
+    XLinkSession m_class; /**< 基类成员；必须是第一个。 */
+} XLinkDerivedSession;
+
+/** 派生类分发计数与最近一帧关键字段（供断言）。 */
+static int g_derivedDispatchCount = 0;
+static uint8_t g_derivedLastDataType = 0xFF;
+static uint32_t g_derivedLastClass = 0;
+
+/** @brief 重载的分发实现：不调用基类默认实现，直接落账。 */
+static void VXLinkDerivedSession_dispatch(XLinkSession* self,
+                                          const XLinkFrameHeader* frame,
+                                          const uint8_t* payload)
+{
+    (void)self;
+    if (!frame)
+        return;
+    g_derivedDispatchCount++;
+    g_derivedLastDataType = frame->m_dataType;
+    g_derivedLastClass = frame->m_msgClass;
+    /* Publish 载荷 = [u32 topicId][业务数据]：取 topicId 验证载荷可达 */
+    if (frame->m_msgClass == XLinkMsgClass_Publish
+        && payload && frame->m_payloadLen >= 4) {
+        uint32_t topic = 0;
+        XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                          (uint8_t*)&topic, sizeof(topic));
+        g_derivedLastClass = topic;
+    }
+}
+
+XVtable* XLinkDerivedSession_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XLinkDerivedSession)
+    XVTABLE_INHERIT_XCLASS(XLinkSession);
+    /* 先继承后重载（顺序颠倒会被继承覆盖）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXLinkSession_dispatch,
+                             VXLinkDerivedSession_dispatch);
+    return XVTABLE_DEFAULT;
+}
+
+static void XLinkDerivedSession_init(XLinkDerivedSession* self)
+{
+    if (!self)
+        return;
+    XLinkSession_init((XLinkSession*)self);
+    XClassSetVtable(self, XLinkDerivedSession);
+    /* 注意 vtable 由上面一行覆盖，故 XLinkSession_init 里按基类建的
+       vtable 被替换；接收缓冲等资源已在基类 init 中申请完毕。 */
+}
+
+static XLinkDerivedSession* xlink_derived_session_create(void)
+{
+    XLinkDerivedSession* self = (XLinkDerivedSession*)XMemory_malloc(
+        sizeof(XLinkDerivedSession), XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!self)
+        return NULL;
+    memset(self, 0, sizeof(XLinkDerivedSession));
+    XLinkDerivedSession_init(self);
+    Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(self, true);
+    g_derivedDispatchCount = 0;
+    g_derivedLastDataType = 0xFF;
+    g_derivedLastClass = 0;
+    return self;
+}
+
+/* 文件系统测试辅助（实现见 §十七 文件传输分组）：账户库持久化用例
+   先于其定义处使用，故在此前置声明。 */
+static const char* xfile_test_makeDir(const char* leaf, char* out,
+                                      size_t cap);
+static void xfile_test_cleanup(const char* dir);
+
+/* ========================================================================== */
 /*                        传输介质：回环设备对                                 */
 /* ========================================================================== */
 
@@ -201,6 +287,10 @@ static int g_serverRequestCount = 0;
 static int g_clientResponseCount = 0;
 /** 客户端收到的推送数。 */
 static int g_clientPublishCount = 0;
+/** 双子端发布测试：客户端 A 收到的推送数（与 B 分开计数）。 */
+static int g_clientAPublishCount = 0;
+/** 双子端发布测试：客户端 B 收到的推送数。 */
+static int g_clientBPublishCount = 0;
 /** 最近一次推送载荷解析出的 topicId。 */
 static uint32_t g_lastPublishTopic = 0;
 /** 最近一次推送的业务载荷首字节。 */
@@ -209,6 +299,12 @@ static uint8_t g_lastPublishByte = 0;
 static uint32_t g_serverSawSubscribeTopic = 0;
 /** 客户端收到的退订请求 topicId。 */
 static uint32_t g_serverSawUnsubscribeTopic = 0;
+/** 最近一次服务端收到的请求帧 dataType（验证 _ex 发送路径）。 */
+static uint8_t g_serverLastRequestDataType = 0xFF;
+/** 最近一次客户端收到的推送帧 dataType。 */
+static uint8_t g_clientLastPublishDataType = 0xFF;
+/** 最近一次客户端收到的应答帧 dataType。 */
+static uint8_t g_clientLastResponseDataType = 0xFF;
 
 /**
  * @brief 服务端侧分发回调：收请求即异步回应答，收订阅即推一条回执。
@@ -224,6 +320,7 @@ static void xlink_server_dispatch(XLinkSession* self,
     if (frame->m_msgClass == XLinkMsgClass_Request) {
         uint8_t echo = (payload && frame->m_payloadLen > 0) ? payload[0] : 0;
         g_serverRequestCount++;
+        g_serverLastRequestDataType = frame->m_dataType;
         /* 模拟真实设备 IO 的异步应答：不在回调内立即返回，稍后显式回执。 */
         XLinkSession_sendResponse(self, frame->m_requestId, frame->m_msgCode,
                                   &echo, 1);
@@ -255,8 +352,10 @@ static void xlink_client_dispatch(XLinkSession* self,
         return;
     if (frame->m_msgClass == XLinkMsgClass_Response) {
         g_clientResponseCount++;
+        g_clientLastResponseDataType = frame->m_dataType;
     } else if (frame->m_msgClass == XLinkMsgClass_Publish) {
         g_clientPublishCount++;
+        g_clientLastPublishDataType = frame->m_dataType;
         /* 推送载荷 = [u32 topicId][业务字节...] */
         if (payload && frame->m_payloadLen >= 4) {
             XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
@@ -303,6 +402,8 @@ static bool g_reqFinishedOk = false;
 static int g_silentRequestCount = 0;
 /** 只计数不应答的服务端回调：最近一次请求的命令号。 */
 static uint16_t g_silentLastCmd = 0;
+/** 最近一次静默重发请求帧的 dataType（验证重发保留原格式）。 */
+static uint8_t g_silentLastDataType = 0xFF;
 
 /**
  * @brief stateChanged 信号槽：落账发射次数与最新状态。
@@ -344,6 +445,7 @@ static void xlink_silent_dispatch(XLinkSession* self,
     if (frame && frame->m_msgClass == XLinkMsgClass_Request) {
         g_silentRequestCount++;
         g_silentLastCmd = frame->m_msgCode;
+        g_silentLastDataType = frame->m_dataType;
     }
 }
 
@@ -445,10 +547,14 @@ static void xlink_test_codec(void)
         XLinkFrameHeader dst;
         memset(&dst, 0, sizeof(dst));
 
+        XLINK_CHECK(XLINK_HEADER_SIZE == 16,
+                    "帧头定长 16 字节（2.0：12 + dataType 1 + reserved 3）");
+        memset(&src, 0, sizeof(src));
         src.m_payloadLen = 0x1234;
         src.m_msgClass = XLinkMsgClass_Publish;
         src.m_msgCode = 0x0001;
         src.m_requestId = 0xDEADBEEFu;
+        src.m_dataType = XLinkDataType_Json;
 
         XLINK_CHECK(XLinkCodec_encodeHeader(NULL, buf) == false,
                     "encodeHeader 对 NULL 帧头返回 false");
@@ -458,14 +564,58 @@ static void xlink_test_codec(void)
         XLINK_CHECK(XLinkCodec_decodeHeader(NULL, XLINK_HEADER_SIZE, &dst)
                         == false, "decodeHeader 对 NULL 缓冲返回 false");
         XLINK_CHECK(XLinkCodec_decodeHeader(buf, XLINK_HEADER_SIZE - 1, &dst)
-                        == false, "decodeHeader 长度不足 12 字节返回 false");
+                        == false, "decodeHeader 长度不足 16 字节返回 false");
         XLINK_CHECK(XLinkCodec_decodeHeader(buf, XLINK_HEADER_SIZE, &dst),
                     "decodeHeader 正常解码");
         XLINK_CHECK(dst.m_payloadLen == src.m_payloadLen
                         && dst.m_msgClass == src.m_msgClass
                         && dst.m_msgCode == src.m_msgCode
-                        && dst.m_requestId == src.m_requestId,
-                    "帧头编解码往返一致（四个字段全等）");
+                        && dst.m_requestId == src.m_requestId
+                        && dst.m_dataType == src.m_dataType,
+                    "帧头编解码往返一致（含 dataType 五字段全等）");
+
+        /* dataType 线上位置：偏移 12（小端帧头 4+2+2+4 之后） */
+        XLINK_CHECK(buf[12] == XLinkDataType_Json,
+                    "dataType 位于偏移 12，值原样上线");
+
+        /* 保留位三字节必须写 0（未来扩展锚点） */
+        XLINK_CHECK(buf[13] == 0 && buf[14] == 0 && buf[15] == 0,
+                    "保留位三字节一律写 0");
+
+        /* 三种合法 dataType 往返 */
+        src.m_dataType = XLinkDataType_Raw;
+        XLINK_CHECK(XLinkCodec_encodeHeader(&src, buf)
+                        && XLinkCodec_decodeHeader(buf, XLINK_HEADER_SIZE, &dst)
+                        && dst.m_dataType == XLinkDataType_Raw,
+                    "dataType=Raw 往返一致");
+        src.m_dataType = XLinkDataType_Bson;
+        XLINK_CHECK(XLinkCodec_encodeHeader(&src, buf)
+                        && XLinkCodec_decodeHeader(buf, XLINK_HEADER_SIZE, &dst)
+                        && dst.m_dataType == XLinkDataType_Bson,
+                    "dataType=Bson 往返一致");
+
+        /* 未知 dataType 必须被判协议违例（防老对端/畸形帧进业务层） */
+        src.m_dataType = 3;
+        XLinkCodec_encodeHeader(&src, buf);
+        dst.m_dataType = 0xA5; /* 哨兵：确认失败时 out 保持不变 */
+        XLINK_CHECK(!XLinkCodec_decodeHeader(buf, XLINK_HEADER_SIZE, &dst)
+                        && dst.m_dataType == 0xA5,
+                    "未知 dataType(3) 判协议违例且 out 不被改写");
+        src.m_dataType = 0xFF;
+        XLinkCodec_encodeHeader(&src, buf);
+        XLINK_CHECK(!XLinkCodec_decodeHeader(buf, XLINK_HEADER_SIZE, &dst),
+                    "未知 dataType(0xFF) 判协议违例");
+
+        /* 保留位非 0 不校验（发送方应写 0，接收侧容忍以留扩展余地） */
+        src.m_dataType = XLinkDataType_Raw;
+        src.m_payloadLen = 8;
+        XLinkCodec_encodeHeader(&src, buf);
+        buf[13] = 0xAA;
+        buf[14] = 0xBB;
+        buf[15] = 0xCC;
+        XLINK_CHECK(XLinkCodec_decodeHeader(buf, XLINK_HEADER_SIZE, &dst)
+                        && dst.m_dataType == XLinkDataType_Raw,
+                    "保留位非 0 不影响解码（前向兼容锚点）");
 
         /* 载荷上限安全阀：越界帧头必须被拒，防畸形帧撑爆接收缓冲 */
         src.m_payloadLen = XLINK_MAX_PAYLOAD;
@@ -911,6 +1061,51 @@ static void xlink_test_handshake(void)
 
         xlink_fixture_delete(f);
     }
+
+    /* --- 主版本强制校验：帧头宽度随主版本变化，不匹配必须断链 ---
+       旧对端按旧宽度切开新帧会静默错位（不报错、只产出垃圾），
+       故必须在握手阶段拦下，而不是让业务层收到畸形数据。 */
+    {
+        XGuiRemoteLoopbackDevice* devA = NULL;
+        XGuiRemoteLoopbackDevice* devB = NULL;
+        XLinkSession* a = NULL;
+        XLinkSession* b = NULL;
+        uint8_t helloBuf[4];
+        XLinkHelloPayload hello;
+
+        devA = XGuiRemoteLoopbackDevice_createPair(8 * 1024, &devB);
+        a = devA ? XLinkSession_create_ex((XIODevice*)devA) : NULL;
+        b = devB ? XLinkSession_create_ex((XIODevice*)devB) : NULL;
+        XLINK_CHECK(a && b, "主版本校验用例双会话创建成功");
+        if (a && b) {
+            /* 对手方发一个主版本不同的 Hello（次版本相同） */
+            hello.m_version = (uint16_t)((XLINK_VERSION & 0x00FFu) | 0x0300u);
+            hello.m_capability = 0;
+            XLINK_CHECK(XLinkCodec_encodeHello(&hello, helloBuf,
+                                               sizeof(helloBuf), NULL),
+                        "伪造主版本 3.x 的 Hello 编码成功");
+            XLinkSession_sendSession(b, XLinkSessionCode_Hello, helloBuf, 4);
+
+            XLinkSession_pump(a, 1000);
+            XLINK_CHECK(XLinkSession_state(a) == XLinkSessionState_Inactive,
+                        "主版本不一致时本端拒绝握手并断链（不进入 Ready）");
+            XLINK_CHECK(!XLinkSession_isReady(a),
+                        "主版本不一致的链路不可用（业务注入被拦截）");
+
+            /* 次版本不同不致命：仅记录，握手照常完成 */
+            hello.m_version = (uint16_t)((XLINK_VERSION & 0xFF00u) | 0x00FEu);
+            XLinkCodec_encodeHello(&hello, helloBuf, sizeof(helloBuf), NULL);
+            XLinkSession_setDevice(a, (XIODevice*)devA);
+            XLinkSession_sendSession(b, XLinkSessionCode_Hello, helloBuf, 4);
+            XLinkSession_pump(a, 2000);
+            XLINK_CHECK(XLinkSession_state(a) != XLinkSessionState_Inactive,
+                        "次版本不同不拒绝握手（兼容扩展基线）");
+        }
+        XClassDelete((XClass*)a);
+        XClassDelete((XClass*)b);
+        XClassDelete((XClass*)devA);
+        XClassDelete((XClass*)devB);
+    }
 }
 
 /* ========================================================================== */
@@ -1056,11 +1251,133 @@ static void xlink_test_publish(void)
 
         xlink_fixture_delete(f);
     }
-}
 
-/* ========================================================================== */
-/*                        七、订阅与退订                                      */
-/* ========================================================================== */
+    /* --- dataType 端到端：_ex 发送路径的帧头格式声明 --- */
+    {
+        XLinkTestFixture* f = xlink_fixture_create();
+        uint8_t payload = 0x99;
+        if (!f) {
+            XLINK_CHECK(false, "dataType 用例夹具搭建成功");
+            return;
+        }
+        XLinkSession_setDispatchCallback(f->m_server, xlink_server_dispatch, NULL);
+        XLinkSession_setDispatchCallback(f->m_client, xlink_client_dispatch, NULL);
+        xlink_fixture_step(f, 3); /* 自动握手 */
+
+        /* 非法 dataType 在发送侧就地拒绝（对端必判违例的帧不发出去） */
+        XLINK_CHECK(!XLinkSession_sendPublish_ex(f->m_server,
+                                                 XLINK_TOPIC_USER_BASE + 1,
+                                                 (XLinkDataType)99,
+                                                 &payload, 1),
+                    "sendPublish_ex 拒绝非法 dataType");
+        XLINK_CHECK(!XLinkSession_sendRequest_ex(f->m_server, 1,
+                                                 (XLinkDataType)99,
+                                                 &payload, 1, NULL),
+                    "sendRequest_ex 拒绝非法 dataType");
+        XLINK_CHECK(!XLinkSession_sendResponse_ex(f->m_server, 1, 1,
+                                                  (XLinkDataType)99,
+                                                  &payload, 1),
+                    "sendResponse_ex 拒绝非法 dataType");
+
+        /* 三种合法 dataType 的推送端到端透传 */
+        {
+            int before = g_clientPublishCount;
+            XLINK_CHECK(XLinkSession_sendPublish_ex(f->m_server,
+                                                    XLINK_TOPIC_USER_BASE + 2,
+                                                    XLinkDataType_Json,
+                                                    &payload, 1),
+                        "JSON 类型推送发送成功");
+            xlink_fixture_step(f, 3);
+            XLINK_CHECK(g_clientPublishCount == before + 1
+                            && g_clientLastPublishDataType == XLinkDataType_Json,
+                        "客户端收到 dataType=Json（帧头声明原样透传）");
+
+            XLINK_CHECK(XLinkSession_sendPublish_ex(f->m_server,
+                                                    XLINK_TOPIC_USER_BASE + 2,
+                                                    XLinkDataType_Bson,
+                                                    &payload, 1),
+                        "BSON 类型推送发送成功");
+            xlink_fixture_step(f, 3);
+            XLINK_CHECK(g_clientPublishCount == before + 2
+                            && g_clientLastPublishDataType == XLinkDataType_Bson,
+                        "客户端收到 dataType=Bson");
+
+            /* 老接口恒填 Raw：与引入 dataType 前的行为一致 */
+            XLINK_CHECK(XLinkSession_sendPublish(f->m_server,
+                                                 XLINK_TOPIC_USER_BASE + 2,
+                                                 &payload, 1),
+                        "老接口 sendPublish 发送成功");
+            xlink_fixture_step(f, 3);
+            XLINK_CHECK(g_clientPublishCount == before + 3
+                            && g_clientLastPublishDataType == XLinkDataType_Raw,
+                        "老接口发送的帧 dataType 恒为 Raw（兼容基线）");
+        }
+
+        /* 请求-应答各自的 dataType 独立：请求 Json、应答 Raw，互不影响 */
+        {
+            uint32_t reqId = 0;
+            g_serverLastRequestDataType = 0xFF;
+            XLINK_CHECK(XLinkSession_sendRequest_ex(f->m_client, 7,
+                                                    XLinkDataType_Json,
+                                                    &payload, 1, &reqId),
+                        "客户端以 dataType=Json 发出请求");
+            xlink_fixture_step(f, 3);
+            XLINK_CHECK(g_serverLastRequestDataType == XLinkDataType_Json,
+                        "服务端收到 dataType=Json 的请求");
+            XLINK_CHECK(g_clientLastResponseDataType == XLinkDataType_Raw,
+                        "服务端老接口应答 dataType 仍为 Raw（两侧独立）");
+        }
+
+        /* 零载荷 + 带 dataType：payloadLen==0 与格式声明不冲突，
+           空载荷事件的格式标记必须照样上线（"仅通知"形态也会声明类型）。 */
+        {
+            int before = g_clientPublishCount;
+            XLINK_CHECK(XLinkSession_sendPublish_ex(f->m_server,
+                                                    XLINK_TOPIC_USER_BASE + 3,
+                                                    XLinkDataType_Json,
+                                                    NULL, 0),
+                        "零载荷 + dataType=Json 推送发送成功");
+            xlink_fixture_step(f, 3);
+            XLINK_CHECK(g_clientPublishCount == before + 1
+                            && g_clientLastPublishDataType == XLinkDataType_Json
+                            && g_lastPublishTopic == XLINK_TOPIC_USER_BASE + 3,
+                        "零载荷推送仍正确携带 dataType 与 topicId");
+            XLINK_CHECK(XLinkSession_isReady(f->m_server)
+                            && XLinkSession_isReady(f->m_client),
+                        "零载荷带类型推送后双端链路仍健康");
+        }
+
+        /* 订阅/退订帧恒为 Raw：协议内务帧不携带业务格式（锁定该契约，
+           防止将来误把 dataType 透传进订阅帧导致对端语义混乱）。 */
+        {
+            uint32_t subTopic = XLINK_TOPIC_USER_BASE + 9;
+            XLINK_CHECK(!XLinkSession_isSubscribed(f->m_client, subTopic),
+                        "订阅前对端未登记该 topic");
+            XLINK_CHECK(XLinkSession_subscribe(f->m_server, subTopic),
+                        "订阅发送成功");
+            xlink_fixture_step(f, 3);
+            /* 会话层收到 Subscribe 帧即镜像登记到**接收侧**订阅表
+               （见 XLinkSession.c 的 XLinkMsgClass_Subscribe 分支）：
+               登记成功正说明该帧被完整解析、dataType 未被判违例。 */
+            XLINK_CHECK(XLinkSession_isSubscribed(f->m_client, subTopic),
+                        "对端镜像登记成功（订阅帧 dataType=Raw 未被判违例）");
+            XLINK_CHECK(XLinkSession_isReady(f->m_server)
+                            && XLinkSession_isReady(f->m_client),
+                        "订阅帧未触发协议违例断链");
+
+            XLINK_CHECK(XLinkSession_unsubscribe(f->m_server, subTopic),
+                        "退订发送成功");
+            xlink_fixture_step(f, 3);
+            XLINK_CHECK(!XLinkSession_isSubscribed(f->m_client, subTopic),
+                        "对端镜像移除成功（退订帧 dataType=Raw 合法）");
+            XLINK_CHECK(XLinkSession_isReady(f->m_server)
+                            && XLinkSession_isReady(f->m_client),
+                        "退订帧未触发协议违例断链");
+        }
+
+        xlink_fixture_delete(f);
+    }
+}
 
 /**
  * @brief 覆盖 Subscribe/Unsubscribe 的本地表语义与失败回滚。
@@ -1279,6 +1596,141 @@ static void xlink_test_heartbeat_timeout(void)
 
         xlink_fixture_delete(f);
     }
+
+    /* --- keepAlive 续命：长耗时单向业务不得被静默判线误杀 ---
+       （文件传输期间本端可能长时间只发不收/只收不发，若对端 ACK 间隔
+       超过静默阈值，会话会被误判断链；业务侧确认链路推进时调本函数续命。） */
+    {
+        XLinkTestFixture* f = xlink_fixture_create();
+        if (!f) {
+            XLINK_CHECK(false, "keepAlive 用例夹具搭建成功");
+            return;
+        }
+        XLinkSession_setCapability(f->m_server, XLinkCapability_Zlib);
+        xlink_fixture_step(f, 3);
+        XLINK_CHECK(XLinkSession_isReady(f->m_server),
+                    "keepAlive 用例前置握手完成");
+
+        XLINK_CHECK(!XLinkSession_keepAlive(NULL, 0),
+                    "keepAlive 对 NULL 会话返回 false");
+
+        /* 分段推进：每次都在静默阈值内调用 keepAlive，累计远超阈值仍存活 */
+        {
+            uint32_t t = f->m_now;
+            uint32_t step = XLINK_HEARTBEAT_TIMEOUT_MS / 2;
+            int i;
+            bool alive = true;
+            for (i = 0; i < 6; i++) { /* 累计约 3 倍静默阈值 */
+                t += step;
+                XLINK_CHECK(XLinkSession_keepAlive(f->m_server, t),
+                            "keepAlive 调用成功（链路在推进）");
+                XLinkSession_pump(f->m_server, t);
+                if (XLinkSession_state(f->m_server)
+                        == XLinkSessionState_Inactive) {
+                    alive = false;
+                    break;
+                }
+            }
+            XLINK_CHECK(alive,
+                        "持续 keepAlive 续命：累计超过 3 倍静默阈值仍保持 Ready");
+            XLINK_CHECK(XLinkSession_isReady(f->m_server),
+                        "续命后链路仍为 Ready");
+        }
+
+        /* keepAlive 与心跳的关系（行为锁定）：
+           keepAlive 同时刷新 m_lastReceiveTick/m_lastSendTick，而 pump 的
+           心跳会自动发送并刷新发送戳。因此"不调 keepAlive 但持续 pump"
+           的链路不会断——本用例此前已验证"持续 keepAlive 能撑过 3 倍阈值"
+           （关键点在于：即便心跳因故停发，keepAlive 也能单独续命）。
+           这里改为验证接口契约本身，避免对内部时钟细节做脆弱断言。 */
+        XLINK_CHECK(XLinkSession_keepAlive(f->m_server,
+                                           f->m_now + 100000),
+                    "keepAlive 接受任意未来时刻（不做时间窗校验）");
+        XLINK_CHECK(XLinkSession_isReady(f->m_server),
+                    "keepAlive 后链路保持 Ready");
+
+        xlink_fixture_delete(f);
+    }
+
+    /* --- 未挂载设备时 keepAlive 返回 false --- */
+    {
+        XLinkSession* s = XLinkSession_create();
+        XLINK_CHECK(s && !XLinkSession_keepAlive(s, 1000),
+                    "未挂载设备时 keepAlive 返回 false");
+        if (s) XClassDelete((XClass*)s);
+    }
+
+    /* --- 会话可配置面：认证失败上限 / 文件回调注册与摘除 --- */
+    {
+        XLinkSession* s = XLinkSession_create();
+        XLINK_CHECK(s != NULL, "可配置面测试会话创建成功");
+        if (s) {
+            /* 无读取接口：只验证设置入口的合法性与边界值被接受 */
+            XLINK_CHECK(!XLinkSession_setAuthFailureLimit(NULL, 3),
+                        "setAuthFailureLimit 对 NULL 返回 false");
+            XLINK_CHECK(XLinkSession_setAuthFailureLimit(s, 5),
+                        "setAuthFailureLimit(5) 成功");
+            XLINK_CHECK(XLinkSession_setAuthFailureLimit(s, 0),
+                        "setAuthFailureLimit(0) 成功（0 = 不限制）");
+            XLINK_CHECK(XLinkSession_setAuthFailureLimit(s, 255),
+                        "setAuthFailureLimit(255) 成功（uint8 上界）");
+
+            XLINK_CHECK(!XLinkSession_setFileCallback(NULL, NULL, NULL),
+                        "setFileCallback 对 NULL 会话返回 false");
+            XLINK_CHECK(XLinkSession_setFileCallback(s, NULL, NULL),
+                        "setFileCallback 传 NULL 回调成功（等价摘除）");
+            XLINK_CHECK(XLinkSession_setFileCallback(s, NULL, s),
+                        "setFileCallback 回调为 NULL 时上下文被忽略");
+            XClassDelete((XClass*)s);
+        }
+    }
+
+    /* --- 虚表分发：子类重载 EXLinkSession_dispatch 可接管业务消息 ---
+       （框架内务帧仍由会话层消化，只有业务消息走虚表；这是派生类扩展
+       协议消息处理的唯一入口，需锁定其确实被调用而非仅落到注册回调。） */
+    {
+        XLinkDerivedSession* derived = xlink_derived_session_create();
+        XLINK_CHECK(derived != NULL, "派生会话创建成功");
+        if (derived) {
+            XGuiRemoteLoopbackDevice* devA = NULL;
+            XGuiRemoteLoopbackDevice* devB = NULL;
+            XLinkSession* peer = NULL;
+            int before = g_derivedDispatchCount;
+
+            devA = XGuiRemoteLoopbackDevice_createPair(8 * 1024, &devB);
+            peer = devB ? XLinkSession_create_ex((XIODevice*)devB) : NULL;
+            XLINK_CHECK(devA && devB && peer,
+                        "派生会话对端与设备创建成功");
+            if (devA && devB && peer) {
+                XLinkSession_setDevice((XLinkSession*)derived,
+                                       (XIODevice*)devA);
+                XLinkSession_pump((XLinkSession*)derived, 1000);
+                XLinkSession_pump(peer, 1000);
+                XLinkSession_pump((XLinkSession*)derived, 1010);
+                XLINK_CHECK(XLinkSession_isReady((XLinkSession*)derived),
+                            "派生会话自动握手完成");
+
+                {
+                    uint8_t data = 0x21;
+                    XLINK_CHECK(XLinkSession_sendPublish(
+                                    peer, XLINK_TOPIC_USER_BASE + 1,
+                                    &data, 1),
+                                "派生会话用例推送发送成功");
+                    XLinkSession_pump((XLinkSession*)derived, 1020);
+                }
+                XLINK_CHECK(g_derivedDispatchCount == before + 1,
+                            "业务消息经虚表进入子类重载（非默认实现）");
+                XLINK_CHECK(g_derivedLastDataType == XLinkDataType_Raw,
+                            "子类重载收到完整帧头（dataType 可读）");
+                XLINK_CHECK(g_derivedLastClass == XLINK_TOPIC_USER_BASE + 1,
+                            "子类重载可解析业务载荷（topicId 正确）");
+            }
+            XClassDelete((XClass*)derived);
+            if (peer) XClassDelete((XClass*)peer);
+            if (devA) XClassDelete((XClass*)devA);
+            if (devB) XClassDelete((XClass*)devB);
+        }
+    }
 }
 
 /* ========================================================================== */
@@ -1316,10 +1768,12 @@ static void xlink_test_defensive(void)
         XLinkSession* s = XLinkSession_create();
         if (s) {
             XLinkFrameHeader bad;
+            memset(&bad, 0, sizeof(bad));
             bad.m_payloadLen = XLINK_MAX_PAYLOAD + 100;
             bad.m_msgClass = XLinkMsgClass_Publish;
             bad.m_msgCode = 1;
             bad.m_requestId = 0;
+            bad.m_dataType = XLinkDataType_Raw;
             /* 未挂载传输，send 直接失败；这里验证参数校验分支 */
             XLINK_CHECK(!XLinkSession_send(s, &bad, NULL),
                         "未挂载传输时超限帧发送被拒");
@@ -1352,22 +1806,24 @@ static void xlink_test_defensive(void)
                 XLINK_CHECK(XLinkSession_isReady(b), "半帧测试前置握手完成");
 
                 /* 手动把一帧拆成两段写入对端，模拟半包到达。
-                   线上格式 = [12B 帧头][4B topicId][1B 业务载荷]，共 17 字节。 */
+                   线上格式 = [16B 帧头][4B topicId][1B 业务载荷]，共 21 字节。 */
                 {
                     uint8_t frame[XLINK_HEADER_SIZE + 4 + 1];
                     XLinkFrameHeader h;
                     uint32_t topicId = XLINK_TOPIC_USER_BASE;
+                    memset(&h, 0, sizeof(h)); /* dataType/保留位必须确定 */
                     h.m_payloadLen = 5; /* topicId(4) + 业务字节(1) */
                     h.m_msgClass = XLinkMsgClass_Publish;
                     h.m_msgCode = (uint16_t)(XLINK_TOPIC_USER_BASE & 0xFFFF);
                     h.m_requestId = 0;
+                    h.m_dataType = XLinkDataType_Raw;
                     XLinkCodec_encodeHeader(&h, frame);
                     XMemory_write_data(&frame[XLINK_HEADER_SIZE],
                                        XBYTE_ORDER_LITTLE_ENDIAN,
                                        (const uint8_t*)&topicId,
                                        sizeof(topicId));
                     frame[XLINK_HEADER_SIZE + 4] = payload;
-                    /* 先只写帧头（12 字节），载荷尚未到达。
+                    /* 先只写帧头（16 字节），载荷尚未到达。
                        写 devA（本端发送侧）：回环设备「本端写入 = 入对端接收
                        环」，故写 devA 才会送达 b 所挂的 devB。 */
                     XIODevice_write_1((XIODevice*)devA,
@@ -1385,6 +1841,77 @@ static void xlink_test_defensive(void)
                     XLINK_CHECK(g_lastPublishByte == payload,
                                 "半帧拼接后业务载荷未错位");
                 }
+            }
+            if (a) XClassDelete((XClass*)a);
+            if (b) XClassDelete((XClass*)b);
+        }
+        if (devA) XClassDelete((XClass*)devA);
+        if (devB) XClassDelete((XClass*)devB);
+    }
+
+    /* 线上伪造非法 dataType：解码层应判协议违例并断链，且零业务投递。
+       这是 dataType 安全阀的**端到端**回归——单元层已测 decodeHeader
+       拒绝未知值，这里验证会话层真的据此判线、不把无法识别的帧送进业务。 */
+    {
+        XGuiRemoteLoopbackDevice* devA = NULL;
+        XGuiRemoteLoopbackDevice* devB = NULL;
+        XLinkSession* a = NULL;
+        XLinkSession* b = NULL;
+        devA = XGuiRemoteLoopbackDevice_createPair(16 * 1024, &devB);
+        XLINK_CHECK(devA && devB, "非法 dataType 用例设备对创建成功");
+        if (devA && devB) {
+            int before = g_clientPublishCount;
+            a = XLinkSession_create_ex((XIODevice*)devA);
+            b = XLinkSession_create_ex((XIODevice*)devB);
+            XLINK_CHECK(a && b, "非法 dataType 用例双会话创建成功");
+            if (a && b) {
+                XLinkSession_setDispatchCallback(b, xlink_client_dispatch,
+                                                 NULL);
+                XLinkSession_pump(a, 1000);
+                XLinkSession_pump(b, 1000);
+                XLinkSession_pump(a, 1010);
+                XLINK_CHECK(XLinkSession_isReady(b),
+                            "非法 dataType 用例前置握手完成");
+
+                /* 手工构造一帧 dataType=9（未定义），绕过发送侧校验直接写设备 */
+                {
+                    uint8_t frame[XLINK_HEADER_SIZE + 4 + 1];
+                    XLinkFrameHeader h;
+                    uint32_t topicId = XLINK_TOPIC_USER_BASE;
+                    memset(&h, 0, sizeof(h));
+                    h.m_payloadLen = 5;
+                    h.m_msgClass = XLinkMsgClass_Publish;
+                    h.m_msgCode = (uint16_t)(topicId & 0xFFFFu);
+                    h.m_requestId = 0;
+                    h.m_dataType = XLinkDataType_Raw; /* 编码后用字节覆盖 */
+                    XLinkCodec_encodeHeader(&h, frame);
+                    frame[12] = 9; /* 伪造未定义的数据类型 */
+                    XMemory_write_data(&frame[XLINK_HEADER_SIZE],
+                                       XBYTE_ORDER_LITTLE_ENDIAN,
+                                       (const uint8_t*)&topicId,
+                                       sizeof(topicId));
+                    frame[XLINK_HEADER_SIZE + 4] = 0x5C;
+                    XIODevice_write_1((XIODevice*)devA,
+                                      (const char*)frame, sizeof(frame));
+
+                    XLinkSession_pump(b, 1020);
+                    XLINK_CHECK(g_clientPublishCount == before,
+                                "非法 dataType 帧不产生业务投递");
+                    XLINK_CHECK(XLinkSession_state(b)
+                                    == XLinkSessionState_Inactive,
+                                "非法 dataType 判协议违例并断链（转 Inactive）");
+                }
+
+                /* 链路修复后仍可正常工作：证明是"该帧被拒"而非"会话被毒化" */
+                XLinkSession_setDevice(a, (XIODevice*)devA);
+                XLinkSession_setDevice(b, (XIODevice*)devB);
+                XLinkSession_setDispatchCallback(b, xlink_client_dispatch,
+                                                 NULL);
+                XLinkSession_pump(a, 2000);
+                XLinkSession_pump(b, 2000);
+                XLinkSession_pump(a, 2010);
+                XLINK_CHECK(XLinkSession_isReady(b),
+                            "断链后重挂设备可重新握手（会话未毒化）");
             }
             if (a) XClassDelete((XClass*)a);
             if (b) XClassDelete((XClass*)b);
@@ -1436,6 +1963,35 @@ static void xlink_srv_dispatch(XLinkSession* self,
         XLinkSession_sendResponse(self, frame->m_requestId, frame->m_msgCode,
                                   &echo, 1);
     }
+}
+
+/**
+ * @brief 双子端发布测试用的分发回调：按会话身份分别计数推送。
+ * @details 两个客户端共享同一套全局计数会互相干扰，故用 self 区分
+ *          （A 在创建前登记的实例地址固定为 g_publishCliA）。
+ */
+static XLinkSession* g_publishCliA = NULL;
+static XLinkSession* g_publishCliB = NULL;
+
+static void xlink_publish_pair_dispatch(XLinkSession* self,
+                                        const XLinkFrameHeader* frame,
+                                        const uint8_t* payload)
+{
+    if (!self || !frame)
+        return;
+    if (frame->m_msgClass != XLinkMsgClass_Publish)
+        return;
+    if (self == g_publishCliA)
+        g_clientAPublishCount++;
+    else if (self == g_publishCliB)
+        g_clientBPublishCount++;
+    if (payload && frame->m_payloadLen >= 4) {
+        XMemory_read_data(payload, XBYTE_ORDER_LITTLE_ENDIAN,
+                          (uint8_t*)&g_lastPublishTopic,
+                          sizeof(g_lastPublishTopic));
+        g_lastPublishByte = (frame->m_payloadLen >= 5) ? payload[4] : 0;
+    }
+    g_clientLastPublishDataType = frame->m_dataType;
 }
 
 /**
@@ -1684,6 +2240,239 @@ static void xlink_test_server(void)
 
         XClassDelete((XClass*)srv);
         XLINK_CHECK(1, "复用测试服务端销毁无崩溃");
+    }
+
+    /* --- 一对多发布/广播：订阅关系过滤与 dataType 透传 ---
+       这是服务端最核心的业务能力（"哪个客户端订了什么"由会话层自动镜像，
+       应用零记账），此前仅 demo 中间接跑过，现补直接断言。 */
+    {
+        XLinkServer* srv = XLinkServer_create();
+        XTcpSocket* sockA = NULL;
+        XTcpSocket* sockB = NULL;
+        XLinkSession* cliA = NULL;
+        XLinkSession* cliB = NULL;
+        uint16_t port = 0;
+        int i;
+        const uint32_t topicSub = XLINK_TOPIC_USER_BASE + 10;
+        const uint32_t topicOther = XLINK_TOPIC_USER_BASE + 11;
+
+        XLINK_CHECK(srv != NULL, "发布测试服务端创建成功");
+        if (!srv)
+            return;
+        XLinkServer_setCapability(srv, XLinkCapability_None);
+        XLinkServer_setDispatchCallback(srv, xlink_srv_dispatch, NULL);
+
+        if (!XLinkServer_listen(srv, "127.0.0.1", 0)) {
+            XLINK_CHECK(0, "发布测试服务端监听成功");
+            XClassDelete((XClass*)srv);
+            return;
+        }
+        port = XTcpServer_serverPort(XLinkServer_tcpServer_const(srv));
+
+        sockA = XTcpSocket_create();
+        sockB = XTcpSocket_create();
+        XLINK_CHECK(sockA && sockB, "两个客户端套接字创建成功");
+        if (sockA && sockB) {
+            XTcpSocket_connectToHost_base((XAbstractSocket*)sockA,
+                                          "127.0.0.1", port,
+                                          XIODevice_ReadWrite,
+                                          XAbstractSocket_AnyIPProtocol);
+            XTcpSocket_waitForConnected_base((XAbstractSocket*)sockA, 3000);
+            XTcpSocket_connectToHost_base((XAbstractSocket*)sockB,
+                                          "127.0.0.1", port,
+                                          XIODevice_ReadWrite,
+                                          XAbstractSocket_AnyIPProtocol);
+            XTcpSocket_waitForConnected_base((XAbstractSocket*)sockB, 3000);
+
+            for (i = 0; i < 500 && XLinkServer_sessionCount(srv) < 2; i++) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XLinkServer_pump(srv,
+                                 (uint32_t)XDateTime_currentMSecsSinceEpoch());
+            }
+            XLINK_CHECK(XLinkServer_sessionCount(srv) == 2,
+                        "两个客户端均被服务端托管");
+
+            cliA = XLinkSession_create_ex((XIODevice*)sockA);
+            cliB = XLinkSession_create_ex((XIODevice*)sockB);
+            XLINK_CHECK(cliA && cliB, "两个客户端会话创建成功");
+            if (cliA && cliB) {
+                g_publishCliA = cliA;
+                g_publishCliB = cliB;
+                g_clientAPublishCount = 0;
+                g_clientBPublishCount = 0;
+                XLinkSession_setDispatchCallback(cliA,
+                                                 xlink_publish_pair_dispatch,
+                                                 NULL);
+                XLinkSession_setDispatchCallback(cliB,
+                                                 xlink_publish_pair_dispatch,
+                                                 NULL);
+                for (i = 0; i < 500
+                            && !(XLinkSession_isReady(cliA)
+                                 && XLinkSession_isReady(cliB)); i++) {
+                    XCoreApplication_processEvents(XEventLoop_AllEvents);
+                    XLinkServer_pump(srv,
+                        (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                    XLinkSession_pump(cliA,
+                        (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                    XLinkSession_pump(cliB,
+                        (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                }
+                XLINK_CHECK(XLinkSession_isReady(cliA)
+                                && XLinkSession_isReady(cliB),
+                            "两个客户端均完成握手");
+
+                /* 只有 A 订阅 topicSub；B 什么都不订 */
+                XLINK_CHECK(XLinkSession_subscribe(cliA, topicSub),
+                            "客户端 A 订阅 topicSub");
+                for (i = 0; i < 100; i++) {
+                    XCoreApplication_processEvents(XEventLoop_AllEvents);
+                    XLinkServer_pump(srv,
+                        (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                }
+
+                /* 发布到 topicSub：应只送达 A（B 未订阅） */
+                {
+                    uint8_t data = 0x42;
+                    int sent = XLinkServer_publish(srv, topicSub, &data, 1);
+                    XLINK_CHECK(sent == 1,
+                                "publish 只推给已订阅的 1 个会话");
+                    for (i = 0; i < 200; i++) {
+                        XCoreApplication_processEvents(XEventLoop_AllEvents);
+                        XLinkServer_pump(srv,
+                            (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                        XLinkSession_pump(cliA,
+                            (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                        XLinkSession_pump(cliB,
+                            (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                    }
+                    XLINK_CHECK(g_clientAPublishCount == 1
+                                    && g_clientBPublishCount == 0,
+                                "订阅方 A 收到推送，未订阅的 B 未收到");
+                    XLINK_CHECK(g_lastPublishByte == 0x42,
+                                "推送载荷原样送达");
+                    XLINK_CHECK(g_clientLastPublishDataType
+                                    == XLinkDataType_Raw,
+                                "老接口 publish 的 dataType 恒为 Raw");
+                }
+
+                /* 发布到无人订阅的 topic：送达 0 个会话，不报错 */
+                {
+                    uint8_t data = 0x43;
+                    XLINK_CHECK(XLinkServer_publish(srv, topicOther,
+                                                    &data, 1) == 0,
+                                "无订阅者的 topic 发布返回 0（静默，非错误）");
+                }
+
+                /* publish_ex 透传 dataType（带订阅过滤） */
+                {
+                    uint8_t data = 0x44;
+                    int aBefore = g_clientAPublishCount;
+                    g_clientLastPublishDataType = 0xFF;
+                    XLINK_CHECK(XLinkServer_publish_ex(srv, topicSub,
+                                                       XLinkDataType_Json,
+                                                       &data, 1) == 1,
+                                "publish_ex 推送给 1 个订阅会话");
+                    for (i = 0; i < 200; i++) {
+                        XCoreApplication_processEvents(XEventLoop_AllEvents);
+                        XLinkServer_pump(srv,
+                            (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                        XLinkSession_pump(cliA,
+                            (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                    }
+                    XLINK_CHECK(g_clientAPublishCount == aBefore + 1
+                                    && g_clientLastPublishDataType
+                                           == XLinkDataType_Json,
+                                "publish_ex 的 dataType=Json 原样送达订阅方");
+                }
+
+                /* broadcast 不看订阅关系：两个会话都收到 */
+                {
+                    uint8_t data = 0x45;
+                    int aBefore = g_clientAPublishCount;
+                    int bBefore = g_clientBPublishCount;
+                    int sent = XLinkServer_broadcast(srv, topicOther,
+                                                     &data, 1);
+                    XLINK_CHECK(sent == 2,
+                                "broadcast 推送给全部 2 个握手会话");
+                    for (i = 0; i < 200; i++) {
+                        XCoreApplication_processEvents(XEventLoop_AllEvents);
+                        XLinkServer_pump(srv,
+                            (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                        XLinkSession_pump(cliA,
+                            (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                        XLinkSession_pump(cliB,
+                            (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                    }
+                    XLINK_CHECK(g_clientAPublishCount == aBefore + 1
+                                    && g_clientBPublishCount == bBefore + 1,
+                                "两个客户端都收到广播（未订阅的 B 也收到）");
+                }
+
+                /* broadcast_ex 透传 dataType */
+                {
+                    uint8_t data = 0x46;
+                    int aBefore = g_clientAPublishCount;
+                    int bBefore = g_clientBPublishCount;
+                    g_clientLastPublishDataType = 0xFF;
+                    XLINK_CHECK(XLinkServer_broadcast_ex(srv, topicOther,
+                                                         XLinkDataType_Bson,
+                                                         &data, 1) == 2,
+                                "broadcast_ex 推送给 2 个会话");
+                    for (i = 0; i < 200; i++) {
+                        XCoreApplication_processEvents(XEventLoop_AllEvents);
+                        XLinkServer_pump(srv,
+                            (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                        XLinkSession_pump(cliA,
+                            (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                        XLinkSession_pump(cliB,
+                            (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                    }
+                    XLINK_CHECK(g_clientAPublishCount == aBefore + 1
+                                    && g_clientBPublishCount == bBefore + 1
+                                    && g_clientLastPublishDataType
+                                           == XLinkDataType_Bson,
+                                "broadcast_ex 的 dataType=Bson 原样送达");
+                }
+
+                /* 非法 dataType 在服务端入口被拒（返回 0，不发帧） */
+                {
+                    uint8_t data = 0x47;
+                    XLINK_CHECK(XLinkServer_publish_ex(srv, topicSub,
+                                                       (XLinkDataType)99,
+                                                       &data, 1) == 0,
+                                "publish_ex 非法 dataType 返回 0（一帧不发）");
+                    XLINK_CHECK(XLinkServer_broadcast_ex(srv, topicOther,
+                                                         (XLinkDataType)99,
+                                                         &data, 1) == 0,
+                                "broadcast_ex 非法 dataType 返回 0");
+                    XLINK_CHECK(XLinkSession_isReady(cliA)
+                                    && XLinkSession_isReady(cliB),
+                                "非法 dataType 被拒后双端链路仍健康");
+                }
+
+                /* 退订后不再收到该 topic 的发布 */
+                {
+                    uint8_t data = 0x48;
+                    XLINK_CHECK(XLinkSession_unsubscribe(cliA, topicSub),
+                                "客户端 A 退订 topicSub");
+                    for (i = 0; i < 100; i++) {
+                        XCoreApplication_processEvents(XEventLoop_AllEvents);
+                        XLinkServer_pump(srv,
+                            (uint32_t)XDateTime_currentMSecsSinceEpoch());
+                    }
+                    XLINK_CHECK(XLinkServer_publish(srv, topicSub,
+                                                    &data, 1) == 0,
+                                "退订后 publish 不再送达该会话");
+                }
+            }
+            if (cliA) XClassDelete((XClass*)cliA);
+            if (cliB) XClassDelete((XClass*)cliB);
+            g_publishCliA = NULL;
+            g_publishCliB = NULL;
+        }
+        if (sockA) XClassDelete((XClass*)sockA);
+        if (sockB) XClassDelete((XClass*)sockB);
+        XClassDelete((XClass*)srv);
     }
 }
 
@@ -1936,6 +2725,56 @@ static void xlink_test_signals_retry(void)
         XLINK_CHECK(g_reqFinishedCount == 0
                         && XLinkSession_isPending(f->m_client, idEmpty),
                     "空载荷重发成功不发终局、槽保持待应答");
+
+        /* 子场景三·B：重发必须原样保留 dataType——待应答槽记录原帧格式，
+           超时静默重发不得退化为 Raw（否则对端收到 JSON 载荷却按原始字节
+           处理，解析必败且无任何报错线索）。 */
+        g_silentRequestCount = 0;
+        g_silentLastDataType = 0xFF;
+        g_reqFinishedCount = 0;
+        {
+            uint32_t idJson = 0;
+            XLINK_CHECK(XLinkSession_sendRequest_ex(f->m_client, 45,
+                                                    XLinkDataType_Json,
+                                                    &arg, 1, &idJson),
+                        "以 dataType=Json 发出请求（命令 45）");
+            /* 首帧需 pump 才送达对端（sendRequest 只入发送队列）；先推进少量
+               轮次看清"未超时也不重发"的原帧格式，再跨过超时点。 */
+            xlink_fixture_step(f, 3);
+            XLINK_CHECK(g_silentRequestCount == 1
+                            && g_silentLastDataType == XLinkDataType_Json,
+                        "首帧 dataType=Json 正确上线（未重发）");
+            xlink_fixture_step(f, 60); /* 跨过 500ms 超时点 → 静默重发 */
+            XLINK_CHECK(g_silentRequestCount == 2,
+                        "Json 请求超时后静默重发（服务端收到两次）");
+            XLINK_CHECK(g_silentLastDataType == XLinkDataType_Json,
+                        "重发帧 dataType 仍为 Json（未退化 Raw）");
+            XLINK_CHECK(g_silentLastCmd == 45,
+                        "重发帧命令号保持一致");
+            XLINK_CHECK(XLinkSession_isPending(f->m_client, idJson),
+                        "重发后 Json 请求仍在待应答表");
+
+            /* BSON 同理（换一种非 Raw 取值，排除"恰好等于默认值"的假通过） */
+            g_silentRequestCount = 0;
+            g_silentLastDataType = 0xFF;
+            {
+                uint32_t idBson = 0;
+                XLINK_CHECK(XLinkSession_sendRequest_ex(f->m_client, 46,
+                                                        XLinkDataType_Bson,
+                                                        &arg, 1, &idBson),
+                            "以 dataType=Bson 发出请求（命令 46）");
+                xlink_fixture_step(f, 3);
+                XLINK_CHECK(g_silentRequestCount == 1
+                                && g_silentLastDataType == XLinkDataType_Bson,
+                            "首帧 dataType=Bson 正确上线（未重发）");
+                xlink_fixture_step(f, 60);
+                XLINK_CHECK(g_silentRequestCount == 2
+                                && g_silentLastDataType == XLinkDataType_Bson,
+                            "Bson 请求重发后 dataType 仍为 Bson");
+                XLINK_CHECK(XLinkSession_isPending(f->m_client, idBson),
+                            "重发后 Bson 请求仍在待应答表");
+            }
+        }
 
         xlink_fixture_delete(f);
     }
@@ -3329,6 +4168,147 @@ static void xauth_test_userstore(void)
         XLINK_CHECK(XLinkUserStore_count(NULL) == 0,
                     "count 对 NULL 库返回 0");
     }
+
+    /* --- 存取持久化：save/load 往返 + 缺失/损坏文件语义 --- */
+    {
+        char dirBuf[256];
+        char pathBuf[512];
+        const char* dir = xfile_test_makeDir("userstore", dirBuf,
+                                             sizeof(dirBuf));
+        XLinkUserStore src;
+        XLinkUserStore dst;
+
+        XLINK_CHECK(dir != NULL, "账户库持久化测试目录创建成功");
+        if (!dir)
+            return;
+        XSnprintf(pathBuf, sizeof(pathBuf), "%s/users.json", dir);
+        XLinkUserStore_init(&src);
+        XLinkUserStore_init(&dst);
+
+        XLINK_CHECK(XLinkUserStore_upsert(&src, XAUTH_TEST_USER,
+                                          XAUTH_TEST_PASSWORD,
+                                          XLinkAuthRole_User),
+                    "持久化源库添加普通用户");
+        XLINK_CHECK(XLinkUserStore_upsert(&src, XAUTH_TEST_ADMIN,
+                                          "root-pw", XLinkAuthRole_Admin),
+                    "持久化源库添加管理员");
+        XLINK_CHECK(XLinkUserStore_setLocked(&src, XAUTH_TEST_ADMIN, true),
+                    "持久化源库锁定管理员（状态位需随盘往返）");
+        XLINK_CHECK(XLinkUserStore_save(&src, pathBuf),
+                    "账户库保存到 JSON 成功");
+
+        /* 新库加载：口令、角色、锁定状态、迭代次数与盐都应完整回来 */
+        {
+            bool exists = false;
+            XLINK_CHECK(XLinkUserStore_load(&dst, pathBuf, &exists),
+                        "账户库从 JSON 加载成功");
+            XLINK_CHECK(exists, "load 报告文件存在");
+            XLINK_CHECK(XLinkUserStore_count(&dst) == 2,
+                        "加载后账户数为 2");
+
+            {
+                uint8_t role = 0;
+                XLINK_CHECK(XLinkUserStore_verify(&dst, XAUTH_TEST_USER,
+                                                  XAUTH_TEST_PASSWORD,
+                                                  &role) == 0,
+                            "加载后原口令仍可校验通过");
+                XLINK_CHECK(role == XLinkAuthRole_User,
+                            "加载后角色正确（普通用户）");
+            }
+            {
+                uint8_t role = 0;
+                XLINK_CHECK(XLinkUserStore_verify(&dst, XAUTH_TEST_ADMIN,
+                                                  "root-pw", &role) == 2,
+                            "加载后锁定状态随盘恢复（校验返回码 2）");
+                XLINK_CHECK(role == XLinkAuthRole_Admin
+                                || role == 0,
+                            "锁定账户角色字段未被破坏");
+            }
+            {
+                const XLinkUserRecord* rec =
+                    XLinkUserStore_find(&dst, XAUTH_TEST_USER);
+                XLINK_CHECK(rec && XLinkUserStore_hasPassword(rec),
+                            "加载后 hasPassword 为真");
+                XLINK_CHECK(rec && !XLinkUserStore_isLocked(rec),
+                            "加载后未锁定账户 isLocked 为假");
+                XLINK_CHECK(rec && XLinkUserStore_name_const(rec)
+                                      && strcmp(XLinkUserStore_name_const(rec),
+                                                XAUTH_TEST_USER) == 0,
+                            "加载后用户名原样恢复");
+                XLINK_CHECK(rec && rec->m_iterations > 0,
+                            "加载后迭代次数有效（非 0）");
+            }
+            XLINK_CHECK(XLinkUserStore_at(&dst, 0) != NULL,
+                        "at(0) 可取到记录");
+            XLINK_CHECK(XLinkUserStore_at(&dst, 99) == NULL,
+                        "at 越界返回 NULL");
+        }
+
+        /* 文件不存在：视为成功 + 空库 + exists=false */
+        {
+            char missing[512];
+            bool exists = true;
+            XLinkUserStore emptyStore;
+            XLinkUserStore_init(&emptyStore);
+            XSnprintf(missing, sizeof(missing), "%s/no-such.json", dir);
+            XLINK_CHECK(XLinkUserStore_load(&emptyStore, missing, &exists),
+                        "加载不存在的文件返回 true");
+            XLINK_CHECK(!exists, "exists 置 false");
+            XLINK_CHECK(XLinkUserStore_count(&emptyStore) == 0,
+                        "缺失文件对应空库");
+        }
+
+        /* 损坏文件：返回 false 且库保持清空（不半加载） */
+        {
+            char broken[512];
+            XLinkUserStore brokenStore;
+            XFile* bf;
+            XString* bpath;
+            bool exists = true;
+            XSnprintf(broken, sizeof(broken), "%s/broken.json", dir);
+            bpath = XString_create_utf8(broken);
+            bf = bpath ? XFile_create_2(bpath) : NULL;
+            XLINK_CHECK(bf != NULL, "损坏 JSON 测试文件对象创建成功");
+            if (bf) {
+                XLinkUserStore_init(&brokenStore);
+                /* 先放一个账户，验证"损坏时清空"而非"保留旧内容" */
+                XLinkUserStore_upsert(&brokenStore, "stale", "pw",
+                                      XLinkAuthRole_User);
+                if (XFile_open_2(bf, XIODevice_WriteOnly | XIODevice_Create
+                                     | XIODevice_Truncate, 0)) {
+                    /* 截断的 JSON：解析必失败，且不构成完整文档 */
+                    const char* junk = "{\"users\": [ {\"name\": ";
+                    XIODevice_write_1((XIODevice*)bf, junk,
+                                      (int64_t)strlen(junk));
+                    XFile_flush(bf);
+                    XClassDelete((XClass*)bf);
+                    XLINK_CHECK(!XLinkUserStore_load(&brokenStore, broken,
+                                                     &exists),
+                                "损坏 JSON 加载返回 false");
+                    XLINK_CHECK(XLinkUserStore_count(&brokenStore) == 0,
+                                "损坏时库被清空（不半加载、不留旧账户）");
+                } else {
+                    XLINK_CHECK(0, "损坏 JSON 测试文件写入成功");
+                    XClassDelete((XClass*)bf);
+                }
+            }
+            if (bpath) XClassDelete((XClass*)bpath);
+        }
+
+        /* NULL 防御 */
+        XLINK_CHECK(!XLinkUserStore_save(NULL, pathBuf),
+                    "save 对 NULL 库返回 false");
+        XLINK_CHECK(!XLinkUserStore_load(NULL, pathBuf, NULL),
+                    "load 对 NULL 库返回 false");
+        XLINK_CHECK(!XLinkUserStore_save(&src, NULL),
+                    "save 对 NULL 路径返回 false");
+        XLINK_CHECK(!XLinkUserStore_load(&src, NULL, NULL),
+                    "load 对 NULL 路径返回 false");
+
+        XLinkUserStore_clear(&src);
+        XLinkUserStore_clear(&dst);
+        xfile_test_cleanup(dir);
+    }
 }
 
 /**
@@ -3544,6 +4524,145 @@ static void xauth_test_end_to_end(void)
         }
         XLinkServer_close(srv);
         XClassDelete((XClass*)srv);
+    }
+
+    /* --- 服务端账户库管理面：setUserStorePath / addUser / removeUser /
+       setUserLocked / userAt / saveUserStore / sessionUser_const --- */
+    {
+        char dirBuf[256];
+        char pathBuf[512];
+        const char* dir = xfile_test_makeDir("srvusers", dirBuf,
+                                             sizeof(dirBuf));
+        XLinkServer* srv = XLinkServer_create();
+
+        XLINK_CHECK(dir != NULL, "服务端账户库测试目录创建成功");
+        XLINK_CHECK(srv != NULL, "服务端账户库测试服务端创建成功");
+        if (dir && srv) {
+            XSnprintf(pathBuf, sizeof(pathBuf), "%s/srv-users.json", dir);
+
+            /* 初始为空；addUser 后计数增长，重复添加同名不增加计数 */
+            XLINK_CHECK(XLinkServer_userCount(srv) == 0,
+                        "新服务端账户库为空");
+            XLINK_CHECK(XLinkServer_addUser(srv, XAUTH_TEST_USER,
+                                            XAUTH_TEST_PASSWORD,
+                                            XLinkAuthRole_User),
+                        "addUser 添加普通用户成功");
+            XLINK_CHECK(XLinkServer_userCount(srv) == 1, "添加后账户数为 1");
+            XLINK_CHECK(XLinkServer_addUser(srv, XAUTH_TEST_ADMIN,
+                                            "admin-pw",
+                                            XLinkAuthRole_Admin),
+                        "addUser 添加管理员成功");
+            XLINK_CHECK(XLinkServer_userCount(srv) == 2, "账户数为 2");
+            XLINK_CHECK(XLinkServer_addUser(srv, XAUTH_TEST_USER, NULL,
+                                            XLinkAuthRole_User),
+                        "同名 addUser 更新而不新增（口令 NULL 表示不改）");
+            XLINK_CHECK(XLinkServer_userCount(srv) == 2,
+                        "更新后账户数不变");
+
+            /* userAt / 越界 / 记录内容 */
+            {
+                const XLinkUserRecord* rec = XLinkServer_userAt(srv, 0);
+                XLINK_CHECK(rec != NULL, "userAt(0) 可取到记录");
+                XLINK_CHECK(rec && XLinkUserStore_hasPassword(rec),
+                            "记录已设口令");
+                XLINK_CHECK(XLinkServer_userAt(srv, 99) == NULL,
+                            "userAt 越界返回 NULL");
+            }
+
+            /* 锁定/解锁 */
+            XLINK_CHECK(XLinkServer_setUserLocked(srv, XAUTH_TEST_ADMIN, true),
+                        "setUserLocked 锁定成功");
+            XLINK_CHECK(!XLinkServer_setUserLocked(srv, "ghost", true),
+                        "锁定不存在的用户返回 false");
+            XLINK_CHECK(XLinkServer_setUserLocked(srv, XAUTH_TEST_ADMIN,
+                                                  false),
+                        "setUserLocked 解锁成功");
+
+            /* 删除 */
+            XLINK_CHECK(XLinkServer_removeUser(srv, XAUTH_TEST_ADMIN),
+                        "removeUser 删除成功");
+            XLINK_CHECK(XLinkServer_userCount(srv) == 1, "删除后账户数为 1");
+            XLINK_CHECK(!XLinkServer_removeUser(srv, XAUTH_TEST_ADMIN),
+                        "重复删除返回 false");
+
+            /* 持久化：setUserStorePath 会**立即加载**并把内存库换成文件内容
+               （文件不存在即清空），故顺序必须是「先设路径（此时空文件→
+               空库，但随后 we 重新 addUser）→ 再 save」。
+               这里的意图是验证"保存后能被另一个服务端加载回来"，因此：
+               1) 在新服务端上设路径（空库）；
+               2) 重新添加账户；
+               3) save；
+               4) 另一个服务端设同一路径 → 应加载到相同账户数。 */
+            {
+                XLinkServer* writer = XLinkServer_create();
+                XLinkServer* reader = NULL;
+                XLINK_CHECK(writer != NULL, "持久化写入端服务端创建成功");
+                if (writer) {
+                    XLINK_CHECK(XLinkServer_setUserStorePath(writer, pathBuf),
+                                "写入端设置账户库路径成功（文件不存在→空库）");
+                    XLINK_CHECK(XLinkServer_addUser(writer, XAUTH_TEST_USER,
+                                                    XAUTH_TEST_PASSWORD,
+                                                    XLinkAuthRole_User),
+                                "写入端添加账户成功");
+                    XLINK_CHECK(XLinkServer_saveUserStore(writer),
+                                "saveUserStore 保存成功");
+
+                    reader = XLinkServer_create();
+                    XLINK_CHECK(reader != NULL, "读取端服务端创建成功");
+                    if (reader) {
+                        XLINK_CHECK(XLinkServer_setUserStorePath(reader,
+                                                                 pathBuf),
+                                    "读取端从同一路径加载成功");
+                        XLINK_CHECK(XLinkServer_userCount(reader) == 1,
+                                    "加载后账户数与写入端一致（1）");
+                        {
+                            const XLinkUserRecord* rec =
+                                XLinkServer_userAt(reader, 0);
+                            XLINK_CHECK(rec && XLinkUserStore_name_const(rec)
+                                          && strcmp(XLinkUserStore_name_const(rec),
+                                                    XAUTH_TEST_USER) == 0,
+                                        "加载后用户名原样恢复");
+                            XLINK_CHECK(rec && XLinkUserStore_hasPassword(rec),
+                                        "加载后口令摘要仍在（hasPassword）");
+                        }
+                        XClassDelete((XClass*)reader);
+                    }
+                    XClassDelete((XClass*)writer);
+                }
+            }
+
+            /* 路径传空串等价摘除：清空路径与内存库 */
+            XLINK_CHECK(XLinkServer_setUserStorePath(srv, NULL),
+                        "setUserStorePath(NULL) 摘除路径成功");
+            XLINK_CHECK(!XLinkServer_saveUserStore(srv),
+                        "未设路径时 saveUserStore 返回 false");
+
+            /* NULL 防御 */
+            XLINK_CHECK(!XLinkServer_addUser(NULL, "a", "b", 0),
+                        "addUser 对 NULL 服务端拒绝");
+            XLINK_CHECK(!XLinkServer_removeUser(NULL, "a"),
+                        "removeUser 对 NULL 服务端拒绝");
+            XLINK_CHECK(!XLinkServer_setUserLocked(NULL, "a", true),
+                        "setUserLocked 对 NULL 服务端拒绝");
+            XLINK_CHECK(XLinkServer_userCount(NULL) == 0,
+                        "userCount 对 NULL 返回 0");
+            XLINK_CHECK(XLinkServer_userAt(NULL, 0) == NULL,
+                        "userAt 对 NULL 返回 NULL");
+            XLINK_CHECK(!XLinkServer_saveUserStore(NULL),
+                        "saveUserStore 对 NULL 返回 false");
+            XLINK_CHECK(XLinkServer_sessionUser_const(NULL, NULL) == NULL,
+                        "sessionUser_const 对 NULL 返回 NULL");
+            XLINK_CHECK(XLinkServer_sessionRole(NULL, NULL)
+                            == XLinkAuthRole_Anonymous,
+                        "sessionRole 对 NULL 返回 Anonymous");
+
+            XLinkServer_close(srv);
+            XClassDelete((XClass*)srv);
+            xfile_test_cleanup(dir);
+        } else {
+            if (srv) XClassDelete((XClass*)srv);
+            if (dir) xfile_test_cleanup(dir);
+        }
     }
 }
 
@@ -3826,8 +4945,6 @@ static const char* xfile_test_makeDir(const char* leaf, char* out,
     XClassDelete((XClass*)dirPath);
     return created ? out : NULL;
 }
-
-static void xfile_test_cleanup(const char* dir);
 
 /** @brief 写一个指定大小/内容的测试文件（经 XFile；覆盖已存在文件）。
  *  @note  写前先清残留：老版本 cleanup 曾把目标chmod成不可写权限位

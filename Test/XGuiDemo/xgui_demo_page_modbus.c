@@ -64,6 +64,32 @@
 #include "XSpinBox.h"
 #include "XTimer.h"
 #include "XTableWidget.h"
+
+/* ===== [Qt 对齐迁移 2026-11-03] XTableWidget 文本便捷 helper =====
+ * 旧 API XTableWidget_setText/XTableWidget_text 已删除（Qt 无对应物）。
+ * Qt 等价写法：item->setText()/item->text()；空格需先创建条目。
+ * 此处提供两个文件内 static helper，集中承担「空格自动建条目」这一
+ * C 侧便捷语义，避免逐点展开样板代码。 */
+#ifndef XTW_TEXT_HELPER_DEFINED
+#define XTW_TEXT_HELPER_DEFINED
+static void xTwSetTextUtf8(XTableWidget* tbl, int row, int col,
+                           const char* utf8)
+{
+    XTableWidgetItem* item = XTableWidget_item(tbl, row, col);
+    if (!item) {
+        item = XTableWidgetItem_create_utf8(utf8, XTableWidgetItem_Type);
+        if (!item) return;
+        XTableWidget_setItem(tbl, row, col, item);
+        return;
+    }
+    XTableWidgetItem_setText_utf8(item, utf8);
+}
+static const char* xTwTextUtf8(const XTableWidget* tbl, int row, int col)
+{
+    return XTableWidgetItem_text_toUtf8(XTableWidget_item(tbl, row, col));
+}
+#endif /* XTW_TEXT_HELPER_DEFINED */
+
 #include "XItemDelegate.h"
 #include "XWidget_Protected.h"
 #include "XCoreApplication.h" /* paintImage/paintOffset（DI 指示灯自绘）。 */
@@ -1148,7 +1174,7 @@ static void mb_regTablesApplyTier(XTableWidget* irTbl, XTableWidget* hrTbl,
         XTableWidget* tbl = tabs[i];
         const char* const* heads;
         if (!tbl) continue;
-        XTableView_setRowHeight(&tbl->m_base, mb_regRowH(compact));
+        XTableView_setRowHeight(&tbl->m_base, 0, mb_regRowH(compact));
         /* 只读表恒用无「双击编辑」字样的文案（主站 IR）。 */
         if (!XAbstractItemView_itemsEditable(&tbl->m_base.m_base))
             heads = kMbRegHeadReadOnly;
@@ -1191,13 +1217,13 @@ static void mb_masterRegReformat(XTableWidget* tbl, int oldHex, int newHex)
     rows = XTableWidget_rowCount(tbl);
     s_mb.regSuppress = true;
     for (i = 0; i < rows; ++i) {
-        const char* text = XTableWidget_text(tbl, i, 1);
+        const char* text = xTwTextUtf8(tbl, i, 1);
         long v = mb_regParseText(text, oldHex);
         if (v < 0) v = 0;
         if (v > 0xFFFF) v = 0xFFFF;
         mb_regFormatText(buf, sizeof(buf), (uint16_t)v, newHex);
         if (!text || strcmp(text, buf) != 0)
-            XTableWidget_setText(tbl, i, 1, buf);
+            xTwSetTextUtf8(tbl, i, 1, buf);
     }
     s_mb.regSuppress = false;
 }
@@ -1254,8 +1280,8 @@ static void mb_masterRewriteAddrCol(XTableWidget* tbl, int start)
     s_mb.regSuppress = true;
     for (i = 0; i < rows; ++i) {
         snprintf(txt, sizeof(txt), "0x%04X", (unsigned)(start + i));
-        if (strcmp(XTableWidget_text(tbl, i, 0), txt) != 0)
-            XTableWidget_setText(tbl, i, 0, txt);
+        if (strcmp(xTwTextUtf8(tbl, i, 0), txt) != 0)
+            xTwSetTextUtf8(tbl, i, 0, txt);
     }
     s_mb.regSuppress = false;
 }
@@ -1310,16 +1336,16 @@ static void mb_masterRegCellChangedAt(XModbusRegisterType type, int row,
     if (col == 0) {
         /* 地址=起始+行号（与轮询/写同源）。 */
         snprintf(txt, sizeof(txt), "0x%04X", (unsigned)(base + row));
-        if (strcmp(XTableWidget_text(tbl, row, 0), txt) != 0) {
+        if (strcmp(xTwTextUtf8(tbl, row, 0), txt) != 0) {
             s_mb.regSuppress = true;
-            XTableWidget_setText(tbl, row, 0, txt);
+            xTwSetTextUtf8(tbl, row, 0, txt);
             s_mb.regSuppress = false;
         }
         return;
     }
     if (col != 1) return;
     {
-        const char* text = XTableWidget_text(tbl, row, 1);
+        const char* text = xTwTextUtf8(tbl, row, 1);
         long val = mb_regParseText(text, hex);
         if (val < 0) val = 0;
         if (val > 0xFFFF) val = 0xFFFF;
@@ -1362,9 +1388,9 @@ static void mb_masterRegCellChangedAt(XModbusRegisterType type, int row,
         }
         /* 规范化回写（差量）：编辑提交的原始文本收敛为当前格式口径。 */
         mb_regFormatText(txt, sizeof(txt), (uint16_t)val, hex);
-        if (strcmp(XTableWidget_text(tbl, row, 1), txt) != 0) {
+        if (strcmp(xTwTextUtf8(tbl, row, 1), txt) != 0) {
             s_mb.regSuppress = true;
-            XTableWidget_setText(tbl, row, 1, txt);
+            xTwSetTextUtf8(tbl, row, 1, txt);
             s_mb.regSuppress = false;
         }
     }
@@ -1415,21 +1441,14 @@ static void mb_masterRegFillTable(XTableWidget* tbl,
          ++i) {
         uint16_t v = XModbusDataUnit_value(result, (size_t)i);
         char text[12];
-        XTableWidgetItem item;
         mb_regFormatText(text, sizeof(text), v, hex);
         /* [脏区 2026-10-15] 同值跳过：setItem 已收窄为单格矩形失效，
            此处再免掉无变化写入——稳态轮询值不变时零像素失效，只有
            真变化的格子进脏区（Qt dataChanged 仅实际变更语义同）。 */
-        {
-            const XTableWidgetItem* cur = XTableWidget_item(tbl, i, 1);
-            if (cur && cur->text &&
-                strcmp(XString_toUtf8(cur->text), text) == 0)
-                continue;
-        }
-        XMemset(&item, 0, sizeof(item));
-        item.text = XString_create_utf8(text);
-        XTableWidget_setItem(tbl, i, 1, &item);
-        XClassDelete((XClass*)item.text);
+        if (strcmp(XTableWidgetItem_text_toUtf8(
+                       XTableWidget_item(tbl, i, 1)), text) == 0)
+            continue;  /* 值未变 ⇒ 不产生脏区。 */
+        xTwSetTextUtf8(tbl, i, 1, text);
     }
     s_mb.regSuppress = false;
 }
@@ -2736,16 +2755,16 @@ static void mb_slaveRegCellChangedAt(XModbusRegisterType type, int row,
         /* 地址列防误改回写：文本已正确早退（setText 会再入本槽，靠
          * 差量+suppress 双重断环）。 */
         snprintf(buf, sizeof(buf), "0x%04X", row);
-        if (strcmp(XTableWidget_text(tbl, row, 0), buf) != 0) {
+        if (strcmp(xTwTextUtf8(tbl, row, 0), buf) != 0) {
             s_mbSlave.regEchoSuppress = 1;
-            XTableWidget_setText(tbl, row, 0, buf);
+            xTwSetTextUtf8(tbl, row, 0, buf);
             s_mbSlave.regEchoSuppress = 0;
         }
         return;
     }
     if (col != 1) return;
     {
-        const char* text = XTableWidget_text(tbl, row, 1);
+        const char* text = xTwTextUtf8(tbl, row, 1);
         int hex = (type == XModbusInputRegisters) ? s_mbSlave.irHex
                                                   : s_mbSlave.hrHex;
         long want = mb_regParseText(text, hex);
@@ -2764,9 +2783,9 @@ static void mb_slaveRegCellChangedAt(XModbusRegisterType type, int row,
         /* 规范化回写（差量）：编辑提交的原始文本（如 "007"/"99999"）
          * 收敛为当前格式口径，与数据区读回一致。 */
         mb_regFormatText(buf, sizeof(buf), (uint16_t)want, hex);
-        if (strcmp(XTableWidget_text(tbl, row, 1), buf) != 0) {
+        if (strcmp(xTwTextUtf8(tbl, row, 1), buf) != 0) {
             s_mbSlave.regEchoSuppress = 1;
-            XTableWidget_setText(tbl, row, 1, buf);
+            xTwSetTextUtf8(tbl, row, 1, buf);
             s_mbSlave.regEchoSuppress = 0;
         }
     }
@@ -2811,13 +2830,13 @@ static void mb_slaveRegReformat(XTableWidget* tbl, int oldHex, int newHex)
     rows = XTableWidget_rowCount(tbl);
     s_mbSlave.regEchoSuppress = 1;
     for (i = 0; i < rows; ++i) {
-        const char* text = XTableWidget_text(tbl, i, 1);
+        const char* text = xTwTextUtf8(tbl, i, 1);
         long v = mb_regParseText(text, oldHex);
         if (v < 0) v = 0;
         if (v > 0xFFFF) v = 0xFFFF;
         mb_regFormatText(buf, sizeof(buf), (uint16_t)v, newHex);
         if (!text || strcmp(text, buf) != 0)
-            XTableWidget_setText(tbl, i, 1, buf);
+            xTwSetTextUtf8(tbl, i, 1, buf);
     }
     s_mbSlave.regEchoSuppress = 0;
 }
@@ -2886,13 +2905,9 @@ static void mb_slaveEchoAll(void)
             continue;
         mb_regFormatText(text, sizeof(text), v, s_mbSlave.irHex);
         {
-            const char* cur = XTableWidget_text(s_mbSlave.irTable, i, 1);
+            const char* cur = xTwTextUtf8(s_mbSlave.irTable, i, 1);
             if (cur && strcmp(cur, text) == 0) continue;  /* 值未变 ⇒ 不产生脏区。 */
-            XTableWidgetItem item;
-            XMemset(&item, 0, sizeof(item));
-            item.text = XString_create_utf8(text);
-            XTableWidget_setItem(s_mbSlave.irTable, i, 1, &item);
-            XClassDelete((XClass*)item.text);
+            xTwSetTextUtf8(s_mbSlave.irTable, i, 1, text);
         }
     }
     for (i = 0; i < s_mbSlave.hrCount && i < MB_SLAVE_REG_MAX_ROWS; ++i) {
@@ -2903,13 +2918,9 @@ static void mb_slaveEchoAll(void)
             continue;
         mb_regFormatText(text, sizeof(text), v, s_mbSlave.hrHex);
         {
-            const char* cur = XTableWidget_text(s_mbSlave.hrTable, i, 1);
+            const char* cur = xTwTextUtf8(s_mbSlave.hrTable, i, 1);
             if (cur && strcmp(cur, text) == 0) continue;
-            XTableWidgetItem item;
-            XMemset(&item, 0, sizeof(item));
-            item.text = XString_create_utf8(text);
-            XTableWidget_setItem(s_mbSlave.hrTable, i, 1, &item);
-            XClassDelete((XClass*)item.text);
+            xTwSetTextUtf8(s_mbSlave.hrTable, i, 1, text);
         }
     }
     s_mbSlave.regEchoSuppress = 0;
@@ -3158,23 +3169,18 @@ static void mb_slaveMountRegRow(XTableWidget* tbl, int i, int hex)
 {
     char addr[12];
     char val[12];
-    XTableWidgetItem item;
+    XTableWidgetItem* item;
     if (!tbl || i < 0 || i >= MB_SLAVE_REG_MAX_ROWS) return;
     snprintf(addr, sizeof(addr), "0x%04X", i);
-    XMemset(&item, 0, sizeof(item));
-    item.text = XString_create_utf8(addr);
-    /* [10-19 对齐 Qt] 地址列只读：item 级 flags 去 ItemIsEditable
-     * （0=缺省可编辑的兼容约定，故显式给「可选+可用」组合）——
-     * 双击地址格不再进入编辑。 */
-    item.itemFlags = XTableWidgetItemFlag_ItemIsSelectable |
-                     XTableWidgetItemFlag_ItemIsEnabled;
-    XTableWidget_setItem(tbl, i, 0, &item);
-    XClassDelete((XClass*)item.text);
+    item = XTableWidgetItem_create_utf8(addr, XTableWidgetItem_Type);
+    /* 对齐 Qt：地址列只读——item 级 flags 去 ItemIsEditable。 */
+    if (item)
+        XTableWidgetItem_setFlags(item,
+            XItemFlag_ItemIsSelectable | XItemFlag_ItemIsEnabled);
+    XTableWidget_setItem(tbl, i, 0, item);
     mb_regFormatText(val, sizeof(val), 0, hex); /* 初值 0 按当前格式。 */
-    XMemset(&item, 0, sizeof(item));
-    item.text = XString_create_utf8(val);
-    XTableWidget_setItem(tbl, i, 1, &item);
-    XClassDelete((XClass*)item.text);
+    XTableWidget_setItem(tbl, i, 1,
+        XTableWidgetItem_create_utf8(val, XTableWidgetItem_Type));
 }
 
 /** @brief 建一张寄存器表（2 列 × 当前行数，观察态纯文本）。
@@ -3363,7 +3369,7 @@ static void mb_slaveApplyRegGeometry(int availW)
          * 表头高同理，读实际值）。 */
         rows = XTableWidget_rowCount(tabs[i]);
         h = (int)tabs[i]->m_headerHeight +
-            XTableView_rowHeight(&tabs[i]->m_base) * rows;
+            XTableView_rowHeight(&tabs[i]->m_base, 0) * rows;
         XWidget_setFixedWidth((XWidget*)tabs[i], w);
         XWidget_setFixedHeight((XWidget*)tabs[i], h);
     }
@@ -3378,7 +3384,7 @@ static void mb_slaveApplyRegGeometry(int availW)
         if (!tbl) continue;
         rows = XTableWidget_rowCount(tbl);
         h = (int)tbl->m_headerHeight +
-            XTableView_rowHeight(&tbl->m_base) * rows;
+            XTableView_rowHeight(&tbl->m_base, 0) * rows;
         XWidget_setGeometry((XWidget*)tbl,
                             XWidget_x((XWidget*)tbl),
                             XWidget_y((XWidget*)tbl), w, h);
@@ -3878,7 +3884,7 @@ static void mb_masterRegSyncViewport(void)
         if (!tbl) continue;
         rows = XTableWidget_rowCount(tbl);
         h = (int)tbl->m_headerHeight +
-            XTableView_rowHeight(&tbl->m_base) * rows;
+            XTableView_rowHeight(&tbl->m_base, 0) * rows;
         XWidget_setFixedWidth((XWidget*)tbl, w);
         XWidget_setFixedHeight((XWidget*)tbl, h);
     }
@@ -3893,7 +3899,7 @@ static void mb_masterRegSyncViewport(void)
         if (!tbl) continue;
         rows = XTableWidget_rowCount(tbl);
         h = (int)tbl->m_headerHeight +
-            XTableView_rowHeight(&tbl->m_base) * rows;
+            XTableView_rowHeight(&tbl->m_base, 0) * rows;
         XWidget_setGeometry((XWidget*)tbl, XWidget_x((XWidget*)tbl),
                             XWidget_y((XWidget*)tbl), w, h);
         mb_slaveApplyRegColWidths(tbl, w);
@@ -4762,8 +4768,10 @@ int demo_page_modbus_master_autotest(XWidget* page)
                     if (XAbstractItemView_edit(irv, rr - 1, 1))++failures;
                 }
                 for (r = 0; r < XTableWidget_rowCount(s_mb.hrTable); ++r) {
-                    uint32_t f = XTableWidget_itemFlags(s_mb.hrTable, r, 0);
-                    if ((f & XTableWidgetItemFlag_ItemIsEditable) || f == 0)
+                    const XTableWidgetItem* ai =
+                        XTableWidget_item(s_mb.hrTable, r, 0);
+                    uint32_t f = XTableWidgetItem_flags(ai);
+                    if (!ai || (f & XItemFlag_ItemIsEditable))
                        ++failures; /* 可写表的地址格也必须显式只读。 */
                 }
             }
@@ -4780,15 +4788,15 @@ int demo_page_modbus_master_autotest(XWidget* page)
                 if (XAbstractItemView_isEditing(hrv))++failures;
                 {
                     const char* cellText =
-                        XTableWidget_text(s_mb.hrTable, 0, 1);
+                        xTwTextUtf8(s_mb.hrTable, 0, 1);
                     if (!cellText || strcmp(cellText, "0x007B") != 0)
                        ++failures;
                 }
                 /* 地址列防误改：写坏文本→桥回写正确地址（=行号 0 基）。 */
-                XTableWidget_setText(s_mb.hrTable, 0, 0, "0xDEAD");
+                xTwSetTextUtf8(s_mb.hrTable, 0, 0, "0xDEAD");
                 {
                     const char* addrText =
-                        XTableWidget_text(s_mb.hrTable, 0, 0);
+                        xTwTextUtf8(s_mb.hrTable, 0, 0);
                     if (!addrText || strcmp(addrText, "0x0000") != 0)
                        ++failures;
                 }
@@ -4813,7 +4821,7 @@ int demo_page_modbus_master_autotest(XWidget* page)
                     }
                     {
                         const char* cellText =
-                            XTableWidget_text(s_mb.hrTable, 0, 1);
+                            xTwTextUtf8(s_mb.hrTable, 0, 1);
                         if (!cellText || strcmp(cellText, "99") != 0)
                            ++failures; /* 10 进制档规范化。 */
                     }
@@ -4824,7 +4832,7 @@ int demo_page_modbus_master_autotest(XWidget* page)
                 mb_masterHrFmtSlot(NULL, NULL);
                 {
                     const char* cellText =
-                        XTableWidget_text(s_mb.hrTable, 0, 1);
+                        xTwTextUtf8(s_mb.hrTable, 0, 1);
                     if (!cellText || strcmp(cellText, "0x0063") != 0)
                        ++failures; /* 切回 16 进制重排。 */
                 }
@@ -4835,8 +4843,8 @@ int demo_page_modbus_master_autotest(XWidget* page)
                 XSpinBox_setValue(s_mb.irAddrSpin, 0x0F00);
                 mb_masterIrAddrSlot(NULL, NULL);
                 {
-                    const char* a0 = XTableWidget_text(s_mb.irTable, 0, 0);
-                    const char* a1 = XTableWidget_text(s_mb.irTable, 1, 0);
+                    const char* a0 = xTwTextUtf8(s_mb.irTable, 0, 0);
+                    const char* a1 = xTwTextUtf8(s_mb.irTable, 1, 0);
                     if (!a0 || strcmp(a0, "0x0F00") != 0)
                        ++failures;
                     if (!a1 || strcmp(a1, "0x0F01") != 0)
@@ -4845,7 +4853,7 @@ int demo_page_modbus_master_autotest(XWidget* page)
                 XSpinBox_setValue(s_mb.irAddrSpin, 0);
                 mb_masterIrAddrSlot(NULL, NULL);
                 {
-                    const char* a0 = XTableWidget_text(s_mb.irTable, 0, 0);
+                    const char* a0 = xTwTextUtf8(s_mb.irTable, 0, 0);
                     if (!a0 || strcmp(a0, "0x0000") != 0)
                        ++failures;
                 }
@@ -5670,7 +5678,7 @@ int demo_page_modbus_slave_autotest(XWidget* page)
                 rows = XTableWidget_rowCount(tbl);
                 mx = XWidget_maximumSize((XWidget*)tbl);
                 fullH = (int)tbl->m_headerHeight +
-                        XTableView_rowHeight(&tbl->m_base) * rows;
+                        XTableView_rowHeight(&tbl->m_base, 0) * rows;
                 if (mx.height != fullH || mx.width < MB_REG_MIN_COL_W)
                     ++failures;
                 bodyW = mx.width - (int)tbl->m_headerWidth;
@@ -5730,7 +5738,7 @@ int demo_page_modbus_slave_autotest(XWidget* page)
                     ++failures;
                 {
                     const char* cellText =
-                        XTableWidget_text(s_mbSlave.irTable, 2, 1);
+                        xTwTextUtf8(s_mbSlave.irTable, 2, 1);
                     if (!cellText || strcmp(cellText, "555") != 0)
                         ++failures;
                 }
@@ -5738,7 +5746,7 @@ int demo_page_modbus_slave_autotest(XWidget* page)
                 XModbusServer_setData2(s_mbSlave.server,
                                        XModbusInputRegisters, 2,
                                        savedProbe);
-                XTableWidget_setText(s_mbSlave.irTable, 2, 1, "0");
+                xTwSetTextUtf8(s_mbSlave.irTable, 2, 1, "0");
             } else {
                 ++failures;
             }
@@ -5871,7 +5879,7 @@ int demo_page_modbus_slave_autotest(XWidget* page)
                     ++failures;
                     continue;
                 }
-                XTableWidget_setText(tabs[k], 3, 1, "1234");
+                xTwSetTextUtf8(tabs[k], 3, 1, "1234");
                 if (!XModbusServer_data2(s_mbSlave.server, types[k],
                                          3, &now) || now != 1234)
                     ++failures;
@@ -5883,7 +5891,7 @@ int demo_page_modbus_slave_autotest(XWidget* page)
                 /* 还原：setData2 落库 + setText 同步文本（槽差量早退）。 */
                 XModbusServer_setData2(s_mbSlave.server, types[k], 3, saved);
                 snprintf(back, sizeof(back), "%u", (unsigned)saved);
-                XTableWidget_setText(tabs[k], 3, 1, back);
+                xTwSetTextUtf8(tabs[k], 3, 1, back);
             }
         }
         /* ---- [10-19 框架编辑器迁移] 观察态无框；编辑器几何/可见性/生命
@@ -5902,7 +5910,7 @@ int demo_page_modbus_slave_autotest(XWidget* page)
                 ++failures;
                 savedIr2 = 0;
             }
-            XTableWidget_setText(s_mbSlave.irTable, 2, 1, "4321");
+            xTwSetTextUtf8(s_mbSlave.irTable, 2, 1, "4321");
             XSpinBox_setValue(s_mbSlave.irCountSpin, 64);
             mb_slaveApplyRegCounts(); /* 与 valueChanged 槽同一路径，幂等。 */
             {
@@ -5915,7 +5923,7 @@ int demo_page_modbus_slave_autotest(XWidget* page)
                     ++failures;
                 /* 新行（63）回显 map 值（未写过 ⇒ "0"）——「已填值不丢」
                  * 与新行初始化的闭环。 */
-                newCell = XTableWidget_text(s_mbSlave.irTable, 63, 1);
+                newCell = xTwTextUtf8(s_mbSlave.irTable, 63, 1);
                 if (!newCell || strcmp(newCell, "0") != 0)
                     ++failures;
             }
@@ -5942,7 +5950,7 @@ int demo_page_modbus_slave_autotest(XWidget* page)
             {
                 char back[8];
                 snprintf(back, sizeof(back), "%u", (unsigned)savedIr2);
-                XTableWidget_setText(s_mbSlave.irTable, 2, 1, back);
+                xTwSetTextUtf8(s_mbSlave.irTable, 2, 1, back);
             }
         }
         return failures;

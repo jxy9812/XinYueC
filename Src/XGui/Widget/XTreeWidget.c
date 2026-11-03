@@ -6,6 +6,7 @@
 #if XGUI_ON
 
 #include "XTreeWidget.h"
+#include "XCommonStyle.h" /* [对齐 Qt 2026-11-03] 统一省略实现。 */
 
 #include "XAlgorithm.h"
 #include "XStringUtils.h"
@@ -1662,53 +1663,6 @@ static int xtw_utf8SeqLen(const char* s)
     return 1;
 }
 
-/** @brief 右省略（W10 第三轮①：对标 Qt::ElideRight，Qt 以
- *         qstyleditemdelegate viewItemDrawText → fontMetrics::elidedText
- *         对超宽条目文本画「前缀…」；本库近似承载见 xcs_elideText
- *         mode 1 同款算法，此处按 UTF-8 字符边界切割——中文长名不得
- *         在序列中腰斩出替换乱字）。省略号视觉以 ASCII "..." 三点
- *         承载：Qt 原字为 U+2026 HORIZONTAL ELLIPSIS，但本库内置
- *         字体族均无该字形（XFont16x16 点阵 cmap 仅覆盖 32..126 与
- *         19968.. 两段；当年实测旧 XFontOutlineCommon Latin/CJK 码点表
- *         亦无 0x2026——该 XFO1 内置字库已于 2026-10-07 移除，现役
- *         FT 外挂字体视部署字体而定，缺字仍退化为单点残形），故以
- *         全字体覆盖的 "..." 同义呈现（视觉同 Qt 的三点省略号）。
- *         宽内原样返回入参；超宽返回栈缓冲内「前缀+...」（宽内放
- *         不下三点时退化为纯前缀硬截，同样不越界）。 */
-static const char* xtw_elideText(char* buf, int bufCap, const char* text,
-                                 const XFont* font, int maxW)
-{
-    static const char ell[] = "..."; /* 省略号（U+2026 缺字形，见上）。 */
-    int fullW;
-    int ellW;
-    int w;
-    int cut;
-    int i;
-    if (!text || !text[0] || maxW <= 0 || !font) return text;
-    fullW = XPainter_textWidth(font, text);
-    if (fullW <= maxW) return text;
-    ellW = XPainter_textWidth(font, ell);
-    w = (ellW <= maxW) ? ellW : 0; /* 连省略号都放不下：纯前缀。 */
-    cut = 0;
-    for (i = 0; text[i] != '\0';) {
-        int len = xtw_utf8SeqLen(text + i);
-        int cw;
-        int j;
-        for (j = 1; j < len; ++j)
-            if (text[i + j] == '\0') { len = j; break; } /* 残序列收窄防越界读。 */
-        cw = XPainter_textWidthRange(font, text, i, i + len);
-        if (w + cw > maxW) break;
-        w += cw;
-        cut = i + len;
-        i += len;
-    }
-    if (cut > bufCap - 5) cut = bufCap - 5; /* 预留 ...+NUL，防缓冲溢出。 */
-    if (cut < 0) cut = 0;
-    XMemcpy(buf, text, (size_t)cut);
-    buf[cut] = '\0';
-    if (ellW <= maxW) XStrncat(buf, ell, (size_t)bufCap - 1);
-    return buf;
-}
 
 /** @brief 列 0 主文本绘制（N5-1/W10 根修；第八轮①再修）：多列树下
  *         列 0 超宽文本由硬 clip 升级为右省略——先按列 0 带内预算
@@ -1741,8 +1695,11 @@ static void xtw_drawColumn0Text(const XTreeWidget* self, XPainter* painter,
         return;
     }
     if (colX + colW > textX) {
-        shown = xtw_elideText(elided, (int)sizeof(elided), text,
-                              XPainter_font(painter), colX + colW - textX);
+        /* [对齐 Qt 2026-11-03] 改用统一省略实现（mode 1 = Qt::ElideRight）。 */
+        shown = XCommonStyle_elideText(elided, (int)sizeof(elided), text,
+                                       1 /* ElideRight */,
+                                       colX + colW - textX,
+                                       XPainter_font(painter));
     }
     colRect.x = colX;
     colRect.y = y0;
@@ -1947,12 +1904,13 @@ static void xtw_drawHeader(const XTreeWidget* tw, XPainter* painter,
         {
             /* 表头标签右省略（第八轮②配套；对标 QHeaderView 样式层对
              * 段标签 elidedText——qstyleditemdelegate 同源路径）：拖窄
-             * 后标签不得压过分隔线串到邻段（与列 0 行文本同 xtw_elideText
+             * 后标签不得压过分隔线串到邻段（与列 0 行文本同款省略
              * 承载，预算 = 段宽 − 左右各 4px 边距）。 */
             const XFont* hfont = XPainter_font(painter);
             char label[512];
             const char* shown =
-                xtw_elideText(label, (int)sizeof(label), text, hfont, w - 8);
+                XCommonStyle_elideText(label, (int)sizeof(label), text,
+                                       1 /* ElideRight */, w - 8, hfont);
             XPainter_drawText(painter, x + 4, XTW_HEADER_H - 6, shown,
                               0xFF444444u);
         }

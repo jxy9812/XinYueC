@@ -24,16 +24,22 @@ typedef struct XScatterSeries XScatterSeries;
 typedef struct XAreaSeries  XAreaSeries;
 typedef struct XSplineSeries XSplineSeries;
 typedef struct XPieSeries   XPieSeries;
+typedef struct XLegend      XLegend;
+typedef struct XBoxPlotSeries XBoxPlotSeries;
+typedef struct XCandlestickSeries XCandlestickSeries;
+typedef struct XAbstractAxis XAbstractAxis;
+typedef struct XAbstractBarSeries XAbstractBarSeries;
 
 /**
  * @brief      图表类型（对标 Qt Charts 6.8 QChart::ChartType，数值一致）。
- * @details    本实现当前仅提供直角坐标系图表；极坐标作为枚举占位。
+ * @details    直角坐标（XChart）与极坐标（XPolarChart）均已实现；
+ *             极坐标经 XChartView 的同心圆/角度射线网格与极坐标映射渲染。
  */
 typedef enum XChart_ChartType
 {
     XChart_ChartType_Undefined = 0,   /**< 未定义（对标 QChart::ChartTypeUndefined）。 */
     XChart_ChartType_Cartesian = 1,   /**< 直角坐标（对标 QChart::ChartTypeCartesian）。 */
-    XChart_ChartType_Polar = 2        /**< 极坐标（对标 QChart::ChartTypePolar；未实现）。 */
+    XChart_ChartType_Polar = 2        /**< 极坐标（对标 QChart::ChartTypePolar；见 XPolarChart）。 */
 } XChart_ChartType;
 
 /**
@@ -124,7 +130,8 @@ typedef enum XEasingCurve_Type
  * @brief      序列类型（对标 Qt Charts 6.8 QAbstractSeries::SeriesType，
  *             数值一致）。
  * @details    泛型序列管理使用；当前实现覆盖 Line/Area/Bar/Pie/Scatter/
- *             Spline 六类，其余作为枚举占位。
+ *             Spline 等全类型均已实现（含 BoxPlot/Candlestick 与 5 个
+ *             柱状变体）；枚举值与 Qt 保持一致以支持跨端对照。
  */
 
 XCLASS_DEFINE_BEGING(XChart)
@@ -145,15 +152,20 @@ typedef struct XChart
      *      0x7a/0xd4/0x104/0x12c/0x154/0x1d4/0x1f2/0x225/0x231/0x384 等
      *      空洞；成员访问一律按名，无位置初始化/offsetof 依赖） ---- */
     XString* m_title;         /**< 图表标题（对象拥有）。 */
-    XValueAxis* m_axisX;      /**< X 数值轴（内部拥有）。 */
-    XValueAxis* m_axisY;      /**< Y 数值轴（内部拥有）。 */
+    XValueAxis* m_axisX;      /**< X 数值轴（内部拥有；新轴非数值轴时为 NULL）。 */
+    XValueAxis* m_axisY;      /**< Y 数值轴（内部拥有；新轴非数值轴时为 NULL）。 */
+    XAbstractAxis* m_axisXAny; /**< X 轴基类视图（内部拥有；恒指向实际 X 轴）。 */
+    XAbstractAxis* m_axisYAny; /**< Y 轴基类视图（内部拥有；恒指向实际 Y 轴）。 */
     XLineSeries* m_lineSeries[8];   /**< 折线序列集合（内部拥有）。 */
     XPieSeries* m_pieSeries;  /**< 饼图序列（内部拥有；单例）。 */
-    XBarSeries* m_barSeries[4];     /**< 柱状序列集合（内部拥有）。 */
+    XAbstractBarSeries* m_barSeries[4]; /**< 柱状序列集合（内部拥有；含全部 bar 变体）。 */
     XScatterSeries* m_scatterSeries[4]; /**< 散点序列集合。 */
     XAreaSeries* m_areaSeries[4];   /**< 面积序列集合。 */
     XSplineSeries* m_splineSeries[4]; /**< 样条序列集合。 */
+    XBoxPlotSeries* m_boxPlotSeries[4]; /**< 盒须序列集合（内部拥有）。 */
+    XCandlestickSeries* m_candlestickSeries[4]; /**< K 线序列集合（内部拥有）。 */
     XString* m_titleFamily;   /**< 标题字体家族（对象拥有；对标 setTitleFont().family()）。 */
+    XLegend* m_legend;        /**< 图例对象（内部拥有；对标 QChart::legend()）。 */
     XString* m_locale;        /**< 区域名称（对象拥有；对标 locale）。 */
     double m_defaultMinX;     /**< 初始 X 域下界（zoomReset 恢复用）。 */
     double m_defaultMaxX;     /**< 初始 X 域上界（zoomReset 恢复用）。 */
@@ -192,8 +204,11 @@ typedef struct XChart
     uint8_t m_scatterCount;   /**< 散点序列数（<=4）。 */
     uint8_t m_areaCount;      /**< 面积序列数（<=4）。 */
     uint8_t m_splineCount;    /**< 样条序列数（<=4）。 */
+    uint8_t m_boxPlotCount;   /**< 盒须序列数（<=4）。 */
+    uint8_t m_candlestickCount; /**< K 线序列数（<=4）。 */
     uint8_t m_seriesCount;    /**< 泛型序列数（<=24）。 */
     uint8_t m_themeId;        /**< 当前主题 ID（XChart_ChartTheme，0-7）。 */
+    uint8_t m_chartType;      /**< XChart_ChartType；派生类 init 设置（对标 chartType()）。 */
     uint8_t m_themeAxisLineWidth; /**< 主题轴线画笔宽（像素，<=255）。 */
     uint8_t m_themeGridLineWidth; /**< 主题网格线画笔宽（像素，<=255）。 */
     uint8_t m_themeMinorGridLineWidth; /**< 主题次网格线画笔宽（像素，<=255）。 */
@@ -204,8 +219,6 @@ typedef struct XChart
     uint16_t m_zoomCapacity;  /**< 缩放栈容量。 */
 
     /* ---- 1 字节标志组（位域压缩；全部无取址使用） ---- */
-    bool m_legendVisible : 1;     /**< 图例可见（默认 true）。 */
-    bool m_titleVisible : 1;      /**< 标题可见（默认 true）。 */
     bool m_backgroundVisible : 1; /**< 背景可见（默认 true）。 */
     bool m_dropShadowEnabled : 1; /**< 背景投影（属性存储；渲染待后续批次）。 */
     bool m_plotAreaBackgroundVisible : 1; /**< 绘图区背景可见（对标 isPlotAreaBackgroundVisible）。 */
@@ -246,14 +259,11 @@ void XChart_setTitle_2(XChart* self, const char* title);
 const XString* XChart_title(const XChart* self);
 /** @brief 读取标题文本（UTF-8 借用；未设置返回空串）。 */
 const char* XChart_title_2(const XChart* self);
-/** @brief 设置标题可见性。 @param self 目标图表指针。 @param visible true 显示。 @return 无返回值。 */
-void XChart_setTitleVisible(XChart* self, bool visible);
-/** @brief 查询标题可见性。 @param self 目标图表指针。 @return 可见返回 true。 */
-bool XChart_isTitleVisible(const XChart* self);
-/** @brief 设置图例可见性（对标 setLegendVisible）。 @param self 目标图表指针。 @param visible true 显示。 @return 无返回值。 */
-void XChart_setLegendVisible(XChart* self, bool visible);
-/** @brief 查询图例可见性。 @param self 目标图表指针。 @return 可见返回 true。 */
-bool XChart_isLegendVisible(const XChart* self);
+/** @brief 读取图例对象（借用；对标 QChart::legend()）。
+ * @param self 目标图表指针。
+ * @return 借用 XLegend*；归图表所有，随图表析构失效，调用者不得释放。
+ */
+XLegend* XChart_legend(const XChart* self);
 
 /* ==================== 泛型序列管理（对标 addSeries/removeSeries/series） ==================== */
 
@@ -316,6 +326,42 @@ XValueAxis* XChart_axisY(const XChart* self);
 
 /** @brief 按轴范围复位默认域并清空缩放栈（对标 createDefaultAxes）。 @param self 目标图表指针。 @return 无返回值。 */
 void XChart_createDefaultAxes(XChart* self);
+
+/* ==================== 泛化轴挂接（支持任意 XAbstractAxis 派生轴） ==================== */
+
+/**
+ * @brief 挂接 X 轴（基类指针泛化入口；对标 QChart::addAxis(axis, Qt::AlignBottom)）。
+ * @details 与 XChart_setAxisX 的差别：本入口接受任意 XAbstractAxis 派生轴
+ *          （XValueAxis / XDateTimeAxis / XLogValueAxis / XCategoryAxis 等），
+ *          使日期时间轴与对数轴也能挂到图表上。所有权转移给图表。
+ * @param self 目标图表指针。
+ * @param axis 轴指针（XAbstractAxis 派生）；NULL 表示恢复内部默认数值轴。
+ * @return 无返回值。
+ */
+void XChart_setAxisX_abstract(XChart* self, XAbstractAxis* axis);
+
+/**
+ * @brief 挂接 Y 轴（基类指针泛化入口；对标 QChart::addAxis(axis, Qt::AlignLeft)）。
+ * @details 语义同 XChart_setAxisX_abstract，作用于 Y 轴。
+ * @param self 目标图表指针。
+ * @param axis 轴指针（XAbstractAxis 派生）；NULL 表示恢复内部默认数值轴。
+ * @return 无返回值。
+ */
+void XChart_setAxisY_abstract(XChart* self, XAbstractAxis* axis);
+
+/**
+ * @brief 读取 X 轴的基类视图（对标 QChart::axes 的 X 轴项）。
+ * @param self 目标图表指针。
+ * @return 借用 XAbstractAxis*；图表无 X 轴返回 NULL。调用者不得释放。
+ */
+XAbstractAxis* XChart_axisX_abstract(const XChart* self);
+
+/**
+ * @brief 读取 Y 轴的基类视图（对标 QChart::axes 的 Y 轴项）。
+ * @param self 目标图表指针。
+ * @return 借用 XAbstractAxis*；图表无 Y 轴返回 NULL。调用者不得释放。
+ */
+XAbstractAxis* XChart_axisY_abstract(const XChart* self);
 
 /* ==================== 主题与外观 ==================== */
 
@@ -495,85 +541,108 @@ XChart_ChartType XChart_chartType(const XChart* self);
  */
 void* XChart_plotAreaChanged_signal(XChart* self);
 
-/* ==================== 兼容层（保持既有按类访问器） ==================== */
+/* ==================== 扩展（Qt 无对应；本库内部渲染与交互所需） ==================== */
 
 /**
- * @brief 添加折线序列并接管所有权（对标 addSeries）。
+ * @brief 读取主题系列色（对标 ChartThemeManager::colorAt(seriesColors)，Qt 无公开等价）。
  *
- * @param self   目标图表指针。
- * @param series 折线序列指针；成功后由图表管理生命周期。
- * @return 无返回值。
+ * @details 渲染层与回归断言需要按序列下标取主题色板；Qt 把该信息藏在
+ *          QChartPrivate/ChartThemeManager 中（无公共访问器）。本库将其
+ *          公开为扩展 API，仅供渲染与测试使用。
+ * @param self  目标图表指针。
+ * @param index 序列下标（越界回环）。
+ * @return ARGB 颜色。
  */
-void XChart_addLineSeries(XChart* self, XLineSeries* series);
-
-/**
- * @brief 设置饼图序列（单例；对标 addSeries(QPieSeries*)）。
- *
- * @param self   目标图表指针。
- * @param series 饼图序列指针；成功后由图表管理生命周期。
- * @return 无返回值。
- */
-void XChart_setPieSeries(XChart* self, XPieSeries* series);
-
-/** @brief 查询折线序列数。 @param self 目标图表指针。 @return 折线序列数。 */
-int XChart_lineSeriesCount(const XChart* self);
-/** @brief 按下标取折线序列。 @param self 目标图表指针。 @param index 下标。 @return 序列指针；越界返回 NULL。 */
-XLineSeries* XChart_lineSeries(const XChart* self, int index);
-/** @brief 查询饼图序列。 @param self 目标图表指针。 @return 饼图序列指针；未设置返回 NULL。 */
-XPieSeries* XChart_pieSeries(const XChart* self);
-
-/** @brief 添加柱状序列（接管所有权）。 @param self 目标图表指针。 @param series 柱状序列指针。 @return 无返回值。 */
-void XChart_addBarSeries(XChart* self, XBarSeries* series);
-/** @brief 添加散点序列（接管所有权）。 @param self 目标图表指针。 @param series 散点序列指针。 @return 无返回值。 */
-void XChart_addScatterSeries(XChart* self, XScatterSeries* series);
-/** @brief 添加面积序列（接管所有权）。 @param self 目标图表指针。 @param series 面积序列指针。 @return 无返回值。 */
-void XChart_addAreaSeries(XChart* self, XAreaSeries* series);
-/** @brief 添加样条序列（接管所有权）。 @param self 目标图表指针。 @param series 样条序列指针。 @return 无返回值。 */
-void XChart_addSplineSeries(XChart* self, XSplineSeries* series);
-/** @brief 查询柱状序列数。 @param self 目标图表指针。 @return 柱状序列数。 */
-int XChart_barSeriesCount(const XChart* self);
-/** @brief 按下标取柱状序列。 @param self 目标图表指针。 @param index 下标。 @return 序列指针；越界 NULL。 */
-XBarSeries* XChart_barSeries(const XChart* self, int index);
-/** @brief 查询散点序列数。 @param self 目标图表指针。 @return 散点序列数。 */
-int XChart_scatterSeriesCount(const XChart* self);
-/** @brief 按下标取散点序列。 @param self 目标图表指针。 @param index 下标。 @return 序列指针；越界 NULL。 */
-XScatterSeries* XChart_scatterSeries(const XChart* self, int index);
-/** @brief 查询面积序列数。 @param self 目标图表指针。 @return 面积序列数。 */
-int XChart_areaSeriesCount(const XChart* self);
-/** @brief 按下标取面积序列。 @param self 目标图表指针。 @param index 下标。 @return 序列指针；越界 NULL。 */
-XAreaSeries* XChart_areaSeries(const XChart* self, int index);
-/** @brief 查询样条序列数。 @param self 目标图表指针。 @return 样条序列数。 */
-int XChart_splineSeriesCount(const XChart* self);
-/** @brief 按下标取样条序列。 @param self 目标图表指针。 @param index 下标。 @return 序列指针；越界 NULL。 */
-XSplineSeries* XChart_splineSeries(const XChart* self, int index);
-/** @brief 取主题系列色（下标越界回环）。 @param self 目标图表指针。 @param index 序列下标。 @return ARGB 颜色。 */
 uint32_t XChart_themeColor(const XChart* self, int index);
-/** @brief 按主题序列渐变取色（对标 ChartThemeManager::colorAt(seriesGradients, pos)）。
+
+/** @brief 按主题序列渐变取色（对标 ChartThemeManager 渐变，Qt 无公开等价）。
  * @param self 目标图表指针。
  * @param index 序列下标（越界回环）。
  * @param pos 渐变位置 0-1（0=渐变起点，1=渐变终点；越界钳位）。
  * @return ARGB 颜色。 */
 uint32_t XChart_themeGradientColor(const XChart* self, int index, double pos);
-/** @brief 读取主题背景渐变起点色。 @param self 目标图表指针。 @return ARGB 颜色。 */
+
+/** @brief 读取主题背景渐变起点色（Qt 无公开等价）。 @param self 目标图表指针。 @return ARGB 颜色。 */
 uint32_t XChart_themeBackgroundStart(const XChart* self);
-/** @brief 读取主题背景渐变终点色。 @param self 目标图表指针。 @return ARGB 颜色。 */
+/** @brief 读取主题背景渐变终点色（Qt 无公开等价）。 @param self 目标图表指针。 @return ARGB 颜色。 */
 uint32_t XChart_themeBackgroundEnd(const XChart* self);
 
-/** @brief 读取图例系列（对标 seriesList 便捷：按下标取泛型系列）。 @param self 目标图表指针。 @param index 下标。 @return 序列指针；越界返回 NULL。 */
-void* XChart_series(const XChart* self, int index);
-/** @brief 添加一个轴（对标 addAxis；axisX/axisY 用 setAxisX/setAxisY）。 @param self 目标图表指针。 @param axis 轴指针。 @return 无返回值。 */
+/* ==================== 坐标轴（对标 addAxis/removeAxis/axes） ==================== */
+
+/**
+ * @brief 添加一个轴（对标 QChart::addAxis(axis, alignment)）。
+ * @details 本库轴与图表的位置绑定由 setAxisX/setAxisY 表达；此入口按
+ *          轴指针登记，X 轴与 Y 轴各自由 setAxisX/setAxisY 指定。
+ * @param self 目标图表指针。
+ * @param axis 轴指针（借用；生命周期仍由调用方或 setAxisX/Y 管理）。
+ * @return 无返回值。
+ */
 void XChart_addAxis(XChart* self, XValueAxis* axis);
-/** @brief 移除一个轴。 @param self 目标图表指针。 @param axis 轴指针。 @return 移除成功返回 true。 */
+
+/**
+ * @brief 移除一个轴（对标 QChart::removeAxis）。
+ * @param self 目标图表指针。
+ * @param axis 轴指针。
+ * @return 移除成功返回 true；轴未登记返回 false 且图表不变。
+ */
 bool XChart_removeAxis(XChart* self, XValueAxis* axis);
-/** @brief 读取轴（对标 axes：返回 X 轴与 Y 轴）。 @param self 目标图表指针。 @param out 输出缓冲（至少 2 项）。 @param maxCount 容量。 @return 实际轴数。 */
+
+/**
+ * @brief 读取轴列表（对标 QChart::axes(orientation, series)）。
+ * @param self     目标图表指针。
+ * @param out      输出缓冲（调用方提供，至少 maxCount 项）。
+ * @param maxCount 缓冲容量。
+ * @return 实际写入的轴数（0 表示无轴或缓冲为 NULL）。
+ */
 int XChart_axes(const XChart* self, XValueAxis** out, int maxCount);
-/** @brief 数据域坐标映射到视图坐标（对标 mapToPosition）。 @param self 目标图表指针。 @param valueX 数据 X。 @param valueY 数据 Y。 @param outX 输出视图 X。 @param outY 输出视图 Y。 @return 无返回值。 */
+
+/** @brief 读取标题字体族（借用；对标 titleFont().family()；等价 titleFontFamily）。
+ * @param self 目标图表指针。
+ * @return 借用 XString*；归对象所有，随析构失效，调用者不得释放。
+ */
+const XString* XChart_titleFont_const(const XChart* self);
+/** @brief 读取标题字体族（兼容别名，转发 _const 借用版）。 */
+const XString* XChart_titleFont(const XChart* self);
+/** @brief 读取标题字体族（UTF-8 借用视图）。 @param self 目标图表指针。 @return UTF-8 串。 */
+const char* XChart_titleFont_toUtf8(const XChart* self);
+/** @brief 读取标题字体族（UTF-8 兼容别名）。 */
+const char* XChart_titleFont_2(const XChart* self);
+/** @brief 读取标题字号（对标 titleFont().pixelSize()）。 @param self 目标图表指针。 @return 像素字号；<=0 表示默认。 */
+int XChart_titlePixelSize(const XChart* self);
+
+/** @brief 数据域坐标映射到视图坐标（对标 mapToPosition 的便捷形态）。 @param self 目标图表指针。 @param valueX 数据 X。 @param valueY 数据 Y。 @param outX 输出视图 X。 @param outY 输出视图 Y。 @return 无返回值。 */
 void XChart_mapToPosition(const XChart* self, double valueX, double valueY,
                           int* outX, int* outY);
-/** @brief 读取标题字体族（titleFont 便捷同义；内部借用 XString*）。 */
-const XString* XChart_titleFont(const XChart* self);
-/** @brief 读取标题字体族（UTF-8 借用）。 */
-const char* XChart_titleFont_2(const XChart* self);
+
+/**
+ * @brief 仅缩放 X 轴（以 X 域中心为焦点；Y 域不动）。
+ * @details **本库扩展**：Qt 的 zoom(factor) 同时缩放两轴，没有单轴版本；
+ *          时间轴趋势图需要「只缩横向、纵轴交给自动量程」，故提供此扩展。
+ * @param self 目标图表指针。
+ * @param factor 缩放因子（>1 放大）。
+ * @return 无返回值。
+ */
+void XChart_zoomX(XChart* self, double factor);
+
+/**
+ * @brief 以锚点缩放 X 轴（锚点数据值缩放前后停在同一点）。
+ * @details **本库扩展**：滚轮缩放围绕光标而非域中心，Qt 无对应 API。
+ * @param self 目标图表指针。
+ * @param factor 缩放因子（>1 放大）。
+ * @param anchor 锚点数据值。
+ * @param ratio 锚点相对位置（0..1）。
+ * @return 无返回值。
+ */
+void XChart_zoomXAt(XChart* self, double factor, double anchor, double ratio);
+
+/**
+ * @brief 仅滚动 X 轴（Y 域不动；入参为域绝对单位，正值右移）。
+ * @details **本库扩展**：Qt 的 scroll(dx,dy) 没有单轴版本。
+ * @param self 目标图表指针。
+ * @param dx X 域偏移量（域单位）。
+ * @return 无返回值。
+ */
+void XChart_scrollX(XChart* self, double dx);
 
 #endif /* XCHARTS_ON */
 

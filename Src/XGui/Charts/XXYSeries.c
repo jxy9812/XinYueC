@@ -218,6 +218,15 @@ static void VXXYSeries_deinit(XXYSeries* self)
         XFree_System(self->m_selected);
         self->m_selected = NULL;
     }
+    /* 标记图像为按值持有，析构/清空时一并释放。 */
+    if (self->m_lightMarker) {
+        XClassDelete(self->m_lightMarker);
+        self->m_lightMarker = NULL;
+    }
+    if (self->m_selectedLightMarker) {
+        XClassDelete(self->m_selectedLightMarker);
+        self->m_selectedLightMarker = NULL;
+    }
     if (self->m_pointColors) {
         XFree_System(self->m_pointColors);
         self->m_pointColors = NULL;
@@ -225,6 +234,25 @@ static void VXXYSeries_deinit(XXYSeries* self)
     if (self->m_pointSizes) {
         XFree_System(self->m_pointSizes);
         self->m_pointSizes = NULL;
+    }
+    if (self->m_pointVisibility) {
+        XFree_System(self->m_pointVisibility);
+        self->m_pointVisibility = NULL;
+    }
+    if (self->m_pointLabelVisibility) {
+        XFree_System(self->m_pointLabelVisibility);
+        self->m_pointLabelVisibility = NULL;
+    }
+    if (self->m_pointLabelFormats) {
+        int k;
+        for (k = 0; k < self->m_pointConfigCapacity; ++k) {
+            if (self->m_pointLabelFormats[k]) {
+                XClassDelete(self->m_pointLabelFormats[k]);
+                self->m_pointLabelFormats[k] = NULL;
+            }
+        }
+        XFree_System(self->m_pointLabelFormats);
+        self->m_pointLabelFormats = NULL;
     }
     if (self->m_pointLabelsFormat) {
         XClassDelete(self->m_pointLabelsFormat);
@@ -560,6 +588,25 @@ void XXYSeries_clear(XXYSeries* self)
         XFree_System(self->m_pointSizes);
         self->m_pointSizes = NULL;
     }
+    if (self->m_pointVisibility) {
+        XFree_System(self->m_pointVisibility);
+        self->m_pointVisibility = NULL;
+    }
+    if (self->m_pointLabelVisibility) {
+        XFree_System(self->m_pointLabelVisibility);
+        self->m_pointLabelVisibility = NULL;
+    }
+    if (self->m_pointLabelFormats) {
+        int k;
+        for (k = 0; k < self->m_pointConfigCapacity; ++k) {
+            if (self->m_pointLabelFormats[k]) {
+                XClassDelete(self->m_pointLabelFormats[k]);
+                self->m_pointLabelFormats[k] = NULL;
+            }
+        }
+        XFree_System(self->m_pointLabelFormats);
+        self->m_pointLabelFormats = NULL;
+    }
     if (n > 0)
         xxy_emitIndexCount(self, (size_t)XXYSeries_pointsRemoved_signal, 0, n);
     if (hadSelected)
@@ -765,6 +812,25 @@ void XXYSeries_deselectAllPoints(XXYSeries* self)
         XFree_System(self->m_pointSizes);
         self->m_pointSizes = NULL;
     }
+    if (self->m_pointVisibility) {
+        XFree_System(self->m_pointVisibility);
+        self->m_pointVisibility = NULL;
+    }
+    if (self->m_pointLabelVisibility) {
+        XFree_System(self->m_pointLabelVisibility);
+        self->m_pointLabelVisibility = NULL;
+    }
+    if (self->m_pointLabelFormats) {
+        int k;
+        for (k = 0; k < self->m_pointConfigCapacity; ++k) {
+            if (self->m_pointLabelFormats[k]) {
+                XClassDelete(self->m_pointLabelFormats[k]);
+                self->m_pointLabelFormats[k] = NULL;
+            }
+        }
+        XFree_System(self->m_pointLabelFormats);
+        self->m_pointLabelFormats = NULL;
+    }
     if (hadSelected)
         xxy_emitVoid(self, (size_t)XXYSeries_selectedPointsChanged_signal);
 }
@@ -834,11 +900,11 @@ void* XXYSeries_pointLabelsClippingChanged_signal(XXYSeries* self,
 { (void)self; (void)clipping;
   return (void*)(size_t)XXYSeries_pointLabelsClippingChanged_signal; }
 void* XXYSeries_lightMarkerChanged_signal(XXYSeries* self,
-                                          const XPixmap* marker)
+                                          const XImage* marker)
 { (void)self; (void)marker;
   return (void*)(size_t)XXYSeries_lightMarkerChanged_signal; }
 void* XXYSeries_selectedLightMarkerChanged_signal(XXYSeries* self,
-                                                  const XPixmap* marker)
+                                                  const XImage* marker)
 { (void)self; (void)marker;
   return (void*)(size_t)XXYSeries_selectedLightMarkerChanged_signal; }
 void* XXYSeries_markerSizeChanged_signal(XXYSeries* self, double size)
@@ -1147,26 +1213,54 @@ const XString* XXYSeries_pointLabelsFont(const XXYSeries* self)
 const char* XXYSeries_pointLabelsFont_2(const XXYSeries* self)
 { return XXYSeries_pointLabelsFontFamily_2(self); }
 
-void XXYSeries_setLightMarker(XXYSeries* self, const XPixmap* marker)
+/** @brief 深拷贝一张 XImage（NULL 透传）；用于按值持有标记图像。
+ * @param src 源图像（借用）。
+ * @return 新建副本；src 为 NULL 或分配失败返回 NULL。调用方负责释放。
+ */
+static XImage* xxy_copyImage(const XImage* src)
 {
-    if (!self || self->m_lightMarker == marker) return;
-    self->m_lightMarker = marker;
-    xxy_emitPtr(self, (size_t)XXYSeries_lightMarkerChanged_signal, marker);
+    XImage* cp;
+    if (!src) return NULL;
+    cp = XImage_create();
+    if (!cp) return NULL;
+    XClassCopy((XClass*)cp, (const XClass*)src);
+    return cp;
 }
 
-const XPixmap* XXYSeries_lightMarker(const XXYSeries* self)
+void XXYSeries_setLightMarker(XXYSeries* self, const XImage* marker)
+{
+    XImage* cp;
+    if (!self) return;
+    /* 对标 QImage 按值持有：先拷贝再替换，失败时保持原值不变。 */
+    cp = xxy_copyImage(marker);
+    if (marker && !cp) return;
+    if (self->m_lightMarker) XClassDelete(self->m_lightMarker);
+    self->m_lightMarker = cp;
+    xxy_emitPtr(self, (size_t)XXYSeries_lightMarkerChanged_signal, cp);
+}
+
+const XImage* XXYSeries_lightMarker_const(const XXYSeries* self)
 { return self ? self->m_lightMarker : NULL; }
 
-void XXYSeries_setSelectedLightMarker(XXYSeries* self, const XPixmap* marker)
+const XImage* XXYSeries_lightMarker(const XXYSeries* self)
+{ return XXYSeries_lightMarker_const(self); }
+
+void XXYSeries_setSelectedLightMarker(XXYSeries* self, const XImage* marker)
 {
-    if (!self || self->m_selectedLightMarker == marker) return;
-    self->m_selectedLightMarker = marker;
-    xxy_emitPtr(self, (size_t)XXYSeries_selectedLightMarkerChanged_signal,
-                marker);
+    XImage* cp;
+    if (!self) return;
+    cp = xxy_copyImage(marker);
+    if (marker && !cp) return;
+    if (self->m_selectedLightMarker) XClassDelete(self->m_selectedLightMarker);
+    self->m_selectedLightMarker = cp;
+    xxy_emitPtr(self, (size_t)XXYSeries_selectedLightMarkerChanged_signal, cp);
 }
 
-const XPixmap* XXYSeries_selectedLightMarker(const XXYSeries* self)
+const XImage* XXYSeries_selectedLightMarker_const(const XXYSeries* self)
 { return self ? self->m_selectedLightMarker : NULL; }
+
+const XImage* XXYSeries_selectedLightMarker(const XXYSeries* self)
+{ return XXYSeries_selectedLightMarker_const(self); }
 
 void XXYSeries_setPointConfiguration(XXYSeries* self, int index,
                                      uint32_t color, double size)
@@ -1202,6 +1296,26 @@ void XXYSeries_setPointConfiguration(XXYSeries* self, int index,
             self->m_pointSizes = ps;
         }
         if (!pc || !ps) return;
+        {
+            uint8_t* pv = (uint8_t*)XRealloc_System(self->m_pointVisibility,
+                sizeof(uint8_t) * (size_t)cap);
+            uint8_t* plv = (uint8_t*)XRealloc_System(
+                self->m_pointLabelVisibility, sizeof(uint8_t) * (size_t)cap);
+            XString** plf = (XString**)XRealloc_System(self->m_pointLabelFormats,
+                sizeof(XString*) * (size_t)cap);
+            if (pv) {
+                for (i = oldCap; i < cap; ++i) pv[i] = 0;
+                self->m_pointVisibility = pv;
+            }
+            if (plv) {
+                for (i = oldCap; i < cap; ++i) plv[i] = 0;
+                self->m_pointLabelVisibility = plv;
+            }
+            if (plf) {
+                for (i = oldCap; i < cap; ++i) plf[i] = NULL;
+                self->m_pointLabelFormats = plf;
+            }
+        }
         self->m_pointConfigCapacity = cap;
     }
     if (color != 0 && self->m_pointColors) {
@@ -1353,6 +1467,223 @@ int XXYSeries_pointsConfiguration(const XXYSeries* self, uint32_t* colors,
 
 void XXYSeries_clearPointsConfiguration(XXYSeries* self)
 { XXYSeries_clearPointConfiguration(self, -1); }
+
+/* ==================== 单点配置五维（对标 QXYSeries::PointConfiguration） ==================== */
+
+/** @brief 确保点配置容量足够容纳 index。 @return 成功返回 true。 */
+static bool xxyseries_ensureConfig(XXYSeries* self, int index)
+{
+    int cap;
+    int oldCap;
+    int i;
+    uint32_t* pc;
+    double* ps;
+    uint8_t* pv;
+    uint8_t* plv;
+    XString** plf;
+    if (!self || index < 0) return false;
+    if (index < self->m_pointConfigCapacity) return true;
+    cap = self->m_pointConfigCapacity > 0 ? self->m_pointConfigCapacity : 8;
+    oldCap = self->m_pointConfigCapacity;
+    while (cap <= index) cap *= 2;
+    pc = (uint32_t*)XRealloc_System(self->m_pointColors,
+                                    sizeof(uint32_t) * (size_t)cap);
+    if (pc) {
+        for (i = oldCap; i < cap; ++i) pc[i] = 0;
+        self->m_pointColors = pc;
+    }
+    ps = (double*)XRealloc_System(self->m_pointSizes,
+                                  sizeof(double) * (size_t)cap);
+    if (ps) {
+        for (i = oldCap; i < cap; ++i) ps[i] = 0.0;
+        self->m_pointSizes = ps;
+    }
+    pv = (uint8_t*)XRealloc_System(self->m_pointVisibility,
+                                   sizeof(uint8_t) * (size_t)cap);
+    if (pv) {
+        for (i = oldCap; i < cap; ++i) pv[i] = 0;
+        self->m_pointVisibility = pv;
+    }
+    plv = (uint8_t*)XRealloc_System(self->m_pointLabelVisibility,
+                                    sizeof(uint8_t) * (size_t)cap);
+    if (plv) {
+        for (i = oldCap; i < cap; ++i) plv[i] = 0;
+        self->m_pointLabelVisibility = plv;
+    }
+    plf = (XString**)XRealloc_System(self->m_pointLabelFormats,
+                                     sizeof(XString*) * (size_t)cap);
+    if (plf) {
+        for (i = oldCap; i < cap; ++i) plf[i] = NULL;
+        self->m_pointLabelFormats = plf;
+    }
+    if (!pc || !ps || !pv || !plv || !plf) return false;
+    self->m_pointConfigCapacity = cap;
+    return true;
+}
+
+void XXYSeries_setPointConfigurationValue(XXYSeries* self, int index, int key,
+                                          void* value)
+{
+    if (!self || index < 0 || index >= self->m_count) return;
+    if (!xxyseries_ensureConfig(self, index)) return;
+    switch (key) {
+    case XXYSeries_PointConfiguration_Color: {
+        uint32_t c = value ? *(uint32_t*)value : 0u;
+        self->m_pointColors[index] = c;
+        break;
+    }
+    case XXYSeries_PointConfiguration_Size: {
+        double sz = value ? *(double*)value : 0.0;
+        self->m_pointSizes[index] = (sz < 0.0) ? 0.0 : sz;
+        break;
+    }
+    case XXYSeries_PointConfiguration_Visibility: {
+        bool v = value ? (*(bool*)value) : false;
+        self->m_pointVisibility[index] = v ? 1u : 2u;
+        break;
+    }
+    case XXYSeries_PointConfiguration_LabelVisibility: {
+        bool v = value ? (*(bool*)value) : false;
+        self->m_pointLabelVisibility[index] = v ? 1u : 2u;
+        break;
+    }
+    case XXYSeries_PointConfiguration_LabelFormat: {
+        const XString* fmt = (const XString*)value;
+        if (self->m_pointLabelFormats[index]) {
+            XClassDelete(self->m_pointLabelFormats[index]);
+            self->m_pointLabelFormats[index] = NULL;
+        }
+        if (fmt)
+            self->m_pointLabelFormats[index] = XString_create_copy(fmt);
+        break;
+    }
+    default:
+        return;
+    }
+}
+
+bool XXYSeries_hasPointConfiguration(const XXYSeries* self, int index, int key)
+{
+    if (!self || index < 0 || index >= self->m_pointConfigCapacity) return false;
+    switch (key) {
+    case XXYSeries_PointConfiguration_Color:
+        return self->m_pointColors && self->m_pointColors[index] != 0u;
+    case XXYSeries_PointConfiguration_Size:
+        return self->m_pointSizes && self->m_pointSizes[index] > 0.0;
+    case XXYSeries_PointConfiguration_Visibility:
+        return self->m_pointVisibility && self->m_pointVisibility[index] != 0u;
+    case XXYSeries_PointConfiguration_LabelVisibility:
+        return self->m_pointLabelVisibility &&
+               self->m_pointLabelVisibility[index] != 0u;
+    case XXYSeries_PointConfiguration_LabelFormat:
+        return self->m_pointLabelFormats &&
+               self->m_pointLabelFormats[index] != NULL;
+    default:
+        return false;
+    }
+}
+
+void XXYSeries_clearPointConfigurationKey(XXYSeries* self, int index, int key)
+{
+    if (!self || index < 0 || index >= self->m_pointConfigCapacity) return;
+    switch (key) {
+    case XXYSeries_PointConfiguration_Color:
+        if (self->m_pointColors) self->m_pointColors[index] = 0u;
+        break;
+    case XXYSeries_PointConfiguration_Size:
+        if (self->m_pointSizes) self->m_pointSizes[index] = 0.0;
+        break;
+    case XXYSeries_PointConfiguration_Visibility:
+        if (self->m_pointVisibility) self->m_pointVisibility[index] = 0u;
+        break;
+    case XXYSeries_PointConfiguration_LabelVisibility:
+        if (self->m_pointLabelVisibility)
+            self->m_pointLabelVisibility[index] = 0u;
+        break;
+    case XXYSeries_PointConfiguration_LabelFormat:
+        if (self->m_pointLabelFormats && self->m_pointLabelFormats[index]) {
+            XClassDelete(self->m_pointLabelFormats[index]);
+            self->m_pointLabelFormats[index] = NULL;
+        }
+        break;
+    default:
+        return;
+    }
+}
+
+void XXYSeries_clearPointsConfigurationKey(XXYSeries* self, int key)
+{
+    int i;
+    if (!self) return;
+    for (i = 0; i < self->m_pointConfigCapacity; ++i)
+        XXYSeries_clearPointConfigurationKey(self, i, key);
+}
+
+bool XXYSeries_isPointVisible(const XXYSeries* self, int index)
+{
+    if (!self) return false;
+    if (self->m_pointVisibility && index >= 0 &&
+        index < self->m_pointConfigCapacity &&
+        self->m_pointVisibility[index] != 0u)
+        return self->m_pointVisibility[index] == 1u;
+    return self->m_pointsVisible;
+}
+
+void XXYSeries_setPointVisible(XXYSeries* self, int index, bool visible)
+{
+    if (!self || index < 0 || index >= self->m_count) return;
+    if (!xxyseries_ensureConfig(self, index)) return;
+    self->m_pointVisibility[index] = visible ? 1u : 2u;
+}
+
+bool XXYSeries_isPointLabelVisible(const XXYSeries* self, int index)
+{
+    if (!self) return false;
+    if (self->m_pointLabelVisibility && index >= 0 &&
+        index < self->m_pointConfigCapacity &&
+        self->m_pointLabelVisibility[index] != 0u)
+        return self->m_pointLabelVisibility[index] == 1u;
+    return self->m_pointLabelsVisible;
+}
+
+void XXYSeries_setPointLabelVisible(XXYSeries* self, int index, bool visible)
+{
+    if (!self || index < 0 || index >= self->m_count) return;
+    if (!xxyseries_ensureConfig(self, index)) return;
+    self->m_pointLabelVisibility[index] = visible ? 1u : 2u;
+}
+
+const XString* XXYSeries_pointLabelFormat_const(const XXYSeries* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_pointConfigCapacity) return NULL;
+    if (!self->m_pointLabelFormats) return NULL;
+    return self->m_pointLabelFormats[index];
+}
+
+void XXYSeries_setPointLabelFormat(XXYSeries* self, int index,
+                                   const XString* format)
+{
+    if (!self || index < 0 || index >= self->m_count) return;
+    if (!xxyseries_ensureConfig(self, index)) return;
+    if (self->m_pointLabelFormats[index]) {
+        XClassDelete(self->m_pointLabelFormats[index]);
+        self->m_pointLabelFormats[index] = NULL;
+    }
+    if (format)
+        self->m_pointLabelFormats[index] = XString_create_copy(format);
+}
+
+void XXYSeries_setPointLabelFormat_utf8(XXYSeries* self, int index,
+                                        const char* format)
+{
+    XString* tmp = NULL;
+    if (format) {
+        tmp = XString_create_utf8(format);
+        if (!tmp) return;
+    }
+    XXYSeries_setPointLabelFormat(self, index, tmp);
+    if (tmp) XClassDelete(tmp);
+}
 
 #endif /* XCHARTS_ON */
 

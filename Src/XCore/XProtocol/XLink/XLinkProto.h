@@ -4,17 +4,31 @@
  *             但为 XinYueC 自有格式，不兼容任何公开协议规范。实现只依赖 XinYueC
  *             抽象层（XIODevice/XMemory），禁止调用 Win32、POSIX 或其他平台 API。
  *
- *             帧结构（小端线序，定长帧头 12 字节）：
+ *             帧结构（小端线序，定长帧头 16 字节）：
  * @code
  *   偏移  长度  字段        说明
- *   0     4     payloadLen  载荷字节数（不含帧头 12 字节），须 <= XLINK_MAX_PAYLOAD
+ *   0     4     payloadLen  载荷字节数（不含帧头 16 字节），须 <= XLINK_MAX_PAYLOAD
  *   4     2     msgClass    消息类（XLinkMsgClass），决定语义与应答义务
  *   6     2     msgCode     业务码：Request/Response = 命令号，
  *                            Publish/Subscribe/Unsubscribe = topicId 低 16 位，
- *                            Session = XLinkSessionCode
- *   8     4     requestId   Request/Response 关联 id（两端各自独立自增）；其余类填 0
- *   12    N     payload     载荷（按字段逐个小端序列化，禁止 memcpy 结构体上线）
+ *                            Session = XLinkSessionCode，File = XLinkFileCode
+ *   8     4     requestId   Request/Response 关联 id（两端各自独立自增）；
+ *                            File = transferId；其余类填 0
+ *   12    1     dataType    载荷数据类型（XLinkDataType），见下方"数据类型"
+ *   13    3     reserved    保留位，发送方必须写 0，接收方不校验（未来扩展用）
+ *   16    N     payload     载荷（按字段逐个小端序列化，禁止 memcpy 结构体上线）
  * @endcode
+ *
+ *             【数据类型 dataType】帧头第 12 字节声明载荷是什么，与 msgClass
+ *             正交：同一份 JSON 既可作为 Request 请求、也可作为 Response 应答、
+ *             还可作为 Publish 推送，承载语义由 msgClass 决定，编码格式由
+ *             dataType 决定。故协议层只传递与校验，不解释载荷内容——
+ *             分发回调可直接据 frame->m_dataType 选择解析器，无需嗅探探测。
+ *             XLinkDataType_Raw(0) 表示"未声明/原始字节"，与引入本字段前的
+ *             行为完全一致（老业务代码零改动，载荷原样透传）。
+ *
+ *             reserved 三字节：当前一律写 0、接收侧不校验，为将来帧头再扩展
+ *             预留稳定锚点（长度字段不变即不需再动 XLINK_HEADER_SIZE）。
  *
  *             【topicId 承载规则】msgCode 线上仅 u16，而业务 topicId 区间自
  *             0x10000 起（已越出 u16 表示范围），故 Publish/Subscribe/Unsubscribe
@@ -52,6 +66,33 @@ extern "C" {
  * 原先本文件与配置文件双侧定义，HEADER_SIZE/TOPIC_USER_BASE 两侧均无
  * 守卫，值一旦单侧漂移即 C4005/冲突；含 1.1 变更说明的版本契约文档
  * 已随迁 XLink_config.h）。 */
+
+/* ========================================================================== */
+/*                        数据类型                                           */
+/* ========================================================================== */
+
+/**
+ * @brief 载荷数据类型：帧头 m_dataType 字段取值（线上 1 字节）。
+ * @details 与 msgClass（消息语义类别）正交——msgClass 决定"这帧算什么"
+ *          （请求/应答/推送），dataType 决定"载荷里装的是什么格式"。
+ *          同一份 JSON 可分别作为 Request、Response、Publish 承载，
+ *          两者互不约束，任意组合合法。
+ *
+ *          数值即为线上字节值。0 保留为"未声明/原始字节"，与引入本字段前的
+ *          行为等价（协议层原样透传，不做任何解析）；1 起为具体格式，
+ *          追加新格式只能往后加，不得改动既有值。
+ *
+ *          协议层对 dataType 只做**取值合法性校验**（未知值判协议违例），
+ *          不解释载荷内容——解析责任在应用层。
+ */
+typedef enum XLinkDataType {
+    XLinkDataType_Raw  = 0, /**< 未声明格式：载荷为原始业务字节，协议层不解释。
+                                 兼容基线——不设 dataType 的老业务沿用此值。 */
+    XLinkDataType_Json = 1, /**< UTF-8 紧凑 JSON（XJsonDocument），payload 即为
+                                 文档字节，不含终止符；长度由 payloadLen 给出。 */
+    XLinkDataType_Bson = 2  /**< 标准 BSON 文档（XBsonDocument），二进制载荷；
+                                 首 4 字节小端即文档总长，末字节必为 0x00。 */
+} XLinkDataType;
 
 /* ========================================================================== */
 /*                        消息类                                             */
@@ -178,6 +219,9 @@ typedef struct XLinkHelloPayload {
 
 /**
  * @brief 解析/构造后的帧头（已脱离线上字节序，编解码见 XLinkCodec.h）。
+ * @details 线序布局见文件头注释；结构体内成员顺序与线上顺序一致，但
+ *          线上宽度更小（dataType 线上 1 字节、reserved 线上 3 字节），
+ *          故地址不可与线上字节互推，一律走 XLinkCodec 编解码。
  */
 typedef struct XLinkFrameHeader {
     uint32_t m_payloadLen; /**< 载荷字节数；须 <= XLINK_MAX_PAYLOAD，解码时校验。 */
@@ -187,6 +231,10 @@ typedef struct XLinkFrameHeader {
                                 XLinkFileCode。 */
     uint32_t m_requestId;  /**< Request/Response 关联 id；File 类为 transferId；
                                 其余消息类填 0。 */
+    uint8_t  m_dataType;   /**< 载荷数据类型，见 XLinkDataType（XLinkDataType_Raw
+                                表示原始字节/未声明）。与 m_msgClass 正交。 */
+    uint8_t  m_reserved[3];/**< 保留位：发送方应置 0，接收方不校验。
+                                仅供实现使用，业务层不得依赖其内容。 */
 } XLinkFrameHeader;
 
 /* ========================================================================== */

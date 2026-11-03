@@ -151,6 +151,38 @@ void XAreaSeries_pen(const XAreaSeries* self, uint32_t* color,
 void XAreaSeries_setBrush(XAreaSeries* self, uint32_t color);
 /** @brief 读取画刷颜色（对标 brush()）。 @param self 目标序列指针。 @return ARGB。 */
 uint32_t XAreaSeries_brush(const XAreaSeries* self);
+/** @brief 查询序列类型（对标 QAreaSeries::type）。 @param self 目标序列指针。 @return 固定返回 Area。 */
+int XAreaSeries_type(const XAreaSeries* self);
+
+/* ==================== 交互信号（对标 QAreaSeries Q_SIGNALS） ==================== */
+
+/** @brief clicked 信号（载荷：x, y）。 */
+void* XAreaSeries_clicked_signal(XAreaSeries* self, double x, double y);
+/** @brief hovered 信号（载荷：x, y, 状态）。 */
+void* XAreaSeries_hovered_signal(XAreaSeries* self, double x, double y, bool state);
+/** @brief pressed 信号（载荷：x, y）。 */
+void* XAreaSeries_pressed_signal(XAreaSeries* self, double x, double y);
+/** @brief released 信号（载荷：x, y）。 */
+void* XAreaSeries_released_signal(XAreaSeries* self, double x, double y);
+/** @brief doubleClicked 信号（载荷：x, y）。 */
+void* XAreaSeries_doubleClicked_signal(XAreaSeries* self, double x, double y);
+/** @brief selected 信号（无载荷）。 */
+void* XAreaSeries_selected_signal(XAreaSeries* self);
+/** @brief colorChanged 信号（载荷：颜色）。 */
+void* XAreaSeries_colorChanged_signal(XAreaSeries* self, uint32_t color);
+/** @brief borderColorChanged 信号（载荷：颜色）。 */
+void* XAreaSeries_borderColorChanged_signal(XAreaSeries* self, uint32_t color);
+/** @brief pointLabelsFormatChanged 信号（载荷：格式串）。 */
+void* XAreaSeries_pointLabelsFormatChanged_signal(XAreaSeries* self, const char* format);
+/** @brief pointLabelsVisibilityChanged 信号（载荷：可见性）。 */
+void* XAreaSeries_pointLabelsVisibilityChanged_signal(XAreaSeries* self, bool visible);
+/** @brief pointLabelsFontChanged 信号（载荷：字体族, 字号）。 */
+void* XAreaSeries_pointLabelsFontChanged_signal(XAreaSeries* self, const char* family, int pointSize);
+/** @brief pointLabelsColorChanged 信号（载荷：颜色）。 */
+void* XAreaSeries_pointLabelsColorChanged_signal(XAreaSeries* self, uint32_t color);
+/** @brief pointLabelsClippingChanged 信号（载荷：裁剪）。 */
+void* XAreaSeries_pointLabelsClippingChanged_signal(XAreaSeries* self, bool clipping);
+
 /** @brief 读取点标签字体（别名：内部借用 XString*）。 */
 const XString* XAreaSeries_pointLabelsFont(const XAreaSeries* self);
 /** @brief 读取点标签字体（UTF-8 借用）。 */

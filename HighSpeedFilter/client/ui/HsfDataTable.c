@@ -162,8 +162,13 @@ XWidget* HsfDataTablePage_create(XWidget* parent,
                                                columnCount);
     if (rowCount > 0)
         XTableWidget_setRowCount(&self->m_table, rowCount);
-    XTableWidget_setSectionResizeMode(&self->m_table,
-                                      XHeaderViewResizeMode_Stretch);
+    /* 对齐 Qt：XHeaderView_setSectionResizeMode 本就是
+     * horizontalHeader()->setSectionResizeMode 的转发，直接调它。 */
+    {
+        XHeaderView* hh = XTableView_horizontalHeader(&self->m_table.m_base);
+        if (hh) XHeaderView_setSectionResizeMode(hh,
+                                                 XHeaderViewResizeMode_Stretch);
+    }
     XWidget_show((XWidget*)&self->m_table);
 
     /* 图表视图占位（自绘提示；与表格同格二选一显隐——显隐已对标 Qt

@@ -22,9 +22,26 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XAbstractSeries.h"
 #include "XGeometry.h"
-#include "XPixmap.h"
+#include "XImage.h"
 
 #if XCHARTS_ON
+
+/**
+ * @brief      单点配置维度（对标 Qt Charts 6.8 QXYSeries::PointConfiguration，
+ *             数值一致）。
+ * @details    Qt 6.2+ 以 QHash<PointConfiguration,QVariant> 承载每点配置；
+ *             本库把这些维度展开为并列的独立 API（见
+ *             XXYSeries_setPointConfigurationValue 等），语义一一对应。
+ *             枚举值仅作维度标识，不按位组合。
+ */
+typedef enum XXYSeries_PointConfiguration
+{
+    XXYSeries_PointConfiguration_Color = 0,           /**< 点颜色（对标 Color）。 */
+    XXYSeries_PointConfiguration_Size = 1,            /**< 点尺寸（对标 Size）。 */
+    XXYSeries_PointConfiguration_Visibility = 2,      /**< 点可见性（对标 Visibility）。 */
+    XXYSeries_PointConfiguration_LabelVisibility = 3, /**< 点标签可见性（对标 LabelVisibility）。 */
+    XXYSeries_PointConfiguration_LabelFormat = 4      /**< 点标签格式（对标 LabelFormat）。 */
+} XXYSeries_PointConfiguration;
 
 XCLASS_DEFINE_BEGING(XXYSeries)
 XCLASS_DEFINE_EXTEND_END(XXYSeries, XAbstractSeries)
@@ -48,10 +65,15 @@ typedef struct XXYSeries
     XString* m_pointLabelsFormat; /**< 点标签格式（对象拥有；默认 "@xPoint, @yPoint"）。 */
     bool* m_selected;            /**< 点选择位图（堆；NULL=全未选）。 */
     XString* m_pointLabelsFontFamily; /**< 点标签字体族（对象拥有）。 */
-    const XPixmap* m_lightMarker; /**< 普通点标记图像（借用）。 */
-    const XPixmap* m_selectedLightMarker; /**< 选中点标记图像（借用）。 */
-    uint32_t* m_pointColors;     /**< 点级颜色配置（堆；下标=点）。 */
-    double* m_pointSizes;        /**< 点级尺寸配置（堆；下标=点）。 */
+    XImage* m_lightMarker;       /**< 普通点标记图像（**对象拥有**；NULL=未设置。
+                                  *   对标 QXYSeries::lightMarker() 返回的 QImage
+                                  *   按值持有语义，非借用）。 */
+    XImage* m_selectedLightMarker; /**< 选中点标记图像（**对象拥有**；NULL=未设置）。 */
+    uint32_t* m_pointColors;     /**< 点级颜色配置（堆；下标=点；0=未配置）。 */
+    double* m_pointSizes;        /**< 点级尺寸配置（堆；下标=点；0=未配置）。 */
+    uint8_t* m_pointVisibility;  /**< 点级可见性配置（堆；0=未配置，1=显式可见，2=显式隐藏）。 */
+    uint8_t* m_pointLabelVisibility; /**< 点级标签可见性配置（同上编码）。 */
+    XString** m_pointLabelFormats;   /**< 点级标签格式（堆；下标=点；NULL=未配置）。 */
     double m_width;              /**< 线宽（像素，默认 2）。 */
     double m_markerSize;         /**< 标记尺寸（默认 8）。 */
     double m_bestFitWidth;       /**< 最佳拟合线宽（默认 2）。 */
@@ -287,10 +309,10 @@ void* XXYSeries_pointLabelsClippingChanged_signal(XXYSeries* self,
                                                   bool clipping);
 /** @brief lightMarkerChanged 信号地址（载荷：图像；Qt 6.2+）。 */
 void* XXYSeries_lightMarkerChanged_signal(XXYSeries* self,
-                                          const XPixmap* marker);
+                                          const XImage* marker);
 /** @brief selectedLightMarkerChanged 信号地址（载荷：图像；Qt 6.2+）。 */
 void* XXYSeries_selectedLightMarkerChanged_signal(XXYSeries* self,
-                                                  const XPixmap* marker);
+                                                  const XImage* marker);
 /** @brief markerSizeChanged 信号地址（载荷：尺寸；Qt 6.2+）。 */
 void* XXYSeries_markerSizeChanged_signal(XXYSeries* self, double size);
 /** @brief bestFitLineVisibilityChanged 信号地址（载荷：可见性；Qt 6.2+）。 */
@@ -317,14 +339,42 @@ void XXYSeries_bestFitLinePen(const XXYSeries* self, uint32_t* color,
 const XString* XXYSeries_pointLabelsFont(const XXYSeries* self);
 /** @brief 读取点标签字体（UTF-8 借用）。 */
 const char* XXYSeries_pointLabelsFont_2(const XXYSeries* self);
-/** @brief 设置普通点标记图像（对标 setLightMarker(QImage)）。 @param self 目标序列指针。 @param marker 图像指针（可空=清除）。 @return 无返回值。 */
-void XXYSeries_setLightMarker(XXYSeries* self, const XPixmap* marker);
-/** @brief 读取普通点标记图像。 @param self 目标序列指针。 @return 图像指针；无标记返回 NULL。 */
-const XPixmap* XXYSeries_lightMarker(const XXYSeries* self);
-/** @brief 设置选中点标记图像（对标 setSelectedLightMarker）。 @param self 目标序列指针。 @param marker 图像指针（可空=清除）。 @return 无返回值。 */
-void XXYSeries_setSelectedLightMarker(XXYSeries* self, const XPixmap* marker);
-/** @brief 读取选中点标记图像。 @param self 目标序列指针。 @return 图像指针；无标记返回 NULL。 */
-const XPixmap* XXYSeries_selectedLightMarker(const XXYSeries* self);
+/** @brief 设置普通点标记图像（对标 QXYSeries::setLightMarker(const QImage&)）。
+ * @details 本库以 `XImage` 对应 Qt 的 `QImage`；按 Qt 的**按值持有**语义
+ *          在内部保存副本，调用方保留入参所有权（_const 契约）。
+ * @param self 目标序列指针。
+ * @param marker 借用 XImage*；NULL 表示清除标记。
+ * @return 无返回值（变化时发射 lightMarkerChanged）。
+ */
+void XXYSeries_setLightMarker(XXYSeries* self, const XImage* marker);
+/** @brief 读取普通点标记图像（借用；对标 QXYSeries::lightMarker()）。
+ * @param self 目标序列指针。
+ * @return 借用 XImage*；未设置返回 NULL。归序列所有，随下次设置或析构失效，
+ *         调用者不得释放。
+ */
+const XImage* XXYSeries_lightMarker_const(const XXYSeries* self);
+/** @brief 读取普通点标记图像（兼容别名，转发 _const 借用版）。
+ * @param self 目标序列指针。
+ * @return 借用 XImage*；未设置返回 NULL。调用者不得释放。
+ */
+const XImage* XXYSeries_lightMarker(const XXYSeries* self);
+/** @brief 设置选中点标记图像（对标 QXYSeries::setSelectedLightMarker）。
+ * @details 与 setLightMarker 同为按值持有语义，内部保存副本。
+ * @param self 目标序列指针。
+ * @param marker 借用 XImage*；NULL 表示清除。
+ * @return 无返回值（变化时发射 selectedLightMarkerChanged）。
+ */
+void XXYSeries_setSelectedLightMarker(XXYSeries* self, const XImage* marker);
+/** @brief 读取选中点标记图像（借用；对标 QXYSeries::selectedLightMarker()）。
+ * @param self 目标序列指针。
+ * @return 借用 XImage*；未设置返回 NULL。归序列所有，调用者不得释放。
+ */
+const XImage* XXYSeries_selectedLightMarker_const(const XXYSeries* self);
+/** @brief 读取选中点标记图像（兼容别名，转发 _const 借用版）。
+ * @param self 目标序列指针。
+ * @return 借用 XImage*；未设置返回 NULL。调用者不得释放。
+ */
+const XImage* XXYSeries_selectedLightMarker(const XXYSeries* self);
 /** @brief 设置点级配置（颜色/尺寸/可见性，对标 setPointConfiguration）。 @param self 目标序列指针。 @param index 点下标。 @param color 颜色（0=不变）。 @param size 尺寸（0=不变）。 @return 无返回值。 */
 void XXYSeries_setPointConfiguration(XXYSeries* self, int index,
                                      uint32_t color, double size);
@@ -353,6 +403,95 @@ int XXYSeries_pointsConfiguration(const XXYSeries* self, uint32_t* colors,
                                   double* sizes, int maxCount);
 /** @brief 清空全部点配置（对标 clearPointsConfiguration）。 @param self 目标序列指针。 @return 无返回值。 */
 void XXYSeries_clearPointsConfiguration(XXYSeries* self);
+
+/* ==================== 单点配置（五维，对标 QXYSeries::PointConfiguration） ==================== */
+
+/**
+ * @brief 按维度设置单点配置（对标 setPointConfiguration(index,key,value)）。
+ * @details 五个维度与 Qt 的 PointConfiguration 一一对应：
+ *          - Color：ARGB 颜色（0=清除该维度配置）；
+ *          - Size：点尺寸（<=0 清除该维度配置）；
+ *          - Visibility：点是否可见（0=可见，非 0=隐藏）；
+ *          - LabelVisibility：该点标签是否可见（0=不可见，非 0=可见）；
+ *          - LabelFormat：点标签格式串（UTF-8；NULL 清除该维度配置）。
+ * @param self 目标序列指针。
+ * @param index 点下标（<0 或 >= count 时为空操作）。
+ * @param key 配置维度（XXYSeries_PointConfiguration）。
+ * @param value 输出缓冲。
+ * @return 无返回值。
+ */
+void XXYSeries_setPointConfigurationValue(XXYSeries* self, int index, int key,
+                                          void* value);
+
+/**
+ * @brief 查询单点某维度配置是否存在（对标 pointConfiguration(index).contains）。
+ * @param self 目标序列指针。
+ * @param index 点下标。
+ * @param key 配置维度。
+ * @return 已配置返回 true。
+ */
+bool XXYSeries_hasPointConfiguration(const XXYSeries* self, int index, int key);
+
+/**
+ * @brief 清除单点某维度配置（标 clearPointConfiguration(index,key)）。
+ * @param self 目标序列指针。
+ * @param index 点下标。
+ * @param key 配置维度。
+ * @return 无返回值。
+ */
+void XXYSeries_clearPointConfigurationKey(XXYSeries* self, int index, int key);
+
+/**
+ * @brief 清除全部点的某维度配置（对标 clearPointsConfiguration(key)）。
+ * @param self 目标序列指针。
+ * @param key 配置维度。
+ * @return 无返回值。
+ */
+void XXYSeries_clearPointsConfigurationKey(XXYSeries* self, int key);
+
+/** @brief 查询单点可见性（对标 pointConfiguration(index)[Visibility]）。
+ * @param self 目标序列指针。
+ * @param index 点下标。
+ * @return 可见返回 true；无配置时沿用序列级 pointsVisible。
+ */
+bool XXYSeries_isPointVisible(const XXYSeries* self, int index);
+/** @brief 设置单点可见性（对标 setPointConfiguration(index,Visibility,value)）。
+ * @param self 目标序列指针。
+ * @param index 点下标。
+ * @param visible true 可见。
+ * @return 无返回值。
+ */
+void XXYSeries_setPointVisible(XXYSeries* self, int index, bool visible);
+/** @brief 查询单点标签可见性（对标 pointConfiguration(index)[LabelVisibility]）。
+ * @param self 目标序列指针。
+ * @param index 点下标。
+ * @return 可见返回 true；无配置时沿用序列级 pointLabelsVisible。
+ */
+bool XXYSeries_isPointLabelVisible(const XXYSeries* self, int index);
+/** @brief 设置单点标签可见性（对标 setPointConfiguration(index,LabelVisibility,value)）。
+ * @param self 目标序列指针。
+ * @param index 点下标。
+ * @param visible true 可见。
+ * @return 无返回值。
+ */
+void XXYSeries_setPointLabelVisible(XXYSeries* self, int index, bool visible);
+/** @brief 查询单点标签格式（借用；对标 pointConfiguration(index)[LabelFormat]）。
+ * @param self 目标序列指针。
+ * @param index 点下标。
+ * @return 借用 XString*；无配置返回 NULL，调用者不得释放。
+ */
+const XString* XXYSeries_pointLabelFormat_const(const XXYSeries* self, int index);
+/** @brief 设置单点标签格式（对标 setPointConfiguration(index,LabelFormat,value)）。
+ * @param self 目标序列指针。
+ * @param index 点下标。
+ * @param format 借用 XString*；NULL 清除该维度配置。
+ * @return 无返回值。
+ */
+void XXYSeries_setPointLabelFormat(XXYSeries* self, int index,
+                                   const XString* format);
+/** @brief 设置单点标签格式（UTF-8 编码版本）。 @param self 目标序列指针。 @param index 点下标。 @param format UTF-8 格式串（借用）。 @return 无返回值。 */
+void XXYSeries_setPointLabelFormat_utf8(XXYSeries* self, int index,
+                                        const char* format);
 
 #endif /* XCHARTS_ON */
 #ifdef __cplusplus

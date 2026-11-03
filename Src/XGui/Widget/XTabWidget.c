@@ -16,6 +16,7 @@
 #if XWIDGET_ON && XTABBAR_ON && XTABWIDGET_ON
 
 #include "XTabWidget.h"
+#include "XAbstractItemView.h" /* [对齐 Qt 2026-11-03] elide 枚举缺省值。 */
 #include "XWidget_Protected.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -857,7 +858,10 @@ void XTabWidget_setElideMode(XTabWidget* self, int mode)
 }
 int XTabWidget_elideMode(const XTabWidget* self)
 {
-    return self ? XTabBar_elideMode(&self->m_tabBar) : 0;
+    /* 对齐 Qt：QTabWidget::elideMode 转发页签条；self 为 NULL 时同样返回
+     * 缺省 ElideRight（数值 1），与 XTabBar_elideMode 的 NULL 语义一致。 */
+    return self ? XTabBar_elideMode(&self->m_tabBar)
+                : (int)XAbstractItemViewTextElideMode_ElideRight;
 }
 
 void XTabWidget_setTabShape(XTabWidget* self, int shape)

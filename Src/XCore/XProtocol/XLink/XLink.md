@@ -1,9 +1,25 @@
 # XLink 私有应用层协议
 
-> 版本：v1.3-dev　|　协议版本：`0x0101`　|　日期：2026-10-27（进行中，见 §14）
-> 落点：`Src/XProtocol/XLink/`　|　开关：`XLINK_ON`
+> 版本：v1.4-dev　|　协议版本：`0x0200`　|　日期：2026-11-03
+> 落点：`Src/XCore/XProtocol/XLink/`　|　开关：`XLINK_ON`
 >
-> v1.3-dev 变更（登录认证 + 文件传输 + 底层加固，**进行中**，进度与已知问题见文末 §14）：
+> v1.4-dev 变更（载荷数据类型，**破坏性**）：
+>   - **帧头 12 → 16 字节**：新增 `dataType`（1 字节，`XLinkDataType`）与
+>     `reserved`（3 字节，写 0、不校验）。`dataType` 与 `msgClass` 正交——
+>     msgClass 决定消息语义（请求/应答/推送），dataType 决定载荷格式
+>     （Raw/JSON/BSON），同一份 JSON 可由三类消息任意承载。见 §3.5。
+>   - **主版本强制校验**：握手期主版本不一致即判协议违例并断链。1.x 对端按
+>     12 字节切帧会静默错位（不报错、只产出垃圾流），故必须拦在握手阶段。
+>     次版本差异仍只记录不拦。见 §6.2。
+>   - **新增 `_ex` 收发 API**：`sendRequest_ex` / `sendResponse_ex` /
+>     `sendPublish_ex` / `XLinkServer_publish_ex` / `XLinkServer_broadcast_ex`，
+>     显式指定载荷数据类型；老接口全部保留且恒填 `XLinkDataType_Raw`，
+>     业务代码零改动，线上行为与 1.x 一致（除帧头宽度）。
+>   - **自动重发保留 dataType**：待应答槽记录原帧 dataType，超时重发不会退化为 Raw。
+>   - 测试：功能全量 **679 通过 / 0 失败**、质量门禁 **72 通过 / 0 失败**
+>     （Windows x64 实测，2026-11-03）。
+>
+> v1.3 变更（登录认证 + 文件传输 + 底层加固，**进行中**，进度与已知问题见文末 §14）：
 >   - **登录认证**（`XLINK_AUTH_ON`，默认开）：挑战应答（盐 + 迭代 HMAC-SHA256）
 >     + 服务端证明防假冒 + 常量时间比较；新模块 `XLinkAuth`（协议与派生）、
 >     `XLinkUserStore`（JSON 账户库，XString 存储）；会话新增 Authenticating 态
@@ -89,7 +105,7 @@ XLink 是 XinYueC 自有的**应用层私有协议**，用于自研程序之间�
 | 界面崩溃后快速恢复画面 | 重连时握手阶段重推全量快照，无需增量补偿逻辑 |
 | 双向：GUI 下发命令 + 服务器推状态 | 消息类正交（请求-应答/推送/订阅），任意一端既能发起请求也能推送 |
 | 通用：新增业务不改框架 | 加一个 topic 或命令号即可，协议层零改动 |
-| 嵌入式友好 | 收发全链路稳态零堆分配；不解密压缩，帧头仅 12 字节 |
+| 嵌入式友好 | 收发全链路稳态零堆分配；不解密压缩，帧头仅 16 字节 |
 
 **不适用场景**：需要与第三方系统互操作时请用 MQTT / Modbus 等标准协议。
 
@@ -163,7 +179,7 @@ XLinkSession* session = XLinkSession_create_ex(conn);
 
 ### 3.1 帧结构
 
-定长帧头 **12 字节**，全部小端线序（fbdev/网络栈惯例，ARM 与 x86 一致）：
+定长帧头 **16 字节**，全部小端线序（fbdev/网络栈惯例，ARM 与 x86 一致）：
 
 | 偏移 | 长度 | 字段 | 说明 |
 |------|------|------|------|
@@ -171,7 +187,11 @@ XLinkSession* session = XLinkSession_create_ex(conn);
 | 4 | 2 | `msgClass` | 消息类，见 [4. 消息类详解](#4-消息类详解) |
 | 6 | 2 | `msgCode` | 业务码：Request/Response = 命令号；Publish/Subscribe = topicId 低 16 位；Session = 子类型（含认证四子码）；File = `XLinkFileCode` |
 | 8 | 4 | `requestId` | Request/Response 关联 id；File 类 = transferId；其余消息类填 0 |
-| 12 | N | `payload` | 载荷 |
+| 12 | 1 | `dataType` | 载荷数据类型（`XLinkDataType`），见 [3.5](#35-载荷数据类型-datatype) |
+| 13 | 3 | `reserved` | 保留位：发送方必须写 0，接收方不校验（未来扩展锚点） |
+| 16 | N | `payload` | 载荷 |
+
+> **2.0 破坏性变更**：帧头由 12 字节增至 16 字节。1.x 对端按 12 字节切帧会从第 13 字节起整体错位，且**不会报错**（只会把垃圾数据当帧头继续解析）。因此握手期对主版本不一致直接断链，见 §6.2。
 
 ### 3.2 topicId 的承载规则（重要）
 
@@ -182,7 +202,7 @@ XLinkSession* session = XLinkSession_create_ex(conn);
 线上布局：
 
 ```
-[12B 帧头][4B topicId (u32 小端)][业务载荷...]
+[16B 帧头][4B topicId (u32 小端)][业务载荷...]
          ↑ msgCode 仅为 topicId 低 16 位
 ```
 
@@ -209,6 +229,68 @@ memcpy(buf, &state, sizeof(state));
 ### 3.4 帧原子性
 
 **帧头与载荷必须一次写出。** 部分传输（如 `XGuiRemoteLoopbackDevice`）的写入是「全有全无」语义，分两段写会只落帧头、对端拿到截断帧流。XLink 内部通过常驻发送缓冲保证单次原子写，调用方无需关心。
+
+### 3.5 载荷数据类型 dataType
+
+帧头第 12 字节声明载荷**是什么格式**。它与 `msgClass` **正交**：
+
+- `msgClass` 决定"这帧算什么"——请求、应答、推送；
+- `dataType` 决定"载荷里装的是什么"——原始字节、JSON、BSON。
+
+所以同一份 JSON 既可作为 `Request` 发出，也可作为 `Response` 回执，还可作为 `Publish` 推送，两者任意组合都合法。
+
+| 值 | 枚举 | 含义 |
+|----|------|------|
+| 0 | `XLinkDataType_Raw` | 未声明格式：载荷为原始业务字节，协议层不解释。**兼容基线**——不设 dataType 的老业务沿用此值 |
+| 1 | `XLinkDataType_Json` | UTF-8 紧凑 JSON（`XJsonDocument`），不含终止符，长度由 `payloadLen` 给出 |
+| 2 | `XLinkDataType_Bson` | 标准 BSON 文档（`XBsonDocument`），首 4 字节小端即文档总长，末字节必为 `0x00` |
+
+**协议层的责任边界**：只校验取值合法性，不解析内容。未知 dataType 判**协议违例**（`decodeHeader` 返回 false → 会话层断链），绝不会把无法识别的帧投递给业务层。
+
+**发送**（老接口恒填 `Raw`，新接口显式声明）：
+
+```c
+/* JSON 文档推送 */
+XByteArray* json = XJsonDocument_toJson(doc, XJsonDocument_Compact);
+XLinkSession_sendPublish_ex(session, TOPIC_STATE, XLinkDataType_Json,
+                            XByteArray_constData(json),
+                            (uint32_t)XByteArray_size_base(json));
+XClassDelete((XClass*)json);
+
+/* BSON 文档请求 */
+XByteArray* bson = XBsonDocument_toBson(bsonDoc);
+XLinkSession_sendRequest_ex(session, CMD_SYNC, XLinkDataType_Bson,
+                            XByteArray_constData(bson),
+                            (uint32_t)XByteArray_size_base(bson), &reqId);
+XClassDelete((XClass*)bson);
+```
+
+**接收**（分发回调里直接看帧头，无需嗅探探测）：
+
+```c
+if (f->m_msgClass == XLinkMsgClass_Publish) {
+    const uint8_t* body = payload + 4;        /* 跳过 u32 topicId */
+    uint32_t len = f->m_payloadLen - 4;
+
+    if (f->m_dataType == XLinkDataType_Json) {
+        /* XJsonDocument_fromJson 会自行剥离尾部 NUL（如有），可按长度直传 */
+        XByteArray* bytes = XByteArray_create_with_data((const char*)body, len);
+        XJsonDocument* doc = XJsonDocument_fromJson(bytes);
+        XClassDelete((XClass*)bytes);
+        ...
+    } else if (f->m_dataType == XLinkDataType_Bson) {
+        XBsonDocument* doc = XBsonDocument_create();
+        XBsonDocument_from_bytes(doc, body, len);   /* 零拷贝解析 */
+        ...
+    }
+}
+```
+
+> ⚠️ JSON / BSON 文档都按**长度**处理，不要当 C 字符串：BSON 内部必然含 `0x00`，JSON 序列化也不保证附加终止符（`[1,2,3]` 序列化为 7 字节）。
+>
+> ⚠️ `dataType` 只描述业务载荷，**不含 Publish 的 topicId 前缀**（那 4 字节属协议层）。判断格式前先跳过前缀。
+>
+> ⚠️ 载荷上限仍是 `XLINK_MAX_PAYLOAD`：Publish 的业务载荷上限为 `XLINK_MAX_PAYLOAD - 4`，Request/Response 为 `XLINK_MAX_PAYLOAD`。超大文档请走文件通道（§6.11）。
 
 ---
 
@@ -375,6 +457,20 @@ XLinkSession_setDispatchCallback(session, my_dispatch_callback, userData);
 
 > ⚠️ 能力位须在事件循环转起来之前设置（通常在 create_ex 之后同步调用）：
 > 会话挂载传输后首次驱动会自动补发 Hello，能力位随 Hello 上线。
+
+**版本校验：主版本不一致直接断链**
+
+`XLINK_VERSION` 高字节为主版本、低字节为次版本。握手收到 Hello/HelloAck 时：
+
+| 情况 | 行为 |
+|------|------|
+| 主版本不同 | 判协议违例，发 `Goodbye(Protocol)` 后断链，**不进入 Ready** |
+| 次版本不同 | 仅记录到 `XLinkSession_remoteVersion`，握手照常完成 |
+
+主版本必须强制的原因是帧头宽度只在主版本变化时改变（1.x = 12 字节，2.x = 16 字节）。
+若放行，旧对端会按旧宽度切帧，从第 13 字节起整体错位——它不会报错，只会把垃圾
+数据当帧头继续解析，表现为"连着但业务全乱"，排查成本极高。次版本之间只增能力位/
+命令号，属兼容扩展，故不拦。
 
 **第 3 步：握手——什么都不用做**
 
@@ -1215,8 +1311,8 @@ void ui_loop(XLinkSession* s)
 
 | 宏 | 默认值 | 说明 |
 |----|--------|------|
-| `XLINK_VERSION` | `0x0101` | 协议版本（高字节主版本，低字节次版本）。正本定义在 `XLinkProto.h`（1.1 新增认证/文件两个可选能力位）；`XLink_config.h` 保留 `#ifndef` 兜底宏 |
-| `XLINK_HEADER_SIZE` | 12 | 帧头固定长度 |
+| `XLINK_VERSION` | `0x0200` | 协议版本（高字节主版本，低字节次版本）。正本定义在 `XLink_config.h`；2.0 帧头 12→16 字节（新增 dataType + 保留位），主版本不兼容，握手期强制校验 |
+| `XLINK_HEADER_SIZE` | 16 | 帧头固定长度（payloadLen 4 + msgClass 2 + msgCode 2 + requestId 4 + dataType 1 + reserved 3） |
 | `XLINK_TOPIC_USER_BASE` | `0x10000` | 业务 topicId 起始值 |
 | `XLINK_MAX_PAYLOAD` | `16384` | **线上**载荷上限（含 topicId 前缀）；同时是接收/发送缓冲的容量依据 |
 | `XLINK_PENDING_SLOTS` | 8 | 待应答表槽位 |
@@ -1271,11 +1367,14 @@ void ui_loop(XLinkSession* s)
 
 | API | 说明 |
 |-----|------|
-| `XLinkSession_send(s, frame, payload)` | 发送任意帧（底层通用接口） |
+| `XLinkSession_send(s, frame, payload)` | 发送任意帧（底层通用接口，dataType 由 frame 携带） |
 | `XLinkSession_sendSession(s, code, payload, len)` | 发送会话帧（Hello/Heartbeat/Goodbye） |
-| `XLinkSession_sendRequest(s, cmd, payload, len, &id)` | 发送请求，返回关联 id |
-| `XLinkSession_sendResponse(s, reqId, cmd, payload, len)` | 发送应答 |
-| `XLinkSession_sendPublish(s, topicId, payload, len)` | 发送推送 |
+| `XLinkSession_sendRequest(s, cmd, payload, len, &id)` | 发送请求，返回关联 id（dataType 恒 `Raw`） |
+| `XLinkSession_sendRequest_ex(s, cmd, dataType, payload, len, &id)` | 同上，显式指定载荷数据类型；自动重发时原样保留 |
+| `XLinkSession_sendResponse(s, reqId, cmd, payload, len)` | 发送应答（dataType 恒 `Raw`） |
+| `XLinkSession_sendResponse_ex(s, reqId, cmd, dataType, payload, len)` | 同上，显式指定载荷数据类型 |
+| `XLinkSession_sendPublish(s, topicId, payload, len)` | 发送推送（dataType 恒 `Raw`） |
+| `XLinkSession_sendPublish_ex(s, topicId, dataType, payload, len)` | 同上，显式指定载荷数据类型 |
 
 ### 9.4 订阅
 
@@ -1316,7 +1415,9 @@ void ui_loop(XLinkSession* s)
 | `XLinkServer_setTickCallback(srv, cb, ud)` | 注册周期业务回调（随内建节拍触发） |
 | `XLinkServer_setTickInterval(srv, ms)` / `tickInterval(srv)` | 运行中调整/读取内建节拍周期；0 = 停节拍转手动 pump |
 | `XLinkServer_publish(srv, topic, payload, len)` | 一对多发布：只推"已订阅且握手完成"的会话，返回推送到的会话数 |
+| `XLinkServer_publish_ex(srv, topic, dataType, payload, len)` | 同上，显式指定载荷数据类型 |
 | `XLinkServer_broadcast(srv, topic, payload, len)` | 广播：不管订阅关系推给全部握手完成的会话 |
+| `XLinkServer_broadcast_ex(srv, topic, dataType, payload, len)` | 同上，显式指定载荷数据类型 |
 | `XLinkServer_pump(srv, nowMs)` | 手动兜底泵：accept + 驱动 + 回收 |
 | `XLinkServer_sessionCount(srv)` / `sessionAt(srv, i)` | 遍历在线会话 |
 | `XLinkServer_tcpServer_const(srv)` | 内嵌监听器（高级配置，借用） |
@@ -1377,8 +1478,8 @@ void ui_loop(XLinkSession* s)
 | `XMemory_write_data(buf, XBYTE_ORDER_LITTLE_ENDIAN, ...)` / `read_data(...)` | 小端序列化原语（多字节字段逐字段读写，本模块不再提供 put/get 转发函数） |
 | `XLinkCodec_encodeHello(payload, buf, cap, &len)` | Hello 载荷编码 |
 | `XLinkCodec_decodeHello(buf, len, &out)` | Hello 载荷解码 |
-| `XLinkCodec_encodeHeader(frame, buf)` | 帧头打包（12 字节） |
-| `XLinkCodec_decodeHeader(buf, len, &out)` | 帧头解包（含载荷上限校验） |
+| `XLinkCodec_encodeHeader(frame, buf)` | 帧头打包（16 字节，含 dataType） |
+| `XLinkCodec_decodeHeader(buf, len, &out)` | 帧头解包（含载荷上限与 dataType 取值校验） |
 
 ### 9.10 登录认证 XLinkAuth（`XLINK_AUTH_ON`，详见 §6.10）
 
@@ -1492,7 +1593,7 @@ XObject 子类；同一时刻只允许一个活跃传输，客户端重连时自
 
 测试环境：x86-64 桌面，`XGuiRemoteLoopbackDevice` 内存环回（无真实网络）。
 
-**纯编解码天花板**（仅 12 字节帧头打包，不含 I/O）：
+**纯编解码天花板**（仅 16 字节帧头打包，不含 I/O）：
 
 | 指标 | 数值 |
 |------|------|
@@ -1534,7 +1635,7 @@ XObject 子类；同一时刻只允许一个活跃传输，客户端重连时自
 
 ### 10.3 优化建议
 
-1. **小包尽量攒批**。16 字节载荷时固定开销占 50%（12B 帧头 + 4B topicId），一半带宽在传元数据。状态快照建议按 100~200ms 周期打包成整帧，而非每点一帧。
+1. **小包尽量攒批**。16 字节载荷时固定开销占 55.6%（16B 帧头 + 4B topicId），一半以上带宽在传元数据；64 字节载荷降到 23.8%。状态快照建议按 100~200ms 周期打包成整帧，而非每点一帧。
 2. **画面块走大帧**。4096B 帧开销仅 0.4%，吞吐是 16B 小帧的 11 倍。按 `XLINK_MAX_PAYLOAD`（16KB）打包最划算。
 3. **真机瓶颈通常不在协议**。协议层仅占每帧十几纳秒，TCP 栈与网卡 DMA 才是主要成本。
 
@@ -1604,7 +1705,7 @@ XObject 子类；同一时刻只允许一个活跃传输，客户端重连时自
 
 | 决策 | 理由 |
 |------|------|
-| 12 字节定长帧头 | 嵌入式解析成本低，无变长字段处理 |
+| 16 字节定长帧头 | 嵌入式解析成本低，无变长字段处理；dataType 与预留位对齐到 4 字节边界，将来追加 u32 字段不必再改帧头长度 |
 | 小端线序 | fbdev/网络栈惯例，ARM 与 x86 一致 |
 | u32 topicId 走载荷而非 msgCode | msgCode 只有 u16，而 topic 从 0x10000 起会溢出 |
 | 单次原子写 | 部分传输是「全有全无」，分段写会产生截断帧流 |
@@ -1620,9 +1721,9 @@ XObject 子类；同一时刻只允许一个活跃传输，客户端重连时自
 
 ```
 会话生命周期：
-  init     → 一次性申请 m_rxBuffer (12+16KB) + m_txBuffer (12+16KB)
+  init     → 一次性申请 m_rxBuffer (16+16KB) + m_txBuffer/发送队列
   收发     → 稳态零堆分配（复用常驻缓冲）
-  deinit   → 成对释放两块缓冲
+  deinit   → 成对释放缓冲
 ```
 
 > ⚠️ 载荷上限受限于 `m_txBuffer` 容量。帧总长超过 `XLINK_HEADER_SIZE + XLINK_MAX_PAYLOAD` 会被拒绝。

@@ -32,6 +32,32 @@
 #endif /* XPLAINTEXTEDIT_ON */
 #if XTABLEWIDGET_ON
 #include "XTableWidget.h" /* 表格单元格编辑器（XItemLineEditor 派生类）弹键盘回归。 */
+
+/* ===== [Qt 对齐迁移 2026-11-03] XTableWidget 文本便捷 helper =====
+ * 旧 API XTableWidget_setText/XTableWidget_text 已删除（Qt 无对应物）。
+ * Qt 等价写法：item->setText()/item->text()；空格需先创建条目。
+ * 此处提供两个文件内 static helper，集中承担「空格自动建条目」这一
+ * C 侧便捷语义，避免逐点展开样板代码。 */
+#ifndef XTW_TEXT_HELPER_DEFINED
+#define XTW_TEXT_HELPER_DEFINED
+static void xTwSetTextUtf8(XTableWidget* tbl, int row, int col,
+                           const char* utf8)
+{
+    XTableWidgetItem* item = XTableWidget_item(tbl, row, col);
+    if (!item) {
+        item = XTableWidgetItem_create_utf8(utf8, XTableWidgetItem_Type);
+        if (!item) return;
+        XTableWidget_setItem(tbl, row, col, item);
+        return;
+    }
+    XTableWidgetItem_setText_utf8(item, utf8);
+}
+static const char* xTwTextUtf8(const XTableWidget* tbl, int row, int col)
+{
+    return XTableWidgetItem_text_toUtf8(XTableWidget_item(tbl, row, col));
+}
+#endif /* XTW_TEXT_HELPER_DEFINED */
+
 #include "XAbstractItemView.h"
 #include "XItemDelegate.h"
 #endif /* XTABLEWIDGET_ON */
@@ -4816,8 +4842,8 @@ bool XKeyboardTest_runAll(void)
         XWidget_setGeometry((XWidget*)tbl, 10, 10, 440, 200);
         XTableWidget_setRowCount(tbl, 2);
         XTableWidget_setColumnCount(tbl, 2);
-        XTableWidget_setText(tbl, 0, 0, "10");
-        XTableWidget_setText(tbl, 0, 1, "20");
+        xTwSetTextUtf8(tbl, 0, 0, "10");
+        xTwSetTextUtf8(tbl, 0, 1, "20");
         XAbstractItemView_setItemsEditable(view, true);
         XWidget_show((XWidget*)tbl);
         if (kp) XVirtualKeyboard_closePopup(kp);

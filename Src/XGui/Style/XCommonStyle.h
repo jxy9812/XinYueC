@@ -66,7 +66,10 @@ XCommonStyle* XCommonStyle_create_ex(XMemoryType memory);
  * @param buf 调用方栈缓冲（承载省略结果）。
  * @param bufCap buf 容量（字节）。
  * @param text 原文（UTF-8）。
- * @param mode 0=截断不加点 1=右省略（尾部…）2=左省略（头部…）。
+ * @param mode 省略模式，**数值对齐 Qt::TextElideMode**：
+ *             0=ElideLeft（头部…）1=ElideRight（尾部…）
+ *             2=ElideMiddle（中段…）3=ElideNone（截断不加省略号）。
+ *             本库不再维护第二套编号。
  * @param maxW 可用宽（px）。
  * @param font 字体。
  * @return 省略后的文本指针（入参原样返回或 buf）。

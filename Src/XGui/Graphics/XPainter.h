@@ -1222,6 +1222,187 @@ void XPainterPath_currentPosition(const XPainterPath* self,
  *          非法值回退 OddEvenFill，与 drawPolygon 同口径。
  */
 void XPainterPath_setFillRule(XPainterPath* self, XPainterFillRule rule);
+/** @brief 查询填充规则（对标 QPainterPath::fillRule）。 @param self 目标路径指针。 @return 填充规则。 */
+XPainterFillRule XPainterPath_fillRule(const XPainterPath* self);
+
+/* ==================== 容量与清空（对标 QPainterPath） ==================== */
+
+/** @brief 清空全部元素并复位当前点（对标 clear）。 @param self 目标路径指针。 @return 无返回值。 */
+void XPainterPath_clear(XPainterPath* self);
+/** @brief 预分配元素容量（对标 reserve）。 @param self 目标路径指针。 @param size 期望容量（不小于已有元素数）。 @return 无返回值。 */
+void XPainterPath_reserve(XPainterPath* self, int size);
+/** @brief 查询当前容量（对标 capacity）。 @param self 目标路径指针。 @return 容量。 */
+int XPainterPath_capacity(const XPainterPath* self);
+/** @brief 路径是否为空（对标 isEmpty）。 @param self 目标路径指针。 @return 无元素返回 true。 */
+bool XPainterPath_isEmpty(const XPainterPath* self);
+
+/* ==================== 圆弧与曲线（对标 QPainterPath） ==================== */
+
+/** @brief 圆弧移动到 startAngle 处的起点（对标 arcMoveTo）。
+ * @param self 目标路径指针。
+ * @param rect 椭圆包围盒。
+ * @param angle 起始角（度，逆时针为正）。
+ * @return 无返回值。
+ */
+void XPainterPath_arcMoveTo(XPainterPath* self, const XRect* rect, float angle);
+/** @brief 追加一段圆弧（对标 arcTo）。
+ * @param self 目标路径指针。
+ * @param rect 椭圆包围盒。
+ * @param startAngle 起始角（度）。
+ * @param arcLength 扫掠角（度，正为逆时针）。
+ * @return 无返回值。
+ */
+void XPainterPath_arcTo(XPainterPath* self, const XRect* rect,
+                        float startAngle, float arcLength);
+
+/* ==================== 图元追加（对标 QPainterPath） ==================== */
+
+/** @brief 追加多边形（对标 addPolygon）。
+ * @param self 目标路径指针。
+ * @param points 顶点数组（借用）。
+ * @param count 顶点数。
+ * @param close 是否闭合。
+ * @return 无返回值。
+ */
+void XPainterPath_addPolygon(XPainterPath* self, const XPointF* points,
+                             int count, bool close);
+/** @brief 追加另一条路径（对标 addPath）。 @param self 目标路径指针。 @param other 源路径（借用）。 @return 无返回值。 */
+void XPainterPath_addPath(XPainterPath* self, const XPainterPath* other);
+/** @brief 用直线连接另一条路径（对标 connectPath）。
+ * @param self 目标路径指针。
+ * @param other 源路径（借用）。
+ * @return 无返回值。
+ */
+void XPainterPath_connectPath(XPainterPath* self, const XPainterPath* other);
+/** @brief 追加圆角矩形（对标 addRoundedRect）。
+ * @param self 目标路径指针。
+ * @param rect 矩形。
+ * @param xRadius X 方向圆角半径。
+ * @param yRadius Y 方向圆角半径。
+ * @return 无返回值。
+ */
+void XPainterPath_addRoundedRect(XPainterPath* self, const XRect* rect,
+                                 float xRadius, float yRadius);
+
+/* ==================== 几何变换与度量（对标 QPainterPath） ==================== */
+
+/** @brief 平移整条路径（对标 translate）。 @param self 目标路径指针。 @param dx X 偏移。 @param dy Y 偏移。 @return 无返回值。 */
+void XPainterPath_translate(XPainterPath* self, float dx, float dy);
+/** @brief 查询控制点包围盒（对标 controlPointRect；含控制点，比 boundingRect 大）。
+ * @param self 目标路径指针。
+ * @param out 输出矩形；调用方提供存储。
+ * @return 无返回值。
+ */
+void XPainterPath_controlPointRect(const XPainterPath* self, XRectF* out);
+/** @brief 查询路径总长度（对标 length；曲线按细分逼近）。 @param self 目标路径指针。 @return 总长度。 */
+float XPainterPath_length(const XPainterPath* self);
+/** @brief 由弧长比例反查百分比（对标 percentAtLength）。 @param self 目标路径指针。 @param t 弧长。 @return 百分比 0..1。 */
+float XPainterPath_percentAtLength(const XPainterPath* self, float t);
+/** @brief 按百分比取路径上的点（对标 pointAtPercent）。
+ * @param self 目标路径指针。
+ * @param t 百分比 0..1（越界钳位）。
+ * @param x 输出 X；可空。
+ * @param y 输出 Y；可空。
+ * @return 无返回值。
+ */
+void XPainterPath_pointAtPercent(const XPainterPath* self, float t,
+                                 float* x, float* y);
+/** @brief 按百分比取切线角度（度；对标 angleAtPercent）。
+ * @param self 目标路径指针。
+ * @param t 百分比 0..1。
+ * @return 角度（度）。
+ */
+float XPainterPath_angleAtPercent(const XPainterPath* self, float t);
+/** @brief 按百分比取切线斜率（对标 slopeAtPercent）。 @param self 目标路径指针。 @param t 百分比 0..1。 @return 斜率。 */
+float XPainterPath_slopeAtPercent(const XPainterPath* self, float t);
+
+/* ==================== 元素访问（对标 QPainterPath） ==================== */
+
+/** @brief 读取指定元素（对标 elementAt）。
+ * @param self 目标路径指针。
+ * @param index 元素下标。
+ * @param out 输出元素；调用方提供存储。
+ * @return 越界返回 false。
+ */
+bool XPainterPath_elementAt(const XPainterPath* self, int index,
+                            XPainterPathElement* out);
+/** @brief 就地修改元素坐标（对标 setElementPositionAt）。
+ * @param self 目标路径指针。
+ * @param index 元素下标。
+ * @param x 新 X。
+ * @param y 新 Y。
+ * @return 越界返回 false。
+ */
+bool XPainterPath_setElementPositionAt(XPainterPath* self, int index,
+                                       float x, float y);
+
+/* ==================== 命中测试（对标 QPainterPath） ==================== */
+
+/** @brief 点是否在路径内部（对标 contains(QPointF)）。
+ * @param self 目标路径指针。
+ * @param x 点 X。
+ * @param y 点 Y。
+ * @return 在内部返回 true。
+ */
+bool XPainterPath_containsPoint(const XPainterPath* self, float x, float y);
+/** @brief 路径是否与矩形相交（对标 intersects(QRectF)）。
+ * @param self 目标路径指针。
+ * @param rect 查询矩形。
+ * @return 相交返回 true。
+ */
+bool XPainterPath_intersectsRect(const XPainterPath* self, const XRect* rect);
+/** @brief 矩形是否完全在路径内部（对标 contains(QRectF)）。
+ * @param self 目标路径指针。
+ * @param rect 查询矩形。
+ * @return 完全包含返回 true。
+ */
+bool XPainterPath_containsRect(const XPainterPath* self, const XRect* rect);
+
+/* ==================== 转多边形（对标 QPainterPath） ==================== */
+
+/** @brief 把每个子路径转成多边形（对标 toSubpathPolygons；曲线细分）。
+ * @param self 目标路径指针。
+ * @param out 输出点缓冲（调用方提供；各子路径首尾相接存放）。
+ * @param maxPoints 缓冲容量。
+ * @param counts 输出每个子路径的点数（可空）。
+ * @param maxSubpaths counts 容量。
+ * @return 实际写入的总点数。
+ */
+int XPainterPath_toSubpathPolygons(const XPainterPath* self, XPointF* out,
+                                   int maxPoints, int* counts,
+                                   int maxSubpaths);
+/** @brief 追加文本字形轮廓（对标 QPainterPath::addText）。
+ * @details 逐字符取轮廓字形（XFontFace_loadOutlineGlyphScaled_base），
+ *          经 XFontOutlineSink 回调直接写入本路径；字符按 advance 水平推进。
+ *          点阵字体（无轮廓）返回 false 且路径不变。
+ * @param self 目标路径指针。
+ * @param x 基线起点 X。
+ * @param y 基线起点 Y。
+ * @param font 字体（借用，不转移所有权）。
+ * @param utf8 文本（UTF-8，借用）。
+ * @return 至少写入一个字形返回 true。
+ */
+bool XPainterPath_addText(XPainterPath* self, float x, float y,
+                          const XFont* font, const char* utf8);
+/** @brief 追加区域轮廓（对标 QPainterPath::addRegion）。
+ * @details 区域由若干矩形组成；每个矩形作为独立闭合子路径追加
+ *          （联合区域下 OddEven/Winding 规则均可正确填充）。
+ * @param self 目标路径指针。
+ * @param region 区域（借用，不转移所有权）。
+ * @return 无返回值。
+ */
+void XPainterPath_addRegion(XPainterPath* self, const XRegion* region);
+/** @brief 把路径转成填充多边形（对标 toFillPolygons；自交路径拆分）。
+ * @param self 目标路径指针。
+ * @param out 输出点缓冲（调用方提供）。
+ * @param maxPoints 缓冲容量。
+ * @param counts 输出每段点数（可空）。
+ * @param maxSubpaths counts 容量。
+ * @return 实际写入的总点数。
+ */
+int XPainterPath_toFillPolygons(const XPainterPath* self, XPointF* out,
+                                int maxPoints, int* counts, int maxSubpaths);
+
 /** @brief 查询路径填充规则（对标 QPainterPath::fillRule）。 */
 XPainterFillRule XPainterPath_fillRule(const XPainterPath* self);
 /**

@@ -331,6 +331,18 @@ static uint32_t XLinkSessionPrivate_nextRequestId(XLinkSession* self)
     return id;
 }
 
+/**
+ * @brief 数据类型取值是否合法（与解码侧校验同口径）。
+ * @note  发送路径的入口校验：非法值直接拒绝，绝不把对端必判违例的帧发出去。
+ *        解码侧独立再校验一次（不信任线上字节），两侧共用同一份取值集合。
+ */
+static bool XLinkSessionPrivate_isDataTypeValid(XLinkDataType dataType)
+{
+    return dataType == XLinkDataType_Raw
+        || dataType == XLinkDataType_Json
+        || dataType == XLinkDataType_Bson;
+}
+
 /** @brief 清空待应答表与订阅表（换设备/断链时调用）。 */
 static void XLinkSessionPrivate_clearTables(XLinkSession* self)
 {
@@ -343,13 +355,16 @@ static void XLinkSessionPrivate_clearTables(XLinkSession* self)
 
 /**
  * @brief 登记一条待应答并快照载荷（自动重发用）；表满返回 false。
+ * @param dataType 该请求的载荷数据类型（XLinkDataType），重发时原样回填。
  * @note  载荷不超过 XLINK_RETRY_PAYLOAD_MAX 时快照进槽（空载荷也算可重试，
  *        m_payloadLen=0）；超长请求照常发送但 m_payloadLen 置 0 且
  *        m_retryCount 置 0xFF 哨兵，标记不可重试（避免定容表膨胀，
  *        见 XLink_config.h XLINK_RETRY_PAYLOAD_MAX）。
  */
 static bool XLinkSessionPrivate_addPending(XLinkSession* self, uint32_t id,
-                                           uint16_t command, uint32_t nowMs,
+                                           uint16_t command,
+                                           XLinkDataType dataType,
+                                           uint32_t nowMs,
                                            const uint8_t* payload,
                                            uint32_t length)
 {
@@ -359,6 +374,7 @@ static bool XLinkSessionPrivate_addPending(XLinkSession* self, uint32_t id,
             self->m_pending[i].m_used = true;
             self->m_pending[i].m_requestId = id;
             self->m_pending[i].m_command = command;
+            self->m_pending[i].m_dataType = (uint8_t)dataType;
             self->m_pending[i].m_sendTick = nowMs;
             if (length <= XLINK_RETRY_PAYLOAD_MAX) {
                 self->m_pending[i].m_payloadLen = length;
@@ -876,6 +892,21 @@ static void XLinkSessionPrivate_onFrame(XLinkSession* self,
                 self->m_peerDeclaredCapability = hello.m_capability;
                 self->m_remoteCapability = (uint16_t)(
                     hello.m_capability & self->m_localCapability);
+                /* 【主版本强制校验】帧头宽度只在主版本升级时变化（1.x 为
+                   12 字节、2.x 为 16 字节）。主版本不一致时旧对端会按旧宽度
+                   切开新帧，从此整条字节流错位——它不会报错，只会把垃圾数据
+                   当帧头继续解析，表现为"连着但业务全乱"，排查成本极高。
+                   故此处直接判协议违例断链，绝不进入握手后续步骤。
+                   次版本（低字节）不校验：新增能力位/命令号属兼容扩展。 */
+                if ((uint8_t)(hello.m_version >> 8)
+                    != (uint8_t)(XLINK_VERSION >> 8)) {
+                    uint8_t reason = XLinkGoodbyeReason_Protocol;
+                    self->m_stats.m_protocolErrors++;
+                    XLinkSession_sendSession(self, XLinkSessionCode_Goodbye,
+                                             &reason, 1);
+                    XLinkSession_reset(self);
+                    return;
+                }
                 if (frame->m_msgCode == XLinkSessionCode_Hello) {
                     /* 对端先发 Hello：本端应答 HelloAck（对称，见头文件设计）。 */
                     if (XLinkCodec_encodeHello(
@@ -887,6 +918,7 @@ static void XLinkSessionPrivate_onFrame(XLinkSession* self,
                         ack.m_msgClass = XLinkMsgClass_Session;
                         ack.m_msgCode = XLinkSessionCode_HelloAck;
                         ack.m_requestId = 0;
+                        ack.m_dataType = XLinkDataType_Raw;
                         XLinkSession_send(self, &ack, helloBuf);
                     }
                 }
@@ -1420,6 +1452,9 @@ void XLinkSession_pump(XLinkSession* self, uint32_t nowMs)
                 frame.m_msgClass = XLinkMsgClass_Request;
                 frame.m_msgCode = slot->m_command;
                 frame.m_requestId = slot->m_requestId;
+                /* 重发必须原样回填数据类型：否则 JSON/BSON 请求超时重发后
+                   对端会按 Raw 处理载荷，解析失败。 */
+                frame.m_dataType = slot->m_dataType;
                 if (XLinkSession_send(self, &frame,
                                       slot->m_payloadLen ? slot->m_payload
                                                          : NULL)) {
@@ -1460,6 +1495,10 @@ bool XLinkSession_send(XLinkSession* self, const XLinkFrameHeader* frame,
     if (frame->m_payloadLen > XLINK_MAX_PAYLOAD)
         return false;
     if (frame->m_payloadLen > 0 && ISNULL(payload, "XLinkSession_send payload"))
+        return false;
+    /* 数据类型入口校验（与解码侧同口径）：非法值发出去必被对端判协议违例
+       并断链，不如在发送侧就地拒绝，让调用方立刻看到失败。 */
+    if (!XLinkSessionPrivate_isDataTypeValid((XLinkDataType)frame->m_dataType))
         return false;
 
     return XLinkSessionPrivate_sendWithPrefix(self, frame, NULL, 0,
@@ -1562,6 +1601,7 @@ bool XLinkSession_sendSession(XLinkSession* self, XLinkSessionCode code,
     frame.m_msgClass = XLinkMsgClass_Session;
     frame.m_msgCode = (uint16_t)code;
     frame.m_requestId = 0;
+    frame.m_dataType = XLinkDataType_Raw; /* 会话帧载荷非业务数据，恒 Raw */
     ok = XLinkSession_send(self, &frame, payload);
     if (ok && code == XLinkSessionCode_Hello)
         self->m_helloSent = true; /* 手动握手与自动握手互斥，防重复 Hello */
@@ -1572,24 +1612,36 @@ bool XLinkSession_sendRequest(XLinkSession* self, uint16_t command,
                               const uint8_t* payload, uint32_t length,
                               uint32_t* outRequestId)
 {
+    return XLinkSession_sendRequest_ex(self, command, XLinkDataType_Raw,
+                                       payload, length, outRequestId);
+}
+
+bool XLinkSession_sendRequest_ex(XLinkSession* self, uint16_t command,
+                                 XLinkDataType dataType,
+                                 const uint8_t* payload, uint32_t length,
+                                 uint32_t* outRequestId)
+{
     XLinkFrameHeader frame;
     uint32_t id;
 
-    if (ISNULL(self, "XLinkSession_sendRequest self"))
+    if (ISNULL(self, "XLinkSession_sendRequest_ex self"))
         return false;
+    if (!XLinkSessionPrivate_isDataTypeValid(dataType))
+        return false; /* 非法格式：发出去必被对端判违例，就地拒绝 */
 
     id = XLinkSessionPrivate_nextRequestId(self);
     /* 发送时间戳取自最近一次 pump 传入的 nowTick（本类不自行取时，见头文件时间口径），
        未 pump 过时 m_nowTick 为 0，超时判定退化为"下次 pump 起算"，不误报。
        同时快照载荷进槽（不超过 XLINK_RETRY_PAYLOAD_MAX 才可自动重发）。 */
-    if (!XLinkSessionPrivate_addPending(self, id, command, self->m_nowTick,
-                                        payload, length))
+    if (!XLinkSessionPrivate_addPending(self, id, command, dataType,
+                                        self->m_nowTick, payload, length))
         return false; /* 表满：拒绝发请求，避免对端应答无槽可落 */
 
     frame.m_payloadLen = length;
     frame.m_msgClass = XLinkMsgClass_Request;
     frame.m_msgCode = command;
     frame.m_requestId = id;
+    frame.m_dataType = (uint8_t)dataType;
     if (!XLinkSession_send(self, &frame, payload)) {
         XLinkSessionPrivate_removePending(self, id);
         return false;
@@ -1603,23 +1655,44 @@ bool XLinkSession_sendResponse(XLinkSession* self, uint32_t requestId,
                                uint16_t command, const uint8_t* payload,
                                uint32_t length)
 {
+    return XLinkSession_sendResponse_ex(self, requestId, command,
+                                        XLinkDataType_Raw, payload, length);
+}
+
+bool XLinkSession_sendResponse_ex(XLinkSession* self, uint32_t requestId,
+                                  uint16_t command, XLinkDataType dataType,
+                                  const uint8_t* payload, uint32_t length)
+{
     XLinkFrameHeader frame;
+    if (!XLinkSessionPrivate_isDataTypeValid(dataType))
+        return false;
     frame.m_payloadLen = length;
     frame.m_msgClass = XLinkMsgClass_Response;
     frame.m_msgCode = command;
     frame.m_requestId = requestId;
+    frame.m_dataType = (uint8_t)dataType;
     return XLinkSession_send(self, &frame, payload);
 }
 
 bool XLinkSession_sendPublish(XLinkSession* self, uint32_t topicId,
                               const uint8_t* payload, uint32_t length)
 {
+    return XLinkSession_sendPublish_ex(self, topicId, XLinkDataType_Raw,
+                                       payload, length);
+}
+
+bool XLinkSession_sendPublish_ex(XLinkSession* self, uint32_t topicId,
+                                 XLinkDataType dataType,
+                                 const uint8_t* payload, uint32_t length)
+{
     XLinkFrameHeader frame;
     uint8_t topicBuf[4];
 
-    if (ISNULL(self, "XLinkSession_sendPublish self"))
+    if (ISNULL(self, "XLinkSession_sendPublish_ex self"))
         return false;
     if (topicId < XLINK_TOPIC_USER_BASE)
+        return false;
+    if (!XLinkSessionPrivate_isDataTypeValid(dataType))
         return false;
 
     /* topicId 完整 u32 置于载荷首 4 字节（msgCode 只承载低 16 位，见 XLinkProto.h
@@ -1631,8 +1704,9 @@ bool XLinkSession_sendPublish(XLinkSession* self, uint32_t topicId,
     frame.m_msgClass = XLinkMsgClass_Publish;
     frame.m_msgCode = (uint16_t)(topicId & 0xFFFFu);
     frame.m_requestId = 0;
+    frame.m_dataType = (uint8_t)dataType;
 
-    if (length == 0 || ISNULL(payload, "XLinkSession_sendPublish payload"))
+    if (length == 0 || ISNULL(payload, "XLinkSession_sendPublish_ex payload"))
         length = 0;
 
     /* XLINK_MAX_PAYLOAD 约束的是「线上载荷总量」（含 topicId 前缀）：
@@ -1670,6 +1744,7 @@ bool XLinkSession_subscribe(XLinkSession* self, uint32_t topicId)
     frame.m_msgClass = XLinkMsgClass_Subscribe;
     frame.m_msgCode = (uint16_t)(topicId & 0xFFFFu);
     frame.m_requestId = 0;
+    frame.m_dataType = XLinkDataType_Raw; /* 订阅帧载荷仅 topicId，无数据类型 */
     if (!XLinkSessionPrivate_sendWithPrefix(self, &frame, topicBuf, 4,
                                             NULL, 0)) {
         XLinkSessionPrivate_removeSub(self, topicId);
@@ -1695,6 +1770,7 @@ bool XLinkSession_unsubscribe(XLinkSession* self, uint32_t topicId)
     frame.m_msgClass = XLinkMsgClass_Unsubscribe;
     frame.m_msgCode = (uint16_t)(topicId & 0xFFFFu);
     frame.m_requestId = 0;
+    frame.m_dataType = XLinkDataType_Raw; /* 退订帧载荷仅 topicId，无数据类型 */
     return XLinkSessionPrivate_sendWithPrefix(self, &frame, topicBuf, 4,
                                               NULL, 0);
 }

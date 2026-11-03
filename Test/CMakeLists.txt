@@ -1,4 +1,4 @@
-# ==================== Test（测试/工具/demo 可执行模块） ====================
+﻿# ==================== Test（测试/工具/demo 可执行模块） ====================
 # 自根 CMakeLists.txt 拆出（2026-11-01 模块化拆分续）：TEST_FILE 源清单
 # （含自带 main 的独立可执行源剔除清单）、主程序双 exe、全部专项探针/回归
 # 测试/demo/工具目标、add_test/CTest 注册、XUpgradePack、xguidemo 安卓 APK
@@ -161,6 +161,13 @@ list(REMOVE_ITEM TEST_FILE
 # 同款坑。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/xscroll_clip_probe.c")
+# xcharts_suite_probe / xchart_newseries_probe 同理：自带 main 的图表对齐
+# 验证探针独立可执行（XChartsSuiteProbe 目标；后者为图表新系列/坐标轴/
+# 渐变/图例/极坐标的逐个目验工具，2026-11-03 图表时间轴批次新增），
+# 不得卷入主程序（与 main.c 重复定义 main）——TEST_FILE 剔除同款坑。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/xcharts_suite_probe.c"
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/xchart_newseries_probe.c")
 # 高精度定时器组压测原为自带 main 的独立驱动（Test/XTimerTest/
 # hr_stress_driver.c），2026-10-25 该文件已删除：压测改从测试菜单进入
 # （「定时器 → XHrTimer(高精度定时器组) → 压测(随机增删+句柄回收)」，
@@ -303,6 +310,31 @@ else()
     target_link_libraries(XSpinBoxGeometryProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
+# ==================== 图表对齐测试套件（独立验证目标） ====================
+# 与 xgui_regression_test.c 内的 test_charts_alignment_suite 同源，独立可
+# 执行以便在整体回归被他处 WIP 阻塞时仍能验证图表对齐与内存泄漏断言。
+add_executable(XChartsSuiteProbe
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/xcharts_suite_probe.c"
+)
+if(UNIX)
+    target_link_libraries(XChartsSuiteProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XChartsSuiteProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== 图表新系列/坐标轴/渐变/图例/极坐标探针（独立可执行） ====================
+# 走 renderToImage（与 paintEvent 同管线）并统计非背景像素，逐个目验
+# 箱线图/蜡烛图/日期轴/对数轴/颜色轴/线性渐变/极坐标等新系列的可见性。
+# 用法：./xchart_newseries_probe
+add_executable(XChartNewSeriesProbe
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/xchart_newseries_probe.c"
+)
+if(UNIX)
+    target_link_libraries(XChartNewSeriesProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XChartNewSeriesProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
 # ==================== 滚动区子控件越界裁剪探针（独立可执行） ====================
 # [2026-10-27 滚动越界根修] 滚动区内控件移出 viewport 边界后未被父容器
 # 裁剪（越到品牌条/标题栏上）。本探针复刻结构并打印几何/全局坐标，
@@ -419,6 +451,8 @@ add_executable(XGuiRegression_Test
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XPinyinT9Test.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XTouchMultiPointTest.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XGuiRemoteTest.c"
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XDataStreamTest.c"
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XTableAlignTest.c"
 )
 if(UNIX)
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)

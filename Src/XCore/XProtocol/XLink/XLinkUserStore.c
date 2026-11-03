@@ -424,7 +424,20 @@ bool XLinkUserStore_save(XLinkUserStore* store, const char* path)
         goto cleanup;
     XDeviceFile_close(fd);
     fd = XFD_INVALID;
-    (void)XDeviceFile_setPermissions(path, XFile_ReadOwner | XFile_WriteOwner);
+    /* XDeviceFile_setPermissions 取 const XString*，本函数的 path 是 char*：
+       必须包装后传入。原实现直接透传 char*，被当作 XString 结构体解引用，
+       在 setPermissions → XStringToWidePath → XString_toUtf8 处访问违例
+       （2026-11-03 账户库持久化测试实测崩溃；Linux 因权限设置分支早退
+       未暴露）。权限设置失败在 FatFs 等后端属正常，故忽略返回值。 */
+    {
+        XString* permissionPath = XString_create_utf8(path);
+        if (permissionPath) {
+            (void)XDeviceFile_setPermissions(permissionPath,
+                                             XFile_ReadOwner
+                                             | XFile_WriteOwner);
+            XClassDelete(permissionPath);
+        }
+    }
     ok = true;
 
 cleanup:

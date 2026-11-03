@@ -9,6 +9,11 @@
 #include "XPieSeries.h"
 #include "XBarSeries.h"
 #include "XScatterSeries.h"
+#include "XLegend.h"
+#include "XDateTimeAxis.h"
+#include "XLogValueAxis.h"
+#include "XCategoryAxis.h"
+#include "XLegendMarker.h"
 #include "XAreaSeries.h"
 #include "XSplineSeries.h"
 #include "XMemory.h"
@@ -470,13 +475,16 @@ void XChart_init(XChart* self)
     self->m_title = XString_create_utf8("Chart");
     self->m_titleFamily = XString_create();
     self->m_locale = XString_create();
-    self->m_legendVisible = true;
-    self->m_titleVisible = true;
+    self->m_legend = XLegend_create();   /* 对标 QChart 构造时自带 QLegend */
     self->m_axisX = (XValueAxis*)XMalloc_System(sizeof(XValueAxis));
     self->m_axisY = (XValueAxis*)XMalloc_System(sizeof(XValueAxis));
     if (self->m_axisX) XValueAxis_init(self->m_axisX);
     if (self->m_axisY) XValueAxis_init(self->m_axisY);
+    /* 基类视图恒指向实际轴，供泛化入口与渲染统一读取。 */
+    self->m_axisXAny = (XAbstractAxis*)self->m_axisX;
+    self->m_axisYAny = (XAbstractAxis*)self->m_axisY;
     self->m_themeId = XChart_ChartTheme_Light;
+    self->m_chartType = XChart_ChartType_Cartesian;
     xchart_applyTheme(self, XChart_ChartTheme_Light);
     self->m_backgroundVisible = true;
     self->m_animationDuration = 1000;
@@ -513,6 +521,10 @@ static bool xchart_seriesInTypedArrays(const XChart* self, const void* series)
         if ((const void*)self->m_areaSeries[i] == series) return true;
     for (i = 0; i < self->m_splineCount; ++i)
         if ((const void*)self->m_splineSeries[i] == series) return true;
+    for (i = 0; i < self->m_boxPlotCount; ++i)
+        if ((const void*)self->m_boxPlotSeries[i] == series) return true;
+    for (i = 0; i < self->m_candlestickCount; ++i)
+        if ((const void*)self->m_candlestickSeries[i] == series) return true;
     return false;
 }
 
@@ -532,6 +544,12 @@ static void VXChart_deinit(XChart* self)
         XClassDelete(self->m_locale);
         self->m_locale = NULL;
     }
+    /* 先释放图例：标记只借用序列指针，序列释放前清掉可避免悬空。 */
+    if (self->m_legend) {
+        XLegend_clearMarkers(self->m_legend);
+        XClassDelete(self->m_legend);
+        self->m_legend = NULL;
+    }
     for (i = 0; i < self->m_lineCount; ++i)
         if (self->m_lineSeries[i]) XClassDelete(self->m_lineSeries[i]);
     if (self->m_pieSeries) XClassDelete(self->m_pieSeries);
@@ -543,6 +561,11 @@ static void VXChart_deinit(XChart* self)
         if (self->m_areaSeries[i]) XClassDelete(self->m_areaSeries[i]);
     for (i = 0; i < self->m_splineCount; ++i)
         if (self->m_splineSeries[i]) XClassDelete(self->m_splineSeries[i]);
+    for (i = 0; i < self->m_boxPlotCount; ++i)
+        if (self->m_boxPlotSeries[i]) XClassDelete(self->m_boxPlotSeries[i]);
+    for (i = 0; i < self->m_candlestickCount; ++i)
+        if (self->m_candlestickSeries[i])
+            XClassDelete(self->m_candlestickSeries[i]);
     /* 泛型注册表兜底：登记在册却未进类型化数组的序列（容量静默拒绝、
        BoxPlot/Candlestick 等无类型化槽的类型）随图表析构补释放；
        多态 XClass_delete_base 不依赖注册类型，已释放过的不重复释放。 */
@@ -554,8 +577,21 @@ static void VXChart_deinit(XChart* self)
         self->m_series[i] = NULL;
     }
     self->m_seriesCount = 0;
+    /* 轴释放：数值轴时 m_axisX/m_axisY 与 m_axisXAny/m_axisYAny 指向同一
+       对象（replaceAxis 只回填数值轴到类型化槽），按类型化槽释放即可；
+       非数值轴（日期时间/对数/类别/值类别）时类型化槽被置 NULL，所有权
+       只体现在基类槽上——此前不释放基类槽，setAxisX_abstract 挂入的派生
+       轴随图表析构即永久泄漏（实测 712B/次）。 */
     if (self->m_axisX) { XValueAxis_deinit_impl(self->m_axisX); XFree_System(self->m_axisX); }
     if (self->m_axisY) { XValueAxis_deinit_impl(self->m_axisY); XFree_System(self->m_axisY); }
+    if (self->m_axisXAny && (void*)self->m_axisXAny != (void*)self->m_axisX) {
+        XClassDeinit((XClass*)self->m_axisXAny);
+        XFree_System(self->m_axisXAny);
+    }
+    if (self->m_axisYAny && (void*)self->m_axisYAny != (void*)self->m_axisY) {
+        XClassDeinit((XClass*)self->m_axisYAny);
+        XFree_System(self->m_axisYAny);
+    }
     if (self->m_zoomStack) XFree_System(self->m_zoomStack);
     self->m_lineCount = 0;
     self->m_barCount = 0;
@@ -565,6 +601,8 @@ static void VXChart_deinit(XChart* self)
     self->m_pieSeries = NULL;
     self->m_axisX = NULL;
     self->m_axisY = NULL;
+    self->m_axisXAny = NULL;
+    self->m_axisYAny = NULL;
     self->m_zoomStack = NULL;
     self->m_zoomCount = 0;
     self->m_zoomCapacity = 0;
@@ -580,8 +618,6 @@ static void VXChart_copy(XChart* self, const XChart* other)
     XClassDeinit(self);
     XChart_init(self);
     XChart_setTitle(self, XChart_title(other));
-    self->m_legendVisible = other->m_legendVisible;
-    self->m_titleVisible = other->m_titleVisible;
     XChart_setTheme(self, other->m_themeId);
     XChart_setTitleBrush(self, other->m_titleBrush);
     XChart_setBackgroundBrush(self, other->m_backgroundBrush);
@@ -664,17 +700,8 @@ const char* XChart_title_2(const XChart* self)
     return text ? text : "";
 }
 
-void XChart_setTitleVisible(XChart* self, bool visible)
-{ if (self) self->m_titleVisible = visible; }
-
-bool XChart_isTitleVisible(const XChart* self)
-{ return self ? self->m_titleVisible : false; }
-
-void XChart_setLegendVisible(XChart* self, bool visible)
-{ if (self) self->m_legendVisible = visible; }
-
-bool XChart_isLegendVisible(const XChart* self)
-{ return self ? self->m_legendVisible : false; }
+XLegend* XChart_legend(const XChart* self)
+{ return self ? self->m_legend : NULL; }
 
 /* ==================== 泛型序列管理 ==================== */
 
@@ -751,15 +778,25 @@ static bool xchart_typeArrayContains(const void* const* array, int count,
     return false;
 }
 
+/* 内部按类型登记助手（对标 QChart::addSeries 的分派实现；不对外公开）。 */
+static void xchart_addLineSeries(XChart* self, XLineSeries* series);
+static void xchart_addBarSeries(XChart* self, XAbstractBarSeries* series);
+static void xchart_addScatterSeries(XChart* self, XScatterSeries* series);
+static void xchart_addAreaSeries(XChart* self, XAreaSeries* series);
+static void xchart_addSplineSeries(XChart* self, XSplineSeries* series);
+static void xchart_addBoxPlotSeries(XChart* self, XBoxPlotSeries* series);
+static void xchart_addCandlestickSeries(XChart* self, XCandlestickSeries* series);
+static void xchart_setPieSeries(XChart* self, XPieSeries* series);
+
 void XChart_addSeries(XChart* self, void* series, XChartSeriesType type)
 {
     if (!self || !series) return;
     switch (type) {
     case XChartSeriesType_Line:
-        XChart_addLineSeries(self, (XLineSeries*)series);
+        xchart_addLineSeries(self, (XLineSeries*)series);
         break;
     case XChartSeriesType_Area:
-        XChart_addAreaSeries(self, (XAreaSeries*)series);
+        xchart_addAreaSeries(self, (XAreaSeries*)series);
         break;
     case XChartSeriesType_Bar:
     case XChartSeriesType_StackedBar:
@@ -767,21 +804,48 @@ void XChart_addSeries(XChart* self, void* series, XChartSeriesType type)
     case XChartSeriesType_HorizontalBar:
     case XChartSeriesType_HorizontalStackedBar:
     case XChartSeriesType_HorizontalPercentBar:
-        XChart_addBarSeries(self, (XBarSeries*)series);
+        xchart_addBarSeries(self, (XAbstractBarSeries*)series);
         break;
     case XChartSeriesType_Pie:
-        XChart_setPieSeries(self, (XPieSeries*)series);
+        xchart_setPieSeries(self, (XPieSeries*)series);
         break;
     case XChartSeriesType_Scatter:
-        XChart_addScatterSeries(self, (XScatterSeries*)series);
+        xchart_addScatterSeries(self, (XScatterSeries*)series);
         break;
     case XChartSeriesType_Spline:
-        XChart_addSplineSeries(self, (XSplineSeries*)series);
+        xchart_addSplineSeries(self, (XSplineSeries*)series);
+        break;
+    case XChartSeriesType_BoxPlot:
+        xchart_addBoxPlotSeries(self, (XBoxPlotSeries*)series);
+        break;
+    case XChartSeriesType_Candlestick:
+        xchart_addCandlestickSeries(self, (XCandlestickSeries*)series);
         break;
     default:
         break;
     }
     xchart_registerSeries(self, series, type);
+    /* 图例标记随序列自动创建（对标 QChart::addSeries 自动建 QLegendMarker）。 */
+    if (self->m_legend) {
+        int markerType = XLegendMarker_LegendMarkerType_XY;
+        switch (type) {
+        case XChartSeriesType_Area:      markerType = XLegendMarker_LegendMarkerType_Area; break;
+        case XChartSeriesType_Bar:
+        case XChartSeriesType_StackedBar:
+        case XChartSeriesType_PercentBar:
+        case XChartSeriesType_HorizontalBar:
+        case XChartSeriesType_HorizontalStackedBar:
+        case XChartSeriesType_HorizontalPercentBar:
+            markerType = XLegendMarker_LegendMarkerType_Bar; break;
+        case XChartSeriesType_Pie:       markerType = XLegendMarker_LegendMarkerType_Pie; break;
+        case XChartSeriesType_BoxPlot:   markerType = XLegendMarker_LegendMarkerType_BoxPlot; break;
+        case XChartSeriesType_Candlestick:
+            markerType = XLegendMarker_LegendMarkerType_Candlestick; break;
+        default:                          markerType = XLegendMarker_LegendMarkerType_XY; break;
+        }
+        XLegend_appendMarker(self->m_legend,
+            XLegendMarker_create((XAbstractSeries*)series, markerType));
+    }
 }
 
 /**
@@ -836,6 +900,9 @@ static void xchart_unlinkSeries(XChart* self, void* series)
 
 void XChart_removeSeries(XChart* self, void* series)
 {
+    /* 图例标记随之摘除（对标 QChart 序列移除时同步删 QLegendMarker）。 */
+    if (self && self->m_legend && series)
+        XLegend_removeMarkerForSeries(self->m_legend, (XAbstractSeries*)series);
     XChartSeriesType type = XChartSeriesType_Line;
     if (!self || !series) return;
     /* 先查泛型注册表（P0-2：唯一摘除路径，memmove 收缩 + 尾部清空）。
@@ -852,6 +919,7 @@ void XChart_removeSeries(XChart* self, void* series)
 void XChart_removeAllSeries(XChart* self)
 {
     if (!self) return;
+    if (self->m_legend) XLegend_clearMarkers(self->m_legend);
     while (self->m_seriesCount > 0) {
         void* s = self->m_series[0];
         if (!s) {
@@ -892,6 +960,7 @@ void XChart_setAxisX(XChart* self, XValueAxis* axis)
     if (!self || !axis || axis == self->m_axisX) return;
     if (self->m_axisX) { XValueAxis_deinit_impl(self->m_axisX); XFree_System(self->m_axisX); }
     self->m_axisX = axis;
+    self->m_axisXAny = (XAbstractAxis*)axis;
 }
 
 void XChart_setAxisY(XChart* self, XValueAxis* axis)
@@ -899,24 +968,105 @@ void XChart_setAxisY(XChart* self, XValueAxis* axis)
     if (!self || !axis || axis == self->m_axisY) return;
     if (self->m_axisY) { XValueAxis_deinit_impl(self->m_axisY); XFree_System(self->m_axisY); }
     self->m_axisY = axis;
+    self->m_axisYAny = (XAbstractAxis*)axis;
 }
 
 XValueAxis* XChart_axisX(const XChart* self) { return self ? self->m_axisX : NULL; }
 XValueAxis* XChart_axisY(const XChart* self) { return self ? self->m_axisY : NULL; }
 
+/* ==================== 泛化轴挂接（任意 XAbstractAxis 派生轴） ==================== */
+
+/**
+ * @brief 替换一侧轴：释放旧轴（按实际 vtable 分派），登记新轴。
+ * @param slot    目标槽（m_axisXAny / m_axisYAny）。
+ * @param numeric 对应数值槽（m_axisX / m_axisY）；非数值轴时置 NULL。
+ * @param axis    新轴（接管所有权）；NULL 空操作由调用方处理。
+ * @return 无返回值。
+ */
+static void xchart_replaceAxis(XAbstractAxis** slot, XValueAxis** numeric,
+                               XAbstractAxis* axis)
+{
+    XAbstractAxis* old;
+    if (!slot || !numeric || !axis) return;
+    old = *slot;
+    if (old == axis) return;
+    if (old) {
+        /* 按轴的实际 vtable 分派析构，避免把派生轴当纯 XValueAxis 释放。 */
+        XClassDeinit((XClass*)old);
+        XFree_System(old);
+    }
+    *slot = axis;
+    /* 只有数值轴可回填到类型化槽；其余轴该槽为 NULL（渲染按基类读取）。 */
+    if (XAbstractAxis_type(axis) == XAbstractAxis_AxisType_Value)
+        *numeric = (XValueAxis*)axis;
+    else
+        *numeric = NULL;
+}
+
+void XChart_setAxisX_abstract(XChart* self, XAbstractAxis* axis)
+{
+    if (!self || !axis) return;
+    xchart_replaceAxis(&self->m_axisXAny, &self->m_axisX, axis);
+}
+
+void XChart_setAxisY_abstract(XChart* self, XAbstractAxis* axis)
+{
+    if (!self || !axis) return;
+    xchart_replaceAxis(&self->m_axisYAny, &self->m_axisY, axis);
+}
+
+XAbstractAxis* XChart_axisX_abstract(const XChart* self)
+{ return self ? self->m_axisXAny : NULL; }
+
+XAbstractAxis* XChart_axisY_abstract(const XChart* self)
+{ return self ? self->m_axisYAny : NULL; }
+
+/**
+ * @brief 把一侧轴复位到默认域（按轴的实际类型分派，不假定数值轴）。
+ * @param axis 轴基类指针（可为 NULL）。
+ * @param lo 默认下限。
+ * @param hi 默认上限。
+ * @return 无返回值。
+ */
+static void xchart_resetAxisRange(XAbstractAxis* axis, double lo, double hi)
+{
+    if (!axis) return;
+    switch (XAbstractAxis_type(axis)) {
+    case XAbstractAxis_AxisType_Value:
+        XValueAxis_setRange((XValueAxis*)axis, lo, hi);
+        break;
+    case XAbstractAxis_AxisType_LogValue:
+        /* 对数轴范围须为正，默认域按 [1,10] 兜底。 */
+        if (lo <= 0.0) { lo = 1.0; hi = 10.0; }
+        XLogValueAxis_setRange((XLogValueAxis*)axis, lo, hi);
+        break;
+    case XAbstractAxis_AxisType_DateTime:
+        XDateTimeAxis_setRangeMSecs((XDateTimeAxis*)axis, (int64_t)lo,
+                                    (int64_t)hi);
+        break;
+    case XAbstractAxis_AxisType_BarCategory:
+        XCategoryAxis_setRangeIndex((XCategoryAxis*)axis, lo, hi);
+        break;
+    default:
+        XAbstractAxis_setRange(axis, lo, hi);
+        break;
+    }
+}
+
 void XChart_createDefaultAxes(XChart* self)
 {
+    double loX;
+    double hiX;
+    double loY;
+    double hiY;
     if (!self) return;
-    if (self->m_axisX)
-        XValueAxis_setRange(self->m_axisX, self->m_defaultMinX,
-                            self->m_defaultMaxX);
-    else
-        XValueAxis_setRange(self->m_axisX, 0.0, 10.0);
-    if (self->m_axisY)
-        XValueAxis_setRange(self->m_axisY, self->m_defaultMinY,
-                            self->m_defaultMaxY);
-    else
-        XValueAxis_setRange(self->m_axisY, 0.0, 10.0);
+    loX = self->m_defaultMinX;
+    hiX = self->m_defaultMaxX > loX ? self->m_defaultMaxX : loX + 10.0;
+    loY = self->m_defaultMinY;
+    hiY = self->m_defaultMaxY > loY ? self->m_defaultMaxY : loY + 10.0;
+    /* 按基类视图分派：非数值轴（日期时间/对数/类别）同样能复位。 */
+    xchart_resetAxisRange(self->m_axisXAny, loX, hiX);
+    xchart_resetAxisRange(self->m_axisYAny, loY, hiY);
     self->m_zoomCount = 0;
 }
 
@@ -959,6 +1109,14 @@ static int xchart_seriesGlobalIndex(const XChart* self, const void* series)
     }
     for (i = 0; i < self->m_scatterCount; ++i) {
         if (self->m_scatterSeries[i] == series) return g;
+        ++g;
+    }
+    for (i = 0; i < self->m_boxPlotCount; ++i) {
+        if (self->m_boxPlotSeries[i] == series) return g;
+        ++g;
+    }
+    for (i = 0; i < self->m_candlestickCount; ++i) {
+        if (self->m_candlestickSeries[i] == series) return g;
         ++g;
     }
     return -1;
@@ -1066,16 +1224,16 @@ static void xchart_applyThemeToSeries(XChart* self)
             XXYSeries_setPointLabelsColor(&s->m_base,
                 self->m_themeLabelBrush);
     }
-    /* 样条：同折线。 */
+    /* 样条：同折线（XSplineSeries : XLineSeries : XXYSeries，故 m_base.m_base）。 */
     for (si = 0; si < self->m_splineCount; ++si) {
         XSplineSeries* s = self->m_splineSeries[si];
         gi = xchart_seriesGlobalIndex(self, s);
         if (gi < 0) gi = si;
-        if (s->m_base.m_color == 0)
-            XXYSeries_setColor(&s->m_base,
+        if (s->m_base.m_base.m_color == 0)
+            XXYSeries_setColor(&s->m_base.m_base,
                 XChart_themeColor(self, gi));
-        if (s->m_base.m_pointLabelsColor == 0)
-            XXYSeries_setPointLabelsColor(&s->m_base,
+        if (s->m_base.m_base.m_pointLabelsColor == 0)
+            XXYSeries_setPointLabelsColor(&s->m_base.m_base,
                 self->m_themeLabelBrush);
     }
     /* 散点：画笔=渐变起点（白），画刷=色板；点标签色=主题标签画刷。 */
@@ -1110,7 +1268,7 @@ static void xchart_applyThemeToSeries(XChart* self)
     }
     /* 柱状：逐柱组按 Qt 算法取色（画刷/标签画刷/画笔）。 */
     for (si = 0; si < self->m_barCount; ++si) {
-        XBarSeries* s = self->m_barSeries[si];
+        XAbstractBarSeries* s = self->m_barSeries[si];
         XAbstractBarSeries* abs = (XAbstractBarSeries*)&s->m_base;
         int setIndex;
         gi = xchart_seriesGlobalIndex(self, s);
@@ -1145,9 +1303,11 @@ static void xchart_applyThemeToSeries(XChart* self)
                         pw > 0 ? pw : 2.0);
             }
         }
-        if (s->m_color == 0 && abs->m_barSetCount > 0 &&
+        /* 柱色回退：仅 XBarSeries 有 m_color 字段；其它 bar 变体走柱组画刷，
+         * 故只在类型匹配时回填，避免对基类指针强转。 */
+        if (s->m_base.m_type == XChartSeriesType_Bar && abs->m_barSetCount > 0 &&
             abs->m_barSets[0])
-            s->m_color = XBarSet_brush(abs->m_barSets[0]);
+            ((XBarSeries*)s)->m_color = XBarSet_brush(abs->m_barSets[0]);
     }
     /* 饼图：画笔=渐变起点，画刷按切片序号取渐变，标签画刷=主题标签。 */
     if (self->m_pieSeries) {
@@ -1562,8 +1722,10 @@ void XChart_mapToValue(const XChart* self, float x, float y,
 
 XChart_ChartType XChart_chartType(const XChart* self)
 {
-    (void)self;
-    return XChart_ChartType_Cartesian;
+    /* 对标 QChart::chartType() 虚函数：派生类 init 写入 m_chartType，
+     * 经基类指针调用即得实际类型（C 版以字段承载分派结果）。 */
+    return self ? (XChart_ChartType)self->m_chartType
+                : XChart_ChartType_Undefined;
 }
 
 /* ==================== 信号 ==================== */
@@ -1582,7 +1744,7 @@ void* XChart_plotAreaChanged_signal(XChart* self)
 
 /* ==================== 兼容层 ==================== */
 
-void XChart_addLineSeries(XChart* self, XLineSeries* series)
+static void xchart_addLineSeries(XChart* self, XLineSeries* series)
 {
     if (!self || !series) return;
     if (xchart_typeArrayContains((const void* const*)self->m_lineSeries,
@@ -1597,7 +1759,7 @@ void XChart_addLineSeries(XChart* self, XLineSeries* series)
     self->m_lineSeries[self->m_lineCount++] = series;
 }
 
-void XChart_setPieSeries(XChart* self, XPieSeries* series)
+static void xchart_setPieSeries(XChart* self, XPieSeries* series)
 {
     if (!self) return;
     if (self->m_pieSeries && self->m_pieSeries != series) {
@@ -1613,19 +1775,10 @@ void XChart_setPieSeries(XChart* self, XPieSeries* series)
     self->m_pieSeries = series;
 }
 
-int XChart_lineSeriesCount(const XChart* self)
-{ return self ? self->m_lineCount : 0; }
 
-XLineSeries* XChart_lineSeries(const XChart* self, int index)
-{
-    if (!self || index < 0 || index >= self->m_lineCount) return NULL;
-    return self->m_lineSeries[index];
-}
 
-XPieSeries* XChart_pieSeries(const XChart* self)
-{ return self ? self->m_pieSeries : NULL; }
 
-void XChart_addBarSeries(XChart* self, XBarSeries* series)
+static void xchart_addBarSeries(XChart* self, XBarSeries* series)
 {
     if (!self || !series) return;
     if (xchart_typeArrayContains((const void* const*)self->m_barSeries,
@@ -1638,7 +1791,7 @@ void XChart_addBarSeries(XChart* self, XBarSeries* series)
     self->m_barSeries[self->m_barCount++] = series;
 }
 
-void XChart_addScatterSeries(XChart* self, XScatterSeries* series)
+static void xchart_addScatterSeries(XChart* self, XScatterSeries* series)
 {
     if (!self || !series) return;
     if (xchart_typeArrayContains((const void* const*)self->m_scatterSeries,
@@ -1651,7 +1804,7 @@ void XChart_addScatterSeries(XChart* self, XScatterSeries* series)
     self->m_scatterSeries[self->m_scatterCount++] = series;
 }
 
-void XChart_addAreaSeries(XChart* self, XAreaSeries* series)
+static void xchart_addAreaSeries(XChart* self, XAreaSeries* series)
 {
     if (!self || !series) return;
     if (xchart_typeArrayContains((const void* const*)self->m_areaSeries,
@@ -1664,7 +1817,7 @@ void XChart_addAreaSeries(XChart* self, XAreaSeries* series)
     self->m_areaSeries[self->m_areaCount++] = series;
 }
 
-void XChart_addSplineSeries(XChart* self, XSplineSeries* series)
+static void xchart_addSplineSeries(XChart* self, XSplineSeries* series)
 {
     if (!self || !series) return;
     if (xchart_typeArrayContains((const void* const*)self->m_splineSeries,
@@ -1677,30 +1830,32 @@ void XChart_addSplineSeries(XChart* self, XSplineSeries* series)
     self->m_splineSeries[self->m_splineCount++] = series;
 }
 
-int XChart_barSeriesCount(const XChart* self) { return self ? self->m_barCount : 0; }
-XBarSeries* XChart_barSeries(const XChart* self, int index)
+static void xchart_addBoxPlotSeries(XChart* self, XBoxPlotSeries* series)
 {
-    if (!self || index < 0 || index >= self->m_barCount) return NULL;
-    return self->m_barSeries[index];
+    if (!self || !series) return;
+    if (xchart_typeArrayContains((const void* const*)self->m_boxPlotSeries,
+                                 self->m_boxPlotCount, series)) return;
+    if (self->m_boxPlotCount >= 4) {
+        /* 容量静默拒绝：登记进泛型注册表兜底析构（同 addLineSeries）。 */
+        xchart_registerSeries(self, series, XChartSeriesType_BoxPlot);
+        return;
+    }
+    self->m_boxPlotSeries[self->m_boxPlotCount++] = series;
 }
-int XChart_scatterSeriesCount(const XChart* self) { return self ? self->m_scatterCount : 0; }
-XScatterSeries* XChart_scatterSeries(const XChart* self, int index)
+
+static void xchart_addCandlestickSeries(XChart* self, XCandlestickSeries* series)
 {
-    if (!self || index < 0 || index >= self->m_scatterCount) return NULL;
-    return self->m_scatterSeries[index];
+    if (!self || !series) return;
+    if (xchart_typeArrayContains((const void* const*)self->m_candlestickSeries,
+                                 self->m_candlestickCount, series)) return;
+    if (self->m_candlestickCount >= 4) {
+        /* 容量静默拒绝：登记进泛型注册表兜底析构（同 addLineSeries）。 */
+        xchart_registerSeries(self, series, XChartSeriesType_Candlestick);
+        return;
+    }
+    self->m_candlestickSeries[self->m_candlestickCount++] = series;
 }
-int XChart_areaSeriesCount(const XChart* self) { return self ? self->m_areaCount : 0; }
-XAreaSeries* XChart_areaSeries(const XChart* self, int index)
-{
-    if (!self || index < 0 || index >= self->m_areaCount) return NULL;
-    return self->m_areaSeries[index];
-}
-int XChart_splineSeriesCount(const XChart* self) { return self ? self->m_splineCount : 0; }
-XSplineSeries* XChart_splineSeries(const XChart* self, int index)
-{
-    if (!self || index < 0 || index >= self->m_splineCount) return NULL;
-    return self->m_splineSeries[index];
-}
+
 
 uint32_t XChart_themeColor(const XChart* self, int index)
 {
@@ -1727,11 +1882,6 @@ uint32_t XChart_themeBackgroundStart(const XChart* self)
 uint32_t XChart_themeBackgroundEnd(const XChart* self)
 { return self ? self->m_themeBgEnd : 0xFFFFFFFFu; }
 
-void* XChart_series(const XChart* self, int index)
-{
-    if (!self || index < 0 || index >= self->m_seriesCount) return NULL;
-    return self->m_series[index];
-}
 
 void XChart_addAxis(XChart* self, XValueAxis* axis)
 {
@@ -1745,12 +1895,22 @@ bool XChart_removeAxis(XChart* self, XValueAxis* axis)
     if (!self || !axis) return false;
     if (self->m_axisX == axis) {
         self->m_axisX = NULL;
+        /* 基类槽同步失联（2026-11-03 根修）：removeAxis 语义是「把轴从
+         * 图表摘下」，轴对象本身不释放、所有权交还调用方。若只清类型化
+         * 槽而保留基类槽，VXChart_deinit 的派生轴释放分支会把已摘下的轴
+         * 再删一次——调用方（先用 XChart_axes 取出、再继续使用）即遭遇
+         * UAF / 双重释放，实测在全量回归 test_chart_interaction_contract
+         * 处段错误。 */
+        self->m_axisXAny = NULL;
         return true;
     }
     if (self->m_axisY == axis) {
         self->m_axisY = NULL;
+        self->m_axisYAny = NULL;
         return true;
     }
+    /* 非数值轴挂在基类槽上，入参 XValueAxis* 无法与之匹配：撤下派生轴
+     * 请用 XChart_setAxisX_abstract(chart, NULL) 之外的同族入口。 */
     return false;
 }
 

@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       xgui_demo_page_views.c
  * @brief      XGuiWindowDemo 扩展页面：条目视图页（对标 Qt 6.8 QListView 族
  *             示例的分页组织）。
@@ -82,6 +82,32 @@
 #include "XTreeWidget.h"
 #include "XTableView.h"
 #include "XTableWidget.h"
+
+/* ===== [Qt 对齐迁移 2026-11-03] XTableWidget 文本便捷 helper =====
+ * 旧 API XTableWidget_setText/XTableWidget_text 已删除（Qt 无对应物）。
+ * Qt 等价写法：item->setText()/item->text()；空格需先创建条目。
+ * 此处提供两个文件内 static helper，集中承担「空格自动建条目」这一
+ * C 侧便捷语义，避免逐点展开样板代码。 */
+#ifndef XTW_TEXT_HELPER_DEFINED
+#define XTW_TEXT_HELPER_DEFINED
+static void xTwSetTextUtf8(XTableWidget* tbl, int row, int col,
+                           const char* utf8)
+{
+    XTableWidgetItem* item = XTableWidget_item(tbl, row, col);
+    if (!item) {
+        item = XTableWidgetItem_create_utf8(utf8, XTableWidgetItem_Type);
+        if (!item) return;
+        XTableWidget_setItem(tbl, row, col, item);
+        return;
+    }
+    XTableWidgetItem_setText_utf8(item, utf8);
+}
+static const char* xTwTextUtf8(const XTableWidget* tbl, int row, int col)
+{
+    return XTableWidgetItem_text_toUtf8(XTableWidget_item(tbl, row, col));
+}
+#endif /* XTW_TEXT_HELPER_DEFINED */
+
 #include "XHeaderView.h"
 #include "XPainter.h"
 #include "XWidget_Protected.h" /* XWidget_paintImage/paintOffset 绘制闭环入口。 */
@@ -598,9 +624,9 @@ static void views_applyRowMetrics(bool compact)
     XListView_setRowHeight((XListView*)&g_views.list, rowH);
     XListView_setRowHeight((XListView*)&g_views.view, rowH);
     XTreeView_setRowHeight((XTreeView*)&g_views.tree, rowH);
-    XTableView_setRowHeight((XTableView*)&g_views.table, rowH);
+    XTableView_setRowHeight((XTableView*)&g_views.table, 0, rowH);
     if (g_views.bigTableAdopted && g_views.bigTable)
-        XTableView_setRowHeight((XTableView*)g_views.bigTable, rowH);
+        XTableView_setRowHeight((XTableView*)g_views.bigTable, 0, rowH);
     XWidget_setFixedHeight((XWidget*)&g_views.header,
                            compact ? VIEWS_COMPACT_HEADER_H
                                    : VIEWS_WIDE_HEADER_H);
@@ -677,7 +703,7 @@ static void views_layoutCompact(void)
     XWidget_setFixedHeight((XWidget*)&g_views.table,
                            g_views.table.m_headerHeight +
                            XTableView_rowHeight(
-                               (XTableView*)&g_views.table) * 3);
+                               (XTableView*)&g_views.table, 0) * 3);
     /* [最小高保障 2026-10-27 视觉走查 P1-3] 五视图紧凑档总高超出视口时
      * 布局把余高压薄，树只剩 ~1.5 行且被水平滚动条叠压（真机截图实证）。
      * 视图最小高=表头档+3 行（紧凑行高常量与 applyRowMetrics 同源）：
@@ -901,7 +927,7 @@ static void views_tableClickedSlot(XObject* receiver, XVarList* args)
     XVarList_args_2(args, int, row, int, col);
     if (row < 0 || col < 0) return;
     snprintf(buf, sizeof(buf), "表格点击: (%d,%d)「%s」", row, col,
-             XTableWidget_text(&g_views.table, row, col));
+             xTwTextUtf8(&g_views.table, row, col));
     views_setState(buf);
 }
 
@@ -1047,12 +1073,12 @@ XWidget* demo_page_views_build(XWidget* parent,
         XTableWidget_setHorizontalHeaderLabels(&g_views.table, kColHeaders,
                                                2);
     }
-    XTableWidget_setText(&g_views.table, 0, 0, "苹果");
-    XTableWidget_setText(&g_views.table, 0, 1, "3");
-    XTableWidget_setText(&g_views.table, 1, 0, "香蕉");
-    XTableWidget_setText(&g_views.table, 1, 1, "5");
-    XTableWidget_setText(&g_views.table, 2, 0, "樱桃");
-    XTableWidget_setText(&g_views.table, 2, 1, "8");
+    xTwSetTextUtf8(&g_views.table, 0, 0, "苹果");
+    xTwSetTextUtf8(&g_views.table, 0, 1, "3");
+    xTwSetTextUtf8(&g_views.table, 1, 0, "香蕉");
+    xTwSetTextUtf8(&g_views.table, 1, 1, "5");
+    xTwSetTextUtf8(&g_views.table, 2, 0, "樱桃");
+    xTwSetTextUtf8(&g_views.table, 2, 1, "8");
     XTableView_setColumnWidth((XTableView*)&g_views.table, 0, 130);
     XTableView_setColumnWidth((XTableView*)&g_views.table, 1, 130);
     XObject_connect_1((XObject*)&g_views.table,
@@ -1258,7 +1284,7 @@ int demo_page_views_autotest(XWidget* page)
                  "表格维度 3 行 2 列");
     {
         XTableWidget* table = &g_views.table;
-        int rowH = XTableView_rowHeight((XTableView*)table);
+        int rowH = XTableView_rowHeight((XTableView*)table, 0);
         int x = table->m_headerWidth +
                 XTableView_columnWidth((XTableView*)table, 0) +
                 XTableView_columnWidth((XTableView*)table, 1) / 2;
@@ -1267,7 +1293,7 @@ int demo_page_views_autotest(XWidget* page)
         VIEWS_EXPECT(XTableWidget_currentRow(table) == 1 &&
                      XTableWidget_currentColumn(table) == 1,
                      "表格点击 (1,1) 当前行列=(1,1)");
-        VIEWS_EXPECT(strcmp(XTableWidget_text(table, 1, 1), "5") == 0,
+        VIEWS_EXPECT(strcmp(xTwTextUtf8(table, 1, 1), "5") == 0,
                      "表格单元格 (1,1) 文本=5");
     }
 

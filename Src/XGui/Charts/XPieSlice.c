@@ -567,6 +567,13 @@ const char* XPieSlice_labelFont_2(const XPieSlice* self)
 int XPieSlice_labelFontSize(const XPieSlice* self)
 { return self ? self->m_labelFontSize : 0; }
 
+/* ==================== 所属序列 ==================== */
+
+struct XPieSeries* XPieSlice_series(const XPieSlice* self)
+{
+    return self ? (struct XPieSeries*)self->m_series : NULL;
+}
+
 #endif /* XCHARTS_ON */
 
 #endif /* XGUI_ON */

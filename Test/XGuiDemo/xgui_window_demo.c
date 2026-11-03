@@ -183,6 +183,32 @@
 #if XTEXTBROWSER_ON
 #include "XTextBrowser.h"
 #include "XTableWidget.h"
+
+/* ===== [Qt 对齐迁移 2026-11-03] XTableWidget 文本便捷 helper =====
+ * 旧 API XTableWidget_setText/XTableWidget_text 已删除（Qt 无对应物）。
+ * Qt 等价写法：item->setText()/item->text()；空格需先创建条目。
+ * 此处提供两个文件内 static helper，集中承担「空格自动建条目」这一
+ * C 侧便捷语义，避免逐点展开样板代码。 */
+#ifndef XTW_TEXT_HELPER_DEFINED
+#define XTW_TEXT_HELPER_DEFINED
+static void xTwSetTextUtf8(XTableWidget* tbl, int row, int col,
+                           const char* utf8)
+{
+    XTableWidgetItem* item = XTableWidget_item(tbl, row, col);
+    if (!item) {
+        item = XTableWidgetItem_create_utf8(utf8, XTableWidgetItem_Type);
+        if (!item) return;
+        XTableWidget_setItem(tbl, row, col, item);
+        return;
+    }
+    XTableWidgetItem_setText_utf8(item, utf8);
+}
+static const char* xTwTextUtf8(const XTableWidget* tbl, int row, int col)
+{
+    return XTableWidgetItem_text_toUtf8(XTableWidget_item(tbl, row, col));
+}
+#endif /* XTW_TEXT_HELPER_DEFINED */
+
 #include "XChartView.h"
 #include "XValueAxis.h"
 #include "XLineSeries.h"
@@ -2307,7 +2333,7 @@ static void demo_ext_viewsBigTableHook(DemoWin* self)
         int c;
         for (r = 0; r < 5; ++r)
             for (c = 0; c < 4; ++c)
-                XTableWidget_setText(&self->m_tableWidget, r, c, cells[r][c]);
+                xTwSetTextUtf8(&self->m_tableWidget, r, c, cells[r][c]);
     }
     XTableWidget_setCurrentCell(&self->m_tableWidget, 0, 0);
     /* 列宽随根宽定版：默认均分把「类型/大小」挤到滚动条带下（目验
@@ -3995,7 +4021,11 @@ static void demo_chartLegendSlot(XObject* receiver, XVarList* args)
     if (!self) return;
     chart = XChartView_chart(&self->m_chartView);
     if (!chart) return;
-    XChart_setLegendVisible(chart, !XChart_isLegendVisible(chart));
+    {
+        /* Qt 无 setLegendVisible；图例可见性走 legend()->setVisible()。 */
+        XLegend* lg = XChart_legend(chart);
+        if (lg) XLegend_setVisible(lg, !XLegend_isVisible(lg));
+    }
     XChartView_updateChart(&self->m_chartView);
     demo_set_status(self, "图表: 图例切换");
 }
@@ -4012,12 +4042,12 @@ static void demo_chartGridSlot(XObject* receiver, XVarList* args)
     /* 网格开关双轴联动：只切 axisY 会让从未被切过的 axisX 竖线在前后对比中
        像「网格自行恢复」（第一轮台账 #52 复核结论）。 */
     if (chart->m_axisX) {
-        XValueAxis_setGridVisible(chart->m_axisX,
-                                  !XValueAxis_isGridVisible(chart->m_axisX));
+        XAbstractAxis_setGridLineVisible(&chart->m_axisX->m_base,
+                                  !XAbstractAxis_isGridLineVisible(&chart->m_axisX->m_base));
     }
     if (chart->m_axisY) {
-        XValueAxis_setGridVisible(chart->m_axisY,
-                                  !XValueAxis_isGridVisible(chart->m_axisY));
+        XAbstractAxis_setGridLineVisible(&chart->m_axisY->m_base,
+                                  !XAbstractAxis_isGridLineVisible(&chart->m_axisY->m_base));
     }
     XChartView_updateChart(&self->m_chartView);
     demo_set_status(self, "图表: 网格切换");
@@ -4032,7 +4062,11 @@ static void demo_chartTitleSlot(XObject* receiver, XVarList* args)
     if (!self) return;
     chart = XChartView_chart(&self->m_chartView);
     if (!chart) return;
-    XChart_setTitleVisible(chart, !XChart_isTitleVisible(chart));
+    {
+        /* Qt 无 setTitleVisible；标题可见性 = 标题文本非空。 */
+        const char* cur = XChart_title_2(chart);
+        XChart_setTitle_2(chart, (cur && cur[0]) ? "" : "Chart");
+    }
     XChartView_updateChart(&self->m_chartView);
     demo_set_status(self, "图表: 标题切换");
 }
@@ -4061,7 +4095,7 @@ static void demo_chartSeriesSlot(XObject* receiver, XVarList* args)
         XAbstractSeries_setVisible((XAbstractSeries*)&chart->m_areaSeries[i]->m_base,
             (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 4));
     for (i = 0; i < chart->m_splineCount; ++i)
-        XAbstractSeries_setVisible((XAbstractSeries*)&chart->m_splineSeries[i]->m_base,
+        XAbstractSeries_setVisible((XAbstractSeries*)&chart->m_splineSeries[i]->m_base.m_base,
             (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 5));
     XChartView_updateChart(&self->m_chartView);
     demo_set_status(self, "图表: 序列模式切换");
@@ -6220,7 +6254,7 @@ static DemoWin* DemoWin_create(void)
             XAbstractSeries_setName_2(&line->m_base.m_base, "销量");
             for (i = 0; i < 7; ++i)
                 XXYSeries_append(line, i, (i * 37) % 50 + 10);
-            XChart_addLineSeries(chart, line);
+            XChart_addSeries(chart, line, XChartSeriesType_Line);
         }
         if (pie) {
             XAbstractSeries_setName_2((XAbstractSeries*)&pie->m_base, "占比");
@@ -6248,7 +6282,7 @@ static DemoWin* DemoWin_create(void)
                         XAbstractBarSeries_append(bar, bset);
                     }
                 }
-                XChart_addBarSeries(chart, bar);
+                XChart_addSeries(chart, bar, XChartSeriesType_Bar);
             }
             if (sc) {
                 XAbstractSeries_setName_2(&sc->m_base.m_base, "离散点");
@@ -6256,7 +6290,7 @@ static DemoWin* DemoWin_create(void)
                 XXYSeries_append(sc, 2.5, 25);
                 XXYSeries_append(sc, 4.5, 55);
                 XXYSeries_setColor(sc, 0xFFD1294Bu);
-                XChart_addScatterSeries(chart, sc);
+                XChart_addSeries(chart, sc, XChartSeriesType_Scatter);
             }
             if (area) {
                 XAreaSeries_setName_2(area, "面积");
@@ -6265,7 +6299,7 @@ static DemoWin* DemoWin_create(void)
                 XXYSeries_append(XAreaSeries_upperSeries(area), 4, 28);
                 XXYSeries_append(XAreaSeries_upperSeries(area), 5, 20);
                 XAreaSeries_setColor(area, 0x5516AFA9u);
-                XChart_addAreaSeries(chart, area);
+                XChart_addSeries(chart, area, XChartSeriesType_Area);
             }
             if (sp) {
                 XAbstractSeries_setName_2(&sp->m_base.m_base, "平滑线");
@@ -6273,7 +6307,7 @@ static DemoWin* DemoWin_create(void)
                 XXYSeries_append(sp, 2, 22);
                 XXYSeries_append(sp, 3, 48);
                 XXYSeries_setColor(sp, 0xFF8B5AC7u);
-                XChart_addSplineSeries(chart, sp);
+                XChart_addSeries(chart, sp, XChartSeriesType_Spline);
             }
         }
         XValueAxis_setRange(XChart_axisY(chart), 0, 60);

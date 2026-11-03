@@ -18,6 +18,7 @@
 #include "XTabBar.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
+#include "XAbstractItemView.h" /* [对齐 Qt 2026-11-03] XAbstractItemView_elidedText。 */
 #include "XWidget_Protected.h"
 #include "XPainter.h"
 #include "XMemory.h"
@@ -452,6 +453,7 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                 if (style != NULL) {
                     /* Fusion/公共风格接管：页签形状 + 标签由样式引擎绘制。 */
                     XStyleOption opt;
+                    char tabElideBuf[256]; /* [对齐 Qt] 页签文本省略缓冲。 */
                     XStyleOption_init(&opt, XStyleCE_TabBarTabShape);
                     opt.m_rect = tab;
                     opt.m_state = bar->m_enabled[i] && XWidget_isEnabled(self)
@@ -464,8 +466,25 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                         opt.m_state |= XStyleState_HasFocus;
                     opt.m_tabSelected = isCur;
                     opt.m_tabIndex = i;
-                    opt.m_tabElideMode = bar->m_elideMode; /* §8.0g11 */
-                    opt.m_text = bar->m_titles[i] ? XString_toUtf8(bar->m_titles[i]) : "";
+                    /* 对齐 Qt：QTabBar::initStyleOption（qtabbar.cpp:200-210）
+                     * 在**填充样式选项时**就完成 elidedText，
+                     * QStyleOptionTab 本身没有 elideMode 字段。
+                     * 可用宽取页签内容宽减去左右留白（与构建 tab 矩形
+                     * 时的文本余量同口径）。 */
+                    {
+                        const char* raw = bar->m_titles[i]
+                            ? XString_toUtf8(bar->m_titles[i]) : "";
+                        int availW = tab.width - 12;
+                        if (availW < 0) availW = 0;
+                        if (bar->m_titles[i] && availW > 0) {
+                            const char* elided = XAbstractItemView_elidedText(
+                                NULL, tabElideBuf, (int)sizeof(tabElideBuf),
+                                raw, availW, XPainter_font(&painter));
+                            if (elided && elided != raw)
+                                raw = elided;
+                        }
+                        opt.m_text = raw;
+                    }
 #if XPALETTE_ON
                     opt.m_palette = XWidget_palette(self);
 #endif
@@ -1009,7 +1028,10 @@ void XTabBar_init(XTabBar* self, XWidget* parent, XWidgetFlags flags)
     xtabbar_updateSizeHint(self);
     self->m_autoHide = false;
     self->m_expanding = true;
-    self->m_elideMode = 1; /* Qt::ElideRight */
+    /* 对齐 Qt：缺省取 Fusion 的 SH_TabBar_ElideMode = ElideRight
+     * 即 Qt::TextElideMode 数值 1（qtabbar.cpp:392）。 */
+    self->m_elideMode =
+        (uint32_t)XAbstractItemViewTextElideMode_ElideRight;
     self->m_selectionBehavior = 0;
     self->m_shape = 0; /* Qt::RoundedShape */
     self->m_iconSize = 0; /* 0 = 默认尺寸 */
@@ -1405,9 +1427,22 @@ bool XTabBar_documentMode(const XTabBar* self)
 { return self ? self->m_documentMode : false; }
 
 void XTabBar_setElideMode(XTabBar* self, int mode)
-{ if (self) self->m_elideMode = mode; }
+{
+    /* 对齐 Qt：QTabBar::setElideMode 直接存值（qtabbar.cpp:2506-2510），
+     * 取值域为 Qt::TextElideMode 0..3。越界值忽略，避免 3 位位域截断。 */
+    if (!self) return;
+    if (mode < (int)XAbstractItemViewTextElideMode_ElideLeft ||
+        mode > (int)XAbstractItemViewTextElideMode_ElideNone)
+        return;
+    self->m_elideMode = (uint32_t)mode;
+}
 int XTabBar_elideMode(const XTabBar* self)
-{ return self ? self->m_elideMode : 0; }
+{
+    /* 缺省对齐 Qt Fusion：QTabBarPrivate 从 styleHint(SH_TabBar_ElideMode)
+     * 初始化（qtabbar.cpp:392），Fusion 返回 ElideRight，即数值 1。 */
+    return self ? (int)self->m_elideMode
+                : (int)XAbstractItemViewTextElideMode_ElideRight;
+}
 
 void XTabBar_setExpanding(XTabBar* self, bool enable)
 { if (self) self->m_expanding = enable; }

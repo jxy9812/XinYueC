@@ -898,7 +898,7 @@ typedef enum XStyleOptionToolButtonFeature
  *             uint16→bool/uint8/位域组），并收窄文档化小值域整型：
  *             m_version/m_type/m_direction/m_checkState/
  *             m_sliderTickPosition/m_spinStepEnabled/m_spinSymbols/
- *             m_checkState2/m_tabElideMode → uint8_t（值域均 ≤255，
+ *             m_checkState2 → uint8_t（值域均 ≤255，
  *             已核 .c 全部赋值/比较无越界无 -1 哨兵），m_tabIndex/
  *             m_decorationAlignment → uint16_t；m_progressValue 保留
  *             int（init 置 -1 哨兵），进度/滑块 min/max/value 保留
@@ -982,8 +982,10 @@ typedef struct XStyleOption
     uint8_t m_spinStepEnabled; /**< 步进使能位：0x1 上/0x2 下（对标 stepEnabled）。 */
     uint8_t m_spinSymbols;    /**< 按钮符号：0 上下箭头/1 加减号/2 无按钮（对标 buttonSymbols）。 */
     uint8_t m_checkState2;    /**< 条目勾选状态（0 未选/1 部分/2 选中）。 */
-    uint8_t m_tabElideMode;   /**< 页签省略模式（§8.0g11：0 无/1 右省略/2 左
-                               省略/3 中省略，对标 Qt::ElideRight 等）。 */
+    /* [对齐 Qt 2026-11-03] 原 m_tabElideMode 字段已删除。
+     * Qt 的 QStyleOptionTab（qstyleoption.h:241-268）**没有** elide 字段：
+     * QTabBar::initStyleOption 在交给样式层之前就已经把
+     * option->text 换成 elidedText 结果。样式层只负责用它。 */
 } XStyleOption;
 
 /**

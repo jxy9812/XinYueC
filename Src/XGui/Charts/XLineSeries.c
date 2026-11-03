@@ -45,6 +45,12 @@ XLineSeries* XLineSeries_create_ex(XMemoryType memory)
     return self;
 }
 
+int XLineSeries_type(const XLineSeries* self)
+{
+    (void)self;
+    return XChartSeriesType_Line;
+}
+
 #endif /* XCHARTS_ON */
 
 #endif /* XGUI_ON */

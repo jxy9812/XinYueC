@@ -306,6 +306,21 @@ int XLinkServer_publish(XLinkServer* self, uint32_t topicId,
                         const uint8_t* payload, uint32_t length);
 
 /**
+ * @brief      一对多发布（扩展版：显式指定载荷数据类型）。
+ * @param      self 服务端对象；传入 NULL 时函数不执行任何操作。
+ * @param      topicId 主题号，须 >= XLINK_TOPIC_USER_BASE。
+ * @param      dataType 载荷数据类型，见 XLinkDataType。
+ * @param      payload 推送载荷（借用，不取得所有权）；可为 NULL。
+ * @param      length 业务载荷长度（字节）；可为 0。
+ * @return     实际推送到的会话数；topicId 越界或 dataType 越界返回 0。
+ * @note       与 XLinkServer_publish 的唯一区别是帧头 m_dataType 取值：
+ *             前者恒填 XLinkDataType_Raw。
+ */
+int XLinkServer_publish_ex(XLinkServer* self, uint32_t topicId,
+                           XLinkDataType dataType,
+                           const uint8_t* payload, uint32_t length);
+
+/**
  * @brief      广播：向所有握手完成的会话推送（不管是否订阅）。
  * @param      self 服务端对象；传入 NULL 时函数不执行任何操作。
  * @param      topicId 主题号，须 >= XLINK_TOPIC_USER_BASE。
@@ -317,6 +332,19 @@ int XLinkServer_publish(XLinkServer* self, uint32_t topicId,
  */
 int XLinkServer_broadcast(XLinkServer* self, uint32_t topicId,
                           const uint8_t* payload, uint32_t length);
+
+/**
+ * @brief      广播（扩展版：显式指定载荷数据类型）。
+ * @param      self 服务端对象；传入 NULL 时函数不执行任何操作。
+ * @param      topicId 主题号，须 >= XLINK_TOPIC_USER_BASE。
+ * @param      dataType 载荷数据类型，见 XLinkDataType。
+ * @param      payload 推送载荷（借用，不取得所有权）；可为 NULL。
+ * @param      length 业务载荷长度（字节）；可为 0。
+ * @return     实际推送到的会话数；topicId 越界或 dataType 越界返回 0。
+ */
+int XLinkServer_broadcast_ex(XLinkServer* self, uint32_t topicId,
+                             XLinkDataType dataType,
+                             const uint8_t* payload, uint32_t length);
 
 /* ========================================================================== */
 /*                        驱动与查询                                         */

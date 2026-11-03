@@ -10,6 +10,7 @@
  *   6. XTHREAD_ON             - 线程对象（XThread / XThreadData）
  *   7. XTHREADPOOL_ON         - 线程池（XThreadPool / XRunnable）
  *   8. XWAITCONDITION_ON      - 条件变量（XWaitCondition）
+ *   9. XLOCKFILE_ON           - 进程间文件锁（XLockFile）
  *
  * 模块总开关 XSYNC_ON 在 CXinYueConfig.h 中定义，此处仅提供默认值。
  * 关闭后若仍有其它模块无条件引用 XSync 符号，需同步裁剪对应依赖。
@@ -79,6 +80,13 @@ extern "C" {
 /** @brief 条件变量（XWaitCondition） */
 #ifndef XWAITCONDITION_ON
 #define XWAITCONDITION_ON 1
+#endif
+
+/** @brief 进程间文件锁（XLockFile）。
+ *  @details 依赖平台「独占创建」原语（CreateFileW+CREATE_NEW /
+ *           open(O_CREAT|O_EXCL)）；无 OS 的裸机平台返回不支持。 */
+#ifndef XLOCKFILE_ON
+#define XLOCKFILE_ON 1
 #endif
 
 #endif /* XSYNC_ON */

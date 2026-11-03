@@ -57,6 +57,13 @@ typedef struct XChartView
 {
     XWidget m_base;           /**< 基类成员；必须是第一个。 */
     XChart* m_chart;          /**< 图表模型（内部拥有；setChart 转移）。 */
+    /* init 预建的占位图表标记：true 表示 m_chart 仍是 init 自动创建、
+     * 从未经 setChart 装入过的空图表。setChart 替换它时同步 delete——
+     * 该对象无外部引用、不在信号发射帧内，无需延迟回收；若走
+     * deleteLater，无事件循环场景（无头导出/探针/单测）永不兑现即泄漏
+     * （实测 2990B/轮）。用户经 setChart 装入的图表仍走 deleteLater
+     * （R-103：槽函数内换图表时发射帧在途）。 */
+    bool m_chartPlaceholder;  /**< m_chart 是否为 init 预建的占位空图表。 */
     XChartView_RubberBands m_rubberBand; /**< 框选缩放模式（对标 rubberBand）。 */
     bool m_dragging;          /**< 框选拖拽进行中。 */
     XPoint m_dragStart;       /**< 拖拽起点（视图局部坐标）。 */

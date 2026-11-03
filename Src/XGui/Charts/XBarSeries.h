@@ -50,6 +50,9 @@ XBarSeries* XBarSeries_create_ex(XMemoryType memory);
 
 /** @brief 删除堆上序列（查表分派析构并释放内存）。 */
 
+/** @brief 查询序列类型（对标 QBarSeries::type）。 @param self 目标序列指针。 @return 固定返回 Bar。 */
+int XBarSeries_type(const XBarSeries* self);
+
 /** @brief 设置柱色。 @param self 目标序列指针。 @param color ARGB。 @return 无返回值。 */
 void XBarSeries_setColor(XBarSeries* self, uint32_t color);
 /** @brief 查询柱色。 @param self 目标序列指针。 @return ARGB。 */

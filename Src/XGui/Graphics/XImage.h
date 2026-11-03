@@ -525,6 +525,87 @@ void XImage_invertPixels(XImage* self, XImageInvertMode mode);
 XPaintDevice* XImage_paintDevice(XImage* self);
 #endif /* XPAINTDEVICE_ON */
 
+/* ========== 设备类型 / 绘制引擎（对标 QImage::devType / paintEngine） ========== */
+
+/**
+ * @brief      获取绘制设备类型（对标 QImage::devType）。
+ * @details    Qt 返回 QInternal::Image；本库返回 XPaintDeviceType 中的
+ *             图像类型编号。无绘制设备时返回 0。
+ * @param      self 目标图像指针。
+ * @return     设备类型编号。
+ */
+int XImage_devType(const XImage* self);
+
+/**
+ * @brief      获取绘制引擎（对标 QImage::paintEngine）。
+ * @details    Qt 中 QImage 使用光栅绘制引擎。本库图像绘制经 XPainter
+ *             直接绑定，无独立引擎对象，故返回 NULL（与 QPixmap 在
+ *             无原生引擎时的约定一致）。
+ * @param      self 目标图像指针。
+ * @return     恒为 NULL；保留该入口以对齐 Qt 的 API 面。
+ */
+struct XPaintEngine* XImage_paintEngine(XImage* self);
+
+/* ========== 拷贝（对标 QImage::copy） ========== */
+
+/**
+ * @brief      拷贝指定矩形区域到新图像（对标 QImage::copy(QRect)）。
+ * @details    矩形为空（宽或高 <=0）时返回整幅副本；矩形超出边界时按
+ *             图像边界裁剪。与 Qt 一致：结果与原图像共享数据（COW），
+ *             写入任一侧时分离。
+ * @param      self 源图像（借用，不修改）。
+ * @param      rect 要拷贝的矩形；NULL 表示整幅。
+ * @return     新建 XImage；失败返回 NULL。调用方用 XClassDelete 释放。
+ */
+XImage* XImage_copy_rect(const XImage* self, const XRect* rect);
+
+/**
+ * @brief      拷贝指定矩形区域到新图像（坐标形态；对标 QImage::copy(x,y,w,h)）。
+ * @param      self 源图像（借用）。
+ * @param      x 左上角 X。
+ * @param      y 左上角 Y。
+ * @param      w 宽度（<=0 表示整幅宽）。
+ * @param      h 高度（<=0 表示整幅高）。
+ * @return     新建 XImage；失败返回 NULL。调用方用 XClassDelete 释放。
+ */
+XImage* XImage_copy_rect_ex(const XImage* self, int x, int y, int w, int h);
+
+/* ========== 格式转换（对标 QImage::convertTo / convertedTo） ========== */
+
+/**
+ * @brief      就地把图像转换为指定格式（对标 QImage::convertTo）。
+ * @details    与 convertToFormatInPlace 语义一致；提供 Qt 命名入口。
+ * @param      self 目标图像；
+ * @param      format 目标格式。
+ * @param      flags 转换标志（Qt::ImageConversionFlags 等价位集合）。
+ * @return     无返回值；格式不变或转换失败时图像保持原状。
+ */
+void XImage_convertTo(XImage* self, XImageFormat format, uint32_t flags);
+
+/**
+ * @brief      返回转换为指定格式的新图像（对标 QImage::convertedTo）。
+ * @details    与 convertedToFormat 语义一致；提供 Qt 命名入口。
+ * @param      self 源图像（借用）。
+ * @param      format 目标格式。
+ * @param      flags 转换标志。
+ * @return     新建 XImage；失败返回 NULL。调用方用 XClassDelete 释放。
+ */
+XImage* XImage_convertedTo(const XImage* self, XImageFormat format,
+                           uint32_t flags);
+
+/* ========== 色彩变换（对标 QImage::colorTransformed） ========== */
+
+/**
+ * @brief      返回应用色彩变换后的新图像（对标 QImage::colorTransformed）。
+ * @details    Qt 的 QColorTransform 描述「源色彩空间 → 目标色彩空间」的
+ *             逐像素映射。本库以「目标色彩空间」直接表达该变换：把源图像
+ *             的 XColorSpace 转换为 targetSpace 并返回新图像；源图像不变。
+ * @param      self 源图像（借用）。
+ * @param      targetSpace 目标色彩空间。
+ * @return     新建 XImage；失败返回 NULL。调用方用 XClassDelete 释放。
+ */
+XImage* XImage_colorTransformed(const XImage* self, XColorSpace targetSpace);
+
 /* ========== 像素数据访问 ========== */
 
 /**

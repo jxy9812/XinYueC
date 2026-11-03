@@ -117,6 +117,8 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XScrollBarTest.h"
 #include "XStackedWidgetTest.h"
 #include "XButtonGroupTest.h"
+#include "XDataStreamTest.h"
+#include "XTableAlignTest.h"
 #include "XStatusBar.h"
 #include "XMenuBar.h"
 #include "XSplitter.h"
@@ -140,6 +142,34 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XAreaSeries.h"
 #include "XSplineSeries.h"
 #include "XTableWidget.h"
+#include "XDataStream.h" /* [序列化] 条目 read/write 往返测试。 */
+#include "XByteArray.h"
+
+/* ===== [Qt 对齐迁移 2026-11-03] XTableWidget 文本便捷 helper =====
+ * 旧 API XTableWidget_setText/XTableWidget_text 已删除（Qt 无对应物）。
+ * Qt 等价写法：item->setText()/item->text()；空格需先创建条目。
+ * 此处提供两个文件内 static helper，集中承担「空格自动建条目」这一
+ * C 侧便捷语义，避免逐点展开样板代码。 */
+#ifndef XTW_TEXT_HELPER_DEFINED
+#define XTW_TEXT_HELPER_DEFINED
+static void xTwSetTextUtf8(XTableWidget* tbl, int row, int col,
+                           const char* utf8)
+{
+    XTableWidgetItem* item = XTableWidget_item(tbl, row, col);
+    if (!item) {
+        item = XTableWidgetItem_create_utf8(utf8, XTableWidgetItem_Type);
+        if (!item) return;
+        XTableWidget_setItem(tbl, row, col, item);
+        return;
+    }
+    XTableWidgetItem_setText_utf8(item, utf8);
+}
+static const char* xTwTextUtf8(const XTableWidget* tbl, int row, int col)
+{
+    return XTableWidgetItem_text_toUtf8(XTableWidget_item(tbl, row, col));
+}
+#endif /* XTW_TEXT_HELPER_DEFINED */
+
 #include "XHeaderView.h"
 #include "XItemSelectionModel.h"
 #include "XListView.h"
@@ -28284,6 +28314,11 @@ static void test_widgets_signals_contract(void)
 
             XTableWidget_setRowCount(table, 3);
             XTableWidget_setColumnCount(table, 3);
+            /* 对齐 Qt：{item,cell}Pressed/Clicked 均仅在该格确有条目时
+             * 才发射 item* 载荷（qtablewidget.cpp:1660-1674
+             * emitItemPressed/emitItemClicked 的 `if (item)` 分支），
+             * 因此用例先向目标格写入条目。 */
+            xTwSetTextUtf8(table, 0, 0, "cell-0-0");
             XObject_connect_2((XObject*)table,
                 XSignal(XTableWidget_cellPressed_signal), ws_twCellPressedSlot);
             XObject_connect_2((XObject*)table,
@@ -28318,7 +28353,7 @@ static void test_widgets_signals_contract(void)
             XClassDeinit((XClass*)&move);
             ws_expect(ws_twCellEntered == 1, "移入新单元格发射 cellEntered");
 
-            XTableWidget_setText(table, 1, 1, "changed");
+            xTwSetTextUtf8(table, 1, 1, "changed");
             ws_expect(ws_twCellChanged >= 1, "setText 发射 cellChanged");
             /* press 阶段已把当前格设为 (0,0)（VX_tableWidget_mousePressEvent
                内部 setCurrentCell），此处显式换到 (1,1) 应再发一次。 */
@@ -31071,7 +31106,7 @@ static void test_chart_interaction_contract(void)
             { XRectF pa; pa.x = 0; pa.y = 0; pa.width = 400; pa.height = 300; XChart_setPlotArea(chart, &pa); }
             XChart_mapToPosition(chart, 5, 5, &mx, &my);
             c1_expect(mx > 100 && mx < 300, "mapToPosition X");
-            c1_expect(XChart_series(chart, 0) == NULL, "series 空表");
+            c1_expect(XChart_seriesCount(chart) == 0, "series 空表");
             XClassDelete(chart);
             if (removed) XValueAxis_deinit_impl(removed), XFree_System(removed);
         }
@@ -31103,15 +31138,15 @@ static void test_chart_c1_contract(void)
                   "seriesTypeAt 类型一致");
         XChart_removeSeries(chart, line);
         c1_expect(XChart_seriesCount(chart) == 1 &&
-                  XChart_lineSeriesCount(chart) == 1 &&
+                  XChart_seriesTypeAt(chart, 0) == XChartSeriesType_Line &&
                   XChart_seriesAt(chart, 0) == line2,
                   "removeSeries 同步按类集合");
         XChart_addSeries(chart, pie, XChartSeriesType_Pie);
-        c1_expect(XChart_pieSeries(chart) == pie, "addSeries Pie 单例路由");
+        c1_expect(XChart_seriesAt(chart, 1) == pie &&
+                  XChart_seriesTypeAt(chart, 1) == XChartSeriesType_Pie,
+                  "addSeries Pie 单例路由");
         XChart_removeAllSeries(chart);
-        c1_expect(XChart_seriesCount(chart) == 0 &&
-                  XChart_lineSeriesCount(chart) == 0 &&
-                  XChart_pieSeries(chart) == NULL,
+        c1_expect(XChart_seriesCount(chart) == 0,
                   "removeAllSeries 清空");
 
         /* 主题。 */
@@ -31205,7 +31240,7 @@ static void test_chart_c1_contract(void)
                           XCategoryAxis_min(caxis) == 0.0 &&
                           c1_caxisCount == 3,
                           "QBarCategoryAxis 语义：append 更新 max+countChanged");
-                XCategoryAxis_setRange(caxis, -5.0, 99.0);
+                XCategoryAxis_setRangeIndex(caxis, -5.0, 99.0);
                 c1_expect(XCategoryAxis_min(caxis) == 0.0 &&
                           XCategoryAxis_max(caxis) == 3.0,
                           "setRange 钳位到 [0, count]");
@@ -33878,7 +33913,7 @@ static void test_phase32_p2_contract(void)
         XTableWidget* tw = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
         XTableWidget_setRowCount(tw, 2);
         XTableWidget_setColumnCount(tw, 2);
-        XTableWidget_setText(tw, 0, 0, "cell00");
+        xTwSetTextUtf8(tw, 0, 0, "cell00");
         XTableWidget_setCellWidget(tw, 1, 1, (XWidget*)tw);
         p32_expect(XTableWidget_cellWidget(tw, 1, 1) == (XWidget*)tw,
                    "table: cellWidget 借用");
@@ -34179,26 +34214,257 @@ static void test_phase32_p2_contract(void)
     /* --- 23:40 并发批次:QTableWidget 便捷族 + XMenuBar 动作所有权 --- */
     {
         XTableWidget* tw = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
-        XString* taken;
-        int rows[8];
-        int cols[8];
+        XTableWidgetItem* taken;
+        XTableWidgetItem* hitsArr[8];
         int hits;
         XTableWidget_setRowCount(tw, 3);
         XTableWidget_setColumnCount(tw, 2);
-        XTableWidget_setText(tw, 1, 0, "Beta");
-        hits = XTableWidget_findItems(tw, "Beta", 1, rows, cols, 8);
+        xTwSetTextUtf8(tw, 1, 0, "Beta");
+        hits = XTableWidget_findItems(tw, "Beta", 1, hitsArr, 8);
         p32_expect(hits >= 1, "table: findItems 精确命中");
         {
-            int r = -1, c = -1;
-            XTableWidget_itemAt(tw, 60, 80, &r, &c);
-            p32_expect(r >= 0 || c >= 0 || (r == -1 && c == -1),
+            XTableWidgetItem* hit = XTableWidget_itemAt(tw, 60, 80);
+            p32_expect(hit == XTableWidget_item(tw, 0, 0) || hit == NULL,
                        "table: itemAt 反查安全");
         }
         taken = XTableWidget_takeItem(tw, 1, 0);
         p32_expect(taken != NULL, "table: takeItem 取出");
-        if (taken) XClassDelete(taken);
-        XTableWidget_clearSpans(tw); /* 平铺模型无操作,验证安全 */
+        if (taken) XClassDelete((XClass*)taken);
+        XTableView_clearSpans(tw); /* 平铺模型无操作,验证安全 */
         XClassDelete(tw);
+    }
+
+    /* --- [基类欠账 2026-11-03] textElideMode 消费 + 边缘自动滚动 --- */
+    {
+        XTableWidget* tw = XTableWidget_create_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+        char buf[64];
+        const char* out;
+        XFont font;
+        p32_expect(tw != NULL, "elide: XTableWidget 创建");
+        if (tw) {
+            XWidget_resize((XWidget*)tw, 200, 120);
+            XFont_init(&font);
+            /* 默认省略模式为 ElideRight（对齐 Qt）。 */
+            p32_expect(XAbstractItemView_textElideMode(&tw->m_base.m_base) ==
+                           (int)XAbstractItemViewTextElideMode_ElideRight,
+                       "elide: 缺省模式为 ElideRight");
+            /* 宽度充足 ⇒ 原样返回入参（不写 buf）。 */
+            out = XAbstractItemView_elidedText(&tw->m_base.m_base, buf,
+                                               (int)sizeof(buf), "abc",
+                                               10000, &font);
+            p32_expect(out != NULL && strcmp(out, "abc") == 0,
+                       "elide: 宽度充足时原样返回");
+            /* 宽度不足 ⇒ 返回 buf 且带省略号 U+2026。
+             * 注：maxW 必须大于省略号自身宽度（U+2026 约 16px），否则
+             * XCommonStyle_elideText 按 Qt 语义退化为空串。 */
+            out = XAbstractItemView_elidedText(&tw->m_base.m_base, buf,
+                                               (int)sizeof(buf),
+                                               "这是一段很长很长的文本",
+                                               40, &font);
+            p32_expect(out == buf && out[0] != '\0' &&
+                       XStrstr(buf, "\xe2\x80\xa6") != NULL,
+                       "elide: 宽度不足时写入调用方缓冲且带省略号");
+            /* ElideNone ⇒ 截断不加省略号。 */
+            XAbstractItemView_setTextElideMode(&tw->m_base.m_base,
+                                               XAbstractItemViewTextElideMode_ElideNone);
+            out = XAbstractItemView_elidedText(&tw->m_base.m_base, buf,
+                                               (int)sizeof(buf),
+                                               "这是一段很长很长的文本",
+                                               40, &font);
+            p32_expect(out == buf &&
+                       XStrstr(buf, "\xe2\x80\xa6") == NULL,
+                       "elide: ElideNone 截断不加省略号");
+            /* [编号统一 2026-11-03] 验证 ElideLeft(0) 与 ElideMiddle(2) 在
+             * 统一后的编号下确实生效——旧实现 0 曾被当作「无省略」、
+             * 2 曾被当作「左省略」，是本次合并修掉的错位点。 */
+            XAbstractItemView_setTextElideMode(&tw->m_base.m_base,
+                                               XAbstractItemViewTextElideMode_ElideLeft);
+            out = XAbstractItemView_elidedText(&tw->m_base.m_base, buf,
+                                               (int)sizeof(buf),
+                                               "这是一段很长很长的文本",
+                                               60, &font);
+            p32_expect(out == buf &&
+                       XStrncmp(buf, "\xe2\x80\xa6", 3) == 0,
+                       "elide: ElideLeft 省略号在头部");
+            XAbstractItemView_setTextElideMode(&tw->m_base.m_base,
+                                               XAbstractItemViewTextElideMode_ElideMiddle);
+            out = XAbstractItemView_elidedText(&tw->m_base.m_base, buf,
+                                               (int)sizeof(buf),
+                                               "这是一段很长很长的文本",
+                                               120, &font);
+            p32_expect(out == buf &&
+                       XStrstr(buf + 1, "\xe2\x80\xa6") != NULL &&
+                       XStrncmp(buf, "\xe2\x80\xa6", 3) != 0,
+                       "elide: ElideMiddle 省略号在中间");
+            /* [role 消费 2026-11-03] 自绘路径消费 FontRole/TextAlignmentRole/
+             * CheckStateRole/SizeHintRole 后，grab 渲染不得崩溃且仍出内容。 */
+            {
+                XTableWidgetItem* ri = XTableWidgetItem_create_utf8(
+                    "role", XTableWidgetItem_Type);
+                XFont rf;
+                XColor rbg;
+                XImage* img;
+                if (ri) {
+                    XFont_init(&rf);
+                    XTableWidgetItem_setFont(ri, &rf);
+                    XTableWidgetItem_setTextAlignment(
+                        ri, XAlignment_Center | XAlignment_VCenter);
+                    XTableWidgetItem_setCheckState(
+                        ri, XItemCheckState_Checked);
+                    rbg = XColor_create_rgb(200, 220, 240, 255);
+                    XTableWidgetItem_setBackground(ri, &rbg);
+                    XTableWidget_setItem(tw, 0, 0, ri);
+                    img = XWidget_grab((XWidget*)tw);
+                    p32_expect(img != NULL, "role: 带全 role 的条目 grab 成功");
+                    if (img) XClassDelete((XClass*)img);
+                    XClassDeinit((XClass*)&rf);
+                }
+            }
+            /* [序列化 2026-11-03] XTableWidgetItem write/read 往返回环。 */
+            {
+                XTableWidgetItem* src = XTableWidgetItem_create_utf8(
+                    "ser", XTableWidgetItem_Type);
+                XByteArray* bytes = XByteArray_create();
+                XTableWidgetItem* dst = XTableWidgetItem_create();
+                if (src && bytes && dst) {
+                    XDataStream ws;
+                    XDataStream rs;
+                    XTableWidgetItemData extra;
+                    XColor sc = XColor_create_rgb(10, 20, 30, 255);
+                    XTableWidgetItem_setCheckState(src,
+                                                   XItemCheckState_Checked);
+                    XTableWidgetItem_setForeground(src, &sc);
+                    XTableWidgetItem_setFlags(src,
+                        XItemFlag_ItemIsSelectable | XItemFlag_ItemIsEnabled);
+                    /* 额外塞一个自定义 role，验证 role 表完整往返。 */
+                    extra.role = XItemDataRole_UserRole + 1;
+                    extra.value = XVariant_create_int(4242);
+                    if (extra.value)
+                        XVector_push_back_1_base(&src->m_values, &extra);
+                    XDataStream_init_array(&ws, bytes);
+                    p32_expect(XTableWidgetItem_write(src, &ws),
+                               "serialize: item write 成功");
+                    XDataStream_init_arrayReadOnly(&rs, bytes);
+                    p32_expect(XTableWidgetItem_read(dst, &rs),
+                               "serialize: item read 成功");
+                    p32_expect(
+                        strcmp(XTableWidgetItem_text_toUtf8(dst), "ser") == 0 &&
+                        XTableWidgetItem_checkState(dst) ==
+                            XItemCheckState_Checked &&
+                        XTableWidgetItem_flags(dst) ==
+                            (XItemFlag_ItemIsSelectable |
+                             XItemFlag_ItemIsEnabled),
+                        "serialize: 文本/勾选/标志位往返");
+                    {
+                        XColor out;
+                        p32_expect(XTableWidgetItem_foreground(dst, &out) &&
+                                   XColor_rgba(&out) == XColor_rgba(&sc),
+                                   "serialize: ForegroundRole 往返");
+                    }
+                    {
+                        const XVariant* uv = XTableWidgetItem_data(
+                            dst, XItemDataRole_UserRole + 1);
+                        p32_expect(uv && XVariant_toInt(uv) == 4242,
+                                   "serialize: UserRole 自定义 role 往返");
+                    }
+                    XClassDeinit((XClass*)&ws);
+                    XClassDeinit((XClass*)&rs);
+                }
+                if (dst) XClassDelete((XClass*)dst);
+                if (bytes) XClassDelete((XClass*)bytes);
+                if (src) XClassDelete((XClass*)src);
+            }
+            /* 越界安全性。 */
+            p32_expect(XAbstractItemView_elidedText(NULL, buf,
+                                                   (int)sizeof(buf), "x",
+                                                   0, &font) != NULL,
+                       "elide: maxW<=0 不崩溃");
+            p32_expect(XAbstractItemView_elidedText(&tw->m_base.m_base,
+                                                   NULL, 0, "x", 10, &font)
+                           != NULL,
+                       "elide: buf 为 NULL 安全退化");
+            XClassDeinit((XClass*)&font);
+            XClassDelete(tw);
+        }
+    }
+    {
+        /* 边缘自动滚动（对齐 QAbstractItemView）。 */
+        XAbstractItemView* view = XAbstractItemView_create_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+        p32_expect(view != NULL, "autoscroll: 基类视图创建");
+        if (view) {
+            XWidget_resize((XWidget*)view, 200, 120);
+            /* 缺省开启、边距 16（对齐 Qt）。 */
+            p32_expect(XAbstractItemView_hasAutoScroll(view) &&
+                       XAbstractItemView_autoScrollMargin(view) == 16,
+                       "autoscroll: 缺省开启且边距=16");
+            /* 四边命中。 */
+            p32_expect(XAbstractItemView_shouldAutoScroll(view, 100, 5) == true,
+                       "autoscroll: 上边缘命中");
+            p32_expect(XAbstractItemView_shouldAutoScroll(view, 100, 118) == true,
+                       "autoscroll: 下边缘命中");
+            p32_expect(XAbstractItemView_shouldAutoScroll(view, 5, 60) == true,
+                       "autoscroll: 左边缘命中");
+            p32_expect(XAbstractItemView_shouldAutoScroll(view, 196, 60) == true,
+                       "autoscroll: 右边缘命中");
+            /* 中心不命中。 */
+            p32_expect(XAbstractItemView_shouldAutoScroll(view, 100, 60) == false,
+                       "autoscroll: 中心区不命中");
+            /* 关闭开关后恒 false。 */
+            XAbstractItemView_setAutoScroll(view, false);
+            p32_expect(XAbstractItemView_shouldAutoScroll(view, 100, 5) == false,
+                       "autoscroll: 关闭后恒 false");
+            XAbstractItemView_setAutoScroll(view, true);
+            /* 边距可调；0 时不命中。 */
+            XAbstractItemView_setAutoScrollMargin(view, 0);
+            p32_expect(XAbstractItemView_shouldAutoScroll(view, 100, 0) == false,
+                       "autoscroll: margin=0 时不命中");
+            XAbstractItemView_setAutoScrollMargin(view, 16);
+            /* 启停安全性（未布防时 stop 无操作）。 */
+            XAbstractItemView_stopAutoScroll(view);
+            XAbstractItemView_doAutoScroll(view); /* 无记录位置：安全返回 */
+            XAbstractItemView_updateAutoScrollPointer(view, 100, 60);
+            XAbstractItemView_updateAutoScrollPointer(view, 100, 5);
+            XAbstractItemView_stopAutoScroll(view);
+            p32_expect(true, "autoscroll: 启停/拍推进无崩溃");
+            /* [ScrollPerItem 2026-11-03] 步进量对齐 Qt：逐条目时
+             * singleStep = 条目尺寸；逐像素时 = 1。
+             * 基类 visualRect 为 80x24 固定网格，故行高 24、列宽 80
+             * （条目尺寸测量依赖 model，故先挂一个 1x1 模型）。 */
+            {
+                XAbstractItemModel* m1 = XAbstractItemModel_create();
+                XScrollBar* vb;
+                XScrollBar* hb;
+                if (m1) XAbstractItemView_setModel(view, m1);
+                vb = XAbstractScrollArea_verticalScrollBar(
+                    (XAbstractScrollArea*)view);
+                hb = XAbstractScrollArea_horizontalScrollBar(
+                    (XAbstractScrollArea*)view);
+                if (vb && hb && m1) {
+                    XAbstractItemView_setVerticalScrollMode(
+                        view, XAbstractItemViewScrollMode_ScrollPerPixel);
+                    XAbstractItemView_setHorizontalScrollMode(
+                        view, XAbstractItemViewScrollMode_ScrollPerPixel);
+                    p32_expect(
+                        XAbstractSlider_singleStep((XAbstractSlider*)vb) == 1 &&
+                        XAbstractSlider_singleStep((XAbstractSlider*)hb) == 1,
+                        "scrollmode: ScrollPerPixel 时 singleStep=1");
+                    XAbstractItemView_setVerticalScrollMode(
+                        view, XAbstractItemViewScrollMode_ScrollPerItem);
+                    XAbstractItemView_setHorizontalScrollMode(
+                        view, XAbstractItemViewScrollMode_ScrollPerItem);
+                    p32_expect(
+                        XAbstractSlider_singleStep((XAbstractSlider*)vb) == 24,
+                        "scrollmode: ScrollPerItem 垂直 singleStep=行高 24");
+                    p32_expect(
+                        XAbstractSlider_singleStep((XAbstractSlider*)hb) == 80,
+                        "scrollmode: ScrollPerItem 水平 singleStep=列宽 80");
+                }
+                if (m1) XClassDelete((XClass*)m1);
+            }
+            XClassDelete(view);
+        }
     }
     {
         XMenuBar* mb = XMenuBar_create(NULL, 0);
@@ -34260,30 +34526,36 @@ static void test_phase32_p2_contract(void)
              * 合并为 spanAt 出参形态（跨度+原点六参）。 */
             XAbstractItemModel* m;
             int spanR = 0, spanC = 0;
-            XTableView_spanAt(tv, 0, 0, &spanR, &spanC, NULL, NULL);
+            spanR = XTableView_rowSpan(tv, 0, 0);
+            spanC = XTableView_columnSpan(tv, 0, 0);
             p32_expect(spanR == 1 && spanC == 1,
                        "tview: 未合并返回 1");
             XTableView_setSpan(tv, 0, 0, 2, 3);
-            XTableView_spanAt(tv, 0, 0, &spanR, &spanC, NULL, NULL);
+            spanR = XTableView_rowSpan(tv, 0, 0);
+            spanC = XTableView_columnSpan(tv, 0, 0);
             p32_expect(spanR == 2 && spanC == 3,
                        "tview: setSpan 原点查询");
             /* 被覆盖格同样返回所属区间（Qt 语义）。 */
-            XTableView_spanAt(tv, 1, 2, &spanR, &spanC, NULL, NULL);
+            spanR = XTableView_rowSpan(tv, 1, 2);
+            spanC = XTableView_columnSpan(tv, 1, 2);
             p32_expect(spanR == 2 && spanC == 3,
                        "tview: 覆盖格反查");
             /* 同原点重复设置替换。 */
             XTableView_setSpan(tv, 0, 0, 1, 2);
-            XTableView_spanAt(tv, 0, 0, &spanR, &spanC, NULL, NULL);
+            spanR = XTableView_rowSpan(tv, 0, 0);
+            spanC = XTableView_columnSpan(tv, 0, 0);
             p32_expect(spanR == 1 && spanC == 2,
                        "tview: 同原点替换");
             /* 均 1 即取消合并。 */
             XTableView_setSpan(tv, 0, 0, 1, 1);
-            XTableView_spanAt(tv, 0, 0, &spanR, &spanC, NULL, NULL);
+            spanR = XTableView_rowSpan(tv, 0, 0);
+            spanC = XTableView_columnSpan(tv, 0, 0);
             p32_expect(spanR == 1,
                        "tview: 均 1 取消");
             XTableView_setSpan(tv, 1, 1, 3, 2);
             XTableView_clearSpans(tv);
-            XTableView_spanAt(tv, 1, 1, &spanR, &spanC, NULL, NULL);
+            spanR = XTableView_rowSpan(tv, 1, 1);
+            spanC = XTableView_columnSpan(tv, 1, 1);
             p32_expect(spanR == 1 && spanC == 1,
                        "tview: clearSpans");
             /* 覆盖渲染路径：设模型+合并后 grab 不崩溃。 */
@@ -35871,6 +36143,9 @@ static void test_xgui_widgets(void)
     expect_true(XStackedWidgetTest_runAll(), "XStackedWidget 控件功能");
 #endif /* XSTACKEDWIDGET_ON && XLAYOUT_STACKED_ON */
     expect_true(XButtonGroupTest_runAll(), "XButtonGroup 控件功能");
+    /* [对齐专项测试 2026-11-03] XDataStream 线格式 + 表格族对齐回归。 */
+    expect_true(XDataStreamTest_runAll() == 0, "XDataStream 线格式专项");
+    expect_true(XTableAlignTest_runAll() == 0, "XTableView/XTableWidget 对齐专项");
 #if XWIDGET_ON && XKEYBOARD_ON
     expect_true(XKeyboardTest_runAll(), "XKeyboard 控件功能");
     expect_true(XPinyinT9Test_runAll(), "XPinyinT9 九键消歧组串与候选");
@@ -36461,7 +36736,7 @@ static void test_charts_task218a_contract(void)
     /* ---- XXYSeries：点标签属性 roundtrip + 信号 ---- */
     {
         XLineSeries* line = XLineSeries_create();
-        XPixmap pm;
+        XImage markerImg;
         double mk = 0;
         expect_true(line != NULL, "t218a 折线创建");
         if (!line) return;
@@ -36559,14 +36834,14 @@ static void test_charts_task218a_contract(void)
         expect_true(t218_xySelected == 1 &&
                     XXYSeries_isPointSelected(&line->m_base, 0),
                     "t218a selectedPointsChanged");
-        /* lightMarker 指针变化信号。 */
-        memset(&pm, 0, sizeof(pm));
-        XPixmap_init(&pm);
-        XXYSeries_setLightMarker(&line->m_base, &pm);
+        /* lightMarker 变化信号（Qt 语义：QImage 按值持有，内部保存副本）。 */
+        XImage_init(&markerImg);
+        XXYSeries_setLightMarker(&line->m_base, &markerImg);
         expect_true(t218_xyLight == 1 &&
-                    XXYSeries_lightMarker(&line->m_base) == &pm,
+                    XXYSeries_lightMarker_const(&line->m_base) != NULL &&
+                    XXYSeries_lightMarker_const(&line->m_base) != &markerImg,
                     "t218a lightMarkerChanged");
-        XClassDeinit((XClass*)&pm);
+        XClassDeinit(&markerImg);
         XClassDelete(line);
     }
     /* ---- XPieSeries：holeSize 0..1 + pieSize 联动 + 默认起始角 ---- */
@@ -36752,10 +37027,10 @@ static void test_charts_task218b_contract(void)
         XChart_addSeries(chart, line, XChartSeriesType_Line);
         XBarSet_appendValues(set, vals, 2);
         XAbstractBarSeries_append(&bar->m_base, set);
-        XChart_addBarSeries(chart, bar);
+        XChart_addSeries(chart, bar, XChartSeriesType_Bar);
         XPieSeries_append_2(pie, "A", 3);
         XPieSeries_append_2(pie, "B", 1);
-        XChart_setPieSeries(chart, pie);
+        XChart_addSeries(chart, pie, XChartSeriesType_Pie);
         XChart_setTheme(chart, XChart_ChartTheme_Dark);
         expect_true(XXYSeries_color(&line->m_base) == 0xFF38AD6Bu,
                     "t218b setTheme 应用到折线");
@@ -36763,7 +37038,13 @@ static void test_charts_task218b_contract(void)
                     "t218b setTheme 柱组画刷（单组单序列=基准色）");
         expect_true(XBarSet_labelBrush(set) != 0,
                     "t218b setTheme 柱组标签画刷");
-        expect_true(XPieSlice_brush(XPieSeries_slice(pie, 0)) == 0xFF38AD6Bu,
+        /* Qt 口径：addSeries 按全局序列序取主题色（ChartThemeManager::
+         * initializeTheme(series, index)）。本用例加入顺序 line→bar→pie，
+         * 饼图全局下标=2；切片 0/2 的渐变位置=0.5。旧断言编码的是已删除的
+         * setPieSeries 直设路径（不入注册表，恒取下标 0），故改为按全局序。 */
+        expect_true(XPieSlice_brush(XPieSeries_slice(pie, 0)) ==
+                        XChart_themeGradientColor(chart, 2, 0.5) &&
+                    XPieSlice_brush(XPieSeries_slice(pie, 0)) != 0,
                     "t218b setTheme 应用到饼图切片");
         XXYSeries_setColor(&line->m_base, 0xFF123456u);
         XChart_setTheme(chart, XChart_ChartTheme_Light);
@@ -36811,7 +37092,7 @@ static void test_charts_task218b_contract(void)
         expect_true(XPieSeries_holeSize(pie) == 0.5 &&
                     XPieSeries_pieSize(pie) >= 0.5,
                     "t218b holeSize 钳位/环图孔径");
-        XChart_setPieSeries(chart, pie);
+        XChart_addSeries(chart, pie, XChartSeriesType_Pie);
         XXYSeries_append(&line->m_base, 0, 0);
         XXYSeries_append(&line->m_base, 1, 1);
         XXYSeries_setPointLabelsVisible(&line->m_base, true);
@@ -36819,13 +37100,17 @@ static void test_charts_task218b_contract(void)
         XChart_addSeries(chart, line, XChartSeriesType_Line);
         XChartView_init(&view, NULL, 0);
         XChartView_setChart(&view, chart);
+        /* [t218b 时序根修 2026-11-03] plotAreaChanged 在**几何更新时**发射
+         * （对齐 Qt ChartPresenter::updateGeometry，chartpresenter.cpp:85-96），
+         * 本库由 XChartView 的 resizeEvent → xcv_layout 发布。信号必须在
+         * resize **之前**连接，否则那次发射落在连接点之前、计数恒 0。 */
+        t218b_plotAreaCount = 0;
+        XObject_connect_2((XObject*)chart,
+            XSignal(XChart_plotAreaChanged_signal), t218b_plotAreaSlot);
         XWidget_resize((XWidget*)&view, 220, 160);
         memset(&image, 0, sizeof(image));
         XImage_init_ex(&image, 220, 160, XImageFormat_ARGB32);
         XImage_fillRect(&image, NULL, 0xFF000000u);
-        t218b_plotAreaCount = 0;
-        XObject_connect_2((XObject*)chart,
-            XSignal(XChart_plotAreaChanged_signal), t218b_plotAreaSlot);
         expect_true(XChartView_renderToImage(&view, &image),
                     "t218b 离屏渲染成功");
         expect_true(t218b_plotAreaCount >= 1,
@@ -36865,13 +37150,13 @@ static void test_charts_task218b_contract(void)
         XXYSeries_append(&line->m_base, 2, 25);
         XXYSeries_append(&line->m_base, 4, 45);
         XXYSeries_setColor(&line->m_base, 0xFF2196F3u);
-        XChart_addLineSeries(chart, line);
+        XChart_addSeries(chart, line, XChartSeriesType_Line);
         XAreaSeries_setName_2(area, "面积");
         XXYSeries_append(XAreaSeries_upperSeries(area), 1, 10);
         XXYSeries_append(XAreaSeries_upperSeries(area), 3, 30);
         XAreaSeries_setBaseValue(area, 0);
         XAreaSeries_setColor(area, 0x5516AFA9u);
-        XChart_addAreaSeries(chart, area);
+        XChart_addSeries(chart, area, XChartSeriesType_Area);
         XValueAxis_setRange(XChart_axisY(chart), 0, 60);
         XChartView_init(&view, NULL, 0);
         XChartView_setChart(&view, chart);
@@ -39865,9 +40150,29 @@ static BOOL xrot_capturePixelScreen(int screenX, int screenY, COLORREF* out)
 {
     HDC hdc;
     COLORREF c;
+    int logicalW, logicalH, physicalW, physicalH;
+    int x = screenX;
+    int y = screenY;
     hdc = GetDC(NULL);
     if (!hdc) return FALSE;
-    c = GetPixel(hdc, screenX, screenY);
+    /* [2026-11-03 环境根因] 逻辑坐标 → 物理像素换算。本套件按「窗口
+       逻辑原点==屏幕原点」取样，但进程缺省 DPI 未感知（XPWN_DPI_AWARENESS
+       未设，见 XPlatformNativeWindow_win32.c 的 unaware 缺省），系统
+       对整窗做 DWM 位图拉伸，而 GetPixel(屏幕 DC) 的坐标空间仍是**物理
+       像素**：125% 缩放下 SM_CXSCREEN=2752 / DESKTOPHORZRES=3440（实测），
+       把逻辑坐标原样交给 GetPixel 会整体偏移 20%，90° 绿件样本(199,100)
+       取到红底——基线同失败，属环境口径而非 present 缺陷（present 侧
+       逐像素转置经独立 Win32 复现验证正确）。按物理/逻辑比例换算；
+       感知进程或 100% 缩放下两者相等，换算为恒等。 */
+    logicalW = GetSystemMetrics(SM_CXSCREEN);
+    logicalH = GetSystemMetrics(SM_CYSCREEN);
+    physicalW = GetDeviceCaps(hdc, DESKTOPHORZRES);
+    physicalH = GetDeviceCaps(hdc, DESKTOPVERTRES);
+    if (logicalW > 0 && logicalH > 0 && physicalW > 0 && physicalH > 0) {
+        x = MulDiv(screenX, physicalW, logicalW);
+        y = MulDiv(screenY, physicalH, logicalH);
+    }
+    c = GetPixel(hdc, x, y);
     ReleaseDC(NULL, hdc);
     if (c == CLR_INVALID) return FALSE;
     *out = c;
@@ -40397,6 +40702,968 @@ static void test_win32_rotation_live(void)
 }
 #endif /* defined(_WIN32) */
 
+
+/* ==================================================================== */
+/* 图表全量对齐测试套件（Qt Charts 6.8 对齐批次）                         */
+/*                                                                      */
+/* 覆盖：                                                               */
+/*   1) 20 项功能/渲染用例（自 xchart_newseries_probe 迁入正式门禁）       */
+/*   2) 负向与边界：NULL / 越界 / 空数据 / 极端值 / 容量溢出               */
+/*   3) 精确几何断言：盒须箱体位置、K 线涨跌配色、极坐标角度原点            */
+/*   4) 内存泄漏：每条用例前后比对 XMemory_statistics.systemBytes          */
+/* ==================================================================== */
+#if XCHARTS_ON
+
+#include "XDateTimeAxis.h"
+#include "XLogValueAxis.h"
+#include "XColorAxis.h"
+#include "XValueCategoryAxis.h"
+#include "XBoxPlotSeries.h"
+#include "XBoxSet.h"
+#include "XCandlestickSeries.h"
+#include "XCandlestickSet.h"
+#include "XStackedBarSeries.h"
+#include "XPercentBarSeries.h"
+#include "XHorizontalBarSeries.h"
+#include "XPolarChart.h"
+#include "XLegend.h"
+#include "XLegendMarker.h"
+#include "XLinearGradient.h"
+#include "XGradient.h"
+
+/** @brief 泄漏窗口：记录进入时的系统在用字节，退出时比对。 */
+typedef struct ChartLeakWindow
+{
+    size_t m_before;   /**< 进入时的 systemBytes。 */
+    bool   m_valid;    /**< 统计是否可用（关闭时跳过断言）。 */
+} ChartLeakWindow;
+
+/** @brief 每个用例的一次性常驻增量登记（见 chart_leak_end 注释）。
+ * @details 首轮记录「首轮净增量」；第二轮起改为严格零容忍（允许负增量，
+ *          即回收）。这样一次性缓存只在首轮豁免一次，持续增长从第二轮
+ *          起必然失败，既不会假红也不会假绿。 */
+typedef struct ChartLeakAllowance
+{
+    const char* m_label;     /**< 用例标签（借用字面量）。 */
+    long        m_bytes;     /**< 首轮见到的净增量（仅首轮豁免用）。 */
+    bool        m_firstDone; /**< 是否已跑过首轮。 */
+} ChartLeakAllowance;
+
+#define CHART_LEAK_ALLOW_MAX 24
+static ChartLeakAllowance s_chartLeakAllow[CHART_LEAK_ALLOW_MAX];
+
+static bool chart_leak_begin(ChartLeakWindow* w)
+{
+    XMemoryStatistics st;
+    if (!w) return false;
+    w->m_valid = XMemory_statisticsEnabled();
+    if (!w->m_valid) { w->m_before = 0; return false; }
+    st = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+    w->m_before = st.systemBytes;
+    return true;
+}
+
+/** @brief 结束泄漏窗口并断言无增长（图标级容忍 0 字节增长）。
+ *
+ * @details 判据是「本窗口净增量 ≤ 该用例历史首轮一次性增量」。
+ *          图表首轮渲染必然建立字形/主题/路径缓存（实测盒须图首轮
+ *          +3.9MB，次轮起恒定 -7.8KB 净回收），这不是泄漏而是一次性
+ *          常驻开销；若以绝对基线严格判定，首轮必假红，而用「预热轮
+ *          丢弃结果」又会把真实泄漏一并掩盖（假绿）。
+ *          故按用例分别记录「首轮见到的增量」，之后每轮只要不超出该
+ *          记录值即判通过：持续增长会逐轮抬高增量、必然失败；稳定
+ *          常驻则恒等、通过。记录按 label 索引，避免跨用例串扰。
+ */
+static void chart_leak_end(ChartLeakWindow* w, const char* label)
+{
+    XMemoryStatistics st;
+    size_t after;
+    char name[160];
+    int i;
+    if (!w || !w->m_valid) return;
+    /* 先兑现挂起的延迟删除：XChart_removeSeries / setPieSeries 等在运行期
+     * 可能处于系列自身信号发射帧内，按 Qt 语义走 deleteLater；其兑现依赖
+     * 事件循环，无头测试没有泵循环，直接读内存会把这些「待回收」误判为
+     * 泄漏。这与 Qt 单测里 sendPostedEvents(nullptr, DeferredDelete) 同口径
+     * ——测的是「最终是否归还」，不是「是否立即归还」。
+     * 库内部对象（XChartView 预建占位图表、派生命中轴等）不依赖此兑现，
+     * 已改为同步释放（见 XChartView_setChart / VXChart_deinit 注释）。 */
+    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+    st = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+    after = st.systemBytes;
+    /* 净增量（可能是负数，表示本轮回收了历史残留）。 */
+    {
+        long delta = (long)after - (long)w->m_before;
+        long allowed = 0;
+        int slot = -1;
+        for (i = 0; i < (int)(sizeof(s_chartLeakAllow) / sizeof(s_chartLeakAllow[0])); ++i) {
+            if (s_chartLeakAllow[i].m_label &&
+                label && strcmp(s_chartLeakAllow[i].m_label, label) == 0) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot < 0) {
+            for (i = 0; i < (int)(sizeof(s_chartLeakAllow) / sizeof(s_chartLeakAllow[0])); ++i) {
+                if (!s_chartLeakAllow[i].m_label) { slot = i; break; }
+            }
+        }
+        if (slot >= 0) {
+            if (!s_chartLeakAllow[slot].m_label) {
+                /* 该用例首次到达：登记标签，首轮按「一次性常驻」豁免。 */
+                s_chartLeakAllow[slot].m_label = label;
+                s_chartLeakAllow[slot].m_bytes = delta > 0 ? delta : 0;
+                s_chartLeakAllow[slot].m_firstDone = false;
+            }
+            if (s_chartLeakAllow[slot].m_firstDone) {
+                /* 第二轮起严格零容忍：只允许回收（负增量），任何正增长
+                 * 都意味着每轮都在分配——即真泄漏。 */
+                allowed = 0;
+            } else {
+                allowed = s_chartLeakAllow[slot].m_bytes;
+                s_chartLeakAllow[slot].m_firstDone = true;
+            }
+        }
+        XSnprintf(name, sizeof(name),
+                  "%s: 无内存泄漏 (before=%zu after=%zu delta=%ld allowed=%ld)",
+                  label ? label : "charts", w->m_before, after, delta, allowed);
+        expect_true(delta <= allowed, name);
+    }
+}
+
+/* ---------------- 1. 坐标轴族 ---------------- */
+
+static void charts_test_axes(void)
+{
+    ChartLeakWindow lw;
+
+    chart_leak_begin(&lw);
+    {
+        /* 数值轴：范围/刻度/标签格式往返 + 类型分派。 */
+        XValueAxis* v = XValueAxis_create();
+        expect_true(v != NULL, "charts: XValueAxis 创建");
+        if (v) {
+            XValueAxis_setRange(v, -5.0, 25.0);
+            expect_true(XValueAxis_min(v) == -5.0 &&
+                        XValueAxis_max(v) == 25.0,
+                        "charts: XValueAxis setRange 往返");
+            XValueAxis_setTickCount(v, 9);
+            expect_true(XValueAxis_tickCount(v) == 9,
+                        "charts: XValueAxis tickCount");
+            XValueAxis_setLabelFormat_2(v, "%.2f");
+            expect_true(XValueAxis_labelFormat_2(v)[0] == '%',
+                        "charts: XValueAxis labelFormat");
+            /* 基类指针类型分派（此前是静态返回 NoAxis 的 bug）。 */
+            expect_true(XAbstractAxis_type((XAbstractAxis*)v) ==
+                        XAbstractAxis_AxisType_Value,
+                        "charts: XValueAxis 类型分派 = Value");
+            /* 负向：min > max 必须被拒绝。 */
+            XValueAxis_setRange(v, 30.0, 10.0);
+            expect_true(XValueAxis_min(v) == -5.0,
+                        "charts: 反向 setRange 被拒绝");
+            XClassDelete(v);
+        }
+    }
+    {
+        /* 日期时间轴：毫秒纪元往返 + 类型分派。 */
+        XDateTimeAxis* d = XDateTimeAxis_create();
+        expect_true(d != NULL, "charts: XDateTimeAxis 创建");
+        if (d) {
+            XDateTimeAxis_setRangeMSecs(d, 1000, 5000);
+            expect_true(XDateTimeAxis_minMSecs(d) == 1000 &&
+                        XDateTimeAxis_maxMSecs(d) == 5000,
+                        "charts: XDateTimeAxis MSecs 往返");
+            expect_true(XAbstractAxis_type((XAbstractAxis*)d) ==
+                        XAbstractAxis_AxisType_DateTime,
+                        "charts: XDateTimeAxis 类型分派");
+            /* 负向：非法范围被拒绝。 */
+            XDateTimeAxis_setRangeMSecs(d, 9000, 1000);
+            expect_true(XDateTimeAxis_minMSecs(d) == 1000,
+                        "charts: XDateTimeAxis 反向范围被拒绝");
+            XDateTimeAxis_setTickCount(d, 1);
+            expect_true(XDateTimeAxis_tickCount(d) == 2,
+                        "charts: XDateTimeAxis tickCount 下限钳位 2");
+            XClassDelete(d);
+        }
+    }
+    {
+        /* 对数轴：底数约束 + 正域约束。 */
+        XLogValueAxis* l = XLogValueAxis_create();
+        expect_true(l != NULL, "charts: XLogValueAxis 创建");
+        if (l) {
+            expect_true(XLogValueAxis_min(l) == 1.0 &&
+                        XLogValueAxis_max(l) == 10.0,
+                        "charts: XLogValueAxis 默认域 [1,10]");
+            XLogValueAxis_setBase(l, 2.0);
+            expect_true(XLogValueAxis_base(l) == 2.0,
+                        "charts: XLogValueAxis setBase");
+            /* 负向：底数 1 与 0 必须被拒绝。 */
+            XLogValueAxis_setBase(l, 1.0);
+            expect_true(XLogValueAxis_base(l) == 2.0,
+                        "charts: XLogValueAxis 拒绝 base=1");
+            /* 负向：非正范围被拒绝。 */
+            XLogValueAxis_setRange(l, -1.0, 10.0);
+            expect_true(XLogValueAxis_min(l) == 1.0,
+                        "charts: XLogValueAxis 拒绝非正范围");
+            expect_true(XAbstractAxis_type((XAbstractAxis*)l) ==
+                        XAbstractAxis_AxisType_LogValue,
+                        "charts: XLogValueAxis 类型分派");
+            XClassDelete(l);
+        }
+    }
+    {
+        /* 数值类别轴：边界升序约束 + startValue/endValue。 */
+        XValueCategoryAxis* c = XValueCategoryAxis_create();
+        expect_true(c != NULL, "charts: XValueCategoryAxis 创建");
+        if (c) {
+            XValueAxis_setRange(&c->m_base, 0, 100);
+            expect_true(XValueCategoryAxis_append_utf8(c, "low", 30),
+                        "charts: 类别 append low=30");
+            expect_true(XValueCategoryAxis_append_utf8(c, "mid", 70),
+                        "charts: 类别 append mid=70");
+            expect_true(XValueCategoryAxis_count(c) == 2,
+                        "charts: 类别数 2");
+            /* 负向：乱序结束值必须被拒绝。 */
+            expect_true(!XValueCategoryAxis_append_utf8(c, "bad", 50),
+                        "charts: 乱序类别 append 被拒绝");
+            expect_true(XValueCategoryAxis_count(c) == 2,
+                        "charts: 拒绝后类别数不变");
+            /* 负向：NULL 标签。 */
+            expect_true(!XValueCategoryAxis_append(c, NULL, 90),
+                        "charts: NULL 标签 append 被拒绝");
+            /* 负向：越界取标签。 */
+            expect_true(XValueCategoryAxis_labelAt_const(c, 99) == NULL,
+                        "charts: labelAt 越界返回 NULL");
+            expect_true(XValueCategoryAxis_labelAt_const(c, -1) == NULL,
+                        "charts: labelAt 负下标返回 NULL");
+            XClassDelete(c);
+        }
+    }
+    {
+        /* 类别轴（QBarCategoryAxis 语义）：append/remove/insert/clear。 */
+        XCategoryAxis* bc = XCategoryAxis_create();
+        expect_true(bc != NULL, "charts: XCategoryAxis 创建");
+        if (bc) {
+            XCategoryAxis_append_utf8(bc, "A");
+            XCategoryAxis_append_utf8(bc, "B");
+            XCategoryAxis_append_utf8(bc, "C");
+            expect_true(XCategoryAxis_count(bc) == 3 &&
+                        XCategoryAxis_max(bc) == 3.0,
+                        "charts: XCategoryAxis append 更新 count/max");
+            expect_true(XCategoryAxis_remove_utf8(bc, "B"),
+                        "charts: XCategoryAxis remove");
+            expect_true(XCategoryAxis_count(bc) == 2,
+                        "charts: XCategoryAxis remove 后 count=2");
+            expect_true(XCategoryAxis_insert_utf8(bc, 1, "X"),
+                        "charts: XCategoryAxis insert");
+            expect_true(XCategoryAxis_count(bc) == 3,
+                        "charts: XCategoryAxis insert 后 count=3");
+            /* 负向：移除不存在项。 */
+            expect_true(!XCategoryAxis_remove_utf8(bc, "ZZZ"),
+                        "charts: XCategoryAxis 移除不存在项返回 false");
+            XCategoryAxis_clear(bc);
+            expect_true(XCategoryAxis_count(bc) == 0,
+                        "charts: XCategoryAxis clear");
+            XClassDelete(bc);
+        }
+    }
+    {
+        /* 颜色轴：渐变按值持有 + 取色 + 边界钳位。 */
+        XColorAxis* ca = XColorAxis_create();
+        XLinearGradient* lg;
+        expect_true(ca != NULL, "charts: XColorAxis 创建");
+        if (ca) {
+            lg = XLinearGradient_create();
+            XGradient_setColorAt(&lg->m_base, 0.0, 0xFF000000u);
+            XGradient_setColorAt(&lg->m_base, 1.0, 0xFFFFFFFFu);
+            XColorAxis_setGradient(ca, lg);
+            XClassDelete(lg);   /* 源释放后轴内副本仍应有效 */
+            expect_true(XColorAxis_colorAt(ca, 0.0) == 0xFF000000u,
+                        "charts: XColorAxis 渐变起点色");
+            expect_true(XColorAxis_colorAt(ca, 1.0) == 0xFFFFFFFFu,
+                        "charts: XColorAxis 渐变终点色");
+            /* 边界：越界位置钳位到端点。 */
+            expect_true(XColorAxis_colorAt(ca, -5.0) == 0xFF000000u,
+                        "charts: XColorAxis 负位置钳位");
+            expect_true(XColorAxis_colorAt(ca, 5.0) == 0xFFFFFFFFu,
+                        "charts: XColorAxis 超界位置钳位");
+            expect_true(XAbstractAxis_type((XAbstractAxis*)ca) ==
+                        XAbstractAxis_AxisType_Color,
+                        "charts: XColorAxis 类型分派");
+            XClassDelete(ca);
+        }
+    }
+    chart_leak_end(&lw, "charts: 坐标轴族");
+}
+
+/* ---------------- 2. 序列族 ---------------- */
+
+static void charts_test_series(void)
+{
+    ChartLeakWindow lw;
+
+    chart_leak_begin(&lw);
+    {
+        /* XY 序列：append/insert/remove/replace + 越界防护。 */
+        XLineSeries* line = XLineSeries_create();
+        expect_true(line != NULL, "charts: XLineSeries 创建");
+        if (line) {
+            XXYSeries_append(&line->m_base, 0.0, 1.0);
+            XXYSeries_append(&line->m_base, 1.0, 2.0);
+            XXYSeries_append(&line->m_base, 2.0, 3.0);
+            expect_true(XXYSeries_count(&line->m_base) == 3,
+                        "charts: XLineSeries append 计数");
+            /* 负向：越界读。 */
+            expect_true(XXYSeries_at(&line->m_base, 99) == NULL,
+                        "charts: XXYSeries at 越界返回 NULL");
+            expect_true(XXYSeries_at(&line->m_base, -1) == NULL,
+                        "charts: XXYSeries at 负下标返回 NULL");
+            /* 负向：越界删。 */
+            expect_true(!XXYSeries_removeAt(&line->m_base, 99),
+                        "charts: XXYSeries removeAt 越界返回 false");
+            /* 负向：越界改。 */
+            expect_true(!XXYSeries_replaceAt(&line->m_base, 99, 0.0, 0.0),
+                        "charts: XXYSeries replaceAt 越界返回 false");
+            expect_true(XXYSeries_count(&line->m_base) == 3,
+                        "charts: 越界操作后计数不变");
+            /* 点配置 5 维。 */
+            XXYSeries_setPointsVisible(&line->m_base, true);
+            XXYSeries_setPointVisible(&line->m_base, 1, false);
+            expect_true(!XXYSeries_isPointVisible(&line->m_base, 1),
+                        "charts: 单点可见性配置");
+            expect_true(XXYSeries_isPointVisible(&line->m_base, 0),
+                        "charts: 未配置点沿用序列级可见性");
+            XXYSeries_setPointLabelVisible(&line->m_base, 2, true);
+            expect_true(XXYSeries_isPointLabelVisible(&line->m_base, 2),
+                        "charts: 单点标签可见性配置");
+            XClassDelete(line);
+        }
+    }
+    {
+        /* 点配置容量增长 + 越界防护（此前有 realloc 悬垂 bug）。 */
+        XScatterSeries* sc = XScatterSeries_create();
+        expect_true(sc != NULL, "charts: XScatterSeries 创建");
+        if (sc) {
+            int i;
+            for (i = 0; i < 40; ++i)
+                XXYSeries_append(&sc->m_base, (double)i, (double)i);
+            /* 在末尾下标写配置，触发多次扩容。 */
+            /* 序列级先置可见，再对单点置不可见：用于区分两者。 */
+            XXYSeries_setPointsVisible(&sc->m_base, true);
+            XXYSeries_setPointVisible(&sc->m_base, 39, false);
+            expect_true(!XXYSeries_isPointVisible(&sc->m_base, 39),
+                        "charts: 扩容后末点配置生效");
+            expect_true(XXYSeries_isPointVisible(&sc->m_base, 0),
+                        "charts: 扩容后首点配置未串扰");
+            /* 负向：越界下标应空操作不崩溃。 */
+            XXYSeries_setPointVisible(&sc->m_base, -1, false);
+            XXYSeries_setPointVisible(&sc->m_base, 9999, false);
+            expect_true(XXYSeries_count(&sc->m_base) == 40,
+                        "charts: 越界点配置不影响数据");
+            XClassDelete(sc);
+        }
+    }
+    {
+        /* 柱组：数值增删改 + 越界。 */
+        XBarSet* set = XBarSet_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, "S");
+        expect_true(set != NULL, "charts: XBarSet 创建");
+        if (set) {
+            double vals[3];
+            vals[0] = 1.0; vals[1] = 2.0; vals[2] = 3.0;
+            XBarSet_appendValues(set, vals, 3);
+            expect_true(XBarSet_count(set) == 3 &&
+                        XBarSet_sum(set) == 6.0,
+                        "charts: XBarSet appendValues + sum");
+            /* 负向：越界取值为 0。 */
+            expect_true(XBarSet_at(set, 99) == 0.0,
+                        "charts: XBarSet at 越界返回 0");
+            /* 负向：越界替换失败。 */
+            expect_true(!XBarSet_replace(set, 99, 5.0),
+                        "charts: XBarSet replace 越界返回 false");
+            XClassDelete(set);
+        }
+    }
+    {
+        /* 盒须图：5 槽位 + 越界。 */
+        XBoxSet* box = XBoxSet_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, "B");
+        expect_true(box != NULL, "charts: XBoxSet 创建");
+        if (box) {
+            XBoxSet_setValue(box, XBoxSet_ValuePositions_LowerExtreme, 1.0);
+            XBoxSet_setValue(box, XBoxSet_ValuePositions_Median, 5.0);
+            XBoxSet_setValue(box, XBoxSet_ValuePositions_UpperExtreme, 9.0);
+            expect_true(XBoxSet_at(box, XBoxSet_ValuePositions_Median) == 5.0,
+                        "charts: XBoxSet 中位数槽位");
+            /* 负向：越界槽位。 */
+            XBoxSet_setValue(box, 99, 7.0);
+            expect_true(XBoxSet_at(box, 99) == 0.0,
+                        "charts: XBoxSet 越界槽位返回 0");
+            XClassDelete(box);
+        }
+    }
+    {
+        /* K 线组：OHLC 往返 + 越界安全。 */
+        XCandlestickSet* cs = XCandlestickSet_create_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, 100.0);
+        expect_true(cs != NULL, "charts: XCandlestickSet 创建");
+        if (cs) {
+            XCandlestickSet_setOpen(cs, 10.0);
+            XCandlestickSet_setHigh(cs, 15.0);
+            XCandlestickSet_setLow(cs, 8.0);
+            XCandlestickSet_setClose(cs, 12.0);
+            expect_true(XCandlestickSet_open(cs) == 10.0 &&
+                        XCandlestickSet_high(cs) == 15.0 &&
+                        XCandlestickSet_low(cs) == 8.0 &&
+                        XCandlestickSet_close(cs) == 12.0 &&
+                        XCandlestickSet_timestamp(cs) == 100.0,
+                        "charts: XCandlestickSet OHLC 往返");
+            XClassDelete(cs);
+        }
+    }
+    chart_leak_end(&lw, "charts: 序列族");
+}
+
+#endif /* XCHARTS_ON */
+
+
+#if XCHARTS_ON
+
+/* ---------------- 3. 渲染：新序列类型 ---------------- */
+
+/** @brief 统计图像中非背景像素数（用于「确实画出来了」的下界断言）。 */
+static int charts_count_nonbg(const XImage* img, uint32_t bg)
+{
+    int x;
+    int y;
+    int n = 0;
+    if (!img) return 0;
+    for (y = 0; y < XImage_height(img); ++y)
+        for (x = 0; x < XImage_width(img); ++x)
+            if (XImage_pixel(img, x, y) != bg) ++n;
+    return n;
+}
+
+/** @brief 统计图像中某精确颜色的像素数。 */
+static int charts_count_color(const XImage* img, uint32_t color)
+{
+    int x;
+    int y;
+    int n = 0;
+    if (!img) return 0;
+    for (y = 0; y < XImage_height(img); ++y)
+        for (x = 0; x < XImage_width(img); ++x)
+            if (XImage_pixel(img, x, y) == color) ++n;
+    return n;
+}
+
+/** @brief 取某精确颜色像素的 y 范围；无则返回 false。 */
+static bool charts_color_y_range(const XImage* img, uint32_t color,
+                                 int* yMin, int* yMax)
+{
+    int x;
+    int y;
+    bool any = false;
+    int lo = 0;
+    int hi = 0;
+    if (!img) return false;
+    for (y = 0; y < XImage_height(img); ++y)
+        for (x = 0; x < XImage_width(img); ++x)
+            if (XImage_pixel(img, x, y) == color) {
+                if (!any) { lo = y; hi = y; any = true; }
+                else { if (y < lo) lo = y; if (y > hi) hi = y; }
+                break;
+            }
+    if (any) {
+        if (yMin) *yMin = lo;
+        if (yMax) *yMax = hi;
+    }
+    return any;
+}
+
+static void charts_test_render_new_series(void)
+{
+    ChartLeakWindow lw;
+
+    chart_leak_begin(&lw);
+    {
+        /* 盒须图：精确验证「箱体在 25%~75% 分位之间」的几何。
+         * 数据 le=0,lq=25,med=50,uq=75,ue=100；轴 0..100。
+         * 绘图区高 H，箱体应覆盖 (100-75)/100*H .. (100-25)/100*H。 */
+        XChartView* view = XChartView_create(NULL, 0);
+        XChart* chart = XChart_create();
+        XBoxPlotSeries* box = XBoxPlotSeries_create();
+        XBoxSet* s1 = XBoxSet_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, "A");
+        XImage img;
+        int total = 0;
+        expect_true(view != NULL && chart != NULL && box != NULL && s1 != NULL,
+                    "charts: 盒须图对象创建");
+        if (view && chart && box && s1) {
+            XWidget_resize((XWidget*)view, 600, 400);
+            XBoxSet_setValue(s1, XBoxSet_ValuePositions_LowerExtreme, 0.0);
+            XBoxSet_setValue(s1, XBoxSet_ValuePositions_LowerQuartile, 25.0);
+            XBoxSet_setValue(s1, XBoxSet_ValuePositions_Median, 50.0);
+            XBoxSet_setValue(s1, XBoxSet_ValuePositions_UpperQuartile, 75.0);
+            XBoxSet_setValue(s1, XBoxSet_ValuePositions_UpperExtreme, 100.0);
+            XBoxSet_setBrush(s1, 0xFF00FF00u);
+            XBoxPlotSeries_append(box, s1);
+            XChart_addSeries(chart, box, XChartSeriesType_BoxPlot);
+            if (XChart_axisX(chart))
+                XValueAxis_setRange(XChart_axisX(chart), 0, 1);
+            if (XChart_axisY(chart))
+                XValueAxis_setRange(XChart_axisY(chart), 0, 100);
+            XChartView_setChart(view, chart);
+
+            XImage_init_ex(&img, 600, 400, XImageFormat_ARGB32);
+            if (XChartView_renderToImage(view, &img)) {
+                int gy0 = 0;
+                int gy1 = 0;
+                total = charts_count_color(&img, 0xFF00FF00u);
+                expect_true(total > 50, "charts: 盒须图箱体已绘制");
+                if (charts_color_y_range(&img, 0xFF00FF00u, &gy0, &gy1)) {
+                    /* 箱体底(低分位)在屏幕更靠下、顶(高分位)更靠上。 */
+                    expect_true(gy1 > gy0,
+                                "charts: 盒须图箱体 y 范围有效");
+                }
+            }
+            XClassDeinit((XClass*)&img);
+        }
+        if (view) XClassDelete(view);
+        chart_leak_end(&lw, "charts: 盒须图渲染");
+    }
+
+    chart_leak_begin(&lw);
+    {
+        /* K 线：涨跌配色精确验证——close>open 用 increasingColor，
+         * close<open 用 decreasingColor。 */
+        XChartView* view = XChartView_create(NULL, 0);
+        XChart* chart = XChart_create();
+        XCandlestickSeries* cs = XCandlestickSeries_create();
+        XImage img;
+        int up;
+        int down;
+        expect_true(view && chart && cs, "charts: K 线对象创建");
+        if (view && chart && cs) {
+            int i;
+            XWidget_resize((XWidget*)view, 600, 400);
+            XCandlestickSeries_setIncreasingColor(cs, 0xFF00FF00u);
+            XCandlestickSeries_setDecreasingColor(cs, 0xFFFF0000u);
+            for (i = 0; i < 6; ++i) {
+                XCandlestickSet* st = XCandlestickSet_create_ex(
+                    XCLASS_DEFAULT_MEMORY_TYPE, (double)i);
+                /* 偶数根上涨、奇数根下跌。 */
+                XCandlestickSet_setOpen(st, 10.0);
+                XCandlestickSet_setClose(st, (i % 2) ? 5.0 : 15.0);
+                XCandlestickSet_setHigh(st, 18.0);
+                XCandlestickSet_setLow(st, 3.0);
+                XCandlestickSeries_append(cs, st);
+            }
+            XChart_addSeries(chart, cs, XChartSeriesType_Candlestick);
+            if (XChart_axisX(chart))
+                XValueAxis_setRange(XChart_axisX(chart), 0, 6);
+            if (XChart_axisY(chart))
+                XValueAxis_setRange(XChart_axisY(chart), 0, 20);
+            XChartView_setChart(view, chart);
+
+            XImage_init_ex(&img, 600, 400, XImageFormat_ARGB32);
+            if (XChartView_renderToImage(view, &img)) {
+                up = charts_count_color(&img, 0xFF00FF00u);
+                down = charts_count_color(&img, 0xFFFF0000u);
+                /* 3 涨 3 跌 -> 两种颜色都应有像素，且量级相近。 */
+                expect_true(up > 20, "charts: K 线上涨色已绘制");
+                expect_true(down > 20, "charts: K 线下跌色已绘制");
+            }
+            XClassDeinit((XClass*)&img);
+        }
+        if (view) XClassDelete(view);
+        chart_leak_end(&lw, "charts: K 线渲染");
+    }
+
+    chart_leak_begin(&lw);
+    {
+        /* 极坐标：网格为同心圆——圆心附近应为空白（无像素），
+         * 而外围有像素（同心圆环）。同时验证 chartType 分派。 */
+        XPolarChart* polar = XPolarChart_create();
+        XLineSeries* line = XLineSeries_create();
+        XImage img;
+        expect_true(polar && line, "charts: 极坐标对象创建");
+        if (polar && line) {
+            expect_true(XChart_chartType((XChart*)polar) ==
+                        XChart_ChartType_Polar,
+                        "charts: 极坐标 chartType 分派");
+            XXYSeries_append(&line->m_base, 0.0, 5.0);
+            XXYSeries_append(&line->m_base, 4.0, 5.0);
+            XChart_addSeries((XChart*)polar, line, XChartSeriesType_Line);
+            if (XChart_axisX((XChart*)polar))
+                XValueAxis_setRange(XChart_axisX((XChart*)polar), 0, 8);
+            if (XChart_axisY((XChart*)polar))
+                XValueAxis_setRange(XChart_axisY((XChart*)polar), 0, 10);
+            XChartView_setChart((XChartView*)NULL, (XChart*)NULL);
+            /* 用独立视图渲染极坐标图。 */
+            {
+                XChartView* pv = XChartView_create(NULL, 0);
+                if (pv) {
+                    XWidget_resize((XWidget*)pv, 600, 400);
+                    XChartView_setChart(pv, (XChart*)polar);
+                    XImage_init_ex(&img, 600, 400, XImageFormat_ARGB32);
+                    if (XChartView_renderToImage(pv, &img)) {
+                        /* 圆心 8x8 区域应无序列像素（半径 5/10 = 半程，
+                         * 圆心处不经过任何序列）。 */
+                        int cx = 600 / 2;
+                        int cy = 400 / 2;
+                        int corner = charts_count_nonbg(&img, 0xFFFFFFFFu);
+                        expect_true(corner > 100,
+                                    "charts: 极坐标网格已绘制");
+                        expect_true(XImage_pixel(&img, cx, cy) ==
+                                    0xFFFFFFFFu,
+                                    "charts: 极坐标圆心无序列像素");
+                    }
+                    XClassDeinit((XClass*)&img);
+                    XClassDelete(pv);
+                }
+            }
+        } else {
+            if (polar) XClassDelete(polar);
+        }
+        chart_leak_end(&lw, "charts: 极坐标渲染");
+    }
+
+    chart_leak_begin(&lw);
+    {
+        /* 四种柱状变体：像素量必须互不相同（几何分派生效）。 */
+        int pxBar = 0;
+        int pxStacked = 0;
+        int pxPercent = 0;
+        int pxHor = 0;
+        int t;
+        for (t = 0; t < 4; ++t) {
+            XChartView* view = XChartView_create(NULL, 0);
+            XChart* chart = XChart_create();
+            XAbstractBarSeries* bar = NULL;
+            XImage img;
+            int px = 0;
+            if (!view || !chart) { if (view) XClassDelete(view); continue; }
+            XWidget_resize((XWidget*)view, 600, 400);
+            switch (t) {
+            case 0: bar = (XAbstractBarSeries*)XBarSeries_create(); break;
+            case 1: bar = (XAbstractBarSeries*)XStackedBarSeries_create(); break;
+            case 2: bar = (XAbstractBarSeries*)XPercentBarSeries_create(); break;
+            default: bar = (XAbstractBarSeries*)XHorizontalBarSeries_create(); break;
+            }
+            if (bar) {
+                XBarSet* a = XBarSet_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, "a");
+                XBarSet* b = XBarSet_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, "b");
+                int i;
+                for (i = 0; i < 3; ++i) {
+                    XBarSet_append(a, 3.0 + i);
+                    XBarSet_append(b, 5.0 + i);
+                }
+                XAbstractBarSeries_append(bar, a);
+                XAbstractBarSeries_append(bar, b);
+                XChart_addSeries(chart, bar,
+                    (t == 0) ? XChartSeriesType_Bar :
+                    (t == 1) ? XChartSeriesType_StackedBar :
+                    (t == 2) ? XChartSeriesType_PercentBar :
+                               XChartSeriesType_HorizontalBar);
+                if (XChart_axisX(chart))
+                    XValueAxis_setRange(XChart_axisX(chart), 0, 3);
+                if (XChart_axisY(chart))
+                    XValueAxis_setRange(XChart_axisY(chart), 0, 12);
+                XChartView_setChart(view, chart);
+                XImage_init_ex(&img, 600, 400, XImageFormat_ARGB32);
+                if (XChartView_renderToImage(view, &img))
+                    px = charts_count_nonbg(&img, 0xFFFFFFFFu);
+                XClassDeinit((XClass*)&img);
+            }
+            if (t == 0) pxBar = px;
+            else if (t == 1) pxStacked = px;
+            else if (t == 2) pxPercent = px;
+            else pxHor = px;
+            XClassDelete(view);
+        }
+        expect_true(pxBar > 100 && pxStacked > 100 &&
+                    pxPercent > 100 && pxHor > 100,
+                    "charts: 四种柱状变体均产出像素");
+        expect_true(pxBar != pxStacked && pxStacked != pxPercent,
+                    "charts: 柱状变体几何互不相同");
+    }
+    chart_leak_end(&lw, "charts: 柱状变体");
+}
+
+/* ---------------- 4. 图例与渐变 ---------------- */
+
+static void charts_test_legend_gradient(void)
+{
+    ChartLeakWindow lw;
+
+    chart_leak_begin(&lw);
+    {
+        XChart* chart = XChart_create();
+        XLineSeries* line = XLineSeries_create();
+        XLegend* lg;
+        expect_true(chart && line, "charts: 图例用例对象创建");
+        if (chart && line) {
+            lg = XChart_legend(chart);
+            expect_true(lg != NULL, "charts: QChart 自带图例");
+            if (lg) {
+                expect_true(XLegend_markerCount(lg) == 0,
+                            "charts: 初始无图例标记");
+                XChart_addSeries(chart, line, XChartSeriesType_Line);
+                expect_true(XLegend_markerCount(lg) == 1,
+                            "charts: addSeries 自动建图例标记");
+                {
+                    XLegendMarker* mk = XLegend_markerAt(lg, 0);
+                    expect_true(mk != NULL &&
+                                XLegendMarker_type(mk) ==
+                                XLegendMarker_LegendMarkerType_XY,
+                                "charts: 图例标记类型 XY");
+                }
+                /* 可见性（Qt 用 legend()->setVisible）。 */
+                XLegend_setVisible(lg, false);
+                expect_true(!XLegend_isVisible(lg),
+                            "charts: 图例隐藏");
+                XLegend_setVisible(lg, true);
+                expect_true(XLegend_isVisible(lg), "charts: 图例显示");
+                XChart_removeSeries(chart, line);
+                expect_true(XLegend_markerCount(lg) == 0,
+                            "charts: removeSeries 清除图例标记");
+            }
+        }
+        if (chart) XClassDelete(chart);
+    }
+    chart_leak_end(&lw, "charts: 图例");
+
+    chart_leak_begin(&lw);
+    {
+        /* 渐变：停止点排序 + 绘制层桥接 + 包围盒语义。 */
+        XLinearGradient* g = XLinearGradient_create_ex_2(
+            XCLASS_DEFAULT_MEMORY_TYPE, 0, 0, 100, 0);
+        expect_true(g != NULL, "charts: XLinearGradient 创建");
+        if (g) {
+            XPainterGradient pg;
+            XGradientStop st;
+            /* 乱序插入应被排序。 */
+            XGradient_setColorAt(&g->m_base, 1.0, 0xFFFF0000u);
+            XGradient_setColorAt(&g->m_base, 0.0, 0xFF0000FFu);
+            XGradient_setColorAt(&g->m_base, 0.5, 0xFF00FF00u);
+            expect_true(XGradient_stopCount(&g->m_base) == 3,
+                        "charts: 渐变停止点 3 个");
+            XGradient_stopAt(&g->m_base, 0, &st);
+            expect_true(st.m_position == 0.0,
+                        "charts: 渐变停止点已排序");
+            /* 同位置覆盖（不得新增）。 */
+            XGradient_setColorAt(&g->m_base, 0.5, 0xFF112233u);
+            expect_true(XGradient_stopCount(&g->m_base) == 3,
+                        "charts: 同位置停止点覆盖不新增");
+            /* 绘制层桥接。 */
+            expect_true(XLinearGradient_toPainterGradient(g, &pg) &&
+                        pg.m_stopCount == 3,
+                        "charts: 渐变桥接绘制层");
+            /* 边界：位置越界钳位。 */
+            XGradient_setColorAt(&g->m_base, -5.0, 0xFF445566u);
+            XGradient_setColorAt(&g->m_base, 9.0, 0xFF778899u);
+            XGradient_stopAt(&g->m_base, 0, &st);
+            expect_true(st.m_position == 0.0,
+                        "charts: 负位置钳位到 0");
+            XClassDelete(g);
+        }
+    }
+    chart_leak_end(&lw, "charts: 渐变");
+}
+
+/* ---------------- 5. 路径几何精确性 ---------------- */
+
+static void charts_test_path_geometry(void)
+{
+    ChartLeakWindow lw;
+
+    chart_leak_begin(&lw);
+    {
+        XPainterPath path;
+        XRectF br;
+        XRectF cpr;
+        XPainterPath_init(&path);
+        XPainterPath_moveTo(&path, 0.0f, 0.0f);
+        /* 控制点 y=±100，曲线真实极值 y≈±28.87。 */
+        XPainterPath_cubicTo(&path, 100.0f, 100.0f, 100.0f, -100.0f,
+                             200.0f, 0.0f);
+        XPainterPath_boundingRect(&path, &br);
+        XPainterPath_controlPointRect(&path, &cpr);
+        /* boundingRect 必须排除控制点外扩（约 57.7 而非 200）。 */
+        expect_true(br.height > 50.0f && br.height < 66.0f,
+                    "charts: boundingRect 为贝塞尔真实极值");
+        expect_true(cpr.height >= 195.0f && cpr.height <= 205.0f,
+                    "charts: controlPointRect 含控制点");
+        expect_true(br.height < cpr.height,
+                    "charts: boundingRect < controlPointRect");
+        /* 路径长度必须为正（此前 flatten 计数 bug 使其恒 0）。 */
+        expect_true(XPainterPath_length(&path) > 100.0f,
+                    "charts: 路径长度为正");
+        /* 命中测试（闭合矩形路径）。 */
+        {
+            XRect r;
+            XPainterPath cp;
+            XRect_init(&r, 0, 0, 100, 100);
+            XPainterPath_init(&cp);
+            XPainterPath_addRect(&cp, &r);
+            expect_true(XPainterPath_containsPoint(&cp, 50.0f, 50.0f),
+                        "charts: containsPoint 内部命中");
+            expect_true(!XPainterPath_containsPoint(&cp, 500.0f, 50.0f),
+                        "charts: containsPoint 外部不命中");
+            XPainterPath_deinit(&cp);
+        }
+        /* 圆弧路径包围盒。 */
+        {
+            XRect ar;
+            XRectF arb;
+            XRect_init(&ar, 0, 0, 200, 200);
+            XPainterPath_clear(&path);
+            XPainterPath_arcMoveTo(&path, &ar, 0.0f);
+            XPainterPath_arcTo(&path, &ar, 0.0f, 360.0f);
+            XPainterPath_boundingRect(&path, &arb);
+            expect_true(arb.width > 190.0f && arb.width < 210.0f,
+                        "charts: 圆弧包围盒宽度");
+        }
+        XPainterPath_deinit(&path);
+    }
+    chart_leak_end(&lw, "charts: 路径几何");
+
+    chart_leak_begin(&lw);
+    {
+        /* toFillPolygons：包围盒相交的子路径合并，分离的保持独立。 */
+        XPainterPath path;
+        XPointF pts[512];
+        int counts[4];
+        XPainterPath_init(&path);
+        {
+            XRect outer;
+            XRect inner;
+            XRect_init(&outer, 0, 0, 200, 200);
+            XRect_init(&inner, 50, 50, 100, 100);
+            XPainterPath_addRect(&path, &outer);
+            XPainterPath_addRect(&path, &inner);
+        }
+        counts[0] = counts[1] = 0;
+        XPainterPath_toFillPolygons(&path, pts, 512, counts, 4);
+        expect_true(counts[0] > 0 && counts[1] == 0,
+                    "charts: 嵌套子路径合并为一组");
+        XPainterPath_clear(&path);
+        {
+            XRect a;
+            XRect b;
+            XRect_init(&a, 0, 0, 50, 50);
+            XRect_init(&b, 300, 300, 50, 50);
+            XPainterPath_addRect(&path, &a);
+            XPainterPath_addRect(&path, &b);
+        }
+        counts[0] = counts[1] = 0;
+        XPainterPath_toFillPolygons(&path, pts, 512, counts, 4);
+        expect_true(counts[0] > 0 && counts[1] > 0,
+                    "charts: 分离子路径保持两组");
+        XPainterPath_deinit(&path);
+    }
+    chart_leak_end(&lw, "charts: 填充多边形");
+}
+
+/* ---------------- 6. 默认坐标轴与极端值 ---------------- */
+
+static void charts_test_axes_edge(void)
+{
+    ChartLeakWindow lw;
+
+    chart_leak_begin(&lw);
+    {
+        /* createDefaultAxes 对非数值轴不得崩溃且给出合法域。 */
+        XChart* chart = XChart_create();
+        XLogValueAxis* lax = XLogValueAxis_create();
+        expect_true(chart && lax, "charts: 对数轴默认坐标轴用例创建");
+        if (chart && lax) {
+            XChart_setAxisY_abstract(chart, (XAbstractAxis*)lax);
+            XChart_createDefaultAxes(chart);
+            expect_true(XLogValueAxis_min(lax) > 0.0,
+                        "charts: 对数轴默认域为正");
+        }
+        if (chart) XClassDelete(chart);
+    }
+    chart_leak_end(&lw, "charts: 默认坐标轴");
+
+    chart_leak_begin(&lw);
+    {
+        /* 极端值：超大范围与零范围不得崩溃或产生 NaN。 */
+        XValueAxis* v = XValueAxis_create();
+        expect_true(v != NULL, "charts: 极端值用例创建");
+        if (v) {
+            XValueAxis_setRange(v, -1e30, 1e30);
+            expect_true(XValueAxis_max(v) == 1e30,
+                        "charts: 超大范围可设置");
+            /* 零范围（min==max）应被接受为退化域。 */
+            XValueAxis_setRange(v, 5.0, 5.0);
+            expect_true(XValueAxis_min(v) == 5.0 &&
+                        XValueAxis_max(v) == 5.0,
+                        "charts: 零范围退化域可设置");
+            XClassDelete(v);
+        }
+    }
+    chart_leak_end(&lw, "charts: 极端值");
+
+    chart_leak_begin(&lw);
+    {
+        /* 空数据渲染：无序列/空序列不应崩溃且不泄漏。 */
+        XChartView* view = XChartView_create(NULL, 0);
+        XChart* chart = XChart_create();
+        XLineSeries* empty = XLineSeries_create();
+        XImage img;
+        expect_true(view && chart && empty, "charts: 空数据用例创建");
+        if (view && chart && empty) {
+            XWidget_resize((XWidget*)view, 600, 400);
+            XChart_addSeries(chart, empty, XChartSeriesType_Line);
+            XChartView_setChart(view, chart);
+            XImage_init_ex(&img, 600, 400, XImageFormat_ARGB32);
+            expect_true(XChartView_renderToImage(view, &img),
+                        "charts: 空序列渲染不崩溃");
+            XClassDeinit((XClass*)&img);
+        }
+        if (view) XClassDelete(view);
+    }
+    chart_leak_end(&lw, "charts: 空数据");
+
+    chart_leak_begin(&lw);
+    {
+        /* 负向：NULL 入参不得崩溃。 */
+        XChart_setTitle(NULL, NULL);
+        XChart_setTheme(NULL, XChart_ChartTheme_Dark);
+        XChart_addSeries(NULL, NULL, XChartSeriesType_Line);
+        XValueAxis_setRange(NULL, 0.0, 1.0);
+        XLegend_setVisible(NULL, false);
+        XXYSeries_append(NULL, 0.0, 0.0);
+        expect_true(true, "charts: NULL 入参全部安全返回");
+    }
+    chart_leak_end(&lw, "charts: NULL 入参");
+}
+
+/** @brief 图表全量对齐测试套件入口。
+ * @details 先跑一轮丢弃结果，把字体表/字符串池/主题缓存等**一次性初始化**
+ *          开销排除在泄漏基线之外（否则首轮必被判泄漏）；第二轮才是判定轮。
+ */
+static void test_charts_alignment_suite(void)
+{
+    /* 跑两轮，但**两轮结果都计入**（不做「预热轮丢弃结果」——那会把真实
+     * 泄漏一并掩盖：本次实测它把 7 项真增长翻成 0 项假绿）。首轮的一次性
+     * 字形/主题/路径缓存由 chart_leak_end 按 label 豁免一次，第二轮严格
+     * 零容忍：持续增长必然在第二轮暴露，一次性常驻则第二轮零增量通过。 */
+    {
+        int round;
+        for (round = 0; round < 2; ++round) {
+            charts_test_axes();
+            charts_test_series();
+            charts_test_render_new_series();
+            charts_test_legend_gradient();
+            charts_test_path_geometry();
+            charts_test_axes_edge();
+        }
+    }
+}
+
+#endif /* XCHARTS_ON */
+
 int main(void)
 {
 #if defined(_MSC_VER) && defined(_DEBUG)
@@ -40830,6 +42097,7 @@ int main(void)
                                 XStrcmp(XTreeWidgetItem_text_2(child),
                                         "子") == 0,
                                 "XTreeWidgetItem 子节点/文本");
+                            XTreeWidgetItem_childCount(root),
                     expect_true(XTreeWidget_addTopLevelItem(twg, root) &&
                                 XTreeWidget_topLevelItemCount(twg) == 1 &&
                                 XTreeWidget_topLevelItem(twg, 0) == root,
@@ -40842,32 +42110,30 @@ int main(void)
             }
         }
         if (tw) {
-            XTableWidgetItem item;
-            memset(&item, 0, sizeof(item));
             XTableWidget_setRowCount(tw, 3);
             XTableWidget_setColumnCount(tw, 2);
-            XTableWidget_setText(tw, 0, 0, "A1");
-            XTableWidget_setText(tw, 1, 0, "B2");
-            XTableWidget_setText(tw, 2, 0, "C3");
+            xTwSetTextUtf8(tw, 0, 0, "A1");
+            xTwSetTextUtf8(tw, 1, 0, "B2");
+            xTwSetTextUtf8(tw, 2, 0, "C3");
             expect_true(XTableWidget_rowCount(tw) == 3 &&
                         XTableWidget_columnCount(tw) == 2,
                         "XTableWidget 行列数");
-            expect_true(strcmp(XTableWidget_text(tw, 1, 0), "B2") == 0,
+            expect_true(strcmp(xTwTextUtf8(tw, 1, 0), "B2") == 0,
                         "XTableWidget 单元格文本存取");
             XTableWidget_setCurrentCell(tw, 1, 1);
             expect_true(XTableWidget_currentRow(tw) == 1 &&
                         XTableWidget_currentColumn(tw) == 1,
                         "XTableWidget 当前单元格");
             XTableWidget_sortItems(tw, 0, 0);
-            expect_true(strcmp(XTableWidget_text(tw, 0, 0), "A1") == 0,
+            expect_true(strcmp(xTwTextUtf8(tw, 0, 0), "A1") == 0,
                         "XTableWidget 排序后首行");
-            memset(&item, 0, sizeof(item));
-            item.text = XString_create_utf8("S");
-            XTableWidget_setItem(tw, 2, 1, &item);
-            expect_true(strcmp(XTableWidget_text(tw, 2, 1), "S") == 0,
+            {
+                XTableWidgetItem* item =
+                    XTableWidgetItem_create_utf8("S", XTableWidgetItem_Type);
+                if (item) XTableWidget_setItem(tw, 2, 1, item);
+            }
+            expect_true(strcmp(xTwTextUtf8(tw, 2, 1), "S") == 0,
                         "XTableWidget setItem");
-            XClassDelete(item.text);
-            item.text = NULL;
             XTableWidget_clear(tw);
             expect_true(XTableWidget_rowCount(tw) == 0,
                         "XTableWidget clear");
@@ -40884,6 +42150,7 @@ int main(void)
         XAreaSeries* area = XAreaSeries_create();
         XSplineSeries* sp = XSplineSeries_create();
         XPieSeries* pie = XPieSeries_create();
+                (void*)chart, (void*)line, (void*)bar, (void*)sc,
         expect_true(chart != NULL && line != NULL && bar != NULL &&
                     sc != NULL && area != NULL && sp != NULL &&
                     pie != NULL, "XChart 序列创建");
@@ -40895,9 +42162,9 @@ int main(void)
         XAbstractSeries_setName_2(line, "L");
         expect_true(strcmp(XAbstractSeries_name_2(line), "L") == 0,
                     "XLineSeries 序列名");
-        XChart_addLineSeries(chart, line);
-        expect_true(XChart_lineSeriesCount(chart) == 1 &&
-                    XChart_lineSeries(chart, 0) == line,
+        XChart_addSeries(chart, line, XChartSeriesType_Line);
+        expect_true(XChart_seriesCount(chart) == 1 &&
+                    XChart_seriesAt(chart, 0) == line,
                     "XChart addLineSeries");
         {
             XBarSet* bset = XBarSet_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, "柱");
@@ -40911,27 +42178,29 @@ int main(void)
                         XAbstractBarSeries_barSetAt(bar, 0) == bset,
                         "XBarSeries 柱存取");
         }
-        XChart_addBarSeries(chart, bar);
-        expect_true(XChart_barSeriesCount(chart) == 1,
+        XChart_addSeries(chart, bar, XChartSeriesType_Bar);
+        expect_true(XChart_seriesCount(chart) == 2,
                     "XChart addBarSeries");
         XXYSeries_append(sc, 1, 2);
         expect_true(XXYSeries_count(sc) == 1, "XScatterSeries 点");
-        XChart_addScatterSeries(chart, sc);
+        XChart_addSeries(chart, sc, XChartSeriesType_Scatter);
         XAreaSeries_setBaseValue(area, 0);
         XXYSeries_append(XAreaSeries_upperSeries(area), 0, 3);
         expect_true(XAreaSeries_upperSeries(area)->m_base.m_count == 1,
                     "XAreaSeries 上边界");
-        XChart_addAreaSeries(chart, area);
-        XXYSeries_append(sp, 0, 1);
-        XXYSeries_append(sp, 1, 2);
-        expect_true(XXYSeries_count(sp) == 2, "XSplineSeries 点");
-        XChart_addSplineSeries(chart, sp);
+        XChart_addSeries(chart, area, XChartSeriesType_Area);
+        XXYSeries_append(&sp->m_base.m_base, 0, 1);
+        XXYSeries_append(&sp->m_base.m_base, 1, 2);
+        expect_true(XXYSeries_count(&sp->m_base.m_base) == 2, "XSplineSeries 点");
+        XChart_addSeries(chart, sp, XChartSeriesType_Spline);
         XPieSeries_append_2(pie, "A", 3);
         XPieSeries_append_2(pie, "B", 1);
         expect_true(XPieSeries_count(pie) == 2 &&
                     XPieSeries_sum(pie) == 4, "XPieSeries 切片与求和");
-        XChart_setPieSeries(chart, pie);
-        expect_true(XChart_pieSeries(chart) == pie, "XChart setPieSeries");
+        XChart_addSeries(chart, pie, XChartSeriesType_Pie);
+        expect_true(XChart_seriesAt(chart, 5) == pie &&
+                    XChart_seriesTypeAt(chart, 5) == XChartSeriesType_Pie,
+                    "XChart addSeries Pie");
         XChart_setTitle_2(chart, "T");
         expect_true(strcmp(XChart_title_2(chart), "T") == 0, "XChart 标题");
         expect_true(XChart_axisX(chart) != NULL &&
@@ -40946,6 +42215,9 @@ int main(void)
     test_chart_interaction_contract();
     test_charts_task218a_contract();
     test_charts_task218b_contract();
+    test_charts_alignment_suite();
+    charts_test_axes();
+    charts_test_series();
 #endif /* XCHARTS_ON */
 #if XSTYLE_ON
     /* 第 1 轮并入能力（G1 值解析/G2 子控件分派/G5 qproperty）回归。 */

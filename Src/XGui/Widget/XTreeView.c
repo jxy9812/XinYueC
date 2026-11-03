@@ -1384,11 +1384,17 @@ static void VXTreeView_paintEvent(XWidget* self, XEvent* event)
             if (text && text[0]) {
                 int indent = (tv->m_indentation > 0)
                                  ? tv->m_indentation : 0;
+                char elideBuf[256];
+                /* [省略消费 2026-11-03] 对齐 Qt 委托绘制前的 elidedText：
+                 * 可用宽 = 视口宽 - 文本左缘（缩进+12）- 右内边距 4。 */
+                const char* shown = XAbstractItemView_elidedText(
+                    &tv->m_base, elideBuf, (int)sizeof(elideBuf), text,
+                    r.width - (indent + 12) - 4, XPainter_font(&painter));
                 /* 选中行走 HighlightedText、普通行走 WindowText
                  * （对标 QStyledItemDelegate 选中态文本取色）。 */
                 XPainter_setPen(&painter, sel ? highlightedText
                                               : windowText);
-                XPainter_drawText(&painter, indent + 12, y + rh - 6, text,
+                XPainter_drawText(&painter, indent + 12, y + rh - 6, shown,
                               sel ? highlightedText : windowText);
             }
         }

@@ -1,4 +1,4 @@
-/* xgui_demo_apitest_views.c —— 控件 API 测试族：views。
+﻿/* xgui_demo_apitest_views.c —— 控件 API 测试族：views。
  *
  * 覆盖控件（对标 Qt 6.8.3）：XAbstractItemModel / XAbstractItemView /
  * XListView / XListWidget / XTreeView / XTreeWidget / XTableView /
@@ -31,6 +31,32 @@
 #include "XTreeWidget.h"
 #include "XTableView.h"
 #include "XTableWidget.h"
+
+/* ===== [Qt 对齐迁移 2026-11-03] XTableWidget 文本便捷 helper =====
+ * 旧 API XTableWidget_setText/XTableWidget_text 已删除（Qt 无对应物）。
+ * Qt 等价写法：item->setText()/item->text()；空格需先创建条目。
+ * 此处提供两个文件内 static helper，集中承担「空格自动建条目」这一
+ * C 侧便捷语义，避免逐点展开样板代码。 */
+#ifndef XTW_TEXT_HELPER_DEFINED
+#define XTW_TEXT_HELPER_DEFINED
+static void xTwSetTextUtf8(XTableWidget* tbl, int row, int col,
+                           const char* utf8)
+{
+    XTableWidgetItem* item = XTableWidget_item(tbl, row, col);
+    if (!item) {
+        item = XTableWidgetItem_create_utf8(utf8, XTableWidgetItem_Type);
+        if (!item) return;
+        XTableWidget_setItem(tbl, row, col, item);
+        return;
+    }
+    XTableWidgetItem_setText_utf8(item, utf8);
+}
+static const char* xTwTextUtf8(const XTableWidget* tbl, int row, int col)
+{
+    return XTableWidgetItem_text_toUtf8(XTableWidget_item(tbl, row, col));
+}
+#endif /* XTW_TEXT_HELPER_DEFINED */
+
 #include "XAbstractScrollArea.h"
 #include "XHeaderView.h"
 #include "XLineEdit.h"
@@ -2791,7 +2817,7 @@ int xapi_views_run(void)
         }
 
         /* ---- 默认值 ---- */
-        XAPI_EXPECT(XTableView_rowHeight(&table) == 24,
+        XAPI_EXPECT(XTableView_rowHeight(&table, 0) == 24,
                     "默认行高 24");
         XAPI_EXPECT(XTableView_columnWidth(&table, 0) == 80,
                     "默认列宽 80（未显式设宽）");
@@ -2807,25 +2833,18 @@ int xapi_views_run(void)
         XAPI_EXPECT(!XTableView_isRowHidden(&table, 0) &&
                     !XTableView_isColumnHidden(&table, 0),
                     "默认行/列均可见");
-        {
-            int rs = 0;
-            int cs = 0;
-            int orow = -1;
-            int ocol = -1;
-            XAPI_EXPECT(!XTableView_spanAt(&table, 0, 0, &rs, &cs,
-                                           &orow, &ocol) &&
-                        rs == 1 && cs == 1 && orow == 0 && ocol == 0,
-                        "默认无合并（spanAt false，跨度=1，原点=自身）");
-        }
+        XAPI_EXPECT(XTableView_rowSpan(&table, 0, 0) == 1 &&
+                    XTableView_columnSpan(&table, 0, 0) == 1,
+                    "默认无合并（rowSpan/columnSpan 均为 1，对齐 Qt）");
         XAPI_EXPECT(XTableView_horizontalHeader(&table) != NULL &&
                     XTableView_verticalHeader(&table) != NULL,
                     "构造内建双表头（对标 QTableViewPrivate::init）");
 
         /* ---- 尺寸往返 ---- */
-        XTableView_setRowHeight(&table, 30);
+        { int r; for (r = 0; r < 8; ++r) XTableView_setRowHeight(&table, r, 30); }
         XTableView_setColumnWidth(&table, 0, 120);
         XTableView_setColumnWidth(&table, 1, 80);
-        XAPI_EXPECT(XTableView_rowHeight(&table) == 30 &&
+        XAPI_EXPECT(XTableView_rowHeight(&table, 0) == 30 &&
                     XTableView_columnWidth(&table, 0) == 120,
                     "setRowHeight/setColumnWidth 往返");
         XAPI_EXPECT(XTableView_columnWidth(&table, 5) == 80,
@@ -2904,71 +2923,55 @@ int xapi_views_run(void)
         XTableView_resizeColumnsToContents(&table);
         XTableView_resizeRowToContents(&table, 0);
         XTableView_resizeRowsToContents(&table);
-        XAPI_EXPECT(XTableView_rowHeight(&table) > 0,
+        XAPI_EXPECT(XTableView_rowHeight(&table, 0) > 0,
                     "resizeToContents 族调用后行高保持正值");
         /* ---- 跨行/列合并（对标 setSpan/spanAt/clearSpans） ---- */
         XTableView_setSpan(&table, 0, 0, 2, 2);
+        XAPI_EXPECT(XTableView_rowSpan(&table, 0, 0) == 2 &&
+                    XTableView_columnSpan(&table, 0, 0) == 2,
+                    "setSpan(0,0,2,2) 合并区间生效（原点）");
+        XAPI_EXPECT(XTableView_rowSpan(&table, 1, 1) == 2 &&
+                    XTableView_columnSpan(&table, 1, 1) == 2,
+                    "被覆盖格同样命中所属区间（对齐 Qt rowSpan/columnSpan）");
+        XAPI_EXPECT(XTableView_rowSpan(&table, 2, 0) == 1,
+                    "未合并格跨度=1");
         {
-            int rs = 0;
-            int cs = 0;
             int orow = -1;
             int ocol = -1;
-            XAPI_EXPECT(XTableView_spanAt(&table, 0, 0, &rs, &cs,
-                                          &orow, &ocol) &&
-                        rs == 2 && cs == 2 && orow == 0 && ocol == 0,
-                        "setSpan(0,0,2,2) 合并区间生效（原点命中）");
-            XAPI_EXPECT(XTableView_spanAt(&table, 1, 1, &rs, &cs,
-                                          &orow, &ocol) &&
-                        rs == 2 && orow == 0 && ocol == 0,
-                        "被覆盖格（非原点）命中所属区间（同 Qt spanAt）");
-            XAPI_EXPECT(!XTableView_spanAt(&table, 2, 0, &rs, &cs,
-                                           &orow, &ocol) && rs == 1,
-                        "未合并格 spanAt false（跨度=1）");
+            XAPI_EXPECT(XTableView_indexAt(&table, 1, 1, &orow, &ocol) &&
+                        orow == 0 && ocol == 0,
+                        "indexAt 命中被覆盖格时吸附到区间原点");
         }
         XTableView_setSpan(&table, 0, 0, 1, 1);
-        {
-            int rs = 0;
-            int cs = 0;
-            XAPI_EXPECT(!XTableView_spanAt(&table, 0, 0, &rs, &cs,
-                                           NULL, NULL) && rs == 1,
-                        "跨度均 1 移除合并（同 Qt）");
-        }
+        XAPI_EXPECT(XTableView_rowSpan(&table, 0, 0) == 1,
+                    "跨度均 1 移除合并（同 Qt）");
         XTableView_setSpan(&table, 0, 0, 0, 2);
-        {
-            int rs = 0;
-            XAPI_EXPECT(!XTableView_spanAt(&table, 0, 0, &rs, NULL,
-                                           NULL, NULL) && rs == 1,
-                        "任一跨度 <=0 忽略");
-        }
+        XAPI_EXPECT(XTableView_rowSpan(&table, 0, 0) == 1,
+                    "跨度为 0 不覆盖任何单元格（对齐 Qt：仅负值拒绝）");
         XTableView_setSpan(&table, 0, 0, 2, 2);
         XTableView_setSpan(&table, 0, 0, 3, 2);
-        {
-            int rs = 0;
-            XAPI_EXPECT(XTableView_spanAt(&table, 0, 0, &rs, NULL,
-                                          NULL, NULL) && rs == 3,
-                        "同原点重复设置替换旧值");
-        }
+        XAPI_EXPECT(XTableView_rowSpan(&table, 0, 0) == 3,
+                    "同原点重复设置替换旧值");
         XTableView_clearSpans(&table);
-        {
-            int rs = 0;
-            XAPI_EXPECT(!XTableView_spanAt(&table, 0, 0, &rs, NULL,
-                                           NULL, NULL) && rs == 1,
-                        "clearSpans 清空全部合并");
-        }
+        XAPI_EXPECT(XTableView_rowSpan(&table, 0, 0) == 1,
+                    "clearSpans 清空全部合并");
 
         /* ---- 滚动/偏移/视觉序（对标 scrollTo/horizontalOffset/
          *      verticalOffset/visualIndex） ---- */
-        XTableView_scrollTo(&table, 5, 0);
+        XTableView_scrollTo(&table, 5, 0,
+                            XAbstractItemViewScrollHint_EnsureVisible);
         XAPI_EXPECT(true, "scrollTo 调用无崩溃（转发基类 EnsureVisible）");
         XAPI_EXPECT(XTableView_horizontalOffset(&table) == 0 &&
                     XTableView_verticalOffset(&table) == 0,
                     "未滚动偏移恒 0（横/纵滚动条值口径）");
-        XAPI_EXPECT(XTableView_visualIndex(&table, 2) == 2 &&
-                    XTableView_visualIndex(&table, -1) == -1,
-                    "visualIndex 恒等映射（平铺模型，负值 -1）");
-        XAPI_EXPECT(XTableView_visualRow(&table, 3) == 3 &&
-                    XTableView_visualRow(&table, -2) == -1,
-                    "visualRow 恒等映射（平铺模型，负值 -1）");
+        /* 对齐 Qt：QTableView 的 visualIndex(const QModelIndex&) 为 **private**
+         * （qtableview.cpp:3624），本框架不导出对应公开 API。
+         * 行/列的视觉序查询走表头（对齐 QHeaderView::visualIndex）。 */
+        XAPI_EXPECT(XHeaderView_visualIndex(
+                        XTableView_horizontalHeader(&table), 2) == 2 &&
+                    XHeaderView_visualIndex(
+                        XTableView_verticalHeader(&table), 1) == 1,
+                    "visualIndex 经表头查询（对齐 QHeaderView::visualIndex）");
 
         /* ---- 表头对象挂接（对标 setHorizontalHeader/VerticalHeader） ---- */
         XTableView_setHorizontalHeader(&table, hHeader);
@@ -3013,6 +3016,7 @@ int xapi_views_run(void)
         const char* vLabels[2] = { "甲行", "乙行" };
         int rows[4];
         int cols[4];
+        XTableWidgetItem* hits[8];
         int count;
         int hitRow;
         int hitCol;
@@ -3031,18 +3035,13 @@ int xapi_views_run(void)
                     "初始无当前单元格");
         XAPI_EXPECT(XTableWidget_model(&table) != NULL,
                     "内建数据模型桥可用（对标 QTableWidget::model）");
-        {
-            XAbstractItemModel* foreign = XAbstractItemModel_create();
-            XAbstractItemModel* before = XTableWidget_model(&table);
-            XTableWidget_setModel(&table, foreign);
-            XAPI_EXPECT(XTableWidget_model(&table) == before,
-                        "setModel 拒绝换模型（Qt QTableWidget::setModel "
-                        "\\internal 拒绝语义，内建模型保持）");
-            if (foreign) XClassDelete(foreign);
-        }
+        /* 对齐 Qt：QTableWidget::setModel 为 private（qtablewidget.h:311），
+         * 本框架不导出对应公开 API。 */
+        XAPI_EXPECT(XTableWidget_model(&table) != NULL,
+                    "内建模型始终存在且不可替换（对齐 Qt setModel 为 private）");
         XAPI_EXPECT(XTableWidget_itemPrototype(&table) == NULL,
                     "初始无原型单元格（对标 itemPrototype 缺省 NULL）");
-        XAPI_EXPECT(XTableView_rowHeight((XTableView*)&table) == 24 &&
+        XAPI_EXPECT(XTableView_rowHeight((XTableView*)&table, 0) == 24 &&
                     XTableView_showGrid((XTableView*)&table),
                     "默认行高 24、网格可见（init 契约）");
 
@@ -3056,15 +3055,15 @@ int xapi_views_run(void)
         XAPI_EXPECT(XTableWidget_rowCount(&table) == 3,
                     "setRowCount 负值忽略");
         /* ---- 行列插入/移除（对标 insertRow/insertColumn/removeRow） ---- */
-        XTableWidget_setText(&table, 0, 0, "甲");
-        XTableWidget_setText(&table, 1, 0, "乙");
+        xTwSetTextUtf8(&table, 0, 0, "甲");
+        xTwSetTextUtf8(&table, 1, 0, "乙");
         XTableWidget_insertRow(&table, 1);
         XAPI_EXPECT(XTableWidget_rowCount(&table) == 4 &&
-                    strcmp(xapi_cstr(XTableWidget_text(&table, 2, 0)), "乙") == 0,
+                    strcmp(xapi_cstr(xTwTextUtf8(&table, 2, 0)), "乙") == 0,
                     "insertRow(1) 原行 1 后移到行 2");
         XTableWidget_removeRow(&table, 1);
         XAPI_EXPECT(XTableWidget_rowCount(&table) == 3 &&
-                    strcmp(xapi_cstr(XTableWidget_text(&table, 1, 0)), "乙") == 0,
+                    strcmp(xapi_cstr(xTwTextUtf8(&table, 1, 0)), "乙") == 0,
                     "removeRow(1) 后续行前移");
         XTableWidget_removeRow(&table, 99);
         XAPI_EXPECT(XTableWidget_rowCount(&table) == 3,
@@ -3077,46 +3076,63 @@ int xapi_views_run(void)
                     "removeColumn(1) 列数 -1");
         /* ---- 持久编辑器三件套（对标 QTableWidget open/close/
          *      isPersistentEditorOpen(item) → 基类 index 形态转发） ---- */
-        XTableWidget_openPersistentEditor(&table, 1, 1);
-        XAPI_EXPECT(XTableWidget_isPersistentEditorOpen(&table, 1, 1),
-                    "openPersistentEditor 后 isPersistentEditorOpen 为 true");
-        XTableWidget_closePersistentEditor(&table, 1, 1);
-        XAPI_EXPECT(!XTableWidget_isPersistentEditorOpen(&table, 1, 1) &&
-                    !XTableWidget_isPersistentEditorOpen(&table, 9, 9),
-                    "closePersistentEditor 后关闭、越界格 false");
+        XTableWidget_openPersistentEditor(&table,
+                                          XTableWidget_item(&table, 1, 1));
+        XAPI_EXPECT(XTableWidget_isPersistentEditorOpen(
+                        &table, XTableWidget_item(&table, 1, 1)),
+                    "openPersistentEditor(item) 后 isPersistentEditorOpen 为 true");
+        XTableWidget_closePersistentEditor(&table,
+                                           XTableWidget_item(&table, 1, 1));
+        XAPI_EXPECT(!XTableWidget_isPersistentEditorOpen(
+                        &table, XTableWidget_item(&table, 1, 1)) &&
+                    !XTableWidget_isPersistentEditorOpen(&table, NULL),
+                    "closePersistentEditor(item) 后关闭、NULL 条目 false");
 
         /* ---- 单元格文本（对标 setText/text 快捷族） ---- */
-        XTableWidget_setText(&table, 0, 0, "苹果");
-        XTableWidget_setText(&table, 0, 1, "3");
-        XTableWidget_setText(&table, 1, 0, "香蕉");
-        XTableWidget_setText(&table, 1, 1, "5");
-        XTableWidget_setText(&table, 2, 0, "樱桃");
-        XTableWidget_setText(&table, 2, 1, "8");
-        XAPI_EXPECT(strcmp(xapi_cstr(XTableWidget_text(&table, 0, 0)), "苹果") == 0 &&
-                    strcmp(xapi_cstr(XTableWidget_text(&table, 2, 1)), "8") == 0,
+        xTwSetTextUtf8(&table, 0, 0, "苹果");
+        xTwSetTextUtf8(&table, 0, 1, "3");
+        xTwSetTextUtf8(&table, 1, 0, "香蕉");
+        xTwSetTextUtf8(&table, 1, 1, "5");
+        xTwSetTextUtf8(&table, 2, 0, "樱桃");
+        xTwSetTextUtf8(&table, 2, 1, "8");
+        XAPI_EXPECT(strcmp(xapi_cstr(xTwTextUtf8(&table, 0, 0)), "苹果") == 0 &&
+                    strcmp(xapi_cstr(xTwTextUtf8(&table, 2, 1)), "8") == 0,
                     "setText/text 往返一致");
-        XAPI_EXPECT(strcmp(xapi_cstr(XTableWidget_text(&table, 9, 9)), "") == 0,
+        XAPI_EXPECT(strcmp(xapi_cstr(xTwTextUtf8(&table, 9, 9)), "") == 0,
                     "越界 text 返回空串");
         XAPI_EXPECT(strcmp(XAbstractItemModel_data_2(XTableWidget_model(&table),
                                                      0, 0), "苹果") == 0,
                     "单元格文本与内建模型同步");
         /* ---- setItem 拷贝全字段（对标 setItem/item） ---- */
         {
-            XTableWidgetItem src;
+            XTableWidgetItem* src = XTableWidgetItem_create_utf8("整格",
+                                                                 XTableWidgetItem_Type);
             const XTableWidgetItem* got;
-            memset(&src, 0, sizeof(src));
-            src.text = XString_create_utf8("整格");
-            src.selected = true;
-            src.checkState = 2;
-            src.foreground = 0xFF0000FFu;
-            src.background = 0xFF00FF00u;
-            XTableWidget_setItem(&table, 2, 1, &src);
-            XClassDelete((XClass*)src.text);
+            XColor bg = XColor_create_rgb(0, 255, 0, 255);
+            XColor fg = XColor_create_rgb(255, 0, 0, 255);
+            XAPI_EXPECT(src != NULL, "item 工厂创建可用");
+            if (src) {
+                XTableWidgetItem_setSelected(src, true);
+                XTableWidgetItem_setCheckState(src, XItemCheckState_Checked);
+                XTableWidgetItem_setBackground(src, &bg);
+                XTableWidgetItem_setForeground(src, &fg);
+                XTableWidget_setItem(&table, 2, 1, src); /* 所有权转移给表格 */
+            }
             got = XTableWidget_item(&table, 2, 1);
-            XAPI_EXPECT(got != NULL &&
-                        strcmp(xapi_u8(got->text), "整格") == 0 &&
-                        got->selected && got->checkState == 2,
-                        "setItem 拷贝全字段、item 只读读取");
+            XAPI_EXPECT(got == src && got != NULL &&
+                        strcmp(XTableWidgetItem_text_toUtf8(got), "整格") == 0 &&
+                        XTableWidgetItem_isSelected(got) &&
+                        XTableWidgetItem_checkState(got) == XItemCheckState_Checked,
+                        "setItem 接管所有权；item 读回文本/选中/勾选");
+            {
+                XColor out;
+                XAPI_EXPECT(XTableWidgetItem_background(got, &out) &&
+                            XColor_rgba(&out) == XColor_rgba(&bg),
+                            "BackgroundRole 往返");
+                XAPI_EXPECT(XTableWidgetItem_foreground(got, &out) &&
+                            XColor_rgba(&out) == XColor_rgba(&fg),
+                            "ForegroundRole 往返");
+            }
             XAPI_EXPECT(XTableWidget_item(&table, 9, 9) == NULL,
                         "越界 item 返回 NULL");
         }
@@ -3136,7 +3152,7 @@ int xapi_views_run(void)
         /* ---- setCurrentItem（要求目标格存在；同 setCurrentCell 差异） ---- */
         XTableWidget_setCurrentCell(&table, 0, 0);
         vsig_reset();
-        XTableWidget_setCurrentItem(&table, 2, 0);
+        XTableWidget_setCurrentItem(&table, XTableWidget_item(&table, 2, 0));
         XAPI_EXPECT(XTableWidget_currentRow(&table) == 2 &&
                     XTableWidget_currentColumn(&table) == 0,
                     "setCurrentItem 转发 setCurrentCell");
@@ -3163,10 +3179,13 @@ int xapi_views_run(void)
         vw_injectKey((XWidget*)&table, XEVENT_TYPE_KEY_PRESS, 0);
         XAPI_EXPECT(true, "键盘事件路径调用无崩溃");
         /* ---- 位置反查（对标 itemAt；表头区 -1） ---- */
-        XTableWidget_itemAt(&table, 40 + 40, 24 + 12, &hitRow, &hitCol);
+        XAPI_EXPECT(XTableWidget_itemAt(&table, 40 + 40, 24 + 12) ==
+                        XTableWidget_item(&table, 0, 0),
+                    "itemAt(表头后首格) 返回 (0,0) 条目");
         XAPI_EXPECT(hitRow == 0 && hitCol == 0,
                     "itemAt 数据区命中 (0,0)");
-        XTableWidget_itemAt(&table, 10, 24 + 12, &hitRow, &hitCol);
+        XAPI_EXPECT(XTableWidget_itemAt(&table, 10, 24 + 12) == NULL,
+                    "itemAt 表头区返回 NULL");
         XAPI_EXPECT(hitRow == -1 && hitCol == -1,
                     "itemAt 表头区返回 -1/-1");
         /* ---- 表头标签（对标 setHorizontal/VerticalHeaderLabels 族） ---- */
@@ -3200,56 +3219,59 @@ int xapi_views_run(void)
                     "takeVerticalHeaderItem 取出行表头文本");
         if (taken) XClassDelete((XClass*)taken);
         /* ---- 查找（对标 findItems 精确/包含） ---- */
-        count = XTableWidget_findItems(&table, "苹果", 1, rows, cols, 4);
-        XAPI_EXPECT(count == 1 && rows[0] == 0 && cols[0] == 0,
+        count = XTableWidget_findItems(&table, "苹果", 1, hits, 4);
+        XAPI_EXPECT(count == 1 && hits[0] == XTableWidget_item(&table, 0, 0),
                     "findItems 精确命中 (0,0)");
-        count = XTableWidget_findItems(&table, "", 1, rows, cols, 4);
+        count = XTableWidget_findItems(&table, "", 1, hits, 4);
         XAPI_EXPECT(count == 0,
                     "空表无空文本命中（NULL 按空串处理）");
-        /* ---- items 按行搜索（对标 items 行号承载） ---- */
+        /* ---- 按列优先搜索（对齐 QTableWidget::findItems 遍历顺序） ---- */
         {
-            XVector* found = XTableWidget_items(&table, "香蕉");
-            XAPI_EXPECT(found != NULL &&
-                        (int)XVector_size_base((const XContainer*)found) == 1 &&
-                        XVector_At_Base(found, 0, int) == 1,
-                        "items 精确反查命中行 1");
-            if (found) XClassDelete((XClass*)found);
+            int found = XTableWidget_findItems(&table, "香蕉", 1, hits, 4);
+            XAPI_EXPECT(found == 1 && XTableWidget_row(&table, hits[0]) == 1,
+                        "findItems 精确命中行 1");
         }
         /* ---- 排序（对标 sortItems 整行重排；ASCII 键避免字节序歧义） ---- */
-        XTableWidget_setText(&table, 0, 0, "b");
-        XTableWidget_setText(&table, 1, 0, "a");
-        XTableWidget_setText(&table, 2, 0, "c");
+        xTwSetTextUtf8(&table, 0, 0, "b");
+        xTwSetTextUtf8(&table, 1, 0, "a");
+        xTwSetTextUtf8(&table, 2, 0, "c");
         XTableWidget_sortItems(&table, 0, 0);
-        XAPI_EXPECT(strcmp(xapi_cstr(XTableWidget_text(&table, 0, 0)), "a") == 0 &&
-                    strcmp(xapi_cstr(XTableWidget_text(&table, 2, 0)), "c") == 0,
+        XAPI_EXPECT(strcmp(xapi_cstr(xTwTextUtf8(&table, 0, 0)), "a") == 0 &&
+                    strcmp(xapi_cstr(xTwTextUtf8(&table, 2, 0)), "c") == 0,
                     "sortItems(0,0) 按列 0 升序整行重排");
         XTableWidget_sortItems(&table, 0, 1);
-        XAPI_EXPECT(strcmp(xapi_cstr(XTableWidget_text(&table, 0, 0)), "c") == 0 &&
-                    strcmp(xapi_cstr(XTableWidget_text(&table, 2, 0)), "a") == 0,
+        XAPI_EXPECT(strcmp(xapi_cstr(xTwTextUtf8(&table, 0, 0)), "c") == 0 &&
+                    strcmp(xapi_cstr(xTwTextUtf8(&table, 2, 0)), "a") == 0,
                     "sortItems(0,1) 降序整行重排");
         /* ---- 选区（对标 setRangeSelected/selectedIndexes/Ranges） ---- */
         vsig_reset();
-        XTableWidget_setRangeSelected(&table, 0, 0, 1, 1, true);
+        {
+            XTableWidgetSelectionRange rng =
+                XTableWidgetSelectionRange_create(0, 0, 1, 1);
+            XTableWidget_setRangeSelected(&table, &rng, true);
+        }
         XAPI_EXPECT(g_sig.tblSelChanged >= 1,
                     "setRangeSelected 有变化发射 itemSelectionChanged");
-        count = XTableWidget_selectedIndexes(&table, rows, cols, 4);
+        count = XTableWidget_selectedItems(&table, hits, 4);
         XAPI_EXPECT(count >= 4,
-                    "selectedIndexes 输出范围选中的 4 格");
+                    "selectedItems 输出范围选中的 4 格");
         {
-            int top[4];
-            int left[4];
-            int bottom[4];
-            int right[4];
-            count = XTableWidget_selectedRanges(&table, top, left, bottom,
-                                                right, 4);
-            XAPI_EXPECT(count >= 1 && top[0] == 0 && bottom[0] == 1,
+            XTableWidgetSelectionRange rngs[4];
+            count = XTableWidget_selectedRanges(&table, rngs, 4);
+            XAPI_EXPECT(count >= 1 &&
+                        XTableWidgetSelectionRange_topRow(&rngs[0]) == 0 &&
+                        XTableWidgetSelectionRange_bottomRow(&rngs[0]) == 1,
                         "selectedRanges 归并连续行为一条范围");
         }
-        XTableWidget_setRangeSelected(&table, 1, 1, 0, 0, false);
+        {
+            XTableWidgetSelectionRange rng =
+                XTableWidgetSelectionRange_create(0, 0, 1, 1);
+            XTableWidget_setRangeSelected(&table, &rng, false);
+        }
         XAPI_EXPECT(true, "setRangeSelected 倒置范围自动归一化（取消路径）");
-        count = XTableWidget_selectedItems(&table, rows, cols, 4);
+        count = XTableWidget_selectedItems(&table, hits, 4);
         XAPI_EXPECT(count >= 0,
-                    "selectedItems 转发 selectedIndexes（语义重合）");
+                    "selectedItems 对应 Qt 选中条目集");
         /* ---- 单元格部件挂载（对标 setCellWidget/cellWidget：表接管
          *      所有权——reparent 到视口+摆位+显示；removeCellWidget/
          *      setCellWidget(NULL)/同格重挂均 deleteLater 旧件） ---- */
@@ -3288,7 +3310,9 @@ int xapi_views_run(void)
             before = XWidget_geometry(cellWidget);
             /* 加行制造滚动空间→滚到第 19 行→row2 挂件应被藏起或移出视口。 */
             XTableWidget_setRowCount(&table, 20);
-            XTableWidget_scrollToItem(&table, 19, 1);
+            XTableWidget_scrollToItem(
+                &table, XTableWidget_item(&table, 19, 1),
+                XAbstractItemViewScrollHint_EnsureVisible);
             after = XWidget_geometry(cellWidget);
             XAPI_EXPECT(!XWidget_isVisible(cellWidget) ||
                         after.y != before.y,
@@ -3320,9 +3344,9 @@ int xapi_views_run(void)
         }
         {
             vsig_reset();
-            XTableWidget_setText(&table, 0, 0, "临时值");
+            xTwSetTextUtf8(&table, 0, 0, "临时值");
             XTableWidget_setItem(&table, 0, 0, NULL);
-            XAPI_EXPECT(xapi_cstr(XTableWidget_text(&table, 0, 0))[0] == '\0',
+            XAPI_EXPECT(xapi_cstr(xTwTextUtf8(&table, 0, 0))[0] == '\0',
                         "setItem(NULL) 清空该格（takeItem+delete 同）");
         }
         /* ---- takeItem（对标 takeItem：文本所有权转移） ---- */
@@ -3330,7 +3354,7 @@ int xapi_views_run(void)
         taken = XTableWidget_takeItem(&table, 2, 1);
         XAPI_EXPECT(taken != NULL,
                     "takeItem 归还单元格文本所有权");
-        XAPI_EXPECT(xapi_cstr(XTableWidget_text(&table, 2, 1))[0] == '\0' &&
+        XAPI_EXPECT(xapi_cstr(xTwTextUtf8(&table, 2, 1))[0] == '\0' &&
                     g_sig.tblCellChanged >= 1,
                     "取出后置空并发射 cellChanged");
         if (taken) XClassDelete((XClass*)taken);
@@ -3359,46 +3383,50 @@ int xapi_views_run(void)
         }
         {
             /* 排序开关/持久编辑器转发（Qt 继承面在本层的显式转发）。 */
-            XTableWidget_setSortingEnabled(&table, true);
-            XAPI_EXPECT(XTableWidget_isSortingEnabled(&table),
+            XTableView_setSortingEnabled(&table, true);
+            XAPI_EXPECT(XTableView_isSortingEnabled(&table),
                         "setSortingEnabled/isSortingEnabled 往返");
-            XTableWidget_setSortingEnabled(&table, false);
-            XAPI_EXPECT(!XTableWidget_isSortingEnabled(&table),
+            XTableView_setSortingEnabled(&table, false);
+            XAPI_EXPECT(!XTableView_isSortingEnabled(&table),
                         "排序开关复位");
-            XTableWidget_openPersistentEditor(&table, 0, 0);
-            XTableWidget_closePersistentEditor(&table, 0, 0);
+            XTableWidget_openPersistentEditor(
+                &table, XTableWidget_item(&table, 0, 0));
+            XTableWidget_closePersistentEditor(
+                &table, XTableWidget_item(&table, 0, 0));
             XAPI_EXPECT(true, "open/closePersistentEditor 转发无崩溃");
         }
         {
-            XString* rowText = XTableWidget_itemFromIndex(&table, 0);
-            XAPI_EXPECT(rowText != NULL,
-                        "itemFromIndex 返回行首列文本副本");
-            if (rowText) XClassDelete((XClass*)rowText);
+            const XTableWidgetItem* rowItem =
+                XTableWidget_itemFromIndex(&table, 0, 0);
+            XAPI_EXPECT(rowItem != NULL &&
+                        rowItem == XTableWidget_item(&table, 0, 0),
+                        "itemFromIndex(row,col) 返回该格条目（对齐 Qt）");
         }
         /* ---- 视觉序（平铺模型视觉序=逻辑序） ---- */
         XAPI_EXPECT(XTableWidget_visualRow(&table, 2) == 2 &&
                     XTableWidget_visualColumn(&table, 1) == 1,
                     "visualRow/visualColumn 恒等（平铺无重排映射）");
-        /* ---- 原型承载（对标 setItemPrototype 不透明记录） ---- */
+        /* ---- 原型（对齐 Qt：setItemPrototype 接管所有权） ---- */
         {
-            XTableWidgetItem proto;
-            memset(&proto, 0, sizeof(proto));
-            XTableWidget_setItemPrototype(&table, &proto);
-            XAPI_EXPECT(XTableWidget_itemPrototype(&table) == &proto,
-                        "setItemPrototype 不透明借用记录");
+            XTableWidgetItem* proto = XTableWidgetItem_create_utf8(
+                "原型", XTableWidgetItem_Type);
+            XTableWidget_setItemPrototype(&table, proto);
+            XAPI_EXPECT(XTableWidget_itemPrototype(&table) == proto,
+                        "setItemPrototype 接管所有权并回读同一指针");
             XTableWidget_setItemPrototype(&table, NULL);
             XAPI_EXPECT(XTableWidget_itemPrototype(&table) == NULL,
-                        "setItemPrototype(NULL) 清除");
+                        "setItemPrototype(NULL) 清除（旧原型由表格释放）");
         }
         /* ---- scrollToItem / editItem / clearSpans（便捷转发） ---- */
-        XTableWidget_scrollToItem(&table, 2, 1);
-        XTableWidget_editItem(&table, 0, 0);
-        XTableWidget_clearSpans(&table);
+        XTableWidget_scrollToItem(&table, XTableWidget_item(&table, 2, 1),
+                                  XAbstractItemViewScrollHint_EnsureVisible);
+        XTableWidget_editItem(&table, XTableWidget_item(&table, 0, 0));
+        XTableView_clearSpans(&table);
         XAPI_EXPECT(true, "scrollToItem/editItem/clearSpans 便捷转发无崩溃");
         /* ---- clearContents：保留行列数、清空内容（对标 clearContents） ---- */
         XTableWidget_clearContents(&table);
         XAPI_EXPECT(XTableWidget_rowCount(&table) == 3 &&
-                    strcmp(xapi_cstr(XTableWidget_text(&table, 0, 0)), "") == 0,
+                    strcmp(xapi_cstr(xTwTextUtf8(&table, 0, 0)), "") == 0,
                     "clearContents 清内容且保留 3 行");
         XAPI_EXPECT(strcmp(XAbstractItemModel_data_2(XTableWidget_model(&table),
                                                      0, 0), "") == 0,

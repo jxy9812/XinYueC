@@ -87,6 +87,51 @@ static bool xtv_hiddenRaw(const bool* table, int count, int index)
     return table[index];
 }
 
+/** @brief 逐行行高表按需扩容（仅增长，新增项默认 0=未覆写）。
+ * @param self 目标视图。
+ * @param need 需要覆盖的行号数（即逻辑长度下限）。
+ * @return 扩容成功（或容量已覆盖）返回 true；分配失败返回 false 且原表不变。
+ * @note  与列宽表（`m_colWidths` / `m_colCapacity`）同款**倍增容量模型**：
+ *        容量决定是否 realloc，逻辑长度（`m_rowHeightCount`）只决定
+ *        需要清零到哪一行。此前直接用逻辑长度比较并恰好扩到 need，
+ *        导致每加一行就 realloc 一次，容量字段形同虚设。
+ *        缩容不回收（隐藏/覆写状态与模型尺寸解耦，对齐 Qt 分段行为）。 */
+static bool xtv_ensureRowHeights(XTableView* self, int need)
+{
+    int16_t* grown;
+    int cap;
+    if (!self) return false;
+    if (need < 0) need = 0;
+    if (need > 0x7FFF) need = 0x7FFF; /* int16_t 承载上限，防截断回绕。 */
+    if (need <= self->m_rowHeightCount) return true;
+    if (need > self->m_rowHeightCapacity) {
+        /* 倍增（起点 8，与列宽表同风格），按 int16_t 上限收敛。 */
+        cap = self->m_rowHeightCapacity > 0 ? self->m_rowHeightCapacity : 8;
+        while (cap < need) {
+            if (cap > 0x3FFF) { cap = 0x7FFF; break; }
+            cap *= 2;
+        }
+        grown = (int16_t*)XRealloc_System(
+            self->m_rowHeights, sizeof(int16_t) * (size_t)cap);
+        if (!grown) return false;
+        /* 新容量区清零：未覆写槽必须可判定为 0。 */
+        XMemset(grown + self->m_rowHeightCapacity, 0,
+                sizeof(int16_t) *
+                    (size_t)(cap - self->m_rowHeightCapacity));
+        self->m_rowHeights = grown;
+        self->m_rowHeightCapacity = (int16_t)cap;
+    }
+    self->m_rowHeightCount = (int16_t)need;
+    return true;
+}
+
+/** @brief 缺省行高（不按 row 分派；绘制/滚动范围快路径）。 */
+static int xtv_defaultRowHeight(const XTableView* self)
+{
+    if (!self) return XTV_DEFAULT_ROW_HEIGHT;
+    return self->m_rowHeight > 0 ? self->m_rowHeight : XTV_DEFAULT_ROW_HEIGHT;
+}
+
 /* ==================== 内部辅助（合并区间表） ==================== */
 
 /** @brief 合并区间表按需扩容（倍增；原表内容保留）。
@@ -145,6 +190,9 @@ void XTableView_init(XTableView* self, XWidget* parent, XWidgetFlags flags)
     XAbstractItemView_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XTableView);
     self->m_rowHeight = XTV_DEFAULT_ROW_HEIGHT;
+    self->m_rowHeights = NULL;
+    self->m_rowHeightCount = 0;
+    self->m_rowHeightCapacity = 0;
     self->m_gridStyle = XTABLEVIEW_GRID_SOLID;
     self->m_gridVisible = 1;
     self->m_wordWrap = false;
@@ -197,6 +245,12 @@ static void VXTableView_deinit(XTableView* self)
         XFree_System(self->m_colWidths);
         self->m_colWidths = NULL;
     }
+    if (self->m_rowHeights) {
+        XFree_System(self->m_rowHeights);
+        self->m_rowHeights = NULL;
+    }
+    self->m_rowHeightCount = 0;
+    self->m_rowHeightCapacity = 0;
     if (self->m_rowHidden) {
         XFree_System(self->m_rowHidden);
         self->m_rowHidden = NULL;
@@ -247,6 +301,25 @@ static void VXTableView_copy(XTableView* self, const XTableView* other)
             XMemmove(self->m_colWidths, other->m_colWidths,
                      sizeof(int) * (size_t)n);
             self->m_colCapacity = n;
+        }
+    }
+    /* 逐行行高覆写表深拷贝（[根修 2026-11-03] 此前 copy 漏掉该表，
+     * 拷贝后全部逐行覆写丢失、只剩缺省行高）。 */
+    if (self->m_rowHeights) {
+        XFree_System(self->m_rowHeights);
+        self->m_rowHeights = NULL;
+    }
+    self->m_rowHeightCount = 0;
+    self->m_rowHeightCapacity = 0;
+    n = other->m_rowHeightCount;
+    if (n > 0 && other->m_rowHeights) {
+        self->m_rowHeights = (int16_t*)XMalloc_System(
+            sizeof(int16_t) * (size_t)n);
+        if (self->m_rowHeights) {
+            XMemmove(self->m_rowHeights, other->m_rowHeights,
+                     sizeof(int16_t) * (size_t)n);
+            self->m_rowHeightCount = (int16_t)n;
+            self->m_rowHeightCapacity = (int16_t)n;
         }
     }
     /* 行隐藏状态表深拷贝。 */
@@ -318,10 +391,24 @@ static void VXTableView_move(XTableView* self, XTableView* other)
     self->m_gridVisible = other->m_gridVisible;
     self->m_wordWrap = other->m_wordWrap;
     self->m_cornerButton = other->m_cornerButton;
+    /* [根修 2026-11-03] 先释放目标已有平行表，再接管源资源：
+     * 此前 move 直接覆盖指针，目标原有数组整块泄漏。 */
+    if (self->m_colWidths) XFree_System(self->m_colWidths);
+    if (self->m_rowHeights) XFree_System(self->m_rowHeights);
+    if (self->m_rowHidden) XFree_System(self->m_rowHidden);
+    if (self->m_colHidden) XFree_System(self->m_colHidden);
+    if (self->m_spans) XFree_System(self->m_spans);
     self->m_colWidths = other->m_colWidths;
     self->m_colCapacity = other->m_colCapacity;
     other->m_colWidths = NULL;
     other->m_colCapacity = 0;
+    /* 逐行行高覆写表随移动转移（[根修 2026-11-03] 此前 move 完全漏掉）。 */
+    self->m_rowHeights = other->m_rowHeights;
+    self->m_rowHeightCount = other->m_rowHeightCount;
+    self->m_rowHeightCapacity = other->m_rowHeightCapacity;
+    other->m_rowHeights = NULL;
+    other->m_rowHeightCount = 0;
+    other->m_rowHeightCapacity = 0;
     self->m_rowHidden = other->m_rowHidden;
     self->m_rowHiddenCount = other->m_rowHiddenCount;
     other->m_rowHidden = NULL;
@@ -389,6 +476,8 @@ void XTableView_setColumnWidth(XTableView* self, int column, int width)
         XAbstractScrollArea_setContentSize(
             area, area->m_contentWidth + (width - old),
             area->m_contentHeight);
+        /* [对齐 Qt 2026-11-03] 列宽变化 ⇒ 水平 ScrollPerItem 的 singleStep 更新。 */
+        XAbstractItemView_syncScrollSteps(&self->m_base);
     }
     /* 对齐 Qt 6.8 QTableView::setColumnWidth → horizontalHeader()->
      * resizeSection()（qtableview.cpp: setColumnWidth 直接转发 header）：
@@ -413,26 +502,34 @@ int XTableView_columnWidth(const XTableView* self, int column)
     return self->m_colWidths[column];
 }
 
-void XTableView_setRowHeight(XTableView* self, int height)
+void XTableView_setRowHeight(XTableView* self, int row, int height)
 {
-    if (self && height > 0) {
-        self->m_rowHeight = height;
-        /* 对齐 Qt 6.8：垂直表头段=行，rowHeight() =
-         * verticalHeader()->sectionSize(row)；未逐行覆写段时回落
-         * defaultSectionSize——统一行高语义下把 defaultSectionSize
-         * 同步为本值即等价逐段全量 resizeSection。 */
-        if (self->m_verticalHeader)
-            XHeaderView_setDefaultSectionSize(self->m_verticalHeader,
-                                              height);
+    if (!self || row < 0 || height <= 0) return;
+    /* 对齐 Qt 6.8 QTableView::setRowHeight（qtableview.cpp:2600）：
+     * verticalHeader->resizeSection(row, height)——只影响该行。 */
+    if (!xtv_ensureRowHeights(self, row + 1)) return;
+    self->m_rowHeights[row] =
+        (int16_t)(height > 0x7FFF ? 0x7FFF : height);
+    if (self->m_verticalHeader) {
+        if (row >= XHeaderView_count(self->m_verticalHeader))
+            XHeaderView_setCount(self->m_verticalHeader, row + 1);
+        XHeaderView_resizeSection(self->m_verticalHeader, row, height);
     }
+    /* [对齐 Qt 2026-11-03] 行高变化 ⇒ ScrollPerItem 的 singleStep 随之更新。 */
+    XAbstractItemView_syncScrollSteps(&self->m_base);
+    XWidget_update((XWidget*)self);
 }
 
-int XTableView_rowHeight(const XTableView* self)
+int XTableView_rowHeight(const XTableView* self, int row)
 {
-    /* 对齐 Qt：优先读垂直表头段缺省尺寸（未逐行覆写段即统一行高）。 */
-    if (self && self->m_verticalHeader)
-        return XHeaderView_defaultSectionSize(self->m_verticalHeader);
-    return self ? self->m_rowHeight : XTV_DEFAULT_ROW_HEIGHT;
+    /* 对齐 Qt 6.8 QTableView::rowHeight（qtableview.cpp:2611）：
+     * verticalHeader->sectionSize(row)。段被逐行覆写则取覆写值，否则回落
+     * defaultSectionSize（= 本视图缺省行高 m_rowHeight）。 */
+    if (!self) return XTV_DEFAULT_ROW_HEIGHT;
+    if (row >= 0 && row < self->m_rowHeightCount && self->m_rowHeights &&
+        self->m_rowHeights[row] > 0)
+        return self->m_rowHeights[row];
+    return xtv_defaultRowHeight(self);
 }
 
 /* ==================== 按内容调整（文本测量简化实现） ==================== */
@@ -508,7 +605,7 @@ void XTableView_resizeRowToContents(XTableView* self, int row)
     XClassDeinit((XClass*)&font);
     if (content <= 0) return;
     /* 统一行高承载：单行调整即整体行高（与 setRowHeight 同一存储）。 */
-    XTableView_setRowHeight(self, content + 2 * XTV_CONTENT_VMARGIN);
+    XTableView_setRowHeight(self, row, content + 2 * XTV_CONTENT_VMARGIN);
     XWidget_update((XWidget*)self);
 }
 
@@ -796,7 +893,7 @@ XRect XTableView_visualRect(const XTableView* self, int row, int column)
         r.y -= offY;
     }
     r.width = XTableView_columnWidth(self, column);
-    r.height = XTableView_rowHeight(self);
+    r.height = XTableView_rowHeight(self, row);
     return r;
 }
 
@@ -857,7 +954,8 @@ void XTableView_setSpan(XTableView* self, int row, int column,
 {
     int i;
     if (!self || row < 0 || column < 0) return;
-    if (rowSpan <= 0 || columnSpan <= 0) return;
+    /* 对齐 Qt 6.8（qtableview.cpp:3436）：仅负值拒绝。 */
+    if (rowSpan < 0 || columnSpan < 0) return;
     for (i = 0; i < self->m_spanCount; ++i) {
         XTableViewSpan* s = &self->m_spans[i];
         if (s->row != row || s->column != column) continue;
@@ -885,31 +983,28 @@ void XTableView_setSpan(XTableView* self, int row, int column,
     XWidget_update((XWidget*)self);
 }
 
-bool XTableView_spanAt(const XTableView* self, int row, int column,
-                       int* rowSpanOut, int* columnSpanOut,
-                       int* originRowOut, int* originColumnOut)
+int XTableView_rowSpan(const XTableView* self, int row, int column)
 {
     const XTableViewSpan* s;
-    if (rowSpanOut) *rowSpanOut = 1;
-    if (columnSpanOut) *columnSpanOut = 1;
-    if (originRowOut) *originRowOut = row;
-    if (originColumnOut) *originColumnOut = column;
-    if (!self || row < 0 || column < 0) return false;
+    if (!self || row < 0 || column < 0) return 1;
     s = xtv_spanFind(self, row, column);
-    if (!s) return false;
-    if (rowSpanOut) *rowSpanOut = s->rowSpan;
-    if (columnSpanOut) *columnSpanOut = s->columnSpan;
-    if (originRowOut) *originRowOut = s->row;
-    if (originColumnOut) *originColumnOut = s->column;
-    return true;
+    return s ? s->rowSpan : 1;
+}
+
+int XTableView_columnSpan(const XTableView* self, int row, int column)
+{
+    const XTableViewSpan* s;
+    if (!self || row < 0 || column < 0) return 1;
+    s = xtv_spanFind(self, row, column);
+    return s ? s->columnSpan : 1;
 }
 
 /* ==================== 滚动与偏移（对标 QTableView::scrollTo/horizontalOffset/verticalOffset） ==================== */
 
-void XTableView_scrollTo(XTableView* self, int row, int column)
+void XTableView_scrollTo(XTableView* self, int row, int column, int hint)
 {
-    /* 对标 Qt QTableView::scrollTo → 基类公共面（EnsureVisible）。 */
-    XAbstractItemView_scrollTo((XAbstractItemView*)self, row, column);
+    /* 对齐 Qt QTableView::scrollTo(index, hint) → 基类分派。 */
+    XAbstractItemView_scrollToHint((XAbstractItemView*)self, row, column, hint);
 }
 
 int XTableView_horizontalOffset(const XTableView* self)
@@ -928,20 +1023,6 @@ int XTableView_verticalOffset(const XTableView* self)
     bar = XAbstractScrollArea_verticalScrollBar(
         (XAbstractScrollArea*)self);
     return bar ? XAbstractSlider_value((XAbstractSlider*)bar) : 0;
-}
-
-/* ==================== 视觉序（平铺模型恒等映射） ==================== */
-
-int XTableView_visualIndex(const XTableView* self, int column)
-{
-    (void)self;
-    return column >= 0 ? column : -1;
-}
-
-int XTableView_visualRow(const XTableView* self, int row)
-{
-    (void)self;
-    return row >= 0 ? row : -1;
 }
 
 void XTableView_clearSpans(XTableView* self)
@@ -979,32 +1060,29 @@ void XTableView_setVerticalHeader(XTableView* self, XHeaderView* header)
 XHeaderView* XTableView_verticalHeader(const XTableView* self)
 { return self ? self->m_verticalHeader : NULL; }
 
-/* ==================== 命中测试（行高/列宽/隐藏感知） ==================== */
+/* ==================== 命中测试（行高/列宽/隐藏/合并感知） ==================== */
 
-static bool VXTableView_indexAt(const XAbstractItemView* view, int x, int y,
-                                int* outRow, int* outCol)
+bool XTableView_indexAt(const XTableView* self, int x, int y,
+                        int* outRow, int* outCol)
 {
-    XTableView* tv = (XTableView*)view;
     XAbstractItemModel* model;
     int row;
     int col;
     int cols;
     if (outRow) *outRow = -1;
     if (outCol) *outCol = -1;
-    if (!tv) return false;
-    /* 行/列数变化生效入口：先同步隐藏状态表覆盖当前模型尺寸。 */
-    xtv_syncHiddenTables(tv);
-    model = view->m_model;
+    if (!self) return false;
+    model = self->m_base.m_model;
     if (!model || model->m_rows <= 0 || model->m_cols <= 0) return false;
     cols = model->m_cols;
-    row = XTableView_rowAt(tv, y);
-    col = XTableView_columnAt(tv, x);
+    row = XTableView_rowAt(self, y);
+    col = XTableView_columnAt(self, x);
     if (row < 0) return false;
     /* 保留原钳制语义：横向越界时收敛到末列（x<0 收敛到首列）。 */
     if (col < 0) col = (x < 0) ? 0 : cols - 1;
+    /* 对齐 Qt QTableView::indexAt：合并区间被覆盖格反查回原点。 */
     {
-        /* 合并区间命中映射（对标 Qt）：被覆盖格反查回原点。 */
-        const XTableViewSpan* span = xtv_spanFind(tv, row, col);
+        const XTableViewSpan* span = xtv_spanFind(self, row, col);
         if (span) {
             row = span->row;
             col = span->column;
@@ -1013,6 +1091,18 @@ static bool VXTableView_indexAt(const XAbstractItemView* view, int x, int y,
     if (outRow) *outRow = row;
     if (outCol) *outCol = col;
     return true;
+}
+
+static bool VXTableView_indexAt(const XAbstractItemView* view, int x, int y,
+                                int* outRow, int* outCol)
+{
+    XTableView* tv = (XTableView*)view;
+    if (outRow) *outRow = -1;
+    if (outCol) *outCol = -1;
+    if (!tv) return false;
+    /* 行/列数变化生效入口：先同步隐藏状态表覆盖当前模型尺寸。 */
+    xtv_syncHiddenTables(tv);
+    return XTableView_indexAt(tv, x, y, outRow, outCol);
 }
 
 /* ==================== 绘制（model 数据通路） ==================== */

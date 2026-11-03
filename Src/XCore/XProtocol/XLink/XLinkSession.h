@@ -105,7 +105,10 @@ typedef struct XLinkPendingRequest {
      * （u16 后 2B、bool 后 3B、u8 后 3B），sizeof=152；现序
      * （u32,u32,u32,u16,u8,bool,buf[128]）零填充，sizeof=144。
      * 待应答表 8 槽 → 每会话省 64 字节。成员名与语义不变，
-     * 调用点零改动。 */
+     * 调用点零改动。
+     * 【2026-11-03 dataType】新增 m_dataType 字节使 sizeof 由 144 增至 148
+     * （4 字节对齐回填，无填充洞可利用）：待应答表 8 槽 → 每会话 +32 字节。
+     * 该开销换来"自动重发与原帧数据类型一致"，不可省略。 */
     uint32_t m_requestId;    /**< 本端分配的关联 id。 */
     uint32_t m_sendTick;     /**< 发出（或最近一次自动重发）时的单调毫秒值，用于超时判定。 */
     uint32_t m_payloadLen;   /**< 快照长度（字节）：可重试时等于原始载荷长度
@@ -114,6 +117,9 @@ typedef struct XLinkPendingRequest {
     uint16_t m_command;      /**< 该 Request 的命令号（msgCode），用于匹配应答。 */
     uint8_t  m_retryCount;   /**< 已自动重发次数；0xFF 为"不可重试"哨兵
                                 （超长载荷），永远不满足重试额度判定。
+                                仅供实现使用。 */
+    uint8_t  m_dataType;     /**< 该 Request 的载荷数据类型（XLinkDataType），
+                                自动重发时原样回填，保证重发帧与原帧一致。
                                 仅供实现使用。 */
     bool     m_used;         /**< 槽位占用标志；false 表示空闲槽。 */
     uint8_t  m_payload[XLINK_RETRY_PAYLOAD_MAX]; /**< 请求载荷快照（自动重发用，
@@ -423,10 +429,18 @@ void XLinkSession_pump(XLinkSession* self, uint32_t nowMs);
 /**
  * @brief      发送一帧消息（内部按帧头 + 载荷两段写出，不拼大缓冲）。
  * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
- * @param      frame 帧头（借用）；m_payloadLen 须 <= XLINK_MAX_PAYLOAD。
+ * @param      frame 帧头（借用）；m_payloadLen 须 <= XLINK_MAX_PAYLOAD，
+ *             m_dataType 须为 XLinkDataType 的合法取值。
  * @param      payload 载荷首地址（借用，不取得所有权）；长度可为 0，此时允许为 NULL。
  * @return     成功返回 true；参数非法、未挂载设备或传输写入失败返回 false。
  * @note       失败时对象状态不变（半帧已写出属传输层现象，由对端超时兜底）。
+ * @warning    **调用方必须显式设置 frame->m_dataType**（协议内务帧填
+ *             XLinkDataType_Raw）。该字段无默认值——栈上未清零的
+ *             XLinkFrameHeader 会带上任意字节，发送侧校验会拒绝非法值，
+ *             而对端收到本层放行的帧后也会独立再校验一次。惯用写法是先
+ *             memset(&frame, 0, sizeof(frame)) 再逐字段赋值。
+ * @note       大多数场景不必直接用本函数：sendRequest/sendResponse/
+ *             sendPublish 及其 _ex 变体已封装帧头构造与校验。
  */
 bool XLinkSession_send(XLinkSession* self, const XLinkFrameHeader* frame,
                        const uint8_t* payload);
@@ -459,6 +473,24 @@ bool XLinkSession_sendRequest(XLinkSession* self, uint16_t command,
                               uint32_t* outRequestId);
 
 /**
+ * @brief      发送请求帧并登记待应答（扩展版：显式指定载荷数据类型）。
+ * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
+ * @param      command 命令号（线上 msgCode）。
+ * @param      dataType 载荷数据类型，见 XLinkDataType；自动重发时原样保留。
+ * @param      payload 请求载荷（借用，不取得所有权）；可为 NULL。
+ * @param      length 载荷长度（字节）；可为 0。
+ * @param      outRequestId 本端分配的关联 id（调用方提供存储空间）；可为 NULL。
+ * @return     成功返回 true；参数非法（dataType 越界）、待应答表已满或发送失败
+ *             返回 false。
+ * @note       与 XLinkSession_sendRequest 的唯一区别是帧头 m_dataType 字段的
+ *             取值：前者恒填 XLinkDataType_Raw。载荷本身不被本层解析。
+ */
+bool XLinkSession_sendRequest_ex(XLinkSession* self, uint16_t command,
+                                 XLinkDataType dataType,
+                                 const uint8_t* payload, uint32_t length,
+                                 uint32_t* outRequestId);
+
+/**
  * @brief      发送应答帧，回带对端的关联 id。
  * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
  * @param      requestId 原样回带对端 Request 的关联 id。
@@ -472,6 +504,22 @@ bool XLinkSession_sendResponse(XLinkSession* self, uint32_t requestId,
                                uint32_t length);
 
 /**
+ * @brief      发送应答帧（扩展版：显式指定载荷数据类型）。
+ * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
+ * @param      requestId 原样回带对端 Request 的关联 id。
+ * @param      command 与请求相同的命令号（线上 msgCode）。
+ * @param      dataType 载荷数据类型，见 XLinkDataType。
+ * @param      payload 应答载荷（借用，不取得所有权）；可为 NULL。
+ * @param      length 载荷长度（字节）；可为 0。
+ * @return     成功返回 true；参数非法（dataType 越界）或发送失败返回 false。
+ * @note       应答方的 dataType 与被应答请求的 dataType 无需一致——请求与
+ *             应答是两个独立载荷，各自声明自己的格式。
+ */
+bool XLinkSession_sendResponse_ex(XLinkSession* self, uint32_t requestId,
+                                  uint16_t command, XLinkDataType dataType,
+                                  const uint8_t* payload, uint32_t length);
+
+/**
  * @brief      发送推送帧（不等应答，产生即发）。
  * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
  * @param      topicId 主题号（线上 msgCode），须 >= XLINK_TOPIC_USER_BASE。
@@ -481,9 +529,28 @@ bool XLinkSession_sendResponse(XLinkSession* self, uint32_t requestId,
  * @note       线上载荷 = [u32 topicId][业务载荷]，故业务载荷上限为
  *             XLINK_MAX_PAYLOAD - 4（XLINK_MAX_PAYLOAD 约束线上载荷总量）。
  *             超出上限直接返回 false，不截断、不部分发送。
+ * @note       帧头 m_dataType 恒填 XLinkDataType_Raw；需声明格式时用
+ *             XLinkSession_sendPublish_ex。
  */
 bool XLinkSession_sendPublish(XLinkSession* self, uint32_t topicId,
                               const uint8_t* payload, uint32_t length);
+
+/**
+ * @brief      发送推送帧（扩展版：显式指定载荷数据类型）。
+ * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
+ * @param      topicId 主题号（线上 msgCode），须 >= XLINK_TOPIC_USER_BASE。
+ * @param      dataType 载荷数据类型，见 XLinkDataType。
+ * @param      payload 推送载荷（借用，不取得所有权）；可为 NULL。
+ * @param      length 业务载荷长度（字节）；可为 0。
+ * @return     成功返回 true；参数非法（topicId 越界/dataType 越界）或发送失败
+ *             返回 false。
+ * @note       载荷上限与 XLinkSession_sendPublish 相同（业务载荷 <=
+ *             XLINK_MAX_PAYLOAD - 4）。dataType 只描述业务载荷，不含
+ *             topicId 前缀。
+ */
+bool XLinkSession_sendPublish_ex(XLinkSession* self, uint32_t topicId,
+                                 XLinkDataType dataType,
+                                 const uint8_t* payload, uint32_t length);
 
 /* ========================================================================== */
 /*                        订阅                                               */

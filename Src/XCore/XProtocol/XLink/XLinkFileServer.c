@@ -236,6 +236,7 @@ static void xfs_rejectOpen(XLinkFileServer* fs, XLinkSession* session,
     out.m_msgClass = XLinkMsgClass_File;
     out.m_msgCode = XLinkFileCode_OpenAck;
     out.m_requestId = frame->m_requestId;
+    out.m_dataType = XLinkDataType_Raw; /* 文件帧载荷由 XLinkFile 自行编码 */
     (void)XLinkSession_send(session, &out, buf);
 }
 
@@ -341,6 +342,7 @@ static void xfs_onOpen(XLinkFileServer* fs, XLinkSession* session,
             out.m_msgClass = XLinkMsgClass_File;
             out.m_msgCode = XLinkFileCode_OpenAck;
             out.m_requestId = frame->m_requestId;
+            out.m_dataType = XLinkDataType_Raw; /* 文件帧载荷由 XLinkFile 自行编码 */
             (void)XLinkSession_send(session, &out, ackBuf);
         }
         return;

@@ -12,12 +12,17 @@
  *             XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API。
  *
  *             与 Qt 的裁剪边界（有意偏离项，均与既有对齐类同口径记录）：
- *             - NativeFormat 在 Qt 桌面绑定平台原生存储（Windows 注册表/
- *               macOS plist）；本实现统一退化为 INI 文件后端（Linux 上
- *               Qt 的 NativeFormat 本就是 INI 文件），跨平台行为一致；
- *             - Registry32Format/Registry64Format 枚举值保留对齐，但本层
- *               禁用平台 API、无注册表设备后端，使用时置
- *               XSettings_AccessError 且读写均为空，不产生文件；
+ *             - NativeFormat 在 Windows 上走注册表（对齐 Qt 的
+ *               QWinSettingsPrivate），其余平台退化为 INI 文件（Qt 在
+ *               Linux 上 NativeFormat 本就是 INI 文件）；
+ *             - Registry32Format/Registry64Format 在 Windows 上是真后端，
+ *               带 KEY_WOW64_32KEY/KEY_WOW64_64KEY 视图；非 Windows 平台
+ *               仅有枚举值、无后端，操作置 XSettings_AccessError；
+ *             - Windows 上 NativeFormat + 文件名构造器把字符串按注册表路径
+ *               解析（只认 HKEY_CURRENT_USER/HKCU/HKEY_LOCAL_MACHINE/HKLM/
+ *               HKEY_CLASSES_ROOT/HKCR/HKEY_USERS/HKU 前缀，不匹配则置
+ *               AccessError 且不建文件），与 Qt 完全一致——想指定 INI 文件
+ *               必须显式传 IniFormat；
  *             - Qt 经 QFileSystemWatcher 监听外部修改后重载（QSettings::
  *               event 处理 QDynamicFileEvent）；本实现文件仅在首次访问与
  *               sync() 时读写，不监听外部变更，也无对应 event 分支；
@@ -32,9 +37,15 @@
  *               WebLocalStorageFormat/WebIndexedDBFormat 不存在。
  * @note       模块总开关 XSETTINGS_ON 定义于本头文件（兜底默认值，先于
  *             包含依赖生效，对齐 XAction.h 口径）；关闭时裁剪本头文件
- *             全部公共声明。对象字段由 XClass 生命周期管理；Qt 保证
- *             QSettings 对象线程安全（内部互斥），本实现按裁剪决策不加
- *             内部锁，多线程访问由调用方自行串行化。
+ *             全部公共声明。对象字段由 XClass 生命周期管理。
+ *
+ *             **线程安全（对标 Qt 的 reentrant 保证）**：每个 XSettings
+ *             对象内部持有一把递归互斥（对标 QConfFile::mutex），全部公开
+ *             API 入口加锁、出口解锁，因此同一对象可被多个线程同时访问；
+ *             静态配置表（默认格式、setPath 覆盖目录、registerFormat 注册表）
+ *             由进程级全局锁（对标 settingsGlobalMutex）保护。用户提供的
+ *             自定义格式读/写回调在**不持锁**状态下调用（先取回调快照再
+ *             解锁），故回调内部可安全重入 XSettings API。
  * @author     XinYueC 团队
  */
 #ifndef XSETTINGS_H

@@ -1062,19 +1062,23 @@ const char* XCommonStyle_elideText(char* buf, int bufCap, const char* text,
 {
     int fullW;
     int len;
-    const char* ell = "\xe2\x80\xa6"; /* U+2026 HORIZONTAL ELLIPSIS */
+    const char* ell;
     int ellW;
     if (!text || !text[0] || maxW <= 0) return text;
     fullW = XPainter_textWidth(font, text);
     if (fullW <= maxW) return text;
     len = (int)XStrlen(text);
     if (len >= bufCap) len = bufCap - 1;
-    /* [码点边界 2026-10-07] 逐码点推进（XTextUtf8_seqLen 钳位序列长
-       度），刀口只落码点边界——旧实现逐字节测宽/切割：多字节 CJK 每
-       字节被按 0xFFFD 计宽（过早省略 ~1/3 容量），cut=i+1 可落在
-       UTF-8 序列中间腰斩出乱码字节。与 dock 标题省略（本文件
-       XTextUtf8_seqLen 同款）及 Qt elide 按 grapheme 边界步进对齐。 */
-    if (mode == 0) { /* 无省略模式：截断不加点 */
+    if (!buf || bufCap <= 1) return text;
+    /* 省略号字形：优先 U+2026；本库内置点阵字体缺该字形时回退 "..."。
+     * 与 Qt 的 elidedText 缺字退化口径一致（Qt 亦优先 U+2026）。 */
+    ell = "\xe2\x80\xa6";
+    if (font && XPainter_textWidth(font, ell) <= 0) ell = "...";
+    /* [对齐 Qt 2026-11-03] mode 参数改用 Qt::TextElideMode 编号：
+     * 0=ElideLeft 省略头部 / 1=ElideRight 省略尾部 /
+     * 2=ElideMiddle 省略中段 / 3=ElideNone 截断不加省略号。
+     * 旧编号（0=截断/1=右/2=左/3=中）已废弃，全库只保留这一套。 */
+    if (mode == 3) { /* ElideNone：截断不加省略号 */
         int w = 0;
         int cut = 0;
         int i = 0;
@@ -1094,27 +1098,27 @@ const char* XCommonStyle_elideText(char* buf, int bufCap, const char* text,
     }
     ellW = XPainter_textWidth(font, ell);
     if (ellW > maxW) { buf[0] = '\0'; return buf; }
-    if (mode == 2) { /* 左省略：保留尾部（回退只在序列首字节落刀） */
+    if (mode == 0) { /* ElideLeft：保留尾部（回退只在序列首字节落刀） */
         int w = ellW;
-        int start = len;
+        int startp = len;
         int i = len;
         while (i > 0) {
-            int s = i - 1;
+            int st = i - 1;
             int cw;
-            while (s > 0 && ((unsigned char)text[s] & 0xC0) == 0x80)
-                --s;
-            cw = XPainter_textWidthRange(font, text, s, i);
+            while (st > 0 && ((unsigned char)text[st] & 0xC0) == 0x80)
+                --st;
+            cw = XPainter_textWidthRange(font, text, st, i);
             if (w + cw > maxW) break;
             w += cw;
-            start = s;
-            i = s;
+            startp = st;
+            i = st;
         }
         buf[0] = '\0';
         XStrncat(buf, ell, (size_t)bufCap - 1);
-        XStrncat(buf, text + start, (size_t)bufCap - 1);
+        XStrncat(buf, text + startp, (size_t)bufCap - 1);
         return buf;
     }
-    if (mode == 1) { /* 右省略：保留头部 */
+    if (mode == 1) { /* ElideRight：保留头部 */
         int w = ellW;
         int cut = 0;
         int i = 0;
@@ -1133,7 +1137,7 @@ const char* XCommonStyle_elideText(char* buf, int bufCap, const char* text,
         XStrncat(buf, ell, (size_t)bufCap - 1);
         return buf;
     }
-    /* 中省略（mode 3）：头尾各留一半预算。 */
+    /* ElideMiddle（mode==2）：头尾各留一半预算。 */
     {
         int w = ellW;
         int head = 0;
@@ -1167,8 +1171,8 @@ const char* XCommonStyle_elideText(char* buf, int bufCap, const char* text,
         buf[head] = '\0';
         XStrncat(buf, ell, (size_t)bufCap - 1);
         XStrncat(buf, text + tail, (size_t)bufCap - 1);
+        return buf;
     }
-    return buf;
 }
 
 /** @brief 绘制页签标签（CE_TabBarTabLabel：居中文本 + 焦点框）。 */
@@ -1189,13 +1193,12 @@ static void xcs_drawTabLabel(XStyle* self, const XStyleOption* option,
     if (textColor == 0) textColor = 0xFF000000u;
     if (option->m_text && option->m_text[0]) {
         const XFont* font = XPainter_font(painter);
-        char elided[256];
+        /* [对齐 Qt 2026-11-03] 样式层不再做省略：Qt 的 QStyleOptionTab
+         * 没有 elide 字段，QTabBar::initStyleOption 在填 option->text 时
+         * 就已经调用 elidedText（qtabbar.cpp:200-210）。此处直接用传进来的
+         * 文本，避免「控件按 Qt 编号省略一次、样式层按另一套编号再省略
+         * 一次」的双重省略与编号错配。 */
         const char* shown = option->m_text;
-        if (option->m_tabElideMode != 0 && r.width > 4) {
-            shown = XCommonStyle_elideText(elided, (int)sizeof(elided),
-                                  option->m_text, option->m_tabElideMode,
-                                  r.width - 6, font);
-        }
         textW = XPainter_textWidth(font, shown);
         textH = XPainter_textHeight(font);
         if (textH < 14) textH = 14;
@@ -2363,7 +2366,8 @@ static void xcs_drawTitleBar(XStyle* self, const XStyleOption* option,
         tb->m_base.m_base.m_text && tb->m_base.m_base.m_text[0] &&
         layout.m_label.width > 8) {
         const char* text =
-            XCommonStyle_elideText(buf, (int)sizeof(buf), tb->m_base.m_base.m_text, 1,
+            XCommonStyle_elideText(buf, (int)sizeof(buf), tb->m_base.m_base.m_text,
+                          /* ElideRight */ 1,
                           layout.m_label.width - 8, XPainter_font(painter));
         XStyle_drawItemText(self, painter, &layout.m_label,
                             XAlignment_Center, &palette, true, text,

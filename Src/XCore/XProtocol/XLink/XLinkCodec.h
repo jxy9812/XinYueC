@@ -57,25 +57,29 @@ bool XLinkCodec_decodeHello(const uint8_t* buf, size_t length,
 /* ========================================================================== */
 
 /**
- * @brief      把帧头结构打包为 12 字节小端线序。
+ * @brief      把帧头结构打包为 XLINK_HEADER_SIZE（16）字节小端线序。
  * @param      header 待打包的帧头（借用，不取得所有权）。
  * @param      buf 输出缓冲区（调用方提供存储空间），至少 XLINK_HEADER_SIZE 字节。
  * @return     成功返回 true；参数为 NULL 时返回 false，buf 保持不变。
- * @note       本函数不校验 m_payloadLen 是否越界（越界由解码侧把关，
- *             保证发帧路径无分支开销）；发送方应自行保证载荷长度合法。
+ * @note       本函数不校验 m_payloadLen 是否越界，也不校验 m_dataType 取值
+ *             （越界/非法值由解码侧把关，保证发帧路径无分支开销）；发送方
+ *             应自行保证载荷长度与数据类型合法。
+ * @note       m_reserved 三字节一律写 0，忽略结构体中的值。
  */
 bool XLinkCodec_encodeHeader(const XLinkFrameHeader* header, uint8_t* buf);
 
 /**
- * @brief      从 12 字节小端线序解出帧头，并做载荷上限校验。
+ * @brief      从 XLINK_HEADER_SIZE（16）字节小端线序解出帧头，并做载荷上限
+ *             与数据类型取值校验。
  * @param      buf 输入缓冲区（借用，不取得所有权），至少 XLINK_HEADER_SIZE 字节。
  * @param      length 输入缓冲区有效长度（字节），须 >= XLINK_HEADER_SIZE。
  * @param      out 输出帧头（调用方提供存储空间）。
- * @return     成功返回 true；参数为 NULL、length 不足 12 字节，或
- *             payloadLen 越界（> XLINK_MAX_PAYLOAD）时返回 false，
- *             此时 out 保持不变。
- * @warning    载荷上限是防畸形帧撑爆接收缓冲的安全阀，返回 false 时调用方
- *             应判定为协议违例并断开链路，不得继续按该帧头读载荷。
+ * @return     成功返回 true；参数为 NULL、length 不足 16 字节、payloadLen
+ *             越界（> XLINK_MAX_PAYLOAD），或 m_dataType 非 XLinkDataType
+ *             合法取值时返回 false，此时 out 保持不变。
+ * @warning    载荷上限是防畸形帧撑爆接收缓冲的安全阀，未知 dataType 是
+ *             挡老对端/畸形帧进业务层的安全阀；返回 false 时调用方应判定为
+ *             协议违例并断开链路，不得继续按该帧头读载荷。
  */
 bool XLinkCodec_decodeHeader(const uint8_t* buf, size_t length,
                              XLinkFrameHeader* out);

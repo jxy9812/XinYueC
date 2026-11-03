@@ -11,6 +11,14 @@
 #include "XPieSeries.h"
 #include "XBarSeries.h"
 #include "XScatterSeries.h"
+#include "XBoxPlotSeries.h"
+#include "XCandlestickSeries.h"
+#include "XLegend.h"
+#include "XDateTimeAxis.h"
+#include "XLogValueAxis.h"
+#include "XCategoryAxis.h"
+#include "XValueCategoryAxis.h"
+#include "XDateTime.h"
 #include "XAreaSeries.h"
 #include "XSplineSeries.h"
 #include "XMemory.h"
@@ -413,6 +421,19 @@ static uint32_t xcv_seriesColor(const XChartView* self, const void* series,
     return XChart_themeColor(chart, gi);
 }
 
+/** @brief 标题是否为空（NULL 或空文本）。
+ * @details XString_toUtf8 对空串返回 NULL（XString.c:511 契约），不能
+ *          对其下标判空——`XChart_setTitle(chart, "")`（隐藏标题的对
+ *          Qt 口径）后 m_title 非 NULL 但空，此前三处 `m_title &&
+ *          XString_toUtf8(m_title)[0]` 直接解引用 NULL 启动即崩。 */
+static bool xcv_titleEmpty(const XChart* chart)
+{
+    const char* utf8;
+    if (!chart->m_title) return true;
+    utf8 = XString_toUtf8(chart->m_title);
+    return !utf8 || utf8[0] == 0;
+}
+
 /** @brief 布局：标题区/图例区/绘图区矩形（边距读图表 m_margins）。 */
 static void xcv_layout(const XChartView* self, XRect* titleR,
                        XRect* plotR, XRect* legendR)
@@ -431,7 +452,7 @@ static void xcv_layout(const XChartView* self, XRect* titleR,
         if (m->right > 0) right = m->right;
         if (m->bottom > 0) bottom = m->bottom;
     }
-    if (self->m_chart && !self->m_chart->m_titleVisible)
+    if (self->m_chart && xcv_titleEmpty(self->m_chart))
         top = 8;
     if (titleR) XRect_init(titleR, 0, 0, w, top);
     {
@@ -504,11 +525,187 @@ static void xcv_paintTitle(XChartView* self, XPainter* painter,
 
 /** @brief 绘制数值轴网格 + 刻度标签（颜色取自主题规格，轴级颜色可覆盖；
  *        轴 setVisible(false) 跳过该轴全部可视元素，reverse 翻转刻度值）。 */
+/**
+ * @brief 按轴的实际类型把刻度值格式化为标签文本（对标 Qt 各轴 labelFormat）。
+ * @details 分派规则：
+ *          - XValueAxis / 默认：printf(labelFormat, v)；
+ *          - XDateTimeAxis：把 v（毫秒纪元）转 XDateTime 后按 format 输出；
+ *          - XLogValueAxis：printf(labelFormat, v)（刻度值本身是线性值，
+ *            对数只影响取值位置，与 Qt 一致）；
+ *          - XCategoryAxis：按下标取类别名（越界回退数值）。
+ *          传入的 base 为轴基类指针，避免调用方各自判型。
+ * @param axis 轴基类指针（借用）。
+ * @param v 刻度值。
+ * @param buf 输出缓冲；调用方提供。
+ * @param n 缓冲容量。
+ * @return 无返回值；无法格式化时写入空串。
+ */
+static void xcv_axisLabel(const XAbstractAxis* axis, double v, char* buf, int n)
+{
+    int type;
+    if (!buf || n <= 0) return;
+    buf[0] = '\0';
+    if (!axis) return;
+    type = XAbstractAxis_type(axis);
+    switch (type) {
+    case XAbstractAxis_AxisType_DateTime: {
+        const XDateTimeAxis* dax = (const XDateTimeAxis*)axis;
+        XDateTime dt;
+        XString* s;
+        int64_t ms = (int64_t)v;
+        XMemset(&dt, 0, sizeof(dt));
+        XDateTime_setMSecsSinceEpoch(&dt, ms);
+        s = XDateTime_toString_format(&dt,
+            XDateTimeAxis_format_toUtf8(dax));
+        if (s) {
+            XSnprintf(buf, (size_t)n, "%s", XString_toUtf8(s));
+            XClassDelete(s);
+        }
+        break;
+    }
+    case XAbstractAxis_AxisType_LogValue: {
+        const XLogValueAxis* lax = (const XLogValueAxis*)axis;
+        XSnprintf(buf, (size_t)n, XLogValueAxis_labelFormat_toUtf8(lax), v);
+        break;
+    }
+    case XAbstractAxis_AxisType_BarCategory: {
+        const XCategoryAxis* cax = (const XCategoryAxis*)axis;
+        int idx = (int)(v + 0.5);
+        const char* name = XCategoryAxis_at_2(cax, idx);
+        if (name && name[0] != '\0')
+            XSnprintf(buf, (size_t)n, "%s", name);
+        else
+            XSnprintf(buf, (size_t)n, "%d", idx);
+        break;
+    }
+    case XAbstractAxis_AxisType_Value:
+    default: {
+        const XValueAxis* vax = (const XValueAxis*)axis;
+        const XString* fmt = XValueAxis_labelFormat(vax);
+        XSnprintf(buf, (size_t)n, fmt ? XString_toUtf8(fmt) : "%g", v);
+        break;
+    }
+    }
+}
+
+
+/**
+ * @brief 绘制极坐标网格（同心圆 + 角度射线 + 刻度标签）。
+ * @details 对标 Qt PolarChartLayout：径向轴决定同心圆数量，角度轴决定
+ *          射线数量。角度自 12 点方向顺时针扫掠，与 xcv_mapPoint 的
+ *          极坐标分支保持同一约定。
+ * @param self   目标视图。
+ * @param painter 绘制器。
+ * @param plotR  绘图区矩形。
+ * @param dirty  脏区；NULL 表示全图。
+ * @return 无返回值。
+ */
+static void xcv_paintPolarGrid(XChartView* self, XPainter* painter,
+                               const XRect* plotR, const XRect* dirty)
+{
+    XChart* chart = self->m_chart;
+    XValueAxis* ax = chart->m_axisX;
+    XValueAxis* ay = chart->m_axisY;
+    uint32_t gridPen;
+    uint32_t textColor;
+    XFont font;
+    double cx;
+    double cy;
+    double maxR;
+    int radialTicks;
+    int angularTicks;
+    int i;
+
+    if (!ax || !ay) return;
+    if (!ax->m_base.m_visible && !ay->m_base.m_visible) return;
+
+    cx = plotR->x + plotR->width / 2.0;
+    cy = plotR->y + plotR->height / 2.0;
+    maxR = (plotR->width < plotR->height ? plotR->width : plotR->height) / 2.0;
+    if (maxR <= 1.0) return;
+
+    gridPen = chart->m_themeGridPen;
+    textColor = ay->m_base.m_labelsBrushColor != 0
+        ? ay->m_base.m_labelsBrushColor : chart->m_themeLabelBrush;
+    font = XWidget_font((XWidget*)self);
+    XPainter_setFont(painter, &font);
+
+    /* 同心圆：径向轴刻度数决定圈数（跳过最外圈，避免与绘图区边框重叠）。 */
+    radialTicks = ay->m_tickCount > 1 ? ay->m_tickCount : 2;
+    if (ay->m_base.m_gridLineVisible) {
+        XPainter_setPen(painter, gridPen);
+        XPainter_setPenWidth(painter, chart->m_themeGridLineWidth);
+        for (i = 1; i < radialTicks; ++i) {
+            double r = maxR * ((double)i / (double)(radialTicks - 1));
+            XRect circle;
+            if (r < 1.0) continue;
+            XRect_init(&circle, (int)(cx - r), (int)(cy - r),
+                       (int)(r * 2), (int)(r * 2));
+#if XPAINTER_SHAPE_ON
+            XPainter_drawEllipse(painter, &circle);
+#endif /* XPAINTER_SHAPE_ON */
+        }
+    }
+
+    /* 角度射线：角度轴刻度数决定射线数（跳过 0 位置，轴本身已画）。 */
+    angularTicks = ax->m_tickCount > 1 ? ax->m_tickCount : 2;
+    if (ax->m_base.m_gridLineVisible) {
+        XPainter_setPen(painter, gridPen);
+        XPainter_setPenWidth(painter, chart->m_themeGridLineWidth);
+        for (i = 1; i < angularTicks; ++i) {
+            double frac = (double)i / (double)(angularTicks - 1);
+            double ang = frac * 6.28318530717958647692;
+            int x1 = (int)(cx + maxR * sin(ang));
+            int y1 = (int)(cy - maxR * cos(ang));
+            XPainter_drawLine(painter, (int)cx, (int)cy, x1, y1);
+        }
+    }
+
+    /* 径向刻度标签（沿 12 点方向排布）。 */
+    if (ay->m_base.m_labelsVisible) {
+        char buf[32];
+        for (i = 0; i < radialTicks; ++i) {
+            double t = (double)i / (double)(radialTicks - 1);
+            double v = ay->m_base.m_reverse
+                ? ay->m_base.m_min + t * (ay->m_base.m_max - ay->m_base.m_min)
+                : ay->m_base.m_max - t * (ay->m_base.m_max - ay->m_base.m_min);
+            int y = (int)(cy - t * maxR);
+            xcv_axisLabel((const XAbstractAxis*)ay, v, buf, (int)sizeof(buf));
+            if (buf[0] == '\0') continue;
+            if (xcv_textVisible(dirty, (int)cx + 4, y - 6,
+                                (int)XStrlen(buf) * 8))
+                XPainter_drawText(painter, (int)cx + 4, y - 6, buf, textColor);
+        }
+    }
+
+    /* 角度刻度标签（沿外缘排布）。 */
+    if (ax->m_base.m_labelsVisible) {
+        char buf[32];
+        for (i = 0; i < angularTicks; ++i) {
+            double frac = (double)i / (double)(angularTicks - 1);
+            double v = ax->m_base.m_reverse
+                ? ax->m_base.m_max - frac * (ax->m_base.m_max - ax->m_base.m_min)
+                : ax->m_base.m_min + frac * (ax->m_base.m_max - ax->m_base.m_min);
+            double ang = frac * 6.28318530717958647692;
+            int lx = (int)(cx + (maxR + 6) * sin(ang));
+            int ly = (int)(cy - (maxR + 6) * cos(ang));
+            xcv_axisLabel((const XAbstractAxis*)ax, v, buf, (int)sizeof(buf));
+            if (buf[0] == '\0') continue;
+            if (xcv_textVisible(dirty, lx - 8, ly, (int)XStrlen(buf) * 8))
+                XPainter_drawText(painter, lx - 8, ly, buf, textColor);
+        }
+    }
+
+    XClassDeinit((XClass*)&font);
+}
+
 static void xcv_paintAxes(XChartView* self, XPainter* painter,
                           const XRect* plotR, const XRect* dirty)
 {
     XValueAxis* ax = self->m_chart->m_axisX;
     XValueAxis* ay = self->m_chart->m_axisY;
+    XAbstractAxis* axAny = self->m_chart->m_axisXAny;
+    XAbstractAxis* ayAny = self->m_chart->m_axisYAny;
     XChart* chart = self->m_chart;
     uint32_t axisPenX;
     uint32_t axisPenY;
@@ -522,7 +719,14 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
     char buf[32];
     int i;
     int ticks;
-    if (!ax || !ay) return;
+    /* 用基类视图判空：非数值轴（类别/日期/对数）时 ax/ay 为 NULL，
+     * 但轴本身仍然要画，不能在此早退（此前后者永远走不到类别分支）。 */
+    if (!self->m_chart->m_axisXAny && !self->m_chart->m_axisYAny) return;
+    /* 极坐标图表走专用网格（同心圆 + 角度射线），直角坐标路径不变。 */
+    if (XChart_chartType(chart) == XChart_ChartType_Polar) {
+        xcv_paintPolarGrid(self, painter, plotR, dirty);
+        return;
+    }
     /* 字体深拷贝下移到空轴早退之后（XWidget_font 契约：用后必须
      * XClassDeinit）：此前先拷贝再在空轴处 return，副本（家族
      * XString）随早退泄漏。 */
@@ -531,24 +735,24 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
      * 轴线/网格/标签照画。对标 QAbstractAxis::setVisible(false) 隐藏该轴
      * 全部可视元素（轴线、网格、次网格、标签、阴影带），双轴同隐时整段
      * 跳过（仅剩字体副本释放）。 */
-    visX = ax->m_base.m_visible;
-    visY = ay->m_base.m_visible;
+    visX = axAny ? axAny->m_visible : false;
+    visY = ayAny ? ayAny->m_visible : false;
     if (!visX && !visY) {
         /* 显式 XClass 转换：XClassDeinit 为裸别名宏，直呼会新增
          * 指针类型诊断（同 xcv_staticFingerprint 尾部注释约定）。 */
         XClassDeinit((XClass*)&font);
         return;
     }
-    axisPenX = ax->m_base.m_linePenColor != 0
-        ? ax->m_base.m_linePenColor : chart->m_themeAxisLinePen;
-    axisPenY = ay->m_base.m_linePenColor != 0
-        ? ay->m_base.m_linePenColor : chart->m_themeAxisLinePen;
+    axisPenX = (axAny && axAny->m_linePenColor != 0)
+        ? axAny->m_linePenColor : chart->m_themeAxisLinePen;
+    axisPenY = (ayAny && ayAny->m_linePenColor != 0)
+        ? ayAny->m_linePenColor : chart->m_themeAxisLinePen;
     gridPen = chart->m_themeGridPen;
     minorPen = chart->m_themeMinorGridPen;
-    textX = ax->m_base.m_labelsBrushColor != 0
-        ? ax->m_base.m_labelsBrushColor : chart->m_themeLabelBrush;
-    textY = ay->m_base.m_labelsBrushColor != 0
-        ? ay->m_base.m_labelsBrushColor : chart->m_themeLabelBrush;
+    textX = (axAny && axAny->m_labelsBrushColor != 0)
+        ? axAny->m_labelsBrushColor : chart->m_themeLabelBrush;
+    textY = (ayAny && ayAny->m_labelsBrushColor != 0)
+        ? ayAny->m_labelsBrushColor : chart->m_themeLabelBrush;
     XPainter_setFont(painter, &font);
     /* 主题阴影带（对标 ChartTheme::backgroundShades；HighContrast 主题生效）。 */
     if (visY && ay->m_base.m_shadesVisible && chart->m_themeShadesBrush != 0) {
@@ -580,8 +784,8 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
     }
     /* Y 轴刻度/网格/标签：reverse 时屏幕比例 t 处的值为 min+t*range
      *（默认向上为 max-t*range），与 xcv_mapPoint 的翻转映射对齐。 */
-    ticks = ay->m_tickCount > 1 ? ay->m_tickCount : 2;
-    for (i = 0; visY && i < ticks; ++i) {
+    ticks = ay && ay->m_tickCount > 1 ? ay->m_tickCount : 2;
+    for (i = 0; visY && ay && i < ticks; ++i) {
         double t = (double)i / (ticks - 1);
         double v = ay->m_base.m_reverse
             ? ay->m_base.m_min + t * (ay->m_base.m_max - ay->m_base.m_min)
@@ -609,12 +813,76 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
             }
 #endif /* XPAINTER_PENSTYLE_ON */
         }
-        XSnprintf(buf, sizeof(buf), XString_toUtf8(ay->m_labelFormat), v);
+        xcv_axisLabel((const XAbstractAxis*)ay, v, buf, (int)sizeof(buf));
         if (xcv_textVisible(dirty, plotR->x - 40, y + 6,
-                            (int)XStrlen(buf) * 8))
-            XPainter_drawText(painter, plotR->x - 40, y + 6, buf, textY);
+                            (int)XStrlen(buf) * 8)) {
+            if (ay->m_base.m_labelsAngle != 0) {
+                XPainter_save(painter);
+                XPainter_translate(painter, (float)(plotR->x - 40),
+                                   (float)(y + 6));
+                XPainter_rotate(painter, (float)ay->m_base.m_labelsAngle);
+                XPainter_drawText(painter, 0, 0, buf, textY);
+                XPainter_restore(painter);
+            } else {
+                XPainter_drawText(painter, plotR->x - 40, y + 6, buf, textY);
+            }
+        }
+    }
+    /* 数值类别轴（XValueCategoryAxis）：刻度落在类别结束值处，
+     * 标签用类别名（对标 QCategoryAxis 的 AxisLabelsPositionOnValue）。
+     * 抽出来单独绘制，避免与等距数值刻度混淆。 */
+    if (visX && axAny &&
+        XAbstractAxis_type(axAny) == XAbstractAxis_AxisType_Category) {
+        /* 必须从基类视图转换：类别轴时 m_axisX（XValueAxis*）为 NULL，
+         * 从它强转会得到悬空指针，导致整段类别刻度读不到数据。 */
+        const XValueCategoryAxis* cax = (const XValueCategoryAxis*)axAny;
+        int cn = XValueCategoryAxis_count(cax);
+        int ci;
+        XPainter_setPen(painter, axisPenX);
+        XPainter_setPenWidth(painter, chart->m_themeAxisLineWidth);
+        for (ci = 0; ci < cn; ++ci) {
+            const XString* lb = XValueCategoryAxis_labelAt_const(cax, ci);
+            double endV = XValueCategoryAxis_endValue(cax, lb);
+            /* 类别区间 = [startV, endV]；首类别起点为轴 min。 */
+            double startV = XValueCategoryAxis_startValue(cax, lb);
+            double span = axAny->m_max - axAny->m_min;
+            double markV;
+            double frac;
+            int x;
+            bool onValue =
+                (XValueCategoryAxis_labelsPosition(cax) ==
+                 XValueCategoryAxis_AxisLabelsPosition_OnValue);
+            /* 对标 Qt horizontalaxis.cpp：Center 取区间中点，
+             * OnValue 取类别右边界（reverse 时取左边界）。 */
+            if (onValue) {
+                if (axAny->m_reverse)
+                    markV = startV;
+                else
+                    markV = endV;
+            } else {
+                markV = (startV + endV) / 2.0;
+            }
+            frac = (span > 0.0) ? (markV - axAny->m_min) / span : 0.0;
+            x = plotR->x + (int)(frac * plotR->width);
+            const char* name = XValueCategoryAxis_labelAt_2(cax, ci);
+            if (name[0] == 0) continue;
+            if (axAny->m_gridLineVisible) {
+                XPainter_setPen(painter, gridPen);
+                XPainter_setPenWidth(painter, chart->m_themeGridLineWidth);
+                XPainter_drawLine(painter, x, plotR->y, x,
+                                  plotR->y + plotR->height);
+                XPainter_setPen(painter, axisPenX);
+                XPainter_setPenWidth(painter, chart->m_themeAxisLineWidth);
+            }
+            if (xcv_textVisible(dirty, x - 12, plotR->y + plotR->height + 6,
+                                (int)XStrlen(name) * 8))
+                XPainter_drawText(painter, x - 12,
+                                  plotR->y + plotR->height + 6, name, textX);
+        }
+        goto x_axis_done;
     }
     /* X 轴刻度/网格/标签：reverse 时屏幕比例 t 处的值为 max-t*range。 */
+    if (!ax) goto x_axis_done;
     ticks = ax->m_tickCount > 1 ? ax->m_tickCount : 2;
     for (i = 0; visX && i < ticks; ++i) {
         double t = (double)i / (ticks - 1);
@@ -643,7 +911,7 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
             }
 #endif /* XPAINTER_PENSTYLE_ON */
         }
-        XSnprintf(buf, sizeof(buf), XString_toUtf8(ax->m_labelFormat), v);
+        xcv_axisLabel((const XAbstractAxis*)ax, v, buf, (int)sizeof(buf));
         {
             /* 标签按刻度横向居中并钳位在控件内（对标 Qt Charts 轴标签
              * 以刻度为中心、sizeHint 预留边距保证末刻度标签不被视窗
@@ -656,12 +924,26 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
             if (lx + lw > vw - 1) lx = vw - 1 - lw;
             if (lx < 0) lx = 0;
             if (xcv_textVisible(dirty, lx,
-                                plotR->y + plotR->height + 16, lw))
-                XPainter_drawText(painter, lx,
-                                  plotR->y + plotR->height + 16, buf,
-                                  textX);
+                                plotR->y + plotR->height + 16, lw)) {
+                if (ax->m_base.m_labelsAngle != 0) {
+                    /* 标签旋转（对标 QAbstractAxis::setLabelsAngle）：
+                     * 以标签落位点为轴心旋转后绘制，绘制完恢复变换。 */
+                    XPainter_save(painter);
+                    XPainter_translate(painter, (float)lx,
+                                       (float)(plotR->y + plotR->height + 16));
+                    XPainter_rotate(painter,
+                                    (float)ax->m_base.m_labelsAngle);
+                    XPainter_drawText(painter, 0, 0, buf, textX);
+                    XPainter_restore(painter);
+                } else {
+                    XPainter_drawText(painter, lx,
+                                      plotR->y + plotR->height + 16, buf,
+                                      textX);
+                }
+            }
         }
     }
+x_axis_done:
     XClassDeinit((XClass*)&font);
 }
 
@@ -746,6 +1028,7 @@ static uint64_t xcv_staticFingerprint(const XChartView* cv)
 {
     const XChart* chart = cv ? cv->m_chart : NULL;
     const XValueAxis* axes[2];
+    const XAbstractAxis* anyAxes[2];
     uint64_t h = 14695981039346656037ULL;
     XFont font;
     int i;
@@ -760,7 +1043,7 @@ static uint64_t xcv_staticFingerprint(const XChartView* cv)
     h = xcv_fnv1aInt(h, chart->m_margins.right);
     h = xcv_fnv1aInt(h, chart->m_margins.bottom);
     /* 标题：可见性 + 文本/字体族/字号/画刷 hash。 */
-    h = xcv_fnv1aBool(h, chart->m_titleVisible);
+    h = xcv_fnv1aBool(h, !xcv_titleEmpty(chart));
     h = xcv_fnv1aStr(h, XChart_title_2(chart));
     h = xcv_fnv1aStr(h, XChart_titleFontFamily_2(chart));
     h = xcv_fnv1aInt(h, chart->m_titlePixelSize);
@@ -793,28 +1076,56 @@ static uint64_t xcv_staticFingerprint(const XChartView* cv)
     /* 双轴：range + tickCount + 网格/阴影可见性 + 轴可见性/reverse +
      * 轴级颜色 + 标签格式（R-106：两属性已被绘制消费，须入指纹驱动
      * 静态层重建，否则切换后回贴旧层）。 */
+    /* 轴指纹走**基类视图**：类别/日期/对数轴时 m_axisX/m_axisY 为 NULL，
+     * 只算数值轴会让这些轴的属性完全不进指纹（切换 labelsPosition 等
+     * 不重建静态层，画面停留在旧内容——实测 pixel-diff=0 的根因）。 */
     axes[0] = chart->m_axisX;
     axes[1] = chart->m_axisY;
+    anyAxes[0] = chart->m_axisXAny;
+    anyAxes[1] = chart->m_axisYAny;
     for (a = 0; a < 2; ++a) {
+        const XAbstractAxis* any = anyAxes[a];
         const XValueAxis* axis = axes[a];
-        if (!axis) {
+        int axisType;
+        if (!any) {
             h = xcv_fnv1aU32(h, 0u);
             continue;
         }
-        h = xcv_fnv1aDouble(h, axis->m_base.m_min);
-        h = xcv_fnv1aDouble(h, axis->m_base.m_max);
-        h = xcv_fnv1aBool(h, axis->m_base.m_visible);
-        h = xcv_fnv1aBool(h, axis->m_base.m_reverse);
-        h = xcv_fnv1aInt(h, axis->m_tickCount);
-        h = xcv_fnv1aBool(h, axis->m_base.m_gridLineVisible);
-        h = xcv_fnv1aBool(h, axis->m_base.m_shadesVisible);
-        h = xcv_fnv1aU32(h, axis->m_base.m_linePenColor);
-        h = xcv_fnv1aU32(h, axis->m_base.m_labelsBrushColor);
-        h = xcv_fnv1aStr(h, axis->m_labelFormat
-                             ? XString_toUtf8(axis->m_labelFormat) : NULL);
+        axisType = XAbstractAxis_type(any);
+        h = xcv_fnv1aInt(h, axisType);
+        h = xcv_fnv1aDouble(h, any->m_min);
+        h = xcv_fnv1aDouble(h, any->m_max);
+        h = xcv_fnv1aBool(h, any->m_visible);
+        h = xcv_fnv1aBool(h, any->m_reverse);
+        h = xcv_fnv1aBool(h, any->m_gridLineVisible);
+        h = xcv_fnv1aBool(h, any->m_shadesVisible);
+        h = xcv_fnv1aU32(h, any->m_linePenColor);
+        h = xcv_fnv1aU32(h, any->m_labelsBrushColor);
+        h = xcv_fnv1aInt(h, any->m_labelsAngle);
+        if (axis)
+            h = xcv_fnv1aInt(h, axis->m_tickCount);
+        else
+            h = xcv_fnv1aInt(h, 0);
+        if (axis)
+            h = xcv_fnv1aStr(h, axis->m_labelFormat
+                                 ? XString_toUtf8(axis->m_labelFormat) : NULL);
+        /* 类别轴的类别边界与标签落位（驱动刻度位置与文本）。 */
+        if (axisType == XAbstractAxis_AxisType_Category) {
+            const XValueCategoryAxis* cax = (const XValueCategoryAxis*)any;
+            int ci;
+            int cn = XValueCategoryAxis_count(cax);
+            h = xcv_fnv1aInt(h, cn);
+            h = xcv_fnv1aInt(h, (int)XValueCategoryAxis_labelsPosition(cax));
+            for (ci = 0; ci < cn; ++ci) {
+                const XString* lb = XValueCategoryAxis_labelAt_const(cax, ci);
+                h = xcv_fnv1aStr(h, lb ? XString_toUtf8(lb) : NULL);
+                h = xcv_fnv1aDouble(h, XValueCategoryAxis_endValue(cax, lb));
+            }
+        }
     }
     /* 图例可见性（图例现绘不入层；见函数头取舍说明）。 */
-    h = xcv_fnv1aBool(h, chart->m_legendVisible);
+    h = xcv_fnv1aBool(h, chart->m_legend &&
+                         XLegend_isVisible(chart->m_legend));
     /* 序列数量+颜色+名称 hash（不含数据点；名称/颜色属外观，驱动图例
      * 与序列主题回退色，按 §10.2 契约混入）。 */
     h = xcv_fnv1aInt(h, chart->m_lineCount);
@@ -838,8 +1149,8 @@ static uint64_t xcv_staticFingerprint(const XChartView* cv)
     h = xcv_fnv1aInt(h, chart->m_splineCount);
     for (i = 0; i < chart->m_splineCount && chart->m_splineSeries[i]; ++i) {
         const XSplineSeries* s = chart->m_splineSeries[i];
-        h = xcv_fnv1aU32(h, s->m_base.m_color);
-        h = xcv_fnv1aStr(h, XAbstractSeries_name_2(&s->m_base.m_base));
+        h = xcv_fnv1aU32(h, s->m_base.m_base.m_color);
+        h = xcv_fnv1aStr(h, XAbstractSeries_name_2(&s->m_base.m_base.m_base));
     }
     h = xcv_fnv1aInt(h, chart->m_barCount);
     for (i = 0; i < chart->m_barCount && chart->m_barSeries[i]; ++i) {
@@ -929,7 +1240,7 @@ static void xcv_paintStaticContent(XChartView* cv, XPainter* painter,
             XPainter_drawRect(painter, plotR);
         }
     }
-    if (cv->m_chart->m_titleVisible)
+    if (!xcv_titleEmpty(cv->m_chart))
         xcv_paintTitle(cv, painter, titleR, dirty);
     xcv_paintAxes(cv, painter, plotR, dirty);
 }
@@ -1097,8 +1408,8 @@ static bool xcv_legendTileContentOpaque(const XChartView* cv)
     }
     for (k = 0; k < chart->m_splineCount; ++k) {
         const XSplineSeries* sp = chart->m_splineSeries[k];
-        uint32_t color = sp->m_base.m_color != 0
-            ? sp->m_base.m_color : xcv_seriesColor(cv, sp, k);
+        uint32_t color = sp->m_base.m_base.m_color != 0
+            ? sp->m_base.m_base.m_color : xcv_seriesColor(cv, sp, k);
         if ((color >> 24) != 0xFFu) return false;
     }
     if (chart->m_pieSeries) {
@@ -1454,6 +1765,26 @@ static void xcv_mapPoint(const XChartView* self, const XRect* plotR,
      * 仅随 alignment() 定位，不读 isReverse()；reverse 只镜像网格/
      * 刻度/标签沿轴的排列（净效果=刻度值序翻转），轴不换边——故本
      * 实现不移轴，维持映射+刻度值翻转即为对标行为。 */
+    /* 极坐标图表：x 轴承担角度、y 轴承担半径（对标 QPolarChart 的
+     * Angular/Radial 角色分工）。角度自 12 点方向顺时针，与 Qt
+     * PolarDomain 的起始约定一致。 */
+    if (XChart_chartType(self->m_chart) == XChart_ChartType_Polar) {
+        double frac = ax->m_base.m_reverse
+            ? (ax->m_base.m_max - x) / rx
+            : (x - ax->m_base.m_min) / rx;
+        double radiusFrac = ay->m_base.m_reverse
+            ? (y - ay->m_base.m_min) / ry
+            : (ay->m_base.m_max - y) / ry;
+        double cx = plotR->x + plotR->width / 2.0;
+        double cy = plotR->y + plotR->height / 2.0;
+        double maxR = (plotR->width < plotR->height
+                       ? plotR->width : plotR->height) / 2.0;
+        double ang = frac * 6.28318530717958647692;   /* 2*pi */
+        double rr = radiusFrac * maxR;
+        *sx = (int)(cx + rr * sin(ang));
+        *sy = (int)(cy - rr * cos(ang));
+        return;
+    }
     *sx = plotR->x + (int)((ax->m_base.m_reverse
         ? ax->m_base.m_max - x
         : x - ax->m_base.m_min) / rx * plotR->width);
@@ -1463,19 +1794,48 @@ static void xcv_mapPoint(const XChartView* self, const XRect* plotR,
 }
 
 /** @brief 绘制柱状序列（按 XBarSet 集合分组成组；柱色=柱组画刷，0=主题默认）。 */
+/**
+ * @brief 绘制柱状序列族（分组 / 堆叠 / 百分比 / 水平四种几何）。
+ * @details 按序列的实际 SeriesType 分派几何：
+ *          - Bar（默认）        ：同类别内各柱组横向并列；
+ *          - StackedBar         ：同类别内各柱组沿数值轴累加堆叠；
+ *          - PercentBar         ：先按类别归一化到 100% 再堆叠；
+ *          - Horizontal*        ：上述三种的转置（类别沿纵轴、数值沿横轴）。
+ *          四种共用同一套颜色/画笔/标签逻辑，保证外观一致。
+ * @param self 目标视图。
+ * @param painter 绘制器。
+ * @param plotR 绘图区矩形。
+ * @return 无返回值。
+ */
 static void xcv_paintBars(XChartView* self, XPainter* painter,
                           const XRect* plotR)
 {
     int si;
     for (si = 0; si < self->m_chart->m_barCount; ++si) {
-        XBarSeries* s = self->m_chart->m_barSeries[si];
-        XAbstractBarSeries* abs = &s->m_base;
+        XAbstractBarSeries* abs = self->m_chart->m_barSeries[si];
         int setCount;
         int catCount;
         int i;
         int j;
-        if (!XAbstractSeries_isVisible(&abs->m_base) || abs->m_barSetCount == 0)
-            continue;
+        int seriesType;
+        bool stacked;
+        bool percent;
+        bool horizontal;
+
+        if (!abs || abs->m_barSetCount == 0) continue;
+        if (!XAbstractSeries_isVisible(&abs->m_base)) continue;
+
+        seriesType = abs->m_base.m_type;
+        horizontal = (seriesType == XChartSeriesType_HorizontalBar ||
+                      seriesType == XChartSeriesType_HorizontalStackedBar ||
+                      seriesType == XChartSeriesType_HorizontalPercentBar);
+        stacked = (seriesType == XChartSeriesType_StackedBar ||
+                   seriesType == XChartSeriesType_PercentBar ||
+                   seriesType == XChartSeriesType_HorizontalStackedBar ||
+                   seriesType == XChartSeriesType_HorizontalPercentBar);
+        percent = (seriesType == XChartSeriesType_PercentBar ||
+                   seriesType == XChartSeriesType_HorizontalPercentBar);
+
         setCount = abs->m_barSetCount;
         catCount = 0;
         for (j = 0; j < setCount; ++j) {
@@ -1483,24 +1843,42 @@ static void xcv_paintBars(XChartView* self, XPainter* painter,
             if (n > catCount) catCount = n;
         }
         if (catCount <= 0) continue;
+
         for (i = 0; i < catCount; ++i) {
-            double slot = (double)plotR->width / (double)catCount;
-            double group = slot * abs->m_barWidth;
-            double barW = setCount > 0 ? group / (double)setCount : group;
-            double gx = plotR->x + (double)i * slot + (slot - group) / 2.0;
+            /* 原值（百分比归一化用）。 */
+            double rawSum = 0.0;
+            double cum = 0.0;
+            if (stacked) {
+                /* 对标 QAbstractBarSeriesPrivate::categorySum：直接累加原值，
+                 * 不取绝对值（负值参与求和，与 Qt 一致）。 */
+                for (j = 0; j < setCount; ++j) {
+                    if (!abs->m_barSets[j]) continue;
+                    rawSum += XBarSet_at(abs->m_barSets[j], i);
+                }
+            }
             for (j = 0; j < setCount; ++j) {
                 XBarSet* set = abs->m_barSets[j];
                 double v;
-                double bx;
+                double base;
+                double top;
                 uint32_t color;
                 uint32_t penColor;
                 double penWidth;
-                int sx0; int sy0; int sy1;
-                int top;
-                int hgt;
+                int sx0; int sy0; int sx1; int sy1;
+                int x0; int y0; int w; int h;
                 XRect barRect;
+
                 if (!set) continue;
                 v = XBarSet_at(set, i);
+                if (percent) {
+                    /* 百分比：value/sum*100；和近似 0 时按 0 处理
+                     * （对标 Qt 的 qFuzzyCompare(sum, 0) 保护）。 */
+                    if (rawSum > -1e-12 && rawSum < 1e-12)
+                        v = 0.0;
+                    else
+                        v = (v / rawSum) * 100.0;
+                }
+
                 color = XBarSet_brush(set) != 0
                     ? XBarSet_brush(set)
                     : XChart_themeGradientColor(self->m_chart, si + j, 0.5);
@@ -1511,53 +1889,355 @@ static void xcv_paintBars(XChartView* self, XPainter* painter,
                 penWidth = 0;
                 XBarSet_pen(set, &penColor, &penWidth);
                 if (penColor == 0) penColor = color;
-                bx = gx + (double)j * barW;
-                xcv_mapPoint(self, plotR, i + 0.5, v, &sx0, &sy1);
-                xcv_mapPoint(self, plotR, i + 0.5, 0, &sx0, &sy0);
-                top = sy1 < sy0 ? sy1 : sy0;
-                hgt = sy1 > sy0 ? sy1 - sy0 : sy0 - sy1;
-                if (hgt < 1) hgt = 1;
-                XRect_init(&barRect, (int)bx, top, (int)barW, hgt);
-                if (barRect.width < 1) barRect.width = 1;
+
+                if (stacked) {
+                    base = cum;
+                    top = cum + v;
+                    cum = top;
+                } else {
+                    base = 0.0;
+                    top = v;
+                }
+
+                /* 极坐标图表：柱体是环形扇区（Qt PolarBarChartItem 语义）。
+                 * 用「内弧 + 外弧」多边形近似；类别 i 占角度区间
+                 * [i/N, (i+1)/N]，半径由数值决定。 */
+                if (XChart_chartType(self->m_chart) == XChart_ChartType_Polar) {
+                    double cx = plotR->x + plotR->width / 2.0;
+                    double cy = plotR->y + plotR->height / 2.0;
+                    double maxR = (plotR->width < plotR->height
+                                   ? plotR->width : plotR->height) / 2.0;
+                    XValueAxis* py = self->m_chart->m_axisY;
+                    double ay_lo = py ? py->m_base.m_min : 0.0;
+                    double ay_span = py
+                        ? (py->m_base.m_max - py->m_base.m_min) : 1.0;
+                    double rLo;
+                    double rHi;
+                    double a0;
+                    double a1;
+                    int steps;
+                    int st;
+                    XPoint poly[130];
+                    int used = 0;
+                    if (ay_span <= 0.0) ay_span = 1.0;
+                    rLo = (base - ay_lo) / ay_span * maxR;
+                    rHi = (top - ay_lo) / ay_span * maxR;
+                    if (rLo < 0.0) rLo = 0.0;
+                    if (rHi < 0.0) rHi = 0.0;
+                    /* 类别 i 的角度区间（含组内细分）。 */
+                    {
+                        double catSpan = 6.28318530717958647692 /
+                                         (double)catCount;
+                        double group = catSpan * abs->m_barWidth;
+                        double one = stacked ? group
+                                             : (setCount > 0
+                                                ? group / setCount : group);
+                        double aStart = (double)i * catSpan +
+                                        (catSpan - group) / 2.0;
+                        a0 = aStart + (stacked ? 0.0 : (double)j * one);
+                        a1 = a0 + one;
+                    }
+                    /* 用真实路径构造环形扇区（对标 Qt PolarBarChartItem
+                     * 用 QPainterPath::arcTo 组扇形的做法）。外弧/内弧各一次
+                     * arcTo，曲线由 XPainterPath 的三次贝塞尔逼近，落笔经
+                     * XPainter_fillPath 走路径光栅器——不再用折线近似。 */
+                    {
+                        XPainterPath* path = (XPainterPath*)XMalloc_System(
+                            sizeof(XPainterPath));
+                        if (path) {
+                            double deg0 = a0 * 180.0 /
+                                          3.14159265358979323846;
+                            double degSweep = (a1 - a0) * 180.0 /
+                                              3.14159265358979323846;
+                            XRect outerR;
+                            XRect innerR;
+                            XPainterPath_init(path);
+                            XRect_init(&outerR, (int)(cx - rHi),
+                                       (int)(cy - rHi), (int)(rHi * 2),
+                                       (int)(rHi * 2));
+                            XRect_init(&innerR, (int)(cx - rLo),
+                                       (int)(cy - rLo), (int)(rLo * 2),
+                                       (int)(rLo * 2));
+                            /* 外弧：屏幕角度自 12 点顺时针，转成数学角
+                             * （Qt 的 arcTo 以 3 点方向为 0、逆时针为正）。 */
+                            XPainterPath_arcMoveTo(path, &outerR,
+                                (float)(90.0 - deg0));
+                            XPainterPath_arcTo(path, &outerR,
+                                (float)(90.0 - deg0), (float)(-degSweep));
+                            /* 内弧：反向扫回，闭合成环。 */
+                            XPainterPath_lineTo(path,
+                                (float)(cx + rLo * sin(a1)),
+                                (float)(cy - rLo * cos(a1)));
+                            XPainterPath_arcTo(path, &innerR,
+                                (float)(90.0 - deg0 - degSweep),
+                                (float)degSweep);
+                            XPainterPath_closeSubpath(path);
+                            XPainter_setPen(painter, penColor);
+                            XPainter_setPenWidth(painter,
+                                (int)(penWidth > 0 ? penWidth : 1));
+                            XPainter_setBrush(painter, color);
+                            XPainterPath_setFillRule(path,
+                                XPainterFillRule_OddEven);
+                            XPainter_fillPath(painter, path);
+                            XPainterPath_deinit(path);
+                            XFree_System(path);
+                        }
+                    }
+                    continue;
+                }
+                if (horizontal) {
+                    /* 水平：类别沿纵轴（第 i 类占对应行），数值沿横轴。 */
+                    double slot = (double)plotR->height / (double)catCount;
+                    double group = slot * abs->m_barWidth;
+                    double barW = stacked ? group
+                                          : (setCount > 0 ? group / setCount
+                                                          : group);
+                    double gy = plotR->y + (double)i * slot +
+                                (slot - group) / 2.0;
+                    double by = stacked ? gy : (gy + (double)j * barW);
+                    xcv_mapPoint(self, plotR, base, i + 0.5, &sx0, &sy0);
+                    xcv_mapPoint(self, plotR, top, i + 0.5, &sx1, &sy1);
+                    x0 = sx0 < sx1 ? sx0 : sx1;
+                    w = sx0 > sx1 ? sx0 - sx1 : sx1 - sx0;
+                    if (w < 1) w = 1;
+                    XRect_init(&barRect, x0, (int)by, w, (int)barW);
+                    if (barRect.height < 1) barRect.height = 1;
+                } else {
+                    /* 竖直：类别沿横轴，数值沿纵轴。 */
+                    double slot = (double)plotR->width / (double)catCount;
+                    double group = slot * abs->m_barWidth;
+                    double barW = stacked ? group
+                                          : (setCount > 0 ? group / setCount
+                                                          : group);
+                    double gx = plotR->x + (double)i * slot +
+                                (slot - group) / 2.0;
+                    double bx = stacked ? gx : (gx + (double)j * barW);
+                    xcv_mapPoint(self, plotR, i + 0.5, base, &sx0, &sy0);
+                    xcv_mapPoint(self, plotR, i + 0.5, top, &sx1, &sy1);
+                    y0 = sy0 < sy1 ? sy0 : sy1;
+                    h = sy0 > sy1 ? sy0 - sy1 : sy1 - sy0;
+                    if (h < 1) h = 1;
+                    XRect_init(&barRect, (int)bx, y0, (int)barW, h);
+                    if (barRect.width < 1) barRect.width = 1;
+                }
+
                 XPainter_setPen(painter, penColor);
                 XPainter_setPenWidth(painter,
                     (int)(penWidth > 0 ? penWidth : 2));
                 XPainter_fillRect(painter, &barRect, color);
-                /* 柱标签（对标 generateLabelText + labelsPosition 落位）。 */
+
+                /* 柱标签（沿用既有落位规则；水平/竖直各自取边）。 */
                 if (abs->m_labelsVisible) {
-                    char lbuf[96];
+                    char lbuf[64];
                     int lx;
                     int ly;
-                    const char* fmt = XAbstractBarSeries_labelsFormat_2(abs);
-                    xcv_formatBarLabel(lbuf, sizeof(lbuf), fmt, v,
-                                       abs->m_labelsPrecision);
-                    lx = barRect.x + barRect.width / 2 -
-                         (int)XStrlen(lbuf) * 4;
-                    switch (abs->m_labelsPosition) {
-                    case XAbstractBarSeries_LabelsInsideEnd:
-                        ly = v >= 0 ? top + 12 : top + hgt - 4;
-                        break;
-                    case XAbstractBarSeries_LabelsInsideBase:
-                        ly = v >= 0 ? top + hgt - 4 : top + 12;
-                        break;
-                    case XAbstractBarSeries_LabelsOutsideEnd:
-                        ly = v >= 0 ? top - 4 : top + hgt + 12;
-                        break;
-                    case XAbstractBarSeries_LabelsCenter:
-                    default:
-                        ly = top + hgt / 2;
-                        break;
+                    XSnprintf(lbuf, sizeof(lbuf),
+                        XAbstractBarSeries_labelsFormat_2(abs)[0] != '\0'
+                            ? XAbstractBarSeries_labelsFormat_2(abs)
+                            : "@value", v);
+                    if (horizontal) {
+                        lx = barRect.x + barRect.width + 4;
+                        ly = barRect.y + barRect.height / 2;
+                    } else {
+                        lx = barRect.x + barRect.width / 2 - 8;
+                        switch (abs->m_labelsPosition) {
+                        case XAbstractBarSeries_LabelsInsideEnd:
+                            ly = barRect.y + 12;
+                            break;
+                        case XAbstractBarSeries_LabelsInsideBase:
+                            ly = barRect.y + barRect.height - 4;
+                            break;
+                        case XAbstractBarSeries_LabelsOutsideEnd:
+                            ly = barRect.y - 4;
+                            break;
+                        default:
+                            ly = barRect.y + barRect.height / 2;
+                            break;
+                        }
                     }
-                    /* m_labelsAngle 旋转：XPainter 无文本旋转能力，仅落位（角度属性已存储）。 */
-                    (void)abs->m_labelsAngle;
+                    /* 柱标签旋转（对标 QAbstractBarSeries::setLabelsAngle）。 */
                     xcv_applyLabelFont(painter, (const XWidget*)self,
                         XBarSet_labelFont_2(set),
                         XBarSet_labelFontSize(set));
-                    XPainter_drawText(painter, lx, ly, lbuf,
-                        XBarSet_labelBrush(set) != 0
+                    {
+                        uint32_t lbc = XBarSet_labelBrush(set) != 0
                             ? XBarSet_labelBrush(set)
-                            : self->m_chart->m_themeLabelBrush);
+                            : self->m_chart->m_themeLabelBrush;
+                        if (abs->m_labelsAngle != 0) {
+                            XPainter_save(painter);
+                            XPainter_translate(painter, (float)lx, (float)ly);
+                            XPainter_rotate(painter,
+                                            (float)abs->m_labelsAngle);
+                            XPainter_drawText(painter, 0, 0, lbuf, lbc);
+                            XPainter_restore(painter);
+                        } else {
+                            XPainter_drawText(painter, lx, ly, lbuf, lbc);
+                        }
+                    }
                 }
+            }
+        }
+    }
+}
+
+
+/** @brief 绘制盒须序列（箱体 + 上下须 + 中位线；对标 Qt BoxPlotChartItem）。
+ * @details 每个 XBoxSet 的 5 个槽位按 ValuePositions 取值：
+ *          LowerExtreme/LowerQuartile/Median/UpperQuartile/UpperExtreme。
+ *          x 位置按盒子序号（类别轴），宽度由 boxWidth 比例决定。
+ */
+static void xcv_paintBoxPlot(XChartView* self, XPainter* painter,
+                             const XRect* plotR)
+{
+    int si;
+    for (si = 0; si < self->m_chart->m_boxPlotCount; ++si) {
+        XBoxPlotSeries* bs = self->m_chart->m_boxPlotSeries[si];
+        uint32_t seriesColor;
+        int n;
+        int bi;
+        if (!bs || !XAbstractSeries_isVisible(&bs->m_base)) continue;
+        seriesColor = bs->m_brushColor != 0
+            ? bs->m_brushColor : xcv_seriesColor(self, bs, si);
+        n = XBoxPlotSeries_count(bs);
+        if (n <= 0) continue;
+        for (bi = 0; bi < n; ++bi) {
+            XBoxSet* box = XBoxPlotSeries_boxSetAt(bs, bi);
+            double le;
+            double lq;
+            double med;
+            double uq;
+            double ue;
+            uint32_t fill;
+            uint32_t pen;
+            double halfW;
+            int cx;
+            int yLe; int yLq; int yMed; int yUq; int yUe;
+            int yLo; int yHi;
+            int x0; int x1;
+            XRect body;
+            if (!box) continue;
+            le = XBoxSet_at(box, XBoxSet_ValuePositions_LowerExtreme);
+            lq = XBoxSet_at(box, XBoxSet_ValuePositions_LowerQuartile);
+            med = XBoxSet_at(box, XBoxSet_ValuePositions_Median);
+            uq = XBoxSet_at(box, XBoxSet_ValuePositions_UpperQuartile);
+            ue = XBoxSet_at(box, XBoxSet_ValuePositions_UpperExtreme);
+            fill = XBoxSet_brush(box) != 0 ? XBoxSet_brush(box) : seriesColor;
+            pen = box->m_penColor != 0 ? box->m_penColor : fill;
+            /* 类别轴语义：第 bi 个盒子落在 [bi, bi+1] 区间中心。 */
+            xcv_mapPoint(self, plotR, (double)bi + 0.5, ue, &cx, &yUe);
+            xcv_mapPoint(self, plotR, (double)bi + 0.5, ue, &cx, &yUe);
+            xcv_mapPoint(self, plotR, (double)bi + 0.5, uq, &cx, &yUq);
+            xcv_mapPoint(self, plotR, (double)bi + 0.5, med, &cx, &yMed);
+            xcv_mapPoint(self, plotR, (double)bi + 0.5, lq, &cx, &yLq);
+            xcv_mapPoint(self, plotR, (double)bi + 0.5, le, &cx, &yLe);
+            /* 须：上须 uq→ue，下须 le→lq。 */
+            XPainter_setPen(painter, pen);
+            XPainter_setPenWidth(painter,
+                (int)(box->m_penWidth > 0 ? box->m_penWidth : 1));
+            XPainter_drawLine(painter, cx, yUq, cx, yUe);
+            XPainter_drawLine(painter, cx, yLq, cx, yLe);
+            /* 须端帽。 */
+            halfW = bs->m_boxWidth > 0 ? bs->m_boxWidth : 0.5;
+            {
+                int capW = (int)((plotR->width / (double)(n > 0 ? n : 1)) *
+                                 halfW * 0.3);
+                if (capW < 2) capW = 2;
+                XPainter_drawLine(painter, cx - capW, yUe, cx + capW, yUe);
+                XPainter_drawLine(painter, cx - capW, yLe, cx + capW, yLe);
+            }
+            /* 箱体：uq 到 lq。 */
+            yLo = (yUq < yLq) ? yUq : yLq;
+            yHi = (yUq < yLq) ? yLq : yUq;
+            {
+                int bodyW = (int)((plotR->width / (double)(n > 0 ? n : 1)) *
+                                  halfW);
+                if (bodyW < 2) bodyW = 2;
+                x0 = cx - bodyW / 2;
+                x1 = bodyW;
+                XRect_init(&body, x0, yLo, x1, (yHi - yLo) > 0 ? (yHi - yLo) : 1);
+            }
+            if (bs->m_boxOutlineVisible) {
+                XPainter_setBrush(painter, fill);
+                XPainter_drawRect(painter, &body);
+            } else {
+                XPainter_fillRect(painter, &body, fill);
+            }
+            /* 中位线（横跨箱体）。 */
+            XPainter_setPen(painter, pen);
+            XPainter_setPenWidth(painter, 2);
+            XPainter_drawLine(painter, body.x, yMed, body.x + body.width, yMed);
+        }
+    }
+}
+
+/** @brief 绘制 K 线序列（实体 + 上下影线 + 涨跌配色；对标 Qt CandlestickChartItem）。
+ * @details 每个 XCandlestickSet 按 open/close 关系决定涨跌色：close>=open
+ *          用 increasingColor，否则 decreasingColor。x 按 set 序号排布。
+ */
+static void xcv_paintCandlestick(XChartView* self, XPainter* painter,
+                                 const XRect* plotR)
+{
+    int si;
+    for (si = 0; si < self->m_chart->m_candlestickCount; ++si) {
+        XCandlestickSeries* cs = self->m_chart->m_candlestickSeries[si];
+        int n;
+        int bi;
+        if (!cs || !XAbstractSeries_isVisible(&cs->m_base)) continue;
+        n = XCandlestickSeries_count(cs);
+        if (n <= 0) continue;
+        for (bi = 0; bi < n; ++bi) {
+            XCandlestickSet* set = XCandlestickSeries_setAt(cs, bi);
+            double open;
+            double high;
+            double low;
+            double close;
+            uint32_t color;
+            double halfW;
+            int cx;
+            int yHigh; int yLow; int yOpen; int yClose;
+            int x0; int bodyW;
+            int yTop; int yBot;
+            if (!set) continue;
+            open = XCandlestickSet_open(set);
+            high = XCandlestickSet_high(set);
+            low = XCandlestickSet_low(set);
+            close = XCandlestickSet_close(set);
+            color = (close >= open) ? cs->m_increasingColor
+                                    : cs->m_decreasingColor;
+            if (set->m_brushColor != 0) color = set->m_brushColor;
+            /* 类别轴语义：第 bi 根落在 [bi, bi+1] 区间中心。 */
+            xcv_mapPoint(self, plotR, (double)bi + 0.5, high, &cx, &yHigh);
+            xcv_mapPoint(self, plotR, (double)bi + 0.5, low, &cx, &yLow);
+            xcv_mapPoint(self, plotR, (double)bi + 0.5, open, &cx, &yOpen);
+            xcv_mapPoint(self, plotR, (double)bi + 0.5, close, &cx, &yClose);
+            /* 上下影线（细线贯穿 high..low）。 */
+            XPainter_setPen(painter, color);
+            XPainter_setPenWidth(painter,
+                (int)(set->m_penWidth > 0 ? set->m_penWidth : 1));
+            XPainter_drawLine(painter, cx, yHigh, cx, yLow);
+            /* 实体（open..close）。 */
+            halfW = cs->m_bodyWidth > 0 ? cs->m_bodyWidth : 0.8;
+            bodyW = (int)((plotR->width / (double)(n > 0 ? n : 1)) * halfW);
+            if (bodyW < 2) bodyW = 2;
+            x0 = cx - bodyW / 2;
+            yTop = (yOpen < yClose) ? yOpen : yClose;
+            yBot = (yOpen < yClose) ? yClose : yOpen;
+            {
+                XRect body;
+                XRect_init(&body, x0, yTop, bodyW,
+                           (yBot - yTop) > 0 ? (yBot - yTop) : 1);
+                if (cs->m_bodyOutlineVisible)
+                    XPainter_fillRect(painter, &body, color);
+                else
+                    XPainter_fillRect(painter, &body, color);
+            }
+            /* 帽（capsVisible 时在 open/close 处画短横线）。 */
+            if (cs->m_capsVisible) {
+                int capW = (int)(bodyW * (cs->m_capsWidth > 0
+                                          ? cs->m_capsWidth : 0.5));
+                if (capW < 2) capW = 2;
+                XPainter_drawLine(painter, cx - capW, yOpen, cx + capW, yOpen);
+                XPainter_drawLine(painter, cx - capW, yClose, cx + capW, yClose);
             }
         }
     }
@@ -1639,18 +2319,86 @@ static void xcv_paintArea(XChartView* self, XPainter* painter,
                     poly[used].y = sy;
                     ++used;
                 }
-                xcv_mapPoint(self, plotR, up->m_base.m_points[count - 1].x,
-                             s->m_baseValue, &bx, &by);
-                poly[used].x = bx;
-                poly[used].y = by;
-                ++used;
-                xcv_mapPoint(self, plotR, up->m_base.m_points[0].x,
-                             s->m_baseValue, &bx, &by);
-                poly[used].x = bx;
-                poly[used].y = by;
-                ++used;
-                XPainter_drawPolygon(painter, poly, used,
-                                     XPainterFillRule_OddEven);
+                /* 极坐标图表：基线回程沿**圆弧**走（不能直线穿过圆心，
+                 * 否则扇形被切成三角形）。用 XPainterPath 组路径：
+                 * 上边界为 lineTo 折线，基线为 arcTo 圆弧，闭合后填充。 */
+                if (XChart_chartType(self->m_chart) == XChart_ChartType_Polar) {
+                    XValueAxis* py2 = self->m_chart->m_axisY;
+                    double ayLo = py2 ? py2->m_base.m_min : 0.0;
+                    double aySpan = py2
+                        ? (py2->m_base.m_max - py2->m_base.m_min) : 1.0;
+                    double baseR;
+                    double pCx = plotR->x + plotR->width / 2.0;
+                    double pCy = plotR->y + plotR->height / 2.0;
+                    double pMaxR = (plotR->width < plotR->height
+                                    ? plotR->width : plotR->height) / 2.0;
+                    XPainterPath* path = (XPainterPath*)XMalloc_System(
+                        sizeof(XPainterPath));
+                    if (aySpan <= 0.0) aySpan = 1.0;
+                    baseR = (s->m_baseValue - ayLo) / aySpan * pMaxR;
+                    if (baseR < 0.0) baseR = 0.0;
+                    if (path) {
+                        XRect baseR_rect;
+                        double aFirst;
+                        double aLast;
+                        double sweepDeg;
+                        XPainterPath_init(path);
+                        /* 上边界折线。 */
+                        for (i = 0; i < used; ++i) {
+                            if (i == 0)
+                                XPainterPath_moveTo(path, (float)poly[0].x,
+                                                    (float)poly[0].y);
+                            else
+                                XPainterPath_lineTo(path, (float)poly[i].x,
+                                                    (float)poly[i].y);
+                        }
+                        /* 基线圆弧：从末端角度回退到起点角度。 */
+                        aFirst = up->m_base.m_points[0].x;
+                        aLast = up->m_base.m_points[count - 1].x;
+                        {
+                            double axLo = self->m_chart->m_axisX
+                                ? self->m_chart->m_axisX->m_base.m_min : 0.0;
+                            double axSpan = self->m_chart->m_axisX
+                                ? (self->m_chart->m_axisX->m_base.m_max -
+                                   self->m_chart->m_axisX->m_base.m_min)
+                                : 1.0;
+                            double f0;
+                            double f1;
+                            if (axSpan <= 0.0) axSpan = 1.0;
+                            f0 = (aFirst - axLo) / axSpan;
+                            f1 = (aLast - axLo) / axSpan;
+                            if (f1 < f0) { double tt = f0; f0 = f1; f1 = tt; }
+                            /* 屏幕角（12 点顺时针）→ 数学角。 */
+                            sweepDeg = (f1 - f0) * 360.0;
+                            XRect_init(&baseR_rect,
+                                (int)(pCx - baseR), (int)(pCy - baseR),
+                                (int)(baseR * 2), (int)(baseR * 2));
+                            XPainterPath_arcTo(path, &baseR_rect,
+                                (float)(90.0 - f1 * 360.0),
+                                (float)sweepDeg);
+                        }
+                        XPainterPath_closeSubpath(path);
+                        XPainter_setBrush(painter, color);
+                        XPainterPath_setFillRule(path,
+                            XPainterFillRule_OddEven);
+                        XPainter_fillPath(painter, path);
+                        XPainterPath_deinit(path);
+                        XFree_System(path);
+                    }
+                } else {
+                    xcv_mapPoint(self, plotR, up->m_base.m_points[count - 1].x,
+                                 s->m_baseValue, &bx, &by);
+                    poly[used].x = bx;
+                    poly[used].y = by;
+                    ++used;
+                    xcv_mapPoint(self, plotR, up->m_base.m_points[0].x,
+                                 s->m_baseValue, &bx, &by);
+                    poly[used].x = bx;
+                    poly[used].y = by;
+                    ++used;
+                    XPainter_drawPolygon(painter, poly, used,
+                                         XPainterFillRule_OddEven);
+                }
                 XFree_System(poly);
             }
         }
@@ -1716,12 +2464,13 @@ static void xcv_paintSpline(XChartView* self, XPainter* painter,
     int si;
     for (si = 0; si < self->m_chart->m_splineCount; ++si) {
         XSplineSeries* s = self->m_chart->m_splineSeries[si];
-        uint32_t color = s->m_base.m_color != 0
-            ? s->m_base.m_color : xcv_seriesColor(self, s, si);
+        uint32_t color = s->m_base.m_base.m_color != 0
+            ? s->m_base.m_base.m_color : xcv_seriesColor(self, s, si);
         int pi;
-        if (!XAbstractSeries_isVisible(&s->m_base.m_base) || s->m_base.m_count < 2) continue;
+        if (!XAbstractSeries_isVisible(&s->m_base.m_base.m_base) ||
+            s->m_base.m_base.m_count < 2) continue;
         XPainter_setPen(painter, color);
-        for (pi = 0; pi < s->m_base.m_count - 1; ++pi) {
+        for (pi = 0; pi < s->m_base.m_base.m_count - 1; ++pi) {
             int sub;
             /* 标准插值 Catmull-Rom：段 [P[i]→P[i+1]] 的四控制点
              * (P0,P1,P2,P3) = (P[i-1],P[i],P[i+1],P[i+2])，端点外取
@@ -1730,11 +2479,11 @@ static void xcv_paintSpline(XChartView* self, XPainter* painter,
              * 点解，此处为其最小等价的参数化样条，@note）。修复
              * night #63：原实现把段终点写为 P[i+1]、P3 侧错取
              * P[i-1]，段末切线方向镜像导致相邻段过冲自交成小环。 */
-            XPointF p1 = s->m_base.m_points[pi];          /* P1 段起点 */
-            XPointF p2 = s->m_base.m_points[pi + 1];      /* P2 段终点 */
-            XPointF p0 = pi > 0 ? s->m_base.m_points[pi - 1] : p1;  /* P0 */
-            XPointF p3 = pi + 2 < s->m_base.m_count
-                             ? s->m_base.m_points[pi + 2] : p2;     /* P3 */
+            XPointF p1 = s->m_base.m_base.m_points[pi];          /* P1 段起点 */
+            XPointF p2 = s->m_base.m_base.m_points[pi + 1];      /* P2 段终点 */
+            XPointF p0 = pi > 0 ? s->m_base.m_base.m_points[pi - 1] : p1;  /* P0 */
+            XPointF p3 = pi + 2 < s->m_base.m_base.m_count
+                             ? s->m_base.m_base.m_points[pi + 2] : p2;     /* P3 */
             for (sub = 0; sub < 8; ++sub) {
                 double t0 = (double)sub / 8;
                 double t1 = (double)(sub + 1) / 8;
@@ -1757,9 +2506,9 @@ static void xcv_paintSpline(XChartView* self, XPainter* painter,
                 XPainter_drawLine(painter, sx0, sy0, sx1, sy1);
             }
         }
-        if (s->m_base.m_bestFitVisible)
-            xcv_drawBestFitLine(self, painter, plotR, &s->m_base);
-        xcv_drawXyPoints(self, painter, plotR, &s->m_base, color, false, 0);
+        if (s->m_base.m_base.m_bestFitVisible)
+            xcv_drawBestFitLine(self, painter, plotR, &s->m_base.m_base);
+        xcv_drawXyPoints(self, painter, plotR, &s->m_base.m_base, color, false, 0);
     }
 }
 
@@ -1771,6 +2520,18 @@ static void xcv_paintLegend(XChartView* self, XPainter* painter,
     uint32_t text = xcv_color(self, XPaletteColorRole_WindowText);
     XFont font = XWidget_font((XWidget*)self);
     int y = legendR->y;
+    /* XLegend 外观参数生效（对标 QLegend::labelColor / setFont）：
+     * 仅当调用方显式设置过（非 0 / 非空）才覆盖默认，保持既有逐位输出。 */
+    if (self->m_chart->m_legend) {
+        XLegend* lg = self->m_chart->m_legend;
+        if (lg->m_labelBrushColor != 0) text = lg->m_labelBrushColor;
+        if (lg->m_fontSize > 0) XFont_setPointSize(&font, lg->m_fontSize);
+        {
+            const XString* fam = XLegend_fontFamily_const(lg);
+            if (fam && XString_toUtf8_length(fam) > 0)
+                XFont_setFamily(&font, XString_toUtf8(fam));
+        }
+    }
     XPainter_setFont(painter, &font);
     for (i = 0; i < self->m_chart->m_lineCount && y < legendR->y + legendR->height; ++i) {
         XLineSeries* s = self->m_chart->m_lineSeries[i];
@@ -1848,13 +2609,45 @@ static void xcv_paintLegend(XChartView* self, XPainter* painter,
         int k;
         for (k = 0; k < self->m_chart->m_splineCount && y < legendR->y + legendR->height; ++k) {
             XSplineSeries* sp = self->m_chart->m_splineSeries[k];
-            uint32_t color = sp->m_base.m_color != 0
-                ? sp->m_base.m_color : xcv_seriesColor(self, sp, k);
+            uint32_t color = sp->m_base.m_base.m_color != 0
+                ? sp->m_base.m_base.m_color : xcv_seriesColor(self, sp, k);
             if (xcv_textVisible(dirty, legendR->x, y, 140)) {
                 XPainter_fillRect(painter,
                     &(XRect){legendR->x, y, 12, 12}, color);
                 XPainter_drawText(painter, legendR->x + 18, y + 10,
-                                  XAbstractSeries_name_2(&sp->m_base.m_base), text);
+                                  XAbstractSeries_name_2(&sp->m_base.m_base.m_base), text);
+            }
+            y += 20;
+        }
+    }
+    {   /* 盒须图例（新增序列类型；沿用既有图例排版）。 */
+        int k;
+        for (k = 0; k < self->m_chart->m_boxPlotCount &&
+                    y < legendR->y + legendR->height; ++k) {
+            XBoxPlotSeries* bs = self->m_chart->m_boxPlotSeries[k];
+            uint32_t color = bs->m_brushColor != 0
+                ? bs->m_brushColor : xcv_seriesColor(self, bs, k);
+            if (xcv_textVisible(dirty, legendR->x, y, 140)) {
+                XPainter_fillRect(painter,
+                    &(XRect){legendR->x, y, 12, 12}, color);
+                XPainter_drawText(painter, legendR->x + 18, y + 10,
+                                  XAbstractSeries_name_2(&bs->m_base), text);
+            }
+            y += 20;
+        }
+    }
+    {   /* K 线图例（新增序列类型）。 */
+        int k;
+        for (k = 0; k < self->m_chart->m_candlestickCount &&
+                    y < legendR->y + legendR->height; ++k) {
+            XCandlestickSeries* cs = self->m_chart->m_candlestickSeries[k];
+            uint32_t color = cs->m_brushColor != 0
+                ? cs->m_brushColor : xcv_seriesColor(self, cs, k);
+            if (xcv_textVisible(dirty, legendR->x, y, 140)) {
+                XPainter_fillRect(painter,
+                    &(XRect){legendR->x, y, 12, 12}, color);
+                XPainter_drawText(painter, legendR->x + 18, y + 10,
+                                  XAbstractSeries_name_2(&cs->m_base), text);
             }
             y += 20;
         }
@@ -2028,6 +2821,8 @@ static bool xcv_renderToImage(XChartView* cv, XImage* image,
             xcv_paintSpline(cv, &painter, &plotR);
             xcv_paintArea(cv, &painter, &plotR);
             xcv_paintBars(cv, &painter, &plotR);
+            xcv_paintBoxPlot(cv, &painter, &plotR);
+            xcv_paintCandlestick(cv, &painter, &plotR);
             xcv_paintScatter(cv, &painter, &plotR);
         }
         XCV_PROF_END(profSeriesUs);
@@ -2063,7 +2858,7 @@ static bool xcv_renderToImage(XChartView* cv, XImage* image,
      * （逐位=今天）。
      * 计时：瓦片重建与贴回计入 legend 段（profLegendUs），不新增探针、
      * 不嵌套，XCV_PROF 五段口径与输出格式不变。 */
-    if (cv->m_chart->m_legendVisible) {
+    if (cv->m_chart->m_legend && XLegend_isVisible(cv->m_chart->m_legend)) {
         bool legendPainted = false;
         if (xcv_staticCacheEnabled() && !g_xcvLayerBypass &&
             legendR.x >= 0 && xcv_legendTileContentOpaque(cv)) {
@@ -2393,20 +3188,20 @@ static XAbstractSeries* xcv_hitTest(XChartView* self, int px, int py,
     }
     for (si = 0; si < chart->m_splineCount; ++si) {
         XSplineSeries* ss = chart->m_splineSeries[si];
-        if (!XAbstractSeries_isVisible((XAbstractSeries*)&ss->m_base.m_base))
+        if (!XAbstractSeries_isVisible((XAbstractSeries*)&ss->m_base.m_base.m_base))
             continue;
-        for (pi = 0; pi < ss->m_base.m_count; ++pi) {
+        for (pi = 0; pi < ss->m_base.m_base.m_count; ++pi) {
             int sx; int sy; int dx; int dy; int d2;
-            xcv_mapPoint(self, &plotR, ss->m_base.m_points[pi].x,
-                         ss->m_base.m_points[pi].y, &sx, &sy);
+            xcv_mapPoint(self, &plotR, ss->m_base.m_base.m_points[pi].x,
+                         ss->m_base.m_base.m_points[pi].y, &sx, &sy);
             dx = sx - px; dy = sy - py;
             d2 = dx * dx + dy * dy;
             if (d2 < bestDist) {
                 bestDist = d2;
                 best = pi;
-                bestS = (XAbstractSeries*)&ss->m_base.m_base;
-                bestX = ss->m_base.m_points[pi].x;
-                bestY = ss->m_base.m_points[pi].y;
+                bestS = (XAbstractSeries*)&ss->m_base.m_base.m_base;
+                bestX = ss->m_base.m_base.m_points[pi].x;
+                bestY = ss->m_base.m_base.m_points[pi].y;
             }
         }
     }
@@ -2490,10 +3285,10 @@ static bool xcv_hoverPointData(const XChart* chart,
     }
     for (i = 0; i < chart->m_splineCount; ++i) {
         const XSplineSeries* ss = chart->m_splineSeries[i];
-        if ((const XAbstractSeries*)&ss->m_base.m_base == series) {
-            if (index >= ss->m_base.m_count) return false;
-            *outX = ss->m_base.m_points[index].x;
-            *outY = ss->m_base.m_points[index].y;
+        if ((const XAbstractSeries*)&ss->m_base.m_base.m_base == series) {
+            if (index >= ss->m_base.m_base.m_count) return false;
+            *outX = ss->m_base.m_base.m_points[index].x;
+            *outY = ss->m_base.m_base.m_points[index].y;
             return true;
         }
     }
@@ -3010,6 +3805,8 @@ void XChartView_init(XChartView* self, XWidget* parent, XWidgetFlags flags)
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     self->m_chart = XChart_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    /* 标记为占位图表（setChart 首次替换它时同步释放，见字段注释）。 */
+    self->m_chartPlaceholder = (self->m_chart != NULL);
     self->m_rubberBand = XChartView_RubberBand_NoRubberBand;
 #if XCHARTVIEW_STATIC_LAYER_ON
     /* 静态层画布绑定 XImage 类元数据（空图像；首帧渲染按需分配）。 */
@@ -3039,11 +3836,21 @@ void XChartView_setChart(XChartView* self, XChart* chart)
 {
     if (!self || chart == self->m_chart) return;
     if (self->m_chart) {
-        /* 旧图表的系列 hovered/clicked 等 Direct 发射链可能在途（用户槽
-           内换图表时正处发射帧）；同步删会在发射帧返回途中释放结构体。
-           悬停状态仍同步清除（R-103 根因不变），结构体延迟回收。 */
-        XObject_deleteLater((XObject*)self->m_chart);
+        /* 占位图表（init 预建、从未装入过用户图表）无外部引用、不可能
+           处于发射帧内，同步删除即可。若也走 deleteLater，无事件循环
+           场景（无头导出/探针/单测）该事件永不兑现 → 每次 setChart 泄漏
+           一个空图表（实测 2990B/轮）。 */
+        if (self->m_chartPlaceholder)
+            XClassDelete(self->m_chart);
+        else
+            /* 旧图表的系列 hovered/clicked 等 Direct 发射链可能在途（用户
+               槽内换图表时正处发射帧）；同步删会在发射帧返回途中释放结构
+               体。悬停状态仍同步清除（R-103 根因不变），结构体延迟回收。 */
+            XObject_deleteLater((XObject*)self->m_chart);
     }
+    /* 新装入的图表由用户经 setChart 交入（可能处于发射帧内），一律按
+     * 非占位处置，故标记清零。 */
+    self->m_chartPlaceholder = false;
     /* 根因（R-103）：setChart 删除旧图表（连带全部序列）后，跨事件
      * 借用的 m_hoverSeries 即悬垂——对标 Qt Charts「交互项随序列删除
      * 即时销毁」，删除属主图表时同步清悬停状态；removeSeries 路径的

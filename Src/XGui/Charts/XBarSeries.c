@@ -52,6 +52,12 @@ void XBarSeries_setColor(XBarSeries* self, uint32_t color)
 uint32_t XBarSeries_color(const XBarSeries* self)
 { return self ? self->m_color : 0; }
 
+int XBarSeries_type(const XBarSeries* self)
+{
+    (void)self;
+    return XChartSeriesType_Bar;
+}
+
 #endif /* XCHARTS_ON */
 
 #endif /* XGUI_ON */

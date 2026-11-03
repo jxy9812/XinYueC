@@ -2328,8 +2328,8 @@ static int xff_treeSectionAt(const XTreeWidget* view, int x)
 
 /** @brief 排序指示器落表头标签：当前排序列标签尾随方向符（"^"=升序、
  *  "v"=降序），其余列还原基础标签。内置字体 cmap 仅覆盖 ASCII 与 CJK
- *  整形区，U+25B2/U+25BC 三角形无字形（XTreeWidget.c xtw_elideText 以
- *  "..." 代 U+2026 同一字体覆盖约束），故以 ASCII 符号承载方向；
+ *  整形区，U+25B2/U+25BC 三角形无字形（省略号亦遵守同一字体覆盖约束，
+ *  见 XCommonStyle_elideText 的 U+2026 → "..." 回退），故以 ASCII 符号承载方向；
  *  setHeaderLabels 内部 XWidget_update 驱动表头即时重绘。 */
 static void xff_applySortIndicator(XTreeWidget* view)
 {

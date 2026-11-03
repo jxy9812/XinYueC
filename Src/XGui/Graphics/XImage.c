@@ -5925,4 +5925,116 @@ XPaintDevice* XImage_paintDevice(XImage* self)
 }
 #endif /* XPAINTDEVICE_ON */
 
+
+/* ========== 设备类型 / 绘制引擎（对标 QImage::devType / paintEngine） ========== */
+
+int XImage_devType(const XImage* self)
+{
+    if (!self || !self->m_data) return 0;
+#if XPAINTDEVICE_ON
+    {
+        XPaintDevice* dev = (XPaintDevice*)&self->m_data->m_paintDevice;
+        return XPaintDevice_devType(dev);
+    }
+#else
+    return 0;
+#endif
+}
+
+struct XPaintEngine* XImage_paintEngine(XImage* self)
+{
+    /* 本库图像绘制经 XPainter 直接绑定，无独立引擎对象（同 QPixmap
+       在无原生引擎时返回 NULL 的约定）。 */
+    (void)self;
+    return NULL;
+}
+
+/* ========== 拷贝（对标 QImage::copy） ========== */
+
+XImage* XImage_copy_rect(const XImage* self, const XRect* rect)
+{
+    XImage* out;
+    XRect r;
+    if (!self) return NULL;
+    if (!self->m_data) return NULL;
+    if (rect) {
+        r = *rect;
+    } else {
+        r.x = 0;
+        r.y = 0;
+        r.width = self->m_data->m_width;
+        r.height = self->m_data->m_height;
+    }
+    /* Qt：空矩形（宽或高 <=0）等价于整幅拷贝。 */
+    if (r.width <= 0 || r.height <= 0) {
+        r.x = 0;
+        r.y = 0;
+        r.width = self->m_data->m_width;
+        r.height = self->m_data->m_height;
+    }
+    out = XImage_create();
+    if (!out) return NULL;
+    XImage_copyRect(self, &r, out);
+    return out;
+}
+
+XImage* XImage_copy_rect_ex(const XImage* self, int x, int y, int w, int h)
+{
+    XRect r;
+    r.x = x;
+    r.y = y;
+    r.width = w;
+    r.height = h;
+    return XImage_copy_rect(self, &r);
+}
+
+/* ========== 格式转换（对标 QImage::convertTo / convertedTo） ========== */
+
+void XImage_convertTo(XImage* self, XImageFormat format, uint32_t flags)
+{
+    XImage temp;
+    if (!self) return;
+    if (!self->m_data) return;
+    if (self->m_data->m_format == format) return;
+    /* 就地转换经临时对象再移动回写，避免 convertToFormat 的自别名分支。 */
+    XImage_init(&temp);
+    XImage_convertToFormat(self, format, flags, &temp);
+    if (temp.m_data) XClassMove(self, &temp);
+    XClassDeinit(&temp);
+}
+
+XImage* XImage_convertedTo(const XImage* self, XImageFormat format,
+                           uint32_t flags)
+{
+    XImage* out;
+    if (!self) return NULL;
+    out = XImage_create();
+    if (!out) return NULL;
+    XImage_convertToFormat(self, format, flags, out);
+    if (!out->m_data) {
+        XClassDelete(out);
+        return NULL;
+    }
+    return out;
+}
+
+/* ========== 色彩变换（对标 QImage::colorTransformed） ========== */
+
+XImage* XImage_colorTransformed(const XImage* self, XColorSpace targetSpace)
+{
+    XImage* out;
+    if (!self) return NULL;
+    out = XImage_create();
+    if (!out) return NULL;
+    XClassCopy((XClass*)out, (const XClass*)self);
+    if (!out->m_data) {
+        XClassDelete(out);
+        return NULL;
+    }
+    /* 独立副本后写入目标色彩空间，源图像不受影响（对标 Qt 返回新图像）。 */
+    XImage_detach(out);
+    XImage_setColorSpace(out, targetSpace);
+    return out;
+}
+
 #endif /* XGUI_ON */

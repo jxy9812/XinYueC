@@ -42,6 +42,9 @@ void XLineSeries_init(XLineSeries* self);
 XLineSeries* XLineSeries_create_ex(XMemoryType memory);
 #define XLineSeries_create() XLineSeries_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
+/** @brief 查询序列类型（对标 QLineSeries::type）。 @param self 目标序列指针。 @return 固定返回 Line。 */
+int XLineSeries_type(const XLineSeries* self);
+
 /** @brief 析构入口（查表分派父类析构）。 */
 
 /** @brief 删除堆上序列（查表分派析构并释放内存）。 */

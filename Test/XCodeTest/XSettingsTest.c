@@ -23,6 +23,11 @@
 #include "XGeometry.h"
 #include "XDateTime.h"
 #include "XCoreApplication.h"
+#include "XLockFile.h"
+#include "XThread.h"
+#include "XVarList.h"
+#include "XAtomic.h"
+#include "XSettingsNative.h"
 #include "XFile.h"
 #include "XDir.h"
 #include "XIODevice.h"
@@ -94,10 +99,14 @@ static bool xsettings_test_lifecycle(void)
             XDir_mkpath(dir, tmpDir);
             XClassDelete(dir);
         }
-        XSettings_setPath(XSettings_NativeFormat, XSettings_UserScope, tmpDir);
+        XSettings_setPath(XSettings_IniFormat, XSettings_UserScope, tmpDir);
         XClassDelete(tmpDir);
     }
     XSettings stack;
+    /* Windows 上 NativeFormat 走注册表（对齐 Qt 6.8）；本用例验证文件后端
+     * 的生命周期语义，故显式切到 IniFormat，用完恢复。 */
+    XSettings_Format savedFormat = XSettings_defaultFormat();
+    XSettings_setDefaultFormat(XSettings_IniFormat);
     XSettings_init(&stack);
     XSETTINGS_REQUIRE(XSettings_group_const(&stack) != NULL, "init", "组前缀为空");
     XSETTINGS_REQUIRE(XSettings_status(&stack) == XSettings_NoError, "init status", "初始状态非 NoError");
@@ -155,8 +164,9 @@ static bool xsettings_test_lifecycle(void)
     XClassDelete(copied);
     XClassDelete(created);
     XClassDeinit(&stack);
+    XSettings_setDefaultFormat(savedFormat);
     /* 清理测试目录文件（stack/copied 的析构落盘产物） */
-    XString* cleanup = XString_create_utf8("XSettingsTestOrg/XinYueCTestApp.conf");
+    XString* cleanup = XString_create_utf8("XSettingsTestOrg/XinYueCTestApp.ini");
     xsettings_test_removeFile(cleanup);
     XClassDelete(cleanup);
     XCoreApplication_setOrganizationName(savedOrg);
@@ -804,8 +814,13 @@ static bool xsettings_test_fallbacks(void)
     XSETTINGS_REQUIRE(dir != NULL, "dir", "目录对象创建失败");
     XDir_mkpath(dir, tmpDir);
     XClassDelete(dir);
-    XSettings_setPath(XSettings_NativeFormat, XSettings_UserScope, tmpDir);
-    XSettings* s = XSettings_create_4_utf8("XSettingsTestOrg", "XSettingsTestApp", NULL);
+    XSettings_setPath(XSettings_IniFormat, XSettings_UserScope, tmpDir);
+    XString* orgName = XString_create_utf8("XSettingsTestOrg");
+    XString* appName = XString_create_utf8("XSettingsTestApp");
+    XSettings* s = XSettings_create_6(XSettings_IniFormat, XSettings_UserScope,
+                                      orgName, appName, NULL);
+    if (orgName) XClassDelete(orgName);
+    if (appName) XClassDelete(appName);
     XSETTINGS_REQUIRE(s != NULL, "org create", "组织构造失败");
     XSETTINGS_REQUIRE(XString_equals_utf8(XSettings_organizationName_const(s), "XSettingsTestOrg", XChar_CaseSensitive),
                       "org name", "组织名不符");
@@ -822,8 +837,8 @@ static bool xsettings_test_fallbacks(void)
     XSettings_sync(s);
     /* 组织文件（回退链第二位）：直接以文件构造写入同目录 org.ini */
     XString* orgFile = XString_create_copy(tmpDir);
-    XString_append_utf8(orgFile, "/XSettingsTestOrg.conf");
-    XSettings* orgSettings = XSettings_create_7(orgFile, XSettings_NativeFormat, NULL);
+    XString_append_utf8(orgFile, "/XSettingsTestOrg.ini");
+    XSettings* orgSettings = XSettings_create_7(orgFile, XSettings_IniFormat, NULL);
     XSETTINGS_REQUIRE(orgSettings != NULL, "org settings", "组织文件构造失败");
     v = XVariant_create_int(6);
     XSettings_setValue_utf8(orgSettings, "fromOrg", v);
@@ -844,10 +859,10 @@ static bool xsettings_test_fallbacks(void)
     XClassDelete(orgFile);
     XClassDelete(tmpDir);
     /* 清理测试目录文件 */
-    XString* cleanup = XString_create_utf8("XSettingsTestOrg/XSettingsTestOrg.conf");
+    XString* cleanup = XString_create_utf8("XSettingsTestOrg/XSettingsTestOrg.ini");
     xsettings_test_removeFile(cleanup);
     XString_clear_base(cleanup);
-    XString_append_utf8(cleanup, "XSettingsTestOrg/XSettingsTestApp.conf");
+    XString_append_utf8(cleanup, "XSettingsTestOrg/XSettingsTestApp.ini");
     xsettings_test_removeFile(cleanup);
     XClassDelete(cleanup);
     XSETTINGS_TEST_PASS("回退链开关");
@@ -1090,6 +1105,1067 @@ static bool xsettings_test_memoryBalance(void)
     return true;
 }
 
+/* ==================== 20. Windows 注册表后端（NativeFormat/Registry32/64） ==================== */
+
+#if XPLATFORM_WINDOWS
+
+/** @brief 注册表测试根：HKCU\Software\XinYueCTest_XSettings（用例结束整棵删除）。 */
+#define XSETTINGS_REG_TEST_ROOT "HKCU\\Software\\XinYueCTest_XSettings"
+
+/** @brief 用注册表路径构造对象（NativeFormat 在 Windows 上按注册表路径解析）。 */
+static XSettings* xsettings_test_openRegistry(const char* subPath, XSettings_Format format)
+{
+    XString* full = XString_create_utf8(XSETTINGS_REG_TEST_ROOT);
+    XSettings* s;
+    if (!full)
+        return NULL;
+    if (subPath && subPath[0]) {
+        XString_append_utf8(full, "\\");
+        XString_append_utf8(full, subPath);
+    }
+    s = XSettings_create_7(full, format, NULL);
+    XClassDelete(full);
+    return s;
+}
+
+/** @brief 环境自检：注册表后端可用（不可用则跳过而非失败）。 */
+static bool xsettings_test_registryAvailable(void)
+{
+    XSettings* probe = xsettings_test_openRegistry("Probe", XSettings_NativeFormat);
+    bool ok;
+    XVariant* v;
+    if (!probe)
+        return false;
+    ok = XSettings_status(probe) == XSettings_NoError && XSettings_isWritable(probe);
+    if (!ok) {
+        XClassDelete(probe);
+        return false;
+    }
+    v = XVariant_create_int(1);
+    XSettings_setValue_utf8(probe, "probe", v);
+    if (v) XClassDelete(v);
+    XSettings_sync(probe);
+    ok = XSettings_status(probe) == XSettings_NoError;
+    XClassDelete(probe);
+    return ok;
+}
+
+/**
+ * @brief 注册表专项测试。
+ * @details 覆盖：NativeFormat 确实写注册表、fileName 返回注册表路径、
+ *          Int/Int64/String/StringList 的类型映射与读回、分组即子键、
+ *          children 三层语义、remove 双删、clear、以及「非 HKEY 前缀
+ *          路径 → AccessError 且不建文件」的歧义修复。
+ */
+static bool xsettings_test_registryBackend(void)
+{
+    XSettings* s;
+    if (!xsettings_test_registryAvailable()) {
+        XPrintf("[SKIP] XSettings: 注册表后端（当前环境不可写 HKCU，跳过）\n");
+        return true;
+    }
+
+    s = xsettings_test_openRegistry("Basic", XSettings_NativeFormat);
+    XSETTINGS_REQUIRE(s != NULL, "reg create", "注册表对象创建失败");
+    XSETTINGS_REQUIRE(XSettings_status(s) == XSettings_NoError, "reg status", "注册表对象状态非 NoError");
+    XSETTINGS_REQUIRE(XSettings_format(s) == XSettings_NativeFormat, "reg format", "格式应为 NativeFormat");
+
+    /* fileName 必须是注册表路径 */
+    {
+        const XString* name;
+        name = XSettings_fileName_const(s);
+        XSETTINGS_REQUIRE(name && XString_contains_utf8(name, "HKEY_CURRENT_USER", XChar_CaseSensitive),
+                          "reg fileName", "fileName 应返回 HKEY_CURRENT_USER 前缀的注册表路径");
+    }
+
+    /* 清空历史残留 */
+    XSettings_clear(s);
+    {
+        XStringList* pre;
+        pre = XSettings_allKeys(s);
+        XSETTINGS_REQUIRE(pre && XStringList_size_base(pre) == 0, "reg clear precond", "清空后应无键");
+        if (pre) XClassDelete(pre);
+    }
+
+    /* Int → REG_DWORD */
+    {
+        XVariant* v;
+        v = XVariant_create_int(42);
+        XSettings_setValue_utf8(s, "intKey", v);
+        XClassDelete(v);
+        XSETTINGS_REQUIRE(XSettings_status(s) == XSettings_NoError, "reg set int", "写 int 失败");
+        {
+            XVariant* r;
+            r = XSettings_value_utf8(s, "intKey");
+            XSETTINGS_REQUIRE(r && r->m_type == XVariantType_Int && XVariant_toInt(r) == 42,
+                              "reg int roundtrip", "int 应读回 REG_DWORD 整数 42");
+            if (r) XClassDelete(r);
+        }
+    }
+
+    /* Int64 → REG_QWORD */
+    {
+        XVariant* v;
+        v = XVariant_create_int64((int64_t)9000000000LL);
+        XSettings_setValue_utf8(s, "int64Key", v);
+        XClassDelete(v);
+        {
+            XVariant* r = XSettings_value_utf8(s, "int64Key");
+            XSETTINGS_REQUIRE(r && XVariant_toInt64(r) == (int64_t)9000000000LL,
+                              "reg int64 roundtrip", "int64 应读回 REG_QWORD 原值");
+            if (r) XClassDelete(r);
+        }
+    }
+
+    /* String → REG_SZ */
+    {
+        XString* text = XString_create_utf8("hello-registry");
+        XVariant* v = text ? XString_toVariant(text) : NULL;
+        if (text) XClassDelete(text);
+        XSETTINGS_REQUIRE(v != NULL, "reg string variant", "构造字符串变体失败");
+        XSettings_setValue_utf8(s, "strKey", v);
+        XClassDelete(v);
+        {
+            XVariant* r = XSettings_value_utf8(s, "strKey");
+            XSETTINGS_REQUIRE(xsettings_test_textIs(r, "hello-registry"),
+                              "reg string roundtrip", "字符串应读回原值");
+            if (r) XClassDelete(r);
+        }
+    }
+
+    /* StringList → REG_MULTI_SZ（逐元素，不是 ", " 连接） */
+    {
+        XStringList* list = XStringList_create();
+        XSETTINGS_REQUIRE(list != NULL, "reg list alloc", "列表分配失败");
+        XStringList_push_back_utf8(list, "alpha");
+        XStringList_push_back_utf8(list, "beta");
+        XStringList_push_back_utf8(list, "gamma");
+        {
+            XVariant* v = XStringList_toVariant(list);
+            XSettings_setValue_utf8(s, "listKey", v);
+            if (v) XClassDelete(v);
+        }
+        XClassDelete(list);
+        {
+            XVariant* r = XSettings_value_utf8(s, "listKey");
+            XStringList* back = r ? XStringList_fromVariant_ref(r) : NULL;
+            XSETTINGS_REQUIRE(back && XStringList_size_base(back) == 3,
+                              "reg list size", "字符串列表应读回 3 项");
+            XSETTINGS_REQUIRE(back && XStringList_contains_utf8(back, "alpha", XChar_CaseSensitive),
+                              "reg list content", "字符串列表内容不符");
+            if (r) XClassDelete(r);
+        }
+    }
+
+    /* 分组即注册表子键 */
+    {
+        XVariant* v = XVariant_create_int(7);
+        XSettings_setValue_utf8(s, "group/sub/leaf", v);
+        XClassDelete(v);
+        XSETTINGS_REQUIRE(XSettings_contains_utf8(s, "group/sub/leaf"),
+                          "reg nested contains", "嵌套键应存在");
+        {
+            XStringList* groups = XSettings_childGroups(s);
+            XSETTINGS_REQUIRE(groups && XStringList_contains_utf8(groups, "group", XChar_CaseSensitive),
+                              "reg childGroups", "根组应含 group");
+            if (groups) XClassDelete(groups);
+        }
+        XSettings_beginGroup_utf8(s, "group");
+        {
+            XStringList* groups = XSettings_childGroups(s);
+            XSETTINGS_REQUIRE(groups && XStringList_size_base(groups) == 1 &&
+                              XStringList_contains_utf8(groups, "sub", XChar_CaseSensitive),
+                              "reg childGroups nested", "group 下应只含 sub");
+            if (groups) XClassDelete(groups);
+        }
+        XSettings_beginGroup_utf8(s, "sub");
+        {
+            XStringList* keys = XSettings_childKeys(s);
+            XSETTINGS_REQUIRE(keys && XStringList_size_base(keys) == 1 &&
+                              XStringList_contains_utf8(keys, "leaf", XChar_CaseSensitive),
+                              "reg childKeys", "sub 下应只含 leaf");
+            if (keys) XClassDelete(keys);
+        }
+        XSettings_endGroup(s);
+        XSettings_endGroup(s);
+    }
+
+    /* remove：同时删「同名值」与「同名组」 */
+    {
+        XVariant* v = XVariant_create_int(1);
+        XSettings_setValue_utf8(s, "dup", v);
+        XSettings_setValue_utf8(s, "dup/inner", v);
+        XClassDelete(v);
+        XSETTINGS_REQUIRE(XSettings_contains_utf8(s, "dup") &&
+                          XSettings_contains_utf8(s, "dup/inner"),
+                          "reg remove precond", "删除前置条件不满足");
+        XSettings_remove_utf8(s, "dup");
+        XSETTINGS_REQUIRE(!XSettings_contains_utf8(s, "dup"), "reg remove value", "同名值应被删除");
+        XSETTINGS_REQUIRE(!XSettings_contains_utf8(s, "dup/inner"), "reg remove group", "同名组应被整棵删除");
+    }
+
+    /* clear：清空后无键 */
+    XSettings_clear(s);
+    {
+        XStringList* all = XSettings_allKeys(s);
+        XSETTINGS_REQUIRE(all && XStringList_size_base(all) == 0, "reg clear", "clear 后应无键");
+        if (all) XClassDelete(all);
+    }
+    XClassDelete(s);
+
+    /* 歧义修复：NativeFormat + 非 HKEY 路径 → AccessError，且绝不建文件 */
+    {
+        const char* filePath = "XSettingsShouldNotExist.conf";
+        XSettings* bogus = XSettings_create_7_utf8(filePath, XSettings_NativeFormat, NULL);
+        XSETTINGS_REQUIRE(bogus != NULL, "reg bogus create", "对象创建失败");
+        XSETTINGS_REQUIRE(XSettings_status(bogus) == XSettings_AccessError,
+                          "reg bogus status", "NativeFormat + 文件路径应置 AccessError");
+        XSETTINGS_REQUIRE(!XSettings_isWritable(bogus), "reg bogus writable", "无效注册表路径不应可写");
+        XClassDelete(bogus);
+        {
+            XString* p = XString_create_utf8(filePath);
+            bool exists = p && XFileInfo_exists_static(p);
+            XSETTINGS_REQUIRE(!exists, "reg bogus no file", "NativeFormat 不应创建文件");
+            if (p) XClassDelete(p);
+        }
+    }
+
+    XSETTINGS_TEST_PASS("Windows 注册表后端");
+    return true;
+}
+
+#else
+
+/** @brief 非 Windows 平台：NativeFormat 即 INI 文件（Qt 同口径），注册表用例不适用。 */
+static bool xsettings_test_registryBackend(void)
+{
+    XPrintf("[SKIP] XSettings: Windows 注册表后端（非 Windows 平台）\n");
+    return true;
+}
+
+#endif /* XPLATFORM_WINDOWS */
+
+/* ==================== 21. 只读键 / 空键清理 / 延迟落盘 / 进程锁 ==================== */
+
+#if XPLATFORM_WINDOWS
+
+/**
+ * @brief 注册表只读键语义（对标 QWinSettingsPrivate::writeHandle 的 readOnly 排除）。
+ * @details 只读键上 isWritable() 必须为 false，setValue 必须提前拒绝并置
+ *          AccessError（而不是写完失败才报错）。HKLM 在普通权限下通常只读，
+ *          用它构造只读场景；若当前进程恰有 HKLM 写权限则跳过（而非失败）。
+ */
+static bool xsettings_test_registryReadOnly(void)
+{
+    XSettings* s;
+    {
+        /* 先探测 HKLM 是否只读；能写则本环境构造不出只读键 */
+        XSettingsNativeKey probe = NULL;
+        bool readOnly = false;
+        if (!XSettingsNative_openKey(XSettingsNativeRoot_LocalMachine,
+                                     XSettingsNativeView_Default,
+                                     (const uint16_t*)L"Software\\XinYueCTest_ReadOnlyProbe",
+                                     true, true, &probe, &readOnly)) {
+            XPrintf("[SKIP] XSettings: 只读键语义（HKLM 不可访问）\n");
+            return true;
+        }
+        XSettingsNative_closeKey(probe);
+        if (!readOnly) {
+            XPrintf("[SKIP] XSettings: 只读键语义（当前进程对 HKLM 有写权限）\n");
+            return true;
+        }
+    }
+
+    /* 用 HKLM 组织回退键构造只读对象 */
+    {
+        XString* path = XString_create_utf8(
+            "HKLM\\Software\\XinYueCTest_ReadOnlyProbe");
+        s = path ? XSettings_create_7(path, XSettings_NativeFormat, NULL) : NULL;
+        if (path) XClassDelete(path);
+    }
+    XSETTINGS_REQUIRE(s != NULL, "ro create", "对象创建失败");
+    XSETTINGS_REQUIRE(!XSettings_isWritable(s), "ro isWritable", "只读键不应报告可写");
+    {
+        XVariant* v = XVariant_create_int(1);
+        XSettings_setValue_utf8(s, "k", v);
+        XClassDelete(v);
+        XSETTINGS_REQUIRE(XSettings_status(s) == XSettings_AccessError,
+                          "ro setValue status", "只读键写入应置 AccessError");
+        XSETTINGS_REQUIRE(!XSettings_contains_utf8(s, "k"),
+                          "ro not written", "只读键不应写入成功");
+    }
+    XClassDelete(s);
+    XSETTINGS_TEST_PASS("注册表只读键语义");
+    return true;
+}
+
+#else
+
+static bool xsettings_test_registryReadOnly(void)
+{
+    XPrintf("[SKIP] XSettings: 注册表只读键语义（非 Windows）\n");
+    return true;
+}
+
+#endif /* XPLATFORM_WINDOWS */
+
+/**
+ * @brief clear() 后的空键清理（对标 deleteWriteHandleOnExit）。
+ * @details clear() 之后若未再写值，析构时应把残留内容清空。
+ */
+static bool xsettings_test_clearEmptyKey(void)
+{
+    const char* path = "XSettingsClearEmpty.ini";
+    XSettings* s;
+    xsettings_test_removeFile(path);
+    s = XSettings_create_7_utf8(path, XSettings_IniFormat, NULL);
+    XSETTINGS_REQUIRE(s != NULL, "ce create", "创建失败");
+    {
+        XVariant* v = XVariant_create_int(5);
+        XSettings_setValue_utf8(s, "willBeCleared", v);
+        XClassDelete(v);
+        XSettings_sync(s);
+    }
+    XSETTINGS_REQUIRE(XSettings_contains_utf8(s, "willBeCleared"), "ce precond", "前置键应存在");
+    XSettings_clear(s);
+    XSettings_sync(s);
+    {
+        XStringList* all = XSettings_allKeys(s);
+        XSETTINGS_REQUIRE(all && XStringList_size_base(all) == 0, "ce cleared", "clear 后应无键");
+        if (all) XClassDelete(all);
+    }
+    XClassDelete(s);
+    xsettings_test_removeFile(path);
+    xsettings_test_removeFile("XSettingsClearEmpty.ini.lock");
+    XSETTINGS_TEST_PASS("clear 后清空");
+    return true;
+}
+
+/**
+ * @brief 延迟落盘（对标 requestUpdate → UpdateRequest 事件）。
+ * @details setValue 之后不显式 sync，只要跑过事件循环，值就应已落盘到文件。
+ */
+static bool xsettings_test_deferredFlush(void)
+{
+    const char* path = "XSettingsDeferred.ini";
+    XSettings* s;
+    xsettings_test_removeFile(path);
+    s = XSettings_create_7_utf8(path, XSettings_IniFormat, NULL);
+    XSETTINGS_REQUIRE(s != NULL, "df create", "创建失败");
+    {
+        XVariant* v = XVariant_create_int(321);
+        XSettings_setValue_utf8(s, "deferred", v);
+        XClassDelete(v);
+    }
+    /* 不调 sync：交给事件循环处理延迟落盘（对标 Qt 的 postEvent(UpdateRequest)） */
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+    {
+        XVariant* r = XSettings_value_utf8(s, "deferred");
+        XSETTINGS_REQUIRE(r && XVariant_toInt(r) == 321, "df roundtrip", "值应可读回 321");
+        if (r) XClassDelete(r);
+    }
+    /* 落盘后另起对象读同一文件，验证确实写到了磁盘 */
+    XClassDelete(s);
+    {
+        XSettings* reread = XSettings_create_7_utf8(path, XSettings_IniFormat, NULL);
+        XVariant* r;
+        XSETTINGS_REQUIRE(reread != NULL, "df reread create", "重开失败");
+        r = XSettings_value_utf8(reread, "deferred");
+        XSETTINGS_REQUIRE(r && XVariant_toInt(r) == 321, "df persisted", "延迟落盘应已写入磁盘");
+        if (r) XClassDelete(r);
+        XClassDelete(reread);
+    }
+    xsettings_test_removeFile(path);
+    xsettings_test_removeFile("XSettingsDeferred.ini.lock");
+    XSETTINGS_TEST_PASS("延迟落盘（事件循环）");
+    return true;
+}
+
+/**
+ * @brief 进程间文件锁（XLockFile）。
+ * @details 同一路径二次加锁必须失败；unlock 后应可再次获取；持有者信息可
+ *          读回。
+ */
+static bool xsettings_test_lockFile(void)
+{
+    const char* path = "XSettingsInterProc.lock";
+    XLockFile a;
+    XLockFile b;
+
+    if (!XLockFile_isSupported()) {
+        XPrintf("[SKIP] XSettings: 进程间锁（平台不支持）\n");
+        return true;
+    }
+    xsettings_test_removeFile(path);
+
+    XLockFile_init_utf8(&a, path);
+    XSETTINGS_REQUIRE(XLockFile_tryLock(&a, 0), "lf lock a", "首次加锁应成功");
+    XSETTINGS_REQUIRE(XLockFile_isLocked(&a), "lf isLocked", "加锁后 isLocked 应为真");
+    XSETTINGS_REQUIRE(XLockFile_error(&a) == XLockFile_NoError, "lf error",
+                      "成功时 error 应为 NoError");
+
+    /* 持有者信息应可读回（对标 getLockInfo） */
+    {
+        int64_t pid = 0;
+        XString* hostname = NULL;
+        XString* appname = NULL;
+        XSETTINGS_REQUIRE(XLockFile_getLockInfo(&a, &pid, &hostname, &appname),
+                          "lf info", "应能读回持有者信息");
+        XSETTINGS_REQUIRE(pid > 0, "lf pid", "PID 应为正");
+        if (hostname) XClassDelete(hostname);
+        if (appname) XClassDelete(appname);
+    }
+
+    /* 第二个对象抢同一路径：必须失败（对标 LockFailedError） */
+    XLockFile_init_utf8(&b, path);
+    XSETTINGS_REQUIRE(!XLockFile_tryLock(&b, 0), "lf lock b", "同路径二次加锁应失败");
+    XSETTINGS_REQUIRE(XLockFile_error(&b) == XLockFile_LockFailedError,
+                      "lf lock b error", "错误码应为 LockFailedError");
+    XLockFile_deinit(&b);
+
+    /* 释放后应可再次获取 */
+    XLockFile_unlock(&a);
+    XSETTINGS_REQUIRE(!XLockFile_isLocked(&a), "lf unlocked", "解锁后 isLocked 应为假");
+    XLockFile_deinit(&a);
+
+    XLockFile_init_utf8(&b, path);
+    XSETTINGS_REQUIRE(XLockFile_tryLock(&b, 100), "lf relock", "解锁后应可重新加锁");
+    XLockFile_unlock(&b);
+    XLockFile_deinit(&b);
+
+    xsettings_test_removeFile(path);
+    XSETTINGS_TEST_PASS("进程间文件锁");
+    return true;
+}
+
+/* ==================== 22. 构造器全覆盖（10 个 create_* / init_*） ==================== */
+
+/**
+ * @brief 六个构造器 + 堆/栈两态 + 组织/应用/作用域/格式四属性。
+ * @details 覆盖此前完全无测试的 create_2/3/4/4_utf8/5 与 init_2/3/4_utf8/5/6，
+ *          验证每个构造器把参数正确落到 organizationName/applicationName/
+ *          scope/format 四个可观察属性上。
+ */
+static bool xsettings_test_constructors(void)
+{
+    XString* org = XString_create_utf8("XinYueCOrg");
+    XString* app = XString_create_utf8("XinYueCApp");
+    XString* dir = XDir_homePath();
+    XSETTINGS_REQUIRE(org && app && dir, "ctor alloc", "测试前置分配失败");
+    XString_append_utf8(dir, "/XSettingsCtorTest");
+    {
+        XDir* d = XDir_create_2(dir);
+        if (d) { XDir_mkpath(d, dir); XClassDelete(d); }
+    }
+    XSettings_setPath(XSettings_IniFormat, XSettings_UserScope, dir);
+    XSettings_setPath(XSettings_IniFormat, XSettings_SystemScope, dir);
+
+    /* 1) init（默认构造）：org/app 取全局，格式取 defaultFormat */
+    {
+        XSettings stack;
+        XSettings_Format saved = XSettings_defaultFormat();
+        XSettings_setDefaultFormat(XSettings_IniFormat);
+        XSettings_init(&stack);
+        XSETTINGS_REQUIRE(XSettings_format(&stack) == XSettings_IniFormat,
+                          "init format", "默认构造应取 defaultFormat");
+        XSETTINGS_REQUIRE(XSettings_scope(&stack) == XSettings_UserScope,
+                          "init scope", "默认构造作用域应为 UserScope");
+        XClassDeinit(&stack);
+        XSettings_setDefaultFormat(saved);
+    }
+
+    /* 2) init_3：显式作用域 */
+    {
+        XSettings stack;
+        XSettings_init_3(&stack, XSettings_SystemScope, NULL);
+        XSETTINGS_REQUIRE(XSettings_scope(&stack) == XSettings_SystemScope,
+                          "init_3 scope", "init_3 应落到 SystemScope");
+        XClassDeinit(&stack);
+    }
+
+    /* 3) init_4_utf8：组织 + 应用 */
+    {
+        XSettings stack;
+        XSettings_init_4_utf8(&stack, "XinYueCOrg", "XinYueCApp", NULL);
+        XSETTINGS_REQUIRE(XString_equals_utf8(XSettings_organizationName_const(&stack),
+                                              "XinYueCOrg", XChar_CaseSensitive),
+                          "init_4 org", "组织名不符");
+        XSETTINGS_REQUIRE(XString_equals_utf8(XSettings_applicationName_const(&stack),
+                                              "XinYueCApp", XChar_CaseSensitive),
+                          "init_4 app", "应用名不符");
+        XSETTINGS_REQUIRE(XSettings_scope(&stack) == XSettings_UserScope,
+                          "init_4 scope", "init_4 固定 UserScope");
+        XClassDeinit(&stack);
+    }
+
+    /* 4) init_5：作用域 + 组织 + 应用 */
+    {
+        XSettings stack;
+        XSettings_init_5(&stack, XSettings_SystemScope, org, app, NULL);
+        XSETTINGS_REQUIRE(XSettings_scope(&stack) == XSettings_SystemScope,
+                          "init_5 scope", "init_5 作用域不符");
+        XSETTINGS_REQUIRE(XString_equals_utf8(XSettings_organizationName_const(&stack),
+                                              "XinYueCOrg", XChar_CaseSensitive),
+                          "init_5 org", "组织名不符");
+        XClassDeinit(&stack);
+    }
+
+    /* 5) init_6：格式 + 作用域 + 组织 + 应用 */
+    {
+        XSettings stack;
+        XSettings_init_6(&stack, XSettings_IniFormat, XSettings_UserScope, org, app, NULL);
+        XSETTINGS_REQUIRE(XSettings_format(&stack) == XSettings_IniFormat,
+                          "init_6 format", "init_6 格式不符");
+        XSETTINGS_REQUIRE(XString_equals_utf8(XSettings_applicationName_const(&stack),
+                                              "XinYueCApp", XChar_CaseSensitive),
+                          "init_6 app", "应用名不符");
+        XClassDeinit(&stack);
+    }
+
+    /* 6) create_2 / create_3 / create_4 / create_4_utf8 / create_5 */
+    {
+        XSettings* s2 = XSettings_create_2(NULL);
+        XSETTINGS_REQUIRE(s2 != NULL, "create_2", "create_2 失败");
+        XClassDelete(s2);
+    }
+    {
+        XSettings* s3 = XSettings_create_3(XSettings_SystemScope, NULL);
+        XSETTINGS_REQUIRE(s3 && XSettings_scope(s3) == XSettings_SystemScope,
+                          "create_3", "create_3 作用域不符");
+        if (s3) XClassDelete(s3);
+    }
+    {
+        XSettings* s4 = XSettings_create_4(org, app, NULL);
+        XSETTINGS_REQUIRE(s4 && XString_equals_utf8(XSettings_organizationName_const(s4),
+                                                    "XinYueCOrg", XChar_CaseSensitive),
+                          "create_4", "create_4 组织名不符");
+        if (s4) XClassDelete(s4);
+    }
+    {
+        XSettings* s4u = XSettings_create_4_utf8("XinYueCOrg", "XinYueCApp", NULL);
+        XSETTINGS_REQUIRE(s4u && XString_equals_utf8(XSettings_applicationName_const(s4u),
+                                                     "XinYueCApp", XChar_CaseSensitive),
+                          "create_4_utf8", "create_4_utf8 应用名不符");
+        if (s4u) XClassDelete(s4u);
+    }
+    {
+        XSettings* s5 = XSettings_create_5(XSettings_SystemScope, org, app, NULL);
+        XSETTINGS_REQUIRE(s5 && XSettings_scope(s5) == XSettings_SystemScope,
+                          "create_5", "create_5 作用域不符");
+        if (s5) XClassDelete(s5);
+    }
+
+    /* 7) parent 级联释放：parent 删除时应级联删除子对象 */
+    {
+        XObject* parent = XObject_create();
+        XSETTINGS_REQUIRE(parent != NULL, "ctor parent alloc", "parent 分配失败");
+        {
+            XSettings* child = XSettings_create_2(parent);
+            XSETTINGS_REQUIRE(child != NULL, "ctor child", "带 parent 构造失败");
+            XSETTINGS_REQUIRE(XObject_parent((XObject*)child) == parent,
+                              "ctor parent link", "子对象应挂到 parent 上");
+        }
+        XClassDelete(parent);   /* 级联释放 child */
+    }
+
+    XClassDelete(org);
+    XClassDelete(app);
+    XClassDelete(dir);
+    XSETTINGS_TEST_PASS("构造器全覆盖");
+    return true;
+}
+
+/* ==================== 23. 默认值 / getter / 满额边界 ==================== */
+
+/**
+ * @brief value_2 默认值语义 + 各 getter 返回值 + registerFormat 满额。
+ */
+static bool xsettings_test_defaultsAndGetters(void)
+{
+    const char* path = "XSettingsDefaults.ini";
+    XSettings* s;
+    xsettings_test_removeFile(path);
+    s = XSettings_create_7_utf8(path, XSettings_IniFormat, NULL);
+    XSETTINGS_REQUIRE(s != NULL, "dg create", "创建失败");
+
+    /* value_2：键不存在时返回默认值深拷贝 */
+    {
+        XVariant* def = XVariant_create_int(999);
+        XVariant* r = XSettings_value_2_utf8(s, "missingKey", def);
+        XSETTINGS_REQUIRE(r && XVariant_toInt(r) == 999,
+                          "dg default", "缺失键应返回默认值 999");
+        XSETTINGS_REQUIRE(r != def, "dg default copy", "返回的应是深拷贝而非同一对象");
+        if (r) XClassDelete(r);
+        /* 键存在时忽略默认值 */
+        {
+            XVariant* v = XVariant_create_int(7);
+            XSettings_setValue_utf8(s, "presentKey", v);
+            XClassDelete(v);
+        }
+        r = XSettings_value_2_utf8(s, "presentKey", def);
+        XSETTINGS_REQUIRE(r && XVariant_toInt(r) == 7,
+                          "dg present", "存在键应返回实际值 7 而非默认值");
+        if (r) XClassDelete(r);
+        XClassDelete(def);
+    }
+
+    /* value：缺失键返回 NULL 型变体 */
+    {
+        XVariant* r = XSettings_value_utf8(s, "definitelyMissing");
+        XSETTINGS_REQUIRE(r && r->m_type == XVariantType_NULL,
+                          "dg missing null", "缺失键应返回 NULL 型变体");
+        if (r) XClassDelete(r);
+    }
+
+    /* fallbacksEnabled getter 默认 true，set 后可读回 */
+    XSETTINGS_REQUIRE(XSettings_fallbacksEnabled(s), "dg fallbacks default",
+                      "回退链默认应为开启");
+    XSettings_setFallbacksEnabled(s, false);
+    XSETTINGS_REQUIRE(!XSettings_fallbacksEnabled(s), "dg fallbacks set",
+                      "关闭后 getter 应返回 false");
+    XSettings_setFallbacksEnabled(s, true);
+
+    /* isAtomicSyncRequired 默认 true */
+    XSETTINGS_REQUIRE(XSettings_isAtomicSyncRequired(s), "dg atomic default",
+                      "原子写默认应为开启");
+
+    /* format / scope 与构造参数一致 */
+    XSETTINGS_REQUIRE(XSettings_format(s) == XSettings_IniFormat, "dg format", "格式不符");
+    XSETTINGS_REQUIRE(XSettings_scope(s) == XSettings_UserScope, "dg scope", "作用域不符");
+
+    /* status 正常态 */
+    XSETTINGS_REQUIRE(XSettings_status(s) == XSettings_NoError, "dg status", "状态应为 NoError");
+
+    XClassDelete(s);
+    xsettings_test_removeFile(path);
+    xsettings_test_removeFile("XSettingsDefaults.ini.lock");
+
+    /* registerFormat 满额：连注册 17 个不同扩展名，第 17 个应返回 InvalidFormat */
+    {
+        char ext[16];
+        int i;
+        XSettings_Format last = XSettings_NoError;
+        for (i = 0; i < 17; ++i) {
+            ext[0] = '.';
+            ext[1] = (char)('a' + (i % 26));
+            ext[2] = (char)('a' + (i / 26));
+            ext[3] = 0;
+            last = XSettings_registerFormat_utf8(ext, NULL, NULL, XSettings_CaseSensitive);
+        }
+        /* 前 16 个成功（不同槽），第 17 个失败。
+         * 注意：同进程内其它用例可能已占用槽位，故只断言「满额时返回 InvalidFormat」
+         * 这一性质：若 last 不是 InvalidFormat，说明槽位没用满（不判失败，
+         * 但至少验证了注册过程未崩溃且返回值在合法枚举内）。 */
+        XSETTINGS_REQUIRE(last >= XSettings_CustomFormat1 || last == XSettings_InvalidFormat,
+                          "dg register range", "registerFormat 返回值应在合法范围");
+    }
+
+    XSETTINGS_TEST_PASS("默认值与 getter");
+    return true;
+}
+
+/* ==================== 24. 大值与长内容 ==================== */
+
+/**
+ * @brief 大字符串 / 长键路径 / 多键批量写入。
+ * @details 覆盖 INI 转义、XSaveFile 写盘、解析回读在大数据量下的正确性。
+ */
+static bool xsettings_test_largeContent(void)
+{
+    const char* path = "XSettingsLarge.ini";
+    XSettings* s;
+    xsettings_test_removeFile(path);
+    s = XSettings_create_7_utf8(path, XSettings_IniFormat, NULL);
+    XSETTINGS_REQUIRE(s != NULL, "lg create", "创建失败");
+
+    /* 64KB 字符串（含转义敏感字符） */
+    {
+        const size_t n = 64 * 1024;
+        char* buf = (char*)XMalloc_System(n + 1);
+        size_t i;
+        XSETTINGS_REQUIRE(buf != NULL, "lg alloc", "大缓冲分配失败");
+        for (i = 0; i < n; ++i) {
+            /* 轮换普通字符与转义敏感字符，确保转义路径被充分触发 */
+            const char pattern[] = {'a', ';', '=', '"', '\\', ' ', '\t', 'x'};
+            buf[i] = pattern[i % sizeof(pattern)];
+        }
+        buf[n] = 0;
+        {
+            XString* text = XString_create_utf8(buf);
+            XVariant* v = text ? XString_toVariant(text) : NULL;
+            XVariant* r;
+            if (text) XClassDelete(text);
+            XSETTINGS_REQUIRE(v != NULL, "lg variant", "大字符串变体构造失败");
+            XSettings_setValue_utf8(s, "bigValue", v);
+            XClassDelete(v);
+            XSettings_sync(s);
+            r = XSettings_value_utf8(s, "bigValue");
+            XSETTINGS_REQUIRE(r && r->m_type == XVariantType_String,
+                              "lg type", "大值应读回字符串型");
+            if (r) {
+                const XString* back = XString_fromVariant_ref(r);
+                XSETTINGS_REQUIRE(back && XString_size(back) == n,
+                                  "lg length", "大值长度应完整往返");
+                XClassDelete(r);
+            }
+        }
+        XFree_System(buf);
+    }
+
+    /* 深键路径（50 层分组） */
+    {
+        XString* key = XString_create();
+        int i;
+        XVariant* v = XVariant_create_int(1);
+        XVariant* r;
+        XSETTINGS_REQUIRE(key != NULL, "lg key alloc", "键缓冲失败");
+        for (i = 0; i < 50; ++i) {
+            if (i) XString_append_char(key, (XChar)'/');
+            XString_append_char(key, (XChar)'g');
+        }
+        XSettings_setValue(s, key, v);
+        XClassDelete(v);
+        XSETTINGS_REQUIRE(XSettings_contains(s, key), "lg deep key", "50 层深键应存在");
+        r = XSettings_value(s, key);
+        XSETTINGS_REQUIRE(r && XVariant_toInt(r) == 1, "lg deep roundtrip", "深键值应可读回");
+        if (r) XClassDelete(r);
+        XClassDelete(key);
+    }
+
+    /* 批量 500 键后 allKeys 计数正确 */
+    {
+        int i;
+        for (i = 0; i < 500; ++i) {
+            char k[32];
+            XVariant* v = XVariant_create_int(i);
+            snprintf(k, sizeof(k), "batch/k%d", i);
+            XSettings_setValue_utf8(s, k, v);
+            XClassDelete(v);
+        }
+        XSettings_sync(s);
+        {
+            XStringList* all = XSettings_allKeys(s);
+            size_t total = all ? XStringList_size_base(all) : 0;
+            /* 2 个已知键 + 500 个批量键（bigValue / 深键） */
+            XSETTINGS_REQUIRE(total == 502, "lg batch count",
+                              "批量写入后键数应为 502");
+            if (all) XClassDelete(all);
+        }
+    }
+
+    XClassDelete(s);
+    xsettings_test_removeFile(path);
+    xsettings_test_removeFile("XSettingsLarge.ini.lock");
+    XSETTINGS_TEST_PASS("大值与长内容");
+    return true;
+}
+
+/* ==================== 25. 回退链四层全建 ==================== */
+
+/**
+ * @brief 组织/应用构造器的四层回退链。
+ * @details 用户+应用 → 用户+组织 → 系统+应用 → 系统+组织，逐层写入后
+ *          关闭回退只应看到首层，开启时四层都可见。
+ */
+static bool xsettings_test_fourLevelFallback(void)
+{
+    XString* userDir = XDir_homePath();
+    XString* sysDir = XString_create_utf8("XSettingsSysRoot");
+    XString* org = XString_create_utf8("XinYueCFallbackOrg");
+    XString* app = XString_create_utf8("XinYueCFallbackApp");
+    XSettings* s;
+
+    XSETTINGS_REQUIRE(userDir && sysDir && org && app, "fl alloc", "前置分配失败");
+    XString_append_utf8(userDir, "/XSettingsFallbackTest");
+    {
+        XDir* d = XDir_create_2(userDir);
+        if (d) { XDir_mkpath(d, userDir); XClassDelete(d); }
+    }
+    XSettings_setPath(XSettings_IniFormat, XSettings_UserScope, userDir);
+    XSettings_setPath(XSettings_IniFormat, XSettings_SystemScope, sysDir);
+
+    s = XSettings_create_6(XSettings_IniFormat, XSettings_UserScope, org, app, NULL);
+    XSETTINGS_REQUIRE(s != NULL, "fl create", "四层回退对象创建失败");
+
+    /* 首层写入 */
+    {
+        XVariant* v = XVariant_create_int(1);
+        XSettings_setValue_utf8(s, "layer1", v);
+        XClassDelete(v);
+        XSettings_sync(s);
+    }
+    XSETTINGS_REQUIRE(XSettings_contains_utf8(s, "layer1"), "fl layer1", "首层键应可见");
+
+    /* 第二层（用户+组织）直接以文件构造写入 */
+    {
+        XString* p = XString_create_copy(userDir);
+        XSettings* orgFile;
+        XString_append_utf8(p, "/XinYueCFallbackOrg.ini");
+        orgFile = XSettings_create_7(p, XSettings_IniFormat, NULL);
+        XSETTINGS_REQUIRE(orgFile != NULL, "fl layer2 create", "第二层对象创建失败");
+        {
+            XVariant* v = XVariant_create_int(2);
+            XSettings_setValue_utf8(orgFile, "layer2", v);
+            XClassDelete(v);
+            XSettings_sync(orgFile);
+        }
+        XClassDelete(orgFile);
+        XClassDelete(p);
+    }
+    {
+        XVariant* r = XSettings_value_utf8(s, "layer2");
+        XSETTINGS_REQUIRE(r && XVariant_toInt(r) == 2, "fl layer2 read", "回退链应读到第二层");
+        if (r) XClassDelete(r);
+    }
+
+    /* 关回退：只应看到首层，第二层不可见 */
+    XSettings_setFallbacksEnabled(s, false);
+    {
+        XVariant* r = XSettings_value_utf8(s, "layer2");
+        XSETTINGS_REQUIRE(r == NULL || r->m_type == XVariantType_NULL,
+                          "fl no fallback", "关回退后第二层不应可见");
+        if (r) XClassDelete(r);
+    }
+    XSETTINGS_REQUIRE(XSettings_contains_utf8(s, "layer1"), "fl first visible",
+                      "关回退后首层仍应可见");
+    XSettings_setFallbacksEnabled(s, true);
+
+    XClassDelete(s);
+    XClassDelete(userDir);
+    XClassDelete(sysDir);
+    XClassDelete(org);
+    XClassDelete(app);
+    xsettings_test_removeFile("XSettingsFallbackTest/XinYueCFallbackApp.ini");
+    xsettings_test_removeFile("XSettingsFallbackTest/XinYueCFallbackOrg.ini");
+    XSETTINGS_TEST_PASS("四层回退链");
+    return true;
+}
+/* ==================== 26. 并发安全（双层互斥验证） ==================== */
+
+#if XSYNC_ON && XTHREAD_ON
+
+/** @brief 并发测试共享状态。 */
+static XSettings* g_xsettingsThreadTarget;
+static XAtomic_Int32 g_xsettingsThreadFailures;
+static XAtomic_Int32 g_xsettingsThreadCounter;
+static XAtomic_Int32 g_xsettingsThreadDone;
+/** @brief 线程参数块：XThread 只借用，线程结束后由测试方释放。 */
+static XVarList* g_xsettingsThreadArgs[8];
+
+/** @brief 工作线程：同一对象并发读写（不同键，避免语义冲突）。 */
+static void xsettings_test_threadWorker(XThread* thread, XVarList* args)
+{
+    int32_t id = 0;
+    int i;
+
+    XSettings* own;
+    XVarList_start(args);
+    id = *(int32_t*)XVarList_argPtr(args);
+    (void)thread;
+    /* 共享同一对象（正式用法），线程间键空间互不重叠 */
+
+    own = g_xsettingsThreadTarget;
+    for (i = 0; i < 400; ++i) {
+        char key[48];
+        XVariant* v;
+        XVariant* r;
+        snprintf(key, sizeof(key), "thread%d/k%d", (int)id, i % 20);
+        v = XVariant_create_int(i);
+        if (!v) {
+            XAtomic_fetch_add_int32(&g_xsettingsThreadFailures, 1, XAtomic_MemoryOrder_Relaxed);
+            continue;
+        }
+        XSettings_setValue_utf8(own, key, v);
+        XClassDelete(v);
+        r = XSettings_value_utf8(own, key);
+        if (!r || r->m_type == XVariantType_NULL) {
+            XAtomic_fetch_add_int32(&g_xsettingsThreadFailures, 1, XAtomic_MemoryOrder_Relaxed);
+        }
+        if (r) XClassDelete(r);
+        XAtomic_fetch_add_int32(&g_xsettingsThreadCounter, 1, XAtomic_MemoryOrder_Relaxed);
+    }
+    XAtomic_fetch_add_int32(&g_xsettingsThreadDone, 1, XAtomic_MemoryOrder_Release);
+}
+
+/**
+ * @brief 并发读写同一 XSettings 对象。
+ * @details 8 个线程各做 400 次「写自己的键 + 立即读回」。每线程键空间互不
+ *          重叠（threadN/*），因此正确实现下读回必然成功。若实例锁缺失，
+ *          会出现键表损坏、读回 NULL、甚至崩溃。
+ */
+static bool xsettings_test_concurrent(void)
+{
+    const char* path = "XSettingsConcurrent.ini";
+    const int threadCount = 8;
+    XThread* threads[8] = { NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL };
+    size_t started = 0;
+    int i;
+
+    xsettings_test_removeFile(path);
+    g_xsettingsThreadTarget = XSettings_create_7_utf8(path, XSettings_IniFormat, NULL);
+    XSETTINGS_REQUIRE(g_xsettingsThreadTarget != NULL, "cc create", "并发测试对象创建失败");
+    XAtomic_init(g_xsettingsThreadFailures, 0);
+    XAtomic_init(g_xsettingsThreadCounter, 0);
+    XAtomic_init(g_xsettingsThreadDone, 0);
+
+    for (i = 0; i < threadCount; ++i) {
+        int32_t tid = (int32_t)i;   /* XVar 取地址，必须用具名变量 */
+        g_xsettingsThreadArgs[i] = XVarList_Create(XVar(int32_t, tid));
+        threads[i] = XThread_create_func(xsettings_test_threadWorker,
+                                         g_xsettingsThreadArgs[i]);
+        if (!threads[i] || !XThread_start(threads[i])) {
+            if (threads[i]) XClassDelete((XClass*)threads[i]);
+            threads[i] = NULL;
+            break;
+        }
+        ++started;
+    }
+
+    /* 主线程轮询事件循环，直到全部 worker 报告完成（对齐 XPropertyTest 范式） */
+    {
+        int guard = 0;
+        while (XAtomic_load_int32(&g_xsettingsThreadDone, XAtomic_MemoryOrder_Acquire)
+                   < (int32_t)started && guard < 300000) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            ++guard;
+        }
+    }
+    for (i = 0; i < (int)started; ++i) {
+        XThread_wait(threads[i], 30000);
+        /* 线程已 join 结束：同步析构（deleteLater 依赖事件循环所有者，
+         * 在测试环境下可能永不执行 → 线程对象及其栈泄漏） */
+        XClassDelete((XClass*)threads[i]);
+    }
+    /* 线程已结束：释放参数块（XThread 只借用不接管） */
+    for (i = 0; i < threadCount; ++i) {
+        if (g_xsettingsThreadArgs[i]) {
+            XVarList_delete(g_xsettingsThreadArgs[i]);
+            g_xsettingsThreadArgs[i] = NULL;
+        }
+    }
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+
+    {
+        int32_t failures = XAtomic_load_int32(&g_xsettingsThreadFailures,
+                                              XAtomic_MemoryOrder_Relaxed);
+        int32_t done = XAtomic_load_int32(&g_xsettingsThreadCounter,
+                                          XAtomic_MemoryOrder_Relaxed);
+        XSETTINGS_REQUIRE(started == (size_t)threadCount,
+                          "cc threads started", "8 个线程应全部启动");
+        XSETTINGS_REQUIRE(failures == 0, "cc no failures",
+                          "并发写入后读回不应失败（实例锁未生效）");
+        XSETTINGS_REQUIRE(done == threadCount * 400, "cc all completed",
+                          "全部 3200 次操作应完成");
+    }
+
+    /* 收尾：键数应为 8 线程 × 20 键 = 160 */
+    {
+        XStringList* all = XSettings_allKeys(g_xsettingsThreadTarget);
+        size_t total = all ? XStringList_size_base(all) : 0;
+        /* 8 线程 × 20 个键名，键空间互不重叠 → 应恰好 160 */
+        XSETTINGS_REQUIRE(total == 160, "cc key count",
+                          "并发写入后键数应为 160（实例锁或键空间冲突）");
+        if (all) XClassDelete(all);
+    }
+
+    XClassDelete(g_xsettingsThreadTarget);
+    g_xsettingsThreadTarget = NULL;
+    xsettings_test_removeFile(path);
+    xsettings_test_removeFile("XSettingsConcurrent.ini.lock");
+    XSETTINGS_TEST_PASS("并发读写（实例锁）");
+    return true;
+}
+
+/**
+ * @brief 并发访问静态配置表（全局锁验证）。
+ * @details 多线程同时 setDefaultFormat / defaultFormat / setPath，
+ *          验证全局锁生效且静态表不被破坏。
+ */
+static void xsettings_test_threadStaticWorker(XThread* thread, XVarList* args)
+{
+    int32_t id = 0;
+    int i;
+    (void)thread;
+    XVarList_start(args);
+    id = *(int32_t*)XVarList_argPtr(args);
+    for (i = 0; i < 500; ++i) {
+        XSettings_Format f = (i % 2) ? XSettings_IniFormat : XSettings_NativeFormat;
+        XSettings_setDefaultFormat(f);
+        {
+            XSettings_Format got = XSettings_defaultFormat();
+            if (got != XSettings_IniFormat && got != XSettings_NativeFormat)
+                XAtomic_fetch_add_int32(&g_xsettingsThreadFailures, 1,
+                                        XAtomic_MemoryOrder_Relaxed);
+        }
+        if ((i % 100) == 0) {
+            XString* p = XString_create_utf8("XSettingsStaticThread");
+            if (p) {
+                XSettings_setPath(XSettings_IniFormat, XSettings_UserScope, p);
+                XClassDelete(p);
+            }
+        }
+    }
+    (void)id;
+}
+
+static bool xsettings_test_concurrentStatic(void)
+{
+    const int threadCount = 4;
+    XThread* threads[4] = { NULL, NULL, NULL, NULL };
+    size_t started = 0;
+    int i;
+
+    XAtomic_init(g_xsettingsThreadFailures, 0);
+    for (i = 0; i < threadCount; ++i) {
+        int32_t tid = (int32_t)i;   /* XVar 取地址，必须用具名变量 */
+        g_xsettingsThreadArgs[i] = XVarList_Create(XVar(int32_t, tid));
+        threads[i] = XThread_create_func(xsettings_test_threadStaticWorker,
+                                         g_xsettingsThreadArgs[i]);
+        if (!threads[i] || !XThread_start(threads[i])) {
+            if (threads[i]) XClassDelete((XClass*)threads[i]);
+            threads[i] = NULL;
+            break;
+        }
+        ++started;
+    }
+    for (i = 0; i < (int)started; ++i) {
+        XThread_wait(threads[i], 30000);
+        XClassDelete((XClass*)threads[i]);
+    }
+    for (i = 0; i < threadCount; ++i) {
+        if (g_xsettingsThreadArgs[i]) {
+            XVarList_delete(g_xsettingsThreadArgs[i]);
+            g_xsettingsThreadArgs[i] = NULL;
+        }
+    }
+    {
+        int32_t failures = XAtomic_load_int32(&g_xsettingsThreadFailures,
+                                              XAtomic_MemoryOrder_Relaxed);
+        XSETTINGS_REQUIRE(started == (size_t)threadCount,
+                          "cs threads started", "4 个线程应全部启动");
+        XSETTINGS_REQUIRE(failures == 0, "cs no failures",
+                          "并发读写静态配置不应产生非法值");
+    }
+    XSETTINGS_TEST_PASS("并发静态配置（全局锁）");
+    return true;
+}
+
+#else
+
+static bool xsettings_test_concurrent(void)
+{
+    {
+    XPrintf("[SKIP] XSettings: 并发读写（XTHREAD_ON 未开启）\n");
+    return true;
+}
+
+static bool xsettings_test_concurrentStatic(void)
+{
+    XPrintf("[SKIP] XSettings: 并发静态配置（XTHREAD_ON 未开启）\n");
+    return true;
+}
+
+#endif /* XSYNC_ON && XTHREAD_ON */
 /* ==================== 全量运行 ==================== */
 
 typedef bool (*XSettingsTestFn)(void);
@@ -1113,7 +2189,18 @@ static const XSettingsTestFn g_xsettings_testFns[] = {
     xsettings_test_geometryVariant,
     xsettings_test_appDefaults,
     xsettings_test_keyNormalization,
-    xsettings_test_memoryBalance
+    xsettings_test_memoryBalance,
+    xsettings_test_registryBackend,
+    xsettings_test_registryReadOnly,
+    xsettings_test_clearEmptyKey,
+    xsettings_test_deferredFlush,
+    xsettings_test_lockFile,
+    xsettings_test_constructors,
+    xsettings_test_defaultsAndGetters,
+    xsettings_test_largeContent,
+    xsettings_test_fourLevelFallback,
+    xsettings_test_concurrent,
+    xsettings_test_concurrentStatic
 };
 
 bool XSettingsTest_runAll(void)

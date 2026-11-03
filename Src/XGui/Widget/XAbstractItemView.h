@@ -100,14 +100,22 @@ typedef enum XAbstractItemViewScrollHint
 } XAbstractItemViewScrollHint;
 
 /**
- * @brief      文本省略模式（对标 Qt 6.8 Qt::TextElideMode，数值一致）。
+ * @brief      文本省略模式（对齐 Qt 6.8 `Qt::TextElideMode`，**数值一致**）。
+ * @details    Qt 定义顺序为 `ElideLeft, ElideRight, ElideMiddle, ElideNone`
+ *             （qnamespace.h:189-194），因此右省略是 **1**、中省略是 **2**。
+ *             本枚举此前把 Right/Middle 的数值写反（Middle=1、Right=2），
+ *             与自身「数值一致」的注释矛盾，也导致 `XTabBar` 里按 Qt 口径
+ *             硬编码的数值 1（注释标为 Qt::ElideRight）在语义上落到了
+ *             Middle。2026-11-03 按 Qt 源码修正为下述取值。
+ * @note      `XCommonStyle_elideText` 的 mode 参数已在 2026-11-03 统一为
+ *             同一套编号（Qt::TextElideMode），全库不再存在第二套编号。
  */
 typedef enum XAbstractItemViewTextElideMode
 {
-    XAbstractItemViewTextElideMode_ElideLeft = 0,   /**< 省略号置于左侧。 */
-    XAbstractItemViewTextElideMode_ElideMiddle = 1, /**< 省略号置于中间。 */
-    XAbstractItemViewTextElideMode_ElideRight = 2,  /**< 省略号置于右侧（默认）。 */
-    XAbstractItemViewTextElideMode_ElideNone = 3    /**< 不省略。 */
+    XAbstractItemViewTextElideMode_ElideLeft = 0,   /**< 省略号置于左侧（对齐 `Qt::ElideLeft`）。 */
+    XAbstractItemViewTextElideMode_ElideRight = 1,  /**< 省略号置于右侧；**缺省值**（对齐 `Qt::ElideRight`）。 */
+    XAbstractItemViewTextElideMode_ElideMiddle = 2, /**< 省略号置于中间（对齐 `Qt::ElideMiddle`）。 */
+    XAbstractItemViewTextElideMode_ElideNone = 3    /**< 不省略（对齐 `Qt::ElideNone`）。 */
 } XAbstractItemViewTextElideMode;
 
 /**
@@ -125,9 +133,15 @@ typedef enum XItemDataRole
     XItemDataRole_DisplayRole = 0,       /**< 显示文本（对标 Qt::DisplayRole）。 */
     XItemDataRole_DecorationRole = 1,    /**< 装饰（图标）承载（对标 DecorationRole）。 */
     XItemDataRole_EditRole = 2,          /**< 编辑器初值（对标 EditRole）。 */
+    XItemDataRole_ToolTipRole = 3,       /**< 工具提示（对标 ToolTipRole）。 */
+    XItemDataRole_StatusTipRole = 4,     /**< 状态栏提示（对标 StatusTipRole）。 */
+    XItemDataRole_WhatsThisRole = 5,     /**< "这是什么"帮助文本（对标 WhatsThisRole）。 */
     XItemDataRole_FontRole = 6,          /**< 字体（对标 FontRole）。 */
     XItemDataRole_TextAlignmentRole = 7, /**< 文本对齐（对标 TextAlignmentRole）。 */
+    XItemDataRole_BackgroundRole = 8,    /**< 背景画刷（对标 BackgroundRole）。 */
+    XItemDataRole_ForegroundRole = 9,    /**< 前景画刷（对标 ForegroundRole）。 */
     XItemDataRole_CheckStateRole = 10,   /**< 复选状态（对标 CheckStateRole）。 */
+    XItemDataRole_SizeHintRole = 13,     /**< 尺寸提示（对标 SizeHintRole）。 */
     XItemDataRole_UserRole = 256         /**< 用户自定义角色起点（对标 UserRole）。 */
 } XItemDataRole;
 
@@ -187,6 +201,13 @@ typedef struct XAbstractItemView
     int m_currentColumn;             /**< 当前列；-1=无。 */
     int m_selectionAnchorRow;        /**< Shift 扩选锚点行（-1 未设置）。 */
     int m_selectionAnchorCol;        /**< Shift 扩选锚点列。 */
+    /* [自动滚动 2026-11-03] 拖选/拖放边缘自动滚动状态（对齐 Qt
+     * QAbstractItemViewPrivate::draggedPosition + autoScrollTimer/Count）。 */
+    int m_dragPosX;                  /**< 本次拖选/拖放的当前指针位置 X（控件本地像素）。 */
+    int m_dragPosY;                  /**< 本次拖选/拖放的当前指针位置 Y（控件本地像素）。 */
+    XTimerId m_autoScrollTimerId;    /**< 边缘自动滚动定时器 id（XTIMER_INVALID_ID=未布防）。 */
+    uint8_t m_dragSelecting : 1;     /**< 左键按住拖选中（对齐 DragSelectingState）。 */
+    uint8_t m_autoScrollCount : 7;   /**< 自动滚动累计拍数（对齐 autoScrollCount，<pageStep 递增）。 */
     int m_rootRow;                   /**< 根索引行（预留树；默认 -1=根）。 */
     int m_rootCol;                   /**< 根索引列（预留树；默认 -1=根）。 */
     int m_persistentRows;            /**< 持久编辑器表逻辑行数（0=未使用）。 */
@@ -783,6 +804,108 @@ void XAbstractItemView_setTextElideMode(XAbstractItemView* self, int mode);
  * @return XAbstractItemViewTextElideMode 枚举。
  */
 int XAbstractItemView_textElideMode(const XAbstractItemView* self);
+
+/* ==================== 文本省略（对齐 elidedText 消费） ==================== */
+
+/**
+ * @brief 按当前 `textElideMode` 省略文本（对齐 Qt 委托绘制前的
+ *        `fontMetrics.elidedText(text, opt.textElideMode, width)`）。
+ *
+ * @param self    目标视图；可为 NULL。
+ * @param buf     调用方提供的输出缓冲（承载省略结果）；不能为 NULL。
+ * @param bufCap  buf 容量（字节，含结尾 NUL）。
+ * @param text    原文（UTF-8）；NULL 或空串按空串处理，不转移所有权。
+ * @param maxW    可用宽度（像素）。
+ * @param font    测量字体；可为 NULL（用缺省字体）。
+ * @return 省略后的文本指针：宽度足够时**原样返回 text**（不写入 buf），
+ *         否则返回 buf。调用方不得释放返回值。
+ * @note  模式语义对齐 `Qt::TextElideMode`：ElideLeft(0) 省略头部、
+ *        ElideRight(1) 省略尾部、ElideMiddle(2) 省略中段、
+ *        ElideNone(3) 直接截断不加省略号。
+ *        与 `XCommonStyle_elideText` 的 mode 编号**已统一**（均为
+ *        `Qt::TextElideMode` 数值，2026-11-03 合并，全库只剩这一套）。
+ * @note  `font` 为 NULL 时不做省略（无法测量），返回原 `text`；本函数
+ *        不取得 `font` 所有权。
+ */
+const char* XAbstractItemView_elidedText(const XAbstractItemView* self,
+                                          char* buf, int bufCap,
+                                          const char* text, int maxW,
+                                          const XFont* font);
+
+/* ==================== 边缘自动滚动（对齐 QAbstractItemView） ==================== */
+
+/**
+ * @brief 判断给定视图坐标是否落在边缘自动滚动区内（对齐
+ *        `QAbstractItemViewPrivate::shouldAutoScroll`）。
+ *
+ * @param self 目标视图；可为 NULL。
+ * @param x    指针横向坐标（控件本地像素）。
+ * @param y    指针纵向坐标（控件本地像素）。
+ * @return 落在任一边缘 `autoScrollMargin` 内且 `autoScroll` 开启时返回
+ *         true；否则 false。
+ * @note  四边**任一**命中即返回 true（Qt 同：`||` 连接）。
+ */
+bool XAbstractItemView_shouldAutoScroll(const XAbstractItemView* self,
+                                        int x, int y);
+
+/**
+ * @brief 启动边缘自动滚动定时器（对齐 `startAutoScroll`）。
+ *
+ * @param self 目标视图；传入 NULL 时函数不执行任何操作。
+ * @return 无。
+ * @note  步进间隔对齐 Qt：`ScrollPerItem` 用 150ms，`ScrollPerPixel` 用
+ *        50ms；启动时把累计拍数清零。重复调用会重置定时器（Qt 同）。
+ * @note  已布防时先 kill 旧 id 再重挂，避免 id 泄漏。
+ */
+void XAbstractItemView_startAutoScroll(XAbstractItemView* self);
+
+/**
+ * @brief 停止边缘自动滚动定时器（对齐 `stopAutoScroll`）。
+ *
+ * @param self 目标视图；传入 NULL 时函数不执行任何操作。
+ * @return 无。
+ * @note  停表并把累计拍数清零；未布防时为无操作。
+ */
+void XAbstractItemView_stopAutoScroll(XAbstractItemView* self);
+
+/**
+ * @brief 执行一拍边缘自动滚动（对齐 `QAbstractItemView::doAutoScroll`）。
+ *
+ * @param self 目标视图；传入 NULL 时函数不执行任何操作。
+ * @return 无。
+ * @note  按指针所在边缘把垂直/水平滚动条各推进 `autoScrollCount` 像素
+ *        （累计拍数每拍 +1，上限 = 两方向 `pageStep` 的较大者，对齐 Qt）；
+ *        两个方向都推不动（已到边界）时自动停表。
+ * @note  坐标取最近一次 `XAbstractItemView_updateAutoScrollPointer` 记录
+ *        的位置。
+ */
+void XAbstractItemView_doAutoScroll(XAbstractItemView* self);
+
+/**
+ * @brief \u6309\u5f53\u524d\u6eda\u52a8\u6a21\u5f0f\u628a\u6761\u76ee\u5c3a\u5bf8\u540c\u6b65\u5230\u6eda\u52a8\u6761\u7684 singleStep\u3002
+ *
+ * @param self \u76ee\u6807\u89c6\u56fe\uff1b\u4f20\u5165 NULL \u65f6\u51fd\u6570\u4e0d\u6267\u884c\u4efb\u4f55\u64cd\u4f5c\u3002
+ * @return \u65e0\u3002
+ * @note  \u5bf9\u9f50 Qt\uff1a`ScrollPerItem` \u65f6 singleStep = \u6761\u76ee\u5b9e\u9645\u9ad8/\u5bbd\uff08\u50cf\u7d20\uff09\uff0c
+ *        \u6eda\u8f6e/\u7bad\u5934\u9010\u6761\u76ee\u8df3\uff08qabstractslider.cpp:932-937 \u7684
+ *        `itemviewChangeSingleStep`\uff09\uff1b`ScrollPerPixel` \u65f6 singleStep = 1\u3002
+ *        **\u6eda\u52a8\u6761\u8303\u56f4\u59cb\u7ec8\u4ee5\u50cf\u7d20\u8ba1**\uff08Qt \u540c\uff09\uff0c\u6a21\u5f0f\u53ea\u5f71\u54cd\u6b65\u8fdb\u91cf\u3002
+ * @note  \u5e42\u7b49\uff1a\u53ef\u5728\u5e03\u5c40\u53d8\u66f4\uff08\u884c\u9ad8/\u5217\u5bbd\u53d8\u5316\uff09\u540e\u53cd\u590d\u8c03\u7528\u3002
+ */
+void XAbstractItemView_syncScrollSteps(XAbstractItemView* self);
+
+/**
+ * @brief 记录拖选/拖放指针位置并（按需）启停自动滚动。
+ *
+ * @param self 目标视图；传入 NULL 时函数不执行任何操作。
+ * @param x    指针横向坐标（控件本地像素）。
+ * @param y    指针纵向坐标（控件本地像素）。
+ * @return 无。
+ * @note  派生视图在按住左键的 mouse move 与拖放 drag move 路径调用本
+ *        函数即可获得与 Qt 一致的边缘自动滚动；未命中边缘时停表。
+ */
+void XAbstractItemView_updateAutoScrollPointer(XAbstractItemView* self,
+                                               int x, int y);
 /**
  * @brief 设置垂直滚动模式（对标 setVerticalScrollMode）。
  * @param self 目标视图指针。

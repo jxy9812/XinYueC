@@ -110,6 +110,7 @@ static bool xft_send(XLinkFileTransfer* t, uint16_t code,
     frame.m_msgClass = XLinkMsgClass_File;
     frame.m_msgCode = code;
     frame.m_requestId = t->m_transferId;
+    frame.m_dataType = XLinkDataType_Raw; /* 文件帧载荷由 XLinkFile 自行编码 */
     return XLinkSession_send(t->m_session, &frame, payload);
 }
 

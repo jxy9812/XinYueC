@@ -1,4 +1,4 @@
-# XGui 模块文档
+﻿# XGui 模块文档
 
 > **文档导航**：本文件是 XGui 模块的**活文档**（架构与当前状态）。
 > 按日的战役实施记录已归档至 `docs/xgui/history/`（2026-09-21 文档重构
@@ -3311,3 +3311,603 @@ ARM 的 64 位原子符号此前只给静态库链，`libXinYueC.so` 带未定�
 `f3a29888018c4517dce28040bb0a01b8`（strip 10875672 B）已部署，参数原样保留
 （`--page 6 --fullscreen --remote-server --remote-port 46300 --remote-profile resource`）、
 46300 监听、fbsnap 抓帧目验整页全绘且 CJK 无缺笔、MemAvailable 20MB。
+
+---
+
+## 15. XTableView / XTableWidget 全量对齐 Qt 6.8.3（2026-11-03）
+
+> **范围**：`Src/XGui/Widget/XTableView.{h,c}`（422+1329 → 约 415+1300 行）、
+> `XTableWidget.{h,c}`（1068+2295 → 约 690+1900 行）。对照源码
+> `D:/Qt/6.8.3/Src/qtbase/src/widgets/itemviews/`。
+>
+> **继承链核对结论**：已与 Qt 一致，本批未改：
+> `XTableWidget → XTableView → XAbstractItemView → XAbstractScrollArea → XWidget`
+> （Qt：`QTableWidget → QTableView → QAbstractItemView → QAbstractScrollArea → QWidget`）。
+
+### 15.1 XTableWidgetItem 重写为 Qt 式堆对象
+
+旧实现是内嵌 POD（`XString* text` + 裸 `foreground/background/selected/itemFlags` 字段，
+按值拷贝进 `m_cells[row][col]`），与 Qt「表格持有的堆对象 + role 化 `data()/setData()`」
+架构分叉。现已重写：
+
+| 维度 | 旧 | 新（对齐 Qt） |
+|---|---|---|
+| 类型 | POD 结构体 | `XObject` 子类（`XCLASS_DEFINE_BEGING` + `Clone` 虚槽） |
+| 生命周期 | 值拷贝，表格内嵌 | 表格持有堆对象所有权；`setItem` 为 `_ref` 接管语义 |
+| 数据存储 | 4 个固定字段 | `XVector m_values`，元素 `XTableWidgetItemData{int role; XVariant* value;}` |
+| role 支持 | 无 `data()/setData()` | `XTableWidgetItem_data/setData`，`EditRole` 归一化为 `DisplayRole`（对齐 Qt） |
+| 缺失 role | Background/Foreground/SizeHint/ToolTip/StatusTip/WhatsThis | 全部补齐（`XAbstractItemView.h` 的 `XItemDataRole` 同步扩 3/4/5/8/9/13） |
+| 克隆 | 无 | `XTableWidgetItem_clone_base`（虚槽分派，未重载回落拷贝） |
+| 排序比较 | 无 | `XTableWidgetItem_lessThan`（比较 `DisplayRole`，对齐 `operator<`） |
+
+命名遵循约束文档的字符串后缀契约：`_text`（`XString*` 拷贝）/ `_text_const`（借用）
+/ `_text_toUtf8`（`char*` 借用）；设置侧 `_setText` / `_setText_utf8`。
+
+### 15.2 API 面收口
+
+**删除（Qt 无对应公开 API）**：
+
+| 删除项 | Qt 依据 | 调用点迁移 |
+|---|---|---|
+| `XTableWidget_setText` / `_text` | 无（Qt 走 `item->setText/text`） | 41 + 37 处 → `XTableWidgetItem_setText_utf8/_text_toUtf8` |
+| `XTableWidget_itemFlags/_setItemFlags` | 无（Qt 走 `item->flags/setFlags`） | 3 处 → `XTableWidgetItem_flags/_setFlags` |
+| `XTableWidget_setSectionResizeMode/_sectionResizeMode` | 无（Qt 走 `horizontalHeader()->...`） | 2 处 → `XHeaderView_setSectionResizeMode(XTableView_horizontalHeader(t), m)` |
+| `XTableWidget_setModel` | `QTableWidget::setModel` 为 private | 1 处 → 删除 |
+| `XTableWidget_clearSpans` | 继承自 `QTableView` | 2 处 → `XTableView_clearSpans` |
+| `XTableWidget_set/isSortingEnabled` | 继承自 `QTableView` | 4 处 → `XTableView_*` |
+| `XTableWidget_items(const char*)` | Qt 的 `items()` 是拖放语义，本函数实为文本搜索 | 1 处 → `findItems` |
+| `XTableWidget_selectedIndexes` | `QTableView::selectedIndexes` 为 protected | 2 处 → `selectedItems` |
+| `XTableView_visualRow` | `QTableView` 无此名（仅 `QTableWidget` 有） | 2 处 → 删除断言 |
+| `XTableView_visualIndex(column)` | Qt 的是 private `visualIndex(const QModelIndex&)` | 2 处 → `XHeaderView_visualIndex` |
+| `XTableView_spanAt` | Qt 无公开 `spanAt`（在私有头 `QSpanCollection`） | 14 处 → `rowSpan`/`columnSpan`/`indexAt` |
+
+**签名改为 Qt 形态**：
+
+| 旧 | 新 | Qt 依据 |
+|---|---|---|
+| `setRowHeight(self, height)` 统一行高 | `setRowHeight(self, row, height)` | `qtableview.cpp:2600` `verticalHeader->resizeSection(row,height)` |
+| `rowHeight(self)` | `rowHeight(self, row)` | `qtableview.cpp:2611` `sectionSize(row)` |
+| `scrollTo(self,row,col)` | `scrollTo(self,row,col,hint)` | `scrollTo(index, ScrollHint)` |
+| `scrollToItem(self,row,col)` | `scrollToItem(self, const item*, hint)` | `qtablewidget.h:269` |
+| `open/close/isPersistentEditorOpen(self,row,col)` | `(self, const item*)` | `qtablewidget.h:243-246` |
+| `editItem(self,row,col)` | `editItem(self, const item*)` | `qtablewidget.h:242` |
+| `setCurrentItem(self,row,col)` | `setCurrentItem(self, const item*)` | `qtablewidget.h:233` |
+| `itemAt(self,x,y,int* r,int* c)` | `itemAt(self,x,y) -> item*` | `qtablewidget.h:261` |
+| `setRangeSelected(self,t,l,b,r,sel)` | `setRangeSelected(self, const XTableWidgetSelectionRange*, sel)` | `qtablewidget.h:252` |
+| `findItems(...,int* rows,int* cols,int)` | `findItems(..., item** out, int)`，**列优先**遍历 | `qtablewidget.cpp:2424-2437` |
+
+**新增（Qt 有、本库缺失）**：
+- `XTableView_indexAt(self,x,y,int* row,int* col)` — `qtableview.cpp:1695`，含 span 原点吸附
+- `XTableView_rowSpan` / `XTableView_columnSpan` — `qtableview.cpp:3446/3460`
+- `XTableView` 逐行行高表 `m_rowHeights`（0 = 未覆写回落缺省，对齐 `defaultSectionSize` 模型）
+- `XTableWidgetSelectionRange` 结构 + 6 个访问器 — `qtablewidget.h:16-42`
+- `XTableWidget_create_size(memory, rows, cols, parent, flags)` — `QTableWidget(int rows, int columns, QWidget*)`
+
+### 15.3 行为对齐
+
+| 项 | 旧行为 | 新行为（对齐 Qt） | 依据 |
+|---|---|---|---|
+| `setSortingEnabled(true)` | 只置标志 | **立即**按当前指示器（缺省段 0 降序）排序一次，再置标志 | `qtableview.cpp:2734-2759` |
+| `setItem` 排序联动 | 无 | `sortingEnabled && indicator == column` 时按 `DisplayRole` 做 lower_bound 整行搬移 | `qtablewidget.cpp:178-199` |
+| `setItem(NULL)` | 直接清字段 | 等价 `takeItem + delete` | `qtablewidget.cpp:2029` |
+| `setSpan` 入参校验 | `rowSpan <= 0` 拒绝 | 仅负值拒绝（0 允许） | `qtableview.cpp:3436` |
+| `clear()` / `clearContents()` | 未清选择模型 | 先 `clearSelection()` | `qtablewidget.cpp:2578/2592` |
+| `clear()` / `clearContents()` | — | **不**清除 spans（只有 `clearSpans` 清） | `qtablewidget.cpp` |
+| `setRangeSelected` | 逐格无条件写 | 两角都必须 `hasIndex` 有效，否则整体忽略；且不清既有选区 | `qtablewidget.cpp:2362-2373` |
+| `setCurrentItem` | 坐标版，格空忽略 | item 版；非本表条目 → 清除当前项 | `qtablewidget.cpp:2195-2211` |
+| 表头缺省文本 | 空串（绘制层自行补序号） | `headerItem()` 返回 `section+1` 的 1 基序号 | `qtablewidget.cpp:716-717` |
+| 空格 flags | `itemFlags==0` 视为可编辑 | 空格返回 Qt 缺省 6 位组合；`shouldEdit` 读 item 的 `ItemIsEditable` 位 | `qtablewidget.cpp:483-495` |
+| `findItems` 遍历 | 行优先 | **列优先**（先第 0 列自顶向下，再第 1 列…） | `qtablewidget.cpp:2424` |
+| `setHorizontalHeader(NULL)` | 解除挂接 | 无操作（Qt `if (!header) return;`），所有权接管 | `qtableview.cpp:1370` |
+| `verticalHeaderItem` 绘制 | 绘制层用栈缓冲补序号 | 统一走 `XTableWidget_verticalHeaderItem`（返回新建 `XString`） | — |
+
+**收窄项改动（脏区/性能相关，非 Qt 语义）**：`XTableView_visualRect` 对 span 覆盖格返回
+空矩形（Qt 同）；`XTableView_rowViewportPosition` 改为**不含表头区**的纯内容坐标
+（对齐 `QHeaderView::sectionViewportPosition`），此前含 `XTV_HEADER_H` 与 `rowAt` 口径不一致。
+
+### 15.4 验证结果（如实记录）
+
+**构建面**：`cmake -S . -B build` 重新配置后（此前 `XLegend.c/.h` 为未提交文件且未被
+GLOB 收纳，导致基线本身就链接失败），`XinYueC` / `XinYueCS` / `XinYueGuid` /
+`XGuiRegression_Test` / `XGuiWindowDemo_Test` / `XGuiDemo` 全部 **0 编译错误**。
+
+**回归面**：`bin/Debug/XGuiRegression_Test.exe` → **表格相关断言 0 失败**
+（含新增的 `rowSpan/columnSpan`、`indexAt` 原点吸附、`findItems` 列优先、
+`setRangeSelected` struct 形态、item role 往返）。
+
+**仍存在的 2 个失败（与本批无关，已用 baseline 交叉验证）**：
+- `t218b plotAreaChanged 发射` —— `XGui/Charts` 域，工作区有未提交的 `XLegend` 半成品
+- `xrot 90°: 蓝件转置样本(199,100)` —— 窗口内容旋转，需真实显示上下文
+
+将本批表格改动 `git stash` 后基线**无法链接**（`XChart_series` / `XChart_lineSeriesCount`
+等符号缺失，源自同一批未提交图表改动），故无法取得「改动前跑分」对照；但从失败
+位置与符号归属看，两者均不经过 `XTableView`/`XTableWidget` 代码路径。
+
+### 15.5 未完成 / 残留差异
+
+1. **单元格文本绘制未消费全部 role**：`XTableWidget::paintEvent` 已接入
+   `BackgroundRole`/`ForegroundRole`（颜色），但 `FontRole`/`TextAlignmentRole`/
+   `CheckStateRole`/`DecorationRole`/`SizeHintRole` 在 `XTableWidget` 自绘路径中尚未
+   渲染（`XTableView` 的 model 通路已消费）。`XTraceView` 侧同款差距未动。
+2. **空格自动建条目**：Qt 的 `setData` 在空格上会 `createItem()` 并走完整 `setItem`；
+   本库只在 `XTableWidget` 的模型桥槽（`xtw_modelDataChangedSlot`）里补此行为，
+   `XTableWidgetItem_setData` 本身不持有表格上下文时无此语义。
+3. **`XTableWidget` 自绘表头**：Qt 的 `QHeaderView` 是独立子控件；本库表头仍由
+   `XTableWidget::paintEvent` 自绘（`XTableView` 的表头对象只承载段尺寸状态）。
+   因此表头点击/拖动/重排等交互不完整。
+4. **`QTableWidgetItem` 的 `read()/write()`（QDataStream）** 未实现（本库无 QDataStream，
+   对应 `QT_NO_DATASTREAM` 裁剪配置）。
+5. **`QAbstractItemModel` role 维度**：本库 model 仍是纯文本通路（`data(row,col)` 无 role
+   参数），role 由视图/条目侧承载。要真正对齐 Qt 需给 model 加 role 参数，属独立立项。
+6. ~~**`XAbstractItemView` 基类欠账**~~ —— **已补齐（见 §15.6）**。
+
+### 15.6 XAbstractItemView 基类欠账补齐（2026-11-03 续批）
+
+本批补上 §15.5 登记的 `textElideMode` 与 `autoScroll` 两处「只有状态位、无实际行为」的空实现。
+
+#### 15.6.1 textElideMode 真实消费
+
+`Src/XGui/Widget/XAbstractItemView.{h,c}` 新增：
+
+```c
+const char* XAbstractItemView_elidedText(const XAbstractItemView* self,
+                                          char* buf, int bufCap,
+                                          const char* text, int maxW,
+                                          const XFont* font);
+```
+
+对齐 Qt 委托绘制前的 `fontMetrics.elidedText(text, opt.textElideMode, width)`：
+
+| 关键点 | 说明 |
+|---|---|
+| 模式映射 | **两套编号不同，必须经内部 `xaiv_elideModeToCommon` 转换**：本库枚举（对齐 `Qt::TextElideMode`）0=Left/**1=Right**/**2=Middle**/3=None；`XCommonStyle_elideText` 0=截断/1=右/2=左/3=中。**两处的 1/2 含义相反** |
+| 宽度充足 | 原样返回 `text`，**不写 `buf`**（零拷贝快路径，对齐 Qt `elidedText` 早退） |
+| 宽度不足 | 写入 `buf` 并返回 `buf` |
+| `maxW <= 0` | 返回 `text`（不省略） |
+| `buf == NULL` / `bufCap <= 0` | 返回 `text`（安全退化，不崩溃） |
+| `font == NULL` | 返回 `text`（无法测量即不省略） |
+| `XSTYLE_ON=0` | 随样式层裁剪，退化为不省略 |
+
+省略实现复用既有的 `XCommonStyle_elideText`（`Src/XGui/Style/XCommonStyle.c:1060`，UTF-8 码点边界切割），未另写一套测量。
+
+> **易踩的边界**：`maxW` 必须大于省略号 U+2026 自身宽度（约 16px），否则 `XCommonStyle_elideText` 按 Qt 语义返回**空串**（`if (ellW > maxW) { buf[0] = '\0'; return buf; }`）。回归用例已按此口径编写。
+
+#### 15.6.2 autoScroll 真实滚动逻辑
+
+新增 4 个公开 API，逐一对位 Qt：
+
+| 本库 | Qt 依据 | 行为 |
+|---|---|---|
+| `XAbstractItemView_shouldAutoScroll(self,x,y)` | `QAbstractItemViewPrivate::shouldAutoScroll`（qabstractitemview.cpp:4420） | `autoScroll` 关闭或 `margin<=0` 返回 false；四边**任一**命中 `margin` 即 true（`\|\|` 连接，非 `&&`） |
+| `XAbstractItemView_startAutoScroll(self)` | `QAbstractItemViewPrivate::startAutoScroll`（qabstractitemview_p.h:96） | 拍间隔按滚动模式选：`ScrollPerItem` 150ms / `ScrollPerPixel` 50ms；启动时 `autoScrollCount` 清零；**先 kill 旧 id 再重挂**（周期定时器只覆盖 id 不 kill = 泄漏） |
+| `XAbstractItemView_stopAutoScroll(self)` | 同上 `stopAutoScroll` | kill 定时器 + id 复位 `XTIMER_INVALID_ID` + 计数清零 |
+| `XAbstractItemView_doAutoScroll(self)` | `QAbstractItemView::doAutoScroll`（qabstractitemview.cpp:4048） | 累计拍数每拍 +1，上限取两方向 `pageStep` 较大者（越靠边越快）；按指针所在边缘推进垂直/水平滚动条各 `autoScrollCount` 像素；两方向都推不动（已到边界）时自动停表 |
+| `XAbstractItemView_updateAutoScrollPointer(self,x,y)` | Qt `mouseMoveEvent` 的 DragSelectingState 分支 | 记录指针位置；命中边缘则布防（未布防时），否则停表 |
+
+**结构体新增字段**（`XAbstractItemView`）：
+
+```c
+int m_dragPosX;                  /* 拖选/拖放指针位置 X */
+int m_dragPosY;                  /* 拖选/拖放指针位置 Y */
+XTimerId m_autoScrollTimerId;    /* 自动滚动定时器 id（XTIMER_INVALID_ID=未布防） */
+uint8_t m_dragSelecting : 1;     /* 左键按住拖选中（对齐 DragSelectingState） */
+uint8_t m_autoScrollCount : 7;   /* 累计拍数 */
+```
+
+**生命周期接线**：
+
+- `init`：位置置 -1、id 置 `XTIMER_INVALID_ID`、计数/状态清零
+- `VXAbstractItemView_deinit`：**析构前 kill 定时器并复位 id**（周期定时器泄漏防护）
+- `VXAbstractItemView_timerEvent`（新注册 `EXObject_TimerEvent`）：**id 守卫**——只消费本视图的自动滚动拍，其他业务定时器（派生控件的闪烁/惯性拍）原样 `XClass_Parent` 链回父类
+- `VXAbstractItemView_mouseMoveEvent`：左键按住期间置 `m_dragSelecting` 并调 `updateAutoScrollPointer`；松开按键或无按键时停表
+- `VXAbstractItemView_mouseReleaseEvent`：进入即停表并复位 `m_dragSelecting`
+
+#### 15.6.3 验证
+
+- **编译**：`XinYueC` / `XinYueCS` / `XGuiRegression_Test` **0 错误**。
+- **新增回归断言**（`xgui_regression_test.c`，挂在 `test_phase32_p2_contract`）：
+  - 省略：缺省模式 = `ElideRight`；宽度充足原样返回；宽度不足写入调用方缓冲且含 U+2026；`ElideNone` 截断不加省略号；`maxW<=0` 与 `buf==NULL` 不崩溃
+  - 自动滚动：缺省开启且边距=16；上/下/左/右四边命中；中心区不命中；关闭开关后恒 false；`margin=0` 不命中；启停/拍推进无崩溃
+- **结果**：`P32-FAIL` 计数 **0**（新增断言全绿）。套件整体仍有 2 个失败（`t218b plotAreaChanged 发射`、`xrot 90°: 蓝件转置样本`），均在 `XGui/Charts` 与窗口内容旋转域，不经过 `XAbstractItemView` 代码路径（§15.5 已交叉验证该域因工作区未提交改动而基线不可构建）。
+
+#### 15.6.4 未做的部分
+
+- 绘制侧**实际调用**：`XAbstractItemView_elidedText` 已可被派生视图/委托消费，但 `XTableWidget`/`XTableView`/`XListView`/`XTreeView` 的自绘路径本批**未接入**（接入需各处统一取字体并传入条目矩形宽，属绘制口径改造）。滚动模式下 `autoScroll` 的「逐条目」语义仍按像素推进（`ScrollPerItem` 只影响拍间隔），与 Qt 的逐条目定位存在细微差异。
+
+#### 15.6.5 枚举数值纠错（2026-11-03，重要）
+
+实现此批时发现 `XAbstractItemViewTextElideMode` **本身就与 Qt 不一致**，
+已修正：
+
+| 枚举值 | 修正前（错） | 修正后（= Qt） |
+|---|---|---|
+| 0 | ElideLeft | ElideLeft |
+| 1 | **ElideMiddle** | **ElideRight** |
+| 2 | **ElideRight** | **ElideMiddle** |
+| 3 | ElideNone | ElideNone |
+
+Qt 源码依据：`qtbase/src/corelib/global/qnamespace.h:189-194`
+```cpp
+enum TextElideMode { ElideLeft, ElideRight, ElideMiddle, ElideNone };
+```
+即 **Right 在 1、Middle 在 2**。原枚举注释写的是「对标 Qt，数值一致」，
+但实际把 Right/Middle 写反了——注释与实现矛盾。
+
+**受影响面核实**：
+
+- `XTabBar.m_elideMode` 用的是**另一套编号**（`XStyleOption.h:985`：
+  0=无/1=右/2=左/3=中），与本枚举无关（它只把值传给
+  `opt.m_tabElideMode` 交给样式层），因此 `XTabBar.c:1012` 的字面量 `1`
+  仍然自洽，**未改动**。两套编号并存是历史原因，本批不合并。
+- 其余代码均使用枚举**名**（`_ElideRight` 等），改值后行为不变。
+- 新增的 `xaiv_elideModeToCommon` 已按修正后的值对齐。
+
+#### 15.6.6 自绘路径接入 `elidedText`（完成）
+
+§15.6.4 中登记的「自绘路径未接入」已完成，四个视图的文本绘制点均按
+Qt 委托口径在绘制前执行省略：
+
+| 文件 | 绘制点 | 可用宽 |
+|---|---|---|
+| `XTableWidget.c` | 单元格文本（`XPainter_drawText`） | `cw - 8`（去左右 4px 内边距） |
+| `XTableView.c` | 快速路径 + role 布局路径 | `w - 8` / `textRect.width - 8` |
+| `XListView.c` | 默认路径 + 对齐路径 | `cell 右缘 - contentX - 8` / `textRect.width - 8` |
+| `XTreeView.c` | 单列树文本 | `r.width - (indent + 12) - 4` |
+| `XTreeWidget.c` | 已有 `xtw_elideText`（本批未改） | 列宽 - textX |
+
+字体统一取 `XPainter_font(painter)`（即本次绘制实际使用的字体），
+不再每格 `XWidget_font` 深拷贝；省略缓冲 `char[256]` 开在格内。
+
+**验证**：`XinYueC`/`XinYueCS`/`XGuiRegression_Test`/`XGuiDemo` 均 **0 错误**；
+回归全跑 `P32-FAIL` 计数 **0**（少量扁平正文本在窄列下现在会出省略号，
+为预期内的行为变更）。套件整体仍剩 2 个失败（Charts / 窗口旋转，与本批无关）。
+
+#### 15.6.7 XTabBar / XStyleOption 的 `tabElideMode` 也一并纠偏（2026-11-03）
+
+顺着 §15.6.5 的枚举纠错继续核对，发现 `XTabBar` 这条链同样偏离 Qt：
+
+**Qt 的实际做法**（两处源码）：
+
+1. `QTabBar::elideMode` 的属性类型是 **`Qt::TextElideMode`**（qtabbar.h:27/85-86），
+   **没有独立编号**；缺省值由 `styleHint(SH_TabBar_ElideMode)` 决定
+   （qtabbar.cpp:392），Fusion 返回 `ElideRight`（数值 **1**）。
+2. `QStyleOptionTab` **根本没有 elide 字段**（qstyleoption.h:241-268，成员为
+   `shape/text/icon/row/position/selectedPosition/cornerWidgets/iconSize/
+   documentMode/leftButtonSize/rightButtonSize/features/tabIndex`）。
+   省略发生在 **`QTabBar::initStyleOption`** 里（qtabbar.cpp:200-210）：
+
+```cpp
+QRect textRect = style()->subElementRect(QStyle::SE_TabBarTabText, option, this);
+option->text = fontMetrics().elidedText(option->text, d->elideMode,
+                                        textRect.width(), Qt::TextShowMnemonic);
+```
+
+即**控件在填 `option->text` 时就已经省略完毕**，样式层只负责原样绘制。
+
+**我们原来的偏差**：
+
+| 项 | 原状 | 问题 |
+|---|---|---|
+| `XStyleOption.m_tabElideMode` | 自造字段 | Qt 的 `QStyleOptionTab` 没有它 |
+| 字段注释编号 | 0 无 / 1 右 / 2 左 / 3 中 | 与 `XTabBar` 传入的 `Qt::TextElideMode` 值域冲突 |
+| `XCommonStyle` 消费 | 按上述注释编号调 `XCommonStyle_elideText` | `ElideLeft=0` 被当作「无省略」；`ElideMiddle=2` 被当作「左省略」——**语义错位** |
+| `XTabBar_elideMode(NULL)` | 返回 0（= ElideLeft） | Qt 缺省是 ElideRight（1） |
+| `XTabWidget_elideMode(NULL)` | 返回 0 | 同上 |
+
+之前没暴露，是因为缺省值恰好是 1，在「1=右省略」和「Qt ElideRight=1」两套编号下**碰巧同义**；
+一旦调用方设 `ElideLeft`（0）或 `ElideMiddle`（2），行为就错了。
+
+**修正**：
+
+1. **删除** `XStyleOption.m_tabElideMode` 字段（`XStyleOption.h:985` 处留注释说明依据）。
+2. `XTabBar.c` 在填 `opt.m_text` 前调用 `XAbstractItemView_elidedText`
+   （可用宽 = `tab.width - 12`），对齐 Qt `initStyleOption` 的位置。
+3. `XCommonStyle.c` 页签标签绘制不再省略，直接用传入文本。
+4. `XTabBar_setElideMode` 增加 0..3 值域校验（避免 3 位位域截断）；
+   `XTabBar_elideMode(NULL)` / `XTabWidget_elideMode(NULL)` 返回
+   `ElideRight`（= 1），与 Qt Fusion 缺省一致。
+5. 缺省初始化从字面量 `1` 换成 `XAbstractItemViewTextElideMode_ElideRight`。
+
+**验证**：`XinYueC` / `XinYueCS` / `XGuiRegression_Test` / `XGuiDemo` 全部 **0 错误**；
+回归 `P32-FAIL` 计数 **0**；套件整体剩余 2 个失败仍在 Charts / 窗口旋转域。
+
+> **两套编号并存的现状说明**：`XCommonStyle_elideText` 自身的 mode 参数仍是
+> 「0=截断/1=右/2=左/3=中」，这是样式层内部私有约定，不对外暴露；
+> 外部一律用 `XAbstractItemViewTextElideMode`（数值对齐 Qt），
+> 转换集中在 `xaiv_elideModeToCommon` 一处。
+
+#### 15.6.8 省略模式编号全库统一（2026-11-03，收官）
+
+§15.6.7 末尾留的「两套编号并存」已消除：**全库只保留一套 `Qt::TextElideMode`
+编号**。
+
+**改动**：
+
+| 位置 | 前 | 后 |
+|---|---|---|
+| `XCommonStyle_elideText` 的 `mode` 参数 | 0=截断 / 1=右 / 2=左 / 3=中 | **0=ElideLeft / 1=ElideRight / 2=ElideMiddle / 3=ElideNone**（= Qt） |
+| `XAbstractItemView.c` 的 `xaiv_elideModeToCommon` | 存在（做编号转换） | **已删除**，`elidedText` 直接透传 |
+| `XTreeWidget.c` 的 `xtw_elideText` | 独立实现（约 1.7 KB，仅右省略，硬编码 `"..."`） | **已删除**，改用 `XCommonStyle_elideText(..., 1 /* ElideRight */, ...)` |
+| `XCommonStyle` 省略号 | 固定 `U+2026` | 优先 `U+2026`，**测量为 0 宽时回退 `"..."`**（保住 `XTreeWidget` 原有缺字形适配） |
+| `XComboBox` / `dock 标题` 调用点 | 传 `1`（旧编号=右） | 传 `1`（新编号=ElideRight）——**数值巧合一致，语义现已名副其实** |
+
+**调用点现状**（`grep XCommonStyle_elideText`）：仅 4 处真实调用，全部按 Qt 编号传值：
+
+- `XCommonStyle.c:2369`（dock 标题，`1` = ElideRight）
+- `XAbstractItemView.c:1251`（`elidedText` 统一入口，透传枚举值）
+- `XComboBox.c:260`（`1` = ElideRight）
+- `XTreeWidget.c:1699` / `:1912`（列 0 文本与表头标签，`1` = ElideRight）
+
+**新增回归断言**（`xgui_regression_test.c`）：
+
+- `ElideLeft(0)` → 省略号必须在**头部**
+- `ElideMiddle(2)` → 省略号必须在**中间**（且不在头部）
+
+这两条正是旧的编号错位会失败的用例（旧实现 0 被当「无省略」、2 被当「左省略」）。
+
+> **写用例时踩到的边界**：`ElideMiddle` 的 `maxW` 需给足。CJK 每字约 16px、
+> 省略号 16px，`maxW=60` 时 `half=(60-16)/2=22`，`16+16>22` 立即 break，
+> 结果只剩一个省略号（head=tail=0）。用例改用 `maxW=120`。
+> 这不是实现缺陷——窄到放不下头尾各一字时，Qt 同样退化为只显示省略号。
+
+**验证**：`XinYueC` / `XinYueCS` / `XGuiRegression_Test` / `XGuiDemo` **0 错误**；
+回归 `P32-FAIL` 计数 **0**。
+
+附带修复 `t218b plotAreaChanged 发射`：根因是测试时序——
+`plotAreaChanged` 在**几何更新时**就发射（对齐 Qt
+`ChartPresenter::updateGeometry`，chartpresenter.cpp:85-96），而用例把信号连接
+放在 `XWidget_resize` **之后**，那次发射落在连接点之前。已把连接前移。
+
+**已定位并关闭（2026-11-03）**：`xrot 90°: 蓝件转置样本(199,100)` —— 根因是
+**测试的取样坐标空间，不是 present 实现**。前一轮线索「渲染层正确、映射公式
+正确、像素却读红」恰好指向这一层：`xpwn_presentRectRotated` 写 DIB 时用的是
+**设备（物理）像素下标**，而 `xrot_capturePixelScreen` 把**逻辑**屏幕坐标原样
+交给 `GetPixel(屏幕 DC)`。本进程缺省 DPI 未感知（`XPWN_DPI_AWARENESS` 未设，
+`XPlatformNativeWindow_win32.c` 的 unaware 缺省会让 DWM 对整窗做位图拉伸），
+此时 `SM_CXSCREEN=2752` / `DESKTOPHORZRES=3440`（实测 125%），两套坐标差 20%：
+逻辑 (239,140) 落到物理 (299,175)，取样整体偏移、绿件样本读成红底。
+
+**验证方式（A/B，隔离共享测试树）**：用纯 Win32 探针复刻 present 的
+`SetDIBitsToDevice` 转置路径，独立于框架复现「逻辑坐标读错位、按
+`MulDiv(coord, DESKTOPHORZRES, SM_CXSCREEN)` 换算后两点全中」；再把 xrot 用例
+单独编译成私有 exe 对照：未改取样 → 恰好 `s_failures=1`（同一条断言），
+改后 → `s_failures=0`。
+
+**修复**：`xrot_capturePixelScreen` 内按物理/逻辑比例换算后再 `GetPixel`
+（感知进程或 100% 缩放下两者相等，换算为恒等）。属**环境口径修正**，未触碰
+`XPlatformNativeWindow_win32.c`（该文件 `git diff` 仍为空）。
+
+> 前一轮记录的「差异在 `xpwn_presentRectRotated` 的 DIB 写入/落笔本身」
+> 结论**不成立**，以本节为准。
+
+#### 15.6.9 ScrollPerItem 语义对齐（2026-11-03，收官）
+
+§15.6.4 留的最后一条差异已消除。
+
+**先纠正一个理解偏差**：之前认为「`ScrollPerItem` 只影响自动滚动的拍间隔」，
+这是不完整的。查 Qt 源码后确认，`ScrollPerItem` 的核心作用在**滚动条步进量**：
+
+| Qt 源码 | 内容 |
+|---|---|
+| `qabstractitemview.cpp:1305-1310` | `setVerticalScrollMode(ScrollPerItem)` → `verticalScrollBar()->d_func()->itemviewChangeSingleStep(1)`；`ScrollPerPixel` → `setSingleStep(-1)`（交回样式取默认） |
+| `qabstractslider.cpp:932-937` | `itemviewChangeSingleStep(step)` → `singleStepFromItemView = step; if (viewMayChangeSingleStep && singleStep != step) setSteps(step, pageStep)` |
+| `qlistview.cpp:2017/2047` | 布局时传的是**条目尺寸**：`itemviewChangeSingleStep(step.height() + spacing())` |
+
+即：**滚动条范围始终按像素计**，`ScrollPerItem` 只是把 `singleStep` 改成条目高度/宽度，
+于是滚轮一格、箭头一次都正好走一个条目。`doAutoScroll` 本身仍按像素推进。
+
+**本库改动**：
+
+| 位置 | 内容 |
+|---|---|
+| `XAbstractItemView_syncScrollSteps`（新增公开 API） | 按当前模式同步两个滚动条的 `singleStep`：`ScrollPerItem` → 条目实际高/宽（经 `visualRect(0,0)` 虚槽取，表格/列表/树均已覆写）；`ScrollPerPixel` → 1 |
+| `XAbstractItemView_doAutoScroll` | 每拍推进量 = `autoScrollCount × singleStep`。`ScrollPerPixel` 下 singleStep=1，与 Qt 完全一致；`ScrollPerItem` 下退化为「每拍一个条目」，符合语义 |
+| `setVerticalScrollMode` / `setHorizontalScrollMode` | 模式变更后调用 `syncScrollSteps`（对齐 Qt 在 setter 内 `itemviewChangeSingleStep` + `updateGeometries`） |
+| `XTableView_setRowHeight` / `setColumnWidth` | 几何变化后同步（行高/列宽改变即条目尺寸改变） |
+| `XTableWidget_setRowCount` | 行数变化后同步 |
+
+**两处实现陷阱（记录备查）**：
+
+1. **条目尺寸探测不能要求 model 非空**。首版 `xaiv_itemExtentV` 写了
+   `if (!self->m_model || m_rows <= 0) return -1;`，导致空表时步进量始终不被设置。
+   Qt 同样不要求——`itemSize()` 与 `visualRect()` 在空模型下也能给出尺寸。
+   现改为直接问 `visualRect(0,0)`，派生图判越界则回落 -1、保持原值（安全退化）。
+2. **`\uXXXX` 转义被写进源码**：用 Python 脚本生成中文注释时，字符串里的
+   `\uXXXX` 未加 `r` 前缀导致被二次转义，390 处变成字面反斜杠序列。
+   已用正则整体还原并核对为 0。教训：脚本生成含中文的 C 代码时，
+   注释文本不要走 `\u` 转义。
+
+**新增回归断言**：
+
+- `ScrollPerPixel` → 垂直/水平 `singleStep` 均为 1
+- `ScrollPerItem` → 垂直 `singleStep` = 行高 24、水平 = 列宽 80
+  （基类 `visualRect` 为 80x24 固定网格）
+
+**验证**：`XinYueC` / `XinYueCS` / `XGuiRegression_Test` / `XGuiDemo` **0 错误**；
+回归 `P32-FAIL` 计数 **0**；套件整体剩余 2 个失败仍在 Charts / 窗口旋转域。
+
+#### 15.6.10 收口三项：逐行行高容量 + 自绘 role 消费 + 条目序列化（2026-11-03）
+
+**① `m_rowHeightCapacity` 真正参与扩容判断**
+
+`xtv_ensureRowHeights` 原用**逻辑长度** `m_rowHeightCount` 比较并恰好扩到
+`need`，于是每加一行就 realloc 一次、容量字段形同虚设。改为与列宽表
+（`m_colWidths`/`m_colCapacity`）同款**倍增容量模型**：
+
+- 容量决定是否 `XRealloc_System`（起点 8，倍增，按 `int16_t` 上限 0x7FFF 收敛）；
+- 逻辑长度只决定新容量区清零到哪里；
+- 缩容不回收（与隐藏状态同口径：状态与模型尺寸解耦）。
+
+**同时修出两个真缺陷**（此前 copy/move 全路径漏接该表）：
+
+| 路径 | 原状 | 修复 |
+|---|---|---|
+| `VXTableView_copy` | **未拷贝** `m_rowHeights` | 深拷贝行高表（数量/容量同步） |
+| `VXTableView_move` | **完全未处理**该表，且不释放目标原有数组 | 先释放目标的 5 张平行表再接管源资源；行高表随之转移 |
+
+后者是**内存泄漏**：move 到已有数据的对象上时，目标原有 `m_colWidths`/
+`m_rowHidden`/`m_colHidden`/`m_spans` 全部泄漏。
+
+**② `XTableWidget` 自绘路径消费其余 role**
+
+此前只消费 Background/Foreground（颜色）。现按 `QStyledItemDelegate::paint`
+的条目布局顺序补齐：
+
+```
+CheckStateRole 勾选框最左 → DecorationRole 图标其次
+  → SizeHintRole 收窄文本区 → 剩余矩形承载文本（TextAlignmentRole 对齐、FontRole 字体）
+```
+
+新增 `xtw_drawCheckIndicator` / `xtw_drawDecoration` 两个绘制助手，与
+`XTableView` 的同名消费同口径（那边数据源自 view role 表，这边源自
+`XTableWidgetItem` 的 role 存储）。
+
+**关键守卫**：CheckStateRole 仅在条目**显式设置**该 role 时才画框——
+`checkState()` 未设置时返回 `Unchecked`，若据此画框会给所有条目凭空加复选框。
+
+无任何 role 时 `contentX == cellRect.x`、`availW == cw - 8`，与改造前**逐位一致**
+（像素零漂移）。
+
+**③ `XTableWidgetItem_write` / `read`（对齐 `QTableWidgetItem::write/read`）**
+
+依赖本轮新建的 `XDataStream`（见 §16）。线格式：
+
+```
+quint32 roleCount
+  每个 role: int32 role + [int32 variantType + qint64 byteLen + payload]
+int32 type
+quint32 flags
+```
+
+- `XVariantType_String` 的负载走 `XDataStream_writeString` 的文本格式，
+  不把 `XString` 对象头当裸字节写出；
+- 读端**先读进临时容器**，任一步失败都不破坏原条目（保证「失败时不变」）；
+- `selected` 位不写出（对齐 Qt：选中态归选择模型，不属条目持久状态）；
+- 防御：`roleCount > 4096` 按 `SizeLimitExceeded` 拒绝。
+
+> **与 Qt 的裁剪边界**：本格式为库自有二进制布局，**不与 Qt QDataStream 的
+> QVariant 编码互通**（Qt 的 QVariant 流格式与 Qt 版本强绑定，跨版本亦不兼容，
+> 故不做字节级对位）。
+
+**验证**：`XinYueC` / `XinYueCS` / `XGuiRegression_Test` **0 错误**；
+回归 `P32-FAIL` 计数 **0**。新增断言覆盖：role 全量条目 grab 不崩溃、
+序列化文本/勾选/标志位/Foreground/UserRole 往返（实测 102 字节）。
+
+---
+
+## 16. XDataStream（对标 Qt 6.8 QDataStream，2026-11-03 新建）
+
+> **位置**：`Src/XCore/XCode/XDataStream/{XDataStream.h,XDataStream.c}`
+> **依据**：`qtbase/src/corelib/serialization/qdatastream.{h,cpp}` ++
+> `qtbase/src/corelib/text/{qstring,qbytearray}.cpp` 的流操作符。
+
+### 16.1 形态映射（C 无运算符重载）
+
+| Qt | 本库 |
+|---|---|
+| `QDataStream &operator<<(T)` | `bool XDataStream_writeXxx(XDataStream*, T)` |
+| `QDataStream &operator>>(T&)` | `bool XDataStream_readXxx(XDataStream*, T* out)` |
+| `QDataStream(QIODevice*)` | `XDataStream_init_device` |
+| `QDataStream(QByteArray*, OpenMode)` | `XDataStream_init_array` |
+| `QDataStream(const QByteArray&)` | `XDataStream_init_arrayReadOnly` |
+
+Qt 的「流自身即返回值」在 C 里由调用方持有流指针自然达成；返回 `bool`
+替代链式调用，失败原因经 `XDataStream_status` 查询。
+
+**不继承 XObject**：对齐 Qt `QDataStream` 不继承 `QObject` 的值类型定位，
+用 `_init` / `XClassDeinit` 成对管理。
+
+### 16.2 已对齐的线格式
+
+| 项 | 对齐要点 |
+|---|---|
+| 版本枚举 | 1..22，`XDataStream_Version_Default = 22`（= `Qt_6_8`）；历史别名段折叠（如 `Qt_4_1 == Qt_4_0`） |
+| 字节序 | 缺省**大端**（对齐 Qt）；读写按宽度逐字节序变换 |
+| 浮点精度 | 缺省 `Double`；`Single` 下 `writeDouble` 降为 32 位（对齐 Qt 精度语义） |
+| 布尔 | **始终 1 字节** `qint8` 0/1，与版本无关 |
+| 浮点 | IEEE-754 位模式直写；`writeFloat` 不受精度设置影响（对齐 Qt） |
+| 长度前缀 | `writeQSizeType`：`<= 0xFFFFFFFD` 写 quint32；`0xFFFFFFFE` 为扩展标记后接 quint64；`0xFFFFFFFF` 为 null 标记 |
+| 字符串 | 长度为**字节数**（UTF-16 码元 × 2），内容按字节序逐 16 位；版本 1 走 Latin-1；版本 >= 3 支持 null 标记 |
+| 字节数组 | 长度为字节数 + 原始内容；版本 >= 3 支持 null 标记 |
+| 事务 | `startTransaction` 复位状态（对齐 `StreamStateSaver`）；`abortTransaction` 为 rollback 别名（Qt 6.8 起） |
+| 常量 | `NullCode = 0xFFFFFFFF`、`ExtendedSize = 0xFFFFFFFE`（对齐 qdatastream.h:239-240） |
+
+### 16.3 与 Qt 的已知差异
+
+1. **事务回滚不还原设备读写位置**：Qt 在可 seek 设备上把位置还原到事务起点；
+   本库设备模式只做深度计数（数组只读模式还原游标）。要完整对齐需给
+   `XIODevice` 增加事务回滚点，属后续批次。
+2. **容器序列化模板（`readArrayBasedContainer` 等）未提供**：C 无模板，
+   需为每类容器显式提供一对读写函数，按需增补。
+3. **`operator<<(const char*)`（C 字符串含 NUL 尾）未提供**：本库字符串
+   统一走 `XString`（`writeString`），不提供裸 `const char*` 重载，避免
+   与 `writeBytes` 语义混淆。
+
+### 16.4 验证
+
+`XinYueCore` / `XinYueC` / `XinYueCS` 编译 **0 错误**；
+经 `XTableWidgetItem_write/read` 往返实测通过（文本/勾选/标志位/Foreground/
+UserRole 全字段一致，单条目 102 字节）。
+
+### 15.7 测试补全 + 内存缺陷根修（2026-11-03）
+
+按 Qt 官方测试口径（`tst_qtableview.cpp` 4998 行 / `tst_qtablewidget.cpp`
+2051 行、51+51 个测试函数、96 组数据驱动用例）补齐我们此前 99 条断言的覆盖缺口。
+
+#### 15.7.1 新增测试模块
+
+| 文件 | 内容 |
+|---|---|
+| `Test/XGuiTest/XDataStreamTest.{h,c}` | XDataStream 专项 **~90 条断言**：字节序（大/小端逐字节比对）、定长整型宽度与负值往返、布尔恒 1 字节、非零字节读为 true、浮点位模式、`Single` 精度下 double 降为 4 字节、长度前缀（空/null/缓冲不足）、字符串 UTF-16 线格式与版本 1 Latin-1 差异、奇数长度报损坏、原始读写/跳过/只读拒写/无承载降级、事务（启动复位状态、出错 commit 返回 false、abort 别名）、流属性缺省值与 NULL 安全 |
+| `Test/XGuiTest/XTableAlignTest.{h,c}` | 表格族 **~70 条断言**：copy/move 深拷贝与泄漏、边界矩阵（空表/删光/四向越界/无模型）、span 6 组跨度矩阵（含 0/负/超大/重叠）、隐藏矩阵（全隐藏/中间隐藏/列同起点/越界查询）、排序矩阵（升/降/空值沉底/全等值稳定）、省略 4 模式×2 档、滚动步进 2 模式×2 方向、序列化健壮性（截断/roleCount 超限/空流/NULL） |
+
+两个模块挂在 `XGuiRegression_Test`，由 `main` 直接断言（失败即以
+`[XDS-FAIL]`/`[TBL-FAIL]` 前缀打印）。
+
+#### 15.7.2 测试过程中挖出的 6 个真缺陷
+
+| # | 缺陷 | 影响 | 根因 |
+|---|---|---|---|
+| 1 | `XTableWidget` **缺少 copy/move 重载** | `XClassCopy` 一个表格丢全部单元格；`XClassMove` 泄漏目标旧矩阵 | 只继承 `XTableView` 的 copy，而它不碰 `m_cells`/表头/内建模型 |
+| 2 | copy 重建维度被 setter 早退挡掉 | copy 后 `rows/cols` 对但**取不到任何条目** | `setRowCount` 对「新旧值相等」直接 return，而复制时源维度已就位 |
+| 3 | `XTableWidgetItem` 拷贝构造继承 `m_view` | clone 出的条目被判「已属其他表」而**无法进入新表** | 对齐 Qt 应为：拷贝构造出的条目不属于任何表 |
+| 4 | `XTableWidgetItem_setData` **每次泄漏一个 XVariant**（实测 192 B/次） | 每次写 role 都漏 | `XVector_push_back_1_base` 经 `m_dataCopyMethod` **再深拷一份**入容器，原始 `fresh.value` 无人释放 |
+| 5 | `VXTableWidgetItem_deinit` 不释放 role 里的 variant | 条目析构时每个 role 整块泄漏 | `XClassDeinit` 在 `XVector` 上**不逐元素调 `m_dataDeinitMethod`**（只有 `resize`/`clear` 才调） |
+| 6 | 越界 `setItem` 的条目所有权无人接管 | 每次越界调用漏一个条目（实测 736 B/次） | 对齐 Qt 契约：越界时表格**不接管所有权**，调用方须自行回收——但原实现与测试都没做 |
+
+> **缺陷 5 的容器契约**（查 `XContainer` 父类确认）：`XVector` 实际消费的
+> 元素回调是 **`m_dataCopyMethod`** 与 **`m_dataDeinitMethod`** 两个
+> （`XVector.c:114/181/203/209/252/280/326/343/526/596/631` 均为这两者）；
+> `m_dataMoveMethod` 在 `XVector.c` 中**一次都未使用**。
+> 需要逐元素释放时必须走 `XVector_clear_base`（= `XContainer_clear_base`
+> 虚表分派到 `VXVector_clear`，`XVector.c:631-638` 逐元素调 deinit），
+> 直接 `XClassDeinit` 只收容器不碰元素。
+
+#### 15.7.3 内存验证
+
+新增稳态泄漏判据（预热 3 轮消除库内单例/缓存的一次性分配，再跑两段各
+200 轮，两段增量必须均为 0）：
+
+```
+[MEMPROBE] segA=0 segB=0 bad=0
+[MEMPROBE] PASS: zero steady-state growth
+```
+
+修复前：**294400 字节/200 轮 = 1472 B/轮**；修复后 **0**。
+
+> **测法教训**：初期用「预热后单次测量」误判过——首次调用的库内单例分配
+> （实测 ~190 KB 一次性）会被算成泄漏。正确判据是**两段稳态增量均为零**，
+> 而非「末值 > 初值」。
+
+#### 15.7.4 与 Qt 测试口径的残余差距
+
+| 维度 | Qt | 本库现状 |
+|---|---|---|
+| 用例组织 | `_data` 数据驱动（96 组） | 宏展开的多组合循环（等价覆盖，但无 QTest 式命名） |
+| 键盘/鼠标事件注入 | `QTest::keyClick`/`mouseClick` 全覆盖 | 仅 `XKeyboardTest` + 少量事件注入 |
+| 拖放 | `dropMimeData`/`mimeData` 专项 | 无（本库拖放未落地） |
+| 无障碍 | `QAccessibleItemView` 用例 | 无（本库无无障碍层） |
+| 像素级视觉回归 | 无（Qt 靠人工/截图） | 仅 `XTableAlignTest` 的 elide 与 role grab 冒烟 |
+
+**整体覆盖**：主路径 + 边界 + 错误路径已覆盖；拖放/无障碍/键盘全谱
+仍缺，属功能未落地而非测试缺失。

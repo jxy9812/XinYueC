@@ -487,10 +487,18 @@ uint32_t XLinkServer_tickInterval(const XLinkServer* self)
 int XLinkServer_publish(XLinkServer* self, uint32_t topicId,
                         const uint8_t* payload, uint32_t length)
 {
+    return XLinkServer_publish_ex(self, topicId, XLinkDataType_Raw,
+                                  payload, length);
+}
+
+int XLinkServer_publish_ex(XLinkServer* self, uint32_t topicId,
+                           XLinkDataType dataType,
+                           const uint8_t* payload, uint32_t length)
+{
     int i, count;
     int sent = 0;
 
-    if (ISNULL(self, "XLinkServer_publish self"))
+    if (ISNULL(self, "XLinkServer_publish_ex self"))
         return 0;
     if (topicId < XLINK_TOPIC_USER_BASE || !self->m_sessions)
         return 0;
@@ -507,7 +515,8 @@ int XLinkServer_publish(XLinkServer* self, uint32_t topicId,
            登记/移除），应用无需自己记录。 */
         if (!XLinkSession_isSubscribed(session, topicId))
             continue;
-        if (XLinkSession_sendPublish(session, topicId, payload, length))
+        if (XLinkSession_sendPublish_ex(session, topicId, dataType,
+                                        payload, length))
             sent++;
     }
     return sent;
@@ -516,10 +525,18 @@ int XLinkServer_publish(XLinkServer* self, uint32_t topicId,
 int XLinkServer_broadcast(XLinkServer* self, uint32_t topicId,
                           const uint8_t* payload, uint32_t length)
 {
+    return XLinkServer_broadcast_ex(self, topicId, XLinkDataType_Raw,
+                                    payload, length);
+}
+
+int XLinkServer_broadcast_ex(XLinkServer* self, uint32_t topicId,
+                             XLinkDataType dataType,
+                             const uint8_t* payload, uint32_t length)
+{
     int i, count;
     int sent = 0;
 
-    if (ISNULL(self, "XLinkServer_broadcast self"))
+    if (ISNULL(self, "XLinkServer_broadcast_ex self"))
         return 0;
     if (topicId < XLINK_TOPIC_USER_BASE || !self->m_sessions)
         return 0;
@@ -531,7 +548,8 @@ int XLinkServer_broadcast(XLinkServer* self, uint32_t topicId,
         XLinkSession* session = slot ? *slot : NULL;
         if (!session || !XLinkSession_isReady(session))
             continue;
-        if (XLinkSession_sendPublish(session, topicId, payload, length))
+        if (XLinkSession_sendPublish_ex(session, topicId, dataType,
+                                        payload, length))
             sent++;
     }
     return sent;

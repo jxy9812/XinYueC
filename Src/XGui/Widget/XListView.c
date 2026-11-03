@@ -210,10 +210,15 @@ static void xlv_drawRowText(XPainter* painter, const XListView* lv,
          * 颜色必须显式传不透明色：XPainter_drawText 直接以该参数作
          * ink（透明色写入=无像素），setPen 不影响此路径；ink 由调用
          * 方按选中态给 HighlightedText/WindowText（对标 Qt）。 */
+        char elideBuf[256];
+        /* [省略消费 2026-11-03] 对齐 Qt 委托绘制前的 elidedText。 */
+        const char* shown = XAbstractItemView_elidedText(
+            &lv->m_base, elideBuf, (int)sizeof(elideBuf), text,
+            cell->x + cell->width - contentX - 8, XPainter_font(painter));
         XPainter_setPen(painter, ink);
         XPainter_drawText(painter, contentX + 4,
                           cell->y + xlv_effectiveRowHeight(lv) - 6,
-                          text, ink);
+                          shown, ink);
         if (roleFont) XPainter_setFont(painter, NULL);
         return;
     }
@@ -224,9 +229,15 @@ static void xlv_drawRowText(XPainter* painter, const XListView* lv,
     {
         /* 文本区=内容占位推进后的剩余矩形（含历史 cell 宽度收缩）。 */
         XRect textRect;
+        char elideBuf[256];
+        const char* shown;
         XRect_init(&textRect, contentX, cell->y,
                    cell->x + cell->width - contentX, cell->height);
-        XPainter_drawTextRect(painter, &textRect, (uint32_t)flags, text,
+        /* [省略消费 2026-11-03] 同 Qt：文本区宽扣除左右内边距后省略。 */
+        shown = XAbstractItemView_elidedText(
+            &lv->m_base, elideBuf, (int)sizeof(elideBuf), text,
+            textRect.width - 8, XPainter_font(painter));
+        XPainter_drawTextRect(painter, &textRect, (uint32_t)flags, shown,
                               ink);
     }
     if (roleFont) XPainter_setFont(painter, NULL);

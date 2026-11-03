@@ -225,6 +225,7 @@ bool XPieSeries_appendSlice(XPieSeries* self, XPieSlice* slice)
     if (!self || !slice) return false;
     if (!xpieseries_grow(self)) return false;
     self->m_slices[self->m_count++] = slice;
+    slice->m_series = self;   /* 对标 QPieSlice::series() 反向指针 */
     xpieseries_emitSlice(self, (size_t)XPieSeries_added_signal, slice);
     xpieseries_emit0(self, (size_t)XPieSeries_countChanged_signal);
     xpieseries_emit0(self, (size_t)XPieSeries_sumChanged_signal);
@@ -264,6 +265,7 @@ bool XPieSeries_insert(XPieSeries* self, int index, XPieSlice* slice)
         self->m_slices[i] = self->m_slices[i - 1];
     self->m_slices[index] = slice;
     ++self->m_count;
+    slice->m_series = self;   /* 对标 QPieSlice::series() 反向指针 */
     xpieseries_emitSlice(self, (size_t)XPieSeries_added_signal, slice);
     xpieseries_emit0(self, (size_t)XPieSeries_countChanged_signal);
     xpieseries_emit0(self, (size_t)XPieSeries_sumChanged_signal);
@@ -293,6 +295,7 @@ bool XPieSeries_take(XPieSeries* self, XPieSlice* slice)
         break;
     }
     if (!found) return false;
+    if (slice->m_series == (void*)self) slice->m_series = NULL;
     xpieseries_emitSlice(self, (size_t)XPieSeries_removed_signal, slice);
     xpieseries_emit0(self, (size_t)XPieSeries_countChanged_signal);
     xpieseries_emit0(self, (size_t)XPieSeries_sumChanged_signal);
@@ -303,8 +306,12 @@ void XPieSeries_clear(XPieSeries* self)
 {
     int i;
     if (!self) return;
-    for (i = 0; i < self->m_count; ++i)
-        if (self->m_slices[i]) XClassDelete(self->m_slices[i]);
+    for (i = 0; i < self->m_count; ++i) {
+        if (self->m_slices[i]) {
+            self->m_slices[i]->m_series = NULL;
+            XClassDelete(self->m_slices[i]);
+        }
+    }
     self->m_count = 0;
     xpieseries_emit0(self, (size_t)XPieSeries_countChanged_signal);
     xpieseries_emit0(self, (size_t)XPieSeries_sumChanged_signal);

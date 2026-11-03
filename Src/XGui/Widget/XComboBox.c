@@ -255,6 +255,7 @@ xcombo_style_text: {}
                 int avail = r.width - 6 - XCOMBOBOX_BUTTON_W - 8;
                 if (avail > 0 && cur) {
                     char elided[256];
+                    /* mode 1 = Qt::ElideRight（编号已统一）。 */
                     const char* shown =
                         XCommonStyle_elideText(elided, (int)sizeof(elided),
                                                cur, 1, avail, cfont);

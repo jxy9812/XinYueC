@@ -1,4 +1,4 @@
-# XinYueC 库代码风格指南
+﻿# XinYueC 库代码风格指南
 
 ## 目录
 1. [命名规范](#命名规范)
@@ -23,6 +23,7 @@
 - **`_const` 所有权契约（2026-11-03 裁定）**：带 `_const` = 借用（禁止释放），不带 `_const` = 拷贝（调用方必须释放），见「获取函数的所有权契约」
 - **`set*` 三态所有权契约（2026-11-03 裁定）**：`setXxx` 拷贝 / `setXxx_move` 抽取资源留空壳（外壳调用方释放）/ `setXxx_ref` 指针接管（所有权全转），见「`set*` 三态所有权契约」
 - **字符串后缀契约（2026-11-03 裁定）**：带 `_utf8` = `char*`，不带 = `XString*`；存储优先 `XString`，仅"只记录不加工"用 `char*`，见「字符串 API 后缀契约」
+- **`string.h` 移出白名单（2026-11-03 裁定）**：`memcpy`/`memset`/`memmove`/`memcmp` 一律改用 `XMemcpy`/`XMemset`/`XMemmove`/`XMemcmp`，见「白名单」
 
 ---
 
@@ -152,8 +153,24 @@
 ### 白名单（语言基础，无库内等价，允许继续使用）
 
 - 头文件：`stdbool.h`、`stdint.h`、`stddef.h`、`limits.h`、`float.h`、`inttypes.h`、`stdarg.h`、`assert.h`
-- `string.h` 仅限裸内存原语：`memcpy`、`memset`、`memmove`、`memcmp`（用于完整对象的拷贝仍被禁止，见「内存管理注意事项」）
 - `math.h`（库内无数学模块）
+
+> **`string.h` 已移出白名单（2026-11-03 裁定）。** 裸内存原语库内已有等价实现，
+> 必须改用 `XMemory.h` 的同族接口：
+>
+> | 禁止 | 必须使用 |
+> |------|---------|
+> | `memcpy` | `XMemcpy` |
+> | `memset` | `XMemset` |
+> | `memmove` | `XMemmove` |
+> | `memcmp` | `XMemcmp` |
+> | `strlen` / `strcmp` / `strncmp` | `XString` 族（`XString_size`/`XString_equals`/`XString_startsWith_utf8`） |
+> | `strdup` | `XStrdup`（见「库内替代对照」） |
+>
+> 语义与 libc 一致（`XMemcpy` 为编译器内建实现），迁移是纯替换，不改变行为。
+> 例外仅剩：`Drive/` 平台适配层在与 OS API 直接对接时可按需使用；即便如此，
+> 能用 `XMemory` 族表达时必须用 `XMemory` 族。用于完整对象的拷贝仍被禁止
+> （见「内存管理注意事项」）。
 
 ### 例外与登记
 

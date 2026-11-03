@@ -12,6 +12,7 @@
 #include "XEvent.h"
 #include "XEventType.h"
 #include "XItemDelegate.h"
+#include "XCommonStyle.h" /* [省略消费 2026-11-03] XCommonStyle_elideText。 */
 #include "XCoreApplication.h"
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
@@ -28,6 +29,7 @@ static void VXAbstractItemView_mouseReleaseEvent(XWidget* self,
 static void VXAbstractItemView_mouseDoubleClickEvent(XWidget* self,
                                                      XEvent* event);
 static void VXAbstractItemView_mouseMoveEvent(XWidget* self, XEvent* event);
+static void VXAbstractItemView_timerEvent(XObject* object, XTimerEvent* event);
 static void VXAbstractItemView_keyPressEvent(XWidget* self, XEvent* event);
 static void VXAbstractItemView_leaveEvent(XWidget* self, XEvent* event);
 static bool VXAbstractItemView_indexAt(const XAbstractItemView* self,
@@ -268,6 +270,10 @@ XVtable* XAbstractItemView_class_init(void)
                              VXAbstractItemView_mouseDoubleClickEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
                              VXAbstractItemView_mouseMoveEvent);
+    /* [自动滚动 2026-11-03] 边缘自动滚动拍（对齐 QAbstractItemView 的
+     * autoScrollTimer → doAutoScroll）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent,
+                             VXAbstractItemView_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
                              VXAbstractItemView_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_LeaveEvent,
@@ -305,6 +311,12 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
     self->m_selectionModel = XItemSelectionModel_create();
     self->m_selectionAnchorRow = -1;
     self->m_selectionAnchorCol = -1;
+    /* [自动滚动 2026-11-03] 拖选/拖放边缘自动滚动状态。 */
+    self->m_dragPosX = -1;
+    self->m_dragPosY = -1;
+    self->m_autoScrollTimerId = XTIMER_INVALID_ID;
+    self->m_dragSelecting = 0;
+    self->m_autoScrollCount = 0;
     self->m_rootRow = -1;
     self->m_rootCol = -1;
     self->m_iconW = 16; /* 小像素值，int16 承载。 */
@@ -370,6 +382,12 @@ XAbstractItemView* XAbstractItemView_create_ex(XMemoryType memory,
 
 static void VXAbstractItemView_deinit(XAbstractItemView* self)
 {
+    /* [自动滚动 2026-11-03] 析构前必须停表：周期定时器只覆盖 id 不 kill
+     * = 定时器泄漏（分发器 startTimer 恒 singleShot=false，到期重挂）。 */
+    if (self->m_autoScrollTimerId != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_autoScrollTimerId);
+        self->m_autoScrollTimerId = XTIMER_INVALID_ID;
+    }
     if (!self) return;
     /* 悬停差分旁表节点随视图析构移除（防悬垂键；旁表头为静态承载）。 */
     xaiv_hoverRelease(self);
@@ -1215,15 +1233,248 @@ int XAbstractItemView_textElideMode(const XAbstractItemView* self)
 { return self ? self->m_textElideMode
               : (int)XAbstractItemViewTextElideMode_ElideRight; }
 
+/* ==================== 文本省略（对齐 elidedText 消费） ==================== */
+
+const char* XAbstractItemView_elidedText(const XAbstractItemView* self,
+                                          char* buf, int bufCap,
+                                          const char* text, int maxW,
+                                          const XFont* font)
+{
+    if (!text || !text[0] || !buf || bufCap <= 0) return text ? text : "";
+    if (maxW <= 0) return text;
+    if (!font) return text; /* 无字体无法测量：不省略（安全退化）。 */
+#if XSTYLE_ON
+    /* [对齐 Qt 2026-11-03] 两套编号已合并：
+     * XCommonStyle_elideText 的 mode 参数现已按
+     * Qt::TextElideMode 数值（0=Left 1=Right 2=Middle 3=None），
+     * 与本枚举一致，无需映射。 */
+    return XCommonStyle_elideText(
+        buf, bufCap, text,
+        self ? (int)self->m_textElideMode
+             : (int)XAbstractItemViewTextElideMode_ElideRight,
+        maxW, font);
+#else
+    (void)self;
+    return text; /* XSTYLE_ON=0：省略实现随样式层裁剪，退化为不省略。 */
+#endif
+}
+
+/* ==================== 边缘自动滚动（对齐 QAbstractItemView） ==================== */
+
+bool XAbstractItemView_shouldAutoScroll(const XAbstractItemView* self,
+                                        int x, int y)
+{
+    int margin;
+    int w;
+    int h;
+    if (!self || !self->m_autoScroll) return false;
+    margin = self->m_autoScrollMargin;
+    if (margin <= 0) return false;
+    w = XWidget_width((const XWidget*)self);
+    h = XWidget_height((const XWidget*)self);
+    /* 四边任一命中即 true（对齐 Qt shouldAutoScroll 的 `||` 连接）。 */
+    return (y < margin) || (h - y < margin) ||
+           (x < margin) || (w - x < margin);
+}
+
+void XAbstractItemView_stopAutoScroll(XAbstractItemView* self)
+{
+    if (!self) return;
+    if (self->m_autoScrollTimerId != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_autoScrollTimerId);
+        self->m_autoScrollTimerId = XTIMER_INVALID_ID;
+    }
+    self->m_autoScrollCount = 0;
+}
+
+void XAbstractItemView_startAutoScroll(XAbstractItemView* self)
+{
+    int interval;
+    if (!self || !self->m_autoScroll) return;
+    /* 对齐 Qt QAbstractItemViewPrivate::startAutoScroll：按滚动模式选拍
+     * 间隔与视觉颗粒度对应（逐条目 150ms / 逐像素 50ms）。 */
+    interval = (self->m_verticalScrollMode ==
+                XAbstractItemViewScrollMode_ScrollPerItem) ? 150 : 50;
+    /* 先停旧表：周期定时器只覆盖 id 不 kill = 泄漏。 */
+    XAbstractItemView_stopAutoScroll(self);
+    self->m_autoScrollTimerId =
+        XObject_startTimer_ms((XObject*)self, (uint64_t)interval,
+                              XTimerType_CoarseTimer);
+    self->m_autoScrollCount = 0;
+}
+
+/** @brief 取单元格（row,col）的高（像素）；无法测量返回 -1。
+ *  @details 对齐 Qt QListViewPrivate::itemSize：逐条目步进量取该行的实际高度。
+ *           本库的 visualRect 已含行高/表头/滚动偏移口径，
+ *           取第 0 列的高即可（各列行高一致）。 */
+static int xaiv_itemExtentV(const XAbstractItemView* self)
+{
+    XRect rect;
+    if (!self) return -1;
+    /* 不要求 model 非空：visualRect 虚槽自行判定（安全退化）。 */
+    if (!XAbstractItemView_visualRect(self, 0, 0, &rect)) return -1;
+    return rect.height > 0 ? rect.height : -1;
+}
+
+/** @brief 取单元格（row,col）的宽（像素）；无法测量返回 -1。 */
+static int xaiv_itemExtentH(const XAbstractItemView* self)
+{
+    XRect rect;
+    if (!self) return -1;
+    /* 同 xaiv_itemExtentV：不要求 model 非空。 */
+    if (!XAbstractItemView_visualRect(self, 0, 0, &rect)) return -1;
+    return rect.width > 0 ? rect.width : -1;
+}
+
+/** @brief 按当前滚动模式把条目尺寸同步到滚动条的 singleStep。
+ *  @details 对齐 Qt：
+ *           - ScrollPerItem：`itemviewChangeSingleStep(itemExtent)`，即
+ *             singleStep = 条目高/宽（像素），滚轮/箭头逐条目跳
+ *             （qabstractslider.cpp:932-937）；
+ *           - ScrollPerPixel：`setSingleStep(-1)` 交绔样式取缺省步进
+ *             （qabstractitemview.cpp:1305-1310），本库取 1px。
+ *           **滚动条范围始终以像素计**（Qt 同），模式只影响步进量。
+ *  @note  本函数幂等，可在布局/滚动模式变更时反复调用。 */
+void XAbstractItemView_syncScrollSteps(XAbstractItemView* self)
+{
+    XScrollBar* vbar;
+    XScrollBar* hbar;
+    int vStep;
+    int hStep;
+    if (!self) return;
+    vbar = XAbstractScrollArea_verticalScrollBar((XAbstractScrollArea*)self);
+    hbar = XAbstractScrollArea_horizontalScrollBar((XAbstractScrollArea*)self);
+    if (vbar) {
+        if (self->m_verticalScrollMode ==
+            XAbstractItemViewScrollMode_ScrollPerItem) {
+            vStep = xaiv_itemExtentV(self);
+            if (vStep > 0)
+                XAbstractSlider_setSingleStep((XAbstractSlider*)vbar, vStep);
+        } else {
+            XAbstractSlider_setSingleStep((XAbstractSlider*)vbar, 1);
+        }
+    }
+    if (hbar) {
+        if (self->m_horizontalScrollMode ==
+            XAbstractItemViewScrollMode_ScrollPerItem) {
+            hStep = xaiv_itemExtentH(self);
+            if (hStep > 0)
+                XAbstractSlider_setSingleStep((XAbstractSlider*)hbar, hStep);
+        } else {
+            XAbstractSlider_setSingleStep((XAbstractSlider*)hbar, 1);
+        }
+    }
+}
+
+void XAbstractItemView_doAutoScroll(XAbstractItemView* self)
+{
+    XScrollBar* vbar;
+    XScrollBar* hbar;
+    int vStep;
+    int hStep;
+    int margin;
+    int vValue;
+    int hValue;
+    int limit;
+    int x;
+    int y;
+    int w;
+    int h;
+    int advance;
+    if (!self || !self->m_autoScroll) return;
+    vbar = XAbstractScrollArea_verticalScrollBar((XAbstractScrollArea*)self);
+    hbar = XAbstractScrollArea_horizontalScrollBar((XAbstractScrollArea*)self);
+    vStep = vbar ? XAbstractSlider_pageStep((XAbstractSlider*)vbar) : 0;
+    hStep = hbar ? XAbstractSlider_pageStep((XAbstractSlider*)hbar) : 0;
+    limit = vStep > hStep ? vStep : hStep;
+    /* 对齐 Qt：累计拍数每拍 +1，上限 = 两方向 pageStep 的较大者——
+     * 越靠近边缘滚得越快（线性加速）。 */
+    if ((int)self->m_autoScrollCount < limit &&
+        self->m_autoScrollCount < 0x7F)
+        ++self->m_autoScrollCount;
+    if (self->m_autoScrollCount == 0) self->m_autoScrollCount = 1;
+
+    margin = self->m_autoScrollMargin;
+    w = XWidget_width((const XWidget*)self);
+    h = XWidget_height((const XWidget*)self);
+    x = self->m_dragPosX;
+    y = self->m_dragPosY;
+    if (x < 0 && y < 0) return; /* 从未记录指针位置：无事可做。 */
+
+    /* 每拍推进量 = 拍数 × singleStep。
+     * - ScrollPerItem：singleStep 已同步为条目尺寸，因此按整条目步进；
+     * - ScrollPerPixel：singleStep = 1，因此按像素步进。
+     * 对齐 Qt doAutoScroll：`setValue(value ± autoScrollCount)`——它本身按
+     * 像素推，因此此处乘 singleStep 后的行为在 ScrollPerItem
+     * 下等价于「每拍一个条目」，在 ScrollPerPixel 下与 Qt 完全一致。 */
+    {
+        int vs = vbar ? XAbstractSlider_singleStep((XAbstractSlider*)vbar) : 1;
+        int hs = hbar ? XAbstractSlider_singleStep((XAbstractSlider*)hbar) : 1;
+        if (vs < 1) vs = 1;
+        if (hs < 1) hs = 1;
+        advance = (int)self->m_autoScrollCount;
+        vValue = vbar ? XAbstractSlider_value((XAbstractSlider*)vbar) : 0;
+        hValue = hbar ? XAbstractSlider_value((XAbstractSlider*)hbar) : 0;
+        if (vbar) {
+            if (y < margin)
+                XAbstractSlider_setValue((XAbstractSlider*)vbar,
+                                         vValue - advance * vs);
+            else if (h - y < margin)
+                XAbstractSlider_setValue((XAbstractSlider*)vbar,
+                                         vValue + advance * vs);
+        }
+        if (hbar) {
+            if (x < margin)
+                XAbstractSlider_setValue((XAbstractSlider*)hbar,
+                                         hValue - advance * hs);
+            else if (w - x < margin)
+                XAbstractSlider_setValue((XAbstractSlider*)hbar,
+                                         hValue + advance * hs);
+        }
+    }
+    /* 两方向都没动（已到边界）：停表（对齐 Qt 的 unchanged 分支）。 */
+    if (vbar && XAbstractSlider_value((XAbstractSlider*)vbar) == vValue &&
+        hbar && XAbstractSlider_value((XAbstractSlider*)hbar) == hValue) {
+        XAbstractItemView_stopAutoScroll(self);
+    }
+}
+
+void XAbstractItemView_updateAutoScrollPointer(XAbstractItemView* self,
+                                               int x, int y)
+{
+    if (!self) return;
+    self->m_dragPosX = x;
+    self->m_dragPosY = y;
+    if (XAbstractItemView_shouldAutoScroll(self, x, y)) {
+        if (self->m_autoScrollTimerId == XTIMER_INVALID_ID)
+            XAbstractItemView_startAutoScroll(self);
+    } else {
+        XAbstractItemView_stopAutoScroll(self);
+    }
+}
+
 void XAbstractItemView_setVerticalScrollMode(XAbstractItemView* self, int mode)
-{ if (self) self->m_verticalScrollMode = (uint8_t)mode; }
+{
+    if (!self) return;
+    if (self->m_verticalScrollMode == (uint8_t)mode) return;
+    self->m_verticalScrollMode = (uint8_t)mode;
+    /* 对齐 Qt setVerticalScrollMode（qabstractitemview.cpp:1297-1312）：
+     * 切换模式后重新同步 singleStep（逐条目 = 条目尺寸）。 */
+    XAbstractItemView_syncScrollSteps(self);
+}
 int XAbstractItemView_verticalScrollMode(const XAbstractItemView* self)
 { return self ? self->m_verticalScrollMode
               : (int)XAbstractItemViewScrollMode_ScrollPerItem; }
 
 void XAbstractItemView_setHorizontalScrollMode(XAbstractItemView* self,
                                                int mode)
-{ if (self) self->m_horizontalScrollMode = (uint8_t)mode; }
+{
+    if (!self) return;
+    if (self->m_horizontalScrollMode == (uint8_t)mode) return;
+    self->m_horizontalScrollMode = (uint8_t)mode;
+    /* 同 setVerticalScrollMode：切换后重新同步 singleStep。 */
+    XAbstractItemView_syncScrollSteps(self);
+}
 int XAbstractItemView_horizontalScrollMode(const XAbstractItemView* self)
 { return self ? self->m_horizontalScrollMode
               : (int)XAbstractItemViewScrollMode_ScrollPerItem; }
@@ -1925,6 +2176,10 @@ static void VXAbstractItemView_mouseReleaseEvent(XWidget* self,
     int row;
     int col;
     if (!view || !event) return;
+    /* [自动滚动 2026-11-03] 松开按键即停表（对齐 Qt mouseReleaseEvent
+     * 末尾的 stopAutoScroll 语义）。 */
+    view->m_dragSelecting = 0;
+    XAbstractItemView_stopAutoScroll(view);
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) {
@@ -1974,6 +2229,24 @@ static void VXAbstractItemView_mouseDoubleClickEvent(XWidget* self,
 
 /** @brief 移动：悬停索引差分——进入新条目才发射 entered（边沿一次）；
  *         由条目移入视口空白（悬停失效）才发射 viewportEntered。 */
+/** @brief 边缘自动滚动拍（id 守卫：只消费本视图的自动滚动拍；其他业务
+ *         定时器——如派生控件的闪烁/惯性拍——原样链回父类槽）。
+ *  @details 对齐 Qt QAbstractItemViewPrivate::startAutoScroll 的
+ *           autoScrollTimer 连接：到期调 doAutoScroll。 */
+static void VXAbstractItemView_timerEvent(XObject* object, XTimerEvent* event)
+{
+    XAbstractItemView* view = (XAbstractItemView*)object;
+    if (!view || !event) return;
+    if (view->m_autoScrollTimerId == XTIMER_INVALID_ID ||
+        XTimerEvent_timerId(event) != view->m_autoScrollTimerId) {
+        XClass_Parent(XObject, EXObject_TimerEvent,
+                      void (*)(XObject*, XTimerEvent*))(object, event);
+        return;
+    }
+    XAbstractItemView_doAutoScroll(view);
+    XEvent_accept((XEvent*)event);
+}
+
 static void VXAbstractItemView_mouseMoveEvent(XWidget* self, XEvent* event)
 {
     XAbstractItemView* view = (XAbstractItemView*)self;
@@ -1986,6 +2259,16 @@ static void VXAbstractItemView_mouseMoveEvent(XWidget* self, XEvent* event)
     if (!view || !event) return;
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
+    /* [自动滚动 2026-11-03] 左键按住拖选期间记录指针并驱动边缘自动滚动
+     * （对齐 Qt mouseMoveEvent 的 DragSelectingState 分支：置状态 → 更新
+     * 选区矩形 → 末了按 shouldAutoScroll 启停定时器）。 */
+    if (XMouseEvent_buttons(me) & XMouseButton_LeftButton) {
+        view->m_dragSelecting = 1;
+        XAbstractItemView_updateAutoScrollPointer(view, pos.x, pos.y);
+    } else if (view->m_dragSelecting) {
+        view->m_dragSelecting = 0;
+        XAbstractItemView_stopAutoScroll(view);
+    }
     /* 前后索引差分（对照 XListWidget m_enteredRow 范式并升级为行列
      * 成对+失效态）：修正此前命中即发射——每次移动重复发 entered，
      * 且 viewportEntered 在条目上发射（与 Qt 相反：Qt 在悬停离开

@@ -44,6 +44,7 @@ typedef struct XPieSlice
      *      offsetof 依赖） ---- */
     XString* m_label;                /**< 切片标签（UTF-8；对象拥有）。 */
     XString* m_labelFontFamily;      /**< 标签字体族（对象拥有）。 */
+    void*    m_series;               /**< 所属饼图序列（借用；对标 QPieSlice::series）。 */
     double m_value;                  /**< 切片值。 */
     double m_explodeDistanceFactor;  /**< 分离距离系数（0-1；默认 0.15）。 */
     double m_labelArmLengthFactor;   /**< 标签引线长度系数（默认 0.15）。 */
@@ -161,6 +162,13 @@ double XPieSlice_labelArmLengthFactor(const XPieSlice* self);
 void XPieSlice_setExplodeDistanceFactor(XPieSlice* self, double factor);
 /** @brief 读取分离距离系数。 @param self 目标切片指针。 @return 系数。 */
 double XPieSlice_explodeDistanceFactor(const XPieSlice* self);
+
+/* ==================== 所属序列（对标 QPieSlice::series） ==================== */
+
+/** @brief 查询所属饼图序列（对标 QPieSlice::series）。
+ * @param self 目标切片指针。
+ * @return 借用 XPieSeries*；未加入任何序列返回 NULL。 */
+struct XPieSeries* XPieSlice_series(const XPieSlice* self);
 
 /* ==================== 派生只读值（series 布局回写） ==================== */
 

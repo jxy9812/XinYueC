@@ -239,15 +239,23 @@ extern "C" {
 /** @brief 协议版本号（写入 HELLO 载荷，线上为 u16）。高字节为主版本、低字节为次版本。
  *  @note  版本不匹配不致命：会话层仅记录到 m_peerVersion，兼容策略由应用层决定。
  *         1.1：新增登录认证与文件传输两个可选项（能力位门控，帧格式不变）。
+ *         2.0：帧头 12 → 16 字节，新增 dataType 字节与 3 字节保留位（载荷
+ *              数据类型枚举，见 XLinkDataType）。**主版本不兼容**：1.x 对端
+ *              按 12 字节帧头解析 2.x 帧会从第 13 字节起整体错位，产生静默
+ *              畸形字节流而非明确报错，故握手期对主版本不一致直接断链
+ *              （见 XLinkSessionPrivate 的 Hello 处理）。
  *  【2026-10-31 重复宏合并】常量唯一权威 = 本文件（XLinkProto.h :40 先包含
  *  本文件，其原正本定义已删除；独立包含本文件的 XLinkClient.h 等亦自洽）。 */
 #ifndef XLINK_VERSION
-#define XLINK_VERSION 0x0101u
+#define XLINK_VERSION 0x0200u
 #endif
 
-/** @brief 帧头固定长度（字节）：payloadLen(4) + msgClass(2) + msgCode(2) + requestId(4)。
- *  @note  全部字段小端线序（fbdev/网络栈惯例，ARM 与 x86 一致）。 */
-#define XLINK_HEADER_SIZE 12u
+/** @brief 帧头固定长度（字节）：payloadLen(4) + msgClass(2) + msgCode(2)
+ *         + requestId(4) + dataType(1) + reserved(3)。
+ *  @note  全部字段小端线序（fbdev/网络栈惯例，ARM 与 x86 一致）。
+ *         2.0 起由 12 字节扩至 16 字节（保留位对齐到 4 字节边界，便于将来
+ *         追加 u32 字段而不改本常量）。 */
+#define XLINK_HEADER_SIZE 16u
 
 /** @brief 业务 topicId 起始值（u32）。低于此值保留给协议自身（如 Session 子类型）。
  *  @note  topicId 用 u32 而非字符串：嵌入式端免去解析与分配。两端各自的业务

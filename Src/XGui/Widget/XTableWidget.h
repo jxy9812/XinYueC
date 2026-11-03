@@ -1,14 +1,13 @@
 ﻿/**
  * @file       XTableWidget.h
- * @brief      XTableWidget 表格控件（对标 Qt 6.8 QTableWidget/QTableView）。
- * @details    单元格字符串数据模型（对标 QTableWidgetItem 的文本/选中/
- *             前后景色/三态勾选子集）+ 表头标签 + 网格渲染 + 单元格
- *             选择/键盘导航/滚轮滚动 + cellClicked 等信号。继承
- *             XAbstractScrollArea：视口滚动经内部滚动条联动，滚动条
- *             策略/scrollContentsBy 语义与基类一致。
- * @note       模块总开关 XTABLEWIDGET_ON 定义于 XGuiConfig.h；=0 时
- *             裁剪整个 XTableWidget 公共 API。依赖 XWIDGET_ON、
- *             XABSTRACTSCROLLAREA_ON、XPALETTE_ON、XPAINTER_ON。
+ * @brief      表格控件公开 API（对齐 Qt 6.8 QTableWidget / QTableWidgetItem）。
+ * @details    继承链与 Qt 一致：XTableWidget → XTableView → XAbstractItemView
+ *             → XAbstractScrollArea → XWidget。本类在 XTableView 之上提供
+ *             「行×列表格」的便捷层：单元格条目对象（XTableWidgetItem）由
+ *             表格持有所有权、按 (row,column) 索引；表头标签、单元格部件
+ *             挂载、当前格/选区、排序与查找便捷族均对齐 Qt 同名接口。
+ *             实现只依赖 XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或
+ *             其他平台 API。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XTABLEWIDGET_H
@@ -26,6 +25,7 @@ extern "C" {
 #include "XTableView.h"
 #include "XAbstractItemModel.h"
 #include "XVector.h"
+#include "XWidget.h"
 #include "XGuiConfig.h"
 
 #if XTABLEWIDGET_ON
@@ -33,71 +33,598 @@ extern "C" {
 XCLASS_DEFINE_BEGING(XTableWidget)
 XCLASS_DEFINE_EXTEND_END(XTableWidget, XTableView)
 
-/**
- * @brief 单元格（对标 QTableWidgetItem 的文本/外观子集）。
- *
- *        直接内嵌存储于表格行数组；text 超长截断，前景/背景色为
- *        0 时回退调色板默认色。
- */
-/* 条目标志位（对标 Qt 6.8 Qt::ItemFlag 数值与语义子集）。
- * [10-19 对齐] 零值约定：itemFlags==0 视为「缺省可编辑」（既有建表
- * 路径 memset 归零后行为不变，同 Qt 缺省 flags 含 ItemIsEditable）；
- * 需要只读条目（如表格地址列）显式设不带 ItemIsEditable 的组合。 */
-typedef enum XTableWidgetItemFlag
-{
-    XTableWidgetItemFlag_ItemIsSelectable   = 1,      /**< 可选中。 */
-    XTableWidgetItemFlag_ItemIsEditable     = 1 << 1, /**< 可编辑（双击/F2 进编辑器门禁）。 */
-    XTableWidgetItemFlag_ItemIsDragEnabled  = 1 << 2, /**< 可拖（暂未消费，占位对齐）。 */
-    XTableWidgetItemFlag_ItemIsDropEnabled  = 1 << 3, /**< 可放（暂未消费，占位对齐）。 */
-    XTableWidgetItemFlag_ItemIsUserCheckable = 1 << 4,/**< 可勾选（预留）。 */
-    XTableWidgetItemFlag_ItemIsEnabled      = 1 << 5  /**< 可用（禁用态预留）。 */
-} XTableWidgetItemFlag;
+/* ==========================================================================
+ * XTableWidgetItem（对齐 Qt 6.8 QTableWidgetItem）
+ * ========================================================================== */
 
+XCLASS_DEFINE_BEGING(XTableWidgetItem)
+XCLASS_DEFINE_ENUM(XTableWidgetItem, Clone) = XCLASS_VTABLE_GET_SIZE(XObject),
+XCLASS_DEFINE_END(XTableWidgetItem)
+
+/** @brief XTableWidget 前向声明（条目的 m_view 反向引用；定义见本节末）。 */
+typedef struct XTableWidget XTableWidget;
+
+/**
+ * @brief role→数据映射元素（对齐 Qt 私有 `QWidgetItemData`）。
+ * @details 由条目对象在 `m_values` 中持有；`value` 归条目所有，随条目释放。
+ */
+typedef struct XTableWidgetItemData
+{
+    int role;        /**< 数据角色（XItemDataRole；EditRole 已归一化为 DisplayRole）。 */
+    XVariant* value; /**< 角色数据（对象拥有；NULL 表示该角色无值）。 */
+} XTableWidgetItemData;
+
+/**
+ * @brief 条目类型标识（对齐 `QTableWidgetItem::ItemType`）。
+ * @details `type()` 返回构造时写入的整数；`_Type` 是基类条目的缺省值，
+ *          `_UserType` 是调用方自定义子类类型的起点。
+ */
+typedef enum XTableWidgetItemType
+{
+    XTableWidgetItem_Type = 0,      /**< 基类条目类型（对齐 `QTableWidgetItem::Type`）。 */
+    XTableWidgetItem_UserType = 1000/**< 用户自定义类型起点（对齐 `UserType`）。 */
+} XTableWidgetItemType;
+
+/** @brief XVariant 前向声明（role 数据的载体；定义见 XData/XVariant）。 */
+typedef struct XVariant XVariant;
+/** @brief XIcon 前向声明（DecorationRole 的 Qt 对齐载体）。 */
+typedef struct XIcon XIcon;
+/** @brief XFont 前向声明（FontRole 的载体；借用指针）。 */
+typedef struct XFont XFont;
+/** @brief XDataStream 前向声明（条目序列化载体；定义见 XCode/XDataStream）。 */
+typedef struct XDataStream XDataStream;
+
+/**
+ * @brief 表格单元格条目（对齐 Qt 6.8 `QTableWidgetItem`）。
+ *
+ * @details 每个单元格拥有一个堆上的 `XTableWidgetItem`；条目本身由所属
+ *          表格拥有并释放（对齐 Qt：`setItem` 后 item 归 table 所有）。
+ *          role→数据存放在对象内部的 `m_values` 容器中，元素为
+ *          `XTableWidgetItemData{ int role; XVariant* value; }`，值按深拷贝
+ *          持有。`DisplayRole` 与 `EditRole` 共用同一存储槽（对齐 Qt
+ *          `QTableWidgetItem::setData` 的 EditRole→DisplayRole 归一化）。
+ *
+ * @note  本类型继承 XObject，因此必须经 `_init` / `_create` 系列构造，
+ *        并经 `XClassDeinit` / `XClassDelete` 释放；禁止栈上裸声明后按值
+ *        传入 `XTableWidget_setItem`（旧版的 POD 值拷贝语义已取消）。
+ * @note  条目的 `m_view` 是所属表格的**借用**指针，不转移所有权；条目被
+ *        `takeItem` 取出或表格析构后置 NULL（对齐 Qt `item->view = nullptr`），
+ *        此时 `row()`/`column()` 返回 -1。
+ */
 typedef struct XTableWidgetItem
 {
-    XString* text;            /**< 显示文本（对象拥有）。 */
-    uint32_t foreground;      /**< 前景色 ARGB；0=使用调色板默认。 */
-    uint32_t background;      /**< 背景色 ARGB；0=使用调色板默认。 */
-    /* [内存治理 2026-10-11] 标志位字：selected 并入 1 位；勾选态
-       0..2（XItemCheckState）收 uint8_t。[10-19 对齐] itemFlags 启用
-       （原保留位）：0=缺省可编辑，见 XTableWidgetItemFlag 注。 */
-    uint32_t selected : 1;    /**< 是否选中。 */
-    uint32_t itemFlags : 31;  /**< 条目标志位（XTableWidgetItemFlag 位组合）。 */
-    uint8_t checkState;       /**< 勾选态：0 未选/1 部分/2 选中。 */
+    XObject m_class;          /**< 基类成员；必须是第一个，由 XClass 管理，禁止手工修改。 */
+    XTableWidget* m_view;     /**< 所属表格（借用指针，不转移所有权）；NULL=游离条目。 */
+    XVector m_values;         /**< role→XVariant* 映射（元素 XTableWidgetItemData；对象拥有）。 */
+    int m_type;               /**< 条目类型（XTableWidgetItemType 或自定义值）。 */
+    uint32_t m_itemFlags;     /**< 条目标志位（XItemFlag 位组合）；默认 0，语义见 XTableWidgetItem_flags。 */
+    uint32_t m_selected : 1;  /**< 选中标记（对齐 Qt `QTableWidgetItemPrivate::selected`）。 */
+    uint32_t m_itemFlagsUnused : 31; /**< 保留位；调用方不得依赖。 */
 } XTableWidgetItem;
 
 /**
- * @brief 单元格挂载部件条目（内部承载记录；对标 setCellWidget 承载表）。
+ * @brief 单元格挂载部件条目（内部承载记录；对齐 `setCellWidget` 承载表）。
  *
- *        widget 为借用指针：表格不取得所有权、不重设父控件、不负责
- *        删除（所有权语义见 XTableWidget_setCellWidget）。
+ * @details widget 由表格拥有（对齐 Qt：`setIndexWidget` 接管所有权、
+ *          reparent 到 viewport、替换与移除时 `deleteLater`）。
  */
 typedef struct XTableWidgetCellWidget
 {
-    XWidget* widget;  /**< 借用的部件指针（所有权归调用方）。 */
-    int16_t row;     /**< 挂载行号。 */
-    int16_t column;  /**< 挂载列号。 */
+    XWidget* widget;  /**< 挂载的部件（对象拥有；表格析构/替换/移除时释放）。 */
+    int16_t row;      /**< 挂载行号。 */
+    int16_t column;   /**< 挂载列号。 */
 } XTableWidgetCellWidget;
 
+/* -------------------- XTableWidgetItem 生命周期 -------------------- */
+
+/** @brief 初始化并返回 XTableWidgetItem 虚函数表。 @return 单例虚函数表指针；调用方不得释放。 */
+XVtable* XTableWidgetItem_class_init(void);
+
 /**
- * @brief 表格控件（对标 QTableWidget）。
+ * @brief 初始化条目（栈对象；对齐 `QTableWidgetItem(int type = Type)`）。
  *
- *        行×列二维单元格存储 + 行高/列宽 + 表头标签 + 当前单元格；
- *        继承 XAbstractScrollArea 后滚动条随内容自动按需显示。
+ * @param self 目标条目；传入 NULL 时函数不执行任何操作。
+ * @return 无。
+ * @note  缺省标志位对齐 Qt：`ItemIsEditable | ItemIsSelectable |
+ *        ItemIsUserCheckable | ItemIsEnabled | ItemIsDragEnabled |
+ *        ItemIsDropEnabled`。
+ */
+void XTableWidgetItem_init(XTableWidgetItem* self);
+
+/**
+ * @brief 初始化条目并设置类型（栈对象；对齐 `QTableWidgetItem(int type)`）。
+ *
+ * @param self 目标条目；传入 NULL 时函数不执行任何操作。
+ * @param type 条目类型（XTableWidgetItemType 或自定义值）。
+ * @return 无。
+ */
+void XTableWidgetItem_init_type(XTableWidgetItem* self, int type);
+
+/**
+ * @brief 初始化条目并设置文本（栈对象；对齐 `QTableWidgetItem(const QString&, int)`）。
+ *
+ * @param self 目标条目；传入 NULL 时函数不执行任何操作。
+ * @param text 显示文本；NULL 按空串处理，不转移所有权。
+ * @param type 条目类型。
+ * @return 无。
+ */
+void XTableWidgetItem_init_text(XTableWidgetItem* self, const XString* text,
+                                int type);
+
+/**
+ * @brief 初始化条目并设置图标与文本（栈对象；对齐 `QTableWidgetItem(const QIcon&, const QString&, int)`）。
+ *
+ * @param self  目标条目；传入 NULL 时函数不执行任何操作。
+ * @param icon  图标；借用，本条目不取得所有权（内部另存副本语义由
+ *              `XTableWidgetItem_setIcon` 定义）。可为 NULL。
+ * @param text  显示文本；NULL 按空串处理。
+ * @param type  条目类型。
+ * @return 无。
+ */
+void XTableWidgetItem_init_iconText(XTableWidgetItem* self, const XIcon* icon,
+                                    const XString* text, int type);
+
+/**
+ * @brief 堆上创建条目（对齐 `QTableWidgetItem(int type = Type)`）。
+ *
+ * @param memory 内存类型。
+ * @return 新建条目，由调用方以 `XClassDelete` 释放；分配失败返回 NULL。
+ */
+XTableWidgetItem* XTableWidgetItem_create_ex(XMemoryType memory);
+
+/**
+ * @brief 堆上创建条目（默认内存类型）。
+ * @return 新建条目；分配失败返回 NULL。
+ */
+XTableWidgetItem* XTableWidgetItem_create(void);
+
+/**
+ * @brief 堆上创建带文本的条目（对齐 `QTableWidgetItem(const QString&, int)`）。
+ *
+ * @param text 显示文本；NULL 按空串处理，不转移所有权。
+ * @param type 条目类型。
+ * @return 新建条目，由调用方以 `XClassDelete` 释放；分配失败返回 NULL。
+ */
+XTableWidgetItem* XTableWidgetItem_create_text(const XString* text, int type);
+
+/**
+ * @brief 堆上创建带文本的条目（UTF-8 入参；对齐 `QTableWidgetItem(const QString&)`）。
+ *
+ * @param utf8 显示文本（UTF-8）；NULL 按空串处理。
+ * @param type 条目类型。
+ * @return 新建条目，由调用方以 `XClassDelete` 释放；分配失败返回 NULL。
+ */
+XTableWidgetItem* XTableWidgetItem_create_utf8(const char* utf8, int type);
+
+/**
+ * @brief 堆上创建带图标与文本的条目（对齐 `QTableWidgetItem(const QIcon&, const QString&, int)`）。
+ *
+ * @param icon 图标；借用，本条目不取得所有权。可为 NULL。
+ * @param text 显示文本；NULL 按空串处理。
+ * @param type 条目类型。
+ * @return 新建条目，由调用方以 `XClassDelete` 释放；分配失败返回 NULL。
+ */
+XTableWidgetItem* XTableWidgetItem_create_iconText(const XIcon* icon,
+                                                   const XString* text,
+                                                   int type);
+
+/**
+ * @brief 拷贝创建条目（对齐 `QTableWidgetItem(const QTableWidgetItem&)`）。
+ *
+ * @param other 源条目；传入 NULL 返回 NULL。
+ * @return 新建条目（深拷贝全部 role 数据与标志位，`m_view` 置 NULL），
+ *         由调用方以 `XClassDelete` 释放；分配失败返回 NULL。
+ */
+XTableWidgetItem* XTableWidgetItem_create_copy(const XTableWidgetItem* other);
+
+/* -------------------- XTableWidgetItem 克隆 -------------------- */
+
+/**
+ * @brief 多态克隆（对齐 `QTableWidgetItem::clone`）。
+ *
+ * @param self 目标条目；传入 NULL 返回 NULL。
+ * @return 新建条目（同 `XTableWidgetItem_create_copy` 语义），由调用方以
+ *         `XClassDelete` 释放；分配失败返回 NULL。
+ * @note  子类可重载 `EXTableWidgetItem_Clone` 槽以克隆自身类型；未重载时
+ *        回落基类拷贝。
+ */
+XTableWidgetItem* XTableWidgetItem_clone_base(const XTableWidgetItem* self);
+
+/* -------------------- XTableWidgetItem 查询/设置 -------------------- */
+
+/**
+ * @brief 查询条目类型（对齐 `QTableWidgetItem::type`）。
+ * @param self 目标条目；可为 NULL。
+ * @return 条目类型；self 为 NULL 返回 0。
+ */
+int XTableWidgetItem_type(const XTableWidgetItem* self);
+
+/**
+ * @brief 查询所属表格（对齐 `QTableWidgetItem::tableWidget`）。
+ * @param self 目标条目；可为 NULL。
+ * @return 所属表格借用指针（归表格所有，调用方不得释放）；游离条目或
+ *         self 为 NULL 返回 NULL。
+ */
+XTableWidget* XTableWidgetItem_tableWidget(const XTableWidgetItem* self);
+
+/**
+ * @brief 查询条目所在行（对齐 `QTableWidgetItem::row`）。
+ * @param self 目标条目；可为 NULL。
+ * @return 行号；游离条目（不属于任何表格）或 self 为 NULL 返回 -1。
+ */
+int XTableWidgetItem_row(const XTableWidgetItem* self);
+
+/**
+ * @brief 查询条目所在列（对齐 `QTableWidgetItem::column`）。
+ * @param self 目标条目；可为 NULL。
+ * @return 列号；游离条目或 self 为 NULL 返回 -1。
+ */
+int XTableWidgetItem_column(const XTableWidgetItem* self);
+
+/**
+ * @brief 查询条目标志位（对齐 `QTableWidgetItem::flags`）。
+ * @param self 目标条目；可为 NULL。
+ * @return XItemFlag 位组合；self 为 NULL 返回 0。
+ */
+uint32_t XTableWidgetItem_flags(const XTableWidgetItem* self);
+
+/**
+ * @brief 设置条目标志位（对齐 `QTableWidgetItem::setFlags`）。
+ * @param self  目标条目；传入 NULL 时函数不执行任何操作。
+ * @param flags XItemFlag 位组合。
+ * @return 无。
+ */
+void XTableWidgetItem_setFlags(XTableWidgetItem* self, uint32_t flags);
+
+/**
+ * @brief 查询条目是否被标记为选中（对齐 `QTableWidgetItem::isSelected`）。
+ * @param self 目标条目；可为 NULL。
+ * @return 选中返回 true；self 为 NULL 返回 false。
+ */
+bool XTableWidgetItem_isSelected(const XTableWidgetItem* self);
+
+/**
+ * @brief 设置条目选中标记（对齐 `QTableWidgetItem::setSelected`）。
+ * @param self   目标条目；传入 NULL 时函数不执行任何操作。
+ * @param select true 标记为选中。
+ * @return 无。
+ * @note  该项只记录状态并请求所属表格重绘；真正的选区语义由
+ *        `XTableWidget_setRangeSelected` / 选择模型维护（对齐 Qt：item 的
+ *        selected 位由 selectionModel 驱动）。
+ */
+void XTableWidgetItem_setSelected(XTableWidgetItem* self, bool select);
+
+/* -------------------- role 数据（对齐 data / setData） -------------------- */
+
+/**
+ * @brief 读取指定角色的数据（对齐 `QTableWidgetItem::data`）。
+ *
+ * @param self 目标条目；可为 NULL。
+ * @param role 数据角色（XItemDataRole）；`EditRole` 按 `DisplayRole` 处理
+ *             （对齐 Qt 归一化）。
+ * @return 该角色数据的借用指针（归条目所有，调用方不得释放，随条目析构
+ *         或该角色被重设而失效）；无该角色数据或 self 为 NULL 返回 NULL。
+ */
+const XVariant* XTableWidgetItem_data(const XTableWidgetItem* self, int role);
+
+/**
+ * @brief 写入指定角色的数据（对齐 `QTableWidgetItem::setData`）。
+ *
+ * @param self  目标条目；传入 NULL 时函数不执行任何操作。
+ * @param role  数据角色；`EditRole` 归一化为 `DisplayRole`。
+ * @param value 角色数据；**借用**——函数深拷贝其内容，返回后调用方仍拥有
+ *              并须自行释放 `value`。传 NULL 表示移除该角色数据。
+ * @return 无。
+ * @note  写入 `DisplayRole` 会触发所属表格的 `itemChanged`/`cellChanged`
+ *        与模型同步（对齐 Qt `QTableModel::itemChanged`）。
+ */
+void XTableWidgetItem_setData(XTableWidgetItem* self, int role,
+                              const XVariant* value);
+
+/**
+ * @brief 读取显示文本（对齐 `QTableWidgetItem::text`；返回新建副本）。
+ *
+ * @param self 目标条目；可为 NULL。
+ * @return 新建 XString，由调用方以 `XClassDelete` 释放；无显示文本或
+ *         self 为 NULL 时返回空串对象（仍须释放）；分配失败返回 NULL。
+ */
+XString* XTableWidgetItem_text(const XTableWidgetItem* self);
+
+/**
+ * @brief 读取显示文本（借用；对齐 `QTableWidgetItem::text` 的零拷贝形态）。
+ *
+ * @param self 目标条目；可为 NULL。
+ * @return 内部字符串借用指针（禁止释放、禁止跨写入持有）；无显示文本或
+ *         self 为 NULL 返回 NULL。
+ */
+const XString* XTableWidgetItem_text_const(const XTableWidgetItem* self);
+
+/**
+ * @brief 读取显示文本的 UTF-8 视图（借用）。
+ *
+ * @param self 目标条目；可为 NULL。
+ * @return 内部编码缓存指针（禁止释放；下次写入或条目析构后失效）；
+ *         无显示文本或 self 为 NULL 返回空串 `""`（非 NULL）。
+ */
+const char* XTableWidgetItem_text_toUtf8(const XTableWidgetItem* self);
+
+/**
+ * @brief 设置显示文本（对齐 `QTableWidgetItem::setText`）。
+ *
+ * @param self 目标条目；传入 NULL 时函数不执行任何操作。
+ * @param text 显示文本；NULL 按空串处理，不转移所有权。
+ * @return 无。
+ */
+void XTableWidgetItem_setText(XTableWidgetItem* self, const XString* text);
+
+/**
+ * @brief 设置显示文本（UTF-8 入参）。
+ *
+ * @param self 目标条目；传入 NULL 时函数不执行任何操作。
+ * @param utf8 显示文本（UTF-8）；NULL 按空串处理。
+ * @return 无。
+ */
+void XTableWidgetItem_setText_utf8(XTableWidgetItem* self, const char* utf8);
+
+/* -------------------- 便捷 role 访问器（对齐 Qt 同名成员） -------------------- */
+
+/**
+ * @brief 读取图标（对齐 `QTableWidgetItem::icon`；DecorationRole）。
+ * @param self 目标条目；可为 NULL。
+ * @return 图标借用指针（归条目所有，禁止释放）；未设置或 self 为 NULL 返回 NULL。
+ */
+const XIcon* XTableWidgetItem_icon(const XTableWidgetItem* self);
+
+/**
+ * @brief 设置图标（对齐 `QTableWidgetItem::setIcon`；DecorationRole）。
+ * @param self 目标条目；传入 NULL 时函数不执行任何操作。
+ * @param icon 图标；借用，本条目不取得所有权（内部转为 DecorationRole 数据）。
+ *             可为 NULL（清除该角色）。
+ * @return 无。
+ */
+void XTableWidgetItem_setIcon(XTableWidgetItem* self, const XIcon* icon);
+
+/**
+ * @brief 读取状态栏提示（对齐 `QTableWidgetItem::statusTip`；StatusTipRole）。
+ * @param self 目标条目；可为 NULL。
+ * @return 新建 XString，由调用方以 `XClassDelete` 释放；未设置返回空串对象。
+ */
+XString* XTableWidgetItem_statusTip(const XTableWidgetItem* self);
+/** @brief 读取状态栏提示的 UTF-8 视图（借用）。 @param self 目标条目。 @return 借用字符串；未设置返回 ""。 */
+const char* XTableWidgetItem_statusTip_toUtf8(const XTableWidgetItem* self);
+/** @brief 设置状态栏提示（对齐 `setStatusTip`）。 @param self 目标条目。 @param tip 提示文本；NULL 清除。 @return 无。 */
+void XTableWidgetItem_setStatusTip(XTableWidgetItem* self, const XString* tip);
+/** @brief 设置状态栏提示（UTF-8）。 @param self 目标条目。 @param utf8 提示文本；NULL 清除。 @return 无。 */
+void XTableWidgetItem_setStatusTip_utf8(XTableWidgetItem* self, const char* utf8);
+
+/** @brief 读取工具提示（对齐 `QTableWidgetItem::toolTip`；ToolTipRole）。 @param self 目标条目。 @return 新建 XString，调用方释放。 */
+XString* XTableWidgetItem_toolTip(const XTableWidgetItem* self);
+/** @brief 读取工具提示的 UTF-8 视图（借用）。 @param self 目标条目。 @return 借用字符串；未设置返回 ""。 */
+const char* XTableWidgetItem_toolTip_toUtf8(const XTableWidgetItem* self);
+/** @brief 设置工具提示（对齐 `setToolTip`）。 @param self 目标条目。 @param tip 提示文本；NULL 清除。 @return 无。 */
+void XTableWidgetItem_setToolTip(XTableWidgetItem* self, const XString* tip);
+/** @brief 设置工具提示（UTF-8）。 @param self 目标条目。 @param utf8 提示文本；NULL 清除。 @return 无。 */
+void XTableWidgetItem_setToolTip_utf8(XTableWidgetItem* self, const char* utf8);
+
+/** @brief 读取"What's This"文本（对齐 `QTableWidgetItem::whatsThis`；WhatsThisRole）。 @param self 目标条目。 @return 新建 XString，调用方释放。 */
+XString* XTableWidgetItem_whatsThis(const XTableWidgetItem* self);
+/** @brief 读取"What's This"的 UTF-8 视图（借用）。 @param self 目标条目。 @return 借用字符串；未设置返回 ""。 */
+const char* XTableWidgetItem_whatsThis_toUtf8(const XTableWidgetItem* self);
+/** @brief 设置"What's This"文本（对齐 `setWhatsThis`）。 @param self 目标条目。 @param text 文本；NULL 清除。 @return 无。 */
+void XTableWidgetItem_setWhatsThis(XTableWidgetItem* self, const XString* text);
+/** @brief 设置"What's This"文本（UTF-8）。 @param self 目标条目。 @param utf8 文本；NULL 清除。 @return 无。 */
+void XTableWidgetItem_setWhatsThis_utf8(XTableWidgetItem* self, const char* utf8);
+
+/**
+ * @brief 读取字体（对齐 `QTableWidgetItem::font`；FontRole）。
+ * @param self 目标条目；可为 NULL。
+ * @return 字体借用指针（归条目所有，禁止释放）；未设置或 self 为 NULL 返回 NULL。
+ */
+const XFont* XTableWidgetItem_font(const XTableWidgetItem* self);
+/**
+ * @brief 设置字体（对齐 `QTableWidgetItem::setFont`；FontRole）。
+ * @param self 目标条目；传入 NULL 时函数不执行任何操作。
+ * @param font 字体；借用，本条目不取得所有权。可为 NULL（清除该角色）。
+ * @return 无。
+ */
+void XTableWidgetItem_setFont(XTableWidgetItem* self, const XFont* font);
+
+/**
+ * @brief 读取文本对齐（对齐 `QTableWidgetItem::textAlignment`；TextAlignmentRole）。
+ * @param self 目标条目；可为 NULL。
+ * @return XAlignment 位组合；未设置或 self 为 NULL 返回 0（交给委托缺省）。
+ */
+int XTableWidgetItem_textAlignment(const XTableWidgetItem* self);
+/**
+ * @brief 设置文本对齐（对齐 `QTableWidgetItem::setTextAlignment`）。
+ * @param self      目标条目；传入 NULL 时函数不执行任何操作。
+ * @param alignment XAlignment 位组合；0 表示清除（回落缺省对齐）。
+ * @return 无。
+ */
+void XTableWidgetItem_setTextAlignment(XTableWidgetItem* self, int alignment);
+
+/**
+ * @brief 读取背景色（对齐 `QTableWidgetItem::background`；BackgroundRole）。
+ * @param self 目标条目；可为 NULL。
+ * @param out  颜色输出（调用方提供存储空间）；可为 NULL。
+ * @return 设置了背景色返回 true；未设置、self 为 NULL 或 out 为 NULL 返回
+ *         false（`out` 保持不变）。
+ */
+bool XTableWidgetItem_background(const XTableWidgetItem* self, XColor* out);
+/**
+ * @brief 设置背景色（对齐 `QTableWidgetItem::setBackground`）。
+ * @param self  目标条目；传入 NULL 时函数不执行任何操作。
+ * @param color 背景色；传 NULL 等价于清除（对齐 Qt `Qt::NoBrush` 语义）。
+ * @return 无。
+ */
+void XTableWidgetItem_setBackground(XTableWidgetItem* self, const XColor* color);
+
+/**
+ * @brief 读取前景色（对齐 `QTableWidgetItem::foreground`；ForegroundRole）。
+ * @param self 目标条目；可为 NULL。
+ * @param out  颜色输出（调用方提供存储空间）；可为 NULL。
+ * @return 设置了前景色返回 true；未设置、self 为 NULL 或 out 为 NULL 返回
+ *         false（`out` 保持不变）。
+ */
+bool XTableWidgetItem_foreground(const XTableWidgetItem* self, XColor* out);
+/**
+ * @brief 设置前景色（对齐 `QTableWidgetItem::setForeground`）。
+ * @param self  目标条目；传入 NULL 时函数不执行任何操作。
+ * @param color 前景色；传 NULL 等价于清除。
+ * @return 无。
+ */
+void XTableWidgetItem_setForeground(XTableWidgetItem* self, const XColor* color);
+
+/**
+ * @brief 读取勾选状态（对齐 `QTableWidgetItem::checkState`；CheckStateRole）。
+ * @param self 目标条目；可为 NULL。
+ * @return XItemCheckState（0 未选 / 1 半选 / 2 选中）；未设置或 self 为
+ *         NULL 返回 `XItemCheckState_Unchecked`。
+ */
+int XTableWidgetItem_checkState(const XTableWidgetItem* self);
+/**
+ * @brief 设置勾选状态（对齐 `QTableWidgetItem::setCheckState`）。
+ * @param self  目标条目；传入 NULL 时函数不执行任何操作。
+ * @param state XItemCheckState（0/1/2）。
+ * @return 无。
+ */
+void XTableWidgetItem_setCheckState(XTableWidgetItem* self, int state);
+
+/**
+ * @brief 读取尺寸提示（对齐 `QTableWidgetItem::sizeHint`；SizeHintRole）。
+ * @param self 目标条目；可为 NULL。
+ * @param out  尺寸输出（调用方提供存储空间）；可为 NULL。
+ * @return 设置了尺寸提示返回 true；未设置、self 为 NULL 或 out 为 NULL 返回
+ *         false（`out` 保持不变）。
+ */
+bool XTableWidgetItem_sizeHint(const XTableWidgetItem* self, XSize* out);
+/**
+ * @brief 设置尺寸提示（对齐 `QTableWidgetItem::setSizeHint`）。
+ * @param self 目标条目；传入 NULL 时函数不执行任何操作。
+ * @param size 尺寸；传 NULL 或宽高均 <= 0 等价于清除（对齐 Qt：无效尺寸
+ *             置空 QVariant）。
+ * @return 无。
+ */
+void XTableWidgetItem_setSizeHint(XTableWidgetItem* self, const XSize* size);
+
+/* -------------------- 比较 -------------------- */
+
+/**
+ * @brief 条目排序比较（对齐 `QTableWidgetItem::operator<`）。
+ *
+ * @param lhs 左条目；可为 NULL（按"最小"处理）。
+ * @param rhs 右条目；可为 NULL。
+ * @return `lhs` 严格小于 `rhs` 返回 true。
+ * @note  比较依据为 `DisplayRole` 数据：两侧均为字符串时按 `XStrcmp`；
+ *        否则按 `XVariant_compare`。缺失数据按空字符串参与比较。
+ */
+bool XTableWidgetItem_lessThan(const XTableWidgetItem* lhs,
+                               const XTableWidgetItem* rhs);
+
+/* -------------------- 序列化（对齐 QTableWidgetItem::read/write） -------------------- */
+
+/**
+ * @brief 把条目全部状态写出到数据流（对齐 `QTableWidgetItem::write`）。
+ *
+ * @param self   目标条目；传入 NULL 返回 false。
+ * @param stream 目标流（见 `XDataStream`）；传入 NULL 返回 false。
+ * @return 全部字段写出成功返回 true；失败返回 false（流状态已置）。
+ *
+ * @note  线格式（对齐 Qt `QTableWidgetItem::write` 的字段序：
+ *        role 列表 → type → flags，Qt 6.8 qtablewidget.cpp:1451-1470）：
+ *        1. `quint32 roleCount`；
+ *        2. 每个 role：`quint32 role` + 该 role 的 `XVariant` 序列化
+ *           （`XVariant` 的流格式见 XDataStream/XVariant 集成，按
+ *           「类型标签 + 负载」自描述）；
+ *        3. `quint32 type`；
+ *        4. `quint32 flags`。
+ *        `selected` 位**不写出**（对齐 Qt：选中态由选择模型持有，
+ *        不属于条目持久状态）。
+ * @warning 本格式为**本库自有**二进制布局，不与 Qt QDataStream 的
+ *          QVariant 编码互通（Qt 的 QVariant 流格式与 Qt 版本强绑定，
+ *          跨版本亦不兼容，故不做字节级对位）。
+ */
+bool XTableWidgetItem_write(const XTableWidgetItem* self, XDataStream* stream);
+
+/**
+ * @brief 从数据流读回条目全部状态（对齐 `QTableWidgetItem::read`）。
+ *
+ * @param self   目标条目；传入 NULL 返回 false。原 role 数据与标志位
+ *               被**整体替换**（不清 `m_view`：读取发生在条目已归属
+ *               表格时不应解绑）。
+ * @param stream 源流；传入 NULL 返回 false。
+ * @return 成功返回 true；数据不足/损坏返回 false（流状态已置，条目
+ *         保持调用前状态不变）。
+ * @note  与 `XTableWidgetItem_write` 严格对称。
+ */
+bool XTableWidgetItem_read(XTableWidgetItem* self, XDataStream* stream);
+
+/* ==========================================================================
+ * XTableWidgetSelectionRange（对齐 Qt 6.8 QTableWidgetSelectionRange）
+ * ========================================================================== */
+
+/**
+ * @brief 矩形选区（对齐 `QTableWidgetSelectionRange`）。
+ * @details 缺省构造为「空范围」：`top=-1, left=-1, bottom=-2, right=-2`，
+ *          此时 `rowCount()`/`columnCount()` 均为 0（对齐 Qt 缺省值）。
+ */
+typedef struct XTableWidgetSelectionRange
+{
+    int m_top;    /**< 起始行号（含）；缺省 -1。 */
+    int m_left;   /**< 起始列号（含）；缺省 -1。 */
+    int m_bottom; /**< 结束行号（含）；缺省 -2。 */
+    int m_right;  /**< 结束列号（含）；缺省 -2。 */
+} XTableWidgetSelectionRange;
+
+/**
+ * @brief 构造矩形选区（对齐 `QTableWidgetSelectionRange(top, left, bottom, right)`）。
+ * @param top    起始行号（含）。
+ * @param left   起始列号（含）。
+ * @param bottom 结束行号（含）。
+ * @param right  结束列号（含）。
+ * @return 按值返回的选区结构（无堆资源，调用方无需释放）。
+ */
+XTableWidgetSelectionRange XTableWidgetSelectionRange_create(
+    int top, int left, int bottom, int right);
+/** @brief 选区起始行号（对齐 `topRow`）。 @param self 目标选区；可为 NULL。 @return 起始行；NULL 返回 -1。 */
+int XTableWidgetSelectionRange_topRow(const XTableWidgetSelectionRange* self);
+/** @brief 选区结束行号（对齐 `bottomRow`）。 @param self 目标选区；可为 NULL。 @return 结束行；NULL 返回 -1。 */
+int XTableWidgetSelectionRange_bottomRow(const XTableWidgetSelectionRange* self);
+/** @brief 选区起始列号（对齐 `leftColumn`）。 @param self 目标选区；可为 NULL。 @return 起始列；NULL 返回 -1。 */
+int XTableWidgetSelectionRange_leftColumn(const XTableWidgetSelectionRange* self);
+/** @brief 选区结束列号（对齐 `rightColumn`）。 @param self 目标选区；可为 NULL。 @return 结束列；NULL 返回 -1。 */
+int XTableWidgetSelectionRange_rightColumn(const XTableWidgetSelectionRange* self);
+/** @brief 选区跨行数（对齐 `rowCount`）。 @param self 目标选区；可为 NULL。 @return 行数；空范围或 NULL 返回 0。 */
+int XTableWidgetSelectionRange_rowCount(const XTableWidgetSelectionRange* self);
+/** @brief 选区跨列数（对齐 `columnCount`）。 @param self 目标选区；可为 NULL。 @return 列数；空范围或 NULL 返回 0。 */
+int XTableWidgetSelectionRange_columnCount(const XTableWidgetSelectionRange* self);
+/** @brief 选区相等比较（对齐 `operator==`）。 @param lhs 左选区。 @param rhs 右选区。 @return 四边均相等返回 true；任一为 NULL 时两侧同为 NULL 才返回 true。 */
+bool XTableWidgetSelectionRange_equals(const XTableWidgetSelectionRange* lhs,
+                                       const XTableWidgetSelectionRange* rhs);
+
+/* ==========================================================================
+ * XTableWidget
+ * ========================================================================== */
+
+/**
+ * @brief 表格控件（对齐 Qt 6.8 `QTableWidget`）。
+ *
+ * @details 行×列二维条目存储 + 表头标签 + 当前单元格；继承
+ *          XAbstractScrollArea 后滚动条随内容自动按需显示。
+ *          条目对象由表格持有所有权：插入/移除行列、clear/clearContents
+ *          与析构路径负责释放。
  */
 typedef struct XTableWidget
 {
     XTableView m_base;            /**< 基类成员；必须是第一个。 */
     /* 指针组（8B 对齐）。 */
-    XTableWidgetItem** m_cells;   /**< 行指针数组（行×列单元格）。 */
-    XString** m_hHeaders;         /**< 水平表头标签（对象拥有；下标=列号）。 */
-    XString** m_vHeaders;         /**< 垂直表头标签（对象拥有；下标=行号）。 */
-    XAbstractItemModel* m_model;   /**< 内建数据模型桥（对象拥有；与单元格同步）。 */
-    const XTableWidgetItem* m_itemPrototype; /**< 原型单元格（借用；不透明记录，见 setItemPrototype）。 */
-    XTableWidgetCellWidget* m_cellWidgets;  /**< 单元格挂载部件条目数组（部件借用，不负责释放）。 */
-    /* [内存治理 2026-10-11] 短整型值：行列数/容量/表头 px 收窄；
-       selection/entered 依赖 -1/-2 哨兵语义，用 int16_t 保留符号。
-       [内存治理 2026-10-11] 标志位字：选区待发射开关 1 位。 */
+    XTableWidgetItem*** m_cells;  /**< 单元格条目指针矩阵（行数组 × 列槽；元素可为 NULL）；对象拥有。 */
+    XString** m_hHeaders;         /**< 水平表头标签（对象拥有；下标=列号；元素可为 NULL）。 */
+    XString** m_vHeaders;         /**< 垂直表头标签（对象拥有；下标=行号；元素可为 NULL）。 */
+    XAbstractItemModel* m_model;  /**< 内建数据模型桥（对象拥有；与单元格同步）。 */
+    XTableWidgetItem* m_itemPrototype; /**< 原型条目（对象拥有；对齐 Qt setItemPrototype 接管所有权）。 */
+    XTableWidgetCellWidget* m_cellWidgets; /**< 单元格挂载部件条目数组（部件对象拥有）。 */
+    /* 行列数/容量/表头 px 收窄；selection/entered 依赖 -1/-2 哨兵语义。 */
     int16_t m_rows;               /**< 当前行数。 */
     int16_t m_columns;            /**< 当前列数。 */
     int16_t m_rowCapacity;        /**< 行指针数组容量。 */
@@ -111,951 +638,681 @@ typedef struct XTableWidget
     uint16_t m_headerHeight;      /**< 水平表头高度（像素）。 */
     uint16_t m_headerWidth;       /**< 垂直表头宽度（像素）。 */
     uint32_t m_selectionChangedPending : 1; /**< 选区等待发射 itemSelectionChanged。 */
-    uint32_t m_tableWidgetFlagsUnused : 31; /**< 保留位。 */
+    uint32_t m_tableWidgetFlagsUnused : 31; /**< 保留位；调用方不得依赖。 */
 } XTableWidget;
 
+/** @brief 初始化并返回本类虚函数表。 @return 单例虚函数表指针；调用方不得释放。 */
 XVtable* XTableWidget_class_init(void);
 
 /**
- * @brief 初始化表格控件（栈对象/嵌入成员使用）。
+ * @brief 初始化表格控件（栈对象/嵌入成员使用；对齐 `QTableWidget(QWidget*)`）。
  *
- *        初始 0 行 0 列、无当前单元格、行高 24、表头 24/40、网格
- *        可见；内部滚动条策略 AsNeeded。
- *
- * @param self   目标表格控件指针，不能为空。
- * @param parent 父控件；可为 NULL（顶层控件）。
+ * @param self   目标表格控件指针；传入 NULL 时函数不执行任何操作。
+ * @param parent 父控件；可为 NULL（顶层控件）。借用，不转移所有权。
  * @param flags  窗口标志位组合。
- * @return 无返回值。
+ * @return 无。
+ * @note  初始 0 行 0 列、无当前单元格、行高 24、表头 24/40、网格可见；
+ *        内部滚动条策略 AsNeeded。
  */
 void XTableWidget_init(XTableWidget* self, XWidget* parent, XWidgetFlags flags);
 
 /**
- * @brief 在堆上创建表格控件（对标 QTableWidget(parent) 构造）。
+ * @brief 堆上创建表格控件（对齐 `QTableWidget(QWidget*)` 构造）。
  *
- * @param memory 内存类型（XCLASS_DEFAULT_MEMORY_TYPE 等）。
+ * @param memory 内存类型。
  * @param parent 父控件；可为 NULL。
  * @param flags  窗口标志位组合。
- * @return 创建成功的表格控件指针；分配失败返回 NULL。
+ * @return 新建表格指针，由调用方以 `XClassDelete` 释放；分配失败返回 NULL。
  */
 XTableWidget* XTableWidget_create_ex(XMemoryType memory, XWidget* parent,
                                      XWidgetFlags flags);
 
 /**
- * @brief 删除基类入口：经 XAbstractScrollArea 虚表析构（宏复用）。
+ * @brief 堆上创建指定行列数的表格（对齐 `QTableWidget(int rows, int columns, QWidget*)`）。
  *
- * @param self 目标表格控件指针。
- * @return 无返回值。
+ * @param memory  内存类型。
+ * @param rows    初始行数；负值按 0 处理。
+ * @param columns 初始列数；负值按 0 处理。
+ * @param parent  父控件；可为 NULL。
+ * @param flags   窗口标志位组合。
+ * @return 新建表格指针，由调用方以 `XClassDelete` 释放；分配失败返回 NULL。
+ * @note  对齐 Qt：直接在构造时设定行列数，不触发 rowsInserted/columnsInserted
+ *        等结构变更信号。
  */
+XTableWidget* XTableWidget_create_size(XMemoryType memory, int rows,
+                                       int columns, XWidget* parent,
+                                       XWidgetFlags flags);
 
-/* ===== 尺寸（对标 QTableWidget 行列 API） ===== */
+/** @brief 堆创建的默认内存类型包装。 @param parent 父控件。 @param flags 标志位。 @return 新建表格；失败 NULL。 */
+#define XTableWidget_create(parent, flags) \
+    XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
+
+/* ===== 尺寸（对齐 QTableWidget 行列 API） ===== */
 
 /**
- * @brief 设置行数（对标 QTableWidget::setRowCount）。
- *
- *        扩大时新增空行；缩小时裁掉尾部行，当前行越界时收敛。
- *
- * @param self 目标表格控件指针。
- * @param rows 新行数；负值忽略。
- * @return 无返回值。
+ * @brief 查询内建数据模型（对齐 `QTableWidget::model` 的内建模型语义）。
+ * @param self 目标表格控件；可为 NULL。
+ * @return 内建模型借用指针（归表格所有，禁止释放）；self 为 NULL 返回 NULL。
  */
-/** @brief 内建数据模型（对标 QTableWidget::model；与单元格同步）。 */
 XAbstractItemModel* XTableWidget_model(const XTableWidget* self);
+
+/**
+ * @brief 设置行数（对齐 `QTableWidget::setRowCount`）。
+ *
+ * @param self 目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param rows 新行数；负值忽略（对齐 Qt：`if (rows < 0 || rc == rows) return;`）。
+ * @return 无。
+ * @note  扩大时新增空行（无条目）；缩小时删除尾部行及其条目（对齐 Qt：
+ *        被删条目直接 delete）。表头条目随之增删。
+ */
 void XTableWidget_setRowCount(XTableWidget* self, int rows);
 
 /**
- * @brief 查询行数（对标 QTableWidget::rowCount）。
- *
- * @param self 目标表格控件指针。
+ * @brief 查询行数（对齐 `QTableWidget::rowCount`）。
+ * @param self 目标表格控件；可为 NULL。
  * @return 当前行数；self 为 NULL 返回 0。
  */
 int XTableWidget_rowCount(const XTableWidget* self);
 
 /**
- * @brief 设置列数（对标 QTableWidget::setColumnCount）。
+ * @brief 设置列数（对齐 `QTableWidget::setColumnCount`）。
  *
- *        扩大时每行补零单元格；缩小时当前列越界时收敛。
- *
- * @param self    目标表格控件指针。
+ * @param self    目标表格控件；传入 NULL 时函数不执行任何操作。
  * @param columns 新列数；负值忽略。
- * @return 无返回值。
+ * @return 无。
+ * @note  扩大时每行补空槽；缩小时删除尾部列及其条目与表头条目。
  */
 void XTableWidget_setColumnCount(XTableWidget* self, int columns);
 
 /**
- * @brief 设置数据模型（对标 QTableWidget::setModel —— Qt 6.8 为
- *        \internal 拒绝入口：qtablewidget.cpp:2708
- *        `Q_ASSERT(!"QTableWidget::setModel() - Changing the model of
- *        the QTableWidget is not allowed.")`）。
- *
- * @param self 目标表格控件指针。
- * @param model 传入模型（仅用于对位签名；恒被忽略）。
- * @return 无返回值。
- * @note QTableWidget 自带内建模型（本框架 XTableWidget_model()），
- *       外部换模型被拒绝——本入口为 Qt 语义收口：任何传入都忽略、
- *       内建模型保持（Release 下 no-op，对齐 Qt 断言被编译掉的行为）。
- */
-void XTableWidget_setModel(XTableWidget* self, XAbstractItemModel* model);
-
-/**
- * @brief 设置列宽调整模式（对标 horizontalHeader()->
- *        setSectionResizeMode(QHeaderView::ResizeMode)）。
- *
- *        Interactive（0，Qt 缺省）=列宽独立、随 setColumnWidth 定；
- *        Stretch（1）=各列均分内容区宽（视口宽-行头宽），窗口/视口
- *        resize 时自动重分——列宽 API 的写入被下次重分覆盖（Qt 同：
- *        Stretch 模式下手动 resizeSection 不保持）。
- *
- * @param self 目标表格控件指针。
- * @param mode XHeaderViewResizeMode：0=Interactive 1=Stretch；其余按 0。
- * @return 无返回值。
- * @note 行为对标 Qt：模式存于内建水平表头（QTableView 构造即创建，
- *       本框架 XTableView_init 同构内建）；本入口即
- *       horizontalHeader()->setSectionResizeMode 的便捷转发。
- */
-void XTableWidget_setSectionResizeMode(XTableWidget* self, int mode);
-
-/**
- * @brief 查询列宽调整模式（对标 horizontalHeader()->
- *        sectionResizeMode()）。
- *
- * @param self 目标表格控件指针。
- * @return 当前模式（0=Interactive 1=Stretch）；self 为 NULL 返回 0。
- */
-int XTableWidget_sectionResizeMode(const XTableWidget* self);
-
-/**
- * @brief 查询列数（对标 QTableWidget::columnCount）。
- *
- * @param self 目标表格控件指针。
+ * @brief 查询列数（对齐 `QTableWidget::columnCount`）。
+ * @param self 目标表格控件；可为 NULL。
  * @return 当前列数；self 为 NULL 返回 0。
  */
 int XTableWidget_columnCount(const XTableWidget* self);
 
+/* ===== 行列增删（对齐 QTableWidget 同名槽） ===== */
+
 /**
- * @brief 在 row 位置插入一行（原有行依次后移）。
+ * @brief 在 row 位置插入一行（对齐 `QTableWidget::insertRow`）。
  *
- * @param self 目标表格控件指针。
- * @param row  插入位置（0=最前；>行数时等价 append）。
- * @return 无返回值。
+ * @param self 目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param row  插入位置（0=最前；> 行数时忽略，对齐 Qt 的入参校验）。
+ * @return 无。
+ * @note  原有行及其条目、行头条目、挂载部件、当前格与选区随之下移；
+ *        新行为空（无条目），表头条目为 NULL。
  */
 void XTableWidget_insertRow(XTableWidget* self, int row);
 
 /**
- * @brief 在 column 位置插入一列（预留列宽数组）。
+ * @brief 在 column 位置插入一列（对齐 `QTableWidget::insertColumn`）。
  *
- * @param self   目标表格控件指针。
- * @param column 插入位置。
- * @return 无返回值。
+ * @param self   目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param column 插入位置；> 列数时忽略。
+ * @return 无。
+ * @note  原有列及其条目、列头条目右移；新列为空槽。
  */
 void XTableWidget_insertColumn(XTableWidget* self, int column);
 
 /**
- * @brief 移除 row 指定行（后续行前移）。
+ * @brief 移除指定行（对齐 `QTableWidget::removeRow`）。
  *
- * @param self 目标表格控件指针。
- * @param row  待移除行号。
- * @return 无返回值。
+ * @param self 目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param row  待移除行号；越界时忽略。
+ * @return 无。
+ * @note  该行全部条目与行头条目**被删除**（对齐 Qt，不返回给调用方）；
+ *        后续行及其条目、挂载部件、当前格与选区前移。
  */
 void XTableWidget_removeRow(XTableWidget* self, int row);
 
 /**
- * @brief 移除 column 指定列（列数减一）。
+ * @brief 移除指定列（对齐 `QTableWidget::removeColumn`）。
  *
- * @param self   目标表格控件指针。
- * @param column 待移除列号。
- * @return 无返回值。
+ * @param self   目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param column 待移除列号；越界时忽略。
+ * @return 无。
+ * @note  该列全部条目与列头条目被删除。
  */
 void XTableWidget_removeColumn(XTableWidget* self, int column);
 
-/* ===== 单元格 ===== */
+/* ===== 单元格条目（对齐 setItem / item / takeItem / itemPrototype） ===== */
 
 /**
- * @brief 写入单元格（拷贝 item 全字段；对标 setItem）。
+ * @brief 写入单元格条目（对齐 `QTableWidget::setItem`）。
  *
- * @param self   目标表格控件指针。
+ * @param self   目标表格控件；传入 NULL 时函数不执行任何操作。
  * @param row    目标行号。
  * @param column 目标列号。
- * @param item   单元格数据指针；NULL 忽略。
- * @return 无返回值。
+ * @param item   条目对象；**所有权转移给表格**（对齐 Qt）。传 NULL 表示清空
+ *               该格（等价 `delete takeItem(row, column)`）。
+ * @return 无。
+ * @warning 传入非 NULL 后调用方**不得**再释放该条目；同一 item 不得交给
+ *          两个表格（对齐 Qt 的 `cannot insert an item that is already
+ *          owned by another QTableWidget` 警告分支——本库在 item 已属其它
+ *          表格时忽略本次调用并保持原格不变）。
+ * @warning 若 `(row, column)` 越界，函数仍会把 item 的所属表格设为 self
+ *          但**不存入表格**（对齐 Qt 父本行为：该条目不会再被表格释放）。
  */
 void XTableWidget_setItem(XTableWidget* self, int row, int column,
-                          const XTableWidgetItem* item);
+                          XTableWidgetItem* item);
 
 /**
- * @brief 读取单元格（对标 item）。
+ * @brief 读取单元格条目（对齐 `QTableWidget::item`）。
  *
- * @param self   目标表格控件指针。
+ * @param self   目标表格控件；可为 NULL。
  * @param row    行号。
  * @param column 列号。
- * @return 单元格只读指针；越界/self 为 NULL 返回 NULL。
+ * @return 条目借用指针（归表格所有，禁止释放，随行列结构调整/clear 失效）；
+ *         该格为空、越界或 self 为 NULL 返回 NULL。
  */
-const XTableWidgetItem* XTableWidget_item(const XTableWidget* self,
-                                          int row, int column);
-
-/** @brief 读条目标志位（对标 QTableWidgetItem::flags）。
- *  @return XTableWidgetItemFlag 位组合；0=缺省（可编辑）。坐标越界返回 0。 */
-uint32_t XTableWidget_itemFlags(const XTableWidget* self, int row,
-                                int column);
-
-/** @brief 设置条目标志位（对标 QTableWidgetItem::setFlags）。
- *  @note 需要只读条目：设不含 ItemIsEditable 的组合（如
- *        ItemIsSelectable|ItemIsEnabled）；0=恢复缺省可编辑。
- *        setItem 值拷贝会随 item->itemFlags 覆盖。 */
-void XTableWidget_setItemFlags(XTableWidget* self, int row, int column,
-                               uint32_t flags);
+XTableWidgetItem* XTableWidget_item(const XTableWidget* self, int row,
+                                    int column);
 
 /**
- * @brief 设置单元格文本（快捷接口）。
+ * @brief 读取单元格条目（const 借用形态）。
  *
- * @param self   目标表格控件指针。
+ * @param self   目标表格控件；可为 NULL。
  * @param row    行号。
  * @param column 列号。
- * @param utf8   UTF-8 文本；NULL 忽略；超长截断。
- * @return 无返回值。
+ * @return 条目只读借用指针（禁止释放）；该格为空、越界或 self 为 NULL 返回 NULL。
  */
-void XTableWidget_setText(XTableWidget* self, int row, int column,
-                          const char* utf8);
+const XTableWidgetItem* XTableWidget_item_const(const XTableWidget* self,
+                                                int row, int column);
 
 /**
- * @brief 读取单元格文本。
+ * @brief 取出单元格条目（对齐 `QTableWidget::takeItem`）。
  *
- * @param self   目标表格控件指针。
+ * @param self   目标表格控件；传入 NULL 时返回 NULL。
  * @param row    行号。
  * @param column 列号。
- * @return 单元格文本（UTF-8）；越界返回空串。
+ * @return 被取出的条目，**所有权移交调用方**（须以 `XClassDelete` 释放）；
+ *         该格为空或越界返回 NULL。
+ * @note  取出后该格清空，条目的 `m_view` 置 NULL；发射 `itemChanged` 与
+ *        `cellChanged`（对齐 Qt 经 dataChanged 桥转出）。
  */
-const char* XTableWidget_text(const XTableWidget* self, int row, int column);
+XTableWidgetItem* XTableWidget_takeItem(XTableWidget* self, int row, int column);
 
 /**
- * @brief 设置当前单元格并滚动到可见（对标 setCurrentCell）。
- *
- *        发射 currentCellChanged 信号并请求重绘。
- *
- * @param self   目标表格控件指针。
- * @param row    当前行号。
- * @param column 当前列号。
- * @return 无返回值。
+ * @brief 读取原型条目（对齐 `QTableWidget::itemPrototype`）。
+ * @param self 目标表格控件；可为 NULL。
+ * @return 原型条目借用指针（归表格所有，禁止释放）；未设置或 self 为 NULL 返回 NULL。
  */
-void XTableWidget_setCurrentCell(XTableWidget* self, int row, int column);
+XTableWidgetItem* XTableWidget_itemPrototype(const XTableWidget* self);
 
 /**
- * @brief 查询当前单元格行号（对标 currentRow）。
+ * @brief 设置原型条目（对齐 `QTableWidget::setItemPrototype`）。
  *
- * @param self 目标表格控件指针。
- * @return 当前行号；无当前单元格返回 -1。
+ * @param self      目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param prototype 原型条目；**所有权转移给表格**（对齐 Qt：旧原型被
+ *                  delete，新原型由表格持有并在析构时释放）。可为 NULL
+ *                  （清除原型）。
+ * @return 无。
+ * @warning 传入非 NULL 后调用方不得再释放该条目。
+ * @note  对齐 Qt：原型不参与现有条目，只在后续按需「创建新条目」的路径
+ *        （如 `XTableWidgetItem` 工厂）中用作克隆模板。
  */
-int XTableWidget_currentRow(const XTableWidget* self);
+void XTableWidget_setItemPrototype(XTableWidget* self,
+                                   XTableWidgetItem* prototype);
+
+/* ===== 单元格部件挂载（对齐 setCellWidget / cellWidget / removeCellWidget） ===== */
 
 /**
- * @brief 查询当前单元格列号（对标 currentColumn）。
+ * @brief 在单元格上挂载部件（对齐 `QTableWidget::setCellWidget`）。
  *
- * @param self 目标表格控件指针。
- * @return 当前列号；无当前单元格返回 -1。
- */
-int XTableWidget_currentColumn(const XTableWidget* self);
-
-/**
- * @brief 读取当前单元格（对标 QTableWidget::currentItem）。
- *
- *        本体系无独立 item 对象：XTableWidgetItem 直接内嵌于单元格
- *        存储，故返回指向当前单元格的恒等指针（别名，所有权仍在
- *        表格，生命周期随行列结构调整/clear 而失效，不得保存复用、
- *        不得释放）。无当前单元格或坐标越界返回 NULL（指针口径的
- *        “无”；行/列号可经 currentRow/currentColumn 获取，无当前
- *        时为 -1）。
- *
- * @param self 目标表格控件指针。
- * @return 当前单元格只读指针；无当前单元格/self 为 NULL 返回 NULL。
- */
-const XTableWidgetItem* XTableWidget_currentItem(const XTableWidget* self);
-
-/**
- * @brief 置当前单元格（对标 QTableWidget::setCurrentItem 的坐标版）。
- *
- *        仅当 (row,column) 处存在单元格（即存在 item）时生效，随后
- *        转发 setCurrentCell（滚动可见并发射 currentCellChanged 等
- *        信号）；目标格不存在时整体忽略——与 setCurrentCell 的差别
- *        在于本接口要求目标确有 item。
- *
- * @param self   目标表格控件指针。
- * @param row    当前行号。
- * @param column 当前列号。
- * @return 无返回值。
- */
-void XTableWidget_setCurrentItem(XTableWidget* self, int row, int column);
-
-/* ===== 单元格部件挂载（对标 setCellWidget/cellWidget/removeCellWidget） ===== */
-
-/**
- * @brief 在单元格上挂载部件（对标 QTableWidget::setCellWidget）。
- *
- * @param self   目标表格控件指针。
+ * @param self   目标表格控件；传入 NULL 时函数不执行任何操作。
  * @param row    目标行号。
  * @param column 目标列号。
- * @param widget 部件指针；借用语义：表格不取得所有权、不重设父
- *               控件、不负责删除，调用方须保证部件在解除挂载前
- *               存活并在之后自行释放。NULL 等价 removeCellWidget。
- * @return 无返回值。
- * @note   目标格越界忽略；重复挂载覆盖旧指针（旧部件仅解除关联，
- *         不被删除）。行/列插入、移除、缩行缩列时挂载表随行号同步
- *         平移或解除对应条目；clear() 解除全部挂载，clearContents()
- *         不解除（与 Qt 的 indexWidget 生命周期一致）。
+ * @param widget 部件；**所有权转移给表格**（对齐 Qt：reparent 到 viewport，
+ *               替换/移除/析构时释放）。传 NULL 等价 `removeCellWidget`。
+ * @return 无。
+ * @warning 传入非 NULL 后调用方不得再释放该部件。
+ * @note  目标格越界忽略；重复挂载会释放旧部件（对齐 Qt `deleteLater`）。
+ *        行/列插入、移除、缩行缩列时挂载表随行号同步平移或解除对应条目；
+ *        `clear()` 与 `clearContents()` 均解除全部挂载（对齐 Qt
+ *        模型 reset 路径释放编辑器）。
  */
 void XTableWidget_setCellWidget(XTableWidget* self, int row, int column,
                                 XWidget* widget);
 
 /**
- * @brief 读取单元格挂载部件（对标 cellWidget）。
+ * @brief 读取单元格挂载部件（对齐 `QTableWidget::cellWidget`）。
  *
- * @param self   目标表格控件指针。
+ * @param self   目标表格控件；可为 NULL。
  * @param row    行号。
  * @param column 列号。
- * @return 部件借用指针（所有权仍属调用方，表格不删除）；
- *         越界或未挂载返回 NULL。
+ * @return 部件借用指针（归表格所有，禁止释放）；越界或未挂载返回 NULL。
  */
 XWidget* XTableWidget_cellWidget(const XTableWidget* self, int row, int column);
 
 /**
- * @brief 移除单元格挂载部件（对标 removeCellWidget）。
+ * @brief 移除并释放单元格挂载部件（对齐 `QTableWidget::removeCellWidget`）。
  *
- *        仅解除承载关联（部件为借用，不删除、不改父控件）；越界或
- *        该格无挂载为无操作。
- *
- * @param self   目标表格控件指针。
+ * @param self   目标表格控件；传入 NULL 时函数不执行任何操作。
  * @param row    行号。
  * @param column 列号。
- * @return 无返回值。
+ * @return 无。
+ * @note  对齐 Qt（`setCellWidget(row, column, nullptr)`）：部件被释放而
+ *        非仅解除关联。越界或该格无挂载为无操作。
  */
 void XTableWidget_removeCellWidget(XTableWidget* self, int row, int column);
 
-/* ===== 表头 ===== */
+/* ===== 表头（对齐 *HeaderItem / *HeaderLabels） ===== */
 
 /**
- * @brief 批量设置水平表头标签（对标 setHorizontalHeaderLabels）。
+ * @brief 批量设置水平表头标签（对齐 `QTableWidget::setHorizontalHeaderLabels`）。
  *
- * @param self   目标表格控件指针。
- * @param labels 标签字符串数组（UTF-8）。
- * @param count  标签个数。
- * @return 无返回值。
+ * @param self   目标表格控件；传入 NULL 或 labels 为 NULL 时函数不执行任何操作。
+ * @param labels 标签字符串数组（UTF-8）；元素可为 NULL（按空串处理）。
+ * @param count  标签个数；超出当前列数的部分仍写入表头存储但不参与绘制
+ *               （对齐 Qt：只改 labels，不改列数）。
+ * @return 无。
  */
 void XTableWidget_setHorizontalHeaderLabels(XTableWidget* self,
-                                            const char* const* labels, int count);
+                                            const char* const* labels,
+                                            int count);
 
 /**
- * @brief 批量设置垂直表头标签（对标 setVerticalHeaderLabels）。
+ * @brief 批量设置垂直表头标签（对齐 `QTableWidget::setVerticalHeaderLabels`）。
  *
- * @param self   目标表格控件指针。
- * @param labels 标签字符串数组（UTF-8）。
+ * @param self   目标表格控件；传入 NULL 或 labels 为 NULL 时函数不执行任何操作。
+ * @param labels 标签字符串数组（UTF-8）；元素可为 NULL（按空串处理）。
  * @param count  标签个数。
- * @return 无返回值。
+ * @return 无。
  */
 void XTableWidget_setVerticalHeaderLabels(XTableWidget* self,
-                                          const char* const* labels, int count);
+                                          const char* const* labels,
+                                          int count);
 
 /**
- * @brief 读取水平表头标签（对标 horizontalHeaderItem）。
+ * @brief 读取水平表头文本（对齐 `QTableWidget::horizontalHeaderItem` 的文本承载形态）。
  *
- * @param self   目标表格控件指针。
+ * @param self   目标表格控件；可为 NULL。
  * @param column 列号。
- * @return 列表头文本；越界/未设置返回空串。
+ * @return 新建 XString，由调用方以 `XClassDelete` 释放。未显式设置时返回
+ *         **`column + 1` 的 1 基列号文本**（对齐 Qt `QTableModel::headerData`：
+ *         无 header item 时 DisplayRole 返回 `section + 1`）；column 越界或
+ *         self 为 NULL 返回空串对象。
  */
-const char* XTableWidget_horizontalHeaderItem(const XTableWidget* self, int column);
+XString* XTableWidget_horizontalHeaderItem(const XTableWidget* self,
+                                           int column);
 
 /**
- * @brief 读取垂直表头标签（对标 verticalHeaderItem）。
+ * @brief 读取垂直表头文本（对齐 `QTableWidget::verticalHeaderItem` 的文本承载形态）。
  *
- * @param self 目标表格控件指针。
+ * @param self 目标表格控件；可为 NULL。
  * @param row  行号。
- * @return 行表头文本；越界/未设置返回空串。
+ * @return 新建 XString，由调用方以 `XClassDelete` 释放。未显式设置时返回
+ *         **`row + 1` 的 1 基行号文本**（对齐 Qt）；row 越界或 self 为
+ *         NULL 返回空串对象。
  */
-const char* XTableWidget_verticalHeaderItem(const XTableWidget* self, int row);
+XString* XTableWidget_verticalHeaderItem(const XTableWidget* self, int row);
 
 /**
- * @brief 设置单个水平表头标签（对标 setHorizontalHeaderItem）。
+ * @brief 设置单个水平表头标签（对齐 `QTableWidget::setHorizontalHeaderItem`）。
  *
- *        与 setHorizontalHeaderLabels 的批量 char* 形态互补：本接口
- *        逐列接受 XString 对象。表格内部拷贝文本——参数 text 所有权
- *        归调用方（可为 NULL，等价清空该列表头文本）；已被表格持有
- *        的旧文本由表格释放。
- *
- * @param self   目标表格控件指针。
+ * @param self   目标表格控件；传入 NULL 时函数不执行任何操作。
  * @param column 列号；负值忽略。
- * @param text   标签字符串对象；可为 NULL（清空）。
- * @return 无返回值。
+ * @param text   标签文本；NULL 等价清空该列标签。借用，不转移所有权。
+ * @return 无。
+ * @note  对齐 Qt：不创建 header item 以外的副作用，也不改变列数；越界列号
+ *        直接忽略（qt 实现同样忽略越界 section）。
  */
 void XTableWidget_setHorizontalHeaderItem(XTableWidget* self, int column,
                                           const XString* text);
 
 /**
- * @brief 设置单个垂直表头标签（对标 setVerticalHeaderItem）。
+ * @brief 设置单个垂直表头标签（对齐 `QTableWidget::setVerticalHeaderItem`）。
  *
- *        所有权语义同 setHorizontalHeaderItem：表格拷贝文本，参数
- *        所有权归调用方（NULL 等价清空）。
- *
- * @param self 目标表格控件指针。
+ * @param self 目标表格控件；传入 NULL 时函数不执行任何操作。
  * @param row  行号；负值忽略。
- * @param text 标签字符串对象；可为 NULL（清空）。
- * @return 无返回值。
+ * @param text 标签文本；NULL 等价清空该行标签。
+ * @return 无。
  */
 void XTableWidget_setVerticalHeaderItem(XTableWidget* self, int row,
                                         const XString* text);
 
 /**
- * @brief 取出水平表头文本（对标 takeHorizontalHeaderItem）。
+ * @brief 取出水平表头文本（对齐 `QTableWidget::takeHorizontalHeaderItem`）。
  *
- *        所有权转移：返回的 XString 由调用方以 XClassDelete
- *        释放，表格不再持有；取出后该列表头文本置空。
- *
- * @param self   目标表格控件指针。
+ * @param self   目标表格控件；传入 NULL 时返回 NULL。
  * @param column 列号。
- * @return 被取出的文本对象；越界或该列未设置文本返回 NULL。
+ * @return 被取出的文本对象，**所有权移交调用方**（须以 `XClassDelete`
+ *         释放）；越界或该列未设置文本返回 NULL。
  */
 XString* XTableWidget_takeHorizontalHeaderItem(XTableWidget* self, int column);
 
 /**
- * @brief 取出垂直表头文本（对标 takeVerticalHeaderItem）。
+ * @brief 取出垂直表头文本（对齐 `QTableWidget::takeVerticalHeaderItem`）。
  *
- *        所有权转移：返回的 XString 由调用方以 XClassDelete
- *        释放，表格不再持有；取出后该行表头文本置空。
- *
- * @param self 目标表格控件指针。
+ * @param self 目标表格控件；传入 NULL 时返回 NULL。
  * @param row  行号。
- * @return 被取出的文本对象；越界或该行未设置文本返回 NULL。
+ * @return 被取出的文本对象，**所有权移交调用方**（须以 `XClassDelete`
+ *         释放）；越界或该行未设置文本返回 NULL。
  */
 XString* XTableWidget_takeVerticalHeaderItem(XTableWidget* self, int row);
 
-/**
- * @brief 设置列宽（最小 20px；对标 QHeaderView::resizeSection）。
- *
- * @param self   目标表格控件指针。
- * @param column 列号。
- * @param width  列宽（像素）。
- * @return 无返回值。
- */
+/* ===== 清空（对齐 clear / clearContents） ===== */
 
 /**
- * @brief 设置网格线可见性（对标 setGridVisible）。
+ * @brief 清空整个表格（对齐 `QTableWidget::clear`）。
  *
- * @param self    目标表格控件指针。
- * @param visible true 显示网格线。
- * @return 无返回值。
- */
-
-/**
- * @brief 清空整个表格（对标 QTableWidget::clear）。
- *
- *        释放全部单元格（含文本）并将行列数归零、当前单元格与选区
- *        跟踪复位、单元格挂载部件条目全部解除（借用部件不销毁）。
- *
- * @param self 目标表格控件指针。
- * @return 无返回值。
- * @note 表头文本不保留：水平/垂直表头标签一并清空（与 Qt clear()
- *       “同时移除表头”一致）；表头数组容量保留，文本指针置空。
+ * @param self 目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @return 无。
+ * @note  删除全部单元格条目与**水平/垂直表头条目**，解除全部单元格挂载
+ *        部件，清空当前格与选区（对齐 Qt：先 `selectionModel()->clear()`
+ *        再清模型）。行列数归零。
+ * @note  对齐 Qt：**不**清除 `setSpan` 合并区间（只有 `clearSpans` 清除）。
  */
 void XTableWidget_clear(XTableWidget* self);
 
 /**
- * @brief 清空全部单元格内容（保留行列数；对标 clearContents）。
+ * @brief 清空全部单元格内容（对齐 `QTableWidget::clearContents`）。
  *
- * @param self 目标表格控件指针。
- * @return 无返回值。
+ * @param self 目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @return 无。
+ * @note  删除全部单元格条目并解除挂载部件，清空当前格与选区；**行列数与
+ *        表头条目保留**（对齐 Qt）。同样**不**清除合并区间。
  */
 void XTableWidget_clearContents(XTableWidget* self);
 
-/**
- * @brief 滚动到指定单元格使其可见（对标 scrollToItem）。
- *
- *        按行号换算垂直滚动条值。
- *
- * @param self   目标表格控件指针。
- * @param row    目标行号。
- * @param column 目标列号（当前版本仅参与签名，预留）。
- * @return 无返回值。
- */
-void XTableWidget_scrollToItem(XTableWidget* self, int row, int column);
-
-/* ==================== 便捷查找/排序/选择（对标 QTableWidget 便捷族） ==================== */
+/* ===== 当前格（对齐 setCurrentItem / setCurrentCell / current*） ===== */
 
 /**
- * @brief 查找文本匹配的单元格（对标 findItems）。
+ * @brief 设置当前单元格（对齐 `QTableWidget::setCurrentCell`）。
  *
- *        按行优先顺序扫描全部单元格；命中坐标以“行号数组 + 列号
- *        数组”双 int 数组形式输出（两数组同下标对应同一命中项）。
- *        缓冲区由调用方分配（栈数组/静态数组均可），库侧不分配
- *        内存，调用方无需向库归还。
- *
- * @param self        目标表格控件指针。
- * @param text        待查找文本（UTF-8）；NULL 按空串处理。
- * @param flags       匹配方式：1=精确相等（对标 MatchExactly）；
- *                    0=包含子串（对标 MatchContains）；其余值按 0 处理。
- * @param outRows     命中行号输出数组（调用方分配）；可为 NULL。
- * @param outColumns  命中列号输出数组（调用方分配）；可为 NULL。
- * @param maxCount    输出数组各自容量；<=0 表示只统计不写出。
- * @return 命中总数（写出条数不超过 maxCount）；返回值大于 maxCount
- *         说明输出被截断。self 为 NULL 返回 0。
+ * @param self   目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param row    当前行号。
+ * @param column 当前列号。
+ * @return 无。
+ * @note  越界行列会把当前格清为 -1/-1（对齐 Qt：无效索引清除当前项）；
+ *        同格重设不发射信号。发射 `currentItemChanged`（仅当新旧至少一个
+ *        条目存在）、`currentCellChanged` 与 `itemSelectionChanged`。
  */
-int XTableWidget_findItems(const XTableWidget* self, const char* text,
-                           int flags, int* outRows, int* outColumns,
-                           int maxCount);
+void XTableWidget_setCurrentCell(XTableWidget* self, int row, int column);
 
 /**
- * @brief 坐标反查单元格（对标 itemAt）。
- *
- *        基于表头尺寸/行高/列宽与滚动偏移换算，与鼠标事件同坐标系；
- *        表头区与数据区之外返回 -1/-1。
- *
- * @param self   目标表格控件指针。
- * @param x      横向坐标（控件本地，像素）。
- * @param y      纵向坐标（控件本地，像素）。
- * @param row    命中行号输出；越界输出 -1；可为 NULL。
- * @param column 命中列号输出；越界输出 -1；可为 NULL。
- * @return 无返回值。
+ * @brief 查询当前单元格行号（对齐 `QTableWidget::currentRow`）。
+ * @param self 目标表格控件；可为 NULL。
+ * @return 当前行号；无当前单元格或 self 为 NULL 返回 -1。
  */
-void XTableWidget_itemAt(const XTableWidget* self, int x, int y,
-                         int* row, int* column);
+int XTableWidget_currentRow(const XTableWidget* self);
 
 /**
- * @brief 按列文本排序（对标 sortItems）。
- *
- *        依据第 column 列单元格文本整行重排（其余各列随行移动）；
- *        空文本按空串参与比较；排序后记录最近排序列/排序序。
- *
- * @param self   目标表格控件指针。
- * @param column 排序列号；越界忽略。
- * @param order  0=升序；非 0（含 1）=降序。
- * @return 无返回值。
+ * @brief 查询当前单元格列号（对齐 `QTableWidget::currentColumn`）。
+ * @param self 目标表格控件；可为 NULL。
+ * @return 当前列号；无当前单元格或 self 为 NULL 返回 -1。
  */
-void XTableWidget_sortItems(XTableWidget* self, int column, int order);
+int XTableWidget_currentColumn(const XTableWidget* self);
 
 /**
- * @brief 开关排序跟随（对标 setSortingEnabled 转发基类）。
- * @param self   目标表格控件指针。
- * @param enable true=排序跟随开启。
- * @return 无返回值。
- * @note 对齐 Qt QTableWidget::setSortingEnabled 直接继承 QTableView
- *       的语义；C 无继承语法，本层显式转发 XTableView 同名 API。
- *       已知差异：Qt 排序开启时 setItem 触发按序自动插入/重排
- *       （QTableModel::setItem 的 sorted insertion+moveRows）；本框架
- *       该联动未实现，sortItems 手动排序语义一致。
+ * @brief 读取当前单元格条目（对齐 `QTableWidget::currentItem`）。
+ * @param self 目标表格控件；可为 NULL。
+ * @return 条目借用指针（归表格所有，禁止释放）；当前格为空、无当前格或
+ *         self 为 NULL 返回 NULL。
  */
-void XTableWidget_setSortingEnabled(XTableWidget* self, bool enable);
-/**
- * @brief 查询排序跟随开关（对标 isSortingEnabled 转发基类）。
- * @param self 目标表格控件指针。
- * @return 排序跟随开启返回 true；NULL 返回 false。
- */
-bool XTableWidget_isSortingEnabled(const XTableWidget* self);
+XTableWidgetItem* XTableWidget_currentItem(const XTableWidget* self);
 
 /**
- * @brief 打开单元格持久编辑器（对标 openPersistentEditor 转发基类）。
- * @param self   目标表格控件指针。
- * @param row    行号。
- * @param column 列号。
- * @return 无返回值。
- * @note 对齐 Qt QTableWidget::openPersistentEditor(item)→
- *       QAbstractItemView::openPersistentEditor(index)；编辑器体系未建
- *       时基类为安全空操作。
+ * @brief 读取当前单元格条目（const 借用形态）。
+ * @param self 目标表格控件；可为 NULL。
+ * @return 条目只读借用指针（禁止释放）；无当前格或 self 为 NULL 返回 NULL。
  */
-void XTableWidget_openPersistentEditor(XTableWidget* self,
-                                       int row, int column);
-/**
- * @brief 关闭单元格持久编辑器（对标 closePersistentEditor 转发基类）。
- * @param self   目标表格控件指针。
- * @param row    行号。
- * @param column 列号。
- * @return 无返回值。
- */
-void XTableWidget_closePersistentEditor(XTableWidget* self,
-                                        int row, int column);
-/**
- * @brief 查询单元格持久编辑器是否打开（对标 isPersistentEditorOpen
- *        转发基类；与 open/close 配对成三件套，同 Qt QTableWidget
- *        openPersistentEditor/closePersistentEditor/
- *        isPersistentEditorOpen(item) → 基类 index 形态的转发）。
- * @param self   目标表格控件指针。
- * @param row    行号。
- * @param column 列号。
- * @return 打开返回 true；未打开、越界或 self 为空返回 false。
- */
-bool XTableWidget_isPersistentEditorOpen(const XTableWidget* self,
-                                         int row, int column);
+const XTableWidgetItem* XTableWidget_currentItem_const(const XTableWidget* self);
 
 /**
- * @brief 输出全部选中单元格坐标（对标 selectedIndexes）。
+ * @brief 把指定条目设为当前项（对齐 `QTableWidget::setCurrentItem`）。
  *
- *        平铺模型为单选语义：统计带 per-cell selected 标记的单元格；
- *        若当前跟踪选区（setCurrentCell/点击/键盘设置）未被标记覆盖
- *        则追加一条。输出形式与 findItems 相同的双 int 数组（调用方
- *        分配，库侧不分配内存，无需归还）。
- *
- * @param self        目标表格控件指针。
- * @param outRows     选中行号输出数组（调用方分配）；可为 NULL。
- * @param outColumns  选中列号输出数组（调用方分配）；可为 NULL。
- * @param maxCount    输出数组各自容量；<=0 表示只统计不写出。
- * @return 选中单元格总数；返回值大于 maxCount 说明输出被截断。
- *         self 为 NULL 返回 0。
+ * @param self 目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param item 目标条目；必须是本表格的条目（`item->m_view == self`），否则
+ *             整体忽略（对齐 Qt：非本表条目得到无效索引 → 清除当前项）。
+ * @return 无。
+ * @note  等价于 `setCurrentCell(item->row(), item->column())`。
  */
-int XTableWidget_selectedIndexes(const XTableWidget* self, int* outRows,
-                                 int* outColumns, int maxCount);
+void XTableWidget_setCurrentItem(XTableWidget* self, const XTableWidgetItem* item);
+
+/* ===== 索引反查（对齐 row / column / indexFromItem / itemFromIndex） ===== */
 
 /**
- * @brief 输出全部选中单元格坐标（对标 selectedItems）。
- *
- *        Qt 的 selectedItems 只返回确有 item 的选中格，selectedIndexes
- *        返回含空格的完整选中；本体系单元格记录恒内嵌存在（无独立
- *        item 生命周期），二者语义重合，本接口转发 selectedIndexes。
- *
- * @param self     目标表格控件指针。
- * @param outRows  选中行号输出数组（调用方分配）；可为 NULL。
- * @param outCols  选中列号输出数组（调用方分配）；可为 NULL。
- * @param maxCount 输出数组各自容量；<=0 表示只统计不写出。
- * @return 选中单元格总数；返回值大于 maxCount 说明输出被截断。
- *         self 为 NULL 返回 0。
+ * @brief 条目所在行反查（对齐 `QTableWidget::row`）。
+ * @param self 目标表格控件；可为 NULL。
+ * @param item 条目借用指针（必须来自本表格）。
+ * @return 条目所在行；游离条目、外部位址或 self 为 NULL 返回 -1。
  */
-int XTableWidget_selectedItems(const XTableWidget* self, int* outRows,
-                               int* outCols, int maxCount);
+int XTableWidget_row(const XTableWidget* self, const XTableWidgetItem* item);
 
 /**
- * @brief 输出全部选中范围（对标 selectedRanges；
- *        QTableWidgetSelectionRange 的四 int 数组承载形态）。
- *
- *        对 per-cell selected 标记做逐行归并：同一行内取最小/最大选中列
- *        为列跨度，行号连续且列跨度一致的范围合并为一条；当前跟踪选区
- *        （setCurrentCell/点击/键盘设置）未被标记覆盖时追加一条 1x1
- *        范围。缓冲区由调用方分配（四个 int 数组同下标对应同一范围），
- *        库侧不分配内存，调用方无需向库归还。
- *
- * @param self      目标表格控件指针。
- * @param outTop    范围起始行号输出数组；可为 NULL。
- * @param outLeft   范围起始列号输出数组；可为 NULL。
- * @param outBottom 范围结束行号（含）输出数组；可为 NULL。
- * @param outRight  范围结束列号（含）输出数组；可为 NULL。
- * @param maxCount  输出数组各自容量；<=0 表示只统计不写出。
- * @return 范围总数；返回值大于 maxCount 说明输出被截断。
- *         self 为 NULL 返回 0。
- * @note 简化口径：行内选中列不连续时，离散空洞并入 [最小,最大] 跨度
- *       （单个矩形范围无法表达离散列）。
+ * @brief 条目所在列反查（对齐 `QTableWidget::column`）。
+ * @param self 目标表格控件；可为 NULL。
+ * @param item 条目借用指针（必须来自本表格）。
+ * @return 条目所在列；游离条目、外部位址或 self 为 NULL 返回 -1。
  */
-int XTableWidget_selectedRanges(const XTableWidget* self, int* outTop,
-                                int* outLeft, int* outBottom, int* outRight,
-                                int maxCount);
+int XTableWidget_column(const XTableWidget* self, const XTableWidgetItem* item);
 
 /**
- * @brief 清除全部跨行/跨列合并（对标 QTableWidget::clearSpans）。
- *
- *        便捷转发基类 XTableView_clearSpans；平铺模型无合并能力，
- *        本接口为无操作（基类亦不提供 setSpan）。
- *
- * @param self 目标表格控件指针。
- * @return 无返回值。
- */
-void XTableWidget_clearSpans(XTableWidget* self);
-
-/**
- * @brief 取出单元格文本并置空（对标 takeItem）。
- *
- *        单元格 text 所有权转移给调用方（表格对象不再持有）；
- *        取出后发射 cellChanged/itemChanged 并同步内建模型为空串。
- *
- * @param self   目标表格控件指针。
- * @param row    行号。
- * @param column 列号。
- * @return 被取出的文本对象（调用方以 XClassDelete 释放）；
- *         越界或单元格无文本返回 NULL（不发射信号、不同步模型）。
- */
-XString* XTableWidget_takeItem(XTableWidget* self, int row, int column);
-
-/**
- * @brief 单元格指针反查行号（对标 indexFromItem）。
- *
- *        XTableWidgetItem 直接内嵌于单元格存储，指针恒等于内部
- *        &m_cells[row][column]，本接口按地址查表定位。未找到返回
- *        -1 且 *column 置 -1。
- *
- * @param self   目标表格控件指针。
- * @param item   待查单元格指针（通常来自 currentItem/item）。
- * @param column 命中列号输出；可为 NULL（只取行号）。
- * @return 命中行号；未找到/self/item 为 NULL 返回 -1。
+ * @brief 由条目反查所在格（对齐 `QTableWidget::indexFromItem` 的 (row,column) 承载）。
+ * @param self   目标表格控件；可为 NULL。
+ * @param item   条目借用指针。
+ * @param column 列号输出；可为 NULL。未命中写 -1。
+ * @return 行号；未命中（条目不属于本表格、越界、self 或 item 为 NULL）返回 -1。
  */
 int XTableWidget_indexFromItem(const XTableWidget* self,
                                const XTableWidgetItem* item, int* column);
 
-/* ===== 索引反查/编辑（对标 row/column/editItem/itemFromIndex/items） ===== */
-
 /**
- * @brief 条目所在列反查（对标 QTableWidget::column(item)）。
- *
- * @param self  目标表格控件指针。
- * @param item  单元格条目借用指针（由 XTableWidget_item 取得或内部
- *              指针；指针必须来自本表格，外部位址返回 -1）。
- * @return 条目所在列；未命中（越界/外部位址/NULL）返回 -1。
- */
-int XTableWidget_column(const XTableWidget* self,
-                        const XTableWidgetItem* item);
-
-/**
- * @brief 条目所在行反查（对标 QTableWidget::row(item)）。
- *
- * @param self 目标表格控件指针。
- * @param item 单元格条目借用指针（必须来自本表格；外部位址返回 -1）。
- * @return 条目所在行；未命中返回 -1。
- */
-int XTableWidget_row(const XTableWidget* self,
-                     const XTableWidgetItem* item);
-
-/**
- * @brief 触发单元格编辑（对标 editItem；编辑触发句柄预留）。
- *
- *        对齐 Qt editItem(item) → edit(index) 的转发路径：坐标有效时
- *        经基类 XAbstractItemView_edit 做编辑触发合法性判定；
- *        坐标越界或该格不存在时整体忽略。
- *
- * @param self   目标表格控件指针。
+ * @brief 由格反查条目（对齐 `QTableWidget::itemFromIndex` 的 (row,column) 承载）。
+ * @param self   目标表格控件；可为 NULL。
  * @param row    行号。
  * @param column 列号。
- * @return 无返回值。
- * @note 编辑器体系已建：转发基类 XAbstractItemView_edit（触发位+
- *       m_itemsEditable 门禁，委托缺省编辑器为内嵌行编辑框）；编辑
- *       提交经基类 setItemText→模型 setData→dataChanged 桥
- *       （xtw_modelDataChangedSlot）发射 cellChanged/itemChanged。
+ * @return 条目借用指针（归表格所有，禁止释放）；该格为空、越界或 self 为
+ *         NULL 返回 NULL。
  */
-void XTableWidget_editItem(XTableWidget* self, int row, int column);
+XTableWidgetItem* XTableWidget_itemFromIndex(const XTableWidget* self,
+                                             int row, int column);
+
+/* ===== 编辑与持久编辑器（对齐 QTableWidget 的 item* 形态） ===== */
 
 /**
- * @brief 行索引 → 行文本（新建副本；对标 itemFromIndex 的行文本承载形态）。
+ * @brief 触发条目编辑（对齐 `QTableWidget::editItem`）。
  *
- * @param self 目标表格控件指针。
- * @param row  行号（越界或 self 为 NULL 返回 NULL）。
- * @return 新建 XString*（堆上文本副本，由调用方以 XClassDelete
- *         释放）；该行无文本时返回空串对象。
- * @note 平铺表格的“行文本”取该行首列（列 0）单元格文本；按任意列
- *       查询单元格请用 text/item 族。内存归属：返回对象归调用方所有。
+ * @param self 目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param item 目标条目；不属于本表格时整体忽略（对齐 Qt `edit(index)` 对
+ *             无效索引的空操作）。
+ * @return 无。
  */
-XString* XTableWidget_itemFromIndex(const XTableWidget* self, int row);
+void XTableWidget_editItem(XTableWidget* self, const XTableWidgetItem* item);
 
 /**
- * @brief 按文本搜索所有匹配行（对标 items 的行号承载形态）。
- *
- *        行优先扫描：行内任一单元格文本与 text 精确相等（区分大小写）
- *        即视为该行命中；每行至多输出一次，行号升序。
- *
- * @param self 目标表格控件指针。
- * @param text 待搜索文本（UTF-8）；NULL 按空串处理。
- * @return 新建 XVector*（元素为 int 行号值拷贝，无字符串所有权；由
- *         调用方以 XClassDelete 释放）；无命中返回空容器；
- *         self 为 NULL 或容器分配失败返回 NULL。
- * @note 内存归属：返回容器归调用方所有（务必 XClassDelete
- *       释放）；需要子串匹配/精确模式开关与 (行,列) 双坐标输出的
- *       逐格搜索请用 findItems。
+ * @brief 打开条目持久编辑器（对齐 `QTableWidget::openPersistentEditor`）。
+ * @param self 目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param item 目标条目；不属于本表格时整体忽略。
+ * @return 无。
  */
-XVector* XTableWidget_items(const XTableWidget* self, const char* text);
-
-/* ===== 原型（对标 itemPrototype/setItemPrototype） ===== */
+void XTableWidget_openPersistentEditor(XTableWidget* self,
+                                       const XTableWidgetItem* item);
 
 /**
- * @brief 读取原型单元格（对标 QTableWidget::itemPrototype）。
- *
- * @param self 目标表格控件指针。
- * @return 原型借用指针（所有权仍属调用方）；未设置返回 NULL。
+ * @brief 关闭条目持久编辑器（对齐 `QTableWidget::closePersistentEditor`）。
+ * @param self 目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param item 目标条目；不属于本表格时整体忽略。
+ * @return 无。
  */
-const XTableWidgetItem* XTableWidget_itemPrototype(const XTableWidget* self);
+void XTableWidget_closePersistentEditor(XTableWidget* self,
+                                        const XTableWidgetItem* item);
 
 /**
- * @brief 设置原型单元格（对标 setItemPrototype）。
- *
- *        借用语义：表格仅不透明记录该指针（不拷贝、不参与任何行
- *        为），调用方须保证其生命周期覆盖使用期并自行释放。
- *
- * @param self       目标表格控件指针。
- * @param prototype  原型单元格指针；可为 NULL（清除）。
- * @return 无返回值。
- * @note 本体系未建 item 克隆/工厂机制（XTableWidgetItem 为内嵌
- *       POD，无虚表），原型暂为不透明承载，仅作 API 对位；后续
- *       引入克隆体系后可无缝启用。
+ * @brief 查询条目持久编辑器是否打开（对齐 `QTableWidget::isPersistentEditorOpen`）。
+ * @param self 目标表格控件；可为 NULL。
+ * @param item 目标条目；不属于本表格时返回 false。
+ * @return 打开返回 true；未打开、条目不属于本表格或 self 为 NULL 返回 false。
  */
-void XTableWidget_setItemPrototype(XTableWidget* self,
-                                   const XTableWidgetItem* prototype);
+bool XTableWidget_isPersistentEditorOpen(const XTableWidget* self,
+                                         const XTableWidgetItem* item);
 
-/* ===== 视觉序与几何（对标 QTableView visualRow/visualColumn/visualItemRect） ===== */
+/* ===== 排序与滚动（对齐 QTableWidget 同名） ===== */
 
 /**
- * @brief 视觉行号 → 逻辑行号（对标 visualRow）。
+ * @brief 按列排序（对齐 `QTableWidget::sortItems`）。
  *
- *        平铺模型不支持行隐藏/重排映射，视觉序与逻辑序恒等，原样
- *        返回入参。
- *
- * @param self      目标表格控件指针。
- * @param visualRow 视觉行号。
- * @return 对应逻辑行号（当前恒等于 visualRow）。
+ * @param self   目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param column 排序列号；越界时整体忽略（对齐 Qt：模型 sort 对越界列不重排）。
+ * @param order  0 = 升序，非 0 = 降序。
+ * @return 无。
+ * @note  依据该列 `DisplayRole` 比较，整行（含条目指针与行头条目）一起移动；
+ *        该列为空的行走「不可排序」组，保持原有相对顺序排在最后（对齐
+ *        `QTableModel::sort`）。对齐 Qt：`verticalHeaderItems` **不**随之
+ *        重排——行头标签留在原位（Qt 6.8 既有行为）。
  */
-int XTableWidget_visualRow(const XTableWidget* self, int visualRow);
+void XTableWidget_sortItems(XTableWidget* self, int column, int order);
 
 /**
- * @brief 视觉列号 → 逻辑列号（对标 visualColumn）。
+ * @brief 滚动使指定条目可见（对齐 `QTableWidget::scrollToItem`）。
  *
- *        平铺模型不支持列隐藏/重排映射，视觉序与逻辑序恒等，原样
- *        返回入参。
- *
- * @param self         目标表格控件指针。
- * @param visualColumn 视觉列号。
- * @return 对应逻辑列号（当前恒等于 visualColumn）。
+ * @param self 目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param item 目标条目；不属于本表格时整体忽略。
+ * @param hint 定位提示（XAbstractItemViewScrollHint）；传
+ *             `XAbstractItemViewScrollHint_EnsureVisible` 即 Qt 缺省。
+ * @return 无。
  */
-int XTableWidget_visualColumn(const XTableWidget* self, int visualColumn);
+void XTableWidget_scrollToItem(XTableWidget* self, const XTableWidgetItem* item,
+                               int hint);
+
+/* ===== 便捷查找/选择（对齐 QTableWidget 便捷族） ===== */
 
 /**
- * @brief 单元格可视矩形（对标 visualItemRect）。
+ * @brief 查找文本匹配的单元格（对齐 `QTableWidget::findItems`）。
  *
- *        已扣除表头尺寸与滚动偏移，与绘制坐标系一致；item 须为
- *        本表格单元格存储内的指针（经 indexFromItem 查表定位）。
+ * @param self     目标表格控件；传入 NULL 时返回 0。
+ * @param text     待查找文本（UTF-8）；NULL 按空串处理。
+ * @param flags    匹配方式：1 = 精确相等（对齐 `Qt::MatchExactly`）；
+ *                 0 = 包含子串（对齐 `Qt::MatchContains`）；其余值按 0 处理。
+ * @param out      命中的条目指针输出数组（调用方提供存储空间）；可为 NULL
+ *                 （只统计不写出）。元素为借用指针，禁止释放。
+ * @param maxCount out 数组容量；<= 0 表示只统计不写出。
+ * @return 命中总数（写出条数不超过 maxCount；返回值大于 maxCount 表示输出
+ *         被截断）。
+ * @note  对齐 Qt 遍历顺序：**列优先**——先输出第 0 列自顶向下的全部命中，
+ *        再输出第 1 列，以此类推（qtablewidget.cpp:2424-2437）。
+ */
+int XTableWidget_findItems(const XTableWidget* self, const char* text,
+                           int flags, XTableWidgetItem** out, int maxCount);
+
+/**
+ * @brief 坐标反查条目（对齐 `QTableWidget::itemAt`）。
  *
- * @param self 目标表格控件指针。
- * @param item 待定位单元格指针。
- * @return 视口坐标矩形；未找到/self/item 为 NULL 返回空矩形
- *         (0,0,0,0)。
+ * @param self 目标表格控件；可为 NULL。
+ * @param x    横向坐标（控件本地，像素）。
+ * @param y    纵向坐标（控件本地，像素）。
+ * @return 命中格条目借用指针（归表格所有，禁止释放）；表头区、空格或越界
+ *         返回 NULL。命中落在合并区间覆盖格时返回区间原点条目（对齐 Qt）。
+ */
+XTableWidgetItem* XTableWidget_itemAt(const XTableWidget* self, int x, int y);
+
+/**
+ * @brief 输出全部选中条目（对齐 `QTableWidget::selectedItems`）。
+ *
+ * @param self     目标表格控件；传入 NULL 时返回 0。
+ * @param out      选中条目指针输出数组（调用方提供存储空间）；可为 NULL
+ *                 （只统计不写出）。元素为借用指针，禁止释放。
+ * @param maxCount out 数组容量；<= 0 表示只统计不写出。
+ * @return 选中条目总数（写出条数不超过 maxCount）。
+ * @note  对齐 Qt：只返回**实际存在条目**的选中格（空格跳过），按选择模型
+ *        的选中索引顺序（行主序）输出。
+ */
+int XTableWidget_selectedItems(const XTableWidget* self,
+                               XTableWidgetItem** out, int maxCount);
+
+/**
+ * @brief 输出全部选中范围（对齐 `QTableWidget::selectedRanges`）。
+ *
+ * @param self     目标表格控件；传入 NULL 时返回 0。
+ * @param out      选区结构输出数组（调用方提供存储空间）；可为 NULL
+ *                 （只统计不写出）。元素按值存放，无所有权问题。
+ * @param maxCount out 数组容量；<= 0 表示只统计不写出。
+ * @return 选区总数（写出条数不超过 maxCount）。
+ * @note  对逐格选中标记做逐行归并：同一行取最小/最大选中列为跨度，行号连续
+ *        且跨度一致的范围合并为一条；当前跟踪选区未被标记覆盖时追加一条
+ *        1x1 范围。行内选中列不连续时离散空洞并入 [最小,最大] 跨度
+ *        （单个矩形无法表达离散列）。
+ */
+int XTableWidget_selectedRanges(const XTableWidget* self,
+                                XTableWidgetSelectionRange* out,
+                                int maxCount);
+
+/**
+ * @brief 范围选中标记（对齐 `QTableWidget::setRangeSelected`）。
+ *
+ * @param self   目标表格控件；传入 NULL 时函数不执行任何操作。
+ * @param range  选区矩形；两角都必须落在有效行列范围内，否则**整体忽略**
+ *               （对齐 Qt 的 `hasIndex` 双向校验）。可为 NULL（无操作）。
+ * @param select true = 选中范围；false = 取消该范围选中。
+ * @return 无。
+ * @note  对齐 Qt：只做 `Select`/`Deselect`，**不会**清除既有选区。有实际
+ *        变化时发射 `itemSelectionChanged`。
+ */
+void XTableWidget_setRangeSelected(XTableWidget* self,
+                                   const XTableWidgetSelectionRange* range,
+                                   bool select);
+
+/**
+ * @brief 条目可视矩形（对齐 `QTableWidget::visualItemRect`）。
+ *
+ * @param self 目标表格控件；可为 NULL。
+ * @param item 目标条目；不属于本表格时返回空矩形。
+ * @return 视口坐标矩形；未找到或 self/item 为 NULL 返回空矩形 (0,0,0,0)。
  */
 XRect XTableWidget_visualItemRect(const XTableWidget* self,
                                   const XTableWidgetItem* item);
 
 /**
- * @brief 范围选中标记（对标 QTableWidget::setRangeSelected）。
+ * @brief 逻辑行号 → 视觉行号（对齐 `QTableWidget::visualRow`）。
  *
- *        对 [topRow,bottomRow]×[leftCol,rightCol] 内的有效单元格
- *        逐格设置 selected 标记（越界部分裁剪；入参大小倒置时自动
- *        归一化）。有实际变化时发射 itemSelectionChanged 并请求重绘。
- *
- * @param self      目标表格控件指针。
- * @param topRow    范围起始行号。
- * @param leftCol   范围起始列号。
- * @param bottomRow 范围结束行号（含）。
- * @param rightCol  范围结束列号（含）。
- * @param select    true=选中范围；false=取消范围选中。
- * @return 无返回值。
+ * @param self      目标表格控件；可为 NULL。
+ * @param logicalRow 逻辑行号。
+ * @return 视觉行号（经垂直表头 `visualIndex`）；负值或 self 为 NULL 返回 -1。
  */
-void XTableWidget_setRangeSelected(XTableWidget* self, int topRow,
-                                   int leftCol, int bottomRow, int rightCol,
-                                   bool select);
+int XTableWidget_visualRow(const XTableWidget* self, int logicalRow);
+
+/**
+ * @brief 逻辑列号 → 视觉列号（对齐 `QTableWidget::visualColumn`）。
+ *
+ * @param self         目标表格控件；可为 NULL。
+ * @param logicalColumn 逻辑列号。
+ * @return 视觉列号（经水平表头 `visualIndex`）；负值或 self 为 NULL 返回 -1。
+ */
+int XTableWidget_visualColumn(const XTableWidget* self, int logicalColumn);
 
 /* ==================== 信号（仅返回自身地址；发射经 emitSignal） ==================== */
 
-/**
- * @brief cellClicked 信号地址（参数：row, column）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
-void* XTableWidget_cellClicked_signal(XTableWidget* self);
-
-/**
- * @brief cellDoubleClicked 信号地址（参数：row, column）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
-void* XTableWidget_cellDoubleClicked_signal(XTableWidget* self);
-
-/**
- * @brief currentCellChanged 信号地址（参数：row, column）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
-void* XTableWidget_currentCellChanged_signal(XTableWidget* self);
-
-/**
- * @brief itemChanged 信号地址（单元格内容变化时发射）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
-void* XTableWidget_itemChanged_signal(XTableWidget* self);
-
-/**
- * @brief itemClicked 信号地址（载荷：item 指针）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
-void* XTableWidget_itemClicked_signal(XTableWidget* self);
-
-/**
- * @brief itemDoubleClicked 信号地址（载荷：item 指针）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
-void* XTableWidget_itemDoubleClicked_signal(XTableWidget* self);
-
-/**
- * @brief itemPressed 信号地址（载荷：item 指针）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
+/** @brief itemPressed 信号地址（载荷：item 指针）。 @param self 目标表格控件。 @return 信号槽地址。 */
 void* XTableWidget_itemPressed_signal(XTableWidget* self);
-
-/**
- * @brief itemEntered 信号地址（载荷：item 指针）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
-void* XTableWidget_itemEntered_signal(XTableWidget* self);
-
-/**
- * @brief itemActivated 信号地址（载荷：item 指针）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
+/** @brief itemClicked 信号地址（载荷：item 指针）。 @param self 目标表格控件。 @return 信号槽地址。 */
+void* XTableWidget_itemClicked_signal(XTableWidget* self);
+/** @brief itemDoubleClicked 信号地址（载荷：item 指针）。 @param self 目标表格控件。 @return 信号槽地址。 */
+void* XTableWidget_itemDoubleClicked_signal(XTableWidget* self);
+/** @brief itemActivated 信号地址（载荷：item 指针）。 @param self 目标表格控件。 @return 信号槽地址。 */
 void* XTableWidget_itemActivated_signal(XTableWidget* self);
-
-/**
- * @brief cellPressed 信号地址（载荷：row, column）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
-void* XTableWidget_cellPressed_signal(XTableWidget* self);
-
-/**
- * @brief cellEntered 信号地址（载荷：row, column）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
-void* XTableWidget_cellEntered_signal(XTableWidget* self);
-
-/**
- * @brief cellActivated 信号地址（载荷：row, column）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
-void* XTableWidget_cellActivated_signal(XTableWidget* self);
-
-/**
- * @brief cellChanged 信号地址（载荷：row, column）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
-void* XTableWidget_cellChanged_signal(XTableWidget* self);
-
-/**
- * @brief currentItemChanged 信号地址（载荷：current, previous）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
+/** @brief itemEntered 信号地址（载荷：item 指针）。 @param self 目标表格控件。 @return 信号槽地址。 */
+void* XTableWidget_itemEntered_signal(XTableWidget* self);
+/** @brief itemChanged 信号地址（载荷：item 指针）。 @param self 目标表格控件。 @return 信号槽地址。 */
+void* XTableWidget_itemChanged_signal(XTableWidget* self);
+/** @brief currentItemChanged 信号地址（载荷：current、previous 条目指针）。 @param self 目标表格控件。 @return 信号槽地址。 */
 void* XTableWidget_currentItemChanged_signal(XTableWidget* self);
-
-/**
- * @brief itemSelectionChanged 信号地址（无载荷）。
- *
- * @param self 目标表格控件指针。
- * @return 信号槽地址。
- */
+/** @brief itemSelectionChanged 信号地址（无载荷）。 @param self 目标表格控件。 @return 信号槽地址。 */
 void* XTableWidget_itemSelectionChanged_signal(XTableWidget* self);
+/** @brief cellPressed 信号地址（载荷：row, column）。 @param self 目标表格控件。 @return 信号槽地址。 */
+void* XTableWidget_cellPressed_signal(XTableWidget* self);
+/** @brief cellClicked 信号地址（载荷：row, column）。 @param self 目标表格控件。 @return 信号槽地址。 */
+void* XTableWidget_cellClicked_signal(XTableWidget* self);
+/** @brief cellDoubleClicked 信号地址（载荷：row, column）。 @param self 目标表格控件。 @return 信号槽地址。 */
+void* XTableWidget_cellDoubleClicked_signal(XTableWidget* self);
+/** @brief cellActivated 信号地址（载荷：row, column）。 @param self 目标表格控件。 @return 信号槽地址。 */
+void* XTableWidget_cellActivated_signal(XTableWidget* self);
+/** @brief cellEntered 信号地址（载荷：row, column）。 @param self 目标表格控件。 @return 信号槽地址。 */
+void* XTableWidget_cellEntered_signal(XTableWidget* self);
+/** @brief cellChanged 信号地址（载荷：row, column）。 @param self 目标表格控件。 @return 信号槽地址。 */
+void* XTableWidget_cellChanged_signal(XTableWidget* self);
+/** @brief currentCellChanged 信号地址（载荷：currentRow、currentColumn、previousRow、previousColumn）。 @param self 目标表格控件。 @return 信号槽地址。 */
+void* XTableWidget_currentCellChanged_signal(XTableWidget* self);
 
 #endif /* XTABLEWIDGET_ON */
 
