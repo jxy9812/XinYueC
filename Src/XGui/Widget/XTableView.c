@@ -156,8 +156,24 @@ void XTableView_init(XTableView* self, XWidget* parent, XWidgetFlags flags)
     self->m_sortingEnabled = false;
     self->m_sortColumn = -1;
     self->m_sortOrder = 0;
-    self->m_horizontalHeader = NULL;
-    self->m_verticalHeader = NULL;
+    /* 内建双表头（对标 Qt QTableViewPrivate::init：构造即创建
+     * horizontalHeader/verticalHeader 两个 QHeaderView 子控件——段
+     * 尺寸事实源在 header，视图列宽/行高读写全部转发。此前 NULL+视图
+     * 自管 m_colWidths 与 Qt 架构分叉：setSectionResizeMode(Stretch)/
+     * stretchLastSection 等段语义无处生效。header 以本视图为父（子控
+     * 件）并显式 hide——XGui 表头绘制仍由派生视图自绘（XTableWidget
+     * paintEvent），本对象只承载段尺寸状态（Qt 的 header 段几何职责），
+     * 不上屏。 */
+    {
+        XHeaderView* hh = XHeaderView_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                (XWidget*)self, 0, 0);
+        XHeaderView* vh = XHeaderView_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                (XWidget*)self, 0, 1);
+        self->m_horizontalHeader = hh;
+        self->m_verticalHeader = vh;
+        if (hh) XWidget_hide((XWidget*)hh);
+        if (vh) XWidget_hide((XWidget*)vh);
+    }
     self->m_spans = NULL;
     self->m_spanCount = 0;
     self->m_spanCapacity = 0;
@@ -354,6 +370,14 @@ void XTableView_setColumnWidth(XTableView* self, int column, int width)
     } else {
         old = self->m_colWidths[column]; /* 扩容新槽未初始化，基准取 0。 */
     }
+    /* 对齐 Qt：段表随列数扩容（Qt 的列由 model 驱动 header 段数；
+     * 本框架 setColumnWidth 即列存在性写入点，扩到 column+1 段，
+     * 新段用写入宽而非 defaultSize——与数组镜像一致）。 */
+    if (self->m_horizontalHeader &&
+        column >= XHeaderView_count(self->m_horizontalHeader)) {
+        XHeaderView_setCount(self->m_horizontalHeader, column + 1);
+        XHeaderView_resizeSection(self->m_horizontalHeader, column, width);
+    }
     /* [根修 2026-10-15] 列宽变更差量同步滚动内容宽：此前只写视图列宽
      * 数组，m_contentWidth 滞留旧值——外层「表随视口」按新视口均分列
      * 宽后，旧内容宽与新视口错位，AsNeeded 误亮双条（Modbus 主站页
@@ -366,10 +390,23 @@ void XTableView_setColumnWidth(XTableView* self, int column, int width)
             area, area->m_contentWidth + (width - old),
             area->m_contentHeight);
     }
+    /* 对齐 Qt 6.8 QTableView::setColumnWidth → horizontalHeader()->
+     * resizeSection()（qtableview.cpp: setColumnWidth 直接转发 header）：
+     * 段尺寸事实源在 header，视图侧数组保持镜像（本框架绘制/定位读
+     * 数组，渐进接线）。 */
+    if (self->m_horizontalHeader)
+        XHeaderView_resizeSection(self->m_horizontalHeader, column, width);
 }
 
 int XTableView_columnWidth(const XTableView* self, int column)
 {
+    /* 对齐 Qt columnWidth → horizontalHeader()->sectionSize()：header
+     * 在则段尺寸为准（段数未覆盖时 Qt 回落 defaultSectionSize；本框架
+     * header 段表由列数变更同步驱动，未同步阶段回落视图数组）。 */
+    if (self && self->m_horizontalHeader &&
+        column >= 0 &&
+        column < XHeaderView_count(self->m_horizontalHeader))
+        return XHeaderView_sectionSize(self->m_horizontalHeader, column);
     if (!self || column < 0 || column >= self->m_colCapacity ||
         !self->m_colWidths)
         return XTV_DEFAULT_COL_WIDTH;
@@ -378,11 +415,23 @@ int XTableView_columnWidth(const XTableView* self, int column)
 
 void XTableView_setRowHeight(XTableView* self, int height)
 {
-    if (self && height > 0) self->m_rowHeight = height;
+    if (self && height > 0) {
+        self->m_rowHeight = height;
+        /* 对齐 Qt 6.8：垂直表头段=行，rowHeight() =
+         * verticalHeader()->sectionSize(row)；未逐行覆写段时回落
+         * defaultSectionSize——统一行高语义下把 defaultSectionSize
+         * 同步为本值即等价逐段全量 resizeSection。 */
+        if (self->m_verticalHeader)
+            XHeaderView_setDefaultSectionSize(self->m_verticalHeader,
+                                              height);
+    }
 }
 
 int XTableView_rowHeight(const XTableView* self)
 {
+    /* 对齐 Qt：优先读垂直表头段缺省尺寸（未逐行覆写段即统一行高）。 */
+    if (self && self->m_verticalHeader)
+        return XHeaderView_defaultSectionSize(self->m_verticalHeader);
     return self ? self->m_rowHeight : XTV_DEFAULT_ROW_HEIGHT;
 }
 
@@ -836,20 +885,63 @@ void XTableView_setSpan(XTableView* self, int row, int column,
     XWidget_update((XWidget*)self);
 }
 
-int XTableView_rowSpan(const XTableView* self, int row, int column)
+bool XTableView_spanAt(const XTableView* self, int row, int column,
+                       int* rowSpanOut, int* columnSpanOut,
+                       int* originRowOut, int* originColumnOut)
 {
     const XTableViewSpan* s;
-    if (!self || row < 0 || column < 0) return 1;
+    if (rowSpanOut) *rowSpanOut = 1;
+    if (columnSpanOut) *columnSpanOut = 1;
+    if (originRowOut) *originRowOut = row;
+    if (originColumnOut) *originColumnOut = column;
+    if (!self || row < 0 || column < 0) return false;
     s = xtv_spanFind(self, row, column);
-    return s ? s->rowSpan : 1;
+    if (!s) return false;
+    if (rowSpanOut) *rowSpanOut = s->rowSpan;
+    if (columnSpanOut) *columnSpanOut = s->columnSpan;
+    if (originRowOut) *originRowOut = s->row;
+    if (originColumnOut) *originColumnOut = s->column;
+    return true;
 }
 
-int XTableView_columnSpan(const XTableView* self, int row, int column)
+/* ==================== 滚动与偏移（对标 QTableView::scrollTo/horizontalOffset/verticalOffset） ==================== */
+
+void XTableView_scrollTo(XTableView* self, int row, int column)
 {
-    const XTableViewSpan* s;
-    if (!self || row < 0 || column < 0) return 1;
-    s = xtv_spanFind(self, row, column);
-    return s ? s->columnSpan : 1;
+    /* 对标 Qt QTableView::scrollTo → 基类公共面（EnsureVisible）。 */
+    XAbstractItemView_scrollTo((XAbstractItemView*)self, row, column);
+}
+
+int XTableView_horizontalOffset(const XTableView* self)
+{
+    XScrollBar* bar;
+    if (!self) return 0;
+    bar = XAbstractScrollArea_horizontalScrollBar(
+        (XAbstractScrollArea*)self);
+    return bar ? XAbstractSlider_value((XAbstractSlider*)bar) : 0;
+}
+
+int XTableView_verticalOffset(const XTableView* self)
+{
+    XScrollBar* bar;
+    if (!self) return 0;
+    bar = XAbstractScrollArea_verticalScrollBar(
+        (XAbstractScrollArea*)self);
+    return bar ? XAbstractSlider_value((XAbstractSlider*)bar) : 0;
+}
+
+/* ==================== 视觉序（平铺模型恒等映射） ==================== */
+
+int XTableView_visualIndex(const XTableView* self, int column)
+{
+    (void)self;
+    return column >= 0 ? column : -1;
+}
+
+int XTableView_visualRow(const XTableView* self, int row)
+{
+    (void)self;
+    return row >= 0 ? row : -1;
 }
 
 void XTableView_clearSpans(XTableView* self)

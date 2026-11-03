@@ -103,4 +103,13 @@ bool XSystem_platformMemoryInfo(XSystemMemoryInfo* info)
 
 #endif /* XSYSTEM_MEMORY_USAGE_ON */
 
+bool XSystem_platformTimerPrecision(bool acquire, double* outActualMs)
+{
+    /* 无 OS 后端：没有「系统定时器分辨率」这一层可调，如实报告不支持，
+       由分发层把申请失败传回调用方（调用方据此不应配对 release）。 */
+    (void)acquire;
+    if (outActualMs) *outActualMs = 0.0;
+    return false;
+}
+
 #endif /* !defined(__linux__) && !defined(_WIN32) */

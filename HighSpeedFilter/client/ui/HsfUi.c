@@ -19,6 +19,7 @@
 #include "HsfStack.h"
 #include "HsfNavPanel.h"
 #include "HsfDemoCompat.h"
+#include "HsfSettingsStore.h"
 #include "HsfHomePage.h"
 #include "HsfMainMenu.h"
 #include "HsfMonitorMenu.h"
@@ -27,6 +28,7 @@
 #include "HsfMonitorVfd.h"
 #include "HsfDataMenu.h"
 #include "HsfDataHistory.h"
+#include "HsfDataTable.h" /* HsfDataTablePage_adapt（页 7/8/9 共用钩子）。 */
 #include "HsfDataLog.h"
 #include "HsfDataAlarm.h"
 #include "HsfSettingsMenu.h"
@@ -36,6 +38,7 @@
 #include "HsfOverlayPage.h"
 #include "HsfWindowPage.h"
 #include "XGuiApplication.h"
+#include "XCoreApplication.h"
 #include "XAbstractEventDispatcher.h"
 #include "XWidget.h"
 #include "XBoxLayout.h"
@@ -47,7 +50,10 @@
 #include "XDateTime.h"
 #include "XDeviceNetwork.h"
 #include "XWindowDecoration.h" /* CSD 系统标题栏保留边距（根布局顶边让位） */
+#include "XScreen.h"           /* 主屏几何（缺省窗口尺寸收敛用） */
+#include "XPlatformScreen.h"   /* 平台屏幕契约（Windows 无 XScreen 时的退路） */
 #include "XImage.h"
+#include "XSystem.h"         /* 环境变量钩子（自测触发）。 */
 #include "XWidget_Protected.h"
 #include "XPrintf.h"
 #include <string.h>
@@ -81,6 +87,11 @@ static const HsfPageCreateFn kHsfBuilders[HSF_PAGE_COUNT] = {
 #define HSF_SPLITTER_HANDLE_W 8  /**< 分割条把手宽（拖拽区）。 */
 #define HSF_OVERLAY_MARGIN    0  /**< 悬浮层贴边余量（0=完全贴内容区边）。 */
 
+/* ---- 主窗缺省尺寸（横屏基准） ---- */
+#define HSF_WIN_DEFAULT_W  1280  /**< 主窗缺省宽（横屏基准，16:9）。 */
+#define HSF_WIN_DEFAULT_H   720  /**< 主窗缺省高（横屏基准，16:9）。 */
+#define HSF_WIN_SCREEN_PCT   90  /**< 屏内占比上限（余量留给边框/任务栏）。 */
+
 /* ---- 移植页的窄宽/竖屏适配钩子（页根=build 返回值） ---- */
 typedef void (*HsfAdaptFn)(XWidget* page);
 
@@ -104,7 +115,14 @@ static void hsfAdaptWindow(XWidget* page, bool compact)
 /** 页级 adapt 表（按页索引；NULL=该页无需自适应）。 */
 static const HsfPageAdaptFn kHsfPageAdapt[HSF_PAGE_COUNT] = {
     HsfHomePage_adapt,   /* 0  主界面（横屏一行/竖屏一列） */
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL,
+    HsfMonitorDigital_adapt, /* 3 监视-数字量（竖屏窄列/触控高/顶行堆叠） */
+    HsfMonitorAnalog_adapt,  /* 4 监视-模拟量（竖屏窄列/触控高） */
+    HsfMonitorVfd_adapt, /* 5  监视-变频器（仪表横排/纵排） */
+    NULL,
+    HsfDataTablePage_adapt, /* 7  数据-历史数据（竖屏收边距） */
+    HsfDataTablePage_adapt, /* 8  数据-日志（竖屏收边距） */
+    HsfDataTablePage_adapt, /* 9  数据-报警（竖屏收边距） */
     NULL, NULL,
     hsfAdaptNetwork,     /* 13 网络设置 */
     hsfAdaptOverlay,     /* 14 悬浮窗设置 */
@@ -638,6 +656,74 @@ void demo_main_refreshChrome(void* user)
 
 /* ==================== 主窗创建与三段装配 ==================== */
 
+/** @brief 取主屏尺寸（逻辑像素）；屏信息不可得时返回 false。
+ *  @details 首选框架 XScreen（逻辑坐标，availableGeometry 已扣任务栏）；
+ *           Windows 平台不登记 XScreen（见 Drive/windows），退到平台
+ *           契约 XPlatformScreen_queryFrameSize（设备像素）并按 dpr
+ *           折回逻辑像素（坐标空间与窗位一致）。
+ */
+static bool hsf_primaryScreenSize(int* outW, int* outH)
+{
+    XScreen* screen;
+    int w = 0;
+    int h = 0;
+    if (!outW || !outH) return false;
+    screen = XGuiApplication_primaryScreen();
+    if (screen) {
+        XRect g = XScreen_availableGeometry(screen);
+        if (g.width <= 0 || g.height <= 0)
+            g = XScreen_geometry(screen);
+        if (g.width > 0 && g.height > 0) {
+            *outW = g.width;
+            *outH = g.height;
+            return true;
+        }
+    }
+    if (XPlatformScreen_queryFrameSize(&w, &h) && w > 0 && h > 0) {
+        float dpr = 1.0f;
+        XPlatformScreenDpiInfo dpi;
+        if (XPlatformScreen_queryDpi(&dpi) && dpi.m_valid &&
+            dpi.m_density > 0.0f)
+            dpr = dpi.m_density;
+        *outW = (int)((float)w / dpr + 0.5f);
+        *outH = (int)((float)h / dpr + 0.5f);
+        return true;
+    }
+    return false;
+}
+
+/** @brief 主窗缺省尺寸：横屏基准 1280x720，屏小则等比收敛。
+ *  @details 缺省取宽屏形态（逻辑宽 ≥ HSF_COMPACT_MAX_W ⇒ 宽屏/横屏
+ *           布局，左侧导航常驻）；屏装不下时按 16:9 等比缩到屏内
+ *           （留 HSF_WIN_SCREEN_PCT 余量给边框与任务栏），绝不裁切。
+ */
+static void hsf_defaultWinSize(int* outW, int* outH)
+{
+    int w = HSF_WIN_DEFAULT_W;
+    int h = HSF_WIN_DEFAULT_H;
+    int sw = 0;
+    int sh = 0;
+    if (!outW || !outH) return;
+    if (hsf_primaryScreenSize(&sw, &sh) && sw > 0 && sh > 0) {
+        int availW = (sw * HSF_WIN_SCREEN_PCT) / 100;
+        int availH = (sh * HSF_WIN_SCREEN_PCT) / 100;
+        if (availW < 1) availW = 1;
+        if (availH < 1) availH = 1;
+        if (w > availW || h > availH) {
+            /* 等比缩到屏内：交叉相乘比宽高约束（免浮点误差） */
+            if ((long long)w * availH > (long long)availW * h) {
+                h = (int)((long long)h * availW / w);
+                w = availW;
+            } else {
+                w = (int)((long long)w * availH / h);
+                h = availH;
+            }
+        }
+    }
+    *outW = w;
+    *outH = h;
+}
+
 /** @brief 创建主窗：根垂直布局三段 + 分割条（导航|堆栈）+ builders 挂栈。 */
 static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
                               int shotWidth, int shotHeight, int startPage,
@@ -670,9 +756,16 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     self->m_lastNetworkPollUsecs = 0;
 
     self->m_thenPage = thenPage;
-    XWidget_resize(&self->m_base,
-                   (shotWidth > 0) ? shotWidth : 480,
-                   (shotHeight > 0) ? shotHeight : 320);
+    /* 缺省窗口尺寸：横屏基准（宽屏形态）；--size 显式指定优先（截图
+     * 验收按给定尺寸出图）。 */
+    {
+        int defW = 0;
+        int defH = 0;
+        hsf_defaultWinSize(&defW, &defH);
+        XWidget_resize(&self->m_base,
+                       (shotWidth > 0) ? shotWidth : defW,
+                       (shotHeight > 0) ? shotHeight : defH);
+    }
     XWidget_setWindowTitle_2(&self->m_base, "PMMA有机玻璃高速过滤器");
 
     /* ---- 第一行：标题栏（菜单图标 + 标题文字，模块自理 chrome） ---- */
@@ -817,6 +910,18 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     if (startPage >= 0 && startPage < HSF_PAGE_COUNT)
         hsf_goPage(self, startPage);
 
+    /* 数字量页状态栏反馈挂接 + 兼容自测钩子（env 触发，截图闭环用）。 */
+    HsfMonitorDigital_attachStatus(HsfPages_setStatus, self);
+    HsfMonitorDigital_autotest(self->m_pageRoot[HSF_PAGE_MONITOR_DIGITAL]);
+    /* 模拟量页同款挂接（env 触发，截图闭环用）。 */
+    HsfMonitorAnalog_attachStatus(HsfPages_setStatus, self);
+    HsfMonitorAnalog_autotest(self->m_pageRoot[HSF_PAGE_MONITOR_ANALOG]);
+
+    /* ---- 【持久化恢复·显示前】不依赖窗口句柄的项：皮肤/边框位/窗口
+     * 方向/光标/电源策略。皮肤必须在此落定——窗口映射后首帧即新配色，
+     * 不会先闪一下默认皮肤再跳变（对标 Qt：设置恢复在界面呈现前完成）。 */
+    hsf_page_window_restoreSettings();
+
     /* UI 装配就绪（此前 resize 事件的形态判定一律跳过——侧栏/分割条
      * 尚未建立，判定结果会落在零内存对象上）。 */
     self->m_uiReady = true;
@@ -828,17 +933,36 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     hsf_layoutModeUpdate(self);
     hsf_navApplySizes(self);
     hsf_adaptPages(self);
+    /* 【持久化恢复·显示后】依赖窗口句柄的项：画布旋转（能力探测要句柄）/
+     * 最大化/全屏（窗口态下发）/状态栏与边框 chrome 重排 + 页面控件回填；
+     * 随后悬浮窗各项 + 预设位置（内容区钳制要内容区几何）。
+     * 此时尚未进事件循环，首帧绘制还没发生，用户看不到中间态。 */
+    hsf_page_window_restoreChrome();
+    hsf_page_overlay_restoreSettings();
     hsf_overlayAnchor(self);
     XWidget_raise((XWidget*)&self->m_overlay);
+
+    /* 兼容自测钩子（env XHSF_SETTINGS_AUTOTEST）：直呼槽 = 用户点击的
+       等价路径，闭环验证「改动 → 落盘 → 复位默认」（自测以复位收尾，落盘
+       的即出厂默认值）。 */
+    if (XSystem_environment("XHSF_SETTINGS_AUTOTEST")) {
+        hsf_page_overlay_autotest(
+            self->m_pageRoot[HSF_PAGE_SETTINGS_OVERLAY]);
+        hsf_page_window_autotest(
+            self->m_pageRoot[HSF_PAGE_SETTINGS_WINDOW]);
+    }
 
 
     /* 离屏截图模式：窗口开到屏外（不占用户桌面、不抢焦点），静默渲染
      * 数帧后存 PNG 自动退出（走 XWidget_paintImage 后备图像，与
      * XGuiWindowDemo --screenshot 同口径，不依赖屏幕像素）。 */
     if (self->m_shotPath) {
+        int defW = 0;
+        int defH = 0;
+        hsf_defaultWinSize(&defW, &defH);
         XWidget_setGeometry(&self->m_base, -3000, -3000,
-                            (shotWidth > 0) ? shotWidth : 480,
-                            (shotHeight > 0) ? shotHeight : 320);
+                            (shotWidth > 0) ? shotWidth : defW,
+                            (shotHeight > 0) ? shotHeight : defH);
         self->m_shotTimer = XObject_startTimer_ms(
             (XObject*)self, 1200u, XTimerType_CoarseTimer);
         if (self->m_shotTimer == XTIMER_INVALID_ID) {
@@ -946,5 +1070,8 @@ int HsfUi_start(int autoExitSeconds, const char* shotPath,
     /* 清理：页面均为堆块子树、两栏/堆栈/分割条为内嵌成员，随窗级联
      * 析构；HsfWin 本体堆分配，整块一次回收。 */
     XClassDelete((XClass*)win);
+    /* 设置落盘收尾（析构内含 sync；此处显式收口，覆盖非 aboutToQuit
+       退出路径——如自动退出定时器/外部 quit）。 */
+    HsfSettingsStore_close();
     return result;
 }

@@ -2180,33 +2180,43 @@ int xapi_input_run(void)
                     XComboBox_itemDelegate(&cb) == NULL,
                     "ComboBox 默认无校验器/委托");
 
-        /* ---- 条目管理：addItem/插入不自动置当前项 ---- */
+        /* ---- 条目管理：addItem 首项自动置当前（Qt 6.8 对齐 2026-11-03） ---- */
+        /* Qt QComboBoxPrivate::rowsInserted（qcombobox.cpp:1146-1153）：
+           空 combo 插入首项且无 placeholderText → setCurrentIndex(0)
+           并发射对信号。此前 XGui 保持 -1 是记录在案的对齐差异，本批
+           按框架层根修翻转为 Qt 口径（占位文本存在时仍不自动选中）。 */
         XComboBox_addItem_2(&cb, "Alpha");
         XComboBox_addItem_2(&cb, "Beta");
         XComboBox_addItem_2(&cb, "Gamma");
         XAPI_EXPECT(XComboBox_count(&cb) == 3,
                     "ComboBox addItem_2 三项 count=3");
-        XAPI_EXPECT(XComboBox_currentIndex(&cb) == -1,
-                    "ComboBox 插入不自动置当前项（XGui 口径；Qt 首项自动置当前——已按回归行为断言，差异记录）");
-        XAPI_EXPECT(g_cbSig.indexChanged == 0 && g_cbSig.textChangedCount == 0,
-                    "ComboBox 插入不发 currentIndex/Text 变化信号");
+        XAPI_EXPECT(XComboBox_currentIndex(&cb) == 0,
+                    "ComboBox 空 combo 首插自动置当前项 0（Qt rowsInserted 口径）");
+        XAPI_EXPECT(g_cbSig.indexChanged == 1 && g_cbSig.textChangedCount == 1,
+                    "ComboBox 首插发射 currentIndex/Text 变化信号各一次（后续插入不再发）");
 
         /* ---- setCurrentIndex 与信号 ---- */
+        /* （首插已置 current=0 并发过一对信号：indexChanged/textChanged
+         * 各 1；此处再切 1 是第二次变化 → 计数到 2。） */
         XComboBox_setCurrentIndex(&cb, 1);
         XAPI_EXPECT(XComboBox_currentIndex(&cb) == 1 &&
-                    g_cbSig.indexChanged == 1 && g_cbSig.lastIndex == 1,
+                    g_cbSig.indexChanged == 2 && g_cbSig.lastIndex == 1,
                     "ComboBox setCurrentIndex(1) 生效并发射 currentIndexChanged(1)");
         XAPI_EXPECT(strcmp(xapi_cstr(XComboBox_currentText_2(&cb)), "Beta") == 0 &&
-                    g_cbSig.textChangedCount == 1 &&
+                    g_cbSig.textChangedCount == 2 &&
                     strcmp(g_cbSig.lastText, "Beta") == 0,
                     "ComboBox 当前文本随之=Beta 并发射 currentTextChanged");
         XComboBox_setCurrentIndex(&cb, 1);
-        XAPI_EXPECT(g_cbSig.indexChanged == 1,
+        XAPI_EXPECT(g_cbSig.indexChanged == 2,
                     "ComboBox 同索引 setCurrentIndex 无操作不发射");
         XComboBox_setCurrentIndex(&cb, 99);
-        XAPI_EXPECT(XComboBox_currentIndex(&cb) == 2 &&
-                    g_cbSig.lastIndex == 2,
-                    "ComboBox 越界索引钳位到末项（Qt 钳位语义）");
+        /* Qt 6.8 setCurrentIndex：越界行号给无效模型索引 → currentIndex
+         * 置 -1 并发射 currentIndexChanged(-1)/currentTextChanged("")
+         * （qcombobox.cpp:2150-2152 + QComboBoxPrivate::setCurrentIndex，
+         * 不钳位到末项——旧断言「钳位末项」与 Qt 不符，随本批对齐）。 */
+        XAPI_EXPECT(XComboBox_currentIndex(&cb) == -1 &&
+                    g_cbSig.lastIndex == -1,
+                    "ComboBox 越界索引置无效 -1 并发射（Qt 语义）");
 
         /* ---- findText/itemText/setItemText ---- */
         XAPI_EXPECT(XComboBox_findText_2(&cb, "Alpha") == 0 &&

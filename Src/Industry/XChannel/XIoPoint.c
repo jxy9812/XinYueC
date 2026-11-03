@@ -12,6 +12,7 @@
 
 #if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON
 
+#include "XIoAnalogPoint.h"
 #include <string.h>
 
 /* ==================== 虚函数表（无自定义虚槽） ==================== */
@@ -85,16 +86,6 @@ const char* XIoPoint_tag(const XIoPoint* point)
     return point ? point->m_tag : NULL;
 }
 
-void XIoPoint_setScale(XIoPoint* point, int32_t scaleNum, int32_t scaleDen,
-                       int32_t offset, int32_t deadband)
-{
-    if (!point) return;
-    point->m_scaleNum = scaleNum;
-    point->m_scaleDen = scaleDen;
-    point->m_offset = offset;
-    point->m_deadband = (deadband < 0) ? 0 : deadband;
-}
-
 void XIoPoint_setSigned(XIoPoint* point, bool signedValue)
 {
     if (!point) return;
@@ -147,51 +138,16 @@ bool XIoPoint_isValid(const XIoPoint* point)
 
 int32_t XIoPoint_toEngineering(const XIoPoint* point, int32_t raw)
 {
-    int64_t num;
-    int64_t den;
     if (!point) return raw;
-    num = (int64_t)raw * (int64_t)(point->m_scaleNum == 0 ? 1 : point->m_scaleNum);
-    den = (int64_t)(point->m_scaleDen == 0 ? 1 : point->m_scaleDen);
-    /* 向零取整：C 的整型除法对负数即向零截断。 */
-    return (int32_t)(num / den) + point->m_offset;
-}
-
-uint16_t XIoPoint_toRaw(const XIoPoint* point, int32_t value)
-{
-    int64_t num;
-    int64_t den;
-    int64_t raw;
-    if (!point) return 0;
-
-    num = (int64_t)value - (int64_t)point->m_offset;
-    num *= (int64_t)(point->m_scaleDen == 0 ? 1 : point->m_scaleDen);
-    den = (int64_t)(point->m_scaleNum == 0 ? 1 : point->m_scaleNum);
-    if (den < 0) {
-        /* 分母为负时把符号并进分子，保证除法的舍入方向一致。 */
-        den = -den;
-        num = -num;
+    /* [2026-11-03 拆分] 数字量（DI/DO）无标度：0/1 直通，恒等返回。
+     * 模拟量（AI/AO）标度在 XIoAnalogPoint，按虚表指针委托；
+     * 类型与实例不符（误用，装配闸口会拒绝）按恒等返回兜底。 */
+    if (point->m_type != (uint16_t)XIoPoint_AnalogInput &&
+        point->m_type != (uint16_t)XIoPoint_AnalogOutput) {
+        return raw;
     }
-    /* 就近取整（.5 远离零），与旧实现保持一致。 */
-    if (num >= 0) {
-        raw = (num + den / 2) / den;
-    } else {
-        raw = -((-num + den / 2) / den);
-    }
-
-    /* [2026-11-02 根修] 符号语义只在这里定义一次：
-     *   有符号点（m_signed=1）→ 负数按 16 位补码归一（-2000 → 0xF830），
-     *                            正数上限 32767 之外仍按补码环绕；
-     *   无符号点           → 负值钳 0，上限 65535。
-     * 旧实现（XIoAnalogPoint.c）先取绝对值算商、恢复负号后又无条件
-     * `if (quotient < 0) quotient = 0;`，把每一个负给定都静默吞成 0。 */
-    if (point->m_flags.bits.m_signed) {
-        if (raw > 32767) raw = ((raw + 32768) % 65536) - 32768;
-        if (raw < -32768) raw = ((raw + 32768) % 65536) - 32768;
-        return (uint16_t)((uint32_t)raw & 0xFFFFu);
-    }
-    if (raw < 0) raw = 0;
-    if (raw > 65535) raw = 65535;
-    return (uint16_t)raw;
+    if (!XIoAnalogPoint_isInstance(point)) return raw;
+    return XIoAnalogPoint_toEngineering((const XIoAnalogPoint*)point, raw);
 }
 
 #endif /* XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON */

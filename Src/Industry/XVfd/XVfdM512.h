@@ -46,7 +46,7 @@ extern "C" {
 /* ========================================================================== */
 
 #define XVfdM512_AddrFreqSet        0x1000  /**< 通讯设定值（±10000 = ±100.00%，int16 补码） */
-#define XVfdM512_AddrTelemetry      0x1001  /**< 快捷遥测块起点：运行频率(0.01Hz) */
+#define XVfdM512_AddrTelemetry      0x1001  /**< 快捷遥测块起点：运行频率(0.1Hz) */
 #define XVfdM512_TelemetryCount     32      /**< 1001H~1020H 运行/停机参数条（手册一条） */
 #define XVfdM512_AddrPassword       0x1F00  /**< 用户密码校验（写入后回 8888H=通过） */
 #define XVfdM512_AddrParamInit      0x1F01  /**< 参数初始化（1/2 恢复出厂 3清记录 4备份 501 恢复备份） */
@@ -58,7 +58,7 @@ extern "C" {
 #define XVfdM512_AddrRunState       0x3000  /**< 运行状态（1正转 2反转 3停机） */
 #define XVfdM512_AddrFault          0x8000  /**< 故障码（附录1 通信故障表） */
 #define XVfdM512_AddrMonitorBase    0x7000  /**< U0 组监视参数起点（7000H=运行频率） */
-#define XVfdM512_AddrMonitorEnd     0x7046  /**< U0 组监视参数末址（U0.74） */
+#define XVfdM512_AddrMonitorEnd     0x7046  /**< U0 组监视参数末址（U0.73） */
 #define XVfdM512_AddrMonitorHole1   0x7030  /**< U0 组内空洞（手册未印该址） */
 #define XVfdM512_AddrMonitorHole2   0x7033  /**< U0 组内空洞起点（手册未印 U0.50~U0.57） */
 #define XVfdM512_AddrMonitorHole2End 0x7039 /**< U0 组内空洞末址 */
@@ -70,17 +70,17 @@ extern "C" {
 #define XVfdM512_AddrFreqSource     0xF003  /**< P0.03 主频率源X选择（9=通讯给定） */
 #define XVfdM512_AddrAuxFreqSource  0xF004  /**< P0.04 辅助频率源Y选择 */
 #define XVfdM512_AddrPresetFreq     0xF008  /**< P0.08 预置频率 */
-#define XVfdM512_AddrMaxFreq        0xF00A  /**< P0.10 最大频率（Hz，两位小数） */
+#define XVfdM512_AddrMaxFreq        0xF00A  /**< P0.10 最大频率（Hz，0.1Hz 定点：500 = 50.0Hz） */
 #define XVfdM512_AddrUpperFreq      0xF00C  /**< P0.12 上限频率 */
 #define XVfdM512_AddrLowerFreq      0xF00E  /**< P0.14 下限频率 */
-#define XVfdM512_AddrCarrier        0xF00F  /**< P0.15 载波频率 */
+#define XVfdM512_AddrCarrier        0xF00F  /**< P0.15 载波频率（0.1kHz 定点：40 = 4.0kHz） */
 #define XVfdM512_AddrAccelTime      0xF011  /**< P0.17 加速时间 1 */
 #define XVfdM512_AddrDecelTime      0xF012  /**< P0.18 减速时间 1 */
 #define XVfdM512_AddrTimeUnit       0xF013  /**< P0.19 加减速时间单位（0=1s 1=0.1s 2=0.01s） */
 #define XVfdM512_AddrPidSource      0xFA00  /**< PA.00 PID 给定源（5=通讯给定） */
 #define XVfdM512_AddrPidTarget      0xFA01  /**< PA.01 PID 数字给定（0~PA.04 量程单位） */
 #define XVfdM512_AddrPidRange       0xFA04  /**< PA.04 PID 给定反馈量程 */
-#define XVfdM512_AddrJogFreq        0xF800  /**< P8.00 点动运行频率（Hz，两位小数） */
+#define XVfdM512_AddrJogFreq        0xF800  /**< P8.00 点动运行频率（Hz，0.1Hz 定点） */
 #define XVfdM512_AddrPresetBase     0xFC00  /**< PC.00 多段指令 0（-10000~10000 = ±100%） */
 #define XVfdM512_AddrPresetCount    16      /**< PC.00~PC.15 共 16 段 */
 #define XVfdM512_AddrBaudRate       0xFD00  /**< Pd.00 通讯波特率（复合值：千位CANlink/十位Profibus/个位MODBUS） */
@@ -94,8 +94,11 @@ extern "C" {
 
 /** @brief 通讯设定值原生单位除率（±10000 = ±100.00%）。 */
 #define XVfdM512_FreqPercentDiv     100
-/** @brief 最大频率原生单位除率（5000 = 50.00Hz）。 */
-#define XVfdM512_MaxFreqDiv         100
+/** @brief 频率类原生单位除率（0.1Hz 定点：500 = 50.0Hz）。
+ *  @note 2026-11-03 实机标定：P0.10 实读 500、面板 20% 给定显示 10Hz、
+ *        P0.22 频率指令分辨率实读 1（=0.1Hz）。手册标 0.01Hz 与固件不符，
+ *        且 16 位寄存器按 0.01Hz 装不下手册标的 5000Hz 上限。 */
+#define XVfdM512_MaxFreqDiv         10
 /** @brief 加减速时间原生单位除率（P0.19 缺省 1 = 0.1s）。 */
 #define XVfdM512_TimeDiv            10
 /** @brief 单次读帧寄存器数上限（附录1：n 最大 12）。 */

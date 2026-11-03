@@ -17,6 +17,11 @@
 #include "XPainter.h"
 #include "XWidget_Protected.h"
 #include "XWindowEvent.h"
+#if XGESTURE_ON
+#include "XGestureEvent.h"
+#include "XPinchGestureRecognizer.h"
+#include "XPanGestureRecognizer.h"
+#endif /* XGESTURE_ON */
 /* 环境门控读取（XCHARTVIEW_PROFILE 计时、XGUI_CHART_DIRTY_CULL 回退与
  * XGUI_CHART_STATIC_CACHE 图例保留瓦片开关共用；各开关一次探测缓存，
  * 关闭路径近零开销）。 */
@@ -429,8 +434,26 @@ static void xcv_layout(const XChartView* self, XRect* titleR,
     if (self->m_chart && !self->m_chart->m_titleVisible)
         top = 8;
     if (titleR) XRect_init(titleR, 0, 0, w, top);
-    if (plotR) XRect_init(plotR, left, top + 4,
-                          w - left - right, h - top - 4 - bottom);
+    {
+        XRect pr;
+        XRect_init(&pr, left, top + 4,
+                   w - left - right, h - top - 4 - bottom);
+        if (plotR) *plotR = pr;
+        /* [绘图区发布 2026-11-03] 把视图算出的绘图区**发布到模型**：
+         * 图表侧的 XChart_plotArea / XChart_mapToValue 读的是模型里的
+         * m_plotArea，而视图此前从不发布它——挂进视图的图表模型绘图区恒
+         * 为空 ⇒ 拖拽平移（鼠标拖动与手势平移都按 plot.width>1 判活）
+         * 与光标锚点换算整体失效（拖了没反应）。发布后模型与视图同源，
+         * 对标 Qt：QChartView 把布局结果写回 QChart 的 plot area。 */
+        if (self->m_chart) {
+            XRectF pf;
+            pf.x = (float)pr.x;
+            pf.y = (float)pr.y;
+            pf.width = (float)pr.width;
+            pf.height = (float)pr.height;
+            XChart_setPlotArea(self->m_chart, &pf);
+        }
+    }
     if (legendR) XRect_init(legendR, w - 150, top + 8, 145, 20 * 6);
 }
 
@@ -2145,6 +2168,10 @@ static void VX_chartView_mouseReleaseEvent(XWidget* self, XEvent* event);
 static void VX_chartView_mouseDoubleClickEvent(XWidget* self, XEvent* event);
 /** @brief 滚轮处理（虚表入口，定义见下）。 */
 static void VX_chartView_wheelEvent(XWidget* self, XEvent* event);
+#if XGESTURE_ON
+/** @brief 手势处理（虚表入口，定义见下；捏合缩放/平移，触屏交互）。 */
+static void VX_chartView_gestureEvent(XWidget* self, XEvent* event);
+#endif /* XGESTURE_ON */
 /** @brief 析构处理（虚表入口，定义见下）。不随 STATIC_LAYER 裁剪：
  *         自有 m_chart 的释放（见定义处注释）在任何编译配置下都必须
  *         挂入虚表。 */
@@ -2153,7 +2180,12 @@ static void VX_chartView_deinit(XChartView* self);
 /** @brief 尺寸变化：静态层失效（§10.2 失效挂钩；层画布在新尺寸首帧
  *         重建，尺寸/格式比对在 renderToImage 入口兜底）。图例瓦片随
  *         瓦片区（随尺寸联动）一并整体失效（保留缓存一期粗失效口径；
- *         开关关时瓦片闲置，仅布尔清零、零行为变化）。 */
+ *         开关关时瓦片闲置，仅布尔清零、零行为变化）。
+ *  @note  [绘图区发布 2026-11-03] 同时把新尺寸算出的绘图区发布到模型
+ *         （xcv_layout 内部写 chart->m_plotArea）：绘图区是模型侧
+ *         plotArea/mapToValue 的唯一来源，拖拽平移/手势平移/光标锚点
+ *         换算都读它——尺寸一变即发布，模型与视图保持同源（首次绘制
+ *         前也成立：无头/探针场景无绘制事件）。 */
 static void VX_chartView_resizeEvent(XWidget* self, XEvent* event)
 {
 #if XCHARTVIEW_STATIC_LAYER_ON
@@ -2166,6 +2198,7 @@ static void VX_chartView_resizeEvent(XWidget* self, XEvent* event)
     (void)self;
 #endif /* XCHARTVIEW_STATIC_LAYER_ON */
     (void)event;
+    xcv_layout((const XChartView*)self, NULL, NULL, NULL);  /* 发布绘图区 */
 }
 
 /** @brief 析构：释放自有图表模型与静态层/图例瓦片画布（§8.0g 逐套
@@ -2201,6 +2234,9 @@ XVtable* XChartView_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VX_chartView_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, VX_chartView_mouseDoubleClickEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VX_chartView_wheelEvent);
+#if XGESTURE_ON
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_GestureEvent, VX_chartView_gestureEvent);
+#endif /* XGESTURE_ON */
     /* 析构重载不随 STATIC_LAYER 裁剪：m_chart 的释放依赖它（定义处注释）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_chartView_deinit);
     return XVTABLE_DEFAULT;
@@ -2241,6 +2277,63 @@ static void xcv_pushCurrentDomain(XChartView* self)
     chart->m_zoomStack[chart->m_zoomCount].height =
         (float)(chart->m_axisY->m_base.m_max - chart->m_axisY->m_base.m_min);
     ++chart->m_zoomCount;
+}
+
+/**
+ * @brief 发射 viewportChanged 信号（用户交互改变视口；参数列表由信号槽
+ *        机制接管，勿在此释放）。
+ *
+ * @param self   目标视图指针。
+ * @param reason 视口变更原因（XChartView_ViewportChange）。
+ * @return 无返回值。
+ */
+static void xcv_emitViewportChanged(XChartView* self, int reason)
+{
+    XVarList* args;
+    if (!self) return;
+    if (!((XObject*)self)->m_signalSlot) return;
+    args = XVarList_Create(XVar(int, reason));
+    if (!args) return;
+    XObject_emitSignal((XObject*)self,
+                       (size_t)XChartView_viewportChanged_signal(self, reason),
+                       args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+/**
+ * @brief 视图点 → X 域锚点（滚轮缩放围绕光标用）。
+ * @details 光标横向比例→X 域值；轴 reverse 时比例翻转（与 xcv_mapPoint
+ *          同口径）。ratio 出参为锚点在 X 域中的相对位置（缩放前后
+ *          保持该位置 ⇒ 锚点停在光标下）。
+ * @param self 目标视图指针。 @param pos 视图局部坐标。 @param outAnchor 出参：锚点数据值。 @param outRatio 出参：锚点相对位置（0..1）。
+ * @return 无返回值。
+ */
+static void xcv_cursorAnchorX(const XChartView* self, XPoint pos,
+                               double* outAnchor, double* outRatio)
+{
+    XRect plotR;
+    XValueAxis* ax;
+    double min;
+    double max;
+    double w;
+    double p;
+    double vfrac;
+    if (outAnchor) *outAnchor = 0.0;
+    if (outRatio) *outRatio = 0.5;
+    if (!self || !self->m_chart) return;
+    ax = self->m_chart->m_axisX;
+    if (!ax) return;
+    xcv_layout(self, NULL, &plotR, NULL);
+    if (plotR.width <= 0) return;
+    min = ax->m_base.m_min;
+    max = ax->m_base.m_max;
+    w = max - min;
+    if (w <= 0.0) return;
+    p = (double)(pos.x - plotR.x) / (double)plotR.width;
+    if (p < 0.0) p = 0.0;
+    if (p > 1.0) p = 1.0;
+    vfrac = ax->m_base.m_reverse ? (1.0 - p) : p;
+    if (outAnchor) *outAnchor = min + vfrac * w;
+    if (outRatio) *outRatio = vfrac;
 }
 
 /** @brief 命中检测：找距像素点最近的 XY 序列点（阈值 10px）。 */
@@ -2437,6 +2530,17 @@ static void VX_chartView_mousePressEvent(XWidget* self, XEvent* event)
     me = (XMouseEvent*)event;
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) return;
     pos = XMouseEvent_position(me);
+    /* 拖拽平移：NoRubberBand + panEnabled 时左键按下即进入平移
+     * （框选模式开启时框选优先，两模式互斥）。 */
+    if (!xcv_rubberBandActive(cv) && cv->m_panEnabled &&
+        xcv_inPlotArea(cv, pos.x, pos.y)) {
+        cv->m_panning = true;
+        cv->m_panLast = pos;
+        cv->m_panNotified = false;   /* 本次平移首个移动帧再发信号。 */
+        XWidget_grabMouse(self);
+        XEvent_accept(event);
+        return;
+    }
     if (!xcv_rubberBandActive(cv) ||
         !xcv_inPlotArea(cv, pos.x, pos.y)) {
         int idx;
@@ -2482,6 +2586,40 @@ static void VX_chartView_mouseMoveEvent(XWidget* self, XEvent* event)
     if (!cv || !event || XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE)
         return;
     me = (XMouseEvent*)event;
+    if (cv->m_panning) {
+        /* 平移拖拽：鼠标位移换算为**域绝对单位**滚动（拖多少移多少）。
+           时间轴模式：只平移横轴（纵轴交给应用侧自动量程）。
+           注：XChart_scroll/scrollX 的入参是域绝对单位（Qt QChart::scroll
+           口径），此处按「像素/绘图区宽 × 域宽」换算。 */
+        XRectF plot = XChart_plotArea(cv->m_chart);
+        XPoint now = XMouseEvent_position(me);
+        if (plot.width > 1.0 && cv->m_chart) {
+            double dxAbs = -(double)(now.x - cv->m_panLast.x) / plot.width *
+                           (cv->m_chart->m_axisX->m_base.m_max -
+                            cv->m_chart->m_axisX->m_base.m_min);
+            if (cv->m_timeAxisMode) {
+                /* 仅横轴：拖多少移多少（左右拖拽看历史）。 */
+                XChart_scrollX(cv->m_chart, dxAbs);
+            } else {
+                double dyAbs = (double)(now.y - cv->m_panLast.y) /
+                               plot.height *
+                               (cv->m_chart->m_axisY->m_base.m_max -
+                                cv->m_chart->m_axisY->m_base.m_min);
+                /* X/Y 域同平移（拖拽语义）；增量小步滚动保持跟手。 */
+                XChart_scroll(cv->m_chart, dxAbs, dyAbs);
+            }
+            if (!cv->m_panNotified) {
+                /* 首次有效位移才报平移（纯点击不报，避免应用侧误判
+                   视口被接管而停止自动跟随）。 */
+                cv->m_panNotified = true;
+                xcv_emitViewportChanged(cv, XChartView_ViewportChange_Pan);
+            }
+        }
+        cv->m_panLast = now;
+        XWidget_update(self);
+        XEvent_accept(event);
+        return;
+    }
     if (!cv->m_dragging) {
         /* 悬停命中：进入/离开发射 hovered。 */
         int idx;
@@ -2588,6 +2726,15 @@ static void VX_chartView_mouseReleaseEvent(XWidget* self, XEvent* event)
     if (XMouseEvent_button(me) != XMouseButton_LeftButton &&
         XMouseEvent_button(me) != XMouseButton_RightButton)
         return;
+    if (cv->m_panning) {
+        /* 平移结束：释放抓取并发射 release 语义（无序列命中路径）。 */
+        if (XMouseEvent_button(me) == XMouseButton_LeftButton) {
+            cv->m_panning = false;
+            XWidget_releaseMouse(self);
+            XEvent_accept(event);
+            return;
+        }
+    }
     if (!cv->m_dragging) {
         int idx;
         double hx;
@@ -2698,10 +2845,17 @@ static void VX_chartView_mouseDoubleClickEvent(XWidget* self, XEvent* event)
         return;
     }
     pos = XMouseEvent_position(me);
-    if (XMouseEvent_modifiers(me) & XKeyboardModifier_ShiftModifier)
+    if (XMouseEvent_modifiers(me) & XKeyboardModifier_ShiftModifier) {
         XChart_zoomReset(cv->m_chart);
-    else
+        xcv_emitViewportChanged(cv, XChartView_ViewportChange_Reset);
+    } else if (cv->m_timeAxisMode) {
+        /* 时间轴模式：双击只放大横轴（纵轴交给应用侧自动量程）。 */
+        XChart_zoomX(cv->m_chart, 2.0);
+        xcv_emitViewportChanged(cv, XChartView_ViewportChange_Zoom);
+    } else {
         XChart_zoomIn(cv->m_chart);
+        xcv_emitViewportChanged(cv, XChartView_ViewportChange_Zoom);
+    }
     {
         int idx;
         double hx;
@@ -2717,7 +2871,9 @@ static void VX_chartView_mouseDoubleClickEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
-/** @brief 滚轮：普通滚动映射为域滚动（120 角度 = 5% 域宽）；Ctrl+滚轮缩放。 */
+/** @brief 滚轮：普通滚动映射为域滚动（120 角度 = 5% 域宽）；Ctrl+滚轮缩放。
+ *  @note  时间轴模式（趋势图口径）：滚轮＝**缩放横轴**，围绕光标处的
+ *         时间值缩放（纵轴交给应用侧自动量程）；Ctrl 修饰不改变语义。 */
 static void VX_chartView_wheelEvent(XWidget* self, XEvent* event)
 {
     XChartView* cv = (XChartView*)self;
@@ -2727,21 +2883,123 @@ static void VX_chartView_wheelEvent(XWidget* self, XEvent* event)
     {
         XPoint delta = XWheelEvent_angleDelta(we);
         XKeyboardModifiers mods = XWheelEvent_modifiers(we);
-        if (mods & XKeyboardModifier_ControlModifier) {
-            /* Ctrl+滚轮：以绘图区中心缩放（向上放大一档，向下缩小）。 */
-            if (delta.y > 0)
-                XChart_zoomIn(cv->m_chart);
-            else if (delta.y < 0)
-                XChart_zoomOut(cv->m_chart);
+        if (cv->m_timeAxisMode) {
+            /* 时间轴模式：滚轮=缩放横轴（光标锚点；纵轴不动）。 */
+            double factor = 0.0;
+            if (delta.y > 0) factor = 1.25;
+            else if (delta.y < 0) factor = 0.8;
+            if (factor > 0.0) {
+                double anchor = 0.0;
+                double ratio = 0.5;
+                xcv_cursorAnchorX(cv, XWheelEvent_position(we),
+                                  &anchor, &ratio);
+                XChart_zoomXAt(cv->m_chart, factor, anchor, ratio);
+                xcv_emitViewportChanged(cv, XChartView_ViewportChange_Zoom);
+            }
+        } else if (mods & XKeyboardModifier_ControlModifier) {
+            /* Ctrl+滚轮：以绘图区中心缩放（向上放大一档，向下缩小）；
+             * wheelZoomXOnly 时仅缩 X 轴（Y 域交给自动量程）。 */
+            if (delta.y > 0) {
+                if (cv->m_wheelZoomXOnly) XChart_zoomX(cv->m_chart, 1.25);
+                else XChart_zoomIn(cv->m_chart);
+            } else if (delta.y < 0) {
+                if (cv->m_wheelZoomXOnly) XChart_zoomX(cv->m_chart, 0.8);
+                else XChart_zoomOut(cv->m_chart);
+            }
         } else {
-            double dx = (double)delta.x / (120.0 * 20.0);
-            double dy = (delta.y != 0) ? (double)delta.y : (double)delta.x;
-            XChart_scroll(cv->m_chart, dx, dy / (120.0 * 20.0));
+            /* 普通滚轮＝域滚动（Qt Charts 无滚轮滚动，此为框架扩展）：
+               偏移量按 Qt QChart::scroll 口径以**域绝对单位**给出——
+               每 120 角度滚动 5% 域宽。 */
+            double dxAbs = (double)delta.x / (120.0 * 20.0) *
+                           (cv->m_chart->m_axisX->m_base.m_max -
+                            cv->m_chart->m_axisX->m_base.m_min);
+            double dyAbs = ((delta.y != 0) ? (double)delta.y : (double)delta.x) /
+                           (120.0 * 20.0) *
+                           (cv->m_chart->m_axisY->m_base.m_max -
+                            cv->m_chart->m_axisY->m_base.m_min);
+            XChart_scroll(cv->m_chart, dxAbs, dyAbs);
         }
     }
     XWidget_update(self);
     XEvent_accept(event);
 }
+
+#if XGESTURE_ON
+/** @brief 手势：捏合缩放（时间轴模式＝X 轴；否则双轴）+ 平移（delta 域滚动）。
+ *  @note  识别器由 setTouchGesturesEnabled 挂。单指拖拽另有一条路径：
+ *         框架 touch→mouse 仿真把单指拖拽合成左键按下+移动，图表的
+ *         鼠标平移分支已处理（与真实鼠标同构）——故 Pan 手势在此
+ *         **只在鼠标平移未在进行时**生效，避免一路平移两遍（双倍速）。 */
+static void VX_chartView_gestureEvent(XWidget* self, XEvent* event)
+{
+    XChartView* cv = (XChartView*)self;
+    XGestureEvent* ge;
+    XGestureEventType type;
+    XGestureState state;
+    if (!cv || !event || XEvent_type(event) != XEVENT_TYPE_GESTURE) return;
+    ge = (XGestureEvent*)event;
+    type = XGestureEvent_gestureType(ge);
+    state = XGestureEvent_state(ge);
+    if (!cv->m_touchZoom) { XEvent_ignore(event); return; }
+    if (type == XGestureEventType_Pinch) {
+        /* 捏合：本帧 scaleFactor 逐帧应用（Started 清累积标志，
+         * Finished/Canceled 收口）。以绘图区中心为焦点缩 X（或双轴）。 */
+        float factor = XGestureEvent_scaleFactor(ge);
+        if (state == XGestureState_Started) {
+            cv->m_pinching = true;
+        } else if (state == XGestureState_Updated) {
+            if (factor > 0.05f && factor < 20.0f) {
+                if (cv->m_timeAxisMode || cv->m_wheelZoomXOnly)
+                    XChart_zoomX(cv->m_chart, (double)factor);
+                else
+                    XChart_zoom(cv->m_chart, (double)factor);
+                xcv_emitViewportChanged(cv, XChartView_ViewportChange_Zoom);
+                XWidget_update(self);
+            }
+        } else if (state == XGestureState_Finished ||
+                   state == XGestureState_Canceled) {
+            cv->m_pinching = false;
+        }
+        XEvent_accept(event);
+        return;
+    }
+    if (type == XGestureEventType_Pan) {
+        /* 平移：delta（本帧增量，控件局部 px）→ 绘图区比例域滚动。
+         * 单指 Pan 亦进（触屏单指拖图=桌面拖拽同语义）。 */
+        XRectF plot = XChart_plotArea(cv->m_chart);
+        XPoint d = XGestureEvent_delta(ge);
+        if (state == XGestureState_Started)
+            cv->m_panNotified = false;   /* 新一轮平移：允许再报一次信号。 */
+        if (state == XGestureState_Updated && plot.width > 1.0 &&
+            cv->m_chart && (d.x != 0 || d.y != 0)) {
+            /* 鼠标平移已在进行（touch→mouse 仿真路径）⇒ 本手势跳过，
+             * 避免同一根手指把视口平移两遍。 */
+            if (!cv->m_panning) {
+                double dxAbs = -(double)d.x / plot.width *
+                               (cv->m_chart->m_axisX->m_base.m_max -
+                                cv->m_chart->m_axisX->m_base.m_min);
+                if (cv->m_timeAxisMode) {
+                    /* 时间轴模式：只左右平移横轴。 */
+                    XChart_scrollX(cv->m_chart, dxAbs);
+                } else {
+                    double dyAbs = (double)d.y / plot.height *
+                                   (cv->m_chart->m_axisY->m_base.m_max -
+                                    cv->m_chart->m_axisY->m_base.m_min);
+                    XChart_scroll(cv->m_chart, dxAbs, dyAbs);
+                }
+                if (!cv->m_panNotified) {
+                    cv->m_panNotified = true;
+                    xcv_emitViewportChanged(cv, XChartView_ViewportChange_Pan);
+                }
+                XWidget_update(self);
+            }
+        }
+        XEvent_accept(event);
+        return;
+    }
+    XEvent_ignore(event);
+}
+#endif /* XGESTURE_ON */
 
 void XChartView_init(XChartView* self, XWidget* parent, XWidgetFlags flags)
 {
@@ -2817,6 +3075,76 @@ XChartView_RubberBands XChartView_rubberBand(const XChartView* self)
 {
     return self ? self->m_rubberBand
                 : XChartView_RubberBand_NoRubberBand;
+}
+
+void XChartView_setPanEnabled(XChartView* self, bool enabled)
+{
+    if (!self) return;
+    self->m_panEnabled = enabled;
+    if (!enabled) self->m_panning = false;
+}
+
+bool XChartView_panEnabled(const XChartView* self)
+{
+    return self ? self->m_panEnabled : false;
+}
+
+void XChartView_setWheelZoomXOnly(XChartView* self, bool xAxisOnly)
+{
+    if (!self) return;
+    self->m_wheelZoomXOnly = xAxisOnly;
+}
+
+bool XChartView_wheelZoomXOnly(const XChartView* self)
+{
+    return self ? self->m_wheelZoomXOnly : false;
+}
+
+void XChartView_setTouchGesturesEnabled(XChartView* self, bool enabled)
+{
+#if XGESTURE_ON
+    if (!self || self->m_touchZoom == enabled) return;
+    self->m_touchZoom = enabled;
+    if (enabled) {
+        /* 挂捏合+平移识别器（对象由视图拥有，deinit 释放；订阅即把
+         * 识别器 target 绑到本控件——触摸帧沿父链分发到持有者）。 */
+        XGestureRecognizer* pinch = (XGestureRecognizer*)
+            XPinchGestureRecognizer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                              (XObject*)self);
+        XGestureRecognizer* pan = (XGestureRecognizer*)
+            XPanGestureRecognizer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                            (XObject*)self);
+        if (pinch) XWidget_addGestureRecognizer(&self->m_base, pinch);
+        if (pan) XWidget_addGestureRecognizer(&self->m_base, pan);
+    } else {
+        XWidget_clearGestureRecognizers(&self->m_base);
+    }
+#else
+    (void)self; (void)enabled;
+#endif /* XGESTURE_ON */
+}
+
+bool XChartView_touchGesturesEnabled(const XChartView* self)
+{
+    return self ? self->m_touchZoom : false;
+}
+
+void XChartView_setTimeAxisMode(XChartView* self, bool enabled)
+{
+    if (!self) return;
+    self->m_timeAxisMode = enabled;
+}
+
+bool XChartView_timeAxisMode(const XChartView* self)
+{
+    return self ? self->m_timeAxisMode : false;
+}
+
+void* XChartView_viewportChanged_signal(XChartView* self, int reason)
+{
+    (void)self;
+    (void)reason;
+    return (void*)(size_t)XChartView_viewportChanged_signal;
 }
 
 void XChartView_updateChart(XChartView* self)

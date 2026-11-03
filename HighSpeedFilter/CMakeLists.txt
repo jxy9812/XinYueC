@@ -24,6 +24,8 @@ FIND_INCLUDE_DIR(HSF_SERVER_INCLUDE_DIRS "server")
 FIND_INCLUDE_DIR(HSF_CLIENT_INCLUDE_DIRS "client")
 
 # ---- 源文件自动搜集 ----
+# 2026-11-03：新增 client/ui/HsfSettingsStore.c（界面设置持久化门面）——
+# 改动本文件即触发 ninja 重跑 cmake，GLOB 重新求值收进新文件。
 file(GLOB_RECURSE HSF_SERVER_FILE "${CMAKE_CURRENT_LIST_DIR}/server/*.c")
 file(GLOB_RECURSE HSF_CLIENT_FILE "${CMAKE_CURRENT_LIST_DIR}/client/*.c")
 

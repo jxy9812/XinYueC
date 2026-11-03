@@ -2,7 +2,8 @@
  * @file       XIoChannelGroup.h
  * @brief      工业通道组：点管理 + 信号分发 + 链路挂接（全组唯一 XObject）。
  * @details    [2026-11-02 XChannel 重写] 本类是全组**唯一**的 XObject：
- *             点退化为 48~64 字节的纯数据（XClass 直派生），N 个点不再各自
+ *             点退化为纯数据（XClass 直派生；数字点 ~48B / 模拟点
+ *             XIoAnalogPoint ~64B，见 2026-11-03 数字/模拟拆分），N 个点不再各自
  *             订阅链路信号，而由本组持有一个 XIoLink 并**只订阅一次**。
  *
  *             [零遍历：三处都是数组下标]
@@ -190,7 +191,7 @@ bool XIoChannelGroup_readAnalogInput(XIoChannelGroup* self, uint16_t role, int32
  * @param role 语义槽号。
  * @param value 定点工程值。
  * @return true=写意图已受理。
- * @note 有符号点的负值按 16 位补码下发（见 XIoPoint_toRaw）。
+ * @note 有符号点的负值按 16 位补码下发（见 XIoAnalogPoint_toRaw）。
  */
 bool XIoChannelGroup_writeAnalogOutput(XIoChannelGroup* self, uint16_t role, int32_t value);
 

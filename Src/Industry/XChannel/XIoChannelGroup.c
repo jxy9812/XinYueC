@@ -12,6 +12,7 @@
 
 #if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON
 
+#include "XIoAnalogPoint.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include <string.h>
@@ -116,6 +117,14 @@ bool XIoChannelGroup_addPoint(XIoChannelGroup* self, XIoPoint* point,
     role = point->m_role;
     if (role >= (uint16_t)XIOCHANNELGROUP_ROLE_CAP) return false;
     if (self->m_points[role]) return false;   /* role 位已占用：装配错误必须暴露。 */
+    /* [2026-11-03 拆分] 模拟量类型必须有标度载荷：AI/AO 点必须是
+     * XIoAnalogPoint 实例（基类 XIoPoint 已不承载标度）。同 role 冲突
+     * 同哲学——装配错误必须暴露，而不是让运行期换算悄悄出错。 */
+    if ((point->m_type == (uint16_t)XIoPoint_AnalogInput ||
+         point->m_type == (uint16_t)XIoPoint_AnalogOutput) &&
+        !XIoAnalogPoint_isInstance(point)) {
+        return false;
+    }
     self->m_points[role] = point;
     point->m_flags.bits.m_autoDelete = autoDelete ? 1u : 0u;
     ++self->m_pointCount;
@@ -213,7 +222,7 @@ bool XIoChannelGroup_writeAnalogOutput(XIoChannelGroup* self, uint16_t role, int
     pt = groupPoint(self, role);
     if (!pt || pt->m_type != (uint16_t)XIoPoint_AnalogOutput) return false;
     if (!self->m_link) return false;
-    raw = XIoPoint_toRaw(pt, value);
+    raw = XIoAnalogPoint_toRaw((const XIoAnalogPoint*)pt, value);
     return XIoLink_writeRole_base(self->m_link, role, (int32_t)raw);
 }
 

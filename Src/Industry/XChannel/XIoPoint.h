@@ -11,6 +11,14 @@
  *             点类数量随链路数线性膨胀。现在链路能力全部收进 XIoLink，
  *             点只存数据 ⇒ **加链路时点类一行不改**。
  *
+ *             [2026-11-03 数字/模拟拆分] 本类进一步瘦身为**数字量点**：
+ *             标度四件套（scaleNum/scaleDen/offset/deadband）只有 AI/AO
+ *             消费，拆入子类 XIoAnalogPoint（同目录，XIoPoint 作第一成员）。
+ *             数字量点直接用基类，x64 上 64→48 字节；模拟量点用子类，
+ *             尺寸不变。「点是不是模拟量点」经虚表指针判定
+ *             （XIoAnalogPoint_isInstance），转换入口 XIoPoint_toEngineering
+ *             按此自动分发，上层无需感知子类。
+ *
  *             [零遍历] 点的身份是 m_role（语义槽号，0 基连续）。通道组按
  *             role 作下标密集存放点指针，设备层按 role 作下标取槽，
  *             两个方向都是 O(1) 数组取址，没有线性查找。
@@ -21,9 +29,9 @@
  *             [所有权] m_autoDelete=0（缺省）由调用方创建/释放；
  *             =1 内存交由登记的 XIoChannelGroup 自动释放。
  *
- *             [标度] AI: 工程值 = 原生值 * m_scaleNum / m_scaleDen + m_offset
- *                    AO: 原生值 = (工程值 - m_offset) * m_scaleDen / m_scaleNum
- *             m_scaleDen/m_scaleNum 为 0 时按 1 处理。m_deadband 仅 AI 消费。
+ *             [标度] 标度换算已拆入 XIoAnalogPoint（AI/AO 专用）；数字量
+ *             0/1 直通，无换算。XIoPoint_toEngineering 保留为统一入口：
+ *             数字类型恒等返回，模拟类型委托子类。
  *
  *             线程模型：与框架一致单线程事件循环。
  */
@@ -62,19 +70,16 @@ XCLASS_DEFINE_BEGING(XIoPoint)
 XCLASS_DEFINE_EXTEND_END(XIoPoint, XClass)
 
 /**
- * @brief 工业 IO 点（纯数据容器；无虚槽）。
+ * @brief 工业 IO 点（数字量即基类；纯数据容器，无虚槽）。
  * @details 成员禁止直接访问，一律经 XIoPoint_* 与 XIoChannelGroup_* API。
  *          仅 XIoChannelGroup 与 XIoLink 的实现文件可经 XIoPoint_Protected.h
  *          的助手函数写入值/状态。
+ *          模拟量（AI/AO）请用子类 XIoAnalogPoint——本结构不承载标度。
  */
 typedef struct XIoPoint {
     XClass m_class;            /**< 第一成员：继承 XClass（vtable + 堆标记）。 */
     int32_t m_value;           /**< 当前值：DI/DO 取 0/1；AI/AO 为定点工程值。 */
     const char* m_tag;         /**< 点名（借用，不拥有；如 "DI3"）。可为 NULL。 */
-    int32_t m_scaleNum;        /**< 标度分子（0 按 1）。 */
-    int32_t m_scaleDen;        /**< 标度分母（0 按 1）。 */
-    int32_t m_offset;          /**< 工程值偏移量。 */
-    int32_t m_deadband;        /**< AI 变化死区（工程值）；负值按 0；AO 不消费。 */
     uint16_t m_role;           /**< 语义槽号（组内下标；决定 O(1) 存放位置）。 */
     uint16_t m_type;           /**< 点类型（XIoPointType）。 */
     union {
@@ -83,10 +88,11 @@ typedef struct XIoPoint {
             uint16_t m_valid : 1;      /**< 数据有效：推送/拉取到首值或写落定后置位。 */
             uint16_t m_valueB : 1;     /**< 当前逻辑值位（DI/DO；AI/AO 不用）。 */
             uint16_t m_hasValue : 1;   /**< 是否已推送过初值。 */
-            uint16_t m_useHolding : 1; /**< AI 区选：1=HR；0=IR。 */
+            uint16_t m_useHolding : 1; /**< AI 区选：1=HR；0=IR（仅模拟量点消费）。 */
             uint16_t m_autoDelete : 1; /**< 自动内存管理：内存交由组释放。 */
             uint16_t m_signed : 1;     /**< 原生量为 16 位有符号（补码）：写链路前
-                                        *   负值按 0xFFFF 归一，而不是钳成 0。 */
+                                        *   负值按 0xFFFF 归一，而不是钳成 0
+                                        *   （仅模拟量点消费，见 XIoAnalogPoint_toRaw）。 */
             uint16_t m_reserved : 10;  /**< 保留位，必须为 0。 */
         } bits;
     } m_flags;                 /**< 状态位域。 */
@@ -166,19 +172,7 @@ void XIoPoint_setTag(XIoPoint* point, const char* tag);
 const char* XIoPoint_tag(const XIoPoint* point);
 
 /**
- * @brief 设置标度四件套。
- * @param point 目标点；NULL 时无操作。
- * @param scaleNum 分子（0 按 1）。
- * @param scaleDen 分母（0 按 1）。
- * @param offset 偏移。
- * @param deadband 死区（负值按 0；仅 AI 消费）。
- * @return 无。
- */
-void XIoPoint_setScale(XIoPoint* point, int32_t scaleNum, int32_t scaleDen,
-                       int32_t offset, int32_t deadband);
-
-/**
- * @brief 设置有符号标记（16 位补码语义）。
+ * @brief 设置有符号标记（16 位补码语义；仅模拟量点消费）。
  * @param point 目标点；NULL 时无操作。
  * @param signedValue true=负值走补码归一。
  * @return 无。
@@ -242,24 +236,18 @@ bool XIoPoint_isValid(const XIoPoint* point);
 /* ==================== 标度换算 ==================== */
 
 /**
- * @brief 原生值 → 工程值：raw * scaleNum / scaleDen + offset。
- * @param point 目标点（提供标度）；不能为 NULL。
+ * @brief 原生值 → 工程值（统一转换入口，按点类型分发）。
+ * @param point 目标点；不能为 NULL。
  * @param raw 原生值（链路层口径）。
- * @return 定点工程值（向零取整；scaleDen 0 按 1）。
+ * @return 定点工程值。数字类型（DI/DO）恒等返回（0/1 直通，无标度）；
+ *         模拟类型（AI/AO）委托 XIoAnalogPoint_toEngineering
+ *         （raw * scaleNum / scaleDen + offset，向零取整）。
+ * @note [2026-11-03 拆分] 模拟量标度已移入 XIoAnalogPoint。点若声明为
+ *       AI/AO 类型但不是 XIoAnalogPoint 实例（误用），按恒等返回——
+ *       装配期 XIoChannelGroup_addPoint 的闸口校验会拒绝这种点，正常
+ *       数据路径不会走到该分支。
  */
 int32_t XIoPoint_toEngineering(const XIoPoint* point, int32_t raw);
-
-/**
- * @brief 工程值 → 原生值：(value - offset) * scaleDen / scaleNum。
- * @param point 目标点（提供标度）；不能为 NULL。
- * @param value 定点工程值。
- * @return 原生值。**有符号点返回 16 位补码原码**（如 -2000 → 0xF830 的低 16 位）；
- *         无符号点负值钳 0、上限 65535。
- * @note [2026-11-02 根修] 旧实现先算绝对值再补符号、随后无条件清零，导致
- *       所有负值被静默钳成 0（负频率给定写不下去）。现按 m_signed 分流，
- *       符号语义只在本函数内定义一次。
- */
-uint16_t XIoPoint_toRaw(const XIoPoint* point, int32_t value);
 
 #endif /* XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON */
 

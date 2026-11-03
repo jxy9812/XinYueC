@@ -184,3 +184,57 @@ bool XSystem_memoryInfo(XSystemMemoryInfo* info)
     return false;
 #endif
 }
+
+/* ========================================================================== */
+/*                        计时精度（引用计数分发）                            */
+/* ========================================================================== */
+
+/** @brief 当前持有深度。0 = 未持有，>0 = 已请求但尚未全部归还。 */
+static uint32_t g_timerPrecisionRequests = 0;
+/** @brief 最近一次平台回报的实际粒度（毫秒）；0 表示未知。 */
+static double g_timerPrecisionActualMs = 0.0;
+
+bool XSystem_requestTimerPrecision(void)
+{
+    double actual = 0.0;
+
+    if (g_timerPrecisionRequests > 0) {
+        /* 已有人持有：只加计数，不重复打扰平台（平台后端可能是引用计数
+           实现，重复申请会把内部深度抬到与应用语义不符的高度）。 */
+        ++g_timerPrecisionRequests;
+        return true;
+    }
+#if XPLATFORM_HAS_OS
+    if (!XSystem_platformTimerPrecision(true, &actual))
+        return false;   /* 申请失败：计数保持 0，调用方不应配对 release。 */
+#else
+    return false;       /* 无 OS 平台没有「系统定时器粒度」概念。 */
+#endif
+    g_timerPrecisionRequests = 1;
+    g_timerPrecisionActualMs = actual;
+    return true;
+}
+
+void XSystem_releaseTimerPrecision(void)
+{
+    if (g_timerPrecisionRequests == 0)
+        return;         /* 多余释放：空操作，计数不会变负。 */
+    if (--g_timerPrecisionRequests > 0)
+        return;         /* 还有别的持有者，不动平台状态。 */
+#if XPLATFORM_HAS_OS
+    {
+        double actual = 0.0;
+        (void)XSystem_platformTimerPrecision(false, &actual);
+        g_timerPrecisionActualMs = actual;
+    }
+#else
+    g_timerPrecisionActualMs = 0.0;
+#endif
+}
+
+bool XSystem_timerPrecision(uint32_t* outRequests, double* outActualMs)
+{
+    if (outRequests) *outRequests = g_timerPrecisionRequests;
+    if (outActualMs) *outActualMs = g_timerPrecisionActualMs;
+    return g_timerPrecisionRequests > 0;
+}

@@ -111,6 +111,19 @@ double XSystem_platformGpuUsagePercent(void);
  */
 bool XSystem_platformMemoryInfo(XSystemMemoryInfo* info);
 
+/**
+ * @brief 向平台申请 / 归还高精度计时（进程级副作用）。
+ * @param acquire true = 申请（进入高精度）；false = 归还（恢复默认）。
+ * @param outActualMs 输出平台回报的实际粒度（毫秒）；可为 NULL。平台无法
+ *                    查询时写 0。申请时写生效值，归还时写恢复后的值。
+ * @return 申请成功 / 归还完成返回 true；平台无此能力或后端调用失败返回 false。
+ * @note 该函数仅供 XSystem 公共分发实现和 Drive 平台文件使用。**平台后端
+ *       只负责「一次申请 / 一次归还」的裸操作，不得自行做引用计数**——计数
+ *       由分发层统一维护，这样多个子系统（串口 / 协议 / 耗时测试）共享同一
+ *       进程级状态而不会互相抵消。
+ */
+bool XSystem_platformTimerPrecision(bool acquire, double* outActualMs);
+
 #ifdef __cplusplus
 }
 #endif

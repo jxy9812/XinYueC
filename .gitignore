@@ -572,3 +572,16 @@ verify/gate_build.bat
 verify/gate_link.bat
 verify/make_gate_rsp.py
 verify/xlink_gate_main.c
+
+# 脚本事故产物：路径分隔符被写成私用区字符（U+F00D）的拼接副本
+# （0 字节空文件，文件名形如 SrcIndustryXChannelXIoPoint.c<U+F00D>）
+*
+
+# 验证区一次性产物（截图/日志/一次性探针/worktree 副本）——不入库
+verify/*.png
+verify/*.bat
+verify/cdb_*.txt
+verify/ai_probe/
+verify/hsf-databar/
+verify/vfd_m512/
+verify/wt/

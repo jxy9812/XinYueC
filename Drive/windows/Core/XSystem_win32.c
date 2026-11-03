@@ -303,4 +303,50 @@ bool XSystem_platformMemoryInfo(XSystemMemoryInfo* info)
 
 #endif /* XSYSTEM_MEMORY_USAGE_ON */
 
+/* ========================================================================== */
+/*                        高精度计时（进程级）                                */
+/* ========================================================================== */
+
+/* Windows 系统时钟默认粒度 15.625ms（64Hz）：**所有** Sleep/等待/定时器唤醒
+   都被这个节拍量化——设 2ms 实际睡 15.4ms（本机实测，见 XSystem.h 注）。
+   这让任何 2ms 级轮询的耗时预算被系统性放大约 7.7 倍。
+   这里用 ntdll 的 NtSetTimerResolution 而不是 winmm 的 timeBeginPeriod：
+   动态取址免去链接 winmm.lib，且能拿到内核回报的**实际**分辨率用于诊断。
+   语义是进程级的，引用计数由分发层（XSystem.c）统一维护，本后端只做
+   「一次申请 / 一次归还」的裸操作。 */
+typedef LONG(WINAPI* PFN_XSystemNtSetTimerResolution)(ULONG DesiredResolution,
+                                                      BOOLEAN IncreaseResolution,
+                                                      PULONG CurrentResolution);
+
+/** @brief 1ms 的分辨率请求值（NtSetTimerResolution 单位是 100ns）。 */
+#define XSYSTEM_WIN32_TIMER_RES_1MS 10000u
+
+bool XSystem_platformTimerPrecision(bool acquire, double* outActualMs)
+{
+    HMODULE ntdll;
+    PFN_XSystemNtSetTimerResolution fn;
+    ULONG actual = 0;
+    LONG status;
+
+    if (outActualMs) *outActualMs = 0.0;
+    ntdll = GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll) return false;
+    fn = (PFN_XSystemNtSetTimerResolution)(void*)GetProcAddress(
+        ntdll, "NtSetTimerResolution");
+    if (!fn) return false;
+
+    status = fn(XSYSTEM_WIN32_TIMER_RES_1MS, acquire ? TRUE : FALSE, &actual);
+    /* 判据按「内核回报的实际分辨率」而不是 NTSTATUS：当全局最小分辨率已被
+       别的进程/系统组件抬到比 1ms 更高时，本调用会返回非 0（STATUS_*），
+       但 `actual` 依然给出**当前真实生效值**——此时精度诉求其实已满足，
+       按返回值判失败会误报（串口侧原实现之所以忽略返回值正是这个原因）。 */
+    if (outActualMs)
+        *outActualMs = (double)actual / 10000.0;
+    if (acquire) {
+        /* 申请：只要内核回报了一个有效粒度就算成功（0 表示没拿到信息）。 */
+        return actual > 0u || status == 0;
+    }
+    return status == 0 || actual > 0u;
+}
+
 #endif /* defined(_WIN32) */

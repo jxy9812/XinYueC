@@ -49,26 +49,38 @@ M512 单设备 66 个点即 66 条信号连接、每次值变化 66 次回调。
    XModbusLink      XCanLink(待)    XEtherCatLink(待)
 ```
 
-### 2.1 XIoPoint —— 纯数据容器
+### 2.1 XIoPoint —— 纯数据容器（数字量即基类）
 
 ```c
 typedef struct XIoPoint {
     XClass m_class;
     int32_t m_value;       /* DI/DO 0/1；AI/AO 定点工程值 */
     const char* m_tag;
-    int32_t m_scaleNum, m_scaleDen, m_offset, m_deadband;
     uint16_t m_role;       /* 语义槽号 = 组内下标 */
     uint16_t m_type;       /* DI / DO / AI / AO */
     union { uint16_t m_raw; struct { ... } bits; } m_flags;
 } XIoPoint;
+
+/* [2026-11-03 数字/模拟拆分] 模拟量子类：基类 + 标度四件套 */
+typedef struct XIoAnalogPoint {
+    XIoPoint m_base;       /* 第一成员：基类 */
+    int32_t m_scaleNum, m_scaleDen, m_offset, m_deadband;
+} XIoAnalogPoint;
 ```
 
 **没有虚槽、没有链路指针。** 它不"会读"，只是"被读写"。
 
 关键点：
 - `m_role` 是它在组里的位置，也是它和设备的约定
-- 标度换算收进 `XIoPoint_toEngineering` / `XIoPoint_toRaw`
-- **符号语义只在一处定义**：`XIoPoint_toRaw` 按 `m_signed` 分流，有符号点负值返回 16 位补码，无符号点钳 0
+- **[2026-11-03 数字/模拟拆分]** 标度四件套只有 AI/AO 消费，拆入子类
+  `XIoAnalogPoint`（沿用重写前历史类名）：数字点 64→48 字节（x64），
+  模拟点不变。子类仍是纯数据容器（零新虚槽），**不复活**「点自己会读写」
+  的行为点类；装配按类型选类（AI/AO → 子类），组登记闸口拒绝
+  「AI/AO 类型但非 XIoAnalogPoint 实例」的装配错误
+- 标度换算收进 `XIoPoint_toEngineering`（基类统一入口，按类型/虚表分发）
+  / `XIoAnalogPoint_toRaw`（模拟量专属）
+- **符号语义只在一处定义**：`XIoAnalogPoint_toRaw` 按 `m_signed` 分流，
+  有符号点负值返回 16 位补码，无符号点钳 0
 
 ### 2.2 XIoChannelGroup —— 点管理 + 分发
 
@@ -194,16 +206,18 @@ static void onCanFrame(XObject* receiver, XVarList* args)
 用 `XChannelAssembly_mount(group, link, spec, &result)`，或直接：
 
 ```c
-XIoPoint* pt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+/* AI/AO 用 XIoAnalogPoint（承载标度）；DI/DO 用基类 XIoPoint（瘦身）。 */
+XIoAnalogPoint* apt = XIoAnalogPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+XIoPoint* pt = &apt->m_base;
 XIoPoint_setRole(pt, role);
 XIoPoint_setType(pt, XIoPoint_AnalogInput);
-XIoPoint_setScale(pt, 1, 10, 0, 0);
+XIoAnalogPoint_setScale(apt, 1, 10, 0, 0);
 XIoChannelGroup_addPoint(group, pt, true);
 XIoLink_bindRole_base(link, role, nativeAddr, aux);
 XVfdDevice_bindRole(dev, role, pt);
 ```
 
-**不需要改**：`XIoPoint`、`XIoChannelGroup`、`XVfdDevice`、任何品牌子类。
+**不需要改**：`XIoPoint`、`XIoAnalogPoint`、`XIoChannelGroup`、`XVfdDevice`、任何品牌子类。
 
 ---
 
@@ -240,7 +254,8 @@ if (quotient < 0) quotient = 0;    /* ← 立刻又抹掉 */
 
 **每一个负给定都变成 0。** M512 的 FreqSet 靠设备层 `m_signed` 分支绕开，直走组层写 AO 则静默失效。
 
-新实现把符号语义收进 `XIoPoint_toRaw` 一处：
+新实现把符号语义收进 `XIoAnalogPoint_toRaw` 一处（2026-11-03 拆分后
+位于模拟量子类；函数体原样迁移）：
 
 ```c
 if (point->m_flags.bits.m_signed) {

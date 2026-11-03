@@ -1751,6 +1751,8 @@ bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
     XHostAddress_init(&outConfig->dhcpServer);
     XHostAddress_init(&outConfig->dnsPrimary);
     XHostAddress_init(&outConfig->dnsSecondary);
+    XHostAddress_init(&outConfig->dnsV6Primary);
+    XHostAddress_init(&outConfig->dnsV6Secondary);
     adapter = netIfFindAdapter(ifIndex, &buffer);
     if (!adapter) return false;
     outConfig->dhcpEnabled =
@@ -1862,6 +1864,8 @@ void XDeviceNetwork_freeInterfaceConfig(XDeviceNetworkInterfaceConfig* config)
     XClassDeinit(&config->dhcpServer);
     XClassDeinit(&config->dnsPrimary);
     XClassDeinit(&config->dnsSecondary);
+    XClassDeinit(&config->dnsV6Primary);
+    XClassDeinit(&config->dnsV6Secondary);
     memset(config, 0, sizeof(*config));
 }
 

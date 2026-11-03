@@ -86,6 +86,28 @@ static uint32_t xcombo_color(const XComboBox* self, XPaletteColorRole role)
 #endif /* XPALETTE_ON */
 }
 
+/**
+ * @brief 按**颜色组**取调色板颜色。
+ * @details [Qt 对齐] 禁用控件走 QPalette::Disabled 组（灰显）——Qt 的
+ *          QComboBox 禁用态用 Disabled 组的文字色，"不可点"一眼可见；
+ *          本组合框此前恒用 Current 组，禁用态与可用态**像素无差**，
+ *          用户无从分辨控件已锁（现场反馈「点不动也不像锁」）。 */
+static uint32_t xcombo_colorGroup(const XComboBox* self,
+                                  XPaletteColorGroup group,
+                                  XPaletteColorRole role)
+{
+#if XPALETTE_ON
+    XPalette palette = XWidget_palette((XWidget*)self);
+    XColor c = XPalette_color(&palette, group, role);
+    return XColor_rgba(&c);
+#else
+    (void)self;
+    (void)group;
+    (void)role;
+    return 0xFF000000u;
+#endif /* XPALETTE_ON */
+}
+
 /** @brief 发射 int 信号。 */
 static void xcombo_emitInt(XComboBox* self, size_t signal, int value)
 {
@@ -131,15 +153,20 @@ static void VXComboBox_paintEvent(XWidget* self, XEvent* event)
     uint32_t text;
     uint32_t highlight;
     uint32_t highlightedText;
+    XPaletteColorGroup group;
     if (!combo || r.width <= 4 || r.height <= 4) return;
     r.x = 0; r.y = 0;
-    base     = xcombo_color(combo, XPaletteColorRole_Base);
-    dark     = xcombo_color(combo, XPaletteColorRole_Dark);
-    light    = xcombo_color(combo, XPaletteColorRole_Light);
-    text     = xcombo_color(combo, XPaletteColorRole_Text);
-    highlight = xcombo_color(combo, XPaletteColorRole_Highlight);
-    highlightedText = xcombo_color(combo, XPaletteColorRole_HighlightedText);
-    button = xcombo_color(combo, XPaletteColorRole_Button);
+    /* [Qt 对齐] 禁用控件走 Disabled 颜色组（灰显）；可用态走当前组。 */
+    group = XWidget_isEnabled(self) ? XPaletteColorGroup_Current
+                                    : XPaletteColorGroup_Disabled;
+    base     = xcombo_colorGroup(combo, group, XPaletteColorRole_Base);
+    dark     = xcombo_colorGroup(combo, group, XPaletteColorRole_Dark);
+    light    = xcombo_colorGroup(combo, group, XPaletteColorRole_Light);
+    text     = xcombo_colorGroup(combo, group, XPaletteColorRole_Text);
+    highlight = xcombo_colorGroup(combo, group, XPaletteColorRole_Highlight);
+    highlightedText = xcombo_colorGroup(combo, group,
+                                        XPaletteColorRole_HighlightedText);
+    button = xcombo_colorGroup(combo, group, XPaletteColorRole_Button);
 
     image = XWidget_paintImage(self);
     if (!image) return;
@@ -2013,12 +2040,30 @@ void XComboBox_insertItem(XComboBox* self, int index, const XString* text)
     if (self->m_itemData) self->m_itemData[index] = NULL;
     if (self->m_itemIcons) self->m_itemIcons[index] = NULL;
     ++self->m_itemCount;
-    /* 对标 Qt：插入不自动改变 currentIndex（首项插入也保持 -1，
-       由调用方显式 setCurrentIndex）。仅当插入位置在当前项之前
-       时当前项索引右移（Qt d->inserting 抑制 rowsInserted 发射，
-       persistent index 静默平移——须先于尾部裁剪，否则裁剪后的
-       索引右移可能越过 m_itemCount-1 越界）。 */
-    if (index <= self->m_currentIndex) ++self->m_currentIndex;
+    /* 对标 Qt 6.8 QComboBoxPrivate::rowsInserted（qcombobox.cpp:1131-1153）：
+       空 combo 插入首项且无 placeholderText 时自动 setCurrentIndex(0)
+       （并发射 currentIndexChanged/currentTextChanged）——此前注释声称
+       「首项插入保持 -1」与 Qt 源码不符（2026-11-03 实证：工具条 combo
+       addItem 后闭态仍显示占位文本而非首项）。有 placeholderText 时不
+       自动选中（Qt 口径：显示占位文本，闭态留空）。仅当插入位置在当前
+       项之前时当前项索引右移（Qt d->inserting 抑制 rowsInserted 发射，
+       persistent index 静默平移——须先于尾部裁剪，否则裁剪后的索引
+       右移可能越过 m_itemCount-1 越界）。 */
+    if (self->m_currentIndex < 0 && self->m_itemCount == 1 && index == 0 &&
+        !(self->m_placeholderText &&
+          XString_toUtf8(self->m_placeholderText) &&
+          XString_toUtf8(self->m_placeholderText)[0])) {
+        /* 经统一收口置当前项：可编辑 combo 行编辑回填（分叉态收敛）+
+           发射对信号，与 setCurrentIndex 同路径（Qt rowsInserted→
+           setCurrentIndex(0) 同样走 QComboBoxPrivate::setCurrentIndex）。
+           直翻 m_currentIndex 裸发射会让可编辑态 currentText 载荷取到
+           行编辑残留（空串）而非首项文本——2026-11-03 FontComboBox
+           currentFamily 非空断言失败实证。 */
+        self->m_currentIndex = 0;
+        xcombo_changeCurrentIndex(self, 0);
+    } else if (index <= self->m_currentIndex) {
+        ++self->m_currentIndex;
+    }
     /* 对标 qcombobox.cpp:2346：插入后超出 maxCount 时从尾部裁剪
        （removeRows(itemCount-1, ...)；裁剪经 removeItem 的 rowsRemoved
        语义调整当前项并发射对信号）。 */

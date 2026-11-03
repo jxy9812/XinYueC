@@ -90,7 +90,7 @@ typedef struct XvfdSlaveEmu {
     int m_m512Fault;                /**< 8000H 故障值 */
     int m_m512State;                /**< 3000H 状态（1/2/3，缺省 3） */
     int m_setpoint;                 /**< 1000H 通讯设定值（±10000 = ±100%） */
-    int m_maxFreq;                  /**< P0.10 原始码（0.01Hz，缺省 5000） */
+    int m_maxFreq;                  /**< P0.10 原始码（0.1Hz 定点，缺省 500 = 50.0Hz；实机标定） */
     uint16_t m_lastCmd;             /**< 命令字边沿检测缓存 */
     uint16_t m_doForce;             /**< 2001H DO 强制位图（回写 1008H） */
     uint16_t m_aoForce1;            /**< 2002H AO1 强制（0~0x7FFF） */
@@ -384,7 +384,7 @@ static bool xvfdSlaveEmuCreate(XvfdSlaveEmu* em, int brand, uint16_t* outPort)
     em->m_m512State = 3;        /* M512：停机 */
     em->m_driveThermal = 25;
     em->m_motorThermal = 30;
-    em->m_maxFreq = 5000;       /* M512：P0.10 = 50.00Hz */
+    em->m_maxFreq = 500;        /* M512：P0.10 = 50.0Hz（0.1Hz 定点，实机标定） */
 #if XVFD_ON && XVFD_M512_ON
     if (brand == XVFD_EMU_M512) {
         /* M512 走**受约束**的从站（手册三条硬约束在从站侧强制）。 */
@@ -557,7 +557,7 @@ static void xvfdSlaveEmuTick(XvfdSlaveEmu* em)
         /* ===== M512：手册语义（附录1 特殊地址区 + 快捷遥测） ===== */
         uint16_t cmd = xvfdEmuGet(em, 0x2000);
         uint16_t cmdSrc = xvfdEmuGet(em, 0xF002);   /* P0.02 命令源（2=通讯） */
-        int hz100;
+        int hz010;   /* 0.1Hz 定点（实机标定：0x1001 单位是 0.1Hz） */
         int16_t setpct;
         if (cmd != em->m_lastCmd) {
             em->m_lastCmd = cmd;
@@ -569,8 +569,9 @@ static void xvfdSlaveEmuTick(XvfdSlaveEmu* em)
         setpct = (int16_t)xvfdEmuGet(em, 0x1000);
         em->m_setpoint = setpct;
         /* 运行频率 = 设定% × 最大频率（0.01Hz 口径）。 */
-        hz100 = (int)((double)setpct / 10000.0 * (em->m_maxFreq / 100.0) * 100.0);
-        xvfdEmuPut(em, 0x1001, (uint16_t)(hz100 & 0xFFFF));  /* 运行频率 0.01Hz */
+        /* 运行频率 raw = 设定% × P0.10raw ÷ 10000（两者同为 0.1Hz 定点，比值即工程值） */
+        hz010 = (int)((double)setpct * (double)em->m_maxFreq / 10000.0);
+        xvfdEmuPut(em, 0x1001, (uint16_t)(hz010 & 0xFFFF));  /* 运行频率 0.1Hz */
         xvfdEmuPut(em, 0x1002, 5400);          /* 母线电压 0.1V → 540.0V */
         xvfdEmuPut(em, 0x1003, 380);           /* 输出电压 1V → 380V */
         xvfdEmuPut(em, 0x1004, 100);           /* 输出电流 0.01A → 1.00A */
@@ -590,7 +591,7 @@ static void xvfdSlaveEmuTick(XvfdSlaveEmu* em)
         xvfdEmuPut(em, 0x1019, 120);           /* 线速度 1 m/Min */
         xvfdEmuPut(em, 0x101A, 600);           /* 当前上电时间 1Min → 10Min */
         xvfdEmuPut(em, 0x101B, 600);           /* 当前运行时间 0.1Min → 1.0Min */
-        xvfdEmuPut(em, 0x101F, (uint16_t)(hz100 & 0xFFFF)); /* 主频率 X 0.01Hz */
+        xvfdEmuPut(em, 0x101F, (uint16_t)(hz010 & 0xFFFF)); /* 主频率 X 0.1Hz */
         xvfdEmuPut(em, 0x1020, 0);             /* 辅频率 Y 0.01Hz */
         xvfdEmuPut(em, 0x7022, 45);            /* 电机温度 1℃ */
         /* 2002H~2004H：AO1/AO2/PULSE 输出强制（0~0x7FFF）——保存备查。 */

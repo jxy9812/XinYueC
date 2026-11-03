@@ -46,6 +46,7 @@
 #include "XPushButton.h"
 #include "XPerformanceOverlay.h"
 #include "HsfDemoCompat.h"
+#include "HsfSettingsStore.h"
 
 /*
  * 控件段宏守卫：悬浮层编译开关 + CheckBox/ComboBox/PushButton/Label；
@@ -56,6 +57,64 @@
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON && \
     XCHECKBOX_ON && XCOMBOBOX_ON && XPUSHBUTTON_ON && XLAYOUT_ON && \
     XLAYOUT_BOX_ON
+
+/* ==================== 持久化：键名与默认值 ==================== */
+
+/* 键名（Qt 风格 group/key；框架自动落成 INI 分节 [Overlay]）。 */
+#define OV_KEY_VISIBLE     "Overlay/Visible"       /* 总开关：显示悬浮窗 */
+#define OV_KEY_FPS         "Overlay/ShowFps"       /* FPS 行 */
+#define OV_KEY_FRAME_TIME  "Overlay/ShowFrameTime" /* 帧耗时行 */
+#define OV_KEY_SYS_STAT    "Overlay/ShowSysStat"   /* CPU/GPU 行 */
+#define OV_KEY_NETWORK     "Overlay/ShowNetwork"   /* 网络行 */
+#define OV_KEY_MEMORY      "Overlay/ShowMemory"    /* 内存行 */
+#define OV_KEY_MEM_DISPLAY "Overlay/MemoryDisplay" /* 内存行显示种类 */
+#define OV_KEY_MEM_SOURCE  "Overlay/MemorySource"  /* 内存数据来源 */
+#define OV_KEY_PRESET      "Overlay/PresetPosition"/* 九宫格预设位置 */
+#define OV_KEY_FIXED       "Overlay/FixedPosition" /* 固定位置 */
+#define OV_KEY_MOVABLE     "Overlay/Movable"       /* 允许拖动 */
+#define OV_KEY_FONT_PX     "Overlay/FontPixelSize" /* 字号（像素） */
+#define OV_KEY_AUTOFIT     "Overlay/AutoFitSize"   /* 自适应尺寸 */
+
+/*
+ * 出厂默认值 = **程序启动默认值**（2026-11-03 用户裁定统一口径）。
+ * 与 HsfUi.c 建悬浮层时的初值一一对应：自适应尺寸开 / 固定位置开 /
+ * 字号 12px / 可见；五个显示行全开、内存显示「两者」、数据来源「自动」、
+ * 预设右下、允许拖动开。
+ * 注：XPerformanceOverlay 自身的构造默认（自适应关 / 固定关）**不是**
+ *     本应用的出厂默认——主窗建层时显式改过（见 HsfUi.c）。
+ * 「复位默认」按钮也复位到这套值（此前复位只清采样数据，开关一个没复位）。
+ */
+#define OV_DEFAULT_VISIBLE      true
+#define OV_DEFAULT_FPS          true
+#define OV_DEFAULT_FRAME_TIME   true
+#define OV_DEFAULT_SYS_STAT     true
+#define OV_DEFAULT_NETWORK      true
+#define OV_DEFAULT_MEMORY       true
+#define OV_DEFAULT_MEM_DISPLAY  ((int)XPerformanceOverlayMemoryDisplay_Both)
+#define OV_DEFAULT_MEM_SOURCE   ((int)XPerformanceOverlayMemorySource_Auto)
+#define OV_DEFAULT_PRESET       ((int)XPerformanceOverlayPosition_BottomRight)
+#define OV_DEFAULT_FIXED        true
+#define OV_DEFAULT_MOVABLE      true
+#define OV_DEFAULT_AUTOFIT      true
+#define OV_DEFAULT_FONT_PX      12
+
+/** @brief 字号档位表（下拉序 → 像素）。 */
+static const int kOvFontSizes[5] = { 12, 13, 14, 16, 18 };
+
+/** @brief 字号档位表条目数。 */
+#define OV_FONT_SIZE_COUNT ((int)(sizeof(kOvFontSizes) / sizeof(kOvFontSizes[0])))
+
+/** @brief 字号档位表条目数（宏展开的常量别名，保持旧引用可用）。 */
+#define OV_FONT_SIZES_COUNT OV_FONT_SIZE_COUNT
+
+/** @brief 像素字号 → 档位下标（无匹配回落默认档位）。 */
+static int ov_fontIndexOf(int px)
+{
+    int i;
+    for (i = 0; i < OV_FONT_SIZE_COUNT; i++)
+        if (kOvFontSizes[i] == px) return i;
+    return 0;
+}
 
 /* ==================== 页面内部控件登记（demo 单实例 static 自持） ==== */
 
@@ -99,13 +158,13 @@ static struct
 
     /* ---- 操作与反馈 ---- */
     XCheckBox*   m_masterCheck;  /**< 「显示悬浮窗」总开关（整体显隐）。 */
-    XPushButton* m_closeBtn;     /**< 「关闭悬浮窗」按钮。 */
     XPushButton* m_resetBtn;     /**< 复位默认。 */
     XLabel*      m_hintLabel;    /**< 说明行（钉底上方）。 */
     XLabel*      m_statusLabel;  /**< 操作结果行（钉底）。 */
 
     bool         m_syncing;      /**< 回读同步中（抑制状态行刷屏）。 */
     bool         m_tierNarrow;   /**< 窄宽档已生效（adapt 分档去重，免重排）。 */
+    bool         m_persistReady; /**< 允许落盘（恢复完成后才置真）。 */
 
     /* ---- 布局器（2026-10-17 容器化；build 装配段挂根，静态自持） ---- */
     XBoxLayout   m_rootLayout;   /**< 根垂直布局器（页内唯一 setLayout）。 */
@@ -182,15 +241,171 @@ static void ov_syncFromOverlay(void)
     s_ov.m_syncing = false;
 }
 
+/* ==================== 持久化（保存 / 恢复） ==================== */
+
+/**
+ * @brief 把当前设置写入配置文件（全部 13 项）。
+ * @details 真源分层取：有运行时 getter 的读运行时（悬浮层对象），框架层
+ *          **没有 getter** 的两项（预设位置 / 字号）读页面控件——控件是
+ *          这两项的唯一真源（悬浮层对象不存预设位置，字号只有 setter）。
+ * @note  m_persistReady 门：建页期与恢复期的**编程**赋值也会触发 toggled
+ *        槽（如建页时给「显示悬浮窗」总开关赋初值），若此时就落盘，会把
+ *        配置文件**覆盖成启动默认值**——用户的设置在恢复前就被抹掉。
+ *        故只在恢复完成后（m_persistReady=true）才允许落盘。
+ */
+static void ov_saveSettings(void)
+{
+    XPerformanceOverlay* overlay = ov_target();
+    int preset = OV_DEFAULT_PRESET;
+    int fontPx = OV_DEFAULT_FONT_PX;
+
+    if (!overlay || !s_ov.m_persistReady) return;
+    if (s_ov.m_presetCombo) {
+        preset = XComboBox_currentIndex(s_ov.m_presetCombo);
+        if (preset < 0 || preset > 8) preset = OV_DEFAULT_PRESET;
+    }
+    if (s_ov.m_fontCombo) {
+        int idx = XComboBox_currentIndex(s_ov.m_fontCombo);
+        if (idx < 0 || idx >= OV_FONT_SIZE_COUNT) idx = ov_fontIndexOf(OV_DEFAULT_FONT_PX);
+        fontPx = kOvFontSizes[idx];
+    }
+    HsfSettingsStore_setBool(OV_KEY_VISIBLE,
+                             !XWidget_isHidden((XWidget*)overlay));
+    HsfSettingsStore_setBool(OV_KEY_FPS,
+                             XPerformanceOverlay_isFpsVisible(overlay));
+    HsfSettingsStore_setBool(OV_KEY_FRAME_TIME,
+                             XPerformanceOverlay_isFrameTimeVisible(overlay));
+    HsfSettingsStore_setBool(OV_KEY_SYS_STAT,
+                             XPerformanceOverlay_isSysStatVisible(overlay));
+    HsfSettingsStore_setBool(OV_KEY_NETWORK,
+                             XPerformanceOverlay_isNetworkVisible(overlay));
+    HsfSettingsStore_setBool(OV_KEY_MEMORY,
+                             XPerformanceOverlay_isMemoryVisible(overlay));
+    HsfSettingsStore_setInt(OV_KEY_MEM_DISPLAY,
+                            (int)XPerformanceOverlay_memoryDisplay(overlay));
+    HsfSettingsStore_setInt(OV_KEY_MEM_SOURCE,
+                            (int)XPerformanceOverlay_memorySource(overlay));
+    HsfSettingsStore_setInt(OV_KEY_PRESET, preset);
+    HsfSettingsStore_setBool(OV_KEY_FIXED,
+                             XPerformanceOverlay_isFixed(overlay));
+    HsfSettingsStore_setBool(OV_KEY_MOVABLE,
+                             XPerformanceOverlay_isMovable(overlay));
+    HsfSettingsStore_setInt(OV_KEY_FONT_PX, fontPx);
+    HsfSettingsStore_setBool(OV_KEY_AUTOFIT,
+                             XPerformanceOverlay_isAutoFitSize(overlay));
+    HsfSettingsStore_sync();
+}
+
+/**
+ * @brief 从配置文件恢复设置：先落运行时，再回填控件。
+ * @details 恢复时键不存在→取出厂默认（= 程序启动默认），故「无配置文件
+ *          首次运行」与「有配置恢复」走同一条路径，行为一致。
+ *          控件回填时全程持 m_syncing：setChecked 会触发 toggled 槽，
+ *          不抑制会把恢复动作当成用户操作再写一遍配置。
+ */
+void hsf_page_overlay_restoreSettings(void)
+{
+    XPerformanceOverlay* overlay = ov_target();
+    bool visible;
+    int preset;
+    int fontPx;
+    int fontIdx;
+    int memDisp;
+    int memSrc;
+
+    if (!overlay) return;
+
+    visible = HsfSettingsStore_getBool(OV_KEY_VISIBLE, OV_DEFAULT_VISIBLE);
+    preset = HsfSettingsStore_getInt(OV_KEY_PRESET, OV_DEFAULT_PRESET);
+    fontPx = HsfSettingsStore_getInt(OV_KEY_FONT_PX, OV_DEFAULT_FONT_PX);
+    memDisp = HsfSettingsStore_getInt(OV_KEY_MEM_DISPLAY, OV_DEFAULT_MEM_DISPLAY);
+    memSrc = HsfSettingsStore_getInt(OV_KEY_MEM_SOURCE, OV_DEFAULT_MEM_SOURCE);
+    /* 越界值（手改 ini / 旧版本档位变化）一律回出厂默认——枚举越界会把
+       底层状态写成不可预期的档位。 */
+    if (preset < 0 || preset > 8) preset = OV_DEFAULT_PRESET;
+    if (memDisp < 0 || memDisp > 2) memDisp = OV_DEFAULT_MEM_DISPLAY;
+    if (memSrc < 0 || memSrc > 2) memSrc = OV_DEFAULT_MEM_SOURCE;
+    fontIdx = ov_fontIndexOf(fontPx);
+    fontPx = kOvFontSizes[fontIdx];
+
+    /* ---- 运行时（悬浮层对象） ---- */
+    XPerformanceOverlay_setFpsVisible(
+        overlay, HsfSettingsStore_getBool(OV_KEY_FPS, OV_DEFAULT_FPS));
+    XPerformanceOverlay_setFrameTimeVisible(
+        overlay,
+        HsfSettingsStore_getBool(OV_KEY_FRAME_TIME, OV_DEFAULT_FRAME_TIME));
+    XPerformanceOverlay_setSysStatVisible(
+        overlay,
+        HsfSettingsStore_getBool(OV_KEY_SYS_STAT, OV_DEFAULT_SYS_STAT));
+    XPerformanceOverlay_setNetworkVisible(
+        overlay,
+        HsfSettingsStore_getBool(OV_KEY_NETWORK, OV_DEFAULT_NETWORK));
+    XPerformanceOverlay_setMemoryVisible(
+        overlay,
+        HsfSettingsStore_getBool(OV_KEY_MEMORY, OV_DEFAULT_MEMORY));
+    XPerformanceOverlay_setMemoryDisplay(
+        overlay, (XPerformanceOverlayMemoryDisplay)memDisp);
+    XPerformanceOverlay_setMemorySource(
+        overlay, (XPerformanceOverlayMemorySource)memSrc);
+    XPerformanceOverlay_setAutoFitSize(
+        overlay,
+        HsfSettingsStore_getBool(OV_KEY_AUTOFIT, OV_DEFAULT_AUTOFIT));
+    XPerformanceOverlay_setMovable(
+        overlay,
+        HsfSettingsStore_getBool(OV_KEY_MOVABLE, OV_DEFAULT_MOVABLE));
+    XPerformanceOverlay_setFixed(
+        overlay,
+        HsfSettingsStore_getBool(OV_KEY_FIXED, OV_DEFAULT_FIXED));
+    XPerformanceOverlay_setTextPixelSize(overlay, fontPx);
+    XWidget_setVisible((XWidget*)overlay, visible);
+    /* 预设位置：经主窗应用（非右下预设会钉住、挂起 resize 自动重锚）。 */
+    demo_main_overlay_applyPreset(s_ov.m_user, preset);
+
+    /* ---- 控件回填（无 getter 的两项 + 总开关） ---- */
+    s_ov.m_syncing = true;
+    if (s_ov.m_presetCombo)
+        XComboBox_setCurrentIndex(s_ov.m_presetCombo, preset);
+    if (s_ov.m_fontCombo)
+        XComboBox_setCurrentIndex(s_ov.m_fontCombo, fontIdx);
+    if (s_ov.m_masterCheck)
+        XAbstractButton_setChecked((XAbstractButton*)s_ov.m_masterCheck,
+                                   visible);
+    /* 其余项从运行时回读（内存显示/来源/固定/拖动/自适应/五个开关）。 */
+    ov_syncFromOverlay();
+    s_ov.m_syncing = false;
+    /* 恢复完成 → 允许后续改动落盘（此前建页期的编程赋值不得写配置）。 */
+    s_ov.m_persistReady = true;
+    if (!HsfSettingsStore_isOpen()) {
+        XPrintf("HsfClient: 未启用设置持久化（--no-settings 或配置不可用），"
+                "悬浮窗设置按出厂默认运行\n");
+        return;
+    }
+    XPrintf("HsfClient: 已恢复悬浮窗设置（可见=%d FPS=%d 帧耗时=%d CPU/GPU=%d"
+            " 网络=%d 内存=%d 内存显示=%d 内存来源=%d 预设=%d 固定=%d 拖动=%d"
+            " 字号=%d 自适应=%d）\n",
+            visible ? 1 : 0,
+            HsfSettingsStore_getBool(OV_KEY_FPS, OV_DEFAULT_FPS) ? 1 : 0,
+            HsfSettingsStore_getBool(OV_KEY_FRAME_TIME, OV_DEFAULT_FRAME_TIME) ? 1 : 0,
+            HsfSettingsStore_getBool(OV_KEY_SYS_STAT, OV_DEFAULT_SYS_STAT) ? 1 : 0,
+            HsfSettingsStore_getBool(OV_KEY_NETWORK, OV_DEFAULT_NETWORK) ? 1 : 0,
+            HsfSettingsStore_getBool(OV_KEY_MEMORY, OV_DEFAULT_MEMORY) ? 1 : 0,
+            memDisp, memSrc, preset,
+            HsfSettingsStore_getBool(OV_KEY_FIXED, OV_DEFAULT_FIXED) ? 1 : 0,
+            HsfSettingsStore_getBool(OV_KEY_MOVABLE, OV_DEFAULT_MOVABLE) ? 1 : 0,
+            fontPx,
+            HsfSettingsStore_getBool(OV_KEY_AUTOFIT, OV_DEFAULT_AUTOFIT) ? 1 : 0);
+}
+
 /** @brief 「显示悬浮窗」总开关槽：整体显隐（各行开关只管行内内容）。
  *  @details demo 原页只有各行开关，**没有整体关闭入口**（全关也只是
- *           悬浮层空白、控件仍在）——本移植补总开关 + 关闭按钮。 */
+ *           悬浮层空白、控件仍在）——本移植补总开关。 */
 static void ov_masterSlot(XObject* receiver, XVarList* args)
 {
     XPerformanceOverlay* overlay = ov_target();
     bool on;
     (void)receiver; (void)args;
     if (!overlay || !s_ov.m_masterCheck) return;
+    if (s_ov.m_syncing) return; /* 恢复期编程回填：不做即时生效动作 */
     on = XAbstractButton_isChecked((XAbstractButton*)s_ov.m_masterCheck);
     XWidget_setVisible((XWidget*)overlay, on);
     s_ov.m_syncing = true;
@@ -198,18 +413,7 @@ static void ov_masterSlot(XObject* receiver, XVarList* args)
     s_ov.m_syncing = false;
     ov_report(on ? "\xE5\xB7\xB2\xE6\x89\x93\xE5\xBC\x80\xE5\xB1\x95\xE6\xAD\xA3"
                   : "\xE5\xB7\xB2\xE6\xBB\x9E\xE5\xB7\xB2\xE6\x89\x93\xE5\xBC\x80\xE5\xB1\x95");
-}
-
-/** @brief 「关闭悬浮窗」槽：关总开关并隐藏悬浮层。 */
-static void ov_closeSlot(XObject* receiver, XVarList* args)
-{
-    XPerformanceOverlay* overlay = ov_target();
-    (void)receiver; (void)args;
-    if (!overlay) return;
-    if (s_ov.m_masterCheck)
-        XAbstractButton_setChecked((XAbstractButton*)s_ov.m_masterCheck, false);
-    XWidget_setVisible((XWidget*)overlay, false);
-    ov_report("å·²æ»å·²æå¼å±");
+    ov_saveSettings();
 }
 
 
@@ -227,6 +431,7 @@ static void ov_fpsSlot(XObject* receiver, XVarList* args)
     XPerformanceOverlay_setFpsVisible(overlay, checked);
     ov_report(checked ? "\xE6\x98\xBE\xE7\xA4\xBA FPS"
                       : "\xE9\x9A\x90\xE8\x97\x8F FPS"); /* 显示/隐藏 FPS */
+    ov_saveSettings();
 }
 
 /** @brief 帧耗时行开关。 */
@@ -242,6 +447,7 @@ static void ov_frameSlot(XObject* receiver, XVarList* args)
     ov_report(checked ? "\xE6\x98\xBE\xE7\xA4\xBA\xE5\xB8\xA7\xE8\x80\x97"
                       : "\xE9\x9A\x90\xE8\x97\x8F\xE5\xB8\xA7\xE8\x80\x97");
                       /* 显示/隐藏帧耗时 */
+    ov_saveSettings();
 }
 
 /** @brief CPU·GPU 行开关。 */
@@ -256,6 +462,7 @@ static void ov_sysSlot(XObject* receiver, XVarList* args)
     XPerformanceOverlay_setSysStatVisible(overlay, checked);
     ov_report(checked ? "\xE6\x98\xBE\xE7\xA4\xBA CPU/GPU"
                       : "\xE9\x9A\x90\xE8\x97\x8F CPU/GPU");
+    ov_saveSettings();
 }
 
 /** @brief 网络行开关。 */
@@ -271,6 +478,7 @@ static void ov_netSlot(XObject* receiver, XVarList* args)
     ov_report(checked ? "\xE6\x98\xBE\xE7\xA4\xBA\xE7\xBD\x91\xE7\xBB\x9C"
                       : "\xE9\x9A\x90\xE8\x97\x8F\xE7\xBD\x91\xE7\xBB\x9C");
                       /* 显示/隐藏网络 */
+    ov_saveSettings();
 }
 
 /** @brief 内存行开关。 */
@@ -286,6 +494,7 @@ static void ov_memSlot(XObject* receiver, XVarList* args)
     ov_report(checked ? "\xE6\x98\xBE\xE7\xA4\xBA\xE5\x86\x85\xE5\xAD\x98"
                       : "\xE9\x9A\x90\xE8\x97\x8F\xE5\x86\x85\xE5\xAD\x98");
                       /* 显示/隐藏内存 */
+    ov_saveSettings();
 }
 
 /** @brief 内存行显示种类。 */
@@ -303,6 +512,7 @@ static void ov_memDispSlot(XObject* receiver, XVarList* args)
     ov_report("\xE5\x86\x85\xE5\xAD\x98\xE8\xA1\x8C\xE6\x98\xBE\xE7\xA4"
               "\xBA\xE7\xA7\x8D\xE7\xB1\xBB\xE5\xB7\xB2\xE6\x9B\xB4\xE6"
               "\x8D\xA2"); /* 内存行显示种类已更换 */
+    ov_saveSettings();
 }
 
 /** @brief 内存行数据来源。 */
@@ -320,6 +530,7 @@ static void ov_memSrcSlot(XObject* receiver, XVarList* args)
     ov_report("\xE5\x86\x85\xE5\xAD\x98\xE6\x95\xB0\xE6\x8D\xAE\xE6\x9D"
               "\xA5\xE6\xBA\x90\xE5\xB7\xB2\xE6\x9B\xB4\xE6\x8D\xA2");
               /* 内存数据来源已更换 */
+    ov_saveSettings();
 }
 
 /** @brief 九宫格预设位置（经主文件应用，协商自动重锚行为）。 */
@@ -333,6 +544,7 @@ static void ov_presetSlot(XObject* receiver, XVarList* args)
     demo_main_overlay_applyPreset(s_ov.m_user, index);
     ov_report("\xE5\xB7\xB2\xE5\xBA\x94\xE7\x94\xA8\xE9\xA2\x84\xE8\xAE"
               "\xBE\xE4\xBD\x8D\xE7\xBD\xAE"); /* 已应用预设位置 */
+    ov_saveSettings();
 }
 
 /** @brief 固定位置开关。 */
@@ -348,6 +560,7 @@ static void ov_fixedSlot(XObject* receiver, XVarList* args)
     ov_report(checked ? "\xE5\xB7\xB2\xE9\x94\x81\xE5\xAE\x9A\xE4\xBD\x8D"
                       "\xE7\xBD\xAE" : "\xE5\xB7\xB2\xE8\xA7\xA3\xE9\x99"
                       "\xA4\xE5\x9B\xBA\xE5\xAE\x9A"); /* 已锁定位置/已解除固定 */
+    ov_saveSettings();
 }
 
 /** @brief 允许拖动开关。 */
@@ -364,22 +577,24 @@ static void ov_movableSlot(XObject* receiver, XVarList* args)
     ov_report(checked ? "\xE5\xB7\xB2\xE5\x85\x81\xE8\xAE\xB8\xE6\x8B\x96"
                       "\xE5\x8A\xA8" : "\xE5\xB7\xB2\xE7\xA6\x81\xE6\xAD"
                       "\xA2\xE6\x8B\x96\xE5\x8A\xA8"); /* 已允许拖动/已禁止拖动 */
+    ov_saveSettings();
 }
 
 /** @brief 字号切换。 */
 static void ov_fontSlot(XObject* receiver, XVarList* args)
 {
     XPerformanceOverlay* overlay;
-    static const int kSizes[5] = { 12, 13, 14, 16, 18 };
     int index;
     (void)receiver; (void)args;
     overlay = ov_target();
     if (!overlay || !s_ov.m_fontCombo || s_ov.m_syncing) return;
     index = XComboBox_currentIndex(s_ov.m_fontCombo);
-    if (index < 0 || index > 4) index = 3;
-    XPerformanceOverlay_setTextPixelSize(overlay, kSizes[index]);
+    if (index < 0 || index >= OV_FONT_SIZE_COUNT)
+        index = ov_fontIndexOf(OV_DEFAULT_FONT_PX);
+    XPerformanceOverlay_setTextPixelSize(overlay, kOvFontSizes[index]);
     ov_report("\xE5\xAD\x97\xE5\x8F\xB7\xE5\xB7\xB2\xE6\x9B\xB4\xE6\x8D"
               "\xA2"); /* 字号已更换 */
+    ov_saveSettings();
 }
 
 /** @brief 自适应尺寸开关。 */
@@ -397,24 +612,61 @@ static void ov_autofitSlot(XObject* receiver, XVarList* args)
                       "\xE9\x80\x82\xE5\xBA\x94\xE5\xB0\xBA\xE5\xAF\xB8"
                       : "\xE5\xB7\xB2\xE5\x85\xB3\xE9\x97\xAD\xE8\x87\xAA"
                         "\xE9\x80\x82\xE5\xBA\x94"); /* 已开启自适应尺寸/已关闭自适应 */
+    ov_saveSettings();
 }
 
-/** @brief 复位默认：悬浮层 reset + 控件回读 + 恢复自动重锚。 */
+/**
+ * @brief 复位默认：悬浮层统计值复位 + **全部设置项**回出厂默认 + 控件回读。
+ * @details 【复位补齐 2026-11-03】XPerformanceOverlay_reset 只清采样数据
+ *          （FPS/帧耗时/CPU/内存等统计值），显示开关、内存显示种类、数据
+ *          来源、固定位置、允许拖动、自适应尺寸**一项都没复位**——此前
+ *          「复位默认」只清了统计值，界面开关保持用户值（与 Qt「恢复默认」
+ *          语义不符）。叠加持久化后更严重：复位后再落盘会把**非默认值**
+ *          写回配置，默认值永远存不回去。
+ *          此处逐项显式复位到**程序启动默认值**（与 HsfUi.c 建层口径一致：
+ *          自适应开 / 固定开 / 字号 12px / 可见 / 五个显示行全开 / 内存
+ *          显示「两者」/ 来源「自动」/ 预设右下 / 允许拖动开）。
+ */
 static void ov_resetSlot(XObject* receiver, XVarList* args)
 {
     XPerformanceOverlay* overlay;
     (void)receiver; (void)args;
     overlay = ov_target();
     if (!overlay) return;
+    /* 统计值归零（FPS/帧耗时/CPU·GPU/内存快照）。 */
     XPerformanceOverlay_reset(overlay);
-    demo_main_overlay_applyPreset(
-        s_ov.m_user, (int)XPerformanceOverlayPosition_BottomRight);
-    /* 下拉框无对应 getter 的项随复位回默认档位。 */
+    /* 设置项逐项复位到出厂默认。 */
+    XPerformanceOverlay_setFpsVisible(overlay, OV_DEFAULT_FPS);
+    XPerformanceOverlay_setFrameTimeVisible(overlay, OV_DEFAULT_FRAME_TIME);
+    XPerformanceOverlay_setSysStatVisible(overlay, OV_DEFAULT_SYS_STAT);
+    XPerformanceOverlay_setNetworkVisible(overlay, OV_DEFAULT_NETWORK);
+    XPerformanceOverlay_setMemoryVisible(overlay, OV_DEFAULT_MEMORY);
+    XPerformanceOverlay_setMemoryDisplay(
+        overlay, (XPerformanceOverlayMemoryDisplay)OV_DEFAULT_MEM_DISPLAY);
+    XPerformanceOverlay_setMemorySource(
+        overlay, (XPerformanceOverlayMemorySource)OV_DEFAULT_MEM_SOURCE);
+    XPerformanceOverlay_setAutoFitSize(overlay, OV_DEFAULT_AUTOFIT);
+    XPerformanceOverlay_setMovable(overlay, OV_DEFAULT_MOVABLE);
+    XPerformanceOverlay_setFixed(overlay, OV_DEFAULT_FIXED);
+    XPerformanceOverlay_setTextPixelSize(overlay, OV_DEFAULT_FONT_PX);
+    XWidget_setVisible((XWidget*)overlay, OV_DEFAULT_VISIBLE);
+    /* 位置：右下预设（并恢复自动重锚——非右下预设会钉住浮层）。 */
+    demo_main_overlay_applyPreset(s_ov.m_user, OV_DEFAULT_PRESET);
+    /* 控件回填（无 getter 的两项 + 总开关）；setChecked 会触发 toggled
+       槽，全程持 m_syncing 抑制。 */
+    s_ov.m_syncing = true;
     if (s_ov.m_presetCombo)
-        XComboBox_setCurrentIndex(s_ov.m_presetCombo, 8); /* 右下 */
+        XComboBox_setCurrentIndex(s_ov.m_presetCombo, OV_DEFAULT_PRESET);
     if (s_ov.m_fontCombo)
-        XComboBox_setCurrentIndex(s_ov.m_fontCombo, 3); /* 16 */
+        XComboBox_setCurrentIndex(s_ov.m_fontCombo,
+                                  ov_fontIndexOf(OV_DEFAULT_FONT_PX));
+    if (s_ov.m_masterCheck)
+        XAbstractButton_setChecked((XAbstractButton*)s_ov.m_masterCheck,
+                                   OV_DEFAULT_VISIBLE);
+    s_ov.m_syncing = false;
     ov_syncFromOverlay();
+    /* 默认值一并落盘（否则配置里留着旧的非默认值，下次启动又被恢复回来）。 */
+    ov_saveSettings();
     ov_report("\xE5\xB7\xB2\xE6\x81\xA2\xE5\xA4\x8D\xE9\xBB\x98\xE8\xAE"
               "\xA4"); /* 已恢复默认 */
 }
@@ -477,7 +729,7 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     XWidget_show((XWidget*)s_ov.m_titleLabel);
 
     /* ---- 显示数据 ---- */
-    /* ---- 总开关行：显示悬浮窗（整体显隐）+ 关闭 ---- */
+    /* ---- 总开关行：显示悬浮窗（整体显隐） ---- */
     s_ov.m_masterCheck = ov_buildCheck(
         "\xE6\x98\xBE\xE7\xA4\xBA\xE6\x82\xAC\xE7\xAA\x97\xE7\xB0\xBF", 120,
                                      ov_masterSlot);
@@ -486,17 +738,6 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
            生效可见性恒为 false（会误显示为「未开启」）。 */
         XAbstractButton_setChecked((XAbstractButton*)s_ov.m_masterCheck,
                                    !XWidget_isHidden((XWidget*)ov_target()));
-    }
-    s_ov.m_closeBtn = XPushButton_create(s_ov.m_root, 0);
-    if (s_ov.m_closeBtn) {
-        XPushButton_setText_2(s_ov.m_closeBtn,
-                              "\xE5\x85\xB3\xE9\x97\xAD\xE6\x82\xAC\xE7\xAA\x97\xE7\xB0\xBF");
-        XWidget_setFixedHeight((XWidget*)s_ov.m_closeBtn, 26);
-        XObject_connect_1((XObject*)s_ov.m_closeBtn,
-                          XSignal(XAbstractButton_clicked_signal),
-                          (XObject*)s_ov.m_root, ov_closeSlot,
-                          XConnectionType_Direct);
-        XWidget_show((XWidget*)s_ov.m_closeBtn);
     }
 
     s_ov.m_capRows = ov_buildCaption(
@@ -625,7 +866,8 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     XComboBox_addItem_2(s_ov.m_fontCombo, "14");
     XComboBox_addItem_2(s_ov.m_fontCombo, "16");
     XComboBox_addItem_2(s_ov.m_fontCombo, "18");
-    XComboBox_setCurrentIndex(s_ov.m_fontCombo, 3);
+    XComboBox_setCurrentIndex(s_ov.m_fontCombo,
+                              ov_fontIndexOf(OV_DEFAULT_FONT_PX));
     XWidget_setFixedWidth((XWidget*)s_ov.m_fontCombo, 120);
     XWidget_setFixedHeight((XWidget*)s_ov.m_fontCombo, 26);
     XObject_connect_2((XObject*)s_ov.m_fontCombo,
@@ -677,15 +919,13 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     XLayout_setContentsMargins((XLayout*)&s_ov.m_rootLayout, 12, 8, 12, 8);
     XBoxLayout_addWidget(&s_ov.m_rootLayout, (XWidget*)s_ov.m_titleLabel);
     XBoxLayout_addSpacing(&s_ov.m_rootLayout, 8);
-    /* 总开关行：显示悬浮窗 | 8 | 关闭（行尾伸展）。 */
+    /* 总开关行：显示悬浮窗（行尾伸展）。 */
     XBoxLayout_init(&s_ov.m_masterRow, XBoxLayoutDirection_LeftToRight);
     XLayout_setSpacing((XLayout*)&s_ov.m_masterRow, 8);
     XLayout_setContentsMargins((XLayout*)&s_ov.m_masterRow, 12, 0, 0, 0);
     if (s_ov.m_masterCheck)
         XBoxLayout_addWidget(&s_ov.m_masterRow,
                              (XWidget*)s_ov.m_masterCheck);
-    if (s_ov.m_closeBtn)
-        XBoxLayout_addWidget(&s_ov.m_masterRow, (XWidget*)s_ov.m_closeBtn);
     XBoxLayout_addStretch(&s_ov.m_masterRow, 1);
     XBoxLayout_addLayout(&s_ov.m_rootLayout, (XLayout*)&s_ov.m_masterRow);
     XBoxLayout_addSpacing(&s_ov.m_rootLayout, 8);
@@ -1031,6 +1271,11 @@ int hsf_page_overlay_autotest(XWidget* page)
 void hsf_page_overlay_adapt(XWidget* page)
 {
     (void)page;
+}
+
+void hsf_page_overlay_restoreSettings(void)
+{
+    /* 页面被裁剪：无悬浮层可恢复（主窗也不会建悬浮层）。 */
 }
 
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && 控件段 */

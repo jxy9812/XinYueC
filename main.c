@@ -15,6 +15,8 @@
 #include "XString.h"
 #include "XStringList.h"
 #include "XPrintf.h"
+#include "XSystem.h"
+#include <stdio.h>
 #include "XDeviceTest.h"
 #include "XIOTest.h"
 #include "XDeviceFileTest.h"
@@ -337,6 +339,14 @@ int main(int argc, char* args[])
 #endif
 
     setvbuf(stdout, NULL, _IONBF, 0);
+
+    /* 【计时精度】向框架请求 1ms 级等待粒度，进程期内一直持有。
+       Windows 系统默认粒度 15.625ms，会让 Sleep(2) 实际睡 15.4ms（实测），
+       所有 2ms 级轮询的耗时预算被放大约 7.7 倍；XLink 的 4MB 传输正是因此
+       看起来「跑不完」。平台实现与引用计数都在框架里（XSystem 域），应用
+       不该自己调 timeBeginPeriod / NtSetTimerResolution。 */
+    (void)XSystem_requestTimerPrecision();
+
     XPrintf("=== XinYueC 启动 ===\n");
     app = XCoreApplication_create(argc, args);
     if (!app) return 1;

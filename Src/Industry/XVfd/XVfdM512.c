@@ -45,8 +45,12 @@ static const XVfdPointSpec s_m512Specs[] = {
     /* ---- 读点（遥测） ---- */
     { XVfdRole_StatusWord,     XIoPoint_AnalogInput,   1, "STATE", 0,                   0 },
     { XVfdRole_FaultCode,      XIoPoint_AnalogInput,   1, "FAULT", 0,                   0 },
-    { XVfdRole_OutputFreq,     XIoPoint_AnalogInput,  100, "RFR",   0,                   0 },
-    { XVfdRole_BusVoltage,     XIoPoint_AnalogInput,  10, "VBUS",  0,                   0 },
+    /* 频率类原生单位是 0.1Hz（实机标定，见 docs/M512_511_512_513寄存器映射表.md
+     * 「单位口径实测标定」）：P0.10 原始值 500 = 50.0Hz；P0.22 频率指令分辨率
+     * 实读为 1（=0.1Hz），且手册 P0.10 范围 50~5000Hz 在 16 位寄存器下只有
+     * 0.1Hz 口径装得下（0.01Hz 上限仅 655.35Hz）。故除率取 10。 */
+    { XVfdRole_OutputFreq,     XIoPoint_AnalogInput,   10, "RFR",  0,                   0 },
+    { XVfdRole_BusVoltage,     XIoPoint_AnalogInput,  10, "VBUS", 0,                   0 },
     { XVfdRole_OutputVoltage,  XIoPoint_AnalogInput,   1, "UOP",   0,                   0 },
     { XVfdRole_OutputCurrent,  XIoPoint_AnalogInput,  100, "LCR",   0,                   0 },
     { XVfdRole_OutputPower,    XIoPoint_AnalogInput,  10, "OPR",   XVfdCap_PowerReport, 0 },
@@ -59,15 +63,16 @@ static const XVfdPointSpec s_m512Specs[] = {
     { XVfdRole_PidSetpoint,    XIoPoint_AnalogInput,   1, "PIDS",  XVfdCap_PidMonitor,  0 },
     { XVfdRole_PidFeedback,    XIoPoint_AnalogInput,   1, "PIDF",  XVfdCap_PidMonitor,  0 },
     { XVfdRole_PlcStep,        XIoPoint_AnalogInput,   1, "PLC",   0,                   0 },
-    { XVfdRole_PulseFreq,      XIoPoint_AnalogInput,  100, "PULSE", 0,                   0 },
+    /* 1013H 单位是 1Hz（附录1 停机/运行参数表），不是 0.01kHz。 */
+    { XVfdRole_PulseFreq,      XIoPoint_AnalogInput,   1, "PULSE", 0,                   0 },
     { XVfdRole_LoadSpeed,      XIoPoint_AnalogInput,   1, "LOAD",  0,                   0 },
     { XVfdRole_PowerOnHours,   XIoPoint_AnalogInput,  60, "PON",   XVfdCap_RuntimeStats, 0 },
     { XVfdRole_RunHours,       XIoPoint_AnalogInput,  600, "RUN",   XVfdCap_RuntimeStats, 0 },
-    { XVfdRole_SetFreq,        XIoPoint_AnalogInput,  100, "FRQ",   0,                   0 },
+    { XVfdRole_SetFreq,        XIoPoint_AnalogInput,   10, "FRQ",   0,                   0 },
     { XVfdRole_MotorTemp,      XIoPoint_AnalogInput,   1, "MTMP",  XVfdCap_MotorTemp,   0 },
     /* 最大频率既是遥测又是可调参数（P0.10）：用 AO 承载——AO 的 ReadRaw 同样
      * 读 Hub 缓存，故一点即可读可写（AI 点不可写，会挡住参数写入）。 */
-    { XVfdRole_MaxFreq,        XIoPoint_AnalogOutput, 100, "MAXF",  0,                   0 },
+    { XVfdRole_MaxFreq,        XIoPoint_AnalogOutput,  10, "MAXF",  0,                   0 },
     /* ---- 写点（控制） ---- */
     { XVfdRole_CommandWord,    XIoPoint_AnalogOutput,  1, "CMD",   0,                   0 },
     /* 1000H 通讯设定值是 16 位补码（-10000~+10000 = ±100.00%）：必须标有符号，
@@ -115,10 +120,10 @@ static const XVfdParamDesc s_m512Params[] = {
     { "P0.02 命令源选择",       NULL,   0,  0,      2,      0,      XVfdParamAccess_RW, 0 },
     { "P0.03 主频率源X选择",    NULL,   0,  0,      9,      1,      XVfdParamAccess_RunLocked, 0 },
     { "P0.04 辅助频率源Y选择",  NULL,   0,  0,      9,      0,      XVfdParamAccess_RunLocked, 0 },
-    { "P0.08 预置频率",         "Hz",   2,  0,      500000, 5000,   XVfdParamAccess_RW, 0 },
-    { "P0.10 最大频率",         "Hz",   2,  5000,   500000, 5000,   XVfdParamAccess_RunLocked, 0 },
-    { "P0.12 上限频率",         "Hz",   2,  0,      500000, 5000,   XVfdParamAccess_RunLocked, 0 },
-    { "P0.14 下限频率",         "Hz",   2,  0,      500000, 0,      XVfdParamAccess_RunLocked, 0 },
+    { "P0.08 预置频率",         "Hz",   1,  0,      50000,  500,    XVfdParamAccess_RW, 0 },
+    { "P0.10 最大频率",         "Hz",   1,  500,    50000,  500,    XVfdParamAccess_RunLocked, 0 },
+    { "P0.12 上限频率",         "Hz",   1,  0,      50000,  500,    XVfdParamAccess_RunLocked, 0 },
+    { "P0.14 下限频率",         "Hz",   1,  0,      50000,  0,      XVfdParamAccess_RunLocked, 0 },
     { "P0.15 载波频率",         "kHz",  1,  5,      160,    0,      XVfdParamAccess_RW, 0 },
     { "P0.17 加速时间1",        "s",    1,  0,      650000, 0,      XVfdParamAccess_RW, 0 },
     { "P0.18 减速时间1",        "s",    1,  0,      650000, 0,      XVfdParamAccess_RW, 0 },
@@ -131,12 +136,12 @@ static const XVfdParamDesc s_m512Params[] = {
     { "P1.01 电机额定功率",     "kW",   1,  10,     10000,  0,      XVfdParamAccess_RunLocked, 1 },
     { "P1.02 电机额定电压",     "V",    0,  1,      2000,   0,      XVfdParamAccess_RunLocked, 1 },
     { "P1.03 电机额定电流",     "A",    2,  1,      65535,  0,      XVfdParamAccess_RunLocked, 1 },
-    { "P1.04 电机额定频率",     "Hz",   2,  1,      500000, 0,      XVfdParamAccess_RunLocked, 1 },
+    { "P1.04 电机额定频率",     "Hz",   1,  1,      50000,  0,      XVfdParamAccess_RunLocked, 1 },
     { "P1.05 电机额定转速",     "rpm",  0,  1,      65535,  0,      XVfdParamAccess_RunLocked, 1 },
     { "P9.00 电机过载保护选择", NULL,   0,  0,      1,      1,      XVfdParamAccess_RW,        9 },
     { "P9.01 电机过载保护增益", NULL,   2,  20,     1000,   100,    XVfdParamAccess_RW,        9 },
     { "P9.09 故障自动复位次数", NULL,   0,  0,      20,     0,      XVfdParamAccess_RW,        9 },
-    { "P8.00 点动运行频率",     "Hz",   2,  0,      500000, 200,    XVfdParamAccess_RW,        8 },
+    { "P8.00 点动运行频率",     "Hz",   1,  0,      50000,  20,     XVfdParamAccess_RW,        8 },
     { "P8.01 点动加速时间",     "s",    1,  0,      65000,  200,    XVfdParamAccess_RW,        8 },
     { "P8.02 点动减速时间",     "s",    1,  0,      65000,  200,    XVfdParamAccess_RW,        8 },
     { "PA.00 PID 给定源",       NULL,   0,  0,      7,      7,      XVfdParamAccess_RunLocked, 10 },

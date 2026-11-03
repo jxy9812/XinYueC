@@ -1,20 +1,30 @@
 ﻿/**
  * @file       HsfDataAlarm.c
- * @brief      报警叶子页实现：复用 HsfPlaceHolder 占位承载。
+ * @brief      报警叶子页实现：XTableWidget 铺满、随窗口拉伸。
  */
 #include "HsfDataAlarm.h"
 
-#include "HsfPlaceHolder.h"
+#include "HsfDataTable.h"
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON
+
+/** 报警列头（静态存活：表格直存指针）。 */
+static const char* const kAlarmHeaders[] = {
+    "\xE6\x97\xB6\xE9\x97\xB4",   /* 时间 */
+    "\xE7\xB1\xBB\xE5\x9E\x8B",   /* 类型 */
+    "\xE6\x8F\x8F\xE8\xBF\xB0",   /* 描述 */
+    "\xE7\x8A\xB6\xE6\x80\x81"    /* 状态 */
+};
 
 XWidget* HsfDataAlarm_create(XWidget* parent, HsfMenuNavFn navFn,
                            void* userData)
 {
-    /* TODO(报警): 占位骨架，真实页面内容在此替换实现。 */
-    return HsfPlaceHolder_create(parent,
-                            "\xE6\x8A\xA5\xE8\xAD\xA6", "\xE6\x8A\xA5\xE8\xAD\xA6\xE8\xA7\x84\xE5\x88\x99\xE4\xB8\x8E\xE8\xAE\xB0\xE5\xBD\x95\xEF\xBC\x9A\xE9\x98\x88\xE5\x80\xBC\xE8\xB6\x8A\xE9\x99\x90\xE3\x80\x81\xE6\x95\x85\xE9\x9A\x9C\xE4\xB8\x8E\xE7\xA1\xAE\xE8\xAE\xA4\xE5\xA4\x84\xE7\xBD\xAE", "\xE5\xBE\x85\xE6\x8E\xA5\xE5\x85\xA5\xEF\xBC\x9A\xE6\x8A\xA5\xE8\xAD\xA6\xE8\xA7\x84\xE5\x88\x99\xE4\xB8\x8E\xE8\xAE\xB0\xE5\xBD\x95",
-                            HSF_PAGE_DATA_MENU, navFn, userData);
+    (void)navFn;
+    (void)userData;
+    /* 报警表格（15 空行占位，报警规则与记录接入后续替换实现）。 */
+    return HsfDataTablePage_create(parent,
+                            "\xE6\x8A\xA5\xE8\xAD\xA6",
+                            kAlarmHeaders, 4, 15); /* 报警 */
 }
 
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */

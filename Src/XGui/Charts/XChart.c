@@ -1378,17 +1378,65 @@ bool XChart_isZoomed(const XChart* self)
 
 void XChart_scroll(XChart* self, double dx, double dy)
 {
-    double sx;
-    double sy;
     if (!self || !self->m_axisX || !self->m_axisY) return;
-    sx = (self->m_axisX->m_base.m_max - self->m_axisX->m_base.m_min) * dx;
-    sy = (self->m_axisY->m_base.m_max - self->m_axisY->m_base.m_min) * dy;
-    if (sx == 0.0 && sy == 0.0) return;
+    if (dx == 0.0 && dy == 0.0) return;
     xchart_pushZoom(self);
-    XValueAxis_setRange(self->m_axisX, self->m_axisX->m_base.m_min + sx,
-                        self->m_axisX->m_base.m_max + sx);
-    XValueAxis_setRange(self->m_axisY, self->m_axisY->m_base.m_min + sy,
-                        self->m_axisY->m_base.m_max + sy);
+    XValueAxis_setRange(self->m_axisX, self->m_axisX->m_base.m_min + dx,
+                        self->m_axisX->m_base.m_max + dx);
+    XValueAxis_setRange(self->m_axisY, self->m_axisY->m_base.m_min + dy,
+                        self->m_axisY->m_base.m_max + dy);
+}
+
+void XChart_zoomX(XChart* self, double factor)
+{
+    double cx;
+    double hw;
+    if (!self || !self->m_axisX) return;
+    if (factor <= 0.0) return;
+    if (self->m_axisX->m_base.m_max - self->m_axisX->m_base.m_min <= 0.0) return;
+    if (!xchart_pushZoom(self)) return;
+    cx = (self->m_axisX->m_base.m_min + self->m_axisX->m_base.m_max) / 2.0;
+    hw = (self->m_axisX->m_base.m_max - self->m_axisX->m_base.m_min) / 2.0 / factor;
+    XValueAxis_setRange(self->m_axisX, cx - hw, cx + hw);
+}
+
+void XChart_scrollX(XChart* self, double dx)
+{
+    if (!self || !self->m_axisX) return;
+    if (dx == 0.0) return;
+    xchart_pushZoom(self);
+    XValueAxis_setRange(self->m_axisX, self->m_axisX->m_base.m_min + dx,
+                        self->m_axisX->m_base.m_max + dx);
+}
+
+/**
+ * @brief 以锚点缩放 X 轴（锚点值保持在其相对位置不动）。
+ *
+ * @param self   目标图表指针。
+ * @param factor 缩放因子（>1 放大）。
+ * @param anchor 锚点数据值。
+ * @param ratio  锚点相对位置（0=左缘，1=右缘；越界按 0.5 居中）。
+ * @return 无返回值。
+ */
+void XChart_zoomXAt(XChart* self, double factor, double anchor, double ratio)
+{
+    double min;
+    double max;
+    double w;
+    double nw;
+    double lo;
+    if (!self || !self->m_axisX) return;
+    if (factor <= 0.0) return;
+    min = self->m_axisX->m_base.m_min;
+    max = self->m_axisX->m_base.m_max;
+    w = max - min;
+    if (w <= 0.0) return;
+    if (ratio < 0.0) ratio = 0.0;
+    if (ratio > 1.0) ratio = 1.0;
+    if (!xchart_pushZoom(self)) return;
+    nw = w / factor;
+    lo = anchor - ratio * nw;
+    XValueAxis_setRange(self->m_axisX, lo, lo + nw);
 }
 
 /* ==================== 边距与绘图区 ==================== */

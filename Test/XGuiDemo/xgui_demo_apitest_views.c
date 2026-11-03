@@ -2807,12 +2807,19 @@ int xapi_views_run(void)
         XAPI_EXPECT(!XTableView_isRowHidden(&table, 0) &&
                     !XTableView_isColumnHidden(&table, 0),
                     "默认行/列均可见");
-        XAPI_EXPECT(XTableView_rowSpan(&table, 0, 0) == 1 &&
-                    XTableView_columnSpan(&table, 0, 0) == 1,
-                    "默认无合并（跨行/跨列=1）");
-        XAPI_EXPECT(XTableView_horizontalHeader(&table) == NULL &&
-                    XTableView_verticalHeader(&table) == NULL,
-                    "初始无挂接表头对象");
+        {
+            int rs = 0;
+            int cs = 0;
+            int orow = -1;
+            int ocol = -1;
+            XAPI_EXPECT(!XTableView_spanAt(&table, 0, 0, &rs, &cs,
+                                           &orow, &ocol) &&
+                        rs == 1 && cs == 1 && orow == 0 && ocol == 0,
+                        "默认无合并（spanAt false，跨度=1，原点=自身）");
+        }
+        XAPI_EXPECT(XTableView_horizontalHeader(&table) != NULL &&
+                    XTableView_verticalHeader(&table) != NULL,
+                    "构造内建双表头（对标 QTableViewPrivate::init）");
 
         /* ---- 尺寸往返 ---- */
         XTableView_setRowHeight(&table, 30);
@@ -2899,28 +2906,69 @@ int xapi_views_run(void)
         XTableView_resizeRowsToContents(&table);
         XAPI_EXPECT(XTableView_rowHeight(&table) > 0,
                     "resizeToContents 族调用后行高保持正值");
-        /* ---- 跨行/列合并（对标 setSpan/rowSpan/columnSpan/clearSpans） ---- */
+        /* ---- 跨行/列合并（对标 setSpan/spanAt/clearSpans） ---- */
         XTableView_setSpan(&table, 0, 0, 2, 2);
-        XAPI_EXPECT(XTableView_rowSpan(&table, 0, 0) == 2 &&
-                    XTableView_columnSpan(&table, 0, 0) == 2,
-                    "setSpan(0,0,2,2) 合并区间生效");
-        XAPI_EXPECT(XTableView_rowSpan(&table, 1, 1) == 2,
-                    "被覆盖格（非原点）返回所属区间跨行数（同 Qt）");
-        XAPI_EXPECT(XTableView_rowSpan(&table, 2, 0) == 1,
-                    "未合并格跨行数=1");
+        {
+            int rs = 0;
+            int cs = 0;
+            int orow = -1;
+            int ocol = -1;
+            XAPI_EXPECT(XTableView_spanAt(&table, 0, 0, &rs, &cs,
+                                          &orow, &ocol) &&
+                        rs == 2 && cs == 2 && orow == 0 && ocol == 0,
+                        "setSpan(0,0,2,2) 合并区间生效（原点命中）");
+            XAPI_EXPECT(XTableView_spanAt(&table, 1, 1, &rs, &cs,
+                                          &orow, &ocol) &&
+                        rs == 2 && orow == 0 && ocol == 0,
+                        "被覆盖格（非原点）命中所属区间（同 Qt spanAt）");
+            XAPI_EXPECT(!XTableView_spanAt(&table, 2, 0, &rs, &cs,
+                                           &orow, &ocol) && rs == 1,
+                        "未合并格 spanAt false（跨度=1）");
+        }
         XTableView_setSpan(&table, 0, 0, 1, 1);
-        XAPI_EXPECT(XTableView_rowSpan(&table, 0, 0) == 1,
-                    "rowSpan/columnSpan 均 1 移除合并（同 Qt）");
+        {
+            int rs = 0;
+            int cs = 0;
+            XAPI_EXPECT(!XTableView_spanAt(&table, 0, 0, &rs, &cs,
+                                           NULL, NULL) && rs == 1,
+                        "跨度均 1 移除合并（同 Qt）");
+        }
         XTableView_setSpan(&table, 0, 0, 0, 2);
-        XAPI_EXPECT(XTableView_rowSpan(&table, 0, 0) == 1,
-                    "任一跨度 <=0 忽略");
+        {
+            int rs = 0;
+            XAPI_EXPECT(!XTableView_spanAt(&table, 0, 0, &rs, NULL,
+                                           NULL, NULL) && rs == 1,
+                        "任一跨度 <=0 忽略");
+        }
         XTableView_setSpan(&table, 0, 0, 2, 2);
         XTableView_setSpan(&table, 0, 0, 3, 2);
-        XAPI_EXPECT(XTableView_rowSpan(&table, 0, 0) == 3,
-                    "同原点重复设置替换旧值");
+        {
+            int rs = 0;
+            XAPI_EXPECT(XTableView_spanAt(&table, 0, 0, &rs, NULL,
+                                          NULL, NULL) && rs == 3,
+                        "同原点重复设置替换旧值");
+        }
         XTableView_clearSpans(&table);
-        XAPI_EXPECT(XTableView_rowSpan(&table, 0, 0) == 1,
-                    "clearSpans 清空全部合并");
+        {
+            int rs = 0;
+            XAPI_EXPECT(!XTableView_spanAt(&table, 0, 0, &rs, NULL,
+                                           NULL, NULL) && rs == 1,
+                        "clearSpans 清空全部合并");
+        }
+
+        /* ---- 滚动/偏移/视觉序（对标 scrollTo/horizontalOffset/
+         *      verticalOffset/visualIndex） ---- */
+        XTableView_scrollTo(&table, 5, 0);
+        XAPI_EXPECT(true, "scrollTo 调用无崩溃（转发基类 EnsureVisible）");
+        XAPI_EXPECT(XTableView_horizontalOffset(&table) == 0 &&
+                    XTableView_verticalOffset(&table) == 0,
+                    "未滚动偏移恒 0（横/纵滚动条值口径）");
+        XAPI_EXPECT(XTableView_visualIndex(&table, 2) == 2 &&
+                    XTableView_visualIndex(&table, -1) == -1,
+                    "visualIndex 恒等映射（平铺模型，负值 -1）");
+        XAPI_EXPECT(XTableView_visualRow(&table, 3) == 3 &&
+                    XTableView_visualRow(&table, -2) == -1,
+                    "visualRow 恒等映射（平铺模型，负值 -1）");
 
         /* ---- 表头对象挂接（对标 setHorizontalHeader/VerticalHeader） ---- */
         XTableView_setHorizontalHeader(&table, hHeader);
@@ -2983,6 +3031,15 @@ int xapi_views_run(void)
                     "初始无当前单元格");
         XAPI_EXPECT(XTableWidget_model(&table) != NULL,
                     "内建数据模型桥可用（对标 QTableWidget::model）");
+        {
+            XAbstractItemModel* foreign = XAbstractItemModel_create();
+            XAbstractItemModel* before = XTableWidget_model(&table);
+            XTableWidget_setModel(&table, foreign);
+            XAPI_EXPECT(XTableWidget_model(&table) == before,
+                        "setModel 拒绝换模型（Qt QTableWidget::setModel "
+                        "\\internal 拒绝语义，内建模型保持）");
+            if (foreign) XClassDelete(foreign);
+        }
         XAPI_EXPECT(XTableWidget_itemPrototype(&table) == NULL,
                     "初始无原型单元格（对标 itemPrototype 缺省 NULL）");
         XAPI_EXPECT(XTableView_rowHeight((XTableView*)&table) == 24 &&

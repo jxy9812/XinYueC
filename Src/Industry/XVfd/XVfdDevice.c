@@ -338,6 +338,7 @@ void XVfdDevice_init(XVfdDevice* dev)
     dev->m_actionTimer = XTIMER_INVALID_ID;
     dev->m_lastError = XVfdError_OK;
     dev->m_op = XVfdOperation_None;
+    dev->m_controlEnabled = true;   /* 控制闸缺省使能（历史行为不变） */
 }
 
 /* ==================== 装配 ==================== */
@@ -560,6 +561,18 @@ bool XVfdDevice_isBusy(const XVfdDevice* dev)
 XVfdError XVfdDevice_lastError(const XVfdDevice* dev)
 {
     return dev ? dev->m_lastError : XVfdError_OK;
+}
+
+void XVfdDevice_setControlEnabled(XVfdDevice* dev, bool enabled)
+{
+    if (!dev) return;
+    dev->m_controlEnabled = enabled;
+}
+
+bool XVfdDevice_controlEnabled(const XVfdDevice* dev)
+{
+    /* 未初始化/野指针按「未使能」保守处理；正常 init 的实例恒有值。 */
+    return dev ? dev->m_controlEnabled : false;
 }
 
 void XVfdDevice_setStatusInterval(XVfdDevice* dev, uint32_t intervalMs)
@@ -950,7 +963,8 @@ bool XVfdDevice_writeRole(XVfdDevice* dev, XVfdPointRole role, int32_t nativeVal
         if (dev) dev->m_lastError = XVfdError_NotAttached;
         return false;
     }
-    /* [有符号原生量 2026-11-02 归口] 补码归一已下沉到 XIoPoint_toRaw：
+    /* [有符号原生量 2026-11-02 归口] 补码归一已下沉到 XIoAnalogPoint_toRaw
+     *   （2026-11-03 拆分后标度换算在模拟量子类）：
      *   有符号点（点上的 m_signed=1）负值输出 16 位补码原码，无符号点钳 0。
      *   本层不再做符号处理——同一语义只在通道层定义一次（旧实现两处各有一套，
      *   走设备层与走组层结果不同）。 */
@@ -964,6 +978,11 @@ bool XVfdDevice_writeRole(XVfdDevice* dev, XVfdPointRole role, int32_t nativeVal
 bool XVfdDevice_beginAction(XVfdDevice* dev, XVfdOperation op)
 {
     if (!dev) return false;
+    if (!dev->m_controlEnabled) {
+        /* 控制闸未使能：全部修改动作在咽喉处拒绝（读路径不经过本函数）。 */
+        dev->m_lastError = XVfdError_ControlDisabled;
+        return false;
+    }
     if (!dev->m_group) {
         dev->m_lastError = XVfdError_NotAttached;
         return false;

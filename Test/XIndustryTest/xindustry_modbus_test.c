@@ -21,6 +21,7 @@
  *             （Test/XProtocolTest/xmodbus_hub_test.c）。
  */
 #include "XChannel/XIoChannelGroup.h"
+#include "XChannel/XIoAnalogPoint.h"
 #include "XChannel/XModbusLink.h"
 #include "XChannel/XChannelAssembly.h"
 #include "XModbusTcpServer.h"
@@ -206,12 +207,18 @@ static void test_channel_group_hub(void)
     XIoChannelGroup_setLink(group, (XIoLink*)link);
     diPt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     doPt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-    aiPt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-    aoPt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    /* [2026-11-03 拆分] AI/AO 用 XIoAnalogPoint（承载标度），对外仍以基类
+     * 指针持有：下游 role 读取、组登记全部按基类口径，零感知子类。 */
+    {
+        XIoAnalogPoint* ai = XIoAnalogPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        XIoAnalogPoint* ao = XIoAnalogPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (ai) aiPt = &ai->m_base;
+        if (ao) aoPt = &ao->m_base;
+    }
     if (diPt) { XIoPoint_setRole(diPt, 0); XIoPoint_setType(diPt, XIoPoint_DigitalInput); XIoPoint_setTag(diPt, "DI3"); }
     if (doPt) { XIoPoint_setRole(doPt, 1); XIoPoint_setType(doPt, XIoPoint_DigitalOutput); XIoPoint_setTag(doPt, "DO0"); }
-    if (aiPt) { XIoPoint_setRole(aiPt, 2); XIoPoint_setType(aiPt, XIoPoint_AnalogInput); XIoPoint_setTag(aiPt, "AI0"); XIoPoint_setScale(aiPt, 1, 1, 0, 0); XIoPoint_setUseHolding(aiPt, true); }
-    if (aoPt) { XIoPoint_setRole(aoPt, 3); XIoPoint_setType(aoPt, XIoPoint_AnalogOutput); XIoPoint_setTag(aoPt, "AO5"); XIoPoint_setScale(aoPt, 1, 1, 0, 0); }
+    if (aiPt) { XIoPoint_setRole(aiPt, 2); XIoPoint_setType(aiPt, XIoPoint_AnalogInput); XIoPoint_setTag(aiPt, "AI0"); XIoAnalogPoint_setScale((XIoAnalogPoint*)aiPt, 1, 1, 0, 0); XIoPoint_setUseHolding(aiPt, true); }
+    if (aoPt) { XIoPoint_setRole(aoPt, 3); XIoPoint_setType(aoPt, XIoPoint_AnalogOutput); XIoPoint_setTag(aoPt, "AO5"); XIoAnalogPoint_setScale((XIoAnalogPoint*)aoPt, 1, 1, 0, 0); }
     CHECK("四点创建", diPt && doPt && aiPt && aoPt);
     CHECK("四点登记",
           XIoChannelGroup_addPoint(group, diPt, true) &&

@@ -461,6 +461,20 @@ else()
     target_link_libraries(XGuiHoverProbe mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 xinyue_force_include_config(XGuiHoverProbe)
+
+# 图表时间轴交互探针（2026-11-03）：断言滚轮/拖拽只作用于横轴、缩放以
+# 光标为锚、绘图区已发布到模型、视口变更信号载荷正确（现场反馈：变频器
+# 页趋势图滚轮缩的是纵坐标、放大后拖不动）。自带 main 的独立探针：整包
+# 回归 XGuiRegression_Test 当前链接受 XTableView API 改名影响，本探针单跑。
+add_executable(XGuiChartProbe
+    "${CMAKE_CURRENT_LIST_DIR}/../xgui_chart_probe.c"
+)
+if(UNIX)
+    target_link_libraries(XGuiChartProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XGuiChartProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+xinyue_force_include_config(XGuiChartProbe)
 endif() # XGUI_ON
 
 # ==================== 滚动区触摸跟手+惯性独立探针 ====================

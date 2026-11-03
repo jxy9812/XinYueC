@@ -34255,32 +34255,36 @@ static void test_phase32_p2_contract(void)
         XTableView_setRowHidden(tv, 0, true);
         p32_expect(XTableView_isRowHidden(tv, 0), "tview: 行隐藏");
         {
-            /* setSpan 族（对标 QTableView::setSpan/rowSpan/columnSpan/clearSpans） */
+            /* setSpan 族（对标 QTableView::setSpan/spanAt/clearSpans；
+             * 2026-11-03 随并发批次 API 收口：rowSpan/columnSpan 两查询
+             * 合并为 spanAt 出参形态（跨度+原点六参）。 */
             XAbstractItemModel* m;
-            p32_expect(XTableView_rowSpan(tv, 0, 0) == 1 &&
-                       XTableView_columnSpan(tv, 0, 0) == 1,
+            int spanR = 0, spanC = 0;
+            XTableView_spanAt(tv, 0, 0, &spanR, &spanC, NULL, NULL);
+            p32_expect(spanR == 1 && spanC == 1,
                        "tview: 未合并返回 1");
             XTableView_setSpan(tv, 0, 0, 2, 3);
-            p32_expect(XTableView_rowSpan(tv, 0, 0) == 2 &&
-                       XTableView_columnSpan(tv, 0, 0) == 3,
+            XTableView_spanAt(tv, 0, 0, &spanR, &spanC, NULL, NULL);
+            p32_expect(spanR == 2 && spanC == 3,
                        "tview: setSpan 原点查询");
             /* 被覆盖格同样返回所属区间（Qt 语义）。 */
-            p32_expect(XTableView_rowSpan(tv, 1, 2) == 2 &&
-                       XTableView_columnSpan(tv, 1, 2) == 3,
+            XTableView_spanAt(tv, 1, 2, &spanR, &spanC, NULL, NULL);
+            p32_expect(spanR == 2 && spanC == 3,
                        "tview: 覆盖格反查");
             /* 同原点重复设置替换。 */
             XTableView_setSpan(tv, 0, 0, 1, 2);
-            p32_expect(XTableView_rowSpan(tv, 0, 0) == 1 &&
-                       XTableView_columnSpan(tv, 0, 0) == 2,
+            XTableView_spanAt(tv, 0, 0, &spanR, &spanC, NULL, NULL);
+            p32_expect(spanR == 1 && spanC == 2,
                        "tview: 同原点替换");
             /* 均 1 即取消合并。 */
             XTableView_setSpan(tv, 0, 0, 1, 1);
-            p32_expect(XTableView_rowSpan(tv, 0, 0) == 1,
+            XTableView_spanAt(tv, 0, 0, &spanR, &spanC, NULL, NULL);
+            p32_expect(spanR == 1,
                        "tview: 均 1 取消");
             XTableView_setSpan(tv, 1, 1, 3, 2);
             XTableView_clearSpans(tv);
-            p32_expect(XTableView_rowSpan(tv, 1, 1) == 1 &&
-                       XTableView_columnSpan(tv, 1, 1) == 1,
+            XTableView_spanAt(tv, 1, 1, &spanR, &spanC, NULL, NULL);
+            p32_expect(spanR == 1 && spanC == 1,
                        "tview: clearSpans");
             /* 覆盖渲染路径：设模型+合并后 grab 不崩溃。 */
             m = XAbstractItemModel_create();

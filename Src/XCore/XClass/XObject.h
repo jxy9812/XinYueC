@@ -395,7 +395,12 @@ XConnection* XObject_connect_1(XObject* object, size_t signal, XObject* receiver
  * @param signal 信号标识（由 XSignal 宏生成）
  * @param slot_func 槽函数指针（XSlotFunc2 类型）
  * @return 连接对象指针（XConnection*），失败返回 NULL
- * @note 建立信号与槽的关联，当信号发射时触发槽函数，无接收者故同步触发
+ * @note 建立信号与槽的关联，当信号发射时触发槽函数，无接收者故同步触发。
+ *       [Qt 背景警示] 槽被调用时 receiver 参数恒为**发送者 object 自身**
+ *       （连接挂在发送者上，无独立接收者）——不是 Qt 四参 connect 里
+ *       的接收者。槽内需要其它对象上下文时改用 connect_1 显式传
+ *       receiver，或在槽内经 sender 派生；把 receiver 当 Qt 语义的
+ *       接收者强转会在发信即错型（以发送者内存布局解读别的类型）。
  */
 XConnection* XObject_connect_2(XObject* object, size_t signal, XSlotFunc2 slot_func);
 

@@ -229,7 +229,8 @@ bool XVfdDevice_bindPoint(dev, spec, point);             /* 旧签名，委托�
 /* 读：优先读组内缓存，缓存为空时回落链路直接读一次 */
 XVfdDevice_readRole(dev, role, &value);
 
-/* 写：经组的 role 口径写，标度与符号由 XIoPoint_toRaw 处理 */
+/* 写：经组的 role 口径写，标度与符号由 XIoAnalogPoint_toRaw 处理
+ *   （2026-11-03 拆分后标度换算在模拟量子类，见 XChannel.md §2.1） */
 XVfdDevice_writeRole(dev, role, nativeValue);
 ```
 
@@ -273,7 +274,8 @@ XVfdDevice_writeRole(dev, role, nativeValue);
 
 旧实现：点层 `xIoAnalogPointToRaw` 钳 0..65535 且抹负号；设备层 `m_signed` 分支做补码归一。**同一语义两处实现、行为不同、走哪条路径结果不同。**
 
-新实现：符号语义只在 `XIoPoint_toRaw` 定义一次，设备层不再处理符号。
+新实现：符号语义只在 `XIoAnalogPoint_toRaw` 定义一次（2026-11-03 拆分后
+位于模拟量子类），设备层不再处理符号。
 
 ---
 

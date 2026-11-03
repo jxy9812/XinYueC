@@ -42,9 +42,10 @@ bool XComboBoxTest_runAll(void)
                       cb_indexChangedSlot);
     XComboBox_addItems_2(combo, kItems);
     cb_expect(XComboBox_count(combo) == 3, "addItems 3 项");
-    /* 对标 Qt：插入不自动改变 currentIndex（保持 -1）。 */
-    cb_expect(XComboBox_currentIndex(combo) == -1, "插入不自动置当前项");
-    cb_expect(cb_indexChangedCount == 0, "插入不发 currentIndex 变化");
+    /* Qt 6.8 对齐（2026-11-03）：空 combo 首插自动置当前项 0 并发信号
+     * （QComboBoxPrivate::rowsInserted qcombobox.cpp:1146-1153）。 */
+    cb_expect(XComboBox_currentIndex(combo) == 0, "首插自动置当前项 0（Qt rowsInserted 口径）");
+    cb_expect(cb_indexChangedCount == 1, "首插发一次 currentIndex 变化");
     XComboBox_setCurrentIndex(combo, 0);
     fprintf(stderr, "[cb-dbg2] after set(0): idx=%d text='%s'\n",
             XComboBox_currentIndex(combo), XComboBox_currentText_2(combo));

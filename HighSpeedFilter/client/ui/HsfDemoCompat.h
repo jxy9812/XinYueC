@@ -59,6 +59,17 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
                                 DemoPageStatusFn status, void* user);
 /** @brief 悬浮窗设置页自适应重排。 */
 void hsf_page_overlay_adapt(XWidget* page);
+/**
+ * @brief 悬浮窗设置持久化恢复：配置文件 → 悬浮层运行时 + 页面控件。
+ * @note  在**主窗显示之前**调用（首帧即用户设定的形态，无中间态闪烁）。
+ */
+void hsf_page_overlay_restoreSettings(void);
+/**
+ * @brief 悬浮窗设置页自测（逐项切换 → getter 回读 → 复位默认态）。
+ * @note  env 钩子用（XHSF_SETTINGS_AUTOTEST）：直呼槽 = 用户点击的等价
+ *        路径，用于闭环验证「改动 → 落盘 → 复位」。
+ */
+int hsf_page_overlay_autotest(XWidget* page);
 
 /** @brief 构建窗口设置页（皮肤/边框/状态栏/最大化/全屏/朝向/光标/休眠）。 */
 XWidget* hsf_page_window_build(XWidget* parent,
@@ -67,6 +78,24 @@ XWidget* hsf_page_window_build(XWidget* parent,
 void hsf_page_window_adapt(XWidget* page);
 /** @brief 窗口状态改变时回读主窗当前态（全屏复选框同步）。 */
 void hsf_page_window_syncFromWindow(void);
+/**
+ * @brief 窗口设置持久化恢复（**显示前**阶段）：皮肤/画布旋转/窗口方向/
+ *        光标/电源策略/最大化全屏 + 页面控件回填。
+ * @note  边框与状态栏属 chrome 重排项，走 hsf_page_window_restoreChrome。
+ */
+void hsf_page_window_restoreSettings(void);
+/**
+ * @brief 窗口设置持久化恢复（**显示后**阶段）：边框保留边距 + 状态栏显隐。
+ * @note  必须放在窗口显示之后——这两项要跑 chrome 重排（含形态判定），
+ *        显示前跑会让紧凑态侧栏被随后的 show 递归显示出来。
+ */
+void hsf_page_window_restoreChrome(void);
+/**
+ * @brief 窗口设置页自测（真实鼠标事件路径 → 逐项断言 → 复位默认态）。
+ * @note  env 钩子用（XHSF_SETTINGS_AUTOTEST）：真实点击路径 = 用户操作
+ *        的等价路径，用于闭环验证「改动 → 落盘 → 复位」。
+ */
+int hsf_page_window_autotest(XWidget* page);
 
 #ifdef __cplusplus
 }

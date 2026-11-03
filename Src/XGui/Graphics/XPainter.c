@@ -1203,9 +1203,11 @@ static bool painterRaster_drawLineDevice(XPainter* self, int x1, int y1,
                                          int x2, int y2);
 #if XPAINTER_PATH_ON && XPAINTER_RENDERHINT_ON
 /** @brief 线段抗锯齿光栅（定义在 painterFillContoursAntialiased 之后，
- *         复用填充 AA 通道的覆盖合成入口）。 */
-static bool painterRaster_drawLineAntialiased(XPainter* self, int ix1,
-                                              int iy1, int ix2, int iy2,
+ *         复用填充 AA 通道的覆盖合成入口）。端点为 float：整数入口传
+ *         整值，QLineF 入口（AA 下）传未取整浮点（亚像素 AA）。 */
+static bool painterRaster_drawLineAntialiased(XPainter* self, float fix1,
+                                              float fiy1, float fix2,
+                                              float fiy2,
                                               int width);
 #endif /* XPAINTER_PATH_ON && XPAINTER_RENDERHINT_ON */
 
@@ -3724,7 +3726,8 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
         dx != 0 && dy != 0)
     {
         if (xpainter_quad_prof_on()) g_xpainterQuadProf.m_diagAa += 1;
-        return painterRaster_drawLineAntialiased(self, ix1, iy1, ix2, iy2,
+        return painterRaster_drawLineAntialiased(self, (float)ix1, (float)iy1,
+                                                 (float)ix2, (float)iy2,
                                                  width);
     }
 #endif /* XPAINTER_PATH_ON && XPAINTER_RENDERHINT_ON */
@@ -7112,8 +7115,14 @@ static bool painterRaster_lineClipToBounds(float x0, float y0,
  * @param      width 已缩放的笔宽（>=1，设备像素）。
  * @return     成功返回 true；完全在界外返回 true（无可见输出）。
  */
-static bool painterRaster_drawLineAntialiased(XPainter* self, int ix1,
-                                              int iy1, int ix2, int iy2,
+/* [2026-11-03 亚像素 AA] 端点改为 float：整数入口照旧传整值（行为零
+ * 变化），QLineF 入口（drawLine_3）在 Antialiasing 下传**未取整**的
+ * 浮点端点——对标 Qt raster（QRasterPaintEngine::drawLines + QLineF
+ * 走浮点覆盖率光栅化，亚像素定位是 AA 线的核心价值；取整后再 AA 等
+ * 于白做）。GPU 重入路径保守取整（局部画布软件重放本就以整数落）。 */
+static bool painterRaster_drawLineAntialiased(XPainter* self, float fix1,
+                                              float fiy1, float fix2,
+                                              float fiy2,
                                               int width)
 {
     float ax, ay, bx, by, dx, dy, len, hw, nx, ny, extend, ex, ey;
@@ -7129,10 +7138,10 @@ static bool painterRaster_drawLineAntialiased(XPainter* self, int ix1,
     if (self->m_gpuActive && painterClipPathActive(self))
     {
         PainterGpuLineArgs args;
-        args.m_x1 = ix1;
-        args.m_y1 = iy1;
-        args.m_x2 = ix2;
-        args.m_y2 = iy2;
+        args.m_x1 = painterRound(fix1);
+        args.m_y1 = painterRound(fiy1);
+        args.m_x2 = painterRound(fix2);
+        args.m_y2 = painterRound(fiy2);
         if (xpainter_prof_requested())
             ++g_xpainterProf.m_bdLine;
         return painterGpuSubmitSoftwareCommand(
@@ -7148,10 +7157,10 @@ static bool painterRaster_drawLineAntialiased(XPainter* self, int ix1,
     clipMinY = -1.0f - hw;
     clipMaxX = (float)XImage_width(self->m_image) + hw;
     clipMaxY = (float)XImage_height(self->m_image) + hw;
-    ax = (float)ix1;
-    ay = (float)iy1;
-    bx = (float)ix2;
-    by = (float)iy2;
+    ax = fix1;
+    ay = fiy1;
+    bx = fix2;
+    by = fiy2;
     if (!painterRaster_lineClipToBounds(ax, ay, bx, by,
                                         clipMinX, clipMinY,
                                         clipMaxX, clipMaxY,
@@ -8627,10 +8636,6 @@ bool XPainter_drawLine_3(XPainter* self, float x1, float y1,
 #endif /* XPAINTER_PENSTYLE_ON */
     if (self->m_deviceKind == XPainterDevice_Image)
     {
-        /* 对标 QPainter::drawLine(const QLineF&) 无抗锯齿时的 aliased
-           输出：端点以浮点精度经过有效变换映射（缩放/旋转不损失
-           用户空间小数），取整到设备像素后走与 int 入口完全相同的
-           设备坐标画线实现（裁剪/笔宽缩放/GPU 快速路径共用）。 */
         XImageTransform transform;
         float fx1, fy1, fx2, fy2;
         bool lineOk;
@@ -8639,6 +8644,23 @@ bool XPainter_drawLine_3(XPainter* self, float x1, float y1,
         if (!painterMapPoint(&transform, x1, y1, &fx1, &fy1) ||
             !painterMapPoint(&transform, x2, y2, &fx2, &fy2))
             return false;
+#if XPAINTER_PATH_ON && XPAINTER_RENDERHINT_ON
+        /* [2026-11-03 亚像素 AA] 对标 Qt raster：QLineF + Antialiasing
+         * 走浮点覆盖率光栅化（QRasterPaintEngine 直接以浮点端点栅格化，
+         * 亚像素定位是 AA 的核心价值）。取整后再 AA 等于白做。斜线判定
+         * 与 int 入口同口径（轴向保持既有硬边快速路径零回归）。 */
+        if ((self->m_state.m_renderHints & XPainterRenderHint_Antialiasing) != 0u &&
+            (int)fx1 != (int)fx2 && (int)fy1 != (int)fy2)
+        {
+            lineOk = painterRaster_drawLineAntialiased(
+                self, fx1, fy1, fx2, fy2, self->m_state.m_penWidth);
+            xgpu_sync_readback_if_requested(self);
+            return lineOk;
+        }
+#endif /* XPAINTER_PATH_ON && XPAINTER_RENDERHINT_ON */
+        /* 无抗锯齿时的 aliased 输出：端点以浮点精度经过有效变换映射
+           （缩放/旋转不损失用户空间小数），取整到设备像素后走与 int
+           入口完全相同的设备坐标画线实现（裁剪/笔宽缩放/GPU 共用）。 */
         lineOk = painterRaster_drawLineDevice(self, painterRound(fx1),
                                               painterRound(fy1),
                                               painterRound(fx2),

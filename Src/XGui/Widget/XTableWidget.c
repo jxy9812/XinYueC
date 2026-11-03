@@ -35,6 +35,9 @@ static void VX_tableWidget_mouseMoveEvent(XWidget* self, XEvent* event);
 static void VX_tableWidget_keyPressEvent(XWidget* self, XEvent* event);
 static void VX_tableWidget_scrollContentsBy(XAbstractScrollArea* self,
                                             int dx, int dy);
+static void VX_tableWidget_resizeEvent(XWidget* self, XEvent* event);
+/** @brief Stretch 模式：按内容区宽均分列宽（实现见列宽模式节）。 */
+static void xtw_stretchColumnsToViewport(XTableWidget* self);
 /** @brief 调色板取色助手。 */
 static uint32_t xtw_color(const XTableWidget* self, XPaletteColorRole role);
 /** @brief 坐标 → 单元格（返回行列；表头/越界返回 -1）。 */
@@ -423,6 +426,8 @@ XVtable* XTableWidget_class_init(void)
                              VX_tableWidget_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy,
                              VX_tableWidget_scrollContentsBy);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
+                             VX_tableWidget_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
                              VX_tableWidget_mouseMoveEvent);
     return XVTABLE_DEFAULT;
@@ -564,6 +569,10 @@ void XTableWidget_setRowCount(XTableWidget* self, int rows)
     if (rows < self->m_rows) xtw_cwTruncateRows(self, rows); /* 收缩：解除越界挂载。 */
     self->m_rows = rows;
     if (self->m_base.m_base.m_currentRow >= rows) self->m_base.m_base.m_currentRow = rows - 1;
+    /* 对齐 Qt：行数变更驱动垂直表头段数（Qt 由 model rows 驱动 header
+     * 段表；段缺省尺寸即统一行高，已由 setRowHeight 联动）。 */
+    if (self->m_base.m_verticalHeader)
+        XHeaderView_setCount(self->m_base.m_verticalHeader, rows);
     xtw_updateContentSize(self);
     /* 行数变化改变内容高/滚动范围：挂件随视口重摆（滚入恢复显示、
        滚出藏起），与 scrollContentsBy 同一口径。 */
@@ -603,6 +612,11 @@ void XTableWidget_setColumnCount(XTableWidget* self, int columns)
     if (columns < self->m_columns) xtw_cwTruncateColumns(self, columns); /* 收缩：解除越界挂载。 */
     self->m_columns = columns;
     if (self->m_base.m_base.m_currentColumn >= columns) self->m_base.m_base.m_currentColumn = columns - 1;
+    /* 对齐 Qt：列数变更驱动水平表头段数（Qt 由 model columns 驱动
+     * header 段表；段尺寸事实源在 header——扩段用缺省宽，与视图数组
+     * 缺省镜像一致）。 */
+    if (self->m_base.m_horizontalHeader)
+        XHeaderView_setCount(self->m_base.m_horizontalHeader, columns);
     xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
     if (self->m_model)
@@ -611,6 +625,81 @@ void XTableWidget_setColumnCount(XTableWidget* self, int columns)
 }
 
 int XTableWidget_columnCount(const XTableWidget* self) { return self ? self->m_columns : 0; }
+
+void XTableWidget_setModel(XTableWidget* self, XAbstractItemModel* model)
+{
+    /* 对标 Qt 6.8 QTableWidget::setModel（qtablewidget.cpp:2708）：
+     * \internal 拒绝改模型（Q_ASSERT 编译掉后为 no-op）。QTableWidget
+     * 自带内建模型，外部模型一律忽略——Release 无操作，Debug 亦不崩
+     * （本框架无 Q_ASSERT 体系，按 Qt 断言被 NDING 关闭后的语义收口）。 */
+    (void)self;
+    (void)model;
+}
+
+/* ==================== 列宽模式（对标 horizontalHeader()->setSectionResizeMode） ==================== */
+
+void XTableWidget_setSectionResizeMode(XTableWidget* self, int mode)
+{
+    if (!self) return;
+    /* 模式事实源=内建水平表头（Qt：QTableView 构造即建 header，
+     * setSectionResizeMode 即其上的段模式写入）。非法值按 Interactive。 */
+    if (self->m_base.m_horizontalHeader)
+        XHeaderView_setSectionResizeMode(self->m_base.m_horizontalHeader,
+                                         (mode == (int)XHeaderViewResizeMode_Stretch)
+                                             ? (int)XHeaderViewResizeMode_Stretch
+                                             : (int)XHeaderViewResizeMode_Interactive);
+    if (mode == (int)XHeaderViewResizeMode_Stretch)
+        xtw_stretchColumnsToViewport(self);
+}
+
+int XTableWidget_sectionResizeMode(const XTableWidget* self)
+{
+    if (!self || !self->m_base.m_horizontalHeader)
+        return (int)XHeaderViewResizeMode_Interactive;
+    return XHeaderView_sectionResizeMode(self->m_base.m_horizontalHeader);
+}
+
+/** @brief Stretch 模式：按内容区宽均分列宽（视口宽-行头宽）。
+ *  @details 对标 Qt QHeaderViewPrivate::resizeSections（Stretch 分支
+ *           以 viewport 宽为可用空间，qheaderview.cpp）：段尺寸写
+ *           header（事实源）并镜像到视图数组（本框架绘制/定位/内容宽
+ *           读数组）。视口宽经滚动区取（内容坐标=视口坐标，同 header
+ *           注释口径）。 */
+static void xtw_stretchColumnsToViewport(XTableWidget* self)
+{
+    XHeaderView* hh;
+    XWidget* viewport;
+    int avail;
+    int each;
+    int i;
+    if (!self || self->m_columns <= 0) return;
+    hh = self->m_base.m_horizontalHeader;
+    if (!hh) return;
+    viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)self);
+    if (!viewport) return;
+    avail = XWidget_width(viewport) - self->m_headerWidth;
+    if (avail < self->m_columns) avail = self->m_columns; /* 每列至少 1px。 */
+    each = avail / self->m_columns;
+    if (each < 1) each = 1;
+    for (i = 0; i < self->m_columns; ++i) {
+        /* 尾列收余数（Qt Stretch 均分同样把零头留在末段）。 */
+        int w = (i == self->m_columns - 1)
+                    ? (avail - each * (self->m_columns - 1))
+                    : each;
+        if (w < 1) w = 1;
+        if (self->m_base.m_colWidths[i] != w) {
+            int old = self->m_base.m_colWidths[i];
+            XAbstractScrollArea* area = (XAbstractScrollArea*)self;
+            self->m_base.m_colWidths[i] = w;
+            XHeaderView_resizeSection(hh, i, w);
+            /* 差量同步内容宽（同 XTableView_setColumnWidth 根修口径）。 */
+            XAbstractScrollArea_setContentSize(
+                area, area->m_contentWidth + (w - old),
+                area->m_contentHeight);
+        }
+    }
+    XWidget_update((XWidget*)self);
+}
 
 void XTableWidget_insertRow(XTableWidget* self, int row)
 {
@@ -630,6 +719,9 @@ void XTableWidget_insertRow(XTableWidget* self, int row)
     self->m_cells[row] = fresh;
     self->m_rows++;
     xtw_cwOnRowInserted(self, row); /* 挂载表随行号平移。 */
+    /* 对齐 Qt：垂直表头段数随行插入同步。 */
+    if (self->m_base.m_verticalHeader)
+        XHeaderView_setCount(self->m_base.m_verticalHeader, self->m_rows);
     xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
     if (self->m_model)
@@ -646,6 +738,11 @@ void XTableWidget_insertColumn(XTableWidget* self, int column)
     self->m_columns++;
     xtw_shiftColumnsRight(self, column); /* 单元格数据右移，新列置空（对标 Qt）。 */
     xtw_cwOnColumnInserted(self, column); /* 挂载表随列号平移。 */
+    /* 对齐 Qt：段表随列数同步（新段=缺省宽；Qt insertColumn 由 model
+     * columnsInserted 驱动 header 段插入，本框架段表容量重建等价）。 */
+    if (self->m_base.m_horizontalHeader)
+        XHeaderView_setCount(self->m_base.m_horizontalHeader,
+                             self->m_columns);
     xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
     if (self->m_model)
@@ -666,6 +763,9 @@ void XTableWidget_removeRow(XTableWidget* self, int row)
     self->m_cells[self->m_rows - 1] = NULL; /* 前移后的孤位（悬空重复指针）清除。 */
     self->m_rows--;
     xtw_cwOnRowRemoved(self, row); /* 挂载表随行号平移/解除。 */
+    /* 对齐 Qt：垂直表头段数随行移除同步。 */
+    if (self->m_base.m_verticalHeader)
+        XHeaderView_setCount(self->m_base.m_verticalHeader, self->m_rows);
     xtw_updateContentSize(self);
     xtw_cellWidgetRelayout(self);
     XWidget_update((XWidget*)self);
@@ -680,6 +780,10 @@ void XTableWidget_removeColumn(XTableWidget* self, int column)
     self->m_columns--;
     xtw_shiftColumnsLeft(self, column); /* 释放被删列文本并左移补位（对标 Qt）。 */
     xtw_cwOnColumnRemoved(self, column); /* 挂载表随列号平移/解除。 */
+    /* 对齐 Qt：段表随列数同步收缩（Qt 由 model columnsRemoved 驱动）。 */
+    if (self->m_base.m_horizontalHeader)
+        XHeaderView_setCount(self->m_base.m_horizontalHeader,
+                             self->m_columns);
     xtw_updateContentSize(self);
     xtw_cellWidgetRelayout(self);
     XWidget_update((XWidget*)self);
@@ -1733,6 +1837,7 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
     int h;
     int row;
     int col;
+    int i;
     if (!tw || !event) return;
     w = XWidget_width(self);
     h = XWidget_height(self);
@@ -1783,9 +1888,19 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
         if (bandEnd > w) bandEnd = w;
         XPainter_fillRect(&painter,
             &(XRect){0, 0, bandEnd, tw->m_headerHeight}, button);
+        /* 末段右侧空区（对标 Qt 6.8 QHeaderView::paintEvent 2494-2499：
+         * CE_HeaderEmptyArea = fillRect(palette.window())，qcommonstyle
+         * CE_HeaderEmptyArea 默认实现——表头带横贯视口全宽，空区铺
+         * window 色而非裸 Base。此前「以底色收束」与本色恰同为 Base，
+         * 用户实机读作「没贴满」；改铺 window 色后与段带(button)在
+         * 默认调色板下仍同色系（#efefef 族），不再有白条断层。 */
+        if (bandEnd < w)
+            XPainter_fillRect(&painter,
+                &(XRect){bandEnd, 0, w - bandEnd, tw->m_headerHeight},
+                xtw_color(tw, XPaletteColorRole_Window));
         XPainter_setPen(&painter, dark);
         XPainter_drawLine(&painter, 0, tw->m_headerHeight - 1,
-                          bandEnd - 1, tw->m_headerHeight - 1);
+                          w - 1, tw->m_headerHeight - 1);
     }
     if (dirty.y < tw->m_headerHeight) {
     for (col = 0; col < tw->m_columns; ++col) {
@@ -1901,6 +2016,28 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
         XPainter_drawLine(&painter, 0, cy + tw->m_base.m_rowHeight - 1,
                           tw->m_headerWidth - 1, cy + tw->m_base.m_rowHeight - 1);
     }
+        /* ---- 空区收口（完全对齐 Qt 6.8，2026-11-03 源码口径重写） ----
+         * Qt 6.8 真规则（本文件头注释所引四处源码）：
+         *  1) QTableView::paintEvent：单元格与网格线均裁到末行/末列
+         *     （dirtyArea.setBottom/Right(min(...))）——数据区空区不画
+         *     网格、无虚拟空行，底色=视口 Base（1) 已由本循环天然满足：
+         *     行/列循环只到 m_rows/m_columns）；
+         *  2) QHeaderView 是独立子控件、整列高覆盖：垂直表头在末行之下
+         *     仍是段带底色（button 族），空段无 headerData（无行号）；
+         *  3) 水平表头末段右侧空区 = CE_HeaderEmptyArea（上方已铺
+         *     window 色并贯穿底线）。
+         * 此处只补 2)：行头空段（无行号文本）。滚动范围仍由真实行数
+         * 决定（xtw_updateContentSize 不动）。 */
+        {
+            int emptyTop = tw->m_headerHeight
+                + tw->m_rows * tw->m_base.m_rowHeight - vo;
+            if (emptyTop < tw->m_headerHeight)
+                emptyTop = tw->m_headerHeight;
+            if (emptyTop < h)
+                XPainter_fillRect(&painter,
+                    &(XRect){0, emptyTop, tw->m_headerWidth,
+                             h - emptyTop}, button);
+        }
     }
     }
     XPainter_end(&painter);
@@ -1917,6 +2054,22 @@ static void VX_tableWidget_scrollContentsBy(XAbstractScrollArea* self,
        滚出视口的藏起，滚入的摆位显示。 */
     xtw_cellWidgetRelayout((XTableWidget*)self);
     XWidget_update((XWidget*)self);
+}
+
+/** @brief resizeEvent：Stretch 模式下按新视口重分列宽（对标 Qt
+ *         QHeaderView 对 viewport resize 的 resizeSections(Stretch)
+ *         响应——段均分可用空间；qheaderview.cpp
+ *         QHeaderViewPrivate::resizeSections）。其余模式转基类。 */
+static void VX_tableWidget_resizeEvent(XWidget* self, XEvent* event)
+{
+    XTableWidget* tw = (XTableWidget*)self;
+    if (!tw) return;
+    XClass_Parent(XTableView, EXWidget_ResizeEvent,
+                  XWidgetEventSlot)(self, event);
+    if (tw->m_base.m_horizontalHeader &&
+        XHeaderView_sectionResizeMode(tw->m_base.m_horizontalHeader)
+            == (int)XHeaderViewResizeMode_Stretch)
+        xtw_stretchColumnsToViewport(tw);
 }
 
 /** @brief 坐标 → 单元格（返回行列；表头/越界返回 -1）。 */

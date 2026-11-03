@@ -84,6 +84,15 @@ int XLinkQualityTest_run(void);
  */
 void XLinkQualityTest(void);
 
+/**
+ * @brief  全量闸门菜单动作（与 `--test xlink-all` 同口径）。
+ * @details 顺序执行 功能全量（XLinkTest_run）→ 质量门禁（XLinkQualityTest_run）
+ *          → 本进程案例联调（XLinkDemo_run），任一段失败即短路——与命令行
+ *          分派（XTestCommand.c xlink-all 分支）的 `&&` 语义一致，避免在已红
+ *          的基础上继续烧时间。
+ */
+void XLinkAllTest(void);
+
 #ifdef __cplusplus
 }
 #endif

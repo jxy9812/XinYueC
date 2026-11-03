@@ -444,6 +444,33 @@ int XVfdAtv61Test_runEx(const char* ptyOverride)
         CHECK(st->m_faultCode == 0, "复位后 LFT = 0");
     }
 
+    /* ---------- ⑧ 控制闸（统一修改许可） ---------- */
+    g_case = "controlGate";
+    {
+        /* 缺省使能：不设置时行为与历史一致。 */
+        CHECK(XVfdDevice_controlEnabled(base), "控制闸缺省使能");
+        /* 关闸：修改动作全被拒，lastError=ControlDisabled。 */
+        XVfdDevice_setControlEnabled(base, false);
+        CHECK(!XVfdDevice_controlEnabled(base), "关闸生效");
+        CHECK(!XVfdDevice_start(base, false), "关闸后 start 被拒");
+        CHECK(XVfdDevice_lastError(base) == XVfdError_ControlDisabled,
+              "关闸后 lastError = ControlDisabled");
+        CHECK(!XVfdDevice_setFrequency(base, 25.0), "关闸后 setFrequency 被拒");
+        CHECK(!XVfdDevice_resetFault(base), "关闸后 resetFault 被拒");
+        /* 读路径不受影响：状态快照照常发布（闸只拦修改）。 */
+        {
+            const XVfdStatus* st = XVfdDevice_status_const(base);
+            CHECK(st && st->m_valid, "关闸后读路径照常（状态快照仍有效）");
+        }
+        /* 开闸恢复：同型修改动作放行。 */
+        XVfdDevice_setControlEnabled(base, true);
+        CHECK(XVfdDevice_controlEnabled(base), "开闸生效");
+        g_drv.doneCount = 0;
+        CHECK(XVfdDevice_setFrequency(base, 30.0), "开闸后 setFrequency 放行");
+        CHECK(waitUntil(predDone, NULL, 4000), "开闸后写给定完成");
+        CHECK(g_drv.lastOk, "开闸后写频率给定成功");
+    }
+
 cleanup:
     if (base) XVfdDevice_detach(base);
     if (drive) XClassDelete((XClass*)drive);

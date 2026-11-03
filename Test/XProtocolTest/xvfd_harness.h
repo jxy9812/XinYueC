@@ -29,6 +29,7 @@
 #include "XModbusMapping.h"
 #include "XModbusClient.h"
 #include "XChannel/XIoChannelGroup.h"
+#include "XChannel/XIoAnalogPoint.h"
 #include "XChannel/XModbusLink.h"
 #include "XChannel/XChannelAssembly.h"
 #include "XVfd/XVfdDevice.h"
@@ -194,8 +195,17 @@ static XIoPoint* xvfdHarnessMakePoint(XvfdHarness* h, const XVfdPointSpec* spec,
     XIoPoint* pt;
     (void)h;
     if (!spec) return NULL;
-    pt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-    if (!pt) return NULL;
+    /* [2026-11-03 拆分] 按规格类型选点类：AI/AO 用 XIoAnalogPoint（承载标度），
+     * DI/DO 用基类（瘦身无标度载荷）；对外统一以基类指针返回。 */
+    if (spec->m_type == (uint8_t)XIoPoint_AnalogInput ||
+        spec->m_type == (uint8_t)XIoPoint_AnalogOutput) {
+        XIoAnalogPoint* apt = XIoAnalogPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (!apt) return NULL;
+        pt = &apt->m_base;
+    } else {
+        pt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (!pt) return NULL;
+    }
     XIoPoint_setRole(pt, spec->m_role);
     XIoPoint_setType(pt, (XIoPointType)spec->m_type);
     XIoPoint_setTag(pt, spec->m_tag);
@@ -206,7 +216,7 @@ static XIoPoint* xvfdHarnessMakePoint(XvfdHarness* h, const XVfdPointSpec* spec,
     /* [2026-11-02 标度归属] 语义点不在通道层标度：XVfdDevice 的 DecodePoint 需要原生量
      * 自己做 double 换算（如转矩 69/10 = 6.9），而 XIoPoint_toEngineering 返回 int32_t 会截断成 6。
      * 故这里一律 div=1（不标度），标度仅用于非语义点（参数点等）。 */
-    XIoPoint_setScale(pt, 1, 1, 0, 0);
+    XIoAnalogPoint_setScale((XIoAnalogPoint*)pt, 1, 1, 0, 0);
     return pt;
 }
 
@@ -367,14 +377,19 @@ static bool xvfdHarnessMountParam(XvfdHarness* h, XVfdDevice* dev, int devId, in
         if (!XModbusMapping_addRange(h->m_map, XModbusHoldingRegisters, vbase, 1,
                                      devId, unitId, pb.m_addr, 0)) return false;
     }
-    pt = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-    if (!pt) return false;
+    pt = NULL;
+    {
+        /* 参数点用 AO 承载（可读可写），AO 须为 XIoAnalogPoint（承载标度）。 */
+        XIoAnalogPoint* apt = XIoAnalogPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (!apt) return false;
+        pt = &apt->m_base;
+    }
     /* 参数点的 role 用「参数槽基址 + paramId」，避免与语义 role 冲突。
      * 参数 role 段起点由 XVFD_HARNESS_PARAM_ROLE_BASE 给定（见文件头常量）。 */
     XIoPoint_setRole(pt, (uint16_t)(XVFD_HARNESS_PARAM_ROLE_BASE + paramId));
     XIoPoint_setType(pt, XIoPoint_AnalogOutput);
     XIoPoint_setTag(pt, desc->m_name);
-    XIoPoint_setScale(pt, 1, 1, 0, 0);
+    XIoAnalogPoint_setScale((XIoAnalogPoint*)pt, 1, 1, 0, 0);
     if (!XIoChannelGroup_addPoint(st->m_group, pt, true)) {
         XClassDelete((XClass*)pt);
         return false;
@@ -672,14 +687,15 @@ static bool xvfdHarnessMountParamBrand(XvfdHarness* h, XVfdDevice* dev, int devI
     vaddr = (uint16_t)(vbase + (paramAddr - groups[gi].m_remoteStart));
     pt = xvfdHarnessFindRef(st, paramAddr);
     if (!pt) {
-        XIoPoint* np = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        /* AO 参数点：必须为 XIoAnalogPoint（承载标度）。 */
+        XIoAnalogPoint* np = XIoAnalogPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         uint16_t prole = (uint16_t)(XVFD_HARNESS_PARAM_ROLE_BASE + paramId);
         if (!np) return false;
-        XIoPoint_setRole(np, prole);
-        XIoPoint_setType(np, XIoPoint_AnalogOutput);
-        XIoPoint_setTag(np, desc->m_name);
-        XIoPoint_setScale(np, 1, 1, 0, 0);
-        pt = np;
+        pt = &np->m_base;
+        XIoPoint_setRole(pt, prole);
+        XIoPoint_setType(pt, XIoPoint_AnalogOutput);
+        XIoPoint_setTag(pt, desc->m_name);
+        XIoAnalogPoint_setScale(np, 1, 1, 0, 0);
         if (!XIoChannelGroup_addPoint(st->m_group, pt, true)) {
             XClassDelete((XClass*)pt);
             return false;

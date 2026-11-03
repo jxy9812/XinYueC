@@ -388,7 +388,8 @@ static void atv_onConnClicked(XObject* receiver, XVarList* args)
                                       unit, "atv61");
         specs = XVfdAtv61_pointSpecs(&specCount);
         if (devId <= 0 || !XVfdDevice_attach(s_atv.m_dev, s_atv.m_harness.m_group) ||
-            !xvfdHarnessMount(&s_atv.m_harness, s_atv.m_dev, devId, unit, specs, specCount)) {
+            !xvfdHarnessMount(&s_atv.m_harness, s_atv.m_dev, devId, unit,
+                              specs, specCount, XVfdAtv61_modbusBinding())) {
             atv_status("装配失败（设备/点绑定）");
             xvfdHarnessDestroy(&s_atv.m_harness);
             memset(&s_atv.m_harness, 0, sizeof(s_atv.m_harness));

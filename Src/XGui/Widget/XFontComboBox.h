@@ -82,6 +82,12 @@ typedef struct XFontComboBox
     uint8_t m_writingSystem; /**< 书写系统（XFontComboBoxWritingSystem，最大
                               *   Symbol=30；setWritingSystem 已按
                               *   xfcb_isValidWritingSystem 校验，默认 Any）。 */
+    /* ---- currentFont 记忆（对标 QFontComboBoxPrivate::currentFont，
+     *   值语义：NULL=未记。转发槽去重比对**记忆值**与新文本（Qt
+     *   qfontcombobox.cpp `_q_currentChanged` 同口径），不比实时
+     *   currentText()——后者随当前项已更新，比对恒等会吞掉首次
+     *   currentFontChanged（2026-11-03 空→首插语义对齐后暴露）。 */
+    XString* m_currentFont; /**< 已发 currentFontChanged 的族名（拥有）。 */
 } XFontComboBox;
 
 /** @brief X字体Combo盒classinit（对标 Qt 同名接口）。

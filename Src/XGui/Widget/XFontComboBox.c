@@ -316,6 +316,15 @@ static void VXFontComboBox_copy(XFontComboBox* self,
             ? XString_toUtf8(systemSamples[i].m_sample) : NULL;
         xfcb_systemSampleSet(self, systemSamples[i].m_system, sampleUtf8);
     }
+    /* currentFont 记忆深拷贝（对标 currentFont 值语义）。 */
+    if (self->m_currentFont) {
+        XClassDelete((XClass*)self->m_currentFont);
+        self->m_currentFont = NULL;
+    }
+    if (other->m_currentFont) {
+        const char* fam = XString_toUtf8(other->m_currentFont);
+        if (fam) self->m_currentFont = XString_create_utf8(fam);
+    }
 }
 
 /** @brief 移动语义：基类移动后转移状态字段与样例表所有权，源对象归默认值。 */
@@ -345,6 +354,10 @@ static void VXFontComboBox_move(XFontComboBox* self, XFontComboBox* other)
     other->m_systemSamples = NULL;
     other->m_systemSampleCount = 0;
     other->m_systemSampleCap = 0;
+    /* currentFont 记忆：转移所有权，源归 NULL。 */
+    if (self->m_currentFont) XClassDelete((XClass*)self->m_currentFont);
+    self->m_currentFont = other->m_currentFont;
+    other->m_currentFont = NULL;
     other->m_filters = (int)XFontComboBoxFilter_AllFonts;
     other->m_writingSystem = (int)XFontComboBoxWritingSystem_Any;
 }
@@ -356,6 +369,10 @@ static void VXFontComboBox_deinit(XFontComboBox* self)
     if (!self) return;
     xfcb_fontSampleFree(self);
     xfcb_systemSampleFree(self);
+    if (self->m_currentFont) {
+        XClassDelete((XClass*)self->m_currentFont);
+        self->m_currentFont = NULL;
+    }
     XClassDeinit((XClass*)&self->m_displayFont);
     self->m_filters = (int)XFontComboBoxFilter_AllFonts;
     self->m_writingSystem = (int)XFontComboBoxWritingSystem_Any;
@@ -373,21 +390,30 @@ XVtable* XFontComboBox_class_init(void)
 }
 
 /** @brief 转发槽：基类 currentTextChanged → currentFontChanged（对标
- *  QFontComboBox 构造连接 qfontcombobox.cpp:412-414 currentTextChanged →
- *  QFontComboBoxPrivate::currentChanged）。当前文本与既记族名不同才发射
- *  （对应对标实现 currentFont.families().first() != text 的去重，352-359）。
- *  用户经弹层/键入/程序化三条路径的当前文本变化由此统一收口。 */
+ *  QFontComboBoxPrivate::currentChanged，qfontcombobox.cpp 6.8.2:352-360）：
+ *  当前文本与**记忆族名**（m_currentFont，对标 currentFont 成员）不同才
+ *  更新记忆并发射——不比实时 currentText（当前项已更新，比对恒等会吞掉
+ *  发射；旧实现依赖「初始 current=-1 读空串」的偶然前置，首插语义对齐
+ *  后暴露）。用户经弹层/键入/程序化三条路径的当前文本变化由此统一收口。 */
 static void xfcb_currentTextChangedSlot(XObject* receiver, XVarList* args)
 {
     XFontComboBox* self = (XFontComboBox*)receiver;
     const char* text = NULL;
+    const char* remembered;
     if (args) {
         XVarList_args_1(args, const char*, t);
         text = t;
     }
     if (!self) return;
     if (!text) text = XComboBox_currentText_2((XComboBox*)self);
-    if (XStrcmp(XFontComboBox_currentFamily(self), text) == 0) return;
+    if (!text) text = "";
+    remembered = self->m_currentFont
+        ? XString_toUtf8(self->m_currentFont) : "";
+    if (XStrcmp(remembered, text) == 0) return;
+    if (self->m_currentFont)
+        XString_assign_utf8(self->m_currentFont, text);
+    else
+        self->m_currentFont = XString_create_utf8(text);
     xfcb_emitText(self,
                   (size_t)XFontComboBox_currentFontChanged_signal(
                       self, text),
@@ -415,10 +441,18 @@ void XFontComboBox_init(XFontComboBox* self, XWidget* parent,
     self->m_systemSamples = NULL;
     self->m_systemSampleCount = 0;
     self->m_systemSampleCap = 0;
+    self->m_currentFont = NULL;
     xfcb_populate(self);
     /* 对标 qfontcombobox.cpp:412-416：currentTextChanged → currentChanged
        （用户选字体时发 currentFontChanged 的通路）；在 populate 置当前项
-       之后连接，初始填充不触发信号（Qt 同序）。 */
+       之后连接，初始填充不触发信号（Qt 同序）。连接后按 Qt
+       `_q_currentChanged` 口径记一次当前族名（初值记忆——否则首个用户
+       选择与初始族名同文本时被误去重）。 */
+    {
+        const char* init = XFontComboBox_currentFamily(self);
+        if (init && init[0])
+            self->m_currentFont = XString_create_utf8(init);
+    }
     XObject_connect_1((XObject*)self,
                       (size_t)XComboBox_currentTextChanged_signal(
                           (XComboBox*)self, NULL),

@@ -32,6 +32,7 @@
 #include "XMemory.h"
 #include "XDateTime.h"
 #include "XThread.h"
+#include "XSystem.h"   /* 计时精度回归锁：XSystem_timerPrecision */
 #include "XPrintf.h"
 #include <string.h>
 #include <stdio.h>
@@ -1337,6 +1338,29 @@ int XLinkQualityTest_run(void)
     XPrintf("========== XLink 质量门禁（泄漏/性能/边界）开始 ==========\n");
     g_qPassed = 0;
     g_qFailed = 0;
+
+    /* 【计时精度回归锁】本门禁的耗时候选（4MB 文件传输、churn 轮次）都以
+       XLINK_Q_FILE_WAIT_MS 这类「毫秒预算」为准；而 Windows 默认系统定时器
+       粒度 15.625ms 会把每次 Sleep(2) 放大成 15.4ms，使预算实际只兑现约
+       1/7.7 的轮次 —— 传输本身正确也会被判「跑不完」。这不是环境噪声，
+       而是框架必须兜住的共性问题（XSystem 域的计时精度能力）。
+       这里显式断言「精度已生效」，任何回退都会在门禁最前面直接报出来，
+       而不是伪装成吞吐不足去误导排查方向。 */
+    {
+        uint32_t precisionRequests = 0;
+        double actualMs = 0.0;
+        bool held = XSystem_timerPrecision(&precisionRequests, &actualMs);
+        XLINK_QCHECK(held, "计时精度：框架已持有 1ms 级计时精度");
+        XLINK_QCHECK(precisionRequests > 0u,
+                     "计时精度：请求计数非零（引用计数已建立）");
+#if defined(_WIN32)
+        XLINK_QCHECK(actualMs > 0.0 && actualMs <= 2.0,
+                     "计时精度：平台实际粒度 <= 2ms（非 15.6ms 默认值）");
+#else
+        XLINK_QCHECK(actualMs > 0.0,
+                     "计时精度：平台回报实际粒度（非 0）");
+#endif
+    }
 
     xlink_qtest_leak();
     xlink_qtest_performance();

@@ -3,6 +3,7 @@
 #if defined(_WIN32) && defined(XSERIALPORT_USE_PLATFORM_API)
 
 #include "XMemory.h"
+#include "XSystem.h"   /* 系统计时精度：串口打开期请求 1ms 粒度 */
 #include "XVariant.h"
 #include "XVarList.h"
 #include "XString.h"
@@ -60,31 +61,30 @@
  * 链路用 pyserial 直连只有 2.9ms ⇒ 差值全在「唤醒被系统节拍量化」。
  *
  * 串口打开期间把分辨率提到 1ms（进程级副作用，作用域=串口打开期），
- * 关闭时还原。用 ntdll 的 NtSetTimerResolution 动态取址，免去链接
- * winmm.lib 的依赖。
+ * 关闭时还原。平台调用走框架 XSystem 域（XSystem_requestTimerPrecision），
+ * 本文件不再自己 include ntdll 细节。
  * ================================================================ */
-typedef LONG (WINAPI *PFN_NtSetTimerResolution)(ULONG DesiredResolution,
-                                                BOOLEAN IncreaseResolution,
-                                                PULONG CurrentResolution);
 static int g_xspw32_timerResRefs = 0; /**< 抬分辨率的引用计数（多串口）。 */
 
 static void xspw32_setTimerResolution(bool raise)
 {
-    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-    PFN_NtSetTimerResolution fn;
-    ULONG actual = 0;
-    if (!ntdll) return;
-    fn = (PFN_NtSetTimerResolution)GetProcAddress(ntdll, "NtSetTimerResolution");
-    if (!fn) return;
+    /* 【已收口到框架】实际平台调用改由 XSystem 域统一承担（进程级引用
+       计数也在那里），本函数只保留「多串口引用计数 + 首次打印」这一层
+       串口自有语义。原先这里自己用 ntdll 动态取址调
+       NtSetTimerResolution，与框架的 XSystem_platformTimerPrecision 是
+       同一件事的两份实现——分头维护会让「精度到底有没有生效」出现两个
+       真值源。 */
     if (raise) {
         if (g_xspw32_timerResRefs++ == 0) {
-            (void)fn(10000 /* 1ms，单位 100ns */, TRUE, &actual);
+            double actualMs = 0.0;
+            if (XSystem_requestTimerPrecision())
+                (void)XSystem_timerPrecision(NULL, &actualMs);
             XPrintf("[XSerial] 系统定时器分辨率: 目标 1.000ms，实际 %.3fms\n",
-                    (double)actual / 10000.0);
+                    actualMs);
         }
     } else if (g_xspw32_timerResRefs > 0) {
         if (--g_xspw32_timerResRefs == 0)
-            (void)fn(10000, FALSE, &actual);
+            XSystem_releaseTimerPrecision();
     }
 }
 

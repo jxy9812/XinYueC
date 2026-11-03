@@ -202,4 +202,15 @@ double XSystem_platformGpuUsagePercent(void)
 
 #endif /* XSYSTEM_GPU_USAGE_ON */
 
+bool XSystem_platformTimerPrecision(bool acquire, double* outActualMs)
+{
+    /* Linux 不需要「提升计时精度」这一步：nanosleep / clock_nanosleep 由
+       高精度定时器（hrtimer）承载，epoll_wait 的超时同样是高精度，不存在
+       Windows 那种「全局节拍量化到 15.625ms」。这里如实回报 1ms，表示
+       「已满足调用方对 1ms 粒度的诉求」，不假装做了平台操作。 */
+    (void)acquire;
+    if (outActualMs) *outActualMs = 1.0;
+    return true;
+}
+
 #endif /* defined(__linux__) */

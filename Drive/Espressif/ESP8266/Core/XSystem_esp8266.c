@@ -114,4 +114,13 @@ bool XSystem_platformMemoryInfo(XSystemMemoryInfo* info)
 }
 #endif /* XSYSTEM_MEMORY_USAGE_ON */
 
+bool XSystem_platformTimerPrecision(bool acquire, double* outActualMs)
+{
+    /* FreeRTOS tick 由 configTICK_RATE_HZ 决定，运行期无法调整；如实报告
+       不支持，由分发层把申请失败传回调用方。 */
+    (void)acquire;
+    if (outActualMs) *outActualMs = 0.0;
+    return false;
+}
+
 #endif /* defined(__ESP8266__) || defined(ESP8266) */

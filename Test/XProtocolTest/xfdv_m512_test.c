@@ -364,7 +364,7 @@ int XVfdM512Test_runEx(const char* ptyOverride)
     pump(800);
     CHECK(XVfdDevice_status_const(g_dev[0])->m_outputFreqHz > 24.9 &&
           XVfdDevice_status_const(g_dev[0])->m_outputFreqHz < 25.1,
-          "站1 输出频率 25.0Hz（0.01Hz × 最大频率百分比）");
+          "站1 输出频率 25.0Hz（0.1Hz 定点 × 最大频率百分比）");
     CHECK(XVfdDevice_status_const(g_dev[1])->m_outputFreqHz > 9.9 &&
           XVfdDevice_status_const(g_dev[1])->m_outputFreqHz < 10.1,
           "站2 输出频率 10.0Hz（站间隔离）");
@@ -417,7 +417,8 @@ int XVfdM512Test_runEx(const char* ptyOverride)
     CHECK(XVfdDevice_readParam(g_dev[1], (uint16_t)idMaxFreq), "站2 发起参数读 P0.10");
     pump(500);
     CHECK(g_d[1].paramReadOk && g_d[1].paramReadId == idMaxFreq, "站2 参数读完成");
-    CHECK(g_d[1].paramReadRaw == 5000, "P0.10 回读 raw=5000（50.00Hz）");
+    /* 2026-11-03 实机标定：P0.10 原始值 500 = 50.0Hz（0.1Hz 定点，见 XVfdM512_MaxFreqDiv） */
+    CHECK(g_d[1].paramReadRaw == 500, "P0.10 回读 raw=500（50.0Hz）");
 
     g_case = "paramWrite";
     g_d[1].paramWriteOk = false;

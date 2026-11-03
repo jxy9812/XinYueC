@@ -6,9 +6,11 @@
  *             「通道层机制正确」——点容器、链路虚槽、地址映射边界、装配失败路径。
  *
  *             覆盖分组：
- *               ① XIoPoint 纯数据容器：role/type/tag/标度/符号/生命周期
- *               ② XIoPoint_toRaw 符号语义：有符号补码、无符号钳位（含负数根修回归）
- *               ③ XIoPoint_toEngineering：整数标度、除零容错
+ *               ① XIoPoint 纯数据容器：role/type/tag/符号/生命周期
+ *                  （2026-11-03 拆分后含 XIoAnalogPoint 标度容器）
+ *               ② XIoAnalogPoint_toRaw 符号语义：有符号补码、无符号钳位（含负数根修回归）
+ *               ③ XIoPoint_toEngineering 基类入口分发：数字恒等、模拟标度、除零容错；
+ *                  ③b 拆分守门：尺寸收益、isa 判定、登记闸口拒绝、多态删除
  *               ④ XIoLink 虚槽缺省实现：未实现返回 false、isAsync 保守取真
  *               ⑤ 假链路虚槽分派：同步完成 / 异步完成 / 拒绝写入
  *               ⑥ XIoChannelGroup：addPoint 位冲突、role 越界、contains 的 O(1) 语义、
@@ -30,6 +32,7 @@
 #include "XEventLoop.h"
 #include "XDateTime.h"
 #include "XChannel/XIoPoint.h"
+#include "XChannel/XIoAnalogPoint.h"
 #include "XChannel/XIoLink.h"
 #include "XChannel/XIoChannelGroup.h"
 #include "XChannel/XChannelAssembly.h"
@@ -196,80 +199,160 @@ static void test_point_container(void)
     XIoPoint_setAutoDelete(&pt, true);
     check(XIoPoint_autoDelete(&pt), "设置自动释放");
 
-    /* 标度四件套：负死区按 0 处理。 */
-    XIoPoint_setScale(&pt, 2, 0, 100, -5);
-    check(XIoPoint_toEngineering(&pt, 50) == 200, "除率为 0 按 1：50*2/1+100 = 200");
+    XClassDeinit((XClass*)&pt);
+}
+
+/* ==================== ①b XIoAnalogPoint 标度容器 ==================== */
+
+static void test_analog_point_scale(void)
+{
+    XIoAnalogPoint pt;
+
+    /* 标度四件套（已从 XIoPoint 拆入子类）：负死区按 0 处理。 */
+    XIoAnalogPoint_init(&pt);
+    XIoPoint_setType(&pt.m_base, XIoPoint_AnalogInput);   /* 分发入口按类型路由。 */
+    check(XIoPoint_type(&pt.m_base) == XIoPoint_AnalogInput, "设置类型 = AI");
+    check(XIoAnalogPoint_isInstance(&pt.m_base), "init 后即本类实例");
+    XIoAnalogPoint_setScale(&pt, 2, 0, 100, -5);
+    check(XIoPoint_toEngineering(&pt.m_base, 50) == 200,
+          "除率为 0 按 1：50*2/1+100 = 200（经基类入口分发）");
 
     XClassDeinit((XClass*)&pt);
 }
 
-/* ==================== ② toRaw 符号语义（负数根修回归） ==================== */
+/* ==================== ② XIoAnalogPoint_toRaw 符号语义（负数根修回归） ==================== */
 
 static void test_point_toRaw_signed(void)
 {
-    XIoPoint pt;
+    XIoAnalogPoint pt;
 
     /* 有符号点：负值必须是 16 位补码，不得被钳成 0。 */
-    XIoPoint_init(&pt);
-    XIoPoint_setSigned(&pt, true);
-    XIoPoint_setScale(&pt, 1, 1, 0, 0);
-    check(XIoPoint_toRaw(&pt, -2000) == (uint16_t)0xF830,
+    XIoAnalogPoint_init(&pt);
+    XIoPoint_setSigned(&pt.m_base, true);
+    XIoAnalogPoint_setScale(&pt, 1, 1, 0, 0);
+    check(XIoAnalogPoint_toRaw(&pt, -2000) == (uint16_t)0xF830,
           "有符号点：-2000 → 0xF830（16 位补码）");
-    check(XIoPoint_toRaw(&pt, -1) == (uint16_t)0xFFFF,
+    check(XIoAnalogPoint_toRaw(&pt, -1) == (uint16_t)0xFFFF,
           "有符号点：-1 → 0xFFFF");
-    check(XIoPoint_toRaw(&pt, 2000) == (uint16_t)2000,
+    check(XIoAnalogPoint_toRaw(&pt, 2000) == (uint16_t)2000,
           "有符号点：正值原样");
-    check(XIoPoint_toRaw(&pt, 0) == 0, "有符号点：0 → 0");
+    check(XIoAnalogPoint_toRaw(&pt, 0) == 0, "有符号点：0 → 0");
 
     /* 无符号点：负值钳 0，超限钳 65535。 */
-    XIoPoint_setSigned(&pt, false);
-    check(XIoPoint_toRaw(&pt, -2000) == 0, "无符号点：负值钳 0");
-    check(XIoPoint_toRaw(&pt, 70000) == 65535, "无符号点：超限钳 65535");
-    check(XIoPoint_toRaw(&pt, 30000) == 30000, "无符号点：范围内原样");
+    XIoPoint_setSigned(&pt.m_base, false);
+    check(XIoAnalogPoint_toRaw(&pt, -2000) == 0, "无符号点：负值钳 0");
+    check(XIoAnalogPoint_toRaw(&pt, 70000) == 65535, "无符号点：超限钳 65535");
+    check(XIoAnalogPoint_toRaw(&pt, 30000) == 30000, "无符号点：范围内原样");
 
     XClassDeinit((XClass*)&pt);
 }
 
 static void test_point_toRaw_scale(void)
 {
-    XIoPoint pt;
+    XIoAnalogPoint pt;
 
     /* 工程值 → 原生值：raw = (v - offset) * den / num。
      * 注意两个方向的除号相反：
-     *   工程值 = raw * num / den（见 XIoPoint_toEngineering）
+     *   工程值 = raw * num / den（见 XIoAnalogPoint_toEngineering）
      *   raw     = 工程值 * den / num（本函数）
      * 故 num=1/den=10 表示「工程值放大 10 倍才是原生值」。 */
-    XIoPoint_init(&pt);
-    XIoPoint_setScale(&pt, 100, 1, 0, 0);     /* 工程值 = raw*100/1：raw = v/100 */
-    check(XIoPoint_toRaw(&pt, 6900) == 69, "标度 num=100：6900 → 69");
+    XIoAnalogPoint_init(&pt);
+    XIoAnalogPoint_setScale(&pt, 100, 1, 0, 0);     /* 工程值 = raw*100/1：raw = v/100 */
+    check(XIoAnalogPoint_toRaw(&pt, 6900) == 69, "标度 num=100：6900 → 69");
 
-    XIoPoint_setScale(&pt, 100, 1, 50, 0);    /* 带偏移：raw = (v-50)/100 */
-    check(XIoPoint_toRaw(&pt, 6450) == 64, "带偏移：(6450-50)/100 = 64");
+    XIoAnalogPoint_setScale(&pt, 100, 1, 50, 0);    /* 带偏移：raw = (v-50)/100 */
+    check(XIoAnalogPoint_toRaw(&pt, 6450) == 64, "带偏移：(6450-50)/100 = 64");
 
     /* 除零容错。 */
-    XIoPoint_setScale(&pt, 0, 0, 0, 0);
-    check(XIoPoint_toRaw(&pt, 42) == 42, "num/den 为 0 按 1：42 → 42");
+    XIoAnalogPoint_setScale(&pt, 0, 0, 0, 0);
+    check(XIoAnalogPoint_toRaw(&pt, 42) == 42, "num/den 为 0 按 1：42 → 42");
 
     XClassDeinit((XClass*)&pt);
 }
 
-/* ==================== ③ toEngineering ==================== */
+/* ==================== ③ XIoPoint_toEngineering（基类入口分发） ==================== */
 
 static void test_point_toEngineering(void)
 {
-    XIoPoint pt;
+    XIoAnalogPoint pt;
 
-    XIoPoint_init(&pt);
-    XIoPoint_setScale(&pt, 1, 100, 0, 0);
-    check(XIoPoint_toEngineering(&pt, 2500) == 25, "2500/100 = 25");
+    XIoAnalogPoint_init(&pt);
+    XIoPoint_setType(&pt.m_base, XIoPoint_AnalogInput);   /* 分发入口按类型路由。 */
+    XIoAnalogPoint_setScale(&pt, 1, 100, 0, 0);
+    check(XIoPoint_toEngineering(&pt.m_base, 2500) == 25, "2500/100 = 25");
 
-    XIoPoint_setScale(&pt, 1, 10, 0, 0);
-    check(XIoPoint_toEngineering(&pt, 69) == 6, "69/10 整数截断 = 6");
+    XIoAnalogPoint_setScale(&pt, 1, 10, 0, 0);
+    check(XIoPoint_toEngineering(&pt.m_base, 69) == 6, "69/10 整数截断 = 6");
 
-    XIoPoint_setScale(&pt, 1, 1, 100, 0);
-    check(XIoPoint_toEngineering(&pt, 5) == 105, "偏移：5+100 = 105");
+    XIoAnalogPoint_setScale(&pt, 1, 1, 100, 0);
+    check(XIoPoint_toEngineering(&pt.m_base, 5) == 105, "偏移：5+100 = 105");
+
+    /* 数字量：0/1 直通（无标度，恒等返回）。 */
+    {
+        XIoPoint d;
+        XIoPoint_init(&d);
+        check(XIoPoint_toEngineering(&d, 1) == 1, "数字点恒等：1 → 1");
+        check(XIoPoint_toEngineering(&d, 0) == 0, "数字点恒等：0 → 0");
+        XClassDeinit((XClass*)&d);
+    }
 
     XClassDeinit((XClass*)&pt);
+}
+
+/* ==================== ③b 数字/模拟拆分守门 ==================== */
+
+static void test_point_split_gate(void)
+{
+    /* 尺寸收益：数字点（基类）必须严格小于模拟点（基类 + 标度四件套）。 */
+    printf("[size] XIoPoint=%d XIoAnalogPoint=%d\n",
+           (int)sizeof(XIoPoint), (int)sizeof(XIoAnalogPoint));
+    check(sizeof(XIoPoint) < sizeof(XIoAnalogPoint),
+          "数字点尺寸 < 模拟点尺寸（拆分生效）");
+
+    /* isa 判定：基类点不是模拟量点。 */
+    {
+        XIoPoint d;
+        XIoPoint_init(&d);
+        check(!XIoAnalogPoint_isInstance(&d), "基类点 isInstance = false");
+        XClassDeinit((XClass*)&d);
+    }
+
+    /* 登记闸口：AI/AO 类型必须是 XIoAnalogPoint 实例，裸基类点被拒。 */
+    {
+        XIoChannelGroup* grp = XIoChannelGroup_create();
+        XIoPoint* badAi = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        XIoAnalogPoint* okAi = XIoAnalogPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (!grp || !badAi || !okAi) {
+            if (grp) XClassDelete((XClass*)grp);
+            if (badAi) XClassDelete((XClass*)badAi);
+            if (okAi) XClassDelete((XClass*)okAi);
+            return;
+        }
+        XIoPoint_setRole(badAi, 11);
+        XIoPoint_setType(badAi, XIoPoint_AnalogInput);
+        check(!XIoChannelGroup_addPoint(grp, badAi, true),
+              "AI 类型裸基类点被登记闸口拒绝");
+        XIoPoint_setRole(&okAi->m_base, 12);
+        XIoPoint_setType(&okAi->m_base, XIoPoint_AnalogInput);
+        check(XIoChannelGroup_addPoint(grp, &okAi->m_base, true),
+              "AI 类型模拟点登记成功");
+        XIoPoint_setRole(badAi, 0);
+        XClassDelete((XClass*)badAi);
+        XClassDelete((XClass*)grp);   /* autoDelete 连带释放 okAi。 */
+    }
+
+    /* 多态删除：基类指针 XClassDelete 走子类虚表，尺寸对齐无踩内存。 */
+    {
+        XIoAnalogPoint* apt = XIoAnalogPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        XIoPoint* base;
+        if (!apt) return;
+        base = &apt->m_base;
+        XIoPoint_setType(base, XIoPoint_AnalogOutput);   /* 分发入口按类型路由。 */
+        XIoAnalogPoint_setScale(apt, 3, 1, 7, 0);
+        check(XIoPoint_toEngineering(base, 10) == 37, "删除前标度可用 10*3+7 = 37");
+        XClassDelete(base);           /* 基类句柄删除子类实例。 */
+        check(true, "基类句柄多态删除模拟点不崩溃");
+    }
 }
 
 /* ==================== ④ XIoLink 缺省实现 ==================== */
@@ -337,7 +420,7 @@ static void test_group_basics(void)
 {
     XIoChannelGroup* grp = XIoChannelGroup_create();
     XIoPoint* p1 = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-    XIoPoint* p2 = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    XIoAnalogPoint* p2 = XIoAnalogPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     bool b = false;
     int32_t v = 0;
 
@@ -346,8 +429,8 @@ static void test_group_basics(void)
 
     XIoPoint_setRole(p1, 5);
     XIoPoint_setType(p1, XIoPoint_DigitalInput);
-    XIoPoint_setRole(p2, 7);
-    XIoPoint_setType(p2, XIoPoint_AnalogOutput);
+    XIoPoint_setRole(&p2->m_base, 7);
+    XIoPoint_setType(&p2->m_base, XIoPoint_AnalogOutput);
 
     check(XIoChannelGroup_recordCount(grp) == 0, "空组记录数 = 0");
     check(XIoChannelGroup_addPoint(grp, p1, true), "登记点 role=5");
@@ -357,7 +440,6 @@ static void test_group_basics(void)
     check(XIoChannelGroup_pointAt(grp, 5) == p1, "按 role 取点（O(1)）");
     check(XIoChannelGroup_pointAt(grp, 6) == NULL, "空位取点返回 NULL");
     check(XIoChannelGroup_pointAt(grp, 9999) == NULL, "role 越界取点返回 NULL");
-
     /* 位冲突：同一 role 第二个点必须被拒。 */
     check(!XIoChannelGroup_addPoint(grp, p1, true), "同点重复登记被拒");
     {
@@ -394,8 +476,7 @@ static void test_group_basics(void)
     XClassDelete((XClass*)p1);
 
     /* removeRole：autoDelete 点当场销毁。 */
-    check(XIoChannelGroup_removeRole(grp, 7), "removeRole 摘除 role=7");
-    check(XIoChannelGroup_recordCount(grp) == 0, "摘除后记录数 = 0");
+    check(XIoChannelGroup_removeRole(grp, 7), "removeRole 摘除 role=7");    check(XIoChannelGroup_recordCount(grp) == 0, "摘除后记录数 = 0");
     check(!XIoChannelGroup_removeRole(grp, 7), "重复摘除返回 false");
     check(!XIoChannelGroup_removeRole(grp, 9999), "越界 role 摘除返回 false");
 
@@ -411,7 +492,6 @@ static void test_group_feed(void)
     if (!grp || !pt) return;
     XIoPoint_setRole(pt, 2);
     XIoPoint_setType(pt, XIoPoint_DigitalInput);
-    XIoPoint_setScale(pt, 1, 1, 0, 0);
     XIoChannelGroup_addPoint(grp, pt, true);
 
     check(XIoChannelGroup_feedRole(grp, 2, 1), "首次喂值成功（应有变化沿）");
@@ -424,12 +504,12 @@ static void test_group_feed(void)
 
     /* 标度换算：点标度 den=10，喂 690 应存 69。 */
     {
-        XIoPoint* a = XIoPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        XIoAnalogPoint* a = XIoAnalogPoint_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         int32_t v = 0;
-        XIoPoint_setRole(a, 3);
-        XIoPoint_setType(a, XIoPoint_AnalogInput);
-        XIoPoint_setScale(a, 1, 10, 0, 0);
-        XIoChannelGroup_addPoint(grp, a, true);
+        XIoPoint_setRole(&a->m_base, 3);
+        XIoPoint_setType(&a->m_base, XIoPoint_AnalogInput);
+        XIoAnalogPoint_setScale(a, 1, 10, 0, 0);
+        XIoChannelGroup_addPoint(grp, &a->m_base, true);
         XIoChannelGroup_feedRole(grp, 3, 690);
         check(XIoChannelGroup_readAnalogInput(grp, 3, &v) && v == 69, "喂值经标度换算 690→69");
     }
@@ -613,13 +693,17 @@ int XChannelTest_run(void)
 
     printf("-- ① XIoPoint 纯数据容器 --\n");
     test_point_container();
+    test_analog_point_scale();
 
-    printf("-- ② XIoPoint_toRaw 符号语义（负数根修回归）--\n");
+    printf("-- ② XIoAnalogPoint_toRaw 符号语义（负数根修回归）--\n");
     test_point_toRaw_signed();
     test_point_toRaw_scale();
 
-    printf("-- ③ XIoPoint_toEngineering --\n");
+    printf("-- ③ XIoPoint_toEngineering（基类入口分发）--\n");
     test_point_toEngineering();
+
+    printf("-- ③b 数字/模拟拆分守门 --\n");
+    test_point_split_gate();
 
     printf("-- ④ XIoLink 缺省实现 --\n");
     test_link_defaults();

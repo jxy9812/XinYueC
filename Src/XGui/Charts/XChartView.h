@@ -39,6 +39,19 @@ typedef enum XChartView_RubberBand
 /** @brief 框选缩放模式集合（可按位组合；对标 QChartView::RubberBands）。 */
 typedef uint32_t XChartView_RubberBands;
 
+/**
+ * @brief      视口变更原因（viewportChanged 信号载荷）。
+ * @details    用户侧交互导致的视口（X 域）变化类别；供应用层仲裁
+ *             「自动跟随最新数据」与「用户接管视口」的归属
+ *             （对标 Qt Charts scrollToDate 与用户手势的共存）。
+ */
+typedef enum XChartView_ViewportChange
+{
+    XChartView_ViewportChange_Zoom  = 0, /**< 缩放（滚轮/捏合/双击）。 */
+    XChartView_ViewportChange_Pan   = 1, /**< 平移（鼠标/触摸拖拽）。 */
+    XChartView_ViewportChange_Reset = 2  /**< 复位（Shift+双击 / zoomReset）。 */
+} XChartView_ViewportChange;
+
 /** @brief 图表视图控件（对标 QChartView）。 */
 typedef struct XChartView
 {
@@ -51,6 +64,14 @@ typedef struct XChartView
     XAbstractSeries* m_hoverSeries; /**< 悬停命中的序列（借用；无命中 NULL）。 */
     int m_hoverIndex;         /**< 悬停命中的点下标（无命中 -1）。 */
     bool m_hovering;          /**< 当前是否处于悬停命中状态。 */
+    bool m_panEnabled;        /**< 拖拽平移（NoRubberBand 时左键拖拽=域滚动）。 */
+    bool m_panning;           /**< 平移拖拽进行中（区别于框选 m_dragging）。 */
+    XPoint m_panLast;         /**< 平移上一帧鼠标位（增量换算用）。 */
+    bool m_wheelZoomXOnly;    /**< Ctrl+滚轮仅缩 X 轴（Y 域交给自动量程）。 */
+    bool m_touchZoom;         /**< 双指捏合缩放 X + 双指平移开关（触屏）。 */
+    bool m_pinching;          /**< 捏合手势进行中（Gesture Updated 帧间累积）。 */
+    bool m_timeAxisMode;      /**< 时间轴模式（滚轮缩 X/拖拽平移 X/捏合缩 X）。 */
+    bool m_panNotified;       /**< 本次平移是否已发过 viewportChanged（去重）。 */
 #if XCHARTVIEW_STATIC_LAYER_ON
     /* 静态层缓存（§10.2 第一期 Phase B，对标 Qt QGraphicsItem::
      * DeviceCoordinateCache）：缓存背景/背景笔/标题/坐标轴网格五件套，
@@ -148,6 +169,76 @@ void XChartView_setChart(XChartView* self, XChart* chart);
 void XChartView_setRubberBand(XChartView* self, XChartView_RubberBands rubberBands);
 /** @brief 读取框选缩放模式。 @param self 目标视图指针。 @return 模式位集合。 */
 XChartView_RubberBands XChartView_rubberBand(const XChartView* self);
+
+/**
+ * @brief      设置拖拽平移开关（对标 Qt Charts QChartView 拖拽滚动）。
+ * @details    开启后：NoRubberBand（未框选）状态下按住左键拖拽 = 把
+ *             绘图区沿数据域平移（拖多少移多少，X/Y 域同动）；框选
+ *             模式开启时框选优先（两模式互斥，框选优先）。
+ * @param      self 目标视图指针。
+ * @param      enabled true=开启拖拽平移；false=关闭（缺省）。
+ * @return     无返回值。
+ */
+void XChartView_setPanEnabled(XChartView* self, bool enabled);
+/** @brief 查询拖拽平移开关。 @param self 目标视图指针。 @return true=已开启。 */
+bool XChartView_panEnabled(const XChartView* self);
+/**
+ * @brief      设置滚轮缩放轴约束。
+ * @details    true=Ctrl+滚轮仅缩放 X 轴（时间轴趋势图配纵轴自动量程
+ *             的标准搭配，Y 域交给自动量程）；false=缺省双轴同缩。
+ * @param      self 目标视图指针。
+ * @param      xAxisOnly true=仅 X 轴。
+ * @return     无返回值。
+ */
+void XChartView_setWheelZoomXOnly(XChartView* self, bool xAxisOnly);
+/** @brief 查询滚轮缩放轴约束。 @param self 目标视图指针。 @return true=仅 X 轴。 */
+bool XChartView_wheelZoomXOnly(const XChartView* self);
+/**
+ * @brief      设置触屏手势开关（双指捏合缩放 + 双指/单指平移）。
+ * @details    开启后视图自动挂 Pinch/Pan 手势识别器（框架手势链，
+ *             对标 Qt QWidget::grabGesture(GesturePinch|GesturePan)），
+ *             移动端触屏交互与桌面鼠标行为同构：捏合=缩放 X 轴（受
+ *             wheelZoomXOnly 约束），平移=域滚动。
+ * @param      self 目标视图指针。
+ * @param      enabled true=开启触屏手势。
+ * @return     无返回值。
+ */
+void XChartView_setTouchGesturesEnabled(XChartView* self, bool enabled);
+/** @brief 查询触屏手势开关。 @param self 目标视图指针。 @return true=已开启。 */
+bool XChartView_touchGesturesEnabled(const XChartView* self);
+
+/**
+ * @brief      设置时间轴模式（趋势图口径：横轴＝时间，单轴交互）。
+ * @details    开启后全部指针交互只作用于横轴（时间轴），纵轴交给应用侧
+ *             自动量程：
+ *             - 滚轮（含 Ctrl）＝**缩放横轴**，以光标处的时间值为锚
+ *               （缩放围绕光标，不是域中心）；
+ *             - 鼠标左键拖拽 ＝仅**左右平移横轴**（拖多远移多少）；
+ *             - 双指捏合      ＝**缩放横轴**；
+ *             - 单指拖拽      ＝**左右平移横轴**（与鼠标拖拽同构）；
+ *             - 双击          ＝缩放横轴（Shift+双击 ＝ 复位）。
+ *             关闭时行为不变（滚轮＝域滚动，Ctrl+滚轮＝双轴缩放，
+ *             拖拽＝双轴平移）。
+ * @param      self 目标视图指针。
+ * @param      enabled true=开启时间轴模式。
+ * @return     无返回值。
+ */
+void XChartView_setTimeAxisMode(XChartView* self, bool enabled);
+/** @brief 查询时间轴模式。 @param self 目标视图指针。 @return true=已开启。 */
+bool XChartView_timeAxisMode(const XChartView* self);
+
+/**
+ * @brief viewportChanged(int reason) 信号标识（用户交互改变视口时发射）。
+ * @details 载荷＝XChartView_ViewportChange 枚举值（缩放/平移/复位）。
+ *          供应用层仲裁「自动跟随最新数据」与「用户接管视口」：收到
+ *          平移即把视口判给用户（应用侧停止改写轴域），收到复位则
+ *          交还应用侧。信号在交互发生的同一事件帧内发射（不经事件
+ *          循环排队），保证应用侧能在下一帧前接管。
+ * @param  self 目标视图指针。
+ * @param  reason 视口变更原因（XChartView_ViewportChange）。
+ * @return 无返回值。
+ */
+void* XChartView_viewportChanged_signal(XChartView* self, int reason);
 
 #endif /* XCHARTS_ON */
 #ifdef __cplusplus

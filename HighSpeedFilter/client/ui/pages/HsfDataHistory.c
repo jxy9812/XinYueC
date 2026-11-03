@@ -1,20 +1,29 @@
 ﻿/**
  * @file       HsfDataHistory.c
- * @brief      历史数据叶子页实现：复用 HsfPlaceHolder 占位承载。
+ * @brief      历史数据叶子页实现：XTableWidget 铺满、随窗口拉伸。
  */
 #include "HsfDataHistory.h"
 
-#include "HsfPlaceHolder.h"
+#include "HsfDataTable.h"
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON
+
+/** 历史数据列头（静态存活：表格直存指针）。 */
+static const char* const kHistoryHeaders[] = {
+    "\xE6\x97\xB6\xE9\x97\xB4",   /* 时间 */
+    "\xE9\x87\x87\xE6\xA0\xB7\xE5\x80\xBC", /* 采样值 */
+    "\xE6\xBB\xA4\xE6\xB3\xA2\xE5\x90\x8E"  /* 滤波后 */
+};
 
 XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
                            void* userData)
 {
-    /* TODO(历史数据): 占位骨架，真实页面内容在此替换实现。 */
-    return HsfPlaceHolder_create(parent,
-                            "\xE5\x8E\x86\xE5\x8F\xB2\xE6\x95\xB0\xE6\x8D\xAE", "\xE5\x8E\x86\xE5\x8F\xB2\xE9\x87\x87\xE6\xA0\xB7\xE4\xB8\x8E\xE8\xB6\x8B\xE5\x8A\xBF\xE6\x9F\xA5\xE8\xAF\xA2\xEF\xBC\x9A\xE6\x8C\x89\xE6\x97\xB6\xE9\x97\xB4\xE7\xAA\x97\xE5\x9B\x9E\xE6\x94\xBE\xE9\x87\x87\xE6\xA0\xB7\xE5\xBA\x8F\xE5\x88\x97", "\xE5\xBE\x85\xE6\x8E\xA5\xE5\x85\xA5\xEF\xBC\x9A\xE5\xAD\x98\xE5\x82\xA8\xE6\x9F\xA5\xE8\xAF\xA2\xE4\xB8\x8E\xE6\x9B\xB2\xE7\xBA\xBF",
-                            HSF_PAGE_DATA_MENU, navFn, userData);
+    (void)navFn;
+    (void)userData;
+    /* 历史数据表格（12 空行占位，数据接入后续替换实现）。 */
+    return HsfDataTablePage_create(parent,
+                            "\xE5\x8E\x86\xE5\x8F\xB2\xE6\x95\xB0\xE6\x8D\xAE",
+                            kHistoryHeaders, 3, 12); /* 历史数据 */
 }
 
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */

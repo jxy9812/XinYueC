@@ -389,8 +389,40 @@ void XChart_zoom(XChart* self, double factor);
 void XChart_zoomReset(XChart* self);
 /** @brief 查询是否处于缩放状态（对标 isZoomed）。 @param self 目标图表指针。 @return 缩放栈非空返回 true。 */
 bool XChart_isZoomed(const XChart* self);
-/** @brief 按数据域比例滚动（对标 scroll(dx, dy)；正值右/下）。 @param self 目标图表指针。 @param dx X 域偏移比例。 @param dy Y 域偏移比例。 @return 无返回值。 */
+/**
+ * @brief 按数据域**绝对单位**滚动（对标 QChart::scroll(dx, dy)）。
+ * @details Qt 口径：偏移量以**图表域单位**计（Qt 原文「The offset is in
+ *          units of the chart's domain」），直接加到两轴域的 min/max 上，
+ *          **不是占比**——如 dx=2.0 表示沿 X 轴右移 2 个域单位（秒）。
+ *          正值右/下。此处此前实现为「占比×域宽」，与自身注释声称的
+ *          Qt 口径不符（且使调用方传入绝对偏移时被二次放大），已按 Qt
+ *          改正为绝对域单位。
+ * @param self 目标图表指针。
+ * @param dx X 域偏移量（域单位；正值右移）。
+ * @param dy Y 域偏移量（域单位；正值下移）。
+ * @return 无返回值。
+ */
 void XChart_scroll(XChart* self, double dx, double dy);
+/** @brief 仅缩放 X 轴（以 X 域中心为焦点；Y 域不动——时间轴趋势图配
+ *         纵轴自动量程的标准搭配；对标 Qt Charts 单轴 zoom）。 @param self 目标图表指针。 @param factor 缩放因子（>1 放大）。 @return 无返回值。 */
+void XChart_zoomX(XChart* self, double factor);
+/**
+ * @brief 以锚点缩放 X 轴（锚点数据值在缩放前后占据同一相对位置）。
+ * @details 趋势图滚轮缩放的口径：光标所指处的那段时间在缩放前后停在
+ *          同一像素位置（缩放围绕光标，而非域中心）。锚点相对位置取
+ *          [0,1]（0=左缘，1=右缘），越界按 0.5（居中）处理。Y 域不动。
+ * @param self 目标图表指针。 @param factor 缩放因子（>1 放大）。 @param anchor 锚点数据值。 @param ratio 锚点相对位置（0..1）。 @return 无返回值。
+ */
+void XChart_zoomXAt(XChart* self, double factor, double anchor, double ratio);
+/**
+ * @brief 仅滚动 X 轴（Y 域不动）。
+ * @details 单轴扩展（Qt QChart::scroll 无单轴版）；入参口径同
+ *          XChart_scroll：**域绝对单位**（正值右移）。
+ * @param self 目标图表指针。
+ * @param dx X 域偏移量（域单位；正值右移）。
+ * @return 无返回值。
+ */
+void XChart_scrollX(XChart* self, double dx);
 
 /* ==================== 边距与绘图区 ==================== */
 

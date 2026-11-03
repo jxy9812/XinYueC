@@ -826,6 +826,15 @@ void XAbstractScrollArea_init(XAbstractScrollArea* self, XWidget* parent,
        此前沿基类 NoFocus——点击不改焦点，表格内 cellWidget 编辑器
        失焦链路（点表格→编辑器 focusOut→确认收框）死路。 */
     self->m_base.m_base.m_focusPolicy = XWidgetFocusPolicy_StrongFocus;
+    /* 对标 Qt QAbstractScrollAreaPrivate::init（qabstractscrollarea.cpp:
+     * 268-273）末尾 setSizePolicy(Expanding, Expanding)：滚动区族
+     * （QTextEdit/QGraphicsView/QTableView/QTableWidget…）缺省双向
+     * Expanding——布局余量吃满、随窗口伸缩。XGui 缺省 Preferred 使
+     * 滚动区在布局里钉在 sizeHint（主轴 stretch>0 时 smartSizeHint
+     * 取 min、交叉轴 crossExpanding=false 不铺满），如数据页表格
+     * 右侧整段留白（无头截图实证）。 */
+    XWidget_setSizePolicy((XWidget*)self, XWidgetSizePolicy_Expanding,
+                          XWidgetSizePolicy_Expanding);
     self->m_viewport = XWidget_create(self, 0);
     /* [2026-10-15 定版撤回] Qt 对标的视口 Base+autofill 两行经实验
        撤回：增量重绘路径下视口底色存在父/子绘序倒挂——滚动后视口

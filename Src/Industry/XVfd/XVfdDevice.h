@@ -67,7 +67,8 @@ typedef enum XVfdError {
     XVfdError_ParamRejected,        /**< 参数被拒绝（无绑定/越界） */
     XVfdError_ParamRunLocked,       /**< 参数运行禁改（描述表 access 约束） */
     XVfdError_NotSupported,         /**< 该品牌不支持此操作（能力位图未置位） */
-    XVfdError_InvalidParam          /**< 调用参数非法 */
+    XVfdError_InvalidParam,         /**< 调用参数非法 */
+    XVfdError_ControlDisabled       /**< 控制闸未使能：禁止界面/通讯修改（setControlEnabled(false)） */
 } XVfdError;
 
 /* ========================================================================== */
@@ -518,6 +519,7 @@ typedef struct XVfdDevice {
     XVfdError m_lastError;          /**< 最近一次失败原因 */
     double m_maxFreqHz;             /**< 最大频率缓存（相对口径频率换算基准；Hz） */
     bool m_maxFreqKnown;            /**< m_maxFreqHz 是否已从 MaxFreq 槽读得 */
+    bool m_controlEnabled;          /**< 控制闸：true=允许 start/stop/给定等修改（默认 true） */
 } XVfdDevice;
 
 /* ========================================================================== */
@@ -706,6 +708,25 @@ bool XVfdDevice_isBusy(const XVfdDevice* dev);
  * @return XVfdError
  */
 XVfdError XVfdDevice_lastError(const XVfdDevice* dev);
+
+/**
+ * @brief 设置控制闸（统一修改许可开关）。
+ * @param dev 设备实例；不能为 NULL。
+ * @param enabled true=允许界面/通讯下发修改（启动/停止/给定/参数写等）；
+ *                false=全部修改动作被拒（XVfdError_ControlDisabled）。
+ * @return 无。
+ * @note 语义=「允许外部修改设备」的单一总闸，覆盖全品牌全命令模型：
+ *       在 beginAction 单一咽喉收口，读路径（状态快照/参数读）不受影响。
+ *       缺省 true（使能）——不调用本函数时行为与历史版本一致。
+ */
+void XVfdDevice_setControlEnabled(XVfdDevice* dev, bool enabled);
+
+/**
+ * @brief 查询控制闸状态。
+ * @param dev 设备实例（可 NULL，返回 false）
+ * @return true=修改动作放行（缺省）；false=修改动作被拒
+ */
+bool XVfdDevice_controlEnabled(const XVfdDevice* dev);
 
 /**
  * @brief 设置状态快照发布周期。

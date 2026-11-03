@@ -129,6 +129,14 @@ static void xsa_updateWidgetGeometry(XScrollArea* self)
             if (hint.height > h) h = hint.height;
             if (w < 0) w = 0;
             if (h < 0) h = 0;
+            /* [Qt 对齐复核 2026-11-03] Qt 的 updateScrollBars 末尾
+             * widget->resize(p.expandedTo(min).boundedTo(max))，此处
+             * 不显式 boundedTo(max)：XWidget_setGeometryRect →
+             * XWidget_setGeometry 内 clampSize(w, min, max) 与 Qt
+             * resize 路径同为「min 下限 + maximumSize 上限」钳口
+             * （hi<lo 时 max 优先，两侧一致），数学等价——内容最大
+             * 尺寸约束由 setGeometry 收口，勿在此重复钳（会绕过
+             * setGeometry 的 WA_Resized 历史状态语义）。 */
             XRect_init(&r, 0, 0, w, h);
             /* 经 XWidget_setGeometry 的 min/max 钳口：页面给内容定尺
              * （setFixed*）时以页面约束为准（对标 Qt

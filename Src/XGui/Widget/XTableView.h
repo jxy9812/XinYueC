@@ -221,6 +221,61 @@ int XTableView_rowViewportPosition(const XTableView* self, int row);
  */
 int XTableView_columnViewportPosition(const XTableView* self, int column);
 
+/* ==================== 滚动与偏移（对标 QTableView::scrollTo/horizontalOffset/verticalOffset） ==================== */
+
+/**
+ * @brief 滚动使指定单元格可见（对标 QAbstractItemView::scrollTo 的
+ *        QTableView 公共面；EnsureVisible 语义）。
+ *
+ * @param self 目标视图指针。
+ * @param row 行号。
+ * @param column 列号。
+ * @return 无返回值。self 为空或坐标非法为无操作。
+ * @note 转发基类 XAbstractItemView_scrollTo（Qt QTableView::scrollTo
+ *       → 基类同签名的公共面形态；Hint 重载经 scrollToHint 提供）。
+ */
+void XTableView_scrollTo(XTableView* self, int row, int column);
+/**
+ * @brief 查询水平滚动偏移（对标 QTableView::horizontalOffset = 水平
+ *        滚动条值）。
+ *
+ * @param self 目标视图指针。
+ * @return 水平滚动条当前值；无滚动条或 self 为空返回 0。
+ */
+int XTableView_horizontalOffset(const XTableView* self);
+/**
+ * @brief 查询垂直滚动偏移（对标 QTableView::verticalOffset = 垂直
+ *        滚动条值）。
+ *
+ * @param self 目标视图指针。
+ * @return 垂直滚动条当前值；无滚动条或 self 为空返回 0。
+ */
+int XTableView_verticalOffset(const XTableView* self);
+
+/* ==================== 视觉序（对标 QTableView::visualIndex/visualRow…… Qt 无 visualRow；见 @note） ==================== */
+
+/**
+ * @brief 逻辑列号 → 视觉列号（对标 QTableView::visualIndex；平铺模型
+ *        不支持列重排映射，视觉序与逻辑序恒等——与 Qt 在无 section
+ *        移动时的返回一致）。
+ *
+ * @param self 目标视图指针（未用；保留签名对位）。
+ * @param column 逻辑列号。
+ * @return 视觉列号（当前恒等于 column）；column < 0 返回 -1。
+ */
+int XTableView_visualIndex(const XTableView* self, int column);
+/**
+ * @brief 逻辑行号 → 视觉行号（本扩展命名 visualRow：与 visualIndex
+ *        对偶；Qt QTableView 无此名——Qt 行视觉序经
+ *        verticalHeader()->visualIndex(row) 承载，本框架行头为自绘、
+ *        无 header 对象可查，收口为视图直查）。
+ *
+ * @param self 目标视图指针（未用；保留签名对位）。
+ * @param row 逻辑行号。
+ * @return 视觉行号（当前恒等于 row）；row < 0 返回 -1。
+ */
+int XTableView_visualRow(const XTableView* self, int row);
+
 /* ==================== 视觉矩形（对标 QTableView::visualRect） ==================== */
 
 /**
@@ -268,7 +323,7 @@ void XTableView_hideColumn(XTableView* self, int column);
  * @param self 目标视图指针。 @param column 列号。 @return 无返回值。 */
 void XTableView_showColumn(XTableView* self, int column);
 
-/* ==================== 跨行/列合并（对标 QTableView::setSpan/rowSpan/columnSpan/clearSpans） ==================== */
+/* ==================== 跨行/列合并（对标 QTableView::setSpan/spanAt/clearSpans） ==================== */
 
 /**
  * @brief 设置单元格合并区间（对标 setSpan）。
@@ -282,21 +337,23 @@ void XTableView_showColumn(XTableView* self, int column);
 void XTableView_setSpan(XTableView* self, int row, int column,
                         int rowSpan, int columnSpan);
 /**
- * @brief 查询单元格跨行数（对标 rowSpan）。
+ * @brief 坐标反查合并区间（对标 spanAt(index)；QModelIndex 形态在 C
+ *        无「无效索引」承载，对位为出参形态）。
+ *
  * @param self 目标视图指针。 @param row 行号。 @param column 列号。
- * @return 包含 (row,column) 的合并区间跨行数；未合并返回 1。
- * @note 与 Qt 一致：被覆盖格（非原点）同样返回所属区间跨行数；
- *       参数非法或 self 为空返回 1。
+ * @param rowSpanOut 跨行数输出；可为 NULL。未合并/参数非法输出 1。
+ * @param columnSpanOut 跨列数输出；可为 NULL。未合并/参数非法输出 1。
+ * @param originRowOut 区间原点行号输出；可为 NULL。未合并输出 row。
+ * @param originColumnOut 区间原点列号输出；可为 NULL。未合并输出 column。
+ * @return 该坐标落在合并区间内返回 true（含原点）；未合并/参数非法
+ *         返回 false。
+ * @note 与 Qt 一致：被覆盖格（非原点）同样命中所属区间（spanAt 对
+ *       覆盖格返回原点索引）；行/列跨度可直接由出参读出（Qt 经
+ *       index.sibling(rowSpan-1,..) 换算，此处直出）。
  */
-int XTableView_rowSpan(const XTableView* self, int row, int column);
-/**
- * @brief 查询单元格跨列数（对标 columnSpan）。
- * @param self 目标视图指针。 @param row 行号。 @param column 列号。
- * @return 包含 (row,column) 的合并区间跨列数；未合并返回 1。
- * @note 与 Qt 一致：被覆盖格（非原点）同样返回所属区间跨列数；
- *       参数非法或 self 为空返回 1。
- */
-int XTableView_columnSpan(const XTableView* self, int row, int column);
+bool XTableView_spanAt(const XTableView* self, int row, int column,
+                       int* rowSpanOut, int* columnSpanOut,
+                       int* originRowOut, int* originColumnOut);
 /** @brief 清除全部跨行/跨列合并（对标 clearSpans）。
  * @param self 目标视图指针。 @return 无返回值（有区间时请求一次重绘）。
  * @note 仅清空区间表（容量保留），对标 Qt 语义。 */

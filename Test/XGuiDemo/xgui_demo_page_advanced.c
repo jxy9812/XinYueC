@@ -53,6 +53,14 @@
  ******************************************************************************/
 #include <stdio.h>
 #include <stdlib.h>
+/* [Windows 链接修复 2026-11-03] 拖动扫掠探针用 POSIX 名 popen/pclose
+ * 做抓帧比对（板侧 Linux 工具路径）；MSVC CRT 只导出 _popen/_pclose
+ * （POSIX 名 deprecated 未导出）→ LNK2019。本文件内经宏映射对齐
+ * （glibc/MinGW 的 popen 即 _popen，行为一致）。 */
+#if defined(_WIN32) && !defined(UNDER_CE)
+#define popen  _popen
+#define pclose _pclose
+#endif
 #include "XThread.h"   /* XThread_sleep：自检相位间的抓帧静默期。 */
 #include "XCursor.h"
 #include "XWindowSystemInterface.h" /* 触摸注入（真机路径等价：触摸→合成鼠标）。 */

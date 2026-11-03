@@ -5106,6 +5106,21 @@ void XLinkClientTest(void)
     (void)XLinkClientTest_run();
 }
 
+/**
+ * @brief 全量闸门菜单动作：功能全量 → 质量门禁 → 本进程案例联调。
+ * @note  与 `--test xlink-all`（XTestCommand.c 分派）同口径：任一段失败即
+ *        短路，不在已红的基础上继续烧时间。菜单动作无返回值，退出码语义
+ *        由命令行分派自行包一层。
+ */
+void XLinkAllTest(void)
+{
+    if (XLinkTest_run() != 0)
+        return;
+    if (XLinkQualityTest_run() != 0)
+        return;
+    (void)XLinkDemo_run();
+}
+
 
 /* ======================================================================== *
  * 菜单注册：挂到 Test 菜单「协议栈 → XLink(xlink)」子菜单
@@ -5152,6 +5167,12 @@ void XTestMenu_XLinkTest(XTestMenu* root)
         /* 质量门禁：内存泄漏 + 性能基准 + 边界对抗 */
         XAction* action = XTestMenu_addAction(menu, "质量门禁（泄漏/性能/边界）");
         XTestMenu_setActionFunction(action, XLinkQualityTest);
+    }
+    {
+        /* 全量闸门（--test xlink-all 同口径）：功能全量 + 质量门禁 +
+           本进程案例三连跑，失败即短路。 */
+        XAction* action = XTestMenu_addAction(menu, "全量闸门（功能+质量+案例）");
+        XTestMenu_setActionFunction(action, XLinkAllTest);
     }
     XTestMenu_addMenu(root, menu);
 }

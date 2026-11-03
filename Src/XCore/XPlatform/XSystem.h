@@ -276,6 +276,45 @@ typedef struct XSystemMemoryInfo {
  */
 bool XSystem_memoryInfo(XSystemMemoryInfo* info);
 
+/**
+ * @brief 请求提升本进程的等待/调度计时精度（引用计数）。
+ * @details 多个子系统可能同时需要高精度计时（串口轮询、协议超时、耗时测试
+ *          预算等），因此按**引用计数**管理：计数 0→1 时才真正向平台申请，
+ *          计数 1→0 时才真正归还。调用方必须与 XSystem_releaseTimerPrecision
+ *          成对使用，多余的释放是空操作（计数不会变负）。
+ * @return 已处于（或成功进入）高精度状态返回 true；当前平台无此能力或后端
+ *         调用失败返回 false（此时调用方**不应**再配对 release）。
+ * @note 语义是**进程级副作用**，不是线程局部：Windows 上把系统定时器分辨率
+ *       从默认 15.625ms 提到 1ms，影响本进程所有 Sleep/等待/定时器唤醒粒度；
+ *       Linux 的 nanosleep/epoll 不量化到 1ms 以上，恒返回 true（无操作）。
+ *       为什么进框架：15.625ms 量化让 Sleep(2) 实际睡 15.4ms（实测），任何
+ *       2ms 级轮询的耗时预算被系统性放大约 7.7 倍——正确的协议实现会因此
+ *       看起来「跑不完」。这是框架层的共性问题，不该由每个应用在 main 里
+ *       各自打补丁。
+ * @warning 高精度会增加计时中断频率与功耗，只在确实需要的时段持有；典型
+ *          持有期是「串口打开期间」「耗时测试运行期间」。
+ */
+bool XSystem_requestTimerPrecision(void);
+
+/**
+ * @brief 归还 XSystem_requestTimerPrecision 申请的计时精度。
+ * @return 无。
+ * @note 与 XSystem_requestTimerPrecision 成对调用；计数归零时才真正归还
+ *       平台精度。多余的释放是空操作（计数不会变负）。
+ */
+void XSystem_releaseTimerPrecision(void);
+
+/**
+ * @brief 查询当前进程计时精度的持有深度与生效值。
+ * @param outRequests 输出当前请求计数；可为 NULL。
+ * @param outActualMs 输出平台回报的实际粒度（毫秒，如 1.0 / 15.625）；
+ *                    未请求或平台无法查询时写 0；可为 NULL。
+ * @return 当前处于高精度状态返回 true；否则返回 false。
+ * @note 诊断/门禁用：让「精度到底生效了没有」可被直接断言，而不是靠间接
+ *       的吞吐数字去猜。
+ */
+bool XSystem_timerPrecision(uint32_t* outRequests, double* outActualMs);
+
 #ifdef __cplusplus
 }
 #endif

@@ -182,6 +182,48 @@ int XTableWidget_rowCount(const XTableWidget* self);
 void XTableWidget_setColumnCount(XTableWidget* self, int columns);
 
 /**
+ * @brief 设置数据模型（对标 QTableWidget::setModel —— Qt 6.8 为
+ *        \internal 拒绝入口：qtablewidget.cpp:2708
+ *        `Q_ASSERT(!"QTableWidget::setModel() - Changing the model of
+ *        the QTableWidget is not allowed.")`）。
+ *
+ * @param self 目标表格控件指针。
+ * @param model 传入模型（仅用于对位签名；恒被忽略）。
+ * @return 无返回值。
+ * @note QTableWidget 自带内建模型（本框架 XTableWidget_model()），
+ *       外部换模型被拒绝——本入口为 Qt 语义收口：任何传入都忽略、
+ *       内建模型保持（Release 下 no-op，对齐 Qt 断言被编译掉的行为）。
+ */
+void XTableWidget_setModel(XTableWidget* self, XAbstractItemModel* model);
+
+/**
+ * @brief 设置列宽调整模式（对标 horizontalHeader()->
+ *        setSectionResizeMode(QHeaderView::ResizeMode)）。
+ *
+ *        Interactive（0，Qt 缺省）=列宽独立、随 setColumnWidth 定；
+ *        Stretch（1）=各列均分内容区宽（视口宽-行头宽），窗口/视口
+ *        resize 时自动重分——列宽 API 的写入被下次重分覆盖（Qt 同：
+ *        Stretch 模式下手动 resizeSection 不保持）。
+ *
+ * @param self 目标表格控件指针。
+ * @param mode XHeaderViewResizeMode：0=Interactive 1=Stretch；其余按 0。
+ * @return 无返回值。
+ * @note 行为对标 Qt：模式存于内建水平表头（QTableView 构造即创建，
+ *       本框架 XTableView_init 同构内建）；本入口即
+ *       horizontalHeader()->setSectionResizeMode 的便捷转发。
+ */
+void XTableWidget_setSectionResizeMode(XTableWidget* self, int mode);
+
+/**
+ * @brief 查询列宽调整模式（对标 horizontalHeader()->
+ *        sectionResizeMode()）。
+ *
+ * @param self 目标表格控件指针。
+ * @return 当前模式（0=Interactive 1=Stretch）；self 为 NULL 返回 0。
+ */
+int XTableWidget_sectionResizeMode(const XTableWidget* self);
+
+/**
  * @brief 查询列数（对标 QTableWidget::columnCount）。
  *
  * @param self 目标表格控件指针。

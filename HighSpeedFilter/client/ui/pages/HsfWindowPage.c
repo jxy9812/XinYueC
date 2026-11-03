@@ -77,6 +77,7 @@
 #include "XPlatformOrientation.h" /* 显示方向契约（向系统申请转屏，2026-10-26）。 */
 #include "HsfThemeCss.h"
 #include "HsfDemoCompat.h"
+#include "HsfSettingsStore.h"
 #include "XWindow_Protected.h"
 #include "XObject_Protected.h"
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
@@ -262,6 +263,46 @@ static const char* wn_skinCss(int index)
 }
 
 
+/* ==================== 持久化：键名与默认值 ==================== */
+
+/* 键名（Qt 风格 group/key；框架自动落成 INI 分节 [Window]）。 */
+#define WN_KEY_SKIN          "Window/Skin"               /* 主题（0..5） */
+#define WN_KEY_SHOW_FRAME    "Window/ShowFrame"          /* 显示边框(标题栏) */
+#define WN_KEY_SHOW_STATUS   "Window/ShowStatusBar"      /* 显示状态栏 */
+#define WN_KEY_MAXIMIZED     "Window/Maximized"          /* 最大化 */
+#define WN_KEY_FULL_SCREEN   "Window/FullScreen"         /* 全屏 */
+#define WN_KEY_CANVAS_ROT    "Window/CanvasRotation"     /* 画布旋转（0/90/180/270） */
+#define WN_KEY_SCREEN_ORIENT "Window/ScreenOrientation"  /* 窗口方向（-1=跟随系统） */
+#define WN_KEY_SHOW_MOUSE    "Window/ShowMouseCursor"    /* 显示鼠标光标 */
+#define WN_KEY_CURSOR_SHAPE  "Window/CursorShape"        /* 鼠标外形（0..4） */
+#define WN_KEY_BLANK_MS      "Window/ScreenOffTimeoutMs" /* 自动熄屏超时（ms） */
+#define WN_KEY_SUSPEND_MS    "Window/SystemSuspendTimeoutMs" /* 自动休眠超时（ms） */
+#define WN_KEY_WAKE_MOUSE    "Window/WakeByMouse"        /* 鼠标唤醒 */
+#define WN_KEY_WAKE_KEY      "Window/WakeByKeyboard"     /* 键盘唤醒 */
+#define WN_KEY_WAKE_TOUCH    "Window/WakeByTouch"        /* 触摸唤醒 */
+
+/*
+ * 出厂默认值 = **程序启动默认值**（与本文件 wn_resetSlot 的复位口径、
+ * 以及首启（无配置文件）时的实际形态一致）：
+ * 主题 0（浅色·现代蓝）/ 边框开 / 状态栏开 / 最大化关 / 全屏关 /
+ * 画布 0° / 方向跟随系统 / 光标显示且箭头 / 熄屏从不 / 休眠从不 /
+ * 三种唤醒全开。
+ */
+#define WN_DEFAULT_SKIN          0
+#define WN_DEFAULT_SHOW_FRAME    true
+#define WN_DEFAULT_SHOW_STATUS   true
+#define WN_DEFAULT_MAXIMIZED     false
+#define WN_DEFAULT_FULL_SCREEN   false
+#define WN_DEFAULT_CANVAS_ROT    0
+#define WN_DEFAULT_SCREEN_ORIENT XPLATFORM_ORIENTATION_AUTO
+#define WN_DEFAULT_SHOW_MOUSE    true
+#define WN_DEFAULT_CURSOR_SHAPE  0
+#define WN_DEFAULT_BLANK_MS      ((int64_t)0)
+#define WN_DEFAULT_SUSPEND_MS    ((int64_t)0)
+#define WN_DEFAULT_WAKE_MOUSE    true
+#define WN_DEFAULT_WAKE_KEY      true
+#define WN_DEFAULT_WAKE_TOUCH    true
+
 /* ==================== 页面内部控件登记（demo 单实例 static 自持） ==== */
 
 /** @brief 窗口设置页内部登记表。 */
@@ -315,6 +356,7 @@ static struct
     XLabel*      m_statusLabel;  /**< 操作结果行（钉底）。 */
 
     bool         m_syncing;      /**< 回读/编程应用中（抑制槽重复生效）。 */
+    bool         m_persistReady; /**< 允许落盘（恢复完成后才置真）。 */
     bool         m_rotationProbed;    /**< 旋转平台能力是否已探测（一次性）。 */
     bool         m_rotationSupported; /**< 平台是否支持软件内容旋转。 */
     bool         m_screenOrientSupported; /**< 平台是否支持向系统申请转屏。 */
@@ -613,6 +655,9 @@ void hsf_page_window_syncFromWindow(void)
 
 /* ==================== 槽 ==================== */
 
+/* 持久化落盘（定义在本节之后——用到 wn_toplevel 等本页辅助）。 */
+static void wn_saveSettings(void);
+
 /** @brief 皮肤切换。 */
 static void wn_skinSlot(XObject* receiver, XVarList* args)
 {
@@ -624,6 +669,7 @@ static void wn_skinSlot(XObject* receiver, XVarList* args)
     wn_applySkin(index);
     wn_report(index == 0 ? "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xE6\xB5\x85\xE8\x89\xB2\xE7\x9A\xAE\xE8\x82\xA4"
                          : "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xE6\xB7\xB1\xE8\x89\xB2\xE7\x9A\xAE\xE8\x82\xA4\xEF\xBC\x88\xE6\x96\x87\xE6\x9C\xAC\xE8\x89\xB2\xE9\x9A\x8F\xE8\xB0\x83\xE8\x89\xB2\xE6\x9D\xBF\xE8\x81\x94\xE5\x8A\xA8\xEF\xBC\x89");
+    wn_saveSettings();
 }
 
 /** @brief 边框(标题栏)显隐：FramelessWindowHint 位动态翻转。 */
@@ -646,6 +692,7 @@ static void wn_frameSlot(XObject* receiver, XVarList* args)
        内容区避让/静态基底须显式重排（2026-10-17 无边框文字错位）。 */
     demo_main_refreshChrome(s_wn.m_user);
     wn_report(show ? "\xE5\xB7\xB2\xE6\x98\xBE\xE7\xA4\xBA\xE8\xBE\xB9\xE6\xA1\x86(\xE6\xA0\x87\xE9\xA2\x98\xE6\xA0\x8F)" : "\xE5\xB7\xB2\xE9\x9A\x90\xE8\x97\x8F\xE8\xBE\xB9\xE6\xA1\x86(\xE6\xA0\x87\xE9\xA2\x98\xE6\xA0\x8F)");
+    wn_saveSettings();
 }
 
 /** @brief 状态栏显隐（经主文件访问器，内容区底部预留同步收放）。 */
@@ -657,6 +704,7 @@ static void wn_statusSlot(XObject* receiver, XVarList* args)
     show = XAbstractButton_isChecked((XAbstractButton*)s_wn.m_statusCheck);
     demo_main_setStatusBarVisible(s_wn.m_user, show);
     wn_report(show ? "\xE5\xB7\xB2\xE6\x98\xBE\xE7\xA4\xBA\xE7\x8A\xB6\xE6\x80\x81\xE6\xA0\x8F" : "\xE5\xB7\xB2\xE9\x9A\x90\xE8\x97\x8F\xE7\x8A\xB6\xE6\x80\x81\xE6\xA0\x8F");
+    wn_saveSettings();
 }
 
 /** @brief 最大化切换（取消最大化还原普通几何）。 */
@@ -701,6 +749,7 @@ static void wn_maxSlot(XObject* receiver, XVarList* args)
         demo_main_refreshChrome(s_wn.m_user);
     }
     wn_report(max ? "\xE5\xB7\xB2\xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\xE6\x98\xBE\xE7\xA4\xBA" : "\xE5\xB7\xB2\xE8\xBF\x98\xE5\x8E\x9F\xE6\x99\xAE\xE9\x80\x9A\xE5\x87\xA0\xE4\xBD\x95");
+    wn_saveSettings();
 }
 
 /** @brief 全屏切换（游戏式满屏：CSD 标题栏随全屏态隐藏，退出还原；
@@ -744,6 +793,7 @@ static void wn_fullSlot(XObject* receiver, XVarList* args)
         demo_main_refreshChrome(s_wn.m_user); /* 快照重刷（同上）。 */
         wn_report("\xE5\xB7\xB2\xE9\x80\x80\xE5\x87\xBA\xE5\x85\xA8\xE5\xB1\x8F");
     }
+    wn_saveSettings();
 }
 
 /** @brief 画布旋转：横竖屏宽高对调（进竖屏存横屏尺寸；按屏钳位）。 */
@@ -997,6 +1047,7 @@ static void wn_canvasSlot(XObject* receiver, XVarList* args)
            内存回升后重选即可再试。 */
         wn_report("\xE5\x86\x85\xE5\xAD\x98\xE4\xB8\x8D\xE8\xB6\xB3\xEF\xBC\x8C\xE5\xB7\xB2\xE4\xBF\x9D\xE6\x8C\x81\xE5\xBD\x93\xE5\x89\x8D\xE6\x96\xB9\xE5\x90\x91");
         wn_syncFromWindow();
+        wn_saveSettings();
         return;
     }
     if (rc == 0)
@@ -1004,7 +1055,8 @@ static void wn_canvasSlot(XObject* receiver, XVarList* args)
         /* 平台不支持软件旋转（win32/android；fbdev 2026-10-21 定稿起
            恒可旋转）：下拉框已在探测阶段置灰，这里给明确说明而非静默
            无反应。 */
-        wn_report("\xE5\xBD\x93\xE5\x89\x8D\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81\xE5\x86\x85\xE5\xAE\xB9\xE6\x97\x8B\xE8\xBD\xAC\xEF\xBC\x8C\xE5\x8F\xAF\xE7\x94\xA8\xE6\x88\xB7\xE7\xAB\xAF\xE5\x8F\xA3\xE6\x94\xAF\xE6\x8C\x81");
+        wn_report("\xE5\xBD\x93\xE5\x89\x8D\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81\xE5\x86\x85\xE5\xAE\xB9\xE6\x97\x8B\xE8\xBD\xAC\xEF\xBC\x8C\xE5\x8F\xAF\xE7\x94\xA8\xE6\x88\xB7\xE7\xAB\xAF\xE9\x82\xA3\xE6\x94\xAF\xE6\x8C\x81");
+        wn_saveSettings();
         return;
     }
     /* 报告文案加角度标记（2026-10-18）：180° 与 0° 宽高完全相同，只打
@@ -1014,6 +1066,7 @@ static void wn_canvasSlot(XObject* receiver, XVarList* args)
              "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xEF\xBC\x9A%s\xEF\xBC\x88%dx%d\xEF\xBC\x89",
              kNames[index], w, h); /* 已切换：…(WxH) */
     wn_report(buf);
+    wn_saveSettings();
 }
 
 /** @brief 「窗口方向」变更：向系统申请显示方向（转屏）。
@@ -1055,12 +1108,14 @@ static void wn_screenOrientSlot(XObject* receiver, XVarList* args)
             XComboBox_setCurrentIndex(s_wn.m_screenOrientCombo,
                 wn_screenOrientIndex(XPlatformOrientation_lastRequested()));
         s_wn.m_syncing = false;
+        wn_saveSettings();
         return;
     }
     snprintf(buf, sizeof(buf),
              "\xE5\xB7\xB2\xE7\x94\xB3\xE8\xAF\xB7\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\xEF\xBC\x9A%s",
              kNames[index]); /* 已申请窗口方向：… */
     wn_report(buf);
+    wn_saveSettings();
 }
 
 /** @brief 鼠标光标显隐 + 外形应用（覆盖光标栈顶操作）。
@@ -1115,6 +1170,7 @@ static void wn_mouseSlot(XObject* receiver, XVarList* args)
     wn_cursorSyncOverride();
     wn_report(show ? "\xE5\xB7\xB2\xE6\x98\xBE\xE7\xA4\xBA\xE9\xBC\xA0\xE6\xA0\x87\xE5\x85\x89\xE6\xA0\x87"
                    : "\xE5\xB7\xB2\xE9\x9A\x90\xE8\x97\x8F\xE9\xBC\xA0\xE6\xA0\x87\xE5\x85\x89\xE6\xA0\x87");
+    wn_saveSettings();
 }
 
 /** @brief 鼠标外形选择：更新影子档位；显示态即时替换覆盖栈顶形状。 */
@@ -1135,6 +1191,308 @@ static void wn_cursorShapeSlot(XObject* receiver, XVarList* args)
                  kCursorShapes[index].text);
         wn_report(buf);
     }
+    wn_saveSettings();
+}
+
+/* ==================== 持久化（保存 / 恢复） ==================== */
+
+/**
+ * @brief 把当前窗口设置写入配置文件（全部 14 项）。
+ * @details 真源分层取：有运行时真源的读运行时（边框位、状态栏显隐、
+ *          最大化/全屏、画布旋转角、窗口方向影子值、电源策略），框架层
+ *          **没有真源**的两项（主题精确档位、鼠标外形档位）读页面控件/
+ *          影子值——运行时只有「深/浅」两态与光标栈，撑不起精确档位。
+ * @note  m_persistReady 门：建页期与恢复期的**编程**赋值也会触发 toggled
+ *        槽，若此时就落盘，会把配置文件**覆盖成启动默认值**——用户的设置
+ *        在恢复前就被抹掉。故只在恢复完成后（m_persistReady=true）才落盘。
+ */
+static void wn_saveSettings(void)
+{
+    XWidget* top = wn_toplevel();
+    XPlatformPowerPolicy policy;
+    int skin = WN_DEFAULT_SKIN;
+    int shape = s_wn.m_cursorShapeIdx;
+    bool showMouse;
+
+    if (!top || !s_wn.m_persistReady) return;
+    if (s_wn.m_skinCombo) {
+        skin = XComboBox_currentIndex(s_wn.m_skinCombo);
+        if (skin < 0 || skin > 5) skin = WN_DEFAULT_SKIN;
+    }
+    if (shape < 0 || shape >= WN_CURSOR_SHAPE_COUNT) shape = 0;
+    /* 鼠标显隐读覆盖栈顶（与 wn_syncFromWindow 同口径：栈空=未表达=显示，
+       栈顶 Blank=隐藏）。 */
+    {
+        const XCursor* cur = XGuiApplication_overrideCursor();
+        showMouse = !(cur && XCursor_shape(cur) == XCursor_Blank);
+    }
+    XPlatformPower_policy(&policy);
+
+    HsfSettingsStore_setInt(WN_KEY_SKIN, skin);
+    HsfSettingsStore_setBool(WN_KEY_SHOW_FRAME,
+                             (XWidget_windowFlags(top) &
+                              (XWidgetFlags)XWindowType_FramelessWindowHint)
+                                 == 0);
+    HsfSettingsStore_setBool(WN_KEY_SHOW_STATUS,
+                             demo_main_statusBarVisible(s_wn.m_user));
+    HsfSettingsStore_setBool(WN_KEY_MAXIMIZED, XWidget_isMaximized(top));
+    HsfSettingsStore_setBool(WN_KEY_FULL_SCREEN, XWidget_isFullScreen(top));
+    HsfSettingsStore_setInt(WN_KEY_CANVAS_ROT,
+                            XWidget_contentRotationDegrees(top) / 90);
+    HsfSettingsStore_setInt(WN_KEY_SCREEN_ORIENT,
+                            XPlatformOrientation_lastRequested());
+    HsfSettingsStore_setBool(WN_KEY_SHOW_MOUSE, showMouse);
+    HsfSettingsStore_setInt(WN_KEY_CURSOR_SHAPE, shape);
+    HsfSettingsStore_setInt64(WN_KEY_BLANK_MS, policy.m_screenOffMs);
+    HsfSettingsStore_setInt64(WN_KEY_SUSPEND_MS, policy.m_systemSuspendMs);
+    HsfSettingsStore_setBool(WN_KEY_WAKE_MOUSE,
+                             (policy.m_wakeInputs &
+                              (unsigned)XPlatformPowerInputMouse) != 0u);
+    HsfSettingsStore_setBool(WN_KEY_WAKE_KEY,
+                             (policy.m_wakeInputs &
+                              (unsigned)XPlatformPowerInputKeyboard) != 0u);
+    HsfSettingsStore_setBool(WN_KEY_WAKE_TOUCH,
+                             (policy.m_wakeInputs &
+                              (unsigned)XPlatformPowerInputTouch) != 0u);
+    HsfSettingsStore_sync();
+}
+
+/**
+ * @brief 从配置文件恢复窗口设置（**显示前**阶段）。
+ * @details 只做**不依赖窗口句柄**的项：皮肤、边框位、窗口方向、光标、
+ *          电源策略。这些项在窗口映射前落定，首帧即为用户设定的形态
+ *          （皮肤不会先闪一下默认配色）。
+ *          画布旋转/最大化/全屏/状态栏**依赖窗口句柄**（旋转能力探测走
+ *          XWindow_rotationSupported(窗口句柄)；窗口态下发也需句柄），放
+ *          hsf_page_window_restoreChrome 在 show 之后做。
+ */
+void hsf_page_window_restoreSettings(void)
+{
+    XWidget* top = wn_toplevel();
+    int skin;
+    int orient;
+    int shape;
+    bool showFrame;
+    bool showMouse;
+    int64_t blankMs;
+    int64_t suspendMs;
+    unsigned wakeMask = 0;
+
+    if (!top) return;
+
+    skin = HsfSettingsStore_getInt(WN_KEY_SKIN, WN_DEFAULT_SKIN);
+    if (skin < 0 || skin > 5) skin = WN_DEFAULT_SKIN;
+    showFrame = HsfSettingsStore_getBool(WN_KEY_SHOW_FRAME,
+                                         WN_DEFAULT_SHOW_FRAME);
+    orient = HsfSettingsStore_getInt(WN_KEY_SCREEN_ORIENT,
+                                     WN_DEFAULT_SCREEN_ORIENT);
+    showMouse = HsfSettingsStore_getBool(WN_KEY_SHOW_MOUSE,
+                                         WN_DEFAULT_SHOW_MOUSE);
+    shape = HsfSettingsStore_getInt(WN_KEY_CURSOR_SHAPE,
+                                    WN_DEFAULT_CURSOR_SHAPE);
+    if (shape < 0 || shape >= WN_CURSOR_SHAPE_COUNT)
+        shape = WN_DEFAULT_CURSOR_SHAPE;
+    blankMs = HsfSettingsStore_getInt64(WN_KEY_BLANK_MS,
+                                        WN_DEFAULT_BLANK_MS);
+    suspendMs = HsfSettingsStore_getInt64(WN_KEY_SUSPEND_MS,
+                                          WN_DEFAULT_SUSPEND_MS);
+    if (HsfSettingsStore_getBool(WN_KEY_WAKE_MOUSE, WN_DEFAULT_WAKE_MOUSE))
+        wakeMask |= (unsigned)XPlatformPowerInputMouse;
+    if (HsfSettingsStore_getBool(WN_KEY_WAKE_KEY, WN_DEFAULT_WAKE_KEY))
+        wakeMask |= (unsigned)XPlatformPowerInputKeyboard;
+    if (HsfSettingsStore_getBool(WN_KEY_WAKE_TOUCH, WN_DEFAULT_WAKE_TOUCH))
+        wakeMask |= (unsigned)XPlatformPowerInputTouch;
+    /* 唤醒路径不可全关（熄屏后将无输入可唤醒，只能靠外部手段恢复设备）
+       ——与 wn_wakeInputSlot 同约束：全关回落全开。 */
+    if (wakeMask == 0u)
+        wakeMask = (unsigned)XPlatformPowerInputAll;
+
+    /* ---- 皮肤（首帧即新配色） ---- */
+    wn_applySkin(skin);
+
+    /* ---- 边框（FramelessWindowHint 位；窗口句柄尚未创建，只落位） ---- */
+    {
+        XWidgetFlags flags = XWidget_windowFlags(top);
+        if (showFrame)
+            flags &= (XWidgetFlags)~(XWidgetFlags)XWindowType_FramelessWindowHint;
+        else
+            flags |= (XWidgetFlags)XWindowType_FramelessWindowHint;
+        XWidget_setWindowFlags(top, flags);
+    }
+
+    /* ---- 窗口方向（向系统申请；平台不支持时静默跳过，不谎报） ---- */
+    if (s_wn.m_screenOrientSupported)
+        XPlatformOrientation_setOrientation(orient);
+
+    /* ---- 光标（外形 + 显隐） ---- */
+    s_wn.m_cursorShapeIdx = shape;
+    if (showMouse) {
+        wn_cursorShapeApply(shape);
+    } else {
+        XCursor blank;
+        const XCursor* cur = XGuiApplication_overrideCursor();
+        if (!cur || XCursor_shape(cur) != XCursor_Blank) {
+            XCursor_init(&blank);
+            XCursor_setShape(&blank, XCursor_Blank);
+            XGuiApplication_setOverrideCursor(&blank);
+            XClassDeinit(&blank);
+        }
+    }
+
+    /* ---- 电源策略（熄屏/休眠阈值 + 唤醒来源） ---- */
+    {
+        XPlatformPowerPolicy policy;
+        XPlatformPower_policy(&policy);
+        policy.m_screenOffMs = blankMs;
+        policy.m_systemSuspendMs = suspendMs;
+        policy.m_wakeInputs = wakeMask;
+        XPlatformPower_setPolicy(&policy);
+    }
+}
+
+/**
+ * @brief 恢复窗口设置（**显示后**阶段）：画布旋转/最大化/全屏/状态栏 +
+ *        页面控件回填。
+ * @details 必须放在**窗口显示之后**：
+ *          ① 画布旋转的能力探测走 XWindow_rotationSupported(窗口句柄)，
+ *             句柄在首次 show 时才惰性创建（XWidget_setVisible → 建窗），
+ *             显示前探测必然拿到「不支持」→ 会把旋转下拉框误置灰；
+ *          ② 最大化/全屏要向平台窗口下发窗口态，句柄在位才有效；
+ *          ③ 状态栏/边框要走 chrome 重排（根布局保留边距 + 形态判定），
+ *             形态判定在 show 之前跑会让紧凑态侧栏被随后的 show 递归
+ *             显示出来（HsfUi.c 形态初判处同款约束）。
+ *          此时尚未进入事件循环，首帧绘制还没发生，用户看不到中间态。
+ */
+void hsf_page_window_restoreChrome(void)
+{
+    XWidget* top = wn_toplevel();
+    int canvasRot;
+    int skin;
+    int shape;
+    bool showFrame;
+    bool showStatus;
+    bool maximized;
+    bool fullScreen;
+    int64_t blankMs;
+    int64_t suspendMs;
+
+    if (!top) return;
+
+    canvasRot = HsfSettingsStore_getInt(WN_KEY_CANVAS_ROT,
+                                        WN_DEFAULT_CANVAS_ROT);
+    if (canvasRot < 0 || canvasRot > 3) canvasRot = WN_DEFAULT_CANVAS_ROT;
+    skin = HsfSettingsStore_getInt(WN_KEY_SKIN, WN_DEFAULT_SKIN);
+    if (skin < 0 || skin > 5) skin = WN_DEFAULT_SKIN;
+    showFrame = HsfSettingsStore_getBool(WN_KEY_SHOW_FRAME,
+                                         WN_DEFAULT_SHOW_FRAME);
+    showStatus = HsfSettingsStore_getBool(WN_KEY_SHOW_STATUS,
+                                           WN_DEFAULT_SHOW_STATUS);
+    maximized = HsfSettingsStore_getBool(WN_KEY_MAXIMIZED,
+                                         WN_DEFAULT_MAXIMIZED);
+    fullScreen = HsfSettingsStore_getBool(WN_KEY_FULL_SCREEN,
+                                          WN_DEFAULT_FULL_SCREEN);
+    shape = HsfSettingsStore_getInt(WN_KEY_CURSOR_SHAPE,
+                                    WN_DEFAULT_CURSOR_SHAPE);
+    if (shape < 0 || shape >= WN_CURSOR_SHAPE_COUNT)
+        shape = WN_DEFAULT_CURSOR_SHAPE;
+    blankMs = HsfSettingsStore_getInt64(WN_KEY_BLANK_MS,
+                                        WN_DEFAULT_BLANK_MS);
+    suspendMs = HsfSettingsStore_getInt64(WN_KEY_SUSPEND_MS,
+                                          WN_DEFAULT_SUSPEND_MS);
+
+    /* ---- 画布旋转（能力探测此时才有窗口句柄） ---- */
+    if (canvasRot != 0)
+        wn_canvasApply(canvasRot * 90, NULL, NULL);
+
+    /* ---- 窗口态（最大化 / 全屏互斥，与现有槽同口径） ---- */
+    if (fullScreen) {
+        XWidget_showFullScreen(top);
+    } else if (maximized) {
+        XWidget_showMaximized(top);
+    }
+
+    /* ---- 状态栏 + chrome 重排（内含根布局保留边距随边框位重算） ---- */
+    demo_main_setStatusBarVisible(s_wn.m_user, showStatus);
+
+    /* ---- 控件回填（全部 14 项对位） ---- */
+    s_wn.m_syncing = true;
+    if (s_wn.m_skinCombo)
+        XComboBox_setCurrentIndex(s_wn.m_skinCombo, skin);
+    if (s_wn.m_frameCheck)
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_frameCheck,
+                                   showFrame);
+    if (s_wn.m_statusCheck)
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_statusCheck,
+                                   showStatus);
+    if (s_wn.m_maxCheck)
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_maxCheck,
+                                   maximized);
+    if (s_wn.m_fullCheck)
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck,
+                                   fullScreen);
+    if (s_wn.m_canvasCombo)
+        XComboBox_setCurrentIndex(s_wn.m_canvasCombo, canvasRot);
+    if (s_wn.m_screenOrientCombo)
+        XComboBox_setCurrentIndex(s_wn.m_screenOrientCombo,
+                                  wn_screenOrientIndex(
+                                      XPlatformOrientation_lastRequested()));
+    if (s_wn.m_mouseCheck)
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_mouseCheck,
+                                   HsfSettingsStore_getBool(
+                                       WN_KEY_SHOW_MOUSE,
+                                       WN_DEFAULT_SHOW_MOUSE));
+    if (s_wn.m_cursorShapeCombo)
+        XComboBox_setCurrentIndex(s_wn.m_cursorShapeCombo, shape);
+    if (s_wn.m_blankCombo)
+        XComboBox_setCurrentIndex(s_wn.m_blankCombo,
+                                  wn_timeoutIndex(blankMs));
+    if (s_wn.m_suspendCombo)
+        XComboBox_setCurrentIndex(s_wn.m_suspendCombo,
+                                  wn_timeoutIndex(suspendMs));
+    {
+        XPlatformPowerPolicy policy;
+        XPlatformPower_policy(&policy);
+        if (s_wn.m_wakeMouseCheck)
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeMouseCheck,
+                (policy.m_wakeInputs &
+                 (unsigned)XPlatformPowerInputMouse) != 0u);
+        if (s_wn.m_wakeKeyCheck)
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeKeyCheck,
+                (policy.m_wakeInputs &
+                 (unsigned)XPlatformPowerInputKeyboard) != 0u);
+        if (s_wn.m_wakeTouchCheck)
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeTouchCheck,
+                (policy.m_wakeInputs &
+                 (unsigned)XPlatformPowerInputTouch) != 0u);
+    }
+    s_wn.m_syncing = false;
+    /* 全屏态「显示边框」复选框置灰（同 wn_fullSlot 口径）。 */
+    if (s_wn.m_frameCheck)
+        XWidget_setEnabled((XWidget*)s_wn.m_frameCheck,
+                           !XWidget_isFullScreen(top));
+    /* 恢复完成 → 允许后续改动落盘（此前建页期的编程赋值不得写配置）。 */
+    s_wn.m_persistReady = true;
+    if (!HsfSettingsStore_isOpen()) {
+        XPrintf("HsfClient: 未启用设置持久化（--no-settings 或配置不可用），"
+                "窗口设置按出厂默认运行\n");
+        return;
+    }
+    XPrintf("HsfClient: 已恢复窗口设置（主题=%d 边框=%d 状态栏=%d 最大化=%d"
+            " 全屏=%d 画布旋转=%d 窗口方向=%d 光标=%d 外形=%d 熄屏=%lldms"
+            " 休眠=%lldms 唤醒=%d%d%d）\n",
+            skin, showFrame ? 1 : 0, showStatus ? 1 : 0, maximized ? 1 : 0,
+            fullScreen ? 1 : 0, canvasRot * 90,
+            XPlatformOrientation_lastRequested(),
+            HsfSettingsStore_getBool(WN_KEY_SHOW_MOUSE, WN_DEFAULT_SHOW_MOUSE)
+                ? 1 : 0,
+            shape,
+            (long long)blankMs, (long long)suspendMs,
+            HsfSettingsStore_getBool(WN_KEY_WAKE_MOUSE, WN_DEFAULT_WAKE_MOUSE)
+                ? 1 : 0,
+            HsfSettingsStore_getBool(WN_KEY_WAKE_KEY, WN_DEFAULT_WAKE_KEY)
+                ? 1 : 0,
+            HsfSettingsStore_getBool(WN_KEY_WAKE_TOUCH, WN_DEFAULT_WAKE_TOUCH)
+                ? 1 : 0);
 }
 
 /* ==================== 屏幕休眠槽（2026-10-26） ==================== */
@@ -1163,12 +1521,14 @@ static void wn_blankSlot(XObject* receiver, XVarList* args)
                 wn_report("\xE9\x9C\x80\xE6\x8E\x88\xE6\x9D\x83\xE7\xB3\xBB\xE7\xBB\x9F\xE8\xAE\xBE\xE7\xBD\xAE\xE6\x9D\x83\xE9\x99\x90\xEF\xBC\x8C\xE5\xB7\xB2\xE8\xB7\xB3\xE8\xBD\xAC\xE6\x8E\x88\xE6\x9D\x83\xE9\xA1\xB5");
             else
                 wn_report("\xE9\x9C\x80\xE6\x8E\x88\xE6\x9D\x83\xE7\xB3\xBB\xE7\xBB\x9F\xE8\xAE\xBE\xE7\xBD\xAE\xE6\x9D\x83\xE9\x99\x90");
+            wn_saveSettings();
             return;
         }
     }
     snprintf(text, sizeof(text), "\xE8\x87\xAA\xE5\x8A\xA8\xE7\x86\x84\xE5\xB1\x8F\xEF\xBC\x9A%s",
              kPowerTimeouts[index].text);
     wn_report(text);
+    wn_saveSettings();
 }
 
 /** @brief 自动系统休眠超时选择：注入框架侧挂起阈值（0=从不）。 */
@@ -1191,6 +1551,7 @@ static void wn_suspendSlot(XObject* receiver, XVarList* args)
     snprintf(text, sizeof(text), "\xE8\x87\xAA\xE5\x8A\xA8\xE4\xBC\x91\xE7\x9C\xA0\xEF\xBC\x9A%s",
              kPowerTimeouts[index].text);
     wn_report(text);
+    wn_saveSettings();
 }
 
 /** @brief 立即熄屏（手动触发；系统与事件循环继续运行）。 */
@@ -1239,6 +1600,7 @@ static void wn_wakeInputSlot(XObject* receiver, XVarList* args)
         if (s_wn.m_wakeMouseCheck)
             XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeMouseCheck,
                                        true);
+        wn_saveSettings();
         return;
     }
     {
@@ -1247,6 +1609,7 @@ static void wn_wakeInputSlot(XObject* receiver, XVarList* args)
         policy.m_wakeInputs = mask;
         XPlatformPower_setPolicy(&policy);
     }
+    wn_saveSettings();
 }
 
 /** @brief 复位默认：控件回默认态并逐项重新应用。 */
@@ -1337,6 +1700,8 @@ static void wn_resetSlot(XObject* receiver, XVarList* args)
     s_wn.m_cursorShapeIdx = 0;
     wn_cursorSyncOverride();
     wn_syncFromWindow();
+    /* 默认值一并落盘（否则配置里留着旧的非默认值，下次启动又被恢复回来）。 */
+    wn_saveSettings();
 }
 
 /* ==================== 装配工具 ==================== */
@@ -2527,6 +2892,16 @@ void hsf_page_window_adapt(XWidget* page)
 
 void hsf_page_window_syncFromWindow(void)
 {
+}
+
+void hsf_page_window_restoreSettings(void)
+{
+    /* 页面被裁剪：无窗口设置页可恢复。 */
+}
+
+void hsf_page_window_restoreChrome(void)
+{
+    /* 页面被裁剪：无 chrome 项可恢复。 */
 }
 
 #endif /* 控件段守卫 */
