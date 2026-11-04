@@ -36,12 +36,13 @@ static bool analogSetConnParam(XModbusDevice* dev, int param, bool isStr,
 {
     XVariant* v = isStr ? XVariant_create_utf8_str(str)
                         : XVariant_create_int(i);
-    bool ok = false;
     if (!v) return false;
-    ok = XModbusDevice_setConnectionParameter(dev,
-                                              (XModbusDevice_ConnectionParameter)param, v);
+    /* 拷贝语义：value 为借用，设备内深拷贝后不取得所有权，故设完由本函数
+       释放自建对象；该 API 无返回值，参数非法时设备保持不变。 */
+    XModbusDevice_setConnectionParameter(dev,
+                                         (XModbusDevice_ConnectionParameter)param, v);
     XClassDelete((XClass*)v);
-    return ok;
+    return true;
 }
 
 /* ==================== 生命周期 ==================== */

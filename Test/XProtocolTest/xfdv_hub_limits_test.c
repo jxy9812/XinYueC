@@ -743,10 +743,17 @@ static int caseM512SlaveConstraints(void)
           exc == XVFD_M512_EXC_ILLEGAL_ADDRESS,
           "从 1001H 读 12 字：数量合规但跨组 → 错误码 02（组边界优先于数量）");
 
-    /* ③ 一帧读不得跨过功能码组边界。 */
-    CHECK(!xvfdM512CheckRequestBrand(0x03, 0x1000, 2, &exc, &excFc) &&
+    /* ③ 一帧读不得跨过功能码组边界。
+     * [2026-11-04 组表口径对齐] 通信组表已按真机实测合并：0x1000（给定）
+     * 与 0x1001~0x1008 同属一条读窗条目（0x1000 起读 8 字真机正常，
+     * 从 0x1001 起连读静默返全 0），故「1000H 是独立条目、读 2 字即跨组」
+     * 的旧前置不再成立。跨组判据改用该条目自身的尾端：0x1000 起读 10 字
+     * 越出 0x1008（数量仍在 12 字上限内）⇒ 仍须以错误码 02 拒绝。 */
+    CHECK(xvfdM512CheckRequestBrand(0x03, 0x1000, 2, &exc, &excFc),
+          "从 1000H 读 2 字在同一条目内放行（0x1000~0x1008 已合为一条）");
+    CHECK(!xvfdM512CheckRequestBrand(0x03, 0x1000, 10, &exc, &excFc) &&
           exc == XVFD_M512_EXC_ILLEGAL_ADDRESS && excFc == 0x83,
-          "从 1000H 读 2 字跨组被拒（1000H 是独立条目）：错误码 02");
+          "从 1000H 读 10 字跨出 0x1008 被拒：错误码 02");
     CHECK(!xvfdM512CheckRequestBrand(0x03, 0x1001, 9, &exc, &excFc) &&
           exc == XVFD_M512_EXC_ILLEGAL_ADDRESS,
           "从 1001H 读 9 字跨组被拒（1001H~1008H 是一条条目）：错误码 02");

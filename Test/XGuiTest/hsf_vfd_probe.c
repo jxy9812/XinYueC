@@ -62,6 +62,17 @@
 bool HsfLinkClient_isOpen(void) { return false; }
 const HsfVfdProvider* HsfVfdProvider_remote(void) { return NULL; }
 
+/* 运行/停止模式族（2026-11-04 页面新增直连 HsfLinkClient）：探针恒离线，
+ * 补最小桩使页面走「离线不可切换」分支——模式切换类断言按离线口径判定。 */
+bool HsfLinkClient_queryRunMode(void) { return false; }
+bool HsfLinkClient_setRunMode(bool autoMode) { (void)autoMode; return false; }
+bool HsfLinkClient_runMode(int* outAuto) { if (outAuto) *outAuto = 0; return false; }
+void HsfLinkClient_setModeCallback(HsfLinkNotifyFn cb, void* userData)
+{
+    (void)cb; (void)userData;
+}
+const char* HsfLinkClient_lastModeError(void) { return "offline"; }
+
 static int s_failures = 0;
 
 /* ---- 主界面快捷入口的 navFn 录制（⑪ receiver 实锅回归锁）。 ---- */

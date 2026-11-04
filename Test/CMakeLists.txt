@@ -21,6 +21,19 @@
 FIND_INCLUDE_DIR(INCLUDE_TEST_LIST ".")
 include_directories(${INCLUDE_TEST_LIST})
 
+# [2026-11-04] HSF（高速过滤器）模块头目录：测试侧直接实例化 HsfLinkClient /
+# HsfFlowMeterProvider（客户端侧）与 HsfServerIoFlowMeter（服务端侧），而这些
+# 源不在主库（只随 HsfClient / XHsfServerIoLib 编译）。目录级引入一次，
+# 本模块全部目标通用，避免逐目标接线遗漏（首个遗漏即 HsfVfdProbe 找不到
+# XhsfLinkProto.h、XGuiTestMenuSweep 找不到 HsfFlowMeterProvider.h）。
+include_directories(
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/common"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/pages"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/server"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/server/io")
+
 # ---- TEST_FILE 收集 + 自带 main 的独立可执行源剔除 ----
 # ⚠ TEST_FILE 剔除三查纪律：新增"自带 main 的独立可执行"时必须同步加
 #   REMOVE_ITEM，否则 XinYueC_Static/_Dynamic 与 demo 测试树收编
@@ -217,9 +230,11 @@ set(HSF_CLIENT_TEST_MODULE_SOURCES
     "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/HsfLinkClient.c"
     "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/HsfFlowMeterProvider.c"
 )
+# 并入 TEST_FILE：凡引用 TEST_FILE 的目标（主程序双 exe / XGuiTestMenuSweep /
+# XGuiWindowDemo 测试树）都自动带上这两个实现，避免逐目标重复接线漏掉符号。
+list(APPEND TEST_FILE ${HSF_CLIENT_TEST_MODULE_SOURCES})
 add_executable(${EXPORT_NAME}_Static
 ${TEST_FILE}
-${HSF_CLIENT_TEST_MODULE_SOURCES}
 "${CMAKE_CURRENT_LIST_DIR}/../main.c"
 )
 set_target_properties(${EXPORT_NAME}_Static PROPERTIES
@@ -258,8 +273,14 @@ xinyue_force_include_config(${EXPORT_NAME}_Dynamic)
 if(UNIX)
     target_link_libraries(${EXPORT_NAME}_Dynamic XHsfServerIoLib ${EXPORT_NAME} ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype)
 else()
-    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} mbedtls lwip zlib fatfs pcre2 sqlite freetype)
+    target_link_libraries(${EXPORT_NAME}_Dynamic XHsfServerIoLib ${EXPORT_NAME} mbedtls lwip zlib fatfs pcre2 sqlite freetype)
 endif()
+# [2026-11-04] 同 Static 目标：HSF 客户端/服务端头目录（测试直接实例化
+# HsfLinkClient / HsfFlowMeterProvider / HsfServerIoFlowMeter）。
+target_include_directories(${EXPORT_NAME}_Dynamic PRIVATE
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/server"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/server/io"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui")
 endif() # XGUI_ON（demo 可执行排除）
 
 # ==================== XNtp 最小复现程序（独立可执行） ====================
@@ -370,7 +391,8 @@ add_executable(HsfVfdProbe
 target_include_directories(HsfVfdProbe PRIVATE
     "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client"
     "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui"
-    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/pages")
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/pages"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/common")
 if(UNIX)
     target_link_libraries(HsfVfdProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
@@ -560,9 +582,9 @@ if(NOT XINYUE_EMBEDDED)
     target_sources(XGuiTestMenuSweep PRIVATE ${XGUI_SWEEP_TESTTREE_SOURCES})
 endif()
 if(UNIX)
-    target_link_libraries(XGuiTestMenuSweep ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
+    target_link_libraries(XGuiTestMenuSweep XHsfServerIoLib ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
 else()
-    target_link_libraries(XGuiTestMenuSweep mbedtls lwip zlib fatfs pcre2 sqlite freetype dbghelp ${EXPORT_NAME}S)
+    target_link_libraries(XGuiTestMenuSweep XHsfServerIoLib mbedtls lwip zlib fatfs pcre2 sqlite freetype dbghelp ${EXPORT_NAME}S)
 endif()
 xinyue_force_include_config(XGuiTestMenuSweep)
 
@@ -751,7 +773,7 @@ add_test(NAME XGuiRegression COMMAND XGuiRegression_Test
 # 2~4 倍），但显式钉死仍是必要的——CI 若在带 env 的环境跑本用例，
 # 须保证软件契约套件不被 GPU 快速路径的 skip 门跳过。
 set_tests_properties(XGuiRegression PROPERTIES
-    ENVIRONMENT "XGUI_RENDER_BACKEND=software;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
+    ENVIRONMENT "XGUI_RENDER_BACKEND=software;XGUI_CSD=0;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
 # GPU 后端下的完整回归变体：无 GL 的环境由后端自动回退软件（断言按
 # 实际会话状态跳过降级项），有 GL 时逐用例覆盖 GPU 快速路径。
 # 注：XGUI_GPU_SYNC=1 走「命令级同步读回」像素契约口径，该口径下斜线
@@ -761,14 +783,14 @@ set_tests_properties(XGuiRegression PROPERTIES
 add_test(NAME XGuiRegressionGpu COMMAND XGuiRegression_Test
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../bin")
 set_tests_properties(XGuiRegressionGpu PROPERTIES
-    ENVIRONMENT "XGUI_RENDER_BACKEND=gpu;XGUI_GPU_SYNC=1;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
+    ENVIRONMENT "XGUI_RENDER_BACKEND=gpu;XGUI_GPU_SYNC=1;XGUI_CSD=0;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
 # 默认层端到端变体：不设任何后端 env，验证**默认口径**本身——当前默认层
 # 为软件光栅（requested()==false），GPU 路径由上面的 XGuiRegressionGpu
 # 变体覆盖。
 add_test(NAME XGuiRegressionAuto COMMAND XGuiRegression_Test
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../bin")
 set_tests_properties(XGuiRegressionAuto PROPERTIES
-    ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
+    ENVIRONMENT "XGUI_CSD=0;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
 
 # ==================== XGuiRemote 输入链路 + 视图适配缩放专项探针 ====================
 # mcgs 战役输入路(2026-10-04)独立可执行: 回环零网络拓扑下自证客户端 FIT
@@ -867,9 +889,9 @@ if(UNIX)
     # [链接序对齐 2026-10-29] 与 XinYueC_Static 同口径（sqlite 夹在两份主
     # 库之间）：测试树收编后 demo 也从 sqlite3_xin_vfs 反向要 XReadWriteLock
     # 等主库符号——sqlite 排在末位时符号无法回解（链接序根修）。
-    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
+    target_link_libraries(XGuiWindowDemo_Test XHsfServerIoLib ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
 else()
-    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
+    target_link_libraries(XGuiWindowDemo_Test XHsfServerIoLib ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
 endif()
 # Linux 桌面图标/启动器接线（安卓不装桌面文件；Windows 图标走 rc 资源）：
 # exe 入 bin，hicolor 四档 PNG 入系统图标主题（freedesktop 惯例，文件名
