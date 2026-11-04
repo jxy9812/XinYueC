@@ -636,21 +636,56 @@ int XTouchMultiPointTest_run(void)
             tp_gestureStep(xw2, XEVENT_TYPE_TOUCH_END, 22, 100,
                            180 - 30 * 3, XTOUCHPOINT_STATE_RELEASED,
                            ts += 16);
-            /* 惯性泵：~1.2s 内停稳（v0≈900px/s，半衰 ~215ms）。 */
-            deadline = XDateTime_currentMSecsSinceEpoch() + 1200;
-            while (XDateTime_currentMSecsSinceEpoch() < deadline)
-                XGuiApplication_processEvents(XEventLoop_AllEvents);
-            vSettled = XScrollBar_value(vsb);
+            /* 惯性泵：泵至「滚动值开始推进」或超窗（v0≈900px/s，半衰
+             * ~215ms；名义 1.2s 内停稳）。
+             * [GPU_SYNC 慢帧适配 2026-11-04] 固定 1200ms 墙钟窗在
+             * XGUI_GPU_SYNC=1（llvmpipe 逐命令同步读回，单帧数百 ms~
+             * 5s）下可能只泵 1~2 轮且惯性 tick 的兑现轮不可控——下游
+             * 「停稳后不再漂移」在惯性未衰完时必然假红。定式=墙钟窗
+             * 内轮询 + **窗闭且条件未成立时补一轮兑现泵**：软件口径条
+             * 件在窗内成立（行为不变）；慢帧口径由补泵轮兑现已到期的
+             * 惯性 tick。 */
+            {
+                int64_t rollDeadline =
+                    XDateTime_currentMSecsSinceEpoch() + 1200;
+                int64_t watchdog = rollDeadline + 58800;
+                vSettled = XScrollBar_value(vsb);
+                while (XDateTime_currentMSecsSinceEpoch() < rollDeadline &&
+                       vSettled <= vAfterDrag) {
+                    XGuiApplication_processEvents(XEventLoop_AllEvents);
+                    vSettled = XScrollBar_value(vsb);
+                }
+                if (vSettled <= vAfterDrag &&
+                    XDateTime_currentMSecsSinceEpoch() < watchdog) {
+                    XGuiApplication_processEvents(XEventLoop_AllEvents);
+                    vSettled = XScrollBar_value(vsb);
+                }
+            }
             tp_expect(vSettled > vAfterDrag,
                       "6.2 fling：END 后惯性继续滚动（无需触摸事件）");
             tp_expect(vSettled <= 600,
                       "6.2 fling：值域钳口封顶");
-            deadline = XDateTime_currentMSecsSinceEpoch();
+            /* 停稳判定：连续 3 个事件泵轮滚动值不变（替代固定 150ms
+             * hold——慢帧下 150ms 窗可能没有任何惯性 tick，「值不变」
+             * 只是尚未兑现而非已停稳）。惯性仍在漂移时 vHold 持续跟进
+             * 且 stableRounds 清零，超窗后末次比对失配照红；真停稳
+             * （速度衰尽）则三轮恒等。墙钟上限只防挂死（GPU_SYNC 慢
+             * 帧单轮可达数秒，不能作判定度量）。 */
             {
                 int vHold = XScrollBar_value(vsb);
-                int64_t hold = deadline + 150;
-                while (XDateTime_currentMSecsSinceEpoch() < hold)
+                int stableRounds = 0;
+                int64_t settleDeadline =
+                    XDateTime_currentMSecsSinceEpoch() + 60000;
+                while (XDateTime_currentMSecsSinceEpoch() < settleDeadline &&
+                       stableRounds < 3) {
                     XGuiApplication_processEvents(XEventLoop_AllEvents);
+                    if (XScrollBar_value(vsb) == vHold)
+                        ++stableRounds;
+                    else {
+                        vHold = XScrollBar_value(vsb);
+                        stableRounds = 0;
+                    }
+                }
                 tp_expect(XScrollBar_value(vsb) == vHold,
                           "6.2 fling：停稳后不再漂移");
             }

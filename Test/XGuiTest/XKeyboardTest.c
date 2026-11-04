@@ -4180,22 +4180,70 @@ bool XKeyboardTest_runAll(void)
                               10300);
                 xkb_touchStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 2, p.x, p.y,
                               10500);
-                /* 泵 ~1100ms（>触摸首振 1000ms；期间真钟 800ms 长按表
-                 * 先到期→面板认领续持，随后首拍起振连删）。 */
-                xkb_pumpMs(1100);
-                lenStart = strlen(XLineEdit_text(ef10));
+                /* 泵至「首振删除发生」（>触摸首振 1000ms；期间真钟 800ms
+                 * 长按表先到期→面板认领续持，随后首拍起振连删）。
+                 * [GPU_SYNC 慢帧适配 2026-11-04] 固定 1100ms 墙钟窗在
+                 * XGUI_GPU_SYNC=1（逐命令同步读回，llvmpipe 单帧数百 ms）
+                 * 下会被一次帧渲染整轮吞掉——1000ms 首振表到期后没有
+                 * 下一轮事件泵来兑现，软件口径全绿而 GPU 变体恒红。改
+                 * 轮询「连删已发生」：条件成立即停，上限仅防挂死（3s
+                 * ÷ 数百 ms/轮 ≥ 4 个兑现轮）。软件口径行为不变。 */
+                /* 泵至「首振删除发生」（>触摸首振 1000ms；期间真钟 800ms
+                 * 长按表先到期→面板认领续持，随后首拍起振连删）。
+                 * [GPU_SYNC 慢帧适配 2026-11-04] 纯墙钟窗在
+                 * XGUI_GPU_SYNC=1（llvmpipe 逐命令同步读回）下失效——
+                 * 实测单轮 processEvents 可达 5s（一次帧渲染整轮吞掉，
+                 * 框架侧 armed/repeatId/grab 全部健康，只欠兑现轮）。
+                 * 轮数下限模式在软件口径同样不可用（5ms/轮 ×3 = 15ms，
+                 * 首振远未到期）。定式=墙钟窗内条件轮询 + **窗闭且条件
+                 * 未成立时补一轮兑现泵**：软件口径条件在窗内成立（行为
+                 * 不变）；慢帧口径窗被首轮吞掉，补泵轮开头兑现已到期
+                 * 的首振/长按表。60s 防挂死仅防御事件泵死锁。 */
+                {
+                    int64_t deadline = XDateTime_currentMSecsSinceEpoch()
+                                       + 1100;
+                    int64_t watchdog = deadline + 58900;
+                    lenStart = strlen(XLineEdit_text(ef10));
+                    while (XDateTime_currentMSecsSinceEpoch() < deadline &&
+                           lenStart >= len0) {
+                        XCoreApplication_processEvents(XEventLoop_AllEvents);
+                        XThread_msleep(5);
+                        lenStart = strlen(XLineEdit_text(ef10));
+                    }
+                    if (lenStart >= len0 &&
+                        XDateTime_currentMSecsSinceEpoch() < watchdog) {
+                        XCoreApplication_processEvents(XEventLoop_AllEvents);
+                        lenStart = strlen(XLineEdit_text(ef10));
+                    }
+                }
                 xkb_expect(lenStart < len0,
                            "⑦.10 长按起振：抖动期间连删进行中");
                 /* 跨 800ms 长按间隔（上方泵内真钟 800ms 长按表已到期
                  * 认领；此组 UPDATE 为注入时间戳域惰性兜底的同域复核，
                  * m_longFired 后随行零合成）：免远偏移释放，连删不断流
-                 * （根修前此处远偏移 RELEASE 解除武装，连删就此停住）。 */
+                 * （根修前此处远偏移 RELEASE 解除武装，连删就此停住）。
+                 * 墙钟窗 + 兑现泵定式同上。 */
                 xkb_touchStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 2, p.x, p.y,
                               10900);
                 xkb_touchStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 2, p.x + 1, p.y,
                               10950);
-                xkb_pumpMs(300);
-                lenCross = strlen(XLineEdit_text(ef10));
+                {
+                    int64_t deadline = XDateTime_currentMSecsSinceEpoch()
+                                       + 300;
+                    int64_t watchdog = deadline + 58900;
+                    lenCross = strlen(XLineEdit_text(ef10));
+                    while (XDateTime_currentMSecsSinceEpoch() < deadline &&
+                           lenCross >= lenStart) {
+                        XCoreApplication_processEvents(XEventLoop_AllEvents);
+                        XThread_msleep(5);
+                        lenCross = strlen(XLineEdit_text(ef10));
+                    }
+                    if (lenCross >= lenStart &&
+                        XDateTime_currentMSecsSinceEpoch() < watchdog) {
+                        XCoreApplication_processEvents(XEventLoop_AllEvents);
+                        lenCross = strlen(XLineEdit_text(ef10));
+                    }
+                }
                 xkb_expect(lenCross < lenStart,
                            "⑦.10 跨 800ms 间隔连删不断流（认领长按免远偏"
                            "移释放）");
@@ -4441,15 +4489,29 @@ bool XKeyboardTest_runAll(void)
                    制实测时通时不通（1 通 3 不通），纯墙钟竞态。框架侧
                    节拍无错（首拍 500ms 实测落点 511ms、稳态 50ms）。
                    改为按「文本由 'abcdefg' 变为 'abcdef'」轮询收敛：首
-                   拍落地即停（5ms 步进，必在第二拍前 50ms 内收敛），
-                   上限 800ms < 保守档 1000ms，快/慢二值可分性不损。 */
+                   拍落地即停（5ms 步进，必在第二拍前 50ms 内收敛）。
+                   [GPU_SYNC 慢帧适配 2026-11-04] 800ms 上限承载的
+                   「快/慢按窗口二值可分」（<慢档 1000ms）在 XGUI_GPU_
+                   SYNC=1（llvmpipe 逐命令同步读回，单帧数百 ms~5s）下
+                   失真——500ms 快档表到期后的兑现轮可落在窗闭之后。
+                   定式=800ms 窗内轮询 + **窗闭且未收敛时补一轮兑现
+                   泵**：软件口径窗内收敛（时间二值在此把关——快档退化
+                   慢档时 800ms 窗内文本不变、补泵轮开头若慢档仍未到期
+                   也不 fire，照红）；慢帧口径由补泵轮兑现已到期的首拍
+                   （此时快/慢墙钟差 << 帧噪声，时间二值由软件口径把
+                   关，本变体保留「删 1 字符」状态二值）。 */
                 {
                     int64_t deadline = XDateTime_currentMSecsSinceEpoch()
-                                      + 800;
+                                       + 800;
+                    int64_t watchdog = deadline + 58900;
                     while (XDateTime_currentMSecsSinceEpoch() < deadline &&
                            strcmp(XLineEdit_text(ef13), "abcdefg") == 0) {
                         XCoreApplication_processEvents(XEventLoop_AllEvents);
                         XThread_msleep(5);
+                    }
+                    if (strcmp(XLineEdit_text(ef13), "abcdefg") == 0 &&
+                        XDateTime_currentMSecsSinceEpoch() < watchdog) {
+                        XCoreApplication_processEvents(XEventLoop_AllEvents);
                     }
                 }
                 xkb_expect(strcmp(XLineEdit_text(ef13), "abcdef") == 0,
