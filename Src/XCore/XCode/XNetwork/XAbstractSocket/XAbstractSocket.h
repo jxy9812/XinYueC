@@ -175,6 +175,14 @@ typedef struct XAbstractSocket {
     XAbstractSocket_PauseModes m_pauseMode;         ///< SSL 错误暂停策略
     bool autoDeleteOnDisconnect;                    ///< 若为 true，disconnect 后自动 delete
     bool isValidFlag;                               ///< 是否处于有效状态（已连接且无致命错误）
+    bool disconnectPending;                         ///< 已请求断开，等待写缓冲排空后收尾（Qt ClosingState 延迟断开语义）。
+    bool readPaused;                                ///< 读缓冲已达 readBufferSize 上限，暂停继续读（Qt 读通知按需使能）。
+    bool hostLookupPending;                         ///< 主机名解析在途（同线程事件驱动，不新增线程/线程池）。
+    bool lookupEmitHostFound;                       ///< 解析成功后是否发 hostFound（按地址直连不发，对齐 Qt）。
+    XString* lookupHostName;                        ///< 在途解析的目标主机名（hostLookupPending 期间持有）。
+    uint16_t lookupPort;                            ///< 在途解析的目标端口。
+    int32_t lookupMode;                             ///< 在途解析的打开模式（XIODeviceBaseMode）。
+    int32_t lookupProtocol;                         ///< 在途解析的协议（XAbstractSocket_NetworkLayerProtocol）。
     XString* protocolTag;                           ///< 协议标签（用于调试和日志）
     XNetworkProxy proxy;                            ///< 代理配置
     XProxyHandshakeContext* proxyHandshakeCtx;      ///< 代理握手上下文（异步握手时使用）
@@ -486,7 +494,18 @@ void XAbstractSocket_setPeerPort(XAbstractSocket* sock, uint16_t port);
 void XAbstractSocket_setPeerAddress(XAbstractSocket* sock, const XHostAddress* address);
 void XAbstractSocket_setPeerName(XAbstractSocket* sock, const char* name);
 void XAbstractSocket_setSocketState(XAbstractSocket* sock, XAbstractSocket_SocketState state);
+/**
+ * @brief 只写错误字段，不发 errorOccurred 信号。
+ * @note 对齐 Qt 6.8 `QAbstractSocket::setSocketError(SocketError)`
+ *       （qabstractsocket.cpp:2797）——该受保护 setter 只写字段，信号发射
+ *       由私有 `setErrorAndEmit` 负责。需要“写字段 + 发信号”的调用方请用
+ *       `XAbstractSocket_setSocketErrorAndEmit`。
+ */
 void XAbstractSocket_setSocketError(XAbstractSocket* sock, XAbstractSocket_SocketError error, const char* str);
+/**
+ * @brief 写错误字段并发 errorOccurred 信号（对标 Qt 私有 setErrorAndEmit）。
+ */
+void XAbstractSocket_setSocketErrorAndEmit(XAbstractSocket* sock, XAbstractSocket_SocketError error, const char* str);
 
 // =============== XAbstractSocket 特有 API ===============
 

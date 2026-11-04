@@ -284,13 +284,56 @@ static void sa2addr(const struct sockaddr_storage* ss, XHostAddress* addr, uint1
 {
     if (ss->ss_family == AF_INET6) {
         const struct sockaddr_in6* s6 = (const struct sockaddr_in6*)ss;
-        XHostAddress_setAddressIPv6(addr, (const uint8_t*)&s6->sin6_addr);
+        /* [Qt 6.8 对齐] 双栈 socket 收到的 IPv4 对端会以 v4-mapped 形式出现
+         * （::ffff:a.b.c.d）。Qt 的 QHostAddress 会还原为 IPv4，这里同样
+         * 还原，否则上层会拿到 "::ffff:127.0.0.1" 而匹配不上 IPv4 地址。 */
+        if (IN6_IS_ADDR_V4MAPPED(&s6->sin6_addr)) {
+            uint32_t v4;
+            memcpy(&v4, &s6->sin6_addr.s6_addr[12], sizeof(v4));
+            XHostAddress_setAddressIPv4(addr, ntohl(v4));
+        } else {
+            XHostAddress_setAddressIPv6(addr, (const uint8_t*)&s6->sin6_addr);
+        }
         if (port) *port = ntohs(s6->sin6_port);
     }
     else if (ss->ss_family == AF_INET) {
         const struct sockaddr_in* s4 = (const struct sockaddr_in*)ss;
         XHostAddress_setAddressIPv4(addr, ntohl(s4->sin_addr.s_addr));
         if (port) *port = ntohs(s4->sin_port);
+    }
+}
+
+/** @brief 套接字是否为 IPv6（双栈）socket。 */
+static bool xw32_socketIsIpv6(SOCKET s)
+{
+    struct sockaddr_storage ss;
+    int len = (int)sizeof(ss);
+    if (s == INVALID_SOCKET) return false;
+    if (getsockname(s, (struct sockaddr*)&ss, &len) != 0) return false;
+    return ss.ss_family == AF_INET6;
+}
+
+/**
+ * @brief 构造目标地址；IPv4 目标发给双栈 IPv6 socket 时转成 v4-mapped。
+ * @details 对齐 Qt 引擎：`nativeSendDatagram` 会把 IPv4 目标映射为
+ *          `::ffff:a.b.c.d` 再交给 sendto，双栈 socket 才能正常发出。
+ */
+static void xw32_mapV4Dest(SOCKET s, const XHostAddress* destAddr, uint16_t port,
+                           struct sockaddr_storage* ss, int* ssLen)
+{
+    addr2sa(destAddr, port, ss, ssLen);
+    if (ss->ss_family == AF_INET && xw32_socketIsIpv6(s)) {
+        struct sockaddr_in6 mapped;
+        XMemset(&mapped, 0, sizeof(mapped));
+        mapped.sin6_family = AF_INET6;
+        mapped.sin6_port = htons(port);
+        mapped.sin6_addr.s6_addr[10] = 0xFF;
+        mapped.sin6_addr.s6_addr[11] = 0xFF;
+        memcpy(&mapped.sin6_addr.s6_addr[12],
+               &((struct sockaddr_in*)ss)->sin_addr.s_addr, 4);
+        XMemset(ss, 0, sizeof(*ss));
+        memcpy(ss, &mapped, sizeof(mapped));
+        *ssLen = (int)sizeof(mapped);
     }
 }
 
@@ -329,7 +372,6 @@ static void xw32_postReady(XDeviceNetworkContextWin32Select* p,
     entry.m_sourceType = XAbstractNetIoRing_Source_NativeIO;
     entry.m_fdType = XFd_type(p->base.m_base.m_fd);
     entry.m_error = 0;
-
 
     if (XAbstractNetIoRing_pushCompletion(ring, &entry))
         XAbstractNetIoRing_wakeUp_base(ring);
@@ -540,7 +582,7 @@ static int64_t xw32_sendOnce(XDeviceNetworkContextWin32Select* p,
         if (destAddr) {
             struct sockaddr_storage dest;
             int destLen = 0;
-            addr2sa(destAddr, destPort, &dest, &destLen);
+            xw32_mapV4Dest(p->socket, destAddr, destPort, &dest, &destLen);
             sent = sendto(p->socket, (const char*)data, (int)len, 0,
                           (const struct sockaddr*)&dest, destLen);
         }
@@ -593,11 +635,22 @@ static bool xw32_armRead(XDeviceNetworkContextWin32Select* p, bool isUdp)
 
     if (!p || !p->base.m_connected || !p->autoRead) return false;
 
+    /* [2026-11-04 单缓冲契约恢复] 上一批数据已投递、上层尚未取走时，**不得**
+     * 再次 recv：`p->readBuffer` 与 `p->readFinishedBytes` 都只有一份，
+     * 再读一次会把未消费的数据覆盖掉，同时产生第二个 Read 完成——上层会
+     * 按同一份缓冲重复拷贝（实测 XLink 回显 17 字节被交付两次、请求帧
+     * 被重复解析）。`ContinueRead` 是唯一的解除点（上层拷进自己的 ring
+     * buffer 之后才调用），与 IOCP 后端的 readPending 契约逐位一致。 */
+    if (p->readPending) return false;
+    /* 已判定对端关闭/硬错误：不再重复 recv，也不再重复投递 0 字节完成。 */
+    if (p->closed) return false;
+
     got = xw32_recvOnceInto(p, p->readBuffer, isUdp);
 
     if (got > 0) {
         p->readFinishedBytes = (size_t)got;
         p->readReadyCount++;
+        p->readPending = true;   /* 缓冲被占用，等 ContinueRead 解除。 */
         xw32_postReady(p, XSocketActType_Read, (uint32_t)got);
         return true;
     }
@@ -763,6 +816,13 @@ uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
         int opt = 1;
         setsockopt(p->socket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
     }
+    /* [Qt 6.8 对齐] bind(Any) 走双栈：AF_INET6 + IPV6_V6ONLY=0 才能同时
+     * 接收 IPv4/IPv6（Qt nativeBind 对 AnyIPProtocol 显式清 V6ONLY）。 */
+    if (af == AF_INET6) {
+        int ipv6only = 0;
+        setsockopt(p->socket, IPPROTO_IPV6, IPV6_V6ONLY,
+                   (char*)&ipv6only, sizeof(ipv6only));
+    }
 
     addr2sa(address, port, &addrStorage, &addrLen);
     if (bind(p->socket, (struct sockaddr*)&addrStorage, addrLen) == SOCKET_ERROR) {
@@ -888,17 +948,19 @@ bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
     p->pendingPeerPort = port;
 
     rc = connect(p->socket, (struct sockaddr*)&destAddr, destLen);
-    if (rc == SOCKET_ERROR) {
-        int error = WSAGetLastError();
-        if (error != WSAEWOULDBLOCK) {
-            xw32_disarmSocket(p);
-            closesocket(p->socket);
-            p->socket = INVALID_SOCKET;
-            return false;
+    {
+        int connErr = (rc == SOCKET_ERROR) ? WSAGetLastError() : 0;
+        if (rc == SOCKET_ERROR) {
+            if (connErr != WSAEWOULDBLOCK) {
+                xw32_disarmSocket(p);
+                closesocket(p->socket);
+                p->socket = INVALID_SOCKET;
+                return false;
+            }
+            /* 连接在途：等 FD_CONNECT（事件环唤醒 → DispatchReady）。 */
+            p->connectPending = true;
+            return true;
         }
-        /* 连接在途：等 FD_CONNECT（事件环唤醒 → DispatchReady）。 */
-        p->connectPending = true;
-        return true;
     }
 
     /* 立即成功（本机环回的常态）。这里**不**直接改 socket 状态：统一由
@@ -1046,11 +1108,17 @@ int64_t XDeviceNetwork_socketWrite(XFd xfd, const void* buf, int64_t len,
     if (written == XNETWORK_IO_WOULD_BLOCK) {
         /* 背压：有 ring buffer 就整包入队并回报「受理」；否则如实失败。 */
         if (!ringBuffer || isUdp) return -1;
+        /* [Qt 对齐] 入队即代表「写缓冲非空」：必须置 writePending，否则
+         * DispatchReady 不会投递 Write 完成，队列里的数据永远等不到续发
+         * （Qt 由 writeToSocket 在缓冲非空时使能写通知，语义等价）。 */
+        p->writePending = true;
         return (int64_t)XRingBuffer_write((XRingBuffer*)ringBuffer, buf, (size_t)len);
     }
     if (written == XNETWORK_IO_ERROR) {
-        if (ringBuffer && !isUdp)
+        if (ringBuffer && !isUdp) {
+            p->writePending = true;
             return (int64_t)XRingBuffer_write((XRingBuffer*)ringBuffer, buf, (size_t)len);
+        }
         return -1;
     }
 
@@ -1182,8 +1250,19 @@ void XDeviceNetwork_win32_selectDispatchReady(void* owner)
 
     if (n > 0 && w) {
         p->writeReadyCount++;
-        p->writePending = false;
-        xw32_postReady(p, XSocketActType_Write, 0);
+        /* [2026-11-04 Qt 6.8 对齐] 只有**存在待发数据**时才投递 Write 完成。
+         * Qt 的写通知按需使能：`QAbstractSocketPrivate::writeToSocket` 仅在
+         * writeBuffer 非空时 `setWriteNotificationEnabled(true)`
+         * （qabsock.cpp:2443/2476），写完即关。原实现只要 `select` 报可写就
+         * 投递——TCP 连接建立后几乎恒可写，于是每次 poll 都产生一个 Write
+         * 完成：①事件环被写事件淹没（实测单次 ddns 跑出 20 万条 poll/投递）；
+         * ②`XAbstractSocket_event` 的 Write 分支用陈旧的 `writeFinishedBytes`
+         * 反复 `bytesWritten`，XLink 大文件传输的进度对账据此错乱（17 项失败
+         * 全在文件上传/下载）。`writePending` 由 `socketWrite` 短写与
+         * `xw32_drainWrite` 共同维护，正是 Qt「writeBuffer 非空」的等价物。
+         * 复位交给 `xw32_drainWrite`（排空后自然转 false），不在这里抢改。 */
+        if (p->writePending)
+            xw32_postReady(p, XSocketActType_Write, 0);
     }
 
     if (n > 0 && x) {
@@ -1260,7 +1339,10 @@ bool XDeviceNetwork_socketSetDescriptor(XFd deviceFd, intptr_t fd, int state, in
         return false;
     }
 
-    p->base.m_connected = (state == 3);
+    /* `state` 是调用方传入的 `XAbstractSocket_SocketState`。用枚举而非魔数
+     * 判定（Qt：`setSocketDescriptor` 直接采用传入的 socketState）。 */
+    p->base.m_connected = ((XAbstractSocket_SocketState)state
+                           == XAbstractSocket_ConnectedState);
     p->autoRead = true;
 
     if (p->base.m_connected) {

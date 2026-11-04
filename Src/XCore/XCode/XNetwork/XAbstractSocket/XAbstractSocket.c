@@ -15,6 +15,7 @@
 #include "XEventLoop.h"
 #include "XRingBuffer.h"
 #include "XNetworkProxyHandshake.h"
+#include "XHostInfo.h"
 #include <string.h>
 #include <assert.h>
 #if XNETWORK_ON
@@ -152,6 +153,14 @@ static bool VXAbstractSocket_reset(XAbstractSocket* self);
 static int64_t VXAbstractSocket_readLineData(XAbstractSocket* self, char* data, int64_t maxlen);
 static int64_t VXAbstractSocket_skipData(XAbstractSocket* self, int64_t maxSize);
 static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e);
+/* 主机名解析 / 断开收尾（实现在 ConnectToHost 之前） */
+static void socketCancelHostLookup(XAbstractSocket* self);
+static bool socketWriteIdle(const XAbstractSocket* self);
+static void socketFinishDisconnectIfIdle(XAbstractSocket* self);
+static bool socketStartConnect(XAbstractSocket* self, const XHostAddress* address,
+                               uint16_t port, XIODeviceBaseMode mode,
+                               XAbstractSocket_NetworkLayerProtocol protocol);
+static void socketCompleteHostLookup(XAbstractSocket* self);
 // --- XAbstractSocket 特有虚函数（默认实现）---
 static void VXAbstractSocket_Resume(XAbstractSocket* self);
 static bool VXAbstractSocket_Bind(XAbstractSocket* self, const XHostAddress* address, uint16_t port, XAbstractSocket_BindMode mode);
@@ -234,6 +243,15 @@ static void VXAbstractSocket_deinit(XAbstractSocket* sock)
         XClassDelete(sock->protocolTag);
         sock->protocolTag = NULL;
     }
+    /* 在途主机名解析：撤销待处理事件并释放目标名（不遗留悬空事件）。 */
+    if (sock->hostLookupPending) {
+        XCoreApplication_removePostedEvents((XObject*)sock, XEVENT_TYPE_HOST_LOOKUP);
+        sock->hostLookupPending = false;
+    }
+    if (sock->lookupHostName) {
+        XClassDelete(sock->lookupHostName);
+        sock->lookupHostName = NULL;
+    }
     // 释放代理配置资源
     XClassDeinit(&sock->proxy);
     // 释放代理握手上下文
@@ -273,6 +291,14 @@ void XAbstractSocket_init(XAbstractSocket* sock, XAbstractSocket_SocketType type
     sock->m_pauseMode = XAbstractSocket_PauseNever;
     sock->autoDeleteOnDisconnect = false;
     sock->isValidFlag = false;
+    sock->disconnectPending = false;
+    sock->readPaused = false;
+    sock->hostLookupPending = false;
+    sock->lookupEmitHostFound = true;
+    sock->lookupHostName = NULL;
+    sock->lookupPort = 0;
+    sock->lookupMode = (int32_t)XIODevice_ReadWrite;
+    sock->lookupProtocol = (int32_t)XAbstractSocket_AnyIPProtocol;
     sock->protocolTag = NULL;
     XNetworkProxy_init(&sock->proxy);
     sock->proxyHandshakeCtx = NULL;
@@ -341,7 +367,12 @@ XAbstractSocket_PauseModes XAbstractSocket_pauseMode(const XAbstractSocket* sock
 
 bool XAbstractSocket_isValid(const XAbstractSocket* sock)
 {
-    return sock && sock->isValidFlag;
+    /* Qt 6.8（qabsock.cpp:1595）：引擎有效即有效（连接中/已连接/已绑定都算），
+     * 无引擎时退回 isOpen()。本框架以「网络设备句柄已打开」等价引擎有效；
+     * `isValidFlag` 保留给通过描述符接管等特殊路径。 */
+    if (!sock) return false;
+    if (socketDeviceFd(sock) != XFD_INVALID) return true;
+    return sock->isValidFlag;
 }
 
 XString* XAbstractSocket_protocolTag(const XAbstractSocket* sock)
@@ -482,24 +513,48 @@ void XAbstractSocket_setSocketState(XAbstractSocket* sock, XAbstractSocket_Socke
     // 特殊状态转换处理
     if (state == XAbstractSocket_ConnectedState) 
     {
+        /* Qt 的 isValid()（qabsock.cpp:1595）在引擎有效期间恒为 true；
+         * 本框架以「设备句柄有效"或"已连接/已绑定」为准（见 isValid）。 */
+        sock->isValidFlag = true;
         XIODevice_open_base(sock, XIODevice_ReadWrite);
-        // 从 HostLookupState 转换时，先发出 hostFound 信号
-        if (oldState == XAbstractSocket_HostLookupState) {
-            XAbstractSocket_hostFound_signal(sock);
-        }
+        /* hostFound 不再在此发射：[2026-11-04] 对齐 Qt 的时序——它在
+         * **主机名解析成功后、发起 connect 之前**发射（qabsock.cpp:979），
+         * 由 socketCompleteHostLookup 负责；「HostLookup→Connected」这条
+         * 转换在正常 connectToHost 下永远不会发生（中间必经过
+         * ConnectingState），原实现因此从未发出过该信号。 */
         // 无论从哪个状态转换到 ConnectedState，都发出 connected 信号
         XAbstractSocket_connected_signal(sock);
     }
     else if (state == XAbstractSocket_UnconnectedState && oldState != XAbstractSocket_UnconnectedState)
     {
-        ((XIODevice*)sock)->m_openMode = XIODevice_NotOpen;
+        /* [2026-11-04 Qt 6.8 对齐] 远端 FIN 不关闭 QIODevice 的 openMode。
+         * Qt 的 `disconnectFromHost`（qabsock.cpp:2612）只 reset socket 引擎
+         * 并置 UnconnectedState；**只有显式 `QAbstractSocket::close()`
+         * （qabsock.cpp:2593）才调 `QIODevice::close()` 清 openMode**。
+         * 原实现在这里把 m_openMode 置 NotOpen，于是「数据先到、FIN 后到」
+         * 的时序下（HTTP/1.0 Connection: close 的常态），已经取进 ring buffer
+         * 的字节会被 `XIODevice_read_1` 的 CHECK_READABLE 拒掉，返回 -1 ⇒
+         * 应用侧看到空应答（实测 DDNS 15 项失败、XLink 文件传输全断）。
+         * 显式关闭路径由 `VXAbstractSocket_close` → 基类 `XIODevice_close` 负责。 */
+        sock->isValidFlag = false;
         XAbstractSocket_disconnected_signal(sock);
         if (sock->autoDeleteOnDisconnect) {
             XAbstractSocket_deleteLater(sock);
         }
     }
+    else if (state == XAbstractSocket_BoundState)
+    {
+        /* Qt：bind 成功后引擎有效 ⇒ isValid() 为 true。 */
+        sock->isValidFlag = true;
+    }
 }
 
+/**
+ * @brief 只写错误字段，不发 errorOccurred 信号。
+ * @note 对齐 Qt 6.8 `QAbstractSocket::setSocketError`（qabsock.cpp:2797）：
+ *       受保护 setter 只赋值；信号由私有的 `setErrorAndEmit` 发射。
+ *       需要“写字段 + 发信号”的调用方用 `XAbstractSocket_setSocketErrorAndEmit`。
+ */
 void XAbstractSocket_setSocketError(XAbstractSocket* sock, XAbstractSocket_SocketError error, const char* str)
 {
     if (!sock) return;
@@ -514,8 +569,15 @@ void XAbstractSocket_setSocketError(XAbstractSocket* sock, XAbstractSocket_Socke
             sock->errorString = XString_create_utf8(str);
         }
     }
+}
 
-    // 发射 errorOccurred 信号
+/**
+ * @brief 写错误字段并发 errorOccurred 信号（对标 Qt 私有 setErrorAndEmit）。
+ */
+void XAbstractSocket_setSocketErrorAndEmit(XAbstractSocket* sock, XAbstractSocket_SocketError error, const char* str)
+{
+    if (!sock) return;
+    XAbstractSocket_setSocketError(sock, error, str);
     XAbstractSocket_errorOccurred_signal(sock, error);
 }
 
@@ -531,13 +593,11 @@ bool XAbstractSocket_bindAny(XAbstractSocket* sock, uint16_t port, XAbstractSock
 {
     XHostAddress any;
     XHostAddress_init(&any);
-    //XHostAddress_setAddress(&any,"127.0.0.1");
-    if (sock->socketType == XAbstractSocket_UdpSocket) {
-        XHostAddress_setAddressSpecial(&any, XHostAddress_AnySpecial);
-    }
-    else {
-        XHostAddress_setAddressSpecial(&any, XHostAddress_AnyIPv6Special);
-    }
+    /* [Qt 6.8 对齐] `QAbstractSocket::bind(quint16 port, BindMode)`
+     * （qabsock.cpp:1580）等价于 `bind(QHostAddress::Any, port, mode)`：
+     * Any 走双栈（AF_INET6 + IPV6_V6ONLY=0），**不分 TCP/UDP**。
+     * 原实现给 UDP 选 IPv4-Any，导致绑定后收不到 IPv6 数据报。 */
+    XHostAddress_setAddressSpecial(&any, XHostAddress_AnyIPv6Special);
     bool result = XAbstractSocket_bind_base(sock, &any, port, mode);
     XClassDeinit(&any);
     return result;
@@ -581,6 +641,8 @@ void XAbstractSocket_disconnectFromHost_base(XAbstractSocket* sock)
 void XAbstractSocket_abort(XAbstractSocket* sock)
 {
     if (!sock) return;
+    socketCancelHostLookup(sock);
+    sock->disconnectPending = false;
     XIODevice_close_base((XIODevice*)sock);
     XAbstractSocket_setSocketState(sock, XAbstractSocket_UnconnectedState);
 }
@@ -655,11 +717,19 @@ static bool VXAbstractSocket_open(XAbstractSocket* self, XIODeviceBaseMode mode)
 static void VXAbstractSocket_close(XAbstractSocket* self)
 {
     if (!self) return;
+    socketCancelHostLookup(self);
+    self->disconnectPending = false;
     if (socketDeviceFd(self) != XFD_INVALID) {
         socketCloseDevice(self);
         self->isValidFlag = false;
     }
     XClass_Parent(XIODevice, EXIODevice_Close, void (*)(XIODevice*))((XIODevice*)self);
+    /* [Qt 6.8 对齐] `QAbstractSocket::close()`（qabsock.cpp:2593）=
+     * `QIODevice::close()` + 状态未断开时走 `disconnectFromHost()`；后者
+     * 最终把状态落到 UnconnectedState 并发 disconnected。原实现只关设备，
+     * 状态机停在 Connected/Closing，调用方观察到"已关闭但仍已连接"。 */
+    if (self->state != XAbstractSocket_UnconnectedState)
+        XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
 }
 
 /**
@@ -682,6 +752,16 @@ static int64_t VXAbstractSocket_readData(XAbstractSocket* self, char* data, int6
         return maxlen ? -1 : 0;             /* Qt：未连接按 EOF 处理。 */
     if (maxlen == 0)
         return 0;
+
+    /* [Qt 6.8 对齐] 读缓冲曾因 setReadBufferSize 上限暂停（readPaused）：
+     * 应用开始消费、缓冲低于上限 ⇒ 恢复读通知。Qt 在
+     * setReadBufferSize/读走数据后重新使能读通知（qabsock.cpp:2736-2747）。 */
+    if (self->readPaused
+        && (self->readBufferSize <= 0
+            || XIODevice_bytesAvailable_base((XIODevice*)self) < self->readBufferSize)) {
+        self->readPaused = false;
+        socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
+    }
 
     got = XDevice_read(socketDeviceFd(self), data, maxlen);
     if (got == 0)
@@ -886,8 +966,16 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
      * DeferredDelete 的处理同构），SOCK_ACT/SOCK_CLOSE 等其余事件维持
      * fd 失效挡护（行为不变，改动最小化）。 */
     if (socketDeviceFd(self) == XFD_INVALID &&
-        e->m_type != XEVENT_TYPE_DEFERRED_DELETE)
+        e->m_type != XEVENT_TYPE_DEFERRED_DELETE &&
+        e->m_type != XEVENT_TYPE_HOST_LOOKUP)
         return false;
+
+    /* 主机名解析完成事件：此时设备尚未打开（fd 无效），必须在 fd 守卫之后、
+     * SOCK_ACT 分支之前处理。解析与连接都在本线程完成，无跨线程状态。 */
+    if (e->m_type == XEVENT_TYPE_HOST_LOOKUP) {
+        socketCompleteHostLookup(self);
+        return true;
+    }
 
     if (e->m_type == XEVENT_TYPE_SOCK_ACT) {
         XEventSockAct* sockAct = (XEventSockAct*)e;
@@ -909,7 +997,7 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                 }
                 else if (hsState == XProxyHandshakeState_Failed) {
                     // 代理握手失败
-                    XAbstractSocket_setSocketError(self, XAbstractSocket_ProxyProtocolError,
+                    XAbstractSocket_setSocketErrorAndEmit(self, XAbstractSocket_ProxyProtocolError,
                         XNetworkProxyHandshake_errorMessage(self->proxyHandshakeCtx));
                     XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
                     XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
@@ -928,10 +1016,21 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                     struct XRingBuffer* rb = XIODevicePrivate_getOrCreateReadBuffer(self->base.m_d, channel);
                     if (rb && readBuf) {
                         XRingBuffer_write(rb, readBuf, bytesTransferred);
-                        /* Release the backend buffer before emitting: direct
-                         * readyRead slots call XIODevice_read(), which would
-                         * otherwise consume the same bytes from both buffers. */
-                        socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
+                        /* [Qt 6.8 对齐] setReadBufferSize 的背压语义：达到上限
+                         * 时**关闭读通知**（不再 ContinueRead），等应用读走、
+                         * 缓冲低于上限后再恢复（见 readData 的恢复点）。
+                         * Qt 在 canReadNotification 里同样按 readBufferMaxSize
+                         * 关闭读通知（qabstractsocket.cpp:616-622）。 */
+                        if (self->readBufferSize > 0
+                            && XIODevice_bytesAvailable_base((XIODevice*)self)
+                                   >= self->readBufferSize) {
+                            self->readPaused = true;
+                        } else {
+                            /* Release the backend buffer before emitting: direct
+                             * readyRead slots call XIODevice_read(), which would
+                             * otherwise consume the same bytes from both buffers. */
+                            socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
+                        }
                         XIODevice_readyRead_signal((XIODevice*)self);
                     } else {
                         socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
@@ -956,7 +1055,7 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                 }
                 else if (hsState == XProxyHandshakeState_Failed) {
                     // 代理握手失败
-                    XAbstractSocket_setSocketError(self, XAbstractSocket_ProxyProtocolError,
+                    XAbstractSocket_setSocketErrorAndEmit(self, XAbstractSocket_ProxyProtocolError,
                         XNetworkProxyHandshake_errorMessage(self->proxyHandshakeCtx));
                     XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
                     XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
@@ -975,6 +1074,8 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                 {
                     socketControlNoArgs(self, XDeviceNetworkCommand_ContinueWrite);
                 }
+                /* 延迟断开收尾：写缓冲已排空且此前请求过断开 ⇒ 此刻真正关闭。 */
+                socketFinishDisconnectIfIdle(self);
             }
         }
 
@@ -985,7 +1086,7 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                 if (self->proxyHandshakeCtx) {
                     // 开始异步代理握手
                     if (!XNetworkProxyHandshake_start(self, self->proxyHandshakeCtx)) {
-                        XAbstractSocket_setSocketError(self, XAbstractSocket_ProxyProtocolError, 
+                        XAbstractSocket_setSocketErrorAndEmit(self, XAbstractSocket_ProxyProtocolError,
                             XNetworkProxyHandshake_errorMessage(self->proxyHandshakeCtx));
                         XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
                         XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
@@ -1000,7 +1101,7 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                 }
             }
             else {
-                XAbstractSocket_setSocketError(self, XAbstractSocket_ConnectionRefusedError, "Connection failed");
+                XAbstractSocket_setSocketErrorAndEmit(self, XAbstractSocket_ConnectionRefusedError, "Connection failed");
                 XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
             }
         }
@@ -1062,11 +1163,209 @@ static bool VXAbstractSocket_Bind(XAbstractSocket* self, const XHostAddress* add
     return true;
 }
 
+/* ==================== 主机名解析（同线程 · 事件驱动） ====================
+ * 设计约束（用户指定）：不新增线程、不使用线程池；解析在调用线程的事件
+ * 循环里执行，完成后用 XEVENT_TYPE_HOST_LOOKUP 事件通知同一个 socket。
+ * 与 Qt 的差异仅在执行体所在线程（Qt 用 QHostInfo 工作线程），对外契约
+ * （connectToHost 立即返回、HostLookupState、hostFound 时序）保持一致。 */
+
+/** @brief 取消在途解析：撤销待处理事件并释放目标名。 */
+static void socketCancelHostLookup(XAbstractSocket* self)
+{
+    if (!self) return;
+    if (self->hostLookupPending) {
+        XCoreApplication_removePostedEvents((XObject*)self, XEVENT_TYPE_HOST_LOOKUP);
+        self->hostLookupPending = false;
+    }
+    if (self->lookupHostName) {
+        XClassDelete(self->lookupHostName);
+        self->lookupHostName = NULL;
+    }
+}
+
+/**
+ * @brief 是否已无待写数据（用户 ring buffer + 平台在途写都为空）。
+ * @details 对应 Qt `allWriteBuffersEmpty() && engine->bytesToWrite() == 0`
+ *          在 `disconnectFromHost` 里的判据。
+ */
+static bool socketWriteIdle(const XAbstractSocket* self)
+{
+    bool writePending = false;
+    if (!self) return true;
+    if (XIODevice_bytesToWrite_base((XIODevice*)self) > 0) return false;
+    if (socketGetBoolProperty(self,
+            (XDeviceProperty)XDeviceNetworkProperty_WritePending, &writePending)
+        && writePending) return false;
+    return true;
+}
+
+/** @brief 写缓冲已排空且此前请求过断开 ⇒ 完成关闭收尾。 */
+static void socketFinishDisconnectIfIdle(XAbstractSocket* self)
+{
+    if (!self || !self->disconnectPending) return;
+    if (!socketWriteIdle(self)) return;
+    self->disconnectPending = false;
+    socketCloseDevice(self);
+    XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+}
+
+/**
+ * @brief 用已解析地址发起连接（不做 DNS；地址串为数字形式）。
+ * @details 对齐 Qt `connectToHost(QHostAddress, ...)` 的语义：不产生
+ *          HostLookupState、不发 hostFound。
+ */
+static bool socketStartConnect(XAbstractSocket* self, const XHostAddress* address,
+                               uint16_t port, XIODeviceBaseMode mode,
+                               XAbstractSocket_NetworkLayerProtocol protocol)
+{
+    XDeviceNetworkOpenOptions options;
+    XString* target;
+    int error = XDeviceError_None;
+
+    if (!self || !address) return false;
+    target = XHostAddress_toString((XHostAddress*)address);
+    if (!target) {
+        XAbstractSocket_setSocketErrorAndEmit(self, XAbstractSocket_OperationError,
+                                              "Failed to format address");
+        XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+        return false;
+    }
+    memset(&options, 0, sizeof(options));
+    options.m_base.m_openMode = mode;
+    options.m_base.m_target = target;
+    options.m_socketType = toNetworkSockType(self->socketType);
+    options.m_protocol = toNetworkProtocol(protocol);
+    options.m_operation = XDeviceNetworkOpen_Connect;
+    options.m_port = port;
+    if (socketOpenDevice(self, &options, &error) == XFD_INVALID) {
+        XClassDelete(target);
+        XAbstractSocket_setSocketErrorAndEmit(self, XAbstractSocket_ConnectionRefusedError,
+                                              "Connection failed");
+        XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+        return false;
+    }
+    XClassDelete(target);
+
+    /* 对齐 QAbstractSocket::connectToHost：`QIODevice::open(openMode)`。
+     * 少了这一步，设备自身 m_openMode 恒 NotOpen ⇒ read_1/write_1 全被
+     * 守卫拒绝（实测 read_1 NOT READABLE mode=0x0）。 */
+    XIODevice_open_base((XIODevice*)self, mode);
+
+    /* UDP 的 connect 在平台层立即完成且不产生连接事件，直接置 Connected；
+     * TCP 保持 ConnectingState，等平台 Connect 完成事件。 */
+    if (self->socketType == XAbstractSocket_UdpSocket)
+        XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectedState);
+    else
+        XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectingState);
+    return true;
+}
+
+/** @brief 按协议族复制地址（XClassCopy 不会搬 XHostAddress 的字段）。 */
+static bool socketCopyHostAddress(XHostAddress* dst, const XHostAddress* src)
+{
+    if (!dst || !src) return false;
+    if (XHostAddress_protocol(src) == XHostAddress_IPv4Protocol) {
+        XHostAddress_setAddressIPv4(dst, XHostAddress_toIPv4Address(src));
+        return true;
+    }
+    if (XHostAddress_protocol(src) == XHostAddress_IPv6Protocol) {
+        uint8_t ip6[16];
+        XHostAddress_toIPv6Address(src, ip6);
+        XHostAddress_setAddressIPv6(dst, ip6);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @brief 解析完成回调（由 HOST_LOOKUP 事件在调用线程驱动）。
+ * @details 与 Qt `qabstractsocket.cpp:975-979` 的时序一致：
+ *          先进入 ConnectingState（发 stateChanged），再发 hostFound，
+ *          最后发起 connect。数字地址不发 hostFound。
+ */
+static void socketCompleteHostLookup(XAbstractSocket* self)
+{
+    XHostInfo* info = NULL;
+    XHostAddress chosen;
+    bool haveAddress = false;
+    bool emitHostFound;
+    uint16_t port;
+    XIODeviceBaseMode mode;
+    XAbstractSocket_NetworkLayerProtocol protocol;
+    XString* hostName;
+
+    if (!self || !self->hostLookupPending) return;
+    self->hostLookupPending = false;
+
+    hostName = self->lookupHostName;
+    self->lookupHostName = NULL;
+    port = self->lookupPort;
+    mode = (XIODeviceBaseMode)self->lookupMode;
+    protocol = (XAbstractSocket_NetworkLayerProtocol)self->lookupProtocol;
+    emitHostFound = self->lookupEmitHostFound;
+
+    if (!hostName) {
+        XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+        return;
+    }
+
+    XHostAddress_init(&chosen);
+
+    /* 数字地址：不再走 DNS（对齐 Qt：地址直连无解析、无 hostFound）。
+     * 注意 `XHostAddress.protocol` 是 31 位位域：Unknown(-1) 存成
+     * 0x7FFFFFFF，不能与枚举常量直接比较；用 `isNull` 判定更可靠。 */
+    XHostAddress_setAddress(&chosen, XString_toUtf8(hostName));
+    if (!chosen.isNull) {
+        haveAddress = true;
+        emitHostFound = false;
+    } else {
+        info = XHostInfo_fromName(hostName);
+        if (info) {
+            const XVector* addresses = XHostInfo_addresses_const(info);
+            size_t count = addresses ? XVector_size_base(addresses) : 0;
+            size_t i;
+            for (i = 0; i < count; ++i) {
+                const XHostAddress* candidate =
+                    (const XHostAddress*)XVector_at_base(addresses, (int64_t)i);
+                int candidateProtocol;
+                if (!candidate) continue;
+                candidateProtocol = (int)XHostAddress_protocol(candidate);
+                if (protocol == XAbstractSocket_IPv4Protocol
+                    && candidateProtocol != (int)XHostAddress_IPv4Protocol)
+                    continue;
+                if (protocol == XAbstractSocket_IPv6Protocol
+                    && candidateProtocol != (int)XHostAddress_IPv6Protocol)
+                    continue;
+                if (socketCopyHostAddress(&chosen, candidate)) {
+                    haveAddress = true;
+                    break;
+                }
+            }
+            XClassDelete(info);
+        }
+    }
+
+    XClassDelete(hostName);
+
+    if (!haveAddress) {
+        XClassDeinit((XClass*)&chosen);
+        XAbstractSocket_setSocketErrorAndEmit(self, XAbstractSocket_HostNotFoundError,
+                                              "Host not found");
+        XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+        return;
+    }
+
+    XAbstractSocket_setPeerAddress(self, &chosen);
+    XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectingState);
+    if (emitHostFound)
+        XAbstractSocket_hostFound_signal(self);
+    (void)socketStartConnect(self, &chosen, port, mode, protocol);
+    XClassDeinit((XClass*)&chosen);
+}
+
 static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* hostName, uint16_t port, XIODeviceBaseMode mode, XAbstractSocket_NetworkLayerProtocol protocol)
 {
     XDeviceNetworkOpenOptions options;
-    XString* hostStr = NULL;
-    const XString* target;
     int error = XDeviceError_None;
     if (!self || !hostName) return;
 
@@ -1077,7 +1376,7 @@ static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* ho
     if (self->proxy.type != XNetworkProxy_NoProxy && self->proxy.type != XNetworkProxy_DefaultProxy) {
         // 使用代理连接
         if (!self->proxy.hostName || self->proxy.port == 0) {
-            XAbstractSocket_setSocketError(self, XAbstractSocket_ProxyNotFoundError, "Proxy server not configured");
+            XAbstractSocket_setSocketErrorAndEmit(self, XAbstractSocket_ProxyNotFoundError, "Proxy server not configured");
             XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
             return;
         }
@@ -1092,7 +1391,7 @@ static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* ho
             &self->proxy, hostName, port);
         
         if (!self->proxyHandshakeCtx) {
-            XAbstractSocket_setSocketError(self, XAbstractSocket_OperationError, "Failed to create proxy handshake context");
+            XAbstractSocket_setSocketErrorAndEmit(self, XAbstractSocket_OperationError, "Failed to create proxy handshake context");
             XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
             return;
         }
@@ -1119,56 +1418,75 @@ static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* ho
         XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectingState);
     }
     else {
-        // 直接连接（无代理）
+        /* 直接连接（无代理）：**同线程、事件驱动**的主机名解析。
+         *
+         * 对齐 `QAbstractSocket::connectToHost`（qabsock.cpp:1623）的异步契约：
+         * 调用即刻返回，先进入 HostLookupState；解析成功后置 Connecting、
+         * 发 hostFound，再发起 connect。区别仅在**执行线程**：Qt 把解析放到
+         * 全局线程池（QHostInfo 的工作线程），本实现按项目约束**不新增线程、
+         * 不使用线程池**，而是在调用线程的事件循环里执行解析（结果经
+         * XEVENT_TYPE_HOST_LOOKUP 事件回到同一个 socket）。
+         *
+         * 取舍：`getaddrinfo` 仍占用事件循环一次调用的时长；换来的是零新增
+         * 线程、零跨线程状态，以及 `connectToHost` 不再同步阻塞调用方。 */
+        socketCancelHostLookup(self);
+        if (socketDeviceFd(self) != XFD_INVALID)
+            socketCloseDevice(self);
+
+        self->lookupHostName = XString_create_utf8(hostName);
+        if (!self->lookupHostName) {
+            XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+            return;
+        }
+        self->lookupPort = port;
+        self->lookupMode = (int32_t)mode;
+        self->lookupProtocol = (int32_t)protocol;
+        self->lookupEmitHostFound = true;
+        self->hostLookupPending = true;
         XAbstractSocket_setSocketState(self, XAbstractSocket_HostLookupState);
-
-        hostStr = XString_create_utf8(hostName);
-        target = hostStr;
-        if (!target) {
-            XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
-            return;
+        {
+            XEvent* ev = XEvent_create(XEVENT_TYPE_HOST_LOOKUP);
+            if (ev)
+                XCoreApplication_postEvent((XObject*)self, ev, XEVENT_PRIORITY_NORMAL);
+            else
+                socketCompleteHostLookup(self);   /* 事件申请失败：同线程立即完成 */
         }
-        memset(&options, 0, sizeof(options));
-        options.m_base.m_openMode = mode;
-        options.m_base.m_target = target;
-        options.m_socketType = toNetworkSockType(self->socketType);
-        options.m_protocol = toNetworkProtocol(protocol);
-        options.m_operation = XDeviceNetworkOpen_Connect;
-        options.m_port = port;
-        if (socketOpenDevice(self, &options, &error) == XFD_INVALID) {
-            XClassDelete(hostStr);
-            XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
-            return;
-        }
-        XClassDelete(hostStr);
-
-        /* [2026-11-04 Qt 6.8 对齐] 把 openMode 真正落到设备上。
-         * 对齐 `QAbstractSocket::connectToHost`（qabsock.cpp:1679）：
-         *   `QIODevice::open(openMode);`
-         * 此前只有 `options.m_base.m_openMode` 一路传到平台层，**设备对象
-         * 自身的 m_openMode 保持 NotOpen**，于是 `XIODevice_isReadable/
-         * isWritable` 恒 false —— 任何 connectToHost 之后的 `read_1`/
-         * `write_1` 都在守卫处被拒（实测 `read_1 NOT READABLE mode=0x0`，
-         * DDNS/HTTP 端到端全链路超时）。IOCP 后端不走这段所以此前未暴露。 */
-        XIODevice_open_base((XIODevice*)self, mode);
-
-        /* A connected UDP socket completes immediately at the platform layer
-         * and never raises a connect event, so waiting for one would leave the
-         * socket stuck in ConnectingState forever. TCP still transitions
-         * through ConnectingState until its connect event arrives. */
-        if (self->socketType == XAbstractSocket_UdpSocket)
-            XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectedState);
-        else
-            XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectingState);
+        return;
     }
 }
 
 
+/**
+ * @brief 正常断开（对标 Qt 6.8 `QAbstractSocket::disconnectFromHost`，:2612）。
+ * @details Qt 语义：
+ *          - 已 Unconnected ⇒ 空操作；
+ *          - 仍在连接中 ⇒ 记 pendingClose，等连接完成后再断；
+ *          - 有待写数据 ⇒ 置 ClosingState 并**延迟断开**，写完由写通知收尾；
+ *          - 无待写数据 ⇒ 立即 reset 并转 Unconnected（发 disconnected）。
+ *          原实现直接关设备返回，未发完的写缓冲被丢弃。
+ */
 static void VXAbstractSocket_DisconnectFromHost(XAbstractSocket* self)
 {
-    if (!self || socketDeviceFd(self) == XFD_INVALID) return;
-    
+    if (!self) return;
+    if (self->state == XAbstractSocket_UnconnectedState) return;
+
+    /* 解析在途：取消后直接收尾（Qt: ConnectingState 时置 pendingClose）。 */
+    if (self->hostLookupPending
+        || self->state == XAbstractSocket_HostLookupState) {
+        socketCancelHostLookup(self);
+        socketCloseDevice(self);
+        XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+        return;
+    }
+
     XAbstractSocket_setSocketState(self, XAbstractSocket_ClosingState);
+
+    /* 有待写数据：延迟断开，写事件里由 socketFinishDisconnectIfIdle 收尾。 */
+    if (!socketWriteIdle(self)) {
+        self->disconnectPending = true;
+        return;
+    }
+
     socketCloseDevice(self);
     XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
 }
@@ -1254,6 +1572,16 @@ static void VXAbstractSocket_SetReadBufferSize(XAbstractSocket* self, int64_t si
     XVariant value;
     if (!self) return;
     self->readBufferSize = size;
+    /* [Qt 6.8 对齐] 上限放宽/取消时若读通知处于暂停态，立即恢复
+     * （qabsock.cpp:2736-2747：`setReadNotificationEnabled(size == 0
+     * || buffer.size() < size)`）。 */
+    if (self->readPaused
+        && (size <= 0
+            || XIODevice_bytesAvailable_base((XIODevice*)self) < size)) {
+        self->readPaused = false;
+        if (socketDeviceFd(self) != XFD_INVALID)
+            socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
+    }
     if (socketDeviceFd(self) == XFD_INVALID) return;
     memset(&value, 0, sizeof(value)); /* fix(r7crash): 见 socketGetBoolProperty 真机修复注。 */
     XVariant_init(&value, NULL, 0, XVariantType_NULL); /* 桶规约: 见 socketGetBoolProperty。 */
@@ -1292,7 +1620,8 @@ static bool VXAbstractSocket_WaitForConnected(XAbstractSocket* self, int msecs)
         if (self->state == XAbstractSocket_UnconnectedState) return false;
         if (msecs >= 0 && XDateTime_currentMSecsSinceEpoch() >= deadline) {
             /* Qt：超时 ⇒ 置错误 + 转未连接 + 复位套接字层。 */
-            XAbstractSocket_setSocketError(self, XAbstractSocket_SocketTimeoutError,
+            socketCancelHostLookup(self);
+            XAbstractSocket_setSocketErrorAndEmit(self, XAbstractSocket_SocketTimeoutError,
                                            "Socket operation timed out");
             XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
             return false;
@@ -1310,6 +1639,9 @@ static bool VXAbstractSocket_WaitForDisconnected(XAbstractSocket* self, int msec
     uint64_t deadline = XDateTime_currentMSecsSinceEpoch() + msecs;
     while (self->state != XAbstractSocket_UnconnectedState) {
         XCoreApplication_processEvents(XEventLoop_AllEvents);
+        /* 延迟断开可能不再产生写事件（积压已在 processEvents 中排空）：
+         * 这里补一次收尾检查，避免等待循环空转到超时。 */
+        socketFinishDisconnectIfIdle(self);
         if (msecs >= 0 && XDateTime_currentMSecsSinceEpoch() >= deadline) return false;
     }
     return true;
@@ -1343,15 +1675,21 @@ void* XAbstractSocket_errorOccurred_signal(XAbstractSocket* sock, XAbstractSocke
 }
 
 // ==================== Qt6 对齐：按地址直连（跳过 DNS）====================
+/**
+ * @brief 直接按已解析地址连接（对齐 Qt `connectToHost(const QHostAddress&, ...)`）。
+ * @details Qt 的地址重载**不做主机名解析、不进入 HostLookupState、不发
+ *          hostFound**；原实现转成字符串后走 hostName 重载，会多绕一圈
+ *          解析语义。这里直接走 socketStartConnect。
+ */
 void XAbstractSocket_connectToHostByAddress(XAbstractSocket* sock, const XHostAddress* address, uint16_t port, XIODeviceBaseMode mode)
 {
     if (!sock || !address) return;
-    XString* s = XHostAddress_toString(address);
-    if (!s) return;
-    const char* hostStr = XString_toUtf8(s);
-    /* NetworkLayerProtocol: 依据地址决定 IPv4/IPv6，交给内部协议识别 */
-    XAbstractSocket_connectToHost_base(sock, hostStr, port, mode, XAbstractSocket_AnyIPProtocol);
-    XClassDelete(s);
+    socketCancelHostLookup(sock);
+    if (socketDeviceFd(sock) != XFD_INVALID)
+        socketCloseDevice(sock);
+    XAbstractSocket_setPeerAddress(sock, address);
+    XAbstractSocket_setPeerPort(sock, port);
+    (void)socketStartConnect(sock, address, port, mode, XAbstractSocket_AnyIPProtocol);
 }
 
 bool XAbstractSocket_connectLocalStream_private(XAbstractSocket* sock,
@@ -1374,7 +1712,7 @@ bool XAbstractSocket_connectLocalStream_private(XAbstractSocket* sock,
     options.m_localStreamType = streamType;
     options.m_timeoutMs = timeoutMs;
     if (socketOpenDevice(sock, &options, &error) == XFD_INVALID) {
-        XAbstractSocket_setSocketError(sock, XAbstractSocket_OperationError,
+        XAbstractSocket_setSocketErrorAndEmit(sock, XAbstractSocket_OperationError,
                                        "Local stream connection failed");
         XAbstractSocket_setSocketState(sock, XAbstractSocket_UnconnectedState);
         return false;

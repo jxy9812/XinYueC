@@ -145,6 +145,84 @@ static bool sst_read_expect(XIODevice* dev, int want, char expect,
 
 /* ==================== 用例 ==================== */
 
+/* --- 追加用例：主机名异步解析 / hostFound / isValid / close 收尾 --- */
+static int g_sstHostFound = 0;
+
+static void sst_on_host_found(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    (void)args;
+    ++g_sstHostFound;
+}
+
+/**
+ * @brief 10) 主机名解析的 Qt 6.8 语义（同线程事件驱动，不新增线程）。
+ * @details 断言四件事：
+ *          1. `connectToHost` 立即返回、进入 HostLookupState（异步契约）；
+ *          2. 解析成功后发**恰好一次** hostFound；
+ *          3. 连接建立后 `isValid()` 为 true；
+ *          4. `close()` 把状态收敛到 UnconnectedState（Qt close 语义）。
+ */
+static bool sst_host_lookup_semantics(void)
+{
+    XTcpServer* server;
+    XTcpSocket* cli;
+    uint16_t port;
+    uint64_t start;
+
+    server = XTcpServer_create();
+    SST_ASSERT(server, "创建服务端失败");
+    SST_ASSERT(XTcpServer_listen(server, NULL, 0), "listen 失败");
+    port = XTcpServer_serverPort(server);
+
+    cli = XTcpSocket_create();
+    SST_ASSERT(cli, "客户端创建失败");
+    g_sstHostFound = 0;
+    XObject_connect_2((XObject*)cli,
+                      XSignal(XAbstractSocket_hostFound_signal),
+                      sst_on_host_found);
+
+    XAbstractSocket_connectToHost_base((XAbstractSocket*)cli, "localhost", port,
+                                       XIODevice_ReadWrite,
+                                       XAbstractSocket_AnyIPProtocol);
+    SST_ASSERT(XAbstractSocket_state((XAbstractSocket*)cli)
+                   == XAbstractSocket_HostLookupState,
+               "connectToHost 未进入 HostLookupState（state=%d）",
+               (int)XAbstractSocket_state((XAbstractSocket*)cli));
+
+    start = XDateTime_currentMSecsSinceEpoch();
+    while (XAbstractSocket_state((XAbstractSocket*)cli)
+               != XAbstractSocket_ConnectedState
+           && XDateTime_currentMSecsSinceEpoch() - start < 3000) {
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        XThread_msleep(2);
+    }
+    SST_ASSERT(XAbstractSocket_state((XAbstractSocket*)cli)
+                   == XAbstractSocket_ConnectedState,
+               "主机名连接未完成（state=%d err=%d）",
+               (int)XAbstractSocket_state((XAbstractSocket*)cli),
+               (int)XAbstractSocket_error((XAbstractSocket*)cli));
+    SST_ASSERT(g_sstHostFound == 1, "hostFound 次数=%d（期望 1）",
+               g_sstHostFound);
+    SST_ASSERT(XAbstractSocket_isValid((XAbstractSocket*)cli),
+               "已连接但 isValid() 为 false");
+
+    XIODevice_close_base((XIODevice*)cli);
+    SST_ASSERT(XAbstractSocket_state((XAbstractSocket*)cli)
+                   == XAbstractSocket_UnconnectedState,
+               "close 后状态=%d（期望 Unconnected=0）",
+               (int)XAbstractSocket_state((XAbstractSocket*)cli));
+    SST_ASSERT(!XAbstractSocket_isValid((XAbstractSocket*)cli),
+               "close 后 isValid() 仍为 true");
+
+    XTcpSocket_deleteLater(cli);
+    XTcpServer_close(server);
+    XTcpServer_deleteLater(server);
+    sst_pump(50);
+    SST_PASS("主机名异步解析与 hostFound/isValid/close 语义");
+    return true;
+}
+
 /**
  * @brief 1) 长空闲后恢复收发：读挂起 2 秒无数据，之后必须还能双向收发。
  * @details 对应「读挂在核心态、长时间无数据后再来数据能否唤醒」这一
@@ -913,7 +991,8 @@ int XSocketStallTest_run(void)
         { "断开重连无串包",       sst_reuse_no_crosstalk },
         { "高频+低频双连接竞争",  sst_busy_and_quiet_links },
         { "多连接隔离",           sst_multi_link_isolation },
-        { "推送压力下的上行小帧", sst_push_heavy_then_small_uplink }
+        { "推送压力下的上行小帧", sst_push_heavy_then_small_uplink },
+        { "主机名异步解析/hostFound/isValid", sst_host_lookup_semantics }
     };
     int i;
     int failed = 0;

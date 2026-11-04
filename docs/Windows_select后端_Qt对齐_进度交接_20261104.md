@@ -1,7 +1,16 @@
 ﻿# Windows 套接字后端：对齐 Qt 6.8 的 select 后端 —— 进度交接（2026-11-04）
 
-> **状态：主体已落地，DDNS/HTTP 端到端仍有 15 项待收口。**
+> **状态：收口完成。DDNS/XLink 全绿，六项回归 0 失败。**
 > 两套后端并存、宏切换可用；TCP 服务端与套接字读挂起回归全绿。
+>
+> | 回归 | 结果 |
+> |---|---|
+> | `--test ddns` | **112 通过 / 0 失败**（原 97/15） |
+> | `--test xlink` | **820 通过 / 0 失败**（原 803/17） |
+> | `--test xtcpserver` | **18 通过 / 0 失败** |
+> | `--test xsocket-stall` | **9 通过 / 0 失败** |
+> | `--test ntp` | **83 通过 / 0 失败** |
+> | `--test xssl` | **PASS** |
 
 ## 一、任务目标（用户原话）
 
@@ -107,71 +116,37 @@
 | `--test xsocket-stall` | **9 通过 / 0 失败** |
 | `--test xlink` | **820 通过 / 0 失败** |
 | `--test xlink-quality` | **72 通过 / 0 失败** |
-| `--test ntp`（UDP 路径） | **82 通过 / 0 失败** |
+| `--test ntp`（UDP 路径） | **83 通过 / 0 失败**（本轮实测；原记 82） |
 | `--test xssl` | **PASS**（含本地 TLS 1.2 握手） |
-| `--test ddns` | **97 通过 / 15 失败**（见 §5） |
+| `--test ddns` | **112 通过 / 0 失败**（原 97/15，根因见 §5） |
 
 回退验证：`XNETWORK_WIN_BACKEND=IOCP` 变体独立编译通过；该变体下
 `XDeviceNetwork_win32_select.c.obj` 被完全裁空（0 符号），
 `XDeviceNetwork_win32.c.obj` 导出完整 18 个套接字 API。
 
-## 五、未收口项：DDNS 端到端 15 项
+## 五、DDNS/XLINK 收口（2026-11-04 第二轮）
 
-### 5.1 现象（已精确定位到一环）
+### 5.1 三个根因（按发现顺序）
+
+| # | 缺陷 | 后果 | 修复 |
+|---|---|---|---|
+| 1 | `XAbstractSocket_setSocketState` 进入 UnconnectedState 时把 `m_openMode` 置 NotOpen | 「数据先到、FIN 后到」时（HTTP/1.0 Connection: close 的常态），已进 ring buffer 的字节被 `read_1` 的 CHECK_READABLE 拒掉 → 空应答 | **删除该赋值**，对齐 Qt：`disconnectFromHost` 不清 openMode，只有显式 `close()` 才清（qabsock.cpp:2593/2612） |
+| 2 | select 后端每次 `select` 报可写就投递 Write 完成 | TCP 建连后几乎恒可写 ⇒ 每次 poll 一个写事件（实测单次 ddns 20 万条）；`XAbstractSocket_event` 用陈旧 `writeFinishedBytes` 反复发 `bytesWritten`，XLink 文件传输进度对账错乱 | 只在 `writePending`（等价 Qt「writeBuffer 非空」）时投递；`socketWrite` 入队时置位、`xw32_drainWrite` 排空后复位 |
+| 3 | `xw32_armRead` 无「单缓冲占用」门控 | 上一批未消费时再次 recv，覆盖 `readBuffer` + `readFinishedBytes`，同一帧被重复投递（实测 17 字节回显交付两次） | 恢复 `readPending` 门控（与 IOCP 后端同契约），`ContinueRead` 是唯一解除点；`closed` 后不再重复投递 0 字节完成 |
+
+### 5.2 定位方法（可复用）
+
+- 临时追踪用 `XNETWORK_SELECT_TRACE=1` 环境变量（排查后已全部删除）。
+- 判定链：`[XSEL] poll → armRead got=N → postReady → [XSOCK] evRead → [XHTTP] read_1`，
+  一眼看出「数据到没到内核 / 有没有投递 / 上层读没读」三段各自的结果。
+- 决定性证据：`waitRR=true avail=190` 紧跟 `read_1 NOT READABLE mode=0x0`，
+  即「数据在、但设备已 NotOpen」——直接指向根因 1。
+
+### 5.3 复验
 
 ```
-[XNET-SOCK] waitReady sock=...5E0 state=3 avail=0 msecs=150
-[XNET-SOCK] waitReady loop sock=...5E0 state=3 avail=0
-[XNET-SOCK] toRing sock=...5E0 rb=...C8620 n=64 avail=64   ← 数据确实进了 ring
-[XDNS] probe fail url=http://127.0.0.1:.../ip body=[]        ← 但收包为 0
+ddns 112/0、xlink 820/0、xtcpserver 18/0、xsocket-stall 9/0、ntp 83/0、xssl PASS
 ```
-
-**矛盾点**：`toRing` 成功把 64 字节写进该 socket 的 ring buffer（`avail=64`），
-但 `waitForReadyRead` 的循环日志里 `avail` 恒为 0，且 `probe fail` 的 body 为空。
-
-### 5.2 已排除
-
-| 排除项 | 证据 |
-|---|---|
-| 后端 recv 失败 | `[XNET-WSA] dispatch ... readable` + `toRing n=64 avail=64` |
-| `read_1` 参数/权限被拒 | `read_1 NOT READABLE mode=0x0` 已消失（`connectToHost` 补 openMode 后） |
-| `bytesAvailable` 虚槽重载问题 | 基类实现即 ring buffer 可用量，无需重载（见 §3.3） |
-| fd 复用串扰 | 事件槽已改为按 **owner 指针** 寻址，`toRing` 的 socket 指针与 `waitReady` 的指针一致 |
-| 数据被别的 socket 消费 | `toRing` 的 `sock` 与 `waitReady` 的 `sock` 是**同一个指针** |
-
-### 5.3 下一步建议（按优先级）
-
-1. **测单次 `processEvents` 耗时**：日志显示 `waitReady` 循环只转了一次就退出，
-   怀疑第一次 `processEvents` 内部接近吃满 150ms。在循环里打印每次迭代的
-   `XDateTime_currentMSecsSinceEpoch()` 差值即可判定。
-2. **`XDdnsHttp_get` 的收包循环**：`XIODevice_waitForReadyRead_base(sock, 150)`
-   返回 true 后立刻 `read_1`；若 `read_1` 返回 0 就 `break`。检查
-   `read_1` 里 `XRingBuffer_read` 与 `VXIODevice_bytesAvailable` 是否读同一
-   通道（两者都用 `XIODevice_currentReadChannel`，理论上一致，但值得实测打印
-   ring 指针）。
-3. **对比 IOCP 后端的时序**：IOCP 下该测试 112/112 全绿。差异在于 IOCP 是
-   **常驻异步读**（连接建立即挂读），数据一进内核就进 `readBuffer`；select 后端
-   要等 poll 时机。可考虑在 `socketSetDescriptor`/`connect` 完成后立即
-   摆一次 `xw32_armRead`（已有类似逻辑，确认是否被 `readPending` 挡住）。
-
-## 六、临时诊断开关（当前仍在代码里，收口时须清理）
-
-`XNET_WSA_DEBUG=1` 环境变量打开，输出前缀：
-
-- `[XNET-WSA]` — 后端 dispatch/recv/write/post
-- `[XNET-SOCK]` — `XAbstractSocket` 的 `waitReady`/`toRing`/`evRead`
-- `[XNET-RING]` — 事件环 poll
-- `[XDNS]` / `[XDNS-HTTP]` — DDNS 探测与收包
-
-**收口时必须全部删除**（这些是排查期临时打点，不符合「诊断打点须被编译开关门
-包裹」的规范；若确需保留，应改为 `XNETWORK_WIN_SELECT_TRACE` 之类的
-默认 0 专属开关）。
-
-## 七、其他待清理项（本次工作区遗留）
-
-- `docs/reg_m512_*.txt`、`docs/rtu_probe_*.txt` — 其他会话的调试输出
-- `bfull.bat` — 根目录临时构建脚本
-- `verify/ld_meter/`、`verify/temphum_probe/`、`verify/verify_hsf_flowmeter.py` — 其他会话产物
 
 ## 八、约束遵守情况
 
@@ -180,4 +155,34 @@
 - ✅ XFd 口径不变：`m_fd` 仍由 `XFd_alloc` 分配，事件仍经 CQ 投递
 - ✅ 平台差异下沉 `Drive/`：`Src/` 无平台分支
 - ✅ 命名/注释规范：UTF-8 BOM、`X` 前缀、`m_` 成员、Doxygen 中文注释
-- ⚠️ 待清理：§6 的临时诊断打点
+- ✅ 临时诊断打点已全部删除（本轮排查用的 `XNETWORK_SELECT_TRACE` 亦已清理）
+
+## 九、QAbstractSocket 行为对齐（2026-11-04 第三轮）
+
+对照 `D:\Qt\6.8.3\Src\qtbase\src\network\socket\qabstractsocket.cpp` 逐项收口。
+API 名称按本项目 C 规约映射（`XAbstractSocket_` 前缀 / `_base` 虚函数入口 /
+`_signal` 信号），功能面已齐全；本轮修的是**行为**：
+
+| # | 项目 | Qt 语义 | 修复 |
+|---|---|---|---|
+| 1 | `isValid()` | 引擎有效即 true（:1595） | 设备句柄有效即 true；`isValidFlag` 保留给描述符接管路径。原实现正常 `connectToHost` 后恒 false |
+| 2 | `hostFound` | DNS 成功后、connect 前发一次（:975-979） | 原实现在 `HostLookup→Connected` 转换发射，而正常连接必经过 Connecting，**信号从未触发**；改由解析完成回调发射 |
+| 3 | 异步 DNS | `connectToHost` 立即返回，HostLookup→解析→Connecting | **同线程事件驱动**：解析在调用线程的事件循环里执行，完成后用 `XEVENT_TYPE_HOST_LOOKUP` 事件回到 socket。**不新增线程、不使用线程池**（区别于 Qt 的 QHostInfo 工作线程）；代价是解析期间占用一次事件循环调用 |
+| 4 | `close()` | `QIODevice::close()` + `disconnectFromHost()`（:2593） | 关闭后补状态收敛到 Unconnected（发 disconnected）。原实现只关设备，状态机停在 Connected |
+| 5 | `disconnectFromHost()` | 有待写数据时延迟断开（:2612-2665） | 新增 `disconnectPending`：ClosingState 后等写缓冲排空，由写事件/等待循环收尾；不再丢弃未发完的写 |
+| 6 | `setReadBufferSize()` | 限制用户态缓冲 + 满时关闭读通知（:2736-2747） | 新增 `readPaused`：ring 达到上限即不再 ContinueRead，应用读走后恢复。原实现只设 `SO_RCVBUF` |
+| 7 | `bind(port)` / `Any` | `QHostAddress::Any` 双栈（:1580） | `bindAny`、`XTcpServer_listen(NULL)`、`setAnyAddress(Any)` 统一改双栈（AF_INET6 + V6ONLY=0）；两个 Win32 后端补 v4-mapped 发送与 `sa2addr` 还原。原实现 UDP 只绑 IPv4 |
+| 8 | `setSocketError()` | 受保护 setter 只写字段（:2797） | 拆为 `setSocketError`（只写）+ `setSocketErrorAndEmit`（写+发信号）；内部调用点改用后者 |
+| 9 | `connectToHost(QHostAddress)` | 无解析、无 hostFound | `connectToHostByAddress` 直接走 `socketStartConnect`，不再绕 hostName 重载 |
+
+新增回归用例（`--test xsocket-stall` 第 10 项）：
+`connectToHost("localhost")` 立即返回且处于 HostLookupState → 恰好一次
+hostFound → 连接后 `isValid()==true` → `close()` 后状态 Unconnected 且
+`isValid()==false`。
+
+复验（select 与 IOCP 两套宏均跑）：
+
+```
+ddns 112/0、xlink 820/0、xtcpserver 18/0、xsocket-stall 10/0、
+ntp 83/0、xssl PASS、xmqtt 全部通过（含双进程联调）
+```

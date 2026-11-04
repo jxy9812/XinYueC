@@ -300,13 +300,51 @@ static void sa2addr(const struct sockaddr_storage* ss, XHostAddress* addr, uint1
 {
     if (ss->ss_family == AF_INET6) {
         const struct sockaddr_in6* s6 = (const struct sockaddr_in6*)ss;
-        XHostAddress_setAddressIPv6(addr, (const uint8_t*)&s6->sin6_addr);
+        /* [Qt 6.8 对齐] 双栈 socket 的 IPv4 对端以 v4-mapped 形式出现，
+         * 还原成 IPv4（Qt QHostAddress 同样处理）。 */
+        if (IN6_IS_ADDR_V4MAPPED(&s6->sin6_addr)) {
+            uint32_t v4;
+            memcpy(&v4, &s6->sin6_addr.s6_addr[12], sizeof(v4));
+            XHostAddress_setAddressIPv4(addr, ntohl(v4));
+        } else {
+            XHostAddress_setAddressIPv6(addr, (const uint8_t*)&s6->sin6_addr);
+        }
         if (port) *port = ntohs(s6->sin6_port);
     }
     else {
         const struct sockaddr_in* s4 = (const struct sockaddr_in*)ss;
         XHostAddress_setAddressIPv4(addr, ntohl(s4->sin_addr.s_addr));
         if (port) *port = ntohs(s4->sin_port);
+    }
+}
+
+/** @brief 套接字是否为 IPv6（双栈）socket。 */
+static bool xw32_socketIsIpv6(SOCKET s)
+{
+    struct sockaddr_storage ss;
+    int len = (int)sizeof(ss);
+    if (s == INVALID_SOCKET) return false;
+    if (getsockname(s, (struct sockaddr*)&ss, &len) != 0) return false;
+    return ss.ss_family == AF_INET6;
+}
+
+/** @brief 构造目标地址；IPv4 目标发给双栈 IPv6 socket 时转成 v4-mapped。 */
+static void xw32_mapV4Dest(SOCKET s, const XHostAddress* destAddr, uint16_t port,
+                           struct sockaddr_storage* ss, int* ssLen)
+{
+    addr2sa(destAddr, port, ss, ssLen);
+    if (ss->ss_family == AF_INET && xw32_socketIsIpv6(s)) {
+        struct sockaddr_in6 mapped;
+        memset(&mapped, 0, sizeof(mapped));
+        mapped.sin6_family = AF_INET6;
+        mapped.sin6_port = htons(port);
+        mapped.sin6_addr.s6_addr[10] = 0xFF;
+        mapped.sin6_addr.s6_addr[11] = 0xFF;
+        memcpy(&mapped.sin6_addr.s6_addr[12],
+               &((struct sockaddr_in*)ss)->sin_addr.s_addr, 4);
+        memset(ss, 0, sizeof(*ss));
+        memcpy(ss, &mapped, sizeof(mapped));
+        *ssLen = (int)sizeof(mapped);
     }
 }
 
@@ -923,7 +961,7 @@ static bool startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
         if (isUdp && destAddr) {
             struct sockaddr_storage dest;
             int destLen;
-            addr2sa(destAddr, destPort, &dest, &destLen);
+            xw32_mapV4Dest(p->socket, destAddr, destPort, &dest, &destLen);
             result = WSASendTo(p->socket, &buf, 1, NULL, 0,
                 (struct sockaddr*)&dest, destLen,
                 (OVERLAPPED*)&slot->ctx, NULL);
@@ -1003,6 +1041,12 @@ uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
     if (reuseAddr) {
         int opt = 1;
         setsockopt(p->socket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
+    }
+    /* [Qt 6.8 对齐] bind(Any) 双栈：AF_INET6 + IPV6_V6ONLY=0。 */
+    if (af == AF_INET6) {
+        int ipv6only = 0;
+        setsockopt(p->socket, IPPROTO_IPV6, IPV6_V6ONLY,
+                   (char*)&ipv6only, sizeof(ipv6only));
     }
 
     struct sockaddr_storage addrStorage;

@@ -288,7 +288,10 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 	if (address) {
 		XClassCopy(&listenAddr, address);
 	} else {
-		XHostAddress_setAddressSpecial(&listenAddr, XHostAddress_AnySpecial);
+		/* [Qt 6.8 对齐] 未指定地址时绑 QHostAddress::Any（双栈）：
+		 * AF_INET6 + IPV6_V6ONLY=0，IPv4/IPv6 客户端都可连。
+		 * 原实现绑 IPv4-Any，导致解析出 ::1 的客户端连接被拒。 */
+		XHostAddress_setAddressSpecial(&listenAddr, XHostAddress_AnyIPv6Special);
 	}
 	memset(&options, 0, sizeof(options));
 	options.m_base.m_openMode = XIODevice_ReadWrite;

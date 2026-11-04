@@ -48,6 +48,7 @@ typedef enum
     XEVENT_TYPE_SOCK_ACT = 50,                                 // 套接字活动
     XEVENT_TYPE_SHORTCUT_OVERRIDE = 51,                        // 快捷键覆盖
     XEVENT_TYPE_DEFERRED_DELETE = 52,                          // 延迟删除
+    XEVENT_TYPE_HOST_LOOKUP = 53,                              // 主机名解析完成（同线程事件驱动，不新增线程）
     XEVENT_TYPE_WIN_EVENT_ACT = 132,                           // Windows 系统事件激活
 
     // Drag and drop

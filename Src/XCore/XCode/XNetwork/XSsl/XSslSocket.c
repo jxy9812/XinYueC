@@ -310,7 +310,7 @@ static int xssl_pump_handshake(XSslSocket* self) {
                 XSsl_sessionNextNegotiatedProtocol(self->session));
         XSslSocket_encrypted_signal(self);
     } else if (r == XSSL_S_ERROR || r == XSSL_S_CLOSED) {
-        XAbstractSocket_setSocketError((XAbstractSocket*)self,
+        XAbstractSocket_setSocketErrorAndEmit((XAbstractSocket*)self,
             XAbstractSocket_SslHandshakeFailedError,
             XSsl_sessionLastErrorString(self->session));
         XSslSocket_sslErrors_signal(self, (int)XSsl_sessionVerifyResult(self->session));
@@ -658,7 +658,7 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
             XAbstractSocket_setSocketState(sock, XAbstractSocket_ConnectedState);
             xssl_controlSocket(sock, XDeviceNetworkCommand_ContinueRead);
         } else {
-            XAbstractSocket_setSocketError(sock, XAbstractSocket_ConnectionRefusedError, "Connection failed");
+            XAbstractSocket_setSocketErrorAndEmit(sock, XAbstractSocket_ConnectionRefusedError, "Connection failed");
             XAbstractSocket_setSocketState(sock, XAbstractSocket_UnconnectedState);
         }
     }

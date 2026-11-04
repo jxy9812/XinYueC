@@ -126,10 +126,14 @@ static bool isProtocolValid(XDeviceNetworkProtocol protocol)
 static void setAnyAddress(XHostAddress* address, XDeviceNetworkProtocol protocol)
 {
     XHostAddress_init(address);
-    if (protocol == XDeviceNetwork_IPv6)
-        XHostAddress_setAddressSpecial(address, XHostAddress_AnyIPv6Special);
-    else
+    /* [Qt 6.8 对齐] AnyIPProtocol 对应 QHostAddress::Any：双栈（AF_INET6 +
+     * IPV6_V6ONLY=0），同时覆盖 IPv4/IPv6。原实现把 Any 落成 IPv4-only，
+     * 导致「服务端绑 Any、客户端解析出 ::1」时连接被拒（localhost 实测）。
+     * 显式 IPv4 协议仍绑 IPv4（保持语义）。 */
+    if (protocol == XDeviceNetwork_IPv4)
         XHostAddress_setAddressSpecial(address, XHostAddress_AnySpecial);
+    else
+        XHostAddress_setAddressSpecial(address, XHostAddress_AnyIPv6Special);
 }
 
 static bool setContextError(XDeviceNetworkContext* ctx, int error)
