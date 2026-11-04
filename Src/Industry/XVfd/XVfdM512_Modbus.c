@@ -24,15 +24,22 @@
 /* ==================== 通信组表（功能码组边界） ==================== */
 static const XVfdCommGroup s_m512Groups[] = {
     /* remoteStart count  area(区)                 手册条目 */
-    { 0x1000,  1,  XIoPoint_AnalogOutput,  }, /* 1000H 通讯设定值 */
-    { 0x1001,  8,  XIoPoint_AnalogInput,   }, /* 1001H~1008H 频率/母线/电压/电流/功率/转矩/DI/DO */
+    /* [2026-11-04 实机口径] 本机只接受**从 0x1000 起**的连读窗口：
+     * 从 0x1001 起连读会被静默返回全 0（裸读实测 02 03 10 01 00 08 → 全 0，
+     * 而 02 03 10 00 00 08 → 频率/母线等全部正确）。故组起点前移一位、
+     * count+1 把 0x1000（频率给定，可读回）一并纳入读窗。 */
+    { 0x1000,  9,  XIoPoint_AnalogInput,   }, /* 1000H~1008H 给定/频率/母线/电压/电流/功率/转矩/DI/DO */
     { 0x1009,  3,  XIoPoint_AnalogInput,   }, /* 1009H~100BH AI1~AI3 */
     { 0x1010,  4,  XIoPoint_AnalogInput,   }, /* 1010H~1013H PID设定/反馈/PLC阶段/脉冲频率 */
     { 0x1019,  3,  XIoPoint_AnalogInput,   }, /* 1019H~101BH 线速度/上电时间/运行时间 */
     { 0x101F,  2,  XIoPoint_AnalogInput,   }, /* 101FH~1020H 主频率X/辅频率Y 显示 */
-    { 0x1F00,  1,  XIoPoint_AnalogOutput,  }, /* 1F00H 用户密码校验 */
-    { 0x1F01,  1,  XIoPoint_AnalogOutput,  }, /* 1F01H 参数初始化 */
-    { 0x2000,  5,  XIoPoint_AnalogOutput,  }, /* 2000H~2004H 命令/DO强制/AO1/AO2/FMP强制 */
+    /* 以下三组在从站侧**可写不可读**（真机实测：读 1F00H/2000H 回错误帧
+     * err=0x04/0x05，1F01H 虽可读但那是"上次写入值"，读它无意义）——
+     * 标记为只写组：装配层登记为只写段，**不参与轮询**（轮询它们只会
+     * 换回错误帧，白赔超时窗口并抬高失败计数触发退避，把写回确认饿死）。 */
+    { 0x1F00,  1,  XIoPoint_AnalogOutput,  XVFD_GROUP_FLAG_WRITE_ONLY }, /* 1F00H 用户密码校验 */
+    { 0x1F01,  1,  XIoPoint_AnalogOutput,  XVFD_GROUP_FLAG_WRITE_ONLY }, /* 1F01H 参数初始化 */
+    { 0x2000,  5,  XIoPoint_AnalogOutput,  XVFD_GROUP_FLAG_WRITE_ONLY }, /* 2000H~2004H 命令/DO强制/AO1/AO2/FMP强制 */
     { 0x3000,  1,  XIoPoint_AnalogInput,   }, /* 3000H 变频器运行状态 */
     { 0x7022,  1,  XIoPoint_AnalogInput,   }, /* U0.34 电机温度（U 组只取用到的这一址） */
     { 0x8000,  1,  XIoPoint_AnalogInput,   }, /* 8000H 变频器故障描述 */

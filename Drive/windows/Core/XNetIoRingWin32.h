@@ -20,10 +20,12 @@ extern "C" {
 #endif
 
 /* ================================================================
- * Windows 头文件（提供 OVERLAPPED / HANDLE / DWORD 等类型）
+ * Windows 头文件（提供 OVERLAPPED / HANDLE / DWORD / WSAEVENT 等类型）
  *
- * 若包含本头文件的 .c 同时需要 winsock2.h，须在包含本文件之前
- * 先 #include <winsock2.h>，以避免 windows.h 与 winsock2.h 冲突。
+ * winsock2.h 必须先于 windows.h 包含，否则 windows.h 会先拉入 winsock.h
+ * （两套 winsock 声明冲突，报 redefinition）。这里把 winsock2.h 提到最前，
+ * 同时保留 windows.h——对既有调用方（串口/文件/USB 后端）完全透明：
+ * 它们本来就先包含 winsock2.h 或不用 winsock 类型。
  * ================================================================ */
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -31,6 +33,7 @@ extern "C" {
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0600
 #endif
+#include <winsock2.h>
 #include <windows.h>
 
 #include "XTypes.h"               /* XFd, XObject 前置声明, bool 等 */
@@ -137,6 +140,49 @@ bool XNetIoRingWin32_postCompletion(XNetIoRingWin32* ring,
                                      DWORD bytesTransferred,
                                      ULONG_PTR completionKey,
                                      LPOVERLAPPED overlapped);
+
+/* ==================== 套接字就绪轮询表（select 模型） ==================== */
+
+/**
+ * @brief 把一个套接字上下文登记进本事件环的**就绪轮询表**。
+ * @param ring  本事件环实例指针。
+ * @param fd    该套接字对应的框架句柄 XFd（仅诊断用）。
+ * @param owner 属主上下文指针（套接字后端的私有上下文）；不能为 NULL。
+ * @return 登记成功返回 true；表满或参数非法返回 false。
+ * @details 本通道专供 `XNETWORK_WIN_BACKEND_WSAEVENT` 的套接字后端使用。
+ *
+ *          ## 为什么是 select 而不是 WSAEventSelect 事件对象
+ *
+ *          起初按 `WSAEventSelect` 的事件对象设计：每个套接字建一个
+ *          `WSAEVENT`，并进事件环等待集，就绪时由内核置位唤醒 poll。
+ *          **实测该组合在本进程下不可靠**：事件对象从不置位
+ *          （`select` 显示内核确有数据、`recv` 也能取到，但
+ *          `WaitForSingleObject(event, 0)` 恒超时），导致读路径只能靠上层
+ *          主动 `ContinueRead` 兜底、`waitForReadyRead` 超时。
+ *
+ *          Qt 6.8 的做法因此被直接照搬：**同步等待走 `select()`**
+ *          （`qns_win.cpp:1495 QNativeSocketEnginePrivate::nativeSelect`），
+ *          事件循环内的通知才用 `WSAAsyncSelect` 窗口消息。本框架没有独立
+ *          窗口消息泵，故统一采用 `select`：每次 poll 对表内每个套接字做
+ *          一次零超时 `select`，就绪者回调其属主——**没有需要维护和复位
+ *          的事件对象状态，也就没有「漏置位」这一故障面**。
+ *
+ * @note 表里**只存属主指针**，不持任何内核对象：登记/注销都是纯数组
+ *       操作，不存在句柄泄漏或失效句柄残留。
+ * @warning 必须直接保存 owner 指针、**不能只存 fd 再反查**：`XFd` 是
+ *          `XFixedPool` 的池槽位号，会随连接关闭被下一个连接复用。
+ */
+bool XNetIoRingWin32_addWsaEvent(XNetIoRingWin32* ring, XFd fd, void* owner);
+
+/**
+ * @brief 从就绪轮询表移除套接字上下文。
+ * @param ring  本事件环实例指针。
+ * @param owner 此前登记的属主上下文指针。
+ * @return 无。未登记过时为空操作（幂等）。
+ * @note 按 **owner 指针**匹配（不是 fd）：owner 在同一时刻唯一，能消除
+ *       fd 复用带来的歧义。
+ */
+void XNetIoRingWin32_removeWsaEvent(XNetIoRingWin32* ring, void* owner);
 
 /* ==================== IOCP 兼容包装（供 XDeviceNetwork_win32.c / XSerialPortWin32.c 使用） ==================== */
 

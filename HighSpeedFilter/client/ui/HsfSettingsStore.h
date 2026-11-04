@@ -27,6 +27,7 @@ extern "C" {
 #include "CXinYueConfig.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 /**
  * @brief 打开配置文件（幂等；重复调用只返回首次结果）。
@@ -82,6 +83,20 @@ void HsfSettingsStore_setInt64(const char* key, int64_t value);
  * @brief 写入布尔键（按 int 0/1 落盘，不落盘）。
  */
 void HsfSettingsStore_setBool(const char* key, bool value);
+
+/**
+ * @brief 读取字符串键（键不存在或非文本时写空串并返回 false）。
+ * @param key 键名（可含 '/'）。
+ * @param out 输出缓冲（调用方提供；恒 0 结尾）。
+ * @param cap 缓冲容量。
+ * @return 读到文本返回 true。
+ */
+bool HsfSettingsStore_getString(const char* key, char* out, size_t cap);
+
+/**
+ * @brief 写字符串键（不落盘；由 sync 或 close 落盘）。
+ */
+void HsfSettingsStore_setString(const char* key, const char* value);
 
 /**
  * @brief 落盘（原子写：临时文件 + 重命名；无修改不写）。

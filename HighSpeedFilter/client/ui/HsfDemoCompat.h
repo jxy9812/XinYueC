@@ -85,6 +85,12 @@ void hsf_page_window_syncFromWindow(void);
  */
 void hsf_page_window_restoreSettings(void);
 /**
+ * @brief 只应用已存皮肤（无主窗场景；登录窗截图/独立弹窗用）。
+ * @note  正常启动序皮肤由 hsf_page_window_restoreSettings 落定，只有
+ *        「不建主窗」的路径（--login-shot）需要显式调本入口。
+ */
+void hsf_page_window_applyStoredSkin(void);
+/**
  * @brief 窗口设置持久化恢复（**显示后**阶段）：边框保留边距 + 状态栏显隐。
  * @note  必须放在窗口显示之后——这两项要跑 chrome 重排（含形态判定），
  *        显示前跑会让紧凑态侧栏被随后的 show 递归显示出来。

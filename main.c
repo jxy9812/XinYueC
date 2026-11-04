@@ -198,6 +198,30 @@ static int main_run_test_dispatch(const char* testPath)
     if (strcmp(testPath, "xindustry-valve") == 0)
         return XIndustryValveTest_run() == 0 ? 0 : 1;
 #endif
+#if XINDUSTRY_ON && (XTEMP_HUM_ON || XPRESS_DIFF_ON)
+    /* Industry 温湿度变送器/压差计 mock 回归（通道组喂点进程内自跑，
+       2026-11-04；含编解码往返与泄漏压测，返回码=失败数）。 */
+    if (strcmp(testPath, "xindustry-sensor") == 0)
+        return XIndustrySensorTest_run() == 0 ? 0 : 1;
+#endif
+#if XINDUSTRY_ON && XFLOW_METER_ON
+    /* Industry 电磁流量计 mock 回归（通道组喂点进程内自跑；含 32 位拼装、
+       单位/报警解析、编解码往返与泄漏压测，返回码=失败数）。 */
+    if (strcmp(testPath, "xindustry-flowmeter") == 0)
+        return XIndustryFlowMeterTest_run() == 0 ? 0 : 1;
+    /* 服务端流量计站隔离单测（Hub 本地缓存驱动，不起串口/TCP）。 */
+    if (strcmp(testPath, "hsf-io-flowmeter") == 0)
+        return XHsfServerIoFlowMeterTest_run() == 0 ? 0 : 1;
+    /* 客户端流量计 provider 隔离单测（注入 BSON，不走网络）。 */
+    if (strcmp(testPath, "hsf-client-flowmeter") == 0)
+        return XHsfClientFlowMeterProviderTest_run() == 0 ? 0 : 1;
+#endif
+#if XINDUSTRY_ON && XBUTTON_STATION_ON
+    /* Industry 按钮组/操作柱 mock 回归（通道组喂触点进程内自跑；含急停安全侧
+       口径、转换开关双触点矛盾、指示灯跟随与写失败沿，返回码=失败数）。 */
+    if (strcmp(testPath, "xindustry-button") == 0)
+        return XIndustryButtonStationTest_run() == 0 ? 0 : 1;
+#endif
 #if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON && XINDUSTRY_MODBUS_ON
     /* Industry Modbus 适配器闭环（TCP 环回进程内自跑；RTU 组合经
        INDUSTRY_RTU_PTY 环境变量由驱动脚本驱动，返回码=失败数）。 */
@@ -253,6 +277,15 @@ static int main_run_test_dispatch(const char* testPath)
     /* 真实网络全链路联调（凭据经 XDNS_AKID/XDNS_SECRET 环境变量传入）。 */
     if (strcmp(testPath, "ddns-real") == 0)
         return XDdnsRealTest_run() == 0 ? 0 : 1;
+#endif
+#if DEMOTEST_ON
+    /* XTcpServer 全用例回归（含 2026-11-04 新增的「同一连接多帧收发 /
+     * 连接 socket 所有权 / pending 队列单次投递」三把锁）。 */
+    if (strcmp(testPath, "xtcpserver") == 0)
+        return XTcpServerTest_run() == 0 ? 0 : 1;
+    /* 套接字「读挂起后不再收数据」专项（长空闲/高频/背压/双向/重连/串包）。 */
+    if (strcmp(testPath, "xsocket-stall") == 0)
+        return XSocketStallTest_run() == 0 ? 0 : 1;
 #endif
 #if DEMOTEST_ON && XS7_ON
     if (strcmp(testPath, "xs7-unit") == 0)
@@ -317,6 +350,8 @@ static void main_print_test_list(void)
     XPrintf("  --test xvfd-m512 / xvfd-bus485 / xvfd-atv61 (需先起虚拟从站)\n");
     XPrintf("  --test xvfd-hub-limits (Hub 从站级约束单测, 进程内自跑)\n");
     XPrintf("  --test xindustry-valve (电磁阀 mock) / xindustry-modbus (TCP 环回；RTU 组合需脚本起从站)\n");
+    XPrintf("  --test xindustry-sensor (温湿度/压差计 mock) / xindustry-flowmeter (电磁流量计 mock)\n");
+    XPrintf("  --test xindustry-button (按钮组/操作柱 mock：急停/启动/停止/复位 + 手自动 + 指示灯)\n");
     XPrintf("  Test 菜单「协议栈 → XLink(xlink)」: 客户端包装 / 实战案例·服务端 / 实战案例·客户端\n");
     XPrintf("  Test 菜单「协议栈 → XModbus/XVfd」: Hub闭环 / 485战役 / 变频器三件套\n");
 }

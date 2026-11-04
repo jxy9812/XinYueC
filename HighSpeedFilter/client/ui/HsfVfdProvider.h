@@ -71,6 +71,22 @@ typedef struct HsfVfdProvider {
     bool (*subscribe)(void* userData, HsfVfdNotifyFn cb, void* page);
     /** @brief 注销数据变化回调（页面对 provider 生命周期早于 provider 时必调）。 */
     void (*unsubscribe)(void* userData, void* page);
+
+    /* ---- 远端后端扩展（可选；NULL 时页面回落 device() 路径） ---- */
+    /** @brief 状态快照（借用，随下次通知失效；远端后端无本地设备对象，
+     *         快照由网络遥测解码而来）。NULL=走 device() 的 status_const。 */
+    const XVfdStatus* (*snapshot)(void* userData);
+    /** @brief 能力位图（XVfdCapability 位或；远端后端本地无设备能力表，
+     *         由协议约定给出）。NULL=走 device() 的 caps()。 */
+    uint32_t (*caps)(void* userData);
+    /** @brief 取最近一拍控制应答（远端后端专用；本地后端无此概念，恒 NULL）。
+     *  @param outSeq 输出应答序号（每拍自增；0=从未收到）。
+     *  @param outErrUtf8 输出失败原因（UTF-8；成功为空串；容量 cap）。
+     *  @return 已收到过应答返回 true；从未收到/无此槽返回 false。
+     *  @note  页面按序号增量观测：序号变化即有新应答，err 非空提示被拒、
+     *         空为成功（提示回落）。轮询口径，无需回调。 */
+    bool (*commandError)(void* userData, int* outSeq,
+                         char* outErrUtf8, size_t cap);
 } HsfVfdProvider;
 
 /**

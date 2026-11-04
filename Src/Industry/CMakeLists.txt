@@ -29,7 +29,11 @@ target_include_directories(XinYueIndustry PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/XChannel"
     "${CMAKE_CURRENT_SOURCE_DIR}/XSolenoidValve"
-    "${CMAKE_CURRENT_SOURCE_DIR}/XVfd")
+    "${CMAKE_CURRENT_SOURCE_DIR}/XVfd"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XTempHum"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XPressDiff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XFlowMeter"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XButtonStation")
 
 # ---- 头目录导出清单（抬升父作用域，根在 Test 模块注册前落地）----
 # [2026-11-01 模块化拆分收口] 与 XCore/Drive/XGui 同款：模块自持头目录清单
@@ -47,6 +51,10 @@ set(INCLUDE_INDUSTRY_LIST_LIFT
     "${CMAKE_CURRENT_SOURCE_DIR}/XChannel"
     "${CMAKE_CURRENT_SOURCE_DIR}/XSolenoidValve"
     "${CMAKE_CURRENT_SOURCE_DIR}/XVfd"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XTempHum"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XPressDiff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XFlowMeter"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XButtonStation"
     PARENT_SCOPE)
 
 # ---- 主库反向边（环依赖） ----

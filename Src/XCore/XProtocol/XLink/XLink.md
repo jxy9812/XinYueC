@@ -2013,6 +2013,83 @@ XClassDelete((XClass*)session);
 4. ✅ demo（`XLinkDemoServer/Client`）已加登录 + 上传/下载剧情（单进程形态覆盖新剧情，随闸门验证）；质量门禁已补文件传输 churn/吞吐/会话统计三项；
 5. ✅ Windows 旧机复测已执行（结论见上方"Windows 复测结果"块：环境级传输停滞定性 + 6s 判线缓解 + 复现程序归档 `verify/windows_loopback_stall_repro.c`；**两处段错误 UAF 已用 cdb+PageHeap 抓实并根修**——deinit 未摘钩子、传输引擎会话借用悬垂；残 failures 为环境停滞，根治待内核态定位）。
 
+#### 14.3.1 订正（2026-11-04，HSF 联调实测）
+
+> 本节记录一次**独立复现**：HSF 客户端/服务端（同一套 `XLinkClient`/
+> `XLinkServer` + Win32 IOCP 后端）联调中，「服务端收不到客户端订阅帧」
+> 被逐层坐实。**结论推翻了 §14.3 的「已排除完成管线」与部分「环境级
+> 停滞」归因**，同时挖出三处代码缺陷。
+
+**背景现象**：GUI 客户端（`HsfClient.exe`）切页时按需订阅/退订遥测主题，
+服务端只收到连接期最初的 3 个订阅，之后切页产生的订阅帧全部丢失；
+连接在约 6 秒后被服务端判线断开。纯 Python 客户端（同时序、同协议）
+却 **9/9 全部到达**。
+
+**逐层实测（每层都有日志实证，非推断）**：
+
+| 层 | 观测 | 结论 |
+|---|---|---|
+| 客户端应用层 | `XLinkSession` 发送队列 `append → txFlush`，22 帧全部 `flushed == total`、`used == 0` | 帧确实入队并写出，**应用层无丢失** |
+| 客户端 socket | `XIODevice_write_1` 未早退（`isWritable` 恒真、`m_device` 非空） | 写路径完整 |
+| 裸 socket 对照 | 同样 22×20B 环回发送，接收端 **440B 全收** | **TCP 层无问题，不是「环回停滞」** |
+| 服务端 IOCP | `WSARecv` 全部 `WSA_IO_PENDING`（0 次立即完成、0 次错误），完成包按 `ARM-pending → DONE-read → ARM-pending` **严格 1:1 配对** | **完成包没有丢失** |
+| 服务端会话 | fd=13（HSF 会话）收到 7 帧（20/20/21/52/20/119/20）后，`ARM-pending` 挂起但再无完成 | 读挂着却再也等不到数据 |
+
+**由此推翻的两条旧结论**：
+
+1. **「已排除框架完成管线（序列号四站配对审计零丢失）」不成立**——
+   旧审计只核对「序列号配对/丢帧/串号」，未检查 **`CQEntry.m_osFd` 字段
+   完整性**。实测该字段在 Win32 后端**从未被赋值**（`memset` 后恒 0），
+   而假 EOF 复核用它做 `MSG_PEEK`，于是 PEEK 打在 **fd 0（stdin）** 上：
+   stdin 读到 0 ⇒ **每一次 0 字节读完成都被判成「对端真 FIN」** ⇒ 健康
+   链路被判线复位。这不是「完成包丢失」，是**完成内容被误读**。
+2. **「会话被杀 = 传输层停滞」至少部分不成立**——本轮断线的直接原因是
+   上述假 EOF 误判，与完成包停滞无关。
+
+**未推翻的结论**：§14.3 记录的「完成包在出队前丢失、`CancelIoEx` 返回
+`ERROR_NOT_FOUND`」在本轮**未复现**；本轮 130 次读挂起全部有 1:1 完成包
+配对。二者可能是不同触发条件（旧记录为 37KB 大流量突发，本轮为小帧
+高频），**保持原结论待进一步取证**。
+
+**本轮挖出的三处代码缺陷（均已根修）**：
+
+| # | 缺陷 | 症状 | 修法 |
+|---|---|---|---|
+| 1 | Win32 IOCP 后端**从不填 `CQEntry.m_osFd`** | 假 EOF 复核 PEEK 打到 stdin，健康链路被判「对端 FIN」→ 会话复位、订阅全丢、推送积压 | 填真实 `SOCKET` 句柄（`XSocketDescriptor_toIntptr`），非套接字填 -1 |
+| 2 | 假 EOF 复核判据为 `m_osFd < 0` | 上述恒 0 值绕过判据（0 不小于 0） | 收紧为 `<= 0`；合法句柄两端恒为正（POSIX fd>2，Win32 SOCKET 非 0） |
+| 3 | `XLinkServer` **从未接 socket 的 `disconnected` 信号**（只有客户端接了） | 对端断开后会话仍停在 Ready，`reap` 只回收 Inactive 会话 ⇒ 僵尸会话常驻，应用 tick 继续往死链路 publish ⇒ tx 队列无界增长 | accept 时接 `XAbstractSocket_disconnected_signal` → `XLinkSession_onDisconnected`（只复位，回收交 `reap`） |
+
+**顺带的两处健壮性修复**：
+
+- `XLinkServerPrivate_reap` 回收会话时**关闭**其接管的连接套接字
+  （`XIODevice_close_base`，只关不删——所有权在 `XTcpServer`，
+  `XClassDelete` 会二次释放/段错误）。
+- `HsfLinkClient` 的按需订阅新增 `m_topicSent` 位，与引用计数分离：
+  引用可能在**建窗期**（尚未连线）累计，若只按引用数判「已订阅」，
+  登录后切页会因 `ref>0` 直接返回、帧永不发出。
+
+**平台钩子（新增，按「平台差异只允许下沉到 Drive」规范）**：
+`XAbstractNetIoRing_platformPeerReallyClosed(int osFd)` —— 各平台用自己的
+PEEK 手段实现同一判定口径，`Src/` 不再出现平台分支。Windows 用
+`recv + MSG_PEEK`（临时 `ioctlsocket(FIONBIO)` 后复原），POSIX 用
+`recv + MSG_PEEK|MSG_DONTWAIT`，STM32/ESP8266 恒返回 true（保持原语义）。
+
+**仍未闭环的一项**：服务端会话读已挂起（`ARM-pending`）却再也收不到
+后续数据，而客户端 22 帧全部成功写入内核、裸 socket 同量级收发零丢失。
+两端的应用层与 IOCP 完成管线均已逐层排除，剩余嫌疑集中在
+「同一连接上既有 HSF 会话流量、又有高频 Modbus TCP 流量（本机模拟量
+模块 200ms 轮询）时的栈行为」。**待续作**。
+
+**How to apply（本轮教训）**：
+- 「已排除某项」必须写清楚**排除了哪个具体属性**。旧审计排的是
+  「序列号配对」，却据此宣称「完成管线无缺陷」——把字段完整性、
+  内容正确性一起豁免了，直接导致本缺陷潜伏两周。
+- 分层排除时**先做裸 socket 对照**。本轮若一开始就确认「裸 socket 440B
+  全收」，可省去大半天对 IOCP 停滞的追查。
+- 同一现象在两种客户端（GUI / 纯 Python）下差异巨大时，**先怀疑被测
+  进程本身的连接生命周期**，而不是协议层——本轮真因就是 GUI 侧多出
+  的连接建立时序。
+
 ### 14.4 新增文件清单
 
 | 文件 | 职责 |

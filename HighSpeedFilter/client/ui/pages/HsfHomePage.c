@@ -14,6 +14,7 @@
 #include "XBoxLayout.h"
 #include "XObject.h"
 #include "XMemory.h"
+#include <stddef.h>
 #include <string.h>
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON
@@ -32,23 +33,45 @@ typedef struct HsfHomePage
     void*        m_navUserData; /**< 回调用户数据。 */
 } HsfHomePage;
 
-/** @brief 快捷入口点击槽：按按钮下标跳对应子树主菜单页。 */
-static void hsfHomeActionSlot(XObject* receiver, XVarList* args)
+/** @brief 快捷入口共用动作体：按按钮下标跳对应子树主菜单页。 */
+static void hsfHomeActionGo(HsfHomePage* self, int idx)
 {
-    HsfHomePage* self = (HsfHomePage*)receiver;
     static const int kTargets[3] = {
         HSF_PAGE_MONITOR_MENU, HSF_PAGE_DATA_MENU, HSF_PAGE_SETTINGS_MENU
     };
-    int idx = -1;
-    (void)args;
     if (!self || !self->m_navFn) return;
-    /* 槽按按钮分派：接收者=页容器，按钮下标经组 id 传入不可得 →
-       三个按钮各用一枚静态转发（m_owner 回到页）。 */
-    if (receiver == (XObject*)&self->m_actions[0]) idx = 0;
-    else if (receiver == (XObject*)&self->m_actions[1]) idx = 1;
-    else if (receiver == (XObject*)&self->m_actions[2]) idx = 2;
-    if (idx < 0) return;
+    if (idx < 0 || idx > 2) return;
     self->m_navFn(self->m_navUserData, kTargets[idx]);
+}
+
+/** @brief 快捷入口点击薄槽 ×3。
+ *  @note  [2026-11-04 receiver 实锅修复] connect_1 首参=注册的 receiver
+ *         （按钮自身，XConnection_directEmit 原样传入），旧实现直转页类型
+ *         得到错误基址 → `receiver==&m_actions[i]` 比较恒假 → 三个快捷
+ *         入口点击整体静默失效（HsfMonitorVfd vfdRunSlot 2026-11-04 同款
+ *         实锅、vfdSliderChanged 2026-11-03 口径）。三钮是**数组元素**，
+ *         offsetof 反推页须按下标各退一步（元素步长 sizeof(XPushButton)）。 */
+static void hsfHomeAction0Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    hsfHomeActionGo((HsfHomePage*)((char*)receiver -
+                                    offsetof(HsfHomePage, m_actions)), 0);
+}
+
+static void hsfHomeAction1Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    hsfHomeActionGo((HsfHomePage*)((char*)receiver -
+                                    offsetof(HsfHomePage, m_actions) -
+                                    sizeof(XPushButton)), 1);
+}
+
+static void hsfHomeAction2Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    hsfHomeActionGo((HsfHomePage*)((char*)receiver -
+                                    offsetof(HsfHomePage, m_actions) -
+                                    2 * sizeof(XPushButton)), 2);
 }
 
 /** @brief 创建主界面页。 */
@@ -62,6 +85,9 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
         "\xE5\x8F\x82\xE6\x95\xB0\xE8\xAE\xBE\xE7\xBD\xAE"  /* 参数设置 */
     };
     int i;
+    static XSlotFunc1 const kActionSlots[3] = {
+        hsfHomeAction0Slot, hsfHomeAction1Slot, hsfHomeAction2Slot
+    };
 
     if (!parent) return NULL;
     self = (HsfHomePage*)XMemory_malloc(sizeof(HsfHomePage),
@@ -121,7 +147,7 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
         XObject_connect_1((XObject*)&self->m_actions[i],
                           XSignal(XAbstractButton_clicked_signal),
                           (XObject*)&self->m_actions[i],
-                          hsfHomeActionSlot,
+                          kActionSlots[i],
                           XConnectionType_Direct);
         XBoxLayout_addWidget(&self->m_actionsRow,
                              (XWidget*)&self->m_actions[i]);

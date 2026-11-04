@@ -24,6 +24,9 @@
 
 #include "HsfTheme.h"
 #include "HsfVfdProvider.h"
+#include "XhsfLinkProto.h"
+#include "HsfVfdProviderRemote.h"
+#include "HsfLinkClient.h"
 #if XVFD_ON
 #include "HsfVfdDemoSim.h"
 #endif
@@ -199,7 +202,9 @@ typedef struct HsfMonitorVfd
     /* 区 4：操作行（方向下拉 + 启停单钮双态 + 点动/复位条件使能）。 */
     XComboBox    m_dirCombo;    /**< 运行方向（正转/反转；启动时生效）。 */
     XPushButton  m_btnRun;      /**< 启动/停止（随运行态换字）。 */
-    XPushButton  m_btnJog;      /**< 点动（运行中禁用）。 */
+    XPushButton  m_btnJog;      /**< 点动（按住生效；运行中禁用）。 */
+    XTimer*      m_jogTimer;    /**< 点动心跳定时器（NULL=未点动）。 */
+    bool         m_jogReverse;  /**< 本次点动方向。 */
     XPushButton  m_btnReset;    /**< 故障复位（有故障才可点）。 */
     /* 区 5：趋势图。 */
     XChartView   m_trendView;   /**< 图表视图。 */
@@ -221,6 +226,13 @@ typedef struct HsfMonitorVfd
     bool         m_updating;    /**< 回显抑制：刷快照时不回写控件。 */
     bool         m_autoMode;    /**< 自动运行模式（true=只读+隐藏闸 UI）。 */
     bool         m_gateRemembered; /**< 退回手动时恢复的闸值（此前状态）。 */
+    /* ---- 服务端运行模式（顶栏统一管理，页面只读消费） ---- */
+    bool         m_srvModeKnown;/**< 是否已从服务端拿到模式。 */
+    bool         m_srvModeAuto; /**< 服务端是否自动模式。 */
+    /* ---- 控制应答提示（远端后端；provider->commandError 增量观测） ---- */
+    int          m_cmdErrSeq;      /**< 已消费的控制应答序号（0=无）。 */
+    bool         m_cmdErrActive;   /**< 最近一拍应答是否带错误（持续显示到下拍）。 */
+    char         m_cmdErrText[96]; /**< 最近错误文本（服务端原文 UTF-8）。 */
 } HsfMonitorVfd;
 
 /* ==================== 工具 ==================== */
@@ -441,6 +453,7 @@ XVtable* HsfVfdBanner_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
+
 /* ---- 状态横幅 ---- */
 
 /** @brief 横幅绘制：状态色胶囊 + 状态文本 + 右侧故障信息。 */
@@ -552,34 +565,158 @@ static void vfdPageNotify(const HsfVfdProvider* provider, void* pageToken);
 static void vfdApplyControlState(HsfMonitorVfd* self);
 static void vfdRefresh(HsfMonitorVfd* self);
 
+/** @brief 取当前状态快照（远端后端走 snapshot 槽；本地后端走设备）。
+ *  @note  远端 provider 无本地设备对象（遥测由网络 BSON 解码而来），
+ *         provider 表的 snapshot/caps 槽即为此设：非 NULL 优先，
+ *         NULL 回落 device() 的 status_const/caps（老后端零改动）。 */
+static const XVfdStatus* vfdPageStatus(HsfMonitorVfd* self)
+{
+    const XVfdDevice* dev;
+    if (self->m_provider && self->m_provider->snapshot)
+        return self->m_provider->snapshot(self->m_provUser);
+    dev = self->m_provider ? self->m_provider->device(self->m_provUser) : NULL;
+    return dev ? XVfdDevice_status_const(dev) : NULL;
+}
+
+/** @brief 取能力位图（远端后端走 caps 槽；本地后端走设备）。 */
+static uint32_t vfdPageCaps(HsfMonitorVfd* self)
+{
+    const XVfdDevice* dev;
+    if (self->m_provider && self->m_provider->caps)
+        return self->m_provider->caps(self->m_provUser);
+    dev = self->m_provider ? self->m_provider->device(self->m_provUser) : NULL;
+    return dev ? XVfdDevice_caps(dev) : 0;
+}
+
 /** @brief 操作按钮点击：按地址分派到 provider 动作。
  *  @note  m_btnRun 双态：未运行=「启动」（按方向下拉下发 start），
  *         运行中=「停止」（下发 stop）——按钮文字由 vfdRefresh 随
- *         运行态翻转，点击行为同样按运行态分派。 */
-static void vfdBtnSlot(XObject* receiver, XVarList* args)
+ *         运行态翻转，点击行为同样按运行态分派。
+ *  @note  [2026-11-04 receiver 实锅] connect_1 首参是**注册的 receiver**
+ *         （按钮自身），槽直转页类型得到的是错误基址 → 整槽失效
+ *         （探针实测：闸/下发/启停点击全部无效果）。与 vfdSliderChanged
+ *         2026-11-03 同款教训；三钮内嵌偏移各异、offsetof 反推有歧义，
+ *         故拆三枚薄槽各自反推（照 vfdSliderChanged 口径）。 */
+static void vfdRunSlot(XObject* receiver, XVarList* args)
 {
-    HsfMonitorVfd* self = (HsfMonitorVfd*)receiver;
+    HsfMonitorVfd* self = (HsfMonitorVfd*)((char*)receiver -
+                                           offsetof(HsfMonitorVfd, m_btnRun));
     const HsfVfdProvider* p;
-    const XVfdDevice* dev;
+    const XVfdStatus* st;
     bool running;
     (void)args;
     if (!self || !self->m_provider) return;
     p = self->m_provider;
-    if (receiver == (XObject*)&self->m_btnRun) {
-        dev = p->device(self->m_provUser);
-        running = dev && XVfdDevice_status_const(dev) && XVfdDevice_status_const(dev)->m_running;
-        if (running) p->stop(self->m_provUser);
-        else p->start(self->m_provUser,
-                      XComboBox_currentIndex(&self->m_dirCombo) == 1);
+    st = vfdPageStatus(self);
+    running = st && st->m_valid && st->m_running;
+    if (running) p->stop(self->m_provUser);
+    else p->start(self->m_provUser,
+                  XComboBox_currentIndex(&self->m_dirCombo) == 1);
+}
+
+/**
+ * @brief 点动心跳重发（由页面 TimerEvent 分发）。
+ * @note  服务端看门狗 HSF_JOG_TIMEOUT_MS(600ms) = 3× 本间隔（200ms），
+ *        容忍连续丢 2 帧仍不断机。
+ */
+static void vfdJogTick(void* userData, XTimerData* timer)
+{
+    HsfMonitorVfd* self = (HsfMonitorVfd*)userData;
+    (void)timer;
+    if (!self || !self->m_provider || !self->m_provider->jog) return;
+    {
+        bool sent = self->m_provider->jog(self->m_provUser, self->m_jogReverse);
+        XPrintf("[vfd-jog] 心跳 rev=%d sent=%d\n",
+                (int)self->m_jogReverse, (int)sent);
     }
-    else if (receiver == (XObject*)&self->m_btnJog)    p->jog(self->m_provUser, false);
-    else if (receiver == (XObject*)&self->m_btnReset)  p->resetFault(self->m_provUser);
+}
+
+/**
+ * @brief 点动按钮按下：立即发一次点动 + 启动心跳重发。
+ * @note  为什么不用 clicked：clicked 在松开时发，点动必须"按下即动"。
+ */
+static void vfdJogPressedSlot(XObject* receiver, XVarList* args)
+{
+    HsfMonitorVfd* self = (HsfMonitorVfd*)((char*)receiver -
+                                           offsetof(HsfMonitorVfd, m_btnJog));
+    (void)args;
+    if (!self || !self->m_provider || !self->m_provider->jog) return;
+    if (self->m_jogTimer) return;                   /* 已在点动。 */
+    self->m_jogReverse = (XComboBox_currentIndex(&self->m_dirCombo) == 1);
+    {
+        bool sent = self->m_provider->jog(self->m_provUser, self->m_jogReverse);
+        XPrintf("[vfd-jog] 点动 rev=%d sent=%d\n",
+                (int)self->m_jogReverse, (int)sent);
+    }
+    /* 心跳重发：独立 XTimer（与页面既有 m_simTimer 完全同构，
+     * 该形态在本页已验证可回火）。 */
+    {
+        XTimer* t = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (t) {
+            XTimer_setInterval(t, (int)HSF_JOG_REPEAT_MS);
+            XTimer_setTimerCallback(t, vfdJogTick);
+            XTimer_setUserData(t, self);
+            XTimer_start_base(t);
+            self->m_jogTimer = t;
+        } else {
+            XPrintf("[vfd-jog] 心跳定时器创建失败\n");
+        }
+    }
+}
+
+/**
+ * @brief 点动按钮松开：停心跳 + 通知服务端立即停机。
+ */
+static void vfdJogReleasedSlot(XObject* receiver, XVarList* args)
+{
+    HsfMonitorVfd* self = (HsfMonitorVfd*)((char*)receiver -
+                                           offsetof(HsfMonitorVfd, m_btnJog));
+    (void)args;
+    if (!self) return;
+    if (self->m_jogTimer) {
+        XTimer_stop_base(self->m_jogTimer);
+        XClassDelete((XClass*)self->m_jogTimer);
+        self->m_jogTimer = NULL;
+    }
+    if (self->m_provider && self->m_provider->stop)
+        self->m_provider->stop(self->m_provUser);
+    XPrintf("[vfd-jog] 点动松开 → 停机\n");
+}
+
+
+static void vfdResetSlot(XObject* receiver, XVarList* args)
+{
+    HsfMonitorVfd* self = (HsfMonitorVfd*)((char*)receiver -
+                                           offsetof(HsfMonitorVfd, m_btnReset));
+    (void)args;
+    if (!self || !self->m_provider) return;
+    self->m_provider->resetFault(self->m_provUser);
+}
+
+/**
+ * @brief 模式应答到达：刷新本地缓存并联动页面只读态。
+ */
+static void vfdModeNotify(void* userData)
+{
+    HsfMonitorVfd* self = (HsfMonitorVfd*)userData;
+    int autoMode = 0;
+    if (!self) return;
+    if (!HsfLinkClient_runMode(&autoMode)) {
+        XLabel_setText_2(&self->m_hint, HsfLinkClient_lastModeError());
+        return;
+    }
+    self->m_srvModeKnown = true;
+    self->m_srvModeAuto = (autoMode == 1);
+    /* 服务端自动 ⇒ 页面只读（复用既有 m_autoMode 机制）。 */
+    self->m_autoMode = self->m_srvModeAuto;
+    vfdApplyControlState(self);
 }
 
 /** @brief 下发按钮：频率给定（0.1Hz 定点 → Hz）。 */
 static void vfdApplySlot(XObject* receiver, XVarList* args)
 {
-    HsfMonitorVfd* self = (HsfMonitorVfd*)receiver;
+    HsfMonitorVfd* self = (HsfMonitorVfd*)((char*)receiver -
+                                           offsetof(HsfMonitorVfd, m_setApply));
     (void)args;
     if (!self || !self->m_provider || !self->m_provider->setFrequency) return;
     self->m_provider->setFrequency(self->m_provUser,
@@ -588,10 +725,13 @@ static void vfdApplySlot(XObject* receiver, XVarList* args)
 
 /** @brief 控制闸切换：透传 provider；联动按钮可用态。
  *  @note  自动运行模式下勾选框已隐藏，此槽不应触达（双保险：触达则
- *         静默回滚勾选态，不透传 provider）。 */
+ *         静默回滚勾选态，不透传 provider）。
+ *  @note  receiver=勾选框自身（connect_1 首参口径），offsetof 反推页
+ *         （vfdRunSlot 2026-11-04 实锅同款口径）。 */
 static void vfdGateSlot(XObject* receiver, XVarList* args)
 {
-    HsfMonitorVfd* self = (HsfMonitorVfd*)receiver;
+    HsfMonitorVfd* self = (HsfMonitorVfd*)((char*)receiver -
+                                           offsetof(HsfMonitorVfd, m_gate));
     bool checked = false;
     (void)args;
     if (!self || !self->m_provider) return;
@@ -720,14 +860,12 @@ static bool s_pendingAutoMode = false;         /**< 建页前的模式意图。 
  *         提示行显示「自动运行中」，勾选框已隐藏（见 setInteractiveMode）。 */
 static void vfdApplyControlState(HsfMonitorVfd* self)
 {
-    const XVfdDevice* dev = self->m_provider ? self->m_provider->device(self->m_provUser) : NULL;
-    uint32_t caps = dev ? XVfdDevice_caps(dev) : 0;
+    uint32_t caps = vfdPageCaps(self);
     bool gate = !self->m_autoMode && self->m_provider && self->m_provider->controlEnabled
                 ? self->m_provider->controlEnabled(self->m_provUser) : false;
 
     {
-        const XVfdDevice* dev2 = self->m_provider ? self->m_provider->device(self->m_provUser) : NULL;
-        const XVfdStatus* st2 = XVfdDevice_status_const(dev2);
+        const XVfdStatus* st2 = vfdPageStatus(self);
         bool running = st2 && st2->m_valid && st2->m_running;
         bool faulted = st2 && st2->m_valid && st2->m_faulted;
         bool hasJog = (caps & XVfdCap_Jog) != 0;
@@ -757,6 +895,33 @@ static void vfdApplyControlState(HsfMonitorVfd* self)
     XWidget_setEnabled((XWidget*)&self->m_setApply,  gate);
     XWidget_setEnabled((XWidget*)&self->m_setSlider, gate);
     XWidget_setEnabled((XWidget*)&self->m_setSpin,   gate);
+    /* 控制应答提示（远端后端）：按序号增量消费——被拒（err 非空）顶替
+     * 提示行并持续显示到下一拍应答（成功 err 空 -> 自动回落闸提示）；
+     * 本地后端无此槽，行为不变。 */
+    if (!self->m_autoMode && self->m_provider && self->m_provider->commandError) {
+        int seq = 0;
+        char err[96];
+        err[0] = '\0';
+        if (self->m_provider->commandError(self->m_provUser, &seq, err, sizeof(err)) &&
+            seq != 0) {
+            if (seq != self->m_cmdErrSeq) {
+                self->m_cmdErrSeq = seq;
+                self->m_cmdErrActive = (err[0] != '\0');
+                if (self->m_cmdErrActive)
+                    snprintf(self->m_cmdErrText, sizeof(self->m_cmdErrText), "%s", err);
+            }
+            if (self->m_cmdErrActive) {
+                XLabel_setText_2(&self->m_hint, self->m_cmdErrText);
+                return;     /* 错误提示优先于闸提示。 */
+            }
+        }
+    }
+    if (self->m_srvModeAuto) {
+        XLabel_setText_2(&self->m_hint,
+            "\xE6\x9C\x8D\xE5\x8A\xA1\xE7\xAB\xAF\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD\xEF\xBC\x9A"
+            "\xE8\xBF\x9C\xE7\xA8\x8B\xE6\x8E\xA7\xE5\x88\xB6\xE5\xB7\xB2\xE7\xA6\x81\xE7\x94\xA8"); /* 服务端自动运行中：远程控制已禁用 */
+        return;
+    }
     if (self->m_autoMode) {
         XLabel_setText_2(&self->m_hint,
             "\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD\xEF\xBC\x9A"
@@ -772,11 +937,9 @@ static void vfdApplyControlState(HsfMonitorVfd* self)
 /** @brief 快照 → 全页控件回填（标签/卡/仪表重绘/趋势追点）。 */
 static void vfdRefresh(HsfMonitorVfd* self)
 {
-    const XVfdDevice* dev;
     const XVfdStatus* st;
     if (!self) return;
-    dev = self->m_provider ? self->m_provider->device(self->m_provUser) : NULL;
-    st = XVfdDevice_status_const(dev);
+    st = vfdPageStatus(self);
 
     /* 数值卡（validMask 显 "--"）。 */
     vfdSetCardText(&self->m_cardPower,
@@ -981,16 +1144,101 @@ static void vfdInitCard(XLabel* card, XWidget* parent)
     XWidget_show((XWidget*)card);
 }
 
-/** @brief 操作按钮初始化（40dp 触控高 + 点击连接）。 */
-static void vfdInitBtn(XPushButton* btn, XWidget* parent, const char* text)
+/** @brief 操作按钮初始化（40dp 触控高 + 点击连接；槽=各钮薄槽，
+ *         receiver 实锅口径见 vfdRunSlot 注释）。 */
+static void vfdInitBtn(XPushButton* btn, XWidget* parent, const char* text,
+                       XSlotFunc1 slot)
 {
     XPushButton_init(btn, parent, 0);
     HsfTheme_applyDefaultFont((XWidget*)btn);
     XPushButton_setText_2(btn, text);
     XWidget_setFixedHeight((XWidget*)btn, 40);
     XObject_connect_1((XObject*)btn, XSignal(XAbstractButton_clicked_signal),
-                      (XObject*)btn, vfdBtnSlot, XConnectionType_Direct);
+                      (XObject*)btn, slot, XConnectionType_Direct);
     XWidget_show((XWidget*)btn);
+}
+
+/* ==================== GUI 自测钩子（联调/CI） ==================== */
+
+/**
+ * @brief 执行一次自测动作（等价于用户操作控件）。
+ * @details env `XHSF_VFD_SELFTEST` = "action[,hz]"：
+ *          start/stop/freestop/jog/reset/setfreq/gate-on/gate-off/
+ *          mode-auto/mode-manual。
+ *          直呼槽函数，走的是与点击完全相同的代码路径
+ *          （provider 函数表 → XLink → 服务端 → 设备）。
+ */
+/**
+ * @brief 自测延迟触发（登录完成后才执行，避免控制被丢弃）。
+ */
+static void vfdRunSelfTest(HsfMonitorVfd* self);
+
+static void vfdSelfTestTimer(void* userData, XTimerData* timer)
+{
+    HsfMonitorVfd* self = (HsfMonitorVfd*)userData;
+    if (timer) XTimer_stop_base(timer);
+    if (!self) return;
+    vfdRunSelfTest(self);
+}
+
+static void vfdRunSelfTest(HsfMonitorVfd* self)
+{
+    const char* spec = XSystem_environment("XHSF_VFD_SELFTEST");
+    char action[32];
+    double hz = 0.0;
+    const char* comma;
+    size_t n;
+
+    if (!self || !spec || !spec[0]) return;
+    comma = strchr(spec, ',');
+    n = comma ? (size_t)(comma - spec) : strlen(spec);
+    if (n >= sizeof(action)) n = sizeof(action) - 1;
+    XMemcpy(action, spec, n);
+    action[n] = '\0';
+    if (comma) hz = atof(comma + 1);
+
+    XPrintf("[vfd-selftest] 执行 action=%s hz=%.1f\n", action, hz);
+    if (!self->m_provider) return;
+
+    if (strcmp(action, "gate-on") == 0) {
+        XCheckBox_setChecked(&self->m_gate, true);
+        if (self->m_provider->setControlEnabled)
+            self->m_provider->setControlEnabled(self->m_provUser, true);
+        vfdApplyControlState(self);
+    } else if (strcmp(action, "gate-off") == 0) {
+        XCheckBox_setChecked(&self->m_gate, false);
+        if (self->m_provider->setControlEnabled)
+            self->m_provider->setControlEnabled(self->m_provUser, false);
+        vfdApplyControlState(self);
+    } else if (strcmp(action, "mode-auto") == 0) {
+        HsfLinkClient_setRunMode(true);
+    } else if (strcmp(action, "mode-manual") == 0) {
+        HsfLinkClient_setRunMode(false);
+    } else if (strcmp(action, "setfreq") == 0) {
+        if (self->m_provider->setFrequency)
+            self->m_provider->setFrequency(self->m_provUser, hz);
+    } else if (strcmp(action, "start") == 0) {
+        if (self->m_provider->start)
+            self->m_provider->start(self->m_provUser,
+                                    XComboBox_currentIndex(&self->m_dirCombo) == 1);
+    } else if (strcmp(action, "stop") == 0) {
+        if (self->m_provider->stop) self->m_provider->stop(self->m_provUser);
+    } else if (strcmp(action, "freestop") == 0) {
+        if (self->m_provider->freeStop)
+            self->m_provider->freeStop(self->m_provUser);
+    } else if (strcmp(action, "jog") == 0) {
+        if (self->m_provider->jog) self->m_provider->jog(self->m_provUser, false);
+    } else if (strcmp(action, "jog-hold") == 0) {
+        /* 等价"按住"：走 pressed 槽（内含立即发送 + 启动心跳）。 */
+        vfdJogPressedSlot((XObject*)&self->m_btnJog, NULL);
+    } else if (strcmp(action, "jog-release") == 0) {
+        vfdJogReleasedSlot((XObject*)&self->m_btnJog, NULL);
+    } else if (strcmp(action, "reset") == 0) {
+        if (self->m_provider->resetFault)
+            self->m_provider->resetFault(self->m_provUser);
+    } else {
+        XPrintf("[vfd-selftest] 未知 action: %s\n", action);
+    }
 }
 
 XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userData)
@@ -1008,8 +1256,13 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     Set_Class_IsHeap(self, true);
     HsfTheme_applyDefaultFont(&self->m_base);
 
-    /* ---- provider 接入（模拟源；后端换表点） ---- */
-    self->m_provider = HsfVfdProvider_demo();
+    /* ---- provider 接入（登录过=远端 XLink 后端；离线=本地模拟源；
+            后端换表点） ----
+     * @note 主窗先建、登录后连线的排布下，建页时链路尚未 open，这里会
+     *       先绑本地模拟源；登录成功后由 HsfMonitorVfd_rebindProvider
+     *       切到远端表（页面不重建，数据源就地换）。 */
+    self->m_provider = HsfLinkClient_isOpen() ? HsfVfdProvider_remote()
+                                              : HsfVfdProvider_demo();
     self->m_provUser = self->m_provider ? self->m_provider->m_userData : NULL;
     if (self->m_provider && self->m_provider->subscribe)
         self->m_provider->subscribe(self->m_provUser, vfdPageNotify, self);
@@ -1110,11 +1363,27 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     XWidget_setMinimumWidth((XWidget*)&self->m_dirCombo, 110);
     XWidget_show((XWidget*)&self->m_dirCombo);
     vfdInitBtn(&self->m_btnRun, &self->m_base,
-               "\xE5\x90\xAF\xE5\x8A\xA8");             /* 启动（双态字随刷新翻） */
+               "\xE5\x90\xAF\xE5\x8A\xA8",              /* 启动（双态字随刷新翻） */
+               vfdRunSlot);
     vfdInitBtn(&self->m_btnJog, &self->m_base,
-               "\xE7\x82\xB9\xE5\x8A\xA8");             /* 点动 */
+               "\xE7\x82\xB9\xE5\x8A\xA8",              /* 点动 */
+               vfdJogPressedSlot);
+    /* 点动"按住生效"：额外接 pressed/released（vfdInitBtn 只连了 clicked）。 */
+    XObject_connect_1((XObject*)&self->m_btnJog,
+                      XSignal(XAbstractButton_pressed_signal),
+                      (XObject*)&self->m_btnJog, vfdJogPressedSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)&self->m_btnJog,
+                      XSignal(XAbstractButton_released_signal),
+                      (XObject*)&self->m_btnJog, vfdJogReleasedSlot,
+                      XConnectionType_Direct);
     vfdInitBtn(&self->m_btnReset, &self->m_base,
-               "\xE6\x95\x85\xE9\x9A\x9C\xE5\xA4\x8D\xE4\xBD\x8D"); /* 故障复位 */
+               "\xE6\x95\x85\xE9\x9A\x9C\xE5\xA4\x8D\xE4\xBD\x8D", /* 故障复位 */
+               vfdResetSlot);
+    /* 远端后端：订阅模式应答并主动查一次初始模式。 */
+    HsfLinkClient_setModeCallback(vfdModeNotify, self);
+    if (HsfLinkClient_isOpen())
+        HsfLinkClient_queryRunMode();
 
     /* ---- 区 5：趋势图（X=时间秒，60s 窗；拖拽平移 + 滚轮/捏合缩 X；
        纵轴自动量程随快照重算） ---- */
@@ -1262,6 +1531,20 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     if (self->m_autoMode || s_pendingAutoMode)
         HsfMonitorVfd_setInteractiveMode(false);   /* 幂等应用：隐藏+锁 */
 
+    /* 自测钩子延后执行：建页时 XLink 可能尚未登录完成
+     * （HsfLinkClient_isReady()==false 时控制会被丢弃）。用一次性定时器
+     * 推迟 1.2s，覆盖"登录+首拍遥测"窗口。 */
+    if (XSystem_environment("XHSF_VFD_SELFTEST")) {
+        XTimer* st = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (st) {
+            XTimer_setInterval(st, 1200);
+            XTimer_setSingleShot(st, true);
+            XTimer_setTimerCallback(st, vfdSelfTestTimer);
+            XTimer_setUserData(st, self);
+            XTimer_start_base(st);
+        }
+    }
+
     XWidget_show(&self->m_base);
     return &self->m_base;
 }
@@ -1348,6 +1631,31 @@ void HsfMonitorVfd_setInteractiveMode(bool interactive)
 bool HsfMonitorVfd_interactiveMode(void)
 {
     return s_vfdPage ? !s_vfdPage->m_autoMode : !s_pendingAutoMode;
+}
+
+bool HsfMonitorVfd_rebindProvider(void)
+{
+    HsfMonitorVfd* self = s_vfdPage;
+    const HsfVfdProvider* target;
+    if (!self) return false;
+    /* 登录成功后才接远端（主窗先建时建页早于连线）。 */
+    target = HsfLinkClient_isOpen() ? HsfVfdProvider_remote()
+                                    : HsfVfdProvider_demo();
+    if (target == self->m_provider) return true;
+    /* 先退旧订再换表：旧表（模拟源）在册期间会被其 tick 回调打进页面。 */
+    if (self->m_provider && self->m_provider->unsubscribe)
+        self->m_provider->unsubscribe(self->m_provUser, self);
+    self->m_provider = target;
+    self->m_provUser = target ? target->m_userData : NULL;
+    if (target && target->subscribe)
+        target->subscribe(self->m_provUser, vfdPageNotify, self);
+    /* 远端后端：补挂模式订阅并查一次当前模式（建页时链路未开）。 */
+    if (HsfLinkClient_isOpen()) {
+        HsfLinkClient_setModeCallback(vfdModeNotify, self);
+        HsfLinkClient_queryRunMode();
+    }
+    vfdRefresh(self);
+    return true;
 }
 
 #endif /* XWIDGET_ON && ... && XVFD_ON */

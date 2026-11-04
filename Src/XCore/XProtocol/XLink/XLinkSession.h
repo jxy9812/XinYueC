@@ -400,12 +400,39 @@ void XLinkSession_dispatch_base(XLinkSession* self,
 bool XLinkSession_setDevice(XLinkSession* self, XIODevice* device);
 
 /**
+ * @brief      取当前挂载的传输设备（借用指针；未挂载返回 NULL）。
+ * @param      self 会话对象。
+ * @return     借用指针，所有权仍在调用方；**禁释放**。
+ * @note       供持有设备的层在做生命周期收尾时定位该设备（如服务端回收
+ *             会话时一并关闭并销毁它接管的连接套接字）。
+ */
+XIODevice* XLinkSession_device(const XLinkSession* self);
+
+/**
  * @brief      断开当前链路并复位到 XLinkSessionState_Inactive。
  * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
  * @return     无。
  * @note       不释放也不关闭底层设备（设备归调用方所有）。
  */
 void XLinkSession_reset(XLinkSession* self);
+
+/**
+ * @brief      告知会话「传输链路已断」（由持有设备的一端接线到传输的
+ *             disconnected 信号后调用）。
+ * @param      self 会话对象；传入 NULL 时函数不执行任何操作。
+ * @return     无。
+ * @note       **[必须接线] 否则会话永不回收**：传输层（如 XAbstractSocket）
+ *             断开会把设备 openMode 清成 NotOpen 并发射 disconnected，
+ *             而会话是**借用**设备的，原先只接了 readyRead（收包），断开
+ *             事件完全感知不到 ⇒ 会话仍停在 Ready ⇒ XLinkServerPrivate_reap
+ *             只回收 Inactive 会话 ⇒ 会话常驻；应用周期 publish 继续往
+ *             tx 队列塞帧，而设备已关闭使写恒失败 ⇒ 队列无界增长（实测
+ *             274B/拍），且该会话既收不到订阅帧也发不出推送，直到静默
+ *             判线才被断开。症状=「服务端明明有会话，客户端订阅却全丢」。
+ * @note       幂等：链路已 Inactive 时为空操作，可安全重复调用。
+ * @note       只复位会话态，**不关闭设备**（设备生命周期归调用方）。
+ */
+void XLinkSession_onDisconnected(XLinkSession* self);
 
 /* ========================================================================== */
 /*                        收发                                               */

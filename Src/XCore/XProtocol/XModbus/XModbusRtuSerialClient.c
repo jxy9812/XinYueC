@@ -11,6 +11,7 @@
 #include "XMemory.h"
 #include "XCrc.h"
 #include "XByteArray.h"
+#include "XPrintf.h"
 #include "XTimer.h"
 #include "string.h"
 // =============== 虚函数前置声明 ===============
@@ -655,6 +656,12 @@ static bool handleInterFrameTimeout(XModbusRtuSerialClient* client)
     }
 
     if (expectedLen > 0 && bufLen >= expectedLen) {
+        {
+            size_t z;
+            for (z = 0; z < bufLen && z < 24; ++z)
+                XPrintf(" %02X", (unsigned)data[z]);
+            XPrintf("\n");
+        }
         processReceivedFrame(client, client->m_receiveBuffer);
         XByteArray_clear_base(client->m_receiveBuffer);
         return true;

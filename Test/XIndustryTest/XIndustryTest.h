@@ -30,6 +30,24 @@ void XTestMenu_XIndustryTest(XTestMenu* root);
 	int XIndustryModbusTest_run(void);
 	void XIndustryModbusTest(XVariant* data);
 #endif
+#if XINDUSTRY_ON && (XTEMP_HUM_ON || XPRESS_DIFF_ON)
+	int XIndustrySensorTest_run(void);
+	void XIndustrySensorTest(XVariant* data);
+#endif
+#if XINDUSTRY_ON && XFLOW_METER_ON
+	int XIndustryFlowMeterTest_run(void);
+	void XIndustryFlowMeterTest(XVariant* data);
+	/* 服务端流量计站隔离单测（Hub 本地缓存驱动；需链接 XHsfServerIoLib）。 */
+	int XHsfServerIoFlowMeterTest_run(void);
+	void XHsfServerIoFlowMeterTest(XVariant* data);
+	/* 客户端流量计 provider 隔离单测（注入 BSON 帧，不走网络）。 */
+	int XHsfClientFlowMeterProviderTest_run(void);
+	void XHsfClientFlowMeterProviderTest(XVariant* data);
+#endif
+#if XINDUSTRY_ON && XBUTTON_STATION_ON
+	int XIndustryButtonStationTest_run(void);
+	void XIndustryButtonStationTest(XVariant* data);
+#endif
 
 #ifdef __cplusplus
 }

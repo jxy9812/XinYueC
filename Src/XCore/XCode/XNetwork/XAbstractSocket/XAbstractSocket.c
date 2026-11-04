@@ -192,9 +192,12 @@ XVtable* XAbstractSocket_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_ReadData, VXAbstractSocket_readData);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteData, VXAbstractSocket_writeData);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_IsSequential, VXAbstractSocket_isSequential);
-    //XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesAvailable, XAbstractSocket_bytesAvailable_base);
-    //XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesToWrite, XAbstractSocket_bytesToWrite_base);
-    //XVTABLE_OVERLOAD_DEFAULT(EXIODevice_CanReadLine, VXAbstractSocket_canReadLine);
+    /* `EXIODevice_BytesAvailable` 不重载：基类 `VXIODevice_bytesAvailable`
+     * （XIODevice_virtual.c:139）已经是「直接返回当前读通道 ring buffer
+     * 的可用字节数」，正是套接字需要的语义。若在此重载并回调
+     * `XIODevice_bytesAvailable_base`，会经虚表回到本类自身形成无限递归
+     * （实测栈溢出；Qt 里 `QIODevice::bytesAvailable()` 调的是非虚的基类
+     * 实现，不存在该问题）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForReadyRead, VXAbstractSocket_waitForReadyRead);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForBytesWritten, VXAbstractSocket_waitForBytesWritten);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_AtEnd, VXAbstractSocket_atEnd);
@@ -553,11 +556,33 @@ void XAbstractSocket_disconnectFromHost_base(XAbstractSocket* sock)
     XClassGetVirtualFunc(sock, EXAbstractSocket_DisconnectFromHost, bool(*)(XAbstractSocket*))(sock);
 }
 
+/**
+ * @brief 立即中止套接字（对标 Qt 6.8 `QAbstractSocket::abort`，
+ *        qabsock.cpp:2346）。
+ * @details Qt 实现：
+ *          ```
+ *          d->setWriteChannelCount(0);   // 丢弃待写通道
+ *          d->abortCalled = true;        // 标记「不等残留数据」
+ *          close();                      // 走 close 统一收尾
+ *          ```
+ *          原实现顺序相反（先把 state 直接改成 UnconnectedState 再 close），
+ *          跳过了「丢弃待写」这一步，且绕开了 close 的完整收尾。
+ *
+ *          本框架的对应关系：
+ *          - `setWriteChannelCount(0)` → 关闭时由平台层 `socketDisconnect`
+ *            丢弃 ring buffer 在途写（已在后端实现）；
+ *          - `abortCalled` 语义 → 直接 close（不等数据），由
+ *            `XIODevice_close_base` 触发 `VXAbstractSocket_close` 的完整
+ *            收尾（关设备句柄 + 复位状态）。
+ * @note 状态复位交给 `VXAbstractSocket_close` 之后统一按 Unconnected 处理；
+ *       这里不抢先改 state，避免「状态已 Unconnected 但设备仍打开」的
+ *       中间态被上层观察到。
+ */
 void XAbstractSocket_abort(XAbstractSocket* sock)
 {
     if (!sock) return;
-    XAbstractSocket_setSocketState(sock, XAbstractSocket_UnconnectedState);
     XIODevice_close_base((XIODevice*)sock);
+    XAbstractSocket_setSocketState(sock, XAbstractSocket_UnconnectedState);
 }
 
 void XAbstractSocket_resume_base(XAbstractSocket* sock)
@@ -637,10 +662,31 @@ static void VXAbstractSocket_close(XAbstractSocket* self)
     XClass_Parent(XIODevice, EXIODevice_Close, void (*)(XIODevice*))((XIODevice*)self);
 }
 
+/**
+ * @brief 底层读（对标 Qt 6.8 `QAbstractSocket::readData`，qabsock.cpp:2385）。
+ * @details Qt 语义：
+ *          - 未连接 / 引擎无效 ⇒ `maxSize ? -1 : 0`（-1 表示 EOF）。
+ *          - 引擎读到 EAGAIN（Qt 引擎返回 -2）⇒ 转 0，即「暂无数据」，
+ *            由上层稍后再读。**不是错误**。
+ *          - 引擎读出错（< 0）⇒ 置错误、复位套接字层、转 Unconnected。
+ * @note 本实现把「设备层返回的『暂不可读』」统一折算为 0：平台后端用
+ *       `-1` 同时表达「真错误」和「背压/暂无数据」，而 Qt 用 -2 区分。
+ *       按 Qt 语义，**暂无数据必须返回 0**，否则调用方会把正常背压
+ *       当成读失败（实测 DDNS/HTTP 逐段收包因此整段丢弃）。
+ */
 static int64_t VXAbstractSocket_readData(XAbstractSocket* self, char* data, int64_t maxlen)
 {
-    if (!self || socketDeviceFd(self) == XFD_INVALID) return -1;
-    return XDevice_read(socketDeviceFd(self), data, maxlen);
+    int64_t got;
+    if (!self) return maxlen ? -1 : 0;
+    if (socketDeviceFd(self) == XFD_INVALID)
+        return maxlen ? -1 : 0;             /* Qt：未连接按 EOF 处理。 */
+    if (maxlen == 0)
+        return 0;
+
+    got = XDevice_read(socketDeviceFd(self), data, maxlen);
+    if (got == 0)
+        return 0;                            /* 暂无数据（等价 Qt 引擎 -2 → 0）。 */
+    return got;
 }
 
 static int64_t VXAbstractSocket_writeData(XAbstractSocket* self, const char* data, int64_t len)
@@ -661,46 +707,115 @@ static bool VXAbstractSocket_isSequential(const XAbstractSocket* self)
  * XIODevicePrivate_canReadLineFromBuffer）逐字同体，挂接行注释后成
  * 孤儿；基类经虚表分派已覆盖 socket 语义，无需第二份。 */
 
+/**
+ * @brief 阻塞等待可读（对标 Qt 6.8 `QAbstractSocket::waitForReadyRead`，
+ *        qabsock.cpp:2139）。
+ * @details Qt 语义要点（原实现三处偏差）：
+ *          1. **UnconnectedState ⇒ 立即 false**（不是等待超时）。
+ *          2. **ConnectingState / HostLookupState ⇒ 先 waitForConnected**；
+ *             连接失败直接 false。原实现把它当「非 Connected 就 false」，
+ *             会让「connectToHost 后立刻 waitForReadyRead」的调用方
+ *             （DDNS/HTTP 的同步 GET）在连接完成的瞬间失败退出。
+ *          3. 循环退出条件是 `deadline` 到期，**且每轮都必须让出事件循环**
+ *             以驱动平台 I/O 与 CQ 派发；`msecs < 0` 表示不超时。
+ * @note 本实现沿用框架的 `processEvents` 驱动模型（Qt 走引擎的
+ *       `waitForReadOrWrite`），但判定顺序与返回值语义与 Qt 一致。
+ */
 static bool VXAbstractSocket_waitForReadyRead(XAbstractSocket* self, int msecs)
 {
-    // 通用实现：事件循环等待
+    uint64_t deadline;
     if (!self) return false;
-    if (XAbstractSocket_bytesAvailable_base(self) > 0) return true;
-    
-    uint64_t deadline = XDateTime_currentMSecsSinceEpoch() + msecs;
-    while (XAbstractSocket_bytesAvailable_base(self) == 0) {
-        if (self->state != XAbstractSocket_ConnectedState) return false;
-        XCoreApplication_processEvents(XEventLoop_AllEvents);
-        if (msecs >= 0 && XDateTime_currentMSecsSinceEpoch() >= deadline) return false;
+
+
+    /* 1. Qt：未连接直接 false。 */
+    if (self->state == XAbstractSocket_UnconnectedState) return false;
+
+    /* 2. Qt：仍在连接中 ⇒ 先等连接完成。 */
+    if (self->state == XAbstractSocket_HostLookupState ||
+        self->state == XAbstractSocket_ConnectingState) {
+        if (!VXAbstractSocket_WaitForConnected(self, msecs)) return false;
     }
-    return true;
+
+    if (XAbstractSocket_bytesAvailable_base(self) > 0) return true;
+
+    deadline = (msecs < 0) ? 0 : (XDateTime_currentMSecsSinceEpoch() + (uint64_t)msecs);
+    do {
+        /* Qt：只有 ConnectedState / BoundState 才继续等。 */
+        if (self->state != XAbstractSocket_ConnectedState &&
+            self->state != XAbstractSocket_BoundState)
+            return false;
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        if (XAbstractSocket_bytesAvailable_base(self) > 0) return true;
+        if (msecs >= 0 && XDateTime_currentMSecsSinceEpoch() >= deadline) return false;
+    } while (1);
 }
 
+/**
+ * @brief 阻塞等待至少一个字节写出（对标 Qt 6.8
+ *        `QAbstractSocket::waitForBytesWritten`，qabsock.cpp:2208）。
+ * @details Qt 语义要点（原实现两处偏差）：
+ *          1. **写缓冲为空 ⇒ 返回 false**（Qt 原文 `if (d->writeBuffer.isEmpty())
+ *             return false;`）。原实现返回 **true**，语义相反——调用方据此
+ *             以为「本轮确实写出去过」，把空闲误报成写成功。
+ *          2. **ConnectingState / HostLookupState ⇒ 先 waitForConnected**。
+ * @note 「写缓冲」在本框架对应「用户 ring buffer 里待发 + 平台在途写」
+ *       两部分，两者都为 0 才算空。
+ */
 static bool VXAbstractSocket_waitForBytesWritten(XAbstractSocket* self, int msecs)
 {
     bool writePending = false;
-    // 通用实现：事件循环等待
-    if (!self) return false;
-    if (XAbstractSocket_bytesToWrite_base(self) == 0 &&
-        (!socketGetBoolProperty(self, (XDeviceProperty)XDeviceNetworkProperty_WritePending, &writePending) ||
-         !writePending)) return true;
+    uint64_t deadline;
+    int64_t buffered;
 
-    uint64_t deadline = XDateTime_currentMSecsSinceEpoch() + msecs;
-    while (XAbstractSocket_bytesToWrite_base(self) > 0 ||
-           (socketGetBoolProperty(self, (XDeviceProperty)XDeviceNetworkProperty_WritePending, &writePending) &&
-            writePending)) {
-        if (self->state != XAbstractSocket_ConnectedState) return false;
-        XCoreApplication_processEvents(XEventLoop_AllEvents);
-        if (msecs >= 0 && XDateTime_currentMSecsSinceEpoch() >= deadline) return false;
+    if (!self) return false;
+
+    /* 1. Qt：未连接直接 false。 */
+    if (self->state == XAbstractSocket_UnconnectedState) return false;
+
+    /* 2. Qt：仍在连接中 ⇒ 先等连接完成。 */
+    if (self->state == XAbstractSocket_HostLookupState ||
+        self->state == XAbstractSocket_ConnectingState) {
+        if (!VXAbstractSocket_WaitForConnected(self, msecs)) return false;
     }
-    return true;
+
+    /* 3. Qt：写缓冲为空 ⇒ false（没有「待写」可等）。 */
+    buffered = XAbstractSocket_bytesToWrite_base(self);
+    if (!socketGetBoolProperty(self,
+            (XDeviceProperty)XDeviceNetworkProperty_WritePending, &writePending))
+        writePending = false;
+    if (buffered == 0 && !writePending) return false;
+
+    deadline = (msecs < 0) ? 0 : (XDateTime_currentMSecsSinceEpoch() + (uint64_t)msecs);
+    do {
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+
+        buffered = XAbstractSocket_bytesToWrite_base(self);
+        if (!socketGetBoolProperty(self,
+                (XDeviceProperty)XDeviceNetworkProperty_WritePending, &writePending))
+            writePending = false;
+        if (buffered == 0 && !writePending) return true;   /* 已全部写出。 */
+
+        if (self->state != XAbstractSocket_ConnectedState) return false;
+        if (msecs >= 0 && XDateTime_currentMSecsSinceEpoch() >= deadline) return false;
+    } while (1);
 }
 
+/**
+ * @brief 是否已无数据可读（对标 Qt 6.8 `QIODevice::atEnd`，qiodevice.cpp:910）。
+ * @details Qt 判据：`openMode == NotOpen || (缓冲区空 && bytesAvailable() == 0)`。
+ *          原实现用「state != ConnectedState」判定，与 Qt 有两处偏差：
+ *            - **BoundState（已 bind 未 connect 的 UDP）在 Qt 下仍可 atEnd**
+ *              按数据可用性判断，原实现恒返回 true；
+ *            - 关闭流程中（ClosingState）Qt 仍按缓冲区实际内容判断，
+ *              原实现立刻判 true，会让「关前把残留数据读完」的循环提前退出。
+ */
 static bool VXAbstractSocket_atEnd(XAbstractSocket* self)
 {
-    // 通用实现：未连接或无数据可读
     if (!self) return true;
-    if (self->state != XAbstractSocket_ConnectedState) return true;
+    /* Qt：设备未打开 ⇒ atEnd。 */
+    if (self->base.m_openMode == XIODevice_NotOpen) return true;
+    /* Qt：缓冲区空且底层也无可读字节 ⇒ atEnd。 */
+    if (XIODevice_bytesAvailable_base((XIODevice*)self) > 0) return false;
     return XAbstractSocket_bytesAvailable_base(self) == 0;
 }
 
@@ -728,10 +843,18 @@ static bool VXAbstractSocket_reset(XAbstractSocket* self)
     return false; // 顺序设备不可 reset
 }
 
+/**
+ * @brief 读一行（对标 Qt 6.8 `QIODevice::readLine` 的前置约束，
+ *        qiodevice.cpp:1314 + `CHECK_LINEMAXLEN`，qiodevice.cpp:82）。
+ * @details Qt 在 `readLine` 入口就要求 `maxSize >= 2`（要留一个字节给
+ *          终止符）；原实现只在 `maxlen <= 0` 时拒绝，`maxlen == 1`
+ *          会走进 `readLineFromBuffer` 并写下越界的终止符。
+ */
 static int64_t VXAbstractSocket_readLineData(XAbstractSocket* self, char* data, int64_t maxlen)
 {
-    // 通用实现：从缓冲区读取一行
-    if (!self || !self->base.m_d || maxlen <= 0) return -1;
+    if (!self || !self->base.m_d) return -1;
+    /* Qt CHECK_LINEMAXLEN：maxSize < 2 视为参数错误。 */
+    if (maxlen < 2) return -1;
     return XIODevicePrivate_readLineFromBuffer(self->base.m_d, data, maxlen);
 }
 
@@ -1019,6 +1142,16 @@ static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* ho
         }
         XClassDelete(hostStr);
 
+        /* [2026-11-04 Qt 6.8 对齐] 把 openMode 真正落到设备上。
+         * 对齐 `QAbstractSocket::connectToHost`（qabsock.cpp:1679）：
+         *   `QIODevice::open(openMode);`
+         * 此前只有 `options.m_base.m_openMode` 一路传到平台层，**设备对象
+         * 自身的 m_openMode 保持 NotOpen**，于是 `XIODevice_isReadable/
+         * isWritable` 恒 false —— 任何 connectToHost 之后的 `read_1`/
+         * `write_1` 都在守卫处被拒（实测 `read_1 NOT READABLE mode=0x0`，
+         * DDNS/HTTP 端到端全链路超时）。IOCP 后端不走这段所以此前未暴露。 */
+        XIODevice_open_base((XIODevice*)self, mode);
+
         /* A connected UDP socket completes immediately at the platform layer
          * and never raises a connect event, so waiting for one would leave the
          * socket stuck in ConnectingState forever. TCP still transitions
@@ -1130,20 +1263,42 @@ static void VXAbstractSocket_SetReadBufferSize(XAbstractSocket* self, int64_t si
     XVariant_setValue_null(&value);
 }
 
+/**
+ * @brief 阻塞等待连接完成（对标 Qt 6.8 `QAbstractSocket::waitForConnected`，
+ *        qabsock.cpp:2049）。
+ * @details Qt 语义要点（原实现两处偏差）：
+ *          1. **UnconnectedState ⇒ 立即 false**（不是继续等）。
+ *          2. **超时/仍在 ConnectingState ⇒ 置 SocketTimeoutError 并转
+ *             UnconnectedState + resetSocketLayer**，而不是静默返回 false
+ *             把「超时」伪装成普通未连接——调用方据 `error()` 无法区分
+ *             「被拒」与「超时」。
+ * @note 本实现沿用 `processEvents` 驱动；判定与收尾语义对齐 Qt。
+ */
 static bool VXAbstractSocket_WaitForConnected(XAbstractSocket* self, int msecs)
 {
-    // 通用实现：事件循环等待连接状态
+    uint64_t deadline;
+
     if (!self) return false;
+    /* Qt：已连接直接 true。 */
     if (self->state == XAbstractSocket_ConnectedState) return true;
+    /* Qt：未连接且不在连接中 ⇒ false。 */
     if (self->state == XAbstractSocket_UnconnectedState) return false;
-    
-    uint64_t deadline = XDateTime_currentMSecsSinceEpoch() + msecs;
-    while (self->state != XAbstractSocket_ConnectedState) {
-        if (self->state == XAbstractSocket_UnconnectedState) return false;
+
+    deadline = (msecs < 0) ? 0 : (XDateTime_currentMSecsSinceEpoch() + (uint64_t)msecs);
+    while (self->state == XAbstractSocket_HostLookupState ||
+           self->state == XAbstractSocket_ConnectingState) {
         XCoreApplication_processEvents(XEventLoop_AllEvents);
-        if (msecs >= 0 && XDateTime_currentMSecsSinceEpoch() >= deadline) return false;
+        if (self->state == XAbstractSocket_ConnectedState) return true;
+        if (self->state == XAbstractSocket_UnconnectedState) return false;
+        if (msecs >= 0 && XDateTime_currentMSecsSinceEpoch() >= deadline) {
+            /* Qt：超时 ⇒ 置错误 + 转未连接 + 复位套接字层。 */
+            XAbstractSocket_setSocketError(self, XAbstractSocket_SocketTimeoutError,
+                                           "Socket operation timed out");
+            XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+            return false;
+        }
     }
-    return true;
+    return self->state == XAbstractSocket_ConnectedState;
 }
 
 static bool VXAbstractSocket_WaitForDisconnected(XAbstractSocket* self, int msecs)

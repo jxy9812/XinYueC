@@ -811,6 +811,227 @@ static bool test_auto_close_on_destroy(void)
     return true;
 }
 
+// ---- 16. 同一连接连续多帧收发（HSF 实锅场景） ----
+/* 现有 test_data_transfer 只做「一来一回各一帧」，覆盖不到真实业务的高频
+ * 小帧模式。HSF 联调中出现「客户端 22 帧全部写出、服务端只收到前 7 帧」，
+ * 本用例把该模式固化成回归锁：同一连接上连续收发多轮，每轮双向各一帧，
+ * 任何一轮丢帧即失败。
+ *
+ * 判据：每轮两端的读回字节必须**逐字节等于发出去的内容**，且轮次不丢
+ * （累计计数而非仅末轮）。 */
+static bool test_multi_frame_transfer(void)
+{
+    enum { kRounds = 24, kFrameLen = 20 };
+    static char s_buf[256];
+    int round;
+    XTcpServer* server;
+    XTcpSocket* client;
+    XTcpSocket* accepted;
+    uint16_t port;
+    int c2s = 0;   /* 客户端 -> 服务端 成功的轮数。 */
+    int s2c = 0;   /* 服务端 -> 客户端 成功的轮数。 */
+
+    server = XTcpServer_create();
+    TEST_ASSERT(server != NULL, "创建失败");
+    XObject_connect_2(server, XSignal(XTcpServer_newConnection_signal),
+                      onNewConnection);
+    TEST_ASSERT(XTcpServer_listen(server, NULL, 0) == true, "listen 应成功");
+    port = XTcpServer_serverPort(server);
+
+    client = connect_client(port, 3000);
+    TEST_ASSERT(client != NULL, "客户端连接应成功");
+    TEST_ASSERT(wait_for_server_connection(server, 2000) == true,
+                "服务器应收到连接");
+    accepted = XTcpServer_nextPendingConnection_base(server);
+    TEST_ASSERT(accepted != NULL, "取出的连接不应为空");
+
+    /* 等两端都进入可读写（Connected）态。 */
+    {
+        uint64_t start = XDateTime_currentMSecsSinceEpoch();
+        while ((XIODevice_isWritable((XIODevice*)client) == false
+                || XIODevice_isWritable((XIODevice*)accepted) == false)
+               && XDateTime_currentMSecsSinceEpoch() - start < 2000) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            XThread_msleep(5);
+        }
+    }
+    TEST_ASSERT(XIODevice_isWritable((XIODevice*)client), "客户端应可写");
+    TEST_ASSERT(XIODevice_isWritable((XIODevice*)accepted), "服务端连接应可写");
+
+    for (round = 0; round < kRounds; ++round) {
+        char out[kFrameLen + 1];
+        int64_t avail;
+        int64_t n;
+
+        /* --- 客户端 -> 服务端 --- */
+        memset(out, 'A' + (round % 26), (size_t)kFrameLen);
+        out[kFrameLen] = '\0';
+        TEST_ASSERT(XIODevice_write_1((XIODevice*)client, out, kFrameLen)
+                    == kFrameLen, "客户端写应完整");
+
+        {
+            uint64_t start = XDateTime_currentMSecsSinceEpoch();
+            while (XIODevice_bytesAvailable_base((XIODevice*)accepted) < kFrameLen
+                   && XDateTime_currentMSecsSinceEpoch() - start < 2000) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XThread_msleep(2);
+            }
+        }
+        avail = XIODevice_bytesAvailable_base((XIODevice*)accepted);
+        if (avail < kFrameLen) {
+            XPrintf("  [失败] 第%d轮 c2s 只到 %lld/%d 字节\n", round,
+                    (long long)avail, kFrameLen);
+            break;
+        }
+        n = XIODevice_read_1((XIODevice*)accepted, s_buf, kFrameLen);
+        if (n != kFrameLen || memcmp(s_buf, out, (size_t)kFrameLen) != 0) {
+            XPrintf("  [失败] 第%d轮 c2s 内容不符（n=%lld）\n", round,
+                    (long long)n);
+            break;
+        }
+        ++c2s;
+
+        /* --- 服务端 -> 客户端 --- */
+        memset(out, 'a' + (round % 26), (size_t)kFrameLen);
+        out[kFrameLen] = '\0';
+        TEST_ASSERT(XIODevice_write_1((XIODevice*)accepted, out, kFrameLen)
+                    == kFrameLen, "服务端写应完整");
+        {
+            uint64_t start = XDateTime_currentMSecsSinceEpoch();
+            while (XIODevice_bytesAvailable_base((XIODevice*)client) < kFrameLen
+                   && XDateTime_currentMSecsSinceEpoch() - start < 2000) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XThread_msleep(2);
+            }
+        }
+        avail = XIODevice_bytesAvailable_base((XIODevice*)client);
+        if (avail < kFrameLen) {
+            XPrintf("  [失败] 第%d轮 s2c 只到 %lld/%d 字节\n", round,
+                    (long long)avail, kFrameLen);
+            break;
+        }
+        n = XIODevice_read_1((XIODevice*)client, s_buf, kFrameLen);
+        if (n != kFrameLen || memcmp(s_buf, out, (size_t)kFrameLen) != 0) {
+            XPrintf("  [失败] 第%d轮 s2c 内容不符（n=%lld）\n", round,
+                    (long long)n);
+            break;
+        }
+        ++s2c;
+    }
+
+    XPrintf("  [信息] 多帧收发：c2s %d/%d，s2c %d/%d\n", c2s, kRounds, s2c,
+            kRounds);
+
+    XAbstractSocket_disconnectFromHost_base((XAbstractSocket*)client);
+    XAbstractSocket_disconnectFromHost_base((XAbstractSocket*)accepted);
+    XTcpSocket_deleteLater(client);
+    XTcpSocket_deleteLater(accepted);
+    XTcpServer_close(server);
+    XTcpServer_deleteLater(server);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+
+    TEST_ASSERT(c2s == kRounds, "客户端->服务端 应每轮都完整到达");
+    TEST_ASSERT(s2c == kRounds, "服务端->客户端 应每轮都完整到达");
+    TEST_PASS("同一连接多帧收发测试");
+    return true;
+}
+
+// ---- 17. 会话销毁后 socket 必须释放（僵尸 socket 回归锁） ----
+/* [2026-11-04 僵尸 socket 根修] XLinkServer 回收会话时若只删会话、不关闭其
+ * 接管的 socket，该 socket 仍挂在 IOCP 上，系统复用 fd 号后它会继续抢走新
+ * 连接的读完成包（数据写进没人读的 ring buffer）。本用例锁住
+ * 「deleteLater 一个取出的 socket 后，其 fd 被释放、isOpen 转假」这一契约，
+ * 防止将来又出现「只删会话忘了关设备」。 */
+static bool test_accepted_socket_ownership(void)
+{
+    XTcpServer* server;
+    XTcpSocket* client;
+    XTcpSocket* accepted;
+    uint16_t port;
+    bool openAfter = true;
+
+    server = XTcpServer_create();
+    TEST_ASSERT(server != NULL, "创建失败");
+    XObject_connect_2(server, XSignal(XTcpServer_newConnection_signal),
+                      onNewConnection);
+    TEST_ASSERT(XTcpServer_listen(server, NULL, 0) == true, "listen 应成功");
+    port = XTcpServer_serverPort(server);
+
+    client = connect_client(port, 3000);
+    TEST_ASSERT(client != NULL, "客户端连接应成功");
+    TEST_ASSERT(wait_for_server_connection(server, 2000) == true,
+                "服务器应收到连接");
+
+    accepted = XTcpServer_nextPendingConnection_base(server);
+    TEST_ASSERT(accepted != NULL, "取出的连接不应为空");
+    TEST_ASSERT(XIODevice_isOpen((XIODevice*)accepted) == true,
+                "取出的 socket 应处于打开态");
+
+    /* 模拟会话回收：关闭设备（XLinkServerPrivate_reap 的做法）。 */
+    XIODevice_close_base((XIODevice*)accepted);
+    openAfter = XIODevice_isOpen((XIODevice*)accepted);
+    TEST_ASSERT(openAfter == false, "关闭后 isOpen 应转假（否则僵尸 socket）");
+
+    /* 再删对象：所有权在 server（accept 时 setParent），deleteLater 安全。 */
+    XTcpSocket_deleteLater(accepted);
+    XAbstractSocket_disconnectFromHost_base((XAbstractSocket*)client);
+    XTcpSocket_deleteLater(client);
+    XTcpServer_close(server);
+    XTcpServer_deleteLater(server);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+
+    TEST_PASS("连接 socket 所有权测试");
+    return true;
+}
+
+// ---- 18. pending 队列取出后不得重复投递 ----
+/* [2026-11-04] 实测出现「客户端只连 1 次，服务端记录 3 路会话接入」。
+ * 本用例锁住 nextPendingConnection 的取出语义：同一连接只能被取出一次，
+ * 取完之后 hasPendingConnections 必须转假，防止同一 socket 被重复受理
+ * 成多个会话（幽灵连接）。 */
+static bool test_pending_queue_drains_once(void)
+{
+    XTcpServer* server;
+    XTcpSocket* client;
+    XTcpSocket* first;
+    XTcpSocket* second;
+    uint16_t port;
+
+    server = XTcpServer_create();
+    TEST_ASSERT(server != NULL, "创建失败");
+    XObject_connect_2(server, XSignal(XTcpServer_newConnection_signal),
+                      onNewConnection);
+    TEST_ASSERT(XTcpServer_listen(server, NULL, 0) == true, "listen 应成功");
+    port = XTcpServer_serverPort(server);
+
+    client = connect_client(port, 3000);
+    TEST_ASSERT(client != NULL, "客户端连接应成功");
+    TEST_ASSERT(wait_for_server_connection(server, 2000) == true,
+                "服务器应收到连接");
+    TEST_ASSERT(XTcpServer_hasPendingConnections_base(server) == true,
+                "应有待处理连接");
+
+    first = XTcpServer_nextPendingConnection_base(server);
+    TEST_ASSERT(first != NULL, "首次取出不应为空");
+    TEST_ASSERT(XTcpServer_hasPendingConnections_base(server) == false,
+                "取出后队列应为空（否则同一连接会被重复受理）");
+
+    second = XTcpServer_nextPendingConnection_base(server);
+    TEST_ASSERT(second == NULL, "再次取出必须为空（不得重复投递同一连接）");
+    TEST_ASSERT(second != first, "重复取出返回了同一 socket（幽灵连接根因）");
+
+    XIODevice_close_base((XIODevice*)first);
+    XTcpSocket_deleteLater(first);
+    XAbstractSocket_disconnectFromHost_base((XAbstractSocket*)client);
+    XTcpSocket_deleteLater(client);
+    XTcpServer_close(server);
+    XTcpServer_deleteLater(server);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+
+    TEST_PASS("pending 队列单次投递测试");
+    return true;
+}
+
 // ==================== 测试执行 ====================
 
 // 测试用例表
@@ -835,6 +1056,55 @@ static void wrap_proxy(void) { test_proxy(); }
 static void wrap_max_pending_connections(void) { test_max_pending_connections(); }
 static void wrap_server_address(void) { test_server_address(); }
 static void wrap_auto_close_on_destroy(void) { test_auto_close_on_destroy(); }
+static void wrap_multi_frame_transfer(void) { test_multi_frame_transfer(); }
+static void wrap_accepted_socket_ownership(void) { test_accepted_socket_ownership(); }
+static void wrap_pending_queue_drains_once(void) { test_pending_queue_drains_once(); }
+
+// ==================== 命令行自动回归 ====================
+
+/** @brief 跑全部 XTcpServer 用例并返回失败数（0=全通过）。
+ *  @details 供 `--test xtcpserver` 调用，让本类测试可脚本化/进 CI。
+ *           每个用例单独返回 bool，失败即计入但**不中断**后续用例——
+ *           一次运行就能看到全部失败面，而不是逐个反复跑。 */
+int XTcpServerTest_run(void)
+{
+    static const TestCase kCases[] = {
+        { "创建/销毁",              test_create_destroy },
+        { "listen",                 test_listen },
+        { "close",                  test_close },
+        { "连接管理配置",            test_connection_management },
+        { "基本连接接受",            test_accept_connection },
+        { "waitForNewConnection",   test_wait_for_new_connection },
+        { "暂停/恢复接受",           test_pause_resume_accepting },
+        { "数据收发",               test_data_transfer },
+        { "多连接",                 test_multiple_connections },
+        { "setSocketDescriptor",    test_set_socket_descriptor },
+        { "错误处理",               test_error_handling },
+        { "代理设置",               test_proxy },
+        { "最大待处理连接限制",      test_max_pending_connections },
+        { "服务器地址",             test_server_address },
+        { "销毁时自动关闭",          test_auto_close_on_destroy },
+        { "同一连接多帧收发",        test_multi_frame_transfer },
+        { "连接 socket 所有权",      test_accepted_socket_ownership },
+        { "pending 队列单次投递",    test_pending_queue_drains_once }
+    };
+    int i;
+    int failed = 0;
+    const int n = (int)(sizeof(kCases) / sizeof(kCases[0]));
+
+    XPrintf("========== XTcpServer 回归测试开始（%d 项） ==========\n", n);
+    for (i = 0; i < n; ++i) {
+        XPrintf("---- [%d/%d] %s ----\n", i + 1, n, kCases[i].name);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        if (!kCases[i].func()) {
+            ++failed;
+            XPrintf("  [失败] %s\n", kCases[i].name);
+        }
+    }
+    XPrintf("\n========== XTcpServer 回归完成: %d 通过, %d 失败 ==========\n",
+            n - failed, failed);
+    return failed;
+}
 
 void XTestMenu_XTcpServerTest(XTestMenu* root)
 {
@@ -859,4 +1129,7 @@ void XTestMenu_XTcpServerTest(XTestMenu* root)
     a = XTestMenu_addAction(menu, "最大待处理连接限制测试");     XTestMenu_setActionFunction(a, wrap_max_pending_connections);
     a = XTestMenu_addAction(menu, "服务器地址测试");             XTestMenu_setActionFunction(a, wrap_server_address);
     a = XTestMenu_addAction(menu, "销毁时自动关闭测试");         XTestMenu_setActionFunction(a, wrap_auto_close_on_destroy);
+    a = XTestMenu_addAction(menu, "同一连接多帧收发测试");       XTestMenu_setActionFunction(a, wrap_multi_frame_transfer);
+    a = XTestMenu_addAction(menu, "连接 socket 所有权测试");     XTestMenu_setActionFunction(a, wrap_accepted_socket_ownership);
+    a = XTestMenu_addAction(menu, "pending 队列单次投递测试");   XTestMenu_setActionFunction(a, wrap_pending_queue_drains_once);
 }

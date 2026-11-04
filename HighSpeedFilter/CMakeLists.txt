@@ -28,12 +28,46 @@ FIND_INCLUDE_DIR(HSF_CLIENT_INCLUDE_DIRS "client")
 # 改动本文件即触发 ninja 重跑 cmake，GLOB 重新求值收进新文件。
 file(GLOB_RECURSE HSF_SERVER_FILE "${CMAKE_CURRENT_LIST_DIR}/server/*.c")
 file(GLOB_RECURSE HSF_CLIENT_FILE "${CMAKE_CURRENT_LIST_DIR}/client/*.c")
+# [2026-11-04 单测可链接化] 服务端 IO 站模块单独编成静态库：
+# 原先它们只随 add_executable(HsfServer) 编译，Test/ 侧无法链接 ⇒
+# HsfServerIoFlowMeter / HsfServerIoTempHum 等站模块零单测（端到端手测
+# 才覆盖）。抽成库后，HsfServer/HsfServerFlow 与测试目标共享同一份实现。
+file(GLOB_RECURSE HSF_SERVER_IO_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/server/io/*.c")
+list(REMOVE_DUPLICATES HSF_SERVER_IO_FILE)
 
-add_executable(HsfServer ${HSF_SERVER_FILE})
+add_library(XHsfServerIoLib STATIC ${HSF_SERVER_IO_FILE})
+set_target_properties(XHsfServerIoLib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(XHsfServerIoLib PUBLIC
+    ${HSF_COMMON_INCLUDE_DIRS}
+    ${HSF_SERVER_INCLUDE_DIRS})
+
+# 可执行只编 server/ 顶层（main/App/Io 编排/Settings/旧 XhsfServer），
+# io/ 那几个站模块由 XHsfServerIoLib 提供——从源列表里剔掉，避免重复定义。
+set(HSF_SERVER_MAIN_FILE ${HSF_SERVER_FILE})
+list(FILTER HSF_SERVER_MAIN_FILE EXCLUDE REGEX "/server/io/")
+
+add_executable(HsfServer ${HSF_SERVER_MAIN_FILE})
 add_executable(HsfClient ${HSF_CLIENT_FILE})
+
+# [2026-11-04 电磁流量计联调] 同源码的第二个服务端可执行，输出名
+# HsfServerFlow.exe —— 现场常有「另一路在测其他功能」同时跑 HsfServer.exe
+# 的情形，两者的 bin\HsfServer.exe 会互相占用（LNK1168 无法写入）且抢
+# 同一个串口。本目标让流量计联调可以独立起一份、独立端口，互不干扰。
+#
+# [关键] 路 B 的启用是**编译期宏**，必须只对本目标生效：HsfServerConfig.h
+# 的默认值是 0（关闭），这里用 PRIVATE define 打开。若把默认值改成 1，
+# 所有从本树编出来的 HsfServer.exe 都会去抢 COM18（2026-11-04 实锅：
+# 另一会话的 6100 服务端因此抢走串口，两边互相踢，打开错误码=3）。
+add_executable(HsfServerFlow ${HSF_SERVER_MAIN_FILE})
+set_target_properties(HsfServerFlow PROPERTIES OUTPUT_NAME "HsfServerFlow")
+target_compile_definitions(HsfServerFlow PRIVATE HSF_BUS_B_ENABLED=1)
 
 # 头文件路径：各自目录 + 公共 common（宏在当前作用域直接出结果变量）。
 target_include_directories(HsfServer PRIVATE
+    ${HSF_COMMON_INCLUDE_DIRS}
+    ${HSF_SERVER_INCLUDE_DIRS})
+target_include_directories(HsfServerFlow PRIVATE
     ${HSF_COMMON_INCLUDE_DIRS}
     ${HSF_SERVER_INCLUDE_DIRS})
 target_include_directories(HsfClient PRIVATE
@@ -42,6 +76,11 @@ target_include_directories(HsfClient PRIVATE
 
 if(UNIX)
     target_link_libraries(HsfServer
+        XHsfServerIoLib
+        ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS}
+        mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(HsfServerFlow
+        XHsfServerIoLib
         ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS}
         mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
     # 客户端走 GUI 栈：链接序对齐 XGuiWindowDemo_Test（sqlite/freetype 同配置）。
@@ -50,6 +89,10 @@ if(UNIX)
         mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
 else()
     target_link_libraries(HsfServer
+        XHsfServerIoLib
+        mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(HsfServerFlow
+        XHsfServerIoLib
         mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
     target_link_libraries(HsfClient
         mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
@@ -61,4 +104,6 @@ endif()
 # （HsfServer/HsfClient 实测 undefined reference: atan2/floor/log10 等数学
 # 符号与 Core 符号），需 LINK_GROUP:RESCAN 组内反复重扫。
 xinyue_link_rescan_group(HsfServer)
+xinyue_link_rescan_group(XHsfServerIoLib)
+xinyue_link_rescan_group(HsfServerFlow)
 xinyue_link_rescan_group(HsfClient)

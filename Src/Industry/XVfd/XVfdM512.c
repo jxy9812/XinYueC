@@ -45,11 +45,14 @@ static const XVfdPointSpec s_m512Specs[] = {
     /* ---- 读点（遥测） ---- */
     { XVfdRole_StatusWord,     XIoPoint_AnalogInput,   1, "STATE", 0,                   0 },
     { XVfdRole_FaultCode,      XIoPoint_AnalogInput,   1, "FAULT", 0,                   0 },
-    /* 频率类原生单位是 0.1Hz（实机标定，见 docs/M512_511_512_513寄存器映射表.md
-     * 「单位口径实测标定」）：P0.10 原始值 500 = 50.0Hz；P0.22 频率指令分辨率
-     * 实读为 1（=0.1Hz），且手册 P0.10 范围 50~5000Hz 在 16 位寄存器下只有
-     * 0.1Hz 口径装得下（0.01Hz 上限仅 655.35Hz）。故除率取 10。 */
-    { XVfdRole_OutputFreq,     XIoPoint_AnalogInput,   10, "RFR",  0,                   0 },
+    /* [单位口径 2026-11-04 实机逐点标定] **状态区 0x1001 与 U 组不是同一口径**：
+     *   给定 10%/20%/30%（=5/10/15Hz）时实测
+     *     0x1001 = 500 / 1000 / 1500   ⇒ 单位 0.01Hz（÷100）
+     *     U0.00  =  50 /  100 /  150   ⇒ 单位 0.1Hz （÷10）
+     *   故 OutputFreq（绑 0x1001）除率取 100；SetFreq（U0.01 口径）保持 10。
+     *   历史误设 ÷10 使运行频率显示放大 10 倍（15Hz 报成 150Hz），
+     *   并连带把"运行中改频跟随"判定带偏（2026-11-04 实锅）。 */
+    { XVfdRole_OutputFreq,     XIoPoint_AnalogInput,  100, "RFR",  0,                   0 },
     { XVfdRole_BusVoltage,     XIoPoint_AnalogInput,  10, "VBUS", 0,                   0 },
     { XVfdRole_OutputVoltage,  XIoPoint_AnalogInput,   1, "UOP",   0,                   0 },
     { XVfdRole_OutputCurrent,  XIoPoint_AnalogInput,  100, "LCR",   0,                   0 },

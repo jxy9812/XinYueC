@@ -96,6 +96,19 @@ typedef struct XModbusHubUnitLimits {
                                   *   且不合并远端连续的相邻映射段）。 */
     bool     m_singleWriteOnly;   /**< 只允许单寄存器写（FC06）：脏区间逐字下发，
                                   *   相邻写不并成一帧 FC16。 */
+    /**
+     * @brief 该从站读组的最小发送间隔（毫秒；0=不限制，跟随设备节拍）。
+     * @details [2026-11-04 分级轮询] Hub 的轮询定时器是**每设备**（=每串口
+     *          客户端）一个，每拍只发一个读组、`groupCursor` 轮转；同一条
+     *          485 上的多个从站因此只能共享一个节拍（改 deviceId 的
+     *          setPollInterval 会连坐全部从站）。本字段把节拍下沉到**从站**：
+     *          读组所属从站的最近发送时刻距今不足本值时跳过该组，等它到期。
+     *          效果 = 慢设备（温湿度 500ms）不再占快设备（变频器 50ms）的
+     *          轮转槽位，快设备因此提速到接近设备节拍。
+     * @note  与 setPollInterval 的关系：设备定时器节拍仍是"扫描周期"，本值
+     *        是"该从站最早多久发一次"。本值 < 设备节拍时按设备节拍走。
+     */
+    uint32_t m_minPollIntervalMs;
 } XModbusHubUnitLimits;
 
 /**
@@ -105,6 +118,16 @@ typedef struct XModbusHubUnitLimitEntry {
     int unitId;                            /**< 从站地址（Modbus unit id）。 */
     XModbusHubUnitLimits m_limits;         /**< 约束内容。 */
 } XModbusHubUnitLimitEntry;
+
+/**
+  * @brief 从站最近发送时刻（分级轮询簿记）
+  * @note 与 m_unitLimits 分开存：约束是装配期配置，本表是运行期状态
+  *       （块表重建时约束要保留，时刻可丢弃）
+  */
+typedef struct XModbusHubUnitSent {
+    int unitId;                            /**< 从站地址（Modbus unit id）。 */
+    uint64_t lastSentMs;                   /**< 该从站最近一次读帧发出时刻（单调毫秒）。 */
+} XModbusHubUnitSent;
 
 /**
   * @brief 缓存块内的映射切片：把块内远端区间翻译回统一虚拟地址
@@ -142,6 +165,9 @@ typedef struct XModbusHubCacheBlock {
     uint16_t unitId;            /**< 从站地址（0..247；uint16 收紧布局）。 */
     uint16_t remoteStart;       /**< 块在远端的起点。 */
     uint16_t count;             /**< 块长（点数/位）。 */
+    uint8_t  flags;             /**< 块属性标志（承自映射段）：
+                                     XModbusMapRange_WriteOnly = 只写块
+                                     （**不参与轮询**，但写路径与缓存照旧）。 */
     XModbusDataUnit* data;      /**< 缓存数据（位区 XBitArray / 寄存器区 2B/点）。 */
     struct XVector* segs;       /**< 覆盖的映射切片（XModbusHubCacheSeg，按虚拟地址升序）。 */
     struct XVector* dirty;      /**< 待写脏区间（XModbusHubDirtyRange，按偏移升序；
@@ -242,6 +268,8 @@ typedef struct XModbusHubDevice {
                                          *   块表重建时随块去重重建）。 */
     struct XVector* m_unitLimits;       /**< 从站约束表（XModbusHubUnitLimitEntry，
                                          *   按 unitId 簿记；NULL=该设备无约束）。 */
+    struct XVector* m_unitLastSent;     /**< 从站最近发送时刻表（XModbusHubUnitSent，
+                                         *   按 unitId 簿记；分级轮询用；NULL=未建）。 */
 } XModbusHubDevice;
 
 /**

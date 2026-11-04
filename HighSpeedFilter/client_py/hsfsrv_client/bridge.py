@@ -1,0 +1,343 @@
+# -*- coding: utf-8 -*-
+"""Qt 桥接层：把网络线程的数据安全地送到 UI 线程。
+
+[核心问题] asyncio 收包在**网络线程**，Qt 控件只能在 **UI 线程**碰。
+跨线程直接改控件会崩或行为不确定（Qt 的硬性要求）。
+
+[做法] 一个 QObject 持有 Qt 信号，信号从网络线程 emit —— Qt 的队列连接
+会自动把投递排进 UI 线程的事件队列。**这是唯一安全的跨线程通道**，
+不要用「标记变量 + 定时器轮询」替代（那样一定会漏事件或读到撕裂状态）。
+
+[订阅策略] 只在「当前页需要」时订阅对应主题（C 端同款：切页才订阅、
+隐藏即退订）。这样链路流量与页面数量解耦——17 页不会同时推 17 份数据。
+"""
+
+import json
+import threading
+
+from PyQt5.QtCore import QObject, QTimer, pyqtSignal
+
+from . import bson, proto
+from .model import AppModel
+
+
+class LinkBridge(QObject):
+    """连接 + 数据桥。
+
+    对外暴露的 Qt 信号（全部在 UI 线程触发）：
+        connected(int)          登录成功（携带角色）
+        disconnected(str)       断开（携带原因）
+        authFailed(str)         登录失败原因
+        dataUpdated(str)        某类数据更新（"vfd"/"temphum"/"analog"/
+                                "digital"/"health"/"mode"）
+        statusMessage(str)      状态栏提示
+    """
+
+    connected = pyqtSignal(int)
+    disconnected = pyqtSignal(str)
+    authFailed = pyqtSignal(str)
+    dataUpdated = pyqtSignal(str)
+    statusMessage = pyqtSignal(str)
+
+    #: 主题 → 数据类型名（dataUpdated 的参数）
+    TOPIC_KIND = {
+        proto.TOPIC_VFD_STATUS: "vfd",
+        proto.TOPIC_TEMPHUM_STATUS: "temphum",
+        proto.TOPIC_AI_STATUS: "analog",
+        proto.TOPIC_DIGITAL_STATUS: "digital",
+        proto.TOPIC_DEVICE_HEALTH: "health",
+        proto.TOPIC_VALVE_STATUS: "valve",
+    }
+
+    def __init__(self, parent=None):
+        QObject.__init__(self, parent)
+        self.model = AppModel()
+        self.client = None
+        self.user = ""
+        self.role = 0
+        self.connected_flag = False
+        #: 当前已订阅的主题集合（UI 线程读写，网络线程只读快照）。
+        self._subscribed = set()
+        self._lock = threading.Lock()
+
+        # 定时器：兜底刷新（推送间隔 100ms，UI 侧 200ms 轮一次足够）。
+        # [为什么要定时器] 数字量/健康是「变化才推」，页面若只靠信号触发，
+        # 静止时首帧可能久等不到。定时器保证页面至少每 200ms 有一拍视图。
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(200)
+        self._refresh_timer.timeout.connect(self._on_refresh_tick)
+        self._refresh_listeners = []
+
+    # ==================================================================
+    #                          连接管理
+    # ==================================================================
+    def connect_to(self, host, port, user, password, timeout=8.0):
+        """建链 + 登录（**阻塞**，须在非 UI 线程或接受短暂卡顿）。
+
+        本项目在登录窗里同步调用：登录本来就要等，卡住是预期行为。
+        """
+        from .xlink import XLinkClient
+        self.disconnect_from()
+        self.user = user
+        self.client = XLinkClient(host, port, user, password,
+                                  log=self.statusMessage.emit)
+        self.client.on_state_changed = self._on_state
+        self.client.on_publish = self._on_publish
+        self.client.on_auth_result = self._on_auth_result
+        ok, err = self.client.start(timeout)
+        if ok:
+            # 注意：connected 信号由 _on_state(READY) 统一发出，
+            # 这里不重复 emit（重复会让上层收到两次连接事件）。
+            self.role = self.client.auth_role
+            self.connected_flag = True
+            # 登录成功后立刻拉全量健康快照（事件驱动主题，不拉会空着）。
+            self._refresh_health()
+        else:
+            self.connected_flag = False
+            self.authFailed.emit(err)
+        return ok, err
+
+    def disconnect_from(self):
+        self.connected_flag = False
+        with self._lock:
+            self._subscribed.clear()
+        if self.client is not None:
+            self.client.close()
+            self.client = None
+        self._refresh_timer.stop()
+
+    def is_connected(self):
+        return self.connected_flag
+
+    def is_auto_mode(self):
+        return self.model.is_auto()
+
+    # ==================================================================
+    #                      网络线程 → UI 线程
+    # ==================================================================
+    def _on_state(self, state):
+        """状态迁移 → UI 信号。
+
+        [为什么 READY 要在这里也处理] 自动重连成功后状态会重新变成 READY，
+        但那条路径不经过 connect_to()（它只在首次登录时调用），所以必须
+        在状态回调里把 connected_flag 置回 True 并补发 connected 信号，
+        否则界面会永远停在"未连接"（实测：断线 6 秒后重连成功，界面不变）。
+        """
+        from .xlink import SessionState
+        if state == SessionState.READY:
+            if not self.connected_flag:
+                self.connected_flag = True
+                self.role = self.client.auth_role if self.client else 0
+                # 重连后订阅表已随旧会话作废，清空以便上层重新 set_topics。
+                with self._lock:
+                    self._subscribed.clear()
+                self.connected.emit(self.role)
+            return
+        if state == SessionState.DISCONNECTED and self.connected_flag:
+            self.connected_flag = False
+            self.disconnected.emit("连接已断开")
+
+    def _on_auth_result(self, ok, role, err):
+        if not ok:
+            self.connected_flag = False
+            self.authFailed.emit(err)
+
+    def _on_publish(self, topic, payload, data_type):
+        """推送到达（**网络线程**）：解包成 model，再信号通知 UI。
+
+        [为什么在这里就解包] 解 BSON 是纯 CPU 活，放网络线程不影响 UI；
+        若把原始字节丢给 UI 再解，17 个页面各解一次就浪费了。
+        """
+        kind = self.TOPIC_KIND.get(topic)
+        if kind is None:
+            return
+        try:
+            doc = bson.decode(payload) if data_type == proto.DATATYPE_BSON else {}
+        except ValueError:
+            return
+        self._apply_doc(kind, doc)
+        self.dataUpdated.emit(kind)
+
+    def _apply_doc(self, kind, doc):
+        """把解出的 dict 合并进 model（按 kind 分派）。"""
+        if kind == "vfd":
+            self.model.vfd.apply(doc)
+        elif kind == "temphum":
+            self.model.temphum.apply(doc)
+        elif kind == "analog":
+            self.model.analog.apply(doc)
+        elif kind == "digital":
+            index = int(doc.get("dev", 0) or 0)
+            self.model.digital_state(index).apply(doc)
+        elif kind == "health":
+            self.model.health.apply(doc)
+        elif kind == "valve":
+            self.model.valve.apply(doc)
+
+    # ==================================================================
+    #                          订阅控制
+    # ==================================================================
+    def subscribe(self, *topics):
+        """订阅指定主题（幂等）。从 UI 线程调用。"""
+        if self.client is None:
+            return
+        with self._lock:
+            wanted = set(topics)
+            added = wanted - self._subscribed
+            self._subscribed |= added
+        for topic in added:
+            self.client.subscribe_async(topic)
+
+    def unsubscribe(self, *topics):
+        if self.client is None:
+            return
+        with self._lock:
+            removed = set(topics) & self._subscribed
+            self._subscribed -= removed
+        for topic in removed:
+            self.client.unsubscribe_async(topic)
+
+    def set_topics(self, topics):
+        """把订阅集合收敛到恰好 `topics`（切页时用：一次调用完成增删）。"""
+        topics = set(topics)
+        if self.client is None:
+            return
+        with self._lock:
+            add = topics - self._subscribed
+            drop = self._subscribed - topics
+            self._subscribed = topics
+        for topic in drop:
+            self.client.unsubscribe_async(topic)
+        for topic in add:
+            self.client.subscribe_async(topic)
+
+    def current_topics(self):
+        with self._lock:
+            return set(self._subscribed)
+
+    # ==================================================================
+    #                          请求（UI 线程发起）
+    # ==================================================================
+    def request(self, cmd, doc=None, on_done=None, on_error=None, timeout=3.0):
+        """发业务请求；回调在**网络线程**，调用方须自行投递回 UI。
+
+        便捷做法：回调里只往一个 queue 塞，或直接用 Qt 信号。
+        """
+        if self.client is None:
+            if on_error:
+                on_error("未连接")
+            return
+        payload = b""
+        if doc is not None:
+            try:
+                payload = bson.encode(doc)
+            except ValueError as exc:
+                if on_error:
+                    on_error("载荷编码失败：%s" % exc)
+                return
+        self.client.request_async(cmd, payload, proto.DATATYPE_BSON, timeout,
+                                  on_done, on_error)
+
+    def request_sync(self, cmd, doc=None, timeout=3.0):
+        """同步请求（阻塞 UI！只用于登录后拉首帧这类一次性动作）。"""
+        if self.client is None:
+            return None
+        import concurrent.futures
+        payload = b""
+        if doc is not None:
+            payload = bson.encode(doc)
+        fut = self.client.call_soon(
+            self.client.request(cmd, payload, proto.DATATYPE_BSON, timeout))
+        if fut is None:
+            return None
+        try:
+            code, dtype, data = fut.result(timeout=timeout + 1.0)
+        except Exception:                               # noqa: BLE001
+            return None
+        try:
+            return bson.decode(data) if dtype == proto.DATATYPE_BSON else {}
+        except ValueError:
+            return None
+
+    def _refresh_health(self):
+        doc = self.request_sync(proto.CMD_DEVICE_HEALTH, timeout=3.0)
+        if doc:
+            self.model.health.apply(doc)
+            self.dataUpdated.emit("health")
+
+    def refresh_run_mode(self, on_done=None):
+        """查一次运行模式（顶栏模式钮要显示当前状态）。"""
+        def _done(code, dtype, data):
+            try:
+                doc = bson.decode(data) if dtype == proto.DATATYPE_BSON else {}
+            except ValueError:
+                return
+            self.model.run_mode = int(doc.get("mode", 0) or 0)
+            self.model.run_mode_known = True
+            self.dataUpdated.emit("mode")
+            if on_done:
+                on_done(doc)
+        self.request(proto.CMD_RUN_MODE, None, on_done=_done)
+
+    def set_run_mode(self, mode, on_done=None, on_error=None):
+        """切换运行模式（需 root）。"""
+        def _done(code, dtype, data):
+            try:
+                doc = bson.decode(data) if dtype == proto.DATATYPE_BSON else {}
+            except ValueError:
+                return
+            if doc.get("ok"):
+                self.model.run_mode = int(doc.get("mode", 0) or 0)
+                self.model.run_mode_known = True
+                self.dataUpdated.emit("mode")
+            if on_done:
+                on_done(doc)
+        self.request(proto.CMD_RUN_MODE, {"mode": int(mode)}, on_done=_done,
+                     on_error=on_error)
+
+    def send_vfd_control(self, doc, on_done=None, on_error=None):
+        """下发变频器控制（op/rev/hz/...）。"""
+        self.request(proto.CMD_VFD_CONTROL, doc, on_done=on_done,
+                     on_error=on_error)
+
+    def send_digital_control(self, dev, on_done=None, on_error=None,
+                             channel=None, on=False, mask=None):
+        """下发 DO 控制：channel+on 单点，或 mask 整组。"""
+        payload = {"dev": int(dev)}
+        if mask is not None:
+            payload["mask"] = int(mask)
+        else:
+            payload["do"] = int(channel)
+            payload["on"] = bool(on)
+        self.request(proto.CMD_DIGITAL_CONTROL, payload, on_done=on_done,
+                     on_error=on_error)
+
+    # ==================================================================
+    #                        兜底刷新
+    # ==================================================================
+    def add_refresh_listener(self, fn):
+        """注册「周期刷新」回调（UI 线程，每 200ms 一次）。
+
+        页面用它做「数据没变也要重画的量」——比如表格里的 "--" 占位
+        在数据到达后必须重绘，纯信号驱动会漏。
+        """
+        if fn not in self._refresh_listeners:
+            self._refresh_listeners.append(fn)
+
+    def remove_refresh_listener(self, fn):
+        if fn in self._refresh_listeners:
+            self._refresh_listeners.remove(fn)
+
+    def start_refresh(self):
+        self._refresh_timer.start()
+
+    def stop_refresh(self):
+        self._refresh_timer.stop()
+
+    def _on_refresh_tick(self):
+        for fn in list(self._refresh_listeners):
+            try:
+                fn()
+            except Exception as exc:                    # noqa: BLE001
+                # 单个页面的刷新异常不得拖垮整个界面。
+                self.statusMessage.emit("刷新异常：%s" % exc)

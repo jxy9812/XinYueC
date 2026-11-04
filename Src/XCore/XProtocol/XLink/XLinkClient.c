@@ -15,6 +15,7 @@
 
 #include "XMemory.h"
 #include "XString.h"
+#include "XPrintf.h"
 #include <string.h>
 #if XLINK_AUTH_ON
 #include "XLinkAuth.h"

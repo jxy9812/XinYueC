@@ -506,9 +506,12 @@ static bool xvfdHarnessEnsureGroup(XvfdHarness* h, XvfdHarnessStation* st, int g
     area = xvfdHarnessAreaOf(st->m_groups[gi].m_area);
     vbase = h->m_identity ? st->m_groups[gi].m_remoteStart
                           : xvfdHarnessBump(h, area, st->m_groups[gi].m_count);
-    if (!XModbusMapping_addRange(h->m_map, area, vbase, st->m_groups[gi].m_count,
-                                 st->m_devId, st->m_unitId,
-                                 st->m_groups[gi].m_remoteStart, 0)) {
+    /* 只写组：登记为只写段（写路径照常，但不进读组 ⇒ 不参与轮询）。
+     * 厂商从站的命令字/密码区读了只会回错误帧。 */
+    if (!XModbusMapping_addRangeEx(h->m_map, area, vbase, st->m_groups[gi].m_count,
+                                   st->m_devId, st->m_unitId,
+                                   st->m_groups[gi].m_remoteStart, 0,
+                                   (uint8_t)st->m_groups[gi].m_flags)) {
         XPrintf("[xvfd-harness] addRange(group=%d remote=0x%04X) 失败\n",
                 gi, st->m_groups[gi].m_remoteStart);
         return false;

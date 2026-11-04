@@ -12,6 +12,12 @@
  */
 #include "HsfUi.h"
 
+
+/* 前置声明：模式回调（实现见文件后部，建窗时注册）。 */
+static void hsfWinModeSlot(void* userData);
+static void hsfWinModeNotify(void* userData);
+static void hsfWinHealthNotify(void* userData);
+
 #include "HsfPages.h"
 #include "HsfTheme.h"
 #include "HsfTitleBar.h"
@@ -20,12 +26,17 @@
 #include "HsfNavPanel.h"
 #include "HsfDemoCompat.h"
 #include "HsfSettingsStore.h"
+#include "HsfLogin.h"
+#include "HsfLinkClient.h"
+#include "XhsfLinkProto.h"
+#include "HsfVfdProviderRemote.h"
 #include "HsfHomePage.h"
 #include "HsfMainMenu.h"
 #include "HsfMonitorMenu.h"
 #include "HsfMonitorDigital.h"
 #include "HsfMonitorAnalog.h"
 #include "HsfMonitorVfd.h"
+#include "HsfMonitorFlowMeter.h"
 #include "HsfDataMenu.h"
 #include "HsfDataHistory.h"
 #include "HsfDataTable.h" /* HsfDataTablePage_adapt（页 7/8/9 共用钩子）。 */
@@ -68,16 +79,17 @@ static const HsfPageCreateFn kHsfBuilders[HSF_PAGE_COUNT] = {
     HsfMonitorDigital_create,  /* 3  监视-数字量 */
     HsfMonitorAnalog_create,   /* 4  监视-模拟量 */
     HsfMonitorVfd_create,      /* 5  监视-变频器 */
-    HsfDataMenu_create,        /* 6  数据 子菜单 */
-    HsfDataHistory_create,     /* 7  数据-历史数据 */
-    HsfDataLog_create,         /* 8  数据-日志 */
-    HsfDataAlarm_create,       /* 9  数据-报警 */
-    HsfSettingsMenu_create,    /* 10 设置 子菜单 */
-    HsfSettingsLocal_create,   /* 11 设置-本地设置 */
-    HsfSettingsRemote_create,  /* 12 设置-远端设置 */
-    HsfNetworkPage_create,     /* 13 设置-网络设置（移植） */
-    HsfOverlayPage_create,     /* 14 设置-悬浮窗设置（移植） */
-    HsfWindowPage_create       /* 15 设置-窗口设置（移植） */
+    HsfMonitorFlowMeter_create,/* 6  监视-电磁流量计（与变频器同级） */
+    HsfDataMenu_create,        /* 7  数据 子菜单 */
+    HsfDataHistory_create,     /* 8  数据-历史数据 */
+    HsfDataLog_create,         /* 9  数据-日志 */
+    HsfDataAlarm_create,       /* 10 数据-报警 */
+    HsfSettingsMenu_create,    /* 11 设置 子菜单 */
+    HsfSettingsLocal_create,   /* 12 设置-本地设置 */
+    HsfSettingsRemote_create,  /* 13 设置-远端设置 */
+    HsfNetworkPage_create,     /* 14 设置-网络设置（移植） */
+    HsfOverlayPage_create,     /* 15 设置-悬浮窗设置（移植） */
+    HsfWindowPage_create       /* 16 设置-窗口设置（移植） */
 };
 
 /* ---- 形态/导航度量（单一事实源） ---- */
@@ -119,14 +131,15 @@ static const HsfPageAdaptFn kHsfPageAdapt[HSF_PAGE_COUNT] = {
     HsfMonitorDigital_adapt, /* 3 监视-数字量（竖屏窄列/触控高/顶行堆叠） */
     HsfMonitorAnalog_adapt,  /* 4 监视-模拟量（竖屏窄列/触控高） */
     HsfMonitorVfd_adapt, /* 5  监视-变频器（仪表横排/纵排） */
+    HsfMonitorFlowMeter_adapt, /* 6 监视-电磁流量计（仪表横排/纵排） */
     NULL,
-    HsfDataTablePage_adapt, /* 7  数据-历史数据（竖屏收边距） */
-    HsfDataTablePage_adapt, /* 8  数据-日志（竖屏收边距） */
-    HsfDataTablePage_adapt, /* 9  数据-报警（竖屏收边距） */
+    HsfDataTablePage_adapt, /* 8  数据-历史数据（竖屏收边距） */
+    HsfDataTablePage_adapt, /* 9  数据-日志（竖屏收边距） */
+    HsfDataTablePage_adapt, /* 10 数据-报警（竖屏收边距） */
     NULL, NULL,
-    hsfAdaptNetwork,     /* 13 网络设置 */
-    hsfAdaptOverlay,     /* 14 悬浮窗设置 */
-    hsfAdaptWindow       /* 15 窗口设置 */
+    hsfAdaptNetwork,     /* 14 网络设置 */
+    hsfAdaptOverlay,     /* 15 悬浮窗设置 */
+    hsfAdaptWindow       /* 16 窗口设置 */
 };
 
 /** 移植页在页索引中的起始位置（= HSF_PAGE_SETTINGS_NETWORK）。 */
@@ -178,6 +191,11 @@ typedef struct HsfWin
                                     *  装配，形态判定会打在零内存对象上）。 */
     const char*  m_shotPath;       /**< 离屏截图输出路径（NULL=不截图）。 */
     XTimerId     m_shotTimer;      /**< 截图定时器（渲染数帧后出图）。 */
+    int          m_shotWaitTicks;  /**< 截图前等待遥测的轮询计数（上限兜底）。 */
+    int          m_subTopic;       /**< 当前已订阅的数据主题（HsfLinkTopic；
+                                    *   -1=无：当前页不吃遥测）。 */
+    XTimerId     m_cycleTimer;     /**< 页轮转自测定时器（按需订阅验证用）。 */
+    int          m_cyclePage;      /**< 轮转中的当前页。 */
 } HsfWin;
 
 XCLASS_DEFINE_BEGING(HsfWin)
@@ -244,6 +262,42 @@ static void hsf_overlayAnchor(HsfWin* self)
 
 /* ---- 页序语义（标题栏/状态栏/导航高亮随页同步） ---- */
 
+/**
+ * @brief 页索引 → 该页需要的遥测主题。
+ * @return 主题枚举；页面不吃遥测返回 -1。
+ * @note  只有**显示中的页**才订阅其主题：隐藏页不占带宽、不解码、不
+ *        刷新（服务端不再投递）。顶栏/状态栏用的温湿度与设备健康是
+ *        常驻主题（不在此表，由 HsfLinkClient 连接期恒订阅）。
+ */
+static int hsf_pageTopicOf(int pageIndex)
+{
+    switch (pageIndex) {
+    case HSF_PAGE_MONITOR_VFD:       return (int)HsfLinkTopic_Vfd;
+    case HSF_PAGE_MONITOR_ANALOG:    return (int)HsfLinkTopic_Ai;
+    case HSF_PAGE_MONITOR_FLOWMETER: return (int)HsfLinkTopic_FlowMeter;
+    default:                         return -1;
+    }
+}
+
+/**
+ * @brief 页数据订阅随切页迁移（旧页退订 → 新页订阅）。
+ * @note  服务端对**新订阅**立即定向补发一拍，故切到某页立即可见数据，
+ *        不必等推送周期。同一主题重复进入不重复加减（引用计数）。
+ */
+static void hsf_pageTopicSwitch(HsfWin* self, int index)
+{
+    const int next = hsf_pageTopicOf(index);
+    if (!self) return;
+    if (next == self->m_subTopic) return;
+    if (self->m_subTopic >= 0)
+        HsfLinkClient_unsubscribe((HsfLinkTopic)self->m_subTopic);
+    if (next >= 0) {
+        if (!HsfLinkClient_subscribe((HsfLinkTopic)next))
+            XPrintf("HsfClient: 页面主题订阅未生效（未登录？page=%d）\n", index);
+    }
+    self->m_subTopic = next;
+}
+
 /** @brief 切页：堆叠当前页 + 标题栏标题 + 状态栏文本 + 导航高亮。 */
 static void hsf_goPage(HsfWin* self, int index)
 {
@@ -255,6 +309,8 @@ static void hsf_goPage(HsfWin* self, int index)
     snprintf(buf, sizeof(buf), "当前页: %s", HsfPages_name(index));
     HsfStatusBar_setText(&self->m_statusBar, buf);
     HsfNavPanel_setActivePage(&self->m_navPanel, index);
+    /* 按需订阅迁移（隐藏页退订，新页订阅即补发首帧）。 */
+    hsf_pageTopicSwitch(self, index);
     /* 移植页窄宽分档：切页后页根宽度更新 → 重新分档。 */
     hsf_adaptPages(self);
     /* 新页控件未覆盖处会露出旧页像素（叠印）→ 切页后整窗刷新。 */
@@ -356,6 +412,76 @@ static void hsf_splitterMovedSlot(XObject* receiver, XVarList* args)
 /** @brief 截图执行（前置声明；定义在本文件后段）。 */
 static void hsfShotCapture(HsfWin* self);
 
+/**
+ * @brief 把远端温湿度遥测同步到标题栏。
+ * @param self 主窗。
+ * @details 数据来源 = HsfLinkClient 订阅的 HSF_TOPIC_TEMPHUM_STATUS
+ *          （服务端按 HSF_TEMPHUM_PUSH_MS 周期发布，A/B 两侧各一份）；
+ *          标题栏显示 **A 侧**（主用侧）。未登录/未收到遥测时显示"--"。
+ *          单位换算在此集中一次：快照是 0.1 定点（219=21.9℃、-250=-25.0℃），
+ *          界面按摄氏度/百分比显示，故统一除 10。
+ * @note  两个触发点：①温湿度推送回调（到达即刷，零延迟）；②时钟定时器
+ *        同拍（兜底——推送停摆时也能把"无数据"状态刷出来）。
+ */
+/**
+ * @brief 把远端温湿度遥测同步到标题栏。
+ * @param self 主窗。
+ * @details 数据来源 = HsfLinkClient 订阅的 HSF_TOPIC_TEMPHUM_STATUS
+ *          （服务端按 HSF_TEMPHUM_PUSH_MS 周期发布，A/B 两侧各一份）；
+ *          标题栏显示 **A 侧**（主用侧）。未登录/未收到遥测时显示"--"。
+ *          单位换算在此集中一次：快照是 0.1 定点（219=21.9℃、-250=-25.0℃），
+ *          界面按摄氏度/百分比显示，故统一除 10。
+ * @note  [新鲜度] 用 HsfLinkClient_tempHumFresh 判实时性，不直读
+ *        m_received——断线后推送停止但 m_received 仍是 true，只判它会
+ *        把最后一拍的旧值当实时数据显示（2026-11-04 实锅）。
+ *        两个触发点：①推送回调（到达即刷）；②时钟定时器同拍（兜底，
+ *        让"断流成 --"能在没有推送时也刷出来）。
+ */
+static void hsf_titleSyncClimate(HsfWin* self)
+{
+    const HsfLinkTempHum* th;
+    if (!self) return;
+    th = HsfLinkClient_tempHum(HSF_SIDE_A);
+    if (!th || !HsfLinkClient_tempHumFresh(HSF_SIDE_A)) {
+        HsfTitleBar_setClimate(&self->m_titleBar, 0.0, 0.0, false, false);
+        return;
+    }
+    HsfTitleBar_setClimate(&self->m_titleBar,
+                           (double)th->m_tempC10 / 10.0,
+                           (double)th->m_humPct10 / 10.0,
+                           th->m_tempValid, th->m_humValid);
+}
+
+/** @brief 温湿度推送回调（HsfLinkClient）：到达即刷新标题栏。 */
+static void hsf_onTempHumPushed(void* userData)
+{
+    hsf_titleSyncClimate((HsfWin*)userData);
+}
+
+/** @brief 截图等待遥测的轮询步长（毫秒）。 */
+#define HSF_SHOT_WAIT_STEP_MS   250
+/** @brief 截图等待遥测的最大轮询次数（250ms × 40 = 10s 上限）。 */
+#define HSF_SHOT_WAIT_MAX_TICKS 40
+
+/**
+ * @brief 截图前的数据就绪判定（按当前页关心的数据源）。
+ * @return 当前页关心的数据已到达返回 true；等待超时上限由调用方控制。
+ * @note 登录态窗口在链路打开**之前**就已创建（无头登录的窗口在登录成功后
+ *       才装配），故不能用 isOpen 判定"要不要等"——统一按"有没有数据"
+ *       判断，未登录（离线演示）永远无数据，靠调用方的轮询上限兜底出图。
+ * @note [2026-11-04 流量计页实锅] 原来只判 A 侧温湿度，截流量计页时
+ *       A 侧温湿度先到就立刻出图，流量计（B 侧）数据还没来 —— 页面截成
+ *       "无数据"。改为按当前页取对应数据源：流量计页等 B 侧流量计，
+ *       其余页维持原判据（A 侧温湿度）。
+ */
+static bool hsfShotDataReady(HsfWin* self)
+{
+    if (!self) return false;
+    if (self && HsfStack_current(&self->m_stack) == HSF_PAGE_MONITOR_FLOWMETER)
+        return HsfLinkClient_flowMeterFresh(HSF_SIDE_B);
+    return HsfLinkClient_tempHumFresh(HSF_SIDE_A);
+}
+
 /* ---- 窗口事件（自动退出 / 关闭退出 / 尺寸变化） ---- */
 
 /** @brief TimerEvent：自动退出倒计时（autoExitSeconds>0 时启用）。 */
@@ -366,6 +492,7 @@ static void VHsfWin_timerEvent(XObject* object, XTimerEvent* event)
     if (self->m_clockTimer != XTIMER_INVALID_ID &&
         XTimerEvent_timerId(event) == self->m_clockTimer) {
         HsfTitleBar_refreshClock(&self->m_titleBar);
+        hsf_titleSyncClimate(self);   /* 顺带刷新标题栏温湿度（远端推送驱动）。 */
         XEvent_accept((XEvent*)event);
         return;
     }
@@ -383,6 +510,16 @@ static void VHsfWin_timerEvent(XObject* object, XTimerEvent* event)
             XEvent_accept((XEvent*)event);
             return;
         }
+        /* 登录态截图：等真实遥测到达再出图（否则截到的是"--"占位态）。
+         * 数据链有连接/认证/首推延迟，固定延迟不可靠——改轮询等待，
+         * 上限 HSF_SHOT_WAIT_MAX_TICKS 兜底（离线演示无数据也照样出图）。 */
+        if (!hsfShotDataReady(self) &&
+            ++self->m_shotWaitTicks <= HSF_SHOT_WAIT_MAX_TICKS) {
+            self->m_shotTimer = XObject_startTimer_ms(
+                (XObject*)self, HSF_SHOT_WAIT_STEP_MS, XTimerType_CoarseTimer);
+            XEvent_accept((XEvent*)event);
+            return;
+        }
         hsfShotCapture(self);
         XEvent_accept((XEvent*)event);
         return;
@@ -393,6 +530,24 @@ static void VHsfWin_timerEvent(XObject* object, XTimerEvent* event)
             self->m_autoQuitTimer = XTIMER_INVALID_ID;
         }
         XGuiApplication_quit();
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+    if (self->m_cycleTimer != XTIMER_INVALID_ID &&
+        XTimerEvent_timerId(event) == self->m_cycleTimer) {
+        /* 轮转：变频器 → 模拟量 → 流量计 → 变频器（每拍切一页）。 */
+        static const int kCycle[3] = {
+            HSF_PAGE_MONITOR_VFD, HSF_PAGE_MONITOR_ANALOG,
+            HSF_PAGE_MONITOR_FLOWMETER
+        };
+        int i;
+        for (i = 0; i < 3; ++i) {
+            if (kCycle[i] == self->m_cyclePage) {
+                self->m_cyclePage = kCycle[(i + 1) % 3];
+                break;
+            }
+        }
+        hsf_goPage(self, self->m_cyclePage);
         XEvent_accept((XEvent*)event);
         return;
     }
@@ -744,11 +899,13 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     self->m_autoQuitTimer = XTIMER_INVALID_ID;
     self->m_clockTimer = XTIMER_INVALID_ID;
     self->m_shotTimer = XTIMER_INVALID_ID;
+    self->m_cycleTimer = XTIMER_INVALID_ID;
     self->m_autoSeconds = (autoSeconds > 0) ? autoSeconds : 0;
     self->m_shotPath = shotPath;
     self->m_navWidth = HSF_NAV_DEFAULT_W;
     self->m_layoutMode = -1; /* 首次必触发形态判定。 */
     self->m_pageBeforeMenu = HSF_PAGE_HOME;
+    self->m_subTopic = -1;   /* 尚无页面订阅（0 是合法主题号，必须显式置 -1）。 */
     self->m_lastFrameUsecs = 0;
     self->m_lastPaintUsecs = 0;
     self->m_overlayAnchorW = 0;
@@ -773,6 +930,11 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     /* 标题固定为应用名（页名由底部状态栏「当前页」承担）。 */
     HsfTitleBar_setTitle(&self->m_titleBar,
                          "PMMA有机玻璃高速过滤器");
+    /* 全局运行模式：顶栏显示 + 点击切换（服务端一档管控全部设备）。 */
+    HsfTitleBar_setModeHandler(&self->m_titleBar, hsfWinModeSlot, self);
+    HsfLinkClient_setModeCallback(hsfWinModeNotify, self);
+    HsfLinkClient_setHealthCallback(hsfWinHealthNotify, self);
+    HsfLinkClient_queryRunMode();
     HsfTitleBar_setMenuHandler(&self->m_titleBar, hsf_menuToggleCb, self);
 
     /* ---- 底部：黑色状态栏（模块自理 chrome） ---- */
@@ -963,8 +1125,13 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
         XWidget_setGeometry(&self->m_base, -3000, -3000,
                             (shotWidth > 0) ? shotWidth : defW,
                             (shotHeight > 0) ? shotHeight : defH);
+        /* 离屏截图延迟：已登录（--login 无头）要多等首推——服务端温湿度
+         * 推送周期 HSF_TEMPHUM_PUSH_MS=1s，加连接/认证/首帧渲染；离线
+         * （--no-login）路径无网络等待，维持原 1200ms。 */
         self->m_shotTimer = XObject_startTimer_ms(
-            (XObject*)self, 1200u, XTimerType_CoarseTimer);
+            (XObject*)self,
+            HsfLinkClient_isOpen() ? 3000u : 1200u,
+            XTimerType_CoarseTimer);
         if (self->m_shotTimer == XTIMER_INVALID_ID) {
             XPrintf("HsfClient: 截图定时器创建失败\n");
         }
@@ -972,7 +1139,61 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     return self;
 }
 
-/* ==================== 帧泵（几何刷新漏斗） ==================== */
+/* ==================== 全局运行模式（顶栏） ==================== */
+
+/**
+ * @brief 顶栏模式钮点击：手动 ⇄ 自动 切换（服务端执行，需 root）。
+ * @param userData 归属主窗（HsfWin*）。
+ */
+static void hsfWinModeSlot(void* userData)
+{
+    HsfTitleBar* bar;
+    int autoMode = 0;
+    bool known;
+    if (!userData) return;
+    bar = &((HsfWin*)userData)->m_titleBar;
+    if (!HsfLinkClient_isReady()) return;
+    known = HsfLinkClient_runMode(&autoMode);
+    HsfLinkClient_setRunMode(!(known && autoMode));
+}
+
+/**
+ * @brief 模式应答到达：刷新顶栏显示。
+ * @param userData 归属主窗（HsfWin*）。
+ */
+static void hsfWinModeNotify(void* userData)
+{
+    HsfWin* win = (HsfWin*)userData;
+    int autoMode = 0;
+    bool known;
+    if (!win) return;
+    known = HsfLinkClient_runMode(&autoMode);
+    HsfTitleBar_setRunMode(&win->m_titleBar, known, autoMode == 1);
+}
+
+/**
+ * @brief 设备健康更新：刷新顶栏健康指示。
+ * @param userData 归属主窗（HsfWin*）。
+ * @note  服务端事件驱动推送（状态变化才发），客户端首连/首订阅会立即
+ *        收到一份，因此这里无需轮询。
+ */
+static void hsfWinHealthNotify(void* userData)
+{
+    HsfWin* win = (HsfWin*)userData;
+    int fault = 0;
+    int offline = 0;
+    int n;
+    if (!win) return;
+    n = HsfLinkClient_deviceHealth(NULL, 0, NULL);
+    if (n <= 0) {
+        HsfTitleBar_setHealth(&win->m_titleBar, false, 0, 0);
+        return;
+    }
+    (void)HsfLinkClient_healthHasProblem(&fault, &offline);
+    HsfTitleBar_setHealth(&win->m_titleBar, true, fault, offline);
+}
+
+/* ==================== 帧泵（几何刷新漏斗） ==================== *//* ==================== 帧泵（几何刷新漏斗） ==================== */
 
 /** @brief 帧泵：每轮事件循环刷新移植页分档与导航几何。
  *  @details 布局/尺寸更新是**异步**的（resize 事件排队派发），故在
@@ -1019,24 +1240,33 @@ static bool hsf_framePump(void* userData)
 
 /* ==================== 启动入口 ==================== */
 
-int HsfUi_start(int autoExitSeconds, const char* shotPath,
-                int shotWidth, int shotHeight, int startPage, int thenPage)
+/**
+ * @brief 登录结果上下文（登录窗/无头登录 → 主窗装配的桥）。
+ */
+typedef struct HsfUiLoginCtx {
+    const HsfUiOptions* m_opts;     /**< 启动选项（借用）。 */
+    HsfWin* m_win;                  /**< 登录成功后装配的主窗（供退出清理）。 */
+    struct HsfLoginWindow* m_login; /**< 登录窗（成功后延迟关闭；无头为 NULL）。 */
+    int m_failed;                   /**< 登录最终失败（退出循环用）。 */
+    int m_pending;                  /**< 主窗待装配（事件循环顶层延迟建，见泵）。 */
+} HsfUiLoginCtx;
+
+static HsfUiLoginCtx* s_launchCtx = NULL;   /**< 延迟装配上下文（泵消费）。 */
+
+/**
+ * @brief 装配主窗（时钟/自动退出/帧泵；截图模式窗口内处理）。
+ */
+static HsfWin* hsfUiMakeWin(const HsfUiOptions* opts)
 {
-    HsfWin* win;
-    XGuiApplication* app;
-    int result;
-
-    app = XGuiApplication_instance();
-    if (!app) {
-        XPrintf("HsfClient: XGuiApplication 未创建\n");
-        return 1;
-    }
-
-    win = hsf_win_create(autoExitSeconds, shotPath, shotWidth, shotHeight,
-                         startPage, thenPage);
+    HsfWin* win = hsf_win_create(opts ? opts->autoSeconds : 0,
+                                 opts ? opts->shotPath : NULL,
+                                 opts ? opts->shotWidth : 0,
+                                 opts ? opts->shotHeight : 0,
+                                 opts ? opts->startPage : -1,
+                                 opts ? opts->thenPage : -1);
     if (!win) {
         XPrintf("HsfClient: 主窗创建失败\n");
-        return 1;
+        return NULL;
     }
     XPrintf("HsfClient: 主窗就绪（标题栏/分割条[导航|堆栈]/黑色状态栏，"
             "%d 页挂栈）\n", HSF_PAGE_COUNT);
@@ -1047,6 +1277,26 @@ int HsfUi_start(int autoExitSeconds, const char* shotPath,
     if (win->m_clockTimer == XTIMER_INVALID_ID)
         XPrintf("HsfClient: 时钟定时器创建失败\n");
 
+    /* 按需订阅自测钩子（env XHSF_PAGE_CYCLE）：每 2s 在"有遥测的页"之间
+     * 轮转一次，供服务端日志观察订阅/退订迁移（切页订阅归属验证）。
+     * 取值=起始页索引；不设则不启用。 */
+    {
+        const char* cycle = XSystem_environment("XHSF_PAGE_CYCLE");
+        if (cycle && cycle[0]) {
+            static const int kCyclePages[3] = {
+                HSF_PAGE_MONITOR_VFD, HSF_PAGE_MONITOR_ANALOG,
+                HSF_PAGE_MONITOR_FLOWMETER
+            };
+            win->m_cyclePage = atoi(cycle);
+            win->m_cycleTimer = XObject_startTimer_ms(
+                (XObject*)win, 2000u, XTimerType_CoarseTimer);
+            (void)kCyclePages;
+            XPrintf("HsfClient: 页轮转自测启用（起始 %d）\n", win->m_cyclePage);
+        } else {
+            win->m_cycleTimer = XTIMER_INVALID_ID;
+        }
+    }
+
     /* 自动退出定时器（CI/截图验收；0=常驻等待窗口关闭）。 */
     if (win->m_autoSeconds > 0) {
         win->m_autoQuitTimer = XObject_startTimer_ms(
@@ -1054,7 +1304,7 @@ int HsfUi_start(int autoExitSeconds, const char* shotPath,
             XTimerType_CoarseTimer);
         if (win->m_autoQuitTimer == XTIMER_INVALID_ID) {
             XPrintf("HsfClient: 自动退出定时器创建失败\n");
-            return 2;
+            return NULL;
         }
     }
 
@@ -1063,15 +1313,191 @@ int HsfUi_start(int autoExitSeconds, const char* shotPath,
         hsf_framePump, win);
     if (!win->m_framePump)
         XPrintf("HsfClient: 帧泵注册失败\n");
+    /* 温湿度推送订阅：标题栏随推送到达即刻刷新（不等 1s 时钟拍）。
+     * 注册在窗口建好之后——回调里直接用 win 指针刷标题栏。 */
+    HsfLinkClient_setTempHumCallback(hsf_onTempHumPushed, win);
+    hsf_titleSyncClimate(win);      /* 立即同步一次现状（未登录则为"--"）。 */
+    return win;
+}
+
+/**
+ * @brief 登录结果回调：成功 → 收登录窗/接远端数据；失败 → 退出循环。
+ * @note  [两种启动序]
+ *        - 主窗先显（交互登录，2026-11-04 起）：主窗**已存在**，本回调
+ *          只需隐藏登录窗并把页面数据源切到远端后端；主窗不重建
+ *          （重建会丢用户已拖好的布局、并让登录窗的 owner 悬垂）。
+ *        - 无头登录（--login）：主窗尚不存在，走延迟装配泵建窗
+ *          （回调栈内建顶层窗口实测卡死，泵在事件循环顶层跑）。
+ */
+static void hsfUiLoginDone(void* userData, bool success, const char* errUtf8)
+{
+    HsfUiLoginCtx* ctx = (HsfUiLoginCtx*)userData;
+    if (!ctx) return;
+    if (!success) {
+        XPrintf("HsfClient: 登录失败（%s）\n",
+                errUtf8 && errUtf8[0] ? errUtf8 : "取消");
+        ctx->m_failed = 1;
+        XGuiApplication_quit();
+        return;
+    }
+    if (ctx->m_win) {
+        /* 主窗先显路径：登录窗收起 + 页面数据源换远端。
+         * 登录窗延迟到事件循环顶层再隐藏/删除（回调栈在 XLink 会话泵里，
+         * 此处同步析控件会拆掉正在派发的事件链）。 */
+        HsfMonitorVfd_rebindProvider();
+        ctx->m_pending = 2;      /* 2=收登录窗（不建主窗）。 */
+        s_launchCtx = ctx;
+        XPrintf("[login-done] 主窗已就绪，收登录窗并接入远端后端\n");
+        return;
+    }
+    ctx->m_pending = 1;
+    s_launchCtx = ctx;
+    XPrintf("[login-done] pending set\n");   /* 主窗装配延迟到事件循环顶层（泵里），
+                             * 回调栈（XLink stateChanged）内建顶层窗口
+                             * 实测卡死——回调不得反调重活。 */
+}
+
+/**
+ * @brief 延迟收尾泵：登录成功后在此（事件循环顶层）收登录窗/建主窗。
+ */
+static bool hsfUiLaunchPump(void* userData)
+{
+    HsfUiLoginCtx* ctx = (HsfUiLoginCtx*)userData;
+    if (!ctx || !ctx->m_pending) return true;
+    if (ctx->m_pending == 2) {
+        ctx->m_pending = 0;
+        s_launchCtx = NULL;
+        if (ctx->m_login) {
+            XWidget_hide((XWidget*)ctx->m_login);  /* 登录窗退出时统一回收。 */
+        }
+        XPrintf("[launch-pump] 登录窗已收起\n");
+        return true;
+    }
+    XPrintf("[launch-pump] enter\n");
+    ctx->m_pending = 0;
+    s_launchCtx = NULL;
+    ctx->m_win = hsfUiMakeWin(ctx->m_opts);
+    if (!ctx->m_win) {
+        ctx->m_failed = 2;
+        XGuiApplication_quit();
+        return true;
+    }
+    if (ctx->m_login) {
+        XWidget_hide((XWidget*)ctx->m_login);   /* 登录窗退出时统一回收。 */
+    }
+    return true;
+}
+
+int HsfUi_start(const HsfUiOptions* opts)
+{
+    HsfUiOptions defOpts;
+    HsfUiLoginCtx ctx;
+    HsfLoginWindow* login = NULL;
+    XHandle launchPump = 0;
+    XGuiApplication* app;
+    int result;
+
+    if (!opts) {
+        memset(&defOpts, 0, sizeof(defOpts));
+        defOpts.startPage = -1;
+        defOpts.thenPage = -1;
+        opts = &defOpts;
+    }
+    app = XGuiApplication_instance();
+    if (!app) {
+        XPrintf("HsfClient: XGuiApplication 未创建\n");
+        return 1;
+    }
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.m_opts = opts;
+
+    if (opts->noLogin) {
+        /* 离线演示：跳过登录直进主窗（变频器页回落本地模拟源）。 */
+        ctx.m_win = hsfUiMakeWin(opts);
+        if (!ctx.m_win) return 1;
+    } else if (opts->loginSpec) {
+        /* 无头登录（CI/联调）：不建窗口，回调里装配主窗。 */
+        if (!HsfLogin_startHeadless(opts->loginSpec, hsfUiLoginDone, &ctx)) {
+            XPrintf("HsfClient: 无头登录发起失败（spec=%s）\n",
+                    opts->loginSpec);
+            return 2;
+        }
+        if (ctx.m_failed) {
+            /* 连接失败在 open 的调用栈内同步回调（TCP 立即拒绝）：
+             * quit() 早于 exec() 会丢失，这里直接快速返回。 */
+            HsfLinkClient_close();
+            HsfSettingsStore_close();
+            return 2;
+        }
+    } else {
+        /* [主窗先显·登录窗压上] 先建主窗（皮肤/窗口设置恢复在建窗内
+         * 完成，见 hsf_win_create 的 hsf_page_window_restoreSettings）——
+         * 登录窗随后以主窗为父创建，天然继承用户已选皮肤，并按其客户区
+         * 居中；否则登录窗先建，恒停在默认浅色皮肤（2026-11-04 实锅）。
+         * 主窗先显示也让用户看到「登录遮罩盖在真实主界面上」的形态，
+         * 未登录期间由登录窗的应用模态门挡住主窗输入。
+         * [截图模式] --login-shot 要截的是登录窗本身，主窗不建
+         * （否则离屏主窗与登录窗同屏抢镜头，且登录窗无父可居中）。 */
+        if (opts->loginShot && opts->shotPath) {
+            /* 只截登录窗：先把用户皮肤装上（本条路径不建主窗，没人跑
+             * hsf_page_window_restoreSettings），再建窗——截图与产品
+             * 形态一致（CI 基线不因缺主窗而失真）。 */
+            hsf_page_window_applyStoredSkin();
+            login = HsfLoginWindow_create(hsfUiLoginDone, &ctx);
+            if (!login) {
+                XPrintf("HsfClient: 登录窗创建失败\n");
+                return 1;
+            }
+            ctx.m_login = login;
+            HsfLoginWindow_armShot(login, opts->shotPath,
+                                   opts->shotWidth, opts->shotHeight);
+        } else {
+            ctx.m_win = hsfUiMakeWin(opts);
+            if (!ctx.m_win) return 1;
+            login = HsfLoginWindow_createFor((XWidget*)ctx.m_win,
+                                             hsfUiLoginDone, &ctx);
+            if (!login) {
+                XPrintf("HsfClient: 登录窗创建失败\n");
+                XClassDelete((XClass*)ctx.m_win);
+                ctx.m_win = NULL;
+                return 1;
+            }
+            ctx.m_login = login;
+        }
+    }
+
+    /* 延迟装配泵：登录成功 → 事件循环顶层建主窗（覆盖窗口/无头两路）；
+     * 离线（--no-login）无登录意图不注册（cleanup 摘泵需有效句柄）。 */
+    if (!opts->noLogin)
+        launchPump = XAbstractEventDispatcher_addPollCallback(hsfUiLaunchPump, &ctx);
 
     result = XGuiApplication_exec();
     XPrintf("HsfClient: 事件循环退出（返回=%d）\n", result);
 
-    /* 清理：页面均为堆块子树、两栏/堆栈/分割条为内嵌成员，随窗级联
-     * 析构；HsfWin 本体堆分配，整块一次回收。 */
-    XClassDelete((XClass*)win);
+    /* 清理次序（实测教训）：① 先摘两个 poll 泵（launch 泵持栈指针、
+     * 帧泵持主窗指针）——disconnectFromServer 排空写队列时会**嵌套泵
+     * 事件循环**，泵若还挂着就会踩已删对象；② 再关 XLink 链路（此
+     * 时主窗仍活着，嵌套泵安全）；③ 最后删窗（页面为堆块子树随窗
+     * 级联析构）与设置落盘。 */
+    XAbstractEventDispatcher_removePollCallback(launchPump);
+    if (ctx.m_win && ctx.m_win->m_framePump)
+        XAbstractEventDispatcher_removePollCallback(ctx.m_win->m_framePump);
+    HsfLinkClient_close();
+    /* [父子析构序] 登录窗以主窗为父（HsfLoginWindow_createFor），删主窗
+     * 会级联删登录窗——必须先单独删登录窗并断开父子关系，否则随后对
+     * login 的第二次 XClassDelete 就是 UAF。这里按「先子后父」显式收口；
+     * 无父路径（--login-shot）同样适用（login 无父时自行释放）。 */
+    if (login) {
+        XWidget* w = (XWidget*)login;
+        XWidget_setParent(w, NULL, XWidget_windowFlags(w));
+        XClassDelete((XClass*)login);
+        login = NULL;
+    }
+    if (ctx.m_win)
+        XClassDelete((XClass*)ctx.m_win);
     /* 设置落盘收尾（析构内含 sync；此处显式收口，覆盖非 aboutToQuit
        退出路径——如自动退出定时器/外部 quit）。 */
     HsfSettingsStore_close();
-    return result;
+    return ctx.m_failed ? ctx.m_failed : result;
 }

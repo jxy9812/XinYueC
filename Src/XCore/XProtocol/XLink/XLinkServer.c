@@ -15,6 +15,9 @@
 #include "XMemory.h"
 #include "XDateTime.h"
 #include "XString.h"
+#include "XPrintf.h"
+#include "XIODevice.h"         /* XIODevice_fd：待处理连接有效性闸。 */
+#include "XAbstractSocket.h"   /* disconnected 信号（传输断开 → 会话复位）。 */
 #include <string.h>
 #if XLINK_AUTH_ON
 #include "XLinkAuth.h"
@@ -26,6 +29,8 @@
 
 /* 前置声明：listen 与 timerEvent 都经 pump 驱动。 */
 static void VXLinkServer_onNewConnection(XObject* receiver, XVarList* args);
+/* 传输断开槽：socket 层 disconnected → 会话复位（见 acceptPending 接线处）。 */
+static void VXLinkSession_onServerSocketGone(XObject* receiver, XVarList* args);
 
 /** @brief 异步驱动路径的当前时刻：单调毫秒（与会话异步口径一致）。 */
 static uint32_t XLinkServerPrivate_nowMs(void)
@@ -113,11 +118,39 @@ static void XLinkServerPrivate_acceptPending(XLinkServer* self)
         XLinkSession* session;
         if (!conn)
             break;
+        /* [2026-11-04 空壳会话闸] 只接受**真正连上**的连接。
+         *
+         * 实测：客户端只建 1 条 TCP 连接（netstat 全程同一源端口），服务端
+         * 却记录 4 次「会话接入」，每个会话的底层设备都处于未连接态——
+         * pending 队列里混进了无效的 XTcpSocket。这类"空壳会话"建起来既
+         * 收发不了数据，又让应用层误以为有客户端接入。
+         *
+         * 判据用 XAbstractSocket 的连接状态（accept 成功的 socket 由
+         * `incomingConnection` 置为 ConnectedState）；不是 Connected 的
+         * 一律丢弃，不建会话。
+         * @note 不能用 `XIODevice_fd(conn) < 0` 当判据：刚 accept 出来的
+         *       socket 其 XFd 尚未登记（实测必然为 -1），那样会把唯一的
+         *       真实连接也丢掉。 */
+        if (XAbstractSocket_state((XAbstractSocket*)conn)
+            != XAbstractSocket_ConnectedState) {
+            XPrintf("XLinkServer: 丢弃未连接的待处理套接字（空壳会话）\n");
+            continue;
+        }
         session = XLinkSession_create_ex((XIODevice*)conn);
         if (!session) {
             /* 会话对象创建失败：关闭连接防泄漏（套接字归监听器子对象管理）。 */
             continue;
         }
+        /* 【僵尸会话根修 2026-11-04】接传输的 disconnected 信号。
+         * 会话只借用了设备、自身只接 readyRead（收包），对端断开时设备
+         * openMode 被清成 NotOpen 而会话毫无察觉 ⇒ 停在 Ready 永不回收，
+         * 应用 tick 继续发布使 tx 队列无界增长，且该会话既收不到订阅也
+         * 发不出推送（客户端表现为"切页订阅全丢"）。
+         * 槽内只 reset（不发信号、不删除）：回收由 reap 在调用栈退出后做。 */
+        XObject_connect_1((XObject*)conn,
+                          XSignal(XAbstractSocket_disconnected_signal),
+                          (XObject*)session, VXLinkSession_onServerSocketGone,
+                          XConnectionType_Auto);
 #if XLINK_AUTH_ON
         /* 认证启用时：能力位模板补 Auth 位（对端据此知道要登录），
            并挂凭据查表回调——握手后自动进入 Authenticating。 */
@@ -171,6 +204,19 @@ static void XLinkServerPrivate_acceptPending(XLinkServer* self)
     }
 }
 
+/** @brief 传输断开槽（receiver = 会话对象）。
+ *  @details 只把会话复位到 Inactive，**不在本栈删除会话**：本槽在 socket
+ *           的状态迁移调用栈里执行，而 reap 要求"所有会话调用栈均已退出"。
+ *           复位后由下一次 pump 末尾的 reap 出表并销毁——时序与 Goodbye/
+ *           静默判线完全一致，不引入新的释放时机。
+ */
+static void VXLinkSession_onServerSocketGone(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    if (!receiver) return;
+    XLinkSession_onDisconnected((XLinkSession*)receiver);
+}
+
 /** @brief 回收 Inactive 会话：出表、通知（删除前，指针仍有效）、删除。
  *  @note  只允许在"任何会话调用栈均已退出"的上下文调用（最外层 pump 末尾
  *         或事件分派的 timerEvent）——同步删除在此前提下符合对象释放时机
@@ -197,6 +243,26 @@ static void XLinkServerPrivate_reap(XLinkServer* self)
         if (self->m_sessionGone)
             self->m_sessionGone(self, session, self->m_sessionGoneUserData);
 #endif
+        /* [僵尸 socket 处置 2026-11-04] 这里**只摘信号，不关闭 socket**。
+         *
+         * 曾尝试在回收会话时 close 掉它接管的 socket（想顺手解除 IOCP
+         * 关联），但实测必段错误：cdb 栈落在 `XDevice_dispatchControl`，
+         * 访问地址 0xFEEEFEEE（MSVC 调试堆的"已释放"标记）——close 会让
+         * 设备上下文析构，而事件队列里仍有指向它的事件，随后派发即 UAF。
+         *
+         * 因此 socket 的生命周期完全交还它的属主 XTcpServer（accept 时
+         * setParent，close() 时统一清理）。本函数只做一件事：把会话与该
+         * socket 的 disconnected 信号摘开，避免会话被删后 socket 再发信号
+         * 打到已释放的会话上（这是另一条 UAF）。 */
+        {
+            XIODevice* dev = XLinkSession_device(session);
+            if (dev) {
+                XObject_disconnect_1((XObject*)dev,
+                                     XSignal(XAbstractSocket_disconnected_signal),
+                                     (XObject*)session,
+                                     VXLinkSession_onServerSocketGone);
+            }
+        }
         XClassDelete((XClass*)session);
     }
 }

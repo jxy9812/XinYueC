@@ -1797,6 +1797,29 @@ XAbstractNetIoRing* XAbstractNetIoRing_createPlatform(void) {
     return (XAbstractNetIoRing*)XNetIoRingPosix_create();
 }
 
+/* ================================================================
+ * 平台钩子：复核「0 字节读完成」是否真是对端 FIN（假 EOF 规避）
+ * ================================================================
+ * [2026-10-16 昆仑通态 A33(5.2.9 定制内核)实测] 新建 connect 型 socket 上
+ * 读到 0 字节完成（连接后 0~350ms 内），但对端健在（同机裸 socket 连接+
+ * 闲置 2s+收发全通）。按对端 FIN 处理即误断——Modbus 主站「连上即断线
+ * 重连」循环、XUpgrade 引擎 HTTP 超时（wget 却通）同征。
+ *
+ * 判定：MSG_PEEK 读 1 字节
+ *   pr == 0                        → 真 FIN（对端关闭，照旧下发 SOCK_CLOSE）
+ *   pr < 0 且 EAGAIN/EWOULDBLOCK    → 连接活着（假 EOF，丢弃关闭事件）
+ *   pr < 0 且其他（EBADF/ENOTSOCK） → 不当作关闭（fd 已失效，不是对端 FIN）
+ *   pr > 0                         → 对端有数据待读，更非关闭
+ */
+bool XAbstractNetIoRing_platformPeerReallyClosed(int osFd) {
+    unsigned char peekByte;
+    int pr;
+    if (osFd < 0)
+        return true; /* 无 OS fd 可查：保持"0 字节即关闭"的保守语义。 */
+    pr = (int)recv(osFd, &peekByte, 1, MSG_PEEK | MSG_DONTWAIT);
+    return pr == 0;
+}
+
 #endif /* __linux__ */
 
 #endif /* XAbstractNetIoRing_ON */

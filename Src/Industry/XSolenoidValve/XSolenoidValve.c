@@ -204,6 +204,12 @@ static void VXSolenoidValve_timerEvent(XObject* obj, XTimerEvent* event)
     id = XTimerEvent_timerId(event);
     XEvent_accept(event);
     if (id == valve->m_guardTimer) {
+        /* [触发即注销 2026-11-03] startTimer 注册的是重复型定时器：触发≠注销，
+         * fd 槽与调度节点都存续到 killTimer 才释放。旧实现只把存储 id 置
+         * INVALID ⇒ 后续 valve_stopGuard 因 id 失效杀不掉它 ⇒ **每次命令超时
+         * 泄漏一个 fd**（fd 表 128 槽）。与 XModbusRtuSerialServer /
+         * XVfdDevice 同源缺陷，此处一并收口。 */
+        XObject_killTimer((XObject*)valve, id);
         valve->m_guardTimer = XTIMER_INVALID_ID;
         XSolenoidValve_commandTimeout_signal(valve);
         valve_setState(valve, XSolenoidValveState_Fault);

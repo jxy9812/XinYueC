@@ -264,41 +264,82 @@ void XIODevice_setCurrentWriteChannel(XIODevice* self, int channelIndex) {
 // ========== 核心读写 API ==========
 // 这些函数现在使用新的单通道 XIODevicePrivate
 
+/**
+ * @brief 从设备读取至多 maxlen 字节（对标 `QIODevice::read(char*, qint64)`）。
+ * @param self   设备对象；NULL 返回 -1。
+ * @param data   调用方提供存储空间；NULL 返回 -1。
+ * @param maxlen 最大读取字节数；`< 0` 返回 -1，`0` 返回 0。
+ * @return 实际读到的字节数；真错误返回 -1；无数据可读返回 0。
+ *
+ * @details **2026-11-04 全面对齐 Qt 6.8 `QIODevice::read`**：
+ *
+ *          1. **守卫判据对齐 `CHECK_READABLE`**（qiodevice.cpp:109-118）
+ *             只要求 `openMode & ReadOnly`；未打开（NotOpen）与只写设备同样
+ *             拒绝并返回 -1。原实现把 `!self->m_d` 与读权限混在一条判断里，
+ *             调用方无法区分「对象无效」与「设备未打开」。
+ *
+ *          2. **`maxlen == 0` 返回 0 而不是 -1**
+ *             Qt 只在 `maxSize < 0` 时报错（`CHECK_MAXLEN`，qiodevice.cpp:73），
+ *             `0` 是合法的空读。原实现把 `maxlen <= 0` 一并判错。
+ *
+ *          3. **先消费缓冲区、再向设备补齐**，与 `QIODevicePrivate::read`
+ *             同构（qiodevice.cpp:1046+）：缓冲区满额即返回；否则把剩余
+ *             额度交给 `readData`。短读合法，不要求一次填满 maxlen。
+ *
+ *          4. **错误传播对齐 `readFromDevice < 0 && readSoFar == 0 → -1`**
+ *             只要本次已从缓冲区取到字节就返回已取到的量；只有一字未得
+ *             且底层出错才返回 -1。原实现在底层出错时**无条件**返回 -1，
+ *             会丢掉 `bytesFromBuffer` 里已成功取出的数据——实测 DDNS
+ *             端到端把「已读到 64 字节响应头」判成读失败。
+ *
+ *          5. **`readData` 返回 0 视为 EOF**：返回已取到的字节数（可 0）。
+ *
+ * @note 每次调用按当前读通道取缓冲区（对应 Qt 单缓冲模型），不改变通道。
+ */
 int64_t XIODevice_read_1(XIODevice* self, char* data, int64_t maxlen)
 {
-	if (!self || !self->m_d || !data || maxlen <= 0) return -1;
-	if (!XIODevice_isReadable(self)) return -1;
+	int64_t bytesFromBuffer;
+	int64_t bytesFromDevice;
+	int64_t remaining;
+	XIODevicePrivate* d;
+	int currentReadChannel;
+	struct XRingBuffer* readBuf;
 
-	XIODevicePrivate* d = self->m_d;
-	// 获取当前读通道ID
-	int currentReadChannel = XIODevice_currentReadChannel(self);
-	struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(d, currentReadChannel);
-	if (!readBuf) {
-		return -1; // 无法获取或创建缓冲区
-	}
-
-	// 1. 首先尝试从当前通道的缓冲区读取
-	int64_t bytesFromBuffer = XRingBuffer_read(readBuf, data, maxlen);
-	if (bytesFromBuffer == maxlen) {
-		return bytesFromBuffer; // 缓冲区数据足够
-	}
-
-	// 2. 如果缓冲区数据不足，调用子类实现的底层 readData 函数
-	// 注意: 此处并未将通道ID传递给底层设备，这是一个限制。
-	int64_t remaining = maxlen - bytesFromBuffer;
-	int64_t bytesFromDevice = XIODevice_readData_base(self, data + bytesFromBuffer, remaining);
-
-	if (bytesFromDevice > 0) {
-		return bytesFromBuffer + bytesFromDevice;
-	}
-	else if (bytesFromDevice == 0) {
-		// EOF
-		return bytesFromBuffer;
-	}
-	else {
-		// Error
+	/* 1. 参数守卫（Qt CHECK_MAXLEN：负值才是参数错误，0 合法）。 */
+	if (!self || !self->m_d || !data || maxlen < 0)
 		return -1;
-	}
+	if (maxlen == 0)
+		return 0;
+
+	/* 2. Qt CHECK_READABLE：仅要求 ReadOnly 位。 */
+	if (!XIODevice_isReadable(self))
+		return -1;
+
+	d = self->m_d;
+	currentReadChannel = XIODevice_currentReadChannel(self);
+	readBuf = XIODevicePrivate_getOrCreateReadBuffer(d, currentReadChannel);
+	if (!readBuf)
+		return -1;   /* 无法获取或创建缓冲区：真错误。 */
+
+	/* 3. 先吃缓冲区；不足时把剩余额度交给 readData（短读合法）。 */
+	bytesFromBuffer = (int64_t)XRingBuffer_read(readBuf, data, (size_t)maxlen);
+	if (bytesFromBuffer < 0)
+		bytesFromBuffer = 0;
+	if (bytesFromBuffer >= maxlen)
+		return bytesFromBuffer;          /* 缓冲区已满足本次请求。 */
+
+	remaining = maxlen - bytesFromBuffer;
+	bytesFromDevice = XIODevice_readData_base(self, data + bytesFromBuffer, remaining);
+
+	if (bytesFromDevice > 0)
+		return bytesFromBuffer + bytesFromDevice;
+
+	if (bytesFromDevice == 0)
+		return bytesFromBuffer;          /* EOF / 暂无数据：返回已取到的量。 */
+
+	/* 4. 底层出错（含「暂不可读」的负值）：已从缓冲区取到字节就照常返回，
+	 *    避免丢弃有效数据（Qt：readFromDevice < 0 && readSoFar == 0 才 -1）。 */
+	return (bytesFromBuffer > 0) ? bytesFromBuffer : -1;
 }
 int64_t XIODevice_read_2(XIODevice* self, XByteArray* buff, int64_t maxlen, bool isAppend)
 {

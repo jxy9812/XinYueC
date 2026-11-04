@@ -55,6 +55,32 @@
 #define XSOLENOID_VALVE_ON 1
 #endif
 
+/** @brief 温湿度变送器设备（XTempHumTransmitter）；依赖 XINDUSTRY_CHANNEL_ON。 */
+#ifndef XTEMP_HUM_ON
+#define XTEMP_HUM_ON 1
+#endif
+
+/** @brief 压差计设备（XDiffPressureGauge）；依赖 XINDUSTRY_CHANNEL_ON。 */
+#ifndef XPRESS_DIFF_ON
+#define XPRESS_DIFF_ON 1
+#endif
+
+/** @brief 电磁流量计设备（XFlowMeter）；依赖 XINDUSTRY_CHANNEL_ON。
+ *  @note   设备层只认通道组（XIoPoint role），Modbus/TCP/CAN 等传输由装配期
+ *          注入，故本开关不看 XINDUSTRY_MODBUS_ON——换成 CAN 链路照常可用。 */
+#ifndef XFLOW_METER_ON
+#define XFLOW_METER_ON 1
+#endif
+
+/** @brief 按钮组设备（XButtonStation：急停/启动/停止/复位 + 手自动转换开关 +
+ *         按钮指示灯）；依赖 XINDUSTRY_CHANNEL_ON。
+ *  @note   读侧是 DI 触点、写侧只有指示灯 DO，两侧都不认识链路类型；触点接在
+ *          GPIO 干接点还是 Modbus 离散输入由装配期决定，本开关不看
+ *          XINDUSTRY_MODBUS_ON。 */
+#ifndef XBUTTON_STATION_ON
+#define XBUTTON_STATION_ON 1
+#endif
+
 /** @brief GPIO 通道适配器；实际可用性还取决于平台后端（Drive/ 各平台 XGpio 实现）。 */
 #ifndef XINDUSTRY_GPIO_ON
 #define XINDUSTRY_GPIO_ON 1

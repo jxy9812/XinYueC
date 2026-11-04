@@ -549,6 +549,14 @@ XAbstractNetIoRing* XAbstractNetIoRing_createPlatform(void)
     return NULL;
 }
 
+/* 假 EOF 复核钩子（无 OS/BSD socket 语义）：恒判真关闭，保持"0 字节读
+ * 完成即对端 FIN"的原有行为，与引入该钩子前逐位一致。 */
+bool XAbstractNetIoRing_platformPeerReallyClosed(int osFd)
+{
+    (void)osFd;
+    return true;
+}
+
 /* ---------------- mbedtls 文件型 X509（库裁剪 FS-IO，恒失败） ------------ */
 int mbedtls_x509_crt_parse_path(mbedtls_x509_crt* chain, const char* path)
 {

@@ -30,12 +30,27 @@ extern "C" {
 /**
  * @brief 一条映射段：统一虚拟地址空间的一段 ↔ 某设备某从站的同宽远端段。
  */
+/**
+ * @brief 映射段属性标志（XModbusMapRange::flags 位掩码）。
+ */
+typedef enum XModbusMapRangeFlag {
+    /** 只写段：远端该段可写不可读（厂商从站的命令字/参数写入区）。
+     *  写路径依赖该段的映射与缓存块，故段仍要建；但**不参与轮询**——
+     *  读它只会让从站回错误帧，白白赔一个超时窗口并抬高轮询失败计数
+     *  （失败计数会触发退避，把写回确认饿死）。 */
+    XModbusMapRange_WriteOnly = 0x01
+} XModbusMapRangeFlag;
+
 typedef struct XModbusMapRange {
     uint16_t virtualStart;      /**< 统一虚拟空间起始地址。 */
     uint16_t count;             /**< 段长（点数；位区=位，寄存器区=字）。 */
     int deviceId;               /**< 底层设备句柄（XModbusHub_addDevice 返回值）。 */
     uint16_t unitId;            /**< 底层从站地址（Modbus unit id；uint16 收紧段表布局）。 */
     uint16_t remoteStart;       /**< 远端起始地址。 */
+    uint8_t  flags;             /**< 段属性标志（XModbusMapRangeFlag 位掩码）：
+                                     XMODBUS_MAP_RANGE_WRITE_ONLY = 只写段
+                                     （可写不可读：写路径需要它，但**不参与轮询**
+                                      ——厂商从站的写区读了只会回错误帧）。 */
     uint16_t defValue;          /**< 段默认值（输出上线对齐用）：块首次物化时
                                      播种进缓存（仅未初始化点），故首启缓存
                                      即默认值、上线下发即默认值清残留；位区
@@ -128,6 +143,25 @@ bool XModbusMapping_addRange(XModbusMapping* map, XModbusRegisterType type,
                              uint16_t virtualStart, uint16_t count,
                              int deviceId, int unitId, uint16_t remoteStart,
                              uint16_t defaultValue);
+
+/**
+ * @brief 增加一条映射段（同 addRange，但可带段属性标志）。
+ * @param map 目标映射管理器；NULL 或未初始化拒绝。
+ * @param type 寄存器区；非法值拒绝。
+ * @param virtualStart 统一虚拟空间起始地址。
+ * @param count 段长（点数）；0 拒绝。
+ * @param deviceId 底层设备句柄；负值拒绝。
+ * @param unitId 底层从站地址。
+ * @param remoteStart 远端起始地址。
+ * @param defaultValue 段默认值（语义同 addRange）。
+ * @param flags 段属性标志（XModbusMapRangeFlag 位掩码；0=普通可读段）。
+ * @return 成功 true；参数非法 / 与既有段重叠 false。
+ * @note addRange 等价于本函数的 flags=0 版本（既有调用点不受影响）。
+ */
+bool XModbusMapping_addRangeEx(XModbusMapping* map, XModbusRegisterType type,
+                               uint16_t virtualStart, uint16_t count,
+                               int deviceId, int unitId, uint16_t remoteStart,
+                               uint16_t defaultValue, uint8_t flags);
 /**
  * @brief 删除虚拟起点为 virtualStart 的段。
  * @param map 目标映射管理器；NULL 拒绝。

@@ -1229,8 +1229,22 @@ static void VXVfdDevice_timerEvent(XObject* obj, XTimerEvent* event)
     XTimerId id;
     if (!obj || !event) return;
     id = XTimerEvent_timerId(event);
+    /* [触发即注销 2026-11-03] XObject_startTimer_ms 注册的是**重复型**定时器：
+     * 触发 ≠ 注销 —— fd 槽位与调度节点都存续到 killTimer 才释放
+     * （XAbstractEventDispatcher_registerTimer 分配 XFd 槽，
+     *  unregisterTimer 才 XFd_free）。旧实现只把存储 id 置 INVALID：
+     *   ① 下一拍 xvfdStatusTimerStart 因 id 已失效**杀不掉**旧定时器，
+     *      而每拍又 start 一个新定时器 ⇒ **每拍永久泄漏一个 fd**；
+     *   ② fd 表只有 128 槽，占满后全应用再无定时器可用 ⇒
+     *      RTU 客户端的帧间定时器注册失败（id 变 -1）⇒ 完整应答帧滞留
+     *      接收缓冲永不解析 ⇒ **所有请求超时**（真机实测 200ms 状态间隔
+     *      约 25s、1000ms 约 36s 耗尽 128 槽）。
+     * 这与 XModbusRtuSerialServer「485 从站 timerEvent 触发不注销泄漏
+     * 定时器占满 128 槽 XFD 表」是同一类缺陷的另一处复发，故此处同样
+     * 「触发即注销」。 */
     if (dev->m_statusTimer != XTIMER_INVALID_ID && id == dev->m_statusTimer) {
         XEvent_accept((XEvent*)event);
+        XObject_killTimer(obj, id);          /* 触发即注销：释放 fd 槽 */
         dev->m_statusTimer = XTIMER_INVALID_ID;
         if (dev->m_dirty) XVfdDevice_emitStatus(dev);
         if (dev->m_group) xvfdStatusTimerStart(dev);
@@ -1238,12 +1252,16 @@ static void VXVfdDevice_timerEvent(XObject* obj, XTimerEvent* event)
     }
     if (dev->m_actionTimer != XTIMER_INVALID_ID && id == dev->m_actionTimer) {
         XEvent_accept((XEvent*)event);
+        XObject_killTimer(obj, id);          /* 同上：动作监督定时器也是重复型 */
         dev->m_actionTimer = XTIMER_INVALID_ID;
         XClassGetVirtualFunc(dev, EXVfdDevice_ActionTimerExpired,
             void (*)(XVfdDevice*))(dev);
         return;
     }
-    /* 未知定时器 id 交父类链处理：第一参=直接父类（XClass_Parent 语义）。 */
+    /* 未知定时器 id 交父类链处理：第一参=直接父类（XClass_Parent 语义）。
+     * **这里不 killTimer**：本类的两个定时器在各自分支里已「触发即注销」，
+     * 走到这里的只可能是已注销的迟到事件（id 槽位已被复用时误杀活定时器
+     * 会把动作监督掐掉，比泄漏一个已死定时器更糟）。 */
     XClass_Parent(XObject, EXObject_TimerEvent, void (*)(XObject*, XTimerEvent*))(obj, event);
 }
 

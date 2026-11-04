@@ -824,17 +824,20 @@ static int caseM512SlaveSemantics(void)
     CHECK(xvfdEmuGet(&em, 0x7022) == 45, "7022H 电机温度（1℃ 口径）");
     CHECK(xvfdEmuGet(&em, 0x3000) == 3, "3000H 初始状态 = 3（停机）");
     CHECK(xvfdEmuGet(&em, 0x8000) == 0, "8000H 初始无故障");
-    CHECK(xvfdEmuGet(&em, 0xF00A) == 5000, "F00AH P0.10 最大频率 50.00Hz（0.01Hz 口径）");
+    /* [2026-11-03 对齐真机 0.1Hz 口径] 模拟器已按实机标定（m_maxFreq=500=
+     * 50.0Hz，0.1Hz 定点；同 df7b7dac 的 M512 真机联调口径），本组断言原按
+     * 旧 0.01Hz 口径写（5000/2500/-1000），物理频率相同但原始码差 10 倍。 */
+    CHECK(xvfdEmuGet(&em, 0xF00A) == 500, "F00AH P0.10 最大频率 50.0Hz（0.1Hz 口径）");
 
     /* ② 1000H 通讯设定值 → 1001H/101FH 运行频率（P0.10 百分比换算）。 */
-    xvfdEmuPut(&em, 0x1000, 5000);              /* +50.00% → 25.00Hz */
+    xvfdEmuPut(&em, 0x1000, 5000);              /* +50.00% → 25.0Hz */
     xvfdSlaveEmuTick(&em);
-    CHECK(xvfdEmuGet(&em, 0x1001) == 2500, "1001H 运行频率跟随 1000H（+50% → 2500）");
-    CHECK(xvfdEmuGet(&em, 0x101F) == 2500, "101FH 主频率 X 跟随");
-    xvfdEmuPut(&em, 0x1000, (uint16_t)(-2000)); /* -20.00% → -10.00Hz */
+    CHECK(xvfdEmuGet(&em, 0x1001) == 250, "1001H 运行频率跟随 1000H（+50% → 250=25.0Hz）");
+    CHECK(xvfdEmuGet(&em, 0x101F) == 250, "101FH 主频率 X 跟随");
+    xvfdEmuPut(&em, 0x1000, (uint16_t)(-2000)); /* -20.00% → -10.0Hz */
     xvfdSlaveEmuTick(&em);
-    CHECK((int16_t)xvfdEmuGet(&em, 0x1001) == -1000,
-          "负给定 → 1001H 是 16 位补码（-1000），不是 0");
+    CHECK((int16_t)xvfdEmuGet(&em, 0x1001) == -100,
+          "负给定 → 1001H 是 16 位补码（-100=-10.0Hz），不是 0");
 
     /* ③ 2000H 命令字 → 3000H 状态（命令源=通讯时生效）。 */
     xvfdEmuPut(&em, 0x2000, 1);

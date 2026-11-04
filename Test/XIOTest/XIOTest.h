@@ -20,6 +20,14 @@ extern "C" {
 	void XUdpDirectedTest(void);
 	void XTestMenu_XTcpSocketTest(XTestMenu* root);
 	void XTestMenu_XTcpServerTest(XTestMenu* root);
+
+	/* XTcpServer 命令行自动回归（--test xtcpserver）：进程内自跑全部用例，
+	   返回 0 表示全通过。供 CI/联调脚本化验证。 */
+	int  XTcpServerTest_run(void);
+
+	/* 套接字「读挂起后不再收数据」专项回归（--test xsocket-stall）：
+	   长空闲/高频/背压/双向/重连/串包六组，返回失败数（0=全通过）。 */
+	int  XSocketStallTest_run(void);
 	void XTestMenu_XHostInfoTest(XTestMenu* root);
 	void XTestMenu_XDirTest(XTestMenu* root);
 	void XTestMenu_XFileTest(XTestMenu* root);

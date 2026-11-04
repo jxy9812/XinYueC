@@ -3,6 +3,7 @@
 #include "XIODevice.h"
 #include "XIODevicePrivate.h"
 #include "XRingBuffer.h"
+#include "XPrintf.h"
 #include "XSocketDescriptor.h"
 #include "XEvent.h"
 #include "XVariant.h"
@@ -973,12 +974,14 @@ static bool VXDeviceNetwork_control(XDevice* self, XDeviceContext* handle, uint3
     case XDeviceNetworkCommand_ContinueRead:
         XDeviceNetwork_socketContinueRead(ctx->m_base.m_fd, ctx->m_socketType == XDeviceNetwork_Udp);
         return true;
-    case XDeviceNetworkCommand_ContinueWrite:
-        XDeviceNetwork_socketContinueWrite(ctx->m_base.m_fd,
-                                     XIODevicePrivate_getOrCreateWriteBuffer(ctx->m_endpoint.m_socket->base.m_d,
-                                                                              ctx->m_endpoint.m_socket->base.m_currentWriteChannel),
+    case XDeviceNetworkCommand_ContinueWrite: {
+        XRingBuffer* rb = XIODevicePrivate_getOrCreateWriteBuffer(
+            ctx->m_endpoint.m_socket->base.m_d,
+            ctx->m_endpoint.m_socket->base.m_currentWriteChannel);
+        XDeviceNetwork_socketContinueWrite(ctx->m_base.m_fd, rb,
                                      ctx->m_socketType == XDeviceNetwork_Udp);
         return true;
+    }
     case XDeviceNetworkCommand_SetSocketOption:
     {
         int option;

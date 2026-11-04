@@ -56,6 +56,16 @@ void HsfMonitorVfd_setInteractiveMode(bool interactive);
  */
 bool HsfMonitorVfd_interactiveMode(void);
 
+/**
+ * @brief      按当前链路状态重新绑定数据 provider（登录成功后调用）。
+ * @details    主窗先建、登录后连线的启动序下，建页时链路尚未 open，页面
+ *             先绑本地模拟源；登录成功（或断线重登）后本入口把页面就地
+ *             切到远端 XLink 后端（已绑同一表时幂等空转）。切到远端时
+ *             顺带补挂模式订阅并查询一次运行模式。
+ * @return     页未建返回 false；已绑定/切换完成返回 true。
+ */
+bool HsfMonitorVfd_rebindProvider(void);
+
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */
 
 #ifdef __cplusplus

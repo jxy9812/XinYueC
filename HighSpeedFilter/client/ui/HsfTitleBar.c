@@ -22,6 +22,12 @@
 /* ---- 几何/格式常量 ---- */
 #define HSF_TITLE_ICON_W   48  /**< ☰ 触控区宽（Material 48dp）。 */
 #define HSF_TITLE_GAP      10  /**< 右侧块内元素间距。 */
+
+/** @brief 全局运行模式钮宽度（顶栏右块左侧，可点击切换）。 */
+#define HSF_TITLE_MODE_W 96
+
+/** @brief 设备健康指示宽度（模式钮左侧；够放"故障99/离线99"）。 */
+#define HSF_TITLE_HEALTH_W 108
 #define HSF_TITLE_PAD       0  /**< 右端留白（0=温湿度列贴窗口右缘）。 */
 #define HSF_TITLE_WIDE_MIN 700 /**< 宽栏阈值：显示「日期+时间」格式。 */
 #define HSF_TITLE_TEMP_W   62  /**< 温度标签定宽（℃ 值+余量）。 */
@@ -75,12 +81,24 @@ static void hsfTitleRefreshSideTexts(HsfTitleBar* self)
     hsfTitleFormatTime(buf, sizeof(buf));
     if (self->m_clock)
         XLabel_setText_2(self->m_clock, buf);
-    snprintf(buf, sizeof(buf), "%.1f\xE2\x84\x83", self->m_temperature);
-    if (self->m_temp)
+    if (self->m_tempValid)
+        snprintf(buf, sizeof(buf), "%.1f\xE2\x84\x83", self->m_temperature);
+    else
+        snprintf(buf, sizeof(buf), "--\xE2\x84\x83");
+    if (self->m_temp) {
         XLabel_setText_2(self->m_temp, buf);
-    snprintf(buf, sizeof(buf), "%.1f%%", self->m_humidity);
-    if (self->m_humid)
+        /* 文本变了但几何可能不变（setFixedWidth 同值不触发重绘）——
+         * 显式标脏，否则屏幕上仍是旧文本（XGui 无自动文本变化失效）。 */
+        XWidget_update((XWidget*)self->m_temp);
+    }
+    if (self->m_humValid)
+        snprintf(buf, sizeof(buf), "%.1f%%", self->m_humidity);
+    else
+        snprintf(buf, sizeof(buf), "--%%");
+    if (self->m_humid) {
         XLabel_setText_2(self->m_humid, buf);
+        XWidget_update((XWidget*)self->m_humid);
+    }
 }
 
 /** @brief 重排：右侧块右对齐，标题占剩余空间居中。
@@ -154,6 +172,25 @@ static void hsfTitleRelayout(HsfTitleBar* self)
         if (self->m_clock)
             XWidget_setGeometry((XWidget*)self->m_clock, x, halfH,
                                 clockW, barH - halfH);
+    }
+
+    /* 全局运行模式：时钟列左侧独立一段（整栏高、垂直居中），
+     * 与右侧时钟/温湿度不重叠——三块各自占位，标题居中区间随之收窄。 */
+    if (self->m_modeBtn) {
+        int modeX = x - gap - HSF_TITLE_MODE_W;
+        if (modeX < HSF_TITLE_ICON_W) modeX = HSF_TITLE_ICON_W;
+        XWidget_setGeometry((XWidget*)self->m_modeBtn, modeX, 0,
+                            HSF_TITLE_MODE_W, barH);
+        x = modeX;
+    }
+
+    /* 设备健康：模式钮再往左一格。 */
+    if (self->m_healthLbl) {
+        int hx = x - gap - HSF_TITLE_HEALTH_W;
+        if (hx < HSF_TITLE_ICON_W) hx = HSF_TITLE_ICON_W;
+        XWidget_setGeometry((XWidget*)self->m_healthLbl, hx, 0,
+                            HSF_TITLE_HEALTH_W, barH);
+        x = hx;
     }
 
     /* 标题：☰ 区右侧 ~ 右侧块左侧，居中（右侧块宽度变化不影响居中）。 */
@@ -230,6 +267,17 @@ static void VHsfTitleBar_mousePressEvent(XWidget* self, XEvent* event)
             return;
         }
     }
+    if (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS && bar && bar->m_modeFn) {
+        XMouseEvent* mouse = (XMouseEvent*)event;
+        XPoint pos = XMouseEvent_position(mouse);
+        int barW = XWidget_width(&bar->m_base);
+        if (pos.x >= barW - HSF_TITLE_MODE_W - HSF_TITLE_GAP &&
+            pos.x <= barW) {
+            bar->m_modeFn(bar->m_modeUserData);
+            XEvent_accept(event);
+            return;
+        }
+    }
     XClass_Parent(XWidget, EXWidget_MousePressEvent,
                   void (*)(XWidget*, XEvent*))(self, event);
 }
@@ -255,6 +303,8 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
     XClassSetVtable(self, HsfTitleBar);
     self->m_temperature = 0.0; /* 默认值 0 */
     self->m_humidity = 0.0;    /* 默认值 0 */
+    self->m_tempValid = false; /* 未收到遥测前显示 "--"，不显示 0.0 */
+    self->m_humValid = false;
 
     HsfTheme_applyDefaultFont(&self->m_base);
     {
@@ -289,6 +339,23 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
     /* 温湿度竖列两行 → 同为 12px（行高 20px）。
      * 竖列**左对齐**：右对齐时「0.0℃」与「0.0%」尾字宽不同 → 数字
      * 参差；左对齐后两行数字起点一致、纵向对齐成列。 */
+    /* 全局运行模式（手动/自动）：服务端一档管控全部设备，故置于顶栏。 */
+    self->m_modeBtn = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
+    if (self->m_modeBtn) {
+        XLabel_setAlignment(self->m_modeBtn, XAlignment_HCenter | XAlignment_VCenter);
+        /* 可点击：撤掉基类的鼠标穿透。 */
+        XWidget_setAttribute((XWidget*)self->m_modeBtn,
+                             XWidgetAttribute_TransparentForMouseEvents, false);
+        XLabel_setText_2(self->m_modeBtn,
+                         "\xE6\xA8\xA1\xE5\xBC\x8F--");   /* 模式-- */
+    }
+    /* 设备健康指示：正常 / 故障N / 离线N（事件驱动推送，变化才刷）。 */
+    self->m_healthLbl = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
+    if (self->m_healthLbl) {
+        XLabel_setAlignment(self->m_healthLbl,
+                            XAlignment_HCenter | XAlignment_VCenter);
+        XLabel_setText_2(self->m_healthLbl, "\xE8\xAE\xBE\xE5\xA4\x87--"); /* 设备-- */
+    }
     self->m_temp = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
     self->m_humid = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
     if (self->m_temp)
@@ -297,6 +364,8 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
         XLabel_setAlignment(self->m_humid, XAlignment_Left | XAlignment_VCenter);
     if (self->m_date) XWidget_show((XWidget*)self->m_date);
     if (self->m_clock) XWidget_show((XWidget*)self->m_clock);
+    if (self->m_modeBtn) XWidget_show((XWidget*)self->m_modeBtn);
+    if (self->m_healthLbl) XWidget_show((XWidget*)self->m_healthLbl);
     if (self->m_temp) XWidget_show((XWidget*)self->m_temp);
     if (self->m_humid) XWidget_show((XWidget*)self->m_humid);
 
@@ -326,6 +395,59 @@ void HsfTitleBar_setMenuHandler(HsfTitleBar* self, HsfTitleBarMenuFn fn,
     self->m_menuFn = fn;
     self->m_menuUserData = userData;
 }
+/**
+ * @brief 注册全局运行模式钮点击回调。
+ */
+void HsfTitleBar_setModeHandler(HsfTitleBar* self, HsfTitleBarModeFn fn,
+                               void* userData)
+{
+    if (!self) return;
+    self->m_modeFn = fn;
+    self->m_modeUserData = userData;
+}
+
+/**
+ * @brief 更新顶栏运行模式显示。
+ */
+void HsfTitleBar_setRunMode(HsfTitleBar* self, bool known, bool autoMode)
+{
+    if (!self || !self->m_modeBtn) return;
+    self->m_modeKnown = known;
+    self->m_modeAuto = autoMode;
+    if (!known) {
+        XLabel_setText_2(self->m_modeBtn, "\xE6\xA8\xA1\xE5\xBC\x8F--");  /* 模式-- */
+    } else if (autoMode) {
+        XLabel_setText_2(self->m_modeBtn,
+            "\xE6\xA8\xA1\xE5\xBC\x8F\xEF\xBC\x9A\xE8\x87\xAA\xE5\x8A\xA8");  /* 模式：自动 */
+    } else {
+        XLabel_setText_2(self->m_modeBtn,
+            "\xE6\xA8\xA1\xE5\xBC\x8F\xEF\xBC\x9A\xE6\x89\x8B\xE5\x8A\xA8");  /* 模式：手动 */
+    }
+    hsfTitleRelayout(self);
+}
+/**
+ * @brief 更新顶栏设备健康指示。
+ */
+void HsfTitleBar_setHealth(HsfTitleBar* self, bool known, int fault, int offline)
+{
+    char buf[40];
+    if (!self || !self->m_healthLbl) return;
+    if (!known) {
+        XLabel_setText_2(self->m_healthLbl, "\xE8\xAE\xBE\xE5\xA4\x87--");  /* 设备-- */
+    } else if (fault > 0) {
+        snprintf(buf, sizeof(buf), "\xE6\x95\x85\xE9\x9A\x9C%d", fault);     /* 故障N */
+        XLabel_setText_2(self->m_healthLbl, buf);
+    } else if (offline > 0) {
+        snprintf(buf, sizeof(buf), "\xE7\xA6\xBB\xE7\xBA\xBF%d", offline);   /* 离线N */
+        XLabel_setText_2(self->m_healthLbl, buf);
+    } else {
+        XLabel_setText_2(self->m_healthLbl,
+                         "\xE8\xAE\xBE\xE5\xA4\x87\xE6\xAD\xA3\xE5\xB8\xB8"); /* 设备正常 */
+    }
+    hsfTitleRelayout(self);
+}
+
+
 
 /** @brief 设置温度（℃）。 */
 void HsfTitleBar_setTemperature(HsfTitleBar* self, double celsius)
@@ -353,6 +475,32 @@ void HsfTitleBar_setHumidity(HsfTitleBar* self, double percent)
 double HsfTitleBar_humidity(const HsfTitleBar* self)
 {
     return self ? self->m_humidity : 0.0;
+}
+
+/**
+ * @brief 一次设置温湿度（小数口径；无效时传 NAN 表示"无数据"）。
+ * @details 数值位数变化会改变右侧列宽（温度 "9.9" → "-10.0" 多一位），
+ *          单独调 setTemperature/setHumidity 只刷文本不重排，右侧块会与
+ *          标题重叠。本函数在两次赋值后统一刷文本 + 重排，调用方一帧内
+ *          只触发一次布局。
+ * @note  -999.0 及以下的温度值按"无数据"处理（显示 "--"），避免初次
+ *        连接尚未收到遥测时显示 0.0 误导现场。
+ */
+void HsfTitleBar_setClimate(HsfTitleBar* self, double celsius, double percent,
+                            bool tempValid, bool humValid)
+{
+    if (!self) return;
+    self->m_temperature = celsius;
+    self->m_humidity = percent;
+    self->m_tempValid = tempValid;
+    self->m_humValid = humValid;
+    hsfTitleRefreshSideTexts(self);
+    hsfTitleRelayout(self);
+    /* 子控件与父栏一并同步重绘。离屏合成路径（--shot 后备图像）下
+     * XWidget_update 的异步标脏可能赶不上出图时刻，且父级按自身脏区
+     * 决定绘制范围——这里用 repaint 走同步绘制，保证文本立即可见。 */
+    if (self->m_temp) XWidget_repaint((XWidget*)self->m_temp);
+    if (self->m_humid) XWidget_repaint((XWidget*)self->m_humid);
 }
 
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */

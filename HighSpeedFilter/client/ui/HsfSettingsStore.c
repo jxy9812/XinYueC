@@ -343,6 +343,43 @@ void HsfSettingsStore_setBool(const char* key, bool value)
     HsfSettingsStore_setInt(key, value ? 1 : 0);
 }
 
+bool HsfSettingsStore_getString(const char* key, char* out, size_t cap)
+{
+    XVariant* v;
+    bool ok = false;
+
+    if (cap == 0) return false;
+    out[0] = '\0';
+    if (!s_store || !key) return false;
+    v = XSettings_value_utf8(s_store, key);
+    if (v) {
+        const XString* text = XString_fromVariant_const(v);
+        if (text) {
+            const char* u8 = XString_toUtf8(text);
+            if (u8) {
+                size_t n = strlen(u8);
+                if (n >= cap) n = cap - 1;
+                memcpy(out, u8, n);
+                out[n] = '\0';
+                ok = (n > 0);
+            }
+        }
+        XClassDelete((XClass*)v);
+    }
+    return ok;
+}
+
+void HsfSettingsStore_setString(const char* key, const char* value)
+{
+    XVariant* v;
+    if (!s_store || !key) return;
+    v = XVariant_create_utf8_str(value ? value : "");
+    if (v) {
+        XSettings_setValue_utf8(s_store, key, v);
+        XClassDelete((XClass*)v);
+    }
+}
+
 void HsfSettingsStore_sync(void)
 {
     if (!s_store) return;

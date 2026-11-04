@@ -74,10 +74,22 @@ typedef struct XVfdParamBinding {
  *          装配层按组切映射段，协议层据此规划读帧——读帧因此天然不跨组。
  * @note 组内允许一次读帧跨多个组内切分；组间绝不合并。
  */
+/**
+ * @brief 通信组属性标志（XVfdCommGroup::m_flags 位掩码）。
+ */
+typedef enum XVfdGroupFlag {
+    /** 只写组：该组在从站侧**可写不可读**（命令字区、密码区、参数初始化区）。
+     *  装配层据此把该组登记为「只写段」：写路径照常（映射段与缓存块仍建），
+     *  但**不参与轮询**——读它只会让从站回错误帧，既白赔一个超时窗口，
+     *  又抬高轮询失败计数触发退避（把写回确认饿死）。 */
+    XVFD_GROUP_FLAG_WRITE_ONLY = 0x01
+} XVfdGroupFlag;
+
 typedef struct XVfdCommGroup {
     uint16_t m_remoteStart; /**< 组起始远端地址。 */
     uint16_t m_count;       /**< 组长度（点数；寄存器区=字，位区=位）。 */
     uint8_t  m_area;        /**< 组所属区（XIoPointType 口径）。 */
+    uint8_t  m_flags;       /**< 组属性标志（XVfdGroupFlag 位掩码；0=普通可读组）。 */
 } XVfdCommGroup;
 
 /**

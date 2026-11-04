@@ -12,6 +12,7 @@ static const char* const kHsfPageNames[HSF_PAGE_COUNT] = {
     "数字量",
     "模拟量",
     "变频器",
+    "流量计",
     "数据",
     "历史数据",
     "日志",
@@ -34,16 +35,17 @@ static const HsfNavNode kHsfNavTree[] = {
     { "数字量", HSF_PAGE_MONITOR_DIGITAL,   1, false },
     { "模拟量", HSF_PAGE_MONITOR_ANALOG,    1, false },
     { "变频器", HSF_PAGE_MONITOR_VFD,       1, false },
+    { "流量计", HSF_PAGE_MONITOR_FLOWMETER, 1, false },
     { "数据",   HSF_PAGE_DATA_MENU,         -1, true  },
-    { "历史数据", HSF_PAGE_DATA_HISTORY,     5, false },
-    { "日志",   HSF_PAGE_DATA_LOG,           5, false },
-    { "报警",   HSF_PAGE_DATA_ALARM,         5, false },
+    { "历史数据", HSF_PAGE_DATA_HISTORY,     6, false },
+    { "日志",   HSF_PAGE_DATA_LOG,           6, false },
+    { "报警",   HSF_PAGE_DATA_ALARM,         6, false },
     { "设置",   HSF_PAGE_SETTINGS_MENU,      -1, true  },
-    { "本地设置", HSF_PAGE_SETTINGS_LOCAL,    9, false },
-    { "远端设置", HSF_PAGE_SETTINGS_REMOTE,   9, false },
-    { "网络设置", HSF_PAGE_SETTINGS_NETWORK,  9, false },
-    { "悬浮窗设置", HSF_PAGE_SETTINGS_OVERLAY, 9, false },
-    { "窗口设置", HSF_PAGE_SETTINGS_WINDOW,   9, false }
+    { "本地设置", HSF_PAGE_SETTINGS_LOCAL,    10, false },
+    { "远端设置", HSF_PAGE_SETTINGS_REMOTE,   10, false },
+    { "网络设置", HSF_PAGE_SETTINGS_NETWORK,  10, false },
+    { "悬浮窗设置", HSF_PAGE_SETTINGS_OVERLAY, 10, false },
+    { "窗口设置", HSF_PAGE_SETTINGS_WINDOW,   10, false }
 };
 
 const char* HsfPages_name(int index)

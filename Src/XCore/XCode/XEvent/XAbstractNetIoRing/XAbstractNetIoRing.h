@@ -341,6 +341,35 @@ void XAbstractNetIoRing_wakeUp_base(XAbstractNetIoRing* ring);
  */
 XAbstractNetIoRing* XAbstractNetIoRing_createPlatform(void);
 
+/**
+ * @brief 平台钩子：复核「0 字节读完成」是否真是对端 FIN。
+ * @param osFd 产生该完成事件的**裸 OS fd**（内核编号空间，非 XFd 槽位号）；
+ *             负数表示不可用。
+ * @return true=对端确已关闭（应下发 SOCK_CLOSE）；
+ *         false=连接仍活（假 EOF，**丢弃**关闭事件，按普通 0 字节读完成
+ *               交给设备层重挂读）。
+ * @details [假 EOF 根因 2026-11-04] 部分内核/驱动会在连接健在时以 0 字节
+ *          完成挂起的读（POSIX：昆仑通态 A33 定制内核，连接后 0~350ms；
+ *          Windows：本机 IOCP 环回实测同征——服务端 socket 莫名 Unconnected
+ *          而客户端从未断开，导致订阅全丢、推送发不出、tx 队列无界积压）。
+ *
+ *          判定口径统一为 **PEEK 复核**（两端同源，避免语义分叉）：
+ *          - pr == 0                       → 真 FIN（对端关闭）；
+ *          - pr < 0 且 EAGAIN/EWOULDBLOCK  → 连接活着（假 EOF）；
+ *          - pr < 0 且其他错误(EBADF 等)   → 不当作关闭；
+ *          - pr > 0                        → 对端有数据待读，更非关闭。
+ * @note      平台实现：
+ *            - POSIX（Linux/Unix）：`Drive/Posix/Core/XNetIoRingPosix.c`；
+ *            - Windows：winsock `recv` + MSG_PEEK，实现于
+ *              `Drive/windows/Core/XNetIoRingWin32.c`；
+ *            - 裸机/ESP8266：无 BSD socket 语义，恒返回 true（保持"0 字节
+ *              即关闭"的原有行为，与引入本钩子前逐位一致）。
+ * @warning    osFd 必须是产生该完成事件的真实 OS fd（`m_osFd`）。拿 XFd
+ *             槽位号顶替会把 PEEK 打到无关 fd 上——历史上就因此把一切真
+ *             FIN 误判成假 EOF（见 POSIX 侧注释）。
+ */
+bool XAbstractNetIoRing_platformPeerReallyClosed(int osFd);
+
 /* ==================== 全局单例 ==================== */
 
 /**

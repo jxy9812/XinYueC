@@ -227,6 +227,66 @@ extern "C" {
 #endif /* XNETWORK_USE_PLATFORM_API */
 
 /* ========================================================================== */
+/*                  Windows 套接字后端选择（2026-11-04）                       */
+/* ========================================================================== */
+
+/**
+ * @brief Windows 套接字 I/O 后端选择。
+ * @details 两套后端**同时保留**在 `Drive/windows/Device/Network/` 下，由本宏
+ *          在编译期择一，互不覆盖：
+ *
+ *          `XNETWORK_WIN_BACKEND_IOCP`（1）
+ *            - 即 `XDeviceNetwork_win32.c` 的 IOCP 重叠 I/O 实现（历史实现）。
+ *            - 收发全走 `WSARecv/WSASend + OVERLAPPED`，完成包经
+ *              `GetQueuedCompletionStatus` 出队。
+ *            - **已知缺陷**：本机环回链路上 `WSARecv` 的完成包会丢失/挂死
+ *              （见 `docs/Windows_IOCP读完成丢失_交接_20261104.md`），表现为
+ *              两端同刻停止接收、只发不收。保留该后端的目的是可随时 A/B
+ *              对照与一键回退。
+ *
+ *          `XNETWORK_WIN_BACKEND_WSAEVENT`（2，默认）
+ *            - 即 `XDeviceNetwork_win32_select.c`，口径对齐 Qt 6.8
+ *              `qnativesocketengine_win.cpp`：**不做 overlapped I/O、不依赖
+ *              完成包投递**。
+ *            - 套接字恒非阻塞，收发是一次同步 `recv/send`；就绪检测由
+ *              `WSAEventSelect` 的事件对象承担，事件对象并入框架事件环
+ *              （`XAbstractNetIoRing`）的同一等待集，仍以 **XFd** 为身份、
+ *              不新增线程。
+ *            - 从机制上消除了「完成包丢失」这一故障族。
+ *
+ * @note 只影响 Windows 的套接字路径；USB / 串口 / 文件设备的 IOCP 通道在
+ *       两种取值下都保持不变（它们与网络无关，且无此缺陷）。
+ * @warning 切换后必须全量重编——改的是公共头里的条件编译宏，增量编译会
+ *          留下按旧口径编出的 obj（见 Windows/Ninja 缺头文件依赖）。
+ */
+#define XNETWORK_WIN_BACKEND_IOCP       1  /**< IOCP 重叠 I/O 后端（保留，可回退）。 */
+#define XNETWORK_WIN_BACKEND_WSAEVENT   2  /**< WSAEventSelect 后端（对齐 Qt，默认）。 */
+
+#ifndef XNETWORK_WIN_BACKEND
+#define XNETWORK_WIN_BACKEND  XNETWORK_WIN_BACKEND_WSAEVENT
+#endif
+
+#if (XNETWORK_WIN_BACKEND != XNETWORK_WIN_BACKEND_IOCP) && \
+    (XNETWORK_WIN_BACKEND != XNETWORK_WIN_BACKEND_WSAEVENT)
+#error "XNetwork: XNETWORK_WIN_BACKEND 只能是 XNETWORK_WIN_BACKEND_IOCP 或 XNETWORK_WIN_BACKEND_WSAEVENT"
+#endif
+
+/** @brief 当前构建是否使用 WSAEventSelect 套接字后端；同时保证该宏恒有定义
+ *         （0/1 两态），避免未定义标识符在 `#if` 里静默取 0 而走进错误分支。 */
+#if XNETWORK_WIN_BACKEND == XNETWORK_WIN_BACKEND_WSAEVENT
+#define XNETWORK_WIN_SOCKET_WSAEVENT 1
+#else
+#define XNETWORK_WIN_SOCKET_WSAEVENT 0
+#endif
+
+/** @brief 当前构建是否使用 IOCP 套接字后端（与上一宏严格互补）。 */
+#if XNETWORK_WIN_BACKEND == XNETWORK_WIN_BACKEND_IOCP
+#define XNETWORK_WIN_SOCKET_IOCP 1
+#else
+#define XNETWORK_WIN_SOCKET_IOCP 0
+#endif
+
+/* ========================================================================== */
 /*                        自动模式检测                                         */
 /* ========================================================================== */
 

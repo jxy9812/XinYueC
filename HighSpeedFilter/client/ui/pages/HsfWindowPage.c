@@ -1266,6 +1266,21 @@ static void wn_saveSettings(void)
  *          XWindow_rotationSupported(窗口句柄)；窗口态下发也需句柄），放
  *          hsf_page_window_restoreChrome 在 show 之后做。
  */
+/**
+ * @brief 只应用已存皮肤（不需要主窗；登录窗截图等无主窗场景用）。
+ * @details 正常启动序下皮肤由 hsf_page_window_restoreSettings 在主窗建窗
+ *          时落定，登录窗后建天然继承。但 `--login-shot` 只建登录窗、
+ *          不建主窗，无人跑那条恢复路径——登录窗会恒出默认浅色图，与
+ *          产品形态不符（CI 基线失真）。本入口给该路径补齐「按设置上
+ *          皮肤」这一步；主窗存在时调用也安全（幂等，重装同一张表）。
+ */
+void hsf_page_window_applyStoredSkin(void)
+{
+    int skin = HsfSettingsStore_getInt(WN_KEY_SKIN, WN_DEFAULT_SKIN);
+    if (skin < 0 || skin > 5) skin = WN_DEFAULT_SKIN;
+    wn_applySkin(skin);
+}
+
 void hsf_page_window_restoreSettings(void)
 {
     XWidget* top = wn_toplevel();
@@ -2897,6 +2912,11 @@ void hsf_page_window_syncFromWindow(void)
 void hsf_page_window_restoreSettings(void)
 {
     /* 页面被裁剪：无窗口设置页可恢复。 */
+}
+
+void hsf_page_window_applyStoredSkin(void)
+{
+    /* 页面被裁剪：皮肤规格表随页面裁掉，维持已装主题。 */
 }
 
 void hsf_page_window_restoreChrome(void)

@@ -175,16 +175,34 @@ void XModbusRtuSerialClient_setTurnaroundDelay(XModbusRtuSerialClient* client, i
  * @brief 获取关联的串口对象
  * @param client XModbusRtuSerialClient实例指针
  * @return 串口对象指针，client为NULL或串口未创建时返回NULL
- * @note 返回的串口对象由XModbusRtuSerialClient管理，不需要手动释放
- * @par 使用示例
+ * @note 返回的串口对象由XModbusRtuSerialClient管理，不需要手动释放。
+ *       **串口对象是在 open() 时才创建的**（connectDevice 之前 serialPort()
+ *       返回 NULL）——旧示例在 create() 之后直接取用会解空指针。
+ * @par 使用示例（配置串口参数 → 连接；连接后才可取串口对象复核实际生效值）
  * @code
+ * // ① 配置串口参数（连接参数表：open() 时据此建串口）
+ * XVariant* v = XVariant_create_utf8_str("COM1");
+ * XModbusDevice_setConnectionParameter((XModbusDevice*)client,
+ *     XModbusDevice_SerialPortNameParameter, v);
+ * XClassDelete((XClass*)v);
+ * v = XVariant_create_int(9600);
+ * XModbusDevice_setConnectionParameter((XModbusDevice*)client,
+ *     XModbusDevice_SerialBaudRateParameter, v);
+ * XClassDelete((XClass*)v);
+ * // ② 连接（此时串口才被创建）
+ * XModbusDevice_connectDevice((XModbusDevice*)client);
+ * // ③ 连接后取串口对象（可用于复核实际生效参数；未连接时为 NULL）
  * XSerialPort* port = XModbusRtuSerialClient_serialPort(client);
- * XSerialPort_setPortName(port, "COM1");
- * XSerialPort_setBaudRate(port, 9600);
- * XSerialPort_setDataBits(port, XSerialPort_Data8);
- * XSerialPort_setParity(port, XSerialPort_NoParity);
- * XSerialPort_setStopBits(port, XSerialPort_OneStop);
+ * if (port) {
+ *     XSerialPort_setBaudRate(port, 115200);   // 需在 open() 之前设置才生效
+ *     XSerialPort_setDataBits(port, XSerialPort_Data8);
+ *     XSerialPort_setParity(port, XSerialPort_NoParity);
+ *     XSerialPort_setStopBits(port, XSerialPort_OneStop);
+ * }
  * @endcode
+ * @warning ② 之后再改 XSerialPort_* 参数对已打开的串口**不生效**（配置只在
+ *          open() 时读取一次）；要改串口参数请在 connectDevice 之前通过
+ *          连接参数表设置。
  */
 XSerialPort* XModbusRtuSerialClient_serialPort(const XModbusRtuSerialClient* client);
 

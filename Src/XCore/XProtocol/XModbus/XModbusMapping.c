@@ -86,6 +86,16 @@ bool XModbusMapping_addRange(XModbusMapping* map, XModbusRegisterType type,
                              int deviceId, int unitId, uint16_t remoteStart,
                              uint16_t defaultValue)
 {
+    return XModbusMapping_addRangeEx(map, type, virtualStart, count,
+                                     deviceId, unitId, remoteStart,
+                                     defaultValue, 0);
+}
+
+bool XModbusMapping_addRangeEx(XModbusMapping* map, XModbusRegisterType type,
+                               uint16_t virtualStart, uint16_t count,
+                               int deviceId, int unitId, uint16_t remoteStart,
+                               uint16_t defaultValue, uint8_t flags)
+{
     if (!map || !XClassGetVtable(map)) return false;
     const int idx = mappingTypeIndex(type);
     /* 跨 0xFFFF 回绕拒绝：段必须完整落在 16 位地址空间内。 */
@@ -113,6 +123,7 @@ bool XModbusMapping_addRange(XModbusMapping* map, XModbusRegisterType type,
     added.deviceId = deviceId;
     added.unitId = unitId;
     added.remoteStart = remoteStart;
+    added.flags = flags;
     added.defValue = defaultValue;
     if (!XVector_insert_1_base(vec, insertAt, &added, 1)) return false;
     return true;

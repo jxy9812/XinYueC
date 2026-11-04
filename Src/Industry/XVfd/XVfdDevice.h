@@ -154,48 +154,59 @@ typedef enum XVfdFreqBasis {
 /**
  * @brief 状态快照字段有效位（m_validMask 按位或；品牌未提供的字段保持 0 且位清零）。
  */
-typedef enum XVfdStatusField {
-    XVfdField_RunState = 1ULL << 0,             /**< m_runState 有效 */
-    XVfdField_RawStateWord = 1ULL << 1,         /**< m_rawStateWord 有效 */
-    XVfdField_Running = 1ULL << 2,              /**< m_running 有效 */
-    XVfdField_Faulted = 1ULL << 3,              /**< m_faulted 有效 */
-    XVfdField_Warning = 1ULL << 4,              /**< m_warning 有效 */
-    XVfdField_Reverse = 1ULL << 5,              /**< m_reverse 有效 */
-    XVfdField_TargetReached = 1ULL << 6,        /**< m_targetReached 有效 */
-    XVfdField_Remote = 1ULL << 7,               /**< m_remote 有效 */
-    XVfdField_JogActive = 1ULL << 8,            /**< m_jogActive 有效 */
-    XVfdField_DcBraking = 1ULL << 9,            /**< m_dcBraking 有效 */
-    XVfdField_SetFreqHz = 1ULL << 10,           /**< m_setFreqHz 有效 */
-    XVfdField_OutputFreqHz = 1ULL << 11,        /**< m_outputFreqHz 有效 */
-    XVfdField_SetFreqPercent = 1ULL << 12,      /**< m_setFreqPercent 有效 */
-    XVfdField_OutputFreqPercent = 1ULL << 13,   /**< m_outputFreqPercent 有效 */
-    XVfdField_OutputVoltage = 1ULL << 14,       /**< m_outputVoltageV 有效 */
-    XVfdField_OutputCurrent = 1ULL << 15,       /**< m_outputCurrentA 有效 */
-    XVfdField_BusVoltage = 1ULL << 16,          /**< m_busVoltageV 有效 */
-    XVfdField_MainsVoltage = 1ULL << 17,        /**< m_mainsVoltageV 有效 */
-    XVfdField_OutputPowerKw = 1ULL << 18,       /**< m_outputPowerKw 有效 */
-    XVfdField_OutputPowerPercent = 1ULL << 19,  /**< m_outputPowerPercent 有效 */
-    XVfdField_TorquePercent = 1ULL << 20,       /**< m_torquePercent 有效 */
-    XVfdField_SpeedRpm = 1ULL << 21,            /**< m_speedRpm 有效 */
-    XVfdField_FeedbackSpeedRpm = 1ULL << 22,    /**< m_feedbackSpeedRpm 有效 */
-    XVfdField_DriveTempC = 1ULL << 23,          /**< m_driveTempC 有效 */
-    XVfdField_MotorTempC = 1ULL << 24,          /**< m_motorTempC 有效 */
-    XVfdField_DriveThermalPercent = 1ULL << 25, /**< m_driveThermalPercent 有效 */
-    XVfdField_MotorThermalPercent = 1ULL << 26, /**< m_motorThermalPercent 有效 */
-    XVfdField_DiBits = 1ULL << 27,              /**< m_diBits 有效 */
-    XVfdField_DoBits = 1ULL << 28,              /**< m_doBits 有效 */
-    XVfdField_Ai1 = 1ULL << 29,                 /**< m_ai1 有效 */
-    XVfdField_Ai2 = 1ULL << 30,                 /**< m_ai2 有效 */
-    XVfdField_Ai3 = 1ULL << 31,                 /**< m_ai3 有效 */
-    XVfdField_PidSetpoint = 1ULL << 32,         /**< m_pidSetpoint 有效 */
-    XVfdField_PidFeedback = 1ULL << 33,         /**< m_pidFeedback 有效 */
-    XVfdField_CounterValue = 1ULL << 34,        /**< m_counterValue 有效 */
-    XVfdField_LengthValue = 1ULL << 35,         /**< m_lengthValue 有效 */
-    XVfdField_RunHours = 1ULL << 36,            /**< m_runHoursTotal 有效 */
-    XVfdField_PowerOnHours = 1ULL << 37,        /**< m_powerOnHoursTotal 有效 */
-    XVfdField_EnergyKwh = 1ULL << 38,           /**< m_energyKwhTotal 有效 */
-    XVfdField_FaultCode = 1ULL << 39            /**< m_faultCode 有效 */
-} XVfdStatusField;
+/* ========================================================================== */
+/*                      状态快照字段位                                        */
+/* ========================================================================== */
+
+/**
+ * @brief 状态快照字段有效位（m_validMask 按位或；品牌未提供的字段保持 0 且位清零）。
+ * @details 用 #define 而非枚举：MSVC C 模式把枚举常量按 int 处理，
+ *          1ULL<<32 及以上静默截断（C4309），多个高位成员塌成同值——
+ *          实测使 m_validMask 高位全 1、编解码字段串位（2026-11-04 实锅）。
+ *          位掩码"字段位"一律宏，类型别名保留原类型名供调用点使用。
+ */
+typedef uint64_t XVfdStatusField;   /**< 字段位类型（位宏组合后的值）。 */
+
+#define XVfdField_RunState             (1ULL << 0 )   /**< m_runState 有效 */
+#define XVfdField_RawStateWord         (1ULL << 1 )   /**< m_rawStateWord 有效 */
+#define XVfdField_Running              (1ULL << 2 )   /**< m_running 有效 */
+#define XVfdField_Faulted              (1ULL << 3 )   /**< m_faulted 有效 */
+#define XVfdField_Warning              (1ULL << 4 )   /**< m_warning 有效 */
+#define XVfdField_Reverse              (1ULL << 5 )   /**< m_reverse 有效 */
+#define XVfdField_TargetReached        (1ULL << 6 )   /**< m_targetReached 有效 */
+#define XVfdField_Remote               (1ULL << 7 )   /**< m_remote 有效 */
+#define XVfdField_JogActive            (1ULL << 8 )   /**< m_jogActive 有效 */
+#define XVfdField_DcBraking            (1ULL << 9 )   /**< m_dcBraking 有效 */
+#define XVfdField_SetFreqHz            (1ULL << 10)   /**< m_setFreqHz 有效 */
+#define XVfdField_OutputFreqHz         (1ULL << 11)   /**< m_outputFreqHz 有效 */
+#define XVfdField_SetFreqPercent       (1ULL << 12)   /**< m_setFreqPercent 有效 */
+#define XVfdField_OutputFreqPercent    (1ULL << 13)   /**< m_outputFreqPercent 有效 */
+#define XVfdField_OutputVoltage        (1ULL << 14)   /**< m_outputVoltageV 有效 */
+#define XVfdField_OutputCurrent        (1ULL << 15)   /**< m_outputCurrentA 有效 */
+#define XVfdField_BusVoltage           (1ULL << 16)   /**< m_busVoltageV 有效 */
+#define XVfdField_MainsVoltage         (1ULL << 17)   /**< m_mainsVoltageV 有效 */
+#define XVfdField_OutputPowerKw        (1ULL << 18)   /**< m_outputPowerKw 有效 */
+#define XVfdField_OutputPowerPercent   (1ULL << 19)   /**< m_outputPowerPercent 有效 */
+#define XVfdField_TorquePercent        (1ULL << 20)   /**< m_torquePercent 有效 */
+#define XVfdField_SpeedRpm             (1ULL << 21)   /**< m_speedRpm 有效 */
+#define XVfdField_FeedbackSpeedRpm     (1ULL << 22)   /**< m_feedbackSpeedRpm 有效 */
+#define XVfdField_DriveTempC           (1ULL << 23)   /**< m_driveTempC 有效 */
+#define XVfdField_MotorTempC           (1ULL << 24)   /**< m_motorTempC 有效 */
+#define XVfdField_DriveThermalPercent  (1ULL << 25)   /**< m_driveThermalPercent 有效 */
+#define XVfdField_MotorThermalPercent  (1ULL << 26)   /**< m_motorThermalPercent 有效 */
+#define XVfdField_DiBits               (1ULL << 27)   /**< m_diBits 有效 */
+#define XVfdField_DoBits               (1ULL << 28)   /**< m_doBits 有效 */
+#define XVfdField_Ai1                  (1ULL << 29)   /**< m_ai1 有效 */
+#define XVfdField_Ai2                  (1ULL << 30)   /**< m_ai2 有效 */
+#define XVfdField_Ai3                  (1ULL << 31)   /**< m_ai3 有效 */
+#define XVfdField_PidSetpoint          (1ULL << 32)   /**< m_pidSetpoint 有效 */
+#define XVfdField_PidFeedback          (1ULL << 33)   /**< m_pidFeedback 有效 */
+#define XVfdField_CounterValue         (1ULL << 34)   /**< m_counterValue 有效 */
+#define XVfdField_LengthValue          (1ULL << 35)   /**< m_lengthValue 有效 */
+#define XVfdField_RunHours             (1ULL << 36)   /**< m_runHoursTotal 有效 */
+#define XVfdField_PowerOnHours         (1ULL << 37)   /**< m_powerOnHoursTotal 有效 */
+#define XVfdField_EnergyKwh            (1ULL << 38)   /**< m_energyKwhTotal 有效 */
+#define XVfdField_FaultCode            (1ULL << 39)   /**< m_faultCode 有效 */
 
 /* ========================================================================== */
 /*                      值类型                                                */

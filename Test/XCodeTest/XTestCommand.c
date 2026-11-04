@@ -23,6 +23,12 @@
 #include "XSshTelnetClientTest.h"
 #include "XProcessTest.h"
 #include "XTestMenuTest.h"
+#include "XIOTest.h"   /* XTcpServerTest_run（--test xtcpserver）。 */
+/* [2026-11-04] 显式包含：工业设备层测试的开关（XINDUSTRY_ON /
+   XSOLENOID_VALVE_ON / XTEMP_HUM_ON / XFLOW_METER_ON 等）定义在
+   XIndustry_config.h，本 TU 之前靠隐式声明链接而非包含，特性宏不可见
+   ⇒ 新增的条件分派块会恒被裁掉、命令「未知测试命令」（XVFD_ON 同款坑）。 */
+#include "XIndustryTest.h"
 #include "XCodeTest.h"
 #include "XPrintf.h"
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
@@ -77,6 +83,10 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
     }
     if (strcmp(name, "xprocess") == 0) {
         result = XProcessTest_runAll();
+    } else if (strcmp(name, "xtcpserver") == 0) {
+        /* XTcpServer 全用例回归（含 2026-11-04 新增的「多帧收发 /
+         * socket 所有权 / pending 单次投递」三把锁）。 */
+        result = XTcpServerTest_run() == 0;
     } else if (strcmp(name, "xconsole-shell") == 0) {
         result = XConsoleShellTest_runAll();
     } else if (strcmp(name, "xconsole-shell-backend") == 0) {
@@ -150,6 +160,28 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
        INDUSTRY_RTU_PTY 环境变量由驱动脚本 mbtest_industry_run.sh 驱动）。 */
     } else if (strcmp(name, "xindustry-modbus") == 0) {
         result = XIndustryModbusTest_run() == 0;
+#endif
+#if XINDUSTRY_ON && (XTEMP_HUM_ON || XPRESS_DIFF_ON)
+    /* Industry 温湿度变送器/压差计 mock 回归（通道组喂点进程内自跑，
+       2026-11-04；含编解码往返与泄漏压测）。 */
+    } else if (strcmp(name, "xindustry-sensor") == 0) {
+        result = XIndustrySensorTest_run() == 0;
+#endif
+#if XINDUSTRY_ON && XFLOW_METER_ON
+    /* Industry 电磁流量计 mock 回归（通道组喂点进程内自跑；含 32 位拼装
+       与编解码往返、泄漏压测）。 */
+    } else if (strcmp(name, "xindustry-flowmeter") == 0) {
+        result = XIndustryFlowMeterTest_run() == 0;
+    } else if (strcmp(name, "hsf-io-flowmeter") == 0) {
+        result = XHsfServerIoFlowMeterTest_run() == 0;
+    } else if (strcmp(name, "hsf-client-flowmeter") == 0) {
+        result = XHsfClientFlowMeterProviderTest_run() == 0;
+#endif
+#if XINDUSTRY_ON && XBUTTON_STATION_ON
+    /* Industry 按钮组/操作柱 mock 回归（通道组喂触点进程内自跑；含急停
+       安全侧口径、转换开关双触点矛盾与指示灯跟随/失败沿）。 */
+    } else if (strcmp(name, "xindustry-button") == 0) {
+        result = XIndustryButtonStationTest_run() == 0;
 #endif
 #if XPROTOCOL_ON && XLINK_ON
     /* XLink 私有应用层协议（控制进程 <-> GUI 进程 消息互通）。 */

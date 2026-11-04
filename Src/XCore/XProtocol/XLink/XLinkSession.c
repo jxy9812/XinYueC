@@ -1140,6 +1140,17 @@ static uint32_t XLinkSessionPrivate_txFlush(XLinkSession* self)
     while (self->m_txUsed > 0 && self->m_device) {
         uint32_t contiguous = self->m_txQueueCap - self->m_txHead;
         int64_t written;
+        /* 设备已关闭（对端断开/连接错误）：立刻丢弃积压并停手。
+         * 不丢的话队列只增不减（每拍 publish 都往里塞），而 write 恒 -1
+         * 永远排不空——既是无界内存增长，也让"链路已死"被延后到静默
+         * 判线才暴露（实测症状：服务端会话收不到订阅、发不出推送）。
+         * 会话状态的收口由 pump 入口的设备已关闭检查完成，这里只止损。 */
+        if (!XIODevice_isOpen(self->m_device)) {
+            self->m_txHead = 0;
+            self->m_txTail = 0;
+            self->m_txUsed = 0;
+            break;
+        }
         if (contiguous > self->m_txUsed)
             contiguous = self->m_txUsed;
         written = XIODevice_write_1(self->m_device,
@@ -1200,6 +1211,12 @@ static uint32_t XLinkSessionPrivate_consumeFrames(XLinkSession* self,
         if (available - consumed < frameLen)
             break; /* 半帧：留待下次 pump */
 
+#if XLINK_TRACE_FRAMES
+        XPrintf("[xltrace] t=%llu RX cls=%u code=0x%04X len=%u\n",
+                (unsigned long long)XDateTime_currentMSecsSinceEpoch(),
+                (unsigned)frame.m_msgClass, (unsigned)frame.m_msgCode,
+                (unsigned)frame.m_payloadLen);
+#endif
         XLinkSessionPrivate_onFrame(self, &frame,
                                     frame.m_payloadLen
                                         ? &self->m_rxBuffer[consumed + XLINK_HEADER_SIZE]
@@ -1286,8 +1303,7 @@ bool XLinkSession_setDevice(XLinkSession* self, XIODevice* device)
 }
 
 void XLinkSession_reset(XLinkSession* self)
-{
-    if (ISNULL(self, "XLinkSession_reset self"))
+{    if (ISNULL(self, "XLinkSession_reset self"))
         return;
     /* 定时器随链路一起停：Inactive 态下节拍只会空转。重连经 setDevice 重启。 */
     XLinkSessionPrivate_stopTimer(self);
@@ -1324,6 +1340,20 @@ void XLinkSession_reset(XLinkSession* self)
     self->m_txUsed = 0;
     self->m_stats.m_resets++;
     XLinkSessionPrivate_setState(self, XLinkSessionState_Inactive);
+}
+
+void XLinkSession_onDisconnected(XLinkSession* self)
+{
+    if (ISNULL(self, "XLinkSession_onDisconnected self"))
+        return;
+    if (self->m_state == XLinkSessionState_Inactive)
+        return; /* 幂等：已复位。 */
+    /* 传输已断：复位会话（清订阅表/待应答/积压队列），使
+     * XLinkServerPrivate_reap 能回收它、应用 tick 不再往死链路推数据。
+     * 设备本身不在此关闭——生命周期归持有者。 */
+    XPrintf("[xlsess] 传输断开，会话复位（原 state=%d，积压=%uB）\n",
+            (int)self->m_state, (unsigned)self->m_txUsed);
+    XLinkSession_reset(self);
 }
 
 /* ========================================================================== */
@@ -1392,13 +1422,31 @@ void XLinkSession_pump(XLinkSession* self, uint32_t nowMs)
            而非"已填充 + 最大载荷"再截到总容量：半帧残留（m_rxFilled > 0）
            时旧公式会向 rxBuffer 之外最多写出 m_rxFilled 字节（堆损坏，
            文件传输 4KB 分块高频出现半帧时必现）。 */
-        uint32_t cap = (uint32_t)(XLINK_HEADER_SIZE + XLINK_MAX_PAYLOAD);
-        int64_t space = (int64_t)(cap - self->m_rxFilled);
+        const uint32_t cap = (uint32_t)(XLINK_HEADER_SIZE + XLINK_MAX_PAYLOAD);
+        int drainRound;
 
-        available = XIODevice_read_1(self->m_device,
-                                     (char*)&self->m_rxBuffer[self->m_rxFilled],
-                                     space);
-        if (available > 0) {
+        /* [2026-11-04 单次读滞留根修] 一次 pump 必须把设备里可读的数据**读空**，
+         * 而不是只读一次就收工。
+         *
+         * 原实现每轮只调一次 `XIODevice_read_1`（最多 cap 字节），pump 又只由
+         * `readyRead` 信号驱动。当一轮完成包里带进来的字节超过一次读取量、
+         * 或半帧把 space 压得很小时，剩余数据会滞留在设备读缓冲里；而那个
+         * 时刻的 readyRead 已经消费完了 ⇒ **没有第二次信号来触发再读** ⇒
+         * 数据永久滞留，会话表现为"一直在收、却某刻起再也收不到"，
+         * 6 秒后静默判线。实测症状：两端都在收发，但字节数只对上约一半
+         * （客户端收 2595 / 服务端发 5590），随后同一时刻双向冻结。
+         *
+         * 上界用固定轮数而非 while(true)：半帧卡住时 space 可能很小，
+         * 无界循环会在异常链路上空转；正常链路上几轮就能抽干。 */
+        for (drainRound = 0; drainRound < 64; ++drainRound) {
+            int64_t space = (int64_t)(cap - self->m_rxFilled);
+            if (space <= 0) break;   /* 缓冲已满：consumeFrames 处理后下轮再读 */
+
+            available = XIODevice_read_1(self->m_device,
+                                         (char*)&self->m_rxBuffer[self->m_rxFilled],
+                                         space);
+            if (available <= 0) break;   /* 读空（0）或出错（<0）：本轮结束 */
+
             self->m_rxFilled += (uint32_t)available;
             self->m_lastReceiveTick = nowMs;
             self->m_stats.m_bytesReceived += (uint64_t)available;
@@ -1413,6 +1461,10 @@ void XLinkSession_pump(XLinkSession* self, uint32_t nowMs)
                     memmove(self->m_rxBuffer, &self->m_rxBuffer[consumed], left);
                 self->m_rxFilled = left;
             }
+            /* onFrame 可能已复位会话：链路已作废，立即停止抽干。 */
+            if (self->m_state == XLinkSessionState_Inactive
+                || !self->m_device)
+                break;
         }
     }
 
@@ -1420,6 +1472,16 @@ void XLinkSession_pump(XLinkSession* self, uint32_t nowMs)
     if (XLINK_HEARTBEAT_TIMEOUT_MS > 0 && self->m_lastReceiveTick != 0
         && nowMs >= self->m_lastReceiveTick
         && (nowMs - self->m_lastReceiveTick) > XLINK_HEARTBEAT_TIMEOUT_MS) {
+        /* [永久诊断 2026-11-04] 静默判线是"联调时链路莫名断开"最常见的
+         * 终局，过去只 reset、不留任何痕迹，排查只能从外部（netstat/对端
+         * 日志）反推。这里保留一行可观测记录：空闲时长 + 本链路累计收发
+         * 字节，足以立刻区分「对端没发」「我方没读到」「发了但解析不出」。 */
+        XPrintf("XLinkSession: 静默超时判线（空闲 %ums > %ums，"
+                "本链路累计收 %llu / 发 %llu 字节）\n",
+                (unsigned)(nowMs - self->m_lastReceiveTick),
+                (unsigned)XLINK_HEARTBEAT_TIMEOUT_MS,
+                (unsigned long long)self->m_stats.m_bytesReceived,
+                (unsigned long long)self->m_stats.m_bytesSent);
         XLinkSession_reset(self);
         return;
     }
@@ -1479,7 +1541,8 @@ void XLinkSession_pump(XLinkSession* self, uint32_t nowMs)
                                             : self->m_lastReceiveTick;
         if (base == 0 || (nowMs >= base
             && (nowMs - base) >= XLINK_HEARTBEAT_INTERVAL_MS)) {
-            XLinkSession_sendSession(self, XLinkSessionCode_Heartbeat, NULL, 0);
+            bool hb = XLinkSession_sendSession(self, XLinkSessionCode_Heartbeat,
+                                               NULL, 0);
         }
     }
 }
@@ -1545,6 +1608,15 @@ static bool XLinkSessionPrivate_sendWithPrefix(XLinkSession* self,
         if (length > 0)
             XLinkSessionPrivate_txAppend(self, payload, length);
         self->m_stats.m_framesSent++;
+#if XLINK_TRACE_FRAMES
+        /* len 打 **payload+prefix 合计**：订阅/退订帧的 topicId 走 prefix
+         * （不是 payload），只打 length 会显示成 0 而产生误导。 */
+        XPrintf("[xltrace] t=%llu TX cls=%u code=0x%04X plen=%u pfx=%u queued=%u\n",
+                (unsigned long long)XDateTime_currentMSecsSinceEpoch(),
+                (unsigned)frame->m_msgClass, (unsigned)frame->m_msgCode,
+                (unsigned)length, (unsigned)prefixLen,
+                (unsigned)self->m_txUsed);
+#endif
         XLinkSessionPrivate_txFlush(self);
         return true;
     }
@@ -1846,6 +1918,13 @@ XLinkSessionState XLinkSession_state(const XLinkSession* self)
     if (ISNULL(self, "XLinkSession_state self"))
         return XLinkSessionState_Inactive;
     return self->m_state;
+}
+
+XIODevice* XLinkSession_device(const XLinkSession* self)
+{
+    if (ISNULL(self, "XLinkSession_device self"))
+        return NULL;
+    return self->m_device;
 }
 
 bool XLinkSession_isReady(const XLinkSession* self)

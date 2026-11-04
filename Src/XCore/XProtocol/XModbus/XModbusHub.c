@@ -168,6 +168,71 @@ static inline bool hubUnitSingleWriteOnly(const XModbusHubDevice* dev, int unitI
     return (lim && lim->m_singleWriteOnly) ? true : false;
 }
 
+/* ==================== 从站分级轮询（每从站最小发送间隔） ==================== */
+
+/**
+ * @brief 查某从站最近一次读帧发出时刻。
+ * @return 时刻（单调毫秒）；从未发过返回 0。
+ */
+static uint64_t hubUnitLastSentOf(const XModbusHubDevice* dev, int unitId)
+{
+    size_t i;
+    if (!dev || !dev->m_unitLastSent) return 0;
+    for (i = 0; i < XVector_size_base(dev->m_unitLastSent); ++i) {
+        const XModbusHubUnitSent* e =
+            (const XModbusHubUnitSent*)XVector_at_base(dev->m_unitLastSent,
+                                                        (int64_t)i);
+        if (e && e->unitId == unitId) return e->lastSentMs;
+    }
+    return 0;
+}
+
+/**
+ * @brief 记账某从站的读帧发出时刻（表惰性建；已存在则更新）。
+ * @return 记账成功返回 true；分配失败返回 false（不影响轮询本身）。
+ */
+static bool hubUnitMarkSent(XModbusHubDevice* dev, int unitId, uint64_t nowMs)
+{
+    size_t i;
+    XModbusHubUnitSent entry;
+    if (!dev || unitId < 0) return false;
+    if (!dev->m_unitLastSent) {
+        dev->m_unitLastSent = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                sizeof(XModbusHubUnitSent), false);
+        if (!dev->m_unitLastSent) return false;
+    }
+    for (i = 0; i < XVector_size_base(dev->m_unitLastSent); ++i) {
+        XModbusHubUnitSent* e =
+            (XModbusHubUnitSent*)XVector_at_base(dev->m_unitLastSent, (int64_t)i);
+        if (e && e->unitId == unitId) {
+            e->lastSentMs = nowMs;
+            return true;
+        }
+    }
+    entry.unitId = unitId;
+    entry.lastSentMs = nowMs;
+    return XVector_push_back_1_base(dev->m_unitLastSent, &entry);
+}
+
+/**
+ * @brief 该从站是否已到允许发送的时刻（分级轮询闸）。
+ * @param dev 设备槽；unitId 从站号；nowMs 当前时刻。
+ * @return true=可以发（未配置最小间隔 / 从未发过 / 已到期）。
+ * @note [2026-11-04 分级轮询] 未配 m_minPollIntervalMs 的从站恒放行，
+ *       行为与旧版完全一致（零回归）。慢从站（如温湿度 500ms）到期前
+ *       被跳过，快从站因此不必陪它轮转整个周期。
+ */
+static bool hubUnitDue(const XModbusHubDevice* dev, int unitId, uint64_t nowMs)
+{
+    const XModbusHubUnitLimits* lim = hubUnitLimitsOf(dev, unitId);
+    uint64_t last;
+    if (!lim || lim->m_minPollIntervalMs == 0) return true;
+    last = hubUnitLastSentOf(dev, unitId);
+    if (last == 0) return true;
+    if (nowMs < last) return true;          /* 时钟回退：放行，不卡死。 */
+    return (nowMs - last) >= (uint64_t)lim->m_minPollIntervalMs;
+}
+
 /* ==================== 缓存块生命周期 ==================== */
 
 /** @brief 释放一个缓存块（数据单元 + 切片表 + 脏区间表 + 结构体）。 */
@@ -591,7 +656,22 @@ static bool hubRebuildDeviceBlocks(XModbusHub* hub, XModbusHubDevice* dev)
                     XModbusHubCacheBlock* b = hubBlockCreate((uint16_t)enumType, unit,
                                                              (uint16_t)start,
                                                              (uint16_t)(end - start));
+                    if (b)
                     if (!b) { ok = false; break; }
+                    /* [只写段] 块属性承自映射段：合并块里**全部**段都是只写
+                     * 才算只写块（混合块仍要轮询）。只写块不进读组 ⇒ 不轮询：
+                     * 厂商从站的写区读了只会回错误帧，白赔一个超时窗口，
+                     * 且抬高轮询失败计数触发退避，把写回确认饿死。 */
+                    {
+                        bool allWriteOnly = true;
+                        for (int k = i; k < j; ++k) {
+                            if (!(arr[k].flags & (uint8_t)XModbusMapRange_WriteOnly)) {
+                                allWriteOnly = false;
+                                break;
+                            }
+                        }
+                        b->flags = allWriteOnly ? (uint8_t)XModbusMapRange_WriteOnly : 0;
+                    }
                     for (int k = i; k < j; ++k) {
                         XModbusHubCacheSeg seg;
                         seg.virtualStart = arr[k].virtualStart;
@@ -716,6 +796,9 @@ static void hubRebuildGroups(XModbusHub* hub, XModbusHubDevice* dev)
         XModbusHubReadGroup g;
         size_t next;
         if (!b) { ++first; continue; }
+        /* [只写段不轮询] 块照建（写路径依赖它），但不进读组 ⇒ 不会被轮询。
+         * 厂商从站的命令字/密码区读了只会回错误帧。 */
+        if (b->flags & (uint8_t)XModbusMapRange_WriteOnly) { ++first; continue; }
         memset(&g, 0, sizeof(g));
         g.type = b->type;
         g.unitId = b->unitId;
@@ -1232,7 +1315,10 @@ static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev)
         const bool writeTurn =
             (dev->lastTxOk || (dev->txAlternateTurn & 1u) != 0);
         if (!windowOpen && writeTurn) {
-            if (hubSendNextWrite(hub, dev)) {
+            const bool sent = hubSendNextWrite(hub, dev);
+            XPrintf("[w-dbg] sendNextWrite dev=%d -> %d\n",
+                    dev->id, (int)sent);
+            if (sent) {
                 if (!dev->lastTxOk) ++dev->txAlternateTurn;  /* 失败期：本次让给了写。 */
                 return;
             }
@@ -1254,8 +1340,12 @@ static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev)
                 (const XModbusHubReadGroup*)XVector_at_base(dev->groups, (int64_t)idx);
             if (!g) continue;
             if (hubUnitMuted(dev, g->unitId, nowMs)) continue;
+            /* [2026-11-04 分级轮询] 该从站还没到最小发送间隔 ⇒ 跳过，
+             * 让快从站立刻拿到本拍（慢从站不再按整轮陪跑）。 */
+            if (!hubUnitDue(dev, g->unitId, nowMs)) continue;
             if (!hubGroupReadable(hub, dev, g)) continue;
             if (hubSendPollGroup(hub, dev, g)) {
+                (void)hubUnitMarkSent(dev, g->unitId, nowMs);
                 dev->groupCursor = (idx + 1) % gn;
                 if (!dev->lastTxOk) ++dev->txAlternateTurn;  /* 失败期：本次让给了轮询。 */
                 return;
@@ -1319,6 +1409,14 @@ static void VXModbusHub_deinit(XModbusHub* hub)
             if (d->groups) {
                 XClassDelete(d->groups);
                 d->groups = NULL;
+            }
+            if (d->m_unitLimits) {
+                XClassDelete(d->m_unitLimits);
+                d->m_unitLimits = NULL;
+            }
+            if (d->m_unitLastSent) {
+                XClassDelete(d->m_unitLastSent);
+                d->m_unitLastSent = NULL;
             }
             XPollScheduler_deinit(&d->unitSched);
         }
@@ -1415,6 +1513,7 @@ int XModbusHub_addDevice(XModbusHub* hub, XModbusClient* client, const XString* 
     dev.groups = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                    sizeof(XModbusHubReadGroup), false);
     dev.m_unitLimits = NULL;    /* 从站约束表惰性建（setUnitLimits 时建）。 */
+    dev.m_unitLastSent = NULL;  /* 从站发送时刻表惰性建（首次发读组时建）。 */
     /* XString 主版本：深拷贝入参（调用方传入的串可随即释放）；_2 为
      * UTF-8 const char* 兼容重载（约束文档「字符串 API 主次顺序」）。 */
     if (name && XString_size_base(name) > 0) dev.name = XString_create_copy(name);
@@ -1503,6 +1602,10 @@ bool XModbusHub_removeDevice(XModbusHub* hub, int deviceId)
     if (dev->m_unitLimits) {
         XClassDelete(dev->m_unitLimits);
         dev->m_unitLimits = NULL;
+    }
+    if (dev->m_unitLastSent) {
+        XClassDelete(dev->m_unitLastSent);
+        dev->m_unitLastSent = NULL;
     }
     XPollScheduler_deinit(&dev->unitSched); /* 槽位摘除前清表。 */
     {
@@ -1968,7 +2071,11 @@ bool XModbusHub_writeValues(XModbusHub* hub, XModbusRegisterType type,
     if (type != XModbusCoils && type != XModbusHoldingRegisters) return false;
     if (t < 0 || !hub->m_view || !hub->m_view[t]) return false;
     vi = hubViewFind(hub->m_view[t], virtualStart);
-    if (vi < 0) return false;
+    if (vi < 0) {
+        XPrintf("[w-dbg] viewFind FAIL v=0x%04X type=%d\n",
+                (unsigned)virtualStart, (int)type);
+        return false;
+    }
     s = (XModbusHubCacheSlice*)XVector_at_base(hub->m_view[t], (int64_t)vi);
     if (!s || !s->block) return false;
     block = s->block;
@@ -2022,6 +2129,9 @@ bool XModbusHub_writeValues(XModbusHub* hub, XModbusRegisterType type,
     }
     /* ② 标脏（合并窗口内多次写只留最终值）+ 调度刷写。 */
         hubMarkDirty(block, blockOffset, count);
+    XPrintf("[w-dbg] dirty ok v=0x%04X off=%u cnt=%u val=%u\n",
+            (unsigned)virtualStart, (unsigned)blockOffset, (unsigned)count,
+            (unsigned)values[0]);
     hub->m_lastWriteMs = XDateTime_currentMSecsSinceEpoch();
     hubScheduleFlush(hub, s->deviceId);
     return true;

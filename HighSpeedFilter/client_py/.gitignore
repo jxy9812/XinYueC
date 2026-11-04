@@ -1,0 +1,9 @@
+# 运行产物
+__pycache__/
+*.pyc
+tests/_run/
+/tmp/
+
+# 编辑器
+.vscode/
+.idea/

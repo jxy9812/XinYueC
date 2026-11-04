@@ -109,12 +109,31 @@ list(REMOVE_ITEM TEST_FILE
 # 不得卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/XProtocolTest/xntp_min_repro.c")
+# xhsf_codec_test 同理：HSF 网络编解码专项单测自带 main（XHsfCodec_Test
+# 目标），不得卷入主程序（剔除三查纪律）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/XProtocolTest/xhsf_codec_test.c")
+# xhsf_link_probe 同理：联调探针自带 main（XHsfLinkProbe 目标）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/XProtocolTest/xhsf_link_probe.c")
 # xmodbus_android_probe 同理：自带 main 的安卓真机 Modbus TCP 主站轮询
 # 探针独立可执行（XModbusAndroidProbe 目标，2026-10-25 安卓 seccomp 拒
 # io_uring_setup 根修车道诊断工具），不得卷入主程序（与 main.c 重复定义
 # main）——TEST_FILE 剔除三查同款坑第五次。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/XProtocolTest/xmodbus_android_probe.c")
+# xfdv_m512_rtu_test 同理：自带 main 的**真机** Modbus RTU 闭环探针独立可执行
+# （XModbusM512RtuProbe 目标，2026-11-03 512M 变频器真机联调：CH343 USB-485
+# + COM17 @115200 8N1 + 站号 2），不得卷入主程序（与 main.c 重复定义 main）
+# ——TEST_FILE 剔除三查同款坑。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/XProtocolTest/xfdv_m512_rtu_test.c")
+# hsf_vfd_probe 同理：自带 main 的 HSF 变频器页交互回归探针独立可执行
+# （HsfVfdProbe 目标，2026-11-04 变频器页全量回归：单 TU 收录页/模拟源/
+# provider 实现以直达内部），不得卷入主程序（与 main.c 重复定义 main）
+# ——TEST_FILE 剔除三查同款坑。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/hsf_vfd_probe.c")
 # XScrollTouchProbe / XGestureRecognizerTest 同理：自带 main 的独立可执行
 # （XScrollTouchProbe_Test / XGestureRecognizer_Test 目标，2026-10-29 触摸
 # 跟手滚动与手势识别器战役新增），不得卷入主程序（与 main.c 重复定义
@@ -191,8 +210,16 @@ list(REMOVE_ITEM TEST_FILE
 # XGUI_ON=0（嵌入式全裁剪）时与回归测试同口径排除：demo（main.c）与
 # Test/*.c 控件测试源引用 GUI 类型，裁剪构建无法编译。
 if(XGUI_ON)
+# [2026-11-04 客户端流量计单测] HsfLinkClient / HsfFlowMeterProvider 只随
+# HsfClient 可执行编译（不在任何库里），测试要直接实例化它们，故把这两个
+# 源一并编进测试目标。它们不依赖 GUI（纯 XLink + BSON），可以安全共用。
+set(HSF_CLIENT_TEST_MODULE_SOURCES
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/HsfLinkClient.c"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/HsfFlowMeterProvider.c"
+)
 add_executable(${EXPORT_NAME}_Static
 ${TEST_FILE}
+${HSF_CLIENT_TEST_MODULE_SOURCES}
 "${CMAKE_CURRENT_LIST_DIR}/../main.c"
 )
 set_target_properties(${EXPORT_NAME}_Static PROPERTIES
@@ -207,10 +234,16 @@ xinyue_force_include_config(${EXPORT_NAME}_Static)
 # 不携带 FT_* 符号，动态 exe 链接必缺）；静态库经 LINK_ONLY 本已传递，重复
 # 列出无害。
 if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
+    target_link_libraries(${EXPORT_NAME}_Static XHsfServerIoLib ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
 else()
-    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
+    target_link_libraries(${EXPORT_NAME}_Static XHsfServerIoLib ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
 endif()
+# [2026-11-04 服务端站单测] 测试直接实例化 HsfServerIoFlowMeter（见
+# Test/XIndustryTest/hsf_server_io_flowmeter_test.c），需要服务端头目录。
+target_include_directories(${EXPORT_NAME}_Static PRIVATE
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/server"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/server/io"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui")
 
 # ==================== 动态链接的可执行程序 ====================
 # 链接 XinYueC 动态库，生成的可执行文件运行时需附带 XinYueC.dll（Windows）或 libXinYueC.so（Linux）
@@ -223,7 +256,7 @@ set_target_properties(${EXPORT_NAME}_Dynamic PROPERTIES
 )
 xinyue_force_include_config(${EXPORT_NAME}_Dynamic)
 if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype)
+    target_link_libraries(${EXPORT_NAME}_Dynamic XHsfServerIoLib ${EXPORT_NAME} ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype)
 else()
     target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} mbedtls lwip zlib fatfs pcre2 sqlite freetype)
 endif()
@@ -241,6 +274,20 @@ add_executable(XNtpMinRepro_Test
 )
 target_link_libraries(XNtpMinRepro_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
+
+# HSF 网络编解码专项单测（变频器/电磁阀 ↔ JSON/BSON；HSF 服务端/客户端
+# 联调的数据面回归锁）。双平台可构建（纯框架层，无平台依赖）。
+add_executable(XHsfCodec_Test
+    "${CMAKE_CURRENT_LIST_DIR}/XProtocolTest/xhsf_codec_test.c"
+)
+target_link_libraries(XHsfCodec_Test XinYueIndustry mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+# HSF 服务端联调探针：登录→遥测快照→控制→角色门禁 全链验证（自带 main）。
+add_executable(XHsfLinkProbe
+    "${CMAKE_CURRENT_LIST_DIR}/XProtocolTest/xhsf_link_probe.c"
+)
+target_include_directories(XHsfLinkProbe PRIVATE
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/common")
+target_link_libraries(XHsfLinkProbe XinYueIndustry mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 
 # ==================== 无线契约探针（独立可执行） ====================
 # 无线平台抽象（L0）实测：枚举无线适配器 → 发起扫描 → 轮询扫描状态机 →
@@ -292,6 +339,42 @@ if(UNIX)
     target_link_libraries(XModbusAndroidProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XModbusAndroidProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== 512M 变频器真机 Modbus RTU 闭环探针（独立可执行） ====================
+# [2026-11-03] 用框架自己的 Modbus RTU 栈（XModbusRtuSerialClient → XModbusHub
+# → XModbusLink → XVfdM512）连**真实**的 511M/512M/513M 变频器（CH343 USB-485，
+# COM17 @115200 8N1，从站地址 2）。与既有的 xfdv_m512_test 的区别：那份的从站是
+# 进程内 TCP 仿真器，本探针的从站就是真机（不用仿真器）。
+# 用法：./XModbusM512RtuProbe [--port COM17] [--unit 2]
+# 安全：电机未接；程序退出前无条件发自由停机（0x2000=5）并回读 0x3000 确认停机。
+add_executable(XModbusM512RtuProbe
+    "${CMAKE_CURRENT_LIST_DIR}/XProtocolTest/xfdv_m512_rtu_test.c"
+)
+if(UNIX)
+    target_link_libraries(XModbusM512RtuProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XModbusM512RtuProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== HSF 变频器页交互回归探针（独立可执行） ====================
+# [2026-11-04] 变频器监视页（HsfMonitorVfd）全量交互回归：控制闸联动/
+# Slider↔SpinBox 双向同步/下发全链路/启停双态/方向下拉/故障复位（确定性
+# 注入）/自动运行锁/趋势追点与视口仲裁/形态自适应，关键状态各存 PNG。
+# 单 TU 收录 HsfMonitorVfd.c + HsfVfdProvider.c + HsfVfdDemoSim.c（直达
+# s_vfdPage 与模拟器内部；勿再把这些源加进本目标——符号会重复）。
+# 用法：./HsfVfdProbe （在仓库根运行，截图落在 out/vfdshot_*.png）
+add_executable(HsfVfdProbe
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/hsf_vfd_probe.c"
+)
+target_include_directories(HsfVfdProbe PRIVATE
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/pages")
+if(UNIX)
+    target_link_libraries(HsfVfdProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(HsfVfdProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
 # ==================== XSpinBox 步进按钮列几何四方口径探针（独立可执行） ====================

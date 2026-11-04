@@ -239,6 +239,16 @@ XAbstractNetIoRing* XAbstractNetIoRing_createPlatform(void)
      * 走无事件环分支（它对 NULL 已做判空降级）。 */
     return NULL;
 }
+
+bool XAbstractNetIoRing_platformPeerReallyClosed(int osFd)
+{
+    /* 假 EOF 复核需要 BSD socket 语义（MSG_PEEK）；ESP8266 NONOS SDK 无此
+     * 头文件。恒判真关闭 = 保持"0 字节读完成即对端 FIN"的原有行为，与
+     * 引入该钩子前逐位一致（该假 EOF 现象出自定制内核与桌面 IOCP，
+     * 不在本平台）。 */
+    (void)osFd;
+    return true;
+}
 #endif /* XPLATFORM_HAS_OS */
 
 #endif /* defined(__ESP8266__) || defined(ESP8266) */

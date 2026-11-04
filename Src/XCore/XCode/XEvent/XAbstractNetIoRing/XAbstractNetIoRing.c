@@ -186,43 +186,28 @@ static void VXAbstractNetIoRing_dispatchCQEntry(XAbstractNetIoRing* self,
          * HTTP 超时(wget 却通)同征。MSG_PEEK 复核: EAGAIN=连接活着
          * (内核边缘事件语义误报, 丢弃 CLOSE、完成事件照常下发, 由设备
          * 层重挂读); pr==0 才是真 FIN(照旧发关闭)。与桌面/其他平台
-         * 真关闭语义零变化(真关闭时 PEEK 恒返 0)。 */
-#if !defined(_WIN32)
-        /* [平台闸 2026-10-19] 仅 POSIX 生效：Windows 侧 winsock2.h
-           无 MSG_DONTWAIT（套接字非阻塞由 ioctlsocket 设），且该假
-           EOF 现象出自嵌入式定制内核，桌面 Win32 从未复现——Windows
-           保持原语义（0 字节完成即判对端关闭），不引入 PEEK 复核段。 */
-#if !defined(__ESP8266__)
-        {   /* 假 EOF PEEK 复核需要 BSD socket 语义；ESP8266 无此头，
-               且该现象出自嵌入式定制内核、桌面从未复现——ESP8266 直接
-               保留原语义（同 Windows 的处理）。 */
-            /* [2026-10-23 对端 FIN 误丢根修] PEEK 必须用引擎随 CQ 条目
-             * 带来的真实 OS fd（m_osFd）。旧实现拿 entry->m_fd——XFd
-             * fd 表槽位号——当 OS fd，两者编号空间不同且常不相等，PEEK
-             * 打到无关 fd（实测打中 stderr 恒 ENOTSOCK=-1≠0），一切真
-             * 对端 FIN 都被当假 EOF 丢弃，SOCK_CLOSE 永不下发（epoll
-             * 引擎 xmqtt-tcp-api 断开三例稳定复现实证）。
-             * m_osFd<0（数据报 0 长报文/上下文缺失/其他引擎）＝不适用
-             * 关闭判定：按普通 0 字节读完成下发，由设备层既有复核路径
-             * （用自身 p->socket，编号正确）决定重挂读。 */
-            if (entry->m_osFd >= 0) {
-                unsigned char peekByte;
-                int pr = (int)recv(entry->m_osFd, &peekByte, 1,
-                                   MSG_PEEK | MSG_DONTWAIT);
-                if (pr != 0) {
-                    /* pr<0 且非 EAGAIN(如 EBADF)=fd 已失效, 同样不当作对端
-                     * FIN; EAGAIN=连接活着; pr>0=对端有数据待读(更非关闭)。
-                     * 丢弃 CLOSE, 完成事件走常规路径下发, 设备层重挂读。 */
-                    return;
-                }
-            }
-            else {
-                /* 引擎未带 OS fd（数据报 0 长报文等）：不判关闭。 */
-                return;
-            }
-        }
-#endif /* __ESP8266__ */
-#endif
+         * 真关闭语义零变化(真关闭时 PEEK 恒返 0)。
+         *
+         * [2026-11-04 Windows 同征] 原实现只在 POSIX 生效、Windows 保持
+         * "0 字节即关闭"。本机 IOCP 环回实测推翻该前提：服务端 socket
+         * 在链路健在时被判 Unconnected（客户端全程未断），导致会话被
+         * 复位、订阅全丢、推送积压。现改为**平台钩子统一裁决**：
+         * `XAbstractNetIoRing_platformPeerReallyClosed(osFd)` —— 各平台
+         * 在自己的 Drive 层用本平台可为的 PEEK 手段实现同一判定口径，
+         * Src/ 不再出现平台分支（平台差异只允许下沉到 Drive）。 */
+        /* PEEK 必须用引擎随 CQ 条目带来的真实 OS fd（m_osFd），不能用
+         * entry->m_fd（XFd 槽位号）——两者编号空间不同，历史上因此把一切
+         * 真 FIN 误判成假 EOF（epoll 引擎 xmqtt-tcp-api 断开三例实证）。
+         * m_osFd<=0（数据报 0 长报文/引擎未填/上下文缺失）＝不适用关闭
+         * 判定：按普通 0 字节读完成下发，由设备层既有复核路径决定重挂读。
+         * [2026-11-04] 判据从 `<0` 收紧为 `<=0`：Win32 后端历史上从不填
+         * 该字段（memset 恒 0），用 `<0` 会让 PEEK 打到 **fd 0（stdin）**
+         * ——stdin 读到 0 ⇒ 一切 0 字节完成被当成真 FIN，健康链路被误断。
+         * 合法套接字句柄在两端都恒为正（POSIX fd>2，Win32 SOCKET 非 0）。 */
+        if (entry->m_osFd <= 0)
+            return;
+        if (!XAbstractNetIoRing_platformPeerReallyClosed((int)entry->m_osFd))
+            return; /* 假 EOF：丢弃 CLOSE，完成事件走常规路径下发。 */
         XEventSockClose* closeEvent = XEventSockClose_create(entry->m_fd);
         if (closeEvent) {
             ((XEvent*)closeEvent)->m_posted = true;

@@ -18,4 +18,29 @@ void XTestMenu_XIndustryTest(XTestMenu* root)
 		XTestMenu_addAction(menu, "XIndustryModbus 适配器闭环（TCP 环回）"),
 		XIndustryModbusTest);
 #endif
+#if XINDUSTRY_ON && (XTEMP_HUM_ON || XPRESS_DIFF_ON)
+	/* 温湿度变送器/压差计（mock 通道，进程内自跑）。 */
+	XTestMenu_setActionFunction(
+		XTestMenu_addAction(menu, "XIndustrySensor 温湿度/压差计（mock）"),
+		XIndustrySensorTest);
+#endif
+#if XINDUSTRY_ON && XFLOW_METER_ON
+	/* 电磁流量计（mock 通道，进程内自跑；含 32 位拼装与编解码）。 */
+	XTestMenu_setActionFunction(
+		XTestMenu_addAction(menu, "XIndustryFlowMeter 电磁流量计（mock）"),
+		XIndustryFlowMeterTest);
+	/* 服务端流量计站（Hub 本地缓存驱动，不起串口/TCP）。 */
+	XTestMenu_setActionFunction(
+		XTestMenu_addAction(menu, "XHsfServerIoFlowMeter 服务端流量计站"),
+		XHsfServerIoFlowMeterTest);
+	XTestMenu_setActionFunction(
+		XTestMenu_addAction(menu, "XHsfClientFlowMeter 客户端流量计 provider"),
+		XHsfClientFlowMeterProviderTest);
+#endif
+#if XINDUSTRY_ON && XBUTTON_STATION_ON
+	/* 按钮组/操作柱（mock 触点，进程内自跑；含急停安全侧与指示灯）。 */
+	XTestMenu_setActionFunction(
+		XTestMenu_addAction(menu, "XIndustryButtonStation 按钮组（mock）"),
+		XIndustryButtonStationTest);
+#endif
 }

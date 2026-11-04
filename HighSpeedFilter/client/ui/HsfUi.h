@@ -5,6 +5,7 @@
  *             （HsfTitleBar）+ 中间堆栈窗口（HsfStack）+ 底部黑色状态栏
  *             （HsfStatusBar），根容器垂直布局。各部件独立模块（ui/ 目录
  *             各自 .h/.c），本模块只做装配与页序语义（切页/标题/状态同步）。
+ *             登录（HsfLogin）→ 主窗装配 → 事件循环的启动编排也在此。
  */
 #ifndef HSFUI_H
 #define HSFUI_H
@@ -14,22 +15,34 @@ extern "C" {
 #endif
 
 #include "CXinYueConfig.h"
+#include <stdbool.h>
 
 /**
- * @brief 启动客户端 UI：建主窗并进入 GUI 事件循环（阻塞至窗口关闭）。
- * @param autoExitSeconds >0 时该秒数后自动退出（CI/截图验收用）；0 常驻。
- * @param shotPath 非空=离屏截图模式：窗口开到屏外静默渲染，出图存该
- *        路径（UTF-8）后自动退出（不打扰用户桌面）。
- * @param shotWidth 截图模式窗口宽（0=缺省：横屏基准 1280，按屏收敛）。
- * @param shotHeight 截图模式窗口高（0=缺省：横屏基准 720，按屏收敛）。
- * @param startPage 启动页索引（-1=主界面；截图/调试用）。
- * @param thenPage 出图前切到的目标页（-1=不切；验证切页残留用）。
- * @return 事件循环退出码（0=正常）。
- * @note 调用方需已创建 XGuiApplication（main_client.c 负责）。
+ * @brief 启动选项（登录口径与 CI 通道；缺省 0/NULL）。
  */
-int HsfUi_start(int autoExitSeconds, const char* shotPath,
-                int shotWidth, int shotHeight, int startPage,
-                int thenPage);
+typedef struct HsfUiOptions {
+    int autoSeconds;            /**< >0 自动退出秒数（CI/截图验收）；0 常驻。 */
+    const char* shotPath;       /**< 离屏截图输出路径（UTF-8；NULL=不截图）。 */
+    int shotWidth;              /**< 截图窗口宽（0=缺省基准）。 */
+    int shotHeight;             /**< 截图窗口高（0=缺省基准）。 */
+    int startPage;              /**< 启动页索引（-1=主页）。 */
+    int thenPage;               /**< 出图前切到的目标页（-1=不切）。 */
+    const char* loginSpec;      /**< 无头登录 "user:pass@host:port"（CI/联调）；
+                                     NULL=登录窗口或跳过。 */
+    int noLogin;                /**< 1=跳过登录直进主界面（离线演示）。 */
+    int loginShot;              /**< 1=离屏截图目标是登录窗（而非主窗）。 */
+} HsfUiOptions;
+
+/**
+ * @brief 启动客户端 UI：登录（窗口/无头/跳过）→ 建主窗 → GUI 事件循环。
+ * @param opts 启动选项（借用；NULL 按「登录窗口 + 常驻」处理）。
+ * @return 事件循环退出码（0=正常；登录失败/取消按失败码）。
+ * @note 调用方需已创建 XGuiApplication（main_client.c 负责）。
+ * @note 登录走 XLink 内建挑战应答（HsfLogin/HsfLinkClient）；成功后才建
+ *       主窗。变频器页在「有连接意图」时自动接远端 provider，离线
+ *       （--no-login）回落本地模拟源。
+ */
+int HsfUi_start(const HsfUiOptions* opts);
 
 #ifdef __cplusplus
 }

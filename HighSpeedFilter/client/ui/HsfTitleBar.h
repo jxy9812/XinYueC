@@ -26,6 +26,9 @@ extern "C" {
 /** @brief ☰ 点击回调（userData=归属主窗指针）。 */
 typedef void (*HsfTitleBarMenuFn)(void* userData);
 
+/** @brief 全局运行模式钮点击回调（userData=注册令牌）。 */
+typedef void (*HsfTitleBarModeFn)(void* userData);
+
 XCLASS_DEFINE_BEGING(HsfTitleBar)
 XCLASS_DEFINE_EXTEND_END(HsfTitleBar, XWidget)
 
@@ -36,13 +39,22 @@ typedef struct HsfTitleBar
     XLabel*       m_title;     /**< 居中标题标签（子控件，随栏析构）。 */
     XLabel*       m_date;      /**< 右上角日期行（年月日）。 */
     XLabel*       m_clock;     /**< 右上角时间行（时分秒）。 */
+    XLabel*       m_modeBtn;   /**< 全局运行模式钮（手动/自动，右侧常驻）。 */
+    XLabel*       m_healthLbl; /**< 设备健康指示（正常/故障N/离线N）。 */
     XLabel*       m_temp;      /**< 温度标签。 */
     XLabel*       m_humid;     /**< 湿度标签。 */
     HsfTitleBarMenuFn m_menuFn;/**< ☰ 点击回调。 */
     void*        m_menuUserData; /**< 回调用户数据（归属主窗）。 */
     double       m_temperature; /**< 温度（℃），默认 0。 */
     double       m_humidity;    /**< 湿度（%），默认 0。 */
+    bool         m_tempValid;   /**< 温度数据有效（false 时显示 "--"）。 */
+    bool         m_humValid;    /**< 湿度数据有效（false 时显示 "--"）。 */
     bool         m_narrowTime;  /**< 窄栏时间格式（只时分秒）。 */
+    /* ---- 全局运行模式（服务端模式；控制全部设备） ---- */
+    bool         m_modeKnown;   /**< 是否已从服务端拿到模式。 */
+    bool         m_modeAuto;    /**< 服务端是否自动模式。 */
+    HsfTitleBarModeFn m_modeFn; /**< 模式钮点击回调。 */
+    void*        m_modeUserData;/**< 回调用户数据。 */
 } HsfTitleBar;
 
 /**
@@ -101,6 +113,43 @@ void HsfTitleBar_setHumidity(HsfTitleBar* self, double percent);
  * @return 湿度值（默认 0）。
  */
 double HsfTitleBar_humidity(const HsfTitleBar* self);
+
+/**
+ * @brief 一次设置温湿度并重排右侧列（推荐入口）。
+ * @param self 目标标题栏；NULL 时无操作。
+ * @param celsius 温度（℃）。
+ * @param percent 湿度（%）。
+ * @param tempValid 温度有效（false 时该格显示 "--"）。
+ * @param humValid 湿度有效（false 时该格显示 "--"）。
+ * @note  数值位数变化会改右侧列宽，单独调 setTemperature/setHumidity 不重排
+ *        会与居中标题重叠；本函数刷文本后统一重排，一帧只触发布局一次。
+ */
+/**
+ * @brief 注册全局运行模式钮点击回调。
+ * @param self 标题栏；fn 回调；userData 令牌。
+ * @note  手动/自动是**全局状态**（服务端一档管控全部设备），故置于顶栏。
+ */
+void HsfTitleBar_setModeHandler(HsfTitleBar* self, HsfTitleBarModeFn fn,
+                               void* userData);
+
+/**
+ * @brief 更新顶栏设备健康指示。
+ * @param self 标题栏。
+ * @param known 是否已收到健康数据（false 显示占位）。
+ * @param fault 故障设备数；offline 离线设备数。
+ */
+void HsfTitleBar_setHealth(HsfTitleBar* self, bool known, int fault, int offline);
+
+/**
+ * @brief 更新顶栏显示的运行模式。
+ * @param self 标题栏。
+ * @param known 是否已知（false 时显示占位）。
+ * @param autoMode true=自动（拒绝远程控制）false=手动。
+ */
+void HsfTitleBar_setRunMode(HsfTitleBar* self, bool known, bool autoMode);
+
+void HsfTitleBar_setClimate(HsfTitleBar* self, double celsius, double percent,
+                            bool tempValid, bool humValid);
 
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 

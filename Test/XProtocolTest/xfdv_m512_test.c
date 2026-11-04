@@ -50,6 +50,8 @@
 #endif
 
 static int g_fail = 0;
+/** 装配完成时的定时器 fd 计数（回归锁基线）。 */
+static int g_fdTimersAtMount = 0;
 static const char* g_case = "";
 static uint64_t g_bootMs = 0;
 
@@ -101,9 +103,24 @@ static void pump(int ms)
     }
 }
 
-/** @brief sender → 站点下标。 */
-static int devIndex(XObject* sender)
+/**
+ * @brief 统计 fd 表里**定时器** fd 占用数（回归锁用）。
+ * @return 定时器 fd 数量。
+ * @note 定时器 fd 只在 XObject_killTimer 时释放（触发≠注销），
+ *       故本计数随状态拍数线性增长即说明状态定时器在泄漏。
+ */
+static int countTimerFds(void)
 {
+    int k, n = 0;
+    for (k = 0; k < XFD_TABLE_SIZE; ++k) {
+        XFileDescriptor* d = XFd_get((XFd)k);
+        if (d && XFd_type((XFd)k) == XFD_TYPE_TIMER) ++n;
+    }
+    return n;
+}
+
+/** @brief sender → 站点下标。 */
+static int devIndex(XObject* sender){
     if (sender && sender == g_devObj[1]) return 1;
     return 0;
 }
@@ -288,6 +305,17 @@ int XVfdM512Test_runEx(const char* ptyOverride)
           "站2 装配 P8.00 参数点");
     CHECK(XVfdDevice_hasCapability(g_dev[0], XVfdCap_Jog), "能力位图：点动（511M 族特有）");
     CHECK(XVfdDevice_hasCapability(g_dev[1], XVfdCap_ParamAccess), "能力位图：参数通道");
+
+    /* [2026-11-03 回归锁] 定时器 fd 基线（状态定时器刚起）。
+     * 修复前：状态定时器每拍触发泄漏 1 个 fd（触发≠注销，fd 要 killTimer
+     * 才释放），两站各一拍 ⇒ 每拍泄漏 2 个；fd 表仅 128 槽，几秒即占满，
+     * 占满后全应用再无定时器可用（RTU 客户端帧间定时器注册失败 ⇒ 应答帧
+     * 滞留接收缓冲 ⇒ 全线超时）。修复后（触发即注销）增量应接近 0。 */
+    {
+        const int base = countTimerFds();
+        g_fdTimersAtMount = base;
+        printf("  [INFO] 回归锁基线：装配完成时定时器 fd = %d\n", base);
+    }
 
     XObject_connect_2(g_devObj[0], XSignal(XVfdDevice_statusUpdated_signal), onStatusUpdated);
     XObject_connect_2(g_devObj[1], XSignal(XVfdDevice_statusUpdated_signal), onStatusUpdated);
@@ -507,6 +535,16 @@ cleanup:
     g_dev[0] = NULL;
     g_dev[1] = NULL;
     pump(50);
+
+    /* ---------- [2026-11-03 回归锁] 定时器 fd 不得随状态拍数线性增长 ---------- */
+    {
+        const int now = countTimerFds();
+        const int delta = now - g_fdTimersAtMount;
+        const int limit = 8;   /* 允许少量抖动，不容线性增长 */
+        printf("  [INFO] 定时器 fd：装配时 %d → 结束 %d（Δ=%d）\n",
+               g_fdTimersAtMount, now, delta);
+        CHECK(delta <= limit, "定时器 fd 未线性增长（状态定时器无泄漏）");
+    }
 
     printf("=== 结束：失败用例 %d ===\n", g_fail);
     fflush(stdout);
