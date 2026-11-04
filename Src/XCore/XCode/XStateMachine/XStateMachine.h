@@ -12,6 +12,7 @@ extern "C" {
 #endif
 
 #include "XState.h"
+#include "XAbstractAnimation.h"
 
 /** @brief 状态机事件优先级，对应 QStateMachine::EventPriority。 */
 typedef enum XStateMachine_EventPriority {
@@ -81,12 +82,15 @@ typedef struct XStateMachine {
     XVector* m_delayedEvents;                    ///< 延迟事件记录列表。
     XVector* m_signalConnections;                ///< 共享信号事件连接列表。
     XVector* m_restorables;                      ///< 属性恢复记录列表（对标 registeredRestorablesForState）。
+    XVector* m_defaultAnimations;                ///< 默认动画列表（对标 defaultAnimations；借用不取得所有权）。
+    XVector* m_animationBindings;                ///< 进入状态的动画绑定记录（对标 animationsForState）。
     XAbstractState* m_pendingErrorState;         ///< 下一 microstep 需要进入的错误状态。
     XString* m_errorString;                      ///< 最近一次错误的描述（由状态机拥有）；NULL 表示无错误。
     int m_nextDelayedEventId;                    ///< 下一个延迟事件编号。
     XStateMachine_PrivateState m_state;          ///< 生命周期状态（对标 QStateMachinePrivate::state）。
     XStateMachine_Error m_error;                  ///< 最近一次状态图错误（对标 QStateMachinePrivate::error）。
     XState_RestorePolicy m_globalRestorePolicy;  ///< 属性恢复策略（对标 globalRestorePolicy）。
+    bool m_animated;                             ///< 动画总开关（对标 animated，默认 true）。
     bool m_processing;                           ///< 当前是否正在执行 macrostep。
     bool m_processingScheduled;                  ///< 是否已投递处理事件。
     bool m_stopRequested;                        ///< 是否请求在安全点停止。
@@ -118,6 +122,39 @@ void XStateMachine_init(XStateMachine* machine);
  * @param childMode 根状态的互斥或并行模式。
  */
 void XStateMachine_init_ex(XStateMachine* machine, XState_ChildMode childMode);
+
+/**
+ * @brief 查询动画是否启用（对标 QStateMachine::isAnimated）。
+ * @param machine 状态机实例。
+ * @return 启用返回 true（默认值，与 Qt 一致）；machine 为 NULL 时返回 false。
+ */
+bool XStateMachine_isAnimated(const XStateMachine* machine);
+/**
+ * @brief 设置动画启用开关（对标 QStateMachine::setAnimated）。
+ * @param machine 状态机实例。
+ * @param enabled true 表示转换触发时播放关联动画并延迟 propertiesAssigned。
+ */
+void XStateMachine_setAnimated(XStateMachine* machine, bool enabled);
+/**
+ * @brief 追加默认动画（对标 QStateMachine::addDefaultAnimation）。
+ * @param machine 状态机实例。
+ * @param animation 默认动画；不取得所有权，重复追加与 Qt 一致不检查。
+ * @return 追加成功返回 true；animation 为 NULL 或容器分配失败返回 false。
+ */
+bool XStateMachine_addDefaultAnimation(XStateMachine* machine, XAbstractAnimation* animation);
+/**
+ * @brief 获取默认动画列表的只读内部引用（对标 QStateMachine::defaultAnimations）。
+ * @param machine 状态机实例。
+ * @return 元素类型为 XAbstractAnimation* 的内部 XVector；machine 为 NULL 时返回 NULL。
+ * @warning 借用语义：容器归状态机所有，调用者不得修改或释放；动画对象归其创建者所有。
+ */
+const XVector* XStateMachine_defaultAnimations_const(const XStateMachine* machine);
+/**
+ * @brief 移除默认动画（对标 QStateMachine::removeDefaultAnimation）。
+ * @param machine 状态机实例。
+ * @param animation 待移除动画；不销毁动画对象。
+ */
+void XStateMachine_removeDefaultAnimation(XStateMachine* machine, XAbstractAnimation* animation);
 
 
 /**

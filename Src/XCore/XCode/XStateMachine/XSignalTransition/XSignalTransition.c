@@ -8,6 +8,10 @@ static bool VXSignalTransition_eventTest(XSignalTransition* transition, XEvent* 
 {
     if (!transition || !event || XEvent_type(event) != XStateMachine_signalEventType_internal())
         return false;
+    /* 对标 Qt：未注册到状态机的信号转换（signalIndex == -1）不参与事件
+     * 匹配，即使事件是手工构造投递的 SignalEvent 也不触发。 */
+    if (!transition->m_connection)
+        return false;
 
     XStateMachine_SignalEvent* signalEvent = (XStateMachine_SignalEvent*)event;
     return signalEvent->m_sender == transition->m_senderObject

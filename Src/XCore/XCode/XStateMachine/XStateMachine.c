@@ -24,6 +24,20 @@ typedef struct XStateMachine_SignalConnection {
 } XStateMachine_SignalConnection;
 
 /**
+ * @brief 进入状态与动画的一条绑定（对标 QStateMachinePrivate::animationsForState）。
+ * @details 动画对象不转移所有权；记录以 XObject 身份充当 finished 信号的
+ *          接收者。m_spent 防"自然结束槽"与"退出路径终止"双路回收。
+ */
+typedef struct XStateMachine_AnimationBinding {
+    XObject m_class;
+    XStateMachine* m_machine;        ///< 所属状态机，不取得所有权。
+    XAbstractState* m_state;         ///< 绑定的进入状态，不取得所有权。
+    XAbstractAnimation* m_animation; ///< 绑定的动画，借用不取得所有权。
+    XConnection* m_connection;       ///< finished 信号连接。
+    bool m_spent;                    ///< 已被任一路径回收标记（防双删）。
+} XStateMachine_AnimationBinding;
+
+/**
  * @brief 一条属性恢复记录（对标 QStateMachinePrivate::RestorableId + 保存值）。
  * @details 元素由 computePendingRestorables_internal 产出、由调用方释放。
  */
@@ -55,10 +69,14 @@ static bool VXStateMachine_eventFilter(XStateMachine* machine, XObject* watched,
 static void VXStateMachine_timerEvent(XStateMachine* machine, XTimerEvent* event);
 static void VXStateMachine_deinit(XStateMachine* machine);
 static void VXStateMachine_hook(XStateMachine* machine, XEvent* event);
+static void VXStateMachine_onEntry(XAbstractState* state, XEvent* event);
+static void VXStateMachine_onExit(XAbstractState* state, XEvent* event);
 
 static void XStateMachine_startInternal(XStateMachine* machine);
 static void XStateMachine_process(XStateMachine* machine);
 static bool XStateMachine_microstep(XStateMachine* machine, XEvent* event, XVector* transitions);
+static void XStateMachine_terminateStateAnimations(XStateMachine* machine,
+                                                   XAbstractState* state, bool deferred);
 
 static bool XStateMachine_vectorContains(const XVector* vector, const void* pointer)
 {
@@ -114,16 +132,6 @@ static void XStateMachine_vectorRemovePointer(XVector* vector, const void* point
         XVector_removeAt_base(vector, index);
 }
 
-static int XStateMachine_stateDepth(const XAbstractState* state)
-{
-    int depth = 0;
-    for (const XAbstractState* current = state; current && current->m_parentState;
-         current = (const XAbstractState*)current->m_parentState) {
-        ++depth;
-    }
-    return depth;
-}
-
 static bool XStateMachine_isDescendant(const XAbstractState* state, const XAbstractState* ancestor)
 {
     if (!state || !ancestor || state == ancestor)
@@ -169,24 +177,156 @@ static bool XStateMachine_isAtomic(const XStateMachine* machine, const XAbstract
     return !XStateMachine_hasActiveChild(machine, (const XState*)state);
 }
 
-static void XStateMachine_sortStates(XVector* states, bool deepestFirst)
+/* ==================== 进入/退出排序（对标 Qt 的三个 LessThan 比较器） ==================== */
+
+/**
+ * @brief 找到 first 与 second 的最近公共祖先（对标 findLCA，非 onlyCompound）。
+ * @details 沿 first 的真祖先链（含状态机根）找第一个同时是 second 祖先的状态；
+ *          找不到时按 Qt 的回退语义返回状态机根。
+ */
+static XAbstractState* XStateMachine_findLCA(const XStateMachine* machine,
+                                             const XAbstractState* first,
+                                             const XAbstractState* second)
 {
-    if (!states)
+    for (XState* ancestor = first->m_parentState; ancestor;
+         ancestor = ancestor->m_class.m_parentState) {
+        if (XStateMachine_isDescendant(second, (XAbstractState*)ancestor))
+            return (XAbstractState*)ancestor;
+    }
+    return (XAbstractState*)machine;
+}
+
+/** @brief 返回 group 的直接子状态中包含 descendant 的那个的下标（对标 indexOfDescendant）。 */
+static int64_t XStateMachine_indexOfDescendant(const XState* group,
+                                               const XAbstractState* descendant)
+{
+    const XVector* children = XState_childStates_const_internal(group);
+    for (int64_t i = 0;
+         children && i < (int64_t)XVector_size_base((const XContainer*)children); ++i) {
+        XAbstractState* child = XVector_At_Base(children, i, XAbstractState*);
+        if (child && (child == descendant || XStateMachine_isDescendant(descendant, child)))
+            return i;
+    }
+    return -1;
+}
+
+/** @brief descendant 到 ancestor 的层数（对标 descendantDepth，ancestor 层不计）。 */
+static int XStateMachine_descendantDepth(const XAbstractState* descendant,
+                                         const XAbstractState* ancestor)
+{
+    int depth = 0;
+    for (const XAbstractState* current = descendant; current && current != ancestor;
+         current = (const XAbstractState*)current->m_parentState) {
+        ++depth;
+    }
+    return depth;
+}
+
+/** @brief 进入序比较（对标 stateEntryLessThan）：浅者优先、同父按子序、跨分支按 LCA 下子序。 */
+static bool XStateMachine_stateEntryLessThan(const XAbstractState* first,
+                                             const XAbstractState* second)
+{
+    if (first == second)
+        return false;
+    if (first->m_parentState == second->m_parentState && first->m_parentState) {
+        const XVector* children = XState_childStates_const_internal(first->m_parentState);
+        const void* keyFirst = first;
+        const void* keySecond = second;
+        return XVector_indexOf(children, &keyFirst, 0) < XVector_indexOf(children, &keySecond, 0);
+    }
+    if (XStateMachine_isDescendant(first, second))
+        return false;
+    if (XStateMachine_isDescendant(second, first))
+        return true;
+    XAbstractState* lca = XStateMachine_findLCA(NULL, first, second);
+    return XStateMachine_indexOfDescendant((XState*)lca, first)
+        < XStateMachine_indexOfDescendant((XState*)lca, second);
+}
+
+/** @brief 退出序比较（对标 stateExitLessThan）：深者优先、同父按子序倒排。 */
+static bool XStateMachine_stateExitLessThan(const XAbstractState* first,
+                                            const XAbstractState* second)
+{
+    if (first == second)
+        return false;
+    if (first->m_parentState == second->m_parentState && first->m_parentState) {
+        const XVector* children = XState_childStates_const_internal(first->m_parentState);
+        const void* keyFirst = first;
+        const void* keySecond = second;
+        return XVector_indexOf(children, &keySecond, 0) < XVector_indexOf(children, &keyFirst, 0);
+    }
+    if (XStateMachine_isDescendant(first, second))
+        return true;
+    if (XStateMachine_isDescendant(second, first))
+        return false;
+    XAbstractState* lca = XStateMachine_findLCA(NULL, first, second);
+    return XStateMachine_indexOfDescendant((XState*)lca, second)
+        < XStateMachine_indexOfDescendant((XState*)lca, first);
+}
+
+/**
+ * @brief 转换源状态进入序比较（对标 transitionStateEntryLessThan）：
+ *        源深者优先；同深度按 LCA 下子序。
+ */
+static bool XStateMachine_transitionEntryLessThan(const XAbstractTransition* first,
+                                                  const XAbstractTransition* second)
+{
+    if (first == second)
+        return false;
+    const XState* sourceFirst = first ? first->m_sourceState : NULL;
+    const XState* sourceSecond = second ? second->m_sourceState : NULL;
+    if (sourceFirst == sourceSecond)
+        return false;
+    if (!sourceFirst || !sourceSecond)
+        return sourceSecond == NULL;
+    if (XStateMachine_isDescendant((const XAbstractState*)sourceFirst,
+                                   (const XAbstractState*)sourceSecond))
+        return true;
+    if (XStateMachine_isDescendant((const XAbstractState*)sourceSecond,
+                                   (const XAbstractState*)sourceFirst))
+        return false;
+    XAbstractState* lca = XStateMachine_findLCA(NULL, (const XAbstractState*)sourceFirst,
+                                                (const XAbstractState*)sourceSecond);
+    const int depthFirst = XStateMachine_descendantDepth((const XAbstractState*)sourceFirst, lca);
+    const int depthSecond
+        = XStateMachine_descendantDepth((const XAbstractState*)sourceSecond, lca);
+    if (depthFirst == depthSecond)
+        return XStateMachine_indexOfDescendant((XState*)lca, (const XAbstractState*)sourceFirst)
+            < XStateMachine_indexOfDescendant((XState*)lca, (const XAbstractState*)sourceSecond);
+    return depthFirst > depthSecond;
+}
+
+static void XStateMachine_sortStatesBy(XVector* states,
+                                       bool (*less)(const XAbstractState*, const XAbstractState*))
+{
+    if (!states || !less)
         return;
     for (int64_t i = 1; i < (int64_t)XVector_size_base((const XContainer*)states); ++i) {
         XAbstractState* key = XVector_At_Base(states, i, XAbstractState*);
-        int keyDepth = XStateMachine_stateDepth(key);
         int64_t j = i - 1;
-        while (j >= 0) {
-            XAbstractState* previous = XVector_At_Base(states, j, XAbstractState*);
-            int previousDepth = XStateMachine_stateDepth(previous);
-            bool move = deepestFirst ? previousDepth < keyDepth : previousDepth > keyDepth;
-            if (!move)
-                break;
-            XVector_At_Base(states, j + 1, XAbstractState*) = previous;
+        while (j >= 0 && less(key, XVector_At_Base(states, j, XAbstractState*))) {
+            XVector_At_Base(states, j + 1, XAbstractState*) = XVector_At_Base(states, j, XAbstractState*);
             --j;
         }
         XVector_At_Base(states, j + 1, XAbstractState*) = key;
+    }
+}
+
+static void XStateMachine_sortTransitionsBy(XVector* transitions,
+                                            bool (*less)(const XAbstractTransition*,
+                                                         const XAbstractTransition*))
+{
+    if (!transitions || !less)
+        return;
+    for (int64_t i = 1; i < (int64_t)XVector_size_base((const XContainer*)transitions); ++i) {
+        XAbstractTransition* key = XVector_At_Base(transitions, i, XAbstractTransition*);
+        int64_t j = i - 1;
+        while (j >= 0 && less(key, XVector_At_Base(transitions, j, XAbstractTransition*))) {
+            XVector_At_Base(transitions, j + 1, XAbstractTransition*)
+                = XVector_At_Base(transitions, j, XAbstractTransition*);
+            --j;
+        }
+        XVector_At_Base(transitions, j + 1, XAbstractTransition*) = key;
     }
 }
 
@@ -612,29 +752,36 @@ static XAbstractState* XStateMachine_setError(XStateMachine* machine,
         errorText = "Missing default state in history state";
         break;
     case XStateMachine_NoCommonAncestorForTransitionError:
-        errorText = "No common ancestor for transition source and targets";
+        errorText = "No common ancestor for targets and source of transition from state";
         break;
     case XStateMachine_StateMachineChildModeSetToParallelError:
-        errorText = "Invalid state machine child mode";
+        errorText = "Child mode of state machine";
         break;
     default:
-        errorText = "Unknown state machine error";
+        errorText = "Unknown error";
         break;
     }
     /* 错误描述按 XString 主版本存储（对标 Qt QString errorString）；
      * 字面量仅在此转换为库内字符串，禁止以 char* 长期保存。
-     * 对标 Qt 的 tr(...).arg(context->objectName())：有对象名时把状态名拼进文本，
-     * 便于现场定位是哪个状态缺初始状态 / 缺历史默认状态。 */
+     * 对标 Qt 的 tr(...).arg(context->objectName())：四条模板与 Qt 6.8 逐字
+     * 对齐；上下文名恒以 'name' 形式拼入（Qt 的 arg 对空 objectName 同样
+     * 产出 ''）。ChildModeSetToParallelError 的上下文在 Qt 里是状态机本身
+     * （findLCA 回退传 q_func()），故取 machine 的 objectName。 */
     XString* text = XString_create_utf8(errorText);
     if (text) {
-        const XString* contextName = context
-            ? XObject_objectName((const XObject*)context)
-            : NULL;
-        if (contextName && !XString_isEmpty_base((const XContainer*)contextName)) {
-            XString_append_utf8(text, " '");
-            XString_append(text, contextName);
-            XString_append_utf8(text, "'");
+        const XString* contextName = NULL;
+        if (error == XStateMachine_StateMachineChildModeSetToParallelError) {
+            contextName = XObject_objectName((const XObject*)machine);
+        } else if (context) {
+            contextName = XObject_objectName((const XObject*)context);
         }
+        XString_append_utf8(text, " '");
+        if (contextName)
+            XString_append(text, contextName);
+        if (error == XStateMachine_StateMachineChildModeSetToParallelError)
+            XString_append_utf8(text, "' is not 'ExclusiveStates'.");
+        else
+            XString_append_utf8(text, "'");
         if (machine->m_errorString)
             XClassDelete((XClass*)machine->m_errorString);
         machine->m_errorString = text;
@@ -648,9 +795,7 @@ static XAbstractState* XStateMachine_setError(XStateMachine* machine,
 }
 
 static XVector* XStateMachine_effectiveTargets(XStateMachine* machine,
-                                               XAbstractTransition* transition,
-                                               bool executeHistoryDefault,
-                                               XEvent* event)
+                                               XAbstractTransition* transition)
 {
     XVector* targets = XVector_Create(XAbstractState*);
     if (!targets || !transition)
@@ -675,6 +820,8 @@ static XVector* XStateMachine_effectiveTargets(XStateMachine* machine,
             continue;
         }
 
+        /* 对标 Qt：历史无记录时取默认转换的目标集，但默认转换的 onTransition
+         * 与 eventTest 都不会被调用（Qt 的 enterStates 历史分支实际不可达）。 */
         XAbstractTransition* fallback = XHistoryState_defaultTransition(history);
         const XVector* fallbackTargets = fallback
             ? XAbstractTransition_targetStates_const(fallback)
@@ -689,8 +836,6 @@ static XVector* XStateMachine_effectiveTargets(XStateMachine* machine,
             XAbstractState* saved = XVector_At_Base(fallbackTargets, j, XAbstractState*);
             XStateMachine_vectorAppendUnique(targets, saved);
         }
-        if (executeHistoryDefault)
-            XAbstractTransition_onTransition_base(fallback, event);
     }
     return targets;
 }
@@ -706,8 +851,13 @@ static XAbstractState* XStateMachine_transitionDomain(XStateMachine* machine,
     if (!source)
         return NULL;
 
+    /* 对标 Qt isCompound：只有标准状态或根状态机是复合态；嵌套状态机
+     * 一律按原子对待（isMachine && group != rootState() → false），
+     * 因此嵌套机不能充当内转换域。 */
     if (transition->m_transitionType == XAbstractTransition_InternalTransition
         && XStateMachine_isGroup(source)
+        && (source->m_kind != XAbstractState_StateMachine
+            || source == (XAbstractState*)machine)
         && ((XState*)source)->m_childMode == XState_ExclusiveStates
         && XStateMachine_hasRealChildren((XState*)source)) {
         bool allDescendants = true;
@@ -722,7 +872,11 @@ static XAbstractState* XStateMachine_transitionDomain(XStateMachine* machine,
             return source;
     }
 
-    XAbstractState* candidate = source->m_kind == XAbstractState_StateMachine
+    /* 对标 Qt findLCA：域候选恒为源状态的真祖先（getProperAncestors 从
+     * parent 起步），嵌套机因此不能成为自己的转换域。唯一例外是根状态机
+     * 自身作源（根没有父状态；Qt 该场景会误报 ChildModeSetToParallel 并
+     * 停机，X 侧按"根即域"的增强语义直接取根，不报错）。 */
+    XAbstractState* candidate = source == (XAbstractState*)machine
         ? source
         : (XAbstractState*)source->m_parentState;
     for (; candidate; candidate = (XAbstractState*)candidate->m_parentState) {
@@ -765,7 +919,7 @@ static XVector* XStateMachine_exitSetForTransition(XStateMachine* machine,
                                                    XAbstractTransition* transition)
 {
     XVector* exitSet = XVector_Create(XAbstractState*);
-    XVector* targets = XStateMachine_effectiveTargets(machine, transition, false, NULL);
+    XVector* targets = XStateMachine_effectiveTargets(machine, transition);
     XAbstractState* domain = XStateMachine_transitionDomain(machine, transition, targets);
     if (domain) {
         for (int64_t i = 0; i < (int64_t)XVector_size_base((const XContainer*)machine->m_configuration); ++i) {
@@ -793,6 +947,8 @@ static void XStateMachine_removeConflictingTransitions(XStateMachine* machine, X
 {
     if (!machine || !transitions)
         return;
+    /* 对标 Qt：先按源状态进入序排序（深源优先），再做冲突消解。 */
+    XStateMachine_sortTransitionsBy(transitions, XStateMachine_transitionEntryLessThan);
     for (int64_t i = 0; i < (int64_t)XVector_size_base((const XContainer*)transitions); ++i) {
         XAbstractTransition* first = XVector_At_Base(transitions, i, XAbstractTransition*);
         XVector* firstExit = XStateMachine_exitSetForTransition(machine, first);
@@ -826,11 +982,22 @@ static XVector* XStateMachine_selectTransitions(XStateMachine* machine, XEvent* 
     if (!enabled)
         return NULL;
 
-    XStateMachine_beginSelectTransitions_base(machine, event);
+    /* 对标 Qt：先取配置中的原子状态并按进入序排序，再逐个沿祖先链选择转换。 */
+    XVector* atomics = XVector_Create(XAbstractState*);
+    if (!atomics) {
+        XClassDelete((XClass*)enabled);
+        return NULL;
+    }
     for (int64_t i = 0; i < (int64_t)XVector_size_base((const XContainer*)machine->m_configuration); ++i) {
         XAbstractState* atomic = XVector_At_Base(machine->m_configuration, i, XAbstractState*);
-        if (!XStateMachine_isAtomic(machine, atomic))
-            continue;
+        if (XStateMachine_isAtomic(machine, atomic))
+            XStateMachine_vectorAppendUnique(atomics, atomic);
+    }
+    XStateMachine_sortStatesBy(atomics, XStateMachine_stateEntryLessThan);
+
+    XStateMachine_beginSelectTransitions_base(machine, event);
+    for (int64_t i = 0; i < (int64_t)XVector_size_base((const XContainer*)atomics); ++i) {
+        XAbstractState* atomic = XVector_At_Base(atomics, i, XAbstractState*);
 
         XState* state = atomic->m_kind == XAbstractState_StandardState
             ? (XState*)atomic
@@ -852,6 +1019,7 @@ static XVector* XStateMachine_selectTransitions(XStateMachine* machine, XEvent* 
     }
     XStateMachine_removeConflictingTransitions(machine, enabled);
     XStateMachine_endSelectTransitions_base(machine, event);
+    XClassDelete((XClass*)atomics);
     return enabled;
 }
 
@@ -891,7 +1059,7 @@ static XVector* XStateMachine_computeExitSet(XStateMachine* machine, XVector* tr
         if (local)
             XClassDelete((XClass*)local);
     }
-    XStateMachine_sortStates(exitSet, true);
+    XStateMachine_sortStatesBy(exitSet, XStateMachine_stateExitLessThan);
     return exitSet;
 }
 
@@ -913,6 +1081,8 @@ static void XStateMachine_exitStates(XStateMachine* machine, XEvent* event, XVec
             }
         }
         XAbstractState_onExit_base(state, event);
+        /* 对标 Qt：onExit 之后终止该状态的活动动画（terminateActiveAnimations）。 */
+        XStateMachine_terminateStateAnimations(machine, state, true); /* 运行期:延迟回收 */
         XAbstractState_setActive_internal(state, false);
         XStateMachine_vectorRemovePointer(machine->m_configuration, state);
         XAbstractState_exited_signal(state);
@@ -970,8 +1140,7 @@ static bool XStateMachine_addDefaultEntry(XStateMachine* machine,
                                           XState* owner,
                                           XAbstractState* initial,
                                           XVector* entries,
-                                          XAbstractState** errorTarget,
-                                          XEvent* event)
+                                          XAbstractState** errorTarget)
 {
     if (!machine || !owner || !initial || !entries)
         return false;
@@ -1004,15 +1173,14 @@ static bool XStateMachine_addDefaultEntry(XStateMachine* machine,
             return false;
         }
     }
-    if (fallback)
-        XAbstractTransition_onTransition_base(fallback, event);
+    /* 对标 Qt：默认转换的 onTransition 不会被调用（Qt enterStates 的历史
+     * 分支因历史状态从不进入 configuration 而不可达），这里同样不调。 */
     return true;
 }
 
 static bool XStateMachine_expandDefaultEntries(XStateMachine* machine,
                                                XVector* entries,
-                                               XAbstractState** errorTarget,
-                                               XEvent* event)
+                                               XAbstractState** errorTarget)
 {
     bool changed = true;
     while (changed) {
@@ -1037,7 +1205,7 @@ static bool XStateMachine_expandDefaultEntries(XStateMachine* machine,
                             continue;
                         XStateMachine_vectorAppendUnique(entries, child);
                         if (!XStateMachine_addDefaultEntry(
-                                machine, state, child, entries, errorTarget, event)) {
+                                machine, state, child, entries, errorTarget)) {
                             return false;
                         }
                         changed = true;
@@ -1072,7 +1240,7 @@ static bool XStateMachine_expandDefaultEntries(XStateMachine* machine,
                 return false;
             }
             if (!XStateMachine_addDefaultEntry(
-                    machine, state, initial, entries, errorTarget, event)) {
+                    machine, state, initial, entries, errorTarget)) {
                 return false;
             }
             changed = true;
@@ -1082,7 +1250,6 @@ static bool XStateMachine_expandDefaultEntries(XStateMachine* machine,
 }
 
 static XVector* XStateMachine_computeEntrySet(XStateMachine* machine,
-                                              XEvent* event,
                                               XVector* transitions,
                                               XAbstractState* forcedTarget)
 {
@@ -1100,8 +1267,7 @@ static XVector* XStateMachine_computeEntrySet(XStateMachine* machine,
     } else {
         for (int64_t i = 0; transitions && i < (int64_t)XVector_size_base((const XContainer*)transitions); ++i) {
             XAbstractTransition* transition = XVector_At_Base(transitions, i, XAbstractTransition*);
-            XVector* targets = XStateMachine_effectiveTargets(
-                machine, transition, true, event);
+            XVector* targets = XStateMachine_effectiveTargets(machine, transition);
             XAbstractState* domain = XStateMachine_transitionDomain(machine, transition, targets);
             if (machine->m_stopRequested && machine->m_error != XStateMachine_NoError) {
                 if (targets)
@@ -1126,14 +1292,14 @@ static XVector* XStateMachine_computeEntrySet(XStateMachine* machine,
 
     XAbstractState* errorTarget = NULL;
     if (!XStateMachine_expandDefaultEntries(
-            machine, entries, &errorTarget, event) && errorTarget) {
+            machine, entries, &errorTarget) && errorTarget) {
         machine->m_pendingErrorState = NULL;
         XVector_clear_base((XContainer*)entries);
         XStateMachine_addEntryPath(machine, errorTarget, (XAbstractState*)machine, entries);
         errorTarget = NULL;
-        XStateMachine_expandDefaultEntries(machine, entries, &errorTarget, event);
+        XStateMachine_expandDefaultEntries(machine, entries, &errorTarget);
     }
-    XStateMachine_sortStates(entries, false);
+    XStateMachine_sortStatesBy(entries, XStateMachine_stateEntryLessThan);
     return entries;
 }
 
@@ -1146,8 +1312,181 @@ bool XStateMachine_isConfigured_internal(const XStateMachine* machine, const XAb
     return XStateMachine_vectorContains(machine->m_configuration, state);
 }
 
+/* ==================== 动画管道（对标 selectAnimations/initializeAnimations/terminateActiveAnimations） ==================== */
+
+/**
+ * @brief 动画绑定记录的 finished 槽：动画结束后解除绑定，状态的全部动画
+ *        结束时补发 propertiesAssigned（对标 _q_animationFinished）。
+ * @note 记录可能正处于动画信号发射快照中，回收走 deleteLater（框架约定：
+ *       XObject 派生异步释放）；m_spent 保证与退出路径互斥。
+ */
+static void XStateMachine_animationFinishedSlot(XObject* receiver, XVarList* arguments)
+{
+    (void)arguments;
+    XStateMachine_AnimationBinding* binding = (XStateMachine_AnimationBinding*)receiver;
+    if (!binding || binding->m_spent)
+        return;
+    binding->m_spent = true;
+    XStateMachine* machine = binding->m_machine;
+    XAbstractState* state = binding->m_state;
+
+    XVector* bindings = machine ? machine->m_animationBindings : NULL;
+    bool removedFromRegistry = false;
+    if (bindings) {
+        for (int64_t i = 0; i < (int64_t)XVector_size_base((const XContainer*)bindings); ++i) {
+            if (XVector_At_Base(bindings, i, XStateMachine_AnimationBinding*) == binding) {
+                XVector_removeAt_base(bindings, i);
+                removedFromRegistry = true;
+                break;
+            }
+        }
+    }
+    binding->m_connection = NULL;
+    XObject_deleteLater((XObject*)binding);
+    if (!removedFromRegistry)
+        return; /* 已被退出路径摘除登记，propertiesAssigned 由退出流程负责。 */
+
+    bool stillAnimating = false;
+    if (bindings) {
+        for (int64_t i = 0; i < (int64_t)XVector_size_base((const XContainer*)bindings); ++i) {
+            XStateMachine_AnimationBinding* other
+                = XVector_At_Base(bindings, i, XStateMachine_AnimationBinding*);
+            if (other && other->m_state == state) {
+                stillAnimating = true;
+                break;
+            }
+        }
+    }
+    if (!stillAnimating && state && XStateMachine_isGroup(state))
+        XState_propertiesAssigned_signal((XState*)state);
+}
+
+/**
+ * @brief 清空指定状态（或全部状态，state==NULL）的动画绑定。
+ * @param deferred true=运行期路径，记录走 deleteLater（可能处于动画信号
+ *        发射快照中）；false=析构路径，同步删防事件循环退出后泄漏
+ *        （参照 XActionGroup 双模式先例）。
+ */
+static void XStateMachine_terminateStateAnimations(XStateMachine* machine,
+                                                   XAbstractState* state, bool deferred)
+{
+    if (!machine || !machine->m_animationBindings)
+        return;
+    XVector* bindings = machine->m_animationBindings;
+    for (int64_t i = (int64_t)XVector_size_base((const XContainer*)bindings) - 1; i >= 0; --i) {
+        XStateMachine_AnimationBinding* binding
+            = XVector_At_Base(bindings, i, XStateMachine_AnimationBinding*);
+        if (!binding || binding->m_spent || (state && binding->m_state != state))
+            continue;
+        XVector_removeAt_base(bindings, i);
+        binding->m_spent = true;
+        if (binding->m_connection && binding->m_animation) {
+            XObject_disconnect_1((XObject*)binding->m_animation,
+                                 (size_t)XAbstractAnimation_finished_signal,
+                                 (XObject*)binding, XStateMachine_animationFinishedSlot);
+        }
+        binding->m_connection = NULL;
+        /* 对标 terminateActiveAnimations：退出状态时停止仍在运行的动画。
+         * 端点停止会同步发 finished，槽回调经 m_spent 防重入。 */
+        if (binding->m_animation
+            && XAbstractAnimation_state(binding->m_animation) != XAbstractAnimation_Stopped) {
+            XAbstractAnimation_stop(binding->m_animation);
+        }
+        if (deferred)
+            XObject_deleteLater((XObject*)binding);
+        else
+            XClassDelete((XClass*)binding);
+    }
+}
+
+/**
+ * @brief 为进入的状态启动选中的动画并登记绑定（对标 initializeAnimations）。
+ * @details Qt 中属性接管依赖 QPropertyAnimation 匹配 (targetObject, propertyName)；
+ *          XinYueC 本批次尚无插值动画类，因此属性赋值恒立即写入（与 Qt 在
+ *          "无 QVariantAnimation 匹配"场景的行为一致），动画照常启动并把
+ *          propertiesAssigned 推迟到全部动画结束（对标 Qt 文档语义）。
+ */
+static void XStateMachine_startStateAnimations(XStateMachine* machine,
+                                               XAbstractState* state,
+                                               const XVector* selectedAnimations)
+{
+    if (!machine || !state || !selectedAnimations
+        || XVector_isEmpty_base((const XContainer*)selectedAnimations))
+        return;
+    if (!machine->m_animationBindings)
+        return;
+    /* 与 Qt 一致：只对带属性赋值的状态启动动画（initializeAnimations 的
+     * assignments 空表早退）。 */
+    const XVector* assignments = XState_propertyAssignments_const((const XState*)state);
+    if (!assignments || XVector_isEmpty_base((const XContainer*)assignments))
+        return;
+
+    for (int64_t i = 0; i < (int64_t)XVector_size_base((const XContainer*)selectedAnimations); ++i) {
+        XAbstractAnimation* animation = XVector_At_Base(selectedAnimations, i, XAbstractAnimation*);
+        if (!animation)
+            continue;
+        XStateMachine_AnimationBinding* binding = XClass_Malloc(XStateMachine_AnimationBinding);
+        if (!binding)
+            continue;
+        XObject_init((XObject*)binding);
+        Set_Class_IsHeap(binding, true);
+        binding->m_machine = machine;
+        binding->m_state = state;
+        binding->m_animation = animation;
+        binding->m_connection = NULL;
+        binding->m_spent = false;
+        binding->m_connection = XObject_connect_1(
+            (XObject*)animation, (size_t)XAbstractAnimation_finished_signal,
+            (XObject*)binding, XStateMachine_animationFinishedSlot, XConnectionType_Auto);
+        if (!binding->m_connection
+            || !XVector_push_back_1_base(machine->m_animationBindings, &binding)) {
+            if (binding->m_connection) {
+                XObject_disconnect_1((XObject*)animation,
+                                     (size_t)XAbstractAnimation_finished_signal,
+                                     (XObject*)binding, XStateMachine_animationFinishedSlot);
+            }
+            XClassDelete((XClass*)binding);
+            continue;
+        }
+        if (XAbstractAnimation_state(animation) != XAbstractAnimation_Running)
+            XAbstractAnimation_start(animation);
+    }
+}
+
+/** @brief 收集本次 microstep 选中转换的关联动画与状态机默认动画（对标 selectAnimations）。 */
+static XVector* XStateMachine_selectAnimations(XStateMachine* machine, XVector* transitions)
+{
+    XVector* selected = NULL;
+    if (!machine->m_animated)
+        return NULL;
+    selected = XVector_Create(XAbstractAnimation*);
+    if (!selected)
+        return NULL;
+    for (int64_t i = 0; transitions && i < (int64_t)XVector_size_base((const XContainer*)transitions); ++i) {
+        XAbstractTransition* transition = XVector_At_Base(transitions, i, XAbstractTransition*);
+        if (!transition)
+            continue;
+        const XVector* own = transition->m_animations;
+        for (int64_t j = 0; own && j < (int64_t)XVector_size_base((const XContainer*)own); ++j) {
+            XAbstractAnimation* animation = XVector_At_Base(own, j, XAbstractAnimation*);
+            XStateMachine_vectorAppendUnique(selected, animation);
+        }
+    }
+    const XVector* defaults = machine->m_defaultAnimations;
+    for (int64_t j = 0; defaults && j < (int64_t)XVector_size_base((const XContainer*)defaults); ++j) {
+        XAbstractAnimation* animation = XVector_At_Base(defaults, j, XAbstractAnimation*);
+        XStateMachine_vectorAppendUnique(selected, animation);
+    }
+    if (XVector_isEmpty_base((const XContainer*)selected)) {
+        XClassDelete((XClass*)selected);
+        return NULL;
+    }
+    return selected;
+}
+
 static void XStateMachine_enterStates(XStateMachine* machine, XEvent* event, XVector* entries,
-                                      const XVector* exitedStates)
+                                      const XVector* exitedStates,
+                                      const XVector* selectedAnimations)
 {
     for (int64_t i = 0; entries && i < (int64_t)XVector_size_base((const XContainer*)entries); ++i) {
         XAbstractState* state = XVector_At_Base(entries, i, XAbstractState*);
@@ -1165,12 +1504,27 @@ static void XStateMachine_enterStates(XStateMachine* machine, XEvent* event, XVe
             }
         }
 
-        /* 属性赋值必须在 onEntry 之前写入，与 Qt 的 enterStates 次序一致。 */
+        /* 属性赋值必须在 onEntry 之前写入，与 Qt 的 enterStates 次序一致；
+         * 动画在其后启动（Qt 的 initializeAnimations 同样先于 callOnEntry）。 */
         XStateMachine_applyPropertyAssignments(machine, state, exitedStates);
+        XStateMachine_startStateAnimations(machine, state, selectedAnimations);
         XAbstractState_onEntry_base(state, event);
         XAbstractState_entered_signal(state);
         XAbstractState_setActive_internal(state, true);
-        if (XStateMachine_isGroup(state))
+        /* 对标 Qt：状态仍有活动动画时 propertiesAssigned 推迟到全部动画结束。 */
+        bool animating = false;
+        if (machine->m_animationBindings) {
+            const XVector* bindings = machine->m_animationBindings;
+            for (int64_t j = 0; j < (int64_t)XVector_size_base((const XContainer*)bindings); ++j) {
+                XStateMachine_AnimationBinding* binding
+                    = XVector_At_Base(bindings, j, XStateMachine_AnimationBinding*);
+                if (binding && binding->m_state == state) {
+                    animating = true;
+                    break;
+                }
+            }
+        }
+        if (XStateMachine_isGroup(state) && !animating)
             XState_propertiesAssigned_signal((XState*)state);
     }
 }
@@ -1227,11 +1581,14 @@ static bool XStateMachine_emitFinishedStates(XStateMachine* machine, XVector* en
 
 static bool XStateMachine_microstep(XStateMachine* machine, XEvent* event, XVector* transitions)
 {
+    /* 对标 Qt microstep 的次序：先算退出集与恢复集合，再算进入集（Qt 的
+     * computeEntrySet 也在 exitStates 之前），然后退出 → 转换内容 → 进入。 */
     XVector* exitSet = XStateMachine_computeExitSet(machine, transitions);
     /* 退出前先取恢复集合：被退出的状态登记着进入时的旧值（对标
      * microstep 里 computePendingRestorables 早于 exitStates 的次序）。 */
     XVector* pendingRestorables =
         XStateMachine_computePendingRestorables_internal(machine, exitSet);
+    XVector* entries = XStateMachine_computeEntrySet(machine, transitions, NULL);
     XStateMachine_exitStates(machine, event, exitSet);
 
     for (int64_t i = 0; transitions && i < (int64_t)XVector_size_base((const XContainer*)transitions); ++i) {
@@ -1240,13 +1597,15 @@ static bool XStateMachine_microstep(XStateMachine* machine, XEvent* event, XVect
         XAbstractTransition_triggered_signal(transition);
     }
 
-    XVector* entries = XStateMachine_computeEntrySet(machine, event, transitions, NULL);
     /* Qt 把"隐式恢复赋值"挂到最外层进入状态上：这里在进入前统一写回，
      * 让随后 enterStates 的属性赋值能够覆盖它（后者优先级更高）。 */
     XStateMachine_restoreProperties(machine, pendingRestorables);
-    XStateMachine_enterStates(machine, event, entries, exitSet);
+    XVector* selectedAnimations = XStateMachine_selectAnimations(machine, transitions);
+    XStateMachine_enterStates(machine, event, entries, exitSet, selectedAnimations);
     bool finished = XStateMachine_emitFinishedStates(machine, entries);
 
+    if (selectedAnimations)
+        XClassDelete((XClass*)selectedAnimations);
     XStateMachine_restorablesRelease_internal(pendingRestorables);
     if (exitSet)
         XClassDelete((XClass*)exitSet);
@@ -1380,7 +1739,7 @@ static void XStateMachine_startInternal(XStateMachine* machine)
     XStateMachine_clearOwnedEvents(machine->m_internalEventQueue);
     XStateMachine_clearOwnedEvents(machine->m_externalEventQueue);
     XStateMachine_clearHistoryRecursive((XState*)machine);
-    XStateMachine_clearError(machine);
+    /* 对标 Qt：_q_start 不清 error/errorString，上一次错误保留到显式 clearError。 */
 
     machine->m_state = XStateMachine_Running;
     const XVector* rootTransitions = XState_transitions_const((XState*)machine);
@@ -1402,7 +1761,7 @@ static void XStateMachine_startInternal(XStateMachine* machine)
                 XAbstractState* ignoredErrorTarget = NULL;
                 XStateMachine_vectorAppendUnique(entries, child);
                 XStateMachine_addDefaultEntry(
-                    machine, root, child, entries, &ignoredErrorTarget, &nullEvent);
+                    machine, root, child, entries, &ignoredErrorTarget);
             } else if (child) {
                 XStateMachine_addEntryPath(
                     machine, child, (XAbstractState*)machine, entries);
@@ -1412,23 +1771,22 @@ static void XStateMachine_startInternal(XStateMachine* machine)
         XAbstractState* ignoredErrorTarget = NULL;
         XStateMachine_addDefaultEntry(
             machine, root, root->m_initialState, entries,
-            &ignoredErrorTarget, &nullEvent);
+            &ignoredErrorTarget);
     }
 
     XAbstractState* errorTarget = NULL;
     if (!XStateMachine_expandDefaultEntries(
-            machine, entries, &errorTarget, &nullEvent) && errorTarget) {
+            machine, entries, &errorTarget) && errorTarget) {
         machine->m_pendingErrorState = NULL;
         XVector_clear_base((XContainer*)entries);
         XStateMachine_addEntryPath(
             machine, errorTarget, (XAbstractState*)machine, entries);
         errorTarget = NULL;
-        XStateMachine_expandDefaultEntries(
-            machine, entries, &errorTarget, &nullEvent);
+        XStateMachine_expandDefaultEntries(machine, entries, &errorTarget);
     }
-    XStateMachine_sortStates(entries, false);
-    /* 启动路径没有退出集合，隐式恢复集合必然为空。 */
-    XStateMachine_enterStates(machine, &nullEvent, entries, NULL);
+    XStateMachine_sortStatesBy(entries, XStateMachine_stateEntryLessThan);
+    /* 启动路径没有退出集合，隐式恢复集合必然为空；启动转换无关联动画。 */
+    XStateMachine_enterStates(machine, &nullEvent, entries, NULL, NULL);
     bool finished = XStateMachine_emitFinishedStates(machine, entries);
     XClassDeinit((XClass*)&nullEvent);
     XClassDelete((XClass*)entries);
@@ -1445,6 +1803,20 @@ static void VXStateMachine_hook(XStateMachine* machine, XEvent* event)
 {
     (void)machine;
     (void)event;
+}
+
+/* 对标 QStateMachine::onEntry/onExit：状态机作为另一台状态机的子状态被
+ * 进入/退出时自动启停自身。 */
+static void VXStateMachine_onEntry(XAbstractState* state, XEvent* event)
+{
+    (void)event;
+    XStateMachine_start((XStateMachine*)state);
+}
+
+static void VXStateMachine_onExit(XAbstractState* state, XEvent* event)
+{
+    (void)event;
+    XStateMachine_stop((XStateMachine*)state);
 }
 
 static bool VXStateMachine_event(XStateMachine* machine, XEvent* event)
@@ -1512,6 +1884,11 @@ static void VXStateMachine_deinit(XStateMachine* machine)
         return;
     XStateMachine_unregisterConfigurationTransitions(machine, false); /* 析构路径:同步删 */
     XStateMachine_clearSignalConnections(machine);
+    XStateMachine_terminateStateAnimations(machine, NULL, false); /* 析构路径:同步删 */
+    if (machine->m_animationBindings) {
+        XClassDelete((XClass*)machine->m_animationBindings);
+        machine->m_animationBindings = NULL;
+    }
     XStateMachine_cancelAllDelayedEvents(machine);
     XStateMachine_clearOwnedEvents(machine->m_internalEventQueue);
     XStateMachine_clearOwnedEvents(machine->m_externalEventQueue);
@@ -1520,6 +1897,10 @@ static void VXStateMachine_deinit(XStateMachine* machine)
     XClassDelete((XClass*)machine->m_externalEventQueue);
     XClassDelete((XClass*)machine->m_delayedEvents);
     XClassDelete((XClass*)machine->m_signalConnections);
+    if (machine->m_defaultAnimations) {
+        XClassDelete((XClass*)machine->m_defaultAnimations);
+        machine->m_defaultAnimations = NULL;
+    }
     if (machine->m_restorables) {
         for (int64_t i = 0;
              i < (int64_t)XVector_size_base((const XContainer*)machine->m_restorables); ++i) {
@@ -1557,6 +1938,8 @@ XVtable* XStateMachine_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXStateMachine_event);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_EventFilter, VXStateMachine_eventFilter);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXStateMachine_timerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractState_OnEntry, VXStateMachine_onEntry);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractState_OnExit, VXStateMachine_onExit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStateMachine_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -1603,11 +1986,16 @@ void XStateMachine_init_ex(XStateMachine* machine, XState_ChildMode childMode)
     XAssert(machine->m_signalConnections, "Memory allocation failed");
     machine->m_restorables = XVector_Create(XStateMachine_RestorableEntry);
     XAssert(machine->m_restorables, "Memory allocation failed");
+    machine->m_defaultAnimations = XVector_Create(XAbstractAnimation*);
+    XAssert(machine->m_defaultAnimations, "Memory allocation failed");
+    machine->m_animationBindings = XVector_Create(XStateMachine_AnimationBinding*);
+    XAssert(machine->m_animationBindings, "Memory allocation failed");
     machine->m_pendingErrorState = NULL;
     machine->m_state = XStateMachine_NotRunning;
     machine->m_error = XStateMachine_NoError;
     machine->m_errorString = NULL;
     machine->m_nextDelayedEventId = 0;
+    machine->m_animated = true; /* 对标 Qt：animated 属性默认 true。 */
     machine->m_processing = false;
     machine->m_processingScheduled = false;
     machine->m_stopRequested = false;
@@ -1673,6 +2061,40 @@ void XStateMachine_setGlobalRestorePolicy(XStateMachine* machine,
     if (!machine)
         return;
     machine->m_globalRestorePolicy = restorePolicy;
+}
+
+bool XStateMachine_isAnimated(const XStateMachine* machine)
+{
+    return machine ? machine->m_animated : false;
+}
+
+void XStateMachine_setAnimated(XStateMachine* machine, bool enabled)
+{
+    if (machine)
+        machine->m_animated = enabled;
+}
+
+bool XStateMachine_addDefaultAnimation(XStateMachine* machine, XAbstractAnimation* animation)
+{
+    if (!machine || !machine->m_defaultAnimations || !animation)
+        return false;
+    return XVector_push_back_1_base(machine->m_defaultAnimations, &animation);
+}
+
+const XVector* XStateMachine_defaultAnimations_const(const XStateMachine* machine)
+{
+    return machine ? machine->m_defaultAnimations : NULL;
+}
+
+void XStateMachine_removeDefaultAnimation(XStateMachine* machine, XAbstractAnimation* animation)
+{
+    if (!machine || !machine->m_defaultAnimations || !animation)
+        return;
+    const void* key = animation;
+    /* 对标 Qt 的 removeAll：移除全部匹配项。 */
+    int64_t index;
+    while ((index = XVector_indexOf(machine->m_defaultAnimations, &key, 0)) >= 0)
+        XVector_removeAt_base(machine->m_defaultAnimations, index);
 }
 
 bool XStateMachine_isRunning(const XStateMachine* machine)

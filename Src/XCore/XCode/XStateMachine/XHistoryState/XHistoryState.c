@@ -79,12 +79,31 @@ bool XHistoryState_setDefaultTransition(XHistoryState* state, XAbstractTransitio
             XState_removeTransition(transition->m_sourceState, transition);
         XObject_setParent((XObject*)transition, (XObject*)state);
     }
-    /* Qt 用 setParent 表达所有权：被替换的旧转换随父对象销毁一并回收。
-     * 这里旧转换已不挂在任何状态上，删除权必须显式交还。 */
+    /* Qt 用 setParent 表达所有权：被替换的旧转换随历史状态析构级联回收。
+     * 这里被替换的旧转换已不挂在任何状态上，为防悬垂立即回收（调用方此后
+     * 不得再引用旧转换指针）。 */
     if (previous)
         XClassDelete((XClass*)previous);
+    /* 对标 Qt：setDefaultTransition 只发 defaultTransitionChanged
+     *（defaultStateChanged 属于 setDefaultState 路径）。 */
     XHistoryState_defaultTransitionChanged_signal(state);
-    XHistoryState_defaultStateChanged_signal(state);
+    return true;
+}
+
+/** @brief setDefaultState 的新建路径：接管语义与 setDefaultTransition 相同，
+ *  但按 Qt 语义只发 defaultStateChanged（Qt 直设 binding 不发 transitionChanged）。 */
+static bool XHistoryState_takeDefaultTransition(XHistoryState* state,
+                                                XAbstractTransition* transition)
+{
+    XAbstractTransition* previous = state->m_defaultTransition;
+    state->m_defaultTransition = transition;
+    if (transition) {
+        if (transition->m_sourceState)
+            XState_removeTransition(transition->m_sourceState, transition);
+        XObject_setParent((XObject*)transition, (XObject*)state);
+    }
+    if (previous)
+        XClassDelete((XClass*)previous);
     return true;
 }
 
@@ -170,8 +189,10 @@ bool XHistoryState_setDefaultState(XHistoryState* state, XAbstractState* default
         XClassDelete((XClass*)transition);
         return false;
     }
-    /* setDefaultTransition 会连旧转换一起回收并发 defaultTransitionChanged。 */
-    XHistoryState_setDefaultTransition(state, transition);
+    /* 对标 Qt：setDefaultState 直设默认转换，只发 defaultStateChanged
+     *（不发 defaultTransitionChanged）。 */
+    XHistoryState_takeDefaultTransition(state, transition);
+    XHistoryState_defaultStateChanged_signal(state);
     return true;
 }
 
@@ -184,8 +205,10 @@ void XHistoryState_setHistoryType(XHistoryState* state, XHistoryState_HistoryTyp
 {
     if (!state || state->m_historyType == type)
         return;
+    /* 对标 Qt 6.8：setHistoryType 只改类型，不清空已保存的历史配置
+     * （qhistorystate.cpp 的实现仅赋值；清空只发生在状态机启动与父状态
+     * 退出重录时）。 */
     state->m_historyType = type;
-    XVector_clear_base((XContainer*)state->m_configuration);
     XHistoryState_historyTypeChanged_signal(state);
 }
 

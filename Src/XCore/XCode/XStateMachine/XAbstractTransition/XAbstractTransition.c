@@ -1,5 +1,6 @@
 ﻿#include "XAbstractTransition.h"
 
+#include "XAbstractAnimation.h"
 #include "XMemory.h"
 #include "XStateMachine_p.h"
 
@@ -30,6 +31,10 @@ static void VXAbstractTransition_deinit(XAbstractTransition* transition)
         XClassDelete((XClass*)transition->m_targetStates);
         transition->m_targetStates = NULL;
     }
+    if (transition->m_animations) {
+        XClassDelete((XClass*)transition->m_animations);
+        transition->m_animations = NULL;
+    }
     XVtableGetFunc(XObject_class_init(), EXClass_Deinit,
                    void(*)(XObject*))((XObject*)transition);
 }
@@ -54,6 +59,8 @@ void XAbstractTransition_init(XAbstractTransition* transition, XState* sourceSta
     transition->m_sourceState = NULL;
     transition->m_targetStates = XVector_Create(XAbstractState*);
     XAssert(transition->m_targetStates, "Memory allocation failed");
+    transition->m_animations = XVector_Create(XAbstractAnimation*);
+    XAssert(transition->m_animations, "Memory allocation failed");
     transition->m_transitionType = XAbstractTransition_ExternalTransition;
     transition->m_kind = XAbstractTransition_CustomTransition;
 
@@ -193,6 +200,35 @@ XStateMachine* XAbstractTransition_machine(const XAbstractTransition* transition
             return XAbstractState_machine(state);
     }
     return NULL;
+}
+
+bool XAbstractTransition_addAnimation(XAbstractTransition* transition,
+                                      XAbstractAnimation* animation)
+{
+    if (!transition || !transition->m_animations)
+        return false;
+    /* 对标 Qt：NULL 动画被拒绝（Qt 侧发 qWarning 后返回）。 */
+    if (!animation)
+        return false;
+    /* 与 Qt 一致：不检查重复，同一动画可追加多次。 */
+    return XVector_push_back_1_base(transition->m_animations, &animation);
+}
+
+void XAbstractTransition_removeAnimation(XAbstractTransition* transition,
+                                         XAbstractAnimation* animation)
+{
+    if (!transition || !transition->m_animations || !animation)
+        return;
+    const void* key = animation;
+    int64_t index = XVector_indexOf(transition->m_animations, &key, 0);
+    /* 对标 Qt 的 removeOne：只移除第一个匹配项。 */
+    if (index >= 0)
+        XVector_removeAt_base(transition->m_animations, index);
+}
+
+const XVector* XAbstractTransition_animations_const(const XAbstractTransition* transition)
+{
+    return transition ? transition->m_animations : NULL;
 }
 
 bool XAbstractTransition_eventTest_base(XAbstractTransition* transition, XEvent* event)

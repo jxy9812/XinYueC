@@ -56,6 +56,8 @@ void XHistoryState_Test();
 bool XStateMachineApiMatrixTest(void);
 /** @brief 运行 XStateMachine 全量测试（供 `--test xstatemachine` 自动化调用）。 */
 bool XStateMachineTest_runAll(void);
+/** @brief 运行 XAnimation（XAbstractAnimation/XAnimationGroup/XAnimationDriver）全量测试。 */
+int XAnimationTest_runAll(void);
 #endif // DEMOTEST_ON
 
 #ifdef __cplusplus

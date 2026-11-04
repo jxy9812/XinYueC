@@ -134,6 +134,9 @@ static int main_run_test_dispatch(const char* testPath)
     /* XStateMachine（对标 Qt 6.8 QStateMachine）全 API 组合矩阵。 */
     if (strcmp(testPath, "xstatemachine") == 0)
         return XStateMachineTest_runAll() ? 0 : 1;
+    /* XAnimation（对标 Qt 6.8 QAbstractAnimation 族）全量测试。 */
+    if (strcmp(testPath, "xanimation") == 0)
+        return XAnimationTest_runAll() == 0 ? 0 : 1;
 #endif
     if (strcmp(testPath, "xconsole-shell") == 0)
         return XConsoleShellTest_runAll() ? 0 : 1;
@@ -341,6 +344,7 @@ static void main_print_test_list(void)
     XPrintf("  --test xdata\n");
     XPrintf("  --test xsettings\n");
     XPrintf("  --test xstatemachine\n");
+    XPrintf("  --test xanimation\n");
     XPrintf("  --test xlink (功能) / xlink-quality (质量) / xlink-demo (案例联调)\n");
     XPrintf("  --test xlink-demo-server + xlink-demo-client (双进程联调)\n");
     XPrintf("  --test xlink-all (全功能闸门) / all (全仓闸门)\n");

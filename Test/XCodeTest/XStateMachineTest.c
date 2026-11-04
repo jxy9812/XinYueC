@@ -14,8 +14,13 @@
 #include "XSignalTransition.h"
 #include "XState.h"
 #include "XStateMachine.h"
+#include "XThread.h"
+#include "XVarList.h"
+#include "XAnimationDriver.h"
+#include "XAnimationGroup.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 /**
  * @file XStateMachineTest.c
@@ -158,6 +163,12 @@ static XStateMachineTest_EventSource* XStateMachineTest_EventSource_create(void)
 {
     return XStateMachineTest_EventSource_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
 }
+
+static void XStateMachineAnimationApiTest(void);
+static void XStateMachineAnimationPipelineTest(void);
+static void XStateMachineBehaviorAlignTest(void);
+static void XStateMachineCoverageGapTest(void);
+static void XStateMachineSignalCoverageTest(void);
 
 // ==================== 公共测试工具 ====================
 
@@ -1891,6 +1902,1311 @@ void XHistoryState_Test(void)
  * @brief 跑一遍全部测试组并返回累计失败数。
  * @note 内存门禁需要连续跑两遍，故抽成函数。
  */
+
+// ==================== 动画 API 与管道（对标 Qt 动画集成） ====================
+
+static int g_propsAssignedCount = 0;
+static int g_exitOrderIndex = 0;
+static int g_exitOrderSlot[8];
+static int g_enterOrderIndex = 0;
+static int g_enterOrderSlot[8];
+
+static void XStateMachineTest_propsAssignedSlot(XObject* sender, XVarList* arguments)
+{
+    (void)sender;
+    (void)arguments;
+    ++g_propsAssignedCount;
+}
+
+/** @brief 测试用固定时长动画（duration 可设，推进回调仅计数）。 */
+XCLASS_DEFINE_BEGING(XStateMachineTest_FixedAnimation)
+XCLASS_DEFINE_EXTEND_END(XStateMachineTest_FixedAnimation, XAbstractAnimation);
+
+typedef struct XStateMachineTest_FixedAnimation {
+    XAbstractAnimation m_class; ///< 继承 XAbstractAnimation，必须位于首成员。
+    int m_duration;             ///< duration() 返回值。
+} XStateMachineTest_FixedAnimation;
+
+static int VXStateMachineTest_FixedAnimation_duration(const XAbstractAnimation* animation)
+{
+    return ((const XStateMachineTest_FixedAnimation*)animation)->m_duration;
+}
+
+static XVtable* XStateMachineTest_FixedAnimation_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XStateMachineTest_FixedAnimation)
+    XVTABLE_INHERIT_XCLASS(XAbstractAnimation);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractAnimation_Duration,
+                             VXStateMachineTest_FixedAnimation_duration);
+    return XVTABLE_DEFAULT;
+}
+
+static XStateMachineTest_FixedAnimation* XStateMachineTest_FixedAnimation_create(int duration)
+{
+    XStateMachineTest_FixedAnimation* animation = XClass_Malloc(XStateMachineTest_FixedAnimation);
+    if (!animation)
+        return NULL;
+    XAbstractAnimation_init((XAbstractAnimation*)animation, NULL);
+    XClassGetVtable(animation) = XStateMachineTest_FixedAnimation_class_init();
+    Set_Class_Memory(animation, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(animation, true);
+    animation->m_duration = duration;
+    return animation;
+}
+
+static void XStateMachineTest_exitedOrderSlot(XObject* sender, XVarList* arguments)
+{
+    (void)sender;
+    (void)arguments;
+    if (g_exitOrderIndex < 8)
+        g_exitOrderSlot[g_exitOrderIndex] = (int)(intptr_t)sender;
+    ++g_exitOrderIndex;
+}
+
+static void XStateMachineTest_enteredOrderSlot(XObject* sender, XVarList* arguments)
+{
+    (void)sender;
+    (void)arguments;
+    if (g_enterOrderIndex < 8)
+        g_enterOrderSlot[g_enterOrderIndex] = (int)(intptr_t)sender;
+    ++g_enterOrderIndex;
+}
+
+/** @brief 等待动画自然结束：睡眠 + 泵事件循环，直到端点或保护轮数用尽。 */
+static void XStateMachineTest_waitAnimationFinished(XAbstractAnimation* animation)
+{
+    for (int guard = 0; guard < 40
+         && XAbstractAnimation_state(animation) == XAbstractAnimation_Running; ++guard) {
+        XThread_msleep(16);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+    }
+}
+
+/** @brief 动画 API 面：状态机 5 个 + 转换 3 个（对标 Qt 6.8 全部动画入口）。 */
+static void XStateMachineAnimationApiTest(void)
+{
+    XStateMachineTest_begin("\n  -- 动画 API（对标 QStateMachine/QAbstractTransition 动画入口） --");
+    g_checkCount = 0;
+    g_failureCount = 0;
+
+    XStateMachine* machine = XStateMachine_create();
+    XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState_setInitialState((XState*)machine, s1);
+    XAbstractTransition* t = XState_addTransition_3(s1, s2);
+
+    XStateMachineTest_expect(XStateMachine_isAnimated(machine),
+                             "新建状态机动画开关默认为 true（对标 Qt）");
+    XStateMachine_setAnimated(machine, false);
+    XStateMachineTest_expect(!XStateMachine_isAnimated(machine), "setAnimated(false) 生效");
+    XStateMachine_setAnimated(machine, true);
+
+    XStateMachineTest_expect(!XStateMachine_addDefaultAnimation(machine, NULL),
+                             "addDefaultAnimation(NULL) 被拒绝");
+    XStateMachineTest_FixedAnimation* defaultAnim = XStateMachineTest_FixedAnimation_create(50);
+    XStateMachineTest_expect(XStateMachine_addDefaultAnimation(machine, (XAbstractAnimation*)defaultAnim),
+                             "addDefaultAnimation 成功追加");
+    XStateMachineTest_expect(XStateMachine_addDefaultAnimation(machine, (XAbstractAnimation*)defaultAnim),
+                             "与 Qt 一致：重复追加不检查");
+    const XVector* defaults = XStateMachine_defaultAnimations_const(machine);
+    XStateMachineTest_expect(defaults
+                                 && XVector_size_base((const XContainer*)defaults) == 2,
+                             "defaultAnimations 返回内部列表（含重复项）");
+    XStateMachine_removeDefaultAnimation(machine, (XAbstractAnimation*)defaultAnim);
+    XStateMachineTest_expect(XVector_isEmpty_base((const XContainer*)XStateMachine_defaultAnimations_const(machine)),
+                             "removeDefaultAnimation 移除全部匹配项");
+
+    XStateMachineTest_expect(!XAbstractTransition_addAnimation(t, NULL),
+                             "addAnimation(NULL) 被拒绝");
+    XStateMachineTest_FixedAnimation* owned = XStateMachineTest_FixedAnimation_create(50);
+    XStateMachineTest_expect(XAbstractTransition_addAnimation(t, (XAbstractAnimation*)owned),
+                             "addAnimation 成功追加");
+    XStateMachineTest_expect(XAbstractTransition_addAnimation(t, (XAbstractAnimation*)owned),
+                             "与 Qt 一致：addAnimation 不检查重复");
+    const XVector* animations = XAbstractTransition_animations_const(t);
+    XStateMachineTest_expect(animations && XVector_size_base((const XContainer*)animations) == 2,
+                             "animations 返回转换持有的列表");
+    XAbstractTransition_removeAnimation(t, (XAbstractAnimation*)owned);
+    XStateMachineTest_expect(XVector_size_base((const XContainer*)XAbstractTransition_animations_const(t)) == 1,
+                             "removeAnimation 只移除第一个匹配项");
+    XStateMachineTest_FixedAnimation* stranger = XStateMachineTest_FixedAnimation_create(10);
+    XAbstractTransition_removeAnimation(t, (XAbstractAnimation*)stranger);
+    XStateMachineTest_expect(XVector_size_base((const XContainer*)XAbstractTransition_animations_const(t)) == 1,
+                             "移除未关联动画为空操作");
+    XClassDelete((XClass*)stranger);
+
+    /* 转换析构不销毁动画对象（对标 Qt：转换不取得动画所有权）。 */
+    XState_removeTransition(s1, t);
+    XClassDelete((XClass*)t);
+    XStateMachineTest_expect(XAbstractAnimation_state((XAbstractAnimation*)owned) == XAbstractAnimation_Stopped,
+                             "转换析构后动画对象仍然存活");
+    XClassDelete((XClass*)owned);
+    XClassDelete((XClass*)defaultAnim);
+    XClassDelete((XClass*)machine);
+    XStateMachineTest_end();
+}
+
+/** @brief 动画管道：propertiesAssigned 延迟、退出终止、总开关短路。 */
+static void XStateMachineAnimationPipelineTest(void)
+{
+    XStateMachineTest_begin("\n  -- 动画管道（propertiesAssigned 延迟与退出终止） --");
+    g_checkCount = 0;
+    g_failureCount = 0;
+
+    XEventType triggerType = (XEventType)XEvent_registerEventType(-1);
+    XEventType leaveType = (XEventType)XEvent_registerEventType(-1);
+
+    /* 场景一：带动画的转换延迟 propertiesAssigned，动画结束补发。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, s1);
+        XAbstractTransition* t = XStateMachineTest_TypeTransition_create(s1, triggerType, NULL);
+        (void)t;
+        XAbstractTransition_setTargetState(t, s2);
+        XVariant* value = XVariant_create_int(42);
+        XString* propName = XString_create_utf8("value");
+        XState_assignProperty(s2, (XObject*)machine, propName, value);
+        XClassDelete((XClass*)value);
+        XClassDelete((XClass*)propName);
+        g_propsAssignedCount = 0;
+        XObject_connect_1((XObject*)s2, (size_t)XState_propertiesAssigned_signal,
+                          NULL, XStateMachineTest_propsAssignedSlot, XConnectionType_Auto);
+
+        XStateMachineTest_FixedAnimation* animation = XStateMachineTest_FixedAnimation_create(80);
+        XAbstractTransition_addAnimation(t, (XAbstractAnimation*)animation);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)s1), "启动进入 s1");
+
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)s2), "事件触发进入 s2");
+        XStateMachineTest_expect(g_propsAssignedCount == 0,
+                                 "属性已立即写入但 propertiesAssigned 被动画延迟");
+        XStateMachineTest_expect(XAbstractAnimation_state((XAbstractAnimation*)animation)
+                                     == XAbstractAnimation_Running,
+                                 "转换触发时动画自动启动");
+        XStateMachineTest_waitAnimationFinished((XAbstractAnimation*)animation);
+        XStateMachineTest_expect(g_propsAssignedCount == 1,
+                                 "动画结束后补发 propertiesAssigned");
+        XStateMachineTest_expect(XAbstractAnimation_state((XAbstractAnimation*)animation)
+                                     == XAbstractAnimation_Stopped,
+                                 "动画自然结束处于 Stopped");
+        XClassDelete((XClass*)machine);
+        XClassDelete((XClass*)animation);
+        /* 动画绑定记录经 deleteLater 回收：裸泵不带循环层，测试末尾显式
+         * 冲刷延迟删除（对标 Qt sendPostedEvents(DeferredDelete) 惯例）。 */
+        XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+    }
+
+    /* 场景二：setAnimated(false) 短路动画管道。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XStateMachine_setAnimated(machine, false);
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, s1);
+        XAbstractTransition* t = XStateMachineTest_TypeTransition_create(s1, triggerType, NULL);
+        XAbstractTransition_setTargetState(t, s2);
+        XStateMachineTest_FixedAnimation* animation = XStateMachineTest_FixedAnimation_create(80);
+        XAbstractTransition_addAnimation(t, (XAbstractAnimation*)animation);
+        g_propsAssignedCount = 0;
+        XObject_connect_1((XObject*)s2, (size_t)XState_propertiesAssigned_signal,
+                          NULL, XStateMachineTest_propsAssignedSlot, XConnectionType_Auto);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)s2)
+                                     && g_propsAssignedCount == 1,
+                                 "总开关关闭时 propertiesAssigned 立即发出");
+        XStateMachineTest_expect(XAbstractAnimation_state((XAbstractAnimation*)animation)
+                                     == XAbstractAnimation_Stopped,
+                                 "总开关关闭时不启动动画");
+        XClassDelete((XClass*)machine);
+        XClassDelete((XClass*)animation);
+        /* 动画绑定记录经 deleteLater 回收：裸泵不带循环层，测试末尾显式
+         * 冲刷延迟删除（对标 Qt sendPostedEvents(DeferredDelete) 惯例）。 */
+        XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+    }
+
+    /* 场景三：状态退出终止活动动画，延期的 propertiesAssigned 不再补发。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s3 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, s1);
+        XAbstractTransition* enter = XStateMachineTest_TypeTransition_create(s1, triggerType, NULL);
+        XAbstractTransition_setTargetState(enter, s2);
+        XAbstractTransition* leave = XStateMachineTest_TypeTransition_create(s2, leaveType, NULL);
+        XAbstractTransition_setTargetState(leave, s3);
+        XVariant* exitValue = XVariant_create_int(7);
+        XString* exitProp = XString_create_utf8("value");
+        XState_assignProperty(s2, (XObject*)machine, exitProp, exitValue);
+        XClassDelete((XClass*)exitValue);
+        XClassDelete((XClass*)exitProp);
+        XStateMachineTest_FixedAnimation* animation = XStateMachineTest_FixedAnimation_create(200);
+        XAbstractTransition_addAnimation(enter, (XAbstractAnimation*)animation);
+        g_propsAssignedCount = 0;
+        XObject_connect_1((XObject*)s2, (size_t)XState_propertiesAssigned_signal,
+                          NULL, XStateMachineTest_propsAssignedSlot, XConnectionType_Auto);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractAnimation_state((XAbstractAnimation*)animation)
+                                     == XAbstractAnimation_Running,
+                                 "s2 的动画正在运行");
+        XStateMachine_postEvent(machine, XEvent_create(leaveType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)s3), "s2 已退出进入 s3");
+        XStateMachineTest_expect(XAbstractAnimation_state((XAbstractAnimation*)animation)
+                                     == XAbstractAnimation_Stopped,
+                                 "状态退出终止活动动画（对标 terminateActiveAnimations）");
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        XStateMachineTest_expect(g_propsAssignedCount == 0,
+                                 "已退出状态的延期 propertiesAssigned 不再补发");
+        XClassDelete((XClass*)machine);
+        XClassDelete((XClass*)animation);
+        /* 动画绑定记录经 deleteLater 回收：裸泵不带循环层，测试末尾显式
+         * 冲刷延迟删除（对标 Qt sendPostedEvents(DeferredDelete) 惯例）。 */
+        XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+    }
+
+    /* 场景四：默认动画对所有转换生效。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, s1);
+        XAbstractTransition* t = XStateMachineTest_TypeTransition_create(s1, triggerType, NULL);
+        XAbstractTransition_setTargetState(t, s2);
+        XVariant* defaultValue = XVariant_create_int(9);
+        XString* defaultProp = XString_create_utf8("value");
+        XState_assignProperty(s2, (XObject*)machine, defaultProp, defaultValue);
+        XClassDelete((XClass*)defaultValue);
+        XClassDelete((XClass*)defaultProp);
+        XStateMachineTest_FixedAnimation* animation = XStateMachineTest_FixedAnimation_create(60);
+        XStateMachine_addDefaultAnimation(machine, (XAbstractAnimation*)animation);
+        g_propsAssignedCount = 0;
+        XObject_connect_1((XObject*)s2, (size_t)XState_propertiesAssigned_signal,
+                          NULL, XStateMachineTest_propsAssignedSlot, XConnectionType_Auto);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractAnimation_state((XAbstractAnimation*)animation)
+                                     == XAbstractAnimation_Running,
+                                 "默认动画随转换启动");
+        XStateMachineTest_waitAnimationFinished((XAbstractAnimation*)animation);
+        XStateMachineTest_expect(g_propsAssignedCount == 1,
+                                 "默认动画结束后补发 propertiesAssigned");
+        XClassDelete((XClass*)machine);
+        XClassDelete((XClass*)animation);
+        /* 动画绑定记录经 deleteLater 回收：裸泵不带循环层，测试末尾显式
+         * 冲刷延迟删除（对标 Qt sendPostedEvents(DeferredDelete) 惯例）。 */
+        XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+    }
+
+    XStateMachineTest_end();
+}
+
+/** @brief 行为对齐批次：错误文本/启动不清错/子状态机启停/排序/历史语义。 */
+static void XStateMachineBehaviorAlignTest(void)
+{
+    XStateMachineTest_begin("\n  -- 行为对齐批次（对标 Qt 6.8 行为口径） --");
+    g_checkCount = 0;
+    g_failureCount = 0;
+    XEventType triggerType = (XEventType)XEvent_registerEventType(-1);
+    XEventType leaveType = (XEventType)XEvent_registerEventType(-1);
+
+    /* B3：四条错误文本逐字对齐 Qt 6.8。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        do { XString* _nameTmp = XString_create_utf8("rootm"); if (_nameTmp) { XObject_setObjectName((XObject*)machine, _nameTmp); XClassDelete((XClass*)_nameTmp); } } while (0);
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        do { XString* _nameTmp = XString_create_utf8("s1"); if (_nameTmp) { XObject_setObjectName((XObject*)s1, _nameTmp); XClassDelete((XClass*)_nameTmp); } } while (0);
+        XState* inner = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, s1);
+        do { XString* _nameTmp = XString_create_utf8("inner"); if (_nameTmp) { XObject_setObjectName((XObject*)inner, _nameTmp); XClassDelete((XClass*)_nameTmp); } } while (0);
+        /* s1 有子状态 inner 但未设初始状态 → 进入时报 NoInitialStateError
+         * （上下文=缺初始状态的状态 s1，与 Qt 的 setError 调用点一致）。 */
+        XState_setInitialState((XState*)machine, s1);
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XStateMachine_error(machine) == XStateMachine_NoInitialStateError,
+                                 "缺少初始状态报告 NoInitialStateError");
+        XStateMachineTest_expect(strcmp(XStateMachine_errorString_utf8(machine),
+                                        "Missing initial state in compound state 's1'") == 0,
+                                 "NoInitial 错误文本逐字对齐 Qt");
+
+        /* B4：start 不清错误（Qt 语义：保留到显式 clearError）。 */
+        XStateMachine_stop(machine);
+        XStateMachineTest_processEvents();
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XStateMachine_error(machine) == XStateMachine_NoInitialStateError
+                                     && XStateMachine_errorString_utf8(machine) != NULL,
+                                 "重启后上一次错误保留（对标 Qt）");
+        XStateMachine_clearError(machine);
+        XStateMachineTest_expect(XStateMachine_error(machine) == XStateMachine_NoError
+                                     && XStateMachine_errorString_utf8(machine) == NULL,
+                                 "clearError 显式清空");
+        XClassDelete((XClass*)machine);
+    }
+
+    /* B3：历史缺默认状态文本 + 默认转换 onTransition 不被调用（B2）。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        do { XString* _nameTmp = XString_create_utf8("sx"); if (_nameTmp) { XObject_setObjectName((XObject*)s1, _nameTmp); XClassDelete((XClass*)_nameTmp); } } while (0);
+        XState* s1a = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, s1);
+        XState_setInitialState(s1, s1a);
+        XHistoryState* history = XHistoryState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                         XHistoryState_ShallowHistory, s1);
+        do { XString* _nameTmp = XString_create_utf8("hh"); if (_nameTmp) { XObject_setObjectName((XObject*)history, _nameTmp); XClassDelete((XClass*)_nameTmp); } } while (0);
+        XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, s2);
+        int defaultOnTransitionCount = 0;
+        XAbstractTransition* defaultTransition
+            = XStateMachineTest_TypeTransition_create(NULL, XEVENT_TYPE_NONE, &defaultOnTransitionCount);
+        XHistoryState_setDefaultTransition(history, defaultTransition);
+        XAbstractTransition* back = XStateMachineTest_TypeTransition_create(s2, triggerType, NULL);
+        XAbstractTransition_setTargetState(back, (XAbstractState*)history);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XStateMachine_error(machine)
+                                     == XStateMachine_NoDefaultStateInHistoryStateError,
+                                 "无记录且默认转换无目标报告 NoDefaultStateInHistoryStateError");
+        XStateMachineTest_expect(strcmp(XStateMachine_errorString_utf8(machine),
+                                        "Missing default state in history state 'hh'") == 0,
+                                 "历史错误文本逐字对齐 Qt");
+        XStateMachineTest_expect(defaultOnTransitionCount == 0,
+                                 "历史默认转换的 onTransition 不会被调用（对标 Qt）");
+        /* 默认转换所有权已随 setDefaultTransition 转入历史状态，
+         * 随机器整树级联释放，此处不得重复删除。 */
+        XClassDelete((XClass*)machine);
+    }
+
+    /* B3：无共同祖先 + 并行根两条文本。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        do { XString* _nameTmp = XString_create_utf8("pm"); if (_nameTmp) { XObject_setObjectName((XObject*)machine, _nameTmp); XClassDelete((XClass*)_nameTmp); } } while (0);
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        do { XString* _nameTmp = XString_create_utf8("from"); if (_nameTmp) { XObject_setObjectName((XObject*)s1, _nameTmp); XClassDelete((XClass*)_nameTmp); } } while (0);
+        XState* detached = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, NULL);
+        do { XString* _nameTmp = XString_create_utf8("detached"); if (_nameTmp) { XObject_setObjectName((XObject*)detached, _nameTmp); XClassDelete((XClass*)_nameTmp); } } while (0);
+        XState_setInitialState((XState*)machine, s1);
+        XAbstractTransition* escape = XStateMachineTest_TypeTransition_create(s1, triggerType, NULL);
+        XAbstractTransition_setTargetState(escape, detached);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XStateMachine_error(machine)
+                                     == XStateMachine_NoCommonAncestorForTransitionError,
+                                 "跨树目标报告 NoCommonAncestorForTransitionError");
+        XStateMachineTest_expect(strcmp(XStateMachine_errorString_utf8(machine),
+                                        "No common ancestor for targets and source of transition from state 'from'") == 0,
+                                 "无共同祖先错误文本逐字对齐 Qt");
+        XClassDelete((XClass*)machine);
+        XClassDelete((XClass*)detached);
+    }
+    {
+        XStateMachine* machine = XStateMachine_create();
+        do { XString* _nameTmp = XString_create_utf8("par"); if (_nameTmp) { XObject_setObjectName((XObject*)machine, _nameTmp); XClassDelete((XClass*)_nameTmp); } } while (0);
+        XState_setChildMode((XState*)machine, XState_ParallelStates);
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XAbstractTransition* stray = XStateMachineTest_TypeTransition_create(s1, triggerType, NULL);
+        (void)stray;
+        XAbstractTransition* cross = XStateMachineTest_TypeTransition_create(s2, triggerType, NULL);
+        XAbstractTransition_setTargetState(cross, s1);
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XStateMachine_error(machine)
+                                     == XStateMachine_StateMachineChildModeSetToParallelError,
+                                 "并行根跨区转换报告 StateMachineChildModeSetToParallelError");
+        const char* parallelText = XStateMachine_errorString_utf8(machine);
+        XStateMachineTest_expect(parallelText
+                                     && strcmp(parallelText,
+                                               "Child mode of state machine 'par' is not 'ExclusiveStates'.") == 0,
+                                 "并行根错误文本逐字对齐 Qt");
+        XClassDelete((XClass*)machine);
+    }
+
+    /* B5：状态机作为子状态进入自动 start、退出自动 stop。 */
+    {
+        XStateMachine* outer = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)outer);
+        XState* s3 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)outer);
+        XStateMachine* sub = XStateMachine_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates);
+        XState* subChild = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)sub);
+        XState_setInitialState((XState*)sub, subChild);
+        XStateMachine_addState(outer, (XAbstractState*)sub);
+        XState_setInitialState((XState*)outer, s1);
+        XAbstractTransition* enter = XStateMachineTest_TypeTransition_create(s1, triggerType, NULL);
+        XAbstractTransition_setTargetState(enter, (XAbstractState*)sub);
+        XAbstractTransition* leave = XStateMachineTest_TypeTransition_create((XState*)sub, leaveType, NULL);
+        XAbstractTransition_setTargetState(leave, s3);
+
+        XStateMachine_start(outer);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)s1), "外层进入 s1");
+        XStateMachineTest_expect(!XStateMachine_isRunning(sub), "子状态机未进入前不运行");
+        XStateMachine_postEvent(outer, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XStateMachine_isRunning(sub),
+                                 "进入子状态机状态自动 start（对标 QStateMachine::onEntry）");
+        XStateMachine_postEvent(outer, XEvent_create(leaveType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)s3)
+                                     && !XStateMachine_isRunning(sub),
+                                 "退出子状态机状态自动 stop（对标 QStateMachine::onExit）");
+        XClassDelete((XClass*)outer);
+    }
+
+    /* B6：并行兄弟进入序=子序、退出序=倒序（对标 stateEntry/ExitLessThan）。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* parent = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ParallelStates, (XState*)machine);
+        XState* regionA = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parent);
+        XState* regionB = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parent);
+        XState* atomicA = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, regionA);
+        XState* atomicB = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, regionB);
+        XState_setInitialState(regionA, atomicA);
+        XState_setInitialState(regionB, atomicB);
+        XState_setInitialState((XState*)machine, parent);
+        XState* outside = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        (void)outside;
+        XAbstractTransition* leave = XStateMachineTest_TypeTransition_create(parent, triggerType, NULL);
+        XAbstractTransition_setTargetState(leave, outside);
+
+        g_enterOrderIndex = 0;
+        g_exitOrderIndex = 0;
+        XObject_connect_1((XObject*)atomicA, (size_t)XAbstractState_entered_signal,
+                          NULL, XStateMachineTest_enteredOrderSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)atomicB, (size_t)XAbstractState_entered_signal,
+                          NULL, XStateMachineTest_enteredOrderSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)atomicA, (size_t)XAbstractState_exited_signal,
+                          NULL, XStateMachineTest_exitedOrderSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)atomicB, (size_t)XAbstractState_exited_signal,
+                          NULL, XStateMachineTest_exitedOrderSlot, XConnectionType_Auto);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XPrintf("[DBG] enterIdx=%d s0=%p s1=%p A=%p B=%p\n", g_enterOrderIndex,
+                (void*)(intptr_t)g_enterOrderSlot[0], (void*)(intptr_t)g_enterOrderSlot[1],
+                (void*)atomicA, (void*)atomicB);
+        XStateMachineTest_expect(g_enterOrderIndex == 2
+                                     && g_enterOrderSlot[0] == (int)(intptr_t)atomicA
+                                     && g_enterOrderSlot[1] == (int)(intptr_t)atomicB,
+                                 "并行原子状态按子序进入（对标 stateEntryLessThan）");
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XPrintf("[DBG] exitIdx=%d s0=%p s1=%p\n", g_exitOrderIndex,
+                (void*)(intptr_t)g_exitOrderSlot[0], (void*)(intptr_t)g_exitOrderSlot[1]);
+        XStateMachineTest_expect(g_exitOrderIndex == 2
+                                     && g_exitOrderSlot[0] == (int)(intptr_t)atomicB
+                                     && g_exitOrderSlot[1] == (int)(intptr_t)atomicA,
+                                 "并行原子状态按子序倒排退出（对标 stateExitLessThan）");
+        XClassDelete((XClass*)machine);
+    }
+
+    /* B10：冲突消解按源状态进入序排序，先序转换胜出。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* parent = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ParallelStates, (XState*)machine);
+        XState* regionA = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parent);
+        XState* regionB = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parent);
+        XState* atomicA = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, regionA);
+        XState* atomicB = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, regionB);
+        XState_setInitialState(regionA, atomicA);
+        XState_setInitialState(regionB, atomicB);
+        XState* winner = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* loser = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, parent);
+        XAbstractTransition* first = XStateMachineTest_TypeTransition_create(regionA, triggerType, NULL);
+        XAbstractTransition_setTargetState(first, winner);
+        XAbstractTransition* second = XStateMachineTest_TypeTransition_create(regionB, triggerType, NULL);
+        XAbstractTransition_setTargetState(second, loser);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XPrintf("[DBG] conflict winnerActive=%d loserActive=%d\n",
+                (int)XAbstractState_active((XAbstractState*)winner),
+                (int)XAbstractState_active((XAbstractState*)loser));
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)winner)
+                                     && !XAbstractState_active((XAbstractState*)loser),
+                                 "退出集交叠时按源序先者胜出（对标 removeConflictingTransitions 排序）");
+        XClassDelete((XClass*)machine);
+    }
+
+    /* B7：未注册信号转换不匹配手工投递的 SignalEvent。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, s1);
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+
+        XStateMachineTest_EventSource* sender = XStateMachineTest_EventSource_create();
+        XSignalTransition* transition = XSignalTransition_create_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, (const XObject*)sender,
+            (size_t)XStateMachineTest_advance_signal, NULL);
+        XStateMachine_SignalEvent* signalEvent = XStateMachine_SignalEvent_create(
+            (XObject*)sender, (size_t)XStateMachineTest_advance_signal, NULL);
+        XStateMachineTest_expect(!XAbstractTransition_eventTest_base(
+                                     (XAbstractTransition*)transition, (XEvent*)signalEvent),
+                                 "未注册信号转换的 eventTest 恒 false（对标 signalIndex==-1）");
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)s1)
+                                     && !XAbstractState_active((XAbstractState*)s2),
+                                 "手工投递 SignalEvent 不触发未注册转换");
+        XClassDelete((XClass*)signalEvent);
+        XClassDelete((XClass*)transition);
+        XClassDelete((XClass*)sender);
+        XStateMachine_stop(machine);
+        XStateMachineTest_processEvents();
+        XClassDelete((XClass*)machine);
+    }
+
+    /* B1：setHistoryType 不清空已保存配置（对标 Qt）。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s1a = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, s1);
+        XState* s1b = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, s1);
+        (void)s1b;
+        XState_setInitialState(s1, s1a);
+        XHistoryState* history = XHistoryState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                         XHistoryState_ShallowHistory, s1);
+        XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, s1);
+        XAbstractTransition* escape = XStateMachineTest_TypeTransition_create(s1, leaveType, NULL);
+        XAbstractTransition_setTargetState(escape, s2);
+        XAbstractTransition* back = XStateMachineTest_TypeTransition_create(s2, triggerType, NULL);
+        XAbstractTransition_setTargetState(back, (XAbstractState*)history);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachine_postEvent(machine, XEvent_create(leaveType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        const XVector* saved = history->m_configuration;
+        XStateMachineTest_expect(saved && XVector_size_base((const XContainer*)saved) == 1,
+                                 "浅历史记录了退出前配置");
+        XHistoryState_setHistoryType(history, XHistoryState_DeepHistory);
+        saved = history->m_configuration;
+        XStateMachineTest_expect(saved && XVector_size_base((const XContainer*)saved) == 1,
+                                 "setHistoryType 不清空已保存配置（对标 Qt）");
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)s1a),
+                                 "切换类型后历史恢复仍走已存配置");
+        XClassDelete((XClass*)machine);
+    }
+
+    /* 再扫描批次 A：嵌套状态机不算复合态（对标 Qt isCompound），内转换
+     * 进入嵌套机子状态时嵌套机自身必须退出并重进。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XStateMachine* sub = XStateMachine_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates);
+        XState* subA = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)sub);
+        XState* subB = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)sub);
+        XState_setInitialState(sub, subA);
+        XStateMachine_addState(machine, (XAbstractState*)sub);
+        XState_setInitialState((XState*)machine, s1);
+        int enterCount = 0;
+        int exitCount = 0;
+        XAbstractTransition* enter = XStateMachineTest_TypeTransition_create(s1, triggerType, NULL);
+        XAbstractTransition_setTargetState(enter, (XAbstractState*)sub);
+        /* 嵌套机自身的内转换：subA → subB，类型 Internal。 */
+        XAbstractTransition* inner = XStateMachineTest_TypeTransition_create((XState*)sub, leaveType, NULL);
+        XAbstractTransition_setTransitionType((XAbstractTransition*)inner,
+                                              XAbstractTransition_InternalTransition);
+        XAbstractTransition_setTargetState(inner, subB);
+        XObject_connect_1((XObject*)sub, (size_t)XAbstractState_entered_signal,
+                          NULL, XStateMachineTest_enteredOrderSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)sub, (size_t)XAbstractState_exited_signal,
+                          NULL, XStateMachineTest_exitedOrderSlot, XConnectionType_Auto);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)subA),
+                                 "事件进入嵌套机初始子状态");
+        g_enterOrderIndex = 0;
+        g_exitOrderIndex = 0;
+        XStateMachine_postEvent(machine, XEvent_create(leaveType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)subB)
+                                     && !XAbstractState_active((XAbstractState*)subA),
+                                 "嵌套机内转换切换到 subB");
+        XStateMachineTest_expect(g_exitOrderIndex == 1 && g_enterOrderIndex == 1,
+                                 "嵌套机（原子对待）内转换退出并重进嵌套机本身"
+                                 "（对标 Qt isCompound 排除嵌套机）");
+        XClassDelete((XClass*)machine);
+    }
+
+    /* 再扫描批次 B：跨状态机目标在 addTransition_2/_3 被拒绝。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, s1);
+        XStateMachine* other = XStateMachine_create();
+        XState* detached = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates,
+                                            (XState*)other);
+        XState_setInitialState((XState*)other, detached);
+        XStateMachineTest_EventSource* sender = XStateMachineTest_EventSource_create();
+
+        XStateMachineTest_expect(XState_addTransition_2(s1, (const XObject*)sender,
+                                                        (size_t)XStateMachineTest_advance_signal,
+                                                        detached) == NULL,
+                                 "addTransition_2 跨机目标被拒绝返回 NULL"
+                                 "（对标 Qt addTransition 校验）");
+        XStateMachineTest_expect(XState_addTransition_3(s1, detached) == NULL,
+                                 "addTransition_3 跨机目标被拒绝返回 NULL");
+        XStateMachineTest_expect(XVector_isEmpty_base((const XContainer*)XState_transitions_const(s1)),
+                                 "被拒绝的目标不产生任何转换残留");
+        XStateMachine_stop(machine);
+        XStateMachineTest_processEvents();
+        XClassDelete((XClass*)machine);
+        XClassDelete((XClass*)other);
+        XClassDelete((XClass*)sender);
+    }
+
+    XStateMachineTest_end();
+}
+
+
+// ==================== 覆盖缺口批次（active 时序/信号参数/历史回退/停机不终止动画/同源双类型/配置口径） ====================
+
+/** @brief 事件顺序日志：编码 = (sender 指针 << 8) | 事件类型。 */
+#define XSMTEST_EVT_ENTERED 0
+#define XSMTEST_EVT_EXITED 1
+#define XSMTEST_EVT_ACTIVE_TRUE 2
+#define XSMTEST_EVT_ACTIVE_FALSE 3
+static int64_t g_orderLog[32];
+static int g_orderLogIndex = 0;
+
+static void XStateMachineTest_logEvent(const XObject* sender, int type)
+{
+    if (g_orderLogIndex < 32)
+        g_orderLog[g_orderLogIndex] = ((int64_t)(intptr_t)sender << 8) | type;
+    ++g_orderLogIndex;
+}
+
+static int XStateMachineTest_findOrderEvent(const XObject* sender, int type)
+{
+    const int64_t key = ((int64_t)(intptr_t)sender << 8) | type;
+    for (int i = 0; i < g_orderLogIndex && i < 32; ++i)
+        if (g_orderLog[i] == key)
+            return i;
+    return -1;
+}
+
+static void XStateMachineTest_enteredLogSlot(XObject* sender, XVarList* arguments)
+{
+    (void)arguments;
+    XStateMachineTest_logEvent(sender, XSMTEST_EVT_ENTERED);
+}
+
+static void XStateMachineTest_exitedLogSlot(XObject* sender, XVarList* arguments)
+{
+    (void)arguments;
+    XStateMachineTest_logEvent(sender, XSMTEST_EVT_EXITED);
+}
+
+static void XStateMachineTest_activeChangedLogSlot(XObject* sender, XVarList* arguments)
+{
+    XVarList_args_1(arguments, bool, active);
+    XStateMachineTest_logEvent(sender, active ? XSMTEST_EVT_ACTIVE_TRUE : XSMTEST_EVT_ACTIVE_FALSE);
+}
+
+static int g_checkedArgAtEventTest = -1;
+static int g_checkedArgAtOnTransition = -1;
+
+/** @brief 带参数的测试信号（对标 Qt 文档 CheckedTransition 例子的 stateChanged(int)）。 */
+static void* XStateMachineTest_value_signal(XObject* sender, int value)
+{
+    XEmitSignal(sender, XStateMachineTest_value_signal,
+                XVarList_create(2, sizeof(int), &value),
+                NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+/** @brief 参数门控信号转换（对标 Qt 文档的 CheckedTransition：eventTest 先调
+ *  基类，再读 SignalEvent::arguments() 过滤；onTransition 同样可读参数）。 */
+XCLASS_DEFINE_BEGING(XStateMachineTest_CheckedTransition)
+XCLASS_DEFINE_EXTEND_END(XStateMachineTest_CheckedTransition, XSignalTransition);
+
+typedef struct XStateMachineTest_CheckedTransition {
+    XSignalTransition m_class; ///< 继承 XSignalTransition，必须位于首成员。
+    int m_expectedValue;       ///< 首参数等于该值才触发。
+} XStateMachineTest_CheckedTransition;
+
+static bool VXStateMachineTest_CheckedTransition_eventTest(
+    XStateMachineTest_CheckedTransition* transition, XEvent* event)
+{
+    bool base = XVtableGetFunc(
+        XSignalTransition_class_init(), EXAbstractTransition_EventTest,
+        bool(*)(XSignalTransition*, XEvent*))((XSignalTransition*)transition, event);
+    if (!base)
+        return false;
+    XStateMachine_SignalEvent* signalEvent = (XStateMachine_SignalEvent*)event;
+    const XVarList* arguments = XStateMachine_SignalEvent_arguments_const(signalEvent);
+    if (!arguments)
+        return false;
+    XVarList_start(arguments);
+    int value = XVarList_arg(arguments, int);
+    g_checkedArgAtEventTest = value;
+    return value == transition->m_expectedValue;
+}
+
+static void VXStateMachineTest_CheckedTransition_onTransition(
+    XStateMachineTest_CheckedTransition* transition, XEvent* event)
+{
+    (void)transition;
+    if (!event || XEvent_type(event) != XStateMachine_signalEventType_internal())
+        return;
+    XStateMachine_SignalEvent* signalEvent = (XStateMachine_SignalEvent*)event;
+    const XVarList* arguments = XStateMachine_SignalEvent_arguments_const(signalEvent);
+    if (!arguments)
+        return;
+    XVarList_start(arguments);
+    g_checkedArgAtOnTransition = XVarList_arg(arguments, int);
+}
+
+static XVtable* XStateMachineTest_CheckedTransition_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XStateMachineTest_CheckedTransition)
+    XVTABLE_INHERIT_XCLASS(XSignalTransition);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractTransition_EventTest,
+                             VXStateMachineTest_CheckedTransition_eventTest);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractTransition_OnTransition,
+                             VXStateMachineTest_CheckedTransition_onTransition);
+    return XVTABLE_DEFAULT;
+}
+
+static XStateMachineTest_CheckedTransition* XStateMachineTest_CheckedTransition_create(
+    const XObject* sender, size_t signal, int expectedValue, XState* sourceState)
+{
+    XStateMachineTest_CheckedTransition* transition =
+        XMemory_malloc(sizeof(XStateMachineTest_CheckedTransition), XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!transition)
+        return NULL;
+    XSignalTransition_init_ex((XSignalTransition*)transition, sender, signal, sourceState);
+    XClassGetVtable(transition) = XStateMachineTest_CheckedTransition_class_init();
+    transition->m_class.m_class.m_kind = XAbstractTransition_SignalTransition;
+    transition->m_expectedValue = expectedValue;
+    Set_Class_Memory(transition, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(transition, true);
+    return transition;
+}
+
+/** @brief 补覆盖批次：六个此前零覆盖的 Qt 行为点。 */
+static void XStateMachineCoverageGapTest(void)
+{
+    XStateMachineTest_begin("\n  -- 覆盖缺口批次（active 时序/信号参数/历史回退/停机不终止动画/同源双类型/配置口径） --");
+    g_checkCount = 0;
+    g_failureCount = 0;
+    XEventType triggerType = (XEventType)XEvent_registerEventType(-1);
+    XEventType typeA = (XEventType)XEvent_registerEventType(-1);
+    XEventType typeB = (XEventType)XEvent_registerEventType(-1);
+
+    /* 场景一：active 在 entered 与 exited 之间为真（对标 Qt 文档契约
+     * "A state is active between entered() and exited() signals"）。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, s1);
+        XAbstractTransition* t = XStateMachineTest_TypeTransition_create(s1, triggerType, NULL);
+        XAbstractTransition_setTargetState(t, s2);
+        XObject_connect_1((XObject*)s1, (size_t)XAbstractState_entered_signal,
+                          NULL, XStateMachineTest_enteredLogSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)s1, (size_t)XAbstractState_exited_signal,
+                          NULL, XStateMachineTest_exitedLogSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)s1, (size_t)XAbstractState_activeChanged_signal,
+                          NULL, XStateMachineTest_activeChangedLogSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)s2, (size_t)XAbstractState_entered_signal,
+                          NULL, XStateMachineTest_enteredLogSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)s2, (size_t)XAbstractState_exited_signal,
+                          NULL, XStateMachineTest_exitedLogSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)s2, (size_t)XAbstractState_activeChanged_signal,
+                          NULL, XStateMachineTest_activeChangedLogSlot, XConnectionType_Auto);
+
+        g_orderLogIndex = 0;
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        int enteredS1 = XStateMachineTest_findOrderEvent((XObject*)s1, XSMTEST_EVT_ENTERED);
+        int activeTrueS1 = XStateMachineTest_findOrderEvent((XObject*)s1, XSMTEST_EVT_ACTIVE_TRUE);
+        XStateMachineTest_expect(enteredS1 >= 0 && activeTrueS1 > enteredS1,
+                                 "s1：entered 先于 active=true（对标 Qt emitEntered 次序）");
+
+        g_orderLogIndex = 0;
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        int activeFalseS1 = XStateMachineTest_findOrderEvent((XObject*)s1, XSMTEST_EVT_ACTIVE_FALSE);
+        int exitedS1 = XStateMachineTest_findOrderEvent((XObject*)s1, XSMTEST_EVT_EXITED);
+        int enteredS2 = XStateMachineTest_findOrderEvent((XObject*)s2, XSMTEST_EVT_ENTERED);
+        int activeTrueS2 = XStateMachineTest_findOrderEvent((XObject*)s2, XSMTEST_EVT_ACTIVE_TRUE);
+        XStateMachineTest_expect(activeFalseS1 >= 0 && exitedS1 > activeFalseS1,
+                                 "s1 退出：active=false 先于 exited（对标 Qt emitExited 次序）");
+        XStateMachineTest_expect(enteredS2 >= 0 && activeTrueS2 > enteredS2,
+                                 "s2 进入：entered 先于 active=true");
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)s2)
+                                     && !XAbstractState_active((XAbstractState*)s1),
+                                 "转换完成后 s2 活动而 s1 非活动");
+        XStateMachine_stop(machine);
+        XStateMachineTest_processEvents();
+        XClassDelete((XClass*)machine);
+    }
+
+    /* 场景二：SignalEvent 参数传到派生转换的 eventTest 与 onTransition
+     * （对标 Qt 文档 CheckedTransition 模式）。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, s1);
+        XStateMachineTest_EventSource* sender = XStateMachineTest_EventSource_create();
+        XStateMachineTest_CheckedTransition* t = XStateMachineTest_CheckedTransition_create(
+            (const XObject*)sender, (size_t)XStateMachineTest_value_signal, 42, s1);
+        XAbstractTransition_setTargetState((XAbstractTransition*)t, s2);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        g_checkedArgAtEventTest = -1;
+        g_checkedArgAtOnTransition = -1;
+        int seven = 7;
+        XObject_emitSignal(sender, (size_t)XStateMachineTest_value_signal,
+                           XVarList_create(2, sizeof(int), &seven),
+                           NULL, NULL, XEVENT_PRIORITY_NORMAL);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(g_checkedArgAtEventTest == 7
+                                     && XAbstractState_active((XAbstractState*)s1),
+                                 "参数不匹配时 eventTest 读到参数并拒绝触发");
+        int fortyTwo = 42;
+        XObject_emitSignal(sender, (size_t)XStateMachineTest_value_signal,
+                           XVarList_create(2, sizeof(int), &fortyTwo),
+                           NULL, NULL, XEVENT_PRIORITY_NORMAL);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)s2),
+                                 "参数匹配时进入目标状态");
+        XStateMachineTest_expect(g_checkedArgAtOnTransition == 42,
+                                 "onTransition 收到同一 SignalEvent 的参数（对标 Qt）");
+        XStateMachine_stop(machine);
+        XStateMachineTest_processEvents();
+        XClassDelete((XClass*)machine);
+        XClassDelete((XClass*)sender);
+    }
+
+    /* 场景三：无源转换挂在历史状态下时 machine() 沿父对象回退
+     * （对标 QAbstractTransitionPrivate::machine 的历史回退分支）。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s1a = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, s1);
+        XState_setInitialState(s1, s1a);
+        XHistoryState* history = XHistoryState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                         XHistoryState_ShallowHistory, s1);
+        XAbstractTransition* bare = XStateMachineTest_TypeTransition_create(NULL, XEVENT_TYPE_NONE, NULL);
+        XStateMachineTest_expect(XAbstractTransition_machine((XAbstractTransition*)bare) == NULL,
+                                 "无源且未挂载的转换 machine() 为 NULL");
+        XHistoryState_setDefaultTransition(history, bare);
+        XStateMachineTest_expect(XAbstractTransition_machine((XAbstractTransition*)bare) == machine,
+                                 "历史默认转换的 machine() 回退到所属状态机");
+        XStateMachine_stop(machine);
+        XStateMachineTest_processEvents();
+        XClassDelete((XClass*)machine);
+    }
+
+    /* 场景四：机器 stop 不终止活动动画（对标 Qt：动画仅随状态退出终止）。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, s1);
+        XAbstractTransition* t = XStateMachineTest_TypeTransition_create(s1, triggerType, NULL);
+        XAbstractTransition_setTargetState(t, s2);
+        XVariant* value = XVariant_create_int(1);
+        XString* prop = XString_create_utf8("value");
+        XState_assignProperty(s2, (XObject*)machine, prop, value);
+        XClassDelete((XClass*)value);
+        XClassDelete((XClass*)prop);
+        XStateMachineTest_FixedAnimation* animation = XStateMachineTest_FixedAnimation_create(800);
+        XAbstractTransition_addAnimation(t, (XAbstractAnimation*)animation);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractAnimation_state((XAbstractAnimation*)animation)
+                                     == XAbstractAnimation_Running,
+                                 "转换触发后动画运行中");
+        XStateMachine_stop(machine);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(!XStateMachine_isRunning(machine)
+                                     && XAbstractAnimation_state((XAbstractAnimation*)animation)
+                                            == XAbstractAnimation_Running,
+                                 "机器 stop 不终止活动动画（对标 Qt：动画仅随状态退出终止）");
+        XAbstractAnimation_stop((XAbstractAnimation*)animation);
+        XStateMachineTest_processEvents();
+        XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+        XClassDelete((XClass*)machine);
+        XClassDelete((XClass*)animation);
+    }
+
+    /* 场景五：同一事件源上两类事件转换各自匹配各自类型
+     * （过滤器共享时注销守卫 sourceIsRegistered 的正路径）。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s3 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s1b = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, s1);
+        XStateMachineTest_EventSource* source = XStateMachineTest_EventSource_create();
+        /* 过滤器路径产生 WrappedEvent，必须用 XEventTransition（按事件源+类型
+         * 匹配），裸 TypeTransition 只匹配投递进状态机队列的原始事件。 */
+        XEventTransition* ta = XEventTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                          (XObject*)source, typeA, s1);
+        XAbstractTransition_setTargetState((XAbstractTransition*)ta, s2);
+        XEventTransition* tb = XEventTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                          (XObject*)source, typeB, s1);
+        XAbstractTransition_setTargetState((XAbstractTransition*)tb, s3);
+        XEventTransition* back = XEventTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                            (XObject*)source, typeB, s2);
+        XAbstractTransition_setTargetState((XAbstractTransition*)back, s1b);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XCoreApplication_sendEvent((XObject*)source, (XEvent*)XEvent_create(typeA));
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)s2)
+                                     && !XAbstractState_active((XAbstractState*)s3),
+                                 "同源 typeA 转换触发而 typeB 不触发");
+        XCoreApplication_sendEvent((XObject*)source, (XEvent*)XEvent_create(typeB));
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(XAbstractState_active((XAbstractState*)s1b)
+                                     && !XAbstractState_active((XAbstractState*)s2),
+                                 "typeB 事件在 s2 上触发回程转换");
+        XStateMachine_stop(machine);
+        XStateMachineTest_processEvents();
+        XClassDelete((XClass*)machine);
+        XClassDelete((XClass*)source);
+    }
+
+    /* 场景六：configuration 内容口径——父状态、区域、原子与最终状态都在，
+     * 状态机自身不在（对标 QStateMachine::configuration 文档）。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState_setChildMode((XState*)machine, XState_ParallelStates);
+        XState* r1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* r2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* r1a = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, r1);
+        XFinalState* r1Final = XFinalState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, r1);
+        XState_setInitialState(r1, r1a);
+        XState* r2a = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, r2);
+        XState_setInitialState(r2, r2a);
+        XAbstractTransition* toFinal = XStateMachineTest_TypeTransition_create(r1a, triggerType, NULL);
+        XAbstractTransition_setTargetState(toFinal, (XAbstractState*)r1Final);
+
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        const XVector* configuration = XStateMachine_configuration_const(machine);
+        const void* probe = NULL;
+        probe = machine;
+        XStateMachineTest_expect(configuration
+                                     && XVector_indexOf(configuration, &probe, 0) < 0,
+                                 "configuration 不含状态机自身（对标 Qt 文档）");
+        probe = r1;
+        bool hasR1 = configuration && XVector_indexOf(configuration, &probe, 0) >= 0;
+        probe = r2;
+        bool hasR2 = configuration && XVector_indexOf(configuration, &probe, 0) >= 0;
+        probe = r1a;
+        bool hasR1a = configuration && XVector_indexOf(configuration, &probe, 0) >= 0;
+        probe = r2a;
+        bool hasR2a = configuration && XVector_indexOf(configuration, &probe, 0) >= 0;
+        XStateMachineTest_expect(hasR1 && hasR2 && hasR1a && hasR2a,
+                                 "configuration 含并行父、区域与原子状态");
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        configuration = XStateMachine_configuration_const(machine);
+        probe = r1Final;
+        bool hasFinal = configuration && XVector_indexOf(configuration, &probe, 0) >= 0;
+        probe = r1a;
+        bool stillHasR1a = configuration && XVector_indexOf(configuration, &probe, 0) >= 0;
+        XStateMachineTest_expect(hasFinal && !stillHasR1a,
+                                 "final 态替换原子态进入 configuration");
+        XStateMachine_stop(machine);
+        XStateMachineTest_processEvents();
+        XClassDelete((XClass*)machine);
+    }
+
+    XStateMachineTest_end();
+}
+
+
+// ==================== 信号覆盖批次（13 个零断言信号 + 驱动器手动安装/elapsed/removeAnimation） ====================
+
+static int g_childModeChangedCount = 0;
+static int g_initialStateChangedCount = 0;
+static int g_errorStateChangedCount = 0;
+static int g_triggeredCount = 0;
+static int g_targetStateChangedCount = 0;
+static int g_targetStatesChangedCount = 0;
+static int g_senderObjectChangedCount = 0;
+static int g_signalChangedCount = 0;
+static int g_histTransitionChangedCount = 0;
+static int g_histStateChangedCount = 0;
+static int g_histTypeChangedCount = 0;
+static int g_driverStartedCount = 0;
+static int g_driverStoppedCount = 0;
+
+static void XStateMachineTest_childModeChangedSlot(XObject* sender, XVarList* arguments)
+{ (void)sender; (void)arguments; ++g_childModeChangedCount; }
+static void XStateMachineTest_initialStateChangedSlot(XObject* sender, XVarList* arguments)
+{ (void)sender; (void)arguments; ++g_initialStateChangedCount; }
+static void XStateMachineTest_errorStateChangedSlot(XObject* sender, XVarList* arguments)
+{ (void)sender; (void)arguments; ++g_errorStateChangedCount; }
+static void XStateMachineTest_triggeredSlot(XObject* sender, XVarList* arguments)
+{ (void)sender; (void)arguments; ++g_triggeredCount; }
+static void XStateMachineTest_targetStateChangedSlot(XObject* sender, XVarList* arguments)
+{ (void)sender; (void)arguments; ++g_targetStateChangedCount; }
+static void XStateMachineTest_targetStatesChangedSlot(XObject* sender, XVarList* arguments)
+{ (void)sender; (void)arguments; ++g_targetStatesChangedCount; }
+static void XStateMachineTest_senderObjectChangedSlot(XObject* sender, XVarList* arguments)
+{ (void)sender; (void)arguments; ++g_senderObjectChangedCount; }
+static void XStateMachineTest_signalChangedSlot(XObject* sender, XVarList* arguments)
+{ (void)sender; (void)arguments; ++g_signalChangedCount; }
+static void XStateMachineTest_histTransitionChangedSlot(XObject* sender, XVarList* arguments)
+{ (void)sender; (void)arguments; ++g_histTransitionChangedCount; }
+static void XStateMachineTest_histStateChangedSlot(XObject* sender, XVarList* arguments)
+{ (void)sender; (void)arguments; ++g_histStateChangedCount; }
+static void XStateMachineTest_histTypeChangedSlot(XObject* sender, XVarList* arguments)
+{ (void)sender; (void)arguments; ++g_histTypeChangedCount; }
+static void XStateMachineTest_driverStartedSlot(XObject* sender, XVarList* arguments)
+{ (void)sender; (void)arguments; ++g_driverStartedCount; }
+static void XStateMachineTest_driverStoppedSlot(XObject* sender, XVarList* arguments)
+{ (void)sender; (void)arguments; ++g_driverStoppedCount; }
+
+/** @brief 信号覆盖批次：setter/转换/历史/驱动器的全部信号发射契约。 */
+static void XStateMachineSignalCoverageTest(void)
+{
+    XStateMachineTest_begin("\n  -- 信号覆盖批次（全部信号发射契约） --");
+    g_checkCount = 0;
+    g_failureCount = 0;
+    XEventType triggerType = (XEventType)XEvent_registerEventType(-1);
+
+    /* 场景一：XState 三个 setter 信号（对标 Qt BINDABLE NOTIFY）。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* child = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, s1);
+        XState* errorTarget = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XObject_connect_1((XObject*)s1, (size_t)XState_childModeChanged_signal,
+                          NULL, XStateMachineTest_childModeChangedSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)s1, (size_t)XState_initialStateChanged_signal,
+                          NULL, XStateMachineTest_initialStateChangedSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)s1, (size_t)XState_errorStateChanged_signal,
+                          NULL, XStateMachineTest_errorStateChangedSlot, XConnectionType_Auto);
+        g_childModeChangedCount = g_initialStateChangedCount = g_errorStateChangedCount = 0;
+
+        XState_setChildMode(s1, XState_ParallelStates);
+        XStateMachineTest_expect(g_childModeChangedCount == 1, "setChildMode 变化发 childModeChanged");
+        XState_setChildMode(s1, XState_ExclusiveStates);
+        XStateMachineTest_expect(g_childModeChangedCount == 2, "切回互斥再次发射");
+        XState_setChildMode(s1, XState_ExclusiveStates);
+        XStateMachineTest_expect(g_childModeChangedCount == 2, "同值 setChildMode 不发射");
+
+        XState_setInitialState(s1, child);
+        XStateMachineTest_expect(g_initialStateChangedCount == 1, "setInitialState 发 initialStateChanged");
+        XState_setInitialState(s1, child);
+        XStateMachineTest_expect(g_initialStateChangedCount == 1, "同值 setInitialState 不发射");
+
+        XState_setErrorState(s1, errorTarget);
+        XStateMachineTest_expect(g_errorStateChangedCount == 1, "setErrorState 发 errorStateChanged");
+        XState_setErrorState(s1, errorTarget);
+        XStateMachineTest_expect(g_errorStateChangedCount == 1, "同值 setErrorState 不发射");
+        XClassDelete((XClass*)machine);
+    }
+
+    /* 场景二：转换的 triggered/targetStateChanged/targetStatesChanged。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s2 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s3 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState_setInitialState((XState*)machine, s1);
+        XAbstractTransition* t = XStateMachineTest_TypeTransition_create(s1, triggerType, NULL);
+        XObject_connect_1((XObject*)t, (size_t)XAbstractTransition_triggered_signal,
+                          NULL, XStateMachineTest_triggeredSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)t, (size_t)XAbstractTransition_targetStateChanged_signal,
+                          NULL, XStateMachineTest_targetStateChangedSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)t, (size_t)XAbstractTransition_targetStatesChanged_signal,
+                          NULL, XStateMachineTest_targetStatesChangedSlot, XConnectionType_Auto);
+        g_triggeredCount = g_targetStateChangedCount = g_targetStatesChangedCount = 0;
+
+        XAbstractTransition_setTargetState(t, s2);
+        XStateMachineTest_expect(g_targetStateChangedCount == 1,
+                                 "setTargetState 变化发 targetStateChanged");
+        XAbstractTransition_setTargetState(t, s2);
+        XStateMachineTest_expect(g_targetStateChangedCount == 1, "同目标 setTargetState 不发射");
+
+        /* setTargetStates 多目标集合变化发 targetStatesChanged（Qt 分工：
+         * setTargetStates 只发 targetStatesChanged）。 */
+        XVector* targets = XVector_Create(XAbstractState*);
+        XVector_push_back_1_base(targets, &(XAbstractState*){ s2 });
+        XVector_push_back_1_base(targets, &(XAbstractState*){ s3 });
+        XAbstractTransition_setTargetStates(t, targets);
+        XClassDelete((XClass*)targets);
+        XStateMachineTest_expect(g_targetStatesChangedCount == 1
+                                     && g_targetStateChangedCount == 1,
+                                 "setTargetStates 只发 targetStatesChanged");
+        XVector* same = XVector_Create(XAbstractState*);
+        XVector_push_back_1_base(same, &(XAbstractState*){ s3 });
+        XVector_push_back_1_base(same, &(XAbstractState*){ s2 });
+        XAbstractTransition_setTargetStates(t, same);
+        XClassDelete((XClass*)same);
+        XStateMachineTest_expect(g_targetStatesChangedCount == 1,
+                                 "同内容多重集 setTargetStates 不发射");
+
+        g_triggeredCount = 0;
+        XStateMachine_start(machine);
+        XStateMachineTest_processEvents();
+        XStateMachine_postEvent(machine, XEvent_create(triggerType), XStateMachine_NormalPriority);
+        XStateMachineTest_processEvents();
+        XStateMachineTest_expect(g_triggeredCount == 1,
+                                 "转换触发发 triggered（onTransition 之后）");
+        XStateMachine_stop(machine);
+        XStateMachineTest_processEvents();
+        XClassDelete((XClass*)machine);
+    }
+
+    /* 场景三：信号转换的 senderObjectChanged/signalChanged。 */
+    {
+        XStateMachineTest_EventSource* senderA = XStateMachineTest_EventSource_create();
+        XStateMachineTest_EventSource* senderB = XStateMachineTest_EventSource_create();
+        XSignalTransition* t = XSignalTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                           (const XObject*)senderA,
+                                                           (size_t)XStateMachineTest_advance_signal, NULL);
+        XObject_connect_1((XObject*)t, (size_t)XSignalTransition_senderObjectChanged_signal,
+                          NULL, XStateMachineTest_senderObjectChangedSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)t, (size_t)XSignalTransition_signalChanged_signal,
+                          NULL, XStateMachineTest_signalChangedSlot, XConnectionType_Auto);
+        g_senderObjectChangedCount = g_signalChangedCount = 0;
+
+        XSignalTransition_setSenderObject(t, (const XObject*)senderB);
+        XStateMachineTest_expect(g_senderObjectChangedCount == 1, "setSenderObject 变化发 senderObjectChanged");
+        XSignalTransition_setSenderObject(t, (const XObject*)senderB);
+        XStateMachineTest_expect(g_senderObjectChangedCount == 1, "同发送者 setSenderObject 不发射");
+        XSignalTransition_setSignal(t, (size_t)XStateMachineTest_leave_signal);
+        XStateMachineTest_expect(g_signalChangedCount == 1, "setSignal 变化发 signalChanged");
+        XSignalTransition_setSignal(t, (size_t)XStateMachineTest_leave_signal);
+        XStateMachineTest_expect(g_signalChangedCount == 1, "同信号 setSignal 不发射");
+        XClassDelete((XClass*)t);
+        XClassDelete((XClass*)senderA);
+        XClassDelete((XClass*)senderB);
+    }
+
+    /* 场景四：历史状态三信号（Qt 语义：setDefaultTransition 只发
+     * defaultTransitionChanged；setDefaultState 只发 defaultStateChanged；
+     * setHistoryType 发 historyTypeChanged）。 */
+    {
+        XStateMachine* machine = XStateMachine_create();
+        XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+        XState* s1a = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, s1);
+        XState_setInitialState(s1, s1a);
+        XState* s1b = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, s1);
+        XHistoryState* history = XHistoryState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                         XHistoryState_ShallowHistory, s1);
+        XObject_connect_1((XObject*)history, (size_t)XHistoryState_defaultTransitionChanged_signal,
+                          NULL, XStateMachineTest_histTransitionChangedSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)history, (size_t)XHistoryState_defaultStateChanged_signal,
+                          NULL, XStateMachineTest_histStateChangedSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)history, (size_t)XHistoryState_historyTypeChanged_signal,
+                          NULL, XStateMachineTest_histTypeChangedSlot, XConnectionType_Auto);
+        g_histTransitionChangedCount = g_histStateChangedCount = g_histTypeChangedCount = 0;
+
+        XAbstractTransition* userDefault = XStateMachineTest_TypeTransition_create(NULL, XEVENT_TYPE_NONE, NULL);
+        XVector* single = XVector_Create(XAbstractState*);
+        XVector_push_back_1_base(single, &(XAbstractState*){ s1a });
+        XAbstractTransition_setTargetStates(userDefault, single);
+        XClassDelete((XClass*)single);
+        XHistoryState_setDefaultTransition(history, userDefault);
+        XStateMachineTest_expect(g_histTransitionChangedCount == 1 && g_histStateChangedCount == 0,
+                                 "setDefaultTransition 只发 defaultTransitionChanged（对标 Qt）");
+
+        XHistoryState_setDefaultState(history, s1b);
+        XStateMachineTest_expect(g_histStateChangedCount == 1 && g_histTransitionChangedCount == 1,
+                                 "setDefaultState 新建默认转换只补发 defaultStateChanged");
+        XHistoryState_setDefaultState(history, s1b);
+        XStateMachineTest_expect(g_histStateChangedCount == 1, "同默认状态 setDefaultState 不发射");
+
+        XHistoryState_setHistoryType(history, XHistoryState_DeepHistory);
+        XStateMachineTest_expect(g_histTypeChangedCount == 1, "setHistoryType 变化发 historyTypeChanged");
+        XHistoryState_setHistoryType(history, XHistoryState_DeepHistory);
+        XStateMachineTest_expect(g_histTypeChangedCount == 1, "同类型 setHistoryType 不发射");
+        XStateMachine_stop(machine);
+        XStateMachineTest_processEvents();
+        XClassDelete((XClass*)machine);
+    }
+
+    /* 场景五：驱动器手动 install/uninstall/elapsed 与 started/stopped 信号
+     * （用私有 driver 实例：单例被其他用例自动装卸且跨轮存活，连接会累积）；
+     * 顺带补 XAnimationGroup_removeAnimation 的组空自停路径断言。 */
+    {
+        XAnimationDriver* driver = XAnimationDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        XObject_connect_1((XObject*)driver, (size_t)XAnimationDriver_started_signal,
+                          NULL, XStateMachineTest_driverStartedSlot, XConnectionType_Auto);
+        XObject_connect_1((XObject*)driver, (size_t)XAnimationDriver_stopped_signal,
+                          NULL, XStateMachineTest_driverStoppedSlot, XConnectionType_Auto);
+        g_driverStartedCount = g_driverStoppedCount = 0;
+
+        XAnimationDriver_install(driver);
+        XStateMachineTest_expect(g_driverStartedCount == 1 && XAnimationDriver_isRunning(driver),
+                                 "手动 install 发 started 并进入运行态");
+        XThread_msleep(20);
+        XStateMachineTest_expect(XAnimationDriver_elapsed(driver) > 0,
+                                 "install 后 elapsed 报告单调时差");
+        XAnimationDriver_uninstall(driver);
+        XStateMachineTest_expect(g_driverStoppedCount == 1 && !XAnimationDriver_isRunning(driver),
+                                 "手动 uninstall 发 stopped 并退出运行态");
+        XAnimationDriver_uninstall(driver);
+        XStateMachineTest_expect(g_driverStoppedCount == 1, "重复 uninstall 不重复发射");
+        XClassDelete((XClass*)driver);
+
+        XAnimationGroup* group = XAnimationGroup_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        XStateMachineTest_FixedAnimation* m = XStateMachineTest_FixedAnimation_create(10);
+        XAnimationGroup_addAnimation(group, (XAbstractAnimation*)m);
+        XAnimationGroup_removeAnimation(group, (XAbstractAnimation*)m);
+        XStateMachineTest_expect(XAbstractAnimation_group((XAbstractAnimation*)m) == NULL
+                                     && XAnimationGroup_animationCount(group) == 0,
+                                 "removeAnimation 移出并清空 group 回指");
+        XClassDelete((XClass*)m);
+        XClassDelete((XClass*)group);
+    }
+
+    XStateMachineTest_end();
+}
+
 static int XStateMachineTest_runOnce(void)
 {
     int totalFailures = 0;
@@ -1902,6 +3218,16 @@ static int XStateMachineTest_runOnce(void)
     totalFailures += g_failureCount;
     if (!XStateMachineApiMatrixTest())
         ++totalFailures;
+    XStateMachineAnimationApiTest();
+    totalFailures += g_failureCount;
+    XStateMachineAnimationPipelineTest();
+    totalFailures += g_failureCount;
+    XStateMachineBehaviorAlignTest();
+    totalFailures += g_failureCount;
+    XStateMachineCoverageGapTest();
+    totalFailures += g_failureCount;
+    XStateMachineSignalCoverageTest();
+    totalFailures += g_failureCount;
     return totalFailures;
 }
 
@@ -1979,6 +3305,31 @@ static void XStateMachineTest_menuApiMatrix(XVariant* data)
     XStateMachineApiMatrixTest();
 }
 
+static void XStateMachineTest_menuAnimation(XVariant* data)
+{
+    (void)data;
+    XStateMachineAnimationApiTest();
+    XStateMachineAnimationPipelineTest();
+}
+
+static void XStateMachineTest_menuBehavior(XVariant* data)
+{
+    (void)data;
+    XStateMachineBehaviorAlignTest();
+}
+
+static void XStateMachineTest_menuCoverageGap(XVariant* data)
+{
+    (void)data;
+    XStateMachineCoverageGapTest();
+}
+
+static void XStateMachineTest_menuSignalCoverage(XVariant* data)
+{
+    (void)data;
+    XStateMachineSignalCoverageTest();
+}
+
 void XTestMenu_XStateMachineTest(XTestMenu* root)
 {
     XTestMenu* menu = XTestMenu_create("XStateMachine（状态机）");
@@ -1991,4 +3342,12 @@ void XTestMenu_XStateMachineTest(XTestMenu* root)
         XStateMachineTest_menuHistory);
     XTestMenu_setActionFunction(XTestMenu_addAction(menu, "API 组合矩阵"),
         XStateMachineTest_menuApiMatrix);
+    XTestMenu_setActionFunction(XTestMenu_addAction(menu, "动画 API 与管道"),
+        XStateMachineTest_menuAnimation);
+    XTestMenu_setActionFunction(XTestMenu_addAction(menu, "行为对齐批次"),
+        XStateMachineTest_menuBehavior);
+    XTestMenu_setActionFunction(XTestMenu_addAction(menu, "覆盖缺口批次"),
+        XStateMachineTest_menuCoverageGap);
+    XTestMenu_setActionFunction(XTestMenu_addAction(menu, "信号覆盖批次"),
+        XStateMachineTest_menuSignalCoverage);
 }

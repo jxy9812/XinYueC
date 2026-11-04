@@ -1778,7 +1778,7 @@ static void xchart_setPieSeries(XChart* self, XPieSeries* series)
 
 
 
-static void xchart_addBarSeries(XChart* self, XBarSeries* series)
+static void xchart_addBarSeries(XChart* self, XAbstractBarSeries* series)
 {
     if (!self || !series) return;
     if (xchart_typeArrayContains((const void* const*)self->m_barSeries,

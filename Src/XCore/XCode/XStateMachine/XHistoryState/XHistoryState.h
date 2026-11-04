@@ -77,8 +77,11 @@ XAbstractTransition* XHistoryState_defaultTransition(const XHistoryState* state)
  * @param state 历史状态实例。
  * @param transition 无历史记录时执行的转换；NULL 表示清除默认转换。
  * @return 设置成功返回 true。
- * @note 默认转换的 eventTest 不会被调用，其 onTransition 会收到触发历史入口的事件。
+ * @note 默认转换的 eventTest 不会被调用，其 onTransition 也不会被调用
+ *       （与 Qt 6.8 一致），状态机直接展开其目标集。
  * @note 转换的源状态被置为 NULL，父对象改为历史状态，与 Qt 的 setParent(this) 等价。
+ * @note 被替换的旧默认转换会被立即回收（所有权语义见实现注释）；
+ *       调用方此后不得再引用旧转换指针。
  */
 bool XHistoryState_setDefaultTransition(XHistoryState* state, XAbstractTransition* transition);
 /**
@@ -107,7 +110,7 @@ XHistoryState_HistoryType XHistoryState_historyType(const XHistoryState* state);
  * @brief 设置历史记录深度（对标 QHistoryState::setHistoryType）。
  * @param state 历史状态实例。
  * @param type 新的浅历史或深历史类型。
- * @note 修改类型会清空已经保存的历史配置。
+ * @note 与 Qt 6.8 一致：只切换类型，不清空已保存的历史配置。
  */
 void XHistoryState_setHistoryType(XHistoryState* state, XHistoryState_HistoryType type);
 

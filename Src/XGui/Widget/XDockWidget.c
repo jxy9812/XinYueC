@@ -1686,6 +1686,13 @@ static void xdw_setFloatingImpl(XDockWidget* self, bool floating,
          *    会让浮动态 ResizeEvent 与 MoveEvent 各跑一遍，且中间态几何
          *    会被 undockedGeometry 快照误记。 */
         XWidget_setGeometry(selfw, globalPos.x, globalPos.y, w, h);
+        /* 【同步补内容布局 2026-11-04】面板尺寸刚变（浮动态尺寸），但
+         *   RESIZE 事件是**异步投递**的：本函数末尾的宿主当帧重绘
+         *   （xdw_syncRepaintHostArea）先于 RESIZE 派发 ⇒ 当帧绘出的仍
+         *   是旧尺寸的内容控件（真机：浮窗内容按停靠态窄宽画在新位）。
+         *   此处同步补一次标题条/内容布局，让当帧重绘拿到新尺寸。 */
+        xdw_layoutTitleBar(self);
+        xdw_layoutContent(self);
         /* ⑦ `if (!hidden) q->show();`（qdockwidget.cpp:1228-1229）：
          *    浮动态还需提升/激活（Qt::Tool 浮窗的默认前台语义）。 */
         if (!hidden) {
@@ -1712,6 +1719,15 @@ static void xdw_setFloatingImpl(XDockWidget* self, bool floating,
     }
     if (host)
         XMainWindow_updateDockLayout((XMainWindow*)host);
+    /* 【同步补内容布局 2026-11-04】回归停靠：宿主重排把面板摆到新的
+     *   停靠矩形（尺寸随之变），而承载内容布局的 RESIZE 事件**异步
+     *   投递**——本函数末尾的宿主当帧重绘先于 RESIZE 派发 ⇒ 当帧绘出
+     *   的内容控件仍是**浮动态尺寸**（真机：回停靠后内容按 160x349
+     *   画在宿主左上，盖住左面板标题条与中央区左缘；随后几何修正的
+     *   脏区又落在已派发 PAINT 的快照之外 ⇒ 终态像素永不落屏）。
+     *   此处同步补一次布局，使当帧重绘即拿到停靠态尺寸。 */
+    xdw_layoutTitleBar(self);
+    xdw_layoutContent(self);
     /* 落位后同步重绘宿主（合成器语义的当帧收口，见
      * xdw_syncRepaintHostArea 注）。浮/停两向都做：浮出时清掉宿主内的
      * 面板旧像素，回归时把新停靠矩形画出来（该矩形由 xmw_layout 的

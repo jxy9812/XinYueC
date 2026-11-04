@@ -147,6 +147,38 @@ static int t_debug(void)
 
 /** @brief 可见缓冲快照（面板坐标，每像素 2 字节；仅做相等比较，不解释
  *         字节序）。 */
+/** @brief 可见缓冲导出 PPM（DD_DUMP=<prefix> 时生效），供目验。 */
+static void t_dumpPpm(const char* tag)
+{
+    const char* dir;
+    char path[256];
+    FILE* f;
+    const uint8_t* vis;
+    int x;
+    int y;
+    dir = getenv("DD_DUMP");
+    if (!dir) return;
+    snprintf(path, sizeof(path), "%s/tabify_%s.ppm", dir, tag);
+    f = fopen(path, "wb");
+    if (!f) return;
+    fprintf(f, "P6\n%d %d\n255\n", T_PANEL_W, T_PANEL_H);
+    vis = t_fb + (size_t)t_visible * (size_t)T_PANEL_H * T_STRIDE;
+    for (y = 0; y < T_PANEL_H; ++y)
+        for (x = 0; x < T_PANEL_W; ++x)
+        {
+            const uint8_t* p = vis + (size_t)y * T_STRIDE + (size_t)x * 2;
+            uint16_t px = (uint16_t)(p[0] | (p[1] << 8));
+            unsigned r = ((px >> 11) & 31) * 255 / 31;
+            unsigned g = ((px >> 5) & 63) * 255 / 63;
+            unsigned b = (px & 31) * 255 / 31;
+            fputc((int)r, f);
+            fputc((int)g, f);
+            fputc((int)b, f);
+        }
+    fclose(f);
+    fprintf(stderr, "[DD:%s] dumped %s\n", tag, path);
+}
+
 static uint16_t* t_captureVisible(void)
 {
     uint16_t* buf = (uint16_t*)malloc((size_t)T_PANEL_W * T_PANEL_H *
@@ -176,6 +208,48 @@ static uint16_t* t_captureVisible(void)
  *         终帧该区是宿主内容 ⇒ 按构造必然不等（正确实现也非零），若
  *         冠以 [DD-FAIL] 前缀会让「退出码 0 且无 [DD-FAIL]」这条通过
  *         判据永远无法满足，也会误导按 [DD-FAIL] 抓红的 CI。 */
+/** @brief 区域差异统计（可排除一块矩形：浮窗新位与旧位重叠时，新位内容
+ *         本就应随浮窗移动，不参与「腾空区残留」判定）。 */
+static int t_diffRegionExcept(const uint16_t* a, const uint16_t* b,
+                               const XRect* r, const XRect* except,
+                               const char* tag, const char* what)
+{
+    int x;
+    int y;
+    int bad = 0;
+    if (!a || !b || !r) return 0;
+    for (y = r->y; y < r->y + r->height; ++y)
+    {
+        if (y < 0 || y >= T_PANEL_H) continue;
+        for (x = r->x; x < r->x + r->width; ++x)
+        {
+            size_t idx;
+            if (x < 0 || x >= T_PANEL_W) continue;
+            if (except && except->width > 0 && except->height > 0 &&
+                x >= except->x && x < except->x + except->width &&
+                y >= except->y && y < except->y + except->height)
+                continue;
+            idx = (size_t)y * T_PANEL_W + (size_t)x;
+            if (a[idx] != b[idx])
+            {
+                if (bad < 6)
+                    fprintf(stderr, "[DD-FAIL] %s: %s mismatch (%d,%d) "
+                                    "drag=%04x base=%04x\n",
+                            tag ? tag : "", what ? what : "", x, y,
+                            (unsigned)a[idx], (unsigned)b[idx]);
+                ++bad;
+            }
+        }
+    }
+    if (bad)
+    {
+        fprintf(stderr, "[DD-FAIL] %s: %s mismatches=%d\n", tag ? tag : "",
+                what ? what : "", bad);
+        t_expect(false, "浮窗拖动腾空区未呈现下层真实内容（残留）");
+    }
+    return bad;
+}
+
 static int t_diffRegion(const uint16_t* a, const uint16_t* b, const XRect* r,
                         const char* tag, int asserted)
 {
@@ -1522,6 +1596,363 @@ static int t_runLetResidueScenario(const char* tag)
     return bad < 0 ? 1 : bad;
 }
 
+/* ==================== 场景八：拖出→拖回中央区释放（页签化回停） ====================
+ * 真机配方复刻（2026-11-04 mcgs 现场）：右面板拖出成浮动 → 拖回宿主
+ * 中央区（缓慢多步滑过中央）→ 在中央区中央释放。真机现场症状：
+ * ①另一侧（左）面板标题条区域被外层页面像素穿透；②宿主下方外层页面
+ * 整条区域被刷白；③旧标题条残影。判据=宿主整窗 + 宿主下方外层条带
+ * 与强制重绘基准逐像素一致（含浮动面板足迹扣除）。 */
+static int t_runTabifyScenario(const char* tag)
+{
+    XMainWindow* host = NULL;
+    XWidget* central = NULL;
+    XDockWidget* dockLeft = NULL;
+    XDockWidget* dockRight = NULL;
+    XWidget* outer = NULL;
+    XLabel* outerLabel = NULL;
+    XPoint zero;
+    XPoint org;
+    XRect hostRect;
+    XRect belowRect;
+    XRect floats[4];
+    int floatCount = 0;
+    uint16_t* v = NULL;
+    uint16_t* baseline = NULL;
+    int bad = 0;
+    int step;
+
+    XPoint_init(&zero, 0, 0);
+    outer = XWidget_create(NULL, 0);
+    if (!outer) return 1;
+    XWidget_setGeometry(outer, 0, 0, T_PANEL_W, T_PANEL_H);
+    /* 外层页面下方放文字标签：宿主下方条带的残留必须可检（真机白块
+     * 把外层页面文字洗掉）。 */
+    outerLabel = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, outer, 0);
+    if (outerLabel)
+    {
+        XLabel_setText_2(outerLabel, "OUTER-PAGE-BELOW");
+        XWidget_setGeometry((XWidget*)outerLabel, 10, 440, 300, 30);
+        XWidget_show((XWidget*)outerLabel);
+    }
+    host = XMainWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, outer,
+                                 (XWidgetFlags)XWindowType_Window);
+    if (!host) return 1;
+    XWidget_setGeometry((XWidget*)host, 10, 10, 560, 420);
+    {
+        XPalette pal;
+        XColor c;
+        XPalette_init_default(&pal);
+        XColor_init_rgb(&c, 0, 128, 0, 255);
+        XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                          XPaletteColorRole_Window, c);
+        XPalette_setColor(&pal, XPaletteColorGroup_Inactive,
+                          XPaletteColorRole_Window, c);
+        XWidget_setPalette((XWidget*)host, &pal);
+        XWidget_setAutoFillBackground((XWidget*)host, true);
+    }
+    {
+        XWidget* menuBar = XMainWindow_menuBar(host);
+        if (menuBar)
+        {
+            XMenu* m1 = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                        (XWidget*)host, "文件(&F)");
+            if (m1) XMenuBar_addMenu((XMenuBar*)menuBar, m1);
+        }
+    }
+    central = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)host, 0);
+    if (central)
+    {
+        XLabel_setText_2((XLabel*)central, "中央显示区（XLabel）");
+        XLabel_setAlignment((XLabel*)central, XAlignment_Center);
+        XMainWindow_setCentralWidget(host, central);
+    }
+    dockLeft = XDockWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "停靠-左",
+                                     (XWidget*)host, 0);
+    dockRight = XDockWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "停靠-右",
+                                      (XWidget*)host, 0);
+    if (dockLeft && dockRight)
+    {
+        XWidget* cl = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                       (XWidget*)dockLeft, 0);
+        XWidget* cr = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                       (XWidget*)dockRight, 0);
+        if (cl)
+        {
+            XLabel_setText_2((XLabel*)cl, "左面板内容");
+            XDockWidget_setWidget(dockLeft, cl);
+        }
+        if (cr)
+        {
+            XLabel_setText_2((XLabel*)cr, "右面板内容（可拖出浮动）");
+            XDockWidget_setWidget(dockRight, cr);
+        }
+        XMainWindow_addDockWidget(host, XDockWidgetArea_Left,
+                                  (XWidget*)dockLeft);
+        XMainWindow_addDockWidget(host, XDockWidgetArea_Right,
+                                  (XWidget*)dockRight);
+    }
+    XWidget_show((XWidget*)host);
+    XWidget_repaint((XWidget*)host);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+
+    org = XWidget_mapToGlobal((XWidget*)host, &zero);
+    XRect_init(&hostRect, org.x, org.y, XWidget_width((XWidget*)host),
+               XWidget_height((XWidget*)host));
+    /* 宿主下方外层条带（真机白块区）：宿主底缘到面板底。 */
+    XRect_init(&belowRect, org.x, org.y + XWidget_height((XWidget*)host),
+               XWidget_width((XWidget*)host),
+               T_PANEL_H - org.y - XWidget_height((XWidget*)host));
+
+    /* 第一步：拖出成浮动（释放点在宿主外）。 */
+    {
+        XDockWidget* d = dockRight;
+        XPoint dorg = XWidget_mapToGlobal((XWidget*)d, &zero);
+        int pressX = dorg.x + 40;
+        int pressY = dorg.y + 4;
+        t_touchDragOut((XWidget*)host, d, pressX, pressY, 60, 2, 4);
+        t_touchRelease((XWidget*)host, d, pressX + 60 * 4, pressY + 2 * 4);
+        t_expect(XDockWidget_isFloating(d),
+                 "场景八第一步：右面板未脱靠成浮动态");
+        if (XDockWidget_isFloating(d))
+        {
+            XPoint p = XWidget_mapToGlobal((XWidget*)d, &zero);
+            XRect_init(&floats[floatCount], p.x, p.y,
+                       XWidget_width((XWidget*)d),
+                       XWidget_height((XWidget*)d));
+            ++floatCount;
+        }
+    }
+
+    /* 第二步：拖回中央区缓慢滑过，中央区中央释放（真机配方）。 */
+    {
+        XDockWidget* d = dockRight;
+        XPoint forg = XWidget_mapToGlobal((XWidget*)d, &zero);
+        int pressX = forg.x + 40;
+        int pressY = forg.y + 4;
+        int cx = org.x + XWidget_width((XWidget*)host) / 2;
+        int cy = org.y + XWidget_height((XWidget*)host) / 2;
+        if (!XDockWidget_isFloating(d)) return bad;
+        t_touchDragOut((XWidget*)host, d, pressX, pressY, cx - pressX,
+                    cy - pressY, 8);
+        t_dumpPpm("pre_release");
+        t_touchRelease((XWidget*)host, d, cx, cy);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        t_dumpPpm("release1");
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        t_dumpPpm("release2");
+        if (t_debug())
+            fprintf(stderr,
+                    "[DD:%s] after tabify release: floating=%d dragging=%d "
+                    "rightG=(%d,%d,%d,%d) dropIndicatorVis=%d\n",
+                    tag, XDockWidget_isFloating(d) ? 1 : 0, d->m_dragging,
+                    XWidget_mapToGlobal((XWidget*)d, &zero).x,
+                    XWidget_mapToGlobal((XWidget*)d, &zero).y,
+                    XWidget_width((XWidget*)d),
+                    XWidget_height((XWidget*)d),
+                    host->m_dropIndicator
+                        ? XWidget_isVisible((XWidget*)host->m_dropIndicator)
+                        : -1);
+    }
+
+    /* 判据：现状 vs 强制整重绘基准（宿主区 + 宿主下方外层条带）。 */
+    floatCount = 0;
+    if (XDockWidget_isFloating(dockRight))
+    {
+        XPoint p = XWidget_mapToGlobal((XWidget*)dockRight, &zero);
+        XRect_init(&floats[floatCount], p.x, p.y,
+                   XWidget_width((XWidget*)dockRight),
+                   XWidget_height((XWidget*)dockRight));
+        ++floatCount;
+    }
+    v = t_captureVisible();
+    t_dumpPpm("residue");
+    XWidget_repaint((XWidget*)outer);
+    XWidget_repaint((XWidget*)host);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    baseline = t_captureVisible();
+    t_dumpPpm("baseline");
+    if (!v || !baseline)
+    {
+        fprintf(stderr, "[DD-FAIL] %s: capture frames\n", tag);
+        free(v);
+        free(baseline);
+        return 1;
+    }
+    bad += t_checkHostArea(&hostRect, v, baseline, floats, floatCount, tag);
+    bad += t_checkHostArea(&belowRect, v, baseline, floats, floatCount, tag);
+    if (t_debug())
+        fprintf(stderr, "[DD:%s] mismatch=%d\n", tag, bad);
+    free(v);
+    free(baseline);
+    if (outer) XClassDelete((XClass*)outer);
+    return bad;
+}
+
+
+/* ==================== 场景九：拖出后**再拖动浮窗**（用户现场手势） ====================
+ * 真机配方复刻（2026-11-04 mcgs 现场）：右面板拖出成浮动态 → 再按住浮窗
+ * 标题条把它拖到别处。真机症状：浮窗像素落到别处、宿主内布局错乱、旧位
+ * 留灰白底+半截文字（"没有重绘"）。判据=腾空区（旧位减新位）与强制重绘
+ * 基准逐像素一致。 */
+static int t_runFloatDragScenario(const char* tag)
+{
+    XMainWindow* host = NULL;
+    XWidget* central = NULL;
+    XDockWidget* dockLeft = NULL;
+    XDockWidget* dockRight = NULL;
+    XWidget* outer = NULL;
+    XPoint zero;
+    XPoint org;
+    XRect oldRect;
+    XRect newRect;
+    uint16_t* v1 = NULL;
+    uint16_t* baseline = NULL;
+    int bad = 0;
+    int i;
+
+    XPoint_init(&zero, 0, 0);
+    outer = XWidget_create(NULL, 0);
+    if (!outer) return 1;
+    XWidget_setGeometry(outer, 0, 0, T_PANEL_W, T_PANEL_H);
+    XWidget_show(outer);
+    host = XMainWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, outer,
+                                 (XWidgetFlags)XWindowType_Window);
+    if (!host) return 1;
+    XWidget_setGeometry((XWidget*)host, 10, 10, 560, 420);
+    {
+        XPalette pal;
+        XColor c;
+        XPalette_init_default(&pal);
+        XColor_init_rgb(&c, 0, 128, 0, 255);
+        XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                          XPaletteColorRole_Window, c);
+        XPalette_setColor(&pal, XPaletteColorGroup_Inactive,
+                          XPaletteColorRole_Window, c);
+        XWidget_setPalette((XWidget*)host, &pal);
+        XWidget_setAutoFillBackground((XWidget*)host, true);
+    }
+    {
+        XWidget* menuBar = XMainWindow_menuBar(host);
+        if (menuBar)
+        {
+            XMenu* m1 = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                        (XWidget*)host, "文件(&F)");
+            if (m1) XMenuBar_addMenu((XMenuBar*)menuBar, m1);
+        }
+    }
+    central = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)host, 0);
+    if (central)
+    {
+        XLabel_setText_2((XLabel*)central, "中央显示区（XLabel）");
+        XLabel_setAlignment((XLabel*)central, XAlignment_Center);
+        XMainWindow_setCentralWidget(host, central);
+    }
+    dockLeft = XDockWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "停靠-左",
+                                     (XWidget*)host, 0);
+    dockRight = XDockWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "停靠-右",
+                                      (XWidget*)host, 0);
+    if (dockLeft && dockRight)
+    {
+        XWidget* cl = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                       (XWidget*)dockLeft, 0);
+        XWidget* cr = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                       (XWidget*)dockRight, 0);
+        if (cl)
+        {
+            XLabel_setText_2((XLabel*)cl, "左面板内容");
+            XDockWidget_setWidget(dockLeft, cl);
+        }
+        if (cr)
+        {
+            XLabel_setText_2((XLabel*)cr, "右面板内容（可拖出浮动）");
+            XDockWidget_setWidget(dockRight, cr);
+        }
+        XMainWindow_addDockWidget(host, XDockWidgetArea_Left,
+                                  (XWidget*)dockLeft);
+        XMainWindow_addDockWidget(host, XDockWidgetArea_Right,
+                                  (XWidget*)dockRight);
+    }
+    XWidget_show((XWidget*)host);
+    XWidget_repaint((XWidget*)host);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+
+    org = XWidget_mapToGlobal((XWidget*)host, &zero);
+    (void)org;
+    /* 第一步：拖出成浮动态（释放点在宿主外）。 */
+    if (!dockRight) return 1;
+    {
+        XPoint dorg = XWidget_mapToGlobal((XWidget*)dockRight, &zero);
+        int pressX = dorg.x + 40;
+        int pressY = dorg.y + 4;
+        t_touchDragOut((XWidget*)host, dockRight, pressX, pressY, 60, 2, 4);
+        t_touchRelease((XWidget*)host, dockRight, pressX + 60 * 4,
+                        pressY + 2 * 4);
+        t_expect(XDockWidget_isFloating(dockRight),
+                 "场景九第一步：右面板未脱靠成浮动态");
+    }
+    if (!XDockWidget_isFloating(dockRight)) return 1;
+    {
+        XPoint p = XWidget_mapToGlobal((XWidget*)dockRight, &zero);
+        XRect_init(&oldRect, p.x, p.y, XWidget_width((XWidget*)dockRight),
+                   XWidget_height((XWidget*)dockRight));
+    }
+    if (t_debug())
+        fprintf(stderr, "[DD:%s] float at global=(%d,%d %dx%d)\n", tag,
+                oldRect.x, oldRect.y, oldRect.width, oldRect.height);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    v1 = t_captureVisible();
+
+    /* 第二步：按住浮窗标题条把它拖到别处（浮动态跟指）。 */
+    {
+        int pressX = oldRect.x + 40;
+        int pressY = oldRect.y + 8;
+        int dx = -180;
+        int dy = 120;
+        t_touchInject(t_touchTargetOf((XWidget*)host, dockRight), pressX,
+                      pressY, XTOUCHPOINT_STATE_PRESSED,
+                      XEVENT_TYPE_TOUCH_BEGIN);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        for (i = 1; i <= 6; ++i)
+        {
+            XThread_usleep(24000);
+            t_touchInject(t_touchTargetOf((XWidget*)host, dockRight),
+                          pressX + dx * i / 6, pressY + dy * i / 6,
+                          XTOUCHPOINT_STATE_UPDATED, XEVENT_TYPE_TOUCH_UPDATE);
+            XGuiApplication_processEvents(XEventLoop_AllEvents);
+        }
+        t_touchInject(t_touchTargetOf((XWidget*)host, dockRight),
+                      pressX + dx, pressY + dy,
+                      XTOUCHPOINT_STATE_RELEASED, XEVENT_TYPE_TOUCH_END);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+    }
+    {
+        XPoint p = XWidget_mapToGlobal((XWidget*)dockRight, &zero);
+        XRect_init(&newRect, p.x, p.y, XWidget_width((XWidget*)dockRight),
+                   XWidget_height((XWidget*)dockRight));
+    }
+    if (t_debug())
+        fprintf(stderr, "[DD:%s] float now global=(%d,%d %dx%d)\n", tag,
+                newRect.x, newRect.y, newRect.width, newRect.height);
+    /* 判据：腾空区（旧位减新位）须与强制重绘基准一致。 */
+    XWidget_repaint((XWidget*)outer);
+    XWidget_repaint((XWidget*)host);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    baseline = t_captureVisible();
+    if (!v1 || !baseline)
+    {
+        fprintf(stderr, "[DD-FAIL] %s: capture frames\n", tag);
+        free(v1);
+        free(baseline);
+        return 1;
+    }
+    bad = t_diffRegionExcept(v1, baseline, &oldRect, &newRect, tag,
+                              "浮窗拖动腾空区");
+    free(v1);
+    free(baseline);
+    if (outer) XClassDelete((XClass*)outer);
+    return bad;
+}
+
 /* ==================== 主流程 ==================== */
 
 int main(void)
@@ -1570,6 +2001,14 @@ int main(void)
 
     /* 场景 7：让位区残留数值化判据行（LET_RESIDUE mismatch=<N>）。 */
     bad += t_runLetResidueScenario("letresidue");
+
+    /* 场景 8：拖出→拖回中央区释放页签化回停（2026-11-04 真机残影配方）。 */
+    bad += t_runTabifyScenario("tabify");
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+
+    /* 场景 9：拖出后再拖动浮窗（用户现场手势：拖动浮窗留残影）。 */
+    bad += t_runFloatDragScenario("floatdrag");
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
 
     if (t_failures)
     {

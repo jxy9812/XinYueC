@@ -431,6 +431,8 @@ static void xmw_layoutDockRow(XMainWindow* self, int area, int y, int rowH,
 
 static void xmw_dockGroupSync(XMainWindow* self);
 static void xmw_layout(XMainWindow* self);
+/* 页签化/落位重排后的宿主当帧收口（定义见文件后段 xmw_syncRepaintHost）。 */
+static void xmw_syncRepaintHost(XMainWindow* self);
 
 /** @brief      页签条 currentChanged 转发槽（connect_2 槽首参=发送者）。
  *  @details    由页签条上溯宿主主窗口，按页签条在 m_dockTabBars 中的
@@ -1308,9 +1310,14 @@ void XMainWindow_addDockWidget(XMainWindow* self, int area,
     if (!self || !dock || !self->m_docks) return;
     /* 登记宿主回链（浮动/显隐变化经此通知主窗口重排）。 */
     XDockWidget_setHost(d, (XWidget*)self);
-    /* 对标 Qt：addDockWidget 会把浮动面板重新停靠。 */
-    if (d->m_floating) XDockWidget_setFloating(d, false);
     existing = xmw_dockIndex(self, d);
+    /* 【登记先于脱浮 2026-11-04】已登记面板换区落位：**先**把区域登记
+     * 改成新区域，再脱浮（setFloating 内部会重排+当帧重绘）。旧序
+     * （先脱浮后改登记）会让脱浮那轮重排按**旧区域**摆放面板（浮动态
+     * 尺寸落在旧区列里），且其当帧重绘把这份错位画上屏（真机：面板
+     * 标题条停在原停靠位不动、内容按浮动态窄宽画在宿主左上）；
+     * 随后的正式重排虽改对几何，其脏区却落在已派发 PAINT 的快照之外
+     * ⇒ 终态像素永不落屏（用户现场「拖动有残留、没有重绘」）。 */
     if (existing >= 0) {
         int* oldArea = (int*)XVector_at_base(self->m_dockAreas, existing);
         /* 对标 Qt：重复登记视为移动，仅更新区域（避免重复条目破坏
@@ -1326,11 +1333,19 @@ void XMainWindow_addDockWidget(XMainWindow* self, int area,
                 *(int*)XVector_at_base(self->m_dockHeights, existing) = 0;
         }
         if (oldArea) *oldArea = areaVal;
+        /* 对标 Qt：addDockWidget 会把浮动面板重新停靠（区域已就位 ⇒
+         * 脱浮那轮重排直接按新区域摆放）。 */
+        if (d->m_floating) XDockWidget_setFloating(d, false);
         XWidget_setParent(dock, (XWidget*)self, 0);
         XWidget_show(dock);
         xmw_layout(self);
+        /* 最终落位的当帧收口（几何脏区落在已派发 PAINT 快照之外 ⇒ 须
+         * 当帧整宿主重绘，见 xmw_syncRepaintHost 注）。 */
+        xmw_syncRepaintHost(self);
         return;
     }
+    /* 对标 Qt：addDockWidget 会把浮动面板重新停靠。 */
+    if (d->m_floating) XDockWidget_setFloating(d, false);
     XWidget_setParent(dock, (XWidget*)self, 0);
     XVector_push_back_1_base(self->m_docks, &dock);
     XVector_push_back_1_base(self->m_dockAreas, &areaVal);
@@ -1338,6 +1353,7 @@ void XMainWindow_addDockWidget(XMainWindow* self, int area,
         XVector_push_back_1_base(self->m_dockHeights, &heightVal);
     XWidget_show(dock);
     xmw_layout(self);
+    xmw_syncRepaintHost(self);
 }
 
 void XMainWindow_removeDockWidget(XMainWindow* self, XWidget* dock)
@@ -1450,6 +1466,25 @@ void XMainWindow_splitDockWidget(XMainWindow* self, XDockWidget* after,
     xmw_layout(self);
 }
 
+/** @brief 页签化/重排后的宿主当帧收口（合成器语义，对齐
+ *  XDockWidget.c xdw_syncRepaintHostArea）。
+ *  @details finishDrop 中央分支的时序陷阱：setFloating(false) 内部已做
+ *           过一轮「重排+同步重绘」（当时树仍是预页签布局），随后
+ *           tabifyDockWidget 的 dockGroupSync 藏 inactive 成员 +
+ *           xmw_layout 重排（藏停靠区被中央吸收、页签条出现、面板移到
+ *           页签之下）产生的几何脏区落在已派发 PAINT 的快照之外
+ *           （XDockWidget.c setFloatingImpl 注释记载的同款快照陷阱）
+ *           ⇒ 无任何落屏消费，屏上停留预页签像素（真机：另一侧面板
+ *           标题条被穿透、宿主下方条带刷白、旧标题条残影）。本收口在
+ *           重排后当帧整宿主重绘，旋转态与不可见时短路。 */
+static void xmw_syncRepaintHost(XMainWindow* self)
+{
+    if (!self) return;
+    if (!XWidget_isVisible((XWidget*)self)) return;
+    if (XWidget_contentRotationDegrees((XWidget*)self) != 0) return;
+    XWidget_repaint((XWidget*)self);
+}
+
 void XMainWindow_tabifyDockWidget(XMainWindow* self, XDockWidget* first,
                                   XDockWidget* second)
 {
@@ -1470,6 +1505,8 @@ void XMainWindow_tabifyDockWidget(XMainWindow* self, XDockWidget* first,
     XMainWindow_tabifiedDockWidgetActivated_signal(self, (XWidget*)second);
     xmw_dockGroupSync(self);
     xmw_layout(self);
+    /* 页签化改布局后的当帧收口（快照陷阱见 xmw_syncRepaintHost 注）。 */
+    xmw_syncRepaintHost(self);
 }
 
 const XVector* XMainWindow_tabifiedDockWidgets(const XMainWindow* self,

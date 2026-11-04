@@ -276,10 +276,21 @@ bool XState_addTransition(XState* state, XAbstractTransition* transition)
     return true;
 }
 
+/** @brief 对标 QState::addTransition 的目标校验：双方都有状态机且不同 → 拒绝。 */
+static bool XState_targetMachineOk(const XState* state, const XAbstractState* target)
+{
+    return !(target && target->m_machine && state->m_class.m_machine
+             && state->m_class.m_machine != target->m_machine);
+}
+
 XSignalTransition* XState_addTransition_2(XState* state, const XObject* sender,
                                           size_t signal, XAbstractState* target)
 {
     if (!state || !sender || !signal || !target)
+        return NULL;
+    /* 对标 Qt addTransition(sender, signal, target)：目标跨状态机时拒绝
+     * 并返回 NULL（Qt 侧由 addTransition(trans) 校验，此处提前同口径）。 */
+    if (!XState_targetMachineOk(state, target))
         return NULL;
 
     XSignalTransition* transition = XSignalTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sender, signal, state);
@@ -295,6 +306,9 @@ XSignalTransition* XState_addTransition_2(XState* state, const XObject* sender,
 XAbstractTransition* XState_addTransition_3(XState* state, XAbstractState* target)
 {
     if (!state || !target)
+        return NULL;
+    /* 对标 Qt addTransition(QAbstractState* target)：目标跨状态机时拒绝。 */
+    if (!XState_targetMachineOk(state, target))
         return NULL;
 
     XAbstractTransition* transition = XClass_Malloc(XAbstractTransition);

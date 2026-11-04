@@ -11,6 +11,7 @@ extern "C" {
 typedef struct XAbstractState XAbstractState;
 typedef struct XState XState;
 typedef struct XStateMachine XStateMachine;
+typedef struct XAbstractAnimation XAbstractAnimation;
 
 /**
  * @brief 转换的执行类型，对应 QAbstractTransition::TransitionType。
@@ -41,6 +42,7 @@ typedef struct XAbstractTransition {
     XObject m_class;                                      ///< 继承 XObject。
     XState* m_sourceState;                                ///< 源状态，由所属 XState 管理。
     XVector* m_targetStates;                              ///< 目标状态列表，元素类型为 XAbstractState*。
+    XVector* m_animations;                                ///< 关联动画列表（对标 animations；借用不取得所有权）。
     XAbstractTransition_TransitionType m_transitionType;  ///< 内部或外部转换（对标 QAbstractTransitionPrivate）。
     XAbstractTransition_Kind m_kind;                      ///< 转换实现种类（C 侧的分流标签）。
 } XAbstractTransition;
@@ -118,6 +120,31 @@ void XAbstractTransition_setTransitionType(XAbstractTransition* transition, XAbs
  * @note 与 Qt 一致：源状态缺失时回退到历史状态的父状态所属机器。
  */
 XStateMachine* XAbstractTransition_machine(const XAbstractTransition* transition);
+
+/**
+ * @brief 追加关联动画（对标 QAbstractTransition::addAnimation）。
+ * @param transition 转换实例。
+ * @param animation 待追加动画；不取得所有权（与 Qt 文档一致）。
+ * @return 追加成功返回 true；animation 为 NULL（对应 Qt 的 qWarning）或
+ *         容器分配失败时返回 false。与 Qt 一致：不检查重复。
+ */
+bool XAbstractTransition_addAnimation(XAbstractTransition* transition,
+                                      XAbstractAnimation* animation);
+/**
+ * @brief 移除关联动画（对标 QAbstractTransition::removeAnimation）。
+ * @param transition 转换实例。
+ * @param animation 待移除动画；不销毁动画对象。
+ */
+void XAbstractTransition_removeAnimation(XAbstractTransition* transition,
+                                         XAbstractAnimation* animation);
+/**
+ * @brief 获取关联动画列表的只读内部引用（对标 QAbstractTransition::animations）。
+ * @param transition 转换实例。
+ * @return 元素类型为 XAbstractAnimation* 的内部 XVector；transition 为 NULL
+ *         或无动画容器时返回 NULL。
+ * @warning 借用语义：容器归转换所有，调用者不得修改或释放；动画对象归其创建者所有。
+ */
+const XVector* XAbstractTransition_animations_const(const XAbstractTransition* transition);
 
 /**
  * @brief 调用事件匹配虚函数。
