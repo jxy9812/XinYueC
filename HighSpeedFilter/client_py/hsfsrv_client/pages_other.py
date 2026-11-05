@@ -17,13 +17,19 @@
     pages/HsfWindowPage.c      → WindowPage
 """
 
+import csv
+import datetime
+import re
 import time
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QCheckBox, QComboBox, QGridLayout, QHBoxLayout,
+from PyQt5.QtCore import QPoint, Qt, QDateTime, pyqtSignal
+from PyQt5.QtGui import QBrush, QColor, QPainter, QPen, QStandardItem, \
+    QStandardItemModel
+from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog,
+                             QFrame, QGridLayout, QHBoxLayout, QHeaderView,
                              QLabel, QLineEdit, QPushButton, QSpinBox,
-                             QTableWidget, QTableWidgetItem, QVBoxLayout,
-                             QWidget)
+                             QTableWidget, QTableWidgetItem, QDateTimeEdit,
+                             QVBoxLayout, QWidget)
 
 from . import pages_registry as reg
 from . import proto, theme
@@ -115,9 +121,19 @@ class HomePage(Page):
             # 改成按钮内部放两行 QLabel（标题加粗 + 说明次要色），
             # 行高由布局管理，不受按钮自身文字绘制逻辑影响。
             btn = QPushButton()
+            # [min-height 必须写进按钮自身样式表，setMinimumHeight 不够]
+            #
+            # 实锅 2026-11-05（第二次踩）：theme.install 装上全局 QSS 后，
+            # 通用规则 `QPushButton { min-height: 18px; }` 会**覆盖**
+            # setMinimumHeight(84) —— 样式表激活时 QSS 的 min/max 系列
+            # 优先于 QWidget 的显式最值（实测：按钮 minimumHeight() 读回
+            # 20，几何高 25，内部两行文字被上下裁切，主界面快捷入口只剩
+            # 半行字）。按钮自己的样式表与应用级同名属性冲突时按钮本地
+            # 规则赢，故在这里把 min-height 重新钉回 84。
             btn.setMinimumHeight(84)
             btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet("QPushButton { text-align: center; padding: 0; }")
+            btn.setStyleSheet("QPushButton { text-align: center; padding: 0;"
+                              " min-height: 84px; }")
             inner = QVBoxLayout(btn)
             inner.setContentsMargins(10, 8, 10, 8)
             inner.setSpacing(2)
@@ -284,57 +300,292 @@ class SubMenuPage(Page):
 # ============================================================================
 
 class HistoryPage(Page):
-    """历史数据：本地缓存最近 N 拍的变频器/温湿度读数。
+    """历史数据：本地缓存最近 N 拍的过程/电气/状态数据。
 
     [为什么客户端本地缓存] 服务端不提供历史查询（C 端也没有）。
     历史页的价值在于「刚才发生了什么」——本进程内缓存足够，
     重连/重启即清空（与 C 端口径一致）。
+
+    [采集项（2026-11-05）] 时间 / 运行模式 / 搅拌机状态+频率+电流+转速 /
+    浊度×2 / 瞬时流量+正累计 / 压差(MPa) / 电箱温湿度 / DI+DO 位图。
+    全部来自既有推送主题，服务端无需新增接口；**各列独立判新鲜**——
+    某台设备离线只让自己那列显示 "--"，不影响其余列继续记录。
+
+    [DI/DO 的记录口径] 一个字节记 8 个点位：32 路输入/输出各折成一个
+    **32 位字（4 字节）**，两列合计 8 字节，按 `0x%08X` 十六进制显示
+    （bit n = 通道 n，与 C 端位图口径一致）。现场 `.13` 已聚合进 `.12`
+    （对外 32 点、publish=false 不发点位帧），故取「已刷新且点数最多」
+    的模块即全部有效点位，不存在重复/遗漏。
+
+    [行高亮口径] 采样那一刻存在异常（变频器故障 / 浊度≥20NTU / 流量计
+    报警字非 0 / 压差越限 / 阀故障含超时）的行整行淡红底 —— 只用已有
+    数据里的异常位，不新增推送、不新增判断逻辑。
+
+    [排序 / 筛选 / 图表 / 导出（2026-11-05 第二批）]
+      · **双击表头排序**：新列降序 → 再击转升 → 再击取消（恢复最新在上）。
+        数值列按数值排（字符串序会把 "12.5" 排到 "9.1" 前面）；排序只动
+        显示视图，采样缓冲的时序永不改变。
+      · **筛选**：起始/结束时间（HH:MM 或 HH:MM:SS）+ 列下拉 + 关键字
+        包含匹配，筛选按钮应用、清除筛选复位；只影响显示与导出范围。
+      · **折线图**：QPainter 手绘（零第三方依赖，板端无 matplotlib），
+        按当前筛选结果时间正序取数，非数值点跳过不补。
+      · **导出数据**：保存框选 .csv → CSV（utf-8-sig）；选 .xlsx →
+        Excel（xlsx_bridge 动态库，见 tools/xlsx_bridge/）；导出内容
+        = 当前可见视图（筛选与排序生效后的样子）。
     """
 
+    #: 列定义（表头与 CSV 导出共用一份，改这里两处同步）。
+    COLUMNS = ["时间", "模式", "搅拌状态", "输出频率(Hz)", "输出电流(A)",
+               "搅拌转速(rpm)", "浊度1(NTU)", "浊度2(NTU)",
+               "瞬时流量", "正累计", "压差(MPa)",
+               "电箱温度(℃)", "电箱湿度(%RH)", "DI(32位)", "DO(32位)"]
+
     TOPICS = (proto.TOPIC_VFD_STATUS, proto.TOPIC_TEMPHUM_STATUS,
-              proto.TOPIC_AI_STATUS)
+              proto.TOPIC_AI_STATUS, proto.TOPIC_TURBIDITY_STATUS,
+              proto.TOPIC_FLOWMETER_STATUS, proto.TOPIC_DIGITAL_STATUS,
+              proto.TOPIC_VALVE_STATUS)
 
     MAX_ROWS = 300
+    #: 浊度越限阈值（与水质监测页同一口径，见 pages_monitor）。
+    TURBIDITY_WARN_NTU = 20.0
+    #: 异常行的底色（CLR_FAULT 的淡色版，红字太刺眼、淡底不干扰读数）。
+    ABNORMAL_BG = "#FDECEC"
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
         self.add_header("历史数据", "最近 %d 条（本地缓存，重启清空）"
                         % self.MAX_ROWS)
-        self._rows = []
+        self._rows = []              # [(texts, abnormal), ...] 旧→新
         self._last_sample_ms = 0
         self._table = DataTable()
-        self._table.table.setColumnCount(5)
-        self._table.table.setHorizontalHeaderLabels(
-            ["时间", "输出频率(Hz)", "温度(℃)", "湿度(%RH)", "母线电压(V)"])
+        self._table.set_headers(self.COLUMNS)
+        # 15 列数据都是短文本，最小档 72px；时间列内容
+        # 'yyyy-MM-dd HH:MM:SS'（19 字符 ≈ 130px）必须整列放得下，否则
+        # 日期被省略号吃掉只剩时刻（截图反馈"时间怎么没有日期"）——
+        # 用按列下限给它 130px 硬保证，其余列维持 72px 档。
+        self._table.set_column_weights(
+            (3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3),
+            min_widths={0: 165})
+
+        # ---- 排序 / 筛选状态（双击表头排序；筛选栏按此过滤显示视图）----
+        self._sort_col = None          # None=不排序（默认最新在上）
+        self._sort_desc = True
+        self._table.table.horizontalHeader().sectionDoubleClicked.connect(
+            self._header_dblclicked)
+
+        # ---- 筛选行：起始/结束时间 + 列多选 + 关键字 + 筛选/清除 ----
+        fbar = QHBoxLayout()
+        fbar.setSpacing(8)
+        fbar.addWidget(QLabel("起始"))
+        self._f_start = TimePickerEdit("yyyy-MM-dd HH:MM 或 HH:MM")
+        self._f_start.setMaximumWidth(120)
+        fbar.addWidget(self._f_start)
+        fbar.addWidget(QLabel("结束"))
+        self._f_end = TimePickerEdit("yyyy-MM-dd HH:MM 或 HH:MM")
+        self._f_end.setMaximumWidth(120)
+        fbar.addWidget(self._f_end)
+        fbar.addWidget(QLabel("列"))
+        self._f_col = MultiCheckCombo(self.COLUMNS, all_text="全部列")
+        self._f_col.setMaximumWidth(170)
+        fbar.addWidget(self._f_col)
+        fbar.addWidget(QLabel("关键字"))
+        self._f_text = QLineEdit()
+        self._f_text.setPlaceholderText("包含…（空=不限）")
+        fbar.addWidget(self._f_text, 1)
+        btn_filter = QPushButton("筛选")
+        btn_filter.clicked.connect(self._apply_filter)
+        fbar.addWidget(btn_filter)
+        btn_clear = QPushButton("清除筛选")
+        btn_clear.clicked.connect(self._clear_filter)
+        fbar.addWidget(btn_clear)
+        self._count_label = QLabel("")
+        self._count_label.setStyleSheet(theme.caption_label_qss())
+        fbar.addWidget(self._count_label)
+        self.root.addLayout(fbar)
+
+        # ---- 工具行：折线图 + 滚动锁定 + 导出 ----
+        bar = QHBoxLayout()
+        bar.setSpacing(8)
+        bar.addWidget(QLabel("折线列"))
+        self._chart_col = QComboBox()
+        for col, name in enumerate(self.COLUMNS):
+            if col == 0 or col in (1, 2):      # 时间/模式/搅拌状态非数值
+                continue
+            self._chart_col.addItem(name)
+        self._chart_col.setMaximumWidth(130)
+        bar.addWidget(self._chart_col)
+        btn_chart = QPushButton("生成折线图")
+        btn_chart.clicked.connect(self._show_chart)
+        bar.addWidget(btn_chart)
+        bar.addStretch(1)
+        self._freeze = QCheckBox("滚动锁定（停止刷表，后台照常采样）")
+        self._freeze.toggled.connect(
+            lambda frozen: None if frozen else self._rebuild())
+        bar.addWidget(self._freeze)
+        btn_export = QPushButton("导出数据")
+        btn_export.clicked.connect(self._export_data)
+        bar.addWidget(btn_export)
+        self.root.addLayout(bar)
+
+        # ---- 数据表卡片（在筛选/工具行之下：筛选条件先设，表格后看）----
         card = Card()
         card.add(self._table)
         self.root.addWidget(card, 1)
 
     def refresh(self):
         # 采样节拍 1s（比推送慢：历史表不需要每 100ms 一行）。
+        # 滚动锁定只停"刷表"，采样照旧 —— 解锁后数据一行不少。
         now = int(time.monotonic() * 1000)
         if now - self._last_sample_ms < 1000:
             return
         self._last_sample_ms = now
-        model = self.ctx.model
-        if not (model.vfd.is_fresh() or model.temphum.is_fresh()):
+        m = self.ctx.model
+        di_word, do_word = self._digital_words(m)
+        # 两个位图都是 None = 数字量还没刷新过一帧。
+        if not (m.vfd.is_fresh() or m.turbidity.is_fresh()
+                or m.flowmeter.is_fresh() or m.analog.is_fresh()
+                or m.temphum.is_fresh() or di_word is not None):
             return
-        stamp = time.strftime("%H:%M:%S")
-        vfd = model.vfd
-        th = model.temphum
-        row = [stamp,
-               "%.2f" % vfd.output_freq_hz if vfd.is_fresh() else "--",
-               th.temp_text(), th.hum_text(),
-               "%.1f" % vfd.bus_voltage_v if vfd.is_fresh() else "--"]
-        self._rows.append(row)
+        texts = [time.strftime("%Y-%m-%d %H:%M:%S"),
+                 self._mode_text(m),
+                 self._vfd_state_text(m),
+                 self._vfd_num_text(m, "output_freq_hz"),
+                 self._vfd_num_text(m, "output_current_a"),
+                 self._rpm_text(m),
+                 self._turb_text(m, 0), self._turb_text(m, 1),
+                 self._flow_text(m), self._total_text(m),
+                 self._press_text(m),
+                 m.temphum.temp_text(), m.temphum.hum_text(),
+                 di_word or "--", do_word or "--"]
+        self._rows.append((texts, self._is_abnormal(m)))
         if len(self._rows) > self.MAX_ROWS:
             self._rows = self._rows[-self.MAX_ROWS:]
-        self._rebuild()
+        if not self._freeze.isChecked():
+            self._rebuild()
+
+    # ---- 各列取数（各自独立判新鲜，离线只影响自己那列）----
+
+    @staticmethod
+    def _rpm_text(m):
+        """搅拌转速：变频器输出频率的换算值（变频器无转速寄存器）。"""
+        if not m.vfd.is_fresh():
+            return "--"
+        return "%.0f" % m.vfd.speed_rpm
+
+    @staticmethod
+    def _mode_text(m):
+        """运行模式：手动 / 自动·停止 / 自动·运行中（与顶栏同一口径）。
+
+        [未知就写未知] 服务端没报过模式（run_mode_known=False）时显示
+        "--"，不拿"手动"冒充 —— 编造的默认值会误导事后排查。
+        """
+        if not m.run_mode_known:
+            return "--"
+        if not m.is_auto():
+            return "手动"
+        if m.auto_running is None:
+            return "自动·未知"
+        return "自动·运行中" if m.auto_running else "自动·停止"
+
+    @staticmethod
+    def _vfd_state_text(m):
+        """搅拌机状态：运行状态文案；故障时带上故障名（FAULT_TEXT 中文）。"""
+        if not m.vfd.is_fresh():
+            return "--"
+        if m.vfd.faulted:
+            detail = m.vfd.fault_text()
+            return "故障 " + detail if detail != "无故障" else "故障"
+        return m.vfd.run_state_text()
+
+    @staticmethod
+    def _vfd_num_text(m, attr):
+        """变频器数值列（频率/电流）通用的取数与格式化。"""
+        if not m.vfd.is_fresh():
+            return "--"
+        return "%.2f" % float(getattr(m.vfd, attr, 0.0) or 0.0)
+
+    def _is_abnormal(self, m):
+        """采样那一刻是否异常（整行淡红底）。只认已有数据里的异常位。"""
+        if m.vfd.is_fresh() and m.vfd.faulted:
+            return True
+        if m.turbidity.is_fresh():
+            for idx in range(min(m.turbidity.count, 2)):
+                ntu = m.turbidity.ntu_of(idx)
+                if ntu is not None and ntu >= self.TURBIDITY_WARN_NTU:
+                    return True
+        if m.flowmeter.is_fresh() and m.flowmeter.alarms:
+            return True
+        # 压差越限（断线/超量程）——服务端给说明文字即异常。
+        if m.analog.is_fresh() and m.analog.eng_note.get(0, ""):
+            return True
+        # 阀故障（含 20s 动作超时）。
+        if m.valve.is_fresh() and m.valve.fault_count():
+            return True
+        return False
+
+    @staticmethod
+    def _turb_text(m, index):
+        """浊度 NTU；该台离线（online=False）时 ntu_of 返回 None → "--"。"""
+        if not m.turbidity.is_fresh():
+            return "--"
+        ntu = m.turbidity.ntu_of(index)
+        return "--" if ntu is None else "%.2f" % ntu
+
+    @staticmethod
+    def _flow_text(m):
+        """瞬时流量：单位随流量计下发的单位码走，不写死 m³/h。"""
+        if not m.flowmeter.is_fresh():
+            return "--"
+        return "%.2f %s" % (m.flowmeter.flow, m.flowmeter.flow_unit_text())
+
+    @staticmethod
+    def _total_text(m):
+        """正向累积总量（单位码与瞬时流量分属两张表，见 model.FLOW_UNIT_TEXT）。"""
+        if not m.flowmeter.is_fresh():
+            return "--"
+        return "%.2f %s" % (m.flowmeter.forward_total,
+                            m.flowmeter.total_unit_text())
+
+    @staticmethod
+    def _press_text(m):
+        """压差：模拟量通道 0 的工程量（服务端按 4~20mA → 0~1MPa 换算）。
+
+        越限（断线/超量程）时服务端把值夹到端点并给说明 —— 夹出来的
+        端点值没有记录价值，历史里直接记说明文字。
+        """
+        if not m.analog.is_fresh():
+            return "--"
+        note = m.analog.eng_note.get(0, "")
+        if note:
+            return note
+        value = m.analog.eng_value(0)
+        return "--" if value is None else "%.3f" % value
+
+    @staticmethod
+    def _digital_words(m):
+        """DI/DO 位图折字：32 点各记一个 32 位字（4 字节），共 8 字节。
+
+        :returns: (di_text, do_text)；没有任何已刷新的数字量模块时
+        两个都是 None（区别于"有数据但全 0"的 "0x00000000"）。
+
+        [为什么取点数最多的模块] 现场 `.13` 已聚合进 `.12`：客户端收到
+        的点位帧就是聚合后的一个 32 点模块，被聚合者 `publish=false`
+        只出健康不发点位帧。取「已刷新且点数最大」的模块即全部有效点位。
+        """
+        best = None
+        for dev in m.digital.values():
+            if dev.is_fresh() and (best is None or dev.count > best.count):
+                best = dev
+        if best is None:
+            return None, None
+        return ("0x%08X" % (best.di & 0xFFFFFFFF),
+                "0x%08X" % (best.do & 0xFFFFFFFF))
 
     def _rebuild(self):
+        rows = self._visible_rows()
         table = self._table.table
-        table.setRowCount(len(self._rows))
-        for r, row in enumerate(reversed(self._rows)):    # 最新在上
+        table.setRowCount(len(rows))
+        for r, (row, abnormal) in enumerate(rows):      # 视图序（默认最新在上）
             for c, text in enumerate(row):
                 item = table.item(r, c)
                 if item is None:
@@ -342,8 +593,393 @@ class HistoryPage(Page):
                     item.setTextAlignment(Qt.AlignCenter)
                     table.setItem(r, c, item)
                 item.setText(text)
+                # [背景必须每拍重设] item 是复用的：只给异常行上色、不给
+                # 正常行清除的话，行滚动/截断后旧底色会残留在已恢复正常的行上。
+                item.setBackground(
+                    QBrush(QColor(self.ABNORMAL_BG)) if abnormal
+                    else QBrush())
         table.verticalHeader().setDefaultSectionSize(theme.TABLE_ROW_H)
-        table.scrollToTop()
+        if not self._freeze.isChecked():
+            table.scrollToTop()
+        self._count_label.setText(
+            "%d/%d 条" % (len(rows), len(self._rows)))
+
+    # ---- 排序 / 筛选 / 视图流水线 ----
+
+    @staticmethod
+    def _cell_float(text):
+        """表格文本 → 数值（排序/画图共用）；非数值返回 None。
+
+        口径：'--'/纯文字 → None；'0x' 前缀按十六进制（DI/DO 位图列）；
+        '36.05 m³/h' 这类带单位文本取前导浮点数。
+        [必须整串锚定] 正则若不锚尾，'2026-11-05 08:10:00' 会被解析成
+        2026.0 —— 时间列（ISO 文本）在排序里被当成数值，时间序全乱
+        （2026-11-05 实测踩到）。锚定规则：数字后只允许「空白+任意后缀」
+        （即单位），'-11-05' 这种数字后紧跟非空白的内容不算数值。
+        """
+        t = str(text).strip()
+        if not t or t == "--":
+            return None
+        if t[:2].lower() == "0x":
+            try:
+                return float(int(t, 16))
+            except ValueError:
+                return None
+        m = re.match(r"^[-+]?\d*\.?\d+(?:\s+.*)?$", t)
+        return float(m.group(0).split()[0]) if m else None
+
+    @staticmethod
+    def _norm_stamp(text, is_end):
+        """筛选时间归一化；无法解析返回 None。
+
+        :returns: None 或 (mode, key)。mode='F' → key 为完整
+        'yyyy-MM-dd HH:MM:SS'（与行内时间列整体比较）；mode='T' → key 为
+        'HH:MM:SS'（只比当天的时刻后缀——用户只填时间时按"当天"语义）。
+
+        接受（缺省部分按 is_end 补端点：起点补 00:00:00，终点补 23:59:59）：
+            HH:MM[:SS]               → 'T'
+            MM-dd [HH:MM[:SS]]       → 'F'（年份取当前年）
+            yyyy-MM-dd [HH:MM[:SS]]  → 'F'
+        """
+        text = str(text).strip()
+        if not text:
+            return None
+        tokens = text.split()
+        if len(tokens) > 2:
+            return None
+        date_part = None
+        time_part = None
+        for token in tokens:
+            if ":" in token:
+                if time_part is not None:
+                    return None
+                time_part = token
+            else:
+                if date_part is not None:
+                    return None
+                date_part = token
+        if date_part is None and time_part is None:
+            return None
+
+        # ---- 时间段：缺省补端点 ----
+        hh, mm, ss = (23, 59, 59) if is_end else (0, 0, 0)
+        if time_part is not None:
+            parts = time_part.split(":")
+            if not 2 <= len(parts) <= 3:
+                return None
+            try:
+                nums = [int(p) for p in parts]
+            except ValueError:
+                return None
+            if len(nums) == 2:
+                nums.append(59 if is_end else 0)
+            hh, mm, ss = nums
+            if not (0 <= hh < 24 and 0 <= mm < 60 and 0 <= ss < 60):
+                return None
+
+        # ---- 日期段：缺省 = 只比当天时刻（mode 'T'）----
+        if date_part is None:
+            return ("T", "%02d:%02d:%02d" % (hh, mm, ss))
+        dp = date_part.split("-")
+        try:
+            if len(dp) == 2:                       # MM-dd → 当年
+                today = datetime.date.today()
+                y, m, d = today.year, int(dp[0]), int(dp[1])
+            elif len(dp) == 3:                     # yyyy-MM-dd
+                y, m, d = int(dp[0]), int(dp[1]), int(dp[2])
+            else:
+                return None
+            datetime.date(y, m, d)                 # 合法性校验（含闰年）
+        except ValueError:
+            return None
+        full = "%04d-%02d-%02d %02d:%02d:%02d" % (y, m, d, hh, mm, ss)
+        return ("F", full)
+
+    def _filtered_rows(self):
+        """时间范围 + 列关键字过滤后的快照（**时间正序**，旧→新）。
+
+        图表走这里（X 轴必须时间正序）；排序视图在其结果上重排。
+
+        [列多选口径] 关键字在**勾选的任意一列**命中即保留（或匹配）；
+        一列都没勾 = 不限列（全行拼接后找）。
+
+        [时间口径] 行内时间是完整 'yyyy-MM-dd HH:MM:SS'（ISO 文本序 =
+        时间序）；筛选两侧按 _norm_stamp 归一——只填时刻按"当天"比后缀，
+        带日期比全键。
+        """
+        lo = self._norm_stamp(self._f_start.text(), is_end=False)
+        hi = self._norm_stamp(self._f_end.text(), is_end=True)
+        cols = self._f_col.checked_indexes()
+        kw = self._f_text.text().strip()
+        out = []
+        for row, abnormal in self._rows:
+            stamp = row[0]
+            if lo is not None:
+                value = stamp[-8:] if lo[0] == "T" else stamp
+                if value < lo[1]:
+                    continue
+            if hi is not None:
+                value = stamp[-8:] if hi[0] == "T" else stamp
+                if value > hi[1]:
+                    continue
+            if kw:
+                if cols:
+                    hit = any(c < len(row) and kw in row[c] for c in cols)
+                else:
+                    hit = kw in " ".join(row)
+                if not hit:
+                    continue
+            out.append((row, abnormal))
+        return out
+
+    def _visible_rows(self):
+        """表格当前应显示的行（筛选 + 排序之后）。"""
+        rows = self._filtered_rows()
+        if self._sort_col is None:
+            return list(reversed(rows))          # 默认最新在上
+        col, desc = self._sort_col, self._sort_desc
+
+        def key(item):
+            text = item[0][col]
+            num = self._cell_float(text)
+            # 数值列按**数值**排（否则 "12.5" 会排在 "9.1" 前面）；
+            # 非数值（"--"、文字）排在数值后面，组内按文本序。
+            return (0, num, "") if num is not None else (1, 0, str(text))
+
+        return sorted(rows, key=key, reverse=desc)
+
+    def _header_dblclicked(self, col):
+        """双击表头：新列→降序；同列降→升；同列升→取消排序。"""
+        if self._sort_col == col:
+            if self._sort_desc:
+                self._sort_desc = False
+            else:
+                self._sort_col = None
+        else:
+            self._sort_col = col
+            self._sort_desc = True
+        header = self._table.table.horizontalHeader()
+        if self._sort_col is None:
+            header.setSortIndicatorShown(False)
+        else:
+            header.setSortIndicatorShown(True)
+            header.setSortIndicator(
+                col, Qt.DescendingOrder if self._sort_desc
+                else Qt.AscendingOrder)
+        self._rebuild()
+
+    def _apply_filter(self):
+        raw_start = self._f_start.text().strip()
+        raw_end = self._f_end.text().strip()
+        if raw_start and self._norm_stamp(raw_start, is_end=False) is None:
+            self.ctx.set_status("起始时间格式不对（HH:MM / MM-dd HH:MM / "
+                                "yyyy-MM-dd HH:MM）")
+            return
+        if raw_end and self._norm_stamp(raw_end, is_end=True) is None:
+            self.ctx.set_status("结束时间格式不对（HH:MM / MM-dd HH:MM / "
+                                "yyyy-MM-dd HH:MM）")
+            return
+        self._rebuild()
+
+    def _clear_filter(self):
+        self._f_start.clear()
+        self._f_end.clear()
+        self._f_col.clear_all()
+        self._f_text.clear()
+        self._rebuild()
+
+    # ---- 折线图 / 导出 ----
+
+    def _show_chart(self):
+        """按当前筛选结果画选中列的折线图（时间正序，X=时间 Y=数值）。"""
+        col_name = self._chart_col.currentText()
+        try:
+            col = self.COLUMNS.index(col_name)
+        except ValueError:
+            return
+        points = []
+        for row, _abnormal in self._filtered_rows():   # 时间正序
+            value = self._cell_float(row[col])
+            if value is not None:
+                points.append((row[0], value))
+        if len(points) < 2:
+            self.ctx.set_status("可画的数值点不足 2 个（换列或放宽筛选）")
+            return
+        dialog = LineChartDialog(col_name, points, self)
+        dialog.show()
+
+    def _export_data(self):
+        """导出**当前可见视图**（含筛选与排序）为 CSV 或 Excel。
+
+        [格式由扩展名决定] 用户在保存框里选 .csv → CSV（utf-8-sig，
+        Excel 双击直开）；选 .xlsx → Excel（走 xlsx_bridge 动态库，
+        库缺失时提示而不是静默降级——「以为是 Excel 其实是 CSV」
+        比直接报错更误事）。
+        """
+        rows = self._visible_rows()
+        if not rows:
+            self.ctx.set_status("无可导出的数据")
+            return
+        default = "hsf_history_%s.csv" % time.strftime("%Y%m%d_%H%M%S")
+        path, selected = QFileDialog.getSaveFileName(
+            self, "导出历史数据", default,
+            "Excel 工作簿 (*.xlsx);;CSV (*.csv)")
+        if not path:
+            return
+        if path.lower().endswith(".xlsx"):
+            try:
+                from . import xlsx_writer
+            except ImportError:
+                xlsx_writer = None
+            if xlsx_writer is None or not xlsx_writer.available():
+                self.ctx.set_status(
+                    "Excel 导出需要 xlsx_bridge 动态库"
+                    "（tools/xlsx_bridge/build.bat），CSV 导出不受影响")
+                return
+            data = [list(r) for r, _abn in rows]
+            try:
+                xlsx_writer.write_rows(path, "历史数据", self.COLUMNS,
+                                       data, {0: 10})
+            except Exception as exc:                 # noqa: BLE001
+                self.ctx.set_status("Excel 导出失败：%s" % exc)
+                return
+        else:
+            if not path.lower().endswith(".csv"):
+                path += ".csv"
+            with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                writer = csv.writer(fh)
+                writer.writerow(self.COLUMNS)
+                for texts, _abnormal in rows:
+                    writer.writerow(texts)
+        self.ctx.set_status("已导出 %d 条 → %s" % (len(rows), path))
+
+    def _export_csv(self):
+        """旧入口（保留兼容）：直接走 CSV 分支。"""
+        rows = self._visible_rows()
+        if not rows:
+            self.ctx.set_status("无可导出的数据")
+            return
+        default = "hsf_history_%s.csv" % time.strftime("%Y%m%d_%H%M%S")
+        path, _selected = QFileDialog.getSaveFileName(
+            self, "导出历史数据", default, "CSV (*.csv)")
+        if not path:
+            return
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+        with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(self.COLUMNS)
+            for texts, _abnormal in rows:
+                writer.writerow(texts)
+        self.ctx.set_status("已导出 %d 条 → %s" % (len(rows), path))
+
+
+class LineChartDialog(QDialog):
+    """历史数据折线图（**QPainter 手绘，零第三方依赖**）。
+
+    [为什么不用 matplotlib] 板端 Python 没有（也装不了）matplotlib，
+    而历史页要在板上跑；QPainter 自绘折线 + 网格 + 刻度一共百来行，
+    桌面/板端表现一致。数据来自历史页当前**筛选后**的视图（时间正序），
+    '--'/非数值点直接跳过（断点不补——编造的数据比缺口更危险）。
+
+    [非模态] 允许边看图边切筛选条件再点一次"生成折线图"——每次点击
+    都弹新图，旧图保留（对比两个时间段用）。
+    """
+
+    #: 绘图区边距（左留 Y 轴刻度、下留 X 轴时间标签）。
+    MARGIN_L, MARGIN_T, MARGIN_R, MARGIN_B = 72, 40, 26, 46
+    LINE_COLOR = "#2E7CE8"
+    GRID_COLOR = "#E3E6EB"
+    TEXT_COLOR = "#5A6572"
+
+    def __init__(self, column_name, points, parent=None):
+        """points: [(时间文本, 数值), ...] 时间正序。"""
+        QDialog.__init__(self, parent)
+        self.setWindowTitle("折线图 — %s（%d 点）" % (column_name, len(points)))
+        self.resize(880, 460)
+        self._column_name = column_name
+        self._points = points
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        w, h = self.width(), self.height()
+        rect_l, rect_t = self.MARGIN_L, self.MARGIN_T
+        rect_r, rect_b = w - self.MARGIN_R, h - self.MARGIN_B
+        plot_w, plot_h = rect_r - rect_l, rect_b - rect_t
+        if plot_w <= 40 or plot_h <= 40:
+            return
+
+        values = [v for _t, v in self._points]
+        vmin, vmax = min(values), max(values)
+        if vmax == vmin:
+            vmin, vmax = vmin - 1.0, vmax + 1.0     # 全程一条水平线也留刻度
+        else:
+            pad = (vmax - vmin) * 0.08
+            vmin, vmax = vmin - pad, vmax + pad
+
+        def x_at(i):
+            n = len(self._points)
+            if n == 1:
+                return rect_l + plot_w / 2
+            return rect_l + plot_w * i / (n - 1)
+
+        def y_at(v):
+            return rect_b - plot_h * (v - vmin) / (vmax - vmin)
+
+        # ---- 网格 + Y 刻度（5 档，紧凑数字）----
+        painter.setPen(QPen(QColor(self.GRID_COLOR), 1))
+        font = painter.font()
+        font.setPixelSize(11)
+        painter.setFont(font)
+        for i in range(6):
+            frac = i / 5.0
+            y = rect_t + plot_h * frac
+            painter.drawLine(rect_l, int(y), rect_r, int(y))
+            painter.setPen(QColor(self.TEXT_COLOR))
+            value = vmax - (vmax - vmin) * frac
+            painter.drawText(0, int(y) - 6, rect_l - 8, 14,
+                             Qt.AlignRight | Qt.AlignVCenter, "%.4g" % value)
+            painter.setPen(QPen(QColor(self.GRID_COLOR), 1))
+
+        # ---- X 刻度：至多 8 个时间标签（均分取样）----
+        n = len(self._points)
+        x_count = min(8, n)
+        for i in range(x_count):
+            idx = i * (n - 1) // max(1, x_count - 1) if x_count > 1 else 0
+            x = x_at(idx)
+            painter.setPen(QColor(self.TEXT_COLOR))
+            painter.drawText(int(x) - 44, rect_b + 8, 88, 16,
+                             Qt.AlignCenter, self._points[idx][0][-8:])
+
+        # ---- 折线 ----
+        painter.setPen(QPen(QColor(self.LINE_COLOR), 2))
+        for i in range(n - 1):
+            x0, y0 = x_at(i), y_at(self._points[i][1])
+            x1, y1 = x_at(i + 1), y_at(self._points[i + 1][1])
+            painter.drawLine(int(x0), int(y0), int(x1), int(y1))
+        if n <= 120:                                  # 点不多时画圆点便于对读
+            painter.setBrush(QColor(self.LINE_COLOR))
+            painter.setPen(Qt.NoPen)
+            for i, (_t, v) in enumerate(self._points):
+                painter.drawEllipse(
+                    _px(x_at(i) - 3), _px(y_at(v) - 3), 6, 6)
+
+        # ---- 标题与极值 ----
+        painter.setPen(QColor("#1F4E79"))
+        big = painter.font()
+        big.setPixelSize(14)
+        big.setBold(True)
+        painter.setFont(big)
+        painter.drawText(rect_l, 8, rect_r - rect_l, 20,
+                         Qt.AlignLeft | Qt.AlignVCenter,
+                         "%s（min %.4g / max %.4g）"
+                         % (self._column_name, min(values), max(values)))
+
+
+def _px(value):
+    """QPainter 几何 API 只收整型；这里统一收缩（去 float 传参 TypeError）。"""
+    return int(value)
 
 
 class LogPage(Page):
@@ -501,13 +1137,146 @@ class LocalSettingsPage(Page):
         self.ctx.set_status("全屏：%s" % ("开" if checked else "关"))
 
 
+# ============================================================================
+#                          可复用输入控件（历史页/设置页）
+# ============================================================================
+
+class TimePickerEdit(QLineEdit):
+    """日期时间输入框：**单击弹带日历的选择浮层**，也允许手输。
+
+    接受三种口径（历史页筛选两侧通用，归一见 _norm_stamp）：
+        HH:MM[:SS]              （当天）
+        MM-dd HH:MM[:SS]        （当年，如 "11-05 23:09"）
+        yyyy-MM-dd [HH:MM[:SS]]
+    """
+
+    timePicked = pyqtSignal(str)          # 归一化 "yyyy-MM-dd HH:MM:SS"
+
+    def __init__(self, placeholder="", parent=None):
+        QLineEdit.__init__(self, parent)
+        self.setPlaceholderText(placeholder)
+        # [排除软键盘] 本控件单击弹的是自己的日期选择浮层——软键盘再弹
+        # 一层就叠罗汉了（softkeyboard.NO_SOFT_KBD 排除标记）。
+        from .softkeyboard import NO_SOFT_KBD
+        self.setProperty(NO_SOFT_KBD, True)
+
+    def mousePressEvent(self, event):
+        QLineEdit.mousePressEvent(self, event)
+        self.show_picker()
+
+    def show_picker(self):
+        popup = QFrame(self, Qt.Popup)
+        popup.setStyleSheet("QFrame { background: #FFFFFF; }")
+        lay = QVBoxLayout(popup)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(8)
+        hint = QLabel("日期时间（点日历图标选日期）")
+        hint.setStyleSheet("QLabel { color: #5A6572; }")
+        lay.addWidget(hint)
+        edit = QDateTimeEdit(QDateTime.currentDateTime())
+        edit.setCalendarPopup(True)           # 内置日历下拉
+        edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        lay.addWidget(edit)
+        row = QHBoxLayout()
+        btn_ok = QPushButton("确定")
+        btn_clear = QPushButton("清空")
+        row.addWidget(btn_ok)
+        row.addWidget(btn_clear)
+        lay.addLayout(row)
+
+        def _commit():
+            self._set_from_picker(edit.dateTime())
+            popup.close()
+
+        def _clear():
+            self.clear()
+            popup.close()
+
+        btn_ok.clicked.connect(_commit)
+        btn_clear.clicked.connect(_clear)
+        popup.move(self.mapToGlobal(QPoint(0, self.height())))
+        popup.show()
+
+    def _set_from_picker(self, qdatetime):
+        """浮层确定 → 写入文本（独立成方法：无头测试直接调这里）。"""
+        text = qdatetime.toString("yyyy-MM-dd HH:mm:ss")
+        self.setText(text)
+        self.timePicked.emit(text)
+
+
+class MultiCheckCombo(QComboBox):
+    """多选下拉：每个选项带勾选框、可勾任意多个；**空选 = 不过滤（全部）**。
+
+    [显示口径] 非编辑下拉只能显示「当前项」文本，塞不下勾选汇总——做成
+    editable + lineEdit 只读，把汇总（"浊度1+浊度2" / "全部列"）写进去。
+    下拉里点选**不收起**：连续勾多个不中断（QComboBox 默认点一下就收，
+    这里走 view().pressed 自行翻转勾选，绕开默认选中行为）。
+    """
+
+    selectionChanged = pyqtSignal()
+
+    def __init__(self, items, all_text="全部列", parent=None):
+        QComboBox.__init__(self, parent)
+        self._all_text = all_text
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.NoInsert)
+        self.lineEdit().setReadOnly(True)
+        self._model = QStandardItemModel(self)
+        for text in items:
+            item = QStandardItem(text)
+            item.setCheckable(True)
+            item.setCheckState(Qt.Unchecked)
+            self._model.appendRow(item)
+        self.setModel(self._model)
+        self._model.itemChanged.connect(lambda _i: self._sync_text())
+        self.view().pressed.connect(self._toggle_item)
+        self._sync_text()
+
+    def _toggle_item(self, index):
+        item = self._model.itemFromIndex(index)
+        if item is None:
+            return
+        item.setCheckState(
+            Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
+
+    def _checked_items(self):
+        return [self._model.item(i) for i in range(self._model.rowCount())
+                if self._model.item(i).checkState() == Qt.Checked]
+
+    def checked_indexes(self):
+        """当前勾中的选项下标列表（0 基；空列表 = 未勾任何项）。"""
+        return [i for i in range(self._model.rowCount())
+                if self._model.item(i).checkState() == Qt.Checked]
+
+    def clear_all(self):
+        for i in range(self._model.rowCount()):
+            self._model.item(i).setCheckState(Qt.Unchecked)
+        self._sync_text()
+
+    def _sync_text(self):
+        names = [it.text() for it in self._checked_items()]
+        self.lineEdit().setText("、".join(names) if names else self._all_text)
+        self.selectionChanged.emit()
+
+
 class RemoteSettingsPage(Page):
-    """远端设置：运行模式（需 root）+ 设备参数只读展示。"""
+    """远端设置：运行模式（需 root）+ 设备参数只读展示。
+
+    [线程口径] bridge 回调跑在**网络线程**；configReady 信号把配置快照
+    投递回 UI 线程再铺控件（信号跨线程自动排队）。曾直接在回调里
+    _populate → 从网络线程碰 QLineEdit/勾选框，界面死活不更新（用户
+    反馈"没生效"）—— 这是 Qt 线程规则，不是可选项。
+    """
+
+    #: 配置快照到货（网络线程 emit，UI 线程收）。
+    configReady = pyqtSignal(dict)
 
     TOPICS = (proto.TOPIC_DEVICE_HEALTH, proto.TOPIC_VFD_STATUS)
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
+        self._config_fetched = False      # 已发过 GET（含失败），防 refresh 轰炸
+        self.configReady.connect(self._populate)
         self.add_header("远端设置", "服务端运行模式与连接信息")
 
         card = Card("运行模式")
@@ -569,7 +1338,94 @@ class RemoteSettingsPage(Page):
         self._conn_label.setStyleSheet("QLabel { background: transparent; }")
         card2.add(self._conn_label)
         self.root.addWidget(card2)
+
+        # ---- 采集配置（远程改"采哪些、多快采"；需 root）----
+        card3 = Card("采集配置")
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        # 表头占**独立的第 0 行**，数据行从第 1 行起。
+        # [教训] 曾把表头塞进 (0,1)/(0,2)——那正是搅拌泵行复选框和数值框
+        # 的格子：QGridLayout 同一格后加者顶掉先加者，搅拌泵的控件直接
+        # 从布局里消失（截图实见：第一行只剩"采集/周期ms"两个文字）。
+        grid.addWidget(QLabel("设备"), 0, 0)
+        grid.addWidget(QLabel("采集"), 0, 1)
+        grid.addWidget(QLabel("周期"), 0, 2)
+        self._collect_rows = []     # (key_enabled, checkbox, key_poll, spin)
+        for r, (label, key_enabled, key_poll) in enumerate((
+                ("搅拌泵", proto.CFGK_VFD_ENABLED, proto.CFGK_VFD_POLL_MS),
+                ("温湿度", proto.CFGK_TEMPHUM_ENABLED,
+                 proto.CFGK_TEMPHUM_POLL_MS),
+                ("浊度仪", proto.CFGK_TURBIDITY_ENABLED,
+                 proto.CFGK_TURBIDITY_POLL_MS),
+                ("模拟量", proto.CFGK_ANALOG_ENABLED,
+                 proto.CFGK_ANALOG_POLL_MS),
+                ("数字量", proto.CFGK_DIGITAL_ENABLED,
+                 proto.CFGK_DIGITAL_POLL_MS)), start=1):
+            chk = QCheckBox()
+            spin = QSpinBox()
+            spin.setRange(proto.CFG_POLL_MS_MIN, proto.CFG_POLL_MS_MAX)
+            spin.setSingleStep(50)
+            spin.setSuffix(" ms")
+            grid.addWidget(QLabel(label), r, 0)
+            grid.addWidget(chk, r, 1)
+            grid.addWidget(spin, r, 2)
+            self._collect_rows.append((key_enabled, chk, key_poll, spin))
+        card3.body.addLayout(grid)
+        hint3 = QLabel("流量计跟随温湿度的周期；电磁阀/进水泵跟随数字量的"
+                       "开关。改开关立即生效（被停的设备健康转数据过期），"
+                       "改周期下一拍生效。")
+        hint3.setWordWrap(True)
+        hint3.setStyleSheet(theme.caption_label_qss())
+        card3.add(hint3)
+        row3 = QHBoxLayout()
+        self._collect_refresh = QPushButton("刷新")
+        self._collect_refresh.clicked.connect(self._fetch_config)
+        self._collect_apply = QPushButton("应用（需 root）")
+        self._collect_apply.clicked.connect(self._apply_collect)
+        row3.addWidget(self._collect_refresh)
+        row3.addWidget(self._collect_apply)
+        row3.addStretch(1)
+        card3.body.addLayout(row3)
+        self.root.addWidget(card3)
+
+        # ---- 数据存储（SQLite 历史库；需 root）----
+        card4 = Card("数据存储（SQLite：历史/日志/报警）")
+        self._storage_enable = QCheckBox("启用落盘")
+        card4.add(self._storage_enable)
+        path_row = QHBoxLayout()
+        path_row.addWidget(QLabel("库文件路径"))
+        self._storage_path = QLineEdit()
+        self._storage_path.setPlaceholderText(
+            "空 = 服务端程序目录\\hsf_data.db；相对路径也按程序目录展开")
+        path_row.addWidget(self._storage_path, 1)
+        card4.body.addLayout(path_row)
+        sample_row = QHBoxLayout()
+        sample_row.addWidget(QLabel("入库周期"))
+        self._storage_sample = QSpinBox()
+        self._storage_sample.setRange(1000, 3600000)
+        self._storage_sample.setSingleStep(1000)
+        self._storage_sample.setSuffix(" ms")
+        sample_row.addWidget(self._storage_sample)
+        sample_row.addStretch(1)
+        card4.body.addLayout(sample_row)
+        self._db_path_label = QLabel("当前库文件：--")
+        self._db_path_label.setWordWrap(True)
+        self._db_path_label.setStyleSheet(
+            "QLabel { background: transparent; }")
+        card4.add(self._db_path_label)
+        row4 = QHBoxLayout()
+        self._storage_save = QPushButton("保存（需 root）")
+        self._storage_save.clicked.connect(self._apply_storage)
+        row4.addWidget(self._storage_save)
+        row4.addStretch(1)
+        card4.body.addLayout(row4)
+        self.root.addWidget(card4)
+
         self.root.addStretch(1)
+
+    def on_enter(self):
+        # 切到本页拉一次配置快照（回显服务端当前值；连接建立后才有意义）。
+        self._fetch_config(silent=True)
 
     def _set_mode(self, mode):
         if not self.ctx.is_root():
@@ -607,6 +1463,98 @@ class RemoteSettingsPage(Page):
                 self.ctx.set_status("操作失败：%s" % doc.get("err", "未知"))
 
         self.ctx.bridge.send_auto_control(want_on, on_done=_done)
+
+    # ---- 采集配置 / 数据存储（CMD_CONFIG_GET / SET 的界面侧）----
+
+    def _config_gate(self):
+        """改配置的前置门：已连接 + root。失败给状态栏原因并返回 False。"""
+        if not self.ctx.bridge.is_connected():
+            self.ctx.set_status("未连接服务端")
+            return False
+        if not self.ctx.is_root():
+            self.ctx.set_status("权限不足：修改服务端配置需要 root 账户")
+            return False
+        return True
+
+    def _fetch_config(self, silent=False):
+        """拉配置快照回显（切页/点刷新时）。silent=失败不打扰状态栏。"""
+        if not self.ctx.bridge.is_connected():
+            if not silent:
+                self.ctx.set_status("未连接服务端")
+            return
+        self._config_fetched = True
+
+        def _done(doc):
+            # [网络线程] 只 emit 信号（跨线程排队回 UI 线程），不碰控件。
+            if doc.get("ok"):
+                self.configReady.emit(doc)
+                if not silent:
+                    self.ctx.set_status("配置已刷新")
+            elif not silent:
+                self.ctx.set_status("读取配置失败：%s" % doc.get("err", "未知"))
+
+        self.ctx.bridge.config_get(on_done=_done)
+
+    def _populate(self, doc):
+        """把服务端配置快照铺到控件上（两节各自缺省跳过）。
+
+        [用应答回显而非本地值] 应用成功的应答带服务端**实际生效值**
+        （周期可能被服务端夹取过），铺回控件保证「界面显示的就是生效的」。
+        """
+        collect = doc.get("collect") or {}
+        if collect:
+            for key_enabled, chk, key_poll, spin in self._collect_rows:
+                chk.setChecked(bool(collect.get(key_enabled, True)))
+                spin.setValue(int(collect.get(key_poll, 200) or 200))
+        storage = doc.get("storage") or {}
+        if storage:
+            self._storage_enable.setChecked(bool(
+                storage.get(proto.CFGK_STORAGE_ENABLED, True)))
+            self._storage_path.setText(str(
+                storage.get(proto.CFGK_STORAGE_PATH, "") or ""))
+            self._storage_sample.setValue(int(
+                storage.get(proto.CFGK_STORAGE_SAMPLE_MS, 5000) or 5000))
+        db_path = str(doc.get("storageDbPath", "") or "")
+        self._db_path_label.setText(
+            "当前库文件：%s" % (db_path or "未启用（落盘关闭）"))
+
+    def _apply_collect(self):
+        if not self._config_gate():
+            return
+        values = {}
+        for key_enabled, chk, key_poll, spin in self._collect_rows:
+            values[key_enabled] = chk.isChecked()
+            values[key_poll] = spin.value()
+        self.ctx.set_status("正在应用采集配置…")
+
+        def _done(doc):
+            # [网络线程] 只发信号/走状态栏信号，不直接碰控件。
+            if doc.get("ok"):
+                self.configReady.emit(doc)
+                self.ctx.set_status("采集配置已生效（开关即时，周期下一拍）")
+            else:
+                self.ctx.set_status("应用失败：%s" % doc.get("err", "未知"))
+
+        self.ctx.bridge.config_set("collect", values, on_done=_done)
+
+    def _apply_storage(self):
+        if not self._config_gate():
+            return
+        values = {
+            proto.CFGK_STORAGE_ENABLED: self._storage_enable.isChecked(),
+            proto.CFGK_STORAGE_PATH: self._storage_path.text().strip(),
+            proto.CFGK_STORAGE_SAMPLE_MS: self._storage_sample.value(),
+        }
+        self.ctx.set_status("正在应用数据存储配置…")
+
+        def _done(doc):
+            if doc.get("ok"):
+                self.configReady.emit(doc)
+                self.ctx.set_status("数据存储配置已生效（历史/日志/报警入库）")
+            else:
+                self.ctx.set_status("应用失败：%s" % doc.get("err", "未知"))
+
+        self.ctx.bridge.config_set("storage", values, on_done=_done)
 
     def refresh(self):
         model = self.ctx.model
@@ -665,6 +1613,24 @@ class RemoteSettingsPage(Page):
                    "管理员" if self.ctx.is_root() else "只读"))
         else:
             self._conn_label.setText("未连接")
+
+        # ---- 配置卡：非 root 整体只读（防止改了应用不上还以为生效）----
+        root = self.ctx.is_root()
+        for _key_e, chk, _key_p, spin in self._collect_rows:
+            chk.setEnabled(root)
+            spin.setEnabled(root)
+        self._collect_apply.setEnabled(root)
+        self._storage_enable.setEnabled(root)
+        self._storage_path.setEnabled(root)
+        self._storage_sample.setEnabled(root)
+        self._storage_save.setEnabled(root)
+
+        # ---- 配置回显兜底 ----
+        # 切到本页时可能还没连上（on_enter 拉空过）；连上后的第一拍补拉。
+        if not self.ctx.bridge.is_connected():
+            self._config_fetched = False
+        elif not self._config_fetched:
+            self._fetch_config(silent=True)
 
 
 class NetworkPage(Page):

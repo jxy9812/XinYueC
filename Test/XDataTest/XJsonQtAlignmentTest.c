@@ -109,13 +109,15 @@ static void test_json_value_api(void)
     copy = XJsonValue_create_copy(integer);
     assert(copy && XJsonValue_equals(copy, integer));
     moved = XJsonValue_create_move(copy);
-    assert(moved && XJsonValue_isInt(moved) && XJsonValue_isNull(copy));
+    assert(moved && XJsonValue_isInt(moved) &&
+           XJsonValue_type(copy) == XJsonValue_Invalid);
     XJsonValue_delete(copy);
     XJsonValue_init(&local, XJsonValue_Invalid);
     XJsonValue_copy(&local, moved);
     assert(XJsonValue_equals(&local, moved));
     XJsonValue_move(&local, moved);
-    assert(XJsonValue_isInt(&local) && XJsonValue_isNull(moved));
+    assert(XJsonValue_isInt(&local) &&
+           XJsonValue_type(moved) == XJsonValue_Invalid);
     XJsonValue_setBool(&local, false);
     assert(!XJsonValue_toBool(&local, true));
     XJsonValue_setDouble(&local, 3.0);
@@ -152,7 +154,7 @@ static void test_json_value_api(void)
     XJsonValue_delete(from_variant);
     json_delete_variant(variant);
     variant = XJsonValue_toVariant_move(&local);
-    assert(variant && XJsonValue_isNull(&local));
+    assert(variant && XJsonValue_type(&local) == XJsonValue_Invalid);
     json_delete_variant(variant);
 
     XJsonValue_setInt(&local, 9);
@@ -334,9 +336,10 @@ static void test_json_object_api(void)
     XJsonValue_delete(value);
     assert(XJsonObject_size_base(object) == 13);
 
-    value = XJsonObject_value_keyUtf8(object, "utf8");
-    assert(value && XJsonValue_isString(value));
-    XJsonValue_delete(value);
+    {
+        const XJsonValue* borrowed = XJsonObject_value_keyUtf8(object, "utf8");
+        assert(borrowed && XJsonValue_isString(borrowed));   /* 借用，不释放 */
+    }
     assert(XJsonObject_contains_keyUtf8(object, "int"));
     taken = XJsonObject_take_keyUtf8(object, "value");
     assert(taken && XJsonValue_isInt(taken));
@@ -429,9 +432,10 @@ static void test_json_document_api(void)
     assert(XJsonDocument_root_const(document) == &document->root);
     object = XJsonDocument_object(document);
     assert(object && XJsonDocument_array(document) == NULL);
-    value = XJsonObject_value_keyUtf8(object, "a");
-    assert(value && XJsonValue_toInt(value, 0) == 1);
-    XJsonValue_delete(value);
+    {
+        const XJsonValue* borrowed = XJsonObject_value_keyUtf8(object, "a");
+        assert(borrowed && XJsonValue_toInt(borrowed, 0) == 1);  /* 借用 */
+    }
     copy = XJsonDocument_create_copy(document);
     assert(copy && XJsonObject_equals(XJsonDocument_object(copy), object));
     moved = XJsonDocument_create_move(copy);

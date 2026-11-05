@@ -15,6 +15,8 @@ extern "C" {
 #include <stdbool.h>
 /** @brief 执行 JSON 与 Qt 行为对齐测试。 @return 成功返回 0，失败返回非 0。 */
 int XJsonQtAlignmentTest(void);
+/** @brief 执行 XJson/XBson 全 API 组合与所有权/泄漏回归测试。 @return 失败项数。 */
+int XJsonBsonCoverageTest_run(void);
 /** @brief 执行 SQL 公共 API 回归测试。 @return 成功返回 0，失败返回非 0。 */
 int XSqlTest_run(void);
 /** @brief 执行 Data 模块中可非交互判定的本地全量回归测试。 */

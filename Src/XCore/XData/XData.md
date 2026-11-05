@@ -582,6 +582,10 @@ void XClassDelete(XVariant* variant)
 
 XinYueC提供完整的JSON解析和生成支持。
 
+> **详细手册（所有权/移动/借用语义、陷阱清单、全量 API）**：
+> [`XJson/XJson.md`](XJson/XJson.md)。本节仅为速览，两者不一致时以详细手册
+> 与 `Test/XDataTest/XJsonBsonCoverageTest.c` 的自动化断言为准。
+
 ### 头文件
 
 ```c
@@ -2908,6 +2912,10 @@ int32_t XPoint_compare(const XPoint* lhs, const XPoint* rhs)
 ## BSON模块
 
 BSON(Binary JSON)是一种二进制编码的JSON格式，广泛应用于MongoDB等数据库。
+
+> **详细手册（线格式、`$` 包装约定、所有权/移动/借用语义、陷阱清单）**：
+> [`XBson/XBson.md`](XBson/XBson.md)。本节仅为速览，两者不一致时以详细手册
+> 与 `Test/XDataTest/XJsonBsonCoverageTest.c` 的自动化断言为准。
 
 ### 头文件
 

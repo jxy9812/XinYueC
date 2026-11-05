@@ -174,6 +174,72 @@ static bool XBsonDocument_appendUtf8(XBsonDocument* doc, const char* key,
 	return result;
 }
 
+/**
+ * @brief 指针接管追加的公共实现。
+ * @details 调用即接管 value 的内容：成功时 value 已被移空；失败时资源由
+ *          element 或本函数释放，调用方不得再访问源对象。
+ */
+static bool XBsonDocument_appendRefValue(XBsonDocument* doc, const char* key,
+                                         XBsonValue* value)
+{
+	XString_Init_Utf8(name, key);
+	const char* key_utf8 = XString_toUtf8(name);
+	size_t key_length = XString_toUtf8_length(name);
+	if (!key_utf8 || XBsonDocument_bufferHasNul(key_utf8, key_length)) {
+		XClassDeinit(name);
+		XBsonValue_deinit(value);
+		return false;
+	}
+	XBsonElement element;
+	XBsonElement_init(&element);
+	XClassMove(&element.m_key, name);
+	XBsonValue_move(&element.m_value, value);
+	bool result = XVector_push_back_move_1_base((XVector*)doc, &element);
+	/* push 失败时 element 仍持有资源，由 deinit 释放；成功时已被移空。 */
+	XBsonElement_deinit(&element);
+	XClassDeinit(name);
+	return result;
+}
+
+bool XBsonDocument_insert_keyUtf8_string_ref(XBsonDocument* doc,
+                                             const char* key,
+                                             XString* strValue)
+{
+	XBsonValue value;
+	if (!doc || !key || !strValue)
+		return false;
+	memset(&value, 0, sizeof(value));
+	value.type = XBSON_TYPE_STRING;
+	value.data.str = strValue;   /* 指针接管：零分配 */
+	return XBsonDocument_appendRefValue(doc, key, &value);
+}
+
+bool XBsonDocument_insert_keyUtf8_array_ref(XBsonDocument* doc,
+                                            const char* key,
+                                            XBsonArray* array)
+{
+	XBsonValue value;
+	if (!doc || !key || !array)
+		return false;
+	memset(&value, 0, sizeof(value));
+	value.type = XBSON_TYPE_ARRAY;
+	value.data.arr = array;      /* 指针接管：零分配 */
+	return XBsonDocument_appendRefValue(doc, key, &value);
+}
+
+bool XBsonDocument_insert_keyUtf8_document_ref(XBsonDocument* doc,
+                                               const char* key,
+                                               XBsonDocument* newDoc)
+{
+	XBsonValue value;
+	if (!doc || !key || !newDoc)
+		return false;
+	memset(&value, 0, sizeof(value));
+	value.type = XBSON_TYPE_DOCUMENT;
+	value.data.doc = newDoc;     /* 指针接管：零分配 */
+	return XBsonDocument_appendRefValue(doc, key, &value);
+}
+
 bool XBsonDocument_insert_keyUtf8_value(XBsonDocument* doc, const char* key,
                                         XBsonValue* value)
 {
@@ -366,13 +432,23 @@ XBsonValue* XBsonDocument_value_base(XBsonDocument* doc, const XString* key)
 	return element ? &element->m_value : NULL;
 }
 
-XBsonValue* XBsonDocument_value_keyUtf8(XBsonDocument* doc, const char* key)
+XBsonValue* XBsonDocument_value_keyUtf8(const XBsonDocument* doc, const char* key)
 {
 	if (!doc || !key) return NULL;
 	XString_Init_Utf8(name, key);
-	XBsonValue* value = XBsonDocument_value_base(doc, name);
+	XBsonValue* value = XBsonDocument_value_base((XBsonDocument*)doc, name);
 	XClassDeinit(name);
 	return value;
+}
+
+XBsonValue* XBsonDocument_value_copy_keyUtf8(const XBsonDocument* doc,
+                                             const char* key)
+{
+	if (!doc || !key) return NULL;
+	XString_Init_Utf8(name, key);
+	XBsonValue* value = XBsonDocument_value_base((XBsonDocument*)doc, name);
+	XClassDeinit(name);
+	return value ? XBsonValue_create_copy(value) : NULL;
 }
 
 size_t XBsonDocument_count_keyUtf8(const XBsonDocument* doc, const char* key)

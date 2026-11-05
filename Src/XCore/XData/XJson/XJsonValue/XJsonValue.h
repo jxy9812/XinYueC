@@ -105,9 +105,11 @@ XJsonValue* XJsonValue_create_copy(XJsonValue* copy);
 */
 XJsonValue* XJsonValue_create_move(XJsonValue* move);
 /**
-* @brief 初始化XJsonValue实例
+* @brief 初始化XJsonValue实例（只设置类型标签，不分配容器载荷）
 * @param var 需要初始化的XJsonValue指针
 * @param type 初始化的目标类型
+* @note String/Array/Object 的 data 初始为 NULL，deinit/clear 对其安全；
+*       需要空容器时用 setString_utf8/setArray/setObject 显式设置。
 */
 void XJsonValue_init(XJsonValue* var, XJsonValueType type);
 /**
@@ -295,6 +297,14 @@ void XJsonValue_setString(XJsonValue* value, const XString* s);
 */
 void XJsonValue_setString_move(XJsonValue* value, XString* s);
 /**
+* @brief 将XJsonValue设置为字符串类型（指针接管，零分配）
+* @param value XJsonValue指针
+* @param s 源字符串；调用即移交所有权，此后调用方不得再访问/释放
+* @note 与 setString_move（内容转移、源留空壳）不同：本接口直接把指针
+*       交给值对象，不额外分配 XString。适合传入刚刚创建、不再复用的字符串。
+*/
+void XJsonValue_setString_ref(XJsonValue* value, XString* s);
+/**
 * @brief 将XJsonValue设置为字符串类型（从UTF-8字符创创建）
 * @param value XJsonValue指针
 * @param utf8 UTF-8编码的字符串
@@ -313,6 +323,13 @@ void XJsonValue_setArray(XJsonValue* value, XJsonArray* a);
 */
 void XJsonValue_setArray_move(XJsonValue* value, XJsonArray* a);
 /**
+* @brief 将XJsonValue设置为数组类型（指针接管，零分配）
+* @param value XJsonValue指针
+* @param a 源数组；调用即移交所有权，此后调用方不得再访问/释放
+* @note 与 setArray_move（内容转移、源留空壳）不同：本接口直接接管指针。
+*/
+void XJsonValue_setArray_ref(XJsonValue* value, XJsonArray* a);
+/**
 * @brief 将XJsonValue设置为对象类型（深拷贝）
 * @param value XJsonValue指针
 * @param o 源对象（XJsonObject指针）
@@ -324,6 +341,13 @@ void XJsonValue_setObject(XJsonValue* value, XJsonObject* o);
 * @param o 源对象（XJsonObject指针，所有权转移）
 */
 void XJsonValue_setObject_move(XJsonValue* value, XJsonObject* o);
+/**
+* @brief 将XJsonValue设置为对象类型（指针接管，零分配）
+* @param value XJsonValue指针
+* @param o 源对象；调用即移交所有权，此后调用方不得再访问/释放
+* @note 与 setObject_move（内容转移、源留空壳）不同：本接口直接接管指针。
+*/
+void XJsonValue_setObject_ref(XJsonValue* value, XJsonObject* o);
 // 与XVariant转换
 /**
 * @brief 将XJsonValue转换为XVariant（深拷贝）

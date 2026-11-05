@@ -233,15 +233,13 @@ static bool XUpgradeManifest_isValidPathToken(const char* utf8, size_t length)
  */
 static int XUpgradeManifest_findValue(const XJsonObject* object, const char* key, XJsonValue** out)
 {
+    const XJsonValue* borrowed = XJsonObject_value_keyUtf8(object, key);
     XJsonValue* value;
-    value = XJsonObject_value_keyUtf8(object, key);
+    if (!borrowed)
+        return 0;   /* 借用接口：缺键即 NULL */
+    value = XJsonValue_create_copy((XJsonValue*)borrowed);
     if (!value)
         return -1;
-    if (XJsonValue_isUndefined(value)) {
-        /* 键缺失时接口返回堆上 Undefined 值，同样需要释放 */
-        XJsonValue_delete(value);
-        return 0;
-    }
     *out = value;
     return 1;
 }

@@ -20,6 +20,7 @@
 
 import asyncio
 import hashlib
+import os
 import hmac
 import socket
 import struct
@@ -303,6 +304,12 @@ class XLinkClient(object):
             return
         if mclass == proto.MSGCLASS_RESPONSE:
             fut = self._pending.pop(rid, None)
+            if os.environ.get("HSF_CLIENT_DEBUG") == "1":
+                import sys as _sys
+                print("[dbg %s] << resp code=0x%04X rid=%d %s"
+                      % (time.strftime("%H:%M:%S"), mcode, rid,
+                         "命中" if fut is not None else "**无匹配请求**"),
+                      file=_sys.stderr, flush=True)
             if fut is not None and not fut.done():
                 fut.set_result((mcode, dtype, payload))
             return

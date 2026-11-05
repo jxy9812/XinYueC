@@ -116,6 +116,9 @@ static int main_run_test_dispatch(const char* testPath)
         return XDeviceSerialPortTest_runAll() ? 0 : 1;
     if (strcmp(testPath, "xdata") == 0)
         return XDataTest_runAll() ? 0 : 1;
+    /* XJson/XBson 全 API 组合与所有权/泄漏回归（逐场景堆在用字节数回基线）。 */
+    if (strcmp(testPath, "xjson-bson") == 0)
+        return XJsonBsonCoverageTest_run() == 0 ? 0 : 1;
 #if DEMOTEST_ON && XPROPERTY_ON
     if (strcmp(testPath, "xproperty") == 0)
     {
@@ -238,6 +241,19 @@ static int main_run_test_dispatch(const char* testPath)
        口径、转换开关双触点矛盾、指示灯跟随与写失败沿，返回码=失败数）。 */
     if (strcmp(testPath, "xindustry-button") == 0)
         return XIndustryButtonStationTest_run() == 0 ? 0 : 1;
+#endif
+
+#if XINDUSTRY_ON && XAUTO_CONTROL_ON
+    /* Industry 自动运行控制器 mock 回归（纯框架件：四板斧状态机/急停锁存/
+       步进闸门/节流/报警队列/BSON-JSON 往返，返回码=失败数）。 */
+    if (strcmp(testPath, "xindustry-autocontrol") == 0)
+        return XAutoControlTest_run() == 0 ? 0 : 1;
+#endif
+#if XINDUSTRY_ON && XACCOUNT_ON && XACCESS_CONTROL_ON
+    /* Industry 访问控制三件 mock 回归（账户 CRUD/管理员不变式/锁定策略/
+       权限位图/登录准入/BSON-JSON 往返，返回码=失败数）。 */
+    if (strcmp(testPath, "xindustry-access") == 0)
+        return XAccessControlTest_run() == 0 ? 0 : 1;
 #endif
 #if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON
     /* 电磁阀组反馈新鲜度语义（纯业务层，不需要从站）：模块离线必须报
@@ -367,6 +383,7 @@ static void main_print_test_list(void)
     XPrintf("  --test xdevice-network\n");
     XPrintf("  --test xdevice-serial-port\n");
     XPrintf("  --test xdata\n");
+    XPrintf("  --test xjson-bson (XJson/XBson 全 API 组合 + 所有权/泄漏回归)\n");
     XPrintf("  --test xsettings\n");
     XPrintf("  --test xstatemachine\n");
     XPrintf("  --test xanimation\n");
@@ -381,6 +398,8 @@ static void main_print_test_list(void)
     XPrintf("  --test xindustry-valve (电磁阀 mock) / xindustry-modbus (TCP 环回；RTU 组合需脚本起从站)\n");
     XPrintf("  --test xindustry-sensor (温湿度/压差计 mock) / xindustry-flowmeter (电磁流量计 mock)\n");
     XPrintf("  --test xindustry-button (按钮组/操作柱 mock：急停/启动/停止/复位 + 手自动 + 指示灯)\n");
+    XPrintf("  --test xindustry-autocontrol (自动运行控制器 mock：四板斧状态机/急停锁存/报警队列)\n");
+    XPrintf("  --test xindustry-access (访问控制 mock：账户/权限/登录策略)\n");
     XPrintf("  --test xindustry-turbidity (在线浊度仪 mock：真机帧回归 + 字序/格式/除数 + Analog 二级标度)\n");
     XPrintf("  Test 菜单「协议栈 → XLink(xlink)」: 客户端包装 / 实战案例·服务端 / 实战案例·客户端\n");
     XPrintf("  Test 菜单「协议栈 → XModbus/XVfd」: Hub闭环 / 485战役 / 变频器三件套\n");

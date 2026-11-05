@@ -20,6 +20,7 @@ import time
 from . import autocontrol
 from . import bson
 from . import devices
+from . import store
 from . import valves
 from . import proto
 from . import pumps as pumps_mod
@@ -149,7 +150,11 @@ class App(object):
 
     def __init__(self, config, log=None):
         self.cfg = config
-        self._log = log or (lambda msg: None)
+        #: 原始日志回调（不含入库旁路）。入库失败时用它报错，**防递归**：
+        #: 若落盘失败也走「会入库的 _log」，写失败→打日志→又写库→死循环。
+        self._log_raw = log or (lambda msg: None)
+        #: 业务日志入口 = 原始回调 + SQLite 落盘旁路（库未开时旁路为空操作）。
+        self._log = self._log_with_store
         self.server = None
 
         # ---- 设备集合 ----
@@ -190,6 +195,11 @@ class App(object):
 
         # ---- 采集任务 ----
         self._poll_tasks = []
+        # ---- 数据落盘（SQLite：历史/日志/报警，见 store.py）----
+        self.store = store.Store(getattr(self.cfg, "base_dir", "") or ".",
+                                 log=self._log_raw)
+        #: 历史采样任务（start_storage 启动；未启用时任务空转）。
+        self._store_task = None
         #: 运行模式（手动/自动）。自动模式拒绝全部远程控制。
         self.run_mode = self.MODE_MANUAL
         #: 自动运行控制器（**预留骨架，控制逻辑待扩展**）。
@@ -480,36 +490,81 @@ class App(object):
     #                         采集循环
     # ==================================================================
     async def start_polling(self):
-        """每台设备一个采集任务（互不阻塞：一台慢不影响另一台）。"""
-        if self.vfd is not None:
-            self._poll_tasks.append(asyncio.ensure_future(
-                # 日志名与健康条目同名（现场口径"搅拌泵"），
-                # 否则日志说"变频器"、界面说"搅拌泵"，对不上号。
-                self._poll_loop(self.vfd, self.cfg.vfd_poll_ms, "搅拌泵")))
-        if self.temphum is not None:
-            self._poll_tasks.append(asyncio.ensure_future(
-                self._poll_loop(self.temphum, self.cfg.temphum_poll_ms, "温湿度")))
-        if self.flowmeter is not None:
-            self._poll_tasks.append(asyncio.ensure_future(
-                self._poll_loop(self.flowmeter, self.cfg.temphum_poll_ms,
-                                "流量计")))
-        for idx, tdev in enumerate(self.turbidity):
-            self._poll_tasks.append(asyncio.ensure_future(
-                self._poll_loop(tdev, self.cfg.turbidity_poll_ms,
-                                tdev.name)))
-        if self.analog is not None:
-            self._poll_tasks.append(asyncio.ensure_future(
-                self._poll_loop(self.analog, self.cfg.analog_poll_ms, "模拟量")))
-        for dev in self.digital:
-            self._poll_tasks.append(asyncio.ensure_future(
-                self._poll_loop(dev, self.cfg.digital_poll_ms, dev.name)))
+        """每台设备一个采集任务（互不阻塞：一台慢不影响另一台）。
 
-    async def _poll_loop(self, dev, period_ms, label):
+        [开关口径] 装配在启动时定死（master/连接在此建立）；本函数按
+        cfg 的各设备开关决定**轮不轮询**。被关的设备健康条目转数据过期
+        —— 如实反映"不采了"，不装作在线。
+        """
+        if self.vfd is not None:
+            if self.cfg.enable_vfd:
+                self._poll_tasks.append(asyncio.ensure_future(
+                    # 日志名与健康条目同名（现场口径"搅拌泵"），
+                    # 否则日志说"变频器"、界面说"搅拌泵"，对不上号。
+                    self._poll_loop(self.vfd, self.cfg.vfd_poll_ms, "搅拌泵",
+                                    "vfd_poll_ms")))
+            else:
+                self._log("搅拌泵采集已停用（配置 vfdEnabled=false）")
+        if self.temphum is not None:
+            if self.cfg.enable_temphum:
+                self._poll_tasks.append(asyncio.ensure_future(
+                    self._poll_loop(self.temphum, self.cfg.temphum_poll_ms,
+                                    "温湿度", "temphum_poll_ms")))
+            else:
+                self._log("温湿度采集已停用（配置 temphumEnabled=false）")
+        if self.flowmeter is not None:
+            if self.cfg.enable_flowmeter:
+                self._poll_tasks.append(asyncio.ensure_future(
+                    self._poll_loop(self.flowmeter, self.cfg.temphum_poll_ms,
+                                    "流量计", "temphum_poll_ms")))
+            else:
+                self._log("流量计采集已停用（配置 flowmeterEnabled=false）")
+        for idx, tdev in enumerate(self.turbidity):
+            if self.cfg.enable_turbidity:
+                self._poll_tasks.append(asyncio.ensure_future(
+                    self._poll_loop(tdev, self.cfg.turbidity_poll_ms,
+                                    tdev.name, "turbidity_poll_ms")))
+        if self.analog is not None:
+            if self.cfg.enable_analog:
+                self._poll_tasks.append(asyncio.ensure_future(
+                    self._poll_loop(self.analog, self.cfg.analog_poll_ms,
+                                    "模拟量", "analog_poll_ms")))
+            else:
+                self._log("模拟量采集已停用（配置 analogEnabled=false）")
+        for dev in self.digital:
+            if self.cfg.enable_digital:
+                self._poll_tasks.append(asyncio.ensure_future(
+                    self._poll_loop(dev, self.cfg.digital_poll_ms, dev.name,
+                                    "digital_poll_ms")))
+            else:
+                self._log("%s 采集已停用（配置 digitalEnabled=false）" % dev.name)
+
+    async def restart_polling(self):
+        """仅取消并重启**轮询任务**（采集开关被远程改后调用）。
+
+        [为什么不用 stop_polling] 那是退出路径：连 master 带设备全拆光
+        （设备引用置 None）。开关变更只需要换一批轮询任务，设备对象与
+        连接原样保留 —— 重启后下一拍数据就回来。
+        """
+        for task in self._poll_tasks:
+            task.cancel()
+        for task in self._poll_tasks:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        self._poll_tasks = []
+        await self.start_polling()
+
+    async def _poll_loop(self, dev, period_ms, label, period_attr=None):
         """单设备轮询：失败只记日志继续（设备恢复后自动跟上，不必重启）。
 
         失败退避：连续失败时把周期拉长到 1s，避免刷爆日志与总线——现场常见
         「拔了线跑了整晚」，无退避会攒出几百 MB 日志（板端 journald 就是这么
         被灌满的）。
+
+        [period_attr] cfg 上的周期属性名。给了它就**每拍重读**：远程改
+        采集频率下一拍直接生效，不必重启任务（周期是纯数字，现读无竞态）。
         """
         period = max(20, period_ms) / 1000.0
         backoff_period = max(period, 1.0)
@@ -528,6 +583,11 @@ class App(object):
                 if failures == 1 or failures % 60 == 0:
                     self._log("%s 采集失败（连续 %d 次）：%s"
                               % (label, failures, exc))
+            if period_attr:
+                period = max(proto.CFG_POLL_MS_MIN,
+                             int(getattr(self.cfg, period_attr,
+                                         period_ms))) / 1000.0
+                backoff_period = max(period, 1.0)
             sleep_s = period if failures == 0 else backoff_period
             elapsed = (self._now_ms() - started) / 1000.0
             await asyncio.sleep(max(0.001, sleep_s - elapsed))
@@ -566,6 +626,336 @@ class App(object):
     @staticmethod
     def _now_ms():
         return int(time.monotonic() * 1000)
+
+    # ==================================================================
+    #                  数据落盘（SQLite：历史/日志/报警）
+    # ==================================================================
+
+    #: RUN_STATE_TEXT：与客户端 model.RUN_STATE_TEXT 同口径。两端独立部署
+    #: 不能互相 import，故镜像一份（只增不改值，改值必须两端同步）。
+    RUN_STATE_TEXT = {0: "未知", 1: "停机", 2: "就绪", 3: "正转运行",
+                      4: "反转运行", 5: "正转点动", 6: "反转点动",
+                      7: "加速中", 8: "减速中", 9: "恒速运行",
+                      10: "直流制动", 11: "自由停车", 12: "快速停车",
+                      13: "故障"}
+    #: 流量计单位码表：与客户端 model.FLOW_UNIT_TEXT / TOTAL_UNIT_TEXT 同口径。
+    FLOW_UNIT_TEXT = {0: "L/s", 1: "L/min", 2: "L/h", 3: "m³/s", 4: "m³/min",
+                      5: "m³/h", 6: "kg/s", 7: "kg/min", 8: "kg/h", 9: "t/s",
+                      10: "t/min", 11: "t/h", 12: "g/s", 13: "g/min",
+                      14: "g/h"}
+    TOTAL_UNIT_TEXT = {0: "L", 1: "m³", 2: "kg", 3: "t", 4: "g", 5: "kL"}
+
+    def _log_with_store(self, msg):
+        """业务日志入口：原始回调 + SQLite 旁路（库未开=空操作）。
+
+        [防递归] 入库失败走 _log_raw 报错，不再进本函数 —— 否则写库失败
+        → 打日志 → 又写库 → 死循环。
+        """
+        self._log_raw(msg)
+        self.store.insert_log(msg)
+
+    def storage_apply(self):
+        """按当前 cfg.storage 开/关/重开数据库（启动与远程改配置共用）。"""
+        if self.cfg.storage.enabled:
+            self.store.open_for(self.cfg.storage.path)
+        else:
+            if self.store.db_path:
+                self._log_raw("数据落盘已禁用，关闭数据库")
+            self.store.close()
+
+    async def start_storage(self):
+        """打开数据库（若启用）并启动历史采样任务（启动路径调用一次）。"""
+        self.storage_apply()
+        self._store_task = asyncio.ensure_future(self._store_loop())
+
+    async def stop_storage(self):
+        """停采样任务并关库（退出路径调用）。"""
+        if self._store_task is not None:
+            self._store_task.cancel()
+            try:
+                await self._store_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+            self._store_task = None
+        self.store.close()
+
+    async def _store_loop(self):
+        """历史采样入库。周期从 cfg 现读 —— 远程改采样周期下一拍生效。"""
+        while True:
+            period_s = max(1, self.cfg.storage.sample_ms) / 1000.0
+            await asyncio.sleep(period_s)
+            if self.store.db_path is None:
+                continue             # 落盘未启用/打开失败：空转，开了自动恢复
+            try:
+                self.store.insert_history(self._history_snapshot())
+            except Exception as exc:                 # noqa: BLE001
+                self._log_raw("历史采样入库异常（不影响采集）：%s: %s"
+                              % (type(exc).__name__, exc))
+
+    def _history_snapshot(self):
+        """一拍历史快照（dict，键 = store.history 表列名）。
+
+        [与推送同源] 各值从 encode_* 的同一批设备对象取（甚至直接解自己
+        编的帧），保证「库里一行 = 界面一拍」可互相印证。设备离线时该列
+        不写（入库为 NULL），与界面 "--" 同口径 —— NULL 是"没数据"，
+        不是 0。
+        """
+        row = {"ts": self._now_ms()}
+        # ---- 运行模式 ----
+        if self.run_mode == self.MODE_AUTO:
+            running = getattr(self.auto_controller, "running", None)
+            row["mode"] = ("自动·运行中" if running
+                           else "自动·未知" if running is None else "自动·停止")
+        else:
+            row["mode"] = "手动"
+        # ---- 变频器（解自己编的遥测帧：encode_vfd 里 valid_mask 已裁键）----
+        if self.vfd is not None:
+            payload = self.encode_vfd(self.vfd)
+            if payload is not None:
+                try:
+                    doc = bson.decode(payload)
+                except ValueError:
+                    doc = {}
+                row["freq_hz"] = doc.get("outputFreqHz")
+                row["current_a"] = doc.get("outputCurrentA")
+                row["rpm"] = doc.get("speedRpm")
+                if doc.get("faulted"):
+                    row["vfd_state"] = "故障 0x%04X" % int(
+                        doc.get("faultCode") or 0)
+                elif doc.get("runState") is not None:
+                    row["vfd_state"] = self.RUN_STATE_TEXT.get(
+                        int(doc["runState"]), "未知")
+        # ---- 温湿度（tenths → 物理量）----
+        if self.temphum is not None:
+            doc = bson.decode(self.encode_temphum(self.temphum))
+            if doc.get("tempValid"):
+                row["temp"] = doc["temp"] / 10.0
+            if doc.get("humValid"):
+                row["hum"] = doc["hum"] / 10.0
+        # ---- 浊度仪（ntu ×100 定点 → 物理量）----
+        payload = self.encode_turbidity()
+        try:
+            doc = bson.decode(payload)
+        except ValueError:
+            doc = {}
+        for idx in range(int(doc.get(proto.KEY_COUNT, 0) or 0)):
+            prefix = "v%d_" % idx
+            if doc.get(prefix + proto.KEY_TURB_ONLINE):
+                row["turb%d" % (idx + 1)] = (
+                    int(doc[prefix + proto.KEY_TURB_NTU]) / 100.0)
+        # ---- 流量计 ----
+        if self.flowmeter is not None:
+            payload = self.encode_flowmeter(self.flowmeter)
+            try:
+                doc = bson.decode(payload)
+            except ValueError:
+                doc = {}
+            if doc.get(proto.KEY_VALID):
+                row["flow"] = doc.get("flow")
+                row["flow_unit"] = self.FLOW_UNIT_TEXT.get(
+                    int(doc.get("flowUnit", 0xFF)), "?")
+                row["flow_total"] = doc.get("forwardTotal")
+                row["total_unit"] = self.TOTAL_UNIT_TEXT.get(
+                    int(doc.get("totalUnit", 0xFF)), "?")
+        # ---- 压差（模拟量通道 0 的工程量 + 越限说明）----
+        ai = self.analog
+        if ai is not None and ai.valid:
+            scale = self.cfg.analog.scales.get(0)
+            if scale is not None and scale.configured and ai.valid[0]:
+                value, note = scale.engineering(ai.ma(0))
+                row["press_mpa"] = value
+                row["press_note"] = note or ""
+        # ---- 数字量位图（取在线模块中点数最多者；现场即聚合后的 .12）----
+        best = None
+        for dev in self.digital:
+            if getattr(dev, "online", False) and (
+                    best is None or getattr(dev, "count", 0)
+                    > getattr(best, "count", 0)):
+                best = dev
+        if best is not None:
+            # di/do 用 mask 方法（bit n = 通道 n 的位图 int）；设备对象上的
+            # .di/.do 是逐点布尔列表，直接 int() 会 TypeError。
+            row["di"] = int(best.di_mask())
+            row["do"] = int(best.do_mask())
+        return row
+
+    # ==================================================================
+    #                  远程配置（采集项 / 落盘；需 root）
+    # ==================================================================
+
+    @staticmethod
+    def _clamp_poll_ms(value):
+        """轮询周期夹到允许区间（越界不报错，夹回——配置错不该让采集停摆）。"""
+        return max(proto.CFG_POLL_MS_MIN,
+                   min(proto.CFG_POLL_MS_MAX, int(value)))
+
+    def _config_collect_doc(self):
+        """采集配置快照（GET 应答用；键与 CMD_CONFIG_SET 一致）。"""
+        c = self.cfg
+        return {
+            proto.CFGK_VFD_ENABLED: bool(c.enable_vfd),
+            proto.CFGK_TEMPHUM_ENABLED: bool(c.enable_temphum),
+            proto.CFGK_FLOWMETER_ENABLED: bool(c.enable_flowmeter),
+            proto.CFGK_TURBIDITY_ENABLED: bool(c.enable_turbidity),
+            proto.CFGK_ANALOG_ENABLED: bool(c.enable_analog),
+            proto.CFGK_DIGITAL_ENABLED: bool(c.enable_digital),
+            proto.CFGK_VFD_POLL_MS: int(c.vfd_poll_ms),
+            proto.CFGK_TEMPHUM_POLL_MS: int(c.temphum_poll_ms),
+            proto.CFGK_TURBIDITY_POLL_MS: int(c.turbidity_poll_ms),
+            proto.CFGK_ANALOG_POLL_MS: int(c.analog_poll_ms),
+            proto.CFGK_DIGITAL_POLL_MS: int(c.digital_poll_ms),
+        }
+
+    def _config_storage_doc(self):
+        """落盘配置快照（GET 应答用）。path 为**配置值**（空=程序目录）；
+        实际库文件路径另给 storageDbPath（界面展示"现在到底写在哪"）。"""
+        s = self.cfg.storage
+        return {
+            proto.CFGK_STORAGE_ENABLED: bool(s.enabled),
+            proto.CFGK_STORAGE_PATH: s.path or "",
+            proto.CFGK_STORAGE_SAMPLE_MS: int(s.sample_ms),
+        }
+
+    def _cfg_set_collect_key(self, key, value):
+        """写一个 collect 键进 cfg；返回 (值有变化, 影响开关)。
+
+        值类型不符抛 ValueError（handler 回否定应答，cfg 不动）。
+        [周期写哪] vfd/temphum 的 cfg 属性是只读转发（→ serial.*），
+        落点必须是 serial/analog 子对象，直接 setattr 属性会 AttributeError。
+        """
+        c = self.cfg
+        bool_keys = {
+            proto.CFGK_VFD_ENABLED: "enable_vfd",
+            proto.CFGK_TEMPHUM_ENABLED: "enable_temphum",
+            proto.CFGK_FLOWMETER_ENABLED: "enable_flowmeter",
+            proto.CFGK_TURBIDITY_ENABLED: "enable_turbidity",
+            proto.CFGK_ANALOG_ENABLED: "enable_analog",
+            proto.CFGK_DIGITAL_ENABLED: "enable_digital",
+        }
+        if key in bool_keys:
+            if not isinstance(value, bool):
+                raise ValueError("%s 需要 bool" % key)
+            attr = bool_keys[key]
+            changed = getattr(c, attr) != value
+            setattr(c, attr, value)
+            return changed, True          # 开关变化 ⇒ 要重启轮询任务
+        poll_keys = {
+            # 值 = (对象名或 None, 属性名)；None = cfg 顶层属性。
+            # [不能拼 "a.b" 字符串再 split] 浊度/数字量周期是 cfg 顶层属性，
+            # 无点可拆 —— 曾统一 split(".") 导致这两路 SET 直接报
+            # "not enough values to unpack"（远程采集配置 e2e 实测抓到）。
+            proto.CFGK_VFD_POLL_MS: ("serial", "vfd_poll_ms"),
+            proto.CFGK_TEMPHUM_POLL_MS: ("serial", "temphum_poll_ms"),
+            proto.CFGK_TURBIDITY_POLL_MS: (None, "turbidity_poll_ms"),
+            proto.CFGK_ANALOG_POLL_MS: ("analog", "poll_ms"),
+            proto.CFGK_DIGITAL_POLL_MS: (None, "digital_poll_ms"),
+        }
+        if key in poll_keys:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("%s 需要 int 毫秒" % key)
+            ms = self._clamp_poll_ms(int(value))
+            obj_name, attr = poll_keys[key]
+            target = c if obj_name is None else getattr(c, obj_name)
+            changed = getattr(target, attr) != ms
+            setattr(target, attr, ms)
+            return changed, False         # 周期下一拍自然生效，无需重启
+        raise ValueError("未知采集配置键：%s" % key)
+
+    def _cfg_set_storage_key(self, key, value):
+        """写一个 storage 键进 cfg；返回是否有变化。"""
+        s = self.cfg.storage
+        if key == proto.CFGK_STORAGE_ENABLED:
+            if not isinstance(value, bool):
+                raise ValueError("enabled 需要 bool")
+            changed = s.enabled != value
+            s.enabled = value
+            return changed
+        if key == proto.CFGK_STORAGE_PATH:
+            if value is None:
+                value = ""
+            if not isinstance(value, str):
+                raise ValueError("path 需要字符串（空串=服务端程序目录）")
+            changed = (s.path or "") != value
+            s.path = value
+            return changed
+        if key == proto.CFGK_STORAGE_SAMPLE_MS:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("sampleMs 需要 int 毫秒")
+            ms = max(1000, min(3600000, int(value)))
+            changed = s.sample_ms != ms
+            s.sample_ms = ms
+            return changed
+        raise ValueError("未知落盘配置键：%s" % key)
+
+    async def _h_config_get(self, session, request_id, msg_code, _payload):
+        """配置快照（无需角色：设置页只读回显不涉密）。"""
+        await self._reply(session, request_id, msg_code, True, extra={
+            "collect": self._config_collect_doc(),
+            "storage": self._config_storage_doc(),
+            "storageDbPath": self.store.db_path or "",
+        })
+
+    async def _h_config_set(self, session, request_id, msg_code, payload):
+        """设置采集/落盘配置（**需 root**）。
+
+        [为什么 root 但不看自动模式闸] 改配置不动任何输出点，不属"控制"；
+        自动运行中允许调采集频率/开关（监视不受模式限制）。
+        """
+        if session.role() < proto.ROLE_CONTROL:
+            await self._reply(session, request_id, msg_code, False,
+                              "权限不足：修改服务端配置需要 root 账户")
+            return
+        try:
+            doc = bson.decode(payload)
+        except ValueError as exc:
+            await self._reply(session, request_id, msg_code, False,
+                              "配置载荷解析失败：%s" % exc)
+            return
+        section = doc.get("section")
+        if section == "collect":
+            keys = [k for k in doc if k != "section"]
+            if not keys:
+                await self._reply(session, request_id, msg_code, False,
+                                  "载荷里没有配置键")
+                return
+            try:
+                enables_changed = False
+                for key in keys:
+                    _, affects_enable = self._cfg_set_collect_key(
+                        key, doc[key])
+                    enables_changed = enables_changed or affects_enable
+            except ValueError as exc:
+                await self._reply(session, request_id, msg_code, False,
+                                  str(exc))
+                return
+            self.cfg.save()
+            if enables_changed:
+                await self.restart_polling()
+            self._log("远程配置：采集节已更新（%s）" % ",".join(keys))
+            await self._reply(session, request_id, msg_code, True, extra={
+                "collect": self._config_collect_doc()})
+        elif section == "storage":
+            keys = [k for k in doc if k != "section"]
+            if not keys:
+                await self._reply(session, request_id, msg_code, False,
+                                  "载荷里没有配置键")
+                return
+            try:
+                for key in keys:
+                    self._cfg_set_storage_key(key, doc[key])
+            except ValueError as exc:
+                await self._reply(session, request_id, msg_code, False,
+                                  str(exc))
+                return
+            self.cfg.save()
+            self.storage_apply()
+            self._log("远程配置：落盘节已更新（%s）" % ",".join(keys))
+            await self._reply(session, request_id, msg_code, True, extra={
+                "storage": self._config_storage_doc(),
+                "storageDbPath": self.store.db_path or ""})
+        else:
+            await self._reply(session, request_id, msg_code, False,
+                              "未知配置节：%r（collect / storage）" % section)
 
     # ==================================================================
     #                       周期 tick（推送 + 健康 + 看门狗）
@@ -681,11 +1071,15 @@ class App(object):
         payload = bson.encode(doc)
         sent = await self.server.publish(proto.TOPIC_VALVE_STATUS, payload)
         for alarm in alarms:
-            self._log("阀告警：%s（%s）→ %s"
-                      % (alarm.get(proto.KEY_ALARM_VALVE_NAME),
-                         _ALARM_KIND_NAMES.get(alarm.get(proto.KEY_ALARM_KIND),
-                                               "?"),
-                         alarm.get(proto.KEY_ALARM_TEXT)))
+            text = "%s（%s）" % (_ALARM_KIND_NAMES.get(
+                alarm.get(proto.KEY_ALARM_KIND), "?"),
+                alarm.get(proto.KEY_ALARM_TEXT))
+            self._log("阀告警：%s → %s"
+                      % (alarm.get(proto.KEY_ALARM_VALVE_NAME), text))
+            # 告警事件入库（kind=来源分类；写失败不影响推送与采集）。
+            self.store.insert_alarm("valve",
+                                    alarm.get(proto.KEY_ALARM_VALVE_NAME),
+                                    text)
         return sent
 
     def _gate_due(self, topic, index, now_ms):
@@ -1284,6 +1678,8 @@ class App(object):
             proto.CMD_PUMP_SNAPSHOT: self._h_pump_snapshot,
             proto.CMD_PUMP_CONTROL: self._h_pump_control,
             proto.CMD_AUTO_CONTROL: self._h_auto_control,
+            proto.CMD_CONFIG_GET: self._h_config_get,
+            proto.CMD_CONFIG_SET: self._h_config_set,
         }.get(msg_code)
         if handler is None:
             # 未知命令必须回否定应答：不发则客户端空等到超时（观感「服务端死了」）。

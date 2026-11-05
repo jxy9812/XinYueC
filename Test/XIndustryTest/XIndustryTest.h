@@ -54,6 +54,16 @@ void XTestMenu_XIndustryTest(XTestMenu* root);
 	int XIndustryButtonStationTest_run(void);
 	void XIndustryButtonStationTest(XVariant* data);
 #endif
+#if XINDUSTRY_ON && XAUTO_CONTROL_ON
+	/* 自动运行控制器（纯框架件；状态机/步进闸门/报警队列/序列化，无设备）。 */
+	int XAutoControlTest_run(void);
+	void XAutoControlTest(XVariant* data);
+#endif
+#if XINDUSTRY_ON && XACCOUNT_ON && XACCESS_CONTROL_ON
+	/* 访问控制三件（账户管理/权限策略/登录策略 + 编解码往返）。 */
+	int XAccessControlTest_run(void);
+	void XAccessControlTest(XVariant* data);
+#endif
 #if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON
 	/* 电磁阀组「反馈模块离线」语义单测（纯业务层，不需要 TCP 从站）。
 	 * 锁定 XIoLink::RoleFresh → XIoChannelGroup_isFresh → 阀组按通道新鲜度

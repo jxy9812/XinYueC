@@ -90,6 +90,39 @@
 #define XBUTTON_STATION_ON 1
 #endif
 
+/** @brief 自动运行控制器（XAutoController：运行闸门/急停锁存/步进节流/
+ *         报警队列/状态序列化）；**不依赖** XINDUSTRY_CHANNEL_ON。
+ *  @note   设备访问归使用方适配层（stepHandler 的 ud 上下文自带"世界"），
+ *          本模块不 include 任何通道/传输/设备头文件——故开关不随
+ *          XINDUSTRY_CHANNEL_ON 派生：没有通道层的产品照样可以用它跑
+ *          "本地逻辑 + 报警 + 远程管理"的组合。 */
+#ifndef XAUTO_CONTROL_ON
+#define XAUTO_CONTROL_ON 1
+#endif
+
+/** @brief 访问控制子模块（XAccessControl：XPermission 权限策略 +
+ *         XLoginPolicy 登录策略）；**不依赖**通道层。
+ *  @note   权限与登录策略是纯策略面（角色位图/准入闸），不认账户库也
+ *          不认链路——与 XAutoControl 同款独立开关口径。 */
+#ifndef XACCESS_CONTROL_ON
+#define XACCESS_CONTROL_ON 1
+#endif
+
+/** @brief 账户管理（XAccountManager）；默认随 XINDUSTRY_ON 与 XLINK_AUTH_ON
+ *         派生（复用 XLinkUserStore 记录格式与 JSON 文件互通）。
+ *  @note   派生点留在本文件且显式包含 XProtocol_config.h（XLINK_AUTH_ON
+ *          定义于其包含的 XLink_config.h）：与 XINDUSTRY_MODBUS_ON 同款
+ *          "显式包含再派生"守卫，避免头保护时序导致恒派生为 0
+ *          （2026-10-29 实锅同款）。 */
+#ifndef XACCOUNT_ON
+#include "XProtocol_config.h"
+#if XINDUSTRY_ON && defined(XLINK_AUTH_ON) && XLINK_AUTH_ON
+#define XACCOUNT_ON 1
+#else
+#define XACCOUNT_ON 0
+#endif
+#endif
+
 /** @brief GPIO 通道适配器；实际可用性还取决于平台后端（Drive/ 各平台 XGpio 实现）。 */
 #ifndef XINDUSTRY_GPIO_ON
 #define XINDUSTRY_GPIO_ON 1

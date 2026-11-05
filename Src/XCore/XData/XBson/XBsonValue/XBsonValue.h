@@ -120,9 +120,12 @@ XBsonValue* XBsonValue_create_max_key(void);
 // 初始化与宏定义
 
 /**
- * @brief 初始化一个 BSON 值。
+ * @brief 初始化一个 BSON 值（只设置类型标签，不分配容器载荷）。
  * @param value 目标 BSON 值；可为栈对象。
  * @param type BSON 类型。
+ * @note 与 XJsonValue_init 一致：string/document/array/binary/regex 等容器型
+ *       载荷初始为 NULL，deinit/clear 对其安全。需要可直接
+ *       toDocument/toArray/toBinary 的空容器时用 XBsonValue_create(type)。
  */
 void XBsonValue_init(XBsonValue* value, XBsonType type);
 /** @brief 快速创建栈上 BSON 值并初始化指针变量。 */
@@ -156,6 +159,12 @@ void XBsonValue_setString(XBsonValue* value, const XString* str);
  * @warning 源 XString 的堆资源已转移；**外壳仍由调用方释放**，此后不得再解引用。
  */
 void XBsonValue_setString_move(XBsonValue* value, XString* str);
+/**
+ * @brief 指针接管设置字符串值（零分配）。
+ * @warning 调用即移交所有权：成功后调用方不得再访问/释放 str；返回类型
+ *          为 void，但 str 已由本值拥有。
+ */
+void XBsonValue_setString_ref(XBsonValue* value, XString* str);
 /** @brief 从 UTF-8 字符串设置字符串值。 */
 void XBsonValue_setString_utf8(XBsonValue* value, const char* utf8);
 /** @brief 深拷贝设置 Symbol 值。 */
@@ -167,6 +176,11 @@ void XBsonValue_setDocument(XBsonValue* value, const XBsonDocument* doc);
  * @warning 源 XBsonDocument 的堆资源已转移；**外壳仍由调用方释放**，此后不得再解引用。
  */
 void XBsonValue_setDocument_move(XBsonValue* value, XBsonDocument* doc);
+/**
+ * @brief 指针接管设置嵌套文档值（零分配）。
+ * @warning 调用即移交所有权：成功后调用方不得再访问/释放 doc。
+ */
+void XBsonValue_setDocument_ref(XBsonValue* value, XBsonDocument* doc);
 /** @brief 深拷贝设置嵌套数组值。 */
 void XBsonValue_setArray(XBsonValue* value, const XBsonArray* arr);
 /**
@@ -174,12 +188,23 @@ void XBsonValue_setArray(XBsonValue* value, const XBsonArray* arr);
  * @warning 源 XBsonArray 的堆资源已转移；**外壳仍由调用方释放**，此后不得再解引用。
  */
 void XBsonValue_setArray_move(XBsonValue* value, XBsonArray* arr);
+/**
+ * @brief 指针接管设置嵌套数组值（零分配）。
+ * @warning 调用即移交所有权：成功后调用方不得再访问/释放 arr。
+ */
+void XBsonValue_setArray_ref(XBsonValue* value, XBsonArray* arr);
 /** @brief 深拷贝设置二进制值。 */
 void XBsonValue_setBinary(XBsonValue* value, XBsonBinarySubtype subtype,
                           const XByteArray* data);
 /** @brief 移动设置二进制值。 */
 void XBsonValue_setBinary_move(XBsonValue* value, XBsonBinarySubtype subtype,
                                XByteArray* data);
+/**
+ * @brief 指针接管设置二进制值（零分配）。
+ * @warning 调用即移交所有权：成功后调用方不得再访问/释放 data。
+ */
+void XBsonValue_setBinary_ref(XBsonValue* value, XBsonBinarySubtype subtype,
+                              XByteArray* data);
 /** @brief 设置 12 字节 ObjectId。 */
 void XBsonValue_setObjectId(XBsonValue* value, const uint8_t* oid);
 /** @brief 设置毫秒级日期时间值。 */

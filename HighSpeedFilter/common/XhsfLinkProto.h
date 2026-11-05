@@ -115,6 +115,52 @@
  */
 #define HSF_CMD_TURBIDITY_SNAPSHOT  0x0112u
 
+/**
+ * @brief 进水泵快照请求（载荷空；Response = 泵状态 BSON）。
+ * @details 与 Python 侧 proto.CMD_PUMP_SNAPSHOT 同号。键表见 HSF_KEY_PUMP_*。
+ *          泵只有输出没有反馈，快照表达的是**命令状态**（见头文件泵键说明）。
+ */
+#define HSF_CMD_PUMP_SNAPSHOT       0x0113u
+
+/**
+ * @brief 进水泵开关（载荷 {"index":int,"on":bool}；需 root + 手动模式）。
+ * @details 与 Python 侧 proto.CMD_PUMP_CONTROL 同号。Response = 应答包络 +
+ *          泵快照键（与推送同一套键，客户端复用一套解析）。
+ */
+#define HSF_CMD_PUMP_CONTROL        0x0114u
+
+/**
+ * @brief 自动运行启停（载荷 {"op":int}；需 root；启动还须已处自动模式）。
+ * @details 与 Python 侧 proto.CMD_AUTO_CONTROL 同号。
+ *          [op 操作字（HSF_AUTO_OP_*；缺省/兼容口径见下）]
+ *            op=1 启动    —— 授权态（自动模式）才放行；
+ *            op=2 停止    —— 永远放行（停机类动作不被任何闸门挡）；
+ *            op=3 急停    —— 永远放行，锁存：复位前拒绝一切启动；
+ *            op=4 复位    —— 解除急停锁存（回到停止态，**不是**重新启动）。
+ *          [兼容] 老载荷 {"on":bool} 仍然受理（true≈op1 / false≈op2）——
+ *          已部署客户端不必升级；op 键存在时优先生效。
+ *          [与 HSF_CMD_RUN_MODE 的分工——⚠ 是两件事]
+ *            RUN_MODE(mode=1) → **授权**自动（远程控制被禁），控制器仍停；
+ *            AUTO_CONTROL(op=1) → 人真正按下"开始自动运行"。
+ *          把"切模式"和"启动运行"合成一个动作是危险的：操作员只想切模式，
+ *          设备就立刻被自动逻辑驱动（现场反馈：默认应该是停止状态）。
+ *          [急停的边界] 服务端急停只停**自动控制器**（不再发起新动作）；
+ *          设备级急停（切断动力）是硬件链职责，软件不冒充。
+ *          Response = {ok, mode, auto, autoRunning}（控制器真实状态回显）。
+ */
+#define HSF_CMD_AUTO_CONTROL        0x0115u
+
+/* ---- 自动运行 op 操作字（HSF_CMD_AUTO_CONTROL 载荷 "op" 键取值） ---- */
+
+/** @brief 启动自动运行（须已处自动模式）。 */
+#define HSF_AUTO_OP_START           1
+/** @brief 停止自动运行（永远放行）。 */
+#define HSF_AUTO_OP_STOP            2
+/** @brief 急停（锁存；复位前拒绝启动；永远放行）。 */
+#define HSF_AUTO_OP_ESTOP           3
+/** @brief 复位（解除急停锁存，回到停止态；不是重新启动）。 */
+#define HSF_AUTO_OP_RESET           4
+
 /* ==================== 推送主题（topicId = XLINK_TOPIC_USER_BASE + n） ==================== */
 
 /** @brief 变频器遥测推送主题（载荷=XVfdStatus BSON + side，周期见服务端配置）。 */
@@ -154,6 +200,44 @@
  *          只会让客户端写两遍同样的订阅逻辑；台数由帧里的 count 决定。
  */
 #define HSF_TOPIC_TURBIDITY_STATUS  0x00010009u
+
+/**
+ * @brief 进水泵状态推送主题（载荷=泵快照 BSON；周期推送）。
+ * @details 与 Python 侧 proto.TOPIC_PUMP_STATUS 同号。
+ */
+#define HSF_TOPIC_PUMP_STATUS       0x0001000Au
+
+/**
+ * @brief 自动运行告警推送主题（载荷=单条告警 BSON；**事件驱动**）。
+ * @details [为什么单独一个主题] 自动运行的报警（动作失败/设备不可用/
+ *          逻辑自定义）与遥测不同：遥测是周期帧，报警是**事件**——发生
+ *          才推一次。远端（客户端/运维终端）订阅本主题即可远程监视自动
+ *          运行的异常，配合 HSF_CMD_AUTO_CONTROL 完成远程管理闭环。
+ *          帧键表复用阀告警键（ac/vi/k/t/at/to）还是专用键？——本主题用
+ *          XAutoControlCodec 的告警帧（kind/atMs/text），与阀告警解耦：
+ *          两类告警的消费者、展示页、处置动作都不同，共用键表只会让
+ *          客户端多一层"先猜类型"的分支。
+ */
+#define HSF_TOPIC_AUTO_ALARM        0x0001000Bu
+
+/**
+ * @brief 自动运行告警帧键（XAutoControlCodec 口径，一条告警一帧）。
+ * @details 与阀告警帧（ac/vi/k/t/at/to）**刻意不同键**：两类告警的消费者、
+ *          展示页、处置动作都不同，共用键表只会让客户端多一层"先猜类型"
+ *          的分支。类型值与 XAutoControlAlarmKind 逐值一致（宏见下）。
+ */
+#define HSF_KEY_AUTOALARM_KIND      "kind"  /**< 告警类型（int；HSF_AUTO_ALARM_*）。 */
+#define HSF_KEY_AUTOALARM_AT        "atMs"  /**< 发生时刻（int64 单调毫秒）。 */
+#define HSF_KEY_AUTOALARM_TEXT      "text"  /**< 告警文字（utf8，给操作员看）。 */
+
+/** @brief 自动运行告警类型：动作下发失败（与 XAutoControlAlarm_ActionFailed 同值）。 */
+#define HSF_AUTO_ALARM_ACTION_FAILED     1
+/** @brief 自动运行告警类型：依赖设备不可用（与 XAutoControlAlarm_DeviceUnavailable 同值）。 */
+#define HSF_AUTO_ALARM_DEVICE_UNAVAIL    2
+/** @brief 自动运行告警类型：逻辑自定义（与 XAutoControlAlarm_Custom 同值）。 */
+#define HSF_AUTO_ALARM_CUSTOM            3
+/** @brief 自动运行告警类型：急停触发（与 XAutoControlAlarm_EmergencyStop 同值）。 */
+#define HSF_AUTO_ALARM_ESTOP             4
 
 /* ==================== 侧号（两路 485 各管一侧） ==================== */
 
@@ -386,6 +470,39 @@ typedef enum HsfValveState {
 /** @brief 该台是否在线（bool；已读到且未陈旧）。 */
 #define HSF_KEY_TURB_ONLINE         "online"
 
+/* ==================== 进水泵（1 台；只有输出、无反馈） ==================== */
+
+/**
+ * @brief 进水泵台数上限（结构上留多台位置；当前 1 台）。
+ * @details 与 Python 侧 proto.HSF_PUMP_COUNT 逐值一致。
+ */
+#ifndef HSF_PUMP_COUNT
+#define HSF_PUMP_COUNT              1
+#endif
+
+/** @brief 泵台数（快照顶层键；与阀/浊度同键名 "count"）。 */
+#define HSF_KEY_PUMP_COUNT          "count"
+
+/**
+ * @brief [泵与阀的本质区别] 泵没有行程反馈——现场只控制接触器，写了就是
+ *        命令。故泵**不判到位、不设超时定时器、无告警**：状态是**命令
+ *        状态**（我们最后一次写的值，经 DO 回显校准）。硬造"超时未到位"
+ *        等于撒谎——没有反馈就没有可比对的真相源。要真正监视泵，得现场
+ *        加运行反馈点（接触器辅助触点/流量开关），那时再扩展键表。
+ */
+
+/** @brief 泵路号（快照前缀键；int，0 起）。 */
+#define HSF_KEY_PUMP_INDEX          "index"
+/** @brief 泵名（utf8）。 */
+#define HSF_KEY_PUMP_NAME           "name"
+/** @brief 命令状态（bool；true=运行/接触器吸合）。**只反映输出，无反馈信号**。 */
+#define HSF_KEY_PUMP_ON             "on"
+/** @brief 该泵输出是否可控（点位已配置且模块在线）（bool）。 */
+#define HSF_KEY_PUMP_READY          "ready"
+/** @brief 数据有效性：与阀同键名 "valid"（HSF_KEY_VALVE_VALID；前缀后同名）。 */
+/** @brief 说明（utf8，可空；"未配置点位"/"模块离线"等）。 */
+#define HSF_KEY_PUMP_TEXT           "text"
+
 /** @brief 阀路数（快照顶层）。 */
 #define HSF_KEY_VALVE_COUNT         "count"
 /** @brief 单路字段前缀格式：v<i>_name 等（i=路序，从 0 起）。 */
@@ -470,6 +587,17 @@ typedef enum HsfRunMode {
 #define HSF_KEY_MODE                "mode"
 /** @brief 自动模式布尔键（Response 冗余字段，客户端可直读）。 */
 #define HSF_KEY_AUTO                "auto"
+/**
+ * @brief 自动运行**控制器**启停状态（Response 冗余字段，bool）。
+ * @details [与 HSF_KEY_AUTO 的区别——两个"自动"不是一回事]
+ *            auto       = 模式闸：远程控制是否被禁（授权态）；
+ *            autoRunning = 控制器：自动逻辑是否正在跑（动作态）。
+ *          CMD_RUN_MODE(mode=1) 后 auto=true 而 autoRunning=false——授权了
+ *          但没人按下"开始"；CMD_AUTO_CONTROL(on=1) 后两者才同时为 true。
+ *          RUN_MODE 查询/设置应答与 AUTO_CONTROL 应答都带本键：客户端拿到
+ *          的就是**切换之后**的控制器真实状态，不必等下一帧推送。
+ */
+#define HSF_KEY_AUTO_RUNNING        "autoRunning"
 
 /* ==================== 应答包络键（Response 载荷） ==================== */
 

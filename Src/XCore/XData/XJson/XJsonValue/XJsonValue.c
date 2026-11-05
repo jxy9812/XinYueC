@@ -105,16 +105,22 @@ XJsonValue* XJsonValue_create_object(XJsonObject* object)
 
 XJsonValue* XJsonValue_create_copy(XJsonValue* copy)
 {
-    XJsonValue* value = XJsonValue_create_null();
-    if (value && copy)
+    XJsonValue* value;
+    if (copy == NULL)
+        return NULL;   /* 与 XBsonValue_create_copy 一致：NULL 入参返回 NULL */
+    value = XJsonValue_create_null();
+    if (value)
         XJsonValue_copy(value, copy);
     return value;
 }
 
 XJsonValue* XJsonValue_create_move(XJsonValue* move)
 {
-    XJsonValue* value = XJsonValue_create_null();
-    if (value && move)
+    XJsonValue* value;
+    if (move == NULL)
+        return NULL;   /* 与 XBsonValue_create_move 一致：NULL 入参返回 NULL */
+    value = XJsonValue_create_null();
+    if (value)
         XJsonValue_move(value, move);
     return value;
 }
@@ -154,7 +160,9 @@ void XJsonValue_move(XJsonValue* var, XJsonValue* src)
     if (var == src) return;
     XJsonValue_deinit(var);
     memcpy(var, src, sizeof(XJsonValue));
-    src->type = XJsonValue_Null;
+    /* 与 XBsonValue_move 统一：源类型清零（Invalid，数值 0），
+       不把 Null 当作「已移动」标记——Null 是合法的 JSON 值。 */
+    src->type = XJsonValue_Invalid;
     memset(&src->data, 0, sizeof(src->data));
 }
 
@@ -382,7 +390,7 @@ void XJsonValue_setInt(XJsonValue* value, int64_t i)
 
 void XJsonValue_setString(XJsonValue* value, const XString* s) 
 {
-    if (!value) return;
+    if (!value || !s) return;   /* 与 XBsonValue_setString 一致：NULL 不生效 */
 
     XJsonValue_deinit(value);
     value->type = XJsonValue_String;
@@ -398,9 +406,18 @@ void XJsonValue_setString_move(XJsonValue* value, XString* s)
     value->data.string = XString_create_move(s);
 }
 
+void XJsonValue_setString_ref(XJsonValue* value, XString* s)
+{
+    if (!value || !s) return;
+
+    XJsonValue_deinit(value);
+    value->type = XJsonValue_String;
+    value->data.string = s;   /* 指针接管：零分配，调用方不再拥有 */
+}
+
 void XJsonValue_setString_utf8(XJsonValue* value, const char* utf8)
 {
-    if (!value) return;
+    if (!value || !utf8) return;  /* 与 XBsonValue_setString_utf8 一致 */
 
     XJsonValue_deinit(value);
     value->type = XJsonValue_String;
@@ -425,6 +442,15 @@ void XJsonValue_setArray_move(XJsonValue* value, XJsonArray* a)
     value->data.array = XJsonArray_create_move(a);
 }
 
+void XJsonValue_setArray_ref(XJsonValue* value, XJsonArray* a)
+{
+    if (!value || !a) return;
+
+    XJsonValue_deinit(value);
+    value->type = XJsonValue_Array;
+    value->data.array = a;    /* 指针接管：零分配，调用方不再拥有 */
+}
+
 void XJsonValue_setObject(XJsonValue* value, XJsonObject* o) 
 {
     if (!value || !o) return;
@@ -440,6 +466,15 @@ void XJsonValue_setObject_move(XJsonValue* value, XJsonObject* o)
     XJsonValue_deinit(value);
     value->type = XJsonValue_Object;
     value->data.object = XJsonObject_create_move(o);
+}
+
+void XJsonValue_setObject_ref(XJsonValue* value, XJsonObject* o)
+{
+    if (!value || !o) return;
+
+    XJsonValue_deinit(value);
+    value->type = XJsonValue_Object;
+    value->data.object = o;   /* 指针接管：零分配，调用方不再拥有 */
 }
 XVariant* XJsonValue_toVariant(const XJsonValue* val)
 {
@@ -476,8 +511,9 @@ XVariant* XJsonValue_toVariant(const XJsonValue* val)
 XVariant* XJsonValue_toVariant_move(XJsonValue* val)
 {
     XVariant* variant = XJsonValue_toVariant(val);
+    /* 与 XBsonValue_toVariant_move 统一：源类型清零（Invalid/0）。 */
     if (val)
-        XJsonValue_setNull(val);
+        XJsonValue_deinit(val);
     return variant;
 }
 

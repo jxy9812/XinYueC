@@ -119,6 +119,14 @@ bool XBsonDocument_insert_keyUtf8_string(XBsonDocument* doc, const char* key,
 bool XBsonDocument_insert_keyUtf8_string_move(XBsonDocument* doc,
                                               const char* key,
                                               XString* strValue);
+/**
+ * @brief 追加字符串元素并接管源字符串指针（零分配）。
+ * @warning 非 NULL 参数调用即移交所有权：此后调用方不得再访问/释放
+ *          strValue；返回 false 时资源已由本函数释放。
+ */
+bool XBsonDocument_insert_keyUtf8_string_ref(XBsonDocument* doc,
+                                             const char* key,
+                                             XString* strValue);
 /** @brief 追加 UTF-8 字符串元素。 */
 bool XBsonDocument_insert_keyUtf8_utf8(XBsonDocument* doc, const char* key,
                                        const char* utf8);
@@ -134,6 +142,14 @@ bool XBsonDocument_insert_keyUtf8_array(XBsonDocument* doc, const char* key,
 bool XBsonDocument_insert_keyUtf8_array_move(XBsonDocument* doc,
                                              const char* key,
                                              XBsonArray* array);
+/**
+ * @brief 追加数组元素并接管源数组指针（零分配）。
+ * @warning 非 NULL 参数调用即移交所有权：此后调用方不得再访问/释放
+ *          array；返回 false 时资源已由本函数释放。
+ */
+bool XBsonDocument_insert_keyUtf8_array_ref(XBsonDocument* doc,
+                                            const char* key,
+                                            XBsonArray* array);
 /** @brief 追加嵌套文档元素的深拷贝。 */
 bool XBsonDocument_insert_keyUtf8_document(XBsonDocument* doc, const char* key,
                                            const XBsonDocument* newDoc);
@@ -141,6 +157,14 @@ bool XBsonDocument_insert_keyUtf8_document(XBsonDocument* doc, const char* key,
 bool XBsonDocument_insert_keyUtf8_document_move(XBsonDocument* doc,
                                                 const char* key,
                                                 XBsonDocument* newDoc);
+/**
+ * @brief 追加嵌套文档元素并接管源文档指针（零分配）。
+ * @warning 非 NULL 参数调用即移交所有权：此后调用方不得再访问/释放
+ *          newDoc；返回 false 时资源已由本函数释放。
+ */
+bool XBsonDocument_insert_keyUtf8_document_ref(XBsonDocument* doc,
+                                               const char* key,
+                                               XBsonDocument* newDoc);
 /** @brief 追加 XString 键并移动 BSON 值，键本身会被拷贝。 */
 bool XBsonDocument_insert_value_move(XBsonDocument* doc, const XString* key,
                                      XBsonValue* value);
@@ -152,7 +176,16 @@ const XBsonElement* XBsonDocument_at_const(const XBsonDocument* doc, int64_t ind
 /** @brief 获取第一个同名键的值借用指针；不存在返回 NULL。 */
 XBsonValue* XBsonDocument_value_base(XBsonDocument* doc, const XString* key);
 /** @brief 获取首个 UTF-8 同名键的值借用指针；不存在返回 NULL。 */
-XBsonValue* XBsonDocument_value_keyUtf8(XBsonDocument* doc, const char* key);
+XBsonValue* XBsonDocument_value_keyUtf8(const XBsonDocument* doc, const char* key);
+/**
+ * @brief 获取首个 UTF-8 同名键的值的深拷贝。
+ * @return 找到时返回新建值；不存在或参数无效返回 NULL。调用方必须
+ *         XBsonValue_delete。
+ * @note 与 XJsonObject_value_copy_keyUtf8 同名同义；需要返回值在文档修改
+ *       后继续有效时使用本接口。
+ */
+XBsonValue* XBsonDocument_value_copy_keyUtf8(const XBsonDocument* doc,
+                                             const char* key);
 /** @brief 返回第一个同名键的索引，不存在返回 -1。 */
 int64_t XBsonDocument_indexOf(const XBsonDocument* doc, const XString* key);
 /** @brief 返回 UTF-8 同名键的数量。 */

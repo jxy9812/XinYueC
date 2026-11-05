@@ -329,6 +329,22 @@ bool XJsonDocument_setObject_move(XJsonDocument* document, XJsonObject* object)
     XJsonValue_setObject_move(&document->root, object);
     return true;
 }
+
+bool XJsonDocument_setArray_ref(XJsonDocument* document, XJsonArray* array)
+{
+    if (!document || !array)
+        return false;
+    XJsonValue_setArray_ref(&document->root, array);
+    return true;
+}
+
+bool XJsonDocument_setObject_ref(XJsonDocument* document, XJsonObject* object)
+{
+    if (!document || !object)
+        return false;
+    XJsonValue_setObject_ref(&document->root, object);
+    return true;
+}
 XJsonDocument* XJsonDocument_fromString(const XString* json)
 {
     return XJsonDocument_fromString_ex(json, NULL);

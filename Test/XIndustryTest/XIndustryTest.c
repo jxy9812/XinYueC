@@ -43,6 +43,18 @@ void XTestMenu_XIndustryTest(XTestMenu* root)
 		XTestMenu_addAction(menu, "XIndustryButtonStation 按钮组（mock）"),
 		XIndustryButtonStationTest);
 #endif
+#if XINDUSTRY_ON && XAUTO_CONTROL_ON
+	/* 自动运行控制器（纯框架件：四板斧状态机/步进闸门/报警队列/序列化）。 */
+	XTestMenu_setActionFunction(
+		XTestMenu_addAction(menu, "XAutoControl 自动运行控制器（mock）"),
+		XAutoControlTest);
+#endif
+#if XINDUSTRY_ON && XACCOUNT_ON && XACCESS_CONTROL_ON
+	/* 访问控制三件：账户管理/权限策略/登录策略（临时文件，进程内自跑）。 */
+	XTestMenu_setActionFunction(
+		XTestMenu_addAction(menu, "XAccessControl 账户/权限/登录策略"),
+		XAccessControlTest);
+#endif
 #if XINDUSTRY_ON && XTURBIDITY_ON
 	/* 在线浊度仪（mock 通道，进程内自跑；含真机帧回归与编解码）。 */
 	XTestMenu_setActionFunction(

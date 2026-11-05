@@ -44,6 +44,7 @@ extern "C" {
 #include "HsfServerIoAnalog.h"
 #include "HsfServerIoDigital.h"
 #include "HsfServerIoValve.h"
+#include "HsfServerIoPump.h"
 
 /** @brief 现场侧标识（两路 485 各管一侧；遥测/命令按侧寻址）。 */
 typedef enum HsfSide {
@@ -216,6 +217,30 @@ bool HsfServerIo_valveSet(int index, bool wantOpen, char* outErr, int cap);
  *       故这里无需调用方另记"已推过"。
  */
 bool HsfServerIo_valveTakeAlarm(int index, int* outKind, char* outText, int cap);
+
+/* ==================== 进水泵（1 台，只有输出、无反馈） ==================== */
+
+/**
+ * @brief 进水泵组读取入口（借用；未装配返回 NULL）。
+ */
+const HsfServerIoPump* HsfServerIo_pumps(void);
+
+/**
+ * @brief 用当前 DO 回显刷新泵组命令状态（含外部改动接管）。
+ * @note  由服务端 tick 每拍调用（先 poll 再编码，同一拍数据自洽）。
+ */
+void HsfServerIo_pumpPoll(void);
+
+/**
+ * @brief 进水泵控制：查配置 → 校验（幂等/离线/未配置）→ 写 DO。
+ * @param index 泵号（0 起）。
+ * @param on true=启动（接触器吸合）。
+ * @param outErr 失败原因（UTF-8；容量 cap；"已处于该状态"属幂等成功，
+ *               本函数返回 true 且不再写）。
+ * @param cap outErr 容量。
+ * @return 受理返回 true（含幂等"已是该状态"）。
+ */
+bool HsfServerIo_pumpSet(int index, bool on, char* outErr, int cap);
 
 /* ==================== 诊断 ==================== */
 /**

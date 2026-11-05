@@ -34,6 +34,12 @@
 #include "XBson.h"
 #include "XBsonDocument.h"
 #include "XBsonValue.h"
+#include "XAutoControl.h"
+#include "XAutoControlCodec.h"
+#include "XAccount.h"
+#include "XPermission.h"
+#include "XLoginPolicy.h"
+#include "XAccessControlCodec.h"
 #include "XIODevice.h"   /* XIODevice_fd（会话接入日志打印底层 fd）。 */
 #include "XAbstractSocket.h"    /* XAbstractSocket_state（连接态诊断）。 */
 #include "XString.h"
@@ -54,6 +60,57 @@ static XLinkServer* s_srv = NULL;       /**< XLink 服务端实例。 */
  *          默认手动：老版本配置文件无该键时行为不变。
  */
 static HsfRunMode s_runMode = HsfRunMode_Manual;
+
+/* ==================== 自动运行控制（XAutoController 装配） ==================== */
+
+/**
+ * @brief 自动运行控制器（Src/Industry/XAutoControl 模块类实例）。
+ * @details [与模式位的关系——两个"自动"不是一回事]
+ *            s_runMode              = 模式闸：自动=远程控制被禁（授权态）；
+ *            s_autoCtl 运行位        = 控制器：自动逻辑真的在驱动设备（动作态）。
+ *          [安全口径，与 Python 侧 app.py 逐条同口径]
+ *            - 进自动**不**自动启动控制器（模式开关不是设备启动按钮）；
+ *            - 退自动**强制停**控制器（单向安全动作，见
+ *              hsfAppApplyModeToDevices）；
+ *            - 重启恢复模式位后控制器**一律保持停止**（没人按过启动，
+ *              设备不能自己动）；
+ *            - 真正启动只走 HSF_CMD_AUTO_CONTROL（需 AutoControl 权限 +
+ *              已处自动模式）。
+ *          [本版本无工艺逻辑] 控制器是空骨架：start/stop/急停锁存/报警/
+ *          记账全链路真实生效，step 放行不做任何动作（安全默认）。设备
+ *          访问归使用方适配层——将来填工艺逻辑时注册
+ *          hsfAppAutoStepHandler（其 ud 上下文自带 HsfServerIo 访问），
+ *          装配面不变。
+ */
+static XAutoController s_autoCtl;
+
+/** @brief 控制器是否已初始化（HsfServerApp_start 置位；stop 复位）。 */
+static bool s_autoCtlReady = false;
+
+/* ==================== 访问控制（XAccount/XPermPolicy/XLoginPolicy） ==================== */
+
+/**
+ * @brief 权限策略（角色→权限位图；判定零遍历）。
+ * @details 各控制命令的闸从此查：控制面=DeviceControl、切模式=ModeSwitch、
+ *          自动运行=AutoControl。拒绝留痕开（permissionDenied → 日志）。
+ */
+static XPermPolicy s_perm;
+
+/**
+ * @brief 登录策略（匿名登录/同账并发/会话上限）。
+ * @details [收编既有 root 单会话特判] 原 hsfAppAuthLookup 里"root 只许一个
+ *          在线会话"是硬编码特例；收编后=缺省策略（匿名关/同账并发关/
+ *          上限 8），语义零漂移。
+ */
+static XLoginPolicy s_loginPolicy;
+
+/**
+ * @brief 账户管理器（XLinkUserStore 同格式记录的管理面：CRUD/锁定策略/
+ *        缺省账户引导）。
+ * @details [记录主源] 认证查表从它读（hsfAppAuthLookup）；XLinkServer 的
+ *          文件副本仅作启动兜底。变更落盘经它 save（原子写），跨重启保持。
+ */
+static XAccountManager s_accounts;
 
 /* ==================== 设备健康（事件驱动推送） ==================== */
 
@@ -119,6 +176,15 @@ static HsfAppJogWatch s_jogWatch[HsfSide_Count];
 #define HSF_VALVE_PUSH_MS       0
 
 /**
+ * @brief 进水泵快照推送间隔（毫秒；500 = 独立分频，对齐 Python
+ *        PUMP_PUSH_MS）。
+ * @details 泵没有"动作中"过程（切换即时），500ms 足够跟手；独立闸而非
+ *          跟随 100ms 基准——泵帧通常只有 1 台，降频省总线（与 Python
+ *          侧 app.PUMP_PUSH_MS=500 同口径）。
+ */
+#define HSF_PUMP_PUSH_MS        500
+
+/**
  * @brief 通道名是否已变更（true ⇒ 下一拍主动下发一帧只含名字的快照）。
  * @details 名字是**部署参数**（写在 HsfServerConfig.h 宏里），运行期不会变；
  *          本标志是给"现场改宏重新部署后不重启客户端也能更新"以及将来
@@ -127,10 +193,11 @@ static HsfAppJogWatch s_jogWatch[HsfSide_Count];
  */
 static bool s_digitalNamesDirty = false;
 
-/** @brief 数字量/电磁阀快照编码（定义在周期遥测段；此处前向声明）。 */
+/** @brief 数字量/电磁阀/进水泵快照编码（定义在周期遥测段；此处前向声明）。 */
 static XByteArray* hsfAppEncodeDigital(bool full);
 static XByteArray* hsfAppEncodeDigitalNames(void);
 static XByteArray* hsfAppEncodeValves(void);
+static XByteArray* hsfAppEncodePump(void);
 
 static void hsfAppJogTouch(HsfSide side, bool reverse);
 static void hsfAppJogRelease(HsfSide side);
@@ -305,6 +372,92 @@ static void hsfHealthCollect(HsfAppHealthState* st)
             hsfHealthAdd(st, "模拟量模块", HsfDeviceKind_AnalogIo, (int)HsfSide_A,
                          any ? HsfDeviceHealth_Ok : HsfDeviceHealth_Stale,
                          0, any, 0, any ? "" : "无有效数据");
+        }
+    }
+
+    /* ---- 进水泵（数字量模块上的一路 DO，归类为数字量） ----
+     * [与 Python 侧 pumps.health_summary 同口径] 无数字量模块→离线；
+     * 未配置点位→离线；有配置但回显无效→陈旧；否则正常。
+     * 泵没有独立通讯口，side 记数字量模块所在侧(A)，客户端按
+     * (kind=DIGITAL, side=0) 找到它。 */
+    {
+        const HsfServerIoPump* pumps = HsfServerIo_pumps();
+        if (pumps && HsfServerIoPump_count(pumps) > 0) {
+            const HsfServerIoPumpItem* item = HsfServerIoPump_item(pumps, 0);
+            int health = HsfDeviceHealth_Ok;
+            bool online = true;
+            const char* text = "";
+            if (!HsfServerIo_digitalReady()) {
+                health = HsfDeviceHealth_Offline;
+                online = false;
+                text = "数字量模块未装配";
+            } else if (!HsfServerIoPump_ready(pumps)) {
+                health = HsfDeviceHealth_Offline;
+                online = false;
+                text = "未配置点位";
+            } else if (item && !item->m_valid) {
+                health = HsfDeviceHealth_Stale;
+                text = "无有效回显";
+            }
+            hsfHealthAdd(st, "进水泵", HSF_DEVICE_KIND_DIGITAL,
+                         (int)HsfSide_A, health, 0, online, 0, text);
+        }
+    }
+
+    /* ---- 数字量模块（C 版为 .12/.13 聚合后的单站） ---- */
+    {
+        uint32_t di = 0;
+        uint32_t doMask = 0;
+        bool valid = false;
+        if (HsfServerIo_digitalReady()) {
+            (void)HsfServerIo_digitalMasks(&di, &doMask, &valid);
+            hsfHealthAdd(st, "数字量模块", HSF_DEVICE_KIND_DIGITAL,
+                         (int)HsfSide_A,
+                         valid ? HsfDeviceHealth_Ok : HsfDeviceHealth_Stale,
+                         0, valid, 0, valid ? "" : "无有效数据");
+        } else {
+            hsfHealthAdd(st, "数字量模块", HSF_DEVICE_KIND_DIGITAL,
+                         (int)HsfSide_A, HsfDeviceHealth_Offline,
+                         0, false, 0, "未装配");
+        }
+    }
+
+    /* ---- 电磁阀组（整组一条，含故障路数摘要） ---- */
+    {
+        const HsfServerIoValve* valves = HsfServerIo_valves();
+        if (valves && HsfServerIoValve_count(valves) > 0) {
+            int health = HsfDeviceHealth_Ok;
+            bool online = true;
+            char text[96] = "";
+            if (!HsfServerIo_digitalReady()) {
+                health = HsfDeviceHealth_Offline;
+                online = false;
+                snprintf(text, sizeof(text), "数字量模块未装配");
+            } else if (!HsfServerIoValve_ready(valves)) {
+                health = HsfDeviceHealth_Offline;
+                online = false;
+                snprintf(text, sizeof(text), "未配置点位");
+            } else {
+                int faults = HsfServerIoValve_faultCount(valves);
+                if (faults > 0) {
+                    health = HsfDeviceHealth_Fault;
+                    snprintf(text, sizeof(text), "%d 路故障", faults);
+                } else {
+                    bool anyValid = false;
+                    int i;
+                    for (i = 0; i < HsfServerIoValve_count(valves); ++i) {
+                        const HsfServerIoValveItem* it =
+                            HsfServerIoValve_item(valves, i);
+                        if (it && it->m_valid) { anyValid = true; break; }
+                    }
+                    if (!anyValid) {
+                        health = HsfDeviceHealth_Stale;
+                        snprintf(text, sizeof(text), "无有效反馈");
+                    }
+                }
+            }
+            hsfHealthAdd(st, "电磁阀组", HSF_DEVICE_KIND_VALVE,
+                         (int)HsfSide_A, health, 0, online, 0, text);
         }
     }
 }
@@ -523,6 +676,9 @@ static XByteArray* hsfAppMakeEnvelope(bool ok, const char* errUtf8)
  * @brief 把所有已装配变频器的控制闸同步到当前模式。
  * @details 自动 → 关闸（设备层也拒绝写入，双保险）；手动 → 开闸。
  *          控制闸是 XVfdDevice 的单一咽喉，覆盖全品牌全命令模型。
+ *          [自动控制器单向安全] 退自动 ⇒ 强制停控制器（切回手动还在自动跑
+ *          = 手动模式下设备被偷偷驱动，硬性安全问题）；进自动 ⇒ **不**启动
+ *          （模式开关不是设备启动按钮，见 s_autoCtl 说明）。
  */
 static void hsfAppApplyModeToDevices(void)
 {
@@ -531,6 +687,10 @@ static void hsfAppApplyModeToDevices(void)
     for (side = HsfSide_A; side < HsfSide_Count; ++side) {
         XVfdDevice* dev = HsfServerIo_vfdDevice(side);
         if (dev) XVfdDevice_setControlEnabled(dev, enable);
+    }
+    if (s_autoCtlReady && !enable && XAutoController_running(&s_autoCtl)) {
+        XAutoController_stop(&s_autoCtl, (uint64_t)XDateTime_currentMSecsSinceEpoch());
+        XPrintf("HsfServerApp: 退出自动模式，自动运行已强制停止\n");
     }
 }
 
@@ -572,7 +732,10 @@ void HsfServerApp_setRunMode(HsfRunMode mode)
 }
 
 /**
- * @brief 应答包络 + 模式字段（{"ok","err","mode","auto"}）。
+ * @brief 应答包络 + 模式字段（{"ok","err","mode","auto","autoRunning"}）。
+ * @details autoRunning 是**控制器**的真实状态（与模式位分开回显）：客户端
+ *          拿到的就是切换/启停之后控制器此刻的运行位，不必等下一帧推送，
+ *          也不允许界面从模式位推断运行位（没启动时假"在跑"比故障更难查）。
  */
 static XByteArray* hsfAppMakeModeEnvelope(bool ok, const char* errUtf8)
 {
@@ -585,6 +748,9 @@ static XByteArray* hsfAppMakeModeEnvelope(bool ok, const char* errUtf8)
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_MODE, (int32_t)s_runMode);
     XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_AUTO,
                                       s_runMode == HsfRunMode_Auto);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_AUTO_RUNNING,
+                                      s_autoCtlReady &&
+                                      XAutoController_running(&s_autoCtl));
     bytes = XBsonDocument_toBson(doc);
     XClassDelete((XClass*)doc);
     return bytes;
@@ -631,7 +797,9 @@ static void hsfAppHandleVfdControl(XLinkSession* session,
                                          "自动运行中：远程控制已被禁用（现场切换到手动后可用）"));
         return;
     }
-    if (XLinkServer_sessionRole(srv, session) < (uint8_t)HSF_ROLE_CONTROL) {
+    if (!XPermPolicy_check(&s_perm,
+                           (XAccountRole)XLinkServer_sessionRole(srv, session),
+                           (uint32_t)XAccessPerm_DeviceControl)) {
         hsfAppRespond(session, frame, hsfAppMakeEnvelope(false, "权限不足：控制命令需要 root 账户"));
         return;
     }
@@ -700,7 +868,10 @@ static void hsfAppHandleRunMode(XLinkSession* session,
         hsfAppRespond(session, frame, hsfAppMakeModeEnvelope(true, NULL));
         return;
     }
-    if (XLinkServer_sessionRole(srv, session) < (uint8_t)HSF_ROLE_CONTROL) {
+    /* [权限策略闸] 切模式需要 ModeSwitch（只有 Admin 持有，等价旧口径）。 */
+    if (!XPermPolicy_check(&s_perm,
+                           (XAccountRole)XLinkServer_sessionRole(srv, session),
+                           (uint32_t)XAccessPerm_ModeSwitch)) {
         hsfAppRespond(session, frame,
                       hsfAppMakeEnvelope(false,
                                          "权限不足：切换运行模式需要 root 账户"));
@@ -712,6 +883,117 @@ static void hsfAppHandleRunMode(XLinkSession* session,
         return;
     }
     HsfServerApp_setRunMode((HsfRunMode)newMode);
+    hsfAppRespond(session, frame, hsfAppMakeModeEnvelope(true, NULL));
+}
+
+/* ==================== 自动运行控制（XAutoController 装配与命令） ==================== */
+
+/**
+ * @brief 装配自动运行控制器（HsfServerApp_start 调用一次）。
+ * @note  [本版本无 stepHandler] 控制器是空骨架：start/stop/急停锁存/报警/
+ *        记账全链路真实生效，step 放行后不做任何动作（安全默认，见
+ *        XAutoControl.h）。设备访问归使用方适配层——将来填工艺逻辑时注册
+ *        hsfAppAutoStepHandler（其 ud 上下文自带 HsfServerIo 访问：DI/DO
+ *        位图直读、写 DO 走 HsfServerIo_digitalWrite、动作失败经
+ *        noteAction+raiseAlarm 回灌），装配面不变。
+ */
+static void hsfAppAutoCtlSetup(void)
+{
+    if (!s_autoCtlReady) {
+        XAutoController_init(&s_autoCtl);
+        s_autoCtlReady = true;
+    }
+    XPrintf("HsfServerApp: 自动运行控制器已装配（骨架：无工艺逻辑，不产生动作）\n");
+}
+
+/**
+ * @brief 自动运行控制命令（HSF_CMD_AUTO_CONTROL，载荷 {"op":int}）。
+ * @details 闸门顺序与 Python 侧 _h_auto_control 逐条同口径，四操作字分发
+ *          （HSF_AUTO_OP_*；兼容老载荷 {"on":bool}）：
+ *            1) 角色门禁——**停机/急停/复位也要求 root**（自动运行状态属于
+ *               运行决策，不开放只读角色）；
+ *            2) 启动必须在自动模式（**停止/急停/复位永远放行**——停机类
+ *               动作不被任何闸门挡住）；拒绝时照样回显模式与运行位，客户端
+ *               能立刻纠正界面而不是再猜；
+ *            3) 急停锁存语义由 XAutoController 保证（复位前拒绝启动；
+ *               复位只回停止态、不重新启动）。
+ *          应答 = 模式包络（mode/auto/autoRunning 为执行**之后**的值）。
+ */
+static void hsfAppHandleAutoControl(XLinkSession* session,
+                                    const XLinkFrameHeader* frame,
+                                    const uint8_t* payload, XLinkServer* srv)
+{
+    XBsonDocument* doc;
+    XBsonValue* v;
+    bool haveOp = false;
+    int32_t op = 0;
+    bool wantOn = false;      /* 兼容老载荷 {"on":bool}。 */
+    bool changed = false;
+    const char* opName = "";
+
+    /* [权限策略闸] 四板斧全部要求 AutoControl（含停止/急停/复位——自动
+     * 运行状态属于运行决策，不开放只读角色，与 Python 侧同口径）。 */
+    if (!XPermPolicy_check(&s_perm,
+                           (XAccountRole)XLinkServer_sessionRole(srv, session),
+                           (uint32_t)XAccessPerm_AutoControl)) {
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false,
+                                         "权限不足：自动运行控制需要 root 账户"));
+        return;
+    }
+    if (!s_autoCtlReady) {
+        hsfAppRespond(session, frame, hsfAppMakeEnvelope(false, "自动控制器未装配"));
+        return;
+    }
+    doc = XBsonDocument_create();
+    if (doc && XBsonDocument_from_bytes(doc, payload, frame->m_payloadLen)) {
+        v = XBsonDocument_value_keyUtf8(doc, "op");
+        if (v) {
+            op = XBsonValue_toInt32(v, 0);
+            haveOp = true;
+        }
+        v = XBsonDocument_value_keyUtf8(doc, "on");
+        if (v) wantOn = XBsonValue_toBool(v, false);
+    }
+    if (doc) XClassDelete((XClass*)doc);
+
+    /* op 键缺失时按老口径折算（true≈启动 / false≈停止）。 */
+    if (!haveOp) op = wantOn ? HSF_AUTO_OP_START : HSF_AUTO_OP_STOP;
+
+    switch (op) {
+    case HSF_AUTO_OP_START:
+        opName = "启动";
+        if (s_runMode != HsfRunMode_Auto) {
+            hsfAppRespond(session, frame,
+                          hsfAppMakeModeEnvelope(false,
+                              "当前是手动模式：请先切到自动模式，再启动自动运行"));
+            return;
+        }
+        changed = XAutoController_start(&s_autoCtl,
+                                        (uint64_t)XDateTime_currentMSecsSinceEpoch());
+        break;
+    case HSF_AUTO_OP_STOP:
+        opName = "停止";
+        changed = XAutoController_stop(&s_autoCtl,
+                                       (uint64_t)XDateTime_currentMSecsSinceEpoch());
+        break;
+    case HSF_AUTO_OP_ESTOP:
+        opName = "急停";
+        changed = XAutoController_eStop(&s_autoCtl,
+                                        (uint64_t)XDateTime_currentMSecsSinceEpoch());
+        break;
+    case HSF_AUTO_OP_RESET:
+        opName = "复位";
+        changed = XAutoController_reset(&s_autoCtl,
+                                        (uint64_t)XDateTime_currentMSecsSinceEpoch());
+        break;
+    default:
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, "非法 op 操作字（1启动/2停止/3急停/4复位）"));
+        return;
+    }
+    XPrintf("HsfServerApp: 自动运行请求%s（%s）\n", opName,
+            changed ? "已执行" : "已是该状态（幂等）");
     hsfAppRespond(session, frame, hsfAppMakeModeEnvelope(true, NULL));
 }
 
@@ -1004,7 +1286,13 @@ static bool hsfAppControlGate(XLinkSession* session, const XLinkFrameHeader* fra
         /* 自动运行中：远程控制已被禁用 */
         return false;
     }
-    if (srv && XLinkServer_sessionRole(srv, session) < (uint8_t)HSF_ROLE_CONTROL) {
+    /* [权限策略闸] 角色位图判定（零遍历）替代原硬比较；拒绝留痕由
+     * XPermPolicy 的 permissionDenied 信号统一打日志（装配见
+     * hsfAppAccessCtlSetup）。语义与旧口径等价：只有 Admin 持有
+     * DeviceControl。 */
+    if (!XPermPolicy_check(&s_perm,
+                           (XAccountRole)XLinkServer_sessionRole(srv, session),
+                           (uint32_t)XAccessPerm_DeviceControl)) {
         hsfAppRespond(session, frame,
                       hsfAppMakeEnvelope(false,
                           "\xE6\x9D\x83\xE9\x99\x90\xE4\xB8\x8D\xE8\xB6\xB3"
@@ -1189,6 +1477,157 @@ static void hsfAppHandleValveControl(XLinkSession* session,
     }
 }
 
+/**
+ * @brief 进水泵快照编码（count + v{i}_ 前缀键；与 Python _pump_doc 同表）。
+ * @return 新建 XByteArray；泵组未装配/编码失败返回 NULL。@warning 调用方释放。
+ */
+static XByteArray* hsfAppEncodePump(void)
+{
+    const HsfServerIoPump* bank = HsfServerIo_pumps();
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    int count;
+    int i;
+
+    if (!bank) return NULL;
+    count = HsfServerIoPump_count(bank);
+    doc = XBsonDocument_create();
+    if (!doc) return NULL;
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_PUMP_COUNT, count);
+    for (i = 0; i < count; ++i) {
+        const HsfServerIoPumpItem* it = HsfServerIoPump_item(bank, i);
+        char key[32];
+        if (!it) continue;
+        snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_PUMP_NAME);
+        XBsonDocument_insert_keyUtf8_utf8(doc, key, it->m_name);
+        snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_PUMP_ON);
+        XBsonDocument_insert_keyUtf8_bool(doc, key, it->m_on);
+        snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_PUMP_READY);
+        XBsonDocument_insert_keyUtf8_bool(doc, key, it->m_do >= 0);
+        snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_VALVE_VALID);
+        XBsonDocument_insert_keyUtf8_bool(doc, key, it->m_valid);
+        if (it->m_text[0]) {
+            snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_PUMP_TEXT);
+            XBsonDocument_insert_keyUtf8_utf8(doc, key, it->m_text);
+        }
+    }
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    return bytes;
+}
+
+/**
+ * @brief 进水泵快照请求（Response = 泵状态 BSON；未装配回否定应答）。
+ */
+static void hsfAppHandlePumpSnapshot(XLinkSession* session,
+                                     const XLinkFrameHeader* frame)
+{
+    XByteArray* bytes = hsfAppEncodePump();
+    if (!bytes) {
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, "进水泵组未装配"));
+        return;
+    }
+    XLinkSession_sendResponse_ex(session, frame->m_requestId, frame->m_msgCode,
+                                 XLinkDataType_Bson,
+                                 (const uint8_t*)XByteArray_constData(bytes),
+                                 (uint32_t)XByteArray_size_base(bytes));
+    XClassDelete((XClass*)bytes);
+}
+
+/**
+ * @brief 进水泵控制（{"index":int,"on":bool}）。
+ * @details 应答 = 包络 + 最新整帧快照键（复用一套解析，客户端不等下一拍
+ *          就刷新卡片）；幂等"已处于该状态"按成功受理（err 文本随帧带
+ *          err 键，客户端可提示但不判失败）。
+ */
+static void hsfAppHandlePumpControl(XLinkSession* session,
+                                    const XLinkFrameHeader* frame,
+                                    const uint8_t* payload, XLinkServer* srv)
+{
+    XBsonDocument* doc;
+    XBsonValue* v;
+    int index = -1;
+    bool on = false;
+    char err[96];
+    bool ok;
+    XByteArray* respBytes = NULL;
+
+    if (!hsfAppControlGate(session, frame, srv)) return;
+
+    doc = XBsonDocument_create();
+    if (!doc || !XBsonDocument_from_bytes(doc, payload, frame->m_payloadLen)) {
+        if (doc) XClassDelete((XClass*)doc);
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, "控制载荷解析失败"));
+        return;
+    }
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_PUMP_INDEX);
+    if (v) index = XBsonValue_toInt32(v, -1);
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_PUMP_ON);
+    if (v) on = XBsonValue_toBool(v, false);
+    XClassDelete((XClass*)doc);
+
+    err[0] = '\0';
+    ok = HsfServerIo_pumpSet(index, on, err, (int)sizeof(err));
+    if (!ok) {
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, err[0] ? err : "进水泵控制被拒"));
+        return;
+    }
+
+    /* 应答 = {ok, err?(幂等提示)} + 泵快照键（同一帧，客户端一次解析）。
+     * [快照并帧] 快照编解码往返一次，逐元素拷进应答文档（BSON 无文档级
+     * merge；元素迭代是公开 API，键名直接取自元素）。 */
+    {
+        XBsonDocument* resp = XBsonDocument_create();
+        XByteArray* snap = hsfAppEncodePump();
+        XBsonDocument* snapDoc = NULL;
+        if (snap) {
+            snapDoc = XBsonDocument_create();
+            if (snapDoc) {
+                if (!XBsonDocument_from_bytes(
+                        snapDoc, (const uint8_t*)XByteArray_constData(snap),
+                        XByteArray_size_base(snap))) {
+                    XClassDelete((XClass*)snapDoc);
+                    snapDoc = NULL;
+                }
+            }
+            XClassDelete((XClass*)snap);
+        }
+        if (resp) {
+            int64_t e;
+            int64_t snapCount = snapDoc ? XBsonDocument_size_base(snapDoc) : 0;
+            XBsonDocument_insert_keyUtf8_bool(resp, HSF_KEY_OK, true);
+            if (err[0])
+                XBsonDocument_insert_keyUtf8_utf8(resp, HSF_KEY_ERR, err);
+            for (e = 0; e < snapCount; ++e) {
+                const XBsonElement* el = XBsonDocument_at_const(snapDoc, e);
+                const XString* k;
+                const XBsonValue* val;
+                if (!el) continue;
+                k = XBsonElement_key_const(el);
+                val = XBsonElement_value_const(el);
+                if (k && val)
+                    XBsonDocument_insert_keyUtf8_value(
+                        resp, XString_constData(k), (XBsonValue*)val);
+            }
+            respBytes = XBsonDocument_toBson(resp);
+            XClassDelete((XClass*)resp);
+        }
+        if (snapDoc) XClassDelete((XClass*)snapDoc);
+    }
+    if (!respBytes)
+        respBytes = hsfAppMakeEnvelope(true, err[0] ? err : NULL);
+    if (respBytes) {
+        XLinkSession_sendResponse_ex(session, frame->m_requestId,
+                                     frame->m_msgCode, XLinkDataType_Bson,
+                                     (const uint8_t*)XByteArray_constData(respBytes),
+                                     (uint32_t)XByteArray_size_base(respBytes));
+        XClassDelete((XClass*)respBytes);
+    }
+}
+
 static void hsfAppDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
                            const uint8_t* payload)
 {
@@ -1232,6 +1671,15 @@ static void hsfAppDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
             break;
         case HSF_CMD_VALVE_CONTROL:
             hsfAppHandleValveControl(session, frame, payload, srv);
+            break;
+        case HSF_CMD_AUTO_CONTROL:
+            hsfAppHandleAutoControl(session, frame, payload, srv);
+            break;
+        case HSF_CMD_PUMP_SNAPSHOT:
+            hsfAppHandlePumpSnapshot(session, frame);
+            break;
+        case HSF_CMD_PUMP_CONTROL:
+            hsfAppHandlePumpControl(session, frame, payload, srv);
             break;
         default:
             /* 未知命令：回否定应答，客户端可感知（不发则对端空等）。 */
@@ -1320,14 +1768,41 @@ static bool hsfAppRootSessionActive(const XLinkSession* except)
 }
 
 /**
- * @brief 服务端凭据查表（替换框架缺省查表，附 root 单会话策略）。
- * @param userData 注册时传入的会话自身（活跃判定时排除自己）。
+ * @brief 统计某账户当前在线会话数（排除 except）。
+ * @note 登录策略判定的"同账并发"输入；人机界面连接数小，O(n) 足够。
+ */
+static uint32_t hsfAppSameAccountSessions(const XLinkSession* except,
+                                          const char* user)
+{
+    uint32_t n = 0;
+    int i;
+    int total = s_srv ? XLinkServer_sessionCount(s_srv) : 0;
+    if (!user || !user[0]) return 0;
+    for (i = 0; i < total; ++i) {
+        XLinkSession* s = XLinkServer_sessionAt(s_srv, i);
+        const char* u;
+        if (!s || (const XLinkSession*)s == except) continue;
+        u = XLinkServer_sessionUser_const(s_srv, s);
+        if (u && hsfAppUserIs(u, user)) ++n;
+    }
+    return n;
+}
+
+/**
+ * @brief 服务端凭据查表（替换框架缺省查表；账户管理器为主源 + 登录策略闸）。
+ * @param userData 注册时传入的会话自身（同账会话计数时排除自己）。
  * @return 见 XLinkSessionAuthLookupResult。
- * @note 策略门禁：root 只允许一个在线会话（防并行修改）；admin（只读）
- *       不限。拒绝走 BadUser——框架按认证失败发 AuthResult(Rejected)+
- *       Goodbye(AuthFailed)，客户端收到干净的 authFailed（登录窗留在
- *       原地，不会闪进主界面）。查表在会话 pump 栈上同步执行；查表语义
- *       复刻框架缺省版（经公开 userAt 读账户库记录，避免触碰私有状态）。
+ * @details [记录主源=账户管理器] XAccountManager 持有同一格式的账户库，
+ *          且承载运行期策略（失败锁定/到期解锁）。查表改从它读——XLink
+ *          自带的文件副本只作启动兜底；否则 noteFailure 记的锁定/到期
+ *          解锁不会反映到认证路径（两份副本漂移是最危险的静默故障）。
+ *          [登录策略闸] 原"root 单会话"硬编码特例收编为 XLoginPolicy
+ *          缺省策略（匿名关/同账并发关/上限 8），语义零漂移。拒绝走
+ *          BadUser——框架按认证失败发 AuthResult(Rejected)+Goodbye
+ *          (AuthFailed)，客户端收到干净的 authFailed（登录窗留在原地）。
+ *          [KickOld 说明] 本批链路层无"服务端关单个会话"API，KickOld
+ *          暂按拒绝处理并打日志（策略缺省 DenyNew，行为不受影响）。
+ *          查表在会话 pump 栈上同步执行。
  */
 static int hsfAppAuthLookup(void* userData, const char* user,
                             uint8_t saltOut[XLINK_AUTH_SALT_BYTES],
@@ -1336,31 +1811,75 @@ static int hsfAppAuthLookup(void* userData, const char* user,
                             uint8_t* roleOut)
 {
     XLinkSession* self = (XLinkSession*)userData;
-    uint32_t i;
-    uint32_t n;
+    const XLinkUserRecord* r;
+    uint64_t now = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+    char reason[XLOGIN_POLICY_REASON_MAX];
+    bool kick = false;
+    uint32_t active;
+    uint32_t same;
 
-    if (hsfAppUserIs(user, HSF_DEFAULT_ROOT_NAME) && hsfAppRootSessionActive(self)) {
-        XPrintf("HsfServerApp: root 单会话策略拒绝重复登录\n");
+    (void)self;
+    if (!user || !user[0])
+        return XLinkSessionAuthLookup_BadUser;
+
+    /* [到期解锁的惰性判定] 自动锁定到期此刻放行（顺便把持久锁定位清掉）。 */
+    (void)XAccountManager_isLockedNow(&s_accounts, user, now);
+
+    /* [登录策略闸] 总数上限 → 同账并发（匿名会话不走本查表——查表只处理
+     * "报了用户名"的认证；匿名准入在链路层的匿名会话口径，本批全关）。 */
+    active = (uint32_t)(s_srv ? XLinkServer_sessionCount(s_srv) : 0);
+    same = hsfAppSameAccountSessions(self, user);
+    if (!XLoginPolicy_admitSession(&s_loginPolicy, false, active, same,
+                                   reason, (int)sizeof(reason), &kick)) {
+        XPrintf("HsfServerApp: 登录被策略拒绝（%s：%s）\n", user,
+                reason[0] ? reason : "未说明");
         return XLinkSessionAuthLookup_BadUser;
     }
-    if (!user || !user[0] || !s_srv)
+    if (kick) {
+        /* 本批无单会话关闭 API：按拒绝处理（见函数头说明）。 */
+        XPrintf("HsfServerApp: KickOld 模式暂不支持（无单会话关闭 API），"
+                "按拒绝处理：%s\n", user);
         return XLinkSessionAuthLookup_BadUser;
-    n = XLinkServer_userCount(s_srv);
-    for (i = 0; i < n; ++i) {
-        const XLinkUserRecord* r = XLinkServer_userAt(s_srv, i);
-        if (!r || !r->m_name) continue;
-        if (!XString_equals_utf8(r->m_name, user, XChar_CaseSensitive)) continue;
-        if (r->m_flags & XLINK_USER_FLAG_LOCKED)
-            return XLinkSessionAuthLookup_Locked;
-        if (!(r->m_flags & XLINK_USER_FLAG_HAS_PASSWORD))
-            return XLinkSessionAuthLookup_BadUser;
-        memcpy(saltOut, r->m_salt, XLINK_AUTH_SALT_BYTES);
-        *iterationsOut = r->m_iterations;
-        memcpy(hashOut, r->m_hash, XLINK_AUTH_NONCE_BYTES);
-        *roleOut = r->m_role;
-        return XLinkSessionAuthLookup_Ok;
     }
-    return XLinkSessionAuthLookup_BadUser;
+
+    /* [凭据材料] 从账户管理器读（盐/迭代/摘要/角色，与 XLink 格式逐字节
+     * 同构）；锁定态已含上面 isLockedNow 的到期判定结果。 */
+    r = XAccountManager_find(&s_accounts, user);
+    if (!r)
+        return XLinkSessionAuthLookup_BadUser;
+    if (XLinkUserStore_isLocked(r))
+        return XLinkSessionAuthLookup_Locked;
+    if (!XLinkUserStore_hasPassword(r))
+        return XLinkSessionAuthLookup_BadUser;
+    memcpy(saltOut, r->m_salt, XLINK_AUTH_SALT_BYTES);
+    *iterationsOut = r->m_iterations;
+    memcpy(hashOut, r->m_hash, XLINK_AUTH_NONCE_BYTES);
+    *roleOut = r->m_role;
+    return XLinkSessionAuthLookup_Ok;
+}
+
+/**
+ * @brief 认证结果回灌槽：成功→清失败计数；失败→失败计数（达阈值自动锁定）。
+ * @details 挂在每会话 authChanged 上（notify Added 时 connect）。用户名取
+ *          会话的已认证名——失败时该名为空（认证没过），拿不到名字就不记
+ *          （防止给空名/不存在的名字建计数表项；"用户名不存在"的失败本就
+ *          不该喂给账户层）。
+ */
+static void hsfAppOnAuthChanged(XObject* sender, XVarList* args)
+{
+    XLinkSession* session = (XLinkSession*)sender;
+    bool passed;
+    const char* user;
+
+    if (!args) return;
+    XVarList_start(args);
+    passed = XVarList_arg(args, bool);
+    (void)XVarList_arg(args, uint8_t);   /* status */
+    (void)XVarList_arg(args, uint8_t);   /* role */
+    if (!passed || !s_srv || !session) return;
+    user = XLinkServer_sessionUser_const(s_srv, session);
+    if (!user || !user[0]) return;
+    XAccountManager_noteSuccess(&s_accounts, user);
 }
 
 static void hsfAppNotify(XLinkServer* self, XLinkSession* session,
@@ -1368,9 +1887,13 @@ static void hsfAppNotify(XLinkServer* self, XLinkSession* session,
 {
     (void)self;
     if (event == XLinkServerSessionEvent_Added && session) {
-        /* 替换框架缺省查表（accept 时挂的）为带 root 单会话策略的版本；
-         * userData 传会话自身，供活跃判定排除自己。 */
+        /* 替换框架缺省查表（accept 时挂的）为"账户管理器主源 + 登录策略
+         * 闸"版本；userData 传会话自身，供同账会话计数排除自己。 */
         XLinkSession_setAuthLookup(session, hsfAppAuthLookup, session);
+        /* 认证结果回灌：成功→清账户失败计数（防误锁定）。 */
+        XObject_connect_2((XObject*)session,
+                          XSignal(XLinkSession_authChanged_signal),
+                          hsfAppOnAuthChanged);
     }
     /* [2026-11-05 协议顺序根修] 原先在此处（Added = 连接已接受、**尚未
      * 握手**）就直发一份设备健康快照。这违反"握手前不发业务帧"的顺序：
@@ -1424,6 +1947,7 @@ enum {
     HSF_PUSH_GATE_AI,
     HSF_PUSH_GATE_DIGITAL,   /**< 数字量位图（无侧维度，用 [0]）。 */
     HSF_PUSH_GATE_VALVE,     /**< 电磁阀 6 路快照（无侧维度，用 [0]）。 */
+    HSF_PUSH_GATE_PUMP,      /**< 进水泵快照（无侧维度，用 [0]）。 */
     HSF_PUSH_GATE_COUNT
 };
 
@@ -1483,6 +2007,8 @@ static void hsfAppPushGatesInit(void)
         (HSF_DIGITAL_PUSH_MS > 0) ? (uint32_t)HSF_DIGITAL_PUSH_MS : 0u;
     s_pushGates[HSF_PUSH_GATE_VALVE][0].m_intervalMs =
         (HSF_VALVE_PUSH_MS > 0) ? (uint32_t)HSF_VALVE_PUSH_MS : 0u;
+    s_pushGates[HSF_PUSH_GATE_PUMP][0].m_intervalMs =
+        (HSF_PUMP_PUSH_MS > 0) ? (uint32_t)HSF_PUMP_PUSH_MS : 0u;
     (void)t;
 }
 
@@ -1782,6 +2308,62 @@ static void hsfAppPublishTopicNow(XLinkServer* srv, XLinkSession* session,
 }
 
 /**
+ * @brief 生成数字量通道名（宏缺省 + 阀/泵点位覆盖）。
+ * @details 与 Python 侧 `_digital_channel_names` / `_pump_channel_names` 同口径：
+ *          阀 DO="<name> 控制"、开到位 DI="<name> 开到位"、关到位 DI=
+ *          "<name> 关到位"；泵 DO="<name>"（不加后缀）。
+ *          服务端是名字的唯一事实源，客户端只按帧更新。
+ * @param diNames 输出 DI 名字数组（容量 HSF_DIG_CHANNELS_MAX）。
+ * @param doNames 输出 DO 名字数组。
+ * @param count 本次快照点数（≤ HSF_DIG_CHANNELS_MAX）。
+ * @note 单线程事件循环内调用；静态缓冲避免每拍分配。
+ */
+static void hsfAppBuildDigitalNames(const char** diNames, const char** doNames,
+                                    int count)
+{
+    static const char* const kDi[HSF_DIG_CHANNELS_MAX] = HSF_DIG_DI_NAMES;
+    static const char* const kDo[HSF_DIG_CHANNELS_MAX] = HSF_DIG_DO_NAMES;
+    static char s_diBuf[HSF_DIG_CHANNELS_MAX][96];
+    static char s_doBuf[HSF_DIG_CHANNELS_MAX][96];
+    const HsfServerIoValve* valves = HsfServerIo_valves();
+    const HsfServerIoPump* pumps = HsfServerIo_pumps();
+    int i;
+
+    if (count > HSF_DIG_CHANNELS_MAX) count = HSF_DIG_CHANNELS_MAX;
+    for (i = 0; i < count; ++i) {
+        snprintf(s_diBuf[i], sizeof(s_diBuf[i]), "%s", kDi[i] ? kDi[i] : "");
+        snprintf(s_doBuf[i], sizeof(s_doBuf[i]), "%s", kDo[i] ? kDo[i] : "");
+        diNames[i] = s_diBuf[i];
+        doNames[i] = s_doBuf[i];
+    }
+    if (valves) {
+        int n = HsfServerIoValve_count(valves);
+        for (i = 0; i < n; ++i) {
+            const HsfServerIoValveItem* it = HsfServerIoValve_item(valves, i);
+            if (!it) continue;
+            if (it->m_do >= 0 && it->m_do < count)
+                snprintf(s_doBuf[it->m_do], sizeof(s_doBuf[it->m_do]),
+                         "%s 控制", it->m_name);
+            if (it->m_openDi >= 0 && it->m_openDi < count)
+                snprintf(s_diBuf[it->m_openDi], sizeof(s_diBuf[it->m_openDi]),
+                         "%s 开到位", it->m_name);
+            if (it->m_closeDi >= 0 && it->m_closeDi < count)
+                snprintf(s_diBuf[it->m_closeDi], sizeof(s_diBuf[it->m_closeDi]),
+                         "%s 关到位", it->m_name);
+        }
+    }
+    if (pumps) {
+        int n = HsfServerIoPump_count(pumps);
+        for (i = 0; i < n; ++i) {
+            const HsfServerIoPumpItem* it = HsfServerIoPump_item(pumps, i);
+            if (it && it->m_do >= 0 && it->m_do < count)
+                snprintf(s_doBuf[it->m_do], sizeof(s_doBuf[it->m_do]),
+                         "%s", it->m_name);
+        }
+    }
+}
+
+/**
  * @brief 编码数字量快照（16DI/16DO 位图）。
  * @return 新建字节数组；未装配返回 NULL。@warning 调用方释放。
  */
@@ -1808,18 +2390,19 @@ static XByteArray* hsfAppEncodeDigital(bool full)
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_DIG_COUNT, count);
     XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_VALVE_VALID, valid);
     if (full) {
-        /* 全量：把服务端宏里的通道名一并下发（名字的唯一事实源在服务端）。 */
-        static const char* const kDiNames[HSF_DIG_CHANNELS_MAX] = HSF_DIG_DI_NAMES;
-        static const char* const kDoNames[HSF_DIG_CHANNELS_MAX] = HSF_DIG_DO_NAMES;
+        /* 全量：把服务端通道名一并下发（名字的唯一事实源在服务端）。 */
+        const char* diNames[HSF_DIG_CHANNELS_MAX];
+        const char* doNames[HSF_DIG_CHANNELS_MAX];
         int i;
+        hsfAppBuildDigitalNames(diNames, doNames, count);
         for (i = 0; i < count && i < HSF_DIG_CHANNELS_MAX; ++i) {
             char key[24];
             snprintf(key, sizeof(key), HSF_KEY_DIG_DI_NAME_FMT, i);
-            if (kDiNames[i])
-                XBsonDocument_insert_keyUtf8_utf8(doc, key, kDiNames[i]);
+            if (diNames[i][0])
+                XBsonDocument_insert_keyUtf8_utf8(doc, key, diNames[i]);
             snprintf(key, sizeof(key), HSF_KEY_DIG_DO_NAME_FMT, i);
-            if (kDoNames[i])
-                XBsonDocument_insert_keyUtf8_utf8(doc, key, kDoNames[i]);
+            if (doNames[i][0])
+                XBsonDocument_insert_keyUtf8_utf8(doc, key, doNames[i]);
         }
     }
     bytes = XBsonDocument_toBson(doc);
@@ -1835,8 +2418,8 @@ static XByteArray* hsfAppEncodeDigitalNames(void)
 {
     XBsonDocument* doc;
     XByteArray* bytes;
-    static const char* const kDiNames[HSF_DIG_CHANNELS_MAX] = HSF_DIG_DI_NAMES;
-    static const char* const kDoNames[HSF_DIG_CHANNELS_MAX] = HSF_DIG_DO_NAMES;
+    const char* diNames[HSF_DIG_CHANNELS_MAX];
+    const char* doNames[HSF_DIG_CHANNELS_MAX];
     int count;
     int i;
 
@@ -1846,14 +2429,15 @@ static XByteArray* hsfAppEncodeDigitalNames(void)
     if (!doc) return NULL;
     XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_FULL, true);
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_DIG_COUNT, count);
+    hsfAppBuildDigitalNames(diNames, doNames, count);
     for (i = 0; i < count && i < HSF_DIG_CHANNELS_MAX; ++i) {
         char key[24];
         snprintf(key, sizeof(key), HSF_KEY_DIG_DI_NAME_FMT, i);
-        if (kDiNames[i])
-            XBsonDocument_insert_keyUtf8_utf8(doc, key, kDiNames[i]);
+        if (diNames[i][0])
+            XBsonDocument_insert_keyUtf8_utf8(doc, key, diNames[i]);
         snprintf(key, sizeof(key), HSF_KEY_DIG_DO_NAME_FMT, i);
-        if (kDoNames[i])
-            XBsonDocument_insert_keyUtf8_utf8(doc, key, kDoNames[i]);
+        if (doNames[i][0])
+            XBsonDocument_insert_keyUtf8_utf8(doc, key, doNames[i]);
     }
     bytes = XBsonDocument_toBson(doc);
     XClassDelete((XClass*)doc);
@@ -2021,6 +2605,67 @@ static void hsfAppTickDigitalValve(XLinkServer* self)
     }
 }
 
+/**
+ * @brief 自动运行告警抽取：取走控制器在队报警，逐条广播给订阅会话。
+ * @details [为什么走 XLink 推送] 自动运行的异常（动作失败/设备不可用/
+ *          逻辑自定义）远端必须能看见——远程管理的闭环是"订阅告警主题 +
+ *          AUTO_CONTROL 启停"。取走即消费：一条报警只出一次帧，与阀告警
+ *          同款防刷屏口径。无人订阅时 publish 静默为 0，事件不丢（帧内容
+ *          已打日志留痕）。
+ */
+static void hsfAppPushAutoAlarms(XLinkServer* self, uint64_t now)
+{
+    XAutoControlAlarm alarm;
+    while (XAutoController_takeAlarm(&s_autoCtl, &alarm)) {
+        XByteArray* bytes = XAutoControlCodec_alarmToBson(&alarm);
+        if (bytes) {
+            XLinkServer_publish_ex(self, HSF_TOPIC_AUTO_ALARM,
+                                   XLinkDataType_Bson,
+                                   (const uint8_t*)XByteArray_constData(bytes),
+                                   (uint32_t)XByteArray_size_base(bytes));
+            XClassDelete((XClass*)bytes);
+        }
+        XPrintf("HsfServerApp: 自动运行报警 类型%d @%llu：%s\n",
+                alarm.m_kind, (unsigned long long)alarm.m_atMs, alarm.m_text);
+    }
+    (void)now;
+}
+
+/**
+ * @brief 进水泵推送拍（先 poll（回显校准/外部改动接管）再按闸推送）。
+ * @note  外部改动留痕：poll 发现回显翻转时 m_text 带一次性说明，本拍打
+ *        日志（泵没有告警面——无反馈就没有可比对的真相源，见
+ *        HsfServerIoPump.h）。
+ */
+static void hsfAppTickPump(XLinkServer* self)
+{
+    const HsfServerIoPump* bank = HsfServerIo_pumps();
+    int count = HsfServerIoPump_count(bank);
+    int i;
+    uint64_t now = XDateTime_currentMSecsSinceEpoch();
+
+    /* 先 poll：DO 回显校准 + 外部改动接管（未装配时内部置 valid=false）。 */
+    HsfServerIo_pumpPoll();
+
+    /* 外部改动留痕（一次性文本出现即打；下一拍状态一致后清掉不再刷屏）。 */
+    for (i = 0; i < count; ++i) {
+        const HsfServerIoPumpItem* it = HsfServerIoPump_item(bank, i);
+        if (it && it->m_text[0])
+            XPrintf("HsfServerApp: 进水泵 %s（%d）%s\n", it->m_name, i, it->m_text);
+    }
+
+    if (hsfAppPushDue(&s_pushGates[HSF_PUSH_GATE_PUMP][0], now)) {
+        XByteArray* bytes = hsfAppEncodePump();
+        if (bytes) {
+            XLinkServer_publish_ex(self, HSF_TOPIC_PUMP_STATUS,
+                                   XLinkDataType_Bson,
+                                   (const uint8_t*)XByteArray_constData(bytes),
+                                   (uint32_t)XByteArray_size_base(bytes));
+            XClassDelete((XClass*)bytes);
+        }
+    }
+}
+
 static void hsfAppTick(XLinkServer* self, void* userData)
 {
     /* 设备健康：事件驱动巡检（变化才推）。 */
@@ -2031,11 +2676,22 @@ static void hsfAppTick(XLinkServer* self, void* userData)
 
     (void)userData;
 
+    /* 自动运行控制器：只在自动模式下步进（手动模式 step 闸门也会拦，
+     * 这里显式判一次省得空转）；告警抽取与模式无关（停机也可能有在队
+     * 报警要清空——stop 保留在队事件，见 XAutoController_stop 契约）。 */
+    if (s_autoCtlReady) {
+        uint64_t nowAuto = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+        if (s_runMode == HsfRunMode_Auto)
+            XAutoController_step(&s_autoCtl, nowAuto);
+        hsfAppPushAutoAlarms(self, nowAuto);
+    }
+
     hsfAppTickVfd(self);
     hsfAppTickTempHum(self);
     hsfAppTickFlowMeter(self);
     hsfAppTickTurbidity(self);
     hsfAppTickDigitalValve(self);   /* 数字量 + 电磁阀（先判读后编码）。 */
+    hsfAppTickPump(self);           /* 进水泵（先 poll 后编码）。 */
     /* 模拟量无侧维度，单闸。 */
     if (hsfAppPushDue(&s_pushGates[HSF_PUSH_GATE_AI][0],
                       XDateTime_currentMSecsSinceEpoch()))
@@ -2045,39 +2701,114 @@ static void hsfAppTick(XLinkServer* self, void* userData)
 /* ==================== 账户库 ==================== */
 
 /**
- * @brief 装配账户库：落数据目录 JSON；空库时创建缺省账户并落盘。
- * @return 账户库可用返回 true。
+ * @brief 权限拒绝留痕槽（XPermPolicy.permissionDenied → 日志）。
+ * @details 约束 5"拒绝必须留痕"的服务端落点：本批落日志（含角色/权限/
+ *          时刻），推远端走扩展位。s_perm 是静态对象，NULL 会话照记。
  */
-static bool hsfAppSetupUsers(XLinkServer* srv)
+static void hsfAppOnPermDenied(XObject* sender, XVarList* args)
+{
+    int role = -1;
+    int32_t perm = 0;
+    int64_t atMs = 0;
+    (void)sender;
+    if (!args) return;
+    XVarList_start(args);
+    role = XVarList_arg(args, int);
+    perm = XVarList_arg(args, int32_t);
+    atMs = XVarList_arg(args, int64_t);
+    XPrintf("HsfServerApp: 权限拒绝 角色%d 权限0x%X @%llu\n",
+            role, (unsigned)perm, (unsigned long long)atMs);
+}
+
+/**
+ * @brief 登录被拒留痕槽（XLoginPolicy.loginRejected → 日志）。
+ * @details 与权限拒绝同一审计口径；原因已由 authLookup 打过带用户名的
+ *          日志，这里只补一条事件级留痕（方便与 access 日志对账）。
+ */
+static void hsfAppOnLoginRejected(XObject* sender, XVarList* args)
+{
+    const char* name = "";
+    const char* reason = "";
+    int64_t atMs = 0;
+    (void)sender;
+    if (!args) return;
+    XVarList_start(args);
+    name = XVarList_arg(args, const char*);
+    reason = XVarList_arg(args, const char*);
+    atMs = XVarList_arg(args, int64_t);
+    XPrintf("HsfServerApp: 登录拒绝留痕（%s：%s @%llu）\n",
+            name ? name : "", reason ? reason : "",
+            (unsigned long long)atMs);
+}
+
+/**
+ * @brief 装配访问控制三件（账户/权限/登录策略）+ 账户库引导落盘。
+ * @param srv XLink 服务端（账户文件路径同步给它作启动兜底；可为 NULL）。
+ * @return 账户库可用返回 true（失败仍继续：登录链路可先联调）。
+ * @details 装配顺序：
+ *            1) 账户库路径 = <数据目录>/hsf_users.json（与旧版同文件，
+ *               格式逐字节同构，现有部署零迁移）；
+ *            2) load → 空库 ensureDefaults（admin/admin 只读 + root/root
+ *               管理，只建一次）→ save（原子写）；
+ *            3) XLinkServer_setUserStorePath 同步文件（框架内部缺省查表的
+ *               兜底源；实际认证走 hsfAppAuthLookup=账户管理器主源）；
+ *            4) 权限策略缺省表（None=无/User=只读/Admin=全权），拒绝留痕
+ *               开（→ 日志）；
+ *            5) 登录策略缺省（匿名关/同账并发关/上限 8/DenyNew）——即旧
+ *               "root 单会话"语义收编；策略落盘 hsf_login_policy.json。
+ *          [本批边界] 远端账户/策略管理命令面（CMD_ACCOUNT_* / 策略下发）
+ *          为扩展位未实现；本地变更直接改 JSON 或后续批次上命令面。
+ */
+static bool hsfAppAccessCtlSetup(XLinkServer* srv)
 {
     char path[600];
+    char policyPath[600];
     const char* dir = HsfServerSettings_dataDir();
+    bool ok;
+
     if (!dir || !dir[0]) dir = ".";
     snprintf(path, sizeof(path), "%s/hsf_users.json", dir);
-    if (!XLinkServer_setUserStorePath(srv, path)) {
-        XPrintf("HsfServerApp: 账户库加载失败（%s）\n", path);
-        return false;
+    snprintf(policyPath, sizeof(policyPath), "%s/hsf_login_policy.json", dir);
+
+    /* ---- 账户管理器 ---- */
+    XAccountManager_init(&s_accounts);
+    XAccountManager_setPath(&s_accounts, path);
+    ok = XAccountManager_load(&s_accounts);
+    if (!ok) {
+        XPrintf("HsfServerApp: 账户库加载失败（%s）——按空库继续\n\n", path);
     }
-    if (XLinkServer_userCount(srv) == 0) {
-        /* 首次启动：admin=只读（User 角色），root=管理员（可控制）。 */
-        if (!XLinkServer_addUser(srv, HSF_DEFAULT_USER_NAME, HSF_DEFAULT_USER_PASS,
-                                 (uint8_t)XLinkAuthRole_User) ||
-            !XLinkServer_addUser(srv, HSF_DEFAULT_ROOT_NAME, HSF_DEFAULT_ROOT_PASS,
-                                 (uint8_t)XLinkAuthRole_Admin)) {
-            XPrintf("HsfServerApp: 缺省账户创建失败\n");
-            return false;
-        }
-        if (!XLinkServer_saveUserStore(srv)) {
-            XPrintf("HsfServerApp: 账户库落盘失败（%s）——本次仍可用\n", path);
-        } else {
-            XPrintf("HsfServerApp: 缺省账户已创建（%s）：admin/admin 只读、"
-                    "root/root 可改\n", path);
-        }
+    if (XAccountManager_ensureDefaults(&s_accounts)) {
+        XPrintf("HsfServerApp: 缺省账户已创建（%s）：admin/admin 只读、"
+                "root/root 可改（请尽快改密）\n\n", path);
     } else {
-        XPrintf("HsfServerApp: 账户库已加载（%s，%d 账户）\n", path,
-                XLinkServer_userCount(srv));
+        XPrintf("HsfServerApp: 账户库已加载（%s，%u 账户）\n\n", path,
+                (unsigned)XAccountManager_count(&s_accounts));
     }
-    return true;
+    if (!XAccountManager_save(&s_accounts)) {
+        XPrintf("HsfServerApp: 账户库落盘失败（%s）——本次仍可用\n\n", path);
+    }
+    if (srv) XLinkServer_setUserStorePath(srv, path);
+
+    /* ---- 权限策略：缺省表 + 拒绝留痕 ---- */
+    XPermPolicy_init(&s_perm);
+    XObject_connect_2((XObject*)&s_perm,
+                      XSignal(XPermPolicy_permissionDenied_signal),
+                      hsfAppOnPermDenied);
+
+    /* ---- 登录策略：缺省（匿名关/并发关/上限8/DenyNew）+ 留痕 + 落盘 ---- */
+    XLoginPolicy_init(&s_loginPolicy);
+    XLoginPolicy_setPath(&s_loginPolicy, policyPath);
+    XLoginPolicy_load(&s_loginPolicy);       /* 不存在=保持缺省。 */
+    XObject_connect_2((XObject*)&s_loginPolicy,
+                      XSignal(XLoginPolicy_loginRejected_signal),
+                      hsfAppOnLoginRejected);
+    XPrintf("HsfServerApp: 登录策略（匿名=%d 同账并发=%d 上限=%u 模式=%d，%s）\n\n",
+            XLoginPolicy_anonymousAllowed(&s_loginPolicy) ? 1 : 0,
+            XLoginPolicy_concurrentAllowed(&s_loginPolicy) ? 1 : 0,
+            (unsigned)XLoginPolicy_maxSessions(&s_loginPolicy),
+            (int)XLoginPolicy_concurrencyMode(&s_loginPolicy),
+            policyPath);
+    return ok;
 }
 
 /* ==================== 公开 API ==================== */
@@ -2097,10 +2828,8 @@ bool HsfServerApp_start(uint16_t port)
     XLinkServer_setTickCallback(s_srv, hsfAppTick, NULL);
     XLinkServer_setTickInterval(s_srv, HSF_TELEMETRY_MS);
     hsfAppPushGatesInit();      /* 三主题按各自间隔分频（0=跟随基准节拍）。 */
-    if (!hsfAppSetupUsers(s_srv)) {
-        XClassDelete((XClass*)s_srv);
-        s_srv = NULL;
-        return false;
+    if (!hsfAppAccessCtlSetup(s_srv)) {
+        XPrintf("HsfServerApp: 账户库不可用（继续启动，登录链路可先联调）\n");
     }
     XLinkServer_setAuthEnabled(s_srv, true);
     if (!XLinkServer_listen(s_srv, NULL, port)) {
@@ -2109,12 +2838,15 @@ bool HsfServerApp_start(uint16_t port)
         s_srv = NULL;
         return false;
     }
-    /* 恢复持久化的运行模式，并同步到设备控制闸。 */
+    /* 恢复持久化的运行模式，并同步到设备控制闸。控制器**一律保持停止**：
+     * 重启 = 没人按过启动，设备不能自己动（模式位只是授权态）。 */
     s_runMode = (HsfServerSettings_getInt("run/mode", 0) == (int)HsfRunMode_Auto)
                     ? HsfRunMode_Auto : HsfRunMode_Manual;
     hsfAppApplyModeToDevices();
-    XPrintf("HsfServerApp: 运行模式 = %s\n",
-            s_runMode == HsfRunMode_Auto ? "自动（远程控制禁用）" : "手动");
+    hsfAppAutoCtlSetup();
+    XPrintf("HsfServerApp: 运行模式 = %s（自动运行 %s）\n",
+            s_runMode == HsfRunMode_Auto ? "自动（远程控制禁用）" : "手动",
+            XAutoController_running(&s_autoCtl) ? "运行中" : "停止");
 
     XPrintf("HsfServerApp: XLink 服务端就绪（端口 %u，鉴权开，"
             "遥测 %dms）\n", (unsigned)port, HSF_TELEMETRY_MS);
@@ -2124,6 +2856,13 @@ bool HsfServerApp_start(uint16_t port)
 void HsfServerApp_stop(void)
 {
     if (!s_srv) return;
+    /* 控制器强制停（服务端关闭不该留下"还在自动跑"的状态），随后整体
+     * 回到未装配态——下次 start 重新走 hsfAppAutoCtlSetup。 */
+    if (s_autoCtlReady) {
+        XAutoController_stop(&s_autoCtl,
+                             (uint64_t)XDateTime_currentMSecsSinceEpoch());
+        XAutoController_setStepHandler(&s_autoCtl, NULL, NULL);
+    }
     XLinkServer_close(s_srv);
     XClassDelete((XClass*)s_srv);
     s_srv = NULL;

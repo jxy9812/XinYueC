@@ -124,11 +124,64 @@ bool XJsonObject_insert_keyUtf8_string_move(XJsonObject* object, const char* key
         return false;
     XString_Init_Utf8(str, key);
     XJsonValue_Init(value, XJsonValue_String);
-    value->data.string = strValue;
+    /* 与全框架 *_move 语义统一：内容转移到目标，源留空壳，壳仍归调用方
+       释放。不要直接把 strValue 指针交给 map——插入失败时源会被本函数
+       释放，调用方既无法感知也无法继续使用。 */
+    value->data.string = XString_create_move(strValue);
+    if (value->data.string == NULL) {
+        XClassDeinit(str);
+        XJsonValue_deinit(value);
+        return false;
+    }
     bool ret = XJsonObject_insert_move_base(object, str, value);
     XClassDeinit(str);
     XJsonValue_deinit(value);
     return ret;
+}
+
+/**
+ * @brief 指针接管插入的公共实现。
+ * @details 调用即接管 value 的内容：成功时 value 已被移空；失败时 value
+ *          仍持有入参（或已被 map 内部释放并清零），统一由这里 deinit。
+ */
+static bool XJsonObject_insertRefValue(XJsonObject* object, const char* key,
+                                       XJsonValue* value)
+{
+    XString_Init_Utf8(str, key);
+    bool ret = XJsonObject_insert_move_base(object, str, value);
+    XJsonValue_deinit(value);
+    XClassDeinit(str);
+    return ret;
+}
+
+bool XJsonObject_insert_keyUtf8_string_ref(XJsonObject* object, const char* key,
+                                           XString* strValue)
+{
+    if (object == NULL || key == NULL || strValue == NULL)
+        return false;
+    XJsonValue_Init(value, XJsonValue_String);
+    value->data.string = strValue;   /* 指针接管：零分配 */
+    return XJsonObject_insertRefValue(object, key, value);
+}
+
+bool XJsonObject_insert_keyUtf8_array_ref(XJsonObject* object, const char* key,
+                                          XJsonArray* array)
+{
+    if (object == NULL || key == NULL || array == NULL)
+        return false;
+    XJsonValue_Init(value, XJsonValue_Array);
+    value->data.array = array;       /* 指针接管：零分配 */
+    return XJsonObject_insertRefValue(object, key, value);
+}
+
+bool XJsonObject_insert_keyUtf8_object_ref(XJsonObject* object, const char* key,
+                                           XJsonObject* valueObj)
+{
+    if (object == NULL || key == NULL || valueObj == NULL)
+        return false;
+    XJsonValue_Init(value, XJsonValue_Object);
+    value->data.object = valueObj;   /* 指针接管：零分配 */
+    return XJsonObject_insertRefValue(object, key, value);
 }
 
 bool XJsonObject_insert_keyUtf8_utf8(XJsonObject* object, const char* key, const char* utf8)
@@ -242,18 +295,26 @@ bool XJsonObject_remove_keyUtf8(XJsonObject* object, const char* key)
     return ret;
 }
 
-XJsonValue* XJsonObject_value_keyUtf8(const XJsonObject* object, const char* key)
+const XJsonValue* XJsonObject_value_keyUtf8(const XJsonObject* object,
+                                            const char* key)
 {
     XJsonValue* value;
     XString* string;
     if (!object || !key)
-        return XJsonValue_create_undefined();
+        return NULL;
     string = XString_create_utf8(key);
     if (!string)
         return NULL;
     value = XJsonObject_value_base((XJsonObject*)object, string);
     XClassDelete(string);
-    return value ? XJsonValue_create_copy(value) : XJsonValue_create_undefined();
+    return value;   /* 借用：指向对象内部，调用方不得释放/长期持有 */
+}
+
+XJsonValue* XJsonObject_value_copy_keyUtf8(const XJsonObject* object,
+                                           const char* key)
+{
+    const XJsonValue* value = XJsonObject_value_keyUtf8(object, key);
+    return value ? XJsonValue_create_copy((XJsonValue*)value) : NULL;
 }
 
 bool XJsonObject_contains_keyUtf8(const XJsonObject* object, const char* key)
@@ -272,9 +333,14 @@ bool XJsonObject_contains_keyUtf8(const XJsonObject* object, const char* key)
 
 XJsonValue* XJsonObject_take_keyUtf8(XJsonObject* object, const char* key)
 {
-    XJsonValue* value = XJsonObject_value_keyUtf8(object, key);
-    if (!value || XJsonValue_isUndefined(value))
-        return value;
+    const XJsonValue* borrowed = XJsonObject_value_keyUtf8(object, key);
+    XJsonValue* value;
+    if (!borrowed)
+        return XJsonValue_create_undefined();
+    /* 先拷贝再移除：remove 会使借用指针失效。 */
+    value = XJsonValue_create_copy((XJsonValue*)borrowed);
+    if (!value)
+        return XJsonValue_create_undefined();
     if (!XJsonObject_remove_keyUtf8(object, key)) {
         XJsonValue_delete(value);
         return XJsonValue_create_undefined();
@@ -469,6 +535,8 @@ XVariantMap* XJsonObject_toVariantMap_move(XJsonObject* object)
         XMap_insert_valueMove_base(map, XPair_first(pair), var);
         XClassDelete(var);
     }
+    /* 与 XBsonDocument_toVariantMap_move 一致：移动后源容器为空。 */
+    XJsonObject_clear_base(object);
     return map;
 }
 XVariant* XJsonObject_toVariant(const XJsonObject* obj)

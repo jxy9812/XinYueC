@@ -220,35 +220,29 @@ static bool xlogin_set_password(XConsoleShellLoginRecord* record, const char* pa
 static bool xlogin_json_string(const XJsonObject* object, const char* key,
                                char* output, size_t outputSize)
 {
-    XJsonValue* value;
+    const XJsonValue* value;
     const XString* string;
     const char* utf8;
     if (!object || !key || !output || outputSize == 0) return false;
     value = XJsonObject_value_keyUtf8(object, key);
     string = value ? XJsonValue_toString(value) : NULL;
     utf8 = string ? XString_toUtf8(string) : NULL;
-    if (!utf8 || XStrlen(utf8) >= outputSize) {
-        if (value) XJsonValue_delete(value);
+    if (!utf8 || XStrlen(utf8) >= outputSize)
         return false;
-    }
     XStrcpy(output, utf8);
-    XJsonValue_delete(value);
     return true;
 }
 
 static bool xlogin_json_int(const XJsonObject* object, const char* key,
                             uint32_t* output, bool required)
 {
-    XJsonValue* value;
+    const XJsonValue* value;
     if (!object || !key || !output) return false;
     value = XJsonObject_value_keyUtf8(object, key);
-    if (!value || !XJsonValue_isInt(value)) {
-        if (value) XJsonValue_delete(value);
+    if (!value || !XJsonValue_isInt(value))
         return !required;
-    }
     {
         int64_t number = XJsonValue_toInt(value, -1);
-        XJsonValue_delete(value);
         if (number < 0 || (uint64_t)number > UINT32_MAX) return false;
         *output = (uint32_t)number;
     }
@@ -258,23 +252,20 @@ static bool xlogin_json_int(const XJsonObject* object, const char* key,
 static bool xlogin_json_bool(const XJsonObject* object, const char* key,
                              bool* output)
 {
-    XJsonValue* value;
+    const XJsonValue* value;
     if (!object || !key || !output) return false;
     value = XJsonObject_value_keyUtf8(object, key);
     if (!value) return false;
-    if (!XJsonValue_isBool(value)) {
-        XJsonValue_delete(value);
+    if (!XJsonValue_isBool(value))
         return false;
-    }
     *output = XJsonValue_toBool(value, false);
-    XJsonValue_delete(value);
     return true;
 }
 
 static bool xlogin_read_groups(const XJsonObject* object,
                                XConsoleShellLoginRecord* record)
 {
-    XJsonValue* value;
+    const XJsonValue* value;
     const XJsonArray* array;
     size_t i;
     if (!object || !record) return false;
@@ -282,21 +273,16 @@ static bool xlogin_read_groups(const XJsonObject* object,
     value = XJsonObject_value_keyUtf8(object, "groups");
     if (!value) return false;
     array = XJsonValue_toArray(value);
-    if (!array || XJsonArray_size_base(array) > XCONSOLE_SHELL_LOGIN_GROUP_CAPACITY) {
-        XJsonValue_delete(value);
+    if (!array || XJsonArray_size_base(array) > XCONSOLE_SHELL_LOGIN_GROUP_CAPACITY)
         return false;
-    }
     for (i = 0; i < XJsonArray_size_base(array); ++i) {
         const XJsonValue* item = XJsonArray_at_const(array, (int64_t)i);
         int64_t group = item && XJsonValue_isInt(item) ?
             XJsonValue_toInt(item, -1) : -1;
-        if (group < 0 || (uint64_t)group > UINT32_MAX) {
-            XJsonValue_delete(value);
+        if (group < 0 || (uint64_t)group > UINT32_MAX)
             return false;
-        }
         record->groups[record->groupCount++] = (uint32_t)group;
     }
-    XJsonValue_delete(value);
     return true;
 }
 
@@ -346,7 +332,7 @@ static bool xlogin_load(XConsoleShell* shell,
     XString* text = NULL;
     XJsonDocument* document = NULL;
     XJsonObject* root;
-    XJsonValue* usersValue = NULL;
+    const XJsonValue* usersValue = NULL;
     const XJsonArray* users;
     char buffer[XCONSOLE_SHELL_LOGIN_CONFIG_MAX_BYTES + 1u];
     size_t readSize = 0;
@@ -389,7 +375,6 @@ static bool xlogin_load(XConsoleShell* shell,
     users = usersValue ? XJsonValue_toArray(usersValue) : NULL;
     if (!document || !root || !users ||
         XJsonArray_size_base(users) > XCONSOLE_SHELL_LOGIN_USER_CAPACITY) {
-        if (usersValue) XJsonValue_delete(usersValue);
         if (document) XClassDelete(document);
         return false;
     }
@@ -397,13 +382,11 @@ static bool xlogin_load(XConsoleShell* shell,
         const XJsonValue* value = XJsonArray_at_const(users, (int64_t)i);
         const XJsonObject* object = value ? XJsonValue_toObject(value) : NULL;
         if (!object || !xlogin_read_record(object, &records[*count])) {
-            XJsonValue_delete(usersValue);
             XClassDelete(document);
             return false;
         }
         ++*count;
     }
-    XJsonValue_delete(usersValue);
     XClassDelete(document);
     return true;
 }

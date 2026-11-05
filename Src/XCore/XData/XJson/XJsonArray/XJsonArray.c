@@ -108,6 +108,8 @@ XVariantList* XJsonArray_toVariantList_move(XJsonArray* arr)
         XVariantList_push_back_move_base(list, var);
         XClassDelete(var);
     }
+    /* 与 XBsonArray_toVariantList_move 一致：移动后源容器为空。 */
+    XJsonArray_clear_base(arr);
     return list;
 }
 XVariant* XJsonArray_toVariant(const XJsonArray* arr)

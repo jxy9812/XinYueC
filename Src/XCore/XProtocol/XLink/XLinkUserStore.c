@@ -141,6 +141,82 @@ static bool xus_setPassword(XLinkUserRecord* record, const char* password)
     return true;
 }
 
+/**
+ * @brief 从 JSON 对象解析一条账户记录。
+ * @details XJsonObject_value_keyUtf8 返回**借用指针**（缺失键为 NULL），
+ *          只读使用、不释放；失败时清空记录，避免半成品名字字符串泄漏。
+ */
+static bool xus_parseRecord(const XJsonObject* object, XLinkUserRecord* record)
+{
+    const XJsonValue* nameValue;
+    const XJsonValue* saltValue;
+    const XJsonValue* hashValue;
+    const XJsonValue* roleValue;
+    const XJsonValue* iterationsValue;
+    const XJsonValue* lockedValue;
+    const char* name;
+    const char* salt;
+    const char* hash;
+    int64_t role = 0;
+    int64_t iterations = (int64_t)XLINK_AUTH_HASH_ITERATIONS;
+    bool ok = false;
+
+    if (!object || !record)
+        return false;
+
+    nameValue = XJsonObject_value_keyUtf8(object, "name");
+    saltValue = XJsonObject_value_keyUtf8(object, "salt");
+    hashValue = XJsonObject_value_keyUtf8(object, "hash");
+    if (!nameValue || !saltValue || !hashValue
+        || !XJsonValue_isString(nameValue)
+        || !XJsonValue_isString(saltValue)
+        || !XJsonValue_isString(hashValue))
+        goto cleanup;
+    name = XString_toUtf8(XJsonValue_toString(nameValue));
+    salt = XString_toUtf8(XJsonValue_toString(saltValue));
+    hash = XString_toUtf8(XJsonValue_toString(hashValue));
+    if (!name || !salt || !hash || !name[0]
+        || XStrlen(name) >= XLINK_AUTH_NAME_BYTES)
+        goto cleanup;
+    if (!xus_hexDecode(salt, record->m_salt, XLINK_AUTH_SALT_BYTES)
+        || !xus_hexDecode(hash, record->m_hash, XLINK_AUTH_NONCE_BYTES))
+        goto cleanup;
+
+    record->m_name = XString_create_utf8(name);
+    if (!record->m_name)
+        goto cleanup;
+
+    roleValue = XJsonObject_value_keyUtf8(object, "role");
+    if (roleValue) {
+        role = XJsonValue_toInt(roleValue, -1);
+        if (role < 0)
+            goto cleanup;
+    }
+    if (role < XLinkAuthRole_Anonymous || role > XLinkAuthRole_Admin)
+        goto cleanup;
+    record->m_role = (uint8_t)role;
+
+    iterationsValue = XJsonObject_value_keyUtf8(object, "iterations");
+    if (iterationsValue) {
+        iterations = XJsonValue_toInt(iterationsValue, -1);
+        if (iterations <= 0 || iterations > 10000000)
+            goto cleanup;
+    }
+    record->m_iterations = (uint32_t)iterations;
+
+    lockedValue = XJsonObject_value_keyUtf8(object, "locked");
+    if (lockedValue && XJsonValue_toBool(lockedValue, false))
+        record->m_flags |= XLINK_USER_FLAG_LOCKED;
+    record->m_flags |= XLINK_USER_FLAG_HAS_PASSWORD;
+    ok = true;
+
+cleanup:
+    /* value_keyUtf8 是借用指针，不释放。 */
+    if (!ok)
+        xus_resetRecord(record);
+    return ok;
+}
+
 /* ========================================================================== */
 /*                        查询                                               */
 /* ========================================================================== */
@@ -199,7 +275,7 @@ bool XLinkUserStore_load(XLinkUserStore* store, const char* path,
     XString* text = NULL;
     XJsonDocument* document = NULL;
     XJsonObject* root;
-    XJsonValue* usersValue = NULL;
+    const XJsonValue* usersValue = NULL;
     const XJsonArray* users;
     int error = 0;
     size_t readSize = 0;
@@ -262,67 +338,10 @@ bool XLinkUserStore_load(XLinkUserStore* store, const char* path,
     for (i = 0; i < (size_t)XJsonArray_size_base(users); ++i) {
         const XJsonValue* value = XJsonArray_at_const(users, (int64_t)i);
         const XJsonObject* object = value ? XJsonValue_toObject(value) : NULL;
-        const XJsonValue* nameValue;
-        const XJsonValue* roleValue;
-        const XJsonValue* saltValue;
-        const XJsonValue* hashValue;
-        const XJsonValue* iterationsValue;
-        const XJsonValue* lockedValue;
         XLinkUserRecord* record = &store->m_users[store->m_count];
-        char saltHex[XLINK_USERSTORE_HEX_SALT];
-        char hashHex[XLINK_USERSTORE_HEX_HASH];
-        const char* name;
-        const char* salt;
-        const char* hash;
-        int64_t role = 0;
-        int64_t iterations = (int64_t)XLINK_AUTH_HASH_ITERATIONS;
 
-        if (!object)
+        if (!object || !xus_parseRecord(object, record))
             goto cleanup;
-        nameValue = XJsonObject_value_keyUtf8(object, "name");
-        saltValue = XJsonObject_value_keyUtf8(object, "salt");
-        hashValue = XJsonObject_value_keyUtf8(object, "hash");
-        if (!nameValue || !saltValue || !hashValue
-            || !XJsonValue_isString(nameValue)
-            || !XJsonValue_isString(saltValue)
-            || !XJsonValue_isString(hashValue))
-            goto cleanup;
-        name = XString_toUtf8(XJsonValue_toString(nameValue));
-        salt = XString_toUtf8(XJsonValue_toString(saltValue));
-        hash = XString_toUtf8(XJsonValue_toString(hashValue));
-        if (!name || !salt || !hash || !name[0]
-            || XStrlen(name) >= XLINK_AUTH_NAME_BYTES)
-            goto cleanup;
-        if (!xus_hexDecode(salt, record->m_salt, XLINK_AUTH_SALT_BYTES)
-            || !xus_hexDecode(hash, record->m_hash, XLINK_AUTH_NONCE_BYTES))
-            goto cleanup;
-
-        record->m_name = XString_create_utf8(name);
-        if (!record->m_name)
-            goto cleanup;
-
-        roleValue = XJsonObject_value_keyUtf8(object, "role");
-        if (roleValue) {
-            role = XJsonValue_toInt(roleValue, -1);
-            if (role < 0)
-                goto cleanup;
-        }
-        if (role < XLinkAuthRole_Anonymous || role > XLinkAuthRole_Admin)
-            goto cleanup;
-        record->m_role = (uint8_t)role;
-
-        iterationsValue = XJsonObject_value_keyUtf8(object, "iterations");
-        if (iterationsValue) {
-            iterations = XJsonValue_toInt(iterationsValue, -1);
-            if (iterations <= 0 || iterations > 10000000)
-                goto cleanup;
-        }
-        record->m_iterations = (uint32_t)iterations;
-
-        lockedValue = XJsonObject_value_keyUtf8(object, "locked");
-        if (lockedValue && XJsonValue_toBool(lockedValue, false))
-            record->m_flags |= XLINK_USER_FLAG_LOCKED;
-        record->m_flags |= XLINK_USER_FLAG_HAS_PASSWORD;
         store->m_count++;
     }
 
@@ -333,7 +352,6 @@ cleanup:
         XLinkAuth_secureZero(buffer, readSize);
         XFree_System(buffer);
     }
-    if (usersValue) XJsonValue_delete(usersValue);
     if (document) XClassDelete(document);
     if (fd != XFD_INVALID) XDeviceFile_close(fd);
     if (!ok)
@@ -387,9 +405,10 @@ bool XLinkUserStore_save(XLinkUserStore* store, const char* path)
             XJsonValue item;
             XJsonValue_init(&item, XJsonValue_Object);
             item.data.object = object;
-            if (!XJsonArray_append_base(users, &item)) {
+            /* 转移所有权：append_base 是深拷贝，原对象会泄漏；失败时
+               item 仍持有 object，由 XJsonValue_deinit 统一释放。 */
+            if (!XJsonArray_append_move_base(users, &item)) {
                 XJsonValue_deinit(&item);
-                XClassDelete(object);
                 goto cleanup;
             }
         }
@@ -397,7 +416,7 @@ bool XLinkUserStore_save(XLinkUserStore* store, const char* path)
 
     if (!XJsonObject_insert_keyUtf8_array(root, "users", users))
         goto cleanup;
-    document = XJsonDocument_create_object(root);
+    document = XJsonDocument_create_object_move(root);
     if (!document)
         goto cleanup;
     text = XJsonDocument_toString(document, XJsonDocument_Indented);

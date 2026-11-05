@@ -198,12 +198,29 @@ bool XJsonDocument_setObject(XJsonDocument* document, const XJsonObject* object)
 */
 bool XJsonDocument_setArray_move(XJsonDocument* document, XJsonArray* array);
 /**
+* @brief 设置文档根节点为指定XJsonArray（指针接管，零分配）
+* @param document 目标XJsonDocument指针
+* @param array 要设置的XJsonArray；调用即移交所有权
+* @return 设置成功返回true，失败返回false（参数为NULL时不接管）
+* @note 与 setArray_move（create_move 会额外分配包装对象）不同：本接口
+*       直接把指针挂到根值上。非 NULL 参数调用后调用方不得再访问/释放。
+*/
+bool XJsonDocument_setArray_ref(XJsonDocument* document, XJsonArray* array);
+/**
 * @brief 设置文档根节点为指定XJsonObject（转移所有权）
 * @param document 目标XJsonDocument指针
 * @param object 要设置的XJsonObject（所有权转移）
 * @return 设置成功返回true，失败返回false
 */
 bool XJsonDocument_setObject_move(XJsonDocument* document, XJsonObject* object);
+/**
+* @brief 设置文档根节点为指定XJsonObject（指针接管，零分配）
+* @param document 目标XJsonDocument指针
+* @param object 要设置的XJsonObject；调用即移交所有权
+* @return 设置成功返回true，失败返回false（参数为NULL时不接管）
+* @note 与 setObject_move 的区别：直接接管指针，不分配包装对象。
+*/
+bool XJsonDocument_setObject_ref(XJsonDocument* document, XJsonObject* object);
 // 序列化与反序列化
 /**
 * @brief 从XString解析JSON文档

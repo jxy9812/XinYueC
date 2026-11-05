@@ -22,6 +22,8 @@
 - [框架/应用分层写法（2026-10-29 裁定）](#框架应用分层写法2026-10-29-裁定)：框架/APP 写法分离，动态文本一律控件化
 - **`_const` 所有权契约（2026-11-03 裁定）**：带 `_const` = 借用（禁止释放），不带 `_const` = 拷贝（调用方必须释放），见「获取函数的所有权契约」
 - **`set*` 三态所有权契约（2026-11-03 裁定）**：`setXxx` 拷贝 / `setXxx_move` 抽取资源留空壳（外壳调用方释放）/ `setXxx_ref` 指针接管（所有权全转），见「`set*` 三态所有权契约」
+- **`insert*` 三态所有权契约（2026-11-05 裁定）**：插入接口与 `set*` 同款三态——`insert_*` 拷贝 / `insert_*_move` 内容转移留壳 / `insert_*_ref` 指针接管，见「`insert*` 与 `set*` 同款三态」
+- **键查询所有权契约（2026-11-05 裁定）**：`value_keyUtf8` 借用（缺失 NULL、禁止释放）/ `value_copy_keyUtf8` 堆拷贝（必须释放），JSON/BSON 同名同义，见「键查询接口的所有权契约」
 - **字符串后缀契约（2026-11-03 裁定）**：带 `_utf8` = `char*`，不带 = `XString*`；存储优先 `XString`，仅"只记录不加工"用 `char*`，见「字符串 API 后缀契约」
 - **`string.h` 移出白名单（2026-11-03 裁定）**：`memcpy`/`memset`/`memmove`/`memcmp` 一律改用 `XMemcpy`/`XMemset`/`XMemmove`/`XMemcmp`，见「白名单」
 
@@ -83,9 +85,9 @@
 | `_gbk` | GBK 编码版本 | `XString_create_gbk()` |
 | `_utf16` | UTF-16 编码版本 | 编码缓存相关 |
 | `_move` | 移动语义：抽取入参内部堆资源，入参变空壳（**外壳仍由调用方释放**） | `XExample_setData_move()`、`XContainer_create_move()` |
-| `_copy` | 深拷贝创建 | `XContainer_create_copy()` |
+| `_copy` | 深拷贝创建；查询接口中表示「返回堆拷贝，调用方释放」 | `XContainer_create_copy()`、`value_copy_keyUtf8()` |
 | `_const` | 返回内部引用（**借用**，调用者禁止释放） | `const char* XExample_data_const(...)` |
-| `_ref` | 指针接管：直接存传入指针，**所有权完全转移给被设对象**，调用方不得再释放或访问 | `XModbusReply_setResult_ref()` |
+| `_ref` | `set*/insert*_ref`：指针接管，**所有权完全转移**，调用方不得再释放或访问；`to*/from*_ref`：非拥有包装（借用） | `XModbusReply_setResult_ref()`、`XJsonValue_toVariant_ref()` |
 | `_ref_2` | 带引用的重载版本（ref + 数字后缀） | |
 | `_2`、`_3`... | 同功能不同参数的重载版本 | `XExample_setData_2()` |
 | `_ex` | 扩展构造函数（比默认多参数） | `XContainer_create_ex(typeSize, useCow)` |
@@ -93,7 +95,11 @@
 
 > `_const`（借用，不转移）与 `_ref`（接管，转移所有权）在语义上相反但都节省拷贝，
 > 区别是**谁负责最终释放**：`_const` 归原对象，`_ref` 归接收方。
-> 完整的 setter 三态契约见「`set*` 三态所有权契约」。
+> **注意 `_ref` 有两种用法**：`set*_ref` / `insert*_ref` 是所有权接管（调用即失所有权）；
+> `to*_ref` / `from*_ref` 是**非拥有包装**（借用），删除包装前必须把
+> `variant->m_data` 置 `NULL`，否则包装析构会释放被引用对象。
+> 完整的 setter 三态契约见「`set*` 三态所有权契约」；插入接口同款三态见
+> 「`insert*` 与 `set*` 同款三态」；键查询的借用/拷贝二分见「键查询接口的所有权契约」。
 
 ### 类型别名
 - 用 `typedef` 给泛型容器定义语义化别名：
@@ -514,6 +520,11 @@ XClassDelete(addr);                 // 3. 删除对象
 
 **重要**：`XType_init()` 和 `XClassDeinit()` 必须成对出现！
 
+> **值类型补充（2026-11-05）**：`XJsonValue_init` / `XBsonValue_init` 一类
+> `*_init(type)` 接口只设置类型标签，**不分配容器载荷**；`deinit` 对空载荷
+> 必须安全。需要空容器时用 `create(type)`（BSON）或显式 `set*`（JSON）。
+> 详见「值类型 `*_init(type)` 契约」。
+
 ```c
 // ✅ 正确：init 与 XClassDeinit 成对
 XHostAddress addr;
@@ -653,6 +664,10 @@ XClassDeinit(&src);
 - 当源对象来自参数、对象成员或调用方输出时，执行 move 的函数只是接收方，不得在 move 现场调用 `XClassDeinit` 或 `XClassDelete`：接收方不知道源对象的分配方式，擅自清理会造成错误释放或双释放。最终清理仍由创建者在自己的清理点完成。
 - 当函数自己创建临时对象并把资源 move 出去时，该函数就是创建者：栈临时对象在作用域结束时按栈上对象规则收尾（`XClassDeinit`，资源已转出时为空操作）；堆临时对象必须由创建者 `XClassDelete`，不能因"源已为空"跳过结构体释放。
 - 移动后仍继续存活的源对象（控件成员、容器元素等）保持原有清理点不变：由拥有它的对象在自身的 `deinit` / 私有释放路径中统一清理，不在 move 现场重复释放。
+- **值类型移动后源类型清零**（2026-11-05 裁定）：`XJsonValue_move` /
+  `XBsonValue_move` / 各 `*_create_move` 执行后，源对象类型置为
+  `XJsonValue_Invalid` / `XBsonValue` 的 `type 0`（数值均为 0），载荷清零。
+  此后源对象只允许 `deinit`/`delete` 或重新 `set*`，不得按原类型解引用。
 
 ```c
 // 接收方只转移资源，不清理源；源与目标都由各自的创建者按分配方式释放
@@ -727,6 +742,25 @@ static void VXView_onClose(XView* self, XVarList* args) {
 | `XType_setXxx_2(XType*, other_type)` | 不同参数类型的重载 |
 | `XType_setXxx_utf8(XType*, const char*)` | UTF-8 编码版本 |
 | `XType_setXxx_gbk(XType*, const char*)` | GBK 编码版本 |
+
+### `insert*` 与 `set*` 同款三态
+
+插入接口（容器/文档/对象追加元素）与 setter 使用完全相同的三态命名与义务，
+不得因为「只是插入」就放松所有权要求：
+
+| 形态 | 命名 | 内部动作 | 函数返回后调用方的义务 |
+|------|------|----------|----------------------|
+| **拷贝** | `XType_insert_xxx(obj, key, const T*)` | 深拷贝一份进容器 | 原参数**仍归调用方**，用完自行释放 |
+| **移动** | `XType_insert_xxx_move(obj, key, T*)` | 抽取参数资源进容器，参数变**空壳** | **必须释放外壳**（`XClassDelete`），不得再解引用 |
+| **指针接管** | `XType_insert_xxx_ref(obj, key, T*)` | 直接把指针交给容器（零分配） | **不得释放、不得访问**（所有权已交出；失败也由被调方释放） |
+
+- 典型实现：`XJsonObject_insert_keyUtf8_string{,_move,_ref}`、
+  `XBsonDocument_insert_keyUtf8_array{,_move,_ref}`；
+- 插入接口的 `_move` 同样只转移内容：`XString`/`XJsonArray`/`XBsonDocument`
+  等源对象空壳仍由调用方释放（`XJsonObject_insert_keyUtf8_string_move`
+  曾直接接管指针、与 BSON 相反，2026-11-05 已统一为留壳语义）；
+- `_ref` 的返回 `false` 表示「参数非法或分配失败」，**资源已由被调方释放**，
+  调用方不要再碰；NULL 参数直接返回 `false` 且不接管。
 
 ### `set*` 三态所有权契约（拷贝 / 移动 / 指针接管）
 
@@ -944,6 +978,44 @@ XClassDelete((XClass*)text);   /* 漏了这行就是泄漏 */
 - **"看起来像拷贝"的 API 不一定是拷贝**，`XString_create_copy` 是 COW 共享；
 - 需要真正独立的副本时用 `XStrdup`（独立缓冲），或立刻把内容取走（`XString_toUtf8` + `XStrdup`）；
 - 写这类代码前先读一遍本节的借用/拷贝二分表，别靠函数名猜。
+
+### 键查询接口的所有权契约（`value_keyUtf8` 借用 / `value_copy_keyUtf8` 拷贝）
+
+> 2026-11-05 裁定。这是对上一节 `_const` 通用规则的**显式例外**：键查询是高频
+> 热路径，历史 API 名称已铺开，故用 `_copy` 区分所有权，但**两库必须同名同义**。
+
+| API | 返回 | 调用方义务 |
+|-----|------|-----------|
+| `XJsonObject_value_keyUtf8` / `XBsonDocument_value_keyUtf8` | **借用**（缺失返回 `NULL`） | **禁止释放**；容器插入/删除/清空后失效，不得跨修改持有 |
+| `XJsonObject_value_copy_keyUtf8` / `XBsonDocument_value_copy_keyUtf8` | **堆拷贝**（缺失返回 `NULL`） | **必须释放**（`XJsonValue_delete` / `XBsonValue_delete`） |
+
+- **禁止一库借用、一库拷贝**：JSON 与 BSON 必须保持一致（2026-11-05 已统一）；
+- 借用版返回只读指针语义（`const XJsonValue*`）；实现若返回可变指针，调用方
+  也只读使用，禁止原地修改（COW 共享数据）；
+- 键查询的借用指针不保证跨容器修改有效：拿到后立即取值/判型，不要长期保存；
+- 需要返回值在容器修改后仍有效时，一律用 `_copy_keyUtf8`，并在每个出口释放。
+
+```c
+/* 借用：只读、不释放 */
+const XJsonValue* v = XJsonObject_value_keyUtf8(obj, "k");
+if (v && XJsonValue_isInt(v)) { ... }
+
+/* 拷贝：独立生命周期，必须释放 */
+XJsonValue* owned = XJsonObject_value_copy_keyUtf8(obj, "k");
+if (owned) { ...; XJsonValue_delete(owned); }
+```
+
+### 值类型 `*_init(type)` 契约（2026-11-05 裁定）
+
+`XJsonValue_init` / `XBsonValue_init` 等值类型初始化接口**只设置类型标签，
+不分配容器载荷**（String/Array/Object/Document 的 `data` 初始为 `NULL`）。
+需要「可直接 `toDocument/toArray/toString` 的空容器」时：
+
+- BSON：用 `XBsonValue_create(type)`（create 会额外分配空载荷）；
+- JSON：用 `setString_utf8(v, "")` / `setArray(v, empty)` / `setObject(v, empty)`。
+
+`move` / `create_move` 后源对象类型清零（JSON `Invalid`、BSON `type 0`，数值
+均为 0），此后只允许 `deinit/delete`，不得再解引用内容。
 
 ### 返回值规范
 

@@ -77,6 +77,7 @@ typedef struct HsfServerIoState {
     HsfServerIoAnalog m_analog;         /**< 模拟量站（TCP，与 485 无关）。 */
     HsfServerIoDigital m_digital;       /**< 数字量站（TCP，16DI/16DO）。 */
     HsfServerIoValve m_valves;          /**< 电磁阀组（纯业务层，点位来自配置）。 */
+    HsfServerIoPump m_pumps;            /**< 进水泵组（纯业务层，点位来自配置）。 */
 } HsfServerIoState;
 
 static HsfServerIoState s_io;           /**< 模块单例（零初始化）。 */
@@ -373,6 +374,24 @@ bool HsfServerIo_start(void)
                                    HSF_VALVE_MOVE_TIMEOUT_MS, enabled);
     }
 
+    /* ---- 进水泵组（点位来自 HsfServerConfig.h 宏；依赖数字量站） ---- */
+    {
+        HsfServerIoPumpCfg pumpItems[HSF_PUMP_COUNT];
+        bool penabled = (HSF_PUMP_ENABLED != 0);
+        int pcount = HSF_PUMP_COUNT;
+        int i;
+        for (i = 0; i < HSF_PUMP_COUNT; ++i) {
+            pumpItems[i].m_name = HSF_PUMP_NAME(i);
+            pumpItems[i].m_do = HSF_PUMP_DO(i);
+        }
+        if (!HsfServerIoDigital_isMounted(&io->m_digital)) {
+            if (penabled)
+                XPrintf("HsfServerIo: 数字量站未装配，进水泵控制关闭\n");
+            penabled = false;
+        }
+        HsfServerIoPump_configure(&io->m_pumps, pumpItems, pcount, penabled);
+    }
+
     io->m_started = true;    /* 先置位：失败也走统一拆除路径，不留半成品。 */
     if (!io->m_sides[HsfSide_A].m_ready && !io->m_sides[HsfSide_B].m_ready &&
         !HsfServerIoAnalog_isMounted(&io->m_analog) &&
@@ -380,12 +399,13 @@ bool HsfServerIo_start(void)
         XPrintf("HsfServerIo: 无任何从站装配成功\n");
         return false;
     }
-    XPrintf("HsfServerIo: IO 装配完成（A=%s B=%s 模拟量=%s 数字量=%s 电磁阀=%d路）\n",
+    XPrintf("HsfServerIo: IO 装配完成（A=%s B=%s 模拟量=%s 数字量=%s 电磁阀=%d路 泵=%d台）\n",
             io->m_sides[HsfSide_A].m_ready ? "OK" : "跳过",
             io->m_sides[HsfSide_B].m_ready ? "OK" : "跳过",
             HsfServerIoAnalog_isMounted(&io->m_analog) ? "OK" : "跳过",
             HsfServerIoDigital_isMounted(&io->m_digital) ? "OK" : "跳过",
-            HsfServerIoValve_count(&io->m_valves));
+            HsfServerIoValve_count(&io->m_valves),
+            HsfServerIoPump_count(&io->m_pumps));
     return true;}
 
 void HsfServerIo_stop(void)
@@ -393,6 +413,7 @@ void HsfServerIo_stop(void)
     HsfServerIoState* io = &s_io;
     if (!io->m_started) return;
     HsfServerIoValve_clear(&io->m_valves);
+    HsfServerIoPump_clear(&io->m_pumps);
     HsfServerIoDigital_unmount(&io->m_digital);
     HsfServerIoAnalog_unmount(&io->m_analog);
     hsfIoUnmountSide(&io->m_sides[HsfSide_B]);
@@ -612,6 +633,61 @@ bool HsfServerIo_valveTakeAlarm(int index, int* outKind, char* outText, int cap)
     if (!s_io.m_started) return false;
     return HsfServerIoValve_takeAlarm(&s_io.m_valves, index, outKind,
                                       outText, cap);
+}
+
+/* ==================== 进水泵组 ==================== */
+
+const HsfServerIoPump* HsfServerIo_pumps(void)
+{
+    if (!s_io.m_started) return NULL;
+    return &s_io.m_pumps;
+}
+
+void HsfServerIo_pumpPoll(void)
+{
+    uint32_t doMask = 0;
+    bool doValid = false;
+
+    if (!s_io.m_started) return;
+    if (HsfServerIoPump_count(&s_io.m_pumps) <= 0) return;
+    if (!HsfServerIo_digitalReady()) {
+        /* 数字量站没了：回显标"全部不新鲜"（命令状态保留，界面按"模块
+         * 离线"呈现），绝不在这里伪造 0 回显。 */
+        HsfServerIoPump_poll(&s_io.m_pumps, 0, false, false);
+        return;
+    }
+    HsfServerIoDigital_readDo(&s_io.m_digital, &doMask, &doValid);
+    /* 新鲜度：readDo 的 doValid 已含"采过一拍"口径（与数字量页推送同一
+     * 数据源，自洽）；链路在线由 Hub 缓存超时兜底。 */
+    HsfServerIoPump_poll(&s_io.m_pumps, doMask, doValid, true);
+}
+
+bool HsfServerIo_pumpSet(int index, bool on, char* outErr, int cap)
+{
+    const HsfServerIoPumpItem* it;
+    bool ok;
+
+    if (outErr && cap > 0) outErr[0] = '\0';
+    if (!s_io.m_started) {
+        if (outErr) snprintf(outErr, (size_t)cap, "%s", "IO 未启动");
+        return false;
+    }
+    /* 先让泵组做校验 + 命令状态记账（未配置/未启用/越界/离线在这里被拒；
+     * 幂等"已处于该状态"返回 true 且不改状态）。 */
+    ok = HsfServerIoPump_setOutput(&s_io.m_pumps, index, on, outErr, cap);
+    if (!ok) return false;
+
+    it = HsfServerIoPump_item(&s_io.m_pumps, index);
+    if (!it) {
+        if (outErr) snprintf(outErr, (size_t)cap, "%s", "泵条目缺失");
+        return false;
+    }
+    if (!HsfServerIo_digitalReady()) {
+        if (outErr) snprintf(outErr, (size_t)cap, "%s", "数字量站未装配，无法动作");
+        return false;
+    }
+    /* [动作出口] 单点写对应 DO（FC05）：1=启动（接触器吸合）、0=停止。 */
+    return HsfServerIoDigital_writeDo(&s_io.m_digital, it->m_do, on);
 }
 
 /* ==================== 诊断 ==================== */

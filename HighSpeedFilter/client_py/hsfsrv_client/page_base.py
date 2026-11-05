@@ -218,8 +218,14 @@ class DataTable(QWidget):
         header.setSectionResizeMode(QHeaderView.Stretch)
         header.setStretchLastSection(False)
 
-    def set_column_weights(self, weights):
+    def set_column_weights(self, weights, min_widths=None):
         """设置列宽比例（如 (6,3,2) = 项目 6 : 数值 3 : 单位 2）。
+
+        :param min_widths: {列号: 最小像素} 按列下限（可选）。某列内容比
+        全局最小档（72/150）更长时用它给硬保证 —— 历史页时间列
+        （"yyyy-MM-dd HH:MM:SS" 19 字符 ≈ 130px）实锅：全局 72px 档把它
+        压成 "202..."，日期看不见（2026-11-05 截图反馈）。
+        分配口径：先按各列下限预留，剩余宽度再按权重分。
 
         [实现要点 —— 踩过三次坑后的定稿]
         1) 不能用「只设第 0 列 Stretch + 其余 ResizeToContents」：
@@ -236,6 +242,7 @@ class DataTable(QWidget):
         但只在「视口宽或权重真的变了」才动（避坑 2 与 3）。
         """
         self._column_weights = tuple(weights) or (1,)
+        self._min_widths = dict(min_widths or {})
         self._apply_min_widths()
         self._apply_column_widths()
         # 调用方通常在建页期（show 之前）设权重，那时视口宽还是 0；
@@ -315,14 +322,19 @@ class DataTable(QWidget):
         # 地址列看着还是被挤。故：先把下限"预留"出来，剩余宽度再按权重分。
         min_w = header.minimumSectionSize() or 56
         min_w = min(min_w, max(40, avail // max(1, n)))
-        spare = max(0, avail - min_w * n)          # 下限之外可自由分配的部分
+        # 各列下限 = 全局档 与 按列 min_widths 取大者；先全部预留，
+        # 剩余宽度再按权重分（下限总和超出视口时宁出横向滚动条，
+        # 也不把任何一列压到内容以下）。
+        min_map = getattr(self, "_min_widths", {}) or {}
+        floors = [max(min_w, int(min_map.get(i, 0))) for i in range(n)]
+        spare = max(0, avail - sum(floors))        # 下限之外可自由分配的部分
         targets = []
         used = 0
         for i, w in enumerate(weights[:-1]):
-            px = min_w + int(spare * w / total_w)
+            px = floors[i] + int(spare * w / total_w)
             targets.append(px)
             used += px
-        targets.append(max(min_w, avail - used))   # 最后一列吃掉余数
+        targets.append(max(floors[-1], avail - used))   # 最后一列吃掉余数
         for i, px in enumerate(targets):
             if header.sectionSize(i) != px:
                 header.resizeSection(i, px)

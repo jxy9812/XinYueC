@@ -17,8 +17,10 @@ Ctrl+C 退出（会向所有客户端发 Goodbye，对端立刻感知而非等�
 
 import argparse
 import asyncio
+import os
 import signal
 import sys
+import time
 
 # [双击兜底] 直接运行本文件（资源管理器里双击，或 `python hsfsrv\__main__.py`）
 # 时 __package__ 为空，下面那些相对导入 `from . import xxx` 会抛
@@ -289,6 +291,9 @@ async def run(cfg, args):
     # ---- 采集任务 ----
     await business.start_polling()
 
+    # ---- 数据落盘（历史/日志/报警 → SQLite）----
+    await business.start_storage()
+
     log("XLink 服务端就绪（端口 %d，鉴权%s，遥测 %dms）"
         % (server.port, "关" if args.no_auth else "开", business.TELEMETRY_MS))
     log("设备：%s" % _device_summary(cfg))
@@ -316,6 +321,7 @@ async def run(cfg, args):
     log("收到退出信号，收尾中…")
     await server.stop()
     await business.stop_polling()
+    await business.stop_storage()
     log("HsfServerPy: 已退出")
     return 0
 

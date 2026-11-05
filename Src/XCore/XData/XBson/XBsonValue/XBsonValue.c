@@ -214,11 +214,17 @@ static bool XBsonValue_fromHexString(const XString* text, uint8_t* data,
 }
 
 /* BSON 值构造、生命周期和所有权转移。 */
+static void XBsonValue_initPayload(XBsonValue* value, XBsonType type);
+
 XBsonValue* XBsonValue_create(XBsonType type)
 {
 	if (!XBsonValue_isKnownType(type)) return NULL;
 	XBsonValue* value = (XBsonValue*)XMalloc_System(sizeof(*value));
-	if (value) XBsonValue_init(value, type);
+	if (value) {
+		XBsonValue_init(value, type);
+		/* create 保证容器型载荷已分配，可直接 toDocument/toArray/toBinary。 */
+		XBsonValue_initPayload(value, type);
+	}
 	return value;
 }
 
@@ -376,11 +382,13 @@ XBsonValue* XBsonValue_create_decimal128(const uint8_t* decimal)
 XBsonValue* XBsonValue_create_min_key(void) { return XBsonValue_create(XBSON_TYPE_MIN_KEY); }
 XBsonValue* XBsonValue_create_max_key(void) { return XBsonValue_create(XBSON_TYPE_MAX_KEY); }
 
-void XBsonValue_init(XBsonValue* value, XBsonType type)
+/**
+ * @brief 为容器型类型分配空载荷（仅 create 路径使用）。
+ * @details 与 XJsonValue_init 统一：public init 只设置类型标签、载荷为 NULL；
+ *          create 额外调用本函数保证空容器可直接使用。
+ */
+static void XBsonValue_initPayload(XBsonValue* value, XBsonType type)
 {
-	if (!value) return;
-	memset(value, 0, sizeof(*value));
-	value->type = type;
 	switch (type) {
 	case XBSON_TYPE_STRING:
 	case XBSON_TYPE_JAVASCRIPT:
@@ -411,6 +419,15 @@ void XBsonValue_init(XBsonValue* value, XBsonType type)
 	default:
 		break;
 	}
+}
+
+void XBsonValue_init(XBsonValue* value, XBsonType type)
+{
+	if (!value) return;
+	/* 与 XJsonValue_init 统一：只设置类型标签，不分配容器载荷；
+	   需要空容器的调用方使用 XBsonValue_create(type)。 */
+	memset(value, 0, sizeof(*value));
+	value->type = type;
 }
 
 void XBsonValue_deinit(XBsonValue* value)
@@ -467,28 +484,32 @@ void XBsonValue_clear(XBsonValue* value)
 	case XBSON_TYPE_STRING:
 	case XBSON_TYPE_JAVASCRIPT:
 	case XBSON_TYPE_SYMBOL:
-		XString_clear_base(value->data.str);
+		if (value->data.str) XString_clear_base(value->data.str);
 		break;
 	case XBSON_TYPE_DOCUMENT:
-		XBsonDocument_clear_base(value->data.doc);
+		if (value->data.doc) XBsonDocument_clear_base(value->data.doc);
 		break;
 	case XBSON_TYPE_ARRAY:
-		XBsonArray_clear_base(value->data.arr);
+		if (value->data.arr) XBsonArray_clear_base(value->data.arr);
 		break;
 	case XBSON_TYPE_BINARY:
-		XByteArray_clear_base(value->data.binary.data);
+		if (value->data.binary.data)
+			XByteArray_clear_base(value->data.binary.data);
 		break;
 	case XBSON_TYPE_REGEX:
-		XString_clear_base(value->data.regex.pattern);
-		XString_clear_base(value->data.regex.options);
+		if (value->data.regex.pattern)
+			XString_clear_base(value->data.regex.pattern);
+		if (value->data.regex.options)
+			XString_clear_base(value->data.regex.options);
 		break;
 	case XBSON_TYPE_DBPOINTER:
-		XString_clear_base(value->data.dbpointer.m_namespace);
+		if (value->data.dbpointer.m_namespace)
+			XString_clear_base(value->data.dbpointer.m_namespace);
 		memset(value->data.dbpointer.oid, 0, sizeof(value->data.dbpointer.oid));
 		break;
 	case XBSON_TYPE_JAVASCRIPT_SCOPE:
-		XString_clear_base(value->data.str);
-		XBsonDocument_clear_base(value->data.doc);
+		if (value->data.str) XString_clear_base(value->data.str);
+		if (value->data.doc) XBsonDocument_clear_base(value->data.doc);
 		break;
 	case XBSON_TYPE_OBJECT_ID:
 		memset(value->data.oid, 0, sizeof(value->data.oid));
@@ -544,6 +565,14 @@ void XBsonValue_setString_move(XBsonValue* value, XString* str)
 	value->data.str = XString_create_move(str);
 }
 
+void XBsonValue_setString_ref(XBsonValue* value, XString* str)
+{
+	if (!value || !str) return;
+	XBsonValue_deinit(value);
+	value->type = XBSON_TYPE_STRING;
+	value->data.str = str;   /* 指针接管：零分配 */
+}
+
 void XBsonValue_setString_utf8(XBsonValue* value, const char* utf8)
 {
 	if (!value || !utf8) return;
@@ -576,6 +605,14 @@ void XBsonValue_setDocument_move(XBsonValue* value, XBsonDocument* doc)
 	value->data.doc = XBsonDocument_create_move(doc);
 }
 
+void XBsonValue_setDocument_ref(XBsonValue* value, XBsonDocument* doc)
+{
+	if (!value || !doc) return;
+	XBsonValue_deinit(value);
+	value->type = XBSON_TYPE_DOCUMENT;
+	value->data.doc = doc;   /* 指针接管：零分配 */
+}
+
 void XBsonValue_setArray(XBsonValue* value, const XBsonArray* arr)
 {
 	if (!value || !arr) return;
@@ -590,6 +627,14 @@ void XBsonValue_setArray_move(XBsonValue* value, XBsonArray* arr)
 	XBsonValue_deinit(value);
 	value->type = XBSON_TYPE_ARRAY;
 	value->data.arr = XBsonArray_create_move(arr);
+}
+
+void XBsonValue_setArray_ref(XBsonValue* value, XBsonArray* arr)
+{
+	if (!value || !arr) return;
+	XBsonValue_deinit(value);
+	value->type = XBSON_TYPE_ARRAY;
+	value->data.arr = arr;   /* 指针接管：零分配 */
 }
 
 void XBsonValue_setBinary(XBsonValue* value, XBsonBinarySubtype subtype,
@@ -610,6 +655,16 @@ void XBsonValue_setBinary_move(XBsonValue* value, XBsonBinarySubtype subtype,
 	value->type = XBSON_TYPE_BINARY;
 	value->data.binary.subtype = subtype;
 	value->data.binary.data = XByteArray_create_move(data);
+}
+
+void XBsonValue_setBinary_ref(XBsonValue* value, XBsonBinarySubtype subtype,
+                              XByteArray* data)
+{
+	if (!value || !data) return;
+	XBsonValue_deinit(value);
+	value->type = XBSON_TYPE_BINARY;
+	value->data.binary.subtype = subtype;
+	value->data.binary.data = data;   /* 指针接管：零分配 */
 }
 
 void XBsonValue_setObjectId(XBsonValue* value, const uint8_t* oid)
@@ -705,7 +760,14 @@ bool XBsonValue_toBool(const XBsonValue* value, bool defaultValue)
 
 double XBsonValue_toDouble(const XBsonValue* value, double defaultValue)
 {
-	return value && value->type == XBSON_TYPE_DOUBLE ? value->data.dbl : defaultValue;
+	if (!value) return defaultValue;
+	/* 与 XJsonValue_toDouble 一致：整数类型按数值拓宽。 */
+	switch (value->type) {
+	case XBSON_TYPE_DOUBLE: return value->data.dbl;
+	case XBSON_TYPE_INT32:  return (double)value->data.int32;
+	case XBSON_TYPE_INT64:  return (double)value->data.int64;
+	default:                return defaultValue;
+	}
 }
 
 int32_t XBsonValue_toInt32(const XBsonValue* value, int32_t defaultValue)

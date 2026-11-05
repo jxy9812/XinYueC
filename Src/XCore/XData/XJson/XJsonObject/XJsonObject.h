@@ -87,13 +87,25 @@ bool XJsonObject_insert_keyUtf8_int(XJsonObject* object, const char* key, int64_
 */
 bool XJsonObject_insert_keyUtf8_string(XJsonObject* object, const char* key, const XString* str);
 /**
-* @brief 向JSON对象插入UTF-8键和XString值（移动字符串所有权）
+* @brief 向JSON对象插入UTF-8键和XString值（移动字符串内容）
 * @param object 目标XJsonObject指针
 * @param key UTF-8编码的键字符串
-* @param str 要插入的XString值（所有权转移给对象）
+* @param str 要插入的XString值；内容转移后源变空壳
 * @return 插入成功返回true，失败返回false（参数无效时）
+* @note 统一移动语义：内容进入对象，**源 XString 的空壳仍由调用方
+*       XClassDelete**。插入失败时源内容不受影响，调用方照常释放。
 */
 bool XJsonObject_insert_keyUtf8_string_move(XJsonObject* object, const char* key, XString* str);
+/**
+* @brief 向JSON对象插入UTF-8键和XString值（指针接管，零分配）
+* @param object 目标XJsonObject指针
+* @param key UTF-8编码的键字符串
+* @param str 要插入的XString值；调用即移交所有权
+* @return 插入成功返回true，失败返回false
+* @note 非 NULL 参数调用后调用方不得再访问/释放 str；返回 false 时资源
+*       已由本函数释放。与 string_move（内容转移、源留空壳）不同。
+*/
+bool XJsonObject_insert_keyUtf8_string_ref(XJsonObject* object, const char* key, XString* str);
 /**
 * @brief 向JSON对象插入UTF-8键和UTF-8字符串值
 * @param object 目标XJsonObject指针
@@ -126,13 +138,25 @@ bool XJsonObject_insert_keyUtf8_bool(XJsonObject* object, const char* key, bool 
 */
 bool XJsonObject_insert_keyUtf8_array(XJsonObject* object, const char* key, const XJsonArray* array);
 /**
-* @brief 向JSON对象插入UTF-8键和XJsonArray值（移动数组所有权）
+* @brief 向JSON对象插入UTF-8键和XJsonArray值（移动数组内容）
 * @param object 目标XJsonObject指针
 * @param key UTF-8编码的键字符串
-* @param array 要插入的XJsonArray值（所有权转移给对象）
+* @param array 要插入的XJsonArray值；内容转移后源变空壳
 * @return 插入成功返回true，失败返回false（参数无效时）
+* @note 统一移动语义：**源 XJsonArray 的空壳仍由调用方 XClassDelete**。
 */
 bool XJsonObject_insert_keyUtf8_array_move(XJsonObject* object, const char* key, XJsonArray* array);
+/**
+* @brief 向JSON对象插入UTF-8键和XJsonArray值（指针接管，零分配）
+* @param object 目标XJsonObject指针
+* @param key UTF-8编码的键字符串
+* @param array 要插入的XJsonArray值；调用即移交所有权
+* @return 插入成功返回true，失败返回false
+* @note 与 array_move 的区别：直接把指针交给对象，不额外分配包装对象。
+*       非 NULL 参数调用后调用方不得再访问/释放 array；返回 false 时资源
+*       已由本函数释放。
+*/
+bool XJsonObject_insert_keyUtf8_array_ref(XJsonObject* object, const char* key, XJsonArray* array);
 /**
 * @brief 向JSON对象插入UTF-8键和XJsonObject值（深拷贝对象）
 * @param object 目标XJsonObject指针
@@ -142,13 +166,24 @@ bool XJsonObject_insert_keyUtf8_array_move(XJsonObject* object, const char* key,
 */
 bool XJsonObject_insert_keyUtf8_object(XJsonObject* object, const char* key, const XJsonObject* value);
 /**
-* @brief 向JSON对象插入UTF-8键和XJsonObject值（移动对象所有权）
+* @brief 向JSON对象插入UTF-8键和XJsonObject值（移动对象内容）
 * @param object 目标XJsonObject指针
 * @param key UTF-8编码的键字符串
-* @param value 要插入的XJsonObject值（所有权转移给对象）
-* @return 插入成功返回true，失败返回false（参数无效时）
+* @param value 要插入的XJsonObject值；内容转移后源变空壳
+* @return 插入成功返回true，失败返回false
+* @note 统一移动语义：**源 XJsonObject 的空壳仍由调用方 XClassDelete**。
 */
 bool XJsonObject_insert_keyUtf8_object_move(XJsonObject* object, const char* key, XJsonObject* value);
+/**
+* @brief 向JSON对象插入UTF-8键和XJsonObject值（指针接管，零分配）
+* @param object 目标XJsonObject指针
+* @param key UTF-8编码的键字符串
+* @param value 要插入的XJsonObject值；调用即移交所有权
+* @return 插入成功返回true，失败返回false
+* @note 非 NULL 参数调用后调用方不得再访问/释放 value；返回 false 时资源
+*       已由本函数释放。
+*/
+bool XJsonObject_insert_keyUtf8_object_ref(XJsonObject* object, const char* key, XJsonObject* value);
 /**
 * @brief 向JSON对象插入XString键和XJsonValue值（移动值的所有权）
 * @param object 目标XJsonObject指针
@@ -166,10 +201,26 @@ bool XJsonObject_insert_value_move(XJsonObject* object, const XString* key, XJso
 */
 bool XJsonObject_remove_keyUtf8(XJsonObject* object, const char* key);
 /**
-* @brief 按 UTF-8 键获取对象值的深拷贝。
-* @return 找到时返回新值；键不存在或参数无效时返回未定义值。
+* @brief 按 UTF-8 键获取对象值（借用，零分配）。
+* @param object 目标对象（只读借用）。
+* @param key UTF-8 键。
+* @return 指向对象内部的借用指针；键不存在或参数无效返回 NULL。
+* @note 与 XBsonDocument_value_keyUtf8 同名同义：**不要释放**返回值。
+*       返回值指向 COW 共享数据；对对象做插入/删除/清空后指针可能失效，
+*       不得跨修改持有。
 */
-XJsonValue* XJsonObject_value_keyUtf8(const XJsonObject* object, const char* key);
+const XJsonValue* XJsonObject_value_keyUtf8(const XJsonObject* object,
+                                            const char* key);
+/**
+* @brief 按 UTF-8 键获取对象值的深拷贝。
+* @param object 目标对象（只读借用）。
+* @param key UTF-8 键。
+* @return 找到时返回新建值；键不存在或参数无效返回 NULL。调用方必须
+*         XJsonValue_delete。
+* @note 需要返回值在对象修改后继续有效时使用本接口。
+*/
+XJsonValue* XJsonObject_value_copy_keyUtf8(const XJsonObject* object,
+                                           const char* key);
 /**
 * @brief 判断对象是否包含指定 UTF-8 键。
 */

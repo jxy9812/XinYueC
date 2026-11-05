@@ -135,6 +135,36 @@ CMD_PUMP_CONTROL = 0x0114
 #: 真正按下启动/停止。合成一个动作会让"只想切个模式"变成"设备立刻
 #: 开始自动运行"——现场认为太危险。
 CMD_AUTO_CONTROL = 0x0115
+
+# ---- 远程配置（采集项/采集频率/数据落盘；与 server_py proto.py 同号同键）----
+
+#: 读取服务端配置快照（无需载荷）。应答 = {"ok","collect","storage",
+#: "storageDbPath"}。先 GET 回显当前值，改完 SET 提交。
+CMD_CONFIG_GET = 0x0116
+#: 设置服务端配置（**需 root**）。载荷 {"section":"collect"/"storage",
+#: …配置键…}；服务端在线生效并立即落盘（cfg.save）。
+CMD_CONFIG_SET = 0x0117
+#: collect 节键：各设备采集开关（bool）。
+CFGK_VFD_ENABLED = "vfdEnabled"
+CFGK_TEMPHUM_ENABLED = "temphumEnabled"
+CFGK_FLOWMETER_ENABLED = "flowmeterEnabled"
+CFGK_TURBIDITY_ENABLED = "turbidityEnabled"
+CFGK_ANALOG_ENABLED = "analogEnabled"
+CFGK_DIGITAL_ENABLED = "digitalEnabled"
+#: collect 节键：轮询周期（int 毫秒；服务端夹到 50~60000）。
+CFGK_VFD_POLL_MS = "vfdPollMs"
+CFGK_TEMPHUM_POLL_MS = "temphumPollMs"
+CFGK_TURBIDITY_POLL_MS = "turbidityPollMs"
+CFGK_ANALOG_POLL_MS = "analogPollMs"
+CFGK_DIGITAL_POLL_MS = "digitalPollMs"
+#: storage 节键：是否落盘 / 库文件路径（空串=服务端程序目录）/ 采样周期。
+CFGK_STORAGE_ENABLED = "enabled"
+CFGK_STORAGE_PATH = "path"
+CFGK_STORAGE_SAMPLE_MS = "sampleMs"
+#: 轮询周期允许范围（与 server_py proto.py 同值：服务端越界自动夹取）。
+CFG_POLL_MS_MIN = 50
+CFG_POLL_MS_MAX = 60000
+
 #: 进水泵遥测推送主题。
 TOPIC_PUMP_STATUS = 0x0001000A
 CMD_DEVICE_HEALTH = 0x0107

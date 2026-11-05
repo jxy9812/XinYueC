@@ -416,18 +416,12 @@ static const XJsonObject* xdns_aliyun_root(const char* body, size_t len,
 }
 
 /**
- * @brief 检查对象是否含有指定键（键缺失时 value_keyUtf8 返回堆上 Undefined
- *        值而非 NULL，须按本函数口径判别并释放）。
+ * @brief 检查对象是否含有指定键（value_keyUtf8 借用，缺键返回 NULL）。
  */
 static bool xdns_aliyun_member_exists(const XJsonObject* obj, const char* key)
 {
-    XJsonValue* value = XJsonObject_value_keyUtf8(obj, key);
-    bool exists = false;
-    if (value) {
-        exists = !XJsonValue_isUndefined(value);
-        XJsonValue_delete(value);
-    }
-    return exists;
+    const XJsonValue* value = XJsonObject_value_keyUtf8(obj, key);
+    return value && !XJsonValue_isUndefined(value);
 }
 
 /**
@@ -437,26 +431,21 @@ static bool xdns_aliyun_member_exists(const XJsonObject* obj, const char* key)
  * @param  out 输出缓冲区（调用方提供存储空间）。
  * @param  cap 输出缓冲区容量。
  * @return 键存在且为字符串时返回 true（含空串）；缺失/类型不符返回 false。
- * @note   value_keyUtf8 返回堆上深拷贝，本函数负责释放。
+ * @note   value_keyUtf8 为借用指针，不释放。
  */
 static bool xdns_aliyun_member_string(const XJsonObject* obj, const char* key,
                                       char* out, size_t cap)
 {
-    XJsonValue* value = XJsonObject_value_keyUtf8(obj, key);
+    const XJsonValue* value = XJsonObject_value_keyUtf8(obj, key);
     const XString* str = NULL;
-    bool ok = false;
 
-    if (!value)
+    if (!value || XJsonValue_isUndefined(value))
         return false;
-    if (!XJsonValue_isUndefined(value)) {
-        str = XJsonValue_toString(value);
-        if (str && XString_toUtf8(str)) {
-            XStrncpy(out, XString_toUtf8(str), cap - 1);
-            ok = true;
-        }
-    }
-    XJsonValue_delete(value);
-    return ok;
+    str = XJsonValue_toString(value);
+    if (!str || !XString_toUtf8(str))
+        return false;
+    XStrncpy(out, XString_toUtf8(str), cap - 1);
+    return true;
 }
 
 /**
@@ -479,8 +468,8 @@ static bool xdns_aliyun_parseQuery(const char* body, size_t len, const char* rr,
 {
     XJsonDocument* doc = NULL;
     const XJsonObject* obj;
-    XJsonValue* domainRecordsVal = NULL;
-    XJsonValue* recordArrayVal = NULL;
+    const XJsonValue* domainRecordsVal = NULL;
+    const XJsonValue* recordArrayVal = NULL;
     XJsonObject* records = NULL;
     XJsonArray* array = NULL;
     int i;
@@ -503,8 +492,7 @@ static bool xdns_aliyun_parseQuery(const char* body, size_t len, const char* rr,
         return false;
     }
 
-    /* 嵌套取值：value_keyUtf8 返回堆上深拷贝值，全部保持存活至遍历结束，
-       最后逆序释放（toObject/toArray 返回其内部指针，随值共存亡）。 */
+    /* 嵌套取值：value_keyUtf8 为借用指针，随文档/对象存活；期间不修改容器。 */
     domainRecordsVal = XJsonObject_value_keyUtf8(obj, "DomainRecords");
     records = domainRecordsVal ? XJsonValue_toObject(domainRecordsVal) : NULL;
     recordArrayVal = records ? XJsonObject_value_keyUtf8(records, "Record")
@@ -512,8 +500,6 @@ static bool xdns_aliyun_parseQuery(const char* body, size_t len, const char* rr,
     array = recordArrayVal ? XJsonValue_toArray(recordArrayVal) : NULL;
     if (!array) {
         /* 结构不符合预期（无 DomainRecords.Record 数组） */
-        if (recordArrayVal) XJsonValue_delete(recordArrayVal);
-        if (domainRecordsVal) XJsonValue_delete(domainRecordsVal);
         XClassDelete(doc);
         return false;
     }
@@ -547,8 +533,6 @@ static bool xdns_aliyun_parseQuery(const char* body, size_t len, const char* rr,
         ok = true;
     }
 
-    if (recordArrayVal) XJsonValue_delete(recordArrayVal);
-    if (domainRecordsVal) XJsonValue_delete(domainRecordsVal);
     XClassDelete(doc);
     /* "无匹配记录"也是合法解析结果：recordId 为空表示需要 Add */
     return true;

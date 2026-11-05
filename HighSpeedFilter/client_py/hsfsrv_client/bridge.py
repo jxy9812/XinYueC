@@ -13,12 +13,22 @@
 """
 
 import json
+import os
+import sys
 import threading
+import time
 
 from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
 
 from . import bson, proto
 from .model import AppModel
+
+
+def _dbg(msg):
+    """临时调试输出（HSF_CLIENT_DEBUG=1 启用；定位设置页回显问题用）。"""
+    if os.environ.get("HSF_CLIENT_DEBUG") == "1":
+        print("[dbg %s] %s" % (time.strftime("%H:%M:%S"), msg),
+              file=sys.stderr, flush=True)
 
 
 class LinkBridge(QObject):
@@ -245,10 +255,9 @@ class LinkBridge(QObject):
     # ==================================================================
     def request(self, cmd, doc=None, on_done=None, on_error=None, timeout=3.0):
         """发业务请求；回调在**网络线程**，调用方须自行投递回 UI。
-
-        便捷做法：回调里只往一个 queue 塞，或直接用 Qt 信号。
         """
         if self.client is None:
+            _dbg(">> req cmd=0x%04X 被拒：未连接" % cmd)
             if on_error:
                 on_error("未连接")
             return
@@ -260,8 +269,19 @@ class LinkBridge(QObject):
                 if on_error:
                     on_error("载荷编码失败：%s" % exc)
                 return
+        _dbg(">> req cmd=0x%04X payload=%dB" % (cmd, len(payload)))
+        wrapped_done = on_done
+        if on_done is not None:
+            def wrapped_done(*args):
+                _dbg("<< on_done cmd=0x%04X" % cmd)
+                on_done(*args)
+        wrapped_error = on_error
+        if on_error is not None:
+            def wrapped_error(*args):
+                _dbg("<< on_error cmd=0x%04X: %r" % (cmd, args))
+                on_error(*args)
         self.client.request_async(cmd, payload, proto.DATATYPE_BSON, timeout,
-                                  on_done, on_error)
+                                  wrapped_done, wrapped_error)
 
     def request_sync(self, cmd, doc=None, timeout=3.0):
         """同步请求（阻塞 UI！只用于登录后拉首帧这类一次性动作）。"""
@@ -362,6 +382,55 @@ class LinkBridge(QObject):
         self.request(proto.CMD_PUMP_CONTROL,
                      {"index": int(index), "on": bool(on)},
                      on_done=on_done, on_error=on_error)
+
+    def config_get(self, on_done=None, on_error=None, timeout=3.0):
+        """读服务端配置快照（采集 + 落盘）。
+
+        应答 doc：{"ok","collect":{…},"storage":{…},"storageDbPath":str}。
+        [回调约定] on_done 收**已解码的 doc**（本包装负责 bson.decode，
+        与 set_run_mode 同口径）——曾经裸传底层 (code,dtype,payload)
+        三元组，页面按 doc 收包直接 TypeError，且异常被网络线程吞掉、
+        界面毫无反应（用户反馈"点了保存没生效"的根因）。
+        """
+        if on_error is None:
+            on_error = lambda e: self.statusMessage.emit(  # noqa: E731
+                "配置请求失败：%s" % e)
+
+        def _done(code, dtype, data):
+            try:
+                doc = bson.decode(data) if dtype == proto.DATATYPE_BSON else {}
+            except ValueError:
+                doc = {}
+            if on_done:
+                on_done(doc)
+
+        self.request(proto.CMD_CONFIG_GET, None, on_done=_done,
+                     on_error=on_error, timeout=timeout)
+
+    def config_set(self, section, values, on_done=None, on_error=None,
+                   timeout=3.0):
+        """提交一节配置（"collect" / "storage"；**需 root**）。
+
+        values 是**只含被改键**的 dict —— 服务端按出现的键逐个应用，
+        没出现的键保持原值（部分更新，不是整节覆盖）。on_done 收已解码
+        应答 doc（约定同 config_get）。
+        """
+        if on_error is None:
+            on_error = lambda e: self.statusMessage.emit(  # noqa: E731
+                "配置请求失败：%s" % e)
+        payload = dict(values or {})
+        payload["section"] = str(section)
+
+        def _done(code, dtype, data):
+            try:
+                doc = bson.decode(data) if dtype == proto.DATATYPE_BSON else {}
+            except ValueError:
+                doc = {}
+            if on_done:
+                on_done(doc)
+
+        self.request(proto.CMD_CONFIG_SET, payload, on_done=_done,
+                     on_error=on_error, timeout=timeout)
 
     def send_digital_control(self, dev, on_done=None, on_error=None,
                              channel=None, on=False, mask=None):

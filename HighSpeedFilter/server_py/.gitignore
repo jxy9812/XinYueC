@@ -21,3 +21,9 @@ tests/_run/
 # 这里显式把测试源码拉回来，运行产物仍由上面的规则排除。
 !tests/
 !tests/*.py
+
+# SQLite 运行产物（历史/日志/报警库）
+hsf_data.db
+*.db
+*.db-wal
+*.db-shm

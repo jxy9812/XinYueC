@@ -571,9 +571,9 @@ static XJsonDocument* xup_state_to_json(const XUpgradeStateFile* state)
 /** @brief 从 JSON 根对象读取 UTF-8 字符串字段到定长缓冲；缺键清空。 */
 static void xup_json_str(const XJsonObject* o, const char* key, char* dst, size_t cap)
 {
-    XJsonValue* v;
+    const XJsonValue* v;
     if (!o || !key) { xups_str_copy(dst, cap, ""); return; }
-    v = XJsonObject_value_keyUtf8((XJsonObject*)o, key); /* 深拷贝，调用者释放 */
+    v = XJsonObject_value_keyUtf8(o, key);   /* 借用，不释放 */
     if (!v) { xups_str_copy(dst, cap, ""); return; }
     if (XJsonValue_type(v) == XJsonValue_String) {
         const XString* s = XJsonValue_toString(v);
@@ -581,33 +581,26 @@ static void xup_json_str(const XJsonObject* o, const char* key, char* dst, size_
     } else {
         xups_str_copy(dst, cap, "");
     }
-    XJsonValue_delete(v);
 }
 
 /** @brief 从 JSON 根对象读取整数字段；缺键返回 def。 */
 static int64_t xup_json_int(const XJsonObject* o, const char* key, int64_t def)
 {
-    XJsonValue* v;
-    int64_t r;
+    const XJsonValue* v;
     if (!o || !key) return def;
-    v = XJsonObject_value_keyUtf8((XJsonObject*)o, key);
+    v = XJsonObject_value_keyUtf8(o, key);
     if (!v) return def;
-    r = XJsonValue_toInt(v, def);
-    XJsonValue_delete(v);
-    return r;
+    return XJsonValue_toInt(v, def);
 }
 
 /** @brief 从 JSON 根对象读取布尔字段；缺键返回 def。 */
 static bool xup_json_bool(const XJsonObject* o, const char* key, bool def)
 {
-    XJsonValue* v;
-    bool r;
+    const XJsonValue* v;
     if (!o || !key) return def;
-    v = XJsonObject_value_keyUtf8((XJsonObject*)o, key);
+    v = XJsonObject_value_keyUtf8(o, key);
     if (!v) return def;
-    r = XJsonValue_toBool(v, def);
-    XJsonValue_delete(v);
-    return r;
+    return XJsonValue_toBool(v, def);
 }
 
 /** @brief 从扁平键重建组件表/跳过表（带越界与白名单防护）。 */
@@ -663,19 +656,16 @@ static void xup_json_fill_download(const XJsonObject* root, XUpgradeStateFile* o
     d->m_offset = off > 0 ? (uint64_t)off : 0ull;
     XMemset(d->m_chunkSha256, 0, XUPGRADE_SHA256_BIN_SIZE);
     {
-        XJsonValue* hv = XJsonObject_value_keyUtf8((XJsonObject*)root, "dlChunkSha256");
-        if (hv) {
-            if (XJsonValue_type(hv) == XJsonValue_String) {
-                const XString* hs = XJsonValue_toString(hv);
-                hex = hs ? XString_toUtf8(hs) : NULL;
-                for (i = 0; hex && i < XUPGRADE_SHA256_BIN_SIZE; ++i) {
-                    int hi = xup_hex_digit(hex[i * 2]);
-                    int lo = xup_hex_digit(hex[i * 2 + 1]);
-                    if (hi < 0 || lo < 0) break;
-                    d->m_chunkSha256[i] = (uint8_t)((hi << 4) | lo);
-                }
+        const XJsonValue* hv = XJsonObject_value_keyUtf8(root, "dlChunkSha256");
+        if (hv && XJsonValue_type(hv) == XJsonValue_String) {
+            const XString* hs = XJsonValue_toString(hv);
+            hex = hs ? XString_toUtf8(hs) : NULL;
+            for (i = 0; hex && i < XUPGRADE_SHA256_BIN_SIZE; ++i) {
+                int hi = xup_hex_digit(hex[i * 2]);
+                int lo = xup_hex_digit(hex[i * 2 + 1]);
+                if (hi < 0 || lo < 0) break;
+                d->m_chunkSha256[i] = (uint8_t)((hi << 4) | lo);
             }
-            XJsonValue_delete(hv);
         }
     }
 }

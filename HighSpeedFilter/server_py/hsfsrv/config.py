@@ -173,6 +173,26 @@ class DigitalConfig(object):
         self.publish = bool(kw.get("publish", True))
 
 
+class StorageConfig(object):
+    """历史/日志/报警的 SQLite 落盘配置。
+
+    [为什么默认开] 历史数据的价值全在「事后」，进程一重启内存缓存就没了；
+    落盘默认开、路径默认落在**服务端程序目录**（不依赖任何安装选择），
+    现场不需要做任何配置就能拿到完整数据。要挪到别处（如挂载的大容量
+    分区）改 `path` 即可，远端设置页可在线改。
+    """
+
+    __slots__ = ("enabled", "path", "sample_ms")
+
+    def __init__(self, **kw):
+        self.enabled = bool(kw.get("enabled", True))
+        #: 数据库文件路径；**空串 = 服务端程序目录下的 hsf_data.db**。
+        self.path = str(kw.get("path", "") or "")
+        #: 历史采样周期（毫秒）。历史是慢变量（趋势排查用），5s 一行
+        #: 一天约 1.7 万行，SQLite 毫无压力；周期推送（100ms）没必要入库。
+        self.sample_ms = int(kw.get("sample_ms", 5000))
+
+
 class Config(object):
     """全局配置。"""
 
@@ -287,6 +307,8 @@ class Config(object):
              "do": 16 + i, "openDi": 16 + i * 2 + 1, "closeDi": 16 + i * 2}
             for i in range(6)
         ]
+        # ---- 数据落盘（历史/日志/报警 → SQLite）----
+        self.storage = StorageConfig()
         self._runtime = {}          # 运行期持久化（run_mode 等）
 
     # ---- 派生（只读转发，避免两处各存一份导致改一个忘一个）----
@@ -376,6 +398,10 @@ class Config(object):
             self.enable_flowmeter = bool(serial.get("flowmeter_enabled"))
         if "turbidity_enabled" in serial:
             self.enable_turbidity = bool(serial.get("turbidity_enabled"))
+        #: 浊度轮询周期（远程采集配置可改；原先只在 __init__ 里赋值、无
+        #: load/save 通路 —— 远程改完重启就丢，配置文件里根本不存在）。
+        self.turbidity_poll_ms = _int(serial.get("turbidity_poll_ms"),
+                                      self.turbidity_poll_ms)
 
         analog = doc.get("analog") or {}
         if analog:
@@ -483,6 +509,14 @@ class Config(object):
                                         self.turbidity_stale_ms)
         self.digital_stale_ms = _int(stale.get("digital_ms"),
                                      self.digital_stale_ms)
+        storage = doc.get("storage") or {}
+        if "enabled" in storage:
+            self.storage.enabled = bool(storage.get("enabled"))
+        # 空串合法（= 服务端程序目录），故只在键存在时覆盖。
+        if "path" in storage:
+            self.storage.path = str(storage.get("path") or "")
+        self.storage.sample_ms = _int(storage.get("sample_ms"),
+                                      self.storage.sample_ms)
         return True
 
     def save(self):
@@ -502,6 +536,11 @@ class Config(object):
                 "temphum_push_ms": self.serial.temphum_push_ms,
                 "vfd_enabled": self.enable_vfd,
                 "temphum_enabled": self.enable_temphum,
+                # 浊度仪/流量计开关与浊度周期：load 侧有通路、save 侧
+                # 曾漏写 —— 远程改完重启丢配置（远程采集配置 e2e 实测抓到）。
+                "flowmeter_enabled": self.enable_flowmeter,
+                "turbidity_enabled": self.enable_turbidity,
+                "turbidity_poll_ms": self.turbidity_poll_ms,
                 "unit_ids": {
                     "vfd": self.vfd_unit_id,
                     "temphum": self.temphum_unit_id,
@@ -539,6 +578,11 @@ class Config(object):
                 "poll_ms": self.valve_poll_ms,
                 "move_timeout_ms": self.valve_move_timeout_ms,
                 "items": self.valve_items,
+            },
+            "storage": {
+                "enabled": self.storage.enabled,
+                "path": self.storage.path,
+                "sample_ms": self.storage.sample_ms,
             },
             "stale": {
                 "vfd_ms": self.vfd_stale_ms,

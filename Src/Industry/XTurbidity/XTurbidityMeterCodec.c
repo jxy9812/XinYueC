@@ -123,10 +123,11 @@ static XBsonDocument* turbidityCodecBuildStateDoc(const XTurbidityMeter* meter,
 
 /**
  * @brief 宽容读 double：BSON DOUBLE/INT32/INT64 三种类型都接受。
- * @details 与 XFlowMeterCodec 同款实锅：XBsonValue_toDouble 仅在类型为 DOUBLE
- *          时返回值，其它类型直接给默认值。JSON 文本里不带小数点的数（如
- *          "ntu": 12）解析后成为整型，转成 BSON 便是 INT32/INT64，经 toDouble
- *          读回落在默认值 0 上——整数字段的 double 往返会静默丢值。
+ * @details 与 XFlowMeterCodec 同款实锅：旧版 XBsonValue_toDouble 仅在类型为
+ *          DOUBLE 时返回值。JSON 文本里不带小数点的数（如 "ntu": 12）解析后
+ *          成为整型，转成 BSON 便是 INT32/INT64，经 toDouble 读回落在默认值
+ *          0 上——整数字段的 double 往返会静默丢值。现 toDouble 已统一拓宽
+ *          整数类型；保留显式分支兼容旧构建。
  * @param v 值对象；NULL 返回 0。
  * @return 数值；不可解释时返回 0。
  */

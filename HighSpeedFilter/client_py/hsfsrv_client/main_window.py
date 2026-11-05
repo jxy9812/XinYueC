@@ -132,6 +132,12 @@ class MainWindow(QMainWindow):
         if bridge.is_connected():
             self._on_connected(bridge.role)
 
+        # ---- 软键盘（触摸屏无键盘设备；自动探测，HSF_TOUCH 可强制）----
+        # 任意 QLineEdit 获得焦点即从主窗底部弹出（登录框/历史筛选/路径等
+        # 全覆盖）。桌面带键盘的机器探测为关，不会弹出。
+        from .softkeyboard import attach_soft_keyboard
+        self.soft_kbd = attach_soft_keyboard(self)
+
     # ==================================================================
     #                            切页
     # ==================================================================

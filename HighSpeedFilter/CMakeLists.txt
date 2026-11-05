@@ -107,3 +107,33 @@ xinyue_link_rescan_group(HsfServer)
 xinyue_link_rescan_group(XHsfServerIoLib)
 xinyue_link_rescan_group(HsfServerFlow)
 xinyue_link_rescan_group(HsfClient)
+
+# ==================== xlsx_bridge（Python 客户端 Excel 导出动态库）====================
+# 高速过滤器 Python 客户端（client_py/）导出 Excel 用：把 XExcel（XCore/XData）
+# 折成 6 个纯 C 函数（xlsx_create/write_str/write_num/add_sheet/set_col_width/
+# save/delete），client_py 用 ctypes 加载 hsfsrv_client/bin/xlsx_bridge.dll。
+# 链接集与 XDataTest 同口径（Core 静态库 + Library 外部库）+ RESCAN 收口。
+# 源文件不存在（如未拉全）时跳过，不影响本文件其他目标。
+set(XLSX_BRIDGE_SRC "${CMAKE_CURRENT_LIST_DIR}/client_py/tools/xlsx_bridge/xlsx_bridge.c")
+if(EXISTS "${XLSX_BRIDGE_SRC}")
+    add_library(xlsx_bridge SHARED "${XLSX_BRIDGE_SRC}")
+    set_target_properties(xlsx_bridge PROPERTIES
+        PREFIX "" OUTPUT_NAME "xlsx_bridge"
+        POSITION_INDEPENDENT_CODE ON)
+    if(UNIX)
+        target_link_libraries(xlsx_bridge
+            ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS}
+            mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    else()
+        target_link_libraries(xlsx_bridge
+            mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    endif()
+    xinyue_link_rescan_group(xlsx_bridge)
+    add_custom_command(TARGET xlsx_bridge POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                "${CMAKE_CURRENT_LIST_DIR}/client_py/hsfsrv_client/bin"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:xlsx_bridge>"
+                "${CMAKE_CURRENT_LIST_DIR}/client_py/hsfsrv_client/bin/"
+        COMMENT "拷贝 xlsx_bridge 动态库 -> client_py/hsfsrv_client/bin/")
+endif()

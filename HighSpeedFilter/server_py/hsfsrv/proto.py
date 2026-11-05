@@ -314,18 +314,98 @@ TOPIC_PUMP_STATUS = 0x0001000A
 
 # ---- 自动运行控制（⚠ 与"切模式"是两件事）----
 
-#: 自动运行控制（Request 载荷 = {"on":bool}；需 root + 自动模式）。
+#: 自动运行控制（Request 载荷 = {"op":int}；需 root；启动还须自动模式）。
 #:
 #: [为什么单独一条命令] 把"切到自动模式"和"开始自动运行"合成一个动作是
 #: **危险的**：操作员只想切模式，设备就立刻被自动逻辑驱动。现场反馈
 #: "默认应该是停止状态，不然太危险"。故：
 #:
 #:     CMD_RUN_MODE(mode=1) → 授权自动（远程控制被禁），控制器**仍停**
-#:     CMD_AUTO_CONTROL(on=1) → 人才真正按下"开始自动运行"
+#:     CMD_AUTO_CONTROL(op=1) → 人才真正按下"开始自动运行"
 #:
 #: 同理，服务端重启后即使配置里是自动模式，控制器也**一律不自动启动**
 #: （断电/升级重启不该让设备自己动起来）。
+#:
+#: [op 操作字（2026-11-05 C 侧对齐新增，向后兼容）] {"op":int} 四板斧：
+#: 启动/停止/急停/复位；老载荷 {"on":bool} 仍受理（true≈op1 / false≈op2），
+#: op 键存在时优先生效。急停锁存：复位（op=4）前拒绝启动，复位只回停止态。
 CMD_AUTO_CONTROL = 0x0115
+
+#: op 操作字：启动自动运行（须已处自动模式）。
+AUTO_OP_START = 1
+#: op 操作字：停止自动运行（永远放行）。
+AUTO_OP_STOP = 2
+#: op 操作字：急停（锁存；复位前拒绝启动；永远放行）。
+AUTO_OP_ESTOP = 3
+#: op 操作字：复位（解除急停锁存，回到停止态；不是重新启动）。
+AUTO_OP_RESET = 4
+
+#: 自动运行告警推送主题（载荷 = 单条告警 BSON {kind,atMs,text}；事件驱动）。
+#:
+#: [与 C 侧 XhsfLinkProto.h TOPIC_AUTO_ALARM 同号] 远程管理闭环：
+#: 订阅本主题监视自动运行异常 + AUTO_CONTROL 远程启停/急停/复位。
+#: 告警类型值与 C 侧 XAutoControlAlarmKind 逐值一致（AUTO_ALARM_*）。
+TOPIC_AUTO_ALARM = 0x0001000B
+
+#: 自动运行告警类型：动作下发失败。
+AUTO_ALARM_ACTION_FAILED = 1
+#: 自动运行告警类型：依赖设备不可用。
+AUTO_ALARM_DEVICE_UNAVAILABLE = 2
+#: 自动运行告警类型：逻辑自定义。
+AUTO_ALARM_CUSTOM = 3
+#: 自动运行告警类型：急停触发。
+AUTO_ALARM_ESTOP = 4
+
+# ---- 远程配置（采集项/采集频率/数据落盘；2026-11-05 新增）----
+
+#: 读取服务端配置快照（无需载荷）。
+#:
+#: 应答 = {"ok":true,
+#:         "collect": {…采集项开关与轮询周期…},
+#:         "storage": {…数据落盘…}}
+#: 与 CMD_CONFIG_SET 成对：设置页先 GET 回显当前值，改完 SET 提交。
+CMD_CONFIG_GET = 0x0116
+
+#: 设置服务端配置（**需 root**）。
+#:
+#: 载荷 = {"section":"collect",   …采集配置键…} 或
+#:        {"section":"storage",   …落盘配置键…}
+#:
+#: [为什么按 section 分] 采集与落盘是两拨键，一次只提一节：客户端两
+#: 张设置卡各自提交，服务端校验/生效范围也按节走（collect ⇒ 重启采集
+#: 任务；storage ⇒ 重开/关闭数据库）。
+#:
+#: [生效口径] **在线生效 + 立即落盘**（cfg.save）：
+#:   · collect：轮询周期下一拍生效（循环每拍重读）；启停开关经
+#:     「重启采集任务」生效——被关的设备不再轮询，健康条目转数据过期
+#:     （如实反映"不采了"，不是装作在线）。
+#:   · storage：enabled/path/sample_ms 变更后重开（或关闭）数据库；
+#:     历史/日志/告警随之落到新位置，旧文件不搬动。
+#: 仅 Py 版（C 版可后补同号命令，语义见注释）。
+CMD_CONFIG_SET = 0x0117
+
+#: collect 节键：各设备采集开关（bool）。
+CFGK_VFD_ENABLED = "vfdEnabled"
+CFGK_TEMPHUM_ENABLED = "temphumEnabled"
+CFGK_FLOWMETER_ENABLED = "flowmeterEnabled"
+CFGK_TURBIDITY_ENABLED = "turbidityEnabled"
+CFGK_ANALOG_ENABLED = "analogEnabled"
+CFGK_DIGITAL_ENABLED = "digitalEnabled"
+#: collect 节键：轮询周期（int 毫秒；服务端夹到 50~60000）。
+CFGK_VFD_POLL_MS = "vfdPollMs"
+CFGK_TEMPHUM_POLL_MS = "temphumPollMs"
+CFGK_TURBIDITY_POLL_MS = "turbidityPollMs"
+CFGK_ANALOG_POLL_MS = "analogPollMs"
+CFGK_DIGITAL_POLL_MS = "digitalPollMs"
+#: storage 节键：是否落盘（bool）/ 库文件路径（空串=程序目录）/ 采样周期。
+CFGK_STORAGE_ENABLED = "enabled"
+CFGK_STORAGE_PATH = "path"
+CFGK_STORAGE_SAMPLE_MS = "sampleMs"
+
+#: 轮询周期允许范围（毫秒）。下限 50 是总线的现实（该模块应答 0.4~0.8s，
+#: 再快只是空转+退避刷日志）；上限防手滑填成小时级。
+CFG_POLL_MS_MIN = 50
+CFG_POLL_MS_MAX = 60000
 
 # ---- 浊度仪键（v{index}_ 前缀，与阀/数字量同一风格）----
 
