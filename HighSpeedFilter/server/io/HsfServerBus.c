@@ -110,6 +110,51 @@ fail:
     return false;
 }
 
+bool HsfServerBus_openWithClient(HsfServerBus* bus, const char* name,
+                                 XModbusClient* client, int timeoutMs,
+                                 int retries)
+{
+    if (!bus || !client) return false;
+    memset(bus, 0, sizeof(*bus));
+    bus->m_devId = -1;
+    bus->m_name = name ? name : "485";
+    bus->m_port = NULL;             /* 无物理串口（模拟/注入）。 */
+
+    bus->m_hub = XModbusHub_create();
+    if (!bus->m_hub) {
+        XPrintf("HsfServerBus: [%s] Hub 创建失败\n", bus->m_name);
+        XClassDelete((XClass*)client);   /* 未被接管，按所有权约定释放。 */
+        return false;
+    }
+    XModbusHub_setWriteCoalesceMs(bus->m_hub, 0);   /* 命令字受理即下发。 */
+
+    XModbusClient_setTimeout(client, (size_t)timeoutMs);
+    XModbusClient_setNumberOfRetries(client, retries);
+    XModbusClient_setAutoReconnect(client, false);
+    if (!XModbusDevice_connectDevice((XModbusDevice*)client)) {
+        /* 注入的客户端 Open 失败：虚拟客户端的 forced-offline 会走到这里，
+         * 正是"模拟模块不在线"的预期表现，如实上报。 */
+        XPrintf("HsfServerBus: [%s] 注入客户端连接失败（错误码=%d）\n",
+                bus->m_name, (int)XModbusDevice_error((XModbusDevice*)client));
+        XClassDelete((XClass*)client);
+        XClassDelete((XClass*)bus->m_hub);
+        bus->m_hub = NULL;
+        return false;
+    }
+    bus->m_devId = XModbusHub_addDevice_2(bus->m_hub, client, bus->m_name);
+    if (bus->m_devId < 0) {
+        XPrintf("HsfServerBus: [%s] 客户端挂 Hub 失败\n", bus->m_name);
+        XClassDelete((XClass*)client);      /* addDevice 失败不接管。 */
+        XClassDelete((XClass*)bus->m_hub);
+        bus->m_hub = NULL;
+        return false;
+    }
+    bus->m_client = client;
+    XPrintf("HsfServerBus: [%s] 已接入注入客户端（超时 %dms，重试 %d）\n",
+            bus->m_name, timeoutMs, retries);
+    return true;
+}
+
 XModbusHub* HsfServerBus_hub(const HsfServerBus* bus)
 {
     return bus ? bus->m_hub : NULL;

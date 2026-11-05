@@ -351,6 +351,81 @@ static void test_tempHumDetachAndErrors(void)
     tempHumFixtureDeinit(&fx);
 }
 
+/**
+ * @brief 温湿度：更新时刻/通道边界/NULL 安全（"数据什么时候来的"是上层
+ *        判陈旧与做趋势的唯一依据，必须逐个通道独立且未收数时明确失败）。
+ */
+static void test_tempHumLastUpdateAndBounds(void)
+{
+    TempHumFixture fx;
+    uint64_t ms = 0;
+    uint64_t ms2 = 0;
+    int32_t v = 0;
+
+    resetSensorFlags();
+    tempHumFixtureInit(&fx);
+    /* 未挂接：没有更新时刻可报。 */
+    CHECK("未挂接无更新时刻", !XTempHumTransmitter_lastUpdateMs(fx.m_dev,
+                                                                XTempHumChannel_Temperature,
+                                                                &ms));
+    CHECK("未挂接时输出被清零", ms == 0);
+    feedCh(&fx, 10, 12000);
+    feedCh(&fx, 11, 5500);
+    CHECK("挂接", XTempHumTransmitter_attach(fx.m_dev, fx.m_group,
+                                             &fx.m_tempPt.m_base, &fx.m_humPt.m_base));
+    /* 两通道各自记账：温度与湿度是两次独立到达。 */
+    CHECK("温度有更新时刻", XTempHumTransmitter_lastUpdateMs(fx.m_dev,
+                                                             XTempHumChannel_Temperature,
+                                                             &ms) && ms > 0);
+    CHECK("湿度有更新时刻", XTempHumTransmitter_lastUpdateMs(fx.m_dev,
+                                                             XTempHumChannel_Humidity,
+                                                             &ms2) && ms2 > 0);
+    /* 更新时刻语义：随吸收路径推进；值未变时通道层去重（feedRole 静默）
+     * 使设备层收不到事件，故时刻不动——按既有跨层契约口径断言。 */
+    {
+        const uint64_t before = ms;
+        spinMs(20);
+        feedCh(&fx, 10, 12900);
+        CHECK("值变化推进时刻", XTempHumTransmitter_lastUpdateMs(
+                                    fx.m_dev, XTempHumChannel_Temperature, &ms) &&
+                                ms > before);
+    }
+    {
+        const uint64_t before = ms;
+        spinMs(20);
+        feedCh(&fx, 10, 12900);        /* 同值：通道层去重，设备层无事件 */
+        CHECK("值不变时刻不动（通道层去重）", XTempHumTransmitter_lastUpdateMs(
+                                                  fx.m_dev,
+                                                  XTempHumChannel_Temperature, &ms) &&
+                                              ms == before);
+    }
+    /* 越界通道号：拒绝且不写输出。 */
+    ms = 12345;
+    CHECK("越界通道拒绝", !XTempHumTransmitter_lastUpdateMs(fx.m_dev,
+                                                            (XTempHumChannel)99, &ms));
+    CHECK("越界通道输出被清零", ms == 0);
+    CHECK("越界通道查询无效",
+          !XTempHumTransmitter_isValid(fx.m_dev, (XTempHumChannel)99));
+    CHECK("越界通道取值失败",
+          !XTempHumTransmitter_value(fx.m_dev, (XTempHumChannel)99, &v));
+    /* NULL 输出指针：只判存在性，不崩。 */
+    CHECK("NULL 输出仍报有时刻", XTempHumTransmitter_lastUpdateMs(
+                                     fx.m_dev, XTempHumChannel_Temperature, NULL));
+    CHECK("NULL 对象无时刻", !XTempHumTransmitter_lastUpdateMs(NULL,
+                                                               XTempHumChannel_Temperature,
+                                                               &ms));
+    /* NULL 对象上的取/设参数：全部安全失败。 */
+    CHECK("NULL 设标度失败", !XTempHumTransmitter_setScale(NULL,
+                                                           XTempHumChannel_Temperature,
+                                                           1, 1, 0));
+    CHECK("NULL 设陈旧阈值失败", !XTempHumTransmitter_setStaleMs(NULL, 100));
+    CHECK("NULL 陈旧阈值查询为 0", XTempHumTransmitter_staleMs(NULL) == 0u);
+    CHECK("NULL 有效性查询为假", !XTempHumTransmitter_isValid(NULL,
+                                                              XTempHumChannel_Temperature));
+    CHECK("NULL detach 失败", !XTempHumTransmitter_detach(NULL));
+    tempHumFixtureDeinit(&fx);
+}
+
 /* ==================== 压差计用例 ==================== */
 
 static void test_diffPressureBasics(void)
@@ -385,6 +460,78 @@ static void test_diffPressureBasics(void)
     CHECK("解挂后查询无效", !XDiffPressureGauge_value(fx.m_dev, &v));
     CHECK("den=0 拒绝", !XDiffPressureGauge_setScale(fx.m_dev, 1, 0, 0));
     CHECK("重复 detach 返回 false", !XDiffPressureGauge_detach(fx.m_dev));
+    diffFixtureDeinit(&fx);
+}
+
+/**
+ * @brief 压差计：标度查询/更新时刻/陈旧阈值/越界与 NULL 安全。
+ * @details 压差计与温湿度是同一族（Single AI + 二级标度），但**只有一个
+ *          通道**：越界访问路径与多通道设备不同，且偏移量为负（零点迁移）
+ *          是最常见的现场配置，必须单独锁住。
+ */
+static void test_diffPressureBounds(void)
+{
+    DiffPressureFixture fx;
+    int32_t v = 0;
+    int32_t n = -1, d = -1, off = -1;
+    uint64_t ms = 0;
+    uint64_t ms2 = 0;
+
+    resetSensorFlags();
+    diffFixtureInit(&fx);
+
+    /* ---- 标度查询与缺省值 ---- */
+    XDiffPressureGauge_scale(fx.m_dev, &n, &d, &off);
+    CHECK("缺省标度 1/1/0", n == 1 && d == 1 && off == 0);
+    CHECK("陈旧阈值缺省可读", XDiffPressureGauge_staleMs(fx.m_dev) > 0u);
+
+    /* ---- 未挂接：无更新时刻 ---- */
+    CHECK("未挂接无更新时刻", !XDiffPressureGauge_lastUpdateMs(fx.m_dev, &ms));
+    CHECK("未挂接时刻输出清零", ms == 0);
+
+    feedCh(&fx, 20, 12000);
+    CHECK("挂接", XDiffPressureGauge_attach(fx.m_dev, fx.m_group, &fx.m_pt.m_base));
+    CHECK("有更新时刻", XDiffPressureGauge_lastUpdateMs(fx.m_dev, &ms) && ms > 0);
+
+    /* ---- 负偏移（零点迁移）：eng = raw×num/den + offset ---- */
+    CHECK("带偏移标度设置", XDiffPressureGauge_setScale(fx.m_dev, 1, 2, -1000));
+    CHECK("标度查询回读一致", (XDiffPressureGauge_scale(fx.m_dev, &n, &d, &off),
+                               n == 1 && d == 2 && off == -1000));
+    CHECK("负偏移参与换算", XDiffPressureGauge_value(fx.m_dev, &v) && v == 5000);
+    CHECK("负偏移结果仍有效", XDiffPressureGauge_isValid(fx.m_dev));
+
+    /* ---- 时刻语义同上：值变化推进；同值因通道层去重不动 ---- */
+    spinMs(20);
+    feedCh(&fx, 20, 14000);
+    CHECK("值变化推进时刻", XDiffPressureGauge_lastUpdateMs(fx.m_dev, &ms2) &&
+                            ms2 > ms);
+    ms = ms2;
+    spinMs(20);
+    feedCh(&fx, 20, 14000);
+    CHECK("值不变时刻不动（通道层去重）",
+          XDiffPressureGauge_lastUpdateMs(fx.m_dev, &ms2) && ms2 == ms);
+
+    /* ---- 陈旧阈值：设为 0 = 永不陈旧 ---- */
+    CHECK("关闭陈旧判定", XDiffPressureGauge_setStaleMs(fx.m_dev, 0));
+    CHECK("staleMs=0 恒有效", XDiffPressureGauge_isValid(fx.m_dev));
+    CHECK("陈旧阈值回读为 0", XDiffPressureGauge_staleMs(fx.m_dev) == 0u);
+    /* 恢复一个极小阈值，验证仍能翻 false（不是被 0 粘住）。 */
+    CHECK("恢复小阈值", XDiffPressureGauge_setStaleMs(fx.m_dev, 1));
+
+    /* ---- NULL / 输出指针安全 ---- */
+    CHECK("NULL 取值失败", !XDiffPressureGauge_value(NULL, &v));
+    CHECK("NULL 有效性为假", !XDiffPressureGauge_isValid(NULL));
+    CHECK("NULL 更新时刻失败", !XDiffPressureGauge_lastUpdateMs(NULL, &ms));
+    CHECK("NULL 标度查询清零", (XDiffPressureGauge_scale(NULL, &n, &d, &off),
+                                n == 0 && d == 0 && off == 0));
+    CHECK("NULL 设标度失败", !XDiffPressureGauge_setScale(NULL, 1, 1, 0));
+    CHECK("NULL 设陈旧失败", !XDiffPressureGauge_setStaleMs(NULL, 100));
+    CHECK("NULL 陈旧查询为 0", XDiffPressureGauge_staleMs(NULL) == 0u);
+    CHECK("NULL detach 失败", !XDiffPressureGauge_detach(NULL));
+    CHECK("NULL attach 失败", !XDiffPressureGauge_attach(NULL, fx.m_group,
+                                                         &fx.m_pt.m_base));
+    CHECK("NULL 组 attach 失败", !XDiffPressureGauge_attach(fx.m_dev, NULL,
+                                                            &fx.m_pt.m_base));
     diffFixtureDeinit(&fx);
 }
 
@@ -497,7 +644,9 @@ static void sensorRunAll(void)
     test_tempHumSeedAndScale();
     test_tempHumStale();
     test_tempHumDetachAndErrors();
+    test_tempHumLastUpdateAndBounds();
     test_diffPressureBasics();
+    test_diffPressureBounds();
     test_tempHumCodec();
     test_diffPressureCodec();
 }

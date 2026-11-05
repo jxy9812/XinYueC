@@ -19,6 +19,7 @@
 """
 
 import asyncio
+import os
 import socket
 import struct
 import time
@@ -493,9 +494,31 @@ class Server(object):
 
     # ---- 生命周期 ----
     async def start(self):
-        self._server = await asyncio.start_server(
-            self._handle_client, host="0.0.0.0", port=self.port,
-            reuse_address=True)
+        # [⚠ 平台差异：reuse_address 在 Windows 上会吞掉端口冲突]
+        #
+        # Linux：SO_REUSEADDR 允许绑定 TIME_WAIT 里的端口（重启服务端不必
+        #        等 60s，是**正当需求**），但**不允许**两个 socket 同时 LISTEN。
+        # Windows：同一位的语义更宽 —— 允许多个 socket **同时监听同一端口**。
+        #
+        # 实锅 2026-11-05：快捷方式启动时旧实例还在跑，第二个实例**静默绑定
+        # 成功**，`netstat` 出现两条 0.0.0.0:6200 LISTENING，客户端连到哪
+        # 一个是随机的。两个实例各自轮询同一批虚拟设备、各自维护推送节拍，
+        # 现象会是"数据跳变/状态重置"，极难看出是双实例。
+        #
+        # 故 Windows 上关掉它（宁可重启时偶尔等 TIME_WAIT，也不能静默双开）。
+        reuse = (os.name != "nt")
+        try:
+            self._server = await asyncio.start_server(
+                self._handle_client, host="0.0.0.0", port=self.port,
+                reuse_address=reuse)
+        except OSError as exc:
+            # 端口被占用是最常见的启动失败，必须给出能直接照做的提示，
+            # 而不是抛一个 EADDRINUSE 栈让用户去猜。
+            raise OSError(
+                "端口 %d 已被占用，无法启动（另一个服务端实例在跑？）。\n"
+                "  · 查占用：netstat -ano | findstr :%d\n"
+                "  · 或者换端口：--port 6201\n"
+                "原始错误：%s" % (self.port, self.port, exc)) from exc
         sock = self._server.sockets[0] if self._server.sockets else None
         if sock is not None:
             self.port = sock.getsockname()[1]

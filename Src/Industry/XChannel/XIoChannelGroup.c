@@ -193,6 +193,18 @@ bool XIoChannelGroup_readDigitalInput(XIoChannelGroup* self, uint16_t role, bool
     return true;
 }
 
+bool XIoChannelGroup_readDigitalOutput(XIoChannelGroup* self, uint16_t role,
+                                       bool* active)
+{
+    const XIoPoint* pt;
+    if (!self || !active) return false;
+    pt = groupPoint(self, role);
+    if (!pt || pt->m_type != (uint16_t)XIoPoint_DigitalOutput) return false;
+    if (!pt->m_flags.bits.m_valid && !pt->m_flags.bits.m_hasValue) return false;
+    *active = (pt->m_flags.bits.m_valueB != 0);
+    return true;
+}
+
 bool XIoChannelGroup_writeDigitalOutput(XIoChannelGroup* self, uint16_t role, bool active)
 {
     XIoPoint* pt;
@@ -232,6 +244,14 @@ bool XIoChannelGroup_isValid(const XIoChannelGroup* self, uint16_t role)
     return (pt && pt->m_flags.bits.m_valid) ? true : false;
 }
 
+bool XIoChannelGroup_isFresh(const XIoChannelGroup* self, uint16_t role)
+{
+    const XIoPoint* pt = groupPoint(self, role);
+    if (!pt || !pt->m_flags.bits.m_valid) return false;
+    if (!self->m_link) return true;     /* 未挂链路：不擅自判陈旧。 */
+    return XIoLink_roleFresh_base(self->m_link, role);
+}
+
 /* ==================== 链路 → 组的数据入口 ==================== */
 
 bool XIoChannelGroup_feedRole(XIoChannelGroup* self, uint16_t role, int32_t raw)
@@ -251,6 +271,31 @@ bool XIoChannelGroup_feedRole(XIoChannelGroup* self, uint16_t role, int32_t raw)
     if (pt->m_type == (uint16_t)XIoPoint_DigitalInput ||
         pt->m_type == (uint16_t)XIoPoint_DigitalOutput) {
         pt->m_flags.bits.m_valueB = (eng != 0) ? 1u : 0u;
+    }
+    XIoChannelGroup_inputChanged_signal(self, role, eng);
+    return true;
+}
+
+bool XIoChannelGroup_feedRoleRefresh(XIoChannelGroup* self, uint16_t role,
+                                     int32_t raw)
+{
+    XIoPoint* pt;
+    int32_t eng;
+    if (!self) return false;
+    pt = groupPoint(self, role);
+    if (!pt) return false;
+    eng = XIoPoint_toEngineering(pt, raw);
+    pt->m_flags.bits.m_valid = 1;
+    /* [2026-11-05 心跳穿透] 值未变时**也**发射一次 inputChanged——这正是
+     * 周期心跳的目的（让上层知道数据仍是这一拍从链路读回来的）。写入部分
+     * 只在值真变时做，语义与普通喂入完全一致，唯一区别是不抑制发射。 */
+    if (!(pt->m_flags.bits.m_hasValue && pt->m_value == eng)) {
+        pt->m_value = eng;
+        pt->m_flags.bits.m_hasValue = 1;
+        if (pt->m_type == (uint16_t)XIoPoint_DigitalInput ||
+            pt->m_type == (uint16_t)XIoPoint_DigitalOutput) {
+            pt->m_flags.bits.m_valueB = (eng != 0) ? 1u : 0u;
+        }
     }
     XIoChannelGroup_inputChanged_signal(self, role, eng);
     return true;

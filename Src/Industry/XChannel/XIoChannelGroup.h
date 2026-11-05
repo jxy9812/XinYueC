@@ -167,6 +167,22 @@ bool XIoChannelGroup_contains(const XIoChannelGroup* self, const XIoPoint* point
 bool XIoChannelGroup_readDigitalInput(XIoChannelGroup* self, uint16_t role, bool* active);
 
 /**
+ * @brief 读离散量输出点的**当前回显值**（最近一次写/轮询回读）。
+ * @param self 目标通道组；NULL 返回 false。
+ * @param role 语义槽号。
+ * @param active 输出逻辑值；不能为 NULL。
+ * @return true=读取成功；false=该 role 无点/类型不符/尚无数据。
+ * @note  [与 readDigitalInput 的区别] readDigitalInput 只接受**输入型**点，
+ *        传输出型点恒返回 false。要读"这个 DO 现在是不是通"必须用本函数
+ *        ——2026-11-05 实测踩过：数字量站用 readDigitalInput 读 DO，
+ *        DO 位图恒为 0（类型不符被静默拒绝），而写入其实早已生效。
+ *        值与写路径共用同一块缓存（Hub 受理写时已乐观更新），故写完
+ *        立刻读就能读到新值，不必等下一轮轮询。
+ */
+bool XIoChannelGroup_readDigitalOutput(XIoChannelGroup* self, uint16_t role,
+                                       bool* active);
+
+/**
  * @brief 写离散量输出点（经链路 WriteRole）。
  * @param self 目标通道组；NULL 返回 false。
  * @param role 语义槽号。
@@ -199,9 +215,32 @@ bool XIoChannelGroup_writeAnalogOutput(XIoChannelGroup* self, uint16_t role, int
  * @brief 查询点数据有效标志（O(1)）。
  * @param self 目标通道组；NULL 返回 false。
  * @param role 语义槽号。
- * @return true=数据可信。
+ * @return true=该点**曾经**收到过值（置 1 后不再回落）。
+ * @note  注意：本标志**不反映新鲜度**。从站掉线后它仍为 true（旧值还在）。
+ *        判断"现在能不能用"请用 XIoChannelGroup_isFresh。
  */
 bool XIoChannelGroup_isValid(const XIoChannelGroup* self, uint16_t role);
+
+/**
+ * @brief 查询某点的数据**是否仍然可信**（有值 且 链路侧未陈旧）。
+ * @param self 目标通道组；NULL 返回 false。
+ * @param role 语义槽号。
+ * @return true=有值且链路判定其未过期。
+ *
+ * @details [与 isValid 的区别 —— 必须分清]
+ *            · isValid：本点**是否曾经**收到过值（单向，不回落到 0）；
+ *            · isFresh：本点**现在**还值不值得信（叠加链路新鲜度）。
+ *
+ *          点级 m_valid 是单向的，这是框架刻意的选择（"有没有数据"与
+ *          "数据还新不新"是两件事）。从站掉线后旧值仍以 valid 姿态留在
+ *          点上，若上层据此判断"设备正常"，就会得到**离线却显示正常**的
+ *          危险结论（实测：电磁阀模块掉线后六路阀仍显示有反馈）。故设备层
+ *          判断可用性一律用本函数。
+ *
+ * @note 判据由链路子类给（XIoLink_roleFresh_base）：同步/进程内链路恒新鲜，
+ *       Modbus 链路看缓存块最近一次成功读回距今是否超过门限。
+ */
+bool XIoChannelGroup_isFresh(const XIoChannelGroup* self, uint16_t role);
 
 /* ==================== 链路 → 组的数据入口 ==================== */
 
@@ -214,6 +253,22 @@ bool XIoChannelGroup_isValid(const XIoChannelGroup* self, uint16_t role);
  * @note 值未变时静默（不发射信号），与既有「变化才通知」契约一致。
  */
 bool XIoChannelGroup_feedRole(XIoChannelGroup* self, uint16_t role, int32_t raw);
+
+/**
+ * @brief 同 feedRole，但**值未变也发射** inputChanged（链路心跳/周期刷新用）。
+ * @param self 目标通道组；NULL 返回 false。
+ * @param role 语义槽号。
+ * @param raw 原生值。
+ * @return true=无点/参数非法之外恒真（已发信号）。
+ * @details [2026-11-05 稳定量心跳] 下层（Hub）在 changedOnly 下会给稳定块
+ *          发周期心跳，目的就是让上层知道"链路仍活着、数据仍是这一拍读回来
+ *          的"。若这里按值未变静默返回，心跳到通道层就被吞掉——设备层照样
+ *          收不到刷新，照样被自己的陈旧判定判死（实测：变频器遥测掩码首拍后
+ *          塌成 0，健康列表报"从站失联"，而 485 应答完全正常）。
+ *          语义区别只在**是否抑制发射**：点值/有效位/hasValue 的写入两者一致。
+ */
+bool XIoChannelGroup_feedRoleRefresh(XIoChannelGroup* self, uint16_t role,
+                                     int32_t raw);
 
 /**
  * @brief 链路报告一次写落定（链路子类收到应答时调用）。

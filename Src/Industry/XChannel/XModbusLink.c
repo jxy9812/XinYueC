@@ -17,7 +17,6 @@
 #include <stdlib.h>
 
 /* ==================== 区映射 ==================== */
-
 int XModbusLink_areaOfType(int type, bool useHolding)
 {
     switch (type) {
@@ -165,7 +164,13 @@ static void VXModbusLink_onHubValueChanged(XObject* receiver, XVarList* args)
         if (role == XMODBUSLINK_ROLE_NONE) continue;
         if (!XModbusHub_value(self->m_hub, (XModbusRegisterType)typeInt,
                               (uint16_t)addr, &raw)) continue;
-        XIoChannelGroup_feedRole(group, role, (int32_t)raw);
+        /* [2026-11-05 心跳穿透] 用 Refresh 变体：Hub 的 valueChanged 语义是
+         * **"这一段数据是本拍读回来的"**，不是"值变了"——它在值变化沿之外
+         * 还会发周期心跳（changedOnly 下稳定量的唯一刷新途径）。若此处按
+         * "值未变"静默，心跳到通道层即被吞，设备层收不到刷新、被自身陈旧
+         * 判定判死（实测：变频器遥测掩码首拍后塌成 0 → 报"从站失联"，而
+         * 485 上该从站应答 49 帧/秒完全正常）。 */
+        XIoChannelGroup_feedRoleRefresh(group, role, (int32_t)raw);
     }
 }
 
@@ -298,6 +303,40 @@ static bool VXModbusLink_isAsync(const XModbusLink* self)
 }
 
 /**
+ * @brief RoleFresh：该 role 的缓存值是否仍可信（未陈旧）。
+ * @param self 链路。
+ * @param role 语义槽号。
+ * @return 命中且所在缓存块最近一次成功读回距今 ≤ 陈旧门限 ⇒ true。
+ *
+ * @details [缺陷根因 2026-11-05] 此前**没有任何地方**把点级 m_valid 清回 0：
+ *          它只在 feedRole/completeWrite 里置 1。于是从站掉线后，最后一次
+ *          读到的值会以"有效"姿态永久留在点上，设备层读到的永远是旧值且
+ *          判定为正常——
+ *            · 电磁阀：DO 通道越过在线模块范围后，反馈恒为 0 却仍标 valid，
+ *              六路阀全显示"无到位反馈（检查行程开关接线）"，把排查方向
+ *              从"模块离线"带偏到"接线"；
+ *            · 更危险的是**离线但看起来正常**：写着 DO=1、界面显示已开，
+ *              实际阀根本没动。
+ *          本槽让"可信度"变成权威判据，由上层显式判定与报错。
+ *
+ * @note 门限取 Hub 侧同一口径（Hub 自身按设备级陈旧做退避）。这里对单点
+ *       用块级新鲜度：整块没读回来，块内每个点都不可信——这是严格判据，
+ *       与"点有数据"无关。
+ */
+static bool VXModbusLink_roleFresh(const XModbusLink* self, uint16_t role)
+{
+    int area;
+    uint16_t addr;
+    if (!self || !self->m_hub || !self->m_roleArea) return true;
+    if (role >= (uint16_t)XIOCHANNELGROUP_ROLE_CAP) return true;   /* 未绑定：不擅自判陈旧。 */
+    area = (int)self->m_roleArea[role];
+    if (area >= XMODBUSLINK_AREA_COUNT) return true;               /* 未绑定。 */
+    addr = self->m_roleAddr[role];
+    return XModbusHub_pointValid(self->m_hub, XModbusLink_hubAreaType(area),
+                                 addr, (uint64_t)XMODBUSLINK_STALE_MS);
+}
+
+/**
  * @brief Start：建立 Hub 信号订阅（各一条）。
  * @param self 链路。
  * @return 成功 true（Hub 为空返回 false）。
@@ -396,6 +435,7 @@ XVtable* XModbusLink_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXIoLink_IsAsync, VXModbusLink_isAsync);
     XVTABLE_OVERLOAD_DEFAULT(EXIoLink_Start, VXModbusLink_start);
     XVTABLE_OVERLOAD_DEFAULT(EXIoLink_Stop, VXModbusLink_stop);
+    XVTABLE_OVERLOAD_DEFAULT(EXIoLink_RoleFresh, VXModbusLink_roleFresh);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusLink_deinit);
     XCLASS_SHOW_SIZE_DEFAULT(XModbusLink);
     return XVTABLE_DEFAULT;

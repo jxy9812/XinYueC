@@ -47,23 +47,61 @@ XDateTime XDateTime_currentDateTimeUtc(void);
 /**
  * @brief 获取自 Unix 纪元 (1970-01-01T00:00:00 UTC) 以来的当前纳秒数。
  * @note  实际精度取决于硬件，通常为 100-纳秒级别，但返回值以纳秒为单位。
+ * @note  自 2026-11-05 起与 XDateTime_currentMSecsSinceEpoch **同锚同源**：
+ *        桌面端由同一个单调源（QPC / CLOCK_MONOTONIC）推进，因此
+ *        `currentNSecsSinceEpoch() / 1000000 == currentMSecsSinceEpoch()`
+ *        严格成立（事件分发器把高精度定时器截止与时间轮截止合并比较，
+ *        依赖这条恒等式）。裸机后端仍由 ms × 1e6 派生。
  * @return 当前的纳秒时间戳。
  */
 int64_t XDateTime_currentNSecsSinceEpoch(void);
 /**
- * @brief 获取自 Unix 纪元 (1970-01-01T00:00:00 UTC) 以来的当前毫秒数。
- * @return 当前的毫秒时间戳。
+ * @brief 获取"当前时刻"的毫秒读数（**Unix 纪元毫秒，单调推进**）。
+ * @return 自 Unix 纪元 (1970-01-01T00:00:00 UTC) 以来的毫秒数。
+ *
+ * @note [口径 —— 四平台约定，用之前必读]
+ *       自 2026-11-05 起四平台统一为 **Unix 纪元毫秒**，语义对齐 Qt 的
+ *       QDateTime::currentMSecsSinceEpoch()：
+ *         · Windows：QPC 推进 + 首调时的墙钟基线（取不到 QPC 退回
+ *           GetTickCount64）；
+ *         · POSIX/Linux：CLOCK_MONOTONIC 推进 + 首调时的 CLOCK_REALTIME
+ *           基线；
+ *         · ESP8266/STM32 等无 RTC 的裸机：仍是上电/调度启动起的单调
+ *           毫秒（拿不到纪元基准，**零点为 0**），但框架时间轮已用
+ *           冷启动对齐门吸收这个落差（见 XTimeWheelGroup handler 注记）。
+ *
+ *       [为什么这样定] 本函数是**全库统一的计时源**：绝大多数调用方拿它
+ *       算**差值**（定时器轮、IO 超时、限流、设备数据新鲜度），所以必须
+ *       单调（不能被 NTP 校时跳变）；同时又常被当成"某件事发生的时刻"直接
+ *       打戳（XFlowMeter::m_lastChangeMs、XTempHum 的 m_lastUpdateMs、
+ *       设备健康 lastOkMs…），所以零点不能是"进程/开机"而在 0 附近——
+ *       取到 0 会被误判成"没有时刻"（xindustry-flowmeter 的「收数后有时刻」
+ *       断言曾因此 1/5~1/3 概率间歇失败）。
+ *
+ *       [纪元锚只取一次] 锚点在首次调用时确定，之后纯单调推进。系统时钟
+ *       若此后才被 NTP 校准，本函数的绝对值仍沿用旧锚（依然单调、依然远
+ *       大于 0，但会与墙钟有固定偏差）。需要真实墙钟时刻请用
+ *       XDateTime_currentWallMSecsSinceEpoch / currentDateTime。
+ *
+ *       [正确用法]
+ *         · 测时长：两次调用相减（跨平台安全）；
+ *         · 判"有没有收到过数据"：优先用业务对象自己的标志（如
+ *           XFlowMeter_lastUpdateMs/XTempHum_lastUpdateMs 的 bool 返回值），
+ *           桌面端现在 `ms > 0` 也成立，但裸机后端的零点仍是 0，别依赖它。
  */
 int64_t XDateTime_currentMSecsSinceEpoch(void);
 
 /**
  * @brief 获取自 Unix 纪元 (1970-01-01T00:00:00 UTC) 以来的当前毫秒数（墙钟口径）。
  * @return 当前的墙钟毫秒时间戳（含亚秒精度）。
- * @note  与 XDateTime_currentMSecsSinceEpoch（单调时钟）不同，本函数读的是
- *        系统实时时钟（POSIX CLOCK_REALTIME / Windows 系统时间），会随校时
- *        发生跳变；但精度高于秒级截断的 currentSecsSinceEpoch。
- * @note  供需要「真实 UTC 时刻 + 亚秒精度」的场景使用，典型如 NTP 客户端
- *        构造与测量时间戳。 durations/超时测量仍必须使用单调钟接口。
+ * @note  与 XDateTime_currentMSecsSinceEpoch 的区别**不在零点**（两者都落在
+ *        Unix 纪元刻度上），而在**是否跟随校时**：本函数直读系统实时时钟
+ *        （POSIX CLOCK_REALTIME / Windows 系统时间），NTP 校时后立刻反映；
+ *        后者用单调源推进，校时不影响它。要"真实 UTC 时刻"用它，要"时长"
+ *        用后者。
+ * @note  精度高于秒级截断的 currentSecsSinceEpoch，供需要「真实 UTC 时刻 +
+ *        亚秒精度」的场景使用，典型如 NTP 客户端构造与测量时间戳。
+ *        durations/超时测量仍必须使用单调钟接口。
  */
 int64_t XDateTime_currentWallMSecsSinceEpoch(void);
 
@@ -76,10 +114,11 @@ int64_t XDateTime_currentWallMSecsSinceEpoch(void);
  *        校时）这类必须改动系统时钟的场景使用；常规时间测量请保持只读。
  * @note  权限要求：POSIX 需 root 或 CAP_SYS_TIME；Windows 需
  *        SE_SYSTEMTIME_NAME 特权。可先用 XDateTime_canSetSystemTime 探测。
- * @warning 调整系统时钟会使所有依赖墙钟的时间戳发生跳变。注意本模块的
- *          XDateTime_currentMSecsSinceEpoch 使用单调时钟，校时不会影响它，
- *          因此定时器、心跳、超时测量不受影响；但依赖墙钟的业务（日志、
- *          文件时间戳、证书有效期校验）会看到时间跳变。
+ * @warning 调整系统时钟会使依赖墙钟的时间戳发生跳变。注意本模块的
+ *          XDateTime_currentMSecsSinceEpoch 用单调源推进（只在首调时取
+ *          一次纪元锚），校时不会影响它，因此定时器、心跳、超时测量不受
+ *          影响；但依赖墙钟的业务（日志、文件时间戳、证书有效期校验）会
+ *          看到时间跳变。
  */
 bool XDateTime_setSystemSecsSinceEpoch(int64_t secs);
 

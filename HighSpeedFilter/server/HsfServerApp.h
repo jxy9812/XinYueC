@@ -55,6 +55,15 @@ HsfRunMode HsfServerApp_runMode(void);
  */
 void HsfServerApp_setRunMode(HsfRunMode mode);
 
+/**
+ * @brief 通知"通道名已变更"：下一拍主动下发一帧只含名字的快照。
+ * @note  通道名是部署参数（HsfServerConfig.h 的宏），运行期通常不变；
+ *        本接口给"改了宏重新部署后不重启客户端"以及将来做热改名预留通路。
+ *        下发的帧带 full=true 且只含 count + 全部名字键，客户端按
+ *        "有名字键就更新名字"处理，不重建点表。
+ */
+void HsfServerApp_notifyChannelNamesChanged(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -11,6 +11,14 @@ import argparse
 import os
 import sys
 
+# [双击兜底] 同 server 侧：直接运行本文件时 __package__ 为空，相对导入会抛
+# ImportError 并秒退（窗口一闪而过）。先加 sys.path 再以包方式重入；
+# 重入后 __package__ == "hsfsrv_client"，不会递归。
+if __package__ in (None, ""):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    from hsfsrv_client.__main__ import main as _entry
+    sys.exit(_entry())
 
 from . import ports
 

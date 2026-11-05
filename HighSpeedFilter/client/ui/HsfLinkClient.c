@@ -64,10 +64,17 @@ typedef struct HsfLinkClientState {
     uint32_t m_aiMask;                  /**< 有效位掩码。 */
     int m_aiCount;                      /**< 通道数。 */
     bool m_aiValid;                     /**< 收到过至少一拍。 */
+    char m_aiName[HSF_LINK_AI_CH_MAX][32]; /**< 通道名（服务端全量下发）。 */
     /* 温湿度遥测快照（按侧）。 */
     HsfLinkTempHum m_tempHumState[HSF_LINK_SIDE_COUNT]; /**< 每侧最近快照。 */
     /* 电磁流量计遥测快照（按侧）。 */
     HsfLinkFlowMeter m_flowMeterState[HSF_LINK_SIDE_COUNT]; /**< 每侧最近快照。 */
+    /* 数字量遥测快照。 */
+    HsfLinkDigital m_digital;               /**< 最近数字量位图。 */
+    HsfLcSub m_digitalCb[HSF_LC_SUB_SLOTS]; /**< 数字量更新订阅槽。 */
+    /* 电磁阀遥测快照。 */
+    HsfLinkValves m_valves;                 /**< 最近 6 路阀快照。 */
+    HsfLcSub m_valveCb[HSF_LC_SUB_SLOTS];   /**< 电磁阀更新订阅槽。 */
     /* 最近控制应答。 */
     bool m_lastCmdOk;
     char m_lastCmdErr[96];              /**< UTF-8 失败原因。 */
@@ -90,6 +97,12 @@ typedef struct HsfLinkClientState {
 } HsfLinkClientState;
 
 static HsfLinkClientState s_lc;         /**< 模块单例（零初始化）。 */
+
+/* ---- 前向声明：分派函数在本文件前部，解析/广播实现在后部。 ---- */
+static bool hsfLcParseDigital(const uint8_t* data, uint32_t len);
+static void hsfLcNotifyDigital(void);
+static bool hsfLcParseValves(const uint8_t* data, uint32_t len);
+static void hsfLcNotifyValves(void);
 
 /* ==================== 内部工具 ==================== */
 
@@ -125,7 +138,9 @@ static void hsfLcParseEnvelope(const uint8_t* data, uint32_t len,
 }
 
 /**
- * @brief 解码模拟量遥测 {"n","v","u0..uN"}（raw 域客户端不消费，忽略）。
+ * @brief 解码模拟量遥测 {"n","v","u0..uN"} + 全量时的 "an0..anN"。
+ * @note  [名字只由服务端给] 全量帧才带 an<i> 名字；增量帧只有数值，
+ *        客户端沿用已缓存的名字。名字变更时服务端主动发全量帧。
  */
 static void hsfLcParseAi(const uint8_t* data, uint32_t len)
 {
@@ -133,18 +148,32 @@ static void hsfLcParseAi(const uint8_t* data, uint32_t len)
     XBsonValue* v;
     int n = 0;
     int i;
+    bool full = false;
     if (!doc) return;
     if (XBsonDocument_from_bytes(doc, data, len)) {
-        v = XBsonDocument_value_keyUtf8(doc, "n");
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_FULL);
+        if (v) full = XBsonValue_toBool(v, false);
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AI_COUNT);
         if (v) n = XBsonValue_toInt32(v, 0);
         if (n > HSF_LINK_AI_CH_MAX) n = HSF_LINK_AI_CH_MAX;
-        v = XBsonDocument_value_keyUtf8(doc, "v");
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AI_VALIDMASK);
         s_lc.m_aiMask = v ? (uint32_t)XBsonValue_toInt32(v, 0) : 0;
         for (i = 0; i < n; ++i) {
-            char key[12];
-            snprintf(key, sizeof(key), "u%d", i);
+            char key[16];
+            snprintf(key, sizeof(key), HSF_KEY_AI_UA_FMT, i);
             v = XBsonDocument_value_keyUtf8(doc, key);
             s_lc.m_aiUa[i] = v ? XBsonValue_toInt32(v, 0) : 0;
+            if (full) {
+                snprintf(key, sizeof(key), HSF_KEY_AI_NAME_FMT, i);
+                v = XBsonDocument_value_keyUtf8(doc, key);
+                if (v) {
+                    const XString* str = XBsonValue_toString(v);
+                    const char* u8 = str ? XString_toUtf8(str) : NULL;
+                    if (u8)
+                        snprintf(s_lc.m_aiName[i], sizeof(s_lc.m_aiName[i]),
+                                 "%s", u8);
+                }
+            }
         }
         s_lc.m_aiCount = n;
         s_lc.m_aiValid = true;
@@ -373,6 +402,8 @@ static uint32_t hsfLcTopicId(HsfLinkTopic topic)
     case HsfLinkTopic_Ai:        return HSF_TOPIC_AI_STATUS;
     case HsfLinkTopic_TempHum:   return HSF_TOPIC_TEMPHUM_STATUS;
     case HsfLinkTopic_FlowMeter: return HSF_TOPIC_FLOWMETER_STATUS;
+    case HsfLinkTopic_Digital:   return HSF_TOPIC_DIGITAL_STATUS;
+    case HsfLinkTopic_Valve:     return HSF_TOPIC_VALVE_STATUS;
     default:                     return 0;
     }
 }
@@ -511,6 +542,41 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
                 s_lc.m_cmdCb(s_lc.m_cmdUser, HSF_CMD_VFD_CONTROL, ok,
                              ok ? "" : s_lc.m_lastCmdErr);
         }
+        else if (frame->m_msgCode == HSF_CMD_DIGITAL_SNAPSHOT) {
+            /* 快照应答：整帧就是位图文档（不是包络），直接走解析路径。 */
+            if (hsfLcParseDigital(payload, frame->m_payloadLen)) hsfLcNotifyDigital();
+        }
+        else if (frame->m_msgCode == HSF_CMD_DIGITAL_CONTROL) {
+            /* 应答 = {ok di do}：成功时顺带把位图对齐（不必等下一拍推送），
+             * 失败时只取 err。包络与位图两条读取都在同一份载荷上做。 */
+            bool ok = false;
+            s_lc.m_lastCmdOk = false;
+            hsfLcParseEnvelope(payload, frame->m_payloadLen, &ok,
+                               s_lc.m_lastCmdErr, sizeof(s_lc.m_lastCmdErr));
+            s_lc.m_lastCmdOk = ok;
+            ++s_lc.m_lastCmdSeq;
+            if (ok) {
+                if (hsfLcParseDigital(payload, frame->m_payloadLen))
+                    hsfLcNotifyDigital();
+            }
+            if (s_lc.m_cmdCb)
+                s_lc.m_cmdCb(s_lc.m_cmdUser, HSF_CMD_DIGITAL_CONTROL, ok,
+                             ok ? "" : s_lc.m_lastCmdErr);
+        }
+        else if (frame->m_msgCode == HSF_CMD_VALVE_SNAPSHOT) {
+            if (hsfLcParseValves(payload, frame->m_payloadLen)) hsfLcNotifyValves();
+        }
+        else if (frame->m_msgCode == HSF_CMD_VALVE_CONTROL) {
+            bool ok = false;
+            s_lc.m_lastCmdOk = false;
+            hsfLcParseEnvelope(payload, frame->m_payloadLen, &ok,
+                               s_lc.m_lastCmdErr, sizeof(s_lc.m_lastCmdErr));
+            s_lc.m_lastCmdOk = ok;
+            ++s_lc.m_lastCmdSeq;
+            if (s_lc.m_cmdCb)
+                s_lc.m_cmdCb(s_lc.m_cmdUser, HSF_CMD_VALVE_CONTROL, ok,
+                             ok ? "" : s_lc.m_lastCmdErr);
+        }
         break;
     case XLinkMsgClass_Publish: {
         /* 线上载荷 = [u32 topicId(小端)][BSON 文档]。 */
@@ -560,6 +626,10 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
                 if (s_lc.m_flowMeter[si].m_cb)
                     s_lc.m_flowMeter[si].m_cb(s_lc.m_flowMeter[si].m_user);
             }
+        } else if (topicId == HSF_TOPIC_DIGITAL_STATUS) {
+            if (hsfLcParseDigital(body, bodyLen)) hsfLcNotifyDigital();
+        } else if (topicId == HSF_TOPIC_VALVE_STATUS) {
+            if (hsfLcParseValves(body, bodyLen)) hsfLcNotifyValves();
         }
         break;
     }
@@ -583,6 +653,17 @@ static void hsfLcOnStateChanged(XObject* sender, XVarList* args)
         s_lc.m_client && XLinkClient_isReady(s_lc.m_client)) {
         s_lc.m_everReady = true;
         hsfLcSubscribeTopics();
+        /* [首次拉全量] 客户端不写死点数/通道名：一连上就向服务端要一次
+         * 数字量与模拟量的全量快照（服务端在 full 帧里带全部名字）。
+         * 之后只收状态/数值增量；名字改了由服务端主动下发。 */
+        HsfLinkClient_digitalSnapshotRequest();
+        {
+            XLinkSession* sess = XLinkClient_session(s_lc.m_client);
+            uint32_t rid = 0;
+            if (sess)
+                XLinkSession_sendRequest_ex(sess, HSF_CMD_AI_SNAPSHOT,
+                                            XLinkDataType_Bson, NULL, 0, &rid);
+        }
         XPrintf("HsfLinkClient: 登录成功（用户 %s）\n",
                 XLinkClient_user_const(s_lc.m_client));
         for (i = 0; i < HSF_LC_SUB_SLOTS; ++i) {
@@ -597,8 +678,20 @@ static void hsfLcOnStateChanged(XObject* sender, XVarList* args)
             if (s_lc.m_fail[i].m_cb)
                 s_lc.m_fail[i].m_cb(s_lc.m_fail[i].m_user);
         }
-    } else if ((XLinkClientState)state == XLinkClient_UnconnectedState) {
+    } else if ((XLinkClientState)state == XLinkClient_ReconnectingState) {
+        /* [2026-11-05 断线不上界面根修] 原实现只处理 UnconnectedState，
+         * **漏了 ReconnectingState(3)**。自动重连开启时，断链后 XLinkClient 转的是
+         * ReconnectingState 而不是 Unconnected，于是客户端 UI 永远收不到
+         * 「已断开」通知——实测：杀掉服务端后界面继续显示旧数据、
+         * 状态栏仍是「已连接」，直到重连成功才被覆盖（工业界面
+         * 最不能容忍的隐式故障）。两种断线态都必须通知上层。 */
         XPrintf("HsfLinkClient: 连接断开（自动重连中）\n");
+        for (i = 0; i < HSF_LC_SUB_SLOTS; ++i) {
+            if (s_lc.m_ready[i].m_cb)
+                s_lc.m_ready[i].m_cb(s_lc.m_ready[i].m_user);
+        }
+    } else if ((XLinkClientState)state == XLinkClient_UnconnectedState) {
+        XPrintf("HsfLinkClient: 连接断开（已收手）\n");
         for (i = 0; i < HSF_LC_SUB_SLOTS; ++i) {
             if (s_lc.m_ready[i].m_cb)
                 s_lc.m_ready[i].m_cb(s_lc.m_ready[i].m_user);
@@ -755,6 +848,15 @@ const char* HsfLinkClient_user(void)
                ? XLinkClient_user_const(s_lc.m_client) : "";
 }
 
+int HsfLinkClient_role(void)
+{
+    XLinkSession* session;
+    if (!s_lc.m_client || !XLinkClient_isAuthenticated(s_lc.m_client)) return 0;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return 0;
+    return (int)XLinkSession_authRole(session);
+}
+
 /**
  * @brief 登记一个订阅（找空槽；表满覆盖末槽并告警）。
  */
@@ -803,10 +905,314 @@ void HsfLinkClient_setFlowMeterCallback(HsfLinkNotifyFn cb, void* userData)
     if (cb) hsfLcAddSub(s_lc.m_flowMeter, cb, userData);
 }
 
+void HsfLinkClient_setDigitalCallback(HsfLinkNotifyFn cb, void* userData)
+{
+    if (cb) hsfLcAddSub(s_lc.m_digitalCb, cb, userData);
+}
+
+void HsfLinkClient_setValveCallback(HsfLinkNotifyFn cb, void* userData)
+{
+    if (cb) hsfLcAddSub(s_lc.m_valveCb, cb, userData);
+}
+
 const HsfLinkFlowMeter* HsfLinkClient_flowMeter(int side)
 {
     if (side < 0 || side >= HSF_LINK_SIDE_COUNT) return NULL;
     return &s_lc.m_flowMeterState[side];
+}
+
+/* ==================== 数字量（16DI/16DO） ==================== */
+
+/**
+ * @brief 解析数字量快照 BSON 到模块状态（推送与应答共用同一条路径）。
+ * @return 解析成功返回 true。
+ */
+static bool hsfLcParseDigital(const uint8_t* data, uint32_t len)
+{
+    XBsonDocument* doc;
+    XBsonValue* v;
+    bool full = false;
+    int n = 0;
+    int i;
+
+    if (!data || len == 0) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    if (!XBsonDocument_from_bytes(doc, data, len)) {
+        XClassDelete((XClass*)doc);
+        return false;
+    }
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_FULL);
+    if (v) full = XBsonValue_toBool(v, false);
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_DIG_DI);
+    if (v) s_lc.m_digital.m_di = (uint32_t)XBsonValue_toInt32(v, 0);
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_DIG_DO);
+    if (v) s_lc.m_digital.m_do = (uint32_t)XBsonValue_toInt32(v, 0);
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_DIG_COUNT);
+    if (v) n = XBsonValue_toInt32(v, 0);
+    if (n > 0) {
+        if (n > HSF_DIGITAL_CHANNELS) n = HSF_DIGITAL_CHANNELS;
+        s_lc.m_digital.m_count = n;
+    }
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_VALVE_VALID);
+    if (v) s_lc.m_digital.m_valid = XBsonValue_toBool(v, false);
+    /* [控制应答也走这里] 应答可能只带 ok+位图，没有 count/valid：
+     * count 沿用旧值，valid 缺省按"有数据"处理，避免按钮态被误判失效。 */
+    else s_lc.m_digital.m_valid = true;
+    if (s_lc.m_digital.m_count <= 0)
+        s_lc.m_digital.m_count = HSF_DIGITAL_CHANNELS;
+
+    /* 名字：只在全量帧（或名字专用帧）里出现。增量帧不带名字，
+     * 客户端沿用缓存——这就是"名字只由服务端给、改了服务端主动推"
+     * 的实现。 */
+    if (full) {
+        for (i = 0; i < s_lc.m_digital.m_count; ++i) {
+            char key[20];
+            snprintf(key, sizeof(key), HSF_KEY_DIG_DI_NAME_FMT, i);
+            v = XBsonDocument_value_keyUtf8(doc, key);
+            if (v) {
+                const XString* str = XBsonValue_toString(v);
+                const char* u8 = str ? XString_toUtf8(str) : NULL;
+                if (u8)
+                    snprintf(s_lc.m_digital.m_diName[i],
+                             sizeof(s_lc.m_digital.m_diName[i]), "%s", u8);
+            }
+            snprintf(key, sizeof(key), HSF_KEY_DIG_DO_NAME_FMT, i);
+            v = XBsonDocument_value_keyUtf8(doc, key);
+            if (v) {
+                const XString* str = XBsonValue_toString(v);
+                const char* u8 = str ? XString_toUtf8(str) : NULL;
+                if (u8)
+                    snprintf(s_lc.m_digital.m_doName[i],
+                             sizeof(s_lc.m_digital.m_doName[i]), "%s", u8);
+            }
+        }
+    }
+    s_lc.m_digital.m_full = full;
+    s_lc.m_digital.m_received = true;
+    s_lc.m_digital.m_lastMs = XDateTime_currentMSecsSinceEpoch();
+    XClassDelete((XClass*)doc);
+    return true;
+}
+
+const char* HsfLinkClient_aiName(int index)
+{
+    if (index < 0 || index >= HSF_LINK_AI_CH_MAX) return NULL;
+    return s_lc.m_aiName[index][0] ? s_lc.m_aiName[index] : NULL;
+}
+
+const char* HsfLinkClient_digitalName(int index, bool isDo)
+{
+    if (index < 0 || index >= HSF_DIGITAL_CHANNELS) return NULL;
+    if (isDo)
+        return s_lc.m_digital.m_doName[index][0] ? s_lc.m_digital.m_doName[index] : NULL;
+    return s_lc.m_digital.m_diName[index][0] ? s_lc.m_digital.m_diName[index] : NULL;
+}
+
+/** @brief 广播数字量更新给全部订阅槽。 */
+static void hsfLcNotifyDigital(void)
+{
+    int i;
+    for (i = 0; i < HSF_LC_SUB_SLOTS; ++i) {
+        if (s_lc.m_digitalCb[i].m_cb)
+            s_lc.m_digitalCb[i].m_cb(s_lc.m_digitalCb[i].m_user);
+    }
+}
+
+const HsfLinkDigital* HsfLinkClient_digital(void)
+{
+    return &s_lc.m_digital;
+}
+
+bool HsfLinkClient_digitalFresh(void)
+{
+    if (!s_lc.m_digital.m_received) return false;
+    return (XDateTime_currentMSecsSinceEpoch() - s_lc.m_digital.m_lastMs) <=
+           (uint64_t)HSF_LINK_DIGITAL_STALE_MS;
+}
+
+bool HsfLinkClient_digitalControl(int channel, bool on)
+{
+    XLinkSession* session;
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    uint32_t reqId = 0;
+    bool ok;
+
+    if (!HsfLinkClient_isReady()) return false;
+    if (channel < 0) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_DIG_INDEX, (int32_t)channel);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_DIG_ON, on);
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    if (!bytes) return false;
+    ok = XLinkSession_sendRequest_ex(session, HSF_CMD_DIGITAL_CONTROL,
+                                     XLinkDataType_Bson,
+                                     (const uint8_t*)XByteArray_constData(bytes),
+                                     (uint32_t)XByteArray_size_base(bytes),
+                                     &reqId);
+    XClassDelete((XClass*)bytes);
+    return ok;
+}
+
+bool HsfLinkClient_digitalSnapshotRequest(void)
+{
+    XLinkSession* session;
+    uint32_t reqId = 0;
+
+    if (!HsfLinkClient_isReady()) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    return XLinkSession_sendRequest_ex(session, HSF_CMD_DIGITAL_SNAPSHOT,
+                                       XLinkDataType_Bson, NULL, 0, &reqId);
+}
+
+/* ==================== 电磁阀（6 路） ==================== */
+
+/** @brief 从 BSON 文档里按 v<i>_<key> 前缀取子键。 */
+static void hsfLcValveReadStr(XBsonDocument* doc, int index, const char* key,
+                              char* out, size_t cap)
+{
+    char full[40];
+    XBsonValue* v;
+    if (!out || cap == 0) return;
+    out[0] = '\0';
+    snprintf(full, sizeof(full), HSF_KEY_VALVE_PREFIX_FMT, index, key);
+    v = XBsonDocument_value_keyUtf8(doc, full);
+    if (!v) return;
+    {
+        const XString* s = XBsonValue_toString(v);
+        const char* u = s ? XString_toUtf8(s) : NULL;
+        if (u) snprintf(out, cap, "%s", u);
+    }
+}
+
+static bool hsfLcValveReadBool(XBsonDocument* doc, int index, const char* key,
+                               bool def)
+{
+    char full[40];
+    XBsonValue* v;
+    snprintf(full, sizeof(full), HSF_KEY_VALVE_PREFIX_FMT, index, key);
+    v = XBsonDocument_value_keyUtf8(doc, full);
+    return v ? XBsonValue_toBool(v, def) : def;
+}
+
+static int hsfLcValveReadInt(XBsonDocument* doc, int index, const char* key,
+                            int def)
+{
+    char full[40];
+    XBsonValue* v;
+    snprintf(full, sizeof(full), HSF_KEY_VALVE_PREFIX_FMT, index, key);
+    v = XBsonDocument_value_keyUtf8(doc, full);
+    return v ? XBsonValue_toInt32(v, def) : def;
+}
+
+/**
+ * @brief 解析电磁阀 6 路快照 BSON 到模块状态。
+ * @return 解析成功返回 true。
+ */
+static bool hsfLcParseValves(const uint8_t* data, uint32_t len)
+{
+    XBsonDocument* doc;
+    XBsonValue* v;
+    int count;
+    int i;
+
+    if (!data || len == 0) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    if (!XBsonDocument_from_bytes(doc, data, len)) {
+        XClassDelete((XClass*)doc);
+        return false;
+    }
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_VALVE_COUNT);
+    count = v ? XBsonValue_toInt32(v, 0) : 0;
+    if (count < 0) count = 0;
+    if (count > HSF_VALVE_COUNT) count = HSF_VALVE_COUNT;
+    s_lc.m_valves.m_count = count;
+    for (i = 0; i < count; ++i) {
+        HsfLinkValveItem* it = &s_lc.m_valves.m_items[i];
+        hsfLcValveReadStr(doc, i, HSF_KEY_VALVE_NAME, it->m_name,
+                          sizeof(it->m_name));
+        it->m_state = hsfLcValveReadInt(doc, i, HSF_KEY_VALVE_STATE, 0);
+        it->m_openCmd = hsfLcValveReadBool(doc, i, HSF_KEY_VALVE_OPEN_CMD, false);
+        it->m_openFb = hsfLcValveReadBool(doc, i, HSF_KEY_VALVE_OPEN_FB, false);
+        it->m_closeFb = hsfLcValveReadBool(doc, i, HSF_KEY_VALVE_CLOSE_FB, false);
+        it->m_ready = hsfLcValveReadBool(doc, i, HSF_KEY_VALVE_READY, false);
+        it->m_valid = hsfLcValveReadBool(doc, i, HSF_KEY_VALVE_VALID, false);
+        hsfLcValveReadStr(doc, i, HSF_KEY_VALVE_TEXT, it->m_text,
+                          sizeof(it->m_text));
+    }
+    s_lc.m_valves.m_received = true;
+    s_lc.m_valves.m_lastMs = XDateTime_currentMSecsSinceEpoch();
+    XClassDelete((XClass*)doc);
+    return true;
+}
+
+/** @brief 广播电磁阀更新给全部订阅槽。 */
+static void hsfLcNotifyValves(void)
+{
+    int i;
+    for (i = 0; i < HSF_LC_SUB_SLOTS; ++i) {
+        if (s_lc.m_valveCb[i].m_cb)
+            s_lc.m_valveCb[i].m_cb(s_lc.m_valveCb[i].m_user);
+    }
+}
+
+const HsfLinkValves* HsfLinkClient_valves(void)
+{
+    return &s_lc.m_valves;
+}
+
+bool HsfLinkClient_valvesFresh(void)
+{
+    if (!s_lc.m_valves.m_received) return false;
+    return (XDateTime_currentMSecsSinceEpoch() - s_lc.m_valves.m_lastMs) <=
+           (uint64_t)HSF_LINK_VALVE_STALE_MS;
+}
+
+bool HsfLinkClient_valveControl(int index, bool wantOpen)
+{
+    XLinkSession* session;
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    uint32_t reqId = 0;
+    bool ok;
+
+    if (!HsfLinkClient_isReady()) return false;
+    if (index < 0 || index >= HSF_VALVE_COUNT) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_VALVE_INDEX, (int32_t)index);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_VALVE_ON, wantOpen);
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    if (!bytes) return false;
+    ok = XLinkSession_sendRequest_ex(session, HSF_CMD_VALVE_CONTROL,
+                                     XLinkDataType_Bson,
+                                     (const uint8_t*)XByteArray_constData(bytes),
+                                     (uint32_t)XByteArray_size_base(bytes),
+                                     &reqId);
+    XClassDelete((XClass*)bytes);
+    return ok;
+}
+
+bool HsfLinkClient_valveSnapshotRequest(void)
+{
+    XLinkSession* session;
+    uint32_t reqId = 0;
+
+    if (!HsfLinkClient_isReady()) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    return XLinkSession_sendRequest_ex(session, HSF_CMD_VALVE_SNAPSHOT,
+                                       XLinkDataType_Bson, NULL, 0, &reqId);
 }
 
 bool HsfLinkClient_flowMeterFresh(int side)

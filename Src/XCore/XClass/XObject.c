@@ -50,21 +50,50 @@ void VXObject_deinit(XObject* object)
 	object->m_is_deleting_children = true;
 	if(object->m_children)
 	{
-		for (int i = 0; i < (int)XContainerSize(object->m_children); i++)
-		{
+		/* [2026-11-05 快照式析构] 原实现边遍历边删：XClassDelete(child) 会
+		 * 跑到 child 的 VXObject_deinit，那里可能（a）把本对象当 parent 再摘
+		 * 一次链、（b）触发延迟删除事件的回收、（c）重入 setParent 往
+		 * m_children 里塞新条目。三条都会让 m_children 的**元素个数与内存
+		 * 在循环中途变化**，于是：
+		 *   · XContainerDataAddr 每轮重取 → 可能拿到重分配后的新基址；
+		 *   · 更糟的是槽位被别的 child 覆盖 → 同一 child 被删两次，
+		 *     第二次读到 0xDDDDDDDD 填充即 AV。
+		 * 实测症状就是**退出时随机崩**（hsf-io-flowmeter 30 次崩 3 次，
+		 * 栈恒为 VXObject_deinit → XClass_delete_base → XClass_deinit_base）。
+		 * 改成先把指针搬到局部数组、把容器清空，再逐个删——循环期间
+		 * 父容器不再被任何人看到，重入也伤不到它。 */
+		const size_t n = XContainerSize(object->m_children);
+		XObject** snap = n ? (XObject**)XMemory_malloc(sizeof(XObject*) * n,
+		                                              XCLASS_DEFAULT_MEMORY_TYPE)
+		                   : NULL;
+		size_t i;
+		for (i = 0; i < n; ++i) {
 			XObject** childPtr = (XObject**)XContainerDataAddr(object->m_children);
-			XObject* child = childPtr[i];
-			if (!child)continue;
-			object->m_currentChildBeingDeleted = child;
+			snap[i] = childPtr[i];
 			childPtr[i] = NULL;
+		}
+		/* 先把表清空：重入 setParent 塞进来的新 child 会活在**新**表里，
+		 * 不会再被下面的遍历误伤。 */
+		XClassDelete(object->m_children);
+		object->m_children = NULL;
+		for (i = 0; i < n; ++i) {
+			XObject* child = snap[i];
+			size_t j;
+			bool seen = false;
+			if (!child) continue;
+			/* 同一指针重复登记（历史 setParent 的 indexOf 漏查）：只删一次。 */
+			for (j = 0; j < i; ++j) {
+				if (snap[j] == child) { seen = true; break; }
+			}
+			if (seen) continue;
+			object->m_currentChildBeingDeleted = child;
 			child->m_parent = NULL;
 			if (Class_IsHeap(child))
 				XClassDelete(child);
 			else
 				XClassDeinit(child);
 		}
-		XClassDelete(object->m_children);
-		object->m_children = NULL;
+		if (snap) XMemory_free(snap, XCLASS_DEFAULT_MEMORY_TYPE);
 	}
 	object->m_currentChildBeingDeleted = NULL;
 	object->m_is_deleting_children = false;
@@ -74,8 +103,19 @@ void VXObject_deinit(XObject* object)
 		object->m_parent = NULL;
 		if (parent->m_children && !parent->m_is_deleting_children) {
 			int index = XVector_indexOf(parent->m_children, &object, 0);
-			if (index != -1)
+			if (index != -1) {
 				XVector_remove_base(parent->m_children, index, 1);
+				/* [2026-11-05 重复登记清尾] 万一历史 setParent 留下了同一指针
+				 * 的多份登记（indexOf 漏查/重入 setParent 都会导致），只删第一个
+				 * 会在表里留下**悬垂指针**：父析构时对该地址再 XClassDelete 一次，
+				 * 读到 0xDDDDDDDD 填充即 AV（实测 hsf-io-flowmeter 退出随机崩）。
+				 * 这里把同一指针的其余登记一并清掉，保证"对象死了表里就没有它"。 */
+				for (;;) {
+					int again = XVector_indexOf(parent->m_children, &object, 0);
+					if (again == -1) break;
+					XVector_remove_base(parent->m_children, again, 1);
+				}
+			}
 			if (index != -1 && object->m_send_child_events && parent->m_receive_child_events) {
 				XChildEvent* event = XChildEvent_create(XEVENT_TYPE_CHILD_REMOVED, object);
 				if (event) {

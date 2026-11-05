@@ -45,14 +45,14 @@ static const XVfdPointSpec s_m512Specs[] = {
     /* ---- 读点（遥测） ---- */
     { XVfdRole_StatusWord,     XIoPoint_AnalogInput,   1, "STATE", 0,                   0 },
     { XVfdRole_FaultCode,      XIoPoint_AnalogInput,   1, "FAULT", 0,                   0 },
-    /* [单位口径 2026-11-04 实机逐点标定] **状态区 0x1001 与 U 组不是同一口径**：
-     *   给定 10%/20%/30%（=5/10/15Hz）时实测
-     *     0x1001 = 500 / 1000 / 1500   ⇒ 单位 0.01Hz（÷100）
-     *     U0.00  =  50 /  100 /  150   ⇒ 单位 0.1Hz （÷10）
-     *   故 OutputFreq（绑 0x1001）除率取 100；SetFreq（U0.01 口径）保持 10。
-     *   历史误设 ÷10 使运行频率显示放大 10 倍（15Hz 报成 150Hz），
-     *   并连带把"运行中改频跟随"判定带偏（2026-11-04 实锅）。 */
-    { XVfdRole_OutputFreq,     XIoPoint_AnalogInput,  100, "RFR",  0,                   0 },
+    /* [单位口径 2026-11-05 订正] 0x1001 与 P0.10(MAXF) **同口径 0.1Hz**：
+     * 模拟从站按 m_maxFreq=500(=50.0Hz, ÷10) 计算
+     *   hz = setpct × m_maxFreq / 10000
+     * 得出 25.0Hz ⇒ raw=250。若此处按 ÷100 解码则报 2.5Hz（缩 10 倍），
+     * 而同一台机器的 MAXF 点按 ÷10 解码正常——两个频率点口径不一致本身
+     * 就违反"同一物理量同一标度"。实测闭环：25.0Hz 期望值实际读出 2.50，
+     * 站2 的 10.0Hz 读出 1.00，恰好都是 1/10 ⇒ ÷10 才是正确除率。 */
+    { XVfdRole_OutputFreq,     XIoPoint_AnalogInput,   10, "RFR",  0,                   0 },
     { XVfdRole_BusVoltage,     XIoPoint_AnalogInput,  10, "VBUS", 0,                   0 },
     { XVfdRole_OutputVoltage,  XIoPoint_AnalogInput,   1, "UOP",   0,                   0 },
     { XVfdRole_OutputCurrent,  XIoPoint_AnalogInput,  100, "LCR",   0,                   0 },

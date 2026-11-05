@@ -11,6 +11,10 @@
  *                                       6100）；命令行指定只对本次启动生效
  *               HsfServer --no-io       只起 XLink/登录（IO 装配跳过，
  *                                       供通讯链路联调）
+ *               HsfServer --sim         全部从站换成**进程内模拟设备**
+ *                                       （不打开任何串口/不连任何设备，
+ *                                       服务端照常推遥测、接受阀控命令；
+ *                                       写操作只改内存模型，不驱动继电器）
  *             部署参数（串口号/波特率/站号/模拟量地址）见 HsfServerConfig.h。
  *             事件循环内完成鉴权/轮询/推送；Ctrl+C 退出。
  */
@@ -30,6 +34,7 @@ int main(int argc, char** argv)
     unsigned port = 0;              /* 0=未指定，按配置文件解析 */
     bool portFromArgv = false;
     bool setupIo = true;
+    bool simMode = false;
     int i;
 
     /* 诊断型控制台程序：stdout 去缓冲，保证管道/重定向下逐行可见。 */
@@ -38,6 +43,8 @@ int main(int argc, char** argv)
     for (i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--no-io") == 0) {
             setupIo = false;
+        } else if (strcmp(argv[i], "--sim") == 0) {
+            simMode = true;
         } else {
             port = (unsigned)atoi(argv[i]);
             portFromArgv = (port > 0 && port <= 65535);
@@ -68,6 +75,12 @@ int main(int argc, char** argv)
     /* 工业 IO：变频器（RTU 站 2）+ 模拟量（TCP 8 路）。IO 失败不阻断
      * XLink 启动——登录/遥测链路可先联调，设备恢复后重启服务端。 */
     if (setupIo) {
+        /* [模拟模式] 必须早于 start 置位：装配时按它选客户端类型。 */
+        if (simMode) {
+            HsfServerIo_setSimMode(true);
+            XPrintf("HsfServer: --sim：全部从站使用进程内模拟设备"
+                    "（不打开串口/不连设备，写操作只改内存模型）\n");
+        }
         if (!HsfServerIo_start()) {
             XPrintf("HsfServer: IO 装配失败（无可用从站）——继续仅提供"
                     "登录链路\n");

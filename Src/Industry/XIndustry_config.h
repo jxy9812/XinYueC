@@ -72,6 +72,15 @@
 #define XFLOW_METER_ON 1
 #endif
 
+/** @brief 在线浊度仪设备（XTurbidityMeter）；依赖 XINDUSTRY_CHANNEL_ON。
+ *  @note   设备层只认通道组（XIoPoint role），**不绑定传输**：数字接口走两个
+ *          相邻寄存器拼 32 位量（字序/格式/除数运行期可配），模拟接口走一路
+ *          模拟量输入点（4-20mA 等）再做二级标度。走 485、TCP 还是模拟量
+ *          完全由装配期决定，本开关不看 XINDUSTRY_MODBUS_ON。 */
+#ifndef XTURBIDITY_ON
+#define XTURBIDITY_ON 1
+#endif
+
 /** @brief 按钮组设备（XButtonStation：急停/启动/停止/复位 + 手自动转换开关 +
  *         按钮指示灯）；依赖 XINDUSTRY_CHANNEL_ON。
  *  @note   读侧是 DI 触点、写侧只有指示灯 DO，两侧都不认识链路类型；触点接在

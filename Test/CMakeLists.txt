@@ -164,6 +164,12 @@ list(REMOVE_ITEM TEST_FILE
 # 2500ms Coarse 定时器并逐次断言触发间隔），不得卷入主程序。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/XTimerTest/XTimerWheelPhaseTest.c")
+# XTimeAxisEpochTest 同理：自带 main 的时间轴口径回归（2026-11-05 纪元化
+# 战役的回归锁：桌面端毫秒/纳秒双轴同锚 Unix 纪元 + 时间轮冷启动对齐门，
+# 防止「零点回到 0 附近」与「冷启动即把全部定时器立即兑现」两类回退），
+# 不得卷入主程序（与 main.c 重复定义 main）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/XTimerTest/XTimeAxisEpochTest.c")
 # XPlatformPowerTest 同理：自带 main 的平台电源契约回归测试独立可执行
 # （2026-11-02 外部唤醒根修的回归锁：影子态卡在「熄」⇒ 再也无法休眠），
 # 不得卷入主程序（与 main.c 重复定义 main）。
@@ -1087,6 +1093,25 @@ if(UNIX)
     target_link_libraries(XTimerWheelPhaseTest ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XTimerWheelPhaseTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== 时间轴口径回归测试（独立可执行） ====================
+# [2026-11-05 纪元化战役] 两条互为因果的缺陷的回归锁：
+#  A/B 段：桌面端 XDateTime_currentMSecsSinceEpoch 零点不是 Unix 纪元
+#          （Win32 进程首调 QPC / POSIX CLOCK_MONOTONIC 裸值）⇒ 进程刚起来
+#          返回值在 0 附近甚至恒 0，被消费方当成"没有时刻"
+#          （xindustry-flowmeter「收数后有时刻」曾 1/5~1/3 概率翻）；
+#          纳秒轴直读 REALTIME 与毫秒轴不同锚，事件分发器两轴相减算错等待。
+#  C 段：零点改纪元后，时间轮 m_current_tick 初值 0 与真实刻度差 ~1.7e12 拍，
+#        原逐拍追赶循环把 200ms 定时器折算成"立即到期"。
+# 用法：XTimeAxisEpochTest [观察窗毫秒]
+add_executable(XTimeAxisEpochTest
+    "${CMAKE_CURRENT_LIST_DIR}/XTimerTest/XTimeAxisEpochTest.c"
+)
+if(UNIX)
+    target_link_libraries(XTimeAxisEpochTest ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XTimeAxisEpochTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
 # ==================== 平台电源契约回归测试（独立可执行） ====================

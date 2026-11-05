@@ -137,6 +137,31 @@ class TitleBar(QWidget):
         self.menu_btn.clicked.connect(self.menuClicked.emit)
         lay.addWidget(self.menu_btn)
 
+        # ---- 时钟（紧跟菜单图标右侧，**左对齐**）----
+        #
+        # [为什么放左边] 原来挤在最右侧，与温度/湿度/健康/模式钮抢地方：
+        # 窗口一窄就被裁掉，而且"看时间"是最高频动作，放左边一眼就看到。
+        # 放左后右侧那组（模式/健康/温湿度）各自靠右排，互不挤压。
+        clock_box = QWidget()
+        clock_box.setStyleSheet("background: transparent;")
+        cb = QVBoxLayout(clock_box)
+        cb.setContentsMargins(0, 2, 0, 2)
+        cb.setSpacing(0)
+        self.date_label = QLabel("")
+        self.date_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.date_label.setStyleSheet(
+            "QLabel { color: #C5D8E8; font-size: 11px; background: transparent; }")
+        cb.addWidget(self.date_label)
+        self.clock_label = QLabel("")
+        self.clock_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.clock_label.setStyleSheet(
+            "QLabel { color: #FFFFFF; font-size: 13px; background: transparent; }")
+        cb.addWidget(self.clock_label)
+        self._clock_box = clock_box
+        # 定宽：秒数变化时不让它左右抖动（否则标题会跟着晃）
+        clock_box.setMinimumWidth(96)
+        lay.addWidget(clock_box)
+
         # ---- 居中标题 ----
         self.title = QLabel("主界面")
         self.title.setStyleSheet(
@@ -157,30 +182,30 @@ class TitleBar(QWidget):
         self._restyle_mode()
         lay.addWidget(self.mode_btn)
 
+        # ---- 自动运行状态（只读回显，紧贴模式钮右侧）----
+        #
+        # [为什么要单独一个标签] 模式钮只说明"人把开关拨到哪一侧"。
+        # 操作员真正要确认的是"自动逻辑此刻在不在跑"。两者正常同步，
+        # 但控制器没起来（装配时序错/异常退出/将来做暂停）时，只看模式钮
+        # 会得到"自动在跑"的错误印象 —— 那种假正常比报故障更难查。
+        #
+        # 三种显示：
+        #   自动 · 运行中   橙底（与模式钮同色系，一眼看出是同一条信息链）
+        #   自动 · 已停止   灰底（模式自动但控制器没跑 = 异常，要看得见）
+        #   手动            不显示（手动模式下"自动是否运行"无意义，别占地方）
+        self.auto_state = QLabel("")
+        self.auto_state.setFixedHeight(22)
+        self.auto_state.setAlignment(Qt.AlignCenter)
+        self.auto_state.setMinimumWidth(84)
+        self._auto_running = None
+        self._restyle_auto_state()
+        lay.addWidget(self.auto_state)
+
         # ---- 设备健康指示 ----
         self.health = QLabel("")
         self.health.setStyleSheet(
             "QLabel { color: #D0D0D0; background: transparent; font-size: 13px; }")
         lay.addWidget(self.health)
-
-        # ---- 时钟（两行：日期 + 时间；窄栏只留时间） ----
-        clock_box = QWidget()
-        clock_box.setStyleSheet("background: transparent;")
-        cb = QVBoxLayout(clock_box)
-        cb.setContentsMargins(0, 2, 0, 2)
-        cb.setSpacing(0)
-        self.date_label = QLabel("")
-        self.date_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.date_label.setStyleSheet(
-            "QLabel { color: #C5D8E8; font-size: 11px; background: transparent; }")
-        cb.addWidget(self.date_label)
-        self.clock_label = QLabel("")
-        self.clock_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.clock_label.setStyleSheet(
-            "QLabel { color: #FFFFFF; font-size: 13px; background: transparent; }")
-        cb.addWidget(self.clock_label)
-        self._clock_box = clock_box
-        lay.addWidget(clock_box)
 
         # ---- 温度 / 湿度（**上下两行**）----
         # [为什么上下排] 并排时顶栏右半部分被拉得很长，时钟/模式钮/
@@ -256,6 +281,46 @@ class TitleBar(QWidget):
         self._mode_auto = bool(auto)
         self._mode_known = bool(known)
         self._restyle_mode()
+        # 模式变了，"自动运行"标签的可见性/含义也跟着变
+        self._restyle_auto_state()
+
+    def set_auto_running(self, running, known=True):
+        """设置自动控制器运行状态。
+
+        :param running: True=在跑 False=已停；known=False 时按"未知"显示。
+        """
+        self._auto_running = None if not known else bool(running)
+        self._restyle_auto_state()
+
+    def _restyle_auto_state(self):
+        """自动运行标签的文案与配色。
+
+        [手动模式下隐藏] 手动时"自动是否在跑"没有意义，留着只会占顶栏
+        宝贵宽度（窄窗口最先被挤掉的就是这些坑位）。
+        [「自动 · 已停止」是**正常默认态**，不是异常] 2026-11-05 订正：
+        切到自动模式只代表"授权自动可以跑"，要真的跑还得人按一次启动。
+        初版把它标成故障红，等于把正常待命说成异常，反而误导操作员。
+        三种状态用颜色区分"要不要管"：橙=在跑、灰=待命/未知、红=不用。
+        """
+        if not self._mode_known or not self._mode_auto:
+            self.auto_state.setVisible(False)
+            return
+        self.auto_state.setVisible(True)
+        if self._auto_running is None:
+            text, bg, fg = "自动 · 未知", "#5A6572", "#E0E0E0"
+        elif self._auto_running:
+            text, bg, fg = "自动 · 运行中", "#ED6C02", "#FFFFFF"
+        else:
+            # 已授权但没按启动：正常待命，中性灰（不是故障红）
+            text, bg, fg = "自动 · 已停止", "#5A6572", "#E0E0E0"
+        self.auto_state.setText(text)
+        self.auto_state.setToolTip(
+            "自动控制器的实际运行状态（不是模式开关的位置）。\n"
+            "「自动 · 已停止」= 已授权自动但还没按过启动（正常待命）。\n"
+            "切到自动模式只是授权，要真正自动运行需在「远端设置」按启动。")
+        self.auto_state.setStyleSheet(
+            "QLabel { background-color: %s; color: %s; border-radius: 3px;"
+            " font-size: 12px; padding: 0 6px; }" % (bg, fg))
 
     def _restyle_mode(self):
         if not self._mode_known:

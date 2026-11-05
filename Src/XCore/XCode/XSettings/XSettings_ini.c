@@ -2070,10 +2070,19 @@ bool xsettingsWriteIniFile(XString** keys, XVariant** values, size_t n, XSetting
             XFree_System(escapedKeys);
             return false;
         }
-        /* 首个 '/' 切分（转义形态中 '/' 只剩真实分隔符，'\\' 是被转义的 '/'） */
+        /* 首个分隔符切分（分组 → [节] 下的键）。
+         *
+         * [2026-11-05 根修] xsettingsEscapedKey 把分组分隔符 '/' 转义成
+         * **单个反斜杠**（对标 Qt iniEscapedKey），故转义形态里
+         * 不存在 '/' —— 旧实现在这里找 '/' 永远找不到，
+         * 结果所有带分组的键（digital/host、valve/v0/do、
+         * server/port…）全被塞进 [General]，分组语义整体失效。
+         * 正确做法：在转义串里找第一个反斜杠作为
+         * 节/键分界；节名部分写成 INI 头（读回时由
+         * xsettingsUnescapedKey 还原）。 */
         size_t slash = escapedKeys[i].len;
         for (size_t p = 0; p < escapedKeys[i].len; ++p) {
-            if (escapedKeys[i].data[p] == '/') {
+            if (escapedKeys[i].data[p] == '\\') {
                 slash = p;
                 break;
             }
@@ -2086,7 +2095,7 @@ bool xsettingsWriteIniFile(XString** keys, XVariant** values, size_t n, XSetting
             entries[i].restLen = escapedKeys[i].len - slash - 1;
         }
         else {
-            /* 无 '/'：整键入 [General] 节 */
+            /* 无分组分隔符：整键入 [General] 节 */
             entries[i].sectionLen = 0;
             entries[i].rest = escapedKeys[i].data;
             entries[i].restLen = escapedKeys[i].len;

@@ -26,7 +26,7 @@ extern "C" {
 #include "XObject.h"
 
 struct XModbusHub;
-struct XModbusTcpClient;
+struct XModbusClient;
 struct XModbusLink;
 struct XIoChannelGroup;
 
@@ -41,7 +41,7 @@ XCLASS_DEFINE_EXTEND_END(HsfServerIoAnalog, XObject)
 typedef struct HsfServerIoAnalog {
     XObject m_class;                    /**< 第一成员：基类 XObject。 */
     struct XModbusHub* m_hub;           /**< 本站独占 Hub（自有）。 */
-    struct XModbusTcpClient* m_client;  /**< TCP 客户端（所有权在 Hub）。 */
+    struct XModbusClient* m_client;     /**< 客户端（所有权在 Hub；TCP 或虚拟）。 */
     struct XIoChannelGroup* m_group;    /**< 通道组（自有）。 */
     struct XModbusLink* m_link;         /**< 链路（自有）。 */
     int m_devId;                        /**< Hub 设备句柄；<0=未挂。 */
@@ -82,6 +82,26 @@ void HsfServerIoAnalog_init(HsfServerIoAnalog* st);
 bool HsfServerIoAnalog_mount(HsfServerIoAnalog* st, const char* host, int port,
                              int unitId, int channels, double shuntOhm,
                              int pollMs);
+
+/**
+ * @brief 用**外部给的客户端**装配模拟量站（模拟设备/单测入口）。
+ * @param st 目标站。
+ * @param client Modbus 客户端（所有权转移给本站 Hub）。
+ * @param unitId 从站 Unit ID（映射段登记用）。
+ * @param channels 通道数（<= 8）。
+ * @param shuntOhm 采样电阻（Ω）。
+ * @param pollMs 轮询周期（毫秒）。
+ * @return 装配成功返回 true。
+ *
+ * @details [与 mount 的区别] 本接口不建 TCP 客户端、不需要 IP/端口，
+ *          传输层完全由调用方决定（虚拟客户端也是 XModbusClient）。
+ *          这样模拟模式与真设备**走同一份装配代码**，不会出现"测试装配
+ *          与实际装配不同步"。
+ */
+bool HsfServerIoAnalog_mountWithClient(HsfServerIoAnalog* st,
+                                       struct XModbusClient* client,
+                                       int unitId, int channels,
+                                       double shuntOhm, int pollMs);
 
 /**
  * @brief 拆除本站（幂等）。

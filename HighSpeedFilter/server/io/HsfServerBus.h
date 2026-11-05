@@ -74,6 +74,29 @@ bool HsfServerBus_open(HsfServerBus* bus, const char* name, const char* port,
                        int baud, int timeoutMs, int retries);
 
 /**
+ * @brief 建一条总线，但**传输层由调用方给**（模拟设备/单测入口）。
+ * @param bus 目标总线（内部先清零）。
+ * @param name 显示名（静态常量借用）。
+ * @param client 总线客户端（**所有权转移给本路 Hub**；虚拟客户端也走这里）。
+ * @param timeoutMs 单帧请求超时（毫秒）。
+ * @param retries 重试次数。
+ * @return 客户端挂上 Hub 返回 true；失败返回 false（客户端已释放）。
+ *
+ * @details [为什么需要这个入口] 与 HsfServerIoDigital_mountWithClient 同理：
+ *          把"物理链路"抽成 XModbusClient* 之后，**同一条装配代码路径**
+ *          既能接真实 RTU 串口也能接进程内模拟设备。若不提供此口，
+ *          模拟模式下 485 两路会被整路跳过（HsfServerBus_open 必然因
+ *          "串口打不开"失败），变频器/温湿度/流量计三站全部无法联调。
+ *
+ *          [多从站] 一条 485 上挂多个从站（路 A = 变频器站 2 + 温湿度站 4）
+ *          时，调用方应在此前用 XModbusVirtualClient_bindUnit 按站号绑定
+ *          各自的模型；真实 RTU 则由帧内从站地址在物理总线上仲裁。
+ */
+bool HsfServerBus_openWithClient(HsfServerBus* bus, const char* name,
+                                 struct XModbusClient* client,
+                                 int timeoutMs, int retries);
+
+/**
  * @brief 取本路 Hub（借用；建映射段/挂通道组链路的都经它）。
  * @param bus 目标总线；NULL 或未建返回 NULL。
  */

@@ -79,37 +79,92 @@ static uint64_t getUnixTimeIn100Ns(void) {
     // 转为自 Unix 纪元以来的 100 纳秒数
     return ull.QuadPart - EPOCH_DIFFERENCE_IN_100NS;
 }
+/* -------------------------------------------------------------------------
+ * [2026-11-05 纪元口径统一] 毫秒轴与纳秒轴共用一组"一次性纪元锚"
+ * -------------------------------------------------------------------------
+ * 返回 = **自 Unix 纪元以来的毫秒/纳秒**，对齐 Qt 的
+ * QDateTime::currentMSecsSinceEpoch()；差值语义等价于纯单调钟（校时/NTP
+ * 跳变不影响超时、限流、定时器）。
+ *
+ * 做法：只在**首次调用**同时取一次 QPC 与系统墙钟，记下
+ * (qpcOrigin, epochBase) 锚点，之后纯 QPC 推进：
+ *     ms(t) = epochBaseMs + (qpc(t) - qpcOrigin) / freq * 1000
+ *     ns(t) = epochBaseNs + (qpc(t) - qpcOrigin) / freq * 1e9
+ * 两轴同锚派生，ns/1e6 == ms 严格成立——这是刚需：XAbstractEventDispatcher
+ * 要把"高精度红黑树截止（ns 轴）"与"时间轮到期（ms 轴 ×1e6）"放在同一个
+ * now 上相减（见其双时钟轴归一注记）。
+ *
+ * [为什么不再用"进程第一次调用 QPC"当零点] 那种口径下返回值是**进程内相
+ * 对毫秒**，进程刚起来的头几百毫秒就在 0 附近甚至恒 0；而全库消费方都把它
+ * 当"某件事发生的时刻"打戳（XFlowMeter::m_lastChangeMs、XTempHum 的
+ * m_lastUpdateMs、设备健康 lastOkMs…），0 被当成"没有时刻"——实测
+ * xindustry-flowmeter 的「收数后有时刻」断言间歇失败 1/5~1/3。
+ * XTimeWheelGroup / XDeviceTimer 的注释也一直按"纪元时间轴"在写。
+ *
+ * [QPC 不可用的兜底] 取不到频率时退回 GetTickCount64（开机毫秒，单调且
+ * 远大于 0）。
+ *
+ * [为什么不会拖垮时间轮] XTimeWheelGroup 的刻度两侧都按 size_t 取值，并带
+ * "只前进不回拨"护栏与其冷启动对齐门（m_clockSynced，见 handler 注记）：
+ * 纪元量纲只抬高绝对值，拍数与差值不变。
+ * ---------------------------------------------------------------------- */
+static LARGE_INTEGER s_qpcFreq = { 0, 0 };
+static LARGE_INTEGER s_qpcOrigin = { 0, 0 };
+static int64_t s_epochBaseMs = 0;
+static int64_t s_epochBaseNs = 0;
+static int s_epochAnchorReady = 0;
+
+static void win32EnsureEpochAnchor(void)
+{
+    if (s_epochAnchorReady) return;
+    if (!QueryPerformanceFrequency(&s_qpcFreq) || s_qpcFreq.QuadPart == 0) {
+        /* 无高精度计数：整体退回开机毫秒轴，ns 轴由 ms 派生。 */
+        int64_t tickMs = (int64_t)GetTickCount64();
+        s_epochBaseMs = tickMs;
+        s_epochBaseNs = tickMs * 1000000LL;
+        s_qpcFreq.QuadPart = 0;
+        s_epochAnchorReady = 1;
+        return;
+    }
+    QueryPerformanceCounter(&s_qpcOrigin);
+    {
+        FILETIME ft;
+        ULARGE_INTEGER ull;
+        GetSystemTimePreciseAsFileTime(&ft);
+        ull.LowPart = ft.dwLowDateTime;
+        ull.HighPart = ft.dwHighDateTime;
+        if (ull.QuadPart >= (ULONGLONG)EPOCH_DIFFERENCE_IN_100NS) {
+            uint64_t sinceUnix100ns = ull.QuadPart - (ULONGLONG)EPOCH_DIFFERENCE_IN_100NS;
+            s_epochBaseMs = (int64_t)(sinceUnix100ns / 10000ULL);
+            s_epochBaseNs = (int64_t)(sinceUnix100ns * 100ULL);
+        } else {
+            int64_t tickMs = (int64_t)GetTickCount64();
+            s_epochBaseMs = tickMs;
+            s_epochBaseNs = tickMs * 1000000LL;
+        }
+    }
+    s_epochAnchorReady = 1;
+}
+
+/* QPC 起点之后的双轴增量（纳秒）。QPC 不可用时返回 0，由锚点兜底。 */
+static int64_t win32ElapsedNs(void)
+{
+    LARGE_INTEGER now;
+    if (s_qpcFreq.QuadPart == 0) return 0;
+    if (!QueryPerformanceCounter(&now)) return 0;
+    return (int64_t)(((now.QuadPart - s_qpcOrigin.QuadPart) * 1000000000LL)
+                     / s_qpcFreq.QuadPart);
+}
+
 int64_t XDateTime_currentNSecsSinceEpoch(void)
 {
-    uint64_t since_unix_100ns = getUnixTimeIn100Ns();
-    return (int64_t)(since_unix_100ns * 100); // 100ns * 100 = 1ns
+    win32EnsureEpochAnchor();
+    return s_epochBaseNs + win32ElapsedNs();
 }
 
 int64_t XDateTime_currentMSecsSinceEpoch(void) {
-    /* 单调时钟（与 posix 后端 CLOCK_MONOTONIC 语义对齐——本函数是全库
-     * 统一"当前毫秒"计时源，消费方全部是时长/超时/限流测量，墙钟跳变
-     * 会破坏这些测量。需要墙钟日期时间的调用方走 XDateTime_currentDateTime）。
-     *
-     * [CLK 2026-10-30] 原实现用 GetTickCount64()，但它的粒度是**系统时钟
-     * 中断周期 15.625ms**（64Hz），与 POSIX 的 CLOCK_MONOTONIC（1ms 粒度）
-     * 不一致 ⇒ Windows 上框架的所有毫秒级行为（时间轮 tick、串口 2ms
-     * 轮询拍、应答超时、UI 限频）被整体量化到 15.625ms：
-     *   真机 485 联调实测：主站在途时延 100% 落在 15.625ms 的整数倍上
-     *   （16/31/125/141/156/172/188/203/219/234ms…），而同一条链路用
-     *   pyserial 直连只有 2.9ms ⇒ 差值全在「计时源粒度」。
-     * 改用 QueryPerformanceCounter：恒定频率、纳秒分辨率、不受校时影响，
-     * 与 POSIX 侧粒度对齐（跨设备行为统一）。 */
-    static LARGE_INTEGER frequency = {0, 0};
-    static LARGE_INTEGER origin = {0, 0};
-    LARGE_INTEGER now;
-    if (frequency.QuadPart == 0) {
-        if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart == 0)
-            return (int64_t)GetTickCount64(); /* 取不到频率则回落旧源 */
-        QueryPerformanceCounter(&origin);
-    }
-    if (!QueryPerformanceCounter(&now)) return (int64_t)GetTickCount64();
-    return (int64_t)(((now.QuadPart - origin.QuadPart) * 1000) /
-                     frequency.QuadPart);
+    win32EnsureEpochAnchor();
+    return s_epochBaseMs + win32ElapsedNs() / 1000000LL;
 }
 
 int64_t XDateTime_currentSecsSinceEpoch(void) {

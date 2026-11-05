@@ -1468,6 +1468,24 @@ void XLinkSession_pump(XLinkSession* self, uint32_t nowMs)
         }
     }
 
+    /* [2026-11-05 心跳发送根修] 在判线之前先补心跳。
+     *
+     * 原实现只有「心跳处理」（收到就丢弃）与「静默判线」，
+     * **从来没有任何代码发心跳**：于是任何客户端只要 6s
+     * 内没发帧（例如停在无推送的页面上）就会被判断线——
+     * 实测：空闲 6010ms 后 reset，客户端侧表现为「无故断线/重连」。
+     *
+     * 发送节拍取超时的 1/3（6s → 2s）：容忍两帧丢失仍不误判，
+     * 并且与既有「心跳定义在 pump 中体现」的设计意图一致。 */
+    if (XLINK_HEARTBEAT_TIMEOUT_MS > 0
+        && self->m_state != XLinkSessionState_Inactive
+        && self->m_state != XLinkSessionState_Connected
+        && self->m_lastSendTick != 0
+        && nowMs >= self->m_lastSendTick
+        && (nowMs - self->m_lastSendTick) > (XLINK_HEARTBEAT_TIMEOUT_MS / 3u)) {
+        XLinkSession_sendSession(self, XLinkSessionCode_Heartbeat, NULL, 0);
+    }
+
     /* 静默超时判线。 */
     if (XLINK_HEARTBEAT_TIMEOUT_MS > 0 && self->m_lastReceiveTick != 0
         && nowMs >= self->m_lastReceiveTick

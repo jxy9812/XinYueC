@@ -742,21 +742,16 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
         {
             /* 双时钟轴归一（交互模式 exec 忙轮活锁的根修，L 路 2026-09-27）：
              * nextPreciseDeadline 聚合的两个定时器后端各在一条时钟轴上——
-             *  - HrTimerGroup（Precise）：高精度时间源注入的是
-             *    XDateTime_currentNSecsSinceEpoch（CLOCK_REALTIME，墙钟 ns）；
-             *  - 全局时间轮（Coarse）：时间源注入的是
-             *    XDateTime_currentMSecsSinceEpoch（449bec6d 起改为
-             *    CLOCK_MONOTONIC 单调 ms），getNextExpireTime ×1e6 后
-             *    仍是单调 ns——比墙钟 now 小约三个数量级。
-             * 原实现一律拿墙钟 now 相减：只要时间轮里存在任意定时器
-             * （交互模式启动即有 250ms/1000ms 周期定时器在轮），差值恒为
-             * 巨负 → remainMs 恒 0 → ring 等待退化为 0 超时 poll → exec
-             * 循环 100% CPU 忙轮（症状：进程卡死 CPU 打满；负载回落/换
-             * Xvfb/LD_PRELOAD XInitThreads/taskset/setsid 均无效；
-             * --autotest 不受影响因其逐帧显式 processEvents 从不停等）。
-             * 按量纲选 now 轴再相减：1e18 ns 分界（墙钟轴 2001-09 之后
-             * 恒超 1e18；单调轴即使连续开机 31.7 年也到不了），两轴各自
-             * 与自身 now 相减恒确。 */
+             *  - HrTimerGroup（Precise）：纳秒轴（XDateTime_currentNSecsSinceEpoch）；
+             *  - 全局时间轮（Coarse）：毫秒轴 ×1e6。
+             * [2026-11-05 纪元口径统一后] 两轴已由同一组纪元锚派生
+             * （桌面端 monolithic 源 + 首调墙钟基线），ns/1e6 == ms 严格成立，
+             * 理论上不再需要分轴。但**裸机后端仍是两条轴**（STM32 的
+             * ms 是 FreeRTOS tick，ns 由 ms×1e6 派生；ESP8266 类似），且
+             * 时间轮在未对齐冷启动刻度时会短暂返回相对刻度——保留按量纲
+             * 选轴的判据，代价极小、且对任一后端都不会错。
+             * 1e18 ns 分界：墙钟/纪元轴 2001-09 之后恒超 1e18；相对量纲轴
+             * 即使连续开机 31.7 年也到不了。 */
             uint64_t nowNs;
             if (deadlineNs >= 1000000000000000000ULL)
                 nowNs = (uint64_t)XDateTime_currentNSecsSinceEpoch();

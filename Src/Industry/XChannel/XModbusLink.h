@@ -49,6 +49,20 @@ extern "C" {
 /** @brief 链路管理的区数（DI/DO/AI/AO）。 */
 #define XMODBUSLINK_AREA_COUNT 4
 
+/**
+ * @brief 点级陈旧门限（毫秒）：超过这么久没从从站读回 ⇒ 该点判不可信。
+ * @details [取值依据] 必须比最慢的正常轮询周期大一个量级，又不能大到让
+ *          现场等太久才看到"离线"。现场最慢的从站节拍是 500ms（温湿度 /
+ *          流量计），最慢的扫描周期是 20ms；5000ms 给足 10 次重试余量，
+ *          同时现场掉线 5 秒内必被察觉——运维能接受。
+ *          [为什么不做成参数] 它属于"链路可信度"的行业常识口径，不是每个
+ *          部署各不相同的现场参数；真要按部署调，改本宏并重编即可（与
+ *          HsfServerConfig 里那些点位/网络参数同性质）。
+ */
+#ifndef XMODBUSLINK_STALE_MS
+#define XMODBUSLINK_STALE_MS 5000
+#endif
+
 XCLASS_DEFINE_BEGING(XModbusLink)
 XCLASS_DEFINE_ENUM(XModbusLink, BindRole) = XCLASS_VTABLE_GET_SIZE(XIoLink),
 XCLASS_DEFINE_ENUM(XModbusLink, ReadRole),
@@ -56,6 +70,7 @@ XCLASS_DEFINE_ENUM(XModbusLink, WriteRole),
 XCLASS_DEFINE_ENUM(XModbusLink, IsAsync),
 XCLASS_DEFINE_ENUM(XModbusLink, Start),
 XCLASS_DEFINE_ENUM(XModbusLink, Stop),
+XCLASS_DEFINE_ENUM(XModbusLink, RoleFresh),
 XCLASS_DEFINE_END(XModbusLink)
 
 /**

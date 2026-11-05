@@ -454,6 +454,82 @@ static void test_feedbackEdgeCases(void)
     fixtureDeinit(&fx);
 }
 
+/* 参数校验与取值器：非法模式/超时往返/NULL 安全/状态谓词自洽 */
+static void test_paramsAndGetters(void)
+{
+    ValveFixture fx;
+    XSolenoidValve* valve = XSolenoidValve_create();
+
+    fixtureInit(&fx, false);
+    resetFlags();
+    /* 观测 errorOccurred：本段要断言"未挂出口时必须报 NotAttached"，
+     * 没有订阅就看不到错误沿（各用例的信号连接不跨作用域）。 */
+    XObject_connect_2((XObject*)valve,
+                      XSignal(XSolenoidValve_errorOccurred_signal), onError2);
+
+    /* ---- 反馈模式：只接受 None/DualLimit，非法值必须**不改变**当前模式 ---- */
+    CHECK("缺省模式 None",
+          XSolenoidValve_feedbackMode(valve) == XSolenoidValveFeedbackMode_None);
+    CHECK("切 DualLimit", XSolenoidValve_setFeedbackMode(
+                              valve, XSolenoidValveFeedbackMode_DualLimit));
+    CHECK("模式回读 DualLimit",
+          XSolenoidValve_feedbackMode(valve) == XSolenoidValveFeedbackMode_DualLimit);
+    {
+        /* 非法枚举值（越界）必须被拒且不污染原模式——否则状态机会走进
+         * 不存在的分支（既不等限位也不按出口推断 → 永远卡在 Moving）。 */
+        const XSolenoidValveFeedbackMode cur = XSolenoidValve_feedbackMode(valve);
+        CHECK("非法模式(99)被拒", !XSolenoidValve_setFeedbackMode(
+                                      valve, (XSolenoidValveFeedbackMode)99));
+        CHECK("非法模式不改变原值", XSolenoidValve_feedbackMode(valve) == cur);
+    }
+    CHECK("切回 None", XSolenoidValve_setFeedbackMode(
+                           valve, XSolenoidValveFeedbackMode_None));
+
+    /* ---- 超时：可设可读，0 = 不设超时 ---- */
+    CHECK("超时缺省可读", XSolenoidValve_timeoutMs(valve) > 0u);
+    CHECK("设超时 0", XSolenoidValve_setTimeoutMs(valve, 0));
+    CHECK("超时回读 0", XSolenoidValve_timeoutMs(valve) == 0u);
+    CHECK("设超时 2500", XSolenoidValve_setTimeoutMs(valve, 2500));
+    CHECK("超时回读 2500", XSolenoidValve_timeoutMs(valve) == 2500u);
+
+    /* ---- 状态谓词与状态值自洽（都从同一个 m_state 派生） ---- */
+    CHECK("初始 Unknown 状态",
+          XSolenoidValve_state(valve) == XSolenoidValveState_Unknown);
+    CHECK("Unknown 不是全开", !XSolenoidValve_isFullyOpen(valve));
+    CHECK("Unknown 不是全关", !XSolenoidValve_isFullyClosed(valve));
+
+    /* ---- NULL 对象：全部安全且不回真 ---- */
+    CHECK("NULL 状态为 Unknown", XSolenoidValve_state(NULL) == XSolenoidValveState_Unknown);
+    CHECK("NULL 非全开", !XSolenoidValve_isFullyOpen(NULL));
+    CHECK("NULL 非全关", !XSolenoidValve_isFullyClosed(NULL));
+    CHECK("NULL 模式为 None",
+          XSolenoidValve_feedbackMode(NULL) == XSolenoidValveFeedbackMode_None);
+    CHECK("NULL 超时为 0", XSolenoidValve_timeoutMs(NULL) == 0u);
+    CHECK("NULL 设模式失败", !XSolenoidValve_setFeedbackMode(
+                                 NULL, XSolenoidValveFeedbackMode_DualLimit));
+    CHECK("NULL 设超时失败", !XSolenoidValve_setTimeoutMs(NULL, 100));
+    CHECK("NULL open 失败", !XSolenoidValve_open(NULL));
+    CHECK("NULL close 失败", !XSolenoidValve_close(NULL));
+    CHECK("NULL 挂出口失败", !XSolenoidValve_attachOutput(NULL, fx.grp,
+                                                           (XIoPoint*)&fx.out));
+    CHECK("NULL 挂反馈失败", !XSolenoidValve_attachFeedback_2(NULL, fx.grp,
+                                                              (XIoPoint*)&fx.mol,
+                                                              NULL));
+    CHECK("NULL 解挂出口失败", !XSolenoidValve_detachOutput(NULL));
+    CHECK("NULL 解挂反馈失败", !XSolenoidValve_detachFeedback(NULL));
+
+    /* ---- 未挂出口时 open/close 必须拒绝并报 NotAttached（不得静默受理） ---- */
+    resetFlags();
+    CHECK("未挂出口 open 拒绝", !XSolenoidValve_open(valve));
+    CHECK("未挂出口 open 报 NotAttached",
+          g_errorSeen && g_lastError == XSolenoidValveError_NotAttached);
+    resetFlags();
+    CHECK("未挂出口 close 拒绝", !XSolenoidValve_close(valve));
+
+    XClassDelete(valve);
+    fixtureDeinit(&fx);
+}
+
 /* ==================== 收编入口（_run 供 --test/Test 命令分派并回失败数。
  * 进程内自跑，无硬件依赖） ==================== */
 
@@ -482,6 +558,7 @@ int XIndustryValveTest_run(void)
     test_writeFailures();
     test_notAttachedAndDetach();
     test_feedbackEdgeCases();
+    test_paramsAndGetters();
 
     XPrintf("\n===== XIndustryValveTest: %d passed, %d failed =====\n",
             g_pass, g_fail);

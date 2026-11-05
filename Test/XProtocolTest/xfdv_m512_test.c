@@ -369,11 +369,44 @@ int XVfdM512Test_runEx(const char* ptyOverride)
     CHECK(XVfdDevice_lastError(g_dev[0]) == XVfdError_WriteRejected,
           "错误码 = XVfdError_WriteRejected");
 
+    /* ⑧c 切源前置（附录1）：后续的调速/启停都要求「
+     * 命令源=通讯、主频率源=通讯给定」，否则从站静默忽略
+     * 控制字与频率给定。
+     *
+     * [2026-11-05 测试自身缺陷根修] 本用例在 ⑧b 验证完
+     * 「未切源时控制被拒」后，**忘了把源切过去**就直接做
+     * 调速与启停断言：产品行为是对的（正确拒绝），却导致整段
+     * 连环 17 项失败——这是用例自身缺前置，不是产品缺陷。
+     * 两台站都需要切（站间隔离也要验）。 */
+    g_case = "setSourceComm";
+    /* [一步一步来] 每次切源写完都要等「写落定 + 回读刷新缓存」，
+     * 否则后一次写的前置校验（m512CheckSource 读的是**缓存**）
+     * 仍看到旧值 ⇒ 误拒。实测：命令源与频率源连着写，
+     * 前者 OK、后者被拒。 */
+    CHECK(XVfdM512_setCommandSourceComm((XVfdM512*)g_dev[0]),
+          "站1 切命令源到通讯（P0.02=2）");
+    pump(700);
+    CHECK(XVfdM512_setCommandSourceComm((XVfdM512*)g_dev[1]),
+          "站2 切命令源到通讯");
+    pump(700);
+    CHECK(XVfdM512_setFrequencySourceComm((XVfdM512*)g_dev[0]),
+          "站1 切主频率源到通讯给定（P0.03=9）");
+    pump(700);
+    CHECK(XVfdM512_setFrequencySourceComm((XVfdM512*)g_dev[1]),
+          "站2 切主频率源到通讯给定");
+    pump(1200);   /* 最后等一拍回读把缓存刷新到最终值 */
+
     /* ---------- ① 双站快照 ---------- */
     g_case = "pollStatus";
     pump(2500);
     CHECK(g_d[0].statusCount > 0, "站1 出快照");
     CHECK(g_d[1].statusCount > 0, "站2 出快照");
+    tlog("[dbg] dev0 runState=%d valid=%d mask=0x%llX outFreq=%.2f setFreq=%.2f",
+         (int)XVfdDevice_status_const(g_dev[0])->m_runState,
+         (int)XVfdDevice_status_const(g_dev[0])->m_valid,
+         (unsigned long long)XVfdDevice_status_const(g_dev[0])->m_validMask,
+         XVfdDevice_status_const(g_dev[0])->m_outputFreqHz,
+         XVfdDevice_status_const(g_dev[0])->m_setFreqHz);
     CHECK(XVfdDevice_status_const(g_dev[0])->m_runState == XVfdRunState_Stopped,
           "站1 初始 Stopped（3000H=3）");
     CHECK(XVfdDevice_status_const(g_dev[1])->m_runState == XVfdRunState_Stopped,
@@ -397,6 +430,29 @@ int XVfdM512Test_runEx(const char* ptyOverride)
           XVfdDevice_status_const(g_dev[1])->m_outputFreqHz < 10.1,
           "站2 输出频率 10.0Hz（站间隔离）");
 
+    /* ---------- ②b 按转速调速（基类通用换算：rpm → Hz → 频率通道） ---------- */
+    g_case = "setSpeedRpm";
+    /* 50Hz ↔ 1440rpm ⇒ 720rpm 应折算成 25.0Hz；比换算式本身先锁死比例。 */
+    CHECK(XVfdDevice_ratedRpm(g_dev[0]) == 1440.0, "额定转速缺省 1440rpm");
+    CHECK(XVfdDevice_rpmToHz(g_dev[0], 720.0) > 24.9 &&
+          XVfdDevice_rpmToHz(g_dev[0], 720.0) < 25.1,
+          "720rpm 折算 25.0Hz（额定点比例）");
+    CHECK(XVfdDevice_hzToRpm(g_dev[0], 50.0) > 1439.9 &&
+          XVfdDevice_hzToRpm(g_dev[0], 50.0) < 1440.1,
+          "50Hz 折算 1440rpm（反向换算一致）");
+    g_d[0].doneCount = 0;
+    CHECK(XVfdDevice_setSpeedRpm(g_dev[0], 720), "站1 按转速给定 720rpm");
+    pump(1500);
+    CHECK(g_d[0].lastOk && g_d[0].lastOp == (int)XVfdOperation_SetFrequency,
+          "转速给定经频率通道落地（op=SetFrequency，比未被当成不支持）");
+    pump(800);
+    CHECK(XVfdDevice_status_const(g_dev[0])->m_outputFreqHz > 24.9 &&
+          XVfdDevice_status_const(g_dev[0])->m_outputFreqHz < 25.1,
+          "720rpm 生效后输出频率 25.0Hz");
+    CHECK(XVfdDevice_status_const(g_dev[0])->m_setFreqHz > 24.9 &&
+          XVfdDevice_status_const(g_dev[0])->m_setFreqHz < 25.1,
+          "设定频率同步为 25.0Hz（站2 不受影响）");
+
     /* ---------- ③ 启停 ---------- */
     g_case = "startBoth";
     CHECK(XVfdDevice_start(g_dev[0], false), "站1 发起正转");
@@ -417,6 +473,37 @@ int XVfdM512Test_runEx(const char* ptyOverride)
           "站1 回到 Stopped");
     CHECK(XVfdDevice_status_const(g_dev[1])->m_runState == XVfdRunState_RunningReverse,
           "站2 仍在反转（站间隔离）");
+
+    /* ---------- ③b 点动（正/反各一次；按住=命令字持续、松开=停机） ---------- */
+    g_case = "jog";
+    /* 站1 已停机，可点动。命令字 3=正转点动 → 模拟从站置运行态。 */
+    CHECK(XVfdDevice_hasCapability(g_dev[0], XVfdCap_Jog), "站1 具备点动能力");
+    g_d[0].doneCount = 0;
+    CHECK(XVfdDevice_jog(g_dev[0], false), "站1 正转点动（2000H=3）");
+    pump(1500);
+    CHECK(g_d[0].lastOk && g_d[0].lastOp == (int)XVfdOperation_Jog,
+          "点动命令字落地（op=Jog）");
+    CHECK(XVfdDevice_status_const(g_dev[0])->m_runState == XVfdRunState_RunningForward,
+          "正转点动后状态字为运行（3000H=1）");
+    /* 松开：走受控停机（与服务端 hsfAppJogRelease 同口径）。 */
+    g_d[0].doneCount = 0;
+    CHECK(XVfdDevice_stop(g_dev[0]), "松开点动 → 受控停机");
+    pump(1500);
+    CHECK(XVfdDevice_status_const(g_dev[0])->m_runState == XVfdRunState_Stopped,
+          "松开点动后回到 Stopped");
+    /* 反转点动：命令字 4。 */
+    g_d[0].doneCount = 0;
+    CHECK(XVfdDevice_jog(g_dev[0], true), "站1 反转点动（2000H=4）");
+    pump(1500);
+    CHECK(XVfdDevice_status_const(g_dev[0])->m_runState == XVfdRunState_RunningReverse,
+          "反转点动后状态字为反转（3000H=2）");
+    g_d[0].doneCount = 0;
+    CHECK(XVfdDevice_stop(g_dev[0]), "反转点动松开 → 受控停机");
+    pump(1500);
+    CHECK(XVfdDevice_status_const(g_dev[0])->m_runState == XVfdRunState_Stopped,
+          "反转点动松开后回到 Stopped");
+    CHECK(XVfdDevice_status_const(g_dev[1])->m_runState == XVfdRunState_RunningReverse,
+          "站1 点动全程站2 状态不受影响（站间隔离）");
 
     /* ---------- ④ 故障 ---------- */
     g_case = "fault";

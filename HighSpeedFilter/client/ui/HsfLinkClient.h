@@ -24,6 +24,7 @@ extern "C" {
 
 #include "CXinYueConfig.h"
 #include "XIndustry_config.h"
+#include "XhsfLinkProto.h"   /* HSF_VALVE_COUNT / HSF_DIGITAL_CHANNELS 等常量。 */
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -130,6 +131,12 @@ bool HsfLinkClient_isReady(void);
  */
 const char* HsfLinkClient_user(void);
 
+/**
+ * @brief 当前会话认证角色（XLinkAuthRole；未就绪/匿名返回 0）。
+ * @note  仅用于界面侧"能否操作"的**提示**判定；权威判定始终在服务端。
+ */
+int HsfLinkClient_role(void);
+
 /* ==================== 回调注册（先注册后 open 才不漏首拍） ==================== */
 
 /**
@@ -194,6 +201,24 @@ bool HsfLinkClient_vfdValid(void);
  * @return 实际通道数（0=无遥测）。
  */
 int HsfLinkClient_aiValues(int32_t* outUa, uint32_t* outMask);
+
+/**
+ * @brief 取模拟量通道名（服务端全量快照下发；未收到返回 NULL）。
+ * @param index 通道号（0..HSF_LINK_AI_CH_MAX-1）。
+ * @return 通道名借用指针（UTF-8；随下一帧全量刷新失效）；无名字返回 NULL。
+ * @note  客户端**不写死**通道名：名字的唯一事实源在服务端
+ *        （HsfServerConfig.h 的 HSF_AI_NAMES 宏）。名字变化时服务端会主动
+ *        下发新名字，本接口读到的就是最新值。
+ */
+const char* HsfLinkClient_aiName(int index);
+
+/**
+ * @brief 取数字量通道名（服务端全量快照下发）。
+ * @param index 通道号。
+ * @param isDo  false=DI、true=DO。
+ * @return 通道名借用指针；未收到/越界返回 NULL。
+ */
+const char* HsfLinkClient_digitalName(int index, bool isDo);
 
 /* ==================== 温湿度遥测 ==================== */
 
@@ -377,6 +402,112 @@ bool HsfLinkClient_healthHasProblem(int* outFault, int* outOffline);
  */
 int HsfLinkClient_commandSeq(void);
 
+/* ==================== 数字量（16DI/16DO） ==================== */
+
+/**
+ * @brief 数字量模块快照（客户端口径）。
+ * @details 位图口径与服务端一致：bit n = 通道 n。
+ *          [名字只由服务端给] 客户端**不写死**点数与通道名：首次连接时
+ *          拉一次全量快照（服务端带全部名字），之后周期推送只带状态/数值；
+ *          名字变化时服务端会主动下发一帧只含名字的快照，本模块就地更新。
+ *          [新鲜度] m_received 是**历史事实**（收到过就恒 true）；判实时性
+ *          必须用 HsfLinkClient_digitalFresh——断线后推送停止，m_received
+ *          仍为 true，只判它会把最后一拍的旧值当实时数据显示。
+ */
+typedef struct HsfLinkDigital {
+    uint32_t m_di;          /**< DI 位图（1=通）。 */
+    uint32_t m_do;          /**< DO 位图（1=通）。 */
+    int      m_count;       /**< 点数（服务端下发）。 */
+    bool     m_valid;       /**< 服务端数据质量。 */
+    bool     m_full;        /**< 最近一帧是否全量（含名字）。 */
+    char     m_diName[HSF_DIGITAL_CHANNELS][32]; /**< DI 通道名（服务端给）。 */
+    char     m_doName[HSF_DIGITAL_CHANNELS][32]; /**< DO 通道名（服务端给）。 */
+    bool     m_received;    /**< 收到过至少一拍（历史事实，不复位）。 */
+    uint64_t m_lastMs;      /**< 最近一次收到推送的本地时刻（单调毫秒）。 */
+} HsfLinkDigital;
+
+/** @brief 数字量数据陈旧阈值（毫秒）；超过即视为断流。 */
+#define HSF_LINK_DIGITAL_STALE_MS   3000u
+
+/**
+ * @brief 取最近数字量快照（借用；从未收到时 m_received=false）。
+ * @warning 返回内部存储，禁释放；内容随下一拍刷新。
+ */
+const HsfLinkDigital* HsfLinkClient_digital(void);
+
+/** @brief 数字量数据是否**当前新鲜**（收到过且未超时）。 */
+bool HsfLinkClient_digitalFresh(void);
+
+/**
+ * @brief 下发单路 DO 控制（异步；结果经 commandResult 回调）。
+ * @param channel DO 通道号（0..count-1）。
+ * @param on true=通电。
+ * @return 已入发送队列返回 true；未就绪/参数非法返回 false。
+ */
+bool HsfLinkClient_digitalControl(int channel, bool on);
+
+/** @brief 请求一拍数字量快照（Response 走 digital 回调）。 */
+bool HsfLinkClient_digitalSnapshotRequest(void);
+
+/**
+ * @brief 注册数字量遥测更新回调（每拍推送/应答后触发）。
+ */
+void HsfLinkClient_setDigitalCallback(HsfLinkNotifyFn cb, void* userData);
+
+/* ==================== 电磁阀（6 路） ==================== */
+
+/**
+ * @brief 单路电磁阀快照。
+ */
+typedef struct HsfLinkValveItem {
+    char m_name[48];    /**< 阀名（UTF-8）。 */
+    int  m_state;       /**< 阀位状态（HsfValveState）。 */
+    bool m_openCmd;     /**< 最近命令意图（true=开）。 */
+    bool m_openFb;      /**< 开到位反馈。 */
+    bool m_closeFb;     /**< 关到位反馈。 */
+    bool m_ready;       /**< 点位是否配置齐全。 */
+    bool m_valid;       /**< 数据有效。 */
+    char m_text[96];    /**< 状态说明（故障原因/排查提示，可空）。 */
+} HsfLinkValveItem;
+
+/**
+ * @brief 电磁阀组快照（定长数组，零分配）。
+ */
+typedef struct HsfLinkValves {
+    HsfLinkValveItem m_items[HSF_VALVE_COUNT]; /**< 各路条目。 */
+    int      m_count;      /**< 实际路数。 */
+    bool     m_received;   /**< 收到过至少一拍（历史事实，不复位）。 */
+    uint64_t m_lastMs;     /**< 最近一次收到推送的本地时刻（单调毫秒）。 */
+} HsfLinkValves;
+
+/** @brief 电磁阀数据陈旧阈值（毫秒）。 */
+#define HSF_LINK_VALVE_STALE_MS     3000u
+
+/**
+ * @brief 取最近电磁阀快照（借用；从未收到时 m_received=false）。
+ * @warning 返回内部存储，禁释放；内容随下一拍刷新。
+ */
+const HsfLinkValves* HsfLinkClient_valves(void);
+
+/** @brief 电磁阀数据是否**当前新鲜**。 */
+bool HsfLinkClient_valvesFresh(void);
+
+/**
+ * @brief 下发单路阀控制（异步；结果经 commandResult 回调）。
+ * @param index 路序（0..count-1）。
+ * @param wantOpen true=开阀、false=关阀。
+ * @return 已入发送队列返回 true。
+ */
+bool HsfLinkClient_valveControl(int index, bool wantOpen);
+
+/** @brief 请求一拍电磁阀快照（Response 走 valve 回调）。 */
+bool HsfLinkClient_valveSnapshotRequest(void);
+
+/**
+ * @brief 注册电磁阀遥测更新回调（每拍推送/应答后触发）。
+ */
+void HsfLinkClient_setValveCallback(HsfLinkNotifyFn cb, void* userData);
+
 /* ==================== 按需订阅（页面显示期订阅，隐藏期退订） ==================== */
 
 /** @brief 可单独开关的遥测主题（与 HSF_TOPIC_* 一一对应）。 */
@@ -385,7 +516,9 @@ typedef enum HsfLinkTopic {
     HsfLinkTopic_Ai        = 1,  /**< 模拟量遥测。 */
     HsfLinkTopic_TempHum   = 2,  /**< 温湿度遥测。 */
     HsfLinkTopic_FlowMeter = 3,  /**< 电磁流量计遥测。 */
-    HsfLinkTopic_Count     = 4
+    HsfLinkTopic_Digital   = 4,  /**< 数字量（16DI/16DO）遥测。 */
+    HsfLinkTopic_Valve     = 5,  /**< 电磁阀 6 路状态。 */
+    HsfLinkTopic_Count     = 6
 } HsfLinkTopic;
 
 /**

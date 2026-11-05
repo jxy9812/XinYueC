@@ -20,6 +20,19 @@ import asyncio
 import signal
 import sys
 
+# [双击兜底] 直接运行本文件（资源管理器里双击，或 `python hsfsrv\__main__.py`）
+# 时 __package__ 为空，下面那些相对导入 `from . import xxx` 会抛
+#     ImportError: attempted relative import with no known parent package
+# 进程立刻退出、控制台一闪而过，看着像"程序坏了"，其实是启动方式错了。
+# 这里把包所在的父目录塞进 sys.path，再以包方式重入一次；重入时
+# __package__ 已是 "hsfsrv"，不会再进这个分支，不会死循环。
+if __package__ in (None, ""):
+    import os as _os
+    sys.path.insert(0, _os.path.dirname(_os.path.dirname(
+        _os.path.abspath(__file__))))
+    from hsfsrv.__main__ import main as _entry
+    sys.exit(_entry())
+
 from . import app as app_mod
 from . import auth as auth_mod
 from . import config as config_mod
@@ -56,6 +69,20 @@ def parse_args(argv):
                     help="起服前先自检一轮设备连通性并打印结果")
     ap.add_argument("--no-auth", action="store_true",
                     help="关闭登录认证（仅限调试；生产禁用）")
+    ap.add_argument("--sim", action="store_true",
+                    help="**虚拟设备模式**：用内存寄存器模型代替真实设备。"
+                         "业务层（闸门/看门狗/阀定时器/告警）全为真实实现，"
+                         "真实设备完全不碰（不开串口/不建 TCP）")
+    ap.add_argument("--sim-flaky", type=float, default=None, metavar="RATE",
+                    help="虚拟数字量模块的抖动概率（0~1，缺省 0=不抖）。"
+                         "真机实测无间隔连发会间歇空应答")
+    ap.add_argument("--sim-valve-move", type=float, default=None,
+                    metavar="SECONDS",
+                    help="虚拟电磁阀动作行程时间（秒，缺省 10）。"
+                         "设 -1=阀卡死永不动作；设 25=超过 20s 超时阈值，"
+                         "用来验证超时告警推送")
+    ap.add_argument("--sim-valve-no-feedback", action="store_true",
+                    help="虚拟行程开关不接（DI 恒 0），验证『无到位反馈』判读")
     return ap.parse_args(argv)
 
 
@@ -78,6 +105,43 @@ def load_config(args):
     if args.port:
         cfg.port = args.port
         log("端口取自命令行 %d（本次生效，不写配置）" % cfg.port)
+    # ---- 虚拟设备模式 ----
+    # [与 --no-io 的区别] --no-io 是"什么都不装配"（只起协议链路）；
+    # --sim 是"装配真实设备类 + 虚拟 master" —— 业务层全部照跑，
+    # 只是电信号来自内存寄存器模型。
+    if getattr(args, "sim", False):
+        cfg.sim_enabled = True
+        log("虚拟设备模式：设备类与业务层为真实实现，"
+            "仅 master 换成内存寄存器模型（真实设备不碰）")
+        # [模拟模式下默认打开流量计] 现场配置里 flowmeter_enabled 是 false
+        # （见 config.py 的说明：现场还没接这路设备）。但模拟模式的目的
+        # 就是"把整套界面跑起来看"，缺一个设备会让人以为功能没做。
+        # 这里只在 sim 时打开 —— 真实模式仍按配置来，不碰现场总线。
+        if not cfg.enable_flowmeter:
+            cfg.enable_flowmeter = True
+            log("虚拟设备模式：补挂流量计（站%d），"
+                "真实模式下它默认关闭" % cfg.flowmeter_unit_id)
+        if not cfg.enable_turbidity:
+            cfg.enable_turbidity = True
+            log("虚拟设备模式：补挂两台浊度仪（站%s），"
+                "真实模式下它默认关闭（站号需现场确认）"
+                % "/".join(str(u) for u in cfg.turbidity_unit_ids[:2]))
+    if getattr(args, "sim_flaky", None) is not None:
+        cfg.sim_flaky_rate = max(0.0, min(1.0, float(args.sim_flaky)))
+        log("虚拟数字量抖动概率 = %.2f" % cfg.sim_flaky_rate)
+    if getattr(args, "sim_valve_move", None) is not None:
+        secs = float(args.sim_valve_move)
+        # -1 是约定值：阀卡死（永远不到位），映射成 inf 交给虚拟模型。
+        cfg.sim_valve_move_ms = (float("inf") if secs < 0
+                                 else int(secs * 1000))
+        if secs < 0:
+            log("虚拟电磁阀：**阀卡死**（永不动作）—— 验证超时/无反馈判读")
+        else:
+            log("虚拟电磁阀动作行程 = %.1fs（服务端超时判据 %.1fs）"
+                % (secs, cfg.valve_move_timeout_ms / 1000.0))
+    if getattr(args, "sim_valve_no_feedback", False):
+        cfg.sim_valve_no_feedback = True
+        log("虚拟电磁阀：行程开关未接（DI 恒 0）")
     return cfg
 
 
@@ -111,8 +175,9 @@ def setup_users(cfg):
                 % cfg.users_path)
         else:
             log("缺省账户落盘失败（%s）——本次仍可用" % cfg.users_path)
-    else:
-        log("账户库已加载（%s，%d 账户）" % (cfg.users_path, len(store)))
+    # [不要再在这里打「账户库已加载」] store.load() 成功时自己已经打过一行；
+    # 这里再打一遍会让日志出现两条一模一样的"已加载 N 账户"，排查时
+    # 容易误以为账户库被加载了两次（或有两个实例）。
     return store
 
 
@@ -176,11 +241,12 @@ async def probe_devices(cfg):
         for dc in cfg.digital_modules:
             m = TcpMaster(dc.host, dc.port, dc.unit_id,
                           timeout=dc.timeout_s, log=log)
-            dev = devices.DigitalIo(m, dc.name, log)
+            dev = devices.DigitalIo(m, dc.name, channels=dc.channels, log=log)
             try:
                 await dev.poll(now)
-                log("  %s %s:%d：OK  DI=0x%04X DO=0x%04X"
-                    % (dc.name, dc.host, dc.port, dev.di_mask(), dev.do_mask()))
+                log("  %s %s:%d：OK  %d 点  DI=0x%X DO=0x%X"
+                    % (dc.name, dc.host, dc.port, dev.channels,
+                       dev.di_mask(), dev.do_mask()))
             except Exception as exc:                    # noqa: BLE001
                 log("  %s %s:%d：失败 %s" % (dc.name, dc.host, dc.port, exc))
             finally:
@@ -201,7 +267,9 @@ async def run(cfg, args):
     business = app_mod.App(cfg, log=log)
     business.build_devices()
     # 恢复持久化的运行模式（老配置无该键时按手动，行为不变）。
-    business.run_mode = cfg.run_mode(default=business.MODE_MANUAL)
+    # [必须走 restore_run_mode] 直接赋值 run_mode 会绕过模式同步，恢复成
+    # 自动模式后自动控制器不会启动（表现：模式显示自动却什么都不做）。
+    business.restore_run_mode(cfg.run_mode(default=business.MODE_MANUAL))
     log("运行模式 = %s"
         % ("自动（远程控制禁用）" if business.is_auto() else "手动"))
 
@@ -258,6 +326,17 @@ def _device_summary(cfg):
         parts.append("变频器(%s站%d)" % (cfg.serial.port, cfg.vfd_unit_id))
     if cfg.enable_temphum:
         parts.append("温湿度(%s站%d)" % (cfg.serial.port, cfg.temphum_unit_id))
+    if cfg.enable_flowmeter:
+        parts.append("流量计(%s站%d)" % (cfg.serial.port,
+                                        cfg.flowmeter_unit_id))
+    if cfg.enable_turbidity:
+        parts.append("浊度仪(%s站%s)" % (
+            cfg.serial.port,
+            "/".join(str(u) for u in cfg.turbidity_unit_ids[:2])))
+    if cfg.enable_pump:
+        dos = [str(it.get("do")) for it in cfg.pump_items
+               if it.get("do") is not None]
+        parts.append("进水泵(DO%s)" % "/".join(dos) if dos else "进水泵")
     if cfg.enable_analog:
         parts.append("模拟量(%s:%d)" % (cfg.analog.host, cfg.analog.port))
     if cfg.enable_digital:

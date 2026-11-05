@@ -131,6 +131,12 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
      * 包含链上），HUB_ON 蕴含 CORE_ON。 */
     } else if (strcmp(name, "xmodbus-core") == 0) {
         result = XModbusCoreTest_run() == 0;
+#if XMODBUS_CLIENT_ON
+    /* 虚拟 Modbus 设备（进程内应答，无串口/套接字）：设备物理层可替换，
+       真设备拆了也能跑通 Hub → 链路 → 通道组 → 设备站全链。 */
+    } else if (strcmp(name, "xmodbus-virtual") == 0) {
+        result = XModbusVirtualTest_run() == 0;
+#endif
     /* XVfd 从站级约束单测（Hub 单帧读上限 / 功能码组边界 / 只 FC06）：
      * 进程内假从站载体，**不依赖传输层**（无 socket/pty），本机环回
      * 数据丢失环境下仍可判定。 */
@@ -177,11 +183,28 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
     } else if (strcmp(name, "hsf-client-flowmeter") == 0) {
         result = XHsfClientFlowMeterProviderTest_run() == 0;
 #endif
+#if XINDUSTRY_ON && XTURBIDITY_ON
+    /* Industry 在线浊度仪 mock 回归（通道组喂点进程内自跑）。最高优先级断言
+       是**真机帧回归**：WZT-701A 手册 4.3.10.2 的 01 03 04 D70A 411F =
+       9.99NTU，锁定"CDAB 低字在前 + IEEE754 float"这条缺省口径。 */
+    } else if (strcmp(name, "xindustry-turbidity") == 0) {
+        result = XIndustryTurbidityTest_run() == 0;
+#endif
 #if XINDUSTRY_ON && XBUTTON_STATION_ON
     /* Industry 按钮组/操作柱 mock 回归（通道组喂触点进程内自跑；含急停
        安全侧口径、转换开关双触点矛盾与指示灯跟随/失败沿）。 */
     } else if (strcmp(name, "xindustry-button") == 0) {
         result = XIndustryButtonStationTest_run() == 0;
+#endif
+#if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON
+    /* 电磁阀组反馈新鲜度语义：模块离线必须报"无法控制"，不得伪装成
+       "无到位反馈（检查行程开关接线）"，也不得伪造"动作中→超时"。 */
+    } else if (strcmp(name, "hsf-io-valve-fresh") == 0) {
+        result = XHsfServerIoValveFreshTest_run() == 0;
+    /* 服务端模拟设备模式（HsfServer --sim）：多从站按站号分派 / VFD 整段
+       应答 / 静止量心跳拍 / 32 位量低字非 0，外加阀控端到端。 */
+    } else if (strcmp(name, "hsf-sim-mode") == 0) {
+        result = XHsfServerIoSimModeTest_run() == 0;
 #endif
 #if XPROTOCOL_ON && XLINK_ON
     /* XLink 私有应用层协议（控制进程 <-> GUI 进程 消息互通）。 */

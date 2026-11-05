@@ -51,6 +51,12 @@ extern "C" {
 #if XPROTOCOL_ON && XMODBUS_CORE_ON
 	int XModbusCoreTest_run(void);
 #endif
+#if XPROTOCOL_ON && XMODBUS_CLIENT_ON
+	/* 虚拟 Modbus 设备（进程内应答，无串口/套接字）：全 C 端离线联调载体。
+	 * 验证"设备物理层可替换"——Hub/链路/通道组/设备站一行不改即可跑通。 */
+	int XModbusVirtualTest_run(void);
+	void XModbusVirtualTest(XVariant* data);
+#endif
 #if XPROTOCOL_ON && XMODBUS_HUB_ON
 	//Hub 从站级通讯约束单测（读帧上限 / 功能码组边界 / 只 FC06）：
 	//进程内假从站载体，**不依赖传输层**（实现于 xfdv_hub_limits_test.c）

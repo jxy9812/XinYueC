@@ -45,8 +45,9 @@
 #define DIGITAL_TOUCH_H_MIN    64   /**< 竖屏单元最小高（44dp 触控口径）。 */
 #define DIGITAL_DOT_MAX        28   /**< 圆点最大直径。 */
 #define DIGITAL_DOT_MIN        16   /**< 圆点最小直径。 */
-#define DIGITAL_COL_MIN_W      132  /**< 横屏单列最小宽（容纳「CHxxx 名称」）。 */
+#define DIGITAL_COL_MIN_W      132  /**< 横屏单列最小宽（**下限**；实际按最长名实测放宽）。 */
 #define DIGITAL_COL_MIN_W_C    108  /**< 竖屏单列最小宽（窄屏多排一列）。 */
+#define DIGITAL_NAME_PAD       16   /**< 名称两侧留白（实测名宽 + 本值 = 单列最小宽）。 */
 #define DIGITAL_GAP            12   /**< 单元间横/纵间距。 */
 #define DIGITAL_SECTION_GAP    18   /**< DI/DO 两区段之间的间距。 */
 #define DIGITAL_NAME_MAX       64   /**< 名称缓冲上限（含 NUL）。 */
@@ -176,6 +177,35 @@ static bool digital_indexToSlot(int index, int* sectionOut, int* slotOut)
     return false;
 }
 
+/** @brief 合成某点的显示名（前置声明：列宽实测要用它）。 */
+static void digital_displayName(int index, char* buf, int size);
+
+/** @brief 量一遍所有显示名的最大像素宽（含 "CH<n> " 前缀）。
+ *  @details [2026-11-05 长名溢出根修] 原来列宽按固定常量 132px 算，而现场名
+ *           形如 "CH16 电磁阀1 关到位"（12~14 个全角字）远超这个宽度，绘制
+ *           又带 DONT_CLIP ⇒ 右侧相邻单元被压字、整行糊成一片（模拟器 32 点
+ *           联调实测）。列宽必须按**实际最长的名字**量出来，不能拍一个常量。
+ */
+static int digital_measureMaxNameW(const HsfDigitalBoard* board, int textH)
+{
+    XFont font;
+    int maxW = 0;
+    int i;
+    (void)textH;
+    if (!board || s_digital.m_count <= 0) return 0;
+    font = XWidget_font((XWidget*)board);
+    for (i = 0; i < s_digital.m_count; ++i) {
+        char name[DIGITAL_NAME_MAX];
+        int w;
+        digital_displayName(i, name, (int)sizeof(name));
+        if (!name[0]) continue;
+        w = XPainter_textWidth(&font, name);
+        if (w > maxW) maxW = w;
+    }
+    XClassDeinit(&font);
+    return maxW;
+}
+
 /** @brief 行列几何探针：按当前宽算列数与单元尺寸（paint/hint 共用）。 */
 static void digital_board_metrics(const HsfDigitalBoard* board, int width,
                                   int* colsOut, int* cellWOut,
@@ -187,6 +217,7 @@ static void digital_board_metrics(const HsfDigitalBoard* board, int width,
     int avail;
     int dotH;
     int textH;
+    int minColW;
     XFont font;
     if (colsOut) *colsOut = 1;
     if (cellWOut) *cellWOut = DIGITAL_COL_MIN_W;
@@ -194,15 +225,21 @@ static void digital_board_metrics(const HsfDigitalBoard* board, int width,
     if (rowsOut) *rowsOut = 0;
     if (!board || width <= DIGITAL_BOARD_MARGIN * 2) return;
     avail = width - DIGITAL_BOARD_MARGIN * 2;
-    cols = (avail + DIGITAL_GAP) /
-           ((s_digital.m_compact ? DIGITAL_COL_MIN_W_C : DIGITAL_COL_MIN_W) +
-            DIGITAL_GAP);
+    /* 单列最小宽：取「设计下限」与「实测最长名 + 左右内边距」的较大者。
+     * 名字更长时宁可少排一列（滚动壳可纵向滚动），也不让文字互相压。 */
+    minColW = s_digital.m_compact ? DIGITAL_COL_MIN_W_C : DIGITAL_COL_MIN_W;
+    {
+        const int nameW = digital_measureMaxNameW(board, 0);
+        if (nameW > 0 && nameW + DIGITAL_NAME_PAD > minColW)
+            minColW = nameW + DIGITAL_NAME_PAD;
+        /* 上限：再长也不超过可视宽的一半，否则一屏只放得下一列。 */
+        if (minColW > avail / 2) minColW = avail / 2;
+        if (minColW < 1) minColW = 1;
+    }
+    cols = (avail + DIGITAL_GAP) / (minColW + DIGITAL_GAP);
     if (cols < 1) cols = 1;
     cellW = (avail - (cols - 1) * DIGITAL_GAP) / cols;
-    if (cellW < (s_digital.m_compact ? DIGITAL_COL_MIN_W_C
-                                     : DIGITAL_COL_MIN_W))
-        cellW = s_digital.m_compact ? DIGITAL_COL_MIN_W_C
-                                    : DIGITAL_COL_MIN_W;
+    if (cellW < minColW) cellW = minColW;
     font = XWidget_font((XWidget*)board);
     textH = XPainter_textHeight(&font);
     XClassDeinit(&font);

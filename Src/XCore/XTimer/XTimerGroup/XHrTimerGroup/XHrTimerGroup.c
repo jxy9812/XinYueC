@@ -75,14 +75,25 @@ static void update_min_node(XHrTimerGroup* group) {
 }
 
 // --- 辅助函数：获取当前纳秒时间 ---
+/* [双轴同源 2026-11-05] 高精度组必须用**纳秒轴**（XDateTime_currentNSecsSinceEpoch），
+ * 不能再用毫秒 ×1e6 派生：
+ *  - 亚毫秒定时器（addTimerNs 的 timeout<1ms）在毫秒派生轴上会被归整到 1ms，
+ *    精度直接损失；
+ *  - 更关键的是两轴必须同锚——事件分发器把本组的 getNextExpireTime（ns）与
+ *    时间轮的到期（ms×1e6）放在同一个 now 上相减（见
+ *    XAbstractEventDispatcher 双时钟轴归一），若 ns 轴由 ms 派生而 ms 轴另有
+ *    基线，两者会差出固定偏移，等待超时算错（忙碌空转或长睡）。
+ * 各平台后端现已统一：ns 与 ms 由同一组纪元锚派生，ns/1e6 == ms 严格成立。 */
 static inline uint64_t get_current_time_ns(XHrTimerGroup* group) {
     XHighResTimeFunc high_res_func = group->m_class.m_high_res_time_func;
     if (high_res_func) {
         return high_res_func();
     }
     else {
-        // 回退到原有的毫秒时间源并转换
-        return (uint64_t)XDateTime_currentMSecsSinceEpoch() * 1000000ULL;
+        /* 兜底同样走纳秒轴：XHighResTimeFunc 契约返回 uint64_t，
+         * XDateTime_currentNSecsSinceEpoch 返回 int64_t——纪元纳秒在 uint64
+         * 量程内恒正，包一层显式定宽转换消签名失配。 */
+        return (uint64_t)XDateTime_currentNSecsSinceEpoch();
     }
 }
 

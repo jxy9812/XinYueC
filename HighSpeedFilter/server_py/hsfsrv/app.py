@@ -17,10 +17,33 @@
 import asyncio
 import time
 
+from . import autocontrol
 from . import bson
 from . import devices
 from . import valves
 from . import proto
+from . import pumps as pumps_mod
+
+
+#: 阀告警类型 → 中文（日志用；客户端有自己的文案）。
+_ALARM_KIND_NAMES = {
+    proto.VALVE_ALARM_TIMEOUT: "动作超时",
+    proto.VALVE_ALARM_CONFLICT: "到位信号冲突",
+    proto.VALVE_ALARM_CLEARED: "已恢复",
+}
+
+#: 「调速类」控制动作：只能在**运行中**下发。
+#:
+#: [为什么停机时禁止] 给定是运行参数，不是可预置的配置。允许停机下发会
+#: 出现"停机 + 输出频率 25Hz + 转速 720rpm"这种自相矛盾的界面状态
+#: （虚拟设备原来确实这样：写 0x1000 后坡道开始爬），操作员还会以为
+#: "设好了但没生效"，再点启动才发现按的是别的给定。
+#: 禁止后语义唯一：**先启动，再调速**。
+#: 启停/点动/复位/点动释放不在此列 —— 它们本来就要在停机时用。
+_VFD_SETPOINT_OPS = frozenset({
+    proto.OP_SET_FREQUENCY,
+    proto.OP_SET_SPEED,
+})
 
 
 class PushGate(object):
@@ -52,9 +75,10 @@ class HealthEntry(object):
     """设备健康条目（值语义，可整体比对判断「是否变化」）。"""
 
     __slots__ = ("name", "kind", "side", "health", "error", "online",
-                 "run_state", "text")
+                 "run_state", "text", "addr")
 
-    def __init__(self, name, kind, side, health, error, online, run_state, text):
+    def __init__(self, name, kind, side, health, error, online, run_state, text,
+                 addr=""):
         self.name = name
         self.kind = kind
         self.side = side
@@ -63,11 +87,20 @@ class HealthEntry(object):
         self.online = online
         self.run_state = run_state
         self.text = text
+        #: 连接地址（给人看的写法）：TCP 是 "ip:port"，485 是
+        #: "COM17 · 115200 · 站 2"。**不回告"能连就行"** —— 现场排故障
+        #: 第一件事就是确认"这台设备到底配在哪个口/哪个 IP"，原来只能翻
+        #: 配置文件。空串表示该设备没有可报的连接参数。
+        self.addr = addr
 
     def key(self):
-        """变化比对用的元组（避开对象身份，纯值比较）。"""
+        """变化比对用的元组（避开对象身份，纯值比较）。
+
+        [必须含 addr] 否则改了配置里的 IP/站号，健康快照的 seq 不变，
+        客户端不会重绘 —— 界面会一直显示旧地址。
+        """
         return (self.name, self.kind, self.side, self.health, self.error,
-                self.online, self.run_state, self.text)
+                self.online, self.run_state, self.text, self.addr)
 
 
 class JogWatch(object):
@@ -97,6 +130,13 @@ class App(object):
     DIGITAL_PUSH_MS = 100
     #: 电磁阀推送节拍：阀动作要几秒，200ms 足够；与数字量模块采集节拍对齐。
     VALVE_PUSH_MS = 200
+    #: 流量计推送节拍：瞬时流量是慢变量（管道里不会有 100ms 级突变），
+    #: 200ms 足够看清波动；与它的采集节拍对齐，避免重复推同一份值。
+    FLOWMETER_PUSH_MS = 200
+    #: 浊度与泵的推送节拍。浊度是慢变量（水质变化以秒计），500ms 足够；
+    #: 泵状态只在开关时变，500ms 一拍已远超需要。
+    TURBIDITY_PUSH_MS = 500
+    PUMP_PUSH_MS = 500
     #: 数字量没有模拟量的「慢变量」特性，跟基准节拍即可。
 
     #: 陈旧阈值（毫秒）：超过即判数据失效。
@@ -115,6 +155,11 @@ class App(object):
         # ---- 设备集合 ----
         self.vfd = None            # VfdM512 或 None
         self.temphum = None
+        self.flowmeter = None      # FlowMeter 或 None
+        #: 浊度仪列表（[TurbidityMeter, ...]，共 2 台）
+        self.turbidity = []
+        #: 进水泵组（数字量模块上的一路 DO，只有输出无反馈）
+        self.pump_bank = None
         self.analog = None
         self.digital = []          # [DigitalIo, ...]
         #: 电磁阀组（6 路；点位来自 config.valve_items，先留空后对接）
@@ -125,6 +170,9 @@ class App(object):
             proto.TOPIC_VFD_STATUS: [],
             proto.TOPIC_AI_STATUS: [PushGate(self.AI_PUSH_MS)],
             proto.TOPIC_TEMPHUM_STATUS: [],
+            proto.TOPIC_FLOWMETER_STATUS: [],
+            proto.TOPIC_TURBIDITY_STATUS: [],
+            proto.TOPIC_PUMP_STATUS: [],
             proto.TOPIC_DIGITAL_STATUS: [],
             proto.TOPIC_VALVE_STATUS: [],
         }
@@ -134,6 +182,8 @@ class App(object):
         self._health_last = None       # 上次推送的 entries（key 列表）
         self._health_primed = False
         self._health_next_ms = 0
+        #: 自动控制异常限频表：异常类名 -> 上次记日志时刻（单调毫秒）。
+        self._auto_err_at = {}
 
         # ---- 点动看门狗 ----
         self._jog = {}
@@ -142,13 +192,30 @@ class App(object):
         self._poll_tasks = []
         #: 运行模式（手动/自动）。自动模式拒绝全部远程控制。
         self.run_mode = self.MODE_MANUAL
+        #: 自动运行控制器（**预留骨架，控制逻辑待扩展**）。
+        #: 见 autocontrol.py 模块头：现在 step() 什么都不做，把"模式门禁"和
+        #: "服务端自己驱动设备"两层职责先分开，将来逻辑直接填进去即可。
+        self.auto_ctx = autocontrol.AutoContext(self, log=self._log)
+        self.auto_controller = autocontrol.AutoController(
+            self.auto_ctx, log=self._log)
 
     # ==================================================================
     #                          装配 / 拆除
     # ==================================================================
     def build_devices(self):
-        """按配置装配设备对象（不打开任何端口/连接，纯对象构造）。"""
+        """按配置装配设备对象（不打开任何端口/连接，纯对象构造）。
+
+        [虚拟设备模式] 配了 `cfg.sim_enabled` 时，把 master 换成内存寄存器
+        模型（virtualdev.py），**devices.py 与 app.py 全部照跑**：
+        换算、状态字解码、控制闸门、点动看门狗、阀定时器都是真实实现，
+        只有"电信号"是假的。真实设备完全不碰（不开串口、不建 TCP）。
+        """
+        from . import virtualdev
         from .modbus import RtuMaster, TcpMaster
+        sim = bool(getattr(self.cfg, "sim_enabled", False))
+        if sim:
+            self._log("虚拟设备模式：master 换成内存寄存器模型"
+                      "（真实设备不碰，业务层全为真实实现）")
 
         # [关键] 同一条 485 上的多个从站必须**共用一个主站**。
         # 串口是排他资源：每台设备各建一个 RtuMaster 就会互相抢口
@@ -168,15 +235,41 @@ class App(object):
             [实现选择] 让 RtuMaster 支持 per-call unit：设备调用
             `read(fc, addr, cnt, unit=self.unit_id)`。这样一台 master
             天然能服务同总线上的多个从站。
+
+            [虚拟模式] 同一个串口上的多个从站共用**同一个** VirtualMaster
+            ——与真实链路的结构一致（一条总线一个 master）。虚拟模型内部
+            按 unit 区分？本实现只模拟一台变频器 + 一台温湿度，故直接各
+            用独立模型即可，不必按 unit 分派。
             """
             c = self.cfg.serial
             key = (c.port, c.baudrate)
             master = rtu_masters.get(key)
             if master is None:
-                # 超时/重试取该路配置（同总线的从站共用一套链路参数）
-                master = RtuMaster(c.port, c.baudrate, unit_id,
-                                   c.timeout_ms / 1000.0, c.retries,
-                                   self._log)
+                if sim:
+                    # 变频器与温湿度共用一条"虚拟串口"：用一个多模型 master
+                    models = {
+                        self.cfg.vfd_unit_id: virtualdev.VirtualVfd(
+                            max_hz=self.cfg.serial.vfd_max_hz,
+                            log=self._log),
+                        self.cfg.temphum_unit_id:
+                            virtualdev.VirtualTempHum(),
+                    }
+                    # 流量计也挂这条总线上（现场若接了就在同一个 485 口）。
+                    if self.cfg.enable_flowmeter:
+                        models[self.cfg.flowmeter_unit_id] = \
+                            virtualdev.VirtualFlowMeter()
+                    # 两台浊度仪同样在这条 485 上，站号各不相同。
+                    if self.cfg.enable_turbidity:
+                        for idx, uid in enumerate(
+                                self.cfg.turbidity_unit_ids[:2]):
+                            models[uid] = virtualdev.VirtualTurbidity(index=idx)
+                    master = virtualdev.VirtualMultiMaster(
+                        models, name="虚拟485总线", log=self._log)
+                else:
+                    # 超时/重试取该路配置（同总线的从站共用一套链路参数）
+                    master = RtuMaster(c.port, c.baudrate, unit_id,
+                                       c.timeout_ms / 1000.0, c.retries,
+                                       self._log)
                 rtu_masters[key] = master
             return master
 
@@ -186,10 +279,17 @@ class App(object):
         def make_th_master():
             return make_rtu(self.cfg.temphum_unit_id)
 
+        def make_flow_master():
+            return make_rtu(self.cfg.flowmeter_unit_id)
+
         if self.cfg.enable_serial:
             if self.cfg.enable_vfd:
                 self.vfd = devices.VfdM512(make_vfd_master, self.cfg.vfd_unit_id,
                                            self._log)
+                # 铭牌额定点：Hz ↔ rpm 换算依据（现场实测 50Hz ≈ 1440rpm）。
+                self.vfd.rated_rpm = self.cfg.serial.vfd_rated_rpm
+                self.vfd.rated_hz = self.cfg.serial.vfd_rated_hz
+                self.vfd.max_freq_hz = self.cfg.serial.vfd_max_hz
                 self._jog["vfd"] = JogWatch()
                 self._gates[proto.TOPIC_VFD_STATUS].append(
                     PushGate(self.VFD_PUSH_MS))
@@ -199,18 +299,52 @@ class App(object):
                                                self._log)
                 self._gates[proto.TOPIC_TEMPHUM_STATUS].append(
                     PushGate(self.TEMPHUM_PUSH_MS))
+            if self.cfg.enable_flowmeter:
+                self.flowmeter = devices.FlowMeter(make_flow_master,
+                                                   self.cfg.flowmeter_unit_id,
+                                                   self._log)
+                self._gates[proto.TOPIC_FLOWMETER_STATUS].append(
+                    PushGate(self.FLOWMETER_PUSH_MS))
+            if self.cfg.enable_turbidity:
+                for idx, uid in enumerate(self.cfg.turbidity_unit_ids[:2]):
+                    self.turbidity.append(devices.TurbidityMeter(
+                        (lambda u=uid: make_rtu(u)), uid,
+                        name="浊度仪%d" % (idx + 1), log=self._log))
+                self._gates[proto.TOPIC_TURBIDITY_STATUS].append(
+                    PushGate(self.TURBIDITY_PUSH_MS))
 
         if self.cfg.enable_analog:
             ai = self.cfg.analog
-            master = TcpMaster(ai.host, ai.port, ai.unit_id,
-                               timeout=2.0, log=self._log)
+            if sim:
+                master = virtualdev.make_analog_master(ai.channels, self._log)
+            else:
+                master = TcpMaster(ai.host, ai.port, ai.unit_id,
+                                   timeout=2.0, log=self._log)
             self.analog = devices.AnalogInput(master, ai.channels, self._log)
 
         if self.cfg.enable_digital:
             for i, dio_cfg in enumerate(self.cfg.digital_modules):
-                master = TcpMaster(dio_cfg.host, dio_cfg.port, dio_cfg.unit_id,
-                                   timeout=dio_cfg.timeout_s, log=self._log)
-                dev = devices.DigitalIo(master, dio_cfg.name, self._log)
+                if sim:
+                    # [行程时间必须传下去] 虚拟阀若"写完 DO 立刻到位"，
+                    # 状态机的「动作中」与「20s 超时报警」两条分支永远走
+                    # 不到 —— 功能存在但无法观察/验证。故把现场节奏（10s）
+                    # 与"坏阀"开关一起交给虚拟模型。
+                    master = virtualdev.make_digital_master(
+                        dio_cfg.channels,
+                        flaky_rate=getattr(self.cfg, "sim_flaky_rate", 0.0),
+                        move_ms=getattr(self.cfg, "sim_valve_move_ms", None),
+                        no_feedback=getattr(self.cfg, "sim_valve_no_feedback",
+                                            False),
+                        log=self._log)
+                else:
+                    master = TcpMaster(dio_cfg.host, dio_cfg.port,
+                                       dio_cfg.unit_id,
+                                       timeout=dio_cfg.timeout_s,
+                                       log=self._log)
+                dev = devices.DigitalIo(master, dio_cfg.name,
+                                        channels=dio_cfg.channels,
+                                        publish=dio_cfg.publish,
+                                        log=self._log)
                 self.digital.append(dev)
                 self._gates[proto.TOPIC_DIGITAL_STATUS].append(
                     PushGate(self.DIGITAL_PUSH_MS))
@@ -228,6 +362,21 @@ class App(object):
                           % (ready, proto.HSF_VALVE_COUNT))
             else:
                 self._log("电磁阀：6 路均未配置点位（界面可见，控制不可用）")
+
+        # ---- 进水泵（同样依赖数字量模块的 DO 回显）----
+        if self.cfg.enable_pump:
+            self.pump_bank = pumps_mod.PumpBank(
+                self.digital, self.cfg.pump_items, self._log)
+            self._gates[proto.TOPIC_PUMP_STATUS] = [
+                PushGate(self.PUMP_PUSH_MS)]
+            ready = self.pump_bank.ready_count()
+            if ready:
+                self._log("进水泵：已装配 %d 台（%s，只有输出无反馈）"
+                          % (ready, "、".join(
+                              "DO%s" % it.do for it in self.pump_bank.items
+                              if it.ready)))
+            else:
+                self._log("进水泵：未配置点位（界面可见，控制不可用）")
 
     @property
     def TEMPHUM_PUSH_MS(self):
@@ -252,9 +401,51 @@ class App(object):
     #                       运行模式（持久化）
     # ==================================================================
     def apply_mode_to_devices(self):
-        """模式同步到设备层：自动模式关闸（本实现的控制闸在 app 层判定，
-        故这里是空实现，保留接口以便将来下沉到设备层做双保险）。"""
-        return
+        """模式同步到设备层 / 自动控制器。
+
+        [⚠ 安全口径 2026-11-05 订正：进自动**不**自动启动控制器]
+        原实现是"进自动就 ctl.start()"，等于把一个模式开关变成了**设备启动
+        按钮** —— 操作员只想切个模式，设备立刻开始被自动逻辑驱动。现场反馈
+        "默认应该是停止状态，不然太危险了"，这个判断是对的：
+
+            模式 = 自动   →  只是**授权**自动逻辑可以跑（远程控制被禁）
+            自动运行       →  必须由人**再明确启动一次**才真的开始驱动设备
+
+        所以这里只做**单向**安全动作：**退出自动时强制停控制器**（切回手动
+        还在自动跑 = 手动模式下设备被偷偷驱动，是硬性安全问题）。
+        启动路径在独立的 CMD_AUTO_CONTROL 里，见 _h_auto_control。
+
+        设备层本身不感知模式（控制闸在 app 层判定），故此函数对设备部分
+        仍是空实现，保留接口以便将来下沉做双保险。
+        """
+        ctl = getattr(self, "auto_controller", None)
+        if ctl is None:
+            return
+        if not self.is_auto() and ctl.running:
+            # 退自动 ⇒ 必须停（安全，单向）
+            ctl.stop(self._now_ms())
+            self._log("退出自动模式：自动控制已强制停止")
+
+    def restore_run_mode(self, mode):
+        """启动时从配置恢复运行模式（**不落盘**，因为值本来就来自磁盘）。
+
+        [为什么不直接用 set_run_mode] 恢复期写回配置是无意义的 IO，而且会
+        让"读取失败按缺省值跑"的情形把缺省值覆盖掉真实配置。
+
+        [⚠ 重启后控制器**一律不自动启动** 2026-11-05] 原实现"恢复成自动模式
+        就把控制器启动起来"，等于**服务端重启 = 设备自己开始动**。现场断电
+        重启、systemd 拉起、升级重启都属这一类 —— 没人按过启动，设备却动了，
+        这是最不能接受的一种自动行为。
+
+        故恢复只还原**模式位**（界面显示"自动模式"），控制器保持停止；
+        要真正开始自动运行，必须由人下发 CMD_AUTO_CONTROL。
+        """
+        if mode not in (self.MODE_MANUAL, self.MODE_AUTO):
+            mode = self.MODE_MANUAL
+        self.run_mode = mode
+        # 只同步"退自动必须停"这一条安全单向；不启动
+        self.apply_mode_to_devices()
+        return True
 
     def set_run_mode(self, mode):
         if mode not in (self.MODE_MANUAL, self.MODE_AUTO):
@@ -273,6 +464,18 @@ class App(object):
     def is_auto(self):
         return self.run_mode == self.MODE_AUTO
 
+    def is_auto_running(self):
+        """自动控制器**是否真的在跑**（与"是不是自动模式"是两件事）。
+
+        [为什么要单独一个查询] `is_auto()` 说的是"人把模式拨到自动了"；
+        这个说的才是"自动逻辑真的在驱动设备"。两者正常同步，但**不能让
+        界面从模式位推断运行位** —— 一旦控制器没启动（装配时序错、异常
+        退出、将来做暂停），界面会显示"自动在跑"而实际什么都不做，
+        这种假正常比直接报故障更难查。
+        """
+        ctl = getattr(self, "auto_controller", None)
+        return bool(ctl is not None and ctl.running)
+
     # ==================================================================
     #                         采集循环
     # ==================================================================
@@ -280,10 +483,20 @@ class App(object):
         """每台设备一个采集任务（互不阻塞：一台慢不影响另一台）。"""
         if self.vfd is not None:
             self._poll_tasks.append(asyncio.ensure_future(
-                self._poll_loop(self.vfd, self.cfg.vfd_poll_ms, "变频器")))
+                # 日志名与健康条目同名（现场口径"搅拌泵"），
+                # 否则日志说"变频器"、界面说"搅拌泵"，对不上号。
+                self._poll_loop(self.vfd, self.cfg.vfd_poll_ms, "搅拌泵")))
         if self.temphum is not None:
             self._poll_tasks.append(asyncio.ensure_future(
                 self._poll_loop(self.temphum, self.cfg.temphum_poll_ms, "温湿度")))
+        if self.flowmeter is not None:
+            self._poll_tasks.append(asyncio.ensure_future(
+                self._poll_loop(self.flowmeter, self.cfg.temphum_poll_ms,
+                                "流量计")))
+        for idx, tdev in enumerate(self.turbidity):
+            self._poll_tasks.append(asyncio.ensure_future(
+                self._poll_loop(tdev, self.cfg.turbidity_poll_ms,
+                                tdev.name)))
         if self.analog is not None:
             self._poll_tasks.append(asyncio.ensure_future(
                 self._poll_loop(self.analog, self.cfg.analog_poll_ms, "模拟量")))
@@ -333,6 +546,13 @@ class App(object):
         if self.temphum is not None:
             await self.temphum.close()
             self.temphum = None
+        if self.flowmeter is not None:
+            await self.flowmeter.close()
+            self.flowmeter = None
+        for tm in self.turbidity:
+            await tm.close()
+        self.turbidity = []
+        self.pump_bank = None
         if self.vfd is not None:
             await self.vfd.close()
             self.vfd = None
@@ -354,9 +574,37 @@ class App(object):
         """XLink 服务端的业务 tick 回调（由 xlink.Server 周期驱动）。"""
         await self._publish_telemetry(now_ms)
         self._jog_watchdog(now_ms)
+        self._auto_step(now_ms)
         if now_ms >= self._health_next_ms:
             self._health_next_ms = now_ms + self.HEALTH_TICK_MS
             await self._health_tick(now_ms)
+
+    def _auto_step(self, now_ms):
+        """跑一拍自动控制（**当前是空骨架**，控制逻辑待扩展）。
+
+        [为什么必须包 try] 自动逻辑是现场工艺代码，将来一定会有人写出除零/
+        越界/None 比较之类的异常。它崩了**不能**把整个服务端的 tick 带死 ——
+        那会连遥测推送和设备健康一起停摆，界面全黑，比"自动逻辑不工作"严重
+        得多。故这里吞掉并限频记日志。
+        """
+        ctl = getattr(self, "auto_controller", None)
+        if ctl is None or not ctl.running:
+            return
+        try:
+            ctl.step(now_ms)
+        except Exception as exc:                        # noqa: BLE001
+            # 限频：同一类错误 1 分钟一条，避免把板端 journald 灌满。
+            # [首次必须记] 用 `not last` 判「从未记过」——不能只靠
+            # `now - last > 60000`：last 初值 0，而单调毫秒是从进程启动算的，
+            # 启动后 1 分钟内发生的第一次异常会被这条件判成「刚记过」而吞掉，
+            # 于是现场看到的是"自动逻辑明明崩了却一条日志都没有"。
+            key = type(exc).__name__
+            now_ms_i = int(now_ms)
+            last = self._auto_err_at.get(key, 0)
+            if (not last) or (now_ms_i - last > 60000):
+                self._auto_err_at[key] = now_ms_i or 1
+                self._log("自动控制异常（已隔离，不影响采集/推送）：%s: %s"
+                          % (key, exc))
 
     async def _publish_telemetry(self, now_ms):
         # ---- 变频器 ----
@@ -370,23 +618,75 @@ class App(object):
                 proto.TOPIC_TEMPHUM_STATUS, 0, now_ms):
             await self.server.publish(proto.TOPIC_TEMPHUM_STATUS,
                                       self.encode_temphum(self.temphum))
+        # ---- 流量计 ----
+        if self.flowmeter is not None and self._gate_due(
+                proto.TOPIC_FLOWMETER_STATUS, 0, now_ms):
+            await self.server.publish(proto.TOPIC_FLOWMETER_STATUS,
+                                      self.encode_flowmeter(self.flowmeter))
+        # ---- 浊度仪（两台一帧）----
+        if self.turbidity and self._gate_due(
+                proto.TOPIC_TURBIDITY_STATUS, 0, now_ms):
+            await self.server.publish(proto.TOPIC_TURBIDITY_STATUS,
+                                      self.encode_turbidity())
+        # ---- 进水泵 ----
+        if self.pump_bank is not None:
+            # 先刷新回显（可能被外部改动），再判推送闸
+            self.pump_bank.poll(now_ms, self.cfg.pump_stale_ms)
+            if self._gate_due(proto.TOPIC_PUMP_STATUS, 0, now_ms):
+                await self.server.publish(proto.TOPIC_PUMP_STATUS,
+                                          self.encode_pumps())
         # ---- 模拟量 ----
         if self.analog is not None and self._gate_due(
                 proto.TOPIC_AI_STATUS, 0, now_ms):
             await self.server.publish(proto.TOPIC_AI_STATUS,
                                       self.encode_analog(self.analog))
         # ---- 数字量（逐模块一帧）----
+        # 只发 publish=True 的模块：被聚合者（如 .13 聚合进 .12）的点已经在
+        # 聚合者的地址空间里出现了，再给它发一帧会让客户端出现两套重复点位。
+        # 它照样参与轮询与健康探测（见 collect_health），只是不出场景。
         for i, dev in enumerate(self.digital):
+            if not getattr(dev, "publish", True):
+                continue
             if self._gate_due(proto.TOPIC_DIGITAL_STATUS, i, now_ms):
+                # 周期推送＝增量帧（不带名字）；名字靠首连/订阅补发的全量帧。
                 await self.server.publish(proto.TOPIC_DIGITAL_STATUS,
-                                          self.encode_digital(dev, i))
+                                          self.encode_digital(dev, i, full=False))
         # ---- 电磁阀（6 路一帧）----
         if self.valve_bank is not None:
             # 反馈来自数字量模块缓存，故先刷新再推送（同一拍数据自洽）
-            self.valve_bank.poll(now_ms)
+            alarms = self.valve_bank.poll(now_ms)
+            if alarms:
+                # [立即推，不等 200ms 周期闸] 超时是事件，晚一拍无所谓但
+                # 更不能被周期推送的闸吞掉（同拍可能有 6 路一起超时）。
+                await self._publish_valve_alarms(alarms)
             if self._gate_due(proto.TOPIC_VALVE_STATUS, 0, now_ms):
                 await self.server.publish(proto.TOPIC_VALVE_STATUS,
                                           self.encode_valves())
+
+    async def _publish_valve_alarms(self, alarms):
+        """把阀告警推给**订阅了阀主题**的会话。
+
+        [为什么用 TOPIC_VALVE_STATUS 而不是另开主题] 客户端关心阀就必然订阅
+        了阀主题；告警是阀的子话题，塞进同一主题不会漏订阅。载荷带
+        "alarms" 数组，与周期状态的键空间不冲突（状态用 v{i}_* 前缀），
+        客户端按"载荷里有 alarms 就走告警分支"处理。
+
+        [为什么不在 valves.py 里推] 设备层不持有传输层引用；且多次 poll
+        调用（快照 handler 也会 poll）不应该重复推送——由这里统一出。
+        """
+        doc = {proto.KEY_ALARM_COUNT: len(alarms)}
+        for i, alarm in enumerate(alarms):
+            for key, value in alarm.items():
+                doc["a%d_%s" % (i, key)] = value
+        payload = bson.encode(doc)
+        sent = await self.server.publish(proto.TOPIC_VALVE_STATUS, payload)
+        for alarm in alarms:
+            self._log("阀告警：%s（%s）→ %s"
+                      % (alarm.get(proto.KEY_ALARM_VALVE_NAME),
+                         _ALARM_KIND_NAMES.get(alarm.get(proto.KEY_ALARM_KIND),
+                                               "?"),
+                         alarm.get(proto.KEY_ALARM_TEXT)))
+        return sent
 
     def _gate_due(self, topic, index, now_ms):
         gates = self._gates.get(topic)
@@ -431,11 +731,91 @@ class App(object):
             doc[proto.KEY_STALE_MS] = self.cfg.temphum_stale_ms
         return bson.encode(doc)
 
+    def encode_flowmeter(self, fm):
+        """流量计快照：{"flow","speed","forwardTotal","reverseTotal",
+        "flowUnit","totalUnit","alarms","valid","staleMs"}。
+
+        [键名与客户端逐项对应] 客户端 `FlowMeterState.apply` 就是按这套键
+        解包的，改一个名字那边就丢一个量。
+
+        [单位用代码不用字符串] 0x1020 瞬时流量单位 / 0x1021 累积单位是
+        **两张独立的码表**（瞬时 5=m³/h；累积 1=m³）。客户端查表转文本，
+        与 C 端口径一致。曾把累积单位填成瞬时表的邻居码 → 界面显示 "?"。
+
+        [alarms 是位图] 0=上限 1=下限 2=空管 3=系统（见 FlowMeter.alarm_mask）。
+        """
+        doc = {proto.KEY_SIDE: 0}
+        if fm is not None:
+            if fm.online:
+                # 保留 4 位小数：流量计的分辨率通常到 0.001
+                doc["flow"] = round(float(fm.flow), 4)
+                doc["speed"] = round(float(fm.speed), 4)
+                doc["forwardTotal"] = round(float(fm.forward_total), 3)
+                doc["reverseTotal"] = round(float(fm.reverse_total), 3)
+                doc["flowUnit"] = int(fm.flow_unit)
+                doc["totalUnit"] = int(fm.total_unit)
+                doc["alarms"] = int(fm.alarm_mask())
+            # 未在线时不写值键：客户端据此显示 "--" 而不是 0（0 是"真的没流量"）
+            doc[proto.KEY_VALID] = bool(fm.online)
+            doc[proto.KEY_STALE_MS] = self.cfg.flowmeter_stale_ms
+        return bson.encode(doc)
+
+    def encode_turbidity(self):
+        """浊度仪快照（两台一帧）：{"count","v0_ntu","v0_raw","v0_online",...}。
+
+        [键名走 v{index}_ 前缀] 与阀/数字量同一风格：客户端按台号取，不必
+        为每台仪器写一套字段名。将来加第三台也只是 count 变大。
+
+        [ntu 发 ×100 的整数] 与模拟量工程值同一口径（定点整数），避免
+        浮点在 BSON 上的精度争议。客户端 ÷100 显示两位小数。
+        """
+        doc = {proto.KEY_COUNT: len(self.turbidity)}
+        for idx, tm in enumerate(self.turbidity):
+            prefix = "v%d_" % idx
+            # 名字由服务端给（客户端不猜"是原水还是出水"）
+            doc[prefix + proto.KEY_NAME] = tm.name
+            doc[prefix + proto.KEY_TURB_ONLINE] = bool(tm.online)
+            if tm.online:
+                doc[prefix + proto.KEY_TURB_NTU] = int(round(tm.ntu * 100.0))
+                doc[prefix + proto.KEY_TURB_RAW] = int(tm.raw)
+        doc[proto.KEY_STALE_MS] = self.cfg.turbidity_stale_ms
+        return bson.encode(doc)
+
+    def encode_pumps(self):
+        """进水泵快照：{"count","v0_name","v0_on","v0_ready","v0_text"}。
+
+        [on 是**命令/回显状态**，不是"泵真的在转"] 现场没有反馈信号，
+        故这里只能如实表示"输出是开着的"。界面上要写清"无反馈"，
+        不能让人误以为这是实测的运行状态。
+        """
+        if self.pump_bank is None:
+            return bson.encode({proto.KEY_COUNT: 0})
+        doc = {proto.KEY_COUNT: len(self.pump_bank.items)}
+        for item in self.pump_bank.items:
+            prefix = "v%d_" % item.index
+            doc[prefix + proto.KEY_PUMP_NAME] = item.name
+            doc[prefix + proto.KEY_PUMP_ON] = bool(item.on)
+            doc[prefix + proto.KEY_PUMP_READY] = bool(item.ready)
+            doc[prefix + proto.KEY_VALID] = bool(item.valid)
+            if item.text:
+                doc[prefix + proto.KEY_PUMP_TEXT] = item.text
+        doc[proto.KEY_STALE_MS] = self.cfg.pump_stale_ms
+        return bson.encode(doc)
+
     def encode_analog(self, ai):
-        """模拟量快照：{"n","v","r0..rN","u0..uN"}。
+        """模拟量快照：{"n","v","r0..rN","u0..uN"} + 换算通道的 "e*" 键。
 
         r* = 原始寄存器（毫伏口径，排查真相用），u* = 微安（mA × 1000）。
         客户端按 u* 显示、按 v 位图判有效。
+
+        [换算值也由服务端算] 配了工程量的通道额外下发：
+            e<i>      换算值 ×1000（定点整数，避免浮点在 BSON 上的精度争议）
+            eu<i>     单位（utf8，如 "MPa"）
+            en<i>     通道名（如 "压差计"）
+            ew<i>     越限说明（utf8；空=正常）
+        为什么由服务端算而不是客户端：量程是**现场标定参数**，与接线同性质。
+        放客户端意味着每台机器都要配一遍、改一次要升客户端；放服务端则一处
+        生效，客户端只负责显示。
         """
         doc = {}
         vmask = 0
@@ -443,33 +823,133 @@ class App(object):
             if ai.valid[i]:
                 vmask |= 1 << i
             doc["r%d" % i] = ai.raw[i]
-            doc["u%d" % i] = int(round(ai.ma(i) * 1000.0))
+            ma = ai.ma(i)
+            doc["u%d" % i] = int(round(ma * 1000.0))
+            scale = self.cfg.analog.scales.get(i)
+            if scale is not None and scale.configured and ai.valid[i]:
+                value, note = scale.engineering(ma)
+                if value is not None:
+                    doc["e%d" % i] = int(round(value * 1000.0))
+                    doc["eu%d" % i] = scale.unit
+                    if scale.name:
+                        doc["en%d" % i] = scale.name
+                    if note:
+                        doc["ew%d" % i] = note
         doc["n"] = ai.channels
         doc["v"] = vmask
         return bson.encode(doc)
 
-    def encode_digital(self, dev, index):
-        """数字量快照：{"dev","di","do","count","valid"}。
+    def encode_digital(self, dev, index, full=True):
+        """数字量快照：{"full","dev","di","do","count","valid","din<n>","don<n>"}。
 
-        di/do 是位图 int（bit n = 通道 n），count 恒 16。
+        di/do 是位图 int（bit n = 通道 n），count 取该模块实际点数
+        （单模块 16；聚合后 32 —— 客户端按 count 显示，不写死）。
+
+        [通道名由服务端推导] 被电磁阀占用的口，名字按**阀门点位映射**
+        自动生成（"阀1 开到位"这种）。客户端因此不需要知道哪路阀接在哪个
+        模块的哪个口 —— 接线改了服务端配置一改，客户端零改动跟着变。
+        名字键只在**该模块上真的有占用**时才写，没被占用的口不发，
+        客户端就显示 CH<n>（不占带宽、也不会被无意义的默认名淹没）。
+
+        :param full: True=全量帧（带名字，客户端据此重建点表并收名字）；
+                     False=周期增量帧（只带状态位图）。
+                     [2026-11-05 跨端对齐] 之前恒发名字且**没有 full 键**，
+                     而 C 端客户端只在 full=True 时解析名字 —— 跨端不一致
+                     的症状是"点画出来了但全都没名字"。与 C 服务端
+                     hsfAppEncodeDigital(bool) 同口径：首连/订阅补发/快照
+                     应答 full=True，周期推送 full=False。
         """
         doc = {
+            proto.KEY_FULL: bool(full),
             proto.KEY_DEV: index,
             proto.KEY_NAME: dev.name,
             proto.KEY_DI: dev.di_mask(),
             proto.KEY_DO: dev.do_mask(),
-            proto.KEY_COUNT: dev.DI_COUNT,
+            proto.KEY_COUNT: dev.channels,
             proto.KEY_VALID: bool(dev.online),
             proto.KEY_STALE_MS: self.cfg.digital_stale_ms,
         }
+        if not full:
+            return bson.encode(doc)
+        names = self._digital_channel_names(index, dev.channels)
+        # 泵占用的 DO 也登记（DO22 = 进水泵），与阀门名汇进同一张表
+        self._pump_channel_names(index, dev.channels, names)
+        for channel, text in names.get("di", {}).items():
+            doc[proto.KEY_DI_NAME_FMT % channel] = text
+        for channel, text in names.get("do", {}).items():
+            doc[proto.KEY_DO_NAME_FMT % channel] = text
         return bson.encode(doc)
 
-    async def refresh_valve_sources(self):
+    def _digital_channel_names(self, module_index, channels):
+        """从阀门点位映射反推该模块上每个被占用口的语义名。
+
+        :returns: {"di": {通道: 名字}, "do": {通道: 名字}}
+
+        [为什么从 valve_bank 推导而不是另建一张名字表] 点位映射已经是
+        "哪路阀用哪个口"的唯一事实源。再维护一张名字表就是第二份真相，
+        接线一改必然漏改一处（实锅：模块下标与名字表对不上）。
+        这里直接读 valve_bank.items 的 do/open_di/close_di，天然同步。
+
+        [越界/未配置的保护] 未配点位的路（module/do/DI 为 None）跳过；
+        通道号超出该模块点数也跳过（配置写错了不该让整个快照崩）。
+        """
+        out = {"di": {}, "do": {}}
+        bank = self.valve_bank
+        if bank is None:
+            return out
+        for item in bank.items:
+            if not item.ready or item.module != module_index:
+                continue
+            for channel, suffix in ((item.do, "控制"),
+                                    (item.open_di, "开到位"),
+                                    (item.close_di, "关到位")):
+                if channel is None:
+                    continue
+                channel = int(channel)
+                if not 0 <= channel < channels:
+                    continue
+                kind = "do" if suffix == "控制" else "di"
+                out[kind][channel] = "%s %s" % (item.name, suffix)
+        return out
+
+    def _pump_channel_names(self, module_index, channels, out):
+        """把进水泵占用的 DO 也登记进数字量通道名（就地补进 out）。
+
+        [为什么并进同一张表] 数字量页显示的就是"这个口是干什么用的"。
+        泵占着 DO22，如果那里只显示 `DO22`，现场看到一屋子阀门名里夹着个
+        光秃秃的通道号，会以为是没配置的多余点。
+
+        [为什么单独一个函数而不是塞进 _digital_channel_names] 那个函数只认
+        valve_bank（它的注释明确说了"不另建名字表"）。泵是另一类外设、
+        另一份配置，硬塞进去会让"唯一事实源"变成"两个源拼起来"。
+        这里各读各的配置，最终汇进同一张输出表。
+        """
+        bank = self.pump_bank
+        if bank is None:
+            return
+        for item in bank.items:
+            if not item.ready or item.module != module_index:
+                continue
+            channel = int(item.do)
+            if 0 <= channel < channels:
+                out["do"][channel] = item.name
+
+    async def refresh_valve_sources(self, force=False):
         """让电磁阀用到的数字量模块现读一次（去重 + 节流）。
 
         [为什么要去重] 6 路阀可能全挂在同一台模块上（现场就是这样：
         module 0 = .12 挂 4 路、module 1 = .13 挂 2 路）。逐路现读会把
         同一台模块读 4 遍 —— 去重后每台只读一次，再由 valve_bank 统一取值。
+
+        :param force: True=忽略「刚读过」的节流，强制现读。
+
+        [为什么要 force] 阀控制命令处理完要用**命令之后**的反馈生成应答。
+        非 force 时 read_fresh 遇到 `now - last_ok_ms < 100ms` 会直接复用
+        缓存 —— 而那条缓存极可能就是命令**之前**那一拍读到的旧反馈。实测
+        症状：点"开阀"应答里 v0_state 还是"已关"，界面第一下看着没反应，
+        得再点一次才变（第二次应答碰巧赶上了新一轮轮询）。
+        故命令后必须绕过节流强制读一帧，或在缓存太新但早于命令时刻时
+        至少让阀状态机按"命令已下发"重新判读。
         """
         if self.valve_bank is None:
             return
@@ -481,8 +961,14 @@ class App(object):
                 continue
             seen.add(item.module)
             if 0 <= item.module < len(self.digital):
-                await devices.read_fresh(self.digital[item.module],
-                                         self._now_ms())
+                if force:
+                    # 节流阈值给 0 ⇒ 无条件现读（命令后必须看到真实反馈）。
+                    await devices.read_fresh(self.digital[item.module],
+                                             self._now_ms(),
+                                             min_interval_ms=0)
+                else:
+                    await devices.read_fresh(self.digital[item.module],
+                                             self._now_ms())
 
     def encode_valves(self):
         """电磁阀 6 路状态（键表见 proto.KEY_VALVE_*）。"""
@@ -508,56 +994,172 @@ class App(object):
             doc["d%d_runState" % i] = e.run_state
             if e.text:
                 doc["d%d_text" % i] = e.text
+            # 空地址不发（老客户端不受影响；也避免给"没有连接概念"的
+            # 汇总类条目发一个空字符串占位）
+            if e.addr:
+                doc["d%d_addr" % i] = e.addr
         return bson.encode(doc)
+
+    # ---- 连接地址文案（给人看） ----
+    def _addr_rtu(self, unit_id):
+        """485 设备地址：``COM17 · 115200 · 站 2``。
+
+        [为什么三个都要写] 现场排故障时这三个缺一不可：口接错、波特率不匹配、
+        站号撞车，现象都是"通讯不上"，只看 IP 或只看"某口"根本判不出来。
+        原来这些参数只存在于配置文件里，界面上看不到 —— 操作员报"搅拌泵离线"，
+        运维还得先 SSH 上去翻配置才知道该查哪个站。
+        """
+        c = self.cfg.serial
+        return "%s · %d · 站 %s" % (c.port, int(c.baudrate), unit_id)
+
+    def _addr_tcp(self, host, port, unit_id=None):
+        """TCP 设备地址：``192.168.0.12:502``（Modbus TCP 站号多为 1，不喧宾夺主）。
+
+        站号只有不等于 1 时才补上去 —— 现场 99% 是 1，写出来只是噪声。
+        """
+        text = "%s:%s" % (host, port)
+        if unit_id is not None and int(unit_id) != 1:
+            text += " · 站 %s" % unit_id
+        return text
+
+    def _pump_addr(self):
+        """泵的"地址"= 它挂在哪个数字量模块的哪一路 DO。
+
+        泵没有自己的通讯口（接触器线圈接在模块的 DO 上），所以不能报
+        "站号"——那会让人去总线上找一个不存在的从站。报模块地址 + DO 口，
+        现场照着万用表量那一路就对了。
+        """
+        bank = self.pump_bank
+        if bank is None or not bank.items:
+            return ""
+        item = bank.items[0]
+        if item.module is None or item.do is None:
+            return ""
+        mods = self.cfg.digital_modules
+        if 0 <= int(item.module) < len(mods):
+            m = mods[int(item.module)]
+            return "%s · DO%s" % (self._addr_tcp(m.host, m.port), item.do)
+        return "DO%s" % item.do
+
+    def _valve_addr(self):
+        """阀组的"地址"= 挂在哪个模块、占哪几个 DO。"""
+        bank = self.valve_bank
+        if bank is None or not bank.items:
+            return ""
+        mods = self.cfg.digital_modules
+        first = bank.items[0]
+        last = bank.items[-1]
+        if first.module is None or first.do is None:
+            return ""
+        # [区间写成 DO16~DO21] 用 ".." 现场有人读成"两个点"，用 ~ 一眼是
+        # "从这口到这口"，数口时不会数错一头。
+        do_span = "DO%s~DO%s" % (first.do, last.do)             if last.do is not None else "DO%s" % first.do
+        if 0 <= int(first.module) < len(mods):
+            m = mods[int(first.module)]
+            return "%s · %s" % (self._addr_tcp(m.host, m.port), do_span)
+        return do_span
 
     def collect_health(self, now_ms):
         """采集全量设备健康（只读缓存/标志，**不发起 IO**）。"""
         entries = []
-        # ---- 变频器 ----
+        # ---- 变频器（现场驱动搅拌泵，**设备名按工艺用途叫"搅拌泵"**）----
+        #
+        # [名字 vs 类别是两件事] 设备名给操作员看"这是哪台设备在不在线"，
+        # 按现场叫法写"搅拌泵"；类别（kind=KIND_VFD）表达"它是什么东西"，
+        # 客户端"类型"列据此显示"变频器"。两者不能混：
+        #   · 名字改成搅拌泵 → 操作员一眼找到要找的那台
+        #   · 类别保持变频器 → 维修时知道该去查调速器，不是去拆泵体
         if self.cfg.enable_vfd:
             if self.vfd is None:
-                entries.append(HealthEntry("变频器", proto.KIND_VFD, 0,
+                entries.append(HealthEntry("搅拌泵", proto.KIND_VFD, 0,
                                            proto.HEALTH_OFFLINE, 0, False, 0,
-                                           "未装配"))
+                                           "未装配",
+                                           self._addr_rtu(self.cfg.vfd_unit_id)))
             else:
                 health, err, online, text = self.vfd.health(
                     now_ms, self.VFD_STALE_MS)
-                entries.append(HealthEntry("变频器", proto.KIND_VFD, 0, health,
+                entries.append(HealthEntry("搅拌泵", proto.KIND_VFD, 0, health,
                                            err, online,
                                            self.vfd.run_state if online else 0,
-                                           text))
+                                           text,
+                                           self._addr_rtu(self.cfg.vfd_unit_id)))
         # ---- 温湿度 ----
         if self.cfg.enable_temphum:
             if self.temphum is None:
                 entries.append(HealthEntry("温湿度", proto.KIND_TEMPHUM, 0,
                                            proto.HEALTH_OFFLINE, 0, False, 0,
-                                           "未装配"))
+                                           "未装配",
+                                           self._addr_rtu(self.cfg.temphum_unit_id)))
             else:
                 health, err, online, text = self.temphum.health(
                     now_ms, self.cfg.temphum_stale_ms)
                 entries.append(HealthEntry("温湿度", proto.KIND_TEMPHUM, 0,
-                                           health, err, online, 0, text))        # ---- 模拟量 ----
+                                           health, err, online, 0, text,
+                                           self._addr_rtu(self.cfg.temphum_unit_id)))
+        # ---- 流量计 ----
+        if self.cfg.enable_flowmeter:
+            if self.flowmeter is None:
+                entries.append(HealthEntry("电磁流量计", proto.KIND_FLOWMETER,
+                                           0, proto.HEALTH_OFFLINE, 0, False,
+                                           0, "未装配",
+                                           self._addr_rtu(self.cfg.flowmeter_unit_id)))
+            else:
+                health, err, online, text = self.flowmeter.health(
+                    now_ms, self.cfg.flowmeter_stale_ms)
+                entries.append(HealthEntry("电磁流量计", proto.KIND_FLOWMETER,
+                                           0, health, err, online, 0, text,
+                                           self._addr_rtu(self.cfg.flowmeter_unit_id)))
+        # ---- 浊度仪（逐台）----
+        for idx, tm in enumerate(self.turbidity):
+            health, err, online, text = tm.health(
+                now_ms, self.cfg.turbidity_stale_ms)
+            # [类别必须是"水质"] 曾经误用 KIND_TEMPHUM，首页"类型"列把两台
+            # 浊度仪显示成"温湿度"，现场会以为是电箱里的温湿度变送器。
+            unit = (self.cfg.turbidity_unit_ids[idx]
+                    if idx < len(self.cfg.turbidity_unit_ids) else "?")
+            entries.append(HealthEntry("浊度仪%d" % (idx + 1),
+                                       proto.KIND_WATER, 0,
+                                       health, err, online, 0, text,
+                                       self._addr_rtu(unit)))
+        # ---- 进水泵 ----
+        if self.pump_bank is not None:
+            health, online, text = self.pump_bank.health_summary(
+                now_ms, self.cfg.pump_stale_ms)
+            # 泵没有独立通讯口，是数字量模块上的一路 DO ⇒ 报模块地址 + 口
+            entries.append(HealthEntry("进水泵", proto.KIND_DIGITAL_IO, 0,
+                                       health, 0, online, 0, text,
+                                       self._pump_addr()))
+        # ---- 模拟量 ----
         if self.cfg.enable_analog:
             if self.analog is None:
                 entries.append(HealthEntry("模拟量模块", proto.KIND_ANALOG_IO, 0,
                                            proto.HEALTH_OFFLINE, 0, False, 0,
-                                           "未装配"))
+                                           "未装配",
+                                           self._addr_tcp(self.cfg.analog.host,
+                                                          self.cfg.analog.port)))
             else:
                 health, err, online, text = self.analog.health(
                     now_ms, self.AI_STALE_MS)
                 entries.append(HealthEntry("模拟量模块", proto.KIND_ANALOG_IO, 0,
-                                           health, err, online, 0, text))
+                                           health, err, online, 0, text,
+                                           self._addr_tcp(self.cfg.analog.host,
+                                                          self.cfg.analog.port)))
         # ---- 数字量（逐模块）----
         for i, dev in enumerate(self.digital):
             health, err, online, text = dev.health(now_ms,
                                                    self.cfg.digital_stale_ms)
-            entries.append(HealthEntry(dev.name, proto.KIND_DIGITAL_IO, i,
-                                       health, err, online, 0, text))
+            mods = self.cfg.digital_modules
+            mcfg = mods[i] if i < len(mods) else None
+            entries.append(HealthEntry(
+                dev.name, proto.KIND_DIGITAL_IO, i,
+                health, err, online, 0, text,
+                self._addr_tcp(mcfg.host, mcfg.port) if mcfg else ""))
         # ---- 电磁阀组（一个条目，含几路故障的摘要）----
         if self.valve_bank is not None:
             health, online, text = self.valve_bank.health_summary(now_ms)
             entries.append(HealthEntry("电磁阀组", proto.KIND_VALVE, 0,
-                                       health, 0, online, 0, text))
+                                       health, 0, online, 0, text,
+                                       self._valve_addr()))
         return entries
 
     async def _health_tick(self, now_ms):
@@ -597,6 +1199,19 @@ class App(object):
             return (payload, proto.DATATYPE_BSON) if payload else (None, None)
         if topic == proto.TOPIC_TEMPHUM_STATUS:
             return self.encode_temphum(self.temphum), proto.DATATYPE_BSON
+        if topic == proto.TOPIC_FLOWMETER_STATUS:
+            if self.flowmeter is None:
+                return None, None
+            return (self.encode_flowmeter(self.flowmeter),
+                    proto.DATATYPE_BSON)
+        if topic == proto.TOPIC_TURBIDITY_STATUS:
+            if not self.turbidity:
+                return None, None
+            return self.encode_turbidity(), proto.DATATYPE_BSON
+        if topic == proto.TOPIC_PUMP_STATUS:
+            if self.pump_bank is None:
+                return None, None
+            return self.encode_pumps(), proto.DATATYPE_BSON
         if topic == proto.TOPIC_AI_STATUS:
             if self.analog is None:
                 return None, None
@@ -658,12 +1273,17 @@ class App(object):
             proto.CMD_VFD_SNAPSHOT: self._h_vfd_snapshot,
             proto.CMD_AI_SNAPSHOT: self._h_ai_snapshot,
             proto.CMD_TEMPHUM_SNAPSHOT: self._h_temphum_snapshot,
+            proto.CMD_FLOWMETER_SNAPSHOT: self._h_flowmeter_snapshot,
             proto.CMD_RUN_MODE: self._h_run_mode,
             proto.CMD_DEVICE_HEALTH: self._h_device_health,
             proto.CMD_DIGITAL_SNAPSHOT: self._h_digital_snapshot,
             proto.CMD_DIGITAL_CONTROL: self._h_digital_control,
             proto.CMD_VALVE_SNAPSHOT: self._h_valve_snapshot,
             proto.CMD_VALVE_CONTROL: self._h_valve_control,
+            proto.CMD_TURBIDITY_SNAPSHOT: self._h_turbidity_snapshot,
+            proto.CMD_PUMP_SNAPSHOT: self._h_pump_snapshot,
+            proto.CMD_PUMP_CONTROL: self._h_pump_control,
+            proto.CMD_AUTO_CONTROL: self._h_auto_control,
         }.get(msg_code)
         if handler is None:
             # 未知命令必须回否定应答：不发则客户端空等到超时（观感「服务端死了」）。
@@ -720,6 +1340,24 @@ class App(object):
         if self.vfd is None:
             await self._reply(session, request_id, msg_code, False, "变频器未就绪")
             return
+        # 5b) **停机时禁止下发给定**（只允许启停/点动/复位）
+        #
+        # [为什么禁止而不是"记下来等启动时用"] 现场口径：给定是**运行参数**，
+        # 不是可预置的配置。允许停机下发会带来两个真实问题：
+        #   ① 界面出现"停机 + 输出频率 25Hz"这种自相矛盾的状态
+        #      （虚拟设备原来就真的这样：写 0x1000 后坡道开始爬，输出
+        #       频率从 0 涨到 25Hz，转速显示 720rpm，而运行状态还是"停机"）
+        #   ② 操作员以为"设好了但没生效"，再点一次启动才发现按的是旧给定
+        # 禁止后语义唯一：**先启动，再调速**。
+        #
+        # 判据用设备**实际遥测**（running），不用客户端界面状态——客户端
+        # 状态可能滞后一拍，而设备缓存是每次 poll 刷新的。
+        if op in _VFD_SETPOINT_OPS:
+            if not self.vfd.is_running():
+                await self._reply(
+                    session, request_id, msg_code, False,
+                    "变频器处于停机状态，不能下发给定（请先启动后再调速）")
+                return
         reverse = bool(doc.get(proto.KEY_REV, False))
         hz = float(doc.get(proto.KEY_HZ, 0.0) or 0.0)
         rpm = float(doc.get(proto.KEY_RPM, 0.0) or 0.0)
@@ -749,6 +1387,10 @@ class App(object):
             val = self.vfd.field_value(bit, kind)
             if val is not None:
                 doc[key] = val
+        # 额定点随快照下发：客户端用它把"转速模式"的输入量程与换算对齐，
+        # 不必在客户端再写死一份 1440/50（两份必然漂移）。
+        doc["ratedRpm"] = float(self.vfd.rated_rpm)
+        doc["ratedHz"] = float(self.vfd.rated_hz)
         await session.send_response(request_id, msg_code, bson.encode(doc))
 
     async def _h_ai_snapshot(self, session, request_id, msg_code, payload):
@@ -770,6 +1412,17 @@ class App(object):
             await devices.read_fresh(self.temphum, self._now_ms())
         await session.send_response(request_id, msg_code,
                                     self.encode_temphum(self.temphum))
+
+    async def _h_flowmeter_snapshot(self, session, request_id, msg_code,
+                                    payload):
+        if self.flowmeter is None:
+            await self._reply(session, request_id, msg_code, False,
+                              "流量计未装配")
+            return
+        # [请求即最新] 现读一次（与其他 485 从站共用总线，节流避免抢）
+        await devices.read_fresh(self.flowmeter, self._now_ms())
+        await session.send_response(request_id, msg_code,
+                                    self.encode_flowmeter(self.flowmeter))
 
     async def _h_digital_snapshot(self, session, request_id, msg_code, payload):
         """载荷 {"dev":int} 选模块；缺省 0。"""
@@ -851,6 +1504,9 @@ class App(object):
         # [请求即最新] 阀的反馈来自数字量模块缓存 —— 要求模块现读一次，
         # 否则"开到位/关到位"可能是 200ms 前的状态。
         await self.refresh_valve_sources()
+        # 快照请求顺带刷新一次状态；此处**丢弃**告警返回值是刻意的：
+        # 告警由 tick 里的 _publish_valve_alarms 统一推送，快照路径再推一遍
+        # 会让同一个超时被推两次（客户端看到重复报警）。
         self.valve_bank.poll(self._now_ms())
         await session.send_response(request_id, msg_code, self.encode_valves())
 
@@ -889,11 +1545,129 @@ class App(object):
                               "控制载荷缺 on 字段（true=开 / false=关）")
             return
         ok, err = await self.valve_bank.set_valve(int(index), on)
-        # 命令已受理：回一拍最新状态，客户端不必再单独拉快照
+        # ---- 命令已受理：回一拍**命令之后**的真实状态 ----
+        #
+        # [实锅 2026-11-05：第一下点击"没反应"] 原来这里只调
+        # `valve_bank.poll()`，而它读的是**数字量模块的缓存**（由后台
+        # 轮询刷新）。命令刚写完 DO，缓存还是命令**之前**那一拍的反馈
+        # ⇒ 应答里 state 仍是旧值 ⇒ 客户端拿这份"最新状态"刷新卡片，
+        # 界面毫无变化。用户再点一次时恰好赶上下一轮轮询，才看到变化。
+        #
+        # 故这里必须：
+        #   ① force 现读一次数字量模块（绕过节流，否则 100ms 内的缓存
+        #      同样可能是旧的）；
+        #   ② 再让阀状态机重新判读，用新反馈生成应答。
+        # 读失败不影响应答（命令本身已下发成功），状态就是"动作中"。
+        await self.refresh_valve_sources(force=True)
         self.valve_bank.poll(self._now_ms())
         extra = self.valve_bank.to_doc()
         await self._reply(session, request_id, msg_code, ok, err or None,
                           extra=extra)
+
+    async def _h_turbidity_snapshot(self, session, request_id, msg_code,
+                                   payload):
+        """浊度仪快照：现读一次再回（两台各一帧 IO）。"""
+        if not self.turbidity:
+            await self._reply(session, request_id, msg_code, False,
+                              "浊度仪未装配")
+            return
+        now = self._now_ms()
+        for tm in self.turbidity:
+            try:
+                await devices.read_fresh(tm, now)
+            except Exception as exc:                    # noqa: BLE001
+                # 单台失败不影响另一台（真实现场常有一台在修）
+                self._log("%s 现读失败：%s" % (tm.name, exc))
+        await session.send_response(request_id, msg_code,
+                                    self.encode_turbidity())
+
+    async def _h_pump_snapshot(self, session, request_id, msg_code, payload):
+        if self.pump_bank is None:
+            await self._reply(session, request_id, msg_code, False,
+                              "进水泵未装配")
+            return
+        # 现读一次数字量模块，让回显是最新的
+        await self.refresh_pump_sources()
+        self.pump_bank.poll(self._now_ms(), self.cfg.pump_stale_ms)
+        await session.send_response(request_id, msg_code,
+                                    self.encode_pumps())
+
+    async def refresh_pump_sources(self, force=False):
+        """让泵用到的数字量模块现读一次（去重 + 节流）。
+
+        与 `refresh_valve_sources` 同一个道理：命令后要用**命令之后**的
+        回显生成应答，否则界面第一下看不出变化。两处模块可能相同（现场
+        都在 .12 上），但各自去重，互不依赖。
+        """
+        if self.pump_bank is None:
+            return
+        seen = set()
+        for item in self.pump_bank.items:
+            if not item.ready or item.module is None:
+                continue
+            if item.module in seen:
+                continue
+            seen.add(item.module)
+            if 0 <= item.module < len(self.digital):
+                await devices.read_fresh(self.digital[item.module],
+                                         self._now_ms(),
+                                         min_interval_ms=0 if force else 100)
+
+    async def _h_pump_control(self, session, request_id, msg_code, payload):
+        """进水泵开关：载荷 {"index":int, "on":bool}。
+
+        [闸门与电磁阀/变频器同口径] 自动模式拒绝 → 需 root → 解析 → 就绪。
+        泵是执行器，自动模式下由现场逻辑驱动，远程只能看不能动。
+        """
+        if self.pump_bank is None:
+            await self._reply(session, request_id, msg_code, False,
+                              "进水泵未装配")
+            return
+        if self.is_auto():
+            await self._reply(session, request_id, msg_code, False,
+                              "自动运行中：远程控制已被禁用（现场切换到手动后可用）")
+            return
+        if session.role() < proto.ROLE_CONTROL:
+            await self._reply(session, request_id, msg_code, False,
+                              "权限不足：控制命令需要 root 账户")
+            return
+        try:
+            doc = bson.decode(payload)
+        except ValueError as exc:
+            await self._reply(session, request_id, msg_code, False,
+                              "控制载荷解析失败：%s" % exc)
+            return
+        index = doc.get(proto.KEY_PUMP_INDEX, doc.get("index"))
+        if not isinstance(index, int) or isinstance(index, bool):
+            await self._reply(session, request_id, msg_code, False,
+                              "控制载荷缺 index 字段（泵号 0 起）")
+            return
+        on = doc.get("on")
+        if not isinstance(on, bool):
+            await self._reply(session, request_id, msg_code, False,
+                              "控制载荷缺 on 字段（true=启动 / false=停止）")
+            return
+        ok, err = await self.pump_bank.set_pump(int(index), on)
+        # 命令后强制现读，让应答带**命令之后**的回显（否则界面第一下不变）
+        await self.refresh_pump_sources(force=True)
+        self.pump_bank.poll(self._now_ms(), self.cfg.pump_stale_ms)
+        await self._reply(session, request_id, msg_code, ok, err or None,
+                          extra=self._pump_doc())
+
+    def _pump_doc(self):
+        """控制应答的附加字段（与推送同一套键，客户端复用一套解析）。"""
+        if self.pump_bank is None:
+            return {proto.KEY_COUNT: 0}
+        doc = {proto.KEY_COUNT: len(self.pump_bank.items)}
+        for item in self.pump_bank.items:
+            prefix = "v%d_" % item.index
+            doc[prefix + proto.KEY_PUMP_NAME] = item.name
+            doc[prefix + proto.KEY_PUMP_ON] = bool(item.on)
+            doc[prefix + proto.KEY_PUMP_READY] = bool(item.ready)
+            doc[prefix + proto.KEY_VALID] = bool(item.valid)
+            if item.text:
+                doc[prefix + proto.KEY_PUMP_TEXT] = item.text
+        return doc
 
     # ---- 运行模式 ----
     async def _h_run_mode(self, session, request_id, msg_code, payload):
@@ -910,7 +1684,9 @@ class App(object):
         if not want_set:
             await self._reply(session, request_id, msg_code, True, None,
                               extra={proto.KEY_MODE: self.run_mode,
-                                     proto.KEY_AUTO: self.is_auto()})
+                                     proto.KEY_AUTO: self.is_auto(),
+                                     proto.KEY_AUTO_RUNNING:
+                                         self.is_auto_running()})
             return
         if session.role() < proto.ROLE_CONTROL:
             await self._reply(session, request_id, msg_code, False,
@@ -921,7 +1697,61 @@ class App(object):
             return
         await self._reply(session, request_id, msg_code, True, None,
                           extra={proto.KEY_MODE: self.run_mode,
-                                 proto.KEY_AUTO: self.is_auto()})
+                                 proto.KEY_AUTO: self.is_auto(),
+                                 # 切换后立刻回显控制器真实状态：这里是
+                                 # apply_mode_to_devices() 刚跑完的时刻，所以
+                                 # 客户端拿到的 running 是**切换之后的**值，
+                                 # 不必等下一帧推送。
+                                 proto.KEY_AUTO_RUNNING:
+                                     self.is_auto_running()})
+
+    # ---- 自动运行控制 ----
+    async def _h_auto_control(self, session, request_id, msg_code, payload):
+        """启停自动运行（载荷 {"on":bool}）。
+
+        [与 CMD_RUN_MODE 的分工] 这条是**真正按下启动/停止**，模式切换只是
+        授权。闸门顺序与其它控制命令一致，另加一条"必须在自动模式下才能
+        启动"：
+          · 手动模式下请求启动 → 拒绝（否则等于绕过模式闸偷偷跑自动逻辑）
+          · 停止请求**永远允许**（停机类动作不该被任何闸门挡住）
+        """
+        # 1) 角色门禁（停机也要求 root：自动运行状态属于运行决策，不开放只读）
+        if session.role() < proto.ROLE_CONTROL:
+            await self._reply(session, request_id, msg_code, False,
+                              "权限不足：自动运行控制需要 root 账户")
+            return
+        ctl = getattr(self, "auto_controller", None)
+        if ctl is None:
+            await self._reply(session, request_id, msg_code, False,
+                              "自动控制器未装配")
+            return
+        # 2) 解析载荷
+        try:
+            doc = bson.decode(payload) if payload else {}
+            want_on = bool(doc.get("on"))
+        except (ValueError, TypeError):
+            await self._reply(session, request_id, msg_code, False, "载荷不合法")
+            return
+        # 3) 启动必须在自动模式（停止不受此闸）
+        if want_on and not self.is_auto():
+            await self._reply(
+                session, request_id, msg_code, False,
+                "当前是手动模式：请先切到自动模式，再启动自动运行",
+                extra={proto.KEY_MODE: self.run_mode,
+                       proto.KEY_AUTO: self.is_auto(),
+                       proto.KEY_AUTO_RUNNING: self.is_auto_running()})
+            return
+        # 4) 执行（幂等）
+        now = self._now_ms()
+        if want_on:
+            ctl.start(now)
+        else:
+            ctl.stop(now)
+        await self._reply(session, request_id, msg_code, True, None,
+                          extra={proto.KEY_MODE: self.run_mode,
+                                 proto.KEY_AUTO: self.is_auto(),
+                                 proto.KEY_AUTO_RUNNING:
+                                     self.is_auto_running()})
 
     # ---- 设备健康 ----
     async def _h_device_health(self, session, request_id, msg_code, payload):

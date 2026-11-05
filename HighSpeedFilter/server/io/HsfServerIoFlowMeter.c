@@ -80,7 +80,13 @@ static bool flowMeterEvaluateQuality(const HsfServerIoFlowMeter* st, uint32_t st
  * @brief 从 Hub 缓存取本站全部寄存器并喂进通道组（一次采样拍）。
  * @param st 目标站；未装配返回 false。
  * @return 喂进了至少一个字返回 true。
- * @note 组内 feedRole 自带「值未变则静默」，故重复调用无副作用。
+ * @note [必须用 feedRoleRefresh 而不是 feedRole] 本函数是**心跳拍**：静止
+ *       时值恒定，feedRole 会因"值未变"静默、一帧信号都不发，设备层
+ *       XFlowMeter 的「最近一拍时刻」就停住不动，超过 staleMs 被判陈旧 ⇒
+ *       valid=false（实测：973/1031 次取值为 0，页面流量恒 0，而 Hub 里的
+ *       原始字完全正确）。feedRoleRefresh 值未变也发射一次，正好表达
+ *       "这一拍的数据确实是从链路读回来的"。变频器侧踩过同一个坑
+ *       （见 XIoChannelGroup_feedRoleRefresh 的注记）。
  */
 static bool flowMeterSampleFromHub(HsfServerIoFlowMeter* st)
 {
@@ -96,7 +102,7 @@ static bool flowMeterSampleFromHub(HsfServerIoFlowMeter* st)
         if (!XModbusHub_value(hub, XModbusInputRegisters,
                               (uint16_t)(st->m_vbase + i), &raw))
             continue;
-        XIoChannelGroup_feedRole(st->m_group, (uint16_t)i, (int32_t)raw);
+        XIoChannelGroup_feedRoleRefresh(st->m_group, (uint16_t)i, (int32_t)raw);
         fed = true;
     }
     return fed;
@@ -380,7 +386,6 @@ bool HsfServerIoFlowMeter_values(const HsfServerIoFlowMeter* st,
 {
     bool valid;
     double v = 0.0;
-
     if (outFlow) *outFlow = 0.0;
     if (outSpeed) *outSpeed = 0.0;
     if (outForwardTotal) *outForwardTotal = 0.0;

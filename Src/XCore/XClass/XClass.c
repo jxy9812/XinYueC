@@ -4,6 +4,7 @@
 #include"XString.h"
 #include"XPrintf.h"
 #include<string.h>
+
 /* 报告慢路径：仅 ArgIsNULL 内联快路径判空命中（参数确为 NULL）时
    到达，打印诊断后返回 true（=参数为空）。 */
 bool ArgIsNULL_report(const char* argsName/*参数名字*/, const char* str/*附加参数*/, const char* funcName/*函数名字*/, const char* filePath/*所在文件路径*/, int line/*所在行号*/)

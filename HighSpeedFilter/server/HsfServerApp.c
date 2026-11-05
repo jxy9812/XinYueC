@@ -105,6 +105,33 @@ typedef struct HsfAppJogWatch {
 static HsfAppJogWatch s_jogWatch[HsfSide_Count];
 
 /* 前置声明（控制处理里用到，实现在 tick 段前）。 */
+/**
+ * @brief 数字量快照推送间隔（毫秒；0 = 跟随 HSF_TELEMETRY_MS）。
+ * @details 交互面：DO 点动要立刻看到回显，跟随基准 100ms 节拍。
+ */
+#define HSF_DIGITAL_PUSH_MS     0
+
+/**
+ * @brief 电磁阀快照推送间隔（毫秒；0 = 跟随基准）。
+ * @details 阀状态本身是秒级过程（动作 1~3s），但"点下去→动作中"的反馈
+ *          必须立即出现，故同样跟随基准节拍。
+ */
+#define HSF_VALVE_PUSH_MS       0
+
+/**
+ * @brief 通道名是否已变更（true ⇒ 下一拍主动下发一帧只含名字的快照）。
+ * @details 名字是**部署参数**（写在 HsfServerConfig.h 宏里），运行期不会变；
+ *          本标志是给"现场改宏重新部署后不重启客户端也能更新"以及将来
+ *          做名字热改预留的通路。当前由 HsfServerApp_notifyDigitalNamesChanged
+ *          置位。
+ */
+static bool s_digitalNamesDirty = false;
+
+/** @brief 数字量/电磁阀快照编码（定义在周期遥测段；此处前向声明）。 */
+static XByteArray* hsfAppEncodeDigital(bool full);
+static XByteArray* hsfAppEncodeDigitalNames(void);
+static XByteArray* hsfAppEncodeValves(void);
+
 static void hsfAppJogTouch(HsfSide side, bool reverse);
 static void hsfAppJogRelease(HsfSide side);
 static void hsfAppPublishTopicNow(XLinkServer* srv, XLinkSession* session,
@@ -235,6 +262,33 @@ static void hsfHealthCollect(HsfAppHealthState* st)
                                               : HsfDeviceHealth_Stale),
                          alarms, valid || alarms != 0, 0,
                          alarms != 0 ? "流量计告警" : (valid ? "" : "无有效数据"));
+        }
+
+        /* ---- 浊度仪 ×2（逐台一条）----
+         * [类别必须是"水质"而不是"温湿度"] 曾经误用 HsfDeviceKind_TempHum，
+         * 首页"类型"列把两台浊度仪显示成"温湿度"——数据正确但类别完全误导
+         * （现场会以为那是电箱里的温湿度变送器）。类别必须表达"这是什么
+         * 设备"，复用一个不相关的值等于在界面上撒谎。
+         * [逐台而不是汇总] 两台是独立接线（站号 1/3），一台没接时另一台
+         * 必须照常报 OK——汇总成一条会让"一台坏"看起来像"整组坏"。 */
+        {
+            int t;
+            for (t = 0; t < HSF_TURBIDITY_COUNT; ++t) {
+                const HsfServerIoTurbidity* tm = HsfServerIo_turbidity(side, t);
+                snprintf(name, sizeof(name), "浊度仪%d-%s", t + 1, sideName);
+                if (!tm) {
+                    hsfHealthAdd(st, name, HSF_DEVICE_KIND_WATER, (int)side,
+                                 HsfDeviceHealth_Offline, 0, false, 0, "未装配");
+                    continue;
+                }
+                {
+                    bool online = HsfServerIoTurbidity_isOnline(tm);
+                    hsfHealthAdd(st, name, HSF_DEVICE_KIND_WATER, (int)side,
+                                 online ? HsfDeviceHealth_Ok
+                                        : HsfDeviceHealth_Stale,
+                                 0, online, 0, online ? "" : "无有效数据");
+                }
+            }
         }
     }
 
@@ -492,6 +546,16 @@ HsfRunMode HsfServerApp_runMode(void)
  * @brief 设置运行模式并落盘。
  * @param mode 目标模式；非法值忽略。
  */
+/**
+ * @brief 通知"通道名已变更"：下一拍主动下发一帧只含名字的快照。
+ * @note  名字本质是部署参数（HsfServerConfig.h 宏），运行期通常不变；
+ *        本接口给"改了宏重新部署后不重启客户端"以及将来热改名预留通路。
+ */
+void HsfServerApp_notifyChannelNamesChanged(void)
+{
+    s_digitalNamesDirty = true;
+}
+
 void HsfServerApp_setRunMode(HsfRunMode mode)
 {
     if (mode != HsfRunMode_Manual && mode != HsfRunMode_Auto) return;
@@ -759,6 +823,90 @@ static void hsfAppFillFlowMeter(XBsonDocument* doc, const HsfServerIoFlowMeter* 
 }
 
 /**
+ * @brief 把两台浊度仪的快照填进 BSON 文档（推送与快照命令共用同一份口径）。
+ * @param doc 目标文档（不能为 NULL）。
+ * @param side 侧号。
+ * @note 键表与 Python 侧 encode_turbidity 逐键一致：
+ *         {"count", "v0_name","v0_ntu","v0_raw","v0_online", ... , "staleMs"}
+ *       其中 ntu 是 **NTU×100 的整数**（Python 侧 proto.KEY_TURB_NTU 同口径），
+ *       客户端 ÷100 显示两位小数。
+ *
+ *       [为什么不发浮点] 与 Python 侧既定口径对齐是第一位的：同一个 BSON 帧
+ *       要能被两边的客户端读成同一个数。设备编解码层 XTurbidityMeterCodec 的
+ *       "ntu" 是**无损原值**（double），服务于进程内/记录回放；本函数是
+ *       **线上协议层**，按跨进程展示口径发定点整数。两者同名不同口径是刻意
+ *       的分工——混用会差 100 倍且不报错。
+ *
+ *       [raw 必须发] 换算口径一旦有疑问，raw 是唯一能反推真相的量。现场拿到
+ *       raw 就能判断是"字序错了"还是"格式错了"，不必猜。
+ */
+static void hsfAppFillTurbidity(XBsonDocument* doc, HsfSide side)
+{
+    int i;
+    if (!doc) return;
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_TURB_COUNT,
+                                       (int32_t)HSF_TURBIDITY_COUNT);
+    for (i = 0; i < HSF_TURBIDITY_COUNT; ++i) {
+        const HsfServerIoTurbidity* tm = HsfServerIo_turbidity(side, i);
+        char key[64];
+        char name[32];
+        double ntu = 0.0;
+        uint32_t raw = 0;
+        bool online = false;
+
+        /* 名字恒带出（未装配也给出，客户端据此占位显示）。 */
+        snprintf(name, sizeof(name), "浊度仪%d", i + 1);
+        snprintf(key, sizeof(key), HSF_KEY_TURB_PREFIX_FMT, i, HSF_KEY_TURB_NAME);
+        XBsonDocument_insert_keyUtf8_utf8(doc, key, name);
+
+        if (tm) {
+            online = HsfServerIoTurbidity_isOnline(tm);
+            (void)HsfServerIoTurbidity_ntu(tm, &ntu);
+            (void)HsfServerIoTurbidity_raw(tm, &raw);
+        }
+        snprintf(key, sizeof(key), HSF_KEY_TURB_PREFIX_FMT, i, HSF_KEY_TURB_ONLINE);
+        XBsonDocument_insert_keyUtf8_bool(doc, key, online);
+        /* 在线才写值：离线时给旧值会让界面显示"一个数"却不知所措。
+         * 客户端按 online=false 显示"--"并提示从站失联。 */
+        if (online) {
+            snprintf(key, sizeof(key), HSF_KEY_TURB_PREFIX_FMT, i,
+                     HSF_KEY_TURB_NTU);
+            /* ×100 取整：四舍五入而非截断（9.995 → 1000 而不是 999）。 */
+            XBsonDocument_insert_keyUtf8_int32(doc, key,
+                (int32_t)(ntu * 100.0 + (ntu >= 0.0 ? 0.5 : -0.5)));
+            snprintf(key, sizeof(key), HSF_KEY_TURB_PREFIX_FMT, i,
+                     HSF_KEY_TURB_RAW);
+            XBsonDocument_insert_keyUtf8_int64(doc, key, (int64_t)raw);
+        }
+    }
+    XBsonDocument_insert_keyUtf8_int32(doc, "staleMs",
+                                       (int32_t)HSF_TURBIDITY_STALE_MS);
+}
+
+/**
+ * @brief 浊度仪快照命令：{"count","v0_*","v1_*","staleMs"}。
+ * @details 浊度仪是**只读设备**——标定/偏移/清洗都在仪表面板上做，对外通讯
+ *          只暴露测量值（手册 4.3.10）。故只有快照命令，没有控制命令。
+ */
+static void hsfAppHandleTurbiditySnapshot(XLinkSession* session,
+                                          const XLinkFrameHeader* frame,
+                                          const uint8_t* payload)
+{
+    const HsfSide side = hsfAppSideFromPayload(payload, frame->m_payloadLen);
+    XBsonDocument* doc = XBsonDocument_create();
+    XByteArray* bytes;
+    if (!doc) {
+        hsfAppRespond(session, frame, NULL);
+        return;
+    }
+    hsfAppInsertSide(doc, side);
+    hsfAppFillTurbidity(doc, side);
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    hsfAppRespond(session, frame, bytes);
+}
+
+/**
  * @brief 电磁流量计快照命令：{"side", "flow", "speed", ... , "valid"}。
  */
 static void hsfAppHandleFlowMeterSnapshot(XLinkSession* session,
@@ -778,42 +926,269 @@ static void hsfAppHandleFlowMeterSnapshot(XLinkSession* session,
     XClassDelete((XClass*)doc);
     hsfAppRespond(session, frame, bytes);
 }
-static void hsfAppHandleAiSnapshot(XLinkSession* session,
-                                   const XLinkFrameHeader* frame)
+/**
+ * @brief 编码模拟量快照（full=true 时附全部通道名）。
+ * @param full 是否全量（含名字）；false=只带数值/掩码（周期推送用）。
+ * @return 新建字节数组；失败 NULL。@warning 调用方释放。
+ * @note  [名字的唯一事实源] 通道名来自 HsfServerConfig.h 的 HSF_AI_NAMES 宏；
+ *        客户端首次拉全量拿到名字，之后只收数值。
+ */
+static XByteArray* hsfAppEncodeAi(bool full)
 {
     XBsonDocument* doc = XBsonDocument_create();
-    XByteArray* bytes = NULL;
+    XByteArray* bytes;
     double ma[HSF_AI_CHANNELS];
     int32_t raw[HSF_AI_CHANNELS];
     bool valid[HSF_AI_CHANNELS];
     int n;
     int i;
     uint32_t vmask = 0;
-    if (!doc) {
-        hsfAppRespond(session, frame, NULL);
-        return;
-    }
+
+    if (!doc) return NULL;
     n = HsfServerIo_aiValues(ma, valid, HSF_AI_CHANNELS);
     (void)HsfServerIo_aiRawValues(raw, NULL, HSF_AI_CHANNELS);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_FULL, full);
     for (i = 0; i < n; ++i) {
         char key[12];
         if (valid[i]) vmask |= (1u << i);
-        snprintf(key, sizeof(key), "r%d", i);
+        snprintf(key, sizeof(key), HSF_KEY_AI_RAW_FMT, i);
         XBsonDocument_insert_keyUtf8_int32(doc, key, raw[i]);
-        snprintf(key, sizeof(key), "u%d", i);
+        snprintf(key, sizeof(key), HSF_KEY_AI_UA_FMT, i);
         XBsonDocument_insert_keyUtf8_int32(doc, key,
                                            (int32_t)(ma[i] * 1000.0 + 0.5));
     }
-    XBsonDocument_insert_keyUtf8_int32(doc, "n", n);
-    XBsonDocument_insert_keyUtf8_int32(doc, "v", (int32_t)vmask);
+    if (full) {
+        static const char* const kNames[HSF_ANALOG_CHANNELS] = HSF_AI_NAMES;
+        for (i = 0; i < n && i < HSF_ANALOG_CHANNELS; ++i) {
+            char key[12];
+            if (!kNames[i]) continue;
+            snprintf(key, sizeof(key), HSF_KEY_AI_NAME_FMT, i);
+            XBsonDocument_insert_keyUtf8_utf8(doc, key, kNames[i]);
+        }
+    }
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_AI_COUNT, n);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_AI_VALIDMASK, (int32_t)vmask);
     bytes = XBsonDocument_toBson(doc);
     XClassDelete((XClass*)doc);
+    return bytes;
+}
+
+static void hsfAppHandleAiSnapshot(XLinkSession* session,
+                                   const XLinkFrameHeader* frame)
+{
+    /* 客户端首次拉全量（含通道名）；之后周期推送只带数值。 */
+    XByteArray* bytes = hsfAppEncodeAi(true);
+    if (!bytes) {
+        hsfAppRespond(session, frame, NULL);
+        return;
+    }
     hsfAppRespond(session, frame, bytes);
 }
 
 /**
  * @brief 分发回调：XLink 全部业务帧的统一入口（在会话 pump 栈上同步执行）。
  */
+/**
+ * @brief 数字量/电磁阀控制命令的公共前置闸（模式 → 角色）。
+ * @return 通过返回 true；被拒时已发否定应答并返回 false。
+ */
+static bool hsfAppControlGate(XLinkSession* session, const XLinkFrameHeader* frame,
+                              XLinkServer* srv)
+{
+    if (s_srv && HsfServerApp_runMode() == HsfRunMode_Auto) {
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false,
+                          "\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD"
+                          "\xEF\xBC\x9A\xE8\xBF\x9C\xE7\xA8\x8B\xE6\x8E\xA7\xE5\x88\xB6"
+                          "\xE5\xB7\xB2\xE8\xA2\xAB\xE7\xA6\x81\xE7\x94\xA8"));
+        /* 自动运行中：远程控制已被禁用 */
+        return false;
+    }
+    if (srv && XLinkServer_sessionRole(srv, session) < (uint8_t)HSF_ROLE_CONTROL) {
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false,
+                          "\xE6\x9D\x83\xE9\x99\x90\xE4\xB8\x8D\xE8\xB6\xB3"
+                          "\xEF\xBC\x9A\xE6\x8E\xA7\xE5\x88\xB6\xE5\x91\xBD\xE4\xBB\xA4"
+                          "\xE9\x9C\x80\xE8\xA6\x81 root \xE8\xB4\xA6\xE6\x88\xB7"));
+        /* 权限不足：控制命令需要 root 账户 */
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief 数字量快照请求（Response = 位图 BSON；未装配回否定应答）。
+ */
+static void hsfAppHandleDigitalSnapshot(XLinkSession* session,
+                                        const XLinkFrameHeader* frame)
+{
+    XByteArray* bytes = hsfAppEncodeDigital(true);   /* 客户端首次拉全量（含名字）。 */
+    if (!bytes) {
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false,
+                          "\xE6\x95\xB0\xE5\xAD\x97\xE9\x87\x8F\xE7\xAB\x99"
+                          "\xE6\x9C\xAA\xE8\xA3\x85\xE9\x85\x8D")); /* 数字量站未装配 */
+        return;
+    }
+    XLinkSession_sendResponse_ex(session, frame->m_requestId, frame->m_msgCode,
+                                 XLinkDataType_Bson,
+                                 (const uint8_t*)XByteArray_constData(bytes),
+                                 (uint32_t)XByteArray_size_base(bytes));
+    XClassDelete((XClass*)bytes);
+}
+
+/**
+ * @brief 数字量输出控制（{"index":int,"on":bool}）。
+ */
+static void hsfAppHandleDigitalControl(XLinkSession* session,
+                                       const XLinkFrameHeader* frame,
+                                       const uint8_t* payload, XLinkServer* srv)
+{
+    XBsonDocument* doc;
+    XBsonValue* v;
+    int index = -1;
+    bool on = false;
+    bool ok;
+
+    if (!hsfAppControlGate(session, frame, srv)) return;
+
+    doc = XBsonDocument_create();
+    if (!doc || !XBsonDocument_from_bytes(doc, payload, frame->m_payloadLen)) {
+        if (doc) XClassDelete((XClass*)doc);
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, "控制载荷解析失败"));
+        return;
+    }
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_DIG_INDEX);
+    if (v) index = XBsonValue_toInt32(v, -1);
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_DIG_ON);
+    if (v) on = XBsonValue_toBool(v, false);
+    XClassDelete((XClass*)doc);
+
+    if (index < 0 || index >= HsfServerIo_digitalCount()) {
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, "通道号越界"));
+        return;
+    }
+    ok = HsfServerIo_digitalWrite(index, on);
+    /* 应答带上最新位图：客户端不必等下一拍推送就能把按钮态对齐。 */
+    {
+        XByteArray* bytes = hsfAppEncodeDigital(false);  /* 控制应答只带状态。 */
+        if (bytes) {
+            XBsonDocument* resp = XBsonDocument_create();
+            if (resp) {
+                uint32_t di = 0;
+                uint32_t doMask = 0;
+                bool valid = false;
+                HsfServerIo_digitalMasks(&di, &doMask, &valid);
+                XBsonDocument_insert_keyUtf8_bool(resp, HSF_KEY_OK, ok);
+                XBsonDocument_insert_keyUtf8_int32(resp, HSF_KEY_DIG_DI, (int32_t)di);
+                XBsonDocument_insert_keyUtf8_int32(resp, HSF_KEY_DIG_DO, (int32_t)doMask);
+                XClassDelete((XClass*)bytes);
+                bytes = XBsonDocument_toBson(resp);
+                XClassDelete((XClass*)resp);
+            }
+            if (bytes) {
+                XLinkSession_sendResponse_ex(session, frame->m_requestId,
+                                             frame->m_msgCode, XLinkDataType_Bson,
+                                             (const uint8_t*)XByteArray_constData(bytes),
+                                             (uint32_t)XByteArray_size_base(bytes));
+                XClassDelete((XClass*)bytes);
+                return;
+            }
+        }
+    }
+    hsfAppRespond(session, frame, hsfAppMakeEnvelope(ok, ok ? NULL : "写入被拒"));
+}
+
+/**
+ * @brief 电磁阀快照请求（Response = 6 路 BSON）。
+ */
+static void hsfAppHandleValveSnapshot(XLinkSession* session,
+                                      const XLinkFrameHeader* frame)
+{
+    XByteArray* bytes = hsfAppEncodeValves();
+    if (!bytes) {
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, "电磁阀组未装配"));
+        return;
+    }
+    XLinkSession_sendResponse_ex(session, frame->m_requestId, frame->m_msgCode,
+                                 XLinkDataType_Bson,
+                                 (const uint8_t*)XByteArray_constData(bytes),
+                                 (uint32_t)XByteArray_size_base(bytes));
+    XClassDelete((XClass*)bytes);
+}
+
+/**
+ * @brief 电磁阀控制（{"index":int,"on":bool}）。
+ * @note  受理 ≠ 到位：应答带最新快照，客户端据此立刻更新卡片；真正的
+ *        "已开/已关"由反馈判读后经周期推送补上。
+ */
+static void hsfAppHandleValveControl(XLinkSession* session,
+                                     const XLinkFrameHeader* frame,
+                                     const uint8_t* payload, XLinkServer* srv)
+{
+    XBsonDocument* doc;
+    XBsonValue* v;
+    int index = -1;
+    bool wantOpen = false;
+    char err[96];
+    bool ok;
+    XByteArray* snap;
+
+    if (!hsfAppControlGate(session, frame, srv)) return;
+
+    doc = XBsonDocument_create();
+    if (!doc || !XBsonDocument_from_bytes(doc, payload, frame->m_payloadLen)) {
+        if (doc) XClassDelete((XClass*)doc);
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, "控制载荷解析失败"));
+        return;
+    }
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_VALVE_INDEX);
+    if (v) index = XBsonValue_toInt32(v, -1);
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_VALVE_ON);
+    if (v) wantOpen = XBsonValue_toBool(v, false);
+    XClassDelete((XClass*)doc);
+
+    err[0] = '\0';
+    ok = HsfServerIo_valveSet(index, wantOpen, err, (int)sizeof(err));
+    if (!ok) {
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, err[0] ? err : "阀门控制被拒"));
+        return;
+    }
+
+    /* 应答 = 包络 + 最新整帧快照（一次刷新全部 6 路，避免逐路拼）。 */
+    {
+        XBsonDocument* resp = XBsonDocument_create();
+        XByteArray* bytes = NULL;
+        if (resp) {
+            XBsonDocument_insert_keyUtf8_bool(resp, HSF_KEY_OK, true);
+            bytes = XBsonDocument_toBson(resp);
+            XClassDelete((XClass*)resp);
+        }
+        if (!bytes) bytes = hsfAppMakeEnvelope(true, NULL);
+        snap = hsfAppEncodeValves();
+        if (snap && bytes) {
+            /* 简化：先回包络，随后把快照作为第二段用同一 requestId 发送会
+             * 破坏 Request/Response 配对，故快照只走周期推送。此处仅回
+             * 受理结果；客户端收到 ok 后等下一拍（≤100ms）拿新状态。 */
+            XClassDelete((XClass*)snap);
+        } else if (snap) {
+            XClassDelete((XClass*)snap);
+        }
+        if (bytes) {
+            XLinkSession_sendResponse_ex(session, frame->m_requestId,
+                                         frame->m_msgCode, XLinkDataType_Bson,
+                                         (const uint8_t*)XByteArray_constData(bytes),
+                                         (uint32_t)XByteArray_size_base(bytes));
+            XClassDelete((XClass*)bytes);
+        }
+    }
+}
+
 static void hsfAppDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
                            const uint8_t* payload)
 {
@@ -842,6 +1217,21 @@ static void hsfAppDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
             break;
         case HSF_CMD_FLOWMETER_SNAPSHOT:
             hsfAppHandleFlowMeterSnapshot(session, frame, payload);
+            break;
+        case HSF_CMD_TURBIDITY_SNAPSHOT:
+            hsfAppHandleTurbiditySnapshot(session, frame, payload);
+            break;
+        case HSF_CMD_DIGITAL_SNAPSHOT:
+            hsfAppHandleDigitalSnapshot(session, frame);
+            break;
+        case HSF_CMD_DIGITAL_CONTROL:
+            hsfAppHandleDigitalControl(session, frame, payload, srv);
+            break;
+        case HSF_CMD_VALVE_SNAPSHOT:
+            hsfAppHandleValveSnapshot(session, frame);
+            break;
+        case HSF_CMD_VALVE_CONTROL:
+            hsfAppHandleValveControl(session, frame, payload, srv);
             break;
         default:
             /* 未知命令：回否定应答，客户端可感知（不发则对端空等）。 */
@@ -878,7 +1268,9 @@ static void hsfAppDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
                     XClassDelete((XClass*)bytes);
                 }
             } else {
-                /* 其余遥测：走统一的"立即推一拍给该会话"路径。 */
+                /* 其余遥测：走统一的"立即推一拍给该会话"路径
+                 * （数字量/模拟量在该路径里按 full=true 补发，见
+                 *  hsfAppPublishTopicNow）。 */
                 hsfAppPublishTopicNow(s_srv, session, topic);
             }
         }
@@ -980,22 +1372,13 @@ static void hsfAppNotify(XLinkServer* self, XLinkSession* session,
          * userData 传会话自身，供活跃判定排除自己。 */
         XLinkSession_setAuthLookup(session, hsfAppAuthLookup, session);
     }
-    if (event == XLinkServerSessionEvent_Added && session) {
-        /* 客户端首次连接：立即补发一份设备健康快照（免等待下一拍）。
-         * 注：此时尚未订阅本主题，故用单会话直发（broadcast 之外的
-         * 定向发送），保证"首连即拿到当前状态"。 */
-        XByteArray* bytes;
-        hsfHealthCollect(&s_health);
-        s_health.m_primed = true;
-        bytes = hsfHealthToBson(&s_health);
-        if (bytes) {
-            XLinkSession_sendPublish_ex(session, HSF_TOPIC_DEVICE_HEALTH,
-                                        XLinkDataType_Bson,
-                                        (const uint8_t*)XByteArray_constData(bytes),
-                                        (uint32_t)XByteArray_size_base(bytes));
-            XClassDelete((XClass*)bytes);
-        }
-    }
+    /* [2026-11-05 协议顺序根修] 原先在此处（Added = 连接已接受、**尚未
+     * 握手**）就直发一份设备健康快照。这违反"握手前不发业务帧"的顺序：
+     * 客户端拿到第一帧是 Publish（class=3）而不是 HelloAck，握手逻辑
+     * 直接判协议异常（外部按标准顺序写的客户端 100% 复现）。
+     * 现在改为**只在收到订阅后补发**——订阅本身只在握手+认证之后才会
+     * 发出，顺序天然正确；订阅补发路径见 dispatch 的 Subscribe 分支
+     * （健康快照在那里单独处理，其余主题走 hsfAppPublishTopicNow）。 */
     /* 接入时带上会话设备指针 + socket 状态：排查「一次物理连接被建成
      * 多个会话」时，光看路数无法区分「客户端真的重连」与「服务端把同一条
      * 连接反复 accept」。
@@ -1037,7 +1420,10 @@ enum {
     HSF_PUSH_GATE_VFD = 0,
     HSF_PUSH_GATE_TEMPHUM,
     HSF_PUSH_GATE_FLOWMETER,
+    HSF_PUSH_GATE_TURBIDITY,
     HSF_PUSH_GATE_AI,
+    HSF_PUSH_GATE_DIGITAL,   /**< 数字量位图（无侧维度，用 [0]）。 */
+    HSF_PUSH_GATE_VALVE,     /**< 电磁阀 6 路快照（无侧维度，用 [0]）。 */
     HSF_PUSH_GATE_COUNT
 };
 
@@ -1074,6 +1460,8 @@ static void hsfAppPushGatesInit(void)
                               ? (uint32_t)HSF_TEMPHUM_PUSH_MS : 0u;
     const uint32_t fmMs = (HSF_FLOWMETER_PUSH_MS > 0)
                               ? (uint32_t)HSF_FLOWMETER_PUSH_MS : 0u;
+    const uint32_t tbMs = (HSF_TURBIDITY_PUSH_MS > 0)
+                              ? (uint32_t)HSF_TURBIDITY_PUSH_MS : 0u;
     const uint32_t aiMs = (HSF_AI_PUSH_MS > 0) ? (uint32_t)HSF_AI_PUSH_MS : 0u;
 
     for (t = 0; t < HSF_PUSH_GATE_COUNT; ++t) {
@@ -1086,8 +1474,15 @@ static void hsfAppPushGatesInit(void)
         s_pushGates[HSF_PUSH_GATE_VFD][si].m_intervalMs = vfdMs;
         s_pushGates[HSF_PUSH_GATE_TEMPHUM][si].m_intervalMs = thMs;
         s_pushGates[HSF_PUSH_GATE_FLOWMETER][si].m_intervalMs = fmMs;
+        s_pushGates[HSF_PUSH_GATE_TURBIDITY][si].m_intervalMs = tbMs;
     }
     s_pushGates[HSF_PUSH_GATE_AI][0].m_intervalMs = aiMs;
+    /* 数字量与电磁阀：跟随基准节拍（100ms）。这两块都是"人点了要立刻
+     * 看到回显"的交互面，单独降频会让按下去的反馈显得迟滞。 */
+    s_pushGates[HSF_PUSH_GATE_DIGITAL][0].m_intervalMs =
+        (HSF_DIGITAL_PUSH_MS > 0) ? (uint32_t)HSF_DIGITAL_PUSH_MS : 0u;
+    s_pushGates[HSF_PUSH_GATE_VALVE][0].m_intervalMs =
+        (HSF_VALVE_PUSH_MS > 0) ? (uint32_t)HSF_VALVE_PUSH_MS : 0u;
     (void)t;
 }
 
@@ -1158,6 +1553,35 @@ static void hsfAppTickTempHum(XLinkServer* self)
 }
 
 /**
+ * @brief 发布浊度仪主题（全部侧各推一份，各自闸独立计时）。
+ * @note 两台合成一帧：它们总是成对显示、成对刷新（见 HSF_KEY_TURB_COUNT 说明）。
+ */
+static void hsfAppTickTurbidity(XLinkServer* self)
+{
+    int si;
+    const uint64_t nowMs = XDateTime_currentMSecsSinceEpoch();
+    for (si = 0; si < (int)HsfSide_Count; ++si) {
+        XBsonDocument* doc;
+        XByteArray* bytes;
+        if (!hsfAppPushDue(&s_pushGates[HSF_PUSH_GATE_TURBIDITY][si], nowMs))
+            continue;
+        doc = XBsonDocument_create();
+        if (!doc) continue;
+        hsfAppInsertSide(doc, (HsfSide)si);
+        hsfAppFillTurbidity(doc, (HsfSide)si);
+        bytes = XBsonDocument_toBson(doc);
+        XClassDelete((XClass*)doc);
+        if (bytes) {
+            XLinkServer_publish_ex(self, HSF_TOPIC_TURBIDITY_STATUS,
+                                   XLinkDataType_Bson,
+                                   (const uint8_t*)XByteArray_constData(bytes),
+                                   (uint32_t)XByteArray_size_base(bytes));
+            XClassDelete((XClass*)bytes);
+        }
+    }
+}
+
+/**
  * @brief 发布流量计主题（全部侧各推一份，各自闸独立计时）。
  */
 static void hsfAppTickFlowMeter(XLinkServer* self)
@@ -1220,37 +1644,13 @@ static void hsfAppTickVfd(XLinkServer* self)
  */
 static void hsfAppTickAi(XLinkServer* self)
 {
-    XBsonDocument* doc = XBsonDocument_create();
-    if (!doc) return;
-    {
-        double ma[HSF_AI_CHANNELS];
-        int32_t raw[HSF_AI_CHANNELS];
-        bool valid[HSF_AI_CHANNELS];
-        int n = HsfServerIo_aiValues(ma, valid, HSF_AI_CHANNELS);
-        int i;
-        uint32_t vmask = 0;
-        XByteArray* bytes;
-        (void)HsfServerIo_aiRawValues(raw, NULL, HSF_AI_CHANNELS);
-        for (i = 0; i < n; ++i) {
-            char key[12];
-            if (valid[i]) vmask |= (1u << i);
-            snprintf(key, sizeof(key), "r%d", i);
-            XBsonDocument_insert_keyUtf8_int32(doc, key, raw[i]);
-            snprintf(key, sizeof(key), "u%d", i);
-            XBsonDocument_insert_keyUtf8_int32(doc, key,
-                                               (int32_t)(ma[i] * 1000.0 + 0.5));
-        }
-        XBsonDocument_insert_keyUtf8_int32(doc, "n", n);
-        XBsonDocument_insert_keyUtf8_int32(doc, "v", (int32_t)vmask);
-        bytes = XBsonDocument_toBson(doc);
-        if (bytes) {
-            XLinkServer_publish_ex(self, HSF_TOPIC_AI_STATUS, XLinkDataType_Bson,
-                                   (const uint8_t*)XByteArray_constData(bytes),
-                                   (uint32_t)XByteArray_size_base(bytes));
-            XClassDelete((XClass*)bytes);
-        }
-    }
-    XClassDelete((XClass*)doc);
+    /* 周期推送只带数值（名字已由全量快照下发过）。 */
+    XByteArray* bytes = hsfAppEncodeAi(false);
+    if (!bytes) return;
+    XLinkServer_publish_ex(self, HSF_TOPIC_AI_STATUS, XLinkDataType_Bson,
+                           (const uint8_t*)XByteArray_constData(bytes),
+                           (uint32_t)XByteArray_size_base(bytes));
+    XClassDelete((XClass*)bytes);
 }
 
 /**
@@ -1356,36 +1756,269 @@ static void hsfAppPublishTopicNow(XLinkServer* srv, XLinkSession* session,
             bytes = XBsonDocument_toBson(doc);
             XClassDelete((XClass*)doc);
         }
-    } else if ((topic & 0xFFFFu) == (HSF_TOPIC_AI_STATUS & 0xFFFFu)) {
+    } else if ((topic & 0xFFFFu) == (HSF_TOPIC_TURBIDITY_STATUS & 0xFFFFu)) {
         XBsonDocument* doc = XBsonDocument_create();
         if (doc) {
-            double ma[HSF_AI_CHANNELS];
-            int32_t raw[HSF_AI_CHANNELS];
-            bool valid[HSF_AI_CHANNELS];
-            int n = HsfServerIo_aiValues(ma, valid, HSF_AI_CHANNELS);
-            int i;
-            uint32_t vmask = 0;
-            (void)HsfServerIo_aiRawValues(raw, NULL, HSF_AI_CHANNELS);
-            for (i = 0; i < n; ++i) {
-                char key[12];
-                if (valid[i]) vmask |= (1u << i);
-                snprintf(key, sizeof(key), "r%d", i);
-                XBsonDocument_insert_keyUtf8_int32(doc, key, raw[i]);
-                snprintf(key, sizeof(key), "u%d", i);
-                XBsonDocument_insert_keyUtf8_int32(doc, key,
-                                                   (int32_t)(ma[i] * 1000.0 + 0.5));
-            }
-            XBsonDocument_insert_keyUtf8_int32(doc, "n", n);
-            XBsonDocument_insert_keyUtf8_int32(doc, "v", (int32_t)vmask);
+            hsfAppInsertSide(doc, HsfSide_A);
+            hsfAppFillTurbidity(doc, HsfSide_A);
             bytes = XBsonDocument_toBson(doc);
             XClassDelete((XClass*)doc);
         }
+    } else if ((topic & 0xFFFFu) == (HSF_TOPIC_AI_STATUS & 0xFFFFu)) {
+        /* 订阅补发：给**全量**（客户端刚订阅，还没拿过名字）。 */
+        bytes = hsfAppEncodeAi(true);
+    } else if ((topic & 0xFFFFu) == (HSF_TOPIC_DIGITAL_STATUS & 0xFFFFu)) {
+        /* 订阅补发：给**全量**（含全部通道名）。客户端首连即拿全量，
+         * 之后周期推送只带状态——这就是"名字只由服务端给"的落地方式。 */
+        bytes = hsfAppEncodeDigital(true);
+    } else if ((topic & 0xFFFFu) == (HSF_TOPIC_VALVE_STATUS & 0xFFFFu)) {
+        bytes = hsfAppEncodeValves();
     }
     if (!bytes) return;
     XLinkSession_sendPublish_ex(session, topic, XLinkDataType_Bson,
                                 (const uint8_t*)XByteArray_constData(bytes),
                                 (uint32_t)XByteArray_size_base(bytes));
     XClassDelete((XClass*)bytes);
+}
+
+/**
+ * @brief 编码数字量快照（16DI/16DO 位图）。
+ * @return 新建字节数组；未装配返回 NULL。@warning 调用方释放。
+ */
+static XByteArray* hsfAppEncodeDigital(bool full)
+{
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    uint32_t di = 0;
+    uint32_t doMask = 0;
+    bool valid = false;
+    int count;
+
+    if (!HsfServerIo_digitalReady()) return NULL;
+    HsfServerIo_digitalMasks(&di, &doMask, &valid);
+    count = HsfServerIo_digitalCount();
+    doc = XBsonDocument_create();
+    if (!doc) return NULL;
+    /* [full 标志] 客户端靠它区分"全量重建点表"与"只更新状态"，
+     * 不靠"有没有名字键"猜（猜错会漏更新或重复建点）。 */
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_FULL, full);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_DIG_DEV, 0);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_DIG_DI, (int32_t)di);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_DIG_DO, (int32_t)doMask);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_DIG_COUNT, count);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_VALVE_VALID, valid);
+    if (full) {
+        /* 全量：把服务端宏里的通道名一并下发（名字的唯一事实源在服务端）。 */
+        static const char* const kDiNames[HSF_DIG_CHANNELS_MAX] = HSF_DIG_DI_NAMES;
+        static const char* const kDoNames[HSF_DIG_CHANNELS_MAX] = HSF_DIG_DO_NAMES;
+        int i;
+        for (i = 0; i < count && i < HSF_DIG_CHANNELS_MAX; ++i) {
+            char key[24];
+            snprintf(key, sizeof(key), HSF_KEY_DIG_DI_NAME_FMT, i);
+            if (kDiNames[i])
+                XBsonDocument_insert_keyUtf8_utf8(doc, key, kDiNames[i]);
+            snprintf(key, sizeof(key), HSF_KEY_DIG_DO_NAME_FMT, i);
+            if (kDoNames[i])
+                XBsonDocument_insert_keyUtf8_utf8(doc, key, kDoNames[i]);
+        }
+    }
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    return bytes;
+}
+
+/**
+ * @brief 名字专用帧（只含 count + 全部名字；用于名字变更主动下发）。
+ * @note  客户端按"有名字键就更新名字"处理，与 full 帧的差别只是没有状态。
+ */
+static XByteArray* hsfAppEncodeDigitalNames(void)
+{
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    static const char* const kDiNames[HSF_DIG_CHANNELS_MAX] = HSF_DIG_DI_NAMES;
+    static const char* const kDoNames[HSF_DIG_CHANNELS_MAX] = HSF_DIG_DO_NAMES;
+    int count;
+    int i;
+
+    if (!HsfServerIo_digitalReady()) return NULL;
+    count = HsfServerIo_digitalCount();
+    doc = XBsonDocument_create();
+    if (!doc) return NULL;
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_FULL, true);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_DIG_COUNT, count);
+    for (i = 0; i < count && i < HSF_DIG_CHANNELS_MAX; ++i) {
+        char key[24];
+        snprintf(key, sizeof(key), HSF_KEY_DIG_DI_NAME_FMT, i);
+        if (kDiNames[i])
+            XBsonDocument_insert_keyUtf8_utf8(doc, key, kDiNames[i]);
+        snprintf(key, sizeof(key), HSF_KEY_DIG_DO_NAME_FMT, i);
+        if (kDoNames[i])
+            XBsonDocument_insert_keyUtf8_utf8(doc, key, kDoNames[i]);
+    }
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    return bytes;
+}
+
+/**
+ * @brief 编码电磁阀 6 路快照（v<i>_* 前缀键表）。
+ * @return 新建字节数组；阀组未装配返回 NULL。@warning 调用方释放。
+ *
+ * @note [键名格式] 与 Python 侧 ValveBank.to_doc 逐字一致：
+ *       count + v<i>_name / v<i>_openCmd / v<i>_openFb / v<i>_closeFb /
+ *       v<i>_state / v<i>_ready / v<i>_valid / v<i>_text。
+ */
+static XByteArray* hsfAppEncodeValves(void)
+{
+    const HsfServerIoValve* bank = HsfServerIo_valves();
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    int count;
+    int i;
+
+    if (!bank) return NULL;
+    count = HsfServerIoValve_count(bank);
+    doc = XBsonDocument_create();
+    if (!doc) return NULL;
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_VALVE_COUNT, count);
+    for (i = 0; i < count; ++i) {
+        const HsfServerIoValveItem* it = HsfServerIoValve_item(bank, i);
+        bool ready;
+        char key[32];
+        if (!it) continue;
+        ready = it->m_do >= 0 && it->m_openDi >= 0 && it->m_closeDi >= 0;
+        snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_VALVE_NAME);
+        XBsonDocument_insert_keyUtf8_utf8(doc, key, it->m_name);
+        snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_VALVE_OPEN_CMD);
+        XBsonDocument_insert_keyUtf8_bool(doc, key, it->m_openCmd);
+        snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_VALVE_OPEN_FB);
+        XBsonDocument_insert_keyUtf8_bool(doc, key, it->m_openFb);
+        snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_VALVE_CLOSE_FB);
+        XBsonDocument_insert_keyUtf8_bool(doc, key, it->m_closeFb);
+        snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_VALVE_STATE);
+        XBsonDocument_insert_keyUtf8_int32(doc, key, it->m_state);
+        snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_VALVE_READY);
+        XBsonDocument_insert_keyUtf8_bool(doc, key, ready);
+        snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_VALVE_VALID);
+        XBsonDocument_insert_keyUtf8_bool(doc, key, it->m_valid);
+        if (it->m_text[0]) {
+            snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_VALVE_TEXT);
+            XBsonDocument_insert_keyUtf8_utf8(doc, key, it->m_text);
+        }
+    }
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    return bytes;
+}
+
+/**
+ * @brief 阀告警推送：把本拍新产生的告警逐条推给**所有已连接会话**。
+ * @details [为什么全推而不按订阅] 阀告警是**事件**，不是遥测。只看数字量页/
+ *          主界面的客户端没订阅阀主题，但"某路阀超时未到位"这类信息必须让它
+ *          看到——现场最常见的失误就是告警藏在没人订阅的主题里。故这里不判
+ *          订阅，直接广播（XLinkServer_publish_ex 按订阅投递；无人订阅时静默
+ *          返回 0，不视为错误）。
+ *
+ *          [为什么要"取走"而不是"读状态"] 告警每拍都可能成立（超时判据是
+ *          `now - cmdAt > timeout`），若按状态推就会每 200ms 一帧把客户端刷屏。
+ *          取走语义保证一条告警只出一次帧。
+ */
+static void hsfAppPushValveAlarms(XLinkServer* self, uint64_t now)
+{
+    int i;
+    int count = HsfServerIoValve_count(HsfServerIo_valves());
+
+    for (i = 0; i < count; ++i) {
+        int kind = 0;
+        char text[160];
+        const HsfServerIoValveItem* it;
+        XBsonDocument* doc;
+
+        if (!HsfServerIo_valveTakeAlarm(i, &kind, text, (int)sizeof(text)))
+            continue;
+        it = HsfServerIoValve_item(HsfServerIo_valves(), i);
+        if (!it) continue;
+
+        doc = XBsonDocument_create();
+        if (!doc) continue;
+        XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_ALARM_COUNT, 1);
+        XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_ALARM_VALVE_INDEX, i);
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_ALARM_VALVE_NAME,
+                                          it->m_name);
+        XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_ALARM_KIND, kind);
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_ALARM_TEXT, text);
+        XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_ALARM_AT,
+                                           (int64_t)now);
+        if (kind == HsfValveAlarmKind_Timeout) {
+            XBsonDocument_insert_keyUtf8_double(
+                doc, HSF_KEY_ALARM_TIMEOUT_S,
+                (double)HsfServerIoValve_moveTimeoutMs(HsfServerIo_valves())
+                    / 1000.0);
+        }
+        {
+            XByteArray* bytes = XBsonDocument_toBson(doc);
+            if (bytes) {
+                XLinkServer_publish_ex(self, HSF_TOPIC_VALVE_ALARM,
+                                       XLinkDataType_Bson,
+                                       (const uint8_t*)XByteArray_constData(bytes),
+                                       (uint32_t)XByteArray_size_base(bytes));
+                XClassDelete((XClass*)bytes);
+            }
+        }
+        XClassDelete((XClass*)doc);
+        XPrintf("HsfServerApp: 阀告警 路%d(%s) 类型%d：%s\n",
+                i, it->m_name, kind, text);
+    }
+}
+
+/**
+ * @brief 数字量/电磁阀推送拍（每拍刷新阀组状态再推两主题）。
+ * @note  阀状态依赖 DI 反馈 ⇒ **先 poll 再编码**，保证同一拍数据自洽
+ *        （与 Python 侧 tick 的"先 refresh_valve_sources 再 encode"同款）。
+ */
+static void hsfAppTickDigitalValve(XLinkServer* self)
+{
+    uint64_t now = XDateTime_currentMSecsSinceEpoch();
+
+    /* 阀组状态判读（内部读 DI 位图；未装配时把 valid 置 false）。 */
+    HsfServerIo_valvePoll(now);
+
+    /* 先推告警（事件，一条一次），再推周期状态。 */
+    hsfAppPushValveAlarms(self, now);
+
+    /* 名字变更：主动下发一帧只含名字的全量帧（见 HsfServerApp_namesChanged）。 */
+    if (s_digitalNamesDirty) {
+        XByteArray* nb = hsfAppEncodeDigitalNames();
+        if (nb) {
+            XLinkServer_publish_ex(self, HSF_TOPIC_DIGITAL_STATUS,
+                                   XLinkDataType_Bson,
+                                   (const uint8_t*)XByteArray_constData(nb),
+                                   (uint32_t)XByteArray_size_base(nb));
+            XClassDelete((XClass*)nb);
+            s_digitalNamesDirty = false;
+            XPrintf("HsfServerApp: 通道名已变更，已主动下发\n");
+        }
+    }
+    if (hsfAppPushDue(&s_pushGates[HSF_PUSH_GATE_DIGITAL][0], now)) {
+        XByteArray* bytes = hsfAppEncodeDigital(false);  /* 周期推送只带状态。 */
+        if (bytes) {
+            XLinkServer_publish_ex(self, HSF_TOPIC_DIGITAL_STATUS,
+                                   XLinkDataType_Bson,
+                                   (const uint8_t*)XByteArray_constData(bytes),
+                                   (uint32_t)XByteArray_size_base(bytes));
+            XClassDelete((XClass*)bytes);
+        }
+    }
+    if (hsfAppPushDue(&s_pushGates[HSF_PUSH_GATE_VALVE][0], now)) {
+        XByteArray* bytes = hsfAppEncodeValves();
+        if (bytes) {
+            XLinkServer_publish_ex(self, HSF_TOPIC_VALVE_STATUS,
+                                   XLinkDataType_Bson,
+                                   (const uint8_t*)XByteArray_constData(bytes),
+                                   (uint32_t)XByteArray_size_base(bytes));
+            XClassDelete((XClass*)bytes);
+        }
+    }
 }
 
 static void hsfAppTick(XLinkServer* self, void* userData)
@@ -1401,6 +2034,8 @@ static void hsfAppTick(XLinkServer* self, void* userData)
     hsfAppTickVfd(self);
     hsfAppTickTempHum(self);
     hsfAppTickFlowMeter(self);
+    hsfAppTickTurbidity(self);
+    hsfAppTickDigitalValve(self);   /* 数字量 + 电磁阀（先判读后编码）。 */
     /* 模拟量无侧维度，单闸。 */
     if (hsfAppPushDue(&s_pushGates[HSF_PUSH_GATE_AI][0],
                       XDateTime_currentMSecsSinceEpoch()))

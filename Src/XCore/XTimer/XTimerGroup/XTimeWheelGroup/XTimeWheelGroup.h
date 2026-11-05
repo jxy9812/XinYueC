@@ -26,6 +26,7 @@ typedef struct XTimeWheelGroup
 	XAtomic_SizeT m_activeProducers;//正在访问槽头的生产者数量，用于安全回收
 	XAtomic_Bool m_hasCancelledTimers;//存在已取消节点，消费者下一轮统一清扫
 	XListSNode* m_retiredNodes;//等待无生产者时回收的节点
+	bool m_clockSynced;//刻度已与时间源对齐过一次（冷启动对齐门，见 handler 注记）
 	//XMutex* m_mutex;
 }XTimeWheelGroup;
 XVtable* XTimeWheelGroup_class_init();

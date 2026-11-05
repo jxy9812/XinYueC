@@ -76,36 +76,34 @@ void HsfServerIoAnalog_init(HsfServerIoAnalog* st)
 
 /* ==================== 装配 ==================== */
 
-bool HsfServerIoAnalog_mount(HsfServerIoAnalog* st, const char* host, int port,
-                             int unitId, int channels, double shuntOhm,
-                             int pollMs)
+/**
+ * @brief 站装配核心：客户端已建好 → 挂 Hub → 登记段 → 建点/链路 → 起轮询。
+ * @param st 目标站。
+ * @param client 客户端（**所有权转移给 Hub**）。
+ * @param unitId 从站 Unit ID。
+ * @param channels 通道数（已夹到 1..8）。
+ * @param shunt 采样电阻整数欧姆（已夹到 >=1）。
+ * @param pollMs 轮询周期。
+ * @return 成功 true；失败时已完成内部清理。
+ */
+static bool analogMountCore(HsfServerIoAnalog* st, XModbusClient* client,
+                            int unitId, int channels, int shunt, int pollMs)
 {
     XModbusMapping* map = NULL;
     int ch;
-    int shunt = (int)(shuntOhm + 0.5);
-
-    if (!st || st->m_mounted) return false;
-    if (!host || !host[0]) return false;
-    if (channels <= 0) return false;
-    if (channels > HSF_ANALOG_MAX_CHANNELS) channels = HSF_ANALOG_MAX_CHANNELS;
-    if (shunt <= 0) shunt = 1;
 
     st->m_hub = XModbusHub_create();
     map = XModbusMapping_create();
-    st->m_client = XModbusTcpClient_create();
-    if (!st->m_hub || !map || !st->m_client) {
+    st->m_client = client;              /* 仅用于诊断查询；所有权在 Hub。 */
+    if (!st->m_hub || !map || !client) {
         XPrintf("HsfServerIoAnalog: Hub/映射/客户端创建失败\n");
         goto fail;
     }
-    analogSetConnParam((XModbusDevice*)st->m_client,
-                       XModbusDevice_NetworkAddressParameter, true, 0, host);
-    analogSetConnParam((XModbusDevice*)st->m_client,
-                       XModbusDevice_NetworkPortParameter, false, port, NULL);
-    st->m_devId = XModbusHub_addDevice_2(st->m_hub,
-                                         (XModbusClient*)st->m_client, "ai-8ch");
+    st->m_devId = XModbusHub_addDevice_2(st->m_hub, client, "ai-8ch");
     if (st->m_devId < 0) {
         XPrintf("HsfServerIoAnalog: 客户端挂 Hub 失败\n");
-        goto fail;
+        XClassDelete((XClass*)map);
+        return false;                   /* addDevice 失败不接管客户端。 */
     }
     /* 输入寄存器段：虚拟 0x0000~ ↔ 远端 0x0000~（本站独占 Hub，无冲突）。 */
     if (!XModbusMapping_addRange(map, XModbusInputRegisters, 0,
@@ -155,14 +153,64 @@ bool HsfServerIoAnalog_mount(HsfServerIoAnalog* st, const char* host, int port,
     st->m_channelCount = channels;
     st->m_shuntOhm = shunt;
     st->m_mounted = true;
-    XPrintf("HsfServerIoAnalog: %s:%d 装配完成（%d 路，轮询 %dms）\n",
-            host, port, channels, pollMs);
     return true;
 
 fail:
     if (map) XClassDelete((XClass*)map);
     HsfServerIoAnalog_unmount(st);
     return false;
+}
+
+bool HsfServerIoAnalog_mount(HsfServerIoAnalog* st, const char* host, int port,
+                             int unitId, int channels, double shuntOhm,
+                             int pollMs)
+{
+    XModbusTcpClient* client;
+    int shunt = (int)(shuntOhm + 0.5);
+
+    if (!st || st->m_mounted) return false;
+    if (!host || !host[0]) return false;
+    if (channels <= 0) return false;
+    if (channels > HSF_ANALOG_MAX_CHANNELS) channels = HSF_ANALOG_MAX_CHANNELS;
+    if (shunt <= 0) shunt = 1;
+
+    client = XModbusTcpClient_create();
+    if (!client) {
+        XPrintf("HsfServerIoAnalog: 客户端创建失败\n");
+        return false;
+    }
+    analogSetConnParam((XModbusDevice*)client,
+                       XModbusDevice_NetworkAddressParameter, true, 0, host);
+    analogSetConnParam((XModbusDevice*)client,
+                       XModbusDevice_NetworkPortParameter, false, port, NULL);
+    if (!analogMountCore(st, (XModbusClient*)client, unitId, channels, shunt,
+                         pollMs)) {
+        return false;
+    }
+    XPrintf("HsfServerIoAnalog: %s:%d 装配完成（%d 路，轮询 %dms）\n",
+            host, port, channels, pollMs);
+    return true;
+}
+
+bool HsfServerIoAnalog_mountWithClient(HsfServerIoAnalog* st,
+                                       struct XModbusClient* client,
+                                       int unitId, int channels,
+                                       double shuntOhm, int pollMs)
+{
+    int shunt = (int)(shuntOhm + 0.5);
+
+    if (!st || st->m_mounted || !client) return false;
+    if (channels <= 0) return false;
+    if (channels > HSF_ANALOG_MAX_CHANNELS) channels = HSF_ANALOG_MAX_CHANNELS;
+    if (shunt <= 0) shunt = 1;
+
+    if (!analogMountCore(st, (XModbusClient*)client, unitId, channels, shunt,
+                         pollMs)) {
+        return false;
+    }
+    XPrintf("HsfServerIoAnalog: 装配完成（%d 路，注入客户端，轮询 %dms）\n",
+            channels, pollMs);
+    return true;
 }
 
 void HsfServerIoAnalog_unmount(HsfServerIoAnalog* st)

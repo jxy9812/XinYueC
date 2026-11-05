@@ -136,6 +136,9 @@ typedef struct XVfdM512 {
     XVfdCommandEnum m_base;         /**< 基类子对象（第一成员） */
     int m_stage;                    /**< 多步动作阶段（0=首步 1=第二步） */
     uint16_t m_pendingRaw;          /**< 第二步待写原始码 */
+    /* [2026-11-05 转速给定] 额定转速不在此处：它已上移为 XVfdDevice 的
+     * m_ratedRpm（所有变频器共有），换算也由基类 SetSpeedRpm 缺省实现统一
+     * 完成（rpm→Hz 后转调本类的 SetFrequency）。品牌层因此不再持两份事实源。 */
 } XVfdM512;
 
 /* ==================== 类生命周期 ==================== */

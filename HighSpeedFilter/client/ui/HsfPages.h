@@ -27,6 +27,7 @@ typedef enum HsfPageIndex
     HSF_PAGE_MONITOR_ANALOG,  /**< 监视-模拟量。 */
     HSF_PAGE_MONITOR_VFD,     /**< 监视-变频器。 */
     HSF_PAGE_MONITOR_FLOWMETER, /**< 监视-电磁流量计（与变频器同级）。 */
+    HSF_PAGE_MONITOR_VALVE,   /**< 监视-电磁阀（6 路看板/操作，与流量计同级）。 */
     HSF_PAGE_DATA_MENU,       /**< 数据 子菜单。 */
     HSF_PAGE_DATA_HISTORY,    /**< 数据-历史数据。 */
     HSF_PAGE_DATA_LOG,        /**< 数据-日志。 */

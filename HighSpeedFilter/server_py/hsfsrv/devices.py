@@ -98,6 +98,13 @@ class VfdM512(object):
 
     #: 最大频率兜底（P0.10 未读到时）。0x1000 的百分比基准。
     DEFAULT_MAX_FREQ_HZ = 50.0
+    #: 额定转速（rpm）：铭牌口径。50Hz 下实测约 1440 rpm（4 极电机带滑差）。
+    #: [为什么用"额定点"换算而不是极对数公式] 极对数公式算出的是同步转速
+    #: （4 极 = 1500 rpm），而异步电机额定点有滑差，实测 1440。
+    #: 用额定点做线性比例 (f/f_rated × n_rated) 与实际更贴近，
+    #: 且现场只需抄铭牌两个数，不用知道极数。
+    DEFAULT_RATED_RPM = 1440.0
+    DEFAULT_RATED_HZ = 50.0
 
     def __init__(self, master_factory, unit_id, log=None):
         """master_factory: 无参可调用对象，返回可用的 master（懒建）。"""
@@ -115,6 +122,27 @@ class VfdM512(object):
         self.last_ok_ms = 0
         self.last_error = ""
         self.max_freq_hz = self.DEFAULT_MAX_FREQ_HZ
+        #: 额定点（铭牌）：用于 Hz ↔ rpm 线性换算。
+        self.rated_rpm = self.DEFAULT_RATED_RPM
+        self.rated_hz = self.DEFAULT_RATED_HZ
+
+    # ---- 转速换算（Hz ↔ rpm）----
+    def rpm_of(self, hz):
+        """频率(Hz) → 转速(rpm)。按额定点线性比例。
+
+        [口径] rpm = hz / rated_hz × rated_rpm
+        50Hz → 1440rpm（现场实测口径）。这是**估算**：变频器本身没有转速
+        寄存器，滑差随负载变化，故界面上标明是换算值。
+        """
+        if hz is None or self.rated_hz <= 0:
+            return None
+        return float(hz) / self.rated_hz * self.rated_rpm
+
+    def hz_of(self, rpm):
+        """转速(rpm) → 频率(Hz)（上式的反解）。"""
+        if rpm is None or self.rated_rpm <= 0:
+            return None
+        return float(rpm) / self.rated_rpm * self.rated_hz
 
     # ---- 总线 ----
     def _master_get(self):
@@ -201,7 +229,9 @@ class VfdM512(object):
         if bit == 20:
             return 0x1006 in self.raw
         if bit == 21:
-            return False              # 无转速寄存器（需铭牌极对数，不提供）
+            # 转速：由输出频率按额定点换算（变频器无转速寄存器）。
+            # 只要读到输出频率就等价值可用 —— 转速是**派生量**，不是原始量。
+            return 0x1001 in self.raw
         if bit == 39:
             return self.ADDR_FAULT in self.raw
         return False
@@ -254,6 +284,18 @@ class VfdM512(object):
     def output_freq_hz(self):
         return self._scaled(0x1001, 100.0)
 
+    def is_running(self):
+        """设备当前是否在运行（**以遥测为准，不看命令回显**）。
+
+        [为什么用遥测而不是"上次发过启动命令"] 命令可能没送达、可能被
+        变频器拒绝、可能现场按了面板停止。用状态字（0x3000）解出的
+        `run_state` 才是唯一事实。
+        状态未读到时按"未运行"处理 —— 宁可拒绝一次调速，也不能在不确定
+        的状态下改运行参数。
+        """
+        return self.run_state in (proto.RUN_RUNNING_FORWARD,
+                                  proto.RUN_RUNNING_REVERSE)
+
     def set_freq_hz(self):
         """设定频率：0x1000 的百分比 × 最大频率。
 
@@ -299,9 +341,11 @@ class VfdM512(object):
         if bit == 20:
             return self._scaled(0x1006, 10.0)
         if bit == 21:
-            # 转速没有直接寄存器；按「运行频率 × 60 / 极对数」估算需要铭牌，
-            # 现场未接电机故不提供（保持无效，客户端显示 --）。
-            return None
+            # 转速：由输出频率按额定点换算（50Hz ↔ 1440rpm）。
+            # 变频器不提供转速寄存器，滑差随负载变化 —— 这是**估算值**，
+            # 界面上要标明，不能当成实测转速。
+            hz = self.output_freq_hz()
+            return None if hz is None else self.rpm_of(hz)
         if bit == 39:
             return self.fault_code
         return None
@@ -352,7 +396,16 @@ class VfdM512(object):
         elif op == proto.OP_SET_SPEED:
             if rpm <= 0:
                 return False, "转速给定值非法"
-            return False, "该型号不支持转速直接给定（请用频率给定）"
+            # [转速给定也走频率通道] 变频器本身只接受频率给定（0x1000 是
+            # 百分比），故按额定点反解成频率再下发。对现场而言效果一致；
+            # 若将来换用支持转速给定的型号，只改这里。
+            hz = self.hz_of(rpm)
+            if hz is None:
+                return False, "转速换算失败（额定点配置非法）"
+            if hz > self.max_freq_hz + 0.001:
+                return False, ("转速 %.0frpm 超出上限（额定 %.0frpm ≈ %.1fHz）"
+                               % (rpm, self.rated_rpm, self.max_freq_hz))
+            await self.set_frequency(hz)
         elif op == proto.OP_SET_PID_TARGET:
             return False, "PID 目标给定未在本实现中启用"
         elif op == proto.OP_SELECT_PRESET_SPEED:
@@ -543,16 +596,31 @@ class AnalogInput(object):
 # ============================================================================
 
 class DigitalIo(object):
-    """AMSAMOTION MT3A-IO1632 数字量模块（16 通道 DI + 16 通道 DO）。
+    """AMSAMOTION MT3A-IO1632 数字量模块（DI + DO，Modbus-TCP）。
 
     [寄存器映射]
-        DO = 线圈 0x0000~0x000F      FC01 读 / FC05 写单点
-        DI = 离散输入 0x0000~0x000F  FC02 读
+        DO = 线圈 0x0000~       FC01 读 / FC05 写单点
+        DI = 离散输入 0x0000~   FC02 读
         站号 1，端口 502
+
+    [点数口径 —— 单模块 16，聚合后 32]
+    单台模块物理 16 点；但它支持**主从聚合**：一台（ms=1 主站）把另一台
+    的 16 点映射进自己的地址空间，对外就是 32 点。本现场即如此：
+
+        .13（被聚合者，16 点）→ 映射进 .12 的 esDoNu1/esDiNu1
+        ⇒ 只轮询 .12 就能拿到全部 32DI/32DO
+
+    2026-11-05 实测确认：.12 的 FC02/FC01 读 0x0000 起 32 点返回 4 字节；
+    且**上半区是活的** —— 写 DO16/DO20/DO31 后回读逐位正确，恢复后归零。
+    故点数**每模块可变**，构造时由配置给（缺省 16，本现场 32）。
+
+    [该模块会间歇性空应答] 实测无间隔连发 10 次里会有 1~2 次收到 0 字节
+    （TCP 可连但本次无应答），间隔 300ms 以上就基本不出。故读失败要靠
+    重试兜底（见 modbus.TcpMaster 的重试），不能把单次空应答当成设备失联。
 
     [为什么整组写不用 FC0F] 本模块对 FC0F **会发两次相同应答**，且打包类
     事务号恒 0000 无法用 tid 区分 ⇒ 同连接的下一条请求会把重复帧当响应。
-    FC05 无此问题，故整组写 = 逐点 FC05（16 次，几十毫秒，足够）。
+    FC05 无此问题，故整组写 = 逐点 FC05。
 
     [为什么读 DI/DO 要两帧] DI 走离散输入区、DO 走线圈区，是两个独立功能码，
     无法一帧同时取。两帧都成功才算本拍有效。
@@ -561,45 +629,45 @@ class DigitalIo(object):
     故 master 必须长连复用（modbus.TcpClient 已是长连 + 按需重连）。
 
     [⚠ 这个模块可以是「主站」而不是「从站」—— 2026-11-04 实锤]
-    MT3A-IO1632 有两个角色，由 Web 配置的 `ms` 字段决定：
+    MT3A-IO1632 的 `ms` 字段决定角色：
 
-        ms = 1（主站模式）：模块**主动**向 `rip:rport` 推送数据，
-                            此时**不响应任何 Modbus 从站请求**。
-                            表现：TCP 502 能连，但**连接会被立刻关闭**，
-                            或连上后发什么都是 EMPTY（0 应答）。
-        ms = 0（从站模式）：标准 Modbus TCP 从站，本类按下面的映射读写。
+        ms = 1（主站模式）：模块**主动**向 `rip:rport` 推送数据。
+                            原以为此时不响应 Modbus 从站请求；但 2026-11-05
+                            复测发现 .12 配成 ms=1 后**仍然完整应答** FC01/FC02
+                            —— 故"ms=1 不应答"不是绝对规则，接线/固件版本
+                            都会影响。诊断时以**实测应答**为准，别只凭配置判死。
+        ms = 0（从站模式）：标准 Modbus TCP 从站，本类按上面的映射读写。
 
-    现场两台（.12/.13）实测都是 `ms=1` 主站：
-      .12 → rip=192.168.0.11:8080
-      .13 → rip=192.168.0.243:8080（本机，被 read_analog_gui.py 接收）
-
-    故**"TCP 502 可连但 Modbus 无应答" 不是故障，是配成了主站**。
-    要当从站采，得先用 Web 界面（账密 amx666/amx666）把 ms 改成 0。
+    故**"TCP 502 可连但 Modbus 无应答"要先看是不是间歇空帧 + 重试没兜住**，
+    其次才怀疑角色配置。
     """
 
-    DI_COUNT = 16
-    DO_COUNT = 16
-
-    def __init__(self, master, name, log=None):
+    def __init__(self, master, name, channels=16, publish=True, log=None):
         self._master = master
         self.name = name
         self._log = log or (lambda msg: None)
-        self.di = [0] * self.DI_COUNT
-        self.do = [0] * self.DO_COUNT
+        #: DI/DO 路数（单模块 16；聚合后 32）。由配置给，不写死。
+        self.channels = max(1, int(channels))
+        #: 是否参与点位发布。被聚合者（点已并入聚合者的地址空间）置 false：
+        #: 它仍然轮询、仍然出健康条目（用于判故障），但不再发一帧点位，
+        #: 否则客户端会出现两套重复点位。
+        self.publish = bool(publish)
+        self.di = [0] * self.channels
+        self.do = [0] * self.channels
         self.online = False
         self.last_ok_ms = 0
         self.last_error = ""
 
     async def poll(self, now_ms):
         try:
-            di = await self._master.read(2, 0, self.DI_COUNT)
-            do = await self._master.read(1, 0, self.DO_COUNT)
+            di = await self._master.read(2, 0, self.channels)
+            do = await self._master.read(1, 0, self.channels)
         except modbus.ModbusError as exc:
             self.online = False
             self.last_error = str(exc)
             raise
-        self.di = list(di)[:self.DI_COUNT]
-        self.do = list(do)[:self.DO_COUNT]
+        self.di = list(di)[:self.channels]
+        self.do = list(do)[:self.channels]
         self.online = True
         self.last_ok_ms = now_ms
         self.last_error = ""
@@ -619,10 +687,30 @@ class DigitalIo(object):
                 mask |= 1 << i
         return mask
 
+    def di_bit(self, channel):
+        """读一路 DI（bit n = 通道 n）。
+
+        [为什么必须有这个方法] valves.py 用它取开/关到位反馈。此前本类
+        没有该方法而 valves.py 又调了它，异常被外层的 except 吞掉并置
+        valid=False —— 表现是**6 路阀永远显示"无有效反馈"**，看着像
+        行程开关没接线，实际是接口缺失。故读失败要显式抛，不能静默 0。
+        """
+        ch = int(channel)
+        if not 0 <= ch < len(self.di):
+            raise IndexError("DI 通道号越界：%d（点数 %d）" % (ch, len(self.di)))
+        return bool(self.di[ch])
+
+    def do_bit(self, channel):
+        """读一路 DO 回显（bit n = 通道 n）。越界抛 IndexError。"""
+        ch = int(channel)
+        if not 0 <= ch < len(self.do):
+            raise IndexError("DO 通道号越界：%d（点数 %d）" % (ch, len(self.do)))
+        return bool(self.do[ch])
+
     async def write_do(self, index, on):
         """写单点 DO（FC05）。"""
-        if not 0 <= index < self.DO_COUNT:
-            return False, "DO 通道号越界（0~%d）" % (self.DO_COUNT - 1)
+        if not 0 <= index < self.channels:
+            return False, "DO 通道号越界（0~%d）" % (self.channels - 1)
         try:
             await self._master.write_single(5, index, 0xFF00 if on else 0x0000)
         except modbus.ModbusError as exc:
@@ -633,15 +721,15 @@ class DigitalIo(object):
     async def write_group(self, values):
         """整组写 DO。
 
-        :param values: 位图 int（bit n = DO n）或长度 16 的 0/1 序列
+        :param values: 位图 int（bit n = DO n）或长度 == channels 的 0/1 序列
         :returns: (ok, err)
         """
         if isinstance(values, int):
-            targets = [(values >> i) & 1 for i in range(self.DO_COUNT)]
+            targets = [(values >> i) & 1 for i in range(self.channels)]
         else:
-            targets = [1 if v else 0 for v in values][:self.DO_COUNT]
-            if len(targets) < self.DO_COUNT:
-                targets += [0] * (self.DO_COUNT - len(targets))
+            targets = [1 if v else 0 for v in values][:self.channels]
+            if len(targets) < self.channels:
+                targets += [0] * (self.channels - len(targets))
         # 逐点 FC05（见类注释：本模块 FC0F 会重发应答）。
         # 只写**有变化的点**：少发帧、少扰动现场输出。
         failed = []
@@ -667,6 +755,276 @@ class DigitalIo(object):
                                    or "IncompleteRead" in self.last_error):
                 reason = "无 Modbus 应答（检查是否配成主站 ms=1）"
             return proto.HEALTH_OFFLINE, 0, False, reason
+        if now_ms - self.last_ok_ms > stale_ms:
+            return proto.HEALTH_STALE, 0, True, "无有效数据"
+        return proto.HEALTH_OK, 0, True, ""
+
+
+# ============================================================================
+#                     电磁流量计（LD 系列，Modbus-RTU）
+# ============================================================================
+
+class FlowMeter(object):
+    """LD 系列电磁流量计（TRX，即 485；Modbus-RTU 从站）。
+
+    [寄存器口径] 与 C 端 `XFlowMeter.h` 的 22 槽一一对应，变量区
+    `0x1010~0x1025` **一帧读完**（FC03，22 个寄存器，未超块读上限 20？
+    实测该表允许 22 个连续读；若现场型号上限 20 则改成两段）：
+
+        0x1010/11  Float HI/LO  瞬时流量
+        0x1012/13  Float HI/LO  瞬时流速
+        0x1014/15  Float HI/LO  流量百分比
+        0x1016/17  Float HI/LO  流体电导比
+        0x1018/19  Long  HI/LO  正向累积整数部分
+        0x101A/1B  Float HI/LO  正向累积小数部分
+        0x101C/1D  Long  HI/LO  反向累积整数部分
+        0x101E/1F  Float HI/LO  反向累积小数部分
+        0x1020     U16          瞬时流量单位
+        0x1021     U16          累积总量单位
+        0x1022     U16          上限报警
+        0x1023     U16          下限报警
+        0x1024     U16          空管报警
+        0x1025     U16          系统报警
+
+    [参数区不支持连读] 0x1020 之后的**参数区**（量程/口径等）实测不支持
+    连续读，故本类只读变量区，参数另走单点读（当前不需要）。
+
+    [32 位量拼装] Float 是"高字在前"的两个 uint16。拼装**必须在设备层
+    做**（不能等两个事件），否则读到的高低字可能来自不同帧 —— 累积量在
+    跳字的那一瞬会拼出天文数字。故一帧读回来立即在本函数内拼好。
+    """
+
+    #: 变量区起始与长度（0x1010 起 22 个寄存器）。
+    VAR_BASE = 0x1010
+    VAR_COUNT = 22
+
+    def __init__(self, master_factory, unit_id, log=None):
+        self._master_factory = master_factory
+        self._master = None
+        self.unit_id = unit_id
+        self._log = log or (lambda msg: None)
+        # 工程值（拼装后）
+        self.flow = 0.0            #: 瞬时流量（单位见 flow_unit）
+        self.speed = 0.0           #: 瞬时流速（m/s）
+        self.flow_percent = 0.0    #: 流量百分比
+        self.conductivity = 0.0    #: 流体电导比
+        self.forward_total = 0.0   #: 正向累积（整数 + 小数）
+        self.reverse_total = 0.0   #: 反向累积
+        self.flow_unit = 0         #: 瞬时流量单位代码（0x1020）
+        self.total_unit = 0        #: 累积总量单位代码（0x1021）
+        self.alarm_upper = False
+        self.alarm_lower = False
+        self.alarm_empty = False
+        self.alarm_system = False
+        self.online = False
+        self.last_ok_ms = 0
+        self.last_error = ""
+
+    # ---- 连接 ----
+    def _master_get(self):
+        if self._master is None:
+            self._master = self._master_factory()
+        return self._master
+
+    async def close(self):
+        if self._master is not None:
+            await self._master.close()
+            self._master = None
+
+    # ---- 32 位量拼装 ----
+    @staticmethod
+    def _float32(hi, lo):
+        """两个 uint16（高字在前）→ float32。
+
+        [为什么放设备层] 一帧读回来的两个字天然同帧；若交给上层分两次
+        取值，累积量跳字时会拼出跨帧的垃圾值。
+        """
+        raw = ((int(hi) & 0xFFFF) << 16) | (int(lo) & 0xFFFF)
+        return struct.unpack(">f", struct.pack(">I", raw))[0]
+
+    @staticmethod
+    def _long32(hi, lo):
+        """两个 uint16（高字在前）→ uint32。"""
+        return ((int(hi) & 0xFFFF) << 16) | (int(lo) & 0xFFFF)
+
+    # ---- 采集 ----
+    async def poll(self, now_ms):
+        master = self._master_get()
+        try:
+            vals = await master.read(3, self.VAR_BASE, self.VAR_COUNT,
+                                     unit=self.unit_id)
+        except modbus.ModbusError as exc:
+            self.online = False
+            self.last_error = str(exc)
+            raise
+        if len(vals) < self.VAR_COUNT:
+            self.online = False
+            self.last_error = "变量区读回不足（%d/%d）" % (len(vals),
+                                                          self.VAR_COUNT)
+            raise modbus.ModbusError(self.last_error)
+        v = vals
+        # 32 位量成对拼装（高字在前）
+        self.flow = self._float32(v[0], v[1])
+        self.speed = self._float32(v[2], v[3])
+        self.flow_percent = self._float32(v[4], v[5])
+        self.conductivity = self._float32(v[6], v[7])
+        fwd_int = self._long32(v[8], v[9])
+        fwd_frac = self._float32(v[10], v[11])
+        rev_int = self._long32(v[12], v[13])
+        rev_frac = self._float32(v[14], v[15])
+        # 累积量 = 整数部分 + 小数部分（小数是 0~1 的 Float）
+        self.forward_total = float(fwd_int) + float(fwd_frac)
+        self.reverse_total = float(rev_int) + float(rev_frac)
+        self.flow_unit = int(v[16]) & 0xFFFF
+        self.total_unit = int(v[17]) & 0xFFFF
+        self.alarm_upper = bool(int(v[18]) & 0xFFFF)
+        self.alarm_lower = bool(int(v[19]) & 0xFFFF)
+        self.alarm_empty = bool(int(v[20]) & 0xFFFF)
+        self.alarm_system = bool(int(v[21]) & 0xFFFF)
+        self.online = True
+        self.last_ok_ms = now_ms
+        self.last_error = ""
+
+    # ---- 报警位图 ----
+    def alarm_mask(self):
+        """四项报警压成一个 int（客户端按位解析）。
+
+        位定义与客户端 `FlowMeterState` 一致：0=上限 1=下限 2=空管 3=系统。
+        """
+        mask = 0
+        if self.alarm_upper:
+            mask |= 1 << 0
+        if self.alarm_lower:
+            mask |= 1 << 1
+        if self.alarm_empty:
+            mask |= 1 << 2
+        if self.alarm_system:
+            mask |= 1 << 3
+        return mask
+
+    def health(self, now_ms, stale_ms):
+        if not self.online:
+            return proto.HEALTH_OFFLINE, 0, False, "从站失联"
+        if now_ms - self.last_ok_ms > stale_ms:
+            return proto.HEALTH_STALE, 0, True, "无有效数据"
+        if self.alarm_system:
+            return proto.HEALTH_WARNING, 0, True, "流量计系统报警"
+        return proto.HEALTH_OK, 0, True, ""
+
+
+# ============================================================================
+#                     浊度仪（两台，同一 485 不同站号）
+# ============================================================================
+
+class TurbidityMeter(object):
+    """浊度仪（Modbus-RTU，WZT-701A 一类）。
+
+    [口径来自真机手册，不再是"市面常见"猜测]
+    WZT-701A 说明书 4.3.10.2「测试命令」给出可复现帧：
+
+        发送：01 03 00 00 00 02 C4 0B
+        回复：01 03 04 D7 0A 41 1F 92 1D
+        原文：按照低字在前高字在后传输(CDAB)，浊度为 2 字 16 进制数
+              D7 0A 41 1F 对应的浮点型数据为 9.99NTU
+
+    即：FC03 读 0x0000 起 **2 个寄存器**；两字按**低字在前（CDAB）**拼成
+    32 位位模式，再按 **IEEE754 单精度**解释 —— 不除以 100。
+
+        bits = (hi << 16) | lo        # hi = vals[1]，lo = vals[0]
+        NTU  = struct.unpack(">f", bits)
+
+    [初版错在哪] 初版按"市面常见"实现成 `raw = (v0<<16)|v1; NTU = raw/100`。
+    用上面这帧验算：正确结果 9.99，初版算出 36077734.71 —— 差 6 个数量级，
+    而且**不报错**（质量仍 valid），是那种"界面有数、数全错"的故障。
+    现场没给资料时这只能靠猜，拿到手册后就必须按手册改。
+
+    [三项口径各自可调] 字序/格式/除数不写成写死的常量：同一现场的另一台表
+    完全可能是 ABCD + 整数/100。C 侧 XTurbidityMeter 也是三个运行期旋钮
+    （setWordOrder/setWordFormat/setWordDivisor），两边一一对应。
+
+    [为什么要留 raw] 换算口径一旦不对，raw 是唯一能反推真相的量。调试时先
+    看 raw 是不是一个像浮点的位模式（比如 0x41 开头 ≈ 10 NTU 量级），再判
+    字序/格式哪一项错了。
+
+    [站号] 两台仪器共用一个串口、站号不同（现场手工设定，实测 1 和 3）。
+    C 端 `HsfServerConfig.h` 的 HSF_TURBIDITY1/2_UNIT_ID 与之一致。
+    """
+
+    #: 寄存器起始地址（手册：0x0000）。
+    READ_ADDR = 0x0000
+    #: 读取寄存器数（32 位量 = 2 个）。
+    READ_COUNT = 2
+    #: 功能码：手册明确是 FC03（读保持寄存器），**不是** FC04。
+    READ_FUNCTION = 3
+    #: 字序：True=低字在前（CDAB，真机口径）；False=高字在前（ABCD，流量计口径）。
+    LOW_WORD_FIRST = True
+    #: 格式："float32" / "uint32" / "int32"。
+    WORD_FORMAT = "float32"
+    #: 整数格式下的除数（float32 格式下不参与计算）。
+    SCALE_DIVISOR = 100.0
+
+    def __init__(self, master_factory, unit_id, name="", log=None):
+        self._master_factory = master_factory
+        self._master = None
+        self.unit_id = unit_id
+        self.name = name or ("浊度仪%d" % unit_id)
+        self._log = log or (lambda msg: None)
+        self.raw = 0
+        self.ntu = 0.0
+        self.online = False
+        self.last_ok_ms = 0
+        self.last_error = ""
+
+    # ---- 连接 ----
+    def _master_get(self):
+        if self._master is None:
+            self._master = self._master_factory()
+        return self._master
+
+    async def close(self):
+        if self._master is not None:
+            await self._master.close()
+            self._master = None
+
+    def _decode(self, vals):
+        """按实例口径把两个字解成 NTU（留 raw 位模式供诊断）。"""
+        v0 = int(vals[0]) & 0xFFFF
+        v1 = int(vals[1]) & 0xFFFF
+        if self.LOW_WORD_FIRST:
+            bits = (v1 << 16) | v0
+        else:
+            bits = (v0 << 16) | v1
+        self.raw = bits
+        if self.WORD_FORMAT == "float32":
+            return struct.unpack(">f", struct.pack(">I", bits))[0]
+        if self.WORD_FORMAT == "int32":
+            signed = struct.unpack(">i", struct.pack(">I", bits))[0]
+            return signed / float(self.SCALE_DIVISOR or 1.0)
+        return bits / float(self.SCALE_DIVISOR or 1.0)
+
+    # ---- 采集 ----
+    async def poll(self, now_ms):
+        master = self._master_get()
+        try:
+            vals = await master.read(self.READ_FUNCTION, self.READ_ADDR,
+                                     self.READ_COUNT, unit=self.unit_id)
+        except modbus.ModbusError as exc:
+            self.online = False
+            self.last_error = str(exc)
+            raise
+        if len(vals) < self.READ_COUNT:
+            self.online = False
+            self.last_error = "读回寄存器不足（%d/%d)" % (
+                len(vals), self.READ_COUNT)
+            raise modbus.ModbusError(self.last_error)
+        self.ntu = self._decode(vals)
+        self.online = True
+        self.last_ok_ms = now_ms
+        self.last_error = ""
+
+    def health(self, now_ms, stale_ms):
+        if not self.online:
+            return proto.HEALTH_OFFLINE, 0, False, "从站失联"
         if now_ms - self.last_ok_ms > stale_ms:
             return proto.HEALTH_STALE, 0, True, "无有效数据"
         return proto.HEALTH_OK, 0, True, ""

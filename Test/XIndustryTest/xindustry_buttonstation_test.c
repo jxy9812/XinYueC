@@ -759,6 +759,90 @@ static void test_signalIsolation(void)
     buttonFixtureDeinit(&fx);
 }
 
+/**
+ * @brief 配置入口边界与取值器：越界元素号、NULL 对象、group() 借用语义。
+ * @details 元素号是**外部可传**的下标（页/装配层按枚举遍历），越界必须
+ *          逐个入口拒绝——漏一处就是数组越界写。group() 是借用指针，
+ *          未挂接时必须回到 NULL（调用方据此判"是否已装配"）。
+ */
+static void test_configBoundsAndGetters(void)
+{
+    ButtonFixture fx;
+
+    resetFlags();
+    buttonFixtureInit(&fx);
+
+    /* ---- group()：未挂接为 NULL，挂接后非 NULL ---- */
+    CHECK("未挂接 group 为 NULL", XButtonStation_group(fx.m_dev) == NULL);
+    CHECK("挂接触点", XButtonStation_attachInput(
+                          fx.m_dev, fx.m_group, XButtonStationElement_Start,
+                          &fx.m_input[XButtonStationElement_Start]));
+    CHECK("挂接后 group 非 NULL", XButtonStation_group(fx.m_dev) == fx.m_group);
+
+    /* ---- 越界元素号：全部配置/查询入口都要拒绝 ---- */
+    CHECK("越界 setContactActiveHigh 拒绝",
+          !XButtonStation_setContactActiveHigh(fx.m_dev,
+                                               XButtonStationElement_Count, true));
+    CHECK("负元素号 setContactActiveHigh 拒绝",
+          !XButtonStation_setContactActiveHigh(fx.m_dev, -1, true));
+    CHECK("越界 contactActiveHigh 返回 false",
+          !XButtonStation_contactActiveHigh(fx.m_dev,
+                                            XButtonStationElement_Count));
+    CHECK("越界 setLampFollow 拒绝",
+          !XButtonStation_setLampFollow(fx.m_dev,
+                                        XButtonStationElement_Count, true));
+    CHECK("负元素号 setLampFollow 拒绝",
+          !XButtonStation_setLampFollow(fx.m_dev, -1, true));
+    CHECK("越界 lampFollow 返回 false",
+          !XButtonStation_lampFollow(fx.m_dev, XButtonStationElement_Count));
+
+    /* ---- 合法范围内读写一致 ---- */
+    CHECK("设常开触点", XButtonStation_setContactActiveHigh(
+                            fx.m_dev, XButtonStationElement_Start, true));
+    CHECK("常开触点回读 true",
+          XButtonStation_contactActiveHigh(fx.m_dev, XButtonStationElement_Start));
+    CHECK("设常闭触点", XButtonStation_setContactActiveHigh(
+                            fx.m_dev, XButtonStationElement_Start, false));
+    CHECK("常闭触点回读 false",
+          !XButtonStation_contactActiveHigh(fx.m_dev, XButtonStationElement_Start));
+    CHECK("设灯跟随", XButtonStation_setLampFollow(
+                          fx.m_dev, XButtonStationElement_Start, true));
+    CHECK("灯跟随回读 true",
+          XButtonStation_lampFollow(fx.m_dev, XButtonStationElement_Start));
+    CHECK("关灯跟随", XButtonStation_setLampFollow(
+                          fx.m_dev, XButtonStationElement_Start, false));
+    CHECK("灯跟随回读 false",
+          !XButtonStation_lampFollow(fx.m_dev, XButtonStationElement_Start));
+
+    /* ---- NULL 对象：全部安全且不回真 ---- */
+    CHECK("NULL group 为 NULL", XButtonStation_group(NULL) == NULL);
+    CHECK("NULL isActive 安全", !XButtonStation_isActive(
+                                    NULL, XButtonStationElement_Start));
+    CHECK("NULL isEStopEngaged 安全", !XButtonStation_isEStopEngaged(NULL));
+    CHECK("NULL lampState 安全", (XButtonStation_lampState(
+                                      NULL, XButtonStationElement_Start, NULL),
+                                  true));
+    CHECK("NULL mode 安全", XButtonStation_mode(NULL) == XButtonStationMode_Unknown);
+    CHECK("NULL setContactActiveHigh 安全",
+          !XButtonStation_setContactActiveHigh(NULL,
+                                               XButtonStationElement_Start, true));
+    CHECK("NULL contactActiveHigh 安全",
+          !XButtonStation_contactActiveHigh(NULL, XButtonStationElement_Start));
+    CHECK("NULL setLampFollow 安全",
+          !XButtonStation_setLampFollow(NULL, XButtonStationElement_Start, true));
+    CHECK("NULL lampFollow 安全",
+          !XButtonStation_lampFollow(NULL, XButtonStationElement_Start));
+    CHECK("NULL setLamp 安全", !XButtonStation_setLamp(
+                                   NULL, XButtonStationElement_Start, true));
+    CHECK("NULL detachAll 安全", (XButtonStation_detachAll(NULL), true));
+    CHECK("NULL detachInput 安全", !XButtonStation_detachInput(
+                                       NULL, XButtonStationElement_Start));
+    CHECK("NULL detachLamp 安全", !XButtonStation_detachLamp(
+                                      NULL, XButtonStationElement_Start));
+
+    buttonFixtureDeinit(&fx);
+}
+
 /** @brief 跑一轮全部用例（泄漏压测循环体）。 */
 static void buttonRunAll(void)
 {
@@ -769,6 +853,7 @@ static void buttonRunAll(void)
     test_attachValidationAndDetach();
     test_rebindPoint();
     test_signalIsolation();
+    test_configBoundsAndGetters();
 }
 
 /**

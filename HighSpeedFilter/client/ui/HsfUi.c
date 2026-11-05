@@ -37,6 +37,17 @@ static void hsfWinHealthNotify(void* userData);
 #include "HsfMonitorAnalog.h"
 #include "HsfMonitorVfd.h"
 #include "HsfMonitorFlowMeter.h"
+#include "HsfMonitorValve.h"
+
+/* 前置声明：数字量/模拟量/电磁阀页回调（实现见文件后部，建窗时注册）。
+ * [必须在 include 之后] 形参用到 HsfDigitalState 等页面类型。 */
+static void hsfWinValveSync(void* userData);
+static void hsfWinValveWrite(void* userData, int index, bool wantOpen);
+static void hsfWinCommandResult(void* userData, int op, bool ok,
+                                const char* errUtf8);
+static void hsfWinDigitalSync(void* userData);
+static void hsfWinDigitalWrite(void* userData, int index, HsfDigitalState target);
+static void hsfWinAnalogSync(void* userData);
 #include "HsfDataMenu.h"
 #include "HsfDataHistory.h"
 #include "HsfDataTable.h" /* HsfDataTablePage_adapt（页 7/8/9 共用钩子）。 */
@@ -54,6 +65,7 @@ static void hsfWinHealthNotify(void* userData);
 #include "XWidget.h"
 #include "XBoxLayout.h"
 #include "XScrollArea.h"
+#include "XScrollBar.h"          /* 切页滚动复位用。 */
 #include "XFrame.h"
 #include "XSplitter.h"
 #include "XSplitterHandle.h"
@@ -80,6 +92,7 @@ static const HsfPageCreateFn kHsfBuilders[HSF_PAGE_COUNT] = {
     HsfMonitorAnalog_create,   /* 4  监视-模拟量 */
     HsfMonitorVfd_create,      /* 5  监视-变频器 */
     HsfMonitorFlowMeter_create,/* 6  监视-电磁流量计（与变频器同级） */
+    HsfMonitorValve_create,    /* 7  监视-电磁阀 */
     HsfDataMenu_create,        /* 7  数据 子菜单 */
     HsfDataHistory_create,     /* 8  数据-历史数据 */
     HsfDataLog_create,         /* 9  数据-日志 */
@@ -132,6 +145,7 @@ static const HsfPageAdaptFn kHsfPageAdapt[HSF_PAGE_COUNT] = {
     HsfMonitorAnalog_adapt,  /* 4 监视-模拟量（竖屏窄列/触控高） */
     HsfMonitorVfd_adapt, /* 5  监视-变频器（仪表横排/纵排） */
     HsfMonitorFlowMeter_adapt, /* 6 监视-电磁流量计（仪表横排/纵排） */
+    HsfMonitorValve_adapt,     /* 7 监视-电磁阀（3 列/1 列） */
     NULL,
     HsfDataTablePage_adapt, /* 8  数据-历史数据（竖屏收边距） */
     HsfDataTablePage_adapt, /* 9  数据-日志（竖屏收边距） */
@@ -174,9 +188,11 @@ typedef struct HsfWin
     int          m_layoutMode;    /**< 形态：0=宽屏 1=紧凑。 */
     int          m_navWidth;      /**< 导航面板记忆宽（拖拽更新，px）。 */
     XTimerId     m_clockTimer;   /**< 标题栏时钟 1s 刷新定时器。 */
+    int64_t      m_homeRefreshMs;/**< 主界面数值块上次刷新时刻（帧泵节流用）。 */
     XTimerId     m_autoQuitTimer; /**< 自动退出定时器（>0 秒参数时启用）。 */
     int          m_autoSeconds;   /**< 剩余自动退出秒数（0=常驻）。 */
     XWidget*     m_pageRoot[HSF_PAGE_COUNT]; /**< 各页页根（供 adapt 用）。 */
+    XWidget*     m_pageScroll[HSF_PAGE_COUNT]; /**< 各页的滚动壳（切页时复位滚动位用；可 NULL）。 */
     int          m_pageBeforeMenu; /**< 打开菜单页前的原页（紧凑态 ☰
                                     *   菜单开合用；形态切回宽屏时据此
                                     *   退出菜单页——同 demo 的
@@ -275,6 +291,7 @@ static int hsf_pageTopicOf(int pageIndex)
     case HSF_PAGE_MONITOR_VFD:       return (int)HsfLinkTopic_Vfd;
     case HSF_PAGE_MONITOR_ANALOG:    return (int)HsfLinkTopic_Ai;
     case HSF_PAGE_MONITOR_FLOWMETER: return (int)HsfLinkTopic_FlowMeter;
+    case HSF_PAGE_MONITOR_VALVE:     return (int)HsfLinkTopic_Valve;
     default:                         return -1;
     }
 }
@@ -309,6 +326,17 @@ static void hsf_goPage(HsfWin* self, int index)
     snprintf(buf, sizeof(buf), "当前页: %s", HsfPages_name(index));
     HsfStatusBar_setText(&self->m_statusBar, buf);
     HsfNavPanel_setActivePage(&self->m_navPanel, index);
+    /* [2026-11-05 切页滚动复位] 滚动壳会记住上次停在哪。实测：窄屏电磁阀页滞留在
+     * 底部，切过去只看得到「电磁阀6」，前面 5 张卡片全在视口上方。
+     * 切页就应从头看。 */
+    if (index >= 0 && index < HSF_PAGE_COUNT && self->m_pageScroll[index]) {
+        /* [用滚动条 value 而不是 ensureVisible] ensureVisible 在切页当拍
+         * 不生效：那时新页刚被 show、视口/内容几何尚未定，
+         * 可见区计算出来是空的。直接把竖向滚动条置 0 最确定。 */
+        XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(
+            (XAbstractScrollArea*)self->m_pageScroll[index]);
+        if (vsb) XScrollBar_setValue(vsb, 0);
+    }
     /* 按需订阅迁移（隐藏页退订，新页订阅即补发首帧）。 */
     hsf_pageTopicSwitch(self, index);
     /* 移植页窄宽分档：切页后页根宽度更新 → 重新分档。 */
@@ -934,6 +962,15 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     HsfTitleBar_setModeHandler(&self->m_titleBar, hsfWinModeSlot, self);
     HsfLinkClient_setModeCallback(hsfWinModeNotify, self);
     HsfLinkClient_setHealthCallback(hsfWinHealthNotify, self);
+    /* 电磁阀：快照到达即灌页面（含控制闸重算）；按钮出口走同一链路。 */
+    HsfLinkClient_setValveCallback(hsfWinValveSync, self);
+    HsfLinkClient_setCommandCallback(hsfWinCommandResult, self);
+    HsfMonitorValve_setWriteHandler(hsfWinValveWrite, self);
+    /* 数字量/模拟量：点数与值全部由服务端推送决定（客户端不写死）。 */
+    HsfLinkClient_setDigitalCallback(hsfWinDigitalSync, self);
+    HsfLinkClient_setAiCallback(hsfWinAnalogSync, self);
+    HsfMonitorDigital_setWriteHandler(hsfWinDigitalWrite, self);
+    HsfMonitorValve_attachStatus(HsfPages_setStatus, self);
     HsfLinkClient_queryRunMode();
     HsfTitleBar_setMenuHandler(&self->m_titleBar, hsf_menuToggleCb, self);
 
@@ -1064,6 +1101,7 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
                              (int)(XFrameShape_NoFrame | XFrameShadow_Plain));
         XScrollArea_setWidget(scroll, page);
         entry = (XWidget*)scroll;
+        self->m_pageScroll[i] = entry;   /* 切页时复位滚动位用。 */
         HsfStack_addPage(&self->m_stack, entry);
     }
     HsfStack_go(&self->m_stack, HSF_PAGE_HOME);
@@ -1193,6 +1231,177 @@ static void hsfWinHealthNotify(void* userData)
     HsfTitleBar_setHealth(&win->m_titleBar, true, fault, offline);
 }
 
+/* ==================== 电磁阀页数据桥 ==================== */
+
+/**
+ * @brief 把服务端阀快照灌进电磁阀页并同步控制闸。
+ * @param userData 归属主窗（HsfWin*；当前未用，保留接缝）。
+ * @note  [双保险] 服务端始终强制闸（自动模式拒绝全部远程控制 + 需 root）；
+ *        客户端这道闸只负责让"点不动"有可见原因——否则用户会以为界面卡了。
+ */
+static void hsfWinValveSync(void* userData)
+{
+    const HsfLinkValves* v = HsfLinkClient_valves();
+    const char* reason = NULL;
+    int autoMode = 0;
+    int i;
+
+    (void)userData;
+    if (!v) return;
+    if (v->m_received && HsfLinkClient_valvesFresh()) {
+        HsfMonitorValve_setCount(v->m_count);
+        for (i = 0; i < v->m_count; ++i) {
+            HsfMonitorValve_setName(i, v->m_items[i].m_name);
+            HsfMonitorValve_setFeedback(i, v->m_items[i].m_openFb,
+                                        v->m_items[i].m_closeFb);
+            HsfMonitorValve_setState(i, v->m_items[i].m_state);
+            HsfMonitorValve_setReady(i, v->m_items[i].m_ready);
+            HsfMonitorValve_setValid(i, v->m_items[i].m_valid);
+            HsfMonitorValve_setText(i, v->m_items[i].m_text);
+        }
+    }
+
+    /* 闸门原因优先级：未连接 → 自动模式 → 权限不足。 */
+    if (!HsfLinkClient_isReady()) {
+        reason = "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5\xE6\x9C\x8D\xE5\x8A\xA1\xE7\xAB\xAF"; /* 未连接服务端 */
+    } else if (HsfLinkClient_runMode(&autoMode) && autoMode) {
+        reason = "\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD"
+                 "\xEF\xBC\x9A\xE8\xBF\x9C\xE7\xA8\x8B\xE6\x8E\xA7\xE5\x88\xB6"
+                 "\xE5\xB7\xB2\xE8\xA2\xAB\xE7\xA6\x81\xE7\x94\xA8"; /* 自动运行中：远程控制已被禁用 */
+    } else if (HsfLinkClient_role() < (int)HSF_ROLE_CONTROL) {
+        reason = "\xE6\x9D\x83\xE9\x99\x90\xE4\xB8\x8D\xE8\xB6\xB3"
+                 "\xEF\xBC\x9A\xE6\x8E\xA7\xE5\x88\xB6\xE9\x9C\x80\xE8\xA6\x81"
+                 " root \xE8\xB4\xA6\xE6\x88\xB7"; /* 权限不足：控制需要 root 账户 */
+    }
+    HsfMonitorValve_setControlEnabled(reason == NULL, reason);
+    HsfMonitorValve_refresh();
+}
+
+/** @brief 电磁阀页按钮出口：下发阀控制请求。 */
+static void hsfWinValveWrite(void* userData, int index, bool wantOpen)
+{
+    (void)userData;
+    HsfLinkClient_valveControl(index, wantOpen);
+}
+
+/** @brief 控制应答回调：阀/数字量被拒时把原因打到状态栏。 */
+static void hsfWinCommandResult(void* userData, int op, bool ok,
+                                const char* errUtf8)
+{
+    HsfWin* win = (HsfWin*)userData;
+    char buf[160];
+    if (!win) return;
+    if (op != (int)HSF_CMD_VALVE_CONTROL && op != (int)HSF_CMD_DIGITAL_CONTROL)
+        return;
+    if (!ok) {
+        snprintf(buf, sizeof(buf),
+                 "\xE6\x93\x8D\xE4\xBD\x9C\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x9A%s",
+                 (errUtf8 && errUtf8[0]) ? errUtf8
+                                         : "\xE6\x9C\xAA\xE7\x9F\xA5\xE5\x8E\x9F\xE5\x9B\xA0");
+    } else {
+        snprintf(buf, sizeof(buf), "\xE5\x91\xBD\xE4\xBB\xA4\xE5\xB7\xB2\xE5\x8F\x97\xE7\x90\x86");
+    }
+    HsfStatusBar_setText(&win->m_statusBar, buf);
+}
+
+/* ==================== 数字量页数据桥 ==================== */
+
+/**
+ * @brief 把服务端位图推送灌进数字量页，并同步操作闸。
+ * @param userData 归属主窗（HsfWin*；当前未用）。
+ * @note  [点数由服务端定] 客户端不写死几个 DI/DO：一律按推送的
+ *        count 建点（DI 占 [0,count)、DO 占 [count,2*count)），服务端改
+ *        点数客户端自动跟随；值取 di/do 位图。
+ *        [操作闸] 与电磁阀同款双保险：服务端始终强制，客户端
+ *        只负责让"点不动"有可见原因。
+ */
+static void hsfWinDigitalSync(void* userData)
+{
+    const HsfLinkDigital* d = HsfLinkClient_digital();
+    const char* reason = NULL;
+    int autoMode = 0;
+    int i;
+
+    (void)userData;
+    if (!d) return;
+    if (d->m_received && HsfLinkClient_digitalFresh()) {
+        int n = d->m_count;
+        if (n < 0) n = 0;
+        if (n > HSF_DIGITAL_CHANNELS) n = HSF_DIGITAL_CHANNELS;
+        HsfMonitorDigital_setCount(n * 2);
+        for (i = 0; i < n; ++i) {
+            /* 通道名由服务端给（未收到时页面显示缺省 DI/DO+通道号）。 */
+            const char* diName = HsfLinkClient_digitalName(i, false);
+            const char* doName = HsfLinkClient_digitalName(i, true);
+            if (diName) HsfMonitorDigital_setName(i, diName);
+            if (doName) HsfMonitorDigital_setName(n + i, doName);
+            HsfMonitorDigital_setChannel(i, i);
+            HsfMonitorDigital_setKind(i, HSF_DIGITAL_INPUT);
+            HsfMonitorDigital_setValue(
+                i, (d->m_di & (1u << i)) ? HSF_DIGITAL_ON : HSF_DIGITAL_OFF);
+
+            HsfMonitorDigital_setChannel(n + i, i);
+            HsfMonitorDigital_setKind(n + i, HSF_DIGITAL_OUTPUT);
+            HsfMonitorDigital_setValue(
+                n + i, (d->m_do & (1u << i)) ? HSF_DIGITAL_ON : HSF_DIGITAL_OFF);
+        }
+    }
+
+    if (!HsfLinkClient_isReady()) {
+        reason = "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5\xE6\x9C\x8D\xE5\x8A\xA1\xE7\xAB\xAF";
+    } else if (HsfLinkClient_runMode(&autoMode) && autoMode) {
+        reason = "\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD\xEF\xBC\x9A\xE8\xBF\x9C\xE7\xA8\x8B\xE6\x8E\xA7\xE5\x88\xB6\xE5\xB7\xB2\xE8\xA2\xAB\xE7\xA6\x81\xE7\x94\xA8";
+    } else if (HsfLinkClient_role() < (int)HSF_ROLE_CONTROL) {
+        reason = "\xE6\x9D\x83\xE9\x99\x90\xE4\xB8\x8D\xE8\xB6\xB3\xEF\xBC\x9A\xE6\x8E\xA7\xE5\x88\xB6\xE9\x9C\x80\xE8\xA6\x81 root \xE8\xB4\xA6\xE6\x88\xB7";
+    }
+    HsfMonitorDigital_setOperationEnabled(reason == NULL);
+    HsfMonitorDigital_setInteractiveMode(reason == NULL);
+}
+
+/**
+ * @brief 数字量页写出口：DO 按下消费者给的下标发控制。
+ * @note  页内下标分两段：[0,count)=DI、[count,2*count)=DO。写出口只接收
+ *        DO 段，按减去段基址后的通道号下发。
+ */
+static void hsfWinDigitalWrite(void* userData, int index, HsfDigitalState target)
+{
+    const HsfLinkDigital* d = HsfLinkClient_digital();
+    int n;
+    (void)userData;
+    if (!d) return;
+    n = d->m_count;
+    if (index < n) return;            /* DI 只读，不应该走到这里。 */
+    HsfLinkClient_digitalControl(index - n, target == HSF_DIGITAL_ON);
+}
+
+/* ==================== 模拟量页数据桥 ==================== */
+
+/**
+ * @brief 把服务端模拟量推送灌进模拟量页。
+ * @note  [点数由服务端定] 通道数取推送的 n 键（不读客户端常量）；
+ *        值取 u<i> 微安定点 ÷ 1000 得 mA，有效标志取 v 掩码。
+ */
+static void hsfWinAnalogSync(void* userData)
+{
+    int32_t ua[HSF_LINK_AI_CH_MAX];
+    uint32_t mask = 0;
+    int n;
+    int i;
+
+    (void)userData;
+    n = HsfLinkClient_aiValues(ua, &mask);
+    if (n <= 0) return;
+    HsfMonitorAnalog_setCount(n);
+    for (i = 0; i < n; ++i) {
+        const char* name = HsfLinkClient_aiName(i);
+        if (name) HsfMonitorAnalog_setName(i, name);
+        HsfMonitorAnalog_setChannel(i, i);
+        HsfMonitorAnalog_setRaw(i, ua[i]);
+        HsfMonitorAnalog_setScaled(i, (double)ua[i] / 1000.0);
+        HsfMonitorAnalog_setKind(i, HSF_ANALOG_INPUT);
+    }
+}
+
 /* ==================== 帧泵（几何刷新漏斗） ==================== *//* ==================== 帧泵（几何刷新漏斗） ==================== */
 
 /** @brief 帧泵：每轮事件循环刷新移植页分档与导航几何。
@@ -1209,6 +1418,18 @@ static bool hsf_framePump(void* userData)
     hsf_adaptPages(win);
     HsfNavPanel_update(&win->m_navPanel);
     HsfNavPanel_update(&win->m_mobilePanel);
+    /* 主界面数值块刷新：**只在首页可见时**、按 200ms 节流跑。
+     * [为什么不在页面内开定时器] 页面生命周期长于/短于主窗不定，页内定时器
+     * 要自己管注销；这里借帧泵统一节拍，页隐藏即不刷（与"隐藏页不重绘"
+     * 同口径），零额外定时器。 */
+    {
+        int64_t nowMs = XDateTime_currentNSecsSinceEpoch() / 1000000LL;
+        if (HsfStack_current(&win->m_stack) == HSF_PAGE_HOME &&
+            nowMs - win->m_homeRefreshMs >= 200) {
+            win->m_homeRefreshMs = nowMs;
+            HsfHomePage_refresh(win->m_pageRoot[HSF_PAGE_HOME]);
+        }
+    }
     XWidget_raise((XWidget*)&win->m_overlay);
     /* autoFit 收框只改尺寸不动位置 → 每帧按「尺寸与上次锚定值不同」重锚
        贴边（demo 帧泵同口径；fixed 态才跟边，非 fixed 是用户自由拖动位）。 */

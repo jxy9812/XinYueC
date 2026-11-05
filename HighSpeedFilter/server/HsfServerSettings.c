@@ -175,8 +175,73 @@ void HsfServerSettings_setInt(const char* key, int value)
     }
 }
 
-/* ==================== 监听端口 ==================== */
+/* ==================== 字符串键 ==================== */
 
+void HsfServerSettings_getString(const char* key, const char* def,
+                                 char* buf, int cap)
+{
+    XVariant* v;
+    const char* out = NULL;
+
+    if (!buf || cap <= 0) return;
+    buf[0] = '\0';
+    if (!def) def = "";
+
+    if (!s_store || !key) {
+        snprintf(buf, (size_t)cap, "%s", def);
+        return;
+    }
+    v = XSettings_value_utf8(s_store, key);
+    if (!v) {
+        snprintf(buf, (size_t)cap, "%s", def);
+        return;
+    }
+    /* [类型退化] 正常读回是 String；现场把 host 写成数字也会读到数值类型。
+     * 非 String 时按数值转文本，不能当"没配置"处理（否则配置写了却不生效）。 */
+    if (XVariant_type(v) == XVariantType_String) {
+        /* fromVariant_ref 返回**变体内部**的借用指针（不新建对象，禁删）。 */
+        XString* s = XString_fromVariant_ref(v);
+        out = s ? XString_toUtf8(s) : NULL;
+    }
+    if (out && out[0]) {
+        snprintf(buf, (size_t)cap, "%s", out);
+    } else if (XVariant_type(v) == XVariantType_String) {
+        snprintf(buf, (size_t)cap, "%s", def);
+    } else {
+        snprintf(buf, (size_t)cap, "%d", XVariant_toInt(v));
+    }
+    XClassDelete((XClass*)v);
+}
+
+void HsfServerSettings_setString(const char* key, const char* value)
+{
+    XVariant* v;
+    if (!s_store || !key) return;
+    v = XString_toVariant_utf8(value ? value : "");
+    if (v) {
+        XSettings_setValue_utf8(s_store, key, v);
+        XClassDelete((XClass*)v);
+        XSettings_sync(s_store);   /* 与 setInt 同款：写完立即落盘。 */
+    }
+}
+
+bool HsfServerSettings_seedInt(const char* key, int def)
+{
+    if (!s_store || !key) return false;
+    if (XSettings_contains_utf8(s_store, key)) return false;
+    HsfServerSettings_setInt(key, def);
+    return true;
+}
+
+bool HsfServerSettings_seedString(const char* key, const char* def)
+{
+    if (!s_store || !key) return false;
+    if (XSettings_contains_utf8(s_store, key)) return false;
+    HsfServerSettings_setString(key, def);
+    return true;
+}
+
+/* ==================== 监听端口 ==================== */
 /**
  * @brief 端口合法性（1~65535；0 是「用缺省」的哨兵值，不落盘）。
  */

@@ -120,6 +120,23 @@ CMD_AI_SNAPSHOT = 0x0103
 CMD_TEMPHUM_SNAPSHOT = 0x0104
 CMD_RUN_MODE = 0x0105
 CMD_FLOWMETER_SNAPSHOT = 0x0106
+#: 浊度仪快照（Response = 两台 BSON）。
+CMD_TURBIDITY_SNAPSHOT = 0x0112
+#: 浊度仪遥测推送主题。
+TOPIC_TURBIDITY_STATUS = 0x00010009
+#: 进水泵快照（Response = 泵状态 BSON）。
+CMD_PUMP_SNAPSHOT = 0x0113
+#: 进水泵开关（Request 载荷 = {"index":int, "on":bool}）。
+CMD_PUMP_CONTROL = 0x0114
+
+#: 自动运行控制（载荷 {"on":bool}；需 root + 自动模式）。
+#:
+#: [与 CMD_RUN_MODE 分开] 切模式只是**授权**自动可以跑；这条才是
+#: 真正按下启动/停止。合成一个动作会让"只想切个模式"变成"设备立刻
+#: 开始自动运行"——现场认为太危险。
+CMD_AUTO_CONTROL = 0x0115
+#: 进水泵遥测推送主题。
+TOPIC_PUMP_STATUS = 0x0001000A
 CMD_DEVICE_HEALTH = 0x0107
 #: 数字量（16DI/16DO）快照请求。载荷 {"dev":int}；应答见 app.handle_digital。
 CMD_DIGITAL_SNAPSHOT = 0x0108
@@ -144,6 +161,12 @@ KEY_OK = "ok"
 KEY_ERR = "err"
 KEY_MODE = "mode"
 KEY_AUTO = "auto"
+#: 自动控制器的**运行状态**（bool）：自动逻辑此刻是否真的在跑。
+#:
+#: [与 KEY_AUTO 的区别] `auto` 是"人把模式拨到自动了"；这个才是"自动逻辑
+#: 真的在驱动设备"。两者正常同步，但界面**不能**从模式位推断运行位 ——
+#: 一旦控制器没启动，界面会显示"自动在跑"而实际什么都不做（最难的假正常）。
+KEY_AUTO_RUNNING = "autoRunning"
 KEY_DEV = "dev"
 KEY_NAME = "name"
 KEY_DI = "di"
@@ -248,7 +271,35 @@ CMD_VALVE_SNAPSHOT = 0x0110
 #: 电磁阀手动开关（Request 载荷 = {"index":int, "on":bool}；需 root + 手动模式）。
 CMD_VALVE_CONTROL = 0x0111
 #: 电磁阀遥测周期推送主题（载荷 = 6 路状态 BSON）。
+#:
+#: [同一主题也承载告警帧] 超时/互斥故障是**事件**，服务端在同一主题上另发
+#: 一帧（键空间 "ac"/"a0_*"，无 count、无 v{i}_*）。客户端订阅一次即可两种
+#: 都收到；解析必须先认 KEY_ALARM_COUNT，否则会把告警帧当状态帧把点位清空。
 TOPIC_VALVE_STATUS = 0x00010007
+
+# ---- 阀告警键 ----
+
+#: 本帧告警条数（int）。**有该键就说明这是告警帧**（不是周期状态帧）。
+KEY_ALARM_COUNT = "ac"
+#: 告警路号（int，0 起）。
+KEY_ALARM_VALVE_INDEX = "vi"
+#: 告警阀名（utf8）。
+KEY_ALARM_VALVE_NAME = "vn"
+#: 告警类型（int；见 VALVE_ALARM_*）。
+KEY_ALARM_KIND = "k"
+#: 告警文字（utf8，给操作员看；服务端已写好，客户端直接显示）。
+KEY_ALARM_TEXT = "t"
+#: 发生时刻（int64 单调毫秒）。
+KEY_ALARM_AT = "at"
+#: 超时秒数（float；仅超时类有意义）。
+KEY_ALARM_TIMEOUT_S = "to"
+
+#: 动作超时未到位（服务端 20s 定时器到点）。
+VALVE_ALARM_TIMEOUT = 1
+#: 开/关到位信号同时有效（接线或阀体故障）。
+VALVE_ALARM_CONFLICT = 2
+#: 阀恢复（超时后终于到位）。客户端据此消警。
+VALVE_ALARM_CLEARED = 3
 
 # ---- 快照键 ----
 
@@ -263,6 +314,15 @@ KEY_VALVE_INDEX = "index"
 KEY_VALVE_NAME = "name"
 #: 是否已下发"开"指令（bool）。**这是命令意图，不是到位结果**。
 KEY_VALVE_OPEN_CMD = "openCmd"
+#: **控制命令**的目标态（bool；CMD_VALVE_CONTROL 载荷键）。
+#:
+#: [为什么与 KEY_VALVE_OPEN_CMD 是两个不同的键] 一个是**命令载荷**的输入键
+#: （C 侧 HSF_KEY_VALVE_ON = "on"），一个是**状态快照**的输出键
+#: （HSF_KEY_VALVE_OPEN_CMD = "openCmd"）。两者不可混用：服务端只读 "on"，
+#: 发 "openCmd":true 会被当作"未给目标态"而取缺省 false ⇒ **每次开阀请求
+#: 实际都在关阀**，且应答仍是 ok=True（命令确实被受理了）。现场表现为
+#: "点了开阀，界面闪一下又变回已关"，从日志几乎看不出来（2026-11-05 实测踩过）。
+KEY_VALVE_ON = "on"
 #: 开到位反馈（bool）。
 KEY_VALVE_OPEN_FB = "openFb"
 #: 关到位反馈（bool）。
@@ -275,6 +335,12 @@ KEY_VALVE_READY = "ready"
 KEY_VALVE_VALID = "valid"
 #: 故障说明（utf8，可空）。
 KEY_VALVE_TEXT = "text"
+#: 控制命令的**处置结果**（utf8：issued/repeated/reversed/ignored）。
+#:
+#: [为什么需要] 服务端对重复点击有三种不同处置：真的动了、原样重发但不
+#: 重置计时、已到位什么都不做。只回 ok=True 的话界面区分不了"动了"和
+#: "本来就在那儿"，用户会以为按钮坏了。
+KEY_VALVE_CMD_RESULT = "cmdResult"
 
 #: 电磁阀状态机（**由两个到位反馈推导，不是命令回显**）。
 #:
@@ -318,12 +384,37 @@ HEALTH_FAULT = 4
 KIND_VFD = 0
 KIND_TEMPHUM = 1
 KIND_FLOWMETER = 2
+
+# ---- 浊度仪键（v{index}_ 前缀）----
+
+#: 浊度值 ×100（int；客户端 ÷100 显示两位小数）。
+KEY_TURB_NTU = "ntu"
+#: 原始寄存器值（int；排查真相用）。
+KEY_TURB_RAW = "raw"
+#: 该台是否在线（bool）。
+KEY_TURB_ONLINE = "online"
+
+# ---- 进水泵键 ----
+
+#: 泵路号（int，0 起）。
+KEY_PUMP_INDEX = "index"
+#: 泵名（utf8）。
+KEY_PUMP_NAME = "name"
+#: 命令/回显状态（bool；**无反馈信号**，只反映输出）。
+KEY_PUMP_ON = "on"
+#: 该泵输出是否可控（bool）。
+KEY_PUMP_READY = "ready"
 KIND_ANALOG_IO = 3
 KIND_BUS = 4
 #: 数字量模块（本 Python 版新增；客户端按 kind 分组，未知值应降级显示）。
 KIND_DIGITAL_IO = 5
 #: 电磁阀组（6 路；一个健康条目汇总整组）。
 KIND_VALVE = 6
+#: 水质仪表（浊度仪等）。
+#:
+#: [实锅 2026-11-05] 浊度仪初版在服务端复用了 KIND_TEMPHUM，首页
+#: "类型"列把两台浊度仪显示成温湿度 —— 数据对、类别完全误导。
+KIND_WATER = 7
 
 # ============================================================================
 #                        点动手持时序（安全红线，勿随手改）

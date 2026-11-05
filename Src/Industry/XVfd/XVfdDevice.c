@@ -26,6 +26,13 @@
 #define XVFD_DEFAULT_STATUS_INTERVAL_MS 200u
 /** @brief 写落定监督超时缺省值（毫秒）。 */
 #define XVFD_DEFAULT_ACTION_TIMEOUT_MS 2000u
+/**
+ * @brief 电机额定转速缺省值（rpm；最大频率处的转速）。
+ * @details 1440rpm@50Hz 是 4 极异步电机的额定点（同步 1500rpm 减去额定转差），
+ *          现场绝大多数风机/泵都落在这个点附近。品牌 init 可覆盖（如从
+ *          P1.05 读得后 setRatedRpm）。0 = 未配置（换算时回落本值）。
+ */
+#define XVFD_DEFAULT_RATED_RPM 1440.0
 
 /* 定时器事件槽（定义在文件后半，类初始化处需取其地址）。 */
 static void VXVfdDevice_timerEvent(XObject* obj, XTimerEvent* event);
@@ -242,7 +249,32 @@ static bool VXVfdDevice_FreeStop(XVfdDevice* dev) { return xvfdNotSupported(dev)
 static bool VXVfdDevice_QuickStop(XVfdDevice* dev) { return xvfdNotSupported(dev); }
 static bool VXVfdDevice_Jog(XVfdDevice* dev, bool reverse) { (void)reverse; return xvfdNotSupported(dev); }
 static bool VXVfdDevice_SetFrequency(XVfdDevice* dev, double hz) { (void)hz; return xvfdNotSupported(dev); }
-static bool VXVfdDevice_SetSpeedRpm(XVfdDevice* dev, int rpm) { (void)rpm; return xvfdNotSupported(dev); }
+/**
+ * @brief 缺省「按转速调速」：rpm → Hz 后转调本类的 SetFrequency。
+ * @param dev 设备。
+ * @param rpm 目标转速（负值=反转方向给定，与频率给定负值同语义）。
+ * @return 受理返回 true；无频率通道（SetFrequency 未实现）返回 false。
+ * @details [2026-11-05 转速给定通用化] 多数品牌只有一个频率给定寄存器
+ *          （M512 的 1000H 百分比），没有独立转速给定。与其每个品牌各写
+ *          一遍乘法，不如在基类按
+ *              hz = rpm / ratedRpm × maxFreqHz
+ *          换算后交给子类的 SetFrequency——子类的源校验（如"主频率源必须
+ *          是通讯给定"）、标度、写序全部复用，不会被绕过。
+ *          有原生转速通道的品牌（ATV61）自行覆盖本虚槽。
+ */
+static bool VXVfdDevice_SetSpeedRpm(XVfdDevice* dev, int rpm)
+{
+    double rated;
+    double base;
+    double hz;
+    if (!dev) return false;
+    rated = (dev->m_ratedRpm > 0.0) ? dev->m_ratedRpm : XVFD_DEFAULT_RATED_RPM;
+    base = (dev->m_maxFreqHz > 0.0) ? dev->m_maxFreqHz : 50.0;
+    hz = (double)rpm / rated * base;
+    /* 转调子类频率通道：未实现时它自己会报 NotSupported（不静默吞掉）。 */
+    return XClassGetVirtualFunc(dev, EXVfdDevice_SetFrequency,
+        bool (*)(XVfdDevice*, double))(dev, hz);
+}
 static bool VXVfdDevice_SetAccelDecel(XVfdDevice* dev, int index, double accelS, double decelS)
 { (void)index; (void)accelS; (void)decelS; return xvfdNotSupported(dev); }
 static bool VXVfdDevice_SelectPresetSpeed(XVfdDevice* dev, int index)
@@ -334,6 +366,7 @@ void XVfdDevice_init(XVfdDevice* dev)
     XClassGetVtable(dev) = XVfdDevice_class_init();
     dev->m_statusIntervalMs = XVFD_DEFAULT_STATUS_INTERVAL_MS;
     dev->m_actionTimeoutMs = XVFD_DEFAULT_ACTION_TIMEOUT_MS;
+    dev->m_ratedRpm = XVFD_DEFAULT_RATED_RPM;   /* 转速给定换算基准 */
     dev->m_statusTimer = XTIMER_INVALID_ID;
     dev->m_actionTimer = XTIMER_INVALID_ID;
     dev->m_lastError = XVfdError_OK;
@@ -550,6 +583,29 @@ bool XVfdDevice_hasCapability(const XVfdDevice* dev, uint32_t cap)
 
 const XVfdStatus* XVfdDevice_status_const(const XVfdDevice* dev)
 {
+    /* [2026-11-05 陈旧快照根修] m_valid / m_validMask 一旦置位就再没人清：
+     * 链路断开（485 没接 / 变频器断电）后 m_status 仍保留最后一拍的字段与
+     * 掩码，服务端据此持续发布"看起来有值"的遥测——实测客户端显示母线
+     * 电压 553.2V、输出功率 0.0kW，而变频器根本没应答。
+     *
+     * 正确语义：快照只在"足够新"时有效。阈值取发布周期的 5 倍（最慢
+     * 100ms 发布 → 500ms），既覆盖单拍抖动，又能在链路死掉后约 0.5s 内
+     * 把 valid 翻成 false。**清掩码是必须的**：消费方（客户端页、服务端
+     * 编码器）都按 mask 判"这个字段有没有值"，只翻 valid 不够。
+     * 就地清理、不额外分配，返回值仍是对内部存储的借用（既有契约不变）。 */
+    if (dev) {
+        XVfdStatus* st = (XVfdStatus*)&dev->m_status;
+        uint32_t interval = dev->m_statusIntervalMs ? dev->m_statusIntervalMs
+                                                    : 200u;
+        uint64_t limitMs = (uint64_t)interval * 5u;
+        uint64_t nowMs = XDateTime_currentMSecsSinceEpoch();
+        if (st->m_valid && st->m_timestampMs != 0 &&
+            nowMs > st->m_timestampMs &&
+            (nowMs - st->m_timestampMs) > limitMs) {
+            st->m_valid = false;
+            st->m_validMask = 0;
+        }
+    }
     return dev ? &dev->m_status : NULL;
 }
 
@@ -610,6 +666,33 @@ void XVfdDevice_setMaxFrequency(XVfdDevice* dev, double hz)
     if (!dev || hz <= 0.0) return;
     dev->m_maxFreqHz = hz;
     dev->m_maxFreqKnown = true;
+}
+
+double XVfdDevice_ratedRpm(const XVfdDevice* dev)
+{
+    if (!dev) return 0.0;
+    return (dev->m_ratedRpm > 0.0) ? dev->m_ratedRpm : XVFD_DEFAULT_RATED_RPM;
+}
+
+void XVfdDevice_setRatedRpm(XVfdDevice* dev, double rpm)
+{
+    if (!dev || !(rpm > 0.0)) return;
+    dev->m_ratedRpm = rpm;
+}
+
+double XVfdDevice_rpmToHz(const XVfdDevice* dev, double rpm)
+{
+    const double base = (dev && dev->m_maxFreqHz > 0.0) ? dev->m_maxFreqHz : 50.0;
+    const double rated = XVfdDevice_ratedRpm(dev);
+    if (!(rated > 0.0)) return 0.0;
+    return rpm / rated * base;
+}
+
+double XVfdDevice_hzToRpm(const XVfdDevice* dev, double hz)
+{
+    const double base = (dev && dev->m_maxFreqHz > 0.0) ? dev->m_maxFreqHz : 50.0;
+    if (!(base > 0.0)) return 0.0;
+    return hz / base * XVfdDevice_ratedRpm(dev);
 }
 
 int32_t XVfdDevice_frequencyToRaw(XVfdDevice* dev, XVfdFreqBasis basis, double hz,
@@ -901,9 +984,22 @@ void XVfdDevice_markDirty(XVfdDevice* dev)
 void XVfdDevice_emitStatus(XVfdDevice* dev)
 {
     if (!dev) return;
-    dev->m_status.m_valid = true;
-    dev->m_haveStatus = true;
-    dev->m_status.m_timestampMs = XDateTime_currentMSecsSinceEpoch();
+    /* [2026-11-05 空快照误判在线根修] 原先无条件置 m_valid=true。
+     * 后果：从站根本不应答时快照仍被当成"有效" → 健康列表报
+     * "变频器正常"、客户端显示一片 0.0 而非"--"（实测：vm=0 但
+     * online=True，自相矛盾）。
+     *
+     * 判据取**遥测字段**的有效位，不能直接用 m_validMask 整体非零：
+     * 掩码里还包含 RawStateWord 这类"非遥测"位（情上报上来的原始
+     * 状态字），它们使掩码非零但遥测字段全空 → 快照编码为
+     * 只剩 "vm":0 ，客户端一无所获。 */
+    if ((dev->m_status.m_validMask & XVfdField_TelemetryMask) != 0) {
+        dev->m_status.m_valid = true;
+        dev->m_haveStatus = true;
+        dev->m_status.m_timestampMs = XDateTime_currentMSecsSinceEpoch();
+    } else {
+        dev->m_status.m_valid = false;
+    }
     dev->m_dirty = false;
     XVfdDevice_statusUpdated_signal(dev);
 }

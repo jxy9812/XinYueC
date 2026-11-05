@@ -85,27 +85,75 @@ XDateTime XDateTime_currentDateTime(void) {
     return XDateTime_create_datetime(date, time);
 }
 
+/* -------------------------------------------------------------------------
+ * [2026-11-05 纪元口径统一] 毫秒轴与纳秒轴共用一组"一次性纪元锚"
+ * -------------------------------------------------------------------------
+ * 目标：返回值 = **自 Unix 纪元以来的毫秒/纳秒**，对齐 Qt 的
+ * QDateTime::currentMSecsSinceEpoch()；同时差值语义等价于纯单调钟
+ * （校时/NTP 跳变不影响超时、限流、定时器）。
+ *
+ * 做法：只在**首次调用**同时读一次 CLOCK_MONOTONIC 与 CLOCK_REALTIME，
+ * 记下 (monoBase, epochBase) 这组锚点，之后一律用单调时钟推进：
+ *     ms(t) = epochBaseMs + (monoNs(t) - monoBaseNs) / 1e6
+ *     ns(t) = epochBaseNs + (monoNs(t) - monoBaseNs)
+ * 两轴由同一组锚点派生，因此 ns/1e6 与 ms 严格同刻度——这一点是刚需：
+ * XAbstractEventDispatcher 要把"高精度红黑树截止（ns 轴）"与"时间轮到期
+ * （ms 轴 ×1e6）"放在同一个 now 上相减，两轴若各锚各的（历史上 ns 直读
+ * REALTIME、ms 读 MONOTONIC）就会在 NTP 校时后错开整段时间。
+ *
+ * [为什么不再返回 MONOTONIC 裸值] 它的零点是**系统开机**：刚上电的头几百
+ * 毫秒就在 0 附近，而消费方普遍把返回值当作"某件事发生的时刻"打戳
+ * （XFlowMeter::m_lastChangeMs、XTempHum::m_lastUpdateMs、设备健康
+ * lastOkMs…），取到 0 会被当成"没有时刻"——xindustry-flowmeter 的「收数
+ * 后有时刻」断言曾 1/5~1/3 概率间歇失败。XTimeWheelGroup / XDeviceTimer
+ * 的注释也一直按"纪元时间轴"在写。
+ *
+ * [局限（有意为之）] 纪元锚只取一次。若系统时钟此后才被 NTP 校准，本函数
+ * 的绝对值沿用旧锚（仍单调、仍远大于 0）；需要真实墙钟时刻请用
+ * XDateTime_currentWallMSecsSinceEpoch / currentSecsSinceEpoch。
+ * ---------------------------------------------------------------------- */
+static int64_t s_epochBaseMs = 0;   /* 锚点：Unix 纪元毫秒 */
+static int64_t s_epochBaseNs = 0;   /* 锚点：Unix 纪元纳秒（与上同一时刻） */
+static int64_t s_monoBaseNs = 0;    /* 锚点：CLOCK_MONOTONIC 纳秒 */
+static int s_epochAnchorReady = 0;
+
+/* 同一换算既用于 MONOTONIC 也用于 REALTIME（都是 struct timespec）。 */
+static inline int64_t posixTimespecNs(const struct timespec* ts)
+{
+    return (int64_t)ts->tv_sec * 1000000000LL + (int64_t)ts->tv_nsec;
+}
+
+static void posixEnsureEpochAnchor(void)
+{
+    struct timespec mono;
+    struct timespec rt;
+    if (s_epochAnchorReady) return;
+    if (clock_gettime(CLOCK_MONOTONIC, &mono) != 0) return;
+    if (clock_gettime(CLOCK_REALTIME, &rt) != 0) return;
+    s_monoBaseNs = posixTimespecNs(&mono);
+    s_epochBaseNs = posixTimespecNs(&rt);
+    s_epochBaseMs = s_epochBaseNs / 1000000LL;
+    s_epochAnchorReady = 1;
+}
+
 int64_t XDateTime_currentMSecsSinceEpoch(void) {
-    /* 单调时钟（CLOCK_MONOTONIC，不受对时/跳变影响）：本函数是全库
-     * 统一的"当前毫秒"计时源，消费方全部是时长/超时/限流测量
-     * （定时器轮/IO 超时/双击去伪/present 限频），墙钟跳变会破坏
-     * 这些测量。需要墙钟日期时间的调用方走 XDateTime_currentDateTime
-     * /currentSecsSinceEpoch（见约束文档「外部依赖约束」时间源规则）。 */
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
-        return 0;
+        return s_epochBaseMs;
     }
+    posixEnsureEpochAnchor();
     {
         /* [CLK 2026-10-29 诊断] 刻度源原始读数对账：XGUI_WHEEL_TRACE=1
-         * 时每 500ms 至多一条，打印本函数返回的 MONOTONIC 毫秒（64 位
-         * 拆高低 32 位用 %lu，绕开板上 libc %zu 错位），并与
-         * MONOTONIC_RAW / REALTIME 同拍对照——判内核 clocksource 失速/
-         * 回绕/对时干扰。多线程调用方共享静态量，诊断打点容忍竞争。 */
+         * 时每 500ms 至多一条，打印本函数返回的毫秒（64 位拆高低 32 位
+         * 用 %lu，绕开板上 libc %zu 错位），并与 MONOTONIC_RAW / REALTIME
+         * 同拍对照——判内核 clocksource 失速/回绕/对时干扰。
+         * 多线程调用方共享静态量，诊断打点容忍竞争。 */
         static int s_clkEn = -1;
         static int64_t s_clkLastMs = 0;
-        int64_t monoMs = (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000;
+        int64_t outMs = s_epochBaseMs +
+                        (posixTimespecNs(&ts) - s_monoBaseNs) / 1000000LL;
         if (s_clkEn < 0) s_clkEn = getenv("XGUI_WHEEL_TRACE") ? 1 : 0;
-        if (s_clkEn && monoMs - s_clkLastMs >= 500) {
+        if (s_clkEn && outMs - s_clkLastMs >= 500) {
             struct timespec rawTs;
             struct timespec rtTs;
             int hasRaw = 0;
@@ -113,15 +161,15 @@ int64_t XDateTime_currentMSecsSinceEpoch(void) {
 #ifdef CLOCK_MONOTONIC_RAW
             hasRaw = (clock_gettime(CLOCK_MONOTONIC_RAW, &rawTs) == 0);
 #endif
-            s_clkLastMs = monoMs;
+            s_clkLastMs = outMs;
             fprintf(stderr, "[CLK] mono_hi=%lu mono_lo=%lu raw_s=%ld raw_ms=%ld rt_s=%ld\n",
-                    (unsigned long)(uint64_t)(monoMs >> 32),
-                    (unsigned long)(uint64_t)(uint32_t)monoMs,
+                    (unsigned long)(uint64_t)(outMs >> 32),
+                    (unsigned long)(uint64_t)(uint32_t)outMs,
                     hasRaw ? (long)rawTs.tv_sec : -1L,
                     hasRaw ? (long)(rawTs.tv_nsec / 1000000) : -1L,
                     hasRt ? (long)rtTs.tv_sec : -1L);
         }
-        return monoMs;
+        return outMs;
     }
 }
 
@@ -193,11 +241,22 @@ bool XDateTime_canSetSystemTime(void) {
 }
 
 int64_t XDateTime_currentNSecsSinceEpoch(void) {
+    /* [2026-11-05 纪元口径统一] 与 XDateTime_currentMSecsSinceEpoch 共用
+     * 同一组 (monoBase, epochBase) 锚点，由 CLOCK_MONOTONIC 推进：
+     *   ns(t) = epochBaseNs + (monoNs(t) - monoBaseNs)
+     * 原实现直读 CLOCK_REALTIME：NTP 校时会让 ns 轴跳变，而事件分发器把
+     * 本函数当作"高精度定时器截止轴"的 now 使用（见
+     * XAbstractEventDispatcher 的双时钟轴归一），跳变会让 Precise 定时器
+     * 提前/延后整段时间。同时它还要与 ms 轴（×1e6）同刻度相减，同锚派生
+     * 才能保证 ns/1e6 == ms。
+     * 需要真实墙钟纳秒请用 XDateTime_currentWallMSecsSinceEpoch 或
+     * XDateTime_currentDateTimeUtc。 */
     struct timespec ts;
-    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
-        return 0;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return s_epochBaseNs;
     }
-    return (int64_t)ts.tv_sec * 1000000000 + (int64_t)ts.tv_nsec;
+    posixEnsureEpochAnchor();
+    return s_epochBaseNs + (posixTimespecNs(&ts) - s_monoBaseNs);
 }
 
 XDateTime XDateTime_currentDateTimeUtc(void) {

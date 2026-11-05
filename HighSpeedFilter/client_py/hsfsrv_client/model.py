@@ -12,6 +12,8 @@ HsfFlowMeterProvider 注释）。
 
 import time
 
+from . import proto
+
 
 def _now_ms():
     return int(time.monotonic() * 1000)
@@ -163,12 +165,26 @@ class AnalogState(object):
 
     :ivar raw: 原始寄存器（毫伏）
     :ivar ua:  微安（mA × 1000）
+    :ivar eng: 换算值 ×1000（只有服务端配了工程量的通道才有；其余为 0）
+    :ivar eng_unit: 换算值单位（utf8）
+    :ivar eng_name: 通道名（如"压差计"）
+    :ivar eng_note: 越限说明（断线/超量程；空=正常）
+
+    [换算值由服务端给] 量程是现场标定参数（同一个变送器型号有 10kPa~14MPa
+    多种膜盒，差三个数量级），不该让每个客户端各配一遍。客户端只负责按
+    e*/eu*/en*/ew* 显示。
     """
 
     def __init__(self, channels=8):
         self.channels = channels
         self.raw = [0] * channels
         self.ua = [0] * channels
+        #: 通道号 -> 换算值 ×1000；不在表里 = 该通道没有工程量换算。
+        self.eng = {}
+        #: 通道号 -> (单位, 名称, 越限说明)
+        self.eng_unit = {}
+        self.eng_name = {}
+        self.eng_note = {}
         self.valid_mask = 0
         self.updated_ms = 0
 
@@ -180,6 +196,18 @@ class AnalogState(object):
         for i in range(self.channels):
             self.raw[i] = int(doc.get("r%d" % i, 0) or 0)
             self.ua[i] = int(doc.get("u%d" % i, 0) or 0)
+        # 换算值：整表重建（服务端不再发 e<i> = 该通道不计工程值了）。
+        eng, unit, name, note = {}, {}, {}, {}
+        for i in range(self.channels):
+            key = "e%d" % i
+            if key not in doc:
+                continue
+            eng[i] = int(doc.get(key, 0) or 0)
+            unit[i] = str(doc.get("eu%d" % i, "") or "")
+            name[i] = str(doc.get("en%d" % i, "") or "")
+            note[i] = str(doc.get("ew%d" % i, "") or "")
+        self.eng, self.eng_unit = eng, unit
+        self.eng_name, self.eng_note = name, note
         self.updated_ms = _now_ms()
 
     def is_fresh(self, stale_ms=5000):
@@ -191,6 +219,22 @@ class AnalogState(object):
     def ma(self, index):
         """毫安值（微安 ÷ 1000）。"""
         return self.ua[index] / 1000.0
+
+    def has_engineering(self, index):
+        return int(index) in self.eng
+
+    def eng_value(self, index):
+        """换算工程量（物理量原值）；无换算返回 None。"""
+        if not self.has_engineering(index):
+            return None
+        return self.eng[int(index)] / 1000.0
+
+    def eng_text(self, index):
+        """换算值的显示文本（含单位）；无换算返回空串。"""
+        if not self.has_engineering(index):
+            return ""
+        return "%g %s" % (self.eng[int(index)] / 1000.0,
+                          self.eng_unit.get(int(index), ""))
 
 
 class DigitalState(object):
@@ -209,6 +253,11 @@ class DigitalState(object):
         self.valid = False
         self.stale_ms = 5000
         self.updated_ms = 0
+        #: 通道号 -> 语义名（服务端下发；没有被占用的口不在表里）。
+        #: [客户端不推导这些名字] 哪路阀接在哪个口是现场接线，只有服务端
+        #: 知道。客户端拿到什么显示什么，接线一改服务端一改就跟着变。
+        self.di_names = {}
+        self.do_names = {}
 
     def apply(self, doc):
         self.name = doc.get("name", self.name) or self.name
@@ -217,7 +266,47 @@ class DigitalState(object):
         self.count = int(doc.get("count", 16) or 16)
         self.valid = bool(doc.get("valid", False))
         self.stale_ms = int(doc.get("staleMs", 5000) or 5000)
+        # ---- 通道名：**这一帧里带了名字才改** ----
+        #
+        # [判据是"帧里有没有名字"，不是只看 full 位]
+        # 服务端与 C 端口径对齐后，名字只在「首连 / 订阅补发 / 快照应答」的
+        # 全量帧里出现，周期推送是只带位图的增量帧。客户端原来**每帧都整表
+        # 重建名字表**，于是：
+        #   订阅补发的 full=True 帧给了 18 个名字 → 200ms 后第一帧增量推送
+        #   把名字表覆盖成空 → 数字量页只剩 CH/DO 号，电磁阀语义名全没了。
+        # 现象看着像"服务端没发名字"，实际是客户端把刚拿到的名字擦掉了。
+        #
+        # 三态处理：
+        #   ① 帧里**有**名字键            → 整表替换（这一帧就是完整真相，
+        #                                   服务端不再发的键 = 该口已释放）
+        #   ② 帧里**没有**名字键           → 一律沿用缓存，**绝不改成空**
+        #      · full=False 增量帧：正常，名字靠缓存
+        #      · full=True 但没名字：老服务端/该模块没被占用 ⇒ 同样不能擦
+        #        掉已知名字 —— 少显示总比把接线信息弄丢好
+        # 与 C 端 HsfLinkClient.c 的 hsfLcParseDigital 同口径（增量帧沿用
+        # 缓存），但更保守：连"full=True 却没带名字"的帧也不擦缓存。
+        di_names, do_names = {}, {}
+        for key, value in doc.items():
+            if key.startswith("din"):
+                try:
+                    di_names[int(key[3:])] = str(value)
+                except (ValueError, TypeError):
+                    continue
+            elif key.startswith("don"):
+                try:
+                    do_names[int(key[3:])] = str(value)
+                except (ValueError, TypeError):
+                    continue
+        if di_names or do_names:
+            self.di_names = di_names
+            self.do_names = do_names
         self.updated_ms = _now_ms()
+
+    def di_name(self, index):
+        return self.di_names.get(int(index), "")
+
+    def do_name(self, index):
+        return self.do_names.get(int(index), "")
 
     def is_fresh(self):
         return (self.valid and self.updated_ms > 0
@@ -228,6 +317,103 @@ class DigitalState(object):
 
     def do_bit(self, index):
         return bool(self.do & (1 << index))
+
+
+class TurbidityState(object):
+    """两台浊度仪的合并状态（v{index}_ 前缀，与阀/数字量同一风格）。
+
+    [为什么合成一个对象而不是两台各一个] 它们总是成对显示、成对刷新，
+    分开存只会让页面写两遍同样的逻辑。台数由服务端 `count` 决定。
+    """
+
+    def __init__(self):
+        #: index -> {"name","ntu","raw","online"}
+        self.items = {}
+        self.count = 0
+        self.stale_ms = 5000
+        self.updated_ms = 0
+
+    def apply(self, doc):
+        count = int(doc.get("count", 0) or 0)
+        self.count = count
+        items = {}
+        for idx in range(count):
+            prefix = "v%d_" % idx
+            raw = {}
+            for key, value in doc.items():
+                if key.startswith(prefix):
+                    raw[key[len(prefix):]] = value
+            items[idx] = raw
+        self.items = items
+        self.stale_ms = int(doc.get("staleMs", 5000) or 5000)
+        self.updated_ms = _now_ms()
+
+    def is_fresh(self):
+        return (self.updated_ms > 0
+                and (_now_ms() - self.updated_ms) < self.stale_ms)
+
+    def name_of(self, index):
+        return self.items.get(int(index), {}).get("name", "")
+
+    def ntu_of(self, index):
+        """浊度值（NTU，float）；无数据返回 None。"""
+        item = self.items.get(int(index), {})
+        if not item.get("online"):
+            return None
+        value = item.get("ntu")
+        return None if value is None else float(value) / 100.0
+
+    def raw_of(self, index):
+        return self.items.get(int(index), {}).get("raw")
+
+    def online_of(self, index):
+        return bool(self.items.get(int(index), {}).get("online"))
+
+
+class PumpState(object):
+    """进水泵状态（v{index}_ 前缀）。
+
+    [只有输出，没有反馈] `on` 表示"输出是开着的"，不是"泵真的在转"。
+    界面必须说清这一点，否则会让人以为这是实测运行状态。
+    """
+
+    def __init__(self):
+        #: index -> {"name","on","ready","valid","text"}
+        self.items = {}
+        self.count = 0
+        self.stale_ms = 5000
+        self.updated_ms = 0
+
+    def apply(self, doc):
+        count = int(doc.get("count", 0) or 0)
+        self.count = count
+        items = {}
+        for idx in range(count):
+            prefix = "v%d_" % idx
+            raw = {}
+            for key, value in doc.items():
+                if key.startswith(prefix):
+                    raw[key[len(prefix):]] = value
+            items[idx] = raw
+        self.items = items
+        self.stale_ms = int(doc.get("staleMs", 5000) or 5000)
+        self.updated_ms = _now_ms()
+
+    def is_fresh(self):
+        return (self.updated_ms > 0
+                and (_now_ms() - self.updated_ms) < self.stale_ms)
+
+    def name_of(self, index):
+        return self.items.get(int(index), {}).get("name", "")
+
+    def is_on(self, index):
+        return bool(self.items.get(int(index), {}).get("on"))
+
+    def is_ready(self, index):
+        return bool(self.items.get(int(index), {}).get("ready"))
+
+    def text_of(self, index):
+        return self.items.get(int(index), {}).get("text", "")
 
 
 class FlowMeterState(object):
@@ -293,8 +479,21 @@ class ValveState(object):
         #: index -> dict(name/openCmd/openFb/closeFb/state/ready/valid/text)
         self.items = {}
         self.updated_ms = 0
+        #: 待显示的告警队列（服务端推来的；页面消费后调 take_alarm_list 取走）。
+        self.alarms = []
+        #: 累计收到的告警条数（诊断用）。
+        self.alarm_total = 0
+        self.last_alarm_ms = 0
 
     def apply(self, doc):
+        # [告警帧不能当状态帧处理] 服务端把"阀告警"也发在 TOPIC_VALVE_STATUS
+        # 上（同一主题，客户端订阅一次即可两种帧都收到）。告警帧的键空间是
+        # "ac"/"a0_*"，**没有 count 也没有 v{i}_***。若照状态帧解析，会把
+        # items 清空 —— 界面上的阀会瞬间全部变成"未配置"再恢复，闪一下。
+        # 故先认告警帧：交给 take_alarms，状态原样保留。
+        if proto.KEY_ALARM_COUNT in doc:
+            self.take_alarms(doc)
+            return
         count = int(doc.get("count", 0) or 0)
         if count:
             self.count = min(count, 16)
@@ -307,6 +506,31 @@ class ValveState(object):
             }
         self.items = items
         self.updated_ms = _now_ms()
+
+    def take_alarms(self, doc):
+        """收集一帧告警（一帧可含多条）。
+
+        客户端**不做任何判断**：超没超时、要不要报警，全部由服务端决定，
+        这里只把内容攒起来给界面显示。
+        """
+        count = int(doc.get(proto.KEY_ALARM_COUNT, 0) or 0)
+        for i in range(count):
+            prefix = "a%d_" % i
+            self.alarms.append({
+                key[len(prefix):]: value
+                for key, value in doc.items() if key.startswith(prefix)
+            })
+        self.alarm_total += count
+        self.last_alarm_ms = _now_ms()
+        return count
+
+    def drain_alarms(self):
+        """取走待显示告警（取走即清空，避免界面每次刷新都重复弹同一条）。"""
+        if not self.alarms:
+            return []
+        out = self.alarms
+        self.alarms = []
+        return out
 
     def is_fresh(self, stale_ms=5000):
         return (self.updated_ms > 0
@@ -340,6 +564,9 @@ class DeviceHealth(object):
         self.online = False
         self.run_state = 0
         self.text = ""
+        #: 连接地址（服务端给的展示写法）：TCP = "ip:port"，
+        #: 485 = "COM17 · 115200 · 站 2"。老服务端不发该键 ⇒ 空串，界面显示 "-"。
+        self.addr = ""
 
     def health_text(self):
         return HEALTH_TEXT.get(self.health, "未知")
@@ -352,7 +579,7 @@ HEALTH_TEXT = {0: "正常", 1: "告警", 2: "数据过期", 3: "离线", 4: "故
 #: 设备类别 → 中文（必须与 proto.KIND_* 对齐；漏一个就会在界面上显示"未知"）。
 #: [实锅] 加电磁阀组时忘了同步这张表，首页"类型"列直接显示"未知"。
 KIND_TEXT = {0: "变频器", 1: "温湿度", 2: "流量计", 3: "模拟量",
-             4: "485总线", 5: "数字量", 6: "电磁阀组"}
+             4: "485总线", 5: "数字量", 6: "电磁阀组", 7: "水质"}
 
 
 class HealthSnapshot(object):
@@ -381,6 +608,7 @@ class HealthSnapshot(object):
             d.online = bool(doc.get("d%d_online" % i, False))
             d.run_state = int(doc.get("d%d_runState" % i, 0))
             d.text = doc.get("d%d_text" % i, "") or ""
+            d.addr = doc.get("d%d_addr" % i, "") or ""
             devices.append(d)
         self.devices = devices
         self.updated_ms = _now_ms()
@@ -406,11 +634,18 @@ class AppModel(object):
         self.temphum = TempHumState()
         self.analog = AnalogState()
         self.flowmeter = FlowMeterState()
+        self.turbidity = TurbidityState()   # 两台浊度仪（合并一帧）
+        self.pump = PumpState()             # 进水泵（只有输出无反馈）
         self.digital = {}          # index -> DigitalState
         self.valve = ValveState()  # 6 路电磁阀
         self.health = HealthSnapshot()
         self.run_mode = 0          # 0=手动 1=自动
         self.run_mode_known = False
+        #: 自动控制器是否真的在跑（None = 服务端没报，按"未知"显示）。
+        #:
+        #: [为什么不从 run_mode 推] 模式=自动 不代表 控制器在跑。分开存，
+        #: 界面才能把"模式自动但控制器已停"这种异常如实显示出来。
+        self.auto_running = None
         self.update_ms = 0
 
     def digital_state(self, index):
@@ -426,3 +661,12 @@ class AppModel(object):
 
     def is_auto(self):
         return self.run_mode == 1
+
+    def is_auto_running(self):
+        """自动控制器是否在跑；**未知时返回 None**（不是 False）。
+
+        [为什么 None 不折成 False] 老服务端不报这个键。若折成 False，
+        界面会在自动模式下显示"自动已停止"——那是**编造的故障**。
+        未知就显示未知，别拿默认值冒充事实。
+        """
+        return self.auto_running

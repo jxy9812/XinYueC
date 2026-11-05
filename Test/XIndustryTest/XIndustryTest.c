@@ -43,4 +43,16 @@ void XTestMenu_XIndustryTest(XTestMenu* root)
 		XTestMenu_addAction(menu, "XIndustryButtonStation 按钮组（mock）"),
 		XIndustryButtonStationTest);
 #endif
+#if XINDUSTRY_ON && XTURBIDITY_ON
+	/* 在线浊度仪（mock 通道，进程内自跑；含真机帧回归与编解码）。 */
+	XTestMenu_setActionFunction(
+		XTestMenu_addAction(menu, "XIndustryTurbidity 在线浊度仪（mock）"),
+		XIndustryTurbidityTest);
+#endif
+#if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON
+	/* 电磁阀组反馈新鲜度语义：模块离线必须报错，不得伪装成"无到位反馈"。 */
+	XTestMenu_setActionFunction(
+		XTestMenu_addAction(menu, "XHsfServerIoValveFresh 电磁阀反馈新鲜度"),
+		XHsfServerIoValveFreshTest);
+#endif
 }

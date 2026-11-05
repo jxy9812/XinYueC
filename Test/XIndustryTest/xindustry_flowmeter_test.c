@@ -371,6 +371,111 @@ static void test_unitsAndAlarms(void)
 }
 
 /**
+ * @brief 累积单位「高两位精度档」与更新时刻口径。
+ * @details C 型（0~11）把精度档塞进高两位：基础单位仍取低两位。两条口径
+ *          必须**分开**暴露——`totalUnit` 给语义（M3/L/…），`unitCodes`
+ *          给原始码（含精度档）。若二者混用，上层要么显示错单位、要么
+ *          把精度档当单位渲染成 Unknown。更新时刻则必须按"值变化"记账，
+ *          否则趋势图会把一段静止数据的点全画在同一时刻。
+ */
+static void test_unitPrecisionAndUpdateTime(void)
+{
+    FlowFixture fx;
+    uint16_t fc = 0;
+    uint16_t tc = 0;
+    uint64_t ms = 0;
+    uint64_t ms2 = 0;
+
+    XPrintf("---- 累积单位精度档 / 更新时刻 ----\n");
+    resetFlowFlags();
+    flowFixtureInit(&fx);
+    XFlowMeter_attach(fx.m_dev, fx.m_group);
+    resetFlowFlags();
+
+    /* 未挂接/未收数：没有更新时刻。 */
+    CHECK("挂接后未收数无时刻",
+          !XFlowMeter_lastUpdateMs(fx.m_dev, &ms));
+
+    /* [为什么不用 1.0f / 12.5f] 这两个值的 IEEE754 位模式低位字恰好是
+     * 0x0000（1.0f=0x3F800000、12.5f=0x41480000）。feedU32 先喂高字
+     * （真值变更，触发整拍重算），再喂低字（值 0，与点初值相同）——
+     * 低字这一拍若被判"值未变"，通道层按既有契约静默，
+     * 随后的重算就会因"低字尚无值"失败、时刻不推进。
+     * 这条断言的本意是"收到数据就该有时间戳"，不该依赖位模式的巧合，
+     * 故喂 12.53f（高 0x4148 / 低 0x7AE1，两字都非 0）：语义等价。 */
+    feedFloat(&fx, XFlowMeterRole_InstantFlowHi, 12.53f);
+    /* [口径已改：桌面端现在可断言纪元刻度] 历史注释（2026-11-05 之前）说
+     * XDateTime_currentMSecsSinceEpoch 四平台统一是"单调时长"口径、零点
+     * 在进程/开机、0 是合法时刻——那个口径已在 2026-11-05 改为
+     * **Unix 纪元毫秒**（Win32 QPC + 首调墙钟锚、POSIX CLOCK_MONOTONIC +
+     * 首调 REALTIME 锚），桌面端启动即 ~1.7e12，不可能为 0。
+     * 但判"有没有收到数据"仍以本函数返回值为权威判据（内部即 m_received
+     * 标志），不依赖时间戳数值——裸机后端（ESP8266/STM32）零点仍是 0，
+     * 保持这个写法跨平台安全。 */
+    CHECK("收数后有时刻", XFlowMeter_lastUpdateMs(fx.m_dev, &ms));
+    /* 桌面端附加断言：时刻落在纪元刻度上（不再是 0 附近的相对量）。
+     * 这是纪元口径统一的行为锚点——退回旧实现时这里必红。 */
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
+    CHECK("时刻落在纪元刻度（非 0 相对量）", ms > 1000000000000ULL);
+#endif
+
+    /* ---- C 型精度档：code=6 → 6%4=2 → T；原始码仍是 6 ---- */
+    feedRaw(&fx, XFlowMeterRole_TotalUnit, 6);
+    XFlowMeter_unitCodes(fx.m_dev, &fc, &tc);
+    CHECK("精度档原始码保留 6", tc == 6u);
+    CHECK("精度档语义取低两位（6%4=2 → T）",
+          XFlowMeter_totalUnit(fx.m_dev) == XFlowMeterTotalUnit_T);
+    /* code=7 → 7%4=3 → 仍是一个合法基础单位（不是 Unknown）。 */
+    feedRaw(&fx, XFlowMeterRole_TotalUnit, 7);
+    CHECK("精度档 7 不落 Unknown",
+          XFlowMeter_totalUnit(fx.m_dev) != XFlowMeterTotalUnit_Unknown);
+    /* code=11（C 型上界）→ 11%4=3，同样合法。 */
+    feedRaw(&fx, XFlowMeterRole_TotalUnit, 11);
+    {
+        uint16_t raw = 0;
+        XFlowMeter_unitCodes(fx.m_dev, NULL, &raw);
+        CHECK("上界 11 原始码可读", raw == 11u);
+        CHECK("上界 11 语义合法",
+              XFlowMeter_totalUnit(fx.m_dev) != XFlowMeterTotalUnit_Unknown);
+    }
+    /* code=12 已越过 C 型上界：语义仍按 %4 兜底（不崩、不 Unknown）。 */
+    feedRaw(&fx, XFlowMeterRole_TotalUnit, 12);
+    CHECK("越界码 12 仍给基础单位",
+          XFlowMeter_totalUnit(fx.m_dev) != XFlowMeterTotalUnit_Unknown);
+
+    /* ---- 更新时刻语义：**随整拍重算推进**（=最近一次数据帧到达） ----
+     * 注意与通道层去重的交互：值未变时 XIoChannelGroup_feedRole **静默**，
+     * 设备层收不到事件，故时刻不动。也就是说 lastUpdateMs 的精度受通道层
+     * 去重约束，只有在"值真的变了"时才必然推进。这是既有跨层契约
+     * （设备层注释与三台同族设备一致），断言按此口径写。 */
+    spinMs(20);
+    feedFloat(&fx, XFlowMeterRole_InstantFlowHi, 3.0f);   /* 变值 */
+    CHECK("值变化推进时刻（整拍重算打戳）",
+          XFlowMeter_lastUpdateMs(fx.m_dev, &ms2) && ms2 > ms);
+    ms = ms2;
+    /* 值不变：通道层去重 → 设备层无事件 → 时刻不动（文档化而非"缺陷"）。 */
+    spinMs(20);
+    feedFloat(&fx, XFlowMeterRole_InstantFlowHi, 3.0f);
+    CHECK("值不变时刻不动（通道层去重所致）",
+          XFlowMeter_lastUpdateMs(fx.m_dev, &ms2) && ms2 == ms);
+
+    /* ---- NULL / 输出指针安全 ---- */
+    CHECK("NULL 时刻查询失败", !XFlowMeter_lastUpdateMs(NULL, &ms));
+    CHECK("NULL 输出指针仍报有时刻", XFlowMeter_lastUpdateMs(fx.m_dev, NULL));
+    CHECK("NULL 单位码查询清零", (XFlowMeter_unitCodes(NULL, &fc, &tc),
+                                 fc == 0 && tc == 0));
+    CHECK("NULL 瞬时单位为 Unknown",
+          XFlowMeter_flowUnit(NULL) == XFlowMeterFlowUnit_Unknown);
+    CHECK("NULL 累积单位为 Unknown",
+          XFlowMeter_totalUnit(NULL) == XFlowMeterTotalUnit_Unknown);
+    CHECK("NULL 报警为 0", XFlowMeter_alarms(NULL) == 0u);
+    CHECK("NULL 有效性为假", !XFlowMeter_isValid(NULL));
+    CHECK("NULL detach 失败", !XFlowMeter_detach(NULL));
+
+    flowFixtureDeinit(&fx);
+}
+
+/**
  * @brief 质量：陈旧阈值经巡检定时器翻转；再喂值恢复；staleMs=0 恒有效。
  */
 static void test_qualityStale(void)
@@ -536,6 +641,7 @@ static void flowRunAll(void)
     test_seedOnAttach();
     test_partialPair();
     test_unitsAndAlarms();
+    test_unitPrecisionAndUpdateTime();
     test_qualityStale();
     test_detach();
     test_codec();
@@ -550,6 +656,7 @@ static void flowLeakFast(void)
     test_seedOnAttach();
     test_partialPair();
     test_unitsAndAlarms();
+    test_unitPrecisionAndUpdateTime();
     test_detach();
     test_codec();
 }

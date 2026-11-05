@@ -36,6 +36,14 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
  */
 void HsfHomePage_adapt(XWidget* page, bool compact);
 
+/**
+ * @brief      刷新看板数据（三卡数值 + 设备状态表）。
+ * @param page 页根控件（HsfHomePage_create 返回值；NULL 安全）。
+ * @note       由主窗帧泵在首页可见时按 200ms 节流调用；页自身不开定时器
+ *             （避免页面销毁时的注销时序问题）。
+ */
+void HsfHomePage_refresh(XWidget* page);
+
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */
 
 #ifdef __cplusplus

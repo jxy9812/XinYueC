@@ -13,14 +13,18 @@
 // 单个时间轮结构
 typedef struct XTimeWheel {
     XVector m_slots;					// 槽数组，每个槽是一个链表头 /XVector<XListSLinked<XTimerWheelData*>>
-    size_t m_tick;						// 当前滴答计数
+    uint64_t m_tick;					// 当前滴答计数（64 位：见下方刻度轴注记）
 } XTimeWheel;
 // 定时器时间轮
 typedef struct XTimerWheelData
 {
     XTimerData m_data;
     XAtomic_Bool m_deleted;				 ///< 定时器是否正在运行
-    size_t m_expire_ticks;                  // 到期时间戳（毫秒）
+    /* [刻度轴 64 位化 2026-11-05] 到期刻度必须是 64 位。刻度源自 2026-11-05
+     * 起是**纪元毫秒**（Unix 纪元，~1.7e12），32 位 size_t 在 49.7 天处回绕；
+     * 回绕后 handler 的"只前进不回拨"护栏会把整轮冻住一个回绕周期。改 64 位
+     * 后有效量程 5.8 亿年，与 XTimeWheelGroup 全族一致。 */
+    uint64_t m_expire_ticks;                // 到期时刻（绝对刻度，毫秒×精度）
 } XTimerWheelData;
 // 内联函数：分配包含 XTimerWheelData 的链表节点
 static inline XListSNode* alloc_timer_node(void)
@@ -136,7 +140,7 @@ static inline size_t ceil_div(size_t dividend, size_t divisor)
     return (dividend + divisor - 1) / divisor;
 }
 // 专用函数：创建并初始化包含 XTimerWheelData 的链表节点
-static XListSNode* create_timer_node(XTimerData* data, size_t expire_ticks);
+static XListSNode* create_timer_node(XTimerData* data, uint64_t expire_ticks);
 
 static size_t calculate_max_time_range(XTimeWheelGroup* group);
 static void VXTimeWheelGroup_deinit(XTimeWheelGroup* group);
@@ -145,8 +149,9 @@ static bool VXTimerGroupBase_removeTimer(XTimeWheelGroup* group, XHandle handle)
 static void VXTimeWheelGroup_tick(XTimeWheelGroup* group);
 static void VXTimerGroupBase_handler(XTimerGroupBase* group);
 static void VXTimeWheelGroup_clear(XTimeWheelGroup* group);
-// 专用函数：创建包含 XTimerWheelData 的链表节点
-static XListSNode* create_timer_node(XTimerData* data, size_t expire_ticks)
+static void wheel_calibrate_ticks(XTimeWheelGroup* group, uint64_t nowTick);
+// 专用函数：创建并初始化包含 XTimerWheelData 的链表节点
+static XListSNode* create_timer_node(XTimerData* data, uint64_t expire_ticks)
 {
     XListSNode* node = alloc_timer_node();
     if (!node) return NULL;
@@ -196,7 +201,9 @@ void VXTimeWheelGroup_deinit(XTimeWheelGroup* group)
 static bool add_timer_to_wheel_lockfree(XTimeWheelGroup* group, XTimeWheel* wheel,
     XListSNode* timer_node, size_t ticks)
 {
-    size_t expire_slot = (wheel->m_tick + ticks) % XContainerSize(&wheel->m_slots);
+    /* 槽位索引只取余数：m_tick 为 64 位绝对刻度，取模后才落到 size_t。 */
+    size_t expire_slot = (size_t)((wheel->m_tick + (uint64_t)ticks) %
+                                  (uint64_t)XContainerSize(&wheel->m_slots));
     XAtomic_Uintptr* slot_ptr = XVector_at_base(&wheel->m_slots, expire_slot);
 
     XAtomic_fetch_add_size_t(&group->m_activeProducers, 1, XAtomic_MemoryOrder_SeqCst);
@@ -255,7 +262,7 @@ static bool addTimer_lockfree(XTimeWheelGroup* group, XListSNode* timer_node,
                  * 第 k=(timeout-d)/unit+1 个边界级联时残余 (0,unit] 交由低
                  * 级轮/到期直兑现路径完成，实际触发时刻回到 ±1 槽精度。 */
                 size_t unit = wheelSize; /* 本级每槽对应的全局刻度跨度 */
-                size_t d = unit - (group->m_class.m_current_tick % unit);
+                size_t d = unit - (size_t)(group->m_class.m_current_tick % (uint64_t)unit);
                 size_t k = ((timeout_ticks > d) ?
                             (timeout_ticks - d) / unit : 0) + 1;
                 offset_ticks = k - 1; /* 0 合法=下一边界级联（残余即到期） */
@@ -278,25 +285,28 @@ XHandle VXTimerGroupBase_addTimerNs(XTimeWheelGroup* group, XTimerData data)
     //校准下时间
     if (((XTimerGroupBase*)group)->m_high_res_time_func == NULL)
         return NULL;/* 未设置时间源无法校准刻度，按添加失败处理（与 handler 判空惯例一致） */
-    /* [刻度轴统一 2026-10-29] 刻度一律按 size_t 宽度取值：handler 的
-     * 当前刻度计算是 size_t（32 位平台上截断），本行原样全宽写入
-     * m_current_tick（uint64）——注入源返回值超过 2^32 时（纪元毫秒
-     * 轴 / 乱源高字）添加侧与消费侧各在一条轴上，轮永不兑现。两侧同
-     * 宽后时间轮有效量程 = size_t 满量程刻度，远超轮自身 max_time。 */
+    /* [刻度轴 64 位 2026-11-05] 刻度源（纪元毫秒）与 m_current_tick、
+     * m_expire_ticks、各级 wheel->m_tick 全族统一 uint64：32 位板不再在
+     * 49.7 天处回绕。仅槽位索引/级联相位在取模时降到 size_t（只用余数）。 */
     {
-        size_t now_ticks = (size_t)(((XTimerGroupBase*)group)->m_high_res_time_func() /
-                                    ((XTimerGroupBase*)group)->m_precision);
-        size_t cur_ticks = (size_t)((XTimerGroupBase*)group)->m_current_tick;
+        uint64_t now_ticks = (uint64_t)(((XTimerGroupBase*)group)->m_high_res_time_func() /
+                                        ((XTimerGroupBase*)group)->m_precision);
+        /* [冷启动对齐门 2026-11-05] 首次使用前把刻度对齐到当前时刻，
+         * **且必须在落槽之前**完成：槽位按 (wheel->m_tick + offset) % slots
+         * 计算，若先落槽后对齐，m_tick 一变所有既有节点都错位。
+         * 详见 wheel_calibrate_ticks 注记。 */
+        if (!group->m_clockSynced)
+            wheel_calibrate_ticks(group, now_ticks);
         /* 单调轴护栏：只前进不回拨。乱源/对时导致的低读数一律不采纳，
          * 刻度信任最近一次合法读数（handler 同护栏，见其注记）。 */
-        if (now_ticks > cur_ticks)
+        else if (now_ticks > ((XTimerGroupBase*)group)->m_current_tick)
             ((XTimerGroupBase*)group)->m_current_tick = now_ticks;
     }
     // 计算超时时间（转换为）
     size_t timeout_ticks = ceil_div(data.m_timeout, group->m_class.m_precision);
     if (timeout_ticks == 0)timeout_ticks = ceil_div(data.m_interval, group->m_class.m_precision);//如果超时时间是0就直接使用周期时间
     if (timeout_ticks == 0) timeout_ticks = 1; // 确保至少有一个节拍
-    size_t expire_ticks = group->m_class.m_current_tick + timeout_ticks;
+    uint64_t expire_ticks = group->m_class.m_current_tick + (uint64_t)timeout_ticks;
 
     // 创建包含 XTimerWheelData 的链表节点（一次性分配）
     XListSNode* timer_node = create_timer_node(&data, expire_ticks);
@@ -379,6 +389,25 @@ void XTimeWheelGroup_addTimeWheel(XTimeWheelGroup* group, size_t slotsCount)
         return;
     }
     ((XTimerGroupBase*)group)->m_max_time = calculate_max_time_range(group);
+    /* [2026-11-05 纪元化配套] 若本组已经对齐过刻度（m_clockSynced 为真），
+     * 新加这一级的 m_tick 还是 0，与其它级的纪元刻度差 ~1.7e12——落槽会算到
+     * 完全错误的槽位。新级此刻必定为空，按"前 i 级槽数连乘"补算即可
+     * （各级刻度的量纲约定见 wheel_calibrate_ticks 注记）。 */
+    if (group->m_clockSynced)
+    {
+        size_t idx = XContainerSize(&group->m_timeWheel);
+        if (idx > 0) {
+            XTimeWheel* added = XVector_at_base(&group->m_timeWheel, idx - 1);
+            uint64_t unit = 1;
+            size_t i;
+            for (i = 0; i + 1 < idx; ++i) {
+                XTimeWheel* w = XVector_at_base(&group->m_timeWheel, i);
+                if (w) unit *= (uint64_t)XContainerSize(&w->m_slots);
+            }
+            if (unit == 0) unit = 1;
+            if (added) added->m_tick = ((XTimerGroupBase*)group)->m_current_tick / unit;
+        }
+    }
 }
 
 void XTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group)
@@ -420,7 +449,7 @@ void VXTimeWheelGroup_clear(XTimeWheelGroup* group)
     }
 }
 // 公共函数：处理一个定时器节点链表
-static void process_timer_list(XTimeWheelGroup* group, XListSNode* head, size_t current_tick)
+static void process_timer_list(XTimeWheelGroup* group, XListSNode* head, uint64_t current_tick)
 {
     if (!head) return;
 
@@ -449,7 +478,7 @@ static void process_timer_list(XTimeWheelGroup* group, XListSNode* head, size_t 
                 // 循环定时器：复用当前节点
                 size_t timeout_ticks = ceil_div(timer->m_data.m_interval, group->m_class.m_precision);
                 if (timeout_ticks == 0) timeout_ticks = 1;
-                timer->m_expire_ticks = current_tick + timeout_ticks;
+                timer->m_expire_ticks = current_tick + (uint64_t)timeout_ticks;
 
                 if (addTimer_lockfree(group, node, timeout_ticks, NULL)) {
                     isdelete = false; // 成功复用，不需要删除
@@ -460,7 +489,7 @@ static void process_timer_list(XTimeWheelGroup* group, XListSNode* head, size_t 
         }
         else {
             // 未到期：不应出现在 L0 中，用 addTimer_lockfree 重新分配到正确的轮次
-            size_t remaining_ticks = timer->m_expire_ticks - current_tick;
+            size_t remaining_ticks = (size_t)(timer->m_expire_ticks - current_tick);
             node->next = NULL;
             if (addTimer_lockfree(group, node, remaining_ticks, NULL)) {
                 isdelete = false;
@@ -519,7 +548,7 @@ static void cascade_timers(XTimeWheelGroup* group, XTimeWheel* higher_level, siz
 
         // 计算剩余全局滴答数
         // 防御：如果定时器已到期（m_expire_ticks <= current_tick），直接放入低级轮第0槽，下次tick立即处理
-        size_t current_tick = group->m_class.m_current_tick;
+        uint64_t current_tick = group->m_class.m_current_tick;
         if (timer->m_expire_ticks <= current_tick) {
             node->next = NULL;
             if(!add_timer_to_wheel_lockfree(group, lower_level, node, 0))
@@ -527,7 +556,7 @@ static void cascade_timers(XTimeWheelGroup* group, XTimeWheel* higher_level, siz
             node = next;
             continue;
         }
-        size_t remaining_global_ticks = timer->m_expire_ticks - current_tick;
+        size_t remaining_global_ticks = (size_t)(timer->m_expire_ticks - current_tick);
         // 计算在低级轮上还需要等待的滴答数
         size_t ticks_in_lower_wheel = remaining_global_ticks / lower_unit;
         if (ticks_in_lower_wheel >= lower_slots) {
@@ -559,9 +588,9 @@ void VXTimeWheelGroup_tick(XTimeWheelGroup* group)
     sweep_cancelled_timers(group);
 
     XTimerGroupBase* groupBase = ((XTimerGroupBase*)group);
-    size_t current_tick = groupBase->m_current_tick;
+    uint64_t current_tick = groupBase->m_current_tick;
     XTimeWheel* wheel = XVector_front_base(&group->m_timeWheel);
-    size_t current_slot = wheel->m_tick % XContainerSize(&wheel->m_slots);
+    size_t current_slot = (size_t)(wheel->m_tick % (uint64_t)XContainerSize(&wheel->m_slots));
 
     // 原子获取并清空当前槽的链表
     XAtomic_Uintptr* slot_ptr = XVector_at_base(&wheel->m_slots, current_slot);
@@ -590,7 +619,8 @@ void VXTimeWheelGroup_tick(XTimeWheelGroup* group)
                 break; // 没有更高级的时间轮
 
             XTimeWheel* nextWheel = XVector_at_base(&group->m_timeWheel, i + 1);
-            size_t next_slot = nextWheel->m_tick % XContainerSize(&nextWheel->m_slots);
+            size_t next_slot = (size_t)(nextWheel->m_tick %
+                                        (uint64_t)XContainerSize(&nextWheel->m_slots));
             cascade_timers(group, nextWheel, next_slot, i + 1);
             ++nextWheel->m_tick;
         }
@@ -603,6 +633,43 @@ void VXTimeWheelGroup_tick(XTimeWheelGroup* group)
     // 当前节拍完成，增加全局节拍计数
     ++groupBase->m_current_tick;
 }
+/* [冷启动刻度对齐 2026-11-05] 把全局刻度与各级轮刻度一起写到 nowTick。
+ *
+ * 背景：刻度源改为纪元毫秒（Unix 纪元）后，m_current_tick 的初值 0 与真实
+ * 刻度相差 ~1.7e12 拍。原实现只能靠 handler 的有界追赶循环逐拍补（单次封顶
+ * max_time/precision=27000 拍），既要 6e7 次调用才收敛，期间每拍都按被压缩
+ * 的时间轴兑现定时器——即"定时器全部立即触发"。故冷启动必须直接对齐。
+ *
+ * 只在**轮里还没有任何定时器**时调用（m_clockSynced 为假即此前提）：
+ *  - m_current_tick 决定级联边界相位；
+ *  - 各级 wheel->m_tick 决定下一格要消费的槽位（addTimer 按
+ *    (wheel->m_tick + ticks) % slots 落槽）。
+ * 两者必须同相，否则新加的定时器会落在与级联相位错开的槽里。空轮里改写
+ * 两者都无副作用。
+ *
+ * [各级刻度的量纲不同，不能都写 nowTick] 消费侧的执行事实是：
+ *   · L0 每拍 ++m_tick  ⇒ L0.m_tick 与全局刻度同步（1:1）；
+ *   · L1/L2 只在级联边界 ++m_tick ⇒ L1.m_tick = global/30，
+ *     L2.m_tick = global/900。
+ * 因此第 i 级应写 nowTick / unit(i)（unit(i) = 前 i 级槽数连乘），
+ * 全写 nowTick 会让更高级轮的槽位相位整体错开（取模后落到错误槽）。 */
+static void wheel_calibrate_ticks(XTimeWheelGroup* group, uint64_t nowTick)
+{
+    size_t i;
+    uint64_t unit = 1;   /* 前 i 级槽数连乘 = 第 i 级每槽对应的全局刻度跨度 */
+    XTimerGroupBase* groupBase = (XTimerGroupBase*)group;
+    groupBase->m_current_tick = nowTick;
+    for (i = 0; i < XContainerSize(&group->m_timeWheel); ++i) {
+        XTimeWheel* wheel = XVector_at_base(&group->m_timeWheel, i);
+        if (wheel)
+            wheel->m_tick = nowTick / unit;
+        if (wheel)
+            unit *= (uint64_t)XContainerSize(&wheel->m_slots);
+        if (unit == 0) unit = 1;
+    }
+    group->m_clockSynced = true;
+}
+
 void VXTimerGroupBase_handler(XTimerGroupBase* group)
 {
     XTimerGroupBase* groupBase = ((XTimerGroupBase*)group);
@@ -612,7 +679,13 @@ void VXTimerGroupBase_handler(XTimerGroupBase* group)
     sweep_cancelled_timers((XTimeWheelGroup*)group);
     reclaim_retired_nodes((XTimeWheelGroup*)group);
 
-    size_t tick = groupBase->m_high_res_time_func() / groupBase->m_precision; // 当前滴答数
+    uint64_t tick = groupBase->m_high_res_time_func() / groupBase->m_precision; // 当前滴答数
+
+    /* [冷启动对齐门 2026-11-05] 首次进入 handler 时直接对齐刻度（见
+     * wheel_calibrate_ticks 注记），不做逐拍追赶。对齐后 tick 已等于
+     * m_current_tick，下方推进循环自然空转，无需提前返回。 */
+    if (!((XTimeWheelGroup*)group)->m_clockSynced)
+        wheel_calibrate_ticks((XTimeWheelGroup*)group, tick);
 
     /* [WHEELCLK 2026-10-29 诊断] 刻度源轴对账：XGUI_WHEEL_TRACE=1 时每
      * 500ms 至多一条，打印注入刻度源原始返回值（64 位拆高低 32 位用
@@ -633,15 +706,17 @@ void VXTimerGroupBase_handler(XTimerGroupBase* group)
             uint32_t rawLo = (uint32_t)rawMs;
             if ((uint32_t)(rawLo - s_wheelClkLastLo) >= 500u)
             {
-                size_t curTick = (size_t)groupBase->m_current_tick;
-                long behind = (long)(tick - curTick);
+                uint64_t curTick = groupBase->m_current_tick;
+                /* 有符号滞后：同宽回绕转 int64（64 位轴下 behind 可超 long，
+                 * Windows/LLP64 的 long 仍是 32 位，故显式用 int64_t）。 */
+                int64_t behind = (int64_t)(tick - curTick);
                 s_wheelClkLastLo = rawLo;
-                fprintf(stderr, "[WHEELCLK] src_hi=%lu src_lo=%lu axis=%lu cur=%lu behind=%ld\n",
+                fprintf(stderr, "[WHEELCLK] src_hi=%lu src_lo=%lu axis=%lu cur=%lu behind=%lld\n",
                         (unsigned long)(uint32_t)(rawMs >> 32),
                         (unsigned long)rawLo,
                         (unsigned long)(uint32_t)tick,
                         (unsigned long)(uint32_t)curTick,
-                        behind);
+                        (long long)behind);
             }
         }
     }
@@ -677,12 +752,12 @@ void VXTimerGroupBase_handler(XTimerGroupBase* group)
      * 推进一段、圈圈有进展，若干圈内收敛，且到期判断用推进后的刻度，
      * 封顶窗口内的到期定时器照常兑现。 */
     {
-        size_t span_ticks;
-        size_t behind;
+        uint64_t span_ticks;
+        uint64_t behind;
         if (groupBase->m_precision == 0)
             span_ticks = tick - groupBase->m_current_tick;
         else
-            span_ticks = (size_t)(groupBase->m_max_time / groupBase->m_precision);
+            span_ticks = groupBase->m_max_time / groupBase->m_precision;
         if (span_ticks == 0)
             span_ticks = 1;
         behind = tick - groupBase->m_current_tick;

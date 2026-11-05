@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "账户库格式示例（不含真实口令/哈希）。",
+    "不要手写这个文件：首次启动时服务端会自动生成 cfg/hsf_users.json，",
+    "并在日志里打印缺省账户（admin/admin 只读、root/root 可改）。",
+    "要改口令请用服务端的账户管理入口，它会重新算 salt/hash。",
+    "本文件仅用于说明 JSON 结构，不参与加载。"
+  ],
+  "version": 1,
+  "users": [
+    {
+      "name": "admin",
+      "role": 1,
+      "iterations": 10000,
+      "locked": false,
+      "salt": "<16 字节 hex>",
+      "hash": "<pbkdf2(sha256) 结果 hex>"
+    },
+    {
+      "name": "root",
+      "role": 2,
+      "iterations": 10000,
+      "locked": false,
+      "salt": "<16 字节 hex>",
+      "hash": "<pbkdf2(sha256) 结果 hex>"
+    }
+  ]
+}

@@ -68,7 +68,7 @@ class HomePage(Page):
         cards.addWidget(th_card, 1)
 
         # 变频器卡
-        vfd_card = Card("变频器")
+        vfd_card = Card("搅拌泵")     # 设备是变频器，按工艺用途显示
         self._vfd_grid = QGridLayout()
         self._vfd_grid.setSpacing(10)
         self.vfd_state = StatBlock("运行状态", "", "--", value_size=20)
@@ -100,17 +100,42 @@ class HomePage(Page):
         entry_row = QHBoxLayout()
         entry_row.setSpacing(10)
         entries = [
-            ("监视", "数字量 / 模拟量 / 变频器 / 流量计", reg.PAGE_MONITOR_MENU),
+            ("监视", "数字量 / 模拟量 / 搅拌泵 / 水质监测", reg.PAGE_MONITOR_MENU),
             ("数据", "历史数据 / 日志 / 报警", reg.PAGE_DATA_MENU),
             ("设置", "本地 / 远端 / 网络 / 悬浮窗 / 窗口", reg.PAGE_SETTINGS_MENU),
         ]
         for title, desc, page in entries:
-            btn = QPushButton("%s\n%s" % (title, desc))
+            # [用按钮内嵌 QLabel 排版，不用按钮自绘多行文字]
+            #
+            # 实锅 2026-11-05：文字写成 "标题\n说明" 时，QPushButton 在带
+            # padding 的样式表下按**单行**算基线，两行文字被垂直居中同时
+            # 上下各切掉一半（截图里只剩半行字）。把 minHeight 提到 84
+            # 也没用 —— 问题在绘制，不在尺寸。
+            #
+            # 改成按钮内部放两行 QLabel（标题加粗 + 说明次要色），
+            # 行高由布局管理，不受按钮自身文字绘制逻辑影响。
+            btn = QPushButton()
             btn.setMinimumHeight(84)
             btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet(
-                "QPushButton { text-align: center; font-size: 13px;"
-                " padding: 10px; }")
+            btn.setStyleSheet("QPushButton { text-align: center; padding: 0; }")
+            inner = QVBoxLayout(btn)
+            inner.setContentsMargins(10, 8, 10, 8)
+            inner.setSpacing(2)
+            lbl_title = QLabel(title)
+            lbl_title.setAlignment(Qt.AlignCenter)
+            lbl_title.setStyleSheet(
+                "QLabel { font-size: 15px; font-weight: bold; color: #1A1A1A;"
+                " background: transparent; }")
+            lbl_desc = QLabel(desc)
+            lbl_desc.setAlignment(Qt.AlignCenter)
+            lbl_desc.setWordWrap(True)
+            lbl_desc.setStyleSheet(
+                "QLabel { font-size: 12px; color: #5A6572;"
+                " background: transparent; }")
+            inner.addStretch(1)
+            inner.addWidget(lbl_title)
+            inner.addWidget(lbl_desc)
+            inner.addStretch(1)
             btn.clicked.connect(lambda _c=False, p=page: self.ctx.navigate(p))
             entry_row.addWidget(btn, 1)
         self.root.addLayout(entry_row)
@@ -121,11 +146,18 @@ class HomePage(Page):
         # [必须先 setColumnCount] DataTable 缺省 3 列；只传 4 个表头标签
         # 不会自动扩列（setHorizontalHeaderLabels 只在已有列上填字），
         # 结果「说明」列根本不显示（截图实见：只有 设备/类型/状态 三列）。
-        self._table.table.setColumnCount(4)
+        # [5 列，2026-11-05] 原「说明」列同时想放"错误原因"和"连接地址"，
+        # 但这两件事性质不同、也会互相覆盖（有错误时地址就看不见了）：
+        #   · 地址   —— 静态配置（ip:port / 口·波特率·站号），**查故障第一步**
+        #   · 错误信息 —— 动态原因（超时/无应答/未装配），只在异常时有值
+        # 拆成两列后，一台设备离线时能同时看到"它在哪个地址"和"为什么离线"，
+        # 不用再去翻配置文件。
+        self._table.table.setColumnCount(5)
         self._table.table.setRowCount(0)
-        self._table.table.setHorizontalHeaderLabels(["设备", "类型", "状态", "说明"])
-        # 设备名占比最大，状态列给足（含"正常/离线"两字）
-        self._table.set_column_weights((4, 2, 2, 4))
+        self._table.table.setHorizontalHeaderLabels(
+            ["设备", "类型", "状态", "地址", "错误信息"])
+        # 地址列最宽（"COM17 · 115200 · 站 2" 这类串比设备名长）
+        self._table.set_column_weights((4, 2, 2, 7, 5))
         card = Card()
         card.add(self._table)
         # 表格高度贴合 5 行内容（否则拖出一整屏空白，页面看着很空）
@@ -167,23 +199,23 @@ class HomePage(Page):
 
         # ---- 设备表 ----
         rows = [(d.name, d.kind_text(), d.health_text(),
-                 d.text or "-") for d in health.devices]
+                 d.addr or "-", d.text or "-") for d in health.devices]
         table = self._table.table
         if table.rowCount() != len(rows):
             table.setRowCount(len(rows))
             self._table.fit_to_content(extra_rows=len(rows))
             for r in range(len(rows)):
-                for c in range(4):
+                for c in range(5):
                     item = QTableWidgetItem("")
                     if c > 0:
                         item.setTextAlignment(Qt.AlignCenter)
                     table.setItem(r, c, item)
             table.verticalHeader().setDefaultSectionSize(theme.TABLE_ROW_H)
         from PyQt5.QtGui import QColor
-        for r, (name, kind, state, text) in enumerate(rows):
+        for r, (name, kind, state, addr, text) in enumerate(rows):
             # 逐格判空再写：行重建与数据更新可能不同步，直接 .setText
             # 会在 item 为 None 时抛 AttributeError 把整页刷新打断。
-            for c, value in enumerate((name, kind, state, text)):
+            for c, value in enumerate((name, kind, state, addr, text)):
                 item = table.item(r, c)
                 if item is None:
                     item = QTableWidgetItem("")
@@ -502,6 +534,35 @@ class RemoteSettingsPage(Page):
         card.body.addLayout(row)
         self.root.addWidget(card)
 
+        # ---- 自动运行（与模式切换**分开**的两个按钮）----
+        #
+        # [为什么必须分开] 切到自动模式只是"授权自动逻辑可以跑"，不等于
+        # "现在开始跑"。合成一个动作的话，操作员只想切个模式，设备立刻
+        # 被自动逻辑驱动 —— 现场反馈"太危险了"。
+        # 这里两个独立按钮，启停都要人明确按一次。
+        card_auto = Card("自动运行")
+        self._auto_label = QLabel("--")
+        self._auto_label.setStyleSheet(
+            "QLabel { background: transparent; font-size: 13px; }")
+        card_auto.add(self._auto_label)
+        hint2 = QLabel("切到自动模式只是授权；要真正开始自动运行，需按下面的"
+                       "「启动自动运行」。服务端重启后控制器一律为停止状态。")
+        hint2.setWordWrap(True)
+        hint2.setStyleSheet(theme.caption_label_qss())
+        card_auto.add(hint2)
+
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+        self.btn_auto_start = QPushButton("启动自动运行")
+        self.btn_auto_start.clicked.connect(lambda: self._set_auto_running(True))
+        self.btn_auto_stop = QPushButton("停止自动运行")
+        self.btn_auto_stop.clicked.connect(lambda: self._set_auto_running(False))
+        row2.addWidget(self.btn_auto_start)
+        row2.addWidget(self.btn_auto_stop)
+        row2.addStretch(1)
+        card_auto.body.addLayout(row2)
+        self.root.addWidget(card_auto)
+
         card2 = Card("连接信息")
         self._conn_label = QLabel("--")
         self._conn_label.setWordWrap(True)
@@ -528,6 +589,25 @@ class RemoteSettingsPage(Page):
 
         self.ctx.bridge.set_run_mode(mode, on_done=_done)
 
+    def _set_auto_running(self, want_on):
+        """启动/停止自动运行（**逻辑在服务端**，客户端只发意图）。"""
+        if not self.ctx.is_root():
+            self.ctx.set_status("权限不足：自动运行控制需要 root 账户")
+            return
+        if not self.ctx.bridge.is_connected():
+            self.ctx.set_status("未连接服务端")
+            return
+        self.ctx.set_status("正在%s自动运行…" % ("启动" if want_on else "停止"))
+
+        def _done(doc):
+            if doc.get("ok"):
+                self.ctx.set_status("自动运行已%s"
+                                    % ("启动" if want_on else "停止"))
+            else:
+                self.ctx.set_status("操作失败：%s" % doc.get("err", "未知"))
+
+        self.ctx.bridge.send_auto_control(want_on, on_done=_done)
+
     def refresh(self):
         model = self.ctx.model
         if model.run_mode_known:
@@ -546,6 +626,37 @@ class RemoteSettingsPage(Page):
         usable = self.ctx.is_root() and not model.is_auto()
         self.btn_manual.setEnabled(self.ctx.is_root() and model.is_auto())
         self.btn_auto.setEnabled(usable)
+
+        # ---- 自动运行（与模式分开显示）----
+        #
+        # [三种状态必须分得清] 手动 / 自动但未运行 / 自动且运行中。
+        # 把"自动模式"直接说成"自动运行中"会让操作员以为设备已经在按逻辑
+        # 动作，而实际还要再按一次启动。
+        running = model.auto_running
+        if not model.run_mode_known:
+            self._auto_label.setText("未知")
+            self._auto_label.setStyleSheet(
+                "QLabel { background: transparent; font-size: 13px; }")
+        elif not model.is_auto():
+            self._auto_label.setText("手动模式（自动运行不可用）")
+            self._auto_label.setStyleSheet(
+                "QLabel { background: transparent; font-size: 13px; color: #5A6572; }")
+        elif running is None:
+            self._auto_label.setText("自动模式 · 运行状态未知（服务端未上报）")
+            self._auto_label.setStyleSheet(
+                "QLabel { background: transparent; font-size: 13px; color: #5A6572; }")
+        elif running:
+            self._auto_label.setText("自动模式 · 运行中")
+            self._auto_label.setStyleSheet(
+                "QLabel { background: transparent; font-size: 13px;"
+                " font-weight: bold; color: %s; }" % theme.CLR_WARN)
+        else:
+            self._auto_label.setText("自动模式 · 已停止（未按过启动）")
+            self._auto_label.setStyleSheet(
+                "QLabel { background: transparent; font-size: 13px; color: #5A6572; }")
+        can_ctrl = self.ctx.is_root() and model.is_auto()
+        self.btn_auto_start.setEnabled(can_ctrl and running is not True)
+        self.btn_auto_stop.setEnabled(can_ctrl and running is True)
         bridge = self.ctx.bridge
         if bridge.is_connected():
             self._conn_label.setText(

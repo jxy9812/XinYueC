@@ -208,6 +208,16 @@ typedef uint64_t XVfdStatusField;   /**< 字段位类型（位宏组合后的值
 #define XVfdField_EnergyKwh            (1ULL << 38)   /**< m_energyKwhTotal 有效 */
 #define XVfdField_FaultCode            (1ULL << 39)   /**< m_faultCode 有效 */
 
+/**
+ * @brief 「遥测字段」掩码（快照是否"有数据"的权威判据）。
+ * @details 与 XVfdCodec 的 telemetryKeys 严格对应（那张表决定快照里最终能写出哪些键）。
+ *          [为何需要它] m_validMask 里还包含 RawStateWord（上报的原始状态字）
+ *          这类**不进遥测**的位：只看"掩码非零"会把「只读到状态字、
+ *          一个遥测量都没有」的情形当成有数据，快照编码出来只剩
+ *          "vm":0，客户端拿到空快照却被告知"设备正常"（实测陷阱）。
+ */
+#define XVfdField_TelemetryMask        (     XVfdField_RunState | XVfdField_Running | XVfdField_Faulted |     XVfdField_Reverse | XVfdField_JogActive | XVfdField_Remote |     XVfdField_SetFreqHz | XVfdField_OutputFreqHz | XVfdField_OutputVoltage |     XVfdField_OutputCurrent | XVfdField_BusVoltage | XVfdField_OutputPowerKw |     XVfdField_TorquePercent | XVfdField_SpeedRpm | XVfdField_FaultCode)
+
 /* ========================================================================== */
 /*                      值类型                                                */
 /* ========================================================================== */
@@ -530,6 +540,18 @@ typedef struct XVfdDevice {
     XVfdError m_lastError;          /**< 最近一次失败原因 */
     double m_maxFreqHz;             /**< 最大频率缓存（相对口径频率换算基准；Hz） */
     bool m_maxFreqKnown;            /**< m_maxFreqHz 是否已从 MaxFreq 槽读得 */
+    /**
+     * @brief 电机额定转速（rpm；最大频率处对应的转速，缺省 1440）。
+     * @details [2026-11-05 转速给定通用化] 「按转速调速」是所有变频器的共同
+     *          需求，但多数品牌（M512 等）**没有独立转速给定寄存器**，只有
+     *          一个频率给定。故转速↔频率换算放在基类：
+     *              hz = rpm / m_ratedRpm × maxFreqHz
+     *          子类只需实现 SetFrequency；基类 SetSpeedRpm 的缺省实现把它
+     *          换算成 Hz 后转调 SetFrequency（见 VXVfdDevice_SetSpeedRpm）。
+     *          有原生转速通道的品牌（ATV61 的 SpeedSet 点）覆盖该虚槽即可。
+     *          1440rpm@50Hz = 4 极异步电机额定点；品牌 init 可覆盖。
+     */
+    double m_ratedRpm;
     bool m_controlEnabled;          /**< 控制闸：true=允许 start/stop/给定等修改（默认 true） */
 } XVfdDevice;
 
@@ -782,6 +804,39 @@ uint32_t XVfdDevice_actionTimeout(const XVfdDevice* dev);
  *       预设值。绝对口径品牌不需要此值。
  */
 double XVfdDevice_maxFrequency(const XVfdDevice* dev);
+
+/**
+ * @brief 取电机额定转速（rpm；最大频率处对应的转速）。
+ * @param dev 设备实例；NULL 返回 0。
+ * @return 额定转速；未配置时返回缺省 1440。
+ * @note UI 用它把"按转速给定"的输入换算成频率再显示/下发。
+ */
+double XVfdDevice_ratedRpm(const XVfdDevice* dev);
+
+/**
+ * @brief 设置电机额定转速（rpm；<=0 忽略）。
+ * @details 现场电机不是 1440rpm@50Hz 的常规 4 极机（如 2 极高转速、或
+ *          6 极低速机）时由装配层按铭牌/P1.05 覆盖。
+ */
+void XVfdDevice_setRatedRpm(XVfdDevice* dev, double rpm);
+
+/**
+ * @brief 转速（rpm）→ 频率（Hz）换算（供 UI 显示与下发前预览）。
+ * @param dev 设备实例；NULL 返回 0。
+ * @param rpm 转速（可为负=反转）。
+ * @return 折算频率（hz = rpm / ratedRpm × maxFreqHz）。
+ * @note 与 VXVfdDevice_SetSpeedRpm 的换算**同一公式**：UI 用它算出的 Hz
+ *       与实际下发路径一致，不会出现"界面 30Hz、设备却按 31Hz 跑"。
+ */
+double XVfdDevice_rpmToHz(const XVfdDevice* dev, double rpm);
+
+/**
+ * @brief 频率（Hz）→ 转速（rpm）换算（供 UI 把遥测频率显示成转速）。
+ * @param dev 设备实例；NULL 返回 0。
+ * @param hz 频率（Hz；负值按负转速返回）。
+ * @return 折算转速（rpm = hz / maxFreqHz × ratedRpm）。
+ */
+double XVfdDevice_hzToRpm(const XVfdDevice* dev, double hz);
 
 /**
  * @brief 工程频率（Hz）→ 品牌原生频率码。

@@ -93,7 +93,10 @@ static bool temphumEvaluateQuality(const HsfServerIoTempHum* st,
  * @brief 从 Hub 缓存取本站两个字并喂进通道组（一次采样拍）。
  * @param st 目标站；未装配返回 false。
  * @return 喂进了至少一个字返回 true。
- * @note 组内 feedRole 自带「值未变则静默」，故重复调用无副作用。
+ * @note [必须用 feedRoleRefresh] 本函数是心跳拍：房间温湿度长期稳定，
+ *       feedRole 会因"值未变"静默，设备的「最近一拍」不再刷新，超过
+ *       staleMs 就被判陈旧（与流量计站同一个坑，见其同款注记）。
+ *       feedRoleRefresh 值未变也发射，表达"这一拍确实是从链路读回来的"。
  */
 static bool temphumSampleFromHub(HsfServerIoTempHum* st)
 {
@@ -105,14 +108,14 @@ static bool temphumSampleFromHub(HsfServerIoTempHum* st)
     hub = HsfServerBus_hub(st->m_bus);
     if (!hub) return false;
     if (XModbusHub_value(hub, XModbusInputRegisters, st->m_vbase, &raw)) {
-        XIoChannelGroup_feedRole(st->m_group, HSF_TEMPHUM_ROLE_TEMP,
-                                 HsfServerIoTempHum_decodeTemp(raw));
+        XIoChannelGroup_feedRoleRefresh(st->m_group, HSF_TEMPHUM_ROLE_TEMP,
+                                        HsfServerIoTempHum_decodeTemp(raw));
         fed = true;
     }
     if (XModbusHub_value(hub, XModbusInputRegisters,
                          (uint16_t)(st->m_vbase + HSF_TEMPHUM_OFF_HUM), &raw)) {
-        XIoChannelGroup_feedRole(st->m_group, HSF_TEMPHUM_ROLE_HUM,
-                                 HsfServerIoTempHum_decodeHum(raw));
+        XIoChannelGroup_feedRoleRefresh(st->m_group, HSF_TEMPHUM_ROLE_HUM,
+                                        HsfServerIoTempHum_decodeHum(raw));
         fed = true;
     }
     return fed;

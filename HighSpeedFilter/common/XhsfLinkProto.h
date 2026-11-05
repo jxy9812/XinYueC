@@ -81,6 +81,40 @@
 /** @brief 电磁流量计遥测快照请求（载荷={"side":int}；Response=流量计快照 BSON）。 */
 #define HSF_CMD_FLOWMETER_SNAPSHOT  0x0106u
 
+/**
+ * @brief 数字量模块（16DI/16DO）遥测快照请求（载荷={"side":int}；可空）。
+ * @details Response = 数字量快照 BSON，键表见 HSF_KEY_DI_* / HSF_KEY_DO_*。
+ *          Python 侧同号（hsfsrv/proto.py CMD_DIGITAL_SNAPSHOT）。
+ */
+#define HSF_CMD_DIGITAL_SNAPSHOT    0x0108u
+
+/**
+ * @brief 数字量输出控制（载荷 {"index":int,"on":bool}；需管理角色）。
+ * @details Response = 应答包络；数字量页 DO 点动即走本命令。
+ *          自动模式下与变频器控制同款被拒。
+ */
+#define HSF_CMD_DIGITAL_CONTROL     0x0109u
+
+/**
+ * @brief 电磁阀状态快照请求（空载荷；Response=6 路阀快照 BSON）。
+ * @details 键表见 HSF_KEY_VALVE_*；与周期推送同构，供入页/重连对账。
+ */
+#define HSF_CMD_VALVE_SNAPSHOT      0x0110u
+
+/**
+ * @brief 电磁阀控制（载荷 {"index":int,"on":bool}；需管理角色）。
+ * @details on=true 开阀、false 关阀。Response 携带最新那一路的快照字段
+ *          （v<i>_*），客户端据此即时刷新卡片而不等下一拍推送。
+ */
+#define HSF_CMD_VALVE_CONTROL       0x0111u
+
+/**
+ * @brief 浊度仪遥测快照请求（载荷空；Response = 两台浊度合并 BSON）。
+ * @details 与 Python 侧 proto.CMD_TURBIDITY_SNAPSHOT 同号。键表见 HSF_KEY_TURB_*。
+ *          只读设备——浊度仪无控制面（标定/清洗都在仪表面板上做）。
+ */
+#define HSF_CMD_TURBIDITY_SNAPSHOT  0x0112u
+
 /* ==================== 推送主题（topicId = XLINK_TOPIC_USER_BASE + n） ==================== */
 
 /** @brief 变频器遥测推送主题（载荷=XVfdStatus BSON + side，周期见服务端配置）。 */
@@ -103,6 +137,23 @@
  *          载荷见 HsfDeviceHealthBundle 的键表（devCount/各设备条目）。
  */
 #define HSF_TOPIC_DEVICE_HEALTH     0x00010005u
+
+/**
+ * @brief 数字量模块遥测推送主题（载荷=数字量快照 BSON）。
+ * @details 周期推送本侧（A 侧=.12 主模块）的 16DI/16DO 位图。
+ */
+#define HSF_TOPIC_DIGITAL_STATUS    0x00010006u
+
+/** @brief 电磁阀状态推送主题（载荷=6 路阀快照 BSON；周期推送）。 */
+#define HSF_TOPIC_VALVE_STATUS      0x00010007u
+
+/**
+ * @brief 浊度仪遥测推送主题（载荷=两台浊度合并 BSON；周期推送）。
+ * @details 与 Python 侧 proto.TOPIC_TURBIDITY_STATUS 同号。
+ *          [为什么两台合成一帧] 它们总是成对显示、成对刷新，分成两个主题
+ *          只会让客户端写两遍同样的订阅逻辑；台数由帧里的 count 决定。
+ */
+#define HSF_TOPIC_TURBIDITY_STATUS  0x00010009u
 
 /* ==================== 侧号（两路 485 各管一侧） ==================== */
 
@@ -204,6 +255,201 @@ typedef enum HsfDeviceKind {
 #define HSF_KEY_DEV_ONLINE      "online"      /**< 通讯在线（bool）。 */
 #define HSF_KEY_DEV_SEQ         "seq"         /**< 变化序号（int；单调递增，客户端据此判新旧）。 */
 #define HSF_KEY_DEV_TS          "ts"          /**< 生成时刻（int64 单调毫秒）。 */
+
+/* ---- 设备类别补充（与 Python 侧 proto.KIND_* 逐值一致） ---- */
+
+#ifndef HSF_DEVICE_KIND_DIGITAL
+#define HSF_DEVICE_KIND_DIGITAL     5   /**< 数字量模块（16DI/16DO）。 */
+#endif
+#ifndef HSF_DEVICE_KIND_VALVE
+#define HSF_DEVICE_KIND_VALVE       6   /**< 电磁阀组。 */
+#endif
+#ifndef HSF_DEVICE_KIND_WATER
+/**
+ * @brief 水质仪表（浊度仪等）。
+ * @note  [实锅 2026-11-05] 浊度仪初版复用了 HsfDeviceKind_TempHum（1），
+ *        首页"类型"列把两台浊度仪显示成"温湿度" —— 数据正确但类别完全
+ *        误导（现场会以为那是电箱里的温湿度变送器）。类别必须表达"这是
+ *        什么设备"，复用一个不相关的值等于在界面上撒谎。
+ */
+#define HSF_DEVICE_KIND_WATER       7
+#endif
+
+/* ==================== 数字量模块（32DI/32DO） ==================== */
+
+/**
+ * @brief 数字量通道数**上限**（客户端与服务端共用的编译期数组容量）。
+ * @note  [2026-11-05 现场 32 点] 原值 16。现场两台 MT3A-IO1632 经 .12 聚合
+ *        对外表现为 32DI/32DO（.13 的 16 点映射到 .12 的上半区 bit16..31），
+ *        故容量放到 32。
+ *
+ *        这是**数组容量**，不是实际点数：实际点数恒由服务端帧里的 count 键
+ *        给出，客户端按 count 显示（可以少于 32）。把它当成"实际点数"写死
+ *        会在少点位时截断——Python 模拟器刻意把合成信号放在 bit16..31，
+ *        就是为了让这类截断立刻暴露（实测：模拟器发 32 点、客户端只画 16）。
+ */
+#define HSF_DIGITAL_CHANNELS        32
+
+/** @brief 模块下标（多模块时区分；当前 A 侧单模块恒 0）。 */
+#define HSF_KEY_DIG_DEV             "dev"
+/** @brief DI 位图（int；bit n = 通道 n，1=通）。 */
+#define HSF_KEY_DIG_DI              "di"
+/** @brief DO 位图（int；bit n = 通道 n，1=通）。 */
+#define HSF_KEY_DIG_DO              "do"
+/** @brief 本模块点数（int；DI/DO 同名路数）。 */
+#define HSF_KEY_DIG_COUNT           "count"
+/** @brief 通道输出控制载荷：通道下标（int）。 */
+#define HSF_KEY_DIG_INDEX           "index"
+/** @brief 通道输出控制载荷：目标值（bool，true=通电）。 */
+#define HSF_KEY_DIG_ON              "on"
+
+/**
+ * @brief 通道名键（**全量快照专用**；格式 "din<通道>"）。
+ * @details 服务端是通道名的唯一事实源（名字写在 HsfServerConfig.h 的宏里）。
+ *          客户端**首次连接拉一次全量**拿到它，之后只收状态/数值增量；
+ *          名字变化时服务端**主动下发**一个只含名字键的快照（见
+ *          HSF_KEY_NAME_FULL 语义），客户端按"有名字键就更新名字"处理。
+ */
+#define HSF_KEY_DIG_DI_NAME_FMT     "din%d"   /**< DI 通道 n 的名字（utf8）。 */
+#define HSF_KEY_DIG_DO_NAME_FMT     "don%d"   /**< DO 通道 n 的名字（utf8）。 */
+
+/**
+ * @brief "本帧是否全量快照"标志（bool）。
+ * @details true ⇒ 载荷含全部通道名 + 全部状态（客户端据此重建点表）；
+ *          false/缺省 ⇒ 只有状态，客户端沿用已缓存的名字。
+ *          [为什么需要这个键] 增量帧不带名字，客户端若靠"有名字键"猜测
+ *          会漏判；显式标志让两条路径完全可区分。
+ */
+#define HSF_KEY_FULL                "full"
+
+/* ==================== 模拟量输入 ==================== */
+
+/** @brief 模拟量通道数上限（中盛 8 路 4-20mA 模块）。 */
+#define HSF_ANALOG_CHANNELS         8
+
+/** @brief 通道数（int）。 */
+#define HSF_KEY_AI_COUNT            "n"
+/** @brief 有效位掩码（int；bit i=通道 i 有效）。 */
+#define HSF_KEY_AI_VALIDMASK        "v"
+/** @brief 通道 i 原始寄存器值（int）。 */
+#define HSF_KEY_AI_RAW_FMT          "r%d"
+/** @brief 通道 i 工程值（微安定点，int）。 */
+#define HSF_KEY_AI_UA_FMT           "u%d"
+/** @brief 通道 i 的名字（utf8；**全量快照专用**）。 */
+#define HSF_KEY_AI_NAME_FMT         "an%d"
+
+/* ==================== 电磁阀（6 路，每路 1 DO + 2 DI 反馈） ==================== */
+
+/** @brief 电磁阀路数上限（与本侧阀组表容量一致）。 */
+#define HSF_VALVE_COUNT             6
+
+/**
+ * @brief 阀位状态（跨端统一口径；与 Python 侧 HsfValveState 逐值一致）。
+ * @details 状态**只由两个到位反馈推导**，不看命令回显——写了 1 只代表命令
+ *          发出去了，阀有没有真动要靠行程开关说话（工业现场最常见的故障
+ *          就是"命令发了、阀卡住了"）。
+ */
+typedef enum HsfValveState {
+    HsfValveState_Unknown = 0,  /**< 状态未知（含无反馈/未配置）。 */
+    HsfValveState_Closed  = 1,  /**< 已关（关到位）。 */
+    HsfValveState_Open    = 2,  /**< 已开（开到位）。 */
+    HsfValveState_Moving  = 3,  /**< 动作中（两个反馈都没到位）。 */
+    HsfValveState_Fault   = 4   /**< 故障（双限位矛盾/动作超时）。 */
+} HsfValveState;
+
+/* ==================== 浊度仪（两台合并一帧；v{index}_ 前缀） ==================== */
+
+/* [为什么两台合成一帧] 它们总是成对显示、成对刷新，分开两个主题只会让客户端
+ * 写两遍同样的订阅逻辑；台数由帧里的 count 决定，将来加第三台也只是 count 变大。 */
+
+/** @brief 帧内台数（顶层，"count"；int）。 */
+#define HSF_KEY_TURB_COUNT          "count"
+/** @brief 单台字段前缀格式：v<i>_ntu 等（i=台序，从 0 起）。 */
+#define HSF_KEY_TURB_PREFIX_FMT     "v%d_%s"
+/** @brief 仪器名（utf8；服务端给，客户端不猜"是原水还是出水"）。 */
+#define HSF_KEY_TURB_NAME           "name"
+/**
+ * @brief 浊度值 NTU × 100 的**整数**（int）。
+ * @details [为什么发定点整数而不是浮点] 与模拟量工程值同一口径，避免浮点在
+ *          BSON 上的精度争议；客户端 ÷100 显示两位小数。
+ *          **注意方向**：这里是 NTU×100，而 XTurbidityMeterCodec 的 "ntu" 是
+ *          NTU 原值（double）——两者同名但口径不同，是刻意的：
+ *            · 设备编解码层（XTurbidityMeterCodec）服务于**进程内/记录回放**，
+ *              给的是无损原值；
+ *            · 线上协议层（本文件）服务于**跨进程展示**，按 Python 侧既定口径
+ *              发定点整数（proto.KEY_TURB_NTU 也是 ×100）。
+ *          混用会差 100 倍且不报错，故两处注释互相点名。
+ */
+#define HSF_KEY_TURB_NTU            "ntu"
+/** @brief 32 位原始寄存器位模式（int；排查真相用，不受换算影响）。 */
+#define HSF_KEY_TURB_RAW            "raw"
+/** @brief 该台是否在线（bool；已读到且未陈旧）。 */
+#define HSF_KEY_TURB_ONLINE         "online"
+
+/** @brief 阀路数（快照顶层）。 */
+#define HSF_KEY_VALVE_COUNT         "count"
+/** @brief 单路字段前缀格式：v<i>_name 等（i=路序，从 0 起）。 */
+#define HSF_KEY_VALVE_PREFIX_FMT    "v%d_%s"
+/** @brief 阀名（utf8）。 */
+#define HSF_KEY_VALVE_NAME          "name"
+/** @brief 最近一次命令意图（bool；true=开）。 */
+#define HSF_KEY_VALVE_OPEN_CMD      "openCmd"
+/** @brief 开到位反馈（bool）。 */
+#define HSF_KEY_VALVE_OPEN_FB       "openFb"
+/** @brief 关到位反馈（bool）。 */
+#define HSF_KEY_VALVE_CLOSE_FB      "closeFb"
+/** @brief 阀位状态（int，HsfValveState）。 */
+#define HSF_KEY_VALVE_STATE         "state"
+/** @brief 点位是否配置齐全（bool；false=未配置，控制被拒）。 */
+#define HSF_KEY_VALVE_READY         "ready"
+/** @brief 数据有效性（bool；服务端质量口径）。 */
+#define HSF_KEY_VALVE_VALID         "valid"
+/** @brief 状态说明（utf8；故障原因/排查提示，可空）。 */
+#define HSF_KEY_VALVE_TEXT          "text"
+/** @brief 阀控制载荷：路序（int）。 */
+#define HSF_KEY_VALVE_INDEX         "index"
+/** @brief 阀控制载荷：目标动作（bool；true=开阀）。 */
+#define HSF_KEY_VALVE_ON            "on"
+
+/* ---------------- 阀告警（事件推送，独立主题） ---------------- */
+
+/**
+ * @brief 阀告警主题（载荷 = 单条告警 BSON）。
+ * @details [为什么单独一个主题而不是塞进阀状态]
+ *            阀状态主题是**周期推送**（200ms 一拍），超时告警是**事件**
+ *            （发生才推一次）。混在一起有两个问题：
+ *              ① 客户端每 200ms 收一帧重复告警，无法区分"新告警"与
+ *                 "仍在超时"；
+ *              ② 只看数字量页/主界面的客户端没订阅阀主题，就收不到这条
+ *                 告警。
+ *            故告警走独立主题，且**全推给所有已连接会话**（不要求订阅）。
+ *            [与 Python 侧 proto.TOPIC_VALVE_ALARM 同值]
+ */
+#define HSF_TOPIC_VALVE_ALARM       0x00010008u
+
+/** @brief 本帧告警条数（int）。**有该键就说明这是告警帧**（不是周期状态帧）。 */
+#define HSF_KEY_ALARM_COUNT         "ac"
+/** @brief 告警路号（int，0 起）。 */
+#define HSF_KEY_ALARM_VALVE_INDEX   "vi"
+/** @brief 告警阀名（utf8）。 */
+#define HSF_KEY_ALARM_VALVE_NAME    "vn"
+/** @brief 告警类型（int；见 HsfValveAlarmKind）。 */
+#define HSF_KEY_ALARM_KIND          "k"
+/** @brief 告警文字（utf8，给操作员看）。 */
+#define HSF_KEY_ALARM_TEXT          "t"
+/** @brief 发生时刻（int64 单调毫秒）。 */
+#define HSF_KEY_ALARM_AT            "at"
+/** @brief 超时秒数（float；仅超时类有意义）。 */
+#define HSF_KEY_ALARM_TIMEOUT_S     "to"
+
+/**
+ * @brief 阀告警类型（与 Python 侧 VALVE_ALARM_* 逐值一致）。
+ */
+typedef enum HsfValveAlarmKind {
+    HsfValveAlarmKind_Timeout  = 1, /**< 动作超时未到位。 */
+    HsfValveAlarmKind_Conflict = 2, /**< 开/关到位信号同时有效（接线/阀体故障）。 */
+    HsfValveAlarmKind_Cleared  = 3  /**< 已到位（消警）。 */
+} HsfValveAlarmKind;
 
 /* ==================== 运行模式 ==================== */
 

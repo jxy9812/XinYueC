@@ -47,12 +47,13 @@
 
 /* 直接收录被测实现（单 TU，避免独立目标的符号复制）。收录顺序：
  * 主题 → 模拟源 → provider 表 → 页面（页面引用前几者的符号）。
- * HsfHomePage 一并收录：快捷入口是 receiver 实锅的回归锁（⑪）。 */
+ * [2026-11-05] 不再收录 HsfHomePage.c：主界面改为三卡片 + 设备状态表，
+ * 数据源是 HsfLinkClient（探针不接网络，桩不起来），且按用户决定 C 版
+ * 主界面不做快捷入口 → 原先的 receiver 回归锁（⑪）随之退休。 */
 #include "HsfTheme.c"
 #include "HsfVfdDemoSim.c"
 #include "HsfVfdProvider.c"
 #include "HsfMonitorVfd.c"
-#include "HsfHomePage.c"
 
 /* ---- 远端后端桩（[2026-11-04] 并发流的 XLink 后端在途：页面 provider
  * 接入已按 HsfLinkClient_isOpen() 分叉 demo/remote。探针只验本地 demo
@@ -74,14 +75,6 @@ void HsfLinkClient_setModeCallback(HsfLinkNotifyFn cb, void* userData)
 const char* HsfLinkClient_lastModeError(void) { return "offline"; }
 
 static int s_failures = 0;
-
-/* ---- 主界面快捷入口的 navFn 录制（⑪ receiver 实锅回归锁）。 ---- */
-static int g_homeNav = -1;
-static void homeNavRecorder(void* userData, int index)
-{
-    (void)userData;
-    g_homeNav = index;
-}
 
 static void expect_true(bool cond, const char* name)
 {
@@ -461,26 +454,6 @@ int main(void)
             printf("      (宽档几何: freq=(%d,%d) cur=(%d,%d))\n",
                    f.x, f.y, c.x, c.y);
             expect_true(c.x > f.x && c.y == f.y, "宽档：三仪表横排同高");
-        }
-    }
-
-    /* ==================== ⑪ 主界面快捷入口（receiver 实锅回归锁） ====================
-     * 旧实现把 connect_1 的 receiver（按钮自身）直转页类型 → 错误基址 →
-     * `receiver==&m_actions[i]` 比较恒假 → 三个快捷入口点击静默失效。
-     * 本节逐钮点击并核对 navFn 目标页，防同款复发。 */
-    printf("[11] 主界面快捷入口\n");
-    {
-        XWidget* home = HsfHomePage_create(host, homeNavRecorder, NULL);
-        HsfHomePage* hp = (HsfHomePage*)home;   /* m_base 第一成员，指针同址。 */
-        static const int kWant[3] = {
-            HSF_PAGE_MONITOR_MENU, HSF_PAGE_DATA_MENU, HSF_PAGE_SETTINGS_MENU
-        };
-        int i;
-        expect_true(home != NULL, "主界面页创建");
-        for (i = 0; i < 3; ++i) {
-            g_homeNav = -1;
-            XAbstractButton_click((XAbstractButton*)&hp->m_actions[i]);
-            expect_true(g_homeNav == kWant[i], "快捷入口点击→导航目标正确");
         }
     }
 

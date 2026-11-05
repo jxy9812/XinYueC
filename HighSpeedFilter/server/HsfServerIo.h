@@ -40,7 +40,10 @@ extern "C" {
 #include "HsfServerIoVfd.h"
 #include "HsfServerIoTempHum.h"
 #include "HsfServerIoFlowMeter.h"
+#include "HsfServerIoTurbidity.h"
 #include "HsfServerIoAnalog.h"
+#include "HsfServerIoDigital.h"
+#include "HsfServerIoValve.h"
 
 /** @brief 现场侧标识（两路 485 各管一侧；遥测/命令按侧寻址）。 */
 typedef enum HsfSide {
@@ -56,6 +59,23 @@ typedef enum HsfSide {
  *        只跳过该路，不阻断其它路与模拟量站。
  */
 bool HsfServerIo_start(void);
+
+/**
+ * @brief 设置是否走模拟设备（运行期开关；须在 HsfServerIo_start 之前调用）。
+ * @param enable true=全部从站换成进程内寄存器模型。
+ * @details [用途] 设备拆走/没接线/CI 环境里也能把整条 C 链路跑通。
+ *          上层代码一行不改：Hub 的缓存块/读组合并/写重发、链路 role 映射、
+ *          设备层状态字与故障表、电磁阀超时与离线判定全部跑真实实现，
+ *          变的只有"电信号从哪来"。
+ * @note  默认值取编译期 HSF_SIM_MODE。命令行 `--sim` 会转调本函数。
+ * @warning 模拟模式下所有写操作只写内存模型，**不会驱动真实继电器**。
+ */
+void HsfServerIo_setSimMode(bool enable);
+
+/**
+ * @brief 当前是否处于模拟模式。
+ */
+bool HsfServerIo_simMode(void);
 
 /**
  * @brief 停止并拆除全部装配（幂等；之后可重新 start）。
@@ -97,6 +117,16 @@ const HsfServerIoTempHum* HsfServerIo_tempHum(HsfSide side);
  */
 const HsfServerIoFlowMeter* HsfServerIo_flowMeter(HsfSide side);
 
+/**
+ * @brief 取某侧第 index 台浊度仪站（借用；遥测取值/编码走它）。
+ * @param side 侧号。
+ * @param index 台号（0=浊度仪1，1=浊度仪2；范围 HSF_TURBIDITY_COUNT）。
+ * @return 站指针；未启动/该台未挂返回 NULL。@warning 禁释放。
+ * @details 逐台查询而不是一次给两台：现场两台是独立接线（站号 1/3），
+ *          某台没接时另一台必须照常显示——调用方按 NULL 单独降级。
+ */
+const HsfServerIoTurbidity* HsfServerIo_turbidity(HsfSide side, int index);
+
 /* ==================== 兼容单侧查询（A 侧） ==================== */
 
 /**
@@ -126,12 +156,77 @@ int HsfServerIo_aiValues(double* outMA, bool* outValid, int maxCount);
  */
 int HsfServerIo_aiRawValues(int32_t* outRaw, bool* outValid, int maxCount);
 
-/* ==================== 诊断 ==================== */
+/* ==================== 数字量模块（16DI/16DO，Modbus-TCP） ==================== */
 
+/**
+ * @brief 数字量站是否已装配。
+ */
+bool HsfServerIo_digitalReady(void);
+
+/**
+ * @brief 读 DI / DO 位图（bit n = 通道 n）。
+ * @param outDi 输出 DI 位图（可为 NULL）；outDo 输出 DO 位图（可为 NULL）。
+ * @param outValid 输出数据是否有效（可为 NULL）。
+ * @return 至少一个位图有有效数据返回 true。
+ */
+bool HsfServerIo_digitalMasks(uint32_t* outDi, uint32_t* outDo, bool* outValid);
+
+/**
+ * @brief 写单路 DO（走 FC05 单点写；通道号按配置的起始地址换算）。
+ * @param channel 通道号（0..channels-1）。
+ * @param on 目标值。
+ * @return 已受理返回 true。
+ */
+bool HsfServerIo_digitalWrite(int channel, bool on);
+
+/** @brief 数字量站点数（未装配返回 0）。 */
+int HsfServerIo_digitalCount(void);
+
+/**
+ * @brief 用当前 DI 刷新电磁阀组状态（含动作超时判定）。
+ * @note  由服务端 tick 每拍调用；内部读 DI 位图 → poll →（可选）写动作。
+ */
+void HsfServerIo_valvePoll(uint64_t nowMs);
+
+/**
+ * @brief 电磁阀组读取入口（借用；未装配返回 NULL）。
+ */
+const HsfServerIoValve* HsfServerIo_valves(void);
+
+/**
+ * @brief 电磁阀控制：查配置 → 校验 → 写 DO。
+ * @param index 路序。
+ * @param wantOpen true=开阀。
+ * @param outErr 失败原因（UTF-8；容量 cap）。
+ * @return 已下发返回 true。
+ * @note  动作出口是"单点写对应 DO"：开=写 1，关=写 0。
+ *        反馈到位由 HsfServerIo_valvePoll 判读，本函数不阻塞等待。
+ */
+bool HsfServerIo_valveSet(int index, bool wantOpen, char* outErr, int cap);
+
+/**
+ * @brief 取走某一路**本拍新产生**的阀告警（取走即消费）。
+ * @param index 路序（0..HSF_VALVE_COUNT-1）。
+ * @param outKind 输出告警类型（HsfValveAlarmKind）。
+ * @param outText 输出告警文字缓冲；可为 NULL。
+ * @param cap outText 容量。
+ * @return 有告警返回 true（并已消费该条）。
+ * @note 告警是**事件**：一条只该推一次。调用方在每拍 valvePoll 之后遍历
+ *       各路取一遍，取到就推 HSF_TOPIC_VALVE_ALARM。取走语义天然防重复，
+ *       故这里无需调用方另记"已推过"。
+ */
+bool HsfServerIo_valveTakeAlarm(int index, int* outKind, char* outText, int cap);
+
+/* ==================== 诊断 ==================== */
 /**
  * @brief 取某路总线的 Hub（借用；缓存读/抓帧排查用）。@warning 禁释放。
  */
 struct XModbusHub* HsfServerIo_busHub(HsfSide side);
+
+/**
+ * @brief 取某路总线在 Hub 里的设备句柄（统计口径用；未装配/未就绪返回 -1）。
+ */
+int HsfServerIo_busDeviceId(HsfSide side);
 
 /**
  * @brief 某侧 485 总线是否通讯在线（该路 Hub 的串口设备处于 Connected）。

@@ -1,0 +1,825 @@
+# -*- coding: utf-8 -*-
+"""虚拟 Modbus 设备层：**只替换设备，业务层用真实实现**。
+
+================================================================================
+                            这个模块解决什么
+================================================================================
+
+真实链路：
+
+    设备类(devices.py) ──> master(modbus.py) ──> 串口/TCP ──> 真实设备
+
+本模块把最后两段换掉：
+
+    真实设备类(devices.py，**原封不动**) ──> VirtualMaster ──> 内存寄存器模型
+
+于是：
+
+    · **devices.py 一行不改**，VfdM512 / DigitalIo / AnalogInput / TempHum
+      的真实实现（换算、状态字解码、故障表、写命令字…）全部照跑；
+    · **app.py 一行不改**，命令路由、控制闸门、点动看门狗、阀 20s 定时器、
+      告警去重、健康推送全部照跑；
+    · 只把「电信号」换成内存里的寄存器。
+
+这与「模拟整个服务端」是两码事：那种做法下业务层是假的，验证不了闸门与
+看门狗；本模块下业务层是真的，**只有设备物理层是假的**。
+
+================================================================================
+                              怎么用
+================================================================================
+
+在 `config` 里打开 `sim` 段（或用 `--sim` 命令行开关），`app.build_devices`
+就会用 VirtualMaster 代替真实 master。真实设备**完全不碰**（不打开串口、
+不建立 TCP），所以设备拆了也能跑，接回来也不用改任何代码。
+
+    python -m hsfsrv --sim                  # 虚拟设备 + 真实业务层（推荐）
+    python -m hsfsrv --sim --sim-flaky 0.1  # 顺带模拟数字量模块抖动
+
+================================================================================
+                            寄存器模型（够用即可）
+================================================================================
+
+只模拟服务端**实际会读写的寄存器**，不是完整 Modbus 从站：
+
+  M512 变频器（FC03 读 / FC06 写）
+      0x1000 设定频率（±10000 = ±100%；int16 补码）
+      0x1001 输出频率（0.01Hz）
+      0x1002 母线电压（0.1V）      0x1003 输出电压（1V）
+      0x1004 输出电流（0.01A）     0x1005 输出功率（0.1kW）
+      0x1006 输出转矩（0.1%）
+      0x2000 命令字（写）          0x3000 运行状态字
+      0x8000 故障码
+
+  温湿度（FC04 读 0x0000 ×2，各 ×0.1）
+  模拟量（FC04 读 0x0000 ×N，毫伏口径）
+  数字量（FC01 读线圈 / FC02 读离散输入 / FC05 写单点）
+
+行为约定（照现场实测）：
+
+  · 数字量模块**会间歇性空应答**（无间隔连发 10 次里 1~2 次 0 字节）
+    → 用 `--flaky N` 打开，默认关闭（免得日常调试被随机失败干扰）
+  · 数字量 DO 变位后**行程开关跟着变**（开到位/关到位互斥）
+  · 变频器收到启停命令后输出频率**渐升到设定值**（不是瞬跳），
+    这样"动作中"这类中间态也能在界面上看到
+"""
+
+import math
+import struct
+import time
+
+
+# ============================================================================
+#                        虚拟 Modbus 主站
+# ============================================================================
+
+class VirtualMaster(object):
+    """假的 master：接口与 modbus.TcpMaster / RtuMaster 一致。
+
+    设备类只用到三个方法（`read` / `write_single` / `close`），故实现这三个
+    即可让**真实的设备驱动**跑起来。
+
+    :param model: 该设备对应的寄存器模型（见下方各类）
+    :param flaky_rate: 模拟"无应答"的概率（0~1）。数字量模块实测会间歇空
+                       应答，默认 0 以免干扰日常调试。
+    """
+
+    def __init__(self, model, name="", flaky_rate=0.0, log=None):
+        self.model = model
+        self.name = name
+        self.flaky_rate = float(flaky_rate)
+        self._log = log or (lambda m: None)
+        self._counter = 0
+        self.closed = False
+
+    async def read(self, function, address, count, unit=None):
+        """读寄存器/线圈/离散输入。
+
+        :returns: 值列表（FC03/04 = 每个寄存器的 uint16；FC01/02 = 位图列表）
+        :raises modbus.ModbusError: 模型拒绝时（越界/不支持的域）
+        """
+        from . import modbus
+        self._tick()
+        if self.closed:
+            raise modbus.ModbusError("%s: 连接已关闭" % self.name)
+        try:
+            return self.model.read(function, address, count)
+        except KeyError as exc:
+            raise modbus.ModbusError("%s: 读越界 addr=0x%04X (%s)"
+                                     % (self.name, address, exc))
+
+    async def write_single(self, function, address, value, unit=None):
+        from . import modbus
+        self._tick()
+        if self.closed:
+            raise modbus.ModbusError("%s: 连接已关闭" % self.name)
+        self.model.write_single(function, address, value)
+        return True
+
+    async def close(self):
+        self.closed = True
+
+    # ---- 内部 ----
+    def _tick(self):
+        """每帧一次：推进模型的时间相关状态（频率爬坡等）。
+
+        [为什么要"推进"] 虚拟设备没有独立线程，靠"被访问"来推进时间。
+        poll 每 100ms 读一次，正好充当驱动器。
+        """
+        self._counter += 1
+        if self.flaky_rate > 0.0:
+            # 用计数做伪随机：每 N 帧故意失败一次（不依赖 random，可复现）
+            period = max(2, int(round(1.0 / self.flaky_rate)))
+            if self._counter % period == 0:
+                from . import modbus
+                raise modbus.ModbusError("%s: 虚拟空应答（模拟模块抖动）"
+                                         % self.name)
+        self.model.on_access()
+
+
+class VirtualMultiMaster(object):
+    """一条"虚拟总线"上挂多个从站：按 unit 号分派到各自的模型。
+
+    对应真实链路里「一台 RtuMaster 服务同总线多个从站」的结构
+    （变频器站2 + 温湿度站4 共用 ttyS3）。设备调用形如
+    `read(fc, addr, cnt, unit=2)`，这里按 unit 找模型。
+
+    [与 VirtualMaster 的区别] 单模型版不需要 unit（一对一）；总线版必须
+    按 unit 分派，否则变频器的寄存器会被温湿度读到。
+    """
+
+    def __init__(self, models, name="", flaky_rate=0.0, log=None):
+        """models: {unit_id: 模型对象}"""
+        self.models = dict(models)
+        self.name = name
+        self.flaky_rate = float(flaky_rate)
+        self._log = log or (lambda m: None)
+        self._counter = 0
+        self.closed = False
+
+    def _model(self, unit):
+        if unit is None:
+            # 未指定 unit：取第一个（本虚拟总线只有单从站时无歧义）
+            if len(self.models) == 1:
+                return next(iter(self.models.values()))
+            raise KeyError("未指定 unit，且总线挂有多台从站（%s）"
+                           % sorted(self.models))
+        model = self.models.get(unit)
+        if model is None:
+            raise KeyError("总线无 unit=%s 的从站（现有 %s）"
+                           % (unit, sorted(self.models)))
+        return model
+
+    async def read(self, function, address, count, unit=None):
+        from . import modbus
+        self._tick()
+        if self.closed:
+            raise modbus.ModbusError("%s: 连接已关闭" % self.name)
+        try:
+            return self._model(unit).read(function, address, count)
+        except KeyError as exc:
+            raise modbus.ModbusError("%s: 读失败 unit=%s addr=0x%04X (%s)"
+                                     % (self.name, unit, address, exc))
+
+    async def write_single(self, function, address, value, unit=None):
+        from . import modbus
+        self._tick()
+        if self.closed:
+            raise modbus.ModbusError("%s: 连接已关闭" % self.name)
+        try:
+            self._model(unit).write_single(function, address, value)
+        except KeyError as exc:
+            raise modbus.ModbusError("%s: 写失败 unit=%s addr=0x%04X (%s)"
+                                     % (self.name, unit, address, exc))
+        return True
+
+    async def close(self):
+        self.closed = True
+
+    def _tick(self):
+        self._counter += 1
+        if self.flaky_rate > 0.0:
+            period = max(2, int(round(1.0 / self.flaky_rate)))
+            if self._counter % period == 0:
+                from . import modbus
+                raise modbus.ModbusError("%s: 虚拟空应答" % self.name)
+        for model in self.models.values():
+            model.on_access()
+
+
+# ============================================================================
+#                        M512 变频器寄存器模型
+# ============================================================================
+
+class VirtualVfd(object):
+    """M512/M513 变频器的寄存器模型。
+
+    [为什么要有爬坡] 真机启停不是瞬时的（加速时间 P0.x）。若虚拟设备瞬间
+    跳到目标频率，界面上永远看不到"加速中"；也验证不了"给定变了但还没跟上"
+    这类显示。这里按固定斜率（每拍 +2.5Hz，约 2s 从 0 到 50Hz）爬坡。
+    """
+
+    CMD = {
+        1: "fwd_run", 2: "rev_run", 3: "jog_fwd", 4: "jog_rev",
+        5: "free_stop", 6: "decel_stop", 7: "fault_reset",
+    }
+
+    #: 加速/减速斜率（Hz 每拍）。poll 100ms 一拍 → 25Hz/s。
+    RAMP_HZ_PER_TICK = 2.5
+
+    def __init__(self, max_hz=50.0, log=None):
+        self.max_hz = float(max_hz)
+        self._log = log or (lambda m: None)
+        # 设定频率（0x1000 存的是相对最大频率的百分比 int16）
+        self.set_percent = 5000          # 50% = 25Hz
+        self.out_hz = 0.0
+        self.target_hz = 0.0
+        self.running = False
+        self.reverse = False
+        self.jogging = False
+        self.fault_code = 0
+        #: 母线电压（真机稳定在 553V 左右）
+        self.bus_v = 553.2
+
+    # ---- 寄存器读写 ----
+    def read(self, function, address, count):
+        if function != 3:
+            raise KeyError("变频器只支持 FC03，收到 FC%02d" % function)
+        vals = []
+        for i in range(count):
+            vals.append(self._reg(address + i))
+        return vals
+
+    def write_single(self, function, address, value):
+        if function != 6:
+            raise KeyError("变频器只支持 FC06，收到 FC%02d" % function)
+        if address == 0x1000:
+            # int16 补码百分比
+            pct = value if value < 0x8000 else value - 0x10000
+            self.set_percent = max(-10000, min(10000, pct))
+            # [停机时写给定不能产生输出] 给定值是"下次启动用多少"，
+            # 写它只是**记住**目标；真正的输出由命令字（0x2000）决定。
+            #
+            # 原实现无条件 `target_hz = 给定`，于是：
+            #   停机状态下把给定从 25Hz 改成 30Hz（或先设转速再启动之前）
+            #   ⇒ 输出频率从 0 爬到 30Hz ⇒ 界面显示"停机 + 输出 30Hz"，
+            #   甚至转速显示 720rpm —— 停机怎么会有转速？
+            # 也就是说"没启动时点下发"会凭空产生一段假运行。
+            #
+            # 正确语义：target_hz 只在**运行中**才跟随给定；
+            # 停机时 target 保持 0（输出维持 0），给定只记在 set_percent。
+            if self.running:
+                self.target_hz = self.set_percent / 10000.0 * self.max_hz
+        elif address == 0x2000:
+            self._command(value)
+        else:
+            raise KeyError("不可写地址 0x%04X" % address)
+
+    def _command(self, code):
+        if code in (1, 2):                    # 正转/反转运行
+            self.running = True
+            self.reverse = (code == 2)
+            self.jogging = False
+            self.target_hz = self.set_percent / 10000.0 * self.max_hz
+        elif code in (3, 4):                  # 点动
+            self.running = True
+            self.reverse = (code == 4)
+            self.jogging = True
+            self.target_hz = self.set_percent / 10000.0 * self.max_hz
+        elif code in (5, 6):                  # 自由/减速停机
+            self.running = False
+            self.jogging = False
+            self.target_hz = 0.0
+        elif code == 7:                       # 故障复位
+            self.fault_code = 0
+        else:
+            self._log("虚拟变频器：未知命令字 %d（忽略）" % code)
+
+    def _reg(self, addr):
+        """按地址返回寄存器值；**未建模的地址返回 0**。
+
+        [为什么不是抛异常] 真实变频器对"存在但本服务端不关心"的寄存器
+        （0x1009 AI1、0x1010 PID 设定、0x1019 线速度…）会正常回 0。
+        设备层 `READ_GROUPS` 一次读 0x1000 连续 9 个、0x1009 连续 3 个……
+        若这里对未建模地址抛 KeyError，就会把"读成功但值为 0"变成
+        "整拍读失败"，设备永远离线 —— 与真机行为完全不符。
+        只对**型号不该有**的地址（远超合理范围）才抛。
+        """
+        if addr == 0x1000:
+            return self.set_percent & 0xFFFF
+        if addr == 0x1001:
+            return int(round(self.out_hz * 100.0)) & 0xFFFF
+        if addr == 0x1002:
+            return int(round(self.bus_v * 10.0)) & 0xFFFF
+        if addr == 0x1003:
+            # 输出电压：大致与频率成正比（0Hz → 0V，50Hz → 380V）
+            ratio = self.out_hz / self.max_hz if self.max_hz > 0 else 0.0
+            return int(round(ratio * 380.0)) & 0xFFFF
+        if addr == 0x1004:
+            # 输出电流：转起来就有负载（0.01A）
+            amps = 3.2 * (self.out_hz / self.max_hz) if self.out_hz > 0.1 else 0.0
+            return int(round(amps * 100.0)) & 0xFFFF
+        if addr == 0x1005:
+            # 输出功率（0.1kW）
+            ratio = self.out_hz / self.max_hz if self.max_hz > 0 else 0.0
+            return int(round(ratio * 15.0 * 10.0)) & 0xFFFF
+        if addr == 0x1006:
+            # 输出转矩（0.1%）：空载轻载
+            return int(round(42.0 * 10.0)) & 0xFFFF
+        if addr == 0x3000:
+            # 运行状态字：1=正转 2=反转 3=停机
+            if not self.running:
+                return 3
+            return 2 if self.reverse else 1
+        if addr == 0x8000:
+            return self.fault_code & 0xFFFF
+        # 0x1007/0x1008 = DI/DO 状态位图（本服务端不读，给 0 即可）
+        # 0x1009~0x1020 = AI/PID/线速度等，真机有寄存器但本服务端不用
+        if 0x1000 <= addr <= 0x2000:
+            return 0
+        raise KeyError(addr)
+
+    # ---- 时间推进 ----
+    def on_access(self):
+        """每拍推进输出频率（爬坡）。
+
+        [停机必须保持 0] 停机时 `target_hz` 恒为 0（见 write_single 的说明），
+        所以坡道会自然把 out_hz 降到 0。这里额外做一次兜底：只要不在运行态，
+        直接把 out_hz 置 0 —— 真机停机（自由停车）是**立刻断输出**，不是慢慢
+        降；而"减速停机"才走坡道，本模型不区分两种停机，取更安全的立刻归零。
+        """
+        if not self.running:
+            self.out_hz = 0.0
+            self.target_hz = 0.0
+            return
+        delta = self.target_hz - self.out_hz
+        if abs(delta) <= self.RAMP_HZ_PER_TICK:
+            self.out_hz = self.target_hz
+        else:
+            self.out_hz += (self.RAMP_HZ_PER_TICK
+                            if delta > 0 else -self.RAMP_HZ_PER_TICK)
+
+
+# ============================================================================
+#                        温湿度寄存器模型
+# ============================================================================
+
+class VirtualTempHum(object):
+    """ZS-SHT30 温湿度（FC04 读 0x0000 ×2，各 ×0.1）。"""
+
+    def __init__(self, temp_tenths=265, hum_tenths=550):
+        self.temp_tenths = int(temp_tenths)
+        self.hum_tenths = int(hum_tenths)
+
+    def read(self, function, address, count):
+        if function != 4:
+            raise KeyError("温湿度只支持 FC04")
+        vals = []
+        for i in range(count):
+            addr = address + i
+            if addr == 0:
+                vals.append(self.temp_tenths & 0xFFFF)
+            elif addr == 1:
+                vals.append(self.hum_tenths & 0xFFFF)
+            else:
+                raise KeyError(addr)
+        return vals
+
+    def write_single(self, function, address, value):
+        raise KeyError("温湿度只读")
+
+    def on_access(self):
+        pass
+
+
+# ============================================================================
+#                        电磁流量计寄存器模型
+# ============================================================================
+
+class VirtualFlowMeter(object):
+    """LD 系列电磁流量计（FC03 读变量区 0x1010 ×22）。
+
+    [寄存器口径] 与 C 端 `XFlowMeter.h` 的 22 槽逐项对应，**高字在前**：
+
+        0x1010/11 Float 瞬时流量      0x1012/13 Float 瞬时流速
+        0x1014/15 Float 流量百分比    0x1016/17 Float 流体电导比
+        0x1018/19 Long  正向累积整数  0x101A/1B Float 正向累积小数
+        0x101C/1D Long  反向累积整数  0x101E/1F Float 反向累积小数
+        0x1020 U16 瞬时流量单位       0x1021 U16 累积总量单位
+        0x1022~0x1025 U16 四种报警
+
+    [为什么要波动] 恒定值看不出"数据在刷新"，容易误判成界面卡住。流量按
+    正弦小幅波动（±2%，周期 60s），累积量随之单调累加 —— 与独立模拟器
+    `sim/hsf_sim.py` 同一套口径，两边看到的数一样。
+
+    [单位码两张表各用各的] 瞬时流量表 5 = m³/h；累积总量表 1 = m³。
+    曾经把累积单位填成 10（瞬时表的邻居码）导致界面显示 "?"。
+    """
+
+    #: DN50 量程中点（瞬时流量基准，m³/h）。
+    BASE_FLOW = 36.5
+    #: 管道内径（m），用于由流量反算流速。
+    PIPE_DIAMETER = 0.05
+
+    def __init__(self, flow_unit=5, total_unit=1):
+        self.flow_unit = int(flow_unit)     #: 5 = m³/h
+        self.total_unit = int(total_unit)   #: 1 = m³
+        self._t0 = time.monotonic()
+        self._forward_total = 0.0
+        self._reverse_total = 0.0
+        self._last_ms = self._t0
+        #: 报警位（0=正常）。测试超时/告警链路时可直接改。
+        self.alarm_upper = 0
+        self.alarm_lower = 0
+        self.alarm_empty = 0
+        self.alarm_system = 0
+
+    # ---- 内部：推进累积量 ----
+    def _step(self):
+        now = time.monotonic()
+        dt = max(0.0, now - self._last_ms)
+        self._last_ms = now
+        flow = self._flow_now()
+        # 累积量 = 积分（dt 用真实经过的时间，不按"被访问次数"算，
+        # 否则轮询节拍一变累积速度就跟着变）
+        self._forward_total += flow / 3600.0 * dt
+        return flow
+
+    def _flow_now(self):
+        """当前瞬时流量（±2% 正弦波动，周期 60s）。"""
+        phase = (time.monotonic() % 60.0) / 60.0 * 2.0 * math.pi
+        return self.BASE_FLOW * (1.0 + 0.02 * math.sin(phase))
+
+    # ---- 寄存器读写 ----
+    @staticmethod
+    def _split_float(value):
+        """float32 → (hi, lo)，高字在前。"""
+        raw = struct.unpack(">I", struct.pack(">f", float(value)))[0]
+        return (raw >> 16) & 0xFFFF, raw & 0xFFFF
+
+    @staticmethod
+    def _split_long(value):
+        """uint32 → (hi, lo)。"""
+        raw = int(value) & 0xFFFFFFFF
+        return (raw >> 16) & 0xFFFF, raw & 0xFFFF
+
+    def read(self, function, address, count):
+        if function != 3:
+            raise KeyError("流量计只支持 FC03，收到 FC%02d" % function)
+        # 变量区之外的地址（参数区）返回 0：真机对"有但不用"的寄存器也是
+        # 正常回 0，抛异常会把"读成功但值为 0"变成"整拍失败"。
+        if not (0x1010 <= address <= 0x1025):
+            return [0] * count
+        flow = self._step()
+        speed = (flow / 3600.0) / (math.pi * (self.PIPE_DIAMETER / 2.0) ** 2)
+        fwd_int = int(self._forward_total)
+        fwd_frac = self._forward_total - fwd_int
+        rev_int = int(self._reverse_total)
+        rev_frac = self._reverse_total - rev_int
+        regs = {}
+        for base, value in ((0x1010, flow), (0x1012, speed),
+                            (0x1014, 100.0 * flow / (self.BASE_FLOW * 2)),
+                            (0x1016, 1.0)):
+            hi, lo = self._split_float(value)
+            regs[base] = hi
+            regs[base + 1] = lo
+        hi, lo = self._split_long(fwd_int)
+        regs[0x1018], regs[0x1019] = hi, lo
+        hi, lo = self._split_float(fwd_frac)
+        regs[0x101A], regs[0x101B] = hi, lo
+        hi, lo = self._split_long(rev_int)
+        regs[0x101C], regs[0x101D] = hi, lo
+        hi, lo = self._split_float(rev_frac)
+        regs[0x101E], regs[0x101F] = hi, lo
+        regs[0x1020] = self.flow_unit & 0xFFFF
+        regs[0x1021] = self.total_unit & 0xFFFF
+        regs[0x1022] = self.alarm_upper & 0xFFFF
+        regs[0x1023] = self.alarm_lower & 0xFFFF
+        regs[0x1024] = self.alarm_empty & 0xFFFF
+        regs[0x1025] = self.alarm_system & 0xFFFF
+        out = []
+        for i in range(count):
+            addr = address + i
+            out.append(regs.get(addr, 0))
+        return out
+
+    def write_single(self, function, address, value):
+        raise KeyError("流量计变量区只读")
+
+    def on_access(self):
+        """被访问时推进累积量（轮询节拍充当定时器）。"""
+        self._step()
+
+
+# ============================================================================
+#                        浊度仪寄存器模型
+# ============================================================================
+
+class VirtualTurbidity(object):
+    """浊度仪（FC03 读 0x0000 ×2，**CDAB 低字在前 + IEEE754 float32**）。
+
+    [口径与真机同源] WZT-701A 说明书 4.3.10.2 的可复现帧：
+
+        发送：01 03 00 00 00 02 C4 0B
+        回复：01 03 04 D7 0A 41 1F 92 1D  →  9.99 NTU
+
+    即寄存器 0x0000 = 低 16 位，0x0001 = 高 16 位（CDAB）；拼出的 32 位
+    位模式按 IEEE754 单精度解释，**不除以 100**。
+    `devices.TurbidityMeter` 按同一套口径实现；两处必须一起改。
+
+    [初版错在哪] 初版造的是"32 位整数 ÷100"（ABCD 高字在前）。用它自己的
+    模型去喂自己的解析器当然自洽，但**与真机不符** —— 真实仪表接上来就会
+    读出错值。模拟器的价值是复刻真机行为，不是复刻一个自洽的假设。
+
+    [为什么要波动] 恒定值看不出"数据在刷新"。两台用**不同相位**波动，
+    这样一眼能看出是两个独立的仪器，而不是同一个值贴了两遍。
+    """
+
+    #: 基准浊度（NTU）：1 号（原水）高、2 号（出水）低。
+    BASE_BY_INDEX = (12.5, 3.2)
+    #: 波动幅度（相对值，±3%）。
+    WOBBLE = 0.03
+
+    def __init__(self, index=0):
+        self.index = int(index) & 1
+        self.base_ntu = self.BASE_BY_INDEX[self.index]
+        self._t0 = time.monotonic()
+        #: 手动固定值（测试/演示用；非 None 时不波动）。
+        self.fixed_ntu = None
+
+    def _ntu_now(self):
+        if self.fixed_ntu is not None:
+            return float(self.fixed_ntu)
+        # 两台相位错开 180°，避免两条曲线完全重合
+        phase = (time.monotonic() % 45.0) / 45.0 * 2.0 * math.pi
+        phase += math.pi * self.index
+        return self.base_ntu * (1.0 + self.WOBBLE * math.sin(phase))
+
+    def read(self, function, address, count):
+        if function != 3:
+            raise KeyError("浊度仪只支持 FC03，收到 FC%02d" % function)
+        if not (0x0000 <= address <= 0x0001):
+            # 未建模地址返回 0（真机对"有但不用"的寄存器同样回 0；
+            # 抛异常会把"读成功但值为 0"变成"整拍失败"→ 设备永远离线）
+            return [0] * count
+        # [CDAB 低字在前] 寄存器 0x0000 是**低** 16 位、0x0001 是高 16 位。
+        # 手册原文「按照低字在前高字在后传输(CDAB)」；顺序写反会让解析侧
+        # 拼出完全不同的浮点（实测 ABCD 解释得到 -1.5e14）。
+        bits = struct.unpack(">I", struct.pack(">f", float(self._ntu_now())))[0]
+        regs = {0x0000: bits & 0xFFFF, 0x0001: (bits >> 16) & 0xFFFF}
+        return [regs.get(address + i, 0) for i in range(count)]
+
+    def write_single(self, function, address, value):
+        raise KeyError("浊度仪只读")
+
+    def on_access(self):
+        pass
+
+
+# ============================================================================
+#                        模拟量寄存器模型
+# ============================================================================
+
+class VirtualAnalog(object):
+    """中盛 8 路 4~20mA（FC04 读 0x0000 ×N，**毫伏**口径）。
+
+    通道 0 模拟压差计（2985mV ≈ 11.988mA ≈ 0.499MPa @ 0~1MPa 量程），
+    其余通道走 4mA 活零点（995mV）。
+    """
+
+    def __init__(self, millivolts=None, channels=8):
+        if millivolts is None:
+            millivolts = [2985] + [995] * (channels - 1)
+        self.mv = [int(v) for v in millivolts[:channels]]
+        self.channels = channels
+
+    def read(self, function, address, count):
+        if function != 4:
+            raise KeyError("模拟量只支持 FC04")
+        vals = []
+        for i in range(count):
+            addr = address + i
+            if 0 <= addr < self.channels:
+                vals.append(self.mv[addr] & 0xFFFF)
+            else:
+                raise KeyError(addr)
+        return vals
+
+    def write_single(self, function, address, value):
+        raise KeyError("模拟量只读")
+
+    def on_access(self):
+        pass
+
+
+# ============================================================================
+#                        数字量寄存器模型（含行程开关联动）
+# ============================================================================
+
+class VirtualDigital(object):
+    """MT3A-IO1632（FC01 读线圈 / FC02 读离散输入 / FC05 写单点）。
+
+    ============================================================================
+                        行程开关模型：**带动作时间**
+    ============================================================================
+
+    现场电磁阀满开满关约 **10s**，服务端超时判据是 **20s**。虚拟模块必须
+    复现这个时间尺度，否则超时报警那条路径永远走不到（DO 写完 DI 立刻
+    跟着变 ⇒ 状态机下一拍就"到位"，`cmd_at_ms` 立刻清零）。
+
+    故这里给每路阀建模一个**动作行程**：
+
+        写 DO → 进入「动作中」：两个到位 DI 都断开（0/0）
+              → 经过 move_ms（默认 10000）→ 目标侧到位
+
+    每路阀 n（与现场接线顺序一致，**先关到位、后开到位**）：
+
+        DO(16+n)=1 → DI(16+2n)=0, DI(16+2n+1)=1    开到位
+        DO(16+n)=0 → DI(16+2n)=1, DI(16+2n+1)=0    关到位
+        动作中     → DI(16+2n)=0, DI(16+2n+1)=0    两个都不吸
+
+    [可配的几种"坏阀"] 都通过构造参数打开，用来验证服务端的故障判读：
+
+        move_ms=10000         正常阀：10s 到位
+        move_ms=25000         行程过长：20s 时误报超时（验证报警）
+        move_ms=None          卡死：永远不动（验证"无到位反馈"文案）
+        no_feedback=True      行程开关没接：DI 恒 0（同上但语义不同）
+
+    [时间怎么推进] 虚拟设备没有独立线程，靠"被访问"推进（见 VirtualMaster
+    `_tick` → `on_access`）。数字量模块 200ms 被轮询一次，故动作计时精度
+    约 200ms —— 对 10s/20s 的量级完全够用。
+    """
+
+    #: 阀占用的 DO 起始位与 DI 起始位（与现场接线一致）
+    VALVE_DO_BASE = 16
+    VALVE_DI_BASE = 16
+    VALVE_COUNT = 6
+    #: 非阀区域的 DI 初值（bit0..7 通），保留一些"有信号"的观感
+    BASE_DI = 0x00FF0000
+    #: 现场满开满关约 10s（用户口径）⇒ 虚拟模型缺省也用 10s。
+    DEFAULT_MOVE_MS = 10000
+
+    def __init__(self, channels=32, do_init=0x8000000F, move_ms=None,
+                 no_feedback=False):
+        """
+        :param move_ms: 动作行程时间（毫秒）。None 用 DEFAULT_MOVE_MS；
+                        传 float("inf") 表示**永远不动**（阀卡死）。
+        :param no_feedback: True=行程开关不接（DI 恒 0，无论 DO 怎么变）。
+        """
+        self.channels = int(channels)
+        self.do_mask = int(do_init)
+        self._di_extra = self.BASE_DI & ~0x0FFF0000   # 阀区以外的 DI
+        self.move_ms = (self.DEFAULT_MOVE_MS if move_ms is None
+                        else float(move_ms))
+        self.no_feedback = bool(no_feedback)
+        #: 每路阀的行程状态：{index: {"target": bool, "start_ms": float,
+        #:                            "done": bool}}
+        #: done=True 表示已到位（DI 按 target 呈现）；False 表示在途中
+        #: （两个 DI 都断开）。
+        self._travel = {}
+        self._t0 = time.monotonic()
+        # 初始状态：按 do_init 的位**直接算作已到位**（开机即稳态，
+        # 不要一启动就让 6 路阀显示"动作中"）。
+        for i in range(self.VALVE_COUNT):
+            target = bool(self.do_mask & (1 << (self.VALVE_DO_BASE + i)))
+            self._travel[i] = {"target": target, "start_ms": -1.0,
+                               "done": True}
+
+    # ---- 时间 ----
+    def _now(self):
+        """虚拟模型的时钟（毫秒）。独立于服务端 monotonic 起点也能对齐。"""
+        return (time.monotonic() - self._t0) * 1000.0
+
+    def _arrived(self, index):
+        """该路当前是否已到位（推进行程后判断）。"""
+        st = self._travel.get(index)
+        if st is None:
+            return True
+        if st["done"]:
+            return True
+        if self.no_feedback:
+            return False            # 行程开关没接：永远等不到反馈
+        if self.move_ms == float("inf"):
+            return False            # 阀卡死
+        if self._now() - st["start_ms"] >= self.move_ms:
+            st["done"] = True
+            return True
+        return False
+
+    # ---- DI 推导 ----
+    def di_mask(self):
+        """按行程状态算 DI 位图。
+
+        [为什么不再直接由 do_mask 推导] 瞬发模型下"命令"与"到位"是同一
+        瞬间，阀状态机永远看不到「动作中」，20s 超时分支成为死代码。
+        现在中间多一个"两个 DI 都断开"的行程期，状态机才能按真实时序跑。
+        """
+        di = self._di_extra
+        for i in range(self.VALVE_COUNT):
+            close_bit = self.VALVE_DI_BASE + i * 2
+            open_bit = self.VALVE_DI_BASE + i * 2 + 1
+            if open_bit >= self.channels:
+                break
+            if not self._arrived(i):
+                continue            # 动作中：两个到位都不吸（DI 保持 0）
+            on = bool(self.do_mask & (1 << (self.VALVE_DO_BASE + i)))
+            di |= (1 << open_bit) if on else (1 << close_bit)
+        return di & ((1 << self.channels) - 1)
+
+    # ---- 寄存器读写 ----
+    def read(self, function, address, count):
+        if function in (1, 2):
+            bits = self.do_mask if function == 1 else self.di_mask()
+            # FC01/02 返回**位**列表。超出 channels 的地址按 0 返回
+            # （真实模块对未配置的点也回 0，而不是抛异常）。
+            return [1 if (bits >> (address + i)) & 1 else 0
+                    for i in range(count)]
+        raise KeyError("数字量读只支持 FC01/FC02，收到 FC%02d" % function)
+
+    def write_single(self, function, address, value):
+        if function != 5:
+            raise KeyError("数字量写只支持 FC05，收到 FC%02d" % function)
+        if not 0 <= address < self.channels:
+            raise KeyError("线圈越界 %d" % address)
+        on = (value & 0xFF00) == 0xFF00
+        if on:
+            self.do_mask |= (1 << address)
+        else:
+            self.do_mask &= ~(1 << address)
+        # ---- 阀区变位 ⇒ 启动这一路的行程计时 ----
+        valve = address - self.VALVE_DO_BASE
+        if 0 <= valve < self.VALVE_COUNT:
+            st = self._travel.setdefault(
+                valve, {"target": False, "start_ms": -1.0, "done": True})
+            if bool(st["target"]) != on:
+                # 目标变了 ⇒ 重新开始行程（途中再改目标也在途中，符合直觉）
+                st["target"] = on
+                st["start_ms"] = self._now()
+                st["done"] = False
+
+    def on_access(self):
+        """被访问时推进行程（VirtualMaster._tick 会调）。
+
+        [为什么在这里推进] 虚拟设备没有独立线程；数字量模块每 200ms 被
+        轮询一次，正好充当"定时器"。不必自己起 task。
+        """
+        # 触发一次判断，让到位的行程落到 done=True（后续 di_mask 直接读）
+        for i in range(self.VALVE_COUNT):
+            self._arrived(i)
+
+    # ---- 实验辅助（不是设备语义，只给测试/演示用）----
+    def valve_progress(self, index):
+        """该路动作进度（0.0~1.0）；已到位=1.0，卡死=0.0。诊断用。"""
+        st = self._travel.get(index)
+        if st is None or st["done"]:
+            return 1.0
+        if self.no_feedback or self.move_ms == float("inf"):
+            return 0.0
+        return min(1.0, (self._now() - st["start_ms"]) / self.move_ms)
+
+
+# ============================================================================
+#                              工厂
+# ============================================================================
+
+def make_vfd_master(max_hz=50.0, log=None):
+    model = VirtualVfd(max_hz=max_hz, log=log)
+    return VirtualMaster(model, name="虚拟变频器", log=log)
+
+
+def make_temphum_master(log=None):
+    model = VirtualTempHum()
+    return VirtualMaster(model, name="虚拟温湿度", log=log)
+
+
+def make_analog_master(channels=8, log=None):
+    model = VirtualAnalog(channels=channels)
+    return VirtualMaster(model, name="虚拟模拟量", log=log)
+
+
+def make_digital_master(channels=32, flaky_rate=0.0, move_ms=None,
+                        no_feedback=False, log=None):
+    """虚拟数字量模块。
+
+    :param move_ms: 阀动作行程时间（毫秒）。**这个参数决定能否看到
+                    "动作中"和"20s 超时报警"**：
+                    10000（缺省）= 现场真实节奏，10s 到位
+                    25000        = 行程过长，20s 时应报警
+                    float("inf") = 阀卡死，永远不到位
+    :param no_feedback: 行程开关没接（DI 恒 0）。
+    """
+    model = VirtualDigital(channels=channels, move_ms=move_ms,
+                           no_feedback=no_feedback)
+    kind = "虚拟数字量"
+    if no_feedback:
+        kind += "(开关未接)"
+    elif move_ms == float("inf"):
+        kind += "(阀卡死)"
+    elif move_ms is not None:
+        kind += "(行程 %.1fs)" % (float(move_ms) / 1000.0)
+    return VirtualMaster(model, name=kind, flaky_rate=flaky_rate, log=log)
+
+
+def make_turbidity_master(index=0, log=None):
+    """虚拟浊度仪（index 0/1 决定基准浊度与波动相位）。"""
+    model = VirtualTurbidity(index=index)
+    return VirtualMaster(model, name="虚拟浊度仪%d" % (index + 1), log=log)

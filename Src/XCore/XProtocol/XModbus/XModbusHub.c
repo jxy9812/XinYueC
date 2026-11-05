@@ -541,6 +541,10 @@ static void hubMigrateBlockState(const XModbusHubDevice* dev,
              * valueAge/pointValid 在每次启停后失真（恒 0 = 从未读回）。 */
             if (old->lastOkMs > newBlock->lastOkMs)
                 newBlock->lastOkMs = old->lastOkMs;
+            /* 心跳计时同迁：重建后若归 0，稳定块会被判成"从未发射"，
+             * 心跳永远起不来（与 lastOkMs 同一类坑）。 */
+            if (old->lastEmitMs > newBlock->lastEmitMs)
+                newBlock->lastEmitMs = old->lastEmitMs;
             if (old->failCount > newBlock->failCount)
                 newBlock->failCount = old->failCount;
         }
@@ -886,6 +890,39 @@ static void hubRebuildAll(XModbusHub* hub)
  *          语义一致；栈上标志数组容量见 HUB_FILL_SEG_CHUNK。
  */
 #define HUB_FILL_SEG_CHUNK 16
+/**
+ * @brief 稳定量心跳的发射间隔（毫秒）：本块距上次发射超过它就强制重发。
+ * @details [2026-11-05] 不能拿 m_pollIntervalDefaultMs 当基准：那是 Hub 的
+ *          **缺省**轮询间隔（1000ms），而实际设备的轮询间隔由 startPolling
+ *          显式给出（本服务端 20ms）。用缺省值会算出 4000ms 的心跳周期，
+ *          远大于上层（XVfdDevice）5×发布周期=1000ms 的陈旧阈值——心跳还没
+ *          来，掩码就被清空了，等于没修。
+ *
+ *          正确基准取**设备自己的 pollIntervalMs**；夹在 [100, 800] 内：
+ *          下限防抖（信号条数不该随高频轮询线性放大），上限必须低于上层
+ *          最紧的陈旧阈值（1000ms），留一拍余量。
+ */
+static uint64_t hubEmitHeartbeatMs(const XModbusHubDevice* dev)
+{
+    uint64_t base = dev ? (uint64_t)dev->pollIntervalMs : 0;
+    if (base == 0) base = 100;
+    base *= 4;
+    if (base < 100) base = 100;
+    if (base > 800) base = 800;
+    return base;
+}
+
+/**
+ * @brief 心跳计时基准：最近一次发射时刻；从未发射过则退回最近一次成功读回。
+ * @details lastEmitMs 为 0（本块还没发过任何信号）时若直接判"不心跳"，
+ *          稳定块会永远停在 0——必须退回 lastOkMs 让首次心跳能起算。
+ */
+static uint64_t hubEmitRefMs(const XModbusHubCacheBlock* b)
+{
+    if (!b) return 0;
+    return (b->lastEmitMs != 0) ? b->lastEmitMs : b->lastOkMs;
+}
+
 static void hubFillGroupResult(XModbusHub* hub, XModbusHubDevice* dev,
                                const XModbusHubReadGroup* group,
                                const XModbusDataUnit* result)
@@ -897,6 +934,8 @@ static void hubFillGroupResult(XModbusHub* hub, XModbusHubDevice* dev,
         XModbusHubCacheBlock* b;
         uint32_t lo, hi;
         bool firstFill;
+        bool heartbeat;
+        bool emitted = false;
         size_t si, base;
         if (bi >= XVector_size_base(dev->blocks)) break;
         b = *(XModbusHubCacheBlock**)XVector_at_base(dev->blocks, (int64_t)bi);
@@ -909,6 +948,19 @@ static void hubFillGroupResult(XModbusHub* hub, XModbusHubDevice* dev,
                  : (uint32_t)group->remoteStart + group->count;
         if (hi <= lo) continue;
         firstFill = (b->lastOkMs == 0);
+        /* [2026-11-05 稳定量心跳] changedOnly 下，值长期不变的块只在
+         * firstFill/changed 时发射，上层（设备层按周期判陈旧）就再也收不到
+         * 刷新——实测变频器母线电压/运行状态字稳定 ⇒ 遥测掩码首拍后塌成 0 ⇒
+         * 健康列表报"从站失联"，而 485 上该从站应答完全正常（49 帧/秒）。
+         *
+         * 判据：本块距上次发射已超过**轮询间隔的 4 倍**就无条件重发一次
+         * （与 XVfdDevice 的陈旧阈值 5× 周期同量级但更早，留一拍余量）。
+         * 只影响 changedOnly 路径的发射，值写入与脏区间语义不变；缓存
+         * 完全相同的情况下多几条信号，代价可忽略（上限 = 1/4 轮询带宽的
+         * 信号条数，且不产生任何总线帧）。 */
+        heartbeat = (hub->m_changedOnlySignals && !firstFill &&
+                     now > hubEmitRefMs(b) &&
+                     (now - hubEmitRefMs(b)) > hubEmitHeartbeatMs(dev));
 
         for (base = 0; base < XVector_size_base(b->segs);
              base += HUB_FILL_SEG_CHUNK) {
@@ -939,7 +991,7 @@ static void hubFillGroupResult(XModbusHub* hub, XModbusHubDevice* dev,
                         break;
                     }
                 }
-                fire[si - base] = (uint8_t)(changed || firstFill);
+                fire[si - base] = (uint8_t)(changed || firstFill || heartbeat);
             }
             /* ② 写入本批切片覆盖的点（脏点保留写意图值）。 */
             for (si = base; si < chunkEnd; ++si) {
@@ -977,9 +1029,12 @@ static void hubFillGroupResult(XModbusHub* hub, XModbusHubDevice* dev,
                 XModbusHub_valueChanged_signal(
                     hub, (XModbusRegisterType)b->type,
                     (int)(seg->virtualStart + (cLo - sStart)), (int)(cHi - cLo));
+                emitted = true;
             }
         }
         b->lastOkMs = now;
+        /* 心跳判据的基准：只有真发过才更新，否则稳定块永远拿不到心跳。 */
+        if (emitted) b->lastEmitMs = now;
         b->failCount = 0;
         b->refreshRequested = false;
     }
@@ -1316,8 +1371,6 @@ static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev)
             (dev->lastTxOk || (dev->txAlternateTurn & 1u) != 0);
         if (!windowOpen && writeTurn) {
             const bool sent = hubSendNextWrite(hub, dev);
-            XPrintf("[w-dbg] sendNextWrite dev=%d -> %d\n",
-                    dev->id, (int)sent);
             if (sent) {
                 if (!dev->lastTxOk) ++dev->txAlternateTurn;  /* 失败期：本次让给了写。 */
                 return;
@@ -1385,6 +1438,26 @@ static void VXModbusHub_deinit(XModbusHub* hub)
         XObject_killTimer((XObject*)hub, hub->m_flushTimer);
         hub->m_flushTimer = XTIMER_INVALID_ID;
     }
+    /* [2026-11-05 退出随机崩溃根修] 先把 children（client / reply）**主动**
+     * 释放干净，再清自身容器，最后不走父类的 children 兜底。
+     *
+     * 原来的顺序是"清容器 → 父类链删 children"，其中删除 client 时：
+     *   client 的析构会调 clearAllPendingRequests →
+     *   XModbusReply_setState(Finished) → **同步**发 finished 信号 →
+     *   Hub 的 onReplyFinished → deleteLater(reply)（或者直接释放 reply）。
+     * 此时 Hub 已置 m_is_deleting_children = true，reply 的 VXObject_deinit
+     * 因此**不把 reply 从 m_children 摘掉**；而父类的删除循环用的是进入
+     * 循环时拍的快照，快照里仍有 reply ⇒ 对已释放内存再 XClassDelete 一次，
+     * 读到 0xDDDDDDDD 填充即 AV。
+     * 实测：hsf-io-flowmeter 退出随机崩 1/15~1/3，栈恒为
+     *   VXObject_deinit → XClass_delete_base → XClass_deinit_base。
+     *
+     * 现在的顺序保证「先断设备关系，再按实际存活情况删对象」：
+     *   ① 设备槽里的 inflight/client 指针全部清空（不再指向将删对象）；
+     *   ② 逐个把 children 从 hub 上摘下来（setParent(NULL) 会同步摘链）；
+     *   ③ 摘一个删一个 —— 删除期间 hub 的 m_children 已是空的，
+     *      任何重入的 setParent/deleteLater 都不会制造悬垂条目。
+     */
     if (hub->m_devices) {
         const size_t n = XVector_size_base(hub->m_devices);
         for (size_t i = 0; i < n; ++i) {
@@ -1431,6 +1504,28 @@ static void VXModbusHub_deinit(XModbusHub* hub)
         if (hub->m_view[t]) {
             XClassDelete(hub->m_view[t]);
             hub->m_view[t] = NULL;
+        }
+    }
+    /* ---- ①②③ 有序释放 children（见函数头注释的根因说明） ---- */
+    {
+        const XVector* kids = XObject_children((XObject*)hub);
+        int32_t kn = kids ? (int32_t)XVector_size_base(kids) : 0;
+        while (kn > 0) {
+            /* 每轮重取：摘链会改变表内容；kn 每次减一保证有界收敛。 */
+            XObject* c = *(XObject* const*)XVector_at_base(kids, 0);
+            if (!c) { kn--; break; }
+            /* 先把自己从 hub 的 children 表里摘下来（同步摘链），
+             * 再删 —— 删除期间的任何重入都看不到这个条目。 */
+            XObject_setParent(c, NULL);
+            if (Class_IsHeap(c))
+                XClassDelete(c);
+            else
+                XClassDeinit(c);
+            kids = XObject_children((XObject*)hub);
+            kn = kids ? (int32_t)XVector_size_base(kids) : 0;
+            /* 防御：若摘链失败导致数量不减，强制退出避免死循环。 */
+            if (kn > 0 && *(XObject* const*)XVector_at_base(kids, 0) == c)
+                break;
         }
     }
     XClass_Deinit_Parent(XObject, hub);
@@ -2071,11 +2166,8 @@ bool XModbusHub_writeValues(XModbusHub* hub, XModbusRegisterType type,
     if (type != XModbusCoils && type != XModbusHoldingRegisters) return false;
     if (t < 0 || !hub->m_view || !hub->m_view[t]) return false;
     vi = hubViewFind(hub->m_view[t], virtualStart);
-    if (vi < 0) {
-        XPrintf("[w-dbg] viewFind FAIL v=0x%04X type=%d\n",
-                (unsigned)virtualStart, (int)type);
-        return false;
-    }
+    if (vi < 0)
+        return false;   /* 该区未在缓存视图内：写前必须先轮询一次。 */
     s = (XModbusHubCacheSlice*)XVector_at_base(hub->m_view[t], (int64_t)vi);
     if (!s || !s->block) return false;
     block = s->block;
@@ -2128,10 +2220,7 @@ bool XModbusHub_writeValues(XModbusHub* hub, XModbusRegisterType type,
         block->firstEmitDone = true;
     }
     /* ② 标脏（合并窗口内多次写只留最终值）+ 调度刷写。 */
-        hubMarkDirty(block, blockOffset, count);
-    XPrintf("[w-dbg] dirty ok v=0x%04X off=%u cnt=%u val=%u\n",
-            (unsigned)virtualStart, (unsigned)blockOffset, (unsigned)count,
-            (unsigned)values[0]);
+    hubMarkDirty(block, blockOffset, count);
     hub->m_lastWriteMs = XDateTime_currentMSecsSinceEpoch();
     hubScheduleFlush(hub, s->deviceId);
     return true;

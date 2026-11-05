@@ -15,7 +15,7 @@
 import json
 import threading
 
-from PyQt5.QtCore import QObject, QTimer, pyqtSignal
+from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
 
 from . import bson, proto
 from .model import AppModel
@@ -38,12 +38,26 @@ class LinkBridge(QObject):
     authFailed = pyqtSignal(str)
     dataUpdated = pyqtSignal(str)
     statusMessage = pyqtSignal(str)
+    #: 通用「把可调用对象投递到 UI 线程」信号。
+    #: [为什么需要] `bridge.request` 的 on_done/on_error 跑在**网络线程**；
+    #: 页面里的回调常常要读控件文字、改按钮状态甚至重建卡片——从非 UI
+    #: 线程碰 QWidget 会让 Qt **直接崩进程**（无 Python traceback）。
+    #: 用信号 + 队列连接投递，Qt 会把它排到 UI 线程的事件循环里执行。
+    #: 用法：`self.bridge.run_in_ui(lambda: self.xxx())`
+    _uiCall = pyqtSignal(object)
 
     #: 主题 → 数据类型名（dataUpdated 的参数）
+    #:
+    #: [漏一个就会"页面永远没数据"] `_on_publish` 里 `kind = TOPIC_KIND.get()`
+    #: 取不到就**静默 return**，所以忘登记的后果是：该主题的推送全部被丢弃，
+    #: 页面显示 `--`，而服务端日志明明在发。流量计就漏过这一条。
     TOPIC_KIND = {
         proto.TOPIC_VFD_STATUS: "vfd",
         proto.TOPIC_TEMPHUM_STATUS: "temphum",
         proto.TOPIC_AI_STATUS: "analog",
+        proto.TOPIC_FLOWMETER_STATUS: "flowmeter",
+        proto.TOPIC_TURBIDITY_STATUS: "turbidity",
+        proto.TOPIC_PUMP_STATUS: "pump",
         proto.TOPIC_DIGITAL_STATUS: "digital",
         proto.TOPIC_DEVICE_HEALTH: "health",
         proto.TOPIC_VALVE_STATUS: "valve",
@@ -59,6 +73,11 @@ class LinkBridge(QObject):
         #: 当前已订阅的主题集合（UI 线程读写，网络线程只读快照）。
         self._subscribed = set()
         self._lock = threading.Lock()
+        # [跨线程执行] 队列连接：emit 时若在别的线程，Qt 会把调用排进
+        # UI 线程的事件循环（不阻塞调用方）。这是页面回调能安全改控件的
+        # 唯一正道 —— 直接调 QWidget 会让 Qt 崩进程。
+        self._uiCall.connect(self._run_ui_call,
+                             Qt.QueuedConnection)
 
         # 定时器：兜底刷新（推送间隔 100ms，UI 侧 200ms 轮一次足够）。
         # [为什么要定时器] 数字量/健康是「变化才推」，页面若只靠信号触发，
@@ -166,6 +185,12 @@ class LinkBridge(QObject):
             self.model.temphum.apply(doc)
         elif kind == "analog":
             self.model.analog.apply(doc)
+        elif kind == "flowmeter":
+            self.model.flowmeter.apply(doc)
+        elif kind == "turbidity":
+            self.model.turbidity.apply(doc)
+        elif kind == "pump":
+            self.model.pump.apply(doc)
         elif kind == "digital":
             index = int(doc.get("dev", 0) or 0)
             self.model.digital_state(index).apply(doc)
@@ -265,6 +290,18 @@ class LinkBridge(QObject):
             self.model.health.apply(doc)
             self.dataUpdated.emit("health")
 
+    def _apply_mode_doc(self, doc):
+        """把模式帧落到 model（**模式位与运行位分开读**）。
+
+        [运行位缺省不改] 老服务端不发 `autoRunning`：此时保持原值（首次为
+        None=未知），**不要**折成 False —— 那会在自动模式下显示"自动已停止"，
+        是编造出来的故障。
+        """
+        self.model.run_mode = int(doc.get("mode", 0) or 0)
+        self.model.run_mode_known = True
+        if "autoRunning" in doc:
+            self.model.auto_running = bool(doc.get("autoRunning"))
+
     def refresh_run_mode(self, on_done=None):
         """查一次运行模式（顶栏模式钮要显示当前状态）。"""
         def _done(code, dtype, data):
@@ -272,8 +309,7 @@ class LinkBridge(QObject):
                 doc = bson.decode(data) if dtype == proto.DATATYPE_BSON else {}
             except ValueError:
                 return
-            self.model.run_mode = int(doc.get("mode", 0) or 0)
-            self.model.run_mode_known = True
+            self._apply_mode_doc(doc)
             self.dataUpdated.emit("mode")
             if on_done:
                 on_done(doc)
@@ -287,8 +323,7 @@ class LinkBridge(QObject):
             except ValueError:
                 return
             if doc.get("ok"):
-                self.model.run_mode = int(doc.get("mode", 0) or 0)
-                self.model.run_mode_known = True
+                self._apply_mode_doc(doc)
                 self.dataUpdated.emit("mode")
             if on_done:
                 on_done(doc)
@@ -299,6 +334,34 @@ class LinkBridge(QObject):
         """下发变频器控制（op/rev/hz/...）。"""
         self.request(proto.CMD_VFD_CONTROL, doc, on_done=on_done,
                      on_error=on_error)
+
+    def send_auto_control(self, on, on_done=None, on_error=None):
+        """启停自动运行（需 root + 自动模式）。
+
+        [为什么单独一条] 切模式 ≠ 开始自动运行。前者只是授权，后者才真正
+        驱动设备；合成一个动作会让"切个模式"变成"设备动起来"。
+        """
+        def _done(code, dtype, data):
+            try:
+                doc = bson.decode(data) if dtype == proto.DATATYPE_BSON else {}
+            except ValueError:
+                doc = {}
+            if doc.get("ok"):
+                self._apply_mode_doc(doc)
+                self.dataUpdated.emit("mode")
+            if on_done:
+                on_done(doc)
+        self.request(proto.CMD_AUTO_CONTROL, {"on": bool(on)},
+                     on_done=_done, on_error=on_error)
+
+    def send_pump_control(self, index, on, on_done=None, on_error=None):
+        """下发进水泵开关。
+
+        [逻辑在服务端] 幂等/门禁/回显确认全由服务端判定；客户端只发意图、
+        并按应答更新界面。"""
+        self.request(proto.CMD_PUMP_CONTROL,
+                     {"index": int(index), "on": bool(on)},
+                     on_done=on_done, on_error=on_error)
 
     def send_digital_control(self, dev, on_done=None, on_error=None,
                              channel=None, on=False, mask=None):
@@ -333,6 +396,31 @@ class LinkBridge(QObject):
 
     def stop_refresh(self):
         self._refresh_timer.stop()
+
+    # ==================================================================
+    #                    跨线程投递（页面回调必用）
+    # ==================================================================
+    def run_in_ui(self, fn):
+        """把一个可调用对象**排到 UI 线程**执行（不阻塞调用方）。
+
+        [为什么必须用它] `request`/`send_*` 的 on_done/on_error 都在**网络
+        线程**执行。回调里若读控件文字（`label.text()`）、改按钮态
+        （`setEnabled`）或重建卡片，就是从非 UI 线程碰 QWidget ——
+        **Qt 直接崩进程，没有 Python traceback**。
+        实测症状：点"自由停车"后界面立刻消失、服务端会话一起断，
+        日志里查不到任何异常（因为进程是被 signal/SIGSEGV 干掉的）。
+
+        :param fn: 无参可调用对象；异常会被吞掉并打到状态栏，
+                   不能让一个页面的回调炸掉整个客户端。
+        """
+        self._uiCall.emit(fn)
+
+    def _run_ui_call(self, fn):
+        """在 UI 线程真正执行 run_in_ui 投递过来的函数。"""
+        try:
+            fn()
+        except Exception as exc:                        # noqa: BLE001
+            self.statusMessage.emit("界面回调异常：%s" % exc)
 
     def _on_refresh_tick(self):
         for fn in list(self._refresh_listeners):

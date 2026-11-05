@@ -1,9 +1,23 @@
 # 运行产物
 __pycache__/
 *.pyc
-cfg/
+# [只排除 cfg 里的**运行产物**，不排除整个目录]
+#
+# 曾写成 `cfg/` 把整个目录挡掉 —— 于是"现场是怎么配的"这份知识只存在于
+# 本机，别人 clone 下来只能看代码默认值，界面差一大截（用户原话：
+# "别人拉取显示不一样"）。改成按文件排除后，`*.example.json` 这类模板
+# 可以正常入库，真实配置与账户库仍不进版本库。
+cfg/*
+!cfg/hsf_server_py.example.json
+!cfg/hsf_users.example.json
 tests/_run/
 
 # 编辑器
 .vscode/
 .idea/
+
+# [反忽略] 仓库根的 .gitignore 有 `Tests/` 规则，Windows 上大小写不敏感，
+# 会连带把本目录的 tests/ 也挡掉（实测：整个 Python 测试目录从未入库）。
+# 这里显式把测试源码拉回来，运行产物仍由上面的规则排除。
+!tests/
+!tests/*.py

@@ -148,6 +148,24 @@ class TcpMaster(object):
         self._writer = None
 
     # ---- 事务 ----
+    async def _read_upto(self, want):
+        """读满 want 字节；不足则继续等到超时。
+
+        [为什么不能用 readexactly 一次了事] 实测 MT3A 数字量模块会把一帧
+        应答拆成多个 TCP 段发（qty=16 时先回 0202 再补 00；qty=32 时 4 字节
+        数据更容易被切开）。而 `readexactly` 在**流未断**的情况下会一直等，
+        但一旦对端分段后短暂静默，`asyncio.wait_for` 的外层超时就会把它
+        取消 —— 取消会把**已缓冲的半帧丢掉**，整条流从此刻起永久错位。
+        正确做法：只按"还差多少字节"反复读，EOF 才认失败。
+        """
+        buf = b""
+        while len(buf) < want:
+            chunk = await self._reader.read(want - len(buf))
+            if not chunk:
+                raise asyncio.IncompleteReadError(buf, want)
+            buf += chunk
+        return buf
+
     async def _transact(self, pdu):
         """发一条 PDU，返回应答 PDU（不含 MBAP）；异常映射为 ModbusError。
 
@@ -172,7 +190,10 @@ class TcpMaster(object):
             remaining = deadline - loop.time()
             if remaining <= 0:
                 raise asyncio.TimeoutError()
-            head = await asyncio.wait_for(self._reader.readexactly(7),
+            # [不许在帧中间被取消] 帧头与帧体各自带超时，但**读的粒度**是
+            # "还差多少字节"：分段到达时继续读，不会因为一次 read() 返回
+            # 半截就丢数据。
+            head = await asyncio.wait_for(self._read_upto(7),
                                           timeout=remaining)
             r_tid, _pid, length, _unit = struct.unpack(">HHHB", head)
             if not 1 <= length <= 260:
@@ -180,7 +201,7 @@ class TcpMaster(object):
                 raise ConnectionError(
                     "MBAP 长度非法（%d），字节流已错位" % length)
             body = await asyncio.wait_for(
-                self._reader.readexactly(length - 1),
+                self._read_upto(length - 1),
                 timeout=max(0.001, deadline - loop.time()))
             # tid 匹配：该模块恒发 0，故把它当"未提供事务号"放行；
             # 一旦对端给了非 0 tid，就必须与本次相同。

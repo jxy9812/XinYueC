@@ -149,11 +149,13 @@ int64_t XDateTime_currentMSecsSinceEpoch(void)
      * 串口轮询定时器）在 ESP8266 上从未工作过，移植版只能用 notifyInput
      * 变通顶上（每秒 200 个 XEvent → arena churn）。
      *
-     * 现在的形态：返回自 XPlatformStub_esp8266_timeInit() 起累加的单调毫秒，
-     * 与桌面端 XDateTime_currentMSecsSinceEpoch（GetTickCount64，单调开机
-     * 毫秒）语义一致——都是"单调时长"，不是 Unix 纪元。绝对时间
-     * （currentDateTime）在本平台依旧不可用（无 RTC/NTP），但时间轮只需要
-     * 增量。
+     * 现在的形态：返回自 XPlatformStub_esp8266_timeInit() 起累加的单调毫秒。
+     * [2026-11-05 纪元口径统一] 桌面端（Win32/POSIX）已改为 Unix 纪元毫秒，
+     * 本平台因为无 RTC/NTP 给不出纪元基准，**有意保持"启动起的单调毫秒"**：
+     * 时间轮的冷启动对齐门（XTimeWheelGroup.c 的 m_clockSynced）会把刻度
+     * 直接对齐到当前读数，零点在哪不影响定时器行为；设备数据打戳在本平台
+     * 从 0 附近起，判"有没有收到数据"须用业务对象 bool 接口，别写 `ms > 0`。
+     * 绝对时间（currentDateTime）在本平台依旧不可用。
      *
      * 详见 PROGRESS §0-Y.6 与本文件上方"单调毫秒基准"注释块。 */
     (void)XPlatformStub_esp8266_timeInit;

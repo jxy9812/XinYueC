@@ -1036,7 +1036,21 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                         socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
                     }
                 } else {
-                    socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
+                    /* [2026-11-05 对端 FIN 丢失根修] 这里收到的是
+                     * 「0 字节读完成」，它的确切含义是
+                     * **对端已关闭（FIN所有数据已读完）或硬错误**，
+                     * 绝不是「暂无数据」。原实现在这里只发
+                     * ContinueRead 就返回，既不转断开也不上报 EOF：
+                     * 实测后果——**服务端进程被杀后，客户端连续
+                     * 33 秒不知道对端已死**，界面继续显示旧数据、
+                     * 不触发重连（工业界面最不能容忍的一类隐式故障）。
+                     *
+                     * [与 XAbstractNetIoRing 的 PEEK 复核分工] 引擎层已经拿
+                     * MSG_PEEK 判过一遍（假 EOF 不会送到这里），
+                     * 故此处可以直接断开。 */
+                    socketCloseDevice(self);
+                    XAbstractSocket_setSocketState(
+                        self, XAbstractSocket_UnconnectedState);
                 }
             }
         }

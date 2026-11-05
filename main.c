@@ -186,6 +186,12 @@ static int main_run_test_dispatch(const char* testPath)
     if (strcmp(testPath, "xmodbus-core") == 0)
         return XModbusCoreTest_run() == 0 ? 0 : 1;
 #endif
+#if XPROTOCOL_ON && XMODBUS_CLIENT_ON
+    /* 虚拟 Modbus 设备（进程内应答）：验证设备物理层可替换——真设备拆了
+       也能跑通 Hub → 链路 → 通道组 → 设备站全链。返回码=失败数。 */
+    if (strcmp(testPath, "xmodbus-virtual") == 0)
+        return XModbusVirtualTest_run() == 0 ? 0 : 1;
+#endif
 #if XPROTOCOL_ON && XVFD_ON
     /* XVfd 变频器闭环三件套（pty 路径走缺省文件回退）。 */
     if (strcmp(testPath, "xvfd-m512") == 0)
@@ -219,11 +225,30 @@ static int main_run_test_dispatch(const char* testPath)
     if (strcmp(testPath, "hsf-client-flowmeter") == 0)
         return XHsfClientFlowMeterProviderTest_run() == 0 ? 0 : 1;
 #endif
+#if XINDUSTRY_ON && XTURBIDITY_ON
+    /* Industry 在线浊度仪 mock 回归（通道组喂点进程内自跑）。最高优先级的断言
+       是**真机帧回归**：WZT-701A 手册 4.3.10.2 的 01 03 04 D70A 411F =
+       9.99NTU，锁定「CDAB 低字在前 + IEEE754 float32」这条缺省口径；另有
+       字序/格式/除数三个旋钮、Analog 二级标度、编解码往返与泄漏压测。 */
+    if (strcmp(testPath, "xindustry-turbidity") == 0)
+        return XIndustryTurbidityTest_run() == 0 ? 0 : 1;
+#endif
 #if XINDUSTRY_ON && XBUTTON_STATION_ON
     /* Industry 按钮组/操作柱 mock 回归（通道组喂触点进程内自跑；含急停安全侧
        口径、转换开关双触点矛盾、指示灯跟随与写失败沿，返回码=失败数）。 */
     if (strcmp(testPath, "xindustry-button") == 0)
         return XIndustryButtonStationTest_run() == 0 ? 0 : 1;
+#endif
+#if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON
+    /* 电磁阀组反馈新鲜度语义（纯业务层，不需要从站）：模块离线必须报
+       "无法控制"，不得伪装成"无到位反馈（检查行程开关接线）"，也不得
+       伪造"动作中 → 动作超时未到位"。 */
+    if (strcmp(testPath, "hsf-io-valve-fresh") == 0)
+        return XHsfServerIoValveFreshTest_run() == 0 ? 0 : 1;
+    /* 服务端模拟设备模式（HsfServer --sim）：多从站按站号分派 / VFD 整段
+       应答 / 静止量心跳拍 / 32 位量低字非 0，外加阀控端到端。 */
+    if (strcmp(testPath, "hsf-sim-mode") == 0)
+        return XHsfServerIoSimModeTest_run() == 0 ? 0 : 1;
 #endif
 #if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON && XINDUSTRY_MODBUS_ON
     /* Industry Modbus 适配器闭环（TCP 环回进程内自跑；RTU 组合经
@@ -356,6 +381,7 @@ static void main_print_test_list(void)
     XPrintf("  --test xindustry-valve (电磁阀 mock) / xindustry-modbus (TCP 环回；RTU 组合需脚本起从站)\n");
     XPrintf("  --test xindustry-sensor (温湿度/压差计 mock) / xindustry-flowmeter (电磁流量计 mock)\n");
     XPrintf("  --test xindustry-button (按钮组/操作柱 mock：急停/启动/停止/复位 + 手自动 + 指示灯)\n");
+    XPrintf("  --test xindustry-turbidity (在线浊度仪 mock：真机帧回归 + 字序/格式/除数 + Analog 二级标度)\n");
     XPrintf("  Test 菜单「协议栈 → XLink(xlink)」: 客户端包装 / 实战案例·服务端 / 实战案例·客户端\n");
     XPrintf("  Test 菜单「协议栈 → XModbus/XVfd」: Hub闭环 / 485战役 / 变频器三件套\n");
 }

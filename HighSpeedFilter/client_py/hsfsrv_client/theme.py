@@ -210,6 +210,20 @@ QPushButton:disabled {
     color: %(offline)s;
 }
 
+/* ---- 数字量 DO 切换按钮：统一固定行高 ---- */
+/*
+ * [为什么要单独一条] 通用 QPushButton 有 padding:6px 14px + min-height:18px，
+ * 样式表算出的 sizeHint 会压过 setFixedHeight：单行文字 33px、两行 51px，
+ * 而 setFixedHeight(46) 只约束了 maximum —— 结果同一行按钮高度 46/33 参差。
+ * 这条把内边距改小并把高度区间收紧，两行文字（DO 号 + 语义名）也放得下。
+ */
+QPushButton#HsfDoToggle {
+    padding: 4px 8px;
+    min-height: 44px;
+    max-height: 46px;
+    font-size: 12px;
+}
+
 /* ==================== QLineEdit ==================== */
 QLineEdit {
     background-color: %(white)s;

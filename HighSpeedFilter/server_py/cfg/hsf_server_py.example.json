@@ -1,0 +1,121 @@
+{
+  "server": {
+    "port": 6200,
+    "serial_enabled": true
+  },
+  "serial": {
+    "port": "COM17",
+    "baudrate": 115200,
+    "timeout_ms": 400,
+    "retries": 1,
+    "vfd_poll_ms": 100,
+    "temphum_poll_ms": 500,
+    "temphum_push_ms": 500,
+    "vfd_enabled": true,
+    "temphum_enabled": true,
+    "unit_ids": {
+      "vfd": 2,
+      "temphum": 4
+    }
+  },
+  "analog": {
+    "enabled": true,
+    "host": "192.168.0.11",
+    "port": 8234,
+    "unit_id": 1,
+    "channels": 8,
+    "poll_ms": 200,
+    "scales": [
+      {
+        "index": 0,
+        "name": "压差计",
+        "unit": "MPa",
+        "fullScale": 1.0,
+        "lowMa": 4.0,
+        "highMa": 20.0
+      }
+    ]
+  },
+  "digital": {
+    "enabled": true,
+    "poll_ms": 200,
+    "stale_ms": 5000,
+    "modules": [
+      {
+        "name": "数字量",
+        "host": "192.168.0.12",
+        "port": 502,
+        "unit_id": 1,
+        "timeout_s": 2.0,
+        "channels": 32,
+        "publish": true
+      },
+      {
+        "name": "数字量从站.13",
+        "host": "192.168.0.13",
+        "port": 502,
+        "unit_id": 1,
+        "timeout_s": 2.0,
+        "channels": 16,
+        "publish": false
+      }
+    ]
+  },
+  "valves": {
+    "enabled": true,
+    "poll_ms": 200,
+    "move_timeout_ms": 20000,
+    "items": [
+      {
+        "name": "电磁阀1",
+        "module": 0,
+        "do": 16,
+        "openDi": 17,
+        "closeDi": 16
+      },
+      {
+        "name": "电磁阀2",
+        "module": 0,
+        "do": 17,
+        "openDi": 19,
+        "closeDi": 18
+      },
+      {
+        "name": "电磁阀3",
+        "module": 0,
+        "do": 18,
+        "openDi": 21,
+        "closeDi": 20
+      },
+      {
+        "name": "电磁阀4",
+        "module": 0,
+        "do": 19,
+        "openDi": 23,
+        "closeDi": 22
+      },
+      {
+        "name": "电磁阀5",
+        "module": 0,
+        "do": 20,
+        "openDi": 25,
+        "closeDi": 24
+      },
+      {
+        "name": "电磁阀6",
+        "module": 0,
+        "do": 21,
+        "openDi": 27,
+        "closeDi": 26
+      }
+    ]
+  },
+  "stale": {
+    "vfd_ms": 5000,
+    "temphum_ms": 5000,
+    "digital_ms": 5000
+  },
+  "runtime": {
+    "run_mode": 0
+  }
+}

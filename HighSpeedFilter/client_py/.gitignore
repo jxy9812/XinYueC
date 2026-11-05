@@ -7,3 +7,9 @@ tests/_run/
 # 编辑器
 .vscode/
 .idea/
+
+# [反忽略] 仓库根的 .gitignore 有 `Tests/` 规则，Windows 上大小写不敏感，
+# 会连带把本目录的 tests/ 也挡掉（实测：客户端测试文件从未入库）。
+# 这里显式把测试源码拉回来，运行产物仍由上面的规则排除。
+!tests/
+!tests/*.py

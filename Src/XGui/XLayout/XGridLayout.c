@@ -1530,6 +1530,53 @@ void XGridLayout_addWidgetSpan(XGridLayout* self, XWidget* widget,
     XLayoutItem* item;
     int idx;
     if (!self || !widget) return;
+    /* [2026-11-05 幂等根修] 同一控件再次 addWidget 时**只更新单元坐标**，
+     * 不新建条目。对齐 Qt：QLayout::addWidget 会把控件从旧位置移走
+     * （一个控件在一个布局里只会有一条条目）。
+     *
+     * 不这么做的后果（实测）：页面 adapt() 是"每帧重排"口径，若 adapt 里
+     * 用 addWidget 摆放卡片，每帧就多一条布局条目 —— 客户端内存实测
+     * 稳定 +260KB/25s（约 10MB/小时）持续增长，布局项数组无限膨胀。
+     * 这是**框架层语义缺陷**，不能只靠调用方"别每帧调"来规避。 */
+    {
+        int existing = -1;
+        int n = XLayout_count_base((XLayout*)self);
+        int k;
+        for (k = 0; k < n; ++k) {
+            XLayoutItem* it = XLayout_itemAt_base((XLayout*)self, k);
+            /* 只有控件条目才有 m_widget；对齐 Qt 的 QWidgetItem 判等。 */
+            if (it && XClassGetVtable(it) == XWidgetItem_class_init()
+                && ((XWidgetItem*)it)->m_widget == widget) {
+                existing = k;
+                break;
+            }
+        }
+        if (existing >= 0) {
+            XGridLayout_normalizeCell(self, &row, &column, &rowSpan, &columnSpan);
+            if (existing < self->m_cellCapacity) {
+                XGridLayoutCell* cell = &self->m_cells[existing];
+                cell->m_row = row;
+                cell->m_column = column;
+                cell->m_rowSpan = row + rowSpan - 1;
+                cell->m_columnSpan = column + columnSpan - 1;
+            }
+            if (alignment != 0) {
+                XLayoutItem* it = XLayout_itemAt_base((XLayout*)self, existing);
+                if (it) XLayoutItem_setAlignment(it, alignment);
+            }
+            /* [2026-11-05 网格扩张必须补] 追加路径在
+             * XGridLayout_appendCellItem 末尾会调
+             * XGridLayout_expand(rowSpan+1, colSpan+1) 把行/列数撑开；
+             * 幂等分支绕过了那一步，导致**网格行列数不变**。
+             * 实测后果（窄屏电磁阀页 6 卡片竖排）：y 坐标
+             * 跑到 1677630378 这类垃圾值、卡片互相叠在一起。 */
+            XGridLayout_expand(self, row + rowSpan,
+                               column + columnSpan);
+            XLayoutItem_invalidate_base((XLayoutItem*)self);
+            XLayout_invalidate((XLayout*)self);
+            return;
+        }
+    }
     item = XLayoutItem_createWidgetItem(widget);
     if (!item) return;
     idx = XGridLayout_appendCellItem(self, item, true, row, column,

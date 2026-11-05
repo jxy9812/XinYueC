@@ -36,8 +36,11 @@ PAGE_NAMES = [
     "监视",
     "数字量",
     "模拟量",
-    "变频器",
-    "电磁流量计",
+    # [2026-11-05 现场口径] 这路设备驱动的是**搅拌泵**。页名按工艺用途叫
+    # 「搅拌泵」，设备**类别**仍是变频器（首页"类型"列显示变频器）——
+    # 操作员关心的是"哪个泵在转"，而不是"用的是什么调速器"。
+    "搅拌泵",
+    "水质监测",
     "电磁阀",
     "数据",
     "历史数据",
@@ -59,8 +62,8 @@ NAV_TREE = [
     ("监视",       PAGE_MONITOR_MENU,       -1),
     ("数字量",     PAGE_MONITOR_DIGITAL,     1),
     ("模拟量",     PAGE_MONITOR_ANALOG,      1),
-    ("变频器",     PAGE_MONITOR_VFD,         1),
-    ("流量计",     PAGE_MONITOR_FLOWMETER,   1),
+    ("搅拌泵",     PAGE_MONITOR_VFD,         1),
+    ("水质监测",   PAGE_MONITOR_FLOWMETER,   1),
     ("电磁阀",     PAGE_MONITOR_VALVE,       1),
     ("数据",       PAGE_DATA_MENU,          -1),
     ("历史数据",   PAGE_DATA_HISTORY,        6),
@@ -86,8 +89,8 @@ SUBMENU_ENTRIES = {
     PAGE_MONITOR_MENU: [
         ("数字量", PAGE_MONITOR_DIGITAL),
         ("模拟量", PAGE_MONITOR_ANALOG),
-        ("变频器", PAGE_MONITOR_VFD),
-        ("流量计", PAGE_MONITOR_FLOWMETER),
+        ("搅拌泵", PAGE_MONITOR_VFD),
+        ("水质监测", PAGE_MONITOR_FLOWMETER),
         ("电磁阀", PAGE_MONITOR_VALVE),
     ],
     PAGE_DATA_MENU: [

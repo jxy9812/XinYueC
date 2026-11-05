@@ -68,6 +68,19 @@ static void VXIoLink_stop(XIoLink* self)
     (void)self;
 }
 
+/**
+ * @brief RoleFresh 缺省：true。
+ * @note 保守取真：未知链路不擅自判陈旧。宁可让上层多用一次可能过期的值，
+ *       也不要把"我不了解这条链路"表达成"数据已失效"——后者会让正常
+ *       设备被误判离线。
+ */
+static bool VXIoLink_roleFresh(const XIoLink* self, uint16_t role)
+{
+    (void)self;
+    (void)role;
+    return true;
+}
+
 /** @brief 析构：仅走父类链（子类必须在自己的 deinit 里释放自己的资源）。 */
 static void VXIoLink_deinit(XIoLink* self)
 {
@@ -88,6 +101,7 @@ XVtable* XIoLink_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXIoLink_IsAsync, VXIoLink_isAsync);
     XVTABLE_OVERLOAD_DEFAULT(EXIoLink_Start, VXIoLink_start);
     XVTABLE_OVERLOAD_DEFAULT(EXIoLink_Stop, VXIoLink_stop);
+    XVTABLE_OVERLOAD_DEFAULT(EXIoLink_RoleFresh, VXIoLink_roleFresh);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIoLink_deinit);
     XCLASS_SHOW_SIZE_DEFAULT(XIoLink);
     return XVTABLE_DEFAULT;
@@ -134,6 +148,14 @@ bool XIoLink_isAsync_base(const XIoLink* link)
         return true;
     return XClassGetVirtualFunc(link, EXIoLink_IsAsync,
         bool (*)(const XIoLink*))(link);
+}
+
+bool XIoLink_roleFresh_base(const XIoLink* link, uint16_t role)
+{
+    if (ISNULL(link, "XIoLink") || ISNULL(XClassGetVtable(link), "Vtable"))
+        return true;
+    return XClassGetVirtualFunc(link, EXIoLink_RoleFresh,
+        bool (*)(const XIoLink*, uint16_t))(link, role);
 }
 
 bool XIoLink_start_base(XIoLink* link)

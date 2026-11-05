@@ -529,11 +529,11 @@ static int xnetioring_profEnabled(void) {
 }
 
 uint64_t XAbstractNetIoRing_profNowUs(void) {
-    /* 单调时长统一经 XDateTime_currentMSecsSinceEpoch()（单调钟，全库
-     * 统一计时源），换算到 µs 轴返回；粒度为毫秒，亚毫秒跨度量化到毫秒。
-     * µs 级精度需 XDateTime 下沉提供单调 µs/nsecs 计时 API 后再切换
-     * （现役 currentNSecsSinceEpoch 为墙钟，不满足时长测量要求）。 */
-    return (uint64_t)XDateTime_currentMSecsSinceEpoch() * 1000ULL;
+    /* [2026-11-05] 改用纳秒轴：currentNSecsSinceEpoch 自本次改动起已由单调源
+     * 推进（不再是墙钟，见 XDateTime.h 的口径注记），并且与 ms 轴同锚，
+     * ns/1e6 == ms 严格成立——因此这里既得到 µs 级分辨率，又不与全库其余
+     * 计时点错轴。 */
+    return (uint64_t)XDateTime_currentNSecsSinceEpoch() / 1000ULL;
 }
 
 void XAbstractNetIoRing_profMarkRecv(int fd) {

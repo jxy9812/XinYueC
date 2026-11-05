@@ -44,9 +44,27 @@ void XTestMenu_XIndustryTest(XTestMenu* root);
 	int XHsfClientFlowMeterProviderTest_run(void);
 	void XHsfClientFlowMeterProviderTest(XVariant* data);
 #endif
+#if XINDUSTRY_ON && XTURBIDITY_ON
+	/* 在线浊度仪（通道组喂点进程内自跑；含真机帧回归 + 三种口径旋钮 +
+	 * Analog 二级标度 + 编解码往返）。 */
+	int XIndustryTurbidityTest_run(void);
+	void XIndustryTurbidityTest(XVariant* data);
+#endif
 #if XINDUSTRY_ON && XBUTTON_STATION_ON
 	int XIndustryButtonStationTest_run(void);
 	void XIndustryButtonStationTest(XVariant* data);
+#endif
+#if XINDUSTRY_ON && XINDUSTRY_CHANNEL_ON
+	/* 电磁阀组「反馈模块离线」语义单测（纯业务层，不需要 TCP 从站）。
+	 * 锁定 XIoLink::RoleFresh → XIoChannelGroup_isFresh → 阀组按通道新鲜度
+	 * 这条链路的对外行为：离线必须报错，不得退化成"无到位反馈"。 */
+	int XHsfServerIoValveFreshTest_run(void);
+	void XHsfServerIoValveFreshTest(XVariant* data);
+	/* 服务端「模拟设备模式」全链路回归（HsfServer --sim）。
+	 * 锁定四类缺陷：多从站按站号分派、VFD 整段应答、静止量心跳拍、
+	 * 32 位量低字非 0；外加阀控端到端（写 DO → 行程开关联动 → 状态翻转）。 */
+	int XHsfServerIoSimModeTest_run(void);
+	void XHsfServerIoSimModeTest(XVariant* data);
 #endif
 
 #ifdef __cplusplus

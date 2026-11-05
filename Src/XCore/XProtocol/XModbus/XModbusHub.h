@@ -173,6 +173,13 @@ typedef struct XModbusHubCacheBlock {
     struct XVector* dirty;      /**< 待写脏区间（XModbusHubDirtyRange，按偏移升序；
                                      *   惰性创建：NULL=无脏区间，首次标脏才分配）。 */
     uint64_t lastOkMs;          /**< 整块最近一次读回成功时刻（单调毫秒；0=从未）。 */
+    uint64_t lastEmitMs;        /**< [2026-11-05 稳定量心跳] 本块最近一次发射
+                                     valueChanged 的时刻（单调毫秒；0=从未）。
+                                     用于 changedOnly 下的**周期重发**：值长期
+                                     不变的稳定量（母线电压/运行状态字）若只在
+                                     变化沿发射，上层永远收不到刷新，会被自身
+                                     陈旧判定判成"链路失效"（实测：变频器遥测
+                                     掩码首拍后塌成 0，健康列表报"从站失联"）。 */
     uint32_t failCount;         /**< 连续读失败次数（质量观测；成功清零）。 */
     bool refreshRequested;      /**< 已被 requestRefresh 标脏，下一拍优先读。 */
     bool firstEmitDone;         /**< [2026-11-01 首推恒发] 本块写路径已发过首笔

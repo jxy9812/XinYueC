@@ -633,9 +633,17 @@ static bool xvfdHarnessMountBrand(XvfdHarness* h, XVfdDevice* dev, int devId, in
     /* 从站协议约束（品牌层中立表达 → 传输层配置，逐字段翻译不靠布局巧合）。 */
     if (protocol) {
         XModbusHubUnitLimits lim;
+        /* [2026-11-05 实锅：调试填充值卡死轮询] 原实现只逐字段赋前三项，
+         * m_minPollIntervalMs **从未赋值**——MSVC 调试构建把它留成 0xCCCCCCCC
+         * （3435973836ms ≈ 39 天）。hubUnitDue 因而对每个读组恒返 false，
+         * 轮询在首组之后永久停摆（实测 pollOk 恒 1、groupCursor 冻在 1），
+         * 全部快照类用例假红。凡"逐字段赋值"的结构体必须先清零：漏一个字
+         * 段的代价随该字段语义放大，这里直接表现为整条总线死掉。 */
+        memset(&lim, 0, sizeof(lim));
         lim.m_maxReadRegisters = protocol->m_maxReadRegisters;
         lim.m_rangeBarrier = protocol->m_rangeBarrier;
         lim.m_singleWriteOnly = protocol->m_singleWriteOnly;
+        lim.m_minPollIntervalMs = 0;   /* 脚手架不降频：见上说明。 */
         if (!XModbusHub_setUnitLimits(h->m_hub, devId, unitId, &lim)) {
             XPrintf("[xvfd-harness] setUnitLimits(dev=%d unit=%d) 失败\n", devId, unitId);
             return false;

@@ -49,6 +49,7 @@ XCLASS_DEFINE_ENUM(XIoLink, WriteRole),
 XCLASS_DEFINE_ENUM(XIoLink, IsAsync),
 XCLASS_DEFINE_ENUM(XIoLink, Start),
 XCLASS_DEFINE_ENUM(XIoLink, Stop),
+XCLASS_DEFINE_ENUM(XIoLink, RoleFresh),
 XCLASS_DEFINE_END(XIoLink)
 
 /**
@@ -120,6 +121,29 @@ bool XIoLink_writeRole_base(XIoLink* link, uint16_t role, int32_t raw);
  * @note 基类默认 true（保守：未知链路按需要等待处理）。
  */
 bool XIoLink_isAsync_base(const XIoLink* link);
+
+/**
+ * @brief 判断某个 role 的缓存值是否**仍然可信**（未陈旧）。
+ * @param link 链路；不能为 NULL。
+ * @param role 语义槽号。
+ * @return true=值仍可用；false=已陈旧（从站久未应答/帧流中断）。
+ *
+ * @details [为什么这是虚槽而不是上层自己算] 新鲜度的判据完全取决于链路
+ *          的传输语义：
+ *            · Modbus 主站：看该点所在缓存块最近一次成功读回距今多久；
+ *            · 进程内假从站：同步链路恒新鲜；
+ *            · CAN/EtherCAT：看周期帧是否还在到。
+ *          上层（设备层）只该问"这个值还能用吗"，不该知道判据。
+ *
+ *          [为什么必须有这个槽] 点级 m_valid 是**单向**的（推送/写落定置 1，
+ *          从不清零）。没有本槽时，从站掉线后缓存值会永远以"有效"姿态被
+ *          上层读到 ⇒ 现场表现为**阀掉线了但界面显示一切正常**，比报错危险。
+ *          有本槽后，上层对"是否可信"才有权威判据。
+ *
+ * @note 基类默认恒 true（保守：不认识的链路不擅自判陈旧——宁可让上层多用
+ *       一次可能过期的值，也不要把"我不了解这条链路"表达成"数据已失效"）。
+ */
+bool XIoLink_roleFresh_base(const XIoLink* link, uint16_t role);
 
 /**
  * @brief 启动链路服务（开始轮询/使能中断/打开端口）。

@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import QMainWindow, QStackedWidget, QWidget
 from . import pages_registry as reg
 from . import proto, theme
 from .page_base import PageContext
-from .pages_monitor import AnalogPage, DigitalPage, FlowMeterPage, VfdPage
+from .pages_monitor import AnalogPage, DigitalPage, VfdPage, WaterPage
 from .pages_valve import ValvePage
 from .pages_other import (AlarmPage, HistoryPage, HomePage, LocalSettingsPage,
                           LogPage, MainMenuPage, NetworkPage, OverlayPage,
@@ -38,7 +38,7 @@ def _build_page(page_index, ctx):
     if page_index == reg.PAGE_MONITOR_VFD:
         return VfdPage(ctx)
     if page_index == reg.PAGE_MONITOR_FLOWMETER:
-        return FlowMeterPage(ctx)
+        return WaterPage(ctx)
     if page_index == reg.PAGE_MONITOR_VALVE:
         return ValvePage(ctx)
     if page_index == reg.PAGE_DATA_HISTORY:
@@ -91,9 +91,14 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.chrome.set_page_widget(self.stack)
 
+        # [状态栏必须走信号，不能直连] 页面里的控制回调（如变频器启停应答）
+        # 跑在**网络线程**上，直接调 status_bar.set_message 就是从非 UI 线程
+        # 碰 QWidget —— Qt 会直接崩进程（实测：点"自由停车"界面立刻消失，
+        # 无任何 Python traceback，服务端会话也跟着断）。
+        # bridge.statusMessage 是 Qt 信号：跨线程 emit 时自动排队到 UI 线程。
         self.ctx = PageContext(bridge,
                                navigate=self.goto_page,
-                               set_status=self.status_bar.set_message)
+                               set_status=bridge.statusMessage.emit)
         self.pages = {}             # page_index -> Page
         self.current = -1
         self._compact = False
@@ -226,6 +231,10 @@ class MainWindow(QMainWindow):
         fault, offline = model.health.counts()
         self.title_bar.set_health(fault, offline)
         self.title_bar.set_mode(model.is_auto(), model.run_mode_known)
+        # 自动控制器的**实际**运行状态（与模式位分开；None=服务端没报）
+        self.title_bar.set_auto_running(
+            model.is_auto_running(),
+            known=(model.auto_running is not None))
 
     # ==================================================================
     #                          连接事件
