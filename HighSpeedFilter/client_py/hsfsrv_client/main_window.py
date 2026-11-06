@@ -223,7 +223,7 @@ class MainWindow(QMainWindow):
             self.status_bar.set_message("刷新失败：%s" % exc)
 
     def _refresh_chrome(self):
-        """顶栏：温湿度 + 健康 + 运行模式。"""
+        """顶栏：温湿度 + 健康 + 运行模式 + **自动运行状态**。"""
         model = self.bridge.model
         th = model.temphum
         self.title_bar.set_temperature(
@@ -241,6 +241,13 @@ class MainWindow(QMainWindow):
         self.title_bar.set_auto_running(
             model.is_auto_running(),
             known=(model.auto_running is not None))
+        # [2026-11-06] 定期向服务端对账模式 + 自动运行位。
+        # 为什么要轮询：现场操作柱的启动/停止按钮会**在服务端**改变自动运行
+        # 状态，服务端没有"自动运行"的独立推送主题（见 02-线协议 7.10b），
+        # 客户端不主动问就永远显示旧值。用户要求「按钮在自动模式下启动后，
+        # 客户端顶部的状态要显示更新状态」。
+        # [1s 一次] 这是低频状态，1s 足够，且不会给链路添负担（一条查询帧）。
+        self.bridge.refresh_run_mode()
 
     # ==================================================================
     #                          连接事件

@@ -3208,24 +3208,23 @@ class TestButtonStation(unittest.TestCase):
         self.assertEqual(st.state, buttons.ButtonState.ESTOP)
 
     def test_lamps_are_mutually_exclusive(self):
-        """启动灯与停止灯任意时刻只能亮一盏（含急停态）。"""
-        from hsfsrv import buttons
+        """启动灯与停止灯任意时刻只能亮一盏（含急停态）。
+
+        [2026-11-06 语义变更] 灯跟着**外部给的运行态**（set_running），
+        不跟按键 —— 按键只是请求，判定在 autocontrol。故这里直接驱动
+        set_running 验证灯，按键→状态那条链在 TestAutoButtonLogic 里测。
+        """
         st, dev, model = self._station()
 
         self._tick(st, dev, 100)               # 停止态
         self.assertTrue(self._lamp(model, 8), "停止态停止灯亮")
         self.assertFalse(self._lamp(model, 7), "停止态启动灯灭")
 
-        model.press_button(13, True)           # 按启动
-        self._tick(st, dev, 200)
-        self.assertEqual(st.state, buttons.ButtonState.RUNNING)
+        st.set_running(True)                   # 外部宣布"真的在自动运行"
+        self._tick(st, dev, 200)               # 第二拍才写灯（首拍已写过）
+        self.assertEqual(st.state, "running")
         self.assertTrue(self._lamp(model, 7), "运行态启动灯亮")
         self.assertFalse(self._lamp(model, 8), "运行态停止灯灭")
-
-        model.press_button(13, False)
-        self._tick(st, dev, 300)
-        self.assertEqual(st.state, buttons.ButtonState.RUNNING,
-                         "松手后保持运行（自锁）")
 
         model.press_button(12, False)          # 急停
         self._tick(st, dev, 400)
@@ -3271,19 +3270,23 @@ class TestButtonStation(unittest.TestCase):
         self.assertFalse(self._lamp(model, 7))
 
     def test_debounce_swallows_double_edge(self):
-        """去抖窗口内的第二个上升沿被丢弃（机械抖动不能算两次启动）。"""
-        from hsfsrv import buttons
+        """去抖窗口内的第二个上升沿被丢弃（机械抖动不能算两次按键）。
+
+        [2026-11-06 改口径] buttons 现在只产"沿"，不推状态。故这里断言
+        沿的产出（start_edge），状态链在 TestAutoButtonLogic 里测。
+        """
         st, dev, model = self._station(debounce_ms=300)
         model.press_button(13, True)
         self._tick(st, dev, 1000)
-        self.assertEqual(st.state, buttons.ButtonState.RUNNING)
+        self.assertTrue(st.start_edge, "第一次按下应产出启动沿")
+
         # 抖动：松开再按下，间隔 < debounce
         model.press_button(13, False)
         self._tick(st, dev, 1040)
         model.press_button(13, True)
         self._tick(st, dev, 1080)
-        # 此时仍在 running（第二个沿被吞，未触发任何新转移）
-        self.assertEqual(st.state, buttons.ButtonState.RUNNING)
+        self.assertFalse(st.start_edge,
+                         "去抖窗口内的第二个沿必须被吞掉（否则一次抖动启动两次）")
 
     def test_lamps_recover_after_external_write(self):
         """灯被外部写灭后必须**自愈**补写回来。
@@ -3328,6 +3331,344 @@ class TestButtonStation(unittest.TestCase):
         text = st.health_text()
         self.assertIn("DI12", text)
         self.assertIn("DO7", text)
+
+
+class TestAutoButtonLogic(unittest.TestCase):
+    """按钮 → 自动运行的**决策链**（逻辑在 autocontrol.py，2026-11-06）。
+
+    [用户口径，原话]
+        「按钮启动这些都是自动模式下的逻辑只能在自动模式下生效，一旦切换
+          到手動，为了安全要停止全部设备，并且按钮在自动模式下启动后，
+          客户端顶部的状态要显示更新状态」
+        「不是根据物理按钮，是根据设备是否开始自动运行，启动按钮只是给一个
+          信号，要满足条件才切换状态」
+
+    [为什么单独立一组] 旧实现把"按启动就进入运行"写在 buttons.py 里，等于
+    物理按钮直接驱动设备，绕过模式授权。现在按键只是**请求**，本组锁的就是
+    "请求在什么条件下才被受理"。
+    """
+
+    ITEMS = {"estop_di": 12, "start_di": 13, "stop_di": 14, "reset_di": 15,
+             "start_lamp_do": 7, "stop_lamp_do": 8, "reset_lamp_do": 9,
+             "module": 0}
+
+    def _rig(self, with_buttons=True):
+        """起一套"虚拟数字量 + 按钮组 + 自动控制器"。
+
+        返回 (ctl, st, dev, model)。
+        """
+        from hsfsrv import autocontrol, buttons, devices, virtualdev
+
+        model = virtualdev.VirtualDigital(channels=16)
+        master = virtualdev.VirtualMaster(model, name="虚拟数字量")
+        dev = devices.DigitalIo(master, "数字量", channels=16)
+        dev.online = True
+
+        class _App(object):
+            digital = [dev]
+            valve_bank = None
+            pump_bank = None
+            vfd = None
+            analog = None
+            temphum = None
+
+            def __init__(self, station):
+                self.button_station = station
+
+        ctx = autocontrol.AutoContext.__new__(autocontrol.AutoContext)
+        ctx._app = _App(None)
+        ctx._log = lambda m: None
+        ctx._throttle = {}
+        ctx.last_error = ""
+        ctx.action_count = 0
+
+        st = None
+        if with_buttons:
+            st = buttons.ButtonStation(ctx, self.ITEMS, debounce_ms=0,
+                                       log=lambda m: None)
+            ctx._app.button_station = st
+        ctl = autocontrol.AutoController(ctx, log=lambda m: None)
+        return ctl, st, dev, model
+
+    def _tick(self, ctl, st, dev, now_ms, auto_mode=True, online=True):
+        """一拍：采设备 → 按钮采集 → 控制器受理按键。
+
+        :param online: 采完之后把 dev.online 设成这个值（模拟模块掉线）。
+                       [为什么不能在 poll 之前设] dev.poll 会把 online 置回
+                       True（假设备语义就是"这台一直在线"），必须先 poll
+                       再改，才模拟得出"读到的是离线状态"。
+        """
+        import asyncio
+
+        async def one():
+            await dev.poll(now_ms)
+            dev.online = bool(online)
+            st.poll(now_ms)
+            ctl.poll_idle(now_ms, auto_mode)
+            await asyncio.sleep(0.02)       # 让灯/全停的协程落地
+
+        asyncio.run(one())
+
+    def _press(self, ctl, st, dev, model, now_ms, channel, auto_mode=True,
+               online=True):
+        """按下并松开某个按钮（一个完整动作，占两拍）。"""
+        model.press_button(channel, True)
+        self._tick(ctl, st, dev, now_ms, auto_mode, online=online)
+        model.press_button(channel, False)
+        self._tick(ctl, st, dev, now_ms + 100, auto_mode, online=online)
+
+    # ---- 1. 手动模式下按钮无效（用户明确要求）----
+    def test_start_button_ignored_in_manual_mode(self):
+        """**手动模式下按启动完全不生效** —— 这是用户要求的核心一条。
+
+        [为什么最重要] 手动模式的语义是"人在客户端上操作"。如果现场按钮
+        还能启动自动运行，等于手动模式里藏着一条没人看得见的自动通路。
+        """
+        ctl, st, dev, model = self._rig()
+        self._press(ctl, st, dev, model, 1000, 13, auto_mode=False)
+        self.assertFalse(ctl.running, "手动模式下启动按钮必须无效")
+        self.assertFalse(st.running, "灯也不该亮成运行")
+
+    def test_start_button_works_in_auto_mode(self):
+        """自动模式下按启动 ⇒ 真的进入自动运行。"""
+        ctl, st, dev, model = self._rig()
+        self._press(ctl, st, dev, model, 1000, 13, auto_mode=True)
+        self.assertTrue(ctl.running, "自动模式下启动按钮应生效")
+        self.assertTrue(st.running, "运行态要同步给按钮组（灯跟着亮）")
+        self.assertEqual(st.state, "running")
+
+    # ---- 2. 启动要满足全部条件 ----
+    def test_start_blocked_when_estop_active(self):
+        """急停无信号时按启动被拒（安全侧默认）。"""
+        ctl, st, dev, model = self._rig()
+        model.press_button(12, False)          # 急停按下
+        self._press(ctl, st, dev, model, 1000, 13)
+        self.assertFalse(ctl.running, "急停期间不得启动")
+
+    def test_start_blocked_when_button_module_offline(self):
+        """模块离线（急停读不到）时按启动也被拒。
+
+        反证：若把"读不到"当成放行，断线时按一下启动设备就转 —— 正是
+        急停常闭要防的那件事。
+        """
+        ctl, st, dev, model = self._rig()
+        self._press(ctl, st, dev, model, 1000, 13, online=False)
+        self.assertFalse(ctl.running, "急停读不到时不得启动")
+        # [断言口径] estop_ok 是只读三元（True/False），None 被折成 False：
+        # ButtonStation 里写的是 `self.estop_ok = (raw is True)`，"读不到"
+        # 与"无信号"在灯/状态机口径上是同一件事（都禁止）。要区分"有没有配"
+        # 得看 estop_configured()。
+        self.assertIsNone(ctl.ctx.estop_ok(),
+                          "读不到 ⇒ 三态里的『未知』（不足以放行，但不算急停事件）")
+
+    def test_start_blocked_after_estop_until_reset(self):
+        """急停后即使回路恢复，**不按复位也不能启动**（锁存）。"""
+        ctl, st, dev, model = self._rig()
+        self._tick(ctl, st, dev, 1000)          # 先采到一帧"急停正常"
+        self.assertFalse(ctl.estop_latched)
+
+        model.press_button(12, False)
+        self._tick(ctl, st, dev, 1100)          # 急停 → 锁存
+        self.assertTrue(ctl.estop_latched)
+        model.press_button(12, True)
+        self._tick(ctl, st, dev, 1200)          # 回路恢复，但锁存还在
+        self._press(ctl, st, dev, model, 1300, 13)
+        self.assertFalse(ctl.running, "急停锁存期间启动必须被拒")
+
+        self._press(ctl, st, dev, model, 1500, 15)   # 复位
+        self.assertFalse(ctl.estop_latched)
+        self._press(ctl, st, dev, model, 1700, 13)   # 再按启动
+        self.assertTrue(ctl.running, "复位后启动应受理")
+
+    def test_no_latch_before_first_frame(self):
+        """**首帧未到时不锁存**（板端实锅 2026-11-06）。
+
+        [实锅] 服务端刚启动、数字量还没采到第一帧时，急停读到 None。初版
+        直接锁存，于是现场重启后立刻进入"急停锁存"，即使 DI12=1 也解不开
+        （必须人工按一次复位），日志里还留一条编造出来的急停事件，让人去
+        查根本不存在的急停回路。
+
+        判据：从没见过"急停正常"之前，只按禁止启动处理，**不锁存**。
+        """
+        ctl, st, dev, model = self._rig()
+        # 不 poll 设备 → 读不到 DI，模拟"首帧未到"
+        import asyncio
+
+        async def boot():
+            st.poll(50)                     # 只采按钮（此时 dev 还没 poll 过）
+            ctl.poll_idle(50, True)
+            await asyncio.sleep(0.01)
+
+        asyncio.run(boot())
+        self.assertFalse(ctl.estop_latched, "首帧未到不得锁存")
+
+        # 采到正常帧之后，再按急停才锁存
+        self._tick(ctl, st, dev, 1000)
+        model.press_button(12, False)
+        self._tick(ctl, st, dev, 1100)
+        self.assertTrue(ctl.estop_latched, "见过正常之后再急停要锁存")
+
+    def test_reset_does_not_start(self):
+        """复位只解除锁存，**不重新启动**（复位不是启动按钮）。"""
+        ctl, st, dev, model = self._rig()
+        model.press_button(12, False)
+        self._tick(ctl, st, dev, 1000)
+        model.press_button(12, True)
+        self._tick(ctl, st, dev, 1100)
+        self._press(ctl, st, dev, model, 1200, 15)
+        self.assertFalse(ctl.running, "复位不得让设备自己跑起来")
+
+    # ---- 3. 停止永远受理 ----
+    def test_stop_button_always_works(self):
+        """停止按钮在**任何模式**都受理（停机不该被任何闸门挡住）。"""
+        ctl, st, dev, model = self._rig()
+        self._press(ctl, st, dev, model, 1000, 13)      # 自动模式启动
+        self.assertTrue(ctl.running)
+        self._press(ctl, st, dev, model, 1200, 14, auto_mode=False)  # 手动下按停止
+        self.assertFalse(ctl.running, "即使手动模式，停止按钮也要受理")
+
+    # ---- 4. 灯跟运行态，不跟按键 ----
+    def test_lamps_follow_running_state_not_button(self):
+        """按下启动但被拒（手动模式）⇒ 灯**仍是停止**。
+
+        [为什么这条重要] 若灯跟着按键走，操作员会看到"启动灯亮了"以为设备
+        在跑，实际什么都没发生 —— 比不亮更危险。
+        """
+        ctl, st, dev, model = self._rig()
+        model.press_button(13, True)
+        self._tick(ctl, st, dev, 1000, auto_mode=False)
+        self.assertFalse(bool((model.do_mask >> 7) & 1), "启动灯不得亮")
+        self.assertTrue(bool((model.do_mask >> 8) & 1), "停止灯应亮")
+
+    # ---- 5. 切回手动要全停 ----
+    def test_leaving_auto_stops_everything(self):
+        """切回手动 ⇒ 控制器停 + 全停设备 + 只点停止灯。
+
+        [用户原话]「一旦切换到手動，为了安全要停止所有设备」
+        """
+        ctl, st, dev, model = self._rig()
+        self._press(ctl, st, dev, model, 1000, 13)
+        self.assertTrue(ctl.running)
+
+        # 模拟 app.apply_mode_to_devices 的行为
+        ctl.stop(1000, stop_devices=True, reason="切回手动")
+        self.assertFalse(ctl.running)
+        self.assertFalse(st.running, "按钮组运行态要同步成停止（停止灯亮）")
+
+    def test_stop_all_switches_off_vfd_pump_valve(self):
+        """全停要真的**逐个关掉**变频器/泵/阀，不能只停控制器。"""
+        import asyncio
+        ctl, st, dev, model = self._rig()
+
+        calls = []
+
+        class _Vfd(object):
+            async def apply_control(self, op, reverse, hz, rpm, value, index):
+                calls.append(("vfd", op))
+                return True, ""
+
+        class _Item(object):
+            ready = True
+
+        class _Bank(object):
+            def __init__(self):
+                self.items = [_Item()]
+
+            async def set_pump(self, i, on):
+                calls.append(("pump", i, on))
+                return True, ""
+
+            async def set_valve(self, i, on):
+                calls.append(("valve", i, on))
+                return True, ""
+
+        ctl.ctx._app.vfd = _Vfd()
+        ctl.ctx._app.pump_bank = _Bank()
+        ctl.ctx._app.valve_bank = _Bank()
+
+        async def run():
+            ctl.stop_all_devices("测试")
+            await asyncio.sleep(0.05)
+
+        asyncio.run(run())
+        kinds = sorted({c[0] for c in calls})
+        self.assertEqual(kinds, ["pump", "valve", "vfd"],
+                         "三类设备都要被停：%s" % calls)
+        self.assertIn(("vfd", proto.OP_STOP), calls, "变频器应减速停机")
+        for c in calls:
+            if c[0] in ("pump", "valve"):
+                self.assertFalse(c[-1], "泵/阀必须是关命令：%s" % (c,))
+
+    def test_stop_all_survives_one_device_failing(self):
+        """一台设备失败不能挡住停其它台。"""
+        import asyncio
+        ctl, st, dev, model = self._rig()
+        calls = []
+
+        class _Vfd(object):
+            async def apply_control(self, *a):
+                raise RuntimeError("设备离线")
+
+        class _Item(object):
+            ready = True
+
+        class _Bank(object):
+            def __init__(self):
+                self.items = [_Item()]
+
+            async def set_pump(self, i, on):
+                calls.append(("pump", on))
+                return True, ""
+
+            async def set_valve(self, i, on):
+                calls.append(("valve", on))
+                return True, ""
+
+        ctl.ctx._app.vfd = _Vfd()
+        ctl.ctx._app.pump_bank = _Bank()
+
+        async def run():
+            ctl.stop_all_devices("测试")
+            await asyncio.sleep(0.05)
+
+        asyncio.run(run())
+        self.assertIn(("pump", False), calls,
+                      "变频器抛异常时泵仍须被停")
+
+    # ---- 6. 无按钮组时不误拦（回归锁）----
+    def test_no_button_station_does_not_block_control(self):
+        """**没装操作柱的现场不能被"急停未知"拦住**（2026-11-06 实锅）。
+
+        [实锅] 初版急停闸直接看 estop_ok()，未装配时恒 None ⇒ 被判"禁止"，
+        纯 TCP 现场的启动/调速全被拒，报"急停状态未知"，表现为"设备好好的
+        但点不动"（端到端 66 项全红暴露的）。判据必须区分"没配"和"配了读不到"。
+        """
+        ctl, st, dev, model = self._rig(with_buttons=False)
+        self.assertIsNone(ctl.ctx.estop_ok(), "未装配时急停状态是未知")
+        self.assertFalse(ctl.ctx.estop_configured(),
+                         "未装配 = 没配这道安全件 ⇒ 不该拿它当闸")
+        ok, why = ctl.start_preconditions(auto_mode=True)
+        self.assertTrue(ok, "未配置急停的现场应允许启动，实际被拒：%s" % why)
+
+    def test_configured_but_unreadable_still_blocks(self):
+        """**配了但读不到**（模块离线）仍要拦 —— 与"没配"区分开。"""
+        ctl, st, dev, model = self._rig()
+        self._tick(ctl, st, dev, 1000, online=False)   # 采完后掉线
+        self.assertTrue(ctl.ctx.estop_configured(), "配了急停点位 = 有这道闸")
+        self.assertIsNone(ctl.ctx.estop_ok(), "离线 ⇒ 三态里的『未知』")
+        ok, _why = ctl.start_preconditions(auto_mode=True)
+        self.assertFalse(ok, "配了却读不到 ⇒ 必须按禁止处理")
+
+    # ---- 7. 急停闸每拍生效（不依赖控制器在跑）----
+    def test_estop_stops_running_controller(self):
+        """运行中急停无信号 ⇒ 立刻停控制器 + 全停。"""
+        ctl, st, dev, model = self._rig()
+        self._press(ctl, st, dev, model, 1000, 13)
+        self.assertTrue(ctl.running)
+        model.press_button(12, False)
+        self._tick(ctl, st, dev, 1200)
+        self.assertFalse(ctl.running, "急停必须把运行中的控制器打停")
+        self.assertTrue(ctl.estop_latched, "急停要锁存")
 
 
 class TestButtonChannelNames(unittest.TestCase):

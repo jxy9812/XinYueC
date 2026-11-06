@@ -115,6 +115,37 @@ print('  已生成 cfg/hsf_server_py.json（串口 %s）'
 PYEOF
     else echo '  沿用已有 cfg/hsf_server_py.json'; fi"
 
+# ---- 4b. 打印生效的**关键配置**（不修改，只报告）----
+# [为什么必须打这几行] 2026-11-06 实锅：部署时沿用已有配置，而那份配置里
+# `serial_enabled` 是 false（早先 --no-serial 留下的）。部署脚本一路 OK，
+# 现场看到的现象却是"搅拌泵与温湿度整个不见了"（健康表报「未装配」），
+# 排查得 SSH 上去翻 JSON 才知道串口是关的。
+# 部署脚本不能擅自改现场配置（那可能覆盖用户真正的设置），但**必须把
+# 生效值打出来**，让"设备去哪了"在第一屏日志里就有答案。
+ssh -o StrictHostKeyChecking=no "root@$HOST" "cd '$REMOTE_DIR' && \
+    python3 - <<'PYEOF'
+import json
+try:
+    c = json.load(open('cfg/hsf_server_py.json'))
+except Exception as exc:
+    print('  [警告] 配置读不出来：%s' % exc)
+    raise SystemExit(0)
+srv = c.get('server') or {}
+ser = bool(srv.get('serial_enabled'))
+print('  串口采集：%s' % ('启用' if ser else
+      '**关闭** —— 变频器/温湿度/流量计/浊度会显示「未装配」'))
+if ser:
+    s = c.get('serial') or {}
+    print('    %s · %s · 变频器%s 温湿度%s'
+          % (s.get('port'), s.get('baudrate'),
+             '开' if s.get('vfd_enabled', True) else '关',
+             '开' if s.get('temphum_enabled', True) else '关'))
+mods = [m.get('host') for m in (c.get('digital') or {}).get('modules') or []]
+print('  数字量模块：%s' % (', '.join(mods) if mods else '未配置'))
+btns = (c.get('buttons') or {})
+print('  按钮组：%s' % ('启用' if btns.get('enabled') else '关闭'))
+PYEOF"
+
 # ---- 5. systemd 服务 ----
 ssh -o StrictHostKeyChecking=no "root@$HOST" "cat > /etc/systemd/system/hsfserverpy.service <<SVCEOF
 [Unit]

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""按钮组（现场操作柱）：4 路 DI 输入 + 3 路 DO 指示灯。
+"""按钮组（现场操作柱）**采集与灯**：4 路 DI 输入 + 3 路 DO 指示灯。
 
 ================================================================================
                               现场定义（2026-11-06）
@@ -10,8 +10,8 @@
     输入 14 = 停止按钮   （点动，按下为 1）
     输入 15 = 复位按钮   （点动，按下为 1）
 
-    输出 7  = 启动灯     （运行时常亮）
-    输出 8  = 停止灯     （停止状态下常亮；运行时常灭 —— 与启动灯**互斥**）
+    输出 7  = 启动灯     （自动运行中时常亮）
+    输出 8  = 停止灯     （未运行时常亮；运行时常灭 —— 与启动灯**互斥**）
     输出 9  = 复位灯     （**点动**：只在按住复位时亮，松手就灭）
 
 [为什么急停用"无信号=禁止"] 急停按钮是**常闭**触点：正常时回路通、DI=1；
@@ -19,28 +19,29 @@
 —— 后者在断线时会误判成"没按急停"从而放行，是安全事故级的错。
 
 ================================================================================
-                            状态机（用户口径）
+                      本文件只管"采集与灯"，不含决策（2026-11-06 改版）
 ================================================================================
 
-    ┌──────────────────────────────────────────────────────────┐
-    │ 急停无信号（DI12=0）                                      │
-    │   ⇒ 禁止启动（按启动也不动），停止灯常亮                  │
-    ├──────────────────────────────────────────────────────────┤
-    │ Idle（停止）                                             │
-    │   · 停止灯常亮、启动灯灭                                  │
-    │   · 启动按钮上升沿 → 若急停正常 → 转 Running              │
-    ├──────────────────────────────────────────────────────────┤
-    │ Running（运行）                                          │
-    │   · 启动灯常亮、停止灯灭（互斥）                          │
-    │   · 停止按钮上升沿 → 转 Idle                             │
-    └──────────────────────────────────────────────────────────┘
+[为什么把决策挪走] 用户明确要求：
 
-    复位灯**不参与状态机**：它只镜像复位按钮的实时电平（按住亮、松开灭），
-    与运行/停止状态无关。复位按钮也**不改状态**（用户只要求灯是点动）。
+    「按钮的逻辑应该写在之前预留的自动模块文件中」
+    「不是根据物理按钮，是根据设备是否开始自动运行，启动按钮只是给一个信号，
+      要满足条件才切换状态」
 
-[点动 vs 常亮] 三个按键都是点动按钮，但**灯有区别**：
-    启动灯/停止灯 = 状态灯（常亮，表达"系统现在处于什么状态"）
-    复位灯        = 动作灯（点动，表达"正在按这个按钮"）
+原实现把状态机（按一下启动就转 Running）直接写在这里，等于**物理按钮 = 设备
+启动按钮**，绕过了模式授权、急停闸、自动运行授权三道条件。现在的分层是：
+
+    buttons.py（本文件）      采集 DI 电平、算沿、按"外部给的状态"亮灯
+          ↓ 上报按键沿（start_edge / stop_edge）
+    autocontrol.py            决定"该不该真的进入自动运行"（条件判定 + 动作）
+          ↓ 下发 auto_running 目标态
+    buttons.py                set_running() ← 灯跟着**设备真实运行态**，不跟按键
+
+即：按键只是**请求**。灯反映的是"系统实际在不在自动运行"，不是"你按没按过"。
+
+[外部必须驱动] 本类的 `running` 由外部（autocontrol）通过 `set_running()`
+设置；没有外部驱动时灯恒为"停止灯亮"。这样即使自动模块没装配/没跑，
+操作柱也不会因为按了一下启动就亮成"运行中"——那是最误导人的假状态。
 
 ================================================================================
                             去抖与采样
@@ -63,7 +64,14 @@ from . import proto
 # ============================================================================
 
 class ButtonState(object):
-    """按钮组状态机的状态值（字符串，便于日志阅读与跨端对齐）。"""
+    """按钮组状态机的状态值（字符串，便于日志阅读与跨端对齐）。
+
+    [2026-11-06 语义变更] 现在这三个值描述的是**系统运行态**，不是按键状态：
+        IDLE    = 未在自动运行（停止灯亮）
+        RUNNING = 自动运行中（启动灯亮）
+        ESTOP   = 急停无信号（禁止启动；灯按"停着"显示）
+    决定权在 autocontrol.py，本类只是把这三个值反映到灯上。
+    """
     IDLE = "idle"           # 停止
     RUNNING = "running"     # 运行
     ESTOP = "estop"         # 急停中（无信号）
@@ -83,12 +91,12 @@ KEY_MODULE = "module"
 
 
 class ButtonStation(object):
-    """按钮组：读 DI 推状态机、按状态写三盏灯。
+    """按钮组：读 DI 出按键沿、按外部给的运行态写三盏灯。
 
-    [与 AutoController 的关系] 本类只管"按钮采集 + 灯"这件**设备侧**的事，
-    不含工艺逻辑（那在 AutoController 里）。分开的理由：按钮组即使不在自动
-    模式也要正常亮灯（手动模式下操作员同样要看得到状态），故它由 app 每拍
-    驱动，而不是挂在自动控制器里。
+    [职责边界] 只做**设备侧**的两件事：采 DI、写 DO。
+    不含任何"该不该启动"的判断 —— 那是 autocontrol.AutoController 的事
+    （模式授权、急停闸、自动运行授权都在那边）。这样手动/自动两种模式可以
+    共用同一套采集与灯，不会出现"手动模式下按钮也能启动设备"的漏洞。
     """
 
     def __init__(self, ctx, items, debounce_ms=300, log=None):
@@ -102,6 +110,9 @@ class ButtonStation(object):
         self.debounce_ms = max(0, int(debounce_ms))
         self._log = log or (lambda msg: None)
 
+        #: 系统运行态（**外部驱动**，见 set_running）。
+        self.running = False
+        #: 由 running/急停推导出来的灯态（供 snapshot/健康阅读）。
         self.state = ButtonState.IDLE
 
         # 上一次采到的原始电平（用于算沿）
@@ -109,6 +120,14 @@ class ButtonStation(object):
                       KEY_STOP: None, KEY_RESET: None}
         # 上次确认沿的时刻（去抖）
         self._last_edge_ms = {}
+
+        #: 本拍新确认的按键沿（**只有一拍的寿命**，poll 开头清空）。
+        #: [为什么要"只活一拍"] 消费方（autocontrol）若某拍没跑（比如手动
+        #: 模式），沿不该攒着下一拍补发 —— 那会让"很久以前按的启动"在切到
+        #: 自动的瞬间突然生效。宁可丢沿，也不能延迟执行一个过期的意图。
+        self.start_edge = False
+        self.stop_edge = False
+        self.reset_edge = False
 
         # 对外可见的实时电平（None = 读不到）
         self.estop_ok = None       # 急停回路正常？（DI=1）
@@ -118,7 +137,7 @@ class ButtonStation(object):
         self.lamps = {KEY_START_LAMP: None, KEY_STOP_LAMP: None,
                       KEY_RESET_LAMP: None}
         #: 上次**写下去**的灯目标值（None = 还没写过 ⇒ 首拍必写一次，
-        #: 把灯拉到确定状态）。只在目标变化时才写，避免每拍刷 DO。
+        #: 把灯拉到确定状态）。
         self._lamp_cache = {KEY_START_LAMP: None, KEY_STOP_LAMP: None,
                             KEY_RESET_LAMP: None}
 
@@ -135,11 +154,22 @@ class ButtonStation(object):
             return None
         return v if v >= 0 else None
 
-    # ---- 单拍 ----
-    def poll(self, now_ms):
-        """采集一拍：读 DI → 判沿 → 推进状态机 → 写灯。
+    # ---- 外部驱动运行态 ----
+    def set_running(self, running):
+        """设置**系统实际是否在自动运行**（外部驱动，主动作方是 autocontrol）。
 
-        返回本拍是否有状态变化。
+        灯严格跟随这个值，因此"切回手动/急停/自动运行被停"都会立刻表现为
+        停止灯亮 —— 不需要额外通知，调用方只要把真实状态照实传进来。
+        """
+        self.running = bool(running)
+
+    # ---- 单拍：采集 + 灯 ----
+    def poll(self, now_ms):
+        """采集一拍：读 DI → 判沿 → 写灯。
+
+        返回本拍是否有**运行态**变化（state 字段变了）。
+        按键沿放在 `start_edge` / `stop_edge` / `reset_edge` 上供外部读取，
+        本方法**不推进运行态**（那由 autocontrol 决定）。
         """
         mod = self.items.get(KEY_MODULE)
         mod = 0 if mod is None else int(mod)
@@ -151,40 +181,56 @@ class ButtonStation(object):
             raw[key] = None if ch is None else self.ctx.read_di(ch, mod)
 
         # ---- 2. 急停（常闭：无信号 = 禁止）----
-        # [None 必须当成"不 OK"] 模块离线时 read_di 返回 None。此时**不能**
-        # 假设急停正常放行 —— 把它当"无信号"即禁止启动，是安全侧默认。
-        self.estop_ok = (raw[KEY_ESTOP] is True)
+        # [保留三态 2026-11-06 板端实锅] 原来写 `(raw is True)`，把
+        # **"还没采到"（None）** 和 **"真的无信号"（False）** 折成同一个
+        # False。后果：服务端刚启动、数字量还没回第一帧时，这一拍被当成
+        # 急停按下，autocontrol 立刻锁存，之后即使 DI12=1 也解不开 ——
+        # 现场表现是"重启后按启动永远没反应，还得先按一次复位"。
+        #
+        # 现在 None 原样保留（= 未知），由下层区分：
+        #   · 灯/状态：None 与 False 一样显示"停着"（安全侧的观感不变）
+        #   · 锁存判定：None 不能触发锁存（见 AutoController._check_estop）
+        if raw[KEY_ESTOP] is None:
+            self.estop_ok = None
+        else:
+            self.estop_ok = bool(raw[KEY_ESTOP])
 
         # ---- 3. 算上升沿（带去抖）----
-        edges = {}
+        # [本拍清空] 沿只活一拍，见 __init__ 里的说明。
+        self.start_edge = self.stop_edge = self.reset_edge = False
         for key in (KEY_START, KEY_STOP, KEY_RESET):
             cur = raw[key]
             prev = self._prev[key]
             self.pressed[key] = (cur is True)
             rising = (cur is True and prev is not True)
             if rising and self._debounce_ok(key, now_ms):
-                edges[key] = True
+                if key == KEY_START:
+                    self.start_edge = True
+                elif key == KEY_STOP:
+                    self.stop_edge = True
+                else:
+                    self.reset_edge = True
             self._prev[key] = cur
 
-        # ---- 4. 推进状态机 ----
+        # ---- 4. 推导灯态（**只看运行态 + 急停，不看按键**）----
         old_state = self.state
-        if not self.estop_ok:
-            # 急停无信号：无论当前在哪，一律回到"急停"态（禁止启动）。
+        if self.estop_ok is not True:
+            # 无信号或读不到：都显示"停着"（停止灯亮）。观感上一致即可 ——
+            # 区别只在"要不要锁存"，那由 autocontrol 判（见上面第 2 步）。
             self.state = ButtonState.ESTOP
+        elif self.running:
+            self.state = ButtonState.RUNNING
         else:
-            if self.state == ButtonState.ESTOP:
-                # 急停恢复：回到停止态（不自动启动 —— 复位必须人工确认）
-                self.state = ButtonState.IDLE
-            if edges.get(KEY_START) and self.state == ButtonState.IDLE:
-                self.state = ButtonState.RUNNING
-            elif edges.get(KEY_STOP) and self.state == ButtonState.RUNNING:
-                self.state = ButtonState.IDLE
+            self.state = ButtonState.IDLE
 
         changed = (old_state != self.state)
         if changed:
-            self._log("按钮组：状态 %s → %s（急停%s）"
+            self._log("按钮组：灯态 %s → %s（运行=%s，急停%s）"
                       % (old_state, self.state,
-                         "正常" if self.estop_ok else "无信号"))
+                         "是" if self.running else "否",
+                         "正常" if self.estop_ok is True
+                         else ("读不到" if self.estop_ok is None
+                               else "无信号")))
             if self.on_state_change:
                 try:
                     self.on_state_change(old_state, self.state)
@@ -204,7 +250,7 @@ class ButtonStation(object):
         return True
 
     def _apply_lamps(self, now_ms, mod):
-        """按当前状态写三盏灯。
+        """按运行态写三盏灯。
 
         [灯的目标值]
             启动灯 = (state == RUNNING)
@@ -235,7 +281,7 @@ class ButtonStation(object):
             ch = self._ch(key)
             if ch is None:
                 continue
-            # 回读实际电平（None = 读到不；此时按"不知道"处理，仍去写一次）
+            # 回读实际电平（None = 读不到；此时按"不知道"处理，仍去写一次）
             try:
                 actual = self.ctx.read_do(ch, mod)
             except Exception:                           # noqa: BLE001
@@ -268,7 +314,9 @@ class ButtonStation(object):
         """给健康/日志/客户端用的快照（纯数据，无副作用）。"""
         return {
             "state": self.state,
-            "estopOk": bool(self.estop_ok) if self.estop_ok is not None else None,
+            "running": bool(self.running),
+            "estopOk": (None if self.estop_ok is None
+                        else bool(self.estop_ok)),
             "startPressed": bool(self.pressed.get(KEY_START)),
             "stopPressed": bool(self.pressed.get(KEY_STOP)),
             "resetPressed": bool(self.pressed.get(KEY_RESET)),

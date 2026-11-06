@@ -94,6 +94,7 @@
         self._act(now_ms, "close_valve", 2); self._phase = "idle"
 """
 
+import asyncio
 import time
 
 from . import proto
@@ -285,10 +286,52 @@ class AutoContext(object):
             return None
         return st.estop_ok
 
+    def estop_configured(self):
+        """现场**有没有配**急停回路（按钮组装配且急停点位有效）。
+
+        [与 estop_ok 的分工 —— 决定"拦不拦"] 这是"有没有这道安全件"，
+        `estop_ok` 是"这道安全件现在通不通"：
+
+            未配置            → 不拦（没有的东西不能拿它当闸）
+            配置了 + True     → 放行
+            配置了 + False    → 拦（急停按下/断线）
+            配置了 + None     → 拦（模块离线，读不到 = 回路可能断了）
+
+        [为什么必须区分] 2026-11-06 实锅：初版只看 estop_ok，未装操作柱的
+        现场（纯 TCP/无数字量）拿到 None 就被当成"禁止"，所有启动/调速全被
+        拒，报"急停状态未知"，现场表现为"设备好好的但点不动"。
+        """
+        st = self.button_station()
+        if st is None:
+            return False
+        try:
+            return st._ch("estop_di") is not None
+        except Exception:                               # noqa: BLE001
+            return False
+
     def button_state(self):
-        """按钮组状态机当前状态（"idle"/"running"/"estop"）；未装配 None。"""
+        """按钮组当前灯态（"idle"/"running"/"estop"）；未装配 None。"""
         st = self.button_station()
         return None if st is None else st.state
+
+    def take_button_edges(self):
+        """取走本拍的按键沿（**读后即清**）。
+
+        返回 (start, stop, reset) 三个 bool。没有按钮组时全 False。
+
+        [为什么用 take 语义] 沿只该被消费一次。若用"读"语义，调用方两处都
+        读到同一次按下就会执行两次启动/停止。读完立刻清，第二处拿到的必然
+        是 False —— 让"一次按键只产生一个动作"成为结构性保证，而不是靠
+        调用方自觉。
+        """
+        st = self.button_station()
+        if st is None:
+            return False, False, False
+        edges = (bool(getattr(st, "start_edge", False)),
+                 bool(getattr(st, "stop_edge", False)),
+                 bool(getattr(st, "reset_edge", False)))
+        st.start_edge = st.stop_edge = st.reset_edge = False
+        return edges
 
     # ---- 节流 ----
     def throttle(self, key, interval_ms, now_ms=None):
@@ -311,87 +354,269 @@ class AutoContext(object):
 # ============================================================================
 
 class AutoController(object):
-    """自动运行控制器（**控制逻辑待扩展**）。
+    """自动运行控制器：按钮决策 + 急停/退自动的全停动作。
 
     生命周期：
-        构造 → start()（进入自动模式时）→ step() 每拍 → stop()（退出时）
+        构造 → start()（人按「启动自动运行」或现场启动按钮）→ step() 每拍
+             → stop()（人按停止 / 切回手动 / 急停）
 
-    [当前行为] step() 什么都不做。这不是遗漏 —— 见模块头「安全默认值」。
+    ======================================================================
+                      本类就是"按钮逻辑"的家（2026-11-06）
+    ======================================================================
+
+    用户口径（原话）：
+        「按钮的逻辑应该写在之前预留的自动模块文件中」
+        「不是根据物理按钮，是根据设备是否开始自动运行，启动按钮只是给一个
+          信号，要满足条件才切换状态」
+        「按钮启动这些都是自动模式下的逻辑只能在自动模式下生效，一旦切换
+          到手動，为了安全要停止全部设备，并且按钮在自动模式下启动后，
+          客户端顶部的状态要显示更新状态」
+
+    逐条落成代码：
+
+    【1】按键只是**请求**，不是命令。
+         启动按钮 = 请求进入自动运行；停止按钮 = 请求退出自动运行。
+         请求能否成立要过下面全部条件，任何一条不满足就不切状态。
+
+    【2】启动必须同时满足
+         · 处于自动模式（手动模式按启动完全无效 —— 这是用户明确要求的
+           "只能在自动模式下生效"）
+         · 急停回路正常（True；False/None 一律禁止，安全侧默认）
+         · 控制器当前没在跑（幂等）
+
+    【3】停止**永远受理**（自动模式与否、急停与否都要能停）。
+
+    【4】运行态由本类决定，写回 ButtonStation（灯跟着它亮）。
+         灯说明的是"设备真的在不在自动运行"，不是"你按没按过启动"。
+
+    【5】退出自动 / 急停 ⇒ **停全部设备**（变频器、泵、阀），不只停控制器。
+         用户原话："一旦切换到手动，为了安全要停止全部设备"。
+
+    [与旧实现的关键差别] 旧实现的状态机在 `buttons.ButtonStation` 里，按键
+    直接推进 running —— 等于按钮就是设备启动按钮，绕过了模式授权。现在
+    按键在 buttons 里只产生"沿"，判定全在这里。
     """
 
     #: 步进周期上限（毫秒）。tick 本身约 100ms；这里只做防御性节流，
     #: 避免将来 tick 频率提高时自动逻辑跑得过密。
     MIN_STEP_INTERVAL_MS = 50
 
+    #: 切回手动/急停时"全停"的等待上限（秒）。超过就记日志不再等。
+    #: [为什么设上限] 设备离线时写命令可能一直等到超时；全停是分批投递的
+    #: 异步任务，不能无限挂在那儿拖住关闭流程。
+    STOP_ALL_TIMEOUT_S = 5.0
+
     def __init__(self, ctx, log=None):
         self.ctx = ctx
         self._log = log or (lambda msg: None)
         self._running = False
         self._last_step_ms = 0
-        #: 扩展位：将来放状态机相位（见模块头示例）。
+        #: 相位：idle / running / estop（供 status()/日志阅读）。
         self.phase = "idle"
+        #: 急停锁存（与 C 侧 XAutoController 同口径）：急停后必须复位才允许
+        #: 再次启动，避免"按住急停松手就自动恢复运行"。由 app 的线协议
+        #: 四板斧（AUTO_OP_ESTOP / AUTO_OP_RESET）驱动。
+        self._estop_latched = False
+        #: 是否**见到过**急停回路正常。见 _check_estop 里"两个必须区分的情形"：
+        #: 首帧未到时读不到，不能当成急停锁存（否则开机就锁死）。
+        self._estop_ever_ok = False
+        self._estop_boot_warned = False
+        #: 全停动作的投递记录（诊断：最近一次触发的批次序号）。
+        self._stop_all_seq = 0
 
     # ---- 生命周期 ----
     def start(self, now_ms=None):
-        """进入自动模式时调用（幂等）。"""
+        """进入自动运行（幂等）。调用方**必须先自行判定条件**是否满足。
+
+        [为什么不在这里判条件] 条件（模式/急停/锁存）的判定需要上下文，
+        分散在两个入口：线协议 `_h_auto_control`（远程命令，要逐条回错因）
+        和 `_step_impl`（现场按钮，只记日志）。两边判定条件相同但报错方式
+        不同，故由调用方判、这里只做状态迁移。
+        """
         if self._running:
-            return
+            return False
         self._running = True
         self.phase = "idle"
         self._last_step_ms = 0
-        self._log("自动控制：已启动（本版本控制逻辑为空，不做任何动作）")
+        self._log("自动运行：已启动")
+        self._sync_station()
+        return True
 
-    def stop(self, now_ms=None):
-        """退出自动模式时调用（幂等）。
+    def stop(self, now_ms=None, stop_devices=False, reason=""):
+        """退出自动运行（幂等）。
 
-        [刻意不做"收尾动作"] 切手动时**不**自动把阀关掉或把泵停掉——
-        那会在操作员手里抢控制权，且"关到哪一步"取决于工艺。自动逻辑
-        若需要收尾，应自己在 stop() 之前显式做（将来扩展时实现）。
+        :param stop_devices: True = 顺带**停全部设备**（切手动/急停走这条）
+        :param reason: 日志里写明原因（"切回手动" / "急停" / …）
+
+        [stop_devices 的默认值必须是 False] 线协议上人主动按"停止自动运行"
+        只是停控制器，不该顺带把变频器断电 —— 那会让"停止自动运行"变成
+        一个比"停设备"更重的动作，反而没人敢按。全停只在**安全场景**
+        （切回手动、急停）发生，由调用方显式要求。
         """
         if not self._running:
-            return
+            # 即使控制器已经停了，安全场景仍要保证设备真停
+            # （可能上一次全停部分失败，这里补一次）。
+            if stop_devices:
+                self.stop_all_devices(reason)
+                self._sync_station()
+            return False
         self._running = False
         self.phase = "idle"
-        self._log("自动控制：已停止")
+        self._log("自动运行：已停止%s"
+                  % ("（%s）" % reason if reason else ""))
+        if stop_devices:
+            self.stop_all_devices(reason)
+        self._sync_station()
+        return True
+
+    def e_stop(self, reason="急停"):
+        """急停：停控制器 + 停全部设备 + **锁存**（复位前拒绝启动）。"""
+        self._estop_latched = True
+        self._running = False
+        self.phase = "estop"
+        self.stop_all_devices(reason)
+        self._sync_station()
+        self._log("自动运行：急停（已锁存，需复位后才能再次启动）")
+        return True
+
+    def reset(self):
+        """复位：解除急停锁存，回到停止态（**不重新启动**）。"""
+        was = self._estop_latched
+        self._estop_latched = False
+        self.phase = "idle"
+        self._sync_station()
+        if was:
+            self._log("自动运行：已复位（急停锁存解除，处于停止态）")
+        return was
 
     @property
     def running(self):
         return self._running
 
+    @property
+    def estop_latched(self):
+        return self._estop_latched
+
+    def _sync_station(self):
+        """把**真实运行态**写给按钮组（灯跟着它亮，不跟按键）。"""
+        st = self.ctx.button_station()
+        if st is not None:
+            try:
+                st.set_running(self._running)
+            except Exception:                           # noqa: BLE001
+                pass
+
+    # ---- 全停 ----
+    def stop_all_devices(self, reason=""):
+        """停全部受控设备：变频器 / 进水泵 / 电磁阀。
+
+        [为什么在框架层做而不是让每个调用点各写一遍] 切手动、急停、退出
+        自动三个入口都要做这件事，任何一处漏了就是"手动模式下设备还在转"。
+        集中一处，且**逐个设备独立 try** —— 一台失败不能挡住停其它台。
+
+        [为什么不 await] 本方法可能被同步路径调用（step() 是同步入口）。
+        全部动作以 asyncio 任务投递，失败只记日志：停机是"尽力而为且必须
+        尝试"，不能因为一台设备离线就整批不做。
+        """
+        self._stop_all_seq += 1
+        seq = self._stop_all_seq
+        self._log("全停：开始（#%d%s）"
+                  % (seq, ("，" + reason) if reason else ""))
+        try:
+            loop = asyncio.get_event_loop_policy().get_event_loop()
+            if loop is None or loop.is_closed():
+                raise RuntimeError("无可用事件循环")
+        except Exception as exc:                        # noqa: BLE001
+            self._log("全停：无法投递（%s），改为同步尝试" % exc)
+            loop = None
+
+        async def _run_all():
+            stopped = []
+            failed = []
+            # 1) 变频器：减速停机（保留停机过程，不用自由停车 —— 现场泵
+            #    是搅拌设备，瞬断对机械冲击更大）
+            vfd = self.ctx.vfd_snapshot()
+            if vfd is not None:
+                try:
+                    ok, err = await vfd.apply_control(
+                        proto.OP_STOP, False, 0.0, 0.0, 0.0, 0)
+                    (stopped if ok else failed).append(
+                        "变频器" + ("" if ok else "（%s）" % err))
+                except Exception as exc:                # noqa: BLE001
+                    failed.append("变频器（%s）" % exc)
+            # 2) 进水泵：逐台关
+            for i, ok_err in enumerate(await self._stop_pumps()):
+                ok, err = ok_err
+                (stopped if ok else failed).append(
+                    "进水泵%d%s" % (i, "" if ok else "（%s）" % err))
+            # 3) 电磁阀：逐路关（不判到位，只发关命令）
+            for i, ok_err in enumerate(await self._close_valves()):
+                ok, err = ok_err
+                (stopped if ok else failed).append(
+                    "阀%d%s" % (i, "" if ok else "（%s）" % err))
+            self._log("全停：完成（#%d）已停 %s%s"
+                      % (seq, "、".join(stopped) or "无设备",
+                         ("；失败 " + "、".join(failed)) if failed else ""))
+
+        if loop is None:
+            return
+        try:
+            task = loop.create_task(_run_all())
+            self._track_stop_task(task)
+        except Exception as exc:                        # noqa: BLE001
+            self._log("全停：投递失败 %s" % exc)
+
+    async def _stop_pumps(self):
+        """逐台停泵，返回 [(ok, err), ...]（未装配返回空表）。"""
+        bank = getattr(self.ctx._app, "pump_bank", None)
+        if bank is None:
+            return []
+        out = []
+        for i in range(len(bank.items)):
+            try:
+                ok, err = await bank.set_pump(i, False)
+            except Exception as exc:                    # noqa: BLE001
+                ok, err = False, str(exc)
+            out.append((ok, err))
+        return out
+
+    async def _close_valves(self):
+        """逐路关阀，返回 [(ok, err), ...]（未装配返回空表）。"""
+        bank = self.ctx._valves()
+        if bank is None:
+            return []
+        out = []
+        for i in range(len(bank.items)):
+            if not self.ctx.valve_ready(i):
+                continue
+            try:
+                ok, err = await bank.set_valve(i, False)
+            except Exception as exc:                    # noqa: BLE001
+                ok, err = False, str(exc)
+            out.append((ok, err))
+        return out
+
+    def _track_stop_task(self, task):
+        """留住全停任务引用（防被 GC 提前回收），完成时自动摘掉。"""
+        tasks = getattr(self, "_stop_tasks", None)
+        if tasks is None:
+            tasks = self._stop_tasks = set()
+        tasks.add(task)
+        try:
+            task.add_done_callback(tasks.discard)
+        except Exception:                               # noqa: BLE001
+            pass
+
     # ---- 每拍 ----
     def step(self, now_ms):
-        """每拍入口：**急停闸门 + 状态跟随**。
+        """每拍入口：**按钮请求 → 条件判定 → 状态迁移**。
 
         约定：
-          · 只在 self._running 为真时被 app 调用（但内部再判一次也无害）；
+          · 只在 self._running 为真时被 app 调用，但**急停/停止按钮的受理
+            不依赖 _running** —— 见 `poll_idle()`（app 每拍都会调它）。
           · 不要 await（这是同步入口）；需要异步动作时用
-            `asyncio.ensure_future(ctx.write_do(...))` 投递；
+            `asyncio.ensure_future(...)` / `loop.create_task(...)` 投递；
           · 任何异常都必须自己吞掉 —— 自动逻辑崩了不能把整个服务端带死。
-
-        ======================================================================
-                          当前实现的工艺逻辑（2026-11-06）
-        ======================================================================
-
-        用户的现场口径，逐条落成代码：
-
-        【1】急停无信号 ⇒ **禁止启动**
-             急停是常闭触点：DI=0 表示按下或断线。此时不准启动、不准调速，
-             已有的运行也要被打停。这是最前置的闸门，先于任何其它判断。
-
-        【2】启动进入运行状态 ⇒ 启动灯常亮
-        【3】停止状态下停止灯常亮
-        【4】运行状态停止灯熄灭，与启动灯**互斥**
-        【5】复位灯是点动：按下复位才亮，松开就灭
-
-        [职责边界] 灯的实际**写入**在 `buttons.ButtonStation` 里（它每拍
-        拿着硬件状态做这件事，手动模式下也照样亮）。本方法负责的是
-        **自动侧的决策与闸门**：
-            · 急停无效时把自动运行打停（不让泵继续转）
-            · 把"系统处于什么状态"记进 self.phase 供 status()/日志使用
-
-        [为什么不在这儿写灯] 灯要跟随的是 `ButtonStation` 的状态机，而那个
-        状态机由**物理按键**驱动（DI 沿），不是由自动逻辑驱动。两边都写灯
-        会互相打架。自动逻辑只在"急停"这种**必须介入**的场合出手。
         """
         if not self._running:
             return
@@ -407,37 +632,135 @@ class AutoController(object):
             self.ctx.last_error = "%s: %s" % (type(exc).__name__, exc)
             self._log("自动控制：本拍异常 %s" % self.ctx.last_error)
 
-    def _step_impl(self, now_ms):
-        """真正的逻辑（异常由 step() 兜住）。"""
-        st = self.ctx.button_station()
+    def poll_idle(self, now_ms, auto_mode):
+        """每拍受理按键（**无论控制器在不在跑**都由 app 调）。
 
-        # ---- 闸门：急停 ----
-        estop_ok = self.ctx.estop_ok()
-        if estop_ok is not True:
-            # False（无信号）和 None（按钮组未装配 / 模块离线）都按**禁止**
-            # 处理。这是安全侧默认：宁可不动，也不能在"不知道急停状态"时
-            # 让设备转起来。
-            if self.phase != "estop":
-                reason = ("无信号（按下或断线）" if estop_ok is False
-                          else "状态未知（按钮组未装配或模块离线）")
-                self._log("自动控制：急停%s ⇒ 禁止运行" % reason)
-                self.phase = "estop"
+        :param auto_mode: 当前是不是自动模式（手动模式下启动请求一律不生效）
+
+        [为什么与 step() 分开] step() 只在自动运行中被调用；但**停止**按钮
+        和**急停**必须在任何时刻都能受理（包括控制器没跑的时候）。如果只有
+        step() 受理按键，"没在跑时按停止"就没人接，"急停"更没人接 —— 那是
+        安全事故。故拆成两个入口：本方法管"请求受理"，step() 管"跑起来之后
+        的工艺逻辑"。
+        """
+        try:
+            self._handle_buttons(now_ms, auto_mode)
+            self._check_estop(auto_mode)
+        except Exception as exc:                        # noqa: BLE001
+            self.ctx.last_error = "%s: %s" % (type(exc).__name__, exc)
+            self._log("自动控制（按键受理）：本拍异常 %s" % self.ctx.last_error)
+
+    # ---- 按键受理 ----
+    def _handle_buttons(self, now_ms, auto_mode):
+        """把按键沿翻译成"启动/停止自动运行"的请求，逐个判条件。"""
+        start_edge, stop_edge, reset_edge = self.ctx.take_button_edges()
+
+        # ---- 停止：无条件受理（停机类动作不该被任何闸门挡住）----
+        if stop_edge:
+            if self._running:
+                self.stop(now_ms, stop_devices=True,
+                          reason="现场停止按钮")
+            else:
+                # 没在跑也照样停一次设备：现场按停止是"我要设备停"，
+                # 不是"我要控制器状态对齐"。
+                self.stop_all_devices("现场停止按钮")
+                self._sync_station()
+                self._log("自动运行：未在运行，现场停止按钮仍执行全停")
+
+        # ---- 复位：解除急停锁存（不启动）----
+        if reset_edge:
+            self.reset()
+
+        # ---- 启动：必须同时满足全部条件 ----
+        if start_edge:
+            ok, why = self.start_preconditions(auto_mode)
+            if ok:
+                changed = self.start(now_ms)
+                self._log("自动运行：现场启动按钮受理（%s）"
+                          % ("已启动" if changed else "已在运行"))
+            else:
+                self._log("自动运行：现场启动按钮被拒 —— %s" % why)
+
+    def start_preconditions(self, auto_mode):
+        """启动的全部条件。返回 (ok, 拒绝原因)。
+
+        [条件顺序] 先判模式再判急停：模式不对是"操作员没切"（配置问题），
+        急停不对是"安全回路"（安全问题）。先报配置问题更好理解；两条都
+        不满足时现场看到的提示应该是"去切自动模式"，而不是"急停无信号"
+        （后者会让人以为急停坏了）。
+        """
+        if not auto_mode:
+            return False, "当前是手动模式（按钮启停只在自动模式下生效）"
+        if self._estop_latched:
+            return False, "急停已锁存，需先复位"
+        # [只拦"配了"的现场] 见 estop_configured 的说明：没配急停回路就
+        # 没有这道安全件，不能拿它当闸（否则未装操作柱的现场永远起不来）。
+        if not self.ctx.estop_configured():
+            return True, ""
+        estop = self.ctx.estop_ok()
+        if estop is not True:
+            return False, ("急停无信号（按下或断线）" if estop is False
+                           else "急停状态未知（数字量模块离线）")
+        return True, ""
+
+    def _check_estop(self, auto_mode):
+        """急停闸：无信号时立刻停控制器 + 停全部设备 + **锁存**（每拍检查）。
+
+        [锁存与 running 无关 —— 2026-11-06 实锅] 初版只在控制器**正在跑**时
+        才调 e_stop（也就是才锁存）。于是"没在跑的时候按下急停"不锁存，
+        回路恢复后按启动立刻就能跑 —— 但现场明明是按过急停的，规矩是
+        **必须人工复位确认**。急停是安全事件，跟当时在不在跑无关。
+
+        [⚠ 两个必须区分的情形 —— 2026-11-06 板端实锅]
+            ① 真实急停事件（有人按下/线断了）：必须锁存，等人工复位。
+            ② 服务端刚启动、数字量还没采到第一帧：DI 读不到是**暂时的**，
+               不是急停。此时若锁存，现场会遇到「刚开机就按不动、必须
+               先按一次复位」——而且日志里那一下"急停锁存"是编造出来的
+               安全事件，会让人去查根本不存在的急停回路（板端实测就是
+               这个现象：重启后立刻 estop 锁存，之后 DI12=1 也解不开）。
+
+        判据：**从没见过急停=正常**之前，只按"禁止启动"处理，**不锁存**。
+        `_estop_ever_ok` 一旦为真（见到过回路通），后面所有无信号都按
+        真实急停处理，锁存照旧。
+        """
+        if not self.ctx.estop_configured():
+            # 没配急停回路：没有这道安全件，不能拿它当闸（同 start_preconditions）。
+            if self.phase == "estop" and not self._estop_latched:
+                self.phase = "idle"
+                self._sync_station()
             return
+        estop_ok = self.ctx.estop_ok()
+        if estop_ok is True:
+            self._estop_ever_ok = True
+            if self.phase == "estop" and not self._estop_latched:
+                self.phase = "idle"
+                self._sync_station()
+            return
+        # False（无信号）与 None（配了但读不到/离线）都按禁止处理。
+        reason = ("急停无信号（按下或断线）" if estop_ok is False
+                  else "急停状态未知（数字量模块离线）")
+        if not self._estop_ever_ok:
+            # 情形②：还没见过第一帧，不锁存、不一定全停（控制器本来也
+            # 起不来 —— start_preconditions 会拒）。只把相位记成"等待采集"。
+            if not getattr(self, "_estop_boot_warned", False):
+                self._estop_boot_warned = True
+                self._log("自动控制：%s（首帧未到，暂不锁存；"
+                          "采到急停正常后才按真实急停处理）" % reason)
+            return
+        if not self._estop_latched:
+            self._log("自动控制：%s ⇒ 停止自动运行并全停设备" % reason)
+            self.e_stop(reason)
 
-        # 急停正常：相位跟随按钮组状态机（物理按键推进的那个）
-        if st is not None:
-            if st.state == "running":
-                if self.phase != "running":
-                    self.phase = "running"
-                    self._log("自动控制：进入运行状态（启动灯常亮）")
-            elif st.state == "idle":
-                if self.phase != "idle":
-                    self.phase = "idle"
-                    self._log("自动控制：停止状态（停止灯常亮）")
-        elif self.phase != "idle":
-            # 没有按钮组（纯 TCP 场景）：自动模式下就当"运行中"，保持
-            # 原有语义（自动模式本身就是运行状态）。
+    def _step_impl(self, now_ms):
+        """运行中的工艺逻辑（异常由 step() 兜住）。
+
+        [当前实现] 工艺逻辑仍是空的（等现场工艺定），本方法只维护相位标记，
+        供 status() 与日志阅读。急停闸已在 `poll_idle` → `_check_estop` 里
+        每拍执行（它必须在控制器没跑时也生效），这里不重复。
+        """
+        if self.phase != "running":
             self.phase = "running"
+            self._log("自动控制：进入运行相位")
 
     # ---- 诊断 ----
     def status(self):
@@ -447,6 +770,7 @@ class AutoController(object):
         return {
             "running": self._running,
             "phase": self.phase,
+            "estopLatched": self._estop_latched,
             "actions": self.ctx.action_count,
             "lastError": self.ctx.last_error,
             "estopOk": self.ctx.estop_ok(),

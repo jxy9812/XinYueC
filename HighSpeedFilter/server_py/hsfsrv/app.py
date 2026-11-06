@@ -406,12 +406,18 @@ class App(object):
         # ---- 按钮组（现场操作柱：4 DI 输入 + 3 DO 灯）----
         # [为什么放在阀门/泵之后] 它要读写同一批数字量缓存；顺序不影响
         # 正确性（都走 dev.di/dev.do 快照），放在最后只是便于阅读。
+        #
+        # [⚠ 按钮只是"请求" 2026-11-06] 灯跟的是**自动运行是否真在跑**，
+        # 不是"按没按过启动"。故装配后立刻把控制器真实状态同步下去（首拍
+        # 就能亮出正确的灯，不会先亮启动灯再熄灭）。
         if getattr(self.cfg, "enable_buttons", False):
             self.button_station = buttons.ButtonStation(
                 self.auto_ctx, self.cfg.button_items,
                 debounce_ms=getattr(self.cfg, "button_debounce_ms", 300),
                 log=self._log)
             self.button_station.on_state_change = self._on_button_state
+            self.button_station.set_running(
+                bool(getattr(self.auto_controller, "running", False)))
             self._log("按钮组：已装配（DI%d~%d 输入 / DO%d~%d 灯）"
                       % (self.cfg.button_items.get("estop_di"),
                          self.cfg.button_items.get("reset_di"),
@@ -455,16 +461,27 @@ class App(object):
         还在自动跑 = 手动模式下设备被偷偷驱动，是硬性安全问题）。
         启动路径在独立的 CMD_AUTO_CONTROL 里，见 _h_auto_control。
 
-        设备层本身不感知模式（控制闸在 app 层判定），故此函数对设备部分
-        仍是空实现，保留接口以便将来下沉做双保险。
+        [2026-11-06 强化：退自动要**停全部设备**] 用户明确要求：
+        「一旦切换到手动，为了安全要停止全部设备，并且按钮在自动模式下
+        启动后，客户端顶部的状态要显示更新状态」。
+
+        原来只停控制器（ctl.stop），变频器/泵/阀**照旧转着** —— 控制器
+        停了但设备没停，等于"手动模式下设备还在被上次的自动命令驱动"，
+        现场看到的是"我切了手动，泵还在转"。现在走 `stop(stop_devices=True)`：
+        停控制器 + 变频器减速停机 + 逐台停泵 + 逐路关阀。
         """
         ctl = getattr(self, "auto_controller", None)
         if ctl is None:
             return
-        if not self.is_auto() and ctl.running:
-            # 退自动 ⇒ 必须停（安全，单向）
-            ctl.stop(self._now_ms())
-            self._log("退出自动模式：自动控制已强制停止")
+        if not self.is_auto():
+            # 退自动 ⇒ 必须停控制器**并停全部设备**（安全，单向）。
+            # [不判 ctl.running] 控制器可能已经停了但设备还在转（比如上一批
+            # 全停失败了一台），此时切手动仍要再停一次 —— 这是补漏机会。
+            ctl.stop(self._now_ms(), stop_devices=True, reason="切回手动")
+            self._log("退出自动模式：自动控制已强制停止，设备全停")
+            # 按钮组灯立刻切到"停止"（不等到下一拍：切模式是个显著动作，
+            # 现场盯着灯看的那一眼必须已经是停止态）。
+            ctl._sync_station()
 
     def restore_run_mode(self, mode):
         """启动时从配置恢复运行模式（**不落盘**，因为值本来就来自磁盘）。
@@ -1050,7 +1067,13 @@ class App(object):
             await self._health_tick(now_ms)
 
     def _auto_step(self, now_ms):
-        """跑一拍自动控制（**当前是空骨架**，控制逻辑待扩展）。
+        """跑一拍自动控制。
+
+        [两个入口，职责不同]
+            poll_idle()  受理现场按键 + 急停闸 —— **每拍都调**，不要求控制器
+                         在跑。停止按钮和急停必须在任何时刻都有人接（控制器
+                         没跑时按停止也得把设备停下来），这是安全要求。
+            step()       跑起来之后的工艺逻辑 —— 只在 running 时调。
 
         [为什么必须包 try] 自动逻辑是现场工艺代码，将来一定会有人写出除零/
         越界/None 比较之类的异常。它崩了**不能**把整个服务端的 tick 带死 ——
@@ -1058,23 +1081,34 @@ class App(object):
         得多。故这里吞掉并限频记日志。
         """
         ctl = getattr(self, "auto_controller", None)
-        if ctl is None or not ctl.running:
+        if ctl is None:
+            return
+        # ---- 每拍：按键受理 + 急停闸（不依赖 running）----
+        try:
+            ctl.poll_idle(now_ms, self.is_auto())
+        except Exception as exc:                        # noqa: BLE001
+            self._log_auto_error(exc)
+        if not ctl.running:
             return
         try:
             ctl.step(now_ms)
         except Exception as exc:                        # noqa: BLE001
-            # 限频：同一类错误 1 分钟一条，避免把板端 journald 灌满。
-            # [首次必须记] 用 `not last` 判「从未记过」——不能只靠
-            # `now - last > 60000`：last 初值 0，而单调毫秒是从进程启动算的，
-            # 启动后 1 分钟内发生的第一次异常会被这条件判成「刚记过」而吞掉，
-            # 于是现场看到的是"自动逻辑明明崩了却一条日志都没有"。
-            key = type(exc).__name__
-            now_ms_i = int(now_ms)
-            last = self._auto_err_at.get(key, 0)
-            if (not last) or (now_ms_i - last > 60000):
-                self._auto_err_at[key] = now_ms_i or 1
-                self._log("自动控制异常（已隔离，不影响采集/推送）：%s: %s"
-                          % (key, exc))
+            self._log_auto_error(exc)
+
+    def _log_auto_error(self, exc):
+        """自动层异常限频记日志（同一类错误 1 分钟一条）。"""
+        # 限频：同一类错误 1 分钟一条，避免把板端 journald 灌满。
+        # [首次必须记] 用 `not last` 判「从未记过」——不能只靠
+        # `now - last > 60000`：last 初值 0，而单调毫秒是从进程启动算的，
+        # 启动后 1 分钟内发生的第一次异常会被这条件判成「刚记过」而吞掉，
+        # 于是现场看到的是"自动逻辑明明崩了却一条日志都没有"。
+        key = type(exc).__name__
+        now_ms_i = self._now_ms()
+        last = self._auto_err_at.get(key, 0)
+        if (not last) or (now_ms_i - last > 60000):
+            self._auto_err_at[key] = now_ms_i or 1
+            self._log("自动控制异常（已隔离，不影响采集/推送）：%s: %s"
+                      % (key, exc))
 
     async def _publish_telemetry(self, now_ms):
         # ---- 变频器 ----
@@ -1936,19 +1970,29 @@ class App(object):
         # [只拦"动作类"命令] 停止、自由停车、故障复位这些**让设备停下/清故障**
         # 的命令必须放行（急停时更要允许停），否则会把人卡住。
         # 点动释放同理放行（它本来就是收尾动作）。
+        #
+        # [⚠ 2026-11-06 订正：没装操作柱的现场不能拦] 初版直接把
+        # `estop_ok()` 的 None 当成"禁止"，于是**未装配按钮组**的现场
+        # （`enable_buttons=false`，或只有 TCP 设备没有数字量模块）所有启动/
+        # 调速全被拒，报"急停状态未知"——设备明明好好的却动不了。
+        # 判据改成：**先看有没有配急停回路**。没配 = 没有这道安全件，
+        # 不该被它拦住（此时安全性由其它手段保证：远程控制本身的权限闸、
+        # 现场硬接线急停）。配了但读不到（模块离线）= None ⇒ 仍然禁止，
+        # 因为"配了却读不到"说明回路可能断了，这正是要拦的情形。
         try:
             _op_for_gate = bson.decode(payload).get(proto.KEY_OP) \
                 if payload else None
         except (ValueError, AttributeError):
             _op_for_gate = None
-        if _op_for_gate in _ESTOP_BLOCKED_OPS:
+        if (_op_for_gate in _ESTOP_BLOCKED_OPS
+                and self.auto_ctx.estop_configured()):
             estop = self.auto_ctx.estop_ok()
             if estop is not True:
                 await self._reply(
                     session, request_id, msg_code, False,
                     "急停无信号（按下或断线）：禁止启动/调速"
                     if estop is False
-                    else "急停状态未知（按钮组未装配或数字量模块离线）：禁止启动/调速")
+                    else "急停状态未知（数字量模块离线）：禁止启动/调速")
                 return
         # 2) 角色门禁
         if session.role() < proto.ROLE_CONTROL:
@@ -2344,13 +2388,19 @@ class App(object):
 
     # ---- 自动运行控制 ----
     async def _h_auto_control(self, session, request_id, msg_code, payload):
-        """启停自动运行（载荷 {"on":bool}）。
+        """启停自动运行（载荷 {"op":int} 四板斧；兼容老载荷 {"on":bool}）。
 
         [与 CMD_RUN_MODE 的分工] 这条是**真正按下启动/停止**，模式切换只是
         授权。闸门顺序与其它控制命令一致，另加一条"必须在自动模式下才能
         启动"：
           · 手动模式下请求启动 → 拒绝（否则等于绕过模式闸偷偷跑自动逻辑）
-          · 停止请求**永远允许**（停机类动作不该被任何闸门挡住）
+          · 停止/急停/复位**永远允许**（停机类动作不该被任何闸门挡住）
+
+        [四板斧与 C 端同口径 2026-11-06] op 缺省时按 {"on":bool} 折算：
+            op=1 启动（须自动模式 + 急停正常 + 未锁存）
+            op=2 停止（停控制器 + 全停设备）
+            op=3 急停（停控制器 + 全停设备 + **锁存**）
+            op=4 复位（解除锁存，回停止态，**不启动**）
         """
         # 1) 角色门禁（停机也要求 root：自动运行状态属于运行决策，不开放只读）
         if session.role() < proto.ROLE_CONTROL:
@@ -2362,28 +2412,50 @@ class App(object):
             await self._reply(session, request_id, msg_code, False,
                               "自动控制器未装配")
             return
-        # 2) 解析载荷
+        # 2) 解析载荷（op 优先；缺 op 时按老口径折算）
         try:
             doc = bson.decode(payload) if payload else {}
-            want_on = bool(doc.get("on"))
+            raw_op = doc.get(proto.KEY_OP)
+            if raw_op is not None:
+                op = int(raw_op)
+            else:
+                op = (proto.AUTO_OP_START if bool(doc.get("on"))
+                      else proto.AUTO_OP_STOP)
         except (ValueError, TypeError):
             await self._reply(session, request_id, msg_code, False, "载荷不合法")
             return
-        # 3) 启动必须在自动模式（停止不受此闸）
-        if want_on and not self.is_auto():
-            await self._reply(
-                session, request_id, msg_code, False,
-                "当前是手动模式：请先切到自动模式，再启动自动运行",
-                extra={proto.KEY_MODE: self.run_mode,
-                       proto.KEY_AUTO: self.is_auto(),
-                       proto.KEY_AUTO_RUNNING: self.is_auto_running()})
+        if op not in (proto.AUTO_OP_START, proto.AUTO_OP_STOP,
+                      proto.AUTO_OP_ESTOP, proto.AUTO_OP_RESET):
+            await self._reply(session, request_id, msg_code, False,
+                              "非法 op 操作字（1启动/2停止/3急停/4复位）")
             return
+        # 3) 启动的条件判定（与现场启动按钮**同一套判据**，见
+        #    AutoController._start_preconditions —— 两处条件必须同源，
+        #    否则"现场能启动、远程不能启动"这种分歧极难查）
+        if op == proto.AUTO_OP_START:
+            ok, why = ctl.start_preconditions(self.is_auto())
+            if not ok:
+                await self._reply(
+                    session, request_id, msg_code, False,
+                    ("当前是手动模式：请先切到自动模式，再启动自动运行"
+                     if not self.is_auto() else why),
+                    extra={proto.KEY_MODE: self.run_mode,
+                           proto.KEY_AUTO: self.is_auto(),
+                           proto.KEY_AUTO_RUNNING: self.is_auto_running()})
+                return
         # 4) 执行（幂等）
         now = self._now_ms()
-        if want_on:
+        if op == proto.AUTO_OP_START:
             ctl.start(now)
+        elif op == proto.AUTO_OP_STOP:
+            # 人按"停止自动运行"⇒ 停控制器**并停全部设备**：
+            # 只停控制器会让设备继续按上一条命令动着，现场看到的是
+            # "我按了停止，泵还在转"。
+            ctl.stop(now, stop_devices=True, reason="远程停止自动运行")
+        elif op == proto.AUTO_OP_ESTOP:
+            ctl.e_stop("远程急停")
         else:
-            ctl.stop(now)
+            ctl.reset()
         await self._reply(session, request_id, msg_code, True, None,
                           extra={proto.KEY_MODE: self.run_mode,
                                  proto.KEY_AUTO: self.is_auto(),

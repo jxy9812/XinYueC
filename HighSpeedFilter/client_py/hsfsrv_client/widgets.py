@@ -346,7 +346,12 @@ class TitleBar(QWidget):
 # ============================================================================
 
 class StatusBar(QWidget):
-    """底部状态栏：黑底 28px，左侧状态文本 + 右侧连接信息。"""
+    """底部状态栏：黑底 28px，左侧状态文本 + 右侧连接信息。
+
+    [不显示时钟 2026-11-06] 顶栏右上角已经有时间（TitleBar 的 clock/date），
+    底部再来一个是重复占位。用户明确要求：「客户端顶部有显示时间了，底部
+    不用显示时间了」。故这里只留状态消息与连接信息。
+    """
 
     def __init__(self, parent=None):
         QWidget.__init__(self, parent)
@@ -364,17 +369,6 @@ class StatusBar(QWidget):
 
         self.conn = QLabel("未连接")
         lay.addWidget(self.conn)
-
-        self.clock = QLabel("")
-        lay.addWidget(self.clock)
-        self._timer = QTimer(self)
-        self._timer.setInterval(1000)
-        self._timer.timeout.connect(self._tick)
-        self._timer.start()
-        self._tick()
-
-    def _tick(self):
-        self.clock.setText(QDateTime.currentDateTime().toString("HH:mm:ss"))
 
     def set_message(self, text):
         self.message.setText(text)
