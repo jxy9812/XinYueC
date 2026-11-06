@@ -3150,13 +3150,13 @@ class TestButtonStation(unittest.TestCase):
         async def write_do(self, ch, on, mod=0):
             return await self.dev.write_do(ch, on)
 
-    def _station(self, debounce_ms=0):
+    def _station(self, debounce_ms=0, items=None):
         from hsfsrv import buttons, devices, virtualdev
         model = virtualdev.VirtualDigital(channels=16)
         master = virtualdev.VirtualMaster(model, name="虚拟数字量")
         dev = devices.DigitalIo(master, "数字量", channels=16)
         dev.online = True
-        return buttons.ButtonStation(self._Ctx(dev), self.ITEMS,
+        return buttons.ButtonStation(self._Ctx(dev), items or self.ITEMS,
                                      debounce_ms=debounce_ms), dev, model
 
     def _tick(self, st, dev, now_ms):
@@ -3287,6 +3287,87 @@ class TestButtonStation(unittest.TestCase):
         self._tick(st, dev, 1080)
         self.assertFalse(st.start_edge,
                          "去抖窗口内的第二个沿必须被吞掉（否则一次抖动启动两次）")
+
+    # ---- 触点类型：停止是常闭（2026-11-06 现场订正）----
+    def test_stop_button_is_normally_closed(self):
+        """停止按钮**常闭**：不按=1（通），按下=0 ⇒ 必须认**下降沿**。
+
+        [用户原话]「停止是常闭的，不按就是通的」「跟急停一样」。
+
+        [旧实现为什么完全收不到停止] 三路一律取上升沿。常闭时：
+          · 开机第一帧"未知→1"被当成**刚按下**（板端日志里那句"未在运行，
+            现场停止按钮仍执行全停"就是这个假沿）
+          · 真正按下是 1→0，代码根本不看 ⇒ 按停止毫无反应
+        """
+        st, dev, model = self._station()
+        # 常闭：上电就是 1（回路通）
+        model.press_button(14, True)
+        self._tick(st, dev, 100)
+        self.assertFalse(st.stop_edge,
+                         "开机看到常闭回路的 1 不能算按下（假沿）")
+        self.assertFalse(st.pressed.get("stop_di"), "1 = 未按")
+
+        # 按下停止：1 → 0
+        model.press_button(14, False)
+        self._tick(st, dev, 200)
+        self.assertTrue(st.stop_edge, "常闭按钮按下（1→0）必须产出停止沿")
+        self.assertTrue(st.pressed.get("stop_di"), "0 = 按下")
+
+        # 松开：0 → 1，不得再产出沿
+        model.press_button(14, True)
+        self._tick(st, dev, 300)
+        self.assertFalse(st.stop_edge, "松开不是按下")
+
+    def test_stop_wire_break_reads_as_pressed(self):
+        """停止回路**断线**也表现为 1→0 ⇒ 等价按下停止（安全侧正确）。
+
+        [为什么这条重要] 停止用常闭的意义正是"线断了就停"。若把断线判成
+        "没按"，断线时按停止没反应、设备也停不下来 —— 常闭白接了。
+        """
+        st, dev, model = self._station()
+        model.press_button(14, True)          # 正常：回路通
+        self._tick(st, dev, 100)
+        st.stop_edge = False
+        self._tick(st, dev, 200)              # 稳态再采一拍
+        self.assertFalse(st.stop_edge)
+        # 拔线：override 清掉、默认值里 DI14 也是 0 ⇒ 看起来同"按下"
+        model.press_button(14, False)
+        self._tick(st, dev, 300)
+        self.assertTrue(st.stop_edge, "断线必须等价于按下停止")
+
+    def test_start_and_reset_are_normally_open(self):
+        """启动/复位是**常开**：不按=0，按下=1 ⇒ 上升沿（与停止相反）。"""
+        st, dev, model = self._station()
+        self._tick(st, dev, 100)
+        self.assertFalse(st.start_edge)
+        self.assertFalse(st.reset_edge)
+
+        model.press_button(13, True)
+        self._tick(st, dev, 200)
+        self.assertTrue(st.start_edge, "常开按钮 0→1 是按下")
+
+        model.press_button(13, False)
+        model.press_button(15, True)
+        self._tick(st, dev, 300)
+        self.assertTrue(st.reset_edge, "复位同为常开")
+
+    def test_normally_closed_is_configurable(self):
+        """触点类型可配：改 `normally_closed` 后判据跟着换（换接法不改代码）。"""
+        from hsfsrv import buttons
+        st, dev, model = self._station()
+        self.assertEqual(st.normally_closed, {buttons.KEY_STOP},
+                         "缺省只有停止是常闭")
+
+        # 把启动也改成常闭
+        items = dict(self.ITEMS)
+        items["normally_closed"] = ["start_di", "stop_di"]
+        st2, dev2, model2 = self._station(items=items)
+        model2.press_button(13, True)          # 常闭：1 = 未按
+        self._tick(st2, dev2, 100)
+        self.assertFalse(st2.start_edge, "常闭接法下 1 不得算按下")
+        model2.press_button(13, False)         # 0 = 按下
+        self._tick(st2, dev2, 200)
+        self.assertTrue(st2.start_edge, "常闭接法下 0 才是按下")
 
     def test_lamps_recover_after_external_write(self):
         """灯被外部写灭后必须**自愈**补写回来。
@@ -3520,12 +3601,21 @@ class TestAutoButtonLogic(unittest.TestCase):
 
     # ---- 3. 停止永远受理 ----
     def test_stop_button_always_works(self):
-        """停止按钮在**任何模式**都受理（停机不该被任何闸门挡住）。"""
+        """停止按钮在**任何模式**都受理（停机不该被任何闸门挡住）。
+
+        [常闭接法] DI14 不按=1（回路通），按下=0。故"按停止"要按成 False。
+        """
         ctl, st, dev, model = self._rig()
         self._press(ctl, st, dev, model, 1000, 13)      # 自动模式启动
         self.assertTrue(ctl.running)
-        self._press(ctl, st, dev, model, 1200, 14, auto_mode=False)  # 手动下按停止
+        # 手动模式下按停止（常闭 ⇒ 按下是置 0）
+        model.press_button(14, True)     # 先恢复到"未按"（回路通）
+        self._tick(ctl, st, dev, 1150, auto_mode=False)
+        model.press_button(14, False)    # 真正按下
+        self._tick(ctl, st, dev, 1200, auto_mode=False)
         self.assertFalse(ctl.running, "即使手动模式，停止按钮也要受理")
+        model.press_button(14, True)
+        self._tick(ctl, st, dev, 1300, auto_mode=False)
 
     # ---- 4. 灯跟运行态，不跟按键 ----
     def test_lamps_follow_running_state_not_button(self):

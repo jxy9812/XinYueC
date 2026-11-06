@@ -626,6 +626,15 @@ class Config(object):
                             "module"):
                     if key in bitems:
                         merged[key] = _opt_int(bitems.get(key))
+                # 常闭触点（如 ["stop_di"]）。由**现场接线**决定，不是软件
+                # 常量：用户口径「停止是常闭的，不按就是通的」「跟急停一样」。
+                # 早先硬编码三路常开 ⇒ 停止按钮按下是 1→0，只认上升沿的
+                # 代码永远收不到，按停止毫无反应。
+                nc = bitems.get("normally_closed")
+                if isinstance(nc, (list, tuple)):
+                    valid = ("estop_di", "start_di", "stop_di", "reset_di")
+                    merged["normally_closed"] = [
+                        str(k) for k in nc if str(k) in valid]
                 self.button_items = merged
 
         stale = doc.get("stale") or {}

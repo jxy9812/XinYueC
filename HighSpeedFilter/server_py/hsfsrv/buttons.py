@@ -6,9 +6,9 @@
 ================================================================================
 
     输入 12 = 急停       （**常闭**：有信号 = 正常；无信号 = 按下/断线 = 禁止启动）
-    输入 13 = 启动按钮   （点动，按下为 1）
-    输入 14 = 停止按钮   （点动，按下为 1）
-    输入 15 = 复位按钮   （点动，按下为 1）
+    输入 13 = 启动按钮   （**常开**，点动：不按 0，按下 1）
+    输入 14 = 停止按钮   （**常闭**，点动：不按 1，按下 0）← 与急停同一种触点
+    输入 15 = 复位按钮   （**常开**，点动：不按 0，按下 1）
 
     输出 7  = 启动灯     （自动运行中时常亮）
     输出 8  = 停止灯     （未运行时常亮；运行时常灭 —— 与启动灯**互斥**）
@@ -17,6 +17,10 @@
 [为什么急停用"无信号=禁止"] 急停按钮是**常闭**触点：正常时回路通、DI=1；
 按下（或线断了）DI=0。故判据必须是「DI 为 0 ⇒ 禁止启动」，而不是反过来
 —— 后者在断线时会误判成"没按急停"从而放行，是安全事故级的错。
+
+[停止为什么也是常闭] 用户口径：「停止是常闭的，不按就是通的」「跟急停一样」。
+常闭的意义是**线断了 = 停止**，是安全侧接线。判据因此取**下降沿**（1→0），
+与常开的启动/复位正好相反。触点类型可由配置覆盖（`normally_closed`）。
 
 ================================================================================
                       本文件只管"采集与灯"，不含决策（2026-11-06 改版）
@@ -88,6 +92,8 @@ KEY_START_LAMP = "start_lamp_do"
 KEY_STOP_LAMP = "stop_lamp_do"
 KEY_RESET_LAMP = "reset_lamp_do"
 KEY_MODULE = "module"
+#: 常闭触点数组（如 ["stop_di"]）。见 ButtonStation.__init__ 的说明。
+KEY_NORMALLY_CLOSED = "normally_closed"
 
 
 class ButtonStation(object):
@@ -109,6 +115,19 @@ class ButtonStation(object):
         self.items = dict(items or {})
         self.debounce_ms = max(0, int(debounce_ms))
         self._log = log or (lambda msg: None)
+
+        #: 三路按键的**触点类型**（True=常闭，False=常开）。
+        #:
+        #: [现场口径 2026-11-06，用户原话]
+        #:   「停止是常闭的，不按就是通的」「跟急停一样」
+        #: 即：启动/复位是常开（按下才通），停止是常闭（不按就通）。
+        #:
+        #: [为什么要做成可配] 触点类型由**现场接线**决定，不是软件常量。
+        #: 早先硬编码成"三路都是常开"，停止按钮直接失效（按下是 1→0，
+        #: 代码只认上升沿）。做成字典后换接法只改配置、不改代码。
+        #: 配置项：`buttons.items.normally_closed = ["stop_di"]`（键名数组）。
+        nc = (self.items.get(KEY_NORMALLY_CLOSED) or [KEY_STOP])
+        self.normally_closed = set(nc)
 
         #: 系统运行态（**外部驱动**，见 set_running）。
         self.running = False
@@ -195,15 +214,36 @@ class ButtonStation(object):
         else:
             self.estop_ok = bool(raw[KEY_ESTOP])
 
-        # ---- 3. 算上升沿（带去抖）----
+        # ---- 3. 算按键沿（带去抖）----
         # [本拍清空] 沿只活一拍，见 __init__ 里的说明。
+        #
+        # [⚠ 触点类型不同，沿的方向相反 —— 2026-11-06 现场订正]
+        # 用户原话：「停止是常闭的，不按就是通的」「跟急停一样」。
+        #
+        #   启动 DI13：**常开**。不按=0，按下=1 ⇒ 取**上升沿**（0→1）
+        #   停止 DI14：**常闭**。不按=1，按下=0 ⇒ 取**下降沿**（1→0）
+        #   复位 DI15：常开（同启动）
+        #
+        # [旧实现为什么完全收不到停止] 原来三路一律取上升沿。停止常闭时，
+        # 开机第一帧就是从"未知"跨到 1 —— 被当成"刚按下"（板端日志里那句
+        # 「未在运行，现场停止按钮仍执行全停」就是这个假沿）；之后**真正
+        # 按下**是 1→0 的下降沿，代码根本不看，于是按停止毫无反应。
+        #
+        # [常闭为什么也要防断线] 停止用常闭的意义正是"线断了 = 停止"。
+        # 下降沿判据天然覆盖：断线看起来就是 1→0，等价于按下 —— 安全侧正确。
         self.start_edge = self.stop_edge = self.reset_edge = False
         for key in (KEY_START, KEY_STOP, KEY_RESET):
             cur = raw[key]
             prev = self._prev[key]
-            self.pressed[key] = (cur is True)
-            rising = (cur is True and prev is not True)
-            if rising and self._debounce_ok(key, now_ms):
+            if key in self.normally_closed:
+                # 常闭：不按=1，按下=0 ⇒ 下降沿 1→0
+                self.pressed[key] = (cur is False)
+                edge = (cur is False and prev is True)
+            else:
+                # 常开：不按=0，按下=1 ⇒ 上升沿 0→1
+                self.pressed[key] = (cur is True)
+                edge = (cur is True and prev is not True)
+            if edge and self._debounce_ok(key, now_ms):
                 if key == KEY_START:
                     self.start_edge = True
                 elif key == KEY_STOP:
