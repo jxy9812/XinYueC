@@ -123,6 +123,13 @@ struct XVirtualModelTurbidity;/**< WZT-701A 在线浊度仪（FC03 CDAB 浮点�
 struct XVirtualModelVfd* XVirtualModelVfd_create(double maxHz);
 /** @brief 变频器模型：设置设定频率（Hz）。 */
 void XVirtualModelVfd_setFrequency(struct XVirtualModelVfd* m, double hz);
+/**
+ * @brief 变频器模型：推进一拍（输出频率向目标线性爬坡 ±2.5Hz）。
+ * @details [心跳驱动] 推进必须只由统一心跳拍调用（HsfServerIoSim_tick，
+ *          100ms ⇒ 25Hz/s），不要挂在读路径上——一次扫描多个读组会推进
+ *          多次，轮询节拍一变加速时间跟着变（Python on_access 同口径）。
+ */
+void XVirtualModelVfd_tick(struct XVirtualModelVfd* m);
 /** @brief 变频器模型：当前输出频率（Hz）。 */
 double XVirtualModelVfd_outputFrequency(const struct XVirtualModelVfd* m);
 /** @brief 变频器模型：是否在运行。 */
@@ -132,6 +139,13 @@ bool XVirtualModelVfd_running(const struct XVirtualModelVfd* m);
 struct XVirtualModelDigital* XVirtualModelDigital_create(int channels);
 /** @brief 数字量模型：设 DI 位图（bit n = 通道 n）。 */
 void XVirtualModelDigital_setDi(struct XVirtualModelDigital* m, uint32_t mask);
+/**
+ * @brief 数字量模型：设 DO 初值位图（bit n = 通道 n）。
+ * @note  与 Python VirtualDigital 的 do_init 同口径：开机即有的输出位
+ *        （现场部分继电器常带电）在装配期由工厂注入；阀区（联动开启时）
+ *        的 DO 仍按写线圈路径驱动行程。
+ */
+void XVirtualModelDigital_setDo(struct XVirtualModelDigital* m, uint32_t mask);
 /** @brief 数字量模型：取 DO 位图。 */
 uint32_t XVirtualModelDigital_doMask(const struct XVirtualModelDigital* m);
 /**
@@ -149,6 +163,16 @@ uint32_t XVirtualModelDigital_diMask(const struct XVirtualModelDigital* m);
  */
 void XVirtualModelDigital_setValveInterlock(struct XVirtualModelDigital* m,
                                             bool enable);
+/**
+ * @brief 数字量模型：本模块内的阀路数（缺省 6）。
+ * @details [为什么要有这个边界] 阀区 = DO 通道 0..count-1，其对应
+ *          关到位 DI(2n) / 开到位 DI(2n+1) 由行程动态推导；**阀区之外**
+ *          的通道（进水泵 DO、按钮灯 DO、按钮输入 DI）不参与行程。
+ *          少了这个边界，写泵/写灯会顺手把按钮组的输入位拉成 0。
+ * @param count 阀路数（0 = 本模块无阀；超过模型容量自动收敛）。
+ */
+void XVirtualModelDigital_setValveChannels(struct XVirtualModelDigital* m,
+                                           int count);
 /**
  * @brief 数字量模型：阀机械行程时间（毫秒；缺省 10000）。
  * @details [为什么建模行程] 写 DO 后 DI 立刻跟着变的话，「命令」与「到位」
@@ -187,7 +211,13 @@ void XVirtualModelTempHum_set(struct XVirtualModelTempHum* m, int temp_tenths,
 
 /** @brief 建流量计模型。 */
 struct XVirtualModelFlow* XVirtualModelFlow_create(void);
-/** @brief 流量计模型：设瞬时流量（m3/h）。 */
+/**
+ * @brief 流量计模型：推进累积量积分（按真实经过的时间，重复推进安全）。
+ * @details 读路径也会推进（dt 口径下只是把积分切细）；本入口供心跳拍在
+ *          链路停摆时仍维持积分（现场不会因为上位机不在读就静止）。
+ */
+void XVirtualModelFlow_tick(struct XVirtualModelFlow* m);
+/** @brief 流量计模型：设瞬时流量（m3/h；≥0 固定不波动，负数恢复波动）。 */
 void XVirtualModelFlow_setInstantFlow(struct XVirtualModelFlow* m, float v);
 
 /**

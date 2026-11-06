@@ -260,34 +260,43 @@ def part_c_history_time(app):
                  "%.2f" % turb, "3.20", "36.0 m³/h", "1.0 m³",
                  "0.499", "26.5", "55.0", "0x00000000", "0x00000000"]
         return (texts, False)
+
+    # [用动态日期，不用写死的 2026-11-05] 「纯时刻 = 当天」的语义依赖运行
+    # 当天的日期；写死日期会让测试在某一天之后必然假红（实测 2026-11-06
+    # 跑就中招）。这里 today/yesterday 由当前时间生成，跨天断言才稳定。
+    import datetime as _dt
+    today = _dt.date.today()
+    yesterday = today - _dt.timedelta(days=1)
+    T = today.strftime("%Y-%m-%d")
+    Y = yesterday.strftime("%Y-%m-%d")
     page._rows = [
-        row("2026-11-04 23:59:00", 9.0),
-        row("2026-11-05 08:10:00", 10.0),
-        row("2026-11-05 08:20:00", 11.0),
-        row("2026-11-05 09:30:00", 12.0),
+        row("%s 23:59:00" % Y, 9.0),
+        row("%s 08:10:00" % T, 10.0),
+        row("%s 08:20:00" % T, 11.0),
+        row("%s 09:30:00" % T, 12.0),
     ]
 
-    page._f_start.setText("2026-11-05 08:00")
-    page._f_end.setText("2026-11-05 09:00")
+    page._f_start.setText("%s 08:00" % T)
+    page._f_end.setText("%s 09:00" % T)
     got = [r[0][0] for r in page._filtered_rows()]
     check("C2a 日期时间段命中 2 行",
-          got == ["2026-11-05 08:10:00", "2026-11-05 08:20:00"], got)
+          got == ["%s 08:10:00" % T, "%s 08:20:00" % T], got)
 
     page._f_start.setText("08:00")
     page._f_end.setText("08:30")
     got = [r[0][0] for r in page._filtered_rows()]
-    check("C2b 纯时刻=当天语义（11-05 两行）",
-          got == ["2026-11-05 08:10:00", "2026-11-05 08:20:00"], got)
+    check("C2b 纯时刻=当天语义（今天 2 行，昨天 23:59 不误命中）",
+          got == ["%s 08:10:00" % T, "%s 08:20:00" % T], got)
 
-    page._f_start.setText("11-04")
+    page._f_start.setText(Y[5:])          # MM-dd
     page._f_end.clear()
     got = [r[0][0] for r in page._filtered_rows()]
     check("C2c 起始日期无结束 = 从当天零点起（全部 4 行）",
           len(got) == 4, got)
-    page._f_end.setText("11-04")
+    page._f_end.setText(Y[5:])
     got = [r[0][0] for r in page._filtered_rows()]
-    check("C2d 起止同日 = 只看那一天（11-04 一行）",
-          got == ["2026-11-04 23:59:00"], got)
+    check("C2d 起止同日 = 只看那一天（昨天 1 行）",
+          got == ["%s 23:59:00" % Y], got)
 
     page._f_start.clear()
     page._f_end.clear()

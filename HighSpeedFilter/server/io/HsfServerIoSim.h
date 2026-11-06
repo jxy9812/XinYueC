@@ -50,8 +50,8 @@ typedef struct HsfServerIoSimModels {
     struct XVirtualModelFlow* m_flowMeter;     /**< 流量计（站 5）。 */
     /** @brief 浊度仪 ×2（站 1 / 站 3；与流量计共用同一条 485）。 */
     struct XVirtualModelTurbidity* m_turbidity[2];
-    struct XVirtualModelDigital* m_dig12;      /**< 数字量主模块 .12。 */
-    struct XVirtualModelDigital* m_dig13;      /**< 数字量扩展模块 .13。 */
+    struct XVirtualModelDigital* m_digMain;     /**< 数字量主模块（现场当前 = .13；逻辑点 0..15）。 */
+    struct XVirtualModelDigital* m_digExt;      /**< 数字量扩展模块（仅配置了 HSF_DIG_HOST_EXT 时才挂载）。 */
     struct XVirtualModelAnalog* m_analog;      /**< 模拟量 8 路。 */
 } HsfServerIoSimModels;
 
@@ -60,6 +60,28 @@ typedef struct HsfServerIoSimModels {
  * @return 模型集合（借用）；失败返回 NULL。
  */
 const HsfServerIoSimModels* HsfServerIoSim_ensure(void);
+
+/**
+ * @brief 模拟心跳拍：推进全部时间驱动的模型状态。
+ * @details [为什么需要] 模型的时间状态（变频器爬坡、流量计波动与累积量）
+ *          若挂在"被读"上推进，加速/波动节奏会随轮询节拍漂移，且链路停了
+ *          模拟现场就"冻结"——现场不会因为上位机不在读就静止。本拍由
+ *          HsfServerApp 的 100ms 基准节拍（hsfAppTick）驱动，与 Python 侧
+ *          App.interval_ms=100 的 on_tick 同构。阀行程/浊度波动内部本就按
+ *          单调钟计算，无需在此推进。
+ * @note  未装配（非 --sim 或未 ensure）时为空操作。须在事件循环内调用。
+ */
+void HsfServerIoSim_tick(void);
+
+/**
+ * @brief 覆盖模拟阀的行程参数（须在 HsfServerIoSim_ensure 之前调用）。
+ * @param moveMs 行程毫秒；0=缺省（10000）；UINT32_MAX=阀卡死。
+ * @param noFeedback true=行程开关未接线（DI 恒 0）。
+ * @details 对齐 Python --sim-valve-move / --sim-valve-no-feedback 故障注入；
+ *          只作用于**承载阀的那台**模型（按 HSF_VALVE_DO 宏判定，当前现场
+ *          = 主模块）。幂等：ensure 前随时可改。
+ */
+void HsfServerIoSim_setValveOverride(uint32_t moveMs, bool noFeedback);
 
 /**
  * @brief 释放全部模拟模型（幂等）。
@@ -84,16 +106,16 @@ struct XModbusVirtualClient* HsfServerIoSim_createBusClient(bool hasVfd,
                                                             bool hasTurbidity);
 
 /**
- * @brief 建数字量站的虚拟客户端（主模块 .12）。
+ * @brief 建数字量站的虚拟客户端（主模块 = 现场 HSF_DIG_HOST 那台）。
  * @return 虚拟客户端；失败返回 NULL。
  */
 struct XModbusVirtualClient* HsfServerIoSim_createDigitalMain(void);
 
 /**
- * @brief 建数字量扩展模块 .13 的虚拟客户端。
+ * @brief 建数字量扩展模块（HSF_DIG_HOST_EXT 那台）的虚拟客户端。
  * @return 虚拟客户端；失败返回 NULL。
- * @note  .13 在线/离线由调用方决定要不要建（不建 = 16 点降级，与真实
- *        装配的降级路径同一条）。
+ * @note  扩展模块在不在由调用方决定要不要建（不建 = 单台 16 点，与真实
+ *        装配的降级路径同一条）。当前现场未配置扩展模块 ⇒ 不用本函数。
  */
 struct XModbusVirtualClient* HsfServerIoSim_createDigitalExt(void);
 

@@ -141,16 +141,16 @@ static void testMultiUnitDispatch(void)
     /* 轮询若干拍：Hub 填缓存 → 各站订阅的 valueChanged 得到触发。 */
     spinMs(1200);
 
-    /* 变频器：状态快照必须有效（模型给了 5400 = 540.0V 母线电压）。 */
+    /* 变频器：状态快照必须有效（模型给 5532 = 553.2V 母线电压，Python 口径）。 */
     dev = (const XVfdDevice*)HsfServerIoVfd_device(&vfd);
     st = dev ? XVfdDevice_status_const(dev) : NULL;
     check("变频器遥测有效（按站号 2 读到自己的模型）",
           st && st->m_valid, NULL);
     /* 母线电压是最能区分"读到变频器 vs 读到温湿度"的量：
      * 温湿度模型在 0x1002 上没有分配（地址空间只到 0x0001）。 */
-    check("变频器母线电压 ≈ 540V（未串到温湿度模型）",
-          st && st->m_valid && st->m_busVoltageV >= 530.0 &&
-          st->m_busVoltageV <= 550.0, NULL);
+    check("变频器母线电压 ≈ 553.2V（未串到温湿度模型）",
+          st && st->m_valid && st->m_busVoltageV >= 548.0 &&
+          st->m_busVoltageV <= 558.0, NULL);
 
     /* 温湿度：模型缺省 265/550（26.5℃ / 55.0%）。 */
     check("温湿度取值",
@@ -192,7 +192,10 @@ static void testVfdSegmentRead(void)
     check("0x1000 段整块读被受理（段内未建模地址不报异常）",
           r == XModbusVirtual_Ok && n == 9, NULL);
     check("段内输出频率字可读（0x1001 有效）", n >= 2, NULL);
-    check("母线电压 = 5400（0.1V）", n >= 3 && out[2] == 5400, NULL);
+    /* [口径对齐 Python] 母线电压真机稳定 553.2V（0.1V ⇒ 5532），不再是
+     * 旧模型的 540V 发明值。 */
+    check("母线电压 = 5532（0.1V，553.2V 真机口径）",
+          n >= 3 && out[2] == 5532, NULL);
 
     /* 段落之外仍必须是 EXC02（真从站对未分配地址就是异常应答）。 */
     r = XModbusVirtualModel_read(XVirtualModel_base(m), 0x03, 0x9000, 1, out, 16, &n);
@@ -240,13 +243,15 @@ static void testFlowMeterHeartbeat(void)
     check("总线启动", HsfServerBus_start(&bus, map, HSF_BUS_B_SCAN_MS), NULL);
 
     spinMs(800);
-    /* 首拍：模型缺省 12.53 m3/h（不能用 12.5——低字恰为 0）。 */
+    /* 首拍：模型缺省 36.5 m3/h ±2% 正弦波动（Python VirtualFlowMeter 口径）。
+     * [不能再用恒 12.53] 恒值是旧口径；波动使 32 位量的两字每拍都被喂，
+     * "低字恰为 0 不被喂"的旧坑随波动消失。 */
     {
         bool ok = HsfServerIoFlowMeter_values(&fm, &flow, NULL, NULL, NULL,
                                               NULL, NULL, NULL, NULL);
         check("首拍流量有效", ok, NULL);
-        check("瞬时流量 = 12.53（低字非 0，两字都喂进去）",
-              ok && flow > 12.5 && flow < 12.6, NULL);
+        check("瞬时流量 = 36.5±2%（波动基线，Python 同口径）",
+              ok && flow > 35.7 && flow < 37.3, NULL);
         valid0 = ok ? 1 : 0;
     }
 
@@ -260,7 +265,7 @@ static void testFlowMeterHeartbeat(void)
         spinMs(500);
         ok = HsfServerIoFlowMeter_values(&fm, &flow, NULL, NULL, NULL,
                                          NULL, NULL, NULL, NULL);
-        if (ok && flow > 12.5 && flow < 12.6) ++validN;
+        if (ok && flow > 35.7 && flow < 37.3) ++validN;
     }
     {
         char detail[96];
@@ -276,7 +281,7 @@ static void testFlowMeterHeartbeat(void)
 }
 
 /* ============================================================================
- * ④ 32 点数字量 + 阀控端到端
+ * ④ 16 点数字量（单模块 .13）+ 阀控端到端
  * ============================================================================ */
 static void testValveEndToEnd(void)
 {
@@ -288,35 +293,36 @@ static void testValveEndToEnd(void)
     bool diValid = false;
     int i;
 
-    XPrintf("---- ④ 32 点数字量 + 阀控端到端 ----\n");
+    XPrintf("---- ④ 16 点数字量（单模块 .13）+ 阀控端到端 ----\n");
 
     HsfServerIoDigital_init(&dig);
     {
-        XModbusVirtualClient* m12 = HsfServerIoSim_createDigitalMain();
-        XModbusVirtualClient* m13 = HsfServerIoSim_createDigitalExt();
-        if (!m12 || !m13) {
+        /* [2026-11-06 现场变更] .12 拆除 ⇒ 只剩 .13 一台 16 点模块，
+         * 阀在 DO0..5 / 关到位 DI0 / 开到位 DI1（HSF_VALVE_* 宏）。 */
+        XModbusVirtualClient* vmain = HsfServerIoSim_createDigitalMain();
+        if (!vmain ||
+            !HsfServerIoDigital_mountWithClients(
+                &dig, (XModbusClient*)vmain, NULL,
+                HSF_DIG_CHANNELS, HSF_DIG_START_ADDR,
+                HSF_DIG_POLL_MS, HSF_DIG_TIMEOUT_MS)) {
             check("数字量模拟客户端创建", 0, NULL);
-            if (m12) XClassDelete((XClass*)m12);
-            if (m13) XClassDelete((XClass*)m13);
             return;
         }
-        check("数字量站按 32 点装配（.12 + .13）",
-              HsfServerIoDigital_mountWithClients(
-                  &dig, (XModbusClient*)m12, (XModbusClient*)m13,
-                  HSF_DIG_CHANNELS_MAX, HSF_DIG_START_ADDR,
-                  HSF_DIG_POLL_MS, HSF_DIG_TIMEOUT_MS), NULL);
     }
-    check("对外点数 = 32", HsfServerIoDigital_channelCount(&dig) == 32, NULL);
+    check("数字量站按 16 点装配（单模块 .13）",
+          HsfServerIoDigital_channelCount(&dig) == HSF_DIG_CHANNELS, NULL);
 
-    /* 阀 1：DO=16（.13 远端 0），开到位 DI=17、关到位 DI=16。 */
+    /* 阀 1：DO=0（模块本地点 0），开到位 DI=1、关到位 DI=0。 */
     for (i = 0; i < HSF_VALVE_COUNT; ++i) {
         cfg[i].m_name = NULL;
         cfg[i].m_do = (i == 0) ? HSF_VALVE_DO(0) : -1;
         cfg[i].m_openDi = (i == 0) ? HSF_VALVE_OPEN_DI(0) : -1;
         cfg[i].m_closeDi = (i == 0) ? HSF_VALVE_CLOSE_DI(0) : -1;
     }
-    check("阀组点位与配置宏一致（DO16/开DI17/关DI16）",
-          cfg[0].m_do == 16 && cfg[0].m_openDi == 17 && cfg[0].m_closeDi == 16,
+    check("阀组点位与配置宏一致（DO0/开DI1/关DI0）",
+          cfg[0].m_do == HSF_VALVE_DO(0) &&
+          cfg[0].m_openDi == HSF_VALVE_OPEN_DI(0) &&
+          cfg[0].m_closeDi == HSF_VALVE_CLOSE_DI(0),
           NULL);
     HsfServerIoValve_init(&bank);
     check("阀组装配", HsfServerIoValve_configure(&bank, cfg, HSF_VALVE_COUNT,
@@ -324,36 +330,38 @@ static void testValveEndToEnd(void)
 
     spinMs(500);
 
-    /* 首拍判读：模型缺省 DI 偶数位吸合 ⇒ DI16（关到位）有效 ⇒ 已关。 */
+    /* 首拍判读：模型开机稳态为六路阀全部"已关"（行程推导 ⇒ 关到位 DI
+     * 吸合，Python 同口径），DI0（阀 1 关到位）有效 ⇒ 已关。 */
     HsfServerIoDigital_readDi(&dig, &diMask, &diValid);
     {
         uint32_t fresh = 0;
-        for (i = 0; i < 32; ++i)
+        for (i = 0; i < HSF_DIG_CHANNELS; ++i)
             if (HsfServerIoDigital_isDiFresh(&dig, i)) fresh |= (1u << i);
-        HsfServerIoValve_poll(&bank, diMask, diValid, fresh,
+        HsfServerIoValve_poll(&bank, diMask, diValid, fresh, 0, false,
                               (uint64_t)XDateTime_currentMSecsSinceEpoch());
     }
     it = HsfServerIoValve_item(&bank, 0);
     check("初始为已关（关到位吸合）", it && it->m_state == HsfValveState_Closed,
           NULL);
-    check("阀反馈模块在线（32 点装配后上半区新鲜）", it && it->m_online, NULL);
+    check("阀反馈模块在线（16 点装配后本区新鲜）", it && it->m_online, NULL);
 
-    /* 开阀：写 DO16=1 ⇒ .13 模型进入行程（缺省 10s）⇒ 先是「动作中」，
+    /* 开阀：写 DO0=1 ⇒ 模型进入行程（缺省 10s）⇒ 先是「动作中」，
      * 10s 后到位才变「已开」。
      *
      * [这两条断言是模拟设备的关键价值] 立即联动的模型下"命令"与"到位"
      * 是同一瞬间，「动作中」与「超时告警」两条分支永远不会被跑到，
      * 模拟联调会给人"超时逻辑已验证"的错觉。 */
     check("开阀受理", HsfServerIoValve_setOutput(&bank, 0, true, NULL, 0), NULL);
-    check("写 DO16 被受理", HsfServerIoDigital_writeDo(&dig, 16, true), NULL);
+    check("写 DO0 被受理",
+          HsfServerIoDigital_writeDo(&dig, HSF_VALVE_DO(0), true), NULL);
     spinMs(600);      /* 远小于 10s 行程 */
     diMask = 0;
     HsfServerIoDigital_readDi(&dig, &diMask, &diValid);
     {
         uint32_t fresh = 0;
-        for (i = 0; i < 32; ++i)
+        for (i = 0; i < HSF_DIG_CHANNELS; ++i)
             if (HsfServerIoDigital_isDiFresh(&dig, i)) fresh |= (1u << i);
-        HsfServerIoValve_poll(&bank, diMask, diValid, fresh,
+        HsfServerIoValve_poll(&bank, diMask, diValid, fresh, 0, false,
                               (uint64_t)XDateTime_currentMSecsSinceEpoch());
     }
     it = HsfServerIoValve_item(&bank, 0);
@@ -368,9 +376,9 @@ static void testValveEndToEnd(void)
     HsfServerIoDigital_readDi(&dig, &diMask, &diValid);
     {
         uint32_t fresh = 0;
-        for (i = 0; i < 32; ++i)
+        for (i = 0; i < HSF_DIG_CHANNELS; ++i)
             if (HsfServerIoDigital_isDiFresh(&dig, i)) fresh |= (1u << i);
-        HsfServerIoValve_poll(&bank, diMask, diValid, fresh,
+        HsfServerIoValve_poll(&bank, diMask, diValid, fresh, 0, false,
                               (uint64_t)XDateTime_currentMSecsSinceEpoch());
     }
     it = HsfServerIoValve_item(&bank, 0);
@@ -380,17 +388,18 @@ static void testValveEndToEnd(void)
     /* 关回去（安全：模拟模式只写内存模型，绝不驱动真实继电器）。
      * 为了不让本用例再等 10s，把行程调短。 */
     XVirtualModelDigital_setMoveMs(
-        (struct XVirtualModelDigital*)HsfServerIoDigital_simModelExt(&dig), 300u);
+        (struct XVirtualModelDigital*)HsfServerIoDigital_simModel(&dig), 300u);
     check("关阀受理", HsfServerIoValve_setOutput(&bank, 0, false, NULL, 0), NULL);
-    check("写 DO16=0 被受理", HsfServerIoDigital_writeDo(&dig, 16, false), NULL);
+    check("写 DO0=0 被受理",
+          HsfServerIoDigital_writeDo(&dig, HSF_VALVE_DO(0), false), NULL);
     spinMs(700);
     diMask = 0;
     HsfServerIoDigital_readDi(&dig, &diMask, &diValid);
     {
         uint32_t fresh = 0;
-        for (i = 0; i < 32; ++i)
+        for (i = 0; i < HSF_DIG_CHANNELS; ++i)
             if (HsfServerIoDigital_isDiFresh(&dig, i)) fresh |= (1u << i);
-        HsfServerIoValve_poll(&bank, diMask, diValid, fresh,
+        HsfServerIoValve_poll(&bank, diMask, diValid, fresh, 0, false,
                               (uint64_t)XDateTime_currentMSecsSinceEpoch());
     }
     it = HsfServerIoValve_item(&bank, 0);
@@ -420,12 +429,11 @@ static void testValveTimeoutAlarm(void)
 
     HsfServerIoDigital_init(&dig);
     {
-        XModbusVirtualClient* m12 = HsfServerIoSim_createDigitalMain();
-        XModbusVirtualClient* m13 = HsfServerIoSim_createDigitalExt();
-        if (!m12 || !m13 ||
+        XModbusVirtualClient* vmain = HsfServerIoSim_createDigitalMain();
+        if (!vmain ||
             !HsfServerIoDigital_mountWithClients(
-                &dig, (XModbusClient*)m12, (XModbusClient*)m13,
-                HSF_DIG_CHANNELS_MAX, HSF_DIG_START_ADDR,
+                &dig, (XModbusClient*)vmain, NULL,
+                HSF_DIG_CHANNELS, HSF_DIG_START_ADDR,
                 HSF_DIG_POLL_MS, HSF_DIG_TIMEOUT_MS)) {
             check("超时用例夹具装配", 0, NULL);
             return;
@@ -433,7 +441,7 @@ static void testValveTimeoutAlarm(void)
     }
     /* 行程 3s，但阀组动作超时设 1s ⇒ 必然判超时。 */
     XVirtualModelDigital_setMoveMs(
-        (struct XVirtualModelDigital*)HsfServerIoDigital_simModelExt(&dig), 3000u);
+        (struct XVirtualModelDigital*)HsfServerIoDigital_simModel(&dig), 3000u);
 
     for (i = 0; i < HSF_VALVE_COUNT; ++i) {
         cfg[i].m_name = NULL;
@@ -450,9 +458,9 @@ static void testValveTimeoutAlarm(void)
     {
         uint32_t fresh = 0;
         HsfServerIoDigital_readDi(&dig, &diMask, &diValid);
-        for (i = 0; i < 32; ++i)
+        for (i = 0; i < HSF_DIG_CHANNELS; ++i)
             if (HsfServerIoDigital_isDiFresh(&dig, i)) fresh |= (1u << i);
-        HsfServerIoValve_poll(&bank, diMask, diValid, fresh,
+        HsfServerIoValve_poll(&bank, diMask, diValid, fresh, 0, false,
                               (uint64_t)XDateTime_currentMSecsSinceEpoch());
     }
     check("开场为已关（关到位吸合）",
@@ -465,14 +473,15 @@ static void testValveTimeoutAlarm(void)
      * [不能冻结在"关到位"] 那样 closeFb=true ⇒ 阀组每拍都判"已关"，
      * 永远走不到超时分支（首版就这么写，三条断言全红）。 */
     check("开阀受理", HsfServerIoValve_setOutput(&bank, 0, true, NULL, 0), NULL);
-    HsfServerIoDigital_writeDo(&dig, 16, true);
+    HsfServerIoDigital_writeDo(&dig, HSF_VALVE_DO(0), true);
 
     {
-        /* 阀 1 的两个到位位（DI16 / DI17）都清掉，其余位保持。 */
-        const uint32_t frozenDi = diMask & ~((1u << 16) | (1u << 17));
+        /* 阀 1 的两个到位位（DI0 / DI1）都清掉，其余位保持。 */
+        const uint32_t frozenDi = diMask &
+            ~((1u << HSF_VALVE_CLOSE_DI(0)) | (1u << HSF_VALVE_OPEN_DI(0)));
         for (i = 0; i < 20; ++i) {
             spinMs(100);
-            HsfServerIoValve_poll(&bank, frozenDi, true, 0xFFFFFFFFu,
+            HsfServerIoValve_poll(&bank, frozenDi, true, 0xFFFFFFFFu, 0, false,
                                   (uint64_t)XDateTime_currentMSecsSinceEpoch());
         }
     }
@@ -494,6 +503,170 @@ static void testValveTimeoutAlarm(void)
 }
 
 /* ============================================================================
+ * ⑥ 阀控制三分支幂等 + 外部接管（对齐 Python valves.set_valve）
+ * ============================================================================
+ * [为什么锁这三条] 连点同侧会把 20s 超时无限推后（卡阀被掩盖）、已到位
+ * 重复下发白写 DO、外部改动（面板/现场按钮）无人解释——Python 侧三个
+ * 实锅的回归锁，C 侧同口径落地后必须同等锁死。 */
+static void testValveCommandSemantics(void)
+{
+    HsfServerIoDigital dig;
+    HsfServerIoValve bank;
+    HsfServerIoValveCfg cfg[HSF_VALVE_COUNT];
+    const HsfServerIoValveItem* it;
+    uint32_t diMask = 0;
+    bool diValid = false;
+    int kind = 0;
+    char text[128];
+    int i;
+
+    XPrintf("---- ⑥ 阀控制三分支幂等 + 外部接管 ----\n");
+
+    HsfServerIoDigital_init(&dig);
+    {
+        XModbusVirtualClient* vmain = HsfServerIoSim_createDigitalMain();
+        if (!vmain ||
+            !HsfServerIoDigital_mountWithClients(
+                &dig, (XModbusClient*)vmain, NULL,
+                HSF_DIG_CHANNELS, HSF_DIG_START_ADDR,
+                HSF_DIG_POLL_MS, HSF_DIG_TIMEOUT_MS)) {
+            check("幂等用例夹具装配", 0, NULL);
+            return;
+        }
+    }
+    XVirtualModelDigital_setMoveMs(
+        (struct XVirtualModelDigital*)HsfServerIoDigital_simModel(&dig),
+        300u);   /* 行程 300ms：到位类断言不必等真实 10s。 */
+    /* [夹具复位] 模拟模型是**全局单例**：前一用例（④b 卡死用例）留下的
+     * DO0=1 与在途行程会泄进本用例（开场就是"已开"）。先写回关位并等
+     * 行程完成，保证下面的"开场已关"断言测的是本用例自己的语义。 */
+    HsfServerIoDigital_writeDo(&dig, HSF_VALVE_DO(0), false);
+    spinMs(500);
+
+    for (i = 0; i < HSF_VALVE_COUNT; ++i) {
+        cfg[i].m_name = NULL;
+        cfg[i].m_do = (i == 0) ? HSF_VALVE_DO(0) : -1;
+        cfg[i].m_openDi = (i == 0) ? HSF_VALVE_OPEN_DI(0) : -1;
+        cfg[i].m_closeDi = (i == 0) ? HSF_VALVE_CLOSE_DI(0) : -1;
+    }
+    HsfServerIoValve_init(&bank);
+    HsfServerIoValve_configure(&bank, cfg, HSF_VALVE_COUNT, 1000, true);
+
+#define POLL_VALVE()                                                          \
+    do {                                                                      \
+        uint32_t fresh6 = 0;                                                  \
+        uint32_t doMask6 = 0;                                                 \
+        bool doValid6 = false;                                                \
+        int k6;                                                               \
+        HsfServerIoDigital_readDi(&dig, &diMask, &diValid);                   \
+        HsfServerIoDigital_readDo(&dig, &doMask6, &doValid6);                 \
+        for (k6 = 0; k6 < HSF_DIG_CHANNELS; ++k6)                           \
+            if (HsfServerIoDigital_isDiFresh(&dig, k6)) fresh6 |= (1u << k6); \
+        HsfServerIoValve_poll(&bank, diMask, diValid, fresh6, doMask6,        \
+                              doValid6,                                       \
+                              (uint64_t)XDateTime_currentMSecsSinceEpoch());  \
+    } while (0)
+
+    spinMs(400);
+    POLL_VALVE();
+    it = HsfServerIoValve_item(&bank, 0);
+    check("⑥ 开场已关", it && it->m_state == HsfValveState_Closed, NULL);
+
+    /* ① 已到位同目标 → ignored：受理但不出帧。 */
+    check("① 已关再关：受理", HsfServerIoValve_setOutput(&bank, 0, false, NULL, 0),
+          NULL);
+    it = HsfServerIoValve_item(&bank, 0);
+    check("① 处置 = ignored（不写 DO）",
+          it && strcmp(it->m_cmdResult, "ignored") == 0,
+          it ? it->m_cmdResult : "?");
+
+    /* ② 新动作 → issued；到位后同目标再点仍 ignored。 */
+    check("② 开阀受理", HsfServerIoValve_setOutput(&bank, 0, true, NULL, 0), NULL);
+    it = HsfServerIoValve_item(&bank, 0);
+    check("② 处置 = issued", it && strcmp(it->m_cmdResult, "issued") == 0,
+          it ? it->m_cmdResult : "?");
+    check("② 写 DO 受理",
+          HsfServerIoDigital_writeDo(&dig, HSF_VALVE_DO(0), true), NULL);
+    /* [自有写入登记] 真实链路里 HsfServerIo_valveSet 写完会调
+     * noteOwnWrite；测试直写 DO 必须同样登记，否则下一拍被阀组判成
+     * "外部改动"接管（cmdResult=external），后续处置断言全部错位。 */
+    HsfServerIoValve_noteOwnWrite(&bank, 0, true);
+    spinMs(120);
+    POLL_VALVE();
+    it = HsfServerIoValve_item(&bank, 0);
+    check("② 动作中", it && it->m_state == HsfValveState_Moving, NULL);
+    spinMs(500);
+    POLL_VALVE();
+    it = HsfServerIoValve_item(&bank, 0);
+    check("② 行程走完已开", it && it->m_state == HsfValveState_Open, NULL);
+    check("② 已开再开：ignored", HsfServerIoValve_setOutput(&bank, 0, true, NULL, 0) &&
+          strcmp(HsfServerIoValve_item(&bank, 0)->m_cmdResult, "ignored") == 0,
+          NULL);
+
+    /* ③ 卡死口径下同目标在途连点 → repeated 且**不重置计时器**。 */
+    XVirtualModelDigital_setMoveMs(
+        (struct XVirtualModelDigital*)HsfServerIoDigital_simModel(&dig),
+        UINT32_MAX);   /* 卡死：永远不到位，超时分支可达。 */
+    check("③ 关阀（新动作）", HsfServerIoValve_setOutput(&bank, 0, false, NULL, 0),
+          NULL);
+    check("③ 写 DO=0",
+          HsfServerIoDigital_writeDo(&dig, HSF_VALVE_DO(0), false), NULL);
+    HsfServerIoValve_noteOwnWrite(&bank, 0, false);   /* 同②：自有写入登记。 */
+    spinMs(300);   /* ≥ 数字量站轮询周期：等 Hub 缓存翻到写后的新 DI。 */
+    POLL_VALVE();
+    it = HsfServerIoValve_item(&bank, 0);
+    check("③ 在途（卡死，Moving）", it && it->m_state == HsfValveState_Moving,
+          NULL);
+    {
+        uint64_t cmdAt = it ? it->m_cmdAtMs : 0;
+        check("③ 在途重发受理",
+              HsfServerIoValve_setOutput(&bank, 0, false, NULL, 0), NULL);
+        it = HsfServerIoValve_item(&bank, 0);
+        check("③ 处置 = repeated",
+              it && strcmp(it->m_cmdResult, "repeated") == 0,
+              it ? it->m_cmdResult : "?");
+        check("③ 计时器未被重置（超时从首次命令起算）",
+              it && it->m_cmdAtMs == cmdAt, NULL);
+    }
+    spinMs(1300);   /* 越过 1s 超时判据。 */
+    POLL_VALVE();
+    it = HsfServerIoValve_item(&bank, 0);
+    check("③ 连点后超时仍触发（卡阀无法被掩盖）",
+          it && it->m_state == HsfValveState_Fault, NULL);
+    check("③ 超时告警一条",
+          HsfServerIoValve_takeAlarm(&bank, 0, &kind, text, (int)sizeof(text)) &&
+          kind == HsfValveAlarmKind_Timeout, NULL);
+    check("③ 不重复告警",
+          !HsfServerIoValve_takeAlarm(&bank, 0, &kind, text, (int)sizeof(text)),
+          NULL);
+
+    /* ④ 在途反向 → reversed。 */
+    check("④ 反向受理", HsfServerIoValve_setOutput(&bank, 0, true, NULL, 0), NULL);
+    it = HsfServerIoValve_item(&bank, 0);
+    check("④ 处置 = reversed", it && strcmp(it->m_cmdResult, "reversed") == 0,
+          it ? it->m_cmdResult : "?");
+
+    /* ⑤ 外部接管：绕过服务端直接写 DO（现场按钮口径）→ external。 */
+    XVirtualModelDigital_setMoveMs(
+        (struct XVirtualModelDigital*)HsfServerIoDigital_simModel(&dig),
+        300u);
+    spinMs(400);
+    POLL_VALVE();
+    HsfServerIoDigital_writeDo(&dig, HSF_VALVE_DO(0), true);   /* 外部开阀（非我方命令）。 */
+    spinMs(350);   /* ≥ 站点轮询周期：等 Hub 缓存翻到"动作中"（两 DI 断开）。 */
+    POLL_VALVE();
+    it = HsfServerIoValve_item(&bank, 0);
+    check("⑤ 外部改动被接管（cmdResult=external）",
+          it && strcmp(it->m_cmdResult, "external") == 0,
+          it ? it->m_cmdResult : "?");
+    check("⑤ 接管起算超时（cmdAtMs>0）", it && it->m_cmdAtMs > 0, NULL);
+
+#undef POLL_VALVE
+    HsfServerIoValve_clear(&bank);
+    HsfServerIoDigital_unmount(&dig);
+}
+
+/* ============================================================================
  * ⑤ 模拟单例生命周期：模型必须在客户端全部释放后才销毁
  * ============================================================================ */
 static void testSimLifecycle(void)
@@ -504,7 +677,7 @@ static void testSimLifecycle(void)
     XPrintf("---- ⑤ 模拟单例生命周期 ----\n");
     m = HsfServerIoSim_ensure();
     check("模型集合建立", m && m->m_vfd && m->m_tempHum && m->m_flowMeter &&
-          m->m_dig12 && m->m_dig13 && m->m_analog, NULL);
+          m->m_digMain && m->m_digExt && m->m_analog, NULL);
     check("重复 ensure 幂等", HsfServerIoSim_ensure() == m, NULL);
 
     /* 客户端借用模型：客户端先释放，模型仍可用（顺序正确时无悬垂）。 */
@@ -547,6 +720,7 @@ int XHsfServerIoSimModeTest_run(void)
     testFlowMeterHeartbeat();
     testValveEndToEnd();
     testValveTimeoutAlarm();
+    testValveCommandSemantics();
     testSimLifecycle();
 
     if (owned) XClassDelete((XClass*)app);

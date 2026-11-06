@@ -74,6 +74,17 @@ static int xtw_vOffset(const XTableWidget* self);
 static int xtw_hOffset(const XTableWidget* self);
 /** @brief 按当前行列尺寸同步滚动范围（对齐 QTableViewPrivate::updateScrollBars）。 */
 static void xtw_updateContentSize(XTableWidget* self);
+
+/**
+ * @brief 垂直表头（行号列）占宽：隐藏时为 0（单元格左移贴边）。
+ * @details 对标 Qt `verticalHeader()->setVisible(false)`：隐藏是**整列
+ *          不占宽**，不是留一条空白窄带。凡是"表体左缘起点"的计算都要
+ *          走这里（列起点、内容宽、命中测试、行号绘制）。
+ */
+static int xtw_vHeaderW(const XTableWidget* self)
+{
+    return (self && self->m_vHeaderVisible) ? self->m_headerWidth : 0;
+}
 /** @brief 确保垂直表头指针数组容量（新增区域清零）。 */
 static bool xtw_ensureVHeaders(XTableWidget* self, int count);
 /** @brief 挂载部件表：按 (row,col) 查找条目下标；无则返回 -1。 */
@@ -1497,6 +1508,7 @@ static void VXTableWidget_copy(XTableWidget* self, const XTableWidget* other)
     self->m_enteredColumn = other->m_enteredColumn;
     self->m_headerHeight = other->m_headerHeight;
     self->m_headerWidth = other->m_headerWidth;
+    self->m_vHeaderVisible = other->m_vHeaderVisible;
     self->m_itemPrototype = NULL;
     if (other->m_itemPrototype)
         self->m_itemPrototype = XTableWidgetItem_create_copy(
@@ -1584,6 +1596,7 @@ static void VXTableWidget_move(XTableWidget* self, XTableWidget* other)
     self->m_cellWidgetCapacity = other->m_cellWidgetCapacity;
     self->m_headerHeight = other->m_headerHeight;
     self->m_headerWidth = other->m_headerWidth;
+    self->m_vHeaderVisible = other->m_vHeaderVisible;
     /* 源归空（可安全析构）。 */
     other->m_cells = NULL;
     other->m_hHeaders = NULL;
@@ -1625,6 +1638,7 @@ void XTableWidget_init(XTableWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_base.m_rowHeight = XTW_DEFAULT_ROW_HEIGHT;
     self->m_headerHeight = XTW_HEADER_H;
     self->m_headerWidth = XTW_HEADER_W;
+    self->m_vHeaderVisible = 1;
     self->m_base.m_gridVisible = 1;
     self->m_base.m_sortOrder = 0;
     self->m_enteredRow = -2;
@@ -1663,6 +1677,16 @@ XTableWidget* XTableWidget_create_size(XMemoryType memory, int rows,
 XAbstractItemModel* XTableWidget_model(const XTableWidget* self)
 {
     return self ? self->m_model : NULL;
+}
+
+void XTableWidget_setVerticalHeaderVisible(XTableWidget* self, bool visible)
+{
+    if (!self) return;
+    if (self->m_vHeaderVisible == (visible ? 1u : 0u)) return;
+    self->m_vHeaderVisible = visible ? 1u : 0u;
+    /* 占宽变了 ⇒ 内容尺寸与滚动范围要重算（隐藏后整表宽一列的位置）。 */
+    xtw_updateContentSize(self);
+    XWidget_update((XWidget*)self);
 }
 
 void XTableWidget_setRowCount(XTableWidget* self, int rows)
@@ -2926,7 +2950,7 @@ void* XTableWidget_itemSelectionChanged_signal(XTableWidget* self)
 static int xtw_colX(const XTableWidget* self, int col)
 {
     int i;
-    int x = self->m_headerWidth;
+    int x = xtw_vHeaderW(self);
     for (i = 0; i < col; ++i) x += self->m_base.m_colWidths[i];
     return x;
 }
@@ -2956,7 +2980,7 @@ static void xtw_updateContentSize(XTableWidget* self)
     if (!self) return;
     rh = XTableView_rowHeight(&self->m_base, 0);
     h = self->m_headerHeight + self->m_rows * rh;
-    w = self->m_headerWidth;
+    w = xtw_vHeaderW(self);
     for (i = 0; i < self->m_columns; ++i)
         w += self->m_base.m_colWidths[i];
     XAbstractScrollArea_setContentSize((XAbstractScrollArea*)self, w, h);
@@ -3104,11 +3128,11 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
        CE_HeaderEmptyArea=window 色，默认调色板下 window=button 同为
        #efefef，空区仍读作"无标题的灰第三列"（用户裁定不收）。 */
     {
-        int bandEnd = tw->m_headerWidth; /* 角按钮区恒属段带。 */
+        int bandEnd = xtw_vHeaderW(tw); /* 角按钮区恒属段带。 */
         if (tw->m_columns > 0)
             bandEnd = xtw_colX(tw, tw->m_columns - 1)
                 + tw->m_base.m_colWidths[tw->m_columns - 1] - ho;
-        if (bandEnd < tw->m_headerWidth) bandEnd = tw->m_headerWidth;
+        if (bandEnd < xtw_vHeaderW(tw)) bandEnd = xtw_vHeaderW(tw);
         if (bandEnd > w) bandEnd = w;
         XPainter_fillRect(&painter,
             &(XRect){0, 0, bandEnd, tw->m_headerHeight}, button);
@@ -3289,20 +3313,24 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
             }
         }
         /* 垂直表头在单元格之后绘制：横向滚动时单元格平移不会盖住
-           行号列（行号列钉在内容区左缘，对齐 Qt 表头子控件层级）。 */
-        XPainter_fillRect(&painter,
-            &(XRect){0, cy, tw->m_headerWidth, rh}, button);
-        {
-            /* 对齐 Qt 6.8 QTableModel::headerData：无显式 header item 时
-             * Vertical+DisplayRole 返回 section+1（1 基行号）。 */
-            XString* vlabel = XTableWidget_verticalHeaderItem(tw, row);
-            XPainter_drawText(&painter, 4, cy + rh - 8,
-                              vlabel ? XString_toUtf8(vlabel) : "",
-                              windowText);
-            if (vlabel) XClassDelete((XClass*)vlabel);
+           行号列（行号列钉在内容区左缘，对齐 Qt 表头子控件层级）。
+           [隐藏时整段跳过] 对标 Qt verticalHeader()->setVisible(false)：
+           行号列不画、也不占宽（单元格已左移贴边）。 */
+        if (tw->m_vHeaderVisible) {
+            XPainter_fillRect(&painter,
+                &(XRect){0, cy, tw->m_headerWidth, rh}, button);
+            {
+                /* 对齐 Qt 6.8 QTableModel::headerData：无显式 header item 时
+                 * Vertical+DisplayRole 返回 section+1（1 基行号）。 */
+                XString* vlabel = XTableWidget_verticalHeaderItem(tw, row);
+                XPainter_drawText(&painter, 4, cy + rh - 8,
+                                  vlabel ? XString_toUtf8(vlabel) : "",
+                                  windowText);
+                if (vlabel) XClassDelete((XClass*)vlabel);
+            }
+            XPainter_drawLine(&painter, 0, cy + rh - 1,
+                              tw->m_headerWidth - 1, cy + rh - 1);
         }
-        XPainter_drawLine(&painter, 0, cy + rh - 1,
-                          tw->m_headerWidth - 1, cy + rh - 1);
     }
         /* ---- 空区收口（对齐 Qt 6.8）----
          * 1) QTableView::paintEvent：单元格与网格线均裁到末行/末列；
@@ -3315,7 +3343,7 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
                 emptyTop = tw->m_headerHeight;
             if (emptyTop < h)
                 XPainter_fillRect(&painter,
-                    &(XRect){0, emptyTop, tw->m_headerWidth,
+                    &(XRect){0, emptyTop, xtw_vHeaderW(tw),
                              h - emptyTop}, button);
         }
     }
@@ -3355,8 +3383,8 @@ static void xtw_cellAt(const XTableWidget* self, int x, int y,
     int i;
     int acc;
     *row = -1; *col = -1;
-    if (!self || x < self->m_headerWidth || y < self->m_headerHeight) return;
-    acc = self->m_headerWidth - xtw_hOffset(self);
+    if (!self || x < xtw_vHeaderW(self) || y < self->m_headerHeight) return;
+    acc = xtw_vHeaderW(self) - xtw_hOffset(self);
     for (i = 0; i < self->m_columns; ++i) {
         int cw = self->m_base.m_colWidths[i];
         if (x >= acc && x < acc + cw) { *col = i; break; }

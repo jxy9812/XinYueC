@@ -90,7 +90,9 @@ static bool digitalSetConnParam(XModbusDevice* dev, int param, bool isStr,
  *          一个，耗尽后连真轮询都会被拒），读点会在模块刚上电时留下半个
  *          会话，代价比一次 connect 大得多。
  *          连接失败的各种原因（不可达/超时/被拒）一律判"不在线"：本函数只
- *          用于决定装 16 点还是 32 点，网络细节不抛给调用方。
+ *          只用于决定装 16 点还是 32 点，网络细节不抛给调用方。
+ *          [当前现场] HSF_DIG_HOST_EXT 为空 ⇒ 根本不会调用它（也就不会
+ *          为探测多占一个会话槽）。
  */
 static bool digitalProbeOnline(const char* host, int port, int timeoutMs)
 {
@@ -173,6 +175,8 @@ void HsfServerIoDigital_init(HsfServerIoDigital* st)
  *            ① 挂设备（拿 devId）→ ② 用 devId 登记全部映射段 → ③ setMapping
  *          若先 setMapping 再追加段，新段不进缓存视图——读到的永远是旧段缓存，
  *          表现为"扩展模块的点恒为 0 且不报错"。这正是 32 点聚合第一版的实锅。
+ *          [当前现场单台 16 点，extClient 恒为 NULL，但这条顺序约束照旧
+ *          适用——将来挂上扩展模块时它仍是前提。]
  */
 static bool digitalMountCore(HsfServerIoDigital* st, XModbusClient* client,
                              XModbusClient* extClient, int channels,
@@ -396,15 +400,20 @@ bool HsfServerIoDigital_mount(HsfServerIoDigital* st, const char* host,
 
     st->m_channelsPerDev = perDev;
 
-    /* [2026-11-05 32 点自动装配] 先探 .13：在线就两台合成 32 点，
-     * 不在线（拆机/断网/上电中）就只读 .12 自己的 16 点。
-     * 降级必须自动——现场拔掉一台不该让整块 IO 跟着失联。 */
-    if (HSF_DIG_HOST_EXT[0])
+    /* [32 点自动装配] HSF_DIG_HOST_EXT 非空时先探它：在线就两台合成 32 点，
+     * 不在线（拆机/断网/上电中）就只读主模块自己的 16 点。
+     * 降级必须自动——现场拔掉一台不该让整块 IO 跟着失联。
+     * [当前现场] 该宏为空 = 本来就没有扩展模块，直接单台 16 点，
+     * 不是"降级"。 */
+    if (HSF_DIG_HOST_EXT[0]) {
         extOnline = digitalProbeOnline(HSF_DIG_HOST_EXT, port, 400);
-    XPrintf("HsfServerIoDigital: 扩展模块 %s %s\n", HSF_DIG_HOST_EXT,
-            extOnline ? "在线（按 32 点装配）" : "不在线（降级为 16 点）");
+        XPrintf("HsfServerIoDigital: 扩展模块 %s %s\n", HSF_DIG_HOST_EXT,
+                extOnline ? "在线（按 32 点装配）" : "不在线（降级为 16 点）");
+    } else {
+        XPrintf("HsfServerIoDigital: 未配置扩展模块（单台 16 点）\n");
+    }
 
-    /* ---- 主模块客户端（.12） ---- */
+    /* ---- 主模块客户端（HSF_DIG_HOST，当前现场 .13） ---- */
     st->m_client = XModbusTcpClient_create();
     if (!st->m_client) {
         XPrintf("HsfServerIoDigital: 客户端创建失败\n");

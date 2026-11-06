@@ -15,6 +15,14 @@
  *                                       （不打开任何串口/不连任何设备，
  *                                       服务端照常推遥测、接受阀控命令；
  *                                       写操作只改内存模型，不驱动继电器）
+ *               HsfServer --sim --sim-valve-move <ms|-1>
+ *                                       覆盖阀行程：-1=卡死（验证"动作超时
+ *                                       未到位"告警）；25000 等超 20s 的值
+ *                                       同样触发告警（对齐 Python
+ *                                       server_py 的 --sim-valve-move）
+ *               HsfServer --sim --sim-valve-no-feedback
+ *                                       行程开关未接线（DI 恒 0，验证
+ *                                       "无到位反馈（检查行程开关接线）"）
  *             部署参数（串口号/波特率/站号/模拟量地址）见 HsfServerConfig.h。
  *             事件循环内完成鉴权/轮询/推送；Ctrl+C 退出。
  */
@@ -24,6 +32,8 @@
 #include "HsfServerApp.h"
 #include "XhsfLinkProto.h"
 #include "XPrintf.h"
+#include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,6 +45,8 @@ int main(int argc, char** argv)
     bool portFromArgv = false;
     bool setupIo = true;
     bool simMode = false;
+    uint32_t simValveMoveMs = 0;    /* 0=缺省行程 */
+    bool simValveNoFeedback = false;
     int i;
 
     /* 诊断型控制台程序：stdout 去缓冲，保证管道/重定向下逐行可见。 */
@@ -45,6 +57,16 @@ int main(int argc, char** argv)
             setupIo = false;
         } else if (strcmp(argv[i], "--sim") == 0) {
             simMode = true;
+        } else if (strcmp(argv[i], "--sim-valve-move") == 0) {
+            /* -1=阀卡死（UINT32_MAX 口径，见 HsfServerIo_setSimValveOverride）。 */
+            if (i + 1 < argc) {
+                ++i;
+                simValveMoveMs = (strcmp(argv[i], "-1") == 0)
+                                     ? UINT32_MAX
+                                     : (uint32_t)atoi(argv[i]);
+            }
+        } else if (strcmp(argv[i], "--sim-valve-no-feedback") == 0) {
+            simValveNoFeedback = true;
         } else {
             port = (unsigned)atoi(argv[i]);
             portFromArgv = (port > 0 && port <= 65535);
@@ -78,6 +100,19 @@ int main(int argc, char** argv)
         /* [模拟模式] 必须早于 start 置位：装配时按它选客户端类型。 */
         if (simMode) {
             HsfServerIo_setSimMode(true);
+            if (simValveMoveMs != 0 || simValveNoFeedback) {
+                HsfServerIo_setSimValveOverride(simValveMoveMs,
+                                                simValveNoFeedback);
+                if (simValveMoveMs == UINT32_MAX)
+                    XPrintf("HsfServer: --sim-valve-move -1：阀卡死"
+                            "（验证 20s 超时告警）\n");
+                else if (simValveMoveMs != 0)
+                    XPrintf("HsfServer: --sim-valve-move %lu：阀行程覆盖\n",
+                            (unsigned long)simValveMoveMs);
+                if (simValveNoFeedback)
+                    XPrintf("HsfServer: --sim-valve-no-feedback：行程开关"
+                            "未接线（DI 恒 0）\n");
+            }
             XPrintf("HsfServer: --sim：全部从站使用进程内模拟设备"
                     "（不打开串口/不连设备，写操作只改内存模型）\n");
         }

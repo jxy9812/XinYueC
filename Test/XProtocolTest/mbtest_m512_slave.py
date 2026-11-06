@@ -8,9 +8,9 @@
     7故障复位）、3000H 运行状态（1正转 2反转 3停机）、8000H 故障码、
     1000H 通讯设定值（±10000=±100%）、2001H 数字输出强制位图、
     1F00H 密码校验、1F01H 参数初始化
-  · 快捷遥测块 1001H..1006H（运行频率0.01Hz/母线电压0.1V/输出电压0.1V/
+  · 快捷遥测块 1001H..1006H（运行频率0.1Hz/母线电压0.1V/输出电压0.1V/
     输出电流0.01A/输出功率0.1kW/输出转矩0.1%），运行频率跟随设定值
-  · P 组功能码 EEPROM 地址 F0xxH（P0.10 最大频率 0.01Hz、P0.17/18 加减速
+  · P 组功能码 EEPROM 地址 F0xxH（P0.10 最大频率 0.1Hz、P0.17/18 加减速
     0.1s、P8.00 点动频率、PC.00~ 多段指令、Pd.02 本机地址）
   · 多站号：unit 1 与 unit 2 独立状态机（混合总线隔离测试）
   · 静默控制：mute 文件内容=站号 → 该站不应答（测从站离线/退避/恢复）
@@ -41,7 +41,7 @@ A_TELE = 0x1001         # 快捷遥测块起点
 A_TELE_N = 6            # 1001..1006
 
 # ---- P 组功能码（EEPROM 编码 F0xxH） ----
-P_MAXFREQ = 0xF00A      # P0.10 最大频率（0.01Hz，出厂 5000=50.00Hz）
+P_MAXFREQ = 0xF00A      # P0.10 最大频率（0.1Hz，实机标定 500=50.0Hz）
 P_ACCEL = 0xF011        # P0.17 加速时间1（0.1s）
 P_DECEL = 0xF012        # P0.18 减速时间1
 P_JOG = 0xF800          # P8.00 点动运行频率
@@ -73,9 +73,9 @@ class M512:
         self.fault = 0              # 8000H 故障值
         self.setpoint = 0           # 1000H 通讯设定值（±10000）
         self.do_bits = 0
-        self.max_freq = 5000        # P0.10 原始码（0.01Hz）= 50.00Hz
+        self.max_freq = 500         # P0.10 原始码（0.1Hz）= 50.0Hz（2026-11-03 实机标定）
         self.params = {
-            P_MAXFREQ: 5000,
+            P_MAXFREQ: 500,
             P_ACCEL: 100,           # 10.0s
             P_DECEL: 100,
             P_JOG: 200,             # 2.00Hz
@@ -107,9 +107,13 @@ class M512:
         if A_TELE <= addr < A_TELE + A_TELE_N:
             off = addr - A_TELE
             if off == 0:
-                # 运行频率跟随设定值（% × 最大频率）
-                hz = self.setpoint / 10000.0 * (self.max_freq / 100.0)
-                return int(round(hz * 100)) & 0xFFFF        # 0.01Hz
+                # 运行频率跟随设定值（% × 最大频率）。
+                # [口径] 0x1001 = 0.1Hz（2026-11-03 实机标定，见
+                # docs/M512M513_变频器RS485通讯实测与使用指南 §11.3/§11.7：
+                # 写 0x1000=2000 ⇒ 面板 10Hz、0x1001=100，三源交叉验证；
+                # 手册的 0.01Hz 与实测不符）。
+                hz = self.setpoint / 10000.0 * (self.max_freq / 10.0)
+                return int(round(hz * 10)) & 0xFFFF         # 0.1Hz
             if off == 1:
                 return 5400            # 母线电压 540.0V（0.1V）
             if off == 2:

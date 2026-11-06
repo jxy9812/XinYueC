@@ -26,6 +26,13 @@ extern "C" {
 XWidget* HsfDataAlarm_create(XWidget* parent, HsfMenuNavFn navFn,
                            void* userData);
 
+/**
+ * @brief      窄宽/竖屏适配（帧泵与切页路径调用；幂等）。
+ * @param page 页根（HsfDataAlarm_create 返回值）。
+ * @param compact true=窄档（收边距）。
+ */
+void HsfDataAlarm_adapt(XWidget* page, bool compact);
+
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */
 
 #ifdef __cplusplus

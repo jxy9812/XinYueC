@@ -643,6 +643,61 @@ uint32_t XVfdDevice_statusInterval(const XVfdDevice* dev)
     return dev ? dev->m_statusIntervalMs : 0;
 }
 
+/** @brief 阶段判定死区（Hz；与 Python VfdDevice.PHASE_DEADBAND_HZ 同值）。 */
+#define XVFD_PHASE_DEADBAND_HZ  0.15
+
+void XVfdDevice_setPhaseDerivation(XVfdDevice* dev, bool enable)
+{
+    if (!dev) return;
+    dev->m_phaseDerive = enable;
+}
+
+void XVfdDevice_deriveRunPhase(XVfdDevice* dev)
+{
+    XVfdStatus* st;
+    bool hasOut;
+    bool hasSet;
+
+    if (!dev) return;
+    st = &dev->m_status;
+    hasOut = (st->m_validMask & XVfdField_OutputFreqHz) != 0;
+    hasSet = (st->m_validMask & XVfdField_SetFreqHz) != 0;
+
+    if (st->m_faulted) {
+        st->m_runState = XVfdRunState_Fault;
+        return;
+    }
+    /* [已发停止命令 + 输出还没到 0 ⇒ 正在停机] 最可靠的判据，并补上
+     * "首拍还没有历史值可比"的空档。真机停机时设定频率仍留旧给定，靠
+     * 差值会判成"加速中"（实测停机全程显示加速中，完全反了）。 */
+    if (dev->m_stopRequested) {
+        if (hasOut && st->m_outputFreqHz > XVFD_PHASE_DEADBAND_HZ) {
+            st->m_runState = XVfdRunState_Decelerating;
+            return;
+        }
+        dev->m_stopRequested = false;   /* 停到位，退出停机窗口。 */
+    }
+    if (!st->m_running) {
+        st->m_runState = (hasOut && st->m_outputFreqHz > XVFD_PHASE_DEADBAND_HZ)
+                       ? XVfdRunState_Decelerating : XVfdRunState_Stopped;
+        return;
+    }
+    if (!hasOut || !hasSet) return;      /* 遥测不全：保留状态字结论。 */
+    {
+        const double delta = st->m_setFreqHz - st->m_outputFreqHz;
+        if (delta > XVFD_PHASE_DEADBAND_HZ) {
+            st->m_runState = XVfdRunState_Accelerating;
+            return;
+        }
+        if (delta < -XVFD_PHASE_DEADBAND_HZ) {
+            st->m_runState = XVfdRunState_Decelerating;
+            return;
+        }
+    }
+    st->m_runState = st->m_reverse ? XVfdRunState_RunningReverse
+                                   : XVfdRunState_RunningForward;
+}
+
 void XVfdDevice_setActionTimeout(XVfdDevice* dev, uint32_t timeoutMs)
 {
     if (!dev) return;
@@ -825,6 +880,11 @@ bool XVfdDevice_start(XVfdDevice* dev, bool reverse)
 bool XVfdDevice_stop(XVfdDevice* dev)
 {
     if (ISNULL(dev, "XVfdDevice") || ISNULL(XClassGetVtable(dev), "Vtable")) return false;
+    /* [停止窗口标记] 停机后输出频率不会瞬间归零（真机斜坡下降，现场好几
+     * 秒）。这段时间状态字可能还报"运行"、输出在往下掉——正是要看的
+     * "正在停机"。这个窗口靠差值判不出来（真机 0x1000 留旧给定），只能
+     * 靠"已发停止命令"标记。 */
+    dev->m_stopRequested = true;
     return XClassGetVirtualFunc(dev, EXVfdDevice_Stop, bool (*)(XVfdDevice*))(dev);
 }
 
@@ -1177,6 +1237,30 @@ const XVfdFaultEntry* XVfdDevice_faultEntry_const(const XVfdFaultEntry* table, i
     return NULL;
 }
 
+/**
+ * @brief 转速是**换算值**：由输出频率按铭牌额定点线性换算（50Hz ↔ 1440rpm）。
+ * @details [为什么设备层算] 变频器本体没有转速寄存器（M512 只有频率），
+ *          转速只能由频率按额定点比例换算——滑差随负载变化，故这是**估算**，
+ *          界面上必须标明"换算值"，不能当实测转速。
+ *          与 Python 侧 VfdDevice.rpm_of 同一口径（50Hz → 1440rpm）。
+ *          [谁优先] 设备**真带**转速寄存器时（如 ATV61 的 RFRD）以寄存器
+ *          为准，本函数不覆盖——寄存器值是实测，比换算可信。
+ * @param dev 设备实例。
+ * @return 无。
+ */
+static void xvfdDeriveSpeedRpm(XVfdDevice* dev)
+{
+    XVfdStatus* st;
+
+    if (!dev) return;
+    st = &dev->m_status;
+    /* 设备自带转速寄存器 ⇒ 实测值优先，不覆盖。 */
+    if (dev->m_slots[XVfdRole_SpeedRpm].m_spec) return;
+    if (!(st->m_validMask & XVfdField_OutputFreqHz)) return;
+    st->m_speedRpm = XVfdDevice_hzToRpm(dev, st->m_outputFreqHz);
+    st->m_validMask |= XVfdField_SpeedRpm;
+}
+
 void XVfdDevice_decodePoint_base(XVfdDevice* dev, const XVfdPointSpec* spec, int32_t raw)
 {
     XVfdStatus* st;
@@ -1187,8 +1271,7 @@ void XVfdDevice_decodePoint_base(XVfdDevice* dev, const XVfdPointSpec* spec, int
      * 拿到的就是原生量，标度换算在本层用 double 做（保留小数，如 69/10=6.9）。
      * 通道层的 XIoPoint_toEngineering 返回 int32_t，做不了小数标度。 */
     eng = XVfdDevice_rawToEngineering(raw, spec->m_div);
-    switch (spec->m_role) {
-    case XVfdRole_StatusWord:
+    switch (spec->m_role) {    case XVfdRole_StatusWord:
         st->m_rawStateWord = (uint16_t)raw;
         st->m_validMask |= XVfdField_RawStateWord;
         break;
@@ -1199,6 +1282,8 @@ void XVfdDevice_decodePoint_base(XVfdDevice* dev, const XVfdPointSpec* spec, int
     case XVfdRole_OutputFreq:
         st->m_outputFreqHz = eng;
         st->m_validMask |= XVfdField_OutputFreqHz;
+        /* 频率一变，换算出来的转速也跟着变（见 xvfdDeriveSpeedRpm）。 */
+        xvfdDeriveSpeedRpm(dev);
         break;
     case XVfdRole_SetFreq:
         st->m_setFreqHz = eng;
@@ -1308,6 +1393,10 @@ void XVfdDevice_decodePoint_base(XVfdDevice* dev, const XVfdPointSpec* spec, int
     default:
         return; /* 写角色/辅助字/铭牌与故障历史角色：由品牌读编排消费。 */
     }
+    /* [阶段推导] 输出频率/设定频率/状态字任一变化都重算一次运行阶段
+     * （加速中/减速中/正在停机）。只有开了推导的品牌才做（ATV61 的状态字
+     * 自带加/减速位，基类推导会覆盖它更准的结论）。 */
+    if (dev->m_phaseDerive) XVfdDevice_deriveRunPhase(dev);
     dev->m_dirty = true;
 }
 

@@ -13,3 +13,6 @@ tests/_run/
 # 这里显式把测试源码拉回来，运行产物仍由上面的规则排除。
 !tests/
 !tests/*.py
+
+# 联调取证截图（kb_shot.py 产物，按需重跑生成）
+tools/_kb_shot/

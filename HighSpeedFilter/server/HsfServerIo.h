@@ -74,6 +74,19 @@ bool HsfServerIo_start(void);
 void HsfServerIo_setSimMode(bool enable);
 
 /**
+ * @brief 覆盖模拟阀的行程参数（须在 HsfServerIo_start 之前调用）。
+ * @param moveMs 行程毫秒；0=用缺省（10000，现场真实节奏）；
+ *               UINT32_MAX=阀卡死（永远不到位，验证"动作超时未到位"告警）；
+ *               25000 之类超 20s 的值=行程过长（同样验证告警）。
+ * @param noFeedback true=行程开关未接线（DI 恒 0，验证"无到位反馈"
+ *                   检查接线"文案分支）。
+ * @details [对齐 Python CLI] server_py 的 --sim-valve-move / --sim-valve-no-
+ *          feedback 同款故障注入；C 侧由 main_server.c 的同名命令行转调。
+ *          只影响 .13（阀挂载半区）的模型。
+ */
+void HsfServerIo_setSimValveOverride(uint32_t moveMs, bool noFeedback);
+
+/**
  * @brief 当前是否处于模拟模式。
  */
 bool HsfServerIo_simMode(void);

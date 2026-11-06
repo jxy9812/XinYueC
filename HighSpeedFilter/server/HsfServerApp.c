@@ -17,6 +17,8 @@
 #include "HsfServerApp.h"
 
 #include "HsfServerIo.h"
+#include "io/HsfServerIoSim.h"
+#include "HsfServerStore.h"
 #include "HsfServerSettings.h"
 #include "HsfServerConfig.h"
 #include "XhsfLinkProto.h"
@@ -34,6 +36,7 @@
 #include "XBson.h"
 #include "XBsonDocument.h"
 #include "XBsonValue.h"
+#include "XBsonArray.h"
 #include "XAutoControl.h"
 #include "XAutoControlCodec.h"
 #include "XAccount.h"
@@ -60,6 +63,8 @@ static XLinkServer* s_srv = NULL;       /**< XLink 服务端实例。 */
  *          默认手动：老版本配置文件无该键时行为不变。
  */
 static HsfRunMode s_runMode = HsfRunMode_Manual;
+/** @brief SQLite 落盘层（历史采样 + 告警事件；storage/enabled 控制）。 */
+static HsfServerStore s_store;
 
 /* ==================== 自动运行控制（XAutoController 装配） ==================== */
 
@@ -130,6 +135,7 @@ typedef struct HsfAppHealthEntry {
     bool     m_online;      /**< 通讯在线。 */
     int      m_runState;    /**< 运行态（XVfdRunState；非设备类为 0）。 */
     char     m_text[48];    /**< 错误说明（可空）。 */
+    char     m_addr[64];    /**< 连接地址文案（给人看；空=无连接概念）。 */
 } HsfAppHealthEntry;
 
 /**
@@ -198,6 +204,7 @@ static XByteArray* hsfAppEncodeDigital(bool full);
 static XByteArray* hsfAppEncodeDigitalNames(void);
 static XByteArray* hsfAppEncodeValves(void);
 static XByteArray* hsfAppEncodePump(void);
+static bool hsfAppFillValvesDoc(XBsonDocument* doc);
 
 static void hsfAppJogTouch(HsfSide side, bool reverse);
 static void hsfAppJogRelease(HsfSide side);
@@ -224,9 +231,31 @@ static void hsfHealthCopy(char* dst, size_t cap, const char* src)
 /**
  * @brief 追加一条设备健康条目。
  */
+/**
+ * @brief 485 设备地址文案："COM17 · 115200 · 站 2"。
+ * @details [为什么三个都要写] 现场排故障时这三个缺一不可：口接错、波特率
+ *          不匹配、站号撞车，现象都是"通讯不上"，只看 IP 或只看"某口"
+ *          根本判不出来。地址是操作员唯一能看到它们的地方（对齐 Python
+ *          侧 _addr_rtu）。
+ */
+static void hsfAddrRtu(char* buf, int cap, const char* port, int baud,
+                        int unit)
+{
+    if (!buf || cap <= 0) return;
+    snprintf(buf, (size_t)cap, "%s \xC2\xB7 %d \xC2\xB7 \xE7\xAB\x99 %d",
+             port ? port : "?", baud, unit);
+}
+
+/** @brief TCP 设备地址文案："192.168.0.13:502"。 */
+static void hsfAddrTcp(char* buf, int cap, const char* host, int port)
+{
+    if (!buf || cap <= 0) return;
+    snprintf(buf, (size_t)cap, "%s:%d", host ? host : "?", port);
+}
+
 static void hsfHealthAdd(HsfAppHealthState* st, const char* name, int kind,
                          int side, int health, int error, bool online,
-                         int runState, const char* text)
+                         int runState, const char* text, const char* addr)
 {
     HsfAppHealthEntry* e;
     if (!st || st->m_count >= HSF_HEALTH_MAX) return;
@@ -240,6 +269,7 @@ static void hsfHealthAdd(HsfAppHealthState* st, const char* name, int kind,
     e->m_online = online;
     e->m_runState = runState;
     hsfHealthCopy(e->m_text, sizeof(e->m_text), text);
+    hsfHealthCopy(e->m_addr, sizeof(e->m_addr), addr ? addr : "");
 }
 
 /**
@@ -258,19 +288,12 @@ static void hsfHealthCollect(HsfAppHealthState* st)
         char name[32];
 
         if (!HsfServerIo_sideReady(side)) {
-            snprintf(name, sizeof(name), "485-%s 总线", sideName);
-            hsfHealthAdd(st, name, HsfDeviceKind_Bus, (int)side,
-                         HsfDeviceHealth_Offline, 0, false, 0, "总线未装配");
+            /* [与 Python 对齐] 首页设备表只列**真实设备**，不含 485 总线
+             * 条目（Python collect_health 同样不列）：总线是链路不是设备，
+             * 混进设备表会让"设备数量"与现场对不上。 */
+            (void)name;
+            (void)sideName;
             continue;
-        }
-
-        /* ---- 485 总线本身 ---- */
-        {
-            bool online = HsfServerIo_busOnline(side);
-            snprintf(name, sizeof(name), "485-%s 总线", sideName);
-            hsfHealthAdd(st, name, HsfDeviceKind_Bus, (int)side,
-                         online ? HsfDeviceHealth_Ok : HsfDeviceHealth_Offline,
-                         0, online, 0, online ? "" : "串口断开");
         }
 
         /* ---- 变频器 ---- */
@@ -281,6 +304,11 @@ static void hsfHealthCollect(HsfAppHealthState* st)
             int health = HsfDeviceHealth_Offline;
             int err = 0;
             const char* text = "";
+            char addr[64];
+            hsfAddrRtu(addr, (int)sizeof(addr),
+                       (side == HsfSide_A) ? HSF_BUS_A_PORT : HSF_BUS_B_PORT,
+                       (side == HsfSide_A) ? HSF_BUS_A_BAUDRATE : HSF_BUS_B_BAUDRATE,
+                       HSF_VFD_UNIT_ID);
             if (online && vs && vs->m_valid) {
                 if (vs->m_faulted) {
                     health = HsfDeviceHealth_Fault;
@@ -296,10 +324,13 @@ static void hsfHealthCollect(HsfAppHealthState* st)
             } else {
                 text = "从站失联";
             }
-            snprintf(name, sizeof(name), "变频器-%s", sideName);
-            hsfHealthAdd(st, name, HsfDeviceKind_Vfd, (int)side, health,
+            /* [名字按工艺用途] 现场驱动的是搅拌泵，操作员按"搅拌泵"找设备；
+             * 类别仍是 Vfd（"变频器"）——名字给操作员、类别给维修，两者不混
+             * （对齐 Python 侧 collect_health 的"搅拌泵"+KIND_VFD）。 */
+            hsfHealthAdd(st, "搅拌泵", HsfDeviceKind_Vfd, (int)side, health,
                          err, online,
-                         (online && vs) ? (int)vs->m_runState : 0, text);
+                         (online && vs) ? (int)vs->m_runState : 0, text,
+                         addr);
         }
 
         /* ---- 温湿度 ---- */
@@ -307,11 +338,15 @@ static void hsfHealthCollect(HsfAppHealthState* st)
         if (th) {
             int32_t t = 0, h = 0;
             bool tv = false, hv = false;
+            char addr[64];
             (void)HsfServerIoTempHum_values(th, &t, &h, &tv, &hv);
-            snprintf(name, sizeof(name), "温湿度-%s", sideName);
-            hsfHealthAdd(st, name, HsfDeviceKind_TempHum, (int)side,
+            hsfAddrRtu(addr, (int)sizeof(addr),
+                       (side == HsfSide_A) ? HSF_BUS_A_PORT : HSF_BUS_B_PORT,
+                       (side == HsfSide_A) ? HSF_BUS_A_BAUDRATE : HSF_BUS_B_BAUDRATE,
+                       HSF_TEMPHUM_UNIT_ID);
+            hsfHealthAdd(st, "温湿度", HsfDeviceKind_TempHum, (int)side,
                          tv || hv ? HsfDeviceHealth_Ok : HsfDeviceHealth_Stale,
-                         0, tv || hv, 0, tv || hv ? "" : "无有效数据");
+                         0, tv || hv, 0, tv || hv ? "" : "无有效数据", addr);
         }
 
         /* ---- 流量计 ---- */
@@ -320,32 +355,58 @@ static void hsfHealthCollect(HsfAppHealthState* st)
             double flow = 0, speed = 0, fwd = 0, rev = 0;
             int fu = 0, tu = 0, alarms = 0;
             bool valid = false;
+            char addr[64];
             (void)HsfServerIoFlowMeter_values(fm, &flow, &speed, &fwd, &rev,
                                               &fu, &tu, &alarms, &valid);
-            snprintf(name, sizeof(name), "流量计-%s", sideName);
-            hsfHealthAdd(st, name, HsfDeviceKind_FlowMeter, (int)side,
+            hsfAddrRtu(addr, (int)sizeof(addr),
+                       (side == HsfSide_A) ? HSF_BUS_A_PORT : HSF_BUS_B_PORT,
+                       (side == HsfSide_A) ? HSF_BUS_A_BAUDRATE : HSF_BUS_B_BAUDRATE,
+                       HSF_FLOWMETER_UNIT_ID);
+            hsfHealthAdd(st, "电磁流量计", HsfDeviceKind_FlowMeter, (int)side,
                          alarms != 0 ? HsfDeviceHealth_Fault
                                      : (valid ? HsfDeviceHealth_Ok
                                               : HsfDeviceHealth_Stale),
                          alarms, valid || alarms != 0, 0,
-                         alarms != 0 ? "流量计告警" : (valid ? "" : "无有效数据"));
+                         alarms != 0 ? "流量计告警" : (valid ? "" : "无有效数据"),
+                         addr);
         }
 
         /* ---- 浊度仪 ×2（逐台一条）----
-         * [类别必须是"水质"而不是"温湿度"] 曾经误用 HsfDeviceKind_TempHum，
-         * 首页"类型"列把两台浊度仪显示成"温湿度"——数据正确但类别完全误导
-         * （现场会以为那是电箱里的温湿度变送器）。类别必须表达"这是什么
-         * 设备"，复用一个不相关的值等于在界面上撒谎。
-         * [逐台而不是汇总] 两台是独立接线（站号 1/3），一台没接时另一台
-         * 必须照常报 OK——汇总成一条会让"一台坏"看起来像"整组坏"。 */
+         * [现场接法] 两条 485 总线：
+         *   · 485-A：变频器 + 温湿度
+         *   · 485-B：流量计 + 浊度仪 ×2（站 1/3，与流量计同一条总线）
+         * 全系统**总共就 2 台浊度仪**，配置里也只有 B 侧挂了
+         * （HSF_BUS_B_HAS_TURBIDITY=1 / HSF_BUS_A_HAS_TURBIDITY=0）。
+         *
+         * [设备名不带 -A/-B] 侧号是**总线**的属性，不是设备的属性。现场
+         * 只有两台表，名字就该是"浊度仪1/浊度仪2"；早先每台都拼侧标，
+         * 加上 A 侧未装配还硬凑两条占位，首页变成 4 台（截图反馈：
+         * 「浊度仪怎么多了两个我总共就两个」）。
+         * 侧标只保留在"485-A/B 总线"那两条上 —— 那是两条真实存在的
+         * 物理链路，操作员排查接线时确实需要区分。
+         *
+         * [只在该侧真的挂了才出条目] 与变频器/温湿度/流量计同一口径：
+         * 该侧没挂就不出条目，别用"未装配"占位条目冒充设备。
+         * [类别必须是"水质"而不是"温湿度"] 类别要表达"这是什么设备"。
+         * [逐台而不是汇总] 两台独立接线，一台坏不能看起来像整组坏。 */
         {
+            const bool sideHasTurbidity =
+                (side == HsfSide_A) ? (HSF_BUS_A_HAS_TURBIDITY != 0)
+                                    : (HSF_BUS_B_HAS_TURBIDITY != 0);
             int t;
-            for (t = 0; t < HSF_TURBIDITY_COUNT; ++t) {
+            for (t = 0; sideHasTurbidity && t < HSF_TURBIDITY_COUNT; ++t) {
                 const HsfServerIoTurbidity* tm = HsfServerIo_turbidity(side, t);
-                snprintf(name, sizeof(name), "浊度仪%d-%s", t + 1, sideName);
+                char addr[64];
+                snprintf(name, sizeof(name), "浊度仪%d", t + 1);
+                hsfAddrRtu(addr, (int)sizeof(addr),
+                           (side == HsfSide_A) ? HSF_BUS_A_PORT : HSF_BUS_B_PORT,
+                           (side == HsfSide_A) ? HSF_BUS_A_BAUDRATE : HSF_BUS_B_BAUDRATE,
+                           (t == 0) ? HSF_TURBIDITY1_UNIT_ID
+                                    : HSF_TURBIDITY2_UNIT_ID);
                 if (!tm) {
                     hsfHealthAdd(st, name, HSF_DEVICE_KIND_WATER, (int)side,
-                                 HsfDeviceHealth_Offline, 0, false, 0, "未装配");
+                                 HsfDeviceHealth_Offline, 0, false, 0, "未装配",
+                                 addr);
                     continue;
                 }
                 {
@@ -353,7 +414,7 @@ static void hsfHealthCollect(HsfAppHealthState* st)
                     hsfHealthAdd(st, name, HSF_DEVICE_KIND_WATER, (int)side,
                                  online ? HsfDeviceHealth_Ok
                                         : HsfDeviceHealth_Stale,
-                                 0, online, 0, online ? "" : "无有效数据");
+                                 0, online, 0, online ? "" : "无有效数据", addr);
                 }
             }
         }
@@ -363,7 +424,9 @@ static void hsfHealthCollect(HsfAppHealthState* st)
     {
         double ma[8];
         bool valid[8];
+        char addr[64];
         int n = HsfServerIo_aiValues(ma, valid, 8);
+        hsfAddrTcp(addr, (int)sizeof(addr), HSF_AI_HOST, HSF_AI_TCP_PORT);
         if (n > 0) {
             bool any = false;
             int i;
@@ -371,7 +434,7 @@ static void hsfHealthCollect(HsfAppHealthState* st)
                 if (valid[i]) { any = true; break; }
             hsfHealthAdd(st, "模拟量模块", HsfDeviceKind_AnalogIo, (int)HsfSide_A,
                          any ? HsfDeviceHealth_Ok : HsfDeviceHealth_Stale,
-                         0, any, 0, any ? "" : "无有效数据");
+                         0, any, 0, any ? "" : "无有效数据", addr);
         }
     }
 
@@ -387,6 +450,12 @@ static void hsfHealthCollect(HsfAppHealthState* st)
             int health = HsfDeviceHealth_Ok;
             bool online = true;
             const char* text = "";
+            char addr[64];
+            /* [泵的地址 = 它挂在哪个数字量模块的哪一路 DO] 泵没有独立通讯口
+             * （接触器线圈接在模块 DO 上），报"站号"会让人去总线上找一个
+             * 不存在的从站；报模块地址 + DO 口，现场照着量那一路就对了。 */
+            snprintf(addr, sizeof(addr), "%s:%d \xC2\xB7 DO%d",
+                     HSF_DIG_HOST, HSF_DIG_TCP_PORT, HSF_PUMP_DO(0));
             if (!HsfServerIo_digitalReady()) {
                 health = HsfDeviceHealth_Offline;
                 online = false;
@@ -400,25 +469,71 @@ static void hsfHealthCollect(HsfAppHealthState* st)
                 text = "无有效回显";
             }
             hsfHealthAdd(st, "进水泵", HSF_DEVICE_KIND_DIGITAL,
-                         (int)HsfSide_A, health, 0, online, 0, text);
+                         (int)HsfSide_A, health, 0, online, 0, text, addr);
         }
     }
 
-    /* ---- 数字量模块（C 版为 .12/.13 聚合后的单站） ---- */
+    /* ---- 按钮组（现场操作柱）----
+     * [为什么必须有一行] 按钮组是**现场设备**（电箱上的操作柱），首页
+     * 设备表按台数清点；缺这一行 ⇒ C 端 9 台、Python 端 10 台，现场对
+     * 数量时没法解释。与 Python 侧 app.py 的 _button_health 同口径：
+     *   · 数字量模块离线 ⇒ 离线（按键与灯均不可用）；
+     *   · 急停触点无信号（DI=0）⇒ **故障**（被按下或断线，禁止启动）；
+     *   · 否则按启动灯给"运行中/停止"。
+     * [急停无信号为什么算故障] 急停是安全件：无信号时不能启动，报故障
+     * 才能让人看见（Python 侧同口径：estop 无信号 ⇒ HEALTH_FAULT）。 */
     {
         uint32_t di = 0;
         uint32_t doMask = 0;
         bool valid = false;
+        int health = HsfDeviceHealth_Ok;
+        bool online = true;
+        const char* text = "";
+        char addr[96];
+        snprintf(addr, sizeof(addr),
+                 "%s:%d \xC2\xB7 DI%d~DI%d \xC2\xB7 DO%d~DO%d",
+                 HSF_DIG_HOST, HSF_DIG_TCP_PORT,
+                 HSF_BTN_ESTOP_DI, HSF_BTN_RESET_DI,
+                 HSF_BTN_START_LAMP_DO, HSF_BTN_RESET_LAMP_DO);
+        if (!HsfServerIo_digitalReady()) {
+            health = HsfDeviceHealth_Offline;
+            online = false;
+            text = "数字量模块离线，按键与灯均不可用";
+        } else {
+            (void)HsfServerIo_digitalMasks(&di, &doMask, &valid);
+            if (!valid) {
+                health = HsfDeviceHealth_Stale;
+                text = "无有效数据";
+            } else if (!(di & (1u << HSF_BTN_ESTOP_DI))) {
+                health = HsfDeviceHealth_Fault;
+                text = "急停无信号（按下或断线）：禁止启动";
+            } else if (doMask & (1u << HSF_BTN_START_LAMP_DO)) {
+                text = "运行中（启动灯亮、停止灯灭）";
+            } else {
+                text = "停止（停止灯亮、启动灯灭）";
+            }
+        }
+        hsfHealthAdd(st, "按钮组", HSF_DEVICE_KIND_DIGITAL,
+                     (int)HsfSide_A, health, 0, online, 0, text, addr);
+    }
+
+    /* ---- 数字量模块（C 版为聚合后的单站；当前现场 .13 单台 16 点） ---- */
+    {
+        uint32_t di = 0;
+        uint32_t doMask = 0;
+        bool valid = false;
+        char addr[64];
+        hsfAddrTcp(addr, (int)sizeof(addr), HSF_DIG_HOST, HSF_DIG_TCP_PORT);
         if (HsfServerIo_digitalReady()) {
             (void)HsfServerIo_digitalMasks(&di, &doMask, &valid);
-            hsfHealthAdd(st, "数字量模块", HSF_DEVICE_KIND_DIGITAL,
+            hsfHealthAdd(st, "数字量", HSF_DEVICE_KIND_DIGITAL,
                          (int)HsfSide_A,
                          valid ? HsfDeviceHealth_Ok : HsfDeviceHealth_Stale,
-                         0, valid, 0, valid ? "" : "无有效数据");
+                         0, valid, 0, valid ? "" : "无有效数据", addr);
         } else {
-            hsfHealthAdd(st, "数字量模块", HSF_DEVICE_KIND_DIGITAL,
+            hsfHealthAdd(st, "数字量", HSF_DEVICE_KIND_DIGITAL,
                          (int)HsfSide_A, HsfDeviceHealth_Offline,
-                         0, false, 0, "未装配");
+                         0, false, 0, "未装配", addr);
         }
     }
 
@@ -429,6 +544,12 @@ static void hsfHealthCollect(HsfAppHealthState* st)
             int health = HsfDeviceHealth_Ok;
             bool online = true;
             char text[96] = "";
+            char addr[64];
+            /* [阀组地址 = 数字量模块 + 它占的 DO 段] 阀组没有自己的通讯口，
+             * 现场照着模块地址与 DO 号去量线即可（对齐 Python _valve_addr）。 */
+            snprintf(addr, sizeof(addr), "%s:%d \xC2\xB7 DO%d~DO%d",
+                     HSF_DIG_HOST, HSF_DIG_TCP_PORT,
+                     HSF_VALVE_DO(0), HSF_VALVE_DO(HSF_VALVE_COUNT - 1));
             if (!HsfServerIo_digitalReady()) {
                 health = HsfDeviceHealth_Offline;
                 online = false;
@@ -457,7 +578,7 @@ static void hsfHealthCollect(HsfAppHealthState* st)
                 }
             }
             hsfHealthAdd(st, "电磁阀组", HSF_DEVICE_KIND_VALVE,
-                         (int)HsfSide_A, health, 0, online, 0, text);
+                         (int)HsfSide_A, health, 0, online, 0, text, addr);
         }
     }
 }
@@ -515,6 +636,12 @@ static XByteArray* hsfHealthToBson(const HsfAppHealthState* st)
         if (e->m_text[0]) {
             snprintf(key, sizeof(key), "d%d_text", i);
             XBsonDocument_insert_keyUtf8_utf8(doc, key, e->m_text);
+        }
+        /* [地址] 连接地址文案（串口/波特率/站号 或 IP:端口 或 模块+DO 口）。
+         * 空地址不发（与 Python 侧同口径：没有连接概念的汇总条目不占位）。 */
+        if (e->m_addr[0]) {
+            snprintf(key, sizeof(key), "d%d_addr", i);
+            XBsonDocument_insert_keyUtf8_utf8(doc, key, e->m_addr);
         }
     }
     bytes = XBsonDocument_toBson(doc);
@@ -815,11 +942,51 @@ static void hsfAppHandleVfdControl(XLinkSession* session,
                                           : "变频器未就绪（B 侧）"));
         return;
     }
+    /* [停机禁给定] 给定类操作（频率/转速）只在**运行中**受理——判据是
+     * 设备层解码出的遥测状态（m_running），不是"上次发过启动命令"。
+     * 与 Python 侧 app.py 的 _VFD_SETPOINT_OPS 闸同口径同文案：宁可拒绝
+     * 一次调速，也不能在不确定的状态下改运行参数（命令可能没送达、可能
+     * 被拒、可能现场已按面板停止）。 */
+    if ((req.m_op == XVfdOperation_SetFrequency ||
+         req.m_op == XVfdOperation_SetSpeed)) {
+        const XVfdStatus* st = XVfdDevice_status_const(dev);
+        if (!st || !st->m_running) {
+            hsfAppRespond(session, frame,
+                          hsfAppMakeEnvelope(false,
+                                             "变频器处于停机状态，不能下发给定（请先启动后再调速）"));
+            return;
+        }
+    }
     /* [点动手持] 101 = 点动释放（自定义 op，不走 XVfdOperation 值域）。 */
     if ((int)req.m_op == HSF_OP_JOG_RELEASE) {
         hsfAppJogRelease(side);
         hsfAppRespond(session, frame, hsfAppMakeEnvelope(true, NULL));
         return;
+    }
+    /* [启动/点动捎带给定 → 先写给定再发命令字] 对齐 Python 服务端
+     * apply_control（OP_START 分支：if given_hz > 0 → set_frequency(...)
+     * 再 send_command）：给定**捎带在启动命令里**下发，服务端内部顺序执行
+     * 「写 1000H → 写 2000H」。
+     * [为什么必须这样] 服务端为安全起见拒绝**停机状态下的独立给定**
+     * （上面的「停机禁给定」闸，拦的是 op=SetFrequency 的独立请求）。
+     * 客户端若先单独发 SET 再发 START，SET 必被拒 ⇒ 启动按变频器里残留的
+     * 旧给定跑（现场实测：界面设 3Hz、实际跑 25Hz = 界面在骗人）。
+     * 捎带则不受该闸限制（它不是独立给定请求），且先后顺序确定。
+     * [转速给定] 转速模式下 Python 客户端带的是 rpm（{"op":4,"rpm":…}），
+     * C 端客户端带的是换算后的 hz；两种都要落到同一条"先写给定再发命令"
+     * 的流程 ⇒ 这里把 rpm 换算成 Hz（换算口径与设备层 SetSpeedRpm 同源）。 */
+    if ((req.m_op == XVfdOperation_Start || req.m_op == XVfdOperation_Jog) &&
+        !(req.m_valueHz > 0.0) && req.m_valueRpm > 0.0) {
+        req.m_valueHz = XVfdDevice_rpmToHz(dev, (int)req.m_valueRpm);
+    }
+    if ((req.m_op == XVfdOperation_Start || req.m_op == XVfdOperation_Jog) &&
+        req.m_valueHz > 0.0) {
+        if (!XVfdDevice_setFrequency(dev, req.m_valueHz)) {
+            hsfAppRespond(session, frame,
+                          hsfAppMakeEnvelope(false,
+                                             "频率给定写入失败（请检查变频器参数与频率源）"));
+            return;
+        }
     }
     ok = XVfdCodec_applyControl(dev, &req);
     if (!ok) err = "设备拒绝（在途动作/控制闸/能力不符）";
@@ -1240,12 +1407,68 @@ static XByteArray* hsfAppEncodeAi(bool full)
                                            (int32_t)(ma[i] * 1000.0 + 0.5));
     }
     if (full) {
+        /* [名字只给有标定的通道] 现场只有通道 0 接了 EJA110A 压差变送器；
+         * 其余通道是通用 4~20mA 输入，没有设备名字——发"模拟量N"是编造。
+         * 无标定通道客户端按"通道 N"显示（与 Python 侧同口径）。 */
         static const char* const kNames[HSF_ANALOG_CHANNELS] = HSF_AI_NAMES;
         for (i = 0; i < n && i < HSF_ANALOG_CHANNELS; ++i) {
             char key[12];
             if (!kNames[i]) continue;
             snprintf(key, sizeof(key), HSF_KEY_AI_NAME_FMT, i);
             XBsonDocument_insert_keyUtf8_utf8(doc, key, kNames[i]);
+        }
+    }
+    /* ---- 工程量四键（e/eu/en/ew，与 Python 侧同键同义）----
+     * 标定表在服务端（HSF_AI_SCALES）：量程是设备铭牌口径，与接线同性质，
+     * 放客户端意味着每台机器都要配一遍、改一次要升客户端。
+     * 换算：p = (I - lowMa) / (highMa - lowMa) × fullScale。
+     * 零点容差 0.05mA：活零点实测 3.996mA 属正常抖动，不是断线。 */
+    {
+        static const struct {
+            const char* m_name;
+            const char* m_unit;
+            double m_fullScale;
+            double m_lowMa;
+            double m_highMa;
+        } kScales[HSF_ANALOG_CHANNELS] = HSF_AI_SCALES;
+        for (i = 0; i < n && i < HSF_ANALOG_CHANNELS; ++i) {
+            char key[12];
+            char noteBuf[64];
+            double value;
+            const char* note = NULL;
+            if (!kScales[i].m_unit || kScales[i].m_fullScale <= 0.0) continue;
+            if (!valid[i]) continue;
+            value = (ma[i] - kScales[i].m_lowMa) /
+                    (kScales[i].m_highMa - kScales[i].m_lowMa) * kScales[i].m_fullScale;
+            if (ma[i] < kScales[i].m_lowMa - HSF_AI_ZERO_TOL_MA) {
+                value = 0.0;
+                snprintf(noteBuf, sizeof(noteBuf),
+                         "\xE4\xB8\x8E\xE4\xBA\x8E %.1fmA\xEF\xBC\x88\xE6\x96\xAD\xE7\xBA\xBF\xE2\x80\x94\xE6\xAC\xA0\xE9\x87\x8F\xE7\xA8\x8B\xEF\xBC\x89",
+                         kScales[i].m_lowMa);   /* 低于 4.0mA（断线/欠量程） */
+                note = noteBuf;
+            } else if (ma[i] > kScales[i].m_highMa + HSF_AI_ZERO_TOL_MA) {
+                value = kScales[i].m_fullScale;
+                snprintf(noteBuf, sizeof(noteBuf),
+                         "\xE9\xAB\x98\xE4\xBA\x8E %.1fmA\xEF\xBC\x88\xE8\xB6\x85\xE9\x87\x8F\xE7\xA8\x8B\xEF\xBC\x89",
+                         kScales[i].m_highMa);   /* 高于 20.0mA（超量程） */
+                note = noteBuf;
+            } else {
+                if (value < 0.0) value = 0.0;
+                if (value > kScales[i].m_fullScale) value = kScales[i].m_fullScale;
+            }
+            snprintf(key, sizeof(key), HSF_KEY_AI_ENG_FMT, i);
+            XBsonDocument_insert_keyUtf8_int32(doc, key,
+                                               (int32_t)(value * 1000.0 + 0.5));
+            snprintf(key, sizeof(key), HSF_KEY_AI_ENG_UNIT_FMT, i);
+            XBsonDocument_insert_keyUtf8_utf8(doc, key, kScales[i].m_unit);
+            if (kScales[i].m_name) {
+                snprintf(key, sizeof(key), HSF_KEY_AI_ENG_NAME_FMT, i);
+                XBsonDocument_insert_keyUtf8_utf8(doc, key, kScales[i].m_name);
+            }
+            if (note) {
+                snprintf(key, sizeof(key), HSF_KEY_AI_ENG_NOTE_FMT, i);
+                XBsonDocument_insert_keyUtf8_utf8(doc, key, note);
+            }
         }
     }
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_AI_COUNT, n);
@@ -1423,7 +1646,6 @@ static void hsfAppHandleValveControl(XLinkSession* session,
     bool wantOpen = false;
     char err[96];
     bool ok;
-    XByteArray* snap;
 
     if (!hsfAppControlGate(session, frame, srv)) return;
 
@@ -1442,30 +1664,27 @@ static void hsfAppHandleValveControl(XLinkSession* session,
 
     err[0] = '\0';
     ok = HsfServerIo_valveSet(index, wantOpen, err, (int)sizeof(err));
-    if (!ok) {
-        hsfAppRespond(session, frame,
-                      hsfAppMakeEnvelope(false, err[0] ? err : "阀门控制被拒"));
-        return;
-    }
-
-    /* 应答 = 包络 + 最新整帧快照（一次刷新全部 6 路，避免逐路拼）。 */
+    /* [应答 = ok/err + 整帧快照合并在同一帧] 与 Python _h_valve_control
+     * 同构（extra=to_doc()），受理失败（离线/未配置）同样带快照；只有
+     * 模式/角色/解析闸走裸包络（hsfAppControlGate 已处理）。
+     * [为什么必须带快照] Python 侧实锅（2026-11-05"第一下点击没反应"）：
+     * 客户端拿应答里的最新状态刷新卡片，只回 {ok:true} 就得等 ≤100ms 的
+     * 周期推送，弱网下观感是"按钮没反应"。 */
     {
         XBsonDocument* resp = XBsonDocument_create();
         XByteArray* bytes = NULL;
         if (resp) {
-            XBsonDocument_insert_keyUtf8_bool(resp, HSF_KEY_OK, true);
+            (void)hsfAppFillValvesDoc(resp);   /* 未装配时文档只含 ok/err。 */
+            XBsonDocument_insert_keyUtf8_bool(resp, HSF_KEY_OK, ok);
+            if (!ok && err[0])
+                XBsonDocument_insert_keyUtf8_utf8(resp, HSF_KEY_ERR, err);
             bytes = XBsonDocument_toBson(resp);
             XClassDelete((XClass*)resp);
         }
-        if (!bytes) bytes = hsfAppMakeEnvelope(true, NULL);
-        snap = hsfAppEncodeValves();
-        if (snap && bytes) {
-            /* 简化：先回包络，随后把快照作为第二段用同一 requestId 发送会
-             * 破坏 Request/Response 配对，故快照只走周期推送。此处仅回
-             * 受理结果；客户端收到 ok 后等下一拍（≤100ms）拿新状态。 */
-            XClassDelete((XClass*)snap);
-        } else if (snap) {
-            XClassDelete((XClass*)snap);
+        if (!bytes) {
+            bytes = ok ? hsfAppMakeEnvelope(true, NULL)
+                       : hsfAppMakeEnvelope(false,
+                                            err[0] ? err : "阀门控制被拒");
         }
         if (bytes) {
             XLinkSession_sendResponse_ex(session, frame->m_requestId,
@@ -1533,6 +1752,438 @@ static void hsfAppHandlePumpSnapshot(XLinkSession* session,
                                  (const uint8_t*)XByteArray_constData(bytes),
                                  (uint32_t)XByteArray_size_base(bytes));
     XClassDelete((XClass*)bytes);
+}
+
+/**
+ * @brief 历史分页查询（HSF_CMD_HISTORY_PAGE）。
+ * @details 载荷 {offset,limit,beforeTs?,loTs?,hiTs?}；应答
+ *          {ok,total,offset,limit,cols,rows,dbRows,latestTs,earliestTs,
+ *            windowStartTs,windowEndTs}——**键名与 Python 侧 proto.HIST_KEY_*
+ *          完全一致**，故 Python 客户端可以直接查 C 服务端的历史（反向
+ *          亦然）。
+ *          [窗口锚点] beforeTs 是"截至这一刻"的墙钟毫秒：库在持续入库
+ *          （5s 一行）时，翻页若不带锚点，新行会把 offset 顶偏 ⇒ 相邻
+ *          两页出现重复行、旧行被跳过。客户端首屏把自己的"现在"发上来，
+ *          翻页原样回传。
+ *          [权限] 只读数据，**不需要 root**（看历史不是控制面动作）。
+ */
+static void hsfAppHandleHistoryPage(XLinkSession* session,
+                                    const XLinkFrameHeader* frame,
+                                    const uint8_t* payload)
+{
+    XBsonDocument* doc;
+    XBsonArray* rowsArr;
+    XBsonArray* colsArr;
+    XByteArray* bytes;
+    HsfHistoryQueryRow rows[HSF_HISTORY_PAGE_MAX];
+    int64_t loMs = 0;
+    int64_t hiMs = 0;
+    int64_t dbRows = 0;
+    int64_t latestTs = 0;
+    int64_t earliestTs = 0;
+    int windowTotal = 0;
+    int offset = 0;
+    int limit = HSF_HISTORY_PAGE_DEFAULT;
+    int n = 0;
+    int i;
+    int c;
+
+    if (!HsfServerStore_isOpen(&s_store)) {
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, "落盘未启用：服务端没有历史数据可查"));
+        return;
+    }
+    doc = XBsonDocument_create();
+    if (!doc || !XBsonDocument_from_bytes(doc, payload, frame->m_payloadLen)) {
+        if (doc) XClassDelete((XClass*)doc);
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, "分页载荷解析失败"));
+        return;
+    }
+    {
+        XBsonValue* v;
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_HIST_OFFSET);
+        if (v) offset = (int)XBsonValue_toInt32(v, 0);
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_HIST_LIMIT);
+        if (v) limit = (int)XBsonValue_toInt32(v, 0);
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_HIST_LO_TS);
+        if (v) loMs = XBsonValue_toInt64(v, 0);
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_HIST_HI_TS);
+        if (v) hiMs = XBsonValue_toInt64(v, 0);
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_HIST_BEFORE_TS);
+        if (v) hiMs = XBsonValue_toInt64(v, 0);
+    }
+    XClassDelete((XClass*)doc);
+    if (offset < 0) offset = 0;
+    if (limit < HSF_HISTORY_PAGE_MIN) limit = HSF_HISTORY_PAGE_MIN;
+    if (limit > HSF_HISTORY_PAGE_MAX) limit = HSF_HISTORY_PAGE_MAX;
+
+    n = HsfServerStore_queryHistory(&s_store, offset, limit, loMs, hiMs,
+                                    rows, HSF_HISTORY_PAGE_MAX,
+                                    &windowTotal, &dbRows,
+                                    &latestTs, &earliestTs);
+
+    /* 应答文档：包络 + 分页数据。 */
+    doc = XBsonDocument_create();
+    if (!doc) {
+        hsfAppRespond(session, frame, hsfAppMakeEnvelope(false, "应答文档创建失败"));
+        return;
+    }
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_OK, true);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_HIST_TOTAL, windowTotal);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_HIST_OFFSET, offset);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_HIST_LIMIT, limit);
+    XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_HIST_DB_ROWS, dbRows);
+    XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_HIST_LATEST_TS, latestTs);
+    XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_HIST_EARLIEST_TS, earliestTs);
+    XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_HIST_WINDOW_START,
+                                      (int64_t)loMs);
+    XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_HIST_WINDOW_END,
+                                      (int64_t)hiMs);
+    /* 列名数组（与 Python store.HISTORY_COLUMNS 同序）。 */
+    colsArr = XBsonArray_create();
+    if (colsArr) {
+        static const char* const kCols[HSF_HISTORY_COLUMNS] = {
+            "ts", "mode", "vfd_state", "freq_hz", "current_a", "rpm",
+            "turb1", "turb2", "flow", "flow_unit", "flow_total",
+            "total_unit", "press_mpa", "press_note", "temp", "hum",
+            "di", "do"
+        };
+        for (c = 0; c < HSF_HISTORY_COLUMNS; ++c) {
+            XBsonValue* val = XBsonValue_create(XBSON_TYPE_STRING);
+            if (!val) continue;
+            XBsonValue_setString_utf8(val, kCols[c]);
+            /* [必须用 move 变体] XBsonArray 的元素是 XBsonValue*，拷贝语义
+             * 的 append 只拷**指针**（浅拷贝）——随后删掉原值，数组里就是
+             * 悬垂指针，编码应答时崩。框架自身（XBsonArray.c）也一律用 move。 */
+            XBsonArray_append_move_base(colsArr, val);
+        }
+        XBsonDocument_insert_keyUtf8_array_move(doc, HSF_KEY_HIST_COLS, colsArr);
+    }
+    /* 行数组：每行一个数组（18 格；NULL 列发 BSON null）。 */
+    rowsArr = XBsonArray_create();
+    if (rowsArr) {
+        for (i = 0; i < n; ++i) {
+            XBsonArray* rowArr = XBsonArray_create();
+            if (!rowArr) break;
+            for (c = 0; c < HSF_HISTORY_COLUMNS; ++c) {
+                const HsfHistoryCell* cell = &rows[i].m_cells[c];
+                XBsonValue* val = NULL;
+                if (cell->m_isNull) {
+                    val = XBsonValue_create_null();
+                } else if (c == 0) {
+                    val = XBsonValue_create_int64(strtoll(cell->m_text, NULL, 10));
+                } else if (c == 1 || c == 2 || c == 9 || c == 11 || c == 13) {
+                    val = XBsonValue_create(XBSON_TYPE_STRING);
+                    if (val) XBsonValue_setString_utf8(val, cell->m_text);
+                } else if (c == 16 || c == 17) {
+                    val = XBsonValue_create_int64(
+                        (int64_t)strtoull(cell->m_text, NULL, 10));
+                } else {
+                    val = XBsonValue_create_double(atof(cell->m_text));
+                }
+                if (!val) continue;
+                XBsonArray_append_move_base(rowArr, val);
+            }
+            XBsonArray_append_move_base(rowsArr,
+                                       XBsonValue_create_array(rowArr));
+            XClassDelete((XClass*)rowArr);
+        }
+        XBsonDocument_insert_keyUtf8_array_move(doc, HSF_KEY_HIST_ROWS, rowsArr);
+    }
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    hsfAppRespond(session, frame, bytes);
+}
+
+/**
+ * @brief 采集节整型参数：缺省取配置头文件的宏，INI 有覆盖则用覆盖值。
+ * @details [为什么要覆盖层] C 端的采集参数是**编译期常量**（写在
+ *          HsfServerConfig.h，与现场接线同性质）。远端配置（0x0117）能改的
+ *          就是这一层：写进 INI 的 collect/<键>，**重启服务端后生效**。
+ *          没有覆盖时行为与从前完全一致（还是宏的值）。
+ */
+static int hsfCollectInt(const char* key, int def)
+{
+    char iniKey[96];
+    snprintf(iniKey, sizeof(iniKey), "collect/%s", key);
+    if (!HsfServerSettings_contains(iniKey)) return def;
+    return HsfServerSettings_getInt(iniKey, def);
+}
+
+/** @brief 采集节开关（同 hsfCollectInt；0=禁用）。 */
+static bool hsfCollectEnabled(const char* key, int def)
+{
+    return hsfCollectInt(key, def) != 0;
+}
+
+/**
+ * @brief 远端配置读取（HSF_CMD_CONFIG_GET）：采集节 + 落盘节 + 容量实况。
+ * @details 应答键与 Python 侧 proto.CFGK_* 一致 ⇒ 两端客户端可互换。
+ *          [采集节报的是"真值"] C 端的采集参数是编译期常量（写在
+ *          HsfServerConfig.h，与现场接线同性质），故这里报的就是当前
+ *          生效值；若 INI 里有 collect/* 覆盖（远端配置改过、重启后生效），
+ *          报覆盖后的值。
+ *          [路 A/B 的耦合] C 端的 485 路 A（变频器+温湿度）与路 B
+ *          （浊度仪+流量计）各自**共用一条总线**，故同一路的两个设备开关
+ *          只能同生死 ⇒ vfdEnabled 与 temphumEnabled 报同一个值
+ *          （如实反映"路 A 装没装"，不谎称能单独关一台）。
+ */
+static void hsfAppHandleConfigGet(XLinkSession* session,
+                                  const XLinkFrameHeader* frame)
+{
+    XBsonDocument* doc;
+    XBsonDocument* collect;
+    XBsonDocument* storage;
+    XBsonDocument* stats;
+
+    doc = XBsonDocument_create();
+    if (!doc) {
+        hsfAppRespond(session, frame, hsfAppMakeEnvelope(false, "应答文档创建失败"));
+        return;
+    }
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_OK, true);
+
+    /* ---- 采集节 ---- */
+    collect = XBsonDocument_create();
+    if (collect) {
+        const bool sideA = hsfCollectEnabled("vfdEnabled", HSF_BUS_A_ENABLED);
+        const bool sideB = hsfCollectEnabled("turbidityEnabled", HSF_BUS_B_ENABLED);
+        XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_VFD_ENABLED, sideA);
+        XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_TEMPHUM_ENABLED, sideA);
+        XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_TURBIDITY_ENABLED, sideB);
+        XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_FLOWMETER_ENABLED, sideB);
+        XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_ANALOG_ENABLED,
+                                         hsfCollectEnabled("analogEnabled", 1));
+        XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_DIGITAL_ENABLED,
+                                         hsfCollectEnabled("digitalEnabled",
+                                                           HSF_DIG_ENABLED));
+        XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_VFD_POLL_MS,
+                                           hsfCollectInt("vfdPollMs",
+                                                         HSF_VFD_MIN_POLL_MS));
+        XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_TEMPHUM_POLL_MS,
+                                           hsfCollectInt("temphumPollMs",
+                                                         HSF_TEMPHUM_MIN_POLL_MS));
+        XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_TURBIDITY_POLL_MS,
+                                           hsfCollectInt("turbidityPollMs",
+                                                         HSF_TURBIDITY_MIN_POLL_MS));
+        XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_ANALOG_POLL_MS,
+                                           hsfCollectInt("analogPollMs",
+                                                         HSF_AI_POLL_MS));
+        XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_DIGITAL_POLL_MS,
+                                           hsfCollectInt("digitalPollMs",
+                                                         HSF_DIG_POLL_MS));
+        XBsonDocument_insert_keyUtf8_document(doc, HSF_CFG_SECTION_COLLECT,
+                                               collect);
+    }
+
+    /* ---- 落盘节 ---- */
+    storage = XBsonDocument_create();
+    if (storage) {
+        char path[256];
+        HsfServerSettings_getString("storage/path", "", path, (int)sizeof(path));
+        XBsonDocument_insert_keyUtf8_bool(storage, HSF_CFGK_STORAGE_ENABLED,
+                                         HsfServerStore_enabled(&s_store));
+        XBsonDocument_insert_keyUtf8_utf8(storage, HSF_CFGK_STORAGE_PATH, path);
+        XBsonDocument_insert_keyUtf8_int32(storage, HSF_CFGK_STORAGE_SAMPLE_MS,
+                                           HsfServerStore_sampleMs(&s_store));
+        XBsonDocument_insert_keyUtf8_int32(storage, HSF_CFGK_STORAGE_MAX_MB,
+                                           hsfCollectInt("storageMaxMb", 0));
+        XBsonDocument_insert_keyUtf8_utf8(storage, HSF_CFGK_STORAGE_FULL_POLICY,
+                                         "keepOldest");
+        XBsonDocument_insert_keyUtf8_int32(storage, HSF_CFGK_STORAGE_KEEP_FILES,
+                                           hsfCollectInt("storageKeepFiles", 0));
+        XBsonDocument_insert_keyUtf8_document(doc, HSF_CFG_SECTION_STORAGE,
+                                               storage);
+    }
+    {
+        const char* dbPath = HsfServerStore_dbPath(&s_store);
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_CFG_STORAGE_DB_PATH,
+                                         dbPath ? dbPath : "");
+    }
+    /* ---- 容量实况（能报多少报多少；C 端没有的分段/丢弃统计就报 0）---- */
+    stats = XBsonDocument_create();
+    if (stats) {
+        int64_t used = HsfServerStore_usedBytes(&s_store);
+        int64_t rows = HsfServerStore_rowCount(&s_store);
+        const int maxMb = hsfCollectInt("storageMaxMb", 0);
+        XBsonDocument_insert_keyUtf8_int64(stats, "usedBytes", used);
+        XBsonDocument_insert_keyUtf8_double(stats, "usedMb",
+                                           (double)used / (1024.0 * 1024.0));
+        XBsonDocument_insert_keyUtf8_int64(stats, "contentBytes", used);
+        XBsonDocument_insert_keyUtf8_double(stats, "contentMb",
+                                           (double)used / (1024.0 * 1024.0));
+        XBsonDocument_insert_keyUtf8_int32(stats, "maxMb", maxMb);
+        XBsonDocument_insert_keyUtf8_int32(stats, "maxKb", maxMb * 1024);
+        XBsonDocument_insert_keyUtf8_utf8(stats, "policy", "keepOldest");
+        XBsonDocument_insert_keyUtf8_int32(stats, "keepFiles",
+                                           hsfCollectInt("storageKeepFiles", 0));
+        XBsonDocument_insert_keyUtf8_bool(stats, "paused", false);
+        XBsonDocument_insert_keyUtf8_utf8(stats, "pauseReason", "");
+        XBsonDocument_insert_keyUtf8_int64(stats, "droppedRows", 0);
+        XBsonDocument_insert_keyUtf8_int64(stats, "rows", rows);
+        XBsonDocument_insert_keyUtf8_int32(stats, "segments", 1);
+        XBsonDocument_insert_keyUtf8_bool(stats, "enabled",
+                                         HsfServerStore_enabled(&s_store));
+        XBsonDocument_insert_keyUtf8_utf8(stats, "dbPath",
+                                         HsfServerStore_dbPath(&s_store)
+                                             ? HsfServerStore_dbPath(&s_store) : "");
+        XBsonDocument_insert_keyUtf8_document(doc, HSF_CFG_STORAGE_STATS, stats);
+    }
+
+    {
+        XByteArray* bytes = XBsonDocument_toBson(doc);
+        XClassDelete((XClass*)doc);
+        hsfAppRespond(session, frame, bytes);
+    }
+}
+
+/**
+ * @brief 远端配置写入（HSF_CMD_CONFIG_SET）：需 root。
+ * @details 载荷 {section:"collect"|"storage", …键}。
+ *          [落盘节运行期生效] enabled/sample_ms 立即生效（重装 store 配置）；
+ *          path 落盘但**下次启动**才换库（换库要重开连接，运行期换会丢数据）。
+ *          [采集节持久化] C 端采集参数是编译期常量（写在 HsfServerConfig.h，
+ *          与现场接线同性质），故这里只把值**落进 INI**，重启服务端后生效；
+ *          应答里明说"重启后生效"，不假装已经改好。
+ */
+static void hsfAppHandleConfigSet(XLinkSession* session,
+                                  const XLinkFrameHeader* frame,
+                                  const uint8_t* payload, XLinkServer* srv)
+{
+    XBsonDocument* doc;
+    XBsonValue* v;
+    char section[32];
+    bool any = false;
+
+    /* [权限] 改配置需 root；但**不看自动模式闸**——改配置不动任何输出点，
+     * 自动运行中允许调采集频率/开关（监视不受模式限制）。 */
+    if (!XPermPolicy_check(&s_perm,
+                           (XLinkServer_sessionRole(srv, session)),
+                           (uint32_t)XAccessPerm_DeviceControl)) {
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, "权限不足：修改服务端配置需要 root 账户"));
+        return;
+    }
+    doc = XBsonDocument_create();
+    if (!doc || !XBsonDocument_from_bytes(doc, payload, frame->m_payloadLen)) {
+        if (doc) XClassDelete((XClass*)doc);
+        hsfAppRespond(session, frame, hsfAppMakeEnvelope(false, "配置载荷解析失败"));
+        return;
+    }
+    v = XBsonDocument_value_keyUtf8(doc, HSF_CFG_SECTION_KEY);
+    if (v) {
+        /* [XBsonValue_toString 返回借用的 const XString*] 用 XVariant_toString
+         * 会拿到 NULL（BSON 字符串的变体类型与 XString_fromVariant 的期望
+         * 不匹配）⇒ section 留着未初始化内容，后面 strcmp 全不匹配（实测
+         * 报"未知配置段"）。另外 XString_toUtf8 是**借用**的内部缓冲，
+         * 必须拷进本地缓冲再用。 */
+        const XString* sec = XBsonValue_toString(v);
+        if (sec) snprintf(section, sizeof(section), "%s", XString_toUtf8(sec));
+    }
+    if (!section || !section[0]) {
+        XClassDelete((XClass*)doc);
+        hsfAppRespond(session, frame, hsfAppMakeEnvelope(false, "载荷缺少 section"));
+        return;
+    }
+
+    if (strcmp(section, HSF_CFG_SECTION_STORAGE) == 0) {
+        /* 落盘节：写 INI + 运行期生效。 */
+        char path[256];
+        v = XBsonDocument_value_keyUtf8(doc, HSF_CFGK_STORAGE_ENABLED);
+        if (v) {
+            HsfServerSettings_setInt("storage/enabled",
+                                     XBsonValue_toBool(v, false) ? 1 : 0);
+            any = true;
+        }
+        v = XBsonDocument_value_keyUtf8(doc, HSF_CFGK_STORAGE_SAMPLE_MS);
+        if (v) {
+            /* [XBsonValue 取值必须用 XBson 层自己的口] XBsonDocument_
+             * value_keyUtf8 返回的是 **XBsonValue***，拿它当 XVariant* 用
+             * （XVariant_toInt）是**类型错乱** ⇒ 取值恒 0（实测写入的采样
+             * 周期被当成 0 夹到 1000，读回也是 1000）。 */
+            int ms = (int)XBsonValue_toInt32(v, 0);
+            if (ms <= 0) ms = (int)XBsonValue_toInt64(v, 0);
+            if (ms < 1000) ms = 1000;
+            HsfServerSettings_setInt("storage/sample_ms", ms);
+            any = true;
+        }
+        v = XBsonDocument_value_keyUtf8(doc, HSF_CFGK_STORAGE_PATH);
+        if (v) {
+            const XString* pstr = XBsonValue_toString(v);
+            HsfServerSettings_setString("storage/path",
+                                       pstr ? XString_toUtf8(pstr) : "");
+            any = true;
+        }
+        v = XBsonDocument_value_keyUtf8(doc, HSF_CFGK_STORAGE_MAX_MB);
+        if (v) {
+            HsfServerSettings_setInt("storage/max_mb", (int)XBsonValue_toInt32(v, 0));
+            any = true;
+        }
+        v = XBsonDocument_value_keyUtf8(doc, HSF_CFGK_STORAGE_KEEP_FILES);
+        if (v) {
+            HsfServerSettings_setInt("storage/keep_files", (int)XBsonValue_toInt32(v, 0));
+            any = true;
+        }
+        XClassDelete((XClass*)doc);
+        if (!any) {
+            hsfAppRespond(session, frame, hsfAppMakeEnvelope(false, "载荷里没有配置键"));
+            return;
+        }
+        /* 运行期生效（enabled/sample_ms 重读配置；path 下次启动换库）。 */
+        (void)HsfServerStore_configure(&s_store, HsfServerSettings_dataDir());
+        XPrintf("HsfServerApp: 远程配置：落盘节已更新（运行期生效）\n");
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(true, "落盘配置已保存（库路径下次启动生效）"));
+        return;
+    }
+
+    if (strcmp(section, HSF_CFG_SECTION_COLLECT) == 0) {
+        /* 采集节：C 端是编译期常量 ⇒ 只落 INI，重启后生效。 */
+        static const char* const kBoolKeys[] = {
+            HSF_CFGK_VFD_ENABLED, HSF_CFGK_TEMPHUM_ENABLED,
+            HSF_CFGK_FLOWMETER_ENABLED, HSF_CFGK_TURBIDITY_ENABLED,
+            HSF_CFGK_ANALOG_ENABLED, HSF_CFGK_DIGITAL_ENABLED
+        };
+        static const char* const kIntKeys[] = {
+            HSF_CFGK_VFD_POLL_MS, HSF_CFGK_TEMPHUM_POLL_MS,
+            HSF_CFGK_TURBIDITY_POLL_MS, HSF_CFGK_ANALOG_POLL_MS,
+            HSF_CFGK_DIGITAL_POLL_MS
+        };
+        int i;
+        for (i = 0; i < (int)(sizeof(kBoolKeys) / sizeof(kBoolKeys[0])); ++i) {
+            v = XBsonDocument_value_keyUtf8(doc, kBoolKeys[i]);
+            if (v) {
+                /* 落 INI 的 collect/<键>（键名与协议同名，便于回读）。 */
+                char iniKey[96];
+                snprintf(iniKey, sizeof(iniKey), "collect/%s", kBoolKeys[i]);
+                HsfServerSettings_setInt(iniKey, XBsonValue_toBool(v, false) ? 1 : 0);
+                any = true;
+            }
+        }
+        for (i = 0; i < (int)(sizeof(kIntKeys) / sizeof(kIntKeys[0])); ++i) {
+            v = XBsonDocument_value_keyUtf8(doc, kIntKeys[i]);
+            if (v) {
+                char iniKey[96];
+                snprintf(iniKey, sizeof(iniKey), "collect/%s", kIntKeys[i]);
+                HsfServerSettings_setInt(iniKey, (int)XBsonValue_toInt32(v, 0));
+                any = true;
+            }
+        }
+        XClassDelete((XClass*)doc);
+        if (!any) {
+            hsfAppRespond(session, frame, hsfAppMakeEnvelope(false, "载荷里没有配置键"));
+            return;
+        }
+        XPrintf("HsfServerApp: 远程配置：采集节已保存（重启服务端后生效）\n");
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(true,
+                                         "采集配置已保存（重启服务端后生效）"));
+        return;
+    }
+
+    XClassDelete((XClass*)doc);
+    hsfAppRespond(session, frame, hsfAppMakeEnvelope(false, "未知配置段"));
 }
 
 /**
@@ -1680,6 +2331,15 @@ static void hsfAppDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
             break;
         case HSF_CMD_PUMP_CONTROL:
             hsfAppHandlePumpControl(session, frame, payload, srv);
+            break;
+        case HSF_CMD_HISTORY_PAGE:
+            hsfAppHandleHistoryPage(session, frame, payload);
+            break;
+        case HSF_CMD_CONFIG_GET:
+            hsfAppHandleConfigGet(session, frame);
+            break;
+        case HSF_CMD_CONFIG_SET:
+            hsfAppHandleConfigSet(session, frame, payload, srv);
             break;
         default:
             /* 未知命令：回否定应答，客户端可感知（不发则对端空等）。 */
@@ -2214,7 +2874,12 @@ static void hsfAppJogRelease(HsfSide side)
     XVfdDevice* dev;
     if (side < 0 || side >= HsfSide_Count) return;
     w = &s_jogWatch[side];
-    if (!w->m_active) return;
+    /* [无条件停机 —— 对齐 Python 侧 _jog_release] 看门狗态与设备真实状态
+     * 可能失步：服务端重启过、或点动帧在途被丢（首帧没被受理时看门狗
+     * 压根没置位），此时客户端松手发来的释放帧会因"未在点动态"被跳过
+     * ⇒ 设备仍在点动、客户端却已放手 ⇒ 电机停不下来。
+     * 松手是**安全动作**：多发这一帧的代价只是几十毫秒的减速停机，
+     * 漏发的代价是电机一直跑。 */
     w->m_active = false;
     dev = HsfServerIo_vfdDevice(side);
     if (dev) {
@@ -2452,18 +3117,21 @@ static XByteArray* hsfAppEncodeDigitalNames(void)
  *       count + v<i>_name / v<i>_openCmd / v<i>_openFb / v<i>_closeFb /
  *       v<i>_state / v<i>_ready / v<i>_valid / v<i>_text。
  */
-static XByteArray* hsfAppEncodeValves(void)
+/**
+ * @brief 把整组阀快照键填进调用方的文档（count + v{i}_* 前缀键表）。
+ * @details [为什么抽内核] 控制应答要把快照与 ok/err 合并在**同一帧**里
+ *          （Python 侧 extra 同构），周期推送则单独成帧——两处共用同一份
+ *          键表逻辑，避免两处漂移。
+ * @return 填充成功返回 true；阀组未装配返回 false（调用方文档保持原样）。
+ */
+static bool hsfAppFillValvesDoc(XBsonDocument* doc)
 {
     const HsfServerIoValve* bank = HsfServerIo_valves();
-    XBsonDocument* doc;
-    XByteArray* bytes;
     int count;
     int i;
 
-    if (!bank) return NULL;
+    if (!bank || !doc) return false;
     count = HsfServerIoValve_count(bank);
-    doc = XBsonDocument_create();
-    if (!doc) return NULL;
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_VALVE_COUNT, count);
     for (i = 0; i < count; ++i) {
         const HsfServerIoValveItem* it = HsfServerIoValve_item(bank, i);
@@ -2485,10 +3153,28 @@ static XByteArray* hsfAppEncodeValves(void)
         XBsonDocument_insert_keyUtf8_bool(doc, key, ready);
         snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_VALVE_VALID);
         XBsonDocument_insert_keyUtf8_bool(doc, key, it->m_valid);
+        if (it->m_cmdResult[0]) {
+            /* [处置结果] 与 Python to_doc 同口径：只在有值时下发，客户端
+             * 据此区分"动了/本来就在那儿/在途重发/外部接管"。 */
+            snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_VALVE_CMD_RESULT);
+            XBsonDocument_insert_keyUtf8_utf8(doc, key, it->m_cmdResult);
+        }
         if (it->m_text[0]) {
             snprintf(key, sizeof(key), "v%d_%s", i, HSF_KEY_VALVE_TEXT);
             XBsonDocument_insert_keyUtf8_utf8(doc, key, it->m_text);
         }
+    }
+    return true;
+}
+
+static XByteArray* hsfAppEncodeValves(void)
+{
+    XBsonDocument* doc = XBsonDocument_create();
+    XByteArray* bytes;
+    if (!doc) return NULL;
+    if (!hsfAppFillValvesDoc(doc)) {
+        XClassDelete((XClass*)doc);
+        return NULL;
     }
     bytes = XBsonDocument_toBson(doc);
     XClassDelete((XClass*)doc);
@@ -2496,12 +3182,17 @@ static XByteArray* hsfAppEncodeValves(void)
 }
 
 /**
- * @brief 阀告警推送：把本拍新产生的告警逐条推给**所有已连接会话**。
- * @details [为什么全推而不按订阅] 阀告警是**事件**，不是遥测。只看数字量页/
- *          主界面的客户端没订阅阀主题，但"某路阀超时未到位"这类信息必须让它
- *          看到——现场最常见的失误就是告警藏在没人订阅的主题里。故这里不判
- *          订阅，直接广播（XLinkServer_publish_ex 按订阅投递；无人订阅时静默
- *          返回 0，不视为错误）。
+ * @brief 阀告警推送：本拍取走的告警合并成**一帧**随阀状态主题下发。
+ * @details [为什么随 HSF_TOPIC_VALVE_STATUS 推] Python 生态
+ *          （server_py/client_py/webui_py）把告警帧推在阀状态主题上——
+ *          载荷带 "ac" 键即告警帧，键空间 a{i}_* 与周期状态的 v{i}_* 不
+ *          相交，客户端按"先认告警再认状态"判型；且 Python 客户端只订阅
+ *          0x00010007 ⇒ C 服务端推独立告警主题 0x00010008 的帧在 Python
+ *          界面上被**静默丢弃**（bridge.TOPIC_KIND 查不到即 return）。旧
+ *          "独立主题全推"的初衷由 publish_ex 的订阅语义兜不住（无人订阅
+ *          即 0 投递）。主题对齐后键布局也必须对齐：{ac:N, a0_vi/vn/k/t/
+ *          at/to?...}（Python _publish_valve_alarms 同构，一拍多路超时
+ *          合并一帧）。
  *
  *          [为什么要"取走"而不是"读状态"] 告警每拍都可能成立（超时判据是
  *          `now - cmdAt > timeout`），若按状态推就会每 200ms 一帧把客户端刷屏。
@@ -2509,50 +3200,71 @@ static XByteArray* hsfAppEncodeValves(void)
  */
 static void hsfAppPushValveAlarms(XLinkServer* self, uint64_t now)
 {
+    const HsfServerIoValve* bank = HsfServerIo_valves();
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    int count;
     int i;
-    int count = HsfServerIoValve_count(HsfServerIo_valves());
+    int taken = 0;
+
+    (void)now;
+    count = bank ? HsfServerIoValve_count(bank) : 0;
+    if (count <= 0) return;
+
+    doc = XBsonDocument_create();
+    if (!doc) return;
 
     for (i = 0; i < count; ++i) {
         int kind = 0;
         char text[160];
         const HsfServerIoValveItem* it;
-        XBsonDocument* doc;
+        char key[32];
+        int n;
 
         if (!HsfServerIo_valveTakeAlarm(i, &kind, text, (int)sizeof(text)))
             continue;
-        it = HsfServerIoValve_item(HsfServerIo_valves(), i);
+        it = HsfServerIoValve_item(bank, i);
         if (!it) continue;
-
-        doc = XBsonDocument_create();
-        if (!doc) continue;
-        XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_ALARM_COUNT, 1);
-        XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_ALARM_VALVE_INDEX, i);
-        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_ALARM_VALVE_NAME,
-                                          it->m_name);
-        XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_ALARM_KIND, kind);
-        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_ALARM_TEXT, text);
-        XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_ALARM_AT,
-                                           (int64_t)now);
+        n = taken;
+        ++taken;
+        snprintf(key, sizeof(key), "a%d_%s", n, HSF_KEY_ALARM_VALVE_INDEX);
+        XBsonDocument_insert_keyUtf8_int32(doc, key, i);
+        snprintf(key, sizeof(key), "a%d_%s", n, HSF_KEY_ALARM_VALVE_NAME);
+        XBsonDocument_insert_keyUtf8_utf8(doc, key, it->m_name);
+        snprintf(key, sizeof(key), "a%d_%s", n, HSF_KEY_ALARM_KIND);
+        XBsonDocument_insert_keyUtf8_int32(doc, key, kind);
+        snprintf(key, sizeof(key), "a%d_%s", n, HSF_KEY_ALARM_TEXT);
+        XBsonDocument_insert_keyUtf8_utf8(doc, key, text);
+        snprintf(key, sizeof(key), "a%d_%s", n, HSF_KEY_ALARM_AT);
+        XBsonDocument_insert_keyUtf8_int64(doc, key, (int64_t)now);
         if (kind == HsfValveAlarmKind_Timeout) {
+            snprintf(key, sizeof(key), "a%d_%s", n, HSF_KEY_ALARM_TIMEOUT_S);
             XBsonDocument_insert_keyUtf8_double(
-                doc, HSF_KEY_ALARM_TIMEOUT_S,
-                (double)HsfServerIoValve_moveTimeoutMs(HsfServerIo_valves())
-                    / 1000.0);
+                doc, key,
+                (double)HsfServerIoValve_moveTimeoutMs(bank) / 1000.0);
         }
-        {
-            XByteArray* bytes = XBsonDocument_toBson(doc);
-            if (bytes) {
-                XLinkServer_publish_ex(self, HSF_TOPIC_VALVE_ALARM,
-                                       XLinkDataType_Bson,
-                                       (const uint8_t*)XByteArray_constData(bytes),
-                                       (uint32_t)XByteArray_size_base(bytes));
-                XClassDelete((XClass*)bytes);
-            }
-        }
-        XClassDelete((XClass*)doc);
         XPrintf("HsfServerApp: 阀告警 路%d(%s) 类型%d：%s\n",
                 i, it->m_name, kind, text);
+        /* [告警入库] 与 Python insert_alarm("valve", name, text) 同表同分类。 */
+        HsfServerStore_insertAlarm(&s_store, "valve", it->m_name, text);
     }
+
+    if (taken == 0) {
+        XClassDelete((XClass*)doc);
+        return;
+    }
+    /* [ac 键最后写] 有该键即告警帧；条数 = 实际取走的条数。 */
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_ALARM_COUNT, taken);
+
+    bytes = XBsonDocument_toBson(doc);
+    if (bytes) {
+        XLinkServer_publish_ex(self, HSF_TOPIC_VALVE_STATUS,
+                               XLinkDataType_Bson,
+                               (const uint8_t*)XByteArray_constData(bytes),
+                               (uint32_t)XByteArray_size_base(bytes));
+        XClassDelete((XClass*)bytes);
+    }
+    XClassDelete((XClass*)doc);
 }
 
 /**
@@ -2627,6 +3339,8 @@ static void hsfAppPushAutoAlarms(XLinkServer* self, uint64_t now)
         }
         XPrintf("HsfServerApp: 自动运行报警 类型%d @%llu：%s\n",
                 alarm.m_kind, (unsigned long long)alarm.m_atMs, alarm.m_text);
+        /* [告警入库] 与 Python insert_alarm("auto", ...) 同分类口径。 */
+        HsfServerStore_insertAlarm(&s_store, "auto", "自动运行", alarm.m_text);
     }
     (void)now;
 }
@@ -2666,8 +3380,164 @@ static void hsfAppTickPump(XLinkServer* self)
     }
 }
 
+/* ==================== 历史落盘：采样装配 ==================== */
+
+/** @brief 变频器状态文案（与 Python RUN_STATE_TEXT 同表；离线返回 NULL）。 */
+static const char* hsfAppVfdStateText(const XVfdStatus* st, char* buf, int cap)
+{
+    if (!st || !st->m_valid) return NULL;
+    if (st->m_faulted) {
+        snprintf(buf, (size_t)cap, "故障 0x%04X", (unsigned)st->m_faultCode);
+        return buf;
+    }
+    switch (st->m_runState) {
+    case XVfdRunState_Stopped: return "停机";
+    case XVfdRunState_RunningForward: return "正转运行";
+    case XVfdRunState_RunningReverse: return "反转运行";
+    case XVfdRunState_JogForward:
+    case XVfdRunState_JogReverse: return "点动运行";
+    case XVfdRunState_Fault: return "故障";
+    default: return "未知";
+    }
+}
+
+/**
+ * @brief 历史采样入库（每 HSF_STORE_SAMPLE_MS 一行；与 Python _store_loop
+ *        同口径：失败不致命、离线列记 NULL）。
+ * @details [与推送同源] 各值直接读装配层缓存（与遥测编码同批设备对象、
+ *          同一 tick），保证"库里一行 = 界面一拍"可互相印证。
+ *          [ts 用墙钟] history.ts 是 epoch 毫秒（趋势图按真实时刻画），
+ *          超时/限流类的**时长**测量仍走单调钟——两套口径各司其职。
+ */
+static void hsfAppTickHistory(void)
+{
+    HsfHistoryRow row;
+    uint64_t now;
+    char vfdText[48];
+
+    if (!HsfServerStore_isOpen(&s_store)) return;
+    now = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+    if (s_store.m_lastSampleMs != 0 &&
+        now - s_store.m_lastSampleMs <
+            (uint64_t)HsfServerStore_sampleMs(&s_store)) {
+        return;
+    }
+    s_store.m_lastSampleMs = now;
+
+    memset(&row, 0, sizeof(row));
+    row.tsMs = (int64_t)XDateTime_currentSecsSinceEpoch() * 1000LL;
+    row.mode = (s_runMode == HsfRunMode_Auto)
+        ? (XAutoController_running(&s_autoCtl) ? "自动·运行中" : "自动·停止")
+        : "手动";
+
+    /* ---- 变频器（A 侧）---- */
+    {
+        XVfdDevice* dev = HsfServerIo_vfdDevice(HsfSide_A);
+        const XVfdStatus* st = dev ? XVfdDevice_status_const(dev) : NULL;
+        if (st && st->m_valid) {
+            row.vfdState = hsfAppVfdStateText(st, vfdText, (int)sizeof(vfdText));
+            row.freqHz = st->m_outputFreqHz;
+            row.freqHzValid = true;
+            row.currentA = st->m_outputCurrentA;
+            row.currentAValid = true;
+            row.rpm = XVfdDevice_hzToRpm(dev, st->m_outputFreqHz);
+            row.rpmValid = true;
+        }
+    }
+    /* ---- 温湿度（电箱）---- */
+    {
+        const HsfServerIoTempHum* th = HsfServerIo_tempHum(HsfSide_A);
+        int32_t t10 = 0;
+        int32_t h10 = 0;
+        bool tv = false;
+        bool hv = false;
+        if (th && HsfServerIoTempHum_values(th, &t10, &h10, &tv, &hv)) {
+            if (tv) {
+                row.temp = (double)t10 / 10.0;
+                row.tempValid = true;
+            }
+            if (hv) {
+                row.hum = (double)h10 / 10.0;
+                row.humValid = true;
+            }
+        }
+    }
+    /* ---- 浊度仪两台（路 B）---- */
+    {
+        double ntu = 0.0;
+        const HsfServerIoTurbidity* t1 = HsfServerIo_turbidity(HsfSide_B, 0);
+        const HsfServerIoTurbidity* t2 = HsfServerIo_turbidity(HsfSide_B, 1);
+        if (t1 && HsfServerIoTurbidity_ntu(t1, &ntu) && ntu > 0.0) {
+            row.turb1 = ntu;
+            row.turb1Valid = true;
+        }
+        if (t2 && HsfServerIoTurbidity_ntu(t2, &ntu) && ntu > 0.0) {
+            row.turb2 = ntu;
+            row.turb2Valid = true;
+        }
+    }
+    /* ---- 流量计（路 B）---- */
+    {
+        const HsfServerIoFlowMeter* fm = HsfServerIo_flowMeter(HsfSide_B);
+        double flow = 0.0;
+        double fwdTotal = 0.0;
+        int flowUnit = 0;
+        int totalUnit = 0;
+        bool valid = false;
+        if (fm && HsfServerIoFlowMeter_values(fm, &flow, NULL, &fwdTotal,
+                                              NULL, &flowUnit, &totalUnit,
+                                              NULL, &valid) &&
+            valid) {
+            row.flow = flow;
+            row.flowValid = true;
+            row.flowTotal = fwdTotal;
+            row.flowTotalValid = true;
+            /* [单位码两张表] 瞬时 5=m³/h、累积 1=m³（与 Python FLOW_UNIT_TEXT
+             * 同一换算；未知码按原文数字给，客户端/库都能对上）。 */
+            row.flowUnit = (flowUnit == 5) ? "m³/h" : NULL;
+            row.totalUnit = (totalUnit == 1) ? "m³" : NULL;
+        }
+    }
+    /* ---- 压差（AI 通道 0：EJA110A 0~1MPa，I=(mA-4)/16×量程）---- */
+    {
+        double ma[HSF_AI_CHANNELS];
+        bool valid[HSF_AI_CHANNELS];
+        int n = HsfServerIo_aiValues(ma, valid, HSF_AI_CHANNELS);
+        if (n > 0 && valid[0]) {
+            /* [活零点] <3.95mA ≡ 未连接（Python 同口径），记 NULL 不记 0。 */
+            if (ma[0] >= 3.95) {
+                row.pressMpa = (ma[0] - 4.0) / 16.0 * 1.0;
+                if (row.pressMpa < 0.0) row.pressMpa = 0.0;
+                row.pressValid = true;
+            }
+        }
+    }
+    /* ---- 数字量位图（位宽随实际点数；聚合时最多 32 点）---- */
+    {
+        uint32_t di = 0;
+        uint32_t doMask = 0;
+        bool valid = false;
+        if (HsfServerIo_digitalMasks(&di, &doMask, &valid) && valid) {
+            row.di = di;
+            row.diValid = true;
+            row.doMask = doMask;
+            row.doValid = true;
+        }
+    }
+
+    if (!HsfServerStore_insertHistory(&s_store, &row)) {
+        /* 失败不致命（磁盘满/路径不可写不该拖垮监控）；不刷屏，留给
+         * store 层的单次 SQL 失败日志。 */
+    }
+}
+
 static void hsfAppTick(XLinkServer* self, void* userData)
 {
+    /* 模拟心跳拍：推进时间驱动的模型状态（变频器爬坡/流量积分）。
+     * [为什么挂在服务端 tick 上] 模拟现场不能因为"没人读"就冻结——现场
+     * 不会因为上位机不在轮询就静止。未启用 --sim 时为空操作。 */
+    HsfServerIoSim_tick();
+
     /* 设备健康：事件驱动巡检（变化才推）。 */
     hsfHealthTick(self);
 
@@ -2692,6 +3562,7 @@ static void hsfAppTick(XLinkServer* self, void* userData)
     hsfAppTickTurbidity(self);
     hsfAppTickDigitalValve(self);   /* 数字量 + 电磁阀（先判读后编码）。 */
     hsfAppTickPump(self);           /* 进水泵（先 poll 后编码）。 */
+    hsfAppTickHistory();            /* 历史采样入库（周期内自节流）。 */
     /* 模拟量无侧维度，单闸。 */
     if (hsfAppPushDue(&s_pushGates[HSF_PUSH_GATE_AI][0],
                       XDateTime_currentMSecsSinceEpoch()))
@@ -2848,6 +3719,15 @@ bool HsfServerApp_start(uint16_t port)
             s_runMode == HsfRunMode_Auto ? "自动（远程控制禁用）" : "手动",
             XAutoController_running(&s_autoCtl) ? "运行中" : "停止");
 
+    /* [历史落盘] 打开失败不致命（对齐 Python store.py 失败口径）：服务
+     * 照跑，只是不落盘。采样周期/路径见 cfg/hsf_server.ini 的 [storage]。 */
+    HsfServerStore_init(&s_store);
+    if (HsfServerStore_configure(&s_store, HsfServerSettings_dataDir())) {
+        HsfServerStore_open(&s_store);
+    } else {
+        XPrintf("HsfServerApp: 数据落盘已禁用（storage/enabled=0）\n");
+    }
+
     XPrintf("HsfServerApp: XLink 服务端就绪（端口 %u，鉴权开，"
             "遥测 %dms）\n", (unsigned)port, HSF_TELEMETRY_MS);
     return true;
@@ -2863,6 +3743,7 @@ void HsfServerApp_stop(void)
                              (uint64_t)XDateTime_currentMSecsSinceEpoch());
         XAutoController_setStepHandler(&s_autoCtl, NULL, NULL);
     }
+    HsfServerStore_clear(&s_store);   /* 关库（幂等；未启用为空操作）。 */
     XLinkServer_close(s_srv);
     XClassDelete((XClass*)s_srv);
     s_srv = NULL;

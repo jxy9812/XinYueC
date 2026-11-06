@@ -46,6 +46,11 @@ void HsfServerIo_setSimMode(bool enable)
     s_ioSimMode = enable;
 }
 
+void HsfServerIo_setSimValveOverride(uint32_t moveMs, bool noFeedback)
+{
+    HsfServerIoSim_setValveOverride(moveMs, noFeedback);
+}
+
 bool HsfServerIo_simMode(void)
 {
     return s_ioSimMode;
@@ -323,18 +328,25 @@ bool HsfServerIo_start(void)
     if (!HSF_DIG_ENABLED) {
         XPrintf("HsfServerIo: 数字量站按 HSF_DIG_ENABLED=0 禁用\n");
     } else if (s_ioSimMode) {
-        /* 模拟模式：.12 与 .13 各一台模型，合成 32 点。
-         * [为什么要 .13] 电磁阀六路点位全在上半区（逻辑点 16..27），
-         * 只装 16 点时那六路一律"未配置"——模拟联调等于没覆盖阀。 */
+        /* 模拟模式：与**真实装配同一条口径**——
+         *   · HSF_DIG_HOST_EXT 非空 ⇒ 主 + 扩展两台，合成 32 点；
+         *   · 为空（当前现场：.12 拆除后只剩 .13）⇒ 只建主模块，16 点。
+         * [为什么要跟着宏走] 模拟器是给联调/回归用的，点数必须和现场一致，
+         * 否则模拟显示 32 点、实机 16 点，测出来的东西不是现场的。 */
         XModbusVirtualClient* vmain = HsfServerIoSim_createDigitalMain();
-        XModbusVirtualClient* vext = HsfServerIoSim_createDigitalExt();
+        XModbusVirtualClient* vext = (HSF_DIG_HOST_EXT[0] != '\0')
+                                     ? HsfServerIoSim_createDigitalExt() : NULL;
         if (!vmain) {
             XPrintf("HsfServerIo: 数字量模拟客户端创建失败（继续其它站）\n");
             if (vext) XClassDelete((XClass*)vext);
         } else if (!HsfServerIoDigital_mountWithClients(
                        &io->m_digital, (XModbusClient*)vmain,
                        (XModbusClient*)vext,
-                       HSF_DIG_CHANNELS_MAX, HSF_DIG_START_ADDR,
+                       /* [点数跟着装配走] 单台 = HSF_DIG_CHANNELS(16)；
+                        * 挂上扩展模块才是 32 点聚合。模拟器给 32 点、
+                        * 实机 16 点的话，测出来的东西不是现场的。 */
+                       vext ? HSF_DIG_CHANNELS_MAX : HSF_DIG_CHANNELS,
+                       HSF_DIG_START_ADDR,
                        HSF_DIG_POLL_MS, HSF_DIG_TIMEOUT_MS)) {
             XPrintf("HsfServerIo: 数字量站装配失败（继续其它站）\n");
         }
@@ -554,7 +566,9 @@ void HsfServerIo_valvePoll(uint64_t nowMs)
 {
     uint32_t di = 0;
     uint32_t fresh = 0;
+    uint32_t doMask = 0;
     bool valid = false;
+    bool doValid = false;
     int i;
     int count;
     int channels;
@@ -565,25 +579,32 @@ void HsfServerIo_valvePoll(uint64_t nowMs)
     if (!HsfServerIo_digitalReady()) {
         /* 数字量站没了：把反馈标成"全部不新鲜"（保留状态，界面按"模块离线"
          * 呈现），绝不在这里伪造 0 反馈——那会把六个阀全判成"动作中/未知"。 */
-        HsfServerIoValve_poll(&s_io.m_valves, 0, false, 0u, nowMs);
+        HsfServerIoValve_poll(&s_io.m_valves, 0, false, 0u, 0, false, nowMs);
         return;
     }
     HsfServerIoDigital_readDi(&s_io.m_digital, &di, &valid);
+    /* DO 回显：外部改动接管用（面板/现场按钮绕过本服务动线圈时，状态机
+     * 要能解释"没有对应命令的动作中"）。 */
+    HsfServerIoDigital_readDo(&s_io.m_digital, &doMask, &doValid);
 
-    /* [新鲜度必须按通道给，不能是整站一个 bool] 32 点 DI 是两台模块聚合
-     * 出来的：.12 提供逻辑点 0..15、.13 提供 16..31，两台在线状态互相独立。
-     * 电磁阀可能一部分挂 .12 那半区、一部分挂 .13 那半区。
-     * 若整站给一个 bool，.13 掉线时 .12 仍正常应答 ⇒ 整站恒 true ⇒
-     * 挂在 .13 上那几路读到恒 0 却仍算有效，界面显示"无到位反馈（检查行程
-     * 开关接线）"——而真相是模块掉线，提示把人引向错误方向。
-     * 按通道给位图后，每路用自己的两个 DI 通道各自判定。 */
+    /* [新鲜度必须按通道给，不能是整站一个 bool] 聚合架構下 DI 是**多台模块**
+     * 拼出来的（主模块提供 0..15、扩展模块提供 16..31），两台在线状态互相
+     * 独立，电磁阀也可能一部分挂这一半区、一部分挂那一半。
+     * 若整站给一个 bool，扩展模块掉线时主模块仍正常应答 ⇒ 整站恒 true ⇒
+     * 挂在扩展那半区的几路读到恒 0 却仍算有效，界面显示"无到位反馈（检查
+     * 行程开关接线）"——而真相是模块掉线，提示把人引向错误方向。
+     * 按通道给位图后，每路用自己的两个 DI 通道各自判定。
+     *
+     * [当前现场] 只剩 .13 一台 16 点（HSF_DIG_HOST_EXT 为空），位图恒为
+     * 0..15 全 fresh；按通道的逻辑保留，将来再挂扩展模块即自动生效。 */
     channels = HsfServerIo_digitalCount();
     if (channels > 32) channels = 32;
     for (i = 0; i < channels; ++i) {
         if (HsfServerIoDigital_isDiFresh(&s_io.m_digital, i))
             fresh |= (1u << i);
     }
-    HsfServerIoValve_poll(&s_io.m_valves, di, valid, fresh, nowMs);
+    HsfServerIoValve_poll(&s_io.m_valves, di, valid, fresh, doMask, doValid,
+                          nowMs);
 }
 
 bool HsfServerIo_valveSet(int index, bool wantOpen, char* outErr, int cap)
@@ -609,22 +630,37 @@ bool HsfServerIo_valveSet(int index, bool wantOpen, char* outErr, int cap)
         if (outErr) snprintf(outErr, (size_t)cap, "%s", "数字量站未装配，无法动作");
         return false;
     }
-    /* [扩展模块离线 ⇒ 明确报错，不要伪装成"阀卡住"] 电磁阀挂在上半区
-     * （逻辑点 16..31）时，这些点由扩展模块 .13 提供。.13 掉线后主模块
-     * .12 仍正常应答，DO 写会落到一个不存在的通道上——若放行，界面先显示
+    /* [模块离线 ⇒ 明确报错，不要伪装成"阀卡住"] 聚合架构下若某路阀挂在
+     * 扩展模块那半区（逻辑点 16..31），通信由扩展模块提供。它掉线后主模块
+     * 仍正常应答，DO 写会落到一个不存在的通道上——若放行，界面先显示
      * "动作中"、超时后显示"动作超时未到位"，**编造出"阀卡住"的假象**。
      * 故这里按"该路自己的 DO/DI 通道是否新鲜"判，离线直接给出结论。
      * 拒绝点：DO 通道不新鲜即拒（写不进去）；反馈通道不新鲜也拒——
-     * 写了也验证不了是否到位，等于盲操作。 */
+     * 写了也验证不了是否到位，等于盲操作。
+     * [当前现场] 单台 .13 全部 16 点同源，这条退化为"整站在线与否"；
+     * 逻辑保留，将来加扩展模块时无需再改。 */
     if (!HsfServerIoDigital_isDiFresh(&s_io.m_digital, it->m_openDi) ||
         !HsfServerIoDigital_isDiFresh(&s_io.m_digital, it->m_closeDi)) {
         if (outErr) snprintf(outErr, (size_t)cap, "%s",
                              "反馈模块离线，无法控制（检查扩展模块在线与接线）");
         return false;
     }
+    /* [ignored 处置不出帧] 已到位同目标的重复命令在 setOutput 里已判
+     * 幂等忽略——这里必须跳过 DO 写，否则白写一次还会重置计时/重启行程
+     * （Python 侧同分支"不写 DO、不重置计时器"）。 */
+    if (it->m_cmdResult[0] != '\0' &&
+        strcmp(it->m_cmdResult, "ignored") == 0) {
+        return true;
+    }
     /* [动作出口] 单点写对应 DO：开=写 1、关=写 0（弹簧复位/双电控在软件层
      * 表现一致，差别只在现场继电器接线——见 Python valves.py 头注释）。 */
-    return HsfServerIoDigital_writeDo(&s_io.m_digital, it->m_do, wantOpen);
+    ok = HsfServerIoDigital_writeDo(&s_io.m_digital, it->m_do, wantOpen);
+    if (ok) {
+        /* [同步自有写入基准] 否则下一拍 poll 把刚写的 DO 当外部改动，
+         * 凭空多一条 external 接管。 */
+        HsfServerIoValve_noteOwnWrite(&s_io.m_valves, index, wantOpen);
+    }
+    return ok;
 }
 
 bool HsfServerIo_valveTakeAlarm(int index, int* outKind, char* outText, int cap)

@@ -1,9 +1,4 @@
-﻿/**
- * @file       HsfSettingsLocal.h
- * @brief      本地设置叶子页（占位）：说明文字 + 返回钮。
- * @details    页面骨架先以 HsfPlaceHolder 占位，真实内容后续在本模块内替换。
- */
-#ifndef HSFSETTINGSLOCAL_H
+﻿#ifndef HSFSETTINGSLOCAL_H
 #define HSFSETTINGSLOCAL_H
 
 #ifdef __cplusplus
@@ -25,6 +20,20 @@ extern "C" {
  */
 XWidget* HsfSettingsLocal_create(XWidget* parent, HsfMenuNavFn navFn,
                            void* userData);
+
+/**
+ * @brief      窄宽/竖屏适配（帧泵与切页路径调用；幂等）。
+ * @param page 页根（HsfSettingsLocal_create 返回值）。
+ * @param compact true=窄档（收边距）。
+ */
+void HsfSettingsLocal_adapt(XWidget* page, bool compact);
+
+/**
+ * @brief      读「界面刷新周期」（数据刷新卡；各页轮询定时器建页时取此值）。
+ * @return     刷新周期 ms（INI 值钳位 [100,2000]；缺省 200）。
+ * @note       设置存储关闭（--no-settings）时恒返回缺省值。
+ */
+int HsfSettingsLocal_refreshMs(void);
 
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */
 

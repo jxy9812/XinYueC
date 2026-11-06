@@ -89,6 +89,14 @@ void HsfMonitorValve_setControlEnabled(bool enabled, const char* blockedReason);
 /** @brief 当前是否允许操作。 */
 bool HsfMonitorValve_controlEnabled(void);
 
+/**
+ * @brief 设置最近阀告警的常驻横幅（服务端原文直显；NULL/空 清除）。
+ * @details 与 Python 客户端 _drain_alarms 同口径：横幅留一条最近的告警，
+ *          直到下一条告警覆盖或出现"控制已禁用"原因；恢复类（Cleared）
+ *          只走状态栏，不清横幅。
+ */
+void HsfMonitorValve_setAlarmBanner(const char* text);
+
 /* ==================== 控制出口 / 状态栏 ==================== */
 
 /**

@@ -54,13 +54,25 @@ typedef struct HsfVfdProvider {
 
     /* ---- 控制动作（异步；结果经 device() 的 commandCompleted 信号回传） ---- */
     /** @brief 启动（reverse=反转；无该能力由设备层拒绝）。 */
-    bool (*start)(void* userData, bool reverse);
+    /** @brief 启动（reverse=反转；hz>0 表示**捎带给定**）。
+     *  @details 给定捎带在启动命令里下发（服务端先写给定再发命令字），
+     *           避免"先单独发给定被停机闸拒 ⇒ 按旧给定跑"。 */
+    bool (*start)(void* userData, bool reverse, double hz);
     /** @brief 受控停机。 */
     bool (*stop)(void* userData);
     /** @brief 自由停车。 */
     bool (*freeStop)(void* userData);
     /** @brief 点动（reverse=反向点动）。 */
-    bool (*jog)(void* userData, bool reverse);
+    /** @brief 点动（reverse=反向点动；hz>0 表示**捎带给定**）。 */
+    bool (*jog)(void* userData, bool reverse, double hz);
+    /**
+     * @brief 点动释放（松手即停）。
+     * @details [为什么单列一个槽] 松手必须"立刻停"，不能等服务端 600ms
+     *          看门狗；而普通 stop 是"受控停机"语义（减速到位）。远端
+     *          后端用专用 op=101（HSF_OP_JOG_RELEASE）；本地模拟后端可
+     *          为 NULL（页面回落到 stop()）。
+     */
+    bool (*jogRelease)(void* userData);
     /** @brief 频率给定（Hz；工程单位，品牌口径换算在设备层）。 */
     bool (*setFrequency)(void* userData, double hz);
     /** @brief 故障复位。 */

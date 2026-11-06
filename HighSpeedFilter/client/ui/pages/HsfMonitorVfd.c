@@ -50,6 +50,7 @@
 #include "XPainter.h"
 #include "XWidget_Protected.h"   /* XWidget_paintOffset（自绘平移用）。 */
 #include "XString.h"
+#include "XEvent.h"              /* XMouseEvent（自测注入点击用）。 */
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -63,6 +64,17 @@
 #define VFD_CARD_H           64       /**< 数值卡高度。 */
 #define VFD_TREND_H          160      /**< 趋势图高度。 */
 #define VFD_FREQ_MAX10       500      /**< 频率给定上限（0.1Hz 定点 = 50.0Hz）。 */
+/* ---- 调速方式（对齐 Python 客户端：频率调速 / 转速调速）---- */
+#define VFD_SPEED_MODE_HZ    0       /**< 频率调速（给定单位 Hz）。 */
+#define VFD_SPEED_MODE_RPM   1       /**< 转速调速（给定单位 rpm）。 */
+#define VFD_RATED_RPM_DEF    1440.0  /**< 缺省额定转速（rpm；4 极 50Hz 实测）。 */
+#define VFD_RATED_HZ_DEF     50.0    /**< 缺省额定频率（Hz）。 */
+/** @brief 实时下发的防抖窗（ms）：拖动滑块只发最后一帧（总线不被打满）。 */
+#define VFD_APPLY_DEBOUNCE_MS 200
+/** @brief 自测序列的最大步数（XHSF_VFD_SELFTEST 分号分隔）。 */
+#define VFD_SELFTEST_MAX_STEPS 4
+/** @brief 实时下发的最大重排次数（快照未就绪时；200ms×N ≈ 2s）。 */
+#define VFD_APPLY_MAX_RETRY  10
 #define VFD_TREND_POINTS     60       /**< 趋势滚动窗点数。 */
 #define VFD_TREND_WIN_DEF    30.0     /**< 时间窗默认宽（秒）。 */
 #define VFD_TREND_WIN_MIN    1.0      /**< 时间窗最小宽（秒；再窄无意义）。 */
@@ -75,23 +87,60 @@
 #define VFD_COLOR_FAULT      0xFFD13438u  /**< 故障红。 */
 #define VFD_COLOR_WARN       0xFFCA8A04u  /**< 警告橙。 */
 #define VFD_COLOR_READY      0xFF1F6FB2u  /**< 就绪蓝。 */
+/** @brief 过渡态蓝（加速中/减速中/正在停机：在"动"，但不是故障也不是稳定运行）。 */
+#define VFD_COLOR_PHASE      0xFF1A66D0u
 #define VFD_COLOR_TRACK      0xFFC9D2DAu  /**< 仪表底轨。 */
 #define VFD_COLOR_GAUGE      0xFF1F4E79u  /**< 仪表进度（品牌蓝）。 */
 #define VFD_COLOR_TEXT       0xFF1A2733u  /**< 主文本。 */
 #define VFD_COLOR_TEXT_DIM   0xFF5A6572u  /**< 弱文本。 */
 
-/** @brief 运行状态 → 横幅底色/文本。 */
-static void vfdRunStateStyle(int runState, uint32_t* color, const char** text)
+/**
+ * @brief 运行状态 → 横幅底色/文本（对齐 Python RUN_STATE_TEXT + 配色口径）。
+ * @param runState 状态枚举。
+ * @param running  状态字是否仍报"运行"（区分「减速中」与「正在停机」）。
+ * @param color    底色输出。
+ * @param text     文本输出。
+ * @details [「减速中」有两种含义，要分开说] 用户 2026-11-06：「点击停止后，
+ *          变频器是慢慢停机的，希望正在停机这个过程状态显示出来，还有正在
+ *          加速、正在减速都显示下」。服务端把两种减速都归到 Decelerating，
+ *          但操作员看到的应是不同的词：
+ *            · 运行中降给定 → 「减速中」（还在转，只是变慢）
+ *            · 已发停止命令 → 「正在停机」（目标就是停）
+ *          判据用 running 位：状态字仍报运行 = 还在正常降速；已报停机 =
+ *          那是停机过程。
+ *          [配色] 过渡态用**强调蓝**（在"动"，但不是故障也不是稳定运行），
+ *          稳定运行绿、故障红、停机深灰 —— 一眼分出四类（对齐 Python）。
+ */
+static void vfdRunStateStyle(int runState, bool running,
+                             uint32_t* color, const char** text)
 {
     switch (runState) {
     case XVfdRunState_RunningForward:
+        *color = VFD_COLOR_RUN; *text = "\xE6\xAD\xA3\xE8\xBD\xAC\xE8\xBF\x90\xE8\xA1\x8C"; /* 正转运行 */
+        break;
     case XVfdRunState_RunningReverse:
+        *color = VFD_COLOR_RUN; *text = "\xE5\x8F\x8D\xE8\xBD\xAC\xE8\xBF\x90\xE8\xA1\x8C"; /* 反转运行 */
+        break;
     case XVfdRunState_ConstantSpeed:
-    case XVfdRunState_Accelerating:
-    case XVfdRunState_Decelerating:
+        *color = VFD_COLOR_RUN; *text = "\xE6\x81\x92\xE9\x80\x9F\xE8\xBF\x90\xE8\xA1\x8C"; /* 恒速运行 */
+        break;
     case XVfdRunState_JogForward:
+        *color = VFD_COLOR_RUN; *text = "\xE6\xAD\xA3\xE8\xBD\xAC\xE7\x82\xB9\xE5\x8A\xA8"; /* 正转点动 */
+        break;
     case XVfdRunState_JogReverse:
-        *color = VFD_COLOR_RUN;  *text = "\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD"; /* 运行中 */
+        *color = VFD_COLOR_RUN; *text = "\xE5\x8F\x8D\xE8\xBD\xAC\xE7\x82\xB9\xE5\x8A\xA8"; /* 反转点动 */
+        break;
+    case XVfdRunState_Accelerating:
+        *color = VFD_COLOR_PHASE; *text = "\xE5\x8A\xA0\xE9\x80\x9F\xE4\xB8\xAD"; /* 加速中 */
+        break;
+    case XVfdRunState_Decelerating:
+        /* [正在停机 vs 减速中] 状态字已报停机 ⇒ 这是停机过程。 */
+        if (!running) {
+            *color = VFD_COLOR_PHASE;
+            *text = "\xE6\xAD\xA3\xE5\x9C\xA8\xE5\x81\x9C\xE6\x9C\xBA"; /* 正在停机 */
+        } else {
+            *color = VFD_COLOR_PHASE; *text = "\xE5\x87\x8F\xE9\x80\x9F\xE4\xB8\xAD"; /* 减速中 */
+        }
         break;
     case XVfdRunState_Fault:
         *color = VFD_COLOR_FAULT; *text = "\xE6\x95\x85\xE9\x9A\x9C";           /* 故障 */
@@ -100,7 +149,7 @@ static void vfdRunStateStyle(int runState, uint32_t* color, const char** text)
         *color = VFD_COLOR_STOP; *text = "\xE5\x81\x9C\xE6\x9C\xBA";            /* 停机 */
         break;
     case XVfdRunState_Ready:
-        *color = VFD_COLOR_READY; *text = "\xE5\xB0\xB1\xE7\xBB\xAA";           /* 就绪 */
+        *color = VFD_COLOR_READY; *text = "\xE5\xB0\xB1\xE7\xBB\xAD";           /* 就绪 */
         break;
     case XVfdRunState_DcBraking:
         *color = VFD_COLOR_WARN; *text = "\xE7\x9B\xB4\xE6\xB5\x81\xE5\x88\xB6\xE5\x8A\xA8"; /* 直流制动 */
@@ -125,6 +174,16 @@ static void vfdRunStateStyle(int runState, uint32_t* color, const char** text)
 typedef struct HsfMonitorVfd HsfMonitorVfd;
 static void VHsfVfdGauge_paintEvent(XWidget* self, XEvent* event);
 static void VHsfVfdBanner_paintEvent(XWidget* self, XEvent* event);
+/* [前置声明] 横幅自绘要用页面统一的状态入口（vfdPageStatus），其定义在
+ * 本文件后部（本地后端取设备状态 / 远端后端取网络快照）。 */
+static const XVfdStatus* vfdPageStatus(HsfMonitorVfd* self);
+/* [前置声明] 自测动作分发：页节拍要推进自测序列的后续步骤。 */
+static void vfdSelfTestDoAction(HsfMonitorVfd* self, const char* action,
+                                double hz);
+/* [前置声明] 实时下发的排程（下发回调里要重排）。 */
+static void vfdScheduleApply(HsfMonitorVfd* self);
+/* [前置声明] 实时下发的试发（页节拍重试用）。 */
+static void vfdTryApplyNow(HsfMonitorVfd* self);
 
 XCLASS_DEFINE_BEGING(HsfVfdGaugeWidget)
 XCLASS_DEFINE_EXTEND_END(HsfVfdGaugeWidget, XWidget)
@@ -194,18 +253,29 @@ typedef struct HsfMonitorVfd
     XLabel       m_cardBus;     /**< 母线电压卡。 */
     XLabel       m_cardRpm;     /**< 转速卡。 */
     XLabel       m_cardTorque;  /**< 转矩卡。 */
+    XLabel       m_cardSet;     /**< 设定频率卡（Python 同项）。 */
+    XLabel       m_cardFault;   /**< 故障卡（故障文案/无故障）。 */
     /* 区 3：给定行。 */
     XLabel       m_setLabel;    /**< 「频率给定」。 */
-    XSlider      m_setSlider;   /**< 0..500（0.1Hz 定点）。 */
-    XSpinBox     m_setSpin;     /**< 0..500（0.1Hz 定点）。 */
-    XPushButton  m_setApply;    /**< 「下发」。 */
+    XSlider      m_setSlider;   /**< 0..500（0.1Hz 定点；永远按 Hz 口径）。 */
+    XSpinBox     m_setSpin;     /**< 用户量纲（频率模式 Hz / 转速模式 rpm）。 */
+    XTimer*      m_applyTimer;  /**< 实时下发的防抖定时器（200ms；拖动只发最后一帧）。 */
+    /* 自测序列（XHSF_VFD_SELFTEST，分号分隔多步；页节拍按秒推进）。 */
+    char         m_ssAction[VFD_SELFTEST_MAX_STEPS][24];
+    double       m_ssHz[VFD_SELFTEST_MAX_STEPS];
+    int          m_ssCount;      /**< 已登记的步数。 */
+    int          m_ssNext;       /**< 下一个待执行的步。 */
+    int64_t      m_ssNextMs;     /**< 下一步的最早执行时刻（单调毫秒）。 */
     /* 区 4：操作行（方向下拉 + 启停单钮双态 + 点动/复位条件使能）。 */
     XComboBox    m_dirCombo;    /**< 运行方向（正转/反转；启动时生效）。 */
+    XComboBox    m_speedMode;   /**< 调速方式（频率调速/转速调速）。 */
+    XLabel       m_speedNote;   /**< 换算说明（额定点口径）。 */
     XPushButton  m_btnRun;      /**< 启动/停止（随运行态换字）。 */
     XPushButton  m_btnJog;      /**< 点动（按住生效；运行中禁用）。 */
     XTimer*      m_jogTimer;    /**< 点动心跳定时器（NULL=未点动）。 */
     bool         m_jogReverse;  /**< 本次点动方向。 */
     XPushButton  m_btnReset;    /**< 故障复位（有故障才可点）。 */
+    XPushButton  m_btnFree;     /**< 自由停车（对齐 Python btn_free）。 */
     /* 区 5：趋势图。 */
     XChartView   m_trendView;   /**< 图表视图。 */
     XChart*      m_trendChart;  /**< 图表（create 所有权在页）。 */
@@ -216,16 +286,20 @@ typedef struct HsfMonitorVfd
     double       m_trendWinW;   /**< 时间窗宽（秒；用户缩放后随之变化）。 */
     bool         m_trendUserView;/**< 视口归用户（用户缩放/平移后页面停写 X 轴）。 */
     /* 控制闸（并入给定行；不单独占行）。 */
-    XCheckBox    m_gate;        /**< 控制闸「允许界面操作」。 */
-    XLabel       m_hint;        /**< 提示行（闸关闭/自动只读）。 */
+    XLabel       m_hint;        /**< 提示行（自动只读/不可控原因）。 */
     /* ---- 数据提供者 ---- */
     const HsfVfdProvider* m_provider; /**< 函数表（借用；可 NULL=全降级）。 */
     void*        m_provUser;    /**< provider userData 缓存。 */
     /* ---- 演示驱动 ---- */
     XTimer*     m_simTimer;    /**< 200ms 模拟源驱动定时器（NULL=无）。 */
     bool         m_updating;    /**< 回显抑制：刷快照时不回写控件。 */
-    bool         m_autoMode;    /**< 自动运行模式（true=只读+隐藏闸 UI）。 */
-    bool         m_gateRemembered; /**< 退回手动时恢复的闸值（此前状态）。 */
+    bool         m_setDirty;    /**< 用户正在编辑给定（编辑期间不回写遥测）。 */
+    /* [下发确认仲裁] 已下发给定、待设备回显确认（确认前不回写遥测）。 */
+    bool         m_applyPending;
+    double       m_appliedHz;   /**< 待确认的给定（Hz）。 */
+    int          m_applyRetry;  /**< 快照未就绪时的重试次数。 */
+    bool         m_applyWait;   /**< 待重试（快照未就绪时挂起）。 */
+    bool         m_autoMode;    /**< 自动运行模式（true=只读）。 */
     /* ---- 服务端运行模式（顶栏统一管理，页面只读消费） ---- */
     bool         m_srvModeKnown;/**< 是否已从服务端拿到模式。 */
     bool         m_srvModeAuto; /**< 服务端是否自动模式。 */
@@ -474,9 +548,12 @@ static void VHsfVfdBanner_paintEvent(XWidget* self, XEvent* event)
 
     if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
     page = (HsfMonitorVfd*)((char*)self - offsetof(HsfMonitorVfd, m_banner));
-    st = XVfdDevice_status_const(page->m_provider
-                                 ? page->m_provider->device(page->m_provUser)
-                                 : NULL);
+    /* [取状态走页面统一入口] 原先这里直接取 provider->device() 的本地状态：
+     * 远端后端（XLink）**没有本地设备对象**（device() 恒 NULL）⇒ 横幅永远
+     * 判"无数据"，而数值卡（走 vfdPageStatus → snapshot）却有值——同一页
+     * 两套数据源打架。改走 vfdPageStatus：本地后端取设备状态、远端后端取
+     * 网络快照，两边口径统一。 */
+    st = vfdPageStatus(page);
 
     image = XWidget_paintImage(self);
     if (!image) return;
@@ -504,7 +581,7 @@ static void VHsfVfdBanner_paintEvent(XWidget* self, XEvent* event)
     if (st && st->m_valid) {
         if (st->m_faulted) { color = VFD_COLOR_FAULT; stateText = "\xE6\x95\x85\xE9\x9A\x9C"; }
         else if (st->m_warning) { color = VFD_COLOR_WARN; stateText = "\xE8\xAD\xA6\xE5\x91\x8A"; }
-        else vfdRunStateStyle(st->m_runState, &color, &stateText);
+        else vfdRunStateStyle(st->m_runState, st->m_running, &color, &stateText);
     } else {
         stateText = "\xE6\x97\xA0\xE6\x95\xB0\xE6\x8D\xAE";  /* 无数据 */
         color = VFD_COLOR_STOP;
@@ -578,6 +655,12 @@ static const XVfdStatus* vfdPageStatus(HsfMonitorVfd* self)
     return dev ? XVfdDevice_status_const(dev) : NULL;
 }
 
+/* [前置声明] 调速方式相关（定义在文件后部）：vfdRunSlot 等早期槽要用
+ * vfdCurrentSetHz，vfdSpeedModeSlot 要用 vfdApplySpeedMode —— 缺声明会被
+ * 编译器当成隐式 int 声明，再撞上真正的定义（C2371）。 */
+static double vfdCurrentSetHz(HsfMonitorVfd* self);
+static void vfdApplySpeedMode(HsfMonitorVfd* self);
+
 /** @brief 取能力位图（远端后端走 caps 槽；本地后端走设备）。 */
 static uint32_t vfdPageCaps(HsfMonitorVfd* self)
 {
@@ -609,9 +692,39 @@ static void vfdRunSlot(XObject* receiver, XVarList* args)
     p = self->m_provider;
     st = vfdPageStatus(self);
     running = st && st->m_valid && st->m_running;
-    if (running) p->stop(self->m_provUser);
-    else p->start(self->m_provUser,
-                  XComboBox_currentIndex(&self->m_dirCombo) == 1);
+    if (running) {
+        p->stop(self->m_provUser);
+        return;
+    }
+    /* [启动：给定**捎带**在启动命令里] 对齐 Python 客户端 _on_run_stop：
+     * 把界面给定（Hz 或换算后的 Hz）随 START 一起下发，服务端内部顺序执行
+     * 「写 1000H → 写 2000H」。
+     * [为什么不单独先发给定] 服务端为安全起见拒绝**停机状态下的独立给定**
+     * ⇒ 单独发 SET 必被拒 ⇒ 启动按变频器里残留的旧给定跑（现场实测：界面
+     * 设 3Hz、实际跑 25Hz = 界面在骗人）。捎带不受该闸限制。 */
+    /* [启动捎带给定] 启动命令里带上界面给定量（服务端"先写给定、再发
+     * 命令字"）⇒ 启动后电机就跑在界面给的那个值上，而不是变频器里残留
+     * 的旧给定（"界面设 3Hz、实际跑 25Hz"＝界面在骗人）。 */
+    {
+        const double hzSet = vfdCurrentSetHz(self);
+        p->start(self->m_provUser,
+                 XComboBox_currentIndex(&self->m_dirCombo) == 1,
+                 hzSet);
+        /* [确认仲裁] 启动同样会带来一次"给定变更"：设备回显追上之前按住
+         * 回写，避免回写把设备**旧**给定灌回滑块（用户以为没生效）。 */
+        if (hzSet > 0.0) {
+            self->m_applyPending = true;
+            self->m_appliedHz = hzSet;
+            self->m_setDirty = true;
+        } else {
+            self->m_applyPending = false;
+            self->m_setDirty = false;
+        }
+    }
+    /* [不再单独发一条给定] 启动命令已捎带给定（服务端 Start 先写给定再发
+     * 命令字），再补一条 SET 既冗余，又可能因"停机禁给定"闸被拒（两条
+     * 命令的先后由服务端调度决定），还会把刚才捎带的值覆盖掉。
+     * 对齐 Python 客户端：启动只发一条 START。 */
 }
 
 /**
@@ -625,7 +738,11 @@ static void vfdJogTick(void* userData, XTimerData* timer)
     (void)timer;
     if (!self || !self->m_provider || !self->m_provider->jog) return;
     {
-        bool sent = self->m_provider->jog(self->m_provUser, self->m_jogReverse);
+        /* [点动捎带给定] 服务端处理 Jog 时先写给定再发命令字（对齐 Python
+         * 服务端 apply_control 的 OP_JOG 分支）⇒ 按住点动按界面给定跑，
+         * 而不是变频器里上一次的残留给定。 */
+        bool sent = self->m_provider->jog(self->m_provUser, self->m_jogReverse,
+                                           vfdCurrentSetHz(self));
         XPrintf("[vfd-jog] 心跳 rev=%d sent=%d\n",
                 (int)self->m_jogReverse, (int)sent);
     }
@@ -644,7 +761,11 @@ static void vfdJogPressedSlot(XObject* receiver, XVarList* args)
     if (self->m_jogTimer) return;                   /* 已在点动。 */
     self->m_jogReverse = (XComboBox_currentIndex(&self->m_dirCombo) == 1);
     {
-        bool sent = self->m_provider->jog(self->m_provUser, self->m_jogReverse);
+        /* [点动捎带给定] 服务端处理 Jog 时先写给定再发命令字（对齐 Python
+         * 服务端 apply_control 的 OP_JOG 分支）⇒ 按住点动按界面给定跑，
+         * 而不是变频器里上一次的残留给定。 */
+        bool sent = self->m_provider->jog(self->m_provUser, self->m_jogReverse,
+                                           vfdCurrentSetHz(self));
         XPrintf("[vfd-jog] 点动 rev=%d sent=%d\n",
                 (int)self->m_jogReverse, (int)sent);
     }
@@ -678,9 +799,18 @@ static void vfdJogReleasedSlot(XObject* receiver, XVarList* args)
         XClassDelete((XClass*)self->m_jogTimer);
         self->m_jogTimer = NULL;
     }
-    if (self->m_provider && self->m_provider->stop)
-        self->m_provider->stop(self->m_provUser);
-    XPrintf("[vfd-jog] 点动松开 → 停机\n");
+    /* [点动释放 op=101] 松手必须"立刻停"，不等服务端 600ms 看门狗；普通
+     * stop 是"受控停机"语义（减速到位）。远端后端用专用 op=101（对齐
+     * Python 客户端的 {"op":101}）；本地模拟后端无此槽，回落 stop()。 */
+    if (self->m_provider) {
+        if (self->m_provider->jogRelease)
+            self->m_provider->jogRelease(self->m_provUser);
+        else if (self->m_provider->stop)
+            self->m_provider->stop(self->m_provUser);
+    }
+    XPrintf("[vfd-jog] 点动松开 → 释放（按钮 enabled=%d down=%d）\n",
+            (int)XWidget_isEnabled((XWidget*)&self->m_btnJog),
+            (int)XAbstractButton_isDown((XAbstractButton*)&self->m_btnJog));
 }
 
 
@@ -691,6 +821,21 @@ static void vfdResetSlot(XObject* receiver, XVarList* args)
     (void)args;
     if (!self || !self->m_provider) return;
     self->m_provider->resetFault(self->m_provUser);
+}
+
+/**
+ * @brief 自由停车（对齐 Python btn_free → op=FREE_STOP）。
+ * @details 自由停车 = 立即断输出（不走减速曲线），与"停止"（受控减速）
+ *          是两种现场动作：急停/故障善后用前者。
+ */
+static void vfdFreeStopSlot(XObject* receiver, XVarList* args)
+{
+    HsfMonitorVfd* self = (HsfMonitorVfd*)((char*)receiver -
+                                           offsetof(HsfMonitorVfd, m_btnFree));
+    (void)args;
+    if (!self || !self->m_provider) return;
+    if (self->m_provider->freeStop)
+        self->m_provider->freeStop(self->m_provUser);
 }
 
 /**
@@ -712,39 +857,222 @@ static void vfdModeNotify(void* userData)
     vfdApplyControlState(self);
 }
 
-/** @brief 下发按钮：频率给定（0.1Hz 定点 → Hz）。 */
-static void vfdApplySlot(XObject* receiver, XVarList* args)
+/**
+ * @brief 额定点（rpm/Hz）：由遥测的「输出频率/换算转速」反推，缺省 1440rpm@50Hz。
+ * @details [口径来源] 变频器不提供转速寄存器，转速是**频率换算值**
+ *          （服务端按额定比例换算）；故比例直接取遥测里 outputFreqHz 与
+ *          speedRpm 之比——与服务端换算**同一比例**，不会出现界面 1440rpm
+ *          而设备换算出别的数。缺省：4 极 50Hz 实测 1440rpm。
+ */
+static void vfdRatedPoint(HsfMonitorVfd* self, double* outRpm, double* outHz)
 {
-    HsfMonitorVfd* self = (HsfMonitorVfd*)((char*)receiver -
-                                           offsetof(HsfMonitorVfd, m_setApply));
-    (void)args;
-    if (!self || !self->m_provider || !self->m_provider->setFrequency) return;
-    self->m_provider->setFrequency(self->m_provUser,
-                                   (double)XSpinBox_value(&self->m_setSpin) / 10.0);
+    const XVfdStatus* st = vfdPageStatus(self);
+    double rpm = VFD_RATED_RPM_DEF;
+    double hz = VFD_RATED_HZ_DEF;
+    if (st && st->m_valid && st->m_outputFreqHz > 0.1 && st->m_speedRpm > 0.1) {
+        const double hzPerRpm = st->m_outputFreqHz / st->m_speedRpm;
+        if (hzPerRpm > 0.0001) {
+            hz = VFD_RATED_HZ_DEF;
+            rpm = hz / hzPerRpm;
+        }
+    }
+    if (outRpm) *outRpm = rpm;
+    if (outHz) *outHz = hz;
 }
 
-/** @brief 控制闸切换：透传 provider；联动按钮可用态。
- *  @note  自动运行模式下勾选框已隐藏，此槽不应触达（双保险：触达则
- *         静默回滚勾选态，不透传 provider）。
- *  @note  receiver=勾选框自身（connect_1 首参口径），offsetof 反推页
- *         （vfdRunSlot 2026-11-04 实锅同款口径）。 */
-static void vfdGateSlot(XObject* receiver, XVarList* args)
+/**
+ * @brief 当前界面给定 → 频率（Hz）。
+ * @details 频率调速直接取输入框；转速调速按额定点反解（rpm → Hz），
+ *          与 Python 客户端同一口径（设备只接受频率通道，转速是换算值）。
+ */
+static double vfdCurrentSetHz(HsfMonitorVfd* self)
+{
+    double rpm = 0.0;
+    double hz = 0.0;
+    double raw;
+    if (!self) return 0.0;
+    raw = (double)XSpinBox_value(&self->m_setSpin);
+    if (XComboBox_currentIndex(&self->m_speedMode) == VFD_SPEED_MODE_RPM) {
+        vfdRatedPoint(self, &rpm, &hz);
+        if (rpm > 0.0) return raw / rpm * hz;
+    }
+    return raw;
+}
+
+/**
+ * @brief 频率（Hz）→ 当前模式下的**界面给定值**（频率模式 Hz / 转速模式 rpm）。
+ * @details [单位口径] 输入框的单位是**用户量纲**（Hz 或 rpm），滑块是
+ *          0.1Hz 定点（VFD_FREQ_MAX10=500 ⇒ 50.0Hz）。两者的换算只走
+ *          本函数与 vfdCurrentSetHz 一对，杜绝"同一份值按两种单位解释"
+ *          ——那种错位会让 50Hz 显示成 500Hz、1440rpm 显示成 500rpm，
+ *          而且下发值还会差 10 倍。
+ */
+static double vfdSetValueOfHz(HsfMonitorVfd* self, double hz)
+{
+    double rpm = 0.0;
+    double hzRef = 0.0;
+
+    if (!self) return 0.0;
+    if (XComboBox_currentIndex(&self->m_speedMode) != VFD_SPEED_MODE_RPM)
+        return hz;
+    vfdRatedPoint(self, &rpm, &hzRef);
+    if (!(rpm > 0.0) || !(hzRef > 0.0)) return 0.0;
+    return hz / hzRef * rpm;
+}
+
+/**
+ * @brief 调速方式下拉切换（receiver=combo 自身；offsetof 反推页）。
+ */
+static void vfdSpeedModeSlot(XObject* receiver, XVarList* args)
 {
     HsfMonitorVfd* self = (HsfMonitorVfd*)((char*)receiver -
-                                           offsetof(HsfMonitorVfd, m_gate));
-    bool checked = false;
+                                           offsetof(HsfMonitorVfd, m_speedMode));
     (void)args;
-    if (!self || !self->m_provider) return;
-    if (self->m_autoMode) {
-        XCheckBox_setChecked(&self->m_gate, false);   /* 自动态恒锁。 */
+    if (!self) return;
+    vfdApplySpeedMode(self);
+    XWidget_update((XWidget*)&self->m_banner);
+}
+
+/**
+ * @brief 调速方式切换：改输入框量程/后缀/步进与初值（对齐 Python）。
+ * @details [为什么切换时重置值] 15Hz 直接当成 15rpm 下发是荒谬的（几乎不转）。
+ *          按当前「设定频率」换算给初值（而非固定值），保证切过去显示的就是
+ *          "当前给定"的等价量，不产生意外跳变；无数据时退回半速。
+ */
+static void vfdApplySpeedMode(HsfMonitorVfd* self)
+{
+    double rpm = 0.0;
+    double hz = 0.0;
+    double baseHz;
+    int v;
+
+    if (!self) return;
+    vfdRatedPoint(self, &rpm, &hz);
+    {
+        const XVfdStatus* st = vfdPageStatus(self);
+        if (st && st->m_valid && (st->m_validMask & XVfdField_SetFreqHz))
+            baseHz = st->m_setFreqHz;
+        else
+            baseHz = hz / 2.0;
+    }
+    if (XComboBox_currentIndex(&self->m_speedMode) == VFD_SPEED_MODE_RPM) {
+        XSpinBox_setRange(&self->m_setSpin, 0, (int)(rpm + 0.5));
+        XSpinBox_setSuffix(&self->m_setSpin, " rpm");
+        XSpinBox_setSingleStep(&self->m_setSpin, 10);
+        v = (int)(baseHz / hz * rpm + 0.5);
+    } else {
+        XSpinBox_setRange(&self->m_setSpin, 0, (int)(hz + 0.5));
+        XSpinBox_setSuffix(&self->m_setSpin, " Hz");
+        XSpinBox_setSingleStep(&self->m_setSpin, 1);
+        v = (int)(baseHz + 0.5);
+    }
+    self->m_updating = true;
+    XSpinBox_setValue(&self->m_setSpin, v);
+    self->m_updating = false;
+    /* 滑块仍按 0.1Hz 定点（与给定物理量一致），随模式换算同步。 */
+    {
+        double hzVal = (XComboBox_currentIndex(&self->m_speedMode) ==
+                        VFD_SPEED_MODE_RPM)
+                           ? (rpm > 0.0 ? (double)v / rpm * hz : 0.0)
+                           : (double)v;
+        int v10 = (int)(hzVal * 10.0 + 0.5);
+        if (v10 < 0) v10 = 0;
+        if (v10 > VFD_FREQ_MAX10) v10 = VFD_FREQ_MAX10;
+        self->m_updating = true;
+        XAbstractSlider_setValue((XAbstractSlider*)&self->m_setSlider, v10);
+        self->m_updating = false;
+    }
+    self->m_setDirty = true;   /* 切换后即视为"用户已改"，遥测不再回写。 */
+    /* 换算说明（对齐 Python 的提示行：输出转速为频率换算值，额定点口径）。 */
+    {
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "\xE8\xBE\x93\xE5\x87\xBA\xE8\xBD\xAC\xE9\x80\x9F"
+                 "\xE4\xB8\xBA\xE9\xA2\x91\xE7\x8E\x87\xE6\x8D\xA2\xE5\x80\xBC"
+                 "\xEF\xBC\x88\xE5\x8F\x98\xE9\xA2\x91\xE5\x99\xA8\xE6\x97\xA0"
+                 "\xE8\xBD\xAC\xE9\x80\x9F\xE4\xBC\xA0\xE6\x84\x9F\xE5\x99\xA8"
+                 "\xEF\xBC\x8C\xE9\xA2\x9D\xE7\x82\xB9\xE7\x82\xB9"
+                 " %.0f rpm @ %.0f Hz\xEF\xBC\x89",
+                 rpm, hz);
+        XLabel_setText_2(&self->m_speedNote, buf);
+    }
+}
+
+/**
+ * @brief 尝试实时下发（条件不满足时挂起，由页节拍重试）。
+ * @details [为什么不直接在定时器回调里重排] 框架的 singleShot 定时器是
+ *          **回调返回后**才停（VXObject_timerEvent：先发 timeout 信号，
+ *          再 stop）——在回调里 stop+start 重装，会被紧接着的那次 stop
+ *          取消掉（实测：只重排到第 1 次就不再触发）。故"重试"改由页
+ *          节拍（200ms）驱动。
+ */
+static void vfdTryApplyNow(HsfMonitorVfd* self)
+{
+    const XVfdStatus* st;
+    double hz;
+
+    if (!self || !self->m_provider || !self->m_provider->setFrequency) return;
+    st = vfdPageStatus(self);
+    if (!st || !st->m_valid) {
+        /* [快照还没到] 刚登录/刚进页面时遥测尚未抵达（valid=0），此时丢掉
+         * 这次下发＝用户的改动"没生效"。挂起，节拍重试。 */
+        self->m_applyWait = true;
+        XPrintf("[vfd-apply] 快照未就绪，挂起待重试\n");
         return;
     }
-    checked = XCheckBox_isChecked(&self->m_gate);
-    self->m_gateRemembered = checked;                 /* 记忆用户意图。 */
-    if (self->m_provider->setControlEnabled)
-        self->m_provider->setControlEnabled(self->m_provUser, checked);
-    vfdApplyControlState(self);
-    XWidget_update(&self->m_banner);        /* 横幅右侧提示联动。 */
+    if (!st->m_running) {
+        /* 停机态：独立给定会被服务端「停机禁给定」闸拒（界面还会冒错误
+         * 提示）；停机态的给定由下一次启动捎带（vfdRunSlot）。 */
+        self->m_applyWait = false;
+        XPrintf("[vfd-apply] 设备停机，跳过（给定随启动捎带）\n");
+        return;
+    }
+    if (self->m_autoMode) {
+        self->m_applyWait = false;
+        XPrintf("[vfd-apply] 自动运行中，跳过\n");
+        return;
+    }
+    hz = vfdCurrentSetHz(self);
+    if (!(hz > 0.0)) {
+        self->m_applyWait = false;
+        XPrintf("[vfd-apply] 给定无效（%.2f Hz），跳过\n", hz);
+        return;
+    }
+    if (!self->m_provider->setFrequency(self->m_provUser, hz)) return;
+    self->m_applyWait = false;
+    self->m_applyRetry = 0;
+    /* [确认仲裁] 已下发但设备回显还没跟上（链路+轮询滞后 ~100ms）：
+     * 此时**不能**恢复遥测回写——回写会把**旧**给定灌回滑块，用户刚
+     * 拖出来的值被弹回，并触发"回写→改值→再下发"的循环（实测：实时
+     * 下发 20Hz 后连发 50Hz）。故标记"待确认"，由 vfdRefresh 在设备
+     * 回显与我们下发的值一致时再恢复回写。 */
+    self->m_applyPending = true;
+    self->m_appliedHz = hz;
+    self->m_setDirty = true;
+    XPrintf("[vfd-apply] 实时下发 %.2f Hz\n", hz);
+}
+
+/**
+ * @brief 实时下发定时器回调（200ms 防抖到点 ⇒ 试发一次）。
+ */
+static void vfdApplyTimerCb(void* userData, XTimerData* timer)
+{
+    HsfMonitorVfd* self = (HsfMonitorVfd*)userData;
+    (void)timer;
+    vfdTryApplyNow(self);
+}
+
+/**
+ * @brief 排一次实时下发（防抖：重装定时器＝重新计时）。
+ * @param self 页对象。
+ */
+static void vfdScheduleApply(HsfMonitorVfd* self)
+{
+    if (!self || !self->m_applyTimer) return;
+    /* [新一次改动 ⇒ 重试预算重置] */
+    self->m_applyRetry = 0;
+    XTimer_stop_base(self->m_applyTimer);
+    XTimer_start_base(self->m_applyTimer);
 }
 
 /** @brief Slider 拖动 → 同步 SpinBox（receiver=slider 自身；分派照
@@ -760,9 +1088,22 @@ static void vfdSliderChanged(XObject* receiver, XVarList* args)
     (void)args;
     if (!self || self->m_updating) return;
     v = XAbstractSlider_value((XAbstractSlider*)&self->m_setSlider);
-    self->m_updating = true;
-    XSpinBox_setValue(&self->m_setSpin, v);
-    self->m_updating = false;
+    /* [单位] 滑块是 0.1Hz 定点 ⇒ 先除 10 得 Hz，再按当前模式换算成
+     * 界面量纲（Hz / rpm）。旧实现把定点值直接塞进输入框，界面显示的
+     * 给定比真实值大 10 倍（50Hz 显示成 500Hz / 500rpm）。 */
+    {
+        const double hz = (double)v / 10.0;
+        const double shown = vfdSetValueOfHz(self, hz);
+        self->m_updating = true;
+        XSpinBox_setValue(&self->m_setSpin, (int)(shown + 0.5));
+        self->m_updating = false;
+    }
+    /* [用户编辑中] 遥测回写不得覆盖用户刚拖出来的值（否则每 100ms 被
+     * 服务端的"上次给定量"弹回 ⇒ 现场观感=滑块拖不动）。对齐 Python
+     * 客户端：用户输入优先，直到实时下发完成。 */
+    self->m_setDirty = true;
+    /* [实时生效] 运行中拖动滑块 ⇒ 给定即刻下发（防抖 200ms，只发最后一帧）。 */
+    vfdScheduleApply(self);
 }
 
 /** @brief SpinBox 编辑 → 同步 Slider（receiver=spinbox 自身）。 */
@@ -770,13 +1111,23 @@ static void vfdSpinChanged(XObject* receiver, XVarList* args)
 {
     HsfMonitorVfd* self = (HsfMonitorVfd*)((char*)receiver -
                                            offsetof(HsfMonitorVfd, m_setSpin));
-    int v;
+    int v10;
     (void)args;
     if (!self || self->m_updating) return;
-    v = XSpinBox_value(&self->m_setSpin);
+    /* [单位] 输入框是用户量纲（Hz / rpm）⇒ 换算成 Hz 再写成滑块的
+     * 0.1Hz 定点。旧实现把 Hz 直接当定点写，滑块位置只有真实值的 1/10。 */
+    {
+        const double hz = vfdCurrentSetHz(self);
+        v10 = (int)(hz * 10.0 + 0.5);
+        if (v10 < 0) v10 = 0;
+        if (v10 > VFD_FREQ_MAX10) v10 = VFD_FREQ_MAX10;
+    }
     self->m_updating = true;
-    XAbstractSlider_setValue((XAbstractSlider*)&self->m_setSlider, v);
+    XAbstractSlider_setValue((XAbstractSlider*)&self->m_setSlider, v10);
     self->m_updating = false;
+    self->m_setDirty = true;   /* 用户编辑中：遥测回写让位（见 vfdSliderChanged）。 */
+    /* [实时生效] 运行中改输入框 ⇒ 给定即刻下发（防抖 200ms）。 */
+    vfdScheduleApply(self);
 }
 
 /**
@@ -861,8 +1212,16 @@ static bool s_pendingAutoMode = false;         /**< 建页前的模式意图。 
 static void vfdApplyControlState(HsfMonitorVfd* self)
 {
     uint32_t caps = vfdPageCaps(self);
-    bool gate = !self->m_autoMode && self->m_provider && self->m_provider->controlEnabled
-                ? self->m_provider->controlEnabled(self->m_provUser) : false;
+    /* [2026-11-06 控制闸口径对齐 Python] 控制可用性 = **手动模式 + 已就绪**
+     * （不再有本地「允许界面操作」勾选框）：
+     *   · 自动模式 ⇒ 锁死（服务端也拒）；
+     *   · 未连接服务端 ⇒ 锁死；
+     *   · 其余 ⇒ 可控——现场点一下就动。
+     * provider 的 controlEnabled 仍参与（本地 demo 后端用它表达"演示可用"），
+     * 但远端后端默认开（见 HsfVfdProviderRemote 的闸缺省）。 */
+    bool gate = !self->m_autoMode && self->m_provider &&
+                self->m_provider->controlEnabled &&
+                self->m_provider->controlEnabled(self->m_provUser);
 
     {
         const XVfdStatus* st2 = vfdPageStatus(self);
@@ -887,12 +1246,33 @@ static void vfdApplyControlState(HsfMonitorVfd* self)
             XWidget_hide((XWidget*)&self->m_btnJog);
         else {
             XWidget_show((XWidget*)&self->m_btnJog);
-            XWidget_setEnabled((XWidget*)&self->m_btnJog, gate && !running);
+            /* [点动按钮不按运行态禁用] 对齐 Python 客户端：btn_jog 只在
+             * "原因"（未连接 / 自动模式 / 权限不足）时禁用，运行中照常可用。
+             * 旧实现带 !running ⇒ 点动按下的瞬间设备进运行态，200ms 刷新
+             * 拍就把按钮 setEnabled(false)；而框架按 **Qt 口径** 在按钮被
+             * 禁用时清掉按下态并**发 released** ⇒ 客户端 released 槽停心跳
+             * + 发 op101 ⇒ 现场症状：鼠标没动，按住状态定时自己退出、
+             * 变频器跟着停。 */
+            {
+                /* [诊断] 点动按钮的可用态变化是"长按被提前松开"的头号嫌疑：
+                 * 按钮被禁用 ⇒ 框架按 Qt 口径清按下态并发 released ⇒ 点动
+                 * 心跳断 + 发 op101 ⇒ 电机停。留日志以便现场一次复现定位。 */
+                const bool wasEnabled =
+                    XWidget_isEnabled((XWidget*)&self->m_btnJog);
+                XWidget_setEnabled((XWidget*)&self->m_btnJog, gate);
+                if (wasEnabled != gate)
+                    XPrintf("[vfd-jog] 按钮可用态变化 %d -> %d（down=%d）\n",
+                            (int)wasEnabled, (int)gate,
+                            (int)XAbstractButton_isDown(
+                                (XAbstractButton*)&self->m_btnJog));
+            }
         }
-        /* 故障复位：仅有故障时可点。 */
+        /* 故障复位：仅有故障时可点（对齐 Python：btn_reset 只按 reason 禁用，
+         * 这里保留"有故障才可点"更安全——无故障时复位无意义）。 */
         XWidget_setEnabled((XWidget*)&self->m_btnReset, gate && faulted);
+        /* 自由停车：与 Python btn_free 同口径（只按 reason 禁用）。 */
+        XWidget_setEnabled((XWidget*)&self->m_btnFree, gate);
     }
-    XWidget_setEnabled((XWidget*)&self->m_setApply,  gate);
     XWidget_setEnabled((XWidget*)&self->m_setSlider, gate);
     XWidget_setEnabled((XWidget*)&self->m_setSpin,   gate);
     /* 控制应答提示（远端后端）：按序号增量消费——被拒（err 非空）顶替
@@ -951,13 +1331,42 @@ static void vfdRefresh(HsfMonitorVfd* self)
                    st && (st->m_validMask & XVfdField_BusVoltage),
                    st ? st->m_busVoltageV : 0.0, "V");
     vfdSetCardText(&self->m_cardRpm,
-                   "\xE7\x94\xB5\xE6\x9C\xBA\xE8\xBD\xAC\xE9\x80\x9F", /* 电机转速 */
+                   "\xE8\xBE\x93\xE5\x87\xBA\xE8\xBD\xAC\xE9\x80\x9F", /* 输出转速 */
                    st && (st->m_validMask & XVfdField_SpeedRpm),
                    st ? st->m_speedRpm : 0.0, "rpm");
     vfdSetCardText(&self->m_cardTorque,
                    "\xE8\xBE\x93\xE5\x87\xBA\xE8\xBD\xAC\xE7\x9F\xA9", /* 输出转矩 */
                    st && (st->m_validMask & XVfdField_TorquePercent),
                    st ? st->m_torquePercent : 0.0, "%");
+    /* [设定频率] 补齐 Python 的读数项：现场要能一眼看到"我给的是多少"，
+     * 而不只是"现在跑的是多少"（两者不一致就是"界面在骗人"）。 */
+    vfdSetCardText(&self->m_cardSet,
+                   "\xE8\xAE\xBE\xE5\xAE\x9A\xE9\xA2\x91\xE7\x8E\x87", /* 设定频率 */
+                   st && (st->m_validMask & XVfdField_SetFreqHz),
+                   st ? st->m_setFreqHz : 0.0, "Hz");
+    /* [故障] 有故障显示故障文案（品牌表），无故障显示"无故障"——Python 同款
+     * （fault_text：无故障码 ⇒ "无故障"）。 */
+    {
+        char buf[96];
+        const char* fault = NULL;
+        if (st && st->m_valid && st->m_faulted) {
+            fault = (self->m_provider && self->m_provider->faultText)
+                  ? self->m_provider->faultText(self->m_provUser, st->m_faultCode)
+                  : NULL;
+            if (!fault || !fault[0]) {
+                char code[24];
+                snprintf(code, sizeof(code), "0x%04X", st->m_faultCode);
+                fault = code;
+            }
+            snprintf(buf, sizeof(buf), "%s\n%s",
+                     "\xE6\x95\x85\xE9\x9A\x9C", fault);   /* 故障 */
+        } else {
+            snprintf(buf, sizeof(buf), "%s\n%s",
+                     "\xE6\x95\x85\xE9\x9A\x9C",
+                     "\xE6\x97\xA0\xE6\x95\x85\xE9\x9A\x9C"); /* 故障 / 无故障 */
+        }
+        XLabel_setText_2(&self->m_cardFault, buf);
+    }
 
     /* 仪表数值标签回填（文字=框架托管 XLabel；画布只负责弧线）。 */
     {
@@ -1048,14 +1457,29 @@ static void vfdRefresh(HsfMonitorVfd* self)
         XChartView_updateChart(&self->m_trendView);
     }
 
-    /* 设定回显（抑制回环；快照侧只同步 SpinBox，用户编辑不被覆盖——
-       m_updating 只在程序侧 setValue 时置位）。 */
+    /* 设定回显（抑制回环；**用户编辑期间不回写**——服务端 setFreqHz 是
+       "上次给定量"，每拍回写会把用户刚拖出来的值弹回 ⇒ 滑块拖不动。
+       用户编辑优先，直到实时下发完成（vfdApplyTimerCb 清 m_setDirty）。 */
     if (st && (st->m_validMask & XVfdField_SetFreqHz) && !self->m_updating) {
-        int v = (int)(st->m_setFreqHz * 10.0 + 0.5);
-        if (v >= 0 && v <= VFD_FREQ_MAX10) {
+        const double hzSet = st->m_setFreqHz;
+        const int v10 = (int)(hzSet * 10.0 + 0.5);
+        /* [下发确认] 设备回显与我们下发的值一致 ⇒ 确认完成，恢复回写
+         * （回写值与本地一致，不会打架）。不一致说明设备还没收到/还没
+         * 生效 ⇒ 继续按住回写，避免把用户的值弹回旧值。 */
+        if (self->m_applyPending &&
+            fabs(hzSet - self->m_appliedHz) < 0.05) {
+            self->m_applyPending = false;
+            self->m_setDirty = false;
+        }
+        if (!self->m_setDirty && v10 >= 0 && v10 <= VFD_FREQ_MAX10) {
+            /* [单位] 滑块收 0.1Hz 定点；输入框收**用户量纲**
+             * （频率模式 Hz / 转速模式 rpm = Hz 按额定点换算）。
+             * 旧实现两处都塞 0.1Hz 定点 ⇒ 输入框显示的给定比真实值大
+             * 10 倍（50Hz 显示成 500Hz、1440rpm 显示成 500rpm）。 */
+            const double shown = vfdSetValueOfHz(self, hzSet);
             self->m_updating = true;
-            XAbstractSlider_setValue((XAbstractSlider*)&self->m_setSlider, v);
-            XSpinBox_setValue(&self->m_setSpin, v);
+            XAbstractSlider_setValue((XAbstractSlider*)&self->m_setSlider, v10);
+            XSpinBox_setValue(&self->m_setSpin, (int)(shown + 0.5));
             self->m_updating = false;
         }
     }
@@ -1070,14 +1494,53 @@ static void vfdPageNotify(const HsfVfdProvider* provider, void* pageToken)
     vfdRefresh((HsfMonitorVfd*)pageToken);
 }
 
-/** @brief 模拟源驱动拍（200ms）：推进剧情 → 设备解码 → 信号桥通知页刷新。 */
+/** @brief 页面节拍（200ms）：推进剧情 → 设备解码 → 点动自愈巡检。 */
 static void vfdSimTimerCb(void* userData, XTimerData* timer)
 {
-    (void)userData; (void)timer;
+    HsfMonitorVfd* self = (HsfMonitorVfd*)userData;
+    (void)timer;
 #if XVFD_ON
     /* 模拟源单例推进（页面创建即订阅；同刻只有一页注册回调）。 */
     hsfVfdSimTick(NULL);
 #endif
+    /* [点动自愈] 心跳在跑、但按钮已不是按下态 ⇒ **松手事件丢了**
+     * （窗口失焦、抓取被抢、事件被吞、页面切走时 release 没送达）。
+     * 点动是"持续意图"，必须能自停：每拍比对一次按钮 down 态，不一致
+     * 就按松手收口（停心跳 + 通知服务端停机）。
+     * 少了这一条，任何一次丢失的 release 都会让电机一直点动下去——
+     * 现场症状："点动后停不下来，松开也不停，点停止也没用"（停止会被
+     * 下一拍心跳立刻覆盖）。
+     * [为什么放节拍而不是刷新] 刷新只在遥测到达时跑（页面切走就没有了），
+     * 而"点着点动切走页面"正是最容易丢松手的场景。 */
+    if (self && self->m_jogTimer &&
+        !XAbstractButton_isDown((XAbstractButton*)&self->m_btnJog)) {
+        XPrintf("[vfd-jog] 检测到松手丢失 → 自愈释放\n");
+        vfdJogReleasedSlot((XObject*)&self->m_btnJog, NULL);
+    }
+
+    /* [实时下发重试] 快照未就绪时挂起的下发，由节拍重试（最多 2s）。
+     * [为什么不用定时器自重排] 框架的 singleShot 定时器在**回调返回后**
+     * 才停 ⇒ 回调里 stop+start 重装会被紧接着的 stop 取消。 */
+    if (self && self->m_applyWait &&
+        self->m_applyRetry < VFD_APPLY_MAX_RETRY) {
+        self->m_applyRetry++;
+        vfdTryApplyNow(self);
+    }
+
+    /* [自测序列推进] 规格里的多步动作按秒推进（第一步建页即跑）。
+     * 步间隔 1s：给服务端留出"启动已生效"的时间（写给定 + 命令字 + 爬坡）。 */
+    if (self && self->m_ssNext < self->m_ssCount) {
+        const int64_t now = (int64_t)XDateTime_currentMSecsSinceEpoch();
+        if (now >= self->m_ssNextMs) {
+            XPrintf("[vfd-selftest] 执行步骤 %d：action=%s hz=%.1f\n",
+                    self->m_ssNext, self->m_ssAction[self->m_ssNext],
+                    self->m_ssHz[self->m_ssNext]);
+            vfdSelfTestDoAction(self, self->m_ssAction[self->m_ssNext],
+                                self->m_ssHz[self->m_ssNext]);
+            self->m_ssNext++;
+            self->m_ssNextMs = now + 1000;
+        }
+    }
 }
 
 /* ==================== 组装 ==================== */
@@ -1158,6 +1621,25 @@ static void vfdInitBtn(XPushButton* btn, XWidget* parent, const char* text,
     XWidget_show((XWidget*)btn);
 }
 
+/**
+ * @brief 建一个**不连 clicked** 的按钮（点动用：动作语义在按下/松开上）。
+ * @details [为什么点动不能连 clicked] 框架的松手顺序是 Qt 口径
+ *          **先 released 再 clicked**（XAbstractButton.c 的 clickInternal）。
+ *          若把"开始点动"挂在 clicked 上，松手就会：先发 released（停心跳
+ *          + 释放），紧接着再发 clicked（**又启动一次点动 + 新心跳**）⇒
+ *          电机永远停不下来，且"停止"按钮按下后被下一拍心跳立刻覆盖。
+ *          实测日志：松手行后面紧跟一行"点动 rev=0 sent=1"。
+ */
+static void vfdInitBtnNoClick(XPushButton* btn, XWidget* parent,
+                              const char* text)
+{
+    XPushButton_init(btn, parent, 0);
+    HsfTheme_applyDefaultFont((XWidget*)btn);
+    XPushButton_setText_2(btn, text);
+    XWidget_setFixedHeight((XWidget*)btn, 40);
+    XWidget_show((XWidget*)btn);
+}
+
 /* ==================== GUI 自测钩子（联调/CI） ==================== */
 
 /**
@@ -1176,68 +1658,138 @@ static void vfdRunSelfTest(HsfMonitorVfd* self);
 static void vfdSelfTestTimer(void* userData, XTimerData* timer)
 {
     HsfMonitorVfd* self = (HsfMonitorVfd*)userData;
-    if (timer) XTimer_stop_base(timer);
+    /* [不要在这里停定时器] 回调第二参是 **XTimerData\***（定时器的数据块），
+     * 不是 XTimer\* —— 把它当 XTimer\* 传给 XTimer_stop_base 会读到空虚表
+     * ⇒ 触发 XError（参数：XClassGetVtable(timer)=NULL）把客户端打死。
+     * 本定时器是 singleShot（见建页处），本来就只跑一次，无需停。 */
+    (void)timer;
     if (!self) return;
     vfdRunSelfTest(self);
 }
 
-static void vfdRunSelfTest(HsfMonitorVfd* self)
+/**
+ * @brief 向控件注入一次"按下 + 松开"（自测用；口径同 Test/XGuiTest 的
+ *        XButtonHoldTest：直接派发鼠标事件到控件）。
+ * @details [为什么需要它] 点动的"按住生效"要验的是**按钮的信号接线**：
+ *        松手时框架先发 released 再发 clicked（Qt 口径），若把"开始点动"
+ *        挂在 clicked 上，松手就会再启动一次点动 ⇒ 电机永远停不下来。
+ *        这个钩子让该缺陷可在无人工点击的情况下回归。
+ * @param w 目标控件（点动按钮）。
+ */
+static void vfdInjectClick(XWidget* w)
 {
-    const char* spec = XSystem_environment("XHSF_VFD_SELFTEST");
-    char action[32];
-    double hz = 0.0;
-    const char* comma;
-    size_t n;
+    XRect g;
+    XMouseEvent me;
+    XPoint p;
 
-    if (!self || !spec || !spec[0]) return;
-    comma = strchr(spec, ',');
-    n = comma ? (size_t)(comma - spec) : strlen(spec);
-    if (n >= sizeof(action)) n = sizeof(action) - 1;
-    XMemcpy(action, spec, n);
-    action[n] = '\0';
-    if (comma) hz = atof(comma + 1);
+    if (!w) return;
+    g = XWidget_geometry(w);
+    p.x = g.width / 2;
+    p.y = g.height / 2;
+    XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                     XMouseButton_LeftButton, 0, p);
+    XObject_event_base((XObject*)w, (XEvent*)&me);
+    XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                     XMouseButton_LeftButton, 0, p);
+    XObject_event_base((XObject*)w, (XEvent*)&me);
+}
 
-    XPrintf("[vfd-selftest] 执行 action=%s hz=%.1f\n", action, hz);
-    if (!self->m_provider) return;
+/**
+ * @brief 自测动作分发（一步）。
+ * @param self 页对象；action 动作名；hz 该步数值（Hz）。
+ */
+static void vfdSelfTestDoAction(HsfMonitorVfd* self, const char* action,
+                                double hz)
+{
+    if (!self || !action || !self->m_provider) return;
 
-    if (strcmp(action, "gate-on") == 0) {
-        XCheckBox_setChecked(&self->m_gate, true);
-        if (self->m_provider->setControlEnabled)
-            self->m_provider->setControlEnabled(self->m_provUser, true);
-        vfdApplyControlState(self);
-    } else if (strcmp(action, "gate-off") == 0) {
-        XCheckBox_setChecked(&self->m_gate, false);
-        if (self->m_provider->setControlEnabled)
-            self->m_provider->setControlEnabled(self->m_provUser, false);
-        vfdApplyControlState(self);
-    } else if (strcmp(action, "mode-auto") == 0) {
+    if (strcmp(action, "mode-auto") == 0) {
         HsfLinkClient_setRunMode(true);
     } else if (strcmp(action, "mode-manual") == 0) {
         HsfLinkClient_setRunMode(false);
     } else if (strcmp(action, "setfreq") == 0) {
         if (self->m_provider->setFrequency)
             self->m_provider->setFrequency(self->m_provUser, hz);
+    } else if (strcmp(action, "setfreq-ui") == 0) {
+        /* [走真实 UI 路径] 直接写滑块值 ⇒ 触发 valueChanged ⇒ 与用户拖动
+         * 完全同一条链（vfdSliderChanged → 实时下发防抖 → 下发）。
+         * 自测要验的正是这条链，故**不能**直接调 provider->setFrequency
+         * （那会绕过"实时生效"逻辑，等于没测）。 */
+        const int v10 = (int)(hz * 10.0 + 0.5);
+        XAbstractSlider_setValue((XAbstractSlider*)&self->m_setSlider, v10);
     } else if (strcmp(action, "start") == 0) {
         if (self->m_provider->start)
             self->m_provider->start(self->m_provUser,
-                                    XComboBox_currentIndex(&self->m_dirCombo) == 1);
+                                    XComboBox_currentIndex(&self->m_dirCombo) == 1,
+                                    hz);
     } else if (strcmp(action, "stop") == 0) {
         if (self->m_provider->stop) self->m_provider->stop(self->m_provUser);
     } else if (strcmp(action, "freestop") == 0) {
         if (self->m_provider->freeStop)
             self->m_provider->freeStop(self->m_provUser);
     } else if (strcmp(action, "jog") == 0) {
-        if (self->m_provider->jog) self->m_provider->jog(self->m_provUser, false);
+        if (self->m_provider->jog) self->m_provider->jog(self->m_provUser, false, hz);
     } else if (strcmp(action, "jog-hold") == 0) {
         /* 等价"按住"：走 pressed 槽（内含立即发送 + 启动心跳）。 */
         vfdJogPressedSlot((XObject*)&self->m_btnJog, NULL);
     } else if (strcmp(action, "jog-release") == 0) {
         vfdJogReleasedSlot((XObject*)&self->m_btnJog, NULL);
+    } else if (strcmp(action, "jog-click") == 0) {
+        /* [按钮级回归] 合成一次"按下+松开"：应看到「点动 rev=… sent=1」
+         * 紧跟「点动松开 → 释放」，且**释放之后不得再出现新的"点动"行**
+         * （那说明"开始点动"被挂在了 clicked 上 ⇒ 电机永远停不下来）。 */
+        vfdInjectClick((XWidget*)&self->m_btnJog);
     } else if (strcmp(action, "reset") == 0) {
         if (self->m_provider->resetFault)
             self->m_provider->resetFault(self->m_provUser);
     } else {
         XPrintf("[vfd-selftest] 未知 action: %s\n", action);
+    }
+}
+
+/**
+ * @brief 解析自测规格并**逐步执行**。
+ * @details 规格 = "动作[,数值]"，多步用 ';' 分隔：
+ *          `start,50;setfreq-ui,20` = 先以 50Hz 启动，1 秒后把滑块改到
+ *          20Hz（走真实 UI 路径 ⇒ 触发实时下发）。
+ *          多步是必需的：单步只能做一件事，而"运行中改给定"这类场景
+ *          天然是"先启动、再改"的时序。
+ */
+static void vfdRunSelfTest(HsfMonitorVfd* self)
+{
+    const char* spec = XSystem_environment("XHSF_VFD_SELFTEST");
+    const char* cur;
+
+    if (!self || !spec || !spec[0]) return;
+
+    cur = spec;
+    while (cur && *cur && self->m_ssCount < VFD_SELFTEST_MAX_STEPS) {
+        const char* sep = strchr(cur, ';');
+        const char* comma = strchr(cur, ',');
+        char action[32];
+        size_t n;
+        if (comma && sep && comma > sep) comma = NULL;
+        n = comma ? (size_t)(comma - cur) : strlen(cur);
+        if (n >= sizeof(action)) n = sizeof(action) - 1;
+        XMemcpy(action, cur, n);
+        action[n] = '\0';
+        XPrintf("[vfd-selftest] 登记步骤 %d：action=%s hz=%.1f\n",
+                self->m_ssCount, action, comma ? atof(comma + 1) : 0.0);
+        XMemcpy(self->m_ssAction[self->m_ssCount], action, n + 1);
+        self->m_ssHz[self->m_ssCount] = comma ? atof(comma + 1) : 0.0;
+        self->m_ssCount++;
+        if (!sep) break;
+        cur = sep + 1;
+    }
+    /* [只先跑第一步] 其余步骤由页节拍按秒推进（见 vfdSimTimerCb）——
+     * 多步之间必须有间隔："先启动、1 秒后再改给定"里，若第二步紧跟第一步
+     * 执行，设备还没进运行态（遥测滞后），实时下发会被跳过。 */
+    if (self->m_ssCount > 0) {
+        XPrintf("[vfd-selftest] 执行步骤 0：action=%s hz=%.1f\n",
+                self->m_ssAction[0], self->m_ssHz[0]);
+        vfdSelfTestDoAction(self, self->m_ssAction[0], self->m_ssHz[0]);
+        self->m_ssNext = 1;
+        self->m_ssNextMs = (int64_t)XDateTime_currentMSecsSinceEpoch() + 1000;
     }
 }
 
@@ -1297,6 +1849,8 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
             vfdInitCard(&self->m_cardBus, cardHost);
             vfdInitCard(&self->m_cardRpm, cardHost);
             vfdInitCard(&self->m_cardTorque, cardHost);
+            vfdInitCard(&self->m_cardSet, cardHost);
+            vfdInitCard(&self->m_cardFault, cardHost);
             grid = (XGridLayout*)XMemory_malloc(sizeof(XGridLayout),
                                                 XCLASS_DEFAULT_MEMORY_TYPE);
             if (grid) {
@@ -1307,6 +1861,9 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
                 XGridLayout_addWidget(grid, (XWidget*)&self->m_cardBus,   0, 1, 0);
                 XGridLayout_addWidget(grid, (XWidget*)&self->m_cardRpm,   1, 0, 0);
                 XGridLayout_addWidget(grid, (XWidget*)&self->m_cardTorque, 1, 1, 0);
+                /* 第三行：设定频率 + 故障（对齐 Python 读数项补全）。 */
+                XGridLayout_addWidget(grid, (XWidget*)&self->m_cardSet,   2, 0, 0);
+                XGridLayout_addWidget(grid, (XWidget*)&self->m_cardFault, 2, 1, 0);
                 XWidget_setLayout(cardHost, (XLayout*)grid);
             }
             XWidget_show(cardHost);
@@ -1320,35 +1877,85 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     XBoxLayout_addWidget(&self->m_gaugeRow, &self->m_gaugeVolt.m_canvas.m_base);
 
     /* ---- 区 3：给定行 ---- */
+    /* [调速方式] 频率调速 / 转速调速（对齐 Python 客户端）：给定值的单位
+     * 由它决定，转速只是频率的换算值（设备只接受频率通道）。 */
+    XComboBox_init(&self->m_speedMode, &self->m_base, 0);
+    HsfTheme_applyDefaultFont((XWidget*)&self->m_speedMode);
+    XComboBox_addItem_2(&self->m_speedMode,
+                        "\xE9\xA2\x91\xE7\x8E\x87\xE8\xB0\x83\xE9\x80\x9F"); /* 频率调速 */
+    XComboBox_addItem_2(&self->m_speedMode,
+                        "\xE8\xBD\xAC\xE9\x80\x9F\xE8\xB0\x83\xE9\x80\x9F"); /* 转速调速 */
+    /* [缺省调速方式 = 转速调速] 现场按"转速"下达工艺要求（给定 1440rpm
+     * 这类），频率是换算出来的中间量；缺省就落在转速上，需要频率时再切。
+     * 建页后会调一次 vfdApplySpeedMode（见建页尾），输入框的量程/后缀/
+     * 步进随这个缺省一起生效（0..额定rpm、步进 10）。 */
+    XComboBox_setCurrentIndex(&self->m_speedMode, VFD_SPEED_MODE_RPM);
+    XWidget_setFixedWidth((XWidget*)&self->m_speedMode, 104);
+    XWidget_show((XWidget*)&self->m_speedMode);
+    /* 换算说明（输出转速为频率换算值，额定点口径）。 */
+    XLabel_init(&self->m_speedNote, &self->m_base, 0);
+    HsfTheme_applyDefaultFont((XWidget*)&self->m_speedNote);
+    XLabel_setTextPixelSize(&self->m_speedNote, 11);
+    XLabel_setText_2(&self->m_speedNote, " ");
+    XWidget_setForegroundRole((XWidget*)&self->m_speedNote,
+                              XPaletteColorRole_Mid);
+    XWidget_show((XWidget*)&self->m_speedNote);
+    /* 调速方式切换槽（receiver=combo 自身，offsetof 反推页）。 */
+    XObject_connect_1((XObject*)&self->m_speedMode,
+                      XSignal(XComboBox_currentIndexChanged_signal),
+                      (XObject*)&self->m_speedMode, vfdSpeedModeSlot,
+                      XConnectionType_Direct);
+
     XLabel_init(&self->m_setLabel, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_setLabel);
     XLabel_setText_2(&self->m_setLabel,
                      "\xE9\xA2\x91\xE7\x8E\x87\xE7\xBB\x99\xE5\xAE\x9A"); /* 频率给定 */
     XLabel_setTextPixelSize(&self->m_setLabel, 13);
+    /* [固定宽] 滑块移走自己的行之后，给定行的空余宽度会被"可伸展"的
+     * 控件吃掉——标签按内容宽排的话，空隙就落在标签与输入框之间（观感：
+     * 控件被推散）。标签给固定宽（≈四字），多余空间交给末尾的换算说明。 */
+    XWidget_setFixedWidth((XWidget*)&self->m_setLabel, 72);
     XWidget_show((XWidget*)&self->m_setLabel);
 
     XSlider_init(&self->m_setSlider, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_setSlider);
     XAbstractSlider_setRange((XAbstractSlider*)&self->m_setSlider, 0, VFD_FREQ_MAX10);
+    /* [加高] 把手高度＝控件高−2 ⇒ 控件 48px ⇒ 把手 46px 高，触摸面
+     * 够大，现场手指能拖得动（原先挤在给定行里既窄又矮）。 */
+    XWidget_setFixedHeight((XWidget*)&self->m_setSlider, 48);
+    XWidget_setMinimumWidth((XWidget*)&self->m_setSlider, 240);
     XWidget_show((XWidget*)&self->m_setSlider);
 
     XSpinBox_init(&self->m_setSpin, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_setSpin);
-    XSpinBox_setRange(&self->m_setSpin, 0, VFD_FREQ_MAX10);
-    XSpinBox_setSingleStep(&self->m_setSpin, 5);   /* 0.5Hz 步进。 */
-    XSpinBox_setSuffix(&self->m_setSpin, " (0.1Hz)");
+    /* [量程/后缀/步进随调速方式走] 频率调速：0..额定Hz 步进 1；转速调速：
+     * 0..额定rpm 步进 10（见 vfdApplySpeedMode）。
+     * [单位] 输入框是**用户量纲**（Hz / rpm），不是滑块那种 0.1Hz 定点
+     * ——旧实现按定点给量程（0..500），界面于是能填出 500Hz（设备上限
+     * 只有 50Hz）。 */
+    XSpinBox_setRange(&self->m_setSpin, 0, (int)(VFD_RATED_HZ_DEF + 0.5));
+    XSpinBox_setSingleStep(&self->m_setSpin, 1);
+    XSpinBox_setSuffix(&self->m_setSpin, " Hz");
     XWidget_show((XWidget*)&self->m_setSpin);
 
-    XPushButton_init(&self->m_setApply, &self->m_base, 0);
-    HsfTheme_applyDefaultFont((XWidget*)&self->m_setApply);
-    XPushButton_setText_2(&self->m_setApply,
-                          "\xE4\xB8\x8B\xE5\x8F\x91"); /* 下发 */
-    XWidget_setFixedHeight((XWidget*)&self->m_setApply, 36);
-    XObject_connect_1((XObject*)&self->m_setApply,
-                      XSignal(XAbstractButton_clicked_signal),
-                      (XObject*)&self->m_setApply, vfdApplySlot,
-                      XConnectionType_Direct);
-    XWidget_show((XWidget*)&self->m_setApply);
+    /* [「下发」按钮已移除 —— 2026-11-06 用户口径] 运行中改频率/转速
+     * **实时生效**（vfdScheduleApply → 200ms 防抖后自动下发），停机态的
+     * 给定由启动命令捎带（vfdRunSlot）。多一个「下发」按钮反而让人以为
+     * 改完不点就不生效。 */
+    {
+        XTimer* t = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (t) {
+            XTimer_setInterval(t, VFD_APPLY_DEBOUNCE_MS);
+            /* [一次性] 框架定时器默认重复（Qt 同款）；不设 singleShot 就会
+             * 每 200ms 自己再跑一次 ⇒ 与遥测回写绞在一起（回写→改值→
+             * 再下发→回写…）。singleShot 的定时器触发后只停不删，可再
+             * 次 start（见 vfdScheduleApply 的 stop+start 重装）。 */
+            XTimer_setSingleShot(t, true);
+            XTimer_setTimerCallback(t, vfdApplyTimerCb);
+            XTimer_setUserData(t, self);
+            self->m_applyTimer = t;   /* 不 start：按需排（见 vfdScheduleApply） */
+        }
+    }
 
     /* ---- 区 4：操作行（方向下拉 + 启停双态钮 + 点动/复位条件使能；
        caps 裁剪在 vfdApplyControlState 随快照刷新） ---- */
@@ -1365,10 +1972,11 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     vfdInitBtn(&self->m_btnRun, &self->m_base,
                "\xE5\x90\xAF\xE5\x8A\xA8",              /* 启动（双态字随刷新翻） */
                vfdRunSlot);
-    vfdInitBtn(&self->m_btnJog, &self->m_base,
-               "\xE7\x82\xB9\xE5\x8A\xA8",              /* 点动 */
-               vfdJogPressedSlot);
-    /* 点动"按住生效"：额外接 pressed/released（vfdInitBtn 只连了 clicked）。 */
+    /* 点动"按住生效"：**不连 clicked**（松手时 clicked 会再启动一次点动，
+     * 电机就永远停不下来）——只接 pressed（开始）与 released（松手）。
+     * 见 vfdInitBtnNoClick 的注记。 */
+    vfdInitBtnNoClick(&self->m_btnJog, &self->m_base,
+                      "\xE7\x82\xB9\xE5\x8A\xA8");              /* 点动 */
     XObject_connect_1((XObject*)&self->m_btnJog,
                       XSignal(XAbstractButton_pressed_signal),
                       (XObject*)&self->m_btnJog, vfdJogPressedSlot,
@@ -1380,6 +1988,11 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     vfdInitBtn(&self->m_btnReset, &self->m_base,
                "\xE6\x95\x85\xE9\x9A\x9C\xE5\xA4\x8D\xE4\xBD\x8D", /* 故障复位 */
                vfdResetSlot);
+    /* [自由停车] 对齐 Python 客户端 btn_free（op=FREE_STOP）：立即断输出，
+     * 与"停止"（受控减速）是两种现场动作。 */
+    vfdInitBtn(&self->m_btnFree, &self->m_base,
+               "\xE8\x87\xAA\xE7\x94\xB1\xE5\x81\x9C\xE8\xBD\xA6", /* 自由停车 */
+               vfdFreeStopSlot);
     /* 远端后端：订阅模式应答并主动查一次初始模式。 */
     HsfLinkClient_setModeCallback(vfdModeNotify, self);
     if (HsfLinkClient_isOpen())
@@ -1428,21 +2041,9 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     XWidget_setFixedHeight((XWidget*)&self->m_trendView, VFD_TREND_H);
     XWidget_show((XWidget*)&self->m_trendView);
 
-    /* ---- 控制闸（并入给定行；不再单独占底行） ---- */
-    XCheckBox_init(&self->m_gate, &self->m_base, 0);
-    HsfTheme_applyDefaultFont((XWidget*)&self->m_gate);
-    XCheckBox_setText_2(&self->m_gate,
-                        "\xE5\x85\x81\xE8\xAE\xB8\xE7\x95\x8C\xE9\x9D\xA2\xE6\x93\x8D\xE4\xBD\x9C"); /* 允许界面操作 */
-    {
-        const HsfVfdProvider* p = self->m_provider;
-        bool on = p && p->controlEnabled ? p->controlEnabled(self->m_provUser) : false;
-        XCheckBox_setChecked(&self->m_gate, on);
-    }
-    XObject_connect_1((XObject*)&self->m_gate,
-                      XSignal(XAbstractButton_clicked_signal),
-                      (XObject*)&self->m_gate, vfdGateSlot,
-                      XConnectionType_Direct);
-    XWidget_show((XWidget*)&self->m_gate);
+    /* [控制闸复选框已移除] 2026-11-06：本地「允许界面操作」闸让现场必须
+     * 先勾选才能动变频器（观感=几乎无法控制），而 Python 客户端没有这层
+     * ——控制可用性只看全局模式（手动/自动）+ 连接态。统一到 Python 口径。 */
 
     XLabel_init(&self->m_hint, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_hint);
@@ -1466,18 +2067,31 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     }
     XBoxLayout_addLayout(&self->m_layout, (XLayout*)&self->m_gaugeRow);
     {
-        /* 给定行：标签 + 闸（允许界面操作）+ 滑块 + SpinBox + 下发。 */
+        /* 给定行：调速方式 + 标签 + SpinBox + 下发 + 换算说明。 */
         XHBoxLayout* row = (XHBoxLayout*)XMemory_malloc(sizeof(XHBoxLayout),
                                                         XCLASS_DEFAULT_MEMORY_TYPE);
         if (row) {
             XBoxLayout_init(row, XBoxLayoutDirection_LeftToRight);
             XLayout_setSpacing((XLayout*)row, 10);
+            XBoxLayout_addWidget(row, (XWidget*)&self->m_speedMode);
             XBoxLayout_addWidget(row, (XWidget*)&self->m_setLabel);
-            XBoxLayout_addWidget(row, (XWidget*)&self->m_gate);
-            XBoxLayout_addWidget(row, (XWidget*)&self->m_setSlider);
             XBoxLayout_addWidget(row, (XWidget*)&self->m_setSpin);
-            XBoxLayout_addWidget(row, (XWidget*)&self->m_setApply);
+            XBoxLayout_addWidget(row, (XWidget*)&self->m_speedNote);
             XBoxLayout_addLayout(&self->m_layout, (XLayout*)row);
+        }
+    }
+    {
+        /* 滑块**单独一行**（2026-11-06 用户实锅）：原先它与标签/输入框/
+         * 下发挤在同一行，只剩几十像素宽、又是细把手，现场手指根本拖不动
+         * 调速。独占一行 + 加高后：把手高度＝控件高−2，触摸面直接变大。 */
+        XHBoxLayout* sliderRow = (XHBoxLayout*)XMemory_malloc(sizeof(XHBoxLayout),
+                                                              XCLASS_DEFAULT_MEMORY_TYPE);
+        if (sliderRow) {
+            XBoxLayout_init(sliderRow, XBoxLayoutDirection_LeftToRight);
+            XLayout_setSpacing((XLayout*)sliderRow, 10);
+            XBoxLayout_addWidget(sliderRow, (XWidget*)&self->m_setSlider);
+            XBoxLayout_setStretch(sliderRow, 0, 1);
+            XBoxLayout_addLayout(&self->m_layout, (XLayout*)sliderRow);
         }
     }
     {
@@ -1491,11 +2105,25 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
             XBoxLayout_addWidget(opRow, (XWidget*)&self->m_btnRun);
             XBoxLayout_addWidget(opRow, (XWidget*)&self->m_btnJog);
             XBoxLayout_addWidget(opRow, (XWidget*)&self->m_btnReset);
+            XBoxLayout_addWidget(opRow, (XWidget*)&self->m_btnFree);
             XBoxLayout_addWidget(opRow, (XWidget*)&self->m_hint);
             XBoxLayout_addLayout(&self->m_layout, (XLayout*)opRow);
         }
     }
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_trendView);
+
+    /* ---- 建页即按当前调速方式摆一次输入框 ----
+     * [为什么建页就要做] vfdApplySpeedMode 负责"量程/后缀/步进/初值"，
+     * 原本只在用户切换下拉时才跑 ⇒ **首屏的输入框永远是频率模式的量纲**
+     * （后缀 Hz、量程 0..50Hz）；模式已是转速模式时，给定值会被量程夹回
+     * 上限（50Hz 显示成 50，而不是 1440rpm）。建页先摆一次，首屏就与
+     * 下拉显示的模式一致。
+     * [m_setDirty 必须清回 false] vfdApplySpeedMode 内部把"用户已改给定"
+     * 置位（切换模式后不该被遥测回写覆盖）；建页这一步不是用户动作，若
+     * 不清，遥测回写会被永久挡掉 ⇒ 输入框永远停在建页那一刻的半速缺省
+     * （720rpm），与设备实际给定量脱节。 */
+    vfdApplySpeedMode(self);
+    self->m_setDirty = false;
 
     /* ---- 模拟源驱动定时器（200ms；XTimer 独立对象，照 HsfNetworkPage 例） ---- */
     {
@@ -1523,7 +2151,6 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     /* ---- 交互模式登记：单页单实例；create 前的 setInteractiveMode
        意图在此生效（对齐 HsfMonitorDigital 的建页尾应用口径） ---- */
     self->m_autoMode = s_pendingAutoMode;
-    self->m_gateRemembered = XCheckBox_isChecked(&self->m_gate);
     s_vfdPage = self;
     /* 环境变量直驱（演示/自测外部门；对齐数字量页 XHSF_DIGITAL_AUTO）。 */
     if (XSystem_environment("XHSF_VFD_AUTO"))
@@ -1609,18 +2236,11 @@ void HsfMonitorVfd_setInteractiveMode(bool interactive)
     if (self->m_autoMode == autoMode) return;
     self->m_autoMode = autoMode;
     if (interactive) {
-        /* 退回手动：重显勾选框，闸值回到此前状态（用户/API 设定）。 */
-        XCheckBox_setChecked(&self->m_gate, self->m_gateRemembered);
-        XWidget_show((XWidget*)&self->m_gate);
+        /* 退回手动：恢复可控（闸由全局模式决定，无需用户勾选）。 */
         if (self->m_provider && self->m_provider->setControlEnabled)
-            self->m_provider->setControlEnabled(self->m_provUser,
-                                                self->m_gateRemembered);
+            self->m_provider->setControlEnabled(self->m_provUser, true);
     } else {
-        /* 进自动运行：闸强制关（真实链路在自动程序手里）+ 隐藏
-           勾选框（界面无从再开）。此前闸值先记忆，退手动时还原。 */
-        self->m_gateRemembered = XCheckBox_isChecked(&self->m_gate);
-        XCheckBox_setChecked(&self->m_gate, false);
-        XWidget_hide((XWidget*)&self->m_gate);
+        /* 进自动运行：闸强制关（真实链路在自动程序手里，服务端也会拒）。 */
         if (self->m_provider && self->m_provider->setControlEnabled)
             self->m_provider->setControlEnabled(self->m_provUser, false);
     }

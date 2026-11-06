@@ -637,8 +637,9 @@ typedef struct XTableWidget
     int16_t m_cellWidgetCapacity; /**< 挂载条目数组容量。 */
     uint16_t m_headerHeight;      /**< 水平表头高度（像素）。 */
     uint16_t m_headerWidth;       /**< 垂直表头宽度（像素）。 */
+    uint32_t m_vHeaderVisible : 1; /**< 垂直表头（行号列）可见；0=隐藏（单元格左移贴边）。 */
     uint32_t m_selectionChangedPending : 1; /**< 选区等待发射 itemSelectionChanged。 */
-    uint32_t m_tableWidgetFlagsUnused : 31; /**< 保留位；调用方不得依赖。 */
+    uint32_t m_tableWidgetFlagsUnused : 30; /**< 保留位；调用方不得依赖。 */
 } XTableWidget;
 
 /** @brief 初始化并返回本类虚函数表。 @return 单例虚函数表指针；调用方不得释放。 */
@@ -706,6 +707,19 @@ XAbstractItemModel* XTableWidget_model(const XTableWidget* self);
  *        被删条目直接 delete）。表头条目随之增删。
  */
 void XTableWidget_setRowCount(XTableWidget* self, int rows);
+
+/**
+ * @brief 显示/隐藏垂直表头（行号列）。
+ * @param self 目标表格控件；可为 NULL。
+ * @param visible true=显示行号列（缺省）；false=隐藏。
+ * @return 无。
+ * @details [对标 Qt] `QTableView::verticalHeader()->setVisible(false)`：
+ *          隐藏后**行号列整列不占宽**（单元格左移贴边），而不是留一条
+ *          空白的窄带。本实现此前把行号列画死在表体里（没有可见性开关），
+ *          想要"纯数据表"外观的页面（如 HSF 首页设备表）只能留着 1/2/3
+ *          行号列，与 Python 端的 `verticalHeader().setVisible(False)` 不一致。
+ */
+void XTableWidget_setVerticalHeaderVisible(XTableWidget* self, bool visible);
 
 /**
  * @brief 查询行数（对齐 `QTableWidget::rowCount`）。

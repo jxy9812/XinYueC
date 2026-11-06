@@ -38,6 +38,7 @@
 #include "XWidget_Protected.h"   /* XWidget_paintImage/paintOffset（自绘平移）。 */
 #include "XMemory.h"
 #include "XFont.h"
+#include "XColor.h"
 #if XVFD_ON
 #include "XVfdDevice.h"
 #endif
@@ -56,6 +57,11 @@
 #define HOME_CLR_WARN        0xFFED6C02u
 #define HOME_CLR_FAULT       0xFFC62828u
 #define HOME_CLR_OFFLINE     0xFF757575u
+
+/* 设备表观感（对齐 Python theme.TABLE_ROW_H 与 DataTable 的做法）。 */
+#define HOME_ROW_H           32   /**< 行高（px；Python theme.TABLE_ROW_H）。 */
+#define HOME_HEAD_H          34   /**< 表头高（px；行高 + 2px 分隔）。 */
+#define HOME_ALIGN_CENTER    XPAINTER_TEXT_ALIGN_CENTER  /**< 居中（Qt AlignCenter 口径）。 */
 
 /* ==================== 数值块 ==================== */
 
@@ -269,7 +275,8 @@ typedef struct HsfHomePage
     HsfStatBlock* m_devFault;  /**< 故障数。 */
     HsfStatBlock* m_devOff;    /**< 离线数。 */
     XLabel       m_devTitle;   /**< 「设备状态」小节标题。 */
-    XTableWidget m_table;      /**< 设备状态表（设备/类型/状态/说明）。 */
+    XTableWidget m_table;      /**< 设备状态表（设备/类型/状态/地址/错误信息）。 */
+    HsfHomeCard* m_tableCard;  /**< 表格所在卡片（对齐 Python 的 Card 包裹）。 */
     int          m_tableRows;  /**< 当前表格行数（避免每拍重建）。 */
     HsfMenuNavFn m_navFn;      /**< 导航回调。 */
     void*        m_navUserData;/**< 回调令牌。 */
@@ -301,37 +308,10 @@ typedef struct HsfHomePage
 #define HOME_TXT_NO_DATA    "\xE6\x97\xA0\xE6\x95\xB0\xE6\x8D\xAE"              /* 无数据 */
 #define HOME_TXT_DASH       "--"
 
-/* ---- 设备健康枚举中文（与服务端 HsfDeviceHealth 对齐） ---- */
-static const char* hsfHomeHealthText(int health)
-{
-    switch (health) {
-    case 0: return "\xE6\xAD\xA3\xE5\xB8\xB8";                     /* 正常 */
-    case 1: return "\xE5\x91\x8A\xE8\xAD\xA6";                     /* 告警 */
-    case 2: return "\xE6\x95\xB0\xE6\x8D\xAE\xE8\xBF\x87\xE6\x9C\x9F"; /* 数据过期 */
-    case 3: return "\xE7\xA6\xBB\xE7\xBA\xBF";                     /* 离线 */
-    case 4: return "\xE6\x95\x85\xE9\x9A\x9C";                     /* 故障 */
-    default: return "\xE6\x9C\xAA\xE7\x9F\xA5";                    /* 未知 */
-    }
-}
-
-/**
- * @brief 设备类别中文（与服务端 HsfDeviceKind / Python KIND_TEXT 对齐）。
- * @note  [实锅] 加电磁阀组时忘同步这张表，首页"类型"列直接显示"未知"。
- */
-static const char* hsfHomeKindText(int kind)
-{
-    switch (kind) {
-    case 0: return "\xE5\x8F\x98\xE9\xA2\x91\xE5\x99\xA8";        /* 变频器 */
-    case 1: return "\xE6\xB8\xA9\xE6\xB9\xBF\xE5\xBA\xA6";        /* 温湿度 */
-    case 2: return "\xE6\xB5\x81\xE9\x87\x8F\xE8\xAE\xA1";        /* 流量计 */
-    case 3: return "\xE6\xA8\xA1\xE6\x8B\x9F\xE9\x87\x8F";        /* 模拟量 */
-    case 4: return "485\xE6\x80\xBB\xE7\xBA\xBF";                  /* 485总线 */
-    case 5: return "\xE6\x95\xB0\xE5\xAD\x97\xE9\x87\x8F";        /* 数字量 */
-    case 6: return "\xE7\x94\xB5\xE7\xA3\x81\xE9\x98\x80";        /* 电磁阀 */
-    case 7: return "\xE6\xB0\xB4\xE8\xB4\xA8";                  /* 水质 */
-    default: return "\xE6\x9C\xAA\xE7\x9F\xA5";                    /* 未知 */
-    }
-}
+/* [设备健康/类别文案已提到 HsfLinkClient（首页与报警页共用）]
+ * HsfLinkClient_healthText() / HsfLinkClient_kindText() —— 原先这两张表是
+ * 本页的 static 函数，报警页要用就得复制一份（两处漂移过一次）⇒ 归到
+ * 链接层（协议枚举的文案与协议同源）。 */
 
 #if XVFD_ON
 /** @brief 变频器运行状态中文（与 Python RUN_STATE_TEXT 对齐）。 */
@@ -448,22 +428,72 @@ static void hsfHomeRefresh(HsfHomePage* self)
             /* [必须补 item] setRowCount 只增行不加格；不建 item 直接写文本会
              * 静默失败（表格空白）。行数变化时一次性建满，之后只改文本。 */
             for (i = 0; i < n; ++i) {
-                for (c = 0; c < 4; ++c) {
+                for (c = 0; c < 5; ++c) {
                     XTableWidgetItem* it = XTableWidgetItem_create_utf8("", 0);
-                    if (it) XTableWidget_setItem(&self->m_table, i, c, it);
+                    if (it) {
+                        XTableWidget_setItem(&self->m_table, i, c, it);
+                        /* [居中] Python 侧第 1 列之外全部居中
+                         * （item.setTextAlignment(Qt.AlignCenter)）。 */
+                        if (c > 0)
+                            XTableWidgetItem_setTextAlignment(it, HOME_ALIGN_CENTER);
+                        /* [隔行浅底] Python setAlternatingRowColors(True)
+                         * 的等价实现（框架无交替行色开关 ⇒ 逐格铺底色）。 */
+                        if (i % 2 == 1) {
+                            XColor bg;
+                            XColor_init_rgb(&bg, 0xF5, 0xF7, 0xFA, 0xFF);
+                            XTableWidgetItem_setBackground(it, &bg);
+                        }
+                    }
                 }
+                /* [行高 32] 对齐 Python theme.TABLE_ROW_H。 */
+                XTableView_setRowHeight(&self->m_table.m_base, i, HOME_ROW_H);
             }
+            /* [表格高度贴合行数] Python fit_to_content：表高跟内容走，
+             * 否则表格下方拖出一大块空白（页面看着很空）。 */
+            XWidget_setFixedHeight((XWidget*)&self->m_table,
+                                   HOME_HEAD_H + n * HOME_ROW_H);
         }
         for (i = 0; i < n; ++i) {
             XTableWidgetItem* it;
             it = XTableWidget_item(&self->m_table, i, 0);
             XTableWidgetItem_setText_utf8(it, devs[i].m_name[0] ? devs[i].m_name : "-");
             it = XTableWidget_item(&self->m_table, i, 1);
-            XTableWidgetItem_setText_utf8(it, hsfHomeKindText(devs[i].m_kind));
+            XTableWidgetItem_setText_utf8(it, HsfLinkClient_kindText(devs[i].m_kind));
             it = XTableWidget_item(&self->m_table, i, 2);
-            XTableWidgetItem_setText_utf8(it, hsfHomeHealthText(devs[i].m_health));
+            XTableWidgetItem_setText_utf8(it, HsfLinkClient_healthText(devs[i].m_health));
+            /* [状态上色] 对齐 Python：状态格按健康色着色
+             * （0 正常绿 / 1,2 告警橙 / 3 离线灰 / 4 故障红）。 */
+            {
+                uint32_t clr = HOME_CLR_TEXT;
+                if (devs[i].m_health == 0) clr = HOME_CLR_OK;
+                else if (devs[i].m_health == 1 || devs[i].m_health == 2) clr = HOME_CLR_WARN;
+                else if (devs[i].m_health == 3) clr = HOME_CLR_OFFLINE;
+                else if (devs[i].m_health == 4) clr = HOME_CLR_FAULT;
+                if (it) {
+                    XColor fg;
+                    /* [0xAARRGGBB 取色] 这批常量是 0xAARRGGBB（alpha 在最高
+                     * 字节），取 rgb 要 >>16 / >>8 / >>0——早先按 >>24 取红，
+                     * 结果"正常"显示成粉色（0xFF,0x2E,0x7D）。 */
+                    XColor_init_rgb(&fg, (int)((clr >> 16) & 0xFFu),
+                                    (int)((clr >> 8) & 0xFFu),
+                                    (int)(clr & 0xFFu), 0xFF);
+                    XTableWidgetItem_setForeground(it, &fg);
+                }
+            }
             it = XTableWidget_item(&self->m_table, i, 3);
-            XTableWidgetItem_setText_utf8(it, devs[i].m_text[0] ? devs[i].m_text : "-");
+            /* 地址（服务端下发；空显示 "-"）。 */
+            XTableWidgetItem_setText_utf8(it, devs[i].m_addr[0] ? devs[i].m_addr : "-");
+            it = XTableWidget_item(&self->m_table, i, 4);
+            /* 错误信息（Python 同款：一列装"错误码 或 说明文字"）。 */
+            if (devs[i].m_text[0]) {
+                XTableWidgetItem_setText_utf8(it, devs[i].m_text);
+            } else if (devs[i].m_error != 0) {
+                char eb[32];
+                snprintf(eb, sizeof(eb), "0x%04X", devs[i].m_error);
+                XTableWidgetItem_setText_utf8(it, eb);
+            } else {
+                XTableWidgetItem_setText_utf8(it, "-");
+            }
         }
         XWidget_update((XWidget*)&self->m_table);
     }
@@ -490,6 +520,11 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
     self->m_navFn = navFn;
     self->m_navUserData = userData;
     HsfTheme_applyDefaultFont(&self->m_base);
+    /* [页根横向铺满] 设备表要放下"COM17 · 115200 · 站 2"这类地址，页根若按
+     * 内容宽度（Preferred）收缩，表格就被挤在左侧、右侧大片留白。 */
+    XWidget_setSizePolicy((XWidget*)&self->m_base,
+                          XWidgetSizePolicy_Expanding,
+                          XWidgetSizePolicy_Preferred);
 
     /* ---- 页内垂直布局 ---- */
     XBoxLayout_init(&self->m_layout, XBoxLayoutDirection_TopToBottom);
@@ -622,26 +657,75 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
     XWidget_show((XWidget*)&self->m_devTitle);
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_devTitle);
 
-    XTableWidget_init(&self->m_table, &self->m_base, 0);
-    XTableWidget_setColumnCount(&self->m_table, 4);
+    /* [表格放进卡片] 对齐 Python：设备表是装在 Card 里的（Card() + add(
+     * table)），C 端原先裸放在页面上 ⇒ 与上方三张统计卡不是一个体系，
+     * 看着像"贴上去的表格"。卡片必须**先建**（表是它的子控件：XLayout
+     * addWidget 不会改父子关系）。 */
+    self->m_tableCard = hsfCardCreate(&self->m_base, NULL);
+    XTableWidget_init(&self->m_table,
+                      self->m_tableCard ? (XWidget*)&self->m_tableCard->m_base
+                                        : &self->m_base,
+                      0);
+    /* [表格横向铺满] 地址列要放得下"COM17 · 115200 · 站 2"，故表格本身
+     * 必须吃掉整行宽度（否则各列按内容宽度排完、右侧留白，地址被挤成
+     * 省略号）。 */
+    XWidget_setSizePolicy((XWidget*)&self->m_table,
+                          XWidgetSizePolicy_Expanding, XWidgetSizePolicy_Preferred);
+    /* [5 列：设备/类型/状态/地址/错误信息] 与 Python 首页设备表**同列**
+     * （Python 的 DataTable.setColumnCount(5) + 表头同款）。C 端原先多一
+     * 列「说明」，把"错误码"与"说明"分了两列：Python 的「错误信息」列
+     * 装的是**文字**（d.text），错误码根本没进表 ⇒ 两端列数/列义对不上。
+     * 这里合并成一列：优先文字，无文字时退到错误码，都没有显示 "-"。 */
+    XTableWidget_setColumnCount(&self->m_table, 5);
     {
-        static const char* const kHeaders[4] = {
+        static const char* const kHeaders[5] = {
             "\xE8\xAE\xBE\xE5\xA4\x87",   /* 设备 */
             "\xE7\xB1\xBB\xE5\x9E\x8B",   /* 类型 */
             "\xE7\x8A\xB6\xE6\x80\x81",   /* 状态 */
-            "\xE8\xAF\xB4\xE6\x98\x8E"    /* 说明 */
+            "\xE5\x9C\xB0\xE5\x9D\x80",   /* 地址 */
+            "\xE9\x94\x99\xE8\xAF\xAF\xE4\xBF\xA1\xE6\x81\xAF" /* 错误信息 */
         };
-        XTableWidget_setHorizontalHeaderLabels(&self->m_table, kHeaders, 4);
+        XTableWidget_setHorizontalHeaderLabels(&self->m_table, kHeaders, 5);
     }
     XTableWidget_setRowCount(&self->m_table, 0);
     self->m_tableRows = 0;
     {
-        /* 列宽 Stretch：各列均分、随窗口拉伸（对标 Qt QHeaderView::Stretch）。 */
+        /* 列宽策略：**固定像素宽**（对齐 Python 的列权重 4:2:2:7:5）。
+         * [为什么不用 Stretch] 表格的 Stretch 模式按列数**均分**可视宽
+         *   （xtw_stretchColumnsToViewport），5 列 × 178px 会把地址
+         *   "COM17 · 115200 · 站 2" 挤成省略号——而地址恰是排障最需要的
+         *   那一列；且列宽的事实源是 m_colWidths（须经
+         *   XTableView_setColumnWidth 写），只改 header 不生效。
+         *   Python 的权重也是按"可用宽 × 权重"算的（DataTable.
+         *   set_column_weights），此处按同一比例给固定像素。 */
         XHeaderView* hh = XTableView_horizontalHeader(&self->m_table.m_base);
-        if (hh) XHeaderView_setSectionResizeMode(hh, XHeaderViewResizeMode_Stretch);
+        if (hh)
+            XHeaderView_setSectionResizeMode(hh, XHeaderViewResizeMode_Fixed);
+        XTableView_setColumnWidth(&self->m_table.m_base, 0, 150);  /* 设备 */
+        XTableView_setColumnWidth(&self->m_table.m_base, 1, 85);   /* 类型 */
+        XTableView_setColumnWidth(&self->m_table.m_base, 2, 80);   /* 状态 */
+        /* 地址：最宽（按钮组那行是"192.168.0.13:502 · DI12~DI15 · DO7~DO9"，
+         * 38 字符；窄了就截成"DO…"，排障时正是这一段要抄给维修）。 */
+        XTableView_setColumnWidth(&self->m_table.m_base, 3, 330);
+        XTableView_setColumnWidth(&self->m_table.m_base, 4, 265);  /* 错误信息 */
     }
+    /* [表格观感对齐 Python] ①无网格线（Python setShowGrid(False)）
+     *   ②隔行浅底（Python setAlternatingRowColors(True)）
+     *   ③行高 32px（Python theme.TABLE_ROW_H）
+     *   ④不显示行号列（Python verticalHeader().setVisible(False)）
+     * 四条都影响"看起来像不像同一套界面"，逐条对齐。 */
+    XTableView_setShowGrid(&self->m_table.m_base, false);
+    /* [不显示行号列] 对齐 Python verticalHeader().setVisible(False)。 */
+    XTableWidget_setVerticalHeaderVisible(&self->m_table, false);
     XWidget_show((XWidget*)&self->m_table);
-    XBoxLayout_addWidgetEx(&self->m_layout, (XWidget*)&self->m_table, 1, 0);
+    if (self->m_tableCard) {
+        XBoxLayout_addWidget(&self->m_tableCard->m_body, (XWidget*)&self->m_table);
+        XBoxLayout_addStretch(&self->m_tableCard->m_body, 0);
+        XBoxLayout_addWidgetEx(&self->m_layout,
+                               (XWidget*)&self->m_tableCard->m_base, 1, 0);
+    } else {
+        XBoxLayout_addWidgetEx(&self->m_layout, (XWidget*)&self->m_table, 1, 0);
+    }
     XBoxLayout_addStretch(&self->m_layout, 0);
 
     /* ---- 首拍刷新（避免开局全 "--" 到下一拍） ---- */

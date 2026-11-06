@@ -13,6 +13,15 @@
 # Test/XIndustryTest/ 去 main 收编进主程序（--test xindustry-valve /
 # xindustry-modbus + 测试菜单「工业」域，XModbusHubTest 同款），本模块
 # 回归纯库目标。
+#
+# [2026-11-06 收编工业协议子集] 原 Src/XCore/XProtocol 下的 **XModbus /
+# XCan / PLC** 三个工业协议子目录迁入本模块（与 XChannel/XVfd 等工业设备
+# 同层：协议与设备同属工业域）。通用通信协议（XLink 传输层、XPoll、XMqtt、
+# XFtp、XHttp、XNtp、XDdns、XSsh、XTelnet）仍留 XCore/XProtocol——它们是
+# 框架级能力，不属工业域。依赖方向不变：Industry → XCore（单向，无环）。
+# 三协议的裁剪开关（XMODBUS_ON / XCAN_ON / XPLC_ON）仍在
+# XCore/XProtocol/XProtocol_config.h 集中托管（XIndustry_config.h 已显式
+# 包含该文件，派生关系不变），此处不重复定义。
 
 # 收集源文件（模块只含自己的头/源；测试已在 Test 模块）
 file(GLOB_RECURSE INDUSTRY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/*.c")
@@ -36,7 +45,11 @@ target_include_directories(XinYueIndustry PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/XTurbidity"
     "${CMAKE_CURRENT_SOURCE_DIR}/XButtonStation"
     "${CMAKE_CURRENT_SOURCE_DIR}/XAutoControl"
-    "${CMAKE_CURRENT_SOURCE_DIR}/XAccessControl")
+    "${CMAKE_CURRENT_SOURCE_DIR}/XAccessControl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XModbus"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XCan"
+    "${CMAKE_CURRENT_SOURCE_DIR}/PLC"
+    "${CMAKE_CURRENT_SOURCE_DIR}/PLC/S7")
 
 # ---- 头目录导出清单（抬升父作用域，根在 Test 模块注册前落地）----
 # [2026-11-01 模块化拆分收口] 与 XCore/Drive/XGui 同款：模块自持头目录清单
@@ -61,6 +74,10 @@ set(INCLUDE_INDUSTRY_LIST_LIFT
     "${CMAKE_CURRENT_SOURCE_DIR}/XButtonStation"
     "${CMAKE_CURRENT_SOURCE_DIR}/XAutoControl"
     "${CMAKE_CURRENT_SOURCE_DIR}/XAccessControl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XModbus"
+    "${CMAKE_CURRENT_SOURCE_DIR}/XCan"
+    "${CMAKE_CURRENT_SOURCE_DIR}/PLC"
+    "${CMAKE_CURRENT_SOURCE_DIR}/PLC/S7"
     PARENT_SCOPE)
 
 # ---- 主库反向边（环依赖） ----

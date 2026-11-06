@@ -41,8 +41,54 @@ static void hsfWinHealthNotify(void* userData);
 
 /* 前置声明：数字量/模拟量/电磁阀页回调（实现见文件后部，建窗时注册）。
  * [必须在 include 之后] 形参用到 HsfDigitalState 等页面类型。 */
+/**
+ * @brief 水质块数据桥：浊度仪推送 → 灌页面。
+ * @note  NTU 是线上定点整数 ×100（协议层口径），显示前 ÷100。
+ */
+static void hsfWinTurbSync(void* userData)
+{
+    const HsfLinkTurbiditySet* t = HsfLinkClient_turbidity();
+    int i;
+    (void)userData;
+    if (!t) return;
+    for (i = 0; i < t->m_count; ++i) {
+        HsfMonitorFlowMeter_setTurbidity(i, t->m_items[i].m_name,
+                                         (double)t->m_items[i].m_ntu100 / 100.0,
+                                         t->m_items[i].m_online);
+    }
+}
+
+/**
+ * @brief 水质块数据桥：泵推送 → 灌页面。
+ */
+static void hsfWinPumpSync(void* userData)
+{
+    const HsfLinkPumps* p = HsfLinkClient_pumps();
+    int i;
+    (void)userData;
+    if (!p) return;
+    for (i = 0; i < p->m_count; ++i) {
+        HsfMonitorFlowMeter_setPump(p->m_items[i].m_name, p->m_items[i].m_on,
+                                    p->m_items[i].m_ready, p->m_items[i].m_text);
+    }
+}
+
+/**
+ * @brief 泵控制出口（启动/停止）。
+ * @note  泵无反馈：命令已发出即显示命令状态（页上有常驻说明）。
+ */
+static void hsfWinPumpWrite(void* userData, bool on)
+{
+    (void)userData;
+    HsfLinkClient_pumpControl(0, on);
+}
+
 static void hsfWinValveSync(void* userData);
+static void hsfWinTurbSync(void* userData);
+static void hsfWinPumpSync(void* userData);
+static void hsfWinPumpWrite(void* userData, bool on);
 static void hsfWinValveWrite(void* userData, int index, bool wantOpen);
+static void hsfWinValveAlarm(void* userData, const HsfLinkValveAlarm* alarm);
 static void hsfWinCommandResult(void* userData, int op, bool ok,
                                 const char* errUtf8);
 static void hsfWinDigitalSync(void* userData);
@@ -93,16 +139,16 @@ static const HsfPageCreateFn kHsfBuilders[HSF_PAGE_COUNT] = {
     HsfMonitorVfd_create,      /* 5  监视-变频器 */
     HsfMonitorFlowMeter_create,/* 6  监视-电磁流量计（与变频器同级） */
     HsfMonitorValve_create,    /* 7  监视-电磁阀 */
-    HsfDataMenu_create,        /* 7  数据 子菜单 */
-    HsfDataHistory_create,     /* 8  数据-历史数据 */
-    HsfDataLog_create,         /* 9  数据-日志 */
-    HsfDataAlarm_create,       /* 10 数据-报警 */
-    HsfSettingsMenu_create,    /* 11 设置 子菜单 */
-    HsfSettingsLocal_create,   /* 12 设置-本地设置 */
-    HsfSettingsRemote_create,  /* 13 设置-远端设置 */
-    HsfNetworkPage_create,     /* 14 设置-网络设置（移植） */
-    HsfOverlayPage_create,     /* 15 设置-悬浮窗设置（移植） */
-    HsfWindowPage_create       /* 16 设置-窗口设置（移植） */
+    HsfDataMenu_create,        /* 8  数据 子菜单 */
+    HsfDataHistory_create,     /* 9  数据-历史数据 */
+    HsfDataLog_create,         /* 10 数据-日志 */
+    HsfDataAlarm_create,       /* 11 数据-报警 */
+    HsfSettingsMenu_create,    /* 12 设置 子菜单 */
+    HsfSettingsLocal_create,   /* 13 设置-本地设置 */
+    HsfSettingsRemote_create,  /* 14 设置-远端设置 */
+    HsfNetworkPage_create,     /* 15 设置-网络设置（移植） */
+    HsfOverlayPage_create,     /* 16 设置-悬浮窗设置（移植） */
+    HsfWindowPage_create       /* 17 设置-窗口设置（移植） */
 };
 
 /* ---- 形态/导航度量（单一事实源） ---- */
@@ -140,20 +186,22 @@ static void hsfAdaptWindow(XWidget* page, bool compact)
 /** 页级 adapt 表（按页索引；NULL=该页无需自适应）。 */
 static const HsfPageAdaptFn kHsfPageAdapt[HSF_PAGE_COUNT] = {
     HsfHomePage_adapt,   /* 0  主界面（横屏一行/竖屏一列） */
-    NULL, NULL,
+    NULL, NULL,          /* 1 主菜单 / 2 监视子菜单（菜单页无分档） */
     HsfMonitorDigital_adapt, /* 3 监视-数字量（竖屏窄列/触控高/顶行堆叠） */
     HsfMonitorAnalog_adapt,  /* 4 监视-模拟量（竖屏窄列/触控高） */
     HsfMonitorVfd_adapt, /* 5  监视-变频器（仪表横排/纵排） */
-    HsfMonitorFlowMeter_adapt, /* 6 监视-电磁流量计（仪表横排/纵排） */
-    HsfMonitorValve_adapt,     /* 7 监视-电磁阀（3 列/1 列） */
-    NULL,
-    HsfDataTablePage_adapt, /* 8  数据-历史数据（竖屏收边距） */
-    HsfDataTablePage_adapt, /* 9  数据-日志（竖屏收边距） */
-    HsfDataTablePage_adapt, /* 10 数据-报警（竖屏收边距） */
-    NULL, NULL,
-    hsfAdaptNetwork,     /* 14 网络设置 */
-    hsfAdaptOverlay,     /* 15 悬浮窗设置 */
-    hsfAdaptWindow       /* 16 窗口设置 */
+    HsfMonitorFlowMeter_adapt, /* 6  监视-电磁流量计（仪表横排/纵排） */
+    HsfMonitorValve_adapt,     /* 7  监视-电磁阀（3 列/1 列） */
+    NULL,                /* 8  数据子菜单 */
+    HsfDataHistory_adapt,/* 9  数据-历史数据（自建根结构，竖屏收边距） */
+    HsfDataTablePage_adapt, /* 10 数据-日志（HsfDataTablePage） */
+    HsfDataAlarm_adapt,  /* 11 数据-报警（自建根结构，竖屏收边距） */
+    NULL,                /* 12 设置子菜单 */
+    HsfSettingsLocal_adapt, /* 13 设置-本地设置（自建根结构，竖屏收边距） */
+    NULL,                /* 14 设置-远端设置（固定五卡，无窄宽分档） */
+    hsfAdaptNetwork,     /* 15 设置-网络设置（移植页） */
+    hsfAdaptOverlay,     /* 16 设置-悬浮窗设置（移植页） */
+    hsfAdaptWindow       /* 17 设置-窗口设置（移植页） */
 };
 
 /** 移植页在页索引中的起始位置（= HSF_PAGE_SETTINGS_NETWORK）。 */
@@ -208,9 +256,10 @@ typedef struct HsfWin
     const char*  m_shotPath;       /**< 离屏截图输出路径（NULL=不截图）。 */
     XTimerId     m_shotTimer;      /**< 截图定时器（渲染数帧后出图）。 */
     int          m_shotWaitTicks;  /**< 截图前等待遥测的轮询计数（上限兜底）。 */
-    int          m_subTopic;       /**< 当前已订阅的数据主题（HsfLinkTopic；
+    uint32_t     m_subTopics;      /**< 当前已订阅的数据主题**集合**（位掩码；
                                     *   -1=无：当前页不吃遥测）。 */
     XTimerId     m_cycleTimer;     /**< 页轮转自测定时器（按需订阅验证用）。 */
+    XTimerId     m_valveSelfTestTimer; /**< 阀自测定时器（XHSF_VALVE_SELFTEST）。 */
     int          m_cyclePage;      /**< 轮转中的当前页。 */
 } HsfWin;
 
@@ -285,14 +334,23 @@ static void hsf_overlayAnchor(HsfWin* self)
  *        刷新（服务端不再投递）。顶栏/状态栏用的温湿度与设备健康是
  *        常驻主题（不在此表，由 HsfLinkClient 连接期恒订阅）。
  */
-static int hsf_pageTopicOf(int pageIndex)
+static uint32_t hsf_pageTopicMask(int pageIndex)
 {
     switch (pageIndex) {
-    case HSF_PAGE_MONITOR_VFD:       return (int)HsfLinkTopic_Vfd;
-    case HSF_PAGE_MONITOR_ANALOG:    return (int)HsfLinkTopic_Ai;
-    case HSF_PAGE_MONITOR_FLOWMETER: return (int)HsfLinkTopic_FlowMeter;
-    case HSF_PAGE_MONITOR_VALVE:     return (int)HsfLinkTopic_Valve;
-    default:                         return -1;
+    case HSF_PAGE_MONITOR_VFD:       return 1u << (int)HsfLinkTopic_Vfd;
+    case HSF_PAGE_MONITOR_ANALOG:    return 1u << (int)HsfLinkTopic_Ai;
+    /* [水质监测页三主题] 流量计 + 浊度仪 + 泵同属一条工艺链，放一页看
+     *  （对齐 Python 客户端的「水质监测」页）。位掩码模型支持一页多主题。 */
+    case HSF_PAGE_MONITOR_FLOWMETER:
+        return (1u << (int)HsfLinkTopic_FlowMeter) |
+               (1u << (int)HsfLinkTopic_Turbidity) |
+               (1u << (int)HsfLinkTopic_Pump);
+    case HSF_PAGE_MONITOR_VALVE:     return 1u << (int)HsfLinkTopic_Valve;
+    /* [数字量页补订阅] 原先该页只在连接期拉一次快照 + 控制应答时刷新，
+     * 页面停留期间看不到实时变化（DO 被现场按钮改动时界面不动）。订阅
+     * 数字量主题后随推送实时刷新（服务端 200ms 一拍）。 */
+    case HSF_PAGE_MONITOR_DIGITAL:   return 1u << (int)HsfLinkTopic_Digital;
+    default:                         return 0;
     }
 }
 
@@ -303,16 +361,24 @@ static int hsf_pageTopicOf(int pageIndex)
  */
 static void hsf_pageTopicSwitch(HsfWin* self, int index)
 {
-    const int next = hsf_pageTopicOf(index);
+    const uint32_t next = hsf_pageTopicMask(index);
+    const uint32_t cur = self->m_subTopics;
+    int i;
     if (!self) return;
-    if (next == self->m_subTopic) return;
-    if (self->m_subTopic >= 0)
-        HsfLinkClient_unsubscribe((HsfLinkTopic)self->m_subTopic);
-    if (next >= 0) {
-        if (!HsfLinkClient_subscribe((HsfLinkTopic)next))
-            XPrintf("HsfClient: 页面主题订阅未生效（未登录？page=%d）\n", index);
+    if (next == cur) return;
+    /* 位掩码模型：一页可同时订阅多个主题（退订旧集合 → 订阅新集合；
+     * 逐主题走引用计数，重复进入同一页不重复加减）。 */
+    for (i = 0; i < (int)HsfLinkTopic_Count; ++i) {
+        const uint32_t bit = 1u << i;
+        if ((cur & bit) && !(next & bit))
+            HsfLinkClient_unsubscribe((HsfLinkTopic)i);
+        else if (!(cur & bit) && (next & bit)) {
+            if (!HsfLinkClient_subscribe((HsfLinkTopic)i))
+                XPrintf("HsfClient: 页面主题订阅未生效（未登录？page=%d topic=%d）\n",
+                        index, i);
+        }
     }
-    self->m_subTopic = next;
+    self->m_subTopics = next;
 }
 
 /** @brief 切页：堆叠当前页 + 标题栏标题 + 状态栏文本 + 导航高亮。 */
@@ -355,8 +421,19 @@ static void hsf_goPage(HsfWin* self, int index)
     for (i = 0; i < HSF_PAGE_COUNT; ++i) {    
     if (self->m_pageRoot[i] && kHsfPageAdapt[i])            kHsfPageAdapt[i](self->m_pageRoot[i], compact);
     }}
-/* ---- 形态策略（宽屏/竖屏） ---- *//** @brief 当前形态：0=宽屏（侧栏停靠）1=紧凑（竖屏，强制收侧栏）。 */static int hsf_layoutModeOf(HsfWin* self){
-    if (!self) return 0;    return (XWidget_width(&self->m_base) < HSF_COMPACT_MAX_W) ? 1 : 0;}
+/* ---- 形态策略（宽屏/竖屏） ---- */
+/* [本地设置·强制紧凑档] -1=跟随窗口宽度自动判定（缺省）；1=强制窄档。
+ * 本地设置页「紧凑模式」开关写 1/解除写 -1（Display/Compact 键持久化，
+ * 主窗装配时恢复）。0 无语义（不提供「强制宽屏」）。 */
+static int s_forceCompact = -1;
+/** @brief 活动主窗（本地设置页翻转形态档后即时生效用；单窗应用）。 */
+static HsfWin* s_activeWin = NULL;
+
+/** @brief 当前形态：0=宽屏（侧栏停靠）1=紧凑（竖屏，强制收侧栏）。 */
+static int hsf_layoutModeOf(HsfWin* self){
+    if (!self) return 0;
+    if (s_forceCompact >= 0) return s_forceCompact;
+    return (XWidget_width(&self->m_base) < HSF_COMPACT_MAX_W) ? 1 : 0;}
 /** @brief 导航面板尺寸意图重申（setSizes 为 px 意图；每轮重申防漂移）。 */static void hsf_navApplySizes(HsfWin* self){
     int total;
     int navSize;
@@ -387,6 +464,13 @@ static void hsf_goPage(HsfWin* self, int index)
     if (back < 0 || back >= HSF_PAGE_COUNT || back == HSF_PAGE_MENU)            back = HSF_PAGE_HOME;        hsf_goPage(self, back);
     }    hsf_navApplySizes(self);
     /* 形态切换 → 移植页宽度跨档 → 重新分档（竖屏适配）。 */    hsf_adaptPages(self);    hsf_fullRepaint(self);    XPrintf("HsfClient: layout mode=%d (%s)\n", mode,            mode == 1 ? "紧凑/竖屏" : "宽屏\n");
+}
+
+void HsfUi_setForceCompact(bool on)
+{
+    s_forceCompact = on ? 1 : -1;
+    if (s_activeWin && s_activeWin->m_uiReady)
+        hsf_layoutModeUpdate(s_activeWin); /* 内含重分档/导航/整窗重绘。 */
 }
 
 /** @brief ☰ 回调：宽屏=折叠/展开左侧导航面板；紧凑=开合主菜单页。 */
@@ -552,6 +636,24 @@ static void VHsfWin_timerEvent(XObject* object, XTimerEvent* event)
         XEvent_accept((XEvent*)event);
         return;
     }
+    /* [阀自测钩子] 到点开阀一次（用于无人值守取证"卡死阀 20s 超时
+     * 告警"这类需等待的现场事件）。用**对象自带定时器**（项目裁定：
+     * 业务对象内部拍子走 XObject 定时器，不用独立 XTimer 实例）。 */
+    if (self->m_valveSelfTestTimer != XTIMER_INVALID_ID &&
+        XTimerEvent_timerId(event) == self->m_valveSelfTestTimer) {
+        XObject_killTimer((XObject*)self, self->m_valveSelfTestTimer);
+        self->m_valveSelfTestTimer = XTIMER_INVALID_ID;
+        {
+            const char* spec = XSystem_environment("XHSF_VALVE_SELFTEST");
+            int index = 0;
+            if (spec && strncmp(spec, "open:", 5) == 0) index = atoi(spec + 5);
+            XPrintf("[valve-selftest] 开阀 路号=%d\n", index);
+            HsfLinkClient_valveControl(index, true);
+        }
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+
     if (XTimerEvent_timerId(event) == self->m_autoQuitTimer) {
         if (self->m_autoQuitTimer != XTIMER_INVALID_ID) {
             XObject_killTimer((XObject*)self, self->m_autoQuitTimer);
@@ -928,12 +1030,13 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     self->m_clockTimer = XTIMER_INVALID_ID;
     self->m_shotTimer = XTIMER_INVALID_ID;
     self->m_cycleTimer = XTIMER_INVALID_ID;
+    self->m_valveSelfTestTimer = XTIMER_INVALID_ID;
     self->m_autoSeconds = (autoSeconds > 0) ? autoSeconds : 0;
     self->m_shotPath = shotPath;
     self->m_navWidth = HSF_NAV_DEFAULT_W;
     self->m_layoutMode = -1; /* 首次必触发形态判定。 */
     self->m_pageBeforeMenu = HSF_PAGE_HOME;
-    self->m_subTopic = -1;   /* 尚无页面订阅（0 是合法主题号，必须显式置 -1）。 */
+    self->m_subTopics = 0;   /* 尚无页面订阅（位掩码 0=无）。 */
     self->m_lastFrameUsecs = 0;
     self->m_lastPaintUsecs = 0;
     self->m_overlayAnchorW = 0;
@@ -964,6 +1067,7 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     HsfLinkClient_setHealthCallback(hsfWinHealthNotify, self);
     /* 电磁阀：快照到达即灌页面（含控制闸重算）；按钮出口走同一链路。 */
     HsfLinkClient_setValveCallback(hsfWinValveSync, self);
+    HsfLinkClient_setValveAlarmCallback(hsfWinValveAlarm, self);
     HsfLinkClient_setCommandCallback(hsfWinCommandResult, self);
     HsfMonitorValve_setWriteHandler(hsfWinValveWrite, self);
     /* 数字量/模拟量：点数与值全部由服务端推送决定（客户端不写死）。 */
@@ -971,6 +1075,10 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     HsfLinkClient_setAiCallback(hsfWinAnalogSync, self);
     HsfMonitorDigital_setWriteHandler(hsfWinDigitalWrite, self);
     HsfMonitorValve_attachStatus(HsfPages_setStatus, self);
+    /* 水质块（浊度 + 泵）：与服务端同主题推送，页面只做呈现。 */
+    HsfLinkClient_setTurbidityCallback(hsfWinTurbSync, self);
+    HsfLinkClient_setPumpCallback(hsfWinPumpSync, self);
+    HsfMonitorFlowMeter_setPumpWriteHandler(hsfWinPumpWrite, self);
     HsfLinkClient_queryRunMode();
     HsfTitleBar_setMenuHandler(&self->m_titleBar, hsf_menuToggleCb, self);
 
@@ -1130,6 +1238,10 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
 
     /* 形态初判（宽/窄）+ 导航尺寸初申——**必须在 show 之后**：show 递归
      * 显示子树，先前隐藏的紧凑态侧栏会被重新显示出来（竖屏侧栏不隐）。 */
+    /* [本地设置·强制紧凑档恢复] 须在形态初判前读键（-1=跟随自动）。
+     * XGuiWindowDemo 同款时机：窗口句柄/几何就绪、尚未进事件循环。 */
+    s_forceCompact = HsfSettingsStore_getInt("Display/Compact", -1);
+    if (s_forceCompact < 0 || s_forceCompact > 1) s_forceCompact = -1;
     hsf_layoutModeUpdate(self);
     hsf_navApplySizes(self);
     hsf_adaptPages(self);
@@ -1165,11 +1277,21 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
                             (shotHeight > 0) ? shotHeight : defH);
         /* 离屏截图延迟：已登录（--login 无头）要多等首推——服务端温湿度
          * 推送周期 HSF_TEMPHUM_PUSH_MS=1s，加连接/认证/首帧渲染；离线
-         * （--no-login）路径无网络等待，维持原 1200ms。 */
-        self->m_shotTimer = XObject_startTimer_ms(
-            (XObject*)self,
-            HsfLinkClient_isOpen() ? 3000u : 1200u,
-            XTimerType_CoarseTimer);
+         * （--no-login）路径无网络等待，维持原 1200ms。
+         * [XHSF_SHOT_DELAY_MS] 额外延时（毫秒）：用于等"稍后才发生"的现场
+         * 事件再取证（如阀超时告警 20s 后才到）——否则截图总是抢在事件前。 */
+        {
+            const char* delayEnv = getenv("XHSF_SHOT_DELAY_MS");
+            unsigned extraMs = 0;
+            if (delayEnv && delayEnv[0]) {
+                long v = strtol(delayEnv, NULL, 10);
+                if (v > 0 && v < 600000L) extraMs = (unsigned)v;
+            }
+            self->m_shotTimer = XObject_startTimer_ms(
+                (XObject*)self,
+                (HsfLinkClient_isOpen() ? 3000u : 1200u) + extraMs,
+                XTimerType_CoarseTimer);
+        }
         if (self->m_shotTimer == XTIMER_INVALID_ID) {
             XPrintf("HsfClient: 截图定时器创建失败\n");
         }
@@ -1204,9 +1326,14 @@ static void hsfWinModeNotify(void* userData)
     HsfWin* win = (HsfWin*)userData;
     int autoMode = 0;
     bool known;
+    int running = -1;
     if (!win) return;
     known = HsfLinkClient_runMode(&autoMode);
     HsfTitleBar_setRunMode(&win->m_titleBar, known, autoMode == 1);
+    /* 自动运行状态片（"自动模式"≠"控制器在跑"；服务端未上报时显示未知）。 */
+    HsfLinkClient_autoRunning(&running);
+    HsfTitleBar_setAutoRunning(&win->m_titleBar, running >= 0, running == 1,
+                               autoMode == 1);
 }
 
 /**
@@ -1277,6 +1404,32 @@ static void hsfWinValveSync(void* userData)
     HsfMonitorValve_refresh();
 }
 
+/**
+ * @brief 阀告警回调：状态栏复述服务端原文 + 阀页常驻横幅。
+ * @details 与 Python 客户端 pages_valve._drain_alarms 同口径：客户端**只
+ *          复述不判读**（超没超时全在服务端算）；恢复类只走状态栏、不清
+ *          横幅（横幅留最近一条非恢复告警直到下一条覆盖）。
+ */
+static void hsfWinValveAlarm(void* userData, const HsfLinkValveAlarm* alarm)
+{
+    HsfWin* win = (HsfWin*)userData;
+    char buf[192];
+    if (!win || !alarm) return;
+    if (alarm->m_kind == (int)HSF_VALVE_ALARM_CLEARED) {
+        snprintf(buf, sizeof(buf), "%s \xE5\xB7\xB2\xE6\x81\xA2\xE5\xA4\x8D\xEF\xBC\x9A%s",
+                 alarm->m_name, alarm->m_text);   /* «name» 已恢复：«text» */
+    } else {
+        char banner[192];
+        snprintf(buf, sizeof(buf), "%s \xE5\x91\x8A\xE8\xAD\xA6\xEF\xBC\x9A%s",
+                 alarm->m_name, alarm->m_text);   /* «name» 告警：«text» */
+        snprintf(banner, sizeof(banner),
+                 "\xE2\x9A\xA0 %s\xEF\xBC\x9A%s",
+                 alarm->m_name, alarm->m_text);   /* ⚠ «name»：«text» */
+        HsfMonitorValve_setAlarmBanner(banner);
+    }
+    HsfStatusBar_setText(&win->m_statusBar, buf);
+}
+
 /** @brief 电磁阀页按钮出口：下发阀控制请求。 */
 static void hsfWinValveWrite(void* userData, int index, bool wantOpen)
 {
@@ -1284,7 +1437,13 @@ static void hsfWinValveWrite(void* userData, int index, bool wantOpen)
     HsfLinkClient_valveControl(index, wantOpen);
 }
 
-/** @brief 控制应答回调：阀/数字量被拒时把原因打到状态栏。 */
+/**
+ * @brief 控制应答回调：阀/数字量被拒时把原因打到状态栏。
+ * @details [阀控制附处置结果] 服务端的幂等三分支（已到位忽略 / 在途重发 /
+ *          反向）只有服务端知道；只回"命令已受理"时用户无法区分"真动了"
+ *          与"本来就在那儿"，会以为按钮坏了。处置结果取自应答里的
+ *          v{i}_cmdResult（对齐 Python 客户端的 VALVE_CMD_TEXT 映射）。
+ */
 static void hsfWinCommandResult(void* userData, int op, bool ok,
                                 const char* errUtf8)
 {
@@ -1298,8 +1457,23 @@ static void hsfWinCommandResult(void* userData, int op, bool ok,
                  "\xE6\x93\x8D\xE4\xBD\x9C\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x9A%s",
                  (errUtf8 && errUtf8[0]) ? errUtf8
                                          : "\xE6\x9C\xAA\xE7\x9F\xA5\xE5\x8E\x9F\xE5\x9B\xA0");
+    } else if (op == (int)HSF_CMD_VALVE_CONTROL) {
+        const char* r = HsfLinkClient_lastValveCmdResult();
+        const char* text = "\xE5\x91\xBD\xE4\xBB\xA4\xE5\xB7\xB2\xE5\x8F\x97\xE7\x90\x86"; /* 命令已受理 */
+        if (r) {
+            if (strcmp(r, "issued") == 0)
+                text = "\xE5\x91\xBD\xE4\xBB\xA4\xE5\xB7\xB2\xE4\xB8\x8B\xE5\x8F\x91"; /* 命令已下发 */
+            else if (strcmp(r, "repeated") == 0)
+                text = "\xE5\x8A\xA8\xE4\xBD\x9C\xE4\xB8\xAD\xEF\xBC\x8C\xE9\x87\x8D\xE5\xA4\x8D\xE5\x91\xBD\xE4\xBB\xA4\xE4\xB8\x8D\xE9\x87\x8D\xE7\xBD\xAE\xE8\xAE\xA1\xE6\x97\xB6\xE5\x99\xA8"; /* 动作中，重复命令不重置计时器 */
+            else if (strcmp(r, "reversed") == 0)
+                text = "\xE5\xB7\xB2\xE5\x8F\x8D\xE5\x90\x91\xEF\xBC\x88\xE9\x87\x8D\xE6\x96\xB0\xE8\xAE\xA1\xE6\x97\xB6\xEF\xBC\x89"; /* 已反向（重新计时） */
+            else if (strcmp(r, "ignored") == 0)
+                text = "\xE5\xB7\xB2\xE5\x9C\xA8\xE7\x9B\xAE\xE6\xA0\x87\xE4\xBD\x8D\xE7\xBD\xAE\xEF\xBC\x8C\xE6\x97\xA0\xE9\x9C\x80\xE5\x8A\xA8\xE4\xBD\x9C"; /* 已在目标位置，无需动作 */
+        }
+        snprintf(buf, sizeof(buf), "%s", text);
     } else {
-        snprintf(buf, sizeof(buf), "\xE5\x91\xBD\xE4\xBB\xA4\xE5\xB7\xB2\xE5\x8F\x97\xE7\x90\x86");
+        snprintf(buf, sizeof(buf), "%s",
+                 "\xE5\x91\xBD\xE4\xBB\xA4\xE5\xB7\xB2\xE5\x8F\x97\xE7\x90\x86"); /* 命令已受理 */
     }
     HsfStatusBar_setText(&win->m_statusBar, buf);
 }
@@ -1394,11 +1568,24 @@ static void hsfWinAnalogSync(void* userData)
     HsfMonitorAnalog_setCount(n);
     for (i = 0; i < n; ++i) {
         const char* name = HsfLinkClient_aiName(i);
+        int32_t eng = 0;
+        char engUnit[12];
+        const char* engNote = NULL;
         if (name) HsfMonitorAnalog_setName(i, name);
         HsfMonitorAnalog_setChannel(i, i);
         HsfMonitorAnalog_setRaw(i, ua[i]);
         HsfMonitorAnalog_setScaled(i, (double)ua[i] / 1000.0);
         HsfMonitorAnalog_setKind(i, HSF_ANALOG_INPUT);
+        /* 原始寄存器（毫伏）：卡片"原始"行与 Python 端脚注同口径。 */
+        HsfMonitorAnalog_setRawMv(i, (int)HsfLinkClient_aiRawMv(i));
+        /* 标定工程量（服务端算）：通道 0 压差计 0~1MPa。 */
+        if (HsfLinkClient_aiEngineering(i, &eng, engUnit, (int)sizeof(engUnit),
+                                       &engNote)) {
+            HsfMonitorAnalog_setEngineering(i, (double)eng / 1000.0, engUnit,
+                                            engNote);
+        } else {
+            HsfMonitorAnalog_setEngineering(i, 0.0, NULL, NULL);
+        }
     }
 }
 
@@ -1492,11 +1679,31 @@ static HsfWin* hsfUiMakeWin(const HsfUiOptions* opts)
     XPrintf("HsfClient: 主窗就绪（标题栏/分割条[导航|堆栈]/黑色状态栏，"
             "%d 页挂栈）\n", HSF_PAGE_COUNT);
 
+    /* [数据源接远端] 无头登录（--login）路径是「先登录、后建主窗」，而
+     * HsfMonitorVfd_rebindProvider 只在"主窗先显"那条路径里调用过 ⇒ 无头
+     * 模式下变频器页仍用**本地 demo 后端**（横幅"无数据"、控制闸锁死，
+     * 与真实服务端不接）。故建窗后若已登录，立即切远端后端。 */
+    if (HsfLinkClient_isOpen()) {
+        HsfMonitorVfd_rebindProvider();
+        XPrintf("HsfClient: 变频器页数据源已切远端（已登录）\n");
+    }
+
     /* 标题栏时钟 1s 刷新（demo 品牌条同款）。 */
     win->m_clockTimer = XObject_startTimer_ms(
         (XObject*)win, 1000u, XTimerType_CoarseTimer);
     if (win->m_clockTimer == XTIMER_INVALID_ID)
         XPrintf("HsfClient: 时钟定时器创建失败\n");
+
+    /* 阀自测钩子（env XHSF_VALVE_SELFTEST=open:<路号>）：延时 1.2s 开阀
+     * 一次（等价于点一次"开阀"按钮，走同一条控制链路）。 */
+    {
+        const char* vst = XSystem_environment("XHSF_VALVE_SELFTEST");
+        if (vst && vst[0]) {
+            win->m_valveSelfTestTimer = XObject_startTimer_ms(
+                (XObject*)win, 1200u, XTimerType_CoarseTimer);
+            XPrintf("HsfClient: 阀自测启用（%s）\n", vst);
+        }
+    }
 
     /* 按需订阅自测钩子（env XHSF_PAGE_CYCLE）：每 2s 在"有遥测的页"之间
      * 轮转一次，供服务端日志观察订阅/退订迁移（切页订阅归属验证）。
@@ -1538,6 +1745,7 @@ static HsfWin* hsfUiMakeWin(const HsfUiOptions* opts)
      * 注册在窗口建好之后——回调里直接用 win 指针刷标题栏。 */
     HsfLinkClient_setTempHumCallback(hsf_onTempHumPushed, win);
     hsf_titleSyncClimate(win);      /* 立即同步一次现状（未登录则为"--"）。 */
+    s_activeWin = win;              /* 本地设置页翻转形态档后即时生效用。 */
     return win;
 }
 

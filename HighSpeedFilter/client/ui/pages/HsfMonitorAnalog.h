@@ -111,6 +111,22 @@ void HsfMonitorAnalog_setScaled(int index, double scaled);
 double HsfMonitorAnalog_scaled(int index);
 
 /**
+ * @brief 设某通道的**标定工程量**（服务端算；与 Python 侧同口径）。
+ * @param index 通道号；越界忽略。
+ * @param value 工程量（如 0.499 MPa）。
+ * @param unit 单位（"MPa"…；NULL=清空标定）。
+ * @param note 越限说明（NULL/空=正常）。
+ * @details 卡片数值行并列显示"电流值 / 工程量"，有越限说明时另起一行橙字。
+ */
+void HsfMonitorAnalog_setEngineering(int index, double value, const char* unit,
+                                     const char* note);
+
+/**
+ * @brief 设某通道的原始寄存器值（毫伏口径；卡片"原始"行用）。越界忽略。
+ */
+void HsfMonitorAnalog_setRawMv(int index, int mv);
+
+/**
  * @brief      写单点名称（UTF-8；内部深拷贝）。越界忽略。
  * @param index 点位下标。
  * @param name  名称文本；NULL 置空（显示退化为「点 N」缺省名）。

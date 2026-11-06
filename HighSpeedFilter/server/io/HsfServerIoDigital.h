@@ -59,8 +59,8 @@ XCLASS_DEFINE_EXTEND_END(HsfServerIoDigital, XObject)
 typedef struct HsfServerIoDigital {
     XObject m_class;                    /**< 第一成员：基类 XObject。 */
     struct XModbusHub* m_hub;           /**< 本站独占 Hub（自有）。 */
-    struct XModbusClient* m_client;     /**< 主模块(.12)客户端（所有权在 Hub；TCP 或虚拟）。 */
-    struct XModbusClient* m_clientExt;  /**< 扩展模块(.13)客户端（所有权在 Hub；NULL=未装）。 */
+    struct XModbusClient* m_client;     /**< 主模块客户端（所有权在 Hub；TCP 或虚拟）。当前现场 = .13。 */
+    struct XModbusClient* m_clientExt;  /**< 扩展模块客户端（所有权在 Hub；NULL=未装）。当前现场未配。 */
     struct XIoChannelGroup* m_group;    /**< 通道组（自有）。 */
     struct XModbusLink* m_link;         /**< 链路（自有）。 */
     int m_devId;                        /**< 主模块设备句柄；<0=未挂。 */
@@ -121,8 +121,8 @@ bool HsfServerIoDigital_mount(HsfServerIoDigital* st, const char* host,
  *          **同一个装配代码路径**既能接真设备也能接模拟设备——测试与
  *          现场用的是同一份装配逻辑，不会出现"测试通过但现场装配不同"。
  *
- *          [与 mount 的区别] mount 内部自己造 TCP 客户端并按 .13 探测结果
- *          决定是否聚合成 32 点；本接口不探测、不建第二个客户端，点数与
+ *          [与 mount 的区别] mount 内部自己造 TCP 客户端并按 HSF_DIG_HOST_EXT
+ *          探测结果决定是否聚合成 32 点；本接口不探测、不建第二个客户端，点数与
  *          客户端完全由调用方决定（模拟场景由模型决定能力）。
  */
 bool HsfServerIoDigital_mountWithClient(HsfServerIoDigital* st,
@@ -133,8 +133,8 @@ bool HsfServerIoDigital_mountWithClient(HsfServerIoDigital* st,
 /**
  * @brief 用外部给的**主 + 扩展**两个客户端装配（32 点聚合的模拟/单测入口）。
  * @param st 目标站。
- * @param client 主模块(.12)客户端（所有权转移给 Hub）。
- * @param extClient 扩展模块(.13)客户端（所有权转移给 Hub；NULL=不聚合）。
+ * @param client 主模块客户端（所有权转移给 Hub）。
+ * @param extClient 扩展模块客户端（所有权转移给 Hub；NULL=不聚合）。
  * @param channels 对外总点数（<= HSF_DIGITAL_CHANNELS；未超单台能力时
  *                 extClient 会被忽略并与 mount 的降级口径一致）。
  * @param startAddr 远端起始地址（实测只能 0）。
@@ -143,9 +143,10 @@ bool HsfServerIoDigital_mountWithClient(HsfServerIoDigital* st,
  * @return 装配成功返回 true。
  *
  * @details [为什么需要它] 32 点是**两台模块聚合**出来的。没有这个入口，
- *          模拟模式只能装 16 点，而电磁阀的六路点位全部落在上半区
- *          （逻辑点 16..27）——那六路会一直报"未配置/离线"，模拟联调
- *          等于没覆盖到阀。
+ *          模拟模式只能装 16 点、覆盖不到扩展模块那半区（逻辑点 16..31）
+ *          上的点位——若某路阀接在那边，模拟联调就等于没覆盖到阀。
+ *          [当前现场] 只剩 .13 单台 16 点（HSF_DIG_HOST_EXT 为空），
+ *          阀点位全在 0..11；本入口保留给"将来再挂一台扩展"的模拟/单测。
  */
 bool HsfServerIoDigital_mountWithClients(HsfServerIoDigital* st,
                                         struct XModbusClient* client,
@@ -198,8 +199,8 @@ bool HsfServerIoDigital_writeDo(HsfServerIoDigital* st, int channel, bool on);
  * @return true=已读到值 且 链路判定未陈旧。
  *
  * @details [为什么需要单点新鲜度而不是整站 bool] 32 点是**两台模块聚合**
- *          出来的（.12 提供 0..15、.13 提供 16..31）。两台各自的在线状态
- *          互相独立：.13 掉线时 .12 仍然正常应答，整站层面"有数据"恒为真，
+ *          出来的（主模块提供 0..15、扩展模块提供 16..31）。两张各自的在线
+ *          状态互相独立：扩展掉线时主模块仍然正常应答，整站层面"有数据"恒为真，
  *          但逻辑点 16..31 已不可信。电磁阀正好挂在这半区，若拿整站
  *          "有数据"当判据，就会得到"模块在线"的错误结论。
  */
@@ -228,13 +229,13 @@ struct XModbusHub* HsfServerIoDigital_hub(const HsfServerIoDigital* st);
  * @details [用途] 模拟联调/自动化测试需要动态改模型的现场参数，例如把阀
  *          行程调短（不然一次开阀要等 10s）、模拟"行程开关没接线"、
  *          模拟"阀卡死"。这些是**模型的实验旋钮**，不是设备语义。
- * @note  通过 XModbusVirtualClient_model() 取；返回的是 .12 主模块的模型
- *        （32 点聚合时 .13 是另一份，需要时用 simModelExt）。
+ * @note  通过 XModbusVirtualClient_model() 取；返回的是主模块的模型
+ *        （32 点聚合时扩展模块是另一份，需要时用 simModelExt）。
  */
 struct XModbusVirtualModel* HsfServerIoDigital_simModel(
     const HsfServerIoDigital* st);
 
-/** @brief 取扩展模块(.13)的模拟模型（借用）；未装扩展或非模拟返回 NULL。 */
+/** @brief 取扩展模块的模拟模型（借用）；未装扩展或非模拟返回 NULL。 */
 struct XModbusVirtualModel* HsfServerIoDigital_simModelExt(
     const HsfServerIoDigital* st);
 

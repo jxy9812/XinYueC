@@ -32,6 +32,7 @@
 #include "XGridLayout.h"
 #include "XObject.h"
 #include "XEvent.h"
+#include "XTimer.h"
 #include "XPainter.h"
 #include "XWidget_Protected.h"
 #include "XMemory.h"
@@ -39,6 +40,7 @@
 #include "XString.h"
 #include "XSystem.h"   /* XSystem_environment（形态诊断开关）。 */
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON
@@ -97,6 +99,7 @@ static struct
     int  m_count;                     /**< 路数。 */
     bool m_controlEnabled;            /**< 是否允许操作。 */
     char m_blockedReason[128];        /**< 禁止原因（UTF-8；空=可操作）。 */
+    char m_alarmText[128];            /**< 最近告警横幅（服务端原文；空=无）。 */
     HsfValveWriteFn m_writeFn;        /**< 控制出口。 */
     void* m_writeUser;                /**< 出口令牌。 */
     void (*m_setStatus)(void*, const char*); /**< 状态栏反馈。 */
@@ -381,6 +384,17 @@ static void valveCardApply(ValveCard* card)
     /* ---- 提示行 ---- */
     {
         const char* hint = it->m_text;
+        /* [与状态徽标重复就不显示] 服务端在阀动作期间把 m_text 置成"动作中"
+         * （HsfServerIoValve.c 的两处 snprintf），而卡片右上角的状态徽标
+         * 已经写着"动作中" ⇒ 同一个信息显示两遍，看着像多余的字段
+         * （2026-11-06 用户实锅）。**只压掉与状态文案完全相同的**那条，
+         * 其它文案（外部改动接管、冲突、点位未配置等）照常显示。 */
+        if (hint[0]) {
+            const char* stText = NULL;
+            uint32_t stColor = 0;
+            valveStateStyle(it->m_state, &stText, &stColor);
+            if (stText && strcmp(hint, stText) == 0) hint = "";
+        }
         if (!hint[0] && !it->m_ready)
             hint = "\xE7\x82\xB9\xE4\xBD\x8D\xE6\x9C\xAA\xE9\x85\x8D\xE7\xBD\xAE"
                    "\xEF\xBC\x88\xE6\x9C\x8D\xE5\x8A\xA1\xE7\xAB\xAF HsfServerConfig.h"
@@ -661,6 +675,11 @@ static void valveRefreshBanner(HsfMonitorValvePage* page)
         snprintf(buf, sizeof(buf),
                  "\xE6\x8E\xA7\xE5\x88\xB6\xE5\xB7\xB2\xE7\xA6\x81\xE7\x94\xA8"
                  "\xEF\xBC\x9A%s", s_valve.m_blockedReason);   /* 控制已禁用： */
+    } else if (s_valve.m_alarmText[0]) {
+        /* [最近告警常驻] 与 Python pages_valve._drain_alarms 同口径：横幅
+         * 留一条最近的告警（服务端原文），直到下一条告警覆盖或出现禁用
+         * 原因；Cleared（恢复）只走状态栏，不清横幅。 */
+        snprintf(buf, sizeof(buf), "%s", s_valve.m_alarmText);
     } else {
         for (i = 0; i < s_valve.m_count; ++i)
             if (!s_valve.m_items[i].m_ready) ++unconfigured;
@@ -992,6 +1011,18 @@ void HsfMonitorValve_setControlEnabled(bool enabled, const char* blockedReason)
 bool HsfMonitorValve_controlEnabled(void)
 {
     return s_valve.m_controlEnabled;
+}
+
+void HsfMonitorValve_setAlarmBanner(const char* text)
+{
+    /* [常驻横幅] text=NULL/空 清除；否则存原文（服务端文案直显，客户端
+     * 不拼装）。禁用原因出现时由 valveRefreshBanner 的优先级压过它。 */
+    if (!text || !text[0]) {
+        s_valve.m_alarmText[0] = '\0';
+    } else {
+        snprintf(s_valve.m_alarmText, sizeof(s_valve.m_alarmText), "%s", text);
+    }
+    valveRefreshAll();
 }
 
 void HsfMonitorValve_setWriteHandler(HsfValveWriteFn fn, void* userData)

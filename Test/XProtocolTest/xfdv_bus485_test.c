@@ -170,10 +170,12 @@ int XVfdBus485Test_runEx(const char* masterPathOverride)
     {
         const XVfdStatus* s1 = XVfdDevice_status_const((XVfdDevice*)d1);
         const XVfdStatus* s2 = XVfdDevice_status_const((XVfdDevice*)d2);
-        CHECK(s1 && s1->m_outputFreqHz > 24.9 && s1->m_outputFreqHz < 25.1,
-              "站1 输出频率 25.0Hz");
-        CHECK(s2 && s2->m_outputFreqHz > 9.9 && s2->m_outputFreqHz < 10.1,
-              "站2 输出频率 10.0Hz（互不串扰）");
+        /* [停机态的大实话] 真机停机时运行频率回 0，写进去的给定留在
+         * 0x101F（设定频率显示源）⇒ 这里断言**给定**（真机口径）。 */
+        CHECK(s1 && s1->m_setFreqHz > 24.9 && s1->m_setFreqHz < 25.1,
+              "站1 设定频率 25.0Hz");
+        CHECK(s2 && s2->m_setFreqHz > 9.9 && s2->m_setFreqHz < 10.1,
+              "站2 设定频率 10.0Hz（互不串扰）");
     }
 
     /* ---------- ③ 动作帧落到站1 且不打断站2 ---------- */

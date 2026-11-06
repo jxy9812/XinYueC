@@ -537,6 +537,9 @@ typedef struct XVfdDevice {
     XTimerId m_actionTimer;         /**< 动作监督定时器（写落定超时/品牌序列步进） */
     uint32_t m_statusIntervalMs;    /**< 快照发布周期（毫秒；默认 200） */
     uint32_t m_actionTimeoutMs;     /**< 写落定监督超时（毫秒；默认 2000） */
+    /* ---- 运行阶段推导（对齐 Python VfdDevice._derive_phase）---- */
+    bool m_phaseDerive;             /**< 开启阶段推导（M512 开；状态字自带阶段的品牌关）。 */
+    bool m_stopRequested;           /**< 已发停止命令、输出尚未归零（"正在停机"窗口）。 */
     XVfdError m_lastError;          /**< 最近一次失败原因 */
     double m_maxFreqHz;             /**< 最大频率缓存（相对口径频率换算基准；Hz） */
     bool m_maxFreqKnown;            /**< m_maxFreqHz 是否已从 MaxFreq 槽读得 */
@@ -776,6 +779,41 @@ void XVfdDevice_setStatusInterval(XVfdDevice* dev, uint32_t intervalMs);
  * @return 周期毫秒
  */
 uint32_t XVfdDevice_statusInterval(const XVfdDevice* dev);
+
+/**
+ * @brief 开关"运行阶段推导"（对齐 Python VfdDevice._derive_phase）。
+ * @param dev 设备实例；不能为 NULL。
+ * @param enable true=开；false=关（缺省）。
+ * @return 无。
+ * @details [为什么需要] M512 的状态字只有 1/2/3（正转/反转/停机），**不报**
+ *          "正在加速/正在减速/正在停机"这三个过渡态——变频器自己能分辨，
+ *          但不通过 0x3000 报告。现场要看的正是这段过程（点停止后电机是
+ *          慢慢停的）。故按"输出频率 vs 设定频率"反推。
+ *
+ *          [为什么做成开关] 有些品牌的状态字**自带**阶段位（ATV61 的
+ *          加/减速位、CiA402 的 QuickStop），它们自己解出来的状态更准，
+ *          基类不该覆盖 ⇒ 由品牌决定是否开。
+ */
+void XVfdDevice_setPhaseDerivation(XVfdDevice* dev, bool enable);
+
+/**
+ * @brief 推导运行阶段（加速中/减速中/正在停机），回填 m_runState。
+ * @param dev 设备实例；可 NULL。
+ * @return 无。
+ * @details 判定表（out=输出频率、target=设定频率，死区 0.15Hz）：
+ *            故障                       ⇒ 故障
+ *            已发停止命令且 out > 死区    ⇒ 减速中（**正在停机**）
+ *            未运行且 out > 死区          ⇒ 减速中
+ *            未运行且 out ≈ 0             ⇒ 停机
+ *            运行中且 target > out+死区  ⇒ 加速中
+ *            运行中且 target < out-死区  ⇒ 减速中
+ *            运行中且已到位              ⇒ 正转/反转运行
+ *
+ *          [停机窗口为什么不能靠差值] 真机停机时 0x1000 仍留旧给定
+ *          （48.6Hz），于是 target > out ⇒ 差值会判成"加速中"——实测停机
+ *          全程显示"加速中"，完全反了。故停机必须靠"已发停止命令"标记。
+ */
+void XVfdDevice_deriveRunPhase(XVfdDevice* dev);
 
 /**
  * @brief 设置写落定监督超时。

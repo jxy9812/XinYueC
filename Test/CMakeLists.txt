@@ -234,6 +234,8 @@ if(XGUI_ON)
 # 源一并编进测试目标。它们不依赖 GUI（纯 XLink + BSON），可以安全共用。
 set(HSF_CLIENT_TEST_MODULE_SOURCES
     "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/HsfLinkClient.c"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/HsfLinkHistory.c"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/HsfLinkConfig.c"
     "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/HsfFlowMeterProvider.c"
 )
 # 并入 TEST_FILE：凡引用 TEST_FILE 的目标（主程序双 exe / XGuiTestMenuSweep /
@@ -548,6 +550,7 @@ add_executable(XGuiRegression_Test
     "${CMAKE_CURRENT_LIST_DIR}/../xgui_regression_test.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XLineEditTest.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XSliderTest.c"
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XButtonHoldTest.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XSpinBoxTest.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XGroupBoxTest.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XProgressBarTest.c"

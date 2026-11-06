@@ -10,6 +10,8 @@
  *             上下文走模块单例（回调无 userData 位）。
  */
 #include "HsfLinkClient.h"
+#include "HsfLinkHistory.h"
+#include "HsfLinkConfig.h"
 
 #include "HsfSettingsStore.h"
 #include "XhsfLinkProto.h"
@@ -24,6 +26,8 @@
 #include "XBson.h"
 #include "XBsonDocument.h"
 #include "XBsonValue.h"
+#include "XByteArray.h"
+#include "XDateTime.h"
 #include "XObject.h"
 #include "XVarList.h"
 #include "XMemory.h"
@@ -58,9 +62,17 @@ typedef struct HsfLinkClientState {
 #if XVFD_ON
     XVfdStatus m_vfdStatus;             /**< 最近遥测（解码产物）。 */
 #endif
+    HsfHistoryPage m_history;          /**< 最近一次历史分页结果（0x0118）。 */
+    HsfConfig m_config;                /**< 最近一次远端配置快照（0x0116）。 */
+    char m_serverAddr[96];              /**< 服务端地址（远端设置页显示用）。 */
     bool m_vfdValid;                    /**< 收到过至少一拍。 */
     /* 模拟量遥测快照。 */
     int32_t m_aiUa[HSF_LINK_AI_CH_MAX]; /**< 工程值（μA 定点）。 */
+    int32_t m_aiRaw[HSF_LINK_AI_CH_MAX]; /**< 原始寄存器（毫伏）。 */
+    int32_t m_aiEng[HSF_LINK_AI_CH_MAX]; /**< 标定工程量（×1000；无标定=0）。 */
+    bool    m_aiEngValid[HSF_LINK_AI_CH_MAX]; /**< 该通道是否有工程量。 */
+    char    m_aiEngUnit[HSF_LINK_AI_CH_MAX][12]; /**< 工程量单位（"MPa"…）。 */
+    char    m_aiEngNote[HSF_LINK_AI_CH_MAX][48]; /**< 越限说明（空=正常）。 */
     uint32_t m_aiMask;                  /**< 有效位掩码。 */
     int m_aiCount;                      /**< 通道数。 */
     bool m_aiValid;                     /**< 收到过至少一拍。 */
@@ -75,13 +87,27 @@ typedef struct HsfLinkClientState {
     /* 电磁阀遥测快照。 */
     HsfLinkValves m_valves;                 /**< 最近 6 路阀快照。 */
     HsfLcSub m_valveCb[HSF_LC_SUB_SLOTS];   /**< 电磁阀更新订阅槽。 */
+    HsfLcSub m_turbCb[HSF_LC_SUB_SLOTS];    /**< 浊度仪更新订阅槽。 */
+    HsfLcSub m_pumpCb[HSF_LC_SUB_SLOTS];    /**< 泵更新订阅槽。 */
+    HsfLinkTurbiditySet m_turbidity;       /**< 浊度仪组快照。 */
+    HsfLinkPumps m_pumps;                  /**< 泵组快照。 */
+    HsfLinkValveAlarmFn m_valveAlarmCb;     /**< 阀告警回调（单槽；NULL=无）。 */
+    void* m_valveAlarmUser;                 /**< 阀告警回调上下文（借用）。 */
     /* 最近控制应答。 */
     bool m_lastCmdOk;
     char m_lastCmdErr[96];              /**< UTF-8 失败原因。 */
+    bool m_suppressNextErr;             /**< 抑制下一条命令应答的错误提示
+                                        *   （启动前预置给定那一步）。 */
     int m_lastCmdSeq;                   /**< 应答序号（每拍自增；0=从未收到）。 */
+    int m_lastValveIndex;               /**< 最近阀控制的路号（cmdResult 取键用）。 */
+    char m_lastValveCmdResult[16];      /**< 最近阀控制的处置结果（issued/repeated/
+                                          *   reversed/ignored/external；空=无）。 */
     /* 服务端运行模式（RUN_MODE 应答）。 */
     bool m_modeKnown;                   /**< 是否收到过模式应答。 */
     int  m_modeAuto;                    /**< 1=自动（拒绝远程控制）0=手动。 */
+    int  m_autoRunning;                 /**< 自动控制器是否在跑：1=运行中 0=已停止
+                                        *   -1=未知（服务端未上报该键）。 */
+    bool m_autoRunningKnown;            /**< 是否收到过 autoRunning 键。 */
     char m_modeErr[96];                 /**< 最近一次模式设置的失败原因。 */
     HsfLcSub m_modeCb[HSF_LC_SUB_SLOTS];/**< 模式变化订阅。 */
     /* 设备健康（事件驱动推送 + 查询应答）。 */
@@ -102,6 +128,8 @@ static HsfLinkClientState s_lc;         /**< 模块单例（零初始化）。 *
 static bool hsfLcParseDigital(const uint8_t* data, uint32_t len);
 static void hsfLcNotifyDigital(void);
 static bool hsfLcParseValves(const uint8_t* data, uint32_t len);
+static void hsfLcParseValveCmdResult(const uint8_t* data, uint32_t len,
+                                      int index);
 static void hsfLcNotifyValves(void);
 
 /* ==================== 内部工具 ==================== */
@@ -163,13 +191,52 @@ static void hsfLcParseAi(const uint8_t* data, uint32_t len)
             snprintf(key, sizeof(key), HSF_KEY_AI_UA_FMT, i);
             v = XBsonDocument_value_keyUtf8(doc, key);
             s_lc.m_aiUa[i] = v ? XBsonValue_toInt32(v, 0) : 0;
+            /* 原始寄存器（毫伏）：底部脚注"原始寄存器：CH1=2985mV…"用。 */
+            snprintf(key, sizeof(key), HSF_KEY_AI_RAW_FMT, i);
+            v = XBsonDocument_value_keyUtf8(doc, key);
+            s_lc.m_aiRaw[i] = v ? XBsonValue_toInt32(v, 0) : 0;
+            /* ---- 工程量四键（e/eu/en/ew，与 Python 侧同键同义）---- */
+            snprintf(key, sizeof(key), HSF_KEY_AI_ENG_FMT, i);
+            v = XBsonDocument_value_keyUtf8(doc, key);
+            if (v) {
+                s_lc.m_aiEng[i] = XBsonValue_toInt32(v, 0);
+                s_lc.m_aiEngValid[i] = true;
+                snprintf(key, sizeof(key), HSF_KEY_AI_ENG_UNIT_FMT, i);
+                v = XBsonDocument_value_keyUtf8(doc, key);
+                if (v) {
+                    const XString* str = XBsonValue_toString(v);
+                    const char* u8 = str ? XString_toUtf8(str) : NULL;
+                    if (u8)
+                        snprintf(s_lc.m_aiEngUnit[i],
+                                 sizeof(s_lc.m_aiEngUnit[i]), "%s", u8);
+                }
+                /* 标定名优先（en{i} 是设备铭牌口径）。 */
+                snprintf(key, sizeof(key), HSF_KEY_AI_ENG_NAME_FMT, i);
+                v = XBsonDocument_value_keyUtf8(doc, key);
+                if (v) {
+                    const XString* str = XBsonValue_toString(v);
+                    const char* u8 = str ? XString_toUtf8(str) : NULL;
+                    if (u8)
+                        snprintf(s_lc.m_aiName[i], sizeof(s_lc.m_aiName[i]),
+                                 "%s", u8);
+                }
+                snprintf(key, sizeof(key), HSF_KEY_AI_ENG_NOTE_FMT, i);
+                v = XBsonDocument_value_keyUtf8(doc, key);
+                if (v) {
+                    const XString* str = XBsonValue_toString(v);
+                    const char* u8 = str ? XString_toUtf8(str) : NULL;
+                    if (u8)
+                        snprintf(s_lc.m_aiEngNote[i],
+                                 sizeof(s_lc.m_aiEngNote[i]), "%s", u8);
+                }
+            }
             if (full) {
                 snprintf(key, sizeof(key), HSF_KEY_AI_NAME_FMT, i);
                 v = XBsonDocument_value_keyUtf8(doc, key);
                 if (v) {
                     const XString* str = XBsonValue_toString(v);
                     const char* u8 = str ? XString_toUtf8(str) : NULL;
-                    if (u8)
+                    if (u8 && !s_lc.m_aiEngValid[i])
                         snprintf(s_lc.m_aiName[i], sizeof(s_lc.m_aiName[i]),
                                  "%s", u8);
                 }
@@ -251,6 +318,121 @@ static double hsfLcValueToDouble(const XBsonValue* v)
  * @note  键名与服务端 hsfAppFillFlowMeter 一致。valid=false 时不写物理量键，
  *        保持上次值并把 valid 置 false（界面按质量显隐）。
  */
+/**
+ * @brief 解析浊度仪组帧（count + v{i}_name/ntu/raw/online）。
+ * @details NTU 是**线上定点整数 ×100**（协议层口径，与 Python 侧同值）；
+ *          客户端显示时 ÷100（原始值另存 m_raw 供排查）。
+ */
+static bool hsfLcParseTurbidity(const uint8_t* data, uint32_t len)
+{
+    XBsonDocument* doc;
+    XBsonValue* v;
+    int count;
+    int i;
+
+    if (!data || len == 0) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    if (!XBsonDocument_from_bytes(doc, data, len)) {
+        XClassDelete((XClass*)doc);
+        return false;
+    }
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_TURB_COUNT);
+    count = v ? XBsonValue_toInt32(v, 0) : 0;
+    if (count < 0) count = 0;
+    if (count > HSF_TURBIDITY_COUNT) count = HSF_TURBIDITY_COUNT;
+    s_lc.m_turbidity.m_count = count;
+    for (i = 0; i < count; ++i) {
+        HsfLinkTurbidity* it = &s_lc.m_turbidity.m_items[i];
+        char key[40];
+        snprintf(key, sizeof(key), HSF_KEY_TURB_PREFIX_FMT, i,
+                 HSF_KEY_TURB_NAME);
+        v = XBsonDocument_value_keyUtf8(doc, key);
+        if (v) {
+            const XString* sv = XBsonValue_toString(v);
+            const char* u8 = sv ? XString_toUtf8(sv) : NULL;
+            if (u8) snprintf(it->m_name, sizeof(it->m_name), "%s", u8);
+        }
+        snprintf(key, sizeof(key), HSF_KEY_TURB_PREFIX_FMT, i,
+                 HSF_KEY_TURB_NTU);
+        v = XBsonDocument_value_keyUtf8(doc, key);
+        if (v) it->m_ntu100 = XBsonValue_toInt32(v, 0);
+        snprintf(key, sizeof(key), HSF_KEY_TURB_PREFIX_FMT, i,
+                 HSF_KEY_TURB_RAW);
+        v = XBsonDocument_value_keyUtf8(doc, key);
+        if (v) it->m_raw = XBsonValue_toInt32(v, 0);
+        snprintf(key, sizeof(key), HSF_KEY_TURB_PREFIX_FMT, i,
+                 HSF_KEY_TURB_ONLINE);
+        v = XBsonDocument_value_keyUtf8(doc, key);
+        it->m_online = v ? XBsonValue_toBool(v, false) : false;
+    }
+    s_lc.m_turbidity.m_received = true;
+    s_lc.m_turbidity.m_lastMs = XDateTime_currentMSecsSinceEpoch();
+    XClassDelete((XClass*)doc);
+    return true;
+}
+
+/**
+ * @brief 解析泵组帧（count + v{i}_index/name/on/ready/valid/text）。
+ * @note  泵无反馈：m_on 是命令状态（我方最后写的值），不代表泵在转。
+ */
+static bool hsfLcParsePumps(const uint8_t* data, uint32_t len)
+{
+    XBsonDocument* doc;
+    XBsonValue* v;
+    int count;
+    int i;
+
+    if (!data || len == 0) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    if (!XBsonDocument_from_bytes(doc, data, len)) {
+        XClassDelete((XClass*)doc);
+        return false;
+    }
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_PUMP_COUNT);
+    count = v ? XBsonValue_toInt32(v, 0) : 0;
+    if (count < 0) count = 0;
+    if (count > HSF_PUMP_COUNT) count = HSF_PUMP_COUNT;
+    s_lc.m_pumps.m_count = count;
+    for (i = 0; i < count; ++i) {
+        HsfLinkPump* it = &s_lc.m_pumps.m_items[i];
+        char key[40];
+        snprintf(key, sizeof(key), HSF_KEY_VALVE_PREFIX_FMT, i,
+                 HSF_KEY_PUMP_NAME);
+        v = XBsonDocument_value_keyUtf8(doc, key);
+        if (v) {
+            const XString* sv = XBsonValue_toString(v);
+            const char* u8 = sv ? XString_toUtf8(sv) : NULL;
+            if (u8) snprintf(it->m_name, sizeof(it->m_name), "%s", u8);
+        }
+        snprintf(key, sizeof(key), HSF_KEY_VALVE_PREFIX_FMT, i,
+                 HSF_KEY_PUMP_ON);
+        v = XBsonDocument_value_keyUtf8(doc, key);
+        it->m_on = v ? XBsonValue_toBool(v, false) : false;
+        snprintf(key, sizeof(key), HSF_KEY_VALVE_PREFIX_FMT, i,
+                 HSF_KEY_PUMP_READY);
+        v = XBsonDocument_value_keyUtf8(doc, key);
+        it->m_ready = v ? XBsonValue_toBool(v, false) : false;
+        snprintf(key, sizeof(key), HSF_KEY_VALVE_PREFIX_FMT, i,
+                 HSF_KEY_VALVE_VALID);
+        v = XBsonDocument_value_keyUtf8(doc, key);
+        it->m_valid = v ? XBsonValue_toBool(v, false) : false;
+        snprintf(key, sizeof(key), HSF_KEY_VALVE_PREFIX_FMT, i,
+                 HSF_KEY_PUMP_TEXT);
+        v = XBsonDocument_value_keyUtf8(doc, key);
+        if (v) {
+            const XString* sv = XBsonValue_toString(v);
+            const char* u8 = sv ? XString_toUtf8(sv) : NULL;
+            if (u8) snprintf(it->m_text, sizeof(it->m_text), "%s", u8);
+        }
+    }
+    s_lc.m_pumps.m_received = true;
+    s_lc.m_pumps.m_lastMs = XDateTime_currentMSecsSinceEpoch();
+    XClassDelete((XClass*)doc);
+    return true;
+}
+
 static bool hsfLcParseFlowMeter(const uint8_t* data, uint32_t len, int* outSide)
 {
     XBsonDocument* doc;
@@ -328,6 +510,37 @@ static void hsfLcCopyValue(XBsonValue* v, char* dst, size_t cap)
     hsfLcCopy(dst, cap, XString_toUtf8(xs));
 }
 
+/* ==================== 设备健康/类别文案（首页/报警页共用） ==================== */
+
+/** @brief 设备健康状态中文（与服务端 HsfDeviceHealth 对齐）。 */
+const char* HsfLinkClient_healthText(int health)
+{
+    switch (health) {
+    case 0: return "\xE6\xAD\xA3\xE5\xB8\xB8";                     /* 正常 */
+    case 1: return "\xE5\x91\x8A\xE8\xAD\xA6";                     /* 告警 */
+    case 2: return "\xE6\x95\xB0\xE6\x8D\xAE\xE8\xBF\x87\xE6\x9C\x9F"; /* 数据过期 */
+    case 3: return "\xE7\xA6\xBB\xE7\xBA\xBF";                     /* 离线 */
+    case 4: return "\xE6\x95\x85\xE9\x9A\x9C";                     /* 故障 */
+    default: return "\xE6\x9C\xAA\xE7\x9F\xA5";                    /* 未知 */
+    }
+}
+
+/** @brief 设备类别中文（与 HsfDeviceKind / Python KIND_TEXT 对齐）。 */
+const char* HsfLinkClient_kindText(int kind)
+{
+    switch (kind) {
+    case 0: return "\xE5\x8F\x98\xE9\xA2\x91\xE5\x99\xA8";        /* 变频器 */
+    case 1: return "\xE6\xB8\xA9\xE6\xB9\xBF\xE5\xBA\xA6";        /* 温湿度 */
+    case 2: return "\xE6\xB5\x81\xE9\x87\x8F\xE8\xAE\xA1";        /* 流量计 */
+    case 3: return "\xE6\xA8\xA1\xE6\x8B\x9F\xE9\x87\x8F";        /* 模拟量 */
+    case 4: return "485\xE6\x80\xBB\xE7\xBA\xBF";                  /* 485总线 */
+    case 5: return "\xE6\x95\xB0\xE5\xAD\x97\xE9\x87\x8F";        /* 数字量 */
+    case 6: return "\xE7\x94\xB5\xE7\xA3\x81\xE9\x98\x80\xE7\xBB\x84";  /* 电磁阀组 */
+    case 7: return "\xE6\xB0\xB4\xE8\xB4\xA8";                  /* 水质 */
+    default: return "\xE6\x9C\xAA\xE7\x9F\xA5";                    /* 未知 */
+    }
+}
+
 /**
  * @brief 解析设备健康载荷（推送与查询应答同构）并通知订阅者。
  * @param data BSON 字节；len 长度。
@@ -381,6 +594,10 @@ static void hsfLcOnHealthPayload(const uint8_t* data, uint32_t len)
         snprintf(key, sizeof(key), "d%d_text", i);
         hsfLcCopyValue(XBsonDocument_value_keyUtf8(doc, key),
                        d->m_text, sizeof(d->m_text));
+        /* [地址] 连接地址文案（服务端下发；空=该设备无连接概念）。 */
+        snprintf(key, sizeof(key), "d%d_addr", i);
+        hsfLcCopyValue(XBsonDocument_value_keyUtf8(doc, key),
+                       d->m_addr, sizeof(d->m_addr));
     }
     s_lc.m_devCount = n;
     XClassDelete((XClass*)doc);
@@ -404,6 +621,8 @@ static uint32_t hsfLcTopicId(HsfLinkTopic topic)
     case HsfLinkTopic_FlowMeter: return HSF_TOPIC_FLOWMETER_STATUS;
     case HsfLinkTopic_Digital:   return HSF_TOPIC_DIGITAL_STATUS;
     case HsfLinkTopic_Valve:     return HSF_TOPIC_VALVE_STATUS;
+    case HsfLinkTopic_Turbidity: return HSF_TOPIC_TURBIDITY_STATUS;
+    case HsfLinkTopic_Pump:      return HSF_TOPIC_PUMP_STATUS;
     default:                     return 0;
     }
 }
@@ -492,6 +711,15 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
     if (!session || !frame) return;
     switch (frame->m_msgClass) {
     case XLinkMsgClass_Response:
+        if (frame->m_msgCode == HSF_CMD_HISTORY_PAGE) {
+            (void)HsfHistoryPage_parse(payload, frame->m_payloadLen,
+                                       &s_lc.m_history);
+            break;
+        }
+        if (frame->m_msgCode == HSF_CMD_CONFIG_GET) {
+            (void)HsfConfig_parse(payload, frame->m_payloadLen, &s_lc.m_config);
+            break;
+        }
         if (frame->m_msgCode == HSF_CMD_DEVICE_HEALTH) {
             hsfLcOnHealthPayload(payload, frame->m_payloadLen);
             break;
@@ -509,6 +737,20 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
                     if (v) {
                         s_lc.m_modeAuto = (XBsonValue_toInt32(v, 0) == 1) ? 1 : 0;
                         s_lc.m_modeKnown = true;
+                    }
+                    /* [自动运行状态] "自动模式"与"控制器真的在跑"是两件事：
+                     * 服务端 0x0105 应答带 auto / autoRunning 两个键。缺失时
+                     * 保持"未知"（三态：未知/已停止/运行中）——不能把缺失当
+                     * false（那会把"服务端没上报"显示成"已停止"）。 */
+                    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTO);
+                    if (v) {
+                        s_lc.m_autoRunning = -1;   /* 重置为未知 */
+                        s_lc.m_autoRunningKnown = false;
+                    }
+                    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTO_RUNNING);
+                    if (v) {
+                        s_lc.m_autoRunning = XBsonValue_toBool(v, false) ? 1 : 0;
+                        s_lc.m_autoRunningKnown = true;
                     }
                 } else {
                     v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_ERR);
@@ -533,11 +775,18 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
         }
         if (frame->m_msgCode == HSF_CMD_VFD_CONTROL) {
             bool ok = false;
+            const bool suppress = s_lc.m_suppressNextErr;
             s_lc.m_lastCmdOk = false;
+            s_lc.m_suppressNextErr = false;   /* 抑制只作用于下一条应答。 */
             hsfLcParseEnvelope(payload, frame->m_payloadLen, &ok,
                                s_lc.m_lastCmdErr, sizeof(s_lc.m_lastCmdErr));
             s_lc.m_lastCmdOk = ok;
             ++s_lc.m_lastCmdSeq;        /* 增量观测序号（成功/失败都推进）。 */
+            /* [静默失败] 启动前的"预置给定"在停机态会被服务端拒（停机禁
+             * 给定闸），Python 客户端把这一步设为静默（两条状态互相冲掉，
+             * 只留最终那条启动结果）。此处同样不把失败写进错误文本——页面
+             * 只看"错误文本非空"决定是否提示，故清空即静默。 */
+            if (suppress && !ok) s_lc.m_lastCmdErr[0] = '\0';
             if (s_lc.m_cmdCb)
                 s_lc.m_cmdCb(s_lc.m_cmdUser, HSF_CMD_VFD_CONTROL, ok,
                              ok ? "" : s_lc.m_lastCmdErr);
@@ -573,6 +822,14 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
                                s_lc.m_lastCmdErr, sizeof(s_lc.m_lastCmdErr));
             s_lc.m_lastCmdOk = ok;
             ++s_lc.m_lastCmdSeq;
+            /* [整帧应用] 控制应答带整帧阀快照（count + v{i}_*）——立刻应用
+             * 并通知页面刷新卡片，不必等下一拍周期推送（对齐 Python 侧
+             * 2026-11-05「点第一下没反应」的修复：应答里的快照是命令之后的
+             * 真实状态）。 */
+            hsfLcParseValveCmdResult(payload, frame->m_payloadLen,
+                                      s_lc.m_lastValveIndex);
+            if (hsfLcParseValves(payload, frame->m_payloadLen))
+                hsfLcNotifyValves();
             if (s_lc.m_cmdCb)
                 s_lc.m_cmdCb(s_lc.m_cmdUser, HSF_CMD_VALVE_CONTROL, ok,
                              ok ? "" : s_lc.m_lastCmdErr);
@@ -630,6 +887,20 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
             if (hsfLcParseDigital(body, bodyLen)) hsfLcNotifyDigital();
         } else if (topicId == HSF_TOPIC_VALVE_STATUS) {
             if (hsfLcParseValves(body, bodyLen)) hsfLcNotifyValves();
+        } else if (topicId == HSF_TOPIC_TURBIDITY_STATUS) {
+            int si;
+            if (!hsfLcParseTurbidity(body, bodyLen)) break;
+            for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
+                if (s_lc.m_turbCb[si].m_cb)
+                    s_lc.m_turbCb[si].m_cb(s_lc.m_turbCb[si].m_user);
+            }
+        } else if (topicId == HSF_TOPIC_PUMP_STATUS) {
+            int si;
+            if (!hsfLcParsePumps(body, bodyLen)) break;
+            for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
+                if (s_lc.m_pumpCb[si].m_cb)
+                    s_lc.m_pumpCb[si].m_cb(s_lc.m_pumpCb[si].m_user);
+            }
         }
         break;
     }
@@ -783,6 +1054,10 @@ bool HsfLinkClient_open(const char* host, uint16_t port,
     if (!s_lc.m_client) return false;
     if (port == 0) port = (uint16_t)HSF_XLINK_DEFAULT_PORT;
     XLinkClient_setHostPort(s_lc.m_client, host, port);
+    /* [记下服务端地址] 远端设置页要显示"连的是哪台"（现场多台机器时
+     * 光看角色看不出连的是谁）。 */
+    snprintf(s_lc.m_serverAddr, sizeof(s_lc.m_serverAddr), "%s:%u", host,
+             (unsigned)port);
     XLinkClient_setDispatchCallback(s_lc.m_client, hsfLcDispatch, NULL);
     XLinkClient_setCredential(s_lc.m_client, user, password);
     XLinkClient_setAutoReconnect(s_lc.m_client, true);
@@ -915,6 +1190,12 @@ void HsfLinkClient_setValveCallback(HsfLinkNotifyFn cb, void* userData)
     if (cb) hsfLcAddSub(s_lc.m_valveCb, cb, userData);
 }
 
+void HsfLinkClient_setValveAlarmCallback(HsfLinkValveAlarmFn cb, void* userData)
+{
+    s_lc.m_valveAlarmCb = cb;
+    s_lc.m_valveAlarmUser = userData;
+}
+
 const HsfLinkFlowMeter* HsfLinkClient_flowMeter(int side)
 {
     if (side < 0 || side >= HSF_LINK_SIDE_COUNT) return NULL;
@@ -999,6 +1280,25 @@ const char* HsfLinkClient_aiName(int index)
 {
     if (index < 0 || index >= HSF_LINK_AI_CH_MAX) return NULL;
     return s_lc.m_aiName[index][0] ? s_lc.m_aiName[index] : NULL;
+}
+
+bool HsfLinkClient_aiEngineering(int index, int32_t* outValue1000,
+                                 char* outUnit, int unitCap,
+                                 const char** outNote)
+{
+    if (index < 0 || index >= HSF_LINK_AI_CH_MAX) return false;
+    if (!s_lc.m_aiEngValid[index]) return false;
+    if (outValue1000) *outValue1000 = s_lc.m_aiEng[index];
+    if (outUnit && unitCap > 0)
+        snprintf(outUnit, (size_t)unitCap, "%s", s_lc.m_aiEngUnit[index]);
+    if (outNote) *outNote = s_lc.m_aiEngNote[index][0] ? s_lc.m_aiEngNote[index] : NULL;
+    return true;
+}
+
+int32_t HsfLinkClient_aiRawMv(int index)
+{
+    if (index < 0 || index >= HSF_LINK_AI_CH_MAX) return 0;
+    return s_lc.m_aiRaw[index];
 }
 
 const char* HsfLinkClient_digitalName(int index, bool isDo)
@@ -1113,7 +1413,11 @@ static int hsfLcValveReadInt(XBsonDocument* doc, int index, const char* key,
 
 /**
  * @brief 解析电磁阀 6 路快照 BSON 到模块状态。
- * @return 解析成功返回 true。
+ * @details [先认告警再认状态] 帧带 "ac" 键即告警帧（a{i}_* 键空间）——
+ *          告警帧逐条回调且**绝不动阀状态模型**（告警帧无 count，旧实现
+ *          落到这里 count=0 ⇒ 六路按钮全死直到下一拍状态帧，即 Python
+ *          客户端注释里的同一口实锅）。无 ac 才按状态帧解析。
+ * @return 解析成功返回 true（含告警帧）。
  */
 static bool hsfLcParseValves(const uint8_t* data, uint32_t len)
 {
@@ -1129,6 +1433,48 @@ static bool hsfLcParseValves(const uint8_t* data, uint32_t len)
         XClassDelete((XClass*)doc);
         return false;
     }
+    /* ---- 告警帧分支（ac 键判型）---- */
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_ALARM_COUNT);
+    if (v) {
+        int n = XBsonValue_toInt32(v, 0);
+        if (n < 0) n = 0;
+        if (n > 8) n = 8;   /* 一帧至多合并 8 条；服务端一拍 6 路全超时=6。 */
+        for (i = 0; i < n; ++i) {
+            HsfLinkValveAlarm alarm;
+            char key[32];
+            XBsonValue* av;
+            memset(&alarm, 0, sizeof(alarm));
+            alarm.m_index = -1;
+            snprintf(key, sizeof(key), "a%d_%s", i, HSF_KEY_ALARM_VALVE_INDEX);
+            av = XBsonDocument_value_keyUtf8(doc, key);
+            if (av) alarm.m_index = XBsonValue_toInt32(av, -1);
+            snprintf(key, sizeof(key), "a%d_%s", i, HSF_KEY_ALARM_VALVE_NAME);
+            av = XBsonDocument_value_keyUtf8(doc, key);
+            if (av) {
+                const XString* s = XBsonValue_toString(av);
+                const char* u = s ? XString_toUtf8(s) : NULL;
+                if (u) snprintf(alarm.m_name, sizeof(alarm.m_name), "%s", u);
+            }
+            snprintf(key, sizeof(key), "a%d_%s", i, HSF_KEY_ALARM_KIND);
+            av = XBsonDocument_value_keyUtf8(doc, key);
+            if (av) alarm.m_kind = XBsonValue_toInt32(av, 0);
+            snprintf(key, sizeof(key), "a%d_%s", i, HSF_KEY_ALARM_TEXT);
+            av = XBsonDocument_value_keyUtf8(doc, key);
+            if (av) {
+                const XString* s = XBsonValue_toString(av);
+                const char* u = s ? XString_toUtf8(s) : NULL;
+                if (u) snprintf(alarm.m_text, sizeof(alarm.m_text), "%s", u);
+            }
+            snprintf(key, sizeof(key), "a%d_%s", i, HSF_KEY_ALARM_AT);
+            av = XBsonDocument_value_keyUtf8(doc, key);
+            if (av) alarm.m_atMs = XBsonValue_toInt64(av, 0);
+            if (s_lc.m_valveAlarmCb) s_lc.m_valveAlarmCb(s_lc.m_valveAlarmUser,
+                                                         &alarm);
+        }
+        XClassDelete((XClass*)doc);
+        return true;
+    }
+    /* ---- 状态帧分支 ---- */
     v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_VALVE_COUNT);
     count = v ? XBsonValue_toInt32(v, 0) : 0;
     if (count < 0) count = 0;
@@ -1168,11 +1514,53 @@ const HsfLinkValves* HsfLinkClient_valves(void)
     return &s_lc.m_valves;
 }
 
+const char* HsfLinkClient_lastValveCmdResult(void)
+{
+    return s_lc.m_lastValveCmdResult;
+}
+
 bool HsfLinkClient_valvesFresh(void)
 {
     if (!s_lc.m_valves.m_received) return false;
     return (XDateTime_currentMSecsSinceEpoch() - s_lc.m_valves.m_lastMs) <=
            (uint64_t)HSF_LINK_VALVE_STALE_MS;
+}
+
+/**
+ * @brief 从阀控制应答里取处置结果 v{i}_cmdResult。
+ * @param data 应答载荷；len 长度。
+ * @param index 路号（发送时记录）。
+ * @note [为什么客户端要读它] 三分支幂等（issued/repeated/reversed/ignored）
+ *       的区别只有服务端知道；若应答只回 ok=true，用户无法区分"真动了"
+ *       和"本来就在那儿"，会以为按钮坏了（Python 侧同一口径）。
+ */
+static void hsfLcParseValveCmdResult(const uint8_t* data, uint32_t len,
+                                      int index)
+{
+    XBsonDocument* doc;
+    XBsonValue* v;
+    char key[40];
+
+    s_lc.m_lastValveCmdResult[0] = '\0';
+    if (!data || len == 0 || index < 0 || index >= HSF_VALVE_COUNT) return;
+    doc = XBsonDocument_create();
+    if (!doc) return;
+    if (!XBsonDocument_from_bytes(doc, data, len)) {
+        XClassDelete((XClass*)doc);
+        return;
+    }
+    snprintf(key, sizeof(key), HSF_KEY_VALVE_PREFIX_FMT, index,
+             HSF_KEY_VALVE_CMD_RESULT);
+    v = XBsonDocument_value_keyUtf8(doc, key);
+    if (v) {
+        const XString* s = XBsonValue_toString(v);
+        const char* u8 = s ? XString_toUtf8(s) : NULL;
+        if (u8) {
+            snprintf(s_lc.m_lastValveCmdResult,
+                     sizeof(s_lc.m_lastValveCmdResult), "%s", u8);
+        }
+    }
+    XClassDelete((XClass*)doc);
 }
 
 bool HsfLinkClient_valveControl(int index, bool wantOpen)
@@ -1187,6 +1575,7 @@ bool HsfLinkClient_valveControl(int index, bool wantOpen)
     if (index < 0 || index >= HSF_VALVE_COUNT) return false;
     session = XLinkClient_session(s_lc.m_client);
     if (!session) return false;
+    s_lc.m_lastValveIndex = index;   /* 应答的 cmdResult 按该路取。 */
     doc = XBsonDocument_create();
     if (!doc) return false;
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_VALVE_INDEX, (int32_t)index);
@@ -1365,6 +1754,108 @@ bool HsfLinkClient_vfdControl(const XVfdControlRequest* req)
 }
 #endif
 
+bool HsfLinkClient_vfdJogRelease(void)
+{
+    /* [点动释放] 专用 op=101（HSF_OP_JOG_RELEASE）：松手即停，不等看门狗
+     * 超时（600ms）。旧实现发普通 Stop——也能停，但语义不清（服务端会把
+     * 它当"减速停机"命令），且与 Python 客户端的 {"op":101} 不一致。 */
+    XVfdControlRequest req;
+    memset(&req, 0, sizeof(req));
+    req.m_op = (XVfdOperation)HSF_OP_JOG_RELEASE;
+    return HsfLinkClient_vfdControl(&req);
+}
+
+void HsfLinkClient_suppressNextCommandError(void)
+{
+    s_lc.m_suppressNextErr = true;
+}
+
+/* ==================== 浊度仪 / 泵 ==================== */
+
+const HsfLinkTurbiditySet* HsfLinkClient_turbidity(void)
+{
+    return &s_lc.m_turbidity;
+}
+
+bool HsfLinkClient_turbidityFresh(void)
+{
+    if (!s_lc.m_turbidity.m_received) return false;
+    return (XDateTime_currentMSecsSinceEpoch() - s_lc.m_turbidity.m_lastMs) <=
+           HSF_LINK_TURBIDITY_STALE_MS;
+}
+
+bool HsfLinkClient_turbiditySnapshotRequest(void)
+{
+    XLinkSession* session;
+    uint32_t reqId = 0;
+    if (!HsfLinkClient_isReady()) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    return XLinkSession_sendRequest_ex(session, HSF_CMD_TURBIDITY_SNAPSHOT,
+                                      XLinkDataType_Bson, NULL, 0, &reqId);
+}
+
+void HsfLinkClient_setTurbidityCallback(HsfLinkNotifyFn cb, void* userData)
+{
+    if (cb) hsfLcAddSub(s_lc.m_turbCb, cb, userData);
+}
+
+const HsfLinkPumps* HsfLinkClient_pumps(void)
+{
+    return &s_lc.m_pumps;
+}
+
+bool HsfLinkClient_pumpsFresh(void)
+{
+    if (!s_lc.m_pumps.m_received) return false;
+    return (XDateTime_currentMSecsSinceEpoch() - s_lc.m_pumps.m_lastMs) <=
+           HSF_LINK_PUMP_STALE_MS;
+}
+
+bool HsfLinkClient_pumpSnapshotRequest(void)
+{
+    XLinkSession* session;
+    uint32_t reqId = 0;
+    if (!HsfLinkClient_isReady()) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    return XLinkSession_sendRequest_ex(session, HSF_CMD_PUMP_SNAPSHOT,
+                                      XLinkDataType_Bson, NULL, 0, &reqId);
+}
+
+bool HsfLinkClient_pumpControl(int index, bool on)
+{
+    XLinkSession* session;
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    uint32_t reqId = 0;
+    bool ok;
+
+    if (!HsfLinkClient_isReady()) return false;
+    if (index < 0 || index >= HSF_PUMP_COUNT) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_PUMP_INDEX, (int32_t)index);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_PUMP_ON, on);
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    if (!bytes) return false;
+    ok = XLinkSession_sendRequest_ex(session, HSF_CMD_PUMP_CONTROL,
+                                     XLinkDataType_Bson,
+                                     (const uint8_t*)XByteArray_constData(bytes),
+                                     (uint32_t)XByteArray_size_base(bytes),
+                                     &reqId);
+    XClassDelete((XClass*)bytes);
+    return ok;
+}
+
+void HsfLinkClient_setPumpCallback(HsfLinkNotifyFn cb, void* userData)
+{
+    if (cb) hsfLcAddSub(s_lc.m_pumpCb, cb, userData);
+}
+
 bool HsfLinkClient_vfdSnapshotRequest(void)
 {
     XLinkSession* session;
@@ -1374,6 +1865,136 @@ bool HsfLinkClient_vfdSnapshotRequest(void)
     if (!session) return false;
     return XLinkSession_sendRequest_ex(session, HSF_CMD_VFD_SNAPSHOT,
                                        XLinkDataType_Bson, NULL, 0, &reqId);
+}
+
+bool HsfLinkClient_historyPage(int offset, int limit)
+{
+    XLinkSession* session;
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    uint32_t reqId = 0;
+    bool ok = false;
+
+    if (!HsfLinkClient_isReady()) return false;
+    if (offset < 0) offset = 0;
+    if (limit <= 0) limit = 20;
+    if (limit > HSF_HISTORY_PAGE_MAX) limit = HSF_HISTORY_PAGE_MAX;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+
+    /* [窗口锚点 beforeTs] é¦é¡µæèªå·±çâç°å¨âåä¸å»ï¼ç¿»é¡µåæ ·åä¼ âæ´æ®µåé¡µéå¨åä¸æ¹æ°æ®ä¸âï¼
+     * å¦å©åºå¨æç»­å¥åºï¼ç¿»å°ç¬¬ 2 é¡µæ¶æ°è¡å·²æªè¿æ¥ï¼
+     * offset æ´ä½åç§»ââ ç¸é»ä¸¤é¡µåºç°éå¤è¡ã */
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_HIST_OFFSET, offset);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_HIST_LIMIT, limit);
+    XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_HIST_BEFORE_TS,
+                                      XDateTime_currentSecsSinceEpoch() * 1000LL);
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    if (!bytes) return false;
+    ok = XLinkSession_sendRequest_ex(session, HSF_CMD_HISTORY_PAGE,
+                                    XLinkDataType_Bson,
+                                    (const uint8_t*)XByteArray_constData(bytes),
+                                    (uint32_t)XByteArray_size_base(bytes),
+                                    &reqId);
+    XClassDelete((XClass*)bytes);
+    return ok;
+}
+
+const HsfHistoryPage* HsfLinkClient_history(void)
+{
+    return &s_lc.m_history;
+}
+
+/* ==================== 远端配置（0x0116 / 0x0117）+ 自动运行（0x0115） ==================== */
+
+bool HsfLinkClient_configGet(void)
+{
+    XLinkSession* session;
+    uint32_t reqId = 0;
+    if (!HsfLinkClient_isReady()) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    return XLinkSession_sendRequest_ex(session, HSF_CMD_CONFIG_GET,
+                                       XLinkDataType_Bson, NULL, 0, &reqId);
+}
+
+bool HsfLinkClient_configSetStorage(bool enabled, int sampleMs)
+{
+    XLinkSession* session;
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    uint32_t reqId = 0;
+    bool ok = false;
+
+    if (!HsfLinkClient_isReady()) return false;
+    if (sampleMs < 1000) sampleMs = 1000;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    XBsonDocument_insert_keyUtf8_utf8(doc, HSF_CFG_SECTION_KEY,
+                                      HSF_CFG_SECTION_STORAGE);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_STORAGE_ENABLED, enabled);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_STORAGE_SAMPLE_MS,
+                                       sampleMs);
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    if (!bytes) return false;
+    ok = XLinkSession_sendRequest_ex(session, HSF_CMD_CONFIG_SET,
+                                    XLinkDataType_Bson,
+                                    (const uint8_t*)XByteArray_constData(bytes),
+                                    (uint32_t)XByteArray_size_base(bytes),
+                                    &reqId);
+    XClassDelete((XClass*)bytes);
+    return ok;
+}
+
+const HsfConfig* HsfLinkClient_config(void)
+{
+    return &s_lc.m_config;
+}
+
+const char* HsfLinkClient_serverAddress(void)
+{
+    return s_lc.m_serverAddr;
+}
+
+const char* HsfLinkClient_roleName(void)
+{
+    switch (HsfLinkClient_role()) {
+    case 1: return "\xE7\xAE\xA1\xE7\x90\x86\xE5\x91\x98";     /* 管理员 */
+    case 2: return "\xE8\xBF\x90\xE8\xA1\x8C\xE5\x91\x98";     /* 运行员 */
+    default: return "\xE5\x8C\x96\xE8\xA7\x82";                  /* 观察 */
+    }
+}
+
+bool HsfLinkClient_autoControl(int op)
+{
+    XLinkSession* session;
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    uint32_t reqId = 0;
+    bool ok = false;
+
+    if (!HsfLinkClient_isReady()) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    XBsonDocument_insert_keyUtf8_int32(doc, "op", op);
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    if (!bytes) return false;
+    ok = XLinkSession_sendRequest_ex(session, HSF_CMD_AUTO_CONTROL,
+                                    XLinkDataType_Bson,
+                                    (const uint8_t*)XByteArray_constData(bytes),
+                                    (uint32_t)XByteArray_size_base(bytes),
+                                    &reqId);
+    XClassDelete((XClass*)bytes);
+    return ok;
 }
 
 const char* HsfLinkClient_lastCommandError(void)
@@ -1428,6 +2049,16 @@ bool HsfLinkClient_runMode(int* outAuto)
         return false;
     }
     if (outAuto) *outAuto = s_lc.m_modeAuto;
+    return true;
+}
+
+bool HsfLinkClient_autoRunning(int* outRunning)
+{
+    if (!s_lc.m_autoRunningKnown) {
+        if (outRunning) *outRunning = -1;
+        return false;
+    }
+    if (outRunning) *outRunning = s_lc.m_autoRunning;
     return true;
 }
 

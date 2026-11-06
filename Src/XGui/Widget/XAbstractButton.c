@@ -1001,6 +1001,16 @@ static void VXAbstractButton_mousePressCommon(XWidget* self, XEvent* event)
             XWidget_setFocusReason(self, XFocusReason_Mouse);
         button->m_pressed = true;
         abstractbutton_setDownFromInput(button, true);
+        /* [不再显式 grabMouse] 「按住拖出按钮仍保持按下」由框架的**隐式
+         * 抓取**（g_buttonDownWidget = Qt 的 qt_button_down）保证：按下时
+         * 登记按压靶，其后的 MOVE/RELEASE 一律改投该靶（见 XWidget.c 的
+         * 事件分派）。
+         * [为什么撤掉早先的显式抓取] 显式抓取是**全局单抓取者**语义，且
+         * 只有真正收到 RELEASE 时才会被释放——按钮在按住期间被禁用
+         * （changeEvent → setDownFromInput(false)）时不会走到释放分支，
+         * 抓取就**留在原地**：此后所有鼠标事件都被投给那个已禁用的按钮，
+         * 界面整体"点不动"（现场症状：点动后连停止按钮都按不动）。
+         * 隐式抓取没有这个问题：RELEASE 一定回到按压靶并当场清除。 */
         XEvent_accept(event);
         return;
     }
@@ -1080,8 +1090,16 @@ static void VXAbstractButton_mouseMoveEvent(XWidget* self, XEvent* event)
 
     position = XMouseEvent_position(mouseEvent);
     hit = XAbstractButton_hitButton_base(button, &position);
+    /* [Qt 口径：移出不释放] 对标 QAbstractButton：按下后即使鼠标拖出按钮，
+     * 按钮**仍保持按下态**（pressed 已发），直到松手才发 released；
+     * "松手时鼠标不在按钮内" ⇒ 不发 clicked（由 mouseReleaseEvent 的
+     * hitButton 判定负责）。
+     * 原实现在这里调 setDownFromInput(false) —— 它会**立刻发 released**，
+     * 于是"按住不动、鼠标轻微抖动出按钮"就被当成松手 ⇒ 现场症状：点动
+     * 按钮长按，电机随即停（服务端还没到看门狗超时就先收到了点动释放）。
+     * 现在移出只保持按下态、不动信号。 */
     if (hit != button->m_down) {
-        abstractbutton_setDownFromInput(button, hit);
+        /* 视觉上仍按下（Qt 口径），故不 repaint 状态；仅吞掉事件。 */
         XEvent_accept(event);
         return;
     }

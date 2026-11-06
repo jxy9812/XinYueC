@@ -197,7 +197,16 @@ static void test_fullChainDigitalStation(void)
     CHECK("DI 有效", valid);
     XPrintf("[INFO] DI mask=0x%08X valid=%d count=%d\n", (unsigned)mask,
             (int)valid, HsfServerIoDigital_channelCount(st));
-    CHECK("DI 缺省为偶数通道吸合（模型缺省值 0x5555）", mask == 0x5555u);
+    /* [口径对齐 Python] 16 点模型 interlock 缺省开 ⇒ **6 路阀**全部"已关"
+     * 的开机稳态，行程推导出关到位位（偶数位 0/2/4/6/8/10）= 0x0555——
+     * 与旧静态缺省值数值相同但来源不同：现在是"阀区行程推导"，不再是
+     * 发明观感。
+     * [为什么是 6 路不是 8 路] 阀区边界 = 现场六路电磁阀（Python
+     * VirtualDigital.VALVE_COUNT 同值）。阀区之外的通道（进水泵 DO6、
+     * 按钮灯 DO7..9、按钮输入 DI12..15）**不是阀**：写它们不产生行程，
+     * 也不该动任何到位位——早先按"模型容量 8"推导，会把 DI12..15 也当
+     * 阀的到位位，阀一动作就把按钮组的输入点拉成 0。 */
+    CHECK("DI 开机稳态 = 6 路阀全关（行程推导 0x0555）", mask == 0x0555u);
 
     /* 写 DO0 = 1 → 回读一致（写路径经 Hub → 虚拟客户端 → 模型）。 */
     CHECK("写 DO0 受理", HsfServerIoDigital_writeDo(st, 0, true));
@@ -280,7 +289,7 @@ static void test_valveWithVirtualDevice(void)
         uint32_t fresh = 0;
         for (i = 0; i < 16; ++i)
             if (HsfServerIoDigital_isDiFresh(dig, i)) fresh |= (1u << i);
-        HsfServerIoValve_poll(&bank, diMask, diValid, fresh,
+        HsfServerIoValve_poll(&bank, diMask, diValid, fresh, 0, false,
                               XDateTime_currentMSecsSinceEpoch());
     }
     it = HsfServerIoValve_item(&bank, 0);
@@ -300,7 +309,7 @@ static void test_valveWithVirtualDevice(void)
         uint32_t fresh = 0;
         for (i = 0; i < 16; ++i)
             if (HsfServerIoDigital_isDiFresh(dig, i)) fresh |= (1u << i);
-        HsfServerIoValve_poll(&bank, diMask, diValid, fresh,
+        HsfServerIoValve_poll(&bank, diMask, diValid, fresh, 0, false,
                               XDateTime_currentMSecsSinceEpoch());
     }
     it = HsfServerIoValve_item(&bank, 0);
@@ -312,7 +321,7 @@ static void test_valveWithVirtualDevice(void)
     HsfServerIoDigital_writeDo(dig, 2, false);
     /* 用"只给新鲜度、不给任何到位"的位图制造动作中（避免清掉 DI 影响其他断言）。 */
     t0 = (int64_t)XDateTime_currentMSecsSinceEpoch();
-    HsfServerIoValve_poll(&bank, 0u, true, 0xFFFFFFFFu, (uint64_t)t0);
+    HsfServerIoValve_poll(&bank, 0u, true, 0xFFFFFFFFu, 0, false, (uint64_t)t0);
     it = HsfServerIoValve_item(&bank, 0);
     CHECK("命令后未到位 = 动作中", it && it->m_state == HsfValveState_Moving);
     {
@@ -323,7 +332,7 @@ static void test_valveWithVirtualDevice(void)
                                           (int)sizeof(text)));
     }
     /* 跨过 2000ms 超时。 */
-    HsfServerIoValve_poll(&bank, 0u, true, 0xFFFFFFFFu, (uint64_t)t0 + 2500u);
+    HsfServerIoValve_poll(&bank, 0u, true, 0xFFFFFFFFu, 0, false, (uint64_t)t0 + 2500u);
     it = HsfServerIoValve_item(&bank, 0);
     CHECK("超时后判故障", it && it->m_state == HsfValveState_Fault);
     {
@@ -338,7 +347,8 @@ static void test_valveWithVirtualDevice(void)
     CHECK("告警取走后不复现（取走即消费）",
           !HsfServerIoValve_takeAlarm(&bank, 0, NULL, NULL, 0));
     /* 再推一拍：仍未到位，但不得再告警（一次动作一条）。 */
-    HsfServerIoValve_poll(&bank, 0u, true, 0xFFFFFFFFu, (uint64_t)t0 + 3000u);
+    HsfServerIoValve_poll(&bank, 0u, true, 0xFFFFFFFFu, 0, false,
+                          (uint64_t)t0 + 3000u);
     CHECK("同一动作不重复告警",
           !HsfServerIoValve_takeAlarm(&bank, 0, NULL, NULL, 0));
 

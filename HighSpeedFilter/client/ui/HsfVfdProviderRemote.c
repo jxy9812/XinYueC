@@ -26,11 +26,18 @@
 typedef struct HsfVfdRemoteState {
     HsfVfdNotifyFn m_pageCb;        /**< 页面通知回调（单页单实例）。 */
     void* m_pageUser;               /**< 页面令牌。 */
-    bool m_gateOpen;                /**< 本地控制闸（默认关，勾选开）。 */
+    bool m_gateOpen;                /**< 本地控制闸（默认开——见下）。 */
     const struct HsfVfdProvider* m_self; /**< 表指针回填（通知回传用）。 */
 } HsfVfdRemoteState;
 
 static HsfVfdRemoteState s_vr;      /**< 模块单例（零初始化）。 */
+
+/* [控制闸默认开] 2026-11-06：原实现默认**关** ⇒ 变频器页所有控制按钮
+ * 全灰、必须先勾「允许界面操作」才能动，现场观感是"变频器几乎无法控制"。
+ * Python 客户端没有这层本地闸——控制可用性只取决于三条（未连接 / 自动模式
+ * / 权限不足），由服务端把关。本地闸降级为"用户可选的额外保险"：默认开，
+ * 自动模式或未登录时仍强制锁死（见 remoteSetControlEnabled）。 */
+#define HSF_VR_GATE_DEFAULT_OPEN  1
 
 /** @brief 远端能力位（协议约定：M512 支持面，页面按位裁剪控件）。 */
 #define HSF_VR_CAPS  ((uint32_t)XVfdCap_Reverse | (uint32_t)XVfdCap_Jog | \
@@ -125,10 +132,12 @@ static bool remoteSendControl(XVfdOperation op, bool reverse, double hz)
     return HsfLinkClient_vfdControl(&req);
 }
 
-static bool remoteStart(void* userData, bool reverse)
+static bool remoteStart(void* userData, bool reverse, double hz)
 {
     (void)userData;
-    return remoteSendControl(XVfdOperation_Start, reverse, 0.0);
+    /* [捎带给定] 服务端在处理 Start/Jog 时先写给定再发命令字（对齐 Python
+     * 服务端 apply_control）⇒ 界面设 3Hz 就真跑 3Hz，不会按残留旧给定跑。 */
+    return remoteSendControl(XVfdOperation_Start, reverse, hz);
 }
 
 static bool remoteStop(void* userData)
@@ -143,10 +152,18 @@ static bool remoteFreeStop(void* userData)
     return remoteSendControl(XVfdOperation_FreeStop, false, 0.0);
 }
 
-static bool remoteJog(void* userData, bool reverse)
+static bool remoteJog(void* userData, bool reverse, double hz)
 {
     (void)userData;
-    return remoteSendControl(XVfdOperation_Jog, reverse, 0.0);
+    /* 点动同样捎带给定：否则按住点动会按变频器里上一次的给定跑。 */
+    return remoteSendControl(XVfdOperation_Jog, reverse, hz);
+}
+
+static bool remoteJogRelease(void* userData)
+{
+    (void)userData;
+    /* [op=101] 松手即停，不等看门狗（对齐 Python 客户端 {"op":101}）。 */
+    return HsfLinkClient_vfdJogRelease();
 }
 
 static bool remoteSetFrequency(void* userData, double hz)
@@ -191,6 +208,7 @@ static HsfVfdProvider kRemoteProvider = {
     remoteStop,
     remoteFreeStop,
     remoteJog,
+    remoteJogRelease,
     remoteSetFrequency,
     remoteResetFault,
     remoteSubscribe,
@@ -205,6 +223,9 @@ const HsfVfdProvider* HsfVfdProvider_remote(void)
 {
     if (!s_vr.m_self) {
         s_vr.m_self = &kRemoteProvider;
+        /* [闸缺省开] 见 HSF_VR_GATE_DEFAULT_OPEN 注记：控制可用性由全局
+         * 模式决定（手动模式即可控），不再要求用户先勾「允许界面操作」。 */
+        s_vr.m_gateOpen = (HSF_VR_GATE_DEFAULT_OPEN != 0);
         /* HsfLinkClient 回调槽位接桥（各槽单订阅者：登录窗占 ready/fail，
          * 本 provider 占 vfd/command；ready 桥在登录窗之后注册会覆盖——
          * 登录窗用 fail/ready 判定首登，本桥只在就绪后拉快照，覆盖安全）。 */

@@ -150,6 +150,101 @@
  */
 #define HSF_CMD_AUTO_CONTROL        0x0115u
 
+/**
+ * @brief 历史分页查询（载荷 {offset:int, limit:int, beforeTs?:int,
+ *                            loTs?:int, hiTs?:int}）。
+ * @details 与 Python 侧 proto.CMD_HISTORY_PAGE 同号。**只读数据，不需要
+ *          root**（看历史不是控制面动作）。
+ *          [窗口锚点 beforeTs] 客户端首屏把自己的"现在"发上来，翻页时
+ *          原样回传 ⇒ 整段分页钉在同一批数据上。否则库在持续入库
+ *          （5s 一行），翻到第 2 页时新行已顶进来，offset 整体偏移 ⇒
+ *          相邻两页出现重复行、旧行被跳过。
+ *          [时间单位] 全部是 **epoch 毫秒**（墙钟；不是 monotonic）。
+ *          Response = {ok, total, offset, limit, cols, rows, dbRows,
+ *          latestTs, earliestTs, windowStartTs, windowEndTs}：
+ *          cols 是列名数组，rows 是**原始值**数组（每行一个数组，NULL 列
+ *          发 BSON null），显示格式化在客户端做（与服务端口径一致）。
+ */
+#define HSF_CMD_HISTORY_PAGE        0x0118u
+
+/**
+ * @brief 远端配置读取（载荷空；**任何角色都可读**，只读回显不涉密）。
+ * @details 与 Python 侧 proto.CMD_CONFIG_GET 同号。应答：
+ *          {ok, collect:{…}, storage:{…}, storageDbPath, storageStats}
+ *          · collect —— 采集节（各设备开关 + 轮询周期）；
+ *          · storage —— 落盘节（开关/路径/采样周期/上限/策略/保留份数）；
+ *          · storageDbPath —— 实际库文件路径；
+ *          · storageStats —— 容量实况（usedBytes/contentBytes/maxMb/rows…）。
+ *          键名与 Python proto.CFGK_* 完全一致 ⇒ 两端客户端可互换。
+ */
+#define HSF_CMD_CONFIG_GET          0x0116u
+
+/**
+ * @brief 远端配置写入（载荷 {section:"collect"|"storage", …键}；**需 root**）。
+ * @details 与 Python 侧 proto.CMD_CONFIG_SET 同号。[为什么 root 但不看自动
+ *          模式闸] 改配置不动任何输出点，不属"控制"；自动运行中允许调采集
+ *          频率/开关（监视不受模式限制）。
+ *          [C 端口径差异] 采集节参数在 C 端是**编译期常量**（写在
+ *          HsfServerConfig.h 的宏里，与现场接线同性质），故写入落 INI、
+ *          **重启服务端后生效**；落盘节是运行期参数，立即生效。
+ */
+#define HSF_CMD_CONFIG_SET          0x0117u
+
+/* ---- 远端配置键（与 Python 侧 proto.CFGK_* 同名） ---- */
+
+/* 采集节：设备开关。 */
+#define HSF_CFGK_VFD_ENABLED        "vfdEnabled"
+#define HSF_CFGK_TEMPHUM_ENABLED    "temphumEnabled"
+#define HSF_CFGK_FLOWMETER_ENABLED  "flowmeterEnabled"
+#define HSF_CFGK_TURBIDITY_ENABLED  "turbidityEnabled"
+#define HSF_CFGK_ANALOG_ENABLED     "analogEnabled"
+#define HSF_CFGK_DIGITAL_ENABLED    "digitalEnabled"
+
+/* 采集节：轮询周期（毫秒）。 */
+#define HSF_CFGK_VFD_POLL_MS        "vfdPollMs"
+#define HSF_CFGK_TEMPHUM_POLL_MS    "temphumPollMs"
+#define HSF_CFGK_TURBIDITY_POLL_MS  "turbidityPollMs"
+#define HSF_CFGK_ANALOG_POLL_MS     "analogPollMs"
+#define HSF_CFGK_DIGITAL_POLL_MS    "digitalPollMs"
+
+/* 落盘节。 */
+#define HSF_CFGK_STORAGE_ENABLED    "enabled"
+#define HSF_CFGK_STORAGE_PATH       "path"
+#define HSF_CFGK_STORAGE_SAMPLE_MS  "sampleMs"
+#define HSF_CFGK_STORAGE_MAX_MB     "maxMb"
+#define HSF_CFGK_STORAGE_FULL_POLICY "fullPolicy"
+#define HSF_CFGK_STORAGE_KEEP_FILES "keepFiles"
+
+/* 应答段/顶层键。 */
+#define HSF_CFG_SECTION_KEY         "section"
+#define HSF_CFG_SECTION_COLLECT     "collect"
+#define HSF_CFG_SECTION_STORAGE     "storage"
+#define HSF_CFG_STORAGE_DB_PATH     "storageDbPath"
+#define HSF_CFG_STORAGE_STATS       "storageStats"
+
+/* ---- 历史分页键（与 Python 侧 proto.HIST_KEY_* 同名） ---- */
+
+#define HSF_KEY_HIST_OFFSET         "offset"
+#define HSF_KEY_HIST_LIMIT          "limit"
+#define HSF_KEY_HIST_BEFORE_TS      "beforeTs"
+#define HSF_KEY_HIST_LO_TS          "loTs"
+#define HSF_KEY_HIST_HI_TS          "hiTs"
+#define HSF_KEY_HIST_TOTAL          "total"
+#define HSF_KEY_HIST_ROWS           "rows"
+#define HSF_KEY_HIST_COLS           "cols"
+#define HSF_KEY_HIST_DB_ROWS        "dbRows"
+#define HSF_KEY_HIST_LATEST_TS      "latestTs"
+#define HSF_KEY_HIST_EARLIEST_TS    "earliestTs"
+#define HSF_KEY_HIST_WINDOW_START   "windowStartTs"
+#define HSF_KEY_HIST_WINDOW_END     "windowEndTs"
+
+/** @brief 历史分页：页大小上限（与 Python HISTORY_PAGE_MAX 同值）。 */
+#define HSF_HISTORY_PAGE_MAX        50
+/** @brief 历史分页：页大小下限。 */
+#define HSF_HISTORY_PAGE_MIN        1
+/** @brief 历史分页：页大小缺省（与 Python HISTORY_PAGE_DEFAULT 同值）。 */
+#define HSF_HISTORY_PAGE_DEFAULT    20
+
 /* ---- 自动运行 op 操作字（HSF_CMD_AUTO_CONTROL 载荷 "op" 键取值） ---- */
 
 /** @brief 启动自动运行（须已处自动模式）。 */
@@ -421,6 +516,20 @@ typedef enum HsfDeviceKind {
 #define HSF_KEY_AI_UA_FMT           "u%d"
 /** @brief 通道 i 的名字（utf8；**全量快照专用**）。 */
 #define HSF_KEY_AI_NAME_FMT         "an%d"
+/**
+ * @brief 通道 i 的**工程量**（定点整数：值 ×1000；如 0.499MPa ⇒ 499）。
+ * @details [与 Python 侧同键同义] Python server_py 的 analog 帧用 e{i}/
+ *          eu{i}/en{i}/ew{i} 四键表达"标定过的通道"：换算值、单位、通道名、
+ *          越限说明。跨端对齐的关键是**键字面一致**，故本端同用。
+ *          换算在服务端做（量程是现场标定参数，与接线同性质）。
+ */
+#define HSF_KEY_AI_ENG_FMT          "e%d"
+/** @brief 通道 i 的工程量单位（utf8；如 "MPa"）。 */
+#define HSF_KEY_AI_ENG_UNIT_FMT     "eu%d"
+/** @brief 通道 i 的标定名称（utf8；如 "压差计"；仅有标定的通道才有）。 */
+#define HSF_KEY_AI_ENG_NAME_FMT     "en%d"
+/** @brief 通道 i 的越限说明（utf8；空=正常，如"低于 4.0mA（断线/欠量程）"）。 */
+#define HSF_KEY_AI_ENG_NOTE_FMT     "ew%d"
 
 /* ==================== 电磁阀（6 路，每路 1 DO + 2 DI 反馈） ==================== */
 
@@ -445,6 +554,15 @@ typedef enum HsfValveState {
 
 /* [为什么两台合成一帧] 它们总是成对显示、成对刷新，分开两个主题只会让客户端
  * 写两遍同样的订阅逻辑；台数由帧里的 count 决定，将来加第三台也只是 count 变大。 */
+
+/** @brief 浊度仪台数上限（结构上留多台位置；当前 2 台）。
+ *  @details 与 Python 侧 proto.HSF_TURBIDITY_COUNT、服务端 HSFServerConfig
+ *           的 HSF_TURBIDITY_COUNT 同值；放在公共协议头是**为了让客户端也能
+ *           定长开数组**（客户端不引服务端配置头）。
+ */
+#ifndef HSF_TURBIDITY_COUNT
+#define HSF_TURBIDITY_COUNT       2
+#endif
 
 /** @brief 帧内台数（顶层，"count"；int）。 */
 #define HSF_KEY_TURB_COUNT          "count"
@@ -527,20 +645,28 @@ typedef enum HsfValveState {
 #define HSF_KEY_VALVE_INDEX         "index"
 /** @brief 阀控制载荷：目标动作（bool；true=开阀）。 */
 #define HSF_KEY_VALVE_ON            "on"
+/**
+ * @brief 阀控制处置结果（utf8；随快照/控制应答以 v{i}_ 前缀下发）。
+ * @details 与 Python 侧 KEY_VALVE_CMD_RESULT 同名同值域：issued（新动作）/
+ *          repeated（同目标在途重发，不重置计时）/ reversed（在途反向）/
+ *          ignored（已到位同目标，幂等忽略）/ external（DO 被外部改动，
+ *          接管为新动作）。客户端据此给不同状态栏文案。
+ */
+#define HSF_KEY_VALVE_CMD_RESULT    "cmdResult"
 
-/* ---------------- 阀告警（事件推送，独立主题） ---------------- */
+/* ---------------- 阀告警（事件帧，随阀状态主题下发） ---------------- */
 
 /**
- * @brief 阀告警主题（载荷 = 单条告警 BSON）。
- * @details [为什么单独一个主题而不是塞进阀状态]
- *            阀状态主题是**周期推送**（200ms 一拍），超时告警是**事件**
- *            （发生才推一次）。混在一起有两个问题：
- *              ① 客户端每 200ms 收一帧重复告警，无法区分"新告警"与
- *                 "仍在超时"；
- *              ② 只看数字量页/主界面的客户端没订阅阀主题，就收不到这条
- *                 告警。
- *            故告警走独立主题，且**全推给所有已连接会话**（不要求订阅）。
- *            [与 Python 侧 proto.TOPIC_VALVE_ALARM 同值]
+ * @brief 阀告警主题（**遗留定义，2026-11-06 起服务端不再使用**）。
+ * @details [为什么改回阀状态主题] Python 生态（server_py/client_py/webui_py）
+ *          把告警帧推在 `TOPIC_VALVE_STATUS`(0x00010007) 上——载荷带 "ac"
+ *          键即告警帧，键空间 `a{i}_*` 与周期状态的 `v{i}_*` 不相交，客户端
+ *          按键判型。而 Python 客户端只订阅 0x00010007 ⇒ C 服务端推 0x00010008
+ *          的告警在 Python 界面上被**静默丢弃**（TOPIC_KIND 查不到即 return）。
+ *          独立主题"全推不要求订阅"的初衷由 publish_ex 的订阅语义兜不住
+ *          （无人订阅即 0 投递），故对齐 Python 布局：随 0x00010007 推
+ *          {ac:N, a0_vi/vn/k/t/at/to...}，取走即消费保证一条只推一次。
+ *          本宏保留仅供对照，新代码勿再使用。
  */
 #define HSF_TOPIC_VALVE_ALARM       0x00010008u
 

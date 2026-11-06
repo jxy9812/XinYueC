@@ -329,15 +329,20 @@ async def run(cfg, args):
 def _device_summary(cfg):
     parts = []
     if cfg.enable_vfd:
-        parts.append("变频器(%s站%d)" % (cfg.serial.port, cfg.vfd_unit_id))
+        parts.append("变频器(%s/%d站%d)"
+                     % (cfg.serial.port, cfg.serial.baudrate,
+                        cfg.vfd_unit_id))
     if cfg.enable_temphum:
-        parts.append("温湿度(%s站%d)" % (cfg.serial.port, cfg.temphum_unit_id))
+        parts.append("温湿度(%s/%d站%d)"
+                     % (cfg.serial.port, cfg.serial.baudrate,
+                        cfg.temphum_unit_id))
     if cfg.enable_flowmeter:
-        parts.append("流量计(%s站%d)" % (cfg.serial.port,
-                                        cfg.flowmeter_unit_id))
+        parts.append("流量计(%s/%d站%d)"
+                     % (cfg.serial_b.port, cfg.serial_b.baudrate,
+                        cfg.flowmeter_unit_id))
     if cfg.enable_turbidity:
-        parts.append("浊度仪(%s站%s)" % (
-            cfg.serial.port,
+        parts.append("浊度仪(%s/%d站%s)" % (
+            cfg.serial_b.port, cfg.serial_b.baudrate,
             "/".join(str(u) for u in cfg.turbidity_unit_ids[:2])))
     if cfg.enable_pump:
         dos = [str(it.get("do")) for it in cfg.pump_items

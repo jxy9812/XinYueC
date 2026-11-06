@@ -161,9 +161,66 @@ CFGK_DIGITAL_POLL_MS = "digitalPollMs"
 CFGK_STORAGE_ENABLED = "enabled"
 CFGK_STORAGE_PATH = "path"
 CFGK_STORAGE_SAMPLE_MS = "sampleMs"
+#: 容量限额（现场硬盘小，必须能封顶）。与 server_py proto.py 同名同值。
+CFGK_STORAGE_MAX_MB = "maxMb"
+CFGK_STORAGE_FULL_POLICY = "fullPolicy"
+CFGK_STORAGE_KEEP_FILES = "keepFiles"
+#: 满额策略下拉项（键, 文案）——与服务端 proto.STORAGE_POLICIES 同序。
+STORAGE_POLICIES = (
+    ("ring", "循环覆盖（删最旧，长期无人值守）"),
+    ("stop", "到限停写（保留已有数据，只读）"),
+    ("rotate", "分段滚动（写满换文件，按段归档）"),
+)
+STORAGE_POLICY_KEYS = tuple(k for k, _t in STORAGE_POLICIES)
+STORAGE_MAX_MB_MIN = 0
+STORAGE_MAX_MB_MAX = 1024 * 1024
+#: 满额策略 → 一句话说明（界面在选中项下方显示，避免下拉文字太长）。
+STORAGE_POLICY_HINTS = {
+    "ring": "库满时删最旧的整段数据（三表同一时间线），磁盘占用封顶在上限。"
+            "适合长期无人值守。",
+    "stop": "库满后停止入库，已有数据原样保留只读。适合宁可丢新数据也"
+            "不能丢历史取证的场合。",
+    "rotate": "库满后改名归档成带时间戳的分段文件并另起新库，只保留最近"
+              "N 段。单段上限 = 总上限 / 段数。",
+}
 #: 轮询周期允许范围（与 server_py proto.py 同值：服务端越界自动夹取）。
 CFG_POLL_MS_MIN = 50
 CFG_POLL_MS_MAX = 60000
+
+#: 分页读取服务端历史数据（**只读，无需 root**）。
+#: 载荷 {"offset","limit","beforeTs"?,"loTs"?,"hiTs"?}；
+#: 应答 {"ok","total","rows","cols","dbRows","latestTs",…}。
+#: [为什么必须分页] 现场库能存上万行（5s 一行 ≈ 1.7 万行/天），一次全拉
+#: 会打爆服务端（SQL 全表读 + 百 KB 级 BSON）和板端内存；协议载荷上限
+#: 本身也只有 16KB。客户端定页大小、服务端只回一页 + 总数。
+CMD_HISTORY_PAGE = 0x0118
+HIST_KEY_OFFSET = "offset"
+HIST_KEY_LIMIT = "limit"
+HIST_KEY_BEFORE_TS = "beforeTs"
+HIST_KEY_LO_TS = "loTs"
+HIST_KEY_HI_TS = "hiTs"
+#: 关键字（下推服务端，在显示文本上匹配；空串/缺省 = 不限）。
+HIST_KEY_KW = "kw"
+#: 关键字要比对的显示列下标数组（缺省/空 = 全部列）。
+HIST_KEY_KW_COLS = "kwCols"
+HIST_KEY_TOTAL = "total"
+HIST_KEY_ROWS = "rows"
+HIST_KEY_COLS = "cols"
+HIST_KEY_DB_ROWS = "dbRows"
+HIST_KEY_LATEST_TS = "latestTs"
+HIST_KEY_EARLIEST_TS = "earliestTs"
+HIST_KEY_WINDOW_START_TS = "windowStartTs"
+HIST_KEY_WINDOW_END_TS = "windowEndTs"
+#: 单页行数上下限（服务端夹取；与 server_py proto.py 同值）。
+#: 上限由 16KB 载荷反推（实测 50 行 ≈ 11.8KB）。
+HISTORY_PAGE_MAX = 50
+HISTORY_PAGE_MIN = 1
+HISTORY_PAGE_DEFAULT = 20
+#: 历史表列名（应答 rows 的列序；与服务端 store.HISTORY_COLUMNS 同序）。
+HISTORY_COLUMNS = (
+    "ts", "mode", "vfd_state", "freq_hz", "current_a", "rpm",
+    "turb1", "turb2", "flow", "flow_unit", "flow_total", "total_unit",
+    "press_mpa", "press_note", "temp", "hum", "di", "do")
 
 #: 进水泵遥测推送主题。
 TOPIC_PUMP_STATUS = 0x0001000A

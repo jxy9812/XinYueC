@@ -38,6 +38,28 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
  */
 void HsfMonitorFlowMeter_adapt(XWidget* page, bool compact);
 
+/* ==================== 水质块（浊度仪 ×2 + 进水泵） ==================== */
+
+/**
+ * @brief 设某台浊度仪读数（index 从 0 起；online=false 显示 "--"）。
+ * @param ntu 浊度值（NTU 原值）；≥20 NTU 由页面标红。
+ */
+void HsfMonitorFlowMeter_setTurbidity(int index, const char* name,
+                                      double ntu, bool online);
+
+/**
+ * @brief 设进水泵状态（**命令状态**：现场无运行反馈点）。
+ * @param on 输出是否已开；ready 输出是否可控；text 说明（可空）。
+ */
+void HsfMonitorFlowMeter_setPump(const char* name, bool on, bool ready,
+                                  const char* text);
+
+/**
+ * @brief 注册泵控制出口（on=true 启动 / false 停止）。
+ */
+void HsfMonitorFlowMeter_setPumpWriteHandler(void (*fn)(void*, bool),
+                                             void* userData);
+
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */
 
 #ifdef __cplusplus

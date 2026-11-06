@@ -418,6 +418,19 @@ static XBsonDocument* xvfdCodecBuildControlDoc(const XVfdControlRequest* req)
         case XVfdOperation_Jog:
             ok = XBsonDocument_insert_keyUtf8_bool(doc, XVFD_CODEC_KEY_REV,
                                                    req->m_reverse);
+            /* [捎带给定 —— 对齐 Python 客户端 {"op":4,"rev":…,"hz":…}]
+             * 启动/点动帧**必须带界面给定量**：客户端只发一条 Start，
+             * 服务端在处理时「先写给定、再发命令字」。旧实现只写 rev、
+             * 把 m_valueHz 丢了 ⇒ 启动/点动按变频器里**残留的旧给定**跑
+             * （现场症状：界面设 3Hz、实际跑 25Hz = 界面在骗人）。
+             * [转速模式] rpm 一并带上，服务端优先用 rpm 换算（与 Python
+             * 侧 _resolve_given_hz 同口径）。 */
+            if (ok && req->m_valueHz != 0.0)
+                ok = XBsonDocument_insert_keyUtf8_double(doc, XVFD_CODEC_KEY_HZ,
+                                                         req->m_valueHz);
+            if (ok && req->m_valueRpm != 0.0)
+                ok = XBsonDocument_insert_keyUtf8_double(doc, XVFD_CODEC_KEY_RPM,
+                                                         req->m_valueRpm);
             break;
         case XVfdOperation_SetFrequency:
             ok = XBsonDocument_insert_keyUtf8_double(doc, XVFD_CODEC_KEY_HZ,

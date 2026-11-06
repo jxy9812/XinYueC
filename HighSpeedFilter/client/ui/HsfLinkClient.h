@@ -23,6 +23,8 @@ extern "C" {
 #endif
 
 #include "CXinYueConfig.h"
+#include "HsfLinkHistory.h"
+#include "HsfLinkConfig.h"
 #include "XIndustry_config.h"
 #include "XhsfLinkProto.h"   /* HSF_VALVE_COUNT / HSF_DIGITAL_CHANNELS 等常量。 */
 #include <stdbool.h>
@@ -81,6 +83,61 @@ typedef struct HsfLinkFlowMeter {
     bool     m_received;    /**< 本侧收到过至少一拍推送（历史事实，不复位）。 */
     uint64_t m_lastMs;      /**< 本侧最近一次收到推送的本地时刻（单调毫秒）。 */
 } HsfLinkFlowMeter;
+
+/* ==================== 浊度仪（两台合成一帧） ==================== */
+
+/**
+ * @brief 单台在线浊度仪快照。
+ * @details NTU 值口径：**线上是 NTU×100 的定点整数**（服务端协议层口径，
+ *          与 Python 侧 proto.KEY_TURB_NTU 同值），客户端显示时 ÷100。
+ */
+typedef struct HsfLinkTurbidity {
+    char   m_name[32];    /**< 仪器名（服务端给；客户端不猜原水/出水）。 */
+    int    m_ntu100;      /**< 浊度值 ×100（定点整数）。 */
+    int    m_raw;         /**< 32 位原始寄存器位模式（排查真相用）。 */
+    bool   m_online;      /**< 该台在线（已读到且未陈旧）。 */
+} HsfLinkTurbidity;
+
+/**
+ * @brief 浊度仪组快照（两台合成一帧；台数由帧里的 count 决定）。
+ */
+typedef struct HsfLinkTurbiditySet {
+    HsfLinkTurbidity m_items[HSF_TURBIDITY_COUNT]; /**< 各台。 */
+    int      m_count;      /**< 台数。 */
+    bool     m_received;   /**< 收到过至少一拍。 */
+    uint64_t m_lastMs;     /**< 最近一次收到推送的本地时刻（单调毫秒）。 */
+} HsfLinkTurbiditySet;
+
+/** @brief 浊度仪数据陈旧阈值（毫秒）。 */
+#define HSF_LINK_TURBIDITY_STALE_MS  3500u
+
+/* ==================== 进水泵（只有输出、无反馈） ==================== */
+
+/**
+ * @brief 单台泵快照。
+ * @details [泵没有反馈] 现场只有接触器输出，写了就是命令 ⇒ m_on 是**命令
+ *          状态**（我方最后写的值，经 DO 回显校准），不代表泵确实在转。
+ */
+typedef struct HsfLinkPump {
+    char   m_name[32];    /**< 泵名（服务端给）。 */
+    bool   m_on;          /**< 命令状态（输出已开）。 */
+    bool   m_ready;       /**< 输出是否可控（点位已配且模块在线）。 */
+    bool   m_valid;       /**< 数据有效。 */
+    char   m_text[64];    /**< 说明（未配置点位/模块离线…）。 */
+} HsfLinkPump;
+
+/**
+ * @brief 泵组快照（当前 1 台；结构上留多台位置）。
+ */
+typedef struct HsfLinkPumps {
+    HsfLinkPump m_items[HSF_PUMP_COUNT]; /**< 各台。 */
+    int      m_count;      /**< 台数。 */
+    bool     m_received;   /**< 收到过至少一拍。 */
+    uint64_t m_lastMs;     /**< 最近一次收到推送的本地时刻。 */
+} HsfLinkPumps;
+
+/** @brief 泵数据陈旧阈值（毫秒）。 */
+#define HSF_LINK_PUMP_STALE_MS  3500u
 
 /** @brief 流量计数据陈旧阈值（毫秒）：超过即视为断流，界面显示无数据。 */
 #define HSF_LINK_FLOWMETER_STALE_MS  3500u
@@ -213,6 +270,28 @@ int HsfLinkClient_aiValues(int32_t* outUa, uint32_t* outMask);
 const char* HsfLinkClient_aiName(int index);
 
 /**
+ * @brief 取模拟量通道的**标定工程量**（服务端算，与 Python 侧同键同义）。
+ * @param index 通道号。
+ * @param outValue1000 输出工程量（×1000 定点整数；如 0.499MPa ⇒ 499）；可 NULL。
+ * @param outUnit 输出单位（UTF-8，如 "MPa"；可 NULL）。
+ * @param unitCap outUnit 缓冲容量。
+ * @param outNote 输出越限说明（UTF-8；空=正常；可 NULL）。
+ * @return 该通道有标定工程量返回 true（未标定/越界返回 false）。
+ * @note  标定只在服务端做（量程是设备铭牌口径）：C 侧标定表见
+ *        HsfServerConfig.h 的 HSF_AI_SCALES，Python 侧见 config.analog.scales。
+ */
+bool HsfLinkClient_aiEngineering(int index, int32_t* outValue1000,
+                                 char* outUnit, int unitCap,
+                                 const char** outNote);
+
+/**
+ * @brief 取模拟量通道的原始寄存器值（毫伏口径；排查真相用）。
+ * @param index 通道号。
+ * @return 毫伏值；越界返回 0。
+ */
+int32_t HsfLinkClient_aiRawMv(int index);
+
+/**
  * @brief 取数字量通道名（服务端全量快照下发）。
  * @param index 通道号。
  * @param isDo  false=DI、true=DO。
@@ -287,6 +366,28 @@ bool HsfLinkClient_flowMeterSnapshotRequest(int side);
  */
 bool HsfLinkClient_flowMeterInject(const uint8_t* data, uint32_t size);
 
+/* ---- 浊度仪 / 泵 ---- */
+
+/** @brief 取浊度仪组快照（借用；禁释放）。 */
+const HsfLinkTurbiditySet* HsfLinkClient_turbidity(void);
+/** @brief 浊度仪数据是否当前新鲜。 */
+bool HsfLinkClient_turbidityFresh(void);
+/** @brief 请求浊度仪快照（0x0112）。 */
+bool HsfLinkClient_turbiditySnapshotRequest(void);
+/** @brief 注册浊度仪更新回调。 */
+void HsfLinkClient_setTurbidityCallback(HsfLinkNotifyFn cb, void* userData);
+
+/** @brief 取泵组快照（借用；禁释放）。 */
+const HsfLinkPumps* HsfLinkClient_pumps(void);
+/** @brief 泵数据是否当前新鲜。 */
+bool HsfLinkClient_pumpsFresh(void);
+/** @brief 请求泵快照（0x0113）。 */
+bool HsfLinkClient_pumpSnapshotRequest(void);
+/** @brief 控制泵（0x0114；index 从 0 起，on=true 启动）。 */
+bool HsfLinkClient_pumpControl(int index, bool on);
+/** @brief 注册泵更新回调。 */
+void HsfLinkClient_setPumpCallback(HsfLinkNotifyFn cb, void* userData);
+
 /* ==================== 控制下发 ==================== */
 
 #if XVFD_ON
@@ -297,12 +398,93 @@ bool HsfLinkClient_flowMeterInject(const uint8_t* data, uint32_t size);
  *         编码失败返回 false。
  */
 bool HsfLinkClient_vfdControl(const XVfdControlRequest* req);
+
+/**
+ * @brief 抑制**下一条**命令应答的错误提示（失败不写错误文本）。
+ * @details 用于"启动前预置给定"这一步：服务端有停机禁给定闸（宁可拒绝
+ *          一次调速，也不在不确定状态下改运行参数），故这一步在停机态
+ *          必然被拒；用户看到"点启动先弹一条失败"只会困惑。对齐 Python
+ *          客户端的静默口径（两条状态互相冲掉，只留最终那条启动结果）。
+ * @note  只作用于下一条应答（成败都清除）；无远端时为空操作。
+ */
+void HsfLinkClient_suppressNextCommandError(void);
+
+/**
+ * @brief 点动释放（松手即停；op=101，不等 600ms 看门狗）。
+ * @details 与 Python 客户端 {"op":101} 同口径；服务端据此立即停机并清
+ *          点动手持槽。
+ */
+bool HsfLinkClient_vfdJogRelease(void);
 #endif
 
 /**
  * @brief 请求一拍变频器遥测快照（Response 走 vfd 回调；连接未就绪返回 false）。
  */
 bool HsfLinkClient_vfdSnapshotRequest(void);
+
+/**
+ * @brief 请求一页历史（0x0118；与 Python 客户端同口径）。
+ * @param offset 起始偏移（按 ts 倒序数；0=最新那行）。
+ * @param limit 本页行数（服务端夹到 1..50）。
+ * @return 已发出请求返回 true（连接未就绪/参数非法返回 false）。
+ * @details 结果落在 HsfLinkClient_history() 里（页面拉取）。
+ */
+bool HsfLinkClient_historyPage(int offset, int limit);
+
+/**
+ * @brief 最近一次历史分页结果（借用指针；未收到过应答时 m_valid=false）。
+ */
+const HsfHistoryPage* HsfLinkClient_history(void);
+
+/**
+ * @brief 设备健康状态中文（与服务端 HsfDeviceHealth 对齐）。
+ * @param health 健康枚举值（0 正常 / 1 告警 / 2 数据过期 / 3 离线 / 4 故障）。
+ * @return 静态文案指针（借用；不释放）。
+ */
+const char* HsfLinkClient_healthText(int health);
+
+/**
+ * @brief 设备类别中文（与 HsfDeviceKind / Python KIND_TEXT 对齐）。
+ * @param kind 类别枚举值。
+ * @return 静态文案指针（借用；不释放）。
+ */
+const char* HsfLinkClient_kindText(int kind);
+
+/**
+ * @brief 请求服务端配置快照（0x0116；结果落在 HsfLinkClient_config()）。
+ * @return 已发出请求返回 true（未连接返回 false）。
+ */
+bool HsfLinkClient_configGet(void);
+
+/**
+ * @brief 写服务端落盘配置（0x0117 的 storage 节；运行期生效）。
+ * @param enabled 落盘开关。
+ * @param sampleMs 采样周期（毫秒；服务端夹到 ≥1000）。
+ * @return 已发出请求返回 true。
+ */
+bool HsfLinkClient_configSetStorage(bool enabled, int sampleMs);
+
+/**
+ * @brief 最近一次服务端配置快照（借用指针；未收到过应答时 m_valid=false）。
+ */
+const HsfConfig* HsfLinkClient_config(void);
+
+/**
+ * @brief 当前连接的服务端地址（"host:port"；借用；未连接为空串）。
+ */
+const char* HsfLinkClient_serverAddress(void);
+
+/**
+ * @brief 当前会话角色中文（管理员/运行员/观察；借用静态串）。
+ */
+const char* HsfLinkClient_roleName(void);
+
+/**
+ * @brief 自动运行控制（0x0115；需 root + 已处自动模式）。
+ * @param op 操作字：1 启动 / 2 停止 / 3 急停 / 4 复位。
+ * @return 已发出请求返回 true。
+ */
+bool HsfLinkClient_autoControl(int op);
 
 /**
  * @brief 最近一次控制应答的失败原因（借用；成功为空串）。
@@ -335,6 +517,15 @@ bool HsfLinkClient_setRunMode(bool autoMode);
 bool HsfLinkClient_runMode(int* outAuto);
 
 /**
+ * @brief 自动控制器是否真的在跑（与"是否自动模式"是两件事）。
+ * @param outRunning 输出：1=运行中、0=已停止、-1=未知（服务端未上报）。
+ * @return 是否已知（false ⇒ outRunning 被置为 -1）。
+ * @note  服务端 0x0105 应答带 autoRunning 键；缺失时必须保持"未知"，
+ *       不得折成 false（那会把"服务端没上报"说成"已停止"）。
+ */
+bool HsfLinkClient_autoRunning(int* outRunning);
+
+/**
  * @brief 注册运行模式变化回调（应答到达时触发）。
  * @param userData 注册令牌。
  * @note  回调内可用 HsfLinkClient_runMode 取当前值、lastModeError 取失败原因。
@@ -363,6 +554,7 @@ typedef struct HsfLinkDeviceHealth {
     int  m_runState;    /**< 运行态（XVfdRunState；非设备类 0）。 */
     bool m_online;      /**< 通讯在线。 */
     char m_text[48];    /**< 错误说明（可空）。 */
+    char m_addr[64];    /**< 连接地址文案（可空；服务端下发）。 */
 } HsfLinkDeviceHealth;
 
 /**
@@ -483,6 +675,38 @@ typedef struct HsfLinkValves {
 /** @brief 电磁阀数据陈旧阈值（毫秒）。 */
 #define HSF_LINK_VALVE_STALE_MS     3000u
 
+/* ==================== 阀告警事件（0x00010007 告警帧） ==================== */
+
+/**
+ * @brief 单条阀告警事件。
+ * @details [帧判型] 阀状态主题上的帧带 "ac" 键即为告警帧（键空间 a{i}_*
+ *          与状态帧 v{i}_* 不相交）——解析入口必须**先认 ac 再认状态**，
+ *          否则告警帧会被当状态帧把阀表清空（顶层无 count ⇒ count=0 ⇒
+ *          全部按钮死），与 Python 客户端 model.apply 的同一条口径。
+ *          [文案口径] m_text 是**服务端原文**，客户端不自行拼文案。
+ */
+typedef struct HsfLinkValveAlarm {
+    char m_name[48];    /**< 阀名（a{i}_vn 原文）。 */
+    char m_text[128];   /**< 告警文字（a{i}_t 原文）。 */
+    int  m_kind;        /**< 类型（1 超时 / 2 冲突 / 3 恢复，HSF_VALVE_ALARM_*）。 */
+    int  m_index;       /**< 路号（a{i}_vi；-1=未提供）。 */
+    int64_t m_atMs;     /**< 服务端发生时刻（a{i}_at，毫秒）。 */
+} HsfLinkValveAlarm;
+
+/** @brief 阀告警类型（与 Python proto.VALVE_ALARM_* / 服务端 HsfValveAlarmKind 同值）。 */
+#define HSF_VALVE_ALARM_TIMEOUT    1  /**< 动作超时未到位。 */
+#define HSF_VALVE_ALARM_CONFLICT   2  /**< 开/关到位信号同时有效。 */
+#define HSF_VALVE_ALARM_CLEARED    3  /**< 恢复（客户端据此走"已恢复"文案）。 */
+
+/** @brief 阀告警回调：每条告警逐条调用（主事件循环内直呼，可直改 UI）。 */
+typedef void (*HsfLinkValveAlarmFn)(void* userData,
+                                    const HsfLinkValveAlarm* alarm);
+
+/**
+ * @brief 注册阀告警回调（单槽，后注册覆盖前者；cb=NULL 注销）。
+ */
+void HsfLinkClient_setValveAlarmCallback(HsfLinkValveAlarmFn cb, void* userData);
+
 /**
  * @brief 取最近电磁阀快照（借用；从未收到时 m_received=false）。
  * @warning 返回内部存储，禁释放；内容随下一拍刷新。
@@ -491,6 +715,14 @@ const HsfLinkValves* HsfLinkClient_valves(void);
 
 /** @brief 电磁阀数据是否**当前新鲜**。 */
 bool HsfLinkClient_valvesFresh(void);
+
+/**
+ * @brief 最近一次阀控制的处置结果（借用；空串=暂无/未知）。
+ * @details 取值：issued（新动作）/ repeated（同目标在途重发，计时不重置）/
+ *          reversed（在途反向）/ ignored（已到位同目标，幂等忽略）/
+ *          external（DO 被外部改动，服务端接管）。随控制应答到达时更新。
+ */
+const char* HsfLinkClient_lastValveCmdResult(void);
 
 /**
  * @brief 下发单路阀控制（异步；结果经 commandResult 回调）。
@@ -518,7 +750,9 @@ typedef enum HsfLinkTopic {
     HsfLinkTopic_FlowMeter = 3,  /**< 电磁流量计遥测。 */
     HsfLinkTopic_Digital   = 4,  /**< 数字量（16DI/16DO）遥测。 */
     HsfLinkTopic_Valve     = 5,  /**< 电磁阀 6 路状态。 */
-    HsfLinkTopic_Count     = 6
+    HsfLinkTopic_Turbidity = 6,  /**< 在线浊度仪（两台合成一帧）。 */
+    HsfLinkTopic_Pump      = 7,  /**< 进水泵状态。 */
+    HsfLinkTopic_Count     = 8
 } HsfLinkTopic;
 
 /**

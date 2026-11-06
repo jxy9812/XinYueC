@@ -571,7 +571,13 @@ static void xvfdSlaveEmuTick(XvfdSlaveEmu* em)
         /* 运行频率 = 设定% × 最大频率（0.01Hz 口径）。 */
         /* 运行频率 raw = 设定% × P0.10raw ÷ 10000（两者同为 0.1Hz 定点，比值即工程值） */
         hz010 = (int)((double)setpct * (double)em->m_maxFreq / 10000.0);
-        xvfdEmuPut(em, 0x1001, (uint16_t)(hz010 & 0xFFFF));  /* 运行频率 0.1Hz */
+        /* [停机时运行频率为 0] 真机停机后运行频率回到 0；旧实现一直回"设定%
+         * 换算出来的频率"，于是遥测里出现"状态字=停机 + 输出 50Hz"的自相
+         * 矛盾，设备层的运行阶段推导（加速中/减速中/正在停机）被带偏。
+         * [注意 0x101F 不清零] 那是**主频率 X（设定频率显示源）**，真机停机
+         * 后仍保留旧给定（现场实测 48.6Hz 残留），不能跟着归零。 */
+        xvfdEmuPut(em, 0x1001,
+                   (uint16_t)((em->m_m512State == 3 ? 0 : hz010) & 0xFFFF)); /* 运行频率 0.1Hz */
         xvfdEmuPut(em, 0x1002, 5400);          /* 母线电压 0.1V → 540.0V */
         xvfdEmuPut(em, 0x1003, 380);           /* 输出电压 1V → 380V */
         xvfdEmuPut(em, 0x1004, 100);           /* 输出电流 0.01A → 1.00A */

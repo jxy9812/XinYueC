@@ -20,9 +20,30 @@
 
 static HsfServerIoSimModels s_sim;
 static bool s_simReady = false;
+/* [阀故障注入覆盖] 命令行 --sim-valve-move / --sim-valve-no-feedback 落点：
+ * 0=缺省（10000ms 现场节奏）、UINT32_MAX=卡死；noFeedback=开关未接。 */
+static uint32_t s_valveMoveOverrideMs = 0;
+static bool s_valveNoFeedback = false;
 
 /* M512 最大频率（Hz）：与 XVfdM512 的 50Hz 口径一致。 */
 #define HSF_SIM_VFD_MAX_HZ   50.0
+
+/**
+ * @brief 阀路挂在哪台数字量模块上。
+ * @details [为什么模型要分主/扩展] 数字量模块按"台"建模：每台 16 点，
+ *          逻辑点号 = 台内本地点号 + 台序 × 16。阀的 DO 是**全局**通道号，
+ *          与单台点数一比就知道它落在哪台上：
+ *            · 全局点 < 单台点数 ⇒ 主模块（本地点号 = 全局点号）；
+ *            · 否则 ⇒ 扩展模块（本地点号 = 全局点号 − 单台点数）。
+ *          2026-11-06 起现场只剩 .13 一台 16 点模块、六路阀在 DO0..5，
+ *          故阀由**主模块**承载，联动（写 DO → 走行程 → 到位 DI 变）
+ *          必须开在主模块上——开在扩展模块上等于阀永远走不动。
+ * @return true=阀在扩展模块上。
+ */
+static bool simValveOnExt(void)
+{
+    return HSF_VALVE_DO(0) >= HSF_DIG_CHANNELS;
+}
 
 const HsfServerIoSimModels* HsfServerIoSim_ensure(void)
 {
@@ -32,37 +53,95 @@ const HsfServerIoSimModels* HsfServerIoSim_ensure(void)
     s_sim.m_vfd = XVirtualModelVfd_create(HSF_SIM_VFD_MAX_HZ);
     s_sim.m_tempHum = XVirtualModelTempHum_create();
     s_sim.m_flowMeter = XVirtualModelFlow_create();
-    s_sim.m_dig12 = XVirtualModelDigital_create(HSF_SIM_DIG_CHANNELS_PER_DEV);
-    s_sim.m_dig13 = XVirtualModelDigital_create(HSF_SIM_DIG_CHANNELS_PER_DEV);
+    s_sim.m_digMain = XVirtualModelDigital_create(HSF_SIM_DIG_CHANNELS_PER_DEV);
+    s_sim.m_digExt = XVirtualModelDigital_create(HSF_SIM_DIG_CHANNELS_PER_DEV);
     s_sim.m_analog = XVirtualModelAnalog_create(HSF_AI_CHANNELS);
     /* 浊度仪两台：index 决定基准浊度与波动相位（0=原水高、1=出水低）。
      * 两台必须能看出是两台独立仪器，而不是同一个值贴两遍。 */
     s_sim.m_turbidity[0] = XVirtualModelTurbidity_create(0);
     s_sim.m_turbidity[1] = XVirtualModelTurbidity_create(1);
     if (!s_sim.m_vfd || !s_sim.m_tempHum || !s_sim.m_flowMeter ||
-        !s_sim.m_dig12 || !s_sim.m_dig13 || !s_sim.m_analog ||
+        !s_sim.m_digMain || !s_sim.m_digExt || !s_sim.m_analog ||
         !s_sim.m_turbidity[0] || !s_sim.m_turbidity[1]) {
         XPrintf("HsfServerIoSim: 模型创建失败（内存不足）\n");
         HsfServerIoSim_destroy();
         return NULL;
     }
-    /* 数字量两台都要关掉到位联动？**不关**：
-     *  - .12（逻辑点 0..15）与 .13（16..31）各自维护 16 位的 DI/DO 位图；
-     *  - 电磁阀的 6 路点位全部落在 .13 那半区（HSF_VALVE_* 宏），
-     *    联动必须由 .13 承担，否则阀永远停在"动作中"，超时告警路径走不到；
-     *  - .12 建模成"工艺侧非阀类点"：只给缺省 DI，不参与阀联动（避免
-     *    写 DO 时凭空改动 DI，掩盖真实的"无反馈"诊断）。
-     * 两台的缺省行为都是 interlock=true，故这里显式区分。 */
-    XVirtualModelDigital_setValveInterlock(s_sim.m_dig12, false);
-    XVirtualModelDigital_setValveInterlock(s_sim.m_dig13, true);
+    /* ---- 数字量两台模型的分工 ----
+     *  - 每台 16 点，逻辑点号 = 本地点号 + 台序 × 16；
+     *  - **阀由哪台承载由 HSF_VALVE_DO 宏决定**（见 simValveOnExt）：
+     *    承载阀的那台开到位联动（写 DO → 10s 行程 → 到位 DI 变），否则
+     *    阀永远停在"动作中"，超时告警路径永远走不到；
+     *  - 不承载阀的那台是"工艺侧非阀类点"：只给缺省 DI，不参与联动
+     *    （避免写 DO 时凭空改动 DI，掩盖真实的"无反馈"诊断）。
+     * 2026-11-06 现场只剩 .13 一台 16 点模块、六路阀在 DO0..5 ⇒
+     * 主模块承载阀。 */
+    XVirtualModelDigital_setValveInterlock(s_sim.m_digMain, !simValveOnExt());
+    XVirtualModelDigital_setValveInterlock(s_sim.m_digExt, simValveOnExt());
+    /* [阀区边界] 只有阀路本身参与行程：阀区之外是进水泵 DO6、按钮灯
+     * DO7..9、按钮输入 DI12..15 —— 写它们不产生行程、也不动任何到位位。 */
+    XVirtualModelDigital_setValveChannels(
+        s_sim.m_digMain, simValveOnExt() ? 0 : HSF_VALVE_ACTIVE_COUNT);
+    XVirtualModelDigital_setValveChannels(
+        s_sim.m_digExt, simValveOnExt() ? HSF_VALVE_ACTIVE_COUNT : 0);
+    /* [故障注入] 行程覆盖只作用**承载阀的那台**——卡死/行程过长/开关
+     * 未接三类现场故障都在这一侧复现，供 UI 验证超时告警与文案分支。 */
+    {
+        struct XVirtualModelDigital* valveModel =
+            simValveOnExt() ? s_sim.m_digExt : s_sim.m_digMain;
+        if (s_valveMoveOverrideMs != 0)
+            XVirtualModelDigital_setMoveMs(valveModel, s_valveMoveOverrideMs);
+        if (s_valveNoFeedback)
+            XVirtualModelDigital_setNoFeedback(valveModel, true);
+    }
+    /* [DI/DO 初值对齐 Python VirtualDigital]
+     *  · DO 全部为 0（Python do_init 缺省 0）：开机没有输出带电。
+     *  · DI 静态位 = 0x00001000：只有按钮组的**急停回路**（DI12）常态
+     *    吸合（常闭触点），三个按键（DI13..15）未按；阀区那 12 位由
+     *    行程动态推导（开机六路全部"已关" ⇒ 关到位位吸合）。
+     *    ⇒ 两端数字量页开机看到的位图完全一致。 */
+    XVirtualModelDigital_setDo(s_sim.m_digMain, 0u);
+    XVirtualModelDigital_setDo(s_sim.m_digExt, 0u);
+    XVirtualModelDigital_setDi(s_sim.m_digMain, 0x00001000u);
+    XVirtualModelDigital_setDi(s_sim.m_digExt, 0u);
 
     s_simReady = true;
     XPrintf("HsfServerIoSim: 模拟设备已装配（变频器 %.0fHz 上限 / 温湿度 %.1f℃ %.1f%% / "
-            "流量 %.2fm3/h / 浊度 12.5与3.2NTU / 数字量 16+16 / 模拟量 %d 路）\n",
+            "流量 %.1fm3/h±2%%波动 / 浊度 12.5与3.2NTU / 数字量 %d 点（阀在%s模块）"
+            " / 模拟量 %d 路）\n",
             HSF_SIM_VFD_MAX_HZ,
-            (double)265 / 10.0, (double)550 / 10.0, (double)12.53,
+            (double)265 / 10.0, (double)550 / 10.0, 36.5,
+            HSF_DIG_HOST_EXT[0] ? (HSF_DIG_CHANNELS * 2) : HSF_DIG_CHANNELS,
+            simValveOnExt() ? "扩展" : "主",
             HSF_AI_CHANNELS);
     return &s_sim;
+}
+
+void HsfServerIoSim_setValveOverride(uint32_t moveMs, bool noFeedback)
+{
+    /* [幂等] ensure 前随时可改；ensure 后再改对已建模型也即时生效
+     * （覆盖值语义不变，模型 setter 本身幂等）。 */
+    s_valveMoveOverrideMs = moveMs;
+    s_valveNoFeedback = noFeedback;
+    if (s_simReady) {
+        /* 只作用承载阀的那台模型（与 ensure 时的口径一致）。 */
+        struct XVirtualModelDigital* valveModel =
+            simValveOnExt() ? s_sim.m_digExt : s_sim.m_digMain;
+        if (moveMs != 0)
+            XVirtualModelDigital_setMoveMs(valveModel, moveMs);
+        if (noFeedback)
+            XVirtualModelDigital_setNoFeedback(valveModel, true);
+    }
+}
+
+void HsfServerIoSim_tick(void)
+{
+    if (!s_simReady) return;
+    /* 时间驱动状态只在心跳拍推进（读路径只序列化当前值——见
+     * XModbusVirtualModels.c 各模型注记）。阀行程/浊度波动内部按单调钟
+     * 计算，无需在此推进。 */
+    XVirtualModelVfd_tick(s_sim.m_vfd);
+    XVirtualModelFlow_tick(s_sim.m_flowMeter);
 }
 
 void HsfServerIoSim_destroy(void)
@@ -72,8 +151,8 @@ void HsfServerIoSim_destroy(void)
     if (s_sim.m_vfd)      { XFree_System(s_sim.m_vfd);      s_sim.m_vfd = NULL; }
     if (s_sim.m_tempHum)  { XFree_System(s_sim.m_tempHum);  s_sim.m_tempHum = NULL; }
     if (s_sim.m_flowMeter){ XFree_System(s_sim.m_flowMeter);s_sim.m_flowMeter = NULL; }
-    if (s_sim.m_dig12)    { XFree_System(s_sim.m_dig12);    s_sim.m_dig12 = NULL; }
-    if (s_sim.m_dig13)    { XFree_System(s_sim.m_dig13);    s_sim.m_dig13 = NULL; }
+    if (s_sim.m_digMain)  { XFree_System(s_sim.m_digMain);  s_sim.m_digMain = NULL; }
+    if (s_sim.m_digExt)   { XFree_System(s_sim.m_digExt);   s_sim.m_digExt = NULL; }
     if (s_sim.m_analog)   { XFree_System(s_sim.m_analog);   s_sim.m_analog = NULL; }
     if (s_sim.m_turbidity[0]) { XFree_System(s_sim.m_turbidity[0]); s_sim.m_turbidity[0] = NULL; }
     if (s_sim.m_turbidity[1]) { XFree_System(s_sim.m_turbidity[1]); s_sim.m_turbidity[1] = NULL; }
@@ -142,12 +221,13 @@ XModbusVirtualClient* HsfServerIoSim_createDigitalMain(void)
     if (!m) return NULL;
     /* 数字量站是**独占 Hub**（不与 485 共线），故用缺省模型即可，
      * 不必 bindUnit——但站号仍是 HSF_DIG_UNIT_ID，故两个都设上，
-     * 让"按站号分派"和"缺省回落"两条路径都成立。 */
+     * 让"按站号分派"和"缺省回落"两条路径都成立。
+     * [主模块 = 现场 HSF_DIG_HOST 那台（当前 .13）] */
     {
         XModbusVirtualClient* c = XModbusVirtualClient_create(
-            XVirtualModel_base(m->m_dig12));
+            XVirtualModel_base(m->m_digMain));
         if (c) XModbusVirtualClient_bindUnit(c, HSF_DIG_UNIT_ID,
-                                             XVirtualModel_base(m->m_dig12));
+                                             XVirtualModel_base(m->m_digMain));
         return c;
     }
 }
@@ -158,9 +238,9 @@ XModbusVirtualClient* HsfServerIoSim_createDigitalExt(void)
     if (!m) return NULL;
     {
         XModbusVirtualClient* c = XModbusVirtualClient_create(
-            XVirtualModel_base(m->m_dig13));
+            XVirtualModel_base(m->m_digExt));
         if (c) XModbusVirtualClient_bindUnit(c, HSF_DIG_UNIT_ID,
-                                             XVirtualModel_base(m->m_dig13));
+                                             XVirtualModel_base(m->m_digExt));
         return c;
     }
 }

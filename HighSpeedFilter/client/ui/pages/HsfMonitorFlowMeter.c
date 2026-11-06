@@ -26,6 +26,7 @@
 #include "HsfLinkClient.h"
 #include "XLabel.h"
 #include "XPushButton.h"
+#include "XAbstractButton.h"
 #include "XBoxLayout.h"
 #include "XGridLayout.h"
 #include "XChartView.h"
@@ -145,10 +146,26 @@ struct HsfFmPage {
 
     XLabel     m_foot;                  /**< 底注（数据源说明）。 */
 
+    /* ---- 水质块：浊度仪 ×2 + 进水泵（同页，对齐 Python「水质监测」页）---- */
+    XWidget    m_waterHost;             /**< 水质块容器（标题 + 两行 + 泵行）。 */
+    XBoxLayout m_waterLayout;           /**< 水质块纵向布局。 */
+    XLabel     m_turbTitle;             /**< 「浊度仪」小标题。 */
+    XLabel     m_turbValue[HSF_TURBIDITY_COUNT]; /**< 各台浊度值行（名称 + 值）。 */
+    XLabel     m_pumpTitle;             /**< 「进水泵」小标题。 */
+    XLabel     m_pumpState;             /**< 泵状态行。 */
+    XPushButton m_pumpStart;            /**< 启动泵。 */
+    XPushButton m_pumpStop;             /**< 停止泵。 */
+    XLabel     m_pumpNote;              /**< 泵说明（无运行反馈点提示）。 */
+    void (*m_pumpWrite)(void*, bool);  /**< 泵控制出口（on=true 启动）。 */
+    void* m_pumpUser;                  /**< 泵出口令牌。 */
+
     /* 字段量程（用于弧形仪表比例；流量计不报量程，按常见工艺值取）。 */
     double     m_flowSpan;              /**< 流量满量程（用于比例）。 */
     double     m_signalRef;             /**< 信号强度参考值。 */
 };
+
+/** @brief 已建页借用指针（模块单例；未建 NULL）。 */
+static HsfFmPage* s_fmPage = NULL;
 
 /* ==================== 类虚表（自绘控件） ==================== */
 
@@ -670,6 +687,98 @@ static void fmOnProviderNotify(const struct HsfFlowMeterProvider* provider,
 
 /* ==================== 建页 ==================== */
 
+/* ==================== 水质块（浊度仪 ×2 + 进水泵） ==================== */
+
+/**
+ * @brief 泵控制按钮点击（启动/停止）。
+ * @note  [泵没有反馈] 现场只有接触器输出：按钮点下去就是"命令已发出"，
+ *        状态行显示的是**命令状态**（我方最后写的值），不代表泵在转。
+ */
+static void fmPumpStartSlot(XObject* receiver, XVarList* args)
+{
+    HsfFmPage* p = (HsfFmPage*)((char*)receiver -
+                                 offsetof(HsfFmPage, m_pumpStart));
+    (void)args;
+    if (!p || !p->m_pumpWrite) return;
+    p->m_pumpWrite(p->m_pumpUser, true);
+}
+
+static void fmPumpStopSlot(XObject* receiver, XVarList* args)
+{
+    HsfFmPage* p = (HsfFmPage*)((char*)receiver -
+                                 offsetof(HsfFmPage, m_pumpStop));
+    (void)args;
+    if (!p || !p->m_pumpWrite) return;
+    p->m_pumpWrite(p->m_pumpUser, false);
+}
+
+/**
+ * @brief 构建水质块（标题 + 浊度两行 + 泵行）。
+ * @details [为什么与流量同页] 流量计、浊度仪、进水泵同属一条水质工艺链
+ *          （原水浊度 → 过滤 → 出水浊度 → 流量计量 → 补水泵），现场是并排
+ *          看的一组数；对齐 Python 客户端的「水质监测」页布局。
+ */
+static void fmBuildWaterBlock(HsfFmPage* p)
+{
+    int i;
+
+    XWidget_init(&p->m_waterHost, &p->m_root, 0);
+    XBoxLayout_init(&p->m_waterLayout, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&p->m_waterLayout, 6);
+    XWidget_setLayout(&p->m_waterHost, (XLayout*)&p->m_waterLayout);
+
+    fmMakeLabel(&p->m_turbTitle, &p->m_waterHost,
+                "\xE6\xB8\xA0\xE5\xBA\xA6\xE4\xBB\xAA",  /* 浊度仪 */
+                13, true, false, XAlignment_Left | XAlignment_VCenter);
+    XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_turbTitle);
+    for (i = 0; i < HSF_TURBIDITY_COUNT; ++i) {
+        fmMakeLabel(&p->m_turbValue[i], &p->m_waterHost, "--", 13, false, false,
+                    XAlignment_Left | XAlignment_VCenter);
+        XBoxLayout_addWidget(&p->m_waterLayout,
+                            (XWidget*)&p->m_turbValue[i]);
+    }
+    fmMakeLabel(&p->m_pumpTitle, &p->m_waterHost,
+                "\xE8\xBF\x9B\xE6\xB0\xB4\xE6\xB3\xB5",  /* 进水泵 */
+                13, true, false, XAlignment_Left | XAlignment_VCenter);
+    XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_pumpTitle);
+    fmMakeLabel(&p->m_pumpState, &p->m_waterHost, "--", 13, false, false,
+                XAlignment_Left | XAlignment_VCenter);
+    XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_pumpState);
+    {
+        XWidget* row = XWidget_create(&p->m_waterHost, 0);
+        XPushButton_init(&p->m_pumpStart, row, 0);
+        XPushButton_init(&p->m_pumpStop, row, 0);
+        XPushButton_setText_2(&p->m_pumpStart,
+                            "\xE5\x90\xAF\xE5\x8A\xA8");  /* 启动 */
+        XPushButton_setText_2(&p->m_pumpStop,
+                            "\xE5\x81\x9C\xE6\xAD\xA2");  /* 停止 */
+        XWidget_setFixedHeight((XWidget*)&p->m_pumpStart, 34);
+        XWidget_setFixedHeight((XWidget*)&p->m_pumpStop, 34);
+        XObject_connect_1((XObject*)&p->m_pumpStart,
+                          XSignal(XAbstractButton_clicked_signal),
+                          (XObject*)&p->m_pumpStart, fmPumpStartSlot,
+                          XConnectionType_Direct);
+        XObject_connect_1((XObject*)&p->m_pumpStop,
+                          XSignal(XAbstractButton_clicked_signal),
+                          (XObject*)&p->m_pumpStop, fmPumpStopSlot,
+                          XConnectionType_Direct);
+        XWidget_show((XWidget*)row);
+        XBoxLayout_addWidget(&p->m_waterLayout, row);
+    }
+    fmMakeLabel(&p->m_pumpNote, &p->m_waterHost,
+                "\xE7\x8E\xB0\xE5\x9C\xBA\xE4\xB8\x8A\xE6\x9C\x89\xE6\x9C\x89"
+                "\xE8\xA7\xA6\xE5\x99\xA8\xE8\xBE\x93\xE5\x87\xBA\xE3\x80\x81"
+                "\xE6\x97\xA0\xE8\xBF\x90\xE8\xA1\x8C\xE5\x8F\x8D\xE9\xA6\x88"
+                "\xE7\x82\xB9\xEF\xBC\x9A\xE6\xAD\xA4\xE5\x8F\xB3\xE6\x98\xAF"
+                "\xE8\xBE\x93\xE5\x87\xBA\xE5\x91\xBD\xE4\xBB\xA4\xE7\x8A\xB6\xE6\x80\x81"
+                "\xEF\xBC\x8C\xE4\xB8\x8D\xE4\xBB\xA3\xE8\xA1\x8C\xE8\xB7\x91\xE5\x8A\xA8\xE3\x80\x82",
+                /* 现场仅有接触器输出、无运行反馈点：此处显示输出命令状态，
+                   不代表泵确实在转。 */
+                11, false, true, XAlignment_Left | XAlignment_VCenter);
+    XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_pumpNote);
+    XWidget_show(&p->m_waterHost);
+}
+
 XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
                                     void* userData)
 {
@@ -683,6 +792,7 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
     p->m_flowSpan = 100.0;      /* 满量程占位（流量计不报量程）。 */
     p->m_signalRef = 1.0;
     p->m_trendT0 = XDateTime_currentMSecsSinceEpoch();
+    s_fmPage = p;
 
     if (!parent) {
         XMemory_free(p, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -817,6 +927,9 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
     XBoxLayout_addWidget(&p->m_mainLayout, &p->m_cardHost);
     XBoxLayout_addWidget(&p->m_mainLayout, (XWidget*)&p->m_trendView.m_base);
     XBoxLayout_addWidget(&p->m_mainLayout, (XWidget*)&p->m_foot);
+    /* 水质块（浊度 + 泵）：与流量同属一条工艺链，放一页看。 */
+    fmBuildWaterBlock(p);
+    XBoxLayout_addWidget(&p->m_mainLayout, &p->m_waterHost);
 
     XWidget_show(&p->m_root);
 
@@ -879,3 +992,83 @@ void HsfMonitorFlowMeter_adapt(XWidget* page, bool compact)
 }
 
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */
+
+/* ==================== 水质块公开 API ==================== */
+
+/**
+ * @brief 设某台浊度仪的读数。
+ * @param index 台序（0 起）。
+ * @param name 仪器名（服务端给；NULL=用"浊度仪N"占位）。
+ * @param ntu 浊度值（NTU 原值；客户端内部按 ×100 定点口径换算）。
+ * @param online 该台是否在线。
+ * @note  ≥20 NTU 标红（现场水质告警线，对齐 Python 客户端口径）。
+ */
+void HsfMonitorFlowMeter_setTurbidity(int index, const char* name,
+                                      double ntu, bool online)
+{
+    HsfFmPage* p = s_fmPage;
+    char buf[96];
+
+    if (!p || index < 0 || index >= HSF_TURBIDITY_COUNT) return;
+    if (!online) {
+        snprintf(buf, sizeof(buf), "%s  --",
+                 (name && name[0]) ? name : "浊度仪");
+        XLabel_setText_2(&p->m_turbValue[index], buf);
+        XWidget_setForegroundRole((XWidget*)&p->m_turbValue[index],
+                                  XPaletteColorRole_Mid);
+        return;
+    }
+    snprintf(buf, sizeof(buf), "%s  %.2f NTU",
+             (name && name[0]) ? name : "浊度仪", ntu);
+    XLabel_setText_2(&p->m_turbValue[index], buf);
+    /* [≥20 NTU 标红] 现场水质告警线（对齐 Python 客户端 TURBIDITY_WARN_NTU）。 */
+    XWidget_setForegroundRole((XWidget*)&p->m_turbValue[index],
+                              (ntu >= 20.0) ? XPaletteColorRole_BrightText
+                                             : XPaletteColorRole_Text);
+}
+
+/**
+ * @brief 设进水泵状态（命令状态）。
+ * @param name 泵名（服务端给；NULL=占位）。
+ * @param on 输出是否已开（命令状态）。
+ * @param ready 输出是否可控（点位已配且模块在线）。
+ * @param text 说明（未配置点位/模块离线…）。
+ */
+void HsfMonitorFlowMeter_setPump(const char* name, bool on, bool ready,
+                                  const char* text)
+{
+    HsfFmPage* p = s_fmPage;
+    char buf[128];
+
+    if (!p) return;
+    if (!ready) {
+        snprintf(buf, sizeof(buf), "%s  %s",
+                 (name && name[0]) ? name : "进水泵",
+                 (text && text[0]) ? text : "不可控");
+        XLabel_setText_2(&p->m_pumpState, buf);
+    } else if (on) {
+        snprintf(buf, sizeof(buf), "%s  运行（输出已开）",
+                 (name && name[0]) ? name : "进水泵");
+        XLabel_setText_2(&p->m_pumpState, buf);
+    } else {
+        snprintf(buf, sizeof(buf), "%s  停止（输出已关）",
+                 (name && name[0]) ? name : "进水泵");
+        XLabel_setText_2(&p->m_pumpState, buf);
+    }
+    /* [幂等置灰] 已生效的一侧按钮禁用（对齐 Python 客户端：已启动则"启动"
+     * 置灰、已停止则"停止"置灰）。 */
+    XWidget_setEnabled((XWidget*)&p->m_pumpStart, ready && !on);
+    XWidget_setEnabled((XWidget*)&p->m_pumpStop, ready && on);
+}
+
+/**
+ * @brief 注册泵控制出口（on=true 启动 / false 停止）。
+ */
+void HsfMonitorFlowMeter_setPumpWriteHandler(void (*fn)(void*, bool),
+                                             void* userData)
+{
+    HsfFmPage* p = s_fmPage;
+    if (!p) return;
+    p->m_pumpWrite = fn;
+    p->m_pumpUser = userData;
+}

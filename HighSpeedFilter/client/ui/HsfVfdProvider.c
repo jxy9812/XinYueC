@@ -49,9 +49,11 @@ static bool demoSetControlEnabled(void* userData, bool enabled)
     return true;
 }
 
-static bool demoStart(void* userData, bool reverse)
+static bool demoStart(void* userData, bool reverse, double hz)
 {
     XVfdDevice* dev = hsfVfdSimDeviceMut((HsfVfdDemoSim*)userData);
+    /* [捎带给定] 演示源同样先写给定再启动（与远端口径一致）。 */
+    if (dev && hz > 0.0) XVfdDevice_setFrequency(dev, hz);
     return dev ? XVfdDevice_start(dev, reverse) : false;
 }
 
@@ -67,9 +69,10 @@ static bool demoFreeStop(void* userData)
     return dev ? XVfdDevice_freeStop(dev) : false;
 }
 
-static bool demoJog(void* userData, bool reverse)
+static bool demoJog(void* userData, bool reverse, double hz)
 {
     XVfdDevice* dev = hsfVfdSimDeviceMut((HsfVfdDemoSim*)userData);
+    if (dev && hz > 0.0) XVfdDevice_setFrequency(dev, hz);
     return dev ? XVfdDevice_jog(dev, reverse) : false;
 }
 
@@ -112,6 +115,7 @@ static HsfVfdProvider kDemoProvider = {
     demoStop,
     demoFreeStop,
     demoJog,
+    NULL,          /* jogRelease：本地模拟回落 stop()。 */
     demoSetFrequency,
     demoResetFault,
     demoSubscribe,

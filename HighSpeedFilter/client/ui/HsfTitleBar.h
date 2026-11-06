@@ -40,6 +40,7 @@ typedef struct HsfTitleBar
     XLabel*       m_date;      /**< 右上角日期行（年月日）。 */
     XLabel*       m_clock;     /**< 右上角时间行（时分秒）。 */
     XLabel*       m_modeBtn;   /**< 全局运行模式钮（手动/自动，右侧常驻）。 */
+    XLabel*       m_autoChip;  /**< 自动运行状态片（自动·运行中/已停止；手动隐藏）。 */
     XLabel*       m_healthLbl; /**< 设备健康指示（正常/故障N/离线N）。 */
     XLabel*       m_temp;      /**< 温度标签。 */
     XLabel*       m_humid;     /**< 湿度标签。 */
@@ -147,6 +148,17 @@ void HsfTitleBar_setHealth(HsfTitleBar* self, bool known, int fault, int offline
  * @param autoMode true=自动（拒绝远程控制）false=手动。
  */
 void HsfTitleBar_setRunMode(HsfTitleBar* self, bool known, bool autoMode);
+
+/**
+ * @brief 设自动运行状态片（"自动模式"与"控制器在跑"是两件事）。
+ * @param known 服务端是否上报了 autoRunning（false=未知）。
+ * @param running 控制器是否在跑（known=true 时有效）。
+ * @param autoMode 当前是否自动模式（手动模式隐藏该片）。
+ * @details 文案：自动·运行中 / 自动·已停止 / 自动·未知（对齐 Python
+ *          客户端标题栏的 autoRunning 状态片）。
+ */
+void HsfTitleBar_setAutoRunning(HsfTitleBar* self, bool known, bool running,
+                                 bool autoMode);
 
 void HsfTitleBar_setClimate(HsfTitleBar* self, double celsius, double percent,
                             bool tempValid, bool humValid);

@@ -8,9 +8,10 @@
  *            业务语义由真实设备类（XVfdM512 / XFlowMeter / …）负责，只有一份。
  *
  *            [寄存器地图来源] 逐项对齐现场实测与 Python 侧 devices.py：
- *              · M512：0x1000 设定频率(±10000=±100%)、0x1001 输出频率(0.1Hz)、
- *                0x1002 母线电压、0x1004 输出电流、0x2000 命令字、
- *                0x3000 运行状态字、0x8000 故障码；
+ *              · M512：0x1000 设定频率(±10000=±100%)、0x1001 输出频率(0.1Hz，
+ *                实测定标 ÷10)、0x1002 母线电压、0x1004 输出电流、
+ *                0x2000 命令字(1=正转…7=故障复位)、0x3000 运行状态字
+ *                (枚举 1/2/3)、0x8000 故障码；
  *              · MT3A：DI=FC02@0、DO=FC01/FC05@0，单台最多 16 点，
  *                超 16 点或 addr+count 跨出 16 ⇒ EXC03/EXC02（实测硬约束）；
  *              · 模拟量：FC04 输入寄存器 0x0000..N，毫伏口径；
@@ -66,36 +67,117 @@ XModbusVirtualResult XModbusVirtualModel_write(struct XModbusVirtualModel* model
  *                            变频器（M512 / ATV61）
  * ============================================================================ */
 
+/**
+ * @struct XVirtualModelVfd
+ * @brief M512 变频器寄存器模型——**逐项对齐 Python virtualdev.VirtualVfd**。
+ *
+ * @details [为什么以 Python 为基准] Python 侧 devices.py 的单位与命令字口径
+ *          是**实机逐点标定**的结果（15Hz 实测 raw=1500 ⇒ 0x1001 ÷100 才对；
+ *          命令字 1=正转 … 7=故障复位）。模拟从站必须与真机同口径，否则
+ *          "模拟联调通过、现场接上真机即翻车"——模拟器的价值是复刻真机
+ *          行为，不是复刻一个自洽的假设。
+ *
+ *          [与旧实现的差别——每条都是实锅]
+ *            · 命令字旧映射（1=停/2=正转/3=反转/4,5=点动/6=复位）是**错的**：
+ *              与 XVfdM512.c 驱动（1=正转…7=复位，见 XVfdM512.h CmdRunForward=1）
+ *              相反——模拟模式下客户端发"启动"写 1，旧模型却当成"停机"。
+ *              旧注释"与 XVfdM512.c 同口径"与事实相反，勿再沿用。
+ *            · 0x1001 刻度 = ×10（0.1Hz）：以现场实测定标文档为准
+ *              （docs/M512M513_变频器RS485通讯实测与使用指南 §11.3/§11.7：
+ *              写 0x1000=2000 ⇒ 面板 10Hz、0x1001=100，三源交叉验证；
+ *              P0.10 数学上只有 0.1Hz 装得下）。Python 侧 devices.py 的
+ *              ÷100 是跟了手册（已被实测证伪），已作为缺陷上报待实机核。
+ *            · 状态字旧为位掩码（RUN|REVERSE|…）；真机 0x3000 是**枚举**
+ *              1=正转 2=反转 3=停机（读数量必须=1，XVfdM512.c DecodePoint
+ *              按 1/2/3 解码——模型与驱动两侧同错时闭环测不出来，此为教训）。
+ *            · 爬坡旧为"每次读向目标靠 10%"——轮询节拍一变加速时间跟着变，
+ *              且一次扫描多个读组会推进多次；Python 是固定斜率 2.5Hz/拍
+ *              （100ms 拍 ⇒ 25Hz/s，0→50Hz 约 2s）。
+ *            · 母线电压 540V→553.2V（真机稳定值）；输出电压/电流/功率改为
+ *              随输出频率缩放（0Hz 全 0，50Hz 满值 380V/3.2A/15kW）。
+ *            · 停机语义：输出强制 0（自由停车口径，两种停机不区分取更安全
+ *              的立刻归零）；停机时写 0x1000 只**记忆**给定、不产生输出——
+ *              否则"停机 + 输出 30Hz / 转速 720rpm"自相矛盾。
+ */
 typedef struct XVirtualModelVfd {
     XModbusVirtualModel m_base;
     double m_maxHz;
-    double m_setHz;       /**< 设定频率（Hz）。 */
-    double m_outHz;       /**< 输出频率（Hz；运行时向设定值爬升）。 */
+    int32_t m_setPct;     /**< 0x1000 给定（±10000=±100%，int16 补码口径）。 */
+    double m_outHz;       /**< 输出频率（Hz）。 */
+    double m_targetHz;    /**< 爬坡目标（Hz；仅运行中跟随给定）。 */
     bool m_running;
+    bool m_reverse;
+    bool m_jogging;
+    /**
+     * @brief 减速停止进行中（输出按斜率降、降到 0 才置停机）。
+     * @details [为什么要这个状态] 真机的**减速停止（F3）**是按减速时间斜坡
+     *          降到 0，状态字在降到 0 那一刻才变"停机"；**自由停车（F4）**
+     *          才是立刻断输出。旧实现"只要不在运行态就把输出置 0"，于是
+     *          界面永远看不到"正在停机"这段过程（用户 2026-11-06 明确要
+     *          看这个过程）。与 Python VirtualVfd 的 decelerating 同口径。
+     */
+    bool m_decelerating;
     uint16_t m_faultCode;
+    /**
+     * @brief P 组参数区存储（0xF000..0xF013，下标 = 地址-0xF000）。
+     * @details [为什么必须建模参数区] 驱动控制前置检查读 P0.02/P0.03
+     *          （命令源=2 / 主频率源=9，真机已配置——见使用指南 §1.6），
+     *          且装配期会把两者**写成**通讯源；模型不建模这两个寄存器时
+     *          读回 0 ⇒ 检查恒失败 ⇒ 全部控制被拒（"控制闸/能力不符"），
+     *          模拟模式下变频器永远操作不动。缺省值即真机实况。
+     */
+    uint16_t m_params[0x14];
     uint64_t m_tick;
 } XVirtualModelVfd;
 
-/* M512 命令字（与 XVfdM512.c 同口径：0x2000 写命令）。 */
-#define VFD_CMD_STOP          1u
-#define VFD_CMD_FORWARD       2u
-#define VFD_CMD_REVERSE       3u
-#define VFD_CMD_FWD_JOG       4u
-#define VFD_CMD_REV_JOG       5u
-#define VFD_CMD_FAULT_RESET   6u
+/* P 组参数区（与 XVfdM512.h 的 Addr* 同址）。 */
+#define VFD_PADDR_BASE       0xF000u
+#define VFD_PADDR_SPAN       0x14u
+#define VFD_PADDR_CMDSRC     0xF002u   /**< P0.02 命令源（2=通讯）。 */
+#define VFD_PADDR_FRQSRC     0xF003u   /**< P0.03 主频率源X（9=通讯给定）。 */
+#define VFD_PADDR_MAXFREQ    0xF00Au   /**< P0.10 最大频率（0.1Hz，500=50Hz）。 */
 
-/* 运行状态字（0x3000）位：与 XVfdM512.c 的解码口径一致。 */
-#define VFD_STAT_RUN          0x0001u
-#define VFD_STAT_REVERSE      0x0002u
-#define VFD_STAT_JOG          0x0004u
-#define VFD_STAT_FAULT        0x0008u
+/* M512 命令字（与 XVfdM512.h 的 XVfdM512_Cmd* 同值：0x2000 写命令）。
+ * [来源] 真机手册 + Python devices.py CMD_*：1=正转 2=反转 3=正点动
+ * 4=反点动 5=自由停机 6=减速停机 7=故障复位。 */
+#define VFD_CMD_RUN_FORWARD   1u
+#define VFD_CMD_RUN_REVERSE   2u
+#define VFD_CMD_JOG_FORWARD   3u
+#define VFD_CMD_JOG_REVERSE   4u
+#define VFD_CMD_FREE_STOP     5u
+#define VFD_CMD_DECEL_STOP    6u
+#define VFD_CMD_FAULT_RESET   7u
 
-static double vfdHzToRaw(double hz) { return hz * 10.0; }          /* 0.1Hz */
-static double vfdPctToRaw(double hz, double maxHz)
+/* [爬坡斜率] 每次推进 ±2.5Hz；推进节拍=100ms 心跳拍 ⇒ 25Hz/s，
+ * 与 Python VirtualVfd.RAMP_HZ_PER_TICK 同值（推进入口见 vfdTick）。 */
+#define VFD_RAMP_HZ_PER_TICK  2.5
+
+/** @brief 给定百分比 → 目标频率（Hz）。
+ *  @note  基准优先取 P0.10 参数（0.1Hz 定点，与驱动 m512MaxFreq 同源同口径），
+ *         未配置时回退 create 传入的最大频率。 */
+static double vfdSetHzOf(const XVirtualModelVfd* m)
 {
-    /* 0x1000 是百分比：±10000 = ±100%。 */
-    if (maxHz <= 0.0) maxHz = 50.0;
-    return hz / maxHz * 10000.0;
+    double maxHz;
+    if (!m) return 0.0;
+    if (m->m_params[VFD_PADDR_MAXFREQ - VFD_PADDR_BASE] > 0)
+        maxHz = (double)m->m_params[VFD_PADDR_MAXFREQ - VFD_PADDR_BASE] / 10.0;
+    else
+        maxHz = (m->m_maxHz > 0.0) ? m->m_maxHz : 50.0;
+    return (double)m->m_setPct / 10000.0 * maxHz;
+}
+
+/** @brief 写 0x1000 的公共路径（FC06 与 setFrequency 共用）。
+ *  @note  [停机时写给定不能产生输出] 给定值是"下次启动用多少"，写它只是
+ *         **记住**目标；真正的输出由命令字（0x2000）决定。旧实现无条件
+ *         更新爬坡目标，于是停机状态改给定 ⇒ 输出从 0 爬到目标频率 ⇒
+ *         界面显示"停机 + 输出 30Hz"甚至"转速 720rpm"。正确语义：目标
+ *         只在**运行中**才跟随给定；停机时目标保持 0，给定只记在 m_setPct。 */
+static void vfdWriteSetPct(XVirtualModelVfd* m, int32_t pct)
+{
+    if (pct > 10000) pct = 10000;      /* [钳位而不是拒绝] 与 Python 侧同口径： */
+    if (pct < -10000) pct = -10000;    /* 现场偶尔给超范围值，钳位后按满速跑。 */
+    m->m_setPct = pct;
+    if (m->m_running) m->m_targetHz = vfdSetHzOf(m);
 }
 
 /**
@@ -134,6 +216,61 @@ static bool vfdAddrKnown(uint16_t addr)
     return false;
 }
 
+/**
+ * @brief 推进一拍：输出频率向目标线性爬坡。
+ * @details [斜率固定而不是"每次读靠 10%"] 旧实现把推进挂在读调用上：读几
+ *          次就爬多快，轮询节拍一变加速时间跟着变，且一次扫描多个读组会
+ *          推进多次。Python 是每拍固定 +2.5Hz（100ms 拍 ⇒ 25Hz/s）。
+ *
+ *          [停机分两种 —— 对齐真机与 Python VirtualVfd]
+ *            · **减速停止（F3，命令字 6）**：输出按斜率降到 0，**降到 0
+ *              才把运行标志清掉**（状态字这时才变"停机"）。真机按减速时间
+ *              走坡道（现场要好几秒），这段过程就是界面上的"正在停机"，
+ *              用户 2026-11-06 明确要看它。
+ *            · **自由停车（F4，命令字 5）**：立刻断输出（真机自由停车就是
+ *              切断输出，不是斜坡）。
+ *          旧实现两者都"不在运行态就置 0"，于是减速停止也瞬断 ⇒ 界面永远
+ *          看不到"正在停机"。
+ * @note  推进入口只有心跳拍（XVirtualModelVfd_tick ← HsfServerIoSim_tick）；
+ *        读路径只序列化当前值。
+ */
+static void vfdTick(XVirtualModelVfd* m)
+{
+    double delta;
+    if (!m) return;
+    if (!m->m_running) {
+        /* 自由停车等"瞬断"路径：输出立刻归零。 */
+        m->m_outHz = 0.0;
+        m->m_targetHz = 0.0;
+        m->m_decelerating = false;
+        ++m->m_tick;
+        return;
+    }
+    delta = m->m_targetHz - m->m_outHz;
+    if (delta > VFD_RAMP_HZ_PER_TICK) {
+        m->m_outHz += VFD_RAMP_HZ_PER_TICK;
+        m->m_decelerating = false;
+    } else if (delta < -VFD_RAMP_HZ_PER_TICK) {
+        m->m_outHz -= VFD_RAMP_HZ_PER_TICK;
+        m->m_decelerating = true;
+    } else {
+        m->m_outHz = m->m_targetHz;
+        /* [不能在这里无脑清减速标记] 最后一拍 delta 会落进死区，若此时把
+         * decelerating 清掉，下面"降到 0 就置停机"的分支就永远进不去
+         * ⇒ 减停到 0 后运行标志仍为 True（与 Python 侧同一个坑）。 */
+        if (!(m->m_decelerating && m->m_outHz <= 0.0))
+            m->m_decelerating = (delta < 0.0);
+    }
+    /* 斜坡降到 0 才算真正停下（状态字这时才变"停机"）。 */
+    if (m->m_decelerating && m->m_outHz <= 0.0) {
+        m->m_outHz = 0.0;
+        m->m_targetHz = 0.0;
+        m->m_decelerating = false;
+        m->m_running = false;
+    }
+    ++m->m_tick;
+}
+
 static XModbusVirtualResult vfdRead(void* self, uint8_t fc, uint16_t addr,
                                     uint16_t count, uint16_t* out,
                                     uint16_t outCap, uint16_t* outLen)
@@ -145,17 +282,9 @@ static XModbusVirtualResult vfdRead(void* self, uint8_t fc, uint16_t addr,
     if (fc != FC_READ_HOLDING) return XModbusVirtual_IllegalFunction;
     if (outCap < count) return XModbusVirtual_IllegalValue;
 
-    /* 运行中输出频率向设定值爬升（每读一次升 10%，模拟真实加速过程）。 */
-    if (m->m_running) {
-        m->m_outHz += (m->m_setHz - m->m_outHz) * 0.1;
-        if (m->m_setHz >= 0.0 ? (m->m_outHz > m->m_setHz - 0.05)
-                              : (m->m_outHz < m->m_setHz + 0.05))
-            m->m_outHz = m->m_setHz;
-    } else {
-        m->m_outHz += (0.0 - m->m_outHz) * 0.2;
-        if (m->m_outHz < 0.05 && m->m_outHz > -0.05) m->m_outHz = 0.0;
-    }
-    ++m->m_tick;
+    /* [推进不在读路径] 爬坡由统一心跳拍驱动（XVirtualModelVfd_tick ←
+     * HsfServerIoSim_tick）：读只是序列化当前值。挂在读上会让加速时间
+     * 随轮询节拍漂移（一次扫描 7 个读组推进 7 次）。 */
 
     for (i = 0; i < count; ++i) {
         const uint16_t reg = (uint16_t)(addr + i);
@@ -165,42 +294,66 @@ static XModbusVirtualResult vfdRead(void* self, uint8_t fc, uint16_t addr,
          * 注记）。区间外才按真从站口径回 EXC02。 */
         if (!vfdAddrKnown(reg)) return XModbusVirtual_IllegalAddress;
         switch (reg) {
-        case 0x1000:    /* 设定频率（百分比 ±10000 = ±100%） */
-            v = (int32_t)vfdPctToRaw(m->m_setHz, m->m_maxHz);
+        case 0x1000:    /* 给定频率（百分比 ±10000 = ±100%，int16 补码） */
+            v = (int32_t)(m->m_setPct & 0xFFFFu);
             break;
-        case 0x1001:    /* 输出频率（0.1Hz） */
-            v = (int32_t)vfdHzToRaw(m->m_outHz);
+        case 0x1001:    /* 输出频率（**0.1Hz**，实测定标 ÷10；勿按手册 ÷100） */
+            v = (int32_t)(m->m_outHz * 10.0 +
+                          (m->m_outHz >= 0.0 ? 0.5 : -0.5));
             break;
-        case 0x1002:    /* 母线电压（0.1V）≈ 540.0V */
-            v = 5400;
+        case 0x1002:    /* 母线电压（0.1V）：真机稳定在 553.2V 左右 */
+            v = 5532;
             break;
-        case 0x1003:    /* 输出电压（1V） */
-            v = (int32_t)(m->m_running ? 380 : 0);
-            break;
-        case 0x1004:    /* 输出电流（0.01A） */
-            v = m->m_running ? 1250 : 0;
-            break;
-        case 0x1005:    /* 输出功率（0.1kW） */
-            v = m->m_running ? 55 : 0;
-            break;
-        case 0x1006:    /* 输出转矩（0.1%） */
-            v = m->m_running ? 420 : 0;
-            break;
-        case 0x3000: {  /* 运行状态字 */
-            uint16_t st = 0;
-            if (m->m_running) st |= VFD_STAT_RUN;
-            if (m->m_setHz < 0.0) st |= VFD_STAT_REVERSE;
-            if (m->m_faultCode) st |= VFD_STAT_FAULT;
-            v = st;
+        case 0x1003: {  /* 输出电压（1V）：与频率成正比，0Hz→0V、50Hz→380V */
+            double maxHz = (m->m_maxHz > 0.0) ? m->m_maxHz : 50.0;
+            v = (int32_t)(m->m_outHz / maxHz * 380.0 +
+                          (m->m_outHz >= 0.0 ? 0.5 : -0.5));
             break;
         }
-        case 0x8000:    /* 故障码 */
+        case 0x1004: {  /* 输出电流（0.01A）：转起来就有负载（满频 3.2A） */
+            double maxHz = (m->m_maxHz > 0.0) ? m->m_maxHz : 50.0;
+            double amps = (m->m_outHz > 0.1)
+                              ? 3.2 * (m->m_outHz / maxHz) : 0.0;
+            v = (int32_t)(amps * 100.0 + 0.5);
+            break;
+        }
+        case 0x1005: {  /* 输出功率（0.1kW）：满频 15kW */
+            double maxHz = (m->m_maxHz > 0.0) ? m->m_maxHz : 50.0;
+            v = (int32_t)(m->m_outHz / maxHz * 15.0 * 10.0 +
+                          (m->m_outHz >= 0.0 ? 0.5 : -0.5));
+            break;
+        }
+        case 0x1006:    /* 输出转矩（0.1%）：空载轻载，42% 恒定（Python 同值） */
+            v = 420;
+            break;
+        case 0x101F:    /* 主频率X（0.1Hz）＝U0.01 设定频率显示源：跟随给定。
+                         * [为什么必须建模] 驱动把"设定频率"遥测绑在这里
+                         * （XVfdM512_Modbus.c SetFreq → 0x101F），不建模则
+                         * 界面"设定频率"恒 0（仿真器 xvfd_slave_emu 同款镜像）。 */
+        case 0x1020:    /* 辅频率Y 同口径镜像。 */
+            v = (int32_t)(vfdSetHzOf(m) * 10.0 +
+                          (vfdSetHzOf(m) >= 0.0 ? 0.5 : -0.5));
+            break;
+        case 0x3000:    /* 运行状态字：**枚举** 1=正转 2=反转 3=停机。
+                         * [不是位掩码] XVfdM512.c DecodePoint 按 1/2/3 解码；
+                         * 点动不单独报状态（设备层口径"不单独报点动状态"）。 */
+            v = (!m->m_running) ? 3 : (m->m_reverse ? 2 : 1);
+            break;
+        case 0x8000:    /* 故障码（0=无故障；运行状态由驱动层按故障派生） */
             v = m->m_faultCode;
             break;
         default:
-            /* 区间内且未显式建模：真实从站会应答（多为 0 或设备实况值）。
-             * 回 0 让整段读成功，段内已建模的点不受牵连。 */
-            v = 0;
+            if (reg >= VFD_PADDR_BASE &&
+                reg < VFD_PADDR_BASE + VFD_PADDR_SPAN) {
+                /* P 组参数区：建模值直接回（未显式赋值的参数回 0——真实
+                 * 从站对"有但未配置"的参数也正常应答，回异常会让整段读
+                 * 失败，见 s_vfdRanges 注记）。 */
+                v = m->m_params[reg - VFD_PADDR_BASE];
+            } else {
+                /* 区间内且未显式建模：真实从站会应答（多为 0 或设备实况值）。
+                 * 回 0 让整段读成功，段内已建模的点不受牵连。 */
+                v = 0;
+            }
             break;
         }
         /* 负值按 16 位补码（保持寄存器是无符号字）。 */
@@ -220,31 +373,63 @@ static XModbusVirtualResult vfdWrite(void* self, uint8_t fc, uint16_t addr,
     if (count != 1) return XModbusVirtual_IllegalValue;
 
     switch (addr) {
-    case 0x1000: {
-        /* 设定频率：按百分比解释，反算 Hz。 */
-        int16_t pct = (int16_t)values[0];
-        double maxHz = (m->m_maxHz > 0.0) ? m->m_maxHz : 50.0;
-        m->m_setHz = (double)pct / 10000.0 * maxHz;
+    case 0x1000:
+        /* 给定频率：int16 补码百分比（无符号读出会把 -500 当成 65036）。 */
+        vfdWriteSetPct(m, (int32_t)(int16_t)values[0]);
         break;
-    }
     case 0x2000: {
+        /* 命令字：与 XVfdM512.h 的 XVfdM512_Cmd* 同值（1=正转…7=复位）。
+         * [停机走命令字，不走给定] 5/6 停机把爬坡目标清 0，输出随 tick 归零。 */
         const uint16_t cmd = values[0];
-        if (cmd == VFD_CMD_STOP) {
+        if (cmd == VFD_CMD_RUN_FORWARD || cmd == VFD_CMD_RUN_REVERSE) {
+            m->m_running = true;
+            m->m_reverse = (cmd == VFD_CMD_RUN_REVERSE);
+            m->m_jogging = false;
+            m->m_decelerating = false;
+            m->m_targetHz = vfdSetHzOf(m);
+        } else if (cmd == VFD_CMD_JOG_FORWARD || cmd == VFD_CMD_JOG_REVERSE) {
+            m->m_running = true;
+            m->m_reverse = (cmd == VFD_CMD_JOG_REVERSE);
+            m->m_jogging = true;
+            m->m_decelerating = false;
+            m->m_targetHz = vfdSetHzOf(m);
+        } else if (cmd == VFD_CMD_FREE_STOP) {
+            /* **自由停车：立刻断输出**（真机自由停车是切断输出，不是斜坡）。 */
             m->m_running = false;
-        } else if (cmd == VFD_CMD_FORWARD || cmd == VFD_CMD_FWD_JOG) {
-            m->m_running = true;
-            if (m->m_setHz < 0.0) m->m_setHz = -m->m_setHz;
-        } else if (cmd == VFD_CMD_REVERSE || cmd == VFD_CMD_REV_JOG) {
-            m->m_running = true;
-            if (m->m_setHz > 0.0) m->m_setHz = -m->m_setHz;
+            m->m_jogging = false;
+            m->m_decelerating = false;
+            m->m_targetHz = 0.0;
+            m->m_outHz = 0.0;
+        } else if (cmd == VFD_CMD_DECEL_STOP) {
+            /* **减速停止：斜坡降到 0**（真机按减速时间走坡道）。这里把
+             * 目标设 0 但**保持运行标志**，由 vfdTick 把输出斜坡降下来、
+             * 降到 0 才置停机 —— 界面这段就是"正在停机"。
+             * [为什么不立刻 running=false] 真机状态字在降到 0 那一刻才变
+             * "停机"；立刻置 False 会让状态字先变停机、输出却还有几十 Hz，
+             * 界面上就是"停机 + 输出 30Hz"的自相矛盾。 */
+            m->m_targetHz = 0.0;
+            m->m_jogging = false;
+            m->m_decelerating = true;
         } else if (cmd == VFD_CMD_FAULT_RESET) {
             m->m_faultCode = 0;
         } else {
-            return XModbusVirtual_IllegalValue;
+            /* [未知命令字忽略而不是报异常] 与 Python 侧同口径：真机对
+             * 未知命令字静默忽略；报 EXC03 会让上层把"命令不受支持"误判
+             * 成"链路故障"。 */
+            XPrintf("XVirtualModelVfd: 未知命令字 %u（忽略）\n",
+                    (unsigned)cmd);
         }
         break;
     }
     default:
+        if (addr >= VFD_PADDR_BASE &&
+            addr < VFD_PADDR_BASE + VFD_PADDR_SPAN) {
+            /* P 组参数区写（P0.02/P0.03 装配期写通讯源；P0.10 可改上限）。
+             * 真机对有效参数写正常受理——回异常会让驱动的 ensure-sources
+             * 失败，控制前置检查全拒。 */
+            m->m_params[addr - VFD_PADDR_BASE] = values[0];
+            break;
+        }
         return XModbusVirtual_IllegalAddress;
     }
     return XModbusVirtual_Ok;
@@ -263,15 +448,34 @@ struct XVirtualModelVfd* XVirtualModelVfd_create(double maxHz)
     m->m_base.m_vtable = &s_vfdVtable;
     m->m_base.m_self = m;
     m->m_maxHz = (maxHz > 0.0) ? maxHz : 50.0;
-    m->m_setHz = 0.0;
+    /* 缺省给定 50%（=25Hz）：与 Python VirtualVfd.set_percent=5000 同值。
+     * 停机态下它只是"下次启动用多少"，不产生输出。 */
+    m->m_setPct = 5000;
     m->m_outHz = 0.0;
+    m->m_targetHz = 0.0;
     m->m_running = false;
+    /* [P 组参数区缺省 = 真机实况] P0.02=2（命令源=通讯）、P0.03=9（主频率
+     * 源=通讯给定）——真机前置条件（使用指南 §1.6，仿真器同款种子值）；
+     * P0.10=500（最大频率 50.0Hz，0.1Hz 实测定标）。 */
+    m->m_params[VFD_PADDR_CMDSRC - VFD_PADDR_BASE] = 2;
+    m->m_params[VFD_PADDR_FRQSRC - VFD_PADDR_BASE] = 9;
+    m->m_params[VFD_PADDR_MAXFREQ - VFD_PADDR_BASE] = 500;
     return m;
 }
 
 void XVirtualModelVfd_setFrequency(struct XVirtualModelVfd* m, double hz)
 {
-    if (m) m->m_setHz = hz;
+    double maxHz;
+    if (!m) return;
+    maxHz = (m->m_maxHz > 0.0) ? m->m_maxHz : 50.0;
+    /* 与写 0x1000 完全同路径（百分比 + 运行中才跟随目标）。 */
+    vfdWriteSetPct(m, (int32_t)(hz / maxHz * 10000.0 +
+                                (hz >= 0.0 ? 0.5 : -0.5)));
+}
+
+void XVirtualModelVfd_tick(struct XVirtualModelVfd* m)
+{
+    vfdTick(m);
 }
 
 double XVirtualModelVfd_outputFrequency(const struct XVirtualModelVfd* m)
@@ -304,6 +508,7 @@ typedef struct XVirtualDigTravel {
 typedef struct XVirtualModelDigital {
     XModbusVirtualModel m_base;
     int m_channels;        /**< 16 或 32。 */
+    int m_valveChannels;   /**< 本模块内的阀路数（DO 通道 0..m_valveChannels-1）。 */
     uint32_t m_di;         /**< 非阀区 DI 位图（阀区由行程动态推导）。 */
     uint32_t m_do;
     bool m_interlock;      /**< 写 DO 时驱动行程（false=纯线圈模型）。 */
@@ -366,11 +571,18 @@ static uint32_t digDiMask(XVirtualModelDigital* m)
 {
     uint32_t di;
     int i;
+    int valves;
 
     if (!m) return 0;
     di = m->m_di;
     if (!m->m_interlock) return di;   /* 纯线圈模型：DI 与 DO 无关。 */
-    for (i = 0; i < XVIRTUAL_DIG_VALVE_CAP; ++i) {
+    /* [阀区边界 = 本模块的阀路数] 阀区之外（如按钮组 DI12..15、进水泵
+     * 的 DO6）**不是阀**：写它不该拉掉任何到位位。早先按"容量上限 8"
+     * 推导，会把 DI12..15 也当成阀的到位位——阀一动作就把按钮组的
+     * 输入点拉成 0，急停回路在界面上凭空变成"断开"。 */
+    valves = m->m_valveChannels;
+    if (valves > XVIRTUAL_DIG_VALVE_CAP) valves = XVIRTUAL_DIG_VALVE_CAP;
+    for (i = 0; i < valves; ++i) {
         const int closeDi = i * 2;
         const int openDi = i * 2 + 1;
         if (closeDi >= m->m_channels) break;
@@ -433,15 +645,15 @@ static XModbusVirtualResult digWrite(void* self, uint8_t fc, uint16_t addr,
         /* [阀区变位 ⇒ 启动这一路的行程] DO 通道 ch 对应阀 ch：
          * 关到位 DI(2ch)、开到位 DI(2ch+1)。
          *
-         * [只有"目标真变"才重新起算] 两个必须同时满足才重启行程：
-         *   · 目标位变了（on != t->m_target）；或
-         *   · 已到位但目标仍是同一侧（说明这一路刚从"卡死/没接开关"
-         *     恢复，或者重复写同一目标希望它再动一次）。
-         * 不看条件一律重启的写法有个现场可感的坑：上位机重复下发同一
-         * 目标（去抖重发、按钮连点）会把行程打回原点，永远到不了位。 */
-        if (m->m_interlock && ch < XVIRTUAL_DIG_VALVE_CAP) {
+         * [只有"目标真变"才重新起算] 与 Python VirtualDigital.write_single
+         * 同口径：`target != on` 才重启行程。已到位后**同值重写不再重启**
+         * ——旧实现多一个"done 也重启"的发明语义，重复写同一目标（服务端
+         * 在途重发、外部改动回写）会让已到位的阀凭空再走一段 10s"动作中"，
+         * 与真机不符（真机线圈已是该状态，再写一次阀不动）。 */
+        if (m->m_interlock && m->m_valveChannels > 0 &&
+            ch < (uint16_t)m->m_valveChannels && ch < XVIRTUAL_DIG_VALVE_CAP) {
             XVirtualDigTravel* t = &m->m_travel[ch];
-            if (t->m_target != on || t->m_done) {
+            if (t->m_target != on) {
                 t->m_target = on;
                 t->m_startMs = digNowMs();
                 t->m_done = false;
@@ -466,6 +678,13 @@ struct XVirtualModelDigital* XVirtualModelDigital_create(int channels)
     m->m_base.m_self = m;
     m->m_channels = channels;
     m->m_interlock = true;
+    /* [缺省阀路数 = 6] 与 Python VirtualDigital.VALVE_COUNT 同值：现场
+     * 六路电磁阀，DO 通道 0..5 → 关到位 DI(2n) / 开到位 DI(2n+1)。
+     * 阀区**只有**这 6 路——通道 6 往后是进水泵、按钮灯、按钮输入，
+     * 写它们不产生行程、也不动任何到位位。 */
+    m->m_valveChannels = 6;
+    if (m->m_valveChannels > XVIRTUAL_DIG_VALVE_CAP)
+        m->m_valveChannels = XVIRTUAL_DIG_VALVE_CAP;
     /* [缺省行程 = 现场真实节奏] 10s 满开满关（见 HsfServerConfig 的
      * HSF_VALVE_MOVE_TIMEOUT_MS 注记：现场实测 10s，超时判据 20s）。
      * 用真实时间尺度而不是"立即到位"，才能让「动作中」与「20s 超时」
@@ -481,20 +700,22 @@ struct XVirtualModelDigital* XVirtualModelDigital_create(int channels)
             m->m_travel[i].m_startMs = -1;
         }
     }
-    /* [非阀区 DI 给点信号] 保留奇数/偶数位的差异，界面看着不像全 0。
-     * 阀区的位由 digDiMask 动态推导，这里写进去会被覆盖——不影响。 */
-    {
-        int i;
-        for (i = 0; i < channels; ++i) {
-            if ((i % 2) == 0) m->m_di |= (1u << i);
-        }
-    }
+    /* [非阀区 DI 缺省 0] 与 Python VirtualDigital 同口径：BASE_DI 经
+     * `& ~0x0FFF0000` 掩掉阀区后实为 0——界面上阀区外的 DI 就是全 0
+     * （数据有效，只是没信号）。旧实现给"偶数位吸合"是发明观感，两端
+     * 页面对不上。阀区的位由 digDiMask 动态推导（初始六路全部"已关"
+     * ⇒ 关到位位吸合），与 Python 的开机稳态一致。 */
     return m;
 }
 
 void XVirtualModelDigital_setDi(struct XVirtualModelDigital* m, uint32_t mask)
 {
     if (m) m->m_di = mask;
+}
+
+void XVirtualModelDigital_setDo(struct XVirtualModelDigital* m, uint32_t mask)
+{
+    if (m) m->m_do = mask;
 }
 
 uint32_t XVirtualModelDigital_doMask(const struct XVirtualModelDigital* m)
@@ -514,6 +735,16 @@ void XVirtualModelDigital_setValveInterlock(struct XVirtualModelDigital* m,
                                             bool enable)
 {
     if (m) m->m_interlock = enable;
+}
+
+void XVirtualModelDigital_setValveChannels(struct XVirtualModelDigital* m,
+                                           int count)
+{
+    if (!m) return;
+    if (count < 0) count = 0;
+    if (count > XVIRTUAL_DIG_VALVE_CAP) count = XVIRTUAL_DIG_VALVE_CAP;
+    if (count > m->m_channels) count = m->m_channels;
+    m->m_valveChannels = count;
 }
 
 void XVirtualModelDigital_setMoveMs(struct XVirtualModelDigital* m,
@@ -578,9 +809,13 @@ struct XVirtualModelAnalog* XVirtualModelAnalog_create(int channels)
     m->m_base.m_vtable = &s_anaVtable;
     m->m_base.m_self = m;
     m->m_channels = channels;
-    /* 缺省给 8mA（量程中点）。
+    /* [缺省值对齐 Python VirtualAnalog] 通道 0 模拟压差计（EJA110A，0~1MPa）：
+     * 2985mV ≈ 11.988mA ≈ 0.499MPa；其余通道 4mA 活零点（995mV ≈ 3.996mA，
+     * 落在 0.05mA 容差内）。旧实现 8 路全 8mA 是"量程中点"的发明观感，
+     * 两端页面对不上（Python 端压差显示 0.5MPa、其余显示 0）。
      * 毫伏 = mA × 249Ω（采样电阻口径，见 HsfServerConfig.HSF_AI_SHUNT_OHM）。 */
-    for (i = 0; i < channels; ++i) m->m_mv[i] = (uint16_t)(8.0 * 249.0);
+    for (i = 0; i < channels; ++i)
+        m->m_mv[i] = (i == 0) ? 2985u : 995u;
     return m;
 }
 
@@ -656,9 +891,37 @@ void XVirtualModelTempHum_set(struct XVirtualModelTempHum* m, int temp_tenths,
  *                        电磁流量计（LD / TRX-485）
  * ============================================================================ */
 
+/**
+ * @struct XVirtualModelFlow
+ * @brief LD 电磁流量计模型——**逐项对齐 Python virtualdev.VirtualFlowMeter**。
+ *
+ * @details [为什么要有波动与累积量] 恒定值看不出"数据在刷新"，容易误判成
+ *          界面卡住；累积量缺失则历史曲线/总量页无数据。Python 口径：
+ *          瞬时流量 36.5 m³/h ±2% 正弦（周期 60s），正/反向累积量按**真实
+ *          经过的时间**积分（dt 不按"被访问次数"算，否则轮询节拍一变累积
+ *          速度跟着变）。
+ *
+ *          [变量区 22 寄存器地图（高字在前 ABCD）]
+ *            0x1010/11 Float 瞬时流量     0x1012/13 Float 瞬时流速
+ *            0x1014/15 Float 流量百分比   0x1016/17 Float 流体电导比
+ *            0x1018/19 Long  正向累积整数 0x101A/1B Float 正向累积小数
+ *            0x101C/1D Long  反向累积整数 0x101E/1F Float 反向累积小数
+ *            0x1020 U16 瞬时流量单位      0x1021 U16 累积总量单位
+ *            0x1022~0x1025 U16 四种报警
+ *          [单位码两张表各用各的] 瞬时流量表 5=m³/h；累积总量表 1=m³。
+ *          Python 注释里的实锅：把累积单位填成 10（瞬时表的邻居码），
+ *          界面显示"?"。
+ */
 typedef struct XVirtualModelFlow {
     XModbusVirtualModel m_base;
-    float m_instant;     /**< 瞬时流量 m3/h。 */
+    double m_fixedFlow;      /**< 固定瞬时流量（m³/h）；<0=未固定（按正弦波动）。 */
+    double m_forwardTotal;   /**< 正向累积量（m³）。 */
+    double m_reverseTotal;   /**< 反向累积量（m³）。 */
+    int64_t m_lastMs;        /**< 上次积分时刻（单调毫秒）。 */
+    int64_t m_t0Ms;          /**< 波动相位起算时刻。 */
+    uint16_t m_flowUnit;     /**< 0x1020 瞬时流量单位（5=m³/h）。 */
+    uint16_t m_totalUnit;    /**< 0x1021 累积总量单位（1=m³）。 */
+    uint16_t m_alarm[4];     /**< 0x1022~0x1025 四种报警（0=正常）。 */
 } XVirtualModelFlow;
 
 /* LD 变量区：0x1010 起（高字在前）；单位码 0x1020/0x1021 等。 */
@@ -666,9 +929,81 @@ typedef struct XVirtualModelFlow {
 #define FLOW_VADDR_SPAN      22u
 #define FLOW_ROLE_INSTANT_HI 0
 #define FLOW_ROLE_INSTANT_LO 1
+#define FLOW_ROLE_SPEED_HI   2
+#define FLOW_ROLE_SPEED_LO   3
+#define FLOW_ROLE_PCT_HI     4
+#define FLOW_ROLE_PCT_LO     5
+#define FLOW_ROLE_COND_HI    6
+#define FLOW_ROLE_COND_LO    7
+#define FLOW_ROLE_FWD_INT_HI 8
+#define FLOW_ROLE_FWD_INT_LO 9
+#define FLOW_ROLE_FWD_FRAC_HI 10
+#define FLOW_ROLE_FWD_FRAC_LO 11
+#define FLOW_ROLE_REV_INT_HI 12
+#define FLOW_ROLE_REV_INT_LO 13
+#define FLOW_ROLE_REV_FRAC_HI 14
+#define FLOW_ROLE_REV_FRAC_LO 15
 #define FLOW_ROLE_UNIT       16      /* 0x1020 瞬时流量单位 */
 #define FLOW_ROLE_TOTAL_UNIT 17      /* 0x1021 累积总量单位 */
 #define FLOW_ROLE_ALARM      18      /* 0x1022 起四字报警 */
+
+/* [DN50 量程中点] 瞬时流量基准（m³/h），与 Python BASE_FLOW 同值。 */
+#define FLOW_BASE_M3H        36.5
+/* [波动幅度/周期] ±2%、60s——与 Python 同值（sim/README 口径表）。 */
+#define FLOW_WOBBLE          0.02
+#define FLOW_PERIOD_MS       60000.0
+/* [管道内径] 由流量反算流速用（DN50 → 0.05m），与 Python 同值。 */
+#define FLOW_PIPE_DIAMETER   0.05
+#define FLOW_PI              3.14159265358979323846
+
+/** @brief 当前瞬时流量（固定值优先，否则 ±2% 正弦波动，周期 60s）。 */
+static double flowNow(const XVirtualModelFlow* m)
+{
+    double phase;
+    if (!m) return 0.0;
+    if (m->m_fixedFlow >= 0.0) return m->m_fixedFlow;
+    phase = (double)((XDateTime_currentMSecsSinceEpoch() - m->m_t0Ms) %
+                     (int64_t)FLOW_PERIOD_MS) / FLOW_PERIOD_MS * 2.0 * FLOW_PI;
+    return FLOW_BASE_M3H * (1.0 + FLOW_WOBBLE * sin(phase));
+}
+
+/**
+ * @brief 推进累积量并返回当前瞬时流量。
+ * @details dt 用真实经过的时间（XDateTime 单调毫秒），不按"被访问次数"算
+ *          ——与 Python _step 同口径。多次调用只是把同一段 dt 切得更细，
+ *          积分结果不变，故读路径与心跳 tick 同时驱动也安全。
+ */
+static double flowStep(XVirtualModelFlow* m)
+{
+    int64_t now;
+    int64_t dt;
+    double flow;
+    if (!m) return 0.0;
+    now = XDateTime_currentMSecsSinceEpoch();
+    dt = now - m->m_lastMs;
+    if (dt < 0) dt = 0;
+    m->m_lastMs = now;
+    flow = flowNow(m);
+    m->m_forwardTotal += flow / 3600.0 * (double)dt / 1000.0;
+    return flow;
+}
+
+/** @brief float32 位模式 → (高字, 低字)，高字在前（ABCD）。 */
+static void flowSplitFloat(double value, uint16_t* hi, uint16_t* lo)
+{
+    float f = (float)value;
+    uint32_t bits = 0;
+    memcpy(&bits, &f, sizeof(bits));
+    *hi = (uint16_t)(bits >> 16);
+    *lo = (uint16_t)(bits & 0xFFFFu);
+}
+
+/** @brief uint32 → (高字, 低字)。 */
+static void flowSplitLong(uint32_t value, uint16_t* hi, uint16_t* lo)
+{
+    *hi = (uint16_t)(value >> 16);
+    *lo = (uint16_t)(value & 0xFFFFu);
+}
 
 static XModbusVirtualResult flowRead(void* self, uint8_t fc, uint16_t addr,
                                      uint16_t count, uint16_t* out,
@@ -676,30 +1011,93 @@ static XModbusVirtualResult flowRead(void* self, uint8_t fc, uint16_t addr,
 {
     XVirtualModelFlow* m = (XVirtualModelFlow*)self;
     uint16_t i;
-    uint32_t bits;
-    float f = 0.0f;
 
     if (!m || !out || !outLen) return XModbusVirtual_IllegalValue;
+    /* [功能码] 真机 FC03/FC04 都能读变量区（Python 驱动走 FC03、本工程
+     * 驱动走 FC04），模型两者都收——驱动层差异不是模拟要复刻的对象。 */
     if (fc != FC_READ_HOLDING && fc != FC_READ_INPUT)
         return XModbusVirtual_IllegalFunction;
     if (outCap < count) return XModbusVirtual_IllegalValue;
+
+    /* 变量区之外（参数区）返回 0 而不是异常：与 Python 同口径——真机对
+     * "有但不用"的寄存器正常应答，抛异常会把"读成功但值为 0"变成
+     * "整拍失败"。 */
     if (addr < FLOW_VADDR_BASE ||
-        (uint32_t)addr + count > (uint32_t)FLOW_VADDR_BASE + FLOW_VADDR_SPAN)
-        return XModbusVirtual_IllegalAddress;
+        (uint32_t)addr >= (uint32_t)FLOW_VADDR_BASE + FLOW_VADDR_SPAN) {
+        for (i = 0; i < count; ++i) out[i] = 0;
+        *outLen = count;
+        return XModbusVirtual_Ok;
+    }
 
-    memcpy(&bits, &m->m_instant, sizeof(bits));
+    {
+        const double flow = flowStep(m);
+        const double speed =
+            (flow / 3600.0) / (FLOW_PI * (FLOW_PIPE_DIAMETER / 2.0) *
+                               (FLOW_PIPE_DIAMETER / 2.0));
+        const double pct = 100.0 * flow / (FLOW_BASE_M3H * 2.0);
+        const double fwdIntD = (m->m_forwardTotal < 0.0)
+                                   ? 0.0 : m->m_forwardTotal;
+        const double revIntD = (m->m_reverseTotal < 0.0)
+                                   ? 0.0 : m->m_reverseTotal;
+        const uint32_t fwdInt = (uint32_t)fwdIntD;
+        const uint32_t revInt = (uint32_t)revIntD;
+        uint16_t hi, lo;
 
-    for (i = 0; i < count; ++i) {
-        const uint16_t idx = (uint16_t)(addr + i - FLOW_VADDR_BASE);
-        switch (idx) {
-        case FLOW_ROLE_INSTANT_HI: out[i] = (uint16_t)(bits >> 16); break;
-        case FLOW_ROLE_INSTANT_LO: out[i] = (uint16_t)(bits & 0xFFFFu); break;
-        case FLOW_ROLE_UNIT:       out[i] = 5;  break;  /* M3/H */
-        case FLOW_ROLE_TOTAL_UNIT: out[i] = 1;  break;  /* M3 */
-        default:                   out[i] = 0;  break;  /* 其余量/报警 = 0。 */
+        for (i = 0; i < count; ++i) {
+            const uint16_t idx =
+                (uint16_t)((uint32_t)addr + i - FLOW_VADDR_BASE);
+            out[i] = 0;
+            switch (idx) {
+            case FLOW_ROLE_INSTANT_HI:
+            case FLOW_ROLE_INSTANT_LO:
+                flowSplitFloat(flow, &hi, &lo);
+                out[i] = (idx == FLOW_ROLE_INSTANT_HI) ? hi : lo;
+                break;
+            case FLOW_ROLE_SPEED_HI:
+            case FLOW_ROLE_SPEED_LO:
+                flowSplitFloat(speed, &hi, &lo);
+                out[i] = (idx == FLOW_ROLE_SPEED_HI) ? hi : lo;
+                break;
+            case FLOW_ROLE_PCT_HI:
+            case FLOW_ROLE_PCT_LO:
+                flowSplitFloat(pct, &hi, &lo);
+                out[i] = (idx == FLOW_ROLE_PCT_HI) ? hi : lo;
+                break;
+            case FLOW_ROLE_COND_HI:
+            case FLOW_ROLE_COND_LO:
+                flowSplitFloat(1.0, &hi, &lo);
+                out[i] = (idx == FLOW_ROLE_COND_HI) ? hi : lo;
+                break;
+            case FLOW_ROLE_FWD_INT_HI:
+            case FLOW_ROLE_FWD_INT_LO:
+                flowSplitLong(fwdInt, &hi, &lo);
+                out[i] = (idx == FLOW_ROLE_FWD_INT_HI) ? hi : lo;
+                break;
+            case FLOW_ROLE_FWD_FRAC_HI:
+            case FLOW_ROLE_FWD_FRAC_LO:
+                flowSplitFloat(fwdIntD - (double)fwdInt, &hi, &lo);
+                out[i] = (idx == FLOW_ROLE_FWD_FRAC_HI) ? hi : lo;
+                break;
+            case FLOW_ROLE_REV_INT_HI:
+            case FLOW_ROLE_REV_INT_LO:
+                flowSplitLong(revInt, &hi, &lo);
+                out[i] = (idx == FLOW_ROLE_REV_INT_HI) ? hi : lo;
+                break;
+            case FLOW_ROLE_REV_FRAC_HI:
+            case FLOW_ROLE_REV_FRAC_LO:
+                flowSplitFloat(revIntD - (double)revInt, &hi, &lo);
+                out[i] = (idx == FLOW_ROLE_REV_FRAC_HI) ? hi : lo;
+                break;
+            case FLOW_ROLE_UNIT:       out[i] = m->m_flowUnit;  break;
+            case FLOW_ROLE_TOTAL_UNIT: out[i] = m->m_totalUnit; break;
+            default:
+                if (idx >= FLOW_ROLE_ALARM &&
+                    idx < FLOW_ROLE_ALARM + 4u)
+                    out[i] = m->m_alarm[idx - FLOW_ROLE_ALARM];
+                break;
+            }
         }
     }
-    (void)f;
     *outLen = count;
     return XModbusVirtual_Ok;
 }
@@ -718,21 +1116,34 @@ struct XVirtualModelFlow* XVirtualModelFlow_create(void)
     XVirtualModelFlow* m = (XVirtualModelFlow*)XMemory_malloc(
         sizeof(XVirtualModelFlow), XCLASS_DEFAULT_MEMORY_TYPE);
     if (!m) return NULL;
+    memset(m, 0, sizeof(*m));
     m->m_base.m_vtable = &s_flowVtable;
     m->m_base.m_self = m;
-    /* [缺省值必须选"低字非 0"的浮点] 12.5f 的 IEEE754 位模式是
-     * 0x41480000——低字恰好为 0。而 32 位量由**高低两字**拼成，组层
-     * feedRole 对"值未变"会静默：低字 0 与点初值相同 ⇒ 永远不喂 ⇒
-     * 设备层整拍重算时低字缺失 ⇒ 瞬时流量恒 0（真机上曾因此以为模型没接）。
-     * 12.53f = 0x41487AE1，两字都非 0，不会有这个巧合。
-     * （同名坑见 xindustry_flowmeter_test.c 的"为什么不用 1.0f/12.5f"。） */
-    m->m_instant = 12.53f;
+    m->m_forwardTotal = 0.0;
+    m->m_reverseTotal = 0.0;
+    m->m_lastMs = XDateTime_currentMSecsSinceEpoch();
+    m->m_t0Ms = m->m_lastMs;
+    /* [单位码两张表各用各的] 瞬时 5=m³/h、累积 1=m³（Python 同值）。 */
+    m->m_flowUnit = 5;
+    m->m_totalUnit = 1;
+    m->m_fixedFlow = -1.0;   /* 缺省不固定，按正弦波动。 */
+    /* [低字非 0 不是靠选缺省值了] 波动使瞬时流量每拍都变，32 位量的两字
+     * 每帧都会被组层喂到——旧实现靠 12.53f（0x41487AE1 两字非 0）躲
+     * "低字恰为 0 不被喂"的坑，波动口径下该坑不存在（仅启动瞬间相位≈0
+     * 时低字可能为 0，下一拍即变）。 */
     return m;
+}
+
+void XVirtualModelFlow_tick(struct XVirtualModelFlow* m)
+{
+    if (m) flowStep(m);
 }
 
 void XVirtualModelFlow_setInstantFlow(struct XVirtualModelFlow* m, float v)
 {
-    if (m) m->m_instant = v;
+    /* [固定瞬时流量] 测试/演示用（对齐浊度 setNtu 的做法）：设 ≥0 的值
+     * 后不再波动；需要恢复波动时传负数。 */
+    if (m) m->m_fixedFlow = (double)v;
 }
 
 /* ==================== 在线浊度仪（WZT-701A） ==================== */

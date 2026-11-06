@@ -174,6 +174,19 @@ static void hsfTitleRelayout(HsfTitleBar* self)
                                 clockW, barH - halfH);
     }
 
+    /* 自动运行状态片：模式钮左侧（手动模式隐藏 ⇒ 不占位）。 */
+    if (self->m_autoChip &&
+        XWidget_isVisible((XWidget*)self->m_autoChip)) {
+        int chipW = XWidget_sizeHint((XWidget*)self->m_autoChip).width;
+        int chipX;
+        if (chipW < 96) chipW = 96;
+        chipX = x - gap - chipW;
+        if (chipX < HSF_TITLE_ICON_W) chipX = HSF_TITLE_ICON_W;
+        XWidget_setGeometry((XWidget*)self->m_autoChip, chipX, 0,
+                            chipW, barH);
+        x = chipX;
+    }
+
     /* 全局运行模式：时钟列左侧独立一段（整栏高、垂直居中），
      * 与右侧时钟/温湿度不重叠——三块各自占位，标题居中区间随之收窄。 */
     if (self->m_modeBtn) {
@@ -271,12 +284,21 @@ static void VHsfTitleBar_mousePressEvent(XWidget* self, XEvent* event)
         XMouseEvent* mouse = (XMouseEvent*)event;
         XPoint pos = XMouseEvent_position(mouse);
         int barW = XWidget_width(&bar->m_base);
-        if (pos.x >= barW - HSF_TITLE_MODE_W - HSF_TITLE_GAP &&
-            pos.x <= barW) {
-            bar->m_modeFn(bar->m_modeUserData);
-            XEvent_accept(event);
-            return;
+        /* [命中区用标签实际几何，不能硬算] 旧实现按 barW - HSF_TITLE_MODE_W -
+         *   HSF_TITLE_GAP 硬算命中区，而标签实际画在「时钟列左侧」（relayout 里
+         *   modeX = 时钟列左界 - gap - MODE_W）。两者在宽窗口下相差上百像素
+         *   （1165 宽时标签在 x≈881、命中区在 x≈1059）⇒ 点「模式: 手动」
+         *   落在温湿度区、事件被吞 ⇒ **点击毫无反应**（现场报"手动自动无法
+         *   切换"的根因）。改为取标签自身几何：绘制与命中同源，永不漂移。 */
+        if (bar->m_modeBtn) {
+            XRect r = XWidget_geometry((XWidget*)bar->m_modeBtn);
+            if (pos.x >= r.x && pos.x <= r.x + r.width) {
+                bar->m_modeFn(bar->m_modeUserData);
+                XEvent_accept(event);
+                return;
+            }
         }
+        (void)barW;
     }
     XClass_Parent(XWidget, EXWidget_MousePressEvent,
                   void (*)(XWidget*, XEvent*))(self, event);
@@ -349,6 +371,15 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
         XLabel_setText_2(self->m_modeBtn,
                          "\xE6\xA8\xA1\xE5\xBC\x8F--");   /* 模式-- */
     }
+    /* 自动运行状态片：只在自动模式显示（手动模式隐藏）——"自动模式"是
+     * 授权态，"控制器在跑"是运行态，两者分开呈现（对齐 Python 客户端）。 */
+    self->m_autoChip = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
+    if (self->m_autoChip) {
+        XLabel_setAlignment(self->m_autoChip,
+                            XAlignment_HCenter | XAlignment_VCenter);
+        XLabel_setText_2(self->m_autoChip, " ");
+        XWidget_setVisible((XWidget*)self->m_autoChip, false);
+    }
     /* 设备健康指示：正常 / 故障N / 离线N（事件驱动推送，变化才刷）。 */
     self->m_healthLbl = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
     if (self->m_healthLbl) {
@@ -409,6 +440,31 @@ void HsfTitleBar_setModeHandler(HsfTitleBar* self, HsfTitleBarModeFn fn,
 /**
  * @brief 更新顶栏运行模式显示。
  */
+void HsfTitleBar_setAutoRunning(HsfTitleBar* self, bool known, bool running,
+                                 bool autoMode)
+{
+    if (!self || !self->m_autoChip) return;
+    if (!autoMode) {
+        /* 手动模式隐藏（此时"控制器在跑"无意义——远程控制才可用）。 */
+        XLabel_setText_2(self->m_autoChip, " ");
+        XWidget_setVisible((XWidget*)self->m_autoChip, false);
+        hsfTitleRelayout(self);
+        return;
+    }
+    if (!known) {
+        XLabel_setText_2(self->m_autoChip,
+                         "èªå¨âæªç¥"); /* 自动·未知 */
+    } else if (running) {
+        XLabel_setText_2(self->m_autoChip,
+                         "èªå¨âè¿è¡ä¸­"); /* 自动·运行中 */
+    } else {
+        XLabel_setText_2(self->m_autoChip,
+                         "èªå¨âå·²åæ­¢"); /* 自动·已停止 */
+    }
+    XWidget_setVisible((XWidget*)self->m_autoChip, true);
+    hsfTitleRelayout(self);
+}
+
 void HsfTitleBar_setRunMode(HsfTitleBar* self, bool known, bool autoMode)
 {
     if (!self || !self->m_modeBtn) return;

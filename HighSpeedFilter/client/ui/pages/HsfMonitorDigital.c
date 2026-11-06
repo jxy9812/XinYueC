@@ -104,7 +104,7 @@ static struct
     void (*m_setStatus)(void*, const char*); /**< 状态栏反馈（可 NULL）。 */
     void*            m_statusUser;  /**< 状态栏反馈用户数据。 */
     HsfDigitalBoard* m_board;        /**< 已建看板借用指针（未建 NULL）。 */
-    XCheckBox*       m_opCheck;      /**< 操作闸勾选框借用（未建 NULL）。 */
+    XCheckBox*       m_opCheck;      /**< 保留占位（本地闸已移除；勿用）。 */
     bool             m_compact;      /**< 竖屏形态（adapt 分档，缺省 false）。 */
     bool             m_autoMode;     /**< 自动运行模式（true=只读查看+隐藏闸 UI）。 */
     bool             m_pageBuilt;    /**< 页已创建（勾选框行显隐可操作）。 */
@@ -786,7 +786,7 @@ typedef struct HsfMonitorDigital
     XBoxLayout    m_layout;    /**< 页内垂直布局。 */
     XBoxLayout    m_topRow;    /**< 顶行：标题居中 + 勾选框贴右（同一行）。 */
     XLabel        m_title;     /**< 页标题（粗）。 */
-    XCheckBox     m_opCheck;   /**< 统一操作闸勾选框（界面开关；自动模式隐藏）。 */
+    XCheckBox     m_opCheck;   /**< 保留占位（本地闸已移除；勿用）。 */
     HsfDigitalBoard* m_board;  /**< 圆点网格看板（堆；随页级联释放）。 */
     XLabel        m_hint;      /**< 底部提示。 */
 } HsfMonitorDigital;
@@ -810,7 +810,6 @@ void HsfMonitorDigital_adapt(XWidget* page, bool compact)
     /* 标题行恒横向（标题居中 + 勾选框贴右，横竖屏同构）；竖屏加高触控。 */
     XBoxLayout_setDirection(&self->m_topRow, XBoxLayoutDirection_LeftToRight);
     XWidget_setFixedHeight((XWidget*)&self->m_title, compact ? 30 : 26);
-    XWidget_setFixedHeight((XWidget*)&self->m_opCheck, compact ? 30 : 22);
     digital_boardRefresh();
 }
 
@@ -820,8 +819,7 @@ static void digital_opCheckSlot(XObject* receiver, XVarList* args)
     HsfMonitorDigital* self = (HsfMonitorDigital*)receiver;
     (void)args;
     if (!self) return;
-    HsfMonitorDigital_setOperationEnabled(
-        XCheckBox_isChecked(&self->m_opCheck));
+    HsfMonitorDigital_setOperationEnabled(true);
     digital_setStatus(s_digital.m_opEnabled
                           ? "\xE7\x95\x8C\xE9\x9D\xA2\xE6\x93\x8D\xE4\xBD"
                             "\x9C\xE5\xB7\xB2\xE5\x85\x81\xE8\xAE\xB8"
@@ -886,22 +884,9 @@ XWidget* HsfMonitorDigital_create(XWidget* parent, HsfMenuNavFn navFn,
                         XAlignment_HCenter | XAlignment_VCenter);
     XWidget_show((XWidget*)&self->m_title);
 
-    XCheckBox_init(&self->m_opCheck, &self->m_base, 0);
-    HsfTheme_applyDefaultFont((XWidget*)&self->m_opCheck);
-    XCheckBox_setText_2(&self->m_opCheck,
-                        "\xE5\x85\x81\xE8\xAE\xB8\xE7\x95\x8C\xE9\x9D\xA2"
-                        "\xE6\x93\x8D\xE4\xBD\x9C"); /* 允许界面操作 */
-    XCheckBox_setChecked(&self->m_opCheck, s_digital.m_opEnabled);
-    XObject_connect_1((XObject*)&self->m_opCheck,
-                      XSignal(XAbstractButton_toggled_signal),
-                      (XObject*)self, digital_opCheckSlot,
-                      XConnectionType_Direct);
-    XWidget_show((XWidget*)&self->m_opCheck);
-    s_digital.m_opCheck = &self->m_opCheck; /* 闸回显借用（页内成员）。 */
-    /* 自动运行模式：勾选框行隐藏、闸锁定只读（API 恢复后重显）。 */
-    if (s_digital.m_autoMode) {
-        XWidget_hide((XWidget*)&self->m_opCheck);
-    }
+    /* [本地「允许界面操作」勾选框已移除] 2026-11-06 对齐 Python：控制可用性
+     * 由**全局运行模式**决定（自动模式只读 / 手动模式可操作）+ 连接态，
+     * 不再要求用户先勾一个本地开关（现场观感=点不动）。 */
     s_digital.m_pageBuilt = true;
 
     /* ---- 底部提示 ---- */
@@ -940,7 +925,6 @@ XWidget* HsfMonitorDigital_create(XWidget* parent, HsfMenuNavFn navFn,
     XBoxLayout_addWidget(&self->m_topRow, (XWidget*)&self->m_title);
     XBoxLayout_addSpacing(&self->m_topRow, 12);
     XBoxLayout_addStretch(&self->m_topRow, 1);
-    XBoxLayout_addWidget(&self->m_topRow, (XWidget*)&self->m_opCheck);
     XBoxLayout_addLayout(&self->m_layout, &self->m_topRow);
 
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)board);
@@ -1061,22 +1045,15 @@ int HsfMonitorDigital_channel(int index)
 
 void HsfMonitorDigital_setOperationEnabled(bool enabled)
 {
-    /* 自动运行模式：界面强制只读，API 也锁闸（唯一解锁口是
-     * setInteractiveMode(false) 退出自动模式）。 */
+    /* 自动运行模式：界面强制只读（唯一解锁口是退出自动模式）。 */
     if (s_digital.m_autoMode) {
         if (!s_digital.m_opEnabled) return;
         s_digital.m_opEnabled = false;
-        if (s_digital.m_opCheck)
-            XCheckBox_setChecked(s_digital.m_opCheck, false);
         digital_boardRefresh();
         return;
     }
     if (s_digital.m_opEnabled == enabled) return;
     s_digital.m_opEnabled = enabled;
-    /* UI 开关随模型态回显（对齐 Qt setChecked 语义：同值不发 toggled，
-     * 故此处静默置位不触发 digital_opCheckSlot 回环）。 */
-    if (s_digital.m_opCheck)
-        XCheckBox_setChecked(s_digital.m_opCheck, enabled);
     digital_boardRefresh();
 }
 
@@ -1090,21 +1067,12 @@ void HsfMonitorDigital_setInteractiveMode(bool interactive)
     if (s_digital.m_autoMode == (!interactive)) return;
     s_digital.m_autoMode = !interactive;
     if (interactive) {
-        /* 退出自动模式：重显闸开关，闸值回到勾选框当前态（保持此前
-         * API/用户设定；缺省关）。 */
-        if (s_digital.m_opCheck) {
-            s_digital.m_opEnabled =
-                XCheckBox_isChecked(s_digital.m_opCheck);
-            XWidget_show((XWidget*)s_digital.m_opCheck);
-        }
+        /* 退出自动模式：恢复可操作（对齐 Python：手动模式即可操作）。 */
+        s_digital.m_opEnabled = true;
     } else {
-        /* 进入自动模式：隐藏闸开关 + 强制只读（真实通道在自动程序
-         * 手里，界面不允许再下发操作，只允许查看）。 */
+        /* 进入自动模式：强制只读（真实通道在自动程序手里，界面不允许
+         * 再下发操作，只允许查看）。 */
         s_digital.m_opEnabled = false;
-        if (s_digital.m_opCheck)
-            XCheckBox_setChecked(s_digital.m_opCheck, false);
-        if (s_digital.m_opCheck)
-            XWidget_hide((XWidget*)s_digital.m_opCheck);
         digital_setStatus(
             "\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD"
             "\x3A\x20\xE7\x95\x8C\xE9\x9D\xA2\xE5\x8F\xAA\xE8\xAF\xBB");

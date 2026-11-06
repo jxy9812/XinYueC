@@ -84,6 +84,11 @@ typedef struct HsfAnalogPoint
     double  m_max;      /**< 量程上限（转换值口径）。 */
     bool    m_hasRange; /**< 是否启用越限判定（setRange 时置位）。 */
     HsfAnalogKind m_kind; /**< 点类型（AI=只读 / AO=可操作；缺省 AI）。 */
+    /* ---- 标定工程量（服务端算；与 Python 侧 e/eu/en/ew 同口径）---- */
+    double  m_eng;       /**< 标定工程量（如 0.499 MPa）；无标定=0。 */
+    char*   m_engUnit;   /**< 标定单位（堆拷贝；"MPa"…；NULL=无标定）。 */
+    char*   m_engNote;   /**< 越限说明（堆拷贝；空=正常）。 */
+    int     m_rawMv;     /**< 原始寄存器（毫伏口径；脚注"原始寄存器"用）。 */
 } HsfAnalogPoint;
 
 /** @brief 页面共享模型（页可未创建时 API 仍可用，故独立于页对象）。 */
@@ -100,7 +105,7 @@ static struct
     void (*m_setStatus)(void*, const char*); /**< 状态栏反馈（可 NULL）。 */
     void*           m_statusUser; /**< 状态栏反馈用户数据。 */
     struct HsfAnalogBoard* m_board; /**< 已建看板借用指针（未建 NULL）。 */
-    XCheckBox*      m_opCheck;   /**< 操作闸勾选框借用（未建 NULL）。 */
+    XCheckBox*      m_opCheck;   /**< 保留占位（本地闸已移除；勿用）。 */
     bool            m_compact;   /**< 竖屏形态（adapt 分档，缺省 false）。 */
 } s_analog;
 
@@ -682,11 +687,11 @@ static void analog_drawCard(XPainter* painter, const HsfAnalogBoard* board,
                               isAo ? ANALOG_COLOR_VALUE
                                    : ANALOG_COLOR_UNIT);
     }
-    /* 第二行：原始值（弱灰，整型口径）。 */
+    /* 第二行：原始寄存器（毫伏口径；与服务端 r{i} 同值，排查真相用）。 */
     if (index >= 0 && index < s_analog.m_count) {
         XRect r;
-        snprintf(line, sizeof(line), "\xE5\x8E\x9F\xE5\xA7\x8B: %d",
-                 s_analog.m_points[index].m_raw); /* 原始: N */
+        snprintf(line, sizeof(line), "\xE5\x8E\x9F\xE5\xA7\x8B: %d mV",
+                 s_analog.m_points[index].m_rawMv); /* 原始: N mV */
         XRect_init(&r, x + 8, y + 10 + textH, w - 16, textH);
         XPainter_drawTextRect(painter, &r,
                               XPAINTER_TEXT_ALIGN_LEFT |
@@ -694,14 +699,29 @@ static void analog_drawCard(XPainter* painter, const HsfAnalogBoard* board,
                                   XPAINTER_TEXT_DONT_CLIP,
                               line, ANALOG_COLOR_RAW);
     }
-    /* 第三行：转换值（品牌蓝/报警红）+ 单位（弱灰跟随）。 */
+    /* 第三行：电流值（品牌蓝/报警红）+ 单位（弱灰跟随）。
+     * [有标定工程量时并列显示] "11.988 mA  0.499 MPa"——量程是设备铭牌
+     * 口径，服务端算好下发（与 Python 侧同款），客户端只呈现。 */
     analog_formatScaled(index, value, (int)sizeof(value));
     unit[0] = '\0';
     if (index >= 0 && index < s_analog.m_count &&
         s_analog.m_points[index].m_unit && s_analog.m_points[index].m_unit[0])
         snprintf(unit, (int)sizeof(unit), " %s",
                  s_analog.m_points[index].m_unit);
+    else
+        /* [未标定通道的缺省单位] 4~20mA 模块的电流值天然单位是 mA；
+         * 服务端只对**有标定**的通道下发单位（压差计⇒MPa），其余通道
+         * 未接入任何东西，只显示原始电流（与 Python 端同口径）。 */
+        snprintf(unit, (int)sizeof(unit), " mA");
     snprintf(line, sizeof(line), "%s%s", value, unit);
+    if (index >= 0 && index < s_analog.m_count &&
+        s_analog.m_points[index].m_engUnit &&
+        s_analog.m_points[index].m_engUnit[0]) {
+        snprintf(line + strlen(line), sizeof(line) - strlen(line),
+                 "  %.3f %s",
+                 s_analog.m_points[index].m_eng,
+                 s_analog.m_points[index].m_engUnit);
+    }
     {
         XRect r;
         XRect_init(&r, x + 8, y + 14 + textH * 2, w - 16, textH + 4);
@@ -710,6 +730,19 @@ static void analog_drawCard(XPainter* painter, const HsfAnalogBoard* board,
                                   XPAINTER_TEXT_ALIGN_TOP |
                                   XPAINTER_TEXT_DONT_CLIP,
                               line, valueColor);
+    }
+    /* 第四行：越限说明（橙字；空=正常不占行）。 */
+    if (index >= 0 && index < s_analog.m_count &&
+        s_analog.m_points[index].m_engNote &&
+        s_analog.m_points[index].m_engNote[0]) {
+        XRect r;
+        XRect_init(&r, x + 8, y + 18 + textH * 3, w - 16, textH);
+        XPainter_drawTextRect(painter, &r,
+                              XPAINTER_TEXT_ALIGN_LEFT |
+                                  XPAINTER_TEXT_ALIGN_TOP |
+                                  XPAINTER_TEXT_DONT_CLIP,
+                              s_analog.m_points[index].m_engNote,
+                              ANALOG_COLOR_ALARM);
     }
 }
 
@@ -999,25 +1032,24 @@ typedef struct HsfMonitorAnalog
     XBoxLayout    m_layout;    /**< 页内垂直布局。 */
     XBoxLayout    m_topRow;    /**< 顶行：标题居中 + 勾选框贴右（同一行）。 */
     XLabel        m_title;     /**< 页标题（粗）。 */
-    XCheckBox     m_opCheck;   /**< 统一操作闸勾选框（界面开关；自动模式隐藏）。 */
     HsfAnalogBoard* m_board;   /**< 数值卡网格看板（堆；随页级联释放）。 */
     XLabel        m_hint;      /**< 底部提示。 */
 } HsfMonitorAnalog;
 
-/** @brief 操作闸勾选框槽：勾选状态即统一闸（唯一写入口在 API，UI 只映射）。 */
+/* [2026-11-06 去掉本地「允许界面操作」勾选框] 与变频器页同款对齐：
+ * 控制可用性只看**全局运行模式**（自动模式只读 / 手动模式可操作）+ 连接态，
+ * 不再要求用户先勾一个本地开关（现场观感=点不动）。模拟量在 Python 端是
+ * **只读监视**页；C 端的 AO 编辑属演示功能，恒可用（自动模式仍锁）。 */
+
+/** @brief 操作闸勾选框槽：勾选状态即统一闸（唯一写入口在 API，UI 只映射）。
+ *  @note  2026-11-06 起本地闸已移除（对齐 Python 的全局模式口径），本槽
+ *         仅保留给旧调用路径，恒传 true（可操作）。 */
 static void analog_opCheckSlot(XObject* receiver, XVarList* args)
 {
     HsfMonitorAnalog* self = (HsfMonitorAnalog*)receiver;
     (void)args;
     if (!self) return;
-    HsfMonitorAnalog_setOperationEnabled(
-        XCheckBox_isChecked(&self->m_opCheck));
-    analog_setStatus(s_analog.m_opEnabled
-                         ? "\xE7\x95\x8C\xE9\x9D\xA2\xE6\x93\x8D\xE4\xBD"
-                           "\x9C\xE5\xB7\xB2\xE5\x85\x81\xE8\xAE\xB8"
-                         : "\xE7\x95\x8C\xE9\x9D\xA2\xE6\x93\x8D\xE4\xBD"
-                           "\x9C\xE5\xB7\xB2\xE7\xA6\x81\xE6\xAD\xA2");
-    /* 「界面已允许操作」/「界面已禁止操作」 */
+    HsfMonitorAnalog_setOperationEnabled(true);
 }
 
 /** @brief 形态自适应（横竖屏；幂等、廉价，HsfUi adapt 表按页调用）。
@@ -1037,7 +1069,6 @@ void HsfMonitorAnalog_adapt(XWidget* page, bool compact)
     /* 标题行恒横向（标题居中 + 勾选框贴右，横竖屏同构）；竖屏加高触控。 */
     XBoxLayout_setDirection(&self->m_topRow, XBoxLayoutDirection_LeftToRight);
     XWidget_setFixedHeight((XWidget*)&self->m_title, compact ? 30 : 26);
-    XWidget_setFixedHeight((XWidget*)&self->m_opCheck, compact ? 30 : 22);
     analog_boardRefresh();
 }
 
@@ -1096,21 +1127,9 @@ XWidget* HsfMonitorAnalog_create(XWidget* parent, HsfMenuNavFn navFn,
                         XAlignment_HCenter | XAlignment_VCenter);
     XWidget_show((XWidget*)&self->m_title);
 
-    XCheckBox_init(&self->m_opCheck, &self->m_base, 0);
-    HsfTheme_applyDefaultFont((XWidget*)&self->m_opCheck);
-    XCheckBox_setText_2(&self->m_opCheck,
-                        "\xE5\x85\x81\xE8\xAE\xB8\xE7\x95\x8C\xE9\x9D\xA2"
-                        "\xE6\x93\x8D\xE4\xBD\x9C"); /* 允许界面操作 */
-    XCheckBox_setChecked(&self->m_opCheck, s_analog.m_opEnabled);
-    XObject_connect_1((XObject*)&self->m_opCheck,
-                      XSignal(XAbstractButton_toggled_signal),
-                      (XObject*)self, analog_opCheckSlot,
-                      XConnectionType_Direct);
-    XWidget_show((XWidget*)&self->m_opCheck);
-    s_analog.m_opCheck = &self->m_opCheck; /* 闸回显借用（页内成员）。 */
-    /* 自动运行模式：勾选框隐藏、闸锁定只读（API 恢复后重显）。 */
-    if (s_analog.m_autoMode)
-        XWidget_hide((XWidget*)&self->m_opCheck);
+    /* [本地「允许界面操作」勾选框已移除] 2026-11-06 对齐 Python：控制可用性
+     * 由**全局运行模式**决定（自动模式只读 / 手动模式可操作），不再要求
+     * 用户先勾一个本地开关。模拟量页的 AO 编辑属演示功能，手动模式恒可用。 */
     s_analog.m_pageBuilt = true;
 
     /* ---- 底部提示 ---- */
@@ -1122,10 +1141,8 @@ XWidget* HsfMonitorAnalog_create(XWidget* parent, HsfMenuNavFn navFn,
                      "\xE5\x80\xBC\xEF\xBC\x88\xE8\xB6\x8A\xE9\x99\x90\xE6"
                      "\x8A\xA5\xE8\xAD\xA6\xE7\xBA\xA2\xEF\xBC\x89\x20\xE2"
                      "\x80\x94\x20\xE7\x82\xB9\xE5\x87\xBB\xE5\x8D\xA1\xE7"
-                     "\x89\x87\xE6\x93\x8D\xE4\xBD\x9C\xEF\xBC\x88\xE9\x9C"
-                     "\x80\xE5\x85\x81\xE8\xAE\xB8\xE7\x95\x8C\xE9\x9D\xA2"
-                     "\xE6\x93\x8D\xE4\xBD\x9C\xEF\xBC\x89");
-    /* 每卡: 原始值 + 转换值（越限报警红） — 点击卡片操作（需允许界面操作） */
+                     "\x89\x87\xE6\x93\x8D\xE4\xBD\x9C");
+    /* 每卡: 原始值 + 转换值（越限报警红） — 点击卡片操作（手动模式可用） */
     XLabel_setTextPixelSize(&self->m_hint, 12);
     XLabel_setAlignment(&self->m_hint,
                         XAlignment_HCenter | XAlignment_VCenter);
@@ -1146,9 +1163,7 @@ XWidget* HsfMonitorAnalog_create(XWidget* parent, HsfMenuNavFn navFn,
      * 标题仍在伸展对称点居中，布局不跳。 */
     XBoxLayout_addStretch(&self->m_topRow, 1);
     XBoxLayout_addWidget(&self->m_topRow, (XWidget*)&self->m_title);
-    XBoxLayout_addSpacing(&self->m_topRow, 12);
     XBoxLayout_addStretch(&self->m_topRow, 1);
-    XBoxLayout_addWidget(&self->m_topRow, (XWidget*)&self->m_opCheck);
     XBoxLayout_addLayout(&self->m_layout, &self->m_topRow);
 
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)board);
@@ -1156,9 +1171,12 @@ XWidget* HsfMonitorAnalog_create(XWidget* parent, HsfMenuNavFn navFn,
 
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_hint);
 
-    /* 模型为空（业务层尚未接入）时种缺省演示数据：页面首开即有内容
-     * 可看；业务层一句 setCount/setXxx 即可整体覆盖。 */
-    if (s_analog.m_count <= 0)
+    /* [不再铺演示数据] 2026-11-06：现场只接了 0 号通道（EJA110A 压差计），
+     * 其余 7 路**没接任何东西**——铺 12 点演示数据（泵后压力/进料温度…）会
+     * 让操作员以为那些点真的在线，是**假数据**（现场最忌讳）。故：模型为空
+     * 时页面就是空的，等服务端快照来了再长出卡片；演示数据只在自测钩子
+     * （XHSF_ANALOG_AUTOTEST）下灌，与业务路径彻底分开。 */
+    if (s_analog.m_count <= 0 && XSystem_environment("XHSF_ANALOG_AUTOTEST"))
         analog_seedDemo();
 
     XWidget_show(&self->m_base);
@@ -1218,6 +1236,54 @@ int HsfMonitorAnalog_raw(int index)
 {
     if (index < 0 || index >= s_analog.m_count) return 0;
     return s_analog.m_points[index].m_raw;
+}
+
+/**
+ * @brief 设某通道的**标定工程量**（服务端算；与 Python 侧同口径）。
+ * @param index 通道号。
+ * @param value 工程量（如 0.499 MPa）。
+ * @param unit 单位（"MPa"…；NULL=清空标定）。
+ * @param note 越限说明（NULL/空=正常）。
+ * @details 卡片第三行会并列显示"电流值 / 工程量"，单位列给"mA / MPa"；
+ *          有越限说明时另起一行橙字（对齐 Python 客户端的 ew 键）。
+ */
+void HsfMonitorAnalog_setEngineering(int index, double value, const char* unit,
+                                     const char* note)
+{
+    HsfAnalogPoint* p;
+    if (index < 0 || index >= s_analog.m_count) return;
+    p = &s_analog.m_points[index];
+    if (p->m_engUnit) {
+        XFree_System(p->m_engUnit);
+        p->m_engUnit = NULL;
+    }
+    if (p->m_engNote) {
+        XFree_System(p->m_engNote);
+        p->m_engNote = NULL;
+    }
+    if (unit && unit[0]) {
+        size_t bytes = strlen(unit) + 1;
+        p->m_engUnit = (char*)XMemory_malloc(bytes, XCLASS_DEFAULT_MEMORY_TYPE);
+        if (p->m_engUnit) memcpy(p->m_engUnit, unit, bytes);
+    }
+    if (note && note[0]) {
+        size_t bytes = strlen(note) + 1;
+        p->m_engNote = (char*)XMemory_malloc(bytes, XCLASS_DEFAULT_MEMORY_TYPE);
+        if (p->m_engNote) memcpy(p->m_engNote, note, bytes);
+    }
+    p->m_eng = value;
+    if (s_analog.m_board) XWidget_update((XWidget*)s_analog.m_board);
+}
+
+/**
+ * @brief 设某通道的原始寄存器值（毫伏口径；卡片"原始"行与脚注用）。
+ */
+void HsfMonitorAnalog_setRawMv(int index, int mv)
+{
+    if (index < 0 || index >= s_analog.m_count) return;
+    if (s_analog.m_points[index].m_rawMv == mv) return;
+    s_analog.m_points[index].m_rawMv = mv;
+    if (s_analog.m_board) XWidget_update((XWidget*)s_analog.m_board);
 }
 
 void HsfMonitorAnalog_setScaled(int index, double scaled)
@@ -1377,16 +1443,11 @@ void HsfMonitorAnalog_setOperationEnabled(bool enabled)
     if (s_analog.m_autoMode) {
         if (!s_analog.m_opEnabled) return;
         s_analog.m_opEnabled = false;
-        if (s_analog.m_opCheck)
-            XCheckBox_setChecked(s_analog.m_opCheck, false);
         analog_boardRefresh();
         return;
     }
     if (s_analog.m_opEnabled == enabled) return;
     s_analog.m_opEnabled = enabled;
-    /* UI 开关随模型态回显（对齐 Qt setChecked 语义：同值不发 toggled）。 */
-    if (s_analog.m_opCheck)
-        XCheckBox_setChecked(s_analog.m_opCheck, enabled);
     analog_boardRefresh();
 }
 
@@ -1400,19 +1461,11 @@ void HsfMonitorAnalog_setInteractiveMode(bool interactive)
     if (s_analog.m_autoMode == (!interactive)) return;
     s_analog.m_autoMode = !interactive;
     if (interactive) {
-        /* 退出自动模式：重显闸开关，闸值回到勾选框当前态。 */
-        if (s_analog.m_opCheck) {
-            s_analog.m_opEnabled =
-                XCheckBox_isChecked(s_analog.m_opCheck);
-            XWidget_show((XWidget*)s_analog.m_opCheck);
-        }
+        /* 退出自动模式：恢复可操作（AO 编辑属演示功能）。 */
+        s_analog.m_opEnabled = true;
     } else {
-        /* 进入自动模式：隐藏闸开关 + 强制只读。 */
+        /* 进入自动模式：强制只读（真实链路在自动程序手里）。 */
         s_analog.m_opEnabled = false;
-        if (s_analog.m_opCheck)
-            XCheckBox_setChecked(s_analog.m_opCheck, false);
-        if (s_analog.m_opCheck)
-            XWidget_hide((XWidget*)s_analog.m_opCheck);
         analog_setStatus(
             "\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD"
             "\x3A\x20\xE7\x95\x8C\xE9\x9D\xA2\xE5\x8F\xAA\xE8\xAF\xBB");

@@ -401,11 +401,94 @@ CFGK_DIGITAL_POLL_MS = "digitalPollMs"
 CFGK_STORAGE_ENABLED = "enabled"
 CFGK_STORAGE_PATH = "path"
 CFGK_STORAGE_SAMPLE_MS = "sampleMs"
+#: 容量限额（现场硬盘小，必须能封顶）。
+#:   maxMb      容量上限（int MB；0 = 不限）
+#:   fullPolicy 满额策略："stop"=到限停写 / "ring"=循环覆盖 / "rotate"=分段滚动
+#:   keepFiles  rotate 模式保留的分段数（含当前库，1..99）
+CFGK_STORAGE_MAX_MB = "maxMb"
+CFGK_STORAGE_FULL_POLICY = "fullPolicy"
+CFGK_STORAGE_KEEP_FILES = "keepFiles"
+#: 满额策略取值与界面文本（与客户端 proto 同表；界面按此顺序出下拉）。
+STORAGE_POLICIES = (
+    ("ring", "循环覆盖（删最旧，长期无人值守）"),
+    ("stop", "到限停写（保留已有数据，只读）"),
+    ("rotate", "分段滚动（写满换文件，按段归档）"),
+)
+STORAGE_POLICY_KEYS = tuple(k for k, _t in STORAGE_POLICIES)
+#: 容量上限允许范围（MB）：0 = 不限；上限防手滑填成 TB 级。
+STORAGE_MAX_MB_MIN = 0
+STORAGE_MAX_MB_MAX = 1024 * 1024
 
 #: 轮询周期允许范围（毫秒）。下限 50 是总线的现实（该模块应答 0.4~0.8s，
 #: 再快只是空转+退避刷日志）；上限防手滑填成小时级。
 CFG_POLL_MS_MIN = 50
 CFG_POLL_MS_MAX = 60000
+
+# ---- 历史数据分页读取（2026-11-06 新增）----
+
+#: 分页读取历史数据（**只读，无角色要求**：历史数据不是控制面）。
+#:
+#: 载荷 = {"offset":int, "limit":int, "pageSizeMs":int?,  "beforeTs":int?,
+#:         "loTs":int?, "hiTs":int?}
+#:   offset      跳过多少行（0 = 最新），int
+#:   limit       本页最多多少行，由客户端决定（服务端夹到 1..HISTORY_PAGE_MAX）
+#:   beforeTs    分页窗口锚点（epoch ms）：**首屏取数时客户端用自己的
+#:               "现在"发上来，之后翻页原样回传**，这样窗口固定，新入库的
+#:               行不会把 offset 顶偏（否则翻第 2 页会重复/漏行）。
+#:               缺省 = 服务端当前时间。
+#:   loTs/hiTs   可选时间范围过滤（服务端在 SQL 里筛，保证总数与页内容同口径）
+#:   kw          关键字（在**显示文本**上包含匹配，与界面显示同一套格式化
+#:               规则；与 loTs/hiTs 一起进同一条 WHERE）
+#:   kwCols      关键字要比对的显示列下标数组；缺省/空 = 全部列
+#:
+#: [为什么关键字必须在服务端筛] 分页在服务端、筛选在客户端时，客户端只能
+#: 在拿到的那一页里搜，命中行绝大多数在别的页上 → 界面上"关键字筛选无效"
+#: （用户实测反馈）。总数与页内容必须共用同一条 WHERE。
+#:
+#: 应答 = {"ok":true, "total":int, "offset":int, "limit":int,
+#:         "windowStartTs":int, "windowEndTs":int,
+#:         "cols":[列名…], "rows":[[值…], …],
+#:         "dbRows":int, "latestTs":int}
+#:   total   本窗口（≤ beforeTs，且落在 lo/hi 内）的行数 —— 客户端据此算
+#:           总页数、显示"共 N 条"
+#:   rows    时间**正序**排列的二维数组（每行按 cols 顺序；离线列是 null）
+#:   dbRows  全库行数（不受窗口限制）；latestTs 全库最新一行时间戳
+#:
+#: [为什么用「二维数组 + cols」而不是每行一个子文档] 单行子文档带 18 个
+#: 键名 ≈ 306B，其中键名占一半；同样的数据用「列名只发一次 + 每行一个
+#: 值数组」压到约 230B/行。16KB 载荷上限下，单页上限因此从 ~48 行提到
+#: ~65 行（实测 50 行 = 11.8KB，留足余量）。
+CMD_HISTORY_PAGE = 0x0118
+
+#: 分页载荷键。
+HIST_KEY_OFFSET = "offset"
+HIST_KEY_LIMIT = "limit"
+HIST_KEY_BEFORE_TS = "beforeTs"
+HIST_KEY_LO_TS = "loTs"
+HIST_KEY_HI_TS = "hiTs"
+#: 关键字（在**显示文本**上做包含匹配；空串/缺省 = 不限）。
+HIST_KEY_KW = "kw"
+#: 关键字要比对的显示列下标数组（缺省/空 = 全部列）。
+HIST_KEY_KW_COLS = "kwCols"
+#: 分页应答键。
+HIST_KEY_TOTAL = "total"
+HIST_KEY_ROWS = "rows"
+HIST_KEY_COLS = "cols"
+HIST_KEY_DB_ROWS = "dbRows"
+HIST_KEY_LATEST_TS = "latestTs"
+HIST_KEY_EARLIEST_TS = "earliestTs"
+HIST_KEY_WINDOW_START_TS = "windowStartTs"
+HIST_KEY_WINDOW_END_TS = "windowEndTs"
+
+#: 单页行数上限：由 XLINK_MAX_PAYLOAD(16KB) 反推。
+#: 实测一行（18 列，含中文模式/状态与单位串）≈230B，50 行 = 11.8KB，
+#: 留 4KB 给包络与异常大的字符串。客户端可以要得更少（板端小屏一次
+#: 20 行够用），但不能更多——超了会被服务端夹回而不是发不出去。
+HISTORY_PAGE_MAX = 50
+#: 单页行数下限（0/负数按 1 处理：要了就该给一行，不能静默变成空页）。
+HISTORY_PAGE_MIN = 1
+#: 客户端缺省页大小（不传 limit 时）。
+HISTORY_PAGE_DEFAULT = 20
 
 # ---- 浊度仪键（v{index}_ 前缀，与阀/数字量同一风格）----
 

@@ -446,10 +446,15 @@ class Router(object):
             finally:
                 hub.unregister_subscriber(sub)
 
-        return Response(200, b"", "text/event-stream; charset=utf-8",
-                        is_sse=True).__class__(200, _CoroBody(_stream),
-                                               "text/event-stream; charset=utf-8",
-                                               is_sse=True)
+        return Response(200, _CoroBody(_stream),
+                        "text/event-stream; charset=utf-8",
+                        headers={
+                            # [首帧就把 connId 告诉前端] 前端要用它调
+                            # /api/topics 与 /api/jog/*（一个浏览器会话可能
+                            # 开多个标签页，各停在不同页，不能按 token 混算）。
+                            "X-Hsf-Conn-Id": str(sub.conn_id),
+                        },
+                        is_sse=True)
 
     def _set_topics(self, request, session):
         """更新本连接的订阅意图。

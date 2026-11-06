@@ -43,21 +43,12 @@
     "modules": [
       {
         "name": "数字量",
-        "host": "192.168.0.12",
-        "port": 502,
-        "unit_id": 1,
-        "timeout_s": 2.0,
-        "channels": 32,
-        "publish": true
-      },
-      {
-        "name": "数字量从站.13",
         "host": "192.168.0.13",
         "port": 502,
         "unit_id": 1,
         "timeout_s": 2.0,
         "channels": 16,
-        "publish": false
+        "publish": true
       }
     ]
   },
@@ -69,44 +60,44 @@
       {
         "name": "电磁阀1",
         "module": 0,
-        "do": 16,
-        "openDi": 17,
-        "closeDi": 16
+        "do": 0,
+        "openDi": 1,
+        "closeDi": 0
       },
       {
         "name": "电磁阀2",
         "module": 0,
-        "do": 17,
-        "openDi": 19,
-        "closeDi": 18
+        "do": 1,
+        "openDi": 3,
+        "closeDi": 2
       },
       {
         "name": "电磁阀3",
         "module": 0,
-        "do": 18,
-        "openDi": 21,
-        "closeDi": 20
+        "do": 2,
+        "openDi": 5,
+        "closeDi": 4
       },
       {
         "name": "电磁阀4",
         "module": 0,
-        "do": 19,
-        "openDi": 23,
-        "closeDi": 22
+        "do": 3,
+        "openDi": 7,
+        "closeDi": 6
       },
       {
         "name": "电磁阀5",
         "module": 0,
-        "do": 20,
-        "openDi": 25,
-        "closeDi": 24
+        "do": 4,
+        "openDi": 9,
+        "closeDi": 8
       },
       {
         "name": "电磁阀6",
         "module": 0,
-        "do": 21,
-        "openDi": 27,
-        "closeDi": 26
+        "do": 5,
+        "openDi": 11,
+        "closeDi": 10
       }
     ]
   },
@@ -117,5 +108,15 @@
   },
   "runtime": {
     "run_mode": 0
+  },
+  "pumps": {
+    "enabled": true,
+    "items": [
+      {
+        "name": "进水泵",
+        "module": 0,
+        "do": 6
+      }
+    ]
   }
 }

@@ -106,6 +106,7 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XContentTypes.h" /* \u626b\u96f7\u6839\u56e0\u56de\u5f52\u9501\uff1a\u5185\u5bb9\u7c7b\u578b\u8868\u8986\u76d6\u4e0d\u5f97 UAF\u3002 */
 #include "XLineEditTest.h"
 #include "XSliderTest.h"
+#include "XButtonHoldTest.h"
 #include "XSpinBoxTest.h"
 #include "XGroupBoxTest.h"
 #include "XProgressBarTest.h"
@@ -27442,9 +27443,15 @@ static void test_pushbutton_input_event_contract(void)
     XWidget_event_base((XWidget*)&button, (XEvent*)&moveOut);
     expect_true(XEvent_isAccepted((XEvent*)&moveOut),
                 "XPushButton 按住移出 accept");
-    expect_true(!XPushButton_isDown(&button) &&
-                g_buttonProbe.released == 1,
-                "XPushButton 按住移出取消 down 并发 released");
+    /* [2026-11-06 改按 Qt 6.8 口径] 原断言"移出即取消 down 并发 released"
+     * 与 Qt 相反：QAbstractButton 按下后有隐式鼠标抓取，**按住拖出按钮仍
+     * 保持按下**，released 只在真正松手时发（"松手时不在按钮内"只影响
+     * clicked）。旧语义让现场"点动长按"在鼠标轻微抖动时就被当成松手
+     * ⇒ 电机随即停（HSF 现场反馈）。 */
+    expect_true(XPushButton_isDown(&button) &&
+                g_buttonProbe.released == 0 &&
+                g_buttonProbe.pressed == 1,
+                "XPushButton 按住移出仍保持 down 且不发 released（Qt 口径）");
 
     XMouseEvent_init(&moveIn, XEVENT_TYPE_MOUSE_MOVE,
                      XMouseButton_NoButton,
@@ -27453,8 +27460,8 @@ static void test_pushbutton_input_event_contract(void)
     XWidget_event_base((XWidget*)&button, (XEvent*)&moveIn);
     expect_true(XEvent_isAccepted((XEvent*)&moveIn) &&
                 XPushButton_isDown(&button) &&
-                g_buttonProbe.pressed == 2,
-                "XPushButton 按住移回恢复 down 并发 pressed");
+                g_buttonProbe.pressed == 1,
+                "XPushButton 按住移回仍是 down（不重复发 pressed，Qt 口径）");
 
     XPushButton_setDown(&button, false);
 
@@ -36126,6 +36133,8 @@ static void test_xgui_widgets(void)
 {
     expect_true(XLineEditTest_runAll(), "XLineEdit 控件功能");
     expect_true(XSliderTest_runAll(), "XSlider 控件功能");
+    expect_true(XButtonHoldTest_runAll(),
+                "按钮按住语义（长按拖出不提前松手，Qt 口径）");
     expect_true(XSpinBoxTest_runAll(), "XSpinBox 控件功能");
     expect_true(XGroupBoxTest_runAll(), "XGroupBox 控件功能");
     {

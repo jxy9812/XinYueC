@@ -44,6 +44,14 @@ typedef struct HsfUiOptions {
  */
 int HsfUi_start(const HsfUiOptions* opts);
 
+/**
+ * @brief      强制紧凑（竖屏）形态档（本地设置页「紧凑模式」开关入口）。
+ * @param on   true=强制窄档（覆盖窗口宽度自动判定）；false=恢复自动判定。
+ * @note       立即生效（形态切换 + 全页重分档 + 整窗重绘）；持久化由
+ *             调用方负责（Display/Compact 键），启动恢复在主窗装配内。
+ */
+void HsfUi_setForceCompact(bool on);
+
 #ifdef __cplusplus
 }
 #endif

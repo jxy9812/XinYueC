@@ -13,6 +13,15 @@
  *
  * 模块总开关 XPROTOCOL_ON 在 CXinYueConfig.h 中定义，此处仅提供默认值。
  * 关闭后若仍有其它模块无条件引用 XProtocol 符号，需同步裁剪对应依赖。
+ *
+ * [2026-11-06 工业协议子集迁出] XCan / XModbus / PLC 三个**工业协议**
+ *   的实现已由 Src/XCore/XProtocol 迁至 **Src/Industry**（与 XChannel/XVfd
+ *   等工业设备同层——协议与设备同属工业域）；本目录保留通用通信协议
+ *   （XLink 传输层、XPoll、XMqtt、XFtp、XHttp、XNtp、XDdns、XSsh、
+ *   XTelnet），它们是框架级能力。
+ *   三者的**裁剪开关仍留在本文件**集中托管：开关表是"协议栈总览"的单
+ *   一事实源，且 Src/Industry/XIndustry_config.h 已显式包含本文件做派生
+ *   （Modbus 适配器默认跟随 XINDUSTRY_MODBUS_ON），派生关系不变。
  */
 
 #ifndef XPROTOCOL_CONFIG_H

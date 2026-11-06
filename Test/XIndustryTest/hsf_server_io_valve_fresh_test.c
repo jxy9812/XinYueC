@@ -115,20 +115,20 @@ static void test_extOfflineReportsUncontrollable(void)
     fxInit(&fx, true);
 
     /* 先喂一拍"全新鲜"建立正常基线（模拟模块本来在线）。 */
-    HsfServerIoValve_poll(&fx.m_bank, 0x00000000u, true, freshUpperOnly(), 1000);
+    HsfServerIoValve_poll(&fx.m_bank, 0x00000000u, true, freshUpperOnly(), 0, false, 1000);
     it = HsfServerIoValve_item(&fx.m_bank, 0);
     CHECK("基线：模块在线时阀0 可用", it && it->m_online);
 
     /* 让它走到"已关"：只给关到位 DI16，不给开到位 DI17。
      * [不能用 0xFFFFFFFF] 那样开/关到位同时为 1，判读逻辑会走到**互斥故障**，
      * 测出来的不是"已关"（首版断言就踩了这个）。 */
-    HsfServerIoValve_poll(&fx.m_bank, (1u << 16), true, freshUpperOnly(), 1200);
+    HsfServerIoValve_poll(&fx.m_bank, (1u << 16), true, freshUpperOnly(), 0, false, 1200);
     it = HsfServerIoValve_item(&fx.m_bank, 0);
     CHECK("基线：关到位反馈生效 = 已关",
           it && it->m_state == HsfValveState_Closed);
 
     /* ---- 现在 .13 掉线：上半区不新鲜，下半区仍新鲜 ---- */
-    HsfServerIoValve_poll(&fx.m_bank, 0x00000000u, true, freshLowerOnly(), 1500);
+    HsfServerIoValve_poll(&fx.m_bank, 0x00000000u, true, freshLowerOnly(), 0, false, 1500);
     it = HsfServerIoValve_item(&fx.m_bank, 0);
     CHECK("离线：阀0 标记为不在线", it && !it->m_online);
     CHECK("离线：阀0 valid=false", it && !it->m_valid);
@@ -172,7 +172,7 @@ static void test_perChannelFreshness(void)
      * 若实现用一个整组 bool，阀0 会连带被判在线。 */
     {
         uint32_t mask = (1u << 19) | (1u << 18);
-        HsfServerIoValve_poll(&fx.m_bank, 0u, true, mask, 1000);
+        HsfServerIoValve_poll(&fx.m_bank, 0u, true, mask, 0, false, 1000);
     }
     it0 = HsfServerIoValve_item(&fx.m_bank, 0);
     it1 = HsfServerIoValve_item(&fx.m_bank, 1);
@@ -182,7 +182,7 @@ static void test_perChannelFreshness(void)
     /* 单边新鲜也不够：只知道开到位、不知道关到位，就无法判阀位。 */
     {
         uint32_t mask = (1u << 17);     /* 阀0 只有开到位新鲜。 */
-        HsfServerIoValve_poll(&fx.m_bank, 0u, true, mask, 1200);
+        HsfServerIoValve_poll(&fx.m_bank, 0u, true, mask, 0, false, 1200);
     }
     it0 = HsfServerIoValve_item(&fx.m_bank, 0);
     CHECK("单边新鲜不算可用（两个到位缺一即判离线）", it0 && !it0->m_online);
@@ -201,14 +201,14 @@ static void test_recoveryAfterReconnect(void)
     fxInit(&fx, true);
 
     /* 离线一拍。 */
-    HsfServerIoValve_poll(&fx.m_bank, 0u, true, freshLowerOnly(), 1000);
+    HsfServerIoValve_poll(&fx.m_bank, 0u, true, freshLowerOnly(), 0, false, 1000);
     it = HsfServerIoValve_item(&fx.m_bank, 0);
     CHECK("离线拍：阀0 不在线", it && !it->m_online);
 
     /* .13 恢复：上半区重新新鲜，且**只**关到位（DI16）为 1。
      * [同上] 不能给 0xFFFFFFFF——那样开/关到位同时为 1 会判互斥故障，
      * 而不是恢复正常位置。 */
-    HsfServerIoValve_poll(&fx.m_bank, (1u << 16), true, freshUpperOnly(), 1200);
+    HsfServerIoValve_poll(&fx.m_bank, (1u << 16), true, freshUpperOnly(), 0, false, 1200);
     it = HsfServerIoValve_item(&fx.m_bank, 0);
     CHECK("恢复后：阀0 重新在线", it && it->m_online);
     CHECK("恢复后：状态回到已关", it && it->m_state == HsfValveState_Closed);

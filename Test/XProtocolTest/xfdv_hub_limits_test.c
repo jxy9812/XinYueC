@@ -2,7 +2,7 @@
  * @file       xfdv_hub_limits_test.c
  * @brief      XVfd 从站级通讯约束单测（Hub 侧三条约束 + M512 从站侧硬约束/遥测语义）。
  * @details    [2026-11-02] 校验 XModbusHub_setUnitLimits 登记的三条**从站级**约束
- *             确实生效（实现见 Src/XCore/XProtocol/XModbus/XModbusHub.c）：
+ *             确实生效（实现见 Src/Industry/XModbus/XModbusHub.c）：
  *               ① m_maxReadRegisters：单帧读寄存器数上限——超限的连续区被拆成多帧；
  *               ② m_rangeBarrier：映射段边界是读帧硬边界——段两侧不并进同一读帧；
  *               ③ m_singleWriteOnly：只允许单寄存器写——相邻写不并成一帧 FC16，
@@ -836,15 +836,24 @@ static int caseM512SlaveSemantics(void)
      * 旧 0.01Hz 口径写（5000/2500/-1000），物理频率相同但原始码差 10 倍。 */
     CHECK(xvfdEmuGet(&em, 0xF00A) == 500, "F00AH P0.10 最大频率 50.0Hz（0.1Hz 口径）");
 
-    /* ② 1000H 通讯设定值 → 1001H/101FH 运行频率（P0.10 百分比换算）。 */
+    /* ② 1000H 通讯设定值 → 101FH 主频率 X（P0.10 百分比换算）。
+     *    [真机口径 2026-11-06] 停机时写给定只是**存下来**（101FH 跟着
+     *    换算），**运行频率 1001H 仍是 0**——真机停了就没有输出；起来
+     *    之后 1001H 才跟给定。旧夹具把 1001H 直接回成给定，于是遥测出现
+     *    "状态字=停机 + 输出 25Hz"的自相矛盾。 */
     xvfdEmuPut(&em, 0x1000, 5000);              /* +50.00% → 25.0Hz */
     xvfdSlaveEmuTick(&em);
-    CHECK(xvfdEmuGet(&em, 0x1001) == 250, "1001H 运行频率跟随 1000H（+50% → 250=25.0Hz）");
-    CHECK(xvfdEmuGet(&em, 0x101F) == 250, "101FH 主频率 X 跟随");
+    CHECK(xvfdEmuGet(&em, 0x101F) == 250, "101FH 主频率 X 跟随给定（+50% → 250=25.0Hz）");
+    CHECK(xvfdEmuGet(&em, 0x1001) == 0, "停机态 1001H 运行频率 = 0（真机：停了没有输出）");
+    xvfdEmuPut(&em, 0x2000, 1);                  /* 起来（命令源已是通讯） */
+    xvfdSlaveEmuTick(&em);
+    CHECK(xvfdEmuGet(&em, 0x1001) == 250, "运行态 1001H 运行频率跟随给定（250=25.0Hz）");
+    xvfdEmuPut(&em, 0x2000, 6);                  /* 减速停机 → 状态停、输出归零 */
+    xvfdSlaveEmuTick(&em);
     xvfdEmuPut(&em, 0x1000, (uint16_t)(-2000)); /* -20.00% → -10.0Hz */
     xvfdSlaveEmuTick(&em);
-    CHECK((int16_t)xvfdEmuGet(&em, 0x1001) == -100,
-          "负给定 → 1001H 是 16 位补码（-100=-10.0Hz），不是 0");
+    CHECK((int16_t)xvfdEmuGet(&em, 0x101F) == -100,
+          "负给定 → 101FH 是 16 位补码（-100=-10.0Hz），不是 0");
 
     /* ③ 2000H 命令字 → 3000H 状态（命令源=通讯时生效）。 */
     xvfdEmuPut(&em, 0x2000, 1);

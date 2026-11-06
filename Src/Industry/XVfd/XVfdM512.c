@@ -45,13 +45,17 @@ static const XVfdPointSpec s_m512Specs[] = {
     /* ---- 读点（遥测） ---- */
     { XVfdRole_StatusWord,     XIoPoint_AnalogInput,   1, "STATE", 0,                   0 },
     { XVfdRole_FaultCode,      XIoPoint_AnalogInput,   1, "FAULT", 0,                   0 },
-    /* [单位口径 2026-11-05 订正] 0x1001 与 P0.10(MAXF) **同口径 0.1Hz**：
-     * 模拟从站按 m_maxFreq=500(=50.0Hz, ÷10) 计算
-     *   hz = setpct × m_maxFreq / 10000
-     * 得出 25.0Hz ⇒ raw=250。若此处按 ÷100 解码则报 2.5Hz（缩 10 倍），
-     * 而同一台机器的 MAXF 点按 ÷10 解码正常——两个频率点口径不一致本身
-     * 就违反"同一物理量同一标度"。实测闭环：25.0Hz 期望值实际读出 2.50，
-     * 站2 的 10.0Hz 读出 1.00，恰好都是 1/10 ⇒ ÷10 才是正确除率。 */
+    /* [单位口径 2026-11-06 复核——0x1001 = 0.1Hz（÷10），实测定标口径]
+     * 依据现场实测定标文档（docs/M512M513_变频器RS485通讯实测与使用指南
+     * §11.3/§11.7，2026-11-03）：写 0x1000=2000 ⇒ 面板 10Hz、0x1001=100、
+     * U0.00=100 三源交叉验证；P0.22 频率指令分辨率实读 1（=0.1Hz）；
+     * P0.10 范围 50~5000Hz 在 16 位下只有 0.1Hz 装得下（数学强制）。
+     * 手册的 0.01Hz 与实测不符（U0.00/U0.01/0x1001 同为 0.1Hz——"与 U0.00
+     * 不同口径"的说法被实测帧证伪）。
+     * [教训] Python 侧 devices.py 按 ÷100（跟了手册）注释"实机标定"，
+     * 与本文档矛盾——模拟从站（XModbusVirtualModels.c 0x1001 = outHz×10）
+     * 与本处 div=10 必须同口径；跨仓库口径以**实测定标文档**为最终权威，
+     * 任何一侧的"自洽闭环"都证明不了刻度（循环论证）。 */
     { XVfdRole_OutputFreq,     XIoPoint_AnalogInput,   10, "RFR",  0,                   0 },
     { XVfdRole_BusVoltage,     XIoPoint_AnalogInput,  10, "VBUS", 0,                   0 },
     { XVfdRole_OutputVoltage,  XIoPoint_AnalogInput,   1, "UOP",   0,                   0 },
@@ -282,6 +286,10 @@ static void VXVfdM512_DecodePoint(XVfdDevice* d, const XVfdPointSpec* spec, int3
         }
         if (st->m_faulted) st->m_runState = XVfdRunState_Fault;
         XVfdDevice_markDirty(d);
+        /* [阶段推导] 状态字解出来的"运行/停机"只是粗粒度；真正的
+         * "加速中/减速中/正在停机"要看输出频率与设定频率的差值。状态字
+         * 解码在品牌层提前 return，故这里显式再推一次。 */
+        XVfdDevice_deriveRunPhase(d);
         return;
     case XVfdRole_FaultCode:
         st->m_faultCode = (uint16_t)raw;
@@ -650,6 +658,11 @@ void XVfdM512_init(XVfdM512* dev)
     XVfdDevice_setCapability(&dev->m_base.m_base, XVfdCap_ParamAccess);
     /* 手册缺省：最大频率 50Hz（P0.10 出厂值），先预设可让首次调频即正确换算。 */
     XVfdDevice_setMaxFrequency(&dev->m_base.m_base, 50.0);
+    /* [运行阶段推导] M512 的状态字只有 1/2/3（正转/反转/停机），**不报**
+     * "正在加速/正在减速/正在停机"这三个过渡态——而现场恰恰要看这段过程
+     * （点停止后电机是慢慢停的）。故按"输出频率 vs 设定频率"反推
+     * （对齐 Python 侧 VfdDevice._derive_phase）。 */
+    XVfdDevice_setPhaseDerivation(&dev->m_base.m_base, true);
 }
 
 /* ==================== 点表 / 组表 / 参数表 / 配置 ==================== */

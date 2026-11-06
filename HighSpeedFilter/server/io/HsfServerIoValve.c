@@ -104,6 +104,9 @@ bool HsfServerIoValve_configure(HsfServerIoValve* st,
         it->m_conflictReported = false;
         it->m_pendingAlarmKind = 0;
         it->m_pendingAlarmText[0] = '\0';
+        it->m_cmdResult[0] = '\0';
+        it->m_knownDo = false;
+        it->m_knownDoValid = false;
         if (it->m_do >= 0 && it->m_openDi >= 0 && it->m_closeDi >= 0) {
             ++readyCount;
         } else {
@@ -123,6 +126,23 @@ bool HsfServerIoValve_configure(HsfServerIoValve* st,
 static bool valveItemReady(const HsfServerIoValveItem* it)
 {
     return it && it->m_do >= 0 && it->m_openDi >= 0 && it->m_closeDi >= 0;
+}
+
+/** @brief 判"已经是目标位置"（用**到位反馈**判，不用命令回显——回显在
+ *         阀卡住时同样为真，会把"卡住的阀"误认为到位）。 */
+static bool valveSameTargetAlreadyMet(const HsfServerIoValveItem* it, bool on)
+{
+    if (on) return it->m_state == HsfValveState_Open;
+    return it->m_state == HsfValveState_Closed;
+}
+
+/** @brief 判"同一目标正在动作中"（在途重复请求：不重置计时器——卡阀
+ *         被反复点击掩盖的直接成因就是无条件重置）。 */
+static bool valveSameTargetInFlight(const HsfServerIoValveItem* it, bool on)
+{
+    return it->m_cmdAtMs > 0 &&
+           it->m_openCmd == on &&
+           it->m_state == HsfValveState_Moving;
 }
 
 /* ==================== 动作 ==================== */
@@ -166,10 +186,26 @@ bool HsfServerIoValve_setOutput(HsfServerIoValve* st, int index, bool wantOpen,
         return false;
     }
 
-    /* 记录意图：状态仍由反馈判读，这里只用于"动作中/超时"判定。
-     * [不清 everFeedback] 它是历史事实，用来区分"卡住"与"没接反馈"。
-     * [时刻延到 poll 再记] 本层是纯业务层、不查时钟（便于测试注入 nowMs），
-     * 故只置 pending 标记，由下一拍 poll 用调用方给的 nowMs 落定。 */
+    /* ---- ① 已到位且同目标：幂等忽略（不写 DO、不重置计时器）。
+     * [为什么必须在服务端拦] 客户端把到位侧按钮置灰只是界面便利；网络
+     * 重发、脚本直连都能绕过。照单全收的后果是白写一次 DO + 重置 20s
+     * 计时器 ⇒ 卡阀被点击掩盖。 */
+    if (valveSameTargetAlreadyMet(it, wantOpen)) {
+        snprintf(it->m_cmdResult, sizeof(it->m_cmdResult), "ignored");
+        return true;
+    }
+    /* ---- ② 同目标在途：重复请求——DO 仍要重发（万一上次写丢了），
+     * 但**不重置计时器**（超时从首次命令起算，卡阀无法靠连点掩盖）。 */
+    if (valveSameTargetInFlight(it, wantOpen)) {
+        snprintf(it->m_cmdResult, sizeof(it->m_cmdResult), "repeated");
+        return true;
+    }
+    /* ---- ③ 反向/首次：新动作——记意图 + 从现在计时。 */
+    {
+        const bool reversing = (it->m_cmdAtMs > 0 && it->m_openCmd != wantOpen);
+        snprintf(it->m_cmdResult, sizeof(it->m_cmdResult), "%s",
+                 reversing ? "reversed" : "issued");
+    }
     it->m_openCmd = wantOpen;
     it->m_pendingCmd = true;
     it->m_cmdAtMs = 0;
@@ -181,6 +217,15 @@ bool HsfServerIoValve_setOutput(HsfServerIoValve* st, int index, bool wantOpen,
     it->m_timeoutReported = false;
     it->m_conflictReported = false;
     return true;
+}
+
+void HsfServerIoValve_noteOwnWrite(HsfServerIoValve* st, int index, bool on)
+{
+    HsfServerIoValveItem* it;
+    if (!st || index < 0 || index >= st->m_count) return;
+    it = &st->m_items[index];
+    it->m_knownDo = on;
+    it->m_knownDoValid = true;
 }
 
 /* ==================== 反馈更新 / 状态判读 ==================== */
@@ -264,7 +309,20 @@ static void valveRefreshItem(HsfServerIoValveItem* it, uint64_t nowMs,
         return;
     }
     if (it->m_openFb) {
-        /* 到位了。若此前报过超时，发一条"恢复"消警（一次动作一条）。 */
+        /* [停在旧位不算到位] 有在途命令且命令目标是**关**时，这个"开到位"
+         * 只是命令下发前一拍的旧反馈（DI 缓存滞后站点轮询 ≤200ms）——
+         * 状态必须保持 Moving，绝不能把它当"已到位"把 20s 计时基清零。
+         * 与 Python valves.py 的承载性修复（arrived_at_target 判定）同口径：
+         * 旧实现无条件清 cmd_at_ms ⇒ 刚发的命令被旧反馈瞬间"到位"，
+         * 卡阀被掩盖、超时永远不触发。 */
+        if (it->m_cmdAtMs != 0 && !it->m_openCmd) {
+            it->m_state = HsfValveState_Moving;
+            snprintf(it->m_text, sizeof(it->m_text),
+                     "\xE5\x8A\xA8\xE4\xBD\x9C\xE4\xB8\xAD");  /* 动作中 */
+            return;
+        }
+        /* 到位了（且与命令目标一致，或本就没有在途命令）。
+         * 若此前报过超时，发一条"恢复"消警（一次动作一条）。 */
         if (it->m_timeoutReported) {
             it->m_timeoutReported = false;
             snprintf(it->m_pendingAlarmText, sizeof(it->m_pendingAlarmText),
@@ -278,6 +336,14 @@ static void valveRefreshItem(HsfServerIoValveItem* it, uint64_t nowMs,
         return;
     }
     if (it->m_closeFb) {
+        /* [停在旧位不算到位] 对称分支：在途命令目标是"开"时，"关到位"
+         * 是旧反馈，保持 Moving（见上一分支注记）。 */
+        if (it->m_cmdAtMs != 0 && it->m_openCmd) {
+            it->m_state = HsfValveState_Moving;
+            snprintf(it->m_text, sizeof(it->m_text),
+                     "\xE5\x8A\xA8\xE4\xBD\x9C\xE4\xB8\xAD");  /* 动作中 */
+            return;
+        }
         if (it->m_timeoutReported) {
             it->m_timeoutReported = false;
             snprintf(it->m_pendingAlarmText, sizeof(it->m_pendingAlarmText),
@@ -337,7 +403,8 @@ static void valveRefreshItem(HsfServerIoValveItem* it, uint64_t nowMs,
 }
 
 void HsfServerIoValve_poll(HsfServerIoValve* st, uint32_t diMask, bool diValid,
-                           uint32_t diFreshMask, uint64_t nowMs)
+                           uint32_t diFreshMask, uint32_t doMask, bool doValid,
+                           uint64_t nowMs)
 {
     int i;
 
@@ -361,6 +428,33 @@ void HsfServerIoValve_poll(HsfServerIoValve* st, uint32_t diMask, bool diValid,
         it->m_openFb = openFb;
         it->m_closeFb = closeFb;
         if (openFb || closeFb) it->m_everFeedback = true;
+
+        /* [外部改动接管] 与 Python _adopt_external_do 同口径：模块真实 DO
+         * 电平与我方最后已知值不一致 ⇒ 有人绕过本服务动了线圈，接管为一次
+         * 新动作（起算超时）。首次播种只认真实 DO 帧（doValid）——拿"还没
+         * 读过的 0"当基准会凭空编造一条 external（Python 侧同款
+         * last_ok_ms>0 门）。 */
+        if (valveItemReady(it) && doValid && it->m_online) {
+            const bool actual = ((doMask & (1u << it->m_do)) != 0);
+            if (!it->m_knownDoValid) {
+                it->m_knownDo = actual;
+                it->m_knownDoValid = true;
+            } else if (actual != it->m_knownDo) {
+                it->m_openCmd = actual;
+                /* [超时起点当场落定] 与 Python _adopt_external_do 同口径
+                 * （cmd_at_ms = now 直写，不经 pendingCmd 下拍补写）——本拍
+                 * 反馈缓存可能还是改动前一拍（显示已到位会把 cmdAt 再清 0），
+                 * 补写路径会被它冲掉。 */
+                it->m_cmdAtMs = nowMs;
+                it->m_timeoutReported = false;
+                it->m_conflictReported = false;
+                snprintf(it->m_cmdResult, sizeof(it->m_cmdResult), "external");
+                it->m_knownDo = actual;
+                XPrintf("HsfServerIoValve: 电磁阀 %s 检测到 DO 被外部改动 →%s，"
+                        "接管为新动作（起算 %dms 超时）\n",
+                        it->m_name, actual ? "开" : "关", st->m_moveTimeoutMs);
+            }
+        }
 
         /* [命令时刻的补写] setOutput 时拿不到 nowMs（纯业务层不查时钟），
          * 故在下一拍用调用方给的 nowMs 落定。 */
