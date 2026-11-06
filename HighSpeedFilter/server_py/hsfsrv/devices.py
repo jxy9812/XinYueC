@@ -136,6 +136,13 @@ class VfdM512(object):
     DEFAULT_RATED_RPM = 1440.0
     DEFAULT_RATED_HZ = 50.0
 
+    #: 连续采集失败多少次才判"从站失联"。
+    #:
+    #: [取值依据] 采集周期 100ms（变频器）；取 5 次 ⇒ 约 0.5s 才认掉线。
+    #: 慢从站偶发一次超时（实测应答 0.4~0.8s vs 超时 400ms）绝不该让设备
+    #: 在健康表里闪成"离线"，但真掉线半秒内仍能判出来。
+    FAILS_TO_OFFLINE = 5
+
     def __init__(self, master_factory, unit_id, log=None):
         """master_factory: 无参可调用对象，返回可用的 master（懒建）。"""
         self._master_factory = master_factory
@@ -152,6 +159,20 @@ class VfdM512(object):
         self.last_ok_ms = 0
         self.last_error = ""
         self.max_freq_hz = self.DEFAULT_MAX_FREQ_HZ
+        #: 连续采集失败次数。
+        #:
+        #: [为什么不能"失败一次就判离线" —— 2026-11-06 板端实锅]
+        #: 现场从那台变频器上偶发读到"无应答（0 字节）"（400~800ms 的慢
+        #: 从站，超时 400ms 本身就偏紧），而初版一失败就 `online=False`：
+        #:   · 健康表在「正常」与「从站失联」之间来回跳（用户看到"停了/
+        #:     又好了"）；
+        #:   · `encode_vfd` 头一句是 `if not dev.online: return None` ⇒
+        #:     **整帧遥测不推送**，客户端 updated_ms 不刷新，几拍下来卡片
+        #:     就变 `--`（"串口有数据，但界面不显示"）。
+        #: 正确口径：偶发一次超时只是"这拍没取到"，保留上一拍数据继续推送
+        #: （客户端另有 staleMs 会把真正过期的数据降级显示）。
+        #: 连续失败达到 FAILS_TO_OFFLINE 次才判离线。
+        self._fail_streak = 0
         #: 上一拍的输出频率（Hz），用于判断"频率在上升还是下降"。
         #: 见 _derive_phase：真机停机时 0x1000 残留旧给定，只能靠走势判减速。
         self._last_out_hz = None
@@ -213,10 +234,16 @@ class VfdM512(object):
             fault = await master.read(3, self.ADDR_FAULT, 1,
                                       unit=self.unit_id)
         except modbus.ModbusError as exc:
-            self.online = False
+            self._fail_streak += 1
             self.last_error = str(exc)
+            # [偶发失败不判离线] 见 __init__ 里 _fail_streak 的说明：
+            # 单次超时只是"这拍没取到"，保留 online 与上一拍数据继续推送，
+            # 由客户端 staleMs 决定什么时候真的降级。连续失败够多才认掉线。
+            if self._fail_streak >= self.FAILS_TO_OFFLINE:
+                self.online = False
             raise
 
+        self._fail_streak = 0
         self.online = True
         self.last_ok_ms = now_ms
         self.last_error = ""
@@ -668,6 +695,12 @@ class TempHum(object):
     READ_COUNT = 2
     NEGATIVE_THRESHOLD = 10000
 
+    #: 连续失败多少次才判失联。采集周期 500ms ⇒ 3 次约 1.5s。
+    #: [为什么不能"失败即离线"] 该模块**非法请求静默丢弃**、只能靠超时判
+    #: 失败，偶发一次超时是常态。一失败就置 offline 会让健康表在「正常」
+    #: 与「从站失联」之间闪跳，同时遥测整帧停推 ⇒ 卡片变 `--`。
+    FAILS_TO_OFFLINE = 3
+
     def __init__(self, master_factory, unit_id, log=None):
         self._master_factory = master_factory
         self._master = None
@@ -680,6 +713,8 @@ class TempHum(object):
         self.online = False
         self.last_ok_ms = 0
         self.last_error = ""
+        #: 连续失败次数（偶发一次超时不判离线，见 VfdM512._fail_streak 说明）。
+        self._fail_streak = 0
 
     def _master_get(self):
         if self._master is None:
@@ -696,8 +731,11 @@ class TempHum(object):
             vals = await master.read(4, self.READ_ADDR, self.READ_COUNT,
                                      unit=self.unit_id)
         except modbus.ModbusError as exc:
-            self.online = False
+            self._fail_streak += 1
             self.last_error = str(exc)
+            # 偶发失败不判离线（同 VfdM512）：保留上一拍数据继续推送。
+            if self._fail_streak >= self.FAILS_TO_OFFLINE:
+                self.online = False
             raise
         if len(vals) < 2:
             self.online = False
@@ -707,6 +745,7 @@ class TempHum(object):
         self.raw_hum = vals[1]
         self.temp_valid = True
         self.hum_valid = True
+        self._fail_streak = 0
         self.online = True
         self.last_ok_ms = now_ms
         self.last_error = ""

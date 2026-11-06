@@ -189,6 +189,17 @@ class LinkBridge(QObject):
 
     def _apply_doc(self, kind, doc):
         """把解出的 dict 合并进 model（按 kind 分派）。"""
+        # [诊断 2026-11-06] 现场出现「设备健康显示正常，但卡片一直是 --」。
+        # 那种现象只有两种成因，一条日志就能分开：
+        #   · 卡片收不到帧      → 这里根本不打（或很稀疏）
+        #   · 收到帧但值/有效位空 → 打出的 doc 里 vm 无位 / 没有 temp，
+        #                         / tempValid=false，一眼可见
+        # 只对最容易出问题、体积又小的两个主题打，避免刷屏。
+        if kind in ("vfd", "temphum"):
+            _dbg("pub %s keys=%s vm=%s temp=%s valid=%s"
+                 % (kind, ",".join(sorted(doc.keys()))[:90],
+                    doc.get("vm"), doc.get("temp"),
+                    doc.get("tempValid")))
         if kind == "vfd":
             self.model.vfd.apply(doc)
         elif kind == "temphum":
@@ -430,6 +441,58 @@ class LinkBridge(QObject):
                 on_done(doc)
 
         self.request(proto.CMD_CONFIG_SET, payload, on_done=_done,
+                     on_error=on_error, timeout=timeout)
+
+    def history_page(self, offset=0, limit=None, before_ts=None, lo_ts=None,
+                     hi_ts=None, kw=None, kw_cols=None, on_done=None,
+                     on_error=None, timeout=5.0):
+        """分页取服务端历史数据（**只读，无需 root**）。
+
+        :param offset: 跳过多少行（0 = 最新）
+        :param limit:  本页行数（客户端说了算；服务端夹到 1..50）
+        :param before_ts: 分页窗口锚点。**首屏发一次、翻页原样回传**，
+            否则新入库的行会把 offset 顶偏，相邻两页重复/漏行。
+        :param lo_ts/hi_ts: 时间范围（毫秒时间戳；推到 SQL 里筛，
+            保证 total 与页内容同口径）。
+        :param kw: 关键字（下推服务端，在显示文本上匹配）。
+        :param kw_cols: 关键字要比对的显示列下标（None/空 = 全部列）。
+        on_done 收已解码的 doc（约定同 config_get）：{"ok","total",
+        "rows":[[…]],"cols":[…],"dbRows","latestTs",…}。
+
+        [为什么关键字也下推] 分页在服务端而筛选在客户端时，客户端只能在
+        拿到的那一页里搜；命中行绝大多数在别的页上，界面表现就是"关键字
+        筛选无效"（用户实测反馈）。总数与页内容必须共用同一条 WHERE。
+
+        [为什么超时给 5s] 这比普通快照重（SQL 排序+计数+LIKE、几 KB 载荷），
+        板端 CPU 忙时 3s 不够；但也不能无限等——界面有"正在加载"态。
+        """
+        if limit is None:
+            limit = proto.HISTORY_PAGE_DEFAULT
+        doc = {proto.HIST_KEY_OFFSET: max(0, int(offset)),
+               proto.HIST_KEY_LIMIT: int(limit)}
+        if before_ts is not None:
+            doc[proto.HIST_KEY_BEFORE_TS] = int(before_ts)
+        if lo_ts is not None:
+            doc[proto.HIST_KEY_LO_TS] = int(lo_ts)
+        if hi_ts is not None:
+            doc[proto.HIST_KEY_HI_TS] = int(hi_ts)
+        if kw:
+            doc[proto.HIST_KEY_KW] = str(kw)
+        if kw_cols:
+            doc[proto.HIST_KEY_KW_COLS] = [int(c) for c in kw_cols]
+        if on_error is None:
+            on_error = lambda e: self.statusMessage.emit(  # noqa: E731
+                "历史数据请求失败：%s" % e)
+
+        def _done(code, dtype, data):
+            try:
+                got = bson.decode(data) if dtype == proto.DATATYPE_BSON else {}
+            except ValueError:
+                got = {}
+            if on_done:
+                on_done(got)
+
+        self.request(proto.CMD_HISTORY_PAGE, doc, on_done=_done,
                      on_error=on_error, timeout=timeout)
 
     def send_digital_control(self, dev, on_done=None, on_error=None,

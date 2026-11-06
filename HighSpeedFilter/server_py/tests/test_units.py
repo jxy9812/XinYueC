@@ -2240,6 +2240,110 @@ class TestTurbidityMeter(unittest.TestCase):
         self.assertFalse(dev.online)
 
 
+class TestTransientFailureTolerance(unittest.TestCase):
+    """偶发一次采集失败**不得**判离线、更不得停推遥测（2026-11-06）。
+
+    [板端实锅] 现场现象是「设备健康显示正常，但卡片一直是 `-- ℃` /
+    `-- Hz`」，用户原话「串口有，是界面不显示了」。根因两处叠加：
+
+        1. 设备层一失败就 `online = False`
+        2. `encode_vfd` 头一句 `if not dev.online: return None`
+           ⇒ **整帧遥测不推送** ⇒ 客户端 updated_ms 不刷新 ⇒
+           几拍后 `is_fresh()` 为假 ⇒ 卡片变 `--`
+
+    而变频器是 400~800ms 应答的慢从站、超时却只有 400ms，偶发超时是常态。
+    一失败就离线等于「正常 / 从站失联」在健康表里闪跳，同时数值永久空。
+
+    正确口径：单次失败只是"这拍没取到"，保留上一拍数据继续推送；
+    连续失败达到 FAILS_TO_OFFLINE 次才判离线（真掉线半秒内仍能判出来）。
+    """
+
+    class _Flaky(object):
+        """每隔 fail_every 次读抛一次 ModbusError。"""
+
+        def __init__(self, model, fail_every=3):
+            from hsfsrv import virtualdev
+            self.inner = virtualdev.VirtualMaster(model, name="flaky")
+            self.n = 0
+            self.fail_every = fail_every
+
+        async def read(self, fc, addr, count, unit=None):
+            self.n += 1
+            # fail_at 里的第 n 次读失败，其余正常（便于精确构造"偶发一次"）
+            if self.n > 1 and (self.n - 2) % self.fail_every == 0:
+                raise modbus.ModbusError("无应答（0 字节）")
+            return await self.inner.read(fc, addr, count, unit=unit)
+
+        async def write_single(self, *a, **k):
+            return await self.inner.write_single(*a, **k)
+
+        async def close(self):
+            pass
+
+    def test_single_failure_keeps_online_and_pushes(self):
+        """单次超时后 online 仍为 True ⇒ 遥测继续推送（卡片不会变 --）。"""
+        from hsfsrv import virtualdev
+        model = virtualdev.VirtualTempHum()
+        dev = devices.TempHum(lambda: self._Flaky(model, fail_every=3), 4,
+                              log=lambda m: None)
+
+        async def run():
+            await dev.poll(1000)
+            self.assertTrue(dev.online)
+            with self.assertRaises(modbus.ModbusError):
+                await dev.poll(1500)              # 偶发失败一次
+            self.assertTrue(dev.online,
+                            "单次超时不得判离线（否则整帧遥测停推）")
+            self.assertEqual(dev._fail_streak, 1)
+
+        asyncio.run(run())
+
+    def test_consecutive_failures_eventually_offline(self):
+        """连续失败够多 ⇒ 真判离线（反证：修复不是"永不判离线"）。"""
+        from hsfsrv import virtualdev
+        model = virtualdev.VirtualTempHum()
+
+        class _Dead(object):
+            def __init__(self):
+                self.inner = virtualdev.VirtualMaster(model, name="dead")
+
+            async def read(self, *a, **k):
+                raise modbus.ModbusError("无应答（0 字节）")
+
+            async def close(self):
+                pass
+
+        dev = devices.TempHum(_Dead, 4, log=lambda m: None)
+
+        async def run():
+            for i in range(devices.TempHum.FAILS_TO_OFFLINE):
+                with self.assertRaises(modbus.ModbusError):
+                    await dev.poll(1000 + i * 500)
+            self.assertFalse(dev.online,
+                             "连续 %d 次失败必须判离线"
+                             % devices.TempHum.FAILS_TO_OFFLINE)
+
+        asyncio.run(run())
+
+    def test_recovery_resets_streak(self):
+        """恢复一次就把连续计数清零（否则零星失败会攒成假离线）。"""
+        from hsfsrv import virtualdev
+        model = virtualdev.VirtualTempHum()
+        dev = devices.TempHum(lambda: self._Flaky(model, fail_every=3), 4,
+                              log=lambda m: None)
+
+        async def run():
+            await dev.poll(1000)
+            with self.assertRaises(modbus.ModbusError):
+                await dev.poll(1500)
+            self.assertEqual(dev._fail_streak, 1)
+            await dev.poll(2000)                 # 这一拍成功
+            self.assertEqual(dev._fail_streak, 0)
+            self.assertTrue(dev.online)
+
+        asyncio.run(run())
+
+
 class TestVirtualTurbidity(unittest.TestCase):
     """虚拟浊度模型必须复刻真机口径（否则虚拟跑通≠真机跑通）。
 
