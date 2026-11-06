@@ -340,6 +340,26 @@ class _InputTarget(object):
         self._sync()
         return True
 
+    def select_all(self):
+        """全选当前内容（键盘弹出时调用，让用户直接覆盖重输）。
+
+        [为什么弹出时就全选] 触摸屏调数值时，操作员想的是"改成 35"，
+        而不是"先把 25 删掉再打 35"。全选后第一个字符就顶掉原值
+        （`QLineEdit.insert()` 有选区时是替换），是最少动作的输入方式；
+        若想微调（如 25→255）也能一键退格只删末位 —— 注意退格在**有选区**
+        时会清空整个选区，那正是"全选重输"的预期语义。
+
+        [为什么不影响普通文本框] 全选对 QLineEdit 同样友好：直接打新词
+        就替换旧词。历史筛选里的关键字框就是这个体验，符合触摸屏习惯。
+        """
+        if not self.alive():
+            return False
+        try:
+            self.editor.selectAll()
+            return True
+        except (RuntimeError, AttributeError):
+            return False
+
     def backspace(self):
         if not self.alive():
             return False
@@ -402,8 +422,8 @@ class SoftKeyboard(QWidget):
     BAND_H = 50                   # 候选带标称高（chip 内高基准；实际高由键高决定）
     KEY_GAP = 7                   # 键间距（手机键盘约 6~8px）
     KEY_RADIUS = 9                # 键圆角
-    KEY_FONT = 25                 # 字母/数字键字号（手机键盘的字号手感）
-    FUNC_FONT = 18                # 功能键字号（标签较长，小一号）
+    KEY_FONT = 30                 # 字母/数字键字号（23*1.3，触摸屏手感）
+    FUNC_FONT = 21                # 功能键字号（16*1.3，标签较长故小一号）
     MAX_BLOCK_W = 1060            # 字母/符号键区最大宽度（超出则居中）
     MAX_BLOCK_W_NUMERIC = 1320    # 数字盘最大宽度（键少，铺得更开才像手机）
     MAX_KEY_W = 88                # 单键最大宽度（宽屏不把键拉成长条）
@@ -820,13 +840,13 @@ class SoftKeyboard(QWidget):
             label = QLabel(text)
             label.setStyleSheet(
                 "QLabel { background: transparent; border: none; color: #1A66D0;"
-                " font-size: 22px; font-weight: bold; }")
+                " font-size: 25px; font-weight: bold; }")
             label.setMinimumWidth(44)
             self._band_box.addWidget(label)
             line = QLabel("|")
             line.setStyleSheet(
                 "QLabel { background: transparent; border: none;"
-                " color: #B8C0CB; font-size: 20px; }")
+                " color: #B8C0CB; font-size: 22px; }")
             self._band_box.addWidget(line)
 
             for i, word in enumerate(self._engine.candidates()):
@@ -849,7 +869,7 @@ class SoftKeyboard(QWidget):
                 info = QLabel("%d/%d" % (self._engine.page_index() + 1, pages))
                 info.setStyleSheet(
                     "QLabel { background: transparent; border: none;"
-                    " color: #5A6572; font-size: 17px; }")
+                    " color: #5A6572; font-size: 20px; }")
                 self._band_box.addWidget(info)
                 nxt = self._key_style(QPushButton("›"), func=True)
                 nxt.setFixedWidth(40)
@@ -859,14 +879,14 @@ class SoftKeyboard(QWidget):
                 hint = QLabel("无候选：空格/回车提交原字母")
                 hint.setStyleSheet(
                     "QLabel { background: transparent; border: none;"
-                    " color: #8B98A5; font-size: 16px; }")
+                    " color: #8B98A5; font-size: 18px; }")
                 self._band_box.addStretch(1)
                 self._band_box.addWidget(hint)
         else:
             hint = QLabel("拼音输入" if chinese else "英文输入")
             hint.setStyleSheet(
                 "QLabel { background: transparent; border: none;"
-                " color: #8B98A5; font-size: 15px; }")
+                " color: #8B98A5; font-size: 17px; }")
             self._band_box.addWidget(hint)
             self._band_box.addStretch(1)
 
@@ -1048,6 +1068,10 @@ class SoftKeyboard(QWidget):
 
     def bind(self, widget):
         """把键盘绑定到某个输入控件（决定 kind/布局并弹出）。"""
+        # [先存旧目标] 下面 `self._target = widget` 会覆盖，全选判据要用旧值
+        # 判断"是不是换了输入框"。
+        prev_target = self._target
+        was_hidden = not self.isVisible()
         # 换目标时先提交上一个数值框的未解析文本（见 _InputTarget._sync）。
         if self._adapter is not None and self._target is not widget:
             self._adapter.commit()
@@ -1070,6 +1094,15 @@ class SoftKeyboard(QWidget):
             self.reposition()
         self.show()
         self.raise_()
+        # [弹出即全选] 用户 2026-11-06 口径：「变频器界面输入框弹出键盘后
+        # 默认选中全部，这样可以***直接重新完整输入一个值***」。放在 show
+        # 之后是为了不干扰 Qt 的焦点处理（先让目标控件拿到焦点，再全选）。
+        #
+        # [判据] 只在"面板原本不可见"或"换了目标/键盘类型"时全选：
+        # 同一目标上连续按键（组串、翻页、切中英）会走 reflow 但**不该**
+        # 再次全选 —— 否则每按一个字母都把已有内容全选，输入变成覆盖。
+        if was_hidden or changed or widget is not prev_target:
+            self._adapter.select_all()
 
     # ------------------------------------------------------------------
     #                    应用级焦点事件过滤（安装入口）

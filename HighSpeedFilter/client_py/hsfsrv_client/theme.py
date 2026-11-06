@@ -182,8 +182,9 @@ def apply_font(app, size=10):
 #
 # 环境变量 `HSF_UI_SCALE` 可覆盖（现场"嫌大/嫌小"不用改代码）：
 #     HSF_UI_SCALE=1.0   原样
-#     HSF_UI_SCALE=1.15  缺省（板端）
-# 真要更大直接给 1.3，不必改代码。
+#     HSF_UI_SCALE=1.3   缺省（板端；2026-11-06 由 1.15 提到 1.3，
+#                        用户反馈"还是有点小"）
+# 真要更大直接给 1.5，不必改代码。
 _UI_SCALE = None
 
 
@@ -197,7 +198,7 @@ def ui_scale():
         except (TypeError, ValueError):
             val = 0.0
         if not 1.0 <= val <= 2.0:          # 非法/离谱值一律回缺省
-            val = 1.15
+            val = 1.3
         _UI_SCALE = val
     return _UI_SCALE
 

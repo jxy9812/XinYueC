@@ -36,7 +36,7 @@ class Card(QFrame):
         if title:
             self.title_label = QLabel(title)
             self.title_label.setStyleSheet(
-                "QLabel { color: #1F4E79; font-weight: bold; font-size: 16px;"
+                "QLabel { color: #1F4E79; font-weight: bold; font-size: 18px;"
                 " background: transparent; }")
             self._lay.addWidget(self.title_label)
         #: 内容区（调用方自行往里加控件）。
@@ -74,7 +74,7 @@ class StatBlock(QWidget):
         row.addWidget(self._value)
         self._unit = QLabel(unit)
         self._unit.setStyleSheet(
-            "QLabel { color: #5A6572; font-size: 14px; background: transparent;"
+            "QLabel { color: #5A6572; font-size: 16px; background: transparent;"
             " padding-bottom: 4px; }")
         self._unit.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
         row.addWidget(self._unit)
@@ -86,7 +86,7 @@ class StatBlock(QWidget):
         if color is not None:
             size = self._value.font().pointSize()
             self._value.setStyleSheet(
-                "QLabel { color: %s; font-size: 23px; font-weight: bold;"
+                "QLabel { color: %s; font-size: 26px; font-weight: bold;"
                 " background: transparent; }" % color)
 
     def set_suffix(self, unit):
@@ -132,7 +132,7 @@ class TitleBar(QWidget):
         self.menu_btn.setCursor(Qt.PointingHandCursor)
         self.menu_btn.setStyleSheet(
             "QPushButton { background: transparent; border: none;"
-            " color: #FFFFFF; font-size: 23px; }"
+            " color: #FFFFFF; font-size: 26px; }"
             "QPushButton:hover { background-color: rgba(255,255,255,0.12); }")
         self.menu_btn.clicked.connect(self.menuClicked.emit)
         lay.addWidget(self.menu_btn)
@@ -150,12 +150,12 @@ class TitleBar(QWidget):
         self.date_label = QLabel("")
         self.date_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.date_label.setStyleSheet(
-            "QLabel { color: #C5D8E8; font-size: 15px; background: transparent; }")
+            "QLabel { color: #C5D8E8; font-size: 17px; background: transparent; }")
         cb.addWidget(self.date_label)
         self.clock_label = QLabel("")
         self.clock_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.clock_label.setStyleSheet(
-            "QLabel { color: #FFFFFF; font-size: 15px; background: transparent; }")
+            "QLabel { color: #FFFFFF; font-size: 17px; background: transparent; }")
         cb.addWidget(self.clock_label)
         self._clock_box = clock_box
         # 定宽：秒数变化时不让它左右抖动（否则标题会跟着晃）
@@ -165,7 +165,7 @@ class TitleBar(QWidget):
         # ---- 居中标题 ----
         self.title = QLabel("主界面")
         self.title.setStyleSheet(
-            "QLabel { color: #FFFFFF; font-size: 18px; font-weight: bold;"
+            "QLabel { color: #FFFFFF; font-size: 21px; font-weight: bold;"
             " background: transparent; }")
         self.title.setAlignment(Qt.AlignCenter)
         lay.addWidget(self.title, 1)
@@ -204,7 +204,7 @@ class TitleBar(QWidget):
         # ---- 设备健康指示 ----
         self.health = QLabel("")
         self.health.setStyleSheet(
-            "QLabel { color: #D0D0D0; background: transparent; font-size: 15px; }")
+            "QLabel { color: #D0D0D0; background: transparent; font-size: 17px; }")
         lay.addWidget(self.health)
 
         # ---- 温度 / 湿度（**上下两行**）----
@@ -222,7 +222,7 @@ class TitleBar(QWidget):
         self.hum_label = QLabel("--%RH")
         for lbl in (self.temp_label, self.hum_label):
             lbl.setStyleSheet(
-                "QLabel { color: #FFFFFF; font-size: 14px;"
+                "QLabel { color: #FFFFFF; font-size: 16px;"
                 " background: transparent; }")
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setMinimumWidth(64)
@@ -272,7 +272,7 @@ class TitleBar(QWidget):
             self.health.setText(" / ".join(parts))
             self.health.setStyleSheet(
                 "QLabel { color: #FFB4B4; background: transparent;"
-                " font-size: 15px; font-weight: bold; }")
+                " font-size: 17px; font-weight: bold; }")
         else:
             # 全部正常时不占位（顶栏空间宝贵，异常才提示）。
             self.health.setText("")
@@ -320,7 +320,7 @@ class TitleBar(QWidget):
             "切到自动模式只是授权，要真正自动运行需在「远端设置」按启动。")
         self.auto_state.setStyleSheet(
             "QLabel { background-color: %s; color: %s; border-radius: 3px;"
-            " font-size: 14px; padding: 0 6px; }" % (bg, fg))
+            " font-size: 16px; padding: 0 6px; }" % (bg, fg))
 
     def _restyle_mode(self):
         if not self._mode_known:
@@ -332,7 +332,7 @@ class TitleBar(QWidget):
         self.mode_btn.setText(text)
         self.mode_btn.setStyleSheet(
             "QPushButton { background-color: %s; color: %s; border: none;"
-            " border-radius: 4px; padding: 3px 10px; font-size: 14px;"
+            " border-radius: 4px; padding: 3px 10px; font-size: 16px;"
             " font-weight: bold; }"
             "QPushButton:hover { background-color: %s; }"
             % (bg, fg, theme.CLR_ACCENT_LINE))
@@ -441,7 +441,7 @@ class NavPanel(QWidget):
                 btn.setStyleSheet(
                     "QPushButton#HsfNavItem { color: #8B98A5; border: none;"
                     " background: transparent; text-align: left;"
-                    " padding-left: %dpx; font-size: 14px; }" % (12 + indent * 2))
+                    " padding-left: %dpx; font-size: 16px; }" % (12 + indent * 2))
             else:
                 idx = page_index
                 btn.clicked.connect(lambda _checked=False, i=idx:

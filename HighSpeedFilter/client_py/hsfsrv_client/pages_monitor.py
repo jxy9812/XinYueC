@@ -508,7 +508,7 @@ class VfdPage(Page):
         self._slider_value.setMinimumWidth(96)
         self._slider_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._slider_value.setStyleSheet(
-            "QLabel { font-size: 23px; font-weight: bold; color: #1A66D0; }")
+            "QLabel { font-size: 26px; font-weight: bold; color: #1A66D0; }")
         row3.addWidget(self._slider_value)
         ctrl_card.body.addLayout(row3)
         self._slider_syncing = False        # 防止 数字框↔滑块 互踢
@@ -1057,16 +1057,16 @@ class WaterPage(Page):
             row.setSpacing(6)
             name = QLabel("浊度仪%d" % (idx + 1))
             name.setStyleSheet(
-                "QLabel { color: #5A6572; font-size: 15px;"
+                "QLabel { color: #5A6572; font-size: 17px;"
                 " background: transparent; }")
             value = QLabel("--")
             value.setStyleSheet(
-                "QLabel { color: #1A1A1A; font-size: 34px; font-weight: bold;"
+                "QLabel { color: #1A1A1A; font-size: 39px; font-weight: bold;"
                 " background: transparent; }")
             value.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
             unit = QLabel("NTU")
             unit.setStyleSheet(
-                "QLabel { color: #5A6572; font-size: 15px;"
+                "QLabel { color: #5A6572; font-size: 17px;"
                 " background: transparent; padding-bottom: 8px; }")
             unit.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
             row.addWidget(name)
@@ -1115,7 +1115,7 @@ class WaterPage(Page):
 
         self._pump_state = QLabel("--")
         self._pump_state.setStyleSheet(
-            "QLabel { font-size: 16px; font-weight: bold; color: #5A6572;"
+            "QLabel { font-size: 18px; font-weight: bold; color: #5A6572;"
             " background: transparent; }")
         pump_card.add(self._pump_state)
 
@@ -1193,7 +1193,7 @@ class WaterPage(Page):
                 block.set_value("--")
             self._flow_alarm.setText("--")
             self._flow_alarm.setStyleSheet(
-                "QLabel { font-size: 16px; font-weight: bold; color: #5A6572;"
+                "QLabel { font-size: 18px; font-weight: bold; color: #5A6572;"
                 " background: transparent; }")
             self._flow_note.setText(
                 "未收到流量计数据（服务端未装配 / 从站失联）")
@@ -1210,7 +1210,7 @@ class WaterPage(Page):
         ok = (st.alarms == 0)
         self._flow_alarm.setText("正常" if ok else "报警 0x%04X" % st.alarms)
         self._flow_alarm.setStyleSheet(
-            "QLabel { font-size: 16px; font-weight: bold; color: %s;"
+            "QLabel { font-size: 18px; font-weight: bold; color: %s;"
             " background: transparent; }"
             % (theme.CLR_OK if ok else theme.CLR_FAULT))
 
@@ -1221,7 +1221,7 @@ class WaterPage(Page):
             if not fresh:
                 value_lbl.setText("--")
                 value_lbl.setStyleSheet(
-                    "QLabel { color: #9E9E9E; font-size: 34px;"
+                    "QLabel { color: #9E9E9E; font-size: 39px;"
                     " font-weight: bold; background: transparent; }")
                 continue
             # 名字由服务端给（客户端不猜"原水/出水"）
@@ -1232,13 +1232,13 @@ class WaterPage(Page):
             if ntu is None:
                 value_lbl.setText("--")
                 value_lbl.setStyleSheet(
-                    "QLabel { color: #9E9E9E; font-size: 34px;"
+                    "QLabel { color: #9E9E9E; font-size: 39px;"
                     " font-weight: bold; background: transparent; }")
                 continue
             value_lbl.setText("%.2f" % ntu)
             warn = ntu >= self.TURBIDITY_WARN_NTU
             value_lbl.setStyleSheet(
-                "QLabel { color: %s; font-size: 34px; font-weight: bold;"
+                "QLabel { color: %s; font-size: 39px; font-weight: bold;"
                 " background: transparent; }"
                 % (theme.CLR_FAULT if warn else "#1A1A1A"))
         if not fresh:
@@ -1260,7 +1260,7 @@ class WaterPage(Page):
         if not has or not st.is_fresh():
             self._pump_state.setText("--")
             self._pump_state.setStyleSheet(
-                "QLabel { font-size: 16px; font-weight: bold; color: #5A6572;"
+                "QLabel { font-size: 18px; font-weight: bold; color: #5A6572;"
                 " background: transparent; }")
             self.btn_pump_on.setEnabled(False)
             self.btn_pump_off.setEnabled(False)
@@ -1277,7 +1277,7 @@ class WaterPage(Page):
             self._pump_state.setText("停止（输出已关）")
             color = "#37474F"
         self._pump_state.setStyleSheet(
-            "QLabel { font-size: 16px; font-weight: bold; color: %s;"
+            "QLabel { font-size: 18px; font-weight: bold; color: %s;"
             " background: transparent; }" % color)
 
         can = ready and not reason

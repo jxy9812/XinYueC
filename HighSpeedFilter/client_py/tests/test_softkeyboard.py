@@ -689,6 +689,38 @@ def part_g_geometry(app):
     check("G6 按键实测高度 == 槽位值（边框已补偿）", not border_bad,
           "; ".join(border_bad[:3]) if border_bad else "全部 %d" % expect)
 
+    # ---- G7/G8：弹出即全选（用户 2026-11-06 要求）----
+    # 「变频器界面输入框弹出键盘后默认选中全部，这样可以***直接重新完整
+    # 输入一个值***」。全选后第一个字符就顶掉原值（QLineEdit.insert 有
+    # 选区时是替换），是最少动作的输入方式。
+    spin.setValue(720)
+    kb.hide()
+    app.processEvents()
+    kb.bind(spin)                       # 弹出（面板由隐藏→显示）
+    settle()
+    sel = kb._adapter.editor.selectedText()
+    check("G7 弹出时默认全选", sel == kb._adapter.editor.text() and sel != "",
+          "选中 %r 全文 %r" % (sel, kb._adapter.editor.text()))
+
+    # 连续按键不得再次全选，否则每敲一个字符就把已输入的覆盖掉
+    kb._adapter.insert("9")             # 模拟首次按键（替换选区）
+    app.processEvents()
+    before = kb._adapter.editor.text()
+    kb.bind(spin)                        # 同一目标再走一次 bind（翻页等路径）
+    settle()
+    after = kb._adapter.editor.text()
+    check("G8 同一目标重复 bind 不重复全选", after == before,
+          "输入 %r → 再 bind 后 %r" % (before, after))
+
+    # 换目标才再全选（先填内容，否则 '' == '' 没有区分力）
+    edit.setText("abcdef")
+    kb.hide(); app.processEvents()
+    kb.bind(edit)
+    settle()
+    sel2 = kb._adapter.editor.selectedText()
+    check("G9 换目标后重新全选", sel2 == "abcdef",
+          "选中 %r（期望 abcdef）" % (sel2,))
+
     host.close()
 
 
