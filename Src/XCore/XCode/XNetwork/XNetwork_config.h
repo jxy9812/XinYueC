@@ -235,16 +235,16 @@ extern "C" {
  * @details 两套后端**同时保留**在 `Drive/windows/Device/Network/` 下，由本宏
  *          在编译期择一，互不覆盖：
  *
- *          `XNETWORK_WIN_BACKEND_IOCP`（1）
- *            - 即 `XDeviceNetwork_win32.c` 的 IOCP 重叠 I/O 实现（历史实现）。
+ *          `XNETWORK_WIN_BACKEND_IOCP`（1，默认）
+ *            - 即 `XDeviceNetwork_win32.c` 的 IOCP 重叠 I/O 实现。
  *            - 收发全走 `WSARecv/WSASend + OVERLAPPED`，完成包经
  *              `GetQueuedCompletionStatus` 出队。
- *            - **已知缺陷**：本机环回链路上 `WSARecv` 的完成包会丢失/挂死
- *              （见 `docs/Windows_IOCP读完成丢失_交接_20261104.md`），表现为
- *              两端同刻停止接收、只发不收。保留该后端的目的是可随时 A/B
- *              对照与一键回退。
+ *            - [2026-11-06 根修] 历史上"本机环回读完成丢失/挂死"已定性为
+ *              本实现的三处缺陷（在飞 OVERLAPPED 复用、完成端口唤醒包饥饿、
+ *              完成包归属按句柄数值判定），全部修掉并有跨进程联调 A/B 证据；
+ *              见 `docs/Windows_IOCP读完成丢失_根修_20261106.md`。
  *
- *          `XNETWORK_WIN_BACKEND_WSAEVENT`（2，默认）
+ *          `XNETWORK_WIN_BACKEND_WSAEVENT`（2，可回退）
  *            - 即 `XDeviceNetwork_win32_select.c`，口径对齐 Qt 6.8
  *              `qnativesocketengine_win.cpp`：**不做 overlapped I/O、不依赖
  *              完成包投递**。
@@ -252,18 +252,19 @@ extern "C" {
  *              `WSAEventSelect` 的事件对象承担，事件对象并入框架事件环
  *              （`XAbstractNetIoRing`）的同一等待集，仍以 **XFd** 为身份、
  *              不新增线程。
- *            - 从机制上消除了「完成包丢失」这一故障族。
+ *            - 不依赖完成包投递，因此完全绕开完成端口相关故障面；
+ *              保留为对照与一键回退后端（切换后同样必须全量重编）。
  *
  * @note 只影响 Windows 的套接字路径；USB / 串口 / 文件设备的 IOCP 通道在
  *       两种取值下都保持不变（它们与网络无关，且无此缺陷）。
  * @warning 切换后必须全量重编——改的是公共头里的条件编译宏，增量编译会
  *          留下按旧口径编出的 obj（见 Windows/Ninja 缺头文件依赖）。
  */
-#define XNETWORK_WIN_BACKEND_IOCP       1  /**< IOCP 重叠 I/O 后端（保留，可回退）。 */
-#define XNETWORK_WIN_BACKEND_WSAEVENT   2  /**< WSAEventSelect 后端（对齐 Qt，默认）。 */
+#define XNETWORK_WIN_BACKEND_IOCP       1  /**< IOCP 重叠 I/O 后端（默认）。 */
+#define XNETWORK_WIN_BACKEND_WSAEVENT   2  /**< WSAEventSelect 后端（对齐 Qt，可回退）。 */
 
 #ifndef XNETWORK_WIN_BACKEND
-#define XNETWORK_WIN_BACKEND  XNETWORK_WIN_BACKEND_WSAEVENT
+#define XNETWORK_WIN_BACKEND  XNETWORK_WIN_BACKEND_IOCP
 #endif
 
 #if (XNETWORK_WIN_BACKEND != XNETWORK_WIN_BACKEND_IOCP) && \

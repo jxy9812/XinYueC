@@ -30,6 +30,7 @@
 #include "XIODevice.h"
 #include "XPrintf.h"
 #include "XThread.h"
+#include "XAbstractNetIoRing.h"   /* 唤醒包风暴用例：直接驱动事件环 wakeUp */
 #include <string.h>
 
 #if DEMOTEST_ON
@@ -979,6 +980,382 @@ static bool sst_push_heavy_then_small_uplink(void)
 
 /* ==================== 命令行入口 ==================== */
 
+/** @brief 在超时内读满 n 字节，返回实际字节数（不比对内容）。 */
+static int sst_read_exact(XIODevice* dev, char* buf, int n, int timeoutMs)
+{
+    uint64_t start = XDateTime_currentMSecsSinceEpoch();
+    int got = 0;
+    while (got < n) {
+        int64_t avail = XIODevice_bytesAvailable_base(dev);
+        if (avail > 0) {
+            int64_t take = (avail > (int64_t)(n - got)) ? (int64_t)(n - got) : avail;
+            int64_t r = XIODevice_read_1(dev, buf + got, take);
+            if (r > 0) {
+                got += (int)r;
+                continue;
+            }
+        }
+        if (XDateTime_currentMSecsSinceEpoch() - start >= (uint64_t)timeoutMs)
+            break;
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        XThread_msleep(1);
+    }
+    return got;
+}
+
+/* ---------- 追加用例：2026-11-06 三个真因的定向回归 ---------- */
+
+/** @brief 唤醒包风暴线程开关（0=停）。 */
+static volatile long g_sstStormRun = 0;
+
+/**
+ * @brief 唤醒包风暴：从**工作线程**高频调用事件环 wakeUp。
+ * @details 跨进程联调里 98.9% 的完成端口包是唤醒包（`polls=7000 /
+ *          wakeTaken=6989`）。旧实现 `pollPlatform` 遇到 `overlapped==NULL`
+ *          就 break，且 wakeUp 每次无条件投包 ⇒ 真实完成包被排队饥饿数秒，
+ *          读看门狗据此误判「完成包丢失」。本例在传输过程中持续制造这种风暴，
+ *          断言数据仍能按轮次完整到达。
+ */
+static void sst_storm_worker(XThread* thread, XVarList* args)
+{
+    unsigned spin = 0;
+    (void)thread;
+    (void)args;
+    while (g_sstStormRun) {
+        XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+        if (ring)
+            XAbstractNetIoRing_wakeUp_base(ring);
+        if ((++spin & 0x1FFu) == 0)
+            XThread_msleep(0);
+    }
+}
+
+static bool sst_wake_storm_keeps_reading(void)
+{
+    enum { kRounds = 120, kLen = 64 };
+    XTcpServer* server;
+    XTcpSocket* cli;
+    XTcpSocket* srv;
+    XThread* storm;
+    uint16_t port;
+    int round;
+
+    server = XTcpServer_create();
+    SST_ASSERT(server, "创建服务端失败");
+    SST_ASSERT(XTcpServer_listen(server, NULL, 0), "listen 失败");
+    port = XTcpServer_serverPort(server);
+
+    cli = sst_connect(port, 3000);
+    SST_ASSERT(cli, "客户端连接失败");
+    {
+        uint64_t start = XDateTime_currentMSecsSinceEpoch();
+        while (!XTcpServer_hasPendingConnections_base(server)
+               && XDateTime_currentMSecsSinceEpoch() - start < 2000) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            XThread_msleep(2);
+        }
+    }
+    srv = XTcpServer_nextPendingConnection_base(server);
+    SST_ASSERT(srv, "取出服务端连接失败");
+
+    g_sstStormRun = 1;
+    storm = XThread_create_func(sst_storm_worker, NULL);
+    SST_ASSERT(storm, "风暴线程创建失败");
+    SST_ASSERT(XThread_start(storm), "风暴线程启动失败");
+
+    for (round = 0; round < kRounds; ++round) {
+        char out[kLen];
+        char in[kLen];
+        int i;
+        for (i = 0; i < kLen; ++i)
+            out[i] = (char)('A' + (round % 26));
+        SST_ASSERT(XIODevice_write_1((XIODevice*)cli, out, kLen) == kLen,
+                   "风暴下第%d轮写失败", round);
+        SST_ASSERT(sst_read_exact((XIODevice*)srv, in, kLen, 3000) == kLen,
+                   "风暴下第%d轮服务端没收满（完成包被唤醒包饿死）", round);
+        SST_ASSERT(memcmp(in, out, kLen) == 0, "风暴下第%d轮内容错", round);
+    }
+
+    g_sstStormRun = 0;
+    (void)XThread_wait(storm, 3000);
+    XClassDelete((XClass*)storm);
+
+    XIODevice_close_base((XIODevice*)srv);
+    XAbstractSocket_disconnectFromHost_base((XAbstractSocket*)cli);
+    XTcpSocket_deleteLater(srv);
+    XTcpSocket_deleteLater(cli);
+    XTcpServer_close(server);
+    XTcpServer_deleteLater(server);
+    sst_pump(50);
+    SST_PASS("唤醒包风暴下读通量完整");
+    return true;
+}
+
+/**
+ * @brief 立刻重连 churn：断开后不等待、不排空，直接进入下一轮。
+ * @details 针对「完成包归属按句柄数值」这根因：Windows 会复用 SOCKET 数值，
+ *          旧连接的 ABORTED 包会被误认为新连接的完成包。本例每轮都带内容
+ *          校验，一旦串代就会立刻表现为首帧错位/收不到。
+ */
+static bool sst_immediate_reconnect_churn(void)
+{
+    enum { kRounds = 20, kLen = 40 };
+    XTcpServer* server;
+    uint16_t port;
+    int round;
+
+    server = XTcpServer_create();
+    SST_ASSERT(server, "创建服务端失败");
+    SST_ASSERT(XTcpServer_listen(server, NULL, 0), "listen 失败");
+    port = XTcpServer_serverPort(server);
+
+    for (round = 0; round < kRounds; ++round) {
+        XTcpSocket* cli;
+        XTcpSocket* srv;
+        char out[kLen];
+        char in[kLen];
+        int i;
+
+        cli = sst_connect(port, 3000);
+        SST_ASSERT(cli, "第%d轮连接失败", round);
+        {
+            uint64_t start = XDateTime_currentMSecsSinceEpoch();
+            while (!XTcpServer_hasPendingConnections_base(server)
+                   && XDateTime_currentMSecsSinceEpoch() - start < 2000) {
+                XCoreApplication_processEvents(XEventLoop_AllEvents);
+                XThread_msleep(1);
+            }
+        }
+        srv = XTcpServer_nextPendingConnection_base(server);
+        SST_ASSERT(srv, "第%d轮取连接失败", round);
+
+        for (i = 0; i < kLen; ++i)
+            out[i] = (char)(0x30 + (round % 10));
+        SST_ASSERT(XIODevice_write_1((XIODevice*)cli, out, kLen) == kLen,
+                   "第%d轮写失败", round);
+        SST_ASSERT(sst_read_exact((XIODevice*)srv, in, kLen, 3000) == kLen,
+                   "第%d轮服务端没收满（疑似完成包串代）", round);
+        SST_ASSERT(memcmp(in, out, kLen) == 0,
+                   "第%d轮内容错位（疑似旧连接完成包落进新连接）", round);
+
+        /* 关键：不 pump、不排空，立刻拆掉两端进入下一轮。 */
+        XIODevice_close_base((XIODevice*)srv);
+        XIODevice_close_base((XIODevice*)cli);
+        XTcpSocket_deleteLater(srv);
+        XTcpSocket_deleteLater(cli);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+    }
+
+    XTcpServer_close(server);
+    XTcpServer_deleteLater(server);
+    sst_pump(50);
+    SST_PASS("立刻重连 20 轮无串代/无丢帧");
+    return true;
+}
+
+/**
+ * @brief 对端异常断开（未读数据 + close ⇒ RST/FIN）必须被及时察觉。
+ * @details 针对「读失败被当成 0 字节读完成、再被假 EOF 复核吞掉」这根因：
+ *          旧实现在对端消失后 PEEK 拿不到 0，关闭事件被丢弃，客户端永不重连。
+ *          本例断言 1500ms 内状态必须收敛到 UnconnectedState。
+ */
+static bool sst_peer_reset_detected(void)
+{
+    XTcpServer* server;
+    XTcpSocket* cli;
+    XTcpSocket* srv;
+    uint16_t port;
+    char junk[4096];
+    uint64_t start;
+
+    memset(junk, 'R', sizeof(junk));
+    server = XTcpServer_create();
+    SST_ASSERT(server, "创建服务端失败");
+    SST_ASSERT(XTcpServer_listen(server, NULL, 0), "listen 失败");
+    port = XTcpServer_serverPort(server);
+
+    cli = sst_connect(port, 3000);
+    SST_ASSERT(cli, "客户端连接失败");
+    {
+        uint64_t t0 = XDateTime_currentMSecsSinceEpoch();
+        while (!XTcpServer_hasPendingConnections_base(server)
+               && XDateTime_currentMSecsSinceEpoch() - t0 < 2000) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            XThread_msleep(2);
+        }
+    }
+    srv = XTcpServer_nextPendingConnection_base(server);
+    SST_ASSERT(srv, "取出服务端连接失败");
+
+    /* 客户端发一帧，服务端**不读**就关闭：接收队列有未读数据 ⇒ 对端 RST。 */
+    SST_ASSERT(XIODevice_write_1((XIODevice*)cli, junk, (int64_t)sizeof(junk))
+                   == (int64_t)sizeof(junk),
+               "客户端写失败");
+    sst_pump(50);
+    XIODevice_close_base((XIODevice*)srv);
+    XTcpSocket_deleteLater(srv);
+
+    start = XDateTime_currentMSecsSinceEpoch();
+    while (XAbstractSocket_state((XAbstractSocket*)cli)
+               != XAbstractSocket_UnconnectedState
+           && XDateTime_currentMSecsSinceEpoch() - start < 1500) {
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        XThread_msleep(2);
+    }
+    SST_ASSERT(XAbstractSocket_state((XAbstractSocket*)cli)
+                   == XAbstractSocket_UnconnectedState,
+               "对端断开后 %llums 仍未察觉（state=%d）",
+               (unsigned long long)(XDateTime_currentMSecsSinceEpoch() - start),
+               (int)XAbstractSocket_state((XAbstractSocket*)cli));
+
+    XTcpSocket_deleteLater(cli);
+    XTcpServer_close(server);
+    XTcpServer_deleteLater(server);
+    sst_pump(50);
+    SST_PASS("对端异常断开 1500ms 内被察觉");
+    return true;
+}
+
+/**
+ * @brief 大块（64KB）逐字节完整性：覆盖写槽分片与 writeStash 保序。
+ * @details 单槽缓冲 8KB，64KB 必须分成多笔在飞写。旧实现「提交失败把数据
+ *          写回 ring 尾部」会打乱字节流顺序，本用例逐字节比对可当场抓住。
+ */
+static bool sst_large_block_integrity(void)
+{
+    enum { kTotal = 64 * 1024 };
+    static char out[kTotal];
+    static char in[kTotal];
+    XTcpServer* server;
+    XTcpSocket* cli;
+    XTcpSocket* srv;
+    uint16_t port;
+    int sent = 0;
+    int i;
+    uint64_t start;
+
+    server = XTcpServer_create();
+    SST_ASSERT(server, "创建服务端失败");
+    SST_ASSERT(XTcpServer_listen(server, NULL, 0), "listen 失败");
+    port = XTcpServer_serverPort(server);
+
+    cli = sst_connect(port, 3000);
+    SST_ASSERT(cli, "客户端连接失败");
+    {
+        uint64_t t0 = XDateTime_currentMSecsSinceEpoch();
+        while (!XTcpServer_hasPendingConnections_base(server)
+               && XDateTime_currentMSecsSinceEpoch() - t0 < 2000) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            XThread_msleep(2);
+        }
+    }
+    srv = XTcpServer_nextPendingConnection_base(server);
+    SST_ASSERT(srv, "取出服务端连接失败");
+
+    for (i = 0; i < kTotal; ++i)
+        out[i] = (char)((i * 31 + 7) & 0xFF);
+
+    start = XDateTime_currentMSecsSinceEpoch();
+    while (sent < kTotal) {
+        int64_t w = XIODevice_write_1((XIODevice*)cli, out + sent, kTotal - sent);
+        if (w > 0) {
+            sent += (int)w;
+            continue;
+        }
+        SST_ASSERT(XDateTime_currentMSecsSinceEpoch() - start < 8000,
+                   "大块写超时（已写 %d/%d）", sent, kTotal);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        XThread_msleep(1);
+    }
+
+    SST_ASSERT(sst_read_exact((XIODevice*)srv, in, kTotal, 10000) == kTotal,
+               "大块读不足（疑似写分片丢序）");
+    SST_ASSERT(memcmp(in, out, kTotal) == 0, "大块内容不符（疑似字节流乱序）");
+
+    XIODevice_close_base((XIODevice*)srv);
+    XAbstractSocket_disconnectFromHost_base((XAbstractSocket*)cli);
+    XTcpSocket_deleteLater(srv);
+    XTcpSocket_deleteLater(cli);
+    XTcpServer_close(server);
+    XTcpServer_deleteLater(server);
+    sst_pump(50);
+    SST_PASS("64KB 大块逐字节一致");
+    return true;
+}
+
+/**
+ * @brief 读缓冲达上限暂停、消费后恢复（Qt setReadBufferSize 语义）。
+ * @details 覆盖 `readPaused` 的恢复路径：暂停后如果 ContinueRead 没有被重新
+ *          触发，读通道就会永久停摆——正是本文件要防的一类故障。
+ */
+static bool sst_read_buffer_pause_resume(void)
+{
+    enum { kTotal = 8192 };
+    static char out[kTotal];
+    static char in[kTotal];
+    XTcpServer* server;
+    XTcpSocket* cli;
+    XTcpSocket* srv;
+    uint16_t port;
+    int sent = 0;
+    int i;
+
+    server = XTcpServer_create();
+    SST_ASSERT(server, "创建服务端失败");
+    SST_ASSERT(XTcpServer_listen(server, NULL, 0), "listen 失败");
+    port = XTcpServer_serverPort(server);
+
+    cli = sst_connect(port, 3000);
+    SST_ASSERT(cli, "客户端连接失败");
+    {
+        uint64_t t0 = XDateTime_currentMSecsSinceEpoch();
+        while (!XTcpServer_hasPendingConnections_base(server)
+               && XDateTime_currentMSecsSinceEpoch() - t0 < 2000) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            XThread_msleep(2);
+        }
+    }
+    srv = XTcpServer_nextPendingConnection_base(server);
+    SST_ASSERT(srv, "取出服务端连接失败");
+
+    XAbstractSocket_setReadBufferSize_base((XAbstractSocket*)cli, 1024);
+    for (i = 0; i < kTotal; ++i)
+        out[i] = (char)(i & 0xFF);
+
+    while (sent < kTotal) {
+        int64_t w = XIODevice_write_1((XIODevice*)srv, out + sent, kTotal - sent);
+        if (w > 0) {
+            sent += (int)w;
+            continue;
+        }
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        XThread_msleep(1);
+    }
+
+    /* 暂停期：应用不读，事件循环里可读量必须被上限截住（不会无限增长）。 */
+    sst_pump(400);
+    {
+        int64_t avail = XIODevice_bytesAvailable_base((XIODevice*)cli);
+        SST_ASSERT(avail <= (int64_t)kTotal, "暂停期可用=%lld 异常",
+                   (long long)avail);
+    }
+
+    /* 恢复期：应用持续消费，必须能收齐全部 8KB（恢复读通知生效）。 */
+    SST_ASSERT(sst_read_exact((XIODevice*)cli, in, kTotal, 8000) == kTotal,
+               "读缓冲暂停后未恢复（收不满 %d 字节）", kTotal);
+    SST_ASSERT(memcmp(in, out, kTotal) == 0, "暂停恢复后内容不符");
+
+    XIODevice_close_base((XIODevice*)srv);
+    XAbstractSocket_disconnectFromHost_base((XAbstractSocket*)cli);
+    XTcpSocket_deleteLater(srv);
+    XTcpSocket_deleteLater(cli);
+    XTcpServer_close(server);
+    XTcpServer_deleteLater(server);
+    sst_pump(50);
+    SST_PASS("读缓冲暂停/恢复（8KB 全额到达）");
+    return true;
+}
+
 int XSocketStallTest_run(void)
 {
     typedef struct { const char* name; bool (*fn)(void); } Case;
@@ -992,7 +1369,12 @@ int XSocketStallTest_run(void)
         { "高频+低频双连接竞争",  sst_busy_and_quiet_links },
         { "多连接隔离",           sst_multi_link_isolation },
         { "推送压力下的上行小帧", sst_push_heavy_then_small_uplink },
-        { "主机名异步解析/hostFound/isValid", sst_host_lookup_semantics }
+        { "主机名异步解析/hostFound/isValid", sst_host_lookup_semantics },
+        { "唤醒包风暴下读通量",     sst_wake_storm_keeps_reading },
+        { "立刻重连 20 轮无串代",   sst_immediate_reconnect_churn },
+        { "对端异常断开及时察觉",   sst_peer_reset_detected },
+        { "64KB 大块字节一致",      sst_large_block_integrity },
+        { "读缓冲暂停/恢复",        sst_read_buffer_pause_resume }
     };
     int i;
     int failed = 0;

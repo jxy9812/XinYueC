@@ -26,6 +26,7 @@
 #include "XStringUtils.h"
 #include "XRingBuffer.h"
 #include "XEvent.h"
+#include "XCoreApplication.h"   /* 读失败时直接把关闭事件投递给属主对象 */
 #include "XHostAddress.h"
 #include "XAbstractSocket.h"
 #include "XNetworkInterface.h"
@@ -479,81 +480,195 @@ bool XDeviceNetwork_getNetworkCounters(uint64_t* rxBytes, uint64_t* txBytes)
 #if XNETWORK_WIN_SOCKET_IOCP
 
 /**
- * @brief 单个异步写槽（一次在途 WSASend 独占一份 OVERLAPPED + 缓冲）。
+ * @brief IOCP 后端不变量与槽池布局（2026-11-06 根修）。
  *
- * @details [2026-11-04 独立写槽根修] 原实现整个连接只有一份
- *          `writeContext` + `writeBuffer`，且用布尔 `writePending` 互斥。
- *          这违反 MSDN 对 OVERLAPPED 的硬性约束：
+ * @details ## 四条不变量（本轮根修的全部依据）
  *
- *            “A common mistake is to reuse an OVERLAPPED structure before
- *             the previous asynchronous operation has been completed. You
- *             should use a separate structure for each request.”
- *            —— https://learn.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-overlapped
+ *          - **A. 一份 OVERLAPPED 同一时刻只能在飞一笔操作。**
+ *          - **B. 只有当该笔操作的完成包出队时，才允许这份 OVERLAPPED 参与
+ *            下一次投递**（"回收"＝完成包已出队，而不是"我认为它该完成了"）。
+ *          - **C. `CancelIoEx` 不是完成的替代品**：被取消的操作仍会投递一个
+ *            `ERROR_OPERATION_ABORTED` 完成包；重投只能等这个完成包出队。
+ *          - **D. ABORTED 完成包是内部控制流，不是语义事件**，不得下派成
+ *            读/写/Accept 事件。
  *
- *          同一份 WSASend 还要求缓冲在内核持有期间不得改动：
+ *          ## 旧实现违反 A/B/C 的四处（每一处单独都能造成"完成包丢失"）
  *
- *            “once the WSASend function is called, the system owns these
- *             buffers and the application may not access them.”
- *            —— https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsasend
+ *          1. 读看门狗 `CancelIoEx(readContext)` 之后**立刻**用同一
+ *             `readContext` 重投 `WSARecv`；
+ *          2. `socketContinueRead` 无条件清 `readPending` 后重投（在飞判据
+ *             是布尔变量而非内核真实状态）；
+ *          3. `socketDisconnect` → 立即重连时，上一连接"已取消但未回收"的读
+ *             与 `readContext` 被新连接复用；
+ *          4. 写槽看门狗直接 `inUse=false`，把**内核仍持有**的 OVERLAPPED
+ *             放回池子，下一次写立刻复用它。
  *
- *          旧写法靠 `writePending` 保证互斥，一旦完成包丢失（实测发生：
- *          客户端第 8 次提交的完成包永不返回；服务端 371 提交 / 340 完成），
- *          `writePending` 永久为真 ⇒ 之后所有写都沉进 ring buffer 且
- *          `ContinueWrite` 也因同一标志被挡 ⇒ 应用层"写成功"而对端零到达。
+ *          机制级复现器 `verify/iocp_overlapped_alias_repro.c` 用例 B 复现了
+ *          第 1 条：取消后立即复用同一 OVERLAPPED 重投 ⇒ 下一批数据永远停在
+ *          内核（`FIONREAD=500`）而完成包永不投递——正是现场日志里
+ *          "内核有数据但读未完成 / 完成包丢失"两种描述的同源现象。
  *
- *          改为槽池后：多个写可同时在途，各自独立 OVERLAPPED/缓冲；
- *          单个完成包丢失只损失一个槽，其余写照常推进。
+ *          ## 修法
+ *
+ *          把"在飞/已回收"从布尔猜测改成**每笔操作独占的槽 + 完成包驱动的
+ *          状态迁移**：
+ *            - 投递只有一个入口：`w32_armRead` / `w32_allocWriteSlot`；
+ *            - 回收只有一个出口：`w32_reapIocpCompletion`（按 OVERLAPPED
+ *              指针身份归属，不猜掩码、不猜提交顺序）；
+ *            - 取消只发 `CancelIoEx`，**重投发生在 ABORTED 完成包里**；
+ *            - 完成包确实丢失时，该槽**永久退役**（迟到的包落在退役槽上被
+ *              静默丢弃），业务改用备用槽继续，绝不冒"迟到包污染新操作"的险。
  */
-#define XNETWORK_WRITE_SLOT_COUNT 4
-#define XNETWORK_WRITE_SLOT_TIMEOUT_MS 2000u  /**< 槽位超时阈值（完成包丢失兜底）。 */
-/** @brief 读请求挂死阈值（毫秒）。
+
+/** @brief 异步写槽数量。
  *
- * @details 读请求提交后超过该时长仍无任何完成，即判为"完成包未投递"并用
- *          CancelIoEx 取消重挂。取值考虑：正常空闲链路也会长时间无数据
- *          （HSF 心跳 1s、遥测 100ms，但安静时可能数十秒无入站），所以阈值
- *          不能太小；这里取 3s——比静默判线阈值（6s）小一半，保证看门狗
- *          能在"链路被判死"之前先尝试自救一次。
- * @note   只对**已挂起且超时**的读生效，空闲链路上一次成功的读会刷新
- *         readArmedMs（由 startAsyncRead 置位），不会误触发。 */
+ * @details 每个槽独占一份 OVERLAPPED + 发送缓冲：多个写可同时在途，且 TCP
+ *          按提交顺序交付，故并发写不串序。槽数是"内核持有 vs 完成回收"之间
+ *          的缓冲深度；8 槽 × 8KB ≈ 64KB 在途量，对工业现场的小帧高频写足够，
+ *          同时把单槽异常的影响面压到 1/8。 */
+#define XNETWORK_WRITE_SLOT_COUNT 8
+/** @brief 写槽挂起多久视为异常（毫秒）。
+ *
+ * @details 超时动作已从"直接把槽标空闲"改为"只发 CancelIoEx"（见
+ *          `w32_reapStalledWriteSlots`）：槽能否复用一律由完成包决定。 */
+#define XNETWORK_WRITE_SLOT_TIMEOUT_MS 2000u
+
+/** @brief 读槽数量。
+ *
+ * @details 正常路径只需要 1 个在飞读槽；额外两槽用于两件必须做、但绝不能
+ *          复用"在飞 OVERLAPPED"的事：
+ *            - 完成包疑似丢失时把该槽**永久退役**（迟到的完成包因此不会污染
+ *              后续任一操作），接着用备用槽继续服务；
+ *            - 旧连接"已取消但未回收"的完成包尚未出队时，新连接仍要能立刻
+ *              挂上读。 */
+#define XNETWORK_READ_SLOT_COUNT 3
+
+/** @brief 判定"完成包丢失"所需的完成端口检查次数（自挂读起）。
+ *
+ * @details `GetOverlappedResult` 只看状态块：内核已完成、包还在端口里排队时
+ *          它同样返回 TRUE。仅凭它判丢包，会把"这一批事件投递耗时长
+ *          （GUI 切页/重绘）"误判成丢包。只有当端口自挂读起已被检查过
+ *          N 次、包仍未出队，才是真丢包。 */
+#ifndef XNETWORK_READ_LOST_POLLS
+#define XNETWORK_READ_LOST_POLLS 4u
+#endif
+
+/** @brief 退役读槽的隔离时长（端口检查次数）。
+ *
+ * @details 被判丢包的槽先隔离，期间若真有迟到包到达，只会落在该退役槽上
+ *          并被静默丢弃。隔离期满后可以回收复用——此时它的迟到包必然
+ *          早已出队（端口每个事件循环批次至少被检查一次），
+ *          这样"丢一次包就永久少一个槽"才不会累积成读通道停摆。 */
+#ifndef XNETWORK_READ_QUARANTINE_POLLS
+#define XNETWORK_READ_QUARANTINE_POLLS 64u
+#endif
+
+/** @brief 读请求挂起多久视为异常（毫秒）。
+ *
+ * @details 取 3s：比链路静默判线（6s）小一半，留出自救窗口；空闲链路上一次
+ *          成功的读会刷新 `readArmedMs`，不会误触发。超时只做两件事：
+ *            - `GetOverlappedResult(FALSE)` 为真 ⇒ 完成包真的丢了：接管内核侧
+ *              结果、**退役该槽**、按正常读完成下派；
+ *            - 否则若内核确有数据（`FIONREAD>0`）而读不完 ⇒ **只** `CancelIoEx`，
+ *              重投等 ABORTED 完成包收尾。 */
 #ifndef XNETWORK_READ_STALL_MS
 #define XNETWORK_READ_STALL_MS 3000u
 #endif
 
+/**
+ * @brief 单个异步写槽（一笔在途 WSASend 独占一份 OVERLAPPED + 缓冲）。
+ *
+ * @details 三个状态位严格区分，避免再次出现"布尔标志与内核状态脱节"：
+ *          - `inUse`  ：槽已被某次写占用（缓冲归它所有）；
+ *          - `armed`  ：**内核仍持有**本槽 OVERLAPPED（完成包未出队）；
+ *          - `zombie` ：连接已拆，等 ABORTED 完成包收尾，此间不得复用。
+ *
+ *          MSDN 对 OVERLAPPED 的硬性约束：
+ *            “A common mistake is to reuse an OVERLAPPED structure before
+ *             the previous asynchronous operation has been completed. You
+ *             should use a separate structure for each request.”
+ *          WSASend 另要求缓冲在内核持有期间不得改动（“once the WSASend
+ *          function is called, the system owns these buffers”）。两条约束都由
+ *          本槽池在物理上保证。
+ */
 typedef struct XDeviceNetworkWriteSlot {
     XEventContext_IOCP ctx;                 /**< 本槽专用的 OVERLAPPED 载体。 */
     char buffer[XNETWORK_WRITE_BUFFER_SIZE];/**< 本槽专用发送缓冲（内核持有期不可动）。 */
-    bool inUse;                             /**< 是否在途。 */
+    bool inUse;                             /**< 槽已被占用（含已完成待回收）。 */
+    bool armed;                             /**< 内核仍持有该 OVERLAPPED。 */
+    bool zombie;                            /**< 连接已拆，等 ABORTED 完成包收尾。 */
     uint64_t armedMs;                       /**< 提交时刻（单调毫秒，看门狗用）。 */
+    uint32_t ioGen;                         /**< 提交时的连接代次（判完成包是否属于当前连接）。 */
 } XDeviceNetworkWriteSlot;
+
+/**
+ * @brief 单个异步读槽（一笔在飞 WSARecv 独占一份 OVERLAPPED + 接收缓冲）。
+ *
+ * @details 三个状态位与写槽同口径：
+ *          - `armed`  ：内核持有该 OVERLAPPED，完成包未出队；
+ *          - `ready`  ：本槽已带数据（或 0 字节 FIN），等上层消费；
+ *          - `retired`：完成包被判定丢失，本槽**永久退役**——内核里可能还有
+ *                       一枚指向它的迟到完成包，退役后它不再承载任何操作，
+ *                       迟到包到达时只被静默丢弃。
+ */
+typedef struct XDeviceNetworkReadSlot {
+    XEventContext_IOCP ctx;                 /**< 本槽专用的 OVERLAPPED 载体。 */
+    char buffer[XNETWORK_READ_BUFFER_SIZE]; /**< 本槽专用接收缓冲（内核持有期不可动）。 */
+    bool armed;                             /**< 内核仍持有该 OVERLAPPED。 */
+    bool ready;                             /**< 已完成，数据待上层消费。 */
+    bool retired;                           /**< 完成包疑似丢失：隔离中，暂不投递。 */
+    uint32_t retiredPollSeq;                /**< 进入隔离时的端口检查序号（判能否回收）。 */
+    uint32_t ioGen;                         /**< 挂读时的连接代次（判完成包是否属于当前连接）。 */
+    uint32_t generation;                    /**< 投递序号（诊断用）。 */
+} XDeviceNetworkReadSlot;
 
 typedef struct XDeviceNetworkContextWin32 {
     XDeviceNetworkContext base;             /**< 第一位：平台无关基类 (owner/xfd/notifiers) */
     SOCKET socket;                          ///< Windows SOCKET 句柄。
     HANDLE namedPipe;                       ///< Windows 命名管道句柄。
 
+    /* ---------------- 读状态机（完成包驱动，唯一投递点） ---------------- */
+    XDeviceNetworkReadSlot readSlots[XNETWORK_READ_SLOT_COUNT];
+    int readArmedSlot;                      ///< 在飞读槽；-1 = 无在飞读。
+    int readActiveSlot;                     ///< 当前呈现给上层的读槽；-1 = 无。
+    int readNextSlot;                       ///< 轮转游标（让迟到包尽量落空）。
+    uint64_t readArmedMs;                   ///< 在飞读提交时刻（看门狗）。
+    uint32_t readArmedPollSeq;              ///< 挂读时的端口检查序号（判"真丢包"用）。
+    bool isUdpRead;                         ///< 在飞读是否为数据报读（重挂用）。
+    uint32_t readStallCount;                ///< 看门狗：内核有数据但读不完（已取消待重挂）。
+    uint32_t readLostCount;                 ///< 看门狗：完成包确实丢失（已接管并退役槽）。
+    uint32_t readAbortedCount;              ///< 主动取消产生的 ABORTED 完成包数。
+    uint32_t ioGeneration;                  ///< 连接代次：每次换 I/O 句柄 +1（判完成包归属）。
+    uint32_t readArmFailCount;              ///< 无空闲槽/提交失败次数（诊断）。
+
     /* 状态标志 */
-    bool readPending;
-    uint64_t readArmedMs;                   ///< 读请求提交时刻（读看门狗）。
-    uint32_t readStallCount;                ///< 累计被看门狗判定"读挂死"的次数。
-    bool writePending;
+    bool writePending;                      ///< 是否仍有写槽被占用（对外观测量）。
     bool connectPending;
     bool autoRead;
     bool isServer;                          ///< 是否为服务器套接字。
     bool acceptPending;                     ///< 是否有待处理的 Accept。
+    bool acceptReady;                       ///< AcceptEx 是否已成功完成（可消费）。
     volatile LONG pendingIocpOperations;    ///< 在途 IOCP 计数: 发起 + 完成两侧同步递减。
     volatile LONG deletePending;            ///< 拆除已挂起标记, 防重复拆除竞态。
 
-    /* 异步写槽池（多写并发 + 完成包丢失隔离） */
+    /* ---------------- 异步写槽池（多写并发 + 完成包丢失隔离） -------------- */
     XDeviceNetworkWriteSlot writeSlots[XNETWORK_WRITE_SLOT_COUNT];
-    int writeSlotCount;                     /**< 已用槽数（诊断/看门狗用）。 */
-    uint32_t writeStallCount;               /**< 累计被看门狗判定"卡死"的槽数。 */
+    int writeSlotCount;                     /**< 已占用槽数（诊断/看门狗用）。 */
+    uint32_t writeStallCount;               ///< 累计被看门狗判定"卡死"的槽数。
+    uint32_t writeAbortedCount;             ///< 取消产生的 ABORTED 完成包数。
+    size_t writeDoneBytes[XNETWORK_WRITE_SLOT_COUNT]; ///< 已完成写的字节数 FIFO。
+    int writeDoneHead;                      ///< FIFO 头（出队侧）。
+    int writeDoneTail;                      ///< FIFO 尾（入队侧）。
+    int writeDoneCount;                     ///< FIFO 中待呈现的完成笔数。
+    size_t lastWriteBytes;                  ///< 当前 Write 事件对应的完成字节数。
+    char writeStash[XNETWORK_WRITE_BUFFER_SIZE]; ///< 提交失败时保序暂存（最多一块）。
+    size_t writeStashLen;                   ///< 暂存字节数；0 = 空。
 
     /* UDP 来源地址 */
     struct sockaddr_in6 fromAddr;
     int fromAddrLen;
 
     /* IOCP 上下文 */
-    XEventContext_IOCP readContext;
     union {
         XEventContext_IOCP connectContext;  ///< 客户端连接上下文。
         XEventContext_IOCP acceptContext;   ///< 服务端 AcceptEx 上下文。
@@ -563,18 +678,13 @@ typedef struct XDeviceNetworkContextWin32 {
     XHostAddress pendingPeerAddr;
     uint16_t pendingPeerPort;
 
-    /* 缓冲区联合体（服务器用 acceptBuffer，客户端用 readBuffer）。
-     * 写缓冲已移入各写槽（见 XDeviceNetworkWriteSlot），不再共享。 */
-    union {
-        struct {
-            char readBuffer[XNETWORK_READ_BUFFER_SIZE];
-        };
-        struct {
-            char acceptBuffer[sizeof(struct sockaddr_in6) * 2 + 32]; ///< AcceptEx 地址双缓冲。
-            SOCKET acceptSocket;                    ///< AcceptEx 落地的新套接字。
-        };
+    /* 服务器专用缓冲（读缓冲已下沉到各读槽，不再共享）。 */
+    struct {
+        char acceptBuffer[sizeof(struct sockaddr_in6) * 2 + 32]; ///< AcceptEx 地址双缓冲。
+        SOCKET acceptSocket;                    ///< AcceptEx 落地的新套接字。
     };
 } XDeviceNetworkContextWin32;
+
 
 /* 便捷转换宏 */
 #define W32(p) ((XDeviceNetworkContextWin32*)(p))
@@ -584,6 +694,8 @@ static uint64_t W32_nowMs(void);
 
 /* 套接字事件处理（读看门狗补投递时复用正常完成路径；定义在文件后段）。 */
 bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event);
+/* 当前呈现的读完成字节数（Read 分支复用；定义在文件后段）。 */
+size_t XDeviceNetwork_socketReadFinishedBytes(XFd xfd);
 
 static bool w32_has_stream_handle(const XDeviceNetworkContextWin32* priv)
 {
@@ -604,14 +716,35 @@ static void releaseContext(XDeviceNetworkContextWin32* p)
         destroyContext(p);
 }
 
+/* 完成包统一出口的前置声明（实现在 track/abandon 之后的位置：既要用它们
+ * 维护的在途计数，也要保证槽状态迁移先于 `releaseContext` 执行）。 */
+
+static bool w32_reapIocpCompletion(XDeviceNetworkContextWin32* p,
+                                   XEventContext_IOCP* ctx);
+static bool w32_armRead(XDeviceNetworkContext* priv);
+
+/**
+ * @brief 完成包出队回调（每笔操作都由 `trackSocketIocpOperation` 挂上）。
+ *
+ * @details 调用时机由 `processOneCompletion` 保证：`finishedBytes` /
+ *          `nativeError` / `completed` 已写好、事件尚未入 CQ。因此这里是
+ *          "槽状态迁移"的唯一正确时点，也是 ABORTED 包被拦下的唯一时点。
+ *
+ * @note 迁移必须在 `releaseContext` 之前完成——那是最后一次能安全访问 `p`
+ *       的机会（在途计数归零时 p 会被释放）。
+ */
 static bool socketIocpOperationCompleted(XEventContext_IOCP* context, void* userData)
 {
     XDeviceNetworkContextWin32* p = (XDeviceNetworkContextWin32*)userData;
     bool shouldDispatch;
+
     if (!p) return false;
 
-    shouldDispatch = InterlockedCompareExchange(&p->deletePending, 0, 0) == 0 &&
+    shouldDispatch = w32_reapIocpCompletion(p, context);
+    shouldDispatch = shouldDispatch &&
+                     InterlockedCompareExchange(&p->deletePending, 0, 0) == 0 &&
                      p->base.m_owner != NULL;
+
     context->completionCallback = NULL;
     context->completionUserData = NULL;
     releaseContext(p);
@@ -634,6 +767,284 @@ static void abandonSocketIocpOperation(XDeviceNetworkContextWin32* p,
     InterlockedDecrement(&p->pendingIocpOperations);
 }
 
+/* =========================================================================
+ * 槽位归属与完成包裁决
+ * ========================================================================= */
+
+/**
+ * @brief 按 OVERLAPPED 指针身份反查读槽下标。
+ * @return 命中返回 [0, COUNT) 下标；不属于任何读槽返回 -1。
+ * @note  **绝不用"事件掩码 + 提交顺序"推断是哪一笔操作完成了**：IOCP 只保证
+ *        同一句柄的完成包大体有序，一旦出现乱序或迟到包，按顺序猜就会把
+ *        完成记到错误的槽上（历史上正是这样让"归还写槽"落到别的槽，
+ *        逐步把在途计数和缓冲所有权搞乱）。OVERLAPPED 指针是内核原样带回的，
+ *        身份唯一且稳定。
+ */
+static int w32_readSlotIndex(const XDeviceNetworkContextWin32* p,
+                             const XEventContext_IOCP* ctx)
+{
+    int i;
+    if (!p || !ctx) return -1;
+    for (i = 0; i < XNETWORK_READ_SLOT_COUNT; ++i)
+        if (&p->readSlots[i].ctx == ctx) return i;
+    return -1;
+}
+
+/** @brief 按 OVERLAPPED 指针身份反查写槽下标（同读槽口径）。 */
+static int w32_writeSlotIndex(const XDeviceNetworkContextWin32* p,
+                              const XEventContext_IOCP* ctx)
+{
+    int i;
+    if (!p || !ctx) return -1;
+    for (i = 0; i < XNETWORK_WRITE_SLOT_COUNT; ++i)
+        if (&p->writeSlots[i].ctx == ctx) return i;
+    return -1;
+}
+
+/** @brief 换用新 I/O 句柄时递增连接代次。
+ *
+ * @details 完成包归属**不能**用 SOCKET/HANDLE 数值比较：Windows 会复用句柄值，
+ *          重连后新 socket 很可能拿到与旧 socket 相同的数值。若按数值判等，
+ *          旧连接残留的 ABORTED 完成包会被当成"当前连接"的完成包，进而
+ *          触发一次重挂 —— 而旧操作可能仍在内核里 ⇒ 同一 OVERLAPPED 二次
+ *          投递 ⇒ 完成包丢失（实测跨进程联调里 750 字节批次反复丢）。
+ *          代次号只在换句柄/拆连接时递增，天然免疫句柄复用。 */
+static void w32_newIoGeneration(XDeviceNetworkContextWin32* p)
+{
+    if (!p) return;
+    p->ioGeneration++;
+}
+
+/** @brief 当前 I/O 句柄（命名管道优先），用于 PEEK 复核等句柄级操作。 */
+static intptr_t w32_currentIoHandle(const XDeviceNetworkContextWin32* p)
+{
+    if (!p) return -1;
+    if (p->namedPipe != INVALID_HANDLE_VALUE) return (intptr_t)p->namedPipe;
+    if (p->socket != INVALID_SOCKET) return (intptr_t)p->socket;
+    return -1;
+}
+
+/** @brief 读通道此刻是否应该挂一笔读。
+ *
+ * @details 三个否定条件合起来表达同一个不变量：**同一句柄上永远只有一笔
+ *          在飞读、且上一批数据必须已被上层消费**。
+ *            - `readArmedSlot >= 0`：已有一笔在飞（无论它是否"看起来该
+ *              完成了"）——绝不再投，这是根修的核心判据；
+ *            - `readActiveSlot` 仍有 `ready` 数据：上层还没取走，投新读会
+ *              覆盖它（单缓冲契约）；
+ *            - 未连接 / 已关读通知：不需要读。
+ */
+static bool w32_readWanted(const XDeviceNetworkContextWin32* p)
+{
+    if (!p) return false;
+    if (!p->base.m_connected || !p->autoRead) return false;
+    if (p->readArmedSlot >= 0) return false;
+    if (p->readActiveSlot >= 0 && p->readSlots[p->readActiveSlot].ready) return false;
+    return true;
+}
+
+/** @brief 把一笔已完成写的字节数压入呈现队列（按完成顺序）。 */
+static void w32_pushWriteDone(XDeviceNetworkContextWin32* p, size_t bytes)
+{
+    if (!p) return;
+    if (p->writeDoneCount >= XNETWORK_WRITE_SLOT_COUNT) {
+        /* 队列满（上层迟迟不来取）：丢最旧的一条，保持"最近的完成可见"。 */
+        p->writeDoneHead = (p->writeDoneHead + 1) % XNETWORK_WRITE_SLOT_COUNT;
+        p->writeDoneCount--;
+    }
+    p->writeDoneBytes[p->writeDoneTail] = bytes;
+    p->writeDoneTail = (p->writeDoneTail + 1) % XNETWORK_WRITE_SLOT_COUNT;
+    p->writeDoneCount++;
+}
+
+/** @brief 取走一笔已完成写的字节数；队列空返回 0。 */
+static size_t w32_popWriteDone(XDeviceNetworkContextWin32* p)
+{
+    size_t bytes;
+    if (!p || p->writeDoneCount <= 0) return 0;
+    bytes = p->writeDoneBytes[p->writeDoneHead];
+    p->writeDoneHead = (p->writeDoneHead + 1) % XNETWORK_WRITE_SLOT_COUNT;
+    p->writeDoneCount--;
+    return bytes;
+}
+
+/** @brief 归还写槽并把 writePending 收敛到真实占用情况。 */
+static void w32_releaseWriteSlot(XDeviceNetworkContextWin32* p,
+                                 int index)
+{
+    XDeviceNetworkWriteSlot* slot;
+    if (!p || index < 0 || index >= XNETWORK_WRITE_SLOT_COUNT) return;
+    slot = &p->writeSlots[index];
+    if (slot->inUse) {
+        slot->inUse = false;
+        if (p->writeSlotCount > 0) p->writeSlotCount--;
+    }
+    slot->armed = false;
+    slot->zombie = false;
+    slot->armedMs = 0;
+    p->writePending = (p->writeSlotCount > 0);
+}
+
+/**
+ * @brief 把"连接已死"以关闭事件的形式投递给属主对象。
+ *
+ * @details 这里**不能**借用"0 字节读完成"那条路径：派发层对 0 字节读完成
+ *          会做假 EOF 复核（`platformPeerReallyClosed`），而对端消失后 PEEK
+ *          未必能拿到 0（实测踢线场景 `closed=0`）⇒ 关闭事件被丢弃 ⇒
+ *          客户端永不重连。读操作**失败**本身就是连接死亡的直接证据，
+ *          不需要也不应该再复核。
+ * @note 用属主指针直接投递，不经 XFd 反查：XFd 是池槽位号，连接拆除后
+ *       可能已被新对象复用（历史串包/误杀事故的同源原因）。
+ */
+static void w32_postSockClose(XFd xfd, void* owner)
+{
+    XEventSockClose* closeEvent;
+    if (!owner) return;
+    closeEvent = XEventSockClose_create(xfd);
+    if (!closeEvent) return;
+    ((XEvent*)closeEvent)->m_posted = true;
+    ((XEvent*)closeEvent)->m_spontaneous = true;
+    XCoreApplication_postEvent((XObject*)owner, (XEvent*)closeEvent,
+                               XEVENT_PRIORITY_NORMAL);
+}
+
+/**
+ * @brief 一条完成包的状态裁决（槽迁移 + 是否下派语义事件）。
+ *
+ * @return true=下派为上层事件；false=内部消化（取消/迟到/退役）。
+ */
+static bool w32_reapIocpCompletion(XDeviceNetworkContextWin32* p,
+                                   XEventContext_IOCP* ctx)
+{
+    int index;
+
+    if (!p || !ctx) return false;
+
+    /* ---------------- 读完成 ---------------- */
+    index = w32_readSlotIndex(p, ctx);
+    if (index >= 0) {
+        XDeviceNetworkReadSlot* slot = &p->readSlots[index];
+        bool sameSocket = (slot->ioGen == p->ioGeneration);
+
+
+
+        /* 不变量 B：完成包已出队 ⇒ 该 OVERLAPPED 现在才可以再次投递。 */
+        slot->armed = false;
+        if (p->readArmedSlot == index) {
+            p->readArmedSlot = -1;
+            p->readArmedMs = 0;
+        }
+
+        /* 退役槽上的迟到包：只回收槽，不影响任何状态、不产生事件。 */
+        if (slot->retired) return false;
+
+        if (!ctx->completed) {
+            if (ctx->nativeError == ERROR_OPERATION_ABORTED) {
+                /* 不变量 D：取消是内部控制流，绝不下派成读事件。
+                 * 不变量 C：重投只能发生在"这个 ABORTED 包出队之后"——就是现在。 */
+                p->readAbortedCount++;
+                /* 槽此刻已回收（armed=false）⇒ 可以安全地为**当前**连接重挂。
+                 * 旧连接的取消包走同一分支：重挂目标是 p->socket 的当前句柄，
+                 * 与取消掉的那笔无关（不变量 C 的落地处）。 */
+                if (!slot->ready && w32_readWanted(p))
+                    (void)w32_armRead(&p->base);
+                return false;
+            }
+            /* 真错误（RST / 连接被中止）：**连接已死**。
+             *
+             * 绝不按"读到 0 字节"处理：那条路会被假 EOF 复核拦截（PEEK 拿不到
+             * 0 时把事件丢掉），实测后果是对端踢线后本端永不重连
+             * （XLink 踢线用例 10 项失败）。读失败是连接死亡的直接证据，
+             * 直接投递关闭事件。 */
+            if (!sameSocket) {
+                slot->ready = false;
+                return false;
+            }
+            if (p->isUdpRead) {
+                /* 数据报错误（如 ICMP 不可达）不等于流关闭：按 0 字节完成
+                 * 交给上层判定，保持既有 UDP 语义。 */
+                slot->ctx.finishedBytes = 0;
+                slot->ready = true;
+                p->readActiveSlot = index;
+                return true;
+            }
+            slot->ready = false;
+            slot->armed = false;
+            p->readActiveSlot = -1;
+            w32_postSockClose(ctx->base.fd, p->base.m_owner);
+            return false;
+        }
+
+        if (!sameSocket) {
+            /* 旧连接的迟到完成（重连后才到）：数据属于已废弃的连接，丢弃。 */
+            slot->ready = false;
+            return false;
+        }
+
+
+        /* [假 EOF 自愈] 0 字节读完成，但对端其实健在（内核/驱动误报）：
+         * 绝不能把它交给上层（上层会按 FIN 断开），也不能让"派发层丢弃该
+         * 事件"成为读通道的终点——就地重挂，读通道继续工作。
+         * 数据报的 0 字节是合法空报文，不做该判定。 */
+        if (ctx->finishedBytes == 0 && !p->isUdpRead
+            && !XAbstractNetIoRing_platformPeerReallyClosed(
+                   (int)w32_currentIoHandle(p))) {
+            slot->ready = false;
+            p->readActiveSlot = -1;
+            if (w32_readWanted(p)) (void)w32_armRead(&p->base);
+            return false;
+        }
+
+        slot->ready = true;
+        p->readActiveSlot = index;
+        return true;
+    }
+
+    /* ---------------- 写完成 ---------------- */
+    index = w32_writeSlotIndex(p, ctx);
+    if (index >= 0) {
+        XDeviceNetworkWriteSlot* slot = &p->writeSlots[index];
+        bool sameSocket = (slot->ioGen == p->ioGeneration);
+        bool aborted = (!ctx->completed &&
+                        ctx->nativeError == ERROR_OPERATION_ABORTED);
+        size_t bytes = ctx->completed ? ctx->finishedBytes : 0;
+
+        w32_releaseWriteSlot(p, index);
+
+        if (aborted) {
+            /* 取消写不是语义事件：若下派，上层会按 FIFO 里的陈旧字节数发
+             * bytesWritten 信号（XLink 进度对账错乱的老故障面）。 */
+            p->writeAbortedCount++;
+            return false;
+        }
+        if (!sameSocket) return false;
+
+        w32_pushWriteDone(p, bytes);
+        return true;
+    }
+
+    /* ---------------- 连接完成 ---------------- */
+    if (ctx == &p->connectContext) {
+        p->connectPending = false;
+        if (!ctx->completed && ctx->nativeError == ERROR_OPERATION_ABORTED)
+            return false;   /* 主动断开导致的取消：不是连接失败事件。 */
+        return true;
+    }
+
+    /* ---------------- 接受完成 ---------------- */
+    if (ctx == &p->acceptContext) {
+        if (!ctx->completed && ctx->nativeError == ERROR_OPERATION_ABORTED) {
+            /* 监听 socket 被拆：回收等待状态，且不把取消当"有新连接"。 */
+            p->acceptPending = false;
+            p->acceptReady = false;
+            return false;
+        }
+        p->acceptReady = ctx->completed;
+        return true;
+    }
+
+    return false;
+}
 /* Keep public endpoint properties aligned with the POSIX backend after an
  * outbound connection completes. */
 static void syncSocketEndpoints(XDeviceNetworkContext* priv)
@@ -678,6 +1089,12 @@ XDeviceNetworkContext* XDeviceNetwork_createContext(void)
     p->acceptSocket = INVALID_SOCKET;
     p->base.m_base.m_fd = XFD_INVALID;
     p->autoRead = true;
+    /* 读状态机的"无在飞/无呈现"必须显式初始化：槽数组本身已被 XCalloc 清零，
+     * 但两个下标是 -1 语义，0 会被误读成"槽 0 正在飞"⇒ 首笔读永远投不出去
+     * （实测：连接成功、写正常、对端零接收）。 */
+    p->readArmedSlot = -1;
+    p->readActiveSlot = -1;
+    p->readNextSlot = 0;
     p->pendingIocpOperations = 1; /* XDeviceNetwork_deleteContext releases this owner reference. */
 
     XHostAddress_init(&p->pendingPeerAddr);
@@ -716,96 +1133,259 @@ intptr_t XDeviceNetwork_socketDescriptor(XFd xfd)
  * 异步读取启动
  * ========================================================================= */
 
-static void startAsyncRead(XDeviceNetworkContext* priv, bool isUdp)
+/** @brief 本地提交失败时就地回滚一次读投递（此时一定不会有完成包）。 */
+static void w32_rollbackReadArm(XDeviceNetworkContextWin32* p, int index,
+                                int nativeError)
+{
+    XDeviceNetworkReadSlot* slot;
+    if (!p || index < 0 || index >= XNETWORK_READ_SLOT_COUNT) return;
+    slot = &p->readSlots[index];
+    slot->armed = false;
+    if (p->readArmedSlot == index) {
+        p->readArmedSlot = -1;
+        p->readArmedMs = 0;
+    }
+    abandonSocketIocpOperation(p, &slot->ctx);
+    p->readArmFailCount++;
+    if (nativeError != 0)
+        XPrintf("[XNetwork-W32] 读提交失败 err=%d（无完成包，已回滚）；累计 %u 次\n",
+                nativeError, (unsigned)p->readArmFailCount);
+}
+
+/* 丢弃呈现槽（定义在补投递之后：补投递失败时要回退到"丢这批、保通道"）。 */
+static void xw32_dropReadSlot(XDeviceNetworkContextWin32* p);
+
+/** @brief 把"内核已完成但完成包丢失"的事实按正常读完成投递回事件环。 */
+static void w32_postReadReady(XFd xfd, XDeviceNetworkContextWin32* p, size_t bytes)
+{
+    XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+    XAbstractNetIoRing_CQEntry entry;
+
+    if (!ring) {
+        xw32_dropReadSlot(p);
+        return;
+    }
+    memset(&entry, 0, sizeof(entry));
+    entry.m_fd = xfd;
+    entry.m_osFd = (int)p->socket;
+    entry.m_bytes = (uint32_t)bytes;
+    entry.m_error = 0;
+    entry.m_events = XSocketActType_Read;
+    entry.m_sourceType = XAbstractNetIoRing_Source_NativeIO;
+    entry.m_fdType = XFd_type(xfd);
+    if (!XAbstractNetIoRing_pushCompletion(ring, &entry)) {
+        /* 事件环不可用/队列满：宁可丢这一批缓冲，也不能让读通道永久停摆。 */
+        xw32_dropReadSlot(p);
+        p->readArmFailCount++;
+        XPrintf("[XNetwork-W32] 补投递失败（事件环不可用），丢弃该批 %u 字节\n",
+                (unsigned)bytes);
+    }
+}
+
+/** @brief 丢弃当前呈现的读槽（不改变"在飞"关系），并尝试重挂读。 */
+static void xw32_dropReadSlot(XDeviceNetworkContextWin32* p)
+{
+    if (!p) return;
+    if (p->readActiveSlot >= 0) {
+        p->readSlots[p->readActiveSlot].ready = false;
+        p->readActiveSlot = -1;
+    }
+}
+
+/**
+ * @brief 提交一笔异步读（读通道**唯一**投递入口）。
+ *
+ * @details 根修要点：在飞判据由 `p->readArmedSlot` 表达——它只在完成包出队
+ *          （`w32_reapIocpCompletion`）时才放回 -1，而不是由"上层希望有一笔
+ *          读"的布尔愿望位表达。因此无论调用时序如何（ContinueRead、重连、
+ *          看门狗、ABORTED 收尾），本函数都不可能对同一份 OVERLAPPED 二次投递。
+ *
+ * @param priv 套接字上下文。
+ * @return true=已提交（含同步完成：overlapped 套接字的同步完成同样会排队一个
+ *         完成包）；false=当前不该读、无空闲槽或提交失败。
+ */
+static bool w32_armRead(XDeviceNetworkContext* priv)
 {
     XDeviceNetworkContextWin32* p = W32(priv);
-    if (!p || p->readPending || !w32_has_stream_handle(p)) return;
-    (void)isUdp;
+    XDeviceNetworkReadSlot* slot = NULL;
+    int index = -1;
+    int i;
+    bool isUdp;
 
-    p->readArmedMs = W32_nowMs();    memset(&p->readContext, 0, sizeof(XEventContext_IOCP));
-    p->readContext.base.type = XEventContextType_Type_Socket;
-    p->readContext.base.fd = priv->m_base.m_fd;
-    p->readContext.socket = XSocketDescriptor_fromIntptr(
-        p->namedPipe != INVALID_HANDLE_VALUE ? (intptr_t)p->namedPipe : (intptr_t)p->socket);
-    p->readContext.eventMask = FD_READ;
-    trackSocketIocpOperation(p, &p->readContext);
+    if (!p || !w32_has_stream_handle(p)) return false;
+
+    if (!w32_readWanted(p)) return false;   /* 不变量 A/B 的守门人 */
+
+
+    /* 轮转选槽：从上次用过的下一个开始，让"退役槽上的迟到包"尽量落在空槽。 */
+    for (i = 0; i < XNETWORK_READ_SLOT_COUNT; ++i) {
+        int k = (p->readNextSlot + i) % XNETWORK_READ_SLOT_COUNT;
+        XDeviceNetworkReadSlot* cand = &p->readSlots[k];
+        if (cand->retired || cand->armed || cand->ready) continue;
+        slot = cand;
+        index = k;
+        break;
+    }
+    if (!slot) {
+        /* 全被占用：回收**隔离期满**的退役槽。隔离期内端口已被检查过
+         * `XNETWORK_READ_QUARANTINE_POLLS` 次，指向该槽的迟到包若存在
+         * 必然早已出队并被丢弃，复用是安全的。 */
+        uint32_t seq = XNetIoRingWin32_pollSeq();
+        for (i = 0; i < XNETWORK_READ_SLOT_COUNT; ++i) {
+            XDeviceNetworkReadSlot* cand = &p->readSlots[i];
+            if (!cand->retired || cand->armed || cand->ready) continue;
+            if ((uint32_t)(seq - cand->retiredPollSeq)
+                    < XNETWORK_READ_QUARANTINE_POLLS)
+                continue;
+            cand->retired = false;
+            cand->retiredPollSeq = 0;
+            slot = cand;
+            index = i;
+            break;
+        }
+    }
+    if (!slot) {
+        /* 仍在隔离期：不是错误，等下一批完成包回收后再试。 */
+        p->readArmFailCount++;
+        return false;
+    }
+
+    isUdp = p->isUdpRead;
+    p->readNextSlot = (index + 1) % XNETWORK_READ_SLOT_COUNT;
+
+
+    memset(&slot->ctx, 0, sizeof(XEventContext_IOCP));
+    slot->ctx.base.type = XEventContextType_Type_Socket;
+    slot->ctx.base.fd = priv->m_base.m_fd;
+    slot->ctx.socket = XSocketDescriptor_fromIntptr(
+        p->namedPipe != INVALID_HANDLE_VALUE ? (intptr_t)p->namedPipe
+                                             : (intptr_t)p->socket);
+    slot->ctx.eventMask = FD_READ;
+
+    /* 先记账再提交：同步完成时完成包同样会排队，出队前它必须已被认领。 */
+    slot->armed = true;
+    slot->generation++;
+    slot->ioGen = p->ioGeneration;
+    p->readArmedSlot = index;
+    p->readArmedMs = W32_nowMs();
+    p->readArmedPollSeq = XNetIoRingWin32_pollSeq();
+
+    trackSocketIocpOperation(p, &slot->ctx);
 
     if (p->namedPipe != INVALID_HANDLE_VALUE) {
         DWORD bytesTransferred = 0;
-        if (ReadFile(p->namedPipe, p->readBuffer, XNETWORK_READ_BUFFER_SIZE,
-                     &bytesTransferred, (OVERLAPPED*)&p->readContext)) {
-            p->readContext.finishedBytes = bytesTransferred;
-            p->readPending = true;
-        } else if (GetLastError() == ERROR_IO_PENDING) {
-            p->readPending = true;
+        if (ReadFile(p->namedPipe, slot->buffer, XNETWORK_READ_BUFFER_SIZE,
+                     &bytesTransferred, (OVERLAPPED*)&slot->ctx))
+            return true;
+        if (GetLastError() == ERROR_IO_PENDING)
+            return true;
+        w32_rollbackReadArm(p, index, (int)GetLastError());
+        return false;
+    }
+
+    {
+        WSABUF buf;
+        DWORD flags = 0;
+        int result;
+
+        buf.buf = slot->buffer;
+        buf.len = XNETWORK_READ_BUFFER_SIZE;
+
+        /* [官方口径] lpOverlapped 非 NULL 时 lpNumberOfBytesRecvd **必须**传
+         * NULL，否则完成字节数可能不可靠；完成后取 GQCS 的输出参数。 */
+        if (isUdp) {
+            p->fromAddrLen = sizeof(p->fromAddr);
+            result = WSARecvFrom(p->socket, &buf, 1, NULL, &flags,
+                (struct sockaddr*)&p->fromAddr, &p->fromAddrLen,
+                (OVERLAPPED*)&slot->ctx, NULL);
         } else {
-            p->readPending = false;
-            abandonSocketIocpOperation(p, &p->readContext);
+            result = WSARecv(p->socket, &buf, 1, NULL, &flags,
+                (OVERLAPPED*)&slot->ctx, NULL);
+        }
+        if (result == 0) return true;                    /* 同步完成，包照常排队 */
+        if (WSAGetLastError() == WSA_IO_PENDING) return true;
+        w32_rollbackReadArm(p, index, (int)WSAGetLastError());
+        return false;
+    }
+}
+
+/**
+ * @brief 读挂起看门狗（**只观察与取消，绝不抢占在飞 OVERLAPPED**）。
+ *
+ * @details 三态判定，两条证据互相独立：
+ *          1. `GetOverlappedResult(FALSE)` 为真 ⇒ 操作已完成、完成包未投递。
+ *             接管结果、把该槽**永久退役**（内核里可能还有一枚迟到包，退役后
+ *             它不会再落到任何新操作上），再按正常读完成补投递。
+ *          2. `FIONREAD > 0` 而操作未完成 ⇒ 数据在内核、读不回来。此时**只**
+ *             `CancelIoEx`：重投由该操作的 ABORTED 完成包收尾后自动发生
+ *             （`w32_reapIocpCompletion`）。旧实现在这里"取消 + 立即用同一
+ *             OVERLAPPED 重投"，正是完成包丢失的直接来源。
+ *          3. 两者都不成立 ⇒ 对端确实没发，只刷新时间戳。
+ */
+static void w32_checkReadStall(XFd xfd, XDeviceNetworkContext* priv)
+{
+    XDeviceNetworkContextWin32* p = W32(priv);
+    XDeviceNetworkReadSlot* slot;
+    int index;
+    DWORD got = 0;
+    u_long readable = 0;
+
+    if (!p) return;
+    index = p->readArmedSlot;
+    if (index < 0 || index >= XNETWORK_READ_SLOT_COUNT) return;
+    slot = &p->readSlots[index];
+    if (w32_currentIoHandle(p) == -1) return;
+
+    /* 证据一：完成包丢失。
+     *
+     * 前提是"包确实不会来了"：自挂读起完成端口已被检查过
+     * `XNETWORK_READ_LOST_POLLS` 次而该包仍未出队。只凭
+     * `GetOverlappedResult` 返回 TRUE 就判丢包是不够的——内核已完成、
+     * 包还在端口里排队时它同样返回 TRUE（GUI 一次切页/重绘就能让一个
+     * 投递批次耗时数秒，实测因此连判 3 次、把 3 个读槽全部退役，
+     * 读通道随之停摆）。 */
+    if ((uint32_t)(XNetIoRingWin32_pollSeq() - p->readArmedPollSeq)
+            >= XNETWORK_READ_LOST_POLLS
+        && GetOverlappedResult((HANDLE)w32_currentIoHandle(p),
+                               (OVERLAPPED*)&slot->ctx, &got, FALSE)) {
+
+        slot->retiredPollSeq = XNetIoRingWin32_pollSeq();
+        slot->retired = true;      /* 隔离：迟到包今后只落在这个退役槽上 */
+        slot->armed = false;
+        p->readArmedSlot = -1;
+        p->readArmedMs = 0;
+        p->readLostCount++;
+        slot->ctx.finishedBytes = got;
+        slot->ctx.completed = TRUE;
+        slot->ctx.nativeError = ERROR_SUCCESS;
+        slot->ready = true;
+        p->readActiveSlot = index;
+        XPrintf("[XNetwork-W32] 读停摆=完成包丢失（已结束 %lu 字节），"
+                "已接管结果并退役该读槽；累计 %u 次\n",
+                (unsigned long)got, (unsigned)p->readLostCount);
+        w32_postReadReady(xfd, p, got);
+        return;
+    }
+
+    /* 证据二：数据在内核，但挂起的读不完成。 */
+    if (p->socket != INVALID_SOCKET
+        && ioctlsocket(p->socket, FIONREAD, &readable) == 0 && readable > 0) {
+        if (CancelIoEx((HANDLE)w32_currentIoHandle(p), (OVERLAPPED*)&slot->ctx)) {
+            p->readStallCount++;
+            p->readArmedMs = W32_nowMs();   /* 等 ABORTED 包收尾后自动重挂 */
+            XPrintf("[XNetwork-W32] 读停摆=数据在内核但读未完成（内核待读=%lu 字节），"
+                    "已取消，待 ABORTED 完成包后重挂；累计 %u 次\n",
+                    (unsigned long)readable, (unsigned)p->readStallCount);
+        } else if (GetLastError() == ERROR_NOT_FOUND) {
+            /* 官方语义：ERROR_NOT_FOUND = 操作其实已完成，完成包在途。
+             * 什么都不做，等它到达即可。 */
+            p->readArmedMs = W32_nowMs();
         }
         return;
     }
 
-    WSABUF buf;
-    buf.buf = p->readBuffer;
-    buf.len = XNETWORK_READ_BUFFER_SIZE;
-
-    DWORD flags = 0;
-    int result;
-
-    /* [2026-11-04 官方口径修正] lpOverlapped 非 NULL 时，lpNumberOfBytesRecvd
-     * **必须传 NULL**。WSARecv 官方文档原文：
-     *   "Use NULL for this parameter [lpNumberOfBytesRecvd] if the
-     *    lpOverlapped parameter is not NULL to avoid potentially erroneous
-     *    results."
-     * 旧代码同时传了非 NULL 的 &bytesTransferred 与 overlapped，属于文档
-     * 明确要求避免的用法。完成字节数应以 GetQueuedCompletionStatus 的
-     * lpNumberOfBytesTransferred 为准（本后端 processOneCompletion 正是这么取的），
-     * 提交侧的局部变量拿不到可靠值、也没有用处。 */
-    if (isUdp) {
-        p->fromAddrLen = sizeof(p->fromAddr);
-        result = WSARecvFrom(p->socket, &buf, 1, NULL, &flags,
-            (struct sockaddr*)&p->fromAddr, &p->fromAddrLen,
-            (OVERLAPPED*)&p->readContext, NULL);
-    }
-    else {
-        result = WSARecv(p->socket, &buf, 1, NULL, &flags,
-            (OVERLAPPED*)&p->readContext, NULL);
-    }
-
-    if (result == 0) {
-        /* 同步完成：`WSARecv` 的提交侧已不再提供字节数（见上方注释：官方要求
-         * overlapped 非 NULL 时 lpNumberOfBytesRecvd 传 NULL）。这里置 0，
-         * 由后续的完成包（IOCP 对 overlapped socket 的同步完成同样会排队一个
-         * 完成包）携带真实字节数覆盖。 */
-        p->readContext.finishedBytes = 0;
-        p->readPending = true;
-    }
-    else if (WSAGetLastError() == WSA_IO_PENDING) {
-        /* 异步等待 */
-        p->readPending = true;
-    }
-    else {
-        /* 错误
-         * @note [2026-11-04 可观测性] WSARecv 的失败分支此前静默丢弃，导致
-         *       「读请求提交不出去」与「提交了但没有完成」两种完全不同的
-         *       故障在现场无法区分。WSAEWOULDBLOCK 在 Win32 上有一条专门
-         *       语义（官方 WSARecv 错误表）：
-         *         "Overlapped sockets: there are too many outstanding
-         *          overlapped I/O requests."
-         *       ——即在飞请求过多，属背压而非链路故障，稍后重挂即可；
-         *       其余错误码才是真异常。这里把两者分开记录。 */
-        {
-            int err = (int)WSAGetLastError();
-            if (err == WSAEWOULDBLOCK)
-                XPrintf("[XNetwork-W32] 读提交背压（在飞请求过多），稍后重挂\n");
-            else
-                XPrintf("[XNetwork-W32] 读提交失败 err=%d\n", err);
-        }
-        p->readPending = false;
-        /* 背压场景保留 armedMs，让看门狗不会误判为"挂死"。 */
-        p->readArmedMs = 0;
-        abandonSocketIocpOperation(p, &p->readContext);
-    }
+    /* 证据三：内核无数据 ⇒ 对端确实没发。 */
+    p->readArmedMs = W32_nowMs();
 }
 
 /* =========================================================================
@@ -832,91 +1412,128 @@ static uint64_t W32_nowMs(void)
  *         CancelIoEx 尝试取消；取消失败（NOT_FOUND = 操作其实已完成，
  *         见 MSDN CancelIoEx）也不影响回收决策——本函数只负责止损。
  */
+/** @brief 是否还有可受理新写的槽（未被占用、且 OVERLAPPED 未被内核持有）。 */
+static bool w32_hasFreeWriteSlot(const XDeviceNetworkContextWin32* p)
+{
+    int i;
+    if (!p) return false;
+    for (i = 0; i < XNETWORK_WRITE_SLOT_COUNT; ++i) {
+        const XDeviceNetworkWriteSlot* slot = &p->writeSlots[i];
+        if (!slot->inUse && !slot->armed && !slot->zombie) return true;
+    }
+    return false;
+}
+
+/**
+ * @brief 写槽挂起超时的止损动作（**只取消，不抢槽**）。
+ *
+ * @details 旧实现在这里把槽直接标成空闲，等于把一份**内核仍可能持有**的
+ *          OVERLAPPED 放回池子——下一次写立刻复用它，正是"完成包丢失"
+ *          的另一条制造路径（与读方向同源，见文件头不变量 A/B）。
+ *
+ *          现在的动作只有一个：对超时槽发 `CancelIoEx`。槽的释放严格由
+ *          该笔操作的 ABORTED 完成包在 `w32_reapIocpCompletion` 里完成。
+ *          若取消返回 `ERROR_NOT_FOUND`（官方语义：操作已完成、完成包在途），
+ *          同样什么都不做，等包到达。
+ *
+ * @note 计数进 `writeStallCount` 保持可观测；不改任何槽状态。
+ */
 static void w32_reapStalledWriteSlots(XDeviceNetworkContextWin32* p)
 {
     uint64_t now;
     int i;
-    bool anyFree = false;
 
     if (!p) return;
-    for (i = 0; i < XNETWORK_WRITE_SLOT_COUNT; ++i)
-        if (!p->writeSlots[i].inUse) { anyFree = true; break; }
-    if (anyFree) return;  /* 还有空槽：不必回收，交给超时判断自然清。 */
+    if (w32_hasFreeWriteSlot(p)) return;   /* 还有空槽：无需干预 */
 
     now = W32_nowMs();
     for (i = 0; i < XNETWORK_WRITE_SLOT_COUNT; ++i) {
         XDeviceNetworkWriteSlot* slot = &p->writeSlots[i];
-        if (!slot->inUse) continue;
-        if (now - slot->armedMs < XNETWORK_WRITE_SLOT_TIMEOUT_MS) continue;
-        if (p->socket != INVALID_SOCKET)
-            (void)CancelIoEx((HANDLE)p->socket, (OVERLAPPED*)&slot->ctx);
-        slot->inUse = false;
-        slot->armedMs = 0;
-        p->writeStallCount++;
-        XPrintf("[XNetwork-W32] 写槽 %d 超时 %ums 未完成（完成包疑似丢失），"
-                "已回收止损；累计 %u 次\n", i,
-                (unsigned)XNETWORK_WRITE_SLOT_TIMEOUT_MS,
-                (unsigned)p->writeStallCount);
+        if (!slot->armed) continue;
+        if (slot->armedMs != 0 && now - slot->armedMs < XNETWORK_WRITE_SLOT_TIMEOUT_MS)
+            continue;
+        if (p->socket == INVALID_SOCKET) continue;
+        if (CancelIoEx((HANDLE)p->socket, (OVERLAPPED*)&slot->ctx)) {
+            slot->armedMs = now;   /* 计时重置：等 ABORTED 完成包收尾 */
+            p->writeStallCount++;
+            XPrintf("[XNetwork-W32] 写槽 %d 超过 %ums 未完成，已取消；"
+                    "待 ABORTED 完成包回收（累计 %u 次）\n", i,
+                    (unsigned)XNETWORK_WRITE_SLOT_TIMEOUT_MS,
+                    (unsigned)p->writeStallCount);
+        }
     }
 }
 
-/** @brief 找空闲写槽；无空槽返回 NULL。 */
+/** @brief 找可用的写槽；**被内核持有（armed）或等收尾（zombie）的槽一律跳过**。 */
 static XDeviceNetworkWriteSlot* w32_allocWriteSlot(XDeviceNetworkContextWin32* p)
 {
     int i;
     if (!p) return NULL;
     for (i = 0; i < XNETWORK_WRITE_SLOT_COUNT; ++i) {
-        if (!p->writeSlots[i].inUse) {
-            p->writeSlots[i].inUse = true;
-            p->writeSlots[i].armedMs = W32_nowMs();
-            p->writeSlotCount++;
-            return &p->writeSlots[i];
-        }
+        XDeviceNetworkWriteSlot* slot = &p->writeSlots[i];
+        if (slot->inUse || slot->armed || slot->zombie) continue;
+        slot->inUse = true;
+        slot->armed = false;
+        slot->zombie = false;
+        slot->armedMs = 0;
+        p->writeSlotCount++;
+        p->writePending = true;
+        return slot;
     }
     return NULL;
 }
 
-/** @brief 归还写槽（完成 / 提交失败两条路径都走这里）。 */
-static void w32_freeWriteSlot(XDeviceNetworkContextWin32* p,
-                              XDeviceNetworkWriteSlot* slot)
+/** @brief 提交失败（不会有完成包）时就地回滚槽与在途计数。 */
+static void w32_rollbackWrite(XDeviceNetworkContextWin32* p, int index, int err)
 {
-    if (!slot) return;
-    slot->inUse = false;
-    slot->armedMs = 0;
-    if (p && p->writeSlotCount > 0) p->writeSlotCount--;
+    if (!p || index < 0 || index >= XNETWORK_WRITE_SLOT_COUNT) return;
+    abandonSocketIocpOperation(p, &p->writeSlots[index].ctx);
+    w32_releaseWriteSlot(p, index);
+    if (err != 0)
+        XPrintf("[XNetwork-W32] 写提交失败 err=%d（无完成包，已回滚槽 %d）\n",
+                err, index);
 }
 
-/** @brief 清空全部写槽（连接建立/断开时调用；在途写随之作废）。 */
+/** @brief 连接建立/断开时收敛写槽：在飞槽打 zombie，其余立即释放。 */
 static void w32_resetWriteSlots(XDeviceNetworkContextWin32* p)
 {
     int i;
     if (!p) return;
     for (i = 0; i < XNETWORK_WRITE_SLOT_COUNT; ++i) {
-        p->writeSlots[i].inUse = false;
-        p->writeSlots[i].armedMs = 0;
+        if (p->writeSlots[i].armed) {
+            /* 内核仍持有：只标记"连接已拆"，等 ABORTED 完成包回收。
+             * 绝不在此时清 armed —— 那会让下一次写复用这份 OVERLAPPED。 */
+            p->writeSlots[i].zombie = true;
+            continue;
+        }
+        w32_releaseWriteSlot(p, i);
     }
-    p->writeSlotCount = 0;
+    p->writeDoneHead = 0;
+    p->writeDoneTail = 0;
+    p->writeDoneCount = 0;
+    p->lastWriteBytes = 0;
+    p->writeStashLen = 0;
+    p->writePending = (p->writeSlotCount > 0);
 }
 
 /**
- * @brief 提交一次异步写（从槽池取独立 OVERLAPPED + 独立缓冲）。
- * @return 已提交（含立即完成）返回 true；无空槽/参数非法/提交失败返回 false。
- * @note  [2026-11-04 独立写槽根修] 每次提交独占一份 OVERLAPPED 与缓冲，
- *        满足 MSDN 对 OVERLAPPED 复用与 WSASend 缓冲所有权的硬性约束
- *        （见 XDeviceNetworkWriteSlot 的注释）；不再依赖布尔 writePending
- *        互斥，因此单个完成包丢失不再阻塞后续写。
+ * @brief 提交一次异步写（每次独占一份 OVERLAPPED + 独立缓冲）。
+ * @return 已提交（含同步完成）返回 true；无可用槽/参数非法/提交失败返回 false。
+ * @note  同步完成时 `WSASend` 返回 0，但 overlapped 套接字**仍会**投递完成包
+ *        （本后端未设置 FILE_SKIP_COMPLETION_PORT_ON_SUCCESS），因此槽必须
+ *        一直保持"内核持有"直到完成包出队；这里绝不重复投递完成包。
  */
 static bool startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64_t len,
     const XHostAddress* destAddr, uint16_t destPort, bool isUdp)
 {
     XDeviceNetworkContextWin32* p = W32(priv);
     XDeviceNetworkWriteSlot* slot;
+    int index;
 
     if (!p || !w32_has_stream_handle(p)) return false;
     if (len <= 0 || len > XNETWORK_WRITE_BUFFER_SIZE) return false;
     if (!data) return false;
 
-    /* 无空槽时先尝试回收超时槽（完成包丢失兜底），再取。 */
     slot = w32_allocWriteSlot(p);
     if (!slot) {
         w32_reapStalledWriteSlots(p);
@@ -924,6 +1541,7 @@ static bool startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
     }
     if (!slot) return false;   /* 真的写不动：调用方把数据留在 ring buffer 等下一轮。 */
 
+    index = (int)(slot - p->writeSlots);
     memcpy(slot->buffer, data, (size_t)len);
 
     memset(&slot->ctx, 0, sizeof(XEventContext_IOCP));
@@ -933,28 +1551,27 @@ static bool startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
         p->namedPipe != INVALID_HANDLE_VALUE ? (intptr_t)p->namedPipe : (intptr_t)p->socket);
     slot->ctx.eventMask = FD_WRITE;
     slot->ctx.finishedBytes = len;
+
+    slot->armed = true;        /* 内核即将持有：在完成包出队前不得复用 */
+    slot->armedMs = W32_nowMs();
+    slot->ioGen = p->ioGeneration;
     trackSocketIocpOperation(p, &slot->ctx);
 
     if (p->namedPipe != INVALID_HANDLE_VALUE) {
         DWORD bytesTransferred = 0;
-        if (WriteFile(p->namedPipe, slot->buffer, (DWORD)len,
-                      &bytesTransferred, (OVERLAPPED*)&slot->ctx)) {
-            slot->ctx.finishedBytes = bytesTransferred;
-            p->writePending = true;
+        if (WriteFile(p->namedPipe, slot->buffer, (DWORD)len, &bytesTransferred,
+                      (OVERLAPPED*)&slot->ctx))
             return true;
-        }
-        if (GetLastError() == ERROR_IO_PENDING) {
-            p->writePending = true;
+        if (GetLastError() == ERROR_IO_PENDING)
             return true;
-        }
-        abandonSocketIocpOperation(p, &slot->ctx);
-        w32_freeWriteSlot(p, slot);
+        w32_rollbackWrite(p, index, (int)GetLastError());
         return false;
     }
 
     {
         WSABUF buf;
         int result;
+
         buf.buf = slot->buffer;
         buf.len = (ULONG)len;
 
@@ -971,25 +1588,12 @@ static bool startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
                 (OVERLAPPED*)&slot->ctx, NULL);
         }
 
-        if (result == 0) {
-            /* An overlapped socket associated with an IOCP queues its own
-             * completion packet even when WSASend completes synchronously.
-             * Posting another packet here delivers the same OVERLAPPED twice;
-             * a later delivery can outlive the FTP data socket that owned it.
-             * 槽在完成事件里归还，这里只标记"有写在途"。 */
-            p->writePending = true;
-            return true;
-        }
-        if (WSAGetLastError() == WSA_IO_PENDING) {
-            p->writePending = true;
-            return true;
-        }
-        abandonSocketIocpOperation(p, &slot->ctx);
-        w32_freeWriteSlot(p, slot);
+        if (result == 0) return true;                       /* 同步完成，包照常排队 */
+        if (WSAGetLastError() == WSA_IO_PENDING) return true;
+        w32_rollbackWrite(p, index, (int)WSAGetLastError());
         return false;
     }
 }
-
 
 /**
  * @brief 把写通道 ring buffer 里积压的数据续发出去（写完成后的回捞）。
@@ -1034,6 +1638,7 @@ uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
 
     p->socket = socket(af, type, proto);
     if (p->socket == INVALID_SOCKET) return 0;
+    w32_newIoGeneration(p);
 
     u_long mode = 1;
     ioctlsocket(p->socket, FIONBIO, &mode);
@@ -1079,7 +1684,10 @@ uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
 
     p->base.m_connected = true;
 
-    if (sockType == XDeviceNetwork_Udp) startAsyncRead(priv, true);
+    if (sockType == XDeviceNetwork_Udp) {
+        p->isUdpRead = true;
+        (void)w32_armRead(priv);
+    }
     return actualPort;
 }
 
@@ -1110,6 +1718,7 @@ bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
 
     p->socket = socket(ai->ai_family, type, proto);
     if (p->socket == INVALID_SOCKET) { freeaddrinfo(result); return false; }
+    w32_newIoGeneration(p);
 
     u_long mode = 1;
     ioctlsocket(p->socket, FIONBIO, &mode);
@@ -1180,7 +1789,8 @@ bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
         p->base.m_connected = true;
         p->connectPending = false;
         syncSocketEndpoints(priv);
-        startAsyncRead(priv, true);
+        p->isUdpRead = true;
+        (void)w32_armRead(priv);
         return true;
     }
     return true;
@@ -1228,12 +1838,12 @@ bool XDeviceNetwork_socketConnectLocal(XFd xfd, const XString* pipePath,
     }
 
     p->namedPipe = handle;
+    w32_newIoGeneration(p);
     p->base.m_connected = true;
     p->connectPending = false;
-    p->readPending = false;
-    p->writePending = false;
+    p->isUdpRead = false;
     w32_resetWriteSlots(p);
-    startAsyncRead(priv, false);
+    (void)w32_armRead(priv);
     return true;
 }
 
@@ -1242,22 +1852,38 @@ void XDeviceNetwork_socketDisconnect(XFd xfd)
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return;
     XDeviceNetworkContextWin32* p = W32(priv);
+    int i;
 
+    /* 顺序不可倒：**先** CancelIoEx **再** closesocket。句柄一经关闭就可能
+     * 被系统立即复用，之后再对旧句柄发取消会打到别人的连接上。
+     *
+     * 取消产生的 ABORTED 完成包由 `w32_reapIocpCompletion` 回收槽；
+     * 这里**绝不**把在飞槽标空闲（不变量 B/C），否则重连会复用一份
+     * 内核仍持有的 OVERLAPPED —— 那正是"重连后只发不收"的成因。 */
     if (p->socket != INVALID_SOCKET) {
-        CancelIoEx((HANDLE)p->socket, NULL);
+        (void)CancelIoEx((HANDLE)p->socket, NULL);
         closesocket(p->socket);
         p->socket = INVALID_SOCKET;
     }
     if (p->namedPipe != INVALID_HANDLE_VALUE) {
-        CancelIoEx(p->namedPipe, NULL);
+        (void)CancelIoEx(p->namedPipe, NULL);
         CloseHandle(p->namedPipe);
         p->namedPipe = INVALID_HANDLE_VALUE;
     }
+    w32_newIoGeneration(p);   /* 旧连接残留的完成包从此不再匹配 */
     p->base.m_connected = false;
     p->connectPending = false;
-    p->readPending = false;
-    p->writePending = false;
+    p->acceptPending = false;
+    p->acceptReady = false;
+
+    /* 读：在飞槽保持 armed（等 ABORTED 包回收），呈现槽直接作废。 */
+    p->readActiveSlot = -1;
+    p->readArmedMs = 0;
+    for (i = 0; i < XNETWORK_READ_SLOT_COUNT; ++i)
+        p->readSlots[i].ready = false;
+
     w32_resetWriteSlots(p);
+    p->writePending = (p->writeSlotCount > 0);
 }
 
 int64_t XDeviceNetwork_socketRead(XFd xfd, void* buf, int64_t len,
@@ -1268,86 +1894,15 @@ int64_t XDeviceNetwork_socketRead(XFd xfd, void* buf, int64_t len,
     XDeviceNetworkContextWin32* p = W32(priv);
     if (!w32_has_stream_handle(p)) return -1;
 
-    /* [2026-11-04 读挂死看门狗] 读请求提交后长时间没有任何完成 ⇒ 重挂一次。
-     *
-     * 实测故障形态：两端在约 2.1s 同时停止接收，之后各自继续发送 5~10 秒
-     * （客户端最后 RX 2108ms / 最后 TX 7165ms；服务端 2294ms / 12257ms），
-     * 最终双双静默判线。写方向正常、写槽看门狗零触发 ⇒ 停的是**读方向**。
-     *
-     * 读请求由 `startAsyncRead` 提交并被 `readPending` 互斥；只有
-     * `socketHandleEvent` 的 Read 分支会清它。一旦某个读完成事件没有投递到
-     * 那里（平台侧完成包异常），`readPending` 永久为真 ⇒ 再也不重挂读 ⇒
-     * 该连接只发不收。
-     *
-     * 这里在每次读调用（会话 pump 的必经路径）做超时检查：挂起超过阈值就
-     * 用 CancelIoEx 尝试取消旧请求并重挂，把"永久只发不收"降级为一次可观测
-     * 的抖动。计数进 readStallCount 供诊断。 */
-    if (p->readPending && p->readArmedMs != 0
+    (void)sockType;   /* 重挂用 p->isUdpRead（挂读时的真实类型），不由读调用改判。 */
+
+    /* [读挂起看门狗] 每次应用层读（会话 pump 的必经路径）检查一次在飞读的
+     * 挂起时长；超阈值只做"观察 + 取消"，绝不在原地复用 OVERLAPPED 重投
+     * （旧实现在这里取消后立刻重投，是完成包丢失的直接来源，见
+     * `w32_checkReadStall` 与 `verify/iocp_overlapped_alias_repro.c`）。 */
+    if (p->readArmedSlot >= 0 && p->readArmedMs != 0
         && (W32_nowMs() - p->readArmedMs) > XNETWORK_READ_STALL_MS) {
-        /* [2026-11-04 读停摆的三态判定] 用两个**互相独立**的官方手段把
-         * "读不动"拆成三种可区分的情况，而不是一律取消重挂：
-         *
-         *   A. GetOverlappedResult(FALSE) == TRUE
-         *      内核已完成、完成包没投递到端口。数据已在 readBuffer 里，
-         *      取消会丢数据 ⇒ 按完成处理（补投递）。
-         *      官方："If this parameter is FALSE and the operation is still
-         *      pending, the function returns FALSE and GetLastError returns
-         *      ERROR_IO_INCOMPLETE."（Learn / ioapiset / GetOverlappedResult）
-         *
-         *   B. FIONREAD > 0 而操作未完成
-         *      数据已在内核接收队列，但挂起的读没有完成它。这是读通道
-         *      真故障 ⇒ 取消后重挂，让新读把队列里的数据取走。
-         *
-         *   C. FIONREAD == 0 而操作未完成
-         *      内核里没有数据 ⇒ 对端确实没发。这不是本端故障，取消重挂
-         *      只是为了不让 readPending 永久卡死（重挂后继续等）。
-         *
-         * 附官方警告（Learn / fileio / i-o-completion-ports）："When a file
-         * handle is associated with a completion port, the status block passed
-         * in will not be updated until the packet is removed from the
-         * completion port." —— 故 A 在 IOCP 句柄上可能被滞后状态误判，
-         * 因此把它与 FIONREAD 并列作为独立证据，两者都拿不到才走 C。 */
-        DWORD got = 0;
-        BOOL ovDone = FALSE;
-        u_long readable = 0;
-
-        if (p->socket != INVALID_SOCKET) {
-            ovDone = GetOverlappedResult((HANDLE)p->socket,
-                                         (OVERLAPPED*)&p->readContext,
-                                         &got, FALSE);
-            (void)ioctlsocket(p->socket, FIONREAD, &readable);
-        }
-
-        p->readStallCount++;
-        if (ovDone) {
-            /* 情况 A：操作已完成，补投递。 */
-            XPrintf("[XNetwork-W32] 读停摆=完成包丢失（已结束 %lu 字节），"
-                    "补投递；累计 %u 次\n",
-                    (unsigned long)got, (unsigned)p->readStallCount);
-            p->readContext.finishedBytes = got;
-            p->readPending = false;
-            p->readArmedMs = 0;
-            {
-                XEventSockAct fakeAct;
-                memset(&fakeAct, 0, sizeof(fakeAct));
-                fakeAct.m_base.m_type = XEVENT_TYPE_SOCK_ACT;
-                fakeAct.fd = xfd;
-                fakeAct.actType = XSocketActType_Read;
-                (void)XDeviceNetwork_socketHandleEvent(xfd, &fakeAct);
-            }
-            return 0;   /* 本轮数据已交给上层。 */
-        }
-
-        XPrintf("[XNetwork-W32] 读停摆=%s（内核待读=%lu 字节），取消重挂；"
-                "累计 %u 次\n",
-                readable > 0 ? "数据在内核但读未完成" : "内核无数据(对端未发)",
-                (unsigned long)readable, (unsigned)p->readStallCount);
-        if (p->socket != INVALID_SOCKET) {
-            (void)CancelIoEx((HANDLE)p->socket, (OVERLAPPED*)&p->readContext);
-        }
-        p->readPending = false;
-        p->readArmedMs = 0;
-        startAsyncRead(priv, sockType == XDeviceNetwork_Udp);
+        w32_checkReadStall(xfd, priv);
     }
 
     if (ringBuffer) {
@@ -1361,67 +1916,91 @@ int64_t XDeviceNetwork_socketRead(XFd xfd, void* buf, int64_t len,
     return 0;
 }
 
+/**
+ * @brief 按序推进写积压（holding pen → ring buffer）。
+ *
+ * @details 写方向的顺序只有一条硬约束：**先到的字节必须先提交**。为此：
+ *          - `writeStash` 保存"上轮因提交失败而没发出去的那一块"，永远先发；
+ *          - 只有 stash 排空后才从 ring buffer 取下一块；
+ *          - 取出的块提交失败时放回 stash（保持它仍排在所有后续数据之前），
+ *            绝不"写回 ring 尾部"——那会让帧的字节流乱序（旧实现如此）。
+ * @note 每个循环最多占一个写槽；在途多笔由 TCP 保证按提交顺序交付。
+ */
+static void w32_pumpWrites(XDeviceNetworkContext* priv, void* ringBuffer, bool isUdp)
+{
+    XDeviceNetworkContextWin32* p = W32(priv);
+    struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
+
+    if (!p) return;
+
+    if (p->writeStashLen > 0) {
+        if (!startAsyncWrite(priv, p->writeStash, (int64_t)p->writeStashLen,
+                             NULL, 0, isUdp))
+            return;
+        p->writeStashLen = 0;
+    }
+
+    while (rb && XRingBuffer_available(rb) > 0 && w32_hasFreeWriteSlot(p)) {
+        char temp[XNETWORK_WRITE_BUFFER_SIZE];
+        size_t chunk = XRingBuffer_available(rb);
+        size_t got;
+        if (chunk > sizeof(temp)) chunk = sizeof(temp);
+        got = XRingBuffer_read(rb, temp, chunk);
+        if (got == 0) break;
+        if (!startAsyncWrite(priv, temp, (int64_t)got, NULL, 0, isUdp)) {
+            memcpy(p->writeStash, temp, got);
+            p->writeStashLen = got;
+            break;
+        }
+    }
+}
+
 int64_t XDeviceNetwork_socketWrite(XFd xfd, const void* buf, int64_t len,
     XDeviceNetworkSocketType sockType, const XHostAddress* destAddr,
     uint16_t destPort, void* ringBuffer)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
+    struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
+    XDeviceNetworkContextWin32* p;
+    bool isUdp;
+
     if (!priv || !buf || len <= 0) return -1;
-    XDeviceNetworkContextWin32* p = W32(priv);
+    p = W32(priv);
     if (!w32_has_stream_handle(p)) return -1;
+    isUdp = (sockType == XDeviceNetwork_Udp);
 
-    if (ringBuffer) {
-        struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
-        size_t pending = XRingBuffer_available(rb);
-        if (pending > 0 && !p->writePending) {
-            char tempBuf[XNETWORK_WRITE_BUFFER_SIZE];
-            size_t toSend = XRingBuffer_read(rb, tempBuf, XNETWORK_WRITE_BUFFER_SIZE);
-            if (toSend > 0) {
-                startAsyncWrite(priv, tempBuf, toSend, destAddr, destPort, sockType == XDeviceNetwork_Udp);
-            }
-        }
+    /* 1. 先把已有积压按序推进（含上轮失败的那一块）。 */
+    w32_pumpWrites(priv, ringBuffer, isUdp);
+
+    /* 2. 前面仍有未发出的字节 ⇒ 本次数据只能排队，保证字节流顺序。 */
+    if (p->writeStashLen > 0
+        || (rb && XRingBuffer_available(rb) > 0)
+        || !w32_hasFreeWriteSlot(p)) {
+        if (!rb) return -1;
+        return (int64_t)XRingBuffer_write(rb, buf, (size_t)len);
     }
 
-    if (!p->writePending) {
-        if (len > XNETWORK_WRITE_BUFFER_SIZE) {
-            if (ringBuffer) {
-                struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
-                XRingBuffer_write(rb, buf, len);
-                {
-                    char tempBuf[XNETWORK_WRITE_BUFFER_SIZE];
-                    size_t toSend = XRingBuffer_read(rb, tempBuf,
-                                                     XNETWORK_WRITE_BUFFER_SIZE);
-                    if (toSend > 0) {
-                        startAsyncWrite(priv, tempBuf, toSend,
-                                        destAddr, destPort, sockType == XDeviceNetwork_Udp);
-                    }
-                }
-                return len;
-            }
-            len = XNETWORK_WRITE_BUFFER_SIZE;
-        }
-        /* [2026-11-04] 只有真正提交成功才回报 len；提交失败（槽池耗尽且
-         * 回收不出空槽）必须让调用方看见失败，否则上层把"没发出去"当成功
-         * 累加发送字节数（正是假成功掩盖真丢帧的成因之一）。 */
-        if (!startAsyncWrite(priv, buf, len, destAddr, destPort,
-                             sockType == XDeviceNetwork_Udp)) {
-            if (ringBuffer) {
-                struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
-                return XRingBuffer_write(rb, buf, len);
-            }
-            return -1;
-        }
-        return len;
+    /* 3. 空闲通道：直接提交本次数据。 */
+    if (len <= XNETWORK_WRITE_BUFFER_SIZE) {
+        if (startAsyncWrite(priv, buf, len, destAddr, destPort, isUdp))
+            return len;
+        if (!rb) return -1;
+        return (int64_t)XRingBuffer_write(rb, buf, (size_t)len);
     }
 
-    if (ringBuffer) {
-        struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
-        return XRingBuffer_write(rb, buf, len);
+    /* 4. 大于单槽缓冲：整块入队，由 pump 分片连续提交（顺序天然正确）。 */
+    if (!rb) {
+        if (startAsyncWrite(priv, buf, XNETWORK_WRITE_BUFFER_SIZE,
+                            destAddr, destPort, isUdp))
+            return XNETWORK_WRITE_BUFFER_SIZE;
+        return -1;
     }
-    return -1;
+    {
+        size_t written = XRingBuffer_write(rb, buf, (size_t)len);
+        w32_pumpWrites(priv, ringBuffer, isUdp);
+        return (int64_t)written;
+    }
 }
-
-
 
 bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
 {
@@ -1435,30 +2014,15 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
     XEventSockAct* sockAct = (XEventSockAct*)e;
 
     if (sockAct->actType & XSocketActType_Read) {
-        p->readPending = false;
-        return p->readContext.finishedBytes > 0;
+        /* 在飞/呈现状态全部由完成包驱动：这里只回报"本次完成是否带数据"。
+         * 不再清"读在飞"标志——它只由 `w32_reapIocpCompletion` 迁移。 */
+
+        return XDeviceNetwork_socketReadFinishedBytes(xfd) > 0;
     }
     if (sockAct->actType & XSocketActType_Write) {
-        /* [2026-11-04 独立写槽] 每次写完成按"哪个槽还在途且无完成"归还该槽。
-         * 完成事件本身不带 OVERLAPPED 指针（CQEntry 只传 fd/掩码），故按
-         * 提交顺序归还最早在途的槽：IOCP 对同一句柄的完成包保持提交顺序，
-         * 这一对应关系在本后端的用法下成立。
-         * `writePending` 改为「是否仍有在途写」，供 socketWrite 判断能否
-         * 直接提交（>=1 在途时走 ring buffer 排队）。 */
-        {
-            int i;
-            for (i = 0; i < XNETWORK_WRITE_SLOT_COUNT; ++i) {
-                if (p->writeSlots[i].inUse) {
-                    w32_freeWriteSlot(p, &p->writeSlots[i]);
-                    break;
-                }
-            }
-        }
-        if (p->writeSlotCount == 0)
-            p->writePending = false;
-        /* 积压续发由上层统一驱动：XAbstractSocket 在写完成分支发出
-         * XDeviceNetworkCommand_ContinueWrite → socketContinueWrite 回捞
-         * ring buffer。本后端不再自行续发（避免两套续发逻辑分叉）。 */
+        /* 写槽的归还已在完成回调里按 OVERLAPPED 身份完成（不再按提交顺序
+         * 猜"最早的在途槽"）。这里只把本次完成的字节数呈现给上层。 */
+        p->lastWriteBytes = w32_popWriteDone(p);
         return true;
     }
     if (sockAct->actType & XSocketActType_Connect) {
@@ -1466,10 +2030,14 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
         /* 检查连接是否真正成功（ConnectEx 失败时 SO_ERROR 非零） */
         int soError = 0;
         int soLen = sizeof(soError);
-        getsockopt(p->socket, SOL_SOCKET, SO_ERROR, (char*)&soError, &soLen);
+        if (p->socket != INVALID_SOCKET)
+            getsockopt(p->socket, SOL_SOCKET, SO_ERROR, (char*)&soError, &soLen);
+        else
+            soError = WSAENOTCONN;
         if (soError == 0) {
             if (setsockopt(p->socket, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0) == 0) {
                 p->base.m_connected = true;
+                p->isUdpRead = false;
                 syncSocketEndpoints(priv);
             } else {
                 p->base.m_connected = false;
@@ -1479,11 +2047,11 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
         }
         return true;
     }
-    /* [2026-11-04 accept 完成] AcceptEx 完成包到达时**不得**清 acceptPending。
+    /* [accept 完成] AcceptEx 完成包到达时**不得**清 acceptPending。
      *
      * 这个标志的语义是"监听 socket 上已挂了一个 AcceptEx"，只有消费方
-     * （`XDeviceNetwork_serverGetAcceptedSocket` 取走 acceptSocket 后）才
-     * 能清它。若在本函数里清掉，`serverAccept` 的守卫就失效，会在旧
+     * （`XDeviceNetwork_serverGetAcceptedSocket` 取走 acceptSocket 后）
+     * 才能清它。若在本函数里清掉，`serverAccept` 的守卫就失效，会在旧
      * AcceptEx 尚未消费时再挂一个 ⇒ 同一个监听 socket 上两个 AcceptEx
      * 同时在飞，第二个完成时 `p->acceptSocket` 被覆盖（第一个 socket
      * 泄漏且仍关联 IOCP）⇒ 实测表现为「客户端只连一次，服务端却反复
@@ -1491,7 +2059,7 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
      *
      * 这里只回报"有完成可消费"，由上层决定何时取走、何时重挂。 */
     if (sockAct->actType & XSocketActType_Accept) {
-        return p->acceptSocket != INVALID_SOCKET;
+        return p->acceptReady && p->acceptSocket != INVALID_SOCKET;
     }
     return false;
 }
@@ -1504,12 +2072,21 @@ bool XDeviceNetwork_socketSetDescriptor(XFd deviceFd, intptr_t fd, int state, in
     XDeviceNetworkContextWin32* p = W32(priv);
 
     p->socket = (SOCKET)fd;
+    w32_newIoGeneration(p);
     if (!iocp_assoc(p->socket, priv->m_owner)) { p->socket = INVALID_SOCKET; return false; }
     p->base.m_connected = (state == 3);
-    if (p->base.m_connected) { p->autoRead = true; startAsyncRead(priv, false); }
+    p->isUdpRead = false;
+    if (p->base.m_connected) {
+        p->autoRead = true;
+        (void)w32_armRead(priv);   /* 在飞判据仍由 readArmedSlot 把关 */
+    }
     return true;
 }
-
+/**
+ * @brief 接管一个已存在的监听套接字（服务端描述符注入路径）。
+ * @details 与 `socketSetDescriptor` 的区别只在语义：监听套接字不挂读、只挂
+ *          AcceptEx。`isServer` 置位后本 context 不再允许二次接管。
+ */
 bool XDeviceNetwork_serverSetDescriptor(XFd deviceFd, intptr_t fd)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(deviceFd);
@@ -1521,11 +2098,11 @@ bool XDeviceNetwork_serverSetDescriptor(XFd deviceFd, intptr_t fd)
     if (!iocp_assoc((SOCKET)fd, priv->m_owner)) return false;
 
     p->socket = (SOCKET)fd;
+    w32_newIoGeneration(p);
     p->isServer = true;
     p->base.m_connected = true;
     return true;
 }
-
 bool XDeviceNetwork_socketSetOption(XFd xfd, int option, const void* value)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
@@ -1585,29 +2162,35 @@ void XDeviceNetwork_socketSetReadBufferSize(XFd xfd, int64_t size)
 const char* XDeviceNetwork_socketReadBuffer(XFd xfd)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
-    return priv ? W32(priv)->readBuffer : NULL;
+    XDeviceNetworkContextWin32* p;
+    if (!priv) return NULL;
+    p = W32(priv);
+    /* 呈现的永远是"当前这批完成数据所在的那一个读槽"。上层只在
+     * `ReadFinishedBytes > 0` 时读它，两者由同一次完成包同时设定。 */
+    if (p->readActiveSlot >= 0 && p->readActiveSlot < XNETWORK_READ_SLOT_COUNT)
+        return p->readSlots[p->readActiveSlot].buffer;
+    return NULL;
 }
 
 size_t XDeviceNetwork_socketReadFinishedBytes(XFd xfd)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
-    return priv ? W32(priv)->readContext.finishedBytes : 0;
+    XDeviceNetworkContextWin32* p;
+    if (!priv) return 0;
+    p = W32(priv);
+    if (p->readActiveSlot >= 0 && p->readActiveSlot < XNETWORK_READ_SLOT_COUNT)
+        return p->readSlots[p->readActiveSlot].ctx.finishedBytes;
+    return 0;
 }
 
 size_t XDeviceNetwork_socketWriteFinishedBytes(XFd xfd)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
-    XDeviceNetworkContextWin32* p;
-    int i;
     if (!priv) return 0;
-    p = W32(priv);
-    /* [2026-11-04 独立写槽] 无单一 writeContext 可查：取最近一个在途槽
-     * 的完成字节数（全空时返回 0）。上层只用它做"本次写是否完成"的观测。 */
-    for (i = XNETWORK_WRITE_SLOT_COUNT - 1; i >= 0; --i) {
-        if (p->writeSlots[i].inUse)
-            return p->writeSlots[i].ctx.finishedBytes;
-    }
-    return 0;
+    /* 完成回调把每笔写的字节数压进 FIFO，Write 事件消费时落进
+     * lastWriteBytes；因此这里读到的是"本次 Write 事件对应那一笔"的字节数，
+     * 而不是"最后一个在途槽碰巧剩下的值"（旧实现会重复/错报 bytesWritten）。 */
+    return W32(priv)->lastWriteBytes;
 }
 
 bool XDeviceNetwork_socketWritePending(XFd xfd)
@@ -1619,10 +2202,19 @@ bool XDeviceNetwork_socketWritePending(XFd xfd)
 void XDeviceNetwork_socketContinueRead(XFd xfd, bool isUdp)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
+    XDeviceNetworkContextWin32* p;
     if (!priv) return;
-    XDeviceNetworkContextWin32* p = W32(priv);
-    p->readPending = false;
-    if (p->autoRead && p->base.m_connected) startAsyncRead(priv, isUdp);
+    p = W32(priv);
+
+    /* 上层已把当前这批数据取走：释放"呈现槽"。注意这里释放的是**数据**，
+     * 不是"在飞"标志——在飞关系只由完成包迁移（不变量 B）。因此本函数被
+     * 重复调用、或在读请求仍在飞时被调用，都只是空操作，不会造成二次投递。 */
+    if (p->readActiveSlot >= 0 && p->readActiveSlot < XNETWORK_READ_SLOT_COUNT) {
+        p->readSlots[p->readActiveSlot].ready = false;
+        p->readActiveSlot = -1;
+    }
+    if (isUdp) p->isUdpRead = true;
+    (void)w32_armRead(priv);
 }
 
 /* =========================================================================
@@ -1645,6 +2237,7 @@ bool XDeviceNetwork_serverAccept(XFd xfd)
     if (acceptSock == INVALID_SOCKET) return false;
 
     p->acceptSocket = acceptSock;
+    p->acceptReady = false;   /* 只有本笔 AcceptEx 的完成包才能把它置真 */
 
     memset(&p->acceptContext, 0, sizeof(XEventContext_IOCP));
     p->acceptContext.base.type = XEventContextType_Type_Socket;
@@ -1663,6 +2256,7 @@ bool XDeviceNetwork_serverAccept(XFd xfd)
 
     closesocket(acceptSock);
     p->acceptSocket = INVALID_SOCKET;
+    p->acceptReady = false;
     abandonSocketIocpOperation(p, &p->acceptContext);
     return false;
 }
@@ -1716,6 +2310,7 @@ XDeviceNetworkServerHandle XDeviceNetwork_serverCreate(XFd deviceFd, const XHost
         return -1;
     }
     p->socket = s;
+    w32_newIoGeneration(p);
     p->isServer = true;    p->base.m_connected = true;
 
     {
@@ -2802,33 +3397,17 @@ int XDeviceNetwork_gssapiAuth(const XString* serviceName,
 void XDeviceNetwork_socketContinueWrite(XFd xfd, XRingBuffer* ringBuffer, bool isUdp)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
-    if (!priv || !ringBuffer) return;
-    XDeviceNetworkContextWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p;
+    if (!priv) return;
+    p = W32(priv);
     if (!w32_has_stream_handle(p)) return;
-    /* [2026-11-04 独立写槽] 去掉 writePending 门：槽池允许多写在途，
-     * 只要还有空槽就能继续推进积压。原先 `if (p->writePending) return;`
-     * 会在单个完成包丢失后永久挡住续发。
-     * @note 读取顺序修正：先确认 startAsyncWrite 有能力受理（提交失败时
-     *       不消费 ring buffer），否则读走的数据会直接丢失。 */
-    {
-        struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
-        size_t pending = XRingBuffer_available(rb);
-        char tempBuf[XNETWORK_WRITE_BUFFER_SIZE];
-        size_t chunk = pending;
-        size_t got;
-        if (pending == 0) return;
-        if (chunk > XNETWORK_WRITE_BUFFER_SIZE) chunk = XNETWORK_WRITE_BUFFER_SIZE;
-        got = XRingBuffer_read(rb, tempBuf, chunk);
-        if (got > 0) {
-            if (!startAsyncWrite(priv, tempBuf, (int64_t)got, NULL, 0, isUdp)) {
-                /* 提交失败：把刚取出的数据写回队列头（下一轮再试），
-                 * 避免"读走即丢"。 */
-                XRingBuffer_write(rb, tempBuf, got);
-            }
-        }
-    }
-}
 
+    /* 续发只有一个实现：`w32_pumpWrites`（holding pen → ring buffer，保序、
+     * 先预检槽位再从队列取数据）。旧实现自带一份"取一块发一块、失败写回
+     * 队尾"的逻辑：既与 socketWrite 的续发路径语义分叉，失败回写队尾还会
+     * 打乱字节流顺序（同一帧被拆开后乱序到达）。 */
+    w32_pumpWrites(priv, ringBuffer, isUdp);
+}
 #endif /* XNETWORK_WIN_SOCKET_IOCP —— 写续发段结束 */
 
 #endif /* XNETWORK_USE_PLATFORM_API */

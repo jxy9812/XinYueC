@@ -136,6 +136,9 @@ bool XNetIoRingWin32_assocHandle(XNetIoRingWin32* ring, HANDLE handle,
  * @param overlapped        OVERLAPPED 指针（NULL 表示纯唤醒）
  * @return true=成功；false=失败
  */
+/** @brief 本事件环累计的完成端口检查次数（单调递增，供后端区分「丢包」与「包还在端口里排队」）。 */
+uint32_t XNetIoRingWin32_pollSeq(void);
+
 bool XNetIoRingWin32_postCompletion(XNetIoRingWin32* ring,
                                      DWORD bytesTransferred,
                                      ULONG_PTR completionKey,

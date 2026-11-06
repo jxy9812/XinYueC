@@ -102,6 +102,7 @@ typedef struct XNetIoRingWin32 {
     XAbstractNetIoRing m_class;   /**< 基类（必须位于第一位） */
     HANDLE  m_iocp;               /**< IOCP 完成端口句柄 */
     bool    m_ownsIocp;           /**< 是否由本实例创建 IOCP（false=使用外部端口） */
+    volatile LONG m_wakePending;  /**< 端口里是否已有未取走的唤醒包（0/1，防洪水） */
 
     /* 套接字就绪轮询表（select 模型，WSAEventSelect 后端使用）。 */
     XNetIoRingWsaSlot m_wsaSlots[XNETIORING_WIN32_MAX_WSA_EVENTS];
@@ -217,6 +218,27 @@ static bool anyWsaEventSignaled(XNetIoRingWin32* win)
 #define XNETIORING_WSA_POLL_SLICE_MS 10
 
 /* ================================================================
+ * 完成端口检查计数器
+ *
+ * 用途：把"完成包丢失"与"完成包还在端口里排队、只是本线程尚未取走"
+ * 区分开。`GetOverlappedResult` 只看状态块——内核已完成而包还在端口里
+ * 时它同样返回 TRUE，仅凭它判定丢包会把正常排队误判成丢包
+ * （实测：GUI 切页重绘让一个投递批次耗时数秒，客户端连续误判 3 次，
+ * 把 3 个读槽全部退役，读通道随之停摆）。
+ *
+ * 判据：自挂读起，端口至少被**检查**过 N 次而该包仍未出队，才成立丢包。
+ * 每次 `pollPlatform` / `waitForEvents` 都算一次检查。
+ * ================================================================ */
+static volatile LONG g_netIoRingPollSeq = 0;
+/** @brief 已取走的唤醒包累计数（诊断：唤醒洪水/排队饥饿是否成立）。 */
+static volatile LONG g_netIoRingWakePackets = 0;
+
+uint32_t XNetIoRingWin32_pollSeq(void)
+{
+    return (uint32_t)InterlockedCompareExchange(&g_netIoRingPollSeq, 0, 0);
+}
+
+/* ================================================================
  * IOCP 完成处理（公共辅助函数）
  * ================================================================ */
 
@@ -229,6 +251,8 @@ static void processOneCompletion(XAbstractNetIoRing* self, BOOL success,
     XEventContext_IOCP* ioCtx = (XEventContext_IOCP*)overlapped;
     XEventContextCompletionCallback completionCallback = NULL;
     void* completionUserData = NULL;
+
+
 
     if (ctx->type == XEventContextType_Type_Timer) {
         /* 定时器完成：直接投递定时器事件到应用层 */
@@ -312,21 +336,36 @@ static void VXNetIoRingWin32_pollPlatform(XAbstractNetIoRing* self) {
     ULONG_PTR completionKey = 0;
     LPOVERLAPPED overlapped = NULL;
     int batchCount = 0;
+    int wakeTaken = 0;
 
     if (!win || !win->m_iocp) return;
 
     /* [2026-11-04] 先扫 WSA 就绪事件：WSAEventSelect 套接字后端不使用
      * 完成包，就绪只体现为事件对象置位。放在 IOCP 之前，保证同一次
      * pollPlatform 内网络就绪不被 IO 完成批量挤到下一轮。 */
+    (void)InterlockedIncrement(&g_netIoRingPollSeq);
     pollWsaEvents(win);
+
 
     /* 非阻塞循环获取 IOCP 完成包 */
     while (batchCount < XNETIORING_WIN32_POLL_BATCH) {
         BOOL success = GetQueuedCompletionStatus(
             win->m_iocp, &bytesTransferred, &completionKey, &overlapped, 0);
 
-        /* 无完成包可取（超时/无事件），退出循环 */
-        if (overlapped == NULL) break;
+        if (overlapped == NULL) {
+            if (!success) break;          /* 超时：确实无包可取 */
+            /* 唤醒包（PostQueuedCompletionStatus 带 NULL overlapped）**不是
+             * 完成包**。旧实现遇到它就 break，于是只要端口里有唤醒包，后面的
+             * 真实完成包每轮只能前进一个包位——而任意线程 postEvent 都会投
+             * 一个唤醒包，唤醒包一多，完成包就被"排队饥饿"：内核早已完成、
+             * 状态块写好 750 字节，包却要等数秒才被取走（实测跨进程联调：
+             * 读看门狗因此反复误判"完成包丢失"并退役读槽，最终静默判线）。
+             * 这里继续取，把唤醒包一次性排空。 */
+            (void)InterlockedExchange(&win->m_wakePending, 0);
+            (void)InterlockedIncrement(&g_netIoRingWakePackets);
+            if (++wakeTaken >= XNETIORING_WIN32_POLL_BATCH) break;
+            continue;
+        }
 
         DWORD lastError = success ? 0 : GetLastError();
         processOneCompletion(self, success, bytesTransferred,
@@ -437,6 +476,12 @@ static void VXNetIoRingWin32_waitForEvents(XAbstractNetIoRing* self, int timeout
 
             success = GetQueuedCompletionStatus(
                 win->m_iocp, &bytesTransferred, &completionKey, &overlapped, slice);
+            if (overlapped == NULL && success) {
+                /* 分片路径同样要清"唤醒包在队"标记，否则 wakeUp 会因幂等
+                 * 判定而停止投递，阻塞等待就只剩超时兜底。 */
+                (void)InterlockedExchange(&win->m_wakePending, 0);
+                (void)InterlockedIncrement(&g_netIoRingWakePackets);
+            }
             if (overlapped != NULL) {
                 DWORD lastError = success ? 0 : GetLastError();
                 processOneCompletion(self, success, bytesTransferred,
@@ -457,11 +502,19 @@ static void VXNetIoRingWin32_waitForEvents(XAbstractNetIoRing* self, int timeout
 
     winTimeout = (timeoutMs < 0) ? INFINITE : (DWORD)timeoutMs;
     {
-        BOOL success = GetQueuedCompletionStatus(
+        BOOL success;
+        (void)InterlockedIncrement(&g_netIoRingPollSeq);
+        success = GetQueuedCompletionStatus(
             win->m_iocp, &bytesTransferred, &completionKey, &overlapped, winTimeout);
 
         /* overlapped==NULL 表示超时或 wakeUp 唤醒，无完成需处理 */
-        if (overlapped == NULL) return;
+        if (overlapped == NULL) {
+            if (success) {
+                (void)InterlockedExchange(&win->m_wakePending, 0);
+                (void)InterlockedIncrement(&g_netIoRingWakePackets);
+            }
+            return;
+        }
 
         DWORD lastError = success ? 0 : GetLastError();
         processOneCompletion(self, success, bytesTransferred,
@@ -473,7 +526,12 @@ static void VXNetIoRingWin32_waitForEvents(XAbstractNetIoRing* self, int timeout
 static void VXNetIoRingWin32_wakeUp(XAbstractNetIoRing* self) {
     XNetIoRingWin32* win = (XNetIoRingWin32*)self;
     if (!win || !win->m_iocp) return;
-    PostQueuedCompletionStatus(win->m_iocp, 0, 0, NULL);
+    /* 幂等：端口里已有唤醒包就不再投。旧实现每次唤醒都无条件投一个，
+     * 高频 postEvent（多线程定时器/日志/推帧）会把端口灌成唤醒包队列，
+     * 真实完成包被挤在后面（见 pollPlatform 的排空注释）。 */
+    if (InterlockedExchange(&win->m_wakePending, 1) != 0) return;
+    if (!PostQueuedCompletionStatus(win->m_iocp, 0, 0, NULL))
+        (void)InterlockedExchange(&win->m_wakePending, 0);
 }
 
 /* ================================================================
@@ -714,16 +772,37 @@ bool XAbstractNetIoRing_platformPeerReallyClosed(int osFd) {
         return true;
 
     pr = (int)recv(s, &peekByte, 1, MSG_PEEK);
-    /* 复原：本框架套接字的收发全走 IOCP 重叠 I/O，fd 的阻塞标志不参与
-     * 收发路径；这里统一恢复为阻塞（与创建时一致）。 */
-    nonBlocking = 0;
+    /* 复原：两套 Win32 套接字后端创建套接字时都是**非阻塞**
+     * （`ioctlsocket(FIONBIO, 1)`）。旧注释写"恢复为阻塞（与创建时一致）"
+     * 与事实相反：这里若真置 0，会把套接字留成阻塞态，后续任何一次
+     * 非重叠 `recv/send`（代理握手、GSSAPI、假 EOF 复核自身）都可能
+     * 永久阻塞事件循环。故恢复为 1。 */
+    nonBlocking = 1;
     (void)ioctlsocket(s, FIONBIO, &nonBlocking);
 
     if (pr == 0)
         return true;                       /* 真 FIN */
-    if (pr == SOCKET_ERROR)
-        return false;                      /* EWOULDBLOCK/其他错误：非对端 FIN */
-    return false;                          /* 有数据待读：更非关闭 */
+    if (pr != SOCKET_ERROR)
+        return false;                      /* 有数据待读：非关闭 */
+    /* recv 出错时要分两类，旧实现把两类混成"非 FIN"：链路被 RST 之后
+     * recv 恒返 SOCKET_ERROR/WSAECONNRESET，若按"活着"处理，0 字节读完成
+     * 会被当成假 EOF 丢弃 —— 表现为对端已踢线而本端永不察觉（实测
+     * XLink 踢线用例 10 项失败：不进 ReconnectingState、不拆旧会话）。 */
+    switch (WSAGetLastError()) {
+    case WSAEWOULDBLOCK:                   /* 活着但暂无数据 */
+        return false;
+    case WSAECONNRESET:
+    case WSAECONNABORTED:
+    case WSAENOTCONN:
+    case WSAESHUTDOWN:
+    case WSAENOTSOCK:                      /* 连接已不可用 ⇒ 真关闭 */
+    case ERROR_NETNAME_DELETED:            /* 64：对端对象已消失（GQCS/recv 都可能报） */
+    case ERROR_CONNECTION_ABORTED:         /* 1236：连接被中止 */
+    case ERROR_BROKEN_PIPE:                /* 109：管道断裂（命名管道路径） */
+        return true;
+    default:
+        return false;                      /* 未知错误：保守按活着处理 */
+    }
 }
 
 #endif /* XPLATFORM_WINDOWS */
