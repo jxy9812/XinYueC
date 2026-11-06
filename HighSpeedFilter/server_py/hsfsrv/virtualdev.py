@@ -649,16 +649,28 @@ class VirtualDigital(object):
     约 200ms —— 对 10s/20s 的量级完全够用。
     """
 
-    #: 阀占用的 DO 起始位与 DI 起始位（与现场接线一致）
-    VALVE_DO_BASE = 16
-    VALVE_DI_BASE = 16
+    #: 阀占用的 DO 起始位与 DI 起始位（与现场接线一致）。
+    #: [2026-11-06 点位整体减 16] .12 拆除后只剩 .13 单台 16 点、点表从 0
+    #: 起，故阀 0..5 占 DO0..5 / DI0..11（原为聚合上半区 16..）。
+    VALVE_DO_BASE = 0
+    VALVE_DI_BASE = 0
     VALVE_COUNT = 6
-    #: 非阀区域的 DI 初值（bit0..7 通），保留一些"有信号"的观感
-    BASE_DI = 0x00FF0000
+    #: 非阀区域的 DI 初值。点表 0 起后阀占满 DO0..5 / DI0..11，剩下
+    #: DI12..15 是按钮组（急停/启动/停止/复位）。默认**急停回路正常**
+    #: （DI12=1，常闭触点），三个按键都未按（0）。
+    BASE_DI = 0x00001000
+    #: 按钮组点位（与 cfg.button_items 同口径）。
+    BUTTON_ESTOP_DI = 12
+    BUTTON_START_DI = 13
+    BUTTON_STOP_DI = 14
+    BUTTON_RESET_DI = 15
+    BUTTON_START_LAMP_DO = 7
+    BUTTON_STOP_LAMP_DO = 8
+    BUTTON_RESET_LAMP_DO = 9
     #: 现场满开满关约 10s（用户口径）⇒ 虚拟模型缺省也用 10s。
     DEFAULT_MOVE_MS = 10000
 
-    def __init__(self, channels=32, do_init=0x8000000F, move_ms=None,
+    def __init__(self, channels=16, do_init=0x00000000, move_ms=None,
                  no_feedback=False):
         """
         :param move_ms: 动作行程时间（毫秒）。None 用 DEFAULT_MOVE_MS；
@@ -667,7 +679,15 @@ class VirtualDigital(object):
         """
         self.channels = int(channels)
         self.do_mask = int(do_init)
-        self._di_extra = self.BASE_DI & ~0x0FFF0000   # 阀区以外的 DI
+        #: 阀区以外的 DI（默认只有急停回路通 = DI12=1）。
+        #: [掩码为什么是 0x00000FFF] 阀占 DI0..11（6 路 x 2 个到位），
+        #: 那 12 位由行程模型算，不能沿用静态初值。
+        self._di_extra = self.BASE_DI & ~0x00000FFF
+        #: 按键覆盖位图（模拟按按钮 / 拔急停线）。见 press_button()。
+        #: 有覆盖的位**优先于** `_di_extra` 的默认值——这样既能"按住"，
+        #: 也能把默认的"急停正常"（DI12=1）按掉。
+        self._di_override = 0
+        self._di_override_mask = 0
         self.move_ms = (self.DEFAULT_MOVE_MS if move_ms is None
                         else float(move_ms))
         self.no_feedback = bool(no_feedback)
@@ -714,6 +734,10 @@ class VirtualDigital(object):
         现在中间多一个"两个 DI 都断开"的行程期，状态机才能按真实时序跑。
         """
         di = self._di_extra
+        # 按键覆盖：被 press_button() 动过的位以覆盖值为准。
+        if self._di_override_mask:
+            di = (di & ~self._di_override_mask) | (self._di_override
+                                                  & self._di_override_mask)
         for i in range(self.VALVE_COUNT):
             close_bit = self.VALVE_DI_BASE + i * 2
             open_bit = self.VALVE_DI_BASE + i * 2 + 1
@@ -755,6 +779,32 @@ class VirtualDigital(object):
                 st["target"] = on
                 st["start_ms"] = self._now()
                 st["done"] = False
+        # ---- 按钮灯区变位 ⇒ 不联动 DI（灯只是灯）----
+        # [为什么不联动] 现场三盏灯是**指示灯**，不是带回读的按钮灯；
+        # 点亮它不会让任何 DI 变。按钮组的状态迁移由服务端的 ButtonStation
+        # 按 DI 沿推进，虚拟模型只需要如实反映"DO 写进去了"。
+        return
+
+    # ---- 实验辅助：模拟按键（给离线调试/测试用）----
+    def press_button(self, di_channel, pressed=True):
+        """模拟按下/松开一个按钮（直接改 DI 电平）。
+
+        现场调试时可以用它替代"人上去按"，也让自动逻辑能在纯离线
+        （--sim）下跑完整状态机。
+        """
+        ch = int(di_channel)
+        if not 0 <= ch < self.channels:
+            raise IndexError("DI 越界 %d" % ch)
+        bit = 1 << ch
+        self._di_override_mask |= bit
+        if pressed:
+            self._di_override |= bit
+        else:
+            self._di_override &= ~bit
+
+    def set_estop(self, normal=True):
+        """模拟急停回路：normal=True 表示回路通（常闭触点未按下）。"""
+        self.press_button(self.BUTTON_ESTOP_DI, bool(normal))
 
     def on_access(self):
         """被访问时推进行程（VirtualMaster._tick 会调）。

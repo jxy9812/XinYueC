@@ -6,6 +6,7 @@
 全部用 unittest，退出码即结果。
 """
 
+import asyncio
 import hashlib
 import hmac
 import os
@@ -134,8 +135,27 @@ class TestBson(unittest.TestCase):
             bson.decode(raw)
 
     def test_encode_rejects_unsupported_type(self):
+        """不支持的类型必须报错（不静默降级成字符串/空值）。
+
+        [2026-11-06] list/tuple 原先在本用例里当"不支持类型"的代表，加入
+        BSON 数组（0x04，历史分页用）后它已被支持；改用 set —— 它既不是
+        标量也不是文档/数组，任何编码器都不该默默收下。
+        """
         with self.assertRaises(ValueError):
-            bson.encode({"v": [1, 2, 3]})
+            bson.encode({"v": {1, 2, 3}})
+
+    def test_array_roundtrip(self):
+        """数组（0x04）编解码：历史分页的行是二维数组，键名按序号。"""
+        doc = {"rows": [[1, "a", None], [2, "b", 3.5]], "cols": ["ts", "m"]}
+        got = bson.decode(bson.encode(doc))
+        self.assertEqual(got["rows"], [[1, "a", None], [2, "b", 3.5]])
+        self.assertEqual(got["cols"], ["ts", "m"])
+
+    def test_array_element_order_beyond_nine(self):
+        """元素顺序按序号数值排（"10" 不能排在 "2" 前面）。"""
+        items = list(range(12))
+        got = bson.decode(bson.encode({"v": items}))
+        self.assertEqual(got["v"], items)
 
     def test_key_with_nul_rejected(self):
         with self.assertRaises(ValueError):
@@ -708,9 +728,10 @@ class TestConfig(unittest.TestCase):
         # 串口号按平台自适应：Windows=COM17，板端=/dev/ttyS3
         self.assertTrue(cfg.serial.port in ("COM17", "/dev/ttyS3"),
                         cfg.serial.port)
-        self.assertEqual(len(cfg.digital_modules), 2)
-        self.assertEqual(cfg.digital_modules[0].host, "192.168.0.12")
-        self.assertEqual(cfg.digital_modules[1].host, "192.168.0.13")
+        # [2026-11-06] .12 已下线拆除，现场只剩 .13 一台 16 点模块
+        self.assertEqual(len(cfg.digital_modules), 1)
+        self.assertEqual(cfg.digital_modules[0].host, "192.168.0.13")
+        self.assertEqual(cfg.digital_modules[0].channels, 16)
         self.assertEqual(cfg.analog.host, "192.168.0.11")
         self.assertEqual(cfg.analog.port, 8234)
 
@@ -735,7 +756,7 @@ class TestConfig(unittest.TestCase):
             self.assertTrue(cfg2.load())
             self.assertEqual(cfg2.port, 6123)
             self.assertEqual(cfg2.vfd_unit_id, 9)
-            self.assertEqual(cfg2.digital_modules[0].host, "192.168.0.12")
+            self.assertEqual(cfg2.digital_modules[0].host, "192.168.0.13")
 
     def test_run_mode_persistence(self):
         import tempfile
@@ -774,8 +795,11 @@ class TestValveBank(unittest.TestCase):
 
     #: 现场接线（.13 上的通道号）：(DO, 关到位DI, 开到位DI)。
     WIRING_13 = [(i, i * 2, i * 2 + 1) for i in range(6)]
-    #: 聚合偏移：.13 → .12 地址空间。
-    AGG_OFFSET = 16
+    #: 聚合偏移：.13 → 聚合者地址空间。
+    #: [2026-11-06 起为 0] .12 已拆除，.13 直接作主模块、点表从 0 起，
+    #: 不再有"上半区偏移 16"。保留这个常量是为了让测试口径与实现同源
+    #: （实现里 HSF_VALVE_DO(i) = i，Python 默认 valve_items 也是 do=i）。
+    AGG_OFFSET = 0
 
     def _bank(self, channels=32, with_module=True):
         from hsfsrv import valves as valves_mod
@@ -813,13 +837,21 @@ class TestValveBank(unittest.TestCase):
         bank, _ = self._bank()
         self.assertEqual(bank.ready_count(), 6)
 
-    def test_wiring_maps_into_upper_half(self):
-        """点位必须落在 .12 的上半区（bit16+），否则会撞到 .12 自己的点。"""
+    def test_wiring_fits_single_module(self):
+        """点位必须落在单台 .13 的 16 点地址空间内（0..15）。
+
+        [2026-11-06 口径变更] 原断言是"必须落在 .12 的上半区（bit16+）"，
+        那是两台聚合时代的要求。.12 拆除后只剩 .13（16 点），点位整体
+        减 16 ⇒ 正确断言是"全部落在 0..15 且不越界"——越界会让模块回
+        EXC03，整组读写失败。
+        """
         bank, _ = self._bank()
         for item in bank.items:
-            self.assertGreaterEqual(item.do, 16)
-            self.assertGreaterEqual(item.open_di, 16)
-            self.assertGreaterEqual(item.close_di, 16)
+            for label, ch in (("DO", item.do), ("开到位 DI", item.open_di),
+                              ("关到位 DI", item.close_di)):
+                self.assertGreaterEqual(ch, 0, "阀 %s 通道号为负" % label)
+                self.assertLess(ch, 16,
+                                "阀 %s 通道号 %d 越出单台 16 点" % (label, ch))
 
     def test_feedback_drives_state(self):
         """状态只由两个到位反馈推导（不信命令回显）。"""
@@ -1190,22 +1222,28 @@ class TestVirtualDevices(unittest.TestCase):
     def test_digital_feedback_follows_do(self):
         """DO 变位后行程开关跟着变（阀页才能看到状态变化）。
 
-        阀 n：DO(16+n)=1 → DI(16+2n+1)=1（开到位）；=0 → DI(16+2n)=1。
+        阀 n：DO(BASE+n)=1 → DI(BASE+2n+1)=1（开到位）；=0 → DI(BASE+2n)=1。
         这与现场接线顺序一致（先关到位、后开到位）。
         """
         from hsfsrv import virtualdev
-        model = virtualdev.VirtualDigital(channels=32)
+        # [点位由常量给，不写死 16] 2026-11-06 点位整体减 16（.12 拆除后
+        # 只剩 .13 单台 16 点、点表从 0 起）⇒ 阀 0 占 DO0 / DI0,DI1。
+        # 写死 16 会在改点位时假红，故一律从 VALVE_DO_BASE/VALVE_DI_BASE 推。
+        do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
+        di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
+        model = virtualdev.VirtualDigital(channels=16)
         model.do_mask = 0                      # 全部关
         di = model.di_mask()
-        self.assertEqual((di >> 16) & 1, 1, "DO16=0 时 DI16（关到位）应为 1")
-        self.assertEqual((di >> 17) & 1, 0, "DO16=0 时 DI17（开到位）应为 0")
+        self.assertEqual((di >> di0) & 1, 1, "DO0=0 时 DI0（关到位）应为 1")
+        self.assertEqual((di >> (di0 + 1)) & 1, 0, "DO0=0 时 DI1（开到位）应为 0")
 
-        model.do_mask = 1 << 16                # 只开阀 1
+        model.do_mask = 1 << do0               # 只开阀 1
         di = model.di_mask()
-        self.assertEqual((di >> 16) & 1, 0, "DO16=1 时 DI16（关到位）应为 0")
-        self.assertEqual((di >> 17) & 1, 1, "DO16=1 时 DI17（开到位）应为 1")
+        self.assertEqual((di >> di0) & 1, 0, "DO0=1 时 DI0（关到位）应为 0")
+        self.assertEqual((di >> (di0 + 1)) & 1, 1,
+                         "DO0=1 时 DI1（开到位）应为 1")
         # 其它路不受影响（阀 2 仍关到位）
-        self.assertEqual((di >> 18) & 1, 1)
+        self.assertEqual((di >> (di0 + 2)) & 1, 1)
 
     def test_unmodelled_register_reads_zero(self):
         """未建模但"真机存在"的寄存器返回 0，**不能抛异常**。
@@ -1269,12 +1307,14 @@ class TestValveReplyFreshness(unittest.TestCase):
         from hsfsrv import virtualdev
         from hsfsrv import valves as valves_mod
 
-        master = virtualdev.make_digital_master(channels=32, move_ms=move_ms)
-        dev = devices.DigitalIo(master, "数字量", channels=32)
-        # 阀点位与现场接线一致（.13 聚合偏移 16、DI 关在前开在后）。
+        master = virtualdev.make_digital_master(channels=16, move_ms=move_ms)
+        dev = devices.DigitalIo(master, "数字量", channels=16)
+        # 阀点位与现场接线一致（.13 单台 16 点、DI 关在前开在后）。
+        do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
+        di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
         items = [{"name": "电磁阀%d" % (i + 1), "module": 0,
-                  "do": 16 + i, "openDi": 16 + i * 2 + 1,
-                  "closeDi": 16 + i * 2} for i in range(6)]
+                  "do": do0 + i, "openDi": di0 + i * 2 + 1,
+                  "closeDi": di0 + i * 2} for i in range(6)]
         bank = valves_mod.ValveBank([dev], items, move_timeout_ms=20000)
 
         # 不跑 App.__init__（它要配置/网络），只借那两个方法。
@@ -1356,50 +1396,66 @@ class TestVirtualValveTravel(unittest.TestCase):
 
     def _digital(self, move_ms):
         from hsfsrv import virtualdev
-        model = virtualdev.VirtualDigital(channels=32, move_ms=move_ms)
+        # [16 点单模块] 2026-11-06 起现场只剩 .13 一台 16 点模块。
+        model = virtualdev.VirtualDigital(channels=16, move_ms=move_ms)
         return model
 
     def test_command_enters_travel_not_arrival(self):
-        """写 DO 后立即：两个到位 DI 都断开（动作中）。"""
-        model = self._digital(move_ms=300)
-        # 初始 DO16=0 ⇒ 关到位=1、开到位=0
-        self.assertEqual((model.di_mask() >> 16) & 1, 1)      # 关到位
-        self.assertEqual((model.di_mask() >> 17) & 1, 0)      # 开到位
+        """写 DO 后立即：两个到位 DI 都断开（动作中）。
 
-        model.write_single(5, 16, 0xFF00)                     # 开阀
+        [点位不写死] 用 VALVE_DO_BASE / VALVE_DI_BASE 推导；点位口径调整
+        （如 2026-11-06 整体减 16）时测试跟着走，不会假红。
+        """
+        from hsfsrv import virtualdev
+        do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
+        di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
+        model = self._digital(move_ms=300)
+        # 初始 DO0=0 ⇒ 关到位=1、开到位=0
+        self.assertEqual((model.di_mask() >> di0) & 1, 1)      # 关到位
+        self.assertEqual((model.di_mask() >> (di0 + 1)) & 1, 0)  # 开到位
+
+        model.write_single(5, do0, 0xFF00)                     # 开阀
         # 关键断言：不是瞬发到位，而是两个都不吸
-        self.assertEqual((model.di_mask() >> 16) & 1, 0, "关到位应断开")
-        self.assertEqual((model.di_mask() >> 17) & 1, 0,
+        self.assertEqual((model.di_mask() >> di0) & 1, 0, "关到位应断开")
+        self.assertEqual((model.di_mask() >> (di0 + 1)) & 1, 0,
                          "开到位此时还不该出现（行程未完成）")
 
     def test_arrives_after_travel_time(self):
         """行程走完 → 目标侧到位。"""
         import time
+        from hsfsrv import virtualdev
+        do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
+        di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
         model = self._digital(move_ms=200)
-        model.write_single(5, 16, 0xFF00)                     # 开阀
-        self.assertEqual((model.di_mask() >> 17) & 1, 0)
+        model.write_single(5, do0, 0xFF00)                     # 开阀
+        self.assertEqual((model.di_mask() >> (di0 + 1)) & 1, 0)
         time.sleep(0.28)                                      # 超过行程
-        self.assertEqual((model.di_mask() >> 17) & 1, 1, "应开到位")
-        self.assertEqual((model.di_mask() >> 16) & 1, 0)
+        self.assertEqual((model.di_mask() >> (di0 + 1)) & 1, 1, "应开到位")
+        self.assertEqual((model.di_mask() >> di0) & 1, 0)
 
     def test_stuck_valve_never_arrives(self):
         """move_ms=inf（阀卡死）⇒ 永远不到位，进度恒 0。"""
         import time
+        from hsfsrv import virtualdev
+        do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
+        di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
         model = self._digital(move_ms=float("inf"))
-        model.write_single(5, 16, 0xFF00)
+        model.write_single(5, do0, 0xFF00)
         time.sleep(0.1)
-        self.assertEqual((model.di_mask() >> 17) & 1, 0)
-        self.assertEqual((model.di_mask() >> 16) & 1, 0)
+        self.assertEqual((model.di_mask() >> (di0 + 1)) & 1, 0)
+        self.assertEqual((model.di_mask() >> di0) & 1, 0)
         self.assertEqual(model.valve_progress(0), 0.0)
 
     def test_no_feedback_switch_unwired(self):
         """行程开关没接 ⇒ DI 恒 0（与"卡死"表现相同但成因不同）。"""
         from hsfsrv import virtualdev
-        model = virtualdev.VirtualDigital(channels=32, move_ms=0,
+        do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
+        di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
+        model = virtualdev.VirtualDigital(channels=16, move_ms=0,
                                           no_feedback=True)
-        model.write_single(5, 16, 0xFF00)
-        self.assertEqual((model.di_mask() >> 16) & 1, 0)
-        self.assertEqual((model.di_mask() >> 17) & 1, 0)
+        model.write_single(5, do0, 0xFF00)
+        self.assertEqual((model.di_mask() >> di0) & 1, 0)
+        self.assertEqual((model.di_mask() >> (di0 + 1)) & 1, 0)
 
     def test_timeout_alarm_fires_once_at_20s(self):
         """行程 25s > 超时 20s ⇒ 20s 报一条告警，之后不重复。
@@ -1411,12 +1467,14 @@ class TestVirtualValveTravel(unittest.TestCase):
         from hsfsrv import valves as valves_mod
         from hsfsrv import virtualdev
 
-        model = virtualdev.VirtualDigital(channels=32, move_ms=25000)
+        model = virtualdev.VirtualDigital(channels=16, move_ms=25000)
         master = virtualdev.VirtualMaster(model, name="虚拟数字量")
-        dev = devices.DigitalIo(master, "数字量", channels=32)
+        dev = devices.DigitalIo(master, "数字量", channels=16)
+        do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
+        di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
         bank = valves_mod.ValveBank(
-            [dev], [{"name": "v0", "module": 0, "do": 16,
-                     "openDi": 17, "closeDi": 16}], move_timeout_ms=20000)
+            [dev], [{"name": "v0", "module": 0, "do": do0,
+                     "openDi": di0 + 1, "closeDi": di0}], move_timeout_ms=20000)
 
         async def go():
             await dev.poll(1000)
@@ -1470,12 +1528,14 @@ class TestValveRepeatCommand(unittest.TestCase):
         """虚拟阀卡在途中（行程很长），用来观察计时器是否被重置。"""
         from hsfsrv import valves as valves_mod
         from hsfsrv import virtualdev
-        model = virtualdev.VirtualDigital(channels=32, move_ms=move_ms)
+        do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
+        di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
+        model = virtualdev.VirtualDigital(channels=16, move_ms=move_ms)
         master = virtualdev.VirtualMaster(model, name="虚拟数字量")
-        dev = devices.DigitalIo(master, "数字量", channels=32)
+        dev = devices.DigitalIo(master, "数字量", channels=16)
         bank = valves_mod.ValveBank(
-            [dev], [{"name": "v0", "module": 0, "do": 16,
-                     "openDi": 17, "closeDi": 16}], move_timeout_ms=20000)
+            [dev], [{"name": "v0", "module": 0, "do": do0,
+                     "openDi": di0 + 1, "closeDi": di0}], move_timeout_ms=20000)
         return bank, dev, model
 
     @staticmethod
@@ -1609,12 +1669,14 @@ class TestValveExternalDo(unittest.TestCase):
     def _bank(self, move_ms=10000):
         from hsfsrv import valves as valves_mod
         from hsfsrv import virtualdev
-        model = virtualdev.VirtualDigital(channels=32, move_ms=move_ms)
+        do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
+        di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
+        model = virtualdev.VirtualDigital(channels=16, move_ms=move_ms)
         master = virtualdev.VirtualMaster(model, name="虚拟数字量")
-        dev = devices.DigitalIo(master, "数字量", channels=32)
+        dev = devices.DigitalIo(master, "数字量", channels=16)
         bank = valves_mod.ValveBank(
-            [dev], [{"name": "v0", "module": 0, "do": 16,
-                     "openDi": 17, "closeDi": 16}], move_timeout_ms=20000)
+            [dev], [{"name": "v0", "module": 0, "do": do0,
+                     "openDi": di0 + 1, "closeDi": di0}], move_timeout_ms=20000)
         return bank, dev, model
 
     def _sync(self, bank, dev, now_ms=1000):
@@ -1624,8 +1686,10 @@ class TestValveExternalDo(unittest.TestCase):
 
     def test_first_poll_seeds_without_fake_action(self):
         """首拍只校准位置，不得把开机稳态误判成"外部改动"。"""
+        from hsfsrv import virtualdev
+        do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
         bank, dev, model = self._bank()
-        model.do_mask |= (1 << 16)          # 开机时阀本来就在开位
+        model.do_mask |= (1 << do0)          # 开机时阀本来就在开位
         self._sync(bank, dev)
         item = bank.items[0]
         self.assertTrue(item.known_do_seeded)
@@ -1634,13 +1698,15 @@ class TestValveExternalDo(unittest.TestCase):
         self.assertNotEqual(item.last_cmd_result, "external")
 
     def test_external_do_write_is_adopted(self):
-        """数字量页写 DO16=1 ⇒ 阀状态机接管为一次新动作。"""
+        """数字量页写阀 DO=1 ⇒ 阀状态机接管为一次新动作。"""
+        from hsfsrv import virtualdev
+        do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
         bank, dev, model = self._bank()
         self._sync(bank, dev)                       # 首拍校准（关位）
         self.assertEqual(bank.items[0].state, proto.HsfValveState.Closed)
 
         # 模拟"从数字量页直接写 DO"（不过 set_valve）
-        model.write_single(5, 16, 0xFF00)
+        model.write_single(5, do0, 0xFF00)
         self._sync(bank, dev, 2000)
 
         item = bank.items[0]
@@ -1655,9 +1721,11 @@ class TestValveExternalDo(unittest.TestCase):
         """外部写的 DO 卡住不到位 ⇒ 同样 20s 报超时（不能因为没有
         set_valve 就失去超时保护）。"""
         import asyncio
+        from hsfsrv import virtualdev
+        do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
         bank, dev, model = self._bank(move_ms=float("inf"))
         self._sync(bank, dev)
-        model.write_single(5, 16, 0xFF00)           # 外部写，阀卡死
+        model.write_single(5, do0, 0xFF00)          # 外部写，阀卡死
         self._sync(bank, dev, 2000)
         t0 = bank.items[0].cmd_at_ms
         self.assertGreater(t0, 0)
@@ -2272,8 +2340,9 @@ class TestPumpBank(unittest.TestCase):
         ④ **没有反馈就没有超时告警**（照抄阀的逻辑会造出永远成立的假告警）
     """
 
-    #: 现场接线：泵在 6 路阀（DO16..21）之后的 DO22。
-    PUMP_DO = 22
+    #: 现场接线：泵在 6 路阀（DO0..5）之后的 DO6。
+    #: [2026-11-06] 原为 DO22（.12 聚合上半区口径），.12 拆除后整体减 16。
+    PUMP_DO = 6
 
     def _bank(self, channels=32):
         from hsfsrv import pumps
@@ -2295,7 +2364,7 @@ class TestPumpBank(unittest.TestCase):
         return bool((model.do_mask >> addr) & 1)
 
     def test_wiring_ready_and_name(self):
-        """点位按配置装配：1 台、DO22、名字来自配置。"""
+        """点位按配置装配：1 台、DO6、名字来自配置。"""
         bank, _dev, _model, _m = self._bank()
         self.assertEqual(len(bank.items), proto.HSF_PUMP_COUNT)
         self.assertEqual(bank.ready_count(), 1)
@@ -2305,11 +2374,11 @@ class TestPumpBank(unittest.TestCase):
         self.assertEqual(item.name, "进水泵")
 
     def test_do_sits_right_after_six_valves(self):
-        """泵的 DO 必须紧接在 6 路阀（DO16..21）之后 = DO22，不能撞阀。"""
+        """泵的 DO 必须紧接在 6 路阀（DO0..5）之后 = DO6，不能撞阀。"""
         bank, _dev, _model, _m = self._bank()
-        self.assertEqual(bank.items[0].do, 22)
-        # 反证：若错写成 DO16~21 就会和电磁阀抢同一个线圈
-        self.assertNotIn(bank.items[0].do, range(16, 22))
+        self.assertEqual(bank.items[0].do, 6)
+        # 反证：若错写成 DO0~5 就会和电磁阀抢同一个线圈
+        self.assertNotIn(bank.items[0].do, range(0, 6))
 
     def test_command_writes_module_do(self):
         """set_pump(True) → 模块 DO22 真的置位（不是只改内存标志）。"""
@@ -2467,8 +2536,11 @@ class TestHealthKind(unittest.TestCase):
         cfg.turbidity_stale_ms = 5000
         cfg.flowmeter_stale_ms = 5000
         cfg.pump_stale_ms = 5000
-        # 健康条目现在也带"连接地址"，故假 cfg 必须给齐这些字段
+        # 健康条目现在也带"连接地址"，故假 cfg 必须给齐这些字段。
+        # 两条独立 485：路 A(COM1/9600) 变频器+温湿度，路 B(COM2/9600)
+        # 流量计+浊度仪。_addr_rtu(bus="b") 会读 serial_b，缺了就 AttributeError。
         cfg.serial = type("S", (), {"port": "COM1", "baudrate": 9600})()
+        cfg.serial_b = type("S", (), {"port": "COM2", "baudrate": 9600})()
         cfg.vfd_unit_id = 2
         cfg.temphum_unit_id = 4
         cfg.flowmeter_unit_id = 5
@@ -2561,8 +2633,9 @@ class TestVfdDeviceName(unittest.TestCase):
                      "enable_digital", "enable_valve"):
             setattr(cfg, attr, False)
         cfg.enable_vfd = True
-        # 健康条目带"连接地址"，假 cfg 需给齐
+        # 健康条目带"连接地址"，假 cfg 需给齐（含第二条 485）。
         cfg.serial = type("S", (), {"port": "COM1", "baudrate": 9600})()
+        cfg.serial_b = type("S", (), {"port": "COM2", "baudrate": 9600})()
         cfg.vfd_unit_id = 2
         cfg.temphum_unit_id = 4
         cfg.flowmeter_unit_id = 5
@@ -2732,17 +2805,27 @@ class TestHealthAddr(unittest.TestCase):
         return a.collect_health(1000)
 
     def test_rtu_devices_report_port_baud_and_unit(self):
-        """485 设备地址必须同时含 端口 / 波特率 / 站号。"""
+        """485 设备地址必须同时含 端口 / 波特率 / 站号。
+
+        [两条独立 485] 路 A(变频器/温湿度) 取 serial，路 B(流量计/浊度仪)
+        取 serial_b；两者口与速率都不同，不能混着校验（2026-11-06 用户
+        反馈：之前界面上 5 台设备全显示同一个 COM17 · 115200）。
+        """
         a, cfg = self._app(enable_flowmeter=True, enable_turbidity=True)
         by_name = {e.name: e for e in self._entries(a)}
-        for name in ("搅拌泵", "温湿度", "电磁流量计"):
+        for name, bus in (("搅拌泵", cfg.serial), ("温湿度", cfg.serial),
+                          ("电磁流量计", cfg.serial_b)):
             e = by_name[name]
-            self.assertIn(cfg.serial.port, e.addr,
+            self.assertIn(bus.port, e.addr,
                           "%s 的地址缺端口：%r" % (name, e.addr))
-            self.assertIn(str(cfg.serial.baudrate), e.addr,
+            self.assertIn(str(bus.baudrate), e.addr,
                           "%s 的地址缺波特率：%r" % (name, e.addr))
             self.assertIn("站", e.addr,
                           "%s 的地址缺站号：%r" % (name, e.addr))
+        # 两条线必须真的分开（不能又退回同一路）
+        self.assertNotEqual(by_name["搅拌泵"].addr.split(" · 站")[0],
+                            by_name["电磁流量计"].addr.split(" · 站")[0],
+                            "路 A 与路 B 的地址前缀不该相同")
 
     def test_each_turbidity_reports_its_own_unit(self):
         """两台浊度仪必须各自报**自己的**站号（写错就分不清是哪台失联）。"""
@@ -2777,11 +2860,16 @@ class TestHealthAddr(unittest.TestCase):
         self.assertNotIn("站", pump.addr, "泵不在 485 总线上，不该报站号")
 
     def test_valve_bank_reports_do_span(self):
-        """阀组报模块地址 + DO 区间（6 路一眼看得出占了哪几口）。"""
+        """阀组报模块地址 + DO 区间（6 路一眼看得出占了哪几口）。
+
+        [2026-11-06 口径] .12 拆除后点位整体减 16 ⇒ 区间是 DO0~DO5。
+        """
         a, _cfg = self._app()
         valve = [e for e in self._entries(a) if e.name == "电磁阀组"][0]
-        self.assertIn("DO16", valve.addr)
-        self.assertIn("DO21", valve.addr)
+        self.assertIn("DO0", valve.addr)
+        self.assertIn("DO5", valve.addr)
+        self.assertNotIn("DO16", valve.addr,
+                         "点位已整体减 16，不应再出现旧的上半区编号")
 
     def test_addr_change_bumps_health_seq(self):
         """改了配置里的地址 ⇒ 健康 seq 必须变（否则界面一直显示旧地址）。
@@ -2887,27 +2975,35 @@ class TestDefaultsMatchField(unittest.TestCase):
         return a, cfg
 
     def test_digital_modules_default_to_field_wiring(self):
-        """默认 32 点聚合，且 .13 不重复发布点位。"""
+        """默认单台 16 点（.13），且是唯一发布者。
+
+        [2026-11-06 口径变更] 原为"32 点聚合 + .13 不重复发布"。.12 已
+        下线拆除，现场只剩 .13 一台 16 点模块 ⇒ 该模块既是唯一设备也是
+        唯一发布者；原先由 .12 提供的 16DI/16DO 一并取消（有意收窄）。
+        """
         _a, cfg = self._app()
         mods = cfg.digital_modules
-        self.assertEqual(len(mods), 2)
-        self.assertEqual(mods[0].channels, 32, ".12 聚合后是 32 点")
-        self.assertTrue(mods[0].publish, "主模块要发布点位")
-        self.assertFalse(mods[1].publish,
-                         ".13 的点已并入 .12 上半区，不能再发一套（会重复）")
+        self.assertEqual(len(mods), 1)
+        self.assertEqual(mods[0].host, "192.168.0.13")
+        self.assertEqual(mods[0].channels, 16, ".13 单台物理 16 点")
+        self.assertTrue(mods[0].publish, "唯一模块必须发布点位")
 
     def test_valves_default_to_field_wiring(self):
-        """6 路阀默认按图纸接线（DO16..21，关到位 DI 在前）。"""
+        """6 路阀默认按图纸接线（DO0..5，关到位 DI 在前）。
+
+        [2026-11-06 口径变更] 原为 DO16..21（.12 聚合上半区）。.12 拆除后
+        只剩 .13 一台 16 点模块、点表从 0 起 ⇒ 整体减 16。
+        """
         _a, cfg = self._app()
         self.assertEqual(len(cfg.valve_items), 6)
         for i, item in enumerate(cfg.valve_items):
             self.assertEqual(item["module"], 0)
-            self.assertEqual(item["do"], 16 + i)
+            self.assertEqual(item["do"], i)
             self.assertEqual(item["close_di"] if "close_di" in item
-                             else item["closeDi"], 16 + i * 2,
+                             else item["closeDi"], i * 2,
                              "阀%d 关到位应在开到位之前" % (i + 1))
             self.assertEqual(item["open_di"] if "open_di" in item
-                             else item["openDi"], 16 + i * 2 + 1)
+                             else item["openDi"], i * 2 + 1)
 
     def test_valve_bank_actually_ready_with_defaults(self):
         """纯默认配置下 6 路阀必须都"已装配"（不能显示未配置）。"""
@@ -2947,6 +3043,349 @@ class TestDefaultsMatchField(unittest.TestCase):
                        "进水泵", "模拟量模块", "数字量", "电磁阀组"):
             self.assertIn(expect, names,
                           "缺设备 %r（别人拉取后会看到少一块）" % expect)
+
+class TestMasterCloseCompat(unittest.TestCase):
+    """master.close() 同步/异步两种签名都要能收（**只有真机串口才暴露**）。
+
+    [实锅 2026-11-06 板端部署] 各设备的 `close()` 原来一律写
+    `await self._master.close()`：`TcpMaster.close()` 是 async 没问题，
+    但 `RtuMaster.close()` 是**同步**（只关 pyserial 句柄） ⇒ 一旦走串口就
+    抛 `TypeError: object NoneType can't be used in 'await' expression`。
+    更阴的是它常在 `finally` 里第一句：自检打完第一台设备就崩，后面几台
+    根本轮不到，看着像"自检只支持一台"。
+    本机 sim 全走 TCP，本地跑一万遍也碰不到 —— 故必须用假 master 锁住。
+    """
+
+    class _SyncMaster(object):
+        def __init__(self):
+            self.closed = 0
+
+        def close(self):
+            self.closed += 1
+            return None              # 同步 close 的典型返回值
+
+    class _AsyncMaster(object):
+        def __init__(self):
+            self.closed = 0
+
+        async def close(self):
+            self.closed += 1
+
+    def test_sync_close_does_not_need_await(self):
+        from hsfsrv import devices
+        m = self._SyncMaster()
+        asyncio.run(devices.close_master(m))
+        self.assertEqual(m.closed, 1, "同步 close 必须被调用一次")
+
+    def test_async_close_is_awaited(self):
+        from hsfsrv import devices
+        m = self._AsyncMaster()
+        asyncio.run(devices.close_master(m))
+        self.assertEqual(m.closed, 1, "异步 close 必须被 await 到")
+
+    def test_none_is_idempotent(self):
+        from hsfsrv import devices
+        asyncio.run(devices.close_master(None))   # 不抛即通过
+
+    def test_device_close_handles_sync_master(self):
+        """设备层 close()：串口（同步 close）路径不得抛异常。"""
+        from hsfsrv import devices
+        m = self._SyncMaster()
+
+        async def go():
+            dev = devices.TempHum(lambda: m, 4, lambda _s: None)
+            dev._master = m
+            await dev.close()
+            return dev
+
+        dev = asyncio.run(go())
+        self.assertEqual(m.closed, 1)
+        self.assertIsNone(dev._master, "close 后必须置空（幂等/防重入）")
+
+    def test_device_close_is_idempotent(self):
+        """连关两次不得重复关同一个句柄（关已关的句柄在串口上会抛）。"""
+        from hsfsrv import devices
+        m = self._SyncMaster()
+
+        async def go():
+            dev = devices.VfdM512(lambda: m, 2, lambda _s: None)
+            dev._master = m
+            await dev.close()
+            await dev.close()
+
+        asyncio.run(go())
+        self.assertEqual(m.closed, 1, "第二次 close 不该再碰 master")
+
+
+class TestButtonStation(unittest.TestCase):
+    """按钮组（操作柱）：4 DI + 3 DO 的状态机与灯。
+
+    [现场定义，用户 2026-11-06 口述]
+        输入 12 = 急停（**常闭**）  13 = 启动  14 = 停止  15 = 复位
+        输出 7  = 启动灯（运行常亮） 8 = 停止灯（停止常亮） 9 = 复位灯（点动）
+
+    [为什么要锁这些] 这几条是**安全语义**，不是界面偏好：
+        · 急停常闭 ⇒ DI=0 必须禁止启动（断线也走这条，是安全侧默认）
+        · 启动/停止灯严格互斥（同时亮=状态不明）
+        · 复位灯是动作灯（点动），不是状态灯
+    任何一条被"顺手简化"都会让现场看不出设备处于什么状态。
+    """
+
+    ITEMS = {"estop_di": 12, "start_di": 13, "stop_di": 14, "reset_di": 15,
+             "start_lamp_do": 7, "stop_lamp_do": 8, "reset_lamp_do": 9,
+             "module": 0}
+
+    class _Ctx(object):
+        """AutoContext 的最小替身：直连虚拟设备，不碰网络/串口。"""
+
+        def __init__(self, dev):
+            self.dev = dev
+
+        def read_di(self, ch, mod=0):
+            return self.dev.di_bit(ch)
+
+        def read_do(self, ch, mod=0):
+            return self.dev.do_bit(ch)
+
+        async def write_do(self, ch, on, mod=0):
+            return await self.dev.write_do(ch, on)
+
+    def _station(self, debounce_ms=0):
+        from hsfsrv import buttons, devices, virtualdev
+        model = virtualdev.VirtualDigital(channels=16)
+        master = virtualdev.VirtualMaster(model, name="虚拟数字量")
+        dev = devices.DigitalIo(master, "数字量", channels=16)
+        dev.online = True
+        return buttons.ButtonStation(self._Ctx(dev), self.ITEMS,
+                                     debounce_ms=debounce_ms), dev, model
+
+    def _tick(self, st, dev, now_ms):
+        """一拍：采集 + 判定 + 让写灯协程落地。
+
+        [必须同一个事件循环] `ButtonStation._apply_lamps` 用
+        `asyncio.ensure_future` 投递写灯协程——它挂在**当前** loop 上。
+        若 poll 之后另起 `asyncio.run(sleep)`，那是另一个 loop，先前投递
+        的任务全部作废（实测：灯永远读不到）。故整拍包在一个 run 里。
+        """
+        import asyncio
+
+        async def one():
+            await dev.poll(now_ms)
+            st.poll(now_ms)
+            await asyncio.sleep(0.02)       # 让 ensure_future 的写灯跑完
+
+        asyncio.run(one())
+
+    def _lamp(self, model, ch):
+        return bool((model.do_mask >> ch) & 1)
+
+    def test_estop_is_normally_closed(self):
+        """上电急停回路通（DI12=1）⇒ 正常；DI12=0 ⇒ 禁止（含断线）。
+
+        [反例] 若把判据写成「DI=1 才是按下」，断线时会被判成"没按急停"
+        而放行启动 —— 这是安全事故级的错，必须锁死。
+        """
+        from hsfsrv import buttons
+        st, dev, model = self._station()
+        self._tick(st, dev, 100)
+        self.assertIs(st.estop_ok, True, "上电急停回路正常（常闭）")
+
+        model.press_button(12, False)          # 急停按下/断线
+        self._tick(st, dev, 200)
+        self.assertIs(st.estop_ok, False)
+        self.assertEqual(st.state, buttons.ButtonState.ESTOP)
+
+    def test_estop_none_counts_as_blocked(self):
+        """读不到 DI（模块离线，返回 None）也必须判"禁止"。
+
+        安全侧默认：宁可误停，不能误启。
+        """
+        from hsfsrv import buttons
+        st, dev, model = self._station()
+        dev.online = False
+        st.poll(100)
+        self.assertIsNot(st.estop_ok, True, "读不到不能当成正常")
+        self.assertEqual(st.state, buttons.ButtonState.ESTOP)
+
+    def test_lamps_are_mutually_exclusive(self):
+        """启动灯与停止灯任意时刻只能亮一盏（含急停态）。"""
+        from hsfsrv import buttons
+        st, dev, model = self._station()
+
+        self._tick(st, dev, 100)               # 停止态
+        self.assertTrue(self._lamp(model, 8), "停止态停止灯亮")
+        self.assertFalse(self._lamp(model, 7), "停止态启动灯灭")
+
+        model.press_button(13, True)           # 按启动
+        self._tick(st, dev, 200)
+        self.assertEqual(st.state, buttons.ButtonState.RUNNING)
+        self.assertTrue(self._lamp(model, 7), "运行态启动灯亮")
+        self.assertFalse(self._lamp(model, 8), "运行态停止灯灭")
+
+        model.press_button(13, False)
+        self._tick(st, dev, 300)
+        self.assertEqual(st.state, buttons.ButtonState.RUNNING,
+                         "松手后保持运行（自锁）")
+
+        model.press_button(12, False)          # 急停
+        self._tick(st, dev, 400)
+        self.assertTrue(self._lamp(model, 8), "急停时停止灯亮")
+        self.assertFalse(self._lamp(model, 7), "急停时启动灯灭")
+
+    def test_reset_lamp_is_jog(self):
+        """复位的灯是**点动**：按住亮、松开灭，且不改运行状态。"""
+        from hsfsrv import buttons
+        st, dev, model = self._station()
+        self._tick(st, dev, 100)
+
+        model.press_button(15, True)
+        self._tick(st, dev, 200)
+        self.assertTrue(self._lamp(model, 9), "按住复位时灯亮")
+        self.assertEqual(st.state, buttons.ButtonState.IDLE,
+                         "复位按钮只驱动灯，不参与状态机")
+
+        model.press_button(15, False)
+        self._tick(st, dev, 300)
+        self.assertFalse(self._lamp(model, 9), "松开复位灯灭")
+
+    def test_start_blocked_while_estop(self):
+        """急停无信号时按启动无效（不能进入运行态）。"""
+        from hsfsrv import buttons
+        st, dev, model = self._station()
+        model.press_button(12, False)          # 急停
+        self._tick(st, dev, 100)
+        model.press_button(13, True)           # 同时按启动
+        self._tick(st, dev, 200)
+        self.assertEqual(st.state, buttons.ButtonState.ESTOP)
+        self.assertFalse(self._lamp(model, 7), "急停期间启动灯不得亮")
+
+    def test_estop_recovery_does_not_auto_start(self):
+        """急停恢复后回停止态，不自动启动（复位必须人工确认）。"""
+        from hsfsrv import buttons
+        st, dev, model = self._station()
+        model.press_button(12, False)
+        self._tick(st, dev, 100)
+        model.press_button(12, True)
+        self._tick(st, dev, 200)
+        self.assertEqual(st.state, buttons.ButtonState.IDLE)
+        self.assertFalse(self._lamp(model, 7))
+
+    def test_debounce_swallows_double_edge(self):
+        """去抖窗口内的第二个上升沿被丢弃（机械抖动不能算两次启动）。"""
+        from hsfsrv import buttons
+        st, dev, model = self._station(debounce_ms=300)
+        model.press_button(13, True)
+        self._tick(st, dev, 1000)
+        self.assertEqual(st.state, buttons.ButtonState.RUNNING)
+        # 抖动：松开再按下，间隔 < debounce
+        model.press_button(13, False)
+        self._tick(st, dev, 1040)
+        model.press_button(13, True)
+        self._tick(st, dev, 1080)
+        # 此时仍在 running（第二个沿被吞，未触发任何新转移）
+        self.assertEqual(st.state, buttons.ButtonState.RUNNING)
+
+    def test_lamps_recover_after_external_write(self):
+        """灯被外部写灭后必须**自愈**补写回来。
+
+        [实锅 2026-11-06 板端实测] 初版只在"目标值变化"时写灯（缓存记的是
+        上次写下去的目标）。于是从数字量页整组清零（或任何外部写 DO7~9）
+        把灯打灭后，目标没变 ⇒ 永远不再写，操作柱上的停止灯**再也不亮**
+        （现场实测 5 拍全 0x0000）。修法是每拍回读实际值，不一致就补写。
+        """
+        st, dev, model = self._station()
+        self._tick(st, dev, 100)
+        self.assertTrue(self._lamp(model, 8), "初始停止灯亮")
+
+        # 模拟外部把灯全灭（数字量页整组清零）
+        model.do_mask = 0
+        self.assertFalse(self._lamp(model, 8))
+
+        self._tick(st, dev, 200)               # 下一拍应自愈补写
+        self.assertTrue(self._lamp(model, 8),
+                        "外部写灭后必须自动补写回停止灯")
+        self.assertFalse(self._lamp(model, 7), "启动灯仍须灭")
+
+    def test_lamps_not_rewritten_when_already_correct(self):
+        """稳态不刷总线：灯已经对就不写（避免每拍 FC05）。
+
+        [为什么这条重要] 真机模块对频繁写敏感，且线上帧数会翻倍。
+        自愈逻辑必须"只在真的不一致时写"。
+        """
+        st, dev, model = self._station()
+        self._tick(st, dev, 100)               # 首拍写一次
+        before = len(dev.write_log) if hasattr(dev, "write_log") else None
+        # 攒下 model 上的写次数（VirtualDigital 不记日志，改用 do_mask 稳定性）
+        mask0 = model.do_mask
+        for i in range(5):
+            self._tick(st, dev, 200 + i * 100)
+        self.assertEqual(model.do_mask, mask0, "稳态下 DO 位图不得变化")
+        self.assertTrue(self._lamp(model, 8))
+
+    def test_health_text_names_channels(self):
+        """健康表地址串要能看出用了哪些点位。"""
+        st, _dev, _model = self._station()
+        text = st.health_text()
+        self.assertIn("DI12", text)
+        self.assertIn("DO7", text)
+
+
+class TestButtonChannelNames(unittest.TestCase):
+    """通道名：数字量页必须显示"急停/启动/停止/复位"，不能只有 DO7 这样的裸号。
+
+    [用户 2026-11-06 明确要求]"将通道名字加入" —— 现场操作员看到
+    "输入12" 不知道那是急停，这是可操作性要求。
+    """
+
+    def test_names_registered(self):
+        """登记的是一张「通道 → 语义名」表（di/do 分两栏）。"""
+        from hsfsrv import app as app_mod
+        from hsfsrv import buttons, devices, virtualdev
+
+        model = virtualdev.VirtualDigital(channels=16)
+        master = virtualdev.VirtualMaster(model, name="虚拟")
+        dev = devices.DigitalIo(master, "数字量", channels=16)
+
+        station = buttons.ButtonStation(
+            TestButtonStation._Ctx(dev), TestButtonStation.ITEMS, debounce_ms=0)
+        app = object.__new__(app_mod.App)
+        app.button_station = station
+
+        out = {"di": {}, "do": {}}
+        app_mod.App._button_channel_names(app, 0, 16, out)
+        self.assertEqual(out["di"].get(12), "急停（常闭）")
+        self.assertEqual(out["di"].get(13), "启动按钮")
+        self.assertEqual(out["di"].get(14), "停止按钮")
+        self.assertEqual(out["di"].get(15), "复位按钮")
+        self.assertEqual(out["do"].get(7), "启动按钮灯")
+        self.assertEqual(out["do"].get(8), "停止按钮灯")
+        self.assertEqual(out["do"].get(9), "复位按钮灯")
+
+    def test_names_skipped_for_other_module(self):
+        """别的模块下标不登记（点位是模块内相对号）。"""
+        from hsfsrv import app as app_mod
+        from hsfsrv import buttons, devices, virtualdev
+
+        model = virtualdev.VirtualDigital(channels=16)
+        master = virtualdev.VirtualMaster(model, name="虚拟")
+        dev = devices.DigitalIo(master, "数字量", channels=16)
+        station = buttons.ButtonStation(
+            TestButtonStation._Ctx(dev), TestButtonStation.ITEMS, debounce_ms=0)
+        app = object.__new__(app_mod.App)
+        app.button_station = station
+
+        out = {"di": {}, "do": {}}
+        app_mod.App._button_channel_names(app, 1, 16, out)
+        self.assertEqual(out, {"di": {}, "do": {}}, "模块 1 不该被登记")
+
+    def test_names_skipped_without_station(self):
+        """未启用按钮组时不得崩（只是不登记）。"""
+        from hsfsrv import app as app_mod
+        app = object.__new__(app_mod.App)
+        out = {"di": {}, "do": {}}
+        app_mod.App._button_channel_names(app, 0, 16, out)
+        self.assertEqual(out, {"di": {}, "do": {}})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

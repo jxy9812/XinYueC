@@ -19,6 +19,8 @@ QPushButton/QLineEdit…，规则体可以**逐字照搬**——这也正是本�
     禁用底    #F0F2F5
 """
 
+import os
+
 from PyQt5.QtGui import QColor, QFont, QPalette
 
 # ============================================================================
@@ -166,6 +168,69 @@ def apply_font(app, size=10):
 
 
 # ============================================================================
+#                        字号缩放（板端触摸屏可读性）
+# ============================================================================
+#
+# [为什么需要全局缩放] 界面各处的字号是**分散硬编码**的 QSS 像素值
+# （`font-size: 12px` 之类，散在 7 个文件约 45 处）。板端是 1280x800 的
+# 7.9 寸屏（338x211mm），12px 字物理高度只有约 1.6mm，站在触摸屏前看着
+# 明显偏小（用户 2026-11-06 反馈"字体有点小，可以尝试字体都加大"）。
+#
+# 改法：所有硬编码像素字号一律走 `font_px(n)`，由本模块的**单一比例**
+# 统一放大。好处：① 一处改全局生效；② 小字与大字的相对层次保持不变
+# （不会出现标题放大了、说明文字没跟上导致的比例失衡）。
+#
+# 环境变量 `HSF_UI_SCALE` 可覆盖（现场"嫌大/嫌小"不用改代码）：
+#     HSF_UI_SCALE=1.0   原样
+#     HSF_UI_SCALE=1.15  缺省（板端）
+# 真要更大直接给 1.3，不必改代码。
+_UI_SCALE = None
+
+
+def ui_scale():
+    """当前界面字号缩放比例（带缓存；首次调用时读环境变量）。"""
+    global _UI_SCALE
+    if _UI_SCALE is None:
+        raw = os.environ.get("HSF_UI_SCALE", "").strip()
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            val = 0.0
+        if not 1.0 <= val <= 2.0:          # 非法/离谱值一律回缺省
+            val = 1.15
+        _UI_SCALE = val
+    return _UI_SCALE
+
+
+def set_ui_scale(val):
+    """强制指定缩放（测试/热调使用）。传 None 表示**清除覆盖**、下次重读环境变量。
+
+    [为什么要支持清除] `_UI_SCALE` 是模块级缓存。测试里先 set 成 2.0，
+    再 `del sys.modules[...]` 重新导入时**新模块的全局变量是 None**，
+    但同一测试进程里若只改环境变量而不重新导入，就永远读到旧值。
+    提供 None 清除语义，测试能干净地验证环境变量分支。
+    """
+    global _UI_SCALE
+    if val is None:
+        _UI_SCALE = None
+        return ui_scale()
+    _UI_SCALE = max(1.0, min(2.0, float(val)))
+    return _UI_SCALE
+
+
+def font_px(size, minimum=10):
+    """把设计稿里的像素字号按全局比例换算（QSS 用，返回 int）。
+
+    :param size: 设计稿字号（px）
+    :param minimum: 下限（防止缩放后仍小到看不清）
+
+    [为什么四舍五入到整像素] QSS 支持小数，但整像素在 1x 屏上渲染更锐利
+    （半像素会触发抗锯齿导致发虚，板端实测文字边缘变灰）。
+    """
+    return max(int(minimum), int(round(float(size) * ui_scale())))
+
+
+# ============================================================================
 #                          样式表
 # ============================================================================
 
@@ -221,7 +286,7 @@ QPushButton#HsfDoToggle {
     padding: 4px 8px;
     min-height: 44px;
     max-height: 46px;
-    font-size: 12px;
+    font-size: %(fz12)dpx;
 }
 
 /* ==================== QLineEdit ==================== */
@@ -470,6 +535,9 @@ QSplitter::handle:horizontal {
     "radius_ctrl": RADIUS_CTRL,
     "radius_card": RADIUS_CARD,
     "splitter_w": SPLITTER_HANDLE_W,
+    # 字号：见 ui_scale()/font_px()。求值发生在本模块导入时，故环境变量
+    # HSF_UI_SCALE 必须在**导入 theme 之前**设好（__main__ 就是这么做的）。
+    "fz12": font_px(12),
 }
 
 
@@ -587,4 +655,4 @@ def value_label_qss(color="#1A1A1A", size=20, bold=True):
 
 def caption_label_qss():
     """灰色小字说明标签。"""
-    return "QLabel { color: #5A6572; font-size: 12px; background: transparent; }"
+    return ("QLabel { color: #5A6572; font-size: %dpx; background: transparent; }" % font_px(12))

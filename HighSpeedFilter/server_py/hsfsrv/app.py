@@ -19,6 +19,7 @@ import time
 
 from . import autocontrol
 from . import bson
+from . import buttons
 from . import devices
 from . import store
 from . import valves
@@ -42,6 +43,18 @@ _ALARM_KIND_NAMES = {
 #: 禁止后语义唯一：**先启动，再调速**。
 #: 启停/点动/复位/点动释放不在此列 —— 它们本来就要在停机时用。
 _VFD_SETPOINT_OPS = frozenset({
+    proto.OP_SET_FREQUENCY,
+    proto.OP_SET_SPEED,
+})
+
+#: **急停无效时要拦下的 op**（2026-11-06 按钮组安全闸）。
+#:
+#: [只拦"让设备动起来"的命令] 启动、点动、调速都在此列；停止/自由停车/
+#: 故障复位/点动释放**必须放行**——急停时更要允许把人把设备停下来，
+#: 拦下停止命令是反安全的。
+_ESTOP_BLOCKED_OPS = frozenset({
+    proto.OP_START,
+    proto.OP_JOG,
     proto.OP_SET_FREQUENCY,
     proto.OP_SET_SPEED,
 })
@@ -169,6 +182,8 @@ class App(object):
         self.digital = []          # [DigitalIo, ...]
         #: 电磁阀组（6 路；点位来自 config.valve_items，先留空后对接）
         self.valve_bank = None
+        #: 按钮组（现场操作柱：DI12~15 输入 + DO7~9 三灯）
+        self.button_station = None
 
         # ---- 推送闸 ----
         self._gates = {
@@ -231,32 +246,31 @@ class App(object):
         # 串口是排他资源：每台设备各建一个 RtuMaster 就会互相抢口
         # （第二个 open 直接 EACCES/EBUSY）。而且 RTU 是半双工单主站总线，
         # 多主站并发写会互相踩帧——本来就该串行化。
-        # 故这里按「串口号+波特率」缓存 master，变频器(站2)与温湿度(站4)
-        # 共享同一个实例；RtuMaster 内部已有 asyncio.Lock 保证事务串行。
+        #
+        # [现场两条独立 485] 路 A（serial）：变频器 + 温湿度，115200；
+        # 路 B（serial_b）：流量计 + 浊度仪 ×2，9600。按「串口号+波特率」
+        # 缓存 master，两条线自然分成两个实例；同一条线上的多个从站共享
+        # 同一个实例（RtuMaster 内部 asyncio.Lock 保证事务串行）。
         rtu_masters = {}
 
-        def make_rtu(unit_id):
+        def make_rtu(unit_id, bus="a"):
             """取（必要时创建）该串口的主站。
 
-            设备侧只需在每次事务时改 unit 号——RtuMaster 的 read/write
-            都用 self.unit，故调用前由设备层设置；这里返回**副本视图**
-            不可行（要共享串口句柄），改为给设备传入 unit 并在事务时切换。
+            :param bus: "a"=变频器/温湿度那条（115200），
+                        "b"=流量计/浊度仪那条（9600）。
 
-            [实现选择] 让 RtuMaster 支持 per-call unit：设备调用
-            `read(fc, addr, cnt, unit=self.unit_id)`。这样一台 master
-            天然能服务同总线上的多个从站。
-
-            [虚拟模式] 同一个串口上的多个从站共用**同一个** VirtualMaster
-            ——与真实链路的结构一致（一条总线一个 master）。虚拟模型内部
-            按 unit 区分？本实现只模拟一台变频器 + 一台温湿度，故直接各
-            用独立模型即可，不必按 unit 分派。
+            [为什么 bus 必须显式传] 两条线速率不同，共用一个 master 会让
+            9600 的设备被按 115200 访问 —— 现象是"从站全不通"。
+            cfg.serial / cfg.serial_b 各自带 port 与 baudrate，key 里带上
+            它们，两条线就不会串。
             """
-            c = self.cfg.serial
+            c = self.cfg.serial_b if bus == "b" else self.cfg.serial
             key = (c.port, c.baudrate)
             master = rtu_masters.get(key)
             if master is None:
                 if sim:
-                    # 变频器与温湿度共用一条"虚拟串口"：用一个多模型 master
+                    # 虚拟模式仍用一台多模型 master 模拟全部从站（不涉及
+                    # 真实串口，无所谓两条线）；站号各不相同即可。
                     models = {
                         self.cfg.vfd_unit_id: virtualdev.VirtualVfd(
                             max_hz=self.cfg.serial.vfd_max_hz,
@@ -264,11 +278,9 @@ class App(object):
                         self.cfg.temphum_unit_id:
                             virtualdev.VirtualTempHum(),
                     }
-                    # 流量计也挂这条总线上（现场若接了就在同一个 485 口）。
                     if self.cfg.enable_flowmeter:
                         models[self.cfg.flowmeter_unit_id] = \
                             virtualdev.VirtualFlowMeter()
-                    # 两台浊度仪同样在这条 485 上，站号各不相同。
                     if self.cfg.enable_turbidity:
                         for idx, uid in enumerate(
                                 self.cfg.turbidity_unit_ids[:2]):
@@ -284,13 +296,16 @@ class App(object):
             return master
 
         def make_vfd_master():
-            return make_rtu(self.cfg.vfd_unit_id)
+            return make_rtu(self.cfg.vfd_unit_id, "a")
 
         def make_th_master():
-            return make_rtu(self.cfg.temphum_unit_id)
+            return make_rtu(self.cfg.temphum_unit_id, "a")
 
         def make_flow_master():
-            return make_rtu(self.cfg.flowmeter_unit_id)
+            return make_rtu(self.cfg.flowmeter_unit_id, "b")
+
+        def make_turb_master(uid):
+            return make_rtu(uid, "b")
 
         if self.cfg.enable_serial:
             if self.cfg.enable_vfd:
@@ -318,7 +333,7 @@ class App(object):
             if self.cfg.enable_turbidity:
                 for idx, uid in enumerate(self.cfg.turbidity_unit_ids[:2]):
                     self.turbidity.append(devices.TurbidityMeter(
-                        (lambda u=uid: make_rtu(u)), uid,
+                        (lambda u=uid: make_turb_master(u)), uid,
                         name="浊度仪%d" % (idx + 1), log=self._log))
                 self._gates[proto.TOPIC_TURBIDITY_STATUS].append(
                     PushGate(self.TURBIDITY_PUSH_MS))
@@ -387,6 +402,21 @@ class App(object):
                               if it.ready)))
             else:
                 self._log("进水泵：未配置点位（界面可见，控制不可用）")
+
+        # ---- 按钮组（现场操作柱：4 DI 输入 + 3 DO 灯）----
+        # [为什么放在阀门/泵之后] 它要读写同一批数字量缓存；顺序不影响
+        # 正确性（都走 dev.di/dev.do 快照），放在最后只是便于阅读。
+        if getattr(self.cfg, "enable_buttons", False):
+            self.button_station = buttons.ButtonStation(
+                self.auto_ctx, self.cfg.button_items,
+                debounce_ms=getattr(self.cfg, "button_debounce_ms", 300),
+                log=self._log)
+            self.button_station.on_state_change = self._on_button_state
+            self._log("按钮组：已装配（DI%d~%d 输入 / DO%d~%d 灯）"
+                      % (self.cfg.button_items.get("estop_di"),
+                         self.cfg.button_items.get("reset_di"),
+                         self.cfg.button_items.get("start_lamp_do"),
+                         self.cfg.button_items.get("reset_lamp_do")))
 
     @property
     def TEMPHUM_PUSH_MS(self):
@@ -656,6 +686,15 @@ class App(object):
 
     def storage_apply(self):
         """按当前 cfg.storage 开/关/重开数据库（启动与远程改配置共用）。"""
+        # 容量限额先灌进去：与连接无关，在线改立刻生效（下一次写前闸就
+        # 按新上限/新策略动作）。
+        try:
+            self.store.configure(
+                max_kb=self.cfg.storage.max_kb,
+                full_policy=self.cfg.storage.full_policy,
+                keep_files=self.cfg.storage.keep_files)
+        except (TypeError, ValueError) as exc:
+            self._log_raw("落盘容量配置非法（%s）：按不限处理" % exc)
         if self.cfg.storage.enabled:
             self.store.open_for(self.cfg.storage.path)
         else:
@@ -700,7 +739,12 @@ class App(object):
         不写（入库为 NULL），与界面 "--" 同口径 —— NULL 是"没数据"，
         不是 0。
         """
-        row = {"ts": self._now_ms()}
+        # [ts 必须用墙钟，不能用 _now_ms()] `_now_ms` 是 **monotonic**
+        # （开机后计时，用于超时判定），写进库里毫无意义：实测入库值是
+        # 5153125 ms ≈ 1970-01-01，历史页时间列全显示 1970 年、时间范围
+        # 筛选永远命中不了、分页窗口锚点（beforeTs）也整体对不上。
+        # 落盘/日志/告警这类"事后要按真实时间查"的数据一律用 epoch 毫秒。
+        row = {"ts": int(time.time() * 1000)}
         # ---- 运行模式 ----
         if self.run_mode == self.MODE_AUTO:
             running = getattr(self.auto_controller, "running", None)
@@ -765,7 +809,7 @@ class App(object):
                 value, note = scale.engineering(ai.ma(0))
                 row["press_mpa"] = value
                 row["press_note"] = note or ""
-        # ---- 数字量位图（取在线模块中点数最多者；现场即聚合后的 .12）----
+        # ---- 数字量位图（取在线模块中点数最多者；现场只有 .13 一台）----
         best = None
         for dev in self.digital:
             if getattr(dev, "online", False) and (
@@ -808,13 +852,24 @@ class App(object):
 
     def _config_storage_doc(self):
         """落盘配置快照（GET 应答用）。path 为**配置值**（空=程序目录）；
-        实际库文件路径另给 storageDbPath（界面展示"现在到底写在哪"）。"""
+        实际库文件路径与用量另给 storageDbPath / storageStats。"""
         s = self.cfg.storage
         return {
             proto.CFGK_STORAGE_ENABLED: bool(s.enabled),
             proto.CFGK_STORAGE_PATH: s.path or "",
             proto.CFGK_STORAGE_SAMPLE_MS: int(s.sample_ms),
+            proto.CFGK_STORAGE_MAX_MB: int(s.max_mb),
+            proto.CFGK_STORAGE_FULL_POLICY: s.full_policy,
+            proto.CFGK_STORAGE_KEEP_FILES: int(s.keep_files),
         }
+
+    def _storage_stats_doc(self):
+        """落盘用量实况（界面进度条/到限提示用；库未开也给零值）。"""
+        stats = self.store.stats()
+        # 加上配置侧的有效值（库未打开时 store 里没有这些读数）。
+        stats["enabled"] = bool(self.cfg.storage.enabled)
+        stats["dbPath"] = self.store.db_path or ""
+        return stats
 
     def _cfg_set_collect_key(self, key, value):
         """写一个 collect 键进 cfg；返回 (值有变化, 影响开关)。
@@ -885,6 +940,29 @@ class App(object):
             changed = s.sample_ms != ms
             s.sample_ms = ms
             return changed
+        if key == proto.CFGK_STORAGE_MAX_MB:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("maxMb 需要 int 兆字节（0 = 不限）")
+            mb = max(proto.STORAGE_MAX_MB_MIN,
+                     min(proto.STORAGE_MAX_MB_MAX, int(value)))
+            changed = s.max_mb != mb
+            s.max_mb = mb
+            return changed
+        if key == proto.CFGK_STORAGE_FULL_POLICY:
+            pol = str(value or "").strip().lower()
+            if pol not in proto.STORAGE_POLICY_KEYS:
+                raise ValueError("fullPolicy 只能是 %s"
+                                 % "/".join(proto.STORAGE_POLICY_KEYS))
+            changed = s.full_policy != pol
+            s.full_policy = pol
+            return changed
+        if key == proto.CFGK_STORAGE_KEEP_FILES:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("keepFiles 需要 int 段数（1..99）")
+            keep = max(1, min(99, int(value)))
+            changed = s.keep_files != keep
+            s.keep_files = keep
+            return changed
         raise ValueError("未知落盘配置键：%s" % key)
 
     async def _h_config_get(self, session, request_id, msg_code, _payload):
@@ -893,6 +971,7 @@ class App(object):
             "collect": self._config_collect_doc(),
             "storage": self._config_storage_doc(),
             "storageDbPath": self.store.db_path or "",
+            "storageStats": self._storage_stats_doc(),
         })
 
     async def _h_config_set(self, session, request_id, msg_code, payload):
@@ -952,7 +1031,8 @@ class App(object):
             self._log("远程配置：落盘节已更新（%s）" % ",".join(keys))
             await self._reply(session, request_id, msg_code, True, extra={
                 "storage": self._config_storage_doc(),
-                "storageDbPath": self.store.db_path or ""})
+                "storageDbPath": self.store.db_path or "",
+                "storageStats": self._storage_stats_doc()})
         else:
             await self._reply(session, request_id, msg_code, False,
                               "未知配置节：%r（collect / storage）" % section)
@@ -1031,9 +1111,11 @@ class App(object):
             await self.server.publish(proto.TOPIC_AI_STATUS,
                                       self.encode_analog(self.analog))
         # ---- 数字量（逐模块一帧）----
-        # 只发 publish=True 的模块：被聚合者（如 .13 聚合进 .12）的点已经在
-        # 聚合者的地址空间里出现了，再给它发一帧会让客户端出现两套重复点位。
+        # 只发 publish=True 的模块：聚合架构下被聚合者的点已经在聚合者的
+        # 地址空间里出现了，再给它发一帧会让客户端出现两套重复点位。
         # 它照样参与轮询与健康探测（见 collect_health），只是不出场景。
+        # [当前现场已无聚合] 只剩 .13 一台且 publish=True，这条过滤恒放行；
+        # 保留它是为了将来再挂第二台聚合模块时不重复发点。
         for i, dev in enumerate(self.digital):
             if not getattr(dev, "publish", True):
                 continue
@@ -1041,6 +1123,17 @@ class App(object):
                 # 周期推送＝增量帧（不带名字）；名字靠首连/订阅补发的全量帧。
                 await self.server.publish(proto.TOPIC_DIGITAL_STATUS,
                                           self.encode_digital(dev, i, full=False))
+        # ---- 按钮组（操作柱：读按键 → 推状态机 → 写三盏灯）----
+        # [放在数字量推送之后] 它读的是 dev.di/dev.do 缓存；数字量那几帧
+        # 刚推完，此刻的缓存就是本拍最新状态。灯的写入是异步投递，下一拍
+        # 由回读校准，不影响本拍推送出去的数据自洽性。
+        if getattr(self, "button_station", None) is not None:
+            try:
+                self.button_station.poll(now_ms)
+            except Exception as exc:                    # noqa: BLE001
+                # 按钮组异常不能把整个 tick 带死（自动/手动都要继续跑）
+                self._log("按钮组：本拍处理失败 %s: %s"
+                          % (type(exc).__name__, exc))
         # ---- 电磁阀（6 路一帧）----
         if self.valve_bank is not None:
             # 反馈来自数字量模块缓存，故先刷新再推送（同一拍数据自洽）
@@ -1238,6 +1331,7 @@ class App(object):
 
         di/do 是位图 int（bit n = 通道 n），count 取该模块实际点数
         （单模块 16；聚合后 32 —— 客户端按 count 显示，不写死）。
+        本现场 2026-11-06 起只剩 .13 一台 ⇒ count=16。
 
         [通道名由服务端推导] 被电磁阀占用的口，名字按**阀门点位映射**
         自动生成（"阀1 开到位"这种）。客户端因此不需要知道哪路阀接在哪个
@@ -1266,8 +1360,10 @@ class App(object):
         if not full:
             return bson.encode(doc)
         names = self._digital_channel_names(index, dev.channels)
-        # 泵占用的 DO 也登记（DO22 = 进水泵），与阀门名汇进同一张表
+        # 泵占用的 DO 也登记（DO6 = 进水泵），与阀门名汇进同一张表
         self._pump_channel_names(index, dev.channels, names)
+        # 按钮组占的 4 DI / 3 DO 也登记（DI12~15 / DO7~9）
+        self._button_channel_names(index, dev.channels, names)
         for channel, text in names.get("di", {}).items():
             doc[proto.KEY_DI_NAME_FMT % channel] = text
         for channel, text in names.get("do", {}).items():
@@ -1310,7 +1406,7 @@ class App(object):
         """把进水泵占用的 DO 也登记进数字量通道名（就地补进 out）。
 
         [为什么并进同一张表] 数字量页显示的就是"这个口是干什么用的"。
-        泵占着 DO22，如果那里只显示 `DO22`，现场看到一屋子阀门名里夹着个
+        泵占着 DO6，如果那里只显示 `DO6`，现场看到一屋子阀门名里夹着个
         光秃秃的通道号，会以为是没配置的多余点。
 
         [为什么单独一个函数而不是塞进 _digital_channel_names] 那个函数只认
@@ -1327,6 +1423,59 @@ class App(object):
             channel = int(item.do)
             if 0 <= channel < channels:
                 out["do"][channel] = item.name
+
+    def _button_channel_names(self, module_index, channels, out):
+        """把按钮组的 4 个 DI 与 3 个 DO 也登记进通道名（就地补进 out）。
+
+        [为什么也要登记] 数字量页显示的是"这个口是干什么用的"。按钮组
+        占了 DI12~15 / DO7~9，如果不登记，现场看到的是 `DI12`、`DO7`
+        这种光秃秃的号，还得对着图纸数 —— 正是用户要求"将通道名字加入"
+        的原因。
+
+        [名字措辞] 输入侧带**动作语义**（"急停"而不是"急停按钮"），因为
+        该点表达的是"回路是否正常"；输出侧是灯，写成"启动按钮灯"。
+        """
+        st = getattr(self, "button_station", None)
+        if st is None:
+            return
+        items = st.items
+        try:
+            mod = int(items.get(buttons.KEY_MODULE) or 0)
+        except (TypeError, ValueError):
+            mod = 0
+        if mod != module_index:
+            return
+
+        di_names = (
+            (buttons.KEY_ESTOP, "急停（常闭）"),
+            (buttons.KEY_START, "启动按钮"),
+            (buttons.KEY_STOP, "停止按钮"),
+            (buttons.KEY_RESET, "复位按钮"),
+        )
+        do_names = (
+            (buttons.KEY_START_LAMP, "启动按钮灯"),
+            (buttons.KEY_STOP_LAMP, "停止按钮灯"),
+            (buttons.KEY_RESET_LAMP, "复位按钮灯"),
+        )
+        for key, text in di_names:
+            ch = st._ch(key)
+            if ch is not None and 0 <= ch < channels:
+                out["di"][ch] = text
+        for key, text in do_names:
+            ch = st._ch(key)
+            if ch is not None and 0 <= ch < channels:
+                out["do"][ch] = text
+
+    def _on_button_state(self, old, new):
+        """按钮组状态迁移回调（日志 + 推送健康变化）。
+
+        [为什么用回调而不是在 poll 里发] ButtonStation 只管设备侧采集与灯，
+        不该知道"怎么发告警/健康"。app 在这里接住状态变化，统一走既有
+        日志与健康通道，两边职责不混。
+        """
+        self._log("按钮组：%s → %s" % (old, new))
+        # 状态变化必然影响健康表（健康里带按钮组这一条），打脏让下一拍重算
+        self._health_dirty = True
 
     async def refresh_valve_sources(self, force=False):
         """让电磁阀用到的数字量模块现读一次（去重 + 节流）。
@@ -1395,19 +1544,25 @@ class App(object):
         return bson.encode(doc)
 
     # ---- 连接地址文案（给人看） ----
-    def _addr_rtu(self, unit_id):
-        """485 设备地址：``COM17 · 115200 · 站 2``。
+    def _addr_rtu(self, unit_id, bus="a"):
+        """485 设备地址：``COM17 · 115200 · 站 2``（路 B 则是 9600 那个口）。
 
         [为什么三个都要写] 现场排故障时这三个缺一不可：口接错、波特率不匹配、
         站号撞车，现象都是"通讯不上"，只看 IP 或只看"某口"根本判不出来。
         原来这些参数只存在于配置文件里，界面上看不到 —— 操作员报"搅拌泵离线"，
         运维还得先 SSH 上去翻配置才知道该查哪个站。
+
+        [两条独立 485 必须分开显示] 用户反馈：「变频器那路是115200是对的，
+        另一路是9600，而且显示的串口号是一样的，他们明明是两路独立的」。
+        路 A（变频器/温湿度）取 cfg.serial，路 B（流量计/浊度仪）取
+        cfg.serial_b；之前所有设备都用 cfg.serial，界面上 5 台设备全是
+        "COM17 · 115200"，与实际接线不符、排障时误导。
         """
-        c = self.cfg.serial
+        c = self.cfg.serial_b if bus == "b" else self.cfg.serial
         return "%s · %d · 站 %s" % (c.port, int(c.baudrate), unit_id)
 
     def _addr_tcp(self, host, port, unit_id=None):
-        """TCP 设备地址：``192.168.0.12:502``（Modbus TCP 站号多为 1，不喧宾夺主）。
+        """TCP 设备地址：``192.168.0.13:502``（Modbus TCP 站号多为 1，不喧宾夺主）。
 
         站号只有不等于 1 时才补上去 —— 现场 99% 是 1，写出来只是噪声。
         """
@@ -1435,6 +1590,60 @@ class App(object):
             return "%s · DO%s" % (self._addr_tcp(m.host, m.port), item.do)
         return "DO%s" % item.do
 
+    def _button_addr(self):
+        """按钮组的"地址"= 挂在哪个模块、占哪些 DI/DO。"""
+        st = getattr(self, "button_station", None)
+        if st is None:
+            return ""
+        try:
+            mod = int(st.items.get(buttons.KEY_MODULE) or 0)
+        except (TypeError, ValueError):
+            mod = 0
+        mods = self.cfg.digital_modules
+        span = st.health_text()
+        if 0 <= mod < len(mods):
+            m = mods[mod]
+            return "%s · %s" % (self._addr_tcp(m.host, m.port), span)
+        return span
+
+    def _button_health(self, now_ms):
+        """按钮组的健康条目。
+
+        [判据] 只看"按钮组作为一个部件是否在工作"：数字量模块在线即可用。
+        急停**无信号不算故障** —— 那是操作员按下急停的正常状态（或现场
+        本来就没接急停线），把它报成故障会天天误报。真正需要人注意的
+        信息写在 text 里（"急停无信号，禁止启动"），让人一眼看懂现状。
+        """
+        st = getattr(self, "button_station", None)
+        mod = 0
+        try:
+            mod = int(st.items.get(buttons.KEY_MODULE) or 0)
+        except (TypeError, ValueError):
+            pass
+        dev = self.digital[mod] if 0 <= mod < len(self.digital) else None
+        online = bool(dev is not None and getattr(dev, "online", False))
+
+        if not online:
+            return HealthEntry("按钮组", proto.KIND_DIGITAL_IO, 0,
+                               proto.HEALTH_OFFLINE, 0, False, 0,
+                               "数字量模块离线，按键与灯均不可用",
+                               self._button_addr())
+
+        # 模块在线：按状态给一句人话
+        snap = st.snapshot()
+        state = snap.get("state")
+        if state == buttons.ButtonState.ESTOP:
+            text = "急停无信号（按下或断线）：禁止启动"
+            health = proto.HEALTH_FAULT
+        elif state == buttons.ButtonState.RUNNING:
+            text = "运行中（启动灯亮、停止灯灭）"
+            health = proto.HEALTH_OK
+        else:
+            text = "停止（停止灯亮、启动灯灭）"
+            health = proto.HEALTH_OK
+        return HealthEntry("按钮组", proto.KIND_DIGITAL_IO, 0,
+                           health, 0, True, 0, text, self._button_addr())
+
     def _valve_addr(self):
         """阀组的"地址"= 挂在哪个模块、占哪几个 DO。"""
         bank = self.valve_bank
@@ -1445,7 +1654,7 @@ class App(object):
         last = bank.items[-1]
         if first.module is None or first.do is None:
             return ""
-        # [区间写成 DO16~DO21] 用 ".." 现场有人读成"两个点"，用 ~ 一眼是
+        # [区间写成 DO0~DO5] 用 ".." 现场有人读成"两个点"，用 ~ 一眼是
         # "从这口到这口"，数口时不会数错一头。
         do_span = "DO%s~DO%s" % (first.do, last.do)             if last.do is not None else "DO%s" % first.do
         if 0 <= int(first.module) < len(mods):
@@ -1496,13 +1705,15 @@ class App(object):
                 entries.append(HealthEntry("电磁流量计", proto.KIND_FLOWMETER,
                                            0, proto.HEALTH_OFFLINE, 0, False,
                                            0, "未装配",
-                                           self._addr_rtu(self.cfg.flowmeter_unit_id)))
+                                           self._addr_rtu(
+                                               self.cfg.flowmeter_unit_id, "b")))
             else:
                 health, err, online, text = self.flowmeter.health(
                     now_ms, self.cfg.flowmeter_stale_ms)
                 entries.append(HealthEntry("电磁流量计", proto.KIND_FLOWMETER,
                                            0, health, err, online, 0, text,
-                                           self._addr_rtu(self.cfg.flowmeter_unit_id)))
+                                           self._addr_rtu(
+                                               self.cfg.flowmeter_unit_id, "b")))
         # ---- 浊度仪（逐台）----
         for idx, tm in enumerate(self.turbidity):
             health, err, online, text = tm.health(
@@ -1514,7 +1725,7 @@ class App(object):
             entries.append(HealthEntry("浊度仪%d" % (idx + 1),
                                        proto.KIND_WATER, 0,
                                        health, err, online, 0, text,
-                                       self._addr_rtu(unit)))
+                                       self._addr_rtu(unit, "b")))
         # ---- 进水泵 ----
         if self.pump_bank is not None:
             health, online, text = self.pump_bank.health_summary(
@@ -1523,6 +1734,11 @@ class App(object):
             entries.append(HealthEntry("进水泵", proto.KIND_DIGITAL_IO, 0,
                                        health, 0, online, 0, text,
                                        self._pump_addr()))
+        # ---- 按钮组（现场操作柱）----
+        # [必须 getattr] 单测/工具会用 object.__new__(App) 造"半初始化"
+        # 实例来测 collect_health，那时 __init__ 没跑、属性不存在。
+        if getattr(self, "button_station", None) is not None:
+            entries.append(self._button_health(now_ms))
         # ---- 模拟量 ----
         if self.cfg.enable_analog:
             if self.analog is None:
@@ -1680,6 +1896,7 @@ class App(object):
             proto.CMD_AUTO_CONTROL: self._h_auto_control,
             proto.CMD_CONFIG_GET: self._h_config_get,
             proto.CMD_CONFIG_SET: self._h_config_set,
+            proto.CMD_HISTORY_PAGE: self._h_history_page,
         }.get(msg_code)
         if handler is None:
             # 未知命令必须回否定应答：不发则客户端空等到超时（观感「服务端死了」）。
@@ -1709,6 +1926,30 @@ class App(object):
             await self._reply(session, request_id, msg_code, False,
                               "自动运行中：远程控制已被禁用（现场切换到手动后可用）")
             return
+        # 1b) **急停闸**（2026-11-06）：急停无信号时禁止一切"让设备动起来"的
+        # 命令。放在角色门禁之前 —— 这是安全件，不依赖谁在操作。
+        #
+        # [为什么是"先于一切"] 急停按下（或急停回路断线）时，任何启动/点动/
+        # 调速都必须被拒。若只靠界面置灰，绕过界面的客户端照样能启动 ——
+        # 安全闸必须在服务端。
+        #
+        # [只拦"动作类"命令] 停止、自由停车、故障复位这些**让设备停下/清故障**
+        # 的命令必须放行（急停时更要允许停），否则会把人卡住。
+        # 点动释放同理放行（它本来就是收尾动作）。
+        try:
+            _op_for_gate = bson.decode(payload).get(proto.KEY_OP) \
+                if payload else None
+        except (ValueError, AttributeError):
+            _op_for_gate = None
+        if _op_for_gate in _ESTOP_BLOCKED_OPS:
+            estop = self.auto_ctx.estop_ok()
+            if estop is not True:
+                await self._reply(
+                    session, request_id, msg_code, False,
+                    "急停无信号（按下或断线）：禁止启动/调速"
+                    if estop is False
+                    else "急停状态未知（按钮组未装配或数字量模块离线）：禁止启动/调速")
+                return
         # 2) 角色门禁
         if session.role() < proto.ROLE_CONTROL:
             await self._reply(session, request_id, msg_code, False,
@@ -2152,6 +2393,102 @@ class App(object):
     # ---- 设备健康 ----
     async def _h_device_health(self, session, request_id, msg_code, payload):
         await session.send_response(request_id, msg_code, self.encode_health())
+
+    # ==================================================================
+    #                    历史数据分页读取
+    # ==================================================================
+    async def _h_history_page(self, session, request_id, msg_code, payload):
+        """分页读历史：{"offset","limit","beforeTs"?,"loTs"?,"hiTs"?}。
+
+        [权限] 只读数据，**不需要 root**（与 CONFIG_GET 同口径）：看历史
+        不是控制面动作，普通账户就该能查。
+
+        [窗口锚定 beforeTs] 客户端首屏把自己的"现在"发上来，翻页时原样
+        回传，服务端据此把整段分页钉在同一批数据上。否则库在持续入库
+        （5s 一行），翻到第 2 页时新行已经顶进来，offset 会整体偏移
+        → 相邻两页出现重复行、旧行被跳过。
+
+        [总数与页内容同口径] total 与 rows 用**同一 WHERE**，所以
+        「共 N 条 / 第 x 页」与实际能翻到的行永远一致。
+        """
+        if self.store.db_path is None:
+            await self._reply(session, request_id, msg_code, False,
+                              "落盘未启用：服务端没有历史数据可查")
+            return
+        try:
+            doc = bson.decode(payload) if payload else {}
+        except ValueError as exc:
+            await self._reply(session, request_id, msg_code, False,
+                              "分页载荷解析失败：%s" % exc)
+            return
+
+        def _int(key, default=None):
+            value = doc.get(key, default)
+            if value is None:
+                return None
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("%s 需要整数时间戳/序号" % key)
+            return int(value)
+
+        try:
+            offset = max(0, _int(proto.HIST_KEY_OFFSET, 0))
+            raw_limit = _int(proto.HIST_KEY_LIMIT, proto.HISTORY_PAGE_DEFAULT)
+            before_ts = _int(proto.HIST_KEY_BEFORE_TS, None)
+            lo_ts = _int(proto.HIST_KEY_LO_TS, None)
+            hi_ts = _int(proto.HIST_KEY_HI_TS, None)
+        except ValueError as exc:
+            await self._reply(session, request_id, msg_code, False, str(exc))
+            return
+
+        # 关键字 / 列下标：BSON 数组解出来是 list；夹到合法显示列范围，
+        # 防止恶意/畸形下标让 store 拼出越界表达式。空列表 = 全部列。
+        kw = doc.get(proto.HIST_KEY_KW) or ""
+        kw = str(kw)[:128]                       # 防超长关键字拖慢 LIKE
+        raw_cols = doc.get(proto.HIST_KEY_KW_COLS) or []
+        if not isinstance(raw_cols, (list, tuple)):
+            raw_cols = []
+        kw_cols = []
+        for v in raw_cols:
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                continue
+            i = int(v)
+            if 0 <= i < len(self.store.DISPLAY_EXPR):
+                kw_cols.append(i)
+
+        # 页大小夹取：客户端说了算，但不得突破载荷上限。
+        limit = max(proto.HISTORY_PAGE_MIN,
+                    min(proto.HISTORY_PAGE_MAX, int(raw_limit or 0)))
+        # [窗口锚点用**墙钟**] 库里的 ts 是 epoch 毫秒（见 _history_snapshot），
+        # 这里若拿 _now_ms()（monotonic，开机计时）当上界，`ts <= 锚点` 会把
+        # 全部行滤掉 —— 实测 total 恒 0、历史页永远空白。
+        window_end = (int(time.time() * 1000) if before_ts is None
+                      else before_ts)
+        # 时间范围与窗口取交集（hiTs 比窗口更晚时以窗口为准）。
+        effective_hi = window_end if hi_ts is None else min(hi_ts, window_end)
+
+        rows, window_total = self.store.query_history_page(
+            offset=offset, limit=limit, lo_ms=lo_ts, hi_ms=effective_hi,
+            kw=kw, kw_cols=kw_cols)
+        # [时间边界只认有效墙钟] history_bounds() 过滤掉 2020 年前的坏 ts
+        # （旧版本误写 monotonic 的 1970 年行）。直接 MIN(ts) 会把"最前
+        # 一条数据的时间"报成 1970-01-01 —— 客户端拿它当默认起始时间
+        # 等于没筛。
+        earliest_ts, latest_ts = self.store.history_bounds()
+
+        await self._reply(session, request_id, msg_code, True, extra={
+            proto.HIST_KEY_TOTAL: int(window_total),
+            proto.HIST_KEY_OFFSET: int(offset),
+            proto.HIST_KEY_LIMIT: int(limit),
+            proto.HIST_KEY_COLS: list(self.store.HISTORY_COLUMNS),
+            # sqlite3.Row / tuple → list：BSON 只认 list/tuple，tuple 可以
+            # 但 list 在客户端拼装更省事（直接当数组用）。
+            proto.HIST_KEY_ROWS: [list(r) for r in rows],
+            proto.HIST_KEY_DB_ROWS: int(self.store.row_count("history")),
+            proto.HIST_KEY_LATEST_TS: latest_ts,
+            proto.HIST_KEY_EARLIEST_TS: earliest_ts,
+            proto.HIST_KEY_WINDOW_START_TS: int(lo_ts or 0),
+            proto.HIST_KEY_WINDOW_END_TS: int(window_end),
+        })
 
     # ==================================================================
     #                      点动手持看门狗

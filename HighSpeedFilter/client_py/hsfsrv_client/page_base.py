@@ -118,7 +118,7 @@ class Page(QWidget):
         row.setSpacing(10)
         lbl = QLabel(title)
         lbl.setStyleSheet(
-            "QLabel { color: #1F4E79; font-size: 17px; font-weight: bold;"
+            "QLabel { color: #1F4E79; font-size: 20px; font-weight: bold;"
             " background: transparent; }")
         row.addWidget(lbl)
         if subtitle:
@@ -190,6 +190,8 @@ class DataTable(QWidget):
         header.setSectionResizeMode(QHeaderView.Stretch)
         header.setStretchLastSection(False)
         self._column_weights = (6, 3, 2)      # 项目 : 数值 : 单位
+        #: 可见列集合（None = 全部；DataTable.set_visible_columns 改）
+        self._visible_cols = None
         #: 视口宽无效时的重试计数（0=正常；>0 表示在排队等布局稳定）
         self._width_retry = 0
         #: 上次算列宽用的可用宽度（用于判断是否需要重算）
@@ -286,7 +288,16 @@ class DataTable(QWidget):
         if len(weights) < n:
             weights = weights + [weights[-1]] * (n - len(weights))
         weights = weights[:n]
-        total_w = sum(weights)
+        # [隐藏列不参与分配] 只对**可见列**算像素：隐藏列仍占 columnCount
+        # 的位置，把它们也算进"列数"会让可见列被按小权重分到过窄的宽度，
+        # 同时腾出来的空白留在最右边（DataTable.set_visible_columns）。
+        visible = getattr(self, "_visible_cols", None)
+        if visible is None:
+            visible = set(range(n))
+        active = [i for i in range(n) if i in visible]
+        if not active:
+            return
+        total_w = sum(weights[i] for i in active)
         if total_w <= 0:
             return
 
@@ -321,23 +332,24 @@ class DataTable(QWidget):
         # （实测 5 列权重算下来 1130 > 视口 1038）⇒ 出现横向滚动条，
         # 地址列看着还是被挤。故：先把下限"预留"出来，剩余宽度再按权重分。
         min_w = header.minimumSectionSize() or 56
-        min_w = min(min_w, max(40, avail // max(1, n)))
+        min_w = min(min_w, max(40, avail // max(1, len(active))))
         # 各列下限 = 全局档 与 按列 min_widths 取大者；先全部预留，
         # 剩余宽度再按权重分（下限总和超出视口时宁出横向滚动条，
         # 也不把任何一列压到内容以下）。
         min_map = getattr(self, "_min_widths", {}) or {}
-        floors = [max(min_w, int(min_map.get(i, 0))) for i in range(n)]
-        spare = max(0, avail - sum(floors))        # 下限之外可自由分配的部分
-        targets = []
+        floors = {i: max(min_w, int(min_map.get(i, 0))) for i in active}
+        spare = max(0, avail - sum(floors.values()))   # 下限之外可自由分配
+        targets = {}
         used = 0
-        for i, w in enumerate(weights[:-1]):
-            px = floors[i] + int(spare * w / total_w)
-            targets.append(px)
+        for i in active[:-1]:
+            px = floors[i] + int(spare * weights[i] / total_w)
+            targets[i] = px
             used += px
-        targets.append(max(floors[-1], avail - used))   # 最后一列吃掉余数
-        for i, px in enumerate(targets):
-            if header.sectionSize(i) != px:
-                header.resizeSection(i, px)
+        last = active[-1]
+        targets[last] = max(floors[last], avail - used)   # 最后一列吃掉余数
+        for i in active:
+            if header.sectionSize(i) != targets[i]:
+                header.resizeSection(i, targets[i])
 
     def showEvent(self, event):
         """显示时按最终视口宽重算列宽。
@@ -349,6 +361,26 @@ class DataTable(QWidget):
         showEvent 是"终于有了真实尺寸"的那一拍，在这里补算最可靠。
         """
         QWidget.showEvent(self, event)
+        self._apply_column_widths()
+
+    def set_visible_columns(self, visible):
+        """只显示给定的列（`visible` 是列下标集合；None/空 = 全部显示）。
+
+        [为什么用 setColumnHidden 而不是重建列] 隐藏列的数据仍在 item 里，
+        重新勾选时**不用重取数据**、调用方的行文本也不用跟着改列序
+        （历史页的行是按固定 15 列存着的，只有显示面变）。重建列会让
+        "勾选列"变成"改数据结构"，一处改动要牵到取数、导出、图表几处。
+
+        [列宽必须跟着重算] `_apply_column_widths` 按**总列数**和视口宽
+        分配像素，隐藏列也占着 columnCount 的位置 ⇒ 不处理的话空出来的
+        宽度全留白（右边一大片空白，剩下的列并不变宽）。这里把
+        `_visible_cols` 交给分配器：只对可见列分配，权重也只用可见列的。
+        """
+        cols = set(range(self.table.columnCount())) if not visible \
+            else set(int(c) for c in visible)
+        self._visible_cols = cols
+        for c in range(self.table.columnCount()):
+            self.table.setColumnHidden(c, c not in cols)
         self._apply_column_widths()
 
     def _retry_widths(self):
@@ -701,6 +733,6 @@ def section_title(text):
     """小节标题（比页标题小，比正文重）。"""
     lbl = QLabel(text)
     lbl.setStyleSheet(
-        "QLabel { color: #1F4E79; font-size: 14px; font-weight: bold;"
+        "QLabel { color: #1F4E79; font-size: 16px; font-weight: bold;"
         " background: transparent; }")
     return lbl

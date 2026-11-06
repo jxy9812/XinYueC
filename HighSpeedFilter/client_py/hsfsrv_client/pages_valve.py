@@ -142,7 +142,7 @@ class ValveCard(Card):
 
         self.name_label = QLabel("电磁阀 %d" % (index + 1))
         self.name_label.setStyleSheet(
-            "QLabel { font-size: 15px; font-weight: bold; color: #1A1A1A;"
+            "QLabel { font-size: 17px; font-weight: bold; color: #1A1A1A;"
             " background: transparent; }")
         top.addWidget(self.name_label, 1)
 
@@ -179,7 +179,7 @@ class ValveCard(Card):
         self.hint_label = QLabel("")
         self.hint_label.setWordWrap(True)
         self.hint_label.setStyleSheet(
-            "QLabel { color: #5A6572; font-size: 11px;"
+            "QLabel { color: #5A6572; font-size: 15px;"
             " background: transparent; }")
         self.body.addWidget(self.hint_label)
 
@@ -190,7 +190,7 @@ class ValveCard(Card):
         row.addWidget(dot)
         label = QLabel("%s：--" % caption)
         label.setStyleSheet(
-            "QLabel { color: #5A6572; font-size: 12px;"
+            "QLabel { color: #5A6572; font-size: 14px;"
             " background: transparent; }")
         row.addWidget(label, 1)
         parent_layout.addLayout(row)
@@ -204,7 +204,7 @@ class ValveCard(Card):
         self.state_label.setText(text)
         self.state_label.setStyleSheet(
             "QLabel { color: #FFFFFF; background-color: %s; border-radius: 9px;"
-            " padding: 2px 10px; font-size: 12px; font-weight: bold; }" % color)
+            " padding: 2px 10px; font-size: 14px; font-weight: bold; }" % color)
 
     def apply_state(self, item, blocked_reason):
         """把服务端下发的单路状态刷到卡片上。
@@ -286,7 +286,7 @@ class ValvePage(Page):
         self.gate_label.setStyleSheet(
             "QLabel { color: #B26500; background-color: #FFF4E5;"
             " border: 1px solid #FFD8A8; border-radius: 4px;"
-            " padding: 6px 10px; font-size: 12px; }")
+            " padding: 6px 10px; font-size: 14px; }")
         self.gate_label.setVisible(False)
         self.root.addWidget(self.gate_label)
 

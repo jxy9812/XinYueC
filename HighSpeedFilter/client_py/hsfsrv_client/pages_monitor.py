@@ -11,7 +11,8 @@
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (QComboBox, QGridLayout, QHBoxLayout, QLabel,
-                             QPushButton, QSpinBox, QVBoxLayout, QWidget)
+                             QPushButton, QSlider, QSpinBox, QVBoxLayout,
+                             QWidget)
 
 from . import proto, theme
 from .page_base import DataTable, LampRow, Page, ToggleGrid, section_title
@@ -27,10 +28,14 @@ class DigitalPage(Page):
 
     上下两区：DI 只读灯阵列、DO 可操作按钮阵。多台模块用顶部下拉切换。
 
-    [为什么点数不能在客户端写死] 单模块物理 16 点，但模块支持主从聚合：
-    本现场 .13 的 16 点已聚合进 .12，对外就是 32 点。客户端写死 16 会让
-    上半区（16~31）永远看不到，而服务端明明在发 —— 表现为"界面只有 16 个
-    灯，但服务端日志说 32"。故灯阵/按钮阵按快照里的 count 键**按需重建**。
+    [为什么点数不能在客户端写死] 单模块物理 16 点，但该型号支持主从聚合
+    （多台合成一台的地址空间，最多 32 点）。点数是**服务端说了算**且会随
+    现场接线变化：写死 16 会让聚合后的上半区永远看不到，而服务端明明在发
+    —— 表现为"界面只有 16 个灯，但服务端日志说 32"。故灯阵/按钮阵按快照里
+    的 count 键**按需重建**。
+
+    [现场当前 16 点] .12 已于 2026-11-06 下线拆除，只剩 .13 单台 16 点；
+    聚合能力仍保留在协议与实现里，将来加第二台不用改客户端。
 
     [初值 16 只是占位] 首帧推送到达前还不知道真实点数，先摆 16 个格子；
     收到 count=32 的帧会自动重建成 32 个。
@@ -188,7 +193,7 @@ class DigitalPage(Page):
             return
         self.di_lamp.set_count(count)
         self.do_grid.set_count(count)
-        # 卡片最小高度跟着点数走：32 点是 4 行，16 点是 2 行。
+        # 卡片最小高度跟着点数走（16 点 2 行、聚合 32 点 4 行）。
         min_h = self._card_min_height(count)
         if self._di_card is not None:
             self._di_card.setMinimumHeight(min_h)
@@ -222,8 +227,8 @@ class DigitalPage(Page):
             # 语义名（服务端下发；没有被占用的口给空串 → 只显示 CH/DO 号）。
             self.di_lamp.set_name(i, st.di_name(i))
             self.do_grid.set_name(i, st.do_name(i))
-        # [位宽跟着点数走] 32 点要用 8 位十六进制，写成 %04X 会把上半区
-        # 截掉，让人以为 bit16+ 恒为 0。
+        # [位宽跟着点数走] 超过 16 点（聚合场景）要用 8 位十六进制，
+        # 写成 %04X 会把上半区截掉，让人以为 bit16+ 恒为 0。
         digits = 8 if total > 16 else 4
         self.state_label.setText("DI 0x%0*X · DO 0x%0*X"
                                  % (digits, st.di, digits, st.do))
@@ -262,7 +267,7 @@ class AnalogPage(Page):
         self._table.set_headers(self.HEADERS)
         # 通道/名称/单位窄、数值最宽（要容纳"11.988 mA  0.499 MPa"两段）。
         self._table.set_column_weights((3, 3, 9, 2))
-        self._table.set_rows([("通道 %d" % (i + 1), "", "--", "mA")
+        self._table.set_rows([("通道 %d" % i, "", "--", "mA")
                               for i in range(8)])
         card = Card("通道读数")
         card.add(self._table)
@@ -278,13 +283,13 @@ class AnalogPage(Page):
     def refresh(self):
         st = self.ctx.model.analog
         if not st.is_fresh():
-            self._table.set_rows([("通道 %d" % (i + 1), "", "--", "mA")
+            self._table.set_rows([("通道 %d" % i, "", "--", "mA")
                                   for i in range(st.channels)])
             self._raw_caption.setText("无数据（未订阅或设备离线）")
             return
         rows = []
         for i in range(st.channels):
-            label = "通道 %d" % (i + 1)
+            label = "通道 %d" % i
             name = st.eng_name.get(i, "") if st.has_engineering(i) else ""
             if not st.channel_valid(i):
                 rows.append((label, name, "--", "mA"))
@@ -304,7 +309,7 @@ class AnalogPage(Page):
             else:
                 rows.append((label, name, "%.3f" % st.ma(i), "mA"))
         self._table.set_rows(rows)
-        raws = " ".join("CH%d=%dmV" % (i + 1, st.raw[i])
+        raws = " ".join("CH%d=%dmV" % (i, st.raw[i])
                         for i in range(st.channels))
         self._raw_caption.setText("原始寄存器：" + raws)
 
@@ -338,7 +343,25 @@ class VfdPage(Page):
     #: 点动重发间隔（与 C 端 HSF_JOG_REPEAT_MS 一致）。
     JOG_REPEAT_MS = 200
 
-    #: 调速方式
+    #: 拖动调速的**下发去抖窗口**（毫秒）。
+    #:
+    #: [为什么用去抖而不是"松手才发"] 拖动过滑槽时 Qt 每格都发 valueChanged，
+    #: 逐格下发会在总线上刷一串 FC06（泵/阀跟着抖）；所以必须等"手停下来"
+    #: 再发。而"松手才发"依赖 sliderReleased —— 单点滑槽（不拖、只戳一下）
+    #: 时 Qt **根本不发** released，那种操作就永远下发不出去，现场触摸屏上
+    #: "戳一下"恰恰是最常见的手法。
+    #:
+    #: 去抖同时覆盖两种手法：每次 valueChanged 重置计时，静默 250ms 就发
+    #: 一条。拖动中不停变化 ⇒ 一直不发；停手/松手/单点 ⇒ 250ms 后发一条。
+    #: 不依赖 isSliderDown()（离屏/某些平台下它不反映真实按下态）。
+    SLIDER_SEND_DELAY_MS = 250
+
+    #: 调速方式缺省值：**转速**（用户 2026-11-06 口径「默认用速度调速」）。
+    #:
+    #: [为什么缺省是转速而不是频率] 操作员关心的是"泵转多快"，而不是
+    #: "变频器输出多少 Hz"。频率只是实现手段，把它摆在前台会让人每次都要
+    #: 心算换算。现场铭牌 50Hz≈1440rpm，转速才是可读的量。
+    DEFAULT_SPEED_MODE = 1          # = SPEED_MODE_RPM（见下）
     SPEED_MODE_HZ = 0
     SPEED_MODE_RPM = 1
 
@@ -352,6 +375,8 @@ class VfdPage(Page):
         self._jog_timer.timeout.connect(self._jog_repeat)
         self._jog_active = False
         self._jog_reverse = False
+        #: 点动按下那一刻的给定（每拍心跳原样捎带，不用每拍重读输入框）。
+        self._jog_given = {}
         #: 额定点（服务端下发；未收到时用现场缺省 1440rpm/50Hz）。
         self._rated_rpm = 1440.0
         self._rated_hz = 50.0
@@ -457,6 +482,47 @@ class VfdPage(Page):
         row2.addWidget(self.btn_set_freq)
         row2.addStretch(1)
         ctrl_card.body.addLayout(row2)
+
+        # ---- 拖动调速条（触摸屏主用；无键盘也能调速）----
+        # [为什么还要滑块] 现场是触摸屏，没有外接键盘。点 HSpinBox 的小箭头
+        # 一下一下点太慢，点数字区又会弹软键盘占掉半屏 —— 用户 2026-11-06
+        # 明确要求"一个按住滑动调速"。
+        #
+        # [拖动期不下发，松手才发] 滑块的 valueChanged 在拖动过程中每格都
+        # 触发；逐格下发会在总线上打出一串 FC06（现场阀/泵都会跟着抖）。
+        # 故：拖动/点击过程中只同步数字框显示，`sliderReleased` 时才下发
+        # 一条。键盘/箭头改数字框仍然走「下发」按钮，语义不变。
+        row3 = QHBoxLayout()
+        row3.setSpacing(8)
+        row3.addWidget(QLabel("拖动调速"))
+        self.freq_slider = QSlider(Qt.Horizontal)
+        self.freq_slider.setMinimumHeight(44)      # 触摸目标：手指比鼠标粗
+        self.freq_slider.setTracking(True)
+        self.freq_slider.setMinimumWidth(320)
+        self.freq_slider.valueChanged.connect(self._on_slider_moved)
+        self.freq_slider.sliderReleased.connect(self._on_slider_released)
+        row3.addWidget(self.freq_slider, 1)
+        #: 拖动中的实时读数（数字框在拖动时只有 0~50 的整数量级，
+        #: 现场还需要看到"松手会下发多少"，故给一个醒目的大字标签）。
+        self._slider_value = QLabel("--")
+        self._slider_value.setMinimumWidth(96)
+        self._slider_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._slider_value.setStyleSheet(
+            "QLabel { font-size: 23px; font-weight: bold; color: #1A66D0; }")
+        row3.addWidget(self._slider_value)
+        ctrl_card.body.addLayout(row3)
+        self._slider_syncing = False        # 防止 数字框↔滑块 互踢
+        #: 停机时拖动过滑块 ⇒ 给定是"预置"值，等启动时生效。
+        #: [为什么需要这个标记] 停机时变频器回报的 setFreqHz 是**上次**的
+        #: 旧值；refresh() 每 200ms 采纳一次，若不挡住，用户刚拖好的预置值
+        #: 会被立刻改回去（看起来就是"拖不动/自己跳回来"）。
+        self._preset_dirty = False
+        #: 拖动去抖定时器：见 _on_slider_moved。
+        self._slider_send_timer = QTimer(self)
+        self._slider_send_timer.setSingleShot(True)
+        self._slider_send_timer.setInterval(self.SLIDER_SEND_DELAY_MS)
+        self._slider_send_timer.timeout.connect(self._on_slider_settled)
+
         self.root.addWidget(ctrl_card)
         self.root.addStretch(1)
 
@@ -466,7 +532,11 @@ class VfdPage(Page):
         #: 设备是否就绪（服务端回过 ok=true 的快照 / 收到过遥测）。
         self._device_ready = None      # None = 还没探测过
         self._not_ready_reason = ""
-        # 初始化时把输入框调到频率模式的口径。
+        # [缺省转速] 用户 2026-11-06 口径「默认用速度调速」。必须放在
+        # freq_spin / freq_slider 都建好之后：`_on_speed_mode` 会改它们的
+        # 量程/后缀/值（早设会 AttributeError，构造期实测踩过）。
+        self.speed_mode.setCurrentIndex(self.DEFAULT_SPEED_MODE)
+        # 初始化时把输入框/滑块调到当前调速方式的口径。
         self._on_speed_mode()
 
     # ---- 调速方式切换 ----
@@ -499,6 +569,67 @@ class VfdPage(Page):
             self.freq_spin.setSuffix(" Hz")
             self.freq_spin.setSingleStep(1)
             self.freq_spin.setValue(int(round(base_hz)))
+        # 滑块与数字框同量程（两种模式都跟：Hz 0~50 / rpm 0~1440）。
+        self._sync_slider_range()
+
+    # ---- 拖动调速 ----
+    def _sync_slider_range(self):
+        """滑块量程/取值跟随数字框（频率/转速两种模式通用）。
+
+        [为什么不固定 0~50] 转速模式下给定是 rpm（0~1440），滑块若还停在
+        50 会把"拖动"变成微调；反之频率模式下用 1440 档位则一格跨 1Hz，
+        手指根本停不到想要的数。量程必须与当前口径一致。
+        """
+        lo, hi = self.freq_spin.minimum(), self.freq_spin.maximum()
+        self._slider_syncing = True
+        try:
+            self.freq_slider.setRange(lo, hi)
+            self.freq_slider.setValue(self.freq_spin.value())
+        finally:
+            self._slider_syncing = False
+
+    def _on_slider_moved(self, value):
+        """拖动/点按中：只同步显示，并重置下发去抖。
+
+        [为什么不在拖动中直接下发] 见 SLIDER_SEND_DELAY_MS 的说明：逐格
+        下发会在总线上刷一串 FC06。这里只更新界面 + 重置 250ms 计时器，
+        真正下发在 `_on_slider_settled`。
+        """
+        if self._slider_syncing:
+            return
+        unit = "rpm" if self._speed_mode_now() == self.SPEED_MODE_RPM else "Hz"
+        self._slider_value.setText("%d %s" % (value, unit))
+        # 数字框跟着走：让操作员拖动时就看见"会下发多少"，
+        # 也保证 _given_payload() 读到的是滑块位置（它只读数字框）。
+        self._slider_syncing = True
+        try:
+            self.freq_spin.setValue(value)
+        finally:
+            self._slider_syncing = False
+        self._slider_send_timer.start()        # 重置：手不停就一直不发
+
+    def _on_slider_released(self):
+        """松手：不等去抖窗口，立即下发（手已经离开，意图明确）。"""
+        if self._slider_syncing:
+            return
+        self._slider_send_timer.stop()
+        self._on_set_speed()
+
+    def _on_slider_settled(self):
+        """停手 250ms：下发一条给定（拖动彻底停下 / 单点滑槽走这里）。
+
+        [停机时只预置，不发] 服务端会拒绝停机给定（见 refresh 里的说明）。
+        这里改 `_preset_dirty` 标记，让 `_on_run_stop` 启动时捎带；
+        同时**挡住遥测对采纳**，否则用户刚预置的值会被变频器回报的旧值改回去。
+        """
+        if self._slider_syncing:
+            return
+        if not self._is_running():
+            self._preset_dirty = True
+            self._send_set_speed(silent=True, preset_only=True)
+            return
+        self._send_set_speed(silent=True)
+        self._preset_dirty = False
 
     # ---- 启停（同一按钮按状态切换） ----
     def _is_running(self):
@@ -512,21 +643,38 @@ class VfdPage(Page):
         return bool(st.is_fresh() and st.running)
 
     def _on_run_stop(self):
-        """一个按钮：运行中→停止；停止→先下给定、再按下拉框方向启动。
+        """一个按钮：运行中→停止；停止→按界面给定值 + 下拉框方向启动。
 
-        [为什么启动前先下给定] 变频器保留着**上一次**的频率给定。若只发
-        启动命令，实际会按旧给定跑（可能是上一班留下的陌生转速），与界面
-        上显示"给定值 25Hz"不符——操作员会以为界面在骗人。故启动前先把
-        当前给定写下去，保证"界面显示什么，就按什么跑"。
+        [给定必须捎带在启动命令里，不能先单独发] 服务端为安全起见**拒绝
+        停机状态下的独立给定**（`_VFD_SETPOINT_OPS`）——只发一条 SET 再发
+        START，SET 会被拒，启动按变频器里残留的旧给定跑（现场实测：界面
+        设 3Hz，实际跑 25Hz）。修法是把给定绑在 OP_START 上，服务端先写
+        给定再发命令字。见 server_py/hsfsrv/devices.py::apply_control。
         """
         # 按"点击那一刻"的状态决定动作，而不是按按钮文字——
         # 文字可能因遥测间隔滞后一拍。
         if self._is_running():
             self._send_op(proto.OP_STOP)
             return
-        self._send_set_speed()
         reverse = bool(self.dir_combo.currentData())
-        self._send_op(proto.OP_START, rev=reverse)
+        payload = self._given_payload()
+        # [预置值在此刻兑现] 停机时拖动的给定通过启动命令捎带下去；发完就
+        # 清标记，之后的遥测采纳恢复正常（变频器里已经是这个值了）。
+        self._preset_dirty = False
+        self._send_op(proto.OP_START, rev=reverse, **payload)
+
+    def _given_payload(self):
+        """当前界面给定值 → 捎带给启动/点动的 {hz, rpm?}。
+
+        频率模式只带 hz；转速模式同时带 rpm 与换算出来的 hz（服务端按
+        rpm 优先换算，hz 作为已算好的结果一并给出，避免两边换算口径漂移）。
+        """
+        value = float(self.freq_spin.value())
+        if self._speed_mode_now() == self.SPEED_MODE_RPM:
+            hz = (value / self._rated_rpm * self._rated_hz
+                  if self._rated_rpm > 0 else 0.0)
+            return {"rpm": value, "hz": hz}
+        return {"hz": value}
 
     def _sync_run_button(self, running, releasable=True):
         """按运行状态同步启停按钮的文字与配色。
@@ -544,13 +692,23 @@ class VfdPage(Page):
                 "QPushButton { color: #FFFFFF; background-color: #2E7D32;"
                 " font-weight: bold; }")
 
-    def _send_set_speed(self, silent=False):
+    def _send_set_speed(self, silent=False, preset_only=False):
         """按当前调速方式下发给定（启动流程与"下发"按钮共用）。
 
         :param silent: True 时不覆盖状态栏（启动流程紧跟一条启动命令，
                        两条状态会互相冲掉，只留最终那条）
+        :param preset_only: True = **只预置、不发帧**（停机拖动滑块时用）。
+                       停机下发会被服务端拒绝（给定是运行参数），预置值等
+                       启动时由 `_given_payload()` 捎带下去。此时仅刷提示。
         """
         value = float(self.freq_spin.value())
+        unit = "rpm" if self._speed_mode_now() == self.SPEED_MODE_RPM else "Hz"
+        if preset_only:
+            msg = "已预置给定 %d %s（启动时生效）" % (int(value), unit)
+            self._ctrl_hint.setText(msg)
+            if not silent:
+                self.ctx.set_status(msg)
+            return
         if self._speed_mode_now() == self.SPEED_MODE_RPM:
             hz = value / self._rated_rpm * self._rated_hz if \
                 self._rated_rpm > 0 else 0.0
@@ -668,9 +826,11 @@ class VfdPage(Page):
             self.ctx.set_status("禁止点动：%s" % reason)
             return
         reverse = bool(self.dir_combo.currentData())
-        # [点动前先下给定] 点动速度同样取界面上的"给定值"。变频器里可能
-        # 存着上一班的旧给定，只发点动命令会按旧值动 —— 与界面对不上。
-        self._send_set_speed(silent=True)
+        # [点动给定同样捎带在每拍心跳里] 服务端拒绝停机时的独立给定，
+        # 所以不能在按下时先发一条 SET_SPEED；且服务端点动看门狗 600ms
+        # 需要每 200ms 重发，每拍都得带上给定（服务端每拍先写给定再发
+        # 点动命令字）。给定在按下那一刻取一次，按住期间不随输入框变动。
+        self._jog_given = self._given_payload()
         self._jog_active = True
         self._jog_reverse = reverse
         self._jog_repeat()
@@ -683,8 +843,9 @@ class VfdPage(Page):
         """按住期间重发点动帧（服务端靠它刷新 600ms 看门狗）。"""
         if not self._jog_active:
             return
-        self.ctx.bridge.send_vfd_control(
-            {"op": proto.OP_JOG, "rev": self._jog_reverse})
+        doc = {"op": proto.OP_JOG, "rev": self._jog_reverse}
+        doc.update(getattr(self, "_jog_given", None) or {})
+        self.ctx.bridge.send_vfd_control(doc)
 
     def _jog_stop(self):
         if not self._jog_active:
@@ -750,19 +911,63 @@ class VfdPage(Page):
 
         # ---- 「下发」只在**运行中**可点 ----
         #
-        # [为什么] 服务端已明确拒绝停机时的给定（给定是运行参数，不是可
-        # 预置配置）。界面若仍让点，用户点完只收到一句拒绝、还以为是故障。
-        # 置灰 + 提示"先启动"才是诚实的前馈。
+        # [为什么] 服务端明确拒绝停机时的**在线给定**（给定是运行参数，不是
+        # 可预置配置）——停机下发会让变频器坡道爬升，界面出现"停机但输出
+        # 25Hz"这种自相矛盾状态。置灰 + 提示"先启动"才是诚实的前馈。
         # 判据与服端同口径：用**遥测的运行状态**，不是按钮文字。
         running = bool(fresh and st.running)
         self.btn_set_freq.setEnabled(not reason and running)
+        # [滑块停机也**可拖**] 用户 2026-11-06：「不启动的时候也要能拖动调速」。
+        # 停机时拖动 = 预置给定：只改本地值、**不发在线给定**（服务端会拒），
+        # 由启动时 `_given_payload()` 捎带下去（`_on_run_stop` 已这么做）。
+        # 所以这里不与 running 合闸，只受控制闸（reason）约束。
+        self.freq_slider.setEnabled(not reason)
+
+        # ---- 滑块跟随变频器实际设定值 ----
+        # [只在用户没在动它时同步] 正在拖/刚拖完（去抖计时器还在跑）时若被
+        # 200ms 的遥测覆盖，手指还按着、滑块却跳回旧值 —— 体验是"拖不动"。
+        # 判据用去抖计时器而不是 isSliderDown()：后者在离屏/部分平台不反映
+        # 真实按下态（实测离屏恒 False）。
+        # [停机不采纳] 停机时变频器回报的是**上次的**设定值；若拿它对冲，
+        # 用户刚预置的给定会被立刻改回去（下面 _on_slider_settled 已按
+        # running 决定发不发，这里同样只在运行中采纳）。
+        if (fresh and running and st.has("setFreqHz")
+                and not self._slider_send_timer.isActive()
+                and not self._preset_dirty):
+            self._adopt_set_freq(st.set_freq_hz)
 
         if reason:
             self._ctrl_hint.setText("控制已禁用：%s" % reason)
         elif not running:
-            self._ctrl_hint.setText("停机状态下不可调速：请先启动，再下发给定")
+            self._ctrl_hint.setText(
+                "已停机：拖动只预置给定，启动时按此值运行（在线调速需先启动）")
         else:
             self._ctrl_hint.setText("")
+
+    def _adopt_set_freq(self, hz):
+        """把变频器回报的设定频率对到滑块/数字框上（保持当前调速口径）。
+
+        :param hz: 变频器的设定频率（Hz）。转速模式下按额定点换算成 rpm。
+        """
+        if self._speed_mode_now() == self.SPEED_MODE_RPM:
+            if self._rated_hz <= 0:
+                return
+            value = int(round(hz / self._rated_hz * self._rated_rpm))
+        else:
+            value = int(round(hz))
+        lo, hi = self.freq_spin.minimum(), self.freq_spin.maximum()
+        value = max(lo, min(hi, value))
+        self._slider_syncing = True
+        try:
+            if self.freq_spin.value() != value:
+                self.freq_spin.setValue(value)
+            if self.freq_slider.value() != value:
+                self.freq_slider.setValue(value)
+            unit = ("rpm" if self._speed_mode_now() == self.SPEED_MODE_RPM
+                    else "Hz")
+            self._slider_value.setText("%d %s" % (value, unit))
+        finally:
+            self._slider_syncing = False
 
 
 # ============================================================================
@@ -852,16 +1057,16 @@ class WaterPage(Page):
             row.setSpacing(6)
             name = QLabel("浊度仪%d" % (idx + 1))
             name.setStyleSheet(
-                "QLabel { color: #5A6572; font-size: 13px;"
+                "QLabel { color: #5A6572; font-size: 15px;"
                 " background: transparent; }")
             value = QLabel("--")
             value.setStyleSheet(
-                "QLabel { color: #1A1A1A; font-size: 30px; font-weight: bold;"
+                "QLabel { color: #1A1A1A; font-size: 34px; font-weight: bold;"
                 " background: transparent; }")
             value.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
             unit = QLabel("NTU")
             unit.setStyleSheet(
-                "QLabel { color: #5A6572; font-size: 13px;"
+                "QLabel { color: #5A6572; font-size: 15px;"
                 " background: transparent; padding-bottom: 8px; }")
             unit.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
             row.addWidget(name)
@@ -910,7 +1115,7 @@ class WaterPage(Page):
 
         self._pump_state = QLabel("--")
         self._pump_state.setStyleSheet(
-            "QLabel { font-size: 14px; font-weight: bold; color: #5A6572;"
+            "QLabel { font-size: 16px; font-weight: bold; color: #5A6572;"
             " background: transparent; }")
         pump_card.add(self._pump_state)
 
@@ -988,7 +1193,7 @@ class WaterPage(Page):
                 block.set_value("--")
             self._flow_alarm.setText("--")
             self._flow_alarm.setStyleSheet(
-                "QLabel { font-size: 14px; font-weight: bold; color: #5A6572;"
+                "QLabel { font-size: 16px; font-weight: bold; color: #5A6572;"
                 " background: transparent; }")
             self._flow_note.setText(
                 "未收到流量计数据（服务端未装配 / 从站失联）")
@@ -1005,7 +1210,7 @@ class WaterPage(Page):
         ok = (st.alarms == 0)
         self._flow_alarm.setText("正常" if ok else "报警 0x%04X" % st.alarms)
         self._flow_alarm.setStyleSheet(
-            "QLabel { font-size: 14px; font-weight: bold; color: %s;"
+            "QLabel { font-size: 16px; font-weight: bold; color: %s;"
             " background: transparent; }"
             % (theme.CLR_OK if ok else theme.CLR_FAULT))
 
@@ -1016,7 +1221,7 @@ class WaterPage(Page):
             if not fresh:
                 value_lbl.setText("--")
                 value_lbl.setStyleSheet(
-                    "QLabel { color: #9E9E9E; font-size: 30px;"
+                    "QLabel { color: #9E9E9E; font-size: 34px;"
                     " font-weight: bold; background: transparent; }")
                 continue
             # 名字由服务端给（客户端不猜"原水/出水"）
@@ -1027,13 +1232,13 @@ class WaterPage(Page):
             if ntu is None:
                 value_lbl.setText("--")
                 value_lbl.setStyleSheet(
-                    "QLabel { color: #9E9E9E; font-size: 30px;"
+                    "QLabel { color: #9E9E9E; font-size: 34px;"
                     " font-weight: bold; background: transparent; }")
                 continue
             value_lbl.setText("%.2f" % ntu)
             warn = ntu >= self.TURBIDITY_WARN_NTU
             value_lbl.setStyleSheet(
-                "QLabel { color: %s; font-size: 30px; font-weight: bold;"
+                "QLabel { color: %s; font-size: 34px; font-weight: bold;"
                 " background: transparent; }"
                 % (theme.CLR_FAULT if warn else "#1A1A1A"))
         if not fresh:
@@ -1055,7 +1260,7 @@ class WaterPage(Page):
         if not has or not st.is_fresh():
             self._pump_state.setText("--")
             self._pump_state.setStyleSheet(
-                "QLabel { font-size: 14px; font-weight: bold; color: #5A6572;"
+                "QLabel { font-size: 16px; font-weight: bold; color: #5A6572;"
                 " background: transparent; }")
             self.btn_pump_on.setEnabled(False)
             self.btn_pump_off.setEnabled(False)
@@ -1072,7 +1277,7 @@ class WaterPage(Page):
             self._pump_state.setText("停止（输出已关）")
             color = "#37474F"
         self._pump_state.setStyleSheet(
-            "QLabel { font-size: 14px; font-weight: bold; color: %s;"
+            "QLabel { font-size: 16px; font-weight: bold; color: %s;"
             " background: transparent; }" % color)
 
         can = ready and not reason

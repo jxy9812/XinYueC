@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (QApplication, QCheckBox, QDialog, QFormLayout,
                              QVBoxLayout, QWidget)
 
 from . import proto, theme
+from .softkeyboard import (KIND_ALPHA, KIND_NUMERIC, set_keyboard_kind)
 from .xlink import DEFAULT_PORT
 
 
@@ -47,13 +48,15 @@ class LoginDialog(QDialog):
         self.setStyleSheet("""
 QDialog { background-color: %(page_bg)s; }
 QLabel#HsfLoginTitle {
-    color: %(brand)s; font-size: 20px; font-weight: bold;
+    color: %(brand)s; font-size: %(fz_title)dpx; font-weight: bold;
     padding: 6px 0 2px 0;
 }
-QLabel#HsfLoginSub { color: #5A6572; font-size: 12px; padding-bottom: 10px; }
-QLabel#HsfLoginErr { color: %(fault)s; font-size: 12px; padding-top: 6px; }
+QLabel#HsfLoginSub { color: #5A6572; font-size: %(fz_sub)dpx; padding-bottom: 10px; }
+QLabel#HsfLoginErr { color: %(fault)s; font-size: %(fz_sub)dpx; padding-top: 6px; }
 """ % {"page_bg": theme.COLOR_PAGE_BG, "brand": theme.COLOR_BRAND,
-       "fault": theme.CLR_FAULT})
+       "fault": theme.CLR_FAULT,
+       # 字号统一走 theme.font_px（板端触摸屏放大）
+       "fz_title": theme.font_px(20), "fz_sub": theme.font_px(12)})
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 22, 28, 20)
@@ -75,19 +78,26 @@ QLabel#HsfLoginErr { color: %(fault)s; font-size: 12px; padding-top: 6px; }
 
         self.host_edit = QLineEdit()
         self.host_edit.setPlaceholderText("192.168.0.10")
+        # [键盘类型声明] 地址/端口是 ASCII 数字点，用户名口令是英文——
+        # 锁拉丁键盘（触摸屏滑到中文态再敲就不是原口令了）。
+        set_keyboard_kind(self.host_edit, KIND_ALPHA)
+        self.host_edit.setInputMethodHints(Qt.ImhLatinOnly)
         form.addRow("服务器地址", self.host_edit)
 
         self.port_edit = QLineEdit()
         self.port_edit.setPlaceholderText(str(DEFAULT_PORT))
+        set_keyboard_kind(self.port_edit, KIND_NUMERIC)
         form.addRow("端口", self.port_edit)
 
         self.user_edit = QLineEdit()
         self.user_edit.setPlaceholderText("root")
+        set_keyboard_kind(self.user_edit, KIND_ALPHA)
         form.addRow("用户名", self.user_edit)
 
         self.pass_edit = QLineEdit()
         self.pass_edit.setEchoMode(QLineEdit.Password)
         self.pass_edit.setPlaceholderText("口令")
+        set_keyboard_kind(self.pass_edit, KIND_ALPHA)
         form.addRow("口令", self.pass_edit)
 
         outer.addLayout(form)

@@ -108,8 +108,11 @@ def main(argv=None):
 
     from . import theme
     theme.install(app)
-    family = theme.apply_font(app)
-    print("字体：%s" % (family or "(系统缺省)"), file=sys.stderr)
+    # [全局基准字号] 板端是 1280x800 / 7.9 寸屏，pt 10 偏小；
+    # 与 QSS 里散落的像素字号同一缩放口径（theme.ui_scale()，缺省 1.15）。
+    family = theme.apply_font(app, size=int(round(10 * theme.ui_scale())))
+    print("字体：%s（缩放 %.2fx）"
+          % (family or "(系统缺省)", theme.ui_scale()), file=sys.stderr)
 
     from .bridge import LinkBridge
     from .login import LoginDialog
@@ -146,6 +149,19 @@ def main(argv=None):
     win.setMinimumSize(640, 420)
     if args.fullscreen:
         win.showFullScreen()
+        # [全屏后必须抢一次前台] xfwm4 在开机自启场景下不会把新窗口设为
+        # 活动窗口：实测板端 `_NET_ACTIVE_WINDOW` 仍是 Thunar 的 Desktop，
+        # 客户端窗口虽然 1280x800 映射着却被桌面盖住（截图看到的是文件夹）。
+        # raise_ + activateWindow 在 show 之后立刻调没用（窗口还没 map 完），
+        # 故用 0ms/300ms 两拍定时器：第一拍抢，第二拍兜底（xfwm4 迟到的
+        # 重新堆叠会把它压下去）。
+        def _grab_foreground():
+            win.raise_()
+            win.activateWindow()
+
+        _grab_foreground()
+        QTimer.singleShot(0, _grab_foreground)
+        QTimer.singleShot(300, _grab_foreground)
     else:
         win.show()
         # show 之后再 resize 一次：xfwm4 有时在 map 时才应用几何。

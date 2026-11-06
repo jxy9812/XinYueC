@@ -195,7 +195,6 @@ class AutoContext(object):
     # ---- 电磁阀 ----
     def _valves(self):
         return getattr(self._app, "valve_bank", None)
-
     def valve_state(self, index):
         """读某路阀状态（proto.HsfValveState）；未装配返回 None。"""
         bank = self._valves()
@@ -267,6 +266,30 @@ class AutoContext(object):
         except Exception:                               # noqa: BLE001
             return None, None
 
+    # ---- 按钮组 ----
+    def button_station(self):
+        """按钮组对象（未装配返回 None）。"""
+        return getattr(self._app, "button_station", None)
+
+    def estop_ok(self):
+        """急停回路是否正常（True=正常，可运行）。
+
+        [三态语义] 返回 True/False/None：
+            True  = 回路通（常闭触点未按下，允许启动）
+            False = 无信号（按下或断线，**禁止启动**）
+            None  = 按钮组未装配或数字量模块离线 —— 调用方必须当成
+                    "不确定"并**按禁止处理**（安全侧默认，绝不能当放行）。
+        """
+        st = self.button_station()
+        if st is None:
+            return None
+        return st.estop_ok
+
+    def button_state(self):
+        """按钮组状态机当前状态（"idle"/"running"/"estop"）；未装配 None。"""
+        st = self.button_station()
+        return None if st is None else st.state
+
     # ---- 节流 ----
     def throttle(self, key, interval_ms, now_ms=None):
         """按 key 做节流：距上次放行不足 interval_ms 返回 False。
@@ -337,14 +360,38 @@ class AutoController(object):
 
     # ---- 每拍 ----
     def step(self, now_ms):
-        """每拍入口（**当前为空实现**）。
+        """每拍入口：**急停闸门 + 状态跟随**。
 
-        将来在这里实现自动运行逻辑。约定：
+        约定：
           · 只在 self._running 为真时被 app 调用（但内部再判一次也无害）；
           · 不要 await（这是同步入口）；需要异步动作时用
-            `asyncio.ensure_future(ctx.write_do(...))` 投递，
-            并靠 ctx.throttle() 防止堆积；
+            `asyncio.ensure_future(ctx.write_do(...))` 投递；
           · 任何异常都必须自己吞掉 —— 自动逻辑崩了不能把整个服务端带死。
+
+        ======================================================================
+                          当前实现的工艺逻辑（2026-11-06）
+        ======================================================================
+
+        用户的现场口径，逐条落成代码：
+
+        【1】急停无信号 ⇒ **禁止启动**
+             急停是常闭触点：DI=0 表示按下或断线。此时不准启动、不准调速，
+             已有的运行也要被打停。这是最前置的闸门，先于任何其它判断。
+
+        【2】启动进入运行状态 ⇒ 启动灯常亮
+        【3】停止状态下停止灯常亮
+        【4】运行状态停止灯熄灭，与启动灯**互斥**
+        【5】复位灯是点动：按下复位才亮，松开就灭
+
+        [职责边界] 灯的实际**写入**在 `buttons.ButtonStation` 里（它每拍
+        拿着硬件状态做这件事，手动模式下也照样亮）。本方法负责的是
+        **自动侧的决策与闸门**：
+            · 急停无效时把自动运行打停（不让泵继续转）
+            · 把"系统处于什么状态"记进 self.phase 供 status()/日志使用
+
+        [为什么不在这儿写灯] 灯要跟随的是 `ButtonStation` 的状态机，而那个
+        状态机由**物理按键**驱动（DI 沿），不是由自动逻辑驱动。两边都写灯
+        会互相打架。自动逻辑只在"急停"这种**必须介入**的场合出手。
         """
         if not self._running:
             return
@@ -353,32 +400,56 @@ class AutoController(object):
             return
         self._last_step_ms = now_ms
 
-        # ==================================================================
-        #                ↓↓↓  自动运行逻辑扩展位（当前为空）  ↓↓↓
-        # ==================================================================
-        #
-        # 可用的设备访问入口全在 self.ctx 上（见 AutoContext）。
-        # 示例（注释掉的伪代码，接线可用后放开即可）：
-        #
-        #   level = self.ctx.analog_ma(0)
-        #   if level is None:
-        #       return                      # 数据不可用：不做决策
-        #   state = self.ctx.valve_state(1)
-        #   if level < 4.0 and state == proto.HsfValveState.Closed:
-        #       if self.ctx.throttle("open1", 2000, now_ms):
-        #           asyncio.ensure_future(self.ctx.open_valve(1))
-        #
-        # ==================================================================
-        #                ↑↑↑  自动运行逻辑扩展位（当前为空）  ↑↑↑
-        # ==================================================================
-        return
+        try:
+            self._step_impl(now_ms)
+        except Exception as exc:                        # noqa: BLE001
+            # 自动逻辑异常绝不能外泄到 tick（会把采集/推送一起带死）
+            self.ctx.last_error = "%s: %s" % (type(exc).__name__, exc)
+            self._log("自动控制：本拍异常 %s" % self.ctx.last_error)
+
+    def _step_impl(self, now_ms):
+        """真正的逻辑（异常由 step() 兜住）。"""
+        st = self.ctx.button_station()
+
+        # ---- 闸门：急停 ----
+        estop_ok = self.ctx.estop_ok()
+        if estop_ok is not True:
+            # False（无信号）和 None（按钮组未装配 / 模块离线）都按**禁止**
+            # 处理。这是安全侧默认：宁可不动，也不能在"不知道急停状态"时
+            # 让设备转起来。
+            if self.phase != "estop":
+                reason = ("无信号（按下或断线）" if estop_ok is False
+                          else "状态未知（按钮组未装配或模块离线）")
+                self._log("自动控制：急停%s ⇒ 禁止运行" % reason)
+                self.phase = "estop"
+            return
+
+        # 急停正常：相位跟随按钮组状态机（物理按键推进的那个）
+        if st is not None:
+            if st.state == "running":
+                if self.phase != "running":
+                    self.phase = "running"
+                    self._log("自动控制：进入运行状态（启动灯常亮）")
+            elif st.state == "idle":
+                if self.phase != "idle":
+                    self.phase = "idle"
+                    self._log("自动控制：停止状态（停止灯常亮）")
+        elif self.phase != "idle":
+            # 没有按钮组（纯 TCP 场景）：自动模式下就当"运行中"，保持
+            # 原有语义（自动模式本身就是运行状态）。
+            self.phase = "running"
 
     # ---- 诊断 ----
     def status(self):
         """当前状态（供日志/健康/测试查询）。"""
+        st = self.ctx.button_station()
+        snap = st.snapshot() if st is not None else None
         return {
             "running": self._running,
             "phase": self.phase,
             "actions": self.ctx.action_count,
             "lastError": self.ctx.last_error,
+            "estopOk": self.ctx.estop_ok(),
+            "buttonState": (None if st is None else st.state),
+            "buttons": snap,
         }

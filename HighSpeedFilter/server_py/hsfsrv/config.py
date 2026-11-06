@@ -30,8 +30,35 @@ DEFAULT_USERS_REL = "cfg/hsf_users.json"
 DEFAULT_PORT = ports.PY_SERVER_PORT
 
 
+def _next_serial_port(port):
+    """从路 A 的串口名推路 B 的缺省口（COM17 → COM18；非 COM 形式原样返回 +2）。
+
+    [为什么只是缺省] 现场两个 USB-485 转换器插在不同 USB 口，Windows 分配
+    的 COM 号不一定相邻。这个推导只保证「默认不撞车」，真实口名以现场
+    设备管理器为准，由配置 `serial_b.port` 覆盖。
+    """
+    import re
+    m = re.match(r"^(.*?)(\d+)$", str(port))
+    if not m:
+        return "%s_2" % port
+    return "%s%d" % (m.group(1), int(m.group(2)) + 1)
+
+
 class SerialConfig(object):
-    """一路 485 总线（本版只有一路：变频器 + 温湿度共用）。"""
+    """一路 485 总线（串口号 + 波特率 + 链路参数）。
+
+    [现场是两条独立 485，不是一条] 用户明确：
+      · 路 A：变频器 + 温湿度，115200
+      · 路 B：流量计 + 浊度仪 ×2，9600
+    两条线物理独立、速率不同，不能共用一个 master（共用会让 9600 的设备
+    被按 115200 访问，全部不通）。故配置里有两个实例：`serial`（路 A）与
+    `serial_b`（路 B）。`make_rtu` 按 (port, baudrate) 缓存，天然分成两个
+    master；健康表的地址文案也按设备所属路取不同的口和速率。
+
+    [向后兼容] 老配置文件只有 `serial` 一节，没有 `serial_b`；缺省把路 B
+    设成「另一个串口 + 9600」。若现场确实两条线接在同一个口上（不可能，
+    速率不同），可由配置显式改。
+    """
 
     __slots__ = ("port", "baudrate", "timeout_ms", "retries",
                  "vfd_poll_ms", "temphum_poll_ms", "temphum_push_ms",
@@ -146,9 +173,11 @@ class AnalogConfig(object):
 class DigitalConfig(object):
     """一台数字量模块（Modbus TCP）。
 
-    [点数口径] 单模块物理 16 点；但该模块支持**主从聚合**：把另一台
-    16 点模块映射进自己的地址空间，对外就是 32 点（本现场即如此，
-    .13 聚合进 .12）。故点数是**每模块可变**的，不能写死 16。
+    [点数口径] 单模块物理 16 点；该模块支持**主从聚合**（把另一台 16 点
+    模块映射进自己的地址空间，对外 32 点），故点数是**每模块可变**的，
+    不能写死 16。但本现场 2026-11-06 起只保留 .13 一台（16 点）——
+    .12（原聚合者，对外 32 点）已下线拆除，它的 16DI/16DO 不再出现在
+    点表里。默认值按"单台 16 点"给出。
     """
 
     __slots__ = ("name", "host", "port", "unit_id", "timeout_s", "channels",
@@ -156,7 +185,7 @@ class DigitalConfig(object):
 
     def __init__(self, name, **kw):
         self.name = name
-        self.host = kw.get("host", "192.168.0.12")
+        self.host = kw.get("host", "192.168.0.13")
         self.port = int(kw.get("port", 502))
         self.unit_id = int(kw.get("unit_id", 1))
         #: 该模块应答实测 0.4~0.8s（比其他设备慢一个数量级），超时给足。
@@ -165,24 +194,31 @@ class DigitalConfig(object):
         #: 起始地址恒 0，且起始+点数不得跨出模块自己的地址空间。
         self.channels = int(kw.get("channels", 16))
         #: 是否发布点位。
-        #: [为什么需要] 聚合架构下，被聚合者（.13）的点已经出现在聚合者
-        #: （.12）的地址空间里。若两台都发布，客户端会看到两套重复点位。
-        #: 但被聚合者**仍要保留**：它自己是否在线是独立故障信息（模块断电/
-        #: 网线松/被聚合链路断，只有它自己的应答能反映）——故照常轮询并出
-        #: 健康条目，只是不发点位帧。
+        #: [为什么需要] 聚合架构下，被聚合者的点已经出现在聚合者的地址
+        #: 空间里。若两台都发布，客户端会看到两套重复点位。但被聚合者
+        #: **仍要保留**：它自己是否在线是独立故障信息（模块断电/网线松/
+        #: 被聚合链路断，只有它自己的应答能反映）——故照常轮询并出健康
+        #: 条目，只是不发点位帧。
+        #: [当前现场已无聚合] 只剩 .13 一台 ⇒ 恒为 True（默认值）。
         self.publish = bool(kw.get("publish", True))
 
 
 class StorageConfig(object):
-    """历史/日志/报警的 SQLite 落盘配置。
+    """历史/日志/报警的 SQLite 落盘配置（含容量限额）。
 
     [为什么默认开] 历史数据的价值全在「事后」，进程一重启内存缓存就没了；
     落盘默认开、路径默认落在**服务端程序目录**（不依赖任何安装选择），
     现场不需要做任何配置就能拿到完整数据。要挪到别处（如挂载的大容量
     分区）改 `path` 即可，远端设置页可在线改。
+
+    [容量限额为什么必须给] 现场那台机器硬盘很小（用户明确提出的约束），
+    不封顶就会一路写到把盘撑满，最后连系统日志都写不进去。`max_mb=0`
+    表示不限（缺省），现场按可用空间填一个值即可；写满后的行为由
+    `full_policy` 三选一（见 store.py 模块头注）。
     """
 
-    __slots__ = ("enabled", "path", "sample_ms")
+    __slots__ = ("enabled", "path", "sample_ms", "max_kb", "full_policy",
+                 "keep_files")
 
     def __init__(self, **kw):
         self.enabled = bool(kw.get("enabled", True))
@@ -191,6 +227,25 @@ class StorageConfig(object):
         #: 历史采样周期（毫秒）。历史是慢变量（趋势排查用），5s 一行
         #: 一天约 1.7 万行，SQLite 毫无压力；周期推送（100ms）没必要入库。
         self.sample_ms = int(kw.get("sample_ms", 5000))
+        #: 库文件容量上限（**KB**，内部统一口径）；0 = 不限。
+        #: 远端协议用 MB（max_mb 属性换算），配置文件也接受 max_kb 直给。
+        self.max_kb = int(kw.get("max_kb", 0) or 0)
+        #: 满额策略：stop / ring / rotate（见 store.POLICIES）。
+        self.full_policy = str(kw.get("full_policy", "") or "") or "ring"
+        #: rotate 模式保留的分段数（含当前库）。
+        self.keep_files = int(kw.get("keep_files", 3) or 3)
+
+    @property
+    def max_mb(self):
+        """容量上限（MB，远端协议口径；非整数 MB 的上限向下取整）。"""
+        return self.max_kb // 1024
+
+    @max_mb.setter
+    def max_mb(self, value):
+        self.max_kb = max(0, int(value)) * 1024
+
+    def set_max_kb(self, kb):
+        self.max_kb = max(0, int(kb))
 
 
 class Config(object):
@@ -234,9 +289,39 @@ class Config(object):
         self.turbidity_poll_ms = 500
         #: 进水泵（数字量模块上的一路 DO，只有输出、无反馈）。
         self.enable_pump = True
-        #: 泵点位：DO22 = 第 6 路电磁阀（DO21）的下一个口。
-        self.pump_items = [{"name": "进水泵", "module": 0, "do": 22}]
+        #: 泵点位：DO6 = 第 6 路电磁阀（DO5）的下一个口。
+        #: [2026-11-06] 随阀门点位整体减 16（原 DO22 → DO6）。
+        self.pump_items = [{"name": "进水泵", "module": 0, "do": 6}]
         self.pump_stale_ms = 5000
+        #: 按钮组（现场操作柱）：4 个 DI 输入 + 3 个 DO 指示灯。
+        #:
+        #: [2026-11-06 现场定义，用户口径]
+        #:   输入 12 = 急停（**常闭**：无信号 = 按下/断开 = 禁止启动）
+        #:   输入 13 = 启动按钮
+        #:   输入 14 = 停止按钮
+        #:   输入 15 = 复位按钮
+        #:   输出 7  = 启动按钮灯（运行时常亮）
+        #:   输出 8  = 停止按钮灯（停止时常亮，与启动灯互斥）
+        #:   输出 9  = 复位按钮灯（**点动**：只在按下复位时亮）
+        #:
+        #: [为什么点位写进默认值] 与阀门/泵同性质——是**图纸确定的接线**，
+        #: 不是站点私有参数。别人 clone 下来跑就该看到同一套点位。
+        self.enable_buttons = True
+        self.button_items = {
+            # 输入（DI 通道号）
+            "estop_di": 12,
+            "start_di": 13,
+            "stop_di": 14,
+            "reset_di": 15,
+            # 输出（DO 通道号）
+            "start_lamp_do": 7,
+            "stop_lamp_do": 8,
+            "reset_lamp_do": 9,
+            # 模块下标（cfg.digital_modules 顺序）
+            "module": 0,
+        }
+        #: 按键去抖/沿判定窗口（毫秒）。DI 扫描 200ms 一拍，给够两拍余量。
+        self.button_debounce_ms = 300
         #: 虚拟设备模式：用内存寄存器模型代替真实设备（见 virtualdev.py）。
         #: [语义] 只换**设备物理层**，devices.py 与 app.py 全部用真实实现 ——
         #: 换算、状态字解码、控制闸门、点动看门狗、阀定时器都照跑。
@@ -265,6 +350,13 @@ class Config(object):
         self.digital_stale_ms = 5000
         self.digital_poll_ms = 200
         self.serial = SerialConfig()
+        #: 第二条独立 485：流量计 + 浊度仪 ×2（9600）。
+        #: [串口号怎么定] 现场两条线各占一个 USB-485 转换器，Windows 下
+        #: 通常是相邻的两个 COM 口。缺省从路 A 的口名推一个"下一个口"
+        #: （COM17 → COM18），也可由配置 `serial_b.port` 显式指定。
+        #: 关键是**速率必须不同**：路 A 115200、路 B 9600。
+        self.serial_b = SerialConfig(port=_next_serial_port(self.serial.port),
+                                     baudrate=9600)
         self.analog = AnalogConfig()
         # [默认值＝**现场口径**，不是"够用的最小集"]
         #
@@ -278,12 +370,13 @@ class Config(object):
         #
         # 故把现场确定的接线上限写进默认值：没有配置文件也能跑出与现场
         # 一致的界面。真正的**站点私有**差异（串口号、IP）仍由 cfg 覆盖。
+        #
+        # 2026-11-06 变更：.12（原聚合者，对外 32 点）已下线拆除，现场只
+        # 保留 .13 一台 16 点模块（ms=1 主站模式，实测 FC01/FC02 读 16 点、
+        # FC05 写单点均可用）。原先由 .12 提供的 16DI/16DO 一并取消 ——
+        # 对外点表从 32 点降到 16 点，这是**有意收窄**，不是漏配。
         self.digital_modules = [
-            # .12 聚合 .13 ⇒ 对外 32DI/32DO
-            DigitalConfig("数字量", host="192.168.0.12", channels=32),
-            # .13 的点已并入 .12 上半区：照常轮询出健康，但不重复发点位
-            DigitalConfig("数字量从站.13", host="192.168.0.13",
-                          channels=16, publish=False),
+            DigitalConfig("数字量", host="192.168.0.13", channels=16),
         ]
         # ---- 电磁阀（6 路，每路 1 DO + 2 DI 反馈）----
         # 点位**先留空**：现场还没定用哪个口。留空时该路显示"未配置"，
@@ -297,14 +390,14 @@ class Config(object):
         self.valve_move_timeout_ms = 20000
         #: 每项 {name, module, do, openDi, closeDi}；module=None 表示未配置。
         #:
-        #: [默认填现场接线 2026-11-05] 原先六路全留空，别人拉下来看到的是
-        #: "6 路全部未配置"——与现场（DO16..21 + 12 个到位反馈）完全不同。
-        #: 接线是**图纸确定的**，不是站点私有参数，故写进默认值。
-        #:   阀 n：DO(16+n)；**关到位 DI 在前、开到位 DI 在后**
-        #:   （.13 聚合进 .12 的偏移 16 ⇒ 全部落在 bit16+）
+        #: [默认填现场接线 2026-11-05，2026-11-06 点位整体减 16]
+        #: 原先六路在「.12 聚合上半区」DO16..21；.12 拆除后只剩 .13 一台
+        #: 16 点模块、点表从 0 起，故整体减 16 → DO0..5。物理端子没动，
+        #: 变的只是寻址口径（上半区第 n 点本来就是 .13 自己的第 n 点）。
+        #:   阀 n：DO n；**关到位 DI 在前、开到位 DI 在后**
         self.valve_items = [
             {"name": "电磁阀%d" % (i + 1), "module": 0,
-             "do": 16 + i, "openDi": 16 + i * 2 + 1, "closeDi": 16 + i * 2}
+             "do": i, "openDi": i * 2 + 1, "closeDi": i * 2}
             for i in range(6)
         ]
         # ---- 数据落盘（历史/日志/报警 → SQLite）----
@@ -390,6 +483,25 @@ class Config(object):
             temphum_push_ms=_int(serial.get("temphum_push_ms"),
                                  self.serial.temphum_push_ms),
         )
+        # ---- 第二条 485（流量计 + 浊度仪 ×2，9600）----
+        # 老配置文件没有 serial_b 节：沿用 __init__ 推出来的缺省口与 9600。
+        # 若路 A 的口名后来改了、而 serial_b 没配，就重新推一次，避免
+        # 两条线悄悄落成同一个口（那样 9600 设备会被按 115200 访问）。
+        sb = doc.get("serial_b") or {}
+        default_b_port = _next_serial_port(self.serial.port)
+        b_port = sb.get("port") or default_b_port
+        if b_port == self.serial.port:
+            b_port = default_b_port          # 撞车兜底
+        self.serial_b = SerialConfig(
+            port=b_port,
+            baudrate=_int(sb.get("baudrate"), 9600),
+            timeout_ms=_int(sb.get("timeout_ms"),
+                            self.serial.timeout_ms),
+            retries=_int(sb.get("retries"), self.serial.retries),
+            vfd_poll_ms=self.serial.vfd_poll_ms,
+            temphum_poll_ms=self.serial.temphum_poll_ms,
+            temphum_push_ms=self.serial.temphum_push_ms,
+        )
         if "vfd_enabled" in serial:
             self.enable_vfd = bool(serial.get("vfd_enabled"))
         if "temphum_enabled" in serial:
@@ -447,7 +559,7 @@ class Config(object):
                 name = item.get("name") or ("数字量%d" % (i + 1))
                 built.append(DigitalConfig(
                     name,
-                    host=item.get("host", "192.168.0.12"),
+                    host=item.get("host", "192.168.0.13"),
                     port=_int(item.get("port"), 502),
                     unit_id=_int(item.get("unit_id"), 1),
                     timeout_s=_float(item.get("timeout_s"), 2.0),
@@ -499,6 +611,23 @@ class Config(object):
                     })
                 self.pump_items = pbuilt
 
+        # ---- 按钮组（现场操作柱：4 DI 输入 + 3 DO 灯）----
+        buttons = doc.get("buttons") or {}
+        if buttons:
+            if "enabled" in buttons:
+                self.enable_buttons = bool(buttons.get("enabled"))
+            self.button_debounce_ms = _int(buttons.get("debounce_ms"),
+                                           self.button_debounce_ms)
+            bitems = buttons.get("items")
+            if isinstance(bitems, dict):
+                merged = dict(self.button_items)
+                for key in ("estop_di", "start_di", "stop_di", "reset_di",
+                            "start_lamp_do", "stop_lamp_do", "reset_lamp_do",
+                            "module"):
+                    if key in bitems:
+                        merged[key] = _opt_int(bitems.get(key))
+                self.button_items = merged
+
         stale = doc.get("stale") or {}
         self.vfd_stale_ms = _int(stale.get("vfd_ms"), self.vfd_stale_ms)
         self.temphum_stale_ms = _int(stale.get("temphum_ms"),
@@ -517,6 +646,22 @@ class Config(object):
             self.storage.path = str(storage.get("path") or "")
         self.storage.sample_ms = _int(storage.get("sample_ms"),
                                       self.storage.sample_ms)
+        if "max_mb" in storage:
+            self.storage.max_mb = _int(storage.get("max_mb"),
+                                       self.storage.max_mb)
+        # [max_kb 优先] 配置文件是管理员手工编辑的，故接受 KB 级细粒度
+        # （极小盘/回归测试要把上限压到几百 KB 才能几十秒内跑到限）。
+        # 远端协议的 maxMb 仍是整数 MB（界面不让人填出 KB 级的怪值）。
+        if "max_kb" in storage:
+            kb = _int(storage.get("max_kb"), -1)
+            if kb >= 0:
+                self.storage.set_max_kb(kb)
+        policy = str(storage.get("full_policy") or "").strip().lower()
+        if policy in ("stop", "ring", "rotate"):
+            self.storage.full_policy = policy
+        self.storage.keep_files = max(
+            1, min(99, _int(storage.get("keep_files"),
+                            self.storage.keep_files)))
         return True
 
     def save(self):
@@ -545,6 +690,13 @@ class Config(object):
                     "vfd": self.vfd_unit_id,
                     "temphum": self.temphum_unit_id,
                 },
+            },
+            # 第二条 485：与 serial 平级，避免把 9600 的口/速率混进路 A。
+            "serial_b": {
+                "port": self.serial_b.port,
+                "baudrate": self.serial_b.baudrate,
+                "timeout_ms": self.serial_b.timeout_ms,
+                "retries": self.serial_b.retries,
             },
             "analog": {
                 "enabled": self.enable_analog,
@@ -579,10 +731,18 @@ class Config(object):
                 "move_timeout_ms": self.valve_move_timeout_ms,
                 "items": self.valve_items,
             },
+            "buttons": {
+                "enabled": self.enable_buttons,
+                "debounce_ms": self.button_debounce_ms,
+                "items": self.button_items,
+            },
             "storage": {
                 "enabled": self.storage.enabled,
                 "path": self.storage.path,
                 "sample_ms": self.storage.sample_ms,
+                "max_kb": self.storage.max_kb,
+                "full_policy": self.storage.full_policy,
+                "keep_files": self.storage.keep_files,
             },
             "stale": {
                 "vfd_ms": self.vfd_stale_ms,
