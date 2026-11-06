@@ -844,11 +844,11 @@ void XAbstractScrollArea_init(XAbstractScrollArea* self, XWidget* parent,
        body 同日改动），视口维持透明。 */
     /* 对标 qabstractscrollarea.cpp:272 viewport->setFocusProxy(q)：
        视口命中时焦点代理到滚动区本体（viewport 缺省 NoFocus，点击
-       事件按命中靶查策略位——无代理则点击视口永不聚焦滚动区）。 */
-    XWidget_setFocusProxy(self->m_viewport, (XWidget*)self);
-    /* 对标 qabstractscrollarea.cpp:272 viewport->setFocusProxy(q)：
-       视口命中时焦点代理到滚动区本体（viewport 缺省 NoFocus，点击
-       事件按命中靶查策略位——无代理则点击视口永不聚焦滚动区）。 */
+       事件按命中靶查策略位——无代理则点击视口永不聚焦滚动区）。
+       【redundant#4 2026-11-05】此前此处连续两行完全相同的
+       setFocusProxy 调用（含逐字重复的注释块）——无效重复，Qt 每次
+       setFocusProxy 只调一次（qwidget.cpp:6407-6411）。已删重复的那一份，
+       零行为变化。 */
     XWidget_setFocusProxy(self->m_viewport, (XWidget*)self);
     /* FocusOwnerQuiet（脏区收窄 2026-10-15）：滚区/条目视图族的
        paintEvent 不读 HasFocus 态（焦点视觉=当前格高亮，由子矩形路径

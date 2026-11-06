@@ -425,7 +425,7 @@ void XStatusBar_removeWidget(XStatusBar* self, XWidget* widget)
         removed = xsb_removeFrom(self->m_permanents, widget);
     if (removed) {
         /* 对标 Qt：移除后控件归调用方所有，解除父子关系。 */
-        XWidget_setParentPlain(widget, NULL);
+        XWidget_setParent_2(widget, NULL);
     }
 }
 

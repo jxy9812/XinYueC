@@ -2603,15 +2603,19 @@ int xapi_input_run(void)
                     "Keyboard 默认关气泡（LVGL popovers 默认 0）");
         XAPI_EXPECT(XVirtualKeyboard_autoPopup(kb),
                     "Keyboard 默认开自动弹出（XGui 扩展，头文件口径）");
-        XAPI_EXPECT(XVirtualKeyboard_buttonCount(kb) == 40,
-                    "Keyboard 小写布局 40 键（LVGL 逐键对齐）");
+        /* [断言口径修正 2026-11-05] 构造默认款型=PinyinFull（搜狗全键，
+         * XKeyboardLayoutKind 默认；款型主表接管 TextLower 模式布局），
+         * 旧「LVGL 逐键 40 键」断言口径随款型层落地翻转；LVGL 表语义由
+         * setMap/User 槽位断言承载（下方 setMap(User1) 段）。 */
+        XAPI_EXPECT(XVirtualKeyboard_buttonCount(kb) == 35,
+                    "Keyboard 小写布局 35 键（PinyinFull 款型 4 行主表）");
         XAPI_EXPECT(XVirtualKeyboard_textArea(kb) == NULL,
                     "Keyboard 默认未绑定目标（对标 get_textarea NULL）");
         XAPI_EXPECT(XVirtualKeyboard_selectedButton(kb) == XKEYBOARD_BUTTON_NONE,
                     "Keyboard 默认无选中按钮（对标 BUTTON_NONE）");
         XAPI_EXPECT(strcmp(xapi_cstr(XVirtualKeyboard_buttonText(kb, 0)),
-                           "1#") == 0,
-                    "Keyboard 按钮 0 为 1# 切换键");
+                           "q") == 0,
+                    "Keyboard 按钮 0 为 q（PinyinFull 行 1 首键）");
         XAPI_EXPECT(XVirtualKeyboard_buttonText(kb, XKEYBOARD_MAX_BUTTONS) == NULL,
                     "Keyboard 越界 buttonText 返回 NULL");
 
@@ -2621,10 +2625,11 @@ int xapi_input_run(void)
                         XVirtualKeyboard_buttonCount(kb) == 17,
                     "Keyboard 数字布局 17 键（4+4+4+5，对标 KB.c:166-177）");
         XVirtualKeyboard_setMode(kb, XKeyboardMode_TextUpper);
-        XAPI_EXPECT(XVirtualKeyboard_buttonCount(kb) == 40 &&
+        XAPI_EXPECT(XVirtualKeyboard_buttonCount(kb) == 35 &&
                         strcmp(xapi_cstr(XVirtualKeyboard_buttonText(kb, 1)),
-                               "Q") == 0,
-                    "Keyboard 大写布局键 1 为 Q（独立布局非锁存）");
+                               "W") == 0,
+                    "Keyboard 大写布局键 1 为 W（PinyinFull 大写键帽表，"
+                    "独立布局非锁存）");
         XVirtualKeyboard_setMode(kb, XKeyboardMode_TextLower);
         XAPI_EXPECT(XVirtualKeyboard_mode(kb) == XKeyboardMode_TextLower,
                     "Keyboard setMode 回小写生效");
@@ -3301,7 +3306,10 @@ int xapi_input_run(void)
                     "避免除零）");
 
         /* ---- reset：置 minimum-1 且不发 valueChanged
-         *      （qprogressbar.cpp:225-232；此前钳到 minimum） ---- */
+         *      （qprogressbar.cpp:225-232；此前钳到 minimum）。
+         *      [夹具修正 2026-11-05] 上段单步量程遗留 (5,5)，先恢复
+         *      (0,100)——哨兵=min-1 断言以 min=0 为前提。 ---- */
+        XProgressBar_setRange(&pb, 0, 100);
         input_pbReset();
         XProgressBar_reset(&pb);
         XProgressBar_text(&pb, text, (int)sizeof(text));
@@ -3317,6 +3325,8 @@ int xapi_input_run(void)
 
         /* ---- setRange 越界处置：走 reset() 而非钳位+多发一次信号
          *      （qprogressbar.cpp:320-331） ---- */
+        XProgressBar_setRange(&pb, 0, 100); /* [夹具修正 2026-11-05] 同上，
+                                                收缩断言前提=值 50 在旧范围外 */
         XProgressBar_setValue(&pb, 50);
         input_pbReset();
         XProgressBar_setRange(&pb, 0, 20);   /* 当前 50 落到新范围外 */

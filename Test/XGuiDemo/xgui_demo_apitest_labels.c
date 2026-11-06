@@ -890,12 +890,13 @@ static int labels_progress(void)
     XAPI_EXPECT(strcmp(xapi_cstr(XProgressBar_format(&bar)), "%p%") == 0,
                 "XProgressBar setFormat(NULL) 恢复默认 %p%");
 
-    /* reset 复位到下限且不发信号（Qt reset：value==minimum 而无
-     * valueChanged）。 */
+    /* [断言口径修正 2026-11-05] Qt reset 置 minimum-1 哨兵
+     * （qprogressbar.cpp:225-232，"未开始"态；实现已对齐）——旧口径
+     * value==minimum 无从区分初始态与复位态。 */
     XProgressBar_reset(&bar);
-    XAPI_EXPECT(XProgressBar_value(&bar) == 0 &&
+    XAPI_EXPECT(XProgressBar_value(&bar) == -1 &&
                     g_labels_pbValueChangedCount == 4,
-                "XProgressBar reset 复位到下限且不发 valueChanged");
+                "XProgressBar reset 置 minimum-1 哨兵且不发 valueChanged");
 
     /* ---- 范围端点联动（Qt setRange = setMinimum(min) +
      * setMaximum(qMax(max, min))：min>max 收敛为 (min,min)，不交换；

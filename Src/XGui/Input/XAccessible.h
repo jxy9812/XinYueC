@@ -133,8 +133,25 @@ bool XAccessible_isVisible(const XAccessible* self);
 XAccessibleState XAccessible_state(const XAccessible* self);
 XString* XAccessible_name(const XAccessible* self);
 void XAccessible_setName(XAccessible* self, const XString* name);
+/**
+ * @brief      查询节点的描述文本（对标 QAccessible::Description）。
+ * @details    回落链：显式描述 → 控件 accessibleDescription() → 控件
+ *             toolTip()（对标 Qt 6.8 qaccessiblewidget.cpp:379-384）。
+ * @param      self 节点；可为 NULL。
+ * @return     新建的描述文本（调用方负责 XClassDelete）；无描述时返回空串。
+ */
 XString* XAccessible_description(const XAccessible* self);
 void XAccessible_setDescription(XAccessible* self, const XString* description);
+/**
+ * @brief      查询节点的帮助文本（对标 QAccessible::Help）。
+ * @details    回落链：控件 whatsThis()（对标 Qt 6.8
+ *             qaccessiblewidget.cpp:385-389）——本仓此前无 Help 取值入口，
+ *             屏幕阅读器取不到控件的 What's This 说明。
+ * @param      self 节点；可为 NULL。
+ * @return     新建的帮助文本（调用方负责 XClassDelete）；无帮助文本时
+ *             返回空串。
+ */
+XString* XAccessible_help(const XAccessible* self);
 XWindow* XAccessible_window(const XAccessible* self);
 /** @brief 返回控件节点关联的 QWidget；窗口/应用节点返回 NULL。 */
 XWidget* XAccessible_widget(const XAccessible* self);

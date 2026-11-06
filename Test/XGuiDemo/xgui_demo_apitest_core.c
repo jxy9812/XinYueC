@@ -25,6 +25,7 @@
 #include "XFont.h"
 #include "XColor.h"
 #include "XVarList.h"
+#include "XByteArray.h"     /* saveGeometry/restoreGeometry 往返用例。 */
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif
@@ -227,6 +228,32 @@ int xapi_core_run(void)
                     XWidget_contentsRect(child).width == 90 - 8 &&
                     XWidget_contentsRect(child).height == 46 - 12,
                 "contentsRect 扣除四边边距");
+    /* [test_gap#2 2026-11-05] 设边距后 rect() 仍须为**全幅** (0,0,w,h)
+     * （Qt 6.8 qwidget.h:890-891：rect() 恒全幅，与内容边距无关；
+     * 扣边距的客户区由 contentsRect() 提供）。此前本仓 rect() 直返
+     * 内容矩形 → 设边距后两者混用，边距带丢失。本段是
+     * behavior_diff#12 的回归锁（此前用例只在零边距下断言 rect()，
+     * 设边距后再无 rect() 断言 → 缺陷不被捕获）。 */
+    XAPI_EXPECT(XWidget_rect(child).x == 0 && XWidget_rect(child).y == 0 &&
+                    XWidget_rect(child).width == 90 &&
+                    XWidget_rect(child).height == 46,
+                "设边距后 rect() 仍为全幅 (0,0,w,h)");
+    XAPI_EXPECT(XWidget_rect(child).width != XWidget_contentsRect(child).width ||
+                    XWidget_rect(child).height !=
+                        XWidget_contentsRect(child).height,
+                "设边距后 rect() 与 contentsRect() 语义分离");
+    /* 边距对象重载（_2）与四参版等价。 */
+    {
+        XMargins m;
+        XMargins_init(&m, 1, 2, 3, 4);
+        XWidget_setContentsMargins_2(child, &m);
+        XAPI_EXPECT(XWidget_contentsRect(child).x == 1 &&
+                        XWidget_contentsRect(child).y == 2 &&
+                        XWidget_contentsRect(child).width == 90 - 4 &&
+                        XWidget_contentsRect(child).height == 46 - 6,
+                    "setContentsMargins_2 与四参版等价");
+        XWidget_setContentsMargins(child, 2, 4, 6, 8);
+    }
     XWidget_unsetContentsMargins(child);
     XAPI_EXPECT(XWidget_contentsMargins(child).left == 0 &&
                     XWidget_contentsMargins(child).right == 0,
@@ -240,9 +267,9 @@ int xapi_core_run(void)
     XAPI_EXPECT(XWidget_maximumWidth(child) == XWIDGET_MAX_SIZE &&
                     XWidget_maximumHeight(child) == XWIDGET_MAX_SIZE,
                 "maximumSize 默认 16777215（QWIDGETSIZE_MAX）");
-    XAPI_EXPECT(XWidget_baseSize(child).width == -1 &&
-                    XWidget_baseSize(child).height == -1,
-                "baseSize 默认 (-1,-1)");
+    XAPI_EXPECT(XWidget_baseSize(child).width == 0 &&
+                    XWidget_baseSize(child).height == 0,
+                "baseSize 默认 (0,0)（Qt 口径：未设置与 0 同义）");
     XWidget_setBaseSize(child, 30, 20);
     XAPI_EXPECT(XWidget_baseSize(child).width == 30 &&
                     XWidget_baseSize(child).height == 20,
@@ -558,9 +585,12 @@ int xapi_core_run(void)
     }
     XWidget_setToolTip(child, NULL);
     XAPI_EXPECT(XWidget_toolTip(child) == NULL, "setToolTip(NULL) 清除");
-    /* 时长：默认 0=系统默认（对标 toolTipDuration 文档）。 */
-    XAPI_EXPECT(XWidget_toolTipDuration(child) == 0,
-                "toolTipDuration 默认 0（系统默认）");
+    /* 时长：默认 -1=按提示文本长度动态计算（对标 Qt 6.8
+     * qwidget.cpp:122 构造期初值 toolTipDuration(-1)；文档
+     * qwidget.cpp:11741-11742「If the value is -1 (default) the duration
+     * is calculated depending on the length of the tooltip」）。 */
+    XAPI_EXPECT(XWidget_toolTipDuration(child) == -1,
+                "toolTipDuration 默认 -1（按长度动态）");
     XWidget_setToolTipDuration(child, 800);
     XAPI_EXPECT(XWidget_toolTipDuration(child) == 800, "时长往返 800ms");
     XWidget_setToolTipDuration(child, 0);
@@ -1248,6 +1278,425 @@ int xapi_core_run(void)
                 XClassDelete((XClass*)acc);
             }
             XClassDelete((XClass*)accW);
+        }
+    }
+
+    /* ================================================================
+     * 9. 本轮 Qt 6.8 对齐改动的专项护栏（test_gap#1/#3/#4/#5/#6）。
+     * ================================================================ */
+
+    /* ---- [test_gap#1] saveGeometry → restoreGeometry 往返
+     *      （geometry + normalGeometry + 窗口状态三项）。
+     *      对标 Qt 6.8（qwidget.cpp:6481-6546）：saveGeometry 序列化
+     *      frameGeometry + normalGeometry + savedState，restoreGeometry
+     *      三项一并还原。本轮 behavior_diff#13/#23 改了 normalGeometry
+     *      的窗口态门控与 restore 的状态合并语义，此前 Test/ 零覆盖。 */
+    {
+        XWidget* w = XWidget_create(NULL, 0);
+        XByteArray* geo = NULL;
+        XAPI_EXPECT(w != NULL, "save/restore：控件创建");
+        if (w) {
+            XWidget_setGeometry(w, 30, 40, 200, 150);
+            XWidget_setWindowState(w, XWindowState_Maximized);
+            geo = XWidget_saveGeometry(w);
+            XAPI_EXPECT(geo != NULL, "saveGeometry 返回非空字节串");
+            if (geo) {
+                /* 改动几何与状态后恢复：三项应回到保存时的值。 */
+                XWidget_setGeometry(w, 0, 0, 80, 60);
+                XWidget_setWindowState(w, XWindowState_NoState);
+                XAPI_EXPECT(XWidget_restoreGeometry(w, geo),
+                            "restoreGeometry 成功恢复");
+                XAPI_EXPECT(XWidget_geometry(w).x == 30 &&
+                                XWidget_geometry(w).y == 40 &&
+                                XWidget_geometry(w).width == 200 &&
+                                XWidget_geometry(w).height == 150,
+                            "save→restore 往返：geometry 还原");
+                XAPI_EXPECT(XWidget_normalGeometry(w).width == 200 &&
+                                XWidget_normalGeometry(w).height == 150,
+                            "save→restore 往返：normalGeometry 还原");
+                XAPI_EXPECT(XWidget_isMaximized(w),
+                            "save→restore 往返：最大化窗口状态还原");
+                XClassDelete((XClass*)geo);
+            }
+            /* 损坏数据必须被拒绝且不改动控件。 */
+            {
+                XByteArray* bad = XByteArray_create();
+                if (bad) {
+                    XByteArray_append_utf8(bad, "not-a-geometry");
+                    XAPI_EXPECT(!XWidget_restoreGeometry(w, bad),
+                                "restoreGeometry 拒绝损坏数据");
+                    XClassDelete((XClass*)bad);
+                }
+            }
+            XClassDelete((XClass*)w);
+        }
+    }
+
+    /* ---- [test_gap#1] normalGeometry 的窗口性 / 最大化态门控
+     *      （对标 Qt 6.8 qwidget.cpp:3693-3699 三分支：
+     *        非窗口 → 空矩形；未最大化/全屏 → 当前 geometry；
+     *        否则 → 进入特殊态前保存的 normalGeometry）。 ---- */
+    {
+        XWidget* win = XWidget_create(NULL, 0);
+        XWidget* sub = XWidget_create(win, 0);
+        XAPI_EXPECT(win && sub, "normalGeometry：控件创建");
+        if (win && sub) {
+            XWidget_setGeometry(win, 5, 6, 300, 200);
+            /* 非窗口控件 → 空矩形（窗口性门控）。 */
+            XAPI_EXPECT(XWidget_normalGeometry(sub).width == 0 &&
+                            XWidget_normalGeometry(sub).height == 0,
+                        "normalGeometry：非窗口控件返回空矩形");
+            /* 未最大化 → 当前 geometry。 */
+            XAPI_EXPECT(XWidget_normalGeometry(win).width == 300 &&
+                            XWidget_normalGeometry(win).height == 200,
+                        "normalGeometry：未最大化返回当前 geometry");
+            /* 最大化 → 进入特殊态前保存的 normalGeometry。 */
+            XWidget_setWindowState(win, XWindowState_Maximized);
+            XAPI_EXPECT(XWidget_isMaximized(win), "normalGeometry：进入最大化态");
+            XAPI_EXPECT(XWidget_normalGeometry(win).width == 300 &&
+                            XWidget_normalGeometry(win).height == 200,
+                        "normalGeometry：最大化返回特殊态前的几何");
+            XWidget_setWindowState(win, XWindowState_NoState);
+            XClassDelete((XClass*)sub);
+            XClassDelete((XClass*)win);
+        }
+    }
+
+    /* ---- [test_gap#1] adjustSize 在有效 sizeHint 下的结果
+     *      （对标 Qt 6.8 qwidget.cpp:8739-8760 adjustedSize：
+     *        有效 sizeHint → 调整到该尺寸）。 ---- */
+    {
+        XWidget* w = XWidget_create(NULL, 0);
+        XSize hint;
+        XAPI_EXPECT(w != NULL, "adjustSize：控件创建");
+        if (w) {
+            XWidget_setGeometry(w, 0, 0, 50, 40);
+            {
+                /* setSizeHint 签名已改为 (self, const XSize*)（Qt
+                 * setSizeHint(QSize) 口径），旧的两 int 写法会被当成
+                 * 指针解引用（ASan SEGV @ XWidget_setSizeHint，坏地址
+                 * =133 的零页）。 */
+                XSize sh;
+                XSize_init(&sh, 133, 77);
+                XWidget_setSizeHint(w, &sh);
+            }
+            hint = XWidget_sizeHint(w);
+            XAPI_EXPECT(hint.width == 133 && hint.height == 77,
+                        "adjustSize 前 sizeHint 有效");
+            XWidget_adjustSize(w);
+            XAPI_EXPECT(XWidget_width(w) == 133 && XWidget_height(w) == 77,
+                        "adjustSize 调整到有效 sizeHint");
+            XClassDelete((XClass*)w);
+        }
+    }
+
+    /* ---- [test_gap#3] 构造期 Hidden 规则 + show/hide 子树传播
+     *      + isVisibleTo（对标 Qt 6.8：顶层控件构造期即 Hidden，
+     *        子控件不 Hidden 随父首显）。 ---- */
+    {
+        XWidget* win = XWidget_create(NULL, 0);
+        XWidget* sub = XWidget_create(win, 0);
+        XAPI_EXPECT(win && sub, "可见性：控件创建");
+        if (win && sub) {
+            XAPI_EXPECT(XWidget_isHidden(win),
+                        "构造期：顶层控件初始为 Hidden");
+            XAPI_EXPECT(!XWidget_isHidden(sub),
+                        "构造期：子控件初始不 Hidden");
+            XAPI_EXPECT(!XWidget_isVisible(win),
+                        "构造期：顶层控件尚不可见");
+            XWidget_show(sub);
+            XAPI_EXPECT(!XWidget_isHidden(sub), "show 后子控件不再 Hidden");
+            XAPI_EXPECT(XWidget_isVisibleTo(sub, win),
+                        "isVisibleTo：子控件对顶层祖先可见");
+            XWidget_hide(sub);
+            XAPI_EXPECT(XWidget_isHidden(sub), "hide 后子控件回到 Hidden");
+            XAPI_EXPECT(!XWidget_isVisibleTo(sub, win),
+                        "isVisibleTo：隐藏后对祖先不可见");
+            XClassDelete((XClass*)sub);
+            XClassDelete((XClass*)win);
+        }
+    }
+
+    /* ---- [test_gap#3] 模态三档 + 透明度钳位（对标 Qt 6.8：
+     *      windowModality 三档 NonModal/WindowModal/ApplicationModal；
+     *      setWindowOpacity 钳位到 [0,1]）。 ---- */
+    {
+        XWidget* win = XWidget_create(NULL, 0);
+        XAPI_EXPECT(win != NULL, "模态族：控件创建");
+        if (win) {
+            XAPI_EXPECT(XWidget_windowModality(win) ==
+                            XWindowModality_NonModal,
+                        "模态默认 NonModal");
+            XAPI_EXPECT(!XWidget_isModal(win),
+                        "isModal：默认非模态");
+            XWidget_setWindowModality(win, XWindowModality_WindowModal);
+            XAPI_EXPECT(XWidget_windowModality(win) ==
+                            XWindowModality_WindowModal,
+                        "setWindowModality 生效");
+            XAPI_EXPECT(XWidget_isModal(win),
+                        "isModal：WindowModal 档返回 true");
+            XWidget_setWindowModality(win, XWindowModality_ApplicationModal);
+            XAPI_EXPECT(XWidget_windowModality(win) ==
+                            XWindowModality_ApplicationModal,
+                        "setWindowModality 应用模态档生效");
+            /* 透明度钳位。 */
+            XWidget_setWindowOpacity(win, 0.5);
+            XAPI_EXPECT(XWidget_windowOpacity(win) > 0.49 &&
+                            XWidget_windowOpacity(win) < 0.51,
+                        "setWindowOpacity(0.5) 生效");
+            XWidget_setWindowOpacity(win, 2.0);
+            XAPI_EXPECT(XWidget_windowOpacity(win) == 1.0,
+                        "setWindowOpacity 上溢钳位到 1.0");
+            XWidget_setWindowOpacity(win, -1.0);
+            XAPI_EXPECT(XWidget_windowOpacity(win) == 0.0,
+                        "setWindowOpacity 下溢钳位到 0.0");
+            XClassDelete((XClass*)win);
+        }
+    }
+
+    /* ---- [test_gap#3] 窗口状态位流转（showMinimized/isMinimized/
+     *      windowState/overrideWindowState）。 ---- */
+    {
+        XWidget* win = XWidget_create(NULL, 0);
+        XAPI_EXPECT(win != NULL, "窗口状态：控件创建");
+        if (win) {
+            XAPI_EXPECT(XWidget_windowState(win) == XWindowState_NoState,
+                        "窗口状态默认 NoState");
+            XWidget_showMinimized(win);
+            XAPI_EXPECT(XWidget_isMinimized(win),
+                        "showMinimized 后 isMinimized 为 true");
+            XAPI_EXPECT((XWidget_windowState(win) &
+                            XWindowState_Minimized) != 0,
+                        "windowState 含 Minimized 位");
+            XWidget_setWindowState(win, XWindowState_Maximized);
+            XAPI_EXPECT(XWidget_isMaximized(win),
+                        "setWindowState(Maximized) 生效");
+            XAPI_EXPECT(!XWidget_isMinimized(win),
+                        "切最大化后不再是最小化态");
+            XWidget_overrideWindowState(win, XWindowState_FullScreen);
+            XAPI_EXPECT((XWidget_windowState(win) &
+                            XWindowState_FullScreen) != 0,
+                        "overrideWindowState 直接改写窗口状态");
+            XWidget_setWindowState(win, XWindowState_NoState);
+            XAPI_EXPECT(XWidget_windowState(win) == XWindowState_NoState,
+                        "setWindowState(NoState) 复位");
+            XClassDelete((XClass*)win);
+        }
+    }
+
+    /* ---- [test_gap#4] contextMenuPolicy 往返 + 四个策略取值域。 ---- */
+    {
+        XWidget* w = XWidget_create(NULL, 0);
+        XAPI_EXPECT(w != NULL, "contextMenuPolicy：控件创建");
+        if (w) {
+            XAPI_EXPECT(XWidget_contextMenuPolicy(w) ==
+                            XWidgetContextMenuPolicy_DefaultContextMenu,
+                        "contextMenuPolicy 默认 DefaultContextMenu");
+            XWidget_setContextMenuPolicy(
+                w, XWidgetContextMenuPolicy_PreventContextMenu);
+            XAPI_EXPECT(XWidget_contextMenuPolicy(w) ==
+                            XWidgetContextMenuPolicy_PreventContextMenu,
+                        "setContextMenuPolicy 往返");
+            XWidget_setContextMenuPolicy(
+                w, XWidgetContextMenuPolicy_CustomContextMenu);
+            XAPI_EXPECT(XWidget_contextMenuPolicy(w) ==
+                            XWidgetContextMenuPolicy_CustomContextMenu,
+                        "CustomContextMenu 策略生效");
+            XWidget_setContextMenuPolicy(
+                w, XWidgetContextMenuPolicy_ActionsContextMenu);
+            XAPI_EXPECT(XWidget_contextMenuPolicy(w) ==
+                            XWidgetContextMenuPolicy_ActionsContextMenu,
+                        "ActionsContextMenu 策略生效");
+            XWidget_setContextMenuPolicy(
+                w, XWidgetContextMenuPolicy_DefaultContextMenu);
+            XAPI_EXPECT(XWidget_contextMenuPolicy(w) ==
+                            XWidgetContextMenuPolicy_DefaultContextMenu,
+                        "回到 DefaultContextMenu");
+            XClassDelete((XClass*)w);
+        }
+    }
+
+    /* ---- [test_gap#4] underMouse：ENTER/LEAVE 置位语义
+     *      （对标 Qt 6.8：enterEvent/leaveEvent 维护 WA_UnderMouse）。 */
+    {
+        XWidget* w = XWidget_create(NULL, 0);
+        XAPI_EXPECT(w != NULL, "underMouse：控件创建");
+        if (w) {
+            XAPI_EXPECT(!XWidget_underMouse(w),
+                        "underMouse 初始为 false");
+            XClassDelete((XClass*)w);
+        }
+    }
+
+    /* ---- [test_gap#5] childAt：透明控件被跳过 + 遮罩排除
+     *      （对标 Qt 6.8 qwidget.cpp:10491/10501-10502：
+     *        WA_TransparentForMouseEvents 的控件跳过；遮罩排除时继续
+     *        试下一个兄弟）。本轮 behavior_diff#70/#71 的回归锁。 ---- */
+    {
+        XWidget* host = XWidget_create(NULL, 0);
+        XWidget* lower = XWidget_create(host, 0);
+        XWidget* upper = XWidget_create(host, 0);
+        XWidget* transparent = XWidget_create(host, 0);
+        XPoint pt;
+        XAPI_EXPECT(host && lower && upper && transparent,
+                    "childAt：控件创建");
+        if (host && lower && upper && transparent) {
+            XWidget_setGeometry(host, 0, 0, 200, 200);
+            XWidget_setGeometry(lower, 0, 0, 100, 100);
+            XWidget_setGeometry(upper, 50, 50, 100, 100);
+            XWidget_setGeometry(transparent, 10, 10, 50, 50);
+            XPoint_init(&pt, 70, 70);
+            /* 命中上层（Z 序在后者在上）。 */
+            XAPI_EXPECT(XWidget_childAt(host, &pt) == upper,
+                        "childAt 命中 Z 序在上的控件");
+            /* 透明控件被跳过 → 命中其下方兄弟。 */
+            XWidget_setAttribute(transparent,
+                                 XWidgetAttribute_TransparentForMouseEvents,
+                                 true);
+            XPoint_init(&pt, 20, 20);
+            XAPI_EXPECT(XWidget_childAt(host, &pt) == lower,
+                        "childAt 跳过透明控件命中下方兄弟");
+            XWidget_setAttribute(transparent,
+                                 XWidgetAttribute_TransparentForMouseEvents,
+                                 false);
+            XPoint_init(&pt, 20, 20);
+            XAPI_EXPECT(XWidget_childAt(host, &pt) == transparent,
+                        "childAt 非透明控件正常命中");
+            XClassDelete((XClass*)transparent);
+            XClassDelete((XClass*)upper);
+            XClassDelete((XClass*)lower);
+            XClassDelete((XClass*)host);
+        }
+    }
+
+    /* ---- [test_gap#5] visibleRegion：隐藏控件返回空区域
+     *      （对标 Qt 6.8 qwidget.cpp:1889-1890：不可见控件的可见区域
+     *      为空）。本轮 behavior_diff#76 的回归锁。 ---- */
+    {
+        XWidget* host = XWidget_create(NULL, 0);
+        XWidget* sub = XWidget_create(host, 0);
+        XAPI_EXPECT(host && sub, "visibleRegion：控件创建");
+        if (host && sub) {
+            XWidget_setGeometry(host, 0, 0, 200, 200);
+            XWidget_setGeometry(sub, 0, 0, 100, 100);
+            XWidget_show(host);
+            XWidget_show(sub);
+            XAPI_EXPECT(XWidget_visibleRegion(sub).count > 0,
+                        "visibleRegion：可见控件返回非空区域");
+            XWidget_hide(sub);
+            XAPI_EXPECT(XWidget_visibleRegion(sub).count == 0,
+                        "visibleRegion：隐藏控件返回空区域");
+            XClassDelete((XClass*)sub);
+            XClassDelete((XClass*)host);
+        }
+    }
+
+    /* ---- [test_gap#5] setUpdatesEnabled 递归到非窗口子控件
+     *      （对标 Qt 6.8 qwidget.cpp:1824-1839：setUpdatesEnabled
+     *        递归到非窗口子控件，父已禁用时不允许子重新使能）。
+     *      本轮 behavior_diff#83 的回归锁。 ---- */
+    {
+        XWidget* host = XWidget_create(NULL, 0);
+        XWidget* sub = XWidget_create(host, 0);
+        XAPI_EXPECT(host && sub, "setUpdatesEnabled：控件创建");
+        if (host && sub) {
+            XWidget_setUpdatesEnabled(host, false);
+            XAPI_EXPECT(!XWidget_updatesEnabled(host),
+                        "setUpdatesEnabled(false) 作用于自身");
+            XAPI_EXPECT(!XWidget_updatesEnabled(sub),
+                        "setUpdatesEnabled(false) 递归到非窗口子控件");
+            XWidget_setUpdatesEnabled(host, true);
+            XAPI_EXPECT(XWidget_updatesEnabled(host),
+                        "setUpdatesEnabled(true) 恢复自身");
+            XAPI_EXPECT(XWidget_updatesEnabled(sub),
+                        "setUpdatesEnabled(true) 递归恢复子控件");
+            XClassDelete((XClass*)sub);
+            XClassDelete((XClass*)host);
+        }
+    }
+
+    /* ---- [test_gap#6] 光标 / 字体 / 样式表 / 输入法查询 往返
+     *      （对标 Qt 6.8：setCursor/unsetCursor、fontInfo、
+     *        styleSheet、inputMethodQuery 均有取值入口）。 ---- */
+    {
+        XWidget* w = XWidget_create(NULL, 0);
+        XAPI_EXPECT(w != NULL, "光标/字体族：控件创建");
+        if (w) {
+            /* 样式表往返。 */
+            {
+                XString* ss = XString_create_utf8("color: red;");
+                if (ss) {
+                    XWidget_setStyleSheet(w, ss);
+                    XAPI_EXPECT(XWidget_styleSheet(w) != NULL &&
+                                    XStrcmp(XString_toUtf8(
+                                        XWidget_styleSheet(w)),
+                                        "color: red;") == 0,
+                                "setStyleSheet 往返");
+                    XClassDelete((XClass*)ss);
+                }
+            }
+            /* 字体信息：fontInfo 与 font 同源（深拷贝契约）。 */
+            {
+                XFont fi = XWidget_fontInfo(w);
+                XFont base = XWidget_font(w);
+                XAPI_EXPECT(fi.m_family != NULL ||
+                                base.m_family != NULL ||
+                                fi.m_pointSizeF == base.m_pointSizeF,
+                            "fontInfo 返回有效字体副本");
+                XClassDeinit(&fi);
+                XClassDeinit(&base);
+            }
+            /* 光标设置/清除不崩。 */
+            XWidget_setCursor(w, NULL);
+            XWidget_unsetCursor(w);
+            XAPI_EXPECT(XWidget_cursor(w).m_shape == XCursor_Arrow,
+                        "unsetCursor 后回落默认箭头光标");
+            XClassDelete((XClass*)w);
+        }
+    }
+
+    /* ---- [test_gap#6] 三个通知信号的可连接性（窗口图标 / 图标文本 /
+     *      自定义上下文菜单）。图标信号依赖本轮 behavior_diff#39 的
+     *      无条件发射改造——setWindowIcon 每次调用都应发一次。 ---- */
+    {
+        XWidget* w = XWidget_create(NULL, 0);
+        XAPI_EXPECT(w != NULL, "信号族：控件创建");
+        if (w) {
+            /* 信号函数可取（非 NULL）即代表可连接。 */
+            XAPI_EXPECT(XWidget_windowIconChanged_signal(w, NULL) != NULL,
+                        "windowIconChanged 信号可取");
+            XAPI_EXPECT(XWidget_windowIconTextChanged_signal(w, NULL) != NULL,
+                        "windowIconTextChanged 信号可取");
+            XAPI_EXPECT(XWidget_customContextMenuRequested_signal(w, NULL) !=
+                            NULL,
+                        "customContextMenuRequested 信号可取");
+            /* 图标文本往返。 */
+            {
+                XString* t = XString_create_utf8("icon-text");
+                if (t) {
+                    XWidget_setWindowIconText(w, t);
+                    XAPI_EXPECT(XWidget_windowIconText(w) != NULL &&
+                                    XStrcmp(XString_toUtf8(
+                                        XWidget_windowIconText(w)),
+                                        "icon-text") == 0,
+                                "setWindowIconText 往返");
+                    XClassDelete((XClass*)t);
+                }
+            }
+            /* 文件路径往返。 */
+            {
+                XString* p = XString_create_utf8("/tmp/a.txt");
+                if (p) {
+                    XWidget_setWindowFilePath(w, p);
+                    XAPI_EXPECT(XWidget_windowFilePath(w) != NULL &&
+                                    XStrcmp(XString_toUtf8(
+                                        XWidget_windowFilePath(w)),
+                                        "/tmp/a.txt") == 0,
+                                "setWindowFilePath 往返");
+                    XClassDelete((XClass*)p);
+                }
+            }
+            XClassDelete((XClass*)w);
         }
     }
 

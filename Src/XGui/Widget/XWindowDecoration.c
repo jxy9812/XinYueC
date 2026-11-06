@@ -95,6 +95,10 @@ typedef struct XWindowDecorationState
 {
     XWidget* m_top;        /**< 顶层控件（借用；注册表键）。 */
     XWindow* m_window;     /**< 桥接窗口（借用；ensureState 时刷新）。 */
+    XWindow* m_stateLinkWindow; /**< 已连接 windowStateChanged 的窗口
+                                *   （借用；注册项摘除时据此显式断开
+                                *   连接——连接随任一端析构自动摘除只覆盖
+                                *   "控件先亡"方向）。 */
     XWidget* m_bar;        /**< 当前生效的标题条控件（借用；自定义条优
                                 先，否则为默认 XTitleBar 实例）。 */
     XWidget* m_defaultBar; /**< 本模块创建的默认 XTitleBar 实例（堆对象；
@@ -203,6 +207,7 @@ static XWindowDecorationState* xwd_ensureState(XWidget* top)
     XMemset(st, 0, sizeof(*st));
     st->m_top = top;
     st->m_window = top->m_windowHandle;
+    st->m_stateLinkWindow = NULL;
     /* 【状态通知链接线 2026-10-23】装饰层消费窗口状态机：桥接窗口的
      * windowStateChanged 信号直连本模块槽（receiver=顶层控件，连接
      * 随任一端析构自动摘除）。此前状态变化到装饰层无任何通知链——
@@ -214,11 +219,16 @@ static XWindowDecorationState* xwd_ensureState(XWidget* top)
      * StateChanged 发射；无 WM 平台态不回写，由控件侧请求路径
      * XWidget_setWindowState 的直呼通知补齐，见该函数）。槽内幂等
      * （m_fullBarSuppressed 账），两路并发通知只应用一次。 */
-    if (st->m_window)
+    if (st->m_window) {
         XObject_connect_1((XObject*)st->m_window,
                           XSignal(XWindow_windowStateChanged_signal),
                           (XObject*)top, xwd_windowStateChangedSlot,
                           XConnectionType_Direct);
+        /* 记下被连接的窗口：注册项摘除时据此显式断开（连接随任一端
+         * 析构自动摘除只覆盖"控件先亡"，窗口先亡而控件仍在时连接项
+         * 仍挂在已亡窗口的连接表上）。 */
+        st->m_stateLinkWindow = st->m_window;
+    }
     return st;
 }
 
@@ -925,6 +935,13 @@ static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
                     {
                         XPoint_init(&zeroOrg, 0, 0);
                         zeroOrg = XWidget_mapToGlobal(ownerTop, &zeroOrg);
+                        /* 【挂起遮挡 2026-11-04】腾空条带标脏走 owner 的
+                         * update——owner（demo 顶层/宿主）的不透明子控件
+                         * 会把条带整块扣掉（collectOpaqueChildren）⇒
+                         * PAINT 区域空、无人重画 ⇒ 面板路径像素永留
+                         * （真机：回停靠拖动轨迹的左下包络阶梯残迹）。
+                         * 挂起期内失效畅通，条带由 owner PAINT 重画。 */
+                        XWidget_suspendDirtyOcclusion();
                         for (hi = 0; hi < hitCount; ++hi)
                         {
                             XRect local;
@@ -935,6 +952,7 @@ static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
                             if (local.width > 0 && local.height > 0)
                                 XWidget_updateRect(ownerTop, &local);
                         }
+                        XWidget_resumeDirtyOcclusion();
                     }
                 }
                 {
@@ -2627,14 +2645,34 @@ void XWindowDecoration_handleLeave(XWidget* top)
     }
 }
 
+/** @brief 断开装饰状态项与桥接窗口的 windowStateChanged 连接。
+ *  @details 注册项摘除时调用：连接随**任一端**析构自动摘除只覆盖"控件
+ *           先亡"方向——窗口先亡而控件仍在时，连接项仍挂在已亡窗口的连接
+ *           表上（悬垂槽目标）。此处显式断开，补齐释放缺口。 */
+static void xwd_releaseStateLink(XWindowDecorationState* st)
+{
+    if (!st || !st->m_stateLinkWindow) return;
+    XObject_disconnect_1((XObject*)st->m_stateLinkWindow,
+                         XSignal(XWindow_windowStateChanged_signal),
+                         (XObject*)st->m_top, xwd_windowStateChangedSlot);
+    st->m_stateLinkWindow = NULL;
+}
+
 void XWindowDecoration_notifyWindowDestroyed(XWindow* win)
 {
     int i;
     if (!win) return;
     for (i = 0; i < g_xwdCount; ++i) {
-        XWidget* top = g_xwdStates[i].m_top;
-        if (g_xwdStates[i].m_window == win ||
-            (top && top->m_windowHandle == win)) {
+        /* 【悬垂读根修 2026-11-07】命中判据只认 m_window（注册时与
+         * m_top->m_windowHandle 同源赋值的权威副本，见 ensureState）。
+         * 旧判据 `g_xwdStates[i].m_window == win ||
+         * (top && top->m_windowHandle == win)` 的第二个分支会解引用
+         * m_top —— 顶层控件可能已先于本窗口消亡（析构未走
+         * notifyTopDestroyed 的路径，如 apitest 里栈上构造的
+         * XMainWindow 随函数返回失效：ASan stack-use-after-return
+         * @ 本函数读 top->m_windowHandle）。m_window 是值拷贝，读它恒
+         * 安全；两字段同源赋值 ⇒ 去掉兜底分支不改变任何正常命中语义。 */
+        if (g_xwdStates[i].m_window == win) {
             /* 宿主注销清理：本模块创建的默认条随装饰状态一并异步释放
              * （XObject_deleteLater；顶层控件未随窗口一起销毁时条控件
              * 不能残留叠画，已销毁则经析构撤销挂起事件，无双重释放）：
@@ -2645,6 +2683,8 @@ void XWindowDecoration_notifyWindowDestroyed(XWindow* win)
             /* 拖动快照随宿主注销释放（若手势中被销毁）：快照模式未启用
              * 时零开销，探针一并收口。 */
             xwd_dragGestureEnd(&g_xwdStates[i], false);
+            /* 断开窗口状态通知连接（窗口先亡方向的悬垂连接补漏）。 */
+            xwd_releaseStateLink(&g_xwdStates[i]);
             /* 尾交换摘除（注册表无序，O(1) 删除）。 */
             g_xwdStates[i] = g_xwdStates[g_xwdCount - 1];
             --g_xwdCount;
@@ -2666,6 +2706,8 @@ void XWindowDecoration_notifyTopDestroyed(XWidget* top)
             xwd_dropDefaultBar(&g_xwdStates[i]);
             /* 拖动快照随顶层消亡释放（快照模式未启用时零开销）。 */
             xwd_dragGestureEnd(&g_xwdStates[i], false);
+            /* 断开窗口状态通知连接（窗口先亡方向的悬垂连接补漏）。 */
+            xwd_releaseStateLink(&g_xwdStates[i]);
             /* 尾交换摘除（注册表无序，O(1) 删除）。 */
             g_xwdStates[i] = g_xwdStates[g_xwdCount - 1];
             --g_xwdCount;

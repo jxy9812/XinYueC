@@ -171,7 +171,7 @@ static XLineEdit* spinbox_createDefaultLineEdit(XAbstractSpinBox* self)
        注意此处焦点代理方向与 Qt 相反（Qt 是编辑框代理到容器、焦点
        停容器本体；XGui 取容器代理到编辑框、焦点落编辑框——编辑框
        直持焦点使键入/选区/IME 走自身完整链路，容器经代理判据与
-       宿主 update（XWidget_setFocusReason 三段配套）画出聚焦环）。 */
+       宿主 update（XWidget_setFocus_2 三段配套）画出聚焦环）。 */
     XWidget_setFocusProxy((XWidget*)self, (XWidget*)edit);
     return edit;
 }

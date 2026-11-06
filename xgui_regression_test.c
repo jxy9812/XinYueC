@@ -120,6 +120,7 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XButtonGroupTest.h"
 #include "XDataStreamTest.h"
 #include "XTableAlignTest.h"
+#include "XWidgetQtAlignTest.h"
 #include "XStatusBar.h"
 #include "XMenuBar.h"
 #include "XSplitter.h"
@@ -22253,6 +22254,69 @@ static void test_input_task214_contract(void)
         }
         if (w) XClassDelete(w);
     }
+    /* ---- XAccessible 取值层回落（description/Name/Help）----
+     * [behavior_diff#108] 对标 Qt 6.8 qaccessiblewidget.cpp:365-389：
+     *   ① Description：accessibleDescription 为空时回落 toolTip；
+     *   ② Name：窗口节点取窗口标题（最小化时取图标文本），**子控件节点
+     *      取伙伴（buddy）标签文本 / 父分组框标题**（不再一律回落窗口标题）；
+     *   ③ Help：取 whatsThis（此前本仓无 Help 取值入口）。 */
+#if XWIDGET_ON && XACCESSIBLE_ON
+    {
+        XWidget* win = XWidget_create(NULL, 0);
+        XWidget* child = XWidget_create(win, 0);
+        XAccessible* acc = NULL;
+        XString* tmp = NULL;
+        expect_true(win != NULL && child != NULL, "acc 回落：控件创建");
+        if (win && child) {
+            XString* title = XString_create_utf8("acc-win-title");
+            if (title) XWidget_setWindowTitle(win, title);
+            if (title) XClassDelete(title);
+            tmp = XString_create_utf8("acc-tip-text");
+            if (tmp) XWidget_setToolTip(child, tmp);
+            if (tmp) XClassDelete(tmp);
+            tmp = XString_create_utf8("acc-help-text");
+            if (tmp) XWidget_setWhatsThis(child, tmp);
+            if (tmp) XClassDelete(tmp);
+            /* ① description 回落 toolTip。 */
+            acc = XAccessible_createForWidget(child);
+            if (acc) {
+                XString* d = XAccessible_description(acc);
+                /* 断言用 XStrcmp 前判空：XString_toUtf8 对空串返回 NULL。 */
+                expect_true(d != NULL && XString_toUtf8(d) != NULL &&
+                                XStrcmp(XString_toUtf8(d), "acc-tip-text") == 0,
+                            "acc 回落：description 回落 toolTip");
+                if (d) XClassDelete(d);
+                /* ③ Help 取 whatsThis。 */
+                d = XAccessible_help(acc);
+                expect_true(d != NULL && XString_toUtf8(d) != NULL &&
+                                XStrcmp(XString_toUtf8(d), "acc-help-text") == 0,
+                            "acc 回落：Help 取 whatsThis");
+                if (d) XClassDelete(d);
+                /* ② 子控件 Name 不取窗口标题（应为空或非窗口标题）。 */
+                d = XAccessible_name(acc);
+                expect_true(d != NULL &&
+                                (XString_toUtf8(d) == NULL ||
+                                 XStrcmp(XString_toUtf8(d),
+                                         "acc-win-title") != 0),
+                            "acc 回落：子控件 Name 不取窗口标题");
+                if (d) XClassDelete(d);
+                XClassDelete(acc);
+            }
+            /* ② 窗口节点 Name 取窗口标题。 */
+            acc = XAccessible_createForWidget(win);
+            if (acc) {
+                XString* n = XAccessible_name(acc);
+                expect_true(n != NULL && XString_toUtf8(n) != NULL &&
+                                XStrcmp(XString_toUtf8(n), "acc-win-title") == 0,
+                            "acc 回落：窗口 Name 取窗口标题");
+                if (n) XClassDelete(n);
+                XClassDelete(acc);
+            }
+            XClassDelete(child);
+            XClassDelete(win);
+        }
+    }
+#endif
 #endif
 }
 
@@ -23012,12 +23076,12 @@ static void test_widget_contract(void)
         TestWidget* fa = TestWidget_create(fRoot);
         TestWidget* fb = TestWidget_create(fRoot);
         expect_true(!XWidget_hasFocus(&fa->m_base), "焦点初始无主");
-        XWidget_setFocusReason(&fa->m_base, XFocusReason_Mouse);
+        XWidget_setFocus_2(&fa->m_base, XFocusReason_Mouse);
         expect_true(XWidget_hasFocus(&fa->m_base), "setFocusReason 获得焦点");
         expect_true(XWidget_focusWidget(fRoot) == &fa->m_base,
                     "focusWidget 返回焦点控件");
         expect_true(fa->focusInCount == 1, "focusInEvent 计数");
-        XWidget_setFocusReason(&fb->m_base, XFocusReason_Tab);
+        XWidget_setFocus_2(&fb->m_base, XFocusReason_Tab);
         expect_true(XWidget_hasFocus(&fb->m_base), "焦点转移");
         expect_true(!XWidget_hasFocus(&fa->m_base), "旧焦点释放");
         expect_true(fa->focusOutCount == 1 && fb->focusInCount == 1,
@@ -23229,7 +23293,7 @@ static void test_widget_contract(void)
         XWidget_show(&reparentChild->m_base);
         expect_true(XWidget_isVisible(&reparentChild->m_base),
                     "setParent 前子控件可见");
-        XWidget_setParentPlain(&reparentChild->m_base, &reparentB->m_base);
+        XWidget_setParent_2(&reparentChild->m_base, &reparentB->m_base);
         expect_true(XWidget_parentWidget(&reparentChild->m_base) ==
                         &reparentB->m_base,
                     "setParentPlain 更新父控件");
@@ -24392,7 +24456,13 @@ static void test_widget_focus_tab_order(void)
     XWidget_show(&b->m_base);
     XWidget_show(&c->m_base);
 
-    /* 未设置显式链前：文档顺序 a -> b -> c。 */
+    /* 未设置显式链前：文档顺序 a -> b -> c。
+     * [Qt 口径 2026-11-05] focusNextChild() 是 focusNextPrevChild(true)
+     * 的 inline 包装（qwidget.h:728）：遍历决定权上交所在顶层窗口，以
+     * **窗口当前焦点控件**为起点续链（qwidget.cpp:6816-6820 +
+     * qapplication.cpp:1975-1977）——不再是"以调用者为起点"。故先显式
+     * 建立焦点（a），再断言前进落到 b。 */
+    XWidget_setFocus(&a->m_base);
     expect_true(XWidget_focusNextChild(&a->m_base) &&
                 XWidget_focusWidget(&a->m_base) == &b->m_base,
                 "Tab 默认文档序 a->b");
@@ -25150,13 +25220,37 @@ static void test_layout_invalidate_propagation(void)
     TestWidget* w;
     TestWidget* subW = NULL;
 
+    /* ---------- ⓪ 布局换挂：旧控件的 m_layout 必须被对称摘除 ----------
+     * [behavior_diff#80] XLayout_attachWidget 挂到新控件时若不清旧控件的
+     * m_layout → 两个控件同时布局同一布局；且旧控件析构时的 detach 会把
+     * 新控件的 m_layout 一并清空（Qt 经 takeLayout 对称摘除，
+     * qwidget.cpp:10309/10338-10347）。 */
+    {
+        TestWidget* hostA = TestWidget_create(NULL);
+        TestWidget* hostB = TestWidget_create(NULL);
+        XBoxLayout* shared;
+        expect_true(hostA && hostB, "prop: 换挂控件创建");
+        shared = XBoxLayout_create(XBoxLayoutDirection_TopToBottom,
+                                   &hostA->m_base);
+        expect_true(shared != NULL, "prop: 换挂布局创建");
+        XWidget_setLayout(&hostA->m_base, (XLayout*)shared);
+        expect_true(hostA->m_base.m_layout == (XLayout*)shared,
+                    "prop: 布局挂到 hostA");
+        /* 换挂到 hostB：hostA 的 m_layout 必须被摘掉。 */
+        XWidget_setLayout(&hostB->m_base, (XLayout*)shared);
+        expect_true(hostB->m_base.m_layout == (XLayout*)shared,
+                    "prop: 布局换挂到 hostB");
+        expect_true(hostA->m_base.m_layout == NULL,
+                    "prop: 换挂后旧控件 m_layout 被对称摘除");
+    }
+
     /* ---------- ① 跨控件上推：叶子变化失效祖先控件布局缓存 ---------- */
     layout_test_ensure_app();
     top = TestWidget_create(NULL);
     mid = TestWidget_create(&top->m_base);
     leaf = layout_make_growable_widget(40, 20);
     expect_true(top && mid && leaf, "prop: 控件创建");
-    XWidget_setParentPlain(&leaf->m_base, &mid->m_base);
+    XWidget_setParent_2(&leaf->m_base, &mid->m_base);
     XWidget_setGeometry(&top->m_base, 0, 0, 300, 200);
     XWidget_setGeometry(&mid->m_base, 0, 0, 300, 200);
     outer = XBoxLayout_create(XBoxLayoutDirection_TopToBottom, &top->m_base);
@@ -31711,7 +31805,7 @@ static void test_hover_synthesis_after_target_destroyed(void)
         XCoreApplication_processEvents(XEventLoop_AllEvents);
 
         /* 旧靶带焦点后销毁 → 焦点锚随之清空（锚全空 = 缺陷触发条件）。 */
-        XWidget_setFocusReason(&oldBtn->m_base, XFocusReason_Mouse);
+        XWidget_setFocus_2(&oldBtn->m_base, XFocusReason_Mouse);
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         XClassDelete((XClass*)&oldBtn->m_base);
         XCoreApplication_processEvents(XEventLoop_AllEvents);
@@ -36155,6 +36249,10 @@ static void test_xgui_widgets(void)
     /* [对齐专项测试 2026-11-03] XDataStream 线格式 + 表格族对齐回归。 */
     expect_true(XDataStreamTest_runAll() == 0, "XDataStream 线格式专项");
     expect_true(XTableAlignTest_runAll() == 0, "XTableView/XTableWidget 对齐专项");
+    /* [Qt 6.8 对齐专项 2026-11-05] XWidget × Qt 6.8.3 对齐战役增量回归
+       （七组：几何/可见性窗口状态/焦点可用性/树与坐标/绘制闭环/外观动作/
+       命名契约），语义出处见 docs/xgui/XWidget_Qt683_对齐测试说明.md。 */
+    expect_true(XWidgetQtAlignTest_runAll(), "XWidget Qt6.8 对齐专项");
 #if XWIDGET_ON && XKEYBOARD_ON
     expect_true(XKeyboardTest_runAll(), "XKeyboard 控件功能");
     expect_true(XPinyinT9Test_runAll(), "XPinyinT9 九键消歧组串与候选");

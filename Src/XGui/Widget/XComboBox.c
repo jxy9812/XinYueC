@@ -1275,7 +1275,7 @@ void XComboBox_setLineEdit(XComboBox* self, XLineEdit* edit)
         self->m_lineEdit = NULL;
     }
     self->m_lineEdit = edit;
-    XWidget_setParentPlain((XWidget*)edit, (XWidget*)self);
+    XWidget_setParent_2((XWidget*)edit, (XWidget*)self);
     XWidget_setGeometry((XWidget*)edit, 2, 2,
                         XWidget_width((XWidget*)self) -
                             XCOMBOBOX_BUTTON_W - 4,

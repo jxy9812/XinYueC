@@ -437,24 +437,37 @@ int XToolBox_insertItem(XToolBox* self, int index, XWidget* widget,
     if (!item) return -1;
     n = XVector_size_base((const XContainer*)self->m_items);
     if (index < 0 || (int64_t)index > n) index = (int)n;
-    XVector_insert_1_base(self->m_items, index, &item, 1);
-    XWidget_setParent(widget, (XWidget*)self, 0);
-    actual = index;
-    if (self->m_currentIndex < 0)
-        XToolBox_setCurrentIndex(self, actual);
-    else {
-        XWidget_setVisible(widget, false);
-        xtb2_layout(self);
-        /* 对标 Qt qtoolbox.cpp:337-344 insertItem：插入位于当前页之前
-         * （index <= 当前控件的新索引）时，按同一控件的新索引重选一次
-         * 并发射 currentChanged；否则 m_currentIndex 数值不变但对应
-         * 另一条目，currentWidget/currentIndex 与可见页脱节。 */
-        {
-            XWidget* current = XToolBox_currentWidget(self);
-            int newIndex = current ? XToolBox_indexOf(self, current) : -1;
-            if (current && newIndex >= 0 && index <= newIndex) {
-                self->m_currentIndex = -1; /* 触发 change（同 Qt 置空 currentPage）。 */
-                XToolBox_setCurrentIndex(self, newIndex);
+    /* [顺序根修 2026-11-05] 先在**插入前**记住旧当前页控件——插入后
+     * m_currentIndex 指向的槽已错位（旧 idx 现落在新插入项上），
+     * currentWidget 会取到错误控件、indexOf 跟随成错值（apitest
+     * 前插段实锚 cur=1≠2）。XVector_at_base 返回槽位地址，元素为
+     * 指针须解引用。 */
+    {
+        XWidget* oldCurrent = NULL;
+        if (self->m_currentIndex >= 0 && self->m_currentIndex < (int)n) {
+            XToolBoxItem** slot = (XToolBoxItem**)XVector_at_base(
+                (const XContainer*)self->m_items, self->m_currentIndex);
+            XToolBoxItem* it = slot ? *slot : NULL;
+            oldCurrent = it ? it->widget : NULL;
+        }
+        XVector_insert_1_base(self->m_items, index, &item, 1);
+        XWidget_setParent(widget, (XWidget*)self, 0);
+        actual = index;
+        if (self->m_currentIndex < 0)
+            XToolBox_setCurrentIndex(self, actual);
+        else {
+            XWidget_setVisible(widget, false);
+            xtb2_layout(self);
+            /* 对标 Qt qtoolbox.cpp:337-344 insertItem：插入位于当前页之前
+             * （index <= 当前控件的新索引）时，按同一控件的新索引重选一次
+             * 并发射 currentChanged；否则 m_currentIndex 数值不变但对应
+             * 另一条目，currentWidget/currentIndex 与可见页脱节。 */
+            {
+                int newIndex = oldCurrent ? XToolBox_indexOf(self, oldCurrent) : -1;
+                if (oldCurrent && newIndex >= 0 && index <= newIndex) {
+                    self->m_currentIndex = -1; /* 触发 change（同 Qt 置空 currentPage）。 */
+                    XToolBox_setCurrentIndex(self, newIndex);
+                }
             }
         }
     }

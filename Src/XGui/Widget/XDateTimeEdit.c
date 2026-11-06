@@ -3496,7 +3496,7 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
                编辑，数字/方向键被 XLineControl_processKeyEvent 当纯文本
                消费，分段键入整条饿死（GUI 表现为裸文本拼接）。F3 的
                「焦点回收至壳本体」只覆盖鼠标路径——键盘与程序性聚焦
-               （XWidget_setFocusReason 经 deepestFocusProxy）必须在此
+               （XWidget_setFocus_2 经 deepestFocusProxy）必须在此
                掐断，分段键入（xdt_typeDigit/commitTyping）才接得到键。 */
             XWidget_setFocusPolicy((XWidget*)lineEdit,
                                    XWidgetFocusPolicy_NoFocus);

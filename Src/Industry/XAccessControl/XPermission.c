@@ -183,7 +183,7 @@ void XPermPolicy_snapshot(const XPermPolicy* pm, XPermPolicySnapshot* out)
 
 /* ==================== 信号 ==================== */
 
-void* XPermPolicy_permissionDenied_signal(XPermPolicy* pm, int role,
+void* XPermPolicy_permissionDenied_signal(XPermPolicy* pm, XAccountRole role,
                                           int32_t permMask, int64_t atMs)
 {
     /* [框架约定] self==NULL 时也必须返回自身地址（connect 侧

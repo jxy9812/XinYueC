@@ -646,7 +646,7 @@ void XProgressDialog_setLabel(XProgressDialog* self, XLabel* label)
     }
     self->m_label = label;
     if (self->m_label) {
-        XWidget_setParentPlain((XWidget*)self->m_label, (XWidget*)self);
+        XWidget_setParent_2((XWidget*)self->m_label, (XWidget*)self);
         XWidget_show((XWidget*)self->m_label);
         /* 子控件变化重算固定尺寸（sizeHint 实测参与）+ 重排。 */
         xprogressdialog_updateSize(self);
@@ -674,7 +674,7 @@ void XProgressDialog_setCancelButton(XProgressDialog* self,
     }
     self->m_cancelButton = button;
     if (self->m_cancelButton) {
-        XWidget_setParentPlain((XWidget*)self->m_cancelButton, (XWidget*)self);
+        XWidget_setParent_2((XWidget*)self->m_cancelButton, (XWidget*)self);
         XWidget_show((XWidget*)self->m_cancelButton);
         if (self->m_cancelButtonText) {
             XAbstractButton_setText((XAbstractButton*)self->m_cancelButton,

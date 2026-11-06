@@ -125,18 +125,18 @@ XPermPolicy* XPermPolicy_create(void);
  * @return 全部持有返回 true；否则 false（并按 m_audit 发 permissionDenied）。
  * @note permMask=0 恒 true（没有要求就不拒绝）；未知角色恒 false。
  */
-bool XPermPolicy_check(XPermPolicy* pm, int role, uint32_t permMask);
+bool XPermPolicy_check(XPermPolicy* pm, XAccountRole role, uint32_t permMask);
 
 /**
  * @brief 判定角色是否持有 permMask 的**任一**权限位（"读或写"类分支用）。
  * @note 任一持有即真；permMask=0 恒 false（任一语义下空集不成立）。
  */
-bool XPermPolicy_checkAny(XPermPolicy* pm, int role, uint32_t permMask);
+bool XPermPolicy_checkAny(XPermPolicy* pm, XAccountRole role, uint32_t permMask);
 
 /**
  * @brief 角色的权限位图（未知角色返回 0——缺省拒绝）。
  */
-uint32_t XPermPolicy_rolePerms(const XPermPolicy* pm, int role);
+uint32_t XPermPolicy_rolePerms(const XPermPolicy* pm, XAccountRole role);
 
 /* ==================== 策略覆盖 ==================== */
 
@@ -147,7 +147,7 @@ uint32_t XPermPolicy_rolePerms(const XPermPolicy* pm, int role);
  * @param permMask 新权限位图（未知位静默丢弃——前向兼容新版本位）。
  * @return 设置成功返回 true；角色非法/Admin 非全权返回 false。
  */
-bool XPermPolicy_setRolePerms(XPermPolicy* pm, int role, uint32_t permMask);
+bool XPermPolicy_setRolePerms(XPermPolicy* pm, XAccountRole role, uint32_t permMask);
 
 /**
  * @brief 回缺省表（None=无 / User=只读 / Admin=全权）并发 policyChanged。
@@ -179,7 +179,7 @@ void XPermPolicy_snapshot(const XPermPolicy* pm, XPermPolicySnapshot* out);
  * @param atMs 判定时刻（单调毫秒）。
  * @return 信号函数地址；仅供 XSignal() 宏取地址使用。
  */
-void* XPermPolicy_permissionDenied_signal(XPermPolicy* pm, int role,
+void* XPermPolicy_permissionDenied_signal(XPermPolicy* pm, XAccountRole role,
                                           int32_t permMask, int64_t atMs);
 
 /**

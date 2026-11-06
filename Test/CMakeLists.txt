@@ -84,6 +84,11 @@ endif()
 # 不得卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XGuiRemoteInputViewTest.c")
+# XWidgetApiTest 同理：自带 main 的 XWidget 公开 API 契约回归
+# （XWidgetApi_Test 目标，test_gap#0；Qt 6.8 对齐改动的 API 护栏），
+# 不得卷入主程序（与 main.c 重复定义 main）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XWidgetApiTest.c")
 # XGuiDialogMoveTest 同理：自带 main 的 fbdev 弹层拖动条带归位离屏测试
 # （XGuiDialogMove_Test 目标，对话框拖动白块根修 2026-10-05 的回归锁；
 # 须 -DXPLATFORM_FBDEV_ON=ON 构建才激活，见文件头注），不得卷入主程序。
@@ -567,6 +572,7 @@ add_executable(XGuiRegression_Test
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XGuiRemoteTest.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XDataStreamTest.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XTableAlignTest.c"
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XWidgetQtAlignTest.c"
 )
 if(UNIX)
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
@@ -762,6 +768,23 @@ else()
     target_link_libraries(XLineControl_Acceptance_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 add_test(NAME XLineControlAcceptance COMMAND XLineControl_Acceptance_Test)
+
+# ==================== XWidget 公开 API 契约回归 ====================
+# [test_gap#0 2026-11-05] Test/XGuiTest 下此前无 XWidget 专属测试文件——
+# XWidget 公开声明 255 个、Test/ 已引用 191 个唯一名，本轮 Qt 6.8 对齐
+# 改动（几何/焦点/命中/动作/窗口状态）全无护栏。本套件覆盖：API 存在性
+# 与 NULL 入参、几何不变式（rect 全幅 / contentsRect 扣边距）、
+# focusNextPrevChild / setVisible 虚槽覆写点、ensurePolished 链、
+# winId 转发。无头可跑（不依赖平台窗口），进 ctest 门禁。
+add_executable(XWidgetApi_Test
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XWidgetApiTest.c"
+)
+if(UNIX)
+    target_link_libraries(XWidgetApi_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XWidgetApi_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+add_test(NAME XWidgetApiTest COMMAND XWidgetApi_Test)
 
 # 平台电源契约回归（外部唤醒根修的回归锁）：白盒桩驱动，跑得快、无屏
 # 依赖，可进 CI 门禁。

@@ -2979,7 +2979,7 @@ static void VX_xgc_mousePressEvent(XWidget* self, XEvent* event)
      * XAbstractButton/XTabBar 的 XFocusReason_Mouse 点击夺焦惯例, 与
      * XLineEdit 点击聚焦同语义; 键盘转发侧另有 hasFocus 双保险门控
      * (VX_xgc_keyPressEvent), 无焦点时按键本就不达此处, 行为无回归面。 */
-    XWidget_setFocusReason(self, XFocusReason_Mouse);
+    XWidget_setFocus_2(self, XFocusReason_Mouse);
     xgc_forwardPointerDown(c, (XMouseEvent*)event, XGUI_REMOTE_PTR_PRESS);
     XEvent_accept(event);
 }

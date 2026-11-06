@@ -775,11 +775,15 @@ int XTableView_rowAt(const XTableView* self, int y)
     /* 与 indexAt 同一坐标系：扣除上方表头区高度。 */
     yAcc = y - XTV_HEADER_H;
     if (yAcc < 0) return -1;
-    rh = self->m_rowHeight > 0 ? self->m_rowHeight : XTV_DEFAULT_ROW_HEIGHT;
-    /* 隐藏行占高 0：累计可见高度后按统一行高逐行判定。 */
+    /* [缺陷根修 2026-11-05] 逐行取高（setRowHeight 覆写优先，回落默认
+     * ——此前恒用全局 m_rowHeight/默认，与 columnAt 的逐列口径不一致：
+     * 自定义行高下 rowAt 与 rowViewportPosition 互逆性破坏，apitest
+     * 「隐藏行占高 0」段实锚 44≠50）。 */
+    /* 隐藏行占高 0：累计可见高度后按各行实际高判定。 */
     for (row = 0; row < rows; ++row) {
         if (xtv_hiddenRaw(self->m_rowHidden, self->m_rowHiddenCount, row))
             continue;
+        rh = XTableView_rowHeight(self, row);
         if (yAcc < rh) return row;
         yAcc -= rh;
     }
@@ -829,12 +833,14 @@ int XTableView_rowViewportPosition(const XTableView* self, int row)
     rows = model ? model->m_rows : 0;
     if (row >= rows) return -1;
     rh = self->m_rowHeight > 0 ? self->m_rowHeight : XTV_DEFAULT_ROW_HEIGHT;
-    /* 与 rowAt 互逆：顶部内嵌表头区高度计入起点；隐藏行占高 0 跳过。 */
+    /* 与 rowAt 互逆：顶部内嵌表头区高度计入起点；隐藏行占高 0 跳过。
+     * [缺陷根修 2026-11-05] 逐行取高（custom 覆写优先）——此前累计恒用
+     * 全局行高，与 rowHeight(row) 查询/rowAt 判定不同源。 */
     yAcc = XTV_HEADER_H;
     for (i = 0; i < row; ++i) {
         if (xtv_hiddenRaw(self->m_rowHidden, self->m_rowHiddenCount, i))
             continue;
-        yAcc += rh;
+        yAcc += XTableView_rowHeight(self, i);
     }
     return yAcc;
 }

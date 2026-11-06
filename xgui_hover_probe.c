@@ -151,7 +151,7 @@ int main(int argc, char** argv)
     /* 步骤 2：给旧按钮焦点（模拟点击后的焦点锚），再销毁它——这正是
      *    「旧靶 deleteLater → 锚全空」的场景。销毁后**焦点锚必须为空**
      *    （否则合成器仍可经锚解析顶层，测不到缺陷本身）。 */
-    XWidget_setFocusReason(&oldBtn->m_base, XFocusReason_Mouse);
+    XWidget_setFocus_2(&oldBtn->m_base, XFocusReason_Mouse);
     XCoreApplication_processEvents(XEventLoop_AllEvents);
     printf("[HOVER-PROBE] focus after set=%p (oldBtn=%p)\n",
            (void*)XWidget_appFocusWidget(), (void*)&oldBtn->m_base);

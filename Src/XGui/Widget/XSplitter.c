@@ -1114,8 +1114,15 @@ void XSplitter_insertWidget(XSplitter* self, int index, XWidget* widget)
     self->m_blockChildAdd = 1;
     XWidget_setParent(widget, (XWidget*)self, 0);
     /* [Qt 对齐 show 语义] shouldShowWidget（qsplitter.cpp:709-713,810）：
-       仅当页未被显式隐藏才 show。 */
-    if (!XWidget_isHidden(widget))
+       仅当页未被**显式**隐藏才 show。[构造位甄别 2026-11-05] 本库 init
+       对顶层构造置 Hidden 构造位（XWidget.c「顶层=Hidden」），栈上
+       构造后经 setParent 收页的动态 UI 常态下 isHidden()==true 但从未
+       显式 hide——以 m_explicitShow 甄别（对标 Qt WA_WState_Explicit
+       ShowHide / isExplicitlyHidden qwidget_p.h:388：该位仅 setVisible
+       显式调用置位，构造 Hidden 位不算显式隐藏）：explicitShow==0 即
+       从未显式 show/hide，照常 show 并入均分布局。显式 hide 过的页
+       （explicitShow==1 且 Hidden==1）仍跳过，与 Qt 同。 */
+    if (!XWidget_isHidden(widget) || !widget->m_explicitShow)
         XWidget_setVisible(widget, true);
     cur = xsp_pageIndexOf(self, widget);
     if (cur < 0) {
@@ -1190,6 +1197,12 @@ XWidget* XSplitter_replaceWidget(XSplitter* self, int index, XWidget* widget)
     /* 继承被替换控件的几何与可见状态（对标 Qt）。 */
     XWidget_setGeometryRect(widget, &geom);
     XWidget_setVisible(widget, wasVisible);
+    /* [Qt 对齐 2026-11-05] 旧控件摘父=交还调用方并隐藏：Qt setParent_sys
+     * （qwidget.cpp:11017-11018）对 newparent==NULL 一律置回 Hidden 位，
+     * 故 Qt replaceWidget 交还的旧控件 isHidden()==true。本库 setParent
+     * 无同款置位，此前靠页的构造 Hidden 位碰巧满足；insertWidget 改按
+     * m_explicitShow 甄别构造位后页会被 show，此处显式补齐隐藏。 */
+    XWidget_setVisible(current, false);
     xsp_layout(self);
     return current;
 }

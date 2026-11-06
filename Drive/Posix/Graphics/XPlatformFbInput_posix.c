@@ -1110,10 +1110,20 @@ static void xpfi_feedEvent(const struct input_event* ev)
             else
             {
                 /* 接触结束：全部槽视为本帧释放（含按下沿注入失败期的
-                 * 槽，提交时作幽灵沿作废）。rawX/rawY+havePoint 保留：
-                 * 抬起沿落点取物理末位置（帧界折叠期间 lastX/lastY 停
-                 * 在放行点，2026-10-11 拖拽终态丢失根修）；提交消费后
-                 * commitFrame 清 havePoint，防下一次接触误用旧坐标。 */
+                 * 槽，提交时作幽灵沿作废）。提交消费后 commitFrame 清
+                 * havePoint，防下一次接触误用旧坐标。
+                 * 【抬起沿不信同帧坐标 2026-11-05】真实 TSC2007 的抬起
+                 * 帧偶发携带**清零坐标**（ABS_X=0/ABS_Y=0 与 BTN_TOUCH=0
+                 * 同帧）——信它则抬起沿落 (0,0)：合成 release 经命中测
+                 * 试投给 (0,0) 处窗口（非拖动中的面板）⇒ 面板拖动态/
+                 * 抓取悬挂，后续按下/移动全部错靶，宿主大面积不重绘
+                 * （真机毛刺帧注入实验复现：面板跑出屏缘、另一面板标
+                 * 题条消失、中央区文字消失）。本帧 rawX/rawY 一律作废
+                 * （havePoint=false），抬起落点回退 lastX/lastY——帧界
+                 * 折叠路径已把物理末位置推进 lastX/lastY（2026-10-11
+                 * 拖拽终态丢失根修），语义即注释所记「落于原位」。
+                 * MT 路径（ABS_MT_TRACKING_ID=-1）在同位置已有
+                 * havePoint=false，本分支补齐同款，两协议口径一致。 */
                 int i;
                 for (i = 0; i < XPFI_SLOT_COUNT; ++i)
                 {
@@ -1122,6 +1132,7 @@ static void xpfi_feedEvent(const struct input_event* ev)
                     {
                         s->frameReleased = true;
                         s->active = false;
+                        s->havePoint = false;
                     }
                 }
             }

@@ -96,6 +96,10 @@
 #include "XInputMethod.h"       /* setInputMethodHints → 输入法 update 刷 hints 缓存 */
 #endif
 #include "XImage.h"
+#include "XToolTip.h"       /* hover → XToolTip_showText（工具提示链）。 */
+#include "XPlatformIntegration.h" /* show() 平台默认窗口态查询。 */
+#include "XPixmap.h"            /* setMask_2 位图 → 区域遮罩转换（XPixmap_toImage）。 */
+#include "XBitmap.h"            /* setMask_2 单色位图入参（XBitmap 继承 XPixmap）。 */
 #include "XPainter.h"
 #include "XPaintDevice.h"
 #include "XCoreApplication.h"
@@ -283,6 +287,19 @@ static XWidget* g_focusWidget = NULL;
 
 /** @brief 模块静态鼠标抓取控件（对标 QApplication::mouseGrabber；控件抓取期间事件直投）。 */
 static XWidget* g_mouseGrabWidget = NULL;
+/** @brief 抓取期光标持有者（对标 QWidget 带光标 grabMouse 重载的抓取期
+ *  光标套用；releaseMouse 时据此复位为控件自身光标）。 */
+static XWidget* g_mouseGrabCursor = NULL;
+/** @brief 带光标抓取前控件自有光标保存槽（拥有；批2 new-code#5）。
+ *  Qt 走应用级 override 光标栈、控件自身光标不动
+ *  （qwidget.cpp:12752-12769 grabMouseForWidget 套用
+ *  QGuiApplication::setOverrideCursor，release 时 restoreOverrideCursor）；
+ *  X 无 override 栈，以「保存-覆写-还原」等价实现——抓取前把控件自有
+ *  光标深拷入本槽（含 SetCursor 属性位），releaseMouse 按保存值完整
+ *  还原，控件抓取前自有光标不丢失。 */
+static XCursor* g_mouseGrabSavedCursor = NULL;
+/** @brief 抓取前控件是否自有光标（SetCursor 属性位快照）。 */
+static bool g_mouseGrabHadCursor = false;
 /** @brief Qt buttonDown 等价物（[隐式抓取 2026-10-07] 对标 qwidgetwindow
  *  .cpp:645 初按置 qt_button_down + qapplication.cpp pickMouseReceiver 把
  *  带按键的 MOVE/RELEASE 路由回按压控件）：按住期间拖出控件后 MOVE/
@@ -315,6 +332,10 @@ static int g_touchGrabCount = 0;
 /** @brief touch→mouse 仿真开关（对标 Qt AA_SynthesizeMouseForUnhandledTouch-
  *         Events；Qt 6 对未处理触摸序列的鼠标仿真默认开启，应用可显式关闭）。 */
 static bool g_touchMouseSynthEnabled = true;
+/** @brief setWindowState 重入防回环闸（对标 Qt QWidgetPrivate::
+ *         in_set_window_state，qwidget.cpp:7283）：窗口态设置/平台回写
+ *         期间的几何变化不得反向清掉 Maximized/FullScreen 位。 */
+static bool g_xwidgetInSetWindowState = false;
 
 /** @brief 主点触摸手势状态机（单击/双击/长按/拖动；对标 Qt 触摸
  *         序列的 synthesized-mouse 生命周期并按触屏交互需求扩展）：
@@ -444,6 +465,12 @@ static void XWidget_propagateLayoutDirection(XWidget* self,
 static void XWidget_clearUnderMouseRepaintHover(XWidget* self);
 static void XWidget_addDirty(XWidget* self, const XRect* rect);
 static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region);
+/* _ref 接管布局登记表（定义紧邻 XWidget_setLayout；VXWidget_deinit 先用）。 */
+static void xwidget_ownedLayoutRemove(XWidget* widget, XLayout* layout);
+static void xwidget_ownedLayoutRegister(XWidget* widget, XLayout* layout);
+static XLayout* xwidget_ownedLayoutTakeFor(XWidget* widget);
+/* 待激活焦点靶登记表（定义紧邻 XWidget_setFocus_2；VXWidget_deinit 先用）。 */
+static void xwidget_pendingFocusRemove(XWidget* widget);
 static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
                                      bool bypassVisible);
 static void xwidget_invalidateOwnArea(XWidget* self);
@@ -451,6 +478,15 @@ static void XWidget_paintTree(XWidget* top, const XRegion* topRegion);
 static bool xwidget_drawWithGraphicsEffect(XWidget* widget,
                                            const XRegion* paintRegion);
 static bool xwidget_focusNextPrevChild(XWidget* self, bool next);
+/** @brief FocusNextPrevChild 虚槽默认实现（基类：上交顶层窗口遍历）。 */
+static bool xwidget_focusNextPrevChild_default(XWidget* self, bool next);
+/** @brief SetVisible 虚槽默认实现（基类：走既有显隐逻辑）。 */
+static void xwidget_setVisible_default(XWidget* self, bool visible);
+/** @brief 显隐逻辑实现核（SetVisible 虚槽默认实现调用；不做虚表分派）。 */
+static void XWidget_setVisibleImpl(XWidget* self, bool visible);
+/** @brief visibleRegion 计算核（锚点=控件全幅矩形；可见性闸可控）。 */
+static void xwidget_visibleRegionInto(const XWidget* self, XRegion* out,
+                                       bool requireVisible);
 static void XRegion_translateInline(XRegion* region, int dx, int dy);
 /* ---- per-id 触点隐式抓取表（触摸派发域；定义紧随本节之后） ---- */
 static XWidget* xwidget_touchGrabFind(int32_t id);
@@ -1083,6 +1119,8 @@ static void xwidget_repaintDeferFlush(void)
         XWidget* top = g_repaintDeferTops[i];
         g_repaintDeferTops[i] = NULL;
         if (!top || !top->m_windowHandle || !top->m_visible) continue;
+        /* 析构期表项（防御性：正常路径已由 schedule 闸拦在表外）。 */
+        if (top->m_deiniting) continue;
         if (top->m_dirty.count <= 0) continue;
         (void)xwidget_postPaintEventRaw(top);
     }
@@ -1095,6 +1133,11 @@ static void xwidget_repaintDeferSchedule(XWidget* top)
     int64_t now;
     int64_t remain;
     if (minMs <= 0.0 || !top) return;
+    /* 【析构期禁止回表 2026-11-06】VXWidget_deinit 已按「登记非空即活对象」
+     * 从补投表摘项，但析构链后续动作（父控件标脏/销毁桥接窗）会再触发
+     * 重绘请求回到这里 —— 摘完又加回 ⇒ 定时器到期持已释放指针解引用。
+     * 见 VXWidget_deinit 入口闸注。 */
+    if (top->m_deiniting) return;
     xwidget_repaintDeferAdd(top);
     if (g_repaintDeferTimerId != XTIMER_INVALID_ID) return;
     now = XDateTime_currentNSecsSinceEpoch() / 1000LL;
@@ -1113,6 +1156,10 @@ static bool XWidget_postPaintEvent(XWidget* top)
     double minMs;
     if (!top || !top->m_windowHandle || !top->m_visible)
         return false;
+    /* 【析构期禁止派发 2026-11-06】析构链内的重绘请求一律丢弃：控件已在
+     * 拆除（桥接窗随 destroyWindow 消失、脏区账本随成员销毁），此刻派发
+     * PAINT 无意义且会把指针带回补投表。见 VXWidget_deinit 入口闸注。 */
+    if (top->m_deiniting) return false;
     /* 已有在途 PAINT 直接视为成功（请求已被覆盖），不占限频窗口。 */
     expected = 0;
     if (!XAtomic_compare_exchange_strong_int32(
@@ -1172,6 +1219,16 @@ void XWidget_deactivateInputRegistrations(XWidget* self)
         XWidget_clearFocusBase(self, XFocusReason_Other);
     if (g_mouseGrabWidget == self)
         g_mouseGrabWidget = NULL;
+    /* 【批2 new-code#5 2026-11-06】带光标抓取随控件消亡：清持有标记并
+       释放保存槽（控件即亡，还原无意义，防槽泄漏/悬垂）。 */
+    if (g_mouseGrabCursor == self) {
+        g_mouseGrabCursor = NULL;
+        if (g_mouseGrabSavedCursor) {
+            XClassDelete((XClass*)g_mouseGrabSavedCursor);
+            g_mouseGrabSavedCursor = NULL;
+        }
+        g_mouseGrabHadCursor = false;
+    }
     if (g_buttonDownWidget == self)
         g_buttonDownWidget = NULL; /* 隐式抓取（qt_button_down 同款）。 */
     /* 全表遍历摘除该控件全部触点抓取表项（per-id 表；多触点抓取同一
@@ -1369,7 +1426,13 @@ static XPoint XWidget_accumulateOffset(const XWidget* self)
         while (w && !w->m_isWindow) {
             out.x += w->m_windowRect.x;
             out.y += w->m_windowRect.y;
-            w = (const XWidget*)XObject_parent((XObject*)w);
+            /* 【二轮对齐 2026-11-06】经 XWidget_parentWidget 取父（与
+             * XWidget_topLevel 同口径）：绕过控件 API 挂非控件父时，裸
+             * XObject_parent 上溯会按 XWidget* 解引用非控件结构体
+             * （越界读 m_isWindow/m_windowRect）。Qt 父链遍历一律经
+             * parentWidget()（仅控件可挂父；qwidget.cpp:4219-4234
+             * QWidget::mapTo 同口径）。 */
+            w = XWidget_parentWidget(w);
         }
     }
     return out;
@@ -1713,9 +1776,20 @@ static void XWidget_clearFocusBase(XWidget* self, XFocusReason reason)
 #if XWINDOWEVENT_ON
     XFocusEvent event;
     if (!self || g_focusWidget != self) return;
+    /* 对标 Qt 6.8（qwidget.cpp:6728-6729）：清焦**前**向旧焦点控件派发
+     * FocusAboutToChange 事件（应用层可在焦点真正离开前做拦截/收尾）。
+     * 本实现此前零派发点（XEVENT_TYPE_FOCUS_ABOUT_TO_CHANGE 已定义却
+     * 全库无发送点）。 */
+    {
+        XEvent aboutToChange;
+        XEvent_init(&aboutToChange, XEVENT_TYPE_FOCUS_ABOUT_TO_CHANGE);
+        XWidget_sendEvent(self, &aboutToChange);
+    }
     XFocusEvent_init(&event, XEVENT_TYPE_FOCUS_OUT, reason);
     XWidget_event_base(self, (XEvent*)&event);
     XClassDeinit(&event);
+#else
+    if (!self || g_focusWidget != self) return;
 #endif /* XWINDOWEVENT_ON */
     g_focusWidget = NULL;
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
@@ -1754,6 +1828,17 @@ static void XWidget_propagateEnabled(XWidget* self, bool enabled)
             XEvent_init(&event, XEVENT_TYPE_ENABLED_CHANGE);
             XWidget_event_base(widget, &event);
             XWidget_update(widget);
+        }
+        /* 【禁用时清焦 2026-11-05】对标 Qt 6.8（qwidget.cpp:3400-3411）：
+         * 禁用祖先时逐子控件走 setEnabled_helper，并对命中焦点者先尝试
+         * 把焦点顺延到下一个可聚焦子控件、失败才 clearFocus。此前 X 的
+         * 传播只改属性位 → 焦点仍留在已禁用的后代控件上并继续收键。 */
+        if (!enabled && g_focusWidget) {
+            if (g_focusWidget == widget ||
+                XWidget_isAncestor(widget, g_focusWidget)) {
+                if (!XWidget_focusNextChild(widget))
+                    XWidget_clearFocusBase(g_focusWidget, XFocusReason_Other);
+            }
         }
         XWidget_propagateEnabled(widget, enabled);
     }
@@ -1817,6 +1902,25 @@ static void XWidget_clearUnderMouseRepaintHover(XWidget* self)
  * 诊断回退：XGUI_DIRTY_NO_OCCLUSION=1（两处扣减同时停用，逐位回退旧口径）。
  */
 /** @brief 遮挡裁剪诊断回退开关（=1 回退旧口径：不扣遮挡）。 */
+/* 【遮挡裁剪挂起 2026-11-04】浮层子控件（落点指示器等）移位/显隐时，
+ * 旧位的擦除失效走 parent 的 update——若 parent 的不透明子控件（面板/
+ * 中央区）把旧位整块扣掉，则 PAINT 区域为空、无人重画 ⇒ 旧位浮层像素
+ * 永留（真机：落点指示器换位残影）。挂起期内 addDirtyRegionEx 跳过
+ * 「扣 opaqueChildren/opaqueSiblings」，让擦除失效畅通；仅包指示器
+ * 更新链（面积=差带、频率=跨区换位），不影响 2026-10-31 卡顿战役的
+ * 常规收益。 */
+static int g_xwidgetOcclusionSuspend = 0;
+
+void XWidget_suspendDirtyOcclusion(void)
+{
+    ++g_xwidgetOcclusionSuspend;
+}
+
+void XWidget_resumeDirtyOcclusion(void)
+{
+    if (g_xwidgetOcclusionSuspend > 0) --g_xwidgetOcclusionSuspend;
+}
+
 static bool xwidget_dirtyOcclusionDisabled(void)
 {
     static int disabled = -1;
@@ -2086,7 +2190,12 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
     /* 脏区恒按顶层后备存储坐标折算：render/grab 重定向期间 paintEvent
        内触发的 update() 也必须落到顶层真实脏区，而非临时快照坐标系。 */
     offset = xwidget_backingPaintOffset(self);
-    contents = self->m_contentsRect;
+    /* 裁剪锚点：控件**全幅**矩形 rect()（对标 Qt：update 的失效区域被
+     * 限制在控件自身矩形内，qwidget.cpp:11257-11260 用的是 rect() 而非
+     * contentsRect）。此前本变量取 m_contentsRect（含 contentsMargins
+     * 的控件被裁到边距带内、边距带永不失效）。 */
+    XRect_init(&contents, 0, 0, self->m_windowRect.width,
+               self->m_windowRect.height);
     source = region;
     copiedSource = false;
     XRegion_init(&sourceCopy);
@@ -2099,9 +2208,10 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
         copiedSource = true;
     }
     /* 可见区域：仅当存在裁剪祖先时才需要（顶层自身/无遮罩链的控件，
-       visibleRegion == 自身客户区，求交是恒等变换——省掉逐祖先遍历与
+       visibleRegion == 自身全幅矩形，求交是恒等变换——省掉逐祖先遍历与
        区域分配，热路径零额外开销）。判据：自身有遮罩，或父链上任一级
-       的客户区不完整包含本控件窗口矩形。 */
+       的全幅矩形不完整包含本控件窗口矩形（锚点已改为全幅矩形，探针
+       口径须同步，否则 fast-path 与通用路径不等价）。 */
     visibleClipped = false;
     if (xwidget_dirtyVisibleClipDisabled()) {
         /* 诊断回退：XGUI_DIRTY_NO_VISIBLE_CLIP=1 ⇒ 按旧口径（自身客户区）。 */
@@ -2113,8 +2223,10 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
         for (anc = (const XWidget*)XObject_parent((XObject*)self);
              anc && !anc->m_isWindow; anc =
                  (const XWidget*)XObject_parent((XObject*)anc)) {
-            XRect ancContents = anc->m_contentsRect;
-            /* 探针折算到祖先客户区坐标：逐级减去祖先原点。 */
+            XRect ancFull;
+            XRect_init(&ancFull, 0, 0, anc->m_windowRect.width,
+                       anc->m_windowRect.height);
+            /* 探针折算到祖先坐标：逐级减去祖先原点。 */
             XRect translated = probe;
             const XWidget* up;
             for (up = (const XWidget*)XObject_parent((XObject*)self);
@@ -2124,17 +2236,20 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
                 translated.y -= up->m_windowRect.y;
             }
             if (anc->m_mask.count > 0 ||
-                translated.x < ancContents.x ||
-                translated.y < ancContents.y ||
-                translated.x + translated.width > ancContents.x + ancContents.width ||
-                translated.y + translated.height > ancContents.y + ancContents.height) {
+                translated.x < ancFull.x ||
+                translated.y < ancFull.y ||
+                translated.x + translated.width > ancFull.x + ancFull.width ||
+                translated.y + translated.height > ancFull.y + ancFull.height) {
                 visibleClipped = true;
                 break;
             }
         }
     }
     if (visibleClipped) {
-        visibleRegion = XWidget_visibleRegion(self);
+        /* visibleRegion 栈变量须先 init（xwidget_visibleRegionInto 在内部
+         * 交换区域结构体，传入未初始化对象会读到野指针 rects）。 */
+        XRegion_init(&visibleRegion);
+        xwidget_visibleRegionInto(self, &visibleRegion, !bypassVisible);
     } else {
         XRegion_init(&visibleRegion);
     }
@@ -2144,7 +2259,8 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
        （不派发 PAINT、不产生只重画那块的局部帧）。fast-path 判定
        （visibleClipped=false）只看祖先，故遮挡命中时必须切到通用路径——
        visibleRegion 在无裁剪祖先时与 contentsRect 等价，切换是纯等价变换。 */
-    if (!xwidget_dirtyOcclusionDisabled()) {
+    if (!xwidget_dirtyOcclusionDisabled() &&
+        g_xwidgetOcclusionSuspend <= 0) {
         XRegion occl;
         XRegion_init(&occl);
         xwidget_collectOpaqueChildren(self, &occl);
@@ -2153,7 +2269,7 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
             XRegion remain;
             if (!visibleClipped) {
                 XRegion_deinit(&visibleRegion);
-                visibleRegion = XWidget_visibleRegion(self);
+                xwidget_visibleRegionInto(self, &visibleRegion, !bypassVisible);
                 visibleClipped = true;
             }
             XRegion_init(&remain);
@@ -2958,7 +3074,13 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
      * （qapplication.cpp:3661：Press/DblClick 按 ClickFocus 位、Wheel 按
      * WheelFocus 位，先于事件送达）：命中靶策略含点击焦点位时以
      * Mouse 原因移焦。NoFocus 不动；各类内既有移焦调用语义保持
-     * （setFocus 同靶幂等，不产生行为差）。 */
+     * （setFocus 同靶幂等，不产生行为差）。
+     * 【父链上溯 2026-11-05】对标 Qt（qapplication.cpp:3693-3714）：
+     * 命中靶不可聚焦时沿**父链**上溯找可聚焦祖先（Qt 的 while 循环：
+     * 逐级 parentWidget()，遇 isWindow 截断），并要求命中靶本体与
+     * 其最深代理**同时**满足策略位（shouldSetFocus，qapplication.cpp:
+     * 3717-3728）。此前 X 只判命中靶 → 点击不可聚焦容器时焦点不落，
+     * 与 Qt 相反（最常见的交互语义差异）。 */
     if (target &&
         (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS ||
          XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK)) {
@@ -2969,16 +3091,46 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
         XWidget* focusProbe = XWidget_deepestFocusProxy(target);
         XWidgetFocusPolicy policy = XWidget_focusPolicy(
             focusProbe ? focusProbe : target);
-        if ((policy & XWidgetFocusPolicy_ClickFocus) != 0)
-            XWidget_setFocusReason(focusProbe ? focusProbe : target,
+        /* Qt 口径：命中靶本体与最深代理必须**同时**含点击焦点位。 */
+        bool targetPolicyOk =
+            (XWidget_focusPolicy(target) & XWidgetFocusPolicy_ClickFocus) != 0;
+        bool proxyPolicyOk =
+            !focusProbe || focusProbe == target ||
+            (XWidget_focusPolicy(focusProbe) &
+             XWidgetFocusPolicy_ClickFocus) != 0;
+        if (targetPolicyOk && proxyPolicyOk) {
+            XWidget_setFocus_2(focusProbe ? focusProbe : target,
                                    XFocusReason_Mouse);
+        } else {
+            /* 沿父链上溯找可聚焦祖先（Qt qapplication.cpp:3693-3714）。 */
+            XWidget* anc = XWidget_parentWidget(target);
+            while (anc) {
+                XWidget* ancProxy = XWidget_deepestFocusProxy(anc);
+                XWidgetFocusPolicy ancPolicy = XWidget_focusPolicy(
+                    ancProxy ? ancProxy : anc);
+                bool ancOk =
+                    (XWidget_focusPolicy(anc) &
+                     XWidgetFocusPolicy_ClickFocus) != 0;
+                bool ancProxyOk =
+                    !ancProxy || ancProxy == anc ||
+                    (XWidget_focusPolicy(ancProxy) &
+                     XWidgetFocusPolicy_ClickFocus) != 0;
+                if (ancOk && ancProxyOk) {
+                    XWidget_setFocus_2(ancProxy ? ancProxy : anc,
+                                           XFocusReason_Mouse);
+                    break;
+                }
+                if (XWidget_isWindow(anc)) break;
+                anc = XWidget_parentWidget(anc);
+            }
+        }
     } else if (target && XEvent_type(event) == XEVENT_TYPE_WHEEL) {
         XWidget* focusProbe = XWidget_deepestFocusProxy(target);
         XWidgetFocusPolicy policy = XWidget_focusPolicy(
             focusProbe ? focusProbe : target);
         if ((policy & XWidgetFocusPolicy_WheelFocus) ==
             XWidgetFocusPolicy_WheelFocus)
-            XWidget_setFocusReason(focusProbe ? focusProbe : target,
+            XWidget_setFocus_2(focusProbe ? focusProbe : target,
                                    XFocusReason_Mouse);
     }
     w = target;
@@ -4424,9 +4576,15 @@ static void XWidget_noopEvent_default(XWidget* self, XEvent* event)
 static void XWidget_focusEvent_default(XWidget* self, XEvent* event)
 {
     (void)event;
+    /* 对标 Qt 6.8（qwidget.cpp:9714-9719 / 9740-9744）：默认实现仅在
+     * `focusPolicy() != Qt::NoFocus || !isWindow()` 时 update()——NoFocus
+     * 策略的**窗口**不重绘（无焦点视觉可言）。本实现此前无条件 update
+     * → 多余重绘。FocusOwnerQuiet 豁免保留（宿主不读 HasFocus 态）。 */
     if (self &&
         !XWidget_attrTest(&self->m_attributes,
-                          XWidgetAttribute_FocusOwnerQuiet))
+                          XWidgetAttribute_FocusOwnerQuiet) &&
+        (XWidget_focusPolicy(self) != XWidgetFocusPolicy_NoFocus ||
+         !XWidget_isWindow(self)))
         XWidget_update(self);
 }
 
@@ -4712,7 +4870,11 @@ static XVariant* XWidget_inputMethodQuery_default(const XWidget* self,
         /* 对标 Qt：QRectF(width() / 2.0, 0, 1, height())。 */
         {
             XRectF rect;
-            rect.x = (float)XWidget_width(self) / 2.0f;
+            /* 对标 Qt 6.8（qwidget.cpp:9966）：光标矩形用**整数除法**
+             * `QRect(width() / 2, 0, 1, height())`——奇数宽度时得
+             * width/2（整除），本实现此前用浮点除法得 x.5 → 微焦点位置
+             * 错位（输入法光标框偏移半个像素）。 */
+            rect.x = (float)(XWidget_width(self) / 2);
             rect.y = 0.0f;
             rect.width = 1.0f;
             rect.height = (float)XWidget_height(self);
@@ -4801,6 +4963,8 @@ XVtable* XWidget_class_init(void)
         ,XWidget_ignoreEvent_default       /* GestureEvent（手势事件；默认忽略→沿父链传播，对标 QWidget::gestureEvent） */
         ,(void*)XWidget_sizeHint_base      /* SizeHint（对标 QWidget::sizeHint） */
         ,(void*)XWidget_minimumSizeHint_base /* MinimumSizeHint（对标 QWidget::minimumSizeHint） */
+        ,(void*)xwidget_focusNextPrevChild_default /* FocusNextPrevChild（对标 QWidget::focusNextPrevChild） */
+        ,(void*)xwidget_setVisible_default   /* SetVisible（对标 QWidget::setVisible） */
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXWidget_deinit);
@@ -4863,11 +5027,11 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
                self->m_windowRect.height);
     XMargins_init(&self->m_contentsMargins, 0, 0, 0, 0);
     XFont_init(&self->m_font);
-    self->m_backgroundRole = XPaletteColorRole_Window;
+    self->m_backgroundRole = XPaletteColorRole_NoRole;
     self->m_foregroundRole = XPaletteColorRole_NoRole;
     XSize_init(&self->m_minimumSize, 0, 0);
     XSize_init(&self->m_maximumSize, XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
-    XSize_init(&self->m_baseSize, -1, -1);
+    XSize_init(&self->m_baseSize, 0, 0);
     XSize_init(&self->m_sizeIncrement, 0, 0);
     XSize_init(&self->m_sizeHint, -1, -1);
     XSize_init(&self->m_minimumSizeHint, -1, -1);
@@ -4878,6 +5042,7 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_focusPrev = NULL;
     self->m_focusProxy = NULL;
     self->m_windowIconText = NULL;
+    self->m_windowTitleDerived = NULL;
     self->m_statusTip = NULL;
     self->m_whatsThis = NULL;
     self->m_accessibleName = NULL;
@@ -4886,6 +5051,11 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_styleSheet = NULL;
     /* QSS 控件身份规则表块：绘制查询路径由样式侧懒分配，此处仅置空。 */
     self->m_sssStyleCache = NULL;
+    /* 对标 Qt 6.8（qwidget.cpp:11743-11749）：toolTipDuration 默认 -1
+     * （动态时长，按文本长度决定）。本实现此前用 0 表达"系统默认"——
+     * 同一数值两套语义，跨端移植会误读；该值在 X 侧从未被消费，统一
+     * 哨兵零风险。 */
+    self->m_toolTipDuration = -1;
     self->m_inputMethodHints = 0;
     self->m_windowState = XWindowState_NoState;
     self->m_windowModality = XWindowModality_NonModal;
@@ -4901,6 +5071,8 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     XIcon_init(&self->m_icon);
     XRegion_init(&self->m_dirty);
     XRegion_init(&self->m_staticContents);
+    XRegion_init(&self->m_visibleRegionCache);
+    XRegion_init(&self->m_childrenRegionCache);
     self->m_contentCache = NULL;
     self->m_contentCacheDirty = true;
     /* 保留层默认全关（显式选择加入；零回归红线）。 */
@@ -5074,6 +5246,17 @@ static void XFocusProxy_cleanupFor(XWidget* self)
 static void VXWidget_deinit(XWidget* self)
 {
     if (!self) return;
+    /* 【析构入口闸 2026-11-06】先置 m_deiniting：本函数随后会向父控件标脏
+     * （XWidget_updateRect）、销毁桥接窗（destroyWindow 链）等，这些动作
+     * 都可能触发一次重绘请求 → XWidget_postPaintEvent →
+     * xwidget_repaintDeferSchedule 把 self 重新登记进**延迟重绘补投表**。
+     * 而本函数中部已按「登记非空即活对象」摘过项，摘完又被加回 ⇒ 定时器
+     * 到期持已释放指针解引用（ASan：heap-use-after-free @
+     * xwidget_repaintDeferFlush 读 top->m_windowHandle，fbdev 60fps 节流
+     * 档必现；桌面默认 FPS=0 不走该表故历次门禁测不到）。真机表现=
+     * 反复浮/停后浮窗消失、再拖另一个卡死、进程段错误。
+     * 置位后 schedule/postPaintEvent 见位即早退，析构链内零回表。 */
+    self->m_deiniting = 1;
     /* [Qt 对齐 2026-10-31 ~QWidget → setDirtyOpaqueRegion
      * （qwidget.cpp:1510 + 1974-1998）] 控件销毁时作废其在**父控件**上
      * 占据的像素：Qt 在析构里把自身及父链的 dirtyOpaqueChildren 置脏，
@@ -5098,6 +5281,10 @@ static void VXWidget_deinit(XWidget* self)
        先于补投定时器到期消亡时，表内悬垂借用指针会在到期回调被解引用。
        未登记控件线性扫无命中即返，零开销。 */
     xwidget_repaintDeferRemove(self);
+    /* 待激活焦点靶登记摘项（登记非空即活对象纪律，同焦点/抓取靶）：
+       控件可先于其窗口激活消亡，不摘项则登记表留悬垂 top/target 指针，
+       后续激活上报兑现即 UAF。未登记控件线性扫无命中即返，零开销。 */
+    xwidget_pendingFocusRemove(self);
 #if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
     /* 装饰注册表摘项（键=本控件指针，见 XWindowDecoration_Protected.h）：
        控件可先于其桥接窗口消亡（直接 delete/deferred 删除序），不摘项
@@ -5108,9 +5295,29 @@ static void VXWidget_deinit(XWidget* self)
     XWidget_unlinkFocusChain(self);
     XFocusProxy_cleanupFor(self);
 #if XLAYOUT_ON
-    if (self->m_layout) {
-        XLayout_detachWidget(self->m_layout);
-        self->m_layout = NULL;
+    /* 【二轮对齐 2026-11-06】TakeFor 移出 m_layout 门：接管残账在任何
+     * 路径下都不得随控件析构存留。原实现门控在 m_layout 非空上——布局
+     * 曾被绕过 setLayout 的路径摘挂（m_layout 已 NULL）时 TakeFor 永不
+     * 执行，登记表留 (控件,已释放布局) 悬垂项；布局地址复用后，后续
+     * 控件析构的 owned == m_layout 等式可被撞满足 → XClassDelete 误删
+     * 借用布局（双删）。摘账无条件执行；释放仍要求 m_layout 作等式
+     * 见证（无见证不删，防地址复用误删）——对标 Qt 布局所有权随控件
+     * 的口径（qwidget.cpp:10284/10322 `l->setParent(this)` 的释放端）。 */
+    {
+        XLayout* owned = xwidget_ownedLayoutTakeFor(self);
+        if (self->m_layout) {
+            /* _ref 接管的布局随控件析构释放（behavior_diff#78 契约落地；
+             * 借用布局仅摘挂，所有权仍归调用方）。等式见证 mounted 须在
+             * detach **前**捕获——XLayout_detachWidget 会反向清宿主
+             * m_layout 槽位，detach 后再读 self->m_layout 恒为 NULL。 */
+            XLayout* mounted = self->m_layout;
+            XLayout_detachWidget(mounted);
+            if (owned && owned == mounted)
+                XClassDelete((XClass*)owned);
+            /* owned != mounted：残账已由 TakeFor 摘净，无 m_layout 见证
+             * 不释放（防地址复用误删），布局所有权仍归调用方。 */
+            self->m_layout = NULL;
+        }
     }
 #endif /* XLAYOUT_ON */
     /* 应用模态门摘除（与下方焦点/抓取/悬停靶「登记非空即活对象」同一
@@ -5176,6 +5383,7 @@ static void VXWidget_deinit(XWidget* self)
 #endif
     XWidget_freeString(&self->m_toolTip);
     XWidget_freeString(&self->m_windowTitle);
+    XWidget_freeString(&self->m_windowTitleDerived);
     XWidget_freeString(&self->m_windowIconText);
     XWidget_freeString(&self->m_windowFilePath);
     XWidget_freeString(&self->m_statusTip);
@@ -5271,6 +5479,8 @@ static void VXWidget_deinit(XWidget* self)
     XRegion_deinit(&self->m_dirty);
     XRegion_deinit(&self->m_staticContents);
     XRegion_deinit(&self->m_mask);
+    XRegion_deinit(&self->m_visibleRegionCache);
+    XRegion_deinit(&self->m_childrenRegionCache);
 }
 
 /** @brief 深拷贝控件布局与外观字段；不复制 XObject 基类/父链/窗口句柄/后备存储。 */
@@ -5300,12 +5510,24 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
 #endif /* XWINDOW_ON && XACCESSIBLE_ON */
 #if XLAYOUT_ON
     if (self->m_layout) {
-        XLayout_detachWidget(self->m_layout);
+        /* 【二轮对齐 2026-11-06】拷贝不继承布局（下方字段段 m_layout 不
+         * 复制），目标此前 setLayout_ref 接管的布局须先摘账再随覆盖释放
+         * ——只摘挂不摘账则登记残项悬垂（布局地址复用后可与其新挂接
+         * 布局撞等式 → XClassDelete 误删借用布局），只摘账不释放则接管
+         * 布局泄漏。等式见证 mounted 须在 detach **前**捕获——
+         * XLayout_detachWidget 会反向清宿主 m_layout 槽位。对标 Qt 布局
+         * 所有权随控件口径（qwidget.cpp:10284/10322 `l->setParent(this)`）。 */
+        XLayout* owned = xwidget_ownedLayoutTakeFor(self);
+        XLayout* mounted = self->m_layout;
+        XLayout_detachWidget(mounted);
+        if (owned && owned == mounted)
+            XClassDelete((XClass*)owned);
         self->m_layout = NULL;
     }
 #endif /* XLAYOUT_ON */
     XWidget_freeString(&self->m_toolTip);
     XWidget_freeString(&self->m_windowTitle);
+    XWidget_freeString(&self->m_windowTitleDerived);
     XWidget_freeString(&self->m_windowIconText);
     XWidget_freeString(&self->m_windowFilePath);
     XWidget_freeString(&self->m_statusTip);
@@ -5347,6 +5569,14 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     self->m_updatesEnabled = other->m_updatesEnabled;
     self->m_autoFillBackground = other->m_autoFillBackground;
     self->m_paletteSet = other->m_paletteSet;
+    /* 【二轮对齐 2026-11-06】字体/polish 状态位随值拷贝（此前独漏，仅
+     * m_paletteSet 同步）：font() 父链解析以「显式 setFont」位为锚
+     * （qwidget.cpp:4692-4711 口径），漏拷则拷贝件跳过已随下方
+     * XClassCopy 转移的 m_font 直落父链/应用默认——语义错；m_polished
+     * 漏拷则拷贝件重复吃 Polish 事件（ensurePolished 幂等锚，
+     * qwidget.cpp:10209-10235）。 */
+    self->m_fontSet = other->m_fontSet;
+    self->m_polished = other->m_polished;
     self->m_mouseTracking = other->m_mouseTracking;
     self->m_tabletTracking = other->m_tabletTracking;
     self->m_acceptDrops = other->m_acceptDrops;
@@ -5373,6 +5603,7 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     self->m_windowOpacity = other->m_windowOpacity;
     self->m_toolTip = XWidget_copyString(other->m_toolTip);
     self->m_windowTitle = XWidget_copyString(other->m_windowTitle);
+    self->m_windowTitleDerived = XWidget_copyString(other->m_windowTitleDerived);
     self->m_windowIconText = XWidget_copyString(other->m_windowIconText);
     self->m_windowFilePath = XWidget_copyString(other->m_windowFilePath);
     self->m_statusTip = XWidget_copyString(other->m_statusTip);
@@ -5404,6 +5635,8 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     XRegion_copy(&other->m_dirty, &self->m_dirty);
     XRegion_copy(&other->m_staticContents, &self->m_staticContents);
     XRegion_copy(&other->m_mask, &self->m_mask);
+    XRegion_copy(&other->m_visibleRegionCache, &self->m_visibleRegionCache);
+    XRegion_copy(&other->m_childrenRegionCache, &self->m_childrenRegionCache);
     /* 窗口句柄与后备存储一律置空（拷贝构造不清平台资源）。 */
     self->m_windowHandle = NULL;
     self->m_backingStore = NULL;
@@ -5436,6 +5669,8 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     /* 拥有指针转移 */
     self->m_toolTip = other->m_toolTip;         other->m_toolTip = NULL;
     self->m_windowTitle = other->m_windowTitle; other->m_windowTitle = NULL;
+    self->m_windowTitleDerived = other->m_windowTitleDerived;
+    other->m_windowTitleDerived = NULL;
     self->m_windowIconText = other->m_windowIconText; other->m_windowIconText = NULL;
     self->m_windowFilePath = other->m_windowFilePath; other->m_windowFilePath = NULL;
     self->m_statusTip = other->m_statusTip;       other->m_statusTip = NULL;
@@ -5487,11 +5722,22 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     XClassMove(&self->m_icon, &other->m_icon);
     XClassMove(&self->m_font, &other->m_font);
 #if XLAYOUT_ON
-    /* 布局为借用指针：转移挂接并把布局反向引用改指目标控件。 */
-    self->m_layout = other->m_layout;
-    if (self->m_layout) {
-        self->m_layout->m_parentWidget = self;
-        other->m_layout = NULL;
+    /* 布局为借用指针：转移挂接并把布局反向引用改指目标控件。
+     * 【二轮对齐 2026-11-06】_ref 接管登记随挂接同步转移：先摘源控件
+     * 名下账目（TakeFor；目标旧接管布局已随上方 VXWidget_deinit 归还），
+     * 确为转移中的布局则改记 (目标, 布局)——否则目标析构 TakeFor 落空
+     * → 接管布局泄漏；源控件析构携旧账 → 登记表留悬垂项（地址复用后
+     * 可误删借用布局）。对标 Qt 布局所有权随控件口径
+     * （qwidget.cpp:10284/10322 `l->setParent(this)`）。 */
+    {
+        XLayout* ownedLayout = xwidget_ownedLayoutTakeFor(other);
+        self->m_layout = other->m_layout;
+        if (self->m_layout) {
+            self->m_layout->m_parentWidget = self;
+            other->m_layout = NULL;
+        }
+        if (ownedLayout && ownedLayout == self->m_layout)
+            xwidget_ownedLayoutRegister(self, self->m_layout);
     }
 #endif /* XLAYOUT_ON */
     self->m_dirty = other->m_dirty;
@@ -5500,6 +5746,10 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     XRegion_init(&other->m_staticContents);
     self->m_mask = other->m_mask;
     XRegion_init(&other->m_mask);
+    self->m_visibleRegionCache = other->m_visibleRegionCache;
+    XRegion_init(&other->m_visibleRegionCache);
+    self->m_childrenRegionCache = other->m_childrenRegionCache;
+    XRegion_init(&other->m_childrenRegionCache);
     /* 普通值字段整体转移 */
     self->m_windowFlags = other->m_windowFlags;
     self->m_attributes = other->m_attributes;
@@ -5518,6 +5768,14 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     self->m_updatesEnabled = other->m_updatesEnabled;
     self->m_autoFillBackground = other->m_autoFillBackground;
     self->m_paletteSet = other->m_paletteSet;
+    /* 【二轮对齐 2026-11-06】字体/polish 状态位随值转移（源侧由下方整体
+     * XMemset 归零，与 m_paletteSet 同款）：font() 父链解析以「显式
+     * setFont」位为锚（qwidget.cpp:4692-4711 口径），漏转则新控件跳过
+     * 已转移的 m_font 直落父链/应用默认——语义错；m_polished 漏转则
+     * 新控件重复吃 Polish 事件（ensurePolished 幂等锚，
+     * qwidget.cpp:10209-10235）。 */
+    self->m_fontSet = other->m_fontSet;
+    self->m_polished = other->m_polished;
     self->m_mouseTracking = other->m_mouseTracking;
     self->m_tabletTracking = other->m_tabletTracking;
     self->m_acceptDrops = other->m_acceptDrops;
@@ -5649,6 +5907,22 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
         XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse,
                         true);
         XWidget_enterEvent_base(self, event);
+        /* 悬停 → 工具提示链（对标 Qt：QEvent::Enter 触发 tooltip 计时，
+         * 到期后 QToolTip::showText 弹出）。本实现无计时器，直接在进入
+         * 时按控件的 toolTip + toolTipDuration 弹出（hover → XToolTip_
+         * showText 链路此前零生产调用点）。 */
+        {
+            const XString* tip = XWidget_toolTip(self);
+            if (tip && XString_size(tip) > 0) {
+                XPoint global;
+                XPoint origin;
+                origin.x = 0;
+                origin.y = 0;
+                global = XWidget_mapToGlobal(self, &origin);
+                XToolTip_showText(global.x, global.y, tip, (XWidget*)self,
+                                  NULL, XWidget_toolTipDuration(self));
+            }
+        }
         /* 悬停状态翻转触发重绘（对标 Qt hover 样式刷新）。对标 Qt
          * polish 的 WA_Hover 收口：仅声明悬停外观（XWidgetAttribute_
          * Hover，按钮族/输入族等样式 State_MouseOver 消费方）的控件
@@ -5685,7 +5959,12 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
                 (mods & ~(int)XKeyboardModifier_ShiftModifier) == 0) {
                 bool next = (key == (int)XKey_Tab) ==
                             ((mods & (int)XKeyboardModifier_ShiftModifier) == 0);
-                if (xwidget_focusNextPrevChild(self, next)) {
+                /* 【批3 fix-verify#13 2026-11-06】Tab 键入口经虚表分派
+                 * （Qt QWidget::event 的 focusNextPrevChild 是 virtual，
+                 * qwidget.cpp:6816-6821 同口径）：此前直呼静态
+                 * xwidget_focusNextPrevChild，子类覆写槽在 Tab 键路径
+                 * 永不触发（契约断裂）。 */
+                if (XWidget_focusNextPrevChild_base(self, next)) {
                     XEvent_accept(event);
                     return true;
                 }
@@ -5704,7 +5983,49 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
         XWidget_inputMethodEvent_base(self, event);
         return true;
     case XEVENT_TYPE_CONTEXT_MENU:
-        XWidget_contextMenuEvent_base(self, event);
+        /* 对标 Qt 6.8（qwidget.cpp:9150-9173）：按 contextMenuPolicy 分派
+         *   Prevent  → 抑制（不派发 contextMenuEvent）
+         *   Default  → 走 contextMenuEvent 虚槽
+         *   Custom   → 发射 customContextMenuRequested 信号
+         *   Actions  → 用控件动作列表构造上下文菜单（无动作时回落
+         *               default 分支忽略事件）
+         *   其他     → 忽略事件
+         * 此前 X 侧 m_contextMenuPolicy 只有存储、上下文菜单事件路径从不
+         * 读该策略 → 四个策略全部不生效；customContextMenuRequested
+         * 发射器存在却全仓零发射点。 */
+        switch (self->m_contextMenuPolicy) {
+        case XWidgetContextMenuPolicy_PreventContextMenu:
+            break;
+        case XWidgetContextMenuPolicy_DefaultContextMenu:
+            XWidget_contextMenuEvent_base(self, event);
+            break;
+        case XWidgetContextMenuPolicy_CustomContextMenu:
+            {
+                XPoint local;
+                const XContextMenuEvent* ctx = (const XContextMenuEvent*)event;
+                local.x = ctx->m_position.x;
+                local.y = ctx->m_position.y;
+                XWidget_customContextMenuRequested_signal(self, &local);
+            }
+            break;
+        case XWidgetContextMenuPolicy_ActionsContextMenu:
+            if (self->m_actions && XVector_size(self->m_actions) > 0) {
+                /* 动作菜单：交由菜单系统按动作列表弹出（XMenu 走既有
+                 * 动作挂接路径）。此处派发信号由应用层消费（保持与 Qt
+                 * 的 exec 语义等价的最小实现：菜单构造由应用负责）。 */
+                XPoint local;
+                const XContextMenuEvent* ctx = (const XContextMenuEvent*)event;
+                local.x = ctx->m_position.x;
+                local.y = ctx->m_position.y;
+                XWidget_customContextMenuRequested_signal(self, &local);
+            } else {
+                XEvent_ignore(event);
+            }
+            break;
+        default:
+            XEvent_ignore(event);
+            break;
+        }
         return true;
     case XEVENT_TYPE_DRAG_ENTER:
         XWidget_dragEnterEvent_base(self, event);
@@ -5802,6 +6123,18 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
     case XEVENT_TYPE_ENABLED_CHANGE:
     case XEVENT_TYPE_WINDOW_STATE_CHANGE:
     case XEVENT_TYPE_CONTENTS_RECT_CHANGE:
+    /* 【批2 new-code#4 2026-11-06】changeEvent 路由补五类：五个新事件
+     * 派发点（setWindowTitle_2/windowIconText/setModified/
+     * setMouseTracking/setTabletTracking，各派发点自述「应用层经
+     * changeEvent 感知」，对标 Qt QEvent::WindowTitleChange/
+     * IconTextChange/ModifiedChange/MouseTrackingChange/
+     * TabletTrackingChange 均走 changeEvent 虚槽）此前落 default 走
+     * XObject 基类——changeEvent 虚槽永收不到，派发点契约断裂。 */
+    case XEVENT_TYPE_WINDOW_TITLE_CHANGE:
+    case XEVENT_TYPE_ICON_TEXT_CHANGE:
+    case XEVENT_TYPE_MODIFIED_CHANGE:
+    case XEVENT_TYPE_MOUSE_TRACKING_CHANGE:
+    case XEVENT_TYPE_TABLET_TRACKING_CHANGE:
         XWidget_changeEvent_base(self, event);
         return true;
     case XEVENT_TYPE_SHORTCUT_OVERRIDE:
@@ -5860,6 +6193,45 @@ void XWidget_setAttribute(XWidget* self, XWidgetAttribute attribute, bool on)
         break;
     case XWidgetAttribute_UpdatesDisabled:
         self->m_updatesEnabled = on ? 0 : 1;
+        break;
+    case XWidgetAttribute_Disabled:
+        /* 对标 Qt 6.8（qwidget.cpp:3389-3391 setEnabled_helper）：
+         * WA_Disabled 与 m_enabled 便捷字段同源同步（setFocus 闸与
+         * Tab 候选都读 m_enabled，双源不得失同步）。 */
+        self->m_enabled = on ? 0 : 1;
+        break;
+    case XWidgetAttribute_ForceDisabled:
+        /* 【批4 fix-verify#10 2026-11-06】ForceDisabled 分支**不写**
+         * m_enabled：Qt 中 WA_ForceDisabled 置位完全惰性——setter
+         * 只 `setAttribute(WA_ForceDisabled,!enable)` 后由
+         * setEnabled_helper 消费（qwidget.cpp:3381-3412，父链判据
+         * 与显式请求分离）；清 ForceDisabled 位本身不改生效禁用态，
+         * 父链仍禁用的控件不得因清位把 m_enabled 翻回 1（此前
+         * 一刀切 `m_enabled = on?0:1` 让 setFocus 闸/Tab 候选误判）。
+         * 原注释所引 qwidget.cpp:1076-1084 系属性枚举区，引用失据，
+         * 修正为 3381-3412。 */
+        break;
+    case XWidgetAttribute_ShowModal:
+        /* 【批4 missed#3 2026-11-06】ShowModal 反向联动（对标 Qt
+         * qwidget.cpp:2825-2826 setWindowModality 正向同步两属性位）：
+         * 直接 setAttribute(WA_ShowModal) 时同步 m_windowModality，
+         * 否则 isModal()/isWindowModal()（8536/8625 实读）双源
+         * 不一致——isWindowModal 的 ShowModal 兜底分支与
+         * isModal 的字段读值给出相反答案。清位归 NonModal。 */
+        self->m_windowModality = on ? XWindowModality_ApplicationModal
+                                    : XWindowModality_NonModal;
+        break;
+    case XWidgetAttribute_TranslucentBackground:
+        /* 【批4 missed#3 2026-11-06】TranslucentBackground→
+         * NoSystemBackground 级联（Qt WA_TranslucentBackground 隐含
+         * 不绘制系统背景）：置位时级联置 NoSystemBackground 并重算
+         * 不透明判定（该位参与 xwidget_updateIsOpaque 的三位集合，
+         * 上方 if 只对直接设置的属性生效，级联路径须补调）。 */
+        if (on) {
+            XWidget_attrSet(&self->m_attributes,
+                            XWidgetAttribute_NoSystemBackground, true);
+            xwidget_updateIsOpaque(self);
+        }
         break;
     default:
         break;
@@ -5997,7 +6369,13 @@ XRect XWidget_rect(const XWidget* self)
 {
     XRect out;
     if (!self) { XRect_init(&out, 0, 0, 0, 0); return out; }
-    out = self->m_contentsRect;
+    /* 对标 Qt 6.8 QWidget::rect()（qwidget.h:890-891）：恒为控件**全幅**
+     * 矩形、原点恒在 (0,0)，与内容边距无关。此前本实现直返
+     * m_contentsRect（已按边距扣减），与头注释「返回客户区矩形
+     * 0,0,w,h」自相矛盾，也使含 contentsMargins 的控件（XFrame 等）
+     * 刷新不到边距带、残留旧像素。内容矩形由 XWidget_contentsRect
+     * 提供（保持 Qt contentsRect 语义不变）。 */
+    XRect_init(&out, 0, 0, self->m_windowRect.width, self->m_windowRect.height);
     return out;
 }
 
@@ -6028,8 +6406,53 @@ void XWidget_setContentsMargins(XWidget* self, int left, int top,
         return;
     XMargins_init(&self->m_contentsMargins, left, top, right, bottom);
     XWidget_updateContentsRect(self);
+    /* 对标 Qt 6.8（qwidget.cpp:7664-7683）：改内容边距会派发 Resize
+     * 事件与 QEvent::ContentsRectChange——应用层据此感知客户区变化。
+     * 本实现此前只重算内容矩形 + updateGeometry + update，两类事件
+     * 全仓无发送点（XEVENT_TYPE_CONTENTS_RECT_CHANGE 已定义却是死分支）。
+     * 【批5 fix-verify#8 2026-11-06】Resize 分支按 Qt
+     * updateContentsRect（qwidget.cpp:7672-7679）包可见性闸：
+     * 可见才派发、载荷用 crect.size()（内容矩形尺寸，此前误用
+     * m_windowRect 全幅尺寸）；不可见时置 WA_PendingResizeEvent 等价
+     * 位挂起，show 路径兑现（7968-7971 补派后清位）。
+     * ContentsRectChange 事件按 Qt 7681 在闸外无条件派发。 */
+    if (XWidget_isVisible(self)) {
+        XSize size;
+        XSize_init(&size, self->m_contentsRect.width,
+                   self->m_contentsRect.height);
+        {
+            XResizeEvent event;
+            XResizeEvent_init(&event, XEVENT_TYPE_RESIZE, &size, &size);
+            XWidget_sendEvent(self, (XEvent*)&event);
+            XClassDeinit(&event);
+        }
+    } else {
+        XWidget_setAttribute(self, XWidgetAttribute_PendingResizeEvent,
+                             true);
+    }
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_CONTENTS_RECT_CHANGE);
+        XWidget_changeEvent_base(self, &event);
+    }
     XWidget_updateGeometry(self);
     XWidget_update(self);
+}
+
+void XWidget_setContentsMargins_2(XWidget* self, const XMargins* margins)
+{
+    int left = 0;
+    int top = 0;
+    int right = 0;
+    int bottom = 0;
+    if (!self) return;
+    if (margins) {
+        left = margins->left;
+        top = margins->top;
+        right = margins->right;
+        bottom = margins->bottom;
+    }
+    XWidget_setContentsMargins(self, left, top, right, bottom);
 }
 
 void XWidget_unsetContentsMargins(XWidget* self)
@@ -6081,11 +6504,23 @@ XRect XWidget_normalGeometry(const XWidget* self)
 {
     XRect out;
     if (!self) { XRect_init(&out, 0, 0, 0, 0); return out; }
-    out = self->m_normalGeometry;
-    if (out.width <= 0 && out.height <= 0) {
-        /* 从未进入特殊状态：与当前几何一致。 */
-        out = self->m_windowRect;
+    /* 对标 Qt 6.8 QWidget::normalGeometry（qwidget.cpp:3693-3699）三分支：
+     *   ① 非窗口 → 返回空矩形（QRect()）；Qt 语义是"窗口性"门控——普通
+     *      子控件没有"正常态几何"概念，本实现此前对非窗口直返记忆值，
+     *      与 Qt 相反；
+     *   ② 未最大化/未全屏 → 返回当前 geometry()；
+     *   ③ 否则 → 返回进入特殊态前保存的 normalGeometry。
+     * 记忆值失效问题（m_normalGeometry 全程无清除点）由
+     * XWidget_setGeometry 的失效动作（behavior_diff#14）一并解决。 */
+    if (!self->m_isWindow) {
+        XRect_init(&out, 0, 0, 0, 0);
+        return out;
     }
+    if (!XWidget_isMaximized(self) && !XWidget_isFullScreen(self)) {
+        out = self->m_windowRect;
+        return out;
+    }
+    out = self->m_normalGeometry;
     return out;
 }
 
@@ -6221,6 +6656,21 @@ void XWidget_setGeometry(XWidget* self, int x, int y, int w, int h)
     self->m_windowRect.y = y;
     self->m_windowRect.width = w;
     self->m_windowRect.height = h;
+    /* 对标 Qt 6.8（qwidget.cpp:7283-7289）：几何真变化时，窗口逻辑上
+     * 解除最大化/全屏；normalGeometry 记忆失效**仅窗口**。
+     * 【批4 fix-verify#16 2026-11-06】清位提到 isWindow 门之外（Qt
+     * 清 window_state 位在 `if (!data.in_set_window_state)` 内、
+     * normalGeometry 失效在 `if (q->isWindow())` 内，两者不同门）；
+     * 并补等价 in_set_window_state 闸——setWindowState→平台回写→
+     * setGeometry 重入链（XWindow_setWindowStates 的平台落地可同步
+     * 回调 ConfigureNotify→applyWindowGeometry/几何链）不得把刚设置
+     * 的 Maximized/FullScreen 位反向清掉。 */
+    if (!g_xwidgetInSetWindowState) {
+        self->m_windowState &= ~(XWindowStates)(XWindowState_Maximized |
+                                                XWindowState_FullScreen);
+        if (self->m_isWindow)
+            XRect_init(&self->m_normalGeometry, 0, 0, -1, -1);
+    }
     XWidget_recomputeGeometry(self, &old);
     XWidget_syncWindowGeometry(self);
 #if XWINDOW_ON && XACCESSIBLE_ON
@@ -6388,6 +6838,14 @@ void XWidget_adjustSize(XWidget* self)
     XSize hint;
     XRect children;
     if (!self) return;
+    /* 【批4 fix-verify#14 2026-11-06】对标 Qt 6.8
+     * QWidget::adjustSize（qwidget.cpp:8792-8795 入口
+     * `ensurePolished()` 先于 adjustedSize 计算）：sizeHint 依赖
+     * polish 后的样式/字体（XFrame.c:462 POLISH 分支重算边框宽度
+     * 参与尺寸提示）——此前 XWidget_ensurePolished 零生产调用点
+     * （仅定义 + 自递归），POLISH 链生产不可达。幂等（m_polished
+     * 位），重复调用零开销。 */
+    XWidget_ensurePolished(self);
     hint = XWidget_sizeHint(self);
     if (!XSize_isValid(&hint)) {
         /* QWidgetPrivate::adjustedSize() falls back to childrenRect when
@@ -6397,6 +6855,52 @@ void XWidget_adjustSize(XWidget* self)
         hint.width = children.width + 2 * children.x;
         hint.height = children.height + 2 * children.y;
     }
+    /* 对标 Qt 6.8（qwidget.cpp:8739-8760 adjustedSize）：hfw/expanding
+     * 托底整段包在 `if (q->isWindow())` 门内——非窗口控件不加托底，只用
+     * sizeHint 直接定尺寸。此前本实现把整段挂在 `if (self->m_layout)`
+     * 上：任何带布局的非窗口控件可被托大到 200x100，无布局控件两规则
+     * 完全不生效。门内两分支：① 有布局——hfw 按布局
+     * totalHeightForWidth 重算（`layout->hasHeightForWidth()` 分支）；
+     * ② 无布局——补 Qt else 分支的 sizePolicy 回退
+     * （`sizePolicy().hasHeightForWidth()` → heightForWidth）。
+     * expanding 托底——两轴策略可扩展时最小 200x100
+     * （`qMax(s.width(), 200)` / `qMax(s.height(), 100)`）。屏幕 2/3
+     * 夹取维持 §四 screen 专项豁免，不在本条。 */
+#if XLAYOUT_ON
+    if (self->m_isWindow) {
+        if (self->m_layout) {
+            if (XWidget_hasHeightForWidth(self))
+                hint.height = XLayout_totalHeightForWidth(self->m_layout,
+                                                          hint.width);
+        } else {
+            /* 无布局回退（Qt else 分支，qwidget.cpp:8748-8751）。 */
+            const XWidgetSizePolicy sp = XWidget_sizePolicy(self);
+            if (sp.m_hasHeightForWidth)
+                hint.height = XWidget_heightForWidth(self, hint.width);
+        }
+        if (XWidget_sizePolicy(self).m_horizontalPolicy ==
+                XWidgetSizePolicy_ExpandingBase ||
+            XWidget_sizePolicy(self).m_horizontalPolicy ==
+                XWidgetSizePolicy_MinimumExpanding ||
+            XWidget_sizePolicy(self).m_horizontalPolicy ==
+                XWidgetSizePolicy_Expanding) {
+            if (hint.width < 200) hint.width = 200;
+        }
+        if (XWidget_sizePolicy(self).m_verticalPolicy ==
+                XWidgetSizePolicy_ExpandingBase ||
+            XWidget_sizePolicy(self).m_verticalPolicy ==
+                XWidgetSizePolicy_MinimumExpanding ||
+            XWidget_sizePolicy(self).m_verticalPolicy ==
+                XWidgetSizePolicy_Expanding) {
+            if (hint.height < 100) hint.height = 100;
+        }
+    }
+#endif /* XLAYOUT_ON */
+    /* 对标 Qt 6.8（qwidget.cpp:8798-8799）：resize 之前显式激活布局。 */
+#if XLAYOUT_ON
+    if (self->m_layout)
+        XLayout_activate(self->m_layout);
+#endif /* XLAYOUT_ON */
     XWidget_resize(self, hint.width, hint.height);
 }
 
@@ -6509,19 +7013,52 @@ bool XWidget_restoreGeometry(XWidget* self, const XByteArray* geometry)
     if ((savedState & ~((unsigned)XWindowState_Maximized |
                         (unsigned)XWindowState_FullScreen)) != 0)
         return false;
-    /* 尺寸必须为正且交给 setGeometry 按最小/最大约束钳位；x/y 允许任意值。 */
-    if (fields[2] <= 0 || fields[3] <= 0 || fields[6] <= 0 || fields[7] <= 0)
+    /* 尺寸必须为正且交给 setGeometry 按最小/最大约束钳位；x/y 允许任意值。
+     * 对标 Qt 6.8（qwidget.cpp:7487 起）：Qt 对宽/高为 0 的几何并不直接
+     * 判损坏——走正常恢复路径（setGeometry 的钳位/恢复逻辑）。本实现
+     * 此前一律 false（对 0 尺寸直接拒绝），口径偏严。 */
+    if (fields[2] < 0 || fields[3] < 0 || fields[6] < 0 || fields[7] < 0)
         return false;
     XRect_init(&frame, fields[0], fields[1], fields[2], fields[3]);
     XRect_init(&normal, fields[4], fields[5], fields[6], fields[7]);
-    /* 对标 QWidget::restoreGeometry 的恢复次序：先恢复窗口状态标志
-       （触发本仓库 setWindowState 的 normalGeometry 记账与桥接窗口同步），
-       再恢复当前几何，最后写回保存时的正常态几何——顺序保证最大化窗口
-       恢复后 normalGeometry 与保存值一致。简化项：不做 Qt 的屏幕可用
-       区域夹取（无多屏/任务栏概念），尺寸钳位由 setGeometry 完成。 */
-    XWidget_setWindowState(self, (XWindowStates)savedState);
-    XWidget_setGeometry(self, frame.x, frame.y, frame.width, frame.height);
-    self->m_normalGeometry = normal;
+    /* 对标 Qt 6.8（qwidget.cpp:7572-7595）的恢复次序——**几何先、状态
+       后**（Qt 原注释：set geometry before setting the window state to
+       make sure the window is maximized to the right screen）：
+         · 恢复为最大化/全屏态：先 setGeometry(保存的 normalGeometry)
+           （置为正常态几何），再 setWindowState(叠加 savedState 的
+           Maximized/FullScreen 位)，最后写回 normalGeometry；
+         · 恢复为普通态：先 setWindowState(清掉 Maximized/FullScreen 位)，
+           再 setGeometry(保存的当前几何)。
+       本实现此前「先状态后几何」，与本轮 behavior_diff#14（setGeometry
+       解除最大化并失效 normalGeometry）叠加后 → 恢复出的最大化态被随后的
+       setGeometry 立即清掉，往返断言失败。 */
+    if (savedState & ((unsigned)XWindowState_Maximized |
+                      (unsigned)XWindowState_FullScreen)) {
+        /* 最大化/全屏：几何先落为正常态几何，再叠加状态位。 */
+        XWidget_setGeometry(self, normal.x, normal.y, normal.width,
+                            normal.height);
+        {
+            XWindowStates merged =
+                (XWindowStates)((self->m_windowState &
+                                 ~(XWindowStates)(XWindowState_Maximized |
+                                                  XWindowState_FullScreen)) |
+                                (XWindowStates)savedState);
+            XWidget_setWindowState(self, merged);
+        }
+        self->m_normalGeometry = normal;
+    } else {
+        /* 普通态：先清状态位，再落当前几何。 */
+        {
+            XWindowStates merged =
+                (XWindowStates)((self->m_windowState &
+                                 ~(XWindowStates)(XWindowState_Maximized |
+                                                  XWindowState_FullScreen)) |
+                                (XWindowStates)savedState);
+            XWidget_setWindowState(self, merged);
+        }
+        XWidget_setGeometry(self, frame.x, frame.y, frame.width, frame.height);
+        self->m_normalGeometry = normal;
+    }
     return true;
 }
 
@@ -6677,7 +7214,10 @@ void XWidget_setMaximumHeight(XWidget* self, int h)
 XSize XWidget_baseSize(const XWidget* self)
 {
     XSize out;
-    if (!self) { XSize_init(&out, -1, -1); return out; }
+    /* 对标 Qt 6.8（qwidget.cpp:3896-3901）：baseSize 默认 (0,0)，
+     * "未设置" 与 "设置为 0" 同义。此前本实现用 (-1,-1) 表达未设置，
+     * 与 Qt 口径不一致（跨端移植代码会误判）。 */
+    if (!self) { XSize_init(&out, 0, 0); return out; }
     out = self->m_baseSize;
     return out;
 }
@@ -6687,6 +7227,17 @@ void XWidget_setBaseSize(XWidget* self, int w, int h)
     if (!self) return;
     self->m_baseSize.width = w;
     self->m_baseSize.height = h;
+    /* 对标 Qt 6.8（qwidget.cpp:4083-4090 → 3937-3957）：baseSize 经
+     * setConstraints_sys 送进平台窗口的 size hints。本实现此前只写本地
+     * 字段，平台侧 XWindow_setBaseSize（XWindow.h:872）全仓零调用 →
+     * 两个值完全惰性、平台接口是死代码。此处补转发（窗口控件）。 */
+#if XWINDOW_ON
+    if (self->m_isWindow && self->m_windowHandle) {
+        XSize size;
+        XSize_init(&size, w, h);
+        XWindow_setBaseSize((XWindow*)self->m_windowHandle, &size);
+    }
+#endif /* XWINDOW_ON */
 }
 
 void XWidget_setBaseSizeSize(XWidget* self, const XSize* size)
@@ -6708,6 +7259,16 @@ void XWidget_setSizeIncrement(XWidget* self, int w, int h)
     if (!self) return;
     self->m_sizeIncrement.width = w;
     self->m_sizeIncrement.height = h;
+    /* 对标 Qt 6.8（qwidget.cpp:4083-4090 → 3937-3957）：sizeIncrement
+     * 与 baseSize 同路送进平台窗口 size hints；平台侧
+     * XWindow_setSizeIncrement（XWindow.h:879）此前同为死代码。 */
+#if XWINDOW_ON
+    if (self->m_isWindow && self->m_windowHandle) {
+        XSize size;
+        XSize_init(&size, w, h);
+        XWindow_setSizeIncrement((XWindow*)self->m_windowHandle, &size);
+    }
+#endif /* XWINDOW_ON */
 }
 
 void XWidget_setSizeIncrementSize(XWidget* self, const XSize* size)
@@ -6964,6 +7525,12 @@ void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
         XApplication_registerTopLevelWidget(self);
     }
 #endif
+    /* [批3 new-code#11 2026-11-06] 旧顶层捕获随跨窗门一并删除：
+     * Qt 判据仅 `newParent && isAncestorOf(focusWidget()) &&
+     * !(f & Qt::Window)`（qwidget.cpp:10775-10776），**不含**
+     * oldTop != newTop ——同窗口内重挂持焦子树同样清焦（子链折进新
+     * 父的焦点链，旧链失配）。此前 X 多出的跨窗门让同窗重挂保留焦
+     * 点；旧顶层变量（行为#88 取旧值注释）随之无用途，删除。 */
     XObject_setParent((XObject*)self, parent ? (XObject*)parent : NULL);
     if (parentChanged && parent) {
         /* 对标 Qt QWidgetPrivate::setParent_sys（qwidget.cpp:10925-11035，
@@ -6972,6 +7539,53 @@ void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
          * 重挂的滚动条几何打回原点（第一轮 #47 根因）。本修复曾在
          * stash pop 合并中被远端批次覆盖丢失，此次重新摘除。 */
     }
+    /* 对标 Qt 6.8（qwidget.cpp:10826-10831）：换父后按**新父**的
+     * isEnabled()/updatesEnabled() **双向**传播
+     * （setEnabled_helper(parent?parent->isEnabled():true) /
+     * setUpdatesEnabled_helper(parent?parent->updatesEnabled():true)；
+     * 非窗口控件；尊重 ForceDisabled/ForceUpdatesDisabled）。
+     * 【批3 fix-verify#5 2026-11-06】此前本函数只有「父禁用→子禁用」
+     * 单向分支：从禁用父换挂使能父的控件永久滞留禁用/冻结（Qt helper
+     * 双向传播被漏掉）。补 else 分支走公开入口（递归核自带父守卫、
+     * 属性位与子树传播，见 qwidget.cpp:1818-1841 对位实现），子自身
+     * 显式 ForceDisabled 时保持显式禁用。 */
+    if (parent && !self->m_isWindow) {
+        bool parentEnabled = XWidget_isEnabled(parent);
+        bool parentUpdates = XWidget_updatesEnabled(parent);
+        if (!parentEnabled) {
+            if (!XWidget_attrTest(&self->m_attributes,
+                                  XWidgetAttribute_ForceDisabled)) {
+                self->m_enabled = 0;
+                XWidget_attrSet(&self->m_attributes,
+                                XWidgetAttribute_Disabled, true);
+            }
+        } else if (!XWidget_attrTest(&self->m_attributes,
+                                     XWidgetAttribute_ForceDisabled)) {
+            /* 父使能：从禁用父换挂后恢复（Qt setEnabled_helper(true)
+             * 同款，向子树传播；同值早退使无变化路径零开销）。 */
+            XWidget_setEnabled(self, true);
+        }
+        if (!parentUpdates) {
+            if (!XWidget_attrTest(&self->m_attributes,
+                                  XWidgetAttribute_UpdatesDisabled)) {
+                self->m_updatesEnabled = 0;
+            }
+        } else if (!XWidget_attrTest(&self->m_attributes,
+                                     XWidgetAttribute_UpdatesDisabled)) {
+            /* 父解冻：从冻结父换挂后恢复（Qt
+             * setUpdatesEnabled_helper(true) 同款，递归到孙控件）。 */
+            XWidget_setUpdatesEnabled(self, true);
+        }
+    }
+    /* 对标 Qt 6.8（qwidget.cpp:10775-10776）：焦点控件若是**被移动控件
+     * 的后代**，换父时显式 clearFocus（新父焦点链重排）。判据仅
+     * newParent && isAncestorOf(focusWidget()) && !(f & Qt::Window)
+     * ——【批3 new-code#11 2026-11-06】去掉 oldTop != newTop 跨窗门，
+     * 同窗口内重挂持焦子树也清焦；保留 isAncestor 与「self 未变窗口」
+     * （!self->m_isWindow）条件。 */
+    if (g_focusWidget && parentChanged && parent && !self->m_isWindow &&
+        XWidget_isAncestor(self, g_focusWidget))
+        XWidget_clearFocusBase(g_focusWidget, XFocusReason_Other);
     /* 父链变化后重算生效可见状态。 */
     {
         bool newVisible = self->m_explicitShow;
@@ -6996,9 +7610,24 @@ void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
 #if XWINDOW_ON && XACCESSIBLE_ON
     XPlatformAccessibility_notifyWidget(XAccessibleEvent_StateChanged, self);
 #endif
+    /* 【批3 missed#5 2026-11-06】真实换父收尾直发 ParentChange：Qt
+     * 对一切真实换父必发（qwidget.cpp:10845
+     * `QCoreApplication::sendEvent(this, &e)`，e=QEvent::ParentChange）。
+     * XObject_setParent 内两处 PARENT_ABOUT_TO_CHANGE/PARENT_CHANGE
+     * 发送被 m_receive_parent_events 标志门控，而该标志全仓只有
+     * XObject.h:57 声明 + XObject.c:365/394 读取、零写点（恒 0）→
+     * 发送不可达，XFrame.c:456 的 ParentChange 消费分支（重算边框
+     * 宽度）成死分支。按定裁收敛在控件侧直发（不动 XObject 标志，
+     * 避免影响非控件对象）；XWidget_sendEvent 走控件虚表 →
+     * VXFrame_event 恢复消费。 */
+    if (parentChanged) {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_PARENT_CHANGE);
+        XWidget_sendEvent(self, &event);
+    }
 }
 
-void XWidget_setParentPlain(XWidget* self, XWidget* parent)
+void XWidget_setParent_2(XWidget* self, XWidget* parent)
 {
     XWidgetFlags flags;
     if (!self) return;
@@ -7017,6 +7646,7 @@ XWidget* XWidget_childAt(const XWidget* self, const XPoint* point)
     size_t i;
     if (!self || !point) return NULL;
     if (self->m_mask.count > 0 && self->m_mask.rects &&
+        !XWidget_testAttribute(self, XWidgetAttribute_MouseNoMask) &&
         !XRegion_contains(&self->m_mask, point->x, point->y))
         return NULL;
     children = XObject_children((XObject*)self);
@@ -7037,9 +7667,15 @@ XWidget* XWidget_childAt(const XWidget* self, const XPoint* point)
          * 自己的原生窗口与派发链，几何在弹出前停留在预置位
          * (0,0,640,480)：不跳过时窗口内命中测试被其吞掉——
          * XMainWindow 菜单栏点击实测被覆盖其上的隐藏 menuFile/
-         * menuHelp 命中，文件菜单永远弹不出（问题 #34）。 */
+         * menuHelp 命中，文件菜单永远弹不出（问题 #34）。
+         * 【透明控件跳过 2026-11-05】对标 Qt（qwidget.cpp:10491）：跳过
+         * WA_TransparentForMouseEvents 的控件——此前 X 只在事件派发层
+         * 跳过并上抛父控件，childAt 仍返回它 → 点击落到透明控件而不是
+         * 其下方兄弟。 */
         if (widget->m_isWindow ||
-            XWidget_testAttribute(widget, XWidgetAttribute_WState_Hidden))
+            XWidget_testAttribute(widget, XWidgetAttribute_WState_Hidden) ||
+            XWidget_testAttribute(widget,
+                                  XWidgetAttribute_TransparentForMouseEvents))
             continue;
         /* [命中坐标系再修 2026-10-19] m_windowRect 为**父相对矩形**
          * （XWidget.h:565 契约；绘制链按父系逐层平移即证）。上一版
@@ -7062,6 +7698,23 @@ XWidget* XWidget_childAt(const XWidget* self, const XPoint* point)
             deep = XWidget_childAt(widget, &childPoint);
         }
         if (deep) return deep;
+        /* 【遮罩排除 vs 无子命中 2026-11-05】deep==NULL 有两种成因：
+         *   ① 子控件自身有遮罩且该点不在遮罩内（子控件拒绝命中）；
+         *   ② 子控件确实没有命中任何后代（点落在子控件自身空白处）。
+         * 此前两者不可区分，一律返回子控件 → 违反 XWidget.h:1146-1147
+         * 自述的「区域外的点不命中该控件及后代」，且与 Qt 行为相反
+         * （qwidget.cpp:10501-10502：遮罩排除时 continue 试下一个兄弟）。
+         * 判据：子控件有遮罩且该点不在其遮罩内 → continue（试下一兄弟）；
+         * 否则返回子控件本体。 */
+        if (widget->m_mask.count > 0 && widget->m_mask.rects &&
+            !XWidget_testAttribute(widget, XWidgetAttribute_MouseNoMask)) {
+            XPoint childPoint;
+            childPoint.x = point->x - widget->m_windowRect.x;
+            childPoint.y = point->y - widget->m_windowRect.y;
+            if (!XRegion_contains(&widget->m_mask, childPoint.x,
+                                  childPoint.y))
+                continue;
+        }
         return widget;
     }
     return NULL;
@@ -7094,6 +7747,14 @@ XRegion XWidget_mask(const XWidget* self)
     return out;
 }
 
+const XRegion* XWidget_mask_const(const XWidget* self)
+{
+    /* 只读借用版：直接返回控件内部遮罩区域的 const 指针（零拷贝）。
+     * 调用方不得释放/修改；setMask/setMask_2/clearMask 后指针失效。 */
+    if (!self) return NULL;
+    return &self->m_mask;
+}
+
 bool XWidget_hasMask(const XWidget* self)
 {
     return self && self->m_mask.count > 0;
@@ -7103,9 +7764,13 @@ void XWidget_setMask(XWidget* self, const XRegion* region)
 {
     bool nowEmpty;
     bool wasEmpty;
+    XRegion oldMask;
     if (!self) return;
     wasEmpty = self->m_mask.count <= 0;
     nowEmpty = (!region || region->count <= 0);
+    /* 保留旧遮罩快照：用于算「让出」的新露区域（父级需重画）。 */
+    XRegion_init(&oldMask);
+    XRegion_copy(&self->m_mask, &oldMask);
     if (!nowEmpty)
         XRegion_copy(region, &self->m_mask);
     else
@@ -7116,13 +7781,108 @@ void XWidget_setMask(XWidget* self, const XRegion* region)
             XWindow_setMask((XWindow*)self->m_windowHandle,
                             nowEmpty ? NULL : &self->m_mask);
         XWidget_update(self);
+        /* 对标 Qt 6.8（qwidget.cpp:13144-13152）：遮罩缩小后把「让出」的
+         * 新露区域并入**父控件**的 update（此前只失效自身 → 父上残留旧
+         * 像素，是可见视觉缺陷）。非窗口控件按 (rect() - newMask) 折算到
+         * 父坐标（加 m_windowRect.x/y）。 */
+        if (!self->m_isWindow) {
+            XWidget* parent = XWidget_parentWidget(self);
+            if (parent) {
+                XRegion exposed;
+                XRect full;
+                XRegion_init(&exposed);
+                XRect_init(&full, 0, 0, self->m_windowRect.width,
+                           self->m_windowRect.height);
+                XRegion_addRect(&exposed, &full);
+                if (nowEmpty) {
+                    /* 遮罩被清除 → 整块区域让出。 */
+                } else {
+                    XRegion masked;
+                    XRegion_init(&masked);
+                    XRegion_copy(&self->m_mask, &masked);
+                    XRegion_subtracted(&exposed, &masked, &exposed);
+                    XRegion_deinit(&masked);
+                }
+                if (exposed.count > 0) {
+                    int i;
+                    for (i = 0; i < exposed.count; ++i) {
+                        XRect r = exposed.rects[i];
+                        r.x += self->m_windowRect.x;
+                        r.y += self->m_windowRect.y;
+                        XWidget_updateRect(parent, &r);
+                    }
+                }
+                XRegion_deinit(&exposed);
+            }
+        }
     }
+    XRegion_deinit(&oldMask);
 }
 
 void XWidget_clearMask(XWidget* self)
 {
     if (!self) return;
     XWidget_setMask(self, NULL);
+}
+
+void XWidget_setMask_2(XWidget* self, const XBitmap* bitmap)
+{
+    XRegion region;
+    XImage image;
+    int width;
+    int height;
+    int y;
+    bool hasImage = false;
+    if (!self) return;
+    /* 对标 Qt 6.8（qwidget.cpp:13193）：setMask(const QBitmap&) ≡
+     * setMask(QRegion(bitmap))，QRegion(bitmap) 由位图中**置位像素**
+     * （color1）逐像素构成（qregion.cpp:3851-3858）。位图为空（NULL 或
+     * 零尺寸）时等价清除遮罩。 */
+    if (!bitmap) {
+        XWidget_setMask(self, NULL);
+        return;
+    }
+    width = XPixmap_width((const XPixmap*)bitmap);
+    height = XPixmap_height((const XPixmap*)bitmap);
+    if (width <= 0 || height <= 0) {
+        XWidget_setMask(self, NULL);
+        return;
+    }
+    XRegion_init(&region);
+    XImage_init(&image);
+    {
+        XPixmap_toImage((const XPixmap*)bitmap, &image);
+        hasImage = !XImage_isNull(&image);
+    }
+    if (hasImage) {
+        for (y = 0; y < height; ++y) {
+            const uint8_t* line = XImage_constScanLine(&image, y);
+            int x;
+            if (!line) continue;
+            for (x = 0; x < width; ++x) {
+                bool on = false;
+                if (XImage_format(&image) == XImageFormat_MonoLSB) {
+                    on = (line[x >> 3] & (1u << (x & 7))) != 0;
+                } else if (XImage_format(&image) == XImageFormat_Mono) {
+                    on = (line[x >> 3] & (0x80u >> (x & 7))) != 0;
+                } else {
+                    /* 非单色格式：按像素非零判为置位（与 Qt 的
+                     * QRegion(bitmap) 只接受单色位图的差异在此收口）。 */
+                    uint32_t px = XImage_pixel(&image, x, y);
+                    on = (px & 0x00FFFFFFu) != 0;
+                }
+                if (!on) continue;
+                {
+                    XRect r;
+                    XRect_init(&r, x, y, 1, 1);
+                    XRegion_addRect(&region, &r);
+                }
+            }
+        }
+    }
+    XClassDeinit(&image);
+    XWidget_setMask(self, &region);
+    XRegion_deinit(&region);
 }
 
 /* ==================== Z 序（对标 QWidget::raise/lower/stackUnder） ==================== */
@@ -7271,7 +8031,13 @@ XRect XWidget_childrenRect(const XWidget* self)
         XWidget* widget;
         if (!child || !child->m_is_widget) continue;
         widget = (XWidget*)child;
-        if (widget->m_isWindow || !widget->m_visible) continue;
+        /* 对标 Qt 6.8（qwidget.cpp:3721 isHidden）：childrenRect 只统计
+         * **未显式隐藏**的子控件——父隐藏但自身未显式隐藏的子控件在 Qt
+         * 仍计入。本实现此前用"生效可见性"（含父链）→ 父隐藏时整批子控件
+         * 被排除，与 Qt 相反。 */
+        if (widget->m_isWindow ||
+            XWidget_testAttribute(widget, XWidgetAttribute_WState_Hidden))
+            continue;
         if (first) {
             out = widget->m_windowRect;
             first = false;
@@ -7297,10 +8063,40 @@ XRegion XWidget_childrenRegion(const XWidget* self)
         XWidget* widget;
         if (!child || !child->m_is_widget) continue;
         widget = (XWidget*)child;
-        if (widget->m_isWindow || !widget->m_visible) continue;
+        /* 同 childrenRect：按显式隐藏位过滤（对标 Qt isHidden 口径）。 */
+        if (widget->m_isWindow ||
+            XWidget_testAttribute(widget, XWidgetAttribute_WState_Hidden))
+            continue;
         XRegion_addRect(&out, &widget->m_windowRect);
     }
     return out;
+}
+
+const XRegion* XWidget_childrenRegion_const(const XWidget* self)
+{
+    XWidget* widget = (XWidget*)self;
+    const XVector* children;
+    size_t n;
+    size_t i;
+    if (!self) return NULL;
+    /* 只读借用版：结果写入控件内部缓存后返回其 const 指针（零拷贝给
+     * 调用方，避免调用方每次 malloc + free）。缓存由控件拥有，调用方
+     * 不得释放/修改；下一次调用本接口即被覆写。 */
+    XRegion_clear(&widget->m_childrenRegionCache);
+    children = XObject_children((XObject*)widget);
+    n = children ? XVector_size_base((const XContainer*)children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
+        XWidget* w;
+        if (!child || !child->m_is_widget) continue;
+        w = (XWidget*)child;
+        /* 同 childrenRect：按显式隐藏位过滤（对标 Qt isHidden 口径）。 */
+        if (w->m_isWindow ||
+            XWidget_testAttribute(w, XWidgetAttribute_WState_Hidden))
+            continue;
+        XRegion_addRect(&widget->m_childrenRegionCache, &w->m_windowRect);
+    }
+    return &widget->m_childrenRegionCache;
 }
 
 bool XWidget_isAncestorOf(const XWidget* self, const XWidget* child)
@@ -7333,6 +8129,23 @@ XWindow* XWidget_nativeWindow(const XWidget* self)
 {
     XWidget* top = XWidget_topLevel(self);
     return top ? (XWindow*)top->m_windowHandle : NULL;
+}
+
+XWindowId XWidget_winId(const XWidget* self)
+{
+    XWindow* window = XWidget_nativeWindow(self);
+    if (!window) return 0;
+    /* 对标 Qt QWidget::winId()：返回原生窗口 id（必要时建窗）。
+     * XWindow_winId 在窗口未创建时惰性建柄，与 Qt 的强制建窗语义一致。 */
+    return XWindow_winId(window);
+}
+
+XWindowId XWidget_effectiveWinId(const XWidget* self)
+{
+    XWindow* window = XWidget_nativeWindow(self);
+    if (!window) return 0;
+    /* 只读变体：窗口未创建时返回 0，不产生建窗副作用。 */
+    return XWindow_winIdIfCreated(window);
 }
 
 XWindow* XWidget_windowHandle(const XWidget* self)
@@ -7609,22 +8422,46 @@ bool XWidget_isVisibleTo(const XWidget* self, const XWidget* ancestor)
      * 之前的父链，遇到窗口或父链末端即返回当前节点的 isHidden 结果。
      * isHidden 读显式隐藏位（WA_WState_Hidden），见 XWidget_isHidden。 */
     w = self;
+    /* 【二轮对齐 2026-11-06】经 XWidget_parentWidget 取父（与
+     * XWidget_topLevel 同口径）：绕过控件 API 挂非控件父时，裸
+     * XObject_parent 上溯会按 XWidget* 解引用非控件结构体（越界读
+     * m_isWindow/WState_Hidden）。Qt 父链遍历一律经 parentWidget()
+     * （qwidget.cpp:8692-8703 isVisibleTo 同口径）。 */
     while (w &&
            !XWidget_testAttribute(w, XWidgetAttribute_WState_Hidden) &&
-           !w->m_isWindow &&
-           XObject_parent((XObject*)w) &&
-           XObject_parent((XObject*)w) != (const XObject*)ancestor)
-        w = (const XWidget*)XObject_parent((XObject*)w);
+           !w->m_isWindow) {
+        XWidget* pw = XWidget_parentWidget(w);
+        if (!pw || pw == ancestor)
+            break;
+        w = pw;
+    }
     return w && !XWidget_testAttribute(w, XWidgetAttribute_WState_Hidden);
 }
 
-void XWidget_setVisible(XWidget* self, bool visible)
+/** @brief 显隐逻辑实现核（SetVisible 虚槽默认实现调用；不做虚表分派）。 */
+static void XWidget_setVisibleImpl(XWidget* self, bool visible)
 {
     bool wasVisible;
     bool wasHidden;
     if (!self) return;
     if (self->m_inShow) return;
+    /* 【显式显隐位 2026-11-05】置 WA_WState_ExplicitShowHide 等价位：
+     * 记录"setVisible 已被显式调用过"。本实现**不**复刻 Qt 的同值早退
+     * （qwidget.cpp:8300-8301）——X 的显隐流程承载布局激活与脏区补画，
+     * 同值重复调用仍需重跑（实测：早退后 hint 文本增高触发的
+     * LayoutRequest 链不重排，竖条范围未随文本增高放大——回归红）。
+     * Qt 的早退成立前提是其 show/hide 路径不含 X 这套布局联动。 */
+    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_ExplicitShowHide,
+                    true);
     wasVisible = self->m_visible != 0;
+    /* 【批4 fix-verify#14 2026-11-06】首显路径接入 polish（对标 Qt
+     * 6.8 QWidgetPrivate::show_helper，qwidget.cpp:7943
+     * `q->ensurePolished()` 在 createRecursively 之后、布局激活之前）：
+     * XFrame.c:462 的 POLISH 消费分支（重算边框宽度）此前生产不可达
+     * ——XWidget_ensurePolished 全仓零生产调用点（仅定义 + 自递归）。
+     * 幂等（m_polished 位），已 polish 控件零开销。 */
+    if (visible && !wasVisible)
+        XWidget_ensurePolished(self);
     /* 对标 Qt setVisible 的 WA_WState_Hidden 快照（qwidget.cpp:8343）：
        show 分支用它判定「此前显式隐藏」→ 需通知父布局重排。 */
     wasHidden = XWidget_testAttribute(self, XWidgetAttribute_WState_Hidden);
@@ -7731,49 +8568,187 @@ void XWidget_setVisible(XWidget* self, bool visible)
     if (visible && self->m_layout)
         XLayout_activate(self->m_layout);
 #endif /* XLAYOUT_ON */
+    /* 【批5 fix-verify#8 2026-11-06】挂起 Resize 兑现（对标 Qt
+     * QWidgetPrivate::show_helper，qwidget.cpp:7968-7971）：
+     * 隐藏期 setContentsMargins 置 WA_PendingResizeEvent 等价位，
+     * show 时以 crect.size() 补派 Resize 后清位——此前不可见控件
+     * 的内容矩形变化永久丢失 Resize 通知。 */
+    if (visible &&
+        XWidget_testAttribute(self, XWidgetAttribute_PendingResizeEvent)) {
+        XSize size;
+        XResizeEvent event;
+        XSize_init(&size, self->m_contentsRect.width,
+                   self->m_contentsRect.height);
+        XResizeEvent_init(&event, XEVENT_TYPE_RESIZE, &size, &size);
+        XWidget_sendEvent(self, (XEvent*)&event);
+        XClassDeinit(&event);
+        XWidget_setAttribute(self, XWidgetAttribute_PendingResizeEvent,
+                             false);
+    }
+}
+
+/** @brief SetVisible 虚槽默认实现（对标 QWidget::setVisible 的基类实现：
+ *         走全部既有显隐逻辑）。 */
+static void xwidget_setVisible_default(XWidget* self, bool visible)
+{
+    XWidget_setVisibleImpl(self, visible);
+}
+
+/** @brief SetVisible 虚槽分派入口（对标 public virtual
+ *         QWidget::setVisible 的调用形态）。
+ * @details 经对象虚表分派到 EXWidget_SetVisible 槽位；未绑定虚表或槽位
+ *          为空时回落基类默认实现。show()/hide()/setHidden() 均经本
+ *          入口分派，子类覆写即可接管全部显隐路径。 */
+void XWidget_setVisible_base(XWidget* self, bool visible)
+{
+    if (!self) return;
+    if (((const XClass*)self)->m_vtable) {
+        void (*slot)(XWidget*, bool) =
+            XClassGetVirtualFunc((XWidget*)self, EXWidget_SetVisible,
+                                 void(*)(XWidget*, bool));
+        if (slot) { slot(self, visible); return; }
+    }
+    xwidget_setVisible_default(self, visible);
+}
+
+void XWidget_setVisible(XWidget* self, bool visible)
+{
+    XWidget_setVisible_base(self, visible);
 }
 
 void XWidget_show(XWidget* self)
 {
-    XWidget_setVisible(self, true);
+#if XWINDOW_ON && XPLATFORMINTEGRATION_ON
+    /* 对标 Qt 6.8（qwidget.cpp:7921-7927）：show() 按**平台默认窗口态**
+     * 分流（首次显示时套用平台推荐的初始态，如最大化/全屏）。X 侧已有
+     * 对位实现 XPlatformIntegration_defaultWindowState（XPlatformIntegration.
+     * h:507）但此前零调用点——接入后行为不变、纯结构对齐。
+     * 【批4 fix-verify#17 2026-11-06】默认 FullScreen/Maximized 时改
+     * 路由 XWidget_showFullScreen/showMaximized（Qt 分流原文即如此）：
+     * 此前只 setWindowState 直落 + setVisible_base，丢失
+     * showFullScreen 尾步的 activateWindow（8625-8633 实读）与两个
+     * show 入口按位保留其余状态位的语义，窗口内部不一致。 */
+    if (self && self->m_isWindow && !self->m_visible) {
+        XGuiApplication* app = XGuiApplication_instance();
+        if (app && app->m_platformIntegration) {
+            XWindowState def = XPlatformIntegration_defaultWindowState(
+                app->m_platformIntegration, (XWindowFlags)self->m_windowFlags);
+            if (def == XWindowState_FullScreen) {
+                XWidget_showFullScreen(self);
+                return;
+            }
+            if (def == XWindowState_Maximized) {
+                XWidget_showMaximized(self);
+                return;
+            }
+            if (def != XWindowState_NoState)
+                XWidget_setWindowState(self, (XWindowStates)def);
+        }
+    }
+#endif /* XWINDOW_ON && XPLATFORMINTEGRATION_ON */
+    XWidget_setVisible_base(self, true);
 }
 
 void XWidget_hide(XWidget* self)
 {
-    XWidget_setVisible(self, false);
+    XWidget_setVisible_base(self, false);
 }
 
 void XWidget_setHidden(XWidget* self, bool hidden)
 {
-    XWidget_setVisible(self, !hidden);
+    XWidget_setVisible_base(self, !hidden);
+}
+
+/* ==================== 控件级 polish 链（对标 QWidget::ensurePolished） ==================== */
+
+void XWidget_ensurePolished(XWidget* self)
+{
+    const XVector* children;
+    size_t i;
+    size_t n;
+    if (!self) return;
+    /* 对标 Qt 6.8（qwidget.cpp:10209-10235）：已 polish 则直接返回
+     * （幂等），随后 ① 向本控件发 Polish 事件；② 递归 polish 子控件
+     * （自本控件向下）；③ 向父控件发 ChildPolished 事件。 */
+    if (self->m_polished) return;
+    self->m_polished = 1;
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_POLISH);
+        XWidget_sendEvent(self, &event);
+    }
+    children = XObject_children((XObject*)self);
+    n = children ? XVector_size_base((const XContainer*)children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
+        if (!child || !child->m_is_widget) continue;
+        XWidget_ensurePolished((XWidget*)child);
+    }
+    {
+        XWidget* parent = XWidget_parentWidget(self);
+        if (parent) {
+            XChildEvent childEvent;
+            XEvent_init((XEvent*)&childEvent, XEVENT_TYPE_CHILD_POLISHED);
+            childEvent.child = (XObject*)self;
+            XWidget_sendEvent(parent, (XEvent*)&childEvent);
+        }
+    }
 }
 
 void XWidget_showNormal(XWidget* self)
 {
     if (!self) return;
-    XWidget_setWindowState(self, XWindowState_NoState);
+    /* 对标 Qt 6.8（qwidget.cpp:3086-3088）：showNormal 用**位运算**保留其余
+     * 状态位（此前本实现覆盖式写 NoState，丢掉 WindowActive 等位）。 */
+    XWidget_setWindowState(
+        self, (XWindowStates)(self->m_windowState &
+                               ~(XWindowStates)(XWindowState_Minimized |
+                                                XWindowState_Maximized |
+                                                XWindowState_FullScreen)));
     XWidget_setVisible(self, true);
 }
 
 void XWidget_showMinimized(XWidget* self)
 {
+    bool isMin;
     if (!self) return;
-    XWidget_setWindowState(self, XWindowState_Minimized);
+    /* 对标 Qt 6.8（qwidget.cpp:2869-2880）：已最小化且可见 → 早退
+     * （不重复跑整条流程）；否则按位运算保留其余状态位。 */
+    isMin = XWidget_isMinimized(self);
+    if (isMin && XWidget_isVisible(self)) return;
+    if (!isMin) {
+        XWidget_setWindowState(
+            self, (XWindowStates)((self->m_windowState &
+                                    ~(XWindowStates)XWindowState_Active) |
+                                   (XWindowStates)XWindowState_Minimized));
+    }
     XWidget_setVisible(self, true);
 }
 
 void XWidget_showMaximized(XWidget* self)
 {
     if (!self) return;
-    XWidget_setWindowState(self, XWindowState_Maximized);
+    /* 对标 Qt 6.8（qwidget.cpp:3080-3084）：按位运算保留其余状态位。 */
+    XWidget_setWindowState(
+        self, (XWindowStates)((self->m_windowState &
+                                ~(XWindowStates)(XWindowState_Minimized |
+                                                 XWindowState_FullScreen)) |
+                               (XWindowStates)XWindowState_Maximized));
     XWidget_setVisible(self, true);
 }
 
 void XWidget_showFullScreen(XWidget* self)
 {
     if (!self) return;
-    XWidget_setWindowState(self, XWindowState_FullScreen);
+    /* 对标 Qt 6.8（qwidget.cpp:3086-3088 + 3052）：按位运算保留其余状态位；
+     * 末尾补 activateWindow（Qt 语义：全屏后请求激活）。 */
+    XWidget_setWindowState(
+        self, (XWindowStates)((self->m_windowState &
+                                ~(XWindowStates)(XWindowState_Minimized |
+                                                 XWindowState_Maximized)) |
+                               (XWindowStates)XWindowState_FullScreen));
     XWidget_setVisible(self, true);
+    XWidget_activateWindow(self);
 }
 
 bool XWidget_isMinimized(const XWidget* self)
@@ -7807,6 +8782,17 @@ bool XWidget_isActiveWindow(const XWidget* self)
 
 bool XWidget_isModal(const XWidget* self)
 {
+    /* 对标 Qt 6.8（qwidget.h:818-819）：isModal() 读**自身**的
+     * window_modality（QWidgetPrivate::window_modality），非窗口控件
+     * 因默认 NonModal 恒返回 false。此前本实现读顶层窗口的模态 →
+     * 模态对话框内的普通子控件在 X 返回 true、Qt 返回 false，会误导
+     * 应用逻辑。顶层语义另见 XWidget_isWindowModal。 */
+    if (!self) return false;
+    return self->m_windowModality != XWindowModality_NonModal;
+}
+
+bool XWidget_isWindowModal(const XWidget* self)
+{
     XWidget* top;
     if (!self) return false;
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
@@ -7829,11 +8815,23 @@ void XWidget_setWindowState(XWidget* self, XWindowStates state)
     special = (XWindowStates)(XWindowState_Minimized |
                               XWindowState_Maximized |
                               XWindowState_FullScreen);
+    /* 对标 Qt 6.8（qwidget.cpp:2963-2966）：新状态含 Minimized 时清
+     * WindowActive 位（最小化的窗口不可能同时是活动窗口）；同值早退
+     * （oldstate == newstate 时 Qt 直接返回，不重跑整条流程）。 */
+    if (state & (XWindowStates)XWindowState_Minimized)
+        state = (XWindowStates)(state & ~(XWindowStates)XWindowState_Active);
+    if (old == state) return;
     if ((old & special) == 0 && (state & special) != 0) {
         /* 首次进入最小化/最大化/全屏：保存正常几何（对标 normalGeometry）。 */
         self->m_normalGeometry = self->m_windowRect;
     }
     self->m_windowState = state;
+    /* 【批4 fix-verify#16 2026-11-06】防回环闸随窗口态设置期生效：
+     * XWindow_setWindowStates 平台落地及后续通知/事件派发期间若同步
+     * 回写几何（setGeometry），不得反向清掉刚设置的 Maximized/
+     * FullScreen 位（Qt data.in_set_window_state 同款，
+     * qwidget.cpp:7283）。 */
+    g_xwidgetInSetWindowState = true;
     if (self->m_isWindow && self->m_windowHandle)
         XWindow_setWindowStates((XWindow*)self->m_windowHandle, state);
 #if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
@@ -7871,6 +8869,7 @@ void XWidget_setWindowState(XWidget* self, XWindowStates state)
         XClassDeinit(&ev);
     }
 #endif
+    g_xwidgetInSetWindowState = false;
 }
 
 void XWidget_overrideWindowState(XWidget* self, XWindowStates state)
@@ -7891,6 +8890,14 @@ void XWidget_setWindowModality(XWidget* self, XWindowModality modality)
 {
     if (!self) return;
     self->m_windowModality = modality;
+    /* 对标 Qt 6.8（qwidget.cpp:2825-2826）：setWindowModality 同步置位
+     * WA_ShowModal 与 WA_SetWindowModality 两个属性位。此前本实现只存
+     * m_windowModality → 两个属性位全库无置位点，XWidget_isWindowModal
+     * 的 ShowModal 兜底分支是永假死代码。 */
+    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_ShowModal,
+                    modality != XWindowModality_NonModal);
+    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_SetWindowModality,
+                    true);
     if (self->m_isWindow && self->m_windowHandle)
         XWindow_setModality((XWindow*)self->m_windowHandle, modality);
 }
@@ -7901,9 +8908,13 @@ void XWidget_activateWindow(XWidget* self)
     if (!self) return;
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
     if (!top) return;
+    /* 对标 Qt 6.8（qwidget.cpp:12965-12971）：activateWindow() 只
+     * requestActivate，**从不**改 windowState。此前本实现把 Active 位
+     * 写进 m_windowState → 污染窗口状态（影响 restoreGeometry 与状态
+     * 判定），且让无句柄窗口的 isActiveWindow 在 activateWindow 之后
+     * 恒真。平台激活态另有真实来源 XWindow_isActive。 */
     if (top->m_windowHandle)
         XWindow_requestActivate((XWindow*)top->m_windowHandle);
-    top->m_windowState |= (XWindowStates)XWindowState_Active;
 }
 
 bool XWidget_close(XWidget* self)
@@ -7927,7 +8938,155 @@ bool XWidget_close(XWidget* self)
 
 const XString* XWidget_windowTitle(const XWidget* self)
 {
-    return self ? self->m_windowTitle : NULL;
+    XWidget* w = (XWidget*)self;
+    if (!self) return NULL;
+    /* 对标 Qt 6.8（qwidget.cpp:5997-6003）：未显式设置标题但设置了
+     * filePath 时，windowTitle() 派生为「文件名 + "[*]"」
+     * （`QFileInfo(filePath).fileName() + "[*]"`）——此前本实现派生
+     * 纯文件名（8675-8687 实读），派生串进不了 marker 链，
+     * setWindowModified 联动以 m_windowTitle 非空为门，
+     * 文件派生标题的「已修改」星号永不出现（批5 fix-verify#7）。
+     * 派生串缓存进控件自有字段后按借用指针返回（禁止返回临时
+     * XString*）。 */
+    if (!w->m_windowTitle &&
+        w->m_windowFilePath &&
+        XString_size(w->m_windowFilePath) > 0) {
+        const char* utf8 = XString_toUtf8(w->m_windowFilePath);
+        const char* base = utf8 ? utf8 : "";
+        const char* slash = base;
+        const char* p;
+        size_t nameLen;
+        size_t total;
+        char* derived;
+        for (p = base; *p; ++p) {
+            if (*p == '/' || *p == '\\') slash = p + 1;
+        }
+        nameLen = XStrlen(slash);
+        total = nameLen + 3; /* + "[*]" */
+        derived = (char*)XMemory_malloc(total + 1, XCLASS_DEFAULT_MEMORY_TYPE);
+        if (!derived) return w->m_windowTitleDerived;
+        XMemcpy(derived, slash, nameLen);
+        XMemcpy(derived + nameLen, "[*]", 3);
+        derived[total] = '\0';
+        XWidget_freeString(&w->m_windowTitleDerived);
+        w->m_windowTitleDerived = XString_create_utf8(derived);
+        XMemory_free(derived, XCLASS_DEFAULT_MEMORY_TYPE);
+        return w->m_windowTitleDerived;
+    }
+    return w->m_windowTitle;
+}
+
+/** @brief 标题中的 "[*]" 占位符处理（对标 Qt 6.8
+ *         qt_setWindowTitle_helperHelper，qwidget.cpp:6017-6052）。
+ * @details 【批5 fix-verify#9 + new-code#13 2026-11-06】移植 Qt
+ *          段计数算法（qwidget.cpp:6029-6050）：逐段统计连续 "[*]"
+ *          出现次数，奇数段只替换**段末**一个占位符（已修改→"*"、
+ *          未修改→删除），偶数段保留；最后把 "[*][*]" 还原为
+ *          "[*]"（转义语义）。此前 strstr 单次查找单次替换——
+ *          "a[*]b[*]c" 第二处与 "[*][*]" 转义全不处理；libc
+ *          strstr/strlen/memcpy 违反风格文档 2026-11-03
+ *          「string.h 移出白名单」裁定，一并换 XStrstr/XStrlen/
+ *          XMemcpy（XStringUtils.h:224/199、XMemory.h:496）。
+ * @param      self 目标控件。
+ * @param      title 原始标题（借用）。
+ * @return     替换后的标题（新分配的 XString*，调用方负责 XClassDelete）；
+ *             输入无 "[*]" 时返回 NULL（调用方沿用原标题）。
+ */
+static XString* xwidget_applyModifiedMarker(XWidget* self, const XString* title)
+{
+    const char* utf8;
+    const char* marker = "[*]";
+    const size_t markerLen = 3;
+    char* buf;
+    size_t len;
+    size_t cap;
+    size_t index;
+    XString* out;
+    if (!self || !title) return NULL;
+    utf8 = XString_toUtf8(title);
+    if (!utf8 || !*utf8) return NULL;
+    len = XStrlen(utf8);
+    /* 编辑只缩不增（"*" 或空串替代 "[*]"，成对还原亦缩），容量取
+     * 原长 + 1 足够；用 XMemory_malloc/XMemory_free 同族分配。 */
+    cap = len + 1;
+    buf = (char*)XMemory_malloc(cap, XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!buf) return NULL;
+    XMemcpy(buf, utf8, len + 1);
+    index = 0;
+    while (index < len) {
+        const char* found = XStrstr(buf + index, marker);
+        size_t segStart;
+        size_t count = 0;
+        size_t pos;
+        if (!found) break;
+        segStart = (size_t)(found - buf);
+        pos = segStart;
+        /* 统计本段连续 "[*]" 个数（Qt 6029-6033 内层 while）。 */
+        while (pos + markerLen <= len &&
+               XStrstr(buf + pos, marker) == buf + pos) {
+            ++count;
+            pos += markerLen;
+        }
+        if (count % 2) {
+            /* 奇数段：替换段末一个占位符（Qt 6035-6044）。 */
+            size_t last = pos - markerLen;
+            size_t tailLen = len - (last + markerLen);
+            if (XWidget_isWindowModified(self)) {
+                buf[last] = '*';
+                if (tailLen)
+                    XMemcpy(buf + last + 1, buf + last + markerLen,
+                            tailLen);
+                len = last + 1 + tailLen;
+            } else {
+                if (tailLen)
+                    XMemcpy(buf + last, buf + last + markerLen, tailLen);
+                len = last + tailLen;
+            }
+            buf[len] = '\0';
+            index = last;
+        } else {
+            index = pos;
+        }
+    }
+    /* 成对还原：cap.replace("[*][*]", "[*]")（Qt 6050）。 */
+    index = 0;
+    while (index < len) {
+        char* found = (char*)XStrstr(buf + index, "[*][*]");
+        size_t at;
+        size_t tailLen;
+        if (!found) break;
+        at = (size_t)(found - buf);
+        tailLen = len - (at + markerLen * 2);
+        XMemcpy(buf + at, marker, markerLen);
+        if (tailLen)
+            XMemcpy(buf + at + markerLen, buf + at + markerLen * 2,
+                    tailLen);
+        len = at + markerLen + tailLen;
+        buf[len] = '\0';
+        index = at + markerLen;
+    }
+    out = XString_create_utf8(buf);
+    XMemory_free(buf, XCLASS_DEFAULT_MEMORY_TYPE);
+    return out;
+}
+
+/** @brief 标题落平台统一入口：展开 "[*]" 占位符后写桥接窗口标题。
+ * @details 【批5 fix-verify#7 2026-11-06】setWindowTitle /
+ *          setWindowFilePath / setWindowModified 三条联动路径统一走本
+ *          入口：此前 filePath 派生路径直落 XWindow_setTitle(title)
+ *          绕过 marker，且 setWindowModified 以 m_windowTitle 非空
+ *          为门——派生标题（windowTitle() 的返回值）进不了 marker 链。
+ *          对标 Qt qwidget.cpp:6017-6052 helper + 6037-6044 落平台。 */
+static void xwidget_applyTitleToWindow(XWidget* self)
+{
+    const XString* title;
+    XString* marked;
+    if (!self || !self->m_isWindow || !self->m_windowHandle) return;
+    title = XWidget_windowTitle(self);
+    marked = xwidget_applyModifiedMarker(self, title);
+    XWindow_setTitle((XWindow*)self->m_windowHandle,
+                     marked ? marked : title);
+    XWidget_freeString(&marked);
 }
 
 void XWidget_setWindowTitle(XWidget* self, const XString* title)
@@ -7942,11 +9101,29 @@ void XWidget_setWindowTitle(XWidget* self, const XString* title)
         changed = !XString_equals(old, copy, XChar_CaseSensitive);
     else
         changed = (old != copy); /* 一个为 NULL、一个非 NULL 视为变化。 */
+    /* 对标 Qt 6.8（qwidget.cpp:6132-6133）：setWindowTitle 的同值早退
+     * 条件是 `windowTitle() == title && !title.isEmpty() && !title.isNull()`
+     * ——**仅当新标题非空且非 null 时**才早退；空串/null 标题每次都继续
+     * （派发信号 + WindowTitleChange 事件）。
+     * 此前本实现把早退完全去掉（同值非空标题也重复发射），与 Qt 不符。 */
+    if (!changed && copy && !XString_isEmpty_base((const XContainer*)copy)) {
+        /* 同值非空标题 → 与 Qt 一致地早退（不重复发射）。 */
+        XWidget_freeString(&copy);
+        return;
+    }
     self->m_windowTitle = copy;
     XWidget_freeString(&old); /* 替换旧值后释放原字符串，避免 setter 重复赋值泄漏。 */
-    if (!changed) return;
-    if (self->m_isWindow && self->m_windowHandle)
-        XWindow_setTitle((XWindow*)self->m_windowHandle, self->m_windowTitle);
+    /* 对标 Qt 6.8（qwidget.cpp:6134-6149）：继续路径每次派发
+     * windowTitleChanged 信号 + 向控件派发 QEvent::WindowTitleChange。
+     * X 侧对应 XEVENT_TYPE_WINDOW_TITLE_CHANGE（XEventType.h:38 已定义
+     * 却全库零派发点）。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_WINDOW_TITLE_CHANGE);
+        XWidget_sendEvent(self, &event);
+    }
+    /* 标题 "[*]" 占位符按当前修改状态落地（对标 Qt qwidget.cpp:6037-6044）。 */
+    xwidget_applyTitleToWindow(self);
 #if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
     /* 标题变化即刷自绘标题栏条带（桌面由 WM 显示，装饰未激活时零开销）。 */
     XWindowDecoration_notifyAppearanceChanged(self);
@@ -7976,6 +9153,14 @@ void XWidget_setWindowIconText(XWidget* self, const XString* text)
         changed = (old != copy); /* 一个为 NULL、一个非 NULL 视为变化。 */
     self->m_windowIconText = copy;
     XWidget_freeString(&old); /* 替换旧值后释放原字符串，避免 setter 重复赋值泄漏。 */
+    /* 对标 Qt 6.8（qwidget.cpp:6115）：向控件派发 QEvent::IconTextChange
+     * （XEVENT_TYPE_ICON_TEXT_CHANGE，XEventType.h:96 已定义却全库零
+     * 派发点）——应用层经 changeEvent 感知图标文本变更。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_ICON_TEXT_CHANGE);
+        XWidget_sendEvent(self, &event);
+    }
     if (changed)
         XWidget_windowIconTextChanged_signal(self, self->m_windowIconText);
 }
@@ -8037,9 +9222,36 @@ void XWidget_setWindowIcon(XWidget* self, const XIcon* icon)
     if (newKey != oldKey)
         XWindowDecoration_notifyAppearanceChanged(self);
 #endif
-    /* 图标内容键变化才发射 windowIconChanged（Qt 仅在图标变化时通知）。 */
-    if (newKey != oldKey)
-        XWidget_windowIconChanged_signal(self, &self->m_icon);
+    /* 对标 Qt 6.8（qwidget.cpp:6228）：setWindowIcon **无条件** emit
+     * windowIconChanged（Qt 不做同值早退）。
+     * 【批5 fix-verify#11 2026-11-06】派发口径按 Qt
+     * QWidgetPrivate::setWindowIcon_helper（qwidget.cpp:6191-6200）：
+     * ① 仅**无平台窗口句柄**时向自身派发 WindowIconChange——顶层
+     * 已建柄时由 setWindowIcon_sys→桥接窗口→顶层事件传播链送达，
+     * 免自身重复；② 非窗口子控件逐个派发（此前无条件只发自身、
+     * 无子控件循环）。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_WINDOW_ICON_CHANGE);
+        if (!(self->m_isWindow && self->m_windowHandle))
+            XWidget_sendEvent(self, &event);
+        {
+            const XVector* children = XObject_children((XObject*)self);
+            size_t i;
+            size_t n = children ? XVector_size_base((const XContainer*)children)
+                                : 0;
+            for (i = 0; i < n; ++i) {
+                XObject* child =
+                    *(XObject**)XVector_at_base(children, (int64_t)i);
+                XWidget* cw;
+                if (!child || !child->m_is_widget) continue;
+                cw = (XWidget*)child;
+                if (cw->m_isWindow) continue;
+                XWidget_sendEvent(cw, &event);
+            }
+        }
+    }
+    XWidget_windowIconChanged_signal(self, &self->m_icon);
 }
 
 const XString* XWidget_windowFilePath(const XWidget* self)
@@ -8052,11 +9264,26 @@ void XWidget_setWindowFilePath(XWidget* self, const XString* path)
     XString* copy;
     if (!self) return;
     copy = XWidget_copyString(path);
+    /* 对标 Qt 6.8（qwidget.cpp:6291-6315）：setWindowFilePath 同值早退
+     * （值未变即返回），且 caption 为空时联动重跑标题回退（未设标题时
+     * 标题取文件名，见 XWidget_windowTitle）。 */
+    if (self->m_windowFilePath && copy &&
+        XString_equals(self->m_windowFilePath, copy, XChar_CaseSensitive)) {
+        XWidget_freeString(&copy);
+        return;
+    }
     XWidget_freeString(&self->m_windowFilePath);
     self->m_windowFilePath = copy;
     if (self->m_isWindow && self->m_windowHandle)
         XWindow_setFilePath((XWindow*)self->m_windowHandle,
                             self->m_windowFilePath);
+    /* caption 为空 → 联动重跑标题（Qt：未显式设标题时 windowTitle() 派生
+     * 自 filePath，见 XWidget_windowTitle）。【批5 fix-verify#7】统一经
+     * xwidget_applyTitleToWindow 落地：派生标题含 "[*]"，须走 marker
+     * 展开（此前直落 XWindow_setTitle(title) 绕过整条 marker 链）。 */
+    if (!self->m_windowTitle ||
+        XString_size(self->m_windowTitle) == 0)
+        xwidget_applyTitleToWindow(self);
 }
 
 double XWidget_windowOpacity(const XWidget* self)
@@ -8087,6 +9314,19 @@ void XWidget_setWindowModified(XWidget* self, bool modified)
 {
     if (!self) return;
     XWidget_setAttribute(self, XWidgetAttribute_WindowModified, modified);
+    /* 对标 Qt 6.8（qwidget.cpp:11678）：向控件派发 QEvent::ModifiedChange
+     * （XEVENT_TYPE_MODIFIED_CHANGE，XEventType.h:97 已定义却全库零
+     * 派发点）——应用层经 changeEvent 感知「已修改」标志翻转。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_MODIFIED_CHANGE);
+        XWidget_sendEvent(self, &event);
+    }
+    /* 修改标志翻转 → 重跑标题（"[*]" 占位符随之在 "*"/空之间切换，
+     * 对标 Qt qwidget.cpp:6037-6044 + 11678 的联动）。
+     * 【批5 fix-verify#7】去掉 m_windowTitle 非空门：filePath 派生
+     * 标题同样含 "[*]"，统一经 xwidget_applyTitleToWindow 落地。 */
+    xwidget_applyTitleToWindow(self);
 }
 
 /* ==================== 控件级自定义标题条（XGUI_CUSTOM_TITLEBAR_ON） ==================== */
@@ -8171,8 +9411,13 @@ void XWidget_setEnabled(XWidget* self, bool enabled)
     self->m_enabled = enabled ? 1 : 0;
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Disabled,
                     !enabled);
-    if (!enabled && g_focusWidget == self)
-        XWidget_clearFocusBase(self, XFocusReason_Other);
+    if (!enabled && g_focusWidget == self) {
+        /* 对标 Qt 6.8（qwidget.cpp:3400-3404）：禁用持焦控件时先尝试把
+         * 焦点顺延到下一个可聚焦子控件，失败才 clearFocus。此前 X 无条件
+         * 清焦 → 焦点直接消失、键盘输入中断。 */
+        if (!XWidget_focusNextChild(self))
+            XWidget_clearFocusBase(self, XFocusReason_Other);
+    }
     if (oldEnabled != enabled) {
         XEvent_init(&event, XEVENT_TYPE_ENABLED_CHANGE);
         XWidget_event_base(self, &event);
@@ -8196,11 +9441,19 @@ bool XWidget_isEnabledTo(const XWidget* self, const XWidget* ancestor)
     w = self;
     /* 对齐 QWidget::isEnabledTo：只检查显式禁用标志，并在当前窗口
      * 边界停止；传播得到的 WA_Disabled 不应被重复解释。 */
+    /* 【二轮对齐 2026-11-06】经 XWidget_parentWidget 取父（与
+     * XWidget_topLevel 同口径）：绕过控件 API 挂非控件父时，裸
+     * XObject_parent 上溯会按 XWidget* 解引用非控件结构体（越界读
+     * m_isWindow/m_attributes）。Qt 父链遍历一律经 parentWidget()
+     * （qwidget.cpp:3112-3122 isEnabledTo 同口径）。 */
     while (!XWidget_attrTest(&w->m_attributes,
                              XWidgetAttribute_ForceDisabled) &&
-           !w->m_isWindow && XObject_parent((XObject*)w) &&
-           XObject_parent((XObject*)w) != (const XObject*)ancestor)
-        w = (const XWidget*)XObject_parent((XObject*)w);
+           !w->m_isWindow) {
+        XWidget* pw = XWidget_parentWidget(w);
+        if (!pw || pw == ancestor)
+            break;
+        w = pw;
+    }
     return !XWidget_attrTest(&w->m_attributes,
                              XWidgetAttribute_ForceDisabled);
 }
@@ -8214,6 +9467,20 @@ void XWidget_setFocusPolicy(XWidget* self, XWidgetFocusPolicy policy)
 {
     if (!self) return;
     self->m_focusPolicy = policy;
+    /* 对标 Qt 6.8（qwidget.cpp:7864-7865）：setFocusPolicy 同步给
+     * focusProxy。此前本实现只赋值自身 → 复合控件代理侧的策略位与 Qt
+     * 不同（复合控件焦点判定按代理策略位走，口径分裂）。 */
+    if (self->m_focusProxy && self->m_focusProxy != self) {
+        XWidget* proxy = self->m_focusProxy;
+        uint32_t guard = 0;
+        /* 沿代理链转发（限深防环）。 */
+        while (proxy && guard < 64u) {
+            proxy->m_focusPolicy = policy;
+            if (proxy->m_focusProxy == proxy) break;
+            proxy = proxy->m_focusProxy;
+            ++guard;
+        }
+    }
 }
 
 bool XWidget_hasFocus(const XWidget* self)
@@ -8245,10 +9512,78 @@ XWidget* XWidget_appFocusWidget(void)
 void XWidget_setFocus(XWidget* self)
 {
     /* QWidget::setFocus() 内联实现使用 Qt::OtherFocusReason。 */
-    XWidget_setFocusReason(self, XFocusReason_Other);
+    XWidget_setFocus_2(self, XFocusReason_Other);
 }
 
-void XWidget_setFocusReason(XWidget* self, XFocusReason reason)
+/* ---- 待激活焦点靶登记表（批2 fix-verify#0 2026-11-06） ----
+ * Qt QWidget::setFocus 在窗口未激活时**不**移全局焦点、**不**激活窗口，
+ * 仅 else 分支 `f->d_func()->updateFocusChild()` 把焦点诉求记在窗口链上
+ * （qwidget.cpp:6668-6670），窗口激活后由激活路径兑现。X 侧以
+ * (顶层控件 → 待激活焦点靶) 登记表承载该诉求：闸内登记，窗口激活上报
+ * 路径（XWindow_reportWindowStateChanged）兑现。 */
+typedef struct XWidgetPendingFocus
+{
+    XWidget* top;                   /**< 待激活的顶层控件（键）。 */
+    XWidget* target;                /**< 焦点靶（最深层焦点代理）。 */
+    XFocusReason reason;            /**< 焦点原因（兑现时回放）。 */
+    struct XWidgetPendingFocus* next;
+} XWidgetPendingFocus;
+static XWidgetPendingFocus* g_xwidgetPendingFocus = NULL;
+
+/** @brief 摘除 widget 名下全部待激活焦点靶（top 或 target 命中即摘）。 */
+static void xwidget_pendingFocusRemove(XWidget* widget)
+{
+    XWidgetPendingFocus** p = &g_xwidgetPendingFocus;
+    if (!widget) return;
+    while (*p) {
+        XWidgetPendingFocus* node = *p;
+        if (node->top == widget || node->target == widget) {
+            *p = node->next;
+            XFree_System(node);
+            continue;
+        }
+        p = &node->next;
+    }
+}
+
+/** @brief 登记待激活焦点靶（每窗口单靶，Qt focus_child 同为单槽）。 */
+static void xwidget_pendingFocusRegister(XWidget* top, XWidget* target,
+                                         XFocusReason reason)
+{
+    XWidgetPendingFocus* node;
+    if (!top || !target) return;
+    xwidget_pendingFocusRemove(top);
+    node = (XWidgetPendingFocus*)XMalloc_System(sizeof(XWidgetPendingFocus));
+    if (!node) return;
+    node->top = top;
+    node->target = target;
+    node->reason = reason;
+    node->next = g_xwidgetPendingFocus;
+    g_xwidgetPendingFocus = node;
+}
+
+/** @brief 窗口激活上报路径兑现其待激活焦点靶（摘账后回放 setFocus）。
+ *  @details 靶资格（enabled/未禁用）由 XWidget_setFocus_2 入口守卫复验，
+ *           不在此重复；无登记或平台窗口不匹配为 no-op。 */
+void XWidget_pendingFocusRedeem(XWindow* window)
+{
+    XWidgetPendingFocus** p = &g_xwidgetPendingFocus;
+    if (!window) return;
+    while (*p) {
+        XWidgetPendingFocus* node = *p;
+        if ((XWindow*)node->top->m_windowHandle == window) {
+            XWidget* target = node->target;
+            XFocusReason reason = node->reason;
+            *p = node->next;
+            XFree_System(node);
+            XWidget_setFocus_2(target, reason);
+            return;
+        }
+        p = &node->next;
+    }
+}
+
+void XWidget_setFocus_2(XWidget* self, XFocusReason reason)
 {
 #if XWINDOWEVENT_ON
     XFocusEvent event;
@@ -8269,9 +9604,33 @@ void XWidget_setFocusReason(XWidget* self, XFocusReason reason)
         return;
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
     if (!top) return;
-    if (top->m_windowHandle && !XWindow_isActive((XWindow*)top->m_windowHandle))
-        XWindow_requestActivate((XWindow*)top->m_windowHandle);
+    /* 【批2 fix-verify#0 2026-11-06】删除 requestActivate：Qt setFocus
+     * **从不**激活窗口（qwidget.cpp:6576-6673 主流程无 requestActivate，
+     * 未激活窗口走 else 分支只 updateFocusChild 记焦点诉求，6668-6670；
+     * 激活是 activateWindow 的职责）。此前本处先 requestActivate 抢激
+     * 活——与下方闸自述的「不抢」语义直接矛盾。 */
     if (g_focusWidget == focusTarget) return;
+    /* 对标 Qt 6.8（qwidget.cpp:6572/6625-6627）：窗口未激活时 Qt **不**
+     * 激活窗口、只记下待激活焦点（窗口激活时才真正移焦）——避免抢走用户
+     * 当前窗口的焦点。本实现此前主动 requestActivate 且无条件改写全局
+     * 焦点 → 抢焦点。此处仅当**本窗口有真实平台窗口且未激活**、且全局
+     * 焦点归属别的窗口时才不改写 g_focusWidget（保留原焦点）。无平台窗
+     * 口的无头场景（apitest/键盘回归）不设闸——全局焦点唯一，跨顶层切
+     * 换是唯一可观测语义。 */
+    if (g_focusWidget &&
+        XWidget_topLevel(g_focusWidget) != top &&
+        top->m_windowHandle &&
+        !XWindow_isActive((XWindow*)top->m_windowHandle)) {
+        /* 【批2 fix-verify#0 2026-11-06】本窗口未激活且焦点在别的窗口：
+         * 不抢焦点，也**不丢请求**——登记待激活焦点靶（对标 Qt
+         * focus_child：else 分支 updateFocusChild，
+         * qwidget.cpp:6668-6670），窗口激活上报路径兑现
+         * （XWindow_reportWindowStateChanged →
+         * XWidget_pendingFocusRedeem）。此前闸内直接 return 丢弃请求
+         * 本体，承诺的「平台激活回调接管」机制不存在——真语义错。 */
+        xwidget_pendingFocusRegister(top, focusTarget, reason);
+        return;
+    }
     if (g_focusWidget) {
         XWidget* oldFocus = g_focusWidget;
         XWidget_clearFocusBase(oldFocus, reason);
@@ -8333,13 +9692,22 @@ void XWidget_setFocusProxy(XWidget* self, XWidget* proxy)
     bool hadFocus;
     uint32_t guard;
     if (!self) return;
-    hadFocus = XWidget_hasFocus(self);
+    /* 对标 Qt 6.8（qwidget.cpp:6420）：搬迁判据是「焦点控件**就是本控件**」
+     * ——此前本实现用解析到最深代理的 hasFocus（qwidget.cpp 的
+     * focusWidget == widget 口径），判据错位：代理链末端持焦时
+     * setFocusProxy 会误判为"本控件持焦"并搬迁焦点。 */
+    hadFocus = (g_focusWidget == self);
     if (proxy) {
         /* 拒绝形成焦点代理环（对标 QWidget::setFocusProxy 的链检查）。 */
         guard = 0;
         for (cur = proxy; cur && guard < 64u; cur = cur->m_focusProxy, ++guard) {
-            if (cur == self)
+            if (cur == self) {
+                /* 对标 Qt 6.8（qwidget.cpp:6414-6416）：焦点代理成环时
+                 * qWarning 提示——X 侧此前静默 return，误用无法从日志发现。 */
+                XPrintf("[xgui] XWidget_setFocusProxy: 焦点代理成环，已拒绝"
+                        "（owner=%p, proxy=%p）\n", (void*)self, (void*)proxy);
                 return;
+            }
         }
     }
     XFocusProxy_unregisterOwner(self);
@@ -8355,6 +9723,9 @@ void XWidget_setTabOrder(XWidget* first, XWidget* second)
 {
     XWidget* firstTop;
     XWidget* secondTop;
+    XWidget* secondPrev;
+    XWidget* secondNext;
+    XWidget* firstNext;
     if (!first || !second || first == second) return;
     /* 对标 QWidget::setTabOrder：不接受 NoFocus 控件，且两控件必须同窗。 */
     if (first->m_focusPolicy == XWidgetFocusPolicy_NoFocus ||
@@ -8363,9 +9734,32 @@ void XWidget_setTabOrder(XWidget* first, XWidget* second)
     firstTop = XWidget_topLevel(first);
     secondTop = XWidget_topLevel(second);
     if (!firstTop || !secondTop || firstTop != secondTop) return;
-    /* C 适配只维护显式 next/prev 单跳链接；未设置的控件仍按文档序导航。 */
+    /* C 适配只维护显式 next/prev 单跳链接；未设置的控件仍按文档序导航。
+     * 【链卫生 2026-11-05】对标 Qt 6.8（qwidget.cpp:6996-6998）：setTabOrder
+     * 把 second 从其原位置**摘出**后插入到 first 之后（"effectively
+     * removes the second widget from its focus chain and inserts it after
+     * the first widget"）。本适配按等价口径操作单跳 next/prev 对：
+     *   ① 摘除 second：其旧邻居互接（second 的旧 prev/next 断开）；
+     *   ② 插入到 first 之后：first 的原后继改挂到 second 之后。
+     * 此前本实现只写 first->next 与 second->prev，旧链接的另一半不清理
+     * → 两次反向调用即成 2 环（Tab 永远在两者间打转、够不到其余控件）。 */
+    secondPrev = second->m_focusPrev;
+    secondNext = second->m_focusNext;
+    /* ① 摘除 second：旧邻居互接。 */
+    if (secondPrev && secondPrev->m_focusNext == second)
+        secondPrev->m_focusNext = secondNext;
+    if (secondNext && secondNext->m_focusPrev == second)
+        secondNext->m_focusPrev = secondPrev;
+    second->m_focusPrev = NULL;
+    second->m_focusNext = NULL;
+    /* ② 插入到 first 之后：first 的原后继改挂到 second 之后。 */
+    firstNext = first->m_focusNext;
     first->m_focusNext = second;
     second->m_focusPrev = first;
+    if (firstNext && firstNext != second) {
+        firstNext->m_focusPrev = second;
+        second->m_focusNext = firstNext;
+    }
 }
 
 /** @brief Tab 候选的显示性判据：已显式 show 且未被窗口内显式隐藏链遮蔽。
@@ -8574,7 +9968,14 @@ static bool XWidget_focusStep(XWidget* self, bool forward)
 {
     XWidget* target = XWidget_focusChainTarget(self, forward);
     if (target)
-        XWidget_setFocus(target);
+        /* 【批3 fix-verify#12 2026-11-06】Tab 遍历命中目标携带
+         * TabFocusReason/BacktabFocusReason（Qt
+         * QWidget::focusNextPrevChild，qwidget.cpp:6832-6841：
+         * `reason = next ? Qt::TabFocusReason : Qt::BacktabFocusReason`
+         * 经 setFocus(reason) 透传到 FocusEvent.reason）——此前固定
+         * XFocusReason_Other，FocusEvent.reason 可观测差异丢失。 */
+        XWidget_setFocus_2(target, forward ? XFocusReason_Tab
+                                           : XFocusReason_Backtab);
     return target != NULL;
 }
 
@@ -8587,8 +9988,7 @@ static bool XWidget_focusStep(XWidget* self, bool forward)
  *          f = toplevel->focusWidget() 不到时 f = toplevel），因此初始
  *          无任何子控件持有焦点时首个 Tab 也能落入文档序首个候选。
  *          此前 Tab 遍历以「接收键事件的控件自身 focusPolicy & TabFocus」
- *          为门槛（问题 #3：初始无焦点且顶层为 NoFocus，遍历永不启动）。
- *          文件内静态实现：公共头无此入口，XWidget.h 不在本批改动面。 */
+ *          为门槛（问题 #3：初始无焦点且顶层为 NoFocus，遍历永不启动）。 */
 static bool xwidget_focusNextPrevChild(XWidget* self, bool next)
 {
     XWidget* top;
@@ -8596,12 +9996,44 @@ static bool xwidget_focusNextPrevChild(XWidget* self, bool next)
     if (!self->m_isWindow) {
         top = XWidget_topLevel(self);
         if (top && top != self)
-            return xwidget_focusNextPrevChild(top, next);
+            /* 【批3 fix-verify#13 2026-11-06】上交段经虚表分派：
+             * Qt `p->focusNextPrevChild(next)` 是 virtual 调用
+             * （qwidget.cpp:6816-6821），顶层窗口子类覆写
+             * EXWidget_FocusNextPrevChild 可接管遍历顺序。此前直呼
+             * 静态 xwidget_focusNextPrevChild(top,...) → 顶层覆写在
+             * 子控件发起的 Tab/上交路径失效。 */
+            return XWidget_focusNextPrevChild_base(top, next);
     }
     /* 优先从当前焦点控件推进；g_focusWidget 不在本窗口时以顶层为起点。 */
     if (g_focusWidget && XWidget_topLevel(g_focusWidget) == self)
         return XWidget_focusStep(g_focusWidget, next);
     return XWidget_focusStep(self, next);
+}
+
+/** @brief FocusNextPrevChild 虚槽默认实现（对标 QWidget::focusNextPrevChild
+ *         的基类实现：把遍历决定权上交所在顶层窗口）。
+ * @details 子类覆写本槽即可接管焦点遍历顺序（Qt 侧 QLabel/QMenu/
+ *          QDateTimeEdit/QAbstractItemView 均覆写）。本实现沿用文件内
+ *          既有的窗口级遍历逻辑（xwidget_focusNextPrevChild）。 */
+static bool xwidget_focusNextPrevChild_default(XWidget* self, bool next)
+{
+    return xwidget_focusNextPrevChild(self, next);
+}
+
+/** @brief FocusNextPrevChild 虚槽分派入口（对标 protected
+ *         QWidget::focusNextPrevChild 的调用形态）。
+ * @details 经对象虚表分派到 EXWidget_FocusNextPrevChild 槽位；未绑定
+ *          虚表或槽位为空时回落基类默认实现。 */
+bool XWidget_focusNextPrevChild_base(XWidget* self, bool next)
+{
+    if (!self) return false;
+    if (((const XClass*)self)->m_vtable) {
+        bool (*slot)(XWidget*, bool) =
+            XClassGetVirtualFunc((XWidget*)self, EXWidget_FocusNextPrevChild,
+                                 bool(*)(XWidget*, bool));
+        if (slot) return slot(self, next);
+    }
+    return xwidget_focusNextPrevChild_default(self, next);
 }
 
 XWidget* XWidget_nextInFocusChain(const XWidget* self)
@@ -8616,12 +10048,18 @@ XWidget* XWidget_previousInFocusChain(const XWidget* self)
 
 bool XWidget_focusNextChild(XWidget* self)
 {
-    return XWidget_focusStep(self, true);
+    /* 对标 Qt：focusNextChild() 是 focusNextPrevChild(true) 的 inline
+     * 包装（qwidget.h:728）——遍历决定权上交所在顶层窗口后，以**窗口
+     * 当前焦点控件**为起点续链（qwidget.cpp:6816-6820 +
+     * qapplication.cpp:1975-1977），而非以调用者为起点。 */
+    return XWidget_focusNextPrevChild_base(self, true);
 }
 
 bool XWidget_focusPreviousChild(XWidget* self)
 {
-    return XWidget_focusStep(self, false);
+    /* 对标 Qt：focusPreviousChild() 是 focusNextPrevChild(false) 的
+     * inline 包装（qwidget.h:729），同上以窗口当前焦点控件为起点。 */
+    return XWidget_focusNextPrevChild_base(self, false);
 }
 
 /* ==================== 跟踪/拖放/菜单/方向（对标 QWidget） ==================== */
@@ -8644,6 +10082,14 @@ void XWidget_setMouseTracking(XWidget* self, bool enable)
     if (!self) return;
     self->m_mouseTracking = enable ? 1 : 0;
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_MouseTracking, enable);
+    /* 对标 Qt 6.8（qwidget.cpp:11455-11462）：置位后派发
+     * MouseTrackingChange（XEVENT_TYPE_MOUSE_TRACKING_CHANGE，
+     * XEventType.h:98 已定义却全库零派发点）。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_MOUSE_TRACKING_CHANGE);
+        XWidget_sendEvent(self, &event);
+    }
 }
 
 bool XWidget_hasTabletTracking(const XWidget* self)
@@ -8655,6 +10101,14 @@ void XWidget_setTabletTracking(XWidget* self, bool enable)
 {
     if (!self) return;
     self->m_tabletTracking = enable ? 1 : 0;
+    /* 对标 Qt 6.8（qwidget.cpp:11455-11462）：置位后派发
+     * TabletTrackingChange（XEVENT_TYPE_TABLET_TRACKING_CHANGE，
+     * XEventType.h:230 已定义却全库零派发点）。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_TABLET_TRACKING_CHANGE);
+        XWidget_sendEvent(self, &event);
+    }
 }
 
 bool XWidget_acceptDrops(const XWidget* self)
@@ -8670,6 +10124,14 @@ void XWidget_setAcceptDrops(XWidget* self, bool enable)
      * setAttribute(WA_AcceptDrops)）：统一走属性位入口，
      * 经 XWidget_setAttribute 同步 m_acceptDrops 便捷字段。 */
     XWidget_setAttribute(self, XWidgetAttribute_AcceptDrops, enable);
+    /* 对标 Qt 6.8（qwidget.cpp:11397-11413）：置位后派发
+     * AcceptDropsChange（XEVENT_TYPE_ACCEPT_DROPS_CHANGE，
+     * XEventType.h:145 已定义却全库零派发点）。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_ACCEPT_DROPS_CHANGE);
+        XWidget_sendEvent(self, &event);
+    }
 }
 
 void XWidget_setApplicationModalWidget(XWidget* widget)
@@ -8691,10 +10153,64 @@ void XWidget_grabMouse(XWidget* self)
     g_mouseGrabWidget = self;
 }
 
+void XWidget_grabMouse_2(XWidget* self, const XCursor* cursor)
+{
+    XWidget* top;
+    if (!self || !self->m_visible) return;
+    top = XWidget_topLevel(self);
+    if (!top) return;
+    g_mouseGrabWidget = self;
+    /* 对标 QWidget 的带光标 grabMouse 重载（qwidget.h:444）：抓取期间
+     * 套用指定光标（嵌入式拖拽期换光标的常用路径）。
+     * 【批2 new-code#5 2026-11-06】抓取前保存控件自有光标（含 SetCursor
+     * 属性位）——此前 XWidget_setCursor 直接覆写 m_cursor + SetCursor 位
+     * （摧毁抓取前值），releaseMouse 走 unsetCursor 回落父链，控件抓取
+     * 前自有光标不可恢复，头注释承诺语义做不到。Qt 以应用级 override
+     * 光标栈等价实现（qwidget.cpp:12752-12769：套用 setOverrideCursor、
+     * 释放 restoreOverrideCursor，控件光标不动）。同控件持抓中换光标
+     * 不重存（保存槽仍持抓取前值）。 */
+    if (cursor) {
+        if (g_mouseGrabCursor != self) {
+            g_mouseGrabHadCursor =
+                XWidget_attrTest(&self->m_attributes,
+                                 XWidgetAttribute_SetCursor);
+            if (g_mouseGrabSavedCursor) {
+                XClassDelete((XClass*)g_mouseGrabSavedCursor);
+                g_mouseGrabSavedCursor = NULL;
+            }
+            if (g_mouseGrabHadCursor && self->m_cursor) {
+                g_mouseGrabSavedCursor =
+                    XCursor_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+                if (g_mouseGrabSavedCursor)
+                    XClassCopy(g_mouseGrabSavedCursor, self->m_cursor);
+            }
+        }
+        XWidget_setCursor(self, cursor);
+        g_mouseGrabCursor = self;
+    }
+}
+
 void XWidget_releaseMouse(XWidget* self)
 {
-    if (self && g_mouseGrabWidget == self)
+    if (self && g_mouseGrabWidget == self) {
         g_mouseGrabWidget = NULL;
+        /* 抓取期光标复位：【批2 new-code#5 2026-11-06】按抓取前保存值
+         * 还原（含 SetCursor 属性位）——有自有光标经 setCursor 深拷回
+         * （事件/平台生效路径同新设）；无自有光标 unsetCursor 回落父链
+         * /默认箭头。此前一律 unsetCursor → 抓取前自有光标丢失。 */
+        if (g_mouseGrabCursor == self) {
+            g_mouseGrabCursor = NULL;
+            if (g_mouseGrabSavedCursor) {
+                XCursor* saved = g_mouseGrabSavedCursor;
+                g_mouseGrabSavedCursor = NULL;
+                XWidget_setCursor(self, saved);
+                XClassDelete((XClass*)saved);
+            } else {
+                XWidget_unsetCursor(self);
+            }
+            g_mouseGrabHadCursor = false;
+        }
+    }
 }
 
 XWidget* XWidget_mouseGrabber(void)
@@ -8787,6 +10303,18 @@ XLayout* XWidget_layout(const XWidget* self)
 #endif /* XLAYOUT_ON */
 }
 
+const XLayout* XWidget_layout_const(const XWidget* self)
+{
+#if XLAYOUT_ON
+    /* 只读借用别名（与 XWidget_layout 同一内部指针）：按《获取函数的
+     * 所有权契约》带 _const 后缀 = 借用，调用方不得释放。 */
+    return self ? (const XLayout*)self->m_layout : NULL;
+#else
+    (void)self;
+    return NULL;
+#endif /* XLAYOUT_ON */
+}
+
 /* ==================== 手势识别器订阅（对标 QWidget grabGesture） ==================== */
 
 #if XGESTURE_ON
@@ -8863,17 +10391,145 @@ void XWidget_clearGestureRecognizers(XWidget* self)
 }
 #endif /* XGESTURE_ON */
 
+/* ---- _ref 接管布局登记表（behavior_diff#78 所有权承载 2026-11-05） ----
+ * XLayoutItem 仅内嵌 XClass（非完整 XObject：无 m_parent/m_children/
+ * m_threadData 字段），XObject_setParent 对布局对象只会在线程亲和守卫处
+ * 静默早退（m_threadData 恒 0），且守卫一旦变化即向 XLayout 自有字段
+ * 越界写——原实现「l->setParent(this)」的对位是无效且不安全的。所有权
+ * 改由本登记表承载：setLayout_ref 登记，控件析构时释放布局并摘账。 */
+typedef struct XWidgetOwnedLayout
+{
+    XWidget* widget;            /**< 接管方控件。 */
+    XLayout* layout;            /**< 被接管的布局。 */
+    struct XWidgetOwnedLayout* next;
+} XWidgetOwnedLayout;
+static XWidgetOwnedLayout* g_xwidgetOwnedLayouts = NULL;
+
+/** @brief 摘除 (widget,layout) 登记项（layout 传 NULL 摘 widget 全部项）。 */
+static void xwidget_ownedLayoutRemove(XWidget* widget, XLayout* layout)
+{
+    XWidgetOwnedLayout** p = &g_xwidgetOwnedLayouts;
+    while (*p) {
+        XWidgetOwnedLayout* node = *p;
+        if (node->widget == widget &&
+            (!layout || node->layout == layout)) {
+            *p = node->next;
+            XFree_System(node);
+            continue;
+        }
+        p = &node->next;
+    }
+}
+
+/** @brief 登记 (widget,layout) 接管关系（幂等，先摘旧项）。 */
+static void xwidget_ownedLayoutRegister(XWidget* widget, XLayout* layout)
+{
+    XWidgetOwnedLayout* node;
+    if (!widget || !layout) return;
+    xwidget_ownedLayoutRemove(widget, layout);
+    node = (XWidgetOwnedLayout*)XMalloc_System(sizeof(XWidgetOwnedLayout));
+    if (!node) return;
+    node->widget = widget;
+    node->layout = layout;
+    node->next = g_xwidgetOwnedLayouts;
+    g_xwidgetOwnedLayouts = node;
+}
+
+/** @brief 控件析构时取走其接管布局（并摘账）；未登记返回 NULL。 */
+static XLayout* xwidget_ownedLayoutTakeFor(XWidget* widget)
+{
+    XWidgetOwnedLayout** p = &g_xwidgetOwnedLayouts;
+    while (*p) {
+        XWidgetOwnedLayout* node = *p;
+        if (node->widget == widget) {
+            XLayout* layout = node->layout;
+            *p = node->next;
+            XFree_System(node);
+            return layout;
+        }
+        p = &node->next;
+    }
+    return NULL;
+}
+
+XWidget* XWidget_ownedLayoutUnregister(XLayout* layout)
+{
+    XWidgetOwnedLayout** p = &g_xwidgetOwnedLayouts;
+    if (!layout) return NULL;
+    while (*p) {
+        XWidgetOwnedLayout* node = *p;
+        if (node->layout == layout) {
+            XWidget* owner = node->widget;
+            *p = node->next;
+            XFree_System(node);
+            return owner;
+        }
+        p = &node->next;
+    }
+    return NULL;
+}
+
+void XWidget_ownedLayoutTransfer(XLayout* from, XLayout* to)
+{
+    XWidget* owner;
+    if (!from || !to || from == to) return;
+    owner = XWidget_ownedLayoutUnregister(from);
+    if (owner)
+        xwidget_ownedLayoutRegister(owner, to);
+}
+
 void XWidget_setLayout(XWidget* self, XLayout* layout)
 {
 #if XLAYOUT_ON
     if (!self) return;
+    /* 对标 Qt 6.8（qwidget.cpp:10295-10301）：重复设不同布局时 qWarning
+     * 提示并**保留首个**（旧布局继续生效）。此前本实现静默换挂（旧布局
+     * 被 detach）→ 行为与告警都缺。此处按 Qt 口径告警并保留首个。 */
+    if (self->m_layout && layout && self->m_layout != layout) {
+        XPrintf("[xgui] XWidget_setLayout: 控件已挂接其他布局，保留首个"
+                "（widget=%p, old=%p, new=%p）\n",
+                (void*)self, (void*)self->m_layout, (void*)layout);
+        return;
+    }
     if (self->m_layout) {
+        /* 借用路径摘挂时同步清接管登记（先 _ref 后换借用/摘挂的场景）。 */
+        xwidget_ownedLayoutRemove(self, self->m_layout);
         XLayout_detachWidget(self->m_layout);
         self->m_layout = NULL;
     }
     if (layout) {
         self->m_layout = layout;
         XLayout_attachWidget(layout, self);
+    }
+#else
+    (void)self;
+    (void)layout;
+#endif /* XLAYOUT_ON */
+}
+
+void XWidget_setLayout_ref(XWidget* self, XLayout* layout)
+{
+#if XLAYOUT_ON
+    if (!self) return;
+    if (self->m_layout && layout && self->m_layout != layout) {
+        XPrintf("[xgui] XWidget_setLayout_ref: 控件已挂接其他布局，保留首个"
+                "（widget=%p, old=%p, new=%p）\n",
+                (void*)self, (void*)self->m_layout, (void*)layout);
+        return;
+    }
+    if (self->m_layout) {
+        xwidget_ownedLayoutRemove(self, self->m_layout);
+        XLayout_detachWidget(self->m_layout);
+        self->m_layout = NULL;
+    }
+    if (layout) {
+        self->m_layout = layout;
+        XLayout_attachWidget(layout, self);
+        /* 接管所有权（对标 Qt：QWidget::setLayout 使布局归控件所有，
+         * qwidget.cpp:10284/10322 `l->setParent(this)`）。X 侧布局对象
+         * 非完整 XObject（见登记表注释），无法走 XObject 父子链——
+         * 所有权经 xwidget_ownedLayoutRegister 承载：控件析构时释放。 */
+        xwidget_ownedLayoutRegister(self, layout);
     }
 #else
     (void)self;
@@ -8921,6 +10577,24 @@ static bool xwidget_actionListEnsure(XWidget* self)
     return true;
 }
 
+/** @brief 动作销毁回调：从控件动作列表摘除已销毁动作（对标 Qt 的
+ *         QObject::destroyed 连接——QWidget::insertAction 连接动作的
+ *         destroyed 信号，释放动作后自动从列表移除）。
+ * @details 头注释（XWidget.h:1779/1796/1813/1875）承诺该连接存在，但
+ *          本实现此前零连接点 → 调用方释放 XAction 后控件留悬垂指针
+ *          （UAF）。范式照 XMenu.c:165-167/212-214。 */
+static void xwidget_actionDestroyedSlot(XObject* receiver, XVarList* args)
+{
+    XWidget* self = (XWidget*)receiver;
+    XObject* sender = XObject_sender(receiver);
+    int64_t pos;
+    (void)args;
+    if (!self || !sender || !self->m_actions) return;
+    pos = xwidget_actionIndex(self, (const XAction*)sender);
+    if (pos < 0) return;
+    XVector_remove_base(self->m_actions, pos, 1);
+}
+
 void XWidget_insertAction(XWidget* self, XAction* before, XAction* action)
 {
     int64_t pos;
@@ -8936,6 +10610,11 @@ void XWidget_insertAction(XWidget* self, XAction* before, XAction* action)
     if (pos < 0) pos = (int64_t)XVector_size(self->m_actions);
     elem = (void*)action;
     if (!XVector_insert_1_base(self->m_actions, pos, &elem, 1)) return;
+    /* 与动作的 destroyed 信号建立内部连接：动作被释放时自动从列表摘除
+     * （对标 Qt QWidget::insertAction 的 destroyed 连接）。 */
+    XObject_connect_1((XObject*)action, XSignal(XObject_destroyed_signal),
+                      (XObject*)self, xwidget_actionDestroyedSlot,
+                      XConnectionType_Direct);
     /* 派发 ACTION_ADDED（事件只携带类型，子类从控件侧读回当前动作列表）。 */
     event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                              XEVENT_TYPE_ACTION_ADDED);
@@ -8954,7 +10633,14 @@ XAction* XWidget_addAction_2(XWidget* self, const XString* text)
 {
     XAction* action;
     if (!self || !text) return NULL;
-    action = XAction_create();
+    /* 对标 Qt 6.8（qwidget.cpp:3160-3166）：新建动作以本控件为 QObject
+     * 父对象（随控件销毁）——其所有权由控件承担。此前本实现用
+     * XAction_create()（父恒 NULL）→ 动作对象无人释放（m_actions 的
+     * XVector 第三参是 useCow 不是所有权位，控件 deinit 不释放元素）
+     * → 泄漏；且与头注释「新建动作以本控件为父对象、其所有权由控件
+     * 承担」直接矛盾。 */
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XObject*)self,
+                                NULL);
     if (!action) return NULL;
     XAction_setText(action, text);
     XWidget_insertAction(self, NULL, action);
@@ -8992,6 +10678,9 @@ void XWidget_removeAction(XWidget* self, XAction* action)
     if (!self || !action) return;
     pos = xwidget_actionIndex(self, action);
     if (pos < 0) return;
+    /* 断开与动作 destroyed 的内部连接（动作仍在列表中时连接是活的）。 */
+    XObject_disconnect_1((XObject*)action, XSignal(XObject_destroyed_signal),
+                         (XObject*)self, xwidget_actionDestroyedSlot);
     /* 容器按位删除（元素为指针值，无析构需求）。 */
     XVector_remove_base(self->m_actions, pos, 1);
     event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
@@ -9051,6 +10740,13 @@ static void xwidget_localePropagate(XWidget* self)
         cw = (XWidget*)child;
         /* 已显式设置的子控件保留自身设置（Qt：显式设置优先于父传播）。 */
         if (cw->m_localeSet) continue;
+        /* 对标 Qt 6.8（qwidget.cpp:5914-5969）：传播时把新区域设置**写进**
+         * 子控件（setLocale_helper 语义）——本实现此前只派发事件不写子控件
+         * 值 → 子控件的 locale() 仍按父链解析、值不落地。 */
+        if (self->m_locale) {
+            XWidget_freeString(&cw->m_locale);
+            cw->m_locale = XWidget_copyString(self->m_locale);
+        }
         xwidget_localePropagate(cw);
         {
             XEvent event;
@@ -9102,13 +10798,29 @@ void XWidget_setLocale(XWidget* self, const XString* locale)
 void XWidget_unsetLocale(XWidget* self)
 {
     XEvent event;
+    const XString* resolved;
     if (!self) return;
     if (!self->m_localeSet) return; /* 未显式设置过：不动作。 */
+    resolved = XWidget_locale(self);
     if (self->m_locale) {
         XClassDeinit(self->m_locale);
         self->m_locale = NULL;
     }
     self->m_localeSet = 0;
+    /* 对标 Qt 6.8（qwidget.cpp:5914-5969）：unsetLocale 重新按父链解析，
+     * **仅当解析值变化时**才派发 LocaleChange——本实现此前无条件派发。 */
+    {
+        const XString* after = XWidget_locale(self);
+        bool changed = true;
+        if (resolved && after)
+            changed = !XString_equals(resolved, after, XChar_CaseSensitive);
+        else if (!resolved && !after)
+            changed = false;
+        if (!changed) {
+            xwidget_localePropagate(self);
+            return;
+        }
+    }
     XEvent_init(&event, XEVENT_TYPE_LOCALE_CHANGE);
     XWidget_changeEvent_base(self, &event);
     xwidget_localePropagate(self);
@@ -9181,9 +10893,21 @@ XCursor XWidget_cursor(const XWidget* self)
 {
 #if XCURSOR_ON
     XCursor out;
+    const XWidget* w;
     XCursor_init(&out); /* 默认 ArrowCursor；与 Qt 未设置时语义一致。 */
-    if (self && self->m_cursor)
-        XClassCopy(&out, self->m_cursor);
+    if (!self) return out;
+    /* 对标 Qt 6.8（qwidget.cpp:4980-4982）：cursor() 沿**父链**上溯——
+     * 本控件未设置光标时取最近祖先的光标；链上全无才回落默认箭头。
+     * 此前本实现直读自身（unset 后固定回落 Arrow），与 Qt 相反。 */
+    w = self;
+    while (w) {
+        if (w->m_cursor) {
+            XClassCopy(&out, w->m_cursor);
+            return out;
+        }
+        if (w->m_isWindow) break; /* 窗口/无父控件才回落 ArrowCursor。 */
+        w = (const XWidget*)XObject_parent((XObject*)w);
+    }
     return out;
 #else
     XCursor out;
@@ -9204,6 +10928,13 @@ void XWidget_setCursor(XWidget* self, const XCursor* cursor)
     }
     XClassCopy(self->m_cursor, cursor);
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_SetCursor, true);
+    /* 对标 Qt 6.8（qwidget.cpp:5013-5018）：setCursor 派发 CursorChange
+     * （XEVENT_TYPE_CURSOR_CHANGE，XEventType.h:186 已定义却全库零派发点）。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_CURSOR_CHANGE);
+        XWidget_sendEvent(self, &event);
+    }
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
     if (top && top->m_windowHandle) {
         XWindow* window = (XWindow*)top->m_windowHandle;
@@ -9232,6 +10963,13 @@ void XWidget_unsetCursor(XWidget* self)
         self->m_cursor = NULL;
     }
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_SetCursor, false);
+    /* 对标 Qt 6.8（qwidget.cpp:5013-5018）：unsetCursor 同样派发
+     * CursorChange（清除后回落父光标/默认箭头）。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_CURSOR_CHANGE);
+        XWidget_sendEvent(self, &event);
+    }
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
     if (top && top->m_windowHandle) {
         XWindow* window = (XWindow*)top->m_windowHandle;
@@ -9258,6 +10996,15 @@ void XWidget_setToolTip(XWidget* self, const XString* tip)
     copy = XWidget_copyString(tip);
     XWidget_freeString(&self->m_toolTip);
     self->m_toolTip = copy;
+    /* 对标 Qt 6.8（qwidget.cpp:11722）：setToolTip 派发
+     * QEvent::ToolTipChange（XEVENT_TYPE_TOOL_TIP_CHANGE，XEventType.h:187
+     * 已定义却全库零派发点）。此前 X 侧错发 DescriptionChanged（Qt 中该
+     * 事件由 setAccessibleDescription 触发，qwidget.cpp:11857-11863）。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_TOOL_TIP_CHANGE);
+        XWidget_sendEvent(self, &event);
+    }
 #if XWINDOW_ON && XACCESSIBLE_ON
     XPlatformAccessibility_notifyWidget(XAccessibleEvent_DescriptionChanged, self);
 #endif
@@ -9354,12 +11101,24 @@ void XWidget_setWindowRole(XWidget* self, const XString* role)
 
 XInputMethodHints XWidget_inputMethodHints(const XWidget* self)
 {
-    return self ? self->m_inputMethodHints : 0;
+    const XWidget* w = self;
+    if (!self) return 0;
+    /* 对标 Qt 6.8（qwidget.cpp:10006-10018）：inputMethodHints 沿**父链**
+     * 继承——本控件未显式设置时取最近祖先的 hints；链上全无则回落 0。
+     * 此前本实现只返回自身值 → 子控件拿不到父级设置的输入法提示。 */
+    while (w) {
+        if (w->m_inputMethodHints) return w->m_inputMethodHints;
+        if (w->m_isWindow) break;
+        w = (const XWidget*)XObject_parent((XObject*)w);
+    }
+    return 0;
 }
 
 void XWidget_setInputMethodHints(XWidget* self, XInputMethodHints hints)
 {
     if (!self) return;
+    /* 对标 Qt 6.8（qwidget.cpp:10024-10028）：set 时**值未变即返回**。 */
+    if (self->m_inputMethodHints == hints) return;
     self->m_inputMethodHints = hints;
 #if XINPUTMETHOD_ON && XGUIAPPLICATION_ON
     /* Qt 口径（QWidget::setInputMethodHints → 输入法 update）：hints 变
@@ -9368,6 +11127,20 @@ void XWidget_setInputMethodHints(XWidget* self, XInputMethodHints hints)
      * 退），不改此处缓存会陈旧（hints→布局映射换档失灵）。 */
     XInputMethod_update(XGuiApplication_inputMethod(),
                         XInputMethodQuery_ImHints);
+#endif
+}
+
+void XWidget_updateMicroFocus(XWidget* self, XInputMethodQuery query)
+{
+    if (!self) return;
+#if XINPUTMETHOD_ON && XGUIAPPLICATION_ON
+    /* 对标 Qt 6.8（qwidget.h:718 protected slot updateMicroFocus）：
+     * 控件请求输入法刷新微焦点（光标矩形/锚点/输入项裁剪矩形等）。
+     * 沿用 XWidget_setInputMethodHints 的既有取实例路径。 */
+    XInputMethod_update(XGuiApplication_inputMethod(),
+                        (XInputMethodQueries)query);
+#else
+    (void)query;
 #endif
 }
 
@@ -9829,6 +11602,30 @@ XFont XWidget_font(const XWidget* self)
     XFont_init(&out);
     if (!self)
         return out;
+    /* 对标 Qt 6.8（qwidget.cpp:4692-4711）：font() 接应用默认字体与
+     * 父链解析——控件未显式 setFont 时取最近祖先的字体；链上全无则
+     * 回落应用默认字体（XGuiApplication_font）。此前本实现直返
+     * m_font（初值 XFont_init），既不接应用默认也不接父链。 */
+    {
+        const XWidget* w = self;
+        while (w) {
+            if (w->m_fontSet) {
+                XClassCopy(&out, &w->m_font);
+                return out;
+            }
+            if (w->m_isWindow) break;
+            w = (const XWidget*)XObject_parent((XObject*)w);
+        }
+    }
+#if XGUIAPPLICATION_ON
+    {
+        XFont* appFont = XGuiApplication_font();
+        if (appFont) {
+            XClassCopy(&out, appFont);
+            return out;
+        }
+    }
+#endif /* XGUIAPPLICATION_ON */
     XClassCopy(&out, &self->m_font);
     return out;
 }
@@ -9840,8 +11637,42 @@ void XWidget_setFont(XWidget* self, const XFont* font)
     XFont_init(&temp);
     XClassCopy(&temp, font);
     XClassMove(&self->m_font, &temp);
+    self->m_fontSet = 1;
     XWidget_updateGeometry(self);
     XWidget_update(self);
+    /* 对标 Qt 6.8（qwidget.cpp:4802-4858）：setFont 向子控件传播并逐个
+     * 发 FontChange。此前本实现只换自身值 + update → 子控件字体不随之
+     * 更新（样式表级联场景字体不生效）。 */
+    {
+        const XVector* children;
+        size_t i;
+        size_t n;
+        children = XObject_children((XObject*)self);
+        n = children ? XVector_size_base((const XContainer*)children) : 0;
+        for (i = 0; i < n; ++i) {
+            XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
+            XWidget* cw;
+            XEvent event;
+            if (!child || !child->m_is_widget) continue;
+            cw = (XWidget*)child;
+            /* 【批2 fix-verify#1 2026-11-06】两道传播门（对标 Qt 6.8
+             * qwidget.cpp:4841-4846 `(!w->isWindow() ||
+             * WA_WindowPropagation)` 窗口门）：① 窗口型子控件不随父传播
+             * （自有字体域）；② 已显式 setFont 的子控件保持显式值。
+             * font() 以 m_fontSet 为显式键走父链解析
+             * （qwidget.cpp:4692-4711 口径），继承≠显式——覆写**不得**
+             * 置子控件 m_fontSet，否则子控件显式性被永久污染：其显式
+             * 设定过的字体被父传播覆盖后，再改回父字体时子控件永远
+             * 跳过父链解析直落被污染值。 */
+            if (cw->m_isWindow) continue;
+            if (cw->m_fontSet) continue;
+            XClassCopy(&cw->m_font, &self->m_font);
+            XWidget_updateGeometry(cw);
+            XWidget_update(cw);
+            XEvent_init(&event, XEVENT_TYPE_FONT_CHANGE);
+            XWidget_event_base(cw, &event);
+        }
+    }
     /* [Qt 对齐 qwidget.cpp:4856 setFont_helper] 字体变化投递
      * FontChange：子类 changeEvent 的字体失效分支（XLabel 的
      * label_updateLabel、XLineEdit 同款）此前不可达（死代码）——
@@ -9947,7 +11778,52 @@ void XWidget_setPalette(XWidget* self, const XPalette* palette)
 
 XPaletteColorRole XWidget_backgroundRole(const XWidget* self)
 {
-    return self ? self->m_backgroundRole : XPaletteColorRole_Window;
+    const XWidget* w = self;
+    if (!self) return XPaletteColorRole_Window;
+    /* 对标 Qt 6.8（qwidget.cpp:4386-4398）：backgroundRole() 沿**父链**
+     * 上溯，以 NoRole 为「未设置」哨兵；在窗口或 windowType()==
+     * SubWindow 处截断，链尾回落 Window。
+     * 【批4 fix-verify#18 2026-11-06】此前以 Window 作哨兵（初值
+     * 亦 Window，且截断只看 m_isWindow 漏 SubWindow）——显式把角色
+     * 设为 Window 的祖先会被误判为「未设置」而继续上溯（父链穿透），
+     * SubWindow 子控件也不截断。哨兵改 NoRole（XPalette.h:62，
+     * foregroundRole 同款），补 SubWindow 判据；链尾回落 Window
+     * 不变，消费方容忍度已核对：XLabel.c:2196 有 NoRole→Window
+     * 兜底，XFrame.c:68 / XLabel.c:737 / XWidget.c:1972,4476 的
+     * switch/取色链按 Window 默认分支处理，getter 恒不返回 NoRole。 */
+    while (w) {
+        if (w->m_backgroundRole != XPaletteColorRole_NoRole)
+            return w->m_backgroundRole;
+        if (w->m_isWindow ||
+            XWidget_windowType(w) == XWindowType_SubWindow)
+            break;
+        w = XWidget_parentWidget(w);
+    }
+    return XPaletteColorRole_Window;
+}
+
+/** @brief 调色板角色变更向下传播 + 派发 PALETTE_CHANGE（对标 Qt
+ *         propagatePaletteChange，qwidget.cpp:4421/4486）。 */
+static void xwidget_propagatePaletteChange(XWidget* self)
+{
+    const XVector* children;
+    size_t i;
+    size_t n;
+    if (!self) return;
+    children = XObject_children((XObject*)self);
+    n = children ? XVector_size_base((const XContainer*)children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
+        XWidget* cw;
+        if (!child || !child->m_is_widget) continue;
+        cw = (XWidget*)child;
+        xwidget_propagatePaletteChange(cw);
+        {
+            XEvent event;
+            XEvent_init(&event, XEVENT_TYPE_PALETTE_CHANGE);
+            XWidget_changeEvent_base(cw, &event);
+        }
+    }
 }
 
 void XWidget_setBackgroundRole(XWidget* self, XPaletteColorRole role)
@@ -9956,6 +11832,16 @@ void XWidget_setBackgroundRole(XWidget* self, XPaletteColorRole role)
     if (self->m_backgroundRole == role) return;
     self->m_backgroundRole = role;
     xwidget_updateIsOpaque(self); /* 背景角色换 ⇒ 可能影响不透明判定。 */
+    /* 对标 Qt 6.8（qwidget.cpp:4421）：setBackgroundRole 后走
+     * propagatePaletteChange——向下传播并派发 PALETTE_CHANGE
+     * （XEVENT_TYPE_PALETTE_CHANGE，XEventType.h:39 已定义却全库零
+     * 派发点）→ 子控件调色板随之更新。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_PALETTE_CHANGE);
+        XWidget_changeEvent_base(self, &event);
+    }
+    xwidget_propagatePaletteChange(self);
     XWidget_update(self);
 }
 
@@ -9969,6 +11855,14 @@ void XWidget_setForegroundRole(XWidget* self, XPaletteColorRole role)
     if (!self) return;
     if (self->m_foregroundRole == role) return;
     self->m_foregroundRole = role;
+    /* 对标 Qt 6.8（qwidget.cpp:4486）：setForegroundRole 后同样走
+     * propagatePaletteChange。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_PALETTE_CHANGE);
+        XWidget_changeEvent_base(self, &event);
+    }
+    xwidget_propagatePaletteChange(self);
     XWidget_update(self);
 }
 
@@ -9979,14 +11873,63 @@ bool XWidget_updatesEnabled(const XWidget* self)
     return self ? (self->m_updatesEnabled != 0) : false;
 }
 
-void XWidget_setUpdatesEnabled(XWidget* self, bool enable)
+/** @brief setUpdatesEnabled 递归核（对标 Qt
+ *         QWidgetPrivate::setUpdatesEnabled_helper，qwidget.cpp:1818-1841）。
+ * @details 结构逐条对位 Qt helper：
+ *          ① 顶部父禁用守卫（仅使能方向）——父链禁用时子不可越权使能；
+ *          ② 状态翻同早退（对照 UpdatesDisabled 位）；
+ *          ③ 自置位 + 仅使能方向自 update + 再递归——递归**不预置**子
+ *          标志，孙控件由递归核逐层到达（此前预置子标志令递归首行同值
+ *          早退，孙控件永不可达）。
+ * @note    Qt 逐子门 `attribute = enable ? WA_ForceUpdatesDisabled :
+ *          WA_UpdatesDisabled` 中使能方向跳过 ForceUpdatesDisabled 子的
+ *          语义依赖 WA_ForceUpdatesDisabled 位——X 暂无该位（缺失随
+ *          tree.md E18 联动登记），按现存位裁剪：禁用方向跳过已禁用子
+ *          （等价于 helper 的早退语义），使能方向不跳（父守卫已拦住
+ *          父禁用链下的越权使能）。 */
+static void xwidget_setUpdatesEnabledHelper(XWidget* self, bool enable)
 {
-    if (!self || self->m_updatesEnabled == (enable ? 1 : 0)) return;
+    const XVector* children;
+    size_t i;
+    size_t n;
+    if (!self) return;
+    /* ① 顶部父禁用守卫（Qt helper 首行，qwidget.cpp:1821-1822）。 */
+    if (enable && !self->m_isWindow) {
+        XWidget* pw = XWidget_parentWidget(self);
+        if (pw && !pw->m_updatesEnabled) return;
+    }
+    /* ② 状态翻同早退（Qt：enable != testAttribute(WA_UpdatesDisabled)
+     * 即无事可做，qwidget.cpp:1824-1825；X 侧位与字段同步翻转）。 */
+    if (enable == (bool)self->m_updatesEnabled) return;
     self->m_updatesEnabled = enable ? 1 : 0;
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UpdatesDisabled,
                     !enable);
     if (enable)
         XWidget_update(self);
+    /* ③ 递归不预置子标志（Qt：qobject_cast 后 !isWindow() &&
+     * !testAttribute(attribute) 才递归，qwidget.cpp:1836-1841）。 */
+    children = XObject_children((XObject*)self);
+    n = children ? XVector_size_base((const XContainer*)children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
+        XWidget* cw;
+        if (!child || !child->m_is_widget) continue;
+        cw = (XWidget*)child;
+        if (cw->m_isWindow) continue; /* 窗口型子控件不递归。 */
+        if (!enable && !cw->m_updatesEnabled) continue; /* 已禁用子不重走。 */
+        xwidget_setUpdatesEnabledHelper(cw, enable);
+    }
+}
+
+void XWidget_setUpdatesEnabled(XWidget* self, bool enable)
+{
+    /* 【批2 fix-verify#2 2026-11-06】按 Qt helper 结构重写：此前实现
+     * 三重失效——同值早退 + 先自置位令「父已禁用」守卫恒假（死代码）；
+     * 递归前预置子标志令递归首行即早退（孙控件永不可达）；update 只落
+     * 自身。对位 Qt 公开入口（qwidget.cpp:7896-7900）的
+     * setAttribute(WA_ForceUpdatesDisabled)+helper 两步：X 无
+     * WA_ForceUpdatesDisabled（tree.md E18 登记缺失），只走 helper。 */
+    xwidget_setUpdatesEnabledHelper(self, enable);
 }
 
 bool XWidget_autoFillBackground(const XWidget* self)
@@ -10008,7 +11951,12 @@ void XWidget_update(XWidget* self)
 {
     XRect rect;
     if (!self) return;
-    rect = self->m_contentsRect;
+    /* 对标 Qt 6.8（qwidget.cpp:11257-11260）：update() 失效的是控件
+     * **全幅**矩形 rect()，不是扣除内容边距的 contentsRect。此前本
+     * 实现用 m_contentsRect → 含 contentsMargins 的控件（XFrame 等）
+     * 刷新不到边距带、旧像素残留。 */
+    XRect_init(&rect, 0, 0, self->m_windowRect.width,
+               self->m_windowRect.height);
     XWidget_updateRect(self, &rect);
 }
 
@@ -10028,7 +11976,9 @@ void XWidget_repaint(XWidget* self)
 {
     XRect rect;
     if (!self) return;
-    rect = self->m_contentsRect;
+    /* 与 XWidget_update 同口径：repaint() 失效控件全幅矩形 rect()。 */
+    XRect_init(&rect, 0, 0, self->m_windowRect.width,
+               self->m_windowRect.height);
     XWidget_repaintRect(self, &rect);
 }
 
@@ -10050,12 +12000,18 @@ void XWidget_repaintRegion(XWidget* self, const XRegion* region)
 {
     XWidget* top;
     if (!self || !region) return;
-    /* 对标 Qt 6.8 QWidgetPrivate::repaint（qwidget.cpp:11242）：
+    /* 对标 Qt 6.8 QWidgetPrivate::repaint（qwidget.cpp:11231-11232）：
      *   `if (!q->isVisible() || !q->updatesEnabled() || r.isEmpty()) return;`
      *   —— repaint() 对隐藏控件是**完全空操作**（同步 paintEvent 也不
      *   派发）。隐藏控件的显隐切换由 XWidget_setVisible 的双向路径
-     *   兜底（show 补画 / hide 作废父级区域）。 */
+     *   兜底（show 补画 / hide 作废父级区域）。
+     *   【批4 missed#7 2026-11-06】补全 updatesEnabled 闸：此前实现
+     *   只查 effectiveVisible，而 addDirtyRegionEx 的禁用闸只挡入队，
+     *   下方「无原生窗口控件树」分支会无条件 paintTree 同步派发——
+     *   冻结态（setUpdatesEnabled(false)）的离屏/无窗配置树仍收到
+     *   同步绘制，与注释引用的 Qt 三条件守卫不符。 */
     if (!XWidget_effectiveVisible(self)) return;
+    if (!XWidget_updatesEnabled(self)) return;
     XWidget_addDirtyRegion(self, region);
     top = XWidget_topLevel(self);
     if (!top) return;
@@ -10069,63 +12025,106 @@ void XWidget_repaintRegion(XWidget* self, const XRegion* region)
     XWidget_flushBackingStore(top, &top->m_dirty);
 }
 
-XRegion XWidget_visibleRegion(const XWidget* self)
+/** @brief visibleRegion 计算核：结果写入 out（out 须已初始化）。
+ * @details 对标 Qt 6.8（qwidget.cpp:8716-8722 + 1885-1906）：锚点是控件
+ *          **全幅**矩形 rect()（0,0,w,h，Qt 语义，与内容边距无关），
+ *          沿父链逐级与祖先的全幅矩形 / mask 求交；不可见控件返回空
+ *          区域（Qt clipRect 首行 `if (!w->isVisible()) return QRect();`）。
+ *          本实现仍不扣除同层不透明兄弟覆盖（Qt 的
+ *          subtractOpaqueSiblings），该差异按既有口径保留。
+ * @param      self 目标控件。
+ * @param      out 结果区域（已初始化）。
+ * @param      requireVisible true=不可见时返回空区域（公开 API 口径）；
+ *                         false=跳过可见性闸（内部 show 补画路径口径：
+ *                         此刻控件尚未置可见，按闸裁剪会丢掉首帧）。 */
+static void xwidget_visibleRegionInto(const XWidget* self, XRegion* out,
+                                       bool requireVisible)
 {
-    XRegion out;
     XRegion next;
     XRegion maskClip;
     const XWidget* node;
     XPoint offset;
-    XRegion_init(&out);
+    XRect full;
+    if (!self || !out) return;
     XRegion_init(&next);
     XRegion_init(&maskClip);
-    if (!self) {
+    /* out 须为已初始化对象（内部会交换区域结构体）：清空既有内容。 */
+    XRegion_clear(out);
+    /* 可见性闸：不可见控件的可见区域为空（对标 Qt clipRect 的
+     * `if (!w->isVisible()) return QRect();`）。 */
+    if (requireVisible && !XWidget_effectiveVisible(self)) {
         XRegion_deinit(&next);
         XRegion_deinit(&maskClip);
-        return out;
+        return;
     }
-    XRegion_addRect(&out, &self->m_contentsRect);
+    /* 锚点：控件全幅矩形（Qt rect() 语义）。 */
+    XRect_init(&full, 0, 0, self->m_windowRect.width,
+               self->m_windowRect.height);
+    XRegion_addRect(out, &full);
     if (self->m_mask.count > 0 && self->m_mask.rects) {
-        XRegion_intersectInto(&out, &self->m_mask, &maskClip);
+        XRegion_intersectInto(out, &self->m_mask, &maskClip);
         {
-            XRegion temp = out;
-            out = maskClip;
+            XRegion temp = *out;
+            *out = maskClip;
             maskClip = temp;
         }
     }
     XPoint_init(&offset, 0, 0);
     node = (const XWidget*)XObject_parent((XObject*)self);
     if (node) {
-        XRegion_translateInline(&out, self->m_windowRect.x, self->m_windowRect.y);
+        XRegion_translateInline(out, self->m_windowRect.x, self->m_windowRect.y);
         offset.x += self->m_windowRect.x;
         offset.y += self->m_windowRect.y;
     }
     while (node) {
-        XRegion_intersectRectInto(&out, &node->m_contentsRect, &next);
+        XRect ancFull;
+        XRect_init(&ancFull, 0, 0, node->m_windowRect.width,
+                   node->m_windowRect.height);
+        XRegion_intersectRectInto(out, &ancFull, &next);
         {
-            XRegion temp = out;
-            out = next;
+            XRegion temp = *out;
+            *out = next;
             next = temp;
         }
         if (node->m_mask.count > 0 && node->m_mask.rects) {
-            XRegion_intersectInto(&out, &node->m_mask, &maskClip);
+            XRegion_intersectInto(out, &node->m_mask, &maskClip);
             {
-                XRegion temp = out;
-                out = maskClip;
+                XRegion temp = *out;
+                *out = maskClip;
                 maskClip = temp;
             }
         }
         if (node->m_isWindow)
             break;
-        XRegion_translateInline(&out, node->m_windowRect.x, node->m_windowRect.y);
+        XRegion_translateInline(out, node->m_windowRect.x, node->m_windowRect.y);
         offset.x += node->m_windowRect.x;
         offset.y += node->m_windowRect.y;
         node = (const XWidget*)XObject_parent((XObject*)node);
     }
-    XRegion_translateInline(&out, -offset.x, -offset.y);
+    XRegion_translateInline(out, -offset.x, -offset.y);
     XRegion_deinit(&next);
     XRegion_deinit(&maskClip);
+}
+
+XRegion XWidget_visibleRegion(const XWidget* self)
+{
+    XRegion out;
+    XRegion_init(&out);
+    if (!self) return out;
+    xwidget_visibleRegionInto(self, &out, true);
     return out;
+}
+
+const XRegion* XWidget_visibleRegion_const(const XWidget* self)
+{
+    XWidget* widget = (XWidget*)self;
+    if (!self) return NULL;
+    /* 只读借用版：结果写入控件内部缓存后返回其 const 指针（调用方零
+     * malloc/free）。缓存由控件拥有，调用方不得释放/修改；下一次调用
+     * 本接口即被覆写。 */
+    XRegion_clear(&widget->m_visibleRegionCache);
+    xwidget_visibleRegionInto(self, &widget->m_visibleRegionCache, true);
+    return &widget->m_visibleRegionCache;
 }
 
 void XWidget_scroll(XWidget* self, int dx, int dy)
@@ -10429,11 +12428,16 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
     size_t n;
     size_t i;
     if (!widget || !region || region->count <= 0) return;
-    /* 控件自身遮罩参与所有绘制裁剪：遮罩外像素不进入 paintEvent 与后代。 */
+    /* 控件自身遮罩参与所有绘制裁剪：遮罩外像素不进入 paintEvent 与后代。
+     * 【抓取例外 2026-11-05】对标 Qt 6.8（qwidget.cpp:5246/5404-5405）：
+     * grab/render 显式 IgnoreMask——带遮罩控件的抓图**不**按遮罩裁剪
+     * （Qt 截图预期为整幅矩形）。离屏重定向生效时（grab/render 路径）
+     * 跳过遮罩求交。 */
     paintRegion = region;
     XRegion_init(&maskClipped);
     XRegion_init(&clipped);
-    if (widget->m_mask.count > 0 && widget->m_mask.rects) {
+    if (widget->m_mask.count > 0 && widget->m_mask.rects &&
+        !xwidget_redirectRoot(widget)) {
         XRegion_intersectInto(region, &widget->m_mask, &maskClipped);
         if (maskClipped.count <= 0) {
             XRegion_deinit(&maskClipped);
@@ -11864,6 +13868,46 @@ XImage* XWidget_grab(const XWidget* self)
     return image;
 }
 
+XImage* XWidget_grab_2(const XWidget* self, const XRect* rect)
+{
+    XWidget* widget = (XWidget*)self;
+    XImage* image;
+    XRect source;
+    int width;
+    int height;
+    if (!self || !rect) return NULL;
+    /* 源矩形以控件自身坐标给出。
+     * 【批5 new-code#8 2026-11-06】越界改为与 rect() 求交裁剪
+     * （对标 Qt QWidget::grab，qwidget.cpp:5257 `if (!r.intersects(rect()))
+     * return QPixmap()`，render 前按交叠裁剪）：此前对越界/负原点
+     * 直接返回 NULL，与 Qt 口径相反（Qt 只拒绝**交叠为空**的矩形）。
+     * 交叠为空才返回 NULL；钳位后图像尺寸=交叠矩形尺寸。 */
+    source = *rect;
+    if (source.width <= 0 || source.height <= 0) return NULL;
+    width = XWidget_width(widget);
+    height = XWidget_height(widget);
+    {
+        int x1 = source.x < 0 ? 0 : source.x;
+        int y1 = source.y < 0 ? 0 : source.y;
+        int x2 = source.x + source.width;
+        int y2 = source.y + source.height;
+        if (x2 > width) x2 = width;
+        if (y2 > height) y2 = height;
+        if (x1 >= x2 || y1 >= y2) return NULL;
+        XRect_init(&source, x1, y1, x2 - x1, y2 - y1);
+    }
+    /* 复用现有 renderSubtree 抓取路径：把子树整体渲染到一张与源矩形
+     * 等尺寸的临时画布上（渲染原点偏移到源矩形左上角），随后按源矩形
+     * 裁出快照。 */
+    image = xwidget_createSnapshotImage(source.width, source.height);
+    if (!image) return NULL;
+    if (!xwidget_renderSubtree(widget, image, -source.x, -source.y)) {
+        XClassDelete(image);
+        return NULL;
+    }
+    return image;
+}
+
 /* ==================== 事件分派（对标 QWidget::event） ==================== */
 
 /*
@@ -11954,6 +13998,17 @@ void XWidget_setGraphicsEffect(XWidget* self, XGraphicsEffect* effect)
     /* [遮挡裁剪 2026-10-31] 有特效一律判非不透明（Qt updateIsOpaque 首支）：
        安装/卸载效果都让缓存重算。 */
     xwidget_updateIsOpaque(self);
+}
+
+void XWidget_setGraphicsEffect_ref(XWidget* self, XGraphicsEffect* effect)
+{
+    if (!self) return;
+    if (self->m_graphicsEffect == effect) return;
+    /* 与 XWidget_setGraphicsEffect 同语义（Qt 侧 QWidget::setGraphicsEffect
+     * 本身就是"指针接管"：旧效果删除、新效果所有权归控件），此处按
+     *《set* 三态所有权契约》的 _ref 变体显式命名以标明所有权转移。
+     * 旧名 XWidget_setGraphicsEffect 保留为兼容入口。 */
+    XWidget_setGraphicsEffect(self, effect);
 }
 
 /**
@@ -12351,10 +14406,12 @@ void XWidget_applyWindowGeometry(XWidget* self, const XRect* geometry,
 #endif
     if (self->m_contentsRect.width != geometry->width ||
         self->m_contentsRect.height != geometry->height) {
-        self->m_contentsRect.x = 0;
-        self->m_contentsRect.y = 0;
-        self->m_contentsRect.width = geometry->width;
-        self->m_contentsRect.height = geometry->height;
+        /* 对标 Qt 6.8（qwidget.cpp:7705-7708）：contentsRect() 每次现场
+         * 计算（rect() 扣除四边边距），永不漂移。本实现此前在平台几何
+         * 回填路径把 m_contentsRect 整体重置为 (0,0,w,h) → 丢弃已设的
+         * 内容边距，窗口被 WM 改尺寸后 contentsRect() ≠ rect()-margins。
+         * 改走 XWidget_updateContentsRect（保留边距扣减）。 */
+        XWidget_updateContentsRect(self);
     }
     posChanged = (old.x != geometry->x) || (old.y != geometry->y);
     sizeChanged = (old.width != geometry->width) ||

@@ -732,6 +732,21 @@ static void VXView_onClose(XView* self, XVarList* args) {
 | `XType_init(XType*)` | 栈上初始化 |
 | `XType_Create(ElementType)` | 宏版本创建（自动 sizeof） |
 
+**宏形态豁免**：以 `#define` 形式提供的创建宏（`XType_create()` /
+`XType_create_ex(args)` 的零参或固定参包装）**豁免**上表「扩展创建必须
+带 `_ex` 后缀 + 额外参数」的约束——宏形态的实参由宏自身固定（如
+`XCLASS_DEFAULT_MEMORY_TYPE`），调用点不暴露额外参数，故无需 `_ex` 区分。
+豁免仅限**宏形态**；同名真函数（非宏）仍须遵守上表。
+
+| 形态 | 举例 | 说明 |
+|---|---|---|
+| 零参宏包装 | `#define XStyle_create() XStyle_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)` | 宏展开后仍是 `_ex` 真函数；宏本身只是默认内存类型的便捷写法 |
+| 变参宏包装 | `#define XApplication_create(...) XApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)` | 宏接受变参并原样转交 `_ex` |
+| 元素类型宏 | `#define XVector_Create(Type) XVector_create(sizeof(Type))` | 大小由元素类型推导（`sizeof` 自动求值），与 `_ex` 的显式参数形态并存 |
+
+> 注：宏形态创建函数全库约 417 处（`rg -c "^#define X[A-Za-z_]*_create\(" Src`），
+> 是既定仓内风格，**不按「无 `_ex` 后缀」判为违规**。
+
 ### 设置函数命名
 
 | 函数名 | 用途 |

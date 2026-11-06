@@ -886,7 +886,7 @@ static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
         XEvent_ignore(event);
         return;
     }
-    /* 点击聚焦：setFocus 不查策略位（XWidget.c XWidget_setFocusReason
+    /* 点击聚焦：setFocus 不查策略位（XWidget.c XWidget_setFocus_2
        只门禁 enabled），此处不再改写策略——init 的 StrongFocus（含
        ClickFocus 位）保持终身有效，点击后 LE 仍是 Tab 候选（#40）。
        对标 Qt：QLineEdit 点击路径从不 setFocusPolicy（qlineedit.cpp

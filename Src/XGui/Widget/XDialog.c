@@ -701,7 +701,7 @@ static void dialog_grabInitialFocus(XDialog* self)
     XPushButton* button;
     if (!self || dialog_containsFocus(self)) return;
     button = dialog_defaultButton(self);
-    XWidget_setFocusReason(button ? (XWidget*)button : (XWidget*)self,
+    XWidget_setFocus_2(button ? (XWidget*)button : (XWidget*)self,
                            XFocusReason_Other);
 }
 
@@ -780,7 +780,7 @@ static bool xdlg_focusNextPrevChild(XDialog* self, bool next)
     }
     XClassDelete((XClass*)list);
     if (!target || target == current) return false;
-    XWidget_setFocusReason(target, next ? XFocusReason_Tab
+    XWidget_setFocus_2(target, next ? XFocusReason_Tab
                                         : XFocusReason_Backtab);
     return true;
 }

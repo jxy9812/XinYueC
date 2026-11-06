@@ -220,6 +220,51 @@ int main(int argc, char** argv)
         move(num(argv[2]), num(argv[3]));
     } else if (!strcmp(argv[1], "up")) {
         up();
+    } else if (!strcmp(argv[1], "upglitch")) {
+        /* 抬起帧携带清零坐标（真实触摸驱动疑似行为：ABS_X=0/ABS_Y=0
+         * 与 BTN_TOUCH=0 同帧）。框架若信同帧坐标 ⇒ 抬起沿落 (0,0)。 */
+        frame_reset();
+        emit(EV_ABS, ABS_X, 0);
+        emit(EV_ABS, ABS_Y, 0);
+        emit(EV_KEY, BTN_TOUCH, 0);
+        syn();
+    } else if (!strcmp(argv[1], "glitchmid")) {
+        /* 拖动中途插入一帧「清零坐标+BTN_TOUCH=0」再恢复按下（模拟
+         * 驱动抖动/毛刺帧，手指实际未离屏）。 */
+        int gx1 = num(argv[2]), gy1 = num(argv[3]);
+        int gx2 = num(argv[4]), gy2 = num(argv[5]);
+        int gst = argc >= 7 ? num(argv[6]) : 20;
+        int gtotal = argc >= 8 ? num(argv[7]) : 40;
+        int gi;
+        if (gtotal < 2) gtotal = 2;
+        if (gst < 1) gst = 1;
+        if (gst >= gtotal) gst = gtotal / 2;
+        down(gx1, gy1);
+        nap_ms(hold_ms);
+        for (gi = 1; gi <= gtotal; ++gi) {
+            int cx = gx1 + (gx2 - gx1) * gi / gtotal;
+            int cy = gy1 + (gy2 - gy1) * gi / gtotal;
+            if (gi == gst) {
+                /* 毛刺帧：清零坐标 + 抬起沿，下一帧恢复按下。 */
+                frame_reset();
+                emit(EV_ABS, ABS_X, 0);
+                emit(EV_ABS, ABS_Y, 0);
+                emit(EV_KEY, BTN_TOUCH, 0);
+                syn();
+                nap_ms(delay_ms);
+                frame_reset();
+                emit(EV_ABS, ABS_X, 0);
+                emit(EV_ABS, ABS_Y, 0);
+                emit(EV_KEY, BTN_TOUCH, 1);
+                syn();
+                nap_ms(delay_ms);
+                continue;
+            }
+            move(cx, cy);
+            nap_ms(delay_ms);
+        }
+        nap_ms(hold_ms);
+        up();
     } else if (!strcmp(argv[1], "drag") && argc >= 6) {
         int x1 = num(argv[2]), y1 = num(argv[3]);
         int x2 = num(argv[4]), y2 = num(argv[5]);

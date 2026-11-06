@@ -166,6 +166,32 @@ void XWidget_hideEvent_base(XWidget* self, XEvent* event);
 /** @brief 属性/状态变更事件槽（对标 QWidget::changeEvent）。 */
 void XWidget_changeEvent_base(XWidget* self, XEvent* event);
 
+/* ==================== 焦点遍历与显隐扩展点（对标 QWidget protected 虚函数） ==================== */
+
+/**
+ * @brief      焦点遍历扩展槽（对标 QWidget::focusNextPrevChild 虚函数）。
+ * @details    Qt 把焦点遍历的决定权交给所在顶层窗口，子类可覆写本槽接管
+ *             遍历顺序（QLabel/QMenu/QDateTimeEdit/QAbstractItemView 均
+ *             覆写）。默认实现把遍历决定权上交所在顶层窗口（沿父链到
+ *             顶层后，以窗口当前焦点控件为起点续链）。子类覆写时须自行
+ *             完成焦点迁移并返回是否成功切换。
+ * @param      self 发起遍历的控件；可为 NULL。
+ * @param      next true=向后（Tab）遍历；false=向前（Shift+Tab）遍历。
+ * @return     成功切换焦点返回 true；否则返回 false。
+ */
+bool XWidget_focusNextPrevChild_base(XWidget* self, bool next);
+/**
+ * @brief      显隐扩展槽（对标 QWidget::setVisible 虚函数）。
+ * @details    Qt 的 setVisible 是 public virtual，对话框/浮层类靠覆写它
+ *             接管显隐时机（QDialog::setVisible 等）。默认实现走基类
+ *             显隐逻辑（XWidget_setVisible 的全部既有语义）。子类覆写
+ *             时应先调用基类实现再叠加自身行为。
+ * @param      self 目标控件；可为 NULL。
+ * @param      visible true=显示，false=隐藏。
+ * @return     无返回值。
+ */
+void XWidget_setVisible_base(XWidget* self, bool visible);
+
 /* ==================== 平台/测试接入钩子（内部） ==================== */
 
 /**
@@ -274,6 +300,22 @@ bool XWidget_replayPressAtGlobal(const XMouseEvent* src, const XPoint* global);
 XPoint XWidget_mapAcrossTopLevel(XWidget* fromTop, XWidget* toTop,
                                  const XPoint* fromLocalLogical);
 
+/* ==================== 待激活焦点靶兑现（对标 Qt focus_child，内部） ==================== */
+
+/**
+ * @brief      窗口激活上报路径兑现其待激活焦点靶（内部）。
+ * @details    QWidget::setFocus 在窗口未激活时不移全局焦点，仅把焦点诉求
+ *             记在窗口上（focus_child；qwidget.cpp:6668-6670 else 分支
+ *             updateFocusChild），窗口激活后由激活路径真正移焦。X 侧由
+ *             XWidget_setFocus_2 的未激活闸登记（每窗口单靶），本入口在
+ *             XWindow_reportWindowStateChanged 检测到 Active 位由无到有
+ *             时按平台窗口反查登记表兑现（摘账后回放 setFocus，靶资格由
+ *             setFocus 入口守卫复验）。
+ * @param      window 激活上报的平台窗口（借用）；NULL 不操作。
+ * @return     无返回值。
+ */
+void XWidget_pendingFocusRedeem(XWindow* window);
+
 /* ==================== 应用模态（对标 QApplication activeModalWidget） ==================== */
 
 /**
@@ -323,6 +365,52 @@ void XWidget_deactivateInputRegistrations(XWidget* self);
  *             悬浮层布局停摆）。
  */
 void XWidget_postLayoutRequest(XWidget* receiver);
+
+/* ==================== 接管布局登记表（setLayout_ref 所有权承载，内部） ==================== */
+
+#if XLAYOUT_ON
+/**
+ * @brief      按布局反查摘除 _ref 接管登记（XLayout 摘挂/析构路径接线用）。
+ * @details    XWidget_setLayout_ref 把接管关系登记进 (控件,布局) 表，但布局
+ *             被绕过 setLayout 的路径改挂/摘挂/销毁时（XLayout_linkItem/
+ *             attachWidget/detachWidget/VXLayout_deinit），登记不会自动
+ *             摘除——残项持已释放布局指针，地址复用后控件析构的 TakeFor
+ *             返回值可与新挂接布局撞等式 → XClassDelete 误删借用布局
+ *             （双删）；或析构 TakeFor 落空 → 接管布局泄漏。本入口供
+ *             XLayout 侧在清宿主 m_layout 前同步摘账，使所有权随挂接
+ *             全路径同步（对标 Qt qwidget.cpp:10284/10322
+ *             `l->setParent(this)` 的所属权口径）。
+ * @param      layout 被接管的布局；NULL 不操作。
+ * @return     摘账前登记该布局的宿主控件（借用）；布局本无登记返回 NULL。
+ */
+XWidget* XWidget_ownedLayoutUnregister(XLayout* layout);
+/**
+ * @brief      接管登记随布局对象移动转移（from 名下账目改记到 to 名下）。
+ * @details    VXLayout_move 把布局内容自 other 壳转入 self 且宿主挂接随之
+ *             改指 self 时调用：other 壳即将销毁，其名下登记必须改绑承载
+ *             内容的活对象，否则宿主析构 TakeFor 携已销毁的壳 → 残账
+ *             悬垂/接管布局泄漏。from 本无登记（借用布局）时不产生新账，
+ *             借用属性保留。
+ * @param      from 移出内容的布局壳；NULL 不操作。
+ * @param      to 承接内容的布局；NULL 不操作。
+ * @return     无返回值。
+ */
+void XWidget_ownedLayoutTransfer(XLayout* from, XLayout* to);
+#endif /* XLAYOUT_ON */
+
+/* ==================== 失效期遮挡裁剪挂起（浮层子控件擦除链） ==================== */
+
+/**
+ * @brief      挂起失效期遮挡裁剪（addDirtyRegionEx 的
+ *             opaqueChildren/opaqueSiblings 扣除），配对 resume 恢复。
+ * @details    浮层子控件（落点指示器等）移位/显隐时旧位擦除走 parent
+ *             update，会被 parent 的不透明子控件整块扣空 ⇒ 无人重画、
+ *             旧位像素永留（真机指示器换位残影）。调用方须保证挂起区
+ *             间极短（包住一次几何变更/差带重绘即可）。可嵌套（计数）。
+ * @note       仅供框架内部（XMainWindow 落点指示器链）使用。
+ */
+void XWidget_suspendDirtyOcclusion(void);
+void XWidget_resumeDirtyOcclusion(void);
 
 #ifdef __cplusplus
 }

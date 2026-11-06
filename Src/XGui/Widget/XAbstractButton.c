@@ -993,12 +993,12 @@ static void VXAbstractButton_mousePressCommon(XWidget* self, XEvent* event)
          * qabstractbutton.cpp:329 + qcommonstyle.cpp:5224-5226），本类
          * init 已对齐。判定按任务口径"NoFocus 跳过"（Qt 的
          * ClickFocus 位判定对 StrongFocus 结果等价）；
-         * XWidget_setFocusReason 对禁用态有门禁，与 Qt 禁用控件不收
+         * XWidget_setFocus_2 对禁用态有门禁，与 Qt 禁用控件不收
          * 鼠标输入一致。点中按钮之外的区域不聚焦（hitButton 未命中
          * 不进入本分支），保留"点空白不移焦"的 Qt 语义。
          */
         if (XWidget_focusPolicy(self) != XWidgetFocusPolicy_NoFocus)
-            XWidget_setFocusReason(self, XFocusReason_Mouse);
+            XWidget_setFocus_2(self, XFocusReason_Mouse);
         button->m_pressed = true;
         abstractbutton_setDownFromInput(button, true);
         /* [不再显式 grabMouse] 「按住拖出按钮仍保持按下」由框架的**隐式

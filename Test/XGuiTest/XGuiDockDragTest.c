@@ -1953,6 +1953,386 @@ static int t_runFloatDragScenario(const char* tag)
     return bad;
 }
 
+
+/* ==================== 场景十：落点指示器跨区换位残留 ====================
+ * 真机 T2 帧实证（2026-11-04）：指示器（XRubberBand）叠在宿主不透明
+ * 子控件（面板/中央区）上，从左区预览换位到右区时，旧位擦除走 parent
+ * 失效——被 addDirtyRegionEx 的 collectOpaqueChildren(host) 整块扣空
+ * ⇒ 无人重画 ⇒ 旧位浅蓝永留（真机"拖动浮窗经常有残留"的又一根因）。
+ * 判据：hoverDrop 左区 → 换位右区后，**旧指示器矩形**必须与强制重绘
+ * 基准逐像素一致（无浅蓝残留）。 */
+static int t_runIndicatorSwapScenario(const char* tag)
+{
+    XMainWindow* host = NULL;
+    XWidget* central = NULL;
+    XDockWidget* dockLeft = NULL;
+    XDockWidget* dockRight = NULL;
+    XWidget* outer = NULL;
+    XPoint zero;
+    XRect oldIndicator;
+    XRect hostRect;
+    uint16_t* v = NULL;
+    uint16_t* baseline = NULL;
+    int bad = 0;
+    XPoint pLeft;
+    XPoint pRight;
+
+    XPoint_init(&zero, 0, 0);
+    outer = XWidget_create(NULL, 0);
+    if (!outer) return 1;
+    XWidget_setGeometry(outer, 0, 0, T_PANEL_W, T_PANEL_H);
+    XWidget_show(outer);
+    host = XMainWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, outer,
+                                 (XWidgetFlags)XWindowType_Window);
+    if (!host) return 1;
+    XWidget_setGeometry((XWidget*)host, 10, 10, 560, 420);
+    {
+        XPalette pal;
+        XColor c;
+        XPalette_init_default(&pal);
+        XColor_init_rgb(&c, 0, 128, 0, 255);
+        XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                          XPaletteColorRole_Window, c);
+        XWidget_setPalette((XWidget*)host, &pal);
+        XWidget_setAutoFillBackground((XWidget*)host, true);
+    }
+    central = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)host, 0);
+    if (central)
+    {
+        XLabel_setText_2((XLabel*)central, "中央显示区（XLabel）");
+        XLabel_setAlignment((XLabel*)central, XAlignment_Center);
+        XMainWindow_setCentralWidget(host, central);
+    }
+    dockLeft = XDockWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "停靠-左",
+                                     (XWidget*)host, 0);
+    dockRight = XDockWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "停靠-右",
+                                      (XWidget*)host, 0);
+    if (dockLeft && dockRight)
+    {
+        XWidget* cl = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                       (XWidget*)dockLeft, 0);
+        XWidget* cr = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                       (XWidget*)dockRight, 0);
+        if (cl)
+        {
+            XLabel_setText_2((XLabel*)cl, "左面板内容");
+            XDockWidget_setWidget(dockLeft, cl);
+        }
+        if (cr)
+        {
+            XLabel_setText_2((XLabel*)cr, "右面板内容");
+            XDockWidget_setWidget(dockRight, cr);
+        }
+        XMainWindow_addDockWidget(host, XDockWidgetArea_Left,
+                                  (XWidget*)dockLeft);
+        XMainWindow_addDockWidget(host, XDockWidgetArea_Right,
+                                  (XWidget*)dockRight);
+    }
+    XWidget_show((XWidget*)host);
+    XWidget_repaint((XWidget*)host);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    {
+        XPoint o = XWidget_mapToGlobal((XWidget*)host, &zero);
+        XRect_init(&hostRect, o.x, o.y, XWidget_width((XWidget*)host),
+                   XWidget_height((XWidget*)host));
+    }
+    /* 悬停点：左区中央 / 右区中央（全局坐标；区域码由 xmw_dropAreaAt
+       判定，指示器矩形=布局模拟落位）。 */
+    pLeft.x = hostRect.x + 80;
+    pLeft.y = hostRect.y + 200;
+    pRight.x = hostRect.x + 480;
+    pRight.y = hostRect.y + 200;
+    /* ① 左区预览（指示器首显+记录矩形）。 */
+    XMainWindow_hoverDrop(host, (XWidget*)dockRight, &pLeft);
+    if (!host->m_dropIndicator ||
+        !XWidget_isVisible((XWidget*)host->m_dropIndicator))
+    {
+        fprintf(stderr, "[DD-FAIL] %s: 左区预览指示器未显示\n", tag);
+        t_expect(false, "左区预览指示器未显示");
+        if (outer) XClassDelete((XClass*)outer);
+        return 1;
+    }
+    oldIndicator = XWidget_geometry((XWidget*)host->m_dropIndicator);
+    if (t_debug())
+        fprintf(stderr, "[DD:%s] indicator@left=(%d,%d %dx%d)\n", tag,
+                oldIndicator.x, oldIndicator.y, oldIndicator.width,
+                oldIndicator.height);
+    /* ② 换位右区（旧位必须被擦除）。 */
+    XMainWindow_hoverDrop(host, (XWidget*)dockRight, &pRight);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    /* ③ 判据：旧指示器矩形 vs 强制重绘基准。 */
+    v = t_captureVisible();
+    XWidget_repaint((XWidget*)host);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    baseline = t_captureVisible();
+    if (!v || !baseline)
+    {
+        fprintf(stderr, "[DD-FAIL] %s: capture frames\n", tag);
+        free(v);
+        free(baseline);
+        if (outer) XClassDelete((XClass*)outer);
+        return 1;
+    }
+    {
+        int x;
+        int y;
+        int mism = 0;
+        for (y = oldIndicator.y;
+             y < oldIndicator.y + oldIndicator.height; ++y)
+        {
+            if (y < 0 || y >= T_PANEL_H) continue;
+            for (x = oldIndicator.x;
+                 x < oldIndicator.x + oldIndicator.width; ++x)
+            {
+                size_t idx;
+                if (x < 0 || x >= T_PANEL_W) continue;
+                idx = (size_t)y * T_PANEL_W + (size_t)x;
+                if (v[idx] != baseline[idx])
+                {
+                    if (mism < 6)
+                        fprintf(stderr,
+                                "[DD-FAIL] %s: 旧指示器位残留 (%d,%d) "
+                                "act=%04x base=%04x\n", tag, x, y,
+                                (unsigned)v[idx], (unsigned)baseline[idx]);
+                    ++mism;
+                }
+            }
+        }
+        if (mism)
+        {
+            fprintf(stderr, "[DD-FAIL] %s: 旧指示器位残留 mism=%d\n", tag,
+                    mism);
+            t_expect(false, "指示器换位后旧位残留（浅蓝）");
+            bad += mism;
+        }
+    }
+    /* 收口：隐藏指示器并验证同样无残留。 */
+    {
+        XPoint pOut;
+        pOut.x = hostRect.x - 100;
+        pOut.y = hostRect.y - 100;
+        XMainWindow_hoverDrop(host, (XWidget*)dockRight, &pOut);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        v = t_captureVisible();
+        XWidget_repaint((XWidget*)host);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        baseline = t_captureVisible();
+        if (v && baseline)
+        {
+            XRect newInd = XWidget_geometry((XWidget*)host->m_dropIndicator);
+            int x;
+            int y;
+            int mism = 0;
+            for (y = newInd.y; y < newInd.y + newInd.height; ++y)
+            {
+                if (y < 0 || y >= T_PANEL_H) continue;
+                for (x = newInd.x; x < newInd.x + newInd.width; ++x)
+                {
+                    size_t idx;
+                    if (x < 0 || x >= T_PANEL_W) continue;
+                    idx = (size_t)y * T_PANEL_W + (size_t)x;
+                    if (v[idx] != baseline[idx]) ++mism;
+                }
+            }
+            if (mism)
+            {
+                fprintf(stderr, "[DD-FAIL] %s: 隐藏后新位残留 mism=%d\n",
+                        tag, mism);
+                t_expect(false, "指示器隐藏后残位残留");
+                bad += mism;
+            }
+        }
+        free(v);
+        free(baseline);
+    }
+    if (outer) XClassDelete((XClass*)outer);
+    return bad;
+}
+
+/* ==================== 场景 11：浮窗被页签化吞掉 ====================
+ * 真机实证（2026-11-07 用户「我就正常拖，左悬浮窗口消失了」，实为拖右面板）：
+ * 左面板已拖出成独立浮窗，随后把**右**面板拖到宿主中央释放 ⇒ finishDrop
+ * 走 Central 分支挑编组基准时只判 isHidden，**浮动态的左面板（可见）被
+ * 选为 first** ⇒ tabifyDockWidget 把两者编成一组 ⇒ dockGroupSync 的
+ * 「仅活动成员可见」对非活动的浮动成员 setVisible(false) ⇒ 左浮窗的独立
+ * 顶层窗被隐藏，且页签条因基准错位不在可点位置 ⇒「浮窗凭空消失、无法
+ * 切回」。
+ * 判据：左面板在右面板落位后仍 isFloating 且 isVisible。修法=finishDrop
+ * 挑基准排除 m_floating（Qt：tabifyDockWidget 只接受已 plug 回布局的面板）。 */
+static int t_runFloatSwallowedScenario(const char* tag)
+{
+    XMainWindow* host = NULL;
+    XWidget* central = NULL;
+    XDockWidget* dockLeft = NULL;
+    XDockWidget* dockRight = NULL;
+    XWidget* outer = NULL;
+    XPoint zero;
+    int bad = 0;
+    int i;
+
+    XPoint_init(&zero, 0, 0);
+    outer = XWidget_create(NULL, 0);
+    if (!outer) return 1;
+    XWidget_setGeometry(outer, 0, 0, T_PANEL_W, T_PANEL_H);
+    XWidget_show(outer);
+    host = XMainWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, outer,
+                                 (XWidgetFlags)XWindowType_Window);
+    if (!host) return 1;
+    XWidget_setGeometry((XWidget*)host, 10, 10, 560, 420);
+    {
+        XPalette pal;
+        XColor c;
+        XPalette_init_default(&pal);
+        XColor_init_rgb(&c, 0, 128, 0, 255);
+        XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                          XPaletteColorRole_Window, c);
+        XPalette_setColor(&pal, XPaletteColorGroup_Inactive,
+                          XPaletteColorRole_Window, c);
+        XPalette_setColor(&pal, XPaletteColorGroup_Disabled,
+                          XPaletteColorRole_Window, c);
+        XWidget_setPalette((XWidget*)host, &pal);
+        XWidget_setAutoFillBackground((XWidget*)host, true);
+    }
+    {
+        XWidget* menuBar = XMainWindow_menuBar(host);
+        if (menuBar)
+        {
+            XMenu* m1 = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                        (XWidget*)host, "文件(&F)");
+            if (m1) XMenuBar_addMenu((XMenuBar*)menuBar, m1);
+        }
+    }
+    central = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)host, 0);
+    if (central)
+    {
+        XLabel_setText_2((XLabel*)central, "中央显示区（XLabel）");
+        XLabel_setAlignment((XLabel*)central, XAlignment_Center);
+        XMainWindow_setCentralWidget(host, central);
+    }
+    dockLeft = XDockWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "停靠-左",
+                                     (XWidget*)host, 0);
+    dockRight = XDockWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "停靠-右",
+                                      (XWidget*)host, 0);
+    if (!dockLeft || !dockRight) return 1;
+    {
+        XWidget* cl = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                       (XWidget*)dockLeft, 0);
+        XWidget* cr = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                       (XWidget*)dockRight, 0);
+        if (cl)
+        {
+            XLabel_setText_2((XLabel*)cl, "左面板内容");
+            XDockWidget_setWidget(dockLeft, cl);
+        }
+        if (cr)
+        {
+            XLabel_setText_2((XLabel*)cr, "右面板内容（可拖出浮动）");
+            XDockWidget_setWidget(dockRight, cr);
+        }
+    }
+    XMainWindow_addDockWidget(host, XDockWidgetArea_Left,
+                              (XWidget*)dockLeft);
+    XMainWindow_addDockWidget(host, XDockWidgetArea_Right,
+                              (XWidget*)dockRight);
+    XWidget_show((XWidget*)host);
+    XWidget_repaint((XWidget*)host);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+
+    /* 第一步：把左面板拖出成独立浮窗（对齐 floatdrag 场景的拖出手势：
+     * 横向 dx 足够大越过 startDragDistance，释放点在宿主外 ⇒ 保持浮动）。 */
+    {
+        XPoint dorg = XWidget_mapToGlobal((XWidget*)dockLeft, &zero);
+        int pressX = dorg.x + 40;
+        int pressY = dorg.y + 4;
+        if (t_debug())
+        {
+            XRect hg = XWidget_geometry((XWidget*)host);
+            XRect lg = XWidget_geometry((XWidget*)dockLeft);
+            fprintf(stderr,
+                    "[DD:%s] host geo=(%d,%d %dx%d) left geo=(%d,%d %dx%d)\n",
+                    tag, hg.x, hg.y, hg.width, hg.height, lg.x, lg.y,
+                    lg.width, lg.height);
+        }
+        /* 左面板停靠在左区、其全局原点常在宿主客户区左缘之外（真机/
+         * 离屏同形：host=(10,10) 时 left=(0,50)）。往**左上**拖出宿主
+         * 几何之外，释放点必为 NoDockWidgetArea ⇒ 保持浮动。 */
+        t_touchDragOut((XWidget*)host, dockLeft, pressX, pressY, -30, -20, 4);
+        t_touchRelease((XWidget*)host, dockLeft, pressX - 30 * 4,
+                       pressY - 20 * 4);
+        t_expect(XDockWidget_isFloating(dockLeft),
+                 "场景11第一步：左面板未脱靠成浮动态");
+    }
+    if (!XDockWidget_isFloating(dockLeft)) return 1;
+    if (!XWidget_isVisible((XWidget*)dockLeft))
+    {
+        t_expect(false, "场景11：左浮窗脱浮后即不可见");
+        return 1;
+    }
+
+    /* 第二步：把右面板拖到宿主**中央**释放（触发 finishDrop Central 分支，
+     * 修复前会把浮动的左面板选为编组基准并 hide 掉）。中央带=停靠区矩形
+     * 横纵都居中 1/3，故释放点取宿主几何中心（宿主局部坐标再映回全局）。 */
+    {
+        XPoint dorg = XWidget_mapToGlobal((XWidget*)dockRight, &zero);
+        XRect hg = XWidget_geometry((XWidget*)host);
+        XPoint hostCenter;
+        XPoint centerGlobal;
+        int pressX = dorg.x + 40;
+        int pressY = dorg.y + 4;
+        int dx;
+        int dy;
+        int steps = 6;
+        XPoint_init(&hostCenter, hg.width / 2, hg.height / 2);
+        centerGlobal = XWidget_mapToGlobal((XWidget*)host, &hostCenter);
+        dx = (centerGlobal.x - pressX) / steps;
+        dy = (centerGlobal.y - pressY) / steps;
+        t_touchInject(t_touchTargetOf((XWidget*)host, dockRight), pressX,
+                      pressY, XTOUCHPOINT_STATE_PRESSED,
+                      XEVENT_TYPE_TOUCH_BEGIN);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        for (i = 1; i <= steps; ++i)
+        {
+            XThread_usleep(24000);
+            t_touchInject(t_touchTargetOf((XWidget*)host, dockRight),
+                          pressX + dx * i, pressY + dy * i,
+                          XTOUCHPOINT_STATE_UPDATED,
+                          XEVENT_TYPE_TOUCH_UPDATE);
+            XGuiApplication_processEvents(XEventLoop_AllEvents);
+        }
+        t_touchInject(t_touchTargetOf((XWidget*)host, dockRight),
+                      centerGlobal.x, centerGlobal.y,
+                      XTOUCHPOINT_STATE_RELEASED, XEVENT_TYPE_TOUCH_END);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        if (t_debug())
+            fprintf(stderr,
+                    "[DD:%s] right drop at global=(%d,%d) (host center)\n",
+                    tag, centerGlobal.x, centerGlobal.y);
+    }
+    if (t_debug())
+        fprintf(stderr,
+                "[DD:%s] after drop: left(float=%d hidden=%d vis=%d) "
+                "right(float=%d hidden=%d vis=%d)\n",
+                tag, XDockWidget_isFloating(dockLeft) ? 1 : 0,
+                XWidget_isHidden((XWidget*)dockLeft) ? 1 : 0,
+                XWidget_isVisible((XWidget*)dockLeft) ? 1 : 0,
+                XDockWidget_isFloating(dockRight) ? 1 : 0,
+                XWidget_isHidden((XWidget*)dockRight) ? 1 : 0,
+                XWidget_isVisible((XWidget*)dockRight) ? 1 : 0);
+
+    /* 判据（修复前第一条必失败：左面板被页签化吞掉、独立窗被隐藏）。 */
+    t_expect(XDockWidget_isFloating(dockLeft),
+             "场景11：拖右面板到中央后左浮窗被强制停靠（页签化吞掉）");
+    t_expect(XWidget_isVisible((XWidget*)dockLeft),
+             "场景11：左浮窗被隐藏（凭空消失且无法切回）");
+    t_expect(!XWidget_isHidden((XWidget*)dockLeft),
+             "场景11：左浮窗进入 Hidden 态");
+    t_expect(XWidget_isVisible((XWidget*)dockRight),
+             "场景11：右面板落位后不可见");
+
+    if (outer) XClassDelete((XClass*)outer);
+    return bad;
+}
+
 /* ==================== 主流程 ==================== */
 
 int main(void)
@@ -2008,6 +2388,14 @@ int main(void)
 
     /* 场景 9：拖出后再拖动浮窗（用户现场手势：拖动浮窗留残影）。 */
     bad += t_runFloatDragScenario("floatdrag");
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+
+    /* 场景 10：落点指示器跨区换位残留（2026-11-04 真机 T2 实证根因）。 */
+    bad += t_runIndicatorSwapScenario("indswap");
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+
+    /* 场景 11：浮窗被页签化吞掉（2026-11-07 真机「拖右面板左浮窗消失」）。 */
+    bad += t_runFloatSwallowedScenario("floatswallow");
     XGuiApplication_processEvents(XEventLoop_AllEvents);
 
     if (t_failures)

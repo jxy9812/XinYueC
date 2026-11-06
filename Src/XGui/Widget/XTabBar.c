@@ -680,7 +680,7 @@ static void VXTabBar_mousePressEvent(XWidget* self, XEvent* event)
      * 非命中区，禁用控件不收鼠标事件。
      */
     if (XWidget_focusPolicy(self) != XWidgetFocusPolicy_NoFocus)
-        XWidget_setFocusReason(self, XFocusReason_Mouse);
+        XWidget_setFocus_2(self, XFocusReason_Mouse);
     if (bar->m_movable) {
         /* 拖拽换位起手：记录起始页签与按下位置（move 阶段跨页签即换位）。 */
         bar->m_dragActive = true;

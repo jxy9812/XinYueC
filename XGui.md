@@ -1605,6 +1605,161 @@ translucent=ff1c2a38 逐位正确）；GL 图表页 20 帧帧对差分 changed=0
 - 触摸→mouse 合成事件已带 m_synthesized 来源标志并透传触摸时间戳；XI2 触摸事件源已接入（§8.0g24 方案 A，主点转译；多点列表留方案 B）。
 - 主循环：无定时器时 20ms 心跳兜底保留（驱动轮询回调）。
 
+#### 8.1.1 控件域（XWidget）Qt 6.8.3 对齐复扫批次（2026-11-05）
+
+> 本段登记本轮 XWidget 对齐复扫（对照本地 Qt 6.8.3 源码逐行核对）确认的
+> **声明式偏差**——即 X 侧有意为之、与 Qt 语义存在差异但非漏实现者。
+> 每条给出 Qt 对照行号与 X 侧处置结论。行为已在同批修正的项不在此列。
+
+**架构裁剪（不补 API，能力由别层承担）**
+
+- **控件级 style/setStyle 不做**：XGui 走全局样式引擎
+  （`XApplication_setStyle`，XApplication.h:281）；引入控件级样式需
+  polish/repolish 机制支撑，属架构级扩项。控件级样式由全局样式引擎承担。
+- **控件级 screen/setScreen 不做**：嵌入式单屏场景无使用价值；屏幕能力
+  落在窗口层（`XWindow_screen` / `XWindow_setScreen`，XWindow.h:1138/1140）。
+- **静态 find(WId) 反查不补**：仓内已有反查基础设施
+  `XWidget_widgetForWindow`（XWidget.h:2045）与
+  `XApplication_topLevelWidgets`（XApplication.h:147），按原生 id 反查控件
+  在嵌入式非刚需。
+- **actionEvent 不补**：Qt 的 actionEvent 依赖 QActionEvent 负载类；X 的
+  XEvent 无动作负载字段（XWidget.h:1820-1823 已自述）。子类经
+  `XEVENT_TYPE_ACTION_ADDED` / `XEVENT_TYPE_ACTION_REMOVED` 感知动作增删，
+  不提供 action/before 负载；事件载荷体系归 XCore 专项。
+- **控件级 nativeEvent 虚槽不做**：原生事件钩子已在窗口层提供
+  （`XWindow_nativeEvent_base`，XWindow_Protected.h:94）；XGui 是
+  「一控件一原生窗口」的嵌入式模型，控件级 nativeEvent 无落地场景。
+- **Keypad 导航不引入**：Qt 侧该对被 `QT_KEYPAD_NAVIGATION` 编译开关包裹
+  （qwidget.h:638），属编译期可选特性；XGui 无 Keypad 导航体系，引入需同时
+  扩 XWidgetFocusPolicy（XWidget.h:292-299）。如未来引入，另立项同时加
+  策略位与 XWidget_setEditFocus。
+- **createWindowContainer 不补**：Qt 该 API 专用于把 QWindow 嵌进 QWidget 树；
+  XGui 的窗口桥接是内部 XWidgetWindow 类，嵌入式不需要外部窗口容器。
+- **GraphicsView 代理控件族不适用**：Qt 侧被 `QT_CONFIG(graphicsview)` 包裹
+  （qwidget.h:462）；XGui 无 GraphicsProxy 族（`rg -l "GraphicsProxy" Src/`
+  零命中），属 Qt 模块级特性。
+- **控件级快捷键四件套不做**：快捷键注册由 XShortcut 对象模型承载
+  （XShortcut.h:143/173/232/239/158/189），无 Qt 的 grabShortcut id
+  登记表；XShortcut 模块级能力齐备。
+- **setTabOrder 批量重载（initializer_list）不补**：initializer_list 是 C++
+  惯用法（qwidget.h:435），XGui 为纯 C 适配无对应承载；两控件版已覆盖
+  嵌入式 Tab 链需求。如需批量建链，另立 C 数组版小项。
+- **render 缺 QPaintDevice 目标重载**：XPaintDevice 绘制派发已按项目决策接入
+  （XGui.md §8.0g9），但 render 的设备目标重载在 XGui 属低频能力。
+- **QPointF 浮点重载待办**：Qt 6.8 才补的 QPointF 重载在整数像素嵌入式用得少；
+  XPointF 已在仓内（XGeometry.h:105-109）且 XWindow 已有浮点映射先例
+  （XWindow.h:1169），需要时按同构补即可。
+- **takeLayout 不补**：现有等价路径（layout() + setLayout(NULL)）已够用；
+  真正的缺陷是布局换挂未从旧控件摘除（已同批修正），takeLayout 本身不必现在补。
+
+**行为口径差（有意扩展 / 刻意取舍，非缺陷）**
+
+- **「父可见即自动可见」模型**：Qt 的构造期 Hidden 规则是「窗口/无父/父可见/
+  显式隐藏 ⇒ Hidden」（qwidget.cpp:11018-11019）；X 的 Hidden 初值只看
+  「有无父」，父可见时新建子控件直接可见——这是 2026-10-29 的有意修复
+  （页面翻层空白根因），改 Qt 口径会回退该修复；isHidden 与 isVisible 在
+  该模型下自洽。换父后同理（Qt 要求保持隐藏并显式 show，qwidget.cpp:11018-11019
+  + 文档 10658-10660）。**登记为声明式偏差**。
+- **托管控件不自动伸缩**：X 侧已把「布局托管控件不自动伸缩」记为有意决策
+  （XWidget.c:6582-6590「约束归布局 2026-10-17」），改回 Qt 的自动放大
+  会与布局约束打架。
+- **heightForWidth 无布局时返回提示高度**：X 的扩展语义（无布局时按策略位/回调
+  给 sizeHint.height 并按 min/max 夹取），Qt 恒返回 -1。
+- **控件级透明度为 X 扩展**：Qt 对非窗口不落值、getter 恒 1.0
+  （qwidget.cpp:11605/11611-11612）；X 允许控件级透明度——嵌入式半透明浮层/
+  遮罩面板的常用能力，按 Qt 改会伤现有用法。
+- **Tab 键处理顺序**：Qt 先做焦点遍历再调 keyPressEvent
+  （qwidget.cpp:8992-9004，普通控件收不到 Tab）；X 先 keyPressEvent
+  （XWidget.c:5688-5718）——这是 X 侧编辑器类能拦 Tab 提交的前提。
+  修饰键门禁也不同（Qt 只排除 Ctrl/Alt）。**登记为声明式偏差**。
+- **Tab 候选要求 m_explicitShow**：Qt 用 isVisibleTo(toplevel)（不要求被显式
+  show 过），X 要求 m_explicitShow 为真（XWidget.c:8402-8419），系无头
+  apitest 契约下的取舍。
+- **复合控件过滤口径差**：Qt 按焦点代理的祖先方向过滤复合控件
+  （qapplication.cpp:1997-1999），X 按父控件是否 Tab 候选，且 X 注释
+  （XWidget.c:8430-8440）自陈为「收集端等效收口」的刻意取舍。
+- **nextInFocusChain 返回下一个可 Tab 聚焦候选**：Qt 返回焦点链上紧邻元素
+  （可能 NoFocus/隐藏，qwidget.cpp:6887 + helper 文档 13379）；X 口径已在
+  XWidget.h:1470-1478 自陈。
+- **focusWidget 返回应用全局焦点控件**：Qt 的 QWidget::focusWidget() 是
+  「窗口内最后一次被 setFocus 过的子控件」记忆（qwidget.cpp:6867-6870 /
+  6677-6698）；X 返回应用全局当前焦点控件（XWidget.c:8249-8258）。
+  per-window focus_child 记忆另立专项（§8.2）。
+- **mouseGrabber 不含隐式按压抓取**：Qt 还返回按键按住期间的隐式按压抓取
+  （qwidget.cpp:12919-12924），X 只返回 g_mouseGrabWidget
+  （XWidget.c:8720-8723）；X 的等价物 g_buttonDownWidget 已在
+  （c:290/2957/2963）。
+- **特殊状态位判定更严**：X 比 Qt 更严格（额外要求 m_isWindow，
+  XWidget.c:7799-7815 vs qwidget.cpp:2858-2859），差异只在「非窗口控件却
+  带特殊状态位」的畸形态出现。
+- **图标父链上溯终止条件**：Qt 在「曾调用过 setWindowIcon」处终止父链上溯
+  （qwidget.cpp:6179-6181），X 在「图标非空」处才终止（XWidget.c:8013-8014）
+  ——仅在「自身设过空图标而父链有非空图标」这一窄场景分歧。
+- **close 不消费 WA_DeleteOnClose**：Qt 接受 close 后按该属性走 deleteLater
+  （qwidget.cpp:8580-8583）；但 X 侧该属性的全部置位点都挂在弹出菜单上，
+  且 XMenu 已自行实现自删（XMenu.c:804-812 经 XObject_deleteLater）——在
+  XWidget_close 通用消费该属性会与菜单自删路径形成**双重删除风险**。保持
+  「菜单自删由 XMenu 承担」；若日后通用化，须先统一 XMenu 自删路径。
+- **overrideWindowState 不派发状态变更事件**：Qt 该 API 自标 internal
+  （qwidget.h），X 的事件体系无 isOverride 标志位（XWidget.c:7896-7903
+  注释已自陈）；其余语义（不动平台窗口、不动 normalGeometry）与 Qt 一致。
+
+**平台边界（Qt 有平台下发，X 无对应桥接入口）**
+
+- **setWindowRole 仅存储不下发平台**：Qt 在 xcb 下写
+  `_NET_WM_WINDOW_ROLE`（qwidget.cpp:6349-6352）；X 的 XWindow 桥接层无 role
+  入口（`rg setRole/WM_ROLE` 零命中），属 X11 平台后端专项，嵌入式不适用。
+- **setWindowIconText 不推送平台**：Qt 走 X11 `_NET_WM_ICON_TEXT`，且
+  Qt 6.1+ 已废弃该 API（XWidget.h:1347/611 已自述「仅存储不推送」）；XWindow
+  桥接层无 iconText 入口。
+
+**承载差异（已在头注释声明）**
+
+- **fontMetrics / fontInfo 承载差异**：Qt 侧返回度量对象与字体解析结果，X 返回
+  XFont 值拷贝、度量由 `XPainter_textWidth` 等自由函数承担（XWidget.h:1724-1759
+  已声明）。若需严格对齐，另补 XFontMetrics / XFontInfo 值类型。
+- **render 仅支持等尺寸、无 RenderFlags / 源区域**：X 的 render 无
+  sourceRegion/RenderFlags 且强制等尺寸否则直接失败（XWidget.c:11821），头
+  注释已登记简化项（XWidget.h:2131-2134），此处补登 §8.1。
+- **visibleRegion 不扣不透明子控件**：Qt 同时扣不透明子控件与不透明兄弟
+  （qwidget.cpp:8724-8725）；X 的 API 层只扣兄弟且头注释仅声明兄弟口径
+  （XWidget.h:2020-2021）。脏区路径已单独扣不透明子/兄
+  （XWidget.c:2166-2183）——补齐会牵动遮挡扣减专项，待其收口后再评估。
+- **childrenRegion 不并入子控件遮罩**：Qt 的 childrenRegion 是带孔形状
+  （子控件有 mask 时并入平移后的 mask，qwidget.cpp:3746-3750），X 恒并入
+  子控件矩形（XWidget.c:7321）；该 API 实测框架与测试零调用（`rg` 计数 2），
+  低频。
+- **XRect 半开区间边界口径**：命中边界像素差异源于 XRect_contains 的半开区间
+  口径（XGeometry.c:422-430），XRect 是全库几何基础类型，改口径爆炸半径过大。
+- **调色板无 resolve 继承语义**：Qt 的 setPalette 走 resolve 掩码 + 自然调色板
+  解析 + 向下传播（qwidget.cpp:4555-4567）；X 的 `xwidget_paletteStore` 整体
+  覆盖全矩阵，缺 resolve 语义与传播；且 X 的 XWidget_palette 无父链继承、
+  也不按 enabled/visible/activeWindow 选色组（XWidget.c:9937-9949）。**归
+  调色板/样式域专项**（§8.2）。
+- **foregroundRole 恒返回 NoRole**：Qt 的 foregroundRole 永不返回 NoRole
+  （按 backgroundRole 推导对比色，qwidget.cpp:4440-4463）；X 恒返回 NoRole
+  （c:9984），推导逻辑被复制在 XLabel.c:732-752 与 XFrame.c:63-76——上提需
+  同时改两个派生类文件，属跨文件推导重构。
+- **样式表级联 qproperty 采集范围**：只读自身 m_styleSheet（XWidget.c:9689-9801），
+  级联 owner 收口已在 §14.128 专项内。
+- **手势体系不做**：见 §8.1 既有登记（XWidget 的 XWidget_addGestureRecognizer
+  语义更接近 QGestureRecognizer::create(target)，XWidget.c:8814-8846、
+  头注释 h:1842 已标注对标关系）。
+
+**X 扩展（Qt 无对应 API，保留并登记）**
+
+- **framePos**：Qt 6 已移除 framePos（`rg framePos` 在 Qt 6.8.3
+  src/widgets 零命中），X 的 framePos 是几何扩展且有实现。
+- **unsetContentsMargins**：Qt 只有 `QLayout::unsetContentsMargins`
+  （qlayout.h:53），QWidget 无此 API；X 的控件级清除边距是实用扩展。
+- **titleBarWidget**：控件级 titleBarWidget 是 X 扩展（Qt 仅 QDockWidget 有，
+  qdockwidget.h:61-62），实现单一无重复（XDockWidget.c:1794-1802 薄包装
+  转发）。
+- **hasMask**：Qt 只有 `mask().isEmpty()` 表达「无遮罩」（qwidget.h:344），
+  X 的 hasMask() 是无害便利 API。
+- **clearGestureRecognizers**：Qt 手势订阅只有 grabGesture/ungrabGesture 两条
+  （qwidget.h:363-364），无「一次性清空全部订阅」入口。
+
 ### 8.2 遗留清单（按优先级，结构改造大件各自立项）
 
 | 项 | 类型 | 备注 |
@@ -1644,6 +1799,26 @@ translucent=ff1c2a38 逐位正确）；GL 图表页 20 帧帧对差分 changed=0
 | XTabBar 多选项卡溢出 | ✅ 已修 | 滚动按钮+偏移滚动+自动露出+滚轮（2026-09-21，见 §8.0f）；elide/按住连发已收口（§8.0g11）；触摸滚动随 XI2 专项 |
 | XTabWidget setWidget 替换语义（现拒绝二次设置） | ✅ 已修 | 2026-09-21 §8.0g2：替换语义落地（摘父链转移所有权），探针 19/19 |
 | demo 启动器按钮文字溢出边界（页 4 网格） | ✅ 已修 | 2026-09-21 §8.0g2：文案缩短至单元格宽度内 |
+
+#### 8.2.1 命名与 API 契约批次（2026-11-05，控件域对齐复扫立项）
+
+> 本轮 XWidget 对齐复扫识别出三族**全库改名类**遗留——单点改动会留下口径
+> 撕裂，须按目录分批机械改名并同步 ctest。三族各自立项，本轮（批次 5）只
+> 登记不施工。
+
+| 项 | 类型 | 备注 |
+|---|---|---|
+| 全库 `_const` 改名（返回内部借用指针的 getter） | 大 | 全库 284 处「返回 `const XString*` 但无 `_const` 后缀」的 getter（101 处已合规）；XWidget 侧 11 个（`windowTitle`/`windowIconText`/`windowFilePath`/`toolTip`/`statusTip`/`whatsThis`/`accessibleName`/`accessibleDescription`/`windowRole`/`styleSheet`/`locale`）。改名波及全库 **188 个唯一名**——单点改会留下口径撕裂，须按目录分批 + ctest 同步。本轮不改这 11 个签名，**所有权说明由 §8.1 之外的头注释 `@warning` 补注覆盖**（「返回值归对象所有、调用方不得释放/修改」）——契约已对调用方可见，改名可独立排期。拆分依据见风格文档《获取函数的所有权契约》：带 `_const` = 借用（禁止释放），不带 = 拷贝（调用方必须释放） |
+| 描述性后缀 → `_2` 编号（全库） | 大 | 「同语义不同参数」重载用描述性后缀（`_Size`/`_Rect`/`_Point`/`_Full`）代替 `_2` 编号，违反《特殊后缀》表「`_2` = 同功能不同参数的重载」。波及 **63 个头文件 / 164 个源文件 / 107 个唯一 API 名**（`XWidget_setGeometryRect` 单独就 79 处 / 34 文件）。属机械改名，须按目录分批 + ctest 同步；**与下一族同批推进**避免重复立项 |
+| 全库 `_2` → `_utf8`（字符串 API 后缀契约） | 大 | 违反《字符串 API 后缀契约》第 4 条（设置侧 `char*` 必须 `_utf8`；契约反例块逐字即列 `XWidget_setTitle_2`）。全库 **213 个唯一** `_2` 函数以 `const char*` 为参——只改 XWidget 一处会留下口径撕裂，须全库批次改名。XWidget 侧代表：`XWidget_setWindowTitle_2`（真实调用点 4 处：HighSpeedFilter/client/ui/HsfUi.c:926、HsfLogin.c:715、Test/XGuiDemo/xgui_demo_page_remote_server.c:616、Src/XGui/Widget/XToolBar.c:256）。与上一族同批推进 |
+
+#### 8.2.2 焦点与屏幕能力专项（2026-11-05，控件域对齐复扫立项）
+
+| 项 | 类型 | 备注 |
+|---|---|---|
+| 焦点链全局 take/insert + per-window focus_child 记忆 | 大 | ①**全局焦点链 take/insert**：X 的 `XWidget_setTabOrder` 只维护单跳 next/prev 链接（`XWidget_setTabOrder`），Qt 的 `QWidget::setTabOrder` 走全局焦点链的 take/insert（qwidget.cpp:7020-7084）——本轮已先落地「改链时摘旧链 + 防 2 环」的链卫生，全局链重构仍未做。②**per-window focus_child 记忆**：Qt 的 `QWidget::focusWidget()` 返回「窗口内最后一次被 setFocus 过的子控件」记忆（qwidget.cpp:6867-6870 / 6677-6698），X 返回应用全局当前焦点控件（`XWidget_focusWidget`）——窗口焦点记忆缺失导致多窗口场景下焦点归属判定不准。两项同属焦点体系，须一并设计（全局链改造会影响 ① 的窗口级记忆落点） |
+| 控件级多屏与屏幕上限（screen/winId 之外） | 中 | 控件级 `screen`/`setScreen` 已定裁不做（§8.1 架构裁剪条），但**多屏与屏幕上限**能力仍缺：Qt 有 `QScreen` 列表与 `QWidget::screen()` 的几何约束（窗口不得越出可用区），X 侧屏幕能力只在窗口层（`XWindow_screen`/`XWindow_setScreen`）且无「窗口限位到可用区」等价约束。嵌入式单屏为主场景，但 Xvfb 多屏与真机多屏（如扩展屏）场景需补窗口可用区夹取——归窗口层专项，**与批次 5 的焦点专项同批排期** |
+| 调色板 resolve 继承与色组选择 | 大 | 与样式域专项**合并**（避开 Src/XGui/Style/XPalette.c 脏区）：①**resolve 语义**——Qt 的 `setPalette` 走 resolve 掩码 + 自然调色板解析 + 向下传播（qwidget.cpp:4555-4567），X 的 `xwidget_paletteStore` 整体覆盖全矩阵（XWidget.c:9918），缺 resolve 语义与向下传播；②**色组选择**——X 的 `XWidget_palette` 无父链继承、也不按 enabled/visible/activeWindow 选色组（XWidget.c:9937-9949；色组本身齐备，XPalette.h:91-94 存有全部色组，真实缺口只是继承与选择）；③`foregroundRole` 恒返回 NoRole 的对比色推导上提（§8.1 承载差异条）。三项同属调色板/样式域，须与该专项合并施工 |
 
 ### 8.3 已修根修存档（防回归要点）
 

@@ -327,7 +327,11 @@ XColor XPalette_color(const XPalette* self, XPaletteColorGroup group, XPaletteCo
 {
     XPaletteColorGroup g;
     XColor invalid = XColor_create();
-    if (!self || role < 0 || role >= XPaletteColorRole_NColorRoles)
+    /* NoRole 读写均不落盘（头文件契约、setColor 拒绝同款；本库 NoRole
+     * 枚举居末位仍落在 <NColorRoles 有效域内，读侧须显式特判——Qt 布局
+     * 中 NoRole 夹在有效角色中间、靠数据槽恒空实现同一语义）。 */
+    if (!self || role < 0 || role >= XPaletteColorRole_NColorRoles ||
+        role == XPaletteColorRole_NoRole)
         return invalid;
     g = palette_normalize_group(group);
     return xpal_unpack(&self->m_colors[g][role]);

@@ -230,6 +230,12 @@ void XLayout_linkItem(XLayout* self, XLayoutItem* item)
     if (!self || !item) return;
     sub = XLayoutItem_layout_base(item);
     if (sub) {
+        /* 【二轮对齐 2026-11-06】子布局脱离旧宿主前按布局反查摘 _ref
+         * 接管账（无条件：宿主挂接条件失败也不留残账）——否则旧宿主
+         * 析构 TakeFor 落空 → 接管布局泄漏；或布局地址复用后与其新挂接
+         * 布局撞等式 → XClassDelete 误删借用布局。使所有权随挂接全路径
+         * 同步（对标 Qt qwidget.cpp:10284/10322 `l->setParent(this)`）。 */
+        XWidget_ownedLayoutUnregister(sub);
         if (sub->m_parentWidget && sub->m_parentWidget->m_layout == sub)
             sub->m_parentWidget->m_layout = NULL;
         if (sub != (XLayout*)self)
@@ -241,7 +247,7 @@ void XLayout_linkItem(XLayout* self, XLayoutItem* item)
     child = XLayoutItem_widget_base(item);
     if (!parent || !child) return;
     if (XWidget_parentWidget(child) != parent)
-        XWidget_setParentPlain(child, parent);
+        XWidget_setParent_2(child, parent);
 }
 
 /* ==================== 虚函数表与生命周期 ==================== */
@@ -524,6 +530,11 @@ static void XLayout_releaseItems(XLayout* self)
 static void VXLayout_deinit(XLayout* self)
 {
     if (!self) return;
+    /* 【二轮对齐 2026-11-06】布局析构先按反查摘 _ref 接管账（无条件，
+     * 挂接条件失败也不留残账）：否则宿主析构 TakeFor 返回已释放布局，
+     * 地址复用后可与其新挂接借用布局撞等式 → XClassDelete 误删（双删），
+     * 或 TakeFor 落空 → 接管布局泄漏。 */
+    XWidget_ownedLayoutUnregister(self);
     if (self->m_parentWidget && self->m_parentWidget->m_layout == self)
         self->m_parentWidget->m_layout = NULL;
     self->m_parentWidget = NULL;
@@ -578,8 +589,14 @@ static void VXLayout_move(XLayout* self, XLayout* other)
         if (item && XLayoutItem_layout_base(item))
             ((XLayout*)item)->m_parentLayout = self;
     }
-    if (self->m_parentWidget && self->m_parentWidget->m_layout == other)
+    if (self->m_parentWidget && self->m_parentWidget->m_layout == other) {
+        /* 【二轮对齐 2026-11-06】宿主挂接改指 self：_ref 接管账随内容
+         * 同步转移（other 壳名下账目改记 (宿主, self)）；other 本无登记
+         * （借用布局）则不产生新账，借用属性保留——否则宿主析构 TakeFor
+         * 携已销毁的 other 壳 → 残账悬垂，或接管布局泄漏。 */
+        XWidget_ownedLayoutTransfer(other, self);
         self->m_parentWidget->m_layout = self;
+    }
     if (self->m_parentLayout) {
         /* 把父布局数组中的 other 条目替换为 self */
         int idx = XLayout_indexOfItem(self->m_parentLayout, (XLayoutItem*)other);
@@ -733,14 +750,37 @@ int XLayout_indexOfItem(XLayout* self, const XLayoutItem* item)
 
 void XLayout_attachWidget(XLayout* self, XWidget* widget)
 {
+    XWidget* oldParent;
     if (!self) return;
     if (self->m_parentLayout) {
         XLayout_removeItem(self->m_parentLayout, (XLayoutItem*)self);
         self->m_parentLayout = NULL;
     }
+    /* 【对称摘除 2026-11-05】对标 Qt 6.8（qwidget.cpp:10309/10338-10347）：
+     * 布局挂到新控件前，先把**旧控件**的 m_layout 摘掉——否则两个控件同时
+     * 布局同一布局（旧控件的 m_layout 仍指向 self），且旧控件析构时的
+     * detach 会把新控件的 m_layout 一并清空（XWidget.c 的
+     * XWidget_setParent_2 → XLayout_detachWidget 路径），使新控件
+     * 凭空丢失布局。 */
+    oldParent = self->m_parentWidget;
+    if (oldParent && oldParent != widget) {
+        /* 【二轮对齐 2026-11-06】旧宿主失去本布局：_ref 接管账按反查
+         * 同步摘除（无条件，宿主挂接条件失败也不留残账）——否则旧宿主
+         * 析构 TakeFor 落空 → 接管布局泄漏；或布局地址复用后与其新挂接
+         * 布局撞等式 → XClassDelete 误删借用布局。同宿主重挂
+         * （oldParent == widget）不动账。 */
+        XWidget_ownedLayoutUnregister(self);
+        if (oldParent->m_layout == self)
+            oldParent->m_layout = NULL;
+    }
     self->m_parentWidget = widget;
-    if (self->m_parentWidget && self->m_parentWidget->m_layout != self)
+    if (self->m_parentWidget && self->m_parentWidget->m_layout != self) {
+        /* 【二轮对齐 2026-11-06】被顶掉的旧挂接布局先摘账（若有接管
+         * 登记）再覆盖 m_layout：直连 attachWidget 绕过 setLayout 的
+         * 路径同样不留残账。 */
+        XWidget_ownedLayoutUnregister(self->m_parentWidget->m_layout);
         self->m_parentWidget->m_layout = self;
+    }
     self->m_isDirty = 1;
     if (widget)
         XLayout_activate(self);
@@ -749,6 +789,12 @@ void XLayout_attachWidget(XLayout* self, XWidget* widget)
 void XLayout_detachWidget(XLayout* self)
 {
     if (!self) return;
+    /* 【二轮对齐 2026-11-06】摘挂前按反查摘 _ref 接管账（无条件）：本
+     * 布局脱离宿主后，宿主名下接管记录必须同步失效——否则宿主析构
+     * TakeFor 落空 → 接管布局泄漏；或布局地址复用后与其新挂接布局撞
+     * 等式 → XClassDelete 误删借用布局。所有权随挂接同步
+     * （对标 Qt qwidget.cpp:10284/10322 `l->setParent(this)`）。 */
+    XWidget_ownedLayoutUnregister(self);
     if (self->m_parentWidget && self->m_parentWidget->m_layout == self)
         self->m_parentWidget->m_layout = NULL;
     self->m_parentWidget = NULL;
@@ -1015,7 +1061,7 @@ void XLayout_setMenuBar(XLayout* self, XWidget* widget)
     if (!self) return;
     pw = XLayout_parentWidget(self);
     if (widget && pw && XWidget_parentWidget(widget) != pw)
-        XWidget_setParentPlain(widget, pw);
+        XWidget_setParent_2(widget, pw);
     self->m_menuBar = widget;
     XLayout_invalidate(self);
 }
@@ -1186,7 +1232,7 @@ XLayoutItem* XLayout_replaceWidget(XLayout* self, XWidget* from,
     /* 对标 Qt addChildWidget：把 to 挂到本布局的父控件下。 */
     pw = XLayout_parentWidget(self);
     if (pw && XWidget_parentWidget(to) != pw)
-        XWidget_setParentPlain(to, pw);
+        XWidget_setParent_2(to, pw);
     newItem = XLayoutItem_createWidgetItem(to);
     if (!newItem) return NULL;
     XLayoutItem_setAlignment(newItem, XLayoutItem_alignment(item));

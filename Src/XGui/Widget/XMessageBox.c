@@ -1439,7 +1439,7 @@ void XMessageBox_setCheckBox(XMessageBox* self, XCheckBox* checkBox)
     self->m_checkBox = checkBox;
     if (self->m_checkBox) {
         /* 收编：改为消息框子控件并显示在文本与按钮盒之间。 */
-        XWidget_setParentPlain((XWidget*)self->m_checkBox, (XWidget*)self);
+        XWidget_setParent_2((XWidget*)self->m_checkBox, (XWidget*)self);
         XWidget_show((XWidget*)self->m_checkBox);
         xmsg_setupCheckBox(self);
     }

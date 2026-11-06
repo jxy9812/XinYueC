@@ -2671,8 +2671,13 @@ XTableWidgetItem* XTableWidget_itemAt(const XTableWidget* self, int x, int y)
     if (!self) return NULL;
     xtw_cellAt(self, x, y, &row, &col);
     if (row < 0 || col < 0) return NULL;
-    /* 对齐 Qt itemAt：命中落在合并区间覆盖格时返回区间原点条目。 */
-    {
+    /* 对标 Qt itemAt：命中落在合并区间覆盖格时返回区间原点条目。
+     * [根修 2026-11-05] 仅当命中格确在合并区间内才吸附——此前无条件经
+     * XTableView_indexAt 重算，而其表头高（XTV_HEADER_H=20）/列宽口径与
+     * XTableWidget 的 m_headerHeight/m_colWidths 不同源，(80,36) 在
+     * cellAt=(0,0) 却被吸附成 (0,1)，itemAt 命中错格。 */
+    if (XTableView_rowSpan(&self->m_base, row, col) > 1 ||
+        XTableView_columnSpan(&self->m_base, row, col) > 1) {
         int orow = row;
         int ocol = col;
         if (XTableView_indexAt(&self->m_base, x, y, &orow, &ocol)) {

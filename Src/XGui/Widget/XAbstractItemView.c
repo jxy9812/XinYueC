@@ -2106,7 +2106,7 @@ static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event)
      * QComboBox 私有机制管理焦点，不经通用点击聚焦路径），避免隐藏
      * 后焦点滞留悬空。 */
     if (!self->m_isWindow)
-        XWidget_setFocusReason(self, XFocusReason_Mouse);
+        XWidget_setFocus_2(self, XFocusReason_Mouse);
     if (XAbstractItemView_indexAt_base(view, pos.x, pos.y, &row, &col)) {
         XAbstractItemViewSelectionMode mode = view->m_selectionMode;
         /* 点击他格先按提交分支关闭编辑器（对标 Qt 点击编辑格以外的

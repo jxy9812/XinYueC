@@ -1253,7 +1253,14 @@ static int ttxt_run_text_browser(void)
             g_xtbAnchorClicked = 0;
             XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
                              XMouseButton_LeftButton, 0, hit);
-            XObject_event_base((XObject*)b->m_base.m_editor, (XEvent*)&me);
+            /* [注入修正 2026-11-05] 点击→anchorClicked 在编辑器事件过滤
+             * 器（VX_browser_eventFilter）内处理，XObject_event_base 直调
+             * event 虚槽绕过滤链——改公开虚槽 eventFilter_base 直调过滤器
+             * 段（等价 XWidget_sendEvent 的过滤段；真窗口路径上线走
+             * handleMouseEvent→sendEvent→filter 已由真机验证）。 */
+            XObject_eventFilter_base((XObject*)b,
+                                     (XObject*)b->m_base.m_editor,
+                                     (XEvent*)&me);
             XAPI_EXPECT(g_xtbAnchorClicked == 1,
                         "XTextBrowser: openLinks=false 点击仍发 anchorClicked");
             XAPI_EXPECT(strcmp(xapi_cstr(XTextBrowser_source(b)),
@@ -1264,7 +1271,9 @@ static int ttxt_run_text_browser(void)
             g_xtbAnchorClicked = 0;
             XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
                              XMouseButton_LeftButton, 0, hit);
-            XObject_event_base((XObject*)b->m_base.m_editor, (XEvent*)&me);
+            XObject_eventFilter_base((XObject*)b,
+                                     (XObject*)b->m_base.m_editor,
+                                     (XEvent*)&me);
             XAPI_EXPECT(g_xtbAnchorClicked == 1 &&
                         strcmp(xapi_cstr(XTextBrowser_source(b)),
                                "xtb://linkA") == 0,
@@ -2019,8 +2028,11 @@ static int ttxt_run_key_sequence_edit(void)
                 "XKeySequenceEdit: startCapturing 重新进入捕获态");
     g_xkseFinished = 0;
     ttxt_key((XWidget*)k, XKey_Tab, XKeyboardModifier_NoModifier);
-    XAPI_EXPECT(g_xkseFinished == 0,
-                "XKeySequenceEdit: 空序列时结束键不发射 editingFinished");
+    /* [断言口径修正 2026-11-05] Qt finishEditing 无条件发射
+     * editingFinished（qkeysequenceedit.cpp:76-82，空序列同样通知），
+     * 此前「空序列不发」是本库早退偏差的口径锁，随实现根修正翻转。 */
+    XAPI_EXPECT(g_xkseFinished == 1,
+                "XKeySequenceEdit: 空序列结束键也发射 editingFinished（Qt 同）");
     g_xkseChanged = 0;
     XKeySequenceEdit_clear(k); /* 空序列重复 clear：无变化不发射 */
     XAPI_EXPECT(g_xkseChanged == 0 && !XKeySequenceEdit_keySequence(k)->count,
@@ -2120,6 +2132,9 @@ static int ttxt_run_key_sequence_edit(void)
     XKeySequenceEdit_setFinishingKeyCombinations(k, finish, 1);
     XAPI_EXPECT(XKeySequenceEdit_finishingKeyCombinationCount(k) == 1,
                 "XKeySequenceEdit: 自定义结束键组合数 1");
+    /* [夹具修正 2026-11-05] 前段 Return finish 后捕获态已退（非捕获不
+     * 消费任何键，qkeysequenceedit 捕获态机）——重新武装再注入。 */
+    XKeySequenceEdit_startCapturing(k);
     ttxt_key((XWidget*)k, XKey_Period, XKeyboardModifier_NoModifier);
     XAPI_EXPECT(g_xkseFinished >= 1,
                 "XKeySequenceEdit: 自定义结束键触发 editingFinished");
@@ -2240,6 +2255,9 @@ static int ttxt_run_combo(void)
     XComboBox_addItem_2(cb, "A");
     XComboBox_addItem_2(cb, "B");
     XComboBox_addItem_2(cb, "C");
+    g_xcbCurIdx = 0; /* [夹具修正 2026-11-05] 首项 addItem 发射
+                      currentIndexChanged(0)（Qt rowsInserted），归零后
+                      本断言只计 setCurrentIndex 的一次发射。 */
     XComboBox_setCurrentIndex(cb, 1);
     XAPI_EXPECT(XComboBox_currentIndex(cb) == 1 && g_xcbCurIdx == 1,
                 "ComboBox: setCurrentIndex(1) 生效发射 currentIndexChanged");
@@ -2269,7 +2287,7 @@ static int ttxt_run_combo(void)
         XString* it1 = XComboBox_itemText(cb, 1);
         XAPI_EXPECT(XComboBox_currentIndex(cb) == 1 && g_xcbCurIdx == 1 &&
                     g_xcbCurIdxLast == 1 &&
-                    it1 && strcmp(xapi_cstr(it1), "C") == 0,
+                    it1 && strcmp(xapi_u8(it1), "C") == 0,
                     "ComboBox: removeItem 左移当前项并发射 currentIndexChanged");
         if (it1) XClassDelete((XClass*)it1);
     }
@@ -2279,6 +2297,8 @@ static int ttxt_run_combo(void)
                 g_xcbCurIdxLast == 0,
                 "ComboBox: 移除当前项重选后继并发射（Qt rowsRemoved）");
     g_xcbCurText = 0;
+    g_xcbCurIdx = 0; /* [夹具修正 2026-11-05] 上一段 removeItem 已计 1 次，
+                      归零后本断言只计清空性移除的一次发射。 */
     XComboBox_removeItem(cb, 0); /* 移除唯一项 → 清空发射 -1/"" */
     XAPI_EXPECT(XComboBox_currentIndex(cb) == -1 && g_xcbCurIdx == 1 &&
                 g_xcbCurIdxLast == -1 && g_xcbCurText == 1 &&
@@ -2314,7 +2334,7 @@ static int ttxt_run_combo(void)
     {
         XString* it2 = XComboBox_itemText(cb, 2);
         XAPI_EXPECT(XComboBox_count(cb) == 3 && g_xcbCurIdx == 0 &&
-                    it2 && strcmp(xapi_cstr(it2), "C") == 0,
+                    it2 && strcmp(xapi_u8(it2), "C") == 0,
                     "ComboBox: 满容量追加直接返回（不插入不挤占，Qt 前置 return）");
         if (it2) XClassDelete((XClass*)it2);
     }
@@ -2323,8 +2343,8 @@ static int ttxt_run_combo(void)
         XString* it0 = XComboBox_itemText(cb, 0);
         XString* it2 = XComboBox_itemText(cb, 2);
         XAPI_EXPECT(XComboBox_count(cb) == 3 &&
-                    it0 && strcmp(xapi_cstr(it0), "Z") == 0 &&
-                    it2 && strcmp(xapi_cstr(it2), "B") == 0,
+                    it0 && strcmp(xapi_u8(it0), "Z") == 0 &&
+                    it2 && strcmp(xapi_u8(it2), "B") == 0,
                     "ComboBox: 满容量头插从尾部裁剪（Qt removeRows 语义）");
         if (it0) XClassDelete((XClass*)it0);
         if (it2) XClassDelete((XClass*)it2);
@@ -2441,7 +2461,7 @@ static int ttxt_run_fontcombo(void)
         XObject_event_base((XObject*)view, (XEvent*)&me);
         fam0 = XComboBox_itemText((XComboBox*)f, 0);
         XAPI_EXPECT(g_fcbFontChanged == 1 && fam0 &&
-                    strcmp(g_fcbFamily, xapi_cstr(fam0)) == 0,
+                    strcmp(g_fcbFamily, xapi_u8(fam0)) == 0,
                     "FontComboBox: 弹层选字体发射 currentFontChanged"
                     "（载荷=选中族名）");
         if (fam0) XClassDelete((XClass*)fam0);

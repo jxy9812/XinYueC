@@ -1680,6 +1680,14 @@ void XWindow_reportWindowStateChanged(XWindow* self, XWindowState state)
          * 不漏（软件路径不发窗口事件，无双重派发）。 */
         XWindow_sendEvent(self, XEVENT_TYPE_WINDOW_STATE_CHANGE);
     }
+    /* 【批2 fix-verify#0 2026-11-06】激活上报兑现待激活焦点靶：Qt 的
+     * setFocus 在窗口未激活时只把焦点诉求记在窗口上（focus_child，
+     * qwidget.cpp:6668-6670 else 分支 updateFocusChild），窗口激活时
+     * 由激活路径真正移焦。X 侧闸内登记（XWidget_setFocus_2 →
+     * xwidget_pendingFocusRegister），此处 Active 位由无到有时兑现
+     * （XWidget_pendingFocusRedeem 按平台窗口反查登记表）。 */
+    if ((after & XWindowState_Active) && !(before & XWindowState_Active))
+        XWidget_pendingFocusRedeem(self);
     /* 最小化上报同样要联动可见性枚举（Minimized→Minimized 可见性），
        与 setWindowStates 末尾的 updateVisibility 保持一致。 */
     XWindow_updateVisibility(self);
@@ -2438,6 +2446,150 @@ XWindow* XWindow_fromWinId(XWindowId id)
 
 /* ==================== 显示 / 隐藏 / 状态显示 ==================== */
 
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+/**
+ * @brief      fbdev 顶层窗 hide 后的腾空区恢复（X11 Unmap→Expose 等价）。
+ * @details    本框架在 fbdev 单屏模式下自任合成器：一个顶层窗 hide 后，
+ *             它原来占据的屏幕矩形必须由 Z 序更下的可见窗口逐层重绘
+ *             覆盖，只有真正没有任何层覆盖的"裸余部"才铺桌面底色。
+ *
+ *             【逐层归属 2026-11-06】旧实现只找**首个**（最上层）相交
+ *             层注入 expose 便 break，随后把 hiddenRect 减去该层几何的
+ *             差集一股脑填 0xEF7D。对"独立浮窗（Tool 顶层）hide 回停靠"
+ *             是致命的：浮窗 hide 矩形常**部分悬出**其宿主主窗口（真机
+ *             探针：浮窗 (422,290 160x370) → y∈[290,660]，主窗口
+ *             (232,90 560x420) → y∈[90,510]），悬出段 y∈[510,600]
+ *             本该由更下层的 demo 全屏窗 (0,0 1024x600) 重绘成白底页面，
+ *             却因 break 从没枚举到它 ⇒ 被判"裸余部"填桌面灰，且该区
+ *             超出宿主 repaint 范围无人再覆盖 ⇒ 永久灰块残留（用户：
+ *             "拖出成独立窗口再拖回去瞬间就有残留"）。
+ *
+ *             正确语义对标 X11：Unmap 后所有被遮挡窗口都收 Expose，按
+ *             Z 序自顶向下逐层自绘；与 XWindowDecoration.c
+ *             xwd_restoreExposeStrips / xwd_clearOutsideWindow 的逐层
+ *             归属契约一致（那两处早已是不 break 的逐层扣除）。此处把
+ *             该口径补齐到 hide 恢复链，消除两处实现的行为分叉。
+ * @param      self 正在 hide 的顶层窗。
+ * @return     无返回值。
+ */
+static void xwin_fbdevHideRestore(XWindow* self)
+{
+    XRect hiddenRect;
+    XRegion remain;      /* 待归属区域：hiddenRect 扣除各下层窗占位后的余部。 */
+    XRegion underRegion; /* 临时：单个下层窗的屏上占位。 */
+    XVector* tops;
+    size_t wi;
+    bool dbg;
+    if (!XPlatformDisplayDriver_active()) return;
+    tops = XGuiApplication_allWindows();
+    if (!tops) return;
+    dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+    hiddenRect = XWindow_screenFootprint(self);
+    XRegion_init(&remain);
+    XRegion_init(&underRegion);
+    XRegion_addRect(&remain, &hiddenRect);
+    /* 【子窗口同列 2026-10-31】下层枚举须含子窗口（demo 主窗即演示
+     * 主窗的子窗口）：只看无父顶层会越过真正的下层窗。登记序=Z 序，
+     * 逆序=自顶向下。逐层都处理，不 break。 */
+    for (wi = XVector_size_base((const XContainer*)tops); wi > 0; --wi)
+    {
+        XWindow* under =
+            *(XWindow**)XVector_at_base((const XVector*)tops,
+                                        (int64_t)(wi - 1));
+        XRect underRect;
+        XRegion hit;
+        int ri;
+        if (!under || under == self || !XWindow_isVisible(under))
+            continue;
+        if (remain.count <= 0) break; /* 已全部归属，无需再向下枚举。 */
+        underRect = XWindow_screenFootprint(under);
+        /* 本层与待归属区的交集 = 该层需要重绘覆盖的腾空部分。 */
+        XRegion_init(&hit);
+        XRegion_clear(&underRegion);
+        XRegion_addRect(&underRegion, &underRect);
+        XRegion_intersected(&remain, &underRegion, &hit);
+        if (hit.count > 0)
+        {
+            /* 交矩形（设备 footprint 域）→ under 局部逻辑矩形，注入
+             * expose 驱动该层自绘上屏（present 遮挡剔除保证更高层不被
+             * 覆盖）。rot=0 恒等；90/180/270 按 MapRect 逆变换。 */
+            XRegion expose;
+            XRect geom = XWindow_geometry(under);
+            int rot = XWindow_contentRotationDegrees(under);
+            XRegion_init(&expose);
+            for (ri = 0; ri < hit.count; ++ri)
+            {
+                XRect local;
+                int ldx = hit.rects[ri].x - underRect.x;
+                int ldy = hit.rects[ri].y - underRect.y;
+                int ldw = hit.rects[ri].width;
+                int ldh = hit.rects[ri].height;
+                switch (rot) {
+                case 90:
+                    local.x = ldy;
+                    local.y = geom.height - ldx - ldw;
+                    local.width = ldh;
+                    local.height = ldw;
+                    break;
+                case 180:
+                    local.x = geom.width - ldx - ldw;
+                    local.y = geom.height - ldy - ldh;
+                    local.width = ldw;
+                    local.height = ldh;
+                    break;
+                case 270:
+                    local.x = geom.width - ldy - ldh;
+                    local.y = ldx;
+                    local.width = ldh;
+                    local.height = ldw;
+                    break;
+                default:
+                    local.x = ldx;
+                    local.y = ldy;
+                    local.width = ldw;
+                    local.height = ldh;
+                    break;
+                }
+                if (local.width > 0 && local.height > 0)
+                    XRegion_addRect(&expose, &local);
+            }
+            if (expose.count > 0)
+                XWindowSystemInterface_handleExposeEvent(under, &expose);
+            XRegion_deinit(&expose);
+            if (dbg)
+                fprintf(stderr,
+                        "[WN] hideRestore layer win=%p hid=(%d,%d %dx%d) "
+                        "under=(%d,%d %dx%d) hits=%d -> remain=%d\n",
+                        (void*)self, hiddenRect.x, hiddenRect.y,
+                        hiddenRect.width, hiddenRect.height,
+                        underRect.x, underRect.y, underRect.width,
+                        underRect.height, hit.count, remain.count);
+        }
+        XRegion_deinit(&hit);
+        /* 本层占位从待归属区扣除：其覆盖的部分已交给它自绘，不再
+         * 计入后续层、也不再铺桌面色。别名扣除（out==self）由
+         * XRegion_subtracted 内部临时区域保证安全。 */
+        XRegion_subtracted(&remain, &underRegion, &remain);
+    }
+    XRegion_deinit(&underRegion);
+    /* 真·裸露余部=没有任何可见下层窗覆盖：维持 2026-10-04 关闭残影
+     * 根修语义，铺桌面底色两缓冲（悬出屏幕/不与任何层相交的对话框）。
+     * 逐层归属后这块只剩真正无归属的部分——独立浮窗回停靠场景下
+     * demo 全屏窗已覆盖 y∈[510,600]，remain 为空 ⇒ 不再误铺灰块。 */
+    if (remain.count > 0)
+        XPlatformBackingStore_fillPanelRects(remain.rects, remain.count,
+                                             0xEF7Du);
+    if (dbg)
+        fprintf(stderr,
+                "[WN] hideRestore done win=%p hid=(%d,%d %dx%d) "
+                "bareBands=%d\n",
+                (void*)self, hiddenRect.x, hiddenRect.y,
+                hiddenRect.width, hiddenRect.height, remain.count);
+    XRegion_deinit(&remain);
+    XClassDelete(tops);
+}
+#endif /* XGUI_ON && XPLATFORM_FBDEV_ON */
+
 void XWindow_requestActivate(XWindow* self)
 {
     XWindowPrivate* data;
@@ -2529,156 +2681,12 @@ void XWindow_setVisible(XWindow* self, bool visible)
         XPlatformNativeWindow_setVisible(self, visible);
 #endif /* XPLATFORMNATIVEWINDOW_ON */
 #if XGUI_ON && XPLATFORM_FBDEV_ON
-    /* fbdev 无窗口系统的弹层暴露恢复：X11 的 XUnmapWindow 由 WM/合成器
-     * 自动向被遮挡窗口发 expose，Win32 由系统重绘——本框架在 fbdev 单屏
-     * 模式下没有窗口系统，弹层（菜单/下拉等瞬态顶层）hide 后其矩形留有
-     * 上一内容，双缓冲差带同步无法凭空补绘 → 弹层区域两缓冲失步，翻页
-     * 交替（真机表现为弹层闪烁，Windows/Linux 正常即因此差异）。此处对
-     * 隐藏窗口矩形按登记逆序找首个可见的相交顶层窗口（语义=紧贴其下的
-     * 可见层），向它注入本地坐标的 expose 事件驱动重绘上屏。 */
-    if (!visible && XPlatformDisplayDriver_active())
-    {
-        /* 【子窗口同列 2026-10-31】下层窗口查找须含子窗口（demo 主窗即
-         * 演示主窗的子窗口）：只看无父顶层会越过真正的下层窗。 */
-        XVector* tops = XGuiApplication_allWindows();
-        if (tops)
-        {
-            /* [旋转随转·footprint 化 2026-10-22] 隐藏矩形/相交判定/恢复
-               expose 全链改**设备 footprint** 口径：90/270 下窗口在屏占
-               位是宽高对调矩形，按逻辑几何相交会把恢复区/铺底区落到错
-               位设备矩形（真机旋转态弹层关闭后残影）。expose 仍投**under
-               窗口局部逻辑**矩形（handleExposeEvent 契约），由设备交矩形
-               按 under 现查角 R⁻¹ 回逻辑（rot=0 恒等，逐位同旧口径）。 */
-            XRect hiddenRect = XWindow_screenFootprint(self);
-            XWindow* restored = NULL;
-            XRect restoredRect;
-            size_t wi;
-            XRect_init(&restoredRect, 0, 0, 0, 0);
-            for (wi = XVector_size_base(tops); wi > 0; --wi)
-            {
-                XWindow* under =
-                    *(XWindow**)XVector_at_base(tops, (int64_t)(wi - 1));
-                if (!under || under == self || !XWindow_isVisible(under))
-                    continue;
-                {
-                    XRect underRect = XWindow_screenFootprint(under);
-                    int ix0 = hiddenRect.x > underRect.x ? hiddenRect.x : underRect.x;
-                    int iy0 = hiddenRect.y > underRect.y ? hiddenRect.y : underRect.y;
-                    int ix1 = hiddenRect.x + hiddenRect.width <
-                              underRect.x + underRect.width
-                              ? hiddenRect.x + hiddenRect.width
-                              : underRect.x + underRect.width;
-                    int iy1 = hiddenRect.y + hiddenRect.height <
-                              underRect.y + underRect.height
-                              ? hiddenRect.y + hiddenRect.height
-                              : underRect.y + underRect.height;
-                    if (ix1 > ix0 && iy1 > iy0)
-                    {
-                        XRegion expose;
-                        XRect local;
-                        XRect geom = XWindow_geometry(under);
-                        int rot = XWindow_contentRotationDegrees(under);
-                        int ldx = ix0 - underRect.x;
-                        int ldy = iy0 - underRect.y;
-                        int ldw = ix1 - ix0;
-                        int ldh = iy1 - iy0;
-                        XRegion_init(&expose);
-                        /* 设备交矩形 → under 局部逻辑矩形（MapRect 逆）：
-                           90: x=dy,y=H-dx-dw,w=dh,h=dw；180: x=W-dx-dw,
-                           y=H-dy-dh；270: x=W-dy-dh,y=dx,w=dh,h=dw。 */
-                        switch (rot) {
-                        case 90:
-                            local.x = ldy;
-                            local.y = geom.height - ldx - ldw;
-                            local.width = ldh;
-                            local.height = ldw;
-                            break;
-                        case 180:
-                            local.x = geom.width - ldx - ldw;
-                            local.y = geom.height - ldy - ldh;
-                            local.width = ldw;
-                            local.height = ldh;
-                            break;
-                        case 270:
-                            local.x = geom.width - ldy - ldh;
-                            local.y = ldx;
-                            local.width = ldh;
-                            local.height = ldw;
-                            break;
-                        default:
-                            local.x = ldx;
-                            local.y = ldy;
-                            local.width = ldw;
-                            local.height = ldh;
-                            break;
-                        }
-                        XRegion_addRect(&expose, &local);
-                        XWindowSystemInterface_handleExposeEvent(under,
-                                                                 &expose);
-                        XRegion_deinit(&expose);
-                        restored = under;
-                        restoredRect = underRect;
-                        break; /* 只有最上层相交层需要恢复。 */
-                    }
-                }
-            }
-            /* 余部铺桌面底色（2026-10-04 关闭残影根修）：隐藏矩形超出
-             * 恢复层几何的部分（对话框拖出父窗/不与任何可见层相交）
-             * 没有任何层拥有，不补填则上一内容永久残留画面（真机拖动
-             * 对话框后关闭，悬出部分残留实证）。底色与 XWindowDecoration
-             * XWD_DESKTOP_PIXEL 同一约定（0xEF7D）。 */
-            if (restored)
-            {
-                XRect bands[4];
-                int bn = 0;
-                {
-                    /* 诊断探针（XGUI_ROT_DEBUG=1）：hide 恢复路径的矩形
-                       口径（逻辑几何 vs footprint）与恢复层。 */
-                    static signed char dbg = -1;
-                    if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
-                    if (dbg)
-                        fprintf(stderr,
-                                "[WN] hideRestore hid win=%p rect=(%d,%d "
-                                "%dx%d) -> under=%p rot=%d\n",
-                                (void*)self, hiddenRect.x, hiddenRect.y,
-                                hiddenRect.width, hiddenRect.height,
-                                (void*)restored,
-                                (int)XWindow_contentRotationDegrees(self));
-                }
-                if (hiddenRect.x < restoredRect.x)
-                    XRect_init(&bands[bn++], hiddenRect.x, hiddenRect.y,
-                               restoredRect.x - hiddenRect.x,
-                               hiddenRect.height);
-                if (hiddenRect.x + hiddenRect.width >
-                    restoredRect.x + restoredRect.width)
-                    XRect_init(&bands[bn++],
-                               restoredRect.x + restoredRect.width,
-                               hiddenRect.y,
-                               hiddenRect.x + hiddenRect.width -
-                               (restoredRect.x + restoredRect.width),
-                               hiddenRect.height);
-                if (hiddenRect.y < restoredRect.y)
-                    XRect_init(&bands[bn++], hiddenRect.x, hiddenRect.y,
-                               hiddenRect.width,
-                               restoredRect.y - hiddenRect.y);
-                if (hiddenRect.y + hiddenRect.height >
-                    restoredRect.y + restoredRect.height)
-                    XRect_init(&bands[bn++], hiddenRect.x,
-                               restoredRect.y + restoredRect.height,
-                               hiddenRect.width,
-                               hiddenRect.y + hiddenRect.height -
-                               (restoredRect.y + restoredRect.height));
-                if (bn > 0)
-                    XPlatformBackingStore_fillPanelRects(bands, bn, 0xEF7Du);
-            }
-            else
-            {
-                /* 不与任何可见层相交：整块都是裸露面板。 */
-                XPlatformBackingStore_fillPanelRects(&hiddenRect, 1, 0xEF7Du);
-            }
-            XClassDelete(tops);
-        }
-    }
+    /* fbdev 无窗口系统的弹层暴露恢复：顶层窗 hide 后腾空矩形按 Z 序
+     * 自顶向下逐层交还下层可见窗重绘，真·裸露余部才铺桌面底色。
+     * 详见 xwin_fbdevHideRestore 注释（2026-11-06 逐层归属根修：
+     * 独立浮窗回停靠时悬出宿主的余部不再被误铺桌面灰永久残留）。 */
+    if (!visible)
+        xwin_fbdevHideRestore(self);
 #endif /* XGUI_ON && XPLATFORM_FBDEV_ON */
 #if XACCESSIBLE_ON
     /* 仅已创建平台句柄的窗口才向无障碍驱动通知可见性变化：未创建/

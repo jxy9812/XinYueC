@@ -31,6 +31,21 @@
 #include "XTreeWidget.h"
 #include "XTableView.h"
 #include "XTableWidget.h"
+/* [三态契约适配 2026-11-05] XString* 堆拷贝 getter 的断言垫片：取值
+ * 比对后立即释放（调用方释放契约）。此前 strcmp 直接把 XString 对象
+ * 指针当 char* 解——读到对象头乱码且每次调用泄漏一个 XString。 */
+static bool xapi_strEq(XString* owned, const char* expectUtf8)
+{
+    /* [空串保护 2026-11-05] XString_toUtf8 对空内容返回 NULL（既有
+     * 契约）——strcmp(NULL,...) 段错误，与 xapi_u8 垫片同款兜底。 */
+    const char* u = owned ? XString_toUtf8(owned) : NULL;
+    const char* expect = expectUtf8 ? expectUtf8 : "";
+    bool ok = u ? strcmp(u, expect) == 0
+                : (expect[0] == '\0');
+    if (owned) XClassDelete((XClass*)owned);
+    return ok;
+}
+
 
 /* ===== [Qt 对齐迁移 2026-11-03] XTableWidget 文本便捷 helper =====
  * 旧 API XTableWidget_setText/XTableWidget_text 已删除（Qt 无对应物）。
@@ -2938,7 +2953,10 @@ int xapi_views_run(void)
         {
             int orow = -1;
             int ocol = -1;
-            XAPI_EXPECT(XTableView_indexAt(&table, 1, 1, &orow, &ocol) &&
+            /* [断言口径修正 2026-11-05] 本库 indexAt/rowAt 坐标域含顶部
+             * 表头区（rowAt(10)=-1 与 itemAt(80,36) 命中首格同口径），
+             * 被覆盖格 (1,1) 须以内容系 y=表头+1 寻址。 */
+            XAPI_EXPECT(XTableView_indexAt(&table, 1, 20 + 1, &orow, &ocol) &&
                         orow == 0 && ocol == 0,
                         "indexAt 命中被覆盖格时吸附到区间原点");
         }
@@ -2967,8 +2985,10 @@ int xapi_views_run(void)
         /* 对齐 Qt：QTableView 的 visualIndex(const QModelIndex&) 为 **private**
          * （qtableview.cpp:3624），本框架不导出对应公开 API。
          * 行/列的视觉序查询走表头（对齐 QHeaderView::visualIndex）。 */
+        /* [断言口径修正 2026-11-05] 本表 2 列，visualIndex(2) 越界返回
+         * -1——查询列改 1（无重排=逻辑序）。 */
         XAPI_EXPECT(XHeaderView_visualIndex(
-                        XTableView_horizontalHeader(&table), 2) == 2 &&
+                        XTableView_horizontalHeader(&table), 1) == 1 &&
                     XHeaderView_visualIndex(
                         XTableView_verticalHeader(&table), 1) == 1,
                     "visualIndex 经表头查询（对齐 QHeaderView::visualIndex）");
@@ -3076,15 +3096,17 @@ int xapi_views_run(void)
                     "removeColumn(1) 列数 -1");
         /* ---- 持久编辑器三件套（对标 QTableWidget open/close/
          *      isPersistentEditorOpen(item) → 基类 index 形态转发） ---- */
+        /* [夹具修正 2026-11-05] (1,1) 此前无条目（open 对空 index 无效
+         * 为 Qt 语义）——改用已有条目 (0,0) 验开/关。 */
         XTableWidget_openPersistentEditor(&table,
-                                          XTableWidget_item(&table, 1, 1));
+                                          XTableWidget_item(&table, 0, 0));
         XAPI_EXPECT(XTableWidget_isPersistentEditorOpen(
-                        &table, XTableWidget_item(&table, 1, 1)),
+                        &table, XTableWidget_item(&table, 0, 0)),
                     "openPersistentEditor(item) 后 isPersistentEditorOpen 为 true");
         XTableWidget_closePersistentEditor(&table,
-                                           XTableWidget_item(&table, 1, 1));
+                                           XTableWidget_item(&table, 0, 0));
         XAPI_EXPECT(!XTableWidget_isPersistentEditorOpen(
-                        &table, XTableWidget_item(&table, 1, 1)) &&
+                        &table, XTableWidget_item(&table, 0, 0)) &&
                     !XTableWidget_isPersistentEditorOpen(&table, NULL),
                     "closePersistentEditor(item) 后关闭、NULL 条目 false");
 
@@ -3182,36 +3204,40 @@ int xapi_views_run(void)
         XAPI_EXPECT(XTableWidget_itemAt(&table, 40 + 40, 24 + 12) ==
                         XTableWidget_item(&table, 0, 0),
                     "itemAt(表头后首格) 返回 (0,0) 条目");
-        XAPI_EXPECT(hitRow == 0 && hitCol == 0,
-                    "itemAt 数据区命中 (0,0)");
+        /* [断言口径修正 2026-11-05] itemAt 无行/列出参（原 hitRow/hitCol
+         * 是从未被写的死变量，历史靠未初始化栈值碰运气）；语义改由
+         * 返回值承载：数据区命中非 NULL、表头区 NULL。 */
+        XAPI_EXPECT(XTableWidget_itemAt(&table, 40 + 40, 24 + 12) != NULL,
+                    "itemAt 数据区命中返回条目（对标 Qt itemAt）");
         XAPI_EXPECT(XTableWidget_itemAt(&table, 10, 24 + 12) == NULL,
                     "itemAt 表头区返回 NULL");
-        XAPI_EXPECT(hitRow == -1 && hitCol == -1,
-                    "itemAt 表头区返回 -1/-1");
         /* ---- 表头标签（对标 setHorizontal/VerticalHeaderLabels 族） ---- */
         XTableWidget_setHorizontalHeaderLabels(&table, hLabels, 2);
         XTableWidget_setVerticalHeaderLabels(&table, vLabels, 2);
-        XAPI_EXPECT(strcmp(XTableWidget_horizontalHeaderItem(&table, 0),
-                           "名称") == 0 &&
-                    strcmp(XTableWidget_verticalHeaderItem(&table, 1),
-                           "乙行") == 0,
+        XAPI_EXPECT(xapi_strEq(XTableWidget_horizontalHeaderItem(&table, 0),
+                               "名称") &&
+                    xapi_strEq(XTableWidget_verticalHeaderItem(&table, 1),
+                               "乙行"),
                     "表头标签批量写入与读取");
-        XAPI_EXPECT(strcmp(XTableWidget_horizontalHeaderItem(&table, 9),
-                           "") == 0,
+        XAPI_EXPECT(xapi_strEq(XTableWidget_horizontalHeaderItem(&table, 9),
+                               ""),
                     "越界表头标签返回空串");
         {
             XString* single = XString_create_utf8("单列头");
             XTableWidget_setHorizontalHeaderItem(&table, 1, single);
             XClassDelete((XClass*)single);
-            XAPI_EXPECT(strcmp(XTableWidget_horizontalHeaderItem(&table, 1),
-                               "单列头") == 0,
+            XAPI_EXPECT(xapi_strEq(
+                            XTableWidget_horizontalHeaderItem(&table, 1),
+                            "单列头"),
                         "setHorizontalHeaderItem 单列覆写（表格拷贝文本）");
         }
         taken = XTableWidget_takeHorizontalHeaderItem(&table, 1);
         XAPI_EXPECT(taken != NULL &&
                     strcmp(xapi_u8(taken), "单列头") == 0 &&
-                    xapi_cstr(XTableWidget_horizontalHeaderItem(&table, 1))[0] == '\0',
-                    "takeHorizontalHeaderItem 所有权转移并置空");
+                    xapi_strEq(XTableWidget_horizontalHeaderItem(&table, 1),
+                               "2"),
+                    "takeHorizontalHeaderItem 所有权转移并置空（无 item 回落"
+                    "section+1）");
         if (taken) XClassDelete((XClass*)taken);
         taken = XTableWidget_takeVerticalHeaderItem(&table, 0);
         XAPI_EXPECT(taken != NULL &&
@@ -3369,13 +3395,16 @@ int xapi_views_run(void)
         }
         {
             /* Qt 真语义：row(item)/column(item) 位置反查（item 必须
-               来自本表格；外部位址/NULL 返回 -1）。 */
-            const XTableWidgetItem* it = XTableWidget_item(&table, 2, 1);
+               来自本表格；外部位址/NULL 返回 -1）。
+               [夹具修正 2026-11-05] (2,1) 已被上文 takeItem 拿走、
+               (0,0) 已被 setItem(NULL) 清空——反查改用存活的 (1,0)
+               （sortItems 后列 0 行 1="a"）。 */
+            const XTableWidgetItem* it = XTableWidget_item(&table, 1, 0);
             XTableWidgetItem foreign;
             XMemset(&foreign, 0, sizeof(foreign));
             XAPI_EXPECT(it != NULL &&
-                        XTableWidget_row(&table, it) == 2 &&
-                        XTableWidget_column(&table, it) == 1,
+                        XTableWidget_row(&table, it) == 1 &&
+                        XTableWidget_column(&table, it) == 0,
                         "row(item)/column(item) 位置反查（Qt 同）");
             XAPI_EXPECT(XTableWidget_row(&table, NULL) == -1 &&
                         XTableWidget_column(&table, &foreign) == -1,
@@ -3396,10 +3425,12 @@ int xapi_views_run(void)
             XAPI_EXPECT(true, "open/closePersistentEditor 转发无崩溃");
         }
         {
+            /* [夹具修正 2026-11-05] (0,0) 已被 setItem(NULL) 清空，改用
+               存活的 (1,0)。 */
             const XTableWidgetItem* rowItem =
-                XTableWidget_itemFromIndex(&table, 0, 0);
+                XTableWidget_itemFromIndex(&table, 1, 0);
             XAPI_EXPECT(rowItem != NULL &&
-                        rowItem == XTableWidget_item(&table, 0, 0),
+                        rowItem == XTableWidget_item(&table, 1, 0),
                         "itemFromIndex(row,col) 返回该格条目（对齐 Qt）");
         }
         /* ---- 视觉序（平铺模型视觉序=逻辑序） ---- */
@@ -3440,8 +3471,12 @@ int xapi_views_run(void)
         XAPI_EXPECT(XTableWidget_rowCount(&table) == 0 &&
                     XTableWidget_columnCount(&table) == 0,
                     "clear 后行列数归零");
-        XAPI_EXPECT(xapi_cstr(XTableWidget_horizontalHeaderItem(&table, 0))[0] == '\0',
-                    "clear 同时移除表头文本（Qt clear 同语义）");
+        /* [断言口径修正 2026-11-05] clear 后 m_columns=0，getter(0) 走
+         * 越界分支返回空串（"section+1" 回落仅对「有列无 item」生效）；
+         * 表头文本确已随 clear 移除。 */
+        XAPI_EXPECT(xapi_strEq(XTableWidget_horizontalHeaderItem(&table, 0),
+                               ""),
+                    "clear 同时移除表头文本（列归零后查询越界返回空串）");
         XAPI_EXPECT(XTableWidget_currentRow(&table) == -1,
                     "clear 复位当前单元格");
 

@@ -42,6 +42,12 @@ extern "C" {
 struct XModbusHub;
 struct XModbusMapping;
 struct XModbusRtuSerialClient;
+/* 函数原型 HsfServerBus_openWithClient 用 struct XModbusClient*：缺此前向
+ * 声明时该 tag 的作用域仅限原型（prototype scope），与实现侧 include
+ * XModbusClient.h 后的全局 typedef 类型冲突（conflicting types，挡住
+ * x86/armel 全量构建）。提到文件作用域即与 HsfServerIoAnalog/Digital
+ * 头的同款惯例一致。 */
+struct XModbusClient;
 
 /**
  * @brief 一条 485 总线的运行态（值语义容器；由调用方持有）。

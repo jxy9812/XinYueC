@@ -39,6 +39,7 @@ out/
 build/
 bin/
 bin-fbdev/
+bin-fbdev-asan/
 bin-release/
 install/
 

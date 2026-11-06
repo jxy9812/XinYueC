@@ -459,6 +459,23 @@ static void VX_lcdNumber_paintEvent(XWidget* self, XEvent* event)
 
 
 
+/** @brief sizeHint（对标 QLCDNumber::sizeHint qlcdnumber.cpp:1164-1167：
+ *  恒数字公式、与边框形状无关——覆写 XFrame 的 HLine/VLine 特例
+ *  （实测 HLine 下走 XFrame 特例给 (-1,3)，压过 init 时的公式缓存）。 */
+static XSize VX_lcdNumber_sizeHint(const XWidget* self)
+{
+    XSize out;
+    const XLcdNumber* lcd = (const XLcdNumber*)self;
+    if (!lcd) {
+        XSize_init(&out, -1, -1);
+        return out;
+    }
+    out.width = 10 + 9 * (lcd->m_digitCount +
+                          (lcd->m_smallDecimalPoint ? 0 : 1));
+    out.height = 23;
+    return out;
+}
+
 /* ==================== 生命周期与虚表 ==================== */
 
 XVtable* XLcdNumber_class_init(void)
@@ -466,6 +483,7 @@ XVtable* XLcdNumber_class_init(void)
     XVTABLE_INIT_DEFAULT(XLcdNumber)
     XVTABLE_INHERIT_XCLASS(XFrame);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_lcdNumber_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VX_lcdNumber_sizeHint);
     return XVTABLE_DEFAULT;
 }
 

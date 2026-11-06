@@ -18,15 +18,24 @@
 
 #if XGUI_DOCK_TRACE
 #include "XDateTime.h"
-/* 与 XDockWidget.c 的 XDW_TRACE 同口径（毫秒时间戳 + 函数名 + 即刷）。 */
+/* 与 XDockWidget.c 的 XDW_TRACE 同口径（毫秒时间戳 + 函数名 + 即刷）。
+ * 【stderr + 运行时门控 2026-11-07】原实现 printf 到 stdout：demo.log 是
+ * `>>` 重定向，stdout 全缓冲 ⇒ 探针行滞留 4KB 块、崩溃时全丢（本战役已
+ * 踩过）。改 stderr 即刷；另外加 XGUI_DOCK_TRACE=1 环境变量运行时开启，
+ * 免去为排查重编译（静态缓存，进程内一次 getenv）。 */
 #define XMW_TRACE(...)                                                    \
     do {                                                                  \
-        int64_t xmwTraceMs = XDateTime_currentMSecsSinceEpoch();          \
-        printf("[DOCK %lld.%03lld %s] ", (long long)(xmwTraceMs / 1000),  \
-               (long long)(xmwTraceMs % 1000), __func__);                 \
-        printf(__VA_ARGS__);                                              \
-        printf("\n");                                                     \
-        fflush(stdout);                                                   \
+        static signed char xmwTraceOn = -1;                               \
+        if (xmwTraceOn < 0)                                               \
+            xmwTraceOn = (getenv("XGUI_DOCK_TRACE") != NULL) ? 1 : 0;     \
+        if (xmwTraceOn) {                                                 \
+            int64_t xmwTraceMs = XDateTime_currentMSecsSinceEpoch();      \
+            fprintf(stderr, "[DOCK %lld.%03lld %s] ",                     \
+                    (long long)(xmwTraceMs / 1000),                       \
+                    (long long)(xmwTraceMs % 1000), __func__);            \
+            fprintf(stderr, __VA_ARGS__);                                 \
+            fprintf(stderr, "\n");                                        \
+        }                                                                 \
     } while (0)
 #else
 #define XMW_TRACE(...) do {} while (0)
@@ -1298,6 +1307,51 @@ static void xmw_dockGroupSync(XMainWindow* self)
             XWidget_setVisible((XWidget*)d, d == active);
         }
     }
+    /* 【状态转储探针 2026-11-07】XGUI_DOCK_DUMP=1 时打印停靠面板/标签组
+     * 全量状态（真机「浮窗消失」类问题定位用；静态缓存，零常驻开销）。 */
+    {
+        static signed char dumpOn = -1;
+        if (dumpOn < 0) dumpOn = (getenv("XGUI_DOCK_DUMP") != NULL) ? 1 : 0;
+        if (dumpOn) {
+            int64_t dn = self->m_docks
+                ? XVector_size_base((const XContainer*)self->m_docks) : 0;
+            int64_t gi;
+            fprintf(stderr, "[DOCKDUMP] docks=%lld groups=%lld active=%p\n",
+                    (long long)dn,
+                    (long long)XVector_size_base(
+                        (const XContainer*)self->m_dockTabGroups),
+                    (void*)self->m_activeTabifiedDock);
+            for (gi = 0; gi < dn; ++gi) {
+                XDockWidget* d =
+                    XVector_At_Base(self->m_docks, gi, XDockWidget*);
+                XRect g;
+                int inGroup = -1;
+                int64_t gg;
+                int64_t gn2 = XVector_size_base(
+                    (const XContainer*)self->m_dockTabGroups);
+                if (!d) continue;
+                g = XWidget_geometry((XWidget*)d);
+                for (gg = 0; gg < gn2; ++gg) {
+                    XVector* grp = XVector_At_Base(self->m_dockTabGroups,
+                                                   gg, XVector*);
+                    if (grp && XVector_indexOf(grp, &d, 0) >= 0) {
+                        inGroup = (int)gg;
+                        break;
+                    }
+                }
+                fprintf(stderr,
+                        "[DOCKDUMP]  dock[%lld] %s area=%d float=%d "
+                        "hidden=%d vis=%d geo=(%d,%d %dx%d) group=%d\n",
+                        (long long)gi,
+                        d->m_title ? XString_toUtf8(d->m_title) : "?",
+                        XMainWindow_dockWidgetArea(self, (XWidget*)d),
+                        d->m_floating ? 1 : 0,
+                        XWidget_isHidden((XWidget*)d) ? 1 : 0,
+                        XWidget_isVisible((XWidget*)d) ? 1 : 0,
+                        g.x, g.y, g.width, g.height, inGroup);
+            }
+        }
+    }
 }
 
 void XMainWindow_addDockWidget(XMainWindow* self, int area,
@@ -1494,6 +1548,21 @@ void XMainWindow_tabifyDockWidget(XMainWindow* self, XDockWidget* first,
         return;
     ai = xmw_dockIndex(self, first);
     if (ai < 0) return; /* 对齐 Qt：基准不在布局中即不动作 */
+    /* 【浮动态基准先停靠 2026-11-07】编组基准必须是停靠态：浮动态面板是
+     * 独立顶层窗，编组后 dockGroupSync 的"仅活动成员可见"会对非活动的
+     * 浮动成员 setVisible(false) —— 独立窗被隐藏且无法从页签切回
+     * （真机：拖右面板导致左浮窗凭空消失）。对标 Qt tabifyDockWidget
+     * 只接受已 plug 回布局的面板。此处把基准停靠回其登记区域，
+     * 走 addDockWidget 的完整重排链。 */
+    if (first->m_floating) {
+        firstArea = XVector_At_Base(self->m_dockAreas, ai, int);
+        if (firstArea == (int)XDockWidgetArea_NoDockWidgetArea ||
+            firstArea == (int)XDockWidgetArea_All)
+            firstArea = (int)XDockWidgetArea_Left;
+        XMainWindow_addDockWidget(self, firstArea, (XWidget*)first);
+        ai = xmw_dockIndex(self, first);
+        if (ai < 0) return;
+    }
     if (xmw_dockIndex(self, second) < 0) {
         /* 未登记：先按 first 的区域接入主窗口。 */
         firstArea = XVector_At_Base(self->m_dockAreas, ai, int);
@@ -2028,12 +2097,18 @@ int XMainWindow_hoverDrop(XMainWindow* self, XWidget* dock,
                 XRect old = XWidget_geometry(self->m_dropIndicator);
                 bool wasVisible =
                     XWidget_isVisible(self->m_dropIndicator) ? true : false;
+                /* 【挂起遮挡 2026-11-04】指示器叠在不透明兄弟（面板/中央
+                 * 区）上，hide 的旧位擦除走 parent 失效——会被
+                 * collectOpaqueChildren(host) 整块扣空 ⇒ 无人重画 ⇒ 旧位
+                 * 浅蓝永留（真机 T2 帧实证）。挂起期内失效畅通。 */
+                XWidget_suspendDirtyOcclusion();
                 XWidget_hide(self->m_dropIndicator);
                 /* fbdev 单屏无合成器：隐藏只作废父级区域（异步失效），
                  * 指示器像素会留在宿主后备缓冲里被 present 反复吐上屏
                  * ⇒ 隐藏后当帧同步重合成该区。 */
                 if (wasVisible)
                     xmw_syncRepaintIndicatorArea(self, &old);
+                XWidget_resumeDirtyOcclusion();
             }
             self->m_dropAreaShown = 0;
         }
@@ -2067,6 +2142,10 @@ int XMainWindow_hoverDrop(XMainWindow* self, XWidget* dock,
         XRect old = XWidget_geometry(self->m_dropIndicator);
         bool wasVisible =
             XWidget_isVisible(self->m_dropIndicator) ? true : false;
+        /* 【挂起遮挡 2026-11-04】换位段全程挂起（setGeometry 的旧位
+         * parent 失效 + 下方差带重绘都走 host update，均被
+         * collectOpaqueChildren 扣掉 ⇒ 旧位指示器像素永留）。 */
+        XWidget_suspendDirtyOcclusion();
         bool sameRect = old.x == r.x && old.y == r.y &&
                         old.width == r.width && old.height == r.height;
         /* setGeometry 只在矩形变化时做；show/raise 只在显形跳变时做
@@ -2099,6 +2178,7 @@ int XMainWindow_hoverDrop(XMainWindow* self, XWidget* dock,
         } else if (!wasVisible) {
             xmw_syncRepaintIndicatorArea(self, &r); /* 首显/复显合入新位 */
         }
+        XWidget_resumeDirtyOcclusion();
     }
     self->m_dropAreaShown = area;
     return area;
@@ -2146,17 +2226,21 @@ int XMainWindow_finishDrop(XMainWindow* self, XWidget* dock,
         XRect old = XWidget_geometry(self->m_dropIndicator);
         bool wasVisible =
             XWidget_isVisible(self->m_dropIndicator) ? true : false;
+        /* 【挂起遮挡 2026-11-04】同 hoverDrop hide 分支：旧位擦除被
+         * collectOpaqueChildren 扣空 ⇒ 残留。 */
+        XWidget_suspendDirtyOcclusion();
         XWidget_hide(self->m_dropIndicator);
         /* 同 hoverDrop：隐藏后当帧同步重合成指示器旧位（fbdev 无
          * 合成器，异步失效会让指示器像素残留到下一次 present）。 */
         if (wasVisible)
             xmw_syncRepaintIndicatorArea(self, &old);
+        XWidget_resumeDirtyOcclusion();
     }
     self->m_dropAreaShown = 0;
     if (area == (int)XDockWidgetArea_NoDockWidgetArea)
         return area; /* 无落点：面板保持浮动态，不改状态 */
     if (area == (int)XDockWidgetArea_All) {
-        /* 中央带：与第一个可见且非本 dock 的登记面板 tab 化。 */
+        /* 中央带：与第一个可见且非本 dock 的**已停靠**面板 tab 化。 */
         if (self->m_docks) {
             n = XVector_size_base((const XContainer*)self->m_docks);
             for (i = 0; i < n; ++i) {
@@ -2164,6 +2248,17 @@ int XMainWindow_finishDrop(XMainWindow* self, XWidget* dock,
                     XVector_At_Base(self->m_docks, i, XDockWidget*);
                 if (!cand || cand == d) continue;
                 if (XWidget_isHidden((XWidget*)cand)) continue;
+                /* 【浮动态排除 2026-11-07】浮动面板是独立顶层窗、不在
+                 * 停靠布局里，不能作为编组基准：选中它后
+                 * xmw_dockGroupAttach 把两者编成一组，dockGroupSync 的
+                 * "仅活动成员可见" 会对非活动的**浮动**成员执行
+                 * setVisible(false) ⇒ 该面板的独立窗口被隐藏、页签条又
+                 * 因组内基准错位没出现在正确位置 ⇒ 用户看到「拖右面板
+                 * 时左浮窗凭空消失且无法切回」（真机实证：主窗顶部只剩
+                 * 一条横贯的右面板标题条，左面板 hidden=1 不可见）。
+                 * Qt 同口径：QMainWindow::tabifyDockWidget 只接受已停靠
+                 * 的面板，浮动面板要先 plug 回布局才参与编组。 */
+                if (cand->m_floating) continue;
                 first = cand;
                 break;
             }

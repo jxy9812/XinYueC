@@ -3144,13 +3144,13 @@ static void demo_compactMenuLayout(DemoWin* self)
     XWidget_setGeometry((XWidget*)&self->m_navScroll, 0, 0, mw, mh);
     XWidget_show((XWidget*)&self->m_navScroll);
     for (i = 0; i < DEMO_NAV_CAT_N; ++i)
-        XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[i],
+        XWidget_setParent_2((XWidget*)&self->m_navCatBtns[i],
                                self->m_navContent);
     for (i = 0; i < DEMO_NAV_PAGE_N; ++i)
-        XWidget_setParentPlain((XWidget*)&self->m_pageNav[i],
+        XWidget_setParent_2((XWidget*)&self->m_pageNav[i],
                                self->m_navContent);
     for (i = 0; i < DEMO_NAV_HEAD_N; ++i)
-        XWidget_setParentPlain((XWidget*)&self->m_navHeadLabels[i],
+        XWidget_setParent_2((XWidget*)&self->m_navHeadLabels[i],
                                self->m_navContent);
 #endif
     {
@@ -3247,7 +3247,7 @@ static void demo_layoutModeUpdate(DemoWin* self)
         XSplitter_setHandleWidth(&self->m_navSplitter, 0);
 #endif
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
-        XWidget_setParentPlain((XWidget*)&self->m_navScroll,
+        XWidget_setParent_2((XWidget*)&self->m_navScroll,
                                &self->m_mobileMenu);
 #endif
     } else {
@@ -3260,7 +3260,7 @@ static void demo_layoutModeUpdate(DemoWin* self)
         XSplitter_setHandleWidth(&self->m_navSplitter, 8);
 #endif
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
-        XWidget_setParentPlain((XWidget*)&self->m_navScroll,
+        XWidget_setParent_2((XWidget*)&self->m_navScroll,
                                &self->m_navPanel);
 #endif
     }
@@ -3455,16 +3455,16 @@ static void demo_navUpdatePanel(DemoWin* self)
         XWidget_show((XWidget*)&self->m_navScroll);
         XWidget_raise((XWidget*)&self->m_navScroll);
         for (i = 0; i < DEMO_NAV_CAT_N; ++i)
-            XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[i],
+            XWidget_setParent_2((XWidget*)&self->m_navCatBtns[i],
                                    self->m_navContent);
         for (i = 0; i < DEMO_NAV_PAGE_N; ++i) {
             if (XWidget_parentWidget((XWidget*)&self->m_pageNav[i]) !=
                 self->m_navContent)
-                XWidget_setParentPlain((XWidget*)&self->m_pageNav[i],
+                XWidget_setParent_2((XWidget*)&self->m_pageNav[i],
                                        self->m_navContent);
         }
         for (i = 0; i < DEMO_NAV_HEAD_N; ++i) {
-            XWidget_setParentPlain((XWidget*)&self->m_navHeadLabels[i],
+            XWidget_setParent_2((XWidget*)&self->m_navHeadLabels[i],
                                    self->m_navContent);
         }
 #endif
@@ -3515,13 +3515,13 @@ static void demo_navUpdatePanel(DemoWin* self)
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
         XWidget_hide((XWidget*)&self->m_navScroll);
         for (i = 0; i < DEMO_NAV_CAT_N; ++i)
-            XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[i],
+            XWidget_setParent_2((XWidget*)&self->m_navCatBtns[i],
                                    &self->m_navPanel);
         for (i = 0; i < DEMO_NAV_PAGE_N; ++i)
-            XWidget_setParentPlain((XWidget*)&self->m_pageNav[i],
+            XWidget_setParent_2((XWidget*)&self->m_pageNav[i],
                                    &self->m_navPanel);
         for (i = 0; i < DEMO_NAV_HEAD_N; ++i)
-            XWidget_setParentPlain((XWidget*)&self->m_navHeadLabels[i],
+            XWidget_setParent_2((XWidget*)&self->m_navHeadLabels[i],
                                    &self->m_navPanel);
 #endif
         if (bw > 120) bw = 120;

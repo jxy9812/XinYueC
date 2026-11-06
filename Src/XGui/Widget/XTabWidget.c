@@ -595,8 +595,15 @@ void XTabWidget_removeTab(XTabWidget* self, int index)
            即 UAF（对标 Qt deleteLater 语义）；创建时已按堆登记分配
            器（见 insertTab），延迟删除经 XClass_delete_base 归还堆
            存储。 */
-        if (self->m_clients[index])
+        if (self->m_clients[index]) {
             XWidget_setParent(self->m_clients[index], NULL, 0);
+            /* [Qt 对齐 2026-11-05] "causing it to be hidden"：Qt 摘父经
+             * setParent_sys（qwidget.cpp:11017-11018，newparent==NULL）
+             * 置回 Hidden 位=交还调用方即隐藏。本库 setParent 无同款
+             * 置位，此处显式补齐——显式 hide 也同步 m_explicitShow，
+             * 调用方下次 setParent/show 语义不受构造位污染。 */
+            XWidget_setVisible(self->m_clients[index], false);
+        }
         XWidget_setParent(self->m_pages[index], NULL, 0);
         XObject_deleteLater((XObject*)self->m_pages[index]);
     }

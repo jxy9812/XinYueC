@@ -12,6 +12,12 @@
 #include "XWindow.h"
 #if XWIDGET_ON
 #include "XWidget.h"
+#if XLABEL_ON && XFRAME_ON
+#include "XLabel.h"      /* buddy 回退：取以本控件为 buddy 的标签文本。 */
+#endif
+#if XGROUPBOX_ON
+#include "XGroupBox.h"   /* buddy 回退：父控件是分组框时取其标题。 */
+#endif
 #endif
 #if XWIDGET_ON && XAPPLICATION_ON && XGUIAPPLICATION_ON
 #include "XApplication.h"
@@ -163,6 +169,56 @@ XAccessibleState XAccessible_state(const XAccessible* self)
     return st;
 }
 
+#if XWIDGET_ON
+#if XLABEL_ON && XFRAME_ON
+/**
+ * @brief 伙伴（buddy）文本：与本控件配对的标签文本（对标 Qt
+ *        qaccessiblewidget.cpp:39-66 的 buddyString）。
+ * @details 对标 Qt 语义：遍历**父控件**的子控件，找一个以本控件为
+ *          buddy 的 XLabel，取其文本；找不到则回退父控件是分组框时的
+ *          分组框标题；都不是则返回 NULL（Qt 返回空串）。
+ * @param      widget 目标控件；可为 NULL。
+ * @return     UTF-8 借用视图（归标签/分组框所有，调用方不得释放或修改，
+ *             且仅在本函数调用期间有效）；无伙伴文本时返回 NULL。
+ */
+static const char* xaccessible_buddyTextUtf8(const XWidget* widget)
+{
+    const XWidget* parent;
+    const XVector* children;
+    size_t n;
+    size_t i;
+    if (!widget) return NULL;
+    parent = XWidget_parentWidget(widget);
+    if (!parent) return NULL;
+    children = XObject_children((const XObject*)parent);
+    n = children ? XVector_size_base((const XContainer*)children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
+        XLabel* label;
+        if (!child || !child->m_is_widget) continue;
+        /* 类型判定用虚表同一性（对标 Qt 的 qobject_cast<QLabel*>）：
+         * 派生的 XLabel 子类虚表不同——本仓 XLabel 无类型注册表，故只认
+         * XLabel 本体（已知派生类 XPerformanceOverlay 无 buddy 语义，
+         * 不影响本回落链）。 */
+        if (XClassGetVtable(child) != XLabel_class_init()) continue;
+        label = (XLabel*)child;
+        if (XLabel_buddy(label) != (XWidget*)widget) continue;
+        {
+            const XString* text = XLabel_text(label);
+            if (!text) continue;
+            return XString_toUtf8(text);
+        }
+    }
+#if XGROUPBOX_ON
+    /* Qt 口径：父控件是分组框时取其标题（buddyString 的第二段）。 */
+    if (XClassGetVtable((const XObject*)parent) == XGroupBox_class_init())
+        return XGroupBox_title((const XGroupBox*)parent);
+#endif /* XGROUPBOX_ON */
+    return NULL;
+}
+#endif /* XLABEL_ON && XFRAME_ON */
+#endif /* XWIDGET_ON */
+
 XString* XAccessible_name(const XAccessible* self)
 {
     if (!XAccessible_isValid(self)) return XString_create_utf8("");
@@ -176,11 +232,29 @@ XString* XAccessible_name(const XAccessible* self)
         const XString* name = XWidget_accessibleName(self->m_widget);
         if (name && XString_toUtf8_length(name) > 0)
             return XString_create_copy(name);
-        name = XWidget_windowTitle(self->m_widget);
+        /* 对标 Qt 6.8（qaccessiblewidget.cpp:365-378）：Name 回落链
+         * **区分窗口与子控件**——
+         *   窗口节点：取窗口标题（最小化时取图标文本，Qt 同款）；
+         *   子控件节点：取伙伴（buddy）标签文本 / 父分组框标题。
+         * 本实现此前两类节点同走"窗口标题 → objectName → toolTip"，
+         * 子控件节点永远拿不到伙伴标签文本（AT-SPI 朗读时读不出控件
+         * 旁边的标签说明）。 */
+        if (XWidget_isWindow(self->m_widget)) {
+            const XString* title = XWidget_isMinimized(self->m_widget)
+                ? XWidget_windowIconText(self->m_widget)
+                : XWidget_windowTitle(self->m_widget);
+            if (title && XString_toUtf8_length(title) > 0)
+                return XString_create_copy(title);
+        } else {
+#if XLABEL_ON && XFRAME_ON
+            const char* buddy = xaccessible_buddyTextUtf8(self->m_widget);
+            if (buddy && buddy[0] != '\0')
+                return XString_create_utf8(buddy);
+#endif /* XLABEL_ON && XFRAME_ON */
+        }
+        name = XObject_objectName((const XObject*)self->m_widget);
         if (name && XString_toUtf8_length(name) > 0)
             return XString_create_copy(name);
-        name = XObject_objectName((const XObject*)self->m_widget);
-        if (name) return XString_create_copy(name);
         name = XWidget_toolTip(self->m_widget);
         return name ? XString_create_copy(name) : XString_create_utf8("");
     }
@@ -203,6 +277,27 @@ XString* XAccessible_description(const XAccessible* self)
         const XString* desc = XWidget_accessibleDescription(self->m_widget);
         if (desc && XString_toUtf8_length(desc) > 0)
             return XString_create_copy(desc);
+        /* 对标 Qt 6.8（qaccessiblewidget.cpp:379-384）：描述为空时回落
+         * 工具提示（toolTip）——AT-SPI 朗读的描述文本来源于提示气泡，
+         * 此前本实现直接返回空串 → 有提示的控件在无障碍层读不到任何
+         * 补充说明。 */
+        desc = XWidget_toolTip(self->m_widget);
+        if (desc && XString_toUtf8_length(desc) > 0)
+            return XString_create_copy(desc);
+    }
+#endif
+    return XString_create_utf8("");
+}
+XString* XAccessible_help(const XAccessible* self)
+{
+    if (!XAccessible_isValid(self)) return XString_create_utf8("");
+#if XWIDGET_ON
+    if (self->m_widget) {
+        /* 对标 Qt 6.8（qaccessiblewidget.cpp:385-389）：Help 取控件的
+         * What's This 文本。 */
+        const XString* help = XWidget_whatsThis(self->m_widget);
+        if (help && XString_toUtf8_length(help) > 0)
+            return XString_create_copy(help);
     }
 #endif
     return XString_create_utf8("");

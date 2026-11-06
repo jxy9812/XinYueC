@@ -384,7 +384,7 @@ void XStackedLayout_removeWidget(XStackedLayout* self, XWidget* widget)
         XWidget_setVisible(page, false);
         /* 对标 Qt：布局放弃条目所有权并把页面控件移出本容器
            （parent 置 NULL），控件归还调用方管理。 */
-        XWidget_setParentPlain(page, NULL);
+        XWidget_setParent_2(page, NULL);
     }
     if (owned)
         XClassDelete(item);

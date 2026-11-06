@@ -160,10 +160,13 @@ static void xkse_stopCapture(XKeySequenceEdit* edit)
  *         超时承担（本批猎获 ② 的结束条件）。 */
 static void xkse_finishEditing(XKeySequenceEdit* edit)
 {
-    if (edit->m_sequence.count > 0) {
+    if (!edit) return;
+    /* 对标 qkeysequenceedit.cpp:76-82：finishEditing 无条件发射
+     * editingFinished——此前序列为空时早退不发，空序列按结束键/Return
+     * 收工零通知（apitest「自定义结束键触发 editingFinished」实锚）。 */
+    if (edit->m_sequence.count > 0)
         edit->m_oldSequence = edit->m_sequence;
-        xkse_emitFinished(edit);
-    }
+    xkse_emitFinished(edit);
 }
 
 /* ==================== 事件处理 ==================== */
@@ -179,7 +182,7 @@ static void VXKeySequenceEdit_mousePressEvent(XWidget* self, XEvent* event)
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
     if (XMouseEvent_button((XMouseEvent*)event) ==
         XMouseButton_LeftButton) {
-        XWidget_setFocusReason(self, XFocusReason_Mouse);
+        XWidget_setFocus_2(self, XFocusReason_Mouse);
         XWidget_update(self);
         XEvent_accept(event);
         return;
