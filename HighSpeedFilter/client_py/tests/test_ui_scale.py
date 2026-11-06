@@ -9,7 +9,7 @@
 约 50 处），改法是把它们统一按 `theme.ui_scale()` 放大。
 
 本测试锁四件事：
-  A. 缩放比例本身：缺省 1.3、可用 HSF_UI_SCALE 覆盖、非法值回落
+  A. 缩放比例本身：缺省 1.5、可用 HSF_UI_SCALE 覆盖、非法值回落
   B. 换算正确且不小于下限（再小就看不清）
   C. 主题样式表里**不存在漏改的原始字号**（12px 之类应已放大）
   D. 各页面源码里不再残留未缩放的像素字号
@@ -75,10 +75,10 @@ def part_a_scale():
     os.environ.pop("HSF_UI_SCALE", None)
     theme = _fresh_theme()
 
-    check("A1 缺省 1.3", abs(theme.ui_scale() - 1.3) < 1e-6,
+    check("A1 缺省 1.5", abs(theme.ui_scale() - 1.5) < 1e-6,
           theme.ui_scale())
-    theme.set_ui_scale(1.3)
-    check("A2 set_ui_scale 生效", abs(theme.ui_scale() - 1.3) < 1e-6,
+    theme.set_ui_scale(1.5)
+    check("A2 set_ui_scale 生效", abs(theme.ui_scale() - 1.5) < 1e-6,
           theme.ui_scale())
     theme.set_ui_scale(0.5)          # 低于下限
     check("A3 低于 1.0 被钳到 1.0", abs(theme.ui_scale() - 1.0) < 1e-6,
@@ -101,13 +101,13 @@ def part_a_scale():
     # 换一个环境变量值：必须再清一次缓存才读新值
     os.environ["HSF_UI_SCALE"] = "abc"          # 非法
     theme = _fresh_theme()
-    check("A6 非法值回落 1.3", abs(theme.ui_scale() - 1.3) < 1e-6,
+    check("A6 非法值回落 1.5", abs(theme.ui_scale() - 1.5) < 1e-6,
           theme.ui_scale())
 
     # 越界值也回落缺省
     os.environ["HSF_UI_SCALE"] = "5.0"
     theme = _fresh_theme()
-    check("A7 越界值回落 1.3", abs(theme.ui_scale() - 1.3) < 1e-6,
+    check("A7 越界值回落 1.5", abs(theme.ui_scale() - 1.5) < 1e-6,
           theme.ui_scale())
 
     theme.set_ui_scale(None)
@@ -121,15 +121,16 @@ def part_b_convert():
         if m.startswith("hsfsrv_client.theme"):
             del sys.modules[m]
     from hsfsrv_client import theme
-    theme.set_ui_scale(1.3)
-    check("B1 12px → 16px", theme.font_px(12) == 16, theme.font_px(12))
-    check("B2 30px → 39px", theme.font_px(30) == 39, theme.font_px(30))
-    check("B3 下限生效（8px 不低于 10）", theme.font_px(8) == 10,
-          theme.font_px(8))
-    check("B4 返回整数", isinstance(theme.font_px(13), int))
+    theme.set_ui_scale(1.5)
+    check("B1 12px → 18px", theme.font_px(12) == 18, theme.font_px(12))
+    check("B2 30px → 45px", theme.font_px(30) == 45, theme.font_px(30))
+    # 8*1.5=12 > 下限 10，故取 12；下限只在缩放后仍过小时生效
+    check("B3 缩放后仍取下限之上", theme.font_px(8) == 12, theme.font_px(8))
+    check("B4 极小值被下限兜住", theme.font_px(3) == 10, theme.font_px(3))
+    check("B5 返回整数", isinstance(theme.font_px(13), int))
     theme.set_ui_scale(1.0)
-    check("B5 比例 1.0 时原样", theme.font_px(12) == 12, theme.font_px(12))
-    theme.set_ui_scale(1.3)
+    check("B6 比例 1.0 时原样", theme.font_px(12) == 12, theme.font_px(12))
+    theme.set_ui_scale(1.5)
 
 
 def part_c_stylesheet():
@@ -138,12 +139,12 @@ def part_c_stylesheet():
         if m.startswith("hsfsrv_client.theme"):
             del sys.modules[m]
     from hsfsrv_client import theme
-    theme.set_ui_scale(1.3)
+    theme.set_ui_scale(1.5)
     qss = theme.STYLESHEET
     check("C1 无未替换的占位符", "%(" not in qss)
     found = [int(n) for n in re.findall(r"font-size:\s*(\d+)px", qss)]
-    small = [n for n in found if n < 14]
-    check("C2 样式表里没有小于 14px 的字号", not small, small or found)
+    small = [n for n in found if n < 16]
+    check("C2 样式表里没有小于 16px 的字号", not small, small or found)
 
 
 def part_d_sources():

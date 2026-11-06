@@ -3387,5 +3387,186 @@ class TestButtonChannelNames(unittest.TestCase):
         self.assertEqual(out, {"di": {}, "do": {}})
 
 
+class TestVfdRunPhase(unittest.TestCase):
+    """运行阶段的推导：加速中 / 减速中 / 正在停机 / 停机。
+
+    [为什么需要这一层] 用户 2026-11-06：「点击停止后，变频器是慢慢停机的，
+    希望正在停机这个过程状态显示出来，还有正在加速、正在减速都显示下」。
+
+    但 **M512 状态字 0x3000 硬件只有 3 个值**（1=正转 / 2=反转 / 3=停机），
+    厂商不通过它报告加速/减速。唯一可行办法是按「输出频率 vs 设定频率」
+    的差值反推 —— 本组测试锁的就是这套推导。
+    """
+
+    def _dev(self):
+        from hsfsrv import devices, virtualdev
+        model = virtualdev.VirtualVfd()
+        master = virtualdev.VirtualMaster(model, name="虚拟变频器")
+        dev = devices.VfdM512(lambda: master, 2, lambda _m: None)
+        return model, dev
+
+    def _poll(self, dev, now_ms=1000):
+        import asyncio
+        asyncio.run(dev.poll(now_ms))
+
+    def test_accelerating_when_output_below_target(self):
+        """启动后输出还没爬到目标 ⇒ 加速中。"""
+        from hsfsrv import proto
+        model, dev = self._dev()
+        model.set_percent = 10000            # 目标 50Hz
+        model.running = True
+        model.target_hz = 50.0
+        model.out_hz = 10.0
+        self._poll(dev)
+        self.assertEqual(dev.run_state, proto.RUN_ACCELERATING)
+        self.assertTrue(dev.is_running(), "加速中当然算运行")
+
+    def test_decelerating_when_target_below_output(self):
+        """运行中把给定调低 ⇒ 减速中，且**仍算运行**（否则调速被自己拒）。"""
+        from hsfsrv import proto
+        model, dev = self._dev()
+        model.running = True
+        model.set_percent = 5000             # 目标 25Hz
+        model.target_hz = 25.0
+        model.out_hz = 45.0                  # 当前还在 45Hz
+        self._poll(dev)
+        self.assertEqual(dev.run_state, proto.RUN_DECELERATING)
+        self.assertTrue(dev.is_running(),
+                        "降给定中的减速不是停机，必须允许继续调速")
+
+    def test_stopping_is_distinguished_from_decelerating(self):
+        """停机斜坡（目标=0 但输出>0）与"降给定"要分开判。
+
+        [为什么这条重要] 两者都返回 RUN_DECELERATING，但语义相反：
+        前者不能再调速（要停了），后者可以。判据是 `_stopping_intent()`。
+        """
+        from hsfsrv import proto
+        model, dev = self._dev()
+        model.running = True
+        model.set_percent = 0                # 目标 0 = 停机
+        model.target_hz = 0.0
+        model.out_hz = 30.0                  # 还在斜坡上
+        self._poll(dev)
+        self.assertEqual(dev.run_state, proto.RUN_DECELERATING)
+        self.assertFalse(dev.is_running(), "停机斜坡不该算运行态")
+
+    def test_stopped_when_output_reaches_zero(self):
+        """输出归零 ⇒ 停机。"""
+        from hsfsrv import proto
+        model, dev = self._dev()
+        model.running = False
+        model.out_hz = 0.0
+        model.target_hz = 0.0
+        self._poll(dev)
+        self.assertEqual(dev.run_state, proto.RUN_STOPPED)
+        self.assertFalse(dev.is_running())
+
+    def test_fault_overrides_phase(self):
+        """故障优先级最高，盖过任何运行阶段。"""
+        from hsfsrv import proto
+        model, dev = self._dev()
+        model.running = True
+        model.out_hz = 10.0
+        model.target_hz = 50.0               # 本应是"加速中"
+        model.fault_code = 0x0002
+        self._poll(dev)
+        self.assertEqual(dev.run_state, proto.RUN_FAULT)
+
+    def test_run_state_word_still_has_only_three_values(self):
+        """状态字段的**硬件口径**不许被改动（1/2/3），推导只覆盖 run_state。
+
+        [回归锁] 若有人"顺手"把加速/减速写进 0x3000 的返回值，真机就错了
+        —— 变频器不认这些值。锁住原始状态字映射。
+        """
+        model, _dev = self._dev()
+        model.running = True
+        model.reverse = False
+        self.assertEqual(model._reg(0x3000), 1, "正转必须是 1")
+        model.reverse = True
+        self.assertEqual(model._reg(0x3000), 2, "反转必须是 2")
+        model.running = False
+        self.assertEqual(model._reg(0x3000), 3, "停机必须是 3")
+
+    def test_stopping_not_misjudged_as_accelerating(self):
+        """停机过程中**绝不能**显示成"加速中"。
+
+        [真机实锅 2026-11-06 板端实测] 点停止后变频器的 0x1000（设定频率）
+        仍保留旧给定 48.6Hz，而输出在斜坡下降 ⇒ `target > out` ⇒ 按差值
+        差值判据会得出"加速中"，实测停机全程显示"加速中"，完全反了。
+
+        修法：以「已发停止命令」为主判据（`_stop_requested`），频率趋势为
+        辅。本测试锁住：发出停止命令后每一拍都必须判减速，直到输出归零。
+        """
+        from hsfsrv import proto
+        model, dev = self._dev()
+        model.set_percent = 9720             # 48.6Hz 旧给定（关键：停机后仍在）
+        model.running = True
+        model.out_hz = 48.6
+        model.target_hz = 48.6
+        self._poll(dev, 1000)
+        self.assertEqual(dev.run_state, proto.RUN_RUNNING_FORWARD)
+
+        import asyncio
+        asyncio.run(dev.apply_control(proto.OP_STOP))
+
+        seq = []
+        for i in range(8):
+            model.on_access()                # 斜坡下降
+            self._poll(dev, 1200 + i * 200)
+            seq.append(dev.run_state)
+        self.assertNotIn(proto.RUN_ACCELERATING, seq,
+                         "停机过程中不得出现『加速中』，实测序列 %s" % seq)
+        self.assertIn(proto.RUN_DECELERATING, seq, "必须出现减速中")
+        self.assertEqual(seq[-1], proto.RUN_STOPPED, "最终应停机")
+
+    def test_stop_requested_cleared_on_restart(self):
+        """重新启动要清掉停机窗口标记，否则启动后被误判成减速。"""
+        from hsfsrv import proto
+        model, dev = self._dev()
+        model.set_percent = 5000
+        model.running = True
+        model.out_hz = 25.0
+        model.target_hz = 25.0
+        self._poll(dev, 1000)
+
+        import asyncio
+        asyncio.run(dev.apply_control(proto.OP_STOP))
+        self.assertTrue(dev._stop_requested)
+
+        model.out_hz = 10.0                  # 还没停完就重启
+        asyncio.run(dev.apply_control(proto.OP_START, hz=25.0))
+        self.assertFalse(dev._stop_requested, "启动必须清停机标记")
+        model.target_hz = 25.0
+        self._poll(dev, 1400)
+        self.assertEqual(dev.run_state, proto.RUN_ACCELERATING,
+                         "重启后是在加速，不是减速")
+
+    def test_decel_stop_ramps_instead_of_cutting(self):
+        """减速停机（命令 6）必须走斜坡；自由停车（命令 5）才瞬断。
+
+        [实锅] 初版 on_access 里"只要不在运行态就 out_hz=0"，点停止后
+        频率瞬间归零 ⇒ 界面上永远看不到"正在停机"。
+        """
+        model, _dev = self._dev()
+        model.set_percent = 5000
+        model.write_single(6, 0x2000, 1)      # 启动
+        model.out_hz = 25.0
+        model.target_hz = 25.0
+        model.write_single(6, 0x2000, 6)      # 减速停机
+        self.assertTrue(model.running, "减速停机不该立刻置停机")
+        model.on_access()
+        self.assertGreater(model.out_hz, 0.0, "必须还有输出（斜坡中）")
+        self.assertTrue(model.decelerating)
+
+        # 自由停车：立刻断
+        model2, _ = self._dev()
+        model2.set_percent = 5000
+        model2.write_single(6, 0x2000, 1)
+        model2.out_hz = 25.0
+        model2.write_single(6, 0x2000, 5)     # 自由停车
+        self.assertFalse(model2.running)
+        self.assertEqual(model2.out_hz, 0.0, "自由停车必须瞬断")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

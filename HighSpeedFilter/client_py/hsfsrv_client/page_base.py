@@ -118,7 +118,7 @@ class Page(QWidget):
         row.setSpacing(10)
         lbl = QLabel(title)
         lbl.setStyleSheet(
-            "QLabel { color: #1F4E79; font-size: 22px; font-weight: bold;"
+            "QLabel { color: #1F4E79; font-size: 26px; font-weight: bold;"
             " background: transparent; }")
         row.addWidget(lbl)
         if subtitle:
@@ -733,6 +733,6 @@ def section_title(text):
     """小节标题（比页标题小，比正文重）。"""
     lbl = QLabel(text)
     lbl.setStyleSheet(
-        "QLabel { color: #1F4E79; font-size: 18px; font-weight: bold;"
+        "QLabel { color: #1F4E79; font-size: 21px; font-weight: bold;"
         " background: transparent; }")
     return lbl

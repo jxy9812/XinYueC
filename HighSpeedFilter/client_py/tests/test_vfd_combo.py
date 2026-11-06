@@ -77,10 +77,12 @@ def main(argv=None):
 
     # ---- 调速方式切换（会改量程/后缀/值）----
     step("调速方式→转速", lambda: page.speed_mode.setCurrentIndex(1))
-    step("转速模式下发", lambda: page.btn_set_freq.click())
+    # [2026-11-06 起无「下发」按钮] 改值即生效（去抖后自动下发），
+    # 这里直接调统一入口模拟"去抖到点"。
+    step("转速模式下发", lambda: page._on_spin_settled())
     step("调速方式→频率", lambda: page.speed_mode.setCurrentIndex(0))
     step("改给定 40Hz", lambda: page.freq_spin.setValue(40))
-    step("频率模式下发", lambda: page.btn_set_freq.click())
+    step("频率模式下发", lambda: page._on_spin_settled())
 
     # ---- 点动（按住/松开走 pressed/released）----
     step("点动按下", lambda: page.btn_jog.pressed.emit())

@@ -182,9 +182,9 @@ def apply_font(app, size=10):
 #
 # 环境变量 `HSF_UI_SCALE` 可覆盖（现场"嫌大/嫌小"不用改代码）：
 #     HSF_UI_SCALE=1.0   原样
-#     HSF_UI_SCALE=1.3   缺省（板端；2026-11-06 由 1.15 提到 1.3，
-#                        用户反馈"还是有点小"）
-# 真要更大直接给 1.5，不必改代码。
+#     HSF_UI_SCALE=1.5   缺省（板端；2026-11-06 1.15 → 1.3 → 1.5，
+#                        用户三次反馈"字有点小"，逐步提高）
+# 真要更大直接给 1.7，不必改代码。
 _UI_SCALE = None
 
 
@@ -198,7 +198,7 @@ def ui_scale():
         except (TypeError, ValueError):
             val = 0.0
         if not 1.0 <= val <= 2.0:          # 非法/离谱值一律回缺省
-            val = 1.3
+            val = 1.5
         _UI_SCALE = val
     return _UI_SCALE
 
@@ -491,19 +491,34 @@ QProgressBar:disabled {
 }
 
 /* ==================== QSlider ==================== */
+/* ==================== QSlider ==================== */
+/*
+ * [触摸屏放大 2026-11-06] 原轨道 4px / 手柄 14px，用户反馈「触摸范围感觉
+ * 有点小，有时候按上去没反应」。手指接触面约 8~10mm，1280x800 屏上约
+ * 30~40px。这里把轨道加到 10px、手柄加到 34x34（圆角 17px = 正圆），
+ * 视觉上仍是一条滑轨 + 圆形滑块，与手机一致。
+ *
+ * [margin 必须负得够] QSS 里 handle 的 margin 是相对 groove 的偏移，
+ * 要让 34px 的手柄居中在 10px 的轨道上，需要 -(34-10)/2 = -12px。
+ * 写小了手柄会被轨道裁掉一半。
+ */
 QSlider::groove:horizontal {
-    height: 4px;
+    height: 10px;
     background: #D5DBE2;
-    border-radius: 2px;
+    border-radius: 5px;
 }
 QSlider::handle:horizontal {
     background: %(accent_fill)s;
     border: 1px solid %(accent_line)s;
-    width: 14px;
-    margin: -6px 0;
-    border-radius: 8px;
+    width: 34px;
+    height: 34px;
+    margin: -12px 0;
+    border-radius: 17px;
 }
 QSlider::handle:horizontal:hover {
+    background: %(accent_line)s;
+}
+QSlider::handle:horizontal:pressed {
     background: %(accent_line)s;
 }
 QSlider::handle:horizontal:disabled {

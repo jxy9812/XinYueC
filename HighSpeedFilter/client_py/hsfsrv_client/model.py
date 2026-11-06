@@ -91,6 +91,20 @@ class VfdState(object):
         return self.updated_ms > 0 and (_now_ms() - self.updated_ms) < stale_ms
 
     def run_state_text(self):
+        """运行状态文案。
+
+        [「减速中」有两种含义，要分开说] 用户 2026-11-06：「点击停止后，
+        变频器是慢慢停机的，希望正在停机这个过程状态显示出来，还有正在
+        加速、正在减速都显示下」。
+        服务端把两种减速都归到 RUN_DECELERATING（都符合"输出在下降"），
+        但操作员看到的应是不同的词：
+            · 运行中降给定 → 「减速中」（还在转，只是变慢）
+            · 已发停止命令 → 「正在停机」（目标就是停）
+        判据用 `running` 位：状态字仍报运行 = 还在正常降速；
+        状态字已报停机 = 那是停机过程。
+        """
+        if self.run_state == 8 and not self.running:      # 8 = 减速中
+            return "正在停机"
         return RUN_STATE_TEXT.get(self.run_state, "未知")
 
     def fault_text(self):

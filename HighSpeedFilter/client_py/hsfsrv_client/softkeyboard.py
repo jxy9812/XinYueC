@@ -294,6 +294,33 @@ KB_MAPS = {
 #                        输入目标适配（控件族 → 插入/删除）
 # ============================================================================
 
+def _spinbox_owner(widget):
+    """若 widget 是某个 QAbstractSpinBox/QComboBox 的内部编辑器，返回外层控件。
+
+    [为什么必须向上找] QSpinBox 的文字区就是它内部的 QLineEdit。真机上
+    点数值框，鼠标/触摸事件落在**内部 lineEdit** 上（不是 spinbox 边框），
+    于是 `_resolve_input_widget` 拿到的是 lineEdit。这带来两个致命后果
+    （2026-11-06 用户实测报告，已复现）：
+
+        ① 键盘类型错：`inputMethodHints` 在 **QSpinBox** 上（Qt 自动设为
+           ImhDigitsOnly），内部 lineEdit 的 hints 是 **0** ⇒ 判成拼音键盘，
+           数值框弹出了字母盘（用户：「弹出他不是数字键盘，需要切换」）。
+        ② 输入无效：插入直接改 lineEdit 文本，没人调 `interpretText()`，
+           而 `spin.value()` 不会跟着变 ⇒ 打进去的合规数字"没反应，还是
+           原来的值"（用户第二条反馈）。
+
+    修法：把"真正的输入目标"统一解析成**外层 spinbox**——它有 hints、也
+    有 interpretText()。lineEdit 只作为文本载体（`_text_editor_of` 仍返回
+    它供插入用）。
+    """
+    parent = widget.parentWidget() if widget is not None else None
+    while parent is not None:
+        if isinstance(parent, (QAbstractSpinBox, QComboBox)):
+            return parent
+        parent = parent.parentWidget()
+    return None
+
+
 def _text_editor_of(widget):
     """取控件真正的文本编辑器（QAbstractSpinBox/QComboBox 内部那个）。"""
     if isinstance(widget, QLineEdit):
@@ -422,8 +449,8 @@ class SoftKeyboard(QWidget):
     BAND_H = 50                   # 候选带标称高（chip 内高基准；实际高由键高决定）
     KEY_GAP = 7                   # 键间距（手机键盘约 6~8px）
     KEY_RADIUS = 9                # 键圆角
-    KEY_FONT = 30                 # 字母/数字键字号（23*1.3，触摸屏手感）
-    FUNC_FONT = 21                # 功能键字号（16*1.3，标签较长故小一号）
+    KEY_FONT = 35                 # 字母/数字键字号（23*1.5，触摸屏手感）
+    FUNC_FONT = 24                # 功能键字号（16*1.5，标签较长故小一号）
     MAX_BLOCK_W = 1060            # 字母/符号键区最大宽度（超出则居中）
     MAX_BLOCK_W_NUMERIC = 1320    # 数字盘最大宽度（键少，铺得更开才像手机）
     MAX_KEY_W = 88                # 单键最大宽度（宽屏不把键拉成长条）
@@ -840,13 +867,13 @@ class SoftKeyboard(QWidget):
             label = QLabel(text)
             label.setStyleSheet(
                 "QLabel { background: transparent; border: none; color: #1A66D0;"
-                " font-size: 25px; font-weight: bold; }")
+                " font-size: 28px; font-weight: bold; }")
             label.setMinimumWidth(44)
             self._band_box.addWidget(label)
             line = QLabel("|")
             line.setStyleSheet(
                 "QLabel { background: transparent; border: none;"
-                " color: #B8C0CB; font-size: 22px; }")
+                " color: #B8C0CB; font-size: 26px; }")
             self._band_box.addWidget(line)
 
             for i, word in enumerate(self._engine.candidates()):
@@ -869,7 +896,7 @@ class SoftKeyboard(QWidget):
                 info = QLabel("%d/%d" % (self._engine.page_index() + 1, pages))
                 info.setStyleSheet(
                     "QLabel { background: transparent; border: none;"
-                    " color: #5A6572; font-size: 20px; }")
+                    " color: #5A6572; font-size: 22px; }")
                 self._band_box.addWidget(info)
                 nxt = self._key_style(QPushButton("›"), func=True)
                 nxt.setFixedWidth(40)
@@ -879,14 +906,14 @@ class SoftKeyboard(QWidget):
                 hint = QLabel("无候选：空格/回车提交原字母")
                 hint.setStyleSheet(
                     "QLabel { background: transparent; border: none;"
-                    " color: #8B98A5; font-size: 18px; }")
+                    " color: #8B98A5; font-size: 21px; }")
                 self._band_box.addStretch(1)
                 self._band_box.addWidget(hint)
         else:
             hint = QLabel("拼音输入" if chinese else "英文输入")
             hint.setStyleSheet(
                 "QLabel { background: transparent; border: none;"
-                " color: #8B98A5; font-size: 17px; }")
+                " color: #8B98A5; font-size: 20px; }")
             self._band_box.addWidget(hint)
             self._band_box.addStretch(1)
 
@@ -1252,7 +1279,17 @@ class SoftKeyboard(QWidget):
 
 
 def _resolve_input_widget(widget):
-    """焦点对象 → 真正接受文本输入的控件（向上解析 spinbox 内部编辑器）。"""
+    """焦点/点击对象 → 真正的输入目标。
+
+    [必须先向上找外层 spinbox] 点 QSpinBox 时事件落在它内部的 QLineEdit
+    上。若不先向上归位，会拿到 lineEdit（hints=0 ⇒ 判成拼音键盘；且没有
+    `interpretText()` ⇒ 输入不改 value）。详见 `_spinbox_owner` 的说明。
+    """
+    if widget is None:
+        return None
+    owner = _spinbox_owner(widget)
+    if owner is not None and is_text_input(owner):
+        return owner
     walker = widget
     while walker is not None:
         if is_text_input(walker):

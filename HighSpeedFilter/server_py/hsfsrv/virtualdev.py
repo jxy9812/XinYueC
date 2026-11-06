@@ -236,6 +236,9 @@ class VirtualVfd(object):
         self.running = False
         self.reverse = False
         self.jogging = False
+        #: 是否处于「减速停机」斜坡中（见 _command / on_access）。
+        #: 为 True 时状态字仍报"运行"，输出频率按斜率降到 0 才转"停机"。
+        self.decelerating = False
         self.fault_code = 0
         #: 母线电压（真机稳定在 553V 左右）
         self.bus_v = 553.2
@@ -279,16 +282,29 @@ class VirtualVfd(object):
             self.running = True
             self.reverse = (code == 2)
             self.jogging = False
+            self.decelerating = False
             self.target_hz = self.set_percent / 10000.0 * self.max_hz
         elif code in (3, 4):                  # 点动
             self.running = True
             self.reverse = (code == 4)
             self.jogging = True
+            self.decelerating = False
             self.target_hz = self.set_percent / 10000.0 * self.max_hz
-        elif code in (5, 6):                  # 自由/减速停机
+        elif code == 6:                       # **减速停机**：斜坡降到 0
+            # [为什么不立刻 running=False] 真机按减速时间降到 0 才停；立刻
+            # 置 False 会让状态字马上变"停机"、输出却还有几十 Hz，界面上
+            # 看不到"正在停机"（用户 2026-11-06 明确要看这个过程）。
+            # 这里把目标设 0，由 on_access 的斜坡降下来、降到 0 再置停机。
+            self.target_hz = 0.0
+            self.jogging = False
+            self.decelerating = True
+        elif code == 5:                       # **自由停车**：立刻断输出
+            # 真机自由停车是切断输出（不是斜坡），故这一步必须瞬断。
             self.running = False
             self.jogging = False
+            self.decelerating = False
             self.target_hz = 0.0
+            self.out_hz = 0.0
         elif code == 7:                       # 故障复位
             self.fault_code = 0
         else:
@@ -342,21 +358,40 @@ class VirtualVfd(object):
     def on_access(self):
         """每拍推进输出频率（爬坡）。
 
-        [停机必须保持 0] 停机时 `target_hz` 恒为 0（见 write_single 的说明），
-        所以坡道会自然把 out_hz 降到 0。这里额外做一次兜底：只要不在运行态，
-        直接把 out_hz 置 0 —— 真机停机（自由停车）是**立刻断输出**，不是慢慢
-        降；而"减速停机"才走坡道，本模型不区分两种停机，取更安全的立刻归零。
+        [停机走斜坡，不是瞬断] 旧实现"只要不在运行态就把 out_hz 置 0"，
+        于是点停止后输出频率瞬间归零 —— 界面上永远看不到"正在停机"。
+        真机是**按减速时间斜坡下降**（现场要好几秒），用户 2026-11-06 明确
+        要求把这个过程显示出来。
+
+        现在的模型：
+            · 命令 6（减速停机）→ `decelerating=True`，out_hz 按斜率降
+            · 命令 5（自由停车）→ 立刻断输出（真机自由停车就是瞬断）
+            · out_hz 降到 0 才把 running 置 False（状态字这时才变"停机"）
         """
         if not self.running:
             self.out_hz = 0.0
             self.target_hz = 0.0
+            self.decelerating = False
             return
         delta = self.target_hz - self.out_hz
         if abs(delta) <= self.RAMP_HZ_PER_TICK:
             self.out_hz = self.target_hz
+            # [不能在这里无脑清 decelerating] 最后一拍 delta 会落进死区，
+            # 若这里把 decelerating 清掉，下面"降到 0 就置停机"的分支就
+            # 永远进不去 ⇒ 减停到 0 后 running 仍为 True（实测复现）。
+            # 只在"不是减速中"或"还没到 0"时才清。
+            if not (self.decelerating and self.out_hz <= 0.0):
+                self.decelerating = delta < 0
         else:
             self.out_hz += (self.RAMP_HZ_PER_TICK
                             if delta > 0 else -self.RAMP_HZ_PER_TICK)
+            self.decelerating = delta < 0
+        # 斜坡降到 0 才算真正停下（状态字变"停机"）
+        if self.decelerating and self.out_hz <= 0.0:
+            self.out_hz = 0.0
+            self.target_hz = 0.0
+            self.decelerating = False
+            self.running = False
 
 
 # ============================================================================

@@ -23,7 +23,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
-from PyQt5.QtCore import QEventLoop, QTimer                # noqa: E402
+from PyQt5.QtCore import QEventLoop, Qt, QTimer           # noqa: E402
 from PyQt5.QtWidgets import QApplication                   # noqa: E402
 
 PASS = 0
@@ -43,6 +43,9 @@ def check(name, ok, detail=""):
 class _Vfd(object):
     """变频器状态桩：运行中、固定设定频率。"""
 
+    #: 运行状态（3 = 正转运行）。refresh() 按它判过渡态配色/文案，
+    #: 见 pages_monitor.VfdPage.refresh 的说明。
+    run_state = 3
     running = True
     faulted = False
     set_freq_hz = 25.0
@@ -213,6 +216,107 @@ def main():
           start_msgs[-1] if start_msgs else None)
     check("F7 启动后预置标记清除", page._preset_dirty is False)
     _Vfd.running = True                     # 还原，避免影响后续
+
+    print("\n=== G. 触摸命中（任意位置都能起拖）===")
+    # [用户 2026-11-06]「触摸范围感觉有点小，滑块可以大点，有时候按上去
+    # 没反应」——Qt 原生 QSlider 只在手柄/轨道上响应，控件上下方的空白区
+    # 按下去被忽略。_TouchSlider 改成"按哪跳哪"，整个矩形都可起拖。
+    from PyQt5.QtCore import QPoint
+    from PyQt5.QtGui import QMouseEvent
+    from PyQt5.QtWidgets import QStyle, QStyleOptionSlider
+
+    app.processEvents()
+    sl = page.freq_slider
+
+    def press(x, y):
+        ev = QMouseEvent(QMouseEvent.MouseButtonPress, QPoint(x, y),
+                         Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        sl.mousePressEvent(ev)
+
+    # 控件足够高（触摸目标 >= 48px）
+    check("G1 控件高度够触摸", sl.height() >= 48, "%dpx" % sl.height())
+
+    # 上/下空白处按下也要起拖
+    sl.setSliderDown(False); sl.setValue(sl.maximum() // 2)
+    n0 = len(sent)
+    press(sl.width() // 4, 2)
+    up_ok = sl.isSliderDown() and sl.value() != sl.maximum() // 2
+    sl.setSliderDown(False)
+    check("G2 轨道上方空白可起拖", up_ok,
+          "值 %d down=%s" % (sl.value(), sl.isSliderDown()))
+
+    sl.setSliderDown(False); sl.setValue(sl.maximum() // 2)
+    press(sl.width() * 3 // 4, sl.height() - 2)
+    down_ok = sl.isSliderDown() and sl.value() != sl.maximum() // 2
+    sl.setSliderDown(False)
+    check("G3 轨道下方空白可起拖", down_ok,
+          "值 %d down=%s" % (sl.value(), sl.isSliderDown()))
+
+    # 两端可达极值（不能因为缩进算错而取不到 0 / max）
+    press(1, sl.height() // 2)
+    left_v = sl.value()
+    sl.setSliderDown(False)
+    press(sl.width() - 2, sl.height() // 2)
+    right_v = sl.value()
+    sl.setSliderDown(False)
+    check("G4 两端可达极值", left_v == sl.minimum()
+          and right_v == sl.maximum(), "左 %d 右 %d" % (left_v, right_v))
+
+    # 命中手柄时不许跳变（拖动体验与原生一致）
+    sl.setValue(sl.maximum() // 2)
+    app.processEvents()
+    opt = QStyleOptionSlider()
+    sl.initStyleOption(opt)
+    h = sl.style().subControlRect(QStyle.CC_Slider, opt,
+                                  QStyle.SC_SliderHandle, sl)
+    before_h = sl.value()
+    press(h.center().x(), h.center().y())
+    check("G5 点手柄中心不跳变", sl.value() == before_h,
+          "%d -> %d" % (before_h, sl.value()))
+    sl.setSliderDown(False)
+
+    print("\n=== H. 无「下发」按钮，改值即生效 ===")
+    # [用户 2026-11-06]「去掉频率或转速下发，改成在启动状态下实时显示」
+    check("H1 页面已无下发按钮", not hasattr(page, "btn_set_freq"))
+    _Vfd.running = True
+    _Vfd.run_state = 3
+    page.refresh()
+    app.processEvents()
+
+    n4 = len(sent)
+    page.freq_spin.setValue(1000)          # 模拟键盘/箭头改值
+    app.processEvents()
+    check("H2 改值立刻同步到滑块",
+          page.freq_slider.value() == 1000,
+          "spin=%d slider=%d" % (page.freq_spin.value(),
+                                 page.freq_slider.value()))
+    check("H3 改值当拍还不下发（等去抖）", len(sent) == n4,
+          "实际 %d 条" % (len(sent) - n4))
+    wait(page.SPIN_SEND_DELAY_MS + 150)
+    got4 = len(sent) - n4
+    check("H4 停手后自动下发 1 条", got4 == 1, "实际 %d 条" % got4)
+    check("H5 只发一条（滑块去抖不重复发）", got4 == 1,
+          "实际 %d 条" % got4)
+    check("H6 下发的是新值",
+          bool(sent) and abs(float(sent[-1].get("rpm", -1)) - 1000.0) < 0.01,
+          sent[-1] if sent else None)
+
+    print("\n=== I. 过渡态文案（加速/减速/正在停机）===")
+    # [用户 2026-11-06]「点击停止后变频器慢慢停机，希望正在停机这个过程
+    # 状态显示出来，还有正在加速、正在减速都显示下」
+    from hsfsrv_client.model import VfdState
+    for state, running, want in (
+            (7, True, "加速中"),      # RUN_ACCELERATING
+            (8, True, "减速中"),      # 降给定中（还在运行）
+            (8, False, "正在停机"),    # 停机斜坡
+            (3, True, "正转运行"),
+            (1, False, "停机"),
+    ):
+        v = VfdState()
+        v.run_state = state
+        v.running = running
+        check("I 状态 %d/%s → %s" % (state, running, want),
+              v.run_state_text() == want, v.run_state_text())
 
     print("\n==== %d passed, %d failed ====" % (PASS, FAIL))
     return 1 if FAIL else 0

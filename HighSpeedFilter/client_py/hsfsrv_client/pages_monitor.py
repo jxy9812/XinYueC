@@ -11,8 +11,8 @@
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (QComboBox, QGridLayout, QHBoxLayout, QLabel,
-                             QPushButton, QSlider, QSpinBox, QVBoxLayout,
-                             QWidget)
+                             QPushButton, QSlider, QSpinBox, QStyle,
+                             QStyleOptionSlider, QVBoxLayout, QWidget)
 
 from . import proto, theme
 from .page_base import DataTable, LampRow, Page, ToggleGrid, section_title
@@ -318,6 +318,79 @@ class AnalogPage(Page):
 #                          监视 - 变频器
 # ============================================================================
 
+class _TouchSlider(QSlider):
+    """触摸友好的横向滑块：**按哪里就跳到哪里**。
+
+    [为什么需要这个子类] Qt 的 QSlider 默认只有在**手柄**（或轨道）上按下
+    才开始拖动；按在控件上下方的空白区（控件 56px 高、轨道只有 10px）时
+    事件被忽略，用户看到的是"按上去没反应"。现场反馈原话：「触摸范围感觉
+    有点小，滑块可以大点，有时候按上去没反应」。
+
+    处理方式：按下时若落点不在手柄上，直接按落点换算成值并跳过去（等价
+    Android/iOS 滑块的"点轨道即跳"），然后照常进入拖动。这样整个控件的
+    **矩形内任意位置**都能起拖，命中率与触摸面积一致。
+
+    [为什么不重写 hitButton] `hitButton()` 只决定"这次按下算不算"，返回
+    True 后 Qt 仍按原生逻辑（点到哪就跳到哪）处理 —— 但原生 `mousePressEvent`
+    会自行再判一次位置来决定是否 setSliderDown，行为在不同 Qt 版本上不一致。
+    直接重写 `mousePressEvent` 最可控：自己算值 + 自己置 down。
+    """
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.LeftButton:
+            QSlider.mousePressEvent(self, event)
+            return
+        # 先让 Qt 走它自己的判定：命中手柄时行为完全不变（拖动体验一致）。
+        if self._hit_handle(event.pos()):
+            QSlider.mousePressEvent(self, event)
+            return
+        # 未命中手柄 ⇒ 按落点跳值，再进入拖动（对齐"点轨道即跳"）。
+        self._jump_to(event.x())
+        self.setSliderDown(True)
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        # 已经在拖动中：交给基类按位置更新值（与原生拖动手感一致）。
+        QSlider.mouseMoveEvent(self, event)
+
+    def _handle_half_width(self):
+        """手柄半宽（像素）。QSS 里手柄 34px 宽，取一半做命中判定。"""
+        return 17
+
+    def _hit_handle(self, pos):
+        """落点是否在手柄的**触摸友好**范围内（左右各放宽半个手柄）。"""
+        span = self.maximum() - self.minimum()
+        if span <= 0:
+            return False
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        groove = self.style().subControlRect(
+            QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self)
+        handle = self.style().subControlRect(
+            QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, self)
+        # 手柄矩形已被 QSS 撑到 34x34；再放宽到整个控件高度以便好按。
+        left = handle.center().x() - self._handle_half_width()
+        right = handle.center().x() + self._handle_half_width()
+        # 纵向放宽：整个控件高度都算命中（触摸屏上手指不会精确落在手柄里）
+        return left <= pos.x() <= right and 0 <= pos.y() <= self.height()
+
+    def _jump_to(self, x):
+        """把值设到 x 对应的刻度（按槽位线性换算）。"""
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        groove = self.style().subControlRect(
+            QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self)
+        span = self.maximum() - self.minimum()
+        if groove.width() <= 0 or span <= 0:
+            return
+        # groove 两端各缩进半个手柄，Qt 原生也是这个口径（否则两端取不到极值）
+        half = self._handle_half_width()
+        usable = max(1, groove.width() - 2 * half)
+        ratio = (x - (groove.x() + half)) / float(usable)
+        ratio = max(0.0, min(1.0, ratio))
+        self.setValue(int(round(self.minimum() + ratio * span)))
+
+
 class VfdPage(Page):
     """变频器监视 + 控制（启停 / 调速 / 点动）。
 
@@ -355,6 +428,16 @@ class VfdPage(Page):
     #: 一条。拖动中不停变化 ⇒ 一直不发；停手/松手/单点 ⇒ 250ms 后发一条。
     #: 不依赖 isSliderDown()（离屏/某些平台下它不反映真实按下态）。
     SLIDER_SEND_DELAY_MS = 250
+
+    #: 数字框改值的**下发去抖窗口**（毫秒）。
+    #:
+    #: [为什么需要] 「下发」按钮已去掉（用户 2026-11-06：「去掉频率或转速
+    #: 下发，改成在启动状态下实时显示」），改值即生效。但 QSpinBox 每敲一
+    #: 个数字、每点一次箭头都发 valueChanged，逐次下发会在总线上刷一串
+    #: FC06（泵会跟着抖）。与滑块同策：静默 400ms 才发一条。
+    #: 取 400ms 而非 250ms：键盘逐位输入间隔比拖滑块长，窗口太短会在打字
+    #: 中途就发出去（打 "1200" 会在 "12" 时就下发一次 12rpm）。
+    SPIN_SEND_DELAY_MS = 400
 
     #: 调速方式缺省值：**转速**（用户 2026-11-06 口径「默认用速度调速」）。
     #:
@@ -477,9 +560,16 @@ class VfdPage(Page):
         self.freq_spin.setValue(25)
         self.freq_spin.setMinimumWidth(120)
         row2.addWidget(self.freq_spin)
-        self.btn_set_freq = QPushButton("下发")
-        self.btn_set_freq.clicked.connect(self._on_set_speed)
-        row2.addWidget(self.btn_set_freq)
+        # [已去掉「下发」按钮 2026-11-06] 用户口径：「去掉频率或转速下发，
+        # 改成在启动状态下实时显示」。改值即生效，交互更顺：
+        #   · 键盘输入/箭头改数字 → 停手即下发（_SPIN_SEND_DELAY_MS 去抖）
+        #   · 拖动滑块 → 停手 250ms 去抖下发（见 _on_slider_settled）
+        # 停机时仍只预置（不发帧），启动时随命令带走。
+        self._spin_send_timer = QTimer(self)
+        self._spin_send_timer.setSingleShot(True)
+        self._spin_send_timer.setInterval(self.SPIN_SEND_DELAY_MS)
+        self._spin_send_timer.timeout.connect(self._on_spin_settled)
+        self.freq_spin.valueChanged.connect(self._on_spin_value_changed)
         row2.addStretch(1)
         ctrl_card.body.addLayout(row2)
 
@@ -495,8 +585,11 @@ class VfdPage(Page):
         row3 = QHBoxLayout()
         row3.setSpacing(8)
         row3.addWidget(QLabel("拖动调速"))
-        self.freq_slider = QSlider(Qt.Horizontal)
-        self.freq_slider.setMinimumHeight(44)      # 触摸目标：手指比鼠标粗
+        self.freq_slider = _TouchSlider(Qt.Horizontal)
+        # [触摸目标] 手指接触面约 8~10mm，1280x800 屏上约 30~40px。
+        # 控件给到 56px 高：轨道 10px + 34px 圆形手柄（见 theme 的 QSlider
+        # QSS）之后，上下仍有富余的**可点区域**，按偏一点也能拖动。
+        self.freq_slider.setMinimumHeight(56)
         self.freq_slider.setTracking(True)
         self.freq_slider.setMinimumWidth(320)
         self.freq_slider.valueChanged.connect(self._on_slider_moved)
@@ -508,7 +601,7 @@ class VfdPage(Page):
         self._slider_value.setMinimumWidth(96)
         self._slider_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._slider_value.setStyleSheet(
-            "QLabel { font-size: 26px; font-weight: bold; color: #1A66D0; }")
+            "QLabel { font-size: 30px; font-weight: bold; color: #1A66D0; }")
         row3.addWidget(self._slider_value)
         ctrl_card.body.addLayout(row3)
         self._slider_syncing = False        # 防止 数字框↔滑块 互踢
@@ -527,8 +620,7 @@ class VfdPage(Page):
         self.root.addStretch(1)
 
         self._control_buttons = [self.btn_run, self.btn_free,
-                                 self.btn_reset, self.btn_set_freq,
-                                 self.btn_jog]
+                                 self.btn_reset, self.btn_jog]
         #: 设备是否就绪（服务端回过 ok=true 的快照 / 收到过遥测）。
         self._device_ready = None      # None = 还没探测过
         self._not_ready_reason = ""
@@ -594,6 +686,13 @@ class VfdPage(Page):
         [为什么不在拖动中直接下发] 见 SLIDER_SEND_DELAY_MS 的说明：逐格
         下发会在总线上刷一串 FC06。这里只更新界面 + 重置 250ms 计时器，
         真正下发在 `_on_slider_settled`。
+
+        [必须同时停掉数字框的去抖]** 同一动作会途经两个控件：滑块改值 →
+        我们调 `freq_spin.setValue()` → 触发 `_on_spin_value_changed` →
+        它启动**数字框**的去抖计时器。两个计时器都到点就下发两条。
+        `_slider_syncing` 只能挡住"值回写循环"，挡不住定时器 —— 实测
+        「松手立即下发 1 条 + 数字框去抖补 1 条 = 2 条」（C2 失败）。
+        故这里显式 stop。
         """
         if self._slider_syncing:
             return
@@ -606,6 +705,7 @@ class VfdPage(Page):
             self.freq_spin.setValue(value)
         finally:
             self._slider_syncing = False
+        self._spin_send_timer.stop()           # 见 docstring：防双发
         self._slider_send_timer.start()        # 重置：手不停就一直不发
 
     def _on_slider_released(self):
@@ -622,6 +722,41 @@ class VfdPage(Page):
         这里改 `_preset_dirty` 标记，让 `_on_run_stop` 启动时捎带；
         同时**挡住遥测对采纳**，否则用户刚预置的值会被变频器回报的旧值改回去。
         """
+        if self._slider_syncing:
+            return
+        if not self._is_running():
+            self._preset_dirty = True
+            self._send_set_speed(silent=True, preset_only=True)
+            return
+        self._send_set_speed(silent=True)
+        self._preset_dirty = False
+
+    # ---- 数字框调速（无「下发」按钮，改值即生效）----
+    def _on_spin_value_changed(self, value):
+        """数字框改值：同步滑块 + 重置下发去抖。
+
+        [为什么先同步滑块] 键盘输入 900 后滑块还停在原位，视觉上"没生效"。
+        同步过去用户立刻看到手柄跟着走。（滑块自己改值时用 _slider_syncing
+        防互踢，这里必须同样置位。）
+        """
+        if self._slider_syncing:
+            return
+        self._slider_syncing = True
+        try:
+            if self.freq_slider.value() != value:
+                self.freq_slider.setValue(value)
+            unit = ("rpm" if self._speed_mode_now() == self.SPEED_MODE_RPM
+                    else "Hz")
+            self._slider_value.setText("%d %s" % (value, unit))
+        finally:
+            self._slider_syncing = False
+        # [停掉滑块去抖]** 与 _on_slider_moved 同理：改数字框会回写滑块，
+        # 滑块 valueChanged 可能已启动它的去抖计时器。两个都到点就双发。
+        self._slider_send_timer.stop()
+        self._spin_send_timer.start()      # 静默 400ms 才下发
+
+    def _on_spin_settled(self):
+        """数字框停手 400ms：下发一条给定（停机时只预置）。"""
         if self._slider_syncing:
             return
         if not self._is_running():
@@ -717,7 +852,11 @@ class VfdPage(Page):
             self._send_op(proto.OP_SET_FREQUENCY, hz=value, silent=silent)
 
     def _on_set_speed(self):
-        """「下发」按钮：下发给定。"""
+        """立即下发给定（滑块松手走这条：手已离开，意图明确，不等去抖）。
+
+        [没有「下发」按钮了] 见构造处说明：用户 2026-11-06 要求去掉按钮、
+        改值即生效。本方法现在只被 `_on_slider_released` 调用。
+        """
         self._send_set_speed()
 
     def on_enter(self):
@@ -869,8 +1008,27 @@ class VfdPage(Page):
                 show(key, "--")
             self._stats["run"].set_value("无数据", theme.CLR_OFFLINE)
         else:
-            color = (theme.CLR_FAULT if st.faulted
-                     else (theme.CLR_OK if st.running else "#1A1A1A"))
+            # ---- 运行状态显示（含过渡态）----
+            #
+            # [为什么不只看 running 位] 用户 2026-11-06：「点击停止后变频器是
+            # 慢慢停机的，希望正在停机这个过程状态显示出来，还有正在加速、
+            # 正在减速都显示下」。这三个过渡态由**服务端**按频率差推导后
+            # 写进 run_state（M512 状态字只有 1/2/3，硬件不报细分，见
+            # server_py/hsfsrv/devices.py::_derive_phase）。
+            #
+            # 配色：过渡态用**强调蓝**（在"动"，但不是故障也不是稳定运行），
+            # 稳定运行用绿、故障用红、停机用黑 —— 一眼能分出四类。
+            phase = st.run_state
+            transition = phase in (proto.RUN_ACCELERATING,
+                                   proto.RUN_DECELERATING)
+            if st.faulted:
+                color = theme.CLR_FAULT
+            elif transition:
+                color = "#1A66D0"
+            elif st.running:
+                color = theme.CLR_OK
+            else:
+                color = "#1A1A1A"
             show("run", st.run_state_text(), color)
             # 未提供的字段显示 "--"（掩码里没有 = 品牌没给这个量）。
             show("out", "%.2f" % st.output_freq_hz
@@ -909,19 +1067,16 @@ class VfdPage(Page):
         for btn in self._control_buttons:
             btn.setEnabled(not reason)
 
-        # ---- 「下发」只在**运行中**可点 ----
+        # ---- 调速输入：滑块与数字框都可改（停机=预置，运行=实时下发）----
         #
-        # [为什么] 服务端明确拒绝停机时的**在线给定**（给定是运行参数，不是
-        # 可预置配置）——停机下发会让变频器坡道爬升，界面出现"停机但输出
-        # 25Hz"这种自相矛盾状态。置灰 + 提示"先启动"才是诚实的前馈。
-        # 判据与服端同口径：用**遥测的运行状态**，不是按钮文字。
+        # [为什么不再有「下发」按钮] 用户 2026-11-06：「去掉频率或转速下发，
+        # 改成在启动状态下实时显示」。改值即生效，少一次点击。
+        # 服务端仍拒绝**停机**时的在线给定（给定是运行参数）——所以停机时
+        # 改值只预置、不发帧，启动时随命令带走（见 _on_slider_settled /
+        # _on_spin_settled 的 running 分支）。
         running = bool(fresh and st.running)
-        self.btn_set_freq.setEnabled(not reason and running)
-        # [滑块停机也**可拖**] 用户 2026-11-06：「不启动的时候也要能拖动调速」。
-        # 停机时拖动 = 预置给定：只改本地值、**不发在线给定**（服务端会拒），
-        # 由启动时 `_given_payload()` 捎带下去（`_on_run_stop` 已这么做）。
-        # 所以这里不与 running 合闸，只受控制闸（reason）约束。
         self.freq_slider.setEnabled(not reason)
+        self.freq_spin.setEnabled(not reason)
 
         # ---- 滑块跟随变频器实际设定值 ----
         # [只在用户没在动它时同步] 正在拖/刚拖完（去抖计时器还在跑）时若被
@@ -1057,16 +1212,16 @@ class WaterPage(Page):
             row.setSpacing(6)
             name = QLabel("浊度仪%d" % (idx + 1))
             name.setStyleSheet(
-                "QLabel { color: #5A6572; font-size: 17px;"
+                "QLabel { color: #5A6572; font-size: 20px;"
                 " background: transparent; }")
             value = QLabel("--")
             value.setStyleSheet(
-                "QLabel { color: #1A1A1A; font-size: 39px; font-weight: bold;"
+                "QLabel { color: #1A1A1A; font-size: 45px; font-weight: bold;"
                 " background: transparent; }")
             value.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
             unit = QLabel("NTU")
             unit.setStyleSheet(
-                "QLabel { color: #5A6572; font-size: 17px;"
+                "QLabel { color: #5A6572; font-size: 20px;"
                 " background: transparent; padding-bottom: 8px; }")
             unit.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
             row.addWidget(name)
@@ -1115,7 +1270,7 @@ class WaterPage(Page):
 
         self._pump_state = QLabel("--")
         self._pump_state.setStyleSheet(
-            "QLabel { font-size: 18px; font-weight: bold; color: #5A6572;"
+            "QLabel { font-size: 21px; font-weight: bold; color: #5A6572;"
             " background: transparent; }")
         pump_card.add(self._pump_state)
 
@@ -1193,7 +1348,7 @@ class WaterPage(Page):
                 block.set_value("--")
             self._flow_alarm.setText("--")
             self._flow_alarm.setStyleSheet(
-                "QLabel { font-size: 18px; font-weight: bold; color: #5A6572;"
+                "QLabel { font-size: 21px; font-weight: bold; color: #5A6572;"
                 " background: transparent; }")
             self._flow_note.setText(
                 "未收到流量计数据（服务端未装配 / 从站失联）")
@@ -1210,7 +1365,7 @@ class WaterPage(Page):
         ok = (st.alarms == 0)
         self._flow_alarm.setText("正常" if ok else "报警 0x%04X" % st.alarms)
         self._flow_alarm.setStyleSheet(
-            "QLabel { font-size: 18px; font-weight: bold; color: %s;"
+            "QLabel { font-size: 21px; font-weight: bold; color: %s;"
             " background: transparent; }"
             % (theme.CLR_OK if ok else theme.CLR_FAULT))
 
@@ -1221,7 +1376,7 @@ class WaterPage(Page):
             if not fresh:
                 value_lbl.setText("--")
                 value_lbl.setStyleSheet(
-                    "QLabel { color: #9E9E9E; font-size: 39px;"
+                    "QLabel { color: #9E9E9E; font-size: 45px;"
                     " font-weight: bold; background: transparent; }")
                 continue
             # 名字由服务端给（客户端不猜"原水/出水"）
@@ -1232,13 +1387,13 @@ class WaterPage(Page):
             if ntu is None:
                 value_lbl.setText("--")
                 value_lbl.setStyleSheet(
-                    "QLabel { color: #9E9E9E; font-size: 39px;"
+                    "QLabel { color: #9E9E9E; font-size: 45px;"
                     " font-weight: bold; background: transparent; }")
                 continue
             value_lbl.setText("%.2f" % ntu)
             warn = ntu >= self.TURBIDITY_WARN_NTU
             value_lbl.setStyleSheet(
-                "QLabel { color: %s; font-size: 39px; font-weight: bold;"
+                "QLabel { color: %s; font-size: 45px; font-weight: bold;"
                 " background: transparent; }"
                 % (theme.CLR_FAULT if warn else "#1A1A1A"))
         if not fresh:
@@ -1260,7 +1415,7 @@ class WaterPage(Page):
         if not has or not st.is_fresh():
             self._pump_state.setText("--")
             self._pump_state.setStyleSheet(
-                "QLabel { font-size: 18px; font-weight: bold; color: #5A6572;"
+                "QLabel { font-size: 21px; font-weight: bold; color: #5A6572;"
                 " background: transparent; }")
             self.btn_pump_on.setEnabled(False)
             self.btn_pump_off.setEnabled(False)
@@ -1277,7 +1432,7 @@ class WaterPage(Page):
             self._pump_state.setText("停止（输出已关）")
             color = "#37474F"
         self._pump_state.setStyleSheet(
-            "QLabel { font-size: 18px; font-weight: bold; color: %s;"
+            "QLabel { font-size: 21px; font-weight: bold; color: %s;"
             " background: transparent; }" % color)
 
         can = ready and not reason

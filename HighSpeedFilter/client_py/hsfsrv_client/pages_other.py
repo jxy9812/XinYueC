@@ -141,13 +141,13 @@ class HomePage(Page):
             lbl_title = QLabel(title)
             lbl_title.setAlignment(Qt.AlignCenter)
             lbl_title.setStyleSheet(
-                "QLabel { font-size: 20px; font-weight: bold; color: #1A1A1A;"
+                "QLabel { font-size: 22px; font-weight: bold; color: #1A1A1A;"
                 " background: transparent; }")
             lbl_desc = QLabel(desc)
             lbl_desc.setAlignment(Qt.AlignCenter)
             lbl_desc.setWordWrap(True)
             lbl_desc.setStyleSheet(
-                "QLabel { font-size: 16px; color: #5A6572;"
+                "QLabel { font-size: 18px; color: #5A6572;"
                 " background: transparent; }")
             inner.addStretch(1)
             inner.addWidget(lbl_title)
@@ -270,7 +270,7 @@ class MainMenuPage(Page):
             btn.setMinimumHeight(160)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(
-                "QPushButton { font-size: 31px; font-weight: bold; }")
+                "QPushButton { font-size: 36px; font-weight: bold; }")
             btn.clicked.connect(lambda _c=False, p=page: self.ctx.navigate(p))
             grid.addWidget(btn, 0, i)
         self.root.addWidget(holder)
@@ -289,7 +289,7 @@ class SubMenuPage(Page):
             btn = QPushButton(name)
             btn.setMinimumHeight(96)
             btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet("QPushButton { font-size: 21px; font-weight: bold; }")
+            btn.setStyleSheet("QPushButton { font-size: 24px; font-weight: bold; }")
             btn.clicked.connect(lambda _c=False, p=page: self.ctx.navigate(p))
             grid.addWidget(btn, i // 3, i % 3)
         self.root.addLayout(grid)
@@ -2120,7 +2120,7 @@ class LogPage(Page):
         self._view.setReadOnly(True)
         self._view.setStyleSheet(
             "QPlainTextEdit { background-color: #FFFFFF; border: 1px solid %s;"
-            " border-radius: %dpx; font-family: monospace; font-size: 16px; }"
+            " border-radius: %dpx; font-family: monospace; font-size: 18px; }"
             % (theme.CLR_BORDER_SOFT, theme.RADIUS_CARD))
         card = Card()
         card.add(self._view)
@@ -2521,7 +2521,7 @@ class MultiCheckCombo(QPushButton):
             cb = QCheckBox(label)
             cb.setChecked(self._checked[i])
             cb.setMinimumHeight(self.ITEM_H)
-            cb.setStyleSheet("QCheckBox { padding: 4px 8px; font-size: 20px; }")
+            cb.setStyleSheet("QCheckBox { padding: 4px 8px; font-size: 22px; }")
             # 点击只改勾选，**不收 popup、不动任何"当前项"**
             cb.toggled.connect(
                 lambda on, idx=i: self._on_check_toggled(idx, on))
@@ -2605,7 +2605,7 @@ class RemoteSettingsPage(Page):
         card = Card("运行模式")
         self._mode_label = QLabel("未知")
         self._mode_label.setStyleSheet(
-            "QLabel { font-size: 21px; font-weight: bold; "
+            "QLabel { font-size: 24px; font-weight: bold; "
             "background: transparent; }")
         card.add(self._mode_label)
         hint = QLabel("自动模式会拒绝全部远程控制（设备由现场逻辑驱动）；"
@@ -2635,7 +2635,7 @@ class RemoteSettingsPage(Page):
         card_auto = Card("自动运行")
         self._auto_label = QLabel("--")
         self._auto_label.setStyleSheet(
-            "QLabel { background: transparent; font-size: 17px; }")
+            "QLabel { background: transparent; font-size: 20px; }")
         card_auto.add(self._auto_label)
         hint2 = QLabel("切到自动模式只是授权；要真正开始自动运行，需按下面的"
                        "「启动自动运行」。服务端重启后控制器一律为停止状态。")
@@ -3007,12 +3007,12 @@ class RemoteSettingsPage(Page):
             if model.is_auto():
                 self._mode_label.setText("自动（远程控制已禁用）")
                 self._mode_label.setStyleSheet(
-                    "QLabel { font-size: 21px; font-weight: bold; color: %s;"
+                    "QLabel { font-size: 24px; font-weight: bold; color: %s;"
                     " background: transparent; }" % theme.CLR_WARN)
             else:
                 self._mode_label.setText("手动（允许 root 远程控制）")
                 self._mode_label.setStyleSheet(
-                    "QLabel { font-size: 21px; font-weight: bold; color: %s;"
+                    "QLabel { font-size: 24px; font-weight: bold; color: %s;"
                     " background: transparent; }" % theme.CLR_OK)
         else:
             self._mode_label.setText("未知")
@@ -3029,24 +3029,24 @@ class RemoteSettingsPage(Page):
         if not model.run_mode_known:
             self._auto_label.setText("未知")
             self._auto_label.setStyleSheet(
-                "QLabel { background: transparent; font-size: 17px; }")
+                "QLabel { background: transparent; font-size: 20px; }")
         elif not model.is_auto():
             self._auto_label.setText("手动模式（自动运行不可用）")
             self._auto_label.setStyleSheet(
-                "QLabel { background: transparent; font-size: 17px; color: #5A6572; }")
+                "QLabel { background: transparent; font-size: 20px; color: #5A6572; }")
         elif running is None:
             self._auto_label.setText("自动模式 · 运行状态未知（服务端未上报）")
             self._auto_label.setStyleSheet(
-                "QLabel { background: transparent; font-size: 17px; color: #5A6572; }")
+                "QLabel { background: transparent; font-size: 20px; color: #5A6572; }")
         elif running:
             self._auto_label.setText("自动模式 · 运行中")
             self._auto_label.setStyleSheet(
-                "QLabel { background: transparent; font-size: 17px;"
+                "QLabel { background: transparent; font-size: 20px;"
                 " font-weight: bold; color: %s; }" % theme.CLR_WARN)
         else:
             self._auto_label.setText("自动模式 · 已停止（未按过启动）")
             self._auto_label.setStyleSheet(
-                "QLabel { background: transparent; font-size: 17px; color: #5A6572; }")
+                "QLabel { background: transparent; font-size: 20px; color: #5A6572; }")
         can_ctrl = self.ctx.is_root() and model.is_auto()
         self.btn_auto_start.setEnabled(can_ctrl and running is not True)
         self.btn_auto_stop.setEnabled(can_ctrl and running is True)

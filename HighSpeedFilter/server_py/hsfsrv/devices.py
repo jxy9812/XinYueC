@@ -8,10 +8,40 @@
 的地方都在注释里写明依据，改之前先看依据。
 """
 
+import inspect
 import struct
 
 from . import modbus
 from . import proto
+
+
+# ============================================================================
+#                   master 关闭：同步 / 异步两种签名的统一口
+# ============================================================================
+
+async def close_master(master):
+    """关闭 master 并让调用方可以**无脑 await**。
+
+    [为什么需要它] 两种 master 的 close 签名不同：
+      · `TcpMaster.close()` 是 **async**（要关 asyncio 的 reader/writer）；
+      · `RtuMaster.close()` 是 **同步**（只关 pyserial 句柄，没有事件循环
+        资源要等）。
+    早先各设备的 `close()` 一律写 `await self._master.close()`：TCP 下正常，
+    一换串口就在自检里炸
+        TypeError: object NoneType can't be used in 'await' expression
+    而且它通常是 `finally` 里第一句，**后面的设备根本没跑**——表现成
+    "自检只打了一台就崩"。本机 sim 走 TCP 永远碰不到，只有真机串口才暴露。
+
+    :param master: master 实例；None 直接返回（幂等）。
+    """
+    if master is None:
+        return
+    fn = getattr(master, "close", None)
+    if fn is None:
+        return
+    result = fn()
+    if inspect.isawaitable(result):
+        await result
 
 
 # ============================================================================
@@ -122,6 +152,14 @@ class VfdM512(object):
         self.last_ok_ms = 0
         self.last_error = ""
         self.max_freq_hz = self.DEFAULT_MAX_FREQ_HZ
+        #: 上一拍的输出频率（Hz），用于判断"频率在上升还是下降"。
+        #: 见 _derive_phase：真机停机时 0x1000 残留旧给定，只能靠走势判减速。
+        self._last_out_hz = None
+        #: 是否已发过停止命令、但输出还没降到 0（"正在停机"窗口）。
+        #: [为什么需要] 真机停机时 0x1000 残留旧给定、首拍还没历史可比的
+        #: 情况下，光靠"频率在下降"会漏判一拍（实测首拍判成"加速中"）。
+        #: 有这个标记就能从发出停止命令那一刻起直接判减速。
+        self._stop_requested = False
         #: 额定点（铭牌）：用于 Hz ↔ rpm 线性换算。
         self.rated_rpm = self.DEFAULT_RATED_RPM
         self.rated_hz = self.DEFAULT_RATED_HZ
@@ -151,9 +189,8 @@ class VfdM512(object):
         return self._master
 
     async def close(self):
-        if self._master is not None:
-            await self._master.close()
-            self._master = None
+        await close_master(self._master)
+        self._master = None
 
     # ---- 取数 ----
     async def poll(self, now_ms):
@@ -187,6 +224,12 @@ class VfdM512(object):
         self.raw[self.ADDR_FAULT] = fault[0]
         self._decode_state(status[0])
         self._decode_fault(fault[0])
+        # [阶段推导覆盖状态字] 状态字只有 3 值，加速/减速/停机中要靠频率差
+        # 反推（见 _derive_phase）。放在 _decode_fault 之后：故障优先级最高，
+        # 两者都读过之后才算得准。
+        self.run_state = self._derive_phase()
+        # [更新基准必须在本拍推导之后] 否则 decreasing 永远为 False
+        self._last_out_hz = self.output_freq_hz()
         self._mark_telemetry_valid()
         self.last_ok_ms = now_ms
 
@@ -237,7 +280,14 @@ class VfdM512(object):
         return False
 
     def _decode_state(self, word):
-        """运行状态字解码（已含「故障优先」：有故障时状态显示故障）。"""
+        """运行状态字解码（已含「故障优先」：有故障时状态显示故障）。
+
+        [M512 状态字只有 3 个值] 0x3000 的硬件口径就是「1=正转 / 2=反转 /
+        3=停机」，**没有**加速中/减速中这些细分（见 docs/03-设备与寄存器
+        口径.md）。所以这里只判"转不转、往哪转"；**运行阶段**（加速/减速/
+        恒速/停机中）由 `_derive_phase()` 按频率差推导 —— 那是唯一能知道
+        "正在加速"的办法。
+        """
         self.valid_mask |= 1 << 0            # RunState
         self.valid_mask |= 1 << 1            # RawStateWord
         self.valid_mask |= 1 << 2            # Running
@@ -261,6 +311,76 @@ class VfdM512(object):
             self.raw["_reverse"] = False
         if self.faulted:
             self.run_state = proto.RUN_FAULT
+
+    #: 频率差判定死区（Hz）。小于它就认为"到位了"（恒速 / 已停）。
+    #:
+    #: [为什么需要死区] 输出频率是 0.01Hz 分辨率、给定是百分比换算，两者
+    #: 永远差一点点（50Hz 给定下实测差 0.01~0.05Hz）。不留死区会把"恒速
+    #: 运行"误判成"一直在加速/减速"，界面状态字永远在闪。
+    PHASE_DEADBAND_HZ = 0.15
+
+    def _derive_phase(self):
+        """按「输出频率 vs 设定频率」推导运行阶段（加速/减速/恒速/停机中）。
+
+        :returns: proto.RUN_* 之一
+
+        [为什么不由状态字给] 见 `_decode_state`：M512 状态字没有这些细分。
+        变频器自己能分辨，但不通过 0x3000 报告 —— 只能靠频率差反推。
+
+        判定表（输出 = 实际频率，设定 = 目标频率）：
+
+            故障                      → RUN_FAULT
+            运行中，设定 > 输出+死区   → RUN_ACCELERATING（正在加速）
+            运行中，设定 < 输出-死区   → RUN_DECELERATING（正在减速）
+            **未运行，输出 > 死区**    → RUN_DECELERATING（正在停机）★
+            未运行，输出 ≈ 0           → RUN_STOPPED
+            运行中，已到位             → RUN_RUNNING_FORWARD / REVERSE
+        """
+        if self.faulted:
+            return proto.RUN_FAULT
+        out_hz = self.output_freq_hz()
+        target_hz = self.set_freq_hz()
+        running = bool(self.raw.get("_running", False))
+
+        # [★ 正在停机] 停机后输出频率不会瞬间归零（真机斜坡下降，现场要
+        # 好几秒）。这段时间状态字可能还报"运行"、但输出在往下掉 —— 正是
+        # 用户要看的"正在停机"。
+        #
+        # [主判据是"已发停止命令"] 真机实测（2026-11-06 板端）：点停止后
+        # 变频器的 0x1000（设定频率）**仍保留旧给定**（48.6Hz），于是
+        # target > out，按差值会判成"加速中" —— 实测停机全程显示"加速中"，
+        # 完全反了。故停机必须靠 `_stop_requested` 标记判，不能靠差值。
+
+        # [已发停止命令 + 输出还没到 0 ⇒ 正在停机] 最可靠，并补上"首拍还
+        # 没有历史值可比"的空档。
+        if (self._stop_requested and out_hz is not None
+                and out_hz > self.PHASE_DEADBAND_HZ):
+            return proto.RUN_DECELERATING
+        if self._stop_requested and (out_hz is None
+                                     or out_hz <= self.PHASE_DEADBAND_HZ):
+            self._stop_requested = False      # 停到位，退出停机窗口
+
+        if not running:
+            if out_hz is not None and out_hz > self.PHASE_DEADBAND_HZ:
+                return proto.RUN_DECELERATING
+            return proto.RUN_STOPPED
+
+        if out_hz is None or target_hz is None:
+            return self.run_state          # 遥测不全：退回状态字结论
+        # [差值判据] 停机窗口已由上面的 `_stop_requested` 精确覆盖，故这里
+        # 可以放心用差值 —— 它表达的是"目标 vs 实际"的稳定关系。
+        #
+        # [为什么不用"频率趋势"做主判据] 试过：手动/外部把输出改小时会被
+        # 判成"减速"，哪怕目标是**升高**的（实测重启时 out 从 25 掉到 10、
+        # 目标 25 ⇒ 误判减速）。趋势只适合区分"降给定"与"停机"，而停机
+        # 已有专用标记，趋势反而引入误判。
+        delta = target_hz - out_hz
+        if delta > self.PHASE_DEADBAND_HZ:
+            return proto.RUN_ACCELERATING
+        if delta < -self.PHASE_DEADBAND_HZ:
+            return proto.RUN_DECELERATING
+        return (proto.RUN_RUNNING_REVERSE if self.raw.get("_reverse")
+                else proto.RUN_RUNNING_FORWARD)
 
     def _decode_fault(self, code):
         self.fault_code = code
@@ -292,9 +412,20 @@ class VfdM512(object):
         `run_state` 才是唯一事实。
         状态未读到时按"未运行"处理 —— 宁可拒绝一次调速，也不能在不确定
         的状态下改运行参数。
+
+        [注意 run_state 已被 _derive_phase 改写] 它现在可能返回
+        ACCELERATING/DECELERATING：
+          · ACCELERATING 一定是运行中；
+          · DECELERATING 要分两种——**运行中降给定**（还算运行）与
+            **停机斜坡**（不算运行）。用 `_stopping_intent()` 区分，
+            否则停机过程中还能在线调速，语义混乱。
         """
+        if self.run_state == proto.RUN_DECELERATING:
+            return not self._stopping_intent()
         return self.run_state in (proto.RUN_RUNNING_FORWARD,
-                                  proto.RUN_RUNNING_REVERSE)
+                                  proto.RUN_RUNNING_REVERSE,
+                                  proto.RUN_ACCELERATING,
+                                  proto.RUN_CONSTANT_SPEED)
 
     def set_freq_hz(self):
         """设定频率：0x1000 的百分比 × 最大频率。
@@ -310,6 +441,25 @@ class VfdM512(object):
     def freq_percent(self):
         return self._signed16(self.ADDR_FREQ_SET)
 
+    def _stopping_intent(self):
+        """设备是否处于「停机过程中」（已发停止命令，或目标≈0 但输出仍>死区）。
+
+        [怎么判] 变频器本身没有"正在停机"的位（M512 状态字只有 1/2/3）。
+        两条判据任一成立就算停机过程：
+            · 已发过停止命令且输出还没到 0（`_stop_requested`，最可靠）
+            · target <= 死区 且 out > 死区
+        后者是兜底：现场有人在变频器面板上按了停止（我们没发命令）时，
+        目标会被变频器自己改成 0。
+        """
+        out_hz = self.output_freq_hz()
+        if self._stop_requested:
+            return True
+        target_hz = self.set_freq_hz()
+        if out_hz is None or target_hz is None:
+            return False
+        return (target_hz <= self.PHASE_DEADBAND_HZ
+                and out_hz > self.PHASE_DEADBAND_HZ)
+
     def field_value(self, bit, kind):
         """按 XVfdCodec 的遥测键表取某一位的值（None = 该字段无效）。"""
         if not (self.valid_mask & (1 << bit)):
@@ -317,6 +467,14 @@ class VfdM512(object):
         if bit == 0:
             return self.run_state
         if bit == 2:
+            # [正在停机时报 False] 停机过程中状态字可能还是"运行"（虚拟
+            # 模型的接口如此），但设备已经收到停止意图、输出在往下走 ——
+            # 对外就该是"没在运行"。客户端据此把「减速中」显示成
+            # 「正在停机」（见 model.py::run_state_text）。
+            # 也保证"停机后不能在线调速"这条语义在斜坡期间一致。
+            if (self.run_state == proto.RUN_DECELERATING
+                    and self._stopping_intent()):
+                return False
             return bool(self.raw.get("_running", False))
         if bit == 3:
             return bool(self.faulted)
@@ -374,21 +532,48 @@ class VfdM512(object):
                             value=0.0, index=0):
         """把控制意图分派到设备（对齐 XVfdCodec_applyControl 的支持子集）。
 
+        [启动/点动也可以带给定] START / JOG 允许携带 hz / rpm：**先写频率
+        给定、再发命令字**。为什么必须这么做（现场实锅，用户反馈）：
+          ① 变频器保留上一次的频率给定，只发启动命令就按旧给定跑——
+             界面显示 3Hz、实际跑 25Hz，操作员以为界面在骗人；
+          ② 上层禁止"停机时下发给定"（见 app 里 `_VFD_SETPOINT_OPS`），
+             所以客户端"先单独发一帧给定、再发启动"会被拒，那条路不通。
+             把给定绑在启动命令上，既不违反"停机不预置给定"的语义（它
+             本来就是启动的一部分），又保证"界面显示什么就按什么转"。
+
         返回 (ok, err)：ok=False 时 err 为中文原因。
         """
+        # 启动/点动捎带的给定：rpm 优先（界面可能选的是转速调速），
+        # 否则用 hz；0 表示不指定、沿用变频器当前值。
+        given_hz = self._resolve_given_hz(hz, rpm)
+        if given_hz is False:
+            return False, "转速换算失败（额定点配置非法）"
+        if given_hz > self.max_freq_hz + 0.001:
+            return False, ("给定 %.1fHz 超出上限 %.1fHz"
+                           % (given_hz, self.max_freq_hz))
+
         if op == proto.OP_START:
+            self._stop_requested = False      # 重新启动，退出停机窗口
+            if given_hz > 0:
+                await self.set_frequency(given_hz)
             await self.send_command(self.CMD_RUN_REVERSE if reverse
                                     else self.CMD_RUN_FORWARD)
         elif op == proto.OP_STOP:
+            self._stop_requested = True
             await self.send_command(self.CMD_DECEL_STOP)
         elif op == proto.OP_FREE_STOP:
+            # 自由停车是瞬断，没有"停机过程"，不需要置位
             await self.send_command(self.CMD_FREE_STOP)
         elif op == proto.OP_QUICK_STOP:
             # 本机无独立快停命令字：用减速停机（现场口径，见文档）
+            self._stop_requested = True
             await self.send_command(self.CMD_DECEL_STOP)
         elif op == proto.OP_RESET_FAULT:
             await self.send_command(self.CMD_FAULT_RESET)
         elif op == proto.OP_JOG:
+            # 点动同样先写给定：否则按住点动会按变频器里上一次的给定跑。
+            if given_hz > 0:
+                await self.set_frequency(given_hz)
             await self.send_command(self.CMD_JOG_REVERSE if reverse
                                     else self.CMD_JOG_FORWARD)
         elif op == proto.OP_SET_FREQUENCY:
@@ -413,6 +598,23 @@ class VfdM512(object):
         else:
             return False, "不支持的控制动作"
         return True, ""
+
+    def _resolve_given_hz(self, hz, rpm):
+        """把启动命令捎带的给定归一到频率（Hz）。
+
+        :returns: 频率（0 = 未指定）；额定点非法且给了 rpm 时返回 False。
+        """
+        try:
+            rpm_value = float(rpm or 0.0)
+        except (TypeError, ValueError):
+            rpm_value = 0.0
+        if rpm_value > 0:
+            converted = self.hz_of(rpm_value)
+            return converted if converted is not None else False
+        try:
+            return max(0.0, float(hz or 0.0))
+        except (TypeError, ValueError):
+            return 0.0
 
     # ---- 健康 ----
     def health(self, now_ms, stale_ms):
@@ -485,9 +687,8 @@ class TempHum(object):
         return self._master
 
     async def close(self):
-        if self._master is not None:
-            await self._master.close()
-            self._master = None
+        await close_master(self._master)
+        self._master = None
 
     async def poll(self, now_ms):
         master = self._master_get()
@@ -605,14 +806,22 @@ class DigitalIo(object):
 
     [点数口径 —— 单模块 16，聚合后 32]
     单台模块物理 16 点；但它支持**主从聚合**：一台（ms=1 主站）把另一台
-    的 16 点映射进自己的地址空间，对外就是 32 点。本现场即如此：
+    的 16 点映射进自己的地址空间，对外就是 32 点。
 
-        .13（被聚合者，16 点）→ 映射进 .12 的 esDoNu1/esDiNu1
-        ⇒ 只轮询 .12 就能拿到全部 32DI/32DO
+    **当前现场（2026-11-06 起）只有 .13 一台，对外 16 点。** 原聚合者
+    .12（对外 32 点）已下线拆除，它提供的 16DI/16DO 一并取消。历史参考：
+    2026-11-05 曾实测 .12 的 FC02/FC01 读 0x0000 起 32 点返回 4 字节、
+    上半区是活的；那是 .12 还没拆时的事，别拿它当现在的点数依据。
+    故点数**每模块可变**，构造时由配置给（缺省 16，本现场 16）。
 
-    2026-11-05 实测确认：.12 的 FC02/FC01 读 0x0000 起 32 点返回 4 字节；
-    且**上半区是活的** —— 写 DO16/DO20/DO31 后回读逐位正确，恢复后归零。
-    故点数**每模块可变**，构造时由配置给（缺省 16，本现场 32）。
+    [⚠ 2026-11-06 实测：ms=1 下点数由固件自动给出，且上限 16]
+    把 .13 从 ms=0 改到 ms=1 后，`sysDoNu`/`sysDiNu` 从 0 自动变成 16/16
+    （改配置前 Web 上这两个框是 disabled，手改 193 字段提交也写不进去）。
+    ms=1 下 FC01/FC02 读 16 点正常、FC05 写单点正常、读 17 点即 exc3
+    （Illegal Data Value）⇒ **对外就是 16 点，读多了直接报错，不是截断**。
+    另：写地址 n 后回读的位图相对写地址有 8 位循环偏移（写 bit0 → 回读
+    bit8），基线恒有 1 位（0x0200）置位 —— 这是模块内部状态位，判"点位
+    是否生效"要按相对变化看，不能拿绝对值跟 0 比。
 
     [该模块会间歇性空应答] 实测无间隔连发 10 次里会有 1~2 次收到 0 字节
     （TCP 可连但本次无应答），间隔 300ms 以上就基本不出。故读失败要靠
@@ -647,6 +856,7 @@ class DigitalIo(object):
         self.name = name
         self._log = log or (lambda msg: None)
         #: DI/DO 路数（单模块 16；聚合后 32）。由配置给，不写死。
+        #: [现场当前 16] 只剩 .13 一台。
         self.channels = max(1, int(channels))
         #: 是否参与点位发布。被聚合者（点已并入聚合者的地址空间）置 false：
         #: 它仍然轮询、仍然出健康条目（用于判故障），但不再发一帧点位，
@@ -827,9 +1037,8 @@ class FlowMeter(object):
         return self._master
 
     async def close(self):
-        if self._master is not None:
-            await self._master.close()
-            self._master = None
+        await close_master(self._master)
+        self._master = None
 
     # ---- 32 位量拼装 ----
     @staticmethod
@@ -982,9 +1191,8 @@ class TurbidityMeter(object):
         return self._master
 
     async def close(self):
-        if self._master is not None:
-            await self._master.close()
-            self._master = None
+        await close_master(self._master)
+        self._master = None
 
     def _decode(self, vals):
         """按实例口径把两个字解成 NTU（留 raw 位模式供诊断）。"""
