@@ -95,7 +95,7 @@ static uint32_t xtb_subControlsFor(const XWindow* win)
  */
 static int VXTitleBar_hitTest(XTitleBar* self, const XPoint* pos)
 {
-    XStyle* style = XStyle_defaultStyle();
+    XStyle* style = XWidget_style((const XWidget*)self);
     XStyleOptionTitleBar opt;
     if (!style || !pos) return 0;
     if (!XTitleBar_buildOption(self, &opt, NULL)) return 0;
@@ -124,7 +124,7 @@ static void VXTitleBar_paintEvent(XWidget* self, XEvent* event)
     XPoint offset;
     int barH;
     if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
-    style = XStyle_defaultStyle();
+    style = XWidget_style((const XWidget*)self);
     if (!style) return;
     barH = XTitleBar_defaultHeight();
     if (barH <= 0) return;

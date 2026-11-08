@@ -40,9 +40,8 @@ static XPaletteColorGroup palette_normalize_group(XPaletteColorGroup group)
    （零量化零损失），非 RGB 色彩空间写入先经 XColor_toRgb 归一（调色板
    语义是「最终显示色」，仅丢弃原色彩空间标签）。XPalette_color/setColor
    与 init 系赋值全部经此两桥，m_colors 勿直访。 */
-static XPaletteCell xpal_pack(XColor color)
+static XBrush xpal_pack(XColor color)
 {
-    XPaletteCell cell;
     XColor rgb;
     if (color.m_spec != XColor_Rgb && color.m_spec != XColor_Invalid &&
         color.m_spec != XColor_ExtendedRgb)
@@ -50,25 +49,14 @@ static XPaletteCell xpal_pack(XColor color)
         XColor_toRgb(&color, &rgb);
         color = rgb;
     }
-    cell.m_alpha = color.m_alpha;
-    cell.m_red = color.m_comp1;
-    cell.m_green = color.m_comp2;
-    cell.m_blue = color.m_comp3;
-    return cell;
+    return XBrush_create_color(color, XBrushStyle_SolidPattern);
 }
 
-static XColor xpal_unpack(const XPaletteCell* cell)
+static XColor xpal_unpack(const XBrush* cell)
 {
-    XColor c;
     if (!cell)
         return XColor_create();
-    c.m_spec = XColor_Rgb;
-    c.m_alpha = cell->m_alpha;
-    c.m_comp1 = cell->m_red;
-    c.m_comp2 = cell->m_green;
-    c.m_comp3 = cell->m_blue;
-    c.m_comp4 = 0;
-    return c;
+    return XBrush_color(cell);
 }
 
 void XPalette_init_default(XPalette* self)
@@ -77,6 +65,7 @@ void XPalette_init_default(XPalette* self)
     int g, r;
     if (!self)
         return;
+    self->m_resolveMask = 0;
 
     invalid = XColor_create();
 
@@ -206,6 +195,7 @@ void XPalette_init_dark(XPalette* self)
     int g, r;
     if (!self)
         return;
+    self->m_resolveMask = 0;
 
     invalid = XColor_create();
 
@@ -345,6 +335,7 @@ void XPalette_setColor(XPalette* self, XPaletteColorGroup group, XPaletteColorRo
         return;
     g = palette_normalize_group(group);
     self->m_colors[g][role] = xpal_pack(color);
+    self->m_resolveMask |= (uint64_t)1 << (unsigned)role;
 }
 
 bool XPalette_isEqual(const XPalette* a, const XPalette* b)
@@ -358,13 +349,109 @@ bool XPalette_isEqual(const XPalette* a, const XPalette* b)
     {
         for (r = 0; r < XPaletteColorRole_NColorRoles; ++r)
         {
-            XColor ca = xpal_unpack(&a->m_colors[g][r]);
-            XColor cb = xpal_unpack(&b->m_colors[g][r]);
-            if (!XColor_equals(&ca, &cb))
+            if (!XBrush_isEqual(&a->m_colors[g][r], &b->m_colors[g][r]))
                 return false;
         }
     }
     return true;
+}
+
+XBrush XPalette_brush(const XPalette* self, XPaletteColorGroup group, XPaletteColorRole role)
+{
+    XPaletteColorGroup g;
+    if (!self || role < 0 || role >= XPaletteColorRole_NColorRoles ||
+        role == XPaletteColorRole_NoRole)
+        return XBrush_create();
+    g = palette_normalize_group(group);
+    return self->m_colors[g][role];
+}
+
+void XPalette_setBrush(XPalette* self, XPaletteColorGroup group, XPaletteColorRole role, const XBrush* brush)
+{
+    XPaletteColorGroup g;
+    if (!self || role < 0 || role >= XPaletteColorRole_NColorRoles ||
+        role == XPaletteColorRole_NoRole)
+        return;
+    g = palette_normalize_group(group);
+    if (brush)
+        self->m_colors[g][role] = *brush;
+    else
+        self->m_colors[g][role] = XBrush_create();
+    self->m_resolveMask |= (uint64_t)1 << (unsigned)role;
+}
+
+bool XPalette_isBrushSet(const XPalette* self, XPaletteColorGroup group, XPaletteColorRole role)
+{
+    XPaletteColorGroup g;
+    const XBrush* b;
+    if (!self || role < 0 || role >= XPaletteColorRole_NColorRoles ||
+        role == XPaletteColorRole_NoRole)
+        return false;
+    g = palette_normalize_group(group);
+    b = &self->m_colors[g][role];
+    (void)b;
+    return (self->m_resolveMask & ((uint64_t)1 << (unsigned)role)) != 0;
+}
+
+void XPalette_swap(XPalette* a, XPalette* b)
+{
+    XPalette tmp;
+    if (!a || !b || a == b) return;
+    tmp = *a;
+    *a = *b;
+    *b = tmp;
+}
+
+uint64_t XPalette_cacheKey(const XPalette* self)
+{
+    uint64_t h = 1469598103934665603ull;
+    int g, r;
+    if (!self) return 0;
+    for (g = 0; g < XPaletteColorGroup_NColorGroups; ++g) {
+        for (r = 0; r < XPaletteColorRole_NColorRoles; ++r) {
+            XColor c = XBrush_color(&self->m_colors[g][r]);
+            h ^= (uint64_t)XColor_rgba(&c);
+            h *= 1099511628211ull;
+        }
+    }
+    h ^= self->m_resolveMask;
+    h *= 1099511628211ull;
+    return h;
+}
+
+bool XPalette_isCopyOf(const XPalette* a, const XPalette* b)
+{
+    /* 本库调色板是值类型（无共享数据指针），「同一拷贝」= 内容全等。 */
+    return XPalette_isEqual(a, b);
+}
+
+XPalette XPalette_resolve(const XPalette* self, const XPalette* other)
+{
+    XPalette out;
+    int g, r;
+    if (self) {
+        out = *self;
+    } else {
+        XPalette_init_default(&out);
+    }
+    if (!other) return out;
+    for (r = 0; r < XPaletteColorRole_NColorRoles; ++r) {
+        if ((other->m_resolveMask & ((uint64_t)1 << (unsigned)r)) == 0) continue;
+        for (g = 0; g < XPaletteColorGroup_NColorGroups; ++g)
+            out.m_colors[g][r] = other->m_colors[g][r];
+        out.m_resolveMask |= (uint64_t)1 << (unsigned)r;
+    }
+    return out;
+}
+
+uint64_t XPalette_resolveMask(const XPalette* self)
+{
+    return self ? self->m_resolveMask : 0;
+}
+
+void XPalette_setResolveMask(XPalette* self, uint64_t mask)
+{
+    if (self) self->m_resolveMask = mask;
 }
 
 #endif /* XPALETTE_ON */

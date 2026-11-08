@@ -96,6 +96,86 @@ def main(argv=None):
     step("再启动", lambda: page.btn_run.click())
     step("运行中自由停车", lambda: page.btn_free.click())
 
+    # ---- 运行中禁点动（2026-11-06 口径）----
+    # [状态对齐前置] 启停是**同一个按钮按模型状态翻转**：上一轮/上一步
+    # 遗留的运行态会让"点启动"实际发出停止（反之亦然），断言的前提
+    # （此刻在转/已停）就不再成立。先用 _ensure_* 把状态钉死，断言只验
+    # 闸门逻辑本身（点动灰/可用 与 运行位联动），不赌按钮时序。
+    def _ensure_running():
+        """确保变频器在运行（先停再启，消除旧运行位歧义）。
+
+        [为什么不能"看到运行就直接返回"] 模型的运行位可能带着**上一拍**
+        的旧值：上一步刚点过自由停车、命令还在途/推送未落地时，
+        _is_running() 仍是 True —— 直接返回会漏发启动，600ms 后断言看到的
+        已是落地后的停机。先点一次停止（对已停电机幂等）等运行位落 False，
+        再点启动等 True，前提就钉死了。
+        """
+        if page._is_running():
+            page.btn_run.click()
+            for _ in range(100):
+                _pump(app, 5)
+                if not page._is_running():
+                    break
+        page.btn_run.click()
+        for _ in range(250):          # ACC 全量程 10s ≫ 5s 上限即失败
+            _pump(app, 5)
+            if page._is_running():
+                return
+        raise AssertionError("无法进入运行态（点动置灰断言前提不成立）")
+
+    def _ensure_stopped():
+        """确保变频器已停（停机斜坡期运行位按口径立即清，无需等满 DEC）。"""
+        if not page._is_running():
+            return
+        page.btn_run.click()
+        for _ in range(250):
+            _pump(app, 5)
+            if not page._is_running():
+                return
+        raise AssertionError("无法进入停机态（点动恢复断言前提不成立）")
+
+    def _assert_jog_grayed_while_running():
+        """运行中点动按钮必须置灰（等 200ms 遥测刷新拍生效）。"""
+        _pump(app, 30)
+        if page.btn_jog.isEnabled():
+            st = page.ctx.model.vfd
+            age = (time.monotonic() * 1000.0 - st.updated_ms) if st.updated_ms else -1
+            raise AssertionError(
+                "运行中点动按钮应置灰（model running=%s fresh=%s 数据龄=%.0fms"
+                " out=%.1fHz reason=%r）"
+                % (st.running, st.is_fresh(), age,
+                   st.output_freq_hz if st.running else -1,
+                   page.ctx.control_blocked_reason()))
+
+    def _assert_jog_enabled_after_stop():
+        """停稳后点动按钮必须恢复可用（ACC/DEC 口径减速要几秒）。"""
+        _pump(app, 200)
+        if not page.btn_jog.isEnabled():
+            st = page.ctx.model.vfd
+            age = (time.monotonic() * 1000.0 - st.updated_ms) if st.updated_ms else -1
+            raise AssertionError(
+                "停机后点动按钮应恢复可用（model running=%s fresh=%s 数据龄=%.0fms"
+                " out=%.1fHz reason=%r）"
+                % (st.running, st.is_fresh(), age, st.output_freq_hz,
+                   page.ctx.control_blocked_reason()))
+
+    step("再启动（备点动断言）", _ensure_running)
+    step("运行中点动置灰", _assert_jog_grayed_while_running)
+    step("点停止", _ensure_stopped)
+    step("停稳后点动恢复可用", _assert_jog_enabled_after_stop)
+
+    # ---- 运行中切方向（2026-11-06 立即换向口径）----
+    # [为什么单独一组] _on_dir_changed 是新接的信号槽：运行中改选方向立刻
+    # 发 OP_START（捎带给定）→ 服务端减速过零再反向加速；换向途中切回则
+    # 取消换向拉回原方向。这条链路的控制应答回调同样跑在网络线程——与
+    # 当年崩进程的是同款风险路径，必须过一遍。
+    step("正转启动（备换向）", lambda: page.btn_run.click())
+    step("运行中切反向（立即换向）", lambda: page.dir_combo.setCurrentIndex(1))
+    step("换向途中切回正转（取消换向）",
+         lambda: page.dir_combo.setCurrentIndex(0))
+    step("点停止", lambda: page.btn_run.click())
+    step("等减速停稳", lambda: _pump(app, 120))
+
     # ---- 跨页往返（订阅收敛 + 回页重建）----
     step("切到数字量", lambda: win.goto_page(reg.PAGE_MONITOR_DIGITAL))
     step("切回变频器", lambda: win.goto_page(reg.PAGE_MONITOR_VFD))

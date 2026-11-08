@@ -198,9 +198,10 @@ XByteArray* XAccessControlCodec_accountListToJson(const XAccountManager* mgr)
 /*                      权限策略帧                                            */
 /* ========================================================================== */
 
-#define ACCESS_CODEC_PERM_NONE   "nonePerms"
-#define ACCESS_CODEC_PERM_USER   "userPerms"
-#define ACCESS_CODEC_PERM_ADMIN  "adminPerms"
+#define ACCESS_CODEC_PERM_NONE     "nonePerms"
+#define ACCESS_CODEC_PERM_USER     "userPerms"
+#define ACCESS_CODEC_PERM_ADMIN    "adminPerms"
+#define ACCESS_CODEC_PERM_OPERATOR "operatorPerms"   /* 追加键：老帧缺该键按 0（拒绝）。 */
 
 static XBsonDocument* accessCodecBuildPermDoc(const XPermPolicySnapshot* snap)
 {
@@ -211,7 +212,9 @@ static XBsonDocument* accessCodecBuildPermDoc(const XPermPolicySnapshot* snap)
         !XBsonDocument_insert_keyUtf8_int32(doc, ACCESS_CODEC_PERM_USER,
             snap ? (int32_t)snap->m_rolePerms[1] : 0) ||
         !XBsonDocument_insert_keyUtf8_int32(doc, ACCESS_CODEC_PERM_ADMIN,
-            snap ? (int32_t)snap->m_rolePerms[2] : 0)) {
+            snap ? (int32_t)snap->m_rolePerms[2] : 0) ||
+        !XBsonDocument_insert_keyUtf8_int32(doc, ACCESS_CODEC_PERM_OPERATOR,
+            snap ? (int32_t)snap->m_rolePerms[3] : 0)) {
         XClassDelete((XClass*)doc);
         return NULL;
     }
@@ -227,6 +230,8 @@ static void accessCodecFillPerm(XPermPolicySnapshot* out, const XBsonDocument* d
     if (v) out->m_rolePerms[1] = (uint32_t)XBsonValue_toInt32(v, 0);
     v = XBsonDocument_value_keyUtf8((XBsonDocument*)doc, ACCESS_CODEC_PERM_ADMIN);
     if (v) out->m_rolePerms[2] = (uint32_t)XBsonValue_toInt32(v, 0);
+    v = XBsonDocument_value_keyUtf8((XBsonDocument*)doc, ACCESS_CODEC_PERM_OPERATOR);
+    if (v) out->m_rolePerms[3] = (uint32_t)XBsonValue_toInt32(v, 0);
 }
 
 XByteArray* XAccessControlCodec_permPolicyToBson(const XPermPolicySnapshot* snap)

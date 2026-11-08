@@ -4,10 +4,12 @@
  * @details    [层次]（TopToBottom）
  *               1) 状态横幅（自绘胶囊：状态色块 + 大字状态 + 报警摘要）
  *               2) 主读数区（大号瞬时流量 + 单位；副标题为流速）
- *               3) 仪表行（两枚 270° 弧形仪表：流量占量程比 / 信号强度）
- *               4) 数值卡行（2×2：流速 / 正向累积 / 反向累积 / 报警详情）
- *               5) 趋势图（XChartView+XLineSeries 瞬时流量 60 点滚动窗）
- *               6) 底注（数据源：B 侧 485 / COM18 / 站号 5）
+ *               3) 仪表行（两枚 270° 弧形仪表：流量占量程比 / 信号强度；
+ *                  主读数并入行首同排）
+ *               4) 数值卡行（1 行 4 卡：流速 / 正向累积 / 反向累积 / 报警详情）
+ *               5) 水质块（浊度仪两路 + 进水泵状态/启停，单行平铺）
+ *               6) 趋势图（XChartView+XLineSeries 瞬时流量 60 点滚动窗；
+ *                  纵向 Expanding 吸收页余量贴底）
  *
  *             [数据路径] HsfFlowMeterProvider 函数表：subscribe 注册回调，
  *             快照更新时回调 → fmRefresh() 读 snapshot() 刷全部控件。
@@ -24,6 +26,9 @@
 #include "HsfTheme.h"
 #include "HsfFlowMeterProvider.h"
 #include "HsfLinkClient.h"
+#include "HsfSettingsStore.h"
+#include "HsfUi.h"
+#include "HsfPages.h"
 #include "XLabel.h"
 #include "XPushButton.h"
 #include "XAbstractButton.h"
@@ -37,6 +42,7 @@
 #include "XObject.h"
 #include "XWidget_Protected.h"
 #include "XMemory.h"
+#include "XSystem.h"     /* XSystem_environment：泵点击诊断开关（XHSF_PUMP_TRACE）。 */
 #include "XFont.h"
 #include "XPainter.h"
 #include "XString.h"
@@ -51,11 +57,11 @@
 
 /** @brief 流量计所在侧（现场：B 侧 485 / COM18 / 站号 5）。 */
 #define FM_SIDE              1
-#define FM_BANNER_H          56
-#define FM_MAIN_H            110
-#define FM_GAUGE_H           150
-#define FM_CARD_H            64
-#define FM_TREND_H           170
+#define FM_BANNER_H          44
+#define FM_MAIN_H            84
+#define FM_GAUGE_H           132
+#define FM_CARD_H            54
+#define FM_TREND_H           148
 #define FM_TREND_POINTS      60
 #define FM_GAUGE_MIN_W       130
 #define FM_ARC_START_DEG     135.0f   /**< 弧起角（左下）。 */
@@ -158,6 +164,10 @@ struct HsfFmPage {
     XLabel     m_pumpNote;              /**< 泵说明（无运行反馈点提示）。 */
     void (*m_pumpWrite)(void*, bool);  /**< 泵控制出口（on=true 启动）。 */
     void* m_pumpUser;                  /**< 泵出口令牌。 */
+    bool       m_ctrlEnabled;          /**< 外部控制闸（false=按钮全灰）。 */
+    char       m_ctrlReason[96];       /**< 闸门原因（页上说明）。 */
+    bool       m_pumpOn;               /**< 最近一拍的泵命令状态。 */
+    bool       m_pumpReady;            /**< 最近一拍的泵点位就绪。 */
 
     /* 字段量程（用于弧形仪表比例；流量计不报量程，按常见工艺值取）。 */
     double     m_flowSpan;              /**< 流量满量程（用于比例）。 */
@@ -483,7 +493,18 @@ static void VHsfFmBanner_paintEvent(XWidget* self, XEvent* event)
 
 /* ==================== 控件构建助手 ==================== */
 
-/** @brief 统一字体+像素尺寸设置。 */
+/**
+ * @brief 页字体缩放折算（本地设置 FontScale/Page6，50–200%）。
+ * @details 字号与配套高度（横幅/仪表/卡/水质块/趋势最小高、仪表内部
+ *          排布）统一走它：字号放大时高度同步放大，避免文字被裁。
+ *          改动在下次建页生效（与刷新周期同口径）。
+ */
+static int fmH(int px)
+{
+    return hsfUi_pageFontPx(HSF_PAGE_MONITOR_FLOWMETER, px);
+}
+
+/** @brief 统一字体+像素尺寸设置（字号按页缩放折算）。 */
 static void fmSetFont(XWidget* w, int px, bool bold, bool dim)
 {
     XFont f;
@@ -492,7 +513,7 @@ static void fmSetFont(XWidget* w, int px, bool bold, bool dim)
     XFont_setBold(&f, bold);
     XWidget_setFont(w, &f);
     XClassDeinit(&f);
-    XLabel_setTextPixelSize((XLabel*)w, px);
+    XLabel_setTextPixelSize((XLabel*)w, fmH(px));
     if (dim)
         XWidget_setForegroundRole(w, XPaletteColorRole_Mid);
 }
@@ -518,18 +539,18 @@ static void fmGaugeInit(HsfFmGauge* g, HsfFmPage* owner, XWidget* parent,
     g->m_owner = owner;
     g->m_slot = slot;
     HsfTheme_applyDefaultFont(&g->m_canvas);
-    XWidget_setFixedHeight(&g->m_canvas, FM_GAUGE_H);
+    XWidget_setFixedHeight(&g->m_canvas, fmH(FM_GAUGE_H));
     XWidget_setMinimumWidth(&g->m_canvas, FM_GAUGE_MIN_W);
     /* 水平 Expanding：不声明时布局按 sizeHint(0) 给宽，画布宽度 0 →
      * 弧画不出来、三个子标签全挤在左上角。 */
     XWidget_setSizePolicy(&g->m_canvas, XWidgetSizePolicy_Expanding,
                           XWidgetSizePolicy_Fixed);
 
-    fmMakeLabel(&g->m_title, &g->m_canvas, title, 13, false, true,
+    fmMakeLabel(&g->m_title, &g->m_canvas, title, 20, false, true,
                 XAlignment_HCenter | XAlignment_VCenter);
-    fmMakeLabel(&g->m_value, &g->m_canvas, "--", 18, true, false,
+    fmMakeLabel(&g->m_value, &g->m_canvas, "--", 28, true, false,
                 XAlignment_HCenter | XAlignment_VCenter);
-    fmMakeLabel(&g->m_unit, &g->m_canvas, unit, 12, false, true,
+    fmMakeLabel(&g->m_unit, &g->m_canvas, unit, 16, false, true,
                 XAlignment_HCenter | XAlignment_VCenter);
     XWidget_show(&g->m_canvas);
 }
@@ -545,26 +566,27 @@ static void fmGaugeRelayout(HsfFmGauge* g)
     w = XWidget_width(&g->m_canvas);
     h = XWidget_height(&g->m_canvas);
     if (w <= 0) w = 140;
-    if (h <= 0) h = FM_GAUGE_H;
+    if (h <= 0) h = fmH(FM_GAUGE_H);
     cx = w / 2;
-    XWidget_move((XWidget*)&g->m_title, cx - 50, 6);
-    XWidget_resize((XWidget*)&g->m_title, 100, 20);
+    /* 标签盒随页字体缩放折算（字号放大时同步放大，避免裁字）。 */
+    XWidget_move((XWidget*)&g->m_title, cx - fmH(50), 6);
+    XWidget_resize((XWidget*)&g->m_title, fmH(100), fmH(20));
     /* 数值放在弧心稍上（弧心在 58% 高度）。 */
-    vTop = (int)(h * 0.58f) - 24;
-    XWidget_move((XWidget*)&g->m_value, cx - 56, vTop);
-    XWidget_resize((XWidget*)&g->m_value, 112, 30);
-    XWidget_move((XWidget*)&g->m_unit, cx - 44, vTop + 30);
-    XWidget_resize((XWidget*)&g->m_unit, 88, 18);
+    vTop = (int)(h * 0.58f) - fmH(24);
+    XWidget_move((XWidget*)&g->m_value, cx - fmH(56), vTop);
+    XWidget_resize((XWidget*)&g->m_value, fmH(112), fmH(30));
+    XWidget_move((XWidget*)&g->m_unit, cx - fmH(44), vTop + fmH(30));
+    XWidget_resize((XWidget*)&g->m_unit, fmH(88), fmH(18));
 }
 
 /** @brief 数值卡初始化（两行文本：名称 + 值）。 */
 static void fmMakeCard(XLabel* card, XWidget* parent, const char* text)
 {
     XLabel_init(card, parent, 0);
-    fmSetFont((XWidget*)card, 13, false, false);
+    fmSetFont((XWidget*)card, 20, false, false);
     XLabel_setText_2(card, text);
     XLabel_setAlignment(card, XAlignment_HCenter | XAlignment_VCenter);
-    XWidget_setMinimumHeight((XWidget*)card, FM_CARD_H);
+    XWidget_setMinimumHeight((XWidget*)card, fmH(FM_CARD_H));
     /* 卡片底色：走主题的 Base 角色（与其它页卡片同色），加内边距避免贴边。 */
     XWidget_setBackgroundRole((XWidget*)card, XPaletteColorRole_Base);
     XWidget_setAutoFillBackground((XWidget*)card, true);
@@ -699,6 +721,14 @@ static void fmPumpStartSlot(XObject* receiver, XVarList* args)
     HsfFmPage* p = (HsfFmPage*)((char*)receiver -
                                  offsetof(HsfFmPage, m_pumpStart));
     (void)args;
+    /* [泵点击诊断 XHSF_PUMP_TRACE] 点击链路静默失败时没有任何痕迹，现场
+     * 「点了没反应」无从定位。开关式日志把三环（槽进来 / 出口已注册 /
+     * 出口被调用）各打一行，能一眼区分「信号没连上」「回调没注册」
+     * 「回调里发了但服务端没响应」。 */
+    if (XSystem_environment("XHSF_PUMP_TRACE"))
+        XPrintf("[pump] start slot: page=%p write=%p user=%p\n",
+                (void*)p, p ? (void*)p->m_pumpWrite : NULL,
+                p ? p->m_pumpUser : NULL);
     if (!p || !p->m_pumpWrite) return;
     p->m_pumpWrite(p->m_pumpUser, true);
 }
@@ -708,6 +738,10 @@ static void fmPumpStopSlot(XObject* receiver, XVarList* args)
     HsfFmPage* p = (HsfFmPage*)((char*)receiver -
                                  offsetof(HsfFmPage, m_pumpStop));
     (void)args;
+    if (XSystem_environment("XHSF_PUMP_TRACE"))
+        XPrintf("[pump] stop slot: page=%p write=%p user=%p\n",
+                (void*)p, p ? (void*)p->m_pumpWrite : NULL,
+                p ? p->m_pumpUser : NULL);
     if (!p || !p->m_pumpWrite) return;
     p->m_pumpWrite(p->m_pumpUser, false);
 }
@@ -723,59 +757,62 @@ static void fmBuildWaterBlock(HsfFmPage* p)
     int i;
 
     XWidget_init(&p->m_waterHost, &p->m_root, 0);
-    XBoxLayout_init(&p->m_waterLayout, XBoxLayoutDirection_TopToBottom);
-    XLayout_setSpacing((XLayout*)&p->m_waterLayout, 6);
+    /* [2026-11-07 单行平铺] 浊度仪两路 + 进水泵状态/按钮 全平铺一行，
+     * 卡片化（Base 底）与数值卡统一观感。 */
+    XBoxLayout_init(&p->m_waterLayout, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&p->m_waterLayout, 18);
+    /* [2026-11-08 退出段错误根修] 这里原先误把 **控件** m_waterHost 当成
+     * 布局强转传给 XLayout_setContentsMargins。XWidget 与 XLayout 是两份
+     * 不同的结构，成员偏移不重合：XLayout 的 m_contentsMargins 在 +0x58，
+     * 而 XWidget 的 +0x58/+0x60 恰是 XObject 的 m_dynamicPropertyNames /
+     * m_dynamicPropertyValues。该调用把 16 字节 XMargins{12,6,12,6} 写到
+     * 控件对象上，两个 XVector* 被覆盖成 0x00000006_0000000C；退出时
+     * VXObject_deinit 清理动态属性、按 XVector* 解引用即必现 AV
+     * （cdb：VXObject_deinit 内 mov eax,[rax+50h]，rax=0x00000006_0000000C）。
+     * 该行在 HEAD 即存在，属既有缺陷，与「基线同样崩」一致。
+     * 边距属于布局 m_waterLayout（第 157 行声明为 XBoxLayout），不是控件。 */
+    XLayout_setContentsMargins((XLayout*)&p->m_waterLayout, 12, 6, 12, 6);
     XWidget_setLayout(&p->m_waterHost, (XLayout*)&p->m_waterLayout);
+    XWidget_setBackgroundRole(&p->m_waterHost, XPaletteColorRole_Base);
+    XWidget_setAutoFillBackground(&p->m_waterHost, true);
+    XWidget_setFixedHeight(&p->m_waterHost, fmH(72));
 
     fmMakeLabel(&p->m_turbTitle, &p->m_waterHost,
-                "\xE6\xB8\xA0\xE5\xBA\xA6\xE4\xBB\xAA",  /* 浊度仪 */
-                13, true, false, XAlignment_Left | XAlignment_VCenter);
+                "\xE6\xB5\x8A\xE5\xBA\xA6\xE4\xBB\xAA",  /* 浊度仪 */
+                20, true, false, XAlignment_Left | XAlignment_VCenter);
     XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_turbTitle);
     for (i = 0; i < HSF_TURBIDITY_COUNT; ++i) {
-        fmMakeLabel(&p->m_turbValue[i], &p->m_waterHost, "--", 13, false, false,
+        fmMakeLabel(&p->m_turbValue[i], &p->m_waterHost, "--", 20, false, false,
                     XAlignment_Left | XAlignment_VCenter);
         XBoxLayout_addWidget(&p->m_waterLayout,
                             (XWidget*)&p->m_turbValue[i]);
     }
     fmMakeLabel(&p->m_pumpTitle, &p->m_waterHost,
                 "\xE8\xBF\x9B\xE6\xB0\xB4\xE6\xB3\xB5",  /* 进水泵 */
-                13, true, false, XAlignment_Left | XAlignment_VCenter);
+                20, true, false, XAlignment_Left | XAlignment_VCenter);
     XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_pumpTitle);
-    fmMakeLabel(&p->m_pumpState, &p->m_waterHost, "--", 13, false, false,
+    fmMakeLabel(&p->m_pumpState, &p->m_waterHost, "--", 20, false, false,
                 XAlignment_Left | XAlignment_VCenter);
     XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_pumpState);
-    {
-        XWidget* row = XWidget_create(&p->m_waterHost, 0);
-        XPushButton_init(&p->m_pumpStart, row, 0);
-        XPushButton_init(&p->m_pumpStop, row, 0);
-        XPushButton_setText_2(&p->m_pumpStart,
-                            "\xE5\x90\xAF\xE5\x8A\xA8");  /* 启动 */
-        XPushButton_setText_2(&p->m_pumpStop,
-                            "\xE5\x81\x9C\xE6\xAD\xA2");  /* 停止 */
-        XWidget_setFixedHeight((XWidget*)&p->m_pumpStart, 34);
-        XWidget_setFixedHeight((XWidget*)&p->m_pumpStop, 34);
-        XObject_connect_1((XObject*)&p->m_pumpStart,
-                          XSignal(XAbstractButton_clicked_signal),
-                          (XObject*)&p->m_pumpStart, fmPumpStartSlot,
-                          XConnectionType_Direct);
-        XObject_connect_1((XObject*)&p->m_pumpStop,
-                          XSignal(XAbstractButton_clicked_signal),
-                          (XObject*)&p->m_pumpStop, fmPumpStopSlot,
-                          XConnectionType_Direct);
-        XWidget_show((XWidget*)row);
-        XBoxLayout_addWidget(&p->m_waterLayout, row);
-    }
-    fmMakeLabel(&p->m_pumpNote, &p->m_waterHost,
-                "\xE7\x8E\xB0\xE5\x9C\xBA\xE4\xB8\x8A\xE6\x9C\x89\xE6\x9C\x89"
-                "\xE8\xA7\xA6\xE5\x99\xA8\xE8\xBE\x93\xE5\x87\xBA\xE3\x80\x81"
-                "\xE6\x97\xA0\xE8\xBF\x90\xE8\xA1\x8C\xE5\x8F\x8D\xE9\xA6\x88"
-                "\xE7\x82\xB9\xEF\xBC\x9A\xE6\xAD\xA4\xE5\x8F\xB3\xE6\x98\xAF"
-                "\xE8\xBE\x93\xE5\x87\xBA\xE5\x91\xBD\xE4\xBB\xA4\xE7\x8A\xB6\xE6\x80\x81"
-                "\xEF\xBC\x8C\xE4\xB8\x8D\xE4\xBB\xA3\xE8\xA1\x8C\xE8\xB7\x91\xE5\x8A\xA8\xE3\x80\x82",
-                /* 现场仅有接触器输出、无运行反馈点：此处显示输出命令状态，
-                   不代表泵确实在转。 */
-                11, false, true, XAlignment_Left | XAlignment_VCenter);
-    XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_pumpNote);
+    XPushButton_init(&p->m_pumpStart, &p->m_waterHost, 0);
+    XPushButton_init(&p->m_pumpStop, &p->m_waterHost, 0);
+    XPushButton_setText_2(&p->m_pumpStart,
+                        "\xE5\x90\xAF\xE5\x8A\xA8");  /* 启动 */
+    XPushButton_setText_2(&p->m_pumpStop,
+                        "\xE5\x81\x9C\xE6\xAD\xA2");  /* 停止 */
+    XWidget_setFixedSize((XWidget*)&p->m_pumpStart, fmH(88), fmH(32));
+    XWidget_setFixedSize((XWidget*)&p->m_pumpStop, fmH(88), fmH(32));
+    XObject_connect_1((XObject*)&p->m_pumpStart,
+                      XSignal(XAbstractButton_clicked_signal),
+                      (XObject*)&p->m_pumpStart, fmPumpStartSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)&p->m_pumpStop,
+                      XSignal(XAbstractButton_clicked_signal),
+                      (XObject*)&p->m_pumpStop, fmPumpStopSlot,
+                      XConnectionType_Direct);
+    XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_pumpStart);
+    XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_pumpStop);
+    XBoxLayout_addStretch(&p->m_waterLayout, 1);
     XWidget_show(&p->m_waterHost);
 }
 
@@ -809,8 +846,8 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
      * [关键] XWidget_setLayout 必须调：只 addWidget 而不把布局挂到页根，
      * 布局不参与几何计算，子控件全部落在 0×0（只有自带尺寸的趋势图可见）。 */
     XBoxLayout_init(&p->m_mainLayout, XBoxLayoutDirection_TopToBottom);
-    XLayout_setContentsMargins((XLayout*)&p->m_mainLayout, 20, 14, 20, 14);
-    XLayout_setSpacing((XLayout*)&p->m_mainLayout, 10);
+    XLayout_setContentsMargins((XLayout*)&p->m_mainLayout, 20, 10, 20, 10);
+    XLayout_setSpacing((XLayout*)&p->m_mainLayout, 7);
 
     /* ---- ① 状态横幅 ---- */
     {
@@ -818,7 +855,7 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
         XClassGetVtable(&p->m_banner.m_base) = fmBannerClassInit();
         p->m_banner.m_owner = p;
         HsfTheme_applyDefaultFont(&p->m_banner.m_base);
-        XWidget_setFixedHeight(&p->m_banner.m_base, FM_BANNER_H);
+        XWidget_setFixedHeight(&p->m_banner.m_base, fmH(FM_BANNER_H));
         fmMakeLabel(&p->m_bannerLabel, &p->m_banner.m_base, FM_TXT_NO_DATA,
                     20, true, false,
                     XAlignment_HCenter | XAlignment_VCenter);
@@ -830,20 +867,24 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
     XBoxLayout_init(&p->m_mainHostLayout, XBoxLayoutDirection_TopToBottom);
     XWidget_setLayout(&p->m_mainHost, (XLayout*)&p->m_mainHostLayout);
     XLayout_setSpacing((XLayout*)&p->m_mainHostLayout, 2);
-    XWidget_setFixedHeight(&p->m_mainHost, FM_MAIN_H);
+    /* [2026-11-07 并入仪表行] 主读数与两枚仪表同排，高度随仪表行，
+     * 内容加前后 stretch 垂直居中。 */
+    XWidget_setFixedHeight(&p->m_mainHost, fmH(FM_GAUGE_H));
     XWidget_setSizePolicy(&p->m_mainHost, XWidgetSizePolicy_Expanding,
                           XWidgetSizePolicy_Minimum);
-    fmMakeLabel(&p->m_mainValue, &p->m_mainHost, "--", 44, true, false,
+    fmMakeLabel(&p->m_mainValue, &p->m_mainHost, "--", 56, true, false,
                 XAlignment_HCenter | XAlignment_VCenter);
-    fmMakeLabel(&p->m_mainSub, &p->m_mainHost, "", 15, false, true,
+    fmMakeLabel(&p->m_mainSub, &p->m_mainHost, "", 22, false, true,
                 XAlignment_HCenter | XAlignment_VCenter);
     /* 两个标签都要登记进容器布局；只 init 挂成子控件的话它们不受布局
      * 管理，各自按 sizeHint 停在容器原点 —— 大号数字会溢出压住横幅。 */
+    XBoxLayout_addStretch(&p->m_mainHostLayout, 1);
     XBoxLayout_addWidget(&p->m_mainHostLayout, (XWidget*)&p->m_mainValue);
     XBoxLayout_addWidget(&p->m_mainHostLayout, (XWidget*)&p->m_mainSub);
+    XBoxLayout_addStretch(&p->m_mainHostLayout, 1);
     XWidget_show(&p->m_mainHost);
 
-    /* ---- ③ 仪表行 ---- */
+    /* ---- ③ 仪表行（主读数在行首，stretch 读数 2 / 仪表 1） ---- */
     XWidget_init(&p->m_gaugeRow, &p->m_root, 0);
     XBoxLayout_init(&p->m_gaugeRowLayout, XBoxLayoutDirection_LeftToRight);
     XWidget_setLayout(&p->m_gaugeRow, (XLayout*)&p->m_gaugeRowLayout);
@@ -853,12 +894,14 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
     /* [关键] 画布必须**登记进布局**：只 XWidget_init 挂成子控件而不
      * addWidget，布局不知道它的存在 —— 控件永远停在 sizeHint 大小，
      * 弧画不出来、三个子标签挤在左上角（本页首版实锅）。 */
+    XBoxLayout_addWidget(&p->m_gaugeRowLayout, &p->m_mainHost);
     XBoxLayout_addWidget(&p->m_gaugeRowLayout,
                          &p->m_gaugeFlow.m_canvas);
     XBoxLayout_addWidget(&p->m_gaugeRowLayout,
                          &p->m_gaugeSignal.m_canvas);
-    XBoxLayout_setStretch(&p->m_gaugeRowLayout, 0, 1);
+    XBoxLayout_setStretch(&p->m_gaugeRowLayout, 0, 2);
     XBoxLayout_setStretch(&p->m_gaugeRowLayout, 1, 1);
+    XBoxLayout_setStretch(&p->m_gaugeRowLayout, 2, 1);
     XWidget_setSizePolicy(&p->m_gaugeRow, XWidgetSizePolicy_Expanding,
                           XWidgetSizePolicy_Minimum);
     XWidget_show(&p->m_gaugeRow);
@@ -875,13 +918,18 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
     fmMakeCard(&p->m_cardAlarm, &p->m_cardHost, FM_TXT_ALARM "\n--");
     XGridLayout_addWidget(&p->m_cardGrid, (XWidget*)&p->m_cardSpeed, 0, 0, 0);
     XGridLayout_addWidget(&p->m_cardGrid, (XWidget*)&p->m_cardForward, 0, 1, 0);
-    XGridLayout_addWidget(&p->m_cardGrid, (XWidget*)&p->m_cardReverse, 1, 0, 0);
-    XGridLayout_addWidget(&p->m_cardGrid, (XWidget*)&p->m_cardAlarm, 1, 1, 0);
+    XGridLayout_addWidget(&p->m_cardGrid, (XWidget*)&p->m_cardReverse, 0, 2, 0);
+    XGridLayout_addWidget(&p->m_cardGrid, (XWidget*)&p->m_cardAlarm, 0, 3, 0);
     XWidget_show(&p->m_cardHost);
 
     /* ---- ⑤ 趋势图 ---- */
     XChartView_init(&p->m_trendView, &p->m_root, 0);
-    XWidget_setMinimumHeight(&p->m_trendView.m_base, FM_TREND_H);
+    /* [贴底] 纵向 Expanding：主布局余量全部归图，图撑到页底
+     * （不再尾部 stretch 沉底留白）。横向同 Expanding 随页宽。 */
+    XWidget_setSizePolicy(&p->m_trendView.m_base,
+                          XWidgetSizePolicy_Expanding,
+                          XWidgetSizePolicy_Expanding);
+    XWidget_setMinimumHeight(&p->m_trendView.m_base, fmH(FM_TREND_H));
     p->m_trendChart = XChart_create();
     if (p->m_trendChart) {
         XChart_setTitle_2(p->m_trendChart, FM_TXT_FLOW_UNIT);
@@ -915,21 +963,21 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
     XWidget_setSizePolicy(&p->m_root, XWidgetSizePolicy_Expanding,
                           XWidgetSizePolicy_Expanding);
 
-    /* ---- ⑥ 底注 ---- */
-    fmMakeLabel(&p->m_foot, &p->m_root,
-                "B \xE4\xBE\xA7 485 / COM18 / \xE7\xAB\x99\xE5\x8F\xB7 5", /* B 侧 485 / COM18 / 站号 5 */
-                12, false, true, XAlignment_HCenter | XAlignment_VCenter);
+    /* [2026-11-07 删除] 底注 label 整个移除（fmMakeLabel 自带 show，
+     * 只摘 addWidget 会残留在 0,0 悬浮——实测盖住横幅左上角）。 */
 
     /* ---- 把主要区块挂进主布局 ---- */
     XBoxLayout_addWidget(&p->m_mainLayout, (XWidget*)&p->m_banner.m_base);
-    XBoxLayout_addWidget(&p->m_mainLayout, &p->m_mainHost);
     XBoxLayout_addWidget(&p->m_mainLayout, &p->m_gaugeRow);
     XBoxLayout_addWidget(&p->m_mainLayout, &p->m_cardHost);
-    XBoxLayout_addWidget(&p->m_mainLayout, (XWidget*)&p->m_trendView.m_base);
-    XBoxLayout_addWidget(&p->m_mainLayout, (XWidget*)&p->m_foot);
-    /* 水质块（浊度 + 泵）：与流量同属一条工艺链，放一页看。 */
+    /* 水质块（浊度 + 泵）：与流量同属一条工艺链，挪到趋势图上方。 */
     fmBuildWaterBlock(p);
     XBoxLayout_addWidget(&p->m_mainLayout, &p->m_waterHost);
+    /* 趋势图收尾（最后一件，纵向 Expanding 吸收全部余量贴底）：
+     * [2026-11-07 改] 原尾部 addStretch 把余量沉到图下方——图底与页底
+     * 之间留一大条空白（用户实拍）。去掉 stretch 后余量归图本身；
+     * 仪表行纵向是 Minimum 不会被撑高，行距不受影响。 */
+    XBoxLayout_addWidget(&p->m_mainLayout, (XWidget*)&p->m_trendView.m_base);
 
     XWidget_show(&p->m_root);
 
@@ -947,11 +995,12 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
      * 滚动条永远关）——页内容比视口高时**必须靠页根的最小高度**撑出来，
      * 否则滚动壳按视口高度压缩页根，下方内容直接看不见（矮窗 800x480
      * 实测：仪表只露一半、趋势图整块消失）。这里按各区块实际高度累加。
-     * 竖向留白 = 6 个区块间距(10) + 上下边距(14+14)。 */
+     * 竖向留白 = 区块间距(7) + 上下边距(10+10)；[2026-11-07] 主读数并入
+     * 仪表行、卡 1 行、底注移除后重算。 */
     XWidget_setMinimumHeight(&p->m_root,
-                             FM_BANNER_H + FM_MAIN_H + FM_GAUGE_H +
-                             FM_CARD_H * 2 + FM_TREND_H + 18 /*底注*/ +
-                             6 * 10 + 14 + 14);
+                             fmH(FM_BANNER_H) + fmH(FM_GAUGE_H) +
+                             fmH(FM_CARD_H) + fmH(90) + fmH(FM_TREND_H) +
+                             6 * 7 + 10 + 10);
 
     return &p->m_root;
 }
@@ -970,24 +1019,25 @@ void HsfMonitorFlowMeter_adapt(XWidget* page, bool compact)
     fmGaugeRelayout(&p->m_gaugeFlow);
     fmGaugeRelayout(&p->m_gaugeSignal);
 
-    XLabel_setTextPixelSize(&p->m_mainValue, compact ? 34 : 44);
-    XLabel_setTextPixelSize(&p->m_bannerLabel, compact ? 17 : 20);
+    XLabel_setTextPixelSize(&p->m_mainValue, fmH(compact ? 44 : 56));
+    XLabel_setTextPixelSize(&p->m_bannerLabel, fmH(compact ? 15 : 17));
     XWidget_setMinimumHeight(&p->m_trendView.m_base,
-                             compact ? 120 : FM_TREND_H);
+                             fmH(compact ? 120 : FM_TREND_H));
 
-    /* 页根最小高度随形态重算：竖屏时仪表改纵排（两枚 150 高 → 300），
+    /* 页根最小高度随形态重算：竖屏时仪表改纵排（两枚 132 高 → 264），
      * 趋势图压到 120，其余不变。滚动壳按此撑出滚范围，矮视口下才能
-     * 滚到全部内容。 */
+     * 滚到全部内容。[2026-11-07] 主读数并入仪表行、卡 1 行、底注移除；
+     * 字号/高度统一过 fmH 页缩放折算。 */
     if (compact) {
         XWidget_setMinimumHeight(&p->m_root,
-                                 FM_BANNER_H + FM_MAIN_H + FM_GAUGE_H * 2 +
-                                 FM_CARD_H * 2 + 120 + 18 +
-                                 6 * 10 + 14 + 14);
+                                 fmH(FM_BANNER_H) + fmH(FM_GAUGE_H) * 2 +
+                                 fmH(FM_CARD_H) + fmH(90) + fmH(120) +
+                                 6 * 7 + 10 + 10);
     } else {
         XWidget_setMinimumHeight(&p->m_root,
-                                 FM_BANNER_H + FM_MAIN_H + FM_GAUGE_H +
-                                 FM_CARD_H * 2 + FM_TREND_H + 18 +
-                                 6 * 10 + 14 + 14);
+                                 fmH(FM_BANNER_H) + fmH(FM_GAUGE_H) +
+                                 fmH(FM_CARD_H) + fmH(90) + fmH(FM_TREND_H) +
+                                 6 * 7 + 10 + 10);
     }
 }
 
@@ -1041,24 +1091,59 @@ void HsfMonitorFlowMeter_setPump(const char* name, bool on, bool ready,
     char buf[128];
 
     if (!p) return;
+    /* 记下最近一拍的泵状态：闸门变化时要按它重算按钮使能（见
+     * HsfMonitorFlowMeter_setControlEnabled）。 */
+    p->m_pumpOn = on;
+    p->m_pumpReady = ready;
+    /* [状态行不再重复泵名] 泵名由上方独立的 m_pumpTitle 标签承担；这里原先
+     * 又在状态文案前拼一遍 name，界面上显示成「进水泵  进水泵 停止（输出
+     * 已关）」（实测截图）。状态行只留状态本身。 */
     if (!ready) {
-        snprintf(buf, sizeof(buf), "%s  %s",
-                 (name && name[0]) ? name : "进水泵",
+        snprintf(buf, sizeof(buf), "%s",
                  (text && text[0]) ? text : "不可控");
         XLabel_setText_2(&p->m_pumpState, buf);
     } else if (on) {
-        snprintf(buf, sizeof(buf), "%s  运行（输出已开）",
-                 (name && name[0]) ? name : "进水泵");
-        XLabel_setText_2(&p->m_pumpState, buf);
+        XLabel_setText_2(&p->m_pumpState, "运行（输出已开）");
     } else {
-        snprintf(buf, sizeof(buf), "%s  停止（输出已关）",
-                 (name && name[0]) ? name : "进水泵");
-        XLabel_setText_2(&p->m_pumpState, buf);
+        XLabel_setText_2(&p->m_pumpState, "停止（输出已关）");
     }
-    /* [幂等置灰] 已生效的一侧按钮禁用（对齐 Python 客户端：已启动则"启动"
-     * 置灰、已停止则"停止"置灰）。 */
-    XWidget_setEnabled((XWidget*)&p->m_pumpStart, ready && !on);
-    XWidget_setEnabled((XWidget*)&p->m_pumpStop, ready && on);
+    /* name 保留在签名里（调用方按服务端通道名传入，将来可能用于多泵），
+     * 本函数当前不再拼它，显式消费以免 C4100。 */
+    (void)name;
+    /* 闸门原因优先于 ready/on：自动模式/未连接/权限不足时状态行要说明
+     * 原因（否则用户看到"停止（输出已关）"却点不动启动，以为是 bug）。 */
+    if (!p->m_ctrlEnabled && p->m_ctrlReason[0])
+        XLabel_setText_2(&p->m_pumpState, p->m_ctrlReason);
+    /* [幂等置灰 + 外部闸] 已生效的一侧禁用（对齐 Python：已启动则"启动"
+     * 置灰）；m_ctrlEnabled=false 时两侧一律置灰（服务端 hsfAppControlGate
+     * 会拒自动模式下的设备控制，客户端必须提前反映，不能等点了才被拒）。 */
+    XWidget_setEnabled((XWidget*)&p->m_pumpStart,
+                       p->m_ctrlEnabled && ready && !on);
+    XWidget_setEnabled((XWidget*)&p->m_pumpStop,
+                       p->m_ctrlEnabled && ready && on);
+}
+
+/**
+ * @brief 控制闸：整体启停泵按钮（对齐 HsfMonitorValve_setControlEnabled）。
+ * @details 闸门只看外部条件（连接/运行模式/权限），与点位 ready 求交在
+ *          setPump 里做。调用点：切页、模式变更、权限/连接变化。
+ */
+void HsfMonitorFlowMeter_setControlEnabled(bool enabled,
+                                           const char* blockedReason)
+{
+    HsfFmPage* p = s_fmPage;
+    if (!p) return;
+    p->m_ctrlEnabled = enabled;
+    if (!enabled && blockedReason && blockedReason[0])
+        snprintf(p->m_ctrlReason, sizeof(p->m_ctrlReason), "%s", blockedReason);
+    else
+        p->m_ctrlReason[0] = '\0';
+    if (!enabled && p->m_ctrlReason[0])
+        XLabel_setText_2(&p->m_pumpState, p->m_ctrlReason);
+    XWidget_setEnabled((XWidget*)&p->m_pumpStart,
+                       enabled && p->m_pumpReady && !p->m_pumpOn);
+    XWidget_setEnabled((XWidget*)&p->m_pumpStop,
+                       enabled && p->m_pumpReady && p->m_pumpOn);
 }
 
 /**

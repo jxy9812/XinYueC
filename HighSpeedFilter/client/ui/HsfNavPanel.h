@@ -11,6 +11,8 @@
  *             widgetResizable=false + 内容区显式 resize + 条目绝对
  *             几何定位（不用盒布局——盒布局在有余量时会把条目均分
  *             拉开，且内容区被撑到视口高后失去滚动语义）。
+ *             面板自身尺寸变化由类内 resizeEvent 重载即时重排（分割条
+ *             拖拽过程中条目宽度逐帧跟随，同 Qt 布局激活语义）。
  *             条目可勾选并入互斥组（当前页常亮）。
  */
 #ifndef HSFNAVPANEL_H
@@ -57,6 +59,8 @@ typedef struct HsfNavPanel
     XButtonGroup m_group;    /**< 条目互斥组（当前页常亮）。 */
     HsfNavItem  m_items[HSF_NAV_MAX_NODES]; /**< 各树节点条目。 */
     int         m_count;      /**< 条目数。 */
+    bool        m_ready;      /**< 初始化完成（子控件齐备）后才允许 resize
+                                *   重排——构造中途收到 RESIZE 必须跳过。 */
     bool        m_mobile;     /**< 移动态（竖屏菜单页）：44px 触控行 +
                                 *   分区间距、无标题行（同 XGuiWindowDemo
                                 *   移动端菜单口径）。 */
@@ -108,6 +112,9 @@ void HsfNavPanel_clickItem(HsfNavPanel* self, int itemIndex);
 /**
  * @brief      按当前面板尺寸重排条目几何（面板宽度变化/内容变化后调用）。
  * @details 标题行 + 滚动壳占位 + 条目树（顶层左对齐，子节点缩进）。
+ *          **面板自身尺寸变化已自动重排**（本类重载 resizeEvent，分割条
+ *          拖拽/布局重排都会即时刷新，见 HsfNavPanel.c）；本入口供
+ *          「尺寸没变但要重排」的场合显式调用（手风琴展开收起/切页）。
  * @param self 目标面板。
  */
 void HsfNavPanel_update(HsfNavPanel* self);

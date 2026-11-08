@@ -192,7 +192,10 @@ static bool xfs_roleAllowed(XLinkFileServer* fs, XLinkSession* session)
 #if XLINK_AUTH_ON
     if (!XLinkSession_isAuthenticated(session))
         return false;
-    return XLinkSession_authRole(session) >= fs->m_policy.m_minRole;
+    /* [角色序换算] 角色值是追加枚举（Operator=3 > Admin=2），不能直接按
+     * 数值比大小：否则 minRole=Admin 时操作者会绕过管理员才准传的闸。 */
+    return XLinkAuthRole_rank((int)XLinkSession_authRole(session)) >=
+           XLinkAuthRole_rank((int)fs->m_policy.m_minRole);
 #else
     /* 认证扩展整体裁空：协议层无登录概念，无会话能"通过认证"，
        REQUIRE_AUTH/minRole 无可执行语义——按未引入本扩展前的基线放行
@@ -604,7 +607,12 @@ bool XLinkFileServer_setMaxFileBytes(XLinkFileServer* fs, uint64_t bytes)
 
 bool XLinkFileServer_setMinRole(XLinkFileServer* fs, uint8_t role)
 {
-    if (!fs || role > XLinkAuthRole_Admin)
+    /* 四档均可作为最低角色（
+     * 数值不再单调，校验必须显式枚举）。 */
+    if (!fs || (role != XLinkAuthRole_Anonymous &&
+                role != XLinkAuthRole_User &&
+                role != XLinkAuthRole_Admin &&
+                role != XLinkAuthRole_Operator))
         return false;
     fs->m_policy.m_minRole = role;
     return true;

@@ -248,6 +248,13 @@ typedef struct XLinkSession {
                                        发请求时据此打发送时间戳，避免本类自行取时。 */
     uint32_t m_lastSendTick;       /**< 最近一次发出任意帧的单调毫秒值。 */
     uint32_t m_lastReceiveTick;    /**< 最近一次收到任意字节的单调毫秒值。 */
+    uint32_t m_lastTxProgressTick; /**< 发方向「连续零写出且队列仍有积压」的起算时刻
+                                        （仅供实现使用）：0 = 当前无此窗口（刚写出过
+                                        任意字节 / 队列已排空 / 尚未起算）；非 0 时
+                                        pump 据 (nowMs - 本值) > 心跳阈值判发方向死链。
+                                        与收方向 m_lastReceiveTick「收到任意字节即刷新」
+                                        对称，同为「持续无进展才判死、任一进展即复位」。
+                                        复用根修：setDevice / reset 同口径归零。 */
 
     XTimerId m_timerId;  /**< 异步心跳/判线定时器 id（XObject 内建定时器，挂载传输时
                               启动）；XTIMER_INVALID_ID 表示未启动（无事件分发器或

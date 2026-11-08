@@ -3159,24 +3159,67 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
         XString* label;
         if (cx + cw < 0 || cx > w) continue;
 #if XSTYLE_ON
-        style = XStyle_defaultStyle();
+        style = XWidget_style((const XWidget*)self);
 #endif
         label = XTableWidget_horizontalHeaderItem(tw, col);
         if (style != NULL) {
-            /* Fusion/公共风格接管：列头走 CE_HeaderSection/HeaderLabel。 */
-            XStyleOption hs;
-            XStyleOption_init(&hs, XStyleCE_HeaderSection);
-            XRect_init(&hs.m_rect, cx, 0, cw, tw->m_headerHeight);
-            hs.m_state = XWidget_isEnabled((XWidget*)tw)
+            /* Fusion/公共风格接管：列头走 CE_HeaderSection/HeaderLabel。
+             *
+             * [QSS ::section 2026-11-07] 改用 XStyleOptionHeader 承载段语义：
+             * `m_optionType == XStyleOptionType_Header` 让 QSS 代理
+             * （XStyleSheetStyle）认出这是表头段并按 `::section` 伪元素
+             * 查规则，`m_position` 决定 `:first/:middle/:last/:only-one`
+             * ——对齐 Qt QHeaderView::initStyleOptionForIndex 的
+             * position 派生（qheaderview.cpp:2922-2934）与
+             * QStyleSheetStyle 的 PseudoElement_HeaderViewSection 查询
+             * （qstylesheetstyle.cpp:4103-4119）。
+             *
+             * position 只按**正在绘制**的段判定：首列（col==0）为
+             * Beginning、末列（col==columns-1）为 End、唯一列为
+             * OnlyOneSection——与 Qt 的 isFirstVisibleSection/
+             * isLastVisibleSection 同向（本库表头无隐藏段概念，隐藏列
+             * 由列宽 0 表达，见 xtw_colX）。
+             *
+             * 段语义只影响 QSS 的 :first/:last 选择，**不影响列宽与
+             * 点选排序**：列宽的事实源仍是 m_base.m_colWidths（Fixed
+             * 模式由 XHeaderView 承载），排序仍走 XTableWidget 的
+             * sectionClicked 路径（下方命中测试与
+             * XTableView_horizontalHeader 的 sortIndicator）。 */
+            XStyleOptionHeader hs;
+            XStyleOptionHeader_init(&hs, XStyleCE_HeaderSection);
+            XRect_init(&hs.m_base.m_rect, cx, 0, cw, tw->m_headerHeight);
+            hs.m_base.m_state = XWidget_isEnabled((XWidget*)tw)
                 ? XStyleState_Enabled : 0;
-            hs.m_text = label ? XString_toUtf8(label) : "";
+            hs.m_base.m_state |= XStyleState_Horizontal;
+            hs.m_base.m_text = label ? XString_toUtf8(label) : "";
 #if XPALETTE_ON
-            hs.m_palette = XWidget_palette((XWidget*)tw);
+            hs.m_base.m_palette = XWidget_palette((XWidget*)tw);
 #endif
-            XStyle_drawControl(style, XStyleCE_HeaderSection, &hs,
+            hs.m_section = col;
+            hs.m_text = hs.m_base.m_text;
+            /* 水平表头缺省居中（Qt QHeaderViewPrivate::setDefaultValues，
+             * qheaderview_p.h:152）。 */
+            hs.m_textAlignment = XPAINTER_TEXT_ALIGN_HCENTER |
+                                 XPAINTER_TEXT_ALIGN_VCENTER;
+            hs.m_orientation = 0; /* Qt::Horizontal。 */
+            if (tw->m_columns <= 1)
+                hs.m_position = XStyleOptionHeaderSectionPosition_OnlyOneSection;
+            else if (col == 0)
+                hs.m_position = XStyleOptionHeaderSectionPosition_Beginning;
+            else if (col == tw->m_columns - 1)
+                hs.m_position = XStyleOptionHeaderSectionPosition_End;
+            else
+                hs.m_position = XStyleOptionHeaderSectionPosition_Middle;
+            XStyle_drawControl(style, XStyleCE_HeaderSection,
+                               (const XStyleOption*)&hs,
                                &painter, (XWidget*)tw);
-            hs.m_type = XStyleCE_HeaderLabel;
-            XStyle_drawControl(style, XStyleCE_HeaderLabel, &hs,
+            /* CE_HeaderLabel：QSS 代理命中 ::section 时已在一趟内画完
+             * 标签（含 font-weight/padding，对齐 Qt 两处共用同一
+             * subRule），未命中则回底层居中文本，见
+             * VXStyleSheetStyle_drawControl 的表头段分支。 */
+            hs.m_base.m_type = XStyleCE_HeaderLabel;
+            XStyle_drawControl(style, XStyleCE_HeaderLabel,
+                               (const XStyleOption*)&hs,
                                &painter, (XWidget*)tw);
             if (label) XClassDelete((XClass*)label);
             continue;

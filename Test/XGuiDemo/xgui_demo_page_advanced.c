@@ -378,7 +378,7 @@ static void adv_springAdd(XBoxLayout* col)
                           XWidgetSizePolicy_Minimum);
     XWidget_show(spring); /* 隐藏件会被布局按空条目跳过。 */
     XBoxLayout_addWidget(col, spring);
-    XBoxLayout_setStretchFactorWidget(col, spring, 1);
+    XBoxLayout_setStretchFactor(col, spring, 1);
 }
 
 /** @brief 单条目行盒装配：控件装入行盒（底边距=行距——布局器无逐条
@@ -1836,10 +1836,10 @@ int demo_page_advanced_autotest(XWidget* page)
 
 
 /**
- * @brief 抽事件若干轮（每轮之间小睡：限频重绘的补投定时器需到期才上屏）。
- * @details 框架重绘受 XGUI_REPAINT_MAX_FPS 限频，超窗的绘制请求走补投
- *          定时器延后投递 ⇒ 只抽一次事件不够，必须「抽事件 + 小睡」多轮
- *          让补投到期，屏幕才是最新态。
+ * @brief 抽事件若干轮（每轮之间小睡：绘制/上屏事件需在后续轮次处理）。
+ * @details 绘制请求经独立 PAINT 事件异步派发（全局重绘帧率闸已移除；
+ *          仅 resize 跟手路径仍受 XGUI_RESIZE_REPAINT_MAX_FPS 限频），
+ *          只抽一次事件不够，必须「抽事件 + 小睡」多轮，屏幕才是最新态。
  * @param rounds 抽事件轮数。
  * @param msleepMs 每轮之间休眠毫秒数。
  * @return 无返回值。

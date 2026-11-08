@@ -673,6 +673,14 @@ void XVfdDevice_deriveRunPhase(XVfdDevice* dev)
     if (dev->m_stopRequested) {
         if (hasOut && st->m_outputFreqHz > XVFD_PHASE_DEADBAND_HZ) {
             st->m_runState = XVfdRunState_Decelerating;
+            /* [停机斜坡 ≠ 运行] 对齐 Python VfdDevice.field_value(bit2)：
+               停机意图下即便状态字仍报"运行"（M512 虚拟模型在降到 0 前
+               一直报运行），对外运行位必须报 False——客户端据此把
+               「减速中」显示成「正在停机」，点动钮在停机斜坡一拍内恢复
+               （停稳后点动恢复可用的时序判据就靠它），停机禁给定/运行
+               禁点动两个服务端闸也同此口径。状态字每拍重解码，这里的
+               覆盖不会泄漏到下一拍。 */
+            st->m_running = false;
             return;
         }
         dev->m_stopRequested = false;   /* 停到位，退出停机窗口。 */
@@ -680,6 +688,14 @@ void XVfdDevice_deriveRunPhase(XVfdDevice* dev)
     if (!st->m_running) {
         st->m_runState = (hasOut && st->m_outputFreqHz > XVFD_PHASE_DEADBAND_HZ)
                        ? XVfdRunState_Decelerating : XVfdRunState_Stopped;
+        return;
+    }
+    /* [运行中换向减速] 命令方向 ≠ 状态字方向（状态字过零才翻）：输出在按
+     * 减速时间降向 0，但设定频率镜像仍是给定——下面的差值判据会把这段
+     * 误判成"加速中"（2026-11-06 换向口径实测，与 Python _derive_phase
+     * 同款补丁）。过零翻向后两者一致，交回差值判据。 */
+    if (dev->m_hasCmdReverse && dev->m_cmdReverse != st->m_reverse) {
+        st->m_runState = XVfdRunState_Decelerating;
         return;
     }
     if (!hasOut || !hasSet) return;      /* 遥测不全：保留状态字结论。 */
@@ -873,6 +889,18 @@ bool XVfdDevice_writeParam_base(XVfdDevice* dev, uint16_t paramId, int32_t raw)
 bool XVfdDevice_start(XVfdDevice* dev, bool reverse)
 {
     if (ISNULL(dev, "XVfdDevice") || ISNULL(XClassGetVtable(dev), "Vtable")) return false;
+    /* [重新启动 = 退出停机窗口] 对齐 Python VfdDevice.apply_control 的
+     * OP_START 分支（self._stop_requested = False）。停机斜坡期用户又按启动
+     * 时，输出频率会被 START 重新拉向给定——若不清 m_stopRequested，
+     * deriveRunPhase 每拍都判"输出 > 死区 ⇒ 正在停机、强制 m_running=false"，
+     * 而输出已升到给定、永远降不回 0.15Hz 以下，标志也就永远清不掉，
+     * 运行位被死锁在 False（runState 恒 Decelerating、点动钮不置灰）。
+     * START 是明确的启动意图，之前的停止意图到此作废。 */
+    dev->m_stopRequested = false;
+    /* [命令方向记账] 换向减速判据用：状态字过零才翻向，这段"命令方向 ≠
+     * 状态字方向"的窗口就是换向减速（见 deriveRunPhase）。 */
+    dev->m_hasCmdReverse = true;
+    dev->m_cmdReverse = reverse;
     return XClassGetVirtualFunc(dev, EXVfdDevice_Start,
         bool (*)(XVfdDevice*, bool))(dev, reverse);
 }
@@ -885,24 +913,30 @@ bool XVfdDevice_stop(XVfdDevice* dev)
      * "正在停机"。这个窗口靠差值判不出来（真机 0x1000 留旧给定），只能
      * 靠"已发停止命令"标记。 */
     dev->m_stopRequested = true;
+    dev->m_hasCmdReverse = false;   /* 停止覆盖换向：方向命令作废。 */
     return XClassGetVirtualFunc(dev, EXVfdDevice_Stop, bool (*)(XVfdDevice*))(dev);
 }
 
 bool XVfdDevice_freeStop(XVfdDevice* dev)
 {
     if (ISNULL(dev, "XVfdDevice") || ISNULL(XClassGetVtable(dev), "Vtable")) return false;
+    dev->m_hasCmdReverse = false;
     return XClassGetVirtualFunc(dev, EXVfdDevice_FreeStop, bool (*)(XVfdDevice*))(dev);
 }
 
 bool XVfdDevice_quickStop(XVfdDevice* dev)
 {
     if (ISNULL(dev, "XVfdDevice") || ISNULL(XClassGetVtable(dev), "Vtable")) return false;
+    dev->m_stopRequested = true;
+    dev->m_hasCmdReverse = false;
     return XClassGetVirtualFunc(dev, EXVfdDevice_QuickStop, bool (*)(XVfdDevice*))(dev);
 }
 
 bool XVfdDevice_jog(XVfdDevice* dev, bool reverse)
 {
     if (ISNULL(dev, "XVfdDevice") || ISNULL(XClassGetVtable(dev), "Vtable")) return false;
+    dev->m_hasCmdReverse = true;
+    dev->m_cmdReverse = reverse;
     return XClassGetVirtualFunc(dev, EXVfdDevice_Jog,
         bool (*)(XVfdDevice*, bool))(dev, reverse);
 }

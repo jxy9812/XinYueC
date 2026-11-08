@@ -110,6 +110,12 @@ class XLinkClient(object):
                                         name="XLinkClient", daemon=True)
         self._thread.start()
         if not self._ready_event.wait(timeout):
+            # [超时竞态的兜底] 唤醒发生在 wait 到期之后的极窄窗口里时，
+            # auth_error 已写入而 event 刚 set：此时仍应报真实原因，
+            # 不要退回笼统的「连接超时」。auth_error 为空（纯网络失败/
+            # 仍在自动重连）时维持原口径。
+            if self.auth_error:
+                return False, self.auth_error
             return False, "连接超时"
         self._ready_event.wait(0.01)
         if self.state != SessionState.READY:
@@ -192,6 +198,15 @@ class XLinkClient(object):
                 self._log("on_state_changed 异常：%s" % exc)
         if state == SessionState.READY:
             self._ready_event.set()
+        elif state == SessionState.DISCONNECTED and self.auth_error:
+            # [认证失败终局唤醒] 失败路径均「先写 auth_error，后 _teardown()
+            # → _set_state(DISCONNECTED)」：原先只有 READY 会 set，登录失败
+            # 只能靠 start() 的 8s 超时兜底、还被 :113 误报成「连接超时」。
+            # 这里 set 让 start() 立即返回，走既有 :115-116 把 auth_error
+            # 作为真实文案交回。带 auth_error 的条件使普通网络失败（空）
+            # 仍保持原来的等待/超时口径，行为面收敛到认证失败一类。
+            self._log("认证失败终局：唤醒登录等待（%s）" % self.auth_error)
+            self._ready_event.set()
 
     @staticmethod
     def _now_ms():
@@ -261,6 +276,12 @@ class XLinkClient(object):
                 pass
         self._reader = None
         self._writer = None
+        # [订阅去重集合必须随连接作废] 服务端的订阅登记在**每条会话**上；
+        # 断线后旧会话的订阅已不存在，若本集合还留着旧主题，重连后
+        # subscribe() 的去重分支会吞掉补订帧 ⇒ 新会话在服务端零订阅，
+        # 界面永远收不到推送（表现为重连后数据全部陈旧，直到切页且主题
+        # 集合恰好变化）。与 bridge._subscribed 在 READY 的清空配套。
+        self.subscriptions = set()
         self._set_state(SessionState.DISCONNECTED)
         self._cancel_all()
 

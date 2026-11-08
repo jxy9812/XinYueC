@@ -535,3 +535,23 @@ bool 新断言）+ 矩阵 6 目标全绿 + 板端重部署冒烟（稳态 act=5-
    （Qt 2.1 门控语义），仅剩 O(1) 的缓存清与标志位；
 5. 页面 show：wasHidden → 失效父布局 + 自身激活 + 可见父链激活（对照表 #11），
    一次性补齐全部陈旧度量。
+
+## 附：`XLayout_linkItem` 子布局宿主的 Qt 对齐修正（2026-11-08）
+
+**现象**：把一行控件挂进工具条的子布局（`HsfDataBar_attachRow2`）后，控件
+不按工具条局部坐标落位，而是整体上移约一个工具条高度、盖住上一行控件。
+
+**根因**：`XLayout_linkItem` 的**控件条目**分支只读 `self->m_parentWidget`，
+而同函数把**子布局**的 `m_parentWidget` 显式置 `NULL`（挂接关系只记在
+`m_parentLayout` 上）⇒ 子布局插入控件时 `parent == NULL` 直接返回，
+不做 `XWidget_setParent`。控件仍挂在页面根下，却按子布局坐标写几何。
+
+**修法**：宿主控件解析改为沿布局链上溯 `XLayout_parentWidget(self)`
+（`m_parentWidget → m_parentLayout` 循环上溯），与 Qt
+`QLayout::addChildWidget` 用的 `QLayout::parentWidget()` 同口径；
+解析到宿主后由 `XWidget_setParent_2` 完成 reparent，几何/裁剪/z 序一并回到
+宿主的坐标空间。
+
+**判据**：任何"子布局插入控件"的路径都必须走 `parentWidget()` 链而非单字段
+直读——单字段在子布局上恒为 NULL，且这个失败是**静默**的（不报错、不掉断言，
+只表现为位置错）。回归看 `HsfDataHistory` 工具条第二排与报警页同款工具条。

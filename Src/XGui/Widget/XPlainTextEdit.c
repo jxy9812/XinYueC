@@ -1783,7 +1783,7 @@ void XPlainTextEdit_setCursorWidth(XPlainTextEdit* self, int width)
         /* 对标 QWidgetTextControl::setCursorWidth（qwidgettextcontrol.cpp:
          * 2469-2476）：-1 = 样式度量 PM_TextCursorWidth。 */
 #if XSTYLE_ON
-        width = XStyle_pixelMetric(XStyle_defaultStyle(),
+        width = XStyle_pixelMetric(XWidget_style((const XWidget*)self),
                                    (int)XStylePM_TextCursorWidth, NULL);
 #endif
         if (width <= 0) width = 1; /* 样式不可用时回退缺省 1（绘制口径）。 */

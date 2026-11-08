@@ -411,8 +411,8 @@ static void ov_masterSlot(XObject* receiver, XVarList* args)
     s_ov.m_syncing = true;
     ov_syncFromOverlay();
     s_ov.m_syncing = false;
-    ov_report(on ? "\xE5\xB7\xB2\xE6\x89\x93\xE5\xBC\x80\xE5\xB1\x95\xE6\xAD\xA3"
-                  : "\xE5\xB7\xB2\xE6\xBB\x9E\xE5\xB7\xB2\xE6\x89\x93\xE5\xBC\x80\xE5\xB1\x95");
+    ov_report(on ? "已打开展正"
+                  : "已滞已打开展");
     ov_saveSettings();
 }
 
@@ -429,8 +429,8 @@ static void ov_fpsSlot(XObject* receiver, XVarList* args)
     if (!overlay || !s_ov.m_fpsCheck || s_ov.m_syncing) return;
     checked = XAbstractButton_isChecked((XAbstractButton*)s_ov.m_fpsCheck);
     XPerformanceOverlay_setFpsVisible(overlay, checked);
-    ov_report(checked ? "\xE6\x98\xBE\xE7\xA4\xBA FPS"
-                      : "\xE9\x9A\x90\xE8\x97\x8F FPS"); /* 显示/隐藏 FPS */
+    ov_report(checked ? "显示 FPS"
+                      : "隐藏 FPS"); /* 显示/隐藏 FPS */
     ov_saveSettings();
 }
 
@@ -444,8 +444,8 @@ static void ov_frameSlot(XObject* receiver, XVarList* args)
     if (!overlay || !s_ov.m_frameCheck || s_ov.m_syncing) return;
     checked = XAbstractButton_isChecked((XAbstractButton*)s_ov.m_frameCheck);
     XPerformanceOverlay_setFrameTimeVisible(overlay, checked);
-    ov_report(checked ? "\xE6\x98\xBE\xE7\xA4\xBA\xE5\xB8\xA7\xE8\x80\x97"
-                      : "\xE9\x9A\x90\xE8\x97\x8F\xE5\xB8\xA7\xE8\x80\x97");
+    ov_report(checked ? "显示帧耗"
+                      : "隐藏帧耗");
                       /* 显示/隐藏帧耗时 */
     ov_saveSettings();
 }
@@ -460,8 +460,8 @@ static void ov_sysSlot(XObject* receiver, XVarList* args)
     if (!overlay || !s_ov.m_sysCheck || s_ov.m_syncing) return;
     checked = XAbstractButton_isChecked((XAbstractButton*)s_ov.m_sysCheck);
     XPerformanceOverlay_setSysStatVisible(overlay, checked);
-    ov_report(checked ? "\xE6\x98\xBE\xE7\xA4\xBA CPU/GPU"
-                      : "\xE9\x9A\x90\xE8\x97\x8F CPU/GPU");
+    ov_report(checked ? "显示 CPU/GPU"
+                      : "隐藏 CPU/GPU");
     ov_saveSettings();
 }
 
@@ -475,8 +475,8 @@ static void ov_netSlot(XObject* receiver, XVarList* args)
     if (!overlay || !s_ov.m_netCheck || s_ov.m_syncing) return;
     checked = XAbstractButton_isChecked((XAbstractButton*)s_ov.m_netCheck);
     XPerformanceOverlay_setNetworkVisible(overlay, checked);
-    ov_report(checked ? "\xE6\x98\xBE\xE7\xA4\xBA\xE7\xBD\x91\xE7\xBB\x9C"
-                      : "\xE9\x9A\x90\xE8\x97\x8F\xE7\xBD\x91\xE7\xBB\x9C");
+    ov_report(checked ? "显示网络"
+                      : "隐藏网络");
                       /* 显示/隐藏网络 */
     ov_saveSettings();
 }
@@ -491,8 +491,8 @@ static void ov_memSlot(XObject* receiver, XVarList* args)
     if (!overlay || !s_ov.m_memCheck || s_ov.m_syncing) return;
     checked = XAbstractButton_isChecked((XAbstractButton*)s_ov.m_memCheck);
     XPerformanceOverlay_setMemoryVisible(overlay, checked);
-    ov_report(checked ? "\xE6\x98\xBE\xE7\xA4\xBA\xE5\x86\x85\xE5\xAD\x98"
-                      : "\xE9\x9A\x90\xE8\x97\x8F\xE5\x86\x85\xE5\xAD\x98");
+    ov_report(checked ? "显示内存"
+                      : "隐藏内存");
                       /* 显示/隐藏内存 */
     ov_saveSettings();
 }
@@ -509,9 +509,7 @@ static void ov_memDispSlot(XObject* receiver, XVarList* args)
     if (index < 0) index = 0;
     XPerformanceOverlay_setMemoryDisplay(
         overlay, (XPerformanceOverlayMemoryDisplay)index);
-    ov_report("\xE5\x86\x85\xE5\xAD\x98\xE8\xA1\x8C\xE6\x98\xBE\xE7\xA4"
-              "\xBA\xE7\xA7\x8D\xE7\xB1\xBB\xE5\xB7\xB2\xE6\x9B\xB4\xE6"
-              "\x8D\xA2"); /* 内存行显示种类已更换 */
+    ov_report("内存行显示种类已更换"); /* 内存行显示种类已更换 */
     ov_saveSettings();
 }
 
@@ -527,8 +525,7 @@ static void ov_memSrcSlot(XObject* receiver, XVarList* args)
     if (index < 0) index = 0;
     XPerformanceOverlay_setMemorySource(
         overlay, (XPerformanceOverlayMemorySource)index);
-    ov_report("\xE5\x86\x85\xE5\xAD\x98\xE6\x95\xB0\xE6\x8D\xAE\xE6\x9D"
-              "\xA5\xE6\xBA\x90\xE5\xB7\xB2\xE6\x9B\xB4\xE6\x8D\xA2");
+    ov_report("内存数据来源已更换");
               /* 内存数据来源已更换 */
     ov_saveSettings();
 }
@@ -542,8 +539,7 @@ static void ov_presetSlot(XObject* receiver, XVarList* args)
     index = XComboBox_currentIndex(s_ov.m_presetCombo);
     if (index < 0) index = 8;
     demo_main_overlay_applyPreset(s_ov.m_user, index);
-    ov_report("\xE5\xB7\xB2\xE5\xBA\x94\xE7\x94\xA8\xE9\xA2\x84\xE8\xAE"
-              "\xBE\xE4\xBD\x8D\xE7\xBD\xAE"); /* 已应用预设位置 */
+    ov_report("已应用预设位置");
     ov_saveSettings();
 }
 
@@ -557,9 +553,9 @@ static void ov_fixedSlot(XObject* receiver, XVarList* args)
     if (!overlay || !s_ov.m_fixedCheck || s_ov.m_syncing) return;
     checked = XAbstractButton_isChecked((XAbstractButton*)s_ov.m_fixedCheck);
     XPerformanceOverlay_setFixed(overlay, checked);
-    ov_report(checked ? "\xE5\xB7\xB2\xE9\x94\x81\xE5\xAE\x9A\xE4\xBD\x8D"
-                      "\xE7\xBD\xAE" : "\xE5\xB7\xB2\xE8\xA7\xA3\xE9\x99"
-                      "\xA4\xE5\x9B\xBA\xE5\xAE\x9A"); /* 已锁定位置/已解除固定 */
+    ov_report(checked ? "已锁定位"
+                      "置" : "宸茶В闄"
+                      "已锁定位置/已解除固定"); /* 已锁定位置/已解除固定 */
     ov_saveSettings();
 }
 
@@ -574,9 +570,7 @@ static void ov_movableSlot(XObject* receiver, XVarList* args)
     checked =
         XAbstractButton_isChecked((XAbstractButton*)s_ov.m_movableCheck);
     XPerformanceOverlay_setMovable(overlay, checked);
-    ov_report(checked ? "\xE5\xB7\xB2\xE5\x85\x81\xE8\xAE\xB8\xE6\x8B\x96"
-                      "\xE5\x8A\xA8" : "\xE5\xB7\xB2\xE7\xA6\x81\xE6\xAD"
-                      "\xA2\xE6\x8B\x96\xE5\x8A\xA8"); /* 已允许拖动/已禁止拖动 */
+    ov_report(checked ? "已允许拖动" : "已禁止拖动"); /* 已允许拖动/已禁止拖动 */
     ov_saveSettings();
 }
 
@@ -592,8 +586,8 @@ static void ov_fontSlot(XObject* receiver, XVarList* args)
     if (index < 0 || index >= OV_FONT_SIZE_COUNT)
         index = ov_fontIndexOf(OV_DEFAULT_FONT_PX);
     XPerformanceOverlay_setTextPixelSize(overlay, kOvFontSizes[index]);
-    ov_report("\xE5\xAD\x97\xE5\x8F\xB7\xE5\xB7\xB2\xE6\x9B\xB4\xE6\x8D"
-              "\xA2"); /* 字号已更换 */
+    ov_report("瀛楀彿宸叉洿鎹"
+              "¢"); /* 字号已更换 */
     ov_saveSettings();
 }
 
@@ -608,10 +602,10 @@ static void ov_autofitSlot(XObject* receiver, XVarList* args)
     checked =
         XAbstractButton_isChecked((XAbstractButton*)s_ov.m_autofitCheck);
     XPerformanceOverlay_setAutoFitSize(overlay, checked);
-    ov_report(checked ? "\xE5\xB7\xB2\xE5\xBC\x80\xE5\x90\xAF\xE8\x87\xAA"
-                      "\xE9\x80\x82\xE5\xBA\x94\xE5\xB0\xBA\xE5\xAF\xB8"
-                      : "\xE5\xB7\xB2\xE5\x85\xB3\xE9\x97\xAD\xE8\x87\xAA"
-                        "\xE9\x80\x82\xE5\xBA\x94"); /* 已开启自适应尺寸/已关闭自适应 */
+    ov_report(checked ? "已开启自"
+                      "适应尺寸"
+                      : "已关闭自"
+                        "适应"); /* 已开启自适应尺寸/已关闭自适应 */
     ov_saveSettings();
 }
 
@@ -667,8 +661,8 @@ static void ov_resetSlot(XObject* receiver, XVarList* args)
     ov_syncFromOverlay();
     /* 默认值一并落盘（否则配置里留着旧的非默认值，下次启动又被恢复回来）。 */
     ov_saveSettings();
-    ov_report("\xE5\xB7\xB2\xE6\x81\xA2\xE5\xA4\x8D\xE9\xBB\x98\xE8\xAE"
-              "\xA4"); /* 已恢复默认 */
+    ov_report("宸叉仮澶嶉粯璁"
+              "¤"); /* 已恢复默认 */
 }
 
 /* ==================== 装配 ==================== */
@@ -722,8 +716,7 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     s_ov.m_titleLabel = XLabel_create(s_ov.m_root, 0);
     if (!s_ov.m_titleLabel) return s_ov.m_root;
     XLabel_setText_2(s_ov.m_titleLabel,
-                     "\xE6\x82\xAC\xE6\xB5\xAE\xE7\xAA\x97\xE8\xAE\xBE"
-                     "\xE7\xBD\xAE"); /* 悬浮窗设置 */
+                     "悬浮窗设置"); /* 悬浮窗设置 */
     XLabel_setTextPixelSize(s_ov.m_titleLabel, 15);
     XWidget_setFixedHeight((XWidget*)s_ov.m_titleLabel, 24);
     XWidget_show((XWidget*)s_ov.m_titleLabel);
@@ -731,7 +724,7 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     /* ---- 显示数据 ---- */
     /* ---- 总开关行：显示悬浮窗（整体显隐） ---- */
     s_ov.m_masterCheck = ov_buildCheck(
-        "\xE6\x98\xBE\xE7\xA4\xBA\xE6\x82\xAC\xE7\xAA\x97\xE7\xB0\xBF", 120,
+        "显示悬窗簿", 120,
                                      ov_masterSlot);
     if (s_ov.m_masterCheck) {
         /* 初值按**显式隐藏位**判定：建页时父窗尚未显示，isVisible 的
@@ -741,25 +734,24 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     }
 
     s_ov.m_capRows = ov_buildCaption(
-        "\xE6\x98\xBE\xE7\xA4\xBA\xE6\x95\xB0\xE6\x8D\xAE");
+        "显示数据");
     s_ov.m_fpsCheck = ov_buildCheck("FPS", 90, ov_fpsSlot);
     s_ov.m_frameCheck = ov_buildCheck(
-        "\xE5\xB8\xA7\xE8\x80\x97\xE6\x97\xB6", 110,
+        "帧耗时", 110,
         ov_frameSlot); /* 帧耗时 */
     s_ov.m_sysCheck = ov_buildCheck("CPU/GPU", 120, ov_sysSlot);
     s_ov.m_netCheck = ov_buildCheck(
-        "\xE7\xBD\x91\xE7\xBB\x9C", 100, ov_netSlot); /* 网络 */
+        "网络", 100, ov_netSlot); /* 网络 */
     s_ov.m_memCheck = ov_buildCheck(
-        "\xE5\x86\x85\xE5\xAD\x98", 100, ov_memSlot); /* 内存 */
+        "内存", 100, ov_memSlot); /* 内存 */
 
     /* ---- 内存行 ---- */
     s_ov.m_capMem = ov_buildCaption(
-        "\xE5\x86\x85\xE5\xAD\x98\xE8\xA1\x8C"); /* 内存行 */
+        "内存行"); /* 内存行 */
     s_ov.m_capMemDisp = XLabel_create(s_ov.m_root, 0);
     if (s_ov.m_capMemDisp) {
         XLabel_setText_2(s_ov.m_capMemDisp,
-                         "\xE6\x98\xBE\xE7\xA4\xBA\xE7\xA7\x8D\xE7\xB1"
-                         "\xBB"); /* 显示种类 */
+                         "显示种类"); /* 显示种类 */
         XWidget_setFixedWidth((XWidget*)s_ov.m_capMemDisp, 64);
         XWidget_setFixedHeight((XWidget*)s_ov.m_capMemDisp, 22);
         XWidget_show((XWidget*)s_ov.m_capMemDisp);
@@ -767,12 +759,11 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     s_ov.m_memDispCombo = XComboBox_create(s_ov.m_root, 0);
     if (!s_ov.m_memDispCombo) return s_ov.m_root;
     XComboBox_addItem_2(s_ov.m_memDispCombo,
-                        "\xE5\x87\x86\xE7\xA1\xAE\xE6\x95\xB0"); /* 准确数 */
+                        "准确数"); /* 准确数 */
     XComboBox_addItem_2(s_ov.m_memDispCombo,
-                        "\xE7\x99\xBE\xE5\x88\x86\xE6\xAF\x94"); /* 百分比 */
+                        "百分比"); /* 百分比 */
     XComboBox_addItem_2(s_ov.m_memDispCombo,
-                        "\xE4\xB8\xA4\xE8\x80\x85\xE9\x83\xBD\xE6\x98\xBE"
-                        "\xE7\xA4\xBA"); /* 两者都显示 */
+                        "两者都显示"); /* 两者都显示 */
     XWidget_setFixedWidth((XWidget*)s_ov.m_memDispCombo, 170);
     XWidget_setFixedHeight((XWidget*)s_ov.m_memDispCombo, 26);
     XObject_connect_2((XObject*)s_ov.m_memDispCombo,
@@ -781,8 +772,7 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     s_ov.m_capMemSrc = XLabel_create(s_ov.m_root, 0);
     if (s_ov.m_capMemSrc) {
         XLabel_setText_2(s_ov.m_capMemSrc,
-                         "\xE6\x95\xB0\xE6\x8D\xAE\xE6\x9D\xA5\xE6\xBA"
-                         "\x90"); /* 数据来源 */
+                         "数据来源"); /* 数据来源 */
         XWidget_setFixedWidth((XWidget*)s_ov.m_capMemSrc, 64);
         XWidget_setFixedHeight((XWidget*)s_ov.m_capMemSrc, 22);
         XWidget_show((XWidget*)s_ov.m_capMemSrc);
@@ -790,12 +780,12 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     s_ov.m_memSrcCombo = XComboBox_create(s_ov.m_root, 0);
     if (!s_ov.m_memSrcCombo) return s_ov.m_root;
     XComboBox_addItem_2(s_ov.m_memSrcCombo,
-                        "\xE8\x87\xAA\xE5\x8A\xA8"); /* 自动 */
+                        "自动"); /* 自动 */
     XComboBox_addItem_2(s_ov.m_memSrcCombo,
-                        "\xE7\xB3\xBB\xE7\xBB\x9F\xE5\x86\x85\xE5\xAD\x98");
+                        "系统内存");
                         /* 系统内存 */
     XComboBox_addItem_2(s_ov.m_memSrcCombo,
-                        "\xE5\xBA\x93\xE5\x86\x85\xE5\x86\x85\xE5\xAD\x98");
+                        "库内内存");
                         /* 库内内存 */
     XWidget_setFixedWidth((XWidget*)s_ov.m_memSrcCombo, 190);
     XWidget_setFixedHeight((XWidget*)s_ov.m_memSrcCombo, 26);
@@ -805,12 +795,11 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
 
     /* ---- 位置 ---- */
     s_ov.m_capPos = ov_buildCaption(
-        "\xE4\xBD\x8D\xE7\xBD\xAE"); /* 位置 */
+        "位置"); /* 位置 */
     s_ov.m_capPreset = XLabel_create(s_ov.m_root, 0);
     if (s_ov.m_capPreset) {
         XLabel_setText_2(s_ov.m_capPreset,
-                         "\xE9\xA2\x84\xE8\xAE\xBE\xE4\xBD\x8D\xE7\xBD"
-                         "\xAE"); /* 预设位置 */
+                         "预设位置"); /* 预设位置 */
         XWidget_setFixedWidth((XWidget*)s_ov.m_capPreset, 64);
         XWidget_setFixedHeight((XWidget*)s_ov.m_capPreset, 22);
         XWidget_show((XWidget*)s_ov.m_capPreset);
@@ -818,23 +807,23 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     s_ov.m_presetCombo = XComboBox_create(s_ov.m_root, 0);
     if (!s_ov.m_presetCombo) return s_ov.m_root;
     XComboBox_addItem_2(s_ov.m_presetCombo,
-                        "\xE5\xB7\xA6\xE4\xB8\x8A");   /* 左上 */
+                        "左上");   /* 左上 */
     XComboBox_addItem_2(s_ov.m_presetCombo,
-                        "\xE4\xB8\x8A\xE4\xB8\xAD");   /* 上中 */
+                        "上中");   /* 上中 */
     XComboBox_addItem_2(s_ov.m_presetCombo,
-                        "\xE5\x8F\xB3\xE4\xB8\x8A");   /* 右上 */
+                        "右上");   /* 右上 */
     XComboBox_addItem_2(s_ov.m_presetCombo,
-                        "\xE5\xB7\xA6\xE4\xB8\xAD");   /* 左中 */
+                        "左中");   /* 左中 */
     XComboBox_addItem_2(s_ov.m_presetCombo,
-                        "\xE5\xB1\x85\xE4\xB8\xAD");   /* 居中 */
+                        "居中");   /* 居中 */
     XComboBox_addItem_2(s_ov.m_presetCombo,
-                        "\xE5\x8F\xB3\xE4\xB8\xAD");   /* 右中 */
+                        "右中");   /* 右中 */
     XComboBox_addItem_2(s_ov.m_presetCombo,
-                        "\xE5\xB7\xA6\xE4\xB8\x8B");   /* 左下 */
+                        "左下");   /* 左下 */
     XComboBox_addItem_2(s_ov.m_presetCombo,
-                        "\xE4\xB8\x8B\xE4\xB8\xAD");   /* 下中 */
+                        "下中");   /* 下中 */
     XComboBox_addItem_2(s_ov.m_presetCombo,
-                        "\xE5\x8F\xB3\xE4\xB8\x8B");   /* 右下 */
+                        "右下");   /* 右下 */
     XComboBox_setCurrentIndex(s_ov.m_presetCombo, 8);
     XWidget_setFixedWidth((XWidget*)s_ov.m_presetCombo, 170);
     XWidget_setFixedHeight((XWidget*)s_ov.m_presetCombo, 26);
@@ -842,19 +831,19 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
                       XSignal(XComboBox_activated_signal), ov_presetSlot);
     XWidget_show((XWidget*)s_ov.m_presetCombo);
     s_ov.m_fixedCheck = ov_buildCheck(
-        "\xE5\x9B\xBA\xE5\xAE\x9A\xE4\xBD\x8D\xE7\xBD\xAE", 110,
+        "固定位置", 110,
         ov_fixedSlot); /* 固定位置 */
     s_ov.m_movableCheck = ov_buildCheck(
-        "\xE5\x85\x81\xE8\xAE\xB8\xE6\x8B\x96\xE5\x8A\xA8", 110,
+        "允许拖动", 110,
         ov_movableSlot); /* 允许拖动 */
 
     /* ---- 外观 ---- */
     s_ov.m_capStyle = ov_buildCaption(
-        "\xE5\xA4\x96\xE8\xA7\x82"); /* 外观 */
+        "外观"); /* 外观 */
     s_ov.m_capFont = XLabel_create(s_ov.m_root, 0);
     if (s_ov.m_capFont) {
         XLabel_setText_2(s_ov.m_capFont,
-                         "\xE5\xAD\x97\xE5\x8F\xB7"); /* 字号 */
+                         "字号"); /* 字号 */
         XWidget_setFixedWidth((XWidget*)s_ov.m_capFont, 64);
         XWidget_setFixedHeight((XWidget*)s_ov.m_capFont, 22);
         XWidget_show((XWidget*)s_ov.m_capFont);
@@ -874,15 +863,14 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
                       XSignal(XComboBox_activated_signal), ov_fontSlot);
     XWidget_show((XWidget*)s_ov.m_fontCombo);
     s_ov.m_autofitCheck = ov_buildCheck(
-        "\xE8\x87\xAA\xE9\x80\x82\xE5\xBA\x94\xE5\xB0\xBA\xE5\xAF\xB8",
+        "自适应尺寸",
         140, ov_autofitSlot); /* 自适应尺寸 */
 
     /* ---- 操作与反馈 ---- */
     s_ov.m_resetBtn = XPushButton_create(s_ov.m_root, 0);
     if (!s_ov.m_resetBtn) return s_ov.m_root;
     XPushButton_setText_2(s_ov.m_resetBtn,
-                          "\xE5\xA4\x8D\xE4\xBD\x8D\xE9\xBB\x98\xE8\xAE"
-                          "\xA4"); /* 复位默认 */
+                          "复位默认"); /* 复位默认 */
     XWidget_setFixedWidth((XWidget*)s_ov.m_resetBtn, 110);
     XWidget_setFixedHeight((XWidget*)s_ov.m_resetBtn, 30);
     XObject_connect_2((XObject*)s_ov.m_resetBtn,
@@ -891,13 +879,7 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     s_ov.m_hintLabel = XLabel_create(s_ov.m_root, 0);
     if (s_ov.m_hintLabel) {
         XLabel_setText_2(s_ov.m_hintLabel,
-                         "\xE6\x94\xB9\xE5\x8A\xA8\xE5\x8D\xB3\xE6\x97"
-                         "\xB6\xE7\x94\x9F\xE6\x95\x88\xEF\xBC\x9B\xE9\x80"
-                         "\x89\xE9\xA2\x84\xE8\xAE\xBE\xE4\xBD\x8D\xE7\xBD"
-                         "\xAE\xE5\x90\x8E\xE7\xAA\x97\xE5\x8F\xA3\xE7\xBC"
-                         "\xA9\xE6\x94\xBE\xE4\xB8\x8D\xE5\x86\x8D\xE8\x87"
-                         "\xAA\xE5\x8A\xA8\xE8\xB4\xB4\xE5\x8F\xB3\xE4\xB8"
-                         "\x8B\xE8\xA7\x92");
+                         "改动即时生效；选预设位置后窗口缩放不再自动贴右下角");
                          /* 改动即时生效；选预设位置后窗口缩放不再自动贴右下角 */
         XLabel_setTextPixelSize(s_ov.m_hintLabel, 12);
         XWidget_setFixedHeight((XWidget*)s_ov.m_hintLabel, 20);
@@ -906,7 +888,7 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     s_ov.m_statusLabel = XLabel_create(s_ov.m_root, 0);
     if (!s_ov.m_statusLabel) return s_ov.m_root;
     XLabel_setText_2(s_ov.m_statusLabel,
-                     "\xE5\xB0\xB1\xE7\xBB\xAA"); /* 就绪 */
+                     "就绪"); /* 就绪 */
     XWidget_setFixedHeight((XWidget*)s_ov.m_statusLabel, 22);
     XWidget_show((XWidget*)s_ov.m_statusLabel);
 

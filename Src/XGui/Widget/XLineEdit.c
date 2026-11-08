@@ -607,7 +607,7 @@ static int xlineedit_startDragDistance(void)
 static bool xlineedit_blinkCursorWhenTextSelected(const XLineEdit* self)
 {
 #if XSTYLE_ON
-    XStyle* style = XStyle_defaultStyle();
+    XStyle* style = XWidget_style((const XWidget*)self);
     XStyleOption opt;
     if (style) {
         XStyleOption_init(&opt, XStylePE_FrameLineEdit);
@@ -634,7 +634,7 @@ static bool xlineedit_blinkCursorWhenTextSelected(const XLineEdit* self)
 static void xlineedit_applyStylePasswordHints(XLineEdit* self)
 {
 #if XSTYLE_ON
-    XStyle* style = XStyle_defaultStyle();
+    XStyle* style = XWidget_style((const XWidget*)self);
     XStyleOption opt;
     int delay;
     if (!self || !self->m_control || !style) return;
@@ -1224,9 +1224,9 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
 
     if (edit->m_frame) {
 #if XSTYLE_ON
-        if (XStyle_defaultStyle() != NULL) {
+        if (XWidget_style((const XWidget*)self) != NULL) {
             /* Fusion/公共风格接管：输入框面板由样式引擎绘制。 */
-            XStyle* style = XStyle_defaultStyle();
+            XStyle* style = XWidget_style((const XWidget*)self);
             XStyleOption opt;
             XStyleOption_init(&opt, XStylePE_PanelLineEdit);
             opt.m_rect = r;

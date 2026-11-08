@@ -87,6 +87,10 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
         /* XTcpServer 全用例回归（含 2026-11-04 新增的「多帧收发 /
          * socket 所有权 / pending 单次投递」三把锁）。 */
         result = XTcpServerTest_run() == 0;
+    } else if (strcmp(name, "udp-bind-family") == 0) {
+        /* bindAny 地址族选择与 IPv4-only 回退（2026-11-07 A33 无 IPv6 根修）：
+         * 双栈优先保持 + XNET_DISABLE_IPV6=1 强制回退 0.0.0.0 + 回退后真实收发。 */
+        result = XUdpBindFamilyTest_run() == 0;
     } else if (strcmp(name, "xconsole-shell") == 0) {
         result = XConsoleShellTest_runAll();
     } else if (strcmp(name, "xconsole-shell-backend") == 0) {

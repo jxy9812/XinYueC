@@ -25,6 +25,15 @@
  *             本模块报错并保持「未打开」状态，其余总线照常工作；插回线后
  *             重启服务端即可（不做热插拔重连，与既有单路实现口径一致）。
  *
+ *             [注入客户端自愈] 走 HsfServerBus_openWithClient 的链路（模拟/
+ *             单测注入的 XModbusVirtualClient 等）带一套**服务端看门狗**
+ *             （HsfServerBusHeal）：虚拟客户端没有"连接"这回事，底层也没有
+ *             任何重连实现，一旦被判失联就再也回不来（现场实测：长时间运行
+ *             + 万次连接压测后温湿度/流量计恒陈旧，重启服务端才恢复）。
+ *             看门狗按"设备状态 + 最后一次成功应答时刻"两个可观测量做判据，
+ *             失联则重连、在线但数据停滞则重挂轮询定时器，全部带退避与
+ *             限频日志。**物理串口路径（HsfServerBus_open）不启用**，行为不变。
+ *
  *             线程模型：与框架一致单线程事件循环；全部 API 须在
  *             XCoreApplication 事件循环内调用。
  */
@@ -50,6 +59,37 @@ struct XModbusRtuSerialClient;
 struct XModbusClient;
 
 /**
+ * @brief 注入客户端自愈看门狗状态（值语义；随宿主容器零初始化）。
+ * @details [为什么需要] 模拟/单测链路注入的是进程内客户端（XModbusVirtualClient）
+ *          或调用方自建的客户端。虚拟客户端的 Open/Close 只是改状态字，
+ *          **没有任何重连实现**：某次状态被判成 Unconnected 之后，Hub 的
+ *          泵会被 `state != Connected` 门槛永久挡住，读组再也不提交——而上层
+ *          （温湿度/流量计/数字量）的陈旧判定只会把它显示成"无数据"，
+ *          除了重启服务端没有第二条恢复路径。本结构就是那条路径。
+ *
+ *          判据全部是**可观测量**（不猜内部实现）：
+ *            · 设备状态：XModbusHub_deviceState（Hub 侧镜像，含跃迁）；
+ *            · 数据新鲜度：XModbusHub_deviceLastSuccessMs（最后一次成功应答）。
+ *          因此它同样能兜住"设备仍报 Connected 但轮询定时器已停/被误杀"
+ *          这类故障（定时器 id 复用误杀：id 是全局槽位，杀错即静默停摆）。
+ *
+ *          [为什么放在本文件] 485 两路 + 数字量站 + 模拟量站（四条注入链路）
+ *          共用同一套策略；实现集中在这里，避免各处各写一份漂移。
+ */
+typedef struct HsfServerBusHeal {
+    bool m_on;                 /**< 已启用（**仅注入/模拟路径**置 true）。 */
+    bool m_lost;               /**< 当前判定"链路失联"（跃迁沿日志用）。 */
+    bool m_stalled;            /**< 当前判定"在线但数据停滞"（同上）。 */
+    int m_pollMs;              /**< 本链路轮询节拍（重挂定时器的参数）。 */
+    uint32_t m_attempts;       /**< 连续自愈尝试次数（退避档位）。 */
+    uint64_t m_armedMs;        /**< 启用时刻（"从未成功过"时的宽限基准）。 */
+    uint64_t m_sinceMs;        /**< 本次异常起点毫秒（0=当前正常）。 */
+    uint64_t m_nextTryMs;      /**< 下次允许动作的时刻（退避闸）。 */
+    uint64_t m_lastLogMs;      /**< 上次"重试中"日志时刻（限频）。 */
+    uint32_t m_suppressed;     /**< 上次日志以来被限频折叠掉的失败次数。 */
+} HsfServerBusHeal;
+
+/**
  * @brief 一条 485 总线的运行态（值语义容器；由调用方持有）。
  * @details 全部成员为借用/句柄，生命周期由 HsfServerBus_* 管理；
  *          调用方只经 API 读取，不要直接改。
@@ -62,6 +102,8 @@ typedef struct HsfServerBus {
     struct XModbusRtuSerialClient* m_client; /**< RTU 客户端（所有权在 Hub）。 */
     int m_devId;                        /**< 该串口在 Hub 里的设备句柄；<0=未挂。 */
     bool m_started;                     /**< 映射已提交且轮询已拉起。 */
+    bool m_injected;                    /**< 客户端由 openWithClient 注入（模拟/单测）。 */
+    HsfServerBusHeal m_heal;            /**< 注入客户端的自愈看门狗（物理串口不用）。 */
 } HsfServerBus;
 
 /**
@@ -147,6 +189,66 @@ void HsfServerBus_stop(HsfServerBus* bus);
  * @brief 本路串口是否已打开（诊断用）。
  */
 bool HsfServerBus_isOpen(const HsfServerBus* bus);
+
+/* ==================== 注入客户端自愈看门狗 ==================== */
+/*
+ * [适用范围] 只对**注入/模拟**客户端启用（物理串口/物理 TCP 的装配入口
+ * 不调 HsfServerBusHeal_arm，行为一字不变）。485 两路、数字量站、模拟量站
+ * 共用同一套实现，判据与节奏完全一致，便于现场按同一条日志口径排查。
+ */
+
+/**
+ * @brief 启用一条链路的自愈看门狗（在设备已挂 Hub 且轮询参数已知后调用）。
+ * @param heal 看门狗状态（宿主容器成员；内部先清零）。
+ * @param client 该链路客户端（借用；同时给它打开 autoReconnect）。
+ * @param pollMs 轮询节拍（毫秒；重挂设备定时器用；<=0 按 200 处理）。
+ * @param nowMs 当前单调毫秒（XDateTime_currentMSecsSinceEpoch）。
+ *
+ * @details [为什么同时开 autoReconnect] 注入的客户端不一定是虚拟客户端
+ *          （单测里也注入 RTU/TCP 客户端）：那两类自带 attemptReconnect 实现，
+ *          开 autoReconnect 让底层先自己重试，服务端看门狗只做兜底。
+ *          对 XModbusVirtualClient 而言该开关**是空操作**（它没有重连实现），
+ *          所以真正的自愈只能由本看门狗提供——这正是本模块存在的原因。
+ */
+void HsfServerBusHeal_arm(HsfServerBusHeal* heal, struct XModbusClient* client,
+                          int pollMs, uint64_t nowMs);
+
+/**
+ * @brief 跑一拍自愈检查（由服务端 tick 每拍调用；内部自带退避与限频）。
+ * @param heal 看门狗状态；未启用（m_on=false）时立即返回 false。
+ * @param hub 该链路 Hub（借用）。
+ * @param devId 该链路设备句柄（Hub 内）。
+ * @param client 该链路客户端（借用；仅用于 connectDevice/disconnectDevice）。
+ * @param name 日志显示名（静态常量借用；如 "485-A"）。
+ * @param nowMs 当前单调毫秒。
+ * @return 本拍是否执行了自愈动作（重连/重挂定时器/重启轮询）。
+ *
+ * @details [动作阶梯] 由轻到重，全部幂等：
+ *            ① Hub 轮询总闸不在 ⇒ startPolling（最便宜，无副作用）；
+ *            ② 设备非 Connected ⇒ connectDevice（带指数退避）；
+ *            ③ 设备 Connected 但最后一次成功应答超过停滞阈值 ⇒
+ *               重挂该设备的轮询定时器（setPollInterval 内部只 kill+start
+ *               定时器，**不动块表、不动在途事务**，因此不会与在途应答的
+ *               块下标回填打架）；
+ *            ④ 连续失败 4 次 ⇒ 断链再连：强制一次状态跃迁，让 Hub 的
+ *               "上线续泵/补写"路径重跑。
+ */
+bool HsfServerBusHeal_step(HsfServerBusHeal* heal, struct XModbusHub* hub,
+                           int devId, struct XModbusClient* client,
+                           const char* name, uint64_t nowMs);
+
+/**
+ * @brief 关闭看门狗并清状态（拆除链路时调用；幂等）。
+ */
+void HsfServerBusHeal_disarm(HsfServerBusHeal* heal);
+
+/**
+ * @brief 本路总线的自愈拍（仅 openWithClient 注入的链路有效）。
+ * @param bus 目标总线；未打开/物理串口/未启用时为空操作。
+ * @param nowMs 当前单调毫秒。
+ * @return 本拍是否执行了自愈动作。
+ */
+bool HsfServerBus_watchdog(HsfServerBus* bus, uint64_t nowMs);
 
 #ifdef __cplusplus
 }

@@ -776,7 +776,7 @@ static void views_layoutWide(void)
     XWidget_setFixedWidth((XWidget*)&g_views.table, VIEWS_WIDE_TABLE_W);
     XWidget_setMinimumHeight((XWidget*)&g_views.table, 0);
     XWidget_setMaximumHeight((XWidget*)&g_views.table, XWIDGET_MAX_SIZE);
-    XBoxLayout_setStretchFactorLayout(&g_views.rootBox,
+    XBoxLayout_setStretchFactor_2(&g_views.rootBox,
                                       (XLayout*)&g_views.midSection, 1);
 }
 
@@ -1149,9 +1149,9 @@ XWidget* demo_page_views_build(XWidget* parent,
     XBoxLayout_addLayout(&g_views.rootBox, (XLayout*)&g_views.capRow);
     XBoxLayout_addLayout(&g_views.rootBox, (XLayout*)&g_views.viewsRow);
     XBoxLayout_addLayout(&g_views.rootBox, (XLayout*)&g_views.midSection);
-    XBoxLayout_setStretchFactorLayout(&g_views.rootBox,
+    XBoxLayout_setStretchFactor_2(&g_views.rootBox,
                                       (XLayout*)&g_views.viewsRow, 1);
-    XBoxLayout_setStretchFactorLayout(&g_views.rootBox,
+    XBoxLayout_setStretchFactor_2(&g_views.rootBox,
                                       (XLayout*)&g_views.midSection, 1);
     XBoxLayout_addWidget(&g_views.rootBox, (XWidget*)&g_views.stateLabel);
     XWidget_setFixedHeight((XWidget*)&g_views.stateLabel, 28);

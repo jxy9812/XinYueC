@@ -510,13 +510,34 @@ static void XLinkSessionPrivate_authConclude(XLinkSession* self,
     /* 客户端：服务端拒绝即终局断链（口令错误属永久失败，不该重试）。
        服务端：达到失败上限才断链，未达上限允许对端重试（换用户/换口令）。 */
     if (!notifyPeer) {
+        /* [失败终局可观测] 客户端拒绝路径原先只发信号、不留日志，
+           错口令表现为"登录挂 8s 再报连接超时"，无从判断是认证被拒。
+           终局（reset 前）留一行：结果码 + 累计失败数。 */
+        XPrintf("XLinkSession: 认证失败终局（status=%u，累计失败 %u 次）\n",
+                (unsigned)status, (unsigned)self->m_authFailures);
         /* 终局断链路径由 authFail 统一发射失败信号，此处不再重复发射
            （认证失败信号双发收敛：客户端收拒绝只报一次 authChanged）。 */
         XLinkSessionPrivate_authFail(self, status, false);
         return;
     }
     XLinkSession_authChanged_signal(self, false, status, 0);
+    /* [按最后活动重新起算认证超时] 服务端未达失败上限时不断链、停在
+       Authenticating 等对端重试（XLink.md §重试口径）。原先认证超时起算点
+       m_authStartTick 只在进入态时补记一次，拒绝后不重算：慢速重试可能在
+       「进入态起 5s 一刀切」中被中途掐断。这里把基准改为「本次拒绝」，下一
+       拍 pump 补记为 nowMs，沉默 XLINK_AUTH_TIMEOUT_MS（默认 5s）无新认证
+       帧后由既有超时路径 authFail(Timeout) → reset → Inactive → reap 收口；
+       每次重试（新拒绝）都会重新置 0，故每次拒绝都获得完整重试窗口。
+       注：本行只改超时基准精度、不新增状态/分配；它把半开拒绝会话的收口
+       相对「进入态一刀切」延后（最坏按失败上限累加到 3 次），对会话数上限
+       策略闸的影响见提交说明 residual，需业主按现场口径裁定是否保留。 */
+    self->m_authStartTick = 0;
     if (self->m_authFailures >= self->m_authFailureLimit) {
+        /* [失败终局可观测] 服务端达上限断链原先无日志：现场只看到"客户端
+           莫名连不上"，分不清是口令错还是网络问题。reset 前留一行。 */
+        XPrintf("XLinkSession: 认证失败达上限断链（status=%u，失败 %u/%u 次）\n",
+                (unsigned)status, (unsigned)self->m_authFailures,
+                (unsigned)self->m_authFailureLimit);
         /* Goodbye 原因字节让对端区分「认证失败」与普通断开。 */
         uint8_t reason = XLinkGoodbyeReason_AuthFailed;
         XLinkSession_sendSession(self, XLinkSessionCode_Goodbye, &reason, 1);
@@ -1169,6 +1190,22 @@ static uint32_t XLinkSessionPrivate_txFlush(XLinkSession* self)
             self->m_lastSendTick = self->m_nowTick;
         self->m_stats.m_bytesSent += total;
     }
+#if XLINK_HEARTBEAT_TIMEOUT_MS > 0
+    /* [发方向判线记账] 与收方向「收到任意字节即刷新 m_lastReceiveTick」
+       对称：本轮写出过任意字节（哪怕短写 1 字节）或队列已排空，都把
+       「连续零写出且仍有积压」的起算点清 0；本轮零写出且仍有积压时，
+       只在本链路首次出现该状况记一次时刻，之后每轮保持、不刷新——
+       于是判线量的是「连续多久毫无进展」，而非累计失败次数。
+       设备已关闭分支把 m_txUsed 置 0，下一条件 m_txUsed == 0 自动清零。
+       注：本函数也在入队路径（sendWithPrefix）被调用，此时 m_nowTick 是
+       上一拍 pump 的时刻，起算点最多有一拍（XLINK_HEARTBEAT_TICK_MS
+       默认 250ms）的滞后，相对 6s 阈值可忽略；pump 路径用的是本拍时刻。 */
+    if (total > 0 || self->m_txUsed == 0) {
+        self->m_lastTxProgressTick = 0;
+    } else if (self->m_lastTxProgressTick == 0 && self->m_nowTick != 0) {
+        self->m_lastTxProgressTick = self->m_nowTick;
+    }
+#endif
     return total;
 }
 
@@ -1262,10 +1299,13 @@ bool XLinkSession_setDevice(XLinkSession* self, XIODevice* device)
        的空闲时刻，新链路第一拍 pump 的 nowMs - 旧时刻 就会超过
        XLINK_HEARTBEAT_TIMEOUT_MS，健康的链路会被立刻误判断开。
        m_lastSendTick 是主动心跳基准，同理归零；m_nowTick 归零让"本链路
-       尚未取到过时刻"重新可识别（下面的 m_attachTick 取 0 起算即依赖它）。 */
+       尚未取到过时刻"重新可识别（下面的 m_attachTick 取 0 起算即依赖它）。
+       新增的 m_lastTxProgressTick（发方向判线起算点）同理归零：残留旧链路
+       的起算时刻会让新链路首拍就满足 (nowMs - 旧值) > 阈值而误判断开。 */
     self->m_lastReceiveTick = 0;
     self->m_lastSendTick = 0;
     self->m_nowTick = 0;
+    self->m_lastTxProgressTick = 0;
     self->m_authRequired = false;
     self->m_authPassed = false;
 #if XLINK_AUTH_ON
@@ -1316,10 +1356,12 @@ void XLinkSession_reset(XLinkSession* self)
        复用去挂新传输，残留的 m_lastReceiveTick 会让新链路第一拍 pump 的
        静默判线（nowMs - 旧时刻 > XLINK_HEARTBEAT_TIMEOUT_MS）立刻成立而
        误判断开；m_lastSendTick 是主动心跳基准，m_nowTick 是本链路时刻快照，
-       一并归零，避免旧链路的时刻渗透进新链路的超时判定。 */
+       一并归零，避免旧链路的时刻渗透进新链路的超时判定。新增的
+       m_lastTxProgressTick（发方向判线起算点）同理归零。 */
     self->m_lastReceiveTick = 0;
     self->m_lastSendTick = 0;
     self->m_nowTick = 0;
+    self->m_lastTxProgressTick = 0;
     self->m_authRequired = false;
     self->m_authPassed = false;
 #if XLINK_AUTH_ON
@@ -1485,6 +1527,35 @@ void XLinkSession_pump(XLinkSession* self, uint32_t nowMs)
         && (nowMs - self->m_lastSendTick) > (XLINK_HEARTBEAT_TIMEOUT_MS / 3u)) {
         XLinkSession_sendSession(self, XLinkSessionCode_Heartbeat, NULL, 0);
     }
+
+#if XLINK_TX_QUEUE_BYTES > 0
+    /* [发方向判线] 与收方向静默判线严格对称，补的是「收通发不通」的单向
+       故障：收方向持续有对端数据/心跳刷新 m_lastReceiveTick（故下面的静默
+       判线永不成立），但发方向 write 恒 <=0、队列持续积压——会话停在 Ready
+       却永远投不出推送。纯半开（双向断、无 FIN）本就会被下面的 6s 静默
+       判线 reset，本判线在该场景是冗余、不会更早触发。
+       判的是「连续 6s 零进展且此刻仍有积压」，不是累计失败次数：任意一次
+       written>0（哪怕短写 1 字节）或队列排空都把 m_lastTxProgressTick 清 0
+       （见 txFlush），与收方向「收到任意字节即刷新」完全同构，正常非阻塞
+       TCP 背压（EWOULDBLOCK/短写）250ms 一拍内窗口重开即恢复，不误杀。
+       文件传输长停滞由 XLinkSession_keepAlive 清零本起算点（逃生阀），避免
+       比文件引擎自身 30s 空闲容忍更激进地 reset 健康的大文件传输。
+       双闸 m_lastTxProgressTick != 0 / m_txUsed > 0 分别要求「确实已连续
+       零写出」「此刻仍有要保护的数据」。 */
+    if (XLINK_HEARTBEAT_TIMEOUT_MS > 0 && self->m_lastTxProgressTick != 0
+        && self->m_txUsed > 0 && nowMs >= self->m_lastTxProgressTick
+        && (nowMs - self->m_lastTxProgressTick) > XLINK_HEARTBEAT_TIMEOUT_MS) {
+        XPrintf("XLinkSession: 发方向判线（持续写失败 %ums > %ums，积压 %uB，"
+                "本链路累计收 %llu / 发 %llu 字节）\n",
+                (unsigned)(nowMs - self->m_lastTxProgressTick),
+                (unsigned)XLINK_HEARTBEAT_TIMEOUT_MS,
+                (unsigned)self->m_txUsed,
+                (unsigned long long)self->m_stats.m_bytesReceived,
+                (unsigned long long)self->m_stats.m_bytesSent);
+        XLinkSession_reset(self);
+        return;
+    }
+#endif
 
     /* 静默超时判线。 */
     if (XLINK_HEARTBEAT_TIMEOUT_MS > 0 && self->m_lastReceiveTick != 0
@@ -2016,6 +2087,12 @@ bool XLinkSession_keepAlive(XLinkSession* self, uint32_t nowMs)
     self->m_lastReceiveTick = nowMs;
     self->m_lastSendTick = nowMs;
     self->m_nowTick = nowMs;
+    /* [逃生阀同步] 文件传输活跃期（XLinkFileTransfer / XLinkFileServer）用本
+       接口抑制「收方向静默判线」以容忍 IOCP 大流量后 send/recv 完成的数秒
+       停滞（XLink_config.h 默认 6s，文件引擎另有 30s 空闲容忍）。新增的发
+       方向判线同样必须随这里归零：否则传输停滞时收方向被放行、发方向却在
+       6s 后被判死，比文件引擎自身容忍度激进、会误杀健康的大文件传输。 */
+    self->m_lastTxProgressTick = 0;
     return true;
 }
 

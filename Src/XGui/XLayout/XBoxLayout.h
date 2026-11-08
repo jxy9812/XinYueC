@@ -322,24 +322,24 @@ void XBoxLayout_setStretch(XBoxLayout* self, int index, int stretch);
 int XBoxLayout_stretch(const XBoxLayout* self, int index);
 
 /**
- * @brief      为指定控件设置伸展因子（对标 QBoxLayout::setStretchFactor）。
+ * @brief      为指定控件设置伸展因子（对标 QBoxLayout::setStretchFactor 控件重载）。
  * @param      self 目标布局；可为 NULL。
  * @param      widget 目标控件借用指针。
  * @param      stretch 伸展因子。
  * @return     控件存在于本布局时返回 true；否则返回 false。
  */
-bool XBoxLayout_setStretchFactorWidget(XBoxLayout* self, XWidget* widget,
-                                       int stretch);
-
+bool XBoxLayout_setStretchFactor(XBoxLayout* self, XWidget* widget,
+                                 int stretch);
 /**
- * @brief      为指定子布局设置伸展因子（对标 QBoxLayout::setStretchFactor）。
+ * @brief      为指定布局设置伸展因子（对标 QBoxLayout::setStretchFactor 布局重载）。
+ * @details    Qt 同名重载在 C 侧按本库约定以 _2 区分。
  * @param      self 目标布局；可为 NULL。
  * @param      child 目标子布局借用指针。
  * @param      stretch 伸展因子。
  * @return     子布局存在于本布局时返回 true；否则返回 false。
  */
-bool XBoxLayout_setStretchFactorLayout(XBoxLayout* self, XLayout* child,
-                                       int stretch);
+bool XBoxLayout_setStretchFactor_2(XBoxLayout* self, XLayout* child,
+                                   int stretch);
 
 #endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 

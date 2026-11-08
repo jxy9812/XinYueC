@@ -87,9 +87,24 @@ CAP_AUTH = 0x0010
 CAP_FILE_TRANSFER = 0x0020
 
 # ---- 角色与认证结果 --------------------------------------------------------
+# [四档角色——追加不重排] 0=匿名（只读）/ 1=普通用户（只读+下载）/
+# 2=管理员（全权）/ 3=操作者（只读+下载+设备控制）。
+# Operator 刻意取追加值 3 而不是插到 1/2 之间：账户库已落盘上线，
+# 把 Admin 从 2 改成 3 会让存量 root（role=2）静默降级。故**禁止用数值
+# 大小比较角色**，一律走 permissions 模块的权限点判定。
 ROLE_ANONYMOUS = 0
 ROLE_USER = 1
 ROLE_ADMIN = 2
+ROLE_OPERATOR = 3
+
+# ---- 权限位（与 C 侧 XAccessPerm 逐值一致） --------------------------------
+PERM_VIEW = 1 << 0             # 查看遥测/快照/历史
+PERM_DEVICE_CONTROL = 1 << 1   # 设备控制（操作者+）
+PERM_MODE_SWITCH = 1 << 2      # 手/自动切换（管理员）
+PERM_AUTO_CONTROL = 1 << 3     # 自动运行启停（管理员）
+PERM_ACCOUNT_ADMIN = 1 << 4    # 账户/服务端配置（管理员）
+PERM_DOWNLOAD = 1 << 5         # 数据下载/导出（普通用户+；追加位）
+PERM_ALL = 0x3F
 
 AUTHSTATUS_OK = 0
 AUTHSTATUS_BAD_USER = 1
@@ -424,6 +439,17 @@ STORAGE_MAX_MB_MAX = 1024 * 1024
 CFG_POLL_MS_MIN = 50
 CFG_POLL_MS_MAX = 60000
 
+#: login 节键（账户/登录策略；与 C 侧 XhsfLinkProto.h 的 HSF_CFGK_LOGIN_*
+#: 同名同值，2026-11-08 新增）。写入立即对下一次登录生效并落盘配置文件；
+#: 已在线会话不受影响（关闭同账并发不会踢人）。需管理员（AccountAdmin）。
+CFG_SECTION_LOGIN = "login"
+CFGK_LOGIN_ALLOW_ANON = "loginAllowAnonymous"
+CFGK_LOGIN_ALLOW_CONCUR = "loginAllowConcurrent"
+CFGK_LOGIN_MAX_SESSIONS = "loginMaxSessions"
+#: 会话上限允许范围（0=不限）。
+CFG_LOGIN_MAX_SESSIONS_MIN = 0
+CFG_LOGIN_MAX_SESSIONS_MAX = 256
+
 # ---- 历史数据分页读取（2026-11-06 新增）----
 
 #: 分页读取历史数据（**只读，无角色要求**：历史数据不是控制面）。
@@ -471,6 +497,10 @@ HIST_KEY_KW = "kw"
 #: 关键字要比对的显示列下标数组（缺省/空 = 全部列）。
 HIST_KEY_KW_COLS = "kwCols"
 #: 分页应答键。
+#: 历史分页：导出/下载意图标记（bool；缺省 false=普通浏览）。
+#: 客户端导出时置 true，服务端验 PERM_DOWNLOAD（界面灰按钮拦不住直接发帧）。
+HIST_KEY_EXPORT = "export"
+
 HIST_KEY_TOTAL = "total"
 HIST_KEY_ROWS = "rows"
 HIST_KEY_COLS = "cols"
@@ -643,7 +673,9 @@ DEFAULT_USER_PASS = "admin"
 DEFAULT_ROOT_NAME = "root"
 DEFAULT_ROOT_PASS = "root"
 
-#: 控制类命令所需最低角色（对齐 XLinkAuthRole_Admin）。
+#: [deprecated] 旧闸值；语义上=权限点 PERM_DEVICE_CONTROL。
+#: 新代码请用 permissions.require(session, PROTO_PERM...)——角色值不单调，
+#: `role < ROLE_CONTROL` 这类比较已不可用。
 ROLE_CONTROL = ROLE_ADMIN
 
 

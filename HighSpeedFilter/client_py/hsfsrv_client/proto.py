@@ -87,9 +87,22 @@ CAP_AUTH = 0x0010
 CAP_FILE_TRANSFER = 0x0020
 
 # ---- 角色与认证结果 --------------------------------------------------------
+# [四档角色——追加不重排] 0=匿名 / 1=普通用户 / 2=管理员 / 3=操作者。
+# Operator 取追加值 3（不插入 1/2 之间，存量账户库不受影响）⇒ 角色值不单调，
+# 禁止用数值大小比较角色；判定一律走 permissions.can_role / bridge.can。
 ROLE_ANONYMOUS = 0
 ROLE_USER = 1
 ROLE_ADMIN = 2
+ROLE_OPERATOR = 3
+
+# ---- 权限位（与 C 侧 XAccessPerm / 服务端 proto.PERM_* 逐值一致） ----------
+PERM_VIEW = 1 << 0
+PERM_DEVICE_CONTROL = 1 << 1
+PERM_MODE_SWITCH = 1 << 2
+PERM_AUTO_CONTROL = 1 << 3
+PERM_ACCOUNT_ADMIN = 1 << 4
+PERM_DOWNLOAD = 1 << 5
+PERM_ALL = 0x3F
 
 AUTHSTATUS_OK = 0
 AUTHSTATUS_BAD_USER = 1
@@ -187,6 +200,23 @@ STORAGE_POLICY_HINTS = {
 CFG_POLL_MS_MIN = 50
 CFG_POLL_MS_MAX = 60000
 
+#: login 节键（账户/登录策略；与 C 侧 XhsfLinkProto.h 的 HSF_CFGK_LOGIN_*
+#: 同名同值，2026-11-08 新增）。写入立即对**新登录**生效并落盘
+#: hsf_login_policy.json；存量会话不受影响。需管理员（AccountAdmin）。
+CFG_SECTION_LOGIN = "login"
+CFGK_LOGIN_ALLOW_ANON = "loginAllowAnonymous"
+CFGK_LOGIN_ALLOW_CONCUR = "loginAllowConcurrent"
+CFGK_LOGIN_MAX_SESSIONS = "loginMaxSessions"
+#: 会话上限允许范围（0=不限；服务端夹到 0~256）。
+CFG_LOGIN_MAX_SESSIONS_MIN = 0
+CFG_LOGIN_MAX_SESSIONS_MAX = 256
+#: 登录策略一句话说明（界面在卡内显示）。
+LOGIN_POLICY_HINTS = (
+    "允许匿名：未宣告认证的对端直接以匿名（只读）会话接入。",
+    "允许同账并发：同一账户可同时在多个客户端在线；关闭时 root 单会话。",
+    "会话上限：全部在线会话总数封顶，0=不限。",
+)
+
 #: 分页读取服务端历史数据（**只读，无需 root**）。
 #: 载荷 {"offset","limit","beforeTs"?,"loTs"?,"hiTs"?}；
 #: 应答 {"ok","total","rows","cols","dbRows","latestTs",…}。
@@ -211,6 +241,9 @@ HIST_KEY_LATEST_TS = "latestTs"
 HIST_KEY_EARLIEST_TS = "earliestTs"
 HIST_KEY_WINDOW_START_TS = "windowStartTs"
 HIST_KEY_WINDOW_END_TS = "windowEndTs"
+#: 导出/下载意图标记（bool；缺省 false=浏览）。导出时置 true，服务端验
+#: PERM_DOWNLOAD。
+HIST_KEY_EXPORT = "export"
 #: 单页行数上下限（服务端夹取；与 server_py proto.py 同值）。
 #: 上限由 16KB 载荷反推（实测 50 行 ≈ 11.8KB）。
 HISTORY_PAGE_MAX = 50
@@ -522,7 +555,8 @@ DEFAULT_USER_PASS = "admin"
 DEFAULT_ROOT_NAME = "root"
 DEFAULT_ROOT_PASS = "root"
 
-#: 控制类命令所需最低角色（对齐 XLinkAuthRole_Admin）。
+#: [deprecated] 旧闸值；语义上=PERM_DEVICE_CONTROL。
+#: 新代码请用 permissions.can_role / bridge.can（角色值不单调）。
 ROLE_CONTROL = ROLE_ADMIN
 
 

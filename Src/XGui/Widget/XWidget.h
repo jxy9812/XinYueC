@@ -623,7 +623,7 @@ typedef struct XWidget
     uint32_t                m_isClosing : 1;         /**< 正在执行 close()。 */
     uint32_t                m_deiniting : 1;         /**< 正在执行析构（VXWidget_deinit 入口置位；
                                                          析构链内的任何重绘请求一律早退，见
-                                                         xwidget_repaintDeferSchedule 注）。 */
+                                                         XWidget_postPaintEvent 注）。 */
     uint32_t                m_inShow : 1;            /**< show 递归保护。 */
     uint32_t                m_inPaintEvent : 1;      /**< 绘制重入保护。 */
     uint32_t                m_visible : 1;           /**< 生效可见状态（含父链）。 */
@@ -983,11 +983,13 @@ void XWidget_updateGeometry(XWidget* self);
 void XWidget_move(XWidget* self, int x, int y);
 /**
  * @brief      移动位置（对标 QWidget::move(const QPoint&)）。
+ * @details    Qt 的 move 是重载族（int,int 与 QPoint 两版）；C 侧按本库
+ *             重载约定以 _2 后缀区分，本函数即 QPoint 版。
  * @param      self 目标控件；可为 NULL。
  * @param      pos 新左上角坐标；可为 NULL。
  * @return     无返回值；参数无效时不执行操作。
  */
-void XWidget_movePoint(XWidget* self, const XPoint* pos);
+void XWidget_move_2(XWidget* self, const XPoint* pos);
 /**
  * @brief      调整尺寸（对标 QWidget::resize(int,int)）。
  * @param      self 目标控件；可为 NULL。
@@ -2044,6 +2046,29 @@ void XWidget_setStyleSheet(XWidget* self, const XString* styleSheet);
  * @return     无返回值。
  */
 void XWidget_applyStyleSheetProperties(XWidget* self);
+/**
+ * @brief      返回控件当前样式（对标 QWidget::style）。
+ * @details    控件级样式（setStyle 设置的借用指针）优先；未设置时回落
+ *             XStyle_defaultStyle（安装 QSS 后即样式表样式），与 Qt 中
+ *             style() 回落 QApplication::style() 的口径一致。
+ * @param      self 目标控件；可为 NULL（返回默认样式）。
+ * @return     样式对象借用指针；全局默认样式未就绪时可为 NULL。
+ * @warning    返回值归对应样式对象所有，调用方不得释放。
+ */
+XStyle* XWidget_style(const XWidget* self);
+/**
+ * @brief      设置控件级样式（对标 QWidget::setStyle）。
+ * @details    语义：旧样式 unpolish → 换指针 → 新样式 polish → 置位
+ *             m_styleSet（对标 Qt::WA_SetStyle）→ 请求重绘。传 NULL
+ *             表示清除控件级样式并回落到默认样式（对默认样式 polish）。
+ *             与 Qt 一致，本函数不接管样式对象所有权：调用方负责其生命周期。
+ *             注：绘制侧需经 XWidget_style(self) 取样式后才生效；尚未迁移
+ *             的绘制点仍直接取 XStyle_defaultStyle。
+ * @param      self 目标控件；可为 NULL（无操作）。
+ * @param      style 样式对象借用指针；NULL 表示回落默认样式。
+ * @return     无返回值。
+ */
+void XWidget_setStyle(XWidget* self, XStyle* style);
 #endif /* XSTYLE_ON */
 /**
  * @brief      返回控件字体副本（对标 QWidget::font）。
@@ -2368,6 +2393,13 @@ void XWidget_repaintRect(XWidget* self, const XRect* rect);
 /** @brief 立即重绘指定区域（对标 QWidget::repaint(const QRegion&)）。 */
 void XWidget_repaintRegion(XWidget* self, const XRegion* region);
 
+/* [移除全局重绘节流 2026-11-08] 此处原有 XWidget_setMaxRepaintFps /
+ * XWidget_maxRepaintFps 两个进程级帧节拍 API。时间闸实测造成两处回归
+ * （帧耗时读数被污染成两帧间隔；XWindowType_Popup 弹层首帧被反复推后，
+ * 下拉框弹层只见灰框不见选项），且 Qt 本身没有全局帧率闸（update() 只
+ * 合并脏区、有脏区就画），故闸与 API 一并移除，见 XWidget.c
+ * 「重绘请求收口」注。唯一调用方 HsfUi.c 的 2fps 设定同步删除。 */
+
 /** @brief 计算控件当前实际可见区域（对标 QWidget::visibleRegion）。
  * @details 区域为本控件局部坐标：以自身 content rect 与自身 mask 求交后，沿父链
  *          逐级与祖先 content rect / mask 求交，最终转回局部坐标返回。近似实现
@@ -2462,6 +2494,22 @@ int XWidget_devType(const XWidget* self);
 void* XWidget_paintEngine(const XWidget* self);
 
 /* ==================== 快照与离屏渲染（对标 QWidget grab/render） ==================== */
+
+/**
+ * @brief      返回最近一次**整树绘制**的耗时（微秒；性能悬浮层口径）。
+ * @details    「整树绘制」= paintTree 根调用覆盖本控件与全部可见子控件的
+ *             绘制耗时。顶层控件的 paintEvent 只覆盖自身，子控件在此之后
+ *             才由 paintTree 递归绘制；因此本接口在顶层 paintEvent 内读取
+ *             时返回的是**上一帧**的完整耗时（帧起点回拨该值即得帧耗时）。
+ *             只统计原生顶层窗口的上屏绘制：子控件级的局部重绘、grab/
+ *             render 的离屏子树绘制不更新该值。
+ * @param      self 目标顶层控件；可为 NULL。
+ * @return     耗时（微秒）；self 不是最近一次整树绘制的根（如其它窗口/
+ *             弹层刚绘制过）或尚无样本时返回 0。
+ * @note       单线程控件模型：只允许在 GUI 线程读取；值随下一次整树绘制
+ *             覆盖，不得跨帧缓存。
+ */
+int64_t XWidget_lastPaintTreeUsecs(const XWidget* self);
 
 /**
  * @brief      抓取控件当前内容为图像（对标 QWidget::grab）。

@@ -401,10 +401,13 @@ static void storeCell(HsfHistoryCell* cell, const XVariant* var, bool numeric)
         XString* s = XVariant_toString(var);
         if (s) {
             const char* utf8 = XString_toUtf8(s);
-            if (utf8) {
+            if (utf8)
                 snprintf(cell->m_text, sizeof(cell->m_text), "%s", utf8);
-                XClassDelete((XClass*)s);
-            }
+            /* [恒释放] 原实现把 XClassDelete 放在 if (utf8) 内：
+             * XString_toUtf8 返回 NULL（转换失败/空缓存）时 s 泄漏。
+             * 副本所有权始终在调用方（XVariant_toString =
+             * XString_fromVariant，内部 XString_create_copy）。 */
+            XClassDelete((XClass*)s);
         }
     }
     cell->m_isNull = false;
@@ -428,7 +431,6 @@ static bool storeQueryInt(HsfServerStore* st, const char* sql, int64_t* out)
 {
     XSqlQuery* q;
     XSqlRecord* rec;
-    XVariant* v;
     bool ok = false;
 
     if (!st || !st->m_db || !out) return false;
@@ -438,30 +440,147 @@ static bool storeQueryInt(HsfServerStore* st, const char* sql, int64_t* out)
     if (XSqlQuery_isActive(q) && XSqlQuery_first(q)) {
         rec = XSqlQuery_record(q);
         if (rec) {
-            v = XSqlRecord_value(rec, 0);
+            /* [借用版] 同 queryHistory：XSqlRecord_value 返回堆副本须释放，
+             * 这里原先也没释放。HISTORY_PAGE 每次调用会走 4 次本函数
+             * （COUNT 窗口/COUNT 全库/MIN/MAX），是固定开销那部分的来源。 */
+            const XVariant* v = XSqlRecord_value_const(rec, 0);
             if (v) {
                 *out = XVariant_toInt64(v);
                 ok = true;
             }
+            /* [记录副本回收 2026-11-08] XSqlQuery_record 返回的是**新记录
+             * 所有权**（XSqlQuery.h：“调用者使用 XClassDelete 释放”），不是
+             * 查询内部借用；原实现只删 q 不删 rec，每次本函数漏一个记录副本。
+             * 本函数跑 COUNT(*)/MIN/MAX，记录只有 **1 个字段**，单次约
+             * 0.96KB；HISTORY_PAGE 一次调用走 4 次，合计约 3.8KB 固定开销。
+             * 注：行记录副本是 18 字段、约 7.5KB，两者不是同一量级，别混算。 */
+            XClassDelete((XClass*)rec);
         }
     }
     XClassDelete((XClass*)q);
+    /* [实测残余 2026-11-08] 单次查询净增 +40 字节（100 连查逐次一致，
+     * 定位在 exec→delq 之间的 SQL 通用层，非本函数漏记录副本）。量级
+     * 可忽略（HISTORY_PAGE 4 次/请求 =160B），已记入遗留清单待专项处理。 */
     return ok;
+}
+
+/**
+ * @brief 显示列表达式（与 Python store.DISPLAY_EXPR 逐条同口径）。
+ * @details 只用于**关键字下推**（LIKE 比对的文本口径必须与界面/导出
+ *          一致，否则“搜得到”与“看得到”会不一致）。
+ */
+static const char* const s_histDisplayExpr[HSF_HISTORY_DISPLAY_COLS] = {
+    "strftime('%Y-%m-%d %H:%M:%S', ts / 1000.0, 'unixepoch', 'localtime')",
+    "COALESCE(mode, '--')",
+    "COALESCE(vfd_state, '--')",
+    "CASE WHEN freq_hz IS NULL THEN '--' ELSE printf('%.2f', freq_hz) END",
+    "CASE WHEN current_a IS NULL THEN '--' ELSE printf('%.2f', current_a) END",
+    "CASE WHEN rpm IS NULL THEN '--' ELSE printf('%.0f', rpm) END",
+    "CASE WHEN turb1 IS NULL THEN '--' ELSE printf('%.2f', turb1) END",
+    "CASE WHEN turb2 IS NULL THEN '--' ELSE printf('%.2f', turb2) END",
+    "CASE WHEN flow IS NULL THEN '--' ELSE printf('%.2f', flow) || ' ' || "
+    "COALESCE(flow_unit, '') END",
+    "CASE WHEN flow_total IS NULL THEN '--' ELSE printf('%.2f', flow_total)"
+    " || ' ' || COALESCE(total_unit, '') END",
+    "CASE WHEN press_note IS NOT NULL AND press_note != '' THEN press_note "
+    "WHEN press_mpa IS NULL THEN '--' ELSE printf('%.3f', press_mpa) END",
+    "CASE WHEN temp IS NULL THEN '--' ELSE printf('%.1f', temp) END",
+    "CASE WHEN hum IS NULL THEN '--' ELSE printf('%.1f', hum) END",
+    "CASE WHEN di IS NULL THEN '--' ELSE printf('0x%08X', di & 0xFFFFFFFF) END",
+    "CASE WHEN do IS NULL THEN '--' ELSE printf('0x%08X', do & 0xFFFFFFFF) END",
+};
+
+/**
+ * @brief 拼关键字条件（与 Python store._keyword_condition 同口径）。
+ * @param out 输出 SQL 片段（以 " AND (…)" 开头）。
+ * @param cap 输出缓冲容量。
+ * @param kw 关键字（utf8；NULL/空=不筛）。
+ * @param cols 显示列下标数组（可 NULL/空=全部列）。
+ * @param colCount 数组长度。
+ * @return 写入条件返回 1；无需筛选返回 0。
+ * @details [转义] 关键字当字面量：SQL 单引号加倍，LIKE 的 \ % _ 前加
+ *          反斜杠并声明 ESCAPE '\\'——否则用户输入 %/_ 会变成通配符，
+ *          搜“0.00”会误命中一大片。
+ */
+static int storeBuildKwCondition(char* out, int cap, const char* kw,
+                                 const uint32_t* cols, int colCount)
+{
+    char lit[192];
+    size_t n = 0;
+    int i;
+    bool first = true;
+    int used = 0;
+
+    if (!out || cap <= 0) return 0;
+    out[0] = '\0';
+    if (!kw || !kw[0]) return 0;
+    {
+        /* [与 Python 同口径] 超长只取前 128 字符继续筛（不整条丢弃——
+         * 丢条件会把"筛选"变成"看全库"，与 Python 行为不一致）。 */
+        size_t kwLen = strlen(kw);
+        size_t k;
+        if (kwLen > 128) kwLen = 128;
+        for (k = 0; k < kwLen && n < sizeof(lit) - 8; ++k) {
+            unsigned char ch = (unsigned char)kw[k];
+            if (ch == '\'') { lit[n++] = '\''; lit[n++] = '\''; }
+            else if (ch == '\\' || ch == '%' || ch == '_') {
+                lit[n++] = '\\';
+                lit[n++] = (char)ch;
+            } else {
+                lit[n++] = (char)ch;
+            }
+        }
+        lit[n] = '\0';
+    }
+
+    used = snprintf(out, (size_t)cap, " AND (");
+    if (used < 0) return 0;
+    for (i = 0; i < colCount; ++i) {
+        int idx = (int)cols[i];
+        int wrote;
+        if (idx < 0 || idx >= HSF_HISTORY_DISPLAY_COLS) continue;
+        wrote = snprintf(out + used, (size_t)(cap - used),
+                         "%sCOALESCE(%s, '')",
+                         first ? "" : " || ' ' || ", s_histDisplayExpr[idx]);
+        if (wrote < 0 || used + wrote >= cap) return 0;
+        used += wrote;
+        first = false;
+    }
+    if (first) {
+        /* 下标全越界：退回全部列（勿把条件拼成空白）。 */
+        for (i = 0; i < HSF_HISTORY_DISPLAY_COLS; ++i) {
+            int wrote = snprintf(out + used, (size_t)(cap - used),
+                                 "%sCOALESCE(%s, '')",
+                                 first ? "" : " || ' ' || ",
+                                 s_histDisplayExpr[i]);
+            if (wrote < 0 || used + wrote >= cap) return 0;
+            used += wrote;
+            first = false;
+        }
+    }
+    if (snprintf(out + used, (size_t)(cap - used),
+                 ") LIKE '%%%s%%' ESCAPE '\\'", lit) < 0)
+        return 0;
+    return 1;
 }
 
 int HsfServerStore_queryHistory(HsfServerStore* st, int offset, int limit,
                                 int64_t loMs, int64_t hiMs,
+                                const char* kw,
+                                const uint32_t* kwCols, int kwColCount,
                                 HsfHistoryQueryRow* outRows, int outMaxRows,
                                 int* outWindowTotal, int64_t* outDbRows,
                                 int64_t* outLatestTs, int64_t* outEarliestTs)
 {
-    char sql[1024];
-    char where[192];
+    char sql[4096];
+    char where[2048];
+    char kwCond[1536];
     XSqlQuery* q;
     XSqlRecord* rec;
     int written = 0;
     int64_t count = 0;
     int64_t v = 0;
+    int whereLen;
 
     if (outWindowTotal) *outWindowTotal = 0;
     if (outDbRows) *outDbRows = 0;
@@ -486,6 +605,12 @@ int HsfServerStore_queryHistory(HsfServerStore* st, int offset, int limit,
         snprintf(where, sizeof(where), " WHERE ts >= %lld",
                  (long long)HSF_STORE_VALID_TS_MIN);
     }
+    /* [关键字下推] 与 Python 同口径：时间 + 关键字共用同一条 WHERE，
+     * 保证"总数"与"页内容"永远一致。 */
+    whereLen = (int)strlen(where);
+    storeBuildKwCondition(kwCond, (int)sizeof(kwCond), kw, kwCols, kwColCount);
+    if (kwCond[0] && whereLen < (int)sizeof(where))
+        snprintf(where + whereLen, sizeof(where) - (size_t)whereLen, "%s", kwCond);
 
     /* 窗口内总行数（页码总数按它算，不是全库行数）。 */
     snprintf(sql, sizeof(sql), "SELECT COUNT(*) FROM history%s", where);
@@ -523,11 +648,28 @@ int HsfServerStore_queryHistory(HsfServerStore* st, int offset, int limit,
                 HsfHistoryQueryRow* row = &outRows[written];
                 int c;
                 for (c = 0; c < HSF_HISTORY_COLUMNS; ++c) {
-                    XVariant* var = XSqlRecord_value(rec, c);
+                    /* [必须用 _const 借用版] XSqlRecord_value 走
+                     * XSqlField_value → XVariant_create_copy，返回的是**堆
+                     * 副本、所有权归调用方**。原实现在这里每格取一次副本却
+                     * 从不释放。实测（记录副本 + 单格副本合计）：limit=20 时
+                     * 每次 HISTORY_PAGE +182,648 字节、limit=1 时 +14,360；
+                     * 本条 _const 修复后分别降到 +153,688 / +11,328，余下
+                     * 即下方 XSqlRecord 副本（每行 1 个，约 7,493 字节/行）。
+                     * _const 返回内部字段地址，零分配、禁止释放。 */
+                    const XVariant* var = XSqlRecord_value_const(rec, c);
                     storeCell(&row->m_cells[c], var, storeColIsNumeric(c));
                 }
                 written++;
             }
+            /* [记录副本回收 2026-11-08] XSqlQuery_record 每次都返回**新记录
+             * 所有权**（XSqlQuery.h：“调用者使用 XClassDelete 释放”），不是
+             * 查询内部借用。原实现只在循环外删 q、从不删 rec ⇒ 每行漏一个
+             * 记录副本（18 字段，≈7,493 字节）。limit=20 时一次
+             * HISTORY_PAGE 的实际构成：20 行 × 7,493 + 4 次 COUNT/MIN/MAX
+             * 的单字段副本（各约 959）= 约 153.7KB，这是 C 客户端每轮增长
+             * 的主项。注意 `if (!rec) break;` 分支 rec 为 NULL 不需释放，
+             * 其余路径（含 written 已满）都走到本行统一释放。 */
+            XClassDelete((XClass*)rec);
         } while (XSqlQuery_next(q));
     }
     XClassDelete((XClass*)q);

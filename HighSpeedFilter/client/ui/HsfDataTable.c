@@ -65,6 +65,9 @@ typedef struct HsfDataTablePage
     XTableWidget m_table;   /**< 内容表格（铺满，随窗口拉伸）。 */
     HsfChartPlaceholder m_chart; /**< 图表视图占位（与表格二选一显隐）。 */
     int          m_viewMode; /**< 当前视图：0=表格 1=图表。 */
+    int          m_fontBasePx; /**< 建页时表格字体像素（0=未设，不缩放）。 */
+    int          m_rowBaseH;   /**< 建页时行高（随字号缩放）。 */
+    int          m_rowCount;   /**< 建页时行数（缩放时逐行设高）。 */
 } HsfDataTablePage;
 
 /** @brief 工具条动作落地：视图切换显隐两视图（其余动作待数据接入）。 */
@@ -155,6 +158,11 @@ XWidget* HsfDataTablePage_create(XWidget* parent,
      * QHeaderView::Stretch)）：各列均分内容区宽、随窗口拉伸——表格
      * 几何铺满（布局器）+ 列宽铺满（Stretch 段）合成「贴满窗口」。 */
     XTableWidget_init(&self->m_table, &self->m_base, 0);
+    {
+        XFont tf = XWidget_font((XWidget*)&self->m_table);
+        self->m_fontBasePx = XFont_pixelSize(&tf);
+        XClassDeinit(&tf);
+    }
     if (columnCount > 0)
         XTableWidget_setColumnCount(&self->m_table, columnCount);
     if (headers && columnCount > 0)
@@ -162,6 +170,8 @@ XWidget* HsfDataTablePage_create(XWidget* parent,
                                                columnCount);
     if (rowCount > 0)
         XTableWidget_setRowCount(&self->m_table, rowCount);
+    self->m_rowCount = rowCount;
+    self->m_rowBaseH = XTableView_rowHeight(&self->m_table.m_base, 0);
     /* 对齐 Qt：XHeaderView_setSectionResizeMode 本就是
      * horizontalHeader()->setSectionResizeMode 的转发，直接调它。 */
     {
@@ -176,7 +186,7 @@ XWidget* HsfDataTablePage_create(XWidget* parent,
     memset(&self->m_chart, 0, sizeof(self->m_chart));
     XWidget_init(&self->m_chart.m_base, &self->m_base, 0);
     XClassGetVtable(&self->m_chart) = HsfChartPlaceholder_class_init();
-    self->m_chart.m_text = "\xE5\x9B\xBE\xE8\xA1\xA8\xE8\xA7\x86\xE5\x9B\xBE\xE5\xBE\x85\xE6\x95\xB0\xE6\x8D\xAE\xE6\x8E\xA5\xE5\x85\xA5"; /* 图表视图待数据接入 */
+    self->m_chart.m_text = "图表视图待数据接入"; /* 图表视图待数据接入 */
     HsfTheme_applyDefaultFont(&self->m_chart.m_base);
     /* 控制工具条（时间/通道/筛选/导出/视图切换；动作回 pageBarAction）。 */
     self->m_bar = HsfDataBar_create(&self->m_base);
@@ -208,6 +218,31 @@ XWidget* HsfDataTablePage_create(XWidget* parent,
 
     XWidget_show(&self->m_base);
     return &self->m_base;
+}
+
+void HsfDataTablePage_applyFont(XWidget* page, int pct)
+{
+    HsfDataTablePage* self = (HsfDataTablePage*)page;
+    XFont src;
+    XFont f;
+    if (!self || pct <= 0) return;
+    XLabel_setTextPixelSize(&self->m_title, (17 * pct + 50) / 100);
+    if (self->m_fontBasePx <= 0) return;
+    src = XWidget_font((XWidget*)&self->m_table);
+    XFont_init(&f);
+    XClassCopy(&f, &src);
+    XClassDeinit(&src);
+    XFont_setPixelSize(&f, (self->m_fontBasePx * pct + 50) / 100);
+    XWidget_setFont((XWidget*)&self->m_table, &f);
+    XClassDeinit(&f);
+    /* 行高随字号同步（否则放大后文字被行高裁掉）。 */
+    if (self->m_rowBaseH > 0) {
+        const int rh = (self->m_rowBaseH * pct + 50) / 100;
+        int r;
+        for (r = 0; r < self->m_rowCount; ++r)
+            XTableView_setRowHeight(&self->m_table.m_base, r, rh);
+    }
+    if (self->m_bar) HsfDataBar_applyFont(self->m_bar, pct);
 }
 
 void HsfDataTablePage_adapt(XWidget* page, bool compact)

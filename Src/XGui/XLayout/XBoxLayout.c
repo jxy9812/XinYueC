@@ -1394,12 +1394,17 @@ void XBoxLayout_insertItem(XBoxLayout* self, int index, XLayoutItem* item,
 
 void XBoxLayout_setStretch(XBoxLayout* self, int index, int stretch)
 {
+    int v;
     if (!self) return;
     if (index < 0 || index >= (int)self->m_base.m_itemCount) return;
     if (index >= self->m_stretchCapacity) {
         if (!XBoxLayout_growStretches(self, index + 1)) return;
     }
-    self->m_stretches[index] = stretch < 0 ? 0 : stretch;
+    v = stretch < 0 ? 0 : stretch;
+    /* [暂时撤除同值早退做 A/B 对照] 加闸后变频器页给定行被拉成 200 高，
+     * 先回退确认是否本闸所致（Qt 语义上早退不该改变布局结果，若确实改变，
+     * 说明本框架有调用方把 setStretch 当「重排信号」用，需分别处理）。 */
+    self->m_stretches[index] = v;
     XLayoutItem_invalidate_base((XLayoutItem*)self);
 }
 
@@ -1411,8 +1416,8 @@ int XBoxLayout_stretch(const XBoxLayout* self, int index)
     return self->m_stretches[index];
 }
 
-bool XBoxLayout_setStretchFactorWidget(XBoxLayout* self, XWidget* widget,
-                                       int stretch)
+bool XBoxLayout_setStretchFactor(XBoxLayout* self, XWidget* widget,
+                                 int stretch)
 {
     int i;
     if (!self || !widget) return false;
@@ -1425,8 +1430,8 @@ bool XBoxLayout_setStretchFactorWidget(XBoxLayout* self, XWidget* widget,
     return false;
 }
 
-bool XBoxLayout_setStretchFactorLayout(XBoxLayout* self, XLayout* child,
-                                       int stretch)
+bool XBoxLayout_setStretchFactor_2(XBoxLayout* self, XLayout* child,
+                                   int stretch)
 {
     int i;
     if (!self || !child) return false;

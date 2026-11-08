@@ -59,6 +59,17 @@ static int64_t hsfCfgSubInt64(const XBsonDocument* sub, const char* key,
     return XBsonValue_toInt64(v, def);
 }
 
+/** @brief 取子文档里的浮点键（usedMb 等服务端直接给的定数）。 */
+static double hsfCfgSubDouble(const XBsonDocument* sub, const char* key,
+                               double def)
+{
+    XBsonValue* v;
+    if (!sub || !key) return def;
+    v = XBsonDocument_value_keyUtf8(sub, key);
+    if (!v) return def;
+    return XBsonValue_toDouble(v, def);
+}
+
 /** @brief 取子文档里的文本键。 */
 static void hsfCfgSubText(const XBsonDocument* sub, const char* key,
                           char* out, int cap)
@@ -70,7 +81,13 @@ static void hsfCfgSubText(const XBsonDocument* sub, const char* key,
     v = XBsonDocument_value_keyUtf8(sub, key);
     if (!v) return;
     s = XBsonValue_toString(v);
-    if (s) snprintf(out, (size_t)cap, "%s", XString_toUtf8(s));
+    if (s) {
+        const char* u = XString_toUtf8(s);
+        /* [空串不能交给 %s] 空 BSON 字符串的 XString 内部缓冲可能为 NULL，
+         * XString_toUtf8 返回 NULL 时 snprintf("%s", NULL) 会写成 "(null)"
+         * （实测：Python 服务端 path="" → 路径框显示 "(null)"）。 */
+        if (u) snprintf(out, (size_t)cap, "%s", u);
+    }
 }
 
 bool HsfConfig_parse(const uint8_t* data, uint32_t len, HsfConfig* out)
@@ -93,6 +110,19 @@ bool HsfConfig_parse(const uint8_t* data, uint32_t len, HsfConfig* out)
     collect = hsfCfgSubDoc(doc, "collect");
     storage = hsfCfgSubDoc(doc, "storage");
     stats = hsfCfgSubDoc(doc, "storageStats");
+    {
+        /* 登录策略节（2026-11-08；旧服务端没有该节 ⇒ 保持缺省，界面
+         * 按缺省显示且不误报）。 */
+        const XBsonDocument* login = hsfCfgSubDoc(doc, "login");
+        if (login) {
+            out->m_login.m_allowAnonymous =
+                hsfCfgSubBool(login, "loginAllowAnonymous", false);
+            out->m_login.m_allowConcurrent =
+                hsfCfgSubBool(login, "loginAllowConcurrent", false);
+            out->m_login.m_maxSessions =
+                hsfCfgSubInt(login, "loginMaxSessions", 8);
+        }
+    }
 
     if (collect) {
         out->m_collect.m_vfdEnabled =
@@ -131,17 +161,27 @@ bool HsfConfig_parse(const uint8_t* data, uint32_t len, HsfConfig* out)
     if (stats) {
         out->m_stats.m_usedBytes = hsfCfgSubInt64(stats, "usedBytes", 0);
         out->m_stats.m_contentBytes = hsfCfgSubInt64(stats, "contentBytes", 0);
+        out->m_stats.m_usedMb = hsfCfgSubDouble(stats, "usedMb",
+            (double)out->m_stats.m_usedBytes / (1024.0 * 1024.0));
         out->m_stats.m_maxMb = hsfCfgSubInt(stats, "maxMb", 0);
-        out->m_stats.m_rows = hsfCfgSubInt(stats, "rows", 0);
-        out->m_stats.m_segments = hsfCfgSubInt(stats, "segments", 0);
-        out->m_stats.m_droppedRows = hsfCfgSubInt(stats, "droppedRows", 0);
+        /* [64 位字段用 Int64 取] 服务端把 rows/droppedRows 写成 int64；
+         * XBsonValue_toInt32 对 int64 变体不降型（实测回到 0），
+         * 界面会显示"行数 0"。 */
+        out->m_stats.m_rows = (int)hsfCfgSubInt64(stats, "rows", 0);
+        out->m_stats.m_segments = (int)hsfCfgSubInt64(stats, "segments", 0);
+        out->m_stats.m_droppedRows =
+            (int)hsfCfgSubInt64(stats, "droppedRows", 0);
         out->m_stats.m_paused = hsfCfgSubBool(stats, "paused", false);
+        hsfCfgSubText(stats, "policy", out->m_stats.m_policy,
+                      (int)sizeof(out->m_stats.m_policy));
+        hsfCfgSubText(stats, "pauseReason", out->m_stats.m_pauseReason,
+                      (int)sizeof(out->m_stats.m_pauseReason));
     }
     v = XBsonDocument_value_keyUtf8(doc, "storageDbPath");
     if (v) {
         const XString* s = XBsonValue_toString(v);
-        if (s) snprintf(out->m_dbPath, sizeof(out->m_dbPath), "%s",
-                        XString_toUtf8(s));
+        const char* u = s ? XString_toUtf8(s) : NULL;
+        if (u) snprintf(out->m_dbPath, sizeof(out->m_dbPath), "%s", u);
     }
     out->m_valid = true;
     XClassDelete((XClass*)doc);

@@ -28,6 +28,7 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XColor.h"
 #if XPALETTE_ON
+#include "XBrush.h"
 
 /** @brief 颜色组（对标 Qt 6.8 QPalette::ColorGroup）。 */
 typedef enum XPaletteColorGroup
@@ -69,28 +70,20 @@ typedef enum XPaletteColorRole
 
 /**
  * @brief      XPalette 调色板值类型。
- * @details    m_colors 为 [组][角色] 二维数组；XPaletteColorGroup_Current
- *             槽位仅为对齐 Qt 而保留，读写统一映射到活动组。所有颜色初值
- *             由 XPalette_init_default 填充；本类型无堆资源，可直接按值
- *             拷贝，不需要 *_delete 释放。
- *             [内存治理 2026-10-11] 存储由 16B XColor 压缩为 8B 全精度
- *             单元 XPaletteCell（alpha/R/G/B 各 uint16 原样，1408→704B）：
- *             写入时非 RGB 色彩空间经 XColor_toRgb 归一（调色板语义=
- *             「最终显示色」，丢弃原色彩空间标签），通道值零量化零损失。
- *             存取一律经 XPalette_color/setColor（内部 pack/unpack 桥接），
- *             勿直访。
+ * @details    m_colors 为 [组][角色] 二维画刷矩阵（XBrush 8B 只读句柄），
+ *             与 Qt 6.8 QPalettePrivate::Data 的 QBrush 数组同构：调色板
+ *             持笔刷而非纯色，纯色只是 SolidPattern 的特例。句柄指向
+ *             XBrush 常驻数据块，因此本类型仍无堆资源、可直接按值拷贝，
+ *             不需要 *_delete 释放。
+ *             颜色读写仍走 XPalette_color/setColor：访问按 RGB 归一后的
+ *             纯色（语义=「最终显示色」，丢弃原色彩空间标签）。
+ *             笔刷读写走 XPalette_brush/setBrush/isBrushSet（对标
+ *             QPalette 同名 API）。m_colors 勿直访。
  */
-typedef struct XPaletteCell
-{
-    uint16_t m_alpha; /**< Alpha 通道（0~65535，XColor 原值）。 */
-    uint16_t m_red;   /**< 红（0~65535，XColor 原值）。 */
-    uint16_t m_green; /**< 绿（0~65535，XColor 原值）。 */
-    uint16_t m_blue;  /**< 蓝（0~65535，XColor 原值）。 */
-} XPaletteCell;
-
 typedef struct XPalette
 {
-    XPaletteCell m_colors[XPaletteColorGroup_NColorGroups][XPaletteColorRole_NColorRoles];
+    XBrush m_colors[XPaletteColorGroup_NColorGroups][XPaletteColorRole_NColorRoles];
+    uint64_t m_resolveMask; /**< 每角色一位（对标 QPalette::ResolveMask）。 */
 } XPalette;
 
 /**
@@ -156,6 +149,89 @@ XColor XPalette_color(const XPalette* self, XPaletteColorGroup group, XPaletteCo
  * @param      color 新颜色值。
  */
 void XPalette_setColor(XPalette* self, XPaletteColorGroup group, XPaletteColorRole role, XColor color);
+
+/**
+ * @brief      查询指定角色的画刷（对标 QPalette::brush）。
+ * @details    返回 8B 句柄副本（无所有权）；NoRole/越界返回 NoBrush。
+ * @param      self 目标调色板；NULL 返回 NoBrush。
+ * @param      group 颜色组。
+ * @param      role 颜色角色。
+ * @return     画刷值；未设置或参数非法为 NoBrush。
+ */
+XBrush XPalette_brush(const XPalette* self, XPaletteColorGroup group, XPaletteColorRole role);
+
+/**
+ * @brief      设置指定角色的画刷（对标 QPalette::setBrush）。
+ * @details    整笔刷替换（样式/颜色/渐变/纹理/变换）；Current 组映射到
+ *             Active，NoRole 忽略。
+ * @param      self 目标调色板；可为 NULL（无操作）。
+ * @param      group 颜色组。
+ * @param      role 颜色角色。
+ * @param      brush 新画刷；可为 NULL（等价 NoBrush）。
+ */
+void XPalette_setBrush(XPalette* self, XPaletteColorGroup group, XPaletteColorRole role, const XBrush* brush);
+
+/**
+ * @brief      查询角色是否显式设置了画刷（对标 QPalette::isBrushSet）。
+ * @details    以 resolveMask 对应位判定：setColor/setBrush 置位，init 系
+ *             初始化清零；NoRole/越界不参与判定。
+ * @param      self 目标调色板；可为 NULL。
+ * @param      group 颜色组。
+ * @param      role 颜色角色。
+ * @return     已设置返回 true；NoRole/越界/NULL 返回 false。
+ */
+bool XPalette_isBrushSet(const XPalette* self, XPaletteColorGroup group, XPaletteColorRole role);
+
+/**
+ * @brief      交换两个调色板（对标 QPalette::swap）。
+ * @details    逐字节交换画刷矩阵与 resolveMask；句柄指向驻留池，交换后
+ *             两侧数据仍有效。
+ * @param      a 调色板 A；可为 NULL（无操作）。
+ * @param      b 调色板 B；可为 NULL（无操作）。
+ * @return     无返回值。
+ */
+void XPalette_swap(XPalette* a, XPalette* b);
+/**
+ * @brief      计算调色板内容哈希（对标 QPalette::cacheKey）。
+ * @details    FNV-1a 逐格混入颜色 ARGB 与 resolveMask；内容相同则键相同，
+ *             可直接用作缓存索引。
+ * @param      self 目标调色板；可为 NULL。
+ * @return     64 位哈希；NULL 返回 0。
+ */
+uint64_t XPalette_cacheKey(const XPalette* self);
+/**
+ * @brief      判断是否与另一调色板内容相同（对标 isCopyOf）。
+ * @details    本库调色板是值类型（无共享数据指针），「同源拷贝」等价于
+ *             逐格内容全等，与 isEqual 同口径。
+ * @param      a 调色板 A；可为 NULL。
+ * @param      b 调色板 B；可为 NULL。
+ * @return     内容全等返回 true。
+ */
+bool XPalette_isCopyOf(const XPalette* a, const XPalette* b);
+/**
+ * @brief      合并另一个调色板已解析的角色（对标 QPalette::resolve）。
+ * @details    返回新值：复制自身全量后，仅用 other 中 resolveMask 置位的
+ *             角色覆盖（覆盖全部分组），并同步置位这些角色；未置位角色
+ *             保持自身值。
+ * @param      self 基础调色板；NULL 时以默认调色板为底。
+ * @param      other 覆盖源；NULL 时原样返回基础调色板。
+ * @return     合并后的调色板值。
+ */
+XPalette XPalette_resolve(const XPalette* self, const XPalette* other);
+/**
+ * @brief      查询解析位掩码（对标 resolveMask）。
+ * @details    每角色一位（低位对应 XPaletteColorRole 枚举序号）。
+ * @param      self 目标调色板；可为 NULL。
+ * @return     64 位掩码；NULL 返回 0。
+ */
+uint64_t XPalette_resolveMask(const XPalette* self);
+/**
+ * @brief      设置解析位掩码（对标 setResolveMask）。
+ * @param      self 目标调色板；可为 NULL（无操作）。
+ * @param      mask 新掩码；每角色一位。
+ * @return     无返回值。
+ */
+void XPalette_setResolveMask(XPalette* self, uint64_t mask);
 
 /**
  * @brief      比较两个调色板是否逐单元相等（对标 QPalette::operator==）。

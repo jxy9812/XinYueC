@@ -540,6 +540,16 @@ typedef struct XVfdDevice {
     /* ---- 运行阶段推导（对齐 Python VfdDevice._derive_phase）---- */
     bool m_phaseDerive;             /**< 开启阶段推导（M512 开；状态字自带阶段的品牌关）。 */
     bool m_stopRequested;           /**< 已发停止命令、输出尚未归零（"正在停机"窗口）。 */
+    /**
+     * @brief 最近一次 START/JOG 的命令方向记账（换向减速判据用）。
+     * @details 状态字过零才翻向——"命令方向 ≠ 状态字方向"的窗口就是运行中
+     *          换向的减速段（2026-11-06 换向口径）。这段输出在按减速时间降
+     *          向 0，但设定频率镜像仍是给定值，差值判据会误判成"加速中"，
+     *          故 deriveRunPhase 用这对标记识别；stop/freeStop/quickStop
+     *          清除（停止覆盖换向）。与 Python VfdDevice._cmd_reverse 同口径。
+     */
+    bool m_hasCmdReverse;
+    bool m_cmdReverse;
     XVfdError m_lastError;          /**< 最近一次失败原因 */
     double m_maxFreqHz;             /**< 最大频率缓存（相对口径频率换算基准；Hz） */
     bool m_maxFreqKnown;            /**< m_maxFreqHz 是否已从 MaxFreq 槽读得 */

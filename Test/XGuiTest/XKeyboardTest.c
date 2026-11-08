@@ -673,6 +673,17 @@ static void xkb_tierDockAssert(int hostW, int hostH, XKeyboardMode mode,
     XWidget_setFocus((XWidget*)ed);
     XWidget_show(win);
     XWidget_show((XWidget*)ed);
+    /* 环境闸：桌面可用工作区可能小于请求的宿主高度（如 800x1280 竖屏
+     * 在矮屏幕上被系统钳位），此时档位绝对值期望不再适用（与 xrot
+     * 的 dpr>1 跳过同口径）。 */
+    if (XWidget_height(win) != hostH) {
+        fprintf(stderr, "[XKB-TIER-SKIP] %s: hostH %d→%d（系统钳位）\n",
+                what ? what : "", hostH, XWidget_height(win));
+        XVirtualKeyboard_setParent(kb, NULL, 0);
+        XClassDelete(win);
+        XClassDelete(kb);
+        return;
+    }
     XVirtualKeyboard_popup(kb, (XWidget*)ed);
     if (!(XVirtualKeyboard_width(kb) == wantW &&
               XVirtualKeyboard_height(kb) == wantH &&

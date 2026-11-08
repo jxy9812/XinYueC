@@ -1021,6 +1021,39 @@ XAbstractAxis* XChart_axisX_abstract(const XChart* self)
 XAbstractAxis* XChart_axisY_abstract(const XChart* self)
 { return self ? self->m_axisYAny : NULL; }
 
+/* ==================== 泛化轴域读写 ==================== */
+
+bool XChart_xRange(const XChart* self, double* min, double* max)
+{
+    const XAbstractAxis* ax = self ? self->m_axisXAny : NULL;
+    if (!ax) return false;
+    if (min) *min = ax->m_min;
+    if (max) *max = ax->m_max;
+    return true;
+}
+
+void XChart_setXRange(XChart* self, double min, double max)
+{
+    XAbstractAxis* ax = self ? self->m_axisXAny : NULL;
+    if (!ax || min > max) return;
+    switch (XAbstractAxis_type(ax)) {
+    case XAbstractAxis_AxisType_DateTime:
+        /* 日期时间轴的域单位＝毫秒纪元（Qt QDateTimeAxis 同口径）。 */
+        XDateTimeAxis_setRangeMSecs((XDateTimeAxis*)ax, (int64_t)min,
+                                    (int64_t)max);
+        break;
+    case XAbstractAxis_AxisType_LogValue:
+        XLogValueAxis_setRange((XLogValueAxis*)ax, min, max);
+        break;
+    case XAbstractAxis_AxisType_Value:
+        XValueAxis_setRange((XValueAxis*)ax, min, max);
+        break;
+    default:
+        XAbstractAxis_setRange(ax, min, max);
+        break;
+    }
+}
+
 /**
  * @brief 把一侧轴复位到默认域（按轴的实际类型分派，不假定数值轴）。
  * @param axis 轴基类指针（可为 NULL）。
@@ -1455,12 +1488,23 @@ XEasingCurve_Type XChart_animationEasingCurve(const XChart* self)
  * @brief 把当前两轴域推入缩放栈。
  *
  * @param self 目标图表指针。
- * @return 压栈成功返回 true；容量分配失败返回 false。
+ * @return 压栈成功返回 true；容量分配失败/无轴返回 false。
+ * @note  域按**基类轴视图**读取，日期时间轴（X 位）同样可压栈；域值以
+ *        XRectF（float）存放，日期时间轴的毫秒纪元在 float 下只有约
+ *        2 分钟精度——缩放栈只服务 zoomOut 回弹，历史页这类时间轴图
+ *        只用 zoomX/zoomXAt（不弹栈），该精度不进入可视路径。
  */
 static bool xchart_pushZoom(XChart* self)
 {
     XRectF entry;
-    if (!self || !self->m_axisX || !self->m_axisY) return false;
+    double xmin;
+    double xmax;
+    double ymin;
+    double ymax;
+    if (!self || !self->m_axisXAny || !self->m_axisYAny) return false;
+    if (!XChart_xRange(self, &xmin, &xmax)) return false;
+    ymin = self->m_axisYAny->m_min;
+    ymax = self->m_axisYAny->m_max;
     if (self->m_zoomCount >= self->m_zoomCapacity) {
         int newCap = self->m_zoomCapacity > 0 ? self->m_zoomCapacity * 2 : 8;
         XRectF* grown = (XRectF*)XMalloc_System(sizeof(XRectF) * (size_t)newCap);
@@ -1473,10 +1517,10 @@ static bool xchart_pushZoom(XChart* self)
         self->m_zoomStack = grown;
         self->m_zoomCapacity = newCap;
     }
-    entry.x = (float)self->m_axisX->m_base.m_min;
-    entry.y = (float)self->m_axisY->m_base.m_min;
-    entry.width = (float)(self->m_axisX->m_base.m_max - self->m_axisX->m_base.m_min);
-    entry.height = (float)(self->m_axisY->m_base.m_max - self->m_axisY->m_base.m_min);
+    entry.x = (float)xmin;
+    entry.y = (float)ymin;
+    entry.width = (float)(xmax - xmin);
+    entry.height = (float)(ymax - ymin);
     self->m_zoomStack[self->m_zoomCount++] = entry;
     return true;
 }
@@ -1488,21 +1532,24 @@ void XChart_zoomIn(XChart* self)
 
 void XChart_zoom(XChart* self, double factor)
 {
+    double xmin;
+    double xmax;
     double cx;
     double cy;
     double hw;
     double hh;
-    if (!self || !self->m_axisX || !self->m_axisY) return;
+    if (!self || !self->m_axisXAny || !self->m_axisYAny) return;
     if (factor <= 0.0) return;
-    if (self->m_axisX->m_base.m_max - self->m_axisX->m_base.m_min <= 0.0) return;
-    if (self->m_axisY->m_base.m_max - self->m_axisY->m_base.m_min <= 0.0) return;
+    if (!XChart_xRange(self, &xmin, &xmax)) return;
+    if (xmax - xmin <= 0.0) return;
+    if (self->m_axisYAny->m_max - self->m_axisYAny->m_min <= 0.0) return;
     if (!xchart_pushZoom(self)) return;
-    cx = (self->m_axisX->m_base.m_min + self->m_axisX->m_base.m_max) / 2.0;
-    cy = (self->m_axisY->m_base.m_min + self->m_axisY->m_base.m_max) / 2.0;
-    hw = (self->m_axisX->m_base.m_max - self->m_axisX->m_base.m_min) / 2.0 / factor;
-    hh = (self->m_axisY->m_base.m_max - self->m_axisY->m_base.m_min) / 2.0 / factor;
-    XValueAxis_setRange(self->m_axisX, cx - hw, cx + hw);
-    XValueAxis_setRange(self->m_axisY, cy - hh, cy + hh);
+    cx = (xmin + xmax) / 2.0;
+    cy = (self->m_axisYAny->m_min + self->m_axisYAny->m_max) / 2.0;
+    hw = (xmax - xmin) / 2.0 / factor;
+    hh = (self->m_axisYAny->m_max - self->m_axisYAny->m_min) / 2.0 / factor;
+    XChart_setXRange(self, cx - hw, cx + hw);
+    XValueAxis_setRange((XValueAxis*)self->m_axisYAny, cy - hh, cy + hh);
 }
 
 void XChart_zoomOut(XChart* self)
@@ -1510,10 +1557,10 @@ void XChart_zoomOut(XChart* self)
     XRectF entry;
     if (!self || self->m_zoomCount <= 0) return;
     entry = self->m_zoomStack[--self->m_zoomCount];
-    if (self->m_axisX)
-        XValueAxis_setRange(self->m_axisX, entry.x, entry.x + entry.width);
-    if (self->m_axisY)
-        XValueAxis_setRange(self->m_axisY, entry.y, entry.y + entry.height);
+    XChart_setXRange(self, entry.x, entry.x + entry.width);
+    if (self->m_axisYAny)
+        XValueAxis_setRange((XValueAxis*)self->m_axisYAny,
+                            entry.y, entry.y + entry.height);
 }
 
 void XChart_zoomReset(XChart* self)
@@ -1525,9 +1572,7 @@ void XChart_zoomReset(XChart* self)
     self->m_zoomStack = NULL;
     self->m_zoomCount = 0;
     self->m_zoomCapacity = 0;
-    if (self->m_axisX)
-        XValueAxis_setRange(self->m_axisX, self->m_defaultMinX,
-                            self->m_defaultMaxX);
+    XChart_setXRange(self, self->m_defaultMinX, self->m_defaultMaxX);
     if (self->m_axisY)
         XValueAxis_setRange(self->m_axisY, self->m_defaultMinY,
                             self->m_defaultMaxY);
@@ -1538,35 +1583,42 @@ bool XChart_isZoomed(const XChart* self)
 
 void XChart_scroll(XChart* self, double dx, double dy)
 {
-    if (!self || !self->m_axisX || !self->m_axisY) return;
+    double xmin;
+    double xmax;
+    if (!self || !self->m_axisXAny || !self->m_axisY) return;
     if (dx == 0.0 && dy == 0.0) return;
+    if (!XChart_xRange(self, &xmin, &xmax)) return;
     xchart_pushZoom(self);
-    XValueAxis_setRange(self->m_axisX, self->m_axisX->m_base.m_min + dx,
-                        self->m_axisX->m_base.m_max + dx);
+    XChart_setXRange(self, xmin + dx, xmax + dx);
     XValueAxis_setRange(self->m_axisY, self->m_axisY->m_base.m_min + dy,
                         self->m_axisY->m_base.m_max + dy);
 }
 
 void XChart_zoomX(XChart* self, double factor)
 {
+    double xmin;
+    double xmax;
     double cx;
     double hw;
-    if (!self || !self->m_axisX) return;
+    if (!self || !self->m_axisXAny) return;
     if (factor <= 0.0) return;
-    if (self->m_axisX->m_base.m_max - self->m_axisX->m_base.m_min <= 0.0) return;
+    if (!XChart_xRange(self, &xmin, &xmax)) return;
+    if (xmax - xmin <= 0.0) return;
     if (!xchart_pushZoom(self)) return;
-    cx = (self->m_axisX->m_base.m_min + self->m_axisX->m_base.m_max) / 2.0;
-    hw = (self->m_axisX->m_base.m_max - self->m_axisX->m_base.m_min) / 2.0 / factor;
-    XValueAxis_setRange(self->m_axisX, cx - hw, cx + hw);
+    cx = (xmin + xmax) / 2.0;
+    hw = (xmax - xmin) / 2.0 / factor;
+    XChart_setXRange(self, cx - hw, cx + hw);
 }
 
 void XChart_scrollX(XChart* self, double dx)
 {
-    if (!self || !self->m_axisX) return;
+    double xmin;
+    double xmax;
+    if (!self || !self->m_axisXAny) return;
     if (dx == 0.0) return;
+    if (!XChart_xRange(self, &xmin, &xmax)) return;
     xchart_pushZoom(self);
-    XValueAxis_setRange(self->m_axisX, self->m_axisX->m_base.m_min + dx,
-                        self->m_axisX->m_base.m_max + dx);
+    XChart_setXRange(self, xmin + dx, xmax + dx);
 }
 
 /**
@@ -1585,10 +1637,9 @@ void XChart_zoomXAt(XChart* self, double factor, double anchor, double ratio)
     double w;
     double nw;
     double lo;
-    if (!self || !self->m_axisX) return;
+    if (!self || !self->m_axisXAny) return;
     if (factor <= 0.0) return;
-    min = self->m_axisX->m_base.m_min;
-    max = self->m_axisX->m_base.m_max;
+    if (!XChart_xRange(self, &min, &max)) return;
     w = max - min;
     if (w <= 0.0) return;
     if (ratio < 0.0) ratio = 0.0;
@@ -1596,7 +1647,7 @@ void XChart_zoomXAt(XChart* self, double factor, double anchor, double ratio)
     if (!xchart_pushZoom(self)) return;
     nw = w / factor;
     lo = anchor - ratio * nw;
-    XValueAxis_setRange(self->m_axisX, lo, lo + nw);
+    XChart_setXRange(self, lo, lo + nw);
 }
 
 /* ==================== 边距与绘图区 ==================== */
@@ -1705,16 +1756,18 @@ void XChart_mapToValue(const XChart* self, float x, float y,
     const XRectF* area;
     double rx;
     double ry;
+    double xmin;
+    double xmax;
     if (outX) *outX = 0.0;
     if (outY) *outY = 0.0;
-    if (!self || !self->m_axisX || !self->m_axisY) return;
+    if (!self || !self->m_axisXAny || !self->m_axisY) return;
+    if (!XChart_xRange(self, &xmin, &xmax)) return;
     area = &self->m_plotArea;
     if (area->width <= 0.0f || area->height <= 0.0f) return;
-    rx = self->m_axisX->m_base.m_max - self->m_axisX->m_base.m_min;
+    rx = xmax - xmin;
     ry = self->m_axisY->m_base.m_max - self->m_axisY->m_base.m_min;
     if (outX)
-        *outX = self->m_axisX->m_base.m_min +
-                (double)((x - area->x) / area->width) * rx;
+        *outX = xmin + (double)((x - area->x) / area->width) * rx;
     if (outY)
         *outY = self->m_axisY->m_base.m_max -
                 (double)((y - area->y) / area->height) * ry;
@@ -1936,8 +1989,11 @@ void XChart_mapToPosition(const XChart* self, double valueX, double valueY,
         if (outY) *outY = 0;
         return;
     }
-    minX = self->m_axisX ? self->m_axisX->m_base.m_min : 0.0;
-    maxX = self->m_axisX ? self->m_axisX->m_base.m_max : 10.0;
+    /* X 侧走泛化读取（日期时间轴时 m_axisX 为 NULL，域单位=毫秒）。 */
+    if (!XChart_xRange(self, &minX, &maxX)) {
+        minX = 0.0;
+        maxX = 10.0;
+    }
     minY = self->m_axisY ? self->m_axisY->m_base.m_min : 0.0;
     maxY = self->m_axisY ? self->m_axisY->m_base.m_max : 10.0;
     /* 数据域映射到绘图区（plotArea；对标 QChart::mapToPosition）。 */

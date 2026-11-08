@@ -6,6 +6,10 @@
  *             加载/生成折线图（绿）+ 表格|图表切换（右靠）。
  *             「数据分析」按需求裁掉。各段说明用弱色标签（VFD 页弱化
  *             文案同口径），控件高 28 触控友好。
+ *             **窄窗自适应**（HsfDataBar_adapt，按工具条实际可用宽分四档）：
+ *             ⓪ 标签全显+常规宽 → ① 收说明标签 → ② 收控件最小宽+行距 →
+ *             ③ 隐去「共 N 行」（1024 宽窗两行最小宽仍差几像素时）。
+ *             「共 N 行」最小宽按**当前文本实测宽**取，5 位数不再被截字。
  *             槽连接口径=HsfMenuPage 同款（receiver=工具条对象；本模块
  *             m_base 是首成员，槽首参直转安全）。sender 分派用
  *             XObject_sender()（对标 QObject::sender()，线程栈口径）。
@@ -17,6 +21,9 @@
 #include "XMemory.h"
 #include "XFont.h"
 #include "XString.h"
+#include "XPrintf.h"
+#include "XSystem.h"
+#include "XPainter.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -24,22 +31,23 @@
     XDATETIMEEDIT_ON && XCOMBOBOX_ON && XSPINBOX_ON
 
 /* ---- UTF-8 字面量（源文件 ASCII 化口径） ---- */
-#define T_START     "\xE8\xB5\xB7\xE5\xA7\x8B\xE6\x97\xB6\xE9\x97\xB4"          /* 起始时间 */
-#define T_END       "\xE7\xBB\x93\xE6\x9D\x9F\xE6\x97\xB6\xE9\x97\xB4"          /* 结束时间 */
-#define T_CHANNEL   "\xE9\x80\x9A\xE9\x81\x93"                                   /* 通道 */
-#define T_COLFILTER "\xE5\x88\x97\xE7\xAD\x9B\xE9\x80\x89"                       /* 列筛选 */
-#define T_FILTER    "\xE7\xAD\x9B\xE9\x80\x89"                                   /* 筛选 */
-#define T_CLEAR     "\xE6\xB8\x85\xE9\x99\xA4\xE7\xAD\x9B\xE9\x80\x89"          /* 清除筛选 */
-#define T_ROWS      "\xE5\x85\xB1 %lld \xE8\xA1\x8C"                             /* 共 %lld 行 */
-#define T_DECIMALS  "\xE6\x98\xBE\xE7\xA4\xBA\xE5\xB0\x8F\xE6\x95\xB0\xE4\xBD\x8D\xE6\x95\xB0" /* 显示小数位数 */
-#define T_EXPORT    "\xE5\xAF\xBC\xE5\x87\xBA"                                   /* 导出 */
-#define T_RELOAD    "\xE9\x87\x8D\xE6\x96\xB0\xE5\x8A\xA0\xE8\xBD\xBD"           /* 重新加载 */
-#define T_CHART     "\xE7\x94\x9F\xE6\x88\x90\xE6\x8A\x98\xE7\xBA\xBF\xE5\x9B\xBE" /* 生成折线图 */
-#define T_TABLE     "\xE8\xA1\xA8\xE6\xA0\xBC"                                   /* 表格 */
-#define T_CHARTTAB  "\xE5\x9B\xBE\xE8\xA1\xA8"                                   /* 图表 */
-#define T_ALL_CHANNELS "\xE5\x85\xA8\xE9\x83\xA8\xE9\x80\x9A\xE9\x81\x93"       /* 全部通道 */
+#define T_START     "起始时间"          /* 起始时间 */
+#define T_END       "结束时间"          /* 结束时间 */
+#define T_CHANNEL   "通道"                                   /* 通道 */
+#define T_COLFILTER "列筛选"                       /* 列筛选 */
+#define T_FILTER    "筛选"                                   /* 筛选 */
+#define T_CLEAR     "清除筛选"          /* 清除筛选 */
+#define T_ROWS      "共 %lld 行"                             /* 共 %lld 行 */
+#define T_DECIMALS  "显示小数位数" /* 显示小数位数 */
+#define T_EXPORT    "导出"                                   /* 导出 */
+#define T_RELOAD    "重新加载"           /* 重新加载 */
+#define T_CHART     "生成折线图" /* 生成折线图 */
+#define T_TABLE     "表格"                                   /* 表格 */
+#define T_CHARTTAB  "图表"                                   /* 图表 */
+#define T_ALL_CHANNELS "全部通道"       /* 全部通道 */
 #define T_FMT_XLSX  "Excel (.xlsx)"
 #define T_FMT_CSV   "CSV (.csv)"
+#define T_MAXPTS    "每图例最多点" /* 每图例最多点 */
 
 /** @brief 工具条对象；m_base 必须是第一个成员（槽首参直转依据）。 */
 typedef struct HsfDataBar
@@ -63,6 +71,8 @@ typedef struct HsfDataBar
 
     XLabel         m_lbDecimals;  /**< 「显示小数位数」。 */
     XSpinBox       m_decimals;    /**< 小数位数（0~6）。 */
+    XLabel         m_lbMaxPts;    /**< 「每图例最多点」。 */
+    XSpinBox       m_maxPoints;   /**< 每图例最多点数（图表降采样上限）。 */
     XComboBox      m_exportFmt;   /**< 导出格式。 */
     XPushButton    m_btnExport;   /**< 导出。 */
     XPushButton    m_btnReload;   /**< 重新加载。 */
@@ -74,6 +84,14 @@ typedef struct HsfDataBar
     HsfDataBarActionFn m_fn;      /**< 动作回调（借用）。 */
     void*          m_fnUser;      /**< 回调上下文（借用）。 */
     int            m_viewMode;    /**< 当前视图：0=表格 1=图表。 */
+    int            m_fontPct;     /**< 已应用的字号百分比（实时重放用）。 */
+    int            m_adaptW;      /**< 上次分档的可用宽（-1=未算）。 */
+    int            m_adaptLevel;  /**< 上次分档结果：0=常规 1=收标签 2=收宽
+                                       3=再隐「共 N 行」。 */
+    int            m_adaptCompact;/**< 上次分档的 compact 位（-1=未算）。 */
+    int            m_rowsMinW;    /**< 「共 N 行」按当前文本算出的最小宽
+                                       （大数字不再被自身最小宽截字）。 */
+    bool           m_suppress;    /**< 编程式 set* 期间抑制变更回调。 */
 } HsfDataBar;
 
 /* ==================== 内部小件 ==================== */
@@ -81,6 +99,10 @@ typedef struct HsfDataBar
 #define BAR_CTRL_H 28   /**< 控件统一高（行紧凑；触控 28 下限）。 */
 
 static void barActionSlot(XObject* receiver, XVarList* args);
+/* [自适应前置声明] adapt 与 setTotalRows 互调：setTotalRows 按**实际文本**
+ * 重算「共 N 行」最小宽后要把档位判据作废，让帧泵下一拍重新分档。 */
+static void barSetWidths(HsfDataBar* self, bool tight);
+static void barSetRowsVisible(HsfDataBar* self, bool on);
 
 /** @brief 弱色说明标签（13px；Mid 色——VFD 页弱化文案同口径）。 */
 static void barInitLabel(XLabel* lb, XWidget* parent, const char* text)
@@ -199,6 +221,30 @@ static void barActionSlot(XObject* receiver, XVarList* args)
         self->m_fn(self->m_fnUser, action);
 }
 
+/** @brief 下拉/微调框变更槽：通道/列筛选/小数位改动 → 透传回调。
+ *  @note  编程式 set* 期间 m_suppress=true，不发回调（防「页面重设
+ *         下拉项 → 回调 → 页面再取值」的回调环）。 */
+static void barChangeSlot(XObject* receiver, XVarList* args)
+{
+    HsfDataBar* self = (HsfDataBar*)receiver;
+    XObject* sender;
+    int action = -1;
+    (void)args;
+    if (!self || self->m_suppress) return;
+    sender = XObject_sender((XObject*)self);
+    if (sender == (XObject*)&self->m_channel)
+        action = HsfDataBarAction_ChannelChanged;
+    else if (sender == (XObject*)&self->m_colFilter)
+        action = HsfDataBarAction_ColumnFilterChanged;
+    else if (sender == (XObject*)&self->m_decimals)
+        action = HsfDataBarAction_DecimalsChanged;
+    else if (sender == (XObject*)&self->m_maxPoints)
+        action = HsfDataBarAction_MaxPointsChanged;
+    if (action < 0) return;
+    if (self->m_fn)
+        self->m_fn(self->m_fnUser, action);
+}
+
 /* ==================== 创建 ==================== */
 
 XWidget* HsfDataBar_create(XWidget* parent)
@@ -213,6 +259,9 @@ XWidget* HsfDataBar_create(XWidget* parent)
     XWidget_init(&self->m_base, parent, 0);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, true); /* 整块随主窗级联释放。 */
+    self->m_adaptW = -1;          /* 分档缓存：未算过。 */
+    self->m_adaptCompact = -1;
+    self->m_rowsMinW = 88;        /* 「共 N 行」文本驱动最小宽（setTotalRows 重算）。 */
     HsfTheme_applyDefaultFont(&self->m_base);
 
     /* ---- 行 1：起始/结束时间 + 通道 + 列筛选 + 筛选/清除 + 行数 ---- */
@@ -220,20 +269,35 @@ XWidget* HsfDataBar_create(XWidget* parent)
     XDateTimeEdit_init(&self->m_dtStart, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_dtStart);
     XDateTimeEdit_setDisplayFormat(&self->m_dtStart, "yyyy-MM-dd HH:mm:ss");
+    /* [日历弹窗] 对标 QDateTimeEdit::calendarPopup=true：点控件右侧箭头
+     * 弹日历（框架 XDateTimeEdit 已实现弹层容器/贴边翻转/点击外部与
+     * Esc 收起/选中日期回写编辑框，见 XDateTimeEdit.c 的
+     * xdt_popupShow / VXDateTimePopup_mousePressEvent / VXDateTimeEdit_
+     * keyPressEvent）。不开启就只有键盘步进，现场没法点日期。 */
+    XDateTimeEdit_setCalendarPopup(&self->m_dtStart, true);
     XWidget_setFixedHeight((XWidget*)&self->m_dtStart, BAR_CTRL_H);
-    XWidget_setMinimumWidth((XWidget*)&self->m_dtStart, 170);
+    XWidget_setMinimumWidth((XWidget*)&self->m_dtStart, 210);
     XWidget_show((XWidget*)&self->m_dtStart);
 
     barInitLabel(&self->m_lbEnd, &self->m_base, T_END);
     XDateTimeEdit_init(&self->m_dtEnd, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_dtEnd);
     XDateTimeEdit_setDisplayFormat(&self->m_dtEnd, "yyyy-MM-dd HH:mm:ss");
+    XDateTimeEdit_setCalendarPopup(&self->m_dtEnd, true);
     XWidget_setFixedHeight((XWidget*)&self->m_dtEnd, BAR_CTRL_H);
-    XWidget_setMinimumWidth((XWidget*)&self->m_dtEnd, 170);
+    XWidget_setMinimumWidth((XWidget*)&self->m_dtEnd, 210);
     XWidget_show((XWidget*)&self->m_dtEnd);
-    /* 缺省区间：过去 24h ~ 现在（数据接入前的合理占位；Qt 页惯用）。 */
+    /* 缺省区间：过去 24h ~ 现在（数据接入前的合理占位；Qt 页惯用）。
+     * [2026-11-07 筛选无效根因] 此前只给结束框赋值、起始框停在
+     * XDateTimeEdit_init 的"页面创建那一刻"⇒ 点「筛选」时时间窗宽度
+     * ≈ 0（loMs == hiMs），服务端 `ts >= lo AND ts <= hi` 一行都查不到，
+     * 界面上就是「共 0 条」，用户口径即"筛选基本没用"。两端都赋值。 */
     now = XDateTime_currentDateTime();
     XDateTimeEdit_setDateTime(&self->m_dtEnd, &now);
+    {
+        const XDateTime lo = XDateTime_addSecs(&now, -24 * 3600);
+        XDateTimeEdit_setDateTime(&self->m_dtStart, &lo);
+    }
 
     barInitLabel(&self->m_lbChannel, &self->m_base, T_CHANNEL);
     XComboBox_init(&self->m_channel, &self->m_base, 0);
@@ -257,7 +321,7 @@ XWidget* HsfDataBar_create(XWidget* parent)
     /* 行数统计（右靠；粗体白底黑字同表格页标题口径）。 */
     XLabel_init(&self->m_lbRows, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_lbRows);
-    XLabel_setText_2(&self->m_lbRows, "\xE5\x85\xB1 0 \xE8\xA1\x8C"); /* 共 0 行 */
+    XLabel_setText_2(&self->m_lbRows, "共 0 行"); /* 共 0 行 */
     XLabel_setTextPixelSize(&self->m_lbRows, 13);
     XLabel_setAlignment(&self->m_lbRows,
                         XAlignment_Left | XAlignment_VCenter);
@@ -273,6 +337,18 @@ XWidget* HsfDataBar_create(XWidget* parent)
     XWidget_setFixedHeight((XWidget*)&self->m_decimals, BAR_CTRL_H);
     XWidget_setFixedWidth((XWidget*)&self->m_decimals, 64);
     XWidget_show((XWidget*)&self->m_decimals);
+
+    /* 每图例最多可见点数（图表降采样上限；超限等距抽样）。 */
+    barInitLabel(&self->m_lbMaxPts, &self->m_base, T_MAXPTS);
+    XSpinBox_init(&self->m_maxPoints, &self->m_base, 0);
+    HsfTheme_applyDefaultFont((XWidget*)&self->m_maxPoints);
+    XSpinBox_setRange(&self->m_maxPoints, HSFDATABAR_MAX_POINTS_MIN,
+                      HSFDATABAR_MAX_POINTS_MAX);
+    XSpinBox_setSingleStep(&self->m_maxPoints, 100);
+    XSpinBox_setValue(&self->m_maxPoints, HSFDATABAR_MAX_POINTS_DEFAULT);
+    XWidget_setFixedHeight((XWidget*)&self->m_maxPoints, BAR_CTRL_H);
+    XWidget_setFixedWidth((XWidget*)&self->m_maxPoints, 84);
+    XWidget_show((XWidget*)&self->m_maxPoints);
 
     XComboBox_init(&self->m_exportFmt, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_exportFmt);
@@ -309,10 +385,17 @@ XWidget* HsfDataBar_create(XWidget* parent)
     XLayout_setSpacing((XLayout*)&self->m_row2, 8);
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_lbDecimals);
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_decimals);
+    XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_lbMaxPts);
+    XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_maxPoints);
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_exportFmt);
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_btnExport);
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_btnReload);
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_btnChart);
+    /* [页级分页控件并入点] 页面经 HsfDataBar_attachRow2 把控件插在**本条
+     * 伸展条之后、两个视图切换钮之前**（插入点 = 条目数-2，见 attachRow2）：
+     * 伸展条吃掉左侧剩余宽度，页级控件与「表格/图表」钮连成右靠段，视图
+     * 切换钮仍在最右。attachRow2 用 insertWidget 在末尾两项之前插入，条目
+     * 顺序稳定且幂等（先 remove 旧的再插）。 */
     XBoxLayout_addStretch(&self->m_row2, 1);
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_btnTable);
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_btnChartTab);
@@ -323,6 +406,24 @@ XWidget* HsfDataBar_create(XWidget* parent)
     XWidget_setLayout(&self->m_base, (XLayout*)&self->m_root);
     XBoxLayout_addLayout(&self->m_root, (XLayout*)&self->m_row1);
     XBoxLayout_addLayout(&self->m_root, (XLayout*)&self->m_row2);
+
+    /* 下拉/微调框变更 → 透传（页面即时重排显示；见 barChangeSlot）。 */
+    XObject_connect_1((XObject*)&self->m_channel,
+                      XSignal(XComboBox_currentIndexChanged_signal),
+                      (XObject*)self, barChangeSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)&self->m_colFilter,
+                      XSignal(XComboBox_currentIndexChanged_signal),
+                      (XObject*)self, barChangeSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)&self->m_decimals,
+                      XSignal(XSpinBox_valueChanged_signal),
+                      (XObject*)self, barChangeSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)&self->m_maxPoints,
+                      XSignal(XSpinBox_valueChanged_signal),
+                      (XObject*)self, barChangeSlot,
+                      XConnectionType_Direct);
 
     XWidget_show(&self->m_base);
     return &self->m_base;
@@ -345,6 +446,7 @@ void HsfDataBar_setChannelItems(XWidget* bar, const char* const* items,
     HsfDataBar* self = (HsfDataBar*)bar;
     int i;
     if (!self) return;
+    self->m_suppress = true;
     XComboBox_clear(&self->m_channel);
     if (items && count > 0)
         for (i = 0; i < count; ++i)
@@ -352,6 +454,7 @@ void HsfDataBar_setChannelItems(XWidget* bar, const char* const* items,
                                 items[i] ? items[i] : "");
     else
         XComboBox_addItem_2(&self->m_channel, T_ALL_CHANNELS);
+    self->m_suppress = false;
 }
 
 int HsfDataBar_channelIndex(const XWidget* bar)
@@ -360,17 +463,28 @@ int HsfDataBar_channelIndex(const XWidget* bar)
     return self ? XComboBox_currentIndex(&self->m_channel) : -1;
 }
 
+void HsfDataBar_setChannelIndex(XWidget* bar, int index)
+{
+    HsfDataBar* self = (HsfDataBar*)bar;
+    if (!self) return;
+    self->m_suppress = true;
+    XComboBox_setCurrentIndex(&self->m_channel, index);
+    self->m_suppress = false;
+}
+
 void HsfDataBar_setColumnFilterItems(XWidget* bar, const char* const* items,
                                      int count)
 {
     HsfDataBar* self = (HsfDataBar*)bar;
     int i;
     if (!self) return;
+    self->m_suppress = true;
     XComboBox_clear(&self->m_colFilter);
     if (items)
         for (i = 0; i < count; ++i)
             XComboBox_addItem_2(&self->m_colFilter,
                                 items[i] ? items[i] : "");
+    self->m_suppress = false;
     /* 空表=留空（占位文本「列筛选」可见）。 */
 }
 
@@ -378,6 +492,15 @@ int HsfDataBar_columnFilterIndex(const XWidget* bar)
 {
     const HsfDataBar* self = (const HsfDataBar*)bar;
     return self ? XComboBox_currentIndex(&self->m_colFilter) : -1;
+}
+
+void HsfDataBar_setColumnFilterIndex(XWidget* bar, int index)
+{
+    HsfDataBar* self = (HsfDataBar*)bar;
+    if (!self) return;
+    self->m_suppress = true;
+    XComboBox_setCurrentIndex(&self->m_colFilter, index);
+    self->m_suppress = false;
 }
 
 void HsfDataBar_setStartDateTime(XWidget* bar, const XDateTime* dt)
@@ -428,7 +551,9 @@ void HsfDataBar_setDecimalDigits(XWidget* bar, int digits)
 {
     HsfDataBar* self = (HsfDataBar*)bar;
     if (!self) return;
+    self->m_suppress = true;
     XSpinBox_setValue(&self->m_decimals, digits);
+    self->m_suppress = false;
 }
 
 int HsfDataBar_exportFormatIndex(const XWidget* bar)
@@ -449,10 +574,102 @@ void HsfDataBar_setTotalRows(XWidget* bar, long long rows)
 {
     HsfDataBar* self = (HsfDataBar*)bar;
     char buf[48];
+    XFont font;
+    int textW;
     if (!self) return;
     if (rows < 0) rows = 0;
     snprintf(buf, sizeof(buf), T_ROWS, rows);
     XLabel_setText_2(&self->m_lbRows, buf);
+    /* [最小宽按实际文本 2026-11-08] 极窄档把「共 N 行」压到 64px（那是按
+     * "共 0 行" 定的），5 位数的「共 11020 行」需要 ~78px ⇒ 标签自身把末尾
+     * 「行」截掉。这里按 **当前文本实测宽**（+6 内边距）记下需求，由
+     * barSetWidths 取 max(档位基准宽, 本值)；若仍放不下，adapt 会升到
+     * 3 档直接隐藏这颗冗余计数（历史页状态行已有「共 N 条 … 库内共 N 条」）。 */
+    font = XWidget_font((XWidget*)&self->m_lbRows);
+    textW = XPainter_textWidth(&font, buf) + 6;
+    XClassDeinit(&font);
+    if (textW < 64) textW = 64;
+    if (textW > 160) textW = 160;
+    if (textW != self->m_rowsMinW) {
+        self->m_rowsMinW = textW;
+        barSetWidths(self, self->m_adaptLevel >= 2);
+        self->m_adaptW = -1;   /* 文本变了 ⇒ 下一拍重新分档（可能升 3 档）。 */
+    }
+}
+
+int HsfDataBar_maxPoints(const XWidget* bar)
+{
+    const HsfDataBar* self = (const HsfDataBar*)bar;
+    int v;
+    if (!self) return HSFDATABAR_MAX_POINTS_DEFAULT;
+    v = XSpinBox_value(&self->m_maxPoints);
+    if (v < HSFDATABAR_MAX_POINTS_MIN) v = HSFDATABAR_MAX_POINTS_MIN;
+    if (v > HSFDATABAR_MAX_POINTS_MAX) v = HSFDATABAR_MAX_POINTS_MAX;
+    return v;
+}
+
+void HsfDataBar_setMaxPoints(XWidget* bar, int points)
+{
+    HsfDataBar* self = (HsfDataBar*)bar;
+    if (!self) return;
+    if (points < HSFDATABAR_MAX_POINTS_MIN) points = HSFDATABAR_MAX_POINTS_MIN;
+    if (points > HSFDATABAR_MAX_POINTS_MAX) points = HSFDATABAR_MAX_POINTS_MAX;
+    self->m_suppress = true;
+    XSpinBox_setValue(&self->m_maxPoints, points);
+    self->m_suppress = false;
+}
+
+/* ---- 行 2 页级控件挂接（分页/关键字） ---- */
+
+/** @brief 从行 2 摘掉一个控件条目（不删控件；控件仍归原父对象）。 */
+static void barDetachOne(XBoxLayout* row, XWidget* w)
+{
+    if (!row || !w) return;
+    if (XLayout_indexOf((const XLayout*)row, w) >= 0)
+        XLayout_removeWidget((XLayout*)row, w);
+}
+
+/* [detachRow2 已删 2026-11-08] 原 HsfDataBar_detachRow2 全库零调用点。
+ * 它想防的是"工具条比页级控件活得久 ⇒ 布局里留悬垂控件条目"，但挂接
+ * 实现根本没有这种生命周期：attachRow2 走 XBoxLayout_insertWidget →
+ * XLayout_linkItem（沿布局链解析宿主工具条后 `XWidget_setParent_2`），
+ * 把控件 reparent 成工具条的子对象；此后页面只持有工具条一个子树，
+ * 工具条析构时 XObject 的子对象级联会把那些控件一并销毁，中间不存在
+ * "控件已亡、条目还在"的窗口。既然没有任何页面需要"留控件、先摘条目"
+ * 的第二种用法，这个零调用、零测试的公开接口只会让人误以为存在该用法，
+ * 故按死代码清除（attachRow2 的幂等前缀仍复用 barDetachOne）。 */
+
+void HsfDataBar_attachRow2(XWidget* bar, XWidget** widgets, int count,
+                           XWidget** rightWidgets, int rightCount)
+{
+    HsfDataBar* self = (HsfDataBar*)bar;
+    int i;
+    int idx;
+    if (!self) return;
+    /* [幂等] 先摘旧条目（重复 attach 不会叠条目、也不会把控件留在
+     * 两个布局里；拔条目不改控件父对象）。 */
+    for (i = 0; i < count; ++i)
+        if (widgets && widgets[i]) barDetachOne(&self->m_row2, widgets[i]);
+    for (i = 0; i < rightCount; ++i)
+        if (rightWidgets && rightWidgets[i])
+            barDetachOne(&self->m_row2, rightWidgets[i]);
+    /* 插在"视图切换钮之前"：行 2 尾段为 [stretch][表格][图表]，故插入点
+     * = 条目数 - 2（stretch 与两钮恒在，见 HsfDataBar_create）。 */
+    idx = XLayout_count_base((const XLayout*)&self->m_row2);
+    if (idx < 2) idx = 0;
+    else idx -= 2;
+    for (i = 0; i < count; ++i) {
+        if (!widgets || !widgets[i]) continue;
+        XBoxLayout_insertWidget(&self->m_row2, idx, widgets[i], 0);
+        ++idx;
+    }
+    for (i = 0; i < rightCount; ++i) {
+        if (!rightWidgets || !rightWidgets[i]) continue;
+        XBoxLayout_insertWidget(&self->m_row2, idx, rightWidgets[i], 0);
+        ++idx;
+    }
+    XLayout_activate((XLayout*)&self->m_row2);
+    XLayout_activate((XLayout*)&self->m_root);
 }
 
 int HsfDataBar_viewMode(const XWidget* bar)
@@ -472,16 +689,225 @@ void HsfDataBar_setViewMode(XWidget* bar, int mode)
                                mode == 1);
 }
 
+/** @brief 字号实时重放：标签绝对值、输入/按钮按新旧比例，控件高同步。 */
+void HsfDataBar_applyFont(XWidget* bar, int pct)
+{
+    HsfDataBar* self = (HsfDataBar*)bar;
+    XWidget* ws[14];
+    int i;
+    int oldPct;
+    int h;
+    if (!self || pct <= 0) return;
+    oldPct = self->m_fontPct > 0 ? self->m_fontPct : 100;
+    h = BAR_CTRL_H * pct / 100;
+    XLabel_setTextPixelSize(&self->m_lbStart, 13 * pct / 100);
+    XLabel_setTextPixelSize(&self->m_lbEnd, 13 * pct / 100);
+    XLabel_setTextPixelSize(&self->m_lbChannel, 13 * pct / 100);
+    XLabel_setTextPixelSize(&self->m_lbRows, 13 * pct / 100);
+    XLabel_setTextPixelSize(&self->m_lbDecimals, 13 * pct / 100);
+    XLabel_setTextPixelSize(&self->m_lbMaxPts, 13 * pct / 100);
+    ws[0] = (XWidget*)&self->m_dtStart;
+    ws[1] = (XWidget*)&self->m_dtEnd;
+    ws[2] = (XWidget*)&self->m_channel;
+    ws[3] = (XWidget*)&self->m_colFilter;
+    ws[4] = (XWidget*)&self->m_btnFilter;
+    ws[5] = (XWidget*)&self->m_btnClear;
+    ws[6] = (XWidget*)&self->m_decimals;
+    ws[7] = (XWidget*)&self->m_maxPoints;
+    ws[8] = (XWidget*)&self->m_exportFmt;
+    ws[9] = (XWidget*)&self->m_btnExport;
+    ws[10] = (XWidget*)&self->m_btnReload;
+    ws[11] = (XWidget*)&self->m_btnChart;
+    ws[12] = (XWidget*)&self->m_btnTable;
+    ws[13] = (XWidget*)&self->m_btnChartTab;
+    for (i = 0; i < 14; ++i) {
+        XWidget_setFixedHeight(ws[i], h);
+        if (pct != oldPct) {
+            XFont src = XWidget_font(ws[i]);
+            int px = XFont_pixelSize(&src);
+            if (px > 0) {
+                XFont f;
+                XFont_init(&f);
+                XClassCopy(&f, &src);
+                XFont_setPixelSize(&f, (px * pct + oldPct / 2) / oldPct);
+                XWidget_setFont(ws[i], &f);
+                XClassDeinit(&f);
+            }
+            XClassDeinit(&src);
+        }
+    }
+    self->m_fontPct = pct;
+    /* 字号变了→各控件最小尺寸提示全变→分档结论作废，下一拍 adapt 重算。 */
+    self->m_adaptW = -1;
+}
+
+/** @brief 两行的**最小宽度需求**（像素；已含各条目自身 minimumSize）。
+ *  @details 用布局自己的 minimumSize 累加值，而不是这里另抄一份宽度常量
+ *           ——控件最小宽改一处即生效，不会两处漂移。 */
+static int barMinWidthOf(const XBoxLayout* row)
+{
+    XSize size;
+    if (!row) return 0;
+    size = XLayoutItem_minimumSize_base((const XLayoutItem*)row);
+    return size.width > 0 ? size.width : 0;
+}
+
+/** @brief **真实可视宽度** = 自身与全部祖先控件宽度的最小值。
+ *  @details 不能用工具条自身宽度当可用宽：页根装在滚壳里
+ *           （XScrollArea widgetResizable），当页的最小宽度超过视口时，
+ *           滚壳把**内容**撑到最小宽（Qt 同款 p.expandedTo(m)），于是
+ *           工具条量到的自己宽度 = 已撑开的 1022，而真正能看见的只有
+ *           视口 ~853 —— 拿前者判断永远「够用」，右端照样被裁（日志页
+ *           1024 宽窗实测）。祖先链里视口/宿主这些容器宽度才是边界，
+ *           取整链最小值即得可视宽（宽窗时链上最小值就是视口宽，等价）。 */
+static int barVisibleWidth(const XWidget* self)
+{
+    const XObject* node = (const XObject*)self;
+    int minW = 0;
+    while (node) {
+        const XWidget* w = (const XWidget*)node;
+        const int ww = XWidget_width(w);
+        if (ww > 0 && (minW <= 0 || ww < minW)) minW = ww;
+        node = XObject_parent((XObject*)node);
+    }
+    return minW;
+}
+
+/** @brief 说明标签显隐（幂等；setVisible 同值早退）。 */
+static void barSetLabels(HsfDataBar* self, bool on)
+{
+    XWidget_setVisible((XWidget*)&self->m_lbStart, on);
+    XWidget_setVisible((XWidget*)&self->m_lbEnd, on);
+    XWidget_setVisible((XWidget*)&self->m_lbChannel, on);
+    XWidget_setVisible((XWidget*)&self->m_lbDecimals, on);
+    XWidget_setVisible((XWidget*)&self->m_lbMaxPts, on);
+}
+
+/** @brief 「共 N 行」计数显隐（幂等；3 档窄到放不下时隐去）。 */
+static void barSetRowsVisible(HsfDataBar* self, bool on)
+{
+    if (!self) return;
+    XWidget_setVisible((XWidget*)&self->m_lbRows, on);
+}
+
+/** @brief 控件标称最小宽两级：常规 / 极窄（幂等；setMinimumWidth 同值早退）。
+ *  @details 时间框显示 `2026-11-07 12:15:56`（19 字符）+ 日历箭头，168 是
+ *           能完整显示该格式的下限；下拉/导出格式同口径按文案缩。
+ *           极窄档同时把行间距 8→4（行 2 有 12 个条目 = 11 个间距，省 ~44px
+ *           ——比继续压控件宽更好：间距是纯留白，压它不影响可读性）。 */
+static void barSetWidths(HsfDataBar* self, bool tight)
+{
+    XWidget_setMinimumWidth((XWidget*)&self->m_dtStart, tight ? 168 : 210);
+    XWidget_setMinimumWidth((XWidget*)&self->m_dtEnd, tight ? 168 : 210);
+    XWidget_setMinimumWidth((XWidget*)&self->m_channel, tight ? 80 : 96);
+    XWidget_setMinimumWidth((XWidget*)&self->m_colFilter, tight ? 72 : 88);
+    XWidget_setMinimumWidth((XWidget*)&self->m_exportFmt, tight ? 84 : 110);
+    /* 两个微调框是固定宽（64/84）：极窄档各让 8px（值仍完整显示）。 */
+    XWidget_setFixedWidth((XWidget*)&self->m_decimals, tight ? 56 : 64);
+    XWidget_setFixedWidth((XWidget*)&self->m_maxPoints, tight ? 76 : 84);
+    /* 「共 N 行」最小宽 = max(档位基准, 当前文本实测宽)：文本宽由
+     * setTotalRows 记入 m_rowsMinW，大数字不再被自身最小宽截字。 */
+    {
+        const int baseW = tight ? 64 : 88;
+        XWidget_setMinimumWidth((XWidget*)&self->m_lbRows,
+                                self->m_rowsMinW > baseW ? self->m_rowsMinW
+                                                         : baseW);
+    }
+    /* [间距同值早退在这里手工做] XLayout_setSpacing 无同值闸（无条件
+     * invalidate），帧泵每拍调两次会把布局打成永久脏 → 每帧重排重绘。 */
+    if (XLayout_spacing((const XLayout*)&self->m_row1) != (tight ? 4 : 8)) {
+        XLayout_setSpacing((XLayout*)&self->m_row1, tight ? 4 : 8);
+        XLayout_setSpacing((XLayout*)&self->m_row2, tight ? 4 : 8);
+    }
+}
+
 void HsfDataBar_adapt(XWidget* bar, bool compact)
 {
     HsfDataBar* self = (HsfDataBar*)bar;
+    int avail;
+    int need;
+    int level;
     if (!self) return;
-    /* 窄屏：说明标签隐藏腾宽（时间框/下拉是必留项）；
-     * 宽屏恢复显示。幂等（帧泵每循环调用）。 */
-    XWidget_setVisible((XWidget*)&self->m_lbStart, !compact);
-    XWidget_setVisible((XWidget*)&self->m_lbEnd, !compact);
-    XWidget_setVisible((XWidget*)&self->m_lbChannel, !compact);
-    XWidget_setVisible((XWidget*)&self->m_lbDecimals, !compact);
+    /* [分档按**实际可用宽度**，不只看形态位 2026-11-08] 原实现只看
+     * layoutMode（竖屏形态）决定收不收说明标签：1280 宽窗算「宽屏」，
+     * 标签全显 → 两行最小宽 1016/1183 而可用宽只有 ~1070，行 1「共 N 行」
+     * 被截、行 2「关键字」框整个伸出窗外（1600 才够）。
+     * 现在按工具条自身宽度与两行最小宽需求比档，逐级收紧：
+     *   ⓪ 标签全显 + 常规最小宽；
+     *   ① 收起全部说明标签；
+     *   ② 再收控件自身最小宽 + 行间距；
+     *   ③ 仍放不下（1024 宽窗 + 导航栏实测 need≈816 > avail≈808）⇒
+     *      **隐去「共 N 行」**：它是两行里唯一的纯只读计数，历史页状态
+     *      行已给出「共 N 条 … 库内共 N 条」；继续压缩只会把末尾字截掉。
+     * [按宽度缓存分档结果] 帧泵每拍调用本函数；若每次都从头「先常规、量、
+     * 再收紧」，会每拍把最小宽/间距来回改两遍 ⇒ 布局永久脏、每帧重排。
+     * 缓存 (avail, compact) 命中即直接套用上次档位，稳态零副作用。 */
+    avail = barVisibleWidth(&self->m_base);
+    if (compact || avail <= 0) {
+        /* 形态位判定（竖屏）或几何未定：按原口径收标签。 */
+        barSetLabels(self, !compact);
+        barSetWidths(self, false);
+        barSetRowsVisible(self, !compact);
+        self->m_adaptW = avail;
+        self->m_adaptCompact = compact ? 1 : 0;
+        self->m_adaptLevel = compact ? 2 : 0;
+        return;
+    }
+    if (self->m_adaptW == avail && self->m_adaptCompact == 0 &&
+        self->m_adaptLevel >= 0) {
+        barSetLabels(self, self->m_adaptLevel == 0);
+        barSetWidths(self, self->m_adaptLevel >= 2);
+        barSetRowsVisible(self, self->m_adaptLevel < 3);
+        return;
+    }
+    barSetLabels(self, true);
+    barSetWidths(self, false);
+    barSetRowsVisible(self, true);
+    level = 0;
+    need = barMinWidthOf(&self->m_row1);
+    {
+        const int need2 = barMinWidthOf(&self->m_row2);
+        if (need2 > need) need = need2;
+    }
+    if (need > avail) {
+        barSetLabels(self, false);
+        level = 1;
+        need = barMinWidthOf(&self->m_row1);
+        {
+            const int need2 = barMinWidthOf(&self->m_row2);
+            if (need2 > need) need = need2;
+        }
+        if (need > avail) {
+            barSetWidths(self, true);
+            level = 2;
+            need = barMinWidthOf(&self->m_row1);
+            {
+                const int need2 = barMinWidthOf(&self->m_row2);
+                if (need2 > need) need = need2;
+            }
+            if (need > avail) {
+                barSetRowsVisible(self, false);
+                level = 3;
+            }
+        }
+    }
+    self->m_adaptW = avail;
+    self->m_adaptLevel = level;
+    if (XSystem_environment("XHSF_BAR_METRICS")) {
+        int n1 = barMinWidthOf(&self->m_row1);
+        int n2 = barMinWidthOf(&self->m_row2);
+        XObject* p = XObject_parent((XObject*)self);
+        int pw = p ? XWidget_width((XWidget*)p) : -1;
+        int winW = 0;
+        XWidget* t = &self->m_base;
+        while (XObject_parent((XObject*)t) &&
+               !((XWidget*)XObject_parent((XObject*)t))->m_isWindow)
+            t = (XWidget*)XObject_parent((XObject*)t);
+        if (XObject_parent((XObject*)t))
+            winW = XWidget_width((XWidget*)XObject_parent((XObject*)t));
+        XPrintf("[bar-metrics] win=%d parentW=%d avail=%d level=%d "
+                "need1=%d need2=%d\n", winW, pw, avail, level, n1, n2);
+    }
 }
 
 #endif /* 守卫 */

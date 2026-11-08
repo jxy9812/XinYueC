@@ -158,6 +158,19 @@ if(MSVC)
     add_link_options(/OPT:NOICF)
 endif()
 
+# ==================== 源文件字符集 = UTF-8（MSVC /source-charset） ====================
+# [2026-11-07 根修] 项目口径"源文件 UTF-8"（AGENTS.md），但 MSVC 默认按
+# **活动码页**（简中系统 = GBK/936）解码无 BOM 的源文件——UTF-8 中文字面量
+# 的字节被按 GBK 重新分组 ⇒ 运行期字符串就是 mojibake（实测：HsfTitleBar.c
+# 的自动运行 chip 文案「自动·已停止」显示为「èªå¨Â·å²åæ­¢」——UTF-8
+# 字节被 GBK 解码后再按 UTF-8 输出的双重乱码）。/utf-8 = /source-charset +
+# /execution-charset 同设 UTF-8：源码按 UTF-8 读、窄字符串按 UTF-8 存，
+# 与 GCC/Clang（默认 UTF-8）口径对齐，全部平台一致。
+# 注意只加在 MSVC 分支（GCC/Clang 不认识 /utf-8，且默认即 UTF-8 无需处理）。
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 #设置可执行文件的输出目录（可用 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=... 覆盖，
 #供 Release 门等旁路构建输出到独立目录，避免覆盖 bin/ 的既有产物）
 #

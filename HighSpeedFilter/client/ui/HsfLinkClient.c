@@ -24,6 +24,7 @@
 #include "XVfdM512.h"
 #endif
 #include "XBson.h"
+#include "XBsonArray.h"
 #include "XBsonDocument.h"
 #include "XBsonValue.h"
 #include "XByteArray.h"
@@ -33,6 +34,7 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XPrintf.h"
+#include "XSystem.h"   /* XSystem_environment：泵点击诊断开关（XHSF_PUMP_TRACE）。 */
 #include <string.h>
 
 /* ==================== 模块状态 ==================== */
@@ -64,6 +66,10 @@ typedef struct HsfLinkClientState {
 #endif
     HsfHistoryPage m_history;          /**< 最近一次历史分页结果（0x0118）。 */
     HsfConfig m_config;                /**< 最近一次远端配置快照（0x0116）。 */
+    int m_cfgSeq;                      /**< 配置**写**应答序号（0=从未收到）。 */
+    int m_cfgGetSeq;                   /**< 配置快照序号（GET 应答递增）。 */
+    bool m_cfgOk;                      /**< 最近一次配置写是否成功。 */
+    char m_cfgErr[96];                 /**< 最近一次配置写失败原因（UTF-8）。 */
     char m_serverAddr[96];              /**< 服务端地址（远端设置页显示用）。 */
     bool m_vfdValid;                    /**< 收到过至少一拍。 */
     /* 模拟量遥测快照。 */
@@ -170,15 +176,24 @@ static void hsfLcParseEnvelope(const uint8_t* data, uint32_t len,
  * @note  [名字只由服务端给] 全量帧才带 an<i> 名字；增量帧只有数值，
  *        客户端沿用已缓存的名字。名字变更时服务端主动发全量帧。
  */
-static void hsfLcParseAi(const uint8_t* data, uint32_t len)
+static bool hsfLcParseAi(const uint8_t* data, uint32_t len)
 {
     XBsonDocument* doc = XBsonDocument_create();
     XBsonValue* v;
     int n = 0;
     int i;
     bool full = false;
-    if (!doc) return;
+    if (!doc) return false;
     if (XBsonDocument_from_bytes(doc, data, len)) {
+        /* [只接受显示侧 2026-11-08，与 VFD 同一处缺陷] 服务端按「主题 × 侧」
+         * 各推一帧（AI 100ms × A/B = 20 帧/秒），而此前无论哪一侧都写同一份
+         * m_ai* 状态并通知订阅者 ⇒ 模拟量页被刷 20 次/秒、两路读数不同时还会
+         * 在 A/B 之间跳变。页面只显示 A 侧，非显示侧直接丢弃。 */
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_SIDE);
+        if (v && (int)XBsonValue_toInt32(v, HSF_SIDE_A) != HSF_SIDE_A) {
+            XClassDelete((XClass*)doc);
+            return false;
+        }
         v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_FULL);
         if (v) full = XBsonValue_toBool(v, false);
         v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AI_COUNT);
@@ -246,8 +261,8 @@ static void hsfLcParseAi(const uint8_t* data, uint32_t len)
         s_lc.m_aiValid = true;
     }
     XClassDelete((XClass*)doc);
+    return true;
 }
-
 /**
  * @brief 解码温湿度遥测 {"side","temp","hum","tempValid","humValid"}。
  * @param data BSON 文档字节；len 字节数；outSide 输出侧号。
@@ -516,12 +531,12 @@ static void hsfLcCopyValue(XBsonValue* v, char* dst, size_t cap)
 const char* HsfLinkClient_healthText(int health)
 {
     switch (health) {
-    case 0: return "\xE6\xAD\xA3\xE5\xB8\xB8";                     /* 正常 */
-    case 1: return "\xE5\x91\x8A\xE8\xAD\xA6";                     /* 告警 */
-    case 2: return "\xE6\x95\xB0\xE6\x8D\xAE\xE8\xBF\x87\xE6\x9C\x9F"; /* 数据过期 */
-    case 3: return "\xE7\xA6\xBB\xE7\xBA\xBF";                     /* 离线 */
-    case 4: return "\xE6\x95\x85\xE9\x9A\x9C";                     /* 故障 */
-    default: return "\xE6\x9C\xAA\xE7\x9F\xA5";                    /* 未知 */
+    case 0: return "正常";                     /* 正常 */
+    case 1: return "告警";                     /* 告警 */
+    case 2: return "数据过期"; /* 数据过期 */
+    case 3: return "离线";                     /* 离线 */
+    case 4: return "故障";                     /* 故障 */
+    default: return "未知";                    /* 未知 */
     }
 }
 
@@ -529,15 +544,15 @@ const char* HsfLinkClient_healthText(int health)
 const char* HsfLinkClient_kindText(int kind)
 {
     switch (kind) {
-    case 0: return "\xE5\x8F\x98\xE9\xA2\x91\xE5\x99\xA8";        /* 变频器 */
-    case 1: return "\xE6\xB8\xA9\xE6\xB9\xBF\xE5\xBA\xA6";        /* 温湿度 */
-    case 2: return "\xE6\xB5\x81\xE9\x87\x8F\xE8\xAE\xA1";        /* 流量计 */
-    case 3: return "\xE6\xA8\xA1\xE6\x8B\x9F\xE9\x87\x8F";        /* 模拟量 */
-    case 4: return "485\xE6\x80\xBB\xE7\xBA\xBF";                  /* 485总线 */
-    case 5: return "\xE6\x95\xB0\xE5\xAD\x97\xE9\x87\x8F";        /* 数字量 */
-    case 6: return "\xE7\x94\xB5\xE7\xA3\x81\xE9\x98\x80\xE7\xBB\x84";  /* 电磁阀组 */
-    case 7: return "\xE6\xB0\xB4\xE8\xB4\xA8";                  /* 水质 */
-    default: return "\xE6\x9C\xAA\xE7\x9F\xA5";                    /* 未知 */
+    case 0: return "变频器";        /* 变频器 */
+    case 1: return "温湿度";        /* 温湿度 */
+    case 2: return "流量计";        /* 流量计 */
+    case 3: return "模拟量";        /* 模拟量 */
+    case 4: return "485总线";                  /* 485总线 */
+    case 5: return "数字量";        /* 数字量 */
+    case 6: return "电磁阀组";  /* 电磁阀组 */
+    case 7: return "水质";                  /* 水质 */
+    default: return "未知";                    /* 未知 */
     }
 }
 
@@ -638,18 +653,70 @@ static void hsfLcSubscribeTopics(void)
     XLinkSession* session = s_lc.m_client ? XLinkClient_session(s_lc.m_client) : NULL;
     int i;
     if (!session) return;
-    if (!XLinkSession_subscribe(session, HSF_TOPIC_TEMPHUM_STATUS) ||
-        !XLinkSession_subscribe(session, HSF_TOPIC_DEVICE_HEALTH)) {
-        XPrintf("HsfLinkClient: 常驻主题订阅失败\n");
-    }
+    /* [两个常驻主题各自独立发送] 原实现用 || 串联：温湿度那一句失败会
+     * 短路掉健康主题的订阅（健康卡随即永久无数据，且日志只有一行"常驻
+     * 主题订阅失败"分不清是谁）。拆成两句、各记各的失败原因。 */
+    if (!XLinkSession_subscribe(session, HSF_TOPIC_TEMPHUM_STATUS))
+        XPrintf("HsfLinkClient: 常驻主题 0x%08X（温湿度）订阅失败\n",
+                (unsigned)HSF_TOPIC_TEMPHUM_STATUS);
+    if (!XLinkSession_subscribe(session, HSF_TOPIC_DEVICE_HEALTH))
+        XPrintf("HsfLinkClient: 常驻主题 0x%08X（设备健康）订阅失败\n",
+                (unsigned)HSF_TOPIC_DEVICE_HEALTH);
     /* 连接就绪时按已累计的页面引用补订（建窗期累计的引用 / 重连场景
-     * 页面仍显示着）。sent 标志随链路作废，此处统一重发。 */
+     * 页面仍显示着）。sent 标志随链路作废，此处统一重发。
+     * [逐主题失败必须留痕] 补订失败时 m_topicSent 保持 false，后续
+     * HsfLinkClient_ensureSubscriptions（页面激活时调用）才有据可补；
+     * 无日志的话实测症状就是"某几张卡一直 --，控制台毫无线索"。 */
     for (i = 0; i < (int)HsfLinkTopic_Count; ++i) {
+        uint32_t id;
         s_lc.m_topicSent[i] = false;
-        if (s_lc.m_topicRef[i] > 0
-            && XLinkSession_subscribe(session, hsfLcTopicId((HsfLinkTopic)i)))
+        if (s_lc.m_topicRef[i] <= 0) continue;
+        id = hsfLcTopicId((HsfLinkTopic)i);
+        if (id && XLinkSession_subscribe(session, id))
             s_lc.m_topicSent[i] = true;
+        else
+            XPrintf("HsfLinkClient: 页面主题 0x%08X 订阅失败（引用=%d）\n",
+                    id, s_lc.m_topicRef[i]);
     }
+}
+
+/**
+ * @brief 幂等补订：把「引用>0 但订阅帧没发出去」的主题补发一次。
+ * @details [为什么需要] 页面集合没变时 hsf_pageTopicSwitch 走"无差异"
+ *          快路径直接返回；若上一次订阅帧因链路抖动/未就绪发送失败，
+ *          该主题就再也补不回来——界面表现为"回到首页后某几张卡永久
+ *          --"（实测复现：page 7 → 主界面，流量计卡停在「-- 无数据」）。
+ *          本函数**只补订、绝不改引用计数**（引用归 subscribe/unsubscribe
+ *          记账），故可在每次页面激活时无条件调用；已订阅的主题由
+ *          XLinkSession_subscribe 幂等短路，不发重复帧、不占表槽。
+ * @note  与 hsfLcSubscribeTopics 的区别：那个是"链路新建"语义（把
+ *        m_topicSent 一律作废后重发）；本函数是"链路仍在"语义，**只补
+ *        m_topicSent 为 false 的**，不会动已经生效的订阅。
+ * @return 链路就绪且补订流程已执行返回 true；未就绪返回 false（引用
+ *         保留，重连就绪时 hsfLcSubscribeTopics 会统一补）。
+ */
+bool HsfLinkClient_ensureSubscriptions(void)
+{
+    XLinkSession* session;
+    int i;
+    if (!s_lc.m_client || !XLinkClient_isReady(s_lc.m_client)) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    /* 常驻主题两兄弟也一起兜（幂等，已订阅即短路）。 */
+    (void)XLinkSession_subscribe(session, HSF_TOPIC_TEMPHUM_STATUS);
+    (void)XLinkSession_subscribe(session, HSF_TOPIC_DEVICE_HEALTH);
+    for (i = 0; i < (int)HsfLinkTopic_Count; ++i) {
+        uint32_t id;
+        if (s_lc.m_topicRef[i] <= 0 || s_lc.m_topicSent[i]) continue;
+        id = hsfLcTopicId((HsfLinkTopic)i);
+        if (!id) continue;
+        if (XLinkSession_subscribe(session, id))
+            s_lc.m_topicSent[i] = true;
+        else
+            XPrintf("HsfLinkClient: 补订主题 0x%08X 失败（引用=%d，"
+                    "下次切页/重连重试）\n", id, s_lc.m_topicRef[i]);
+    }
+    return true;
 }
 
 bool HsfLinkClient_subscribe(HsfLinkTopic topic)
@@ -672,9 +739,15 @@ bool HsfLinkClient_subscribe(HsfLinkTopic topic)
     if (s_lc.m_topicSent[topic])
         return true;
     if (!XLinkSession_subscribe(session, id)) {
-        /* 发送失败：回滚，下次切页/重连可重试。 */
-        s_lc.m_topicRef[topic]--;
-        XPrintf("HsfLinkClient: 主题 0x%08X 订阅失败\n", id);
+        /* [失败不回收引用] 引用表达的是"某页当前正显示"（见 close 注释：
+         * 引用属页面生命周期，不属连接生命周期），发送成败不该改动它——
+         * 原实现回滚引用，而页面侧 m_subTopics 位掩码仍保留该主题位，两边
+         * 就此失步：下次切回同一页位掩码无差异 ⇒ 不再发订阅帧，该主题
+         * 永久无推送（界面表现为某几张卡一直 "--"，切页也不恢复）。
+         * 保留引用后，HsfLinkClient_ensureSubscriptions（每次页面激活
+         * 调用）与重连后的 hsfLcSubscribeTopics 都能据此重试。 */
+        XPrintf("HsfLinkClient: 主题 0x%08X 订阅帧发送失败（引用=%d，"
+                "切页/重连时重试）\n", id, s_lc.m_topicRef[topic]);
         return false;
     }
     s_lc.m_topicSent[topic] = true;
@@ -718,6 +791,18 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
         }
         if (frame->m_msgCode == HSF_CMD_CONFIG_GET) {
             (void)HsfConfig_parse(payload, frame->m_payloadLen, &s_lc.m_config);
+            ++s_lc.m_cfgGetSeq;       /* 新快照 → 页面才回填控件（避免每拍覆盖用户输入）。 */
+            break;
+        }
+        if (frame->m_msgCode == HSF_CMD_CONFIG_SET) {
+            /* [写应答] 与 Python 同口径：ok/err 回显到状态行（
+             * 周期可能被服务端夹取过，页面以随后的 GET 快照为准）。 */
+            bool ok = false;
+            s_lc.m_cfgErr[0] = '\0';
+            hsfLcParseEnvelope(payload, frame->m_payloadLen, &ok,
+                               s_lc.m_cfgErr, sizeof(s_lc.m_cfgErr));
+            s_lc.m_cfgOk = ok;
+            ++s_lc.m_cfgSeq;
             break;
         }
         if (frame->m_msgCode == HSF_CMD_DEVICE_HEALTH) {
@@ -848,19 +933,34 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
         if (topicId == HSF_TOPIC_VFD_STATUS) {
 #if XVFD_ON
             int si;
-            if (XVfdCodec_statusFromBson(&s_lc.m_vfdStatus, body, bodyLen)) {
-                s_lc.m_vfdValid = true;
-                for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
-                    if (s_lc.m_vfd[si].m_cb)
-                        s_lc.m_vfd[si].m_cb(s_lc.m_vfd[si].m_user);
-                }
+            int side = HSF_SIDE_A;
+            /* [只接受显示侧 2026-11-08] 服务端按「主题 × 侧」各推一帧（VFD
+             * 100ms × A/B 两侧 = 20 帧/秒）。此前两份都写进同一个
+             * m_vfdStatus 并逐帧通知订阅者，导致：
+             *   (a) 界面数值在 A/B 之间每 100ms 交替（两侧读数不同时肉眼
+             *       可见跳变）——这是**正确性**问题；
+             *   (b) 仪表/横幅/趋势图每秒被刷 20 次，实测 VFD 页 28fps、
+             *       帧区域均值 133K px。
+             * 界面（含标题栏）显示 A 侧（HSF_SIDE_A），非显示侧的帧直接
+             * 丢弃：不写状态、不通知 ⇒ 帧数减半且不再跳变。
+             * [为什么不按侧分别存] 页面只用一侧，per-side 存储只会多占内存
+             * 与分支；将来要做 A/B 同屏对比时再改。 */
+            if (!XVfdCodec_statusFromBson_2(&s_lc.m_vfdStatus, &side,
+                                            body, bodyLen))
+                break;
+            if (side != HSF_SIDE_A) break;
+            s_lc.m_vfdValid = true;
+            for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
+                if (s_lc.m_vfd[si].m_cb)
+                    s_lc.m_vfd[si].m_cb(s_lc.m_vfd[si].m_user);
             }
 #endif
         } else if (topicId == HSF_TOPIC_DEVICE_HEALTH) {
             hsfLcOnHealthPayload(body, bodyLen);
         } else if (topicId == HSF_TOPIC_AI_STATUS) {
             int si;
-            hsfLcParseAi(body, bodyLen);
+            /* 解析函数内已做显示侧过滤：非显示侧返回 false，不通知订阅者。 */
+            if (!hsfLcParseAi(body, bodyLen)) break;
             for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
                 if (s_lc.m_ai[si].m_cb)
                     s_lc.m_ai[si].m_cb(s_lc.m_ai[si].m_user);
@@ -1130,6 +1230,31 @@ int HsfLinkClient_role(void)
     session = XLinkClient_session(s_lc.m_client);
     if (!session) return 0;
     return (int)XLinkSession_authRole(session);
+}
+
+/**
+ * @brief 四档角色→权限位图的**客户端镜像**（服务端 XPermPolicy 同源）。
+ * @details 下行下标严格等于 XLinkAuthRole 值（0/1/2/3），**不是权限档序**。
+ *          与服务端 XPermission.c 的 s_permDefaults 逐位对齐：
+ *            匿名=查看 / 普通=查看+下载 / 管理员=全权 / 操作者=+控制。
+ * @warning 只影响界面可达性；授权以服务端为准。
+ */
+static uint32_t hsfLcRolePerms(int role)
+{
+    switch (role) {
+    case (int)XLinkAuthRole_Anonymous: return HSF_PERM_VIEW;
+    case (int)XLinkAuthRole_User:      return HSF_PERM_VIEW | HSF_PERM_DOWNLOAD;
+    case (int)XLinkAuthRole_Admin:     return HSF_PERM_ALL;
+    case (int)XLinkAuthRole_Operator:
+        return HSF_PERM_VIEW | HSF_PERM_DOWNLOAD | HSF_PERM_DEVICE_CONTROL;
+    default:                           return 0;
+    }
+}
+
+bool HsfLinkClient_can(uint32_t perm)
+{
+    if (perm == 0) return true;
+    return (hsfLcRolePerms(HsfLinkClient_role()) & perm) == perm;
 }
 
 /**
@@ -1830,7 +1955,14 @@ bool HsfLinkClient_pumpControl(int index, bool on)
     XByteArray* bytes;
     uint32_t reqId = 0;
     bool ok;
+    const bool trace = XSystem_environment("XHSF_PUMP_TRACE") != NULL;
 
+    /* [泵点击诊断] 三个前置闸都会静默 return false，现场「点了没反应」时
+     * 看不到任何痕迹。开关式日志各留一行即可区分「链路未就绪」「索引
+     * 越界」「会话为空」。 */
+    if (trace)
+        XPrintf("[pump] control(index=%d on=%d) ready=%d\n", index,
+                on ? 1 : 0, HsfLinkClient_isReady() ? 1 : 0);
     if (!HsfLinkClient_isReady()) return false;
     if (index < 0 || index >= HSF_PUMP_COUNT) return false;
     session = XLinkClient_session(s_lc.m_client);
@@ -1867,7 +1999,11 @@ bool HsfLinkClient_vfdSnapshotRequest(void)
                                        XLinkDataType_Bson, NULL, 0, &reqId);
 }
 
-bool HsfLinkClient_historyPage(int offset, int limit)
+/** @brief 历史分页实际发包（时间窗/关键字均下推服务端）。 */
+static bool hsfLcHistoryQuery(int offset, int limit, bool exportMode,
+                              const char* kw,
+                              const uint32_t* kwCols, int kwColCount,
+                              int64_t loTs, int64_t hiTs)
 {
     XLinkSession* session;
     XBsonDocument* doc;
@@ -1882,15 +2018,53 @@ bool HsfLinkClient_historyPage(int offset, int limit)
     session = XLinkClient_session(s_lc.m_client);
     if (!session) return false;
 
-    /* [窗口锚点 beforeTs] é¦é¡µæèªå·±çâç°å¨âåä¸å»ï¼ç¿»é¡µåæ ·åä¼ âæ´æ®µåé¡µéå¨åä¸æ¹æ°æ®ä¸âï¼
-     * å¦å©åºå¨æç»­å¥åºï¼ç¿»å°ç¬¬ 2 é¡µæ¶æ°è¡å·²æªè¿æ¥ï¼
-     * offset æ´ä½åç§»ââ ç¸é»ä¸¤é¡µåºç°éå¤è¡ã */
+    /* [窗口锚点 beforeTs] 首屏把自己的"现在"发上去，翻页原样回传——整段分页
+     * 钉在同一批数据上；否则库在持续入库，翻到第 2 页时新行已顶进来，
+     * offset 整体偏移→相邻两页出现重复行。
+     * [export 标记] 导出意图由服务端验 Download 权限（界面灰按钮拦不住
+     * 直接发帧的人）；普通浏览不带该键。
+     * [kw/kwCols] 关键字下推服务端（与 Python 同键名），保证"总数"与
+     * "页内容"共用同一条 WHERE。 */
     doc = XBsonDocument_create();
     if (!doc) return false;
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_HIST_OFFSET, offset);
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_HIST_LIMIT, limit);
     XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_HIST_BEFORE_TS,
                                       XDateTime_currentSecsSinceEpoch() * 1000LL);
+    /* [时间窗] 客户端选定的起止时刻下推服务端（HIST_KEY_LO_TS/HI_TS）；
+     * 未设的一端不发键（服务端按"库内最早/现在"处理）。 */
+    if (loTs > 0)
+        XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_HIST_LO_TS, loTs);
+    if (hiTs > 0)
+        XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_HIST_HI_TS, hiTs);
+    if (exportMode)
+        XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_HIST_EXPORT, true);
+    if (kw && kw[0]) {
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_HIST_KW, kw);
+        if (kwCols && kwColCount > 0) {
+            XBsonArray* arr = XBsonArray_create();
+            int i;
+            if (arr) {
+                for (i = 0; i < kwColCount; ++i) {
+                    XBsonValue* v = XBsonValue_create_int32((int32_t)kwCols[i]);
+                    if (v) {
+                        /* [move 后释放源壳 2026-11-08] append_move 只转内容，
+                         * XBsonValue 堆壳归调用方（框架 XBsonArray.c 同款收尾；
+                         * 公开测试 XJsonBsonCoverageTest 也是 move 后 delete）。
+                         * 原先不释放 ⇒ 每次历史查询漏 N 个 32 字节壳，界面
+                         * 历史页轮询时随运行时长累积。 */
+                        XBsonArray_append_move_base(arr, v);
+                        XBsonValue_delete(v);
+                    }
+                }
+                XBsonDocument_insert_keyUtf8_array_move(doc, HSF_KEY_HIST_KW_COLS,
+                                                        arr);
+                /* 同口径：insert_keyUtf8_array_move 只转移内容，源数组壳由
+                 * 调用方释放（否则每次带关键字查询漏一个 XBsonArray）。 */
+                XClassDelete((XClass*)arr);
+            }
+        }
+    }
     bytes = XBsonDocument_toBson(doc);
     XClassDelete((XClass*)doc);
     if (!bytes) return false;
@@ -1901,6 +2075,33 @@ bool HsfLinkClient_historyPage(int offset, int limit)
                                     &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
+}
+
+bool HsfLinkClient_historyQuery(int offset, int limit, bool exportMode,
+                                const char* kw,
+                                const uint32_t* kwCols, int kwColCount)
+{
+    return hsfLcHistoryQuery(offset, limit, exportMode, kw, kwCols, kwColCount,
+                             0, 0);
+}
+
+bool HsfLinkClient_historyQueryWindow(int offset, int limit, bool exportMode,
+                                      const char* kw,
+                                      const uint32_t* kwCols, int kwColCount,
+                                      int64_t loTs, int64_t hiTs)
+{
+    return hsfLcHistoryQuery(offset, limit, exportMode, kw, kwCols, kwColCount,
+                             loTs, hiTs);
+}
+
+bool HsfLinkClient_historyPageEx(int offset, int limit, bool exportMode)
+{
+    return HsfLinkClient_historyQuery(offset, limit, exportMode, NULL, NULL, 0);
+}
+
+bool HsfLinkClient_historyPage(int offset, int limit)
+{
+    return HsfLinkClient_historyPageEx(offset, limit, false);
 }
 
 const HsfHistoryPage* HsfLinkClient_history(void)
@@ -1923,6 +2124,14 @@ bool HsfLinkClient_configGet(void)
 
 bool HsfLinkClient_configSetStorage(bool enabled, int sampleMs)
 {
+    /* 兼容旧入口：只改开关/周期，不碰路径/上限/策略（-1/NULL=不发该键）。 */
+    return HsfLinkClient_configSetStorageEx(enabled, NULL, sampleMs, -1, NULL, -1);
+}
+
+bool HsfLinkClient_configSetStorageEx(bool enabled, const char* path,
+                                      int sampleMs, int maxMb,
+                                      const char* policy, int keepFiles)
+{
     XLinkSession* session;
     XBsonDocument* doc;
     XByteArray* bytes;
@@ -1940,6 +2149,16 @@ bool HsfLinkClient_configSetStorage(bool enabled, int sampleMs)
     XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_STORAGE_ENABLED, enabled);
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_STORAGE_SAMPLE_MS,
                                        sampleMs);
+    if (path)
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_CFGK_STORAGE_PATH, path);
+    if (maxMb >= 0)
+        XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_STORAGE_MAX_MB, maxMb);
+    if (policy && policy[0])
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_CFGK_STORAGE_FULL_POLICY,
+                                          policy);
+    if (keepFiles >= 0)
+        XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_STORAGE_KEEP_FILES,
+                                           keepFiles);
     bytes = XBsonDocument_toBson(doc);
     XClassDelete((XClass*)doc);
     if (!bytes) return false;
@@ -1950,6 +2169,108 @@ bool HsfLinkClient_configSetStorage(bool enabled, int sampleMs)
                                     &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
+}
+
+bool HsfLinkClient_configSetCollect(const HsfConfigCollect* collect)
+{
+    XLinkSession* session;
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    uint32_t reqId = 0;
+    bool ok = false;
+
+    if (!HsfLinkClient_isReady() || !collect) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    XBsonDocument_insert_keyUtf8_utf8(doc, HSF_CFG_SECTION_KEY,
+                                      HSF_CFG_SECTION_COLLECT);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_VFD_ENABLED,
+                                      collect->m_vfdEnabled);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_TEMPHUM_ENABLED,
+                                      collect->m_temphumEnabled);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_FLOWMETER_ENABLED,
+                                      collect->m_flowmeterEnabled);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_TURBIDITY_ENABLED,
+                                      collect->m_turbidityEnabled);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_ANALOG_ENABLED,
+                                      collect->m_analogEnabled);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_DIGITAL_ENABLED,
+                                      collect->m_digitalEnabled);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_VFD_POLL_MS,
+                                        collect->m_vfdPollMs);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_TEMPHUM_POLL_MS,
+                                        collect->m_temphumPollMs);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_TURBIDITY_POLL_MS,
+                                        collect->m_turbidityPollMs);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_ANALOG_POLL_MS,
+                                        collect->m_analogPollMs);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_DIGITAL_POLL_MS,
+                                        collect->m_digitalPollMs);
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    if (!bytes) return false;
+    ok = XLinkSession_sendRequest_ex(session, HSF_CMD_CONFIG_SET,
+                                    XLinkDataType_Bson,
+                                    (const uint8_t*)XByteArray_constData(bytes),
+                                    (uint32_t)XByteArray_size_base(bytes),
+                                    &reqId);
+    XClassDelete((XClass*)bytes);
+    return ok;
+}
+
+bool HsfLinkClient_configSetLogin(const HsfConfigLogin* login)
+{
+    XLinkSession* session;
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    uint32_t reqId = 0;
+    bool ok = false;
+
+    if (!HsfLinkClient_isReady() || !login) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    XBsonDocument_insert_keyUtf8_utf8(doc, HSF_CFG_SECTION_KEY,
+                                      HSF_CFG_SECTION_LOGIN);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_LOGIN_ALLOW_ANON,
+                                      login->m_allowAnonymous);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_LOGIN_ALLOW_CONCUR,
+                                      login->m_allowConcurrent);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_LOGIN_MAX_SESSIONS,
+                                       login->m_maxSessions);
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    if (!bytes) return false;
+    ok = XLinkSession_sendRequest_ex(session, HSF_CMD_CONFIG_SET,
+                                    XLinkDataType_Bson,
+                                    (const uint8_t*)XByteArray_constData(bytes),
+                                    (uint32_t)XByteArray_size_base(bytes),
+                                    &reqId);
+    XClassDelete((XClass*)bytes);
+    return ok;
+}
+
+bool HsfLinkClient_configOk(void)
+{
+    return s_lc.m_cfgOk;
+}
+
+const char* HsfLinkClient_configError(void)
+{
+    return s_lc.m_cfgErr;
+}
+
+int HsfLinkClient_configSeq(void)
+{
+    return s_lc.m_cfgSeq;
+}
+
+int HsfLinkClient_configGetSeq(void)
+{
+    return s_lc.m_cfgGetSeq;
 }
 
 const HsfConfig* HsfLinkClient_config(void)
@@ -1964,10 +2285,14 @@ const char* HsfLinkClient_serverAddress(void)
 
 const char* HsfLinkClient_roleName(void)
 {
+    /* 四档中文名与 XPermPolicy_roleName 同口径；角色值不单调，必须逐个
+     * 枚举（旧实现把 1 写成"管理员"、2 写成"运行员"，与 XAccountRole
+     * 正好相反——root（2）显示成运行员，现场据此误判权限）。 */
     switch (HsfLinkClient_role()) {
-    case 1: return "\xE7\xAE\xA1\xE7\x90\x86\xE5\x91\x98";     /* 管理员 */
-    case 2: return "\xE8\xBF\x90\xE8\xA1\x8C\xE5\x91\x98";     /* 运行员 */
-    default: return "\xE5\x8C\x96\xE8\xA7\x82";                  /* 观察 */
+    case (int)XLinkAuthRole_Admin:    return "管理员";
+    case (int)XLinkAuthRole_Operator: return "操作者";
+    case (int)XLinkAuthRole_User:     return "普通用户";
+    default:                          return "匿名";
     }
 }
 
@@ -2070,6 +2395,13 @@ void HsfLinkClient_setModeCallback(HsfLinkNotifyFn cb, void* userData)
 const char* HsfLinkClient_lastModeError(void)
 {
     return s_lc.m_modeErr;
+}
+
+const char* HsfLinkClient_runModeError(void)
+{
+    /* 同一缓冲，零拷贝借用：成功应答已在 hsfLcOnFrame（RUN_MODE 分支）
+     * 解析前清空，故返回空串即「没有失败原因」。 */
+    return HsfLinkClient_lastModeError();
 }
 
 void HsfLinkClient_setHealthCallback(HsfLinkNotifyFn cb, void* userData)

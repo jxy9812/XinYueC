@@ -1983,7 +1983,7 @@ void XTextEdit_setCursorWidth(XTextEdit* self, int width)
     effective = width;
     if (effective == -1) {
 #if XSTYLE_ON
-        effective = XStyle_pixelMetric(XStyle_defaultStyle(),
+        effective = XStyle_pixelMetric(XWidget_style((const XWidget*)self),
                                        (int)XStylePM_TextCursorWidth, NULL);
 #endif
         if (effective <= 0) effective = 1;

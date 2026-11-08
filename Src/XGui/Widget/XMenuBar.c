@@ -261,9 +261,9 @@ static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
     text = xsb_color_bar(bar, XPaletteColorRole_WindowText);
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：面板 + 每项走 PE_PanelMenuBar/CE_MenuBarItem。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption panel;
         XStyleOption_init(&panel, XStylePE_PanelMenuBar);
         {
@@ -813,7 +813,7 @@ static bool xmenubar_styleMode(const XMenuBar* bar)
 {
 #if XSTYLE_ON
     (void)bar;
-    return XStyle_defaultStyle() != NULL;
+    return XWidget_style((const XWidget*)bar) != NULL;
 #else
     (void)bar;
     return false;

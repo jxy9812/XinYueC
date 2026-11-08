@@ -408,6 +408,13 @@ committed:
                              : curW;
         wantH = XLabel_heightForWidth(&self->m_base, wantW) - margin
                 - cm.bottom;
+        /* [宽度按 8px 量化 2026-11-08] 读数每变一次（FPS 4.9→12.3、速率
+         * 257.8→1024.0 KB/s）文本宽度就差几个像素 → 收框尺寸变 → HsfUi
+         * 的锚定逻辑把悬浮层右贴边重摆一次 → 旧位/新位各标一次整窗脏区
+         * （画像实测：空闲每 3s 有 8 笔 187×64 的 HsfWin 级入队，全部来自
+         * 这里）。把目标宽量化到 8px 网格后，小幅文本宽度变化不再触发
+         * 收框与重锚；跨档时仍会重排（真需要变宽时）。 */
+        if (wantW > 0) wantW = (wantW + 7) / 8 * 8;
         if (wantW > 0 && wantH > 0 && (wantW != curW || wantH != curH))
             XWidget_resize(base, wantW, wantH);
     }
@@ -1129,7 +1136,11 @@ void XPerformanceOverlay_updateNetwork(XPerformanceOverlay* self,
         self->m_networkTxBytes = 0;
         self->m_networkRxKbps = 0.0;
         self->m_networkTxKbps = 0.0;
-        performanceOverlay_updateText(self);
+        /* [文本刷新统一到统计窗口 2026-11-08] 此处原直接 updateText：
+         * 网络计数与 FPS 采样是两个独立 1s 周期，各刷一次文本 ⇒ 悬浮层
+         * 每秒两次文本变化、两帧（速率数字每拍都在变，setText 同值早退
+         * 挡不住）。文本刷新收归 XPerformanceOverlay_updateFrame 的统计
+         * 窗口后，悬浮层对外只剩 1Hz 一次更新；本函数只落采样值。 */
         return;
     }
 
@@ -1155,7 +1166,7 @@ void XPerformanceOverlay_updateNetwork(XPerformanceOverlay* self,
     self->m_networkSampleUsecs = nowUsecs;
     self->m_networkRxBytes = rxBytes;
     self->m_networkTxBytes = txBytes;
-    performanceOverlay_updateText(self);
+    /* 文本刷新见函数头注：由 updateFrame 的统计窗口统一驱动。 */
 }
 
 void XPerformanceOverlay_draw(XPerformanceOverlay* self, XPainter* painter)

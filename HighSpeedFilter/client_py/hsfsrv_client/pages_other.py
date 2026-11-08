@@ -33,7 +33,7 @@ from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog,
                              QWidget)
 
 from . import pages_registry as reg
-from . import proto, theme
+from . import permissions, proto, theme
 from .page_base import DataTable, Page, form_row, section_title
 from .widgets import Card
 
@@ -1386,6 +1386,10 @@ class HistoryPage(Page):
         if not rows:
             self.ctx.set_status("无可导出的数据")
             return
+        # [下载权限] 无权限直接提示（界面侧）；服务端还会验 export 帧。
+        if not self.ctx.bridge.can(proto.PERM_DOWNLOAD):
+            self.ctx.set_status("权限不足：下载数据需要普通用户及以上账户")
+            return
         cols = self.visible_columns()
         headers = [self.COLUMNS[c] for c in cols]
         default = "hsf_history_%s.csv" % time.strftime("%Y%m%d_%H%M%S")
@@ -1394,6 +1398,15 @@ class HistoryPage(Page):
             "Excel 工作簿 (*.xlsx);;CSV (*.csv)")
         if not path:
             return
+        # [服务端授权后再落盘] 导出不是"把屏幕上的数据写文件"——先带
+        # export=true 向服务端重取同一窗口，服务端验 Download 权限后才
+        # 有数据可写。否则无权限账户改客户端就能导出。
+        self._export_authorized(path)
+
+    def _write_export(self, path, rows):
+        """把（已授权的）行集写成 CSV / Excel（格式由扩展名决定）。"""
+        cols = self.visible_columns()
+        headers = [self.COLUMNS[c] for c in cols]
         if path.lower().endswith(".xlsx"):
             try:
                 from . import xlsx_writer
@@ -1423,6 +1436,33 @@ class HistoryPage(Page):
                                      for c in cols])
         self.ctx.set_status("已导出 %d 条 × %d 列 → %s"
                             % (len(rows), len(cols), path))
+
+    def _export_authorized(self, path):
+        """带 export 标记向服务端重取当前窗口，授权成功后写文件。"""
+        bridge = self.ctx.bridge
+        lo_ms, hi_ms = (self._server_time_range() or (None, None))
+        kw = self._f_text.text().strip() or None
+
+        def _done(doc):
+            if not doc.get("ok"):
+                self.ctx.set_status("导出被拒绝：%s"
+                                    % (doc.get("err") or "未知"))
+                return
+            cols = list(doc.get(proto.HIST_KEY_COLS)
+                        or proto.HISTORY_COLUMNS)
+            rows = [self._server_row_texts(r, cols)
+                    for r in (doc.get(proto.HIST_KEY_ROWS) or [])]
+            self._write_export(path, rows)
+
+        def _err(msg):
+            self.ctx.set_status("导出请求失败：%s" % msg)
+
+        bridge.history_page(
+            offset=self._page_index * self._page_size,
+            limit=self._page_size, before_ts=self._window_end,
+            lo_ts=lo_ms, hi_ts=hi_ms, kw=kw,
+            kw_cols=self.visible_columns(), export_mode=True,
+            on_done=_done, on_error=_err)
 
     def _export_csv(self):
         """旧入口（保留兼容）：直接走 CSV 分支。"""
@@ -2799,6 +2839,42 @@ class RemoteSettingsPage(Page):
         card4.body.addLayout(row4)
         self.root.addWidget(card4)
 
+        # ---- 登录策略（账号；与 C 客户端同键同义，2026-11-08）----
+        #
+        # [为什么要有这块] 服务端登录策略（匿名/同账并发/会话上限）原先只能
+        # 改服务端侧的 hsf_login_policy.json（还要重启）；多客户端联调、
+        # 压测、多端围观都要用。现经 CMD_CONFIG_GET/SET 的 login 节下发，
+        # 管理员在线可改、立即对新登录生效并落盘。
+        card5 = Card("登录策略（账号）")
+        self._login_anon = QCheckBox("允许匿名登录（只读）")
+        card5.add(self._login_anon)
+        self._login_concur = QCheckBox("允许同账并发（同账户多端在线）")
+        card5.add(self._login_concur)
+        login_row = QHBoxLayout()
+        login_row.addWidget(QLabel("会话上限"))
+        self._login_max = QSpinBox()
+        self._login_max.setRange(proto.CFG_LOGIN_MAX_SESSIONS_MIN,
+                                 proto.CFG_LOGIN_MAX_SESSIONS_MAX)
+        self._login_max.setSpecialValueText("不限")
+        self._login_max.setSuffix(" 个")
+        self._login_max.setMinimumWidth(120)
+        login_row.addWidget(self._login_max)
+        login_row.addStretch(1)
+        card5.body.addLayout(login_row)
+        hint5 = QLabel(
+            "写入立即对下一次登录生效并落盘 hsf_login_policy.json；"
+            "已在线会话不受影响（关闭同账并发不会踢人）。")
+        hint5.setWordWrap(True)
+        hint5.setStyleSheet(theme.caption_label_qss())
+        card5.add(hint5)
+        login_btns = QHBoxLayout()
+        self._login_save = QPushButton("应用登录策略（需 root）")
+        self._login_save.clicked.connect(self._apply_login)
+        login_btns.addWidget(self._login_save)
+        login_btns.addStretch(1)
+        card5.body.addLayout(login_btns)
+        self.root.addWidget(card5)
+
         self.root.addStretch(1)
 
     def on_enter(self):
@@ -2806,8 +2882,8 @@ class RemoteSettingsPage(Page):
         self._fetch_config(silent=True)
 
     def _set_mode(self, mode):
-        if not self.ctx.is_root():
-            self.ctx.set_status("权限不足：切换运行模式需要 root 账户")
+        if not self.ctx.bridge.can(proto.PERM_MODE_SWITCH):
+            self.ctx.set_status("权限不足：切换运行模式需要管理员账户")
             return
         if not self.ctx.bridge.is_connected():
             self.ctx.set_status("未连接服务端")
@@ -2825,8 +2901,8 @@ class RemoteSettingsPage(Page):
 
     def _set_auto_running(self, want_on):
         """启动/停止自动运行（**逻辑在服务端**，客户端只发意图）。"""
-        if not self.ctx.is_root():
-            self.ctx.set_status("权限不足：自动运行控制需要 root 账户")
+        if not self.ctx.bridge.can(proto.PERM_AUTO_CONTROL):
+            self.ctx.set_status("权限不足：自动运行控制需要管理员账户")
             return
         if not self.ctx.bridge.is_connected():
             self.ctx.set_status("未连接服务端")
@@ -2849,8 +2925,8 @@ class RemoteSettingsPage(Page):
         if not self.ctx.bridge.is_connected():
             self.ctx.set_status("未连接服务端")
             return False
-        if not self.ctx.is_root():
-            self.ctx.set_status("权限不足：修改服务端配置需要 root 账户")
+        if not self.ctx.bridge.can(proto.PERM_ACCOUNT_ADMIN):
+            self.ctx.set_status("权限不足：修改服务端配置需要管理员账户")
             return False
         return True
 
@@ -2905,6 +2981,14 @@ class RemoteSettingsPage(Page):
         self._db_path_label.setText(
             "当前库文件：%s" % (db_path or "未启用（落盘关闭）"))
         self._populate_usage(doc.get("storageStats") or {})
+        login = doc.get("login") or {}
+        if login:
+            self._login_anon.setChecked(bool(
+                login.get(proto.CFGK_LOGIN_ALLOW_ANON, False)))
+            self._login_concur.setChecked(bool(
+                login.get(proto.CFGK_LOGIN_ALLOW_CONCUR, False)))
+            self._login_max.setValue(int(
+                login.get(proto.CFGK_LOGIN_MAX_SESSIONS, 8) or 0))
 
     def _populate_usage(self, stats):
         """把用量实况铺到进度条与文字上。
@@ -3001,6 +3085,27 @@ class RemoteSettingsPage(Page):
 
         self.ctx.bridge.config_set("storage", values, on_done=_done)
 
+    def _apply_login(self):
+        """提交登录策略（login 节；需 root）。"""
+        if not self._config_gate():
+            return
+        values = {
+            proto.CFGK_LOGIN_ALLOW_ANON: self._login_anon.isChecked(),
+            proto.CFGK_LOGIN_ALLOW_CONCUR: self._login_concur.isChecked(),
+            proto.CFGK_LOGIN_MAX_SESSIONS: self._login_max.value(),
+        }
+        self.ctx.set_status("正在应用登录策略…")
+
+        def _done(doc):
+            if doc.get("ok"):
+                self.configReady.emit(doc)
+                self.ctx.set_status("登录策略已生效（下次登录起）")
+            else:
+                self.ctx.set_status("应用失败：%s" % doc.get("err", "未知"))
+
+        self.ctx.bridge.config_set(proto.CFG_SECTION_LOGIN, values,
+                                   on_done=_done)
+
     def refresh(self):
         model = self.ctx.model
         if model.run_mode_known:
@@ -3016,9 +3121,9 @@ class RemoteSettingsPage(Page):
                     " background: transparent; }" % theme.CLR_OK)
         else:
             self._mode_label.setText("未知")
-        usable = self.ctx.is_root() and not model.is_auto()
-        self.btn_manual.setEnabled(self.ctx.is_root() and model.is_auto())
-        self.btn_auto.setEnabled(usable)
+        can_mode = self.ctx.bridge.can(proto.PERM_MODE_SWITCH)
+        self.btn_manual.setEnabled(can_mode and model.is_auto())
+        self.btn_auto.setEnabled(can_mode and not model.is_auto())
 
         # ---- 自动运行（与模式分开显示）----
         #
@@ -3047,28 +3152,37 @@ class RemoteSettingsPage(Page):
             self._auto_label.setText("自动模式 · 已停止（未按过启动）")
             self._auto_label.setStyleSheet(
                 "QLabel { background: transparent; font-size: 20px; color: #5A6572; }")
-        can_ctrl = self.ctx.is_root() and model.is_auto()
+        can_ctrl = (self.ctx.bridge.can(proto.PERM_AUTO_CONTROL)
+                    and model.is_auto())
         self.btn_auto_start.setEnabled(can_ctrl and running is not True)
         self.btn_auto_stop.setEnabled(can_ctrl and running is True)
         bridge = self.ctx.bridge
         if bridge.is_connected():
             self._conn_label.setText(
                 "已连接 · 用户 %s（%s）"
-                % (bridge.user,
-                   "管理员" if self.ctx.is_root() else "只读"))
+                % (bridge.user, permissions.role_name(bridge.role)))
         else:
             self._conn_label.setText("未连接")
 
-        # ---- 配置卡：非 root 整体只读（防止改了应用不上还以为生效）----
-        root = self.ctx.is_root()
+        # ---- 配置卡：无管理权限整体只读（防止改了应用不上还以为生效）----
+        can_cfg = self.ctx.bridge.can(proto.PERM_ACCOUNT_ADMIN)
         for _key_e, chk, _key_p, spin in self._collect_rows:
-            chk.setEnabled(root)
-            spin.setEnabled(root)
-        self._collect_apply.setEnabled(root)
-        self._storage_enable.setEnabled(root)
-        self._storage_path.setEnabled(root)
-        self._storage_sample.setEnabled(root)
-        self._storage_save.setEnabled(root)
+            chk.setEnabled(can_cfg)
+            spin.setEnabled(can_cfg)
+        self._collect_apply.setEnabled(can_cfg)
+        self._storage_enable.setEnabled(can_cfg)
+        self._storage_path.setEnabled(can_cfg)
+        self._storage_sample.setEnabled(can_cfg)
+        self._storage_max.setEnabled(can_cfg)
+        self._storage_policy.setEnabled(can_cfg)
+        self._storage_keep.setEnabled(can_cfg and
+                                      (self._storage_policy.currentData()
+                                       == "rotate"))
+        self._storage_save.setEnabled(can_cfg)
+        self._login_anon.setEnabled(can_cfg)
+        self._login_concur.setEnabled(can_cfg)
+        self._login_max.setEnabled(can_cfg)
+        self._login_save.setEnabled(can_cfg)
 
         # ---- 配置回显兜底 ----
         # 切到本页时可能还没连上（on_enter 拉空过）；连上后的第一拍补拉。

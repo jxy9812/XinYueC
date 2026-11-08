@@ -508,6 +508,11 @@ void XTestMenu_XUdpSocketTest(XTestMenu* root)
         XTestMenu_setActionFunction(action, XUdpDirectedTest);
     }
     {
+        /* bindAny 地址族选择 / IPv4-only 回退（XNET_DISABLE_IPV6=1） */
+        XAction* action = XTestMenu_addAction(menu, "bindAny 地址族与 IPv4 回退");
+        XTestMenu_setActionFunction(action, XUdpBindFamilyTest);
+    }
+    {
         XAction* action = XTestMenu_addAction(menu, "基本收发测试");
         XTestMenu_setActionFunction(action, XUdpSocketBasicTest);
     }

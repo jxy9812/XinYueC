@@ -158,10 +158,10 @@ static void VXScrollBar_paintEvent(XWidget* self, XEvent* event)
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：渐变槽 + 渐变滑块 + 双层描边走
          * CC_ScrollBar（完整对标 QFusionStyle 非 transient 路径）。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStyleCC_ScrollBar);
         {

@@ -253,6 +253,10 @@ XDateTime XDateTime_addMSecs(const XDateTime* datetime, int64_t msecs);
  * @param datetime XDateTime 对象指针。
  * @param format 格式字符串（如 "yyyy-MM-dd HH:mm:ss"）。
  * @return 指向新 XString 对象的指针，失败时返回 NULL。
+ * @note  字段字母与 Qt 的 QDateTime::toString 同义：y/yy/yyyy（年）、
+ *        M/MM（月）、d/dd（日）、H/HH（时）、m/mm（分）、s/ss（秒）。
+ *        多字母 token 补前导零（"MM" ⇒ "05"），单字母 token 不补
+ *        （"M" ⇒ "5"）——日期时间轴的刻度标签依赖这条定宽语义。
  */
 XString* XDateTime_toString_format(const XDateTime* datetime, const char* format);
 

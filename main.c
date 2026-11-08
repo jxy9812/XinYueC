@@ -330,6 +330,10 @@ static int main_run_test_dispatch(const char* testPath)
     /* 套接字「读挂起后不再收数据」专项（长空闲/高频/背压/双向/重连/串包）。 */
     if (strcmp(testPath, "xsocket-stall") == 0)
         return XSocketStallTest_run() == 0 ? 0 : 1;
+    /* bindAny 地址族选择 / IPv4-only 回退（2026-11-07 A33 无 IPv6 根修）：
+     * 双栈优先保持 + XNET_DISABLE_IPV6=1 强制回退 0.0.0.0 + 回退后真实收发。 */
+    if (strcmp(testPath, "udp-bind-family") == 0)
+        return XUdpBindFamilyTest_run() == 0 ? 0 : 1;
 #endif
 #if DEMOTEST_ON && XS7_ON
     if (strcmp(testPath, "xs7-unit") == 0)

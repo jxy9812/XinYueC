@@ -17,6 +17,7 @@
 #include "XNetworkProxyHandshake.h"
 #include "XHostInfo.h"
 #include <string.h>
+#include <stdlib.h>
 #include <assert.h>
 #if XNETWORK_ON
 #if XNETWORK_ABSTRACT_SOCKET_ON
@@ -589,16 +590,48 @@ bool XAbstractSocket_bind_base(XAbstractSocket* sock, const XHostAddress* addres
     return XClassGetVirtualFunc(sock, EXAbstractSocket_Bind, bool(*)(XAbstractSocket*, const XHostAddress*, uint16_t, XAbstractSocket_BindMode))(sock, address,port, mode);
 }
 
+/**
+ * @brief 本轮绑定是否优先尝试双栈（AnyIPv6）。
+ * @details 运行环境可能「编译期保留了 AF_INET6、运行期却没有 IPv6 栈」：
+ *          裁掉 ipv6 模块的嵌入式内核（实测全志 A33 5.2.9 无
+ *          /proc/net/if_inet6，socket(AF_INET6) 直接 EAFNOSUPPORT）、
+ *          精简容器、被运维禁用的网络命名空间。这类环境里双栈绑定必然
+ *          失败，必须能回退 IPv4-Any。
+ *          `XNET_DISABLE_IPV6=1` 是显式覆盖口（与 XGUI_WHEEL_TRACE /
+ *          XPRINTF_NO_STDOUT_RELAY 同口径的 env 探针），既供现场运维强制
+ *          IPv4，也让回退分支能在双栈开发机上被回归用例确定性覆盖。
+ * @note   每次调用读一次 env（不缓存）：bind 不在热路径，避免探针结果
+ *         与用例中途改 env 的时序耦合（缓存会让用例受执行顺序影响）。
+ */
+static bool xabstractsocket_ipv6Preferred(void)
+{
+    const char* env = getenv("XNET_DISABLE_IPV6");
+    return !(env && env[0] && env[0] != '0');
+}
+
 bool XAbstractSocket_bindAny(XAbstractSocket* sock, uint16_t port, XAbstractSocket_BindMode mode)
 {
     XHostAddress any;
+    bool result = false;
     XHostAddress_init(&any);
     /* [Qt 6.8 对齐] `QAbstractSocket::bind(quint16 port, BindMode)`
      * （qabsock.cpp:1580）等价于 `bind(QHostAddress::Any, port, mode)`：
      * Any 走双栈（AF_INET6 + IPV6_V6ONLY=0），**不分 TCP/UDP**。
-     * 原实现给 UDP 选 IPv4-Any，导致绑定后收不到 IPv6 数据报。 */
-    XHostAddress_setAddressSpecial(&any, XHostAddress_AnyIPv6Special);
-    bool result = XAbstractSocket_bind_base(sock, &any, port, mode);
+     * 原实现给 UDP 选 IPv4-Any，导致绑定后收不到 IPv6 数据报。
+     *
+     * [2026-11-07 IPv4-only 内核根修] Qt 的「Any=双栈」是**编译期**能力
+     * （QT_CONFIG(ipv6) 关闭时 QHostAddress::Any 落 IPv4），本框架没有该
+     * 开关，只能运行期兜底：双栈失败后回退 0.0.0.0 再绑一次。实测 A33
+     * 5.2.9 上原实现令 NTP（UDP）与远程服务（TCP listen）全部“套接字
+     * 创建失败”。回退只在首次失败时发生，双栈可用时行为不变。 */
+    if (xabstractsocket_ipv6Preferred()) {
+        XHostAddress_setAddressSpecial(&any, XHostAddress_AnyIPv6Special);
+        result = XAbstractSocket_bind_base(sock, &any, port, mode);
+    }
+    if (!result) {
+        XHostAddress_setAddressSpecial(&any, XHostAddress_AnyIPv4Special);
+        result = XAbstractSocket_bind_base(sock, &any, port, mode);
+    }
     XClassDeinit(&any);
     return result;
 }

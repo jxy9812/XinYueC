@@ -215,10 +215,22 @@
 #define HSF_CFGK_STORAGE_FULL_POLICY "fullPolicy"
 #define HSF_CFGK_STORAGE_KEEP_FILES "keepFiles"
 
+/* 登录/账户策略节（2026-11-08 新增；与 Python 侧 CFGK_LOGIN_* 同值同名）。
+ * 语义见服务端 XLoginPolicy：
+ *   - loginAllowAnonymous：未宣告认证的对端是否放行为匿名会话（缺省关）；
+ *   - loginAllowConcurrent：同一账户是否允许同时在线多个会话（缺省关，
+ *     即 root 单会话；压测/多端围观场景可开）；
+ *   - loginMaxSessions：会话总数上限（0=不限；缺省 8）。
+ * 写入立即对**新登录**生效并落盘 hsf_login_policy.json，存量会话不受影响。 */
+#define HSF_CFGK_LOGIN_ALLOW_ANON   "loginAllowAnonymous"
+#define HSF_CFGK_LOGIN_ALLOW_CONCUR "loginAllowConcurrent"
+#define HSF_CFGK_LOGIN_MAX_SESSIONS "loginMaxSessions"
+
 /* 应答段/顶层键。 */
 #define HSF_CFG_SECTION_KEY         "section"
 #define HSF_CFG_SECTION_COLLECT     "collect"
 #define HSF_CFG_SECTION_STORAGE     "storage"
+#define HSF_CFG_SECTION_LOGIN       "login"
 #define HSF_CFG_STORAGE_DB_PATH     "storageDbPath"
 #define HSF_CFG_STORAGE_STATS       "storageStats"
 
@@ -237,6 +249,25 @@
 #define HSF_KEY_HIST_EARLIEST_TS    "earliestTs"
 #define HSF_KEY_HIST_WINDOW_START   "windowStartTs"
 #define HSF_KEY_HIST_WINDOW_END     "windowEndTs"
+/**
+ * @brief 关键字筛选（utf8；下推服务端，与 Python store._keyword_condition 同口径）。
+ * @details [为什么下推] 分页在服务端、筛选在客户端时，只能在当前页里搜；
+ *          命中行绝大多数在别的页上，界面表现就是"筛选无效"。总数与页
+ *          内容必须共用同一条 WHERE。
+ */
+#define HSF_KEY_HIST_KW             "kw"
+/** @brief 关键字比对列下标数组（int32 数组；0..14 = 显示列；缺省=全部列）。 */
+#define HSF_KEY_HIST_KW_COLS        "kwCols"
+/** @brief 显示列数（与服务端 15 个显示表达式/客户端表格列一一对应）。 */
+#define HSF_HISTORY_DISPLAY_COLS    15
+/**
+ * @brief 导出/下载意图标记（bool；缺省 false=普通分页浏览）。
+ * @details [为什么要上服务端] "下载数据"是权限点（XAccessPerm_Download），
+ *          不能只靠客户端把按钮灰掉——绕过界面直接发帧的人必须被服务端
+ *          拒绝。客户端在**导出**时把本键置 true；服务端据此验权限，
+ *          普通浏览（false/缺省）按只读面放行。
+ */
+#define HSF_KEY_HIST_EXPORT         "export"
 
 /** @brief 历史分页：页大小上限（与 Python HISTORY_PAGE_MAX 同值）。 */
 #define HSF_HISTORY_PAGE_MAX        50
@@ -347,12 +378,30 @@
 /* ==================== 角色策略（XLinkAuthRole） ==================== */
 
 /**
- * @brief 控制类命令所需最低角色：管理员（root）。
- * @details admin（XLinkAuthRole_User）只读：可订阅遥测、可请求快照；
- *          root（XLinkAuthRole_Admin）可下发控制。服务端在分发回调里
- *          以 XLinkServer_sessionRole 强制执行。
+ * @brief 四档角色的权限语义（与 Src/Industry/XAccessControl 的 XPermPolicy 同源）。
+ * @details 匿名=只能查看；普通用户=查看+下载；操作者=+设备控制；管理员=全权。
+ *          **角色值不单调**（Operator=3 是追加值，Admin=2），故下面**不提供
+ *          "最低角色"宏**——服务端一律走 XPermPolicy 权限点判定，禁止
+ *          `role >= HSF_ROLE_CONTROL` 这类数值比较。
+ *          HSF_ROLE_CONTROL 仅为兼容旧代码保留，新代码请用权限点。
+ * @note  控件客户端若需自定义闸，用 HsfLinkClient_can(HSF_PERM_*)。
  */
-#define HSF_ROLE_CONTROL            2u   /* XLinkAuthRole_Admin */
+#define HSF_ROLE_ANONYMOUS          0u   /* XLinkAuthRole_Anonymous */
+#define HSF_ROLE_USER               1u   /* XLinkAuthRole_User      */
+#define HSF_ROLE_ADMIN              2u   /* XLinkAuthRole_Admin     */
+#define HSF_ROLE_OPERATOR           3u   /* XLinkAuthRole_Operator（追加值） */
+
+/** @brief [deprecated] 旧闸值；语义上=权限点 DeviceControl（操作者+）。 */
+#define HSF_ROLE_CONTROL            2u
+
+/* ---- 权限位（与 XAccessPerm 同值；客户端/服务端同源口径） ---- */
+#define HSF_PERM_VIEW               (1u << 0)  /**< 查看遥测/快照/历史。 */
+#define HSF_PERM_DEVICE_CONTROL     (1u << 1)  /**< 设备控制（操作者+）。 */
+#define HSF_PERM_MODE_SWITCH        (1u << 2)  /**< 手/自动切换（管理员）。 */
+#define HSF_PERM_AUTO_CONTROL       (1u << 3)  /**< 自动运行启停（管理员）。 */
+#define HSF_PERM_ACCOUNT_ADMIN      (1u << 4)  /**< 账户/服务端配置（管理员）。 */
+#define HSF_PERM_DOWNLOAD           (1u << 5)  /**< 数据下载/导出（普通用户+）。 */
+#define HSF_PERM_ALL                (0x3Fu)
 
 /* ==================== 缺省账户（首次启动自动创建） ==================== */
 

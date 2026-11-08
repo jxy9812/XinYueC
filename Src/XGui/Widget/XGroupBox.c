@@ -161,10 +161,10 @@ void XGroupBox_drawControl(const XGroupBox* self, XPainter* painter)
     (void)text;
 
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：分组框整体走 CC_GroupBox（镂空边框 +
          * 标题 + 勾选框完整复刻）。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStyleCC_GroupBox);
         opt.m_rect = r;

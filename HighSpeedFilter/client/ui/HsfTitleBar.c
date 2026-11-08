@@ -28,6 +28,13 @@
 
 /** @brief 设备健康指示宽度（模式钮左侧；够放"故障99/离线99"）。 */
 #define HSF_TITLE_HEALTH_W 108
+
+/** @brief 登录账号标签宽度：按实时文本宽 + 余量，夹在 [MIN, MAX]。
+ *  @details 12px 字库下「admin·普通用户」约 84px（半角 6/全角 12），
+ *           96 的下限保证与健康(108)/模式(96)视觉等重；超长账号截断，
+ *           不让一个 40 字符的用户名把标题区挤没。 */
+#define HSF_TITLE_USER_MIN_W 96
+#define HSF_TITLE_USER_MAX_W 150
 #define HSF_TITLE_PAD       0  /**< 右端留白（0=温湿度列贴窗口右缘）。 */
 #define HSF_TITLE_WIDE_MIN 700 /**< 宽栏阈值：显示「日期+时间」格式。 */
 #define HSF_TITLE_TEMP_W   62  /**< 温度标签定宽（℃ 值+余量）。 */
@@ -82,23 +89,24 @@ static void hsfTitleRefreshSideTexts(HsfTitleBar* self)
     if (self->m_clock)
         XLabel_setText_2(self->m_clock, buf);
     if (self->m_tempValid)
-        snprintf(buf, sizeof(buf), "%.1f\xE2\x84\x83", self->m_temperature);
+        snprintf(buf, sizeof(buf), "%.1f℃", self->m_temperature);
     else
-        snprintf(buf, sizeof(buf), "--\xE2\x84\x83");
-    if (self->m_temp) {
+        snprintf(buf, sizeof(buf), "--℃");
+    if (self->m_temp)
+        /* [不要在这里补 XWidget_update 2026-11-08] 原先带一句「XGui 无自动
+         * 文本变化失效」的注释并无条件 XWidget_update。该前提**不成立**：
+         * XLabel_setText 末尾经 label_updateLabel 已经
+         * XWidget_updateGeometry + XWidget_update，文本真变了必然重绘；
+         * 而这里再补一次，等于把 setText 的同值早退完全废掉——本函数被时钟
+         * 与温湿度推送反复调用（实测 ~18 次/秒），两个 47×20 标签因此每秒
+         * 产生 36 次入帧脏区，是标题栏持续重绘的根因。 */
         XLabel_setText_2(self->m_temp, buf);
-        /* 文本变了但几何可能不变（setFixedWidth 同值不触发重绘）——
-         * 显式标脏，否则屏幕上仍是旧文本（XGui 无自动文本变化失效）。 */
-        XWidget_update((XWidget*)self->m_temp);
-    }
     if (self->m_humValid)
         snprintf(buf, sizeof(buf), "%.1f%%", self->m_humidity);
     else
         snprintf(buf, sizeof(buf), "--%%");
-    if (self->m_humid) {
+    if (self->m_humid)
         XLabel_setText_2(self->m_humid, buf);
-        XWidget_update((XWidget*)self->m_humid);
-    }
 }
 
 /** @brief 重排：右侧块右对齐，标题占剩余空间居中。
@@ -204,6 +212,32 @@ static void hsfTitleRelayout(HsfTitleBar* self)
         XWidget_setGeometry((XWidget*)self->m_healthLbl, hx, 0,
                             HSF_TITLE_HEALTH_W, barH);
         x = hx;
+    }
+
+    /* 登录账号：健康指示再往左一格（「账号·角色」，未登录「未登录」）。
+     * [窄栏不压字] 其余右块标签越界时 clamp 到 ☰ 区会互相叠字；账号是
+     * 新增块，不能靠 clamp 混过去。空间不足以同时放下它和标题最小宽
+     * （40px）时**隐藏**该标签并把位置让回健康指示，宽栏重排自动恢复——
+     * 隐藏态不发占位，健康/模式/温湿度的既有排布完全不变。 */
+    if (self->m_userLbl) {
+        int userW = XWidget_sizeHint((XWidget*)self->m_userLbl).width + 8;
+        int userX;
+        if (userW < HSF_TITLE_USER_MIN_W) userW = HSF_TITLE_USER_MIN_W;
+        if (userW > HSF_TITLE_USER_MAX_W) userW = HSF_TITLE_USER_MAX_W;
+        userX = x - gap - userW;
+        if (userX - gap < HSF_TITLE_ICON_W + 40) {
+            /* 用显式隐藏位（isHidden）而不是 isVisible 做翻转判据：
+             * isVisible 含父链，窗口未 show 时恒 false，会把"已被宽度
+             * 隐藏"误判成"未隐藏"，窗口一 show 就露出压字的标签。 */
+            if (!XWidget_isHidden((XWidget*)self->m_userLbl))
+                XWidget_hide((XWidget*)self->m_userLbl);
+        } else {
+            if (XWidget_isHidden((XWidget*)self->m_userLbl))
+                XWidget_show((XWidget*)self->m_userLbl);
+            XWidget_setGeometry((XWidget*)self->m_userLbl, userX, 0,
+                                userW, barH);
+            x = userX;
+        }
     }
 
     /* 标题：☰ 区右侧 ~ 右侧块左侧，居中（右侧块宽度变化不影响居中）。 */
@@ -369,7 +403,7 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
         XWidget_setAttribute((XWidget*)self->m_modeBtn,
                              XWidgetAttribute_TransparentForMouseEvents, false);
         XLabel_setText_2(self->m_modeBtn,
-                         "\xE6\xA8\xA1\xE5\xBC\x8F--");   /* 模式-- */
+                         "模式--");   /* 模式-- */
     }
     /* 自动运行状态片：只在自动模式显示（手动模式隐藏）——"自动模式"是
      * 授权态，"控制器在跑"是运行态，两者分开呈现（对齐 Python 客户端）。 */
@@ -385,7 +419,14 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
     if (self->m_healthLbl) {
         XLabel_setAlignment(self->m_healthLbl,
                             XAlignment_HCenter | XAlignment_VCenter);
-        XLabel_setText_2(self->m_healthLbl, "\xE8\xAE\xBE\xE5\xA4\x87--"); /* 设备-- */
+        XLabel_setText_2(self->m_healthLbl, "设备--"); /* 设备-- */
+    }
+    /* 登录账号：账号·角色（未登录显示「未登录」，如实反映会话状态）。 */
+    self->m_userLbl = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
+    if (self->m_userLbl) {
+        XLabel_setAlignment(self->m_userLbl,
+                            XAlignment_HCenter | XAlignment_VCenter);
+        XLabel_setText_2(self->m_userLbl, "未登录"); /* 未登录 */
     }
     self->m_temp = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
     self->m_humid = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
@@ -397,6 +438,7 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
     if (self->m_clock) XWidget_show((XWidget*)self->m_clock);
     if (self->m_modeBtn) XWidget_show((XWidget*)self->m_modeBtn);
     if (self->m_healthLbl) XWidget_show((XWidget*)self->m_healthLbl);
+    if (self->m_userLbl) XWidget_show((XWidget*)self->m_userLbl);
     if (self->m_temp) XWidget_show((XWidget*)self->m_temp);
     if (self->m_humid) XWidget_show((XWidget*)self->m_humid);
 
@@ -453,13 +495,13 @@ void HsfTitleBar_setAutoRunning(HsfTitleBar* self, bool known, bool running,
     }
     if (!known) {
         XLabel_setText_2(self->m_autoChip,
-                         "èªå¨âæªç¥"); /* 自动·未知 */
+                         "自动·未知");
     } else if (running) {
         XLabel_setText_2(self->m_autoChip,
-                         "èªå¨âè¿è¡ä¸­"); /* 自动·运行中 */
+                         "自动·运行中");
     } else {
         XLabel_setText_2(self->m_autoChip,
-                         "èªå¨âå·²åæ­¢"); /* 自动·已停止 */
+                         "自动·已停止");
     }
     XWidget_setVisible((XWidget*)self->m_autoChip, true);
     hsfTitleRelayout(self);
@@ -471,13 +513,13 @@ void HsfTitleBar_setRunMode(HsfTitleBar* self, bool known, bool autoMode)
     self->m_modeKnown = known;
     self->m_modeAuto = autoMode;
     if (!known) {
-        XLabel_setText_2(self->m_modeBtn, "\xE6\xA8\xA1\xE5\xBC\x8F--");  /* 模式-- */
+        XLabel_setText_2(self->m_modeBtn, "模式--");  /* 模式-- */
     } else if (autoMode) {
         XLabel_setText_2(self->m_modeBtn,
-            "\xE6\xA8\xA1\xE5\xBC\x8F\xEF\xBC\x9A\xE8\x87\xAA\xE5\x8A\xA8");  /* 模式：自动 */
+            "模式：自动");  /* 模式：自动 */
     } else {
         XLabel_setText_2(self->m_modeBtn,
-            "\xE6\xA8\xA1\xE5\xBC\x8F\xEF\xBC\x9A\xE6\x89\x8B\xE5\x8A\xA8");  /* 模式：手动 */
+            "模式：手动");  /* 模式：手动 */
     }
     hsfTitleRelayout(self);
 }
@@ -489,21 +531,42 @@ void HsfTitleBar_setHealth(HsfTitleBar* self, bool known, int fault, int offline
     char buf[40];
     if (!self || !self->m_healthLbl) return;
     if (!known) {
-        XLabel_setText_2(self->m_healthLbl, "\xE8\xAE\xBE\xE5\xA4\x87--");  /* 设备-- */
+        XLabel_setText_2(self->m_healthLbl, "设备--");  /* 设备-- */
     } else if (fault > 0) {
-        snprintf(buf, sizeof(buf), "\xE6\x95\x85\xE9\x9A\x9C%d", fault);     /* 故障N */
+        snprintf(buf, sizeof(buf), "故障%d", fault);     /* 故障N */
         XLabel_setText_2(self->m_healthLbl, buf);
     } else if (offline > 0) {
-        snprintf(buf, sizeof(buf), "\xE7\xA6\xBB\xE7\xBA\xBF%d", offline);   /* 离线N */
+        snprintf(buf, sizeof(buf), "离线%d", offline);   /* 离线N */
         XLabel_setText_2(self->m_healthLbl, buf);
     } else {
         XLabel_setText_2(self->m_healthLbl,
-                         "\xE8\xAE\xBE\xE5\xA4\x87\xE6\xAD\xA3\xE5\xB8\xB8"); /* 设备正常 */
+                         "设备正常"); /* 设备正常 */
     }
     hsfTitleRelayout(self);
 }
 
-
+/**
+ * @brief 设置顶栏登录账号（「账号·角色」；未登录显示「未登录」）。
+ * @details 入参是 UTF-8 借用指针，文本在本函数内拷贝进标签（XLabel 持有
+ *          自己的 XString），调用后可释放/覆盖入参。角色名用
+ *          HsfLinkClient_roleName() 的四档中文名（管理员/操作者/普通用户），
+ *          不另造第五种叫法——它已与 XPermPolicy_roleName 同口径。
+ */
+void HsfTitleBar_setUser(HsfTitleBar* self, const char* user,
+                         const char* roleName)
+{
+    char buf[128];
+    if (!self || !self->m_userLbl) return;
+    if (!user || !user[0]) {
+        XLabel_setText_2(self->m_userLbl, "未登录"); /* 未登录 */
+    } else if (roleName && roleName[0]) {
+        snprintf(buf, sizeof(buf), "%s·%s", user, roleName);
+        XLabel_setText_2(self->m_userLbl, buf);
+    } else {
+        XLabel_setText_2(self->m_userLbl, user);
+    }
+    hsfTitleRelayout(self);
+}
 
 /** @brief 设置温度（℃）。 */
 void HsfTitleBar_setTemperature(HsfTitleBar* self, double celsius)
@@ -546,6 +609,15 @@ void HsfTitleBar_setClimate(HsfTitleBar* self, double celsius, double percent,
                             bool tempValid, bool humValid)
 {
     if (!self) return;
+    /* [同值早退 2026-11-08] 下面是"落字段 + 重建文本 + 重排 + **同步
+     * repaint 两个标签**"。调用方 hsf_titleSyncClimate 由**每秒时钟节拍**
+     * 驱动（时钟定时器顺带刷新温湿度），温度没变也每秒跑一遍 ⇒ 两个标签
+     * 每秒各被同步重画一次（画像实测：标题栏标签稳态 3 笔/秒脏区里 2 笔
+     * 来自这里）。值完全相同就什么都不会变，提前返回即可；真正变化时
+     * 行为不变。 */
+    if (self->m_temperature == celsius && self->m_humidity == percent &&
+        self->m_tempValid == tempValid && self->m_humValid == humValid)
+        return;
     self->m_temperature = celsius;
     self->m_humidity = percent;
     self->m_tempValid = tempValid;

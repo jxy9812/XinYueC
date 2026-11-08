@@ -464,28 +464,56 @@ bool XNtpClient_syncNow(XNtpClient* self)
         return false;
     }
 
-    /* 懒创建套接字；绑定任意端口后由 writeDatagram 定向发送。 */
-    if (!d->m_socket) {
-        d->m_socket = XUdpSocket_create();
-        if (!d->m_socket
-            || !XUdpSocket_bindAny(d->m_socket, 0,
-                                   XAbstractSocket_DefaultForPlatform)) {
-            if (d->m_socket) {
-                XClassDelete((XClass*)d->m_socket);
-                d->m_socket = NULL;
-            }
-            xntp_fail(self, XNtpClientError_Socket);
-            return true; /* 已按异步失败路径处理 */
-        }
-        XObject_connect_1((XObject*)d->m_socket,
-                          XSignal(XIODevice_readyRead_signal),
-                          (XObject*)self, xntp_onReadyRead,
-                          XConnectionType_Auto);
-    }
-
+    /* [2026-11-07 IPv4-only 内核根修] 先解析再建套接字：
+     * 绑定族必须跟随**服务器地址族**。旧实现固定 XUdpSocket_bindAny()
+     * （内部恒 AnyIPv6 双栈），在裁掉 ipv6 的内核（实测全志 A33 5.2.9：
+     * 无 /proc/net/if_inet6，socket(AF_INET6) = EAFNOSUPPORT）上绑定即失败，
+     * UI 恒报“套接字创建/发送失败”。改为：
+     *   1) 先 xntp_resolveServer（失败归 NoServer，语义不变）；
+     *   2) 按解析结果的协议族绑 Any/AnyIPv6；
+     *   3) 服务器族别变化时重建套接字（旧套接字族不对，定向发送必败）。 */
     if (!xntp_resolveServer(self)) {
         xntp_fail(self, XNtpClientError_NoServer);
         return true;
+    }
+
+    {
+        uint8_t family = (uint8_t)XHostAddress_protocol(&d->m_serverAddr);
+        bool needCreate = (d->m_socket == NULL) || (d->m_socketFamily != family);
+        if (needCreate) {
+            XHostAddress any;
+            if (d->m_socket) {
+                /* 族别变化：旧套接字绑的是另一族，定向发送无法成功。 */
+                XUdpSocket_abort(d->m_socket);
+                XClassDelete((XClass*)d->m_socket);
+                d->m_socket = NULL;
+                d->m_socketFamily = 0;
+            }
+            XHostAddress_init(&any);
+            XHostAddress_setAddressSpecial(
+                &any, family == (uint8_t)XHostAddress_IPv6Protocol
+                          ? XHostAddress_AnyIPv6Special
+                          : XHostAddress_AnyIPv4Special);
+            d->m_socket = XUdpSocket_create();
+            if (!d->m_socket
+                || !XAbstractSocket_bind_base((XAbstractSocket*)d->m_socket,
+                                              &any, 0,
+                                              XAbstractSocket_DefaultForPlatform)) {
+                XClassDeinit(&any);
+                if (d->m_socket) {
+                    XClassDelete((XClass*)d->m_socket);
+                    d->m_socket = NULL;
+                }
+                xntp_fail(self, XNtpClientError_Socket);
+                return true; /* 已按异步失败路径处理 */
+            }
+            XClassDeinit(&any);
+            d->m_socketFamily = family;
+            XObject_connect_1((XObject*)d->m_socket,
+                              XSignal(XIODevice_readyRead_signal),
+                              (XObject*)self, xntp_onReadyRead,
+                              XConnectionType_Auto);
+        }
     }
 
     d->m_retriesLeft = d->m_maxRetries;

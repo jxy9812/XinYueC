@@ -254,6 +254,79 @@ static const char* const hsf_theme_css =
     " border: 1px solid #D5DBE2;"
     " border-radius: 3px; } "
 
+    /* ==================== XTableWidget / XTableView：边框 + 圆角 + 斑马纹 ==================== */
+    /* 对齐 Python 版 theme.py:416-423 的 QTableView/QTableWidget 规则。
+     * [为什么能命中] 本引擎 QSS 元素名按 vtable 名严格匹配
+     * （xsss_className → XVTABLE_GET_NAME），XTableWidget 的 vtable 名
+     * 就是 "XTableWidget"、基类 "XTableView"；两条都写（表控件本身 +
+     * 只标注基类名的场景），参照 XItemLineEditor 段同款理由。
+     * [消费边界·如实登记]
+     *  - border/border-radius：由控件级盒路径（VXStyleSheetStyle_
+     *    drawControl → xsss_drawBorder）在表体绘制之后覆盖四缘，圆角
+     *    仅描边视觉（表体仍是矩形填充，四角不会真的被裁）；
+     *  - alternate-background-color / gridline-color：本引擎**未接入**
+     *    表格交替行与网格线的取色（XTableWidget 自绘按调色板
+     *    AlternateBase/Dark，XTableView 同），写了不生效——C 端隔行
+     *    浅底现由 HsfHomePage 逐格 BackgroundRole 承载。规则在此保留
+     *    以便引擎接入后自动生效，不参与本次像素产出。 */
+    "XTableWidget {"
+    " background-color: #FFFFFF;"
+    " border: 1px solid #D5DBE2;"
+    " border-radius: 6px; } "
+    "XTableView {"
+    " background-color: #FFFFFF;"
+    " border: 1px solid #D5DBE2;"
+    " border-radius: 6px; } "
+
+    /* ==================== 表头段 ::section（对齐 Python theme.py:425-440） ==================== */
+    /* [引擎能力对齐] Python 侧 QHeaderView::section / :last /
+     * QTableCornerButton::section 三条规则，由本次框架补的
+     * 「绘制点向 QSS 代理声明伪元素」通道消费：
+     *  - XTableWidget 列头绘制以 XStyleOptionHeader（m_optionType =
+     *    XStyleOptionType_Header）传段号/段位置，代理据此按
+     *    `XTableWidget::section`（默认伪元素名 "section"）查规则；
+     *    段位置再派生 :first/:middle/:last/:only-one
+     *    （对齐 Qt qstylesheetstyle.cpp:1995-2003）；
+     *  - 四边独立边框由框架新增的表头段绘制路径消费
+     *    （border:none + border-right + border-bottom 三声明共存，
+     *    这是本规则能画成「右侧竖线 + 底部横线、无其余边框」的前提）；
+     *  - padding:6px 8px 参与 SE_HeaderLabel 矩形内缩（文本不贴边）；
+     *  - font-weight:bold 由标签趟落画家字体（对齐 Qt
+     *    CE_HeaderLabel 的 p->setFont(subRule.font.resolve())）。
+     * [元素名] 用 "XTableWidget" 而非 "XHeaderView"：C 端列头绘制点
+     * 传的 widget 是表控件本身（XTableWidget.c paintEvent 内联绘制），
+     * XHeaderView 在本库只承载段尺寸状态、不上屏（XTableView.c:207-224
+     * 注释），写 XHeaderView 会永不命中。两者同时写出，兼顾后续把列头
+     * 迁到 XHeaderView 自绘的情形。 */
+    "XTableWidget::section {"
+    " background-color: #EFF3F7;"
+    " border: none;"
+    " border-right: 1px solid #E4E8EC;"
+    " border-bottom: 1px solid #D5DBE2;"
+    " padding: 6px 8px;"
+    " color: #1A1A1A;"
+    " font-weight: bold; } "
+    "XHeaderView::section {"
+    " background-color: #EFF3F7;"
+    " border: none;"
+    " border-right: 1px solid #E4E8EC;"
+    " border-bottom: 1px solid #D5DBE2;"
+    " padding: 6px 8px;"
+    " color: #1A1A1A;"
+    " font-weight: bold; } "
+    /* ::section:last —— 末段去掉右边线（否则末列右侧多一条与表框
+     * 相邻的竖线，视觉上成双线）。对齐 Python theme.py:434-436。 */
+    "XTableWidget::section:last {"
+    " border-right: none; } "
+    "XHeaderView::section:last {"
+    " border-right: none; } "
+    /* 角按钮（左上角格）：同底色、无边框。C 端当前不单独绘制角格
+     * （表头带由整段 fillRect 铺底，见 XTableWidget.c:3135-3153），
+     * 规则为后续接入预留；底色与 ::section 同值保证接入前后一致。 */
+    "XTableCornerButton::section {"
+    " background-color: #EFF3F7;"
+    " border: none; } "
+
     ; /* hsf_theme_css 结束 */
 
 #ifdef __cplusplus

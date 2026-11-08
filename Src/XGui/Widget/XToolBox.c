@@ -234,8 +234,8 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
             if (!item || !*item) continue;
             XRect_init(&head, 0, y, w, XTOOLBOX_HEADER_H);
 #if XSTYLE_ON
-            if (XStyle_defaultStyle() != NULL) {
-                XStyle* style = XStyle_defaultStyle();
+            if (XWidget_style((const XWidget*)self) != NULL) {
+                XStyle* style = XWidget_style((const XWidget*)self);
                 XStyleOption opt;
                 XStyleOption_init(&opt, XStyleCE_ToolBoxTab);
                 opt.m_rect = head;

@@ -545,8 +545,8 @@ XSize XAbstractButton_iconSize(const XAbstractButton* self)
      * （qabstractbutton.cpp:1234-1241：iconSize 无效时取
      * style()->pixelMetric(PM_ButtonIconSize)，桌面通常 16x16）——
      * (0,0) 会让调用方按「无图标尺寸」分支误判。 */
-    if (size.width == 0 && size.height == 0 && XStyle_defaultStyle() != NULL) {
-        int pm = XStyle_pixelMetric(XStyle_defaultStyle(),
+    if (size.width == 0 && size.height == 0 && XWidget_style((const XWidget*)self) != NULL) {
+        int pm = XStyle_pixelMetric(XWidget_style((const XWidget*)self),
                                     XStylePM_ButtonIconSize, NULL);
         if (pm > 0)
             XSize_init(&size, pm, pm);

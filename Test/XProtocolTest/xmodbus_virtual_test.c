@@ -131,6 +131,134 @@ static void test_modelRegisterMap(void)
             "  在单测里活到进程结束即可，避免为测试加释放路径。）\n");
 }
 
+/* ---- 变频器便捷包装 ---- */
+
+/** @brief 写 0x2000 命令字。 */
+static void vfdWriteCmd(struct XVirtualModelVfd* vfd, uint16_t cmd)
+{
+    XVirtualModel_base(vfd)->m_vtable->write(
+        XVirtualModel_base(vfd), 6, 0x2000, 1, &cmd);
+}
+
+/** @brief 写单个保持寄存器（FC06）。 */
+static void vfdWriteReg(struct XVirtualModelVfd* vfd, uint16_t addr,
+                        uint16_t val)
+{
+    XVirtualModel_base(vfd)->m_vtable->write(
+        XVirtualModel_base(vfd), 6, addr, 1, &val);
+}
+
+/** @brief 推进若干拍直到输出频率 ≥ 目标（返回是否在限拍内到达）。 */
+static bool vfdRampTo(struct XVirtualModelVfd* vfd, double hz, int maxTicks)
+{
+    int i;
+    for (i = 0; i < maxTicks; ++i) {
+        XVirtualModelVfd_tick(vfd);
+        if (XVirtualModelVfd_outputFrequency(vfd) >= hz - 0.05) return true;
+    }
+    return false;
+}
+
+/* ==================== ①b 变频器：ACC/DEC 斜坡与运行中换向 ====================
+ * [口径] ACC(P0.17)/DEC(P0.18)=满量程（0↔P0.10 最大频率）秒数，0.1s 定点，
+ * 缺省 100=10.0s ⇒ 50Hz 模型斜率 0.5Hz/拍（5Hz/s）。运行中换向＝先按 DEC
+ * 减速过零（状态字仍报原方向）、过零翻向、按 ACC 反向加速到给定；同向
+ * 命令/自由停车/减速停机/点动取消待决换向。与 Python VirtualVfd 同口径
+ * （server_py/tests/test_units.py 的换向用例互为镜像）。 */
+static void test_vfdReversalRamp(void)
+{
+    struct XVirtualModelVfd* vfd = XVirtualModelVfd_create(50.0);
+    uint16_t stw = 0;
+    double minHz = 0.0;
+    int i;
+
+    XPrintf("--- ①b 变频器：ACC/DEC 斜坡 + 运行中换向 ---\n");
+    CHECK("变频器模型建成", vfd != NULL);
+    if (!vfd) return;
+
+    /* ACC/DEC 寄存器：缺省与读写。 */
+    CHECK("ACC 缺省 100（10.0s）", modelReadReg(vfd, 0xF011) == 100u);
+    CHECK("DEC 缺省 100（10.0s）", modelReadReg(vfd, 0xF012) == 100u);
+    vfdWriteReg(vfd, 0xF011, 50);
+    CHECK("ACC 写读回（50=5.0s）", modelReadReg(vfd, 0xF011) == 50u);
+    vfdWriteReg(vfd, 0xF011, 100);
+
+    /* 给定 24%=12Hz，正转启动：ACC 斜坡 0.5Hz/拍。 */
+    vfdWriteReg(vfd, 0x1000, 2400);
+    vfdWriteCmd(vfd, 1);
+    XVirtualModelVfd_tick(vfd);
+    CHECK("启动第一拍在 ACC 斜坡上（未瞬到目标）",
+          XVirtualModelVfd_outputFrequency(vfd) > 0.0 &&
+          XVirtualModelVfd_outputFrequency(vfd) < 12.0);
+    CHECK("正转爬到给定 12Hz（10s 满量程 ⇒ ≤40 拍）",
+          vfdRampTo(vfd, 12.0, 40));
+    CHECK("稳态状态字 = 正转", modelReadReg(vfd, 0x3000) == 1u);
+
+    /* ---- 运行中发反向命令字：减速过零再反向加速 ---- */
+    vfdWriteCmd(vfd, 2);
+    XVirtualModelVfd_tick(vfd);
+    CHECK("换向第一拍已开始减速",
+          XVirtualModelVfd_outputFrequency(vfd) < 12.0);
+    CHECK("换向减速中状态字仍报正转（过零才翻）",
+          modelReadReg(vfd, 0x3000) == 1u);
+    minHz = XVirtualModelVfd_outputFrequency(vfd);
+    for (i = 0; i < 400; ++i) {
+        XVirtualModelVfd_tick(vfd);
+        {
+            const double hz = XVirtualModelVfd_outputFrequency(vfd);
+            if (hz < minHz) minHz = hz;
+        }
+        stw = modelReadReg(vfd, 0x3000);
+        if (stw == 2u) break;
+    }
+    CHECK("过零后状态字翻为反转", stw == 2u);
+    CHECK("减速段经过零（无跳变，min≈0）", minHz <= 0.001 && minHz >= -0.001);
+    CHECK("过零后保持运行（未经过停机）", XVirtualModelVfd_running(vfd));
+    CHECK("反转爬回给定 12Hz", vfdRampTo(vfd, 12.0, 40));
+
+    /* ---- 换向途中同向命令＝取消换向，拉回原方向 ---- */
+    vfdWriteCmd(vfd, 1);                    /* 正转运行中发反转 → 减速 */
+    XVirtualModelVfd_tick(vfd);
+    vfdWriteCmd(vfd, 1);                    /* 翻回正转 → 取消待决 */
+    CHECK("取消换向后回正转 12Hz", vfdRampTo(vfd, 12.0, 60));
+    CHECK("取消换向后状态字仍正转", modelReadReg(vfd, 0x3000) == 1u);
+
+    /* ---- 换向减速中改给定：过零后按新给定加速 ---- */
+    vfdWriteCmd(vfd, 2);
+    XVirtualModelVfd_tick(vfd);
+    vfdWriteReg(vfd, 0x1000, 1200);         /* 减速中改给定 6Hz（只记忆） */
+    for (i = 0; i < 400; ++i) {
+        XVirtualModelVfd_tick(vfd);
+        if (modelReadReg(vfd, 0x3000) == 2u &&
+            XVirtualModelVfd_outputFrequency(vfd) >= 5.95) break;
+    }
+    CHECK("换向中改给定：过零后按新给定收敛 6Hz", i < 400);
+    CHECK("改给定后稳态状态字 = 反转", modelReadReg(vfd, 0x3000) == 2u);
+
+    /* ---- 换向减速中自由停车＝瞬断且清待决 ---- */
+    vfdWriteReg(vfd, 0x1000, 2400);
+    vfdWriteCmd(vfd, 1);
+    CHECK("回正转 12Hz", vfdRampTo(vfd, 12.0, 40));
+    vfdWriteCmd(vfd, 2);
+    XVirtualModelVfd_tick(vfd);
+    vfdWriteCmd(vfd, 5);
+    CHECK("自由停车瞬断",
+          XVirtualModelVfd_outputFrequency(vfd) == 0.0 &&
+          !XVirtualModelVfd_running(vfd));
+    XVirtualModelVfd_tick(vfd);
+    CHECK("待决已清：停机态推进不翻向", modelReadReg(vfd, 0x3000) == 3u);
+
+    /* ---- 换向减速中减速停机＝真停（覆盖换向） ---- */
+    vfdWriteCmd(vfd, 1);
+    CHECK("再次爬到 12Hz", vfdRampTo(vfd, 12.0, 40));
+    vfdWriteCmd(vfd, 2);
+    XVirtualModelVfd_tick(vfd);
+    vfdWriteCmd(vfd, 6);
+    for (i = 0; i < 400; ++i) XVirtualModelVfd_tick(vfd);
+    CHECK("停止覆盖换向：最终停机（状态字 3）",
+          modelReadReg(vfd, 0x3000) == 3u && !XVirtualModelVfd_running(vfd));
+}
+
 /* ==================== ② 客户端：离线/空应答开关 ==================== */
 
 static void test_clientSwitches(void)
@@ -367,6 +495,7 @@ int XModbusVirtualTest_run(void)
     g_fail = 0;
     XPrintf("===== 虚拟 Modbus 设备（全 C 端离线联调）=====\n");
     test_modelRegisterMap();
+    test_vfdReversalRamp();
     test_clientSwitches();
     test_fullChainDigitalStation();
     test_valveWithVirtualDevice();

@@ -558,6 +558,7 @@ add_executable(XGuiRegression_Test
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XButtonHoldTest.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XSpinBoxTest.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XGroupBoxTest.c"
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XBrushPaletteTest.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XProgressBarTest.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XDialTest.c"
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XComboBoxTest.c"

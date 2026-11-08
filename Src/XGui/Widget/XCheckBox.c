@@ -298,9 +298,9 @@ void XCheckBox_drawContents(XCheckBox* self, XPainter* painter)
     /* indicator 方块：Base 背景 + 凸起边框。 */
     ind = checkbox_indicatorRect(self);
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：指示器由样式引擎绘制。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption indOpt;
         XStyleOption_init(&indOpt, XStylePE_IndicatorCheckBox);
         indOpt.m_rect = ind;

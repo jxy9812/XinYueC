@@ -422,7 +422,7 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
         bool scrollMode;
         XStyle* style = NULL;
 #if XSTYLE_ON
-        style = XStyle_defaultStyle();
+        style = XWidget_style((const XWidget*)self);
 #endif
         xtabbar_wrapLayout(bar, &cols, &rows, &tabW, &totalH);
         scrollMode = xtabbar_scrollLayout(bar, &tabW, &cW, &btnW, &viewX,

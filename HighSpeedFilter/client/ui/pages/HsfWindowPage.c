@@ -391,11 +391,11 @@ static const struct {
     XCursorShape shape; /**< XCursorShape 值。 */
     const char*  text;  /**< 下拉条目文本。 */
 } kCursorShapes[] = {
-    { XCursor_Arrow,        "\xE7\xAE\xAD\xE5\xA4\xB4" },   /* 箭头 */
-    { XCursor_PointingHand, "\xE6\x89\x8B\xE5\x9E\x8B" },   /* 手型 */
-    { XCursor_Cross,        "\xE5\x8D\x81\xE5\xAD\x97" },   /* 十字 */
-    { XCursor_IBeam,        "\xE6\x96\x87\xE6\x9C\xAC" },   /* 文本 */
-    { XCursor_Wait,         "\xE7\xAD\x89\xE5\xBE\x85" }    /* 等待 */
+    { XCursor_Arrow,        "箭头" },   /* 箭头 */
+    { XCursor_PointingHand, "手型" },   /* 手型 */
+    { XCursor_Cross,        "十字" },   /* 十字 */
+    { XCursor_IBeam,        "文本" },   /* 文本 */
+    { XCursor_Wait,         "等待" }    /* 等待 */
 };
 
 /** @brief 鼠标外形档位条目数。 */
@@ -410,12 +410,12 @@ static const struct {
     const char* text; /**< 下拉条目文本。 */
     int64_t     ms;   /**< 超时毫秒（0=从不）。 */
 } kPowerTimeouts[] = {
-    { "\xE4\xBB\x8E\xE4\xB8\x8D",                 0 },
-    { "1 \xE5\x88\x86\xE9\x92\x9F",  60LL * 1000 },
-    { "3 \xE5\x88\x86\xE9\x92\x9F", 180LL * 1000 },
-    { "5 \xE5\x88\x86\xE9\x92\x9F", 300LL * 1000 },
-    { "10 \xE5\x88\x86\xE9\x92\x9F", 600LL * 1000 },
-    { "30 \xE5\x88\x86\xE9\x92\x9F", 1800LL * 1000 }
+    { "从不",                 0 },
+    { "1 分钟",  60LL * 1000 },
+    { "3 分钟", 180LL * 1000 },
+    { "5 分钟", 300LL * 1000 },
+    { "10 分钟", 600LL * 1000 },
+    { "30 分钟", 1800LL * 1000 }
 };
 
 /** @brief 档位表条目数。 */
@@ -495,18 +495,18 @@ static void wn_refreshPowerState(void)
     bool off = XPlatformPower_isScreenOff();
     snprintf(buf, sizeof(buf),
              "%s  |  %s  |  %s",
-             off ? "\xE5\xB7\xB2\xE7\x86\x84\xE5\xB1\x8F"
-                 : "\xE5\xBD\x93\xE5\x89\x8D\xEF\xBC\x9A\xE6\xAD\xA3\xE5\xB8\xB8",
+             off ? "已熄屏"
+                 : "当前：正常",
              (caps & (unsigned)XPlatformPowerCap_ScreenControl)
-                 ? "\xE7\x86\x84\xE5\xB1\x8F\xE6\x94\xAF\xE6\x8C\x81"
+                 ? "熄屏支持"
                  : ((caps & (unsigned)XPlatformPowerCap_ScreenTimeout)
                         /* 无主动关屏原语、但能把「屏幕超时」交给系统——
                            如安卓：息屏由系统计时执行。 */
-                        ? "\xE7\x86\x84\xE5\xB1\x8F\xE7\x94\xB1\xE7\xB3\xBB\xE7\xBB\x9F\xE5\xA7\x94\xE6\x89\x98"
-                        : "\xE7\x86\x84\xE5\xB1\x8F\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81"),
+                        ? "熄屏由系统委托"
+                        : "熄屏不支持"),
              (caps & (unsigned)XPlatformPowerCap_SystemSuspend)
-                 ? "\xE7\xB3\xBB\xE7\xBB\x9F\xE4\xBC\x91\xE7\x9C\xA0\xE6\x94\xAF\xE6\x8C\x81"
-                 : "\xE7\xB3\xBB\xE7\xBB\x9F\xE4\xBC\x91\xE7\x9C\xA0\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81");
+                 ? "系统休眠支持"
+                 : "系统休眠不支持");
     if (s_wn.m_powerStateLabel)
         XLabel_setText_2(s_wn.m_powerStateLabel, buf);
 }
@@ -667,8 +667,8 @@ static void wn_skinSlot(XObject* receiver, XVarList* args)
     index = XComboBox_currentIndex(s_wn.m_skinCombo);
     if (index < 0) index = 0;
     wn_applySkin(index);
-    wn_report(index == 0 ? "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xE6\xB5\x85\xE8\x89\xB2\xE7\x9A\xAE\xE8\x82\xA4"
-                         : "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xE6\xB7\xB1\xE8\x89\xB2\xE7\x9A\xAE\xE8\x82\xA4\xEF\xBC\x88\xE6\x96\x87\xE6\x9C\xAC\xE8\x89\xB2\xE9\x9A\x8F\xE8\xB0\x83\xE8\x89\xB2\xE6\x9D\xBF\xE8\x81\x94\xE5\x8A\xA8\xEF\xBC\x89");
+    wn_report(index == 0 ? "已切换浅色皮肤"
+                         : "已切换深色皮肤（文本色随调色板联动）");
     wn_saveSettings();
 }
 
@@ -691,7 +691,7 @@ static void wn_frameSlot(XObject* receiver, XVarList* args)
     /* CSD 保留边距收放只走框架 setFrameMargins：demo 蓝条文字几何/
        内容区避让/静态基底须显式重排（2026-10-17 无边框文字错位）。 */
     demo_main_refreshChrome(s_wn.m_user);
-    wn_report(show ? "\xE5\xB7\xB2\xE6\x98\xBE\xE7\xA4\xBA\xE8\xBE\xB9\xE6\xA1\x86(\xE6\xA0\x87\xE9\xA2\x98\xE6\xA0\x8F)" : "\xE5\xB7\xB2\xE9\x9A\x90\xE8\x97\x8F\xE8\xBE\xB9\xE6\xA1\x86(\xE6\xA0\x87\xE9\xA2\x98\xE6\xA0\x8F)");
+    wn_report(show ? "已显示边框(标题栏)" : "已隐藏边框(标题栏)");
     wn_saveSettings();
 }
 
@@ -703,7 +703,7 @@ static void wn_statusSlot(XObject* receiver, XVarList* args)
     if (!s_wn.m_statusCheck || s_wn.m_syncing) return;
     show = XAbstractButton_isChecked((XAbstractButton*)s_wn.m_statusCheck);
     demo_main_setStatusBarVisible(s_wn.m_user, show);
-    wn_report(show ? "\xE5\xB7\xB2\xE6\x98\xBE\xE7\xA4\xBA\xE7\x8A\xB6\xE6\x80\x81\xE6\xA0\x8F" : "\xE5\xB7\xB2\xE9\x9A\x90\xE8\x97\x8F\xE7\x8A\xB6\xE6\x80\x81\xE6\xA0\x8F");
+    wn_report(show ? "已显示状态栏" : "已隐藏状态栏");
     wn_saveSettings();
 }
 
@@ -748,7 +748,7 @@ static void wn_maxSlot(XObject* receiver, XVarList* args)
             XWidget_setEnabled((XWidget*)s_wn.m_frameCheck, true);
         demo_main_refreshChrome(s_wn.m_user);
     }
-    wn_report(max ? "\xE5\xB7\xB2\xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\xE6\x98\xBE\xE7\xA4\xBA" : "\xE5\xB7\xB2\xE8\xBF\x98\xE5\x8E\x9F\xE6\x99\xAE\xE9\x80\x9A\xE5\x87\xA0\xE4\xBD\x95");
+    wn_report(max ? "已最大化显示" : "已还原普通几何");
     wn_saveSettings();
 }
 
@@ -783,7 +783,7 @@ static void wn_fullSlot(XObject* receiver, XVarList* args)
          * （框架侧 RESIZE 重排踢只重跑布局解算，解算消费的是快照值）。
          * demo 蓝条文字几何/内容区避让/静态基底一并重排。 */
         demo_main_refreshChrome(s_wn.m_user);
-        wn_report("\xE5\xB7\xB2\xE5\x85\xA8\xE5\xB1\x8F\xEF\xBC\x88\xE6\xA0\x87\xE9\xA2\x98\xE6\xA0\x8F\xE9\x9A\x8F\xE5\x85\xA8\xE5\xB1\x8F\xE9\x9A\x90\xE8\x97\x8F\xEF\xBC\x8C\xE9\x9A\x8F\xE6\x97\x8B\xE8\xBD\xAC\xE9\x93\xBA\xE6\xBB\xA1\xEF\xBC\x89");
+        wn_report("已全屏（标题栏随全屏隐藏，随旋转铺满）");
     } else {
         XWidget_showNormal(top);
         /* 退出全屏：恢复边框复选框可用（勾选值全程未被全屏触碰，按其
@@ -791,7 +791,7 @@ static void wn_fullSlot(XObject* receiver, XVarList* args)
         if (s_wn.m_frameCheck)
             XWidget_setEnabled((XWidget*)s_wn.m_frameCheck, true);
         demo_main_refreshChrome(s_wn.m_user); /* 快照重刷（同上）。 */
-        wn_report("\xE5\xB7\xB2\xE9\x80\x80\xE5\x87\xBA\xE5\x85\xA8\xE5\xB1\x8F");
+        wn_report("已退出全屏");
     }
     wn_saveSettings();
 }
@@ -1025,10 +1025,10 @@ static int wn_canvasApply(int deg, int* outW, int* outH)
 static void wn_canvasSlot(XObject* receiver, XVarList* args)
 {
     static const char* const kNames[4] = {
-        "\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "0" "\xC2\xB0\xEF\xBC\x89",
-        "\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "90" "\xC2\xB0\xEF\xBC\x89",
-        "\xE5\x80\x92\xE7\xBD\xAE\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "180" "\xC2\xB0\xEF\xBC\x89",
-        "\xE5\x80\x92\xE7\xBD\xAE\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "270" "\xC2\xB0\xEF\xBC\x89"
+        "横屏（0°）",
+        "竖屏（90°）",
+        "倒置横屏（180°）",
+        "倒置竖屏（270°）"
     }; /* 横屏(0°)/竖屏(90°)/倒置横屏(180°)/倒置竖屏(270°) */
     char buf[96];
     int index;
@@ -1045,7 +1045,7 @@ static void wn_canvasSlot(XObject* receiver, XVarList* args)
         /* 内存安全阀拒绝（2026-10-23）：明确文案而非静默，方向保持原样；
            下拉框回读窗口当前角（m_syncing 抑制槽），选择不留在新档——
            内存回升后重选即可再试。 */
-        wn_report("\xE5\x86\x85\xE5\xAD\x98\xE4\xB8\x8D\xE8\xB6\xB3\xEF\xBC\x8C\xE5\xB7\xB2\xE4\xBF\x9D\xE6\x8C\x81\xE5\xBD\x93\xE5\x89\x8D\xE6\x96\xB9\xE5\x90\x91");
+        wn_report("内存不足，已保持当前方向");
         wn_syncFromWindow();
         wn_saveSettings();
         return;
@@ -1055,7 +1055,7 @@ static void wn_canvasSlot(XObject* receiver, XVarList* args)
         /* 平台不支持软件旋转（win32/android；fbdev 2026-10-21 定稿起
            恒可旋转）：下拉框已在探测阶段置灰，这里给明确说明而非静默
            无反应。 */
-        wn_report("\xE5\xBD\x93\xE5\x89\x8D\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81\xE5\x86\x85\xE5\xAE\xB9\xE6\x97\x8B\xE8\xBD\xAC\xEF\xBC\x8C\xE5\x8F\xAF\xE7\x94\xA8\xE6\x88\xB7\xE7\xAB\xAF\xE9\x82\xA3\xE6\x94\xAF\xE6\x8C\x81");
+        wn_report("当前平台不支持内容旋转，可用户端那支持");
         wn_saveSettings();
         return;
     }
@@ -1063,7 +1063,7 @@ static void wn_canvasSlot(XObject* receiver, XVarList* args)
        (WxH) 在状态行上二者一模一样——这正是「180° 完全无感」的用户
        可见面。 */
     snprintf(buf, sizeof(buf),
-             "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xEF\xBC\x9A%s\xEF\xBC\x88%dx%d\xEF\xBC\x89",
+             "已切换：%s（%dx%d）",
              kNames[index], w, h); /* 已切换：…(WxH) */
     wn_report(buf);
     wn_saveSettings();
@@ -1079,11 +1079,11 @@ static void wn_canvasSlot(XObject* receiver, XVarList* args)
 static void wn_screenOrientSlot(XObject* receiver, XVarList* args)
 {
     static const char* const kNames[5] = {
-        "\xE8\xB7\x9F\xE9\x9A\x8F\xE7\xB3\xBB\xE7\xBB\x9F",
-        "\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "0" "\xC2\xB0\xEF\xBC\x89",
-        "\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "90" "\xC2\xB0\xEF\xBC\x89",
-        "\xE5\x80\x92\xE7\xBD\xAE\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "180" "\xC2\xB0\xEF\xBC\x89",
-        "\xE5\x80\x92\xE7\xBD\xAE\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "270" "\xC2\xB0\xEF\xBC\x89"
+        "跟随系统",
+        "横屏（0°）",
+        "竖屏（90°）",
+        "倒置横屏（180°）",
+        "倒置竖屏（270°）"
     }; /* 跟随系统/横屏(0°)/竖屏(90°)/倒置横屏(180°)/倒置竖屏(270°) */
     char buf[96];
     int index;
@@ -1100,9 +1100,9 @@ static void wn_screenOrientSlot(XObject* receiver, XVarList* args)
            转档）——文案混成一句「不支持」会误导排查方向。下拉框一律
            回读实际影子值，不留一个没生效的档位在框里骗人。 */
         if (XPlatformOrientation_supports(XPlatformOrientationCap_Request))
-            wn_report("\xE7\xB3\xBB\xE7\xBB\x9F\xE6\x9C\xAA\xE6\x8E\xA5\xE5\x8F\x97\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\xE7\x94\xB3\xE8\xAF\xB7");
+            wn_report("系统未接受窗口方向申请");
         else
-            wn_report("\xE6\x9C\xAC\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81\xE7\x94\xB3\xE8\xAF\xB7\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91");
+            wn_report("本平台不支持申请窗口方向");
         s_wn.m_syncing = true;
         if (s_wn.m_screenOrientCombo)
             XComboBox_setCurrentIndex(s_wn.m_screenOrientCombo,
@@ -1112,7 +1112,7 @@ static void wn_screenOrientSlot(XObject* receiver, XVarList* args)
         return;
     }
     snprintf(buf, sizeof(buf),
-             "\xE5\xB7\xB2\xE7\x94\xB3\xE8\xAF\xB7\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\xEF\xBC\x9A%s",
+             "已申请窗口方向：%s",
              kNames[index]); /* 已申请窗口方向：… */
     wn_report(buf);
     wn_saveSettings();
@@ -1168,8 +1168,8 @@ static void wn_mouseSlot(XObject* receiver, XVarList* args)
     if (!s_wn.m_mouseCheck || s_wn.m_syncing) return;
     show = XAbstractButton_isChecked((XAbstractButton*)s_wn.m_mouseCheck);
     wn_cursorSyncOverride();
-    wn_report(show ? "\xE5\xB7\xB2\xE6\x98\xBE\xE7\xA4\xBA\xE9\xBC\xA0\xE6\xA0\x87\xE5\x85\x89\xE6\xA0\x87"
-                   : "\xE5\xB7\xB2\xE9\x9A\x90\xE8\x97\x8F\xE9\xBC\xA0\xE6\xA0\x87\xE5\x85\x89\xE6\xA0\x87");
+    wn_report(show ? "已显示鼠标光标"
+                   : "已隐藏鼠标光标");
     wn_saveSettings();
 }
 
@@ -1187,7 +1187,7 @@ static void wn_cursorShapeSlot(XObject* receiver, XVarList* args)
         XAbstractButton_isChecked((XAbstractButton*)s_wn.m_mouseCheck)) {
         wn_cursorShapeApply(index);
         snprintf(buf, sizeof(buf),
-                 "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xE9\xBC\xA0\xE6\xA0\x87\xE5\xA4\x96\xE5\xBD\xA2\xEF\xBC\x9A%s",
+                 "已切换鼠标外形：%s",
                  kCursorShapes[index].text);
         wn_report(buf);
     }
@@ -1533,14 +1533,14 @@ static void wn_blankSlot(XObject* receiver, XVarList* args)
              * 权）：如实报告并引导授权，**不假装已设置**——否则界面显示
              * 「5 分钟」而系统从不熄屏，是最坏的静默失效。 */
             if (XPlatformPower_requestScreenTimeoutPermission())
-                wn_report("\xE9\x9C\x80\xE6\x8E\x88\xE6\x9D\x83\xE7\xB3\xBB\xE7\xBB\x9F\xE8\xAE\xBE\xE7\xBD\xAE\xE6\x9D\x83\xE9\x99\x90\xEF\xBC\x8C\xE5\xB7\xB2\xE8\xB7\xB3\xE8\xBD\xAC\xE6\x8E\x88\xE6\x9D\x83\xE9\xA1\xB5");
+                wn_report("需授权系统设置权限，已跳转授权页");
             else
-                wn_report("\xE9\x9C\x80\xE6\x8E\x88\xE6\x9D\x83\xE7\xB3\xBB\xE7\xBB\x9F\xE8\xAE\xBE\xE7\xBD\xAE\xE6\x9D\x83\xE9\x99\x90");
+                wn_report("需授权系统设置权限");
             wn_saveSettings();
             return;
         }
     }
-    snprintf(text, sizeof(text), "\xE8\x87\xAA\xE5\x8A\xA8\xE7\x86\x84\xE5\xB1\x8F\xEF\xBC\x9A%s",
+    snprintf(text, sizeof(text), "自动熄屏：%s",
              kPowerTimeouts[index].text);
     wn_report(text);
     wn_saveSettings();
@@ -1563,7 +1563,7 @@ static void wn_suspendSlot(XObject* receiver, XVarList* args)
          * 挂起动作会被能力位跳过——界面不假装本平台能挂起整机。 */
         XPlatformPower_setPolicy(&policy);
     }
-    snprintf(text, sizeof(text), "\xE8\x87\xAA\xE5\x8A\xA8\xE4\xBC\x91\xE7\x9C\xA0\xEF\xBC\x9A%s",
+    snprintf(text, sizeof(text), "自动休眠：%s",
              kPowerTimeouts[index].text);
     wn_report(text);
     wn_saveSettings();
@@ -1575,13 +1575,13 @@ static void wn_blankNowSlot(XObject* receiver, XVarList* args)
     (void)receiver; (void)args;
     if (!s_wn.m_ready) return;
     if (!XPlatformPower_supports(XPlatformPowerCap_ScreenControl)) {
-        wn_report("\xE6\x9C\xAC\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81\xE7\x86\x84\xE5\xB1\x8F");
+        wn_report("本平台不支持熄屏");
         return;
     }
     if (XPlatformPower_setScreenState(XPlatformPowerScreenState_Off))
-        wn_report("\xE5\xB7\xB2\xE7\xAB\x8B\xE5\x8D\xB3\xE7\x86\x84\xE5\xB1\x8F");
+        wn_report("已立即熄屏");
     else
-        wn_report("\xE7\x86\x84\xE5\xB1\x8F\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x8C\xE8\xAF\xB7\xE7\xA8\x8D\xE5\x90\x8E\xE5\x9B\x9E\xE6\x8A\xA5");
+        wn_report("熄屏失败，请稍后回报");
     wn_refreshPowerState();
 }
 
@@ -1611,7 +1611,7 @@ static void wn_wakeInputSlot(XObject* receiver, XVarList* args)
            保底项并如实提示。勾选会再次触发本槽，届时掩码非零即正常落
            策略，故此处直接 return，不重复写策略（否则会用空掩码覆盖
            递归中写入的保底值）。 */
-        wn_report("\xE8\x87\xB3\xE5\xB0\x91\xE4\xBF\x9D\xE7\x95\x99\xE4\xB8\x80\xE7\xA7\x8D\xE5\x94\xA4\xE9\x86\x92\xE6\x96\xB9\xE5\xBC\x8F");
+        wn_report("至少保留一种唤醒方式");
         if (s_wn.m_wakeMouseCheck)
             XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeMouseCheck,
                                        true);
@@ -1705,9 +1705,9 @@ static void wn_resetSlot(XObject* receiver, XVarList* args)
        时窗口保持旋转态，其余复位项照常生效，状态行如实报因而非「已
        复位默认」。 */
     if (wn_canvasApply(0, NULL, NULL) < 0)
-        wn_report("\xE5\x86\x85\xE5\xAD\x98\xE4\xB8\x8D\xE8\xB6\xB3\xEF\xBC\x8C\xE5\xB7\xB2\xE4\xBF\x9D\xE6\x8C\x81\xE5\xBD\x93\xE5\x89\x8D\xE6\x96\xB9\xE5\x90\x91");
+        wn_report("内存不足，已保持当前方向");
     else
-        wn_report("\xE5\xB7\xB2\xE5\xA4\x8D\xE4\xBD\x8D\xE9\xBB\x98\xE8\xAE\xA4");
+        wn_report("已复位默认");
     XGuiApplication_restoreOverrideCursor();
     /* 鼠标光标复位（2026-10-27 外形选择语义）：勾选默认=显示（true）
        且外形回箭头档——restore 清栈后按新语义压入所选形状（复选框
@@ -1769,7 +1769,7 @@ XWidget* hsf_page_window_build(XWidget* parent,
     s_wn.m_user = user;
     if (!parent) return (XWidget*)0;
     if (!demo_main_toplevel(user)) {
-        XPrintf("XGuiAutoTest: [FAIL] \xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE4\xB8\xBB\xE7\xAA\x97\xE9\xA1\xB6\xE5\xB1\x82\xE4\xB8\x8D\xE5\x8F\xAF\xE7\x94\xA8\n");
+        XPrintf("XGuiAutoTest: [FAIL] 窗口设置页: 主窗顶层不可用\n");
         return (XWidget*)0;
     }
     s_wn.m_root = XWidget_create(parent, 0);
@@ -1778,28 +1778,28 @@ XWidget* hsf_page_window_build(XWidget* parent,
     /* ---- 标题 ---- */
     s_wn.m_titleLabel = XLabel_create(s_wn.m_root, 0);
     if (!s_wn.m_titleLabel) return s_wn.m_root;
-    XLabel_setText_2(s_wn.m_titleLabel, "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE");
+    XLabel_setText_2(s_wn.m_titleLabel, "窗口设置");
     XLabel_setTextPixelSize(s_wn.m_titleLabel, 15);
     XWidget_setFixedHeight((XWidget*)s_wn.m_titleLabel, 24);
     XWidget_show((XWidget*)s_wn.m_titleLabel);
 
     /* ---- 皮肤 ---- */
-    s_wn.m_capSkin = wn_buildCaption("\xE7\x9A\xAE\xE8\x82\xA4");
+    s_wn.m_capSkin = wn_buildCaption("皮肤");
     s_wn.m_capSkinName = XLabel_create(s_wn.m_root, 0);
     if (s_wn.m_capSkinName) {
-        XLabel_setText_2(s_wn.m_capSkinName, "\xE4\xB8\xBB\xE9\xA2\x98");
+        XLabel_setText_2(s_wn.m_capSkinName, "主题");
         XWidget_setFixedWidth((XWidget*)s_wn.m_capSkinName, 64);
         XWidget_setFixedHeight((XWidget*)s_wn.m_capSkinName, 22);
         XWidget_show((XWidget*)s_wn.m_capSkinName);
     }
     s_wn.m_skinCombo = XComboBox_create(s_wn.m_root, 0);
     if (!s_wn.m_skinCombo) return s_wn.m_root;
-    XComboBox_addItem_2(s_wn.m_skinCombo, "\xE6\xB5\x85\xE8\x89\xB2 \xC2\xB7 \xE7\x8E\xB0\xE4\xBB\xA3\xE8\x93\x9D\xEF\xBC\x88\xE9\xBB\x98\xE8\xAE\xA4\xEF\xBC\x89");
-    XComboBox_addItem_2(s_wn.m_skinCombo, "\xE6\xB5\x85\xE8\x89\xB2 \xC2\xB7 \xE6\x9A\x96\xE6\xB2\x99");
-    XComboBox_addItem_2(s_wn.m_skinCombo, "\xE6\xB5\x85\xE8\x89\xB2 \xC2\xB7 \xE9\x9D\x92\xE7\xAB\xB9");
-    XComboBox_addItem_2(s_wn.m_skinCombo, "\xE6\xB7\xB1\xE8\x89\xB2 \xC2\xB7 \xE5\xA2\xA8\xE8\x93\x9D");
-    XComboBox_addItem_2(s_wn.m_skinCombo, "\xE6\xB7\xB1\xE8\x89\xB2 \xC2\xB7 \xE6\x9A\x96\xE6\xA9\x99");
-    XComboBox_addItem_2(s_wn.m_skinCombo, "\xE6\xB7\xB1\xE8\x89\xB2 \xC2\xB7 \xE6\xA3\xAE\xE7\xBB\xBF");
+    XComboBox_addItem_2(s_wn.m_skinCombo, "浅色 · 现代蓝（默认）");
+    XComboBox_addItem_2(s_wn.m_skinCombo, "浅色 · 暖沙");
+    XComboBox_addItem_2(s_wn.m_skinCombo, "浅色 · 青竹");
+    XComboBox_addItem_2(s_wn.m_skinCombo, "深色 · 墨蓝");
+    XComboBox_addItem_2(s_wn.m_skinCombo, "深色 · 暖橙");
+    XComboBox_addItem_2(s_wn.m_skinCombo, "深色 · 森绿");
     XWidget_setFixedWidth((XWidget*)s_wn.m_skinCombo, 220);
     XWidget_setFixedHeight((XWidget*)s_wn.m_skinCombo, 26);
     XObject_connect_2((XObject*)s_wn.m_skinCombo,
@@ -1807,16 +1807,16 @@ XWidget* hsf_page_window_build(XWidget* parent,
     XWidget_show((XWidget*)s_wn.m_skinCombo);
 
     /* ---- 窗口框架 ---- */
-    s_wn.m_capFrame = wn_buildCaption("\xE7\xAA\x97\xE5\x8F\xA3\xE6\xA1\x86\xE6\x9E\xB6");
-    s_wn.m_frameCheck = wn_buildCheck("\xE6\x98\xBE\xE7\xA4\xBA\xE8\xBE\xB9\xE6\xA1\x86(\xE6\xA0\x87\xE9\xA2\x98\xE6\xA0\x8F)", 190,
+    s_wn.m_capFrame = wn_buildCaption("窗口框架");
+    s_wn.m_frameCheck = wn_buildCheck("显示边框(标题栏)", 190,
                                       wn_frameSlot);
-    s_wn.m_statusCheck = wn_buildCheck("\xE6\x98\xBE\xE7\xA4\xBA\xE7\x8A\xB6\xE6\x80\x81\xE6\xA0\x8F", 150,
+    s_wn.m_statusCheck = wn_buildCheck("显示状态栏", 150,
                                        wn_statusSlot);
-    s_wn.m_maxCheck = wn_buildCheck("\xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\xE6\x98\xBE\xE7\xA4\xBA", 190, wn_maxSlot);
-    s_wn.m_fullCheck = wn_buildCheck("\xE5\x85\xA8\xE5\xB1\x8F\xE6\x98\xBE\xE7\xA4\xBA", 150, wn_fullSlot);
+    s_wn.m_maxCheck = wn_buildCheck("最大化显示", 190, wn_maxSlot);
+    s_wn.m_fullCheck = wn_buildCheck("全屏显示", 150, wn_fullSlot);
     /* 显示鼠标光标：与上面四个开关同属一组（2026-10-26 用户裁定自
        「方向与鼠标」行上移——孤行挂在方向组里语义不贴）。 */
-    s_wn.m_mouseCheck = wn_buildCheck("\xE6\x98\xBE\xE7\xA4\xBA\xE9\xBC\xA0\xE6\xA0\x87\xE5\x85\x89\xE6\xA0\x87", 170,
+    s_wn.m_mouseCheck = wn_buildCheck("显示鼠标光标", 170,
                                       wn_mouseSlot);
     /* 鼠标外形（2026-10-27）：五款内建形状跨平台视觉一致（同一份
        2bit 位图素材：fbdev/安卓软件精灵直接绘制、X11/Win32 转原生
@@ -1824,7 +1824,7 @@ XWidget* hsf_page_window_build(XWidget* parent,
     s_wn.m_capCursorShapeName = XLabel_create(s_wn.m_root, 0);
     if (s_wn.m_capCursorShapeName) {
         XLabel_setText_2(s_wn.m_capCursorShapeName,
-                         "\xE9\xBC\xA0\xE6\xA0\x87\xE5\xA4\x96\xE5\xBD\xA2");
+                         "鼠标外形");
         XWidget_setFixedWidth((XWidget*)s_wn.m_capCursorShapeName, 64);
         XWidget_setFixedHeight((XWidget*)s_wn.m_capCursorShapeName, 22);
         XWidget_show((XWidget*)s_wn.m_capCursorShapeName);
@@ -1844,7 +1844,7 @@ XWidget* hsf_page_window_build(XWidget* parent,
     XWidget_show((XWidget*)s_wn.m_cursorShapeCombo);
 
     /* ---- 方向 ---- */
-    s_wn.m_capOrient = wn_buildCaption("\xE6\x96\xB9\xE5\x90\x91");
+    s_wn.m_capOrient = wn_buildCaption("方向");
     s_wn.m_capCanvasName = XLabel_create(s_wn.m_root, 0);
     if (s_wn.m_capCanvasName) {
         /* 「画布旋转」（2026-10-26 由原「窗口方向」改名）：内容在应用内
@@ -1852,17 +1852,17 @@ XWidget* hsf_page_window_build(XWidget* parent,
            转屏）是两件事，名字必须区分开，否则用户以为「窗口方向」会
            把屏幕转过来。 */
         XLabel_setText_2(s_wn.m_capCanvasName,
-                         "\xE7\x94\xBB\xE5\xB8\x83\xE6\x97\x8B\xE8\xBD\xAC");
+                         "画布旋转");
         XWidget_setFixedWidth((XWidget*)s_wn.m_capCanvasName, 64);
         XWidget_setFixedHeight((XWidget*)s_wn.m_capCanvasName, 22);
         XWidget_show((XWidget*)s_wn.m_capCanvasName);
     }
     s_wn.m_canvasCombo = XComboBox_create(s_wn.m_root, 0);
     if (!s_wn.m_canvasCombo) return s_wn.m_root;
-    XComboBox_addItem_2(s_wn.m_canvasCombo, "\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "0" "\xC2\xB0\xEF\xBC\x89");
-    XComboBox_addItem_2(s_wn.m_canvasCombo, "\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "90" "\xC2\xB0\xEF\xBC\x89");
-    XComboBox_addItem_2(s_wn.m_canvasCombo, "\xE5\x80\x92\xE7\xBD\xAE\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "180" "\xC2\xB0\xEF\xBC\x89");
-    XComboBox_addItem_2(s_wn.m_canvasCombo, "\xE5\x80\x92\xE7\xBD\xAE\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "270" "\xC2\xB0\xEF\xBC\x89");
+    XComboBox_addItem_2(s_wn.m_canvasCombo, "横屏（0°）");
+    XComboBox_addItem_2(s_wn.m_canvasCombo, "竖屏（90°）");
+    XComboBox_addItem_2(s_wn.m_canvasCombo, "倒置横屏（180°）");
+    XComboBox_addItem_2(s_wn.m_canvasCombo, "倒置竖屏（270°）");
     XWidget_setFixedWidth((XWidget*)s_wn.m_canvasCombo, 170);
     XWidget_setFixedHeight((XWidget*)s_wn.m_canvasCombo, 26);
     XObject_connect_2((XObject*)s_wn.m_canvasCombo,
@@ -1877,7 +1877,7 @@ XWidget* hsf_page_window_build(XWidget* parent,
     s_wn.m_capScreenOrientName = XLabel_create(s_wn.m_root, 0);
     if (s_wn.m_capScreenOrientName) {
         XLabel_setText_2(s_wn.m_capScreenOrientName,
-                         "\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91");
+                         "窗口方向");
         XWidget_setFixedWidth((XWidget*)s_wn.m_capScreenOrientName, 64);
         XWidget_setFixedHeight((XWidget*)s_wn.m_capScreenOrientName, 22);
         XWidget_show((XWidget*)s_wn.m_capScreenOrientName);
@@ -1887,11 +1887,11 @@ XWidget* hsf_page_window_build(XWidget* parent,
     /* 索引 0=跟随系统（交回系统按传感器/用户设置决定）；1..4=四方位，
      * 角度口径与画布旋转一致（0/90/180/270）。 */
     XComboBox_addItem_2(s_wn.m_screenOrientCombo,
-                        "\xE8\xB7\x9F\xE9\x9A\x8F\xE7\xB3\xBB\xE7\xBB\x9F");
-    XComboBox_addItem_2(s_wn.m_screenOrientCombo, "\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "0" "\xC2\xB0\xEF\xBC\x89");
-    XComboBox_addItem_2(s_wn.m_screenOrientCombo, "\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "90" "\xC2\xB0\xEF\xBC\x89");
-    XComboBox_addItem_2(s_wn.m_screenOrientCombo, "\xE5\x80\x92\xE7\xBD\xAE\xE6\xA8\xAA\xE5\xB1\x8F\xEF\xBC\x88" "180" "\xC2\xB0\xEF\xBC\x89");
-    XComboBox_addItem_2(s_wn.m_screenOrientCombo, "\xE5\x80\x92\xE7\xBD\xAE\xE7\xAB\x96\xE5\xB1\x8F\xEF\xBC\x88" "270" "\xC2\xB0\xEF\xBC\x89");
+                        "跟随系统");
+    XComboBox_addItem_2(s_wn.m_screenOrientCombo, "横屏（0°）");
+    XComboBox_addItem_2(s_wn.m_screenOrientCombo, "竖屏（90°）");
+    XComboBox_addItem_2(s_wn.m_screenOrientCombo, "倒置横屏（180°）");
+    XComboBox_addItem_2(s_wn.m_screenOrientCombo, "倒置竖屏（270°）");
     XWidget_setFixedWidth((XWidget*)s_wn.m_screenOrientCombo, 170);
     XWidget_setFixedHeight((XWidget*)s_wn.m_screenOrientCombo, 26);
     XObject_connect_2((XObject*)s_wn.m_screenOrientCombo,
@@ -1913,11 +1913,11 @@ XWidget* hsf_page_window_build(XWidget* parent,
      * 熄屏=关屏但系统继续运行（事件循环与渲染照常）；系统休眠=整机挂起。
      * 两个维度能力各自独立探测（平台可能能关屏却不能挂起），不支持项在
      * 状态行如实标出，控件不假装可用。 */
-    s_wn.m_capPower = wn_buildCaption("\xE5\xB1\x8F\xE5\xB9\x95\xE4\xBC\x91\xE7\x9C\xA0");
+    s_wn.m_capPower = wn_buildCaption("屏幕休眠");
     s_wn.m_capBlankName = XLabel_create(s_wn.m_root, 0);
     if (s_wn.m_capBlankName) {
         XLabel_setText_2(s_wn.m_capBlankName,
-                         "\xE8\x87\xAA\xE5\x8A\xA8\xE7\x86\x84\xE5\xB1\x8F");
+                         "自动熄屏");
         /* 88：「自动熄屏」四字 advance 约 74px，64 会顶到下拉框左边框
            （「窗口方向」行同款教训，窄宽档已按 88 放宽）。 */
         XWidget_setFixedWidth((XWidget*)s_wn.m_capBlankName, 88);
@@ -1940,7 +1940,7 @@ XWidget* hsf_page_window_build(XWidget* parent,
     s_wn.m_capSuspendName = XLabel_create(s_wn.m_root, 0);
     if (s_wn.m_capSuspendName) {
         XLabel_setText_2(s_wn.m_capSuspendName,
-                         "\xE8\x87\xAA\xE5\x8A\xA8\xE4\xBC\x91\xE7\x9C\xA0");
+                         "自动休眠");
         XWidget_setFixedWidth((XWidget*)s_wn.m_capSuspendName, 88);
         XWidget_setFixedHeight((XWidget*)s_wn.m_capSuspendName, 22);
         XWidget_show((XWidget*)s_wn.m_capSuspendName);
@@ -1961,7 +1961,7 @@ XWidget* hsf_page_window_build(XWidget* parent,
     s_wn.m_blankBtn = XPushButton_create(s_wn.m_root, 0);
     if (!s_wn.m_blankBtn) return s_wn.m_root;
     XPushButton_setText_2(s_wn.m_blankBtn,
-                          "\xE7\xAB\x8B\xE5\x8D\xB3\xE7\x86\x84\xE5\xB1\x8F");
+                          "立即熄屏");
     XWidget_setFixedWidth((XWidget*)s_wn.m_blankBtn, 100);
     XWidget_setFixedHeight((XWidget*)s_wn.m_blankBtn, 30);
     XObject_connect_2((XObject*)s_wn.m_blankBtn,
@@ -1979,16 +1979,16 @@ XWidget* hsf_page_window_build(XWidget* parent,
     s_wn.m_capWakeName = XLabel_create(s_wn.m_root, 0);
     if (s_wn.m_capWakeName) {
         XLabel_setText_2(s_wn.m_capWakeName,
-                         "\xE5\x94\xA4\xE9\x86\x92\xE6\x96\xB9\xE5\xBC\x8F");
+                         "唤醒方式");
         XWidget_setFixedWidth((XWidget*)s_wn.m_capWakeName, 88);
         XWidget_setFixedHeight((XWidget*)s_wn.m_capWakeName, 22);
         XWidget_show((XWidget*)s_wn.m_capWakeName);
     }
-    s_wn.m_wakeMouseCheck = wn_buildCheck("\xE9\xBC\xA0\xE6\xA0\x87\xE5\x94\xA4\xE9\x86\x92", 110,
+    s_wn.m_wakeMouseCheck = wn_buildCheck("鼠标唤醒", 110,
                                          wn_wakeInputSlot);
-    s_wn.m_wakeKeyCheck = wn_buildCheck("\xE9\x94\xAE\xE7\x9B\x98\xE5\x94\xA4\xE9\x86\x92", 110,
+    s_wn.m_wakeKeyCheck = wn_buildCheck("键盘唤醒", 110,
                                        wn_wakeInputSlot);
-    s_wn.m_wakeTouchCheck = wn_buildCheck("\xE8\xA7\xA6\xE6\x91\xB8\xE5\x94\xA4\xE9\x86\x92", 110,
+    s_wn.m_wakeTouchCheck = wn_buildCheck("触摸唤醒", 110,
                                          wn_wakeInputSlot);
     /* 平台不能主动关屏/唤醒时（如安卓——息屏与唤醒都是系统行为，应用
      * 无主动原语），唤醒方式设置对本平台无意义，整行置灰。 */
@@ -2006,7 +2006,7 @@ XWidget* hsf_page_window_build(XWidget* parent,
     s_wn.m_powerStateLabel = XLabel_create(s_wn.m_root, 0);
     if (s_wn.m_powerStateLabel) {
         XLabel_setText_2(s_wn.m_powerStateLabel,
-                         "\xE5\xBD\x93\xE5\x89\x8D\xEF\xBC\x9A\xE6\xAD\xA3\xE5\xB8\xB8");
+                         "当前：正常");
         XLabel_setTextPixelSize(s_wn.m_powerStateLabel, 12);
         XWidget_setFixedHeight((XWidget*)s_wn.m_powerStateLabel, 22);
         XWidget_show((XWidget*)s_wn.m_powerStateLabel);
@@ -2028,7 +2028,7 @@ XWidget* hsf_page_window_build(XWidget* parent,
     /* ---- 操作与反馈 ---- */
     s_wn.m_resetBtn = XPushButton_create(s_wn.m_root, 0);
     if (!s_wn.m_resetBtn) return s_wn.m_root;
-    XPushButton_setText_2(s_wn.m_resetBtn, "\xE5\xA4\x8D\xE4\xBD\x8D\xE9\xBB\x98\xE8\xAE\xA4");
+    XPushButton_setText_2(s_wn.m_resetBtn, "复位默认");
     XWidget_setFixedWidth((XWidget*)s_wn.m_resetBtn, 110);
     XWidget_setFixedHeight((XWidget*)s_wn.m_resetBtn, 30);
     XObject_connect_2((XObject*)s_wn.m_resetBtn,
@@ -2039,9 +2039,9 @@ XWidget* hsf_page_window_build(XWidget* parent,
         XLabel_setText_2(s_wn.m_hintLabel,
                          /* 「画布旋转」= 应用内内容转置；「窗口方向」= 向
                           * 系统申请转屏（两者正交，提示行须分开讲）。 */
-                         "\xE6\x94\xB9\xE5\x8A\xA8\xE7\x94\xBB\xE5\xB8\x83\xE6\x97\x8B\xE8\xBD\xAC\x3D\xE5\x9B\x9B\xE6\x96\xB9\xE4\xBD\x8D\xE5\xA4\x96\xE6\xA1\x86\xE6\x97\x8B\xE8\xBD\xAC\xEF\xBC\x88\xE6\x8C\x89\xE4\xB8\xBB\xE5\xB1\x8F\xE5\x8F\xAF\xE7\x94\xA8\xE5\x87\xA0\xE4\xBD\x95\xE9\x92\xB3\xE4\xBD\x8D\xEF\xBC\x89\xEF\xBC\x9B"
-                         "\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\x3D\xE5\x90\x91\xE7\xB3\xBB\xE7\xBB\x9F\xE7\x94\xB3\xE8\xAF\xB7\xE8\xBD\xAC\xE5\xB1\x8F\xEF\xBC\x88\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81\xE6\x97\xB6\xE7\xBD\xAE\xE7\x81\xB0\xEF\xBC\x89\xEF\xBC\x9B"
-                         "\xE9\x9A\x90\xE8\x97\x8F\xE9\xBC\xA0\xE6\xA0\x87\xE5\x90\x8E\xE6\xBB\x91\xE5\x8A\xA8\xE6\x97\xA0\xE5\x85\x89\xE6\xA0\x87\xEF\xBC\x8C\xE5\x9B\x9E\xE6\x9C\xAC\xE9\xA1\xB5\xE5\x8B\xBE\xE9\x80\x89\xE6\x81\xA2\xE5\xA4\x8D");
+                         "改动画布旋转=四方位外框旋转（按主屏可用几何钳位）；"
+                         "窗口方向=向系统申请转屏（平台不支持时置灰）；"
+                         "隐藏鼠标后滑动无光标，回本页勾选恢复");
         XLabel_setTextPixelSize(s_wn.m_hintLabel, 12);
         /* 不设定高：高度由 hfw（窄档换行）/推送的 sizeHint（宽档单行）
          * 驱动（见 adapt；2026-10-25 框架 hfw 修复后删除绕 Bug 定高）。 */
@@ -2049,7 +2049,7 @@ XWidget* hsf_page_window_build(XWidget* parent,
     }
     s_wn.m_statusLabel = XLabel_create(s_wn.m_root, 0);
     if (!s_wn.m_statusLabel) return s_wn.m_root;
-    XLabel_setText_2(s_wn.m_statusLabel, "\xE5\xB0\xB1\xE7\xBB\xAA");
+    XLabel_setText_2(s_wn.m_statusLabel, "就绪");
     XWidget_setFixedHeight((XWidget*)s_wn.m_statusLabel, 22);
     XWidget_show((XWidget*)s_wn.m_statusLabel);
 
@@ -2467,7 +2467,7 @@ int hsf_page_window_autotest(XWidget* page)
         XPlatformPowerPolicy policy;
         XPlatformPower_policy(&policy);
         WN_EXPECT(policy.m_wakeInputs != 0u,
-                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE7\xBC\xBA\xE7\x9C\x81\xE5\x94\xA4\xE9\x86\x92\xE6\x9D\xA5\xE6\xBA\x90\xE9\x9D\x9E\xE7\xA9\xBA");
+                  "窗口设置页: 缺省唤醒来源非空");
     }
     /* 自测期间禁止自动熄屏/自动休眠：真机上屏幕会在用例中途黑掉，
      * 后续断言无从读取（且无人触发输入来唤醒）。真实熄屏/唤醒属
@@ -2480,17 +2480,17 @@ int hsf_page_window_autotest(XWidget* page)
         XPlatformPower_setPolicy(&policy);
     }
     top = wn_toplevel();
-    WN_EXPECT(top != NULL, "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE4\xB8\xBB\xE7\xAA\x97\xE9\xA1\xB6\xE5\xB1\x82\xE5\x80\x9F\xE7\x94\xA8\xE5\x8F\xAF\xE7\x94\xA8");
+    WN_EXPECT(top != NULL, "窗口设置页: 主窗顶层借用可用");
 
     /* ---- 控件登记完整 ---- */
     WN_EXPECT(s_wn.m_skinCombo && s_wn.m_frameCheck && s_wn.m_statusCheck &&
               s_wn.m_maxCheck && s_wn.m_canvasCombo && s_wn.m_mouseCheck &&
               s_wn.m_resetBtn,
-              "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\x8E\xA7\xE4\xBB\xB6\xE5\x85\xA8\xE9\x83\xA8\xE7\x99\xBB\xE8\xAE\xB0");
+              "窗口设置页: 控件全部登记");
     WN_EXPECT(s_wn.m_blankCombo && s_wn.m_suspendCombo && s_wn.m_blankBtn &&
               s_wn.m_wakeMouseCheck && s_wn.m_wakeKeyCheck &&
               s_wn.m_wakeTouchCheck && s_wn.m_powerStateLabel,
-              "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE5\xB1\x8F\xE5\xB9\x95\xE4\xBC\x91\xE7\x9C\xA0\xE6\x8E\xA7\xE4\xBB\xB6\xE7\x99\xBB\xE8\xAE\xB0\xE5\xAE\x8C\xE6\x95\xB4");
+              "窗口设置页: 屏幕休眠控件登记完整");
 
     if (top) {
         /* ---- 边框：去框 → 回读 Frameless 位 → 复原 ---- */
@@ -2512,10 +2512,10 @@ int hsf_page_window_autotest(XWidget* page)
         XObject_event_base((XObject*)s_wn.m_frameCheck, (XEvent*)&cme);
         WN_EXPECT((XWidget_windowFlags(top) &
                    (XWidgetFlags)XWindowType_FramelessWindowHint) != 0,
-                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE9\x9A\x90\xE8\x97\x8F\xE8\xBE\xB9\xE6\xA1\x86\xE7\x94\x9F\xE6\x95\x88(Frameless \xE4\xBD\x8D)");
+                  "窗口设置页: 隐藏边框生效(Frameless 位)");
         /* 去框态：框架装饰必须失活，自绘条不得残留（双条的另一半）。 */
         WN_EXPECT(!XWindowDecoration_activeFor(top),
-                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x8E\xBB\xE6\xA1\x86\xE6\x80\x81\xE8\x87\xAA\xE7\xBB\x98\xE6\xA0\x87\xE9\xA2\x98\xE6\xA0\x8F\xE5\xB7\xB2\xE5\xA4\xB1\xE6\xB4\xBB");
+                  "窗口设置页: 去框态自绘标题栏已失活");
         /* 再点一次：勾回（释放帧内同样要能回到稳定态，不得卡死）。 */
         XMouseEvent_init(&cme, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
                          XMouseButton_LeftButton, 0, cpos);
@@ -2525,22 +2525,22 @@ int hsf_page_window_autotest(XWidget* page)
         XObject_event_base((XObject*)s_wn.m_frameCheck, (XEvent*)&cme);
         WN_EXPECT((XWidget_windowFlags(top) &
                    (XWidgetFlags)XWindowType_FramelessWindowHint) == 0,
-                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE8\xBE\xB9\xE6\xA1\x86\xE5\xA4\x8D\xE5\x8E\x9F");
+                  "窗口设置页: 边框复原");
         WN_EXPECT(XAbstractButton_isChecked((XAbstractButton*)s_wn.m_frameCheck)
                       == frameBefore,
-                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE8\xBE\xB9\xE6\xA1\x86\xE5\xA4\x8D\xE5\x8E\x9F");
+                  "窗口设置页: 边框复原");
         /* 边框开态（强制 CSD）：框架条必须接管，且原生装饰位不得残留。
            这两条合起来就是「不得同时出现系统标题栏与自定义标题栏」的
            机器判据——只查 Frameless 位会被「位对了但原生样式没落地」
            的假绿骗过（用户实测双条即此形态）。 */
         if (frameBefore) {
         WN_EXPECT(XWindowDecoration_activeFor(top),
-                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE8\xBE\xB9\xE6\xA1\x86\xE5\xBC\x80\xE6\x80\x81\xE6\xA1\x86\xE6\x9E\xB6\xE8\x87\xAA\xE7\xBB\x98\xE6\xA0\x87\xE9\xA2\x98\xE6\xA0\x8F\xE7\x94\x9F\xE6\x95\x88");
+                  "窗口设置页: 边框开态框架自绘标题栏生效");
 #ifdef WN_HAS_NATIVE_STYLE_FN
         {
             int bits = wn_nativeStyleBits(top);
             WN_EXPECT(bits == 0,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\xA1\x86\xE6\x9E\xB6\xE5\xBC\x80\xE6\x80\x81\xE6\x97\xA0\xE5\x8E\x9F\xE7\x94\x9F\xE8\xA3\x85\xE9\xA5\xB0\xE4\xBD\x8D(\xE5\x8D\x95\xE6\xA0\x87\xE9\xA2\x98\xE6\xA0\x8F)");
+                      "窗口设置页: 框架开态无原生装饰位(单标题栏)");
         }
 #endif
         }
@@ -2552,13 +2552,13 @@ int hsf_page_window_autotest(XWidget* page)
                                        false);
             wn_statusSlot(NULL, NULL);
             WN_EXPECT(demo_main_statusBarVisible(s_wn.m_user) == false,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE9\x9A\x90\xE8\x97\x8F\xE7\x8A\xB6\xE6\x80\x81\xE6\xA0\x8F\xE7\x94\x9F\xE6\x95\x88");
+                      "窗口设置页: 隐藏状态栏生效");
             XAbstractButton_setChecked((XAbstractButton*)s_wn.m_statusCheck,
                                        sbBefore);
             wn_statusSlot(NULL, NULL);
             WN_EXPECT(
                 demo_main_statusBarVisible(s_wn.m_user) == sbBefore,
-                "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE7\x8A\xB6\xE6\x80\x81\xE6\xA0\x8F\xE5\xA4\x8D\xE5\x8E\x9F");
+                "窗口设置页: 状态栏复原");
         }
 
         /* ---- 最大化：最大化 → isMaximized 回读 → 还原 ---- */
@@ -2568,12 +2568,12 @@ int hsf_page_window_autotest(XWidget* page)
                                        !maxBefore);
             wn_maxSlot(NULL, NULL);
             WN_EXPECT(XWidget_isMaximized(top) == !maxBefore,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\xE7\x94\x9F\xE6\x95\x88");
+                      "窗口设置页: 最大化生效");
             XAbstractButton_setChecked((XAbstractButton*)s_wn.m_maxCheck,
                                        maxBefore);
             wn_maxSlot(NULL, NULL);
             WN_EXPECT(XWidget_isMaximized(top) == maxBefore,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\xE8\xBF\x98\xE5\x8E\x9F");
+                      "窗口设置页: 最大化还原");
         }
 
         /* ---- 屏幕休眠：超时档位注入 → 回读 → 复位（**不触发真实熄屏**）----
@@ -2586,21 +2586,21 @@ int hsf_page_window_autotest(XWidget* page)
             wn_blankSlot(NULL, NULL);
             XPlatformPower_policy(&policy);
             WN_EXPECT(policy.m_screenOffMs == 300LL * 1000,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE8\x87\xAA\xE5\x8A\xA8\xE7\x86\x84\xE5\xB1\x8F\xE9\x98\x88\xE5\x80\xBC\xE6\xB3\xA8\xE5\x85\xA5\xE7\x94\x9F\xE6\x95\x88");
+                      "窗口设置页: 自动熄屏阈值注入生效");
             XComboBox_setCurrentIndex(s_wn.m_suspendCombo, 2);
             wn_suspendSlot(NULL, NULL);
             XPlatformPower_policy(&policy);
             WN_EXPECT(policy.m_systemSuspendMs == 180LL * 1000,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE8\x87\xAA\xE5\x8A\xA8\xE4\xBC\x91\xE7\x9C\xA0\xE9\x98\x88\xE5\x80\xBC\xE6\xB3\xA8\xE5\x85\xA5\xE7\x94\x9F\xE6\x95\x88");
+                      "窗口设置页: 自动休眠阈值注入生效");
             /* 能力查询自洽：supports 与能力位集合判定必须一致。 */
             WN_EXPECT(XPlatformPower_supports(XPlatformPowerCap_ScreenControl) ==
                       ((XPlatformPower_capabilities() &
                         (unsigned)XPlatformPowerCap_ScreenControl) != 0),
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE7\x86\x84\xE5\xB1\x8F\xE8\x83\xBD\xE5\x8A\x9B\xE6\x9F\xA5\xE8\xAF\xA2\xE8\x87\xAA\xE6\xB4\xBD");
+                      "窗口设置页: 熄屏能力查询自洽");
             /* 档位回读：下拉索引与注入的阈值互相还原。 */
             WN_EXPECT(XComboBox_currentIndex(s_wn.m_blankCombo) == 3 &&
                       XComboBox_currentIndex(s_wn.m_suspendCombo) == 2,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE4\xBC\x91\xE7\x9C\xA0\xE6\xA1\xA3\xE4\xBD\x8D\xE4\xB8\x8B\xE6\x8B\x89\xE5\x9B\x9E\xE8\xAF\xBB\xE4\xB8\x80\xE8\x87\xB4");
+                      "窗口设置页: 休眠档位下拉回读一致");
             /* 唤醒来源：可单独关闭某类输入（如键盘），且不允许全关。 */
             {
                 XPlatformPowerPolicy policy;
@@ -2610,7 +2610,7 @@ int hsf_page_window_autotest(XWidget* page)
                 XPlatformPower_policy(&policy);
                 WN_EXPECT((policy.m_wakeInputs &
                            (unsigned)XPlatformPowerInputKeyboard) == 0u,
-                          "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE5\x94\xA4\xE9\x86\x92\xE6\x9D\xA5\xE6\xBA\x90\xE5\x8F\xAF\xE5\x8D\x95\xE7\x8B\xAC\xE5\x85\xB3\xE9\x97\xAD\xEF\xBC\x88\xE9\x94\xAE\xE7\x9B\x98\xEF\xBC\x89");
+                          "窗口设置页: 唤醒来源可单独关闭（键盘）");
                 /* 三个全关 → 必须被拒绝（否则熄屏后无输入可唤醒）。 */
                 XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeMouseCheck,
                                            false);
@@ -2619,7 +2619,7 @@ int hsf_page_window_autotest(XWidget* page)
                 wn_wakeInputSlot(NULL, NULL);
                 XPlatformPower_policy(&policy);
                 WN_EXPECT(policy.m_wakeInputs != 0u,
-                          "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE5\x94\xA4\xE9\x86\x92\xE6\x9D\xA5\xE6\xBA\x90\xE4\xB8\x8D\xE5\x85\x81\xE8\xAE\xB8\xE5\x85\xA8\xE9\x83\xA8\xE5\x85\xB3\xE9\x97\xAD");
+                          "窗口设置页: 唤醒来源不允许全部关闭");
                 /* 复原：三项全开。 */
                 XAbstractButton_setChecked((XAbstractButton*)s_wn.m_wakeMouseCheck,
                                            true);
@@ -2637,7 +2637,7 @@ int hsf_page_window_autotest(XWidget* page)
             XPlatformPower_policy(&policy);
             WN_EXPECT(policy.m_screenOffMs == 0 &&
                       policy.m_systemSuspendMs == 0,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE4\xBC\x91\xE7\x9C\xA0\xE9\x98\x88\xE5\x80\xBC\xE5\xA4\x8D\xE4\xBD\x8D\xE5\x9B\x9E\xE3\x80\x8C\xE4\xBB\x8E\xE4\xB8\x8D\xE3\x80\x8D");
+                      "窗口设置页: 休眠阈值复位回「从不」");
         }
 
         /* ---- 方向四方位：90° 竖 → 180° 横(同基准) → 270° 竖 → 0° 还原 ----
@@ -2656,22 +2656,22 @@ int hsf_page_window_autotest(XWidget* page)
                     wn_canvasSlot(NULL, NULL);
                     if (s_wn.m_rotationSupported)
                         WN_EXPECT(XWidget_contentRotationDegrees(top) == deg,
-                                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\x9C\x89\xE6\x8A\x8A\xE9\xA1\xB5\xE5\xAE\x9A\xE8\xA7\x92\xE6\x89\x8D\xE4\xBD\x8D\xEF\xBC\x88\xE5\xB9\xB2\xE7\x94\x9F\xE6\x95\xB0\xEF\xBC\x89");
+                                  "窗口设置页: 有把页定角才位（干生数）");
                     if (deg == 180)
                         WN_EXPECT(XWidget_width(top) > XWidget_height(top),
-                                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x80\x92\xE7\xBD\xAE\xE6\xA8\xAA\xE5\xB1\x8F\xE5\xAE\xBD>\xE9\xAB\x98");
+                                  "窗口设置页: 倒置横屏宽>高");
                     else
                         WN_EXPECT(XWidget_height(top) > XWidget_width(top),
-                                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE7\xAB\x96\xE5\xB1\x8F\xE5\xAE\xBD\xE9\xAB\x98\xE5\xAF\xB9\xE8\xB0\x83");
+                                  "窗口设置页: 竖屏宽高对调");
                 }
                 XComboBox_setCurrentIndex(s_wn.m_canvasCombo, 0);
                 wn_canvasSlot(NULL, NULL);
                 if (s_wn.m_rotationSupported)
                     WN_EXPECT(XWidget_contentRotationDegrees(top) == 0,
-                              "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x9B\x9E\xE5\x8D\xA0\xE5\x85\x8D\xE8\xBD\xAC\xE7\x8E\x87\xE5\xBD\x92\xE9\x9B\xB6");
+                              "窗口设置页: 回占免转率归零");
                 WN_EXPECT(XWidget_width(top) == w0 &&
                               XWidget_height(top) == h0,
-                          "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\xA8\xAA\xE5\xB1\x8F 0\xC2\xB0 \xE8\xBF\x98\xE5\x8E\x9F\xE5\x9F\xBA\xE5\x87\x86\xE5\xB0\xBA\xE5\xAF\xB8");
+                          "窗口设置页: 横屏 0° 还原基准尺寸");
             }
             /* ---- 方向切换：再走一遍 90°/180°/270° 往返 ----
                （与上方四方位循环同口径；此处只保留行为断言，不模拟弹层
@@ -2684,11 +2684,11 @@ int hsf_page_window_autotest(XWidget* page)
                     wn_canvasSlot(NULL, NULL);
                     WN_EXPECT(XWidget_contentRotationDegrees(top) == deg ||
                                   !s_wn.m_rotationSupported,
-                              "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\xBC\xB9\xE5\xB1\x82\xE9\x80\x89\xE6\x96\xB9\xE4\xBD\x8D\xE5\x90\x8E\xE6\x97\x8B\xE8\xBD\xAC\xE8\xA7\x92\xE7\x94\x9F\xE6\x95\x88");
+                              "窗口设置页: 弹层选方位后旋转角生效");
                     if (deg == 180)
                         WN_EXPECT(XWidget_width(top) == w0 &&
                                       XWidget_height(top) == h0,
-                                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: 180\xC2\xB0 \xE5\xAE\xBD\xE9\xAB\x98\xE4\xB8\x8E 0\xC2\xB0 \xE5\x90\x8C");
+                                  "窗口设置页: 180° 宽高与 0° 同");
                 }
                 XComboBox_setCurrentIndex(s_wn.m_canvasCombo, 0);
                 wn_canvasSlot(NULL, NULL);
@@ -2704,20 +2704,20 @@ int hsf_page_window_autotest(XWidget* page)
             bool canRequest = XPlatformOrientation_supports(
                                   XPlatformOrientationCap_Request);
             WN_EXPECT(XComboBox_count(s_wn.m_screenOrientCombo) == 5,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\xE6\xA1\xA3\xE4\xBD\x8D\xE6\x95\xB0\xE4\xB8\x8D\xE5\xAF\xB9");
+                      "窗口设置页: 窗口方向档位数不对");
             /* 能力一致性：契约判定与页面记录必须一致（能力探测漏同步时
              * 控件会「以为能用」而点了没反应）。 */
             WN_EXPECT(canRequest == s_wn.m_screenOrientSupported,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\xE8\x83\xBD\xE5\x8A\x9B\xE4\xB8\x8E\xE7\x94\x9F\xE6\x95\x88\xE5\x9B\x9E\xE8\xAF\xBB\xE4\xB8\x8D\xE4\xB8\x80\xE8\x87\xB4");
+                      "窗口设置页: 窗口方向能力与生效回读不一致");
             /* 不支持时控件必须置灰（不假装可用）。 */
             if (!canRequest)
                 WN_EXPECT(!XWidget_isEnabled((XWidget*)s_wn.m_screenOrientCombo),
-                          "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81\xE6\x97\xB6\xE6\x8E\xA7\xE4\xBB\xB6\xE5\xBA\x94\xE7\xBD\xAE\xE7\x81\xB0");
+                          "窗口设置页: 窗口方向不支持时控件应置灰");
             /* 下拉回显与影子值一致（影子=本应用最近一次成功受理的申请）。 */
             WN_EXPECT(XComboBox_currentIndex(s_wn.m_screenOrientCombo) ==
                           wn_screenOrientIndex(
                               XPlatformOrientation_lastRequested()),
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE7\xAA\x97\xE5\x8F\xA3\xE6\x96\xB9\xE5\x90\x91\xE5\x9B\x9E\xE6\x98\xBE\xE4\xB8\x8E\xE5\xBD\xB1\xE5\xAD\x90\xE5\x80\xBC\xE4\xB8\x8D\xE4\xB8\x80\xE8\x87\xB4");
+                      "窗口设置页: 窗口方向回显与影子值不一致");
         }
 
         /* ---- 鼠标：隐藏(BBlank) → 显示(所选形状) → 外形切换 → 复原 ----
@@ -2730,27 +2730,27 @@ int hsf_page_window_autotest(XWidget* page)
             WN_EXPECT(XGuiApplication_overrideCursor() != NULL &&
                           XCursor_shape(XGuiApplication_overrideCursor()) ==
                               XCursor_Blank,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE9\x9A\x90\xE8\x97\x8F\xE9\xBC\xA0\xE6\xA0\x87\xE7\x94\x9F\xE6\x95\x88(\xE8\xA6\x86\xE7\x9B\x96\xE6\xA0\x88 Blank)");
+                      "窗口设置页: 隐藏鼠标生效(覆盖栈 Blank)");
             XAbstractButton_setChecked((XAbstractButton*)s_wn.m_mouseCheck,
                                        true);
             wn_mouseSlot(NULL, NULL);
             WN_EXPECT(XGuiApplication_overrideCursor() != NULL &&
                           XCursor_shape(XGuiApplication_overrideCursor()) ==
                               kCursorShapes[s_wn.m_cursorShapeIdx].shape,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\x98\xBE\xE7\xA4\xBA\xE9\xBC\xA0\xE6\xA0\x87\xE6\x89\x80\xE9\x80\x89\xE5\xA4\x96\xE5\xBD\xA2\xE7\x94\x9F\xE6\x95\x88");
+                      "窗口设置页: 显示鼠标所选外形生效");
             /* 外形切换：手型 → 栈顶随选即变（显示态）。 */
             XComboBox_setCurrentIndex(s_wn.m_cursorShapeCombo, 1);
             wn_cursorShapeSlot(NULL, NULL);
             WN_EXPECT(XGuiApplication_overrideCursor() != NULL &&
                           XCursor_shape(XGuiApplication_overrideCursor()) ==
                               XCursor_PointingHand,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE9\xBC\xA0\xE6\xA0\x87\xE5\xA4\x96\xE5\xBD\xA2\xE5\x88\x87\xE6\x8D\xA2\xE7\x94\x9F\xE6\x95\x88");
+                      "窗口设置页: 鼠标外形切换生效");
             XComboBox_setCurrentIndex(s_wn.m_cursorShapeCombo, 0);
             wn_cursorShapeSlot(NULL, NULL);
             WN_EXPECT(XGuiApplication_overrideCursor() != NULL &&
                           XCursor_shape(XGuiApplication_overrideCursor()) ==
                               XCursor_Arrow,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\x3A\x20\xE9\xBC\xA0\xE6\xA0\x87\xE5\xA4\x96\xE5\xBD\xA2\xE5\x9B\x9E\xE7\xAE\xAD\xE5\xA4\xB4");
+                      "窗口设置页: 鼠标外形回箭头");
         }
 
         /* ---- 皮肤：切深色 → 方案回读 Dark → 复位浅色 ---- */
@@ -2760,7 +2760,7 @@ int hsf_page_window_autotest(XWidget* page)
             wn_skinSlot(NULL, NULL);
             WN_EXPECT(hints && XStyleHints_colorScheme(hints) ==
                                   XStyleHintsColorScheme_Dark,
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\xB7\xB1\xE8\x89\xB2\xE7\x9A\xAE\xE8\x82\xA4\xE6\x96\xB9\xE6\xA1\x88\xE7\x94\x9F\xE6\x95\x88");
+                      "窗口设置页: 深色皮肤方案生效");
         }
 
         /* ---- 全屏（2026-10-23）：普通态进全屏 → isFullScreen 回读 +
@@ -2775,33 +2775,33 @@ int hsf_page_window_autotest(XWidget* page)
                                        true);
             wn_fullSlot(NULL, NULL);
             WN_EXPECT(XWidget_isFullScreen(top),
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE8\xBF\x9B\xE5\x85\xA5\xE7\x94\x9F\xE6\x95\x88\x28\x69\x73\x46\x75\x6C\x6C\x53\x63\x72\x65\x65\x6E\x29");
+                      "窗口设置页: 全屏进入生效(isFullScreen)");
             WN_EXPECT(!XWidget_isMaximized(top),
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE4\xB8\x8E\xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\xE4\xBA\x92\xE6\x96\xA5\x28\x6D\x61\x78\x20\xE4\xBD\x8D\xE6\xB8\x85\xE9\x9B\xB6\x29");
+                      "窗口设置页: 全屏与最大化互斥(max 位清零)");
             /* 【全屏态边框复选框置灰 2026-10-23】置灰 + 勾选值保持。 */
             WN_EXPECT(s_wn.m_frameCheck &&
                           !XWidget_isEnabled((XWidget*)s_wn.m_frameCheck),
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE6\x80\x81\xE8\xBE\xB9\xE6\xA1\x86\xE5\xA4\x8D\xE9\x80\x89\xE6\xA1\x86\xE7\xBD\xAE\xE7\x81\xB0\x28\x69\x73\x45\x6E\x61\x62\x6C\x65\x64\x3D\x66\x61\x6C\x73\x65\x29");
+                      "窗口设置页: 全屏态边框复选框置灰(isEnabled=false)");
             WN_EXPECT(s_wn.m_frameCheck &&
                           XAbstractButton_isChecked(
                               (XAbstractButton*)s_wn.m_frameCheck),
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE6\x9C\x9F\xE9\x97\xB4\xE8\xBE\xB9\xE6\xA1\x86\xE5\x8B\xBE\xE9\x80\x89\xE4\xBF\x9D\xE6\x8C\x81\xE5\x8E\x9F\xE5\x80\xBC");
+                      "窗口设置页: 全屏期间边框勾选保持原值");
             if (wn_fullDemoHold()) {
                 WN_EXPECT(!s_wn.m_fullCheck ||
                               XAbstractButton_isChecked(
                                   (XAbstractButton*)s_wn.m_fullCheck),
-                          "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE5\x8B\xBE\xE9\x80\x89\xE4\xBF\x9D\xE6\x8C\x81\x28\xE5\x8F\x96\xE8\xAF\x81\xE9\x92\xA9\xE5\xAD\x90\x29");
-                wn_report("\xE5\xB7\xB2\xE5\x85\xA8\xE5\xB1\x8F\xEF\xBC\x88\xE5\x8F\x96\xE8\xAF\x81\xE4\xBF\x9D\xE6\x8C\x81\xEF\xBC\x89");
+                          "窗口设置页: 全屏勾选保持(取证钩子)");
+                wn_report("已全屏（取证保持）");
                 return failures; /* 取证保持：停在全屏态，跳过退出与复位。 */
             }
             XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck,
                                        false);
             wn_fullSlot(NULL, NULL);
             WN_EXPECT(!XWidget_isFullScreen(top),
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE9\x80\x80\xE5\x87\xBA\xE5\x85\xA8\xE5\xB1\x8F\xE8\xBF\x98\xE5\x8E\x9F\x28\x21\x69\x73\x46\x75\x6C\x6C\x53\x63\x72\x65\x65\x6E\x29");
+                      "窗口设置页: 退出全屏还原(!isFullScreen)");
             WN_EXPECT(s_wn.m_frameCheck &&
                           XWidget_isEnabled((XWidget*)s_wn.m_frameCheck),
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE9\x80\x80\xE5\x87\xBA\xE5\x85\xA8\xE5\xB1\x8F\xE8\xBE\xB9\xE6\xA1\x86\xE5\xA4\x8D\xE9\x80\x89\xE6\xA1\x86\xE6\x81\xA2\xE5\xA4\x8D\x28\x69\x73\x45\x6E\x61\x62\x6C\x65\x64\x3D\x74\x72\x75\x65\x29");
+                      "窗口设置页: 退出全屏边框复选框恢复(isEnabled=true)");
 
             /* 最大化态进全屏（同尺寸状态替换路径：几何未变的 FullScreen
              * 位翻转，装饰边距随状态重算+同尺寸重排）：先最大化，再全
@@ -2814,12 +2814,12 @@ int hsf_page_window_autotest(XWidget* page)
                                        true);
             wn_fullSlot(NULL, NULL);
             WN_EXPECT(XWidget_isFullScreen(top) && !XWidget_isMaximized(top),
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\xE6\x80\x81\xE8\xBF\x9B\xE5\x85\xA8\xE5\xB1\x8F\x28\xE7\x8A\xB6\xE6\x80\x81\xE6\x9B\xBF\xE6\x8D\xA2\x29");
+                      "窗口设置页: 最大化态进全屏(状态替换)");
             XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck,
                                        false);
             wn_fullSlot(NULL, NULL);
             WN_EXPECT(!XWidget_isFullScreen(top) && !XWidget_isMaximized(top),
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE7\x9B\xB4\xE8\xBF\x98\xE5\x8E\x9F\x28\xE5\x87\xA0\xE4\xBD\x95\xE5\x9B\x9E\xE6\xAD\xA3\xE5\xB8\xB8\xE6\x80\x81\x29");
+                      "窗口设置页: 全屏直还原(几何回正常态)");
 
             /* 【FullScreen→Maximized 直切 2026-10-24（2a 回归锁定）】：
                全屏态直点最大化（状态一步替换），此槽不经 wn_fullSlot
@@ -2832,15 +2832,15 @@ int hsf_page_window_autotest(XWidget* page)
                                        true);
             wn_maxSlot(NULL, NULL);
             WN_EXPECT(XWidget_isMaximized(top) && !XWidget_isFullScreen(top),
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE7\x9B\xB4\xE5\x88\x87\xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\x28\xE7\x8A\xB6\xE6\x80\x81\xE6\x9B\xBF\xE6\x8D\xA2\x29");
+                      "窗口设置页: 全屏直切最大化(状态替换)");
             WN_EXPECT(s_wn.m_frameCheck &&
                           XWidget_isEnabled((XWidget*)s_wn.m_frameCheck),
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE7\x9B\xB4\xE5\x88\x87\xE5\x90\x8E\xE8\xBE\xB9\xE6\xA1\x86\xE5\xA4\x8D\xE9\x80\x89\xE6\xA1\x86\xE6\x81\xA2\xE5\xA4\x8D\x28\x32\x61\x20\xE9\x80\x80\xE5\x87\xBA\xE8\xAF\xAD\xE4\xB9\x89\x29");
+                      "窗口设置页: 直切后边框复选框恢复(2a 退出语义)");
             XAbstractButton_setChecked((XAbstractButton*)s_wn.m_maxCheck,
                                        false);
             wn_maxSlot(NULL, NULL);
             WN_EXPECT(!XWidget_isMaximized(top) && !XWidget_isFullScreen(top),
-                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE7\x9B\xB4\xE5\x88\x87\xE5\x90\x8E\xE8\xBF\x98\xE5\x8E\x9F\xE6\x99\xAE\xE9\x80\x9A\xE6\x80\x81");
+                      "窗口设置页: 直切后还原普通态");
         }
     }
 
@@ -2851,34 +2851,34 @@ int hsf_page_window_autotest(XWidget* page)
     wn_fullSlot(NULL, NULL);
     wn_resetSlot(NULL, NULL);
     WN_EXPECT(top && !XWidget_isFullScreen(top) && !XWidget_isMaximized(top),
-              "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE6\x80\x81\xE5\xA4\x8D\xE4\xBD\x8D\xE9\x80\x80\xE5\x87\xBA\xE5\x85\xA8\xE5\xB1\x8F");
+              "窗口设置页: 全屏态复位退出全屏");
     WN_EXPECT(s_wn.m_frameCheck &&
                   XWidget_isEnabled((XWidget*)s_wn.m_frameCheck),
-              "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE6\x80\x81\xE5\xA4\x8D\xE4\xBD\x8D\xE5\x90\x8E\xE8\xBE\xB9\xE6\xA1\x86\xE5\xA4\x8D\xE9\x80\x89\xE6\xA1\x86\xE6\x81\xA2\xE5\xA4\x8D");
+              "窗口设置页: 全屏态复位后边框复选框恢复");
     wn_resetSlot(NULL, NULL);
     {
         XStyleHints* hints = XGuiApplication_styleHints();
         WN_EXPECT(s_wn.m_skinCombo &&
                       XComboBox_currentIndex(s_wn.m_skinCombo) == 0,
-                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\xA4\x8D\xE4\xBD\x8D\xE5\x90\x8E\xE7\x9A\xAE\xE8\x82\xA4\xE5\x9B\x9E\xE6\xB5\x85\xE8\x89\xB2");
+                  "窗口设置页: 复位后皮肤回浅色");
         WN_EXPECT(hints && XStyleHints_colorScheme(hints) ==
                               XStyleHintsColorScheme_Light,
-                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\xA4\x8D\xE4\xBD\x8D\xE5\x90\x8E\xE6\x96\xB9\xE6\xA1\x88\xE5\x9B\x9E\xE6\xB5\x85\xE8\x89\xB2");
+                  "窗口设置页: 复位后方案回浅色");
         WN_EXPECT(top && (XWidget_windowFlags(top) &
                           (XWidgetFlags)XWindowType_FramelessWindowHint) == 0,
-                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\xA4\x8D\xE4\xBD\x8D\xE5\x90\x8E\xE8\xBE\xB9\xE6\xA1\x86\xE6\x98\xBE\xE7\xA4\xBA");
+                  "窗口设置页: 复位后边框显示");
         WN_EXPECT(demo_main_statusBarVisible(s_wn.m_user),
-                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\xA4\x8D\xE4\xBD\x8D\xE5\x90\x8E\xE7\x8A\xB6\xE6\x80\x81\xE6\xA0\x8F\xE6\x98\xBE\xE7\xA4\xBA");
+                  "窗口设置页: 复位后状态栏显示");
         WN_EXPECT(top && !XWidget_isMaximized(top),
-                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\xA4\x8D\xE4\xBD\x8D\xE5\x90\x8E\xE9\x9D\x9E\xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96");
+                  "窗口设置页: 复位后非最大化");
         WN_EXPECT(XGuiApplication_overrideCursor() != NULL &&
                       XCursor_shape(XGuiApplication_overrideCursor()) ==
                           XCursor_Arrow,
-                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\xA4\x8D\xE4\xBD\x8D\xE5\x90\x8E\xE9\xBC\xA0\xE6\xA0\x87\xE6\x98\xBE\xE7\xA4\xBA");
+                  "窗口设置页: 复位后鼠标显示");
     }
 
 #undef WN_EXPECT
-    XPrintf("XGuiAutoTest: \xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5 %s\n",
+    XPrintf("XGuiAutoTest: 窗口设置页 %s\n",
             failures == 0 ? "PASS" : "FAIL");
     return failures;
 }
@@ -2889,14 +2889,14 @@ XWidget* hsf_page_window_build(XWidget* parent,
                                          DemoPageStatusFn status, void* user)
 {
     (void)parent; (void)status; (void)user;
-    XPrintf("XGuiAutoTest: [FAIL] \xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\xE4\xBE\x9D\xE8\xB5\x96\xE6\x8E\xA7\xE4\xBB\xB6\xE6\xAE\xB5\xE8\xA2\xAB\xE8\xA3\x81\xE5\x89\xAA\xEF\xBC\x8C\xE6\x97\xA0\xE6\xB3\x95\xE6\x9E\x84\xE5\xBB\xBA\n");
+    XPrintf("XGuiAutoTest: [FAIL] 窗口设置页依赖控件段被裁剪，无法构建\n");
     return (XWidget*)0;
 }
 
 int hsf_page_window_autotest(XWidget* page)
 {
     (void)page;
-    XPrintf("XGuiAutoTest: [FAIL] \xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5\xE8\xA2\xAB\xE8\xA3\x81\xE5\x89\xAA\xEF\xBC\x8C\xE6\x97\xA0\xE6\xB3\x95\xE8\x87\xAA\xE6\xB5\x8B\n");
+    XPrintf("XGuiAutoTest: [FAIL] 窗口设置页被裁剪，无法自测\n");
     return -1;
 }
 

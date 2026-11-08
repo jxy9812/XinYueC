@@ -605,10 +605,10 @@ static void VXToolButton_paintEvent(XWidget* self, XEvent* event)
 
     /* 背景与边框：非 autoRaise 或按下/悬停时绘制。 */
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：面板走 PE_PanelButtonTool（AutoRaise
          * 时仅按下/悬停凸起，完整对标 QFusionStyle 工具按钮语义）。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStylePE_PanelButtonTool);
         opt.m_rect = rect;

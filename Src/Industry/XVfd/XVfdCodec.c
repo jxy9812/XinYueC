@@ -329,11 +329,13 @@ static void xvfdCodecFillStatus(XVfdStatus* out, const XBsonDocument* doc)
     out->m_valid = (mask != 0);
 }
 
-bool XVfdCodec_statusFromBson(XVfdStatus* out, const uint8_t* data, size_t size)
+bool XVfdCodec_statusFromBson_2(XVfdStatus* out, int* outSide,
+                                const uint8_t* data, size_t size)
 {
     XBsonDocument* doc;
     if (!out) return false;
     memset(out, 0, sizeof(*out));
+    if (outSide) *outSide = 0;          /* 缺省侧 A（协议缺键时的口径）。 */
     if (!data || size == 0) return false;
     doc = XBsonDocument_create();
     if (!doc) return false;
@@ -341,9 +343,18 @@ bool XVfdCodec_statusFromBson(XVfdStatus* out, const uint8_t* data, size_t size)
         XClassDelete((XClass*)doc);
         return false;
     }
+    if (outSide) {
+        XBsonValue* sv = XBsonDocument_value_keyUtf8(doc, "side");
+        if (sv) *outSide = (int)XBsonValue_toInt32(sv, 0);
+    }
     xvfdCodecFillStatus(out, doc);
     XClassDelete((XClass*)doc);
     return true;
+}
+
+bool XVfdCodec_statusFromBson(XVfdStatus* out, const uint8_t* data, size_t size)
+{
+    return XVfdCodec_statusFromBson_2(out, NULL, data, size);
 }
 
 /**

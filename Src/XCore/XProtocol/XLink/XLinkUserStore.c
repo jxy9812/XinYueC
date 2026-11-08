@@ -192,7 +192,10 @@ static bool xus_parseRecord(const XJsonObject* object, XLinkUserRecord* record)
         if (role < 0)
             goto cleanup;
     }
-    if (role < XLinkAuthRole_Anonymous || role > XLinkAuthRole_Admin)
+    /* 合法角色集**显式枚举**：Operator 是后追加值 3，不能用 "role > Admin"
+     * 的数值夹取（会把 operator 误判非法，也会放过将来的未定义值）。 */
+    if (role != XLinkAuthRole_Anonymous && role != XLinkAuthRole_User &&
+        role != XLinkAuthRole_Admin && role != XLinkAuthRole_Operator)
         goto cleanup;
     record->m_role = (uint8_t)role;
 
@@ -481,7 +484,9 @@ bool XLinkUserStore_upsert(XLinkUserStore* store, const char* user,
     if (!store || !user || !user[0]
         || XStrlen(user) >= XLINK_AUTH_NAME_BYTES)
         return false;
-    if (role > XLinkAuthRole_Admin)
+    /* 接受四档角色（Operator=3 为追加值，数值最大但不是越界）。 */
+    if (role != XLinkAuthRole_Anonymous && role != XLinkAuthRole_User &&
+        role != XLinkAuthRole_Admin && role != XLinkAuthRole_Operator)
         return false;
     if (store->m_count >= XLINK_AUTH_USER_SLOTS
         && xus_indexOf(store, user) < 0)

@@ -97,9 +97,14 @@ bool HsfHistoryPage_parse(const uint8_t* data, uint32_t len,
     XBsonValue* v;
     const XBsonArray* rows;
     int i;
+    uint32_t seq;
 
     if (!out) return false;
+    /* [m_seq 跨解析保留] 本函数整结构清零重填，序号必须单独拎出来
+     * 递增（否则永远停在 1，"等下一跳应答"的导出流程会永远等不到）。 */
+    seq = out->m_seq;
     memset(out, 0, sizeof(*out));
+    out->m_seq = seq;
     doc = XBsonDocument_create();
     if (!doc) return false;
     if (!XBsonDocument_from_bytes(doc, data, len)) {
@@ -108,6 +113,8 @@ bool HsfHistoryPage_parse(const uint8_t* data, uint32_t len,
     }
     v = XBsonDocument_value_keyUtf8(doc, "total");
     if (v) out->m_total = (int)XBsonValue_toInt32(v, 0);
+    v = XBsonDocument_value_keyUtf8(doc, "dbRows");
+    if (v) out->m_dbRows = XBsonValue_toInt64(v, 0);
     v = XBsonDocument_value_keyUtf8(doc, "offset");
     if (v) out->m_offset = (int)XBsonValue_toInt32(v, 0);
     v = XBsonDocument_value_keyUtf8(doc, "limit");
@@ -131,9 +138,10 @@ bool HsfHistoryPage_parse(const uint8_t* data, uint32_t len,
             for (k = 0; k < 18; ++k)
                 cell[k] = XBsonArray_at_base(row, (int64_t)k);
 
-            /* 时间戳：epoch 毫秒 → 文本。 */
+            /* 时间戳：epoch 毫秒 → 文本（原值同时留存给图表当 X 轴）。 */
             {
                 const int64_t ts = (int64_t)hsfHistNum(cell[0], 0.0);
+                dst->m_ts = ts;
                 hsfHistFormatTs(ts, dst->m_cells[0], (int)sizeof(dst->m_cells[0]));
             }
             /* 模式 / 搅拌状态（文本列）。 */
@@ -162,6 +170,30 @@ bool HsfHistoryPage_parse(const uint8_t* data, uint32_t len,
                         snprintf(dst->m_cells[kDst[k]],
                                  sizeof(dst->m_cells[kDst[k]]), kFmt[k],
                                  hsfHistNum(cell[kSrc[k]], 0.0));
+                }
+                /* [图表原值旁路] 显示列 3..12 逐列对应服务端原始列
+                 * （HsfServerStore 应答列序 ts,mode,vfd_state,freq_hz,
+                 * current_a,rpm,turb1,turb2,flow,flow_unit,flow_total,
+                 * total_unit,press_mpa,press_note,temp,hum,di,do）：
+                 * freq 3 / current 4 / rpm 5 / turb1 6 / turb2 7 /
+                 * flow 8 / flow_total 10 / press 12 / temp 14 / hum 15。
+                 * 原值与显示格同源同一次解析，不另开反解析（显示格带
+                 * 单位，"36.50 m3/h" 用 strtod 会停在空格，整列丢）。 */
+                {
+                    static const int kNumSrc[HSF_HISTORY_NUM_COUNT] = {
+                        3, 4, 5, 6, 7, 8, 10, 12, 14, 15
+                    };
+                    int n;
+                    for (n = 0; n < HSF_HISTORY_NUM_COUNT; ++n) {
+                        const int src = kNumSrc[n];
+                        if (hsfHistIsNull(cell[src])) {
+                            dst->m_hasNum[n] = false;
+                            dst->m_num[n] = 0.0;
+                        } else {
+                            dst->m_hasNum[n] = true;
+                            dst->m_num[n] = hsfHistNum(cell[src], 0.0);
+                        }
+                    }
                 }
             }
             /* 瞬时流量 / 正累计（带单位）。 */
@@ -219,6 +251,7 @@ bool HsfHistoryPage_parse(const uint8_t* data, uint32_t len,
         }
     }
     out->m_valid = true;
+    ++out->m_seq;
     XClassDelete((XClass*)doc);
     return true;
 }

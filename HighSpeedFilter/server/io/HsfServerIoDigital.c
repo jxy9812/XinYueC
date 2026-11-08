@@ -317,6 +317,19 @@ static bool digitalMountCore(HsfServerIoDigital* st, XModbusClient* client,
     st->m_channelsPerDev = perDev;
     st->m_startAddr = startAddr;
     st->m_mounted = true;
+    /* [注入链路：挂自愈看门狗] 节拍此刻才确定（重挂定时器要用它）。
+     * 真机装配（mount 建 TCP 客户端）不置 m_injected，行为不变。 */
+    if (st->m_injected) {
+        const uint64_t nowMs =
+            (uint64_t)XDateTime_currentMSecsSinceEpoch();
+        HsfServerBusHeal_arm(&st->m_heal, client, pollMs, nowMs);
+        if (st->m_devIdExt >= 0 && st->m_clientExt)
+            HsfServerBusHeal_arm(&st->m_healExt, st->m_clientExt, pollMs, nowMs);
+        XPrintf("HsfServerIoDigital: 注入链路自愈已启用（主模块%s；失联重连 + "
+                "数据停滞重挂 %dms 定时器）\n",
+                (st->m_devIdExt >= 0 && st->m_clientExt) ? " + 扩展模块" : "",
+                pollMs);
+    }
     return true;
 
 fail:
@@ -361,6 +374,9 @@ bool HsfServerIoDigital_mountWithClients(HsfServerIoDigital* st,
     if (timeoutMs < 200) timeoutMs = 200;
 
     st->m_channelsPerDev = perDev;
+    /* [注入链路标记] 本入口的客户端由调用方给（模拟设备/单测），底层可能是
+     * 没有任何重连实现的虚拟客户端 ⇒ 装配尾部要挂服务端自愈看门狗。 */
+    st->m_injected = true;
     XModbusClient_setTimeout((XModbusClient*)client, (size_t)timeoutMs);
     if (extClient)
         XModbusClient_setTimeout((XModbusClient*)extClient, (size_t)timeoutMs);
@@ -468,6 +484,10 @@ bool HsfServerIoDigital_mount(HsfServerIoDigital* st, const char* host,
 void HsfServerIoDigital_unmount(HsfServerIoDigital* st)
 {
     if (!st) return;
+    /* 看门狗先撤：拆除过程中 Hub/客户端会整体释放，不能再让它碰。 */
+    HsfServerBusHeal_disarm(&st->m_heal);
+    HsfServerBusHeal_disarm(&st->m_healExt);
+    st->m_injected = false;
     if (st->m_hub) {
         XModbusHub_stopPolling(st->m_hub);
         XModbusHub_disconnectAll(st->m_hub);
@@ -600,4 +620,34 @@ struct XModbusVirtualModel* HsfServerIoDigital_simModelExt(
     c = (const XModbusVirtualClient*)st->m_clientExt;
     if (XClassGetVtable(c) != XModbusVirtualClient_class_init()) return NULL;
     return XModbusVirtualClient_model(c);
+}
+
+/* ==================== 注入链路自愈 ==================== */
+
+/**
+ * @brief 跑一拍自愈检查（主模块 + 扩展模块各一）。
+ * @details [病根] 模拟/单测链路注入的是 XModbusVirtualClient：它只有
+ *          "改状态字"的 Open/Close，**没有重连实现**，autoReconnect 对它
+ *          是空操作。设备一旦被判失联、或轮询定时器被误杀（定时器 id 是
+ *          全局槽位，误杀即静默停摆），Hub 的泵就对它永久沉默；链路层按
+ *          XMODBUSLINK_STALE_MS=5000 判陈旧 ⇒ 电磁阀那六路的到位反馈
+ *          一会儿有一会儿没有，最后全变"不新鲜"。
+ *          本函数由服务端 tick 每拍调用，策略与 485 两路完全一致
+ *          （见 HsfServerBusHeal_step）。
+ */
+bool HsfServerIoDigital_watchdog(HsfServerIoDigital* st, uint64_t nowMs)
+{
+    bool acted = false;
+    if (!st || !st->m_mounted || !st->m_hub || !st->m_injected) return false;
+    if (HsfServerBusHeal_step(&st->m_heal, st->m_hub, st->m_devId,
+                              st->m_client, "数字量主模块", nowMs)) {
+        acted = true;
+    }
+    if (st->m_devIdExt >= 0 && st->m_clientExt) {
+        if (HsfServerBusHeal_step(&st->m_healExt, st->m_hub, st->m_devIdExt,
+                                  st->m_clientExt, "数字量扩展模块", nowMs)) {
+            acted = true;
+        }
+    }
+    return acted;
 }

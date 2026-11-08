@@ -12,7 +12,7 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import QMainWindow, QStackedWidget, QWidget
 
 from . import pages_registry as reg
-from . import proto, theme
+from . import permissions, proto, theme
 from .page_base import PageContext
 from .pages_monitor import AnalogPage, DigitalPage, VfdPage, WaterPage
 from .pages_valve import ValvePage
@@ -191,13 +191,14 @@ class MainWindow(QMainWindow):
             self.nav.setVisible(visible)
 
     def _on_mode_clicked(self):
-        """顶栏模式钮：手动↔自动切换（需 root）。"""
+        """顶栏模式钮：手动↔自动切换（需管理员权限）。"""
         model = self.bridge.model
         if not self.bridge.is_connected():
             self.status_bar.set_message("未连接服务端")
             return
-        if self.bridge.role < proto.ROLE_ADMIN:
-            self.status_bar.set_message("权限不足：切换运行模式需要 root 账户")
+        if not self.bridge.can(proto.PERM_MODE_SWITCH):
+            self.status_bar.set_message(
+                "权限不足：切换运行模式需要管理员账户")
             return
         target = 0 if model.is_auto() else 1
         self.status_bar.set_message("正在切换到%s模式…"
@@ -255,8 +256,7 @@ class MainWindow(QMainWindow):
     def _on_connected(self, role):
         self.status_bar.set_connection(
             "已连接 · %s · %s" % (self.bridge.user,
-                                  "管理员" if role >= proto.ROLE_ADMIN
-                                  else "只读"), ok=True)
+                                  permissions.role_name(role)), ok=True)
         self.bridge.start_refresh()
         # 登录后先拉一次运行模式（模式钮要显示当前状态）。
         self.bridge.refresh_run_mode()

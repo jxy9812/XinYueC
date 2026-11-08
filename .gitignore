@@ -587,6 +587,9 @@ verify/hsf-databar/
 verify/vfd_m512/
 verify/wt/
 
+# 本地代码索引缓存（ZCode 桌面端生成，含大体积 json/截图，非源码）
+.dsh-code-index/
+
 # Python 客户端 xlsx_bridge 动态库与构建产物（编完自动拷贝，见
 # client_py/tools/xlsx_bridge/ 与 HighSpeedFilter/CMakeLists.txt）
 HighSpeedFilter/client_py/hsfsrv_client/bin/

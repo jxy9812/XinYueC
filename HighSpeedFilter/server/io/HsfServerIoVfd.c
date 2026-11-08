@@ -96,6 +96,23 @@ static bool vfdEnsureGroup(HsfServerIoVfd* st, const XVfdCommGroup* g, int gi)
 }
 
 /**
+ * @brief 设备层 emitError → 服务端日志。
+ * @details [为什么必须留痕] 动作监督超时/写拒绝这类错误此前无人订阅，
+ *          只进设备层 m_lastError——界面上就是"点了没反应"，现场无从
+ *          查起。与登录拒绝留痕同口径：至少落一行日志（receiver=设备
+ *          自身，打印指针区分 A/B 侧）。
+ */
+static void VHsfServerIoVfd_onDeviceError(XObject* receiver, XVarList* args)
+{
+    const char* msg = "";
+    if (!args) return;
+    XVarList_start(args);
+    msg = XVarList_arg(args, const char*);
+    XPrintf("HsfServerIoVfd: 设备错误（dev=%p）：%s\n",
+            (void*)receiver, (msg && msg[0]) ? msg : "(空)");
+}
+
+/**
  * @brief 按品牌规格建语义点（AI/AO 用 XIoAnalogPoint，DI/DO 用基类）。
  * @return 新点（autoDelete 语义，交给组托管）；失败返回 NULL。
  * @note 语义点不在通道层标度（XVfdDevice 的 DecodePoint 需要原生量自己
@@ -258,6 +275,11 @@ bool HsfServerIoVfd_mount(HsfServerIoVfd* st, HsfServerBus* bus,
     }
     st->m_dev = XVfdM512_create();
     if (!st->m_dev) goto fail;
+    /* 设备错误留痕（见槽函数说明；receiver=设备自身，随设备析构自断）。 */
+    XObject_connect_1((XObject*)st->m_dev,
+                      XSignal(XVfdDevice_errorOccurred_signal),
+                      (XObject*)st->m_dev, VHsfServerIoVfd_onDeviceError,
+                      XConnectionType_Auto);
     if (!XVfdDevice_attach((XVfdDevice*)st->m_dev, st->m_group)) {
         XPrintf("HsfServerIoVfd: 变频器设备挂组失败\n");
         goto fail;

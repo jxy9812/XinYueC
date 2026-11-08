@@ -326,10 +326,10 @@ void XCommandLinkButton_drawContents(XCommandLinkButton* self,
         arrowColor = 0xFF000000u;
 
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：面板走 PE_PanelButtonCommand（悬停渐变/
          * 按下反转/焦点环），标题/描述/图标保留本控件绘制。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStylePE_PanelButtonCommand);
         opt.m_rect = rect;

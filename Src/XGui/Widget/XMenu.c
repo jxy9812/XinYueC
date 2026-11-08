@@ -1015,10 +1015,10 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
         return;
     rect = XWidget_rect((XWidget*)self);
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共接管：菜单面板 + 条目走 PE_PanelMenu/CE_MenuItem
          * （分隔线保留原实现；选中项 highlight + HighlightedText）。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption panel;
         int64_t n;
         int64_t k;

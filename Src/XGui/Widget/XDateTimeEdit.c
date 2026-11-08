@@ -3078,8 +3078,8 @@ static void VXDateTimeEdit_paintEvent(XWidget* self, XEvent* event)
             XPainter_translate(&painter, (float)offset.x, (float)offset.y);
         XRect_init(&r, 0, 0, w, h);
 #if XSTYLE_ON
-        if (XStyle_defaultStyle() != NULL) {
-            XStyle* style = XStyle_defaultStyle();
+        if (XWidget_style((const XWidget*)self) != NULL) {
+            XStyle* style = XWidget_style((const XWidget*)self);
             XStyleOption opt;
             XStyleOption_init(&opt, XStyleCC_ComboBox);
             opt.m_rect = r;
@@ -3255,13 +3255,13 @@ static XRect xdt_arrowRect(XDateTimeEdit* edit)
     int w = XWidget_width((XWidget*)edit);
     int h = XWidget_height((XWidget*)edit);
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)edit) != NULL) {
         XStyleOption opt;
         XStyleOption_init(&opt, XStyleCC_ComboBox);
         XRect_init(&opt.m_rect, 0, 0, w, h);
         opt.m_state = XWidget_isEnabled((XWidget*)edit)
             ? (uint32_t)XStyleState_Enabled : 0;
-        r = XStyle_subControlRect(XStyle_defaultStyle(), XStyleCC_ComboBox,
+        r = XStyle_subControlRect(XWidget_style((const XWidget*)edit), XStyleCC_ComboBox,
                                   &opt, XStyleSC_ComboBoxArrow,
                                   (XWidget*)edit);
         if (r.width > 0 && r.height > 0) return r;
@@ -3287,14 +3287,14 @@ static void xdt_syncEditGeometry(XDateTimeEdit* self)
     w = XWidget_width((XWidget*)self);
     h = XWidget_height((XWidget*)self);
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         XStyleOption opt;
         XRect field;
         XStyleOption_init(&opt, XStyleCC_ComboBox);
         XRect_init(&opt.m_rect, 0, 0, w, h);
         opt.m_state = XWidget_isEnabled((XWidget*)self)
             ? (uint32_t)XStyleState_Enabled : 0;
-        field = XStyle_subControlRect(XStyle_defaultStyle(),
+        field = XStyle_subControlRect(XWidget_style((const XWidget*)self),
                                       XStyleCC_ComboBox, &opt,
                                       XStyleSC_ComboBoxEditField,
                                       (XWidget*)self);

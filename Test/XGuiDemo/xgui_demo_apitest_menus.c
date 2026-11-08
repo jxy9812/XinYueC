@@ -2148,7 +2148,7 @@ int xapi_menus_run(void)
             {
                 XPoint mv;
                 XPoint_init(&mv, 7, 8);
-                XWidget_movePoint((XWidget*)&ff, &mv);
+                XWidget_move_2((XWidget*)&ff, &mv);
             }
             XAPI_EXPECT(XWidget_x((XWidget*)&ff) == 7 &&
                         XWidget_y((XWidget*)&ff) == 8,
@@ -2210,7 +2210,7 @@ int xapi_menus_run(void)
             {
                 XPoint mv;
                 XPoint_init(&mv, 30, 40);
-                XWidget_movePoint((XWidget*)&sg, &mv);
+                XWidget_move_2((XWidget*)&sg, &mv);
             }
             XAPI_EXPECT(XWidget_x((XWidget*)&sg) == 30 &&
                         XWidget_y((XWidget*)&sg) == 40,
@@ -2291,7 +2291,7 @@ int xapi_menus_run(void)
             {
                 XPoint mv;
                 XPoint_init(&mv, 9, 11);
-                XWidget_movePoint((XWidget*)&rb, &mv);
+                XWidget_move_2((XWidget*)&rb, &mv);
             }
             XAPI_EXPECT(XWidget_x((XWidget*)&rb) == 9 &&
                         XWidget_y((XWidget*)&rb) == 11,

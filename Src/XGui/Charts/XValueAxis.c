@@ -250,6 +250,29 @@ const char* XValueAxis_labelFormat_2(const XValueAxis* self)
     return s ? XString_toUtf8(s) : "%g";
 }
 
+/* ==================== 自定义刻度标签回调 ==================== */
+
+void XValueAxis_setLabelTextCallback(XValueAxis* self, XValueAxisLabelTextFn fn,
+                                     void* userData)
+{
+    if (!self) return;
+    /* 回调/私有数据只影响渲染文本，不发信号（与 m_labelFormat 的
+     * labelFormatChanged 不同：那是 Qt 契约的一部分）。视图在
+     * xcv_axisLabel 里直接读字段，下一帧即生效。 */
+    self->m_labelTextFn = fn;
+    self->m_labelTextUserData = userData;
+}
+
+XValueAxisLabelTextFn XValueAxis_labelTextCallback(const XValueAxis* self)
+{
+    return self ? self->m_labelTextFn : NULL;
+}
+
+void* XValueAxis_labelTextCallbackData(const XValueAxis* self)
+{
+    return self ? self->m_labelTextUserData : NULL;
+}
+
 /* ==================== 自动刻度 ==================== */
 
 /**

@@ -211,6 +211,14 @@ volatile unsigned long g_flushBsCount;
  * 收口，不会丢更新。 */
 static int g_paintDispatching = 0;
 
+/* [绘制期正在派发 paintEvent 的控件 2026-11-08] paintTree 在调用某控件的
+ * paintEvent 前后置位/复原（同帧嵌套时栈式保存）。用途=判定绘制期标脏的
+ * 归属：若标脏方是该控件的**严格后代**，则 paintTree 先父后子，它本帧稍后
+ * 仍会以新状态重画（伪脏）；其余情形（自己改自己 / 兄弟改兄弟 / 祖先链
+ * 之外）一律按「像素可能已陈旧」保守处理，见 addDirtyRegion 的抑制分支与
+ * g_paintCoveredDirty 注。 */
+static const XWidget* g_paintDispatchWidget = NULL;
+
 /* [绘制期抑制的重投计数 2026-10-26 回归根修] 上游 2026-10-25 的绘制期
  * 抑制门与 flush 尾部的重投条件互相抵消，导致绘制期产生的脏区**永久
  * 丢失**：addDirtyRegion 抑制路径先把 PendingUpdate 置真才 return，而
@@ -224,12 +232,22 @@ static int g_paintDispatching = 0;
  * （补投发生在绘制之外的事件队列，非绘制栈内递归）。 */
 static int g_paintSuppressedDirty = 0;
 
+/* [绘制期「他人标脏」计数 2026-11-08 自激环收窄] 与 g_paintSuppressedDirty
+ * 分账的另一半：绘制期由**别的控件**（典型=父/祖先 paintEvent 喂子控件
+ * 文本）产生的标脏。paintTree 先父后子，该子件本帧稍后仍会以新状态重画，
+ * 其脏区若落在本帧绘制区内即无需补投。flush 尾部用本帧绘制区（whole）
+ * 扣减这部分后，仅当仍有未覆盖脏区（或存在 ① 自脏）才补投。
+ * 与 g_paintSuppressedDirty 一样按帧栈式记账（见 flush 首部注），不跨帧、
+ * 不跨顶层残留。 */
+static int g_paintCoveredDirty = 0;
+
 /* [rprof] 区域尺寸画像状态（XGPU_W_FRAME_PROF 同门控，2026-10-14）。
  * 脏区架构的量化口：入队侧（update*→addDirtyRegion，本文件前部——
  * 故独立于文件尾部的 wprof 状态体在此提前定义）按裁剪后矩形累计像素
  * 并记录最大单笔失效的控件类名；帧侧（flushBackingStore）按 whole
  * 区域统计矩形像素和与包围盒。触摸阵发的「谁在刷整件」直接读 enq
  * 归因，无需抓帧猜。汇总打印与复位在 wprof 3s 窗口内一并完成。 */
+#define XWIDGET_RPROF_CLASS_MAX 16   /**< 入队直方图类槽数（诊断用）。 */
 typedef struct XWidgetRprofState
 {
     unsigned long long enqPix;         /**< 入队像素累计（裁剪后）。 */
@@ -248,9 +266,28 @@ typedef struct XWidgetRprofState
     long srcEvt;                       /**< PAINT 区域帧数。 */
     long srcDirty;                     /**< 脏区回退帧数。 */
     long srcFull;                      /**< 脏区空整窗兜底帧数。 */
+    /* [入队按类直方图 2026-11-08] 「谁在按固定节拍标脏」只靠 max 单笔看不
+     * 出来（无变化时的入队每笔都很小、但笔数多）。这里按控件类名累计入队
+     * 笔数，3s 窗口打印前 8 名：稳态下哪一类的笔数≈帧数，它就是唤醒源。
+     * 表小且线性查找（≤16 项），只在 XGPU_W_FRAME_PROF 开启时付成本。 */
+    struct {
+        const char* name;              /**< 控件类名（借用，虚表静态名）。 */
+        const char* parentName;        /**< 父控件类名（借用）。 */
+        long hits;                     /**< 本窗口入队笔数。 */
+        unsigned long long pix;        /**< 本窗口入队像素。 */
+        int maxW;                      /**< 该类最大单笔宽。 */
+        int maxH;                      /**< 该类最大单笔高。 */
+        char sample[64];               /**< 样本：XLabel 的当前文本（诊断）。 */
+    } cls[XWIDGET_RPROF_CLASS_MAX];
+    int clsCount;                      /**< 已登记类数。 */
 } XWidgetRprofState;
 volatile int g_xgui_rprofFlushSrc = 0; /**< EXPOSE→flush 来源旗（诊断）。 */
 static XWidgetRprofState xwidget_rprof;
+
+/** @brief 入队直方图记账（按控件类名累计笔数/像素；表满后不再登记新类）。
+ *  @note  只在 `rprofOn` 分支内调用，画像门关闭时零开销。 */
+static void xwidget_rprofClassAdd(const XWidget* self, int w, int h,
+                                  unsigned long long pix);
 
 #if XWIDGET_ON
 
@@ -475,6 +512,7 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
                                      bool bypassVisible);
 static void xwidget_invalidateOwnArea(XWidget* self);
 static void XWidget_paintTree(XWidget* top, const XRegion* topRegion);
+static void xwidget_paintTreeRec(XWidget* widget, const XRegion* region);
 static bool xwidget_drawWithGraphicsEffect(XWidget* widget,
                                            const XRegion* paintRegion);
 static bool xwidget_focusNextPrevChild(XWidget* self, bool next);
@@ -922,12 +960,50 @@ static bool xwidget_postPaintEventLocked(XWidget* top)
     return true;
 }
 
-/** @brief 投递顶层控件绘制事件原始实现（不含重绘节奏闸）。 */
-static bool xwidget_postPaintEventRaw(XWidget* top)
+/** @brief 绘制闸专用的「最小化」判据：**只认窗口系统的事实**。
+ * @details 四处绘制闸（raw 派发/限频派发/到期补投/flush）要回答的问题是
+ *          「窗口系统此刻会不会把我们的像素显示出来」——只有桥接窗口的
+ *          状态机（平台上报 XWindow_reportWindowStateChanged + 本端请求
+ *          XWidget_setWindowStates 都落账于此）能回答；首帧建窗前无桥接
+ *          窗时才退回控件镜像。
+ *          【为何与 XWidget_isMinimized 分开（2026-11-08 三轮收口）】
+ *          XWidget_isMinimized() 是 Qt 语义的**逻辑**查询（读控件镜像，
+ *          这样 XWidget_overrideWindowState 只写镜像才有意义，见 XWidget.h
+ *          契约）；但闸若读镜像，纯逻辑最小化（override 只改状态、平台窗
+ *          仍可见）会把仍可见的窗口冻结且无平台事件自愈。两者分家后：
+ *            · 系统标题栏/任务栏最小化 → 窗口侧 Minimized → 闸生效；
+ *            · 系统还原 → 窗口侧清位 → 闸立即解除（不依赖镜像是否同步）；
+ *            · overrideWindowState(Minimized) → 窗口侧未变 → 闸不生效。 */
+static bool xwidget_paintSuppressedByMinimize(const XWidget* top)
+{
+    if (!top || !top->m_isWindow) return false;
+#if XWINDOW_ON
+    if (top->m_windowHandle)
+        return (XWindow_windowStates((const XWindow*)top->m_windowHandle) &
+                (XWindowStates)XWindowState_Minimized) != 0;
+#endif
+    return (top->m_windowState & XWindowState_Minimized) != 0;
+}
+
+/** @brief 投递顶层控件绘制事件（唯一出口；无时间节流）。
+ * @details 语义=Qt 的 update() 合并脏区后立即投递：本函数只做三件事——
+ *          可见性/最小化抑制、析构期丢弃、PAINT 事件占位去重；不含任何
+ *          帧率闸（闸已整体移除，见下方「重绘请求收口」注）。 */
+static bool XWidget_postPaintEvent(XWidget* top)
 {
     int32_t expected;
-    if (!top || !top->m_windowHandle || !top->m_visible)
+    /* [最小化不 paint 2026-11-07] 对标 Qt 6.8：最小化窗口 isVisible()
+     * 仍为真，但合成器不派发 paint 事件。此前只查 m_visible，最小化
+     * 期间自激环照常投递 PAINT、空耗 CPU/GPU。
+     * [2026-11-08] 判据走 xwidget_paintSuppressedByMinimize（只认窗口侧，
+     * 见其注），不读控件镜像。 */
+    if (!top || !top->m_windowHandle || !top->m_visible ||
+        xwidget_paintSuppressedByMinimize(top))
         return false;
+    /* 【析构期禁止派发 2026-11-06】析构链内的重绘请求一律丢弃：控件已在
+     * 拆除（桥接窗随 destroyWindow 消失、脏区账本随成员销毁），此刻派发
+     * PAINT 无意义。见 VXWidget_deinit 入口注。 */
+    if (top->m_deiniting) return false;
     /* PendingUpdate 是脏区状态，不足以防止并发 update() 重复入队；这个
        独立占位位只代表一个 PAINT 事件。已有事件时请求已经被覆盖，
        直接视为成功，避免调用方错误清掉仍有效的 PendingUpdate。 */
@@ -939,250 +1015,21 @@ static bool xwidget_postPaintEventRaw(XWidget* top)
     return xwidget_postPaintEventLocked(top);
 }
 
-/* ---- 重绘节奏闸（XGUI_REPAINT_MAX_FPS）与尾帧补投 ----
- * 挂点=XWidget_postPaintEvent：update/updateRect/updateRegion/repaint 之外的
- * 一切重绘请求（addDirtyRegion/flush 尾部重投/show 传播）都汇入此处，是
- * 「这一帧到底画不画」的唯一决策点。语义=距上次允许派发的 PAINT 不足
- * 1000/fps 毫秒则本帧不派发：脏区已在 m_dirty 累积、PendingUpdate 保持
- * 置位，另由一次性定时器在剩余窗口到期时补投——跳帧零丢失、尾帧结构性
- * 必达（与 XGUI_PRESENT_MAX_FPS 同款不丢帧纪律）。
- * 与 present 闸分工：本闸省「绘制」CPU（paintTree 整链不跑），present 闸
- * 省「提交」带宽；两者同时开时本闸先收敛，present 闸退化为兜底。
- * 取 0=不限（宏默认桌面 0、fbdev 60）；运行期 XGUI_REPAINT_MAX_FPS 环境
- * 变量覆盖宏值（同 present 闸族一次性读取、进程内生效）。 */
-#define XWIDGET_REPAINT_DEFER_MAX 16
-
-/** @brief 待补投顶层表（含已到期未派发者；析构即摘除）。 */
-static XWidget* g_repaintDeferTops[XWIDGET_REPAINT_DEFER_MAX];
-/** @brief 待补投顶层数（0=表空）。 */
-static int g_repaintDeferCount = 0;
-/** @brief 补投定时器 id（XTIMER_INVALID_ID=未布防；单实例防重复布防）。 */
-static XTimerId g_repaintDeferTimerId = XTIMER_INVALID_ID;
-/** @brief 上次允许派发 PAINT 的单调微秒（0=从未派发，首帧恒放行）。
- * @note 用微秒而非毫秒：60fps 的 16.67ms 在 1ms 粒度下只能近似成 16/17，
- *       累积误差会让实测节拍漂到设定值之外；微秒基准可精确表达任意
- *       1000/fps。 */
-static int64_t g_repaintLastPostUs = 0;
-
-/** @brief 内部补投定时器宿主虚表枚举（仅重载 TimerEvent 槽）。 */
-XCLASS_DEFINE_BEGING(xwidget_repaintTimerHost)
-XCLASS_DEFINE_EXTEND_END(xwidget_repaintTimerHost, XObject)
-
-/** @brief 补投定时器专用宿主（静态存储零堆分配）。
- * @details 复用长按定时器宿主的同款理由：叶子控件类普遍覆写
- *          EXObject_TimerEvent，以顶层控件作宿主会被其吞掉；本宿主固定为
- *          模块内部类，到期事件必达。无父对象、非控件、无几何，不进任何
- *          枚举/命中路径。 */
-typedef struct xwidget_repaintTimerHost
-{
-    XObject m_base;      /**< 基类 XObject；必须是第一个成员。 */
-} xwidget_repaintTimerHost;
-
-/** @brief 宿主唯一实例（静态存储；进程级生命周期）。 */
-static xwidget_repaintTimerHost g_repaintTimerHostInstance;
-/** @brief 宿主惰性初始化守卫（幂等）。 */
-static bool g_repaintTimerHostReady = false;
-
-static void xwidget_repaintDeferFlush(void);
-
-/** @brief 宿主定时器事件槽：到期即补投待办顶层表。 */
-static void xwidget_repaintTimerHost_timerEvent(XObject* object,
-                                                XTimerEvent* event)
-{
-    (void)object;
-    if (!event) return;
-    if (XTimerEvent_timerId(event) != XTIMER_INVALID_ID &&
-        XTimerEvent_timerId(event) == g_repaintDeferTimerId) {
-        xwidget_repaintDeferFlush();
-        XEvent_accept((XEvent*)event);
-    }
-}
-
-/** @brief 宿主类虚函数表（继承 XObject 全部槽位 + 重载 TimerEvent）。 */
-static XVtable* xwidget_repaintTimerHost_class_init(void)
-{
-    XVTABLE_INIT_DEFAULT(xwidget_repaintTimerHost)
-    XVTABLE_INHERIT_XCLASS(XObject);
-    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent,
-                             xwidget_repaintTimerHost_timerEvent);
-    return XVTABLE_DEFAULT;
-}
-
-/** @brief 宿主实例初始化（静态存储：XObject_init 后改绑本类虚表）。 */
-static void xwidget_repaintTimerHost_init(xwidget_repaintTimerHost* host)
-{
-    if (!host) return;
-    XObject_init(&host->m_base);
-    XClassSetVtable(&host->m_base, xwidget_repaintTimerHost);
-    Set_Class_IsHeap(&host->m_base, false);
-}
-
-/** @brief 取补投定时器宿主（惰性初始化一次）。 */
-static XObject* xwidget_repaintTimerHostInstance(void)
-{
-    if (!g_repaintTimerHostReady)
-    {
-        g_repaintTimerHostReady = true;
-        xwidget_repaintTimerHost_init(&g_repaintTimerHostInstance);
-    }
-    return &g_repaintTimerHostInstance.m_base;
-}
-
-/** @brief 重绘节奏间隔（毫秒）；0=不限（解析单点：env 优先、宏兜底）。 */
-static double xwidget_repaintThrottleMinMs(void)
-{
-    static int init = -1;
-    static double minMs = 0.0;
-    if (init < 0)
-    {
-        const char* tv = XSystem_environment("XGUI_REPAINT_MAX_FPS");
-        int fps = XGUI_REPAINT_MAX_FPS;
-        if (tv && *tv) fps = (int)XStrtol(tv, NULL, 10);
-        minMs = fps > 0 ? 1000.0 / (double)fps : 0.0;
-        init = 1;
-    }
-    return minMs;
-}
-
-/** @brief 把顶层登记进补投表（重复登记幂等；表满则立即放行保正确性）。 */
-static void xwidget_repaintDeferAdd(XWidget* top)
-{
-    int i;
-    if (!top) return;
-    for (i = 0; i < g_repaintDeferCount; ++i)
-        if (g_repaintDeferTops[i] == top) return;
-    if (g_repaintDeferCount >= XWIDGET_REPAINT_DEFER_MAX)
-    {
-        /* 表满（异常多的并发顶层）：正确性优先于节奏，立即原样派发。 */
-        (void)xwidget_postPaintEventRaw(top);
-        return;
-    }
-    g_repaintDeferTops[g_repaintDeferCount++] = top;
-}
-
-/** @brief 析构摘除：控件先于补投到期消亡时不得留悬挂借用指针。 */
-static void xwidget_repaintDeferRemove(XWidget* top)
-{
-    int i;
-    if (!top) return;
-    for (i = 0; i < g_repaintDeferCount; ++i)
-    {
-        if (g_repaintDeferTops[i] == top)
-        {
-            g_repaintDeferTops[i] = g_repaintDeferTops[--g_repaintDeferCount];
-            g_repaintDeferTops[g_repaintDeferCount] = NULL;
-            --i;
-        }
-    }
-}
-
-/** @brief 补投到期：逐个顶层重派 PAINT（脏区仍非空才派发）。
- * @note 本函数**不绕过**限频窗口：定时器到期与「普通请求恰好通过闸门」
- *       可能落在同一毫秒，若无条件派发会同窗双投（实测 20fps 档跑出
- *       41.5、60fps 档跑出 117.5 的整倍超发）。到期时先复核窗口，未到
- *       就把整表原样保留、按剩余窗口重新布防。 */
-static void xwidget_repaintDeferFlush(void)
-{
-    int i;
-    int n;
-    double minMs;
-    int64_t now;
-    /* 必须先真正注销分发器侧定时器再清 id：registerTimer 零初始化
-     * XTimerData（singleShot=false），时间轮对非 singleShot 节点到期后
-     * 无条件重挂——只清 id 则本回调每周期空唤醒并堆分配一个被 id 比对
-     * 守卫忽略的 TIMER 事件，永久泄漏（长按定时器同款根修 2026-10-25）。 */
-    if (g_repaintDeferTimerId != XTIMER_INVALID_ID)
-    {
-        XObject_killTimer(xwidget_repaintTimerHostInstance(),
-                          g_repaintDeferTimerId);
-        g_repaintDeferTimerId = XTIMER_INVALID_ID;
-    }
-    minMs = xwidget_repaintThrottleMinMs();
-    now = XDateTime_currentNSecsSinceEpoch() / 1000LL;
-    if (minMs > 0.0 && g_repaintLastPostUs != 0 &&
-        (double)(now - g_repaintLastPostUs) < minMs * 1000.0)
-    {
-        /* 窗口未真正打开（到期与放行同刻竞争）：保留待办、续期。 */
-        int64_t remain = (int64_t)(minMs + 0.5) -
-                         (now - g_repaintLastPostUs) / 1000LL;
-        if (remain < 1) remain = 1;
-        g_repaintDeferTimerId = XObject_startTimer_ms(
-            xwidget_repaintTimerHostInstance(), (uint64_t)remain,
-            XTimerType_PreciseTimer);
-        return;
-    }
-    n = g_repaintDeferCount;
-    g_repaintDeferCount = 0;
-    g_repaintLastPostUs = now;
-    for (i = 0; i < n; ++i)
-    {
-        XWidget* top = g_repaintDeferTops[i];
-        g_repaintDeferTops[i] = NULL;
-        if (!top || !top->m_windowHandle || !top->m_visible) continue;
-        /* 析构期表项（防御性：正常路径已由 schedule 闸拦在表外）。 */
-        if (top->m_deiniting) continue;
-        if (top->m_dirty.count <= 0) continue;
-        (void)xwidget_postPaintEventRaw(top);
-    }
-}
-
-/** @brief 布防补投定时器：剩余窗口不足 1ms 按 1ms（防 0 间隔忙等）。 */
-static void xwidget_repaintDeferSchedule(XWidget* top)
-{
-    double minMs = xwidget_repaintThrottleMinMs();
-    int64_t now;
-    int64_t remain;
-    if (minMs <= 0.0 || !top) return;
-    /* 【析构期禁止回表 2026-11-06】VXWidget_deinit 已按「登记非空即活对象」
-     * 从补投表摘项，但析构链后续动作（父控件标脏/销毁桥接窗）会再触发
-     * 重绘请求回到这里 —— 摘完又加回 ⇒ 定时器到期持已释放指针解引用。
-     * 见 VXWidget_deinit 入口闸注。 */
-    if (top->m_deiniting) return;
-    xwidget_repaintDeferAdd(top);
-    if (g_repaintDeferTimerId != XTIMER_INVALID_ID) return;
-    now = XDateTime_currentNSecsSinceEpoch() / 1000LL;
-    remain = (int64_t)(minMs + 0.5) -
-             (now - g_repaintLastPostUs) / 1000LL;
-    if (remain < 1) remain = 1;
-    g_repaintDeferTimerId = XObject_startTimer_ms(
-        xwidget_repaintTimerHostInstance(), (uint64_t)remain,
-        XTimerType_PreciseTimer);
-}
-
-/** @brief 投递顶层控件绘制事件（含重绘节奏闸；跳帧由补投定时器兜底）。 */
-static bool XWidget_postPaintEvent(XWidget* top)
-{
-    int32_t expected;
-    double minMs;
-    if (!top || !top->m_windowHandle || !top->m_visible)
-        return false;
-    /* 【析构期禁止派发 2026-11-06】析构链内的重绘请求一律丢弃：控件已在
-     * 拆除（桥接窗随 destroyWindow 消失、脏区账本随成员销毁），此刻派发
-     * PAINT 无意义且会把指针带回补投表。见 VXWidget_deinit 入口闸注。 */
-    if (top->m_deiniting) return false;
-    /* 已有在途 PAINT 直接视为成功（请求已被覆盖），不占限频窗口。 */
-    expected = 0;
-    if (!XAtomic_compare_exchange_strong_int32(
-            &top->m_paintEventPosted, &expected, 1,
-            XAtomic_MemoryOrder_AcqRel, XAtomic_MemoryOrder_Acquire))
-        return true;
-    minMs = xwidget_repaintThrottleMinMs();
-    if (minMs > 0.0)
-    {
-        int64_t nowUs = XDateTime_currentNSecsSinceEpoch() / 1000LL;
-        if (g_repaintLastPostUs != 0 &&
-            (double)(nowUs - g_repaintLastPostUs) < minMs * 1000.0)
-        {
-            /* 限频窗口内：归还占位位、脏区保留、登记补投。 */
-            XAtomic_store_int32(&top->m_paintEventPosted, 0,
-                                XAtomic_MemoryOrder_Release);
-            xwidget_repaintDeferSchedule(top);
-            return true;
-        }
-        g_repaintLastPostUs = nowUs;
-    }
-    return xwidget_postPaintEventLocked(top);
-}
+/* ---- 重绘请求收口（Qt 语义：无全局帧率闸） ----
+ * [移除全局重绘节流 2026-11-08] 此前这里有一道进程级时间闸
+ * （XGUI_REPAINT_MAX_FPS + XWidget_setMaxRepaintFps），按「距上次派发不足
+ * 1000/fps 毫秒就吞掉本帧、另挂一次性定时器补投」实现。实测两处硬伤：
+ *   ① 帧耗时口径被污染——VHsfWin_paintEvent 曾把「上次绘制时刻」当帧起点
+ *      喂 XPerformanceOverlay_updateFrame，读数变成两帧间隔（2fps 档下
+ *      507ms/632ms），而非本帧真实绘制耗时；
+ *   ② 临时顶层窗口（XComboBox 弹层 / XMenu / 工具提示，XWindowType_Popup，
+ *      见 XComboBox.c 的 XWidget_setWindowFlags(view, XWindowType_Popup)）
+ *      同样是顶层控件、同样被闸拦，首帧被反复推后 ⇒ 弹层只见灰框不见选项。
+ * Qt 本身没有全局帧率闸：update() 只做脏区合并，有脏区就画，节奏由平台
+ * 合成器/显示刷新天然限制。本框架没有合成器，但「自己声明节拍」换来的是
+ * 交互延迟（最坏 1000/fps 毫秒才上屏）与上述两处回归，收益不成立。
+ * 因此恢复 Qt 语义：paintEvent 直接派发，除「最小化不绘制」这一既有抑制
+ * 外不做任何时间节流；补投表/定时器/宿主对象随闸一并移除。 */
 
 /** @brief 判断 self 是否 child 的祖先控件。 */
 static bool XWidget_isAncestor(const XWidget* self, const XWidget* child)
@@ -1931,6 +1778,50 @@ static bool xwidget_dirtyOcclusionDisabled(void)
     return disabled != 0;
 }
 
+/** @brief 入队直方图记账（按控件类名累计；表满后不再登记新类）。 */
+static void xwidget_rprofClassAdd(const XWidget* self, int w, int h,
+                                  unsigned long long pix)
+{
+    XVtable* vt;
+    XVtable* pvt;
+    XObject* parent;
+    const char* name;
+    const char* parentName;
+    int i;
+    if (!self) return;
+    vt = XClassGetVtable(self);
+    name = (vt && vt->m_name) ? vt->m_name : "?";
+    /* [按「父类/自身类」成对聚合] 同是 XLabel，挂在 HsfHomeCardWidget 下
+     * （主页数值块）与挂在 XTableView 下含义完全不同。成对聚合才能指出
+     * 「哪一块的标签在刷」。 */
+    parent = XObject_parent((XObject*)self);
+    pvt = parent ? XClassGetVtable((const XClass*)parent) : NULL;
+    parentName = (pvt && pvt->m_name) ? pvt->m_name : "?";
+    for (i = 0; i < xwidget_rprof.clsCount; ++i) {
+        /* 虚表名是静态字面量，指针相等即同类（更快且不受重名类影响：
+         * 不同类若同名，合并统计也更符合"这一类在刷"的诊断目的）。 */
+        if (xwidget_rprof.cls[i].name == name &&
+            xwidget_rprof.cls[i].parentName == parentName) {
+            xwidget_rprof.cls[i].hits += 1;
+            xwidget_rprof.cls[i].pix += pix;
+            if ((long)w * (long)h > (long)xwidget_rprof.cls[i].maxW *
+                                    (long)xwidget_rprof.cls[i].maxH) {
+                xwidget_rprof.cls[i].maxW = w;
+                xwidget_rprof.cls[i].maxH = h;
+            }
+            return;
+        }
+    }
+    if (xwidget_rprof.clsCount >= XWIDGET_RPROF_CLASS_MAX) return;
+    xwidget_rprof.cls[xwidget_rprof.clsCount].name = name;
+    xwidget_rprof.cls[xwidget_rprof.clsCount].parentName = parentName;
+    xwidget_rprof.cls[xwidget_rprof.clsCount].hits = 1;
+    xwidget_rprof.cls[xwidget_rprof.clsCount].pix = pix;
+    xwidget_rprof.cls[xwidget_rprof.clsCount].maxW = w;
+    xwidget_rprof.cls[xwidget_rprof.clsCount].maxH = h;
+    ++xwidget_rprof.clsCount;
+}
+
 /** @brief 标记不透明度缓存失效（对标 Qt updateIsOpaque 的调用点分布）。 */
 static void xwidget_updateIsOpaque(XWidget* self)
 {
@@ -2287,15 +2178,20 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
                （热路径零额外开销，也避免 visibleRegion 的区域分配）。 */
             XRect translated = XRect_translated(&clipped, offset.x, offset.y);
             XRegion_addRect(&top->m_dirty, &translated);
-            /* [rprof] 入队归因：只在画像门开启时付类名/最大值维护成本。 */
+            /* [rprof] 入队归因：只在画像门开启时付类名/最大值维护成本。
+             * [2026-11-08 计数移出 backtrace 门] 原实现把 enqPix/enqHits/
+             * maxEnqSrc 整段放在 `#ifdef XWIDGET_HAVE_BACKTRACE` 里，而该宏
+             * 只在 glibc 定义（见文件头 execinfo 注释）⇒ Windows/MSVC 上
+             * 「谁在标脏」永远是 enq=0，画像只能看帧侧、看不到源头。计数
+             * 与类名归因不需要 backtrace，移出门外；仅真正打印调用栈的
+             * 那段仍受宏约束。 */
             if (rprofOn) {
                 unsigned long long pix =
                     (unsigned long long)clipped.width *
                     (unsigned long long)clipped.height;
-#ifdef XWIDGET_HAVE_BACKTRACE
-                int rprofBtHit = 0;
                 xwidget_rprof.enqPix += pix;
                 xwidget_rprof.enqHits += 1;
+                xwidget_rprofClassAdd(self, clipped.width, clipped.height, pix);
                 if (pix > xwidget_rprof.maxEnqPix) {
                     XVtable* vt = XClassGetVtable(self);
                     xwidget_rprof.maxEnqPix = pix;
@@ -2304,6 +2200,8 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
                     xwidget_rprof.maxEnqW = clipped.width;
                     xwidget_rprof.maxEnqH = clipped.height;
                 }
+#ifdef XWIDGET_HAVE_BACKTRACE
+                int rprofBtHit = 0;
                 {
                     static int btMinPix = -1;
                     if (btMinPix < 0)
@@ -2361,15 +2259,16 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
                 {
             XRect translated = XRect_translated(&vis, offset.x, offset.y);
             XRegion_addRect(&top->m_dirty, &translated);
-            /* [rprof] 入队归因：只在画像门开启时付类名/最大值维护成本。 */
+            /* [rprof] 入队归因：只在画像门开启时付类名/最大值维护成本。
+             * [2026-11-08 计数移出 backtrace 门] 同上方无裁剪分支的注：
+             * 该宏只在 glibc 定义，Windows 上原会把「谁在标脏」恒报 0。 */
             if (rprofOn) {
                 unsigned long long pix =
                     (unsigned long long)vis.width *
                     (unsigned long long)vis.height;
-#ifdef XWIDGET_HAVE_BACKTRACE
-                int rprofBtHit = 0;
                 xwidget_rprof.enqPix += pix;
                 xwidget_rprof.enqHits += 1;
+                xwidget_rprofClassAdd(self, vis.width, vis.height, pix);
                 if (pix > xwidget_rprof.maxEnqPix) {
                     XVtable* vt = XClassGetVtable(self);
                     xwidget_rprof.maxEnqPix = pix;
@@ -2378,6 +2277,8 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
                     xwidget_rprof.maxEnqW = vis.width;
                     xwidget_rprof.maxEnqH = vis.height;
                 }
+#ifdef XWIDGET_HAVE_BACKTRACE
+                int rprofBtHit = 0;
                 /* 大失效调用点归因（诊断态）：单笔≥窗面积一半时打一次
                    backtrace（走当前栈，非 ptrace；每 3s 窗最多一笔）。
                    backtrace_symbols 需 malloc——诊断路径可接受。 */
@@ -2441,10 +2342,28 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
      * 尾部统一收口。
      * [2026-10-26 回归根修] 抑制期间计数：flush 尾部据该计数强制补投
      * （旧路径按 !alreadyPending 判断，而本行刚把 PendingUpdate 置真，
-     *  条件恒假 → 绘制期脏区永久滞留 = 画面冻结）。 */
+     *  条件恒假 → 绘制期脏区永久滞留 = 画面冻结）。
+     * [自激环收窄 2026-11-08] 按「谁的 paintEvent 造成的」分账：
+     *   ① 自己在自己的 paintEvent 里改自己（m_inPaintEvent 置位）⇒ 这一帧
+     *      已按旧状态画完，像素陈旧，计入 g_paintSuppressedDirty（必补投）；
+     *   ② 标脏方是**当前正在派发 paintEvent 的控件的严格后代**（典型=父/
+     *      祖先 paintEvent 里喂子控件文本，如 HUD）⇒ paintTree 先父后子，
+     *      该子件本帧稍后仍会以新状态重画；其脏区若落在本帧绘制区内即为
+     *      伪脏，只计入 g_paintCoveredDirty，由 flush 尾部用本帧绘制区扣减
+     *      后再决定是否补投——这是「绘制→标脏→补投→再绘制」反馈链唯一的
+     *      闭合点（此前一律必补投，每帧都多画一帧，只能靠
+     *      XGUI_REPAINT_MAX_FPS 限速——该全局节流已于 2026-11-08 移除，
+     *      本处扣减就是这条反馈链唯一的收敛手段，不得放宽为「一律补投」）。
+     *   ③ 其余情形（兄弟改兄弟、祖先链之外、无派发上下文）**不能**证明
+     *      本帧稍后会重画 ⇒ 保守计入 ①，照旧补投（不丢更新的底线）。 */
     if (g_paintDispatching > 0)
     {
-        ++g_paintSuppressedDirty;
+        if (!self->m_inPaintEvent && g_paintDispatchWidget &&
+            g_paintDispatchWidget != self &&
+            XWidget_isAncestor(g_paintDispatchWidget, self))
+            ++g_paintCoveredDirty;
+        else
+            ++g_paintSuppressedDirty;
         return;
     }
     if (top->m_windowHandle && top->m_visible)
@@ -4607,6 +4526,53 @@ static bool XWidget_topIsPopup(const XWidget* top)
                XWindowType_Popup;
 }
 
+/** @brief 平台窗口状态回写：桥接窗口生效态 → 控件侧镜像 + 还原补画。
+ * @details 【镜像回写 2026-11-08】控件侧 m_windowState 是 Qt 语义的逻辑
+ *          window_state（XWidget_isMinimized/windowState/saveGeometry/
+ *          overrideWindowState 的读写面），此前**只有本端请求路径写**、
+ *          平台回写路径（XWindow_reportWindowStateChanged）从不写 ⇒ 两侧
+ *          长期分叉：系统标题栏/任务栏最小化后镜像不置位、系统还原后镜像
+ *          恒残留 Minimized（公共查询与 saveGeometry 报错误状态）。
+ *          绘制闸本身不读镜像（另有 xwidget_paintSuppressedByMinimize
+ *          只认窗口侧），所以本条不回写也不会冻结画面；回写是为了让公共
+ *          查询面与平台一致。
+ *          本函数在平台回写事件到达控件前把生效态并回镜像（对标 Qt
+ *          QWidgetWindow::handleWindowStateChangedEvent 先同步 widget 的
+ *          window_state 再派 QEvent::WindowStateChange），只并三个特殊位，
+ *          其余位（Active 等）保持控件侧原值。
+ *          **不**调 XWidget_setWindowState：那条路径会回写平台
+ *          （XWindow_setWindowStates → 平台 setWindowState），形成注入回环。
+ * @note      进入特殊态补存 normalGeometry，与 XWidget_setWindowState 同
+ *            口径；最小化→非最小化补整窗脏区（闸在最小化期丢掉了所有
+ *            PAINT、脏区留在 m_dirty，没有新的暴露事件时画面会停在旧帧）。 */
+static void XWidget_syncWindowStateFromPlatform(XWidget* top)
+{
+    XWindowStates special;
+    XWindowStates reported;
+    XWindowStates old;
+    XWindowStates merged;
+    if (!top || !top->m_windowHandle) return;
+    special = (XWindowStates)(XWindowState_Minimized |
+                              XWindowState_Maximized |
+                              XWindowState_FullScreen);
+    reported = (XWindowStates)(XWindow_windowStates(
+                                   (const XWindow*)top->m_windowHandle) &
+                               special);
+    old = top->m_windowState;
+    merged = (XWindowStates)((old & ~special) | reported);
+    if (merged != old)
+    {
+        /* 首次进入最小化/最大化/全屏：保存正常几何（同 setWindowState）。 */
+        if ((old & special) == 0 && (merged & special) != 0)
+            top->m_normalGeometry = top->m_windowRect;
+        top->m_windowState = merged;
+    }
+    if ((old & (XWindowStates)XWindowState_Minimized) &&
+        (reported & (XWindowStates)XWindowState_Minimized) == 0 &&
+        top->m_visible && !top->m_deiniting)
+        xwidget_invalidateOwnArea(top);
+}
+
 /** @brief 顶层桥接窗口事件总入口：把窗口事件转译为控件事件。 */
 static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
 {
@@ -4780,7 +4746,13 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
          * widget 走 changeEvent）。来源=XWindow_reportWindowStateChanged
          * （WM 回写/平台强制改态——安卓沉浸式启动对齐等）；软件请求路径
          * （XWidget_setWindowState）已在控件侧直派同一事件，不经此处，
-         * 无双重派发。 */
+         * 无双重派发。
+         * 【状态镜像回写 2026-11-08】派发 changeEvent **之前**把桥接窗口
+         * 的生效态并回控件侧 m_windowState：平台强制改态只落窗口侧，
+         * 不回写则控件侧镜像永久失同步（重绘闸读错事实源 → 系统最小化
+         * 时闸失效、系统还原后闸永久早退 = 画面冻结）。与 Qt 一致：状态
+         * 先落、事件后派，changeEvent 内读到的是收敛后的状态。 */
+        XWidget_syncWindowStateFromPlatform(top);
         XWidget_sendEvent(top, event);
         return XEvent_isAccepted(event);
     case XEVENT_TYPE_SHOW:
@@ -5248,14 +5220,11 @@ static void VXWidget_deinit(XWidget* self)
     if (!self) return;
     /* 【析构入口闸 2026-11-06】先置 m_deiniting：本函数随后会向父控件标脏
      * （XWidget_updateRect）、销毁桥接窗（destroyWindow 链）等，这些动作
-     * 都可能触发一次重绘请求 → XWidget_postPaintEvent →
-     * xwidget_repaintDeferSchedule 把 self 重新登记进**延迟重绘补投表**。
-     * 而本函数中部已按「登记非空即活对象」摘过项，摘完又被加回 ⇒ 定时器
-     * 到期持已释放指针解引用（ASan：heap-use-after-free @
-     * xwidget_repaintDeferFlush 读 top->m_windowHandle，fbdev 60fps 节流
-     * 档必现；桌面默认 FPS=0 不走该表故历次门禁测不到）。真机表现=
-     * 反复浮/停后浮窗消失、再拖另一个卡死、进程段错误。
-     * 置位后 schedule/postPaintEvent 见位即早退，析构链内零回表。 */
+     * 都可能触发一次重绘请求 → XWidget_postPaintEvent。
+     * 置位后 XWidget_postPaintEvent 见位即早退，析构链内零 PAINT 投递
+     * （历史上这条闸还兼防「回填重绘补投表」导致定时器到期持已释放指针
+     * 解引用；补投表已于 2026-11-08 随全局帧节拍闸一并移除，本闸保留，
+     * 因为它防的 PAINT 投递本身在析构链内同样无意义）。 */
     self->m_deiniting = 1;
     /* [Qt 对齐 2026-10-31 ~QWidget → setDirtyOpaqueRegion
      * （qwidget.cpp:1510 + 1974-1998）] 控件销毁时作废其在**父控件**上
@@ -5277,10 +5246,6 @@ static void VXWidget_deinit(XWidget* self)
             XWidget_updateRect(dparent, &drect);
         }
     }
-    /* 重绘补投表摘项（登记非空即活对象纪律，同焦点/抓取/长按靶）：控件
-       先于补投定时器到期消亡时，表内悬垂借用指针会在到期回调被解引用。
-       未登记控件线性扫无命中即返，零开销。 */
-    xwidget_repaintDeferRemove(self);
     /* 待激活焦点靶登记摘项（登记非空即活对象纪律，同焦点/抓取靶）：
        控件可先于其窗口激活消亡，不摘项则登记表留悬垂 top/target 指针，
        后续激活上报兑现即 UAF。未登记控件线性扫无命中即返，零开销。 */
@@ -5916,11 +5881,20 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
             if (tip && XString_size(tip) > 0) {
                 XPoint global;
                 XPoint origin;
+                XRect anchor;
                 origin.x = 0;
                 origin.y = 0;
                 global = XWidget_mapToGlobal(self, &origin);
+                /* 锚定区域（设计口径 2026-11-07）：把控件全局区域经
+                 * rect 传入，XToolTip 据此把提示定在控件上方（不再按
+                 * 控件原点/鼠标点落位覆盖控件本身）；x/y 仍传全局原点，
+                 * 兼容无 rect 的退化路径。 */
+                anchor.x = global.x;
+                anchor.y = global.y;
+                anchor.width = XWidget_width(self);
+                anchor.height = XWidget_height(self);
                 XToolTip_showText(global.x, global.y, tip, (XWidget*)self,
-                                  NULL, XWidget_toolTipDuration(self));
+                                  &anchor, XWidget_toolTipDuration(self));
             }
         }
         /* 悬停状态翻转触发重绘（对标 Qt hover 样式刷新）。对标 Qt
@@ -6664,7 +6638,13 @@ void XWidget_setGeometry(XWidget* self, int x, int y, int w, int h)
      * 并补等价 in_set_window_state 闸——setWindowState→平台回写→
      * setGeometry 重入链（XWindow_setWindowStates 的平台落地可同步
      * 回调 ConfigureNotify→applyWindowGeometry/几何链）不得把刚设置
-     * 的 Maximized/FullScreen 位反向清掉。 */
+     * 的 Maximized/FullScreen 位反向清掉。
+     * 【Minimized 为何不清 2026-11-08】Qt 此处只清 WindowMaximized|
+     * WindowFullScreen（qwidget.cpp:7284）：最小化是窗口系统的瞬态，
+     * 改几何不等于还原（最小化窗也可被程序改几何）。本实现保持同口径，
+     * 不在此清 Minimized；平台还原清位由 XWindow_reportWindowStateChanged
+     * → XWidget_syncWindowStateFromPlatform 负责（2026-11-08 镜像回写），
+     * 应用侧还原走 showNormal/setWindowState。 */
     if (!g_xwidgetInSetWindowState) {
         self->m_windowState &= ~(XWindowStates)(XWindowState_Maximized |
                                                 XWindowState_FullScreen);
@@ -6768,7 +6748,7 @@ void XWidget_move(XWidget* self, int x, int y)
         XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Resized, false);
 }
 
-void XWidget_movePoint(XWidget* self, const XPoint* pos)
+void XWidget_move_2(XWidget* self, const XPoint* pos)
 {
     if (!self || !pos) return;
     XWidget_move(self, pos->x, pos->y);
@@ -7031,7 +7011,13 @@ bool XWidget_restoreGeometry(XWidget* self, const XByteArray* geometry)
            再 setGeometry(保存的当前几何)。
        本实现此前「先状态后几何」，与本轮 behavior_diff#14（setGeometry
        解除最大化并失效 normalGeometry）叠加后 → 恢复出的最大化态被随后的
-       setGeometry 立即清掉，往返断言失败。 */
+       setGeometry 立即清掉，往返断言失败。
+       【不清 Minimized（2026-11-08 复审收口）】合并基准只清
+       Maximized|FullScreen，与 HEAD/既有注释一致：最小化是瞬态，恢复几何
+       不等于还原（restoreGeometry 在最小化窗上把窗口意外还原属公共 API
+       行为变化，且无测试覆盖）。「最小化位残留导致闸早退」由镜像回写
+       路径解决（XWidget_syncWindowStateFromPlatform 在平台还原事件里清位），
+       与本函数无关。 */
     if (savedState & ((unsigned)XWindowState_Maximized |
                       (unsigned)XWindowState_FullScreen)) {
         /* 最大化/全屏：几何先落为正常态几何，再叠加状态位。 */
@@ -8753,6 +8739,22 @@ void XWidget_showFullScreen(XWidget* self)
 
 bool XWidget_isMinimized(const XWidget* self)
 {
+    /* 【镜像语义 2026-11-08】读控件侧镜像（=QWidgetPrivate::window_state
+     * 同口径，overrideWindowState 才有效——见 XWidget.h 契约），镜像的
+     * **平台回写路径**此前缺失：系统标题栏/任务栏/壳发起的最小化与还原走
+     * XPlatformNativeWindow_win32.c 的 WM_SIZE → XWindowSystemInterface_
+     * handleWindowStateChanged → XWindow_reportWindowStateChanged
+     * （XWindow.c:1657），只落 XWindowPrivate::m_windowStates；控件侧此前
+     * 只有本端请求路径写 ⇒ 系统最小化后公共查询恒 false、系统还原后镜像
+     * 残留 Minimized（公共查询/saveGeometry 报错误状态）。
+     * 现由桥接窗 WINDOW_STATE_CHANGE 分支的
+     * XWidget_syncWindowStateFromPlatform()（本文件上方）在派发
+     * changeEvent 之前把窗口生效态并回镜像，因此这里读镜像即读到平台
+     * 实测结果。**不**在此直读窗口侧：那样 XWidget_overrideWindowState
+     * （只写镜像、不向平台请求）会被架空，与 Qt 语义/本仓头文件契约不符。
+     * 注意：四处**绘制闸**不用本函数，而用 xwidget_paintSuppressedByMinimize
+     * （只认窗口侧）——闸要回答的是「窗口系统会不会显示像素」，纯逻辑
+     * 最小化（override 只改镜像）不该冻结仍可见的窗口。 */
     return self && self->m_isWindow &&
            (self->m_windowState & XWindowState_Minimized) != 0;
 }
@@ -8869,6 +8871,16 @@ void XWidget_setWindowState(XWidget* self, XWindowStates state)
         XClassDeinit(&ev);
     }
 #endif
+    /* 【最小化→还原必须补画 2026-11-08】最小化期间三道投递闸 + flush 闸
+     * 全部早退，PAINT 被丢弃、脏区只留在 m_dirty；还原后若既不换几何也
+     * 没有新的暴露事件，画面会停在最小化前的旧帧（用户可见「还原后画面
+     * 不刷新」）。此处以应用侧还原路径（XWidget_showNormal/setWindowState）
+     * 与平台回写路径（XWidget_syncWindowStateFromPlatform）两处闭环：
+     * 谁能清掉 Minimized 谁负责补一帧整窗。 */
+    if ((old & (XWindowStates)XWindowState_Minimized) &&
+        (state & (XWindowStates)XWindowState_Minimized) == 0 &&
+        self->m_visible && !self->m_deiniting)
+        xwidget_invalidateOwnArea(self);
     g_xwidgetInSetWindowState = false;
 }
 
@@ -8877,7 +8889,13 @@ void XWidget_overrideWindowState(XWidget* self, XWindowStates state)
     if (!self) return;
     /* 对标 QWidget::overrideWindowState：只覆盖逻辑状态，不请求平台窗口，
      * 也不维护 normalGeometry。当前事件系统没有 isOverride 标志，故不伪造
-     * 状态变更事件。 */
+     * 状态变更事件。
+     * [逻辑态 vs 绘制闸 2026-11-08] 本接口只改镜像，**不会**改变窗口系统的
+     * 事实态：四处绘制闸读的是窗口侧（xwidget_paintSuppressedByMinimize），
+     * 因此 overrideWindowState(Minimized) 不会冻结仍可见的窗口，也不需要
+     * 平台事件来「还原」——平台真最小化/还原仍分别由
+     * XWindow_reportWindowStateChanged → XWidget_syncWindowStateFromPlatform
+     * 与 show 路径驱动。 */
     self->m_windowState = state;
 }
 
@@ -8951,6 +8969,10 @@ const XString* XWidget_windowTitle(const XWidget* self)
     if (!w->m_windowTitle &&
         w->m_windowFilePath &&
         XString_size(w->m_windowFilePath) > 0) {
+        /* 派生串缓存：同值重复调用必须返回同一借用指针（对标
+         * setWindowFilePath 同值早退后缓存不重建）。缓存失效点：
+         * setWindowFilePath 值变化、setWindowTitle 赋值、控件析构。 */
+        if (w->m_windowTitleDerived) return w->m_windowTitleDerived;
         const char* utf8 = XString_toUtf8(w->m_windowFilePath);
         const char* base = utf8 ? utf8 : "";
         const char* slash = base;
@@ -9113,6 +9135,7 @@ void XWidget_setWindowTitle(XWidget* self, const XString* title)
     }
     self->m_windowTitle = copy;
     XWidget_freeString(&old); /* 替换旧值后释放原字符串，避免 setter 重复赋值泄漏。 */
+    XWidget_freeString(&self->m_windowTitleDerived); /* 显式标题优先 → 派生缓存失效 */
     /* 对标 Qt 6.8（qwidget.cpp:6134-6149）：继续路径每次派发
      * windowTitleChanged 信号 + 向控件派发 QEvent::WindowTitleChange。
      * X 侧对应 XEVENT_TYPE_WINDOW_TITLE_CHANGE（XEventType.h:38 已定义
@@ -9274,6 +9297,7 @@ void XWidget_setWindowFilePath(XWidget* self, const XString* path)
     }
     XWidget_freeString(&self->m_windowFilePath);
     self->m_windowFilePath = copy;
+    XWidget_freeString(&self->m_windowTitleDerived); /* filePath 变 → 派生标题失效 */
     if (self->m_isWindow && self->m_windowHandle)
         XWindow_setFilePath((XWindow*)self->m_windowHandle,
                             self->m_windowFilePath);
@@ -11555,6 +11579,28 @@ void XWidget_applyStyleSheetProperties(XWidget* self)
 
 #endif /* XSTYLE_ON */
 
+#if XSTYLE_ON
+XStyle* XWidget_style(const XWidget* self)
+{
+    if (self && self->m_style) return self->m_style;
+    return XStyle_defaultStyle();
+}
+
+void XWidget_setStyle(XWidget* self, XStyle* style)
+{
+    if (!self) return;
+    if (self->m_style == style) return;
+    if (self->m_style && self->m_polished) XStyle_unpolish(self->m_style, self);
+    self->m_style = style;
+    self->m_styleSet = style ? 1u : 0u;
+    /* 对标 QWidget::setStyle：仅对已完成 ensurePolished 的控件重跑 polish；
+     * 未 polished 的控件由后续 ensurePolished 统一落地（此时样式链的
+     * 依赖项尚未就绪，强行 polish 会命中未初始化的样式槽）。 */
+    if (style && self->m_polished) XStyle_polish(style, self);
+    XWidget_update(self);
+}
+#endif /* XSTYLE_ON */
+
 void XWidget_setStyleSheet(XWidget* self, const XString* styleSheet)
 {
     XString* copy;
@@ -11634,6 +11680,8 @@ void XWidget_setFont(XWidget* self, const XFont* font)
 {
     XFont temp;
     if (!self || !font) return;
+    /* [暂时撤除同字体早退做 A/B 对照] 加闸后变频器页给定行高度从 40 涨到
+     * 200（换行说明标签的 hfw 高度算错），先回退确认是否本闸所致。 */
     XFont_init(&temp);
     XClassCopy(&temp, font);
     XClassMove(&self->m_font, &temp);
@@ -11769,6 +11817,15 @@ void XWidget_setPalette(XWidget* self, const XPalette* palette)
     return;
 #else
     if (!self || !palette) return;
+    /* [同值早退 2026-11-08 对齐 QWidgetPrivate::setPalette_helper]
+     * Qt 6.8（qwidget.cpp:4629-4633）在调色板与当前完全一致时直接 return，
+     * 不 update；本实现此前无条件落盘 + update。业务侧「按状态着色」的
+     * 写法（HsfHomePage 的 hsfHomeLabelSetColor：每 200ms 刷新时对 6 路阀
+     * 状态标签无条件 setPalette）因此变成固定节拍的重绘源——状态没变也
+     * 每拍标一次脏。加上与 Qt 一致的早退后，颜色不变就不产生脏区；
+     * 颜色真变时行为不变（store + update）。 */
+    if (self->m_palette && XPalette_isEqual(self->m_palette, palette))
+        return;
     xwidget_paletteStore(self, palette);
     self->m_paletteSet = 1;
     xwidget_updateIsOpaque(self); /* 背景角色色可能变透明/不透明。 */
@@ -12411,7 +12468,72 @@ bool XWidget_drawContentCached(XWidget* self, XPainter* target,
     return false;
 }
 
-/** @brief 递归绘制控件树：region 为控件本地坐标脏区，裁剪后平移递归子控件。
+/* ---- 整树帧耗时（性能悬浮层「帧耗时」口径）----
+ * paintTree 是「本控件 + 全部可见子控件」的唯一绘制入口：顶层 paintEvent
+ * 只覆盖顶层自身的绘制，子控件随后在递归里画。性能悬浮层若在顶层
+ * paintEvent 前后取时，读数只含顶层自身背景填充（实测恒 0.00ms），无法
+ * 反映组合界面的真实绘制成本。这里在**最外层根调用**两端取时，把耗时留给
+ * 下一次顶层 paintEvent 读取（XWidget_lastPaintTreeUsecs）；顶层
+ * paintEvent 发生在本次树起点，读到的必然是上一帧的完整耗时。
+ * 只对原生顶层窗口的根调用记账：离屏 grab/render 经 redirectRoot 重定向的
+ * 子树绘制不是上屏帧，不参与统计（其 m_isWindow 根虽真，但 redirect 非空）；
+ * 子控件级的 repaint/离屏渲染根调用也不记账（m_isWindow=0），避免把局部
+ * 重绘成本误当成整窗帧耗时。 */
+static int            s_paintTreeDepth;
+static const XWidget* s_lastPaintTreeRoot;
+static int64_t        s_lastPaintTreeUsecs;
+
+static void XWidget_paintTree(XWidget* widget, const XRegion* region)
+{
+    int64_t startUsecs = 0;
+    int64_t startMs = 0;
+    bool record = false;
+    if (!widget || !region || region->count <= 0) return;
+    if (s_paintTreeDepth == 0) {
+        record = widget->m_isWindow && !xwidget_redirectRoot(widget);
+        if (record) {
+            /* 起点先记；getter 在树绘制期间读到的仍是上一帧值。 */
+            startUsecs = XDateTime_currentNSecsSinceEpoch() / 1000;
+            startMs = XDateTime_currentMSecsSinceEpoch();
+            s_lastPaintTreeRoot = widget;
+        }
+    }
+    ++s_paintTreeDepth;
+    xwidget_paintTreeRec(widget, region);
+    --s_paintTreeDepth;
+    if (record) {
+        int64_t endMs = XDateTime_currentMSecsSinceEpoch();
+        s_lastPaintTreeUsecs =
+            XDateTime_currentNSecsSinceEpoch() / 1000 - startUsecs;
+        s_lastPaintTreeRoot = widget;
+        {
+            static int s_ptTrace = -1;
+            static long s_ptSerial;
+            if (s_ptTrace < 0)
+                s_ptTrace = XSystem_environment("XHSF_PTREE_TRACE") ? 1 : 0;
+            if (s_ptTrace)
+                XPrintf("[ptree] #%ld root=0x%p %dx%d rects=%d r0=%d,%d %dx%d %lldus ms=%lld\n",
+                        ++s_ptSerial, (void*)widget,
+                        XWidget_width(widget), XWidget_height(widget),
+                        (int)region->count,
+                        region->rects ? region->rects[0].x : -1,
+                        region->rects ? region->rects[0].y : -1,
+                        region->rects ? region->rects[0].width : -1,
+                        region->rects ? region->rects[0].height : -1,
+                        (long long)s_lastPaintTreeUsecs,
+                        (long long)(endMs - startMs));
+        }
+    }
+}
+
+int64_t XWidget_lastPaintTreeUsecs(const XWidget* self)
+{
+    if (!self || s_lastPaintTreeRoot != self) return 0;
+    return s_lastPaintTreeUsecs;
+}
+
+/**
+ * @brief 递归绘制控件树：region 为控件本地坐标脏区，裁剪后平移递归子控件。
  * @details Qt 语义根修（14.122）：PAINT 事件携带的矩形 R 是脏区外接框
  *          （XPaintEvent_init 取 boundingRect），凡按自身 paint rect 涂写
  *          的父级（样式面板、autoFillBackground、demo 静态 tile memcpy）
@@ -12419,7 +12541,7 @@ bool XWidget_drawContentCached(XWidget* self, XPainter* target,
  *          R∩自身 为裁剪完整重绘，否则被抹像素残缺到其后代下次自我更新。
  *          多矩形区域先逐矩形拆分派发：每棵子树的 PAINT 只携带单一矩形，
  *          外接框==矩形本身，父级可涂写范围与后代重绘范围严格闭合。 */
-static void XWidget_paintTree(XWidget* widget, const XRegion* region)
+static void xwidget_paintTreeRec(XWidget* widget, const XRegion* region)
 {
     const XVector* children;
     XRegion maskClipped;
@@ -12533,15 +12655,42 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
     }
     if (widget->m_updatesEnabled && !widget->m_inPaintEvent) {
         XPaintEvent event;
+        const XWidget* outerDispatch = g_paintDispatchWidget;
         widget->m_inPaintEvent = 1;
+        /* [绘制期标脏归属 2026-11-08] 记录「当前正在派发 paintEvent 的控件」：
+         * 其严格后代在此期间标脏 ⇒ 本帧稍后会被重画（伪脏），见
+         * g_paintCoveredDirty 注。栈式保存/复原以支持嵌套派发。 */
+        g_paintDispatchWidget = widget;
         /* 借用 paintRegion 初始化栈上事件（不深拷贝区域）：paintRegion
            在整个 paintTree 递归期间稳定，控件 paintEvent 同步返回，事件
-           随即析构——借用生命周期严格覆盖使用期。每个控件一次深拷贝是
-           软件增量帧的固定分配开销（N 控件 = N 次 malloc/free），实测
-           借用化是本轮帧率提升的最大单项之一（默认页 4430→9063 FPS）。 */
+           随即析构——每个控件一次深拷贝是软件增量帧的固定分配开销（N 控件
+           = N 次 malloc/free），实测借用化是本轮帧率提升的最大单项之一
+           （默认页 4430→9063 FPS）。 */
         XPaintEvent_initBorrow(&event, XEVENT_TYPE_PAINT, paintRegion);
-        XWidget_paintEvent_base(widget, (XEvent*)&event);
+        {
+            static int s_ptTrace = -1;
+            int64_t t0 = 0;
+            if (s_ptTrace < 0)
+                s_ptTrace = XSystem_environment("XHSF_PTREE_TRACE") ? 1 : 0;
+            if (s_ptTrace) t0 = XDateTime_currentMSecsSinceEpoch();
+            XWidget_paintEvent_base(widget, (XEvent*)&event);
+            if (s_ptTrace) {
+                int64_t dt = XDateTime_currentMSecsSinceEpoch() - t0;
+                if (dt >= 5) {
+                    const char* cn = XVTABLE_GET_NAME(
+                        XClassGetVtable(widget));
+                    XPrintf("[ptree-own] %s %dx%d rect=%d,%d %dx%d pn=%d %lldms\n",
+                            cn ? cn : "?", XWidget_width(widget),
+                            XWidget_height(widget),
+                            paintRegion->rects[0].x, paintRegion->rects[0].y,
+                            paintRegion->rects[0].width,
+                            paintRegion->rects[0].height,
+                            (int)paintRegion->count, (long long)dt);
+                }
+            }
+        }
         XClassDeinit(&event);
+        g_paintDispatchWidget = outerDispatch;
         widget->m_inPaintEvent = 0;
     }
     children = XObject_children((XObject*)widget);
@@ -12963,6 +13112,48 @@ static void xwidget_wprof_add(int leg, int64_t startNs)
         xwidget_rprof.srcDirty = 0;
         xwidget_rprof.srcExpose = 0;
         xwidget_rprof.srcFull = 0;
+        /* [入队直方图] 稳态唤醒源：按笔数降序打前 8 类。帧数≈某类笔数
+         * ⇒ 该类就是节拍器（空闲无变化时尤其明显）。 */
+        if (xwidget_rprof.clsCount > 0) {
+            int order[XWIDGET_RPROF_CLASS_MAX];
+            int n = xwidget_rprof.clsCount;
+            int i;
+            int j;
+            int shown;
+            for (i = 0; i < n; ++i) order[i] = i;
+            for (i = 0; i < n; ++i)
+                for (j = i + 1; j < n; ++j)
+                    if (xwidget_rprof.cls[order[j]].hits >
+                        xwidget_rprof.cls[order[i]].hits) {
+                        int t = order[i];
+                        order[i] = order[j];
+                        order[j] = t;
+                    }
+            XPrintf("[rprof3] enq-by-class");
+            shown = n < 8 ? n : 8;
+            for (i = 0; i < shown; ++i) {
+                const int k = order[i];
+                XPrintf(" | %s/%s=%ld(%.1fKB max %dx%d)",
+                        xwidget_rprof.cls[k].parentName
+                            ? xwidget_rprof.cls[k].parentName : "?",
+                        xwidget_rprof.cls[k].name
+                            ? xwidget_rprof.cls[k].name : "?",
+                        xwidget_rprof.cls[k].hits,
+                        (double)xwidget_rprof.cls[k].pix / 1024.0,
+                        xwidget_rprof.cls[k].maxW,
+                        xwidget_rprof.cls[k].maxH);
+            }
+            XPrintf("\n");
+            for (i = 0; i < n; ++i) {
+                xwidget_rprof.cls[i].name = NULL;
+                xwidget_rprof.cls[i].parentName = NULL;
+                xwidget_rprof.cls[i].hits = 0;
+                xwidget_rprof.cls[i].pix = 0;
+                xwidget_rprof.cls[i].maxW = 0;
+                xwidget_rprof.cls[i].maxH = 0;
+            }
+            xwidget_rprof.clsCount = 0;
+        }
         /* [lprof] 布局画像行（计数在 XLayout.c，同门控）：act=activate 真
            重解算（未早退）次数 skip=幂等早退 inval=失效事件数 solveAvg=
            单次真重解算平均耗时——「谁在全量重算布局」直接读这一行；隐藏
@@ -13138,6 +13329,25 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     XSize size;
     int64_t wprofT0;
     int64_t wprofMark;
+    /* [抑制账本按帧隔离 2026-11-08] 本次 flush 的绘制段内发生的「被抑制
+     * 标脏」次数。原先直接读全局 g_paintSuppressedDirty，而该全局只在
+     * 「本帧确要绘制」的分支里清零 ⇒ ① 不绘制的 flush（region 空/脏区
+     * 不命中）会读到**上一帧甚至别的顶层**的残留值，凭空强制补投一帧；
+     * ② 绘制段内嵌套别的顶层的 flush（弹层同步重绘）会把它清零，外层
+     * 帧的抑制计数被吃掉 ⇒ 该补投的没补投（2026-10-26「画面冻结」同
+     * 类风险）。改成「进入绘制段前保存、清零、退出时取自己的值再复原」
+     * 的栈式记账：计数严格等于本帧本顶层的绘制期标脏次数。
+     * coveredThisFrame/outerCovered 同法管理「他人绘制期标脏」计数
+     * （g_paintCoveredDirty，见其定义注）：本帧内被本帧覆盖的伪脏在尾部
+     * 从 m_dirty 扣掉，不再强制补投。
+     * presentSkipped=本帧提交被 present 限频闸跳过（该闸会把提交矩形并回
+     * top->m_dirty 等尾部重投）。伪脏扣减会扫掉这些刚并回的矩形 ⇒ 跳过的
+     * present 永不上屏；故 presentSkipped 置位时一律不做扣减（见扣减处注）。 */
+    int suppressedThisFrame = 0;
+    int outerSuppressed = 0;
+    int coveredThisFrame = 0;
+    int outerCovered = 0;
+    int presentSkipped = 0;
     if (!self) return;
     wprofT0 = xwidget_wprof_now();
     wprofMark = wprofT0;
@@ -13154,8 +13364,15 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
      * hide→主窗恢复之后才被处理时，本 flush 会把陈旧内容重新 blit 到
      * 已恢复的画面上（真机拖动对话框后关闭，标题条带残留实证）。隐藏
      * 窗口的 flush 无展示语义直接丢弃；重新 show 时 setVisible→整窗
-     * update 会重新入队 PAINT，不丢首帧。 */
-    if (!top->m_visible) return;
+     * update 会重新入队 PAINT，不丢首帧。
+     * [最小化不 paint 2026-11-07] 对标 Qt 6.8：最小化窗口 isVisible()
+     * 仍为真，但合成器不产出 paint 事件。已在途 PAINT（最小化前投递）
+     * 也必须在这里挡下，否则投递侧的三道最小化闸只挡住「新投递」，
+     * 在途事件仍会驱动整窗 paintTree+上屏。脏区保留 m_dirty，show
+     * 时由既有 show 补画路径重新入队，不丢首帧。
+     * [2026-11-08] 判据=窗口侧事实（xwidget_paintSuppressedByMinimize），
+     * 不读控件镜像：镜像可能被 overrideWindowState 纯逻辑改写。 */
+    if (!top->m_visible || xwidget_paintSuppressedByMinimize(top)) return;
     if (!top->m_windowHandle)
         XWidget_createWindow(top);
     store = top->m_backingStore;
@@ -13203,7 +13420,38 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
             xwidget_rprof.srcFull += 1;
     }
     if (region && region->count > 0)
+    {
         XRegion_copy(region, &whole);
+        /* [Qt update 合并语义：PAINT 快照 ∪ 当前脏区 2026-11-08]
+         * 对标 Qt 6.8 QWidgetWindow::handleUpdateRequest —— 它**忽略**
+         * QUpdateLaterEvent 携带的区域，按控件此刻累积的 dirty 区一次画完
+         * （qwidgetwindow.cpp：`toClean = dirty; dirty = QRegion();`）。
+         * 本框架此前直接信 PAINT 事件入队时的**快照**：一次推送里连续
+         * 标脏 N 个单元格 ⇒ 首个事件只含第 1 格，其余 N-1 格要等尾部重投
+         * 再画，**N 笔标脏 = N 帧**（数字量页 16 点 × 10Hz 实测 159.8fps）。
+         * 取并集后同一轮事件循环内的标脏合并进本帧，一次画完；绘制期间
+         * 新产生的脏区仍落 m_dirty，由 flush 尾部重投（语义不变）。
+         * 事件快照仍要并进来：EXPOSE 区域可能不在 m_dirty 里（老内容已被
+         * 平台丢弃），只画脏区会漏掉暴露块。
+         * 诊断回退：XGUI_FLUSH_DIRTY_UNION=0 恢复「只信快照」旧口径。 */
+        {
+            static int unionInit = -1;
+            static int unionOn = 1;
+            if (unionInit < 0) {
+                const char* uv = XSystem_environment("XGUI_FLUSH_DIRTY_UNION");
+                unionOn = !(uv && *uv && uv[0] == '0' && uv[1] == 0);
+                unionInit = 1;
+            }
+            if (unionOn && top->m_dirty.count > 0)
+            {
+                XRegion merged;
+                XRegion_init(&merged);
+                XRegion_united(&whole, &top->m_dirty, &merged);
+                XRegion_deinit(&whole);
+                whole = merged;
+            }
+        }
+    }
     else if (top->m_dirty.count > 0)
     {
         /* P0-4（2026-09-25）脏区限绘：region 未携带时优先用当前脏区
@@ -13424,8 +13672,15 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         ++g_paintDispatching;
         /* [2026-10-26 回归根修] 本次绘制期的抑制计数归零：flush 尾部
          * 据此判断「本次绘制是否发生过被抑制的标脏」，决定是否强制
-         * 补投（见 g_paintSuppressedDirty 注）。 */
+         * 补投（见 g_paintSuppressedDirty 注）。
+         * [按帧隔离 2026-11-08] 清零前先把外层（嵌套 flush）的值存到
+         * outerSuppressed/outerCovered，绘制段退出时取本帧值存
+         * suppressedThisFrame/coveredThisFrame 再还原外层值——全局计数器
+         * 只承载「当前正在绘制的这一帧」的计数，不跨帧、不跨顶层残留。 */
+        outerSuppressed = g_paintSuppressedDirty;
+        outerCovered = g_paintCoveredDirty;
         g_paintSuppressedDirty = 0;
+        g_paintCoveredDirty = 0;
         /* [顶层预填底 2026-10-27 框架根修] 对标 Qt
          * QWidgetPrivate::paintBackground 的 **asRoot 分支**
          * （qwidget.cpp:2290-2303）：顶层控件上屏绘制前**总是**先用
@@ -13550,6 +13805,8 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         /* 呈现限频全腿闸：决策先于 GPU/软件分叉（跳帧帧不再区分腿）。 */
         presentThisFrame = xwidget_presentThrottleAllow(top, gpuWindow,
                                                         &whole, &wholeBbox);
+        if (!presentThisFrame)
+            presentSkipped = 1; /* 提交矩形已并回 top->m_dirty，伪脏扣减须让路 */
         if (gpuWindow && !XGpuRenderBackend_frameDegraded())
         {
             /* GPU 上屏双通道。默认=回读+BitBlt：SwapBuffers 换链在
@@ -13730,7 +13987,33 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
 #endif
         xwidget_wprof_seg(XW_WPROF_SEG_COMMIT, &wprofMark);
         }
-        /* 绘制段结束，恢复标脏重投（与上方 ++g_paintDispatching 配对）。 */
+        /* 绘制段结束，恢复标脏重投（与上方 ++g_paintDispatching 配对）。
+         * [按帧隔离 2026-11-08] 先取出本帧的两个计数，再把全局还原成
+         * 外层帧（若有嵌套 flush）的值，见函数首部 suppressedThisFrame 注。 */
+        suppressedThisFrame = g_paintSuppressedDirty;
+        coveredThisFrame = g_paintCoveredDirty;
+        g_paintSuppressedDirty = outerSuppressed;
+        g_paintCoveredDirty = outerCovered;
+        /* [自激环收窄 2026-11-08] 他人绘制期产生的脏区（coveredThisFrame）
+         * 若落在本帧绘制区 whole 内，像素已由本帧（paintTree 先父后子，
+         * 该子件随后以新状态重画）更新，属伪脏：就地扣掉，避免尾部据它
+         * 再强制补投一帧——这就是「绘制→标脏→补投→再绘制」反馈链的
+         * 闭合点。未被本帧覆盖的部分保留，仍按「脏区未清即补投」补投，
+         * 不丢更新（2026-10-26 冻结根因不复发）。存在自脏（①：控件在
+         * 自己的 paintEvent 里改自己、像素已画旧值）时不做扣减，照旧补投。
+         * 【两道让路条件 2026-11-08 三轮复审】扣减只是「省一帧」的优化，
+         * 任何可能让像素丢失的帧一律放弃扣减、走保守补投：
+         *  ① presentSkipped：提交限频闸把本帧提交矩形并回了 top->m_dirty
+         *     （xwidget_presentThrottleAllow 跳帧分支），扣减会把它们扫掉
+         *     ⇒ 被跳过的 present 永无补投、画面停在陈旧帧；
+         *  ② whole.count != 1（多矩形拆分派发）：paintTree 对多矩形逐趟
+         *     重发顶层 paintEvent，子件可能已在**更早一趟**以旧状态画完，
+         *     用并集 whole 扣减会连它的脏区一起扫掉 ⇒ 旧像素滞留。单矩形
+         *     帧内「先父后子」的覆盖关系才是成立的。 */
+        if (coveredThisFrame > 0 && suppressedThisFrame == 0 &&
+            !presentSkipped && whole.count == 1 &&
+            top->m_dirty.count > 0)
+            XRegion_subtracted(&top->m_dirty, &whole, &top->m_dirty);
         --g_paintDispatching;
     }
         g_paintTargetImage = NULL;
@@ -13740,14 +14023,19 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     /* 保留绘制期间或本次快照未覆盖的脏区，并确保它最终会再次派发。 */
     if (top->m_dirty.count > 0)
     {
-        /* [2026-10-26 回归根修] 本次绘制期若发生过被抑制的标脏
-         * （g_paintSuppressedDirty > 0），必须**强制补投**：抑制路径已把
-         * PendingUpdate 置真，若仍按旧条件「!alreadyPending」判断则该条件
-         * 恒假，本次绘制产生的脏区永久滞留 m_dirty 而不再派发 PAINT——
-         * 真机症状即「触摸后画面不刷新、只有光标跟随」。强制补投走事件
-         * 队列（非绘制栈内递归），既补回丢失的更新，又保留绘制期抑制门
-         * 防「paint→setText→update→postPaint→paint」自激的意图。 */
-        bool suppressed = (g_paintSuppressedDirty > 0);
+        /* [2026-10-26 回归根修] 本次绘制期若发生过被抑制的标脏，必须
+         * **强制补投**：抑制路径已把 PendingUpdate 置真，若仍按旧条件
+         * 「!alreadyPending」判断则该条件恒假，本次绘制产生的脏区永久
+         * 滞留 m_dirty 而不再派发 PAINT——真机症状即「触摸后画面不刷新、
+         * 只有光标跟随」。强制补投走事件队列（非绘制栈内递归），既补回
+         * 丢失的更新，又保留绘制期抑制门。
+         * [按帧隔离 2026-11-08] 判据取本帧局部值（不再读全局残留）：
+         * 不绘制的 flush 不会因上一帧/别顶层的计数而凭空多补一帧。
+         * [自激环收窄 2026-11-08] 触发条件仍是「本帧绘制期发生过标脏」，
+         * 但能走到这里说明 m_dirty 仍有内容——他人绘制期产生的伪脏已在
+         * 上面按本帧绘制区扣减；全被覆盖时 m_dirty 为空、外层 if 不成立、
+         * 不补投（反馈链闭合），只有未覆盖部分才补投（不丢更新）。 */
+        bool suppressed = (suppressedThisFrame > 0 || coveredThisFrame > 0);
         bool alreadyPending = XWidget_attrTest(
             &top->m_attributes, XWidgetAttribute_PendingUpdate);
         XWidget_attrSet(&top->m_attributes,
@@ -13928,6 +14216,11 @@ void XWidget_##FuncName##_base(XWidget* self, XEvent* event) \
     XClassGetVirtualFunc(self, SlotEnum, void(*)(XWidget*, XEvent*))(self, event); \
 }
 
+/* [paintEvent 回归统一宏 2026-11-08] 此前 paintEvent 是专用实现，唯一差别
+ * 是顶层控件上多一道帧节拍闸（2026-11-08 加，同日移除）。闸整体撤除后
+ * 它与其余 24 个槽位逐字同构，故回归宏生成——顶层与子控件、普通窗口与
+ * XWindowType_Popup 临时窗口（XComboBox 弹层/XMenu/工具提示）一律直通
+ * 派发，不存在任何按窗口类型/窗口身份分叉的时间闸。 */
 XWIDGET_VT_DISPATCH(paintEvent, EXWidget_PaintEvent)
 XWIDGET_VT_DISPATCH(resizeEvent, EXWidget_ResizeEvent)
 XWIDGET_VT_DISPATCH(moveEvent, EXWidget_MoveEvent)

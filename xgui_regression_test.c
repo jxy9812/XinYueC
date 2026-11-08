@@ -14,6 +14,9 @@
 #include "XCssValue.h" /* 第 1 轮并入能力 G1：渐变/palette/url/repeat/position 类型化解析 */
 #endif
 #include "XStyle.h"
+#include "XGradient.h"
+#include "XLinearGradient.h"
+#include "XBrush.h"
 #include "XStyleOption.h"
 #include "XIcon.h"
 #include "XIconThemeEngine.h"
@@ -109,6 +112,7 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XButtonHoldTest.h"
 #include "XSpinBoxTest.h"
 #include "XGroupBoxTest.h"
+#include "XBrushPaletteTest.h"
 #include "XProgressBarTest.h"
 #include "XDialTest.h"
 #include "XComboBoxTest.h"
@@ -4434,6 +4438,41 @@ static void test_painter_task211_contract(void)
             }
         }
         expect_true(ok, "t211: Dense4 图案逐像素匹配 Qt 表");
+        XPainter_deinit(&painter);
+        XClassDeinit(&image);
+    }
+
+    /* ---- 调色板渐变笔刷桥接：XBrush -> XPainter 像素断言 ---- */
+    {
+        XImage image;
+        XPainter painter;
+        XLinearGradient lin;
+        XBrush brush;
+        XRect r = { 0, 0, 8, 8 };
+        uint32_t topPixel;
+        uint32_t bottomPixel;
+        memset(&image, 0, sizeof(image));
+        XImage_init_ex(&image, 8, 8, XImageFormat_ARGB32);
+        XPainter_init(&painter, NULL);
+        expect_true(XPainter_begin_image(&painter, &image),
+                    "brush: begin image");
+        XLinearGradient_init_ex(&lin, 0.0, 0.0, 0.0, 8.0);
+        XGradient_setColorAt((XGradient*)&lin, 0.0, 0xffff0000u);
+        XGradient_setColorAt((XGradient*)&lin, 1.0, 0xff0000ffu);
+        brush = XBrush_create_color(XColor_create_argb(0xffff0000u),
+                                    XBrushStyle_SolidPattern);
+        XBrush_setGradient(&brush, (const XGradient*)&lin);
+        /* 清空源渐变停止点：验证拥有语义（池内副本仍可用）。 */
+        XGradient_clearStops((XGradient*)&lin);
+        XBrush_applyToPainter(&brush, &painter, &r);
+        expect_true(XPainter_fillRect_2(&painter, &r),
+                    "brush: 渐变填充成功");
+        topPixel = XImage_pixel(&image, 4, 0);
+        bottomPixel = XImage_pixel(&image, 4, 7);
+        expect_true(topPixel != bottomPixel,
+                    "brush: 渐变上下端像素不同");
+        expect_true(((topPixel >> 16) & 0xFFu) > ((bottomPixel >> 16) & 0xFFu),
+                    "brush: 渐变红→蓝色向");
         XPainter_deinit(&painter);
         XClassDeinit(&image);
     }
@@ -23776,9 +23815,9 @@ static void test_box_layout_contract(void)
     expect_true(ga && gb, "box stretch 测试控件创建");
     XBoxLayout_addWidget(&box2, &ga->m_base);
     XBoxLayout_addWidget(&box2, &gb->m_base);
-    expect_true(XBoxLayout_setStretchFactorWidget(&box2, &ga->m_base, 1),
+    expect_true(XBoxLayout_setStretchFactor(&box2, &ga->m_base, 1),
                 "setStretchFactorWidget(ga,1)");
-    expect_true(XBoxLayout_setStretchFactorWidget(&box2, &gb->m_base, 2),
+    expect_true(XBoxLayout_setStretchFactor(&box2, &gb->m_base, 2),
                 "setStretchFactorWidget(gb,2)");
     XRect_init(&rect, 0, 0, 90, 30);
     XLayoutItem_setGeometry_base((XLayoutItem*)&box2, &rect);
@@ -26264,7 +26303,8 @@ static void test_performance_overlay_contract(void)
     expect_true(position.x == 0 && position.y == 0,
                 "性能悬浮层大于客户区时位置钳位");
 
-    XPerformanceOverlay_setPosition(&overlay, 17, 23);
+    /* [悬浮层采样窗口] 注入帧跨度与 FPS 期望值共用（宏缺省 250ms 时旧值
+     * 16.0；2026-11-08 采样窗改 1000ms 后期望值是 4.0 —— 都按宏折算）。 */
     {
         const int64_t sampleWindowUsecs =
 #if XGUI_PERFORMANCE_OVERLAY_UPDATE_MS > 0
@@ -26272,6 +26312,10 @@ static void test_performance_overlay_contract(void)
 #else
             250000LL;
 #endif
+        XPerformanceOverlay_setPosition(&overlay, 17, 23);
+        {
+        /* [采样窗宏口径] 本组断言（FPS 期望值）与注入时间跨度都按同一窗口
+         * 折算；2026-11-08 悬浮层采样窗 250ms→1000ms，写死 16.0 会随宏漂。 */
         const int64_t frameUsecs = 10000;
         const int64_t baseUsecs = 1000000;
         XPerformanceOverlay_updateFrame(&overlay,
@@ -26288,20 +26332,37 @@ static void test_performance_overlay_contract(void)
             baseUsecs + sampleWindowUsecs);
     }
     text = XLabel_text(&overlay.m_base);
-    expect_true(overlay.m_fps > 15.9 && overlay.m_fps < 16.1 &&
-                overlay.m_frameMs > 9.99 && overlay.m_frameMs < 10.01 &&
-                overlay.m_maxFrameMs > 9.99 && overlay.m_maxFrameMs < 10.01,
-                "性能悬浮层按采样窗口计算 FPS 和帧耗时");
-    expect_true(text != NULL && strstr(XString_toUtf8(text), "FPS 16.0") != NULL,
-                "性能悬浮层显示计算后的 FPS 数值");
-    expect_true(text != NULL &&
-                    strstr(XString_toUtf8(text), "帧耗时") != NULL,
-                "性能悬浮层使用中文帧耗时标签");
+    {
+        /* [期望值随采样窗口] 注入 4 帧跨一个采样窗 ⇒ FPS = 4 / 窗口秒数。
+         * 2026-11-08 悬浮层采样窗 250ms→1000ms 后，原写死的 16.0 必须改为
+         * 按宏折算（4fps），否则改窗口就红——这是测试口径，不是产品值。 */
+        const double expectFps = 4.0 * 1000000.0 /
+                                 (double)(sampleWindowUsecs > 0
+                                              ? sampleWindowUsecs : 250000LL);
+        char fpsText[32];
+        snprintf(fpsText, sizeof(fpsText), "FPS %.1f", expectFps);
+        expect_true(overlay.m_fps > expectFps - 0.1 &&
+                        overlay.m_fps < expectFps + 0.1 &&
+                    overlay.m_frameMs > 9.99 && overlay.m_frameMs < 10.01 &&
+                    overlay.m_maxFrameMs > 9.99 && overlay.m_maxFrameMs < 10.01,
+                    "性能悬浮层按采样窗口计算 FPS 和帧耗时");
+        expect_true(text != NULL &&
+                        strstr(XString_toUtf8(text), fpsText) != NULL,
+                    "性能悬浮层显示计算后的 FPS 数值");
+        }   /* 内层：注入帧+期望值 */
+        expect_true(text != NULL &&
+                        strstr(XString_toUtf8(text), "帧耗时") != NULL,
+                    "性能悬浮层使用中文帧耗时标签");
+    }   /* 外层：采样窗口作用域 */
 #if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
     XPerformanceOverlay_updateNetwork(&overlay, true, 0, 0, 1000000);
     XPerformanceOverlay_updateNetwork(&overlay, true,
                                       3u * 1024u * 1024u,
                                       512u * 1024u, 2000000);
+    /* [文本刷新归统计窗口 2026-11-08] updateNetwork 只采样+算速率，不再
+     * 自己刷文本（避免每秒两次文本变化多画一帧）；这里再喂一帧跨过采样窗
+     * 的 updateFrame，等价真实绘制路径（paintEvent 每帧喂样本）。 */
+    XPerformanceOverlay_updateFrame(&overlay, 3000000, 3000001);
     text = XLabel_text(&overlay.m_base);
     expect_true(text != NULL &&
                     strstr(XString_toUtf8(text), "下载 3.0 MB/s") != NULL &&
@@ -31047,16 +31108,20 @@ static void test_chart_interaction_contract(void)
         XObject_connect_2((XObject*)&line->m_base,
             XSignal(XXYSeries_hovered_signal),
             chart_hitHoverSlot);
-        /* 数据域 (0,0)-(10,10) 映射到 400x300 画布：
-           点 (5,5) 位于画布中心 (200,150)。 */
-        XPoint_init(&pos, 200, 150);
+        /* [命中映射基准=绘图区] 数据域 (0,0)-(10,10) 映射到**绘图区**，
+         * 而不是整个 400x300 控件——绘图区左上还要让出 48px 轴标签区与
+         * 34px 标题区。期望像素坐标由 XChart_mapToPosition（对标
+         * QChart::mapToPosition）直接给出，保证"命中检测与落笔同一映射"；
+         * 此前这里写死画布中心 (200,150)，是"整控件映射"的旧口径。 */
+        XChart_mapToPosition(chart, 5, 5, &x, &y);
+        XPoint_init(&pos, x, y);
         XMouseEvent_init(&press, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
                          XMouseButton_LeftButton,
                          XKeyboardModifier_NoModifier, pos);
         XWidget_event_base((XWidget*)&view, (XEvent*)&press);
         XClassDeinit((XClass*)&press);
         c1_expect(s_chartHitPressed == 1, "点击按压命中发射 pressed");
-        XPoint_init(&pos, 200, 150);
+        XPoint_init(&pos, x, y);
         XMouseEvent_init(&release, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
                          XMouseButton_LeftButton,
                          XKeyboardModifier_NoModifier, pos);
@@ -31064,7 +31129,7 @@ static void test_chart_interaction_contract(void)
         XClassDeinit((XClass*)&release);
         c1_expect(s_chartHitClicked == 1 && s_chartHitReleased == 1,
                   "点击抬起发射 clicked/released");
-        XPoint_init(&pos, 200, 150);
+        XPoint_init(&pos, x, y);
         XMouseEvent_init(&move, XEVENT_TYPE_MOUSE_MOVE, XMouseButton_NoButton,
                          XKeyboardModifier_NoModifier, pos);
         XWidget_event_base((XWidget*)&view, (XEvent*)&move);
@@ -31076,7 +31141,6 @@ static void test_chart_interaction_contract(void)
         XWidget_event_base((XWidget*)&view, (XEvent*)&move);
         XClassDeinit((XClass*)&move);
         c1_expect(s_chartHitHoverIn >= 2, "离开命中发射 hovered(离开)");
-        (void)x; (void)y;
         /* m_chart 已随视图 delete_base 的析构释放（XChartView.h 契约
          * 「内部拥有；setChart 转移」，f93a7c05 起析构必释放）；此处再
          * delete 同一图表即双重释放。 */
@@ -36231,6 +36295,7 @@ static void test_xgui_widgets(void)
                 "按钮按住语义（长按拖出不提前松手，Qt 口径）");
     expect_true(XSpinBoxTest_runAll(), "XSpinBox 控件功能");
     expect_true(XGroupBoxTest_runAll(), "XGroupBox 控件功能");
+    expect_true(XBrushPaletteTest_runAll(), "XBrush/调色板笔刷功能");
     {
         extern int XTouchMultiPointTest_run(void);
         int tpFails = XTouchMultiPointTest_run();

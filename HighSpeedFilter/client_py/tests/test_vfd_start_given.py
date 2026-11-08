@@ -126,9 +126,12 @@ class Server(object):
             time.sleep(0.05)
         return holder
 
-    def output_hz(self, settle=3.0):
-        """等运行稳定后读输出频率。
+    def output_hz(self, settle=3.0, target=None, tol=0.6):
+        """等输出频率到位后读回；超时按最后一拍返回。
 
+        [ACC/DEC 口径 2026-11-06] 服务端虚拟变频器按加减速时间参数爬坡
+        （缺省 10.0s 满量程 ⇒ 5Hz/s）：25Hz 要 ~5s，固定 3s 只会停在半坡。
+        给 target 时轮询到 |out-target|<tol 或超时（~15s 上限）。
         [字段名] 遥测键见 server_py/proto.py 的 VFD_TELEMETRY_FIELDS：
         `outputFreqHz`（输出频率）/ `setFreqHz`（设定频率）。读不到返回
         None，让断言明确报"读不到"而不是伪装成 0。
@@ -136,6 +139,18 @@ class Server(object):
         wait(settle)
         doc = self.snapshot()
         value = doc.get("outputFreqHz")
+        if target is not None:
+            deadline = time.time() + 15.0
+            while time.time() < deadline:
+                if value is not None:
+                    try:
+                        if abs(float(value) - target) < tol:
+                            break
+                    except (TypeError, ValueError):
+                        pass
+                wait(0.3)
+                doc = self.snapshot()
+                value = doc.get("outputFreqHz")
         if value is None:
             return None
         try:
@@ -184,23 +199,23 @@ def main():
         resp = srv.op(op=proto.OP_START, rev=False, hz=3.0)
         check("A1 启动命令被受理", resp.get("ok") is True,
               str(resp.get("err", ""))[:50])
-        out = srv.output_hz()
+        out = srv.output_hz(target=3.0)
         check("A2 实际输出 = 3Hz（不是残留旧给定）",
               out is not None and abs(out - 3.0) < 0.6,
               "out=%.2fHz 期望 3.0Hz" % (out if out is not None else -1))
         srv.op(op=proto.OP_STOP)
-        wait(1.5)
+        wait(2.5)
 
         # ---- B. 换给定值再启动：8Hz ----
         print("== B. 换给定再启动：8Hz ==")
         resp = srv.op(op=proto.OP_START, rev=False, hz=8.0)
         check("B1 启动受理", resp.get("ok") is True, str(resp.get("err", ""))[:50])
-        out = srv.output_hz()
+        out = srv.output_hz(target=8.0)
         check("B2 实际输出 = 8Hz（按当前设定，不是上一次的 3Hz）",
               out is not None and abs(out - 8.0) < 0.6,
               "out=%.2fHz 期望 8.0Hz" % (out if out is not None else -1))
         srv.op(op=proto.OP_STOP)
-        wait(1.5)
+        wait(2.5)
 
         # ---- C. 转速模式：给 rpm，服务端换算成频率 ----
         print("== C. 转速模式：给 rpm ==")
@@ -210,7 +225,7 @@ def main():
                       hz=want_hz)
         check("C1 启动受理（转速口径）", resp.get("ok") is True,
               str(resp.get("err", ""))[:50])
-        out = srv.output_hz()
+        out = srv.output_hz(target=want_hz)
         check("C2 实际输出 = 转速换算值 %.1fHz" % want_hz,
               out is not None and abs(out - want_hz) < 0.6,
               "out=%.2fHz 期望 %.1fHz" % (out if out is not None else -1,
@@ -226,7 +241,9 @@ def main():
         # （安全兜底）。只发一帧就等 2.5s 的话设备早停了——那测的是
         # 看门狗而不是给定值。这里按客户端真实行为每 200ms 重发。
         out = None
-        end = time.time() + 3.0
+        # [ACC/DEC 口径] C 组停机后还剩 ~17Hz 在斜坡上（wait 只给 2.5s），
+        # 点动把目标拉到 5Hz 后输出要再降 ~2.4s 才到位——循环给足 4s。
+        end = time.time() + 4.0
         while time.time() < end:
             srv.bridge.send_vfd_control(
                 {"op": proto.OP_JOG, "rev": False, "hz": 5.0})
@@ -238,7 +255,8 @@ def main():
               out is not None and abs(out - 5.0) < 0.8,
               "out=%.2fHz 期望 5.0Hz" % (out if out is not None else -1))
         srv.op(op=proto.OP_JOG_RELEASE)
-        wait(1.0)
+        # [ACC/DEC 口径] 5Hz 减速到 0 要 ~1s，给足余量再测"停机禁给定"。
+        wait(2.5)
 
         # ---- E. 停机时单独下发给定仍被拒（安全语义不许回归）----
         print("== E. 停机单独下发给定仍被拒 ==")

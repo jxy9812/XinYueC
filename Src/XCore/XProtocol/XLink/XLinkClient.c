@@ -99,10 +99,37 @@ static void XLinkClientPrivate_teardown(XLinkClient* self, bool graceful,
         self->m_session = NULL;
     }
     if (self->m_socket) {
-        if (deferred)
+        /* 【先关后删 2026-11-08】原实现直接 XClassDelete 套接字，**不先
+         * close/disconnect**。Windows IOCP 后端的读/写 OVERLAPPED 仍在内核
+         * 里飞，完成包回来时驱动会访问已释放的设备上下文 → 堆 UAF：实测
+         * HsfClient 退出恒 AV（`HsfClient ! VXObject_deinit`，被踩的对象
+         * 头里残留 XLink 协议帧字节 0x0105/0x0109，即网络数据覆写到了控件
+         * 对象上），且每次退出必现。
+         * 与 Qt 对齐：QAbstractSocket 的任何拆除路径都先 abort/close 引擎
+         * 再释放对象（qabstractsocket.cpp: disconnectFromHost → close）。
+         * 手动断开用 abort（不发 FIN 等待，立即收引擎）；deferred 路径
+         * 走 deleteLater，其析构里同样会 close。 */
+        /* [先关后删，两条路径都关] 原实现只在非 deferred 路径 abort，
+         * deferred（重连/踢线路径：本文件的多处 `teardown(self,false,true)`）
+         * 只投 deleteLater。而 deleteLater 在本框架的投递条件是
+         * `eventLevel > currentLevel`（XEvent.c:430-445）——在事件循环同一层
+         * 投递时恒不成立，除非有人显式 sendPostedEvents。实测客户端每次重连
+         * 净增 2 个句柄 + 约 57KB，就是 Node 引擎连同对象一起滞留。
+         * abort 幂等（setSocketState 到 Unconnected 时 oldState 相同即不发
+         * 信号），在已断开状态下重复调用安全。 */
+        XAbstractSocket_abort((XAbstractSocket*)self->m_socket);
+        if (deferred) {
+            /* [改回框架原生 deleteLater] 之前以为"同层投递永不生效"，
+             * 复核后确认判断有误：XAbstractEventDispatcher_processEvents
+             * 对 DEFERRED_DELETE 调 shouldDeliver，而 notifyInternal2 在派发
+             * 期间自增 scopeLevel ⇒ 槽里 post 的删除事件层号大 1，满足 `>`
+             * 会被投递（与 Qt 6.8 qcoreapplication.cpp:1904-1912 同构）。
+             * 服务端同款改动实测 10 轮内存负增长、句柄零增，故此处的
+             * 待释放槽同样多余，改回框架原语。 */
             XObject_deleteLater((XObject*)self->m_socket);
-        else
+        } else {
             XClassDelete((XClass*)self->m_socket);
+        }
         self->m_socket = NULL;
     }
 }

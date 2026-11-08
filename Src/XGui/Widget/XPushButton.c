@@ -165,10 +165,10 @@ static XSize pushbutton_computeSizeHint(const XPushButton* self)
         XSize size;
         XStyleOption_init(&opt, XStyleCT_PushButton);
         if (self->m_menu)
-            w += XStyle_pixelMetric(XStyle_defaultStyle(),
+            w += XStyle_pixelMetric(XWidget_style((const XWidget*)self),
                                     XStylePM_MenuButtonIndicator, &opt);
         XSize_init(&content, w, h);
-        size = XStyle_sizeFromContents(XStyle_defaultStyle(),
+        size = XStyle_sizeFromContents(XWidget_style((const XWidget*)self),
                                        XStyleCT_PushButton, &opt, content);
         XSize_init(&out, size.width, size.height);
         return out;
@@ -564,9 +564,9 @@ void XPushButton_drawContents(XPushButton* self, XPainter* painter)
     pressed = ab->m_down || ab->m_checked;
 
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：面板 + 焦点框由样式引擎绘制。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStylePE_PanelButtonCommand);
         opt.m_rect = rect;

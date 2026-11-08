@@ -4086,3 +4086,68 @@ UserRole 全字段一致，单条目 102 字节）。
 
 **整体覆盖**：主路径 + 边界 + 错误路径已覆盖；拖放/无障碍/键盘全谱
 仍缺，属功能未落地而非测试缺失。
+
+## 17. 重绘请求收口与脏区合并语义（2026-11-08）
+
+> 端到端台账（12 类脏源、逐页实测数据、复现命令）见
+> [docs/HSF客户端重绘脏源根修_实施记录_20261108.md](docs/HSF客户端重绘脏源根修_实施记录_20261108.md)。
+> 本节只记**框架级语义**，业务侧修法不在此重复。
+
+### 17.1 全局重绘帧率闸已移除，不得再加
+
+`XGUI_REPAINT_MAX_FPS` / `XWidget_setMaxRepaintFps`（挂在
+`XWidget_postPaintEvent` 的进程级时间闸）**整体删除**。两处硬伤：
+① 帧耗时读数被污染成「两帧间隔」；② 临时顶层弹层（Popup 类型的
+XComboBox/XMenu）同样被拦，首帧反复推后 ⇒ 弹层只见灰框不见选项。
+Qt 本身没有全局重绘闸：`update()` 只合并脏区、有脏区就画，节奏由平台
+合成器/显示刷新天然限制。**判据是「有没有持续标脏源」，不是「限到几帧」。**
+
+现存两个限频宏（语义不同，不可互替）：
+
+| 宏 | 默认 | 作用面 | 跳帧语义 |
+|---|---|---|---|
+| `XGUI_RESIZE_REPAINT_MAX_FPS` | 30 | 仅窗框装饰的拖拽移动/改尺寸手势 | 跳过的中间位移按「按下锚+总位移」无状态重算天然合并，松手补尾帧，零丢失 |
+| `XGUI_PRESENT_MAX_FPS`（env `XGPU_PRESENT_MAX_FPS` 可覆盖） | 0=不限 | 仅上屏提交段（GPU/软件全腿） | 跳帧把提交矩形并回 `top->m_dirty`，下次放行帧一起上屏；整窗帧/降级恢复帧永不跳 |
+
+两者都**不影响绘制频率**（paint 早已完成），也不会改变悬浮层 FPS 读数
+（读数取 paint 路径）。
+
+### 17.2 PAINT 区域 = 入队快照 ∪ 当前脏区
+
+对齐 Qt 6.8 `QWidgetWindow::handleUpdateRequest`：Qt 忽略
+`QUpdateLaterEvent` 携带的区域，按控件此刻累积的 dirty 一次画完
+（`toClean = dirty; dirty = QRegion();`）。本框架此前只信 PAINT 事件
+**入队时的快照** ⇒ 「一次推送标脏 N 格 = N 帧」（多矩形局部刷新时尤其
+明显，端到端实测 16 格 × 10Hz = 159.8fps）。
+
+现 `XWidget_flushBackingStore` 取并集：
+`whole = event_region ∪ top->m_dirty`。事件快照仍必须并入——EXPOSE 区域
+可能不在 `m_dirty` 里（平台已丢弃旧像素），只画脏区会漏掉暴露块。
+绘制期间新产生的脏区仍落 `m_dirty`，由 flush 尾部重投（语义不变）。
+诊断回退：`XGUI_FLUSH_DIRTY_UNION=0`。
+
+### 17.3 三处「框架刻意不做同值早退」的接口（业务侧必须自己判）
+
+| 接口 | 早退现状 | 重复调用的代价 |
+|---|---|---|
+| `XWidget_setVisible` | **不做**（显隐承载布局激活与脏区补画，XWidget.c 有据） | 每拍 `XLayout_invalidate` 父布局 ⇒ 布局失效风暴（实测 662 次/秒） |
+| `XWidget_setEnabled` | 做（`oldEnabled == enabled` 直接 return） | 但「先启用再禁用」两步写法 = 两步**真翻转**，每步都标脏 + 发事件 |
+| `XWidget_setPalette` | 做（同 `QWidgetPrivate::setPalette_helper`，qwidget.cpp:4629-4633） | 旧实现无条件 update，业务再补一次 update 则同值也脏 |
+
+业务侧正确姿势：
+- 显隐：先比 `XWidget_isHidden()`（显式隐藏位，对标 `QWidget::isHidden`）；
+- 可用性：**先算最终态再一次 setEnabled**，不要「先全开再关某侧」；
+- 文本/名称：`XLabel_setText` 有早退，但业务层若自己 malloc 字符串，
+  必须在**业务层**先 `strcmp` 早退（否则 10Hz 重放 = 每拍 alloc/free + 标脏）。
+
+### 17.4 整板自绘控件的局部刷新口径
+
+自绘看板（模拟量/数字量）必须两件套：
+1. 标脏按**元素矩形**（`XWidget_updateRect`），不整块 `XWidget_update`；
+2. paintEvent **消费 PAINT 矩形**：translate 之后
+   `XPainter_setClipRect(&painter, &XPaintEvent_rect(pe), ReplaceClip)`，
+   并跳过与脏区不相交的元素（光栅层有裁剪，但文字整形/省略号计算的
+   开销裁剪兜不住）。
+
+元素矩形计算必须与绘制公式**同源同参**（`analog_cardRect` /
+`digital_cellRect`），改版面必须两处同改，否则局部刷新漏脏留残影。

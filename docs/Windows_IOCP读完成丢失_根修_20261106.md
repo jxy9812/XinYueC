@@ -233,3 +233,51 @@ out\build\build_hsf.bat <构建目录>   :: 联调二进制 HsfServer/HsfClient
 4. 布尔标志（`readPending`/`writePending`）不得作为「内核在飞」的判据；
    在飞关系只能由完成包出队来结束。
 5. 完成包归属**不得**用句柄数值比较（句柄会复用），必须用连接代次。
+
+## 九、写方向补修：提交失败不再静默（2026-11-08）
+
+前八节都在读方向。2026-11-08 联调暴露出**写方向的对称缺陷**：
+`WSASend` 的**提交**（不是完成包）失败时，旧实现只回滚写槽、打印一行日志，
+**从不判定连接已死**。
+
+### 现象（现场口径）
+
+服务端日志刷出成百上千条 `[XNetwork-W32] 写提交失败 err=10053/10054
+（无完成包，已回滚槽 N）`，但会话仍停在 `Ready`：tx 队列持续积压、推送被
+静默丢弃（队列满即丢），而心跳与收方向仍然通。客户端表现为**界面数据冻结、
+连接显示正常、切页订阅也发得出去**——最容易误判成「客户端渲染卡住」或
+「服务端推错主题」。
+
+### 根因
+
+`WSASend` 返回失败时**不会**产生完成包，因此「靠完成包判死」的两条路径
+（读完成失败、写完成失败）都不会触发。而提交失败的错误码分两类：
+
+| 类别 | 错误码 | 语义 |
+|---|---|---|
+| 致命（连接已死） | 10053 WSAECONNABORTED、10054 WSAECONNRESET、10057、10058、10059、10060、10061、ERROR_NETNAME_DELETED、ERROR_CONNECTION_ABORTED、ERROR_BROKEN_PIPE、ERROR_NO_DATA、ERROR_PIPE_NOT_CONNECTED | 再重试也不会好 |
+| 瞬时（背压） | 10035 WSAEWOULDBLOCK、997 ERROR_IO_PENDING 及未知码 | 下一拍继续 |
+
+旧实现把两类一律当背压滚回槽位 ⇒ 死链路上无限重试，永远不会判死。
+
+### 修法（`Drive/windows/Device/Network/XDeviceNetwork_win32.c`）
+
+1. `w32_isFatalWriteError(err)`：按上表分类。
+2. `w32_postFatalClose(p, err, where)`：投递一次**关闭事件**走正常拆除路径
+   （不在提交栈上直接拆，避免重入），并用 `closePosted` 按**连接代次**去重
+   ——同一代连接无论读写各报多少次致命错误，只投递一次。
+3. `w32_rollbackWrite(p, index, err, fatalAllowed)`：回滚槽 + 关判定。
+   调用侧显式区分：命名管道 `fatalAllowed=true`；TCP `fatalAllowed=!isUdp`
+   （UDP 无「连接」语义，一律按瞬时处理）。
+4. `closePosted` 在 `w32_newIoGeneration()` 里复位（覆盖 connect/bind/
+   setDescriptor/ConnectLocal/socketDisconnect 全部换句柄路径），保证重连后
+   仍能正常判死，又不会让旧代的重复致命写错误刷屏。
+5. 异步写**完成**失败分支同样补 `w32_isFatalWriteError` 判定，且 `isUdp`
+   必须在 `w32_releaseWriteSlot` 清槽**之前**取值（清槽会清掉该位）。
+
+### 判据（给下一次）
+
+- 看到「数据不更新但连接正常」，先数日志里 `写提交失败` 的条数与错误码：
+  出现 10053/10054 且会话仍是 `Ready` ⇒ 写方向判死缺失。
+- 「提交失败」与「完成失败」是两条独立路径，**都必须**判死；只补一条仍会漏。
+- 判死去重必须按**连接代次**，不能按布尔（`closePosted` 就是为此存在）。

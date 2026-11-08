@@ -670,18 +670,38 @@ static bool xcss_parseAttribute(XCssParseCtx* ctx, XCssAttributeSelector* a)
     return true;
 }
 
-/** @brief 伪类名 → 位（对标 qcssparser.cpp findKnownValue(pseudos[])；
- *         只收可由 XStyleState 位派生的名（xsss_statePseudos 有映射源），
- *         未知名单冒号伪类按旧行为忽略。
+/* ---- 表头段位置伪类位（:first/:last/:middle/:only-one）----
  *
- *  Qt 6.8.3 pseudos[] 共 45 名，其中无 State 来源的名字（alternate/
- *  bottom/closable/default/edit-focus/editable/exclusive/first/flat/
- *  floatable/last/left/maximized/middle/minimized/movable/next-selected/
- *  no-frame/non-exclusive/only-one/previous-selected/right/top 等）在本库
- *  永不命中（XStyleState 无对应位、置位侧亦无生产者），不收入名表；
- *  :top/:bottom/:left/:right 在 Qt 由各绘制点手工附加（非 state 派生），
- *  随子控件分派（deferred）再议。拼写陷阱：Qt 名是 read-only（带连
- *  字符），本表为主名；旧拼写 readonly 保留兼容。
+ * 对齐 Qt 6.8.3：Qt 的 qcssparser.cpp:275/284/287/295 把 first/last/
+ * middle/only-one 收进 pseudos[] 名表，QStyleSheetStyle::renderRule 在
+ * QStyleOptionHeader 分支按 position 派生这四位
+ * （qstylesheetstyle.cpp:1995-2003）。位值与「由 state 派生」的伪类不同：
+ * 它们**没有 XStyleState 来源**，只由绘制点（表头段）附加。
+ *
+ * 值契约：本文件只负责「名字 → 位」解析；「绘制点 → 位」附加在
+ * XStyleSheetStyle.c 的 XSSS_PSEUDOCLASS_FIRST/LAST/MIDDLE/ONLY_ONE
+ * （逐值同步，改一侧必须同步另一侧）。取 0x80000 起的连续四位，
+ * 接在既有 XCssPseudo_Vertical(0x40000) 之后，不改既有值。
+ */
+#define XCSS_PSEUDOCLASS_FIRST     0x00080000u
+#define XCSS_PSEUDOCLASS_LAST      0x00100000u
+#define XCSS_PSEUDOCLASS_MIDDLE    0x00200000u
+#define XCSS_PSEUDOCLASS_ONLY_ONE  0x00400000u
+
+/** @brief 伪类名 → 位（对标 qcssparser.cpp findKnownValue(pseudos[])；
+ *         只收可由 XStyleState 位派生的名（xsss_statePseudos 有映射源）
+ *         以及表头段位置四位（无 state 来源，由绘制点附加），未知名单
+ *         冒号伪类按旧行为忽略。
+ *
+ *  Qt 6.8.3 pseudos[] 共 45 名，其中已在册的 first/last/middle/
+ *  only-one 见上方 XCSS_PSEUDOCLASS_* 块；其余无来源的名字（alternate/
+ *  bottom/closable/default/edit-focus/editable/exclusive/flat/floatable/
+ *  left/maximized/minimized/movable/next-selected/no-frame/non-exclusive/
+ *  previous-selected/right/top 等）在本库永不命中（XStyleState 无对应
+ *  位、置位侧亦无生产者），不收入名表；:top/:bottom/:left/:right 在 Qt
+ *  由各绘制点手工附加（非 state 派生），随子控件分派（deferred）再议。
+ *  拼写陷阱：Qt 名是 read-only（带连字符），本表为主名；旧拼写 readonly
+ *  保留兼容。
  */
 static void xcss_applyPseudo(const char* name, size_t len, uint32_t* pseudos)
 {
@@ -731,6 +751,16 @@ static void xcss_applyPseudo(const char* name, size_t len, uint32_t* pseudos)
         *pseudos |= XCssPseudo_Horizontal;
     else if (len == 8 && XStrncasecmp(name, "vertical", 8) == 0)
         *pseudos |= XCssPseudo_Vertical;
+    /* 表头段位置四位（Qt qcssparser.cpp:275/284/287/295 名表；位由绘制点
+     * 附加，无 state 来源——见上方 XCSS_PSEUDOCLASS_* 块注释）。 */
+    else if (len == 5 && XStrncasecmp(name, "first", 5) == 0)
+        *pseudos |= XCSS_PSEUDOCLASS_FIRST;
+    else if (len == 4 && XStrncasecmp(name, "last", 4) == 0)
+        *pseudos |= XCSS_PSEUDOCLASS_LAST;
+    else if (len == 6 && XStrncasecmp(name, "middle", 6) == 0)
+        *pseudos |= XCSS_PSEUDOCLASS_MIDDLE;
+    else if (len == 8 && XStrncasecmp(name, "only-one", 8) == 0)
+        *pseudos |= XCSS_PSEUDOCLASS_ONLY_ONE;
 }
 
 /** @brief 解析一个基础选择器段（对标 parseSimpleSelector）。

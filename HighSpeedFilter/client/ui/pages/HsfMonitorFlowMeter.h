@@ -60,6 +60,21 @@ void HsfMonitorFlowMeter_setPump(const char* name, bool on, bool ready,
 void HsfMonitorFlowMeter_setPumpWriteHandler(void (*fn)(void*, bool),
                                              void* userData);
 
+/**
+ * @brief 控制闸：整体启停泵按钮（对齐阀页 HsfMonitorValve_setControlEnabled）。
+ * @param enabled false 时两个按钮一律置灰（不看 ready/on）。
+ * @param blockedReason 置灰原因（页上常驻说明用；NULL/空=不显示）。
+ * @details [为什么需要这道闸] 服务端 `hsfAppControlGate`
+ *          （HsfServerApp.c:1560）会在**自动模式**拒绝一切设备控制，回
+ *          "自动运行中：远程控制已被禁用"。客户端原先只有阀页提前置灰、
+ *          泵页没接这道闸 ⇒ 自动模式下泵按钮仍是实心可点，用户点了才被
+ *          服务端拒（截图实测：顶栏"模式: 自动"，泵"启动"仍可点）。
+ *          置灰判据只看外部条件（连接/模式/权限）；点位 ready 仍由
+ *          HsfMonitorFlowMeter_setPump 内部与闸门求交。
+ */
+void HsfMonitorFlowMeter_setControlEnabled(bool enabled,
+                                           const char* blockedReason);
+
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */
 
 #ifdef __cplusplus

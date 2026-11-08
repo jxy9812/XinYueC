@@ -432,7 +432,7 @@ static bool spinbox_buttonRect(const XSpinBox* self, XRect* out)
     int h = XWidget_height((XWidget*)self);
     if (w <= 2 || h <= 2) return false;
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         XStyleOption opt;
         XRect up;
         XStyleOption_init(&opt, XStyleCC_SpinBox);
@@ -442,7 +442,7 @@ static bool spinbox_buttonRect(const XSpinBox* self, XRect* out)
         opt.m_spinFrame = self->m_base.m_frame;
         opt.m_spinSymbols = XAbstractSpinBox_buttonSymbols(
             (XAbstractSpinBox*)self);
-        up = XStyle_subControlRect(XStyle_defaultStyle(),
+        up = XStyle_subControlRect(XWidget_style((const XWidget*)self),
                                    XStyleCC_SpinBox, &opt,
                                    XStyleSC_SpinBoxUp, (XWidget*)self);
         if (up.width > 0 && up.height > 0) {
@@ -543,9 +543,9 @@ static void VXSpinBox_paintEvent(XWidget* self, XEvent* event)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
 
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：面板 + 上/下按钮走 CC_SpinBox。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStyleCC_SpinBox);
         opt.m_rect = r;
@@ -1025,8 +1025,8 @@ static XSize spinbox_computeSizeHint(const XSpinBox* self)
         /* 步进按钮区宽（上下箭头列）+ 边框留白：与绘制路径同量级。 */
         XStyleOption opt;
         XStyleOption_init(&opt, XStyleCT_SpinBox);
-        if (XStyle_defaultStyle()) {
-            frame = XStyle_pixelMetric(XStyle_defaultStyle(),
+        if (XWidget_style((const XWidget*)self)) {
+            frame = XStyle_pixelMetric(XWidget_style((const XWidget*)self),
                                        XStylePM_SpinBoxFrameWidth, &opt);
         }
         if (frame <= 0) frame = 1;

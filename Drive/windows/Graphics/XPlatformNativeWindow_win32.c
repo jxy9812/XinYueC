@@ -650,7 +650,16 @@ static DWORD xpwn_windowExStyle(const XWindow* window);
 static DWORD xpwn_windowStyle(const XWindow* window)
 {
     DWORD style = WS_OVERLAPPEDWINDOW;
-    if (window && XWindow_type(window) == XWindowType_Popup)
+    /* 瞬态弹层族（与 posix 后端创建期的 override-redirect 判定同族：
+       Popup/ToolTip/SplashScreen）：原生样式 WS_POPUP 无边框，绕过原生
+       装饰与摆放。此前 Win32 端漏配 ToolTip——XToolTip 已显式设
+       XWindowType_ToolTip（X11 端正常，落 _NET_WM_WINDOW_TYPE_TOOLTIP），
+       Windows 端却落到 WS_OVERLAPPEDWINDOW→提示弹层带整条标题栏（最小/
+       最大化/关闭钮）与厚边框上屏。对标 Qt::ToolTip（QWindowsWindow::
+       setWindow：Tooltip/Splash 同走 WS_POPUP）。 */
+    if (window && (XWindow_type(window) == XWindowType_Popup ||
+                   XWindow_type(window) == XWindowType_ToolTip ||
+                   XWindow_type(window) == XWindowType_SplashScreen))
         return WS_POPUP;
     /* CSD 激活（框架自绘标题栏接管，标记经 XWindow_setCsdFrameSuppressed
      * 置位）时按无边框组装：WS_POPUP 去除 WS_CAPTION/WS_THICKFRAME，
@@ -992,8 +1001,10 @@ static DWORD xpwn_windowExStyle(const XWindow* window)
     exStyle = cached ? WS_EX_COMPOSITED : 0;
     /* 对标 Qt::Tool（QWidgetWindow 工具窗旗标映射）：工具窗口不进任务
        栏/Alt-Tab，标题条为细条仅含关闭钮（qdockwidget.cpp:1203 浮动
-       停靠面板走此形态）。 */
-    if (window && XWindow_type(window) == XWindowType_Tool)
+       停靠面板走此形态）。ToolTip 同族：提示弹层同样不进任务栏/
+       Alt-Tab（WS_POPUP 分支已无标题，此位补齐 Qt ToolTip 语义）。 */
+    if (window && (XWindow_type(window) == XWindowType_Tool ||
+                   XWindow_type(window) == XWindowType_ToolTip))
         exStyle |= WS_EX_TOOLWINDOW;
     return exStyle;
 }

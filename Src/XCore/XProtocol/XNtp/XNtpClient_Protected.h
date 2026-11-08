@@ -32,6 +32,8 @@ struct XNtpClientPrivate {
     XHostAddress m_serverAddr;     /**< 已解析的服务器地址（最近一次成功解析）。 */
     uint16_t m_serverPort;         /**< 服务器端口（默认 XNTP_DEFAULT_PORT）。 */
     bool m_addrResolved;           /**< 服务器地址是否已成功解析。 */
+    uint8_t m_socketFamily;        /**< 当前 m_socket 的地址族（XHostAddress_NetworkLayerProtocol；
+                                     *   0 表示尚未建套接字）。换服务器族别不同须重建套接字。 */
 
     XNtpTimestamp m_t1;            /**< 本次请求的 T1（发出时刻，用于回显比对）。 */
     int64_t m_t1WallMs;            /**< T1 的墙钟毫秒（本机口径，算 offset 用）。 */

@@ -32,7 +32,12 @@ class PageContext(object):
         self.model = bridge.model
 
     def is_root(self):
-        return self.bridge.role >= proto.ROLE_ADMIN
+        """是否持有设备控制权限（操作者/管理员；角色值不单调故查表）。"""
+        return self.bridge.can(proto.PERM_DEVICE_CONTROL)
+
+    def is_admin(self):
+        """是否持有管理面权限（账户/服务端配置；仅管理员）。"""
+        return self.bridge.can(proto.PERM_ACCOUNT_ADMIN)
 
     def is_auto(self):
         return self.model.is_auto()
@@ -44,7 +49,7 @@ class PageContext(object):
         if self.model.is_auto():
             return "自动运行中：远程控制已被禁用"
         if not self.is_root():
-            return "权限不足：控制需要 root 账户"
+            return "权限不足：控制需要操作者或管理员账户"
         return ""
 
 

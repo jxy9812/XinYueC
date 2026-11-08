@@ -21,6 +21,7 @@ from . import autocontrol
 from . import bson
 from . import buttons
 from . import devices
+from . import permissions
 from . import store
 from . import valves
 from . import proto
@@ -888,6 +889,15 @@ class App(object):
         stats["dbPath"] = self.store.db_path or ""
         return stats
 
+    def _config_login_doc(self):
+        """登录/账户策略快照（GET 应答用；与 C 侧 login 节同键同义）。"""
+        c = self.cfg
+        return {
+            proto.CFGK_LOGIN_ALLOW_ANON: bool(c.login_allow_anonymous),
+            proto.CFGK_LOGIN_ALLOW_CONCUR: bool(c.login_allow_concurrent),
+            proto.CFGK_LOGIN_MAX_SESSIONS: int(c.login_max_sessions),
+        }
+
     def _cfg_set_collect_key(self, key, value):
         """写一个 collect 键进 cfg；返回 (值有变化, 影响开关)。
 
@@ -982,11 +992,37 @@ class App(object):
             return changed
         raise ValueError("未知落盘配置键：%s" % key)
 
+    def _cfg_set_login_key(self, key, value):
+        """写一个 login 键进 cfg；返回是否有变化（2026-11-08）。"""
+        c = self.cfg
+        if key == proto.CFGK_LOGIN_ALLOW_ANON:
+            if not isinstance(value, bool):
+                raise ValueError("loginAllowAnonymous 需要 bool")
+            changed = c.login_allow_anonymous != value
+            c.login_allow_anonymous = value
+            return changed
+        if key == proto.CFGK_LOGIN_ALLOW_CONCUR:
+            if not isinstance(value, bool):
+                raise ValueError("loginAllowConcurrent 需要 bool")
+            changed = c.login_allow_concurrent != value
+            c.login_allow_concurrent = value
+            return changed
+        if key == proto.CFGK_LOGIN_MAX_SESSIONS:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("loginMaxSessions 需要 int（0 = 不限）")
+            n = max(proto.CFG_LOGIN_MAX_SESSIONS_MIN,
+                    min(proto.CFG_LOGIN_MAX_SESSIONS_MAX, int(value)))
+            changed = c.login_max_sessions != n
+            c.login_max_sessions = n
+            return changed
+        raise ValueError("未知登录策略键：%s" % key)
+
     async def _h_config_get(self, session, request_id, msg_code, _payload):
         """配置快照（无需角色：设置页只读回显不涉密）。"""
         await self._reply(session, request_id, msg_code, True, extra={
             "collect": self._config_collect_doc(),
             "storage": self._config_storage_doc(),
+            "login": self._config_login_doc(),
             "storageDbPath": self.store.db_path or "",
             "storageStats": self._storage_stats_doc(),
         })
@@ -997,9 +1033,9 @@ class App(object):
         [为什么 root 但不看自动模式闸] 改配置不动任何输出点，不属"控制"；
         自动运行中允许调采集频率/开关（监视不受模式限制）。
         """
-        if session.role() < proto.ROLE_CONTROL:
+        if not permissions.can(session, proto.PERM_ACCOUNT_ADMIN):
             await self._reply(session, request_id, msg_code, False,
-                              "权限不足：修改服务端配置需要 root 账户")
+                              permissions.denied_text(proto.PERM_ACCOUNT_ADMIN))
             return
         try:
             doc = bson.decode(payload)
@@ -1050,9 +1086,33 @@ class App(object):
                 "storage": self._config_storage_doc(),
                 "storageDbPath": self.store.db_path or "",
                 "storageStats": self._storage_stats_doc()})
+        elif section == "login":
+            # 登录/账户策略节（2026-11-08）。写入立即对**下一次登录**生效
+            # 并落盘 cfg；存量会话不受影响（关并发不会踢人）。
+            keys = [k for k in doc if k != "section"]
+            if not keys:
+                await self._reply(session, request_id, msg_code, False,
+                                  "载荷里没有配置键")
+                return
+            try:
+                for key in keys:
+                    self._cfg_set_login_key(key, doc[key])
+            except ValueError as exc:
+                await self._reply(session, request_id, msg_code, False,
+                                  str(exc))
+                return
+            self.cfg.save()
+            c = self.cfg
+            self._log("远程配置：登录策略已更新（匿名=%d 同账并发=%d 上限=%d）"
+                      % (1 if c.login_allow_anonymous else 0,
+                         1 if c.login_allow_concurrent else 0,
+                         int(c.login_max_sessions)))
+            await self._reply(session, request_id, msg_code, True, extra={
+                "login": self._config_login_doc()})
         else:
             await self._reply(session, request_id, msg_code, False,
-                              "未知配置节：%r（collect / storage）" % section)
+                              "未知配置节：%r（collect / storage / login）"
+                              % section)
 
     # ==================================================================
     #                       周期 tick（推送 + 健康 + 看门狗）
@@ -1890,11 +1950,15 @@ class App(object):
     #                        登录策略（root 单会话）
     # ==================================================================
     def policy_blocks_login(self, user_name, session):
-        """root 只允许一个在线会话（防并行修改）。
+        """登录策略闸（2026-11-08 起可由远端设置里的 login 节调整）。
 
-        admin（只读）不限——多人围观无风险。极小竞态窗（两个 root 同时
-        处于认证中）不设防：认证在毫秒级完成。
+        - login_allow_concurrent=True：同账可多端并发（压测/多端围观）；
+        - 否则沿用「root 单会话」保护（防并行修改）；
+        - admin（只读）不限——多人围观无风险。
+        极小竞态窗（两个 root 同时处于认证中）不设防：认证在毫秒级完成。
         """
+        if getattr(self.cfg, "login_allow_concurrent", False):
+            return False
         if user_name != proto.DEFAULT_ROOT_NAME:
             return False
         if self.server is None:
@@ -1994,10 +2058,11 @@ class App(object):
                     if estop is False
                     else "急停状态未知（数字量模块离线）：禁止启动/调速")
                 return
-        # 2) 角色门禁
-        if session.role() < proto.ROLE_CONTROL:
+        # 2) 角色门禁（设备控制：操作者/管理员）
+        if not permissions.can(session, proto.PERM_DEVICE_CONTROL):
             await self._reply(session, request_id, msg_code, False,
-                              "权限不足：控制命令需要 root 账户")
+                              permissions.denied_text(
+                                  proto.PERM_DEVICE_CONTROL))
             return
         # 3) 载荷解析
         try:
@@ -2038,6 +2103,18 @@ class App(object):
                 await self._reply(
                     session, request_id, msg_code, False,
                     "变频器处于停机状态，不能下发给定（请先启动后再调速）")
+                return
+        # 5c) **运行中禁止点动**（2026-11-06 口径）：电机在正常启停语义下
+        # 运行时，点动会瞬间换向/抢命令字，物理上不成立 ⇒ 拒绝。例外：
+        # **点动保持中**（watch.active）放行——点动手持每 200ms 重发心跳，
+        # 此时设备必然"运行中"，把心跳拦掉会被 600ms 看门狗误停机。
+        # 与 C 服务端 hsfAppHandleVfdControl 同口径同文案。
+        if op == proto.OP_JOG and self.vfd.is_running():
+            watch = self._jog_slot()
+            if not watch.active:
+                await self._reply(
+                    session, request_id, msg_code, False,
+                    "变频器运行中，禁止点动（请先停机再点动）")
                 return
         reverse = bool(doc.get(proto.KEY_REV, False))
         hz = float(doc.get(proto.KEY_HZ, 0.0) or 0.0)
@@ -2136,16 +2213,17 @@ class App(object):
     async def _h_digital_control(self, session, request_id, msg_code, payload):
         """DO 控制：载荷 单点 {"dev","do","on"} 或 整组 {"dev","mask"}。
 
-        [闸门与变频器同口径] 自动模式拒绝 → 需 root → 解析 → 设备就绪。
+        [闸门与变频器同口径] 自动模式拒绝 → 需设备控制权限 → 解析 → 设备就绪。
         DO 是驱动现场执行器的输出，安全等级与控制变频器相同，不另开口子。
         """
         if self.is_auto():
             await self._reply(session, request_id, msg_code, False,
                               "自动运行中：远程控制已被禁用（现场切换到手动后可用）")
             return
-        if session.role() < proto.ROLE_CONTROL:
+        if not permissions.can(session, proto.PERM_DEVICE_CONTROL):
             await self._reply(session, request_id, msg_code, False,
-                              "权限不足：控制命令需要 root 账户")
+                              permissions.denied_text(
+                                  proto.PERM_DEVICE_CONTROL))
             return
         try:
             doc = bson.decode(payload)
@@ -2194,7 +2272,7 @@ class App(object):
     async def _h_valve_control(self, session, request_id, msg_code, payload):
         """电磁阀手动开关：载荷 {"index":int, "on":bool}。
 
-        [闸门与变频器/DO 同口径] 自动模式拒绝 → 需 root → 解析 → 就绪。
+        [闸门与变频器/DO 同口径] 自动模式拒绝 → 需设备控制权限 → 解析 → 就绪。
         电磁阀是执行器，自动模式下由现场逻辑驱动，远程只能看不能动。
         """
         if self.valve_bank is None:
@@ -2205,9 +2283,10 @@ class App(object):
             await self._reply(session, request_id, msg_code, False,
                               "自动运行中：远程控制已被禁用（现场切换到手动后可用）")
             return
-        if session.role() < proto.ROLE_CONTROL:
+        if not permissions.can(session, proto.PERM_DEVICE_CONTROL):
             await self._reply(session, request_id, msg_code, False,
-                              "权限不足：控制命令需要 root 账户")
+                              permissions.denied_text(
+                                  proto.PERM_DEVICE_CONTROL))
             return
         try:
             doc = bson.decode(payload)
@@ -2297,7 +2376,7 @@ class App(object):
     async def _h_pump_control(self, session, request_id, msg_code, payload):
         """进水泵开关：载荷 {"index":int, "on":bool}。
 
-        [闸门与电磁阀/变频器同口径] 自动模式拒绝 → 需 root → 解析 → 就绪。
+        [闸门与电磁阀/变频器同口径] 自动模式拒绝 → 需设备控制权限 → 解析 → 就绪。
         泵是执行器，自动模式下由现场逻辑驱动，远程只能看不能动。
         """
         if self.pump_bank is None:
@@ -2308,9 +2387,10 @@ class App(object):
             await self._reply(session, request_id, msg_code, False,
                               "自动运行中：远程控制已被禁用（现场切换到手动后可用）")
             return
-        if session.role() < proto.ROLE_CONTROL:
+        if not permissions.can(session, proto.PERM_DEVICE_CONTROL):
             await self._reply(session, request_id, msg_code, False,
-                              "权限不足：控制命令需要 root 账户")
+                              permissions.denied_text(
+                                  proto.PERM_DEVICE_CONTROL))
             return
         try:
             doc = bson.decode(payload)
@@ -2369,9 +2449,9 @@ class App(object):
                                      proto.KEY_AUTO_RUNNING:
                                          self.is_auto_running()})
             return
-        if session.role() < proto.ROLE_CONTROL:
+        if not permissions.can(session, proto.PERM_MODE_SWITCH):
             await self._reply(session, request_id, msg_code, False,
-                              "权限不足：切换运行模式需要 root 账户")
+                              permissions.denied_text(proto.PERM_MODE_SWITCH))
             return
         if not self.set_run_mode(new_mode):
             await self._reply(session, request_id, msg_code, False, "非法模式值")
@@ -2402,10 +2482,12 @@ class App(object):
             op=3 急停（停控制器 + 全停设备 + **锁存**）
             op=4 复位（解除锁存，回停止态，**不启动**）
         """
-        # 1) 角色门禁（停机也要求 root：自动运行状态属于运行决策，不开放只读）
-        if session.role() < proto.ROLE_CONTROL:
+        # 1) 权限门禁（停机也要求自动控制权限：自动运行状态属于运行决策，
+        #    操作者只能控单台设备，不开放自动运行）
+        if not permissions.can(session, proto.PERM_AUTO_CONTROL):
             await self._reply(session, request_id, msg_code, False,
-                              "权限不足：自动运行控制需要 root 账户")
+                              permissions.denied_text(
+                                  proto.PERM_AUTO_CONTROL))
             return
         ctl = getattr(self, "auto_controller", None)
         if ctl is None:
@@ -2472,8 +2554,9 @@ class App(object):
     async def _h_history_page(self, session, request_id, msg_code, payload):
         """分页读历史：{"offset","limit","beforeTs"?,"loTs"?,"hiTs"?}。
 
-        [权限] 只读数据，**不需要 root**（与 CONFIG_GET 同口径）：看历史
-        不是控制面动作，普通账户就该能查。
+        [权限] 浏览（缺省）属只读面；**导出/下载**（载荷 export=true）需
+        Download 权限（普通用户+）。与 C 侧同口径：导出意图必须上服务端
+        验权，客户端灰按钮拦不住直接发帧的人。
 
         [窗口锚定 beforeTs] 客户端首屏把自己的"现在"发上来，翻页时原样
         回传，服务端据此把整段分页钉在同一批数据上。否则库在持续入库
@@ -2492,6 +2575,12 @@ class App(object):
         except ValueError as exc:
             await self._reply(session, request_id, msg_code, False,
                               "分页载荷解析失败：%s" % exc)
+            return
+        # [下载权限闸] 导出意图必须持有 Download；普通浏览不受此限。
+        if doc.get(proto.HIST_KEY_EXPORT) and not permissions.can(
+                session, proto.PERM_DOWNLOAD):
+            await self._reply(session, request_id, msg_code, False,
+                              permissions.denied_text(proto.PERM_DOWNLOAD))
             return
 
         def _int(key, default=None):

@@ -151,6 +151,12 @@ XVariant* XSqlRecord_value(const XSqlRecord* record, int index)
     return field ? XSqlField_value(field) : XVariant_create_null();
 }
 
+const XVariant* XSqlRecord_value_const(const XSqlRecord* record, int index)
+{
+    const XSqlField* field = XSqlRecord_field_const(record, index);
+    return field ? XSqlField_value_const(field) : NULL;
+}
+
 XVariant* XSqlRecord_value_utf8(const XSqlRecord* record, const char* name)
 {
     return XSqlRecord_value(record, XSqlRecord_indexOf_utf8(record, name));

@@ -108,7 +108,10 @@ static bool remoteCommandError(void* userData, int* outSeq,
 static bool remoteControlEnabled(void* userData)
 {
     (void)userData;
-    return s_vr.m_gateOpen;
+    /* [权限闸镜像] 本地闸开 + 当前角色持有 DeviceControl 才给开：
+     * 匿名/普通用户看到的按钮直接是灰的（不点也知道不行），
+     * 与服务端 XPermPolicy 闸同口径。自动模式/未连接由页面另锁。 */
+    return s_vr.m_gateOpen && HsfLinkClient_can(HSF_PERM_DEVICE_CONTROL);
 }
 
 static bool remoteSetControlEnabled(void* userData, bool enabled)

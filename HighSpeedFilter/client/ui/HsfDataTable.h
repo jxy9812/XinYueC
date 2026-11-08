@@ -45,6 +45,14 @@ XWidget* HsfDataTablePage_create(XWidget* parent,
  */
 void HsfDataTablePage_adapt(XWidget* page, bool compact);
 
+/**
+ * @brief 按百分比缩放本页标题与表格字体（本地设置·按页字号）。
+ * @param page 页根（HsfDataTablePage_create 返回值）。
+ * @param pct 百分比（50–200；100=不改）。
+ * @note  仅建页后调用一次；表格行高仍由调用方给定。
+ */
+void HsfDataTablePage_applyFont(XWidget* page, int pct);
+
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON && XLAYOUT_ON && XLAYOUT_BOX_ON */
 
 #ifdef __cplusplus

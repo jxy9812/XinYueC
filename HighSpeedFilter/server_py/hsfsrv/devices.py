@@ -181,6 +181,11 @@ class VfdM512(object):
         #: 情况下，光靠"频率在下降"会漏判一拍（实测首拍判成"加速中"）。
         #: 有这个标记就能从发出停止命令那一刻起直接判减速。
         self._stop_requested = False
+        #: 最近一次 START/JOG 下发的方向（None=无在途方向命令）。
+        #: [换向减速判据用] 状态字过零才翻向，这段"命令方向 ≠ 状态字方向"
+        #: 的窗口就是换向减速——差值判据会把它误判成"加速中"（设定频率
+        #: 镜像仍是给定值），见 _derive_phase。
+        self._cmd_reverse = None
         #: 额定点（铭牌）：用于 Hz ↔ rpm 线性换算。
         self.rated_rpm = self.DEFAULT_RATED_RPM
         self.rated_hz = self.DEFAULT_RATED_HZ
@@ -222,6 +227,12 @@ class VfdM512(object):
         更贴近现场观感（否则数值会闪）。
         """
         master = self._master_get()
+        # [虚拟模型墙钟推进] 虚拟 master 的变频器模型需要稳定节拍（ACC/DEC
+        # 的"秒"要真秒）：本轮 poll 随后会发 N 次总线事务，挂事务上的推进
+        # 会快 N 倍。真实 master 没有 advance_ms（鸭子类型，getattr 跳过）。
+        advance_ms = getattr(master, "advance_ms", None)
+        if advance_ms is not None:
+            advance_ms(now_ms)
         try:
             # [必须逐次传 unit] 变频器与温湿度共享同一个 RtuMaster，
             # 谁是目标从站由这里指定（master 不知道当前在跟谁说话）。
@@ -386,6 +397,14 @@ class VfdM512(object):
         if self._stop_requested and (out_hz is None
                                      or out_hz <= self.PHASE_DEADBAND_HZ):
             self._stop_requested = False      # 停到位，退出停机窗口
+
+        # [运行中换向减速] 命令方向 ≠ 状态字方向（状态字过零才翻）：输出
+        # 在按减速时间降向 0，但设定频率镜像仍是给定——上面的差值判据会
+        # 把这段误判成"加速中"（2026-11-06 换向口径实测）。命令方向与状态
+        # 字方向不一致 = 换向减速中；过零翻向后两者一致，交回差值判据。
+        if (running and self._cmd_reverse is not None
+                and self._cmd_reverse != bool(self.raw.get("_reverse", False))):
+            return proto.RUN_DECELERATING
 
         if not running:
             if out_hz is not None and out_hz > self.PHASE_DEADBAND_HZ:
@@ -581,24 +600,29 @@ class VfdM512(object):
 
         if op == proto.OP_START:
             self._stop_requested = False      # 重新启动，退出停机窗口
+            self._cmd_reverse = bool(reverse)  # 记命令方向（换向减速判据）
             if given_hz > 0:
                 await self.set_frequency(given_hz)
             await self.send_command(self.CMD_RUN_REVERSE if reverse
                                     else self.CMD_RUN_FORWARD)
         elif op == proto.OP_STOP:
             self._stop_requested = True
+            self._cmd_reverse = None          # 停止覆盖换向：方向命令作废
             await self.send_command(self.CMD_DECEL_STOP)
         elif op == proto.OP_FREE_STOP:
             # 自由停车是瞬断，没有"停机过程"，不需要置位
+            self._cmd_reverse = None
             await self.send_command(self.CMD_FREE_STOP)
         elif op == proto.OP_QUICK_STOP:
             # 本机无独立快停命令字：用减速停机（现场口径，见文档）
             self._stop_requested = True
+            self._cmd_reverse = None
             await self.send_command(self.CMD_DECEL_STOP)
         elif op == proto.OP_RESET_FAULT:
             await self.send_command(self.CMD_FAULT_RESET)
         elif op == proto.OP_JOG:
             # 点动同样先写给定：否则按住点动会按变频器里上一次的给定跑。
+            self._cmd_reverse = bool(reverse)
             if given_hz > 0:
                 await self.set_frequency(given_hz)
             await self.send_command(self.CMD_JOG_REVERSE if reverse

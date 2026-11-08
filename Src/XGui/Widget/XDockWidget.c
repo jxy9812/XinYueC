@@ -767,10 +767,10 @@ static void VX_dockWidget_paintEvent(XWidget* self, XEvent* event)
     /* 复扫 R-83：自定义标题条接管呈现时，默认标题带不再由本控件绘制
      * （对标 Qt QDockWidgetLayout——自定义条即标题区的唯一呈现者），
      * 该区域交由自定义条子控件自绘。 */
-    if (XStyle_defaultStyle() != NULL && !xdw_titleBar(dock)) {
+    if (XWidget_style((const XWidget*)self) != NULL && !xdw_titleBar(dock)) {
         /* Fusion/公共风格接管：标题栏走 CE_DockWidgetTitle
          * （highlight 标题条 + 标题文本 + 底部分隔线）。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStyleCE_DockWidgetTitle);
         XRect_init(&opt.m_rect, 0, 0, w, 20);

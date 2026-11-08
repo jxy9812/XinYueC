@@ -91,6 +91,15 @@ void HsfMonitorAnalog_setCount(int count);
 int HsfMonitorAnalog_count(void);
 
 /**
+ * @brief      离线演示（--no-login）：模型为空时灌 12 点演示数据。
+ * @details    仅由 HsfUi 的显式离线演示路径（--no-login）调用，**登录
+ *             路径不调用**——现场真实点位绝不能被假数据顶替。登录后
+ *             服务端快照 HsfMonitorAnalog_setCount 会整体覆盖演示点。
+ *             模型已有数据时本函数为空操作（幂等）。
+ */
+void HsfMonitorAnalog_seedDemoForOffline(void);
+
+/**
  * @brief      一步写双值（常用口：业务层一次拿到原始+转换时用）。
  * @param index 点位下标；越界忽略。
  * @param raw   原始值（整型口径：ADC 码值/寄存器原始字）。

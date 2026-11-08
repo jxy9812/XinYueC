@@ -994,6 +994,28 @@ XClassDelete((XClass*)text);   /* 漏了这行就是泄漏 */
 - 需要真正独立的副本时用 `XStrdup`（独立缓冲），或立刻把内容取走（`XString_toUtf8` + `XStrdup`）；
 - 写这类代码前先读一遍本节的借用/拷贝二分表，别靠函数名猜。
 
+**已知高频踩坑清单（2026-11-08 实测，全部按"漏掉就泄漏"计）**
+
+| 接口 | 返回物 | 实测漏掉的代价 |
+|---|---|---|
+| `XSqlQuery_record(q)` | **新记录**所有权（`XSqlQuery.h` 明写"调用者使用 XClassDelete 释放"） | 单字段记录（COUNT/MIN/MAX）≈1KB/次；18 字段行记录 ≈7.5KB/行 |
+| `XSqlRecord_value(rec, i)` | `XVariant_create_copy` 堆副本 | 整表遍历 20 行 × 18 列 = 360 副本 ≈153KB/次 |
+| `XSqlRecord_value_const(rec, i)`（2026-11-08 新增） | **借用**内部字段地址 | 禁止释放；整表遍历**必须**用这个，零分配 |
+| `XBsonDocument_insert_keyUtf8_document(doc,k,sub)` | **深拷贝**插入，`sub` 仍归调用方 | ≈13,580 字节/次 |
+
+另：`XBsonDocument_insert_keyUtf8_array_move` 只转移**内容**，源数组/值对象的
+**壳**仍要 `XClassDelete`——与「`insert*` 三态」一致，别把 move 当接管。
+
+**延迟删除不在这里重造（2026-11-08 裁定）**
+
+`XObject_deleteLater` 的投递语义与 Qt 6.8 `qcoreapplication.cpp:1904-1912`
+逐条同构（详见仓库根 `AGENTS.md` 的「延迟删除已对齐 Qt」一节）。**禁止**为了
+"确保对象被释放"而自造延迟队列/待释放槽——本轮曾在 XLinkServer/XLinkClient
+各造过一套（约 90 行），复核后确认投递机制本身没问题，真因是调用点取了返回
+副本没释放，两套机件已全部撤除。
+
+排查顺序固定为：**先核所有权 → 再查是否缺 `close/abort` → 最后才怀疑投递机制**。
+
 ### 键查询接口的所有权契约（`value_keyUtf8` 借用 / `value_copy_keyUtf8` 拷贝）
 
 > 2026-11-05 裁定。这是对上一节 `_const` 通用规则的**显式例外**：键查询是高频

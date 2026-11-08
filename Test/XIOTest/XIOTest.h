@@ -18,6 +18,11 @@ extern "C" {
 	   取源地址返回垃圾数据三处缺陷建立的红线测试。 */
 	int  XUdpDirectedTest_run(void);
 	void XUdpDirectedTest(void);
+	/* UDP bindAny 地址族选择 / IPv4-only 回退回归（--test udp-bind-family）：
+	   双栈优先保持 + XNET_DISABLE_IPV6=1 强制回退 IPv4-Any，并验证回退
+	   后的套接字可真实收发。返回失败用例数（0=全通过）。 */
+	int  XUdpBindFamilyTest_run(void);
+	void XUdpBindFamilyTest(void);
 	void XTestMenu_XTcpSocketTest(XTestMenu* root);
 	void XTestMenu_XTcpServerTest(XTestMenu* root);
 

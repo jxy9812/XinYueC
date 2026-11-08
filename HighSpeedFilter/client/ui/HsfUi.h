@@ -15,6 +15,7 @@ extern "C" {
 #endif
 
 #include "CXinYueConfig.h"
+#include "XWidget.h"   /* 页根类型（字号重放接口） */
 #include <stdbool.h>
 
 /**
@@ -51,6 +52,30 @@ int HsfUi_start(const HsfUiOptions* opts);
  *             调用方负责（Display/Compact 键），启动恢复在主窗装配内。
  */
 void HsfUi_setForceCompact(bool on);
+
+/**
+ * @brief      页面字体缩放折算（本地设置 FontScale/Page<N>，50–200%）。
+ * @param page 页索引（HsfPages 枚举值；越界按 100% 原样返回）。
+ * @param px   该页基准像素值（字号或与字号联动的高度）。
+ * @return     折算后的像素值（四舍五入；Page<N> 未配置时=px 原值）。
+ * @note       各页在 create/adapt 里把写死的字号/高度过一遍本函数即可
+ *             实现按页缩放（本地设置页「字体大小」区写 FontScale/Page<N>，
+ *             N=HsfPages 页序；改动在下次建页生效，与刷新周期同口径）。
+ */
+int hsfUi_pageFontPx(int page, int px);
+
+/** @brief 页字体百分比（重新读 FontScale/PageN；50–200）。 */
+int hsfUi_pageFontPct(int page);
+
+/** @brief 每页字号重放回调（页自查重设已知标签的字号）。 */
+typedef void (*HsfPageFontApplyFn)(XWidget* page, int pct);
+
+/** @brief 登记某页的字号重放函数与页根（建页后调用）。 */
+void hsfUi_registerPageFontApplier(int page, XWidget* root,
+                                   HsfPageFontApplyFn fn);
+
+/** @brief 字号设置变更后实时重放该页（不重启客户端）。 */
+void hsfUi_reapplyPageFonts(int page);
 
 #ifdef __cplusplus
 }

@@ -19,6 +19,7 @@
 #include "XIoAnalogPoint.h"
 #include "XVariant.h"
 #include "XPrintf.h"
+#include "XDateTime.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -153,6 +154,14 @@ static bool analogMountCore(HsfServerIoAnalog* st, XModbusClient* client,
     st->m_channelCount = channels;
     st->m_shuntOhm = shunt;
     st->m_mounted = true;
+    /* [注入链路：挂自愈看门狗] 真机装配（mount 建 TCP 客户端）不置
+     * m_injected，行为与历史一致。 */
+    if (st->m_injected) {
+        HsfServerBusHeal_arm(&st->m_heal, client, pollMs,
+                             (uint64_t)XDateTime_currentMSecsSinceEpoch());
+        XPrintf("HsfServerIoAnalog: 注入链路自愈已启用（失联重连 + 数据停滞"
+                "重挂 %dms 定时器）\n", pollMs);
+    }
     return true;
 
 fail:
@@ -204,6 +213,9 @@ bool HsfServerIoAnalog_mountWithClient(HsfServerIoAnalog* st,
     if (channels > HSF_ANALOG_MAX_CHANNELS) channels = HSF_ANALOG_MAX_CHANNELS;
     if (shunt <= 0) shunt = 1;
 
+    /* [注入链路标记] 客户端由调用方给（模拟设备/单测），底层可能是没有
+     * 任何重连实现的虚拟客户端 ⇒ 装配尾部要挂服务端自愈看门狗。 */
+    st->m_injected = true;
     if (!analogMountCore(st, (XModbusClient*)client, unitId, channels, shunt,
                          pollMs)) {
         return false;
@@ -216,6 +228,9 @@ bool HsfServerIoAnalog_mountWithClient(HsfServerIoAnalog* st,
 void HsfServerIoAnalog_unmount(HsfServerIoAnalog* st)
 {
     if (!st) return;
+    /* 看门狗先撤：下面会把 Hub/客户端整体释放。 */
+    HsfServerBusHeal_disarm(&st->m_heal);
+    st->m_injected = false;
     if (st->m_hub) {
         XModbusHub_stopPolling(st->m_hub);
         XModbusHub_disconnectAll(st->m_hub);
@@ -276,4 +291,19 @@ XModbusHub* HsfServerIoAnalog_hub(const HsfServerIoAnalog* st)
 bool HsfServerIoAnalog_isMounted(const HsfServerIoAnalog* st)
 {
     return st && st->m_mounted;
+}
+
+/* ==================== 注入链路自愈 ==================== */
+
+/**
+ * @brief 跑一拍自愈检查（与 485 两路/数字量站同一套策略）。
+ * @details [为什么需要] 模拟链路注入的 XModbusVirtualClient 没有重连实现，
+ *          设备一旦被判失联或轮询定时器被误杀，8 路模拟量就永久陈旧
+ *          （现场同款故障已见于温湿度/流量计/阀反馈）。真机装配不启用。
+ */
+bool HsfServerIoAnalog_watchdog(HsfServerIoAnalog* st, uint64_t nowMs)
+{
+    if (!st || !st->m_mounted || !st->m_hub || !st->m_injected) return false;
+    return HsfServerBusHeal_step(&st->m_heal, st->m_hub, st->m_devId,
+                                 st->m_client, "模拟量站", nowMs);
 }

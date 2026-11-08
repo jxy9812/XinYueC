@@ -66,7 +66,9 @@ static void core_titleChangedSlot(XObject* receiver, XVarList* args)
         ++g_core_sig.titleChanged;
         g_core_sig.titleText[0] = '\0';
         if (title) {
-            const char* utf8 = XString_c_str(title);
+            /* 项目规约：XString 跨接口一律取 UTF-8（XString_c_str 是本地编码，
+             * 中文 Windows 下与 UTF-8 字面量比对会失败）。 */
+            const char* utf8 = XString_toUtf8(title);
             size_t i;
             if (utf8) {
                 for (i = 0; i + 1 < sizeof(g_core_sig.titleText) && utf8[i];
@@ -174,9 +176,9 @@ int xapi_core_run(void)
     {
         XPoint p;
         XPoint_init(&p, 7, 8);
-        XWidget_movePoint(child, &p);
+        XWidget_move_2(child, &p);
         XAPI_EXPECT(XWidget_x(child) == 7 && XWidget_y(child) == 8,
-                    "movePoint(QPoint) 值重载往返");
+                    "move_2(QPoint) 值重载往返");
     }
 
     /* ---- resize 保持位置（对标 QWidget::resize：仅尺寸变化）。 ---- */

@@ -597,6 +597,7 @@ typedef struct XDeviceNetworkWriteSlot {
     bool inUse;                             /**< 槽已被占用（含已完成待回收）。 */
     bool armed;                             /**< 内核仍持有该 OVERLAPPED。 */
     bool zombie;                            /**< 连接已拆，等 ABORTED 完成包收尾。 */
+    bool isUdp;                             /**< 本笔为数据报写（致命错误不判流关闭）。 */
     uint64_t armedMs;                       /**< 提交时刻（单调毫秒，看门狗用）。 */
     uint32_t ioGen;                         /**< 提交时的连接代次（判完成包是否属于当前连接）。 */
 } XDeviceNetworkWriteSlot;
@@ -650,6 +651,7 @@ typedef struct XDeviceNetworkContextWin32 {
     bool acceptReady;                       ///< AcceptEx 是否已成功完成（可消费）。
     volatile LONG pendingIocpOperations;    ///< 在途 IOCP 计数: 发起 + 完成两侧同步递减。
     volatile LONG deletePending;            ///< 拆除已挂起标记, 防重复拆除竞态。
+    bool closePosted;                      ///< 本代连接是否已投递过「连接已死」关闭事件（去重）。
 
     /* ---------------- 异步写槽池（多写并发 + 完成包丢失隔离） -------------- */
     XDeviceNetworkWriteSlot writeSlots[XNETWORK_WRITE_SLOT_COUNT];
@@ -722,6 +724,11 @@ static void releaseContext(XDeviceNetworkContextWin32* p)
 static bool w32_reapIocpCompletion(XDeviceNetworkContextWin32* p,
                                    XEventContext_IOCP* ctx);
 static bool w32_armRead(XDeviceNetworkContext* priv);
+/* 「连接已死」分类/收口：定义在写槽段（1400+），但完成包裁决（916+）
+ * 也要用，故前置声明。 */
+static bool w32_isFatalWriteError(int err);
+static void w32_postFatalClose(XDeviceNetworkContextWin32* p, int err,
+                               const char* where);
 
 /**
  * @brief 完成包出队回调（每笔操作都由 `trackSocketIocpOperation` 挂上）。
@@ -813,6 +820,10 @@ static void w32_newIoGeneration(XDeviceNetworkContextWin32* p)
 {
     if (!p) return;
     p->ioGeneration++;
+    /* 新连接代次：允许为这一代再次投递「连接已死」关闭事件。覆盖
+     * connect/bind/setDescriptor/ConnectLocal/socketDisconnect 全部换句柄
+     * 路径，保证重连后仍能正常判死，又不会让旧代的重复致命写错误刷屏。 */
+    p->closePosted = false;
 }
 
 /** @brief 当前 I/O 句柄（命名管道优先），用于 PEEK 复核等句柄级操作。 */
@@ -881,6 +892,7 @@ static void w32_releaseWriteSlot(XDeviceNetworkContextWin32* p,
     }
     slot->armed = false;
     slot->zombie = false;
+    slot->isUdp = false;
     slot->armedMs = 0;
     p->writePending = (p->writeSlotCount > 0);
 }
@@ -971,7 +983,10 @@ static bool w32_reapIocpCompletion(XDeviceNetworkContextWin32* p,
             slot->ready = false;
             slot->armed = false;
             p->readActiveSlot = -1;
-            w32_postSockClose(ctx->base.fd, p->base.m_owner);
+            /* 读失败与写失败共用「连接已死」去重收口：同一代连接只投递
+             * 一次关闭事件、只留一行日志（读写可能连报多次致命错误）。
+             * 读失败即连接死亡的直接证据，语义与原来直接投递一致。 */
+            w32_postFatalClose(p, (int)ctx->nativeError, "读完成");
             return false;
         }
 
@@ -1007,6 +1022,13 @@ static bool w32_reapIocpCompletion(XDeviceNetworkContextWin32* p,
         bool sameSocket = (slot->ioGen == p->ioGeneration);
         bool aborted = (!ctx->completed &&
                         ctx->nativeError == ERROR_OPERATION_ABORTED);
+        /* 异步写**完成包**也可能报致命错误（GQCS success=FALSE +
+         * 10054/64…），与同步 WSASend 提交失败同根：连接同样已死，必须
+         * 一并收口。判据须在 releaseWriteSlot 之前取 isUdp（release 会清
+         * 状态），且排除 ABORTED 与旧代迟到包。 */
+        bool fatal = (!ctx->completed && !aborted && sameSocket
+                      && !slot->isUdp
+                      && w32_isFatalWriteError((int)ctx->nativeError));
         size_t bytes = ctx->completed ? ctx->finishedBytes : 0;
 
         w32_releaseWriteSlot(p, index);
@@ -1018,6 +1040,15 @@ static bool w32_reapIocpCompletion(XDeviceNetworkContextWin32* p,
             return false;
         }
         if (!sameSocket) return false;
+
+        if (fatal) {
+            /* 连接已死：不下派 Write 事件（续发无意义），也不压入 0 字节
+             * 完成（连接马上由 socketDisconnect → resetWriteSlots 清账）。
+             * 槽已由 releaseWriteSlot 归还、在途计数由本回调的
+             * releaseContext 递减，二者配平。 */
+            w32_postFatalClose(p, (int)ctx->nativeError, "写完成");
+            return false;
+        }
 
         w32_pushWriteDone(p, bytes);
         return true;
@@ -1483,12 +1514,110 @@ static XDeviceNetworkWriteSlot* w32_allocWriteSlot(XDeviceNetworkContextWin32* p
     return NULL;
 }
 
-/** @brief 提交失败（不会有完成包）时就地回滚槽与在途计数。 */
-static void w32_rollbackWrite(XDeviceNetworkContextWin32* p, int index, int err)
+/**
+ * @brief 判别 WSASend/WriteFile 的**同步提交失败**是否意味着「连接已死」。
+ *
+ * @details 以框架层 `XAbstractNetIoRing_platformPeerReallyClosed`
+ *          （Drive/windows/Core/XNetIoRingWin32.c:791-805，PEEK 判真关闭的
+ *          实测口径，XLink 踢线用例验证过）为基线：RST / ABORT / 对端对象
+ *          消失 / 管道断裂这类错误一旦从写侧报出，该 SOCKET 不可能再恢复，
+ *          必须让 `XIODevice_isOpen` 及时变假、会话层退出 Ready 并重连；
+ *          否则（现状）`XIODevice_isOpen` 恒真，会话 `txFlush` 把
+ *          written<=0 当背压，128KB 发送队列囤满后所有 Publish 静默丢弃，
+ *          而客户端心跳仍到达 ⇒ 永远 Ready、界面永远卡在最后几帧。
+ *          在框架基线之上补齐写侧可达的不可恢复错误（10050/10052/10060/
+ *          10065）与命名管道专属错误（232/233）；这些码与 WSA 的 10000+
+ *          空间不重叠，不会误伤 TCP 判断。
+ *
+ *          反之 `WSAEWOULDBLOCK`（10035，发送缓冲满的瞬时背压）与
+ *          `WSA_IO_PENDING`/`ERROR_IO_PENDING`（997）**绝不判死**：997 已在
+ *          `startAsyncWrite` 里当成功返回（不会走到本函数），10035 时数据
+ *          必须原样留在 writeStash / ring buffer 等续发。未知错误一律保守
+ *          按「瞬时」处理，避免误杀正常链路与正常重连。
+ *
+ * @note 本函数只做**分类**，不改变任何槽/计数状态；UDP 是否允许判死由
+ *       调用方的 `fatalAllowed` 决定（对齐读完成错误分支「数据报错误不
+ *       等于流关闭」的既有语义）。
+ */
+static bool w32_isFatalWriteError(int err)
+{
+    switch (err) {
+    /* ---- Winsock：连接已死（ask 点名的 10053/10054/10058 在这里） ---- */
+    case WSAECONNABORTED:            /* 10053 软件导致连接中止 */
+    case WSAECONNRESET:              /* 10054 对端 RST（现场实测主因） */
+    case WSAENETDOWN:                /* 10050 网络子系统失效 */
+    case WSAENETRESET:               /* 10052 连接被重置 */
+    case WSAENOTCONN:                /* 10057 套接字未连接 */
+    case WSAESHUTDOWN:               /* 10058 已 shutdown 后仍发送 */
+    case WSAENOTSOCK:                /* 10038 句柄已不是套接字 */
+    case WSAETIMEDOUT:               /* 10060 连接超时 */
+    case WSAEHOSTUNREACH:            /* 10065 对端不可达（仅流路径，UDP 已被屏蔽） */
+    /* ---- Win32 / IOCP 内核对象错误（同步 WSASend 与 GQCS 都可能报） ---- */
+    case ERROR_NETNAME_DELETED:      /* 64   对端对象已消失（ask 点名） */
+    case ERROR_CONNECTION_ABORTED:   /* 1236 连接被中止 */
+    case ERROR_BROKEN_PIPE:          /* 109  命名管道断裂 */
+    case ERROR_NO_DATA:              /* 232  命名管道对端已关闭 */
+    case ERROR_PIPE_NOT_CONNECTED:   /* 233  命名管道未连接 */
+        return true;
+    default:
+        /* 10035 WSAEWOULDBLOCK / 997 WSA_IO_PENDING 及一切未知错误：
+         * 保持「只回滚、不判死」的既有瞬时背压语义。 */
+        return false;
+    }
+}
+
+/**
+ * @brief 「连接已死」的唯一收口：去重 + 一行可观测日志 + 投递关闭事件。
+ *
+ * @details 读完成失败（`w32_reapIocpCompletion` 错误分支）与写失败
+ *          （`w32_rollbackWrite` / 写完成包失败）**共用本收口**，也共用
+ *          `closePosted` 去重标志：同一代连接无论读写各报多少次致命错误，
+ *          只投递一次关闭事件、只留一行日志。关闭事件是**异步** post 的，
+ *          在它被 `XAbstractSocket_event` 处理（→ `socketCloseDevice` →
+ *          `XDevice_close` → `socketDisconnect` → `w32_newIoGeneration`
+ *          清零标志）之前，会话层可能仍继续调 `socketWrite`；没有去重标志
+ *          就会刷出数千个无用事件与日志（现场实测症状）。
+ *
+ *          框架层本身对 `XEVENT_TYPE_SOCK_CLOSE` 是幂等的
+ *          （`socketCloseDevice` 的 `XFD_INVALID` 守卫 +
+ *          `XAbstractSocket_setSocketState` 的同态守卫 ⇒ `disconnected`
+ *          不会重复发），故这里去重的目的不是防重复信号，而是**抑制
+ *          事件/日志风暴**并让写通道在判死后立即停止无谓提交。
+ */
+static void w32_postFatalClose(XDeviceNetworkContextWin32* p, int err,
+                               const char* where)
+{
+    if (!p) return;
+    if (p->closePosted) return;              /* 同代已判死：不再重复投递 */
+    p->closePosted = true;
+    XPrintf("[XNetwork-W32] %s 致命错误 err=%d，判定连接已死，投递关闭事件\n",
+            where, err);
+    /* owner 可能已在 deleteContext 里被置 NULL；w32_postSockClose 自带
+     * `if (!owner) return` 守卫，此处无需重复判断。用 base.m_base.m_fd
+     * 与读完成失败路径的 ctx->base.fd 是同一个 XFd。 */
+    w32_postSockClose(p->base.m_base.m_fd, p->base.m_owner);
+}
+
+/** @brief 提交失败（不会有完成包）时就地回滚槽与在途计数。
+ *
+ * @details [2026-11-07 写侧连接判死根修] 回滚（abandon + release）对致命
+ *          与非致命错误**一律照做**——槽与在途计数必须配平，判死只是额外
+ *          投递一次关闭事件，绝不影响槽回收。`fatalAllowed=false` 用于
+ *          UDP：数据报错误不等于流关闭，对齐读完成错误分支的既有语义。
+ *
+ *          日志分两类：致命错误归并到 `w32_postFatalClose` 的「判定连接
+ *          已死」一行（首代去重），避免判死事件异步生效前重复刷屏；瞬时
+ *          背压保留「写提交失败…已回滚」行，语义与原来一致。 */
+static void w32_rollbackWrite(XDeviceNetworkContextWin32* p, int index, int err,
+                              bool fatalAllowed)
 {
     if (!p || index < 0 || index >= XNETWORK_WRITE_SLOT_COUNT) return;
     abandonSocketIocpOperation(p, &p->writeSlots[index].ctx);
     w32_releaseWriteSlot(p, index);
+    if (fatalAllowed && w32_isFatalWriteError(err)) {
+        w32_postFatalClose(p, err, "写提交");
+        return;
+    }
     if (err != 0)
         XPrintf("[XNetwork-W32] 写提交失败 err=%d（无完成包，已回滚槽 %d）\n",
                 err, index);
@@ -1555,6 +1684,7 @@ static bool startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
     slot->armed = true;        /* 内核即将持有：在完成包出队前不得复用 */
     slot->armedMs = W32_nowMs();
     slot->ioGen = p->ioGeneration;
+    slot->isUdp = isUdp;      /* 完成包/同步失败判死时按数据报语义屏蔽 */
     trackSocketIocpOperation(p, &slot->ctx);
 
     if (p->namedPipe != INVALID_HANDLE_VALUE) {
@@ -1564,7 +1694,8 @@ static bool startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
             return true;
         if (GetLastError() == ERROR_IO_PENDING)
             return true;
-        w32_rollbackWrite(p, index, (int)GetLastError());
+        /* 命名管道是流语义：致命错误按「连接已死」收口。 */
+        w32_rollbackWrite(p, index, (int)GetLastError(), true);
         return false;
     }
 
@@ -1590,7 +1721,9 @@ static bool startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
 
         if (result == 0) return true;                       /* 同步完成，包照常排队 */
         if (WSAGetLastError() == WSA_IO_PENDING) return true;
-        w32_rollbackWrite(p, index, (int)WSAGetLastError());
+        /* UDP 数据报错误不等于流关闭（对齐读完成错误分支的既有语义）：
+         * 只回滚槽、不判死，由上层按既有 UDP 语义处理。 */
+        w32_rollbackWrite(p, index, (int)WSAGetLastError(), !isUdp);
         return false;
     }
 }

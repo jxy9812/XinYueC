@@ -42,6 +42,7 @@ typedef struct HsfTitleBar
     XLabel*       m_modeBtn;   /**< 全局运行模式钮（手动/自动，右侧常驻）。 */
     XLabel*       m_autoChip;  /**< 自动运行状态片（自动·运行中/已停止；手动隐藏）。 */
     XLabel*       m_healthLbl; /**< 设备健康指示（正常/故障N/离线N）。 */
+    XLabel*       m_userLbl;   /**< 登录账号（账号·角色；未登录显示「未登录」）。 */
     XLabel*       m_temp;      /**< 温度标签。 */
     XLabel*       m_humid;     /**< 湿度标签。 */
     HsfTitleBarMenuFn m_menuFn;/**< ☰ 点击回调。 */
@@ -140,6 +141,20 @@ void HsfTitleBar_setModeHandler(HsfTitleBar* self, HsfTitleBarModeFn fn,
  * @param fault 故障设备数；offline 离线设备数。
  */
 void HsfTitleBar_setHealth(HsfTitleBar* self, bool known, int fault, int offline);
+
+/**
+ * @brief 设置顶栏登录账号标签（「账号·角色」，例：root·管理员）。
+ * @param self 标题栏。
+ * @param user 登录用户名（UTF-8，**借用**）；NULL/空串=未登录 ⇒ 显示「未登录」。
+ * @param roleName 角色中文名（HsfLinkClient_roleName()，**借用**）；
+ *        NULL/空串时只显示账号本身。
+ * @note  文本在调用内经 XLabel_setText_2 拷贝进标签，调用方无需保活入参；
+ *        入参必须是 UTF-8（跨进程序列化一律 XString_toUtf8）。
+ * @note  标签放在设备健康指示左侧；栏宽不足时自动隐藏，避免与
+ *        ☰/标题/健康/模式钮互相压字（宽栏重排会自动恢复）。
+ */
+void HsfTitleBar_setUser(HsfTitleBar* self, const char* user,
+                         const char* roleName);
 
 /**
  * @brief 更新顶栏显示的运行模式。

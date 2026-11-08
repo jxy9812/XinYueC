@@ -35,6 +35,31 @@ typedef enum XValueAxis_TickType
 XCLASS_DEFINE_BEGING(XValueAxis)
 XCLASS_DEFINE_EXTEND_END(XValueAxis, XAbstractAxis)
 
+/* ==================== 自定义刻度标签回调（本库扩展；Qt 无对应） ==================== */
+
+/* [前向声明] 回调 typedef 引用轴类型，而完整结构体在本段之后定义；
+ * 只 include 本头的翻译单元（如 XPolarChart.c）必须先见到这个名字。 */
+typedef struct XValueAxis XValueAxis;
+
+/**
+ * @brief 刻度标签文本回调（把轴值转成标签文本）。
+ * @details 用途：轴值是**相对量**、刻度却要显示绝对信息时（典型：横轴是
+ *          「相对某基准时刻的秒数」，刻度要显示成本地时间）。QValueAxis
+ *          只有 printf 风格格式串，表达不了这种换算；QDateTimeAxis 虽能
+ *          显示日期，但它要求轴值本身就是 epoch 毫秒——而本库序列点存储
+ *          是 XPointF（float），1.7e12 量级的绝对值在 float 下只剩约
+ *          2 分钟分辨率（见 XXYSeries.h m_points）。故用回调在渲染侧做
+ *          「相对秒 → 本地时间文本」，轴值域保持小量级、精度不受损。
+ * @param axis     发起调用的轴（借用）。
+ * @param value    轴值（与坐标映射同一口径）。
+ * @param buf      输出缓冲（调用方提供）。
+ * @param cap      缓冲容量（>=1）。
+ * @param userData 注册时传入的私有数据（借用，生命周期由调用方保证）。
+ * @return 无返回值；写入空串表示该刻度不显示文本。
+ */
+typedef void (*XValueAxisLabelTextFn)(const XValueAxis* axis, double value,
+                                      char* buf, int cap, void* userData);
+
 /** @brief 数值轴（m_base 必须是第一个成员；对标 QValueAxis : QAbstractAxis）。 */
 typedef struct XValueAxis
 {
@@ -45,6 +70,9 @@ typedef struct XValueAxis
     int m_tickCount;          /**< 刻度数（含端点，默认 6）。 */
     int m_minorTickCount;     /**< 次刻度数（默认 0）。 */
     int m_tickType;           /**< XValueAxis_TickType（默认 Fixed）。 */
+    /** 自定义标签回调（本库扩展；NULL=按 m_labelFormat 的 printf 输出）。 */
+    XValueAxisLabelTextFn m_labelTextFn;
+    void* m_labelTextUserData; /**< 回调私有数据（借用，轴不释放）。 */
 } XValueAxis;
 
 /**
@@ -128,6 +156,24 @@ const XString* XValueAxis_labelFormat(const XValueAxis* self);
  * @param self 目标轴指针。
  * @return 借用 UTF-8 串；调用者不得释放。 */
 const char* XValueAxis_labelFormat_2(const XValueAxis* self);
+
+/* ==================== 自定义刻度标签回调（设置/查询） ==================== */
+
+/**
+ * @brief 设置刻度标签回调（本库扩展；Qt 的 QValueAxis 无此能力）。
+ * @details 设置后**优先于** labelFormat：xcv_axisLabel 先调回调，回调写
+ *          入空串则该刻度不画文本。置 NULL 恢复按 labelFormat 的 printf。
+ * @param self     目标轴指针。
+ * @param fn       回调；NULL 取消。
+ * @param userData 私有数据（借用，不转移所有权）。
+ * @return 无返回值。
+ */
+void XValueAxis_setLabelTextCallback(XValueAxis* self, XValueAxisLabelTextFn fn,
+                                     void* userData);
+/** @brief 查询刻度标签回调（未设置返回 NULL）。 @param self 目标轴指针。 @return 回调指针。 */
+XValueAxisLabelTextFn XValueAxis_labelTextCallback(const XValueAxis* self);
+/** @brief 查询回调私有数据（未设置返回 NULL）。 @param self 目标轴指针。 @return 借用私有数据。 */
+void* XValueAxis_labelTextCallbackData(const XValueAxis* self);
 
 /* ==================== 自动刻度（对标 QValueAxis::applyNiceNumbers） ==================== */
 

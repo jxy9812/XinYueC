@@ -219,9 +219,9 @@ static int XLayout_menuBarHeightForWidth(const XWidget* menubar, int width)
     return result;
 }
 
-/** @brief 条目挂接后的关联设置：子布局登记父布局；控件条目登记父控件
- *  （对标 Qt 布局 addWidget 自动 reparent 语义；受保护，子类原位替换
- *  新条目时复用）。 */
+/** @brief 条目挂接后的关联设置：子布局登记父布局；控件条目 reparent 到
+ *  布局链顶端宿主的控件（对标 Qt QLayout::addChildWidget 的
+ *  `w->setParent(parentWidget())` 语义；受保护，子类原位替换新条目时复用）。 */
 void XLayout_linkItem(XLayout* self, XLayoutItem* item)
 {
     XWidget* parent;
@@ -243,7 +243,17 @@ void XLayout_linkItem(XLayout* self, XLayoutItem* item)
         sub->m_parentWidget = NULL;
         return;
     }
-    parent = self->m_parentWidget;
+    /* [子布局内控件 reparent 根修 2026-11-08] 宿主控件必须取**布局链上溯**
+     * 的挂接控件（XLayout_parentWidget，对标 Qt QLayout::parentWidget()），
+     * 不能只读本布局的 m_parentWidget：子布局（addLayout 挂进来的行盒）
+     * 该字段恒为 NULL（见上方子布局分支的 sub->m_parentWidget = NULL，挂接
+     * 信息只记在 m_parentLayout 上），此前直读 m_parentWidget 会让
+     * 「往已挂接的子布局里 addWidget/insertWidget」直接早退、不做 reparent。
+     * 后果（历史页实锅）：行 2 的分页/关键字控件父对象仍是页根，而
+     * VXWidgetItem_setGeometry 按子布局坐标（= 工具条局部坐标）原样写控件
+     * 几何 ⇒ 整排控件上移一个工具条高度（≈40px）压住行 1 的「筛选/清除
+     * 筛选」且被盖住；同时 z 序按页子控件排在工具条之后。 */
+    parent = XLayout_parentWidget(self);
     child = XLayoutItem_widget_base(item);
     if (!parent || !child) return;
     if (XWidget_parentWidget(child) != parent)
@@ -909,6 +919,15 @@ void XLayout_setContentsMargins(XLayout* self, int left, int top,
                                 int right, int bottom)
 {
     if (!self) return;
+    /* [幂等早退——对齐 Qt QLayout::setContentsMargins] 值未变则不失效。
+     * 不改这一行会让"每帧调用 adapt"的界面（HSF 主窗帧泵对全部页调
+     * adapt）每轮事件循环都清布局缓存 + 投递 LayoutRequest + 重排重绘，
+     * 实测帧率飙到数千 FPS、CPU 恒满。Qt 同样只在真变化时才 invalidate。 */
+    if (self->m_contentsMargins.left == left &&
+        self->m_contentsMargins.top == top &&
+        self->m_contentsMargins.right == right &&
+        self->m_contentsMargins.bottom == bottom)
+        return;
     self->m_contentsMargins.left = left;
     self->m_contentsMargins.top = top;
     self->m_contentsMargins.right = right;

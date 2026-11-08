@@ -363,6 +363,34 @@ XAbstractAxis* XChart_axisX_abstract(const XChart* self);
  */
 XAbstractAxis* XChart_axisY_abstract(const XChart* self);
 
+/* ==================== 泛化轴域读写（任意轴类型的域单位一致口径） ==================== */
+
+/**
+ * @brief 读取 X 轴当前域（对标 QAbstractAxis::min/max；按实际轴类型读取）。
+ * @details 存在的理由：XChart_axisX 只能拿到数值轴，日期时间轴挂到 X 位后
+ *          该槽为 NULL（见 xchart_replaceAxis）。而缩放/平移/光标锚点等交互
+ *          与渲染映射都必须**与轴类型无关**地读写域，故提供本对入口：
+ *          值仍以 double 承载，日期时间轴的域单位是**毫秒纪元**（Qt 的
+ *          QDateTimeAxis 同样以毫秒作为轴值单位）。
+ * @param self 目标图表指针。
+ * @param min  出参：域下限；可为 NULL。
+ * @param max  出参：域上限；可为 NULL。
+ * @return 图表无 X 轴返回 false（出参不变）。
+ */
+bool XChart_xRange(const XChart* self, double* min, double* max);
+
+/**
+ * @brief 写入 X 轴域（按实际轴类型分派 setRange）。
+ * @details 日期时间轴走 XDateTimeAxis_setRangeMSecs（double → int64 截断，
+ *          毫秒精度足够）；对数轴走 XLogValueAxis_setRange；其余走基类/数值
+ *          轴实现。min > max 时忽略（Qt 各轴 setRange 同语义）。
+ * @param self 目标图表指针。
+ * @param min  域下限。
+ * @param max  域上限。
+ * @return 无返回值；图表无 X 轴时为空操作。
+ */
+void XChart_setXRange(XChart* self, double min, double max);
+
 /* ==================== 主题与外观 ==================== */
 
 /** @brief 设置主题并重建色板。 @param self 目标图表指针。 @param theme 主题枚举。 @return 无返回值。 */

@@ -293,17 +293,31 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 		 * 原实现绑 IPv4-Any，导致解析出 ::1 的客户端连接被拒。 */
 		XHostAddress_setAddressSpecial(&listenAddr, XHostAddress_AnyIPv6Special);
 	}
-	memset(&options, 0, sizeof(options));
-	options.m_base.m_openMode = XIODevice_ReadWrite;
-	options.m_socketType = XDeviceNetwork_Tcp;
-	options.m_protocol = (XDeviceNetworkProtocol)XHostAddress_protocol(&listenAddr);
-	options.m_operation = XDeviceNetworkOpen_Listen;
-	options.m_address = &listenAddr;
-	options.m_port = port;
-	options.m_reuseAddress = true;
-	options.m_owner = server;
-	options.m_listenBacklog = server->listenBacklogSize;
-	server->m_deviceFd = XDevice_open(XDeviceType_Socket, &options.m_base, &error);
+	/* [2026-11-07 IPv4-only 内核根修] 无 IPv6 栈的内核（实测全志 A33
+	 * 5.2.9）连 socket(AF_INET6) 都建不出来，双栈监听得不到 fd；未显式
+	 * 指定地址时回退 0.0.0.0 再试一次（对应 Qt 无 IPv6 构建下 Any 落
+	 * IPv4 的语义）。原实现在此直接报 “Failed to bind to address”，屏上
+	 * 远程服务 46300 即因此始终 listen FAILED。 */
+	{
+		int attempt;
+		for (attempt = 0; attempt < 2; ++attempt) {
+			memset(&options, 0, sizeof(options));
+			options.m_base.m_openMode = XIODevice_ReadWrite;
+			options.m_socketType = XDeviceNetwork_Tcp;
+			options.m_protocol = (XDeviceNetworkProtocol)XHostAddress_protocol(&listenAddr);
+			options.m_operation = XDeviceNetworkOpen_Listen;
+			options.m_address = &listenAddr;
+			options.m_port = port;
+			options.m_reuseAddress = true;
+			options.m_owner = server;
+			options.m_listenBacklog = server->listenBacklogSize;
+			error = XDeviceError_None;
+			server->m_deviceFd = XDevice_open(XDeviceType_Socket, &options.m_base, &error);
+			if (server->m_deviceFd != XFD_INVALID) break;
+			if (address || attempt != 0) break; /* 显式地址不代改；已回退过则收手 */
+			XHostAddress_setAddressSpecial(&listenAddr, XHostAddress_AnyIPv4Special);
+		}
+	}
 	if (server->m_deviceFd == XFD_INVALID) {
 		XClassDeinit(&listenAddr);
 		server->lastError = XAbstractSocket_AddressInUseError;

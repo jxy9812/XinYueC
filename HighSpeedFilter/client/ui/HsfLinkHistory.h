@@ -23,20 +23,43 @@ extern "C" {
 /** @brief 浊度越限阈值（NTU；与水质监测页同口径，也是异常行判据）。 */
 #define HSF_HISTORY_TURB_WARN_NTU   20.0
 
+/** @brief 数值列区间（3 输出频率 … 12 电箱湿度；图表逐列取数用）。 */
+#define HSF_HISTORY_NUM_FIRST   3
+#define HSF_HISTORY_NUM_LAST    12
+/** @brief 数值列个数（= 折线序列数）。 */
+#define HSF_HISTORY_NUM_COUNT   (HSF_HISTORY_NUM_LAST - HSF_HISTORY_NUM_FIRST + 1)
+
 /**
  * @brief 历史分页的一行（15 个显示格；已格式化）。
+ * @note  [原始值旁路] 显示格是给人看的（含单位/"--"/越限说明），图表要
+ *        的是**未格式化原值 + 真实时间戳**。只从显示格反解析会把带单位的
+ *        「瞬时流量」「正累计」整列丢掉（strtod 停在单位前的空格），也会
+ *        让 X 轴退化成页内下标（缩放到真实时间域就错位）。故解析时同时
+ *        留存 m_ts（epoch 毫秒）与 m_num/m_hasNum（第 3..12 列原值）。
  */
 typedef struct HsfHistoryRow {
     char m_cells[15][40]; /**< 15 个显示格（UTF-8；"--"=无数据）。 */
     bool m_abnormal;       /**< 异常行（故障/浊度越限/压差越限）。 */
+    int64_t m_ts;          /**< 该行真实时间戳（epoch 毫秒；0=无）。 */
+    double m_num[HSF_HISTORY_NUM_COUNT]; /**< 数值列原值（列 3..12）。 */
+    bool m_hasNum[HSF_HISTORY_NUM_COUNT];/**< 对应原值是否存在。 */
 } HsfHistoryRow;
 
 /**
  * @brief 一页历史（解析产物）。
+ * @note  [应答身份] 0x0118 应答的帧头 m_requestId（XLinkProto.h:253）才是
+ *        应答的唯一身份；HsfLinkClient 目前只解析载荷、没把 reqId 带进本
+ *        结构，页面只能退而按服务端回显的 offset/limit 认领（故页面侧用
+ *        HIST_CHART_CHUNK 让各消费者 limit 两两不相交，见 HsfDataHistory.c）。
+ *        将来补 reqId 链路时：hsfLcHistoryQuery 已拿到 sendRequest_ex 的
+ *        reqId（现在丢弃），hsfLcDispatch 有 frame->m_requestId，加一个
+ *        `uint32_t m_reqId` 字段填入即可，页面改成按它比对。
  */
 typedef struct HsfHistoryPage {
     bool m_valid;          /**< 已解析过应答。 */
+    uint32_t m_seq;        /**< 应答序号（每次成功解析 +1；导出等"等同一次应答"的场合按它判新）。 */
     int  m_total;          /**< 本窗口内总行数（页码总数按它算）。 */
+    int64_t m_dbRows;      /**< 全库行数（"库内共 N 条"；与 Python dbRows 同口径）。 */
     int  m_offset;         /**< 本页起始偏移。 */
     int  m_limit;           /**< 本页行数上限。 */
     int  m_count;           /**< 本页实际行数。 */

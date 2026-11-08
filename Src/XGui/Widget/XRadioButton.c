@@ -208,11 +208,11 @@ void XRadioButton_drawContents(XRadioButton* self, XPainter* painter)
     ind = radiobutton_indicatorRect(self);
 
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：指示器走 PE_IndicatorRadioButton；
            标签（图标+文本）由下方公共尾部绘制（比照 XCheckBox——
            样式选项不携带图标，CE 只画指示器+文本会让图标无处落位）。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStylePE_IndicatorRadioButton);
         opt.m_rect = ind;

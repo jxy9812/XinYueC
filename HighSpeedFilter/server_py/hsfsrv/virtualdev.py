@@ -90,6 +90,10 @@ class VirtualMaster(object):
         self._log = log or (lambda m: None)
         self._counter = 0
         self.closed = False
+        # [墙钟节拍] 给 wants_poll_clock 模型（变频器）按设备 poll 的时间
+        # 补推进用；见 advance_ms()。
+        self._poll_clock_last_ms = None
+        self._poll_clock_debt_ms = 0
 
     async def read(self, function, address, count, unit=None):
         """读寄存器/线圈/离散输入。
@@ -118,6 +122,26 @@ class VirtualMaster(object):
     async def close(self):
         self.closed = True
 
+    def advance_ms(self, now_ms):
+        """设备层每拍（VfdM512.poll 进门时）调用：按墙钟间隔补推进。
+
+        [为什么变频器不能靠事务驱动] 一轮 poll 发 N 次总线事务
+        （READ_GROUPS 多段 + 状态 + 故障），挂事务上的推进会快 N 倍——
+        ACC/DEC 的"秒"就不再是秒（实测 2026-11-06：换向减速跑到 25Hz/s，
+        恰为 0.5Hz/拍 × 每 poll 5 次事务）。C 侧同款问题的修法是独立
+        100ms 心跳拍（XVirtualModelVfd_tick ← HsfServerIoSim_tick），
+        这里的等价物是按设备 poll 传入的 now_ms 折算拍数。只对声明
+        `wants_poll_clock` 的模型生效，其余模型维持事务驱动口径不变。
+        """
+        last = self._poll_clock_last_ms
+        self._poll_clock_last_ms = now_ms
+        if last is None or now_ms is None:
+            return
+        self._poll_clock_debt_ms += max(0, now_ms - last)
+        while self._poll_clock_debt_ms >= 100:
+            self._poll_clock_debt_ms -= 100
+            self.model.on_access()
+
     # ---- 内部 ----
     def _tick(self):
         """每帧一次：推进模型的时间相关状态（频率爬坡等）。
@@ -133,7 +157,11 @@ class VirtualMaster(object):
                 from . import modbus
                 raise modbus.ModbusError("%s: 虚拟空应答（模拟模块抖动）"
                                          % self.name)
-        self.model.on_access()
+        # [wants_poll_clock 模型不在这里推进] 事务节拍 ≠ 墙钟节拍（一轮
+        # poll 发 N 次事务），变频器这类要按真实时间走 ACC/DEC 的模型改由
+        # 设备 poll 的 advance_ms() 驱动，见 advance_ms 注释。
+        if not getattr(self.model, "wants_poll_clock", False):
+            self.model.on_access()
 
 
 class VirtualMultiMaster(object):
@@ -155,6 +183,26 @@ class VirtualMultiMaster(object):
         self._log = log or (lambda m: None)
         self._counter = 0
         self.closed = False
+        # [墙钟节拍] 见 VirtualMaster.advance_ms 同名说明。
+        self._poll_clock_last_ms = None
+        self._poll_clock_debt_ms = 0
+
+    def advance_ms(self, now_ms):
+        """设备层每拍调用：按墙钟间隔给 `wants_poll_clock` 模型补推进。
+
+        与 VirtualMaster.advance_ms 同口径（总线版——`--sim` 用的是这个，
+        变频器 + 温湿度挂同一条虚拟 485 总线上）。
+        """
+        last = self._poll_clock_last_ms
+        self._poll_clock_last_ms = now_ms
+        if last is None or now_ms is None:
+            return
+        self._poll_clock_debt_ms += max(0, now_ms - last)
+        while self._poll_clock_debt_ms >= 100:
+            self._poll_clock_debt_ms -= 100
+            for model in self.models.values():
+                if getattr(model, "wants_poll_clock", False):
+                    model.on_access()
 
     def _model(self, unit):
         if unit is None:
@@ -202,8 +250,11 @@ class VirtualMultiMaster(object):
             if self._counter % period == 0:
                 from . import modbus
                 raise modbus.ModbusError("%s: 虚拟空应答" % self.name)
+        # [wants_poll_clock 模型不在这里推进] 见 VirtualMaster._tick 注释；
+        # 由 advance_ms()（设备 poll 墙钟）驱动。
         for model in self.models.values():
-            model.on_access()
+            if not getattr(model, "wants_poll_clock", False):
+                model.on_access()
 
 
 # ============================================================================
@@ -215,15 +266,24 @@ class VirtualVfd(object):
 
     [为什么要有爬坡] 真机启停不是瞬时的（加速时间 P0.x）。若虚拟设备瞬间
     跳到目标频率，界面上永远看不到"加速中"；也验证不了"给定变了但还没跟上"
-    这类显示。这里按固定斜率（每拍 +2.5Hz，约 2s 从 0 到 50Hz）爬坡。
+    这类显示。爬坡斜率按 ACC/DEC 加减速时间参数推导（见 _ramp_hz_per_tick）。
+
+    [wants_poll_clock] 声明本模型按**设备 poll 的墙钟**推进（master 的
+    advance_ms()），不随总线事务走——事务节拍是轮询段数的 N 倍，会把
+    ACC/DEC 的"秒"缩水成 1/N 秒（实锅 2026-11-06，与 C 侧
+    XVirtualModelVfd_tick ← HsfServerIoSim 100ms 心跳拍同口径）。
     """
+
+    #: 声明走墙钟节拍（master 的事务 _tick 跳过本模型）。
+    wants_poll_clock = True
 
     CMD = {
         1: "fwd_run", 2: "rev_run", 3: "jog_fwd", 4: "jog_rev",
         5: "free_stop", 6: "decel_stop", 7: "fault_reset",
     }
 
-    #: 加速/减速斜率（Hz 每拍）。poll 100ms 一拍 → 25Hz/s。
+    #: 加速/减速斜率兜底（Hz 每拍）。仅在 ACC/DEC 参数未配置（≤0）时使用。
+    #: 常规斜率按 ACC/DEC 满量程时间推导，见 _ramp_hz_per_tick()。
     RAMP_HZ_PER_TICK = 2.5
 
     def __init__(self, max_hz=50.0, log=None):
@@ -239,9 +299,37 @@ class VirtualVfd(object):
         #: 是否处于「减速停机」斜坡中（见 _command / on_access）。
         #: 为 True 时状态字仍报"运行"，输出频率按斜率降到 0 才转"停机"。
         self.decelerating = False
+        #: 运行中换向待决：None=无；True/False=过零后要翻去的目标方向。
+        #: [换向 = 减速过零再反向加速，对齐真机] 运行中收到反方向命令字
+        #: （0x2000 写 1↔2）不是瞬间翻方向位——先按减速时间把输出降到 0
+        #: （这段状态字仍报**原**方向），过零那一刻才翻方向、再按加速时间
+        #: 向新方向爬到给定。与 C 侧 XVirtualModelVfd.m_revPending 同口径。
+        self._rev_pending = None
+        #: 加速/减速时间（0xF011/0xF012，0.1s 定点，满量程 0↔最大频率）。
+        #: 缺省 100=10.0s（真机 10s 减速口径，C 侧 create 同值）。
+        self.acc_tenths = 100
+        self.dec_tenths = 100
         self.fault_code = 0
         #: 母线电压（真机稳定在 553V 左右）
         self.bus_v = 553.2
+
+    # ---- 斜率与给定 ----
+    def _full_range_hz(self):
+        """满量程频率（ACC/DEC 时间的基准，= 最大频率）。"""
+        return self.max_hz if self.max_hz > 0 else 50.0
+
+    def _ramp_hz_per_tick(self, decel):
+        """每拍斜率（Hz/拍）：满量程时间口径 = 最大频率 / ACC或DEC秒 / 10。
+
+        拍 = 100ms ⇒ 每秒 10 拍。缺省 ACC/DEC=10.0s、50Hz ⇒ 0.5Hz/拍
+        （5Hz/s）：12Hz 换向全程约 5s，"先慢慢停、再反向加速"肉眼可见。
+        参数 ≤0（显式写 0 未配置）时回退 RAMP_HZ_PER_TICK 兜底，与 C 侧
+        vfdRampHzPerTick 同口径。
+        """
+        sec = (self.dec_tenths if decel else self.acc_tenths) / 10.0
+        if sec <= 0.0:
+            return self.RAMP_HZ_PER_TICK
+        return self._full_range_hz() / sec / 10.0
 
     # ---- 寄存器读写 ----
     def read(self, function, address, count):
@@ -263,28 +351,50 @@ class VirtualVfd(object):
             # 写它只是**记住**目标；真正的输出由命令字（0x2000）决定。
             #
             # 原实现无条件 `target_hz = 给定`，于是：
-            #   停机状态下把给定从 25Hz 改成 30Hz（或先设转速再启动之前）
-            #   ⇒ 输出频率从 0 爬到 30Hz ⇒ 界面显示"停机 + 输出 30Hz"，
-            #   甚至转速显示 720rpm —— 停机怎么会有转速？
+            # 停机状态下把给定从 25Hz 改成 30Hz（或先设转速再启动之前）
+            # ⇒ 输出频率从 0 爬到 30Hz ⇒ 界面显示"停机 + 输出 30Hz"，
+            # 甚至转速显示 720rpm —— 停机怎么会有转速？
             # 也就是说"没启动时点下发"会凭空产生一段假运行。
             #
             # 正确语义：target_hz 只在**运行中**才跟随给定；
             # 停机时 target 保持 0（输出维持 0），给定只记在 set_percent。
-            if self.running:
+            # [换向减速中给定只记忆不动目标] 服务端处理带给定的 START 是
+            # "先写 0x1000 再写 0x2000"两步；两步之间一拍推进可能插入——
+            # 换向待决期间目标保持 0，过零翻向时按**新**给定加速（与 C 侧
+            # vfdWriteSetPct 同口径，防"正在减速却先弹高半拍"的毛刺）。
+            if self.running and self._rev_pending is None:
                 self.target_hz = self.set_percent / 10000.0 * self.max_hz
         elif address == 0x2000:
             self._command(value)
+        elif address == 0xF011:                 # P0.17 加速时间（0.1s）
+            self.acc_tenths = value & 0xFFFF
+        elif address == 0xF012:                 # P0.18 减速时间（0.1s）
+            self.dec_tenths = value & 0xFFFF
         else:
             raise KeyError("不可写地址 0x%04X" % address)
 
     def _command(self, code):
         if code in (1, 2):                    # 正转/反转运行
-            self.running = True
-            self.reverse = (code == 2)
+            rev = (code == 2)
+            if self.running and rev != self.reverse:
+                # [运行中换向 = 先减速过零再反向加速] 对齐真机：不瞬间翻
+                # 方向位，先按减速时间把输出降向 0（状态字仍报原方向），
+                # 过零那一刻 on_access 才翻向、按加速时间向新方向爬到给定。
+                # 减速途中再收到同向命令（含翻回原方向）走下面分支＝取消换向。
+                self._rev_pending = rev
+                self.target_hz = 0.0
+                self.decelerating = True
+            else:
+                self._rev_pending = None
+                self.running = True
+                self.reverse = rev
+                self.decelerating = False
+                self.target_hz = self.set_percent / 10000.0 * self.max_hz
             self.jogging = False
-            self.decelerating = False
-            self.target_hz = self.set_percent / 10000.0 * self.max_hz
         elif code in (3, 4):                  # 点动
+            # 点动接管：取消换向待决，方向/目标按点动立即生效（点动是
+            # 按住即走的短促动作，沿用既有瞬时口径）。
+            self._rev_pending = None
             self.running = True
             self.reverse = (code == 4)
             self.jogging = True
@@ -295,11 +405,14 @@ class VirtualVfd(object):
             # 置 False 会让状态字马上变"停机"、输出却还有几十 Hz，界面上
             # 看不到"正在停机"（用户 2026-11-06 明确要看这个过程）。
             # 这里把目标设 0，由 on_access 的斜坡降下来、降到 0 再置停机。
+            # [停止覆盖换向] 用户点了停止就是真停：清换向待决，过零走停机。
+            self._rev_pending = None
             self.target_hz = 0.0
             self.jogging = False
             self.decelerating = True
         elif code == 5:                       # **自由停车**：立刻断输出
             # 真机自由停车是切断输出（不是斜坡），故这一步必须瞬断。
+            self._rev_pending = None
             self.running = False
             self.jogging = False
             self.decelerating = False
@@ -348,6 +461,10 @@ class VirtualVfd(object):
             return 2 if self.reverse else 1
         if addr == 0x8000:
             return self.fault_code & 0xFFFF
+        if addr == 0xF011:                # P0.17 加速时间（0.1s）
+            return self.acc_tenths & 0xFFFF
+        if addr == 0xF012:                # P0.18 减速时间（0.1s）
+            return self.dec_tenths & 0xFFFF
         # 0x1007/0x1008 = DI/DO 状态位图（本服务端不读，给 0 即可）
         # 0x1009~0x1020 = AI/PID/线速度等，真机有寄存器但本服务端不用
         if 0x1000 <= addr <= 0x2000:
@@ -364,9 +481,13 @@ class VirtualVfd(object):
         要求把这个过程显示出来。
 
         现在的模型：
+            · 斜率按 ACC/DEC 时间参数推导（_ramp_hz_per_tick，升/降各用
+              各的参数）；参数未配置回退 RAMP_HZ_PER_TICK。
             · 命令 6（减速停机）→ `decelerating=True`，out_hz 按斜率降
             · 命令 5（自由停车）→ 立刻断输出（真机自由停车就是瞬断）
-            · out_hz 降到 0 才把 running 置 False（状态字这时才变"停机"）
+            · out_hz 降到 0：有换向待决（_rev_pending）→ 翻方向、按给定
+              反向加速（保持运行）；否则把 running 置 False（状态字这时
+              才变"停机"）
         """
         if not self.running:
             self.out_hz = 0.0
@@ -374,24 +495,34 @@ class VirtualVfd(object):
             self.decelerating = False
             return
         delta = self.target_hz - self.out_hz
-        if abs(delta) <= self.RAMP_HZ_PER_TICK:
+        slope = self._ramp_hz_per_tick(decel=delta < 0)
+        if abs(delta) <= slope:
             self.out_hz = self.target_hz
             # [不能在这里无脑清 decelerating] 最后一拍 delta 会落进死区，
-            # 若这里把 decelerating 清掉，下面"降到 0 就置停机"的分支就
-            # 永远进不去 ⇒ 减停到 0 后 running 仍为 True（实测复现）。
+            # 若这里把 decelerating 清掉，下面"降到 0 就置停机/换向"的分
+            # 支就永远进不去 ⇒ 减停到 0 后 running 仍为 True（实测复现）。
             # 只在"不是减速中"或"还没到 0"时才清。
             if not (self.decelerating and self.out_hz <= 0.0):
                 self.decelerating = delta < 0
         else:
-            self.out_hz += (self.RAMP_HZ_PER_TICK
-                            if delta > 0 else -self.RAMP_HZ_PER_TICK)
+            self.out_hz += slope if delta > 0 else -slope
             self.decelerating = delta < 0
-        # 斜坡降到 0 才算真正停下（状态字变"停机"）
+        # 斜坡降到 0：有换向待决就翻向加速（保持运行），否则真正停机。
         if self.decelerating and self.out_hz <= 0.0:
-            self.out_hz = 0.0
-            self.target_hz = 0.0
-            self.decelerating = False
-            self.running = False
+            if self._rev_pending is not None:
+                # [换向过零] 这一刻才翻方向位——状态字（0x3000）在此之前
+                # 一直报**原**方向（电机确实还在原方向转），与真机一致。
+                # 目标现算：减速期间改的给定在这里生效。
+                self.reverse = bool(self._rev_pending)
+                self._rev_pending = None
+                self.decelerating = False
+                self.out_hz = 0.0
+                self.target_hz = self.set_percent / 10000.0 * self.max_hz
+            else:
+                self.out_hz = 0.0
+                self.target_hz = 0.0
+                self.decelerating = False
+                self.running = False
 
 
 # ============================================================================

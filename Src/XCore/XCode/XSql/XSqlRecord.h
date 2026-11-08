@@ -53,6 +53,18 @@ XVariant* XSqlRecord_value(const XSqlRecord* record, int index);
 XVariant* XSqlRecord_value_utf8(const XSqlRecord* record, const char* name);
 /** @brief 按 XString 字段名获取字段值副本。 @param record 记录对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 新值所有权；调用者使用 XClassDelete 释放，未找到返回空值对象。 */
 XVariant* XSqlRecord_value_2(const XSqlRecord* record, const XString* name);
+/**
+ * @brief 按位置获取字段值**借用**指针（零分配，对标 QSqlRecord 的只读取值路径）。
+ * @param record 记录对象；可为 NULL。
+ * @param index 字段索引，从 0 开始。
+ * @return 借用指针，**禁止释放**；随 record 的下一次取值/析构失效。
+ *         越界或记录为空时返回 NULL。
+ * @warning 与 XSqlRecord_value 的区别只在所有权：那个返回堆副本（必须
+ *          XClassDelete），本函数返回内部字段的地址（禁止释放）。整表遍历
+ *          （每行 18 列 × 数百行）必须用本函数——用副本版而忘记释放，实测
+ *          每次 HISTORY_PAGE 泄漏 182KB（360 个 XVariant 副本）。
+ */
+const XVariant* XSqlRecord_value_const(const XSqlRecord* record, int index);
 /** @brief 按位置设置字段值。 @param record 记录对象；不能为 NULL。 @param index 字段索引，从 0 开始。 @param value 字段值；借用并深复制，可为 NULL 表示 SQL NULL。 @return 无；越界或内存不足时保持原字段值。 */
 void XSqlRecord_setValue(XSqlRecord* record, int index, const XVariant* value);
 /** @brief 按 UTF-8 字段名设置字段值。 @param record 记录对象；不能为 NULL。 @param name 字段名；借用，可为 NULL。 @param value 字段值；借用并深复制，可为 NULL 表示 SQL NULL。 @return 无；名称不存在或内存不足时保持不变。 */

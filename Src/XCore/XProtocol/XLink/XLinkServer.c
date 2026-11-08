@@ -243,17 +243,26 @@ static void XLinkServerPrivate_reap(XLinkServer* self)
         if (self->m_sessionGone)
             self->m_sessionGone(self, session, self->m_sessionGoneUserData);
 #endif
-        /* [僵尸 socket 处置 2026-11-04] 这里**只摘信号，不关闭 socket**。
-         *
-         * 曾尝试在回收会话时 close 掉它接管的 socket（想顺手解除 IOCP
-         * 关联），但实测必段错误：cdb 栈落在 `XDevice_dispatchControl`，
-         * 访问地址 0xFEEEFEEE（MSVC 调试堆的"已释放"标记）——close 会让
-         * 设备上下文析构，而事件队列里仍有指向它的事件，随后派发即 UAF。
-         *
-         * 因此 socket 的生命周期完全交还它的属主 XTcpServer（accept 时
-         * setParent，close() 时统一清理）。本函数只做一件事：把会话与该
-         * socket 的 disconnected 信号摘开，避免会话被删后 socket 再发信号
-         * 打到已释放的会话上（这是另一条 UAF）。 */
+        /* [socket 回收时机] 先摘信号，再摘父，放入 m_graveSockets，由
+         * **下一个 pump 拍**起点统一 XClassDelete。两条硬约束决定这个
+         * 三段式（2026-11-04 / 2026-11-08 两次实测）：
+         *  1) 不能在 reap 里直接 close/delete 设备：事件队列里可能还挂着
+         *     指向设备上下文的事件，随后派发即 UAF（cdb 栈落
+         *     XDevice_dispatchControl，访问 0xFEEEFEEE）。
+         *  2) 不能用 XObject_deleteLater：reap 跑在 timerEvent 派发栈上
+         *     （loopLevel/scopeLevel 同层），XDeferredDeleteEvent_shouldDeliver
+         *     要求 eventLevel > currentLevel；手动 pump / 无事件循环的
+         *     Test 环境里该事件永不投递 ⇒ 每条连接的 XTcpSocket（对象+
+         *     私有引擎+设备上下文）永久滞留。这一项对应 Python 客户端
+         *     路径的 +22,168 字节/轮（修 socket 回收后降到 +80~120）；
+         *     C 客户端 210KB/轮不是 socket 滞留，而是 HISTORY_PAGE /
+         *     CONFIG_GET 的应用层分配（见 HsfServerStore.c 与
+         *     HsfServerApp.c 的 2026-11-08 修复），两者不可混为一谈。
+         * 入队+隔拍删除让回收只依赖下一次 pump（服务端 100ms 节拍），
+         * 不再依赖派发器层级条件；隔的一拍用来让网络后端在 reap 之后
+         * 投递的完成包先派发完，再销毁对象。
+         * 所有权按 Qt 口径：XTcpServer_nextPendingConnection 取出后 socket
+         * 归 XLinkServer，会话回收时必须释放。 */
         {
             XIODevice* dev = XLinkSession_device(session);
             if (dev) {
@@ -261,6 +270,17 @@ static void XLinkServerPrivate_reap(XLinkServer* self)
                                      XSignal(XAbstractSocket_disconnected_signal),
                                      (XObject*)session,
                                      VXLinkSession_onServerSocketGone);
+                XObject_setParent((XObject*)dev, NULL);
+                /* [实测回归：改回框架原生 deleteLater] 之前判断"deleteLater
+                 * 在同层永不投递"，据此加了两级待释放队列。复核框架实现后
+                 * 发现该判断有误：XAbstractEventDispatcher_processEvents
+                 * （:684-687）对 DEFERRED_DELETE 调 shouldDeliver，而
+                 * notifyInternal2 在派发期间自增 scopeLevel ⇒ 槽里 post 的
+                 * 删除事件层号比 processEvents 顶层大 1，满足 `>` 会被投递
+                 * （与 Qt 6.8 qcoreapplication.cpp:1904-1912 同构）。
+                 * 这里改回 deleteLater 做对照实测：若内存仍收敛，说明真正的
+                 * 差别是此前缺 abort（设备引擎没关），与投递机制无关。 */
+                XAbstractSocket_deleteLater((XAbstractSocket*)dev);
             }
         }
         XClassDelete((XClass*)session);

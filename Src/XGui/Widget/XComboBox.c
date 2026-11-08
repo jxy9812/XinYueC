@@ -180,9 +180,9 @@ static void VXComboBox_paintEvent(XWidget* self, XEvent* event)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
 
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：面板 + 下拉按钮区走 CC_ComboBox。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStyleCC_ComboBox);
         opt.m_rect = r;
@@ -913,7 +913,7 @@ static void xcombo_updateSizeHint(XComboBox* self)
     {
         XSize content;
         XSize_init(&content, maxW, XCOMBOBOX_ITEM_H);
-        hint = XStyle_sizeFromContents(XStyle_defaultStyle(),
+        hint = XStyle_sizeFromContents(XWidget_style((const XWidget*)self),
                                        XStyleCT_ComboBox, &opt, content);
     }
     XWidget_setSizeHint((XWidget*)self, &hint);

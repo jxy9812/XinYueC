@@ -5,6 +5,7 @@
 #include "XChar.h"
 #include "XStringUtils.h"   /* XStrlen/XStrchr/XSscanf：库内字符串原语（外部依赖约束） */
 #include <stdlib.h>
+#include <stdio.h>      /* snprintf：定宽补零格式化（xdtAppendPadded） */
 
 void XDateTime_clear(XDateTime* datetime)
 {
@@ -231,6 +232,25 @@ XDateTime XDateTime_addMSecs(const XDateTime* datetime, int64_t msecs) {
     return result;
 }
 
+/**
+ * @brief 追加定宽十进制数字（补前导零，不截断）。
+ * @param out   目标串。
+ * @param value 数值。
+ * @param count 需要的最少位数（"MM"/"dd"/"HH"/"mm"/"ss" 为 2；"yyyy" 为 4）。
+ * @note  Qt 的日期格式串里单字母 token 不补零、"MM" 这类多字母 token 按
+ *        位数补零；此前的实现只按数值输出（7 月 ⇒ "7"），日期时间轴的
+ *        刻度标签会变成 "2026-11-8 9:5:3" 这类不等宽文本（图例/刻度对齐
+ *        全乱）。多字母 token 统一走本函数，单字母 token 仍走原路径。
+ */
+static void xdtAppendPadded(XString* out, int value, int count)
+{
+    char buf[32];
+    if (!out || count <= 0) return;
+    if (count > (int)sizeof(buf) - 1) count = (int)sizeof(buf) - 1;
+    snprintf(buf, sizeof(buf), "%0*d", count, value);
+    XString_append_utf8(out, buf);
+}
+
 XString* XDateTime_toString_format(const XDateTime* datetime, const char* format) {
     if (!XDateTime_isValid(datetime) || !format)
         return NULL;
@@ -263,14 +283,16 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
             }
 
             if (count >= 4) {
-                XString_setNum_int(temp_num_str, year, 10);
+                xdtAppendPadded(result, year, 4);
+            }
+            else if (count == 2) {
+                /* "yy"：两位年份（Qt 语义，补零）。 */
+                xdtAppendPadded(result, ((year % 100) + 100) % 100, 2);
             }
             else {
-                XString_setNum_int(temp_num_str, year % 100, 10);
+                XString_setNum_int(temp_num_str, year, 10);
+                XString_append(result, temp_num_str);
             }
-            XString_append(result, temp_num_str);
-            // -----------------------
-
             i = j - 1;
         }
         else if (format[i] == 'M') {
@@ -281,10 +303,11 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
                 j++;
             }
 
-            XString_setNum_int(temp_num_str, month, 10);
-            XString_append(result, temp_num_str);
-            // -----------------------
-
+            if (count >= 2) xdtAppendPadded(result, month, 2);
+            else {
+                XString_setNum_int(temp_num_str, month, 10);
+                XString_append(result, temp_num_str);
+            }
             i = j - 1;
         }
         else if (format[i] == 'd') {
@@ -295,10 +318,11 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
                 j++;
             }
 
-            XString_setNum_int(temp_num_str, day, 10);
-            XString_append(result, temp_num_str);
-            // -----------------------
-
+            if (count >= 2) xdtAppendPadded(result, day, 2);
+            else {
+                XString_setNum_int(temp_num_str, day, 10);
+                XString_append(result, temp_num_str);
+            }
             i = j - 1;
         }
         else if (format[i] == 'H') {
@@ -309,10 +333,11 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
                 j++;
             }
 
-            XString_setNum_int(temp_num_str, hour, 10);
-            XString_append(result, temp_num_str);
-            // -----------------------
-
+            if (count >= 2) xdtAppendPadded(result, hour, 2);
+            else {
+                XString_setNum_int(temp_num_str, hour, 10);
+                XString_append(result, temp_num_str);
+            }
             i = j - 1;
         }
         else if (format[i] == 'm') {
@@ -323,10 +348,11 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
                 j++;
             }
 
-            XString_setNum_int(temp_num_str, minute, 10);
-            XString_append(result, temp_num_str);
-            // -----------------------
-
+            if (count >= 2) xdtAppendPadded(result, minute, 2);
+            else {
+                XString_setNum_int(temp_num_str, minute, 10);
+                XString_append(result, temp_num_str);
+            }
             i = j - 1;
         }
         else if (format[i] == 's') {
@@ -337,12 +363,11 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
                 j++;
             }
 
-            XString_setNum_int(temp_num_str, second, 10);
-           
-            XString_append(result, temp_num_str);
-            //XPrintf_string(result);
-            // -----------------------
-
+            if (count >= 2) xdtAppendPadded(result, second, 2);
+            else {
+                XString_setNum_int(temp_num_str, second, 10);
+                XString_append(result, temp_num_str);
+            }
             i = j - 1;
         }
         else {

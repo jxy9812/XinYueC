@@ -308,11 +308,11 @@ static void net_report(const char* fmt, const char* detail)
 static const char* net_typeName(XNetworkInterface_InterfaceType type)
 {
     switch (type) {
-    case XNetworkInterface_Ethernet: return "\xE4\xBB\xA5\xE5\xA4\xAA\xE7\xBD\x91"; /* 以太网 */
+    case XNetworkInterface_Ethernet: return "以太网"; /* 以太网 */
     case XNetworkInterface_Wifi:     return "Wi-Fi";
-    case XNetworkInterface_Loopback: return "\xE5\x9B\x9E\xE7\x8E\xAF";             /* 回环 */
-    case XNetworkInterface_Virtual:  return "\xE8\x99\x9A\xE6\x8B\x9F";             /* 虚拟 */
-    default:                         return "\xE5\x85\xB6\xE4\xBB\x96";             /* 其他 */
+    case XNetworkInterface_Loopback: return "回环";             /* 回环 */
+    case XNetworkInterface_Virtual:  return "虚拟";             /* 虚拟 */
+    default:                         return "其他";             /* 其他 */
     }
 }
 
@@ -499,13 +499,13 @@ static void net_fillInfoFromInterface(int ifIndex)
             XClassDelete(ipText);
         }
         snprintf(info, sizeof(info),
-                 "\xE7\x8A\xB6\xE6\x80\x81: %s  "
-                 "\xE7\xB1\xBB\xE5\x9E\x8B: %s\n"
+                 "状态: %s  "
+                 "类型: %s\\n"
                  "IPv4: %s\n"
                  "MAC: %s",
                  /* 状态: / 类型: */
                  XNetworkInterface_isUp(iface)
-                     ? "Up" : "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5",
+                     ? "Up" : "未连接",
                  net_typeName(XNetworkInterface_type(iface)),
                  ipv4[0] ? ipv4 : "-",
                  (mac && XString_toUtf8(mac) && XString_toUtf8(mac)[0])
@@ -536,7 +536,7 @@ static void net_updateV6Label(void)
         snprintf(line, sizeof(line), "IPv6: %s", s_net.m_v6First);
     else
         snprintf(line, sizeof(line),
-                 "IPv6: %s \xEF\xBC\x88\xE7\xAD\x89 %d \xE4\xB8\xAA\xEF\xBC\x89",
+                 "IPv6: %s （等 %d 个）",
                  s_net.m_v6First, s_net.m_v6Count); /* （等 N 个） */
     XLabel_setText_2(s_net.m_v6Label, line);
 }
@@ -676,10 +676,8 @@ static void net_v6ExpandSlot(XObject* receiver, XVarList* args)
         XAbstractButton_isChecked((XAbstractButton*)s_net.m_v6ExpandCheck);
     XAbstractButton_setText_2((XAbstractButton*)s_net.m_v6ExpandCheck,
                               s_net.m_v6Expanded
-                                  ? "\xE6\x94\xB6\xE8\xB5\xB7 IPv6 \xE5\x88\x97"
-                                    "\xE8\xA1\xA8" /* 收起 IPv6 列表 */
-                                  : "\xE5\xB1\x95\xE5\xBC\x80\xE5\x85\xA8"
-                                    "\xE9\x83\xA8 IPv6"); /* 展开全部 IPv6 */
+                                  ? "收起 IPv6 列表"
+                                  : "展开全部 IPv6");
     net_relayout();
 }
 
@@ -698,8 +696,8 @@ static void net_applyV6Slot(XObject* receiver, XVarList* args)
     slot = s_net.m_adapterCombo
                ? XComboBox_currentIndex(s_net.m_adapterCombo) : -1;
     if (slot < 0 || slot >= s_net.m_count) {
-        net_report("\xE5\xBA\x94\xE7\x94\xA8\xE5\xA4\xB1\xE8\xB4\xA5: "
-                   "\xE6\x9C\xAA\xE9\x80\x89\xE6\x8B\xA9\xE7\xBD\x91\xE5\x8D\xA1",
+        net_report("应用失败: "
+                   "未选择网卡",
                    NULL); /* 应用失败: 未选择网卡 */
         return;
     }
@@ -710,37 +708,25 @@ static void net_applyV6Slot(XObject* receiver, XVarList* args)
     prefix = atoi(prefixText && prefixText[0] ? prefixText : "64");
     /* 输入校验先于平台能力门（同 IPv4 侧口径）。 */
     if (!XHostAddress_isIPv6Address(addr)) {
-        net_report("IPv6 \xE5\x9C\xB0\xE5\x9D\x80\xE9\x9D\x9E\xE6\xB3\x95"
-                   "\xEF\xBC\x8C\xE6\x8B\x92\xE7\xBB\x9D\xE5\xBA\x94"
-                   "\xE7\x94\xA8", NULL); /* IPv6 地址非法，拒绝应用 */
+        net_report("IPv6 地址非法，拒绝应用", NULL);
         return;
     }
     if (prefix < 0 || prefix > 128) {
-        net_report("\xE5\x89\x8D\xE7\xBC\x80\xE9\x95\xBF\xE5\xBA\xA6\xE9"
-                   "\x9D\x9E\xE6\xB3\x95\xEF\xBC\x8C\xE6\x8B\x92\xE7\xBB"
-                   "\x9D\xE5\xBA\x94\xE7\x94\xA8", NULL); /* 前缀长度非法，拒绝应用 */
+        net_report("前缀长度非法，拒绝应用", NULL); /* 前缀长度非法，拒绝应用 */
         return;
     }
     if (gw && gw[0] && !XHostAddress_isIPv6Address(gw)) {
-        net_report("IPv6 \xE7\xBD\x91\xE5\x85\xB3\xE9\x9D\x9E\xE6\xB3\x95"
-                   "\xEF\xBC\x8C\xE6\x8B\x92\xE7\xBB\x9D\xE5\xBA\x94"
-                   "\xE7\x94\xA8", NULL); /* IPv6 网关非法，拒绝应用 */
+        net_report("IPv6 网关非法，拒绝应用", NULL); /* IPv6 网关非法，拒绝应用 */
         return;
     }
     if (!XNetworkInterface_configSupported()) {
-        net_report("\xE5\xBD\x93\xE5\x89\x8D\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8"
-                   "\x8D\xE6\x94\xAF\xE6\x8C\x81\xE7\xBD\x91\xE5\x8D\xA1"
-                   "\xE9\x85\x8D\xE7\xBD\xAE", NULL); /* 当前平台不支持网卡配置 */
+        net_report("当前平台不支持网卡配置", NULL); /* 当前平台不支持网卡配置 */
         return;
     }
     ok = XNetworkInterface_setStaticIpv6(ifIndex, addr, prefix,
                                          (gw && gw[0]) ? gw : NULL);
-    net_report(ok ? "\xE5\xB7\xB2\xE8\xBF\xBD\xE5\x8A\xA0\xE9\x9D\x99\xE6"
-                    "\x80\x81 IPv6 \xE5\x9C\xB0\xE5\x9D\x80"
-                  : "\xE5\xBA\x94\xE7\x94\xA8\xE5\xA4\xB1\xE8\xB4\xA5"
-                    "\xEF\xBC\x88\xE9\x9C\x80\xE7\xAE\xA1\xE7\x90\x86"
-                    "\xE5\x91\x98\xE6\x9D\x83\xE9\x99\x90\xEF\xBC\x9F"
-                    "\xEF\xBC\x89",
+    net_report(ok ? "已追加静态 IPv6 地址"
+                  : "应用失败（需管理员权限？）",
                NULL); /* 已追加静态 IPv6 地址 / 应用失败（需管理员权限？） */
     if (ok)
         net_refreshSelection();
@@ -757,32 +743,21 @@ static void net_updateHint(void)
          * 连过的网络受配置所有权限制（切静态会被系统拒），IPv6 静态为
          * 系统级不支持（AOSP StaticIpConfiguration 只有 v4）。 */
         XLabel_setText_2(s_net.m_hintLabel,
-                         "\xE5\xAE\x89\xE5\x8D\x93\xEF\xBC\x9AIP \xE7\x94\xB1"
-                         "\xE7\xB3\xBB\xE7\xBB\x9F WiFi \xE7\xAE\xA1\xE7\x90\x86"
-                         "\xEF\xBC\x9B\xE9\x9D\x99\xE6\x80\x81\xE9\x85\x8D\xE7\xBD\xAE"
-                         "\xE4\xBB\x85\xE5\xAF\xB9\xE5\xBA\x94\xE7\x94\xA8\xE5\x88"
-                         "\x9B\xE5\xBB\xBA\xE7\x9A\x84\xE7\xBD\x91\xE7\xBB\x9C\xE7"
-                         "\x94\x9F\xE6\x95\x88\xEF\xBC\x9B\xE9\x9D\x99\xE6\x80\x81 IPv6"
-                         "\xE7\xB3\xBB\xE7\xBB\x9F\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81");
+                         "安卓：IP 由系统 WiFi 管理；静态配置仅对应用创建的"
+                         "网络生效；静态 IPv6 系统不支持");
                          /* 安卓：IP 由系统 WiFi 管理；静态配置仅对应用创建的网络生效；静态 IPv6 系统不支持 */
 #else
         XLabel_setText_2(s_net.m_hintLabel,
-                         "\xE5\xBA\x94\xE7\x94\xA8\xE7\xBB\x8F\xE7\xB3\xBB"
-                         "\xE7\xBB\x9F netsh \xE9\x80\x9A\xE8\xB7\xAF"
-                         "\xEF\xBC\x88\xE9\x9C\x80\xE7\xAE\xA1\xE7\x90\x86"
-                         "\xE5\x91\x98\xE6\x9D\x83\xE9\x99\x90\xEF\xBC\x89"
-                         "\xEF\xBC\x9B\xE5\x88\x87\xE6\x8D\xA2\xE4\xBC\x9A"
-                         "\xE7\x9F\xAD\xE6\x9A\x82\xE4\xB8\xAD\xE6\x96\xAD"
-                         "\xE8\xAF\xA5\xE7\xBD\x91\xE5\x8D\xA1");
+                         "应用经系统 netsh 通路（需管理员权限）；切换会短暂中断该网卡");
                          /* 应用经系统 netsh 通路（需管理员权限）；切换会短暂中断该网卡 */
 #endif
     else
         XLabel_setText_2(s_net.m_hintLabel,
-                         "\xE5\xBD\x93\xE5\x89\x8D\xE5\xB9\xB3\xE5\x8F\xB0"
-                         "\xE6\x9C\xAA\xE6\x8E\xA5\xE9\x85\x8D\xE7\xBD\xAE"
-                         "\xE9\x80\x9A\xE8\xB7\xAF\xEF\xBC\x8C\xE6\x9C\xAC"
-                         "\xE9\xA1\xB5\xE4\xBB\x85\xE5\xB1\x95\xE7\xA4\xBA"
-                         "\xE4\xB8\x8E\xE6\xA0\xA1\xE9\xAA\x8C");
+                         "当前平台"
+                         "未接配置"
+                         "通路，本"
+                         "页仅展示"
+                         "与校验");
                          /* 当前平台未接配置通路，本页仅展示与校验 */
 }
 
@@ -804,7 +779,7 @@ static void net_refreshSelection(void)
     slot = s_net.m_adapterCombo
                ? XComboBox_currentIndex(s_net.m_adapterCombo) : -1;
     if (slot < 0 || slot >= s_net.m_count) {
-        net_report("\xE6\x9C\xAA\xE9\x80\x89\xE6\x8B\xA9\xE7\xBD\x91\xE5\x8D\xA1",
+        net_report("未选择网卡",
                    NULL); /* 未选择网卡 */
         return;
     }
@@ -837,23 +812,25 @@ static void net_refreshSelection(void)
                                           s_net.m_v6All,
                                           sizeof(s_net.m_v6All));
     if (s_net.m_infoLabel) {
+        /* [2026-11-08 修字面 \n] 前三行曾写成 "\\n"（源码里是转义反斜杠+ n）
+         * ⇒ 界面直接显示「服务器: -\nIPv4: …」两个字符。格式串一律用 \n。 */
         snprintf(info, sizeof(info),
-                 "\xE6\xA8\xA1\xE5\xBC\x8F: %s %s%s\n"
-                 "IPv4: %s  \xE6\x8E\xA9\xE7\xA0\x81: %s  "
-                 "\xE7\xBD\x91\xE5\x85\xB3: %s\n"
+                 "模式: %s %s%s\n"
+                 "IPv4: %s  掩码: %s  "
+                 "网关: %s\n"
                  "DNS: %s, %s\n"
                  "DHCP: %s\n"
                  "MAC: %s",
                  /* 模式: */
                  config->m_dhcpEnabled
-                     ? "DHCP \xE8\x87\xAA\xE5\x8A\xA8\xE8\x8E\xB7\xE5\x8F\x96"
-                     : "\xE9\x9D\x99\xE6\x80\x81\xE9\x85\x8D\xE7\xBD\xAE",
-                 config->m_dhcpEnabled ? "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x99\xA8: " : "",
+                     ? "DHCP 自动获取"
+                     : "静态配置",
+                 config->m_dhcpEnabled ? "服务器: " : "",
                  config->m_dhcpEnabled ? dhcp : "",
                  ip, mask, gw, dns1, dns2,
                  config->m_dhcpEnabled
-                     ? "\xE8\x87\xAA\xE5\x8A\xA8\xE8\x8E\xB7\xE5\x8F\x96"
-                     : "\xE9\x9D\x99\xE6\x80\x81", /* 自动获取/静态 */
+                     ? "自动获取"
+                     : "自动获取/静态", /* 自动获取/静态 */
                  mac);
         s_net.m_infoLines = 5;
         XLabel_setText_2(s_net.m_infoLabel, info);
@@ -953,8 +930,7 @@ static void net_refreshAdapters(void)
     XComboBox_clear(s_net.m_adapterCombo);
     s_net.m_count = 0;
     if (!interfaces) {
-        net_report("\xE6\x9C\xAA\xE6\x9E\x9A\xE4\xB8\xBE\xE5\x88\xB0\xE7\xBD"
-                   "\x91\xE5\x8D\xA1", NULL); /* 未枚举到网卡 */
+        net_report("未枚举到网卡", NULL); /* 未枚举到网卡 */
         return;
     }
     count = XVector_size_base(interfaces);
@@ -988,8 +964,7 @@ static void net_refreshAdapters(void)
             XComboBox_setCurrentIndex(s_net.m_adapterCombo, restored);
     }
     if (s_net.m_count == 0)
-        net_report("\xE6\x9C\xAA\xE6\x9E\x9A\xE4\xB8\xBE\xE5\x88\xB0\xE7\xBD"
-                   "\x91\xE5\x8D\xA1", NULL); /* 未枚举到网卡 */
+        net_report("未枚举到网卡", NULL); /* 未枚举到网卡 */
     else
         net_refreshSelection();
 }
@@ -1043,8 +1018,8 @@ static void net_applySlot(XObject* receiver, XVarList* args)
     slot = s_net.m_adapterCombo
                ? XComboBox_currentIndex(s_net.m_adapterCombo) : -1;
     if (slot < 0 || slot >= s_net.m_count) {
-        net_report("\xE5\xBA\x94\xE7\x94\xA8\xE5\xA4\xB1\xE8\xB4\xA5: "
-                   "\xE6\x9C\xAA\xE9\x80\x89\xE6\x8B\xA9\xE7\xBD\x91\xE5\x8D\xA1",
+        net_report("应用失败: "
+                   "未选择网卡",
                    NULL); /* 应用失败: 未选择网卡 */
         return;
     }
@@ -1059,71 +1034,51 @@ static void net_applySlot(XObject* receiver, XVarList* args)
         dns1 = s_net.m_dns1Edit ? XLineEdit_text(s_net.m_dns1Edit) : "";
         dns2 = s_net.m_dns2Edit ? XLineEdit_text(s_net.m_dns2Edit) : "";
         if (!net_validIpv4(ip)) {
-            net_report("IP \xE5\x9C\xB0\xE5\x9D\x80\xE9\x9D\x9E\xE6\xB3\x95"
-                       "\xEF\xBC\x8C\xE6\x8B\x92\xE7\xBB\x9D\xE5\xBA\x94"
-                       "\xE7\x94\xA8", NULL); /* IP 地址非法，拒绝应用 */
+            net_report("IP 地址非法，拒绝应用", NULL);
             return;
         }
         if (!net_validIpv4(mask)) {
-            net_report("\xE5\xAD\x90\xE7\xBD\x91\xE6\x8E\xA9\xE7\xA0\x81"
-                       "\xE9\x9D\x9E\xE6\xB3\x95\xEF\xBC\x8C\xE6\x8B\x92"
-                       "\xE7\xBB\x9D\xE5\xBA\x94\xE7\x94\xA8",
+            net_report("子网掩码"
+                       "非法，拒"
+                       "绝应用",
                        NULL); /* 子网掩码非法，拒绝应用 */
             return;
         }
         if (gw && gw[0] && !net_validIpv4(gw)) {
-            net_report("\xE9\xBB\x98\xE8\xAE\xA4\xE7\xBD\x91\xE5\x85\xB3"
-                       "\xE9\x9D\x9E\xE6\xB3\x95\xEF\xBC\x8C\xE6\x8B\x92"
-                       "\xE7\xBB\x9D\xE5\xBA\x94\xE7\x94\xA8",
+            net_report("默认网关"
+                       "非法，拒"
+                       "绝应用",
                        NULL); /* 默认网关非法，拒绝应用 */
             return;
         }
         if (dns1 && dns1[0] && !net_validIpv4(dns1)) {
-            net_report("\xE9\xA6\x96\xE9\x80\x89 DNS \xE9\x9D\x9E\xE6\xB3"
-                       "\x95\xEF\xBC\x8C\xE6\x8B\x92\xE7\xBB\x9D\xE5\xBA"
-                       "\x94\xE7\x94\xA8", NULL); /* 首选 DNS 非法，拒绝应用 */
+            net_report("首选 DNS 非法，拒绝应用", NULL); /* 首选 DNS 非法，拒绝应用 */
             return;
         }
         if (dns2 && dns2[0] && !net_validIpv4(dns2)) {
-            net_report("\xE5\xA4\x87\xE7\x94\xA8 DNS \xE9\x9D\x9E\xE6\xB3"
-                       "\x95\xEF\xBC\x8C\xE6\x8B\x92\xE7\xBB\x9D\xE5\xBA"
-                       "\x94\xE7\x94\xA8", NULL); /* 备用 DNS 非法，拒绝应用 */
+            net_report("备用 DNS 非法，拒绝应用", NULL); /* 备用 DNS 非法，拒绝应用 */
             return;
         }
     }
     if (!XNetworkInterface_configSupported()) {
-        net_report("\xE5\xBD\x93\xE5\x89\x8D\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8"
-                   "\x8D\xE6\x94\xAF\xE6\x8C\x81\xE7\xBD\x91\xE5\x8D\xA1"
-                   "\xE9\x85\x8D\xE7\xBD\xAE", NULL); /* 当前平台不支持网卡配置 */
+        net_report("当前平台不支持网卡配置", NULL); /* 当前平台不支持网卡配置 */
         return;
     }
     if (mode == 0) {
         ok = XNetworkInterface_setDhcpMode(ifIndex);
-        net_report(ok ? "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xE4\xB8\xBA "
-                        "DHCP \xE8\x87\xAA\xE5\x8A\xA8\xE8\x8E\xB7\xE5\x8F\x96"
-                      : "\xE5\xBA\x94\xE7\x94\xA8\xE5\xA4\xB1\xE8\xB4\xA5"
-                        "\xEF\xBC\x88\xE9\x9C\x80\xE7\xAE\xA1\xE7\x90\x86"
-                        "\xE5\x91\x98\xE6\x9D\x83\xE9\x99\x90\xEF\xBC\x9F"
-                        "\xEF\xBC\x89",
+        net_report(ok ? "已切换为 DHCP 自动获取"
+                      : "应用失败（需管理员权限？）",
                    NULL); /* 已切换为 DHCP 自动获取 / 应用失败（需管理员权限？） */
     } else {
         ok = XNetworkInterface_setStaticMode(ifIndex, ip, mask,
                                              (gw && gw[0]) ? gw : NULL,
                                              (dns1 && dns1[0]) ? dns1 : NULL,
                                              (dns2 && dns2[0]) ? dns2 : NULL);
-        net_report(ok ? "\xE5\xB7\xB2\xE5\xBA\x94\xE7\x94\xA8\xE9\x9D\x99"
-                        "\xE6\x80\x81 IP \xE9\x85\x8D\xE7\xBD\xAE"
-                      : "\xE5\xBA\x94\xE7\x94\xA8\xE5\xA4\xB1\xE8\xB4\xA5"
-                        "\xEF\xBC\x88\xE9\x9C\x80\xE7\xAE\xA1\xE7\x90\x86"
-                        "\xE5\x91\x98\xE6\x9D\x83\xE9\x99\x90\xEF\xBC\x9F"
-                        "\xEF\xBC\x89",
+        net_report(ok ? "已应用静态 IP 配置"
+                      : "应用失败（需管理员权限？）",
                    NULL); /* 已应用静态 IP 配置 / 应用失败（需管理员权限？） */
     }
-    if (ok)
-        net_refreshSelection(); /* 下发成功即回读（netsh 同步完成）。 */
 }
-
-/* ==================== 装配 ==================== */
 
 /** @brief 组装一行「标题 + 单行编辑」（只建件与固定尺寸；入列装配见
  *         net_addFieldRow）。 */
@@ -1177,13 +1132,13 @@ static void net_addFieldRow(XBoxLayout* col, XBoxLayout* row,
 static const char* net_wifiSecurityName(XDeviceWiFiSecurity security)
 {
     switch (security) {
-    case XDeviceWiFi_SecurityOpen:          return "\xE5\xBC\x80\xE6\x94\xBE"; /* 开放 */
+    case XDeviceWiFi_SecurityOpen:          return "开放"; /* 开放 */
     case XDeviceWiFi_SecurityWep:           return "WEP";
     case XDeviceWiFi_SecurityWpaPsk:        return "WPA-PSK";
     case XDeviceWiFi_SecurityWpa2Psk:       return "WPA2-PSK";
-    case XDeviceWiFi_SecurityWpa2Enterprise: return "WPA2-\xE4\xBC\x81\xE4\xB8\x9A"; /* 企业 */
+    case XDeviceWiFi_SecurityWpa2Enterprise: return "WPA2-企业"; /* 企业 */
     case XDeviceWiFi_SecurityWpa3Sae:       return "WPA3-SAE";
-    default:                                return "\xE6\x9C\xAA\xE7\x9F\xA5"; /* 未知 */
+    default:                                return "未知"; /* 未知 */
     }
 }
 
@@ -1226,22 +1181,20 @@ static void net_wifiRefreshInfo(void)
     if (!s_net.m_wifiInfoLabel) return;
     if (!net_wifiReady() || !adapter) {
         XLabel_setText_2(s_net.m_wifiInfoLabel,
-                         "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
-                         "\xE4\xB8\x8D\xE5\x8F\xAF\xE7\x94\xA8"); /* 无线：不可用 */
+                         "无线：不可用"); /* 无线：不可用 */
         return;
     }
     connection = XNetworkWiFi_queryConnection(s_net.m_wifi, adapter);
     if (!connection) {
         XLabel_setText_2(s_net.m_wifiInfoLabel,
-                         "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
-                         "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5"); /* 无线：未连接 */
+                         "无线：未连接"); /* 无线：未连接 */
         return;
     }
     {
         const XString* ssid = XNetworkWiFiConnection_ssid(connection);
         snprintf(text, sizeof(text),
-                 "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A%s  "
-                 "\xE4\xBF\xA1\xE5\x8F\xB7 %d  %s", /* 无线：<ssid>  信号 N  <加密> */
+                 "无线：%s  "
+                 "信号 %d  %s", /* 无线：<ssid>  信号 N  <加密> */
                  ssid ? XString_toUtf8(ssid) : "-",
                  XNetworkWiFiConnection_signalStrength(connection),
                  net_wifiSecurityName(XNetworkWiFiConnection_security(connection)));
@@ -1272,7 +1225,7 @@ static void net_wifiFillNetworks(XVector* networks)
         char text[192];
         snprintf(text, sizeof(text), "%s  (%d%%, %s)",
                  ssid ? XString_toUtf8(ssid)
-                      : "\xE9\x9A\x90\xE8\x97\x8F\xE7\xBD\x91\xE7\xBB\x9C", /* 隐藏网络 */
+                      : "隐藏网络", /* 隐藏网络 */
                  XNetworkWiFiNetwork_signalStrength(net),
                  net_wifiSecurityName(XNetworkWiFiNetwork_security(net)));
         XComboBox_addItem_2(s_net.m_wifiApCombo, text);
@@ -1326,18 +1279,16 @@ static void net_wifiScanSlot(XObject* receiver, XVarList* args)
     const XNetworkWiFiAdapter* adapter = net_wifiAdapter();
     (void)receiver; (void)args;
     if (!net_wifiReady() || !adapter) {
-        net_report("\xE6\x97\xA0\xE7\xBA\xBF\xE4\xB8\x8D\xE5\x8F\xAF"
-                   "\xE7\x94\xA8", NULL); /* 无线不可用 */
+        net_report("无线不可用", NULL); /* 无线不可用 */
         return;
     }
     if (!XNetworkWiFi_startScan(s_net.m_wifi, adapter)) {
-        net_report("\xE6\x89\xAB\xE6\x8F\x8F\xE5\x8F\x91\xE8\xB5\xB7"
-                   "\xE5\xA4\xB1\xE8\xB4\xA5", NULL); /* 扫描发起失败 */
+        net_report("扫描发起"
+                   "失败", NULL); /* 扫描发起失败 */
         return;
     }
     XLabel_setText_2(s_net.m_wifiInfoLabel,
-                     "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
-                     "\xE6\x89\xAB\xE6\x8F\x8F\xE4\xB8\xAD"); /* 无线：扫描中 */
+                     "无线：扫描中"); /* 无线：扫描中 */
     XWidget_setEnabled((XWidget*)s_net.m_wifiScanBtn, false);
     if (s_net.m_wifiTimer && !XTimer_isRunning(s_net.m_wifiTimer))
         XTimer_start_base(s_net.m_wifiTimer);
@@ -1353,19 +1304,16 @@ static void net_wifiConnectSlot(XObject* receiver, XVarList* args)
     XDeviceWiFiSecurity security = XDeviceWiFi_SecurityWpa2Psk;
     (void)receiver; (void)args;
     if (!net_wifiReady() || !adapter) {
-        net_report("\xE6\x97\xA0\xE7\xBA\xBF\xE4\xB8\x8D\xE5\x8F\xAF"
-                   "\xE7\x94\xA8", NULL); /* 无线不可用 */
+        net_report("无线不可用", NULL); /* 无线不可用 */
         return;
     }
     if (!network) {
-        net_report("\xE8\xAF\xB7\xE5\x85\x88\xE9\x80\x89\xE6\x8B\xA9"
-                   "\xE6\x97\xA0\xE7\xBA\xBF\xE9\x80\x82\xE9\x85\x8D"
-                   "\xE5\x99\xA8", NULL); /* 请先选择无线适配器 */
+        net_report("请先选择无线适配器", NULL);
         return;
     }
     ssid = XNetworkWiFiNetwork_ssid(network);
     if (!ssid) {
-        net_report("\xE6\x9C\xAA\xE7\x9F\xA5", NULL); /* 未知 */
+        net_report("未知", NULL); /* 未知 */
         return;
     }
     security = XNetworkWiFiNetwork_security(network);
@@ -1377,19 +1325,15 @@ static void net_wifiConnectSlot(XObject* receiver, XVarList* args)
            下手（真机实测踩坑：AP 已选中但口令框空着）。 */
         if (security != XDeviceWiFi_SecurityOpen &&
             (!password || !password[0])) {
-            net_report("\xE8\xBF\x9E\xE6\x8E\xA5\xE5\x8F\x91\xE8\xB5\xB7"
-                       "\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x9A"
-                       "\xE8\xAF\xB7\xE5\x85\x88\xE5\xA1\xAB\xE5\x8F\xA3"
-                       "\xE4\xBB\xA5", NULL); /* 连接发起失败：请先填口令 */
+            net_report("连接发起失败：请先填口令", NULL);
         } else {
-            net_report("\xE8\xBF\x9E\xE6\x8E\xA5\xE5\x8F\x91\xE8\xB5\xB7"
-                       "\xE5\xA4\xB1\xE8\xB4\xA5", NULL); /* 连接发起失败 */
+            net_report("连接发起"
+                       "失败", NULL); /* 连接发起失败 */
         }
         return;
     }
     XLabel_setText_2(s_net.m_wifiInfoLabel,
-                     "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
-                     "\xE8\xBF\x9E\xE6\x8E\xA5\xE4\xB8\xAD"); /* 无线：连接中 */
+                     "无线：连接中"); /* 无线：连接中 */
     if (s_net.m_wifiTimer && !XTimer_isRunning(s_net.m_wifiTimer))
         XTimer_start_base(s_net.m_wifiTimer);
 }
@@ -1400,17 +1344,15 @@ static void net_wifiDisconnectSlot(XObject* receiver, XVarList* args)
     const XNetworkWiFiAdapter* adapter = net_wifiAdapter();
     (void)receiver; (void)args;
     if (!net_wifiReady() || !adapter) {
-        net_report("\xE6\x97\xA0\xE7\xBA\xBF\xE4\xB8\x8D\xE5\x8F\xAF"
-                   "\xE7\x94\xA8", NULL); /* 无线不可用 */
+        net_report("无线不可用", NULL); /* 无线不可用 */
         return;
     }
     if (!XNetworkWiFi_disconnect(s_net.m_wifi, adapter)) {
-        net_report("\xE6\x96\xAD\xE5\xBC\x80\xE5\xA4\xB1\xE8\xB4\xA5",
+        net_report("断开失败",
                    NULL); /* 断开失败 */
         return;
     }
-    net_report("\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
-               "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5", NULL); /* 无线：未连接 */
+    net_report("无线：未连接", NULL); /* 无线：未连接 */
     net_wifiRefreshInfo();
 }
 
@@ -1430,18 +1372,18 @@ static void net_wifiTimerCb(void* userData, XTimerData* timer)
         XTimer_stop_base(s_net.m_wifiTimer);
         XWidget_setEnabled((XWidget*)s_net.m_wifiScanBtn, true);
         net_wifiRefreshInfo();
-        net_report("\xE6\x97\xA0\xE7\xBA\xBF\xE8\xBF\x9E\xE6\x8E\xA5"
-                   "\xE6\x88\x90\xE5\x8A\x9F", NULL); /* 无线连接成功 */
+        net_report("无线连接"
+                   "成功", NULL); /* 无线连接成功 */
         return;
     }
     if (connect == XDeviceWiFi_ConnectFailed) {
         XTimer_stop_base(s_net.m_wifiTimer);
         XWidget_setEnabled((XWidget*)s_net.m_wifiScanBtn, true);
         XLabel_setText_2(s_net.m_wifiInfoLabel,
-                         "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
-                         "\xE8\xBF\x9E\xE6\x8E\xA5\xE5\xA4\xB1\xE8\xB4\xA5"); /* 无线：连接失败 */
-        net_report("\xE6\x97\xA0\xE7\xBA\xBF\xE8\xBF\x9E\xE6\x8E\xA5"
-                   "\xE5\xA4\xB1\xE8\xB4\xA5", NULL); /* 无线连接失败 */
+                         "无线："
+                         "连接失败"); /* 无线：连接失败 */
+        net_report("无线连接"
+                   "失败", NULL); /* 无线连接失败 */
         return;
     }
 
@@ -1452,13 +1394,12 @@ static void net_wifiTimerCb(void* userData, XTimerData* timer)
     if (scan == XDeviceWiFi_ScanCompleted) {
         XVector* networks = XNetworkWiFi_takeScanResults(s_net.m_wifi, adapter);
         net_wifiFillNetworks(networks);
-        net_report("\xE6\x89\xAB\xE6\x8F\x8F\xE5\xAE\x8C\xE6\x88\x90",
+        net_report("扫描完成",
                    NULL); /* 扫描完成 */
     } else {
         XLabel_setText_2(s_net.m_wifiInfoLabel,
-                         "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
-                         "\xE6\x89\xAB\xE6\x8F\x8F\xE5\xA4\xB1\xE8\xB4\xA5"); /* 无线：扫描失败 */
-        net_report("\xE6\x89\xAB\xE6\x8F\x8F\xE5\xA4\xB1\xE8\xB4\xA5",
+                         "无线：扫描失败"); /* 无线：扫描失败 */
+        net_report("扫描失败",
                    NULL); /* 扫描失败 */
     }
 }
@@ -1522,7 +1463,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_titleLabel = XLabel_create(s_net.m_root, 0);
     if (!s_net.m_titleLabel) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_titleLabel,
-                     "\xE7\xBD\x91\xE5\x8D\xA1\xE8\xAE\xBE\xE7\xBD\xAE");
+                     "网卡设置");
                      /* 网卡设置 */
     XLabel_setTextPixelSize(s_net.m_titleLabel, 15);
     XLabel_setAlignment(s_net.m_titleLabel, XAlignment_Center);
@@ -1531,7 +1472,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_ipTitle = XLabel_create(s_net.m_root, 0);
     if (!s_net.m_ipTitle) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_ipTitle,
-                     "IPv4 \xE8\xAE\xBE\xE7\xBD\xAE"); /* IPv4 设置 */
+                     "IPv4 设置"); /* IPv4 设置 */
     XLabel_setTextPixelSize(s_net.m_ipTitle, 15);
     XLabel_setAlignment(s_net.m_ipTitle, XAlignment_Center);
     XWidget_setFixedHeight((XWidget*)s_net.m_ipTitle, 24);
@@ -1539,7 +1480,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_v6Title = XLabel_create(s_net.m_root, 0);
     if (!s_net.m_v6Title) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_v6Title,
-                     "IPv6 \xE8\xAE\xBE\xE7\xBD\xAE"); /* IPv6 设置 */
+                     "IPv6 设置"); /* IPv6 设置 */
     XLabel_setTextPixelSize(s_net.m_v6Title, 15);
     XLabel_setAlignment(s_net.m_v6Title, XAlignment_Center);
     XWidget_setFixedHeight((XWidget*)s_net.m_v6Title, 24);
@@ -1548,7 +1489,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_wifiTitle = XLabel_create(s_net.m_root, 0);
     if (s_net.m_wifiTitle) {
         XLabel_setText_2(s_net.m_wifiTitle,
-                         "WiFi \xE8\xAE\xBE\xE7\xBD\xAE"); /* WiFi 设置 */
+                         "WiFi 设置"); /* WiFi 设置 */
         XLabel_setTextPixelSize(s_net.m_wifiTitle, 15);
         XLabel_setAlignment(s_net.m_wifiTitle, XAlignment_Center);
         XWidget_setFixedHeight((XWidget*)s_net.m_wifiTitle, 24);
@@ -1560,7 +1501,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_capAdapter = XLabel_create(s_net.m_root, 0);
     if (s_net.m_capAdapter) {
         XLabel_setText_2(s_net.m_capAdapter,
-                         "\xE7\xBD\x91\xE5\x8D\xA1"); /* 网卡 */
+                         "网卡"); /* 网卡 */
         XWidget_setFixedWidth((XWidget*)s_net.m_capAdapter, 40);
         XWidget_setFixedHeight((XWidget*)s_net.m_capAdapter, 22);
         XWidget_show((XWidget*)s_net.m_capAdapter);
@@ -1585,7 +1526,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_refreshBtn = XPushButton_create(s_net.m_root, 0);
     if (s_net.m_refreshBtn) {
         XPushButton_setText_2(s_net.m_refreshBtn,
-                              "\xE5\x88\xB7\xE6\x96\xB0"); /* 刷新 */
+                              "刷新"); /* 刷新 */
         XWidget_setFixedWidth((XWidget*)s_net.m_refreshBtn, 64);
         XWidget_setFixedHeight((XWidget*)s_net.m_refreshBtn, 26);
         XObject_connect_2((XObject*)s_net.m_refreshBtn,
@@ -1599,8 +1540,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_infoLabel = XLabel_create(s_net.m_root, 0);
     if (!s_net.m_infoLabel) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_infoLabel,
-                     "\xE6\xAD\xA3\xE5\x9C\xA8\xE6\x9E\x9A\xE4\xB8\xBE"
-                     "\xE7\xBD\x91\xE5\x8D\xA1\xE2\x80\xA6"); /* 正在枚举网卡… */
+                     "正在枚举网卡…"); /* 正在枚举网卡… */
     XLabel_setTextPixelSize(s_net.m_infoLabel, 13);
     XLabel_setAlignment(s_net.m_infoLabel,
                         XAlignment_Left | XAlignment_Top);
@@ -1619,8 +1559,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_v6ExpandCheck = XCheckBox_create(s_net.m_root, 0);
     if (s_net.m_v6ExpandCheck) {
         XAbstractButton_setText_2((XAbstractButton*)s_net.m_v6ExpandCheck,
-                                  "\xE5\xB1\x95\xE5\xBC\x80\xE5\x85\xA8"
-                                  "\xE9\x83\xA8 IPv6"); /* 展开全部 IPv6 */
+                                  "展开全部 IPv6"); /* 展开全部 IPv6 */
         XWidget_setFixedWidth((XWidget*)s_net.m_v6ExpandCheck, 164);
         XWidget_setFixedHeight((XWidget*)s_net.m_v6ExpandCheck, 22);
         XObject_connect_2((XObject*)s_net.m_v6ExpandCheck,
@@ -1640,10 +1579,9 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_v4ModeCombo = XComboBox_create(s_net.m_root, 0);
     if (!s_net.m_v4ModeCombo) return s_net.m_pageHost;
     XComboBox_addItem_2(s_net.m_v4ModeCombo,
-                        "DHCP \xE8\x87\xAA\xE5\x8A\xA8\xE8\x8E\xB7"
-                        "\xE5\x8F\x96"); /* DHCP 自动获取 */
+                        "DHCP 自动获取");
     XComboBox_addItem_2(s_net.m_v4ModeCombo,
-                        "\xE9\x9D\x99\xE6\x80\x81 IP"); /* 静态 IP */
+                        "静态 IP"); /* 静态 IP */
     XComboBox_setCurrentIndex(s_net.m_v4ModeCombo, 0);
     XWidget_setFixedWidth((XWidget*)s_net.m_v4ModeCombo, 150);
     XWidget_setFixedHeight((XWidget*)s_net.m_v4ModeCombo, 26);
@@ -1654,8 +1592,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_applyBtn = XPushButton_create(s_net.m_root, 0);
     if (s_net.m_applyBtn) {
         XPushButton_setText_2(s_net.m_applyBtn,
-                              "\xE5\xBA\x94\xE7\x94\xA8\xE9\x85\x8D"
-                              "\xE7\xBD\xAE"); /* 应用配置 */
+                              "应用配置"); /* 应用配置 */
         XWidget_setFixedWidth((XWidget*)s_net.m_applyBtn, NET_BTN_W);
         XWidget_setFixedHeight((XWidget*)s_net.m_applyBtn, 30);
         XObject_connect_2((XObject*)s_net.m_applyBtn,
@@ -1675,11 +1612,9 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_v6ModeCombo = XComboBox_create(s_net.m_root, 0);
     if (!s_net.m_v6ModeCombo) return s_net.m_pageHost;
     XComboBox_addItem_2(s_net.m_v6ModeCombo,
-                        "\xE8\x87\xAA\xE5\x8A\xA8\xE8\x8E\xB7\xE5\x8F"
-                        "\x96"); /* 自动获取 */
+                        "自动获取"); /* 自动获取 */
     XComboBox_addItem_2(s_net.m_v6ModeCombo,
-                        "\xE6\x89\x8B\xE5\x8A\xA8\xE8\xBF\xBD\xE5\x8A"
-                        "\xA0"); /* 手动追加 */
+                        "手动追加"); /* 手动追加 */
     XComboBox_setCurrentIndex(s_net.m_v6ModeCombo, 0);
     XWidget_setFixedWidth((XWidget*)s_net.m_v6ModeCombo, 140);
     XWidget_setFixedHeight((XWidget*)s_net.m_v6ModeCombo, 26);
@@ -1690,7 +1625,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_applyV6Btn = XPushButton_create(s_net.m_root, 0);
     if (s_net.m_applyV6Btn) {
         XPushButton_setText_2(s_net.m_applyV6Btn,
-                              "\xE5\xBA\x94\xE7\x94\xA8 IPv6"); /* 应用 IPv6 */
+                              "应用 IPv6"); /* 应用 IPv6 */
         XWidget_setFixedWidth((XWidget*)s_net.m_applyV6Btn, NET_BTN_W);
         XWidget_setFixedHeight((XWidget*)s_net.m_applyV6Btn, 30);
         XObject_connect_2((XObject*)s_net.m_applyV6Btn,
@@ -1701,13 +1636,13 @@ XWidget* hsf_page_network_build(XWidget* parent,
 
     /* ---- 左列：IPv4 静态五件 ---- */
     net_buildField("IP", &s_net.m_capIp, &s_net.m_ipEdit);
-    net_buildField("\xE5\xAD\x90\xE7\xBD\x91\xE6\x8E\xA9\xE7\xA0\x81",
+    net_buildField("子网掩码",
                    &s_net.m_capMask, &s_net.m_maskEdit); /* 子网掩码 */
-    net_buildField("\xE9\xBB\x98\xE8\xAE\xA4\xE7\xBD\x91\xE5\x85\xB3",
+    net_buildField("默认网关",
                    &s_net.m_capGw, &s_net.m_gwEdit); /* 默认网关 */
-    net_buildField("\xE9\xA6\x96\xE9\x80\x89 DNS",
+    net_buildField("首选 DNS",
                    &s_net.m_capDns1, &s_net.m_dns1Edit); /* 首选 DNS */
-    net_buildField("\xE5\xA4\x87\xE7\x94\xA8 DNS",
+    net_buildField("备用 DNS",
                    &s_net.m_capDns2, &s_net.m_dns2Edit); /* 备用 DNS */
     net_setV4EditsEnabled(false); /* 初值来自选中网卡（初始 DHCP 态置灰）。 */
 
@@ -1715,7 +1650,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_capV6Addr = XLabel_create(s_net.m_root, 0);
     if (s_net.m_capV6Addr) {
         XLabel_setText_2(s_net.m_capV6Addr,
-                         "IPv6 \xE5\x9C\xB0\xE5\x9D\x80"); /* IPv6 地址 */
+                         "IPv6 地址"); /* IPv6 地址 */
         XWidget_setFixedWidth((XWidget*)s_net.m_capV6Addr, 100);
         XWidget_setFixedHeight((XWidget*)s_net.m_capV6Addr, 20);
         XWidget_show((XWidget*)s_net.m_capV6Addr);
@@ -1728,7 +1663,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_capV6Prefix = XLabel_create(s_net.m_root, 0);
     if (s_net.m_capV6Prefix) {
         XLabel_setText_2(s_net.m_capV6Prefix,
-                         "\xE5\x89\x8D\xE7\xBC\x80"); /* 前缀 */
+                         "前缀"); /* 前缀 */
         XWidget_setFixedWidth((XWidget*)s_net.m_capV6Prefix, 36);
         XWidget_setFixedHeight((XWidget*)s_net.m_capV6Prefix, 20);
         XWidget_show((XWidget*)s_net.m_capV6Prefix);
@@ -1743,7 +1678,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_capV6Gw = XLabel_create(s_net.m_root, 0);
     if (s_net.m_capV6Gw) {
         XLabel_setText_2(s_net.m_capV6Gw,
-                         "\xE7\xBD\x91\xE5\x85\xB3"); /* 网关 */
+                         "网关"); /* 网关 */
         XWidget_setFixedWidth((XWidget*)s_net.m_capV6Gw, 60);
         XWidget_setFixedHeight((XWidget*)s_net.m_capV6Gw, 20);
         XWidget_show((XWidget*)s_net.m_capV6Gw);
@@ -1756,9 +1691,9 @@ XWidget* hsf_page_network_build(XWidget* parent,
     }
     /* ---- IPv6 DNS 两行（只读展示：系统下发，安卓不允许应用改 WiFi 的
      *      IPv6 DNS；StaticIpConfiguration 只有 v4） ---- */
-    net_buildField("\xE9\xA6\x96\xE9\x80\x89 DNS",
+    net_buildField("首选 DNS",
                    &s_net.m_capV6Dns1, &s_net.m_v6Dns1Edit); /* 首选 DNS */
-    net_buildField("\xE5\xA4\x87\xE7\x94\xA8 DNS",
+    net_buildField("备用 DNS",
                    &s_net.m_capV6Dns2, &s_net.m_v6Dns2Edit); /* 备用 DNS */
     net_setV6EditsEnabled(false); /* IPv6 模式初始=自动获取（右列置灰）。 */
 
@@ -1780,7 +1715,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_wifiCap = XLabel_create(s_net.m_root, 0);
     if (s_net.m_wifiCap) {
         XLabel_setText_2(s_net.m_wifiCap,
-                         "\xE6\x97\xA0\xE7\xBA\xBF"); /* 无线 */
+                         "无线"); /* 无线 */
         XWidget_setFixedWidth((XWidget*)s_net.m_wifiCap, 40);
         XWidget_setFixedHeight((XWidget*)s_net.m_wifiCap, 22);
         XWidget_show((XWidget*)s_net.m_wifiCap);
@@ -1800,7 +1735,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_wifiScanBtn = XPushButton_create(s_net.m_root, 0);
     if (s_net.m_wifiScanBtn) {
         XPushButton_setText_2(s_net.m_wifiScanBtn,
-                              "\xE6\x89\xAB\xE6\x8F\x8F"); /* 扫描 */
+                              "扫描"); /* 扫描 */
         XWidget_setFixedWidth((XWidget*)s_net.m_wifiScanBtn, 64);
         XWidget_setFixedHeight((XWidget*)s_net.m_wifiScanBtn, 26);
         XObject_connect_2((XObject*)s_net.m_wifiScanBtn,
@@ -1812,7 +1747,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
         s_net.m_wifiNetCap = XLabel_create(s_net.m_root, 0);
         if (s_net.m_wifiNetCap) {
             XLabel_setText_2(s_net.m_wifiNetCap,
-                             "\xE7\xBD\x91\xE7\xBB\x9C"); /* 网络 */
+                             "网络"); /* 网络 */
             XWidget_setFixedWidth((XWidget*)s_net.m_wifiNetCap, 40);
             XWidget_setFixedHeight((XWidget*)s_net.m_wifiNetCap, 22);
             XWidget_show((XWidget*)s_net.m_wifiNetCap);
@@ -1828,7 +1763,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
         s_net.m_wifiPassCap = XLabel_create(s_net.m_root, 0);
         if (s_net.m_wifiPassCap) {
             XLabel_setText_2(s_net.m_wifiPassCap,
-                             "\xE5\x8F\xA3\xE4\xBB\xA4"); /* 口令 */
+                             "口令"); /* 口令 */
             XWidget_setFixedWidth((XWidget*)s_net.m_wifiPassCap, 40);
             XWidget_setFixedHeight((XWidget*)s_net.m_wifiPassCap, 22);
             XWidget_show((XWidget*)s_net.m_wifiPassCap);
@@ -1841,7 +1776,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
         s_net.m_wifiConnectBtn = XPushButton_create(s_net.m_root, 0);
         if (s_net.m_wifiConnectBtn) {
             XPushButton_setText_2(s_net.m_wifiConnectBtn,
-                                  "\xE8\xBF\x9E\xE6\x8E\xA5"); /* 连接 */
+                                  "连接"); /* 连接 */
             XWidget_setFixedWidth((XWidget*)s_net.m_wifiConnectBtn, 72);
             XWidget_setFixedHeight((XWidget*)s_net.m_wifiConnectBtn, 26);
             XObject_connect_2((XObject*)s_net.m_wifiConnectBtn,
@@ -1852,7 +1787,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
         s_net.m_wifiDisconnectBtn = XPushButton_create(s_net.m_root, 0);
         if (s_net.m_wifiDisconnectBtn) {
             XPushButton_setText_2(s_net.m_wifiDisconnectBtn,
-                                  "\xE6\x96\xAD\xE5\xBC\x80"); /* 断开 */
+                                  "断开"); /* 断开 */
             XWidget_setFixedWidth((XWidget*)s_net.m_wifiDisconnectBtn, 72);
             XWidget_setFixedHeight((XWidget*)s_net.m_wifiDisconnectBtn, 26);
             XObject_connect_2((XObject*)s_net.m_wifiDisconnectBtn,
@@ -1911,7 +1846,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_statusLabel = XLabel_create(s_net.m_root, 0);
     if (!s_net.m_statusLabel) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_statusLabel,
-                     "\xE5\xB0\xB1\xE7\xBB\xAA"); /* 就绪 */
+                     "就绪"); /* 就绪 */
     XWidget_setFixedHeight((XWidget*)s_net.m_statusLabel, 22);
     XWidget_show((XWidget*)s_net.m_statusLabel);
 
@@ -2443,7 +2378,7 @@ int hsf_page_network_autotest(XWidget* page)
     NET_EXPECT(XComboBox_count(s_net.m_adapterCombo) >= 1 &&
                s_net.m_count >= 1,
                "网络设置页: 网卡枚举非空");
-    NET_EXPECT(strstr(s_net.m_lastStatus, "\xE6\x9C\xAA") == NULL,
+    NET_EXPECT(strstr(s_net.m_lastStatus, "未") == NULL,
                "网络设置页: 首选网卡回填无失败反馈"); /* 未… */
 
     /* ---- 信息区含模式行（查询已回填） ---- */
@@ -2479,7 +2414,7 @@ int hsf_page_network_autotest(XWidget* page)
         XLineEdit_setText(s_net.m_ipEdit, "999.1.1.1");
         net_applySlot(NULL, NULL);
         NET_EXPECT(strstr(s_net.m_lastStatus,
-                          "\xE9\x9D\x9E\xE6\xB3\x95") != NULL,
+                          "非法") != NULL,
                    "网络设置页: 非法 IP 拒应用(不触平台)"); /* 非法 */
         XLineEdit_setText(s_net.m_ipEdit, savedIp);
     }
@@ -2550,7 +2485,7 @@ int hsf_page_network_autotest(XWidget* page)
         XLineEdit_setText(s_net.m_v6AddrEdit, "zz::gg");
         net_applyV6Slot(NULL, NULL);
         NET_EXPECT(strstr(s_net.m_lastStatus,
-                          "\xE9\x9D\x9E\xE6\xB3\x95") != NULL,
+                          "非法") != NULL,
                    "网络设置页: 非法 IPv6 拒应用(不触平台)"); /* 非法 */
         XLineEdit_setText(s_net.m_v6AddrEdit, savedAddr);
         XComboBox_setCurrentIndex(s_net.m_v4ModeCombo, 0);

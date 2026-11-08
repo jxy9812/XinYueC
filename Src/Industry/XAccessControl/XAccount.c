@@ -258,7 +258,10 @@ bool XAccountManager_add(XAccountManager* mgr, const char* name,
                          const char* password, XAccountRole role)
 {
     if (!mgr || !name || !name[0]) return false;
-    if (role != XAccountRole_User && role != XAccountRole_Admin) return false;
+    /* 可建角色：User（只读+下载）/ Operator（+设备控制）/ Admin（全权）。 */
+    if (role != XAccountRole_User && role != XAccountRole_Operator &&
+        role != XAccountRole_Admin)
+        return false;
     if (!password || !password[0]) return false;
     if (mgr->m_minPassLen && strlen(password) < mgr->m_minPassLen) return false;
     if (XLinkUserStore_find(&mgr->m_store, name)) return false;   /* 重名拒绝。 */
@@ -284,7 +287,9 @@ bool XAccountManager_setRole(XAccountManager* mgr, const char* name,
 {
     const XLinkUserRecord* r;
     if (!mgr || !name) return false;
-    if (role != XAccountRole_User && role != XAccountRole_Admin) return false;
+    if (role != XAccountRole_User && role != XAccountRole_Operator &&
+        role != XAccountRole_Admin)
+        return false;
     r = XLinkUserStore_find(&mgr->m_store, name);
     if (!r) return false;
     /* 降级闸：目标当前是未锁定管理员且目标角色非 Admin → 先评不变式。 */

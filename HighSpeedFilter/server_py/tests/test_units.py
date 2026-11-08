@@ -1094,6 +1094,8 @@ class TestVirtualDevices(unittest.TestCase):
 
         [为什么要爬坡] 瞬跳的话界面上永远看不到"加速中"，也验证不了
         "给定变了但还没跟上"这类显示。这里断言"一拍内未到目标"。
+        [ACC/DEC 口径 2026-11-06] 斜率按加减速时间参数（缺省 10.0s 满量程
+        ⇒ 5Hz/s）：0→25Hz 要 ~5s，轮询预算随之放宽。
         """
         import asyncio
 
@@ -1103,7 +1105,7 @@ class TestVirtualDevices(unittest.TestCase):
             await dev.apply_control(proto.OP_START, reverse=False)
             await dev.poll(100)                 # 第一拍：还在爬坡
             first = dev.output_freq_hz()
-            for t in range(200, 3000, 100):      # 继续跑够时间
+            for t in range(200, 11000, 100):     # 继续跑够时间（~5s 到目标）
                 await dev.poll(t)
             return first, dev.output_freq_hz()
         first, final = asyncio.run(go())
@@ -1142,18 +1144,21 @@ class TestVirtualDevices(unittest.TestCase):
         self.assertAlmostEqual(dev.set_freq_hz(), 30.0, 1)
 
     def test_vfd_running_setpoint_follows(self):
-        """运行中改给定 → 输出跟随（这是调速的正常路径）。"""
+        """运行中改给定 → 输出跟随（这是调速的正常路径）。
+
+        [ACC/DEC 口径 2026-11-06] 斜率 5Hz/s：0→25Hz ~5s、25→40Hz ~3s。
+        """
         import asyncio
         dev, _ = self._vfd()
 
         async def go():
             await dev.poll(0)
             await dev.apply_control(proto.OP_START)
-            for t in range(100, 3000, 100):
+            for t in range(100, 7000, 100):
                 await dev.poll(t)
             first = dev.output_freq_hz()
             await dev.apply_control(proto.OP_SET_FREQUENCY, hz=40.0)
-            for t in range(3000, 7000, 100):
+            for t in range(7000, 13000, 100):
                 await dev.poll(t)
             return first, dev.output_freq_hz()
 
@@ -1169,11 +1174,11 @@ class TestVirtualDevices(unittest.TestCase):
         async def go():
             await dev.poll(0)
             await dev.apply_control(proto.OP_START)
-            for t in range(100, 3000, 100):
+            for t in range(100, 7000, 100):      # 25Hz @5Hz/s 要 ~5s
                 await dev.poll(t)
             running_hz = dev.output_freq_hz()
             await dev.apply_control(proto.OP_FREE_STOP)
-            await dev.poll(3000)
+            await dev.poll(7000)
             return running_hz, dev.output_freq_hz()
 
         running_hz, after = asyncio.run(go())
@@ -4044,8 +4049,10 @@ class TestVfdRunPhase(unittest.TestCase):
         import asyncio
         asyncio.run(dev.apply_control(proto.OP_STOP))
 
+        # [ACC/DEC 口径 2026-11-06] 斜率按减速时间参数（缺省 10s 满量程
+        # ⇒ 0.5Hz/拍）：48.6Hz 降到 0 要 ~97 拍，轮询预算随之放宽。
         seq = []
-        for i in range(8):
+        for i in range(120):
             model.on_access()                # 斜坡下降
             self._poll(dev, 1200 + i * 200)
             seq.append(dev.run_state)
@@ -4076,6 +4083,46 @@ class TestVfdRunPhase(unittest.TestCase):
         self.assertEqual(dev.run_state, proto.RUN_ACCELERATING,
                          "重启后是在加速，不是减速")
 
+    def test_reversal_decel_shows_decelerating(self):
+        """运行中换向减速：命令方向≠状态字方向 ⇒ 减速中（不得误判加速中）。
+
+        [2026-11-06 换向口径实测] 状态字过零才翻向，这段设定频率镜像仍是
+        给定——差值判据会把减速段误判成"加速中"；靠 _cmd_reverse 记账识别
+        （与 C 侧 XVfdDevice m_hasCmdReverse/m_cmdReverse 同口径）。
+        """
+        from hsfsrv import proto
+        model, dev = self._dev()
+        model.running = True
+        model.set_percent = 5000             # 设定镜像 25Hz（换向中不变）
+        model.target_hz = 0.0                # 模型在换向减速（目标 0）
+        model.out_hz = 18.0
+        dev._cmd_reverse = True              # 命令了反转，状态字仍报正转
+        self._poll(dev)
+        self.assertEqual(dev.run_state, proto.RUN_DECELERATING,
+                         "换向减速段必须显示减速中，不得显示加速中")
+
+    def test_reversal_crossed_resumes_diff_rule(self):
+        """过零翻向后命令方向==状态字方向 ⇒ 交回差值判据（加速中）。"""
+        from hsfsrv import proto
+        model, dev = self._dev()
+        model.running = True
+        model.reverse = True                 # 已过零翻向
+        model.set_percent = 5000
+        model.target_hz = 25.0
+        model.out_hz = 3.0                   # 正在反向爬坡
+        dev._cmd_reverse = True
+        self._poll(dev)
+        self.assertEqual(dev.run_state, proto.RUN_ACCELERATING,
+                         "过零后应按差值判加速中")
+
+    def test_stop_clears_cmd_reverse(self):
+        """停止覆盖换向：OP_STOP 后方向记账作废（不得再进换向减速分支）。"""
+        import asyncio
+        model, dev = self._dev()
+        dev._cmd_reverse = True
+        asyncio.run(dev.apply_control(proto.OP_STOP))
+        self.assertIsNone(dev._cmd_reverse, "停止应清方向记账")
+
     def test_decel_stop_ramps_instead_of_cutting(self):
         """减速停机（命令 6）必须走斜坡；自由停车（命令 5）才瞬断。
 
@@ -4101,6 +4148,160 @@ class TestVfdRunPhase(unittest.TestCase):
         model2.write_single(6, 0x2000, 5)     # 自由停车
         self.assertFalse(model2.running)
         self.assertEqual(model2.out_hz, 0.0, "自由停车必须瞬断")
+
+
+class TestVfdReversal(unittest.TestCase):
+    """运行中换向：反向命令先减速过零、再反向加速（ACC/DEC 口径）。
+
+    [口径 2026-11-06] 运行中收到反方向命令字（0x2000 写 1↔2）＝按 DEC 减速
+    到 0（状态字仍报**原方向**）、过零那一刻翻向、按 ACC 爬回给定；同向命令
+    /自由停车/减速停机/点动取消待决换向。斜率按 ACC(0xF011)/DEC(0xF012)
+    满量程时间推导（缺省各 10.0s ⇒ 50Hz 模型 0.5Hz/拍）。C 侧
+    XVirtualModelVfd 同口径（Test/XProtocolTest/xmodbus_virtual_test.c ①b
+    互为镜像，两端口径改动必须同步）。
+    """
+
+    def _model(self):
+        from hsfsrv.virtualdev import VirtualVfd
+        model = VirtualVfd(max_hz=50.0)
+        model.set_percent = 2400             # 给定 12Hz
+        return model
+
+    def _ramp_to(self, model, hz, ticks=60):
+        """推进若干拍直到输出 ≥ 目标。"""
+        for _ in range(ticks):
+            model.on_access()
+            if model.out_hz >= hz - 0.05:
+                return True
+        return False
+
+    def test_acc_dec_defaults_and_roundtrip(self):
+        """ACC/DEC 寄存器缺省 10.0s，可写可读回，斜率按参数推导。"""
+        model = self._model()
+        self.assertEqual(model.acc_tenths, 100, "ACC 缺省 10.0s")
+        self.assertEqual(model.dec_tenths, 100, "DEC 缺省 10.0s")
+        self.assertEqual(model._reg(0xF011), 100)
+        self.assertEqual(model._reg(0xF012), 100)
+        model.write_single(6, 0xF011, 50)    # 5.0s
+        model.write_single(6, 0xF012, 30)    # 3.0s
+        self.assertEqual(model._reg(0xF011), 50)
+        self.assertEqual(model._reg(0xF012), 30)
+        # ACC=5.0s ⇒ 50/5/10 = 1.0Hz/拍
+        model.write_single(6, 0x2000, 1)     # 正转启动
+        model.on_access()
+        self.assertAlmostEqual(model.out_hz, 1.0, 6, "ACC=5s ⇒ 1Hz/拍")
+        # DEC=3.0s ⇒ 50/3/10 ≈ 1.667Hz/拍（减速走 DEC）
+        model.write_single(6, 0x2000, 6)
+        model.out_hz = 10.0                  # 摆到斜坡中段避开死区
+        model.on_access()
+        self.assertAlmostEqual(model.out_hz, 10.0 - 50.0 / 3.0 / 10.0, 6,
+                               msg="减速斜率应按 DEC 参数")
+
+    def test_slope_fallback_when_param_zero(self):
+        """ACC/DEC 被显式写 0（未配置）⇒ 回退固定斜率兜底（不除零）。"""
+        from hsfsrv.virtualdev import VirtualVfd
+        model = self._model()
+        model.write_single(6, 0xF011, 0)
+        model.write_single(6, 0x2000, 1)
+        model.on_access()
+        self.assertAlmostEqual(model.out_hz, VirtualVfd.RAMP_HZ_PER_TICK, 6)
+
+    def test_reversal_ramps_through_zero(self):
+        """运行中发反向命令：减速段状态字仍报原方向，过零翻向，保持运行。"""
+        model = self._model()
+        model.write_single(6, 0x2000, 1)     # 正转
+        self.assertTrue(self._ramp_to(model, 12.0))
+        self.assertEqual(model._reg(0x3000), 1)
+        model.write_single(6, 0x2000, 2)     # 运行中发反转
+        model.on_access()
+        self.assertLess(model.out_hz, 12.0, "换向第一拍应在减速")
+        self.assertEqual(model._reg(0x3000), 1, "减速段状态字仍报正转")
+        min_hz = model.out_hz
+        for _ in range(120):
+            model.on_access()
+            min_hz = min(min_hz, model.out_hz)
+            if model._reg(0x3000) == 2:
+                break
+        self.assertEqual(model._reg(0x3000), 2, "过零后状态字翻反转")
+        self.assertLessEqual(min_hz, 0.001, "减速段必须经过零（非瞬跳）")
+        self.assertGreaterEqual(min_hz, -0.001, "不得出现负频率")
+        self.assertTrue(model.running, "过零后保持运行（未经过停机）")
+        self.assertTrue(self._ramp_to(model, 12.0), "反转应爬回给定")
+        self.assertEqual(model._reg(0x3000), 2)
+
+    def test_reversal_cancel_by_same_dir_command(self):
+        """换向减速中收到同向命令＝取消待决换向，拉回原方向。"""
+        model = self._model()
+        model.write_single(6, 0x2000, 1)
+        self.assertTrue(self._ramp_to(model, 12.0))
+        model.write_single(6, 0x2000, 2)     # 换向减速
+        model.on_access()
+        model.write_single(6, 0x2000, 1)     # 翻回正转＝取消
+        self.assertTrue(self._ramp_to(model, 12.0), "取消换向后回给定")
+        self.assertEqual(model._reg(0x3000), 1)
+
+    def test_reversal_given_change_applies_after_crossing(self):
+        """换向减速中改给定：只记忆不动目标，过零后按新给定加速。
+
+        [为什么要锁] 服务端处理带给定的 START 是"先写 0x1000 再写 0x2000"
+        两步，两步间一拍推进若被给定拉高目标就会出现减速毛刺。
+        """
+        model = self._model()
+        model.write_single(6, 0x2000, 1)
+        self.assertTrue(self._ramp_to(model, 12.0))
+        model.write_single(6, 0x2000, 2)
+        model.on_access()                    # 减速中
+        before = model.out_hz
+        model.write_single(6, 0x1000, 1200)  # 改给定 6Hz
+        model.on_access()
+        self.assertLess(model.out_hz, before, "减速中改给定不得弹高输出")
+        for _ in range(120):
+            model.on_access()
+            if model._reg(0x3000) == 2 and model.out_hz >= 5.95:
+                break
+        self.assertAlmostEqual(model.out_hz, 6.0, 1, "过零后按新给定收敛")
+        self.assertEqual(model.set_percent, 1200)
+
+    def test_free_stop_cancels_pending_reversal(self):
+        """换向减速中自由停车＝瞬断且清待决（推进不得再翻向）。"""
+        model = self._model()
+        model.write_single(6, 0x2000, 1)
+        self.assertTrue(self._ramp_to(model, 12.0))
+        model.write_single(6, 0x2000, 2)
+        model.on_access()
+        model.write_single(6, 0x2000, 5)     # 自由停车
+        self.assertFalse(model.running)
+        self.assertEqual(model.out_hz, 0.0)
+        model.on_access()
+        self.assertEqual(model._reg(0x3000), 3, "待决已清：不翻向")
+
+    def test_decel_stop_overrides_reversal(self):
+        """换向减速中减速停机＝真停（覆盖换向，过零走停机不走翻向）。"""
+        model = self._model()
+        model.write_single(6, 0x2000, 1)
+        self.assertTrue(self._ramp_to(model, 12.0))
+        model.write_single(6, 0x2000, 2)
+        model.on_access()
+        model.write_single(6, 0x2000, 6)     # 减速停机
+        for _ in range(120):
+            model.on_access()
+            if not model.running:
+                break
+        self.assertFalse(model.running, "停止覆盖换向：最终停机")
+        self.assertEqual(model._reg(0x3000), 3)
+
+    def test_jog_cancels_pending_reversal(self):
+        """点动接管：取消待决换向，方向按点动立即生效。"""
+        model = self._model()
+        model.write_single(6, 0x2000, 1)
+        self.assertTrue(self._ramp_to(model, 12.0))
+        model.write_single(6, 0x2000, 2)
+        model.on_access()
+        model.write_single(6, 0x2000, 3)     # 正转点动
+        self.assertTrue(model.jogging)
+        self.assertFalse(model.reverse)
+        self.assertEqual(model._reg(0x3000), 1)
+        self.assertTrue(self._ramp_to(model, 12.0))
 
 
 if __name__ == "__main__":

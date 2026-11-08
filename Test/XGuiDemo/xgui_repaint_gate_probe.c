@@ -1,4 +1,8 @@
 /* [XGUI_REPAINT_MAX_FPS 闸取证探针 2026-10-27]
+ * [2026-11-08 注记] 该全局重绘闸已按 Qt 语义整体移除（XGuiConfig.h 不再
+ * 定义 XGUI_REPAINT_MAX_FPS，XWidget_postPaintEvent 无时间节流）。本探针
+ * 保留作历史取证记录：其 topPaint/s 与 flush/s 计数仍可作绘制活动率对照，
+ * 但**不能**再用来验证「闸有效/绕闸」结论。
  * 整文件受本宏守卫：常规构建（含 XGuiWindowDemo_Test 的 GLOB 收集）编译为
  * 空 TU（仅保留 typedef 防 ISO C 空翻译单元告警），只有探针手动编译线
  * （-DXGUI_REPAINT_GATE_PROBE_STANDALONE，链接 libXinYueCS.a 独立出 main）

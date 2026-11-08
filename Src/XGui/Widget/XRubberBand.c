@@ -55,10 +55,10 @@ static void VXRubberBand_paintEvent(XWidget* self, XEvent* event)
     outline = 0xFF3080C0u;
 #endif /* XPALETTE_ON */
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL &&
+    if (XWidget_style((const XWidget*)self) != NULL &&
         rb->m_shape == XRubberBandShape_Rectangle) {
         /* Fusion/公共风格接管：半透明 highlight 填充 + 边框。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStyleCE_RubberBand);
         XRect_init(&opt.m_rect, 0, 0, w, h);

@@ -101,7 +101,7 @@ static void VX_handle_paintEvent(XWidget* self, XEvent* event)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
     XRect_init(&line, 0, 0, w, hh);
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         XStyleOption opt;
         XStyleOption_init(&opt, XStyleCE_Splitter);
         opt.m_rect = line;
@@ -113,7 +113,7 @@ static void VX_handle_paintEvent(XWidget* self, XEvent* event)
 #if XPALETTE_ON
         opt.m_palette = XWidget_palette(self);
 #endif
-        XStyle_drawControl(XStyle_defaultStyle(), XStyleCE_Splitter, &opt,
+        XStyle_drawControl(XWidget_style((const XWidget*)self), XStyleCE_Splitter, &opt,
                            &painter, self);
     } else
 #endif
@@ -414,7 +414,7 @@ XSize XSplitterHandle_sizeHint(const XSplitterHandle* self)
     if (!self || !self->m_splitter) return out;
     hw = XSplitter_handleWidth(self->m_splitter);
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         XStyleOption_init(&opt, XStyleCT_Splitter);
         {
             XRect r;
@@ -427,7 +427,7 @@ XSize XSplitterHandle_sizeHint(const XSplitterHandle* self)
         opt.m_palette = XWidget_palette((XWidget*)self);
 #endif
         XSize_init(&content, hw, hw);
-        size = XStyle_sizeFromContents(XStyle_defaultStyle(),
+        size = XStyle_sizeFromContents(XWidget_style((const XWidget*)self),
                                        XStyleCT_Splitter, &opt, content);
         XSize_init(&out, size.width, size.height);
         return out;

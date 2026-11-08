@@ -305,9 +305,9 @@ void XProgressBar_drawControl(const XProgressBar* self, XPainter* painter)
     range = self->m_max - self->m_min;
 
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：槽 + 内容块由样式引擎绘制。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStyleCE_ProgressBarGroove);
         opt.m_rect = r;
@@ -582,7 +582,7 @@ static void xprogressbar_updateSizeHint(XProgressBar* self)
     horizontal = self->m_orientation == XProgressBarOrientation_Horizontal;
     XStyleOption_init(&opt, XStyleCT_ProgressBar);
     opt.m_horizontal = horizontal ? 1 : 0;
-    chunkW = XStyle_pixelMetric(XStyle_defaultStyle(),
+    chunkW = XStyle_pixelMetric(XWidget_style((const XWidget*)self),
                                 XStylePM_ProgressBarChunkWidth, &opt);
     if (chunkW <= 0) chunkW = 9;
     font = XWidget_font((XWidget*)self);
@@ -596,7 +596,7 @@ static void xprogressbar_updateSizeHint(XProgressBar* self)
     {
         XSize content;
         XSize_init(&content, w, h);
-        hint = XStyle_sizeFromContents(XStyle_defaultStyle(),
+        hint = XStyle_sizeFromContents(XWidget_style((const XWidget*)self),
                                        XStyleCT_ProgressBar, &opt, content);
     }
     XWidget_setSizeHint((XWidget*)self, &hint);

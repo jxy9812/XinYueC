@@ -356,9 +356,9 @@ static void VXSlider_paintEvent(XWidget* self, XEvent* event)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
 
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：凹槽/子页高亮/刻度/把手走 CC_Slider。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStyleCC_Slider);
         opt.m_rect = r;
@@ -537,7 +537,7 @@ static void xslider_updateSizeHint(XSlider* self)
     opt.m_sliderMin = 0;
     opt.m_sliderMax = 0;
     opt.m_sliderValue = 0;
-    thick = XStyle_pixelMetric(XStyle_defaultStyle(),
+    thick = XStyle_pixelMetric(XWidget_style((const XWidget*)self),
                                XStylePM_SliderThickness, &opt);
     if (thick <= 0) thick = 16;
     w = horizontal ? length : thick;
@@ -545,13 +545,13 @@ static void xslider_updateSizeHint(XSlider* self)
     {
         XSize content;
         XSize_init(&content, w, h);
-        hint = XStyle_sizeFromContents(XStyle_defaultStyle(),
+        hint = XStyle_sizeFromContents(XWidget_style((const XWidget*)self),
                                        XStyleCT_Slider, &opt, content);
     }
     XWidget_setSizeHint((XWidget*)self, &hint);
     minHint = hint;
     {
-        int minLen = XStyle_pixelMetric(XStyle_defaultStyle(),
+        int minLen = XStyle_pixelMetric(XWidget_style((const XWidget*)self),
                                         XStylePM_SliderLength, &opt);
         if (minLen <= 0) minLen = 16;
         if (horizontal) minHint.width = minLen;

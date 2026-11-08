@@ -302,14 +302,14 @@ static void VX_calendar_paintEvent(XWidget* self, XEvent* event)
         /* 月份子矩形当前仅随布局同出（月份下拉未实现，见 deferred）。 */
         (void)titleMonth;
 #if XSTYLE_ON
-        if (XStyle_defaultStyle() != NULL) {
+        if (XWidget_style((const XWidget*)self) != NULL) {
             /* 对标 QCalendarWidget 导航条（qcalendarwidget.cpp:1784-1794
              * headerLayout）：左侧 prevMonth 箭头（CC_ToolButton，走
              * SP_ArrowLeft 口径）+ 中央「yyyy年M月」标题 + 右侧
              * nextMonth 箭头。Qt 6.8 无年箭头，年份导航由年份文本就地
              * 编辑承担。缺陷4：按钮选项不再带 AutoRaise（样式恒画按钮
              * 底），大三角由本控件直绘（样式链箭头仅 ~5px）。 */
-            XStyle* style = XStyle_defaultStyle();
+            XStyle* style = XWidget_style((const XWidget*)self);
             XStyleOption bar;
             XStyleOption_init(&bar, XStyleCC_ToolButton);
             {

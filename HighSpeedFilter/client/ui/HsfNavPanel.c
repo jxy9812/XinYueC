@@ -28,6 +28,13 @@
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON && XSCROLLAREA_ON
 
+/* [面板自身虚表] 本面板用**显式绝对几何**排布（文件头「对标
+ * XGuiWindowDemo 侧栏」：不用盒布局），框架没有布局对象会在容器尺寸
+ * 变化时替我们重排子项——必须自己重载 RESIZE 接住。只重载
+ * resizeEvent 一个槽，其余全部继承 XWidget（同 NetPageHost 口径）。 */
+XCLASS_DEFINE_BEGING(HsfNavPanel)
+XCLASS_DEFINE_EXTEND_END(HsfNavPanel, XWidget)
+
 /* ---- 宽屏侧栏度量（对标 demo 侧栏节奏） ---- */
 #define HSF_NAV_TITLE_H     28  /**< 标题行高。 */
 #define HSF_NAV_ITEM_H      26  /**< 顶层条目高。 */
@@ -126,7 +133,8 @@ void HsfNavPanel_update(HsfNavPanel* self)
     if (!self->m_mobile) {
         XWidget_setGeometry((XWidget*)&self->m_title, HSF_NAV_PAD, 4,
                             pw - HSF_NAV_PAD * 2, 20);
-        XWidget_show((XWidget*)&self->m_title);
+        if (XWidget_isHidden((XWidget*)&self->m_title))
+            XWidget_show((XWidget*)&self->m_title);
     }
 
     /* 滚动壳占位（标题行下方到底部）。 */
@@ -134,7 +142,8 @@ void HsfNavPanel_update(HsfNavPanel* self)
     if (scrollH < 1) scrollH = 1;
     XWidget_setGeometry((XWidget*)&self->m_scroll, 0, titleH,
                         pw, scrollH);
-    XWidget_show((XWidget*)&self->m_scroll);
+    if (XWidget_isHidden((XWidget*)&self->m_scroll))
+        XWidget_show((XWidget*)&self->m_scroll);
     XWidget_raise((XWidget*)&self->m_scroll);
 
     /* 条目树：顶层（=主菜单）左对齐；其子项缩进挂其下，仅展开者可见。 */
@@ -143,9 +152,15 @@ void HsfNavPanel_update(HsfNavPanel* self)
         HsfNavItem* item = &self->m_items[i];
         bool isChild = (tree[i].childOf >= 0);
         if (isChild) {
-            /* 子项：父主菜单未展开 → 隐藏且不占位。 */
+            /* 子项：父主菜单未展开 → 隐藏且不占位。
+             * [同值早退] 框架 XWidget_show/hide 刻意不复刻 Qt 的同值早退，
+             * 每次调用都会 XLayout_invalidate 父布局；分割条拖动时本函数
+             * 逐帧重跑，20+ 条目无守卫地 show 一遍就是布局/脏区风暴
+             * （项目铁律「推送里每拍都调的 setter 必须自己判同值」）。
+             * 显式隐藏位没变就别调。 */
             if (self->m_expanded != tree[i].childOf) {
-                XWidget_hide((XWidget*)&item->m_btn);
+                if (!XWidget_isHidden((XWidget*)&item->m_btn))
+                    XWidget_hide((XWidget*)&item->m_btn);
                 continue;
             }
             {
@@ -168,10 +183,46 @@ void HsfNavPanel_update(HsfNavPanel* self)
             if (self->m_mobile)
                 y += HSF_NAV_M_GAP;
         }
-        XWidget_show((XWidget*)&item->m_btn);
+        if (XWidget_isHidden((XWidget*)&item->m_btn))
+            XWidget_show((XWidget*)&item->m_btn);
     }
     /* 内容区尺寸：宽=面板宽、高=条目总高（不可拉伸 ⇒ 保滚动语义）。 */
     XWidget_resize(&self->m_content, pw, y > 1 ? y : 1);
+}
+
+/** @brief 尺寸变化：立即按新尺寸重排内部条目（拖动过程逐帧跟手）。
+ *  @details 为什么必须在这里做：面板与条目是**显式绝对几何**（见文件头
+ *           「对标 XGuiWindowDemo 侧栏」），框架没有布局引擎会在面板被
+ *           撑宽/压窄后把条目重算一遍。分割条拖拽经
+ *           XWidget_setGeometryRect 改面板几何 → 框架同步派发 RESIZE
+ *           （XWidget_recomputeGeometry → EXWidget_ResizeEvent）→ 本槽
+ *           重跑 update，等价 Qt 的「QSplitter 拖拽 → 子控件 resize →
+ *           布局立即 activate」实时重排。
+ *           此前只在帧泵「主窗宽/高、当前页、形态档」签名变化时调
+ *           update，而拖拽恰恰不改这四个量 ⇒ 面板容器变宽、条目宽度
+ *           与 x 不动、容器右侧留白（现场截图口径）——本槽即其修复点。
+ *  @note 只调 update：它只改**子控件**几何，不动 m_base 自身，故不会
+ *        在 RESIZE 派发中递归回本槽。 */
+static void VHsfNavPanel_resizeEvent(XWidget* self, XEvent* event)
+{
+    HsfNavPanel* panel = (HsfNavPanel*)self; /* m_base 是首成员，地址即面板。 */
+    /* 基类槽必须取 XWidget 自己的虚表项（XClass_Parent）——经对象虚表
+     * 的 *_base 入口会再派回本重载，无限递归。 */
+    XClass_Parent(XWidget, EXWidget_ResizeEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+    /* 构造中途（标题/滚动壳/条目尚未建齐）的 RESIZE 一律跳过：此时
+     * HsfNavPanel_update 会碰到未初始化的子控件。initEx 末尾自会补一次。 */
+    if (!panel || !panel->m_ready) return;
+    HsfNavPanel_update(panel);
+}
+
+/** @brief HsfNavPanel 虚表：仅重载 resizeEvent，其余继承 XWidget。 */
+static XVtable* HsfNavPanel_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(HsfNavPanel)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VHsfNavPanel_resizeEvent);
+    return XVTABLE_DEFAULT;
 }
 
 /** @brief 程序化点击指定条目（自测/无头验证用）。 */
@@ -198,6 +249,9 @@ static void hsfNavPanel_initEx(HsfNavPanel* self, XWidget* parent,
     self->m_expanded = -1;
 
     XWidget_init(&self->m_base, parent, 0);
+    /* 装本类虚表：resizeEvent 重载由此生效（容器尺寸变化 → 条目即时
+     * 重排，见 VHsfNavPanel_resizeEvent 的「为什么」）。 */
+    XClassSetVtable(&self->m_base, HsfNavPanel);
     HsfTheme_applyDefaultFont(&self->m_base);
     /* 面板最小宽度：拖拽把手可改宽，但窄于此字会挤掉条目。 */
     if (!mobile)
@@ -258,6 +312,8 @@ static void hsfNavPanel_initEx(HsfNavPanel* self, XWidget* parent,
                       (XObject*)self, hsfNavItemSlot,
                       XConnectionType_Direct);
 
+    /* 子控件齐备，允许 resizeEvent 重排（此前的中途 RESIZE 一律跳过）。 */
+    self->m_ready = true;
     XWidget_show(&self->m_base);
     HsfNavPanel_update(self);
 }

@@ -3,9 +3,13 @@
  * @brief      模拟量监视页实现：数值卡网格看板 + 统一操作闸 + 全量 API。
  * @details    结构（与 HsfMonitorDigital 同构，框架零改动）：
  *             - HsfAnalogBoard：文件内自定义控件（XCLASS 机制继承
- *               XWidget），paintEvent 自绘「数值卡」网格——单卡三行：
- *               通道号+名称 / 原始值（整型口径）/ 转换值+单位（工程量
- *               double，按小数位格式化；量程越限显示报警红）；
+ *               XWidget），paintEvent 自绘「数值卡」网格——单卡四行：
+ *               通道号+名称 / 原始寄存器（毫伏，服务端 r{i} 同值）/
+ *               转换值+单位（工程量 double，按小数位格式化；量程越限显示
+ *               报警红）/ 越限说明（有则画，卡片高度恒留此行）；
+ *               **局部刷新**：标脏按卡片矩形（XWidget_updateRect），
+ *               paintEvent 消费 PAINT 矩形并跳过不相交的卡片（见
+ *               analog_cardRect 注；10Hz 推送下整板重画曾是 13.46/25.71ms）；
  *               sizeHint 虚槽按当前宽算列数/行数给高度提示（滚动壳
  *               widgetResizable 语义：宽随视口、高出滚动）；
  *               mousePressEvent/mouseReleaseEvent 命中卡片且交互模式 +
@@ -19,11 +23,14 @@
  *               （走公开 API，验证回显链路）；XHSF_ANALOG_AUTO=1 额外
  *               进自动运行模式（验证锁界面）；点击自测直投合成鼠标事件
  *               断言回调/拦截（与数字量页同口径）。
+ *             - 离线演示（--no-login）：HsfUi 调 seedDemoForOffline 灌同一
+ *               批演示点（真实登录路径不灌，见该 API 注）。
  */
 #include "HsfMonitorAnalog.h"
 
 #include "HsfTheme.h"
 #include "HsfPages.h"
+#include "HsfUi.h"
 #include "XLabel.h"
 #include "XCheckBox.h"
 #include "XAbstractButton.h"
@@ -58,6 +65,21 @@
 #define ANALOG_SECTION_GAP    18   /**< AI/AO 两区段之间的间距。 */
 #define ANALOG_NAME_MAX       64   /**< 名称/单位缓冲上限（含 NUL）。 */
 #define ANALOG_BADGE_GAP      8    /**< 名称与右上 AI/AO 角标的间距。 */
+
+/* ---- 字号基准（本地设置 FontScale/Page4 的 100% 取值；逐项等于旧常量） ----
+ * [2026-11-08] 看板是自绘控件：卡片文字的字号来自**看板自身字体**
+ * （paintEvent 的 XWidget_font(self)），与标题/提示的 XLabel 字号是两套。
+ * 旧代码只折算标题/提示/联动高，从未设置看板字体 ⇒ 卡片文字恒定不缩放
+ * （用户实锅「模拟量界面调整文字大小对这些卡片无效」）。现把基准值集中
+ * 在此，100% 时折算结果与旧常量逐位相同（默认观感零回归）。 */
+#define ANALOG_TITLE_PX       17   /**< 页标题基准字号（px）。 */
+#define ANALOG_HINT_PX        12   /**< 底部提示基准字号（px）。 */
+#define ANALOG_TITLE_ROW_H    26   /**< 标题行基准高（横屏）。 */
+#define ANALOG_TITLE_ROW_H_C  30   /**< 标题行基准高（竖屏触控）。 */
+#define ANALOG_BOARD_EXTRA_H  32   /**< 看板最小高余量（单卡最小高之上）。 */
+#define ANALOG_BOARD_FONT_PX  16   /**< 看板基准字号（主题 12pt@96dpi=16px）。 */
+#define ANALOG_FONT_PCT_MIN   50   /**< 页字号下限（%，与 HsfUi 钳口同值）。 */
+#define ANALOG_FONT_PCT_MAX   200  /**< 页字号上限（%，与 HsfUi 钳口同值）。 */
 
 /* ---- 卡片颜色（ARGB；语义由 API 状态决定，非业务色） ---- */
 #define ANALOG_COLOR_TEXT     0xE6202020u  /**< 名称/主文本。 */
@@ -107,6 +129,9 @@ static struct
     struct HsfAnalogBoard* m_board; /**< 已建看板借用指针（未建 NULL）。 */
     XCheckBox*      m_opCheck;   /**< 保留占位（本地闸已移除；勿用）。 */
     bool            m_compact;   /**< 竖屏形态（adapt 分档，缺省 false）。 */
+    int             m_fontPct;   /**< 已应用的页字号百分比（0=未应用按 100）。 */
+    bool            m_fontCompact; /**< 上次应用字号时的形态档（同值早退）。 */
+    int             m_fontBasePx; /**< 看板基准字号 px（首次锁定，防叠加缩放）。 */
 } s_analog;
 
 /* ==================== 看板控件（文件内自定义控件） ==================== */
@@ -184,6 +209,23 @@ static bool analog_indexToSlot(int index, int* sectionOut, int* slotOut)
     return false;
 }
 
+/** @brief 基准像素 × 页字号百分比（四舍五入）。
+ *  @details 与 HsfUi.c 的 hsfUi_pageFontPx 同式同值（`(px*pct+50)/100`），
+ *           区别只在 pct 由调用方显式给出——实时重放路径必须用**刚读到**
+ *           的 pct，不能再用惰性缓存的旧值。 */
+static int analogScale(int px, int pct)
+{
+    if (pct < ANALOG_FONT_PCT_MIN) pct = ANALOG_FONT_PCT_MIN;
+    if (pct > ANALOG_FONT_PCT_MAX) pct = ANALOG_FONT_PCT_MAX;
+    return (px * pct + 50) / 100;
+}
+
+/** @brief 当前生效的页字号百分比（未应用过按 100）。 */
+static int analogFontPct(void)
+{
+    return s_analog.m_fontPct > 0 ? s_analog.m_fontPct : 100;
+}
+
 static void analog_board_metrics(const HsfAnalogBoard* board, int width,
                                  int* colsOut, int* cardWOut,
                                  int* cardHOut, int* rowsOut)
@@ -200,7 +242,12 @@ static void analog_board_metrics(const HsfAnalogBoard* board, int width,
     if (cardHOut) *cardHOut = ANALOG_CARD_H_MIN;
     if (rowsOut) *rowsOut = 0;
     if (!board || width <= ANALOG_BOARD_MARGIN * 2) return;
-    minW = s_analog.m_compact ? ANALOG_COL_MIN_W_C : ANALOG_COL_MIN_W;
+    /* 单列最小宽随字号同比放大：卡宽是**文字容器**，字号放大后仍按旧宽
+     * 排就会让第三行（电流值+工程量）横向溢出到邻卡（用户禁项「卡片
+     * 相互重叠」）。100% 时折算值等于原常量。 */
+    minW = analogScale(s_analog.m_compact ? ANALOG_COL_MIN_W_C
+                                          : ANALOG_COL_MIN_W,
+                       analogFontPct());
     avail = width - ANALOG_BOARD_MARGIN * 2;
     if (s_analog.m_columns > 0) {
         cols = s_analog.m_columns; /* 强制列数（1..8 钳口在 API）。 */
@@ -214,8 +261,11 @@ static void analog_board_metrics(const HsfAnalogBoard* board, int width,
     font = XWidget_font((XWidget*)board);
     textH = XPainter_textHeight(&font);
     XClassDeinit(&font);
-    /* 三行文本（名称/原始值/转换值）+ 行距 + 上下内边距。 */
-    cardH = 6 + textH + 4 + textH + 4 + textH + 4 + 8;
+    /* 三行文本（名称/原始值/转换值）+ 可选第四行越限说明 + 行距 + 内边距。
+     * [第四行留高 2026-11-08] 越限说明（m_engNote）画在 y+18+3*textH，
+     * 而旧公式只留了三行高 ⇒ 说明行被卡片底边切掉/压到下一张卡上（此前
+     * 没有裁剪更糟：直接糊在邻卡）。按 4 行留高：18+4*textH+4 下边距。 */
+    cardH = 6 + textH + 4 + textH + 4 + textH + 4 + textH + 4 + 8;
     if (cardH < ANALOG_CARD_H_MIN) cardH = ANALOG_CARD_H_MIN;
     if (s_analog.m_compact && cardH < ANALOG_TOUCH_H_MIN)
         cardH = ANALOG_TOUCH_H_MIN;
@@ -319,6 +369,64 @@ static int analog_boardHeightFor(const HsfAnalogBoard* board, int width)
     return height;
 }
 
+/**
+ * @brief      单点卡片在看板内的矩形（局部标脏与 paintEvent 共用）。
+ * @param      index 全局点下标。
+ * @param      out   出参矩形（看板局部坐标，不含滚动壳偏移）。
+ * @return     true=命中可定位卡片；false=几何未知/点不存在（调用方回退整板）。
+ * @details    排版公式与 VAnalogBoard_paintEvent 逐项同源（两段标题行 +
+ *             网格行列），改版面必须两处同改，否则局部刷新会漏脏留残影。
+ *             [局部标脏 2026-11-08] 此前任何一次值变化都 XWidget_update 整块
+ *             看板（1072×611）：8 卡 10Hz 推送实测帧耗时 13.46/25.71ms，
+ *             屏幕上真正变化的往往只有一两张卡。
+ */
+static bool analog_cardRect(int index, XRect* out)
+{
+    const HsfAnalogBoard* board = s_analog.m_board;
+    int section;
+    int slot;
+    int cols;
+    int cardW;
+    int cardH;
+    int titleH;
+    int aiY;
+    int aiRows;
+    int aoY;
+    int aoRows;
+    int width;
+    int rowsTop;
+    if (!out || !board) return false;
+    if (!analog_indexToSlot(index, &section, &slot)) return false;
+    width = XWidget_width((const XWidget*)board);
+    if (width <= ANALOG_BOARD_MARGIN * 2) return false;
+    analog_board_metrics2(board, width, &cols, &cardW, &cardH, &titleH,
+                          &aiY, &aiRows, &aoY, &aoRows);
+    (void)aiRows;
+    (void)aoRows;
+    if (cols <= 0) return false;
+    if (section == 0) {
+        if (aiY < 0) return false;
+        rowsTop = aiY + titleH + 4;
+    } else {
+        if (aoY < 0) return false;
+        rowsTop = aoY + titleH + 4;
+    }
+    XRect_init(out, ANALOG_BOARD_MARGIN + (slot % cols) * (cardW + ANALOG_GAP),
+               rowsTop + (slot / cols) * (cardH + ANALOG_GAP), cardW, cardH);
+    return true;
+}
+
+/** @brief 把某点的卡片区域标脏（几何不可定位时回退整板，保证不出残影）。 */
+static void analog_invalidateCard(int index)
+{
+    XRect rect;
+    if (!s_analog.m_board) return;
+    if (analog_cardRect(index, &rect))
+        XWidget_updateRect((XWidget*)s_analog.m_board, &rect);
+    else
+        XWidget_update((XWidget*)s_analog.m_board);
+}
+
 /** @brief 取点位显示名（buf 恒 NUL 收尾；无名称用缺省「点 N」）。
  *  @details 已设通道号（>=0）时加「CH<k> 」前缀（显示在名称前）。 */
 static void analog_displayName(int index, char* buf, int size)
@@ -340,7 +448,10 @@ static void analog_displayName(int index, char* buf, int size)
         snprintf(buf, (size_t)size, "%s", base);
         return;
     }
-    snprintf(buf, (size_t)size, "\xE7\x82\xB9 %d", index + 1); /* 点 N */
+    /* [2026-11-08 实修] 兜底此前是空语句 `"点 N";` ⇒ 无名无通道号的点
+     * 拿到**未初始化缓冲**（画出垃圾字）。与 HsfMonitorAnalog_name 的
+     * 兜底同口径「点 N」。 */
+    snprintf(buf, (size_t)size, "点 %d", index + 1);
 }
 
 /** @brief 转换值格式化（按小数位；buf 恒 NUL 收尾）。 */
@@ -430,8 +541,7 @@ static void analog_editAcceptSlot(XObject* receiver, XVarList* args)
                XRadioButton_isChecked(s_editCtx.m_editRaw) && !canConvert) {
         /* raw==0：锁死改原始（前置守卫已置灰），理论不可达；保底只回显。 */
         analog_setStatus(
-            "\xE5\x8E\x9F\xE5\xA7\x8B\xE5\x80\xBC\xE4\xB8\xBA\x30\x20\xE4"
-            "\xB8\x8D\xE8\x83\xBD\xE6\x8D\xA2\xE7\xAE\x97"); /* 原始值为0 不能换算 */
+            "原始值为0 不能换算"); /* 原始值为0 不能换算 */
     } else {
         /* 改转换值：原始值=新转换 / ratio（换算比保持；raw==0 保持 0）。 */
         double newScaled = atof(text);
@@ -440,8 +550,7 @@ static void analog_editAcceptSlot(XObject* receiver, XVarList* args)
             s_analog.m_points[s_editCtx.m_index].m_raw =
                 (int)(newScaled / ratio + (newScaled >= 0 ? 0.5 : -0.5));
     }
-    if (s_analog.m_board)
-        XWidget_update((XWidget*)s_analog.m_board);
+    analog_invalidateCard(s_editCtx.m_index);
     /* 业务附加通知（tapFn 语义：AO 写请求已提交）。 */
     if (s_analog.m_tapFn)
         s_analog.m_tapFn(s_analog.m_tapUser, s_editCtx.m_index);
@@ -459,14 +568,11 @@ static void analog_editRejectSlot(XObject* receiver, XVarList* args)
 /** @brief AO 点编辑对话框实现（见前置声明注释）。 */
 static void analog_showEditDialog(XWidget* parent, int index)
 {
-    static const char* kTitle = "\xE4\xBF\xAE\xE6\x94\xB9\xE6\xA8\xA1\xE6"
-        "\x8B\x9F\xE9\x87\x8F"; /* 修改模拟量 */
-    static const char* kLabelRaw = "\xE6\x94\xB9\xE5\x8E\x9F\xE5\xA7\x8B"
-        "\xE5\x80\xBC"; /* 改原始值 */
-    static const char* kLabelScaled = "\xE6\x94\xB9\xE8\xBD\xAC\xE6\x8D"
-        "\xA2\xE5\x80\xBC"; /* 改转换值 */
-    static const char* kOk = "\xE7\xA1\xAE\xE5\xAE\x9A";   /* 确定 */
-    static const char* kCancel = "\xE5\x8F\x96\xE6\xB6\x88"; /* 取消 */
+    static const char* kTitle = "修改模拟量"; /* 修改模拟量 */
+    static const char* kLabelRaw = "改原始值"; /* 改原始值 */
+    static const char* kLabelScaled = "改转换值"; /* 改转换值 */
+    static const char* kOk = "确定"; /* 确定 */
+    static const char* kCancel = "取消"; /* 取消 */
     XDialog* dlg;
     XBoxLayout* page;
     XGridLayout* grid;
@@ -526,7 +632,7 @@ static void analog_showEditDialog(XWidget* parent, int index)
     capRaw = XLabel_create((XWidget*)dlg, 0);
     if (capRaw) {
         HsfTheme_applyDefaultFont((XWidget*)capRaw);
-        snprintf(buf, sizeof(buf), "\xE5\xBD\x93\xE5\x89\x8D: %d",
+        snprintf(buf, sizeof(buf), "当前: %d",
                  s_analog.m_points[index].m_raw); /* 当前: N */
         XLabel_setText_2(capRaw, buf);
         XWidget_setFixedHeight((XWidget*)capRaw, 20);
@@ -544,7 +650,7 @@ static void analog_showEditDialog(XWidget* parent, int index)
         char val[32];
         HsfTheme_applyDefaultFont((XWidget*)capScaled);
         analog_formatScaled(index, val, (int)sizeof(val));
-        snprintf(buf, sizeof(buf), "\xE5\xBD\x93\xE5\x89\x8D: %s",
+        snprintf(buf, sizeof(buf), "当前: %s",
                  val); /* 当前: X */
         XLabel_setText_2(capScaled, buf);
         XWidget_setFixedHeight((XWidget*)capScaled, 20);
@@ -612,24 +718,20 @@ static bool analog_tryTap(int index)
     if (index < 0 || index >= s_analog.m_count) return false;
     if (s_analog.m_autoMode) {
         analog_setStatus(
-            "\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD"
-            "\x3A\x20\xE7\x95\x8C\xE9\x9D\xA2\xE5\x8F\xAA\xE8\xAF\xBB");
-        /* 自动运行中: 界面只读 */
+            "自动运行中: 界面只读"); /* 自动运行中: 界面只读 */
         return false;
     }
     if (!s_analog.m_opEnabled) {
         analog_setStatus(
-            "\xE6\x93\x8D\xE4\xBD\x9C\xE5\xB7\xB2\xE7\xA6\x81\xE6\xAD\xA2"
-            "\xEF\xBC\x88\xE7\x95\x8C\xE9\x9D\xA2\xE5\x8F\xAA\xE8\xAF\xBB"
-            "\xEF\xBC\x89"); /* 操作已禁止（界面只读） */
+            "操作已禁止（界面只读）"); /* 操作已禁止（界面只读） */
         return false;
     }
     /* AI 点恒只读（提示可查看语义）；AO 点弹编辑对话框（改原始值/
      * 转换值二选一，换算比保持互转）。 */
     if (s_analog.m_points[index].m_kind != HSF_ANALOG_OUTPUT) {
         analog_setStatus(
-            "\xE8\xBE\x93\xE5\x85\xA5\xE7\x82\xB9\xE5\x8F\xAA\xE8\xAF\xBB"
-            "\x28\x41\x49\x29"); /* 输入点只读(AI) */
+            "输入点只读"
+            "(AI)"); /* 输入点只读(AI) */
         return false;
     }
     analog_showEditDialog(s_analog.m_board ? &s_analog.m_board->m_base
@@ -647,6 +749,7 @@ static void analog_drawCard(XPainter* painter, const HsfAnalogBoard* board,
     char value[32];
     char unit[ANALOG_NAME_MAX];
     char line[ANALOG_NAME_MAX + 40];
+    char rawLine[48];
     uint32_t valueColor = analog_isAlarmed(index) ? ANALOG_COLOR_ALARM
                                                   : ANALOG_COLOR_VALUE;
     /* 卡片底 + 细描边（按压中的卡描边加重反馈）。 */
@@ -670,7 +773,12 @@ static void analog_drawCard(XPainter* painter, const HsfAnalogBoard* board,
         const XFont* font = XPainter_font(painter);
         bool isAo = (index >= 0 && index < s_analog.m_count &&
                      s_analog.m_points[index].m_kind == HSF_ANALOG_OUTPUT);
-        XRect_init(&r, x + 8, y + 6, w - 16 - 28 - ANALOG_BADGE_GAP, textH);
+        /* 角标保留带宽随字号实测（"AO" 两字符）：字号放大后固定 28px 会
+         * 让角标自身溢出到名称带（用户禁项「名称与 AI/AO 角标重叠」）。
+         * 100% 时 "AO"≈19px < 28 ⇒ 恒取 28，与旧布局逐像素相同。 */
+        int badgeW = XPainter_textWidth(font, "AO") + 2;
+        if (badgeW < 28) badgeW = 28;
+        XRect_init(&r, x + 8, y + 6, w - 16 - badgeW - ANALOG_BADGE_GAP, textH);
         XPainter_drawTextRect(painter, &r,
                               XPAINTER_TEXT_ALIGN_LEFT |
                                   XPAINTER_TEXT_ALIGN_TOP |
@@ -678,7 +786,7 @@ static void analog_drawCard(XPainter* painter, const HsfAnalogBoard* board,
                               XCommonStyle_elideText(shown, (int)sizeof(shown),
                                                      name, 1, r.width, font),
                               ANALOG_COLOR_TEXT);
-        XRect_init(&r, x + w - 34, y + 6, 26, textH);
+        XRect_init(&r, x + w - 8 - badgeW, y + 6, badgeW, textH);
         XPainter_drawTextRect(painter, &r,
                               XPAINTER_TEXT_ALIGN_RIGHT |
                                   XPAINTER_TEXT_ALIGN_TOP |
@@ -687,17 +795,21 @@ static void analog_drawCard(XPainter* painter, const HsfAnalogBoard* board,
                               isAo ? ANALOG_COLOR_VALUE
                                    : ANALOG_COLOR_UNIT);
     }
-    /* 第二行：原始寄存器（毫伏口径；与服务端 r{i} 同值，排查真相用）。 */
+    /* 第二行：原始寄存器（毫伏口径；与服务端 r{i} 同值，排查真相用）。
+     * [2026-11-08 实锅] 这里原先是空语句 `"原始: N mV";`，真正画的是
+     * **未初始化的 line 栈缓冲**——本行实际不出字（偶发花屏），而
+     * m_rawMv 也没人读。现补 snprintf 走独立缓冲（line 后面还要装
+     * 电流+工程量，不能提前占用）。 */
     if (index >= 0 && index < s_analog.m_count) {
         XRect r;
-        snprintf(line, sizeof(line), "\xE5\x8E\x9F\xE5\xA7\x8B: %d mV",
-                 s_analog.m_points[index].m_rawMv); /* 原始: N mV */
+        snprintf(rawLine, sizeof(rawLine), "原始: %d mV",
+                 s_analog.m_points[index].m_rawMv);
         XRect_init(&r, x + 8, y + 10 + textH, w - 16, textH);
         XPainter_drawTextRect(painter, &r,
                               XPAINTER_TEXT_ALIGN_LEFT |
                                   XPAINTER_TEXT_ALIGN_TOP |
                                   XPAINTER_TEXT_DONT_CLIP,
-                              line, ANALOG_COLOR_RAW);
+                              rawLine, ANALOG_COLOR_RAW);
     }
     /* 第三行：电流值（品牌蓝/报警红）+ 单位（弱灰跟随）。
      * [有标定工程量时并列显示] "11.988 mA  0.499 MPa"——量程是设备铭牌
@@ -750,6 +862,20 @@ static void analog_drawCard(XPainter* painter, const HsfAnalogBoard* board,
 static void analog_drawSectionTitle(XPainter* painter, int y, int width,
                                     int titleH, bool isAo, int count);
 
+/**
+ * @brief      矩形是否与本次绘制的脏区有交集（脏区 NULL=全量绘制）。
+ * @details    局部重绘的跳过判据：不与脏区相交的卡片不排版不画字形——
+ *             光栅层有裁剪兜底，但文字整形/省略号计算的开销裁剪兜不住。
+ */
+static bool analog_rectDirty(const XRect* rect, const XRect* clip)
+{
+    XRect hit;
+    if (!rect) return false;
+    if (!clip) return true;
+    hit = XRect_intersected(rect, clip);
+    return hit.width > 0 && hit.height > 0;
+}
+
 /** @brief 绘制事件：清背景 → AI 段（标题+网格）→ AO 段（标题+网格）。 */
 static void VAnalogBoard_paintEvent(XWidget* self, XEvent* event)
 {
@@ -758,6 +884,8 @@ static void VAnalogBoard_paintEvent(XWidget* self, XEvent* event)
     XPoint offset;
     XPainter painter;
     XFont font;
+    XRect clip;
+    const XRect* clipPtr = NULL;
     int w;
     int h;
     int cols;
@@ -785,6 +913,18 @@ static void VAnalogBoard_paintEvent(XWidget* self, XEvent* event)
     offset = XWidget_paintOffset(self);
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+#if XPAINTER_CLIP_ON
+    /* [消费 PAINT 裁剪矩形 2026-11-08 对齐 QPainter 的 systemClip]
+     * 与 XPushButton 同一套路：translate 之后用**控件局部坐标**设替换裁剪，
+     * 光栅层据此只写脏区。此前本看板忽略事件矩形，任何一张卡变化都整版
+     * 重画（文字整形为主因），是模拟量页帧耗时 13.46/25.71ms 的来源。 */
+    clip = XPaintEvent_rect((const XPaintEvent*)event);
+    if (clip.width > 0 && clip.height > 0) {
+        XPainter_setClipRect(&painter, &clip,
+                             XPainterClipOperation_ReplaceClip);
+        clipPtr = &clip;
+    }
+#endif /* XPAINTER_CLIP_ON */
 
     /* 页面底色（对标 autoFillBackground 手工版：看板自绘透明底）。 */
     XPainter_fillRect(&painter,
@@ -802,16 +942,23 @@ static void VAnalogBoard_paintEvent(XWidget* self, XEvent* event)
         int y = aiY + titleH + 4;
         int aiCount = 0;
         int slot;
+        XRect titleRect;
         analog_countKinds(&aiCount, &aoCount2);
-        analog_drawSectionTitle(&painter, aiY, w, titleH, false, aiCount);
+        XRect_init(&titleRect, ANALOG_BOARD_MARGIN, aiY,
+                   w - ANALOG_BOARD_MARGIN * 2, titleH);
+        if (analog_rectDirty(&titleRect, clipPtr))
+            analog_drawSectionTitle(&painter, aiY, w, titleH, false, aiCount);
         for (slot = 0; slot < aiCount; ++slot) {
             int row = slot / cols;
             int col = slot % cols;
+            XRect cardRect;
             i = analog_slotToIndex(0, slot);
             if (i < 0) continue;
-            analog_drawCard(&painter, board, i,
-                            ANALOG_BOARD_MARGIN + col * (cardW + ANALOG_GAP),
-                            y + row * (cardH + ANALOG_GAP),
+            XRect_init(&cardRect,
+                       ANALOG_BOARD_MARGIN + col * (cardW + ANALOG_GAP),
+                       y + row * (cardH + ANALOG_GAP), cardW, cardH);
+            if (!analog_rectDirty(&cardRect, clipPtr)) continue;
+            analog_drawCard(&painter, board, i, cardRect.x, cardRect.y,
                             cardW, cardH, textH);
         }
     }
@@ -820,16 +967,23 @@ static void VAnalogBoard_paintEvent(XWidget* self, XEvent* event)
         int y = aoY + titleH + 4;
         int aoCount = 0;
         int slot;
+        XRect titleRect;
         analog_countKinds(&aiCount2, &aoCount);
-        analog_drawSectionTitle(&painter, aoY, w, titleH, true, aoCount);
+        XRect_init(&titleRect, ANALOG_BOARD_MARGIN, aoY,
+                   w - ANALOG_BOARD_MARGIN * 2, titleH);
+        if (analog_rectDirty(&titleRect, clipPtr))
+            analog_drawSectionTitle(&painter, aoY, w, titleH, true, aoCount);
         for (slot = 0; slot < aoCount; ++slot) {
             int row = slot / cols;
             int col = slot % cols;
+            XRect cardRect;
             i = analog_slotToIndex(1, slot);
             if (i < 0) continue;
-            analog_drawCard(&painter, board, i,
-                            ANALOG_BOARD_MARGIN + col * (cardW + ANALOG_GAP),
-                            y + row * (cardH + ANALOG_GAP),
+            XRect_init(&cardRect,
+                       ANALOG_BOARD_MARGIN + col * (cardW + ANALOG_GAP),
+                       y + row * (cardH + ANALOG_GAP), cardW, cardH);
+            if (!analog_rectDirty(&cardRect, clipPtr)) continue;
+            analog_drawCard(&painter, board, i, cardRect.x, cardRect.y,
                             cardW, cardH, textH);
         }
     }
@@ -840,8 +994,7 @@ static void VAnalogBoard_paintEvent(XWidget* self, XEvent* event)
         XPainter_drawTextRect(&painter, &textRect,
                               XPAINTER_TEXT_ALIGN_HCENTER |
                                   XPAINTER_TEXT_ALIGN_VCENTER,
-                              "\xE6\x97\xA0\xE6\xA8\xA1\xE6\x8B\x9F\xE9\x87"
-                              "\x8F\xE7\x82\xB9", /* 无模拟量点 */
+                              "无模拟量点", /* 无模拟量点 */
                               ANALOG_COLOR_HINT);
     }
     XPainter_end(&painter);
@@ -854,10 +1007,12 @@ static void analog_drawSectionTitle(XPainter* painter, int y, int width,
 {
     char text[96];
     XRect rect;
-    snprintf(text, sizeof(text), "%s (%s) %d \xE7\x82\xB9",
-             isAo ? "\xE8\xBE\x93\xE5\x87\xBA" : "\xE8\xBE\x93\xE5\x85\xA5",
+    /* [2026-11-08 实锅] 原先这里是裸字面量语句（"输出 (AO) N 点 / …";），
+     * 真正画的是**未初始化的 text** ⇒ 两段标题行恒空，用户看到卡片上方
+     * 一片留白（1024 截图明显）。与数字量页同款 snprintf 口径。 */
+    snprintf(text, sizeof(text), "%s (%s) %d 点",
+             isAo ? "输出" : "输入",
              isAo ? "AO" : "AI", count);
-    /* 输出 (AO) N 点 / 输入 (AI) N 点 */
     XRect_init(&rect, ANALOG_BOARD_MARGIN, y,
                width - ANALOG_BOARD_MARGIN * 2, titleH);
     XPainter_drawTextRect(painter, &rect,
@@ -980,7 +1135,9 @@ static XSize VAnalogBoard_minimumSizeHintSlot(const XWidget* self)
         return out;
     }
     minW = ANALOG_BOARD_MARGIN * 2 +
-           (s_analog.m_compact ? ANALOG_COL_MIN_W_C : ANALOG_COL_MIN_W);
+           analogScale(s_analog.m_compact ? ANALOG_COL_MIN_W_C
+                                          : ANALOG_COL_MIN_W,
+                       analogFontPct());
     curW = XWidget_width((XWidget*)self);
     if (curW < minW) curW = minW;
     XSize_init(&out, minW,
@@ -1052,23 +1209,115 @@ static void analog_opCheckSlot(XObject* receiver, XVarList* args)
     HsfMonitorAnalog_setOperationEnabled(true);
 }
 
+/** @brief 看板基准字号（px）：取页根继承字体（主题 12pt@96dpi = 16px）。
+ *  @details 只在首次调用时求值并**锁定**：之后一律以它为基准乘百分比，
+ *           否则「150% → 160%」会拿已放大的字号当新基准，缩放层层叠加。
+ *           页根字体来自 HsfTheme_applyDefaultFont（只设家族，pixelSize
+ *           为 -1）⇒ 这里按 pointSizeF 折算到像素（与 paint 度量同源：
+ *           XPainter 的 scale = pixelSize/unitsPerEm，见 XPainter.c:10448）。 */
+static int analog_boardBaseFontPx(XWidget* page)
+{
+    XFont f;
+    int px;
+    if (s_analog.m_fontBasePx > 0) return s_analog.m_fontBasePx;
+    px = 0;
+    if (page) {
+        f = XWidget_font(page);
+        px = XFont_pixelSize(&f);
+        if (px <= 0) px = XPainter_fontPixelSize(XFont_pointSizeF(&f));
+        XClassDeinit(&f);
+    }
+    if (px <= 0) px = ANALOG_BOARD_FONT_PX;
+    s_analog.m_fontBasePx = px;
+    return px;
+}
+
+/** @brief 看板字体按像素字号应用（同值早退）。
+ *  @details 看板是自绘控件：paintEvent 用 XWidget_font(self) 取字体，
+ *           textH=XPainter_textHeight 驱动卡片高/网格/命中区（metrics 同源），
+ *           故只要把字体设对，整块版面自动跟随。XWidget_setFont 内含
+ *           updateGeometry + update（XWidget.c:11890-11891），sizeHint /
+ *           最小提示随之失效重算。 */
+static void analog_applyBoardFontPx(int px)
+{
+    XFont f;
+    if (!s_analog.m_board || px <= 0) return;
+    f = XWidget_font((XWidget*)s_analog.m_board);
+    if (XFont_pixelSize(&f) == px) { /* 同值早退（帧泵/重放不空转）。 */
+        XClassDeinit(&f);
+        return;
+    }
+    XFont_setPixelSize(&f, px);
+    XWidget_setFont((XWidget*)s_analog.m_board, &f);
+    XClassDeinit(&f);
+}
+
+/** @brief 页字体与联动度量统一应用（create / adapt / 实时重放唯一入口）。
+ *  @param page    页根（&self->m_base）。
+ *  @param compact 形态档（决定标题行高与看板最小高）。
+ *  @param pct     页字号百分比（50..200；100=基准，逐像素同旧观感）。
+ *  @details 完整换算链：本地设置 FontScale/Page4 → hsfUi_pageFontPct
+ *           → analogScale（基准 × pct）→ XWidget_setFont（看板字体）
+ *           → paint 的 textH → analog_board_metrics 的卡高/列宽 → 卡片布局。
+ *           标题/提示是 XLabel（自持字体），同一 pct 一并重设。 */
+static void analogApplyFontMetrics(XWidget* page, bool compact, int pct)
+{
+    HsfMonitorAnalog* self = (HsfMonitorAnalog*)page;
+    int minH;
+    if (!self || !self->m_board) return;
+    if (pct < ANALOG_FONT_PCT_MIN) pct = ANALOG_FONT_PCT_MIN;
+    if (pct > ANALOG_FONT_PCT_MAX) pct = ANALOG_FONT_PCT_MAX;
+    /* 标签只在「字号或形态档真变」时重设（XLabel_setTextPixelSize 无同值
+     * 早退，adapt 在拖窗时会被反复调用）。 */
+    if (pct != s_analog.m_fontPct || compact != s_analog.m_fontCompact) {
+        XLabel_setTextPixelSize(&self->m_title,
+                                analogScale(ANALOG_TITLE_PX, pct));
+        XWidget_setFixedHeight((XWidget*)&self->m_title,
+                               analogScale(compact ? ANALOG_TITLE_ROW_H_C
+                                                   : ANALOG_TITLE_ROW_H, pct));
+        XLabel_setTextPixelSize(&self->m_hint,
+                                analogScale(ANALOG_HINT_PX, pct));
+        /* metrics 读 m_fontPct 折算列宽 → 必须先落值，重绘才拿到新列宽。 */
+        s_analog.m_fontPct = pct;
+        s_analog.m_fontCompact = compact;
+    }
+    analog_applyBoardFontPx(analogScale(analog_boardBaseFontPx(page), pct));
+    /* 看板最小高：单卡最小高 + 字号联动余量（竖屏取触控下限，同旧口径）。 */
+    minH = compact ? ANALOG_TOUCH_H_MIN
+                   : ANALOG_CARD_H_MIN + analogScale(ANALOG_BOARD_EXTRA_H, pct);
+    XWidget_setMinimumHeight((XWidget*)self->m_board, minH);
+}
+
+/** @brief 字号实时重放（hsfUi_registerPageFontApplier 契约）。
+ *  @details 与 adapt 共用 analogApplyFontMetrics ⇒ 重放 = 一次完整的
+ *           字号重设；末尾补看板 update/updateGeometry，防旧字形残影。
+ *           [与回落路径互斥] 本页已注册本函数 ⇒ hsfUi_reapplyPageFonts
+ *           不再走「清 adapt 去重标记 + hsf_adaptPages」分支，故这里必须
+ *           把 adapt 里与字号相关的三件事（标题/提示字号、标题行高、
+ *           看板最小高）全部覆盖——已由共用函数保证。 */
+static void analogApplyFonts(XWidget* page, int pct)
+{
+    analogApplyFontMetrics(page, s_analog.m_compact, pct);
+    analog_boardRefresh();
+}
+
 /** @brief 形态自适应（横竖屏；幂等、廉价，HsfUi adapt 表按页调用）。
  *  @details 竖屏（compact）：列最小宽收窄（窄屏也能排 2~3 列）、卡片
  *           触控目标加高、页边距收窄；横屏恢复宽列。列数本就随视口宽
- *           实时反解（paint/hit/hint 同源），无需重排。 */
+ *           实时反解（paint/hit/hint 同源），无需重排。字号/联动度量
+ *           经 analogApplyFontMetrics 统一应用。 */
 void HsfMonitorAnalog_adapt(XWidget* page, bool compact)
 {
     HsfMonitorAnalog* self = (HsfMonitorAnalog*)page;
     if (!self) return;
     s_analog.m_compact = compact;
-    XWidget_setMinimumHeight((XWidget*)self->m_board,
-                             compact ? ANALOG_TOUCH_H_MIN
-                                     : ANALOG_CARD_H_MIN + 32);
+    /* 字号/联动度量走唯一入口（pct 每次现读，本地设置改完不必重启）。 */
+    analogApplyFontMetrics(page, compact,
+                           hsfUi_pageFontPct(HSF_PAGE_MONITOR_ANALOG));
     XLayout_setContentsMargins((XLayout*)&self->m_layout,
                                compact ? 6 : 12, 10, compact ? 6 : 12, 12);
     /* 标题行恒横向（标题居中 + 勾选框贴右，横竖屏同构）；竖屏加高触控。 */
     XBoxLayout_setDirection(&self->m_topRow, XBoxLayoutDirection_LeftToRight);
-    XWidget_setFixedHeight((XWidget*)&self->m_title, compact ? 30 : 26);
     analog_boardRefresh();
 }
 
@@ -1109,7 +1358,6 @@ XWidget* HsfMonitorAnalog_create(XWidget* parent, HsfMenuNavFn navFn,
     s_analog.m_board = board;
     self->m_board = board;
     XWidget_show((XWidget*)board);
-    XWidget_setMinimumHeight((XWidget*)board, ANALOG_CARD_H_MIN + 32);
 
     /* ---- 标题 + 操作闸勾选框（同一行：对称伸展标题居中、勾选框贴右） ---- */
     XLabel_init(&self->m_title, &self->m_base, 0);
@@ -1121,8 +1369,7 @@ XWidget* HsfMonitorAnalog_create(XWidget* parent, HsfMenuNavFn navFn,
         XClassDeinit(&f);
     }
     XLabel_setText_2(&self->m_title,
-                     "\xE6\xA8\xA1\xE6\x8B\x9F\xE9\x87\x8F"); /* 模拟量 */
-    XLabel_setTextPixelSize(&self->m_title, 17);
+                     "模拟量"); /* 模拟量 */
     XLabel_setAlignment(&self->m_title,
                         XAlignment_HCenter | XAlignment_VCenter);
     XWidget_show((XWidget*)&self->m_title);
@@ -1136,14 +1383,7 @@ XWidget* HsfMonitorAnalog_create(XWidget* parent, HsfMenuNavFn navFn,
     XLabel_init(&self->m_hint, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_hint);
     XLabel_setText_2(&self->m_hint,
-                     "\xE6\xAF\x8F\xE5\x8D\xA1\x3A\x20\xE5\x8E\x9F\xE5\xA7"
-                     "\x8B\xE5\x80\xBC\x20\x2B\x20\xE8\xBD\xAC\xE6\x8D\xA2"
-                     "\xE5\x80\xBC\xEF\xBC\x88\xE8\xB6\x8A\xE9\x99\x90\xE6"
-                     "\x8A\xA5\xE8\xAD\xA6\xE7\xBA\xA2\xEF\xBC\x89\x20\xE2"
-                     "\x80\x94\x20\xE7\x82\xB9\xE5\x87\xBB\xE5\x8D\xA1\xE7"
-                     "\x89\x87\xE6\x93\x8D\xE4\xBD\x9C");
-    /* 每卡: 原始值 + 转换值（越限报警红） — 点击卡片操作（手动模式可用） */
-    XLabel_setTextPixelSize(&self->m_hint, 12);
+                     "每卡: 原始值 + 转换值（越限报警红） — 点击卡片操作（手动模式可用）");
     XLabel_setAlignment(&self->m_hint,
                         XAlignment_HCenter | XAlignment_VCenter);
     XWidget_setForegroundRole((XWidget*)&self->m_hint,
@@ -1175,10 +1415,19 @@ XWidget* HsfMonitorAnalog_create(XWidget* parent, HsfMenuNavFn navFn,
      * 其余 7 路**没接任何东西**——铺 12 点演示数据（泵后压力/进料温度…）会
      * 让操作员以为那些点真的在线，是**假数据**（现场最忌讳）。故：模型为空
      * 时页面就是空的，等服务端快照来了再长出卡片；演示数据只在自测钩子
-     * （XHSF_ANALOG_AUTOTEST）下灌，与业务路径彻底分开。 */
+     * （XHSF_ANALOG_AUTOTEST）与**显式离线演示**（--no-login，由 HsfUi 建窗
+     * 后调 HsfMonitorAnalog_seedDemoForOffline）两条非生产路径下灌。登录
+     * 路径不灌；登录后服务端快照 setCount 整体覆盖。 */
     if (s_analog.m_count <= 0 && XSystem_environment("XHSF_ANALOG_AUTOTEST"))
         analog_seedDemo();
 
+    /* 字号/联动度量一次到位（create 与 adapt/实时重放同一入口；100% 时
+     * 与本页原常量逐像素一致 ⇒ 默认观感零回归）。 */
+    analogApplyFontMetrics(&self->m_base, false,
+                           hsfUi_pageFontPct(HSF_PAGE_MONITOR_ANALOG));
+    /* 字号实时重放登记（本地设置改动时由 HsfUi 调回，不重启即生效）。 */
+    hsfUi_registerPageFontApplier(HSF_PAGE_MONITOR_ANALOG, &self->m_base,
+                                  analogApplyFonts);
     XWidget_show(&self->m_base);
     return &self->m_base;
 }
@@ -1218,6 +1467,16 @@ int HsfMonitorAnalog_count(void)
     return s_analog.m_count;
 }
 
+void HsfMonitorAnalog_seedDemoForOffline(void)
+{
+    /* [仅离线演示] 由 HsfUi 在 --no-login 建窗后调用（登录路径不调用）：
+     * 离线态没有服务端快照，模型恒空，页面只有「无模拟量点」空态，指定
+     * 截图无法验收卡片字号/角标/重叠。登录后快照 setCount 整体覆盖本批
+     * 演示点，不会残留到现场真实数据。 */
+    if (s_analog.m_count > 0) return;
+    analog_seedDemo();
+}
+
 void HsfMonitorAnalog_setValue(int index, int raw, double scaled)
 {
     HsfMonitorAnalog_setRaw(index, raw);
@@ -1229,7 +1488,7 @@ void HsfMonitorAnalog_setRaw(int index, int raw)
     if (index < 0 || index >= s_analog.m_count) return;
     if (s_analog.m_points[index].m_raw == raw) return;
     s_analog.m_points[index].m_raw = raw;
-    if (s_analog.m_board) XWidget_update((XWidget*)s_analog.m_board);
+    analog_invalidateCard(index);
 }
 
 int HsfMonitorAnalog_raw(int index)
@@ -1251,8 +1510,19 @@ void HsfMonitorAnalog_setEngineering(int index, double value, const char* unit,
                                      const char* note)
 {
     HsfAnalogPoint* p;
+    const char* newUnit;
+    const char* newNote;
     if (index < 0 || index >= s_analog.m_count) return;
     p = &s_analog.m_points[index];
+    newUnit = (unit && unit[0]) ? unit : "";
+    newNote = (note && note[0]) ? note : "";
+    /* [同值早退 2026-11-08] 服务端 10Hz 推送会重复下发未变的工程量；
+     * 此前每次都释放/重分配两个字符串并整卡标脏（英文单位/说明几乎从不
+     * 变化，等于每帧白送 alloc+free 与一次重绘）。 */
+    if (p->m_eng == value &&
+        strcmp(p->m_engUnit ? p->m_engUnit : "", newUnit) == 0 &&
+        strcmp(p->m_engNote ? p->m_engNote : "", newNote) == 0)
+        return;
     if (p->m_engUnit) {
         XFree_System(p->m_engUnit);
         p->m_engUnit = NULL;
@@ -1261,18 +1531,18 @@ void HsfMonitorAnalog_setEngineering(int index, double value, const char* unit,
         XFree_System(p->m_engNote);
         p->m_engNote = NULL;
     }
-    if (unit && unit[0]) {
-        size_t bytes = strlen(unit) + 1;
+    if (newUnit[0]) {
+        size_t bytes = strlen(newUnit) + 1;
         p->m_engUnit = (char*)XMemory_malloc(bytes, XCLASS_DEFAULT_MEMORY_TYPE);
-        if (p->m_engUnit) memcpy(p->m_engUnit, unit, bytes);
+        if (p->m_engUnit) memcpy(p->m_engUnit, newUnit, bytes);
     }
-    if (note && note[0]) {
-        size_t bytes = strlen(note) + 1;
+    if (newNote[0]) {
+        size_t bytes = strlen(newNote) + 1;
         p->m_engNote = (char*)XMemory_malloc(bytes, XCLASS_DEFAULT_MEMORY_TYPE);
-        if (p->m_engNote) memcpy(p->m_engNote, note, bytes);
+        if (p->m_engNote) memcpy(p->m_engNote, newNote, bytes);
     }
     p->m_eng = value;
-    if (s_analog.m_board) XWidget_update((XWidget*)s_analog.m_board);
+    analog_invalidateCard(index);
 }
 
 /**
@@ -1283,7 +1553,7 @@ void HsfMonitorAnalog_setRawMv(int index, int mv)
     if (index < 0 || index >= s_analog.m_count) return;
     if (s_analog.m_points[index].m_rawMv == mv) return;
     s_analog.m_points[index].m_rawMv = mv;
-    if (s_analog.m_board) XWidget_update((XWidget*)s_analog.m_board);
+    analog_invalidateCard(index);
 }
 
 void HsfMonitorAnalog_setScaled(int index, double scaled)
@@ -1291,7 +1561,7 @@ void HsfMonitorAnalog_setScaled(int index, double scaled)
     if (index < 0 || index >= s_analog.m_count) return;
     if (s_analog.m_points[index].m_scaled == scaled) return;
     s_analog.m_points[index].m_scaled = scaled;
-    if (s_analog.m_board) XWidget_update((XWidget*)s_analog.m_board);
+    analog_invalidateCard(index);
 }
 
 double HsfMonitorAnalog_scaled(int index)
@@ -1304,6 +1574,12 @@ void HsfMonitorAnalog_setName(int index, const char* name)
 {
     char* copy;
     if (index < 0 || index >= s_analog.m_count) return;
+    /* [同值早退 2026-11-08] 快照每次推送都重放名称；相同则不必 alloc/free
+     * 与标脏（名称是静态配置，一年也变不了一次）。 */
+    if (strcmp(s_analog.m_points[index].m_name ? s_analog.m_points[index].m_name
+                                               : "",
+               name ? name : "") == 0)
+        return;
     copy = NULL;
     if (name && name[0]) {
         size_t bytes = strlen(name) + 1;
@@ -1313,7 +1589,7 @@ void HsfMonitorAnalog_setName(int index, const char* name)
     }
     XFree_System(s_analog.m_points[index].m_name);
     s_analog.m_points[index].m_name = copy;
-    if (s_analog.m_board) XWidget_update((XWidget*)s_analog.m_board);
+    analog_invalidateCard(index);
 }
 
 void HsfMonitorAnalog_name(int index, char* buf, int size)
@@ -1321,7 +1597,7 @@ void HsfMonitorAnalog_name(int index, char* buf, int size)
     if (!buf || size <= 0) return;
     buf[0] = '\0';
     if (index < 0 || index >= s_analog.m_count) {
-        snprintf(buf, (size_t)size, "\xE7\x82\xB9 %d", index + 1);
+        snprintf(buf, (size_t)size, "点 %d", index + 1);
         return;
     }
     analog_displayName(index, buf, size);
@@ -1331,6 +1607,11 @@ void HsfMonitorAnalog_setUnit(int index, const char* unit)
 {
     char* copy;
     if (index < 0 || index >= s_analog.m_count) return;
+    /* [同值早退 2026-11-08] 同 setName：快照重放常量字段不产生脏。 */
+    if (strcmp(s_analog.m_points[index].m_unit ? s_analog.m_points[index].m_unit
+                                               : "",
+               unit ? unit : "") == 0)
+        return;
     copy = NULL;
     if (unit && unit[0]) {
         size_t bytes = strlen(unit) + 1;
@@ -1340,7 +1621,7 @@ void HsfMonitorAnalog_setUnit(int index, const char* unit)
     }
     XFree_System(s_analog.m_points[index].m_unit);
     s_analog.m_points[index].m_unit = copy;
-    if (s_analog.m_board) XWidget_update((XWidget*)s_analog.m_board);
+    analog_invalidateCard(index);
 }
 
 void HsfMonitorAnalog_unit(int index, char* buf, int size)
@@ -1357,7 +1638,7 @@ void HsfMonitorAnalog_setChannel(int index, int channel)
     if (index < 0 || index >= s_analog.m_count) return;
     if (s_analog.m_points[index].m_channel == channel) return;
     s_analog.m_points[index].m_channel = channel;
-    if (s_analog.m_board) XWidget_update((XWidget*)s_analog.m_board);
+    analog_invalidateCard(index);
 }
 
 int HsfMonitorAnalog_channel(int index)
@@ -1373,7 +1654,7 @@ void HsfMonitorAnalog_setDecimals(int index, int decimals)
     if (decimals > 6) decimals = 6;
     if (s_analog.m_points[index].m_decimals == decimals) return;
     s_analog.m_points[index].m_decimals = decimals;
-    if (s_analog.m_board) XWidget_update((XWidget*)s_analog.m_board);
+    analog_invalidateCard(index);
 }
 
 int HsfMonitorAnalog_decimals(int index)
@@ -1396,7 +1677,7 @@ void HsfMonitorAnalog_setRange(int index, double min, double max)
         p->m_max = max;
         p->m_hasRange = true;
     }
-    if (s_analog.m_board) XWidget_update((XWidget*)s_analog.m_board);
+    analog_invalidateCard(index);
 }
 
 bool HsfMonitorAnalog_range(int index, double* minOut, double* maxOut)
@@ -1414,7 +1695,7 @@ void HsfMonitorAnalog_setKind(int index, HsfAnalogKind kind)
     if (kind != HSF_ANALOG_INPUT && kind != HSF_ANALOG_OUTPUT) return;
     if (s_analog.m_points[index].m_kind == kind) return;
     s_analog.m_points[index].m_kind = kind;
-    if (s_analog.m_board) XWidget_update((XWidget*)s_analog.m_board);
+    analog_invalidateCard(index);
 }
 
 HsfAnalogKind HsfMonitorAnalog_kind(int index)
@@ -1467,9 +1748,7 @@ void HsfMonitorAnalog_setInteractiveMode(bool interactive)
         /* 进入自动模式：强制只读（真实链路在自动程序手里）。 */
         s_analog.m_opEnabled = false;
         analog_setStatus(
-            "\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD"
-            "\x3A\x20\xE7\x95\x8C\xE9\x9D\xA2\xE5\x8F\xAA\xE8\xAF\xBB");
-        /* 自动运行中: 界面只读 */
+            "自动运行中: 界面只读"); /* 自动运行中: 界面只读 */
     }
     analog_boardRefresh();
 }
@@ -1501,21 +1780,21 @@ void HsfMonitorAnalog_attachStatus(void (*setStatus)(void*, const char*),
 static void analog_seedDemo(void)
 {
     static const char* kNames[12] = {
-        "\xE6\xB3\xB5\xE5\x89\x8D\xE5\x8E\x8B\xE5\x8A\x9B",   /* 泵前压力 */
-        "\xE6\xB3\xB5\xE5\x90\x8E\xE5\x8E\x8B\xE5\x8A\x9B",   /* 泵后压力 */
-        "\xE8\xBF\x9B\xE6\x96\x99\xE6\xB8\xA9\xE5\xBA\xA6",   /* 进料温度 */
-        "\xE5\x87\xBA\xE6\x96\x99\xE6\xB8\xA9\xE5\xBA\xA6",   /* 出料温度 */
-        "\xE6\xB5\x81\xE9\x87\x8F",                           /* 流量 */
-        "\xE6\xB6\xB2\xE4\xBD\x8D",                           /* 液位 */
-        "\xE7\x94\xB5\xE6\x9C\xBA\xE7\x94\xB5\xE6\xB5\x81",   /* 电机电流 */
-        "\xE7\x94\xB5\xE6\x9C\xBA\xE8\xBD\xAC\xE9\x80\x9F",   /* 电机转速 */
-        "\xE7\x9C\x9F\xE7\xA9\xBA\xE5\xBA\xA6",               /* 真空度 */
-        "\xE6\xB0\xB4\xE5\x88\x86",                           /* 水分 */
-        "\xE9\x85\xB8\xE5\xBA\xA6",                           /* 酸度 */
-        "\xE6\xB5\x93\xE5\xBA\xA6"                            /* 浓度 */
+        "泵前压力",   /* 泵前压力 */
+        "泵后压力",   /* 泵后压力 */
+        "进料温度",   /* 进料温度 */
+        "出料温度",   /* 出料温度 */
+        "流量",                           /* 流量 */
+        "液位",                           /* 液位 */
+        "电机电流",   /* 电机电流 */
+        "电机转速",   /* 电机转速 */
+        "真空度",     /* 真空度 */
+        "水分",                           /* 水分 */
+        "酸度",                           /* 酸度 */
+        "浓度"                            /* 浓度 */
     };
     static const char* kUnits[12] = {
-        "kPa", "kPa", "\xE2\x84\x83", "\xE2\x84\x83", /* kPa kPa ℃ ℃ */
+        "kPa", "kPa", "℃", "℃", /* kPa kPa ℃ ℃ */
         "L/min", "mm", "A", "rpm",
         "kPa", "%", "pH", "g/L"
     };

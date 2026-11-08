@@ -402,6 +402,13 @@ class Config(object):
         ]
         # ---- 数据落盘（历史/日志/报警 → SQLite）----
         self.storage = StorageConfig()
+        # ---- 登录/账户策略（与 C 侧 XLoginPolicy 同义，2026-11-08）----
+        #: 允许匿名（只读）会话接入。
+        self.login_allow_anonymous = False
+        #: 允许同一账户并发在线（False ⇒ 沿用「root 单会话」保护）。
+        self.login_allow_concurrent = False
+        #: 会话总数上限（0=不限）。
+        self.login_max_sessions = 8
         self._runtime = {}          # 运行期持久化（run_mode 等）
 
     # ---- 派生（只读转发，避免两处各存一份导致改一个忘一个）----
@@ -671,6 +678,16 @@ class Config(object):
         self.storage.keep_files = max(
             1, min(99, _int(storage.get("keep_files"),
                             self.storage.keep_files)))
+        # ---- 登录策略（2026-11-08；缺节=保持缺省）----
+        login = doc.get("login") or {}
+        if login:
+            self.login_allow_anonymous = bool(
+                login.get("allow_anonymous", self.login_allow_anonymous))
+            self.login_allow_concurrent = bool(
+                login.get("allow_concurrent", self.login_allow_concurrent))
+            self.login_max_sessions = max(
+                0, min(256, _int(login.get("max_sessions"),
+                                 self.login_max_sessions)))
         return True
 
     def save(self):
@@ -752,6 +769,11 @@ class Config(object):
                 "max_kb": self.storage.max_kb,
                 "full_policy": self.storage.full_policy,
                 "keep_files": self.storage.keep_files,
+            },
+            "login": {
+                "allow_anonymous": self.login_allow_anonymous,
+                "allow_concurrent": self.login_allow_concurrent,
+                "max_sessions": self.login_max_sessions,
             },
             "stale": {
                 "vfd_ms": self.vfd_stale_ms,

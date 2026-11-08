@@ -240,39 +240,12 @@
 #ifndef XGUI_PRESENT_MAX_FPS
 #define XGUI_PRESENT_MAX_FPS 0
 #endif
-/* - XGUI_REPAINT_MAX_FPS：重绘（绘制+上屏整链）节奏上限（2026-10-25 用户
- *   裁定取 60）。此前三条限频路径都拦不住「绘制」本身：RESIZE 只管装饰
- *   手势两分支，PRESENT 闸只跳提交不跳绘制（屏幕不更新但 paintTree 照
- *   付全额 CPU），PARTIAL 攒批腿在 fbdev/桌面定版平台根本不编译。实测
- *   昆仑通态 A33 上 HUD 读数可达 160+ 帧的绘制活动率，主因是任意来源的
- *   update() 都能立刻驱动一次整窗 paintTree+pan。
- *   本宏挂点=XWidget_postPaintEvent（所有重绘请求汇入的唯一口：update/
- *   updateRect/updateRegion/repaint/show 全经此处），语义=「上次真正派发
- *   PAINT 的时刻起不足 1000/fps 毫秒则本帧只记账不派发」。记账=脏区已在
- *   m_dirty 里累积，另置一次性补投定时器在剩余窗口到期时补发，因此跳帧
- *   零丢失、尾帧结构性必达（与 PRESENT 闸同款不丢帧纪律）。
- *   取值 0=不限（编译期裁掉整个闸与补投路径，桌面历史口径逐位不变）；
- *   运行期环境变量 XGUI_REPAINT_MAX_FPS 覆盖宏值（同 present 闸族约定）。
- *   与 PRESENT 闸的分工：本宏管「画不画」（省 CPU），PRESENT 管「提交不
- *   提交」（省带宽/防闪烁）；同时开启时重绘节拍先收敛，present 闸退化为
- *   兜底。 */
-#ifndef XGUI_REPAINT_MAX_FPS
-#if XPLATFORM_FBDEV_ON
-/* 嵌入式单屏直写：面板 60Hz 量级，绘制超频纯属浪费 CPU（present 是阻塞
- * pan，绘制更快只会把队列打满）。取 60 与面板刷新对齐。 */
-#define XGUI_REPAINT_MAX_FPS 60
-#elif defined(__ANDROID__)
-/* [安卓限帧缺省补齐 2026-10-27] 安卓与 fbdev 同属「直写/整帧提交」形态
- * （XPlatformWindowAndroid 的 present 是 surface 整帧上屏），此前落进
- * else 分支取 0=不限：真机实测任何拖动/滚动都触发满速重绘——HUD 读数
- * FPS 155、CPU 107%，同时因每帧整窗重画而表现为**画面残留重、卡顿**，
- * 且宏看似"无效"（实际是默认值根本没进限帧分支）。
- * 取 60 与面板刷新对齐（手机普遍 60/120Hz，60 已足够顺滑且省电）。 */
-#define XGUI_REPAINT_MAX_FPS 60
-#else
-#define XGUI_REPAINT_MAX_FPS 0
-#endif
-#endif
+/* [XGUI_REPAINT_MAX_FPS 已移除 2026-11-08] 此前这里声明进程级重绘帧率闸
+ * 宏（缺省桌面 60Hz，挂点 XWidget_postPaintEvent），同日按 Qt 语义整体
+ * 撤除：update()/repaint() 只合并脏区、有脏区就画，不再按时间吞帧
+ * （详见 Src/XGui/Widget/XWidget.c 的「重绘请求收口」注）。本头不再提供
+ * 该宏；诊断/压测无需再设 XGUI_REPAINT_MAX_FPS，遗留的编译期定义会被
+ * 忽略。剩余限频宏只有下方的 RESIZE（装饰手势）与 PRESENT（上屏提交）。 */
 
 /* 强制 DPI 缩放（对标 Qt QT_SCALE_FACTOR 的编译期版；2026-10-01 用户
  * 裁定用宏而非环境变量——调试经 CMake -D 注入即可，安卓无 shell env
@@ -351,10 +324,6 @@
 #if XGUI_PRESENT_MAX_FPS < 0
 #undef XGUI_PRESENT_MAX_FPS
 #define XGUI_PRESENT_MAX_FPS 0
-#endif
-#if XGUI_REPAINT_MAX_FPS < 0
-#undef XGUI_REPAINT_MAX_FPS
-#define XGUI_REPAINT_MAX_FPS 0
 #endif
 /* 【桌面缓冲形态定案 2026-10-30】**桌面不再强制双缓冲**，默认单缓冲。
  *
@@ -823,8 +792,15 @@
 #ifndef XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
 #define XGUI_PERFORMANCE_OVERLAY_MEMORY_ON 1
 #endif
+/* 性能悬浮层统计/文本刷新周期（毫秒）。
+ * [2026-11-08 由 250 改 1000，用户口径]「悬浮层 1s 周期采集够了」。
+ * 这个周期直接决定**空闲时的重绘节拍**：悬浮层每次重算文本 → 文本变化
+ * 才 setText → 标脏 → 触发一帧绘制 → 又喂一次样本 …… 250ms 时空闲页
+ * 稳定在 4~7fps（画像实测数字量/历史页各约 7fps，脏源 100% 是悬浮层自己
+ * 与标题栏时钟）。诊断读数 1Hz 完全够用，且与「画面变化慢 ⇒ 帧数一两帧」
+ * 的预期一致。 */
 #ifndef XGUI_PERFORMANCE_OVERLAY_UPDATE_MS
-#define XGUI_PERFORMANCE_OVERLAY_UPDATE_MS 250
+#define XGUI_PERFORMANCE_OVERLAY_UPDATE_MS 1000
 #endif
 
 /* 控件静态内容保留层（retained layer，融合 LVGL 静态内容缓存思想）字节
@@ -1142,8 +1118,6 @@
 #define XGUI_RESIZE_REPAINT_MAX_FPS 0
 #undef XGUI_PRESENT_MAX_FPS
 #define XGUI_PRESENT_MAX_FPS 0
-#undef XGUI_REPAINT_MAX_FPS
-#define XGUI_REPAINT_MAX_FPS 0
 #undef XGUI_RETAINED_LAYER_BUDGET_BYTES
 #define XGUI_RETAINED_LAYER_BUDGET_BYTES 0
 #undef XPIXMAP_ON

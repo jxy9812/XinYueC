@@ -117,6 +117,17 @@ typedef struct XVirtualModelVfd {
      *          看这个过程）。与 Python VirtualVfd 的 decelerating 同口径。
      */
     bool m_decelerating;
+    /**
+     * @brief 运行中换向待决：True=正在按 DEC 减速过零，过零后翻向加速。
+     * @details [换向 = 减速过零再反向加速，对齐真机] 运行中收到反方向命令字
+     *          （0x2000 写 1↔2）不是瞬间翻方向位——真机先按减速时间把输出
+     *          降到 0（这段状态字仍报**原**方向），过零那一刻才翻方向、再按
+     *          加速时间向新方向爬到给定。旧实现直接翻 m_reverse ⇒ 频率不经过
+     *          0 的"假换向"。过零处理见 vfdTick；m_revPendingReverse 记过零后
+     *          要翻去的目标方向。自由停车/减速停机/点动命令会取消待决。
+     */
+    bool m_revPending;
+    bool m_revPendingReverse;   /**< 过零后要翻去的目标方向。 */
     uint16_t m_faultCode;
     /**
      * @brief P 组参数区存储（0xF000..0xF013，下标 = 地址-0xF000）。
@@ -136,6 +147,8 @@ typedef struct XVirtualModelVfd {
 #define VFD_PADDR_CMDSRC     0xF002u   /**< P0.02 命令源（2=通讯）。 */
 #define VFD_PADDR_FRQSRC     0xF003u   /**< P0.03 主频率源X（9=通讯给定）。 */
 #define VFD_PADDR_MAXFREQ    0xF00Au   /**< P0.10 最大频率（0.1Hz，500=50Hz）。 */
+#define VFD_PADDR_ACC        0xF011u   /**< P0.17 加速时间（0.1s，100=10.0s，满量程 0↔P0.10）。 */
+#define VFD_PADDR_DEC        0xF012u   /**< P0.18 减速时间（0.1s，同上）。 */
 
 /* M512 命令字（与 XVfdM512.h 的 XVfdM512_Cmd* 同值：0x2000 写命令）。
  * [来源] 真机手册 + Python devices.py CMD_*：1=正转 2=反转 3=正点动
@@ -148,8 +161,10 @@ typedef struct XVirtualModelVfd {
 #define VFD_CMD_DECEL_STOP    6u
 #define VFD_CMD_FAULT_RESET   7u
 
-/* [爬坡斜率] 每次推进 ±2.5Hz；推进节拍=100ms 心跳拍 ⇒ 25Hz/s，
- * 与 Python VirtualVfd.RAMP_HZ_PER_TICK 同值（推进入口见 vfdTick）。 */
+/* [爬坡斜率兜底] 常规斜率按 ACC/DEC 参数推导（vfdRampHzPerTick）；参数
+ * 未配置（写 0）时回退本固定值：每拍 ±2.5Hz，推进节拍=100ms 心跳拍
+ * ⇒ 25Hz/s，与 Python VirtualVfd.RAMP_HZ_PER_TICK 同值（推进入口见
+ * vfdTick）。 */
 #define VFD_RAMP_HZ_PER_TICK  2.5
 
 /** @brief 给定百分比 → 目标频率（Hz）。
@@ -166,6 +181,29 @@ static double vfdSetHzOf(const XVirtualModelVfd* m)
     return (double)m->m_setPct / 10000.0 * maxHz;
 }
 
+/** @brief 按加减速时间参数推导每拍斜率（Hz/拍，拍=100ms）。
+ *  @details [满量程时间口径，对齐真机] ACC(P0.17)/DEC(P0.18) = 输出从 0 走到
+ *           P0.10 最大频率（或反向）的秒数（0.1s 定点）：斜率 = maxHz / 秒 /
+ *           10（每秒 10 拍）。缺省 100=10.0s、50Hz ⇒ 0.5Hz/拍（5Hz/s）——
+ *           12Hz 换向全程约 5s，"先慢慢停、再反向加速"肉眼可见（用户
+ *           2026-11-06 选定 ACC/DEC 口径，替换旧的固定 25Hz/s）。
+ *           [参数 ≤0] 未配置（显式写 0）时回退固定斜率兜底，不钳 0.1s——
+ *           与 Python 侧同口径（Python 用 RAMP_HZ_PER_TICK 兜底）。 */
+static double vfdRampHzPerTick(const XVirtualModelVfd* m, bool decel)
+{
+    double maxHz, sec;
+    uint16_t param;
+    if (!m) return VFD_RAMP_HZ_PER_TICK;
+    if (m->m_params[VFD_PADDR_MAXFREQ - VFD_PADDR_BASE] > 0)
+        maxHz = (double)m->m_params[VFD_PADDR_MAXFREQ - VFD_PADDR_BASE] / 10.0;
+    else
+        maxHz = (m->m_maxHz > 0.0) ? m->m_maxHz : 50.0;
+    param = m->m_params[(decel ? VFD_PADDR_DEC : VFD_PADDR_ACC) - VFD_PADDR_BASE];
+    sec = (double)param / 10.0;
+    if (sec <= 0.0) return VFD_RAMP_HZ_PER_TICK;
+    return maxHz / sec / 10.0;
+}
+
 /** @brief 写 0x1000 的公共路径（FC06 与 setFrequency 共用）。
  *  @note  [停机时写给定不能产生输出] 给定值是"下次启动用多少"，写它只是
  *         **记住**目标；真正的输出由命令字（0x2000）决定。旧实现无条件
@@ -177,7 +215,13 @@ static void vfdWriteSetPct(XVirtualModelVfd* m, int32_t pct)
     if (pct > 10000) pct = 10000;      /* [钳位而不是拒绝] 与 Python 侧同口径： */
     if (pct < -10000) pct = -10000;    /* 现场偶尔给超范围值，钳位后按满速跑。 */
     m->m_setPct = pct;
-    if (m->m_running) m->m_targetHz = vfdSetHzOf(m);
+    /* [换向减速中给定只记忆不动目标] 服务端处理带给定的 START 是"先写
+     * 0x1000 再写 0x2000"两步；两步之间 100ms 心跳拍可能插入一次推进——
+     * 若写给定就把目标从 0 拉回给定，会出现"正在减速却先弹高半拍"的毛刺。
+     * 换向待决期间给定只记入 m_setPct，过零翻向时 vfdTick 用 vfdSetHzOf()
+     * 取到的是**新**给定，反向加速直达用户改的值（物理上也说得通：换向
+     * 途中改给定，过零后按新给定走）。 */
+    if (m->m_running && !m->m_revPending) m->m_targetHz = vfdSetHzOf(m);
 }
 
 /**
@@ -247,26 +291,41 @@ static void vfdTick(XVirtualModelVfd* m)
         return;
     }
     delta = m->m_targetHz - m->m_outHz;
-    if (delta > VFD_RAMP_HZ_PER_TICK) {
-        m->m_outHz += VFD_RAMP_HZ_PER_TICK;
-        m->m_decelerating = false;
-    } else if (delta < -VFD_RAMP_HZ_PER_TICK) {
-        m->m_outHz -= VFD_RAMP_HZ_PER_TICK;
-        m->m_decelerating = true;
-    } else {
-        m->m_outHz = m->m_targetHz;
-        /* [不能在这里无脑清减速标记] 最后一拍 delta 会落进死区，若此时把
-         * decelerating 清掉，下面"降到 0 就置停机"的分支就永远进不去
-         * ⇒ 减停到 0 后运行标志仍为 True（与 Python 侧同一个坑）。 */
-        if (!(m->m_decelerating && m->m_outHz <= 0.0))
-            m->m_decelerating = (delta < 0.0);
+    {
+        /* 斜率按方向取：升速用 ACC、降速用 DEC（vfdRampHzPerTick）。 */
+        const double slope = vfdRampHzPerTick(m, delta < 0.0);
+        if (delta > slope) {
+            m->m_outHz += slope;
+            m->m_decelerating = false;
+        } else if (delta < -slope) {
+            m->m_outHz -= slope;
+            m->m_decelerating = true;
+        } else {
+            m->m_outHz = m->m_targetHz;
+            /* [不能在这里无脑清减速标记] 最后一拍 delta 会落进死区，若此时把
+             * decelerating 清掉，下面"降到 0 就置停机/换向"的分支就永远进
+             * 不去 ⇒ 减停到 0 后运行标志仍为 True（与 Python 侧同一个坑）。 */
+            if (!(m->m_decelerating && m->m_outHz <= 0.0))
+                m->m_decelerating = (delta < 0.0);
+        }
     }
-    /* 斜坡降到 0 才算真正停下（状态字这时才变"停机"）。 */
+    /* 斜坡降到 0：有换向待决就翻向加速（保持运行），否则真正停机。 */
     if (m->m_decelerating && m->m_outHz <= 0.0) {
-        m->m_outHz = 0.0;
-        m->m_targetHz = 0.0;
-        m->m_decelerating = false;
-        m->m_running = false;
+        if (m->m_revPending) {
+            /* [换向过零] 这一刻才翻方向位——状态字（0x3000）在此之前一直
+             * 报**原**方向（电机确实还在原方向转），与真机一致。目标取
+             * vfdSetHzOf() 现算：减速期间用户改的给定在这里生效。 */
+            m->m_reverse = m->m_revPendingReverse;
+            m->m_revPending = false;
+            m->m_decelerating = false;
+            m->m_outHz = 0.0;
+            m->m_targetHz = vfdSetHzOf(m);
+        } else {
+            m->m_outHz = 0.0;
+            m->m_targetHz = 0.0;
+            m->m_decelerating = false;
+            m->m_running = false;
+        }
     }
     ++m->m_tick;
 }
@@ -382,12 +441,28 @@ static XModbusVirtualResult vfdWrite(void* self, uint8_t fc, uint16_t addr,
          * [停机走命令字，不走给定] 5/6 停机把爬坡目标清 0，输出随 tick 归零。 */
         const uint16_t cmd = values[0];
         if (cmd == VFD_CMD_RUN_FORWARD || cmd == VFD_CMD_RUN_REVERSE) {
-            m->m_running = true;
-            m->m_reverse = (cmd == VFD_CMD_RUN_REVERSE);
+            const bool rev = (cmd == VFD_CMD_RUN_REVERSE);
+            if (m->m_running && rev != m->m_reverse) {
+                /* [运行中换向 = 先减速过零再反向加速] 对齐真机：不瞬间翻
+                 * 方向位，先按 DEC 把输出降向 0（状态字仍报原方向），过零
+                 * 那一刻 vfdTick 才翻向、按 ACC 向新方向爬到给定。减速途中
+                 * 再收到同向命令（含翻回原方向）走下面分支＝取消换向。 */
+                m->m_revPending = true;
+                m->m_revPendingReverse = rev;
+                m->m_targetHz = 0.0;
+                m->m_decelerating = true;
+            } else {
+                m->m_revPending = false;
+                m->m_running = true;
+                m->m_reverse = rev;
+                m->m_decelerating = false;
+                m->m_targetHz = vfdSetHzOf(m);
+            }
             m->m_jogging = false;
-            m->m_decelerating = false;
-            m->m_targetHz = vfdSetHzOf(m);
         } else if (cmd == VFD_CMD_JOG_FORWARD || cmd == VFD_CMD_JOG_REVERSE) {
+            /* 点动接管：取消换向待决，方向/目标按点动立即生效（点动是
+             * 按住即走的短促动作，沿用既有瞬时口径）。 */
+            m->m_revPending = false;
             m->m_running = true;
             m->m_reverse = (cmd == VFD_CMD_JOG_REVERSE);
             m->m_jogging = true;
@@ -395,6 +470,7 @@ static XModbusVirtualResult vfdWrite(void* self, uint8_t fc, uint16_t addr,
             m->m_targetHz = vfdSetHzOf(m);
         } else if (cmd == VFD_CMD_FREE_STOP) {
             /* **自由停车：立刻断输出**（真机自由停车是切断输出，不是斜坡）。 */
+            m->m_revPending = false;
             m->m_running = false;
             m->m_jogging = false;
             m->m_decelerating = false;
@@ -406,7 +482,9 @@ static XModbusVirtualResult vfdWrite(void* self, uint8_t fc, uint16_t addr,
              * 降到 0 才置停机 —— 界面这段就是"正在停机"。
              * [为什么不立刻 running=false] 真机状态字在降到 0 那一刻才变
              * "停机"；立刻置 False 会让状态字先变停机、输出却还有几十 Hz，
-             * 界面上就是"停机 + 输出 30Hz"的自相矛盾。 */
+             * 界面上就是"停机 + 输出 30Hz"的自相矛盾。
+             * [停止覆盖换向] 用户点了停止就是真停：清换向待决，过零走停机。 */
+            m->m_revPending = false;
             m->m_targetHz = 0.0;
             m->m_jogging = false;
             m->m_decelerating = true;
@@ -456,10 +534,14 @@ struct XVirtualModelVfd* XVirtualModelVfd_create(double maxHz)
     m->m_running = false;
     /* [P 组参数区缺省 = 真机实况] P0.02=2（命令源=通讯）、P0.03=9（主频率
      * 源=通讯给定）——真机前置条件（使用指南 §1.6，仿真器同款种子值）；
-     * P0.10=500（最大频率 50.0Hz，0.1Hz 实测定标）。 */
+     * P0.10=500（最大频率 50.0Hz，0.1Hz 实测定标）；
+     * P0.17/P0.18=100（加/减速时间各 10.0s，真机 10s 减速口径——爬坡斜率
+     * 由 vfdRampHzPerTick 按它们推导，与 Python VirtualVfd 同值）。 */
     m->m_params[VFD_PADDR_CMDSRC - VFD_PADDR_BASE] = 2;
     m->m_params[VFD_PADDR_FRQSRC - VFD_PADDR_BASE] = 9;
     m->m_params[VFD_PADDR_MAXFREQ - VFD_PADDR_BASE] = 500;
+    m->m_params[VFD_PADDR_ACC - VFD_PADDR_BASE] = 100;
+    m->m_params[VFD_PADDR_DEC - VFD_PADDR_BASE] = 100;
     return m;
 }
 

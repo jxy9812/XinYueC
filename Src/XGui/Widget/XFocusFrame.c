@@ -173,9 +173,9 @@ static void VXFocusFrame_paintEvent(XWidget* self, XEvent* event)
     highlight = 0xFF3080C0u;
 #endif /* XPALETTE_ON */
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：焦点框走 PE_FrameFocusRect。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStylePE_FrameFocusRect);
         XRect_init(&opt.m_rect, 0, 0, w, h);

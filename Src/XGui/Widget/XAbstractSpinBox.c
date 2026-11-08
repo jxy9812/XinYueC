@@ -112,7 +112,7 @@ static void spinbox_syncEditFieldGeometry(XAbstractSpinBox* self)
     w = XWidget_width((XWidget*)self);
     h = XWidget_height((XWidget*)self);
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         XStyleOption opt;
         XRect field;
         XStyleOption_init(&opt, XStyleCC_SpinBox);
@@ -124,7 +124,7 @@ static void spinbox_syncEditFieldGeometry(XAbstractSpinBox* self)
            EditField 全宽）。 */
         opt.m_spinFrame = self->m_frame;
         opt.m_spinSymbols = self->m_buttonSymbols;
-        field = XStyle_subControlRect(XStyle_defaultStyle(),
+        field = XStyle_subControlRect(XWidget_style((const XWidget*)self),
                                       XStyleCC_SpinBox, &opt,
                                       XStyleSC_SpinBoxEditField,
                                       (XWidget*)self);

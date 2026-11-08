@@ -25,8 +25,30 @@ static void VXObject_poll(XObject* object)
 
 void VXObject_deinit(XObject* object)
 {
+	/* 【threadData 提前取快照 2026-11-08】原实现在函数**末尾**才
+	 * `XAtomic_load(&object->m_threadData)` 再 deref。但 deinit 中段会
+	 * 级联删除子对象、发 destroyed 信号、清信号槽——任何一环若因既有
+	 * 双删/堆踩踏把本对象内存写坏，末尾读到的就是垃圾指针：
+	 * 实测 HsfClient 退出恒 AV，崩溃指令是 `mov eax,[rax+50h]`（即
+	 * XThreadData_deref 里读 data->m_ref），rax=0x000000060000000C
+	 * 这种"两个 32 位整数拼成"的脏值。
+	 * 在本函数**开头**（对象内存必然完好）就把 td 取出存进局部变量，
+	 * 末尾直接用局部变量 deref——把"读脏内存"的时间窗口压到零。
+	 * 【2026-11-08 修订】槽位清空（store NULL）必须留到**末尾**：deinit
+	 * 中段的 XObject_thread()/XObject_eventDispatcher() 都要经
+	 * m_threadData 取线程亲和性，用于 XCoreApplication_removePostedEvents
+	 * 守卫与定时器注销。若在开头就把槽位清空，XObject_thread() 恒返回
+	 * NULL → removePostedEvents 被整段跳过，对象的 posted 事件留在队列里
+	 * 带悬垂 m_receiver；下一次 processEvents 解引用
+	 * m_receiver->m_is_deleting_children（[rax+1Ch] bit3）即 AV（实测
+	 * XGuiRegression_Test 稳定 segfault 于 test_layout_updategeometry_qt_align）。
+	 * 故：只提前"读快照"，不提前"清槽位"；清槽位与 deref 一并留到末尾。 */
+	XThreadData* deinitTd = NULL;
 	if (!object || object->m_was_deleted)
 		return;
+
+	deinitTd = (XThreadData*)XAtomic_load_uintptr_t(
+		(XAtomic_Uintptr*)&object->m_threadData, XAtomic_MemoryOrder_Acquire);
 
 	object->m_was_deleted = true;
 	object->m_block_sig = 0;
@@ -198,12 +220,12 @@ void VXObject_deinit(XObject* object)
 	// Qt 6.8: ~QObjectPrivate() - 释放线程亲和性引用 (对标 thisThreadData->deref())
 	// 放在所有子对象/信号槽清理之后: 清理过程可能仍需通过 threadData 访问当前线程。
 	// XObject_init 时 ref, moveToThread 时平衡 (ref 新/deref 旧), 析构时此处 deref 收尾。
-	XThreadData* td = (XThreadData*)XAtomic_load_uintptr_t(
-		(XAtomic_Uintptr*)&object->m_threadData, XAtomic_MemoryOrder_Acquire);
-	if (td) {
+	// 快照在函数开头已取（见上方说明）：这里只用局部变量，不再读对象内存。
+	// 清槽位留在此处（deinit 中段仍需 m_threadData 判线程亲和性，见开头说明）。
+	if (deinitTd) {
 		XAtomic_store_uintptr_t(&object->m_threadData, (uintptr_t)NULL,
 			XAtomic_MemoryOrder_Release);
-		XThreadData_deref(td);
+		XThreadData_deref(deinitTd);
 	}
 }
 bool VXObject_event(XObject* self, XEvent* e)

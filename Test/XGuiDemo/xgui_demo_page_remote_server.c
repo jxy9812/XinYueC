@@ -998,7 +998,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
      *     布局器按 addLayout 顺序入列, 会话状态区 stretch 吃满纵轴
      *     余量、服务地址行殿后贴底（高随宽度档 24/40）。行内控件尺寸用
      *     setFixedWidth/Height 定格原稿宽高, 伸缩语义用
-     *     setStretchFactorWidget（=按控件取索引的 setStretch）声明。 ---- */
+     *     setStretchFactor（=按控件取索引的 setStretch）声明。 ---- */
     XBoxLayout_init(&s_rs.m_layoutRoot, XBoxLayoutDirection_TopToBottom);
     XBoxLayout_init(&s_rs.m_rowHeader, XBoxLayoutDirection_LeftToRight);
     XBoxLayout_init(&s_rs.m_rowToggle, XBoxLayoutDirection_LeftToRight);
@@ -1147,7 +1147,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                       XSignal(XComboBox_activated_signal), rs_profileSlot);
     XWidget_show((XWidget*)s_rs.m_profileCombo);
     XBoxLayout_addWidget(&s_rs.m_rowPort, (XWidget*)s_rs.m_profileCombo);
-    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowPort,
+    XBoxLayout_setStretchFactor(&s_rs.m_rowPort,
                                       (XWidget*)s_rs.m_profileCombo, 1);
 
     /* ---- TLS 开关 + 证书/私钥路径（TLS 定宽 220; UDP 开关伸缩吃掉
@@ -1179,7 +1179,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                       XSignal(XAbstractButton_toggled_signal), rs_udpSlot);
     XWidget_show((XWidget*)s_rs.m_udpCheck);
     XBoxLayout_addWidget(&s_rs.m_rowTls, (XWidget*)s_rs.m_udpCheck);
-    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowTls,
+    XBoxLayout_setStretchFactor(&s_rs.m_rowTls,
                                       (XWidget*)s_rs.m_udpCheck, 1);
 
     s_rs.m_capCert = rs_buildRowLabel(
@@ -1194,7 +1194,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_certEdit);
     XBoxLayout_addWidget(&s_rs.m_rowCert, (XWidget*)s_rs.m_certEdit);
-    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowCert,
+    XBoxLayout_setStretchFactor(&s_rs.m_rowCert,
                                       (XWidget*)s_rs.m_certEdit, 1);
     XBoxLayout_addSpacing(&s_rs.m_rowCert, 8); /* 原稿证书段↔私钥段间隙。 */
 
@@ -1210,7 +1210,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_keyEdit);
     XBoxLayout_addWidget(&s_rs.m_rowCert, (XWidget*)s_rs.m_keyEdit);
-    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowCert,
+    XBoxLayout_setStretchFactor(&s_rs.m_rowCert,
                                       (XWidget*)s_rs.m_keyEdit, 1);
 
     /* ---- 认证方式 + 口令 + 「应用配置」（认证/口令两框对半伸缩
@@ -1236,7 +1236,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_authCombo);
     XBoxLayout_addWidget(&s_rs.m_rowAuth, (XWidget*)s_rs.m_authCombo);
-    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowAuth,
+    XBoxLayout_setStretchFactor(&s_rs.m_rowAuth,
                                       (XWidget*)s_rs.m_authCombo, 1);
     XBoxLayout_addSpacing(&s_rs.m_rowAuth, 8); /* 原稿认证段↔口令段间隙。 */
 
@@ -1253,7 +1253,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_passwordEdit);
     XBoxLayout_addWidget(&s_rs.m_rowAuth, (XWidget*)s_rs.m_passwordEdit);
-    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowAuth,
+    XBoxLayout_setStretchFactor(&s_rs.m_rowAuth,
                                       (XWidget*)s_rs.m_passwordEdit, 1);
     XBoxLayout_addSpacing(&s_rs.m_rowAuth, 8); /* 原稿口令框↔应用钮间隙。 */
 
@@ -1292,7 +1292,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     XWidget_show((XWidget*)s_rs.m_pingLabel);
     XBoxLayout_addWidgetEx(&s_rs.m_rowPing, (XWidget*)s_rs.m_pingLabel,
                            0, XLayoutAlignment_VCenter);
-    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowPing,
+    XBoxLayout_setStretchFactor(&s_rs.m_rowPing,
                                       (XWidget*)s_rs.m_pingLabel, 1);
 
     /* ---- 输入回显（联调断言辅助; 2026-10-02 增强）: 每次内容变化同步
@@ -1311,7 +1311,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                       rs_echoChangedSlot);
     XWidget_show((XWidget*)s_rs.m_echoEdit);
     XBoxLayout_addWidget(&s_rs.m_rowEcho, (XWidget*)s_rs.m_echoEdit);
-    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowEcho,
+    XBoxLayout_setStretchFactor(&s_rs.m_rowEcho,
                                       (XWidget*)s_rs.m_echoEdit, 1);
     XBoxLayout_addSpacing(&s_rs.m_rowEcho, 4); /* 原稿回显框↔设口令钮间隙。 */
 

@@ -277,6 +277,35 @@ static void xcs_drawFrame(XStyle* self, const XStyleOption* option,
                                         1, r.height}, light);
 }
 
+#if XPALETTE_ON
+/**
+ * @brief      调色板角色笔刷为渐变时按画笔填充（对标 QPalette 笔刷消费）。
+ * @param      painter 目标绘制器。
+ * @param      option 样式选项（取 m_palette 与启用态）。
+ * @param      role 颜色角色。
+ * @param      rect 目标矩形。
+ * @return     已按笔刷填充返回 true；纯色/NoBrush/非法参数返回 false（交回纯色路径）。
+ */
+static bool xcs_fillWithBrush(XPainter* painter, const XStyleOption* option,
+                              XPaletteColorRole role, const XRect* rect)
+{
+    XPaletteColorGroup g;
+    XBrush b;
+    XBrushStyle st;
+    if (!painter || !option || !rect) return false;
+    g = (option->m_state & XStyleState_Enabled) ? XPaletteColorGroup_Active
+                                                : XPaletteColorGroup_Disabled;
+    b = XPalette_brush(&option->m_palette, g, role);
+    st = XBrush_style(&b);
+    if (st != XBrushStyle_LinearGradientPattern &&
+        st != XBrushStyle_RadialGradientPattern &&
+        st != XBrushStyle_ConicalGradientPattern)
+        return false;
+    XBrush_applyToPainter(&b, painter, rect);
+    return XPainter_fillRect_2(painter, rect);
+}
+#endif /* XPALETTE_ON */
+
 /** @brief 绘制命令按钮面板（PE_PanelButtonCommand：Fusion 渐变入口）。 */
 static void xcs_drawPanelButtonCommand(XStyle* self,
                                        const XStyleOption* option,
@@ -304,7 +333,8 @@ static void xcs_drawPanelButtonCommand(XStyle* self,
      * 内斜面——浅色主题下 Button/Light/Midlight 近同色时，仅调换斜面
      * 亮暗线的按压态亮度均值差仅 ≈1%（问题 #5 量化证据），Qt 的可见
      * 按压感正来自整面 darker(110)。 */
-    XPainter_fillRect(painter, &r, sunken ? xcs_darker(base, 110) : base);
+    if (!xcs_fillWithBrush(painter, option, XPaletteColorRole_Button, &r))
+        XPainter_fillRect(painter, &r, sunken ? xcs_darker(base, 110) : base);
     if (sunken) {
         /* 凹陷：内缩 1px 的高光上边 + 暗下边。 */
         XPainter_fillRect(painter,
@@ -343,7 +373,8 @@ static void xcs_drawIndicatorCheckBox(XStyle* self,
     noChange = (option->m_state & XStyleState_NoChange) != 0;
     if (r.width < 4 || r.height < 4) return;
     /* 白底 + 灰边框。 */
-    XPainter_fillRect(painter, &r, base);
+    if (!xcs_fillWithBrush(painter, option, XPaletteColorRole_Base, &r))
+        XPainter_fillRect(painter, &r, base);
     XPainter_fillRect(painter, &(XRect){r.x, r.y, r.width, 1}, fg);
     XPainter_fillRect(painter, &(XRect){r.x, r.y, 1, r.height}, fg);
     XPainter_fillRect(painter, &(XRect){r.x, r.y + r.height - 1,
@@ -551,7 +582,8 @@ static void xcs_drawProgressGroove(XStyle* self,
     if (base == 0) base = 0xFFFFFFFFu;
     if (dark == 0) dark = 0xFF808080u;
     if (light == 0) light = 0xFFE0E0E0u;
-    XPainter_fillRect(painter, &r, base);
+    if (!xcs_fillWithBrush(painter, option, XPaletteColorRole_Base, &r))
+        XPainter_fillRect(painter, &r, base);
     /* 凹陷描边：上/左 Dark，下/右 Light（对标原 XProgressBar 实现）。 */
     XPainter_fillRect(painter, &(XRect){r.x, r.y, r.width, 1}, dark);
     XPainter_fillRect(painter, &(XRect){r.x, r.y, 1, r.height}, dark);
@@ -693,7 +725,8 @@ static void xcs_drawTabShape(XStyle* self, const XStyleOption* option,
     if (dark == 0) dark = 0xFF808080u;
     if (light == 0) light = 0xFFE0E0E0u;
     if (r.width < 2 || r.height < 2) return;
-    XPainter_fillRect(painter, &r, base);
+    if (!xcs_fillWithBrush(painter, option, XPaletteColorRole_Base, &r))
+        XPainter_fillRect(painter, &r, base);
     if (selected) {
         /* 选中页签：上/左/右亮边，下边融入容器。 */
         XPainter_fillRect(painter, &(XRect){r.x, r.y, r.width, 1}, light);
@@ -751,7 +784,8 @@ static void xcs_drawShadePanel(XStyle* self, const XStyleOption* option,
     if (dark == 0) dark = 0xFF808080u;
     if (lineWidth < 1) lineWidth = 1;
     if (r.width <= lineWidth * 2 || r.height <= lineWidth * 2) return;
-    XPainter_fillRect(painter, &r, button);
+    if (!xcs_fillWithBrush(painter, option, XPaletteColorRole_Button, &r))
+        XPainter_fillRect(painter, &r, button);
     for (i = 0; i < lineWidth; ++i) {
         XPainter_fillRect(painter,
             &(XRect){r.x + i, r.y + i, r.width - i * 2, 1}, light);

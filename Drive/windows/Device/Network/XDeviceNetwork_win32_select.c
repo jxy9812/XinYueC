@@ -209,6 +209,10 @@ typedef struct XDeviceNetworkContextWin32Select {
     bool autoRead;                   /**< 连接建立后自动挂读（框架既有语义）。 */
     bool isServer;                   /**< 监听套接字。 */
     bool closed;                     /**< 已收到 FD_CLOSE（避免重复投递关闭事件）。 */
+    void* probeEvent;                /**< [候选2] WSAEVENT 就绪探测事件（armSocket 创建、disconnect 销毁）。 */
+    bool probeArmed;                 /**< [候选3] probeEvent 已与当前 socket 关联
+                                          （WSAEventSelect 只发一次；换 socket/
+                                          断开时复位）。 */
 
     uint32_t readReadyCount;         /**< 累计读完成投递次数（诊断用）。 */
     uint32_t writeReadyCount;        /**< 累计写就绪投递次数（诊断用）。 */
@@ -387,6 +391,39 @@ static void xw32_postReady(XDeviceNetworkContextWin32Select* p,
  * ========================================================================= */
 
 /**
+ * @brief [候选3] 把 probeEvent 与当前 socket 做**一次性** WSAEventSelect 关联。
+ * @param p 上下文（`p->socket` 必须有效）。
+ * @return 成功 true；建事件/关联失败 false。
+ * @details 事件对象按上下文缓存；关联位图一次到位（FD_READ|FD_ACCEPT|
+ *          FD_WRITE|FD_CONNECT|FD_CLOSE|FD_OOB 全集，读/写/连接/监听各
+ *          角色通用——多出的位在派发处按角色取舍）。**绝不能每轮重发
+ *          WSAEventSelect**：重注册在 AFD 里是「取消旧 poll IRP+重挂」
+ *          复合操作，病态（对端已 FIN）套接字上会永久悬挂（见
+ *          xw32_selectOne 内候选3注）。换 socket/断开时由调用方把
+ *          probeArmed 复位（disconnect/SetDescriptor）。
+ */
+static bool xw32_probeArm(XDeviceNetworkContextWin32Select* p)
+{
+    long mask = FD_READ | FD_ACCEPT | FD_WRITE | FD_CONNECT |
+                FD_CLOSE | FD_OOB;
+    if (!p || p->socket == INVALID_SOCKET) return false;
+    if (!p->probeEvent) {
+        p->probeEvent = (void*)WSACreateEvent();
+        if (p->probeEvent == WSA_INVALID_EVENT) {
+            p->probeEvent = NULL;
+            return false;
+        }
+    }
+    if (!p->probeArmed) {
+        if (WSAEventSelect(p->socket, (WSAEVENT)p->probeEvent, mask)
+            == SOCKET_ERROR)
+            return false;
+        p->probeArmed = true;
+    }
+    return true;
+}
+
+/**
  * @brief 用 `select()` 查询套接字当前的可读/可写/异常状态。
  * @param p          上下文。
  * @param wantRead   是否关心可读。
@@ -396,30 +433,30 @@ static void xw32_postReady(XDeviceNetworkContextWin32Select* p,
  * @param outError   输出异常（`select` 的 exceptfds 命中）；可为 NULL。
  * @return 就绪项数（>=0）；`SOCKET_ERROR` 表示查询失败。
  *
- * @details **为什么用 `select` 而不是 `WSAEventSelect` 事件对象**
+ * @details **就绪探测的形态演进**（三段，均有实锅背书）：
  *
- *          Qt 6.8 在 Windows 上的实际做法是两条腿：
- *          - 事件循环内：`WSAAsyncSelect` + 窗口消息（`qeventdispatcher_win.cpp`）；
- *          - 同步等待时：`select()`（`qns_win.cpp:1495 nativeSelect`）。
+ *          ① 原始形态零超时 `select()`。Qt 6.8 同步等待也用 `select()`
+ *          （`qns_win.cpp:1495 nativeSelect`）。病态句柄（对端 FIN 后的
+ *          死句柄）上会**永久悬挂**：主线程冻在 pollWsaEvents、全局时间
+ *          轮停摆 → 全部 Coarse 定时器死（候选1 诊断文档）。
  *
- *          本框架主循环已有自有事件环、没有独立窗口消息泵，且任务要求
- *          「不新增线程/等待集」。起初把 `WSAEventSelect` 的事件对象并进
- *          事件环等待集，实测事件对象**从不置位**（`slot not signaled`
- *          持续出现，而内核里确有数据）——该组合在本进程的套接字创建顺序
- *          下不可靠。改用 `select()` 后与 Qt 的同步路径完全一致：
- *          每次 poll 直接问内核对每个已登记套接字做就绪查询，**没有
- *          需要维护/复位的事件状态，也就没有「漏置位」这一故障面**。
+ *          ② [候选2] 改 WSAEventSelect+Enum，但**每轮重发关联**。对端已
+ *          FIN 的 CLOSE_WAIT 套接字上，重注册（取消旧 poll IRP+重挂）会
+ *          悬挂在 AFD 端点锁上（cdb 栈：NtDeviceIoControlFile ←
+ *          WSAEventSelect）——同一 hang 类换了皮。
  *
- * @note 只在 poll 里以零超时调用（非阻塞查询）；`select` 的 fd_set 在
- *       Winsock 里是**数组**（`fd_count`/`fd_array`），与 BSD 的位图不同，
- *       故这里按 Qt 的写法直接赋值 `fd_array[0]`。
+ *          ③ [候选3·现行] 关联**一次**（xw32_probeArm，probeArmed 守卫，
+ *          换 socket/断开复位），此后每轮只 Wait(0)+Enum。这正是 MSDN
+ *          事件模型服务器的标准姿势；事件位累积、Enum 取走，无「漏置位」
+ *          故障面，也无每轮重注册的 IRP 序列化。
+ *
+ * @note 早期把事件对象并入事件环等待集还踩过「从不置位」（slot not
+ *       signaled）——该口径（每上下文独立事件 + 本函数内 Wait）不受其累。
  */
 static int xw32_selectOne(XDeviceNetworkContextWin32Select* p,
                           bool wantRead, bool wantWrite,
                           bool* outRead, bool* outWrite, bool* outError)
 {
-    fd_set fdRead, fdWrite, fdExcept;
-    struct timeval tv;
     SOCKET s;
     int ret;
 
@@ -427,31 +464,52 @@ static int xw32_selectOne(XDeviceNetworkContextWin32Select* p,
     if (outWrite) *outWrite = false;
     if (outError) *outError = false;
     if (!p || p->socket == INVALID_SOCKET) return SOCKET_ERROR;
-
-    s = p->socket;
-    FD_ZERO(&fdRead);
-    FD_ZERO(&fdWrite);
-    FD_ZERO(&fdExcept);
-    if (wantRead) FD_SET(s, &fdRead);
-    if (wantWrite) {
-        FD_SET(s, &fdWrite);
-        /* Windows 需要 exceptfds 才能报告连接失败（Qt 同款注释）。 */
-        FD_SET(s, &fdExcept);
-    }
     if (!wantRead && !wantWrite) return 0;
 
-    tv.tv_sec = 0;
-    tv.tv_usec = 0;      /* 非阻塞查询：事件环 poll 语义。 */
-
-    ret = select(0, &fdRead, &fdWrite, &fdExcept, &tv);
-    if (ret == SOCKET_ERROR) return SOCKET_ERROR;
-
-    if (outRead && FD_ISSET(s, &fdRead)) *outRead = true;
-    if (outWrite && FD_ISSET(s, &fdWrite)) *outWrite = true;
-    if (outError && FD_ISSET(s, &fdExcept)) {
-        *outError = true;
-        /* 连接失败/异常只减不增就绪计数（Qt：`if (FD_ISSET(...)) ret--;`）。 */
-        if (ret > 0) --ret;
+    s = p->socket;
+    /* [候选2→3 2026-11-07] 零超时 select 在病态句柄上会永久悬挂（实测：
+     * 主线程冻结在 pollWsaEvents、全局时间轮停摆 → 全部 Coarse 定时器死，
+     * 见 Src/XCore/XProtocol/XLink 的楔死诊断文档）。改用 WSAEventSelect
+     * + WSAEnumNetworkEvents。
+     * [候选3 2026-11-07] WSAEventSelect **每轮重发**会悬挂：重注册在 AFD
+     * 里是「取消旧 poll IRP + 重挂新 IRP」的复合操作，对端已 FIN 的病态
+     * 套接字（CLOSE_WAIT）上旧 IRP 取消不完 ⇒ 新 IRP 在端点锁上排队永不
+     * 返回（实测：主线程冻结在 WSAEventSelect 内 NtDeviceIoControlFile，
+     * cdb 栈佐证；MSDN/SO 亦载重注册清未决事件态的竞态）。故关联**只发
+     * 一次**（probeArmed 守卫），此后每轮只做 Wait(0)+Enum——这正是
+     * MSDN 事件模型服务器的标准姿势（arm once → wait → enumerate）。
+     * 位语义对齐原 select：
+     *   readable = FD_READ | FD_ACCEPT | FD_CLOSE（EOF 也要报可读，
+     *              recv 拿 0 走既有 closed/摘表路径）
+     *   writable = FD_WRITE | FD_CONNECT
+     *   error    = FD_CLOSE
+     * 事件位由 WSANETWORKEVENTS 持续累积、Enum 时一并取走，一次注册不
+     * 丢事件；FD_WRITE 的「缓冲满→空」跃迁、FD_READ 的「recv 后仍有
+     * 余量」重报、FD_ACCEPT 的 accept 后重查，均由 AFD 在对应操作后
+     * 自行重置位（标准事件语义，写续传链路不受影响）。 */
+    {
+        WSANETWORKEVENTS ne;
+        DWORD wait;
+        if (!xw32_probeArm(p)) return SOCKET_ERROR;
+        wait = WSAWaitForMultipleEvents(1, (WSAEVENT*)&p->probeEvent,
+                                        FALSE, 0, FALSE);
+        if (wait == WSA_WAIT_TIMEOUT) return 0;   /* 无事件，位留给下轮。 */
+        if (wait == WSA_WAIT_FAILED) return SOCKET_ERROR;
+        if (WSAEnumNetworkEvents(s, (WSAEVENT)p->probeEvent, &ne) ==
+            SOCKET_ERROR)
+            return SOCKET_ERROR;
+        if (outRead)
+            *outRead = (ne.lNetworkEvents &
+                        (FD_READ | FD_ACCEPT | FD_CLOSE)) != 0;
+        if (outWrite)
+            *outWrite = (ne.lNetworkEvents & FD_WRITE) != 0;
+        if (outError)
+            *outError = (ne.lNetworkEvents & FD_CLOSE) != 0;
+        /* [判空 2026-11-07] connect-pending 调用方传 outRead=NULL、
+         * accept 传 outWrite=NULL——未判空直接解引用=崩溃（实测）。 */
+        ret = ((outRead && *outRead) ? 1 : 0) +
+              ((outWrite && *outWrite) ? 1 : 0);
+        if (outError && *outError && ret > 0) --ret;
     }
     return ret;
 }
@@ -472,6 +530,17 @@ static bool xw32_armSocket(XDeviceNetworkContextWin32Select* p)
     if (!p || p->socket == INVALID_SOCKET) return false;
 
     (void)ioctlsocket(p->socket, FIONBIO, &nonBlocking);
+    /* [候选2→3] 就绪探测事件：每上下文一个，供 xw32_selectOne 的
+     * Wait+Enum 使用（替代会悬挂的零超时 select）。事件与 socket 的
+     * WSAEventSelect 关联在这里**一次**做完（xw32_probeArm 内 probeArmed
+     * 守卫）；此后每轮只 Wait+Enum，绝不重发关联（重发会悬挂，见
+     * xw32_selectOne 候选3注）。 */
+    if (!xw32_probeArm(p))
+        return false;
+    if (!p->probeEvent) {
+        p->probeEvent = (void*)WSACreateEvent();
+        if (p->probeEvent == WSA_INVALID_EVENT) return false;
+    }
     /* 登记进框架就绪轮询表（不预建/不持任何事件对象）。 */
     (void)xw32_ringAddSockEvent(NULL, p->base.m_base.m_fd, (void*)p);
     return true;
@@ -658,6 +727,17 @@ static bool xw32_armRead(XDeviceNetworkContextWin32Select* p, bool isUdp)
         /* 对端关闭：投递 0 字节读完成，让框架的 PEEK 复核下结论。 */
         p->readFinishedBytes = 0;
         p->closed = true;
+        /* [2026-11-06 根修：死句柄即刻摘出轮询表] EOF 是水平触发的，句柄
+         * 留在 WSA 轮询表里 ⇒ 之后每圈仍对它 select 并重投 Read(0)（事件
+         * 洪水），且实测病态死句柄上的 select 会**永久悬挂**——主线程冻结
+         * 在 pollWsaEvents 里，全局时间轮停摆 ⇒ 全部 Coarse 定时器死
+         * （XLink pump/reap/静默判线/485 总线轮询全冻结：38 路僵尸会话、
+         * 界面 "--"、登录全拒，详见 Src/XCore/XProtocol/XLink/
+         * XLink服务端会话泄漏与事件环挂死诊断_20261106.md）。
+         * closed 是终态（全库无"假 EOF 复活"路径），此刻摘表只动环形表
+         * 项、不关 socket（生命周期仍归持有者），安全；后续正式 close 里
+         * 的 disarm 重复摘为幂等空操作。 */
+        xw32_disarmSocket(p);
         xw32_postReady(p, XSocketActType_Read, 0);
         return true;
     }
@@ -665,6 +745,7 @@ static bool xw32_armRead(XDeviceNetworkContextWin32Select* p, bool isUdp)
         /* 硬错误（连接被重置等）：同样走 0 字节完成，由 PEEK 复核判定；
          * 对端确已断开时 PEEK 返回 0 ⇒ 框架下发关闭事件。 */
         p->closed = true;
+        xw32_disarmSocket(p);   /* [2026-11-06 根修] 同上：死句柄摘出轮询表。 */
         xw32_postReady(p, XSocketActType_Read, 0);
         return true;
     }
@@ -762,6 +843,12 @@ void XDeviceNetwork_deleteContext(XDeviceNetworkContext* priv)
      * 任何残留访问都会因魔数不匹配被 dispatch 拒绝（见 xw32_isLive）。 */
     xw32_disarmSocket(p);
     p->magic = 0;
+    /* [候选3] 探测事件随上下文销毁（原仅 disconnect 收，直删路径漏）。 */
+    if (p->probeEvent) {
+        WSACloseEvent((WSAEVENT)p->probeEvent);
+        p->probeEvent = NULL;
+    }
+    p->probeArmed = false;
     if (p->socket != INVALID_SOCKET) {
         closesocket(p->socket);
         p->socket = INVALID_SOCKET;
@@ -1033,6 +1120,12 @@ void XDeviceNetwork_socketDisconnect(XFd xfd)
 
     xw32_disarmSocket(p);
 
+    if (p->probeEvent) {
+        WSACloseEvent((WSAEVENT)p->probeEvent);
+        p->probeEvent = NULL;
+    }
+    p->probeArmed = false;   /* [候选3] 关联随事件对象与 socket 一并作废。 */
+
     if (p->socket != INVALID_SOCKET) {
         closesocket(p->socket);
         p->socket = INVALID_SOCKET;
@@ -1184,9 +1277,11 @@ void XDeviceNetwork_socketContinueRead(XFd xfd, bool isUdp)
  *            3. 可写 ⇒ 清写背压标记并投递 `Write`；
  *            4. 异常 ⇒ 走 0 字节读完成，交框架复核。
  *
- *          **没有事件对象、没有需要复位的状态**：每次都是现问现判，因此
- *          不存在 `WSAEventSelect` 那套「漏置位/漏复位」的故障面。实测该
- *          故障面确实发生过（事件对象从不置位，而内核里确有数据）。
+ *          **没有需要手工复位的状态**：事件位由 WSANETWORKEVENTS 累积、
+ *          Enum 一并取走；probeEvent/probeArmed 只在换 socket/断开时复位
+ *          （候选3 一次关联）。历史教训仍在：早期把事件对象并进等待集
+ *          出现过「从不置位」；候选2 的每轮重发关联又暴露「重注册悬挂」
+ *          ——两头都踩过，最终形态是「一次关联 + 只 Wait+Enum」。
  *
  *          connect 完成判定：`select` 没有 `FD_CONNECT` 对应位，改用
  *          `SO_ERROR` 轮询（Qt 的 `_q_testConnection` 同样查 `SO_ERROR`）。
@@ -1211,6 +1306,12 @@ void XDeviceNetwork_win32_selectDispatchReady(void* owner)
         return;
     }
     if (p->socket == INVALID_SOCKET) return;
+    /* [2026-11-06 根修] 已判 closed（对端关闭/硬错误）的套接字**不再参与
+     * 轮询**：EOF 水平触发，每圈仍会对死句柄 select 并经 x 分支重投
+     * Read(0)（事件洪水）；病态死句柄上的 select 更会永久悬挂拖死整个
+     * 事件循环（机制见 xw32_armRead 根修注与 XLink 诊断报告）。armRead/
+     * x 分支的 closed 处已同步摘表，此处是冗余护栏（摘表幂等）。 */
+    if (p->closed) return;
 
     isUdp = (p->base.m_socketType == XDeviceNetwork_Udp);
 
@@ -1268,6 +1369,8 @@ void XDeviceNetwork_win32_selectDispatchReady(void* owner)
     if (n > 0 && x) {
         /* 异常/连接被重置：投递 0 字节读完成，由框架的 PEEK 复核裁定。 */
         p->closed = true;
+        xw32_disarmSocket(p);   /* [2026-11-06 根修] 死句柄摘出轮询表（见
+                                 * xw32_armRead 同款注）。 */
         p->readFinishedBytes = 0;
         xw32_postReady(p, XSocketActType_Read, 0);
         return;
@@ -1328,6 +1431,8 @@ bool XDeviceNetwork_socketSetDescriptor(XFd deviceFd, intptr_t fd, int state, in
 
     p->socket = (SOCKET)fd;
     p->closed = false;
+    /* [候选3] 接手的是新句柄：旧关联（若有）属于旧 socket，作废重挂。 */
+    p->probeArmed = false;
 
     /* 接管已有连接：绑事件对象（同时把 socket 置非阻塞）。accept 出来的
      * 套接字会继承监听套接字的事件关联，这里重新绑定会覆盖掉该继承关
@@ -1365,6 +1470,8 @@ bool XDeviceNetwork_serverSetDescriptor(XFd deviceFd, intptr_t fd)
     p->socket = (SOCKET)fd;
     p->isServer = true;
     p->base.m_connected = true;
+    /* [候选3] 新句柄接管：旧关联作废（同 socketSetDescriptor）。 */
+    p->probeArmed = false;
     if (!xw32_armSocket(p)) {
         p->socket = INVALID_SOCKET;
         p->isServer = false;
@@ -1607,11 +1714,11 @@ XDeviceNetworkSocketHandle XDeviceNetwork_serverGetAcceptedSocket(XFd xfd,
     if (client == INVALID_SOCKET) return -1;
 
     /* 显式把新连接置为非阻塞。
-     * 本后端已不再使用 `WSAEventSelect`（改用 `select` 查询就绪），因此
-     * 没有「事件对象被 accept 继承」的问题；但 socket 的阻塞属性**不保证**
-     * 随 accept 继承（不同 Winsock 实现行为不一），而本后端全部收发路径都
-     * 建立在「非阻塞 + WSAEWOULDBLOCK 背压」之上——阻塞 recv 会把主循环
-     * 钉死，所以这里显式设置。 */
+     * [候选3] 新连接的首轮探测（xw32_probeArm）会把事件对象关联到本
+     * socket，覆盖 accept 继承自监听套接字的旧关联；但 socket 的阻塞
+     * 属性**不保证**随 accept 继承（不同 Winsock 实现行为不一），而本
+     * 后端全部收发路径都建立在「非阻塞 + WSAEWOULDBLOCK 背压」之上——
+     * 阻塞 recv 会把主循环钉死，所以这里显式设置。 */
     {
         u_long nonBlocking = 1;
         (void)ioctlsocket(client, FIONBIO, &nonBlocking);

@@ -477,6 +477,11 @@
  *
  *          [与阀/泵的分区] 阀占 DO0..5、泵占 DO6、灯占 DO7..9；
  *          DI0..11 是六路阀的到位反馈、DI12..15 是这四个按键。
+ *
+ *          [通道名跟着这里走] 这 4 个 DI 与 3 个 DO 的显示名由
+ *          HsfServerApp.c 的 hsfAppBuildDigitalNames 按本组宏登记（覆盖
+ *          顺序在阀/泵之后，与 Python 侧 _button_channel_names 同序），
+ *          改点位号名字自动跟到新口，不需要另改名字表。
  */
 #define HSF_BTN_ESTOP_DI        12  /**< 急停触点（常闭：1=回路通=正常）。 */
 #define HSF_BTN_START_DI        13  /**< 启动按键触点。 */

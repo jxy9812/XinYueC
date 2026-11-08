@@ -7,6 +7,10 @@
  *               红=断开），sizeHint 虚槽按当前宽度算行数给高度提示
  *               （滚动壳 widgetResizable 语义下：宽随视口、高出滚动），
  *               mousePressEvent 命中圆点且统一闸放行时经写回调出 UI；
+ *               **局部刷新**：标脏按单元格矩形（XWidget_updateRect），
+ *               paintEvent 消费 PAINT 矩形并跳过不相交的点格（见
+ *               digital_cellRect 注；快照每拍重放 16 点名称曾把页面推到
+ *               159.8fps，setName 同值早退 + 局部刷新后回 2fps）；
  *             - 数据模型（静态模块级 s_digital）：点数/状态/名称数组 +
  *               统一闸 + 写回调，全部经本头公开 API 读写（调用前页可
  *               未创建，安全空操作）；名称惰性拷贝、点数变化重建数组。
@@ -21,6 +25,7 @@
 
 #include "HsfTheme.h"
 #include "HsfPages.h"
+#include "HsfUi.h"
 #include "XLabel.h"
 #include "XCheckBox.h"
 #include "XAbstractButton.h"
@@ -51,6 +56,20 @@
 #define DIGITAL_GAP            12   /**< 单元间横/纵间距。 */
 #define DIGITAL_SECTION_GAP    18   /**< DI/DO 两区段之间的间距。 */
 #define DIGITAL_NAME_MAX       64   /**< 名称缓冲上限（含 NUL）。 */
+
+/* ---- 字号基准（本地设置 FontScale/Page3 的 100% 取值；逐项等于旧常量） ----
+ * [2026-11-08] 看板是自绘控件：圆点名称的字号来自**看板自身字体**
+ * （paintEvent 的 XWidget_font(self)），与标题/提示的 XLabel 字号是两套。
+ * 旧代码只折算标题/提示/联动高，从未设置看板字体 ⇒ 名称恒定不缩放
+ * （与模拟量页同源同问题）。基准值集中在此，100% 时与旧常量逐位相同。 */
+#define DIGITAL_TITLE_PX       17   /**< 页标题基准字号（px）。 */
+#define DIGITAL_HINT_PX        12   /**< 底部提示基准字号（px）。 */
+#define DIGITAL_TITLE_ROW_H    26   /**< 标题行基准高（横屏）。 */
+#define DIGITAL_TITLE_ROW_H_C  30   /**< 标题行基准高（竖屏触控）。 */
+#define DIGITAL_BOARD_EXTRA_H  32   /**< 看板最小高余量（单元最小高之上）。 */
+#define DIGITAL_BOARD_FONT_PX  16   /**< 看板基准字号（主题 12pt@96dpi=16px）。 */
+#define DIGITAL_FONT_PCT_MIN   50   /**< 页字号下限（%，与 HsfUi 钳口同值）。 */
+#define DIGITAL_FONT_PCT_MAX   200  /**< 页字号上限（%，与 HsfUi 钳口同值）。 */
 
 /* ---- 看板颜色（ARGB；语义由 API 状态决定，非业务色） ---- */
 #define DIGITAL_COLOR_ON       0xFF2E9E4Fu  /**< 通（绿）。 */
@@ -108,6 +127,9 @@ static struct
     bool             m_compact;      /**< 竖屏形态（adapt 分档，缺省 false）。 */
     bool             m_autoMode;     /**< 自动运行模式（true=只读查看+隐藏闸 UI）。 */
     bool             m_pageBuilt;    /**< 页已创建（勾选框行显隐可操作）。 */
+    int              m_fontPct;      /**< 已应用的页字号百分比（0=未应用按 100）。 */
+    bool             m_fontCompact;  /**< 上次应用字号时的形态档（同值早退）。 */
+    int              m_fontBasePx;   /**< 看板基准字号 px（首次锁定，防叠加缩放）。 */
 } s_digital;
 
 /* ---- 区段布局（DI 上段 / DO 下段，各自成行不混排） ---- */
@@ -206,6 +228,23 @@ static int digital_measureMaxNameW(const HsfDigitalBoard* board, int textH)
     return maxW;
 }
 
+/** @brief 基准像素 × 页字号百分比（四舍五入）。
+ *  @details 与 HsfUi.c 的 hsfUi_pageFontPx 同式同值（`(px*pct+50)/100`），
+ *           区别只在 pct 由调用方显式给出——实时重放路径必须用**刚读到**
+ *           的 pct，不能再用惰性缓存的旧值。 */
+static int digitalScale(int px, int pct)
+{
+    if (pct < DIGITAL_FONT_PCT_MIN) pct = DIGITAL_FONT_PCT_MIN;
+    if (pct > DIGITAL_FONT_PCT_MAX) pct = DIGITAL_FONT_PCT_MAX;
+    return (px * pct + 50) / 100;
+}
+
+/** @brief 当前生效的页字号百分比（未应用过按 100）。 */
+static int digitalFontPct(void)
+{
+    return s_digital.m_fontPct > 0 ? s_digital.m_fontPct : 100;
+}
+
 /** @brief 行列几何探针：按当前宽算列数与单元尺寸（paint/hint 共用）。 */
 static void digital_board_metrics(const HsfDigitalBoard* board, int width,
                                   int* colsOut, int* cellWOut,
@@ -226,8 +265,13 @@ static void digital_board_metrics(const HsfDigitalBoard* board, int width,
     if (!board || width <= DIGITAL_BOARD_MARGIN * 2) return;
     avail = width - DIGITAL_BOARD_MARGIN * 2;
     /* 单列最小宽：取「设计下限」与「实测最长名 + 左右内边距」的较大者。
-     * 名字更长时宁可少排一列（滚动壳可纵向滚动），也不让文字互相压。 */
-    minColW = s_digital.m_compact ? DIGITAL_COL_MIN_W_C : DIGITAL_COL_MIN_W;
+     * 名字更长时宁可少排一列（滚动壳可纵向滚动），也不让文字互相压。
+     * [字号联动] 下限按页字号同比放大（100% 时等于原常量）；实测名宽
+     * 本身随看板字体自动变（digital_measureMaxNameW 读 XWidget_font），
+     * 故两条口径在任意百分比下都不冲突。 */
+    minColW = digitalScale(s_digital.m_compact ? DIGITAL_COL_MIN_W_C
+                                               : DIGITAL_COL_MIN_W,
+                           digitalFontPct());
     {
         const int nameW = digital_measureMaxNameW(board, 0);
         if (nameW > 0 && nameW + DIGITAL_NAME_PAD > minColW)
@@ -300,8 +344,76 @@ static void digital_board_metrics2(const HsfDigitalBoard* board, int width,
     if (titleHOut) *titleHOut = titleH;
 }
 
+/**
+ * @brief      单点单元格在看板内的矩形（局部标脏与 paintEvent 共用）。
+ * @param      index 全局点下标。
+ * @param      out   出参矩形（看板局部坐标）。
+ * @return     true=可定位；false=几何未知/点不存在（调用方回退整板）。
+ * @details    排版公式与 VDigitalBoard_paintEvent 逐项同源（两段标题 +
+ *             网格行列），改版面必须两处同改，否则局部刷新漏脏留残影。
+ *             [局部标脏 2026-11-08] 与模拟量页同款：值变化只脏该点格。
+ */
+static bool digital_cellRect(int index, XRect* out)
+{
+    const HsfDigitalBoard* board = s_digital.m_board;
+    int section;
+    int slot;
+    int cols;
+    int cellW;
+    int cellH;
+    int titleH;
+    int diY;
+    int diRows;
+    int doY;
+    int doRows;
+    int width;
+    int rowsTop;
+    if (!out || !board) return false;
+    if (!digital_indexToSlot(index, &section, &slot)) return false;
+    width = XWidget_width((const XWidget*)board);
+    if (width <= DIGITAL_BOARD_MARGIN * 2) return false;
+    digital_board_metrics2(board, width, &cols, &cellW, &cellH, &titleH,
+                           &diY, &diRows, &doY, &doRows);
+    (void)diRows;
+    (void)doRows;
+    if (cols <= 0) return false;
+    if (section == 0) {
+        if (diY < 0) return false;
+        rowsTop = diY + titleH + 4;
+    } else {
+        if (doY < 0) return false;
+        rowsTop = doY + titleH + 4;
+    }
+    XRect_init(out,
+               DIGITAL_BOARD_MARGIN + (slot % cols) * (cellW + DIGITAL_GAP),
+               rowsTop + (slot / cols) * (cellH + DIGITAL_GAP), cellW, cellH);
+    return true;
+}
+
+/** @brief 把某点的单元格标脏（几何不可定位时回退整板，保证不出残影）。 */
+static void digital_invalidateCell(int index)
+{
+    XRect rect;
+    if (!s_digital.m_board) return;
+    if (digital_cellRect(index, &rect))
+        XWidget_updateRect((XWidget*)s_digital.m_board, &rect);
+    else
+        XWidget_update((XWidget*)s_digital.m_board);
+}
+
+/** @brief 矩形是否与本次绘制的脏区相交（脏区 NULL=全量绘制）。 */
+static bool digital_rectDirty(const XRect* rect, const XRect* clip)
+{
+    XRect hit;
+    if (!rect) return false;
+    if (!clip) return true;
+    hit = XRect_intersected(rect, clip);
+    return hit.width > 0 && hit.height > 0;
+}
+
 /** @brief 取点位显示名（buf 恒 NUL 收尾；无名称用缺省「点 N」）。
- *  @details 已设通道号（>=0）时加「CH<k> 」前缀（显示在名称前）。 */static void digital_displayName(int index, char* buf, int size)
+ *  @details 已设通道号（>=0）时加「CH<k> 」前缀（显示在名称前）。 */
+static void digital_displayName(int index, char* buf, int size)
 {
     const char* base;
     if (!buf || size <= 0) return;
@@ -320,7 +432,9 @@ static void digital_board_metrics2(const HsfDigitalBoard* board, int width,
         snprintf(buf, (size_t)size, "%s", base);
         return;
     }
-    snprintf(buf, (size_t)size, "\xE7\x82\xB9 %d", index + 1); /* 点 N */
+    /* [2026-11-08 修正] 原为 snprintf(..., "点 N", index + 1)：格式串没有
+     * %d（多给的实参被忽略）⇒ 无名无通道号的点恒显示字面「点 N」。 */
+    snprintf(buf, (size_t)size, "点 %d", index + 1);
 }
 
 /** @brief 状态栏反馈（未挂接时静默）。 */
@@ -344,28 +458,23 @@ static bool digital_tryWrite(int index)
     if (index < 0 || index >= s_digital.m_count) return false;
     if (s_digital.m_points[index].m_kind != HSF_DIGITAL_OUTPUT) {
         digital_setStatus(
-            "\xE8\xBE\x93\xE5\x85\xA5\xE7\x82\xB9\xE4\xB8\x8D\xE5\x8F\xAF"
-            "\xE6\x93\x8D\xE4\xBD\x9C"); /* 输入点不可操作 */
+            "输入点不可"
+            "操作"); /* 输入点不可操作 */
         return false;
     }
     if (s_digital.m_autoMode) {
         digital_setStatus(
-            "\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD"
-            "\x3A\x20\xE7\x95\x8C\xE9\x9D\xA2\xE5\x8F\xAA\xE8\xAF\xBB");
+            "自动运行中"
+            ": 界面只读");
         /* 自动运行中: 界面只读 */
         return false;
     }
     if (!s_digital.m_opEnabled) {
-        digital_setStatus(
-            "\xE6\x93\x8D\xE4\xBD\x9C\xE5\xB7\xB2\xE7\xA6\x81\xE6\xAD\xA2"
-            "\xEF\xBC\x88\xE7\x95\x8C\xE9\x9D\xA2\xE5\x8F\xAA\xE8\xAF\xBB"
-            "\xEF\xBC\x89"); /* 操作已禁止（界面只读） */
+        digital_setStatus("操作已禁止（界面只读）");
         return false;
     }
     if (!s_digital.m_writeFn) {
-        digital_setStatus(
-            "\xE6\x9C\xAA\xE6\xB3\xA8\xE5\x86\x8C\xE5\x86\x99\xE5\x87\xBA"
-            "\xE5\x8F\xA3"); /* 未注册写出口 */
+        digital_setStatus("未注册写出口");
         return false;
     }
     /* 目标态=当前态取反（切换语义；真实下发以业务回调为准）。 */
@@ -385,14 +494,33 @@ static void digital_drawPoint(XPainter* painter, const HsfDigitalBoard* board,
     uint32_t color = (s_digital.m_points[index].m_state == HSF_DIGITAL_ON)
                          ? DIGITAL_COLOR_ON : DIGITAL_COLOR_OFF;
     char name[DIGITAL_NAME_MAX];
+    /* [禁用态视觉：对齐 Qt 的 disabled 调色板] 自动模式/权限不足时 DO 点
+     * 虽然内部已拒绝下发（digital_tryWrite），但此前**外观完全不变**——
+     * 用户看到实心圆以为能点，点了没反应才知道被禁。这里把 DO 圆点整体
+     * 调灰（QPalette::Disabled 同思路：状态色去饱和 + 描边变浅），并在
+     * 点旁补一个锁提示；DI 是只读量测点，不受操作闸影响，保持原色。 */
+    bool pointDisabled = (s_digital.m_points[index].m_kind == HSF_DIGITAL_OUTPUT) &&
+                         (!s_digital.m_opEnabled || s_digital.m_autoMode);
+    if (pointDisabled) {
+        /* 去饱和：状态色与灰按 1:3 混合（保持明暗可辨但明显退居次要）。 */
+        uint32_t r = (color >> 16) & 0xFFu;
+        uint32_t g = (color >> 8) & 0xFFu;
+        uint32_t b = color & 0xFFu;
+        r = (r + 3u * 0xA0u) / 4u;
+        g = (g + 3u * 0xA0u) / 4u;
+        b = (b + 3u * 0xA0u) / 4u;
+        color = 0xFF000000u | (r << 16) | (g << 8) | b;
+    }
     /* 圆点：DO=实心圆（填充+细描边）；DI=空心环（底色填充+状态色
      * 3px 环，形状一眼区分输入/输出）。按压中的点放大 2px 反馈。 */
     {
         int dotR = DIGITAL_DOT_MAX / 2;
-        if (board->m_pressedIndex == index) dotR += 2;
+        /* 禁用态不放大：连按压反馈都不给，避免"看起来还有反应"。 */
+        if (board->m_pressedIndex == index && !pointDisabled) dotR += 2;
         if (s_digital.m_points[index].m_kind == HSF_DIGITAL_OUTPUT) {
             XPainter_setBrush(painter, color);
-            XPainter_setPen(painter, DIGITAL_COLOR_RING);
+            XPainter_setPen(painter, pointDisabled ? 0xFFD0D0D0u
+                                                  : DIGITAL_COLOR_RING);
             XPainter_setPenWidth(painter, 1);
             XPainter_drawEllipse_2(painter, (float)cx, (float)cy,
                                    (float)dotR, (float)dotR);
@@ -426,8 +554,8 @@ static void digital_drawSectionTitle(XPainter* painter, int y, int width,
 {
     char text[96];
     XRect rect;
-    snprintf(text, sizeof(text), "%s (%s) %d \xE7\x82\xB9",
-             isDo ? "\xE8\xBE\x93\xE5\x87\xBA" : "\xE8\xBE\x93\xE5\x85\xA5",
+    snprintf(text, sizeof(text), "%s (%s) %d 点",
+             isDo ? "输出" : "输入",
              isDo ? "DO" : "DI", count);
     /* 输出 (DO) N 点 / 输入 (DI) N 点 */
     XRect_init(&rect, DIGITAL_BOARD_MARGIN, y,
@@ -446,6 +574,8 @@ static void VDigitalBoard_paintEvent(XWidget* self, XEvent* event)
     XPoint offset;
     XPainter painter;
     XFont font;
+    XRect clip;
+    const XRect* clipPtr = NULL;
     int w;
     int h;
     int cols;
@@ -474,6 +604,17 @@ static void VDigitalBoard_paintEvent(XWidget* self, XEvent* event)
     offset = XWidget_paintOffset(self);
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+#if XPAINTER_CLIP_ON
+    /* [消费 PAINT 裁剪矩形 2026-11-08 与模拟量页同款] 标脏已按单元格
+     * 粒度（digital_invalidateCell），这里必须把事件矩形设成裁剪并跳过
+     * 不相交的点格，否则一次值变化仍会把 16 个点全部重排重画。 */
+    clip = XPaintEvent_rect((const XPaintEvent*)event);
+    if (clip.width > 0 && clip.height > 0) {
+        XPainter_setClipRect(&painter, &clip,
+                             XPainterClipOperation_ReplaceClip);
+        clipPtr = &clip;
+    }
+#endif /* XPAINTER_CLIP_ON */
 
     /* 页面底色（对标 autoFillBackground 手工版：看板自绘透明底）。 */
     XPainter_fillRect(&painter,
@@ -490,30 +631,60 @@ static void VDigitalBoard_paintEvent(XWidget* self, XEvent* event)
     /* DI 段（输入区，上段）。 */
     if (diY >= 0 && diCount > 0) {
         int y = diY + titleH + 4;
-        digital_drawSectionTitle(&painter, diY, w, titleH, false, diCount);
+        XRect titleRect;
+        XRect_init(&titleRect, DIGITAL_BOARD_MARGIN, diY,
+                   w - DIGITAL_BOARD_MARGIN * 2, titleH);
+        if (digital_rectDirty(&titleRect, clipPtr))
+            digital_drawSectionTitle(&painter, diY, w, titleH, false, diCount);
         for (slot = 0; slot < diCount; ++slot) {
             int row = slot / cols;
             int col = slot % cols;
+            XRect cellRect;
             i = digital_slotToIndex(0, slot);
             if (i < 0) continue;
-            digital_drawPoint(&painter, board, i,
-                              DIGITAL_BOARD_MARGIN + col * (cellW + DIGITAL_GAP),
-                              y + row * (cellH + DIGITAL_GAP),
+            XRect_init(&cellRect,
+                       DIGITAL_BOARD_MARGIN + col * (cellW + DIGITAL_GAP),
+                       y + row * (cellH + DIGITAL_GAP), cellW, cellH);
+            if (!digital_rectDirty(&cellRect, clipPtr)) continue;
+            digital_drawPoint(&painter, board, i, cellRect.x, cellRect.y,
                               cellW, cellH, textH);
         }
     }
     /* DO 段（输出区，下段）。 */
     if (doY >= 0 && doCount > 0) {
         int y = doY + titleH + 4;
-        digital_drawSectionTitle(&painter, doY, w, titleH, true, doCount);
+        XRect titleRect;
+        XRect_init(&titleRect, DIGITAL_BOARD_MARGIN, doY,
+                   w - DIGITAL_BOARD_MARGIN * 2, titleH);
+        if (digital_rectDirty(&titleRect, clipPtr))
+            digital_drawSectionTitle(&painter, doY, w, titleH, true, doCount);
+        /* [只读提示] 自动模式/操作闸关闭时，在 DO 段标题右侧常驻说明。
+         * 与「点位变灰」配套：灰圆点说明"不能点"，这行说明"为什么不能点"。
+         * 缺了它用户只看到一片灰，仍不知道是权限、模式还是断线。 */
+        if ((!s_digital.m_opEnabled || s_digital.m_autoMode) &&
+            digital_rectDirty(&titleRect, clipPtr)) {
+            const char* hint = s_digital.m_autoMode
+                                   ? "自动运行中：输出点仅可查看"
+                                   : "界面操作已禁止：输出点仅可查看";
+            XRect hintRect;
+            XRect_init(&hintRect, DIGITAL_BOARD_MARGIN, doY,
+                       w - DIGITAL_BOARD_MARGIN * 2, titleH);
+            XPainter_drawTextRect(&painter, &hintRect,
+                                  XPAINTER_TEXT_ALIGN_RIGHT |
+                                      XPAINTER_TEXT_ALIGN_VCENTER,
+                                  hint, 0xFF9A9A9Au);
+        }
         for (slot = 0; slot < doCount; ++slot) {
             int row = slot / cols;
             int col = slot % cols;
+            XRect cellRect;
             i = digital_slotToIndex(1, slot);
             if (i < 0) continue;
-            digital_drawPoint(&painter, board, i,
-                              DIGITAL_BOARD_MARGIN + col * (cellW + DIGITAL_GAP),
-                              y + row * (cellH + DIGITAL_GAP),
+            XRect_init(&cellRect,
+                       DIGITAL_BOARD_MARGIN + col * (cellW + DIGITAL_GAP),
+                       y + row * (cellH + DIGITAL_GAP), cellW, cellH);
+            if (!digital_rectDirty(&cellRect, clipPtr)) continue;
+            digital_drawPoint(&painter, board, i, cellRect.x, cellRect.y,
                               cellW, cellH, textH);
         }
     }
@@ -524,8 +695,7 @@ static void VDigitalBoard_paintEvent(XWidget* self, XEvent* event)
         XPainter_drawTextRect(&painter, &textRect,
                               XPAINTER_TEXT_ALIGN_HCENTER |
                                   XPAINTER_TEXT_ALIGN_VCENTER,
-                              "\xE6\x97\xA0\xE6\x95\xB0\xE5\xAD\x97\xE9\x87"
-                              "\x8F\xE7\x82\xB9", /* 无数字量点 */
+                              "无数字量点",
                               DIGITAL_COLOR_HINT);
     }
     XPainter_end(&painter);
@@ -791,25 +961,116 @@ typedef struct HsfMonitorDigital
     XLabel        m_hint;      /**< 底部提示。 */
 } HsfMonitorDigital;
 
+/** @brief 看板基准字号（px）：取页根继承字体（主题 12pt@96dpi = 16px）。
+ *  @details 只在首次调用时求值并**锁定**：之后一律以它为基准乘百分比，
+ *           否则「150% → 160%」会拿已放大的字号当新基准，缩放层层叠加。
+ *           页根字体来自 HsfTheme_applyDefaultFont（只设家族，pixelSize
+ *           为 -1）⇒ 这里按 pointSizeF 折算到像素（与 paint 度量同源：
+ *           XPainter 的 scale = pixelSize/unitsPerEm，见 XPainter.c:10448）。 */
+static int digital_boardBaseFontPx(XWidget* page)
+{
+    XFont f;
+    int px;
+    if (s_digital.m_fontBasePx > 0) return s_digital.m_fontBasePx;
+    px = 0;
+    if (page) {
+        f = XWidget_font(page);
+        px = XFont_pixelSize(&f);
+        if (px <= 0) px = XPainter_fontPixelSize(XFont_pointSizeF(&f));
+        XClassDeinit(&f);
+    }
+    if (px <= 0) px = DIGITAL_BOARD_FONT_PX;
+    s_digital.m_fontBasePx = px;
+    return px;
+}
+
+/** @brief 看板字体按像素字号应用（同值早退）。
+ *  @details 看板是自绘控件：paintEvent 用 XWidget_font(self) 取字体，
+ *           textH=XPainter_textHeight 驱动单元高/列宽/命中区（metrics 同源），
+ *           故只要把字体设对，整块版面自动跟随。XWidget_setFont 内含
+ *           updateGeometry + update（XWidget.c:11890-11891），sizeHint /
+ *           最小提示随之失效重算。 */
+static void digital_applyBoardFontPx(int px)
+{
+    XFont f;
+    if (!s_digital.m_board || px <= 0) return;
+    f = XWidget_font((XWidget*)s_digital.m_board);
+    if (XFont_pixelSize(&f) == px) { /* 同值早退（帧泵/重放不空转）。 */
+        XClassDeinit(&f);
+        return;
+    }
+    XFont_setPixelSize(&f, px);
+    XWidget_setFont((XWidget*)s_digital.m_board, &f);
+    XClassDeinit(&f);
+}
+
+/** @brief 页字体与联动度量统一应用（create / adapt / 实时重放唯一入口）。
+ *  @param page    页根（&self->m_base）。
+ *  @param compact 形态档（决定标题行高与看板最小高）。
+ *  @param pct     页字号百分比（50..200；100=基准，逐像素同旧观感）。
+ *  @details 完整换算链：本地设置 FontScale/Page3 → hsfUi_pageFontPct
+ *           → digitalScale（基准 × pct）→ XWidget_setFont（看板字体）
+ *           → paint 的 textH → digital_board_metrics 的单元高/列宽
+ *           → 圆点网格布局。标题/提示是 XLabel（自持字体），同 pct 重设。 */
+static void digitalApplyFontMetrics(XWidget* page, bool compact, int pct)
+{
+    HsfMonitorDigital* self = (HsfMonitorDigital*)page;
+    int minH;
+    if (!self || !self->m_board) return;
+    if (pct < DIGITAL_FONT_PCT_MIN) pct = DIGITAL_FONT_PCT_MIN;
+    if (pct > DIGITAL_FONT_PCT_MAX) pct = DIGITAL_FONT_PCT_MAX;
+    /* 标签只在「字号或形态档真变」时重设（XLabel_setTextPixelSize 无同值
+     * 早退，adapt 在拖窗时会被反复调用）。 */
+    if (pct != s_digital.m_fontPct || compact != s_digital.m_fontCompact) {
+        XLabel_setTextPixelSize(&self->m_title,
+                                digitalScale(DIGITAL_TITLE_PX, pct));
+        XWidget_setFixedHeight((XWidget*)&self->m_title,
+                               digitalScale(compact ? DIGITAL_TITLE_ROW_H_C
+                                                    : DIGITAL_TITLE_ROW_H, pct));
+        XLabel_setTextPixelSize(&self->m_hint,
+                                digitalScale(DIGITAL_HINT_PX, pct));
+        /* metrics 读 m_fontPct 折算列宽 → 必须先落值，重绘才拿到新列宽。 */
+        s_digital.m_fontPct = pct;
+        s_digital.m_fontCompact = compact;
+    }
+    digital_applyBoardFontPx(digitalScale(digital_boardBaseFontPx(page), pct));
+    /* 看板最小高：单元最小高 + 字号联动余量（竖屏取触控下限，同旧口径）。 */
+    minH = compact ? DIGITAL_TOUCH_H_MIN
+                   : DIGITAL_CELL_H_MIN + digitalScale(DIGITAL_BOARD_EXTRA_H, pct);
+    XWidget_setMinimumHeight((XWidget*)self->m_board, minH);
+}
+
+/** @brief 字号实时重放（hsfUi_registerPageFontApplier 契约）。
+ *  @details 与 adapt 共用 digitalApplyFontMetrics ⇒ 重放 = 一次完整的
+ *           字号重设；末尾补看板 update/updateGeometry，防旧字形残影。
+ *           [与回落路径互斥] 本页已注册本函数 ⇒ hsfUi_reapplyPageFonts
+ *           不再走「清 adapt 去重标记 + hsf_adaptPages」分支，故这里必须
+ *           把 adapt 里与字号相关的三件事（标题/提示字号、标题行高、
+ *           看板最小高）全部覆盖——已由共用函数保证。 */
+static void digitalApplyFonts(XWidget* page, int pct)
+{
+    digitalApplyFontMetrics(page, s_digital.m_compact, pct);
+    digital_boardRefresh();
+}
+
 /** @brief 形态自适应（横竖屏；幂等、廉价，HsfUi adapt 表按页调用）。
  *  @details 竖屏（compact）：列最小宽收窄（窄屏也能排 2~3 列）、单元
- *           触控目标加高（44dp 口径）、页边距收窄、顶行改纵向堆叠
- *           （标题独占一行居中，勾选框整行，触控友好）；
- *           横屏恢复横向顶行与宽列。列数本就随视口宽实时反解
- *           （paint/hit/hint 同源），无需重排。 */
+ *           触控目标加高（44dp 口径）、页边距收窄；
+ *           横屏恢复宽列。列数本就随视口宽实时反解（paint/hit/hint
+ *           同源），无需重排。字号/联动度量经 digitalApplyFontMetrics
+ *           统一应用。 */
 void HsfMonitorDigital_adapt(XWidget* page, bool compact)
 {
     HsfMonitorDigital* self = (HsfMonitorDigital*)page;
     if (!self) return;
     s_digital.m_compact = compact;
-    XWidget_setMinimumHeight((XWidget*)self->m_board,
-                             compact ? DIGITAL_TOUCH_H_MIN
-                                     : DIGITAL_CELL_H_MIN + 32);
+    /* 字号/联动度量走唯一入口（pct 每次现读，本地设置改完不必重启）。 */
+    digitalApplyFontMetrics(page, compact,
+                            hsfUi_pageFontPct(HSF_PAGE_MONITOR_DIGITAL));
     XLayout_setContentsMargins((XLayout*)&self->m_layout,
                                compact ? 6 : 12, 10, compact ? 6 : 12, 12);
     /* 标题行恒横向（标题居中 + 勾选框贴右，横竖屏同构）；竖屏加高触控。 */
     XBoxLayout_setDirection(&self->m_topRow, XBoxLayoutDirection_LeftToRight);
-    XWidget_setFixedHeight((XWidget*)&self->m_title, compact ? 30 : 26);
     digital_boardRefresh();
 }
 
@@ -821,10 +1082,8 @@ static void digital_opCheckSlot(XObject* receiver, XVarList* args)
     if (!self) return;
     HsfMonitorDigital_setOperationEnabled(true);
     digital_setStatus(s_digital.m_opEnabled
-                          ? "\xE7\x95\x8C\xE9\x9D\xA2\xE6\x93\x8D\xE4\xBD"
-                            "\x9C\xE5\xB7\xB2\xE5\x85\x81\xE8\xAE\xB8"
-                          : "\xE7\x95\x8C\xE9\x9D\xA2\xE6\x93\x8D\xE4\xBD"
-                            "\x9C\xE5\xB7\xB2\xE7\xA6\x81\xE6\xAD\xA2");
+                              ? "界面操作已允许"
+                              : "界面操作已禁止");
     /* 「界面已允许操作」/「界面已禁止操作」 */
 }
 
@@ -866,7 +1125,6 @@ XWidget* HsfMonitorDigital_create(XWidget* parent, HsfMenuNavFn navFn,
     s_digital.m_board = board;
     self->m_board = board;
     XWidget_show((XWidget*)board);
-    XWidget_setMinimumHeight((XWidget*)board, DIGITAL_CELL_H_MIN + 32);
 
     /* ---- 顶行：标题 + 操作闸勾选框（返回语义由导航树承担，页内不放钮） ---- */
     XLabel_init(&self->m_title, &self->m_base, 0);
@@ -878,8 +1136,7 @@ XWidget* HsfMonitorDigital_create(XWidget* parent, HsfMenuNavFn navFn,
         XClassDeinit(&f);
     }
     XLabel_setText_2(&self->m_title,
-                     "\xE6\x95\xB0\xE5\xAD\x97\xE9\x87\x8F"); /* 数字量 */
-    XLabel_setTextPixelSize(&self->m_title, 17);
+                     "数字量"); /* 数字量 */
     XLabel_setAlignment(&self->m_title,
                         XAlignment_HCenter | XAlignment_VCenter);
     XWidget_show((XWidget*)&self->m_title);
@@ -892,18 +1149,16 @@ XWidget* HsfMonitorDigital_create(XWidget* parent, HsfMenuNavFn navFn,
     /* ---- 底部提示 ---- */
     XLabel_init(&self->m_hint, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_hint);
+    /* [底部提示只讲图例，不复述闸门原因] 只读的**原因**分两种（自动运行 /
+     * 未连接·权限不足），且二者在视觉上都是「DO 点变灰」。原因由 DO 段
+     * 标题右侧那行常驻说明承担（见本文件 drawPoint 上方的只读提示块：
+     * 「自动运行中：输出点仅可查看」/「界面操作已禁止：输出点仅可查看」），
+     * 底部这行只负责解释颜色与空心/实心语义——两处都写"自动"会把
+     * 权限不足误报成自动运行，正是本轮要修的那类文案漂移。 */
     XLabel_setText_2(&self->m_hint,
-                     "\xE7\xBB\xBF\x3D\xE9\x80\x9A\x20\xE7\xBA\xA2\x3D"
-                     "\xE6\x96\xAD\xE5\xBC\x80\x20\xE2\x80\x94\x20\xE7\xA9"
-                     "\xBA\xE5\xBF\x83\x3D\x44\x49\xE5\x8F\xAA\xE8\xAF\xBB"
-                     "\x20\xE5\xAE\x9E\xE5\xBF\x83\x3D\x44\x4F\xE5\x8F\xAF"
-                     "\xE6\x93\x8D\xE4\xBD\x9C\x20\xE7\x82\xB9\xE5\x87\xBB"
-                     "\xE5\xAE\x9E\xE5\xBF\x83\xE5\x9C\x86\xE6\x93\x8D\xE4"
-                     "\xBD\x9C\xEF\xBC\x88\xE9\x9C\x80\xE5\x85\x81\xE8\xAE"
-                     "\xB8\xE7\x95\x8C\xE9\x9D\xA2\xE6\x93\x8D\xE4\xBD\x9C"
-                     "\xEF\xBC\x89");
-    /* 绿=通 红=断开 — 空心=DI只读 实心=DO可操作 点击实心圆操作（需允许界面操作） */
-    XLabel_setTextPixelSize(&self->m_hint, 12);
+                     "绿=通 红=断开 — 空心=DI只读  实心=DO可操作"
+                     "（只读原因见输出区右上角）");
+    /* 绿=通 红=断开 — 空心=DI只读 实心=DO可操作（只读原因见输出区右上角） */
     XLabel_setAlignment(&self->m_hint,
                         XAlignment_HCenter | XAlignment_VCenter);
     XWidget_setForegroundRole((XWidget*)&self->m_hint,
@@ -938,6 +1193,13 @@ XWidget* HsfMonitorDigital_create(XWidget* parent, HsfMenuNavFn navFn,
     if (s_digital.m_count <= 0)
         digital_seedDemo();
 
+    /* 字号/联动度量一次到位（create 与 adapt/实时重放同一入口；100% 时
+     * 与本页原常量逐像素一致 ⇒ 默认观感零回归）。 */
+    digitalApplyFontMetrics(&self->m_base, false,
+                            hsfUi_pageFontPct(HSF_PAGE_MONITOR_DIGITAL));
+    /* 字号实时重放登记（本地设置改动时由 HsfUi 调回，不重启即生效）。 */
+    hsfUi_registerPageFontApplier(HSF_PAGE_MONITOR_DIGITAL, &self->m_base,
+                                  digitalApplyFonts);
     XWidget_show(&self->m_base);
     return &self->m_base;
 }
@@ -978,7 +1240,7 @@ void HsfMonitorDigital_setValue(int index, HsfDigitalState state)
     if (state != HSF_DIGITAL_OFF && state != HSF_DIGITAL_ON) return;
     if (s_digital.m_points[index].m_state == state) return;
     s_digital.m_points[index].m_state = state;
-    if (s_digital.m_board) XWidget_update((XWidget*)s_digital.m_board);
+    digital_invalidateCell(index);
 }
 
 HsfDigitalState HsfMonitorDigital_value(int index)
@@ -993,7 +1255,7 @@ void HsfMonitorDigital_setKind(int index, HsfDigitalKind kind)
     if (kind != HSF_DIGITAL_INPUT && kind != HSF_DIGITAL_OUTPUT) return;
     if (s_digital.m_points[index].m_kind == kind) return;
     s_digital.m_points[index].m_kind = kind;
-    if (s_digital.m_board) XWidget_update((XWidget*)s_digital.m_board);
+    digital_invalidateCell(index);
 }
 
 HsfDigitalKind HsfMonitorDigital_kind(int index)
@@ -1006,6 +1268,13 @@ void HsfMonitorDigital_setName(int index, const char* name)
 {
     char* copy;
     if (index < 0 || index >= s_digital.m_count) return;
+    /* [同值早退 2026-11-08] 快照每次推送都重放 16 个点位名称；此前每条
+     * 都 alloc/free + 标脏 ⇒ 单次推送 16 笔脏区、16 帧（实测数字量页
+     * 159.8fps）。名称是静态配置，相同则什么都不做。 */
+    if (strcmp(s_digital.m_points[index].m_name
+                   ? s_digital.m_points[index].m_name : "",
+               name ? name : "") == 0)
+        return;
     copy = NULL;
     if (name && name[0]) {
         size_t bytes = strlen(name) + 1;
@@ -1015,7 +1284,7 @@ void HsfMonitorDigital_setName(int index, const char* name)
     }
     XFree_System(s_digital.m_points[index].m_name);
     s_digital.m_points[index].m_name = copy;
-    if (s_digital.m_board) XWidget_update((XWidget*)s_digital.m_board);
+    digital_invalidateCell(index);
 }
 
 void HsfMonitorDigital_name(int index, char* buf, int size)
@@ -1023,7 +1292,7 @@ void HsfMonitorDigital_name(int index, char* buf, int size)
     if (!buf || size <= 0) return;
     buf[0] = '\0';
     if (index < 0 || index >= s_digital.m_count) {
-        snprintf(buf, (size_t)size, "\xE7\x82\xB9 %d", index + 1);
+        snprintf(buf, (size_t)size, "点 %d", index + 1);
         return;
     }
     digital_displayName(index, buf, size);
@@ -1034,7 +1303,7 @@ void HsfMonitorDigital_setChannel(int index, int channel)
     if (index < 0 || index >= s_digital.m_count) return;
     if (s_digital.m_points[index].m_channel == channel) return;
     s_digital.m_points[index].m_channel = channel;
-    if (s_digital.m_board) XWidget_update((XWidget*)s_digital.m_board);
+    digital_invalidateCell(index);
 }
 
 int HsfMonitorDigital_channel(int index)
@@ -1064,6 +1333,10 @@ bool HsfMonitorDigital_operationEnabled(void)
 
 void HsfMonitorDigital_setInteractiveMode(bool interactive)
 {
+    /* [本函数是诚实 setter：调用方说退手动就退] env 自测钩子
+     * （XHSF_DIGITAL_AUTO）的"别被驱动翻回手动"不在这里判——见
+     * HsfUi.c hsfWinApplyControlGates 的驱动侧让路。头文件
+     * （HsfMonitorDigital.h:153-162）与本函数的往返契约必须保持可用。 */
     if (s_digital.m_autoMode == (!interactive)) return;
     s_digital.m_autoMode = !interactive;
     if (interactive) {
@@ -1074,8 +1347,8 @@ void HsfMonitorDigital_setInteractiveMode(bool interactive)
          * 再下发操作，只允许查看）。 */
         s_digital.m_opEnabled = false;
         digital_setStatus(
-            "\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD"
-            "\x3A\x20\xE7\x95\x8C\xE9\x9D\xA2\xE5\x8F\xAA\xE8\xAF\xBB");
+            "自动运行中"
+            ": 界面只读");
         /* 自动运行中: 界面只读 */
     }
     digital_boardRefresh();
@@ -1109,22 +1382,22 @@ void HsfMonitorDigital_attachStatus(void (*setStatus)(void*, const char*),
 static void digital_seedDemo(void)
 {
     static const char* kNames[16] = {
-        "\xE9\xA3\x8E\xE6\x9C\xBA\xE5\x90\xAF\xE5\x81\x9C",   /* 风机启停 */
-        "\xE6\xB3\xB5\xE5\x90\xAF\xE5\x81\x9C",               /* 泵启停 */
-        "\xE9\x98\x80\xE9\x97\xA8\x31",                       /* 阀门1 */
-        "\xE9\x98\x80\xE9\x97\xA8\x32",                       /* 阀门2 */
-        "\xE6\x8A\xA5\xE8\xAD\xA6\xE7\x81\xAF",               /* 报警灯 */
-        "\xE6\x95\x85\xE9\x9A\x9C\xE4\xBD\x8D",               /* 故障位 */
-        "\xE8\xBF\x90\xE8\xA1\x8C\xE4\xBD\x8D",               /* 运行位 */
-        "\xE5\xA4\x87\xE7\x94\xA8\xE6\xB3\xB5",               /* 备用泵 */
-        "\xE6\x90\x85\xE6\x8B\x8C\xE5\x99\xA8",               /* 搅拌器 */
-        "\xE5\x8A\xA0\xE7\x83\xAD\xE5\x99\xA8",               /* 加热器 */
-        "\xE6\x8E\x92\xE9\xA3\x8E\xE6\x9C\xBA",               /* 排风机 */
-        "\xE7\x85\xA7\xE6\x98\x8E",                           /* 照明 */
-        "\xE9\x9A\x94\xE7\xA6\xBB\xE5\x99\xA8",               /* 隔离器 */
-        "\xE6\x80\xBB\xE7\xBA\xBF\xE5\x81\x9C\xE6\x9C\xBA",   /* 总线停机 */
-        "\xE7\xBB\xB4\xE4\xBF\xAE\xE6\xA8\xA1\xE5\xBC\x8F",   /* 维修模式 */
-        "\xE6\xB8\x85\xE6\xB4\x97\xE9\x98\x80"                /* 清洗阀 */
+        "风机启停",   /* 风机启停 */
+        "泵启停",               /* 泵启停 */
+        "阀门1",                       /* 阀门1 */
+        "阀门2",                       /* 阀门2 */
+        "报警灯",               /* 报警灯 */
+        "故障位",               /* 故障位 */
+        "运行位",               /* 运行位 */
+        "备用泵",               /* 备用泵 */
+        "搅拌器",               /* 搅拌器 */
+        "加热器",               /* 加热器 */
+        "排风机",               /* 排风机 */
+        "照明",                           /* 照明 */
+        "隔离器",               /* 隔离器 */
+        "总线停机",   /* 总线停机 */
+        "维修模式",   /* 维修模式 */
+        "清洗阀"                /* 清洗阀 */
     };
     int i;
     HsfMonitorDigital_setCount(16);
@@ -1301,7 +1574,10 @@ int HsfMonitorDigital_autotest(XWidget* page)
     }
     /* 自动模式演示：XHSF_DIGITAL_AUTO=1 时进自动运行态（勾选框隐藏+
      * 界面只读），验证锁界面 UI（点击自测仍会跑，DO 点击被拦属预期，
-     * hits=0；状态栏显示自动模式提示）。 */
+     * hits=0；状态栏显示自动模式提示）。
+     * [防被闸门翻回] 本地只建立态；"闸门别退手动"由驱动侧让路承担
+     * （HsfUi.c hsfWinApplyControlGates 读同名 env 后跳过驱动），
+     * 本 setter 对任何调用方保持诚实。 */
     if (XSystem_environment("XHSF_DIGITAL_AUTO"))
         HsfMonitorDigital_setInteractiveMode(false);
     return 16;

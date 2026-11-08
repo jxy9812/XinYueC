@@ -225,9 +225,9 @@ static void VX_toolBar_paintEvent(XWidget* self, XEvent* event)
     mid = 0xFF808080u;
 #endif /* XPALETTE_ON */
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    if (XWidget_style((const XWidget*)self) != NULL) {
         /* Fusion/公共风格接管：工具栏面板走 PE_PanelToolBar。 */
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStylePE_PanelToolBar);
         {

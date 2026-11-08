@@ -25,6 +25,7 @@
 #include "HsfMonitorValve.h"
 
 #include "HsfTheme.h"
+#include "HsfUi.h"   /* hsfUi_pageFontPx（本地设置·按页字号） */
 #include "XhsfLinkProto.h"
 #include "XLabel.h"
 #include "XPushButton.h"
@@ -44,6 +45,12 @@
 #include <stdio.h>
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON
+
+/** @brief 本页字号折算（本地设置 FontScale/Page7）。 */
+static int valvePx(int px)
+{
+    return hsfUi_pageFontPx(HSF_PAGE_MONITOR_VALVE, px);
+}
 
 /* ==================== 常量 ==================== */
 
@@ -117,23 +124,23 @@ static void valveStateStyle(int state, const char** text, uint32_t* color)
 {
     switch (state) {
     case HsfValveState_Open:
-        *text = "\xE5\xB7\xB2\xE5\xBC\x80";              /* 已开 */
+        *text = "已开";              /* 已开 */
         *color = VALVE_CLR_OPEN;
         break;
     case HsfValveState_Closed:
-        *text = "\xE5\xB7\xB2\xE5\x85\xB3";              /* 已关 */
+        *text = "已关";              /* 已关 */
         *color = VALVE_CLR_CLOSED;
         break;
     case HsfValveState_Moving:
-        *text = "\xE5\x8A\xA8\xE4\xBD\x9C\xE4\xB8\xAD";  /* 动作中 */
+        *text = "动作中";  /* 动作中 */
         *color = VALVE_CLR_MOVING;
         break;
     case HsfValveState_Fault:
-        *text = "\xE6\x95\x85\xE9\x9A\x9C";              /* 故障 */
+        *text = "故障";              /* 故障 */
         *color = VALVE_CLR_FAULT;
         break;
     default:
-        *text = "\xE7\x8A\xB6\xE6\x80\x81\xE6\x9C\xAA\xE7\x9F\xA5"; /* 状态未知 */
+        *text = "状态未知"; /* 状态未知 */
         *color = VALVE_CLR_UNKNOWN;
         break;
     }
@@ -331,54 +338,78 @@ static void valveCardApply(ValveCard* card)
 
     /* ---- 状态徽标 ---- */
     if (!it->m_ready) {
-        stext = "\xE6\x9C\xAA\xE9\x85\x8D\xE7\xBD\xAE";  /* 未配置 */
+        stext = "未配置";  /* 未配置 */
         scolor = VALVE_CLR_UNKNOWN;
     } else {
         valveStateStyle(it->m_state, &stext, &scolor);
     }
-    XLabel_setText_2(&card->m_badge, stext);
+    /* [同值早退 2026-11-08] 本函数由**每次阀快照推送**驱动（服务端 100ms
+     * ×2 侧 ⇒ 20 次/秒），六张卡各 4 个自绘件。原实现无条件
+     * XWidget_update ⇒ 6×4×20 = 480 笔脏区/秒，实测阀页 FPS 95.7。
+     * 三个自绘件（徽标/状态点/两个到位点）的值没变就不必重画：
+     *   · 徽标：XLabel_setText 同值已早退，这里只补 update —— 比较文本；
+     *   · 圆点：比较 m_state/m_ready/m_on 三元组。 */
+    if (XLabel_text(&card->m_badge) == NULL ||
+        strcmp(XString_toUtf8(XLabel_text(&card->m_badge)),
+               stext ? stext : "") != 0) {
+        XLabel_setText_2(&card->m_badge, stext);
+        XWidget_update((XWidget*)&card->m_badge);
+    }
     /* [双编码] 颜色由卡头圆点承担（XLabel 无设色接口），文字承担语义
      * ——色弱/黑白屏也能读出状态。 */
     (void)scolor;
-    XWidget_update((XWidget*)&card->m_badge);
 
     /* ---- 卡头状态点 ---- */
-    card->m_dot.m_state = it->m_state;
-    card->m_dot.m_ready = it->m_ready;
-    XWidget_update((XWidget*)&card->m_dot);
+    if (card->m_dot.m_state != it->m_state ||
+        card->m_dot.m_ready != it->m_ready) {
+        card->m_dot.m_state = it->m_state;
+        card->m_dot.m_ready = it->m_ready;
+        XWidget_update((XWidget*)&card->m_dot);
+    }
 
     /* ---- 反馈点与文字 ---- */
-    card->m_openDot.m_on = it->m_openFb;
-    card->m_closeDot.m_on = it->m_closeFb;
-    XWidget_update((XWidget*)&card->m_openDot);
-    XWidget_update((XWidget*)&card->m_closeDot);
+    if (card->m_openDot.m_on != it->m_openFb) {
+        card->m_openDot.m_on = it->m_openFb;
+        XWidget_update((XWidget*)&card->m_openDot);
+    }
+    if (card->m_closeDot.m_on != it->m_closeFb) {
+        card->m_closeDot.m_on = it->m_closeFb;
+        XWidget_update((XWidget*)&card->m_closeDot);
+    }
     if (it->m_ready && it->m_valid) {
-        snprintf(buf, sizeof(buf),
-                 "\xE5\xBC\x80\xE5\x88\xB0\xE4\xBD\x8D\xEF\xBC\x9A%s",
-                 it->m_openFb ? "\xE6\x98\xAF" : "\xE5\x90\xA6");   /* 开到位：是/否 */
+        /* [2026-11-08 修重复文案损伤] 此前被批量去重改成了
+         *   "开到位：%s", it->m_openFb ? "开到位：是/否" : "开到位：是/否"
+         * ——两个分支完全相同（永远显示"是/否"字样，不反映反馈值），
+         * 且参数里又拼了一遍"开到位："，界面显示成
+         * 「开到位：开到位：是/否」（用户实测截图）。正确语义：格式串带
+         * 名称、参数只给"是"/"否"。 */
+        snprintf(buf, sizeof(buf), "开到位：%s",
+                 it->m_openFb ? "是" : "否");
         XLabel_setText_2(&card->m_openText, buf);
-        snprintf(buf, sizeof(buf),
-                 "\xE5\x85\xB3\xE5\x88\xB0\xE4\xBD\x8D\xEF\xBC\x9A%s",
-                 it->m_closeFb ? "\xE6\x98\xAF" : "\xE5\x90\xA6");  /* 关到位：是/否 */
+        snprintf(buf, sizeof(buf), "关到位：%s",
+                 it->m_closeFb ? "是" : "否");
         XLabel_setText_2(&card->m_closeText, buf);
     } else {
         XLabel_setText_2(&card->m_openText,
-                         "\xE5\xBC\x80\xE5\x88\xB0\xE4\xBD\x8D\xEF\xBC\x9A--"); /* 开到位：-- */
+                         "开到位：--"); /* 开到位：-- */
         XLabel_setText_2(&card->m_closeText,
-                         "\xE5\x85\xB3\xE5\x88\xB0\xE4\xBD\x8D\xEF\xBC\x9A--"); /* 关到位：-- */
+                         "关到位：--"); /* 关到位：-- */
     }
 
     /* ---- 按钮可用性 ----
      * [已到位那侧置灰] 避免重复下发同一个动作（Python 同款口径）。
-     * 未配置/闸门拦截 ⇒ 全灰，让"点不动"有明确原因。 */
+     * 未配置/闸门拦截 ⇒ 全灰，让"点不动"有明确原因。
+     * [先算最终态再下发 2026-11-08 实锅] 原实现先
+     * `setEnabled(close, canControl)` 再对已关阀 `setEnabled(close, false)`：
+     * 每拍推一次 = 关阀钮**启用→禁用两次真实状态翻转**（setEnabled 只在
+     * 状态真变时才标脏/发事件）。6 卡 × 20Hz ⇒ 开/关钮 240 笔脏区/秒、
+     * 阀页 60fps（帧耗时 0.7ms 看着不贵，但全是白画）。最终态一次算清。 */
     canControl = it->m_ready && s_valve.m_controlEnabled;
-    XWidget_setEnabled((XWidget*)&card->m_openBtn, canControl);
-    XWidget_setEnabled((XWidget*)&card->m_closeBtn, canControl);
-    if (canControl) {
-        if (it->m_state == HsfValveState_Open)
-            XWidget_setEnabled((XWidget*)&card->m_openBtn, false);
-        else if (it->m_state == HsfValveState_Closed)
-            XWidget_setEnabled((XWidget*)&card->m_closeBtn, false);
+    {
+        const bool openEnabled = canControl && it->m_state != HsfValveState_Open;
+        const bool closeEnabled = canControl && it->m_state != HsfValveState_Closed;
+        XWidget_setEnabled((XWidget*)&card->m_openBtn, openEnabled);
+        XWidget_setEnabled((XWidget*)&card->m_closeBtn, closeEnabled);
     }
 
     /* ---- 提示行 ---- */
@@ -396,13 +427,23 @@ static void valveCardApply(ValveCard* card)
             if (stText && strcmp(hint, stText) == 0) hint = "";
         }
         if (!hint[0] && !it->m_ready)
-            hint = "\xE7\x82\xB9\xE4\xBD\x8D\xE6\x9C\xAA\xE9\x85\x8D\xE7\xBD\xAE"
-                   "\xEF\xBC\x88\xE6\x9C\x8D\xE5\x8A\xA1\xE7\xAB\xAF HsfServerConfig.h"
-                   "\xE7\x9A\x84 HSF_VALVE_DO/OPEN_DI/CLOSE_DI \xE9\x87\x8C"
-                   "\xE5\xA1\xAB\xE9\x80\x9A\xE9\x81\x93\xE5\x8F\xB7\xEF\xBC\x89";
+            hint = "点位未配置"
+                   "（服务端 HsfServerConfig.h"
+                   "的 HSF_VALVE_DO/OPEN_DI/CLOSE_DI 里"
+                   "填通道号）";
         /* 点位未配置（在服务端 HsfServerConfig.h 的 HSF_VALVE_DO/OPEN_DI/CLOSE_DI 里填通道号） */
         XLabel_setText_2(&card->m_hint, hint);
-        XWidget_setVisible((XWidget*)&card->m_hint, hint[0] != '\0');
+        /* [避免重复 setVisible 2026-11-08 实锅] 本函数由每次阀快照推送驱动
+         * （20 次/秒 ×6 卡）。框架的 setVisible **刻意不做同值早退**（显隐
+         * 联动布局激活），重复调用会每拍 XLayout_invalidate 卡片布局 ⇒
+         * 布局风暴（实测 662 次失效/秒、卡片里的开阀/关阀钮 248 笔脏区/秒、
+         * 阀页 60fps）。状态没变就不要调：判据用 isHidden()（显式隐藏位，
+         * 对标 Qt QWidget::isHidden），隐藏页里也稳定。 */
+        {
+            const bool wantVisible = hint[0] != '\0';
+            if (XWidget_isHidden((XWidget*)&card->m_hint) == wantVisible)
+                XWidget_setVisible((XWidget*)&card->m_hint, wantVisible);
+        }
     }
 }
 
@@ -419,15 +460,15 @@ static void valveCardRequest(ValveCard* card, bool wantOpen)
     if (!s_valve.m_controlEnabled) {
         snprintf(s_valve.m_lastError, sizeof(s_valve.m_lastError), "%s",
                  s_valve.m_blockedReason[0] ? s_valve.m_blockedReason
-                                            : "\xE6\x8E\xA7\xE5\x88\xB6\xE5\xB7\xB2\xE7\xA6\x81\xE7\x94\xA8");
+                                            : "控制已禁用");
         if (s_valve.m_setStatus)
             s_valve.m_setStatus(s_valve.m_statusUser, s_valve.m_lastError);
         return;
     }
     if (!it->m_ready) {
         snprintf(s_valve.m_lastError, sizeof(s_valve.m_lastError), "%s",
-                 "\xE7\x82\xB9\xE4\xBD\x8D\xE6\x9C\xAA\xE9\x85\x8D\xE7\xBD\xAE"
-                 "\xEF\xBC\x8C\xE6\x97\xA0\xE6\xB3\x95\xE6\x8E\xA7\xE5\x88\xB6");
+                 "点位未配置"
+                 "，无法控制");
         if (s_valve.m_setStatus)
             s_valve.m_setStatus(s_valve.m_statusUser, s_valve.m_lastError);
         return;
@@ -435,9 +476,9 @@ static void valveCardRequest(ValveCard* card, bool wantOpen)
     s_valve.m_lastError[0] = '\0';
     if (s_valve.m_setStatus) {
         char msg[128];
-        snprintf(msg, sizeof(msg), "%s \xE2\x86\x92 \xE6\xAD\xA3\xE5\x9C\xA8%s\xE2\x80\xA6",
+        snprintf(msg, sizeof(msg), "%s → 正在%s…",
                  it->m_name,
-                 wantOpen ? "\xE5\xBC\x80\xE9\x98\x80" : "\xE5\x85\xB3\xE9\x98\x80");
+                 wantOpen ? "开阀" : "关阀");
         /* "阀名 → 正在开阀…" */
         s_valve.m_setStatus(s_valve.m_statusUser, msg);
     }
@@ -509,7 +550,7 @@ static ValveCard* valveCardCreate(XWidget* parent, int index)
         XWidget_setFont((XWidget*)&card->m_name, &f);
         XClassDeinit(&f);
     }
-    XLabel_setTextPixelSize(&card->m_name, 15);
+    XLabel_setTextPixelSize(&card->m_name, valvePx(15));
     XLabel_setAlignment(&card->m_name, XAlignment_Left | XAlignment_VCenter);
     XLabel_setText_2(&card->m_name, " ");
     XWidget_show((XWidget*)&card->m_name);
@@ -517,11 +558,11 @@ static ValveCard* valveCardCreate(XWidget* parent, int index)
 
     XLabel_init(&card->m_badge, &card->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&card->m_badge);
-    XLabel_setTextPixelSize(&card->m_badge, 12);
+    XLabel_setTextPixelSize(&card->m_badge, valvePx(12));
     XLabel_setAlignment(&card->m_badge, XAlignment_HCenter | XAlignment_VCenter);
     XWidget_setMinimumWidth((XWidget*)&card->m_badge, 64);
     XLabel_setText_2(&card->m_badge,
-                     "\xE6\x9C\xAA\xE9\x85\x8D\xE7\xBD\xAE");  /* 未配置 */
+                     "未配置");  /* 未配置 */
     XWidget_show((XWidget*)&card->m_badge);
     XBoxLayout_addWidget(head, (XWidget*)&card->m_badge);
     XBoxLayout_addLayout(lay, (XLayout*)head);
@@ -536,13 +577,13 @@ static ValveCard* valveCardCreate(XWidget* parent, int index)
     XBoxLayout_addWidget(fbRow, (XWidget*)&card->m_openDot);
     XLabel_init(&card->m_openText, &card->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&card->m_openText);
-    XLabel_setTextPixelSize(&card->m_openText, 12);
+    XLabel_setTextPixelSize(&card->m_openText, valvePx(12));
     XLabel_setAlignment(&card->m_openText,
                         XAlignment_Left | XAlignment_VCenter);
     XWidget_setForegroundRole((XWidget*)&card->m_openText,
                               XPaletteColorRole_Mid);
     XLabel_setText_2(&card->m_openText,
-                     "\xE5\xBC\x80\xE5\x88\xB0\xE4\xBD\x8D\xEF\xBC\x9A--");
+                     "开到位：--");
     XWidget_show((XWidget*)&card->m_openText);
     XBoxLayout_addWidgetEx(fbRow, (XWidget*)&card->m_openText, 1, 0);
     XBoxLayout_addLayout(lay, (XLayout*)fbRow);
@@ -557,13 +598,13 @@ static ValveCard* valveCardCreate(XWidget* parent, int index)
     XBoxLayout_addWidget(fbRow, (XWidget*)&card->m_closeDot);
     XLabel_init(&card->m_closeText, &card->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&card->m_closeText);
-    XLabel_setTextPixelSize(&card->m_closeText, 12);
+    XLabel_setTextPixelSize(&card->m_closeText, valvePx(12));
     XLabel_setAlignment(&card->m_closeText,
                         XAlignment_Left | XAlignment_VCenter);
     XWidget_setForegroundRole((XWidget*)&card->m_closeText,
                               XPaletteColorRole_Mid);
     XLabel_setText_2(&card->m_closeText,
-                     "\xE5\x85\xB3\xE5\x88\xB0\xE4\xBD\x8D\xEF\xBC\x9A--");
+                     "关到位：--");
     XWidget_show((XWidget*)&card->m_closeText);
     XBoxLayout_addWidgetEx(fbRow, (XWidget*)&card->m_closeText, 1, 0);
     XBoxLayout_addLayout(lay, (XLayout*)fbRow);
@@ -576,7 +617,7 @@ static ValveCard* valveCardCreate(XWidget* parent, int index)
     XPushButton_init(&card->m_openBtn, &card->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&card->m_openBtn);
     XPushButton_setText_2(&card->m_openBtn,
-                          "\xE5\xBC\x80\xE9\x98\x80");   /* 开阀 */
+                          "开阀");   /* 开阀 */
     XWidget_setFixedHeight((XWidget*)&card->m_openBtn, 34);
     XObject_connect_1((XObject*)&card->m_openBtn,
                       XSignal(XAbstractButton_clicked_signal),
@@ -588,7 +629,7 @@ static ValveCard* valveCardCreate(XWidget* parent, int index)
     XPushButton_init(&card->m_closeBtn, &card->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&card->m_closeBtn);
     XPushButton_setText_2(&card->m_closeBtn,
-                          "\xE5\x85\xB3\xE9\x98\x80");   /* 关阀 */
+                          "关阀");   /* 关阀 */
     XWidget_setFixedHeight((XWidget*)&card->m_closeBtn, 34);
     XObject_connect_1((XObject*)&card->m_closeBtn,
                       XSignal(XAbstractButton_clicked_signal),
@@ -601,7 +642,7 @@ static ValveCard* valveCardCreate(XWidget* parent, int index)
     /* ---- 提示行 ---- */
     XLabel_init(&card->m_hint, &card->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&card->m_hint);
-    XLabel_setTextPixelSize(&card->m_hint, 11);
+    XLabel_setTextPixelSize(&card->m_hint, valvePx(11));
     XLabel_setAlignment(&card->m_hint, XAlignment_Left | XAlignment_VCenter);
     XWidget_setForegroundRole((XWidget*)&card->m_hint,
                               XPaletteColorRole_Mid);
@@ -672,9 +713,10 @@ static void valveRefreshBanner(HsfMonitorValvePage* page)
      * → XWidget_setVisible → VXWidget_copy → XString_create_copy 崩溃）。 */
     if (!page->m_bannerBuilt) return;
     if (s_valve.m_blockedReason[0]) {
-        snprintf(buf, sizeof(buf),
-                 "\xE6\x8E\xA7\xE5\x88\xB6\xE5\xB7\xB2\xE7\xA6\x81\xE7\x94\xA8"
-                 "\xEF\xBC\x9A%s", s_valve.m_blockedReason);   /* 控制已禁用： */
+        /* [格式串必须带 %s] 原先字面量既重复两遍又**没有格式符**，
+         * m_blockedReason 作为多余实参被直接丢弃 ⇒ 横幅永远只显示前缀，
+         * 用户看不到禁用原因（未连接/自动模式/权限不足）。 */
+        snprintf(buf, sizeof(buf), "控制已禁用：%s", s_valve.m_blockedReason);
     } else if (s_valve.m_alarmText[0]) {
         /* [最近告警常驻] 与 Python pages_valve._drain_alarms 同口径：横幅
          * 留一条最近的告警（服务端原文），直到下一条告警覆盖或出现禁用
@@ -685,11 +727,11 @@ static void valveRefreshBanner(HsfMonitorValvePage* page)
             if (!s_valve.m_items[i].m_ready) ++unconfigured;
         if (unconfigured > 0) {
             snprintf(buf, sizeof(buf),
-                     "%d \xE8\xB7\xAF\xE7\x82\xB9\xE4\xBD\x8D\xE6\x9C\xAA"
-                     "\xE9\x85\x8D\xE7\xBD\xAE\xEF\xBC\x88\xE6\x9C\x8D\xE5\x8A\xA1"
-                     "\xE7\xAB\xAF HSF_VALVE_DO/OPEN_DI/CLOSE_DI "
-                     "\xE6\x8C\x87\xE5\xAE\x9A\xE9\x80\x9A\xE9\x81\x93\xE5\x8F\xB7"
-                     "\xEF\xBC\x89",
+                     "%d 路点位未"
+                     "配置（服务"
+                     "端 HSF_VALVE_DO/OPEN_DI/CLOSE_DI "
+                     "指定通道号"
+                     "）",
                      unconfigured);
             /* N 路点位未配置（服务端 HSF_VALVE_DO/OPEN_DI/CLOSE_DI 指定通道号） */
         } else {
@@ -697,7 +739,12 @@ static void valveRefreshBanner(HsfMonitorValvePage* page)
         }
     }
     XLabel_setText_2(&page->m_bannerText, buf[0] ? buf : " ");
-    XWidget_setVisible((XWidget*)&page->m_banner, buf[0] != '\0');
+    /* [避免重复 setVisible] 同卡内 hint：每拍推一次显隐会持续失效布局。 */
+    {
+        const bool wantVisible = buf[0] != '\0';
+        if (XWidget_isHidden((XWidget*)&page->m_banner) == wantVisible)
+            XWidget_setVisible((XWidget*)&page->m_banner, wantVisible);
+    }
 }
 
 /** @brief 重刷全部卡片 + 横幅（幂等、廉价）。 */
@@ -713,6 +760,28 @@ static void valveRefreshAll(void)
 }
 
 /* ==================== 公开 API ==================== */
+
+/** @brief 字号实时重放（本地设置改动时由 HsfUi 调回）。 */
+static void valveApplyFonts(XWidget* page, int pct)
+{
+    HsfMonitorValvePage* self = (HsfMonitorValvePage*)page;
+    int i;
+    if (!self || pct <= 0) return;
+    XLabel_setTextPixelSize(&self->m_title, 17 * pct / 100);
+    XLabel_setTextPixelSize(&self->m_subtitle, 12 * pct / 100);
+    XLabel_setTextPixelSize(&self->m_bannerText, 12 * pct / 100);
+    XLabel_setTextPixelSize(&self->m_footHint, 11 * pct / 100);
+    for (i = 0; i < HSF_VALVE_COUNT; ++i) {
+        ValveCard* c = self->m_cards[i];
+        if (!c) continue;
+        XWidget_setFixedHeight(&c->m_base, VALVE_CARD_H * pct / 100);
+        XLabel_setTextPixelSize(&c->m_name, 15 * pct / 100);
+        XLabel_setTextPixelSize(&c->m_badge, 12 * pct / 100);
+        XLabel_setTextPixelSize(&c->m_openText, 12 * pct / 100);
+        XLabel_setTextPixelSize(&c->m_closeText, 12 * pct / 100);
+        XLabel_setTextPixelSize(&c->m_hint, 11 * pct / 100);
+    }
+}
 
 XWidget* HsfMonitorValve_create(XWidget* parent, HsfMenuNavFn navFn,
                                 void* userData)
@@ -761,15 +830,15 @@ XWidget* HsfMonitorValve_create(XWidget* parent, HsfMenuNavFn navFn,
         XWidget_setFont((XWidget*)&self->m_title, &f);
         XClassDeinit(&f);
     }
-    XLabel_setTextPixelSize(&self->m_title, 17);
+    XLabel_setTextPixelSize(&self->m_title, valvePx(17));
     XLabel_setText_2(&self->m_title,
-                     "\xE7\x94\xB5\xE7\xA3\x81\xE9\x98\x80");  /* 电磁阀 */
+                     "电磁阀");  /* 电磁阀 */
     XWidget_show((XWidget*)&self->m_title);
     XBoxLayout_addWidget(&self->m_titleRow, (XWidget*)&self->m_title);
 
     XLabel_init(&self->m_subtitle, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_subtitle);
-    XLabel_setTextPixelSize(&self->m_subtitle, 12);
+    XLabel_setTextPixelSize(&self->m_subtitle, valvePx(12));
     XLabel_setAlignment(&self->m_subtitle,
                         XAlignment_Left | XAlignment_Bottom);
     XWidget_setForegroundRole((XWidget*)&self->m_subtitle,
@@ -777,8 +846,8 @@ XWidget* HsfMonitorValve_create(XWidget* parent, HsfMenuNavFn navFn,
     {
         char sub[96];
         snprintf(sub, sizeof(sub),
-                 "%d \xE8\xB7\xAF \xC2\xB7 1 \xE8\xB7\xAF\xE8\xBE\x93\xE5\x87\xBA"
-                 " + 2 \xE8\xB7\xAF\xE5\x88\xB0\xE4\xBD\x8D\xE5\x8F\x8D\xE9\xA6\x88",
+                 "%d 路 · 1 路输出"
+                 " + 2 路到位反馈",
                  HSF_VALVE_COUNT);   /* N 路 · 1 路输出 + 2 路到位反馈 */
         XLabel_setText_2(&self->m_subtitle, sub);
     }
@@ -801,7 +870,7 @@ XWidget* HsfMonitorValve_create(XWidget* parent, HsfMenuNavFn navFn,
             }
             XLabel_init(&self->m_bannerText, &self->m_banner, 0);
             HsfTheme_applyDefaultFont((XWidget*)&self->m_bannerText);
-            XLabel_setTextPixelSize(&self->m_bannerText, 12);
+            XLabel_setTextPixelSize(&self->m_bannerText, valvePx(12));
             XLabel_setText_2(&self->m_bannerText, " ");
             XWidget_show((XWidget*)&self->m_bannerText);
             if (bl) XBoxLayout_addWidgetEx(bl, (XWidget*)&self->m_bannerText, 1, 0);
@@ -835,16 +904,16 @@ XWidget* HsfMonitorValve_create(XWidget* parent, HsfMenuNavFn navFn,
     /* ---- 底部提示 ---- */
     XLabel_init(&self->m_footHint, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_footHint);
-    XLabel_setTextPixelSize(&self->m_footHint, 11);
+    XLabel_setTextPixelSize(&self->m_footHint, valvePx(11));
     XLabel_setAlignment(&self->m_footHint, XAlignment_Left | XAlignment_VCenter);
     XWidget_setForegroundRole((XWidget*)&self->m_footHint,
                               XPaletteColorRole_Mid);
     XLabel_setText_2(&self->m_footHint,
-                     "\xE9\x98\x80\xE4\xBD\x8D\xE7\x8A\xB6\xE6\x80\x81\xE5\x8F\xAA"
-                     "\xE7\x94\xB1\xE5\x88\xB0\xE4\xBD\x8D\xE5\x8F\x8D\xE9\xA6\x88"
-                     "\xE6\x8E\xA8\xE5\xAF\xBC\xEF\xBC\x9B\xE5\x91\xBD\xE4\xBB\xA4"
-                     "\xE5\x9B\x9E\xE6\x98\xBE\xE4\xB8\x8D\xE4\xBB\xA3\xE8\xA1\xA8"
-                     "\xE9\x98\x80\xE5\xB7\xB2\xE5\x8A\xA8\xE4\xBD\x9C");
+                     "阀位状态只"
+                     "由到位反馈"
+                     "推导；命令"
+                     "回显不代表"
+                     "阀已动作");
     /* 阀位状态只由到位反馈推导；命令回显不代表阀已动作 */
     XWidget_show((XWidget*)&self->m_footHint);
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_footHint);
@@ -859,12 +928,14 @@ XWidget* HsfMonitorValve_create(XWidget* parent, HsfMenuNavFn navFn,
             if (!s_valve.m_items[i].m_name[0])
                 snprintf(s_valve.m_items[i].m_name,
                          sizeof(s_valve.m_items[i].m_name),
-                         "\xE7\x94\xB5\xE7\xA3\x81\xE9\x98\x80%d", i + 1);
+                         "电磁阀%d", i + 1);
         }
     }
     valveRebuildCards(self);
     valveRefreshAll();
 
+    hsfUi_registerPageFontApplier(HSF_PAGE_MONITOR_VALVE, &self->m_base,
+                                  valveApplyFonts);
     XWidget_show(&self->m_base);
     return &self->m_base;
 }
@@ -998,6 +1069,11 @@ void HsfMonitorValve_refresh(void)
 
 void HsfMonitorValve_setControlEnabled(bool enabled, const char* blockedReason)
 {
+    /* [同值早退 2026-11-08] 闸门由 hsfWinApplyControlGates 在**每次阀推送**
+     * 前重算并下发（20 次/秒）；值没变就不必重刷全部卡片。 */
+    if (s_valve.m_controlEnabled == enabled &&
+        strcmp(s_valve.m_blockedReason, blockedReason ? blockedReason : "") == 0)
+        return;
     s_valve.m_controlEnabled = enabled;
     if (enabled || !blockedReason) {
         s_valve.m_blockedReason[0] = '\0';

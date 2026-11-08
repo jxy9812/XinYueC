@@ -437,6 +437,39 @@ void HsfServerIo_stop(void)
     XPrintf("HsfServerIo: IO 已全部拆除\n");
 }
 
+/* ==================== 注入链路自愈 ==================== */
+
+/**
+ * @brief 跑一拍注入链路自愈看门狗（485 两路 + 模拟量站 + 数字量站）。
+ * @details [接线位置] 由 hsfAppTick 每拍调用（与阀/泵轮询同一事件循环，
+ *          不存在并发）；顺序放在推数据之前，让同一拍里的编码拿到的是
+ *          自愈后的状态。
+ *
+ *          [为什么必须在装配层统一驱动] 四个 Hub 各自独立、互不知道对方；
+ *          看门狗是"服务端对链路的兜底"，天然属于编排层——放在任何单站
+ *          模块里都会漏掉其它站。各站自己只提供"我这条链路怎么重连"的
+ *          描述（hub/devId/client/节拍），策略实现全在 HsfServerBusHeal。
+ *
+ *          [不碰物理链路] 每个 *Heal* 状态只在注入装配入口 enable，
+ *          物理串口/真机 TCP 装配下 m_on=false，本函数是纯空转。
+ */
+bool HsfServerIo_watchdog(uint64_t nowMs)
+{
+    HsfServerIoState* io = &s_io;
+    bool acted = false;
+    int s;
+
+    if (!io->m_started) return false;
+
+    for (s = 0; s < (int)HsfSide_Count; ++s) {
+        if (HsfServerBus_watchdog(&io->m_sides[s].m_bus, nowMs))
+            acted = true;
+    }
+    if (HsfServerIoAnalog_watchdog(&io->m_analog, nowMs)) acted = true;
+    if (HsfServerIoDigital_watchdog(&io->m_digital, nowMs)) acted = true;
+    return acted;
+}
+
 /* ==================== 按侧查询 ==================== */
 
 bool HsfServerIo_sideReady(HsfSide side)

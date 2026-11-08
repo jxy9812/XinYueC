@@ -36,6 +36,7 @@ extern "C" {
 
 #include "XObject.h"
 #include "XhsfLinkProto.h"   /* HSF_DIGITAL_CHANNELS（点数上限）。 */
+#include "HsfServerBus.h"    /* HsfServerBusHeal：注入客户端自愈看门狗状态。 */
 
 struct XModbusHub;
 struct XModbusClient;
@@ -69,6 +70,12 @@ typedef struct HsfServerIoDigital {
     int m_channelsPerDev;               /**< 单台模块点数（每台 16）。 */
     int m_startAddr;                    /**< 远端起始地址（实测只能 0）。 */
     bool m_mounted;                     /**< 装配完成标志。 */
+    /** @brief 是否由 mountWithClient(s) 注入客户端（模拟/单测）。
+     *  [只对注入链路自愈] 真机装配（mount 建 TCP 客户端）不启用看门狗，
+     *  行为与历史一致；注入的虚拟客户端没有重连实现，必须有服务端兜底。 */
+    bool m_injected;
+    HsfServerBusHeal m_heal;            /**< 主模块自愈看门狗（仅注入链路用）。 */
+    HsfServerBusHeal m_healExt;         /**< 扩展模块自愈看门狗（同上）。 */
 } HsfServerIoDigital;
 
 /* ==================== 类初始化 / 构造与析构 ==================== */
@@ -238,6 +245,20 @@ struct XModbusVirtualModel* HsfServerIoDigital_simModel(
 /** @brief 取扩展模块的模拟模型（借用）；未装扩展或非模拟返回 NULL。 */
 struct XModbusVirtualModel* HsfServerIoDigital_simModelExt(
     const HsfServerIoDigital* st);
+
+/**
+ * @brief 跑一拍自愈检查（仅 mountWithClient(s) 注入的链路有效）。
+ * @param st 目标站；未装配/真机装配/未启用时为空操作。
+ * @param nowMs 当前单调毫秒。
+ * @return 本拍是否执行了自愈动作。
+ *
+ * @details [为什么数字量也要] 现场实测「电磁阀 · 6 路」数据一会儿有一会儿
+ *          没有，与温湿度/流量计是同一个病根：注入客户端没有重连实现，设备
+ *          一旦被判失联（或轮询定时器被误杀）DI/DO 读组就再也不提交，链路层
+ *          按 5000ms 陈旧阈值把每路阀的到位反馈判成"不新鲜"，界面表现为
+ *          间歇/永久陈旧。物理 TCP 装配（mount）不启用，现场设备行为不变。
+ */
+bool HsfServerIoDigital_watchdog(HsfServerIoDigital* st, uint64_t nowMs);
 
 #ifdef __cplusplus
 }

@@ -5,10 +5,12 @@
  *               1) 状态横幅（自绘胶囊：状态色块 + 大字状态 + 故障码/名）
  *               2) 仪表行（三枚 270° 弧形仪表自绘控件：频率/电流/电压）
  *               3) 数值卡行（2×2：功率/母线电压/转速/转矩；validMask 显 "--"）
- *               4) 给定行（Slider 0..500 ×0.1Hz + SpinBox + 下发）
- *               5) 操作行（正转/停止/反转/点动/复位；caps 裁剪 + 闸联动）
+ *               4) 控制行（2026-11-08 合并：给定组 = 调速方式 + 频率给定 +
+ *                  数字框；操作组 = 方向 + 启动 + 点动 + 故障复位 + 自由
+ *                  停车 + 右端提示；窄页宽由 adapt 回退成上下两排）
+ *               5) 拖动调速滑块（独占一行，触摸拖拽口径）
  *               6) 趋势图（XChartView+XLineSeries 输出频率 60 点滚动窗）
- *               7) 底行（控制闸 CheckBox「允许界面操作」）
+ *               （控制闸 CheckBox 已于 2026-11-06 移除：可用性只看全局模式）
  *
  *             [数据路径] provider->subscribe 注册回调；模拟源经 200ms XTimer
  *             驱动 hsfVfdSimTick → 设备解码 → statusUpdated → 回调刷新。
@@ -23,6 +25,7 @@
 #include "HsfMonitorVfd.h"
 
 #include "HsfTheme.h"
+#include "HsfUi.h"   /* hsfUi_pageFontPx（本地设置·按页字号） */
 #include "HsfVfdProvider.h"
 #include "XhsfLinkProto.h"
 #include "HsfVfdProviderRemote.h"
@@ -44,6 +47,9 @@
 #include "XValueAxis.h"
 #include "XObject.h"
 #include "XTimer.h"
+#include "XDateTime.h"            /* XDateTime_currentMSecsSinceEpoch（int64_t 时间戳）：
+                                     漏包含会走 C4013 隐式 int，64 位下截断毫秒值、
+                                     趋势跟随窗口算错。 */
 #include "XSystem.h"               /* XSystem_environment（XHSF_VFD_AUTO 外部门）。 */
 #include "XMemory.h"
 #include "XFont.h"
@@ -56,6 +62,12 @@
 #include <math.h>
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON && XVFD_ON
+
+/** @brief 本页字号折算（本地设置 FontScale/Page5）。 */
+static int vfdPx(int px)
+{
+    return hsfUi_pageFontPx(HSF_PAGE_MONITOR_VFD, px);
+}
 
 /* ==================== 常量与配色 ==================== */
 
@@ -78,6 +90,37 @@
 #define VFD_TREND_POINTS     60       /**< 趋势滚动窗点数。 */
 #define VFD_TREND_WIN_DEF    30.0     /**< 时间窗默认宽（秒）。 */
 #define VFD_TREND_WIN_MIN    1.0      /**< 时间窗最小宽（秒；再窄无意义）。 */
+/* ---- 合并控制行（给定组 + 操作组同排）的宽度口径 2026-11-08 ---- */
+/** @brief 控制行组内/组间间距（px；原给定行/操作行都是 10，合并后收紧）。 */
+#define VFD_CTRL_ROW_SPACING 8
+/** @brief 行末提示标签的宽度上限（px）：见 create 里 setMaximumWidth 注。 */
+#define VFD_HINT_MAX_W       200
+/**
+ * @brief 控制行单行排布所需的最小**页根宽度**（px；含页左右边距）。
+ * @details 单行最小宽 = 固定/最小宽之和 + 间距：
+ *           给定组 104(调速方式)+72(标签)+100(数字框) = 276；
+ *           操作组 100(方向)+76(启动)+60(点动)+84(故障复位)+84(自由停车)
+ *                 = 404，行末提示封顶 200；
+ *           间距 8×(3+6+1) = 80（组内 3/6 个空档 + 两组之间 1 个）；
+ *           合计 276+404+200+80 = 960，再加页左右边距 24+24 = 48
+ *           ⇒ 页根最小 **1008**。页宽 ≥ 1024 时单行必放得下（余量归
+ *           给定组末尾的可伸展空隙）。
+ * @note 以上按 100% 字号计。标签定宽随 Page5 字号折算（vfdPx(72)，
+ *       150% = 108），单行预算同比 +36；1280 窗口行内可用 1048，仍够
+ *       （150% 预算 996）。字号再放大时两排回退阈值仍按 1024 判，页宽
+ *       不足时由 adapt 翻两排兜底。
+ * @note [为什么阈值比最小宽高 16px] 页根被滚动区按**布局最小宽**兜底
+ *       （XScrollArea.c:xsa_updateWidgetGeometry `minHint.width > w`）。
+ *       若阈值等于页根最小宽，窄窗下页根会被钉在"刚好等于阈值"的宽度，
+ *       adapt 读到 `pw == 阈值` 判宽档 → 回退永不触发、页根比视口宽、右侧
+ *       被裁。阈值取 1024 > 1008：任何视口 < 1024 时页根宽 ∈ [1008,1024)
+ *       必然 < 阈值 → 回退两排 → 页根最小宽降到 700，视口重新成为主导。
+ * @note 1280×800 窗口：页宽 ≈ 1280−176(侧栏)−8(分割条) = 1096 ⇒ 单行
+ *       （行内可用 1048，预算 960，余 88px 全给伸展空隙）；1600×900：
+ *       页宽 ≈ 1416 ⇒ 行内可用 1368，余 408px。1024 窗口页宽 ≈ 840
+ *       < 1024 ⇒ 自动两排（两排最小宽 700，840 放得下）。
+ */
+#define VFD_CTRL_MIN_ROW_W   1024
 #define VFD_TREND_WIN_MAX    600.0    /**< 时间窗最大宽（秒）。 */
 #define VFD_TREND_CATCHUP    0.05     /**< 恢复跟随的右缘容差（秒；≈1px）。 */
 
@@ -116,54 +159,54 @@ static void vfdRunStateStyle(int runState, bool running,
 {
     switch (runState) {
     case XVfdRunState_RunningForward:
-        *color = VFD_COLOR_RUN; *text = "\xE6\xAD\xA3\xE8\xBD\xAC\xE8\xBF\x90\xE8\xA1\x8C"; /* 正转运行 */
+        *color = VFD_COLOR_RUN; *text = "正转运行"; /* 正转运行 */
         break;
     case XVfdRunState_RunningReverse:
-        *color = VFD_COLOR_RUN; *text = "\xE5\x8F\x8D\xE8\xBD\xAC\xE8\xBF\x90\xE8\xA1\x8C"; /* 反转运行 */
+        *color = VFD_COLOR_RUN; *text = "反转运行"; /* 反转运行 */
         break;
     case XVfdRunState_ConstantSpeed:
-        *color = VFD_COLOR_RUN; *text = "\xE6\x81\x92\xE9\x80\x9F\xE8\xBF\x90\xE8\xA1\x8C"; /* 恒速运行 */
+        *color = VFD_COLOR_RUN; *text = "恒速运行"; /* 恒速运行 */
         break;
     case XVfdRunState_JogForward:
-        *color = VFD_COLOR_RUN; *text = "\xE6\xAD\xA3\xE8\xBD\xAC\xE7\x82\xB9\xE5\x8A\xA8"; /* 正转点动 */
+        *color = VFD_COLOR_RUN; *text = "正转点动"; /* 正转点动 */
         break;
     case XVfdRunState_JogReverse:
-        *color = VFD_COLOR_RUN; *text = "\xE5\x8F\x8D\xE8\xBD\xAC\xE7\x82\xB9\xE5\x8A\xA8"; /* 反转点动 */
+        *color = VFD_COLOR_RUN; *text = "反转点动"; /* 反转点动 */
         break;
     case XVfdRunState_Accelerating:
-        *color = VFD_COLOR_PHASE; *text = "\xE5\x8A\xA0\xE9\x80\x9F\xE4\xB8\xAD"; /* 加速中 */
+        *color = VFD_COLOR_PHASE; *text = "加速中"; /* 加速中 */
         break;
     case XVfdRunState_Decelerating:
         /* [正在停机 vs 减速中] 状态字已报停机 ⇒ 这是停机过程。 */
         if (!running) {
             *color = VFD_COLOR_PHASE;
-            *text = "\xE6\xAD\xA3\xE5\x9C\xA8\xE5\x81\x9C\xE6\x9C\xBA"; /* 正在停机 */
+            *text = "正在停机"; /* 正在停机 */
         } else {
-            *color = VFD_COLOR_PHASE; *text = "\xE5\x87\x8F\xE9\x80\x9F\xE4\xB8\xAD"; /* 减速中 */
+            *color = VFD_COLOR_PHASE; *text = "减速中"; /* 减速中 */
         }
         break;
     case XVfdRunState_Fault:
-        *color = VFD_COLOR_FAULT; *text = "\xE6\x95\x85\xE9\x9A\x9C";           /* 故障 */
+        *color = VFD_COLOR_FAULT; *text = "故障";           /* 故障 */
         break;
     case XVfdRunState_Stopped:
-        *color = VFD_COLOR_STOP; *text = "\xE5\x81\x9C\xE6\x9C\xBA";            /* 停机 */
+        *color = VFD_COLOR_STOP; *text = "停机";            /* 停机 */
         break;
     case XVfdRunState_Ready:
-        *color = VFD_COLOR_READY; *text = "\xE5\xB0\xB1\xE7\xBB\xAD";           /* 就绪 */
+        *color = VFD_COLOR_READY; *text = "就续";           /* 就绪 */
         break;
     case XVfdRunState_DcBraking:
-        *color = VFD_COLOR_WARN; *text = "\xE7\x9B\xB4\xE6\xB5\x81\xE5\x88\xB6\xE5\x8A\xA8"; /* 直流制动 */
+        *color = VFD_COLOR_WARN; *text = "直流制动"; /* 直流制动 */
         break;
     case XVfdRunState_FreeStopping:
-        *text = "\xE8\x87\xAA\xE7\x94\xB1\xE5\x81\x9C\xE8\xBD\xA6";             /* 自由停车 */
+        *text = "自由停车";             /* 自由停车 */
         *color = VFD_COLOR_WARN;
         break;
     case XVfdRunState_QuickStopping:
-        *text = "\xE5\xBF\xAB\xE9\x80\x9F\xE5\x81\x9C\xE6\x9C\xBA";             /* 快速停机 */
+        *text = "快速停机";             /* 快速停机 */
         *color = VFD_COLOR_WARN;
         break;
     default:
-        *color = VFD_COLOR_STOP; *text = "\xE6\x9C\xAA\xE7\x9F\xA5";            /* 未知 */
+        *color = VFD_COLOR_STOP; *text = "未知";            /* 未知 */
         break;
     }
 }
@@ -199,6 +242,14 @@ typedef struct HsfVfdGaugeWidget {
     XWidget m_base;                     /**< 基类子对象（第一成员）。 */
     HsfMonitorVfd* m_owner;             /**< 回属页（分派+取数）。 */
     int m_slot;                         /**< 仪表槽位（0=频率 1=电流 2=电压）。 */
+    /* [静态层缓存 2026-11-08] 表盘上只有**进度弧**随值变化；底盘圆、
+     * 底轨带与三条圆缘描边对给定尺寸是常量。此前每帧重画全部（实测
+     * 单表 66ms：底盘 ~1430 条 AA 径向线 + 底轨 ~1080 条 + 描边 ~600 条，
+     * 三只表合计 ~200ms/帧 ⇒ 变频器页帧耗时 33.81ms、界面明显卡）。
+     * 把静态部分渲染到离屏图，每帧只 blit + 画进度弧（~1/5 的线量）。 */
+    XImage* m_staticCache;              /**< 静态层（NULL=未建；随画布析构释放）。 */
+    int     m_cacheW;                   /**< 缓存宽（0=失效）。 */
+    int     m_cacheH;                   /**< 缓存高。 */
 } HsfVfdGaugeWidget;
 
 /**
@@ -224,11 +275,23 @@ static void vfdGaugeRelayout(HsfVfdGauge* g)
     XWidget_setGeometry((XWidget*)&g->m_unit, 0, h / 2 + 12, w, 16);
 }
 
+/** @brief 仪表析构：释放静态层缓存（画布随页级联析构时走到这里）。 */
+static void VHsfVfdGaugeWidget_deinit(XObject* obj)
+{
+    HsfVfdGaugeWidget* gauge = (HsfVfdGaugeWidget*)obj;
+    if (gauge && gauge->m_staticCache) {
+        XClassDelete((XClass*)gauge->m_staticCache);
+        gauge->m_staticCache = NULL;
+    }
+    XClass_Deinit_Parent(XWidget, obj);
+}
+
 XVtable* HsfVfdGauge_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(HsfVfdGaugeWidget)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VHsfVfdGauge_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VHsfVfdGaugeWidget_deinit);
     XCLASS_SHOW_SIZE_DEFAULT(HsfVfdGaugeWidget);
     return XVTABLE_DEFAULT;
 }
@@ -255,7 +318,11 @@ typedef struct HsfMonitorVfd
     XLabel       m_cardTorque;  /**< 转矩卡。 */
     XLabel       m_cardSet;     /**< 设定频率卡（Python 同项）。 */
     XLabel       m_cardFault;   /**< 故障卡（故障文案/无故障）。 */
-    /* 区 3：给定行。 */
+    /* 区 3：控制行（给定组 + 操作组同排；窄页宽时回退成上下两排）。 */
+    XHBoxLayout  m_ctrlRow;     /**< 控制行容器：宽档=单行；窄档=竖向两排
+                                     （方向由 adapt 切；组内控件不搬家）。 */
+    XHBoxLayout  m_setRow;      /**< 给定组：调速方式 + 标签 + 数字框 + 余宽。 */
+    XHBoxLayout  m_opRow;       /**< 操作组：方向 + 四钮 + 余宽 + 提示右靠。 */
     XLabel       m_setLabel;    /**< 「频率给定」。 */
     XSlider      m_setSlider;   /**< 0..500（0.1Hz 定点；永远按 Hz 口径）。 */
     XSpinBox     m_setSpin;     /**< 用户量纲（频率模式 Hz / 转速模式 rpm）。 */
@@ -266,10 +333,12 @@ typedef struct HsfMonitorVfd
     int          m_ssCount;      /**< 已登记的步数。 */
     int          m_ssNext;       /**< 下一个待执行的步。 */
     int64_t      m_ssNextMs;     /**< 下一步的最早执行时刻（单调毫秒）。 */
-    /* 区 4：操作行（方向下拉 + 启停单钮双态 + 点动/复位条件使能）。 */
-    XComboBox    m_dirCombo;    /**< 运行方向（正转/反转；启动时生效）。 */
+    /* 区 4：操作组（方向下拉 + 启停单钮双态 + 点动/复位条件使能；与给定组
+       同排——见区 3 的 m_opRow）。 */
+    XComboBox    m_dirCombo;    /**< 运行方向（正转/反转；停机预选随下次启动
+                                     下发，运行中改选立即换向——见
+                                     vfdDirChangeSlot 2026-11-06）。 */
     XComboBox    m_speedMode;   /**< 调速方式（频率调速/转速调速）。 */
-    XLabel       m_speedNote;   /**< 换算说明（额定点口径）。 */
     XPushButton  m_btnRun;      /**< 启动/停止（随运行态换字）。 */
     XPushButton  m_btnJog;      /**< 点动（按住生效；运行中禁用）。 */
     XTimer*      m_jogTimer;    /**< 点动心跳定时器（NULL=未点动）。 */
@@ -285,7 +354,7 @@ typedef struct HsfMonitorVfd
     int64_t      m_trendStartMs;/**< 趋势计时起点（单调毫秒）。 */
     double       m_trendWinW;   /**< 时间窗宽（秒；用户缩放后随之变化）。 */
     bool         m_trendUserView;/**< 视口归用户（用户缩放/平移后页面停写 X 轴）。 */
-    /* 控制闸（并入给定行；不单独占行）。 */
+    /* 控制闸（并入控制行；不单独占行）。 */
     XLabel       m_hint;        /**< 提示行（自动只读/不可控原因）。 */
     /* ---- 数据提供者 ---- */
     const HsfVfdProvider* m_provider; /**< 函数表（借用；可 NULL=全降级）。 */
@@ -307,6 +376,19 @@ typedef struct HsfMonitorVfd
     int          m_cmdErrSeq;      /**< 已消费的控制应答序号（0=无）。 */
     bool         m_cmdErrActive;   /**< 最近一拍应答是否带错误（持续显示到下拍）。 */
     char         m_cmdErrText[96]; /**< 最近错误文本（服务端原文 UTF-8）。 */
+    /* ---- 自绘区脏签名（同值早退；2026-11-08） ---- */
+    bool         m_gaugeSigInit;   /**< 仪表签名已初始化（首帧必脏）。 */
+    double       m_gaugeFreqSig;   /**< 频率表上次标脏的显示值（Hz）。 */
+    double       m_gaugeCurSig;    /**< 电流表上次标脏的显示值（A）。 */
+    double       m_gaugeVoltSig;   /**< 电压表上次标脏的显示值（V）。 */
+    bool         m_gaugeFaultSig;  /**< 频率表上次标脏的故障着色。 */
+    bool         m_bannerSigInit;  /**< 横幅签名已初始化（首帧必脏）。 */
+    int          m_bannerSig;      /**< 横幅上次标脏的可见状态打包签名。 */
+    bool         m_bannerCtrlSig;  /**< 横幅上次标脏的"界面操作已锁"位。 */
+    /* ---- 趋势追点节流（同值且窗未前进 1s 不追点；2026-11-08） ---- */
+    bool         m_trendLastValid; /**< 上一点是否有效（首点必追）。 */
+    double       m_trendLastValue; /**< 上一点频率值（Hz）。 */
+    double       m_trendLastX;     /**< 上一点时间（相对秒）。 */
 } HsfMonitorVfd;
 
 /* ==================== 工具 ==================== */
@@ -334,54 +416,79 @@ static void vfdSetCardText(XLabel* card, const char* name, bool valid,
 /* ---- 仪表：270° 弧带（AA 径向线扇带；锯齿终修） ---- */
 
 /**
- * @brief 扇环（弧带）绘制：内/外半径 + 起止角 → 逐角画**径向线**。
- * @details [2026-11-03 锯齿终修] 前代扫描线填充零空洞但边缘是硬边
- *          （用户放大看锯齿；Qt QPainter::Antialiasing 对标）。本框架
- *          AA 能力齐备（XPainterRenderHint_Antialiasing + 斜线浮点
- *          覆盖率光栅化 painterRaster_drawLineAntialiased，Qt raster
- *          同源），此前未用是页面侧没开 hint。
- *          现做法：paintEvent 开 Antialiasing → 每个角度步画一根
- *          rInner→rOuter 的**斜径向线**（AA 只对斜线生效，正好全中），
- *          角度步距按外缘弦长 0.5px 加密 —— 相邻 AA 线的半像素羽化
- *          边互相融合，扇带内部饱和、内外圆缘平滑（覆盖率渐变）。
- *          代替前代硬边扫描线：均匀性由 0.5px 步距 + AA 半透明叠加
- *          保证（同色多叠不影响饱和度上限）。
- */
-static void vfdDrawArcBand(XPainter* painter, int cx, int cy,
+ * @brief 扇环（弧带）绘制：内/外半径 + 起止角 → **一条闭合路径填充**。
+ * @details [2026-11-08 性能根修，对齐 Qt QPainterPath::arcTo + fillPath]
+ *          前代实现逐角度画数千条 AA 径向线（实测单表 66ms：底盘 ~1430
+ *          条 + 底轨 ~1080 条 + 描边 ~600 条，变频器页帧耗时 33.81ms）。
+ *          那是拿"线"模拟"面"——每条 AA 线各自走一次覆盖率光栅化（各建
+ *          一张 4×4 子采样的临时覆盖图），代价随周长线性堆叠。
+ *          Qt 的做法是**一个填充路径**：arcTo 外弧 → arcTo 内弧（反向）
+ *          → closeSubpath → fillPath，一次覆盖图光栅化整块扇环。
+ *          本框架 `XPainter_fillPath` 正是这条通道（painterFillPathContours
+ *          → painterFillContoursAntialiased，Antialiasing 提示下 4×4
+ *          面积子采样）；固改为路径填充：弧点按 1px 弦长取样，拐点数
+ *          与周长同阶但只光栅化一次。
+ * @note  填充用画刷（XPainter_setBrush），描边不在本函数职责内——圆缘的
+ *        1px 羽化由覆盖图自身给出，无需再叠描边链。 */
+static void vfdFillArcBand(XPainter* painter, int cx, int cy,
                            int rInner, int rOuter,
-                           double startDeg, double sweepDeg)
+                           double startDeg, double sweepDeg,
+                           uint32_t color)
 {
+    XPainterPath path;
     int i;
     int segments;
     double a0 = startDeg * 3.14159265358979323846 / 180.0;
     double sweepRad = sweepDeg * 3.14159265358979323846 / 180.0;
     double step;
-    if (rOuter < 1 || sweepDeg == 0.0 || rOuter <= rInner) return;
-    /* 角度步距：外缘弦长 ≈ 0.25px（相邻 AA 线羽化带充分重叠，
-     * 带内覆盖率均匀无网纹；上限护栏防超大半径慢绘）。 */
+    if (!painter || rOuter < 1 || sweepDeg == 0.0 || rOuter <= rInner)
+        return;
+    /* 弧点密度：外缘弦长 ≈ 1px（填充边缘由覆盖图羽化，1px 弦已远小于
+     * 一个像素的覆盖率过渡宽度；加密只加拐点、不再加光栅化次数）。 */
     segments = (int)(2.0 * 3.14159265358979323846 * rOuter *
-                     ((sweepDeg > 0 ? sweepDeg : -sweepDeg) / 360.0) * 4.0);
-    if (segments < 720) segments = 720;
-    if (segments > 4320) segments = 4320;
-    step = sweepRad / segments;
-    for (i = 0; i <= segments; ++i) {
-        double a = a0 + step * i;
-        double c = cos(a);
-        double s = sin(a);
-        /* 亚像素端点（QLineF 口径）：外缘精确落圆周，AA 覆盖率连续。 */
-        XPainter_drawLine_3(painter,
-                            (float)(cx + rInner * c), (float)(cy - rInner * s),
-                            (float)(cx + rOuter * c), (float)(cy - rOuter * s));
+                     ((sweepDeg > 0 ? sweepDeg : -sweepDeg) / 360.0) * 1.0);
+    if (segments < 24) segments = 24;
+    if (segments > 720) segments = 720;
+    step = sweepRad / (double)segments;
+    XPainterPath_init(&path);
+    XPainterPath_setFillRule(&path, XPainterFillRule_OddEven);
+    /* 外弧（起点 → 终点）。 */
+    XPainterPath_moveTo(&path,
+                        (float)(cx + rOuter * cos(a0)),
+                        (float)(cy - rOuter * sin(a0)));
+    for (i = 1; i <= segments; ++i) {
+        double a = a0 + step * (double)i;
+        XPainterPath_lineTo(&path,
+                            (float)(cx + rOuter * cos(a)),
+                            (float)(cy - rOuter * sin(a)));
     }
+    /* 内弧（终点 → 起点，反向闭合出扇环）。 */
+    for (i = segments; i >= 0; --i) {
+        double a = a0 + step * (double)i;
+        XPainterPath_lineTo(&path,
+                            (float)(cx + rInner * cos(a)),
+                            (float)(cy - rInner * sin(a)));
+    }
+    XPainterPath_closeSubpath(&path);
+    XPainter_setBrush(painter, color);
+    XPainter_fillPath(painter, &path);
+    XPainterPath_deinit(&path);
+}
+
+/**
+ * @brief 360° 全圆填充（仪表底盘）：一次路径填充，理由同 vfdFillArcBand。
+ * @note  半径 < 1 时无绘制；内半径固定 0。 */
+static void vfdFillCircle(XPainter* painter, int cx, int cy, int r,
+                          uint32_t color)
+{
+    vfdFillArcBand(painter, cx, cy, 0, r, 0.0, 360.0, color);
 }
 
 /**
  * @brief 圆缘描边：沿圆周以 ≤0.7px 弦长步进画 AA 短线段链。
- * @details [2026-11-03 锯齿根修] 扇带径向线端点整数化（(int)r·cos），
- *          内外圆缘呈 1px 阶梯——AA 只柔化线的**两侧**，管不住**端点
- *          量化**。修法＝给圆缘补一根 AA 描边：弦长小于线宽时相邻段
- *          端点落在同像素邻域，AA 覆盖率连续 → 圆缘成 1px 渐变带
- *          （Qt drawArc + Antialiasing 的观感对齐）。半径 0 时整圆。
+ * @details [2026-11-08] 路径填充（vfdFillArcBand）的覆盖图已经把内外圆缘
+ *          羽化成 1px 渐变带，不再需要这条描边链——保留实现但当前无调用
+ *          点（历史锯齿修法的记录；若将来要恢复硬边填充可再启用）。
  */
 static void vfdDrawArcOutline(XPainter* painter, int cx, int cy, int r,
                               double startDeg, double sweepDeg)
@@ -411,15 +518,59 @@ static void vfdDrawArcOutline(XPainter* painter, int cx, int cy, int r,
     }
 }
 
+/** @brief 把表盘**静态部分**（底盘圆 + 270° 底轨带）渲染进缓存。
+ *  @details 静态层只与尺寸有关；进度弧单独每帧画。缓存图用 ARGB32 且
+ *           背景全透明：blit 到画布上时圆外区域保持透明（页面底色透出），
+ *           与原先"直接在画布上画"的合成结果一致。 */
+static void vfdGaugeRenderStatic(HsfVfdGaugeWidget* gauge, int w, int h,
+                                 int cx, int cy, int r,
+                                 int bandOuter, int bandInner)
+{
+    XPainter painter;
+    if (!gauge) return;
+    if (!gauge->m_staticCache) {
+        gauge->m_staticCache = XImage_create();
+        if (!gauge->m_staticCache) return;
+    }
+    if (gauge->m_cacheW != w || gauge->m_cacheH != h) {
+        XImage_reinit_ex(gauge->m_staticCache, w, h, XImageFormat_ARGB32);
+        gauge->m_cacheW = w;
+        gauge->m_cacheH = h;
+    }
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, gauge->m_staticCache)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    /* [底透明] 图内容未定义 → 先以 Source 合成模式整幅写 0（全透明）。
+     * 不能用普通 fillRect：默认 SourceOver 下 alpha=0 的源不改变目标，
+     * 未初始化像素会被保留。 */
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_Source);
+    XPainter_fillRect(&painter,
+                      (const XRect*)&(XRect){0, 0, w, h}, 0x00000000u);
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_SourceOver);
+    XPainter_setRenderHint(&painter, XPainterRenderHint_Antialiasing, true);
+    /* 底盘（整圆）+ 底轨带（270°：135° 起、顺时针 270°）。 */
+    vfdFillCircle(&painter, cx, cy, r, 0xFFF7F9FB);
+    vfdFillArcBand(&painter, cx, cy, bandInner, bandOuter, 135.0, -270.0,
+                   VFD_COLOR_TRACK);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+}
+
 /**
  * @brief 仪表绘制（三个 gauge 共用；只画表盘几何，文字归叠放 XLabel）。
  * @details 表盘：底盘（扫描线填充）+ 270° 底轨带 + 进度带（故障转红）。
  *          角度：数学坐标系，起点 135°（左下），顺时针经顶部扫 270°
  *          到 -45°（右下）——sweep 为负即顺时针；开口朝正下方。
+ *          [静态层缓存 2026-11-08] 底盘/底轨/描边对给定尺寸是常量，渲染
+ *          进离屏图一次；每帧只 blit + 画进度弧。实测单表绘制 66ms →
+ *          目标 <10ms（AA 径向线是主要成本，静态部分占其中约 4/5）。
  */
 static void vfdGaugePaint(XWidget* self, XEvent* event, double value, double maxV,
                           bool faultColor)
 {
+    HsfVfdGaugeWidget* gauge = (HsfVfdGaugeWidget*)self;
     XImage* image;
     XPoint offset;
     XPainter painter;
@@ -434,47 +585,55 @@ static void vfdGaugePaint(XWidget* self, XEvent* event, double value, double max
     double frac = (maxV > 0.0) ? (value / maxV) : 0.0;
     uint32_t arcColor = faultColor ? VFD_COLOR_FAULT : VFD_COLOR_GAUGE;
 
+    (void)event;
     if (frac < 0.0) frac = 0.0;
     if (frac > 1.0) frac = 1.0;
 
     image = XWidget_paintImage(self);
     if (!image) return;
+    /* 静态层按尺寸惰性重建（尺寸不变则复用）。 */
+    if (gauge->m_cacheW != w || gauge->m_cacheH != h)
+        vfdGaugeRenderStatic(gauge, w, h, cx, cy, r, bandOuter, bandInner);
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
         XPainter_deinit(&painter);
         return;
     }
-    /* 抗锯齿（Qt QPainter::Antialiasing 对标）：斜径向线走框架浮点
-     * 覆盖率光栅化，扇带内外圆缘平滑（用户放大看锯齿的终修）。 */
     XPainter_setRenderHint(&painter, XPainterRenderHint_Antialiasing, true);
     offset = XWidget_paintOffset(self);
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
 
-    /* 底盘：AA 斜线径向扇（整圆）；轴对齐扫描线硬边同弃——圆缘要平滑。 */
-    XPainter_setPen(&painter, 0xFFF7F9FB);
-    vfdDrawArcBand(&painter, cx, cy, 0, r, 0.0, 360.0);
-    /* 底盘圆缘 AA 描边（同色；羽化圆缘，消除扫描/径向端点阶梯）。 */
-    vfdDrawArcOutline(&painter, cx, cy, r, 0.0, 360.0);
-    /* 底轨带（270°：135° 起、顺时针 270°）+ 内外圆缘描边。 */
-    XPainter_setPenWidth(&painter, 1);
-    XPainter_setPen(&painter, VFD_COLOR_TRACK);
-    vfdDrawArcBand(&painter, cx, cy, bandInner, bandOuter, 135.0, -270.0);
-    vfdDrawArcOutline(&painter, cx, cy, bandOuter, 135.0, -270.0);
-    vfdDrawArcOutline(&painter, cx, cy, bandInner, 135.0, -270.0);
-    /* 进度带（主题色/故障红；从起点起 frac 比例，略厚盖在底轨上）。 */
-    if (frac > 0.003) {
-        int progInner = (bandInner > 0) ? bandInner - 1 : bandInner;
-        XPainter_setPen(&painter, arcColor);
-        vfdDrawArcBand(&painter, cx, cy, progInner, bandOuter + 1,
-                       135.0, -270.0 * frac);
-        vfdDrawArcOutline(&painter, cx, cy, bandOuter + 1, 135.0, -270.0 * frac);
-        vfdDrawArcOutline(&painter, cx, cy, progInner, 135.0, -270.0 * frac);
+    {
+        static int s_gpTrace = -1;
+        int64_t t0 = 0;
+        if (s_gpTrace < 0)
+            s_gpTrace = XSystem_environment("XHSF_PTREE_TRACE") ? 1 : 0;
+        if (s_gpTrace) t0 = XDateTime_currentMSecsSinceEpoch();
+        /* 静态层 blit（圆外透明，页面底色透出）。 */
+        if (gauge->m_staticCache)
+            XPainter_drawImage(&painter, gauge->m_staticCache, 0, 0);
+        /* 进度带（主题色/故障红；从起点起 frac 比例，略厚盖在底轨上）。 */
+        if (frac > 0.003) {
+            int progInner = (bandInner > 0) ? bandInner - 1 : bandInner;
+            vfdFillArcBand(&painter, cx, cy, progInner, bandOuter + 1,
+                           135.0, -270.0 * frac, arcColor);
+        }
+        if (s_gpTrace) {
+            int64_t dt = XDateTime_currentMSecsSinceEpoch() - t0;
+            if (dt >= 5)
+                XPrintf("[gauge] %dx%d r=%d frac=%.2f %lldms\n",
+                        w, h, r, frac, (long long)dt);
+        }
     }
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
 }
+
+/** @brief 取当前状态快照（统一入口：远端走 snapshot 槽、本地回落 device；
+ *         定义见后）。 */
+static const XVfdStatus* vfdPageStatus(HsfMonitorVfd* self);
 
 /** @brief 三仪表 paintEvent 分派（owner+slot 正经分派；取实时值）。 */
 static void VHsfVfdGauge_paintEvent(XWidget* self, XEvent* event)
@@ -486,9 +645,12 @@ static void VHsfVfdGauge_paintEvent(XWidget* self, XEvent* event)
     gauge = (HsfVfdGaugeWidget*)self;
     page = gauge->m_owner;
     if (!page) return;
-    st = XVfdDevice_status_const(page->m_provider
-                                 ? page->m_provider->device(page->m_provUser)
-                                 : NULL);
+    /* [数据源必须统一 2026-11-08 实锅] 此前这里直取
+     * `provider->device()->status_const`：远端（XLink）后端的 device 槽
+     * 恒返回 NULL（无本地设备对象），于是**联机时三只表的进度弧永远画不
+     * 出来**——数值标签走快照显示 35.0 Hz，圆圈却停在 0%。横幅早已改用
+     * vfdPageStatus，仪表漏了同一处口径。 */
+    st = vfdPageStatus(page);
     switch (gauge->m_slot) {
     case 0:     /* 输出频率（故障时弧转红）。 */
         vfdGaugePaint(self, event,
@@ -579,11 +741,11 @@ static void VHsfVfdBanner_paintEvent(XWidget* self, XEvent* event)
 
     /* 左：状态胶囊（圆点 + 状态字）。 */
     if (st && st->m_valid) {
-        if (st->m_faulted) { color = VFD_COLOR_FAULT; stateText = "\xE6\x95\x85\xE9\x9A\x9C"; }
-        else if (st->m_warning) { color = VFD_COLOR_WARN; stateText = "\xE8\xAD\xA6\xE5\x91\x8A"; }
+        if (st->m_faulted) { color = VFD_COLOR_FAULT; stateText = "故障"; }
+        else if (st->m_warning) { color = VFD_COLOR_WARN; stateText = "警告"; }
         else vfdRunStateStyle(st->m_runState, st->m_running, &color, &stateText);
     } else {
-        stateText = "\xE6\x97\xA0\xE6\x95\xB0\xE6\x8D\xAE";  /* 无数据 */
+        stateText = "无数据";  /* 无数据 */
         color = VFD_COLOR_STOP;
     }
     XPainter_setBrush(&painter, color);
@@ -609,11 +771,11 @@ static void VHsfVfdBanner_paintEvent(XWidget* self, XEvent* event)
         faultColor = 0xFFFFC7C9u;
     } else if (page->m_provider && !page->m_provider->controlEnabled(page->m_provUser)) {
         snprintf(faultBuf, sizeof(faultBuf),
-                 "\xE7\x95\x8C\xE9\x9D\xA2\xE6\x93\x8D\xE4\xBD\x9C\xE5\xB7\xB2\xE9\x94\x81"); /* 界面操作已锁 */
+                 "界面操作已锁"); /* 界面操作已锁 */
         faultColor = 0xFFFFD88Au;
     } else {
         snprintf(faultBuf, sizeof(faultBuf),
-                 "\xE9\x80\x9A\xE8\xAE\xAF\xE7\x9B\x91\xE8\xA7\x86\xE4\xB8\xAD"); /* 通讯监视中 */
+                 "通讯监视中"); /* 通讯监视中 */
         faultColor = 0xFF9FB4C7u;
     }
     if (faultBuf[0] != '\0') {
@@ -725,6 +887,55 @@ static void vfdRunSlot(XObject* receiver, XVarList* args)
      * 命令字），再补一条 SET 既冗余，又可能因"停机禁给定"闸被拒（两条
      * 命令的先后由服务端调度决定），还会把刚才捎带的值覆盖掉。
      * 对齐 Python 客户端：启动只发一条 START。 */
+}
+
+/**
+ * @brief 方向下拉切换：停机＝仅预选（随下次启动下发）；运行中＝立即换向。
+ * @details [2026-11-06 运行中换向] 服务端模拟模型已支持"运行中收到反向
+ *          命令字＝先按减速时间降到 0、过零翻向、再按加速时间反向加速"
+ *          （C XVirtualModelVfd / Python VirtualVfd 同口径），故运行中改选
+ *          方向立即下发 START(新方向，捎带当前给定)，不再等下次启动；
+ *          横幅随遥测显示"减速中 → 加速中 → 反转运行"。
+ *          [同向且稳态才跳过] 快照方向在新方向过零前不变（状态字那时才
+ *          翻），故不能只比方向：换向途中翻回原方向（rev==快照方向但处于
+ *          加/减速过渡态）也必须下发——服务端按"同向命令"取消待决换向、
+ *          拉回原方向。稳态同向（无过渡态）才是真冗余，跳过。
+ * @note   receiver=combo 自身，offsetof 反推页（照 vfdRunSlot 口径）。
+ */
+static void vfdDirChangeSlot(XObject* receiver, XVarList* args)
+{
+    HsfMonitorVfd* self = (HsfMonitorVfd*)((char*)receiver -
+                                           offsetof(HsfMonitorVfd, m_dirCombo));
+    const HsfVfdProvider* p;
+    const XVfdStatus* st;
+    bool rev;
+    bool steadySameDir;
+    (void)args;
+    if (!self || !self->m_provider) return;
+    p = self->m_provider;
+    if (!p->start) return;
+    rev = (XComboBox_currentIndex(&self->m_dirCombo) == 1);
+    st = vfdPageStatus(self);
+    /* 停机/无快照：只预选（方向随下次启动下发，原口径不变）。 */
+    if (!st || !st->m_valid || !st->m_running) return;
+    steadySameDir = (rev == st->m_reverse) &&
+                    (st->m_runState == XVfdRunState_RunningForward ||
+                     st->m_runState == XVfdRunState_RunningReverse);
+    if (steadySameDir) return;
+    {
+        /* [捎带给定+回写仲裁] 与启动完全同款：给定随换向命令下发
+         * （服务端"先写 1000H 再写 2000H"），设备回显追上之前按住回写，
+         * 避免回写把设备旧给定灌回滑块。 */
+        const double hzSet = vfdCurrentSetHz(self);
+        const bool sent = p->start(self->m_provUser, rev, hzSet);
+        XPrintf("[vfd-dir] 运行中换向 rev=%d hz=%.2f sent=%d\n",
+                (int)rev, hzSet, (int)sent);
+        if (sent && hzSet > 0.0) {
+            self->m_applyPending = true;
+            self->m_appliedHz = hzSet;
+            self->m_setDirty = true;
+        }
+    }
 }
 
 /**
@@ -852,8 +1063,19 @@ static void vfdModeNotify(void* userData)
     }
     self->m_srvModeKnown = true;
     self->m_srvModeAuto = (autoMode == 1);
-    /* 服务端自动 ⇒ 页面只读（复用既有 m_autoMode 机制）。 */
-    self->m_autoMode = self->m_srvModeAuto;
+    /* [驱动侧让路：env 钩子在位时不驱动"退手动"] XHSF_VFD_AUTO 建立的自动
+     * 只读是演示/自测前提，而这里是**服务端模式位**的驱动点：服务端报手动
+     * 时若照常赋值，钩子态首拍应答即被解开。判据直接读 env（与建页段、
+     * HsfUi.c 闸门同一来源），不另设页面粘性位。
+     * [保持 HEAD 的写入口径] 这里仍直接写 m_autoMode、不经
+     * setInteractiveMode：后者会连带调 provider->setControlEnabled，
+     * 给本路径带上"服务端切自动就关设备层控制闸"的额外副作用（HEAD 没有）。
+     * 让路只加在驱动侧，公开 setter 保持诚实。 */
+    if (!((XSystem_environment("XHSF_VFD_AUTO") != NULL) &&
+          !self->m_srvModeAuto))
+        self->m_autoMode = self->m_srvModeAuto;
+    /* [闸刷新照常执行] 提示行依赖刚更新的 m_srvModeAuto（"服务端自动运行中"
+     * 优先于本页口径），与上面的模式赋值是否被让路无关。 */
     vfdApplyControlState(self);
 }
 
@@ -983,19 +1205,9 @@ static void vfdApplySpeedMode(HsfMonitorVfd* self)
         self->m_updating = false;
     }
     self->m_setDirty = true;   /* 切换后即视为"用户已改"，遥测不再回写。 */
-    /* 换算说明（对齐 Python 的提示行：输出转速为频率换算值，额定点口径）。 */
-    {
-        char buf[128];
-        snprintf(buf, sizeof(buf),
-                 "\xE8\xBE\x93\xE5\x87\xBA\xE8\xBD\xAC\xE9\x80\x9F"
-                 "\xE4\xB8\xBA\xE9\xA2\x91\xE7\x8E\x87\xE6\x8D\xA2\xE5\x80\xBC"
-                 "\xEF\xBC\x88\xE5\x8F\x98\xE9\xA2\x91\xE5\x99\xA8\xE6\x97\xA0"
-                 "\xE8\xBD\xAC\xE9\x80\x9F\xE4\xBC\xA0\xE6\x84\x9F\xE5\x99\xA8"
-                 "\xEF\xBC\x8C\xE9\xA2\x9D\xE7\x82\xB9\xE7\x82\xB9"
-                 " %.0f rpm @ %.0f Hz\xEF\xBC\x89",
-                 rpm, hz);
-        XLabel_setText_2(&self->m_speedNote, buf);
-    }
+    /* [换算说明标签已删 2026-11-08] 原行末长文案（输出转速为频率换算值，
+     * 额定点口径）随「给定行/操作行合并成一行」拆除；量纲换算仍在上面
+     * （滑块恒按 Hz、数字框按当前模式），只是不再在行内复述口径。 */
 }
 
 /**
@@ -1232,46 +1444,49 @@ static void vfdApplyControlState(HsfMonitorVfd* self)
         /* 启动/停止单钮双态：恒可点（闸开时），动作按运行态分派。 */
         XWidget_setEnabled((XWidget*)&self->m_btnRun, gate);
         XAbstractButton_setText_2((XAbstractButton*)&self->m_btnRun,
-            running ? "\xE5\x81\x9C\xE6\xAD\xA2"     /* 停止 */
-                    : "\xE5\x90\xAF\xE5\x8A\xA8");   /* 启动 */
-        /* 方向下拉：可随时预选（方向随**本次启动**下发，运行中改选
-           不影响正在运行的电机；下一次启动生效）。此前运行中整控件
-           置灰，点击无弹窗——用户反馈「正转/反转单击无切换弹窗」：
-           Qt 口径下选择器只读态应**看得见**（灰显），而这里是既要
-           预选又要可点，故改为不置灰、语义只在下次启动生效。 */
+            running ? "停止"     /* 停止 */
+                    : "启动");   /* 启动 */
+        /* 方向下拉：可随时预选；[2026-11-06] 运行中改选**立即换向**——
+           下拉连了 vfdDirChangeSlot，运行中选反向就发 START(新方向)，
+           服务端模型先减速过零再反向加速（横幅"减速中→加速中→反转
+           运行"）。停机时改选仍是预选（随下次启动下发）。保持不置灰：
+           Qt 口径下选择器只读态应看得见（灰显），而这里既要预选又要可点。 */
         XWidget_setEnabled((XWidget*)&self->m_dirCombo, gate);
         /* 点动：无能力（如 ATV61 无通讯点动）直接隐藏（Qt 风格：无
-         * 功能不展示）；有能力则非运行态可点（运行中点动冲突）。 */
+         * 功能不展示）。 */
         if (!hasJog)
             XWidget_hide((XWidget*)&self->m_btnJog);
         else {
             XWidget_show((XWidget*)&self->m_btnJog);
-            /* [点动按钮不按运行态禁用] 对齐 Python 客户端：btn_jog 只在
-             * "原因"（未连接 / 自动模式 / 权限不足）时禁用，运行中照常可用。
-             * 旧实现带 !running ⇒ 点动按下的瞬间设备进运行态，200ms 刷新
-             * 拍就把按钮 setEnabled(false)；而框架按 **Qt 口径** 在按钮被
-             * 禁用时清掉按下态并**发 released** ⇒ 客户端 released 槽停心跳
-             * + 发 op101 ⇒ 现场症状：鼠标没动，按住状态定时自己退出、
-             * 变频器跟着停。 */
+            /* [2026-11-06 运行中禁点动] 电机运行中点动会瞬间换向，物理上
+             * 不成立 ⇒ 运行中禁用（与服务端闸同口径双保险，Python 客户端
+             * 同批对齐）。例外：**点动按住中**（m_jogTimer 非空）不更新
+             * 可用态——框架按 Qt 口径在禁用按下态按钮时会清按下态并**发
+             * released** ⇒ 心跳停 + op101 ⇒ 点动一按就被掐（2026-11-04
+             * 实锅：鼠标没动、按住状态自己退出、变频器跟着停）。松手后
+             * 下一拍刷新即禁用。 */
             {
-                /* [诊断] 点动按钮的可用态变化是"长按被提前松开"的头号嫌疑：
-                 * 按钮被禁用 ⇒ 框架按 Qt 口径清按下态并发 released ⇒ 点动
-                 * 心跳断 + 发 op101 ⇒ 电机停。留日志以便现场一次复现定位。 */
+                /* [诊断] 可用态变化留痕：排除"长按被提前松开"时一眼定位。 */
                 const bool wasEnabled =
                     XWidget_isEnabled((XWidget*)&self->m_btnJog);
-                XWidget_setEnabled((XWidget*)&self->m_btnJog, gate);
-                if (wasEnabled != gate)
-                    XPrintf("[vfd-jog] 按钮可用态变化 %d -> %d（down=%d）\n",
-                            (int)wasEnabled, (int)gate,
+                const bool jogHold = (self->m_jogTimer != NULL);
+                const bool jogGate = gate && (!running || jogHold);
+                XWidget_setEnabled((XWidget*)&self->m_btnJog, jogGate);
+                if (wasEnabled != jogGate)
+                    XPrintf("[vfd-jog] 按钮可用态变化 %d -> %d（down=%d hold=%d）\n",
+                            (int)wasEnabled, (int)jogGate,
                             (int)XAbstractButton_isDown(
-                                (XAbstractButton*)&self->m_btnJog));
+                                (XAbstractButton*)&self->m_btnJog),
+                            (int)jogHold);
             }
         }
         /* 故障复位：仅有故障时可点（对齐 Python：btn_reset 只按 reason 禁用，
          * 这里保留"有故障才可点"更安全——无故障时复位无意义）。 */
         XWidget_setEnabled((XWidget*)&self->m_btnReset, gate && faulted);
-        /* 自由停车：与 Python btn_free 同口径（只按 reason 禁用）。 */
-        XWidget_setEnabled((XWidget*)&self->m_btnFree, gate);
+        /* 自由停车：立即断输出（与"停止"受控减速不同），**只在运行中可点**
+         * ——停机态没有输出可断，按钮应置灰（用户口径「没有启动怎么停止」）。
+         * 闸门(自动/权限/未连接)仍优先。 */
+        XWidget_setEnabled((XWidget*)&self->m_btnFree, gate && running);
     }
     XWidget_setEnabled((XWidget*)&self->m_setSlider, gate);
     XWidget_setEnabled((XWidget*)&self->m_setSpin,   gate);
@@ -1298,19 +1513,16 @@ static void vfdApplyControlState(HsfMonitorVfd* self)
     }
     if (self->m_srvModeAuto) {
         XLabel_setText_2(&self->m_hint,
-            "\xE6\x9C\x8D\xE5\x8A\xA1\xE7\xAB\xAF\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD\xEF\xBC\x9A"
-            "\xE8\xBF\x9C\xE7\xA8\x8B\xE6\x8E\xA7\xE5\x88\xB6\xE5\xB7\xB2\xE7\xA6\x81\xE7\x94\xA8"); /* 服务端自动运行中：远程控制已禁用 */
+            "服务端自动运行中：远程控制已禁用");
         return;
     }
     if (self->m_autoMode) {
         XLabel_setText_2(&self->m_hint,
-            "\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD\xEF\xBC\x9A"
-            "\xE7\x95\x8C\xE9\x9D\xA2\xE5\x8F\xAA\xE8\xAF\xBB"); /* 自动运行中：界面只读 */
+            "自动运行中：界面只读");
     } else {
         XLabel_setText_2(&self->m_hint,
             gate ? ""
-                 : "\xE7\x95\x8C\xE9\x9D\xA2\xE6\x93\x8D\xE4\xBD\x9C\xE5\xB7\xB2\xE9\x94\x81\xEF\xBC\x8C"
-                   "\xE5\x8B\xBE\xE9\x80\x89\xE9\xA2\x91\xE7\x8E\x87\xE7\xBB\x99\xE5\xAE\x9A\xE8\xA1\x8C\xE5\xBC\x80\xE5\x85\xB3\xE8\xA7\xA3\xE9\x94\x81"); /* 界面操作已锁，勾选频率给定行开关解锁 */
+                 : "界面操作已锁"); /* 界面操作已锁 */
     }
 }
 
@@ -1320,28 +1532,30 @@ static void vfdRefresh(HsfMonitorVfd* self)
     const XVfdStatus* st;
     if (!self) return;
     st = vfdPageStatus(self);
+    /* [暂时撤除去重做 A/B 对照] 加去重后给定行高度从 40 涨到 200，
+     * 先回退确认是否本闸所致（vfdRefresh 里可能含几何相关设置）。 */
 
     /* 数值卡（validMask 显 "--"）。 */
     vfdSetCardText(&self->m_cardPower,
-                   "\xE8\xBE\x93\xE5\x87\xBA\xE5\x8A\x9F\xE7\x8E\x87", /* 输出功率 */
+                   "输出功率", /* 输出功率 */
                    st && (st->m_validMask & XVfdField_OutputPowerKw),
                    st ? st->m_outputPowerKw : 0.0, "kW");
     vfdSetCardText(&self->m_cardBus,
-                   "\xE6\xAF\x8D\xE7\xBA\xBF\xE7\x94\xB5\xE5\x8E\x8B", /* 母线电压 */
+                   "母线电压", /* 母线电压 */
                    st && (st->m_validMask & XVfdField_BusVoltage),
                    st ? st->m_busVoltageV : 0.0, "V");
     vfdSetCardText(&self->m_cardRpm,
-                   "\xE8\xBE\x93\xE5\x87\xBA\xE8\xBD\xAC\xE9\x80\x9F", /* 输出转速 */
+                   "输出转速", /* 输出转速 */
                    st && (st->m_validMask & XVfdField_SpeedRpm),
                    st ? st->m_speedRpm : 0.0, "rpm");
     vfdSetCardText(&self->m_cardTorque,
-                   "\xE8\xBE\x93\xE5\x87\xBA\xE8\xBD\xAC\xE7\x9F\xA9", /* 输出转矩 */
+                   "输出转矩", /* 输出转矩 */
                    st && (st->m_validMask & XVfdField_TorquePercent),
                    st ? st->m_torquePercent : 0.0, "%");
     /* [设定频率] 补齐 Python 的读数项：现场要能一眼看到"我给的是多少"，
      * 而不只是"现在跑的是多少"（两者不一致就是"界面在骗人"）。 */
     vfdSetCardText(&self->m_cardSet,
-                   "\xE8\xAE\xBE\xE5\xAE\x9A\xE9\xA2\x91\xE7\x8E\x87", /* 设定频率 */
+                   "设定频率", /* 设定频率 */
                    st && (st->m_validMask & XVfdField_SetFreqHz),
                    st ? st->m_setFreqHz : 0.0, "Hz");
     /* [故障] 有故障显示故障文案（品牌表），无故障显示"无故障"——Python 同款
@@ -1359,11 +1573,11 @@ static void vfdRefresh(HsfMonitorVfd* self)
                 fault = code;
             }
             snprintf(buf, sizeof(buf), "%s\n%s",
-                     "\xE6\x95\x85\xE9\x9A\x9C", fault);   /* 故障 */
+                     "故障", fault);   /* 故障 */
         } else {
             snprintf(buf, sizeof(buf), "%s\n%s",
-                     "\xE6\x95\x85\xE9\x9A\x9C",
-                     "\xE6\x97\xA0\xE6\x95\x85\xE9\x9A\x9C"); /* 故障 / 无故障 */
+                     "故障",
+                     "无故障"); /* 故障 / 无故障 */
         }
         XLabel_setText_2(&self->m_cardFault, buf);
     }
@@ -1385,76 +1599,124 @@ static void vfdRefresh(HsfMonitorVfd* self)
         XLabel_setText_2(&self->m_gaugeVolt.m_value, buf);
     }
 
-    /* 自绘区重绘。 */
-    XWidget_update(&self->m_banner);
-    XWidget_update(&self->m_gaugeFreq.m_canvas.m_base);
-    XWidget_update(&self->m_gaugeCur.m_canvas.m_base);
-    XWidget_update(&self->m_gaugeVolt.m_canvas.m_base);
+    /* 自绘区重绘（同值早退）。
+     * [为什么必须早退 2026-11-08] 服务端**变值才推**快照，但停机时母线电压
+     * 等字段仍在抖 ⇒ vfdRefresh 以 ~5.7Hz 被调，此前四个自绘区无条件标脏，
+     * 页面空闲也跑 32fps（实测悬浮层 FPS 32.4 / 3.61ms）——与用户口径
+     * 「画面变化慢就该一两帧」矛盾。这里按**各控件真正显示的输入**比较：
+     * 频率表 = 频率值 + 故障着色；电流/电压表 = 各自数值；横幅 = 状态胶囊
+     * + 故障码 + 右侧提示（含"界面操作已锁"）。任何一项变了才标脏。 */
+    {
+        double freqV = st ? st->m_outputFreqHz : 0.0;
+        double curV = st ? st->m_outputCurrentA : 0.0;
+        double voltV = st ? st->m_outputVoltageV : 0.0;
+        bool faulted = st ? st->m_faulted : false;
+        bool ctrlOn = (self->m_provider && self->m_provider->controlEnabled)
+                          ? self->m_provider->controlEnabled(self->m_provUser)
+                          : true;
+        /* 横幅可见状态打包（valid/fault/warn/runState/running/faultCode）：
+         * 只作变更判据，不参与绘制。faultCode 是 16 位，左移 9 位不会溢出。 */
+        int bannerSig = 0;
+        if (st) {
+            bannerSig = (st->m_valid ? 1 : 0) | (st->m_faulted ? 2 : 0) |
+                        (st->m_warning ? 4 : 0) | ((int)st->m_runState << 3) |
+                        ((st->m_running ? 1 : 0) << 8) |
+                        ((int)(st->m_faultCode & 0xFFFFu) << 9);
+        }
+        if (!self->m_gaugeSigInit || self->m_gaugeFreqSig != freqV ||
+            self->m_gaugeFaultSig != faulted)
+            XWidget_update(&self->m_gaugeFreq.m_canvas.m_base);
+        if (!self->m_gaugeSigInit || self->m_gaugeCurSig != curV)
+            XWidget_update(&self->m_gaugeCur.m_canvas.m_base);
+        if (!self->m_gaugeSigInit || self->m_gaugeVoltSig != voltV)
+            XWidget_update(&self->m_gaugeVolt.m_canvas.m_base);
+        if (!self->m_bannerSigInit || self->m_bannerSig != bannerSig ||
+            self->m_bannerCtrlSig != ctrlOn)
+            XWidget_update(&self->m_banner);
+        self->m_gaugeSigInit = true;
+        self->m_gaugeFreqSig = freqV;
+        self->m_gaugeCurSig = curV;
+        self->m_gaugeVoltSig = voltV;
+        self->m_gaugeFaultSig = faulted;
+        self->m_bannerSigInit = true;
+        self->m_bannerSig = bannerSig;
+        self->m_bannerCtrlSig = ctrlOn;
+    }
 
-    /* 趋势追点（输出频率；X=相对秒，60s 滚动窗；缩放/平移不打断追点）。 */
+    /* 趋势追点（输出频率；X=相对秒，60s 滚动窗；缩放/平移不打断追点）。
+     * [追点节流 2026-11-08] 此前每拍快照都追一个点：停机（频率恒 0）时
+     * 服务端仍因母线电压抖动以 ~5.7Hz 推快照 ⇒ 图表随之 5.7Hz 滚动重绘，
+     * 空闲页 7.7fps、帧耗时被图表拉高。口径对齐「画面变化慢」：**值变了
+     * 就追**（运行中 10Hz 曲线不受影响），值没变时按 1s 一格补平点
+     * （时间窗 60s、刻度 6s，1s 分辨率足够；平线本来就没有形状差异）。 */
     if (self->m_trendSeries && st && (st->m_validMask & XVfdField_OutputFreqHz)) {
         double xNow = (double)(XDateTime_currentMSecsSinceEpoch() -
                                self->m_trendStartMs) / 1000.0;
-        double minV = st->m_outputFreqHz;
-        double maxV = st->m_outputFreqHz;
-        double winL = self->m_axisX->m_base.m_min;   /* 当前 X 窗左缘。 */
-        static int s_traceCnt = 0;
-        XXYSeries_append((XXYSeries*)self->m_trendSeries, xNow,
-                         st->m_outputFreqHz);
-        if (s_traceCnt++ % 10 == 0)
-            XPrintf("[vfd-trend] pts=%d xNow=%.1f winL=%.1f\n",
-                    (int)XXYSeries_count((XXYSeries*)self->m_trendSeries),
-                    xNow, winL);
-        /* 按点数近似裁剪：点距 0.2s，保留最近 450 点（90s 数据余量）。 */
-        {
-            static const int kKeep = 450;
-            int count = XXYSeries_count((XXYSeries*)self->m_trendSeries);
-            if (count > kKeep)
-                XXYSeries_removePoints((XXYSeries*)self->m_trendSeries,
-                                       0, count - kKeep);
-        }
-        /* 视口仲裁（用户交互 vs 自动跟随最新数据）：
-         * - 默认跟随：右缘贴最新追点，窗宽＝m_trendWinW（用户选的分辨率）；
-         * - 用户平移（viewportChanged/Pan）→ 视口归用户：页面**停写 X 轴**，
-         *   拖到哪停在哪（放大后可左右拖拽看历史）；
-         * - 用户缩放（viewportChanged/Zoom）→ 窗宽取图表当前 X 域宽，
-         *   位置仍跟随（趋势图跟最新数据的常规口径）；
-         * - 用户把窗右缘推回实时点（容差 VFD_TREND_CATCHUP）→ 恢复跟随；
-         * - 复位（viewportChanged/Reset）→ 窗宽回默认并恢复跟随。 */
-        {
-            double winR = self->m_axisX->m_base.m_max;
-            if (self->m_trendUserView && winR >= xNow - VFD_TREND_CATCHUP) {
-                /* 视口右缘已追到实时点 → 交还页面自动跟随。 */
-                self->m_trendUserView = false;
+        const double trendV = st->m_outputFreqHz;
+        bool append = true;
+        if (self->m_trendLastValid && self->m_trendLastValue == trendV &&
+            xNow - self->m_trendLastX < 1.0)
+            append = false;
+        if (append) {
+            double minV = st->m_outputFreqHz;
+            double maxV = st->m_outputFreqHz;
+            double winL = self->m_axisX->m_base.m_min;   /* 当前 X 窗左缘。 */
+            XXYSeries_append((XXYSeries*)self->m_trendSeries, xNow, trendV);
+            self->m_trendLastValid = true;
+            self->m_trendLastValue = trendV;
+            self->m_trendLastX = xNow;
+            /* 按点数近似裁剪：点距 0.2s，保留最近 450 点（90s 数据余量）。 */
+            {
+                static const int kKeep = 450;
+                int count = XXYSeries_count((XXYSeries*)self->m_trendSeries);
+                if (count > kKeep)
+                    XXYSeries_removePoints((XXYSeries*)self->m_trendSeries,
+                                           0, count - kKeep);
             }
-            if (!self->m_trendUserView) {
-                /* 跟随：右缘贴最新追点；左缘钳 0（数据起点前不空滚），
-                 * 钳位时右缘 = max(xNow, lo+winW) 保窗宽不塌。 */
-                vfdTrendFollowWindow(self, xNow);
-                winL = self->m_axisX->m_base.m_min;
-                winR = self->m_axisX->m_base.m_max;
+            /* 视口仲裁（用户交互 vs 自动跟随最新数据）：
+             * - 默认跟随：右缘贴最新追点，窗宽＝m_trendWinW（用户选的分辨率）；
+             * - 用户平移（viewportChanged/Pan）→ 视口归用户：页面**停写 X 轴**，
+             *   拖到哪停在哪（放大后可左右拖拽看历史）；
+             * - 用户缩放（viewportChanged/Zoom）→ 窗宽取图表当前 X 域宽，
+             *   位置仍跟随（趋势图跟最新数据的常规口径）；
+             * - 用户把窗右缘推回实时点（容差 VFD_TREND_CATCHUP）→ 恢复跟随；
+             * - 复位（viewportChanged/Reset）→ 窗宽回默认并恢复跟随。 */
+            {
+                double winR = self->m_axisX->m_base.m_max;
+                if (self->m_trendUserView && winR >= xNow - VFD_TREND_CATCHUP) {
+                    /* 视口右缘已追到实时点 → 交还页面自动跟随。 */
+                    self->m_trendUserView = false;
+                }
+                if (!self->m_trendUserView) {
+                    /* 跟随：右缘贴最新追点；左缘钳 0（数据起点前不空滚），
+                     * 钳位时右缘 = max(xNow, lo+winW) 保窗宽不塌。 */
+                    vfdTrendFollowWindow(self, xNow);
+                    winL = self->m_axisX->m_base.m_min;
+                    winR = self->m_axisX->m_base.m_max;
+                }
             }
-        }
-        /* 纵轴自动量程：扫窗内可见点 min/max（下限 0 起步，上限留 15%
-         * 余量；数据全零给最小跨度兜底）。时间轴模式保证 Y 永不被
-         * 滚轮/捏合缩放，故这里每快照重算即可。 */
-        {
-            int count = XXYSeries_count((XXYSeries*)self->m_trendSeries);
-            int i;
-            for (i = count - 1; i >= 0; --i) {
-                const XPointF* pt = XXYSeries_at((XXYSeries*)self->m_trendSeries, i);
-                if (!pt) break;
-                if ((double)pt->x < winL) break;   /* 更早的更小，提前收。 */
-                if (pt->y < minV) minV = pt->y;
-                if (pt->y > maxV) maxV = pt->y;
+            /* 纵轴自动量程：扫窗内可见点 min/max（下限 0 起步，上限留 15%
+             * 余量；数据全零给最小跨度兜底）。时间轴模式保证 Y 永不被
+             * 滚轮/捏合缩放，故这里每快照重算即可。 */
+            {
+                int count = XXYSeries_count((XXYSeries*)self->m_trendSeries);
+                int i;
+                for (i = count - 1; i >= 0; --i) {
+                    const XPointF* pt = XXYSeries_at(
+                        (XXYSeries*)self->m_trendSeries, i);
+                    if (!pt) break;
+                    if ((double)pt->x < winL) break;   /* 更早的更小，提前收。 */
+                    if (pt->y < minV) minV = pt->y;
+                    if (pt->y > maxV) maxV = pt->y;
+                }
+                if (maxV - minV < 1.0) maxV = minV + 1.0;    /* 最小跨度兜底。 */
+                XValueAxis_setRange(self->m_axisY, 0.0, maxV * 1.15);
             }
-            if (maxV - minV < 1.0) maxV = minV + 1.0;    /* 最小跨度兜底。 */
-            XValueAxis_setRange(self->m_axisY, 0.0, maxV * 1.15);
-        }
-        /* 模型变更通知：追加/裁点/改轴后让视图失效重绘（Qt Charts
-         * 数据模型变更口径；此前不通知——旧版靠偶发布局重绘波及出线，
-         * 时间轴改版后无人刷新即空图，2026-11-03 实锅）。 */
-        XChartView_updateChart(&self->m_trendView);
+            /* 模型变更通知：追加/裁点/改轴后让视图失效重绘（Qt Charts
+             * 数据模型变更口径；此前不通知——旧版靠偶发布局重绘波及出线，
+             * 时间轴改版后无人刷新即空图，2026-11-03 实锅）。 */
+            XChartView_updateChart(&self->m_trendView);
+        }   /* append 节流块 */
     }
 
     /* 设定回显（抑制回环；**用户编辑期间不回写**——服务端 setFreqHz 是
@@ -1487,11 +1749,20 @@ static void vfdRefresh(HsfMonitorVfd* self)
     vfdApplyControlState(self);
 }
 
-/** @brief provider 通知 → vfdRefresh。 */
+/** @brief provider 通知 → vfdRefresh。
+ *  @note  [隐藏页不刷 2026-11-08] 远程推送是"订阅即收"：页切走时 HsfUi
+ *        会退订（hsf_pageTopicSwitch），但**本地 demo 源**不走订阅，其
+ *        200ms 定时器在页面隐藏时照样推进并回调本函数 ⇒ 隐藏页每拍改写
+ *        9 个标签（画像实测：稳态下 3 个数值卡标签 + 2 个仪表刻度标签
+ *        每秒各变 5 次，连带 49 次/秒布局失效），是空闲 CPU 与"看不见的
+ *        重绘准备"的主要来源。隐藏时跳过 UI 回填，切回时由 200ms 节拍
+ *        的下一拍补齐（数据本身不丢：模型/快照仍在推进）。 */
 static void vfdPageNotify(const HsfVfdProvider* provider, void* pageToken)
 {
+    HsfMonitorVfd* self = (HsfMonitorVfd*)pageToken;
     (void)provider;
-    vfdRefresh((HsfMonitorVfd*)pageToken);
+    if (!self || !XWidget_isVisible((XWidget*)&self->m_base)) return;
+    vfdRefresh(self);
 }
 
 /** @brief 页面节拍（200ms）：推进剧情 → 设备解码 → 点动自愈巡检。 */
@@ -1500,8 +1771,14 @@ static void vfdSimTimerCb(void* userData, XTimerData* timer)
     HsfMonitorVfd* self = (HsfMonitorVfd*)userData;
     (void)timer;
 #if XVFD_ON
-    /* 模拟源单例推进（页面创建即订阅；同刻只有一页注册回调）。 */
-    hsfVfdSimTick(NULL);
+    /* [可见才推进并回填 2026-11-08] 隐藏页不推进 demo 剧情、不刷 UI：
+     * 隐藏页的标签写入不产生脏区（可见区域为空），但仍要付出 setText
+     * 文本重建 + sizeHint 推送 + 布局失效的代价（实测 49 次/秒布局
+     * 失效全部来自这里）。切回该页时 200ms 内的下一拍会把剧情追平并
+     * 回填界面——demo 源是自演进的，不依赖连续推进。 */
+    if (self && XWidget_isVisible((XWidget*)&self->m_base)) {
+        hsfVfdSimTick(NULL);
+    }
 #endif
     /* [点动自愈] 心跳在跑、但按钮已不是按下态 ⇒ **松手事件丢了**
      * （窗口失焦、抓取被抢、事件被吞、页面切走时 release 没送达）。
@@ -1566,7 +1843,7 @@ static void vfdInitGauge(HsfVfdGauge* g, XWidget* parent, const char* title,
     XLabel_init(&g->m_title, &g->m_canvas.m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&g->m_title);
     XLabel_setText_2(&g->m_title, title);
-    XLabel_setTextPixelSize(&g->m_title, 13);
+    XLabel_setTextPixelSize(&g->m_title, vfdPx(13));
     XLabel_setAlignment(&g->m_title, XAlignment_HCenter | XAlignment_VCenter);
     XWidget_setForegroundRole((XWidget*)&g->m_title, XPaletteColorRole_Mid);
 
@@ -1579,13 +1856,13 @@ static void vfdInitGauge(HsfVfdGauge* g, XWidget* parent, const char* title,
         XWidget_setFont((XWidget*)&g->m_value, &f);
         XClassDeinit(&f);
     }
-    XLabel_setTextPixelSize(&g->m_value, 18);
+    XLabel_setTextPixelSize(&g->m_value, vfdPx(18));
     XLabel_setAlignment(&g->m_value, XAlignment_HCenter | XAlignment_VCenter);
 
     XLabel_init(&g->m_unit, &g->m_canvas.m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&g->m_unit);
     XLabel_setText_2(&g->m_unit, unit);
-    XLabel_setTextPixelSize(&g->m_unit, 12);
+    XLabel_setTextPixelSize(&g->m_unit, vfdPx(12));
     XLabel_setAlignment(&g->m_unit, XAlignment_HCenter | XAlignment_VCenter);
     XWidget_setForegroundRole((XWidget*)&g->m_unit, XPaletteColorRole_Mid);
 
@@ -1602,7 +1879,7 @@ static void vfdInitCard(XLabel* card, XWidget* parent)
     XLabel_init(card, parent, 0);
     HsfTheme_applyDefaultFont((XWidget*)card);
     XLabel_setAlignment(card, XAlignment_HCenter | XAlignment_VCenter);
-    XLabel_setTextPixelSize(card, 13);
+    XLabel_setTextPixelSize(card, vfdPx(13));
     XWidget_setFixedHeight((XWidget*)card, VFD_CARD_H);
     XWidget_show((XWidget*)card);
 }
@@ -1793,6 +2070,46 @@ static void vfdRunSelfTest(HsfMonitorVfd* self)
     }
 }
 
+/** @brief 字号实时重放（本地设置改动时由 HsfUi 调回）。 */
+static void vfdApplyFonts(XWidget* page, int pct)
+{
+    HsfMonitorVfd* self = (HsfMonitorVfd*)page;
+    HsfVfdGauge* gs[3];
+    XLabel* cards[6];
+    int i;
+    if (!self || pct <= 0) return;
+    gs[0] = &self->m_gaugeFreq;
+    gs[1] = &self->m_gaugeCur;
+    gs[2] = &self->m_gaugeVolt;
+    for (i = 0; i < 3; ++i) {
+        XLabel_setTextPixelSize(&gs[i]->m_title, 13 * pct / 100);
+        XLabel_setTextPixelSize(&gs[i]->m_value, 18 * pct / 100);
+        XLabel_setTextPixelSize(&gs[i]->m_unit, 12 * pct / 100);
+        XWidget_setFixedHeight(&gs[i]->m_canvas.m_base,
+                               VFD_GAUGE_H * pct / 100);
+    }
+    cards[0] = &self->m_cardPower;
+    cards[1] = &self->m_cardBus;
+    cards[2] = &self->m_cardRpm;
+    cards[3] = &self->m_cardTorque;
+    cards[4] = &self->m_cardSet;
+    cards[5] = &self->m_cardFault;
+    for (i = 0; i < 6; ++i) {
+        XLabel_setTextPixelSize(cards[i], 13 * pct / 100);
+        XWidget_setFixedHeight((XWidget*)cards[i],
+                               VFD_CARD_H * pct / 100);
+    }
+    XWidget_setFixedHeight(&self->m_banner, VFD_BANNER_H * pct / 100);
+    XLabel_setTextPixelSize(&self->m_setLabel, 13 * pct / 100);
+    /* [标签定宽随字号同步放大 2026-11-08] 定宽存在的意义是"四字宽度固定"，
+     * 字号放大后若仍按 100% 的 72px 定宽，19px 的四字（≈76px）会裁掉末字
+     * 「定」——150% 实测只剩约 11px（验收截图 wf_vfd1600.png）。定宽必须
+     * 与字号同一折算比例，语义才是"四字宽度固定"而不是"像素固定"。 */
+    XWidget_setFixedWidth((XWidget*)&self->m_setLabel,
+                          (72 * pct + 50) / 100);
+    XLabel_setTextPixelSize(&self->m_hint, 12 * pct / 100);
+}
+
 XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userData)
 {
     HsfMonitorVfd* self;
@@ -1829,13 +2146,13 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
 
     /* ---- 区 2：仪表行（3 gauge + 2×2 卡片） ---- */
     vfdInitGauge(&self->m_gaugeFreq, &self->m_base,
-                 "\xE8\xBE\x93\xE5\x87\xBA\xE9\xA2\x91\xE7\x8E\x87", "Hz", /* 输出频率 */
+                 "输出频率", "Hz", /* 输出频率 */
                  self, 0);
     vfdInitGauge(&self->m_gaugeCur, &self->m_base,
-                 "\xE8\xBE\x93\xE5\x87\xBA\xE7\x94\xB5\xE6\xB5\x81", "A", /* 输出电流 */
+                 "输出电流", "A", /* 输出电流 */
                  self, 1);
     vfdInitGauge(&self->m_gaugeVolt, &self->m_base,
-                 "\xE8\xBE\x93\xE5\x87\xBA\xE7\x94\xB5\xE5\x8E\x8B", "V", /* 输出电压 */
+                 "输出电压", "V", /* 输出电压 */
                  self, 2);
     {
         /* 卡片宿主先行创建：卡片必须以宿主为父（父=页容器会脱管悬浮——
@@ -1876,15 +2193,19 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     XBoxLayout_addWidget(&self->m_gaugeRow, &self->m_gaugeCur.m_canvas.m_base);
     XBoxLayout_addWidget(&self->m_gaugeRow, &self->m_gaugeVolt.m_canvas.m_base);
 
-    /* ---- 区 3：给定行 ---- */
+    /* ---- 区 3：控制行-给定组 ---- */
     /* [调速方式] 频率调速 / 转速调速（对齐 Python 客户端）：给定值的单位
      * 由它决定，转速只是频率的换算值（设备只接受频率通道）。 */
     XComboBox_init(&self->m_speedMode, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_speedMode);
+    /* [行内输入控件定高 2026-11-08，对齐本页既有惯例] 操作行按钮/方向下拉
+     * 都是 setFixedHeight(40)；给定行此前没定高 ⇒ 布局把多余竖向空间摊给
+     * 它时组合框/数字框被拉到 200px（用户实测"两个控件拉得很大"）。 */
+    XWidget_setFixedHeight((XWidget*)&self->m_speedMode, 40);
     XComboBox_addItem_2(&self->m_speedMode,
-                        "\xE9\xA2\x91\xE7\x8E\x87\xE8\xB0\x83\xE9\x80\x9F"); /* 频率调速 */
+                        "频率调速"); /* 频率调速 */
     XComboBox_addItem_2(&self->m_speedMode,
-                        "\xE8\xBD\xAC\xE9\x80\x9F\xE8\xB0\x83\xE9\x80\x9F"); /* 转速调速 */
+                        "转速调速"); /* 转速调速 */
     /* [缺省调速方式 = 转速调速] 现场按"转速"下达工艺要求（给定 1440rpm
      * 这类），频率是换算出来的中间量；缺省就落在转速上，需要频率时再切。
      * 建页后会调一次 vfdApplySpeedMode（见建页尾），输入框的量程/后缀/
@@ -1892,14 +2213,10 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     XComboBox_setCurrentIndex(&self->m_speedMode, VFD_SPEED_MODE_RPM);
     XWidget_setFixedWidth((XWidget*)&self->m_speedMode, 104);
     XWidget_show((XWidget*)&self->m_speedMode);
-    /* 换算说明（输出转速为频率换算值，额定点口径）。 */
-    XLabel_init(&self->m_speedNote, &self->m_base, 0);
-    HsfTheme_applyDefaultFont((XWidget*)&self->m_speedNote);
-    XLabel_setTextPixelSize(&self->m_speedNote, 11);
-    XLabel_setText_2(&self->m_speedNote, " ");
-    XWidget_setForegroundRole((XWidget*)&self->m_speedNote,
-                              XPaletteColorRole_Mid);
-    XWidget_show((XWidget*)&self->m_speedNote);
+    /* [换算说明已删除 2026-11-08 用户口径] 原「输出转速为频率换算值（变频器
+     * 无转速传感器，额定点 1440 rpm @ 50 Hz）」长文案独占行尾、把给定行与
+     * 操作行挤成两行；用户要求两行合并 + 去掉该段长文案。换算口径本身不变
+     * （见 vfdApplySpeedMode 的量纲换算），只是不再在行内复述。 */
     /* 调速方式切换槽（receiver=combo 自身，offsetof 反推页）。 */
     XObject_connect_1((XObject*)&self->m_speedMode,
                       XSignal(XComboBox_currentIndexChanged_signal),
@@ -1909,12 +2226,20 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     XLabel_init(&self->m_setLabel, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_setLabel);
     XLabel_setText_2(&self->m_setLabel,
-                     "\xE9\xA2\x91\xE7\x8E\x87\xE7\xBB\x99\xE5\xAE\x9A"); /* 频率给定 */
-    XLabel_setTextPixelSize(&self->m_setLabel, 13);
-    /* [固定宽] 滑块移走自己的行之后，给定行的空余宽度会被"可伸展"的
-     * 控件吃掉——标签按内容宽排的话，空隙就落在标签与输入框之间（观感：
-     * 控件被推散）。标签给固定宽（≈四字），多余空间交给末尾的换算说明。 */
-    XWidget_setFixedWidth((XWidget*)&self->m_setLabel, 72);
+                     "频率给定"); /* 频率给定 */
+    XLabel_setTextPixelSize(&self->m_setLabel, vfdPx(13));
+    /* [行内统一固定高 40] 标签不给定高时，横排里会被拉到与行同高（40）
+     * ——数值一致，但字号放大后行高由别的控件决定、标签跟着变；直接定成
+     * 40 与行内其它控件同口径（文字自身垂直居中，见 XLabel 缺省对齐）。 */
+    XWidget_setFixedHeight((XWidget*)&self->m_setLabel, 40);
+    /* [固定宽] 合并后的控制行里，空余宽度若按内容宽排会分散到标签与
+     * 输入框之间（观感：控件被推散）。标签给固定宽（≈四字），多余空间
+     * 统一交给给定组末尾的可伸展空隙（见布局段的 addStretch）。
+     * [定宽必须过 vfdPx 2026-11-08] 本页字号按 Page5 百分比折算（150% 时
+     * 13px→19px），72px 的固定宽会裁掉四字里的最后一个「定」（验收实测
+     * 只显示约 11px）。折算后 150% = 108px，四字有充足余量；实时字号
+     * 重放路径 vfdApplyFonts 同步重设定宽，见该函数注。 */
+    XWidget_setFixedWidth((XWidget*)&self->m_setLabel, vfdPx(72));
     XWidget_show((XWidget*)&self->m_setLabel);
 
     XSlider_init(&self->m_setSlider, &self->m_base, 0);
@@ -1928,6 +2253,12 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
 
     XSpinBox_init(&self->m_setSpin, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_setSpin);
+    XWidget_setFixedHeight((XWidget*)&self->m_setSpin, 40);  /* 见组合框处注。 */
+    /* [定宽 2026-11-08] 合并成单行后本框与方向下拉/四枚按钮同排：按文本
+     * 自动量宽会随「1440 rpm / 50 Hz」变档而抖动（整行控件跟着跳）。定宽
+     * 100 覆盖最长文本（4 位数字 + " rpm" + 步进箭头列 ≈ 85），同时作为
+     * 单行宽度预算里的确定项（见 VFD_CTRL_MIN_ROW_W 注）。 */
+    XWidget_setFixedWidth((XWidget*)&self->m_setSpin, 100);
     /* [量程/后缀/步进随调速方式走] 频率调速：0..额定Hz 步进 1；转速调速：
      * 0..额定rpm 步进 10（见 vfdApplySpeedMode）。
      * [单位] 输入框是**用户量纲**（Hz / rpm），不是滑块那种 0.1Hz 定点
@@ -1957,26 +2288,40 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
         }
     }
 
-    /* ---- 区 4：操作行（方向下拉 + 启停双态钮 + 点动/复位条件使能；
-       caps 裁剪在 vfdApplyControlState 随快照刷新） ---- */
+    /* ---- 区 4：操作组（方向下拉 + 启停双态钮 + 点动/复位条件使能；
+       caps 裁剪在 vfdApplyControlState 随快照刷新） ----
+       [与给定组同排 2026-11-08 用户口径] 原「给定行」「操作行」各自独占
+       一行，用户要求合成一行（去掉行尾长换算说明后宽度够用）；同排后
+       单行的宽度预算见文件末 VFD_CTRL_MIN_ROW_W。 */
     XComboBox_init(&self->m_dirCombo, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_dirCombo);
     XComboBox_addItem_2(&self->m_dirCombo,
-                        "\xE6\xAD\xA3\xE8\xBD\xAC");   /* 正转 */
+                        "正转");   /* 正转 */
     XComboBox_addItem_2(&self->m_dirCombo,
-                        "\xE5\x8F\x8D\xE8\xBD\xAC");   /* 反转 */
+                        "反转");   /* 反转 */
     XComboBox_setCurrentIndex(&self->m_dirCombo, 0);
     XWidget_setFixedHeight((XWidget*)&self->m_dirCombo, 40);
-    XWidget_setMinimumWidth((XWidget*)&self->m_dirCombo, 110);
+    XWidget_setMinimumWidth((XWidget*)&self->m_dirCombo, 100);
     XWidget_show((XWidget*)&self->m_dirCombo);
+    /* 方向切换槽（receiver=combo 自身，offsetof 反推页）：停机＝预选、
+     * 运行中＝立即换向（见 vfdDirChangeSlot）。必须在 setCurrentIndex
+     * 之后连接——建页的初始预选不发命令。 */
+    XObject_connect_1((XObject*)&self->m_dirCombo,
+                      XSignal(XComboBox_currentIndexChanged_signal),
+                      (XObject*)&self->m_dirCombo, vfdDirChangeSlot,
+                      XConnectionType_Direct);
+    /* [初始文本 = 实字，不写内部注记] 原先这里放的是「启动（双态字随刷新
+     * 翻）」这条注释文案：首拍遥测到达前按钮按 12 个字量宽（≈224px），
+     * 合并后的单行会被它顶宽/缩字一拍。vfdApplyControlState 首次刷新即
+     * 会按运行态改成「启动/停止」，这里给同口径的初值即可。 */
     vfdInitBtn(&self->m_btnRun, &self->m_base,
-               "\xE5\x90\xAF\xE5\x8A\xA8",              /* 启动（双态字随刷新翻） */
+               "启动",              /* 启动（运行中由刷新换成「停止」） */
                vfdRunSlot);
     /* 点动"按住生效"：**不连 clicked**（松手时 clicked 会再启动一次点动，
      * 电机就永远停不下来）——只接 pressed（开始）与 released（松手）。
      * 见 vfdInitBtnNoClick 的注记。 */
     vfdInitBtnNoClick(&self->m_btnJog, &self->m_base,
-                      "\xE7\x82\xB9\xE5\x8A\xA8");              /* 点动 */
+                      "点动");              /* 点动 */
     XObject_connect_1((XObject*)&self->m_btnJog,
                       XSignal(XAbstractButton_pressed_signal),
                       (XObject*)&self->m_btnJog, vfdJogPressedSlot,
@@ -1986,13 +2331,21 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
                       (XObject*)&self->m_btnJog, vfdJogReleasedSlot,
                       XConnectionType_Direct);
     vfdInitBtn(&self->m_btnReset, &self->m_base,
-               "\xE6\x95\x85\xE9\x9A\x9C\xE5\xA4\x8D\xE4\xBD\x8D", /* 故障复位 */
+               "故障复位", /* 故障复位 */
                vfdResetSlot);
     /* [自由停车] 对齐 Python 客户端 btn_free（op=FREE_STOP）：立即断输出，
      * 与"停止"（受控减速）是两种现场动作。 */
     vfdInitBtn(&self->m_btnFree, &self->m_base,
-               "\xE8\x87\xAA\xE7\x94\xB1\xE5\x81\x9C\xE8\xBD\xA6", /* 自由停车 */
+               "自由停车", /* 自由停车 */
                vfdFreeStopSlot);
+    /* [按钮最小宽 = 单行预算的确定项 + 触控面 2026-11-08] 高度同行内 40
+     * 惯例；宽度都大于文本宽（4 字 × 16px ≈ 64 + 风格边距 8 ⇒ 72；2 字
+     * ⇒ 40），不裁字。数值同时是单行宽度预算里可数的项（见
+     * VFD_CTRL_MIN_ROW_W）。 */
+    XWidget_setMinimumWidth((XWidget*)&self->m_btnRun, 76);
+    XWidget_setMinimumWidth((XWidget*)&self->m_btnJog, 60);
+    XWidget_setMinimumWidth((XWidget*)&self->m_btnReset, 84);
+    XWidget_setMinimumWidth((XWidget*)&self->m_btnFree, 84);
     /* 远端后端：订阅模式应答并主动查一次初始模式。 */
     HsfLinkClient_setModeCallback(vfdModeNotify, self);
     if (HsfLinkClient_isOpen())
@@ -2011,7 +2364,7 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
         /* Qt 无 setTitleVisible；隐藏标题 = 标题文本置空（对标 QChart::setTitle("")）。 */
         XChart_setTitle_2(self->m_trendChart, "");
         XAbstractSeries_setName_2((XAbstractSeries*)self->m_trendSeries,
-                                  "\xE8\xBE\x93\xE5\x87\xBA\xE9\xA2\x91\xE7\x8E\x87"); /* 输出频率 */
+                                  "输出频率"); /* 输出频率 */
         XChart_addSeries(self->m_trendChart, self->m_trendSeries,
                          XChartSeriesType_Line);
         XChart_createDefaultAxes(self->m_trendChart);
@@ -2038,7 +2391,15 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
                       XSignal(XChartView_viewportChanged_signal),
                       (XObject*)self, vfdTrendViewportSlot,
                       XConnectionType_Direct);
-    XWidget_setFixedHeight((XWidget*)&self->m_trendView, VFD_TREND_H);
+    /* [趋势图吃满剩余高度 2026-11-08 用户口径] 原先 setFixedHeight(160)：
+     * 主布局就算把伸缩给了图表，**固定高**也长不大 ⇒ 多出来的竖向空间被
+     * 别的行（仪表行/控制行）摊掉，页面上留一大块空白、图表只有 160px。
+     * 对齐 Qt 做法：最小高 160 + 双向 Expanding + 布局伸缩项，图表自然
+     * 吃掉全部多余高度。 */
+    XWidget_setSizePolicy((XWidget*)&self->m_trendView,
+                          XWidgetSizePolicy_Expanding,
+                          XWidgetSizePolicy_Expanding);
+    XWidget_setMinimumHeight((XWidget*)&self->m_trendView, VFD_TREND_H);
     XWidget_show((XWidget*)&self->m_trendView);
 
     /* [控制闸复选框已移除] 2026-11-06：本地「允许界面操作」闸让现场必须
@@ -2047,8 +2408,17 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
 
     XLabel_init(&self->m_hint, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_hint);
-    XLabel_setTextPixelSize(&self->m_hint, 12);
+    XLabel_setTextPixelSize(&self->m_hint, vfdPx(12));
     XWidget_setForegroundRole((XWidget*)&self->m_hint, XPaletteColorRole_Mid);
+    /* [宽度上限 = 单行预算的封顶项 2026-11-08] 提示是行末唯一按文本量宽
+     * 的控件：模式文案「服务端自动运行中：远程控制已禁用」16 字 × 12px
+     * ≈ 192；不封顶时更长的应答错误会顶宽整行，把方向下拉/按钮挤出窗口。
+     * 框架的布局条目最小尺寸会按 maximumSize 收敛（XLayoutItem.c 的
+     * VXWidgetItem_minimumSize），所以 200 同时是"最小"的封顶值：
+     * 单行最小宽恒 ≤ 预算（见 VFD_CTRL_MIN_ROW_W）。 */
+    XWidget_setMaximumWidth((XWidget*)&self->m_hint, VFD_HINT_MAX_W);
+    /* [行内统一固定高 40] 与按钮/下拉同高，行高不再依赖文本高度。 */
+    XWidget_setFixedHeight((XWidget*)&self->m_hint, 40);
     XWidget_show((XWidget*)&self->m_hint);
 
     /* ---- 页内布局 ---- */
@@ -2066,24 +2436,42 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
         XBoxLayout_setStretch(&self->m_gaugeRow, 3, 2);  /* 卡片列更宽。 */
     }
     XBoxLayout_addLayout(&self->m_layout, (XLayout*)&self->m_gaugeRow);
-    {
-        /* 给定行：调速方式 + 标签 + SpinBox + 下发 + 换算说明。 */
-        XHBoxLayout* row = (XHBoxLayout*)XMemory_malloc(sizeof(XHBoxLayout),
-                                                        XCLASS_DEFAULT_MEMORY_TYPE);
-        if (row) {
-            XBoxLayout_init(row, XBoxLayoutDirection_LeftToRight);
-            XLayout_setSpacing((XLayout*)row, 10);
-            XBoxLayout_addWidget(row, (XWidget*)&self->m_speedMode);
-            XBoxLayout_addWidget(row, (XWidget*)&self->m_setLabel);
-            XBoxLayout_addWidget(row, (XWidget*)&self->m_setSpin);
-            XBoxLayout_addWidget(row, (XWidget*)&self->m_speedNote);
-            XBoxLayout_addLayout(&self->m_layout, (XLayout*)row);
-        }
-    }
+    /* ---- 控制行：给定组 + 操作组合成**同一行**（2026-11-08 用户口径）----
+     * [为什么用"两组 + 一层横向容器"] 两组合排是单行，容器方向一改就是
+     * 上下两排——窄页宽的回退只翻方向、控件不搬家（adapt 每帧幂等）。
+     * [顺序] 给定组（调速方式、固定宽 72 的「频率给定」、数字框）其后是
+     * 组内**可伸展空隙**（addStretch），把操作组与行末提示顶到右边；行末
+     * 再加一道 stretch，让提示标签贴右（同时保证操作组内按钮不被拉散）。
+     * [只有给定组吃余宽] 容器给给定组 stretch=1 ⇒ 余宽全进它末尾的空隙，
+     * 操作组恒按自身 hint 排列、提示恒在右端（窄档翻成竖排时该 stretch
+     * 由 adapt 归零，两排才不会被竖向撑开）。 */
+    XBoxLayout_init(&self->m_ctrlRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&self->m_ctrlRow, VFD_CTRL_ROW_SPACING);
+    XBoxLayout_init(&self->m_setRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&self->m_setRow, VFD_CTRL_ROW_SPACING);
+    XBoxLayout_addWidget(&self->m_setRow, (XWidget*)&self->m_speedMode);
+    XBoxLayout_addWidget(&self->m_setRow, (XWidget*)&self->m_setLabel);
+    XBoxLayout_addWidget(&self->m_setRow, (XWidget*)&self->m_setSpin);
+    XBoxLayout_addStretch(&self->m_setRow, 1);   /* 可伸展空隙（给定↔操作）。 */
+    XBoxLayout_init(&self->m_opRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&self->m_opRow, VFD_CTRL_ROW_SPACING);
+    XBoxLayout_addWidget(&self->m_opRow, (XWidget*)&self->m_dirCombo);
+    XBoxLayout_addWidget(&self->m_opRow, (XWidget*)&self->m_btnRun);
+    XBoxLayout_addWidget(&self->m_opRow, (XWidget*)&self->m_btnJog);
+    XBoxLayout_addWidget(&self->m_opRow, (XWidget*)&self->m_btnReset);
+    XBoxLayout_addWidget(&self->m_opRow, (XWidget*)&self->m_btnFree);
+    XBoxLayout_addStretch(&self->m_opRow, 1);    /* 行末 stretch：提示右靠。 */
+    XBoxLayout_addWidget(&self->m_opRow, (XWidget*)&self->m_hint);
+    XBoxLayout_addLayout(&self->m_ctrlRow, (XLayout*)&self->m_setRow);
+    XBoxLayout_addLayout(&self->m_ctrlRow, (XLayout*)&self->m_opRow);
+    XBoxLayout_setStretch(&self->m_ctrlRow, 0, 1);  /* 余宽只进给定组空隙。 */
+    XBoxLayout_addLayout(&self->m_layout, (XLayout*)&self->m_ctrlRow);
     {
         /* 滑块**单独一行**（2026-11-06 用户实锅）：原先它与标签/输入框/
          * 下发挤在同一行，只剩几十像素宽、又是细把手，现场手指根本拖不动
-         * 调速。独占一行 + 加高后：把手高度＝控件高−2，触摸面直接变大。 */
+         * 调速。独占一行 + 加高后：把手高度＝控件高−2，触摸面直接变大。
+         * [2026-11-08 合并控制行后仍独占一行] 用户明确要求保留；拖动调速
+         * 是触摸屏的主要操作，不能为了省行把它挤窄。 */
         XHBoxLayout* sliderRow = (XHBoxLayout*)XMemory_malloc(sizeof(XHBoxLayout),
                                                               XCLASS_DEFAULT_MEMORY_TYPE);
         if (sliderRow) {
@@ -2094,23 +2482,15 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
             XBoxLayout_addLayout(&self->m_layout, (XLayout*)sliderRow);
         }
     }
-    {
-        /* 操作行：方向下拉 + 启停双态钮 + 点动 + 故障复位 + 提示右靠。 */
-        XHBoxLayout* opRow = (XHBoxLayout*)XMemory_malloc(sizeof(XHBoxLayout),
-                                                          XCLASS_DEFAULT_MEMORY_TYPE);
-        if (opRow) {
-            XBoxLayout_init(opRow, XBoxLayoutDirection_LeftToRight);
-            XLayout_setSpacing((XLayout*)opRow, 10);
-            XBoxLayout_addWidget(opRow, (XWidget*)&self->m_dirCombo);
-            XBoxLayout_addWidget(opRow, (XWidget*)&self->m_btnRun);
-            XBoxLayout_addWidget(opRow, (XWidget*)&self->m_btnJog);
-            XBoxLayout_addWidget(opRow, (XWidget*)&self->m_btnReset);
-            XBoxLayout_addWidget(opRow, (XWidget*)&self->m_btnFree);
-            XBoxLayout_addWidget(opRow, (XWidget*)&self->m_hint);
-            XBoxLayout_addLayout(&self->m_layout, (XLayout*)opRow);
-        }
-    }
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_trendView);
+    /* [竖向多余空间只给趋势图 2026-11-08] 主布局里此前**没有任何伸展项**：
+     * 页面比各行 sizeHint 之和高出来的那截，会被平均摊给每一行 ⇒ 给定行
+     * （转速调速/频率给定的组合框与数字框）被拉到 200px 高、箭头按钮各占
+     * 100px（用户实测截图"两个控件拉得很大"）。对齐 Qt 的做法：纵向布局
+     * 只让**图表**吃伸缩，其余行按 sizeHint 定高。 */
+    XBoxLayout_setStretch(&self->m_layout,
+                          XLayout_count_base((const XLayout*)&self->m_layout) - 1,
+                          1);
 
     /* ---- 建页即按当前调速方式摆一次输入框 ----
      * [为什么建页就要做] vfdApplySpeedMode 负责"量程/后缀/步进/初值"，
@@ -2150,13 +2530,16 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
 
     /* ---- 交互模式登记：单页单实例；create 前的 setInteractiveMode
        意图在此生效（对齐 HsfMonitorDigital 的建页尾应用口径） ---- */
-    self->m_autoMode = s_pendingAutoMode;
     s_vfdPage = self;
-    /* 环境变量直驱（演示/自测外部门；对齐数字量页 XHSF_DIGITAL_AUTO）。 */
-    if (XSystem_environment("XHSF_VFD_AUTO"))
-        s_pendingAutoMode = true;
-    if (self->m_autoMode || s_pendingAutoMode)
-        HsfMonitorVfd_setInteractiveMode(false);   /* 幂等应用：隐藏+锁 */
+    /* 环境变量直驱（演示/自测外部门；对齐数字量页 XHSF_DIGITAL_AUTO）。
+     * [只在此建立初始态] 钩子态仅写页面；之后"闸门不得把它翻回手动"由
+     * 驱动侧让路承担（HsfUi.c hsfWinApplyControlGates、本文件 vfdModeNotify
+     * 都读同名 env 后跳过"退手动"）。本函数对调用方保持诚实。
+     * [不要先直接写 m_autoMode 再调 setInteractiveMode] 那样会命中
+     * `m_autoMode == autoMode` 早退，provider 的控制闸与按钮态都不下发；
+     * 让 setInteractiveMode 自己完成首次应用。 */
+    if (s_pendingAutoMode || XSystem_environment("XHSF_VFD_AUTO"))
+        HsfMonitorVfd_setInteractiveMode(false);   /* 建页首次应用：隐藏+锁 */
 
     /* 自测钩子延后执行：建页时 XLink 可能尚未登录完成
      * （HsfLinkClient_isReady()==false 时控制会被丢弃）。用一次性定时器
@@ -2172,6 +2555,8 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
         }
     }
 
+    hsfUi_registerPageFontApplier(HSF_PAGE_MONITOR_VFD, &self->m_base,
+                                  vfdApplyFonts);
     XWidget_show(&self->m_base);
     return &self->m_base;
 }
@@ -2187,15 +2572,32 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
 
 /** @brief 形态自适应：按页根实际宽度分档（全局 compact 信号作或）。
  *  @details 窄档（页宽 < 620 或全局竖屏形态）：仪表纵排、卡片宿主
- *           整宽；宽档：仪表横排三等分 + 卡片占右列。 */
+ *           整宽；宽档：仪表横排三等分 + 卡片占右列。
+ *           控制行另按 VFD_CTRL_MIN_ROW_W 分档：宽档单行（给定组 + 操作组
+ *           同排），窄档竖向两排——两档都只改布局方向/stretch，不重建控件。 */
 void HsfMonitorVfd_adapt(XWidget* page, bool compact)
 {
     HsfMonitorVfd* self = (HsfMonitorVfd*)page;
     bool narrow;
+    bool ctrlTwoLine;
     int pw;
     if (!self) return;
     pw = XWidget_width(page);
     narrow = compact || (pw > 0 && pw < VFD_NARROW_PAGE_W);
+    /* [控制行分档 2026-11-08] 单行最小宽 960 + 页边距 48 ⇒ 页宽 < 1024
+     * 回退两排（1280×800 页宽 ≈ 1096 单行，1024 页宽 ≈ 840 两排）。
+     * 阈值高于页根最小宽 1008：页根被滚动区按布局最小宽兜底，若阈值等于
+     * 它，窄窗下 adapt 只会读到"刚好等于阈值"的宽度、回退永不触发——
+     * 详见 VFD_CTRL_MIN_ROW_W 的注。宽未知（0，建页当帧）按宽档走：
+     * 几何定下来后 adapt 会按页宽重跑。 */
+    ctrlTwoLine = compact || (pw > 0 && pw < VFD_CTRL_MIN_ROW_W);
+    /* 宽档单行（LeftToRight）；窄档竖向两排：给定组一行、操作组一行
+       ——控件不搬家，只翻容器方向。 */
+    XBoxLayout_setDirection(&self->m_ctrlRow,
+                            ctrlTwoLine ? XBoxLayoutDirection_TopToBottom
+                                        : XBoxLayoutDirection_LeftToRight);
+    /* 竖排时给定组不能再吃余宽（横排时它负责把操作组/提示顶到右边）。 */
+    XBoxLayout_setStretch(&self->m_ctrlRow, 0, ctrlTwoLine ? 0 : 1);
     XBoxLayout_setDirection(&self->m_gaugeRow,
                             narrow ? XBoxLayoutDirection_TopToBottom
                                    : XBoxLayoutDirection_LeftToRight);
@@ -2233,6 +2635,12 @@ void HsfMonitorVfd_setInteractiveMode(bool interactive)
         s_pendingAutoMode = autoMode;
         return;
     }
+    /* [本函数是诚实 setter：调用方说退手动就退] env 自测钩子
+     * （XHSF_VFD_AUTO）的"别被驱动翻回手动"不在这里判——见 vfdModeNotify
+     * 与 HsfUi.c hsfWinApplyControlGates 的驱动侧让路。头文件
+     * （HsfMonitorVfd.h:39-50）与本函数的往返契约必须保持可用：
+     * Test/XGuiTest/hsf_vfd_probe.c ⑨ 段断言 setInteractiveMode(true) 后
+     * interactiveMode()==true。 */
     if (self->m_autoMode == autoMode) return;
     self->m_autoMode = autoMode;
     if (interactive) {

@@ -191,8 +191,20 @@ const char* HsfLinkClient_user(void);
 /**
  * @brief 当前会话认证角色（XLinkAuthRole；未就绪/匿名返回 0）。
  * @note  仅用于界面侧"能否操作"的**提示**判定；权威判定始终在服务端。
+ * @warning 角色值**不单调**（操作者=3 > 管理员=2），禁止写 role>=x 比较；
+ *          需要"能不能做"一律用 HsfLinkClient_can(HSF_PERM_*)。
  */
 int HsfLinkClient_role(void);
+
+/**
+ * @brief 界面侧权限判定（服务端同源缺省表的镜像，用于灰化按钮/入口）。
+ * @param perm 权限位（HSF_PERM_*，与 XAccessPerm 同值）。
+ * @return 当前会话角色持有该位返回 true；未登录按匿名处理。
+ * @note  [镜像而非权威] 本函数只决定"按钮能不能点/入口是否隐藏"，
+ *        真正的门在服务端（每帧校验）；两边口径必须同步（改一侧要改
+ *        另一侧 + 服务端 XPermPolicy 缺省表）。
+ */
+bool HsfLinkClient_can(uint32_t perm);
 
 /* ==================== 回调注册（先注册后 open 才不漏首拍） ==================== */
 
@@ -432,6 +444,44 @@ bool HsfLinkClient_vfdSnapshotRequest(void);
 bool HsfLinkClient_historyPage(int offset, int limit);
 
 /**
+ * @brief 历史分页（带导出意图）：exportMode=true 时服务端验 Download 权限。
+ * @param exportMode true=导出/下载（需普通用户+）；false=普通浏览。
+ * @return 已发出请求返回 true。
+ * @note  即使客户端界面已灰按钮，本参数仍由服务端强制验权（绕过界面
+ *        直接发帧同样被拒）——这是"下载权限实际生效"的协议落点。
+ */
+bool HsfLinkClient_historyPageEx(int offset, int limit, bool exportMode);
+
+/**
+ * @brief 历史分页（带导出意图 + 关键字筛选，与 Python 客户端同口径）。
+ * @param offset/limit 分页参数。
+ * @param exportMode true=导出（服务端验 Download）。
+ * @param kw 关键字（utf8；NULL/空=不筛）——**下推服务端**，与 Python
+ *           HIST_KEY_KW 同名同义。
+ * @param kwCols 要比对的显示列下标（0..14）；NULL/0 项=全部列。
+ * @param kwColCount 下标个数。
+ * @return 已发出请求返回 true。
+ */
+bool HsfLinkClient_historyQuery(int offset, int limit, bool exportMode,
+                                const char* kw,
+                                const uint32_t* kwCols, int kwColCount);
+
+/**
+ * @brief 历史分页（带时间窗 + 关键字）：loTs/hiTs 下推服务端 WHERE。
+ * @param loTs 窗口起点（epoch 毫秒；<=0=不设下界）。
+ * @param hiTs 窗口终点（epoch 毫秒；<=0=不设上界，服务端仍按 beforeTs
+ *             与"现在"取交集）。
+ * @details 与 Python 客户端同键名同语义（HIST_KEY_LO_TS/HI_TS）；其余
+ *          参数同 HsfLinkClient_historyQuery。时间范围是**服务端筛**，
+ *          因此 total/分页口径与页内容一致（不是客户端过滤当前页）。
+ * @return 已发出请求返回 true。
+ */
+bool HsfLinkClient_historyQueryWindow(int offset, int limit, bool exportMode,
+                                      const char* kw,
+                                      const uint32_t* kwCols, int kwColCount,
+                                      int64_t loTs, int64_t hiTs);
+
+/**
  * @brief 最近一次历史分页结果（借用指针；未收到过应答时 m_valid=false）。
  */
 const HsfHistoryPage* HsfLinkClient_history(void);
@@ -465,6 +515,47 @@ bool HsfLinkClient_configGet(void);
 bool HsfLinkClient_configSetStorage(bool enabled, int sampleMs);
 
 /**
+ * @brief 写服务端落盘配置（全字段；与 Python RemoteSettingsPage 同键名）。
+ * @param enabled 落盘开关。
+ * @param path 库文件路径（NULL=不改；空串=程序目录）。
+ * @param sampleMs 入库周期（毫秒；服务端夹到 ≥1000）。
+ * @param maxMb 容量上限 MB（0=不限；-1=不改）。
+ * @param policy 到限策略（"ring"/"stop"/"rotate"；NULL/空=不改）。
+ * @param keepFiles 保留分段数（rotate 时有效；-1=不改）。
+ * @return 已发出请求返回 true。
+ * @note 应答 ok/err 经 HsfLinkClient_configOk/configError 取回（序号
+ *       HsfLinkClient_configSeq 递增）；服务端可能夹取数值，以随后 GET 为准。
+ */
+bool HsfLinkClient_configSetStorageEx(bool enabled, const char* path,
+                                      int sampleMs, int maxMb,
+                                      const char* policy, int keepFiles);
+
+/**
+ * @brief 写采集配置（0x0117 的 collect 节；需管理员）。
+ * @param collect 采集开关 + 周期（与 Python 同键）。
+ * @return 已发出请求返回 true。
+ */
+bool HsfLinkClient_configSetCollect(const HsfConfigCollect* collect);
+
+/**
+ * @brief 写登录/账户策略（0x0117 的 login 节；需管理员 AccountAdmin）。
+ * @param login 匿名/同账并发/会话上限（与 Python 同键）。
+ * @return 已发出请求返回 true。
+ * @note  服务端立即对**下一次登录**生效并落盘 hsf_login_policy.json；
+ *        存量会话不受影响（关并发不会踢人）。
+ */
+bool HsfLinkClient_configSetLogin(const HsfConfigLogin* login);
+
+/** @brief 最近一次配置写是否成功（写应答到达后更新）。 */
+bool HsfLinkClient_configOk(void);
+/** @brief 最近一次配置写失败原因（UTF-8；空=无/成功）。 */
+const char* HsfLinkClient_configError(void);
+/** @brief 配置快照/写应答序号（递增 ⇒ 页面据此回填/提示）。 */
+int HsfLinkClient_configSeq(void);
+/** @brief 配置快照序号（仅 GET 应答递增；页面按它回填控件）。 */
+int HsfLinkClient_configGetSeq(void);
+
+/**
  * @brief 最近一次服务端配置快照（借用指针；未收到过应答时 m_valid=false）。
  */
 const HsfConfig* HsfLinkClient_config(void);
@@ -475,7 +566,7 @@ const HsfConfig* HsfLinkClient_config(void);
 const char* HsfLinkClient_serverAddress(void);
 
 /**
- * @brief 当前会话角色中文（管理员/运行员/观察；借用静态串）。
+ * @brief 当前会话角色中文（匿名/普通用户/操作者/管理员；借用静态串）。
  */
 const char* HsfLinkClient_roleName(void);
 
@@ -536,6 +627,17 @@ void HsfLinkClient_setModeCallback(HsfLinkNotifyFn cb, void* userData);
  * @brief 最近一次模式设置的失败原因（借用；成功为空串）。
  */
 const char* HsfLinkClient_lastModeError(void);
+
+/**
+ * @brief 最近一次「设置运行模式」失败的原文（UTF-8，借用）。
+ * @return 客户端内部定长缓冲的**借用指针**（调用方**不得释放**、不得
+ *         长期持有）；无失败原因时为空串 ""（不是 NULL）。
+ * @note  与 HsfLinkClient_lastModeError **同源同义**（同一缓冲）：本名是
+ *        界面侧的语义化入口，旧名保留给既有调用方。内容在每条 0x0105
+ *        应答解析前清空、ok=false 时写入服务端 err 原文，故「成功 ⇒ 空串」；
+ *        重连时由 hsfLcResetConnectionState 一并清空。
+ */
+const char* HsfLinkClient_runModeError(void);
 
 /* ==================== 设备运行状态与错误 ==================== */
 
@@ -770,6 +872,17 @@ bool HsfLinkClient_subscribe(HsfLinkTopic topic);
  * @note  隐藏的页面退订后服务端不再投递，省带宽与解码开销。
  */
 void HsfLinkClient_unsubscribe(HsfLinkTopic topic);
+
+/**
+ * @brief 幂等补订：把「引用>0 但订阅帧没发出去」的主题补发一次。
+ * @return 链路就绪并执行了补订流程返回 true；未就绪返回 false。
+ * @note  只补发、**不改引用计数**（引用仍由 subscribe/unsubscribe 记账），
+ *        故可在页面每次激活时无条件调用。已订阅的主题由会话层幂等短路，
+ *        不会重复发帧。用途：页面集合未变时 hsf_pageTopicSwitch 走快路径
+ *        返回，之前发送失败的订阅就没有第二次机会（界面表现为某几张卡
+ *        永久「--」），本函数补上这条重试路径。
+ */
+bool HsfLinkClient_ensureSubscriptions(void);
 
 #ifdef __cplusplus
 }

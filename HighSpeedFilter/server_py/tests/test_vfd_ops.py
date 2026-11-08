@@ -11,6 +11,7 @@
     E. 点动看门狗：心跳丢失后自动停机（600ms）
     F. 点动释放：立即停机不等看门狗
     G. 命令字验证：设备侧实际收到的命令字必须正确（不是"受理了就算过"）
+    H. 运行中换向：反向 START 减速过零再反向加速（2026-11-06 ACC/DEC 口径）
 
 用法：
     python tests/test_vfd_ops.py [--port 6199]
@@ -209,6 +210,24 @@ def login_as(host, port, user, password, retries=12):
     raise RuntimeError("登录失败：%s" % (last,))
 
 
+def wait_run_state(c, want, timeout=15.0, poll=0.15):
+    """轮询快照直到 runState 进入 want 集合，返回最后一拍快照。
+
+    [为什么不能固定 sleep] 2026-11-06 起虚拟变频器的启停斜率按 ACC/DEC
+    加减速时间参数走（缺省各 10.0s 满量程 ⇒ 5Hz/s）：25Hz 减速停机要
+    ~5s，固定 sleep(0.4) 只会停在斜坡中途误报失败。
+    """
+    want = set(want)
+    deadline = time.time() + timeout
+    snap = {}
+    while time.time() < deadline:
+        snap = c.snapshot()
+        if snap.get("runState") in want:
+            break
+        time.sleep(poll)
+    return snap
+
+
 # ============================================================================
 #                           测试用例
 # ============================================================================
@@ -297,8 +316,8 @@ def case_all_operations(host, port):
 
     ok, err = c.control(op=proto.OP_STOP)
     check("减速停机受理", ok, "" if ok else err)
-    time.sleep(0.4)
-    snap = c.snapshot()
+    # [ACC/DEC 斜坡] 25Hz 减速到 0 要 ~5s，等到位再断言（见 wait_run_state）。
+    snap = wait_run_state(c, (proto.RUN_STOPPED,))
     check("停机后状态为 Stopped", snap.get("runState") == proto.RUN_STOPPED,
           "runState=%s" % snap.get("runState"))
 
@@ -313,8 +332,7 @@ def case_all_operations(host, port):
 
     ok, err = c.control(op=proto.OP_FREE_STOP)
     check("自由停车受理", ok, "" if ok else err)
-    time.sleep(0.4)
-    snap = c.snapshot()
+    snap = wait_run_state(c, (proto.RUN_STOPPED,))
     check("自由停车后停止", snap.get("runState") == proto.RUN_STOPPED,
           "runState=%s" % snap.get("runState"))
 
@@ -336,13 +354,30 @@ def case_all_operations(host, port):
     ok, err = c.control(op=proto.OP_JOG, rev=True)
     check("反转点动受理", ok, "" if ok else err)
 
-    # 点动释放必须立刻停（不等看门狗）
+    # 点动释放必须立刻停（不等看门狗）。释放走的是减速停机（op=101 →
+    # XVfdDevice_stop），从点动频率按 DEC 斜坡归零——等到位再断言。
     ok, err = c.control(op=proto.OP_JOG_RELEASE)
     check("点动释放受理", ok, "" if ok else err)
-    time.sleep(0.4)
-    snap = c.snapshot()
-    check("点动释放后立即停止", snap.get("runState") == proto.RUN_STOPPED,
+    snap = wait_run_state(c, (proto.RUN_STOPPED,))
+    check("点动释放后停止（斜坡到位）",
+          snap.get("runState") == proto.RUN_STOPPED,
           "runState=%s" % snap.get("runState"))
+
+    # ---- 运行中禁点动（2026-11-06 口径）----
+    # 运行中 OP_JOG 拒绝（点动会瞬间换向）；**点动保持中**的心跳例外放行
+    # （上面"反转点动受理"即点动保持中的心跳帧，已隐式覆盖）。
+    ok, err = c.control(op=proto.OP_START, rev=False)
+    check("运行中禁点动前置启动", ok, "" if ok else err)
+    time.sleep(0.3)
+    ok, err = c.control(op=proto.OP_JOG, rev=False)
+    check("运行中点动被拒", not ok, "err=%s" % (err or "")[:60])
+    check("拒绝原因指向先停机", "运行中" in (err or ""), err or "")
+    c.control(op=proto.OP_FREE_STOP)
+    wait_run_state(c, (proto.RUN_STOPPED,))
+    ok, err = c.control(op=proto.OP_JOG, rev=False)
+    check("停机后点动恢复受理", ok, "" if ok else err)
+    c.control(op=proto.OP_JOG_RELEASE)
+    wait_run_state(c, (proto.RUN_STOPPED,))
 
     c.close()
     time.sleep(0.8)
@@ -425,8 +460,10 @@ def case_mode_gate(host, port):
     ok, err = c.control(op=proto.OP_START)
     check("手动模式恢复控制", ok, "" if ok else err)
     # 顺带锁住新规则本身：停机时调速必须被**明确拒绝**（不能静默成功）。
+    # [ACC/DEC 斜坡] 等减速到位再发 SET——运行中 SET 是合法操作，斜坡中途
+    # 发会被受理，闸门断言就失去意义了。
     c.control(op=proto.OP_STOP)
-    time.sleep(0.4)
+    wait_run_state(c, (proto.RUN_STOPPED,))
     ok_set, err_set = c.control(op=proto.OP_SET_FREQUENCY, hz=15.0)
     check("停机时下发给定被明确拒绝", not ok_set,
           "err=%s" % err_set if not ok_set else "居然成功了（规则失效）")
@@ -489,11 +526,11 @@ def case_command_codes(host, port):
     check("START(fwd) → running&&!reverse",
           snap.get("running") is True and snap.get("reverse") is False,
           "running=%s reverse=%s" % (snap.get("running"), snap.get("reverse")))
-    # 停机 → 停止
+    # 停机 → 停止（ACC/DEC 斜坡：等减速到位）
     c.control(op=proto.OP_STOP)
-    time.sleep(0.35)
     check("STOP → runState=Stopped",
-          c.snapshot().get("runState") == proto.RUN_STOPPED)
+          wait_run_state(c, (proto.RUN_STOPPED,)).get("runState")
+          == proto.RUN_STOPPED)
     # 反转 → running&&reverse
     c.control(op=proto.OP_START, rev=True)
     time.sleep(0.35)
@@ -507,6 +544,117 @@ def case_command_codes(host, port):
     time.sleep(0.8)
 
 
+def case_running_reversal(host, port, sim_host=None, sim_port=6200):
+    """H 组：运行中换向 —— 反向 START 先减速过零、再反向加速（2026-11-06）。
+
+    分两层验证：
+      · **H1 协议面**（本 harness）：反向 START 受理、方向最终翻转、终态
+        反转运行。FakeVfd 是协议夹具（方向瞬变、输出=给定），够用。
+      · **H2 物理面**（连 `hsfsrv --sim` 真实虚拟模型）：减速段输出经过
+        零（非瞬跳）、状态字过零才翻、反转按 ACC 爬回给定。FakeVfd 没有
+        斜坡，必须连真模型；`--sim-host` 未给或不可达时整组跳过并说明。
+
+    [口径] 正转运行中收到反向 START（rev=True）不拒也不瞬跳：服务端虚拟
+    变频器按 DEC 把输出降到 0（这段状态字仍报**正转**），过零那一刻翻向、
+    按 ACC 爬回给定。C 侧 XVirtualModelVfd 同口径（xmodbus_virtual_test
+    ①b 与 tests/test_units.py TestVfdReversal 互为镜像）。
+    """
+    # ==================== H1：协议面（harness 假设备） ====================
+    section("H1. 运行中换向（协议面：受理与翻向）")
+    c, _role = login_as(host, port, "root", "root")
+    ok, err = c.control(op=proto.OP_START, rev=False, hz=25.0)
+    check("正转启动(捎带给定)受理", ok, "" if ok else err)
+    time.sleep(0.3)
+    snap = c.snapshot()
+    check("稳态为正转", snap.get("reverse") is False,
+          "reverse=%s" % snap.get("reverse"))
+
+    ok, err = c.control(op=proto.OP_START, rev=True, hz=25.0)
+    check("运行中反向 START 受理", ok, "" if ok else err)
+    snap = wait_run_state(c, (proto.RUN_RUNNING_REVERSE,))
+    check("运行中换向翻为反转", snap.get("reverse") is True,
+          "reverse=%s" % snap.get("reverse"))
+    check("换向后仍处运行态", snap.get("running") is True,
+          "runState=%s" % snap.get("runState"))
+
+    c.control(op=proto.OP_FREE_STOP)
+    time.sleep(0.3)
+    c.close()
+    time.sleep(0.8)
+
+    # ==================== H2：物理面（hsfsrv --sim 真模型） ====================
+    if not sim_host:
+        print("  [SKIP] 未给 --sim-host，物理面（减速过零）不在此跑——"
+              "模型级口径已由 tests/test_units.py TestVfdReversal 覆盖")
+        return
+    section("H2. 运行中换向（物理面：减速过零，连 hsfsrv --sim %s:%d）"
+            % (sim_host, sim_port))
+    try:
+        c, _role = login_as(sim_host, sim_port, "root", "root")
+    except Exception as exc:                            # noqa: BLE001
+        print("  [SKIP] --sim 服务端不可达（%s:%d）：%s"
+              % (sim_host, sim_port, exc))
+        return
+
+    # ---- 正转爬到给定 25Hz（0→25Hz @5Hz/s 约 5s） ----
+    ok, err = c.control(op=proto.OP_START, rev=False, hz=25.0)
+    check("[sim] 正转启动(捎带给定)受理", ok, "" if ok else err)
+    deadline = time.time() + 10.0
+    snap = {}
+    while time.time() < deadline:
+        snap = c.snapshot()
+        if float(snap.get("outputFreqHz", 0) or 0) >= 24.0:
+            break
+        time.sleep(0.2)
+    check("[sim] 正转爬到给定 25Hz",
+          float(snap.get("outputFreqHz", 0) or 0) >= 24.0,
+          "out=%.2f" % float(snap.get("outputFreqHz", 0) or 0))
+    check("[sim] 稳态为正转", snap.get("reverse") is False,
+          "reverse=%s" % snap.get("reverse"))
+
+    # ---- 运行中直接发反向 START：受理（不拒、不瞬跳） ----
+    ok, err = c.control(op=proto.OP_START, rev=True, hz=25.0)
+    check("[sim] 运行中反向 START 受理", ok, "" if ok else err)
+
+    # ---- 减速段：输出降向 0 且状态字仍报正转；过零翻反转 ----
+    min_hz = 1e9
+    deadline = time.time() + 10.0
+    while time.time() < deadline:
+        snap = c.snapshot()
+        hz = float(snap.get("outputFreqHz", 0) or 0)
+        min_hz = min(min_hz, hz)
+        if snap.get("reverse") is True:
+            break
+        time.sleep(0.12)
+    check("[sim] 换向过零翻为反转", snap.get("reverse") is True,
+          "reverse=%s out=%.2f" % (snap.get("reverse"),
+                                   float(snap.get("outputFreqHz", 0) or 0)))
+    check("[sim] 减速段经过零（min≈0，非瞬跳换向）", min_hz <= 2.0,
+          "min=%.2f" % min_hz)
+    check("[sim] 过零后仍处运行态", snap.get("running") is True,
+          "runState=%s" % snap.get("runState"))
+
+    # ---- 反转按 ACC 爬回给定 ----
+    deadline = time.time() + 10.0
+    while time.time() < deadline:
+        snap = c.snapshot()
+        if float(snap.get("outputFreqHz", 0) or 0) >= 24.0:
+            break
+        time.sleep(0.2)
+    check("[sim] 反转爬回给定 25Hz",
+          float(snap.get("outputFreqHz", 0) or 0) >= 24.0,
+          "out=%.2f" % float(snap.get("outputFreqHz", 0) or 0))
+    check("[sim] 最终稳态反转运行",
+          snap.get("runState") == proto.RUN_RUNNING_REVERSE,
+          "runState=%s" % snap.get("runState"))
+
+    # 收尾（不留给别人一个转着的电机）
+    c.control(op=proto.OP_FREE_STOP)
+    wait_run_state(c, (proto.RUN_STOPPED,))
+    c.close()
+    time.sleep(0.8)
+
+
 # ============================================================================
 #                               main
 # ============================================================================
@@ -515,6 +663,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=6199)
+    ap.add_argument("--sim-host", default=None,
+                    help="H2 物理面（减速过零）要连的 hsfsrv --sim 地址；"
+                         "缺省跳过（模型口径已由 test_units 覆盖）")
+    ap.add_argument("--sim-port", type=int, default=6200)
     args = ap.parse_args()
 
     print("变频器全操作测试  %s:%d" % (args.host, args.port))
@@ -526,6 +678,9 @@ def main():
         case_mode_gate(args.host, args.port)
         case_boundaries(args.host, args.port)
         case_command_codes(args.host, args.port)
+        case_running_reversal(args.host, args.port,
+                              sim_host=args.sim_host,
+                              sim_port=args.sim_port)
     except Exception as exc:                            # noqa: BLE001
         print("\n[ERROR] %s: %s" % (type(exc).__name__, exc))
         FAILED.append("exception")

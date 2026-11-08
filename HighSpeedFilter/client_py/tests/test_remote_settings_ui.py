@@ -212,6 +212,38 @@ def part_b_flow(app, port=6298):
               saved["serial"]["temphum_poll_ms"] == 500
               and saved["serial"]["turbidity_enabled"] is True
               and saved["storage"]["path"] == "")
+
+        # ---- B6 登录策略（login 节；2026-11-08 新增）----
+        # 走页面真实控件 → _apply_login → CMD_CONFIG_SET("login") →
+        # 服务端配置文件 login 节真变（与 C 服务端同键同义）。
+        page._config_fetched = False
+        populated.clear()
+        page._fetch_config(silent=True)
+        pump()
+        check("B6a login 节 GET 回投含三键",
+              isinstance(populated.get("login"), dict)
+              and cproto.CFGK_LOGIN_ALLOW_CONCUR
+              in (populated.get("login") or {}))
+        page._login_concur.setChecked(True)
+        page._login_max.setValue(0)
+        populated.clear()
+        page._apply_login()
+        pump()
+        with open(cfg_path, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        check("B6b 配置文件 login.allow_concurrent = true",
+              (saved.get("login") or {}).get("allow_concurrent") is True)
+        check("B6c 配置文件 login.max_sessions = 0",
+              (saved.get("login") or {}).get("max_sessions") == 0)
+        page._login_concur.setChecked(False)
+        page._login_max.setValue(8)
+        page._apply_login()
+        pump()
+        with open(cfg_path, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        check("B6d 恢复后 login 节回缺省",
+              (saved.get("login") or {}).get("allow_concurrent") is False
+              and (saved.get("login") or {}).get("max_sessions") == 8)
         try:
             if bridge.client is not None:
                 bridge.client.close()

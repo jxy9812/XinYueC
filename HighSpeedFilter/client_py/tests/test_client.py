@@ -246,17 +246,21 @@ def main():
     # ---- F. 数字量点数由服务端决定 ----
     section("F. 数字量点数跟随服务端（16 / 32）")
     # [为什么专门测] 客户端曾把点数写死 16（LampRow(16)/ToggleGrid(16)/
-    # range(16)），而本现场 .13 已聚合进 .12、对外是 32 点 ⇒ 界面只画
-    # 16 个灯，上半区（16~31）永远看不见，看着像服务端没发。
+    # range(16)），聚合口 32 点 ⇒ 界面只画 16 个灯，上半区（16~31）永远
+    # 看不见，看着像服务端没发。
+    # [注入走 dev5：避开遥测竞争] 真连服务端时 dev0/dev1 的周期帧每
+    # 200ms 一拍，会把注入的 count 立刻冲回服务端值——断言窗口撞上一拍
+    # 就崩在 _cells[16]（实测）。dev5 服务端永远不会发布，注入稳稳站住。
     win.goto_page(reg.PAGE_MONITOR_DIGITAL)
     app.processEvents()
     dig = win.pages[reg.PAGE_MONITOR_DIGITAL]
     m = bridge.model
 
     # 注入 32 点快照 → 灯阵/按钮阵必须自动扩到 32
-    m.digital_state(0).apply({"dev": 0, "name": "数字量", "count": 32,
+    m.digital_state(5).apply({"dev": 5, "name": "聚合口", "count": 32,
                               "di": 0x00010005, "do": 0x80000003,
                               "valid": True, "staleMs": 5000})
+    dig._current_dev = 5
     dig.refresh()
     app.processEvents()
     check("32 点快照 → 灯阵重建为 32", dig.di_lamp.count() == 32,
@@ -273,7 +277,8 @@ def main():
           "0x00010005" in dig.state_label.text(),
           dig.state_label.text())
 
-    # 再注入 16 点快照（模拟没有聚合的另一台模块）→ 必须缩回 16
+    # 再注入 16 点快照（单模块 16 点；2026-11-06 起现场就是这个口径）
+    # → 必须缩回 16
     m.digital_state(1).apply({"dev": 1, "name": "小模块", "count": 16,
                               "di": 0x0005, "do": 0x0003,
                               "valid": True, "staleMs": 5000})
@@ -477,16 +482,19 @@ def main():
           "无运行反馈" in water._pump_note.text(),
           water._pump_note.text()[:40])
 
-    # ⑩ 数字量页 DO22 名字同步为「进水泵」（同一路输出两个页面必须同名）
+    # ⑩ 数字量页 DO6 名字同步为「进水泵」（同一路输出两个页面必须同名）
+    # [2026-11-06 点表收窄] .12 聚合器（对外 32 点）已拆除，现场只剩 .13
+    # 一个 16 点模块：阀 1~6 在 DO0~DO5、进水泵在 DO6、按钮组 DO7~DO9。
+    # 旧口径 DO21/DO22（16+5/16+6 的聚合编号）随之作废。
     dig_st = m.digital_state(0)
-    dig_st.apply({"dev": 0, "name": "数字量", "count": 32,
+    dig_st.apply({"dev": 0, "name": "数字量", "count": 16,
                   "di": 0x0, "do": 0x0, "valid": True, "staleMs": 5000,
-                  "full": True, "don21": "电磁阀6 控制",
-                  "don22": "进水泵"})
-    check("DO21 = 电磁阀6", dig_st.do_name(21) == "电磁阀6 控制",
-          dig_st.do_name(21))
-    check("DO22 = 进水泵（与水质页同源）", dig_st.do_name(22) == "进水泵",
-          dig_st.do_name(22))
+                  "full": True, "don5": "电磁阀6 控制",
+                  "don6": "进水泵"})
+    check("DO5 = 电磁阀6", dig_st.do_name(5) == "电磁阀6 控制",
+          dig_st.do_name(5))
+    check("DO6 = 进水泵（与水质页同源）", dig_st.do_name(6) == "进水泵",
+          dig_st.do_name(6))
 
     # ---- K. 表格列宽按权重分配（不能被均分/溢出色）----
     #
@@ -718,22 +726,24 @@ def main():
 
         # ---- 数字量页必须看到同一路输出（跨页自洽）----
         #
-        # [为什么这条要真连服务端] 泵与数字量页操作的是**同一个 DO22**。
+        # [为什么这条要真连服务端] 泵与数字量页操作的是**同一个 DO6**。
         # 若服务端没把泵的名字/位写进数字量快照，就会出现"水质页说泵在转、
-        # 数字量页 DO22 是灭的"——现场查线时最容易被误导的一种不一致。
+        # 数字量页 DO6 是灭的"——现场查线时最容易被误导的一种不一致。
+        # [2026-11-06 点表收窄] .12 聚合器拆除后现场只剩 .13 一个 16 点
+        # 模块：进水泵在 DO6（旧口径 DO22 是 16+6 的聚合编号，已作废）。
         win.goto_page(reg.PAGE_MONITOR_DIGITAL)
         for _ in range(25):
             app.processEvents()
             time.sleep(0.05)
         dig_st = bridge.model.digital_state(0)
-        check("数字量页能查到 DO22 的名字",
-              dig_st.do_name(22) != "", repr(dig_st.do_name(22)))
-        check("DO22 名字为『进水泵』", dig_st.do_name(22) == "进水泵",
-              repr(dig_st.do_name(22)))
+        check("数字量页能查到 DO6 的名字",
+              dig_st.do_name(6) != "", repr(dig_st.do_name(6)))
+        check("DO6 名字为『进水泵』", dig_st.do_name(6) == "进水泵",
+              repr(dig_st.do_name(6)))
         dev0 = bridge.model.digital.get(0)
-        bit22 = bool((getattr(dev0, "do_mask", 0) >> 22) & 1) if dev0 else None
-        # 泵此刻是停的 ⇒ DO22 必须是灭的（两边同源）
-        check("泵已停 ⇒ 数字量 DO22 位为 0", bit22 is False, "bit22=%s" % bit22)
+        bit6 = bool((getattr(dev0, "do_mask", 0) >> 6) & 1) if dev0 else None
+        # 泵此刻是停的 ⇒ DO6 必须是灭的（两边同源）
+        check("泵已停 ⇒ 数字量 DO6 位为 0", bit6 is False, "bit6=%s" % bit6)
 
         # ---- 回到水质页，确认来回切页不丢状态、不崩 ----
         win.goto_page(reg.PAGE_MONITOR_FLOWMETER)

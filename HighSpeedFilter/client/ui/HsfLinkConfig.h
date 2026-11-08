@@ -46,12 +46,22 @@ typedef struct HsfConfigStorage {
 typedef struct HsfConfigStats {
     int64_t m_usedBytes;
     int64_t m_contentBytes;
+    double  m_usedMb;        /**< 已用（MB；服务端直给，缺省由字节换算）。 */
     int  m_maxMb;
     int  m_rows;
     int  m_segments;
     int  m_droppedRows;
-    bool m_paused;
+    bool m_paused;           /**< 已停写（到限策略=stop 且已满）。 */
+    char m_policy[32];       /**< 生效策略（ring/stop/rotate；与 Python 同词）。 */
+    char m_pauseReason[128]; /**< 停写原因（paused=true 时显示）。 */
 } HsfConfigStats;
+
+/** @brief 登录/账户策略节（2026-11-08；写入需管理员 AccountAdmin）。 */
+typedef struct HsfConfigLogin {
+    bool m_allowAnonymous;   /**< 允许匿名（只读）会话接入。 */
+    bool m_allowConcurrent;  /**< 允许同一账户并发在线（关=root 单会话）。 */
+    int  m_maxSessions;      /**< 会话总数上限（0=不限）。 */
+} HsfConfigLogin;
 
 /** @brief 服务端配置快照（0x0116 应答的解析产物）。 */
 typedef struct HsfConfig {
@@ -59,6 +69,7 @@ typedef struct HsfConfig {
     HsfConfigCollect m_collect;
     HsfConfigStorage m_storage;
     HsfConfigStats m_stats;
+    HsfConfigLogin m_login; /**< 登录策略节。 */
     char m_dbPath[256];    /**< 实际库文件路径。 */
 } HsfConfig;
 

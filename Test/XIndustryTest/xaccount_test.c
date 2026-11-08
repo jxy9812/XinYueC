@@ -166,6 +166,16 @@ static void test_accounts(void)
                                                XAccountRole_User));
     CHECK("非法角色拒绝", !XAccountManager_add(mgr, "op3", "x2345678",
                                                XAccountRole_None));
+    /* [四档] 操作者角色可建、可回读、可改。 */
+    CHECK("加操作者角色", XAccountManager_add(mgr, "opr", "opr12345",
+                                              XAccountRole_Operator));
+    CHECK("操作者角色回读",
+          XAccountManager_role(mgr, "opr") == XAccountRole_Operator);
+    CHECK("操作者升管理员", XAccountManager_setRole(mgr, "opr",
+                                                     XAccountRole_Admin));
+    CHECK("管理员降回操作者", XAccountManager_setRole(mgr, "opr",
+                                                       XAccountRole_Operator));
+    CHECK("删操作者放行", XAccountManager_remove(mgr, "opr"));
     CHECK("新增不是缺省口令", !XAccountManager_isDefaultPassword(mgr, "op1"));
 
     /* 改密：本人验旧；管理员强制重置不验旧；改密清缺省口令标记。 */
@@ -310,20 +320,30 @@ static void test_permissions(void)
     XObject_connect_2((XObject*)pm,
                       XSignal(XPermPolicy_policyChanged_signal), onPermChanged2);
 
-    /* 缺省表。 */
-    CHECK("匿名无权限", XPermPolicy_rolePerms(pm, XAccountRole_None) == 0);
-    CHECK("操作员只读", XPermPolicy_rolePerms(pm, XAccountRole_User) ==
+    /* 缺省表（四档）：匿名=只看；普通=看+下载；操作者=+控制；管理=全权。 */
+    CHECK("匿名只能看", XPermPolicy_rolePerms(pm, XAccountRole_None) ==
           (uint32_t)XAccessPerm_ViewTelemetry);
+    CHECK("普通用户可下载", XPermPolicy_rolePerms(pm, XAccountRole_User) ==
+          (uint32_t)(XAccessPerm_ViewTelemetry | XAccessPerm_Download));
+    CHECK("操作者可控制", XPermPolicy_rolePerms(pm, XAccountRole_Operator) ==
+          (uint32_t)(XAccessPerm_ViewTelemetry | XAccessPerm_Download |
+                     XAccessPerm_DeviceControl));
     CHECK("管理员全权", XPermPolicy_rolePerms(pm, XAccountRole_Admin) ==
           (uint32_t)XAccessPerm_All);
 
     /* check 全含语义。 */
-    CHECK("匿名拉快照被拒", !XPermPolicy_check(pm, XAccountRole_None,
-                                               (uint32_t)XAccessPerm_ViewTelemetry));
-    CHECK("操作员拉快照放行", XPermPolicy_check(pm, XAccountRole_User,
-                                                (uint32_t)XAccessPerm_ViewTelemetry));
-    CHECK("操作员控制被拒", !XPermPolicy_check(pm, XAccountRole_User,
-                                               (uint32_t)XAccessPerm_DeviceControl));
+    CHECK("匿名拉快照放行", XPermPolicy_check(pm, XAccountRole_None,
+                                              (uint32_t)XAccessPerm_ViewTelemetry));
+    CHECK("匿名下载被拒", !XPermPolicy_check(pm, XAccountRole_None,
+                                             (uint32_t)XAccessPerm_Download));
+    CHECK("普通用户下载放行", XPermPolicy_check(pm, XAccountRole_User,
+                                               (uint32_t)XAccessPerm_Download));
+    CHECK("普通用户控制被拒", !XPermPolicy_check(pm, XAccountRole_User,
+                                                (uint32_t)XAccessPerm_DeviceControl));
+    CHECK("操作者控制放行", XPermPolicy_check(pm, XAccountRole_Operator,
+                                              (uint32_t)XAccessPerm_DeviceControl));
+    CHECK("操作者改配置被拒", !XPermPolicy_check(pm, XAccountRole_Operator,
+                                                (uint32_t)XAccessPerm_AccountAdmin));
     CHECK("管理员控制放行", XPermPolicy_check(pm, XAccountRole_Admin,
                                               (uint32_t)(XAccessPerm_DeviceControl |
                                                          XAccessPerm_AutoControl)));
@@ -341,26 +361,41 @@ static void test_permissions(void)
                                               (uint32_t)XAccessPerm_AccountAdmin));
     CHECK("任一空集恒假", !XPermPolicy_checkAny(pm, XAccountRole_Admin, 0));
 
-    /* Admin 恒全权：改小被拒；None/User 可覆盖。 */
+    /* Admin 恒全权 + 各档不过上限。 */
     CHECK("Admin 改小被拒", !XPermPolicy_setRolePerms(pm, XAccountRole_Admin,
                                                       (uint32_t)XAccessPerm_ViewTelemetry));
     CHECK("Admin 恒 All", XPermPolicy_rolePerms(pm, XAccountRole_Admin) ==
           (uint32_t)XAccessPerm_All);
-    CHECK("User 加控制权放行", XPermPolicy_setRolePerms(
+    CHECK("User 加控制权被拒（超上限）", !XPermPolicy_setRolePerms(
               pm, XAccountRole_User,
               (uint32_t)(XAccessPerm_ViewTelemetry | XAccessPerm_DeviceControl)));
-    CHECK("覆盖后判定即时生效", XPermPolicy_check(pm, XAccountRole_User,
-                                                  (uint32_t)XAccessPerm_DeviceControl));
-    CHECK("未知位静默丢弃", XPermPolicy_setRolePerms(pm, XAccountRole_User, 0xFFFFFFu));
-    CHECK("丢弃后仅合法位", XPermPolicy_rolePerms(pm, XAccountRole_User) ==
-          (0xFFFFFFu & (uint32_t)XAccessPerm_All));
-    CHECK("策略变更信号已发", g_permChanged >= 2);
+    CHECK("匿名加下载被拒（超上限）", !XPermPolicy_setRolePerms(
+              pm, XAccountRole_None,
+              (uint32_t)(XAccessPerm_ViewTelemetry | XAccessPerm_Download)));
+    CHECK("操作者加模式权被拒（超上限）", !XPermPolicy_setRolePerms(
+              pm, XAccountRole_Operator,
+              (uint32_t)(XAccessPerm_ViewTelemetry | XAccessPerm_DeviceControl |
+                         XAccessPerm_ModeSwitch)));
+    CHECK("User 收紧为只看放行", XPermPolicy_setRolePerms(
+              pm, XAccountRole_User, (uint32_t)XAccessPerm_ViewTelemetry));
+    CHECK("收紧后下载被拒", !XPermPolicy_check(pm, XAccountRole_User,
+                                                (uint32_t)XAccessPerm_Download));
+    CHECK("越上限掩码被拒", !XPermPolicy_setRolePerms(
+              pm, XAccountRole_User, 0xFFFFFFu));
+    CHECK("上限内掩码放行", XPermPolicy_setRolePerms(
+              pm, XAccountRole_User,
+              (uint32_t)(XAccessPerm_ViewTelemetry | XAccessPerm_Download)));
+    CHECK("上限内回读一致", XPermPolicy_rolePerms(pm, XAccountRole_User) ==
+          (uint32_t)(XAccessPerm_ViewTelemetry | XAccessPerm_Download));
+    CHECK("策略变更信号已发", g_permChanged >= 1);
 
     /* 回缺省表。 */
     CHECK("回缺省表", XPermPolicy_resetPolicy(pm));
-    CHECK("回缺省后 User 只读", XPermPolicy_rolePerms(pm, XAccountRole_User) ==
-          (uint32_t)XAccessPerm_ViewTelemetry);
+    CHECK("回缺省后 User 可下载", XPermPolicy_rolePerms(pm, XAccountRole_User) ==
+          (uint32_t)(XAccessPerm_ViewTelemetry | XAccessPerm_Download));
     CHECK("未知角色覆盖拒绝", !XPermPolicy_setRolePerms(pm, (XAccountRole)9, 1));
+    CHECK("角色名口径", strcmp(XPermPolicy_roleName(XAccountRole_Operator),
+                               "操作者") == 0);
 
     /* NULL 安全（策略未装配=全拒绝，且不留痕——装配错误由装配修复）。 */
     CHECK("NULL 策略全拒绝", !XPermPolicy_check(NULL, XAccountRole_Admin,

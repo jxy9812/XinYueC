@@ -20,7 +20,7 @@ import time
 
 from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
 
-from . import bson, proto
+from . import bson, permissions, proto
 from .model import AppModel
 
 
@@ -137,6 +137,15 @@ class LinkBridge(QObject):
 
     def is_connected(self):
         return self.connected_flag
+
+    def can(self, perm):
+        """界面侧权限判定（与服务端 permissions.py 同源缺省表的镜像）。
+
+        只决定按钮/入口能不能用；权威判定始终在服务端。角色值不单调
+        （Operator=3 是追加值），故此函数按位查表，禁止在外面写
+        ``role >= ROLE_*`` 比较。
+        """
+        return permissions.can_role(int(self.role or 0), int(perm))
 
     def is_auto_mode(self):
         return self.model.is_auto()
@@ -444,8 +453,8 @@ class LinkBridge(QObject):
                      on_error=on_error, timeout=timeout)
 
     def history_page(self, offset=0, limit=None, before_ts=None, lo_ts=None,
-                     hi_ts=None, kw=None, kw_cols=None, on_done=None,
-                     on_error=None, timeout=5.0):
+                     hi_ts=None, kw=None, kw_cols=None, export_mode=False,
+                     on_done=None, on_error=None, timeout=5.0):
         """分页取服务端历史数据（**只读，无需 root**）。
 
         :param offset: 跳过多少行（0 = 最新）
@@ -480,6 +489,9 @@ class LinkBridge(QObject):
             doc[proto.HIST_KEY_KW] = str(kw)
         if kw_cols:
             doc[proto.HIST_KEY_KW_COLS] = [int(c) for c in kw_cols]
+        if export_mode:
+            # [下载权限] 导出意图上服务端验权（界面灰按钮拦不住直接发帧）。
+            doc[proto.HIST_KEY_EXPORT] = True
         if on_error is None:
             on_error = lambda e: self.statusMessage.emit(  # noqa: E731
                 "历史数据请求失败：%s" % e)

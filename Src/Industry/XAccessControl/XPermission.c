@@ -24,21 +24,45 @@
 /* ==================== 内部辅助 ==================== */
 
 /**
- * @brief 缺省策略表（None=无 / User=只读 / Admin=全权）。
+ * @brief 缺省策略表（匿名=只读 / 普通=只读+下载 / 管理=全权 / 操作者=+控制）。
+ * @note  下标严格等于 XAccountRole 值（2=Admin 在 3=Operator 之前）。
  */
-static const uint32_t s_permDefaults[3] = {
-    (uint32_t)XAccessPerm_None,                  /* None：缺省拒绝。 */
-    (uint32_t)XAccessPerm_ViewTelemetry,         /* User：只读面。 */
-    (uint32_t)XAccessPerm_All                    /* Admin：全权。 */
+static const uint32_t s_permDefaults[XPERM_ROLE_SLOTS] = {
+    /* None（匿名）：只能查看。 */
+    (uint32_t)XAccessPerm_ViewTelemetry,
+    /* User（普通用户）：查看 + 下载数据。 */
+    (uint32_t)(XAccessPerm_ViewTelemetry | XAccessPerm_Download),
+    /* Admin（管理员）：全权。 */
+    (uint32_t)XAccessPerm_All,
+    /* Operator（操作者）：查看 + 下载 + 设备控制（不含模式/自动/账户）。 */
+    (uint32_t)(XAccessPerm_ViewTelemetry | XAccessPerm_Download |
+               XAccessPerm_DeviceControl)
 };
 
-/** @brief 角色收敛：未知值一律按 None（缺省拒绝，约束 1）。 */
+/**
+ * @brief 各角色权限上限（四档逐级包含的产品约束，不可配置）。
+ */
+static const uint32_t s_permCeilings[XPERM_ROLE_SLOTS] = {
+    (uint32_t)XAccessPerm_ViewTelemetry,
+    (uint32_t)(XAccessPerm_ViewTelemetry | XAccessPerm_Download),
+    (uint32_t)XAccessPerm_All,
+    (uint32_t)(XAccessPerm_ViewTelemetry | XAccessPerm_Download |
+               XAccessPerm_DeviceControl)
+};
+
+/** @brief 角色收敛：**未知值返回 -1（全拒绝）**。
+ *  @details 不能把未知角色当匿名：匿名字段现在持有 ViewTelemetry，
+ *           映射到匿名会让"越界/伪造角色值"白得只读权限（缺省拒绝是
+ *           安全组件的第一铁律）。 */
 static int permRoleIndex(XAccountRole role)
 {
-    if (role != XAccountRole_None && role != XAccountRole_User &&
-        role != XAccountRole_Admin)
-        return (int)XAccountRole_None;
-    return (int)role;
+    switch (role) {
+    case XAccountRole_None:     return 0;
+    case XAccountRole_User:     return 1;
+    case XAccountRole_Admin:    return 2;
+    case XAccountRole_Operator: return 3;
+    default:                    return -1;
+    }
 }
 
 /** @brief 未知位静默丢弃（前向兼容：老版本收到新版本位不误判）。 */
@@ -100,6 +124,12 @@ bool XPermPolicy_check(XPermPolicy* pm, XAccountRole role, uint32_t permMask)
         return false;
     }
     idx = permRoleIndex(role);
+    if (idx < 0) {
+        if (pm->m_audit)
+            XPermPolicy_permissionDenied_signal(pm, (int)role,
+                                                (int32_t)permMask, 0);
+        return false;
+    }
     have = pm->m_rolePerms[idx] & permMask;
     if (have == permMask) return true;
     if (pm->m_audit)
@@ -120,6 +150,12 @@ bool XPermPolicy_checkAny(XPermPolicy* pm, XAccountRole role, uint32_t permMask)
         return false;
     }
     idx = permRoleIndex(role);
+    if (idx < 0) {
+        if (pm->m_audit)
+            XPermPolicy_permissionDenied_signal(pm, (int)role,
+                                                (int32_t)permMask, 0);
+        return false;
+    }
     have = pm->m_rolePerms[idx] & permMask;
     if (have != 0) return true;
     if (pm->m_audit)
@@ -129,8 +165,27 @@ bool XPermPolicy_checkAny(XPermPolicy* pm, XAccountRole role, uint32_t permMask)
 
 uint32_t XPermPolicy_rolePerms(const XPermPolicy* pm, XAccountRole role)
 {
+    int idx;
     if (!pm) return 0;
-    return pm->m_rolePerms[permRoleIndex(role)];
+    idx = permRoleIndex(role);
+    return (idx < 0) ? 0 : pm->m_rolePerms[idx];
+}
+
+uint32_t XPermPolicy_roleCeiling(XAccountRole role)
+{
+    int idx = permRoleIndex(role);
+    return (idx < 0) ? 0 : s_permCeilings[idx];
+}
+
+const char* XPermPolicy_roleName(XAccountRole role)
+{
+    switch (role) {
+    case XAccountRole_None:     return "匿名";
+    case XAccountRole_User:     return "普通用户";
+    case XAccountRole_Admin:    return "管理员";
+    case XAccountRole_Operator: return "操作者";
+    default:                    return "未知";
+    }
 }
 
 /* ==================== 策略覆盖 ==================== */
@@ -138,17 +193,22 @@ uint32_t XPermPolicy_rolePerms(const XPermPolicy* pm, XAccountRole role)
 bool XPermPolicy_setRolePerms(XPermPolicy* pm, XAccountRole role, uint32_t permMask)
 {
     int idx;
+    uint32_t known;
+    uint32_t ceiling;
 
     if (!pm) return false;
     if (role != XAccountRole_None && role != XAccountRole_User &&
-        role != XAccountRole_Admin)
-        return false;
-    /* Admin 恒全权：改小被拒（约束 2——杜绝自锁）。 */
-    if (role == XAccountRole_Admin &&
-        permMaskKnown(permMask) != (uint32_t)XAccessPerm_All)
+        role != XAccountRole_Admin && role != XAccountRole_Operator)
         return false;
     idx = permRoleIndex(role);
-    pm->m_rolePerms[idx] = permMaskKnown(permMask);
+    known = permMaskKnown(permMask);
+    ceiling = s_permCeilings[idx];
+    /* 四档逐级包含（产品约束）：越上限位一律拒绝。Admin 上限=All，
+     * 等价于"Admin 只接受 All"（改小同样被拒——否则自锁）。 */
+    if ((known & ~ceiling) != 0) return false;
+    if (idx == (int)XAccountRole_Admin && known != (uint32_t)XAccessPerm_All)
+        return false;
+    pm->m_rolePerms[idx] = known;
     XPermPolicy_policyChanged_signal(pm);
     return true;
 }

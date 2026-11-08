@@ -38,6 +38,22 @@
  *         截断（深度位阶保证近者恒胜，截断只丢远端弱源）。 */
 #define XSSS_MAX_CASCADE_SOURCES 8
 
+/* ---- 表头段位置伪类位（:first/:last/:middle/:only-one）----
+ *
+ * 对齐 Qt 6.8.3：QStyleSheetStyle::renderRule 在 QStyleOptionHeader 分支
+ * 按 opt.position 派生这四位（qstylesheetstyle.cpp:1995-2003），名表在
+ * qcssparser.cpp:275/284/287/295。它们**没有 XStyleState 来源**（不像
+ * :hover/:pressed 由 state 派生），只能由绘制点附加，因此本文件用
+ * extraPseudo 通道把它们并入 statePseudos 后再走同一套匹配。
+ *
+ * 值契约：与 XCssStyleSheet.c 的 XCSS_PSEUDOCLASS_* 逐值同步（改一侧
+ * 必须同步另一侧）；取 0x80000 起连续四位，接在
+ * XCssPseudo_Vertical(0x40000) 之后，不改既有值。 */
+#define XSSS_PSEUDOCLASS_FIRST     0x00080000u
+#define XSSS_PSEUDOCLASS_LAST      0x00100000u
+#define XSSS_PSEUDOCLASS_MIDDLE    0x00200000u
+#define XSSS_PSEUDOCLASS_ONLY_ONE  0x00400000u
+
 /** @brief 控件源解析缓存容量。≥ 1+XSSS_MAX_CASCADE_SOURCES，保证单次
  *         收集走查内不会环形替换掉本次已收集的条目（收集到的规则指针
  *         在走查期间恒有效）。 */
@@ -1300,6 +1316,70 @@ static int xsss_collectSources(XStyleSheetStyle* self, const XObject* obj,
     return count;
 }
 
+/** @brief 全源级联扫描核心（xsss_scanRules / xsss_scanDecl 共用）。
+ *
+ *  走查序=源序（应用级→控件链近→远）×规则序×选择器序；裁决用
+ *  `>=` 同权取后。declId >= 0（**声明级**）时只有声明了该属性的命中
+ *  参与比较，并带回其规则内该属性的最后一条声明（*outDecl）——这是
+ *  Qt 6.8.3 declarations()（qstylesheetstyle.cpp:1739-1756 把全部命中
+ *  规则的声明按权重升序串接、同属性后出现者覆盖）的单属性等价：低权重
+ *  规则先应用，高权重规则只在它自己写了该属性时才覆盖。declId < 0
+ *  （**规则级**，旧口径）整条规则赢家，*outDecl 恒 NULL。
+ */
+static const XCssStyleRule* xsss_scanCascade(XStyleSheetStyle* self,
+                                             const XObject* obj,
+                                             uint32_t statePseudos,
+                                             const char* pseudoElementWant,
+                                             int declId,
+                                             const XCssDeclaration** outDecl,
+                                             const XCssSelector** outSel,
+                                             uint32_t* outWeight)
+{
+    const XCssStyleSheet* sheets[XSSS_MAX_CASCADE_SOURCES];
+    int depths[XSSS_MAX_CASCADE_SOURCES];
+    uint32_t bestWeight = 0;
+    const XCssStyleRule* bestRule = NULL;
+    const XCssDeclaration* bestDecl = NULL;
+    const XCssSelector* bestSel = NULL;
+    int count = xsss_collectSources(self, obj, sheets, depths);
+    int s;
+    if (outDecl) *outDecl = NULL;
+    for (s = 0; s < count; ++s) {
+        const XCssStyleSheet* sheet = sheets[s];
+        uint32_t originDepth =
+            (uint32_t)(XSSS_ORIGIN_INLINE + depths[s]) * 0x100000u;
+        int ri;
+        for (ri = 0; ri < sheet->m_ruleCount; ++ri) {
+            const XCssStyleRule* rule = &sheet->m_rules[ri];
+            int si;
+            for (si = 0; si < rule->m_selectorCount; ++si) {
+                const XCssSelector* sel = &rule->m_selectors[si];
+                const XCssDeclaration* d = NULL;
+                uint32_t w;
+                if (!xsss_selectorMatches(sel, obj, statePseudos,
+                                          pseudoElementWant))
+                    continue;
+                if (declId >= 0) {
+                    d = xsss_findDecl(rule, (XCssProperty)declId);
+                    if (!d) continue; /* 未写该属性：不参与声明级裁决。 */
+                }
+                w = (uint32_t)ri +
+                    (uint32_t)sel->m_specificity * 0x100u + originDepth;
+                if (!bestRule || w >= bestWeight) {
+                    bestRule = rule;
+                    bestSel = sel;
+                    bestWeight = w;
+                    if (declId >= 0) bestDecl = d;
+                }
+            }
+        }
+    }
+    if (outDecl) *outDecl = bestDecl;
+    if (outSel) *outSel = bestSel;
+    if (outWeight) *outWeight = bestWeight;
+    return bestRule;
+}
+
 /** @brief 全源级联扫描：返回权重最高的匹配规则（同权后到者胜）。
  *
  *  逐条对标 Qt 6.8.3：
@@ -1328,45 +1408,48 @@ static void xsss_widgetCacheGenBump(XStyleSheetStyle* self)
 
 static const XCssStyleRule* xsss_scanRules(XStyleSheetStyle* self,
                                            const XObject* obj, uint32_t state,
+                                           uint32_t extraPseudos,
                                            const char* pseudoElementWant,
                                            const XCssSelector** outSel,
                                            uint32_t* outWeight)
 {
-    const XCssStyleSheet* sheets[XSSS_MAX_CASCADE_SOURCES];
-    int depths[XSSS_MAX_CASCADE_SOURCES];
-    uint32_t statePseudos = xsss_statePseudos(state);
-    uint32_t bestWeight = 0;
-    const XCssStyleRule* bestRule = NULL;
-    const XCssSelector* bestSel = NULL;
-    int count = xsss_collectSources(self, obj, sheets, depths);
-    int s;
-    for (s = 0; s < count; ++s) {
-        const XCssStyleSheet* sheet = sheets[s];
-        uint32_t originDepth =
-            (uint32_t)(XSSS_ORIGIN_INLINE + depths[s]) * 0x100000u;
-        int ri;
-        for (ri = 0; ri < sheet->m_ruleCount; ++ri) {
-            const XCssStyleRule* rule = &sheet->m_rules[ri];
-            int si;
-            for (si = 0; si < rule->m_selectorCount; ++si) {
-                const XCssSelector* sel = &rule->m_selectors[si];
-                uint32_t w;
-                if (!xsss_selectorMatches(sel, obj, statePseudos,
-                                          pseudoElementWant))
-                    continue;
-                w = (uint32_t)ri +
-                    (uint32_t)sel->m_specificity * 0x100u + originDepth;
-                if (!bestRule || w >= bestWeight) {
-                    bestRule = rule;
-                    bestSel = sel;
-                    bestWeight = w;
-                }
-            }
-        }
-    }
-    if (outSel) *outSel = bestSel;
-    if (outWeight) *outWeight = bestWeight;
-    return bestRule;
+    /* extraPseudos：无 XStyleState 来源的伪类位（表头段位置四位，
+     * 见本文件头 XSSS_PSEUDOCLASS_* 块），与 state 派生位并集后参与
+     * 匹配——对标 Qt renderRule 的 `pseudoClass(state) | extraClass`。 */
+    return xsss_scanCascade(self, obj,
+                            xsss_statePseudos(state) | extraPseudos,
+                            pseudoElementWant, -1, NULL, outSel, outWeight);
+}
+
+/** @brief 全源**声明级**级联扫描：返回「声明了该属性」的最高权重规则内
+ *         该属性的最后一条声明（Qt declarations() 串接语义的单属性等价，
+ *         见 xsss_scanCascade 注释）。
+ *
+ *  根因（表头末列白盒回归）：旧实现只裁决单条赢家规则，属性读取全部
+ *  只在这条规则里找；`XTableWidget::section:last { border-right: none }`
+ *  特异度高（1+1×0x10，XCssStyleSheet.c:576-582）整条顶替 `::section`，
+ *  末列因此只剩 border-right:none，背景/其余三边/字体全部丢失，
+ *  xsssHdr_drawSection 无背景无边框返回 false，落回控件级盒路径被画成
+ *  白色圆角盒。本函数让每条属性各自找「声明了它的最高权重规则」，高
+ *  特异度规则只覆盖自己写的属性。
+ *
+ *  @param outWeight 可选，带回命中规则权重（未命中 0；真实权重恒
+ *         ≥ (origin+1)*0x100000，0 可作「未写」哨兵）。
+ */
+static const XCssDeclaration* xsss_scanDecl(XStyleSheetStyle* self,
+                                            const XObject* obj, uint32_t state,
+                                            uint32_t extraPseudos,
+                                            const char* pseudoElementWant,
+                                            XCssProperty id,
+                                            uint32_t* outWeight)
+{
+    const XCssDeclaration* d = NULL;
+    uint32_t w = 0;
+    (void)xsss_scanCascade(self, obj,
+                           xsss_statePseudos(state) | extraPseudos,
+                           pseudoElementWant, (int)id, &d, NULL, &w);
+    if (outWeight) *outWeight = d ? w : 0;
+    return d;
 }
 
 /* ---- 控件身份规则表（第三层缓存；结构契约见 XStyleSheetStyle.h 注）
@@ -1452,25 +1535,37 @@ static XsssWidgetCache* xsss_widgetCache(XStyleSheetStyle* self,
 }
 
 /** @brief 控件身份规则表查询：过滤期裁剪末段伪类与伪元素，同序同权
- *         取后。与 xsss_scanRules(self, obj, state, want, ·, ·) 逐位
- *         等价（集合代数证明见 XStyleSheetStyle.h 结构注）；块不可用
- *         （obj 非控件/OOM/超容量降级）时回落即时全源扫描保底。 */
-static const XCssStyleRule* xsss_widgetRule(XStyleSheetStyle* self,
-                                            const XObject* obj,
-                                            uint32_t state,
-                                            const char* pseudoElementWant)
+ *         取后。与 xsss_scanRules(self, obj, state, extra, want, ·, ·)
+ *         逐位等价（集合代数证明见 XStyleSheetStyle.h 结构注）；块不可用
+ *         （obj 非控件/OOM/超容量降级）时回落即时全源扫描保底。
+ *
+ *  @param extraPseudos 无 state 来源的伪类位（表头段位置四位，见文件头
+ *         XSSS_PSEUDOCLASS_* 块）；普通属性路径传 0。
+ *  @param outWeight 可选，带回赢家命中权重（未命中 0）——声明级查询的
+ *         快路径据此免二次扫描即得权重。 */
+static const XCssStyleRule* xsss_widgetRuleW(XStyleSheetStyle* self,
+                                             const XObject* obj,
+                                             uint32_t state,
+                                             uint32_t extraPseudos,
+                                             const char* pseudoElementWant,
+                                             uint32_t* outWeight)
 {
     XsssWidgetCache* c;
     const XCssStyleRule* bestRule = NULL;
     uint32_t bestWeight = 0;
     uint32_t ps;
     int i;
+    if (outWeight) *outWeight = 0;
     if (!self) return NULL;
     c = xsss_widgetCache(self, obj);
-    if (!c || c->m_count < 0)
-        return xsss_scanRules(self, obj, state, pseudoElementWant, NULL,
-                              NULL);
-    ps = xsss_statePseudos(state);
+    if (!c || c->m_count < 0) {
+        uint32_t w = 0;
+        bestRule = xsss_scanRules(self, obj, state, extraPseudos,
+                                  pseudoElementWant, NULL, &w);
+        if (outWeight && bestRule) *outWeight = w;
+        return bestRule;
+    }
+    ps = xsss_statePseudos(state) | extraPseudos;
     for (i = 0; i < c->m_count; ++i) {
         const XsssWidgetRuleHit* hit = &c->m_hits[i];
         if ((hit->m_pseudoMask & ps) != hit->m_pseudoMask) continue;
@@ -1482,26 +1577,251 @@ static const XCssStyleRule* xsss_widgetRule(XStyleSheetStyle* self,
             bestWeight = hit->m_weight;
         }
     }
+    if (outWeight && bestRule) *outWeight = bestWeight;
     return bestRule;
 }
 
+/** @brief 控件身份规则表查询（免权重壳）。 */
+static const XCssStyleRule* xsss_widgetRule(XStyleSheetStyle* self,
+                                            const XObject* obj,
+                                            uint32_t state,
+                                            uint32_t extraPseudos,
+                                            const char* pseudoElementWant)
+{
+    return xsss_widgetRuleW(self, obj, state, extraPseudos, pseudoElementWant,
+                            NULL);
+}
+
+/** @brief 控件身份规则表的**声明级（叠加）**查询：返回命中规则中
+ *         「声明了该属性」的最高权重规则内该属性的最后一条声明（同权取后）。
+ *
+ *  **仅表头 `::section` 伪元素路径使用**（经 xsss_declTextW / 表头专用
+ *  族裁决）。通用控件属性路径必须走规则级 xsss_widgetDeclW，保持修复前
+ *  语义——声明级叠加若同时用于通用路径，简写族里「低权重长写反压高权重
+ *  简写」会让 outline（Outline 简写 vs outline-width/color/style）与
+ *  border 宽（xg3_borderWidthPx 的 BorderWidth→Border 回落）跟整条规则
+ *  口径分裂（复审第 2 轮 issues#1/#2）；叠加只在本函数服务的表头路径
+ *  启用，两头都收敛。
+ *
+ *  与 xsss_widgetRule 的差别只在裁决粒度：那边整条规则赢家、未写该属性
+ *  即负结论；这边每条属性各自找「写了它的最高权重规则」，未写该属性的
+ *  高权重规则不参与该属性的裁决——正是 Qt declarations() 串接语义的单
+ *  属性等价（低权重先应用、高权重只覆盖自己写的属性，见 xsss_scanCascade
+ *  注释）。表头末列白盒回归的根因修复点：`::section:last { border-right:
+ *  none }` 自此只覆盖 border-right，背景/其余三边/字体仍取自 `::section`。
+ *
+ *  块不可用（非控件/OOM/超容量降级）时回落 xsss_scanDecl 即时全源扫描。
+ *
+ *  @param extraPseudos 无 state 来源的伪类位（表头段位置四位）；普通属性
+ *         路径传 0。@param pseudoElementWant NULL=普通属性路径。
+ *  @param outWeight 可选，带回命中规则权重（未命中 0；真实权重恒
+ *         ≥ (origin+1)*0x100000，0 可作「未写」哨兵）——简写族长写/
+ *         简写混排的消费端按此裁决先后（见 xsss_declKey）。
+ *  @return 命中声明（借用，随规则表失效）；未命中 NULL。 */
+static const XCssDeclaration* xsss_stackDeclW(XStyleSheetStyle* self,
+                                              const XObject* obj,
+                                              uint32_t state,
+                                              uint32_t extraPseudos,
+                                              const char* pseudoElementWant,
+                                              XCssProperty id,
+                                              uint32_t* outWeight)
+{
+    XsssWidgetCache* c;
+    const XCssStyleRule* winner;
+    const XCssDeclaration* bestDecl;
+    uint32_t winnerWeight = 0;
+    uint32_t bestWeight = 0;
+    uint32_t ps;
+    int i;
+    if (outWeight) *outWeight = 0;
+    if (!self) return NULL;
+    c = xsss_widgetCache(self, obj);
+    if (!c || c->m_count < 0)
+        /* 无身份表（非控件/OOM/超容量降级）：直接一次声明级全源扫描，
+         * 不先做规则级扫描再重扫（与旧口径同量级）。 */
+        return xsss_scanDecl(self, obj, state, extraPseudos,
+                             pseudoElementWant, id, outWeight);
+    winner = xsss_widgetRuleW(self, obj, state, extraPseudos,
+                              pseudoElementWant, &winnerWeight);
+    if (!winner) return NULL;
+    /* 快路径（绝大多数绘制查询）：规则级赢家自己写了该属性时，它必是
+     * 声明级赢家——其它命中规则权重不高于它，同权时它在同权组最后。 */
+    bestDecl = xsss_findDecl(winner, id);
+    if (bestDecl) {
+        if (outWeight) *outWeight = winnerWeight;
+        return bestDecl;
+    }
+    /* 慢路径（叠加语义的实际修复点）：赢家没写该属性时，沿全部命中
+     * 规则找「写了它的最高权重规则」，而不是整条换人后直接答 NULL。 */
+    ps = xsss_statePseudos(state) | extraPseudos;
+    bestDecl = NULL;
+    for (i = 0; i < c->m_count; ++i) {
+        const XsssWidgetRuleHit* hit = &c->m_hits[i];
+        const XCssDeclaration* d;
+        if ((hit->m_pseudoMask & ps) != hit->m_pseudoMask) continue;
+        if (!xsss_pseudoElemTextMatches(hit->m_pseudoElem,
+                                        pseudoElementWant))
+            continue;
+        if (bestDecl && hit->m_weight < bestWeight) continue; /* 权重更低必败。 */
+        d = xsss_findDecl(hit->m_rule, id);
+        if (!d) continue; /* 该规则未写此属性：不参与本属性裁决。 */
+        if (!bestDecl || hit->m_weight >= bestWeight) {
+            bestDecl = d;
+            bestWeight = hit->m_weight;
+        }
+    }
+    if (outWeight && bestDecl) *outWeight = bestWeight;
+    return bestDecl;
+}
+
+/** @brief 控件身份规则表的**规则级（单赢家）**查询：整条规则赢家内查
+ *         该属性的最后一条声明；赢家没写该属性即负结论。
+ *
+ *  通用控件属性路径一律走本函数——与修复前的 xsss_lookup 语义逐位一致
+ *  （赢家由 xsss_widgetRuleW 给出，权重为赢家权重）。声明级叠加只在
+ *  表头路径（xsss_stackDeclW）启用，原因见其注释。
+ *
+ *  @param outWeight 可选，带回赢家权重（赢家未写该属性时不表态=0）。
+ *  @return 命中声明（借用，随规则表失效）；未命中 NULL。 */
+static const XCssDeclaration* xsss_widgetDeclW(XStyleSheetStyle* self,
+                                               const XObject* obj,
+                                               uint32_t state,
+                                               uint32_t extraPseudos,
+                                               const char* pseudoElementWant,
+                                               XCssProperty id,
+                                               uint32_t* outWeight)
+{
+    const XCssStyleRule* winner;
+    const XCssDeclaration* d;
+    uint32_t w = 0;
+    if (outWeight) *outWeight = 0;
+    if (!self) return NULL;
+    winner = xsss_widgetRuleW(self, obj, state, extraPseudos,
+                              pseudoElementWant, &w);
+    if (!winner) return NULL;
+    d = xsss_findDecl(winner, id);
+    if (!d) return NULL;
+    if (outWeight) *outWeight = w;
+    return d;
+}
+
+/** @brief 不带权重的规则级（单赢家）查询（xsss_widgetDeclW 的免权重壳）。 */
+static const XCssDeclaration* xsss_widgetDecl(XStyleSheetStyle* self,
+                                              const XObject* obj,
+                                              uint32_t state,
+                                              uint32_t extraPseudos,
+                                              const char* pseudoElementWant,
+                                              XCssProperty id)
+{
+    return xsss_widgetDeclW(self, obj, state, extraPseudos, pseudoElementWant,
+                            id, NULL);
+}
+
+/** @brief 级联「先后」判据键：权重为主、层序为次（同权=同一规则内，
+ *         层序由调用方的族内优先级给定，保持本库既有的声明序近似）。
+ *         键大者后应用（覆盖前者）。 */
+static uint64_t xsss_declKey(uint32_t weight, int layer)
+{
+    return ((uint64_t)weight << 4) | (uint32_t)(layer & 0xF);
+}
+
+/** @brief 声明查询二选一：stack=true 走声明级叠加（仅表头 ::section
+ *         伪元素路径），false 走规则级单赢家（通用控件属性路径，保持
+ *         修复前语义）。
+ *
+ *  根因（复审第 2 轮）：声明级叠加若同时用于通用路径，简写族里「低权重
+ *  长写反压高权重简写」会让 outline 族与 xg3_borderWidthPx 跟整条规则
+ *  口径分裂（issues#1/#2）。叠加只保留在表头路径，通用路径统一回规则级。
+ */
+static const XCssDeclaration* xsss_declByMode(
+    XStyleSheetStyle* self, bool stack, const XObject* obj, uint32_t state,
+    uint32_t extraPseudos, const char* pseudoElement, XCssProperty id,
+    uint32_t* outWeight)
+{
+    if (stack)
+        return xsss_stackDeclW(self, obj, state, extraPseudos, pseudoElement,
+                               id, outWeight);
+    return xsss_widgetDeclW(self, obj, state, extraPseudos, pseudoElement, id,
+                            outWeight);
+}
+
+/** @brief 简写族内两候选的「后应用者」裁决（带伪元素/附加伪类上下文）。
+ *
+ *  同一逻辑属性的简写族（`background`/`background-color`、`border`/
+ *  `border-width` 等）要裁决先后。表头路径（stack=true）用声明级叠加：
+ *  低权重规则里的长写不能盖掉高权重规则里的简写（如 base
+ *  `background-color` + `:hover { background:url() }` 时 url 丢失——Qt
+ *  是按权重升序串接全集、后声明覆盖）。通用路径（stack=false）两级查询
+ *  都取同一赢家规则，键比较退化为层序（同权重），即既有近似口径。
+ *  层序大者视为更晚声明——本库不保留规则内声明序。
+ *
+ *  @param stack true=声明级叠加（表头路径），false=规则级单赢家（通用）。
+ *  @param idA/layerA、idB/layerB 两候选及其层序。一方未命中返回另一方。
+ *  @return 级联键较大的声明。 */
+static const XCssDeclaration* xsss_pickLaterDecl(
+    XStyleSheetStyle* self, const XObject* obj, uint32_t state,
+    uint32_t extraPseudos, const char* pseudoElement, bool stack,
+    XCssProperty idA, int layerA, XCssProperty idB, int layerB)
+{
+    uint32_t wa = 0;
+    uint32_t wb = 0;
+    const XCssDeclaration* a = xsss_declByMode(self, stack, obj, state,
+                                               extraPseudos, pseudoElement,
+                                               idA, &wa);
+    const XCssDeclaration* b = xsss_declByMode(self, stack, obj, state,
+                                               extraPseudos, pseudoElement,
+                                               idB, &wb);
+    if (!a) return b;
+    if (!b) return a;
+    return xsss_declKey(wa, layerA) >= xsss_declKey(wb, layerB) ? a : b;
+}
+
+/** @brief 无伪元素上下文的简写族裁决（普通控件属性路径，规则级）。 */
+static const XCssDeclaration* xsss_pickLaterDecl2(XStyleSheetStyle* self,
+                                                  const XObject* obj,
+                                                  uint32_t state,
+                                                  XCssProperty idA,
+                                                  int layerA,
+                                                  XCssProperty idB,
+                                                  int layerB)
+{
+    return xsss_pickLaterDecl(self, obj, state, 0, NULL, false, idA, layerA,
+                              idB, layerB);
+}
+
+/** @brief 表头伪元素路径的声明值文本 + 命中规则权重（声明级叠加）。
+ *
+ *  仅表头 `::section` 路径使用：低权重 `::section` 与高权重
+ *  `::section:last` 叠加，`last` 只覆盖自己写的属性。
+ *
+ *  注意：返回 NULL 不代表权重为 0——声明存在但 m_value 为空的边界下，
+ *  权重仍可能已回带（声明级/规则级查询均如此）；调用方必须先判返回值
+ *  再使用权重（本文件调用方均已先判）。
+ */
+static const char* xsss_declTextW(XStyleSheetStyle* self, const XObject* obj,
+                                  uint32_t state, uint32_t extraPseudos,
+                                  const char* pseudoElement, XCssProperty id,
+                                  char* buf, size_t cap, uint32_t* outWeight)
+{
+    const XCssDeclaration* d = xsss_stackDeclW(self, obj, state, extraPseudos,
+                                               pseudoElement, id, outWeight);
+    if (!d || !d->m_value) return NULL;
+    return xsss_declText(d, buf, cap);
+}
+
 /**
- * @brief 在级联全源（应用级 + 控件自身 + 祖先 sheets）中查最优先命中
- *        的声明。主路径=控件身份规则表（xsss_widgetRule）：过滤期裁
- *        决出该 (对象,状态) 的级联赢家后规则内 findDecl——赢家=最高
- *        权重且同权取后（与扫描裁决同口径），未声明该属性即负结论直
- *        答 NULL。1015 版的「负结论哈希+确认重扫」两段（逐帧最热扫
- *        描）随 rcache/acache 退役一并消除：赢家查询本身已不再是全源
- *        扫描，负结论无需独立登记。
+ * @brief 在级联全源（应用级 + 控件自身 + 祖先 sheets）中查该属性的最优
+ *        先声明。主路径=控件身份规则表的**规则级**裁决（xsss_widgetDecl）：
+ *        整条规则赢家内查该属性，赢家没写即未命中——修复前单赢家语义，
+ *        通用路径保持逐字节不变。声明级叠加只在表头 ::section 路径启用
+ *        （xsss_stackDeclW / xsss_declTextW，见其注释）。
  */
 static const XCssDeclaration* xsss_lookup(XStyleSheetStyle* self,
                                           const XObject* obj, uint32_t state,
                                           XCssProperty id)
 {
-    const XCssStyleRule* rule;
     if (!self) return NULL;
-    rule = xsss_widgetRule(self, obj, state, NULL);
-    return rule ? xsss_findDecl(rule, id) : NULL;
+    return xsss_widgetDecl(self, obj, state, 0, NULL, id);
 }
 
 /* ==================== 底层样式回落 ==================== */
@@ -1837,20 +2157,100 @@ static bool xsss_applyFontShorthand(XFont* font, const char* text,
     return applied;
 }
 
+/** @brief 字体族声明候选（font 简写 vs 长写，按级联键排序后逐条应用）。 */
+typedef struct XsssFontDecl
+{
+    const XCssDeclaration* m_decl; /**< 候选声明（借用）。 */
+    uint64_t m_key;                /**< 级联键（xsss_declKey）。 */
+    int m_kind;                    /**< 0=family 1=size 2=weight 3=style
+                                        4=font 简写。 */
+} XsssFontDecl;
+
+/** @brief 按级联键升序应用字体族声明（同键保持传入序）。
+ *
+ *  `font` 简写会一次性重置 family/size/weight/style，因此族内**必须**
+ *  按 Qt declarations() 的串接序逐条应用（低权重先、高权重后），否则
+ *  低权重规则的 `font` 简写会覆盖高权重规则的 `font-weight`。同权重
+ *  （同一规则内）沿用本库既有口径：长写在先、简写在后（layer 4）。
+ *
+ *  @return 有应用返回 true。 */
+static bool xsss_fontDeclsApply(XFont* font, XCssLengthContext* ctx,
+                                XsssFontDecl* list, int n)
+{
+    int i;
+    int j;
+    bool changed = false;
+    char buf[256];
+    const char* text;
+    for (i = 1; i < n; ++i) { /* 插入排序：稳定、n ≤ 5。 */
+        XsssFontDecl cur = list[i];
+        j = i - 1;
+        while (j >= 0 && list[j].m_key > cur.m_key) {
+            list[j + 1] = list[j];
+            --j;
+        }
+        list[j + 1] = cur;
+    }
+    for (i = 0; i < n; ++i) {
+        if (!list[i].m_decl || !list[i].m_decl->m_value) continue;
+        text = xsss_declText(list[i].m_decl, buf, sizeof(buf));
+        if (!text || !*text) continue;
+        switch (list[i].m_kind) {
+        case 0:
+            if (xsss_applyFontFamily(font, text)) changed = true;
+            break;
+        case 1:
+            if (xsss_applyFontSize(font, text, ctx)) changed = true;
+            break;
+        case 2:
+            if (xsss_applyFontWeight(font, text)) changed = true;
+            break;
+        case 3:
+            if (xsss_applyFontStyle(font, text)) changed = true;
+            break;
+        default:
+            if (xsss_applyFontShorthand(font, text, ctx)) changed = true;
+            break;
+        }
+    }
+    return changed;
+}
+
+/** @brief 收集字体族五条候选（含权重与层序；未命中的 decl 为 NULL）。
+ *
+ *  @param stack true=声明级叠加（表头 ::section 路径）；false=规则级单
+ *         赢家（通用控件路径，与修复前口径一致）。 */
+static int xsss_fontDeclsCollect(XStyleSheetStyle* self, const XObject* obj,
+                                 uint32_t state, uint32_t extraPseudos,
+                                 const char* pseudoElement, bool stack,
+                                 XsssFontDecl out[5])
+{
+    static const XCssProperty kIds[5] = {
+        XCssProperty_FontFamily, XCssProperty_FontSize,
+        XCssProperty_FontWeight, XCssProperty_FontStyle,
+        XCssProperty_Font
+    };
+    int i;
+    for (i = 0; i < 5; ++i) {
+        uint32_t w = 0;
+        out[i].m_decl = xsss_declByMode(self, stack, obj, state, extraPseudos,
+                                        pseudoElement, kIds[i], &w);
+        out[i].m_key = xsss_declKey(w, i);
+        out[i].m_kind = i;
+    }
+    return 5;
+}
+
 /** @brief 应用字体覆盖（绘制前：font-family/font-size/weight/style 及
  *         G4 的 font-variant/letter-spacing/word-spacing 命中时重设画
  *         家字体，对标 extractFont 的逐声明分派）。 */
 static void xsss_applyFont(XStyleSheetStyle* self, const XObject* obj,
                            XStyleOption* option, XPainter* painter)
 {
-    const XCssDeclaration* family;
-    const XCssDeclaration* size;
-    const XCssDeclaration* weight;
-    const XCssDeclaration* ital;
-    const XCssDeclaration* fontShorthand;
     const XCssDeclaration* variant;
     const XCssDeclaration* letterSp;
     const XCssDeclaration* wordSp;
+    XsssFontDecl fontDecls[5];
     XFont font;
     XCssLengthContext ctx;
     char buf[256];
@@ -1868,39 +2268,12 @@ static void xsss_applyFont(XStyleSheetStyle* self, const XObject* obj,
         ctx = xsss_lengthContext(painter, NULL);
     }
     famOrig = font.m_family;
-    family = xsss_lookup(self, obj, option->m_state,
-                         XCssProperty_FontFamily);
-    size = xsss_lookup(self, obj, option->m_state,
-                       XCssProperty_FontSize);
-    weight = xsss_lookup(self, obj, option->m_state,
-                         XCssProperty_FontWeight);
-    ital = xsss_lookup(self, obj, option->m_state,
-                       XCssProperty_FontStyle);
-    fontShorthand = xsss_lookup(self, obj, option->m_state,
-                                XCssProperty_Font);
-    if (family && family->m_value) {
-        text = xsss_declText(family, buf, sizeof(buf));
-        if (text && *text && xsss_applyFontFamily(&font, text)) changed = true;
-    }
-    if (size && size->m_value) {
-        text = xsss_declText(size, buf, sizeof(buf));
-        if (text && *text && xsss_applyFontSize(&font, text, &ctx))
-            changed = true;
-    }
-    if (weight && weight->m_value) {
-        text = xsss_declText(weight, buf, sizeof(buf));
-        if (text && *text && xsss_applyFontWeight(&font, text)) changed = true;
-    }
-    if (ital && ital->m_value) {
-        text = xsss_declText(ital, buf, sizeof(buf));
-        if (text && *text && xsss_applyFontStyle(&font, text)) changed = true;
-    }
-    if (fontShorthand && fontShorthand->m_value) {
-        text = xsss_declText(fontShorthand, buf, sizeof(buf));
-        if (text && *text &&
-            xsss_applyFontShorthand(&font, text, &ctx))
-            changed = true;
-    }
+    /* 字体族取自规则级赢家（stack=false：通用路径保持修复前单赢家口径，
+     * 五行候选同权，排序后即既有「长写→font 简写」应用序）；variant/
+     * letter-spacing/word-spacing 是独立属性，免权重单点查询即可。 */
+    (void)xsss_fontDeclsCollect(self, obj, option->m_state, 0, NULL, false,
+                                fontDecls);
+    if (xsss_fontDeclsApply(&font, &ctx, fontDecls, 5)) changed = true;
     /* G4 文本属性消费：font-variant / letter-spacing / word-spacing
      * → 画家字体旗标（对标 setTextVariantFromValue →
      * QFont::setCapitalization、setLetterSpacingFromValue →
@@ -2057,11 +2430,14 @@ static void xsss_applyBackground(XStyleSheetStyle* self, const XObject* obj,
     const char* text;
     if (!self || !option || !painter) return;
     if (self->m_sheet.m_ruleCount == 0) return;
-    bg = xsss_lookup(self, obj, option->m_state,
-                     XCssProperty_BackgroundColor);
-    if (!bg)
-        bg = xsss_lookup(self, obj, option->m_state,
-                         XCssProperty_Background);
+    /* BackgroundColor 与 background 简写同族：按级联键裁决后应用者
+     * （同权重时 long-hand 优先——本库既有口径）。声明级级联只保证
+     * 「每条属性取最高权重规则」，族内先后还要再比一次，否则高权重
+     * 规则的 `background: url(...)` 会被低权重规则的 background-color
+     * 顶掉（Qt declarations() 按权重升序串接、后声明覆盖）。 */
+    bg = xsss_pickLaterDecl2(self, obj, option->m_state,
+                             XCssProperty_BackgroundColor, 1,
+                             XCssProperty_Background, 0);
     text = (bg && bg->m_value) ? xsss_declText(bg, buf, sizeof(buf)) : NULL;
     if (text && *text) {
         bool isGradient = false;
@@ -2173,30 +2549,67 @@ static int xsss_boxExpand(const char* value, const XCssLengthContext* ctx,
     return n;
 }
 
+/** @brief 查询盒模型内边距（padding 简写 + 单侧长写）。
+ *
+ *  stack=true（表头路径，声明级叠加）：简写提供四边基准值，单侧长写
+ *  只在级联键**严格更大**时覆盖该边——跨规则高权重覆盖低权重，同权重
+ *  保持本库既有口径（简写优先，层序：单侧 0 < 简写 1）；否则低权重规则
+ *  的 `padding-left` 会顶掉高权重规则的 `padding` 简写。
+ *  stack=false（通用控件路径，规则级单赢家）：两级查询都取同一赢家规则，
+ *  键比较退化为层序——简写可解析即四边生效、单侧不覆盖，与修复前逐位
+ *  一致。
+ *
+ *  @param stack true=声明级叠加（表头路径），false=规则级单赢家。
+ *  @param extraPseudos/pseudoElement 伪元素上下文（普通控件路径传
+ *         0/NULL）。
+ */
+static void xsss_paddingResolve(XStyleSheetStyle* self, const XObject* obj,
+                                uint32_t state, uint32_t extraPseudos,
+                                const char* pseudoElement, bool stack,
+                                const XCssLengthContext* ctx, int out[4])
+{
+    static const XCssProperty kPadSide[4] = {
+        XCssProperty_PaddingLeft, XCssProperty_PaddingTop,
+        XCssProperty_PaddingRight, XCssProperty_PaddingBottom
+    };
+    const XCssDeclaration* d;
+    char buf[256];
+    const char* text;
+    uint32_t w = 0;
+    uint64_t shKey = 0;
+    bool hasSh = false;
+    int i;
+    out[0] = out[1] = out[2] = out[3] = 0; /* 左/上/右/下。 */
+    d = xsss_declByMode(self, stack, obj, state, extraPseudos, pseudoElement,
+                        XCssProperty_Padding, &w);
+    if (d && d->m_value) {
+        text = xsss_declText(d, buf, sizeof(buf));
+        if (text && *text && xsss_boxExpand(text, ctx, out) > 0) {
+            hasSh = true;
+            shKey = xsss_declKey(w, 1);
+        }
+    }
+    /* 单侧长写（% 按轴：左右参考宽、上下参考高）。 */
+    for (i = 0; i < 4; ++i) {
+        uint32_t ws = 0;
+        XCssLength len;
+        int v;
+        d = xsss_declByMode(self, stack, obj, state, extraPseudos,
+                            pseudoElement, kPadSide[i], &ws);
+        if (!d || !d->m_value) continue;
+        text = xsss_declText(d, buf, sizeof(buf));
+        if (!text || !*text || !XCssParseLengthEx(text, &len)) continue;
+        v = xsss_lengthPx(&len, ctx, i == 0 || i == 2);
+        if (!hasSh || xsss_declKey(ws, 0) > shKey) out[i] = v;
+    }
+}
+
 /** @brief 查询盒模型内边距（padding 系列声明；1/2/3/4 值简写展开）。 */
 static void xsss_padding(XStyleSheetStyle* self, const XObject* obj,
                          uint32_t state, const XCssLengthContext* ctx,
                          int out[4])
 {
-    const XCssDeclaration* d;
-    char buf[256];
-    const char* text;
-    out[0] = out[1] = out[2] = out[3] = 0; /* 左/上/右/下。 */
-    d = xsss_lookup(self, obj, state, XCssProperty_Padding);
-    if (d && d->m_value) {
-        text = xsss_declText(d, buf, sizeof(buf));
-        if (text && *text && xsss_boxExpand(text, ctx, out) > 0)
-            return; /* 简写可解析 → 四边生效（多值按 CSS 盒序展开）。 */
-    }
-    /* 单侧回落（% 按轴：左右参考宽、上下参考高）。 */
-    (void)xsss_declPx(self, obj, state, XCssProperty_PaddingLeft, ctx,
-                      true, &out[0]);
-    (void)xsss_declPx(self, obj, state, XCssProperty_PaddingTop, ctx,
-                      false, &out[1]);
-    (void)xsss_declPx(self, obj, state, XCssProperty_PaddingRight, ctx,
-                      true, &out[2]);
-    (void)xsss_declPx(self, obj, state, XCssProperty_PaddingBottom, ctx,
-                      false, &out[3]);
+    xsss_paddingResolve(self, obj, state, 0, NULL, false, ctx, out);
 }
 
 /** @brief 查询盒模型外边距（margin 声明；1/2/3/4 值简写展开）。
@@ -2254,10 +2667,24 @@ static void xg3_borderDrawImpl(XStyleSheetStyle* self, const XObject* obj,
                                const XRect* boxRect,
                                const XCssLengthContext* ctx)
 {
-    const XCssDeclaration* bw;
+    const XCssDeclaration* bw;   /* border-width 长写。 */
+    const XCssDeclaration* bl;   /* border 简写。 */
     const XCssDeclaration* bc;
     const XCssDeclaration* br;
     const XCssDeclaration* bs;
+    uint32_t wBW = 0;
+    uint32_t wB = 0;
+    uint32_t wBC = 0;
+    uint32_t wBS = 0;
+    uint64_t kBW;
+    uint64_t kB;
+    int lw = 0;              /* 简写里的长度分量。 */
+    bool lhasW = false;
+    bool lnone = false;      /* 简写里的 none（style=None 语义）。 */
+    bool lhasC = false;
+    uint32_t lc = 0;
+    int lstyle = 0;
+    bool lhasStyle = false;
     int width = 0;
     bool hasWidth = false;
     bool hasColor = false; /* 「未指定色」与「色为全透明」分离。 */
@@ -2269,13 +2696,65 @@ static void xg3_borderDrawImpl(XStyleSheetStyle* self, const XObject* obj,
     XRect r;
     if (!self || !option || !painter) return;
     if (self->m_sheet.m_ruleCount == 0) return;
-    bw = xsss_lookup(self, obj, option->m_state,
-                     XCssProperty_BorderWidth);
-    if (!bw)
-        bw = xsss_lookup(self, obj, option->m_state,
-                         XCssProperty_Border);
-    /* 宽度：简写/单值统一逐 token 取首个长度分量。 */
-    if (bw && bw->m_value) {
+    /* 子属性级裁决（通用控件路径）：border 简写分别写 width/style/color，
+     * 未写的子属性不参与覆盖；与对应长写按级联键比先后。本路径走规则级
+     * 单赢家（xsss_widgetDeclW），四个候选恒来自同一赢家规则，故级联键
+     * 比较退化为族内层序——同权重统一取「长写优先」（本库不保留规则内
+     * 声明序，宽度/颜色旧实现即长写优先，线型一并统一）。
+     * 跨规则的声明级叠加只在表头 ::section 路径（xsssHdr_sideBorder 用
+     * xsss_stackDeclW 的权重裁决），通用路径保持修复前口径（复审第 2 轮
+     * issues#2 的收窄方案）。 */
+    bl = xsss_widgetDeclW(self, obj, option->m_state, 0, NULL,
+                          XCssProperty_Border, &wB);
+    bw = xsss_widgetDeclW(self, obj, option->m_state, 0, NULL,
+                          XCssProperty_BorderWidth, &wBW);
+    bc = xsss_widgetDeclW(self, obj, option->m_state, 0, NULL,
+                          XCssProperty_BorderColor, &wBC);
+    bs = xsss_widgetDeclW(self, obj, option->m_state, 0, NULL,
+                          XCssProperty_BorderStyle, &wBS);
+    kBW = xsss_declKey(wBW, 1);
+    kB = xsss_declKey(wB, 0);
+    /* 1) 先拆 border 简写的三个子属性。 */
+    if (bl && bl->m_value) {
+        text = xsss_declText(bl, bbuf, sizeof(bbuf));
+        while (text && *text) {
+            char tok[64];
+            size_t tl = 0;
+            XCssLength len;
+            uint32_t token = 0;
+            while (text[tl] && !XIsSpace((unsigned char)text[tl]) &&
+                   tl + 1 < sizeof(tok))
+                ++tl;
+            XMemcpy(tok, text, tl);
+            tok[tl] = '\0';
+            text += tl;
+            while (*text && XIsSpace((unsigned char)*text)) ++text;
+            if (XCssParseColorToken(tok, tl, &token)) {
+                lc = token;
+                lhasC = true;
+            } else if (XStrcasecmp(tok, "none") == 0) {
+                lnone = true;
+            } else if (XStrcasecmp(tok, "solid") == 0) {
+                lstyle = 0;
+                lhasStyle = true;
+            } else if (XStrcasecmp(tok, "dashed") == 0) {
+                lstyle = 1;
+                lhasStyle = true;
+            } else if (XStrcasecmp(tok, "dotted") == 0) {
+                lstyle = 2;
+                lhasStyle = true;
+            } else if (tl > 0 && XCssParseLengthEx(tok, &len)) {
+                lw = xsss_lengthPx(&len, ctx, true);
+                lhasW = true;
+            }
+        }
+    }
+    /* 2) 宽度：border-width 长写 vs 简写长度分量（只有写了长度才表态）。 */
+    if (lhasW && (!bw || kB > kBW)) {
+        width = lw;
+        hasWidth = true;
+    } else if (bw && bw->m_value) {
+        /* 简写/单值统一逐 token 取首个长度分量。 */
         text = xsss_declText(bw, bbuf, sizeof(bbuf));
         while (text && *text && !hasWidth) {
             char tok[64];
@@ -2294,47 +2773,23 @@ static void xg3_borderDrawImpl(XStyleSheetStyle* self, const XObject* obj,
             }
         }
     }
-    bc = xsss_lookup(self, obj, option->m_state,
-                     XCssProperty_BorderColor);
-    if (bc && bc->m_value) {
+    /* 3) 颜色：border-color 长写 vs 简写色 token。 */
+    if (lhasC && (!bc || kB > xsss_declKey(wBC, 1))) {
+        color = lc;
+        hasColor = true;
+    } else if (bc && bc->m_value) {
         text = xsss_declText(bc, bbuf, sizeof(bbuf));
         if (text && *text && XCssParseColor(text, &color)) hasColor = true;
     }
-    bs = xsss_lookup(self, obj, option->m_state,
-                     XCssProperty_BorderStyle);
-    if (bs && bs->m_value) {
+    /* 4) 线型：border-style 长写 vs 简写线型关键字（none 整条不画）。 */
+    if ((lnone || lhasStyle) && (!bs || kB > xsss_declKey(wBS, 1))) {
+        if (lnone) return;
+        style = lstyle;
+    } else if (bs && bs->m_value) {
         text = xsss_declText(bs, bbuf, sizeof(bbuf));
         if (text && *text && XStrcasecmp(text, "none") == 0) return;
         if (text && *text && XStrcasecmp(text, "dashed") == 0) style = 1;
         else if (text && *text && XStrcasecmp(text, "dotted") == 0) style = 2;
-    }
-    /* border 简写扫描（"2px solid #FF0000"）：颜色 token 与风格关键字。 */
-    if (bw && bw->m_value) {
-        text = xsss_declText(bw, bbuf, sizeof(bbuf));
-        while (text && *text) {
-            char tok[64];
-            size_t tl = 0;
-            uint32_t token = 0;
-            while (text[tl] && !XIsSpace((unsigned char)text[tl]) &&
-                   tl + 1 < sizeof(tok))
-                ++tl;
-            XMemcpy(tok, text, tl);
-            tok[tl] = '\0';
-            text += tl;
-            while (*text && XIsSpace((unsigned char)*text)) ++text;
-            if (!hasColor && XCssParseColorToken(tok, tl, &token)) {
-                color = token;
-                hasColor = true;
-            } else if (XStrcasecmp(tok, "solid") == 0) {
-                style = 0;
-            } else if (XStrcasecmp(tok, "dashed") == 0) {
-                style = 1;
-            } else if (XStrcasecmp(tok, "dotted") == 0) {
-                style = 2;
-            } else if (XStrcasecmp(tok, "none") == 0) {
-                return;
-            }
-        }
     }
     if (!hasWidth || width <= 0) return;
     if (hasColor && (color & 0xFF000000u) == 0)
@@ -2517,6 +2972,14 @@ static void VXStyleSheetStyle_drawPrimitive(XStyle* self, int pe,
         XStyle_drawPrimitive(src, pe, option, painter, widget);
 }
 
+/* HDR 新增区（定义在文件尾 G2 区之后）：表头段 ::section 伪元素绘制。
+ * 前置声明以便 drawControl 早于定义处调用。 */
+static bool xsssHdr_drawSectionHeader(XStyleSheetStyle* self,
+                                      int ce,
+                                      const XStyleOption* option,
+                                      XPainter* painter,
+                                      const XWidget* widget);
+
 static void VXStyleSheetStyle_drawControl(XStyle* self, int ce,
                                           const XStyleOption* option,
                                           XPainter* painter,
@@ -2525,6 +2988,21 @@ static void VXStyleSheetStyle_drawControl(XStyle* self, int ce,
     XStyleSheetStyle* ss = (XStyleSheetStyle*)self;
     XStyle* src = xsss_source(ss);
     XStyleOption opt;
+    /* 表头段：QSS `...::section` 规则优先（对标 Qt
+     * QStyleSheetStyle::drawControl 的 CE_HeaderSection 分支，
+     * qstylesheetstyle.cpp:4103-4120）。命中即由该分支自绘背景/四边
+     * 边框，并由随后的 CE_HeaderLabel 趟绘制标签（含 font-weight 与
+     * padding），**不再**走下方控件级盒路径，也不落底层
+     * xcs_drawHeaderSection 的 Button 底+双线；无 :section 规则时返回
+     * false，行为与修复前逐字节一致。
+     *
+     * 分两趟（对齐 Qt 两处共用同一 subRule）：CE_HeaderSection 那一趟
+     * 只画段 chrome（背景+四边边框），不画标签；随后的 CE_HeaderLabel
+     * 调用单独画标签（不重画 chrome），两趟共用同一 labelRect 公式。 */
+    if (ce == XStyleCE_HeaderSection || ce == XStyleCE_HeaderLabel) {
+        if (xsssHdr_drawSectionHeader(ss, ce, option, painter, widget))
+            return;
+    }
     if (option) {
         XCssLengthContext ctx =
             xsss_lengthContext(painter, &option->m_rect);
@@ -2799,7 +3277,7 @@ const XCssStyleRule* XStyleSheetStyle_styleRuleForPseudoElement(
     if (!self || !widget) return NULL;
     /* 查询与属性查询共用同一份控件身份规则表：伪元素约束在过滤期裁
      * 决（键不含伪元素），级联口径一致。 */
-    return xsss_widgetRule(self, (const XObject*)widget, state,
+    return xsss_widgetRule(self, (const XObject*)widget, state, 0,
                            (pseudoElement && *pseudoElement) ? pseudoElement
                                                              : NULL);
 }
@@ -3417,7 +3895,7 @@ static void xsss2_dispatchSubControls(XStyleSheetStyle* self, int cc,
                                   specs[i].m_sc, &r)) continue;
         rects[count] = r;
         rules[count] = xsss_widgetRule(self, (const XObject*)widget,
-                                       option->m_state, specs[i].m_name);
+                                       option->m_state, 0, specs[i].m_name);
         ++count;
     }
     /* 二趟：命中规则的子件绘制 chrome（背景/边框/圆角），painter
@@ -3435,6 +3913,730 @@ static void xsss2_dispatchSubControls(XStyleSheetStyle* self, int cc,
 }
 
 /* ==================== ===== G2 新增区 结束 ==================== */
+
+/* ==================== ===== HDR 新增区 开始（lane-qss-header 线专属，
+ * 其他线勿动；表头段 ::section 伪元素绘制） ==================== */
+
+/* ---- 根因与对齐口径 ----
+ *
+ * 修复前：XTableWidget 列头绘制点（XTableWidget.c:3166-3180）以
+ * CE_HeaderSection/CE_HeaderLabel 调 XStyle_drawControl，而
+ * VXStyleSheetStyle_drawControl（本文件 :2520 附近）只走「控件级盒」
+ * 属性路径（伪元素 NULL），因此任何 `...::section {...}` 规则**永不
+ * 命中**——PyQt 版 theme.py:425 的 QHeaderView::section 同款规则在 C
+ * 端起不到作用，列头只能是 XCommonStyle::xcs_drawHeaderSection 的
+ * 「Button 底 + 双线边框」。
+ *
+ * 对齐 Qt 6.8.3（逐条）：
+ *  - qstylesheetstyle.cpp:4103-4119 CE_HeaderSection 分支：
+ *    `QRenderRule subRule = renderRule(w, opt, PseudoElement_HeaderViewSection)`，
+ *    非 native 边框时 `subRule.drawRule(p, opt->rect)`——即画背景+四边
+ *    边框到段矩形；native 时回底层并 `configurePalette`（ButtonText/
+ *    Button）。
+ *  - qstylesheetstyle.cpp:4122-4150 CE_HeaderLabel 分支：取**同一**
+ *    :section 规则，有 font 时 `p->setFont(subRule.font.resolve(...))`
+ *    后交底层画文本，否则回底层——font-weight:bold 由此生效。
+ *  - qstylesheetstyle.cpp:6262-6281 SE_HeaderLabel：`subRule.hasBox()
+ *    || !subRule.hasNativeBorder()` 时返回 `subRule.contentsRect(rect)`
+ *    ——padding 因此把文本矩形内缩（contentsRect = borderRect 内缩
+ *    border + padding，见 :1124-1134）。
+ *  - qstylesheetstyle.cpp:1995-2003：QStyleOptionHeader 的 position 派生
+ *    PseudoClass_OnlyOne/First/Last/Middle，即 `::section:last` 的由来；
+ *    名表见 qcssparser.cpp:275/284/287/295。
+ *  - qheaderview.cpp:2922-2934 initStyleOptionForIndex：position 由
+ *    首/末**可见**段判定（isFirstVisibleSection/isLastVisibleSection），
+ *    单段即 OnlyOneSection。
+ *  - qtableview.cpp:551-572 QTableCornerButton::paintEvent：角按钮同样
+ *    drawControl(CE_Header) 且 `opt.position = OnlyOneSection`，故
+ *    `QTableCornerButton::section` 与 `::section:only-one` 同源。
+ *
+ * 本区只做「绘制点显式声明伪元素」这一件事：控件级路径（伪元素 NULL）
+ * 逐字节不变；无 `::section` 规则时整段短路回底层样式，与修复前一致。 */
+
+/** @brief 取表头段 Qt 侧 position 语义的伪类位（:first/:last/:middle/
+ *         :only-one）与定位用伪元素名。
+ *
+ *  与 Qt 的两处偏差，均如实登记：
+ *  - 本库表头没有「隐藏段」概念可参与首末判定（Qt 用 isFirstVisible
+ *    Section/isLastVisibleSection，qheaderview.cpp:2925-2926）；调用侧
+ *    传入的是「首个/末个**正在绘制**的列」，hidden 列由调用侧跳过。
+ *  - Qt 反向下 position 会把 Beginning/End 对调（qheaderview.cpp:2929-
+ *    2932）；本库无 RTL 表头布局，恒按 LTR 判定。
+ *
+ *  @param section 段号（0 基）。@param count 段总数。
+ *  @return XSSS_PSEUDOCLASS_* 位组合。 */
+static uint32_t xsssHdr_positionPseudoClass(int section, int count)
+{
+    bool first;
+    bool last;
+    if (count <= 0 || section < 0) return 0;
+    first = (section == 0);
+    last = (section == count - 1);
+    if (first && last) return XSSS_PSEUDOCLASS_ONLY_ONE;
+    if (first) return XSSS_PSEUDOCLASS_FIRST;
+    if (last) return XSSS_PSEUDOCLASS_LAST;
+    return XSSS_PSEUDOCLASS_MIDDLE;
+}
+
+/** @brief 表头段伪元素上下文下的声明值文本（**声明级**级联）。
+ *
+ *  根因（末列白盒回归）：旧实现先用 xsss_widgetRule 取「单条赢家规则」，
+ *  再从这条规则里读所有声明；`XTableWidget::section:last { border-right:
+ *  none }` 特异度（1+1×0x10）高于 `XTableWidget::section`（1），整条顶替
+ *  父规则后末列只剩 border-right:none——背景/其余三边/字体全部丢失，
+ *  xsssHdr_drawSection 无背景无边框返回 false，落回控件级盒路径被画成
+ *  白色圆角盒。改走 xsss_widgetDecl：每条属性各自取「写了它的最高权重
+ *  规则」的声明，高特异度规则只覆盖它自己写的属性（Qt declarations()
+ *  串接口径，见 xsss_scanCascade 注释）。
+ *
+ *  @param pseudoElement 伪元素名（"section"）。 */
+static const char* xsssHdr_declText(XStyleSheetStyle* self,
+                                    const XObject* obj, uint32_t state,
+                                    uint32_t extraPseudos,
+                                    const char* pseudoElement,
+                                    XCssProperty id, char* buf, size_t cap)
+{
+    return xsss_declTextW(self, obj, state, extraPseudos, pseudoElement, id,
+                          buf, cap, NULL);
+}
+
+/** @brief 同 xsssHdr_declText，另回带声明所在规则权重（未命中 0）。 */
+static const char* xsssHdr_declTextW(XStyleSheetStyle* self,
+                                     const XObject* obj, uint32_t state,
+                                     uint32_t extraPseudos,
+                                     const char* pseudoElement,
+                                     XCssProperty id, char* buf, size_t cap,
+                                     uint32_t* outWeight)
+{
+    return xsss_declTextW(self, obj, state, extraPseudos, pseudoElement, id,
+                          buf, cap, outWeight);
+}
+
+/** @brief 单边边框取值（对齐 Qt ValueExtractor::extractBorder 的
+ *         逐边优先级，qcssparser.cpp:596-653）。
+ *
+ *  Qt 的实参**声明出现序**扫描；本库声明表是「属性 ID + 值」且同属性
+ *  取最后一条（xsss_findDecl 反向找），故等价口径为：单边族优先于
+ *  简写族，简写族优先于整体 `border`。
+ *  取值顺序（每边独立）：`border-<side>` 简写 → `border-<side>-width/
+ *  color/style` 单项 → `border-width/color/style` → `border` 简写。
+ *  `border: none` 与 `border-<side>: none` 一律解析为「该边不画」，
+ *  与 Qt BorderStyle_None 一致（qcssparser.cpp:935-947）。
+ *
+ *  各层取值走 xsssHdr_declTextW（声明级级联 + 权重）：`::section` 与
+ *  `::section:last` 同时命中时，`border: none` / `border-bottom` 仍由
+ *  `::section` 提供，只有 `:last` 自己写的 `border-right` 被覆盖。
+ *  层序 L0..L3 只在**同权重**（同一规则内）时作为声明序近似；跨规则
+ *  一律权重说话——避免低权重规则的侧边简写反压高权重规则的
+ *  `border: none`（Qt 按权重升序串接全集、后声明覆盖）。
+ *
+ *  @param outWidth 输出宽度（px；0=不画）。@param outColor 输出 ARGB。
+ *  @return 该边应绘制返回 true。 */
+static bool xsssHdr_sideBorder(XStyleSheetStyle* self, const XObject* obj,
+                               uint32_t state, uint32_t extraPseudos,
+                               const char* pseudoElement, int side,
+                               const XCssLengthContext* ctx,
+                               const XStyleOption* option,
+                               int* outWidth, uint32_t* outColor)
+{
+    static const XCssProperty kSideShorthand[4] = {
+        XCssProperty_BorderLeft, XCssProperty_BorderTop,
+        XCssProperty_BorderRight, XCssProperty_BorderBottom
+    };
+    static const XCssProperty kSideWidth[4] = {
+        XCssProperty_BorderLeftWidth, XCssProperty_BorderTopWidth,
+        XCssProperty_BorderRightWidth, XCssProperty_BorderBottomWidth
+    };
+    static const XCssProperty kSideColor[4] = {
+        XCssProperty_BorderLeftColor, XCssProperty_BorderTopColor,
+        XCssProperty_BorderRightColor, XCssProperty_BorderBottomColor
+    };
+    static const XCssProperty kSideStyle[4] = {
+        XCssProperty_BorderLeftStyle, XCssProperty_BorderTopStyle,
+        XCssProperty_BorderRightStyle, XCssProperty_BorderBottomStyle
+    };
+    static const XCssProperty kAllWidth[4] = {
+        XCssProperty_BorderWidth, XCssProperty_BorderWidth,
+        XCssProperty_BorderWidth, XCssProperty_BorderWidth
+    };
+    static const XCssProperty kAllColor[4] = {
+        XCssProperty_BorderColor, XCssProperty_BorderColor,
+        XCssProperty_BorderColor, XCssProperty_BorderColor
+    };
+    static const XCssProperty kAllStyle[4] = {
+        XCssProperty_BorderStyle, XCssProperty_BorderStyle,
+        XCssProperty_BorderStyle, XCssProperty_BorderStyle
+    };
+    char buf[256];
+    const char* text;
+    uint32_t w;
+    uint64_t widthKey = 0; /* 宽度子属性当前生效的级联键（0=未表态）。 */
+    uint64_t colorKey = 0; /* 颜色子属性当前生效的级联键。 */
+    int width = 0;
+    uint32_t color = 0;
+    bool hasWidth = false;
+    bool hasColor = false;
+    /* `border: none` 在 Qt 里不是"该边不画"这条独立语义，而是把该边的
+     * width/style 置为 0/None（qcssparser.cpp:596-653 的 borderValue 写
+     * 回 borders[edge]=0、styles[edge]=None，随后被**更后出现**的
+     * border-right:1px 覆盖）——所以「none」必须和下一位一起参与分层，
+     * 不能一见到就 return。层级（低→高，仅同权重时生效）：
+     *   L0 border 整体简写 → L1 border-width/style/color 族 →
+     *   L2 border-<side> 简写 → L3 border-<side>-width/style/color。
+     * 高层没表态时沿用低层；高层表态（含 none）即覆盖。跨规则时级联键
+     * （权重<<4 | 层序）大者胜：低权重规则的层序再高也压不过高权重规则
+     * ——Qt declarations() 按权重升序串接全集、后声明覆盖（见
+     * xsss_scanCascade 注释）。 */
+    if (!self) return false;
+    if (side < 0 || side > 3) return false;
+    *outWidth = 0;
+    *outColor = 0;
+    /* ---- L0：border 整体简写（同权时最低优先）。none → 该边宽 0。 ---- */
+    text = xsssHdr_declTextW(self, obj, state, extraPseudos, pseudoElement,
+                             XCssProperty_Border, buf, sizeof(buf), &w);
+    if (text && *text) {
+        const char* p = text;
+        uint64_t k = xsss_declKey(w, 0);
+        int lw = 0;
+        uint32_t lc = 0;
+        bool lhasW = false;
+        bool lhasC = false;
+        bool lnone = false;
+        while (*p) {
+            char tok[64];
+            size_t tl = 0;
+            XCssLength len;
+            uint32_t c = 0;
+            while (p[tl] && !XIsSpace((unsigned char)p[tl]) &&
+                   tl + 1 < sizeof(tok))
+                ++tl;
+            XMemcpy(tok, p, tl);
+            tok[tl] = '\0';
+            p += tl;
+            while (*p && XIsSpace((unsigned char)*p)) ++p;
+            if (XCssParseColorToken(tok, tl, &c)) {
+                lc = c;
+                lhasC = true;
+            } else if (XStrcasecmp(tok, "none") == 0) {
+                lnone = true;
+            } else if (tl > 0 && XCssParseLengthEx(tok, &len)) {
+                lw = xsss_lengthPx(&len, ctx, side == 0 || side == 2);
+                lhasW = true;
+            }
+        }
+        if ((lnone || lhasW) && k >= widthKey) {
+            width = lnone ? 0 : lw;
+            hasWidth = true;
+            widthKey = k;   /* 表态：该边宽度以此层为准。 */
+        }
+        if (lhasC && k >= colorKey) {
+            color = lc;
+            hasColor = true;
+            colorKey = k;
+        }
+    }
+    /* ---- L1：border-width / -style / -color 族（四边同值）。 ---- */
+    text = xsssHdr_declTextW(self, obj, state, extraPseudos, pseudoElement,
+                             kAllWidth[side], buf, sizeof(buf), &w);
+    if (text && *text) {
+        const char* p = text;
+        XCssLength vals[4];
+        int n = 0;
+        while (*p && n < 4) {
+            char tok[64];
+            size_t tl = 0;
+            while (p[tl] && !XIsSpace((unsigned char)p[tl]) &&
+                   tl + 1 < sizeof(tok))
+                ++tl;
+            XMemcpy(tok, p, tl);
+            tok[tl] = '\0';
+            p += tl;
+            while (*p && XIsSpace((unsigned char)*p)) ++p;
+            if (tl > 0 && XCssParseLengthEx(tok, &vals[n])) ++n;
+        }
+        if (n > 0 && xsss_declKey(w, 1) >= widthKey) {
+            /* CSS 盒序「上右下左」→ 本函数 side 序 左/上/右/下；
+             * 1/2/3/4 值展开同 qcssparser.cpp:448-475 lengthValues。 */
+            int boxIdx = (side == 0) ? 3 : (side == 1 ? 0
+                                                       : (side == 2 ? 1 : 2));
+            int pick;
+            if (n == 1) pick = 0;
+            else if (n == 2) pick = (side == 1 || side == 3) ? 0 : 1;
+            else if (n == 3) pick = (side == 1) ? 0 : ((side == 3) ? 2 : 1);
+            else pick = boxIdx;
+            width = xsss_lengthPx(&vals[pick], ctx,
+                                  side == 0 || side == 2);
+            hasWidth = true;
+            widthKey = xsss_declKey(w, 1);
+        }
+    }
+    text = xsssHdr_declTextW(self, obj, state, extraPseudos, pseudoElement,
+                             kAllStyle[side], buf, sizeof(buf), &w);
+    if (text && *text) {
+        if (XStrcasecmp(text, "none") == 0 &&
+            xsss_declKey(w, 2) >= widthKey) {
+            width = 0;
+            hasWidth = true;
+            widthKey = xsss_declKey(w, 2);
+        }
+    }
+    text = xsssHdr_declTextW(self, obj, state, extraPseudos, pseudoElement,
+                             kAllColor[side], buf, sizeof(buf), &w);
+    if (text && *text && xsss_declKey(w, 3) >= colorKey) {
+        /* border-color 多值（上右下左）取首 token——表头段实际只用
+         * 单值形态，多值按首值近似（如实登记）。 */
+        char tok[64];
+        size_t tl = 0;
+        uint32_t c = 0;
+        while (text[tl] && !XIsSpace((unsigned char)text[tl]) &&
+               tl + 1 < sizeof(tok))
+            ++tl;
+        XMemcpy(tok, text, tl);
+        tok[tl] = '\0';
+        if (XCssParseColorToken(tok, tl, &c)) {
+            color = c;
+            hasColor = true;
+            colorKey = xsss_declKey(w, 3);
+        }
+    }
+    /* ---- L2：border-<side> 简写（width/style/color 一并）。 ---- */
+    text = xsssHdr_declTextW(self, obj, state, extraPseudos, pseudoElement,
+                             kSideShorthand[side], buf, sizeof(buf), &w);
+    if (text && *text) {
+        const char* p = text;
+        uint64_t k = xsss_declKey(w, 4);
+        int sw = 0;
+        uint32_t sc = 0;
+        bool shasW = false;
+        bool shasC = false;
+        bool snone = false;
+        while (*p) {
+            char tok[64];
+            size_t tl = 0;
+            XCssLength len;
+            uint32_t c = 0;
+            while (p[tl] && !XIsSpace((unsigned char)p[tl]) &&
+                   tl + 1 < sizeof(tok))
+                ++tl;
+            XMemcpy(tok, p, tl);
+            tok[tl] = '\0';
+            p += tl;
+            while (*p && XIsSpace((unsigned char)*p)) ++p;
+            if (XCssParseColorToken(tok, tl, &c)) {
+                sc = c;
+                shasC = true;
+            } else if (XStrcasecmp(tok, "none") == 0) {
+                snone = true;
+            } else if (XStrcasecmp(tok, "solid") == 0 ||
+                       XStrcasecmp(tok, "dashed") == 0 ||
+                       XStrcasecmp(tok, "dotted") == 0) {
+                /* 线型：表头段边框恒实线，不区分。 */
+            } else if (tl > 0 && XCssParseLengthEx(tok, &len)) {
+                sw = xsss_lengthPx(&len, ctx, side == 0 || side == 2);
+                shasW = true;
+            }
+        }
+        if ((snone || shasW) && k >= widthKey) {
+            width = snone ? 0 : sw;
+            hasWidth = true;
+            widthKey = k;
+        }
+        if (shasC && k >= colorKey) {
+            color = sc;
+            hasColor = true;
+            colorKey = k;
+        }
+    }
+    /* ---- L3：border-<side>-width / -style / -color（同权时最高优先）。 ---- */
+    text = xsssHdr_declTextW(self, obj, state, extraPseudos, pseudoElement,
+                             kSideWidth[side], buf, sizeof(buf), &w);
+    if (text && *text && xsss_declKey(w, 5) >= widthKey) {
+        XCssLength len;
+        if (XCssParseLengthEx(text, &len)) {
+            width = xsss_lengthPx(&len, ctx, side == 0 || side == 2);
+            hasWidth = true;
+            widthKey = xsss_declKey(w, 5);
+        }
+    }
+    text = xsssHdr_declTextW(self, obj, state, extraPseudos, pseudoElement,
+                             kSideStyle[side], buf, sizeof(buf), &w);
+    if (text && *text) {
+        if (XStrcasecmp(text, "none") == 0 &&
+            xsss_declKey(w, 6) >= widthKey) {
+            width = 0;
+            hasWidth = true;
+            widthKey = xsss_declKey(w, 6);
+        }
+    }
+    text = xsssHdr_declTextW(self, obj, state, extraPseudos, pseudoElement,
+                             kSideColor[side], buf, sizeof(buf), &w);
+    if (text && *text && xsss_declKey(w, 7) >= colorKey) {
+        uint32_t c = 0;
+        if (XCssParseColor(text, &c)) {
+            color = c;
+            hasColor = true;
+            colorKey = xsss_declKey(w, 7);
+        }
+    }
+    if (!hasWidth || width <= 0) return false;
+    /* currentColor 回落链（同 xsss2_ruleBorder）：本规则 color → 选项
+     * 文本色 → 不透明黑。 */
+    if (!hasColor) {
+        text = xsssHdr_declText(self, obj, state, extraPseudos,
+                                pseudoElement, XCssProperty_Color, buf,
+                                sizeof(buf));
+        if (text && *text && XCssParseColor(text, &color)) {
+            hasColor = true;
+        } else if (option && option->m_textColor) {
+            color = option->m_textColor;
+            hasColor = true;
+        } else {
+            color = 0xFF000000u;
+        }
+    }
+    if ((color & 0xFF000000u) == 0) return false; /* 全透明不产生像素。 */
+    *outWidth = width;
+    *outColor = color;
+    return true;
+}
+
+/** @brief 表头段 QSS 绘制（背景 + 四边独立边框）。
+ *
+ *  几何：段矩形即 opt->rect（对标 Qt CE_HeaderSection 的
+ *  `subRule.drawRule(p, opt->rect)`，qstylesheetstyle.cpp:4116）。
+ *  四边独立是必需的：PyQt 版的 `border:none; border-right:1px solid
+ *  #E4E8EC; border-bottom:1px solid #D5DBE2` 与 `:last { border-right:
+ *  none }` 只有在「四边各自可取宽度」时才画得对；既有
+ *  xsss2_ruleBorder 只认整体 border-width，会把这套规则画成
+ *  「四边全 1px」或「一条不画」。
+ *
+ *  @return 命中可绘制规则并已绘制返回 true；否则 false（调用侧回底层）。 */
+static bool xsssHdr_drawSection(XStyleSheetStyle* self,
+                                const XStyleOption* option,
+                                XPainter* painter, const XWidget* widget,
+                                const char* pseudoElement,
+                                uint32_t extraPseudos)
+{
+    const XObject* obj = (const XObject*)widget;
+    XCssLengthContext ctx;
+    XRect r;
+    uint32_t color = 0;
+    char buf[256];
+    const char* text;
+    int widths[4] = { 0, 0, 0, 0 }; /* 左/上/右/下。 */
+    uint32_t colors[4] = { 0, 0, 0, 0 };
+    bool draw[4] = { false, false, false, false };
+    bool drewAny = false;
+    int i;
+    if (!self || !option || !painter || !widget) return false;
+    if (self->m_sheet.m_ruleCount == 0) return false;
+    /* 存在性闸（无 :section 规则时整段回底层，保持旧行为且免逐属性查询）；
+     * 存在后各属性按声明级级联独立取值——即 Qt declarations() 叠加语义：
+     * 高权重 `:last` 只覆盖它写的 border-right，背景/其余三边仍取
+     * `::section`（见 xsss_scanCascade 注释）。 */
+    if (!xsss_widgetRule(self, obj, option->m_state, extraPseudos,
+                         pseudoElement))
+        return false;
+    ctx = xsss_lengthContext(painter, &option->m_rect);
+    r = option->m_rect;
+    /* 1) 背景色（声明级级联：低权重 `::section` 写背景、高权重
+     *    `::section:last` 只写 border-right 时，背景仍取自前者——
+     *    对齐 Qt declarations() 串接，见 xsss_scanCascade 注释）。
+     *    BackgroundColor 与 background 简写同族：按级联键取后者
+     *    （同权重时 long-hand 优先，本库既有口径）。全透明不填充。 */
+    {
+        const XCssDeclaration* d = xsss_pickLaterDecl(
+            self, obj, option->m_state, extraPseudos, pseudoElement, true,
+            XCssProperty_BackgroundColor, 1, XCssProperty_Background, 0);
+        text = (d && d->m_value) ? xsss_declText(d, buf, sizeof(buf)) : NULL;
+    }
+    if (text && *text && XCssParseColor(text, &color) &&
+        (color & 0xFF000000u) != 0) {
+        XPainter_fillRect(painter, &r, color);
+        drewAny = true;
+    }
+    /* 2) 四边独立边框（同样声明级级联：每条边各取自己写了的规则）。 */
+    for (i = 0; i < 4; ++i)
+        draw[i] = xsssHdr_sideBorder(self, obj, option->m_state,
+                                     extraPseudos, pseudoElement, i, &ctx,
+                                     option, &widths[i], &colors[i]);
+    for (i = 0; i < 4; ++i) {
+        int w;
+        int x0;
+        int y0;
+        int x1;
+        int y1;
+        int k;
+        if (!draw[i]) continue;
+        XPainter_setPen(painter, colors[i]);
+        w = widths[i];
+        if (w < 1) w = 1;
+        for (k = 0; k < w; ++k) {
+            x0 = r.x;
+            y0 = r.y;
+            x1 = r.x + r.width - 1;
+            y1 = r.y + r.height - 1;
+            switch (i) {
+            case 0: /* 左 */
+                x0 = x1 = r.x + k;
+                break;
+            case 1: /* 上 */
+                y0 = y1 = r.y + k;
+                break;
+            case 2: /* 右 */
+                x0 = x1 = r.x + r.width - 1 - k;
+                break;
+            default: /* 下 */
+                y0 = y1 = r.y + r.height - 1 - k;
+                break;
+            }
+            XPainter_drawLine(painter, x0, y0, x1, y1);
+            drewAny = true;
+        }
+    }
+    /* 无背景也无可见边框：视为「无 native 边框可画」，交回调用侧落
+     * 底层（对齐 Qt `!subRule.hasNativeBorder() ? drawRule : baseStyle()`
+     * 的二选一，qstylesheetstyle.cpp:4106-4117——不会出现「样式画了
+     * 一半又叠底层」的双绘）。 */
+    return drewAny;
+}
+
+/** @brief 表头段标签矩形（把 :section 的 padding/border 内缩，对标 Qt
+ *         SE_HeaderLabel 的 `subRule.contentsRect(opt->rect)`，
+ *         qstylesheetstyle.cpp:6262-6281）。
+ *
+ *  Qt 的 contentsRect = 原矩形 − margin − 四边边框 − padding
+ *  （qstylesheetstyle.cpp:1124-1134 paddingRect/contentsRect）。表头段
+ *  无 margin 声明路径（margin 对段无意义），故此处只减边框 + padding。
+ *
+ *  @return 内缩后的文本矩形；无 :section 规则时返回原矩形。 */
+static XRect xsssHdr_labelRect(XStyleSheetStyle* self,
+                               const XStyleOption* option,
+                               XPainter* painter, const XWidget* widget,
+                               const char* pseudoElement,
+                               uint32_t extraPseudos)
+{
+    const XObject* obj = (const XObject*)widget;
+    XCssLengthContext ctx;
+    XRect r;
+    int pad[4];
+    int i;
+    if (!self || !option || !painter || !widget) return option->m_rect;
+    r = option->m_rect;
+    if (self->m_sheet.m_ruleCount == 0) return r;
+    /* 存在性闸（无 :section 规则时不内缩，保持旧行为）；各属性取值走
+     * 声明级级联 xsssHdr_declText——`:last` 只覆盖 border-right 时
+     * padding/border-bottom 仍取自 `::section`。 */
+    if (!xsss_widgetRule(self, obj, option->m_state, extraPseudos,
+                         pseudoElement))
+        return r;
+    ctx = xsss_lengthContext(painter, &option->m_rect);
+    /* 边框内缩：逐边取 width（与 xsssHdr_drawSection 同源函数保证一致）。 */
+    for (i = 0; i < 4; ++i) {
+        int w = 0;
+        uint32_t c = 0;
+        if (!xsssHdr_sideBorder(self, obj, option->m_state, extraPseudos,
+                                pseudoElement, i, &ctx, option, &w, &c))
+            continue;
+        if (i == 0) { r.x += w; r.width -= w; }
+        else if (i == 1) { r.y += w; r.height -= w; }
+        else if (i == 2) { r.width -= w; }
+        else { r.height -= w; }
+    }
+    /* padding：**:section 伪元素的声明**为数据源（对齐 Qt
+     * SE_HeaderLabel 取 subRule.contentsRect 而非控件级规则，见
+     * qstylesheetstyle.cpp:6263-6265）。简写多值按 CSS 盒序展开
+     * （xsss_boxExpand），单侧 padding-* 按级联键覆盖（同 xsss_padding
+     * 共用 xsss_paddingResolve，声明级级联）。 */
+    xsss_paddingResolve(self, obj, option->m_state, extraPseudos,
+                        pseudoElement, true, &ctx, pad);
+    r.x += pad[0];
+    r.y += pad[1];
+    r.width -= pad[0] + pad[2];
+    r.height -= pad[1] + pad[3];
+    if (r.width < 1) r.width = 1;
+    if (r.height < 1) r.height = 1;
+    return r;
+}
+
+/** @brief 表头段字体（:section 的 font-weight/font-size 等；对标 Qt
+ *         CE_HeaderLabel 的 `p->setFont(subRule.font.resolve(...))`，
+ *         qstylesheetstyle.cpp:4142-4146），并把文本色落 option。
+ *
+ *  字形只在本段绘制期间生效：调用侧必须在绘制后 XPainter_restore
+ *  （或等价重设）——字体是画家级状态。
+ *
+ *  @param inOutOption 输入原始选项；输出 textColor 覆盖（0=不改）。
+ *  @return 有字体改动返回 true（调用侧负责恢复画家属性的时机）。 */
+static bool xsssHdr_applyLabelFont(XStyleSheetStyle* self,
+                                   const XStyleOption* option,
+                                   XPainter* painter, const XWidget* widget,
+                                   const char* pseudoElement,
+                                   uint32_t extraPseudos,
+                                   uint32_t* outTextColor)
+{
+    const XObject* obj = (const XObject*)widget;
+    XsssFontDecl fontDecls[5];
+    char buf[256];
+    const char* text;
+    XFont font;
+    XCssLengthContext ctx;
+    XString* famOrig;
+    bool changed = false;
+    if (!self || !option || !painter || !widget) return false;
+    if (self->m_sheet.m_ruleCount == 0) return false;
+    /* 存在性闸；取值走声明级级联（xsssHdr_declText）：`:last` 只覆盖
+     * border-right 时 color/font-weight 仍取自 `::section`。 */
+    if (!xsss_widgetRule(self, obj, option->m_state, extraPseudos,
+                         pseudoElement))
+        return false;
+    /* 文本色：Qt CE_HeaderLabel 走 `subRule.configurePalette(&hdr.palette,
+     * ButtonText, Button)`（qstylesheetstyle.cpp:4141）——即 `color`
+     * 声明覆盖 ButtonText。 */
+    if (outTextColor) {
+        text = xsssHdr_declText(self, obj, option->m_state, extraPseudos,
+                                pseudoElement, XCssProperty_Color, buf,
+                                sizeof(buf));
+        if (text && *text) {
+            uint32_t c = 0;
+            if (XCssParseColor(text, &c)) *outTextColor = c;
+        }
+    }
+    /* 字体：与 xsss_applyFont 同口径（含 font 简写 vs 长写的级联键排序），
+     * 但数据源是 :section 伪元素声明（非控件级规则）。 */
+    {
+        const XFont* cur = XPainter_font(painter);
+        if (!cur) return false;
+        font = *cur;
+        ctx = xsss_lengthContext(painter, &option->m_rect);
+    }
+    famOrig = font.m_family;
+    (void)xsss_fontDeclsCollect(self, obj, option->m_state, extraPseudos,
+                                pseudoElement, true, fontDecls);
+    if (xsss_fontDeclsApply(&font, &ctx, fontDecls, 5)) changed = true;
+    if (changed) XPainter_setFont(painter, &font);
+    /* 家族串所有权：同 xsss_applyFont 尾部注释（画家已深拷贝接管，
+     * 自建非驻留串在此释放；共享串不得删）。 */
+    if (font.m_family != famOrig && !XFont_isSharedFamily(font.m_family))
+        XClassDelete((XClass*)font.m_family);
+    return changed;
+}
+
+/** @brief 是否存在可用的 `::section` 规则（标签趟的命中判定）。 */
+static bool xsssHdr_hasSectionRule(XStyleSheetStyle* self,
+                                   const XStyleOption* option,
+                                   const XWidget* widget,
+                                   const char* pseudoElement,
+                                   uint32_t extraPseudos)
+{
+    if (!self || !option || !widget) return false;
+    if (self->m_sheet.m_ruleCount == 0) return false;
+    return xsss_widgetRule(self, (const XObject*)widget, option->m_state,
+                           extraPseudos, pseudoElement) != NULL;
+}
+
+/** @brief 表头段绘制总入口（由 VXStyleSheetStyle_drawControl 的
+ *         CE_HeaderSection / CE_HeaderLabel 分支调用）。
+ *
+ *  契约：命中 `::section` 规则时返回 true（调用侧不再落底层样式）；
+ *  返回 false 表示无 :section 规则，调用侧按原样回退底层样式（行为
+ *  与修复前逐字节一致）。
+ *
+ *  ce 分两趟（对齐 Qt CE_Header 依次绘制 CE_HeaderSection 再
+ *  CE_HeaderLabel，qcommonstyle.cpp:2196-2206；两趟共用同一 subRule）：
+ *  - `XStyleCE_HeaderSection`：只画背景 + 四边边框；
+ *  - `XStyleCE_HeaderLabel`：只画标签（字体/padding/颜色）。
+ *  分趟而非一趟通吃，是为了让「只画标签」的调用方（如
+ *  XCommonStyle::xcs_drawHeader 先 Section 后 Label）不会重复叠加。
+ *
+ *  伪元素名与段位置从 option 取得：`m_optionType ==
+ *  XStyleOptionType_Header` 的选项读其 m_section/m_position；否则按
+ *  单段（OnlyOneSection）处理——对齐 Qt QTableCornerButton::paintEvent
+ *  的 `position = OnlyOneSection`（qtableview.cpp:568）。 */
+static bool xsssHdr_drawSectionHeader(XStyleSheetStyle* self,
+                                      int ce,
+                                      const XStyleOption* option,
+                                      XPainter* painter,
+                                      const XWidget* widget)
+{
+    const XStyleOptionHeader* hdr = NULL;
+    XStyleOption opt;
+    XRect labelRect;
+    uint32_t extraPseudos;
+    uint32_t textColor = 0;
+    int section = 0;
+    int count = 1;
+    int textW;
+    int textH;
+    if (!self || !option || !painter || !widget) return false;
+    if (self->m_sheet.m_ruleCount == 0) return false;
+    if (option->m_optionType == XStyleOptionType_Header)
+        hdr = (const XStyleOptionHeader*)option;
+    if (hdr) {
+        switch (hdr->m_position) {
+        case XStyleOptionHeaderSectionPosition_OnlyOneSection:
+            count = 1;
+            section = 0;
+            break;
+        case XStyleOptionHeaderSectionPosition_Beginning:
+            count = 3;
+            section = 0;
+            break;
+        case XStyleOptionHeaderSectionPosition_End:
+            count = 3;
+            section = 2;
+            break;
+        default: /* Middle */
+            count = 3;
+            section = 1;
+            break;
+        }
+    }
+    extraPseudos = xsssHdr_positionPseudoClass(section, count);
+    opt = *option;
+    if (ce == XStyleCE_HeaderSection) {
+        /* 段 chrome：背景 + 四边边框。 */
+        return xsssHdr_drawSection(self, &opt, painter, widget, "section",
+                                   extraPseudos);
+    }
+    /* 标签：字体 + 颜色 + padding 内缩 + 居中文本（Qt CE_HeaderLabel）。
+     * 规则不存在时返回 false（调用侧回底层，同修复前）。 */
+    if (!xsssHdr_hasSectionRule(self, option, widget, "section",
+                                extraPseudos))
+        return false;
+    labelRect = xsssHdr_labelRect(self, option, painter, widget, "section",
+                                  extraPseudos);
+    if (!XPainter_save(painter)) return false;
+    (void)xsssHdr_applyLabelFont(self, option, painter, widget, "section",
+                                 extraPseudos, &textColor);
+    if (textColor) opt.m_textColor = textColor;
+    if (option->m_text && option->m_text[0]) {
+        textW = XPainter_textWidth(XPainter_font(painter), option->m_text);
+        textH = XPainter_textHeight(XPainter_font(painter));
+        if (textH < 14) textH = 14;
+        if (!opt.m_textColor) {
+#if XPALETTE_ON
+            XColor c = XPalette_color((XPalette*)&option->m_palette,
+                                      XPaletteColorGroup_Current,
+                                      XPaletteColorRole_ButtonText);
+            opt.m_textColor = XColor_rgba(&c);
+#endif
+            if (!opt.m_textColor) opt.m_textColor = 0xFF000000u;
+        }
+        /* 超宽不画：段太窄时不溢到邻段（Qt 侧由 elide 收口）。 */
+        if (textW <= labelRect.width) {
+            XPainter_drawText(painter,
+                              labelRect.x + (labelRect.width - textW) / 2,
+                              labelRect.y + (labelRect.height - textH) / 2 +
+                                  textH - 4,
+                              option->m_text, opt.m_textColor);
+        }
+    }
+    XPainter_restore(painter);
+    return true;
+}
+
+/* ==================== ===== HDR 新增区 结束 ==================== */
 
 /* ==================== ===== G4 新增区 开始（lane-palette-text 线专属，
  * 其他线勿动） ==================== */
@@ -3919,7 +5121,7 @@ static const XCssStyleRule* xg3_winningRule(XStyleSheetStyle* self,
                                             const XObject* obj,
                                             uint32_t state)
 {
-    return xsss_widgetRule(self, obj, state, NULL);
+    return xsss_widgetRule(self, obj, state, 0, NULL);
 }
 
 /** @brief 按声明原名（大小写不敏感）取值文本（无名表属性消费口：

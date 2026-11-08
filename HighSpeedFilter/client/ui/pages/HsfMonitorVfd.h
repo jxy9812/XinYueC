@@ -1,6 +1,6 @@
 /**
  * @file       HsfMonitorVfd.h
- * @brief      变频器监视页：仪表组 + 状态横幅 + 给定/操作 + 趋势 + 控制闸。
+ * @brief      变频器监视页：仪表组 + 状态横幅 + 给定/操作同排 + 趋势。
  * @details    页面零业务：全部数据/动作经 HsfVfdProvider 函数表（本战役
  *             内置进程内模拟源，后端接入时换表零改动）。渲染只读
  *             XVfdDevice_status_const() 快照 + m_validMask 显隐。
@@ -29,10 +29,12 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn,
                            void* userData);
 
 /**
- * @brief      形态自适应（横屏仪表横排/竖屏纵排）。
+ * @brief      形态自适应（横屏仪表横排/竖屏纵排；控制行单行/两排）。
  * @param page 页根控件（HsfMonitorVfd_create 返回值）。
  * @param compact true=窄屏/竖屏形态。
  * @note       由 HsfUi 帧泵每循环调用：必须幂等、廉价（只改布局参数）。
+ *             控制行（给定组 + 操作组）按页根宽分档：宽档单行，窄档回退
+ *             成上下两排（只翻布局方向，不重建控件）。
  */
 void HsfMonitorVfd_adapt(XWidget* page, bool compact);
 

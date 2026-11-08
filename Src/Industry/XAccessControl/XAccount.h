@@ -67,12 +67,32 @@ extern "C" {
 /**
  * @brief 账户角色（与 XLinkAuthRole **逐值一致**，注释互相点名，不做
  *        运行时转换——两边换值必须同步改，见 XLinkProto.h XLinkAuthRole）。
+ * @details [四档角色——追加不重排] 0=匿名（只读）/ 1=普通用户（只读+下载）/
+ *          2=管理员（全权）/ 3=操作者（只读+下载+设备控制）。
+ *          **Operator 刻意取 3（追加值）而不是插到 1 与 2 之间**：角色已
+ *          随账户库 hsf_users.json 落盘上线，把 Admin 从 2 改成 3 会让存量
+ *          部署的 root（role=2）静默降级为操作者——安全组件不做"看起来
+ *          更整齐但需要猜历史文件"的迁移。代价是**角色值不再单调**，故：
+ *          - 任何"谁比谁大/最小角色"的判断一律禁止用数值比较，改走
+ *            XPermPolicy 的权限点判定（见 XPermission.h）；
+ *          - 协议层若确实需要序（如 XLinkFileServer 的 minRole 闸），
+ *            必须经 XLinkAuthRole_rank() 换算（XLinkProto.h）。
  */
 typedef enum XAccountRole {
-    XAccountRole_None  = 0,   /**< 未认证/匿名（与 XLinkAuthRole_Anonymous 同值）。 */
-    XAccountRole_User  = 1,   /**< 操作员/只读（与 XLinkAuthRole_User 同值）。 */
-    XAccountRole_Admin = 2    /**< 管理员/全权（与 XLinkAuthRole_Admin 同值）。 */
+    XAccountRole_None     = 0,   /**< 未认证/匿名：只读（与 XLinkAuthRole_Anonymous 同值）。 */
+    XAccountRole_User     = 1,   /**< 普通用户：只读 + 下载数据（与 XLinkAuthRole_User 同值）。 */
+    XAccountRole_Admin    = 2,   /**< 管理员：全权（与 XLinkAuthRole_Admin 同值）。 */
+    XAccountRole_Operator = 3    /**< 操作者：只读 + 下载 + 设备控制（与 XLinkAuthRole_Operator 同值）。 */
 } XAccountRole;
+
+/** @brief 合法角色值判定（None=匿名也算——协议层会下发匿名角色）。 */
+static inline bool XAccountRole_isValid(int role)
+{
+    return role == (int)XAccountRole_None ||
+           role == (int)XAccountRole_User ||
+           role == (int)XAccountRole_Admin ||
+           role == (int)XAccountRole_Operator;
+}
 
 /**
  * @brief 锁定原因（accountLocked 信号与审计口径）。
@@ -214,7 +234,8 @@ bool XAccountManager_ensureDefaults(XAccountManager* mgr);
  * @param mgr 目标管理器；不能为 NULL。
  * @param name 用户名（UTF-8 非空；超长拒绝）。
  * @param password 口令明文（借用；即刻派生摘要，不留存）。
- * @param role 角色（None 视为非法——账户必须有身份）。
+ * @param role 角色（None 视为非法——账户必须有身份；User/Operator/Admin
+ *             三档均受理，Operator 为"只读+下载+设备控制"）。
  * @return 成功返回 true；失败返回 false（不变更库）。
  * @note 成功发 accountAdded(name)；不落盘（save 归调用方）。
  */

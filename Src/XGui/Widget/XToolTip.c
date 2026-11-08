@@ -15,6 +15,8 @@
 #include "XGuiConfig.h"
 #include "XTimer.h"
 #include "XWidget_Protected.h"
+#include "XGuiApplication.h" /* 锚定控件所在屏（XGuiApplication_screenAt）。 */
+#include "XScreen.h"         /* 提示落位钳制（XScreen_availableGeometry）。 */
 
 #if XWIDGET_ON
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
@@ -169,7 +171,8 @@ static void xtooltip_restartExpire(int msecShowTime)
 void XToolTip_showText(int x, int y, const XString* text, XWidget* widget,
                        const XRect* rect, int msecShowTime)
 {
-    (void)rect;
+    int px = x;
+    int py = y;
     if (!text || XContainer_size_base((const XContainer*)text) == 0) {
         /* 空文本等价 hideText（对标 QToolTip::showText 的
          * text.isEmpty() 分支，qtooltip.cpp:439-446：空文本隐藏当前
@@ -204,7 +207,42 @@ void XToolTip_showText(int x, int y, const XString* text, XWidget* widget,
     xtooltip_setText(text);
     xtooltip_applyAppearance();
     xtooltip_updateSize();
-    XWidget_movePoint(s_tooltipWidget, &(XPoint){x, y});
+    /* 锚定落位（设计口径 2026-11-07，偏离 Qt 的鼠标点/显式点落位）：
+     * 调用方给出悬停控件全局区域（rect）时，提示悬于控件上方——底边
+     * 对齐控件上缘（GAP 2px），不再覆盖被悬停的控件本身；上方放不下
+     * （越出屏幕工作区上缘）降级到控件下方，下放再越出下缘则按工作区
+     * 下缘回收；水平与控件左缘对齐并钳制在工作区内。无 rect 保持 Qt
+     * 原语义：按传入坐标落位（QToolTip::showText 显式 pos，API 测试
+     * 路径与无宿主退化路径不受影响）。 */
+    if (rect) {
+        XPoint anchor;
+        XRect avail;
+        XScreen* screen;
+        int tipW = XWidget_width(s_tooltipWidget);
+        int tipH = XWidget_height(s_tooltipWidget);
+        const int gap = 2;
+        anchor.x = rect->x;
+        anchor.y = rect->y;
+        avail.x = 0; avail.y = 0;
+        avail.width = 0; avail.height = 0;
+        screen = XGuiApplication_screenAt(&anchor);
+        if (screen)
+            avail = XScreen_availableGeometry(screen);
+        px = rect->x;
+        py = rect->y - tipH - gap;
+        if (avail.height > 0 && py < avail.y)
+            py = rect->y + rect->height + gap;  /* 上方放不下→控件下方 */
+        if (avail.height > 0 && py + tipH > avail.y + avail.height)
+            py = avail.y + avail.height - tipH; /* 下方越缘→工作区下缘回收 */
+        if (avail.width > 0) {
+            if (px + tipW > avail.x + avail.width)
+                px = avail.x + avail.width - tipW;
+            if (px < avail.x) px = avail.x;
+        } else if (px < 0) {
+            px = 0;
+        }
+    }
+    XWidget_move_2(s_tooltipWidget, &(XPoint){px, py});
     XWidget_show(s_tooltipWidget);
     XWidget_raise(s_tooltipWidget);
     /* 独立顶层窗口无宿主帧泵：主动完成首帧绘制上屏（参照 XMenu/

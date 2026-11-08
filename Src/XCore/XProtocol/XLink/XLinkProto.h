@@ -182,12 +182,33 @@ typedef enum XLinkCapability {
 /**
  * @brief 登录角色：认证成功后由服务端在 AuthResult 中下发。
  * @details 角色决定业务层权限；协议层只负责传递与保存，不解释权限范围。
+ *          [追加不重排] Operator=3 是**追加值**（语义上位于 User 与 Admin
+ *          之间，但数值最大）——存量账户库里的 Admin=2 不因而失效。
+ *          因此**禁止用数值大小比较角色**：需要序的地方（如文件服务的
+ *          minRole 闸）一律经 XLinkAuthRole_rank() 换算。
  */
 typedef enum XLinkAuthRole {
     XLinkAuthRole_Anonymous = 0, /**< 匿名（未启用认证时的默认角色）。 */
-    XLinkAuthRole_User      = 1, /**< 普通用户。 */
-    XLinkAuthRole_Admin     = 2  /**< 管理员。 */
+    XLinkAuthRole_User      = 1, /**< 普通用户（只读+下载）。 */
+    XLinkAuthRole_Admin     = 2, /**< 管理员（全权）。 */
+    XLinkAuthRole_Operator  = 3  /**< 操作者（只读+下载+设备控制；追加值）。 */
 } XLinkAuthRole;
+
+/**
+ * @brief 角色权限序（Anonymous=0 < User=1 < Operator=2 < Admin=3）。
+ * @param role 角色值（越界值返回 0——缺省拒绝）。
+ * @return 序值；仅用于"最低角色"类闸，不得反推权限点。
+ */
+static inline int XLinkAuthRole_rank(int role)
+{
+    switch (role) {
+    case XLinkAuthRole_Anonymous: return 0;
+    case XLinkAuthRole_User:      return 1;
+    case XLinkAuthRole_Operator:  return 2;
+    case XLinkAuthRole_Admin:     return 3;
+    default:                      return 0;
+    }
+}
 
 /**
  * @brief 登录结果码（AuthResult 载荷首字节）。

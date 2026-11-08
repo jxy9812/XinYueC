@@ -506,6 +506,10 @@ class VfdPage(Page):
         self.dir_combo.addItem("正转", False)      # userData = reverse?
         self.dir_combo.addItem("反转", True)
         self.dir_combo.setMinimumWidth(90)
+        # [运行中换向 2026-11-06] 停机＝预选（随下次启动下发，原口径）；
+        # 运行中改选＝立即换向（见 _on_dir_changed）。必须在 addItem 之后
+        # 连接——建页的初始预选不发命令。
+        self.dir_combo.currentIndexChanged.connect(self._on_dir_changed)
         row1.addWidget(self.dir_combo)
         row1.addSpacing(12)
 
@@ -798,6 +802,31 @@ class VfdPage(Page):
         self._preset_dirty = False
         self._send_op(proto.OP_START, rev=reverse, **payload)
 
+    def _on_dir_changed(self, _index):
+        """方向下拉切换：停机＝仅预选；运行中＝立即换向。
+
+        [2026-11-06 运行中换向] 服务端虚拟变频器已支持"运行中收到反向命令
+        字＝先按减速时间降到 0、过零翻向、再按加速时间反向加速"（C/Python
+        模型同口径），故运行中改选立即发 OP_START(新方向，捎带当前给定)，
+        不再等下次启动；横幅随遥测显示"减速中 → 加速中 → 反转运行"。
+        [同向且稳态才跳过] 快照方向在新方向过零前不变（状态字那时才翻），
+        故换向途中翻回原方向（方向==快照但处于加/减速过渡态）也必须下发
+        ——服务端按"同向命令"取消待决换向、拉回原方向。稳态同向才是真冗
+        余，跳过（对齐 C 客户端 vfdDirChangeSlot 口径）。
+        """
+        if not self._is_running():
+            return
+        reverse = bool(self.dir_combo.currentData())
+        st = self.ctx.model.vfd
+        steady_same = (reverse == bool(st.reverse)) and st.run_state in (
+            proto.RUN_RUNNING_FORWARD, proto.RUN_RUNNING_REVERSE)
+        if steady_same:
+            return
+        payload = self._given_payload()
+        # [预置值在此刻兑现] 与启动同款：捎带后清标记，遥测采纳恢复正常。
+        self._preset_dirty = False
+        self._send_op(proto.OP_START, rev=reverse, **payload)
+
     def _given_payload(self):
         """当前界面给定值 → 捎带给启动/点动的 {hz, rpm?}。
 
@@ -1066,6 +1095,9 @@ class VfdPage(Page):
             reason = getattr(self, "_not_ready_reason", "") or "设备未就绪"
         for btn in self._control_buttons:
             btn.setEnabled(not reason)
+        # [自由停车只在运行中可点 2026-11-08 用户口径] 停机态没有输出可断，
+        # 按钮应置灰；与 C 客户端 HsfMonitorVfd.c 同口径（两端一致）。
+        self.btn_free.setEnabled(not reason and bool(fresh and st.running))
 
         # ---- 调速输入：滑块与数字框都可改（停机=预置，运行=实时下发）----
         #
@@ -1077,6 +1109,12 @@ class VfdPage(Page):
         running = bool(fresh and st.running)
         self.freq_slider.setEnabled(not reason)
         self.freq_spin.setEnabled(not reason)
+        # [运行中禁点动 2026-11-06] 电机运行中点动会瞬间换向，物理上不成立
+        # ⇒ 点动只在停机态可用（与服务端闸同口径双保险，C 客户端同批对齐）。
+        # 例外：点动按住中（_jog_active）不更新——Qt 在禁用按下态按钮时会
+        # 清按下态并发 released ⇒ 心跳停 + op101 ⇒ 点动一按就被掐。
+        self.btn_jog.setEnabled(not reason and
+                                (not running or self._jog_active))
 
         # ---- 滑块跟随变频器实际设定值 ----
         # [只在用户没在动它时同步] 正在拖/刚拖完（去抖计时器还在跑）时若被

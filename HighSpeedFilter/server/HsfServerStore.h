@@ -122,6 +122,10 @@ typedef struct HsfHistoryQueryRow {
  * @param limit 本页最多多少行。
  * @param loMs 时间下界（epoch 毫秒；<=0=不限）。
  * @param hiMs 时间上界（epoch 毫秒；<=0=不限）。
+ * @param kw 关键字（utf8；NULL/空=不筛）。**下推服务端**，与 Python
+ *           store._keyword_condition 同口径（按显示列文本 LIKE 匹配）。
+ * @param kwCols 要比对的显示列下标数组（0..14）；NULL/0 项=全部列。
+ * @param kwColCount 下标数组长度。
  * @param outRows 行输出缓冲（调用方提供；容量 outMaxRows）。
  * @param outMaxRows 行缓冲容量（行数）。
  * @param outWindowTotal 本窗口内总行数（页码总数按它算，不是全库行数）。
@@ -138,6 +142,8 @@ typedef struct HsfHistoryQueryRow {
  */
 int HsfServerStore_queryHistory(HsfServerStore* st, int offset, int limit,
                                 int64_t loMs, int64_t hiMs,
+                                const char* kw,
+                                const uint32_t* kwCols, int kwColCount,
                                 HsfHistoryQueryRow* outRows, int outMaxRows,
                                 int* outWindowTotal, int64_t* outDbRows,
                                 int64_t* outLatestTs, int64_t* outEarliestTs);

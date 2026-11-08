@@ -24,6 +24,7 @@ extern "C" {
 #include <stdint.h>
 
 #include "XObject.h"
+#include "HsfServerBus.h"   /* HsfServerBusHeal：注入客户端自愈看门狗状态。 */
 
 struct XModbusHub;
 struct XModbusClient;
@@ -48,6 +49,10 @@ typedef struct HsfServerIoAnalog {
     int m_channelCount;                 /**< 实际装配的通道数。 */
     int m_shuntOhm;                     /**< 采样电阻（Ω；标度反推用）。 */
     bool m_mounted;                     /**< 装配完成标志。 */
+    /** @brief 是否由 mountWithClient 注入客户端（模拟/单测）。
+     *  [只对注入链路自愈] 真机装配（mount 建 TCP 客户端）不启用看门狗。 */
+    bool m_injected;
+    HsfServerBusHeal m_heal;            /**< 注入链路自愈看门狗状态。 */
 } HsfServerIoAnalog;
 
 /* ==================== 类初始化 / 构造与析构 ==================== */
@@ -143,6 +148,17 @@ struct XModbusHub* HsfServerIoAnalog_hub(const HsfServerIoAnalog* st);
  * @brief 本站是否已装配完成。
  */
 bool HsfServerIoAnalog_isMounted(const HsfServerIoAnalog* st);
+
+/**
+ * @brief 跑一拍自愈检查（仅 mountWithClient 注入的链路有效）。
+ * @param st 目标站；未装配/真机装配/未启用时为空操作。
+ * @param nowMs 当前单调毫秒。
+ * @return 本拍是否执行了自愈动作。
+ * @details 与 485 两路、数字量站同一套策略（见 HsfServerBusHeal_step）：
+ *          注入的虚拟客户端没有重连实现，失联/定时器停摆后必须由服务端
+ *          拉起来，否则 8 路模拟量会永久陈旧。
+ */
+bool HsfServerIoAnalog_watchdog(HsfServerIoAnalog* st, uint64_t nowMs);
 
 #ifdef __cplusplus
 }

@@ -174,7 +174,8 @@ class UserRecord(object):
             return None
         if iterations < 1:
             return None
-        if role not in (proto.ROLE_ANONYMOUS, proto.ROLE_USER, proto.ROLE_ADMIN):
+        if role not in (proto.ROLE_ANONYMOUS, proto.ROLE_USER,
+                        proto.ROLE_ADMIN, proto.ROLE_OPERATOR):
             return None
         return cls(name, salt, digest, iterations, role, locked)
 

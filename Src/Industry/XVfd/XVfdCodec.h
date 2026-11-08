@@ -106,6 +106,25 @@ XByteArray* XVfdCodec_statusToJson(const XVfdStatus* status,
 bool XVfdCodec_statusFromBson(XVfdStatus* out, const uint8_t* data, size_t size);
 
 /**
+ * @brief BSON 载荷 → 状态快照，并回传**侧别**（多侧聚合场景专用）。
+ * @param out 输出快照（调用方提供存储；先整体清零再填充）。
+ * @param outSide 输出侧别（`HSF_SIDE_A`/`HSF_SIDE_B`…）；可为 NULL。
+ *                载荷缺 "side" 键时按 `HSF_SIDE_A` 处理（与协议缺省一致）。
+ * @param data BSON 文档字节（借用；只要求在调用期间有效）。
+ * @param size 字节数。
+ * @return 解析并填充成功返回 true。
+ * @details [为什么需要它] 服务端按「主题 × 侧」各推一帧，而客户端把同一主题
+ *          的所有侧都写进**同一个** XVfdStatus 并逐帧通知订阅者 ⇒
+ *          (a) 界面显示的数值在两侧之间每 100ms 交替（两侧读数不同时肉眼
+ *              可见跳变）；
+ *          (b) 推送帧数翻倍、重绘帧数随之翻倍（实测 VFD 页 28fps）。
+ *          调用方拿到侧别后即可「只接受正在显示的那一侧」，两个问题一并解决。
+ *          旧入口 `XVfdCodec_statusFromBson` 语义不变（内部转调本函数，丢弃侧别）。
+ */
+bool XVfdCodec_statusFromBson_2(XVfdStatus* out, int* outSide,
+                                const uint8_t* data, size_t size);
+
+/**
  * @brief JSON 载荷 → 状态快照（就地填充；键名与 BSON 版本一致）。
  * @param out 输出快照。
  * @param data UTF-8 JSON 文本字节（借用；不含终止符也可，含亦容忍）。

@@ -60,18 +60,12 @@ static void hsfWinTurbSync(void* userData)
 
 /**
  * @brief 水质块数据桥：泵推送 → 灌页面。
+ * @note  定义在文件后段（HsfWin 完整定义之后）：本函数要调
+ *        hsfWinApplyPumpGate(HsfWin*)，而此处 HsfWin 还是不完整类型，
+ *        直接引用会让 MSVC 把前置声明与定义的形参视为不同基类型
+ *        （error C2371）。
  */
-static void hsfWinPumpSync(void* userData)
-{
-    const HsfLinkPumps* p = HsfLinkClient_pumps();
-    int i;
-    (void)userData;
-    if (!p) return;
-    for (i = 0; i < p->m_count; ++i) {
-        HsfMonitorFlowMeter_setPump(p->m_items[i].m_name, p->m_items[i].m_on,
-                                    p->m_items[i].m_ready, p->m_items[i].m_text);
-    }
-}
+static void hsfWinPumpSync(void* userData);
 
 /**
  * @brief 泵控制出口（启动/停止）。
@@ -123,6 +117,7 @@ static void hsfWinAnalogSync(void* userData);
 #include "XPlatformScreen.h"   /* 平台屏幕契约（Windows 无 XScreen 时的退路） */
 #include "XImage.h"
 #include "XSystem.h"         /* 环境变量钩子（自测触发）。 */
+#include "XMemory.h"         /* XMemory_statistics_2（XHSF_HEAP_TRACE 压测）。 */
 #include "XWidget_Protected.h"
 #include "XPrintf.h"
 #include <string.h>
@@ -240,12 +235,18 @@ typedef struct HsfWin
     XTimerId     m_autoQuitTimer; /**< 自动退出定时器（>0 秒参数时启用）。 */
     int          m_autoSeconds;   /**< 剩余自动退出秒数（0=常驻）。 */
     XWidget*     m_pageRoot[HSF_PAGE_COUNT]; /**< 各页页根（供 adapt 用）。 */
+    int          m_adaptWidth[HSF_PAGE_COUNT]; /**< 上次 adapt 的页宽（-1=未适配）。 */
+    int          m_adaptCompact;  /**< 上次 adapt 的形态档（-1=未适配）。 */
+    int          m_navSigW;       /**< 上次导航重排时的窗宽（-1=未排）。 */
+    int          m_navSigH;       /**< 上次导航重排时的窗高。 */
+    int          m_navSigPage;    /**< 上次导航重排时的当前页。 */
+    int          m_navSigMode;    /**< 上次导航重排时的形态档。 */
+    int64_t      m_pumpLastMs;    /**< 帧泵上一拍时刻（节流用）。 */
     XWidget*     m_pageScroll[HSF_PAGE_COUNT]; /**< 各页的滚动壳（切页时复位滚动位用；可 NULL）。 */
     int          m_pageBeforeMenu; /**< 打开菜单页前的原页（紧凑态 ☰
                                     *   菜单开合用；形态切回宽屏时据此
                                     *   退出菜单页——同 demo 的
                                     *   m_pageBeforeMenu 口径）。 */
-    int64_t      m_lastPaintUsecs;     /**< 上次绘制时刻（喂悬浮层帧率）。 */
     int64_t      m_lastFrameUsecs;      /**< 上拍时刻（轮询节拍）。 */
     int64_t      m_lastNetworkPollUsecs;/**< 上次网络计数采样时刻。 */
     XHandle      m_framePump;      /**< 帧泵句柄（几何刷新漏斗）。 */
@@ -265,6 +266,11 @@ typedef struct HsfWin
 
 XCLASS_DEFINE_BEGING(HsfWin)
 XCLASS_DEFINE_EXTEND_END(HsfWin, XWidget)
+
+/* 泵控制闸重算（定义在模式/设备回调区；切页、泵推送、模式变更都要用）。
+ * 放在 HsfWin 完整定义之后：前置声明处若 HsfWin 仅是不完整类型，MSVC 会把
+ * 声明与定义的形参类型视为不同基类型（error C2371）。 */
+static void hsfWinApplyPumpGate(HsfWin* win);
 
 /* ---- 重绘辅助（脏区残留治理） ---- */
 
@@ -337,6 +343,23 @@ static void hsf_overlayAnchor(HsfWin* self)
 static uint32_t hsf_pageTopicMask(int pageIndex)
 {
     switch (pageIndex) {
+    /* [主界面补订阅 2026-11-06] 主界面消费四主题：搅拌泵卡读变频器遥测、
+     * 压差卡读 AI 通道 0（压差计）、流量计卡读流量计（B 侧）、电磁阀卡读
+     * 六路阀状态。VFD 主题原先只在变频器页订阅 ⇒ 首次启动停在主界面时
+     * 卡片永远"无数据"（首启实测）。Python 客户端是连接期全局订阅全部
+     * 主题（bridge.py TOPIC_KIND 全集），故无此问题。
+     *
+     * [2026-11-08 温湿度不再进本表] 主界面左上「电箱温湿度」卡读 TempHum
+     * 主题。此前把 TempHum 加进本表"补订"，但温湿度已是**常驻订阅**
+     * （HsfLinkClient 连接期恒订，见 hsfLcSubscribeTopics），造成重复登记：
+     * 离开首页时引用归零 → 真的发退订帧 → 紧接着常驻补订又发订阅帧，
+     * 每次切页产生一对多余帧，并短暂摘掉顶栏温湿度依赖的订阅。
+     * 卡片与顶栏读同一份 model，常驻订阅已足够覆盖，故这里移除。 */
+    case HSF_PAGE_HOME:
+        return (1u << (int)HsfLinkTopic_Vfd) |
+               (1u << (int)HsfLinkTopic_Ai) |
+               (1u << (int)HsfLinkTopic_FlowMeter) |
+               (1u << (int)HsfLinkTopic_Valve);
     case HSF_PAGE_MONITOR_VFD:       return 1u << (int)HsfLinkTopic_Vfd;
     case HSF_PAGE_MONITOR_ANALOG:    return 1u << (int)HsfLinkTopic_Ai;
     /* [水质监测页三主题] 流量计 + 浊度仪 + 泵同属一条工艺链，放一页看
@@ -365,7 +388,16 @@ static void hsf_pageTopicSwitch(HsfWin* self, int index)
     const uint32_t cur = self->m_subTopics;
     int i;
     if (!self) return;
-    if (next == cur) return;
+    if (next == cur) {
+        /* [集合没变也要补订] 快路径原本直接 return：若上一次订阅帧因链路
+         * 抖动/未就绪而发送失败，这里的 m_topicRef>0 会永久悬空——服务端
+         * 收不到 Subscribe 就不推，界面表现为切回主界面后某几张卡永久
+         * "--"（实测：page 7 → 主界面，流量计卡停在「-- 无数据」）。
+         * ensureSubscriptions 只补发不计数（引用仍由 subscribe/unsubscribe
+         * 记账），已订阅主题由会话层幂等短路，故可无条件调用。 */
+        (void)HsfLinkClient_ensureSubscriptions();
+        return;
+    }
     /* 位掩码模型：一页可同时订阅多个主题（退订旧集合 → 订阅新集合；
      * 逐主题走引用计数，重复进入同一页不重复加减）。 */
     for (i = 0; i < (int)HsfLinkTopic_Count; ++i) {
@@ -379,6 +411,8 @@ static void hsf_pageTopicSwitch(HsfWin* self, int index)
         }
     }
     self->m_subTopics = next;
+    /* 订阅集合已迁移：把上一轮可能发送失败的引用再兜一次（同上）。 */
+    (void)HsfLinkClient_ensureSubscriptions();
 }
 
 /** @brief 切页：堆叠当前页 + 标题栏标题 + 状态栏文本 + 导航高亮。 */
@@ -405,6 +439,9 @@ static void hsf_goPage(HsfWin* self, int index)
     }
     /* 按需订阅迁移（隐藏页退订，新页订阅即补发首帧）。 */
     hsf_pageTopicSwitch(self, index);
+    /* [切到/离开水质页都重算泵闸] 首次进入时按钮使能必须已反映当前
+     * 运行模式（否则自动模式下进去一看就是可点，点完才被服务端拒）。 */
+    hsfWinApplyPumpGate(self);
     /* 移植页窄宽分档：切页后页根宽度更新 → 重新分档。 */
     hsf_adaptPages(self);
     /* 新页控件未覆盖处会露出旧页像素（叠印）→ 切页后整窗刷新。 */
@@ -418,9 +455,26 @@ static void hsf_goPage(HsfWin* self, int index)
     int i;
     bool compact;
     if (!self) return;    compact = (self->m_layoutMode == 1);
-    for (i = 0; i < HSF_PAGE_COUNT; ++i) {    
-    if (self->m_pageRoot[i] && kHsfPageAdapt[i])            kHsfPageAdapt[i](self->m_pageRoot[i], compact);
-    }}
+    /* [只在页宽/形态档真变时重跑] 帧泵每轮都调本函数；各页 adapt 会改布局
+     * 方向/边距并 activate，即使值没变也会清缓存+重排+重绘（实测帧率数千、
+     * CPU 恒满）。按“页宽 + 形态档”去重。 */
+    for (i = 0; i < HSF_PAGE_COUNT; ++i) {
+        int w;
+        if (!self->m_pageRoot[i] || !kHsfPageAdapt[i]) continue;
+        w = XWidget_width(self->m_pageRoot[i]);
+        if (w <= 0) continue;
+        if (self->m_adaptWidth[i] == w &&
+            self->m_adaptCompact == (compact ? 1 : 0))
+            continue;
+        if (self->m_adaptCompact != (compact ? 1 : 0)) {
+            int k;
+            for (k = 0; k < HSF_PAGE_COUNT; ++k) self->m_adaptWidth[k] = -1;
+            self->m_adaptCompact = compact ? 1 : 0;
+        }
+        self->m_adaptWidth[i] = w;
+        kHsfPageAdapt[i](self->m_pageRoot[i], compact);
+    }
+}
 /* ---- 形态策略（宽屏/竖屏） ---- */
 /* [本地设置·强制紧凑档] -1=跟随窗口宽度自动判定（缺省）；1=强制窄档。
  * 本地设置页「紧凑模式」开关写 1/解除写 -1（Display/Compact 键持久化，
@@ -473,6 +527,77 @@ void HsfUi_setForceCompact(bool on)
         hsf_layoutModeUpdate(s_activeWin); /* 内含重分档/导航/整窗重绘。 */
 }
 
+/* ---- 页面字体缩放（本地设置 FontScale/Page<N>，50–200%，100=默认） ----
+ * [2026-11-07] 各页把写死的字号（及与字号联动的高度）过 hsfUi_pageFontPx
+ * 折算，本地设置页「字体大小」区即可按页调；首次调用惰性读键，改动在
+ * 下次建页生效（与刷新周期同口径——页实例不换则维持建页时折算）。 */
+static int  s_pageFontPct[HSF_PAGE_COUNT];
+static bool s_pageFontLoaded = false;
+
+int hsfUi_pageFontPx(int page, int px)
+{
+    if (page < 0 || page >= HSF_PAGE_COUNT) return px;
+    if (!s_pageFontLoaded) {
+        char key[32];
+        int i;
+        for (i = 0; i < HSF_PAGE_COUNT; ++i) {
+            snprintf(key, sizeof(key), "FontScale/Page%d", i);
+            s_pageFontPct[i] = HsfSettingsStore_getInt(key, 100);
+            if (s_pageFontPct[i] < 50)  s_pageFontPct[i] = 50;
+            if (s_pageFontPct[i] > 200) s_pageFontPct[i] = 200;
+        }
+        s_pageFontLoaded = true;
+    }
+    return (px * s_pageFontPct[page] + 50) / 100;
+}
+
+/* ---- 实时字号：每页自查重放（不遍历控件树） ---- */
+static void (*s_pageFontApply[HSF_PAGE_COUNT])(XWidget* page, int pct);
+static XWidget* s_pageFontRoot[HSF_PAGE_COUNT];
+
+int hsfUi_pageFontPct(int page)
+{
+    char key[32];
+    int pct;
+    if (page < 0 || page >= HSF_PAGE_COUNT) return 100;
+    snprintf(key, sizeof(key), "FontScale/Page%d", page);
+    pct = HsfSettingsStore_getInt(key, 100);
+    if (pct < 50)  pct = 50;
+    if (pct > 200) pct = 200;
+    s_pageFontPct[page] = pct;
+    s_pageFontLoaded = true;
+    return pct;
+}
+
+void hsfUi_registerPageFontApplier(int page, XWidget* root,
+                                   void (*fn)(XWidget* page, int pct))
+{
+    if (page < 0 || page >= HSF_PAGE_COUNT) return;
+    s_pageFontRoot[page] = root;
+    s_pageFontApply[page] = fn;
+}
+
+void hsfUi_reapplyPageFonts(int page)
+{
+    int pct;
+    if (page < 0 || page >= HSF_PAGE_COUNT) return;
+    pct = hsfUi_pageFontPct(page);
+    if (s_pageFontApply[page] && s_pageFontRoot[page]) {
+        s_pageFontApply[page](s_pageFontRoot[page], pct);
+        XWidget_update(s_pageFontRoot[page]);
+        XPrintf("HsfUi: 页%d 字号实时重放 %d%%\n", page, pct);
+        return;
+    }
+    /* 无专用重放函数的页（数字量/模拟量/流量计）：它们的 adapt 已经用
+     * hsfUi_pageFontPx 重设字号/行高。清掉该页的 adapt 去重标记再重跑。 */
+    if (s_activeWin && s_pageFontRoot[page]) {
+        s_activeWin->m_adaptWidth[page] = -1;
+        hsf_adaptPages(s_activeWin);
+        XWidget_update(s_pageFontRoot[page]);
+        XPrintf("HsfUi: 页%d 字号实时重放（adapt）%d%%\n", page, pct);
+    }
+}
+
 /** @brief ☰ 回调：宽屏=折叠/展开左侧导航面板；紧凑=开合主菜单页。 */
 static void hsf_menuToggleCb(void* userData)
 {
@@ -502,7 +627,10 @@ static void hsf_menuToggleCb(void* userData)
     hsf_fullRepaint(win); /* 侧栏显隐后内容区尺寸变化 → 整窗刷新防残留。 */
 }
 
-/** @brief 分割条拖拽：更新导航面板宽度记忆（仅真实拖拽触发）。 */
+/** @brief 分割条拖拽：更新导航面板宽度记忆（仅真实拖拽触发）。
+ *  @note 条目几何不在这里重排：拖拽改的是面板几何，框架随即同步派发
+ *        RESIZE，HsfNavPanel 的 resizeEvent 重载负责即时重排（拖动过程
+ *        逐帧跟手，同 Qt 布局激活语义，见 HsfNavPanel.c）。 */
 static void hsf_splitterMovedSlot(XObject* receiver, XVarList* args)
 {
     HsfWin* win = (HsfWin*)receiver;
@@ -717,20 +845,48 @@ static void VHsfWin_closeEvent(XWidget* self, XEvent* event)
 
 /** @brief PaintEvent：按**绘制事件**喂悬浮层帧率/帧耗时。
  *  @details 口径同 XGuiWindowDemo（每个 paintEvent 计 1 帧）——用帧泵
- *           轮询间隔算 FPS 会得到「轮询率」（数千 FPS，无意义）。 */
+ *           轮询间隔算 FPS 会得到「轮询率」（数千 FPS，无意义）。
+ *           【帧耗时口径 2026-11-08·整窗】本窗是**组合控件树**：顶层
+ *           paintEvent 只画顶层自身，子控件（页/表盘/状态栏/悬浮层）在
+ *           paintTree 递归里随后绘制。原先在顶层 paintEvent 前后取时，
+ *           读数只含顶层自身背景填充 ⇒ 恒为 0.00ms（验收实测六页均如此），
+ *           无法反映整窗绘制成本。现改为读框架在 paintTree **根调用**
+ *           两端记下的整树耗时（XWidget_lastPaintTreeUsecs，含全部可见
+ *           子控件）：顶层 paintEvent 发生在本次树起点，读到的是**上一帧**
+ *           的完整耗时，因此把样本起点回拨该耗时、终点取当前时刻——差值
+ *           恒等于整窗绘制耗时；样本终点（当前时刻）仍每帧一个，FPS 口径
+ *           不变。首帧无上一帧可参照，耗时报 0（单个样本，不影响窗口均值）。 */
 static void VHsfWin_paintEvent(XWidget* self, XEvent* event)
 {
     HsfWin* win = (HsfWin*)self;
-    int64_t nowUsecs;
+    int64_t frameStartUsecs;
+    int64_t frameEndUsecs;
+    int64_t lastTreeUsecs;
     XClass_Parent(XWidget, EXWidget_PaintEvent,
                   void (*)(XWidget*, XEvent*))(self, event);
     if (!win) return;
-    nowUsecs = XDateTime_currentNSecsSinceEpoch() / 1000LL;
-    if (win->m_lastPaintUsecs > 0 && nowUsecs > win->m_lastPaintUsecs) {
-        XPerformanceOverlay_updateFrame(&win->m_overlay,
-                                        win->m_lastPaintUsecs, nowUsecs);
+    {
+        /* [诊断] XHSF_PAINT_TRACE=1：逐 paintEvent 打出矩形/整树耗时。 */
+        static int s_trace = -1;
+        if (s_trace < 0)
+            s_trace = XSystem_environment("XHSF_PAINT_TRACE") ? 1 : 0;
+        if (s_trace && event && XEvent_type(event) == XEVENT_TYPE_PAINT) {
+            XRect tr = XPaintEvent_rect((const XPaintEvent*)event);
+            XPrintf("[paint] page=%d rect=%d,%d %dx%d tree=%lldus\n",
+                    HsfStack_current(&win->m_stack), tr.x, tr.y,
+                    tr.width, tr.height,
+                    (long long)XWidget_lastPaintTreeUsecs(self));
+        }
     }
-    win->m_lastPaintUsecs = nowUsecs;
+    frameEndUsecs = XDateTime_currentNSecsSinceEpoch() / 1000LL;
+    /* 上一帧整树绘制耗时（根调用至全部子控件绘制完成）。 */
+    lastTreeUsecs = XWidget_lastPaintTreeUsecs(self);
+    if (lastTreeUsecs > 0 && lastTreeUsecs < frameEndUsecs)
+        frameStartUsecs = frameEndUsecs - lastTreeUsecs;
+    else
+        frameStartUsecs = frameEndUsecs;   /* 首帧/无样本：本帧耗时报 0。 */
+    XPerformanceOverlay_updateFrame(&win->m_overlay,
+                                    frameStartUsecs, frameEndUsecs);
 }
 
 /** @brief 点是否落在悬浮层矩形内（浮层对鼠标穿透，命中由根窗判定）。 */
@@ -1035,10 +1191,19 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     self->m_shotPath = shotPath;
     self->m_navWidth = HSF_NAV_DEFAULT_W;
     self->m_layoutMode = -1; /* 首次必触发形态判定。 */
+    /* adapt/导航去重哨位：-1=未适配（首轮必跑）。 */
+    self->m_adaptCompact = -1;
+    self->m_navSigW = -1;
+    self->m_navSigH = -1;
+    self->m_navSigPage = -1;
+    self->m_navSigMode = -1;
+    {
+        int k;
+        for (k = 0; k < HSF_PAGE_COUNT; ++k) self->m_adaptWidth[k] = -1;
+    }
     self->m_pageBeforeMenu = HSF_PAGE_HOME;
     self->m_subTopics = 0;   /* 尚无页面订阅（位掩码 0=无）。 */
     self->m_lastFrameUsecs = 0;
-    self->m_lastPaintUsecs = 0;
     self->m_overlayAnchorW = 0;
     self->m_overlayAnchorH = 0;
     self->m_lastNetworkPollUsecs = 0;
@@ -1078,7 +1243,13 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     /* 水质块（浊度 + 泵）：与服务端同主题推送，页面只做呈现。 */
     HsfLinkClient_setTurbidityCallback(hsfWinTurbSync, self);
     HsfLinkClient_setPumpCallback(hsfWinPumpSync, self);
-    HsfMonitorFlowMeter_setPumpWriteHandler(hsfWinPumpWrite, self);
+    /* [2026-11-07 泵点击无响应根因] 泵的**写出口**不能在这里设：本函数此刻
+     * 还没走到建页循环（下方 kHsfBuilders 逐页创建），HsfMonitorFlowMeter
+     * 的 s_fmPage 仍为 NULL，setPumpWriteHandler 里的 `if (!p) return;` 会把
+     * 回调静默丢弃 ⇒ 按钮可点、槽也进得来，但 m_pumpWrite 恒 NULL，
+     * `if (!p->m_pumpWrite) return;` 直接返回（实测诊断日志：
+     * `[pump] start slot: write=0000000000000000`）。移到建页之后
+     * （见下方「泵写出口」注释处）。 */
     HsfLinkClient_queryRunMode();
     HsfTitleBar_setMenuHandler(&self->m_titleBar, hsf_menuToggleCb, self);
 
@@ -1172,6 +1343,7 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
             continue;
         }
         self->m_pageRoot[i] = page;
+        s_pageFontRoot[i] = page;   /* 字号实时重放的页根登记 */
         if (i == HSF_PAGE_MENU) {
             /* 菜单页：改用**移动态树面板**（竖屏菜单口径：分区标题 +
                缩进子项、44dp 触控行、手风琴就地展开）。旧页收起（它已
@@ -1212,11 +1384,34 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
         self->m_pageScroll[i] = entry;   /* 切页时复位滚动位用。 */
         HsfStack_addPage(&self->m_stack, entry);
     }
+    /* [泵写出口：必须建页之后设] 页面在本循环里才创建，早于此处调用
+     * setPumpWriteHandler 会因 s_fmPage==NULL 被静默丢弃（详见上方注释）。
+     * 其它设备的 setWriteHandler 无此问题：它们的页面单例在建页时把自己
+     * 注册进模块，模块内部的写出口表与实例解耦；泵页用的是"外部注入
+     * 回调"模型，必须先有实例再接回调。 */
+    HsfMonitorFlowMeter_setPumpWriteHandler(hsfWinPumpWrite, self);
     HsfStack_go(&self->m_stack, HSF_PAGE_HOME);
     HsfNavPanel_setActivePage(&self->m_navPanel, HSF_PAGE_HOME);
+    /* [初始页主题订阅 2026-11-06] 初始页走 HsfStack_go 直显（不经
+     * hsf_goPage），页面主题订阅从未发生 ⇒ 首次启动停在主界面时搅拌泵
+     * 卡片永远"无数据"（VFD 主题无人订阅，服务端按订阅制不推；首启实测
+     * 服务端只收到 0x00010003/5 常驻订阅）。此处补一次与 hsf_goPage 同
+     * 口径的主题切换：未登录时先累计引用，登录就绪由 hsfLcSubscribeTopics
+     * 按引用补订。startPage 分支随后按需再切。 */
+    hsf_pageTopicSwitch(self, HSF_PAGE_HOME);
     /* 指定起始页（截图/调试直达某页）。 */
     if (startPage >= 0 && startPage < HSF_PAGE_COUNT)
         hsf_goPage(self, startPage);
+    /* [2026-11-07 --goto 非截图路径根修] `--goto N` 原先只在截图定时器分支
+     * （下面的 m_shotTimer 事件里）被消费，于是**不带 --shot 的普通启动
+     * 完全忽略 --goto**：命令行写 --goto 6 仍然停在主界面，联调/现场排障
+     * 无法直达目标页（实测：客户端日志无任何 switch page 行）。此处与
+     * startPage 同处立即切一次；m_thenPage 随后置 -1，截图路径的"出图前
+     * 再切一次"语义不变（那时 m_thenPage 已为 -1，该分支自然跳过）。 */
+    if (thenPage >= 0 && thenPage < HSF_PAGE_COUNT) {
+        self->m_thenPage = -1;
+        hsf_goPage(self, thenPage);
+    }
 
     /* 数字量页状态栏反馈挂接 + 兼容自测钩子（env 触发，截图闭环用）。 */
     HsfMonitorDigital_attachStatus(HsfPages_setStatus, self);
@@ -1240,8 +1435,9 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
      * 显示子树，先前隐藏的紧凑态侧栏会被重新显示出来（竖屏侧栏不隐）。 */
     /* [本地设置·强制紧凑档恢复] 须在形态初判前读键（-1=跟随自动）。
      * XGuiWindowDemo 同款时机：窗口句柄/几何就绪、尚未进事件循环。 */
-    s_forceCompact = HsfSettingsStore_getInt("Display/Compact", -1);
-    if (s_forceCompact < 0 || s_forceCompact > 1) s_forceCompact = -1;
+    /* [本地设置页已移除「紧凑模式」开关] 不再读 Display/Compact：旧值
+     * 会把界面永久锁在窄档且没有 UI 可恢复；形态一律按窗口宽度自动判定。 */
+    s_forceCompact = -1;
     hsf_layoutModeUpdate(self);
     hsf_navApplySizes(self);
     hsf_adaptPages(self);
@@ -1302,19 +1498,200 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
 /* ==================== 全局运行模式（顶栏） ==================== */
 
 /**
+ * @brief 把最近一次「设置运行模式」失败原因回显到状态栏；成功不动文案。
+ * @param win 归属主窗。
+ * @details [为什么两处调用] 0x0105 应答是**异步**的：点击槽里刚下发时
+ *          HsfLinkClient_runModeError() 还是上一拍的结论，真正的拒绝原文
+ *          （服务端 hsfAppHandleRunMode：「权限不足：切换运行模式需要 root
+ *          账户」）要等应答回来才写入。故：
+ *            · 点击槽（hsfWinModeSlot）：下发后立刻回显，覆盖"上一拍已
+ *              拒绝、本次点击瞬间"的即时反馈；
+ *            · 模式应答回调（hsfWinModeNotify）：首点被拒的可见反馈——
+ *              此前 err 只存不显，现场看到的就是"点了没反应"。
+ *          成功时应答已把错误清空 ⇒ 本函数早退，**不覆盖**既有状态栏
+ *          文案（当前页/告警等）。
+ */
+static void hsfWinModeShowError(HsfWin* win)
+{
+    const char* err;
+    if (!win) return;
+    err = HsfLinkClient_runModeError();   /* 借用指针，不得释放。 */
+    if (!err || !err[0]) return;
+    /* HsfStatusBar_setText 经 XLabel_setText_2 内部拷贝，借用可即刻失效。 */
+    HsfStatusBar_setText(&win->m_statusBar, err);
+}
+
+/**
  * @brief 顶栏模式钮点击：手动 ⇄ 自动 切换（服务端执行，需 root）。
  * @param userData 归属主窗（HsfWin*）。
  */
 static void hsfWinModeSlot(void* userData)
 {
-    HsfTitleBar* bar;
+    HsfWin* win;
     int autoMode = 0;
     bool known;
     if (!userData) return;
-    bar = &((HsfWin*)userData)->m_titleBar;
+    win = (HsfWin*)userData;
     if (!HsfLinkClient_isReady()) return;
     known = HsfLinkClient_runMode(&autoMode);
     HsfLinkClient_setRunMode(!(known && autoMode));
+    /* 下发后回显最近一次失败原因（无权限账户的"点了没反应"由这里兜底；
+     * 本条应答到达时 hsfWinModeNotify 会再回显一次同一文案，幂等）。 */
+    hsfWinModeShowError(win);
+}
+
+/**
+ * @brief 统一的设备控制闸判据：算出"为什么点不动"，NULL=可操作。
+ * @return 常驻文案（静态区，不需要释放）。
+ * @details 判据优先级：未连接 → 自动模式 → 权限不足。服务端
+ *          `hsfAppControlGate`（HsfServerApp.c:1560）按同样优先级拒绝，
+ *          客户端提前置灰可避免"点了没反应/被拒"的观感。
+ *
+ *          [为什么收敛成一个函数] 原先阀页/数字量页/泵页各写一份判据，结果
+ *          三份互相漂移：阀页文案拼成了「自动运行中：远程控制自动运行中：
+ *          远程控制已被禁用」，阀页与数字量页还停在 `role >= HSF_ROLE_CONTROL`
+ *          的旧口径（四档权限下角色值不单调），VFD 页则**根本没被驱动过**
+ *          （setInteractiveMode 全库无调用者）⇒ 自动模式下变频器页的正转/
+ *          反转/点动/给定仍可点。四处同一判据必须同源。
+ */
+static const char* hsfWinControlBlockReason(void)
+{
+    int autoMode = 0;
+    /* [离线演示不算被禁] 判据的第一刀用 isOpen（链路对象是否建立），不是
+     * isReady（是否已认证就绪）：
+     *   · --no-login：客户端从未 HsfLinkClient_open ⇒ isOpen=false ⇒ 离线
+     *     演示操作的是本地模拟源（变频器页建页时绑 HsfVfdProvider_demo），
+     *     界面不该锁死；原先这里按 isReady 返回「未连接服务端」，把离线
+     *     演示一并禁掉，属于回归。
+     *   · 已登录后网络断开：open 过的客户端对象仍在（HsfLinkClient_close
+     *     才会释放），isOpen 仍为 true、isReady 转 false ⇒ 落到下一行返回
+     *     「未连接服务端」，闸正常关闭。注意此时**不会**切回本地模拟源
+     *     （rebind 只在建窗与登录成功时发生，见 HsfUi.c 的
+     *     HsfMonitorVfd_rebindProvider 调用点），故必须禁。
+     * 远端不可用但确实该拒的操作，另有服务端 hsfAppControlGate 兜底。 */
+    if (!HsfLinkClient_isOpen()) return NULL;
+    if (!HsfLinkClient_isReady()) return "未连接服务端";
+    if (HsfLinkClient_runMode(&autoMode) && autoMode)
+        return "自动运行中：远程控制已被禁用";
+    if (!HsfLinkClient_can(HSF_PERM_DEVICE_CONTROL))
+        return "权限不足：控制需要操作者及以上账户";
+    return NULL;
+}
+
+/**
+ * @brief 泵/阀/数字量/变频器四页控制闸一次重算。
+ * @param win 归属主窗（当前未用，保留接缝）。
+ * @details 调用点（五处，全是"状态可能变了"的时机）：切页（hsf_goPage）、
+ *          模式变更（hsfWinModeNotify）、泵推送（hsfWinPumpSync）、
+ *          阀推送（hsfWinValveSync）、数字量推送（hsfWinDigitalSync）。
+ *          幂等且廉价（各页只在值变化时改控件使能）。
+ *
+ *          [两类闸必须分开驱动] `setInteractiveMode(bool)` 在各页的语义是
+ *          **「运行模式」**（true=手动可操作 / false=自动运行只读），它会改
+ *          页面文案为「自动运行中：界面只读」并隐藏勾选框。绝不能把
+ *          「未连接」「权限不足」也映射到它——那会让离线演示（--no-login）
+ *          被锁成只读并误报「自动运行中」（2026-11-08 复审实测回归）。
+ *          故这里拆成两条独立信号：
+ *            · 运行模式  → setInteractiveMode（只由服务端模式位决定）
+ *            · 可操作性  → setOperationEnabled / setControlEnabled
+ *
+ *          [四个页的可操作性分别落在哪里——不要一律按"传 reason"理解]
+ *            · 泵页 / 阀页 / 数字量页：本函数把 `reason == NULL` 直接投给
+ *              各页的 setControlEnabled / setOperationEnabled，即
+ *              「连接 + 权限 + 模式」求交后的结果。
+ *            · 变频器页：**不**由本函数传 reason，本函数只投模式位；它的
+ *              连接/权限判定由 provider 闸承担——HsfMonitorVfd.c 的
+ *              `gate = !m_autoMode && provider->controlEnabled(...)`，
+ *              远端 provider 的 controlEnabled 为
+ *              `s_vr.m_gateOpen && HsfLinkClient_can(DEVICE_CONTROL)`
+ *              （HsfVfdProviderRemote.c）。未认证时 role=0 ⇒ can() 为假
+ *              ⇒ 闸关闭，所以「未就绪」这条也被覆盖；离线（--no-login）
+ *              时绑的是 demo provider，其 controlEnabled 读设备
+ *              m_controlEnabled（缺省 true）⇒ 离线可操作。文案也由该页
+ *              依 provider 闸自行渲染（横幅「界面操作已锁」/提示行）。
+ *              若将来要把四页彻底统一口径，再加 setControlEnabled 入口；
+ *              现在两侧判据等价，先不让第五个信号源进来。
+ *
+ *          [本函数是"服务端模式投影"，不是模式唯一来源] 两页的
+ *          setInteractiveMode 还承接 **env 自测钩子**（XHSF_DIGITAL_AUTO /
+ *          XHSF_VFD_AUTO）建立的演示态。那段态不是本函数能撤销的：钩子在位
+ *          时**驱动侧让路**——下面只跳过"退手动"（manualMode==true）这一次
+ *          驱动，"进自动"照常下发。否则每拍切页/推送都按服务端手动位把钩子
+ *          设的自动只读翻回去（2026-11-08：钩子态一进页就失效）。
+ *          让路放在**驱动侧而不是 setInteractiveMode 里**：两页头文件
+ *          （HsfMonitorDigital.h:153-162 / HsfMonitorVfd.h:39-50）明写
+ *          interactive=true 即退出自动，公开 setter 必须保持诚实——
+ *          Test/XGuiTest/hsf_vfd_probe.c ⑨ 段正断言这个往返。
+ */
+static void hsfWinApplyControlGates(HsfWin* win)
+{
+    const char* reason;
+    bool connected;
+    bool manualMode;
+    int autoMode = 0;
+    (void)win;
+
+    connected = HsfLinkClient_isReady();
+    /* 模式未知（未连接）时按手动处理：不把「不知道」误报成「自动运行」。 */
+    manualMode = !(connected && HsfLinkClient_runMode(&autoMode) && autoMode);
+
+    reason = hsfWinControlBlockReason();
+
+    /* [顺序有语义：先模式、后可操作闸] 数字量页 setInteractiveMode 的
+     * 「退手动」分支会**无条件**把操作闸置 true（该页注释："手动模式即可
+     * 操作"）。若反过来先落操作闸再落模式：自动→手动且角色无控制权限那一
+     * 拍，操作闸刚被 reason 关掉，紧接着又被模式解锁分支重新置 true ⇒
+     * 无权限账户拿到了可操作界面（点了才被服务端拒）。故模式先落定、操作
+     * 闸后算，后者是"连接/权限/模式"的最终求交，不被任何分支反超。 */
+    /* ---- 运行模式闸（只反映服务端模式位，不做连接/权限推断） ----
+     * [env 自测钩子：让路只在这两行] XHSF_VFD_AUTO 与
+     * XHSF_DIGITAL_AUTOTEST+XHSF_DIGITAL_AUTO 在建页/自测时把对应页置成
+     * 自动只读（演示与截图闭环的前提）。本函数每拍（切页、泵/阀推送、模式
+     * 应答）都会重算 manualMode；已连接+手动模式下 manualMode==true，照常
+     * 下发就把钩子态翻回手动。故钩子在位时**只跳过"退手动"这一次驱动**，
+     * "进自动"（manualMode==false）仍照常下发——服务端切自动必须立刻锁页。
+     * 判据与两页建页处读的是同一个 env：HsfMonitorVfd.c 建页段、
+     * HsfMonitorDigital.c 的 HsfMonitorDigital_autotest 尾段；改名需三处同改。 */
+    {
+        bool vfdHook = XSystem_environment("XHSF_VFD_AUTO") != NULL;
+        bool digHook = XSystem_environment("XHSF_DIGITAL_AUTOTEST") != NULL &&
+                       XSystem_environment("XHSF_DIGITAL_AUTO") != NULL;
+        if (!(digHook && manualMode))
+            HsfMonitorDigital_setInteractiveMode(manualMode);
+        if (!(vfdHook && manualMode))
+            HsfMonitorVfd_setInteractiveMode(manualMode);
+    }
+    /* ---- 可操作闸（连接 / 权限 / 模式三者求交） ---- */
+    HsfMonitorFlowMeter_setControlEnabled(reason == NULL, reason);
+    HsfMonitorValve_setControlEnabled(reason == NULL, reason);
+    HsfMonitorDigital_setOperationEnabled(reason == NULL);
+}
+
+/**
+ * @brief 泵控制闸重算（保留旧名，语义等于全设备闸重算）。
+ * @param win 归属主窗。
+ */
+static void hsfWinApplyPumpGate(HsfWin* win)
+{
+    hsfWinApplyControlGates(win);
+}
+
+/**
+ * @brief 水质块数据桥：泵推送 → 灌页面（定义见上方前置声明）。
+ */
+static void hsfWinPumpSync(void* userData)
+{
+    const HsfLinkPumps* p = HsfLinkClient_pumps();
+    int i;
+    if (!p) return;
+    /* [闸门先于灌数据] setPump 会用 m_ctrlEnabled 与 ready/on 求交；若闸门
+     * 值还是建页时的初值（false），第一拍推送就会把按钮错误置灰。这里先按
+     * 当前连接/模式/权限算一次，再灌。userData 就是主窗（见装配处）。 */
+    hsfWinApplyPumpGate((HsfWin*)userData);
+    for (i = 0; i < p->m_count; ++i) {
+        HsfMonitorFlowMeter_setPump(p->m_items[i].m_name, p->m_items[i].m_on,
+                                    p->m_items[i].m_ready, p->m_items[i].m_text);
+    }
 }
 
 /**
@@ -1334,6 +1711,16 @@ static void hsfWinModeNotify(void* userData)
     HsfLinkClient_autoRunning(&running);
     HsfTitleBar_setAutoRunning(&win->m_titleBar, running >= 0, running == 1,
                                autoMode == 1);
+    /* [被拒要说出来] 无权限账户（admin=普通用户）切模式时服务端应答
+     * ok=false + err 原文；此前只存进 HsfLinkClient 的 m_modeErr 无人显示，
+     * 现场观感是"点了没反应"。成功时应答已清空错误 ⇒ 此处早退，不改既有
+     * 状态栏文案。 */
+    hsfWinModeShowError(win);
+    /* [模式一变就重算设备控制闸] 服务端 hsfAppControlGate 在自动模式拒绝
+     * 一切设备控制；客户端必须在**模式切换的那一刻**把泵按钮置灰，而不是
+     * 等用户点了才被拒（截图实测：顶栏"模式: 自动"而泵"启动"仍可点）。
+     * 阀页在自己的刷新里已带这道闸，泵页原先没有，这里统一驱动。 */
+    hsfWinApplyPumpGate(win);
 }
 
 /**
@@ -1369,11 +1756,8 @@ static void hsfWinHealthNotify(void* userData)
 static void hsfWinValveSync(void* userData)
 {
     const HsfLinkValves* v = HsfLinkClient_valves();
-    const char* reason = NULL;
-    int autoMode = 0;
     int i;
 
-    (void)userData;
     if (!v) return;
     if (v->m_received && HsfLinkClient_valvesFresh()) {
         HsfMonitorValve_setCount(v->m_count);
@@ -1388,19 +1772,8 @@ static void hsfWinValveSync(void* userData)
         }
     }
 
-    /* 闸门原因优先级：未连接 → 自动模式 → 权限不足。 */
-    if (!HsfLinkClient_isReady()) {
-        reason = "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5\xE6\x9C\x8D\xE5\x8A\xA1\xE7\xAB\xAF"; /* 未连接服务端 */
-    } else if (HsfLinkClient_runMode(&autoMode) && autoMode) {
-        reason = "\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD"
-                 "\xEF\xBC\x9A\xE8\xBF\x9C\xE7\xA8\x8B\xE6\x8E\xA7\xE5\x88\xB6"
-                 "\xE5\xB7\xB2\xE8\xA2\xAB\xE7\xA6\x81\xE7\x94\xA8"; /* 自动运行中：远程控制已被禁用 */
-    } else if (HsfLinkClient_role() < (int)HSF_ROLE_CONTROL) {
-        reason = "\xE6\x9D\x83\xE9\x99\x90\xE4\xB8\x8D\xE8\xB6\xB3"
-                 "\xEF\xBC\x9A\xE6\x8E\xA7\xE5\x88\xB6\xE9\x9C\x80\xE8\xA6\x81"
-                 " root \xE8\xB4\xA6\xE6\x88\xB7"; /* 权限不足：控制需要 root 账户 */
-    }
-    HsfMonitorValve_setControlEnabled(reason == NULL, reason);
+    /* 闸门由 hsfWinApplyControlGates 统一驱动（本函数只管灌数据 + 重绘）。 */
+    hsfWinApplyControlGates((HsfWin*)userData);
     HsfMonitorValve_refresh();
 }
 
@@ -1416,14 +1789,14 @@ static void hsfWinValveAlarm(void* userData, const HsfLinkValveAlarm* alarm)
     char buf[192];
     if (!win || !alarm) return;
     if (alarm->m_kind == (int)HSF_VALVE_ALARM_CLEARED) {
-        snprintf(buf, sizeof(buf), "%s \xE5\xB7\xB2\xE6\x81\xA2\xE5\xA4\x8D\xEF\xBC\x9A%s",
+        snprintf(buf, sizeof(buf), "%s 已恢复：%s",
                  alarm->m_name, alarm->m_text);   /* «name» 已恢复：«text» */
     } else {
         char banner[192];
-        snprintf(buf, sizeof(buf), "%s \xE5\x91\x8A\xE8\xAD\xA6\xEF\xBC\x9A%s",
+        snprintf(buf, sizeof(buf), "%s 告警：%s",
                  alarm->m_name, alarm->m_text);   /* «name» 告警：«text» */
         snprintf(banner, sizeof(banner),
-                 "\xE2\x9A\xA0 %s\xEF\xBC\x9A%s",
+                 "⚠ %s：%s",
                  alarm->m_name, alarm->m_text);   /* ⚠ «name»：«text» */
         HsfMonitorValve_setAlarmBanner(banner);
     }
@@ -1454,26 +1827,26 @@ static void hsfWinCommandResult(void* userData, int op, bool ok,
         return;
     if (!ok) {
         snprintf(buf, sizeof(buf),
-                 "\xE6\x93\x8D\xE4\xBD\x9C\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x9A%s",
+                 "操作失败：%s",
                  (errUtf8 && errUtf8[0]) ? errUtf8
-                                         : "\xE6\x9C\xAA\xE7\x9F\xA5\xE5\x8E\x9F\xE5\x9B\xA0");
+                                         : "未知原因");
     } else if (op == (int)HSF_CMD_VALVE_CONTROL) {
         const char* r = HsfLinkClient_lastValveCmdResult();
-        const char* text = "\xE5\x91\xBD\xE4\xBB\xA4\xE5\xB7\xB2\xE5\x8F\x97\xE7\x90\x86"; /* 命令已受理 */
+        const char* text = "命令已受理"; /* 命令已受理 */
         if (r) {
             if (strcmp(r, "issued") == 0)
-                text = "\xE5\x91\xBD\xE4\xBB\xA4\xE5\xB7\xB2\xE4\xB8\x8B\xE5\x8F\x91"; /* 命令已下发 */
+                text = "命令已下发"; /* 命令已下发 */
             else if (strcmp(r, "repeated") == 0)
-                text = "\xE5\x8A\xA8\xE4\xBD\x9C\xE4\xB8\xAD\xEF\xBC\x8C\xE9\x87\x8D\xE5\xA4\x8D\xE5\x91\xBD\xE4\xBB\xA4\xE4\xB8\x8D\xE9\x87\x8D\xE7\xBD\xAE\xE8\xAE\xA1\xE6\x97\xB6\xE5\x99\xA8"; /* 动作中，重复命令不重置计时器 */
+                text = "动作中，重复命令不重置计时器"; /* 动作中，重复命令不重置计时器 */
             else if (strcmp(r, "reversed") == 0)
-                text = "\xE5\xB7\xB2\xE5\x8F\x8D\xE5\x90\x91\xEF\xBC\x88\xE9\x87\x8D\xE6\x96\xB0\xE8\xAE\xA1\xE6\x97\xB6\xEF\xBC\x89"; /* 已反向（重新计时） */
+                text = "已反向（重新计时）"; /* 已反向（重新计时） */
             else if (strcmp(r, "ignored") == 0)
-                text = "\xE5\xB7\xB2\xE5\x9C\xA8\xE7\x9B\xAE\xE6\xA0\x87\xE4\xBD\x8D\xE7\xBD\xAE\xEF\xBC\x8C\xE6\x97\xA0\xE9\x9C\x80\xE5\x8A\xA8\xE4\xBD\x9C"; /* 已在目标位置，无需动作 */
+                text = "已在目标位置，无需动作"; /* 已在目标位置，无需动作 */
         }
         snprintf(buf, sizeof(buf), "%s", text);
     } else {
         snprintf(buf, sizeof(buf), "%s",
-                 "\xE5\x91\xBD\xE4\xBB\xA4\xE5\xB7\xB2\xE5\x8F\x97\xE7\x90\x86"); /* 命令已受理 */
+                 "命令已受理"); /* 命令已受理 */
     }
     HsfStatusBar_setText(&win->m_statusBar, buf);
 }
@@ -1492,8 +1865,6 @@ static void hsfWinCommandResult(void* userData, int op, bool ok,
 static void hsfWinDigitalSync(void* userData)
 {
     const HsfLinkDigital* d = HsfLinkClient_digital();
-    const char* reason = NULL;
-    int autoMode = 0;
     int i;
 
     (void)userData;
@@ -1521,15 +1892,8 @@ static void hsfWinDigitalSync(void* userData)
         }
     }
 
-    if (!HsfLinkClient_isReady()) {
-        reason = "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5\xE6\x9C\x8D\xE5\x8A\xA1\xE7\xAB\xAF";
-    } else if (HsfLinkClient_runMode(&autoMode) && autoMode) {
-        reason = "\xE8\x87\xAA\xE5\x8A\xA8\xE8\xBF\x90\xE8\xA1\x8C\xE4\xB8\xAD\xEF\xBC\x9A\xE8\xBF\x9C\xE7\xA8\x8B\xE6\x8E\xA7\xE5\x88\xB6\xE5\xB7\xB2\xE8\xA2\xAB\xE7\xA6\x81\xE7\x94\xA8";
-    } else if (HsfLinkClient_role() < (int)HSF_ROLE_CONTROL) {
-        reason = "\xE6\x9D\x83\xE9\x99\x90\xE4\xB8\x8D\xE8\xB6\xB3\xEF\xBC\x9A\xE6\x8E\xA7\xE5\x88\xB6\xE9\x9C\x80\xE8\xA6\x81 root \xE8\xB4\xA6\xE6\x88\xB7";
-    }
-    HsfMonitorDigital_setOperationEnabled(reason == NULL);
-    HsfMonitorDigital_setInteractiveMode(reason == NULL);
+    /* 闸门由 hsfWinApplyControlGates 统一驱动（本函数只管灌数据）。 */
+    hsfWinApplyControlGates((HsfWin*)userData);
 }
 
 /**
@@ -1601,10 +1965,68 @@ static bool hsf_framePump(void* userData)
     HsfWin* win = (HsfWin*)userData;
     int64_t nowUsecs;
     int64_t frameUsecs;
+    int64_t nowMs;
     if (!win || !win->m_uiReady) return true;
+    /* [帧泵节流] dispatcher 空转时本回调最高 50Hz；布局/导航重排 ~30Hz 足够。 */
+    nowMs = XDateTime_currentNSecsSinceEpoch() / 1000000LL;
+    if (win->m_pumpLastMs > 0 && nowMs - win->m_pumpLastMs < 33)
+        return true;
+    win->m_pumpLastMs = nowMs;
+    /* [字号实时自测] XHSF_FONT_SELFTEST="page:pct"：启动 2.5s 后写键并
+     * 走一次实时重放（CI/验收无需人工点数字框）。无该变量不生效。 */
+    {
+        static int64_t s_fontTestStart = 0;
+        static int s_fontTestDone = 0;
+        const char* spec = XSystem_environment("XHSF_FONT_SELFTEST");
+        if (spec && spec[0] && !s_fontTestDone) {
+            if (s_fontTestStart == 0) s_fontTestStart = nowMs;
+            if (nowMs - s_fontTestStart >= 2500) {
+                int page = atoi(spec);
+                const char* colon = strchr(spec, ':');
+                int pct = colon ? atoi(colon + 1) : 120;
+                char key[32];
+                snprintf(key, sizeof(key), "FontScale/Page%d", page);
+                HsfSettingsStore_setInt(key, pct);
+                HsfSettingsStore_sync();
+                hsfUi_reapplyPageFonts(page);
+                XPrintf("HsfClient: 字体自测 page=%d pct=%d\n", page, pct);
+                s_fontTestDone = 1;
+            }
+        }
+    }
+    /* [adapt 与导航重排共用一个签名闸] adapt 只解决"页宽变了但分档还没跟上"：
+     * 页宽只在**窗口尺寸/当前页/形态档**变化时才变，故按同一签名节流。
+     * 原先无条件每 33ms 调一次——各页 adapt 里必然重设布局方向/拉伸/内边距/
+     * 字体，只要其中任一处没做同值早退，就会变成 30Hz 空转重绘。
+     * 导航收起/展开走 hsf_layoutModeUpdate → hsf_adaptPages 的独立路径，
+     * 不依赖本闸。 */
+    /* [adapt 必须每拍跑] 页宽在**窗口尺寸不变**时也会变（切页后堆栈首次
+     * 布局、导航收起、分割条拖动），而且首次 pump 时页宽可能还是 0 ——
+     * 曾把它收进签名闸，结果 adapt 拿着 0 宽度选了「窄档竖向布局」并
+     * 永久停在那里（实测变频器页给定行竖着堆、控件被拉成 100x200）。
+     * 各页 adapt 内部的布局调用都已是同值早退（setDirection/setStretch/
+     * setContentsMargins/setFont 均有闸），所以每拍跑的实际代价只是一串
+     * 比较，不产生脏区。 */
     hsf_adaptPages(win);
-    HsfNavPanel_update(&win->m_navPanel);
-    HsfNavPanel_update(&win->m_mobilePanel);
+    {
+        const int page = HsfStack_current(&win->m_stack);
+        if (win->m_navSigW != XWidget_width(&win->m_base) ||
+            win->m_navSigH != XWidget_height(&win->m_base) ||
+            win->m_navSigPage != page ||
+            win->m_navSigMode != win->m_layoutMode) {
+            win->m_navSigW = XWidget_width(&win->m_base);
+            win->m_navSigH = XWidget_height(&win->m_base);
+            win->m_navSigPage = page;
+            win->m_navSigMode = win->m_layoutMode;
+            HsfNavPanel_update(&win->m_navPanel);
+            HsfNavPanel_update(&win->m_mobilePanel);
+            /* [悬浮层抬升随页面/几何变化一起做] 原先每 33ms 无条件调用，
+             * 每次都可能搬动子对象并 XWidget_updateRect 标脏 ⇒ 30Hz 重绘
+             * 来源（实测各页含无图表的主界面都有 47~93 帧/窗口）。抬升只在
+             * 「可能被别人盖住」的时机需要：切页、改尺寸、形态切换。 */
+            XWidget_raise((XWidget*)&win->m_overlay);
+        }
+    }
     /* 主界面数值块刷新：**只在首页可见时**、按 200ms 节流跑。
      * [为什么不在页面内开定时器] 页面生命周期长于/短于主窗不定，页内定时器
      * 要自己管注销；这里借帧泵统一节拍，页隐藏即不刷（与"隐藏页不重绘"
@@ -1617,7 +2039,8 @@ static bool hsf_framePump(void* userData)
             HsfHomePage_refresh(win->m_pageRoot[HSF_PAGE_HOME]);
         }
     }
-    XWidget_raise((XWidget*)&win->m_overlay);
+    /* [此处不再每帧抬升悬浮层] 见上方签名块的说明：抬升会搬动子对象并
+     * XWidget_updateRect 标脏，每 33ms 一次就是 30Hz 空转重绘源。 */
     /* autoFit 收框只改尺寸不动位置 → 每帧按「尺寸与上次锚定值不同」重锚
        贴边（demo 帧泵同口径；fixed 态才跟边，非 fixed 是用户自由拖动位）。 */
     if (XPerformanceOverlay_isFixed(&win->m_overlay)) {
@@ -1626,23 +2049,49 @@ static bool hsf_framePump(void* userData)
             ovlGeo.height != win->m_overlayAnchorH)
             hsf_overlayAnchor(win);
     }
-    /* 喂悬浮层：FPS/帧耗时按**两拍间隔**统计，网络按 250ms 周期取
-       计数（同 XGuiWindowDemo 帧泵口径）——悬浮层是被动控件，不喂数据
-       就只是一块空白板。 */
+    /* 喂悬浮层：FPS/帧耗时由 paintEvent 喂；网络计数按**悬浮层自身统计
+       周期**采样。原来固定 250ms，与 XGUI_PERFORMANCE_OVERLAY_UPDATE_MS
+       的 250ms 恰好同频但各自计数；周期改 1000ms 后这里若仍 250ms，就会
+       每 250ms 调一次 updateNetwork → performanceOverlay_updateText →
+       文本（速率数字）变化 → 标脏 → 又画一帧，把「1s 采集」的省帧效果
+       完全抵消掉。两处必须同源。 */
     nowUsecs = XDateTime_currentNSecsSinceEpoch() / 1000LL;
     frameUsecs = nowUsecs - win->m_lastFrameUsecs;
     if (win->m_lastFrameUsecs > 0 && frameUsecs > 0) {
         /* 帧率/帧耗时由 paintEvent 喂（口径=绘制活动率）；此处只喂网络。 */
-        if (nowUsecs - win->m_lastNetworkPollUsecs >= 250000LL) {
+        if (nowUsecs - win->m_lastNetworkPollUsecs >=
+            (int64_t)XGUI_PERFORMANCE_OVERLAY_UPDATE_MS * 1000LL) {
             uint64_t rx = 0;
             uint64_t tx = 0;
             bool ok = XDeviceNetwork_getNetworkCounters(&rx, &tx);
-            XPerformanceOverlay_updateNetwork(&win->m_overlay, ok, rx, tx,
-                                              nowUsecs);
+            /* 悬浮层不可见时不采样/不刷文本（免得因此触发重绘）。 */
+            if (XWidget_isVisible((XWidget*)&win->m_overlay))
+                XPerformanceOverlay_updateNetwork(&win->m_overlay, ok, rx, tx,
+                                                  nowUsecs);
             win->m_lastNetworkPollUsecs = nowUsecs;
         }
     }
     win->m_lastFrameUsecs = nowUsecs;
+    /* [诊断] XHSF_HEAP_TRACE=1：每 5 秒打一遍系统堆存量（重连/压测判泄漏）。
+     * 口径与服务器端 HSF_HEAP_TRACE 一致（AGENTS：看堆计数不看工作集）；
+     * 附链路就绪位，便于区分「连接态堆涨」与「断开后堆不回落」。 */
+    {
+        static int heapTraceOn = -1;
+        static int64_t heapLastMs = 0;
+        if (heapTraceOn < 0)
+            heapTraceOn = XSystem_environment("XHSF_HEAP_TRACE") ? 1 : 0;
+        if (heapTraceOn) {
+            int64_t heapNowMs = XDateTime_currentMSecsSinceEpoch();
+            if (heapLastMs == 0 || heapNowMs - heapLastMs >= 5000) {
+                heapLastMs = heapNowMs;
+                XPrintf("[heap] sys=%lld link=%d t=%lld\n",
+                        (long long)XMemory_statistics_2(
+                            XMEMORY_TYPE_SYSTEM).systemBytes,
+                        HsfLinkClient_isReady() ? 1 : 0,
+                        (long long)heapNowMs);
+            }
+        }
+    }
     return true;
 }
 
@@ -1664,6 +2113,32 @@ static HsfUiLoginCtx* s_launchCtx = NULL;   /**< 延迟装配上下文（泵消�
 /**
  * @brief 装配主窗（时钟/自动退出/帧泵；截图模式窗口内处理）。
  */
+/**
+ * @brief 停掉主窗挂的全部定时器（退出收口用；幂等）。
+ * @param win 归属主窗。
+ * @details 必须在 `XClassDelete(win)` **之前**调用：主窗析构是深层级联，
+ *          期间若有本窗定时器回调被派发，会解引用已释放的页/控件（实测
+ *          退出恒 AV）。kill 后把 id 复位为 XTIMER_INVALID_ID，避免重复
+ *          kill 已复用的 id 误杀别人的定时器。
+ */
+static void hsfWinStopAllTimers(HsfWin* win)
+{
+    if (!win) return;
+#define HSF_KILL_TIMER(field)                                                  \
+    do {                                                                       \
+        if (win->field != XTIMER_INVALID_ID) {                                 \
+            XObject_killTimer((XObject*)win, win->field);                      \
+            win->field = XTIMER_INVALID_ID;                                    \
+        }                                                                      \
+    } while (0)
+    HSF_KILL_TIMER(m_clockTimer);
+    HSF_KILL_TIMER(m_autoQuitTimer);
+    HSF_KILL_TIMER(m_shotTimer);
+    HSF_KILL_TIMER(m_cycleTimer);
+    HSF_KILL_TIMER(m_valveSelfTestTimer);
+#undef HSF_KILL_TIMER
+}
+
 static HsfWin* hsfUiMakeWin(const HsfUiOptions* opts)
 {
     HsfWin* win = hsf_win_create(opts ? opts->autoSeconds : 0,
@@ -1687,6 +2162,22 @@ static HsfWin* hsfUiMakeWin(const HsfUiOptions* opts)
         HsfMonitorVfd_rebindProvider();
         XPrintf("HsfClient: 变频器页数据源已切远端（已登录）\n");
     }
+    /* [--no-login 离线演示：模拟量页灌演示点] 离线态没有服务端快照，
+     * 模拟量模型恒空 ⇒ 页面只有「无模拟量点」空态，指定截图无法验收
+     * 卡片字号/角标/重叠。只在显式 --no-login 路径灌（登录路径不灌——
+     * 现场真实点位绝不能被假数据顶替；登录后服务端快照 setCount 会整体
+     * 覆盖本批演示点）。 */
+    if (opts && opts->noLogin)
+        HsfMonitorAnalog_seedDemoForOffline();
+
+    /* 顶栏账号（设备健康左侧）：
+     *   · --login（无头）：回调里先登录成功、再由本函数建窗 ⇒ 这里已就绪，
+     *     HsfLinkClient_user() 非空；
+     *   · --no-login / 主窗先显的交互登录：此刻尚未认证 ⇒ 空串 ⇒ 如实显示
+     *     「未登录」；交互登录成功后由 hsfUiLoginDone 再补一次。
+     * 入参都是借用指针，HsfTitleBar_setUser 内部拷贝。 */
+    HsfTitleBar_setUser(&win->m_titleBar, HsfLinkClient_user(),
+                        HsfLinkClient_roleName());
 
     /* 标题栏时钟 1s 刷新（demo 品牌条同款）。 */
     win->m_clockTimer = XObject_startTimer_ms(
@@ -1774,6 +2265,9 @@ static void hsfUiLoginDone(void* userData, bool success, const char* errUtf8)
          * 登录窗延迟到事件循环顶层再隐藏/删除（回调栈在 XLink 会话泵里，
          * 此处同步析控件会拆掉正在派发的事件链）。 */
         HsfMonitorVfd_rebindProvider();
+        /* 顶栏账号：主窗先显路径建窗时还没登录，这里补刷成「账号·角色」。 */
+        HsfTitleBar_setUser(&ctx->m_win->m_titleBar, HsfLinkClient_user(),
+                            HsfLinkClient_roleName());
         ctx->m_pending = 2;      /* 2=收登录窗（不建主窗）。 */
         s_launchCtx = ctx;
         XPrintf("[login-done] 主窗已就绪，收登录窗并接入远端后端\n");
@@ -1832,6 +2326,13 @@ int HsfUi_start(const HsfUiOptions* opts)
         defOpts.thenPage = -1;
         opts = &defOpts;
     }
+    /* [全局重绘节流已移除 2026-11-08] 此处原有「XHSF_REPAINT_MAX_FPS 缺省
+     * 2fps → XWidget_setMaxRepaintFps」的进程级节流设定。它把**所有**重绘
+     * 来源合并到 2Hz，代价是任何交互（点击/切页/下拉框弹层）最坏要等
+     * 500ms 才上屏，且弹层是独立顶层窗（XWindowType_Popup）同样被拦，
+     * 首帧被反复推后 ⇒ 「预设位置」下拉只见灰框不见选项。Qt 没有全局帧率闸
+     * （update() 只合并脏区、有脏区就画），框架侧已按 Qt 语义撤除该闸，
+     * 本处设定随之删除。 */
     app = XGuiApplication_instance();
     if (!app) {
         XPrintf("HsfClient: XGuiApplication 未创建\n");
@@ -1913,6 +2414,15 @@ int HsfUi_start(const HsfUiOptions* opts)
     if (ctx.m_win && ctx.m_win->m_framePump)
         XAbstractEventDispatcher_removePollCallback(ctx.m_win->m_framePump);
     HsfLinkClient_close();
+    /* [退出期定时器先停 2026-11-08] 主窗挂的时钟/自测/自动退出定时器此前
+     * 从不显式 kill，靠 VXObject_deinit 的 unregisterTimers 兜底。但析构是
+     * 深层级联（splitter → scrollArea → 各页 widget），期间定时器表可能
+     * 已被部分清理、回调仍能排进事件队列并解引用**已释放页对象**——
+     * 实测退出恒 AV（`VXObject_deinit` 内 mov eax,[rax+50h]，rax 为
+     * 0x000000060000000C 这类脏值）。删窗之前先把本窗定时器全停掉，
+     * 消除"析构过程中还有本窗回调在跑"这一整类时序。 */
+    if (ctx.m_win)
+        hsfWinStopAllTimers(ctx.m_win);
     /* [父子析构序] 登录窗以主窗为父（HsfLoginWindow_createFor），删主窗
      * 会级联删登录窗——必须先单独删登录窗并断开父子关系，否则随后对
      * login 的第二次 XClassDelete 就是 UAF。这里按「先子后父」显式收口；

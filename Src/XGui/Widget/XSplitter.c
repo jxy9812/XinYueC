@@ -102,7 +102,7 @@ static int xsp_handleWidthEff(const XSplitter* self)
     if (w >= 0) return w;
 #if XSTYLE_ON
     {
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         if (style) {
             w = XStyle_pixelMetric(style, XStylePM_SplitterWidth, NULL);
             return w < 0 ? 0 : w;
@@ -1303,7 +1303,7 @@ bool XSplitter_opaqueResize(const XSplitter* self)
     if (self->m_opaqueResizeSet) return self->m_opaqueResize != 0;
 #if XSTYLE_ON
     {
-        XStyle* style = XStyle_defaultStyle();
+        XStyle* style = XWidget_style((const XWidget*)self);
         if (style)
             return XStyle_styleHint(style, XStyleSH_Splitter_OpaqueResize,
                                     NULL, NULL) != 0;
