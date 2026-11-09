@@ -211,6 +211,12 @@ class App(object):
 
         # ---- 采集任务 ----
         self._poll_tasks = []
+        #: 数字量通道名是否已变更（true ⇒ 下一拍主动下发一帧只含名字的
+        #: full 帧）。对齐 C 侧 s_digitalNamesDirty /
+        #: HsfServerApp_notifyChannelNamesChanged：名字是部署参数（点位
+        #: 映射来自配置），装配/配置变更处置位一次，见
+        #: mark_digital_names_dirty。
+        self._digital_names_dirty = False
         # ---- 数据落盘（SQLite：历史/日志/报警，见 store.py）----
         self.store = store.Store(getattr(self.cfg, "base_dir", "") or ".",
                                  log=self._log_raw)
@@ -424,6 +430,16 @@ class App(object):
                          self.cfg.button_items.get("reset_di"),
                          self.cfg.button_items.get("start_lamp_do"),
                          self.cfg.button_items.get("reset_lamp_do")))
+
+        # ---- 名字口径置脏（对齐 C 侧"改宏重新部署"后的主动补发）----
+        # 数字量通道名由阀门/泵/按钮三处点位映射推导（见 _digital_channel_names
+        # 及同族函数），本方法结束时三者已定型 —— 这里置位一次，装配后首拍
+        # 主动补一帧名字（此刻通常尚无订阅者，publish 静默为 0，无副作用）。
+        # [运行期热改] py 版点位目前只在装配时定型（无热载命令）；将来若加
+        # 点位热改入口，改完调用 mark_digital_names_dirty() 即可，推送通路
+        # 已就绪（见 _publish_telemetry 数字量段）。
+        if self.digital:
+            self.mark_digital_names_dirty("点位装配完成")
 
     @property
     def TEMPHUM_PUSH_MS(self):
@@ -1121,12 +1137,12 @@ class App(object):
         """XLink 服务端的业务 tick 回调（由 xlink.Server 周期驱动）。"""
         await self._publish_telemetry(now_ms)
         self._jog_watchdog(now_ms)
-        self._auto_step(now_ms)
+        await self._auto_step(now_ms)
         if now_ms >= self._health_next_ms:
             self._health_next_ms = now_ms + self.HEALTH_TICK_MS
             await self._health_tick(now_ms)
 
-    def _auto_step(self, now_ms):
+    async def _auto_step(self, now_ms):
         """跑一拍自动控制。
 
         [两个入口，职责不同]
@@ -1139,6 +1155,11 @@ class App(object):
         越界/None 比较之类的异常。它崩了**不能**把整个服务端的 tick 带死 ——
         那会连遥测推送和设备健康一起停摆，界面全黑，比"自动逻辑不工作"严重
         得多。故这里吞掉并限频记日志。
+
+        [告警抽取与模式/运行态无关] 对齐 C 侧 HsfServerApp.c
+        hsfAppPushAutoAlarms：停机状态下也可能有在队报警要清（全停失败的
+        ActionFailed 在控制器已停后才入队）。故在 poll_idle 之后、running
+        闸之前统一 take。
         """
         ctl = getattr(self, "auto_controller", None)
         if ctl is None:
@@ -1148,12 +1169,53 @@ class App(object):
             ctl.poll_idle(now_ms, self.is_auto())
         except Exception as exc:                        # noqa: BLE001
             self._log_auto_error(exc)
+        # ---- 每拍：抽取在队报警（取走即消费，一条一帧）----
+        await self._drain_auto_alarms(ctl)
         if not ctl.running:
             return
         try:
             ctl.step(now_ms)
         except Exception as exc:                        # noqa: BLE001
             self._log_auto_error(exc)
+
+    async def _drain_auto_alarms(self, ctl):
+        """把控制器在队报警逐条广播（TOPIC_AUTO_ALARM）并入库。
+
+        [一帧一条] 对齐 C 侧 XAutoControlCodec_alarmToBson 的单条报警帧：
+        载荷键 {kind:int, atMs:int, text:str}（键名与 C 侧编解码逐字一致，
+        见 XAutoControlCodec.c 的 ALARM_KIND/ALARM_AT/ALARM_TEXT）。
+        take_alarm 取走即消费 —— 同一条报警绝不出两次帧。
+
+        [无人订阅也不丢] publish 无人订阅时静默为 0（与 C publish_ex 同
+        口径），但日志与告警入库照做：事件留痕在库里，不依赖有人在看。
+        """
+        while True:
+            try:
+                alarm = ctl.take_alarm()
+            except Exception as exc:                    # noqa: BLE001
+                self._log_auto_error(exc)
+                return
+            if alarm is None:
+                return
+            kind = int(alarm.get("kind", 0))
+            at_ms = int(alarm.get("atMs", 0))
+            text = str(alarm.get("text", ""))
+            try:
+                payload = bson.encode({"kind": kind, "atMs": at_ms,
+                                       "text": text})
+                await self.server.publish(proto.TOPIC_AUTO_ALARM, payload)
+            except Exception as exc:                    # noqa: BLE001
+                # 推送失败不挡入库与下一条：告警链路自身不能成为新故障源。
+                self._log("自动告警发布失败（已留痕入库）：%s: %s"
+                          % (type(exc).__name__, exc))
+            self._log("自动运行告警 类型%d @%d：%s" % (kind, at_ms, text))
+            # 告警入库（kind=来源分类；与 C 侧 insertAlarm("auto",...) 同表
+            # 同分类；写失败不影响推送与采集）。
+            try:
+                self.store.insert_alarm("auto", "自动运行", text)
+            except Exception as exc:                    # noqa: BLE001
+                self._log("自动告警入库失败：%s: %s"
+                          % (type(exc).__name__, exc))
 
     def _log_auto_error(self, exc):
         """自动层异常限频记日志（同一类错误 1 分钟一条）。"""
@@ -1210,6 +1272,22 @@ class App(object):
         # 它照样参与轮询与健康探测（见 collect_health），只是不出场景。
         # [当前现场已无聚合] 只剩 .13 一台且 publish=True，这条过滤恒放行；
         # 保留它是为了将来再挂第二台聚合模块时不重复发点。
+        # ---- 名字脏帧：点位配置变更后的下一拍，先补一帧只含名字的 full 帧
+        # （对齐 C 侧 hsfAppTickDigitalValve 里的 s_digitalNamesDirty 分支：
+        # 事件帧随拍发一次即清标志，不占周期推送闸），再走周期状态推送。
+        if self._digital_names_dirty:
+            self._digital_names_dirty = False
+            for i, dev in enumerate(self.digital):
+                if not getattr(dev, "publish", True):
+                    continue
+                try:
+                    await self.server.publish(
+                        proto.TOPIC_DIGITAL_STATUS,
+                        self.encode_digital_names(dev, i))
+                except Exception as exc:                # noqa: BLE001
+                    self._log("数字量名字帧发布失败：%s: %s"
+                              % (type(exc).__name__, exc))
+            self._log("数字量：通道名已变更，已主动下发名字帧")
         for i, dev in enumerate(self.digital):
             if not getattr(dev, "publish", True):
                 continue
@@ -1457,6 +1535,49 @@ class App(object):
         # 泵占用的 DO 也登记（DO6 = 进水泵），与阀门名汇进同一张表
         self._pump_channel_names(index, dev.channels, names)
         # 按钮组占的 4 DI / 3 DO 也登记（DI12~15 / DO7~9）
+        self._button_channel_names(index, dev.channels, names)
+        for channel, text in names.get("di", {}).items():
+            doc[proto.KEY_DI_NAME_FMT % channel] = text
+        for channel, text in names.get("do", {}).items():
+            doc[proto.KEY_DO_NAME_FMT % channel] = text
+        return bson.encode(doc)
+
+    def mark_digital_names_dirty(self, reason=""):
+        """通知「通道名已变更」：下一拍主动下发一帧只含名字的 full 帧。
+
+        对齐 C 侧 HsfServerApp_notifyChannelNamesChanged（HsfServerApp.c:848）：
+        名字本质是部署参数，运行期通常不变；本入口给"配置变更/将来热改名"
+        预留通路。真正的推送在 _publish_telemetry 数字量段（标志消费后清零，
+        只补一帧，不随周期刷屏）。
+
+        :param reason: 日志留痕（哪个环节改了名字），空串不打日志。
+        """
+        self._digital_names_dirty = True
+        if reason:
+            self._log("数字量：通道名已变更（%s），下一拍下发名字帧" % reason)
+
+    def encode_digital_names(self, dev, index):
+        """名字专用帧：{full:true, dev, name, count, din%d/don%d 名字键}。
+
+        对齐 C 侧 hsfAppEncodeDigitalNames（HsfServerApp.c:3544）的键口径：
+        **只含名字键、不带状态位图**（di/do/valid/staleMs 都不上）——客户端
+        按"载荷里有名字键就更新名字"处理，与 full 帧的差别只是没有状态。
+        full 键恒为 true：客户端靠它走"全量"分支，不靠"有没有状态键"猜。
+
+        [与 C 的差异（py 多模块布局所需）] C 单模块，名字帧只有
+        full/count/名字键；py 支持多台数字量模块，补 dev（模块序号）与
+        name（模块名）键供客户端路由，其余键与 C 逐字一致。
+        """
+        doc = {
+            proto.KEY_FULL: True,
+            proto.KEY_DEV: index,
+            proto.KEY_NAME: dev.name,
+            proto.KEY_COUNT: dev.channels,
+        }
+        names = self._digital_channel_names(index, dev.channels)
+        # 泵/按钮组占用的口也登记 —— 与 encode_digital(full=True) 同一
+        # 张汇合表（三处点位映射就是名字的唯一事实源）。
+        self._pump_channel_names(index, dev.channels, names)
         self._button_channel_names(index, dev.channels, names)
         for channel, text in names.get("di", {}).items():
             doc[proto.KEY_DI_NAME_FMT % channel] = text
@@ -1947,26 +2068,57 @@ class App(object):
         await self.on_session_added(session)
 
     # ==================================================================
-    #                        登录策略（root 单会话）
+    #                        登录策略（三键判定）
     # ==================================================================
     def policy_blocks_login(self, user_name, session):
-        """登录策略闸（2026-11-08 起可由远端设置里的 login 节调整）。
+        """登录策略闸（login 节三键；2026-11-08 起可由远端设置调整）。
 
-        - login_allow_concurrent=True：同账可多端并发（压测/多端围观）；
-        - 否则沿用「root 单会话」保护（防并行修改）；
-        - admin（只读）不限——多人围观无风险。
+        闸序对齐 C 侧 XLoginPolicy_admitSession：**总数上限 → 匿名 →
+        同账并发**，先到先拒，命中即拒（返回 True，链路层按 AUTHSTATUS
+        BAD_USER 回认证失败，见 xlink._on_auth_request）。
+
+        - loginMaxSessions     会话总数上限（0=不限）。口径与 C 一致：按
+          xlink.session_count()（**当前连接总数**，含本会话与尚未认证的
+          连接——连接一建立就入表，见 xlink.Server._handle_client）；
+        - loginAllowAnonymous  false 时拒绝**未宣告认证**的登录请求
+          （session.auth_declared()：hello 能力位未宣告且无在途挑战/未
+          完成认证 = 想匿名进来；近似口径的取舍见 xlink.Session 注释）；
+        - loginAllowConcurrent True 同账可多端并发（压测/多端围观）；
+          否则沿用「root 单会话」保护（防并行修改）；admin 之外账户不限
+          ——多人围观无风险。
+
         极小竞态窗（两个 root 同时处于认证中）不设防：认证在毫秒级完成。
         """
+        if self.server is None:
+            return False
+        # ---- 闸1：会话总数上限（0=不限）----
+        max_sessions = int(getattr(self.cfg, "login_max_sessions", 0) or 0)
+        if max_sessions > 0 and self.server.session_count() >= max_sessions:
+            self._log("登录策略：拒绝 %s（会话数已达上限 %d，当前 %d）"
+                      % (user_name, max_sessions, self.server.session_count()))
+            return True
+        # ---- 闸2：匿名未开放 → 拒绝未宣告认证的会话 ----
+        if not getattr(self.cfg, "login_allow_anonymous", True):
+            declared = True
+            try:
+                declared = bool(session.auth_declared())
+            except AttributeError:
+                declared = True          # 无该接口的会话对象：不拦（保守放行）
+            if not declared:
+                self._log("登录策略：拒绝 %s（匿名登录未开放：会话未宣告认证）"
+                          % user_name)
+                return True
+        # ---- 闸3：同账并发（现状维持：root 单会话）----
         if getattr(self.cfg, "login_allow_concurrent", False):
             return False
         if user_name != proto.DEFAULT_ROOT_NAME:
-            return False
-        if self.server is None:
             return False
         for other in self.server.sessions:
             if other is session or not other.is_ready():
                 continue
             if other.auth_user == proto.DEFAULT_ROOT_NAME:
+                self._log("登录策略：拒绝 %s（该账户已登录，不允许同时在线）"
+                          % user_name)
                 return True
         return False
 

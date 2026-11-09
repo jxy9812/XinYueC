@@ -20,6 +20,7 @@ import argparse
 import os
 import sys
 import time
+import gc
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CLIENT_ROOT = os.path.dirname(HERE)
@@ -301,7 +302,19 @@ def main(argv=None):
     print("进程存活，界面仍在刷新（vfd fresh=%s runState=%s）"
           % (st.is_fresh(), st.run_state))
     print("===== %s =====" % ("通过" if failures == 0 else "有异常，需查"))
+    # [顺序化拆卸 2026-11-09] 退出段错误根修（台账 §6.6）：return 时局部
+    # 引用无序释放 → 主窗 C++ 级联析构 → 页面 destroyed 处理器里还在
+    # emit 到已半死的接收方 → pyqtBoundSignal_emit 段错误。显式按序拆：
+    # 断开(闸网络线程发射) → 泵一轮消化 deleteLater → 关窗 → 泵 → 显式
+    # 释放窗/桥，最后才 return（app 留给解释器，destroyonexit 已关）。
     bridge.disconnect_from()
+    _pump(app, 10)
+    win.close()
+    _pump(app, 10)
+    win.deleteLater()
+    _pump(app, 10)
+    del page, win, bridge
+    gc.collect()
     return 0 if failures == 0 else 1
 
 

@@ -97,6 +97,15 @@ typedef void (*XLinkSessionDispatchCallback)(XLinkSession* self,
                                              const uint8_t* payload);
 
 /**
+ * @brief 推送失步补发信号：Publish 帧因发送队列满被拒绝后，队列重新排空时
+ *        由会话发出（见 XLinkSession_txResyncNeeded_signal）。
+ * @param self 会话对象（借用）。
+ * @note  接收方（服务端应用）应按该会话的订阅表补发全量快照，消除拥塞窗
+ *        内被丢弃的变值事件帧造成的状态分歧。信号在 txFlush/pump 栈上同步
+ *        派发，槽内可安全调用本会话的发送接口（补发即入队）。
+ */
+
+/**
  * @brief 待应答表项：一条已发出、尚未收到 Response 的 Request。
  */
 typedef struct XLinkPendingRequest {
@@ -209,6 +218,8 @@ typedef struct XLinkSessionStats {
     uint64_t m_bytesReceived;   /**< 已读入字节数。 */
     uint32_t m_protocolErrors;  /**< 协议违例次数（畸形帧/超限）。 */
     uint32_t m_resets;          /**< 复位次数（断链/判线/违例）。 */
+    uint32_t m_txOverflowFrames; /**< 队满被拒的 Publish 帧累计数（推送失步
+                                      观测口径；reset/setDevice 不清零）。 */
 } XLinkSessionStats;
 
 /**
@@ -255,6 +266,21 @@ typedef struct XLinkSession {
                                         与收方向 m_lastReceiveTick「收到任意字节即刷新」
                                         对称，同为「持续无进展才判死、任一进展即复位」。
                                         复用根修：setDevice / reset 同口径归零。 */
+    /* ---------- 推送失步记账（2026-11-09 根修，见 XLink_config.h
+       XLINK_TX_DESYNC_KICK_MS 注释）---------- */
+    uint32_t m_txOverflowFrames;   /**< 队满被拒的 Publish 帧累计数（镜像到
+                                        m_stats.m_txOverflowFrames）。 */
+    uint32_t m_desyncSinceTick;    /**< 推送失步起算时刻（本链路单调毫秒）：
+                                        0 = 同步。Publish 队满拒帧时置位
+                                        （m_nowTick 为 0 时顺延到下一拍）；
+                                        队列排空时清零并发射
+                                        txResyncNeeded；超过 m_txDesyncKickMs
+                                        仍未排空由 pump 踢线。setDevice /
+                                        reset 同口径归零。 */
+    uint32_t m_txDesyncKickMs;     /**< 失步踢线阈值（0=禁用），init 默认
+                                        XLINK_TX_DESYNC_KICK_MS，运行时经
+                                        XLinkSession_setTxDesyncKickMs 调整
+                                        （单测用小阈值驱动手工路径）。 */
 
     XTimerId m_timerId;  /**< 异步心跳/判线定时器 id（XObject 内建定时器，挂载传输时
                               启动）；XTIMER_INVALID_ID 表示未启动（无事件分发器或
@@ -850,6 +876,29 @@ void* XLinkSession_authChanged_signal(XLinkSession* self, bool passed,
                                       uint8_t status, uint8_t role);
 
 #endif /* XLINK_AUTH_ON */
+
+/**
+ * @brief      发射「推送失步已排空」信号（推送失步根修 2026-11-09）。
+ * @param      self 会话对象。
+ * @return     信号标识
+ * @note  Publish 帧因发送队列满被拒（失步）后，队列重新排空的瞬间由
+ *        txFlush 发射。槽函数原型：void slot(XObject* sender, XVarList* args)，
+ *        参数依次为 int overflowFrames（被拒 Publish 帧累计数）、
+ *        XLinkSession* session（发送会话，借用）。接收方（服务端）应按该
+ *        会话的订阅表补发全量快照。本会话内未失步过则永不发射。
+ */
+void* XLinkSession_txResyncNeeded_signal(XLinkSession* self);
+
+/**
+ * @brief      设置推送失步踢线阈值（毫秒）。
+ * @param      self 会话对象。
+ * @param      ms   阈值；0 = 禁用踢线（仅保留排空补发自愈）。
+ * @return     成功 true。
+ * @note  init 默认 XLINK_TX_DESYNC_KICK_MS（15000）。失步（Publish 队满
+ *        拒帧）持续超过阈值仍未排空 ⇒ pump 判定消费端过慢并 reset 会话，
+ *        由客户端重连+重订阅完成再同步。主要供单测用小阈值驱动踢线路径。
+ */
+bool XLinkSession_setTxDesyncKickMs(XLinkSession* self, uint32_t ms);
 
 /* ========================================================================== */
 /*                        文件传输钩子（XLINK_FILE_ON）                      */

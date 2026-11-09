@@ -57,6 +57,9 @@ class Session(object):
         self.auth_user = None
         self.auth_role = proto.ROLE_ANONYMOUS
         self.auth_passed = False
+        # 对端是否在 hello 里宣告过 CAP_AUTH（持久记下，重试登录也不丢）。
+        # 见 auth_declared()：登录策略匿名闸的"未宣告认证"判据。
+        self.auth_declared_cap = False
         # 认证挑战上下文（一次性，比对完即作废）
         self._challenge_nonce = None
         self._challenge_user = None
@@ -75,6 +78,31 @@ class Session(object):
 
     def is_ready(self):
         return self.state == SessionState.READY
+
+    def auth_declared(self):
+        """本会话是否已「宣告认证」或至少已走入认证流程。
+
+        [口径] 首选 **hello 的能力位宣告**（auth_declared_cap：对端原始
+        宣告，持久记下，不受本端 require_auth 影响、也不因登录失败重试
+        而丢）——对端宣告了 CAP_AUTH 即视为"不是来匿名蹭连接的"。对端
+        不发 Hello 载荷时能力位拿不到（=0，见 _on_hello：载荷不可解只记
+        日志不处理），无从判别 —— 此时以「是否已走入认证流程」**近似**：
+        服务端已给它下发过挑战且挑战尚未消费（_challenge_nonce 在手），
+        或已完成认证（auth_user 非空）。
+
+        [⚠ 为什么不能拿 state==AUTHENTICATING 当"已走入流程"] 认证被拒
+        后 _auth_reject 会把状态放回 Authenticating 允许重试 —— 若重试
+        也算"宣告过"，匿名闸就形同虚设：跳过 Hello 的客户端连发两次
+        AuthRequest 即绕过。故近似只认「挑战在手/认证完成」这类**服务端
+        主动给过材料**的硬痕迹（app.policy_blocks_login 注释同款声明）。
+
+        [消费方] app.policy_blocks_login 的匿名闸（loginAllowAnonymous=
+        false 时拒绝未宣告认证的登录请求）。注意本方法**不是**"已认证"：
+        已认证看 auth_passed / is_ready。
+        """
+        if self.auth_declared_cap:
+            return True
+        return bool(self._challenge_nonce) or bool(self.auth_user)
 
     def role(self):
         return self.auth_role
@@ -229,6 +257,9 @@ class Session(object):
             return
 
         self.peer_capability = capability
+        # [持久宣告记录] 登录策略匿名闸（auth_declared）要的是"对端有没有
+        # 宣告过认证能力"，与后续状态无关 —— hello 里宣告一次就算数。
+        self.auth_declared_cap = bool(capability & proto.CAP_AUTH)
         self.remote_capability = capability & self.local_capability
 
         if code == proto.SESSION_HELLO:
@@ -275,11 +306,13 @@ class Session(object):
             await self._auth_reject(proto.AUTHSTATUS_PROTOCOL, "malformed request")
             return
 
-        # [root 单会话策略] 防并行修改：同一账户只允许一个在线会话。
-        # 拒绝走 BadUser 口径（客户端看到干净的 authFailed，登录窗留在原地）。
+        # [登录策略闸] app 侧 policy_blocks_login 三键判定（总数上限 /
+        # 匿名 / 同账并发，具体哪道闸拒绝由 app 侧记日志）。
+        # 拒绝走 BadUser 口径（对齐 C 侧 XLoginPolicy 准入拒绝 →
+        # XLinkSessionAuthLookup_BadUser：客户端看到干净的 authFailed，
+        # 登录窗留在原地），具体拒绝码不在链路层展开。
         if self.server.server_policy_blocks(name, self):
-            self.server.log("会话 %s 重复登录被拒（%s 已有在线会话）"
-                            % (self.peer, name))
+            self.server.log("会话 %s 登录被策略拒绝（%s）" % (self.peer, name))
             await self._auth_reject(proto.AUTHSTATUS_BAD_USER, "unknown user")
             return
 

@@ -9,13 +9,20 @@
                                     流量 + 浊度×2 + 进水泵；C 端无此页）
 """
 
+import time
+from collections import deque
+
 from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QColor, QPainter, QPen
 from PyQt5.QtWidgets import (QComboBox, QGridLayout, QHBoxLayout, QLabel,
-                             QPushButton, QSlider, QSpinBox, QStyle,
-                             QStyleOptionSlider, QVBoxLayout, QWidget)
+                             QPushButton, QSizePolicy, QSlider, QSpinBox,
+                             QStyle, QStyleOptionSlider, QVBoxLayout, QWidget)
 
 from . import proto, theme
 from .page_base import DataTable, LampRow, Page, ToggleGrid, section_title
+# [import 复用] 趋势图的配色/整型收缩直接取历史折线图的同一份定义，
+# 不复制一份（两处图表读起来是同一套视觉口径）。
+from .pages_other import LineChartDialog, _px
 from .widgets import Card
 
 
@@ -391,6 +398,597 @@ class _TouchSlider(QSlider):
         self.setValue(int(round(self.minimum() + ratio * span)))
 
 
+# ============================================================================
+#                     实时趋势图（变频器 / 水质两页共用）
+# ============================================================================
+
+class TrendChart(QWidget):
+    """实时趋势图：**60 点滚动窗 + 视口归属仲裁**（QPainter 自绘，零依赖）。
+
+    [为什么不用 LineChartDialog] 历史页的 LineChartDialog 是**顶层弹窗**，
+    视口是"占全程的 0..1 比例"——它假设数据集不再变化。实时趋势的数据
+    逐拍增长、窗口不断右移，还需要"用户接管视口后停写 / 一键跟随"的
+    仲裁状态机，塞不进那个模型；故按约定在监视页内建轻量控件。表现口径
+    （配色 / 悬停 / 滚轮缩放 / 整型收缩）仍与 LineChartDialog 保持同一套：
+    SERIES_COLORS 与 _px 直接 import 复用，不复制一份。
+
+    [对齐 C 端] 参照 HsfMonitorVfd.c 区 5（VFD_TREND_POINTS=60 滚动窗、
+    vfdTrendFollowWindow 右缘贴最新追点、vfdTrendViewportSlot 视口仲裁、
+    VFD_TREND_CATCHUP 右缘容差）与 HsfMonitorFlowMeter.c 趋势图区：
+      a) 每序列一个 deque(maxlen=60)：新遥测逐拍追加，超窗自动移除最旧；
+      b) 多序列独立存点（VFD=输出频率/给定频率/输出电流；
+         水质=瞬时流量/浊度1/浊度2），量纲不同**不做双 Y 轴**——
+         各序列按自己视口内的 min/max 归一化到绘图区高度，
+         图例里标该序列视口内 min/max（同 LineChartDialog 口径，
+         图是"看趋势"不是"读精确值"）；
+      c) 滚轮缩放 X 轴（指针锚点；纵轴是各序列自适应的，不被滚轮破坏）；
+      d) 用户拖动/缩放后视口**接管**（停写：追点继续、窗口不再自动右移）；
+         右缘推回实时点（容差 CATCHUP_MS）自动交还；「跟随」按钮/双击恢复。
+         [与 C 端的一处口径差] C 端缩放后仍保持跟随（只改窗宽），本控件按
+         任务口径缩放也接管——操作员"滚了一下"多半是想停在那一帧看。
+      e) 悬停显示最近点的数值与时刻。
+
+    [默认窗宽为何是 12s 而不是 C 端的 30s] C 端保 450 点（0.2s 点距 ≈
+    90s）供 30s 窗用；本控件滚动窗只有 **60 点**，按 Python 客户端 200ms
+    刷新 / 服务端 ~5Hz 推送算 ≈ 12s 数据。默认窗与之对齐，否则稳定态下
+    窗口左端永远是一段空白（保的点不够铺满窗）。缩放上/下限仍取 C 端
+    1s / 600s。
+
+    [重绘纪律] 追点 / 缩放 / 平移只改自身状态后调 update()（仅本控件
+    重绘），不增删控件、不动布局——200ms 一拍的刷新不引起整页重排。
+
+    [页面负责"逐拍"] 控件不猜哪一拍是新的：append() 来了就收。页面用
+    `st.updated_ms` 判重（同一拍只喂一次），保证 deque 里一个遥测拍一个点。
+    """
+
+    #: 滚动窗保留点数（对齐 C 端 VFD_TREND_POINTS）。
+    WINDOW_POINTS = 60
+
+    #: 视口时间窗缺省宽（毫秒；60 点 × 200ms 拍距，理由见类 docstring）。
+    WIN_DEF_MS = 12000
+
+    #: 时间窗上/下限（毫秒；对齐 C 端 VFD_TREND_WIN_MIN/MAX = 1s/600s）。
+    WIN_MIN_MS = 1000
+    WIN_MAX_MS = 600000
+
+    #: 恢复跟随的右缘容差（毫秒；对齐 C 端 VFD_TREND_CATCHUP ≈ 1px）。
+    CATCHUP_MS = 50
+
+    #: 绘图区边距：上留图例行、下留 X 轴刻度。左右窄——本图没有 Y 轴
+    #: 数值标签（各序列各自归一化，数值读图例与悬停）。
+    MARGIN_L, MARGIN_T, MARGIN_R, MARGIN_B = 14, 26, 12, 26
+
+    GRID_COLOR = "#E3E6EB"
+    TEXT_COLOR = "#5A6572"
+    #: 非跟随态角标色（琥珀，区别于序列色与故障红）。
+    TAKEOVER_COLOR = "#B26A00"
+
+    #: 悬停吸附的水平容差（像素；同 LineChartDialog.PICK_TOLERANCE 量级）。
+    PICK_TOLERANCE = 24
+
+    def __init__(self, series, parent=None):
+        """:param series: [(key, 显示名), ...]；key 供页面 refresh() 追点。"""
+        QWidget.__init__(self, parent)
+        self.setMouseTracking(True)      # 不按键也收 move（悬停读数）
+        self.setMinimumHeight(160)       # 对齐 C 端 VFD_TREND_H
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        colors = LineChartDialog.SERIES_COLORS
+        #: [(key, 显示名, 颜色)]；配色与历史折线图同一套。
+        self._series = [(key, name, colors[i % len(colors)])
+                        for i, (key, name) in enumerate(series)]
+        #: key -> 颜色（悬停标记取色用，免去每次重扫序列表）。
+        self._color_of = {key: color for key, _name, color in self._series}
+        #: key -> deque[(t_ms, value)]；maxlen 即滚动窗（超窗自动丢最旧）。
+        self._data = {key: deque(maxlen=self.WINDOW_POINTS)
+                      for key, _name in series}
+        #: 时间轴 0 点（第一个点的时刻；其后窗口左缘钳到这里不空滚）。
+        self._origin_ms = None
+        #: 视口时间窗宽（毫秒）；用户缩放改写它，跟随/恢复时生效。
+        self._win_w = float(self.WIN_DEF_MS)
+        #: 当前 X 视口 [lo, hi]（毫秒）；None = 还没有数据、还没写过窗。
+        self._win_lo = None
+        self._win_hi = None
+        #: 视口归属：False=页面跟随最新数据（每拍自动右移）；True=用户接管。
+        self._user_view = False
+        #: 交互中的临时状态。
+        self._drag_origin = None         # (x, win_lo, win_hi)
+        self._hover_pos = None           # QPoint 或 None
+
+    # ==================================================================
+    #                        数据（追点 / 滚动窗）
+    # ==================================================================
+
+    def append(self, key, t_ms, value):
+        """追一个遥测点；跟随态顺手把窗口右缘贴上去。
+
+        :return: 是否真的收了点（序列不存在 / 值不可解析返回 False）。
+        deque(maxlen) 负责滚动窗：第 61 个点进来，最旧的自动出窗。
+        """
+        buf = self._data.get(key)
+        if buf is None or t_ms is None or value is None:
+            return False
+        try:
+            t_ms = int(t_ms)
+            value = float(value)
+        except (TypeError, ValueError):
+            return False
+        buf.append((t_ms, value))
+        if self._origin_ms is None:
+            self._origin_ms = t_ms
+        newest = self._newest_ms()
+        if self._user_view:
+            # 视口在用户手里：窗口不动（停写）；右缘本来就贴着实时点
+            # （接管没带走多少）→ 交还跟随（C 端 CATCHUP 口径）。
+            self._maybe_resume_follow(newest)
+        if not self._user_view:
+            self._follow_window(newest)
+        self.update()                    # 只重绘本控件，不动布局
+        return True
+
+    def points(self, key):
+        """某序列当前窗内全部点（tuple[(t_ms, value)]；测试与调试用）。"""
+        buf = self._data.get(key)
+        return tuple(buf) if buf is not None else ()
+
+    def _newest_ms(self):
+        """所有序列中最新的点时刻（空图返回 None）。"""
+        newest = None
+        for buf in self._data.values():
+            if buf:
+                t = buf[-1][0]
+                newest = t if newest is None else max(newest, t)
+        return newest
+
+    def _follow_window(self, x_now):
+        """跟随写窗：右缘贴最新追点，左缘＝右缘−窗宽（钳到 0 点不空滚）。
+
+        对齐 C 端 vfdTrendFollowWindow：数据起点之前不出现空白滚动，
+        钳位时保窗宽（hi = lo + win_w 可能领先 x_now）。
+        """
+        if x_now is None:
+            return
+        lo = float(x_now) - self._win_w
+        if self._origin_ms is not None and lo < self._origin_ms:
+            lo = float(self._origin_ms)
+        self._win_lo, self._win_hi = lo, max(lo + self._win_w, float(x_now))
+
+    # ==================================================================
+    #                     视口归属（跟随 / 接管 / 恢复）
+    # ==================================================================
+
+    def is_following(self):
+        """True = 跟随态（窗口随每拍右移）；False = 视口在用户手里。"""
+        return not self._user_view
+
+    def window_ms(self):
+        """当前 X 视口 (lo, hi)（毫秒）；还没有数据时返回 None。"""
+        if self._win_lo is None or self._win_hi is None:
+            return None
+        return (self._win_lo, self._win_hi)
+
+    def follow(self):
+        """「跟随」/双击：视口交还页面——窗宽回默认、右缘立即贴最新点。
+
+        对齐 C 端 Reset 口径（m_trendWinW 回 VFD_TREND_WIN_DEF + 恢复跟随），
+        并当场重写一次窗（不等下一拍，点了按钮马上看到回到实时）。
+        """
+        self._user_view = False
+        self._win_w = float(self.WIN_DEF_MS)
+        self._follow_window(self._newest_ms())
+        self.update()
+
+    def zoom_at(self, fraction, factor):
+        """以时间轴 `fraction`(0..1) 为锚点缩放 `factor` 倍（滚轮/捏合共用）。
+
+        :param factor: <1 放大（窗变窄），>1 缩小。窗宽钳在
+        [WIN_MIN_MS, WIN_MAX_MS]；缩放即接管视口（停写，见类 docstring d）。
+        :return: 视口是否真的变了（已到缩放极限时不动 = False）。
+        """
+        if self._win_lo is None or self._win_hi is None:
+            return False
+        if not (0.0 <= fraction <= 1.0) or factor <= 0:
+            return False
+        span = self._win_hi - self._win_lo
+        new_span = min(float(self.WIN_MAX_MS),
+                       max(float(self.WIN_MIN_MS), span * factor))
+        if abs(new_span - span) < 1e-6:
+            return False
+        anchor = self._win_lo + span * fraction
+        lo = anchor - new_span * fraction
+        hi = lo + new_span
+        if self._origin_ms is not None and lo < self._origin_ms:
+            # 左缘不越出时间轴 0 点（同跟随态的钳位口径）
+            lo, hi = float(self._origin_ms), self._origin_ms + new_span
+        self._win_lo, self._win_hi = lo, hi
+        self._win_w = new_span     # 窗宽＝用户选的时间分辨率（C Zoom 口径）
+        self._user_view = True     # 接管：追点继续、窗口暂停右移
+        self.update()
+        return True
+
+    def pan_pixels(self, dx_pixels, plot_width):
+        """按像素平移视口并接管（正值 = 内容右移 = 看更早的数据）。
+
+        :return: 视口是否真的变了。右缘被推回实时点（容差内）时自动
+        恢复跟随——这是"拖回最右 = 回到实时"的直接路径（C 端 CATCHUP）。
+        """
+        if plot_width <= 0 or self._win_lo is None or self._win_hi is None:
+            return False
+        return self._pan_from(self._win_lo, self._win_hi, dx_pixels,
+                              plot_width)
+
+    def _pan_from(self, origin_lo, origin_hi, dx_pixels, plot_width):
+        """从拖动起点重算窗口（不逐帧累加：夹取丢的距离才对得上）。"""
+        span = origin_hi - origin_lo
+        delta = float(dx_pixels) / float(plot_width) * span
+        lo = origin_lo - delta
+        hi = lo + span
+        if self._origin_ms is not None and lo < self._origin_ms:
+            lo, hi = float(self._origin_ms), self._origin_ms + span
+        newest = self._newest_ms()
+        if newest is not None and hi > newest:
+            # 右缘不越过最新点（更右边没有数据，留着就是假空白）
+            hi, lo = float(newest), newest - span
+            if lo < (self._origin_ms or 0):
+                lo = float(self._origin_ms)
+        changed = (lo, hi) != (self._win_lo, self._win_hi)
+        self._win_lo, self._win_hi = lo, hi
+        if changed:
+            self._user_view = True            # 拖动即接管（停写）
+            self._maybe_resume_follow(newest)  # 拖回实时点 → 自动交还
+            self.update()
+        return changed
+
+    def _maybe_resume_follow(self, newest):
+        """视口右缘已追到实时点（容差内）→ 交还页面自动跟随。"""
+        if (self._user_view and newest is not None
+                and self._win_hi is not None
+                and self._win_hi >= newest - self.CATCHUP_MS):
+            self._user_view = False
+
+    # ==================================================================
+    #                        几何 / 悬停
+    # ==================================================================
+
+    def plot_rect(self):
+        """绘图区 (l, t, r, b)。"""
+        return (self.MARGIN_L, self.MARGIN_T,
+                self.width() - self.MARGIN_R, self.height() - self.MARGIN_B)
+
+    def _x_at(self, t_ms):
+        """时刻 → 屏幕 x（按当前视口线性映射）。"""
+        l, _t, r, _b = self.plot_rect()
+        window = self.window_ms()
+        if window is None or window[1] <= window[0]:
+            return (l + r) / 2.0
+        lo, hi = window
+        return l + (r - l) * (t_ms - lo) / float(hi - lo)
+
+    def _visible_scale(self, points):
+        """该序列在当前视口内的 (vmin, vmax)，含 8% 上下留白。
+
+        单值序列给最小跨度兜底（对齐 C 端"数据全平给最小跨度"），
+        视口内没有点返回 None（这条线这一段本来就没有数据）。
+        """
+        window = self.window_ms()
+        if window is None:
+            return None
+        lo, hi = window
+        vals = [v for t, v in points if lo <= t <= hi]
+        if not vals:
+            return None
+        vmin, vmax = min(vals), max(vals)
+        if vmax <= vmin:
+            vmax = vmin + 1.0
+        pad = (vmax - vmin) * 0.08
+        return vmin - pad, vmax + pad
+
+    def hover_at(self, pos):
+        """屏幕坐标 → 最近的数据点 ``(key, 显示名, t_ms, value)`` 或 None。
+
+        只在视口内、横向距离 `PICK_TOLERANCE` 内的点里挑最近（纵向不设限，
+        触摸屏上不用瞄得准；纵向距离只作同距时的次序）。
+        """
+        l, t, r, b = self.plot_rect()
+        if not (l - self.PICK_TOLERANCE <= pos.x() <= r + self.PICK_TOLERANCE
+                and t - 16 <= pos.y() <= b + 16):
+            return None
+        window = self.window_ms()
+        if window is None:
+            return None
+        lo, hi = window
+        best = None
+        for key, name, _color in self._series:
+            scale = self._visible_scale(self._data[key])
+            if scale is None:
+                continue
+            vmin, vmax = scale
+            for t_ms, value in self._data[key]:
+                if not (lo <= t_ms <= hi):
+                    continue
+                px = self._x_at(t_ms)
+                dist = abs(px - pos.x())
+                if dist > self.PICK_TOLERANCE:
+                    continue
+                py = b - (b - t) * (value - vmin) / ((vmax - vmin) or 1.0)
+                score = (dist, abs(py - pos.y()))
+                if best is None or score < best[0]:
+                    best = (score, key, name, t_ms, value)
+        return None if best is None else (best[1], best[2], best[3], best[4])
+
+    def hover_text(self, pos):
+        """悬停点的「名称 数值 @ 时刻」一行文本（独立成方法以便断言）。
+
+        [为什么给文本方法] 离屏平台不绘制文字（画了也是全白），悬停内容
+        对不对只能靠这个纯函数断言（同 LineChartDialog.tooltip_lines）。
+        """
+        hit = self.hover_at(pos)
+        if hit is None:
+            return ""
+        _key, name, t_ms, value = hit
+        return "%s %.2f @ %s" % (name, value,
+                                 time.strftime("%H:%M:%S",
+                                               time.localtime(t_ms / 1000.0)))
+
+    # ==================================================================
+    #                            绘制
+    # ==================================================================
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        l, t, r, b = self.plot_rect()
+        plot_w, plot_h = r - l, b - t
+        if plot_w <= 40 or plot_h <= 40:
+            return
+        window = self.window_ms()
+
+        # ---- 横向网格（4 分）----
+        painter.setPen(QPen(QColor(self.GRID_COLOR), 1))
+        for i in range(1, 4):
+            y = t + plot_h * i / 4.0
+            painter.drawLine(_px(l), _px(y), _px(r), _px(y))
+
+        if window is None:
+            painter.setPen(QColor(self.TEXT_COLOR))
+            painter.drawText(self.rect(), Qt.AlignCenter, "等待数据…")
+            return
+        lo, hi = window
+        span = (hi - lo) or 1.0
+        origin = float(self._origin_ms or lo)
+
+        # ---- X 刻度：6 格（相对秒，对齐 C 端"%.0f s"标签）----
+        font = painter.font()
+        font.setPixelSize(11)
+        painter.setFont(font)
+        for i in range(6):
+            frac = i / 5.0
+            x = l + plot_w * frac
+            painter.setPen(QPen(QColor(self.GRID_COLOR), 1))
+            painter.drawLine(_px(x), _px(t), _px(x), _px(b))
+            painter.setPen(QColor(self.TEXT_COLOR))
+            label = "%.0f s" % ((lo + span * frac - origin) / 1000.0)
+            painter.drawText(_px(x) - 24, _px(b) + 6, 48, 14,
+                             Qt.AlignCenter, label)
+
+        # ---- 各序列折线（各自归一化，见类 docstring b）----
+        for key, _name, color in self._series:
+            self._paint_series(painter, key, color, l, t, r, b)
+
+        # ---- 图例（名 + 视口内 min/max）与接管角标 ----
+        self._paint_legend(painter, l, t - 16)
+        if not self.is_following():
+            painter.setPen(QColor(self.TAKEOVER_COLOR))
+            painter.drawText(_px(r) - 250, _px(t) - 16, 250, 14,
+                             Qt.AlignRight | Qt.AlignVCenter,
+                             "已暂停跟随（双击或点「跟随」恢复）")
+
+        # ---- 悬停气泡 ----
+        if self._hover_pos is not None and self._drag_origin is None:
+            hit = self.hover_at(self._hover_pos)
+            if hit is not None:
+                self._paint_hover(painter, hit)
+
+    def _paint_series(self, painter, key, color, l, t, r, b):
+        """画一条序列：视口裁剪（两侧各多取一点防断线）+ 点少时画圆点。"""
+        pts = self._data[key]
+        scale = self._visible_scale(pts)
+        if scale is None:
+            return
+        vmin, vmax = scale
+        span_v = (vmax - vmin) or 1.0
+        lo, hi = self.window_ms()
+        plot_w, plot_h = r - l, b - t
+
+        def px_of(t_ms):
+            return l + plot_w * (t_ms - lo) / float(hi - lo)
+
+        def py_of(value):
+            return b - plot_h * (value - vmin) / span_v
+
+        visible = []
+        for i, (t_ms, value) in enumerate(pts):
+            if lo <= t_ms <= hi:
+                visible.append((t_ms, value))
+            elif t_ms < lo:
+                if i + 1 < len(pts) and pts[i + 1][0] >= lo:
+                    visible.append((t_ms, value))
+            else:
+                if visible:
+                    visible.append((t_ms, value))
+                break
+
+        painter.setPen(QPen(QColor(color), 2))
+        for i in range(len(visible) - 1):
+            painter.drawLine(
+                _px(px_of(visible[i][0])), _px(py_of(visible[i][1])),
+                _px(px_of(visible[i + 1][0])), _px(py_of(visible[i + 1][1])))
+        if len(visible) <= 160:          # 60 点窗内恒画圆点，便于对读
+            painter.setBrush(QColor(color))
+            painter.setPen(Qt.NoPen)
+            for t_ms, value in visible:
+                painter.drawEllipse(_px(px_of(t_ms) - 3),
+                                    _px(py_of(value) - 3), 6, 6)
+
+    def _paint_legend(self, painter, x, y):
+        """图例：色块 + 名 + 视口内 min/max（量纲不同各标各的，防误读）。"""
+        window = self.window_ms()
+        font = painter.font()
+        font.setPixelSize(11)
+        painter.setFont(font)
+        _l, _t, r, _b = self.plot_rect()
+        cursor = x
+        for key, name, color in self._series:
+            label = name
+            if window is not None:
+                lo, hi = window
+                vals = [v for t, v in self._data[key] if lo <= t <= hi]
+                if vals:
+                    label = "%s %.4g~%.4g" % (name, min(vals), max(vals))
+            width = painter.fontMetrics().width(label) + 26
+            if cursor + width > r:
+                break                    # 放不下就截断（不换行，省高度）
+            painter.setBrush(QColor(color))
+            painter.setPen(Qt.NoPen)
+            painter.drawRect(_px(cursor), _px(y + 4), 12, 4)
+            painter.setPen(QColor(self.TEXT_COLOR))
+            painter.drawText(_px(cursor + 16), _px(y), width - 16, 14,
+                             Qt.AlignLeft | Qt.AlignVCenter, label)
+            cursor += width
+        painter.setBrush(Qt.NoBrush)
+
+    def _paint_hover(self, painter, hit):
+        """悬停点：竖虚线 + 圆点标记 + 「数值 / 时刻」气泡。"""
+        key, name, t_ms, value = hit
+        l, t, r, b = self.plot_rect()
+        x = self._x_at(t_ms)
+        scale = self._visible_scale(self._data[key])
+        if scale is None:
+            return
+        vmin, vmax = scale
+        color = self._color_of[key]
+        y = b - (b - t) * (value - vmin) / ((vmax - vmin) or 1.0)
+
+        painter.setPen(QPen(QColor(color), 1, Qt.DashLine))
+        painter.drawLine(_px(x), _px(t), _px(x), _px(b))
+        painter.setBrush(QColor(color))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(_px(x) - 4, _px(y) - 4, 8, 8)
+
+        line1 = "%s %.2f" % (name, value)          # 数值口径同各页读数 %.2f
+        line2 = time.strftime("%H:%M:%S", time.localtime(t_ms / 1000.0))
+        font = painter.font()
+        font.setPixelSize(12)
+        painter.setFont(font)
+        fm = painter.fontMetrics()
+        w = max(fm.width(line1), fm.width(line2)) + 16
+        h = fm.height() * 2 + 10
+        # 气泡默认在点右上；右边/上边放不下翻另一侧（不出绘图区）
+        bx = x + 12
+        if bx + w > r:
+            bx = x - 12 - w
+        by = y - h - 10
+        if by < t:
+            by = y + 12
+        bx = max(l, min(bx, r - w))
+        by = max(t, min(by, b - h))
+        painter.setBrush(QColor(255, 255, 255, 240))
+        painter.setPen(QPen(QColor(self.TEXT_COLOR), 1))
+        painter.drawRoundedRect(_px(bx), _px(by), _px(w), _px(h), 5, 5)
+        painter.setPen(QColor("#1A1A1A"))
+        painter.drawText(_px(bx + 8), _px(by + 4), _px(w - 16), fm.height(),
+                         Qt.AlignLeft | Qt.AlignVCenter, line1)
+        painter.drawText(_px(bx + 8), _px(by + 6 + fm.height()),
+                         _px(w - 16), fm.height(),
+                         Qt.AlignLeft | Qt.AlignVCenter, line2)
+
+    # ==================================================================
+    #                          鼠标 / 滚轮
+    # ==================================================================
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_origin = (event.pos().x(), self._win_lo, self._win_hi)
+            event.accept()
+            return
+        QWidget.mousePressEvent(self, event)
+
+    def mouseMoveEvent(self, event):
+        # [拖动判据同 LineChartDialog] 用"按下时记的起点"而不是 buttons()：
+        # QTest/合成事件常不带按键位，按 buttons() 判会让拖动整段失效。
+        if self._drag_origin is not None:
+            if self._drag_origin[1] is not None:
+                l, _t, r, _b = self.plot_rect()
+                self._pan_from(self._drag_origin[1], self._drag_origin[2],
+                               event.pos().x() - self._drag_origin[0],
+                               max(1, r - l))
+            event.accept()
+            return
+        self._hover_pos = event.pos()   # 悬停：记位置，重绘本控件出气泡
+        self.update()
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._drag_origin is not None:
+            self._drag_origin = None
+            event.accept()
+            return
+        QWidget.mouseReleaseEvent(self, event)
+
+    def mouseDoubleClickEvent(self, event):
+        """双击：视口交还页面（恢复跟随），触摸屏上"双击回实时"的手感。"""
+        if event.button() == Qt.LeftButton:
+            self.follow()
+            event.accept()
+            return
+        QWidget.mouseDoubleClickEvent(self, event)
+
+    def wheelEvent(self, event):
+        """滚轮缩放 X 轴：以指针位置为锚点（上滚放大、下滚缩小）。
+
+        1 格 = 1.25 倍（同 LineChartDialog）；纵轴是各序列自适应的，
+        滚轮只动时间轴（对齐 C 端 XChartView_setWheelZoomXOnly）。
+        """
+        l, _t, r, _b = self.plot_rect()
+        plot_w = max(1, r - l)
+        frac = min(1.0, max(0.0, (event.pos().x() - l) / float(plot_w)))
+        steps = event.angleDelta().y() / 120.0
+        if abs(steps) < 0.01:
+            event.ignore()
+            return
+        self.zoom_at(frac, 0.8 ** steps)   # 1 格 ≈ 1.25 倍（同 LineChartDialog）
+        event.accept()
+
+    def leaveEvent(self, _event):
+        """鼠标移出：收气泡（悬停位置已无意义）。"""
+        self._hover_pos = None
+        self.update()
+
+
+def _trend_card(series):
+    """建「实时趋势」卡：接管提示 + 「跟随」按钮 + TrendChart。
+
+    变频器 / 水质两页共用同一版式（标题行右侧「跟随」按钮）。按钮直接
+    连 chart.follow（视口被拖动/缩放接管后，一键恢复自动跟随）。
+    :return: (card, chart, hint_label)
+    """
+    card = Card("实时趋势")
+    row = QHBoxLayout()
+    row.setSpacing(8)
+    hint = QLabel("")
+    hint.setStyleSheet(theme.caption_label_qss())
+    row.addWidget(hint)
+    row.addStretch(1)
+    btn = QPushButton("跟随")
+    btn.setObjectName("btnTrendFollow")   # 测试按名定位（Qt 惯用法）
+    btn.setToolTip("拖动/滚轮缩放会接管视口；点此恢复自动跟随最新数据")
+    chart = TrendChart(series)
+    btn.clicked.connect(chart.follow)
+    row.addWidget(btn)
+    card.body.addLayout(row)
+    card.add(chart)
+    return card, chart, hint
+
+
 class VfdPage(Page):
     """变频器监视 + 控制（启停 / 调速 / 点动）。
 
@@ -447,6 +1045,15 @@ class VfdPage(Page):
     DEFAULT_SPEED_MODE = 1          # = SPEED_MODE_RPM（见下）
     SPEED_MODE_HZ = 0
     SPEED_MODE_RPM = 1
+
+    #: 趋势序列（key → refresh() 取数）：输出频率/给定频率/输出电流。
+    #: 对齐 C 端区 5 趋势图（HsfMonitorVfd.c m_trendSeries 输出频率；
+    #: 这里按任务口径扩成三条数值序列，同一 60 点滚动窗）。
+    TREND_SERIES = (
+        ("out", "输出频率 Hz"),
+        ("set", "给定频率 Hz"),
+        ("cur", "输出电流 A"),
+    )
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
@@ -621,7 +1228,18 @@ class VfdPage(Page):
         self._slider_send_timer.timeout.connect(self._on_slider_settled)
 
         self.root.addWidget(ctrl_card)
-        self.root.addStretch(1)
+
+        # ---- 区 5：实时趋势（60 点滚动窗；对齐 C 端 HsfMonitorVfd.c）----
+        # [竖向多余空间只给趋势图] 对齐 C 端 2026-11-08 口径：页面尾部不再
+        # 放 addStretch，趋势卡吃 stretch=1（图表纵向 Expanding），多出来
+        # 的高度全归图表，其余行按自身高度排布。
+        trend_card, self._trend, self._trend_hint = \
+            _trend_card(self.TREND_SERIES)
+        self.root.addWidget(trend_card, 1)
+
+        #: 上一拍遥测时刻（毫秒）：同一拍只追一次点（refresh() 200ms 一拍，
+        #: 遥测可能慢于它——重复喂会把 60 点窗灌满同值重复点）。
+        self._trend_last_ms = 0
 
         self._control_buttons = [self.btn_run, self.btn_free,
                                  self.btn_reset, self.btn_jog]
@@ -1087,6 +1705,26 @@ class VfdPage(Page):
             show("fault", st.fault_text(),
                  theme.CLR_FAULT if st.faulted else theme.CLR_OK)
 
+        # ---- 趋势追点（60 点滚动窗；缩放/平移不打断追点，对齐 C 端）----
+        # [只在数据新鲜时追] 过期数据画进趋势图会伪造"设备还在报数"。
+        # [同一拍只追一次] updated_ms 判重：refresh() 200ms 一拍，遥测拍
+        # 之间可能隔着多次刷新，重复喂会把 60 点窗灌满同值重复点。
+        # [getattr 兜底] updated_ms 是 VfdState 的固定字段；取不到的桩
+        # （离屏测试的轻量替身）视为"没有拍"，不追点。
+        t_ms = int(getattr(st, "updated_ms", 0) or 0)
+        if fresh and t_ms and t_ms != self._trend_last_ms:
+            self._trend_last_ms = t_ms
+            if st.has("outputFreqHz"):
+                self._trend.append("out", t_ms, st.output_freq_hz)
+            if st.has("setFreqHz"):
+                self._trend.append("set", t_ms, st.set_freq_hz)
+            if st.has("outputCurrentA"):
+                self._trend.append("cur", t_ms, st.output_current_a)
+        # 视口归属提示：接管后追点继续、窗口暂停右移，必须说清楚。
+        self._trend_hint.setText(
+            "" if self._trend.is_following()
+            else "视口已接管：追点继续、窗口暂停右移")
+
         # 启停按钮跟随运行状态（运行中显示"停止"、停止时显示"启动"）。
         self._sync_run_button(fresh and st.running)
 
@@ -1202,6 +1840,15 @@ class WaterPage(Page):
     #: 真要进报警列表/推送事件，必须挪到服务端（客户端各自算阈值必然漂移，
     #: 而且断线时客户端看到的是旧值）。这里仅做低风险的视觉提示。
     TURBIDITY_WARN_NTU = 20.0
+
+    #: 趋势序列：瞬时流量 + 两路浊度（对齐 C 端 HsfMonitorFlowMeter.c
+    #: 趋势图——C 端只画瞬时流量一条，这里按任务口径把浊度×2 一并画上，
+    #: 三条序列同一 60 点滚动窗、各自归一化）。
+    TREND_SERIES = (
+        ("flow", "瞬时流量"),
+        ("turb1", "浊度1 NTU"),
+        ("turb2", "浊度2 NTU"),
+    )
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
@@ -1325,7 +1972,16 @@ class WaterPage(Page):
         bottom.addWidget(pump_card, 2)
 
         self.root.addLayout(bottom)
-        self.root.addStretch(1)
+
+        # ---- 实时趋势（瞬时流量 + 浊度×2；对齐 C 端趋势图区）----
+        # [吃尾部余量] 对齐 C 端 2026-11-07 口径：不再尾部 addStretch 把
+        # 余量沉到图下方留白，趋势卡吃 stretch=1 把多余高度全归图表。
+        trend_card, self._trend, self._trend_hint = \
+            _trend_card(self.TREND_SERIES)
+        self.root.addWidget(trend_card, 1)
+        #: 流量计 / 浊度上一拍时刻（两路独立推送，各自判重，见 _trend_feed）。
+        self._trend_last_flow_ms = 0
+        self._trend_last_turb_ms = 0
 
     # ==================================================================
     #                          进水泵控制
@@ -1378,6 +2034,32 @@ class WaterPage(Page):
         self._render_flow()
         self._render_turbidity()
         self._render_pump()
+        self._trend_feed()
+        self._trend_hint.setText(
+            "" if self._trend.is_following()
+            else "视口已接管：追点继续、窗口暂停右移")
+
+    def _trend_feed(self):
+        """把本拍流量/浊度喂给趋势图（两路设备独立推送，各自判重追点）。
+
+        [无数据不追] 流量计不新鲜、浊度离线（ntu=None）时不追点：趋势图
+        是"实测曲线"，编造平点比缺口更危险。
+        [同一拍只追一次] refresh() 200ms 一拍、遥测可能慢于它；按
+        updated_ms 判重，同一拍重复喂会把 60 点窗灌满同值重复点。
+        """
+        fm = self.ctx.model.flowmeter
+        fm_ms = int(getattr(fm, "updated_ms", 0) or 0)
+        if fm.is_fresh() and fm_ms and fm_ms != self._trend_last_flow_ms:
+            self._trend_last_flow_ms = fm_ms
+            self._trend.append("flow", fm_ms, fm.flow)
+        tb = self.ctx.model.turbidity
+        tb_ms = int(getattr(tb, "updated_ms", 0) or 0)
+        if tb.is_fresh() and tb_ms and tb_ms != self._trend_last_turb_ms:
+            self._trend_last_turb_ms = tb_ms
+            for key, idx in (("turb1", 0), ("turb2", 1)):
+                ntu = tb.ntu_of(idx)
+                if ntu is not None:
+                    self._trend.append(key, tb_ms, ntu)
 
     def _render_flow(self):
         st = self.ctx.model.flowmeter

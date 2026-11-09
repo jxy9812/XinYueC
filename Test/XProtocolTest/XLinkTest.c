@@ -1468,6 +1468,160 @@ static void xlink_test_subscribe(void)
 }
 
 /* ========================================================================== */
+/*                  七b、推送失步记账/排空补发/失步踢线                        */
+/* ========================================================================== */
+
+/** 失步补发信号观测：触发次数与最近一次携带的被拒帧数。 */
+static int g_resyncCount = 0;
+static int g_resyncOverflowFrames = 0;
+
+/**
+ * @brief txResyncNeeded 信号观测槽（失步排空补发用例）。
+ * @note  [args_N 遮蔽陷阱] 宏展开自带 const 声明，解包名不得预声明。
+ */
+static void xlink_resync_slot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    XVarList_args_2(args, int, resyncFrames, XLinkSession*, resyncSession);
+    (void)resyncSession;
+    g_resyncCount++;
+    g_resyncOverflowFrames = resyncFrames;
+}
+
+/**
+ * @brief 推送失步三件套（2026-11-09 根修回归）：
+ *        ①队满拒帧记账（stats.m_txOverflowFrames 累计、失步戳置位）；
+ *        ②队列排空瞬间发 txResyncNeeded（恰好一次）；
+ *        ③失步超过可调阈值未排空 ⇒ pump 踢线 reset。
+ * @details 拥塞制造：不驱动 pump，把 1KB Publish 灌到「设备缓冲 64KB +
+ *          TX 队列 128KB」上限后继续灌 ⇒ 整帧拒绝。排空：恢复 step()。
+ */
+static void xlink_test_tx_desync(void)
+{
+    XLINK_SECTION("七b、推送失步记账与排空补发");
+
+    /* --- ①+②：队满拒帧 → 排空补发信号恰好一次 ---
+     * [为什么自建 256KB 环夹具] 标准夹具 64KB 环 + 回环设备「全有全无写」
+     * 语义：队列分块（qcap-txHead）一旦大于环剩余空间就永远写不出（真
+     * TCP 是短写无此问题）——测试装置局限，非被测代码缺陷。256KB 环
+     * 保证「队列任一分块 ≤ 环容量」，客户端读空环后续泵即可一次写尽。 */
+    {
+        XLinkTestFixture* f =
+            (XLinkTestFixture*)XMalloc_System(sizeof(XLinkTestFixture));
+        if (!f) {
+            XLINK_CHECK(false, "夹具搭建成功");
+            return;
+        }
+        memset(f, 0, sizeof(*f));
+        f->m_serverDevice = XGuiRemoteLoopbackDevice_createPair(
+            256 * 1024, &f->m_clientDevice);
+        f->m_server = f->m_serverDevice
+            ? XLinkSession_create_ex((XIODevice*)f->m_serverDevice) : NULL;
+        f->m_client = f->m_clientDevice
+            ? XLinkSession_create_ex((XIODevice*)f->m_clientDevice) : NULL;
+        f->m_now = 1000;
+        if (!f->m_serverDevice || !f->m_clientDevice
+            || !f->m_server || !f->m_client) {
+            xlink_fixture_delete(f);
+            XLINK_CHECK(false, "256KB 环夹具搭建成功");
+            return;
+        }
+        XLinkSession_setDispatchCallback(f->m_server, xlink_server_dispatch, NULL);
+        XLinkSession_setDispatchCallback(f->m_client, xlink_client_dispatch, NULL);
+        xlink_fixture_step(f, 2);   /* 自动握手转 Ready */
+        XLINK_CHECK(XLinkSession_isReady(f->m_server)
+                        && XLinkSession_isReady(f->m_client),
+                    "失步用例夹具握手就绪");
+
+        g_resyncCount = 0;
+        g_resyncOverflowFrames = -1;
+        XObject_connect_1((XObject*)f->m_server,
+                          XSignal(XLinkSession_txResyncNeeded_signal),
+                          (XObject*)f->m_client,
+                          xlink_resync_slot,
+                          XConnectionType_Auto);
+
+        /* 灌到拥塞：环 256KB + 队列 128KB = 384KB 容量；420×1044B=438KB
+         * 必有整帧拒绝。期间不 step ⇒ 队列不排空 ⇒ 不该有补发信号。 */
+        {
+            static uint8_t payload[1024];
+            int i;
+            memset(payload, 0xA5, sizeof(payload));
+            for (i = 0; i < 420; ++i)
+                XLinkSession_sendPublish(f->m_server,
+                                         XLINK_TOPIC_USER_BASE + 7,
+                                         payload, sizeof(payload));
+        }
+        XLINK_CHECK(f->m_server->m_stats.m_txOverflowFrames > 0,
+                    "队满拒帧计入 stats.m_txOverflowFrames");
+        XLINK_CHECK(f->m_server->m_desyncSinceTick != 0,
+                    "队满拒帧置失步起算戳");
+        XLINK_CHECK(g_resyncCount == 0,
+                    "未排空前不发射补发信号");
+
+        /* 排空：双向 pump 让设备环流向对端，TX 队列抽干 ⇒ 信号恰好一次。 */
+        {
+            int before = g_clientPublishCount;
+            xlink_fixture_step(f, 40);
+            XLINK_CHECK(g_resyncCount == 1,
+                        "队列排空瞬间发射补发信号（恰好一次）");
+            XLINK_CHECK(g_resyncOverflowFrames > 0,
+                        "信号携带被拒 Publish 帧累计数");
+            XLINK_CHECK(f->m_server->m_desyncSinceTick == 0,
+                        "补发后失步戳清零");
+            XLINK_CHECK(g_clientPublishCount > before,
+                        "积压帧在排空后全部到达对端（FIFO 不丢）");
+        }
+
+        XObject_disconnect_1((XObject*)f->m_server,
+                             XSignal(XLinkSession_txResyncNeeded_signal),
+                             (XObject*)f->m_client,
+                             xlink_resync_slot);
+        xlink_fixture_delete(f);
+    }
+
+    /* --- ③：失步踢线（阈值可调，500ms） --- */
+    {
+        XLinkTestFixture* f = xlink_fixture_create();
+        if (!f) {
+            XLINK_CHECK(false, "踢线用例夹具搭建成功");
+            return;
+        }
+        xlink_fixture_step(f, 2);
+        XLINK_CHECK(XLinkSession_isReady(f->m_server), "踢线用例握手就绪");
+        XLINK_CHECK(XLinkSession_setTxDesyncKickMs(f->m_server, 500),
+                    "setTxDesyncKickMs 设置成功");
+
+        {
+            static uint8_t payload[1024];
+            int i;
+            memset(payload, 0x5A, sizeof(payload));
+            for (i = 0; i < 260; ++i)
+                XLinkSession_sendPublish(f->m_server,
+                                         XLINK_TOPIC_USER_BASE + 8,
+                                         payload, sizeof(payload));
+        }
+        XLINK_CHECK(f->m_server->m_desyncSinceTick != 0, "踢线用例失步戳已置位");
+
+        /* 不排空（只泵服务端：设备缓冲满后队列滞留），把时钟推过踢线阈值
+         * ⇒ pump 判定消费端过慢并 reset。 */
+        {
+            int i;
+            uint32_t resetsBefore = f->m_server->m_stats.m_resets;
+            for (i = 0; i < 60; ++i) {
+                f->m_now += 10;
+                XLinkSession_pump(f->m_server, f->m_now);
+            }
+            XLINK_CHECK(f->m_server->m_stats.m_resets > resetsBefore,
+                        "失步超阈值触发踢线 reset");
+            XLINK_CHECK(!XLinkSession_isReady(f->m_server),
+                        "踢线后会话离开 Ready");
+        }
+        xlink_fixture_delete(f);
+    }
+}
+
+/* ========================================================================== */
 /*                        八、待应答表与自动超时                              */
 /* ========================================================================== */
 
@@ -6104,6 +6258,7 @@ int XLinkTest_run(void)
     xlink_test_request_response();
     xlink_test_publish();
     xlink_test_subscribe();
+    xlink_test_tx_desync();
     xlink_test_pending_timeout();
     xlink_test_heartbeat_timeout();
     xlink_test_defensive();
@@ -6166,6 +6321,7 @@ void XLinkSessionTest(void)
     xlink_test_request_response();
     xlink_test_publish();
     xlink_test_subscribe();
+    xlink_test_tx_desync();
     xlink_test_pending_timeout();
     xlink_test_heartbeat_timeout();
     xlink_test_defensive();

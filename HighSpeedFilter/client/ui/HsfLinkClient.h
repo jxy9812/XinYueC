@@ -486,6 +486,53 @@ bool HsfLinkClient_historyQueryWindow(int offset, int limit, bool exportMode,
  */
 const HsfHistoryPage* HsfLinkClient_history(void);
 
+/* ==================== 运行日志分页（0x0119；C 端扩展命令） ==================== */
+
+/** @brief 运行日志一行（服务端 logs 表一行；category 口径 conn/ctrl/
+ *         alarm/auto/auth，见 XhsfLinkProto.h HSF_CMD_LOG_PAGE 注释）。 */
+typedef struct HsfLinkLogRow {
+    int64_t m_ts;          /**< 事件时刻（epoch 毫秒，墙钟）。 */
+    char m_category[16];   /**< 类别（utf8）。 */
+    char m_text[224];      /**< 事件文本（utf8）。 */
+} HsfLinkLogRow;
+
+/**
+ * @brief 运行日志分页应答（0x0119 解析产物）。
+ * @note  [应答身份] 与 HsfHistoryPage 同款局限：HsfLinkClient 未把帧头
+ *        m_requestId 交给页面，页面只能按服务端回显的 offset/limit 认领
+ *        （本命令只有一个消费者＝日志页，键冲突面比 0x0118 小得多）。
+ */
+typedef struct HsfLinkLogPage {
+    bool m_valid;              /**< 已解析过应答（含否定应答）。 */
+    bool m_ok;                 /**< 服务端业务结果（ok=false 时看 m_err）。 */
+    char m_err[96];            /**< 失败原因（utf8；仅 m_ok=false 时有意义）。 */
+    uint32_t m_seq;            /**< 应答序号（每次成功解析 +1）。 */
+    int m_total;               /**< 本窗口命中总行数（分页总数按它算）。 */
+    int m_offset;              /**< 本页起始偏移（服务端原样回显）。 */
+    int m_limit;               /**< 本页行数上限（服务端原样回显）。 */
+    int m_count;               /**< 本页实际行数。 */
+    HsfLinkLogRow m_rows[HSF_LOG_PAGE_MAX]; /**< 本页行（协议上限 50）。 */
+} HsfLinkLogPage;
+
+/**
+ * @brief 运行日志分页（带时间窗，照 HsfLinkClient_historyQueryWindow 契约）。
+ * @param offset 起始偏移（按 ts 倒序数；0=最新那条）。
+ * @param limit 本页行数（服务端夹到 1..HSF_LOG_PAGE_MAX）。
+ * @param beforeTs 窗口锚点（epoch 毫秒；<=0=客户端取"现在"，翻页原样
+ *                 回传 ⇒ 整段分页钉在同一批数据上，0x0118 同理）。
+ * @param loTs/hiTs 时间窗（epoch 毫秒；<=0=该端不限，服务端取交集）。
+ * @param category 类别过滤（utf8；NULL/空=全部）。
+ * @param kw 关键字（utf8；NULL/空=不筛；下推服务端）。
+ * @return 已发出请求返回 true（连接未就绪返回 false）。
+ * @details 结果落在 HsfLinkClient_logPage() 里（页面轮询拉取）。
+ */
+bool HsfLinkClient_logQueryWindow(int offset, int limit, int64_t beforeTs,
+                                  int64_t loTs, int64_t hiTs,
+                                  const char* category, const char* kw);
+
+/** @brief 最近一次运行日志分页结果（借用指针；未收到过应答时 m_valid=false）。 */
+const HsfLinkLogPage* HsfLinkClient_logPage(void);
+
 /**
  * @brief 设备健康状态中文（与服务端 HsfDeviceHealth 对齐）。
  * @param health 健康枚举值（0 正常 / 1 告警 / 2 数据过期 / 3 离线 / 4 故障）。

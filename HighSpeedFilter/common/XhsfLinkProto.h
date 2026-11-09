@@ -68,7 +68,16 @@
 /**
  * @brief 运行模式：查询 / 设置（载荷 {"mode":int}；无 mode 键=查询）。
  * @details 设置需 root（HSF_ROLE_CONTROL）。应答：{"ok":bool,"mode":int,"auto":bool}。
- *          自动模式下 HSF_CMD_VFD_CONTROL 一律被拒（err="自动运行中：远程控制被禁用"）。
+ *          自动模式下 VFD/数字量/阀/泵控制命令一律被拒。拒绝文案（[2026-11-09
+ *          核对] 两端字面逐字核对过，客户端按 err 前缀提示时勿再凭记忆）：
+ *            · C 服务端 = "自动运行中：远程控制已被禁用"（HsfServerApp.c
+ *              hsfAppControlGate）；
+ *            · Python 服务端 = 同文案再带指引后缀
+ *              "（现场切换到手动后可用）"（server_py/hsfsrv/app.py）。
+ *          [闸序差异，见 server_py] Python 侧在角色门禁之前还有**急停闸**
+ *          （急停回路已配置且无信号 ⇒ 再拒启动/调速类 op，err 带原因）；
+ *          C 服务端暂未实现该闸，只拦自动模式——两端行为差异以
+ *          server_py/hsfsrv/app.py（_h_vfd_control 的 1b 急停闸注释）为准。
  */
 #define HSF_CMD_RUN_MODE            0x0105u
 
@@ -89,8 +98,22 @@
 #define HSF_CMD_DIGITAL_SNAPSHOT    0x0108u
 
 /**
- * @brief 数字量输出控制（载荷 {"index":int,"on":bool}；需管理角色）。
- * @details Response = 应答包络；数字量页 DO 点动即走本命令。
+ * @brief 数字量输出控制（需设备控制权限）。
+ * @details [2026-11-09 口径统一（S6 方案 A）] 载荷三种形态，两端口径一致
+ *          （与 Python 侧 proto.KEY_DEV/KEY_DO/KEY_ON/KEY_MASK/KEY_VALUES
+ *          同名同义，处理逻辑见 server_py/hsfsrv/app.py _h_digital_control）：
+ *            · 单点 {"dev":int,"do":int,"on":bool} —— dev=模块号（C 端单站
+ *              恒 0；越界拒绝），do=模块内通道号，on=目标值；
+ *            · 整组 {"dev":int,"mask":int}（或 {"dev":int,"values":int}，
+ *              两键同义、mask 优先）—— bit n = 通道 n 目标值，服务端只写
+ *              有变化的点（与 Python write_group 同口径）；
+ *            · 旧单点 {"index":int,"on":bool} —— 兼容保留：dev 缺省 0，
+ *              index 与 do 同义（老客户端不必升级）。
+ *          优先级：mask/values 在场 ⇒ 整组；否则 do/index 在场 ⇒ 单点；
+ *          都没有 ⇒ 拒（"控制载荷缺 do 或 mask 字段"，与 Python 同文案）。
+ *          Response = {ok, err?, dev, do} —— dev=受理的模块号、do=该模块
+ *          **当前 DO 位图**（与 Python extra 回显同键）；C 端另回带 di
+ *          （老客户端沿用，Python 端忽略未知键）。
  *          自动模式下与变频器控制同款被拒。
  */
 #define HSF_CMD_DIGITAL_CONTROL     0x0109u
@@ -190,6 +213,27 @@
  */
 #define HSF_CMD_CONFIG_SET          0x0117u
 
+/**
+ * @brief 运行日志分页查询（载荷 {limit:int, offset:int, beforeTs?:int,
+ *                            loTs?:int, hiTs?:int, category?:utf8, kw?:utf8}）。
+ * @details [2026-11-09 新增（C 端扩展）] **Python 侧 proto.py 暂无同号命令**
+ *          ——键名风格刻意照抄 0x0118 HISTORY_PAGE（limit/offset/beforeTs/
+ *          loTs/hiTs/kw 与 HSF_KEY_HIST_* 同字面），两端将来对齐时按本表
+ *          落 Python 侧即可。只读数据，权限 ViewTelemetry（读面缺省闸）。
+ *          [窗口锚点] beforeTs/loTs/hiTs 语义与 0x0118 完全一致（epoch
+ *          毫秒；上界 = min(hiTs, beforeTs)，缺省=现在）。
+ *          [category] 类别过滤（精确匹配；服务端入库口径：conn/ctrl/
+ *          alarm/auto/auth，见 HsfServerStore insertLog）；空/缺省=全部。
+ *          [kw] 关键字下推服务端（text+category 列 LIKE 匹配，ESCAPE
+ *          转义，与 0x0118 的 kw 同口径——总数与页内容共用同一条 WHERE）。
+ *          Response = {ok, rows:[{ts,category,text}…], total, count,
+ *          offset, limit}：rows 每行一个**对象**（区别于 0x0118 的值数组），
+ *          ts=epoch 毫秒（int64）、category/text=utf8；total=本窗口命中
+ *          总行数、count=本页实际行数；offset/limit 原样回显（客户端在途
+ *          应答归属判定用，与 0x0118 同机制）。
+ */
+#define HSF_CMD_LOG_PAGE            0x0119u
+
 /* ---- 远端配置键（与 Python 侧 proto.CFGK_* 同名） ---- */
 
 /* 采集节：设备开关。 */
@@ -276,6 +320,35 @@
 /** @brief 历史分页：页大小缺省（与 Python HISTORY_PAGE_DEFAULT 同值）。 */
 #define HSF_HISTORY_PAGE_DEFAULT    20
 
+/* ---- 运行日志分页键（HSF_CMD_LOG_PAGE=0x0119；C 端扩展，Python 侧暂无同号命令） ----
+ * limit/offset/beforeTs/loTs/hiTs/kw/rows/total 与 0x0118 的 HSF_KEY_HIST_*
+ * **同字面**（0x0118 同风格）——单独定义一套 HSF_KEY_LOG_* 是为了注释可
+ * 点名、两端将来对齐 Python 时有一份自洽键表，字面值改任何一个都必须
+ * 两处同步（铁律：同号同键）。 */
+
+/** @brief 日志页大小上限（与 HSF_HISTORY_PAGE_MAX 同值）。 */
+#define HSF_LOG_PAGE_MAX            50
+/** @brief 日志页大小缺省（与 HSF_HISTORY_PAGE_DEFAULT 同值）。 */
+#define HSF_LOG_PAGE_DEFAULT        20
+
+#define HSF_KEY_LOG_LIMIT           "limit"    /**< 与 HSF_KEY_HIST_LIMIT 同字面。 */
+#define HSF_KEY_LOG_OFFSET          "offset"   /**< 与 HSF_KEY_HIST_OFFSET 同字面。 */
+#define HSF_KEY_LOG_BEFORE_TS       "beforeTs" /**< 与 HSF_KEY_HIST_BEFORE_TS 同字面。 */
+#define HSF_KEY_LOG_LO_TS           "loTs"     /**< 与 HSF_KEY_HIST_LO_TS 同字面。 */
+#define HSF_KEY_LOG_HI_TS           "hiTs"     /**< 与 HSF_KEY_HIST_HI_TS 同字面。 */
+/** @brief 类别过滤（utf8；conn/ctrl/alarm/auto/auth；空/缺省=全部）。 */
+#define HSF_KEY_LOG_CATEGORY        "category"
+#define HSF_KEY_LOG_KW              "kw"       /**< 与 HSF_KEY_HIST_KW 同字面。 */
+/** @brief 应答行数组（每元素一个对象 {ts,category,text}）。 */
+#define HSF_KEY_LOG_ROWS            "rows"     /**< 与 HSF_KEY_HIST_ROWS 同字面。 */
+/** @brief 应答：本窗口命中总行数（分页总数按它算）。 */
+#define HSF_KEY_LOG_TOTAL           "total"    /**< 与 HSF_KEY_HIST_TOTAL 同字面。 */
+/** @brief 应答：本页实际行数。 */
+#define HSF_KEY_LOG_COUNT           "count"
+/* 行对象内键（{ts,category,text}；category 与请求过滤键同字面）。 */
+#define HSF_KEY_LOG_TS              "ts"       /**< 事件时刻（int64，epoch 毫秒）。 */
+#define HSF_KEY_LOG_TEXT            "text"     /**< 事件文本（utf8）。 */
+
 /* ---- 自动运行 op 操作字（HSF_CMD_AUTO_CONTROL 载荷 "op" 键取值） ---- */
 
 /** @brief 启动自动运行（须已处自动模式）。 */
@@ -286,6 +359,26 @@
 #define HSF_AUTO_OP_ESTOP           3
 /** @brief 复位（解除急停锁存，回到停止态；不是重新启动）。 */
 #define HSF_AUTO_OP_RESET           4
+
+/* ==================== 变频器快照额定点键（HSF_CMD_VFD_SNAPSHOT 应答） ==================== */
+
+/**
+ * @brief 电机额定转速（double，rpm；随 0x0102 快照下发）。
+ * @details 与 Python 侧 app.py _h_vfd_snapshot 的 "ratedRpm" 同键同义
+ *          （server_py/hsfsrv/app.py）。客户端用它把"转速模式"的输入量程
+ *          与换算对齐（hz = rpm / ratedRpm × ratedHz），不必自写一份
+ *          1440/50——两份必然漂移。C 服务端取 XVfdDevice_ratedRpm()
+ *          （缺省 1440，与 Python DEFAULT_RATED_RPM 同值）。
+ */
+#define HSF_KEY_VFD_RATED_RPM       "ratedRpm"
+/**
+ * @brief 电机额定频率（double，Hz；随 0x0102 快照下发）。
+ * @details 与 Python 侧 app.py 的 "ratedHz" 同键同义。Python 语义 =
+ *          cfg.serial.vfd_rated_hz（缺省 50）= 转速↔频率换算基准；C 服务端
+ *          同角色值是 XVfdDevice_maxFrequency()（未读得时按 50 兜底，与
+ *          XVfdDevice_rpmToHz 内部基准一致）。
+ */
+#define HSF_KEY_VFD_RATED_HZ        "ratedHz"
 
 /* ==================== 推送主题（topicId = XLINK_TOPIC_USER_BASE + n） ==================== */
 
@@ -526,10 +619,25 @@ typedef enum HsfDeviceKind {
 #define HSF_KEY_DIG_DO              "do"
 /** @brief 本模块点数（int；DI/DO 同名路数）。 */
 #define HSF_KEY_DIG_COUNT           "count"
-/** @brief 通道输出控制载荷：通道下标（int）。 */
+/** @brief 通道输出控制载荷：通道下标（int；旧口径，与 HSF_KEY_DIG_DO 同义保留）。 */
 #define HSF_KEY_DIG_INDEX           "index"
 /** @brief 通道输出控制载荷：目标值（bool，true=通电）。 */
 #define HSF_KEY_DIG_ON              "on"
+/**
+ * @brief 整组写载荷：目标位图（int；bit n = 通道 n 目标值）。
+ * @details [2026-11-09 S6 口径统一] 与 Python proto.KEY_MASK 同名同义；
+ *          mask 与 values 两键同义时 mask 优先（Python 同序）。整组写时
+ *          服务端只写有变化的点。命令号/形态说明见 HSF_CMD_DIGITAL_CONTROL。
+ */
+#define HSF_KEY_DIG_MASK            "mask"
+/** @brief 整组写载荷别名键（与 HSF_KEY_DIG_MASK 同义；Python KEY_VALUES 同名）。 */
+#define HSF_KEY_DIG_VALUES          "values"
+/**
+ * @brief 控制载荷：模块号（int；缺省 0；与 Python proto.KEY_DEV 同名同义）。
+ * @details C 服务端单站部署恒收 0；越界拒绝文案与 Python 一致
+ *          （"数字量模块号越界（0~N）"）。
+ */
+/* HSF_KEY_DIG_DEV（"dev"）已在上方数字量快照键中定义，此处不重复。 */
 
 /**
  * @brief 通道名键（**全量快照专用**；格式 "din<通道>"）。
@@ -707,7 +815,9 @@ typedef enum HsfValveState {
 
 /**
  * @brief 阀告警主题（**遗留定义，2026-11-06 起服务端不再使用**）。
- * @details [为什么改回阀状态主题] Python 生态（server_py/client_py/webui_py）
+ * @details [一句话结论] 实际推送随 0x00010007（HSF_TOPIC_VALVE_STATUS）
+ *          合帧（载荷带 ac 键即告警帧），本号遗留未用。
+ *          [为什么改回阀状态主题] Python 生态（server_py/client_py/webui_py）
  *          把告警帧推在 `TOPIC_VALVE_STATUS`(0x00010007) 上——载荷带 "ac"
  *          键即告警帧，键空间 `a{i}_*` 与周期状态的 `v{i}_*` 不相交，客户端
  *          按键判型。而 Python 客户端只订阅 0x00010007 ⇒ C 服务端推 0x00010008

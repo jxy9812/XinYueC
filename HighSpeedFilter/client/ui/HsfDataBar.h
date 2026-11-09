@@ -160,7 +160,9 @@ int HsfDataBar_viewMode(const XWidget* bar);
 void HsfDataBar_setViewMode(XWidget* bar, int mode);
 
 /**
- * @brief      形态自适应（窄屏隐藏各段说明标签；帧泵每循环调用，幂等）。
+ * @brief      形态自适应（按实际可用宽分五档逐级收窄：⓪常规 → ①收说明
+ *             标签 → ②收控件最小宽+行距 → ③隐「共 N 行」→ ④行1/行2 翻
+ *             竖排；帧泵每循环调用，幂等）。
  */
 void HsfDataBar_adapt(XWidget* bar, bool compact);
 

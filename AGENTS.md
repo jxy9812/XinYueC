@@ -69,6 +69,8 @@
 - **会话压测 / 泄漏回归（改会话、订阅、登录或服务端 per-session 状态必跑）**：
   `tests/test_stress_reconnect.py --port 6100 --clients 8 --cycles 1250`
   （8 进程 × 1250 轮 = 1 万次连接→登录→订阅 9 主题→快照→断开）。
+  **2026-11-09 起加码：改 XLinkSession/XLinkServer 传输层必须连跑两轮**，
+  判据=0 失败 + 第二轮堆计数零增长（首轮 arena 平台期不作数）。
   环境要求：脚本会**自动**经远端配置（`CMD_CONFIG_GET/SET` 的 `login` 节）
   打开同账并发，收尾按原值恢复（`--no-policy` 可跳过）；手工压测时也可在
   「远端设置 → 登录策略（账号）」里改（管理员），或写
@@ -78,6 +80,33 @@
   客户端，5s 一条 `[heap]`）；2026-11-08 实测 2 万次会话 0 失败、
   服务端堆回到 ~702KB 基线、句柄第二轮 0 增长。台账：
   `docs/HSF会话压测与泄漏回归_实施记录_20261108.md`。
+- **推送失步两级自愈（2026-11-09 根修，详见 `Src/XCore/XProtocol/XLink/XLink.md` §15）**：
+  Publish 帧队满被拒不再是无账目的有损丢弃——会话层记
+  `m_txOverflowFrames` + 失步戳，队列排空发 `txResyncNeeded` 信号（服务端
+  `hsfAppTxResync` 按订阅表补发全量）；失步超
+  `XLINK_TX_DESYNC_KICK_MS`（15s）不排空踢线 reset。排查「界面数据冻结、
+  连接显示正常」先看服务端日志三行：`推送失步补发` / `推送失步踢线` /
+  `发方向判线`，都没有才是新问题。信号函数**必须容忍 self=NULL**
+  （`XObject_signalIdOf` 以 NULL 调用采集信号 id）；`XVar` 宏对表达式
+  取址，右值先落局部。新增信号函数照 `XLinkSession_txResyncNeeded_signal`
+  的写法。
+- **运行日志分页（0x0119，2026-11-09）**：C 服务端 logs 表
+  （ts/category/text，category=conn/ctrl/alarm/auto/auth）+
+  `HSF_CMD_LOG_PAGE` 分页查询（键与 0x0118 同字面）；C 客户端日志页
+  （HsfDataLog）与 Python 客户端日志页都消费它；server_py 不实现该命令
+  （proto.py 仅登记常量，注释点名 C 端）。改日志事件点/类别枚举必须同步
+  `XhsfLinkProto.h`、server_py/client_py 两个 proto.py 三处注释。
+- **Py 客户端退出拆卸三闸（2026-11-09 根修，证据链与三机制详见
+  `docs/HSF双端对齐竖屏与推送失步根修_实施记录_20261109.md` §六）**：
+  ① `sip.setdestroyonexit(False)` 已落在 `hsfsrv_client/__init__.py`
+  （对齐 C 端 XGui.md §8.2 同款裁定；退出持有交 OS 回收）——**不要再往
+  回加「退出时全量销毁」逻辑**；② bridge 的 Qt 信号发射一律走
+  `_emit_net`（`_shutting_down` 闸），新增网络线程 emit 禁止裸 `.emit`；
+  ③ `XLinkClient.close(join_timeout=3)` 同步停线程，`_set_state` 首行
+  `_closed` 静默闸——自动重连的最后一拍不得在终结期触碰 Qt 层。
+  新增信号/清理代码先看台账 §6 的三机制取证（core vtable 指向匿名堆=
+  已复用，追类名无意义）；测试/工具**禁止一进程创建多个 QApplication**
+  （Qt5 未定义行为，复现器工件会污染归因）。
 
 ## 文件修改工具铁律：禁止用 Python 脚本改源码
 

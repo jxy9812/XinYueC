@@ -171,14 +171,23 @@ class XLinkClient(object):
                                  proto.encode_hello(self.local_capability))
         await self._pump()
 
-    def close(self):
-        """主动断开（幂等）。"""
+    def close(self, join_timeout=3.0):
+        """主动断开（幂等）。
+
+        :param join_timeout: 等待网络线程收尾的秒数；>0 时同步 join——
+            **close 返回后保证不再有任何回调/信号从本类发出**（退出竞态
+            根修 2026-11-09：此前 close 是异投递即返回，解释器终结阶段
+            网络线程仍可能在发状态信号，而主线程的 Qt 对象已析构 →
+            pyqtBoundSignal_emit 段错误，见台账 §六）。
+        """
         self._closed = True
         if self._loop is not None and not self._loop.is_closed():
             try:
                 self._loop.call_soon_threadsafe(self._cancel_all)
             except RuntimeError:
                 pass
+        if join_timeout and self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=join_timeout)
 
     def _cancel_all(self):
         for fut in list(self._pending.values()):
@@ -188,6 +197,14 @@ class XLinkClient(object):
 
     def _set_state(self, state):
         if self.state == state:
+            return
+        if self._closed:
+            # [退出竞态闸 2026-11-09] close() 之后重连迭代可能还剩最后一拍
+            # （await sleep 的重连间隔未到期）：一切状态迁移静默——此时解释
+            # 器可能正在终结，on_state_changed(→bridge._on_state→Qt emit)
+            # 的接收端已析构，emit 即段错误（faulthandler 全栈实证：
+            # _run→_connect_once→_teardown→_set_state）。
+            self.state = state
             return
         self.state = state
         self._log("状态 → %s" % state)

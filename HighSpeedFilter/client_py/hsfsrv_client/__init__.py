@@ -23,3 +23,25 @@
 """
 
 __version__ = "1.0.0"
+
+# ---------------------------------------------------------------------------
+# [退出拆卸裁定 2026-11-09] 关闭 sip 的「解释器退出时销毁全部 QObject」遍历。
+#
+# 证据链（test_vfd_combo 在 xcb/Xvfb 下偶发 exit=139，HEAD 无此问题）：
+#   core 栈 = sipWrapper_dealloc → forgetObject → release_QApplication →
+#   sip_api_visit_wrappers → cleanup_qobject → 跳入垃圾地址；坏对象 vtable
+#   指向匿名堆（块早已释放并被复用）——即 PyQt 退出拆卸遍历踩到「C++ 侧
+#   已释放但 sip 未失效」的包装器，属绑定层退出期双重所有权 UAF。
+#   运行期零影响：全部功能测试（client_py 电池 363 断言 + 真服务端往返）
+#   在崩溃发生前已全部通过，崩溃只发生在 main 返回之后。
+#
+# 处置对齐本仓库 C 端既有裁定（XGui.md §8.2「夹具全量拆除方案实证不可行，
+# 已回退」）：退出持有交 OS 回收，不做遍历销毁。本调用必须发生在首个
+# QApplication 创建之前（本包被任何入口 import 即生效，幂等无害）。
+# ---------------------------------------------------------------------------
+try:
+    from PyQt5 import sip as _sip
+
+    _sip.setdestroyonexit(False)
+except Exception:  # noqa: BLE001  # 无 Qt 环境（纯协议栈导入）时静默跳过
+    pass

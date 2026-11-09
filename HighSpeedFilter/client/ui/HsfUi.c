@@ -146,8 +146,15 @@ static const HsfPageCreateFn kHsfBuilders[HSF_PAGE_COUNT] = {
     HsfWindowPage_create       /* 17 设置-窗口设置（移植） */
 };
 
-/* ---- 形态/导航度量（单一事实源） ---- */
-#define HSF_COMPACT_MAX_W   600  /**< 紧凑断点（逻辑宽 < 600 ⇒ 竖屏形态）。 */
+/* ---- 形态/导航度量（单一事实源） ----
+ * [2026-11-09 竖屏三档化] 窗口宽 <860 ⇒ 窄档（NARROW：侧栏收起+页级
+ * compact 全集），覆盖 720×1280 手机竖屏 / 768 平板竖屏 / ~800 半屏——
+ * 旧断点 600 下 720×1280 落宽屏档，导航侧栏挤压内容区只剩 ~530px，
+ * 页面横排爆宽（勘察台账 HsfMonitorVfd.c:2565 实锅）。520 以下为手机
+ * PHONE 档：窗级不再单列，由各页按**页根宽**细档承接（VFD 620/数据条
+ * 1016/窗口页 520 等既有页宽档全部保留——页宽口径本来就是正确的）。
+ * 横屏 ≥860 零变化（1280×720 基线不受影响）。 */
+#define HSF_COMPACT_MAX_W   860  /**< 窄档断点（逻辑宽 < 860 ⇒ 侧栏收起+页级 compact）。 */
 #define HSF_NAV_MIN_W       120  /**< 导航面板最小宽（拖拽下限）。 */
 #define HSF_NAV_DEFAULT_W   176  /**< 导航面板缺省宽（拖拽记忆初值）。 */
 #define HSF_SPLITTER_HANDLE_W 8  /**< 分割条把手宽（拖拽区）。 */
@@ -193,7 +200,7 @@ static const HsfPageAdaptFn kHsfPageAdapt[HSF_PAGE_COUNT] = {
     HsfDataAlarm_adapt,  /* 11 数据-报警（自建根结构，竖屏收边距） */
     NULL,                /* 12 设置子菜单 */
     HsfSettingsLocal_adapt, /* 13 设置-本地设置（自建根结构，竖屏收边距） */
-    NULL,                /* 14 设置-远端设置（固定五卡，无窄宽分档） */
+    HsfSettingsRemote_adapt, /* 14 设置-远端设置（2026-11-09 补窄档：收边距+store 行翻排） */
     hsfAdaptNetwork,     /* 15 设置-网络设置（移植页） */
     hsfAdaptOverlay,     /* 16 设置-悬浮窗设置（移植页） */
     hsfAdaptWindow       /* 17 设置-窗口设置（移植页） */

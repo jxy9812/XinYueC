@@ -260,6 +260,8 @@ void XLinkSession_init(XLinkSession* obj)
     /* 请求自动超时/重试默认值：被动模式（0/0），行为与无自动重试时一致。 */
     obj->m_retryCount = XLINK_RETRY_MAX_DEFAULT;
     obj->m_requestTimeoutMs = XLINK_REQUEST_TIMEOUT_MS;
+    /* 推送失步踢线默认值（编译期可裁剪；0=禁用）。 */
+    obj->m_txDesyncKickMs = XLINK_TX_DESYNC_KICK_MS;
     /* 握手/认证超时默认值（编译期可裁剪）。 */
     obj->m_attachTick = 0;
     obj->m_authStartTick = 0;
@@ -1206,6 +1208,13 @@ static uint32_t XLinkSessionPrivate_txFlush(XLinkSession* self)
         self->m_lastTxProgressTick = self->m_nowTick;
     }
 #endif
+    /* [排空补发] 失步期间队列一旦排空，发射补发信号：应用层按该会话的
+     * 订阅表补发全量快照，消除拥塞窗内丢帧造成的状态分歧。先清失步戳
+     * 再发射——补发槽内重新入队会递归进本函数，清零后不得二次触发。 */
+    if (self->m_desyncSinceTick != 0 && self->m_txUsed == 0) {
+        self->m_desyncSinceTick = 0;
+        XLinkSession_txResyncNeeded_signal(self);
+    }
     return total;
 }
 
@@ -1301,11 +1310,15 @@ bool XLinkSession_setDevice(XLinkSession* self, XIODevice* device)
        m_lastSendTick 是主动心跳基准，同理归零；m_nowTick 归零让"本链路
        尚未取到过时刻"重新可识别（下面的 m_attachTick 取 0 起算即依赖它）。
        新增的 m_lastTxProgressTick（发方向判线起算点）同理归零：残留旧链路
-       的起算时刻会让新链路首拍就满足 (nowMs - 旧值) > 阈值而误判断开。 */
+       的起算时刻会让新链路首拍就满足 (nowMs - 旧值) > 阈值而误判断开。
+       m_desyncSinceTick（推送失步起算点）同理归零：失步是链路级状态，
+       换链路后旧失步窗不得渗透（累计计数 m_txOverflowFrames 保留，
+       与统计口径一致）。 */
     self->m_lastReceiveTick = 0;
     self->m_lastSendTick = 0;
     self->m_nowTick = 0;
     self->m_lastTxProgressTick = 0;
+    self->m_desyncSinceTick = 0;
     self->m_authRequired = false;
     self->m_authPassed = false;
 #if XLINK_AUTH_ON
@@ -1357,11 +1370,13 @@ void XLinkSession_reset(XLinkSession* self)
        静默判线（nowMs - 旧时刻 > XLINK_HEARTBEAT_TIMEOUT_MS）立刻成立而
        误判断开；m_lastSendTick 是主动心跳基准，m_nowTick 是本链路时刻快照，
        一并归零，避免旧链路的时刻渗透进新链路的超时判定。新增的
-       m_lastTxProgressTick（发方向判线起算点）同理归零。 */
+       m_lastTxProgressTick（发方向判线起算点）同理归零。
+       m_desyncSinceTick（推送失步起算点）同理归零，理由同 setDevice。 */
     self->m_lastReceiveTick = 0;
     self->m_lastSendTick = 0;
     self->m_nowTick = 0;
     self->m_lastTxProgressTick = 0;
+    self->m_desyncSinceTick = 0;
     self->m_authRequired = false;
     self->m_authPassed = false;
 #if XLINK_AUTH_ON
@@ -1555,6 +1570,24 @@ void XLinkSession_pump(XLinkSession* self, uint32_t nowMs)
         XLinkSession_reset(self);
         return;
     }
+    /* [推送失步踢线] Publish 队满拒帧后长期不排空 = 消费端过慢（写入尚能
+     * 滴漏，上面的发方向判线「任一写出即复位」永不成立，收方向又持续有
+     * 心跳刷新）——这正是「界面数据冻结、连接显示正常」的静默冻结窗口。
+     * 淘汰慢消费方：客户端自动重连 + 重订阅 + 订阅即补发，完成再同步。 */
+    if (self->m_txDesyncKickMs > 0 && self->m_desyncSinceTick != 0
+        && self->m_txUsed > 0 && nowMs >= self->m_desyncSinceTick
+        && (nowMs - self->m_desyncSinceTick) > self->m_txDesyncKickMs) {
+        XPrintf("XLinkSession: 推送失步踢线（队满拒帧 %u 次，失步 %ums > %ums "
+                "未排空，积压 %uB，本链路累计收 %llu / 发 %llu 字节）\n",
+                (unsigned)self->m_txOverflowFrames,
+                (unsigned)(nowMs - self->m_desyncSinceTick),
+                (unsigned)self->m_txDesyncKickMs,
+                (unsigned)self->m_txUsed,
+                (unsigned long long)self->m_stats.m_bytesReceived,
+                (unsigned long long)self->m_stats.m_bytesSent);
+        XLinkSession_reset(self);
+        return;
+    }
 #endif
 
     /* 静默超时判线。 */
@@ -1689,8 +1722,22 @@ static bool XLinkSessionPrivate_sendWithPrefix(XLinkSession* self,
        随后尽力立即推进；短写只推进游标，剩余字节由后续 pump 续写。
        这使非阻塞 TCP 的短写不再丢帧，也让大块文件数据可以安全排队。 */
     if (self->m_txQueue) {
-        if (XLinkSessionPrivate_txSpace(self) < (uint32_t)total)
+        if (XLinkSessionPrivate_txSpace(self) < (uint32_t)total) {
+            /* [推送失步记账 2026-11-09] 队满整帧拒绝对 Publish 是**有损**
+             * 丢弃：请求/应答有超时重发兜底，发布帧（尤其变值事件帧——
+             * 设备健康变化、阀告警、单次状态跃迁）没有。记失步起算点 +
+             * 计数，交给两级自愈：排空瞬间 txFlush 发 txResyncNeeded
+             * 补发全量；长期不排空由 pump 失步踢线淘汰慢消费方。
+             * （m_nowTick 为 0 = 本链路尚未 pump 过，顺延到下一拍置位，
+             *  拥塞是持续态，下一帧拒绝仍会落到置位路径。） */
+            if ((XLinkMsgClass)frame->m_msgClass == XLinkMsgClass_Publish) {
+                ++self->m_txOverflowFrames;
+                self->m_stats.m_txOverflowFrames = self->m_txOverflowFrames;
+                if (self->m_desyncSinceTick == 0 && self->m_nowTick != 0)
+                    self->m_desyncSinceTick = self->m_nowTick;
+            }
             return false; /* 队列满：背压，调用方稍后重试 */
+        }
         XLinkSessionPrivate_txAppend(self, hdrBuf, XLINK_HEADER_SIZE);
         if (prefixLen > 0)
             XLinkSessionPrivate_txAppend(self, prefix, prefixLen);
@@ -2216,6 +2263,26 @@ void* XLinkSession_authChanged_signal(XLinkSession* self, bool passed,
         XVarList_Create(XVar(bool, passed), XVar(uint8_t, status),
                         XVar(uint8_t, role)),
         NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XLinkSession_txResyncNeeded_signal(XLinkSession* self)
+{
+    /* 参数：被拒 Publish 帧累计数 + 会话指针（服务端槽据此转发应用回调）。
+     * [信号函数 NULL 契约] XObject_signalIdOf 以 self=NULL 调用本函数采集
+     *   信号 id（id=函数地址），故 self 解引用必须判空——只在宏内使用。
+     * [XVar 取址陷阱] 宏展开是 &var，右值（强转表达式）取不了址——先落局部。 */
+    int frames = self ? (int)self->m_txOverflowFrames : 0;
+    XEmitSignal(self, XLinkSession_txResyncNeeded_signal,
+        XVarList_Create(XVar(int, frames), XVar(XLinkSession*, self)),
+        NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+bool XLinkSession_setTxDesyncKickMs(XLinkSession* self, uint32_t ms)
+{
+    if (ISNULL(self, "XLinkSession_setTxDesyncKickMs self"))
+        return false;
+    self->m_txDesyncKickMs = ms;
+    return true;
 }
 
 #endif /* XLINK_AUTH_ON */

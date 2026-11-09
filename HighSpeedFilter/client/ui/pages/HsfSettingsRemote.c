@@ -1007,4 +1007,25 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
     return &self->m_base;
 }
 
+/**
+ * @brief 远端设置页窄宽自适应（2026-11-09 竖屏适配批次补齐）。
+ * @details [为什么只动两处] 本页行最宽的是「写满后 + 策略下拉(最小宽 240)
+ *          + 保留分段 + spin(100)」≈513px——480 手机档必裁右端。其余行
+ *          （采集 96+60+150、登录 96+170）在 480 档视口 ~456px 内本就放得
+ *          下，不动。窄档两板斧：页边距 16,12→8,6（与 HsfDataAlarm_adapt
+ *          同口径）；策略下拉最小宽 240→160（行宽 ~433 放得下，下拉本身
+ *          可横向滚动条目）。宽档恢复 create 原值，幂等（帧泵每轮驱动）。
+ */
+void HsfSettingsRemote_adapt(XWidget* page, bool compact)
+{
+    HsfSettingsRemote* self = (HsfSettingsRemote*)page;
+    if (!self) return;
+    XLayout_setContentsMargins((XLayout*)&self->m_layout,
+                               compact ? 8 : 16, compact ? 6 : 12,
+                               compact ? 8 : 16, compact ? 6 : 12);
+    XWidget_setMinimumWidth((XWidget*)&self->m_storePolicy,
+                            compact ? 160 : 240);
+    XLayout_activate((XLayout*)&self->m_layout);
+}
+
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON && XCHECKBOX_ON && XSPINBOX_ON */

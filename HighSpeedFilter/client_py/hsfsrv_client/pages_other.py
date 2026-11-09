@@ -27,14 +27,16 @@ from PyQt5.QtGui import QBrush, QColor, QPainter, QPen, QStandardItem, \
     QStandardItemModel
 from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog,
                              QFrame, QGridLayout, QHBoxLayout, QHeaderView,
-                             QLabel, QLineEdit, QProgressBar, QPushButton,
-                             QScrollArea, QSpinBox, QTableWidget,
-                             QTableWidgetItem, QDateTimeEdit, QVBoxLayout,
-                             QWidget)
+                             QLabel, QLineEdit, QPlainTextEdit, QProgressBar,
+                             QPushButton, QScrollArea, QSpinBox,
+                             QStackedWidget, QTableWidget, QTableWidgetItem,
+                             QDateTimeEdit, QVBoxLayout, QWidget)
 
+from . import model as model_mod
 from . import pages_registry as reg
 from . import permissions, proto, theme
 from .page_base import DataTable, Page, form_row, section_title
+from .pages_valve import VALVE_STATE_TEXT
 from .widgets import Card
 
 
@@ -42,15 +44,78 @@ from .widgets import Card
 #                              主界面
 # ============================================================================
 
+class _ClickableCard(Card):
+    """可点击卡片：整卡**按下**即发 clicked（C 端 HsfHomeCard 可点击口径）。
+
+    主界面的「设备健康」「搅拌泵」卡用它承载"点卡弹出悬浮详情"的交互
+    （对齐 C HsfHomePage.c hsfHomeHealthClicked / hsfHomePumpClicked：
+    鼠标按下即触发，触控口径）。
+    """
+
+    clicked = pyqtSignal()
+
+    def __init__(self, title="", parent=None):
+        Card.__init__(self, title, parent)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        Card.mousePressEvent(self, event)
+
+
+class _HomeShade(QWidget):
+    """悬浮详情的触摸遮罩：垫在浮层底下，捕获「点浮层外」收起。
+
+    对齐 C HsfHomePage.c hsfHomeShadeClicked：遮罩上按下 ⇒ 收起浮层。
+    """
+
+    def __init__(self, on_click, parent=None):
+        QWidget.__init__(self, parent)
+        self._on_click = on_click
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet("background: rgba(0, 0, 0, 64);")
+
+    def mousePressEvent(self, _event):
+        if self._on_click is not None:
+            self._on_click()
+
+
 class HomePage(Page):
     """主界面：关键指标总览 + 三大分类快捷入口。
 
-    C 端 HsfHomePage 的口径：顶部看板（温湿度/变频器/设备健康）+
-    下方快捷入口卡片。
+    C 端 HsfHomePage 的口径：顶部看板（温湿度 / 搅拌泵 / 设备健康 /
+    压差 / 流量计 / 电磁阀六路）+ 下方快捷入口卡片。
+
+    [悬浮详情卡（2026-11-09 对齐 C hsfHomeApplyDetail）] 设备状态表与
+    搅拌泵详情不再是布局流里的常驻区，而是**可开合的居中悬浮卡**：
+      · 点「设备健康」卡 ⇒ 弹出设备状态表；再点同卡 / 点 × / 点遮罩 ⇒ 收起
+      · 点「搅拌泵」卡 ⇒ 弹出泵详情
+    弹出期间遮罩垫底、浮层居中抬升；窗口缩放后每拍/每次 resize 校正居中
+    （C 端「浮层跟随页面尺寸」同口径）。
+
+    [刷新分帧（对齐 C 帧泵注释 HsfHomePage.c hsfStatSet）] 数值卡每拍刷
+    （QLabel.setText 同值早退，稳态零重排）；设备表每 2 拍铺一次 ——
+    setRowCount / fit_to_content 会触发布局重排，摊开到两帧，
+    避免单拍重排整页。
     """
 
     TOPICS = (proto.TOPIC_VFD_STATUS, proto.TOPIC_TEMPHUM_STATUS,
-              proto.TOPIC_AI_STATUS, proto.TOPIC_DEVICE_HEALTH)
+              proto.TOPIC_AI_STATUS, proto.TOPIC_FLOWMETER_STATUS,
+              proto.TOPIC_VALVE_STATUS, proto.TOPIC_DEVICE_HEALTH)
+
+    #: 悬浮详情卡宽度（表格态 / 泵详情态）。
+    #:
+    #: [表格态不能太窄] 设备表 5 列在 DataTable 里有 150px/列的宽度下限
+    #: （"COM17 · 115200 · 站 2" 这类地址串的硬保证），780px 宽的浮层会让
+    #: 5×150 刚好吃满视口、权重分配失效（各列全被压到下限）。960px 留出
+    #: 按权重分配的余量，地址列才能明显宽于类型列。
+    DETAIL_TABLE_W = 960
+    DETAIL_PUMP_W = 640
+    #: 电磁阀卡的路数（服务端 6 路；超出部分不显示）。
+    VALVE_COUNT = 6
+    #: 阀状态「未配置」的灰（对齐 pages_valve.VALVE_STATE_TEXT 的浅灰）。
+    VALVE_NA_COLOR = "#9E9E9E"
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
@@ -61,6 +126,8 @@ class HomePage(Page):
         cards.setSpacing(10)
 
         from .widgets import StatBlock
+        self._detail_mode = "none"     # "none"/"table"/"pump"（悬浮详情）
+        self._refresh_phase = 0        # 刷新分帧相位（0 拍铺设备表）
         # 温湿度卡 —— [现场口径] 这是**电箱内**的温度/湿度，不是环境(室外/室内)
         # 温湿度：变送器装在电控柜里，用来监视柜内温升与凝露风险。
         # 标题与字段名都要带上"电箱"，否则会被误读成现场环境温度。
@@ -74,8 +141,10 @@ class HomePage(Page):
         th_card.body.addLayout(self._th_grid)
         cards.addWidget(th_card, 1)
 
-        # 变频器卡
-        vfd_card = Card("搅拌泵")     # 设备是变频器，按工艺用途显示
+        # 变频器卡（可点击 ⇒ 弹出泵详情悬浮卡；对齐 C hsfHomePumpClicked）
+        vfd_card = _ClickableCard("搅拌泵")   # 设备是变频器，按工艺用途显示
+        vfd_card.setToolTip("点击查看搅拌泵详情")
+        vfd_card.clicked.connect(lambda: self._toggle_detail("pump"))
         self._vfd_grid = QGridLayout()
         self._vfd_grid.setSpacing(10)
         self.vfd_state = StatBlock("运行状态", "", "--", value_size=20)
@@ -87,8 +156,10 @@ class HomePage(Page):
         vfd_card.body.addLayout(self._vfd_grid)
         cards.addWidget(vfd_card, 1)
 
-        # 健康卡
-        h_card = Card("设备健康")
+        # 健康卡（可点击 ⇒ 弹出设备状态表悬浮卡；对齐 C hsfHomeHealthClicked）
+        h_card = _ClickableCard("设备健康")
+        h_card.setToolTip("点击查看设备状态表")
+        h_card.clicked.connect(lambda: self._toggle_detail("table"))
         self._h_grid = QGridLayout()
         self._h_grid.setSpacing(10)
         self.h_total = StatBlock("设备总数", "台", "--", value_size=22)
@@ -101,6 +172,64 @@ class HomePage(Page):
         cards.addWidget(h_card, 1)
 
         self.root.addLayout(cards)
+
+        # ---- 第二排看板卡：压差 / 流量计 / 电磁阀（对齐 C HsfHomePage）----
+        cards2 = QHBoxLayout()
+        cards2.setSpacing(10)
+
+        # 压差卡 —— TOPIC_AI 通道 0（"压差计"，MPa；服务端按 4~20mA 换算）。
+        # 越限（断线/超量程）时服务端给说明文字，警示色显示在下方小字。
+        dp_card = Card("压差")
+        self.dp_value = StatBlock("通道 0", "", "--", value_size=26)
+        dp_card.add(self.dp_value)
+        self.dp_note = QLabel("--")
+        self.dp_note.setWordWrap(True)
+        self.dp_note.setStyleSheet(theme.caption_label_qss())
+        dp_card.add(self.dp_note)
+        cards2.addWidget(dp_card, 1)
+
+        # 流量计卡 —— TOPIC_FLOWMETER（现场流量计挂 B 侧；Python 端服务端
+        # 只发一份流量计快照，model.flowmeter 即该快照，口径与 C 优先 B 侧一致）。
+        # 瞬时流量 + 正/反向累计（单位随服务端单位码下发）。
+        fm_card = Card("流量计")
+        self.fm_flow = StatBlock("瞬时流量", "", "--", value_size=26)
+        fm_card.add(self.fm_flow)
+        self.fm_sub = QLabel("无数据")
+        self.fm_sub.setWordWrap(True)
+        self.fm_sub.setStyleSheet(theme.caption_label_qss())
+        fm_card.add(self.fm_sub)
+        cards2.addWidget(fm_card, 1)
+
+        # 电磁阀卡 —— TOPIC_VALVE 六路状态色点（色义对齐 pages_valve 卡片：
+        # 已开绿 / 已关灰蓝 / 动作中橙 / 故障红 / 未配置·未知浅灰）。
+        valve_card = Card("电磁阀")
+        self._valve_grid = QGridLayout()
+        self._valve_grid.setSpacing(6)
+        self._valve_state = []          # 每路「● 状态」标签（色随状态）
+        self._valve_name = []           # 每路阀名小字（服务端下发）
+        self._valve_render = [None] * self.VALVE_COUNT   # 上次渲染缓存（免重排）
+        for i in range(self.VALVE_COUNT):
+            cell = QWidget()
+            v = QVBoxLayout(cell)
+            v.setContentsMargins(0, 0, 0, 0)
+            v.setSpacing(0)
+            state_lbl = QLabel("● --")
+            state_lbl.setAlignment(Qt.AlignCenter)
+            state_lbl.setStyleSheet(
+                "QLabel { color: %s; font-size: 18px; background: transparent; }"
+                % self.VALVE_NA_COLOR)
+            name_lbl = QLabel("-")
+            name_lbl.setAlignment(Qt.AlignCenter)
+            name_lbl.setStyleSheet(theme.caption_label_qss())
+            v.addWidget(state_lbl)
+            v.addWidget(name_lbl)
+            self._valve_grid.addWidget(cell, i // 3, i % 3)
+            self._valve_state.append(state_lbl)
+            self._valve_name.append(name_lbl)
+        valve_card.body.addLayout(self._valve_grid)
+        cards2.addWidget(valve_card, 1)
+
+        self.root.addLayout(cards2)
 
         # ---- 快捷入口 ----
         self.root.addWidget(section_title("快捷入口"))
@@ -157,8 +286,7 @@ class HomePage(Page):
             entry_row.addWidget(btn, 1)
         self.root.addLayout(entry_row)
 
-        # ---- 设备列表 ----
-        self.root.addWidget(section_title("设备状态"))
+        # ---- 设备状态表（装进悬浮详情卡；见类注释）----
         self._table = DataTable()
         # [必须先 setColumnCount] DataTable 缺省 3 列；只传 4 个表头标签
         # 不会自动扩列（setHorizontalHeaderLabels 只在已有列上填字），
@@ -175,14 +303,70 @@ class HomePage(Page):
             ["设备", "类型", "状态", "地址", "错误信息"])
         # 地址列最宽（"COM17 · 115200 · 站 2" 这类串比设备名长）
         self._table.set_column_weights((4, 2, 2, 7, 5))
-        card = Card()
-        card.add(self._table)
-        # 表格高度贴合 5 行内容（否则拖出一整屏空白，页面看着很空）
+        # 表格高度贴合 5 行内容（否则浮层拖出一整屏空白）
         self._table.fit_to_content(extra_rows=5)
-        self.root.addWidget(card)
+
+        # ---- 泵详情（悬浮详情卡的 pump 态内容；对齐 C HOME_DETAIL_PUMP）----
+        self._pump_detail = QWidget()
+        pd_grid = QGridLayout(self._pump_detail)
+        pd_grid.setContentsMargins(4, 4, 4, 8)
+        pd_grid.setHorizontalSpacing(18)
+        pd_grid.setVerticalSpacing(8)
+        self.pd_state = StatBlock("运行状态", "", "--", value_size=22)
+        self.pd_freq = StatBlock("输出频率", "Hz", "--", value_size=22)
+        self.pd_setf = StatBlock("设定频率", "Hz", "--", value_size=22)
+        self.pd_cur = StatBlock("输出电流", "A", "--", value_size=22)
+        self.pd_rpm = StatBlock("搅拌转速", "rpm", "--", value_size=22)
+        for col, block in enumerate((self.pd_state, self.pd_freq,
+                                     self.pd_setf)):
+            pd_grid.addWidget(block, 0, col)
+        for col, block in enumerate((self.pd_cur, self.pd_rpm)):
+            pd_grid.addWidget(block, 1, col)
+        self._pump_detail.setVisible(False)
+
+        # ---- 悬浮详情卡 + 触摸遮罩（点卡弹出、居中悬浮；×/点外面收起）----
+        # 对齐 C HsfHomePage.c 创建段（~1932）：标题行（标题随态切文字 +
+        # × 关闭钮）+ 内容（设备表 / 泵详情二选一显示）。
+        self._shade = _HomeShade(self._close_detail, self)
+        self._detail_float = QFrame(self)
+        self._detail_float.setObjectName("HsfHomeDetailFloat")
+        self._detail_float.setStyleSheet(
+            "QFrame#HsfHomeDetailFloat { background: #FFFFFF;"
+            " border: 1px solid %s; border-radius: %dpx; }"
+            % (theme.CLR_BORDER_SOFT, theme.RADIUS_CARD))
+        fl = QVBoxLayout(self._detail_float)
+        fl.setContentsMargins(12, 10, 12, 12)
+        fl.setSpacing(6)
+        title_row = QHBoxLayout()
+        self._detail_title = QLabel("设备状态")
+        self._detail_title.setStyleSheet(
+            "QLabel { color: #1F4E79; font-weight: bold; font-size: 21px;"
+            " background: transparent; }")
+        title_row.addWidget(self._detail_title)
+        title_row.addStretch(1)
+        self._detail_close = QPushButton("×")
+        self._detail_close.setFixedSize(28, 28)
+        self._detail_close.setCursor(Qt.PointingHandCursor)
+        self._detail_close.setToolTip("收起")
+        self._detail_close.clicked.connect(self._close_detail)
+        title_row.addWidget(self._detail_close)
+        fl.addLayout(title_row)
+        fl.addWidget(self._table)
+        fl.addWidget(self._pump_detail)
+        self._shade.hide()
+        self._detail_float.hide()
+
         self.root.addStretch(1)
 
-    def refresh(self):
+    def refresh(self, force=False):
+        """每拍刷新（200ms）。
+
+        [分帧] 数值卡每拍刷（QLabel.setText 同值早退，稳态零重排）；
+        设备表每 2 拍铺一次 —— setRowCount / fit_to_content 会触发布局
+        重排，摊开到两帧、避免单拍重排整页（对齐 C HsfHomePage 帧泵注释
+        hsfStatSet：把重活摊到多帧，不无变化也整页标脏）。
+        `force=True` 一拍刷齐（入页/测试用）。
+        """
         model = self.ctx.model
 
         # ---- 温湿度 ----
@@ -214,7 +398,113 @@ class HomePage(Page):
         self.h_offline.set_value(str(offline),
                                  theme.CLR_WARN if offline else theme.CLR_OK)
 
-        # ---- 设备表 ----
+        # ---- 压差（TOPIC_AI 通道 0）----
+        self._refresh_dp(model)
+        # ---- 流量计（TOPIC_FLOWMETER，B 侧快照）----
+        self._refresh_fm(model)
+        # ---- 电磁阀（TOPIC_VALVE 六路）----
+        self._refresh_valves(model)
+
+        # ---- 设备表（分帧：每 2 拍铺一次；force 一拍刷齐）----
+        if force or self._refresh_phase % 2 == 0:
+            self._refresh_device_table(model)
+        self._refresh_phase = (self._refresh_phase + 1) % 2
+
+        # ---- 泵详情（仅悬浮卡 pump 态刷，对齐 C detailMode 口径）----
+        if self._detail_mode == "pump":
+            self._refresh_pump_detail(model)
+
+    # ---- 第二排看板卡（压差/流量计/电磁阀）----
+
+    def _refresh_dp(self, m):
+        """压差卡：TOPIC_AI 通道 0（对齐 C HsfHomePage 压差段口径）。
+
+        越限（断线/超量程）时服务端把值夹到端点并给说明 —— 夹出来的
+        端点值没有读数价值，卡片只报说明文字（警示色）；正常时下方小字
+        显示通道名（服务端下发，如"压差计"）。
+        """
+        if not m.analog.is_fresh():
+            self.dp_value.set_value("--")
+            self.dp_value.set_suffix("")
+            self._set_note(self.dp_note, "无数据", theme.CLR_OFFLINE)
+            return
+        note = m.analog.eng_note.get(0, "")
+        if note:
+            self.dp_value.set_value("--")
+            self.dp_value.set_suffix("")
+            self._set_note(self.dp_note, note, theme.CLR_WARN)
+            return
+        value = m.analog.eng_value(0)
+        self.dp_value.set_value("--" if value is None else "%.3f" % value)
+        self.dp_value.set_suffix(m.analog.eng_unit.get(0, ""))
+        self._set_note(self.dp_note,
+                       m.analog.eng_name.get(0, "") or "通道 0", "#5A6572")
+
+    def _refresh_fm(self, m):
+        """流量计卡：瞬时流量 + 正/反向累计（B 侧快照；对齐 C 流量计段）。
+
+        单位随服务端单位码下发，不写死 m³/h（与历史页同一口径）。
+        """
+        fm = m.flowmeter
+        if not fm.is_fresh():
+            self.fm_flow.set_value("--")
+            self.fm_flow.set_suffix("")
+            self._set_note(self.fm_sub, "无数据", theme.CLR_OFFLINE)
+            return
+        self.fm_flow.set_value("%.2f" % fm.flow)
+        self.fm_flow.set_suffix(fm.flow_unit_text())
+        self._set_note(self.fm_sub,
+                       "正累计 %.2f %s / 反累计 %.2f %s"
+                       % (fm.forward_total, fm.total_unit_text(),
+                          fm.reverse_total, fm.total_unit_text()),
+                       "#5A6572")
+
+    def _refresh_valves(self, m):
+        """电磁阀卡：六路「● 状态」色点（色义对齐 pages_valve 卡片，
+        与 C hsfHomeValveStateInfo 同源：已开绿/已关灰蓝/动作中橙/
+        故障红/未配置·未知浅灰）。"""
+        fresh = m.valve.is_fresh()
+        for i in range(self.VALVE_COUNT):
+            item = m.valve.items.get(i) if fresh else None
+            if item:
+                name = str(item.get("name") or ("电磁阀 %d" % (i + 1)))
+                if item.get("ready"):
+                    text, color = VALVE_STATE_TEXT.get(
+                        int(item.get("state", 0)),
+                        ("未知", self.VALVE_NA_COLOR))
+                else:
+                    # 未配置不是"未知"：点位没接线要说清（pages_valve 同口径）。
+                    text, color = "未配置", self.VALVE_NA_COLOR
+            else:
+                name, text, color = "-", "--", self.VALVE_NA_COLOR
+            key = (text, color, name)
+            if self._valve_render[i] == key:
+                continue               # 同值早退：稳态零重排
+            self._valve_render[i] = key
+            self._valve_state[i].setText("● " + text)
+            self._valve_state[i].setStyleSheet(
+                "QLabel { color: %s; font-size: 18px;"
+                " background: transparent; }" % color)
+            self._valve_name[i].setText(name)
+
+    @staticmethod
+    def _set_note(label, text, color):
+        """小字说明（文本+颜色都变了才写）：setText 同值早退，但
+        setStyleSheet 每次都会重抛样式，缓存一层避免稳态无谓重排。"""
+        key = (text, color)
+        if getattr(label, "_hsf_note_key", None) == key:
+            return
+        label._hsf_note_key = key
+        label.setText(text)
+        label.setStyleSheet(
+            "QLabel { color: %s; font-size: 18px; background: transparent; }"
+            % color)
+
+    # ---- 设备表 / 泵详情 ----
+
+    def _refresh_device_table(self, model):
+        """设备状态表（悬浮卡 table 态内容；分帧时每 2 拍执行一次）。"""
+        health = model.health
         rows = [(d.name, d.kind_text(), d.health_text(),
                  d.addr or "-", d.text or "-") for d in health.devices]
         table = self._table.table
@@ -228,6 +518,9 @@ class HomePage(Page):
                         item.setTextAlignment(Qt.AlignCenter)
                     table.setItem(r, c, item)
             table.verticalHeader().setDefaultSectionSize(theme.TABLE_ROW_H)
+            # 表随行数收放：行数变了悬浮卡几何要跟着（对齐 C 定高逻辑）。
+            if self._detail_mode == "table":
+                self._apply_detail_geometry()
         from PyQt5.QtGui import QColor
         for r, (name, kind, state, addr, text) in enumerate(rows):
             # 逐格判空再写：行重建与数据更新可能不同步，直接 .setText
@@ -246,6 +539,98 @@ class HomePage(Page):
             state_item = table.item(r, 2)
             if color and state_item is not None:
                 state_item.setForeground(QColor(color))
+
+    def _refresh_pump_detail(self, m):
+        """泵详情（悬浮卡 pump 态）：字段有效性逐项判，缺的给 "--"。"""
+        vfd = m.vfd
+        if not vfd.is_fresh():
+            self.pd_state.set_value("无数据", theme.CLR_OFFLINE)
+            for block in (self.pd_freq, self.pd_setf, self.pd_cur,
+                          self.pd_rpm):
+                block.set_value("--")
+            return
+        color = (theme.CLR_FAULT if vfd.faulted
+                 else (theme.CLR_OK if vfd.running else "#1A1A1A"))
+        self.pd_state.set_value(vfd.run_state_text(), color)
+        self.pd_freq.set_value(
+            "%.2f" % vfd.output_freq_hz if vfd.has("outputFreqHz") else "--")
+        self.pd_setf.set_value(
+            "%.2f" % vfd.set_freq_hz if vfd.has("setFreqHz") else "--")
+        self.pd_cur.set_value(
+            "%.2f" % vfd.output_current_a
+            if vfd.has("outputCurrentA") else "--")
+        self.pd_rpm.set_value("%.0f" % vfd.speed_rpm)
+
+    # ---- 悬浮详情卡（对齐 C hsfHomeApplyDetail / hsfHomeFloatCloseSlot）----
+
+    def _toggle_detail(self, mode):
+        """点卡：同卡再点收起，否则切到该卡（对齐 C hsfHomeHealthClicked）。"""
+        self._detail_mode = "none" if self._detail_mode == mode else mode
+        self._apply_detail()
+
+    def _close_detail(self):
+        """× / 遮罩：收起浮层（对齐 C hsfHomeFloatCloseSlot）。"""
+        self._detail_mode = "none"
+        self._apply_detail()
+
+    def _apply_detail(self):
+        """把 _detail_mode 落到界面（标题/内容切换 + 遮罩/浮层显隐）。"""
+        mode = self._detail_mode
+        if mode == "none":
+            self._shade.hide()
+            self._detail_float.hide()
+            return
+        if mode == "table":
+            self._detail_title.setText("设备状态")
+            self._table.setVisible(True)
+            self._pump_detail.setVisible(False)
+        else:
+            self._detail_title.setText("搅拌泵详情")
+            self._table.setVisible(False)
+            self._pump_detail.setVisible(True)
+        self._apply_detail_geometry()
+        self._shade.show()
+        self._shade.raise_()
+        self._detail_float.show()
+        self._detail_float.raise_()
+
+    def _apply_detail_geometry(self):
+        """按当前内容重算浮层尺寸并居中（表随行数收放，C 端同口径）。
+
+        [宽度夹取] 页面比期望宽度窄时（紧凑竖屏）夹到页宽 - 24，
+        浮层不出页面。
+        """
+        if self._detail_mode == "none":
+            return
+        if self._detail_mode == "table":
+            width = self.DETAIL_TABLE_W
+            inner_h = self._table.minimumHeight()
+        else:
+            width = self.DETAIL_PUMP_W
+            inner_h = self._pump_detail.sizeHint().height()
+        width = min(width, max(320, self.width() - 24))
+        height = inner_h + 64            # 标题行 + 上下边距
+        if (self._detail_float.width(), self._detail_float.height()) != \
+                (width, height):
+            self._detail_float.resize(width, height)
+        self._center_float()
+
+    def _center_float(self):
+        """浮层居中 + 遮罩盖满页面（弹出期间每次尺寸变化都校正）。"""
+        if self._detail_mode == "none":
+            return
+        pw, ph = self.width(), self.height()
+        fw = self._detail_float.width()
+        fh = self._detail_float.height()
+        self._shade.setGeometry(0, 0, pw, ph)
+        self._detail_float.move(max(0, (pw - fw) // 2),
+                                max(0, (ph - fh) // 2))
+
+    def resizeEvent(self, event):
+        QWidget.resizeEvent(self, event)
+        # [浮层跟随页面尺寸] 窗口缩放后重算居中/遮罩覆盖（C 端同口径）。
+        if getattr(self, "_detail_mode", "none") != "none":
+            self._center_float()
 
 
 # ============================================================================
@@ -1539,13 +1924,37 @@ class LineChartDialog(QDialog):
         的时间并集）。
         """
         QDialog.__init__(self, parent)
+        self.setWindowTitle("折线图")
+        self.resize(920, 520)
+        self.setMouseTracking(True)          # 鼠标移动收气泡/找最近点
+        self.setCursor(Qt.CrossCursor)
+        #: 拖动/捏合过程中的临时状态。
+        self._drag_origin = None         # (x, view_x0, view_x1)
+        self._dragged = False
+        self._pinch_start = None         # (center_frac, view_x0, view_x1)
+        self._press_pos = None
+        self._series = []
+        self._view_x0 = 0.0
+        self._view_x1 = 1.0
+        self._picked = None
+        self.set_series(series)
+
+        self.grabGesture(Qt.PinchGesture)
+        self.setAttribute(Qt.WA_AcceptTouchEvents, True)
+
+    def set_series(self, series):
+        """替换数据源并重绘（标题/视口/选中点一并复位）。
+
+        [独立成方法] 报警页的图表视图把本对话框以 Qt.Widget 旗标内嵌进
+        页面（表格/图表双视图），新报警到货时**原地换数据**而不是重建
+        对话框 —— 重建会闪一帧、还会丢掉用户已缩放/平移的视口。
+
+        :param series: [(列名, [(时间文本, 数值), ...]), ...] 时间正序。
+        """
         self.setWindowTitle("折线图 — %s"
                             % ("、".join(name for name, _pts in series)
                                if len(series) <= 3
                                else "%d 条曲线" % len(series)))
-        self.resize(920, 520)
-        self.setMouseTracking(True)          # 鼠标移动收气泡/找最近点
-        self.setCursor(Qt.CrossCursor)
         #: [(name, points, color), ...]
         self._series = []
         for idx, (name, points) in enumerate(series):
@@ -1558,14 +1967,7 @@ class LineChartDialog(QDialog):
         self._view_x1 = 1.0
         #: 单击选中的点：(序列下标, 点下标) 或 None（气泡）。
         self._picked = None
-        #: 拖动/捏合过程中的临时状态。
-        self._drag_origin = None         # (x, view_x0, view_x1)
-        self._dragged = False
-        self._pinch_start = None         # (center_frac, view_x0, view_x1)
-        self._press_pos = None
-
-        self.grabGesture(Qt.PinchGesture)
-        self.setAttribute(Qt.WA_AcceptTouchEvents, True)
+        self.update()
 
     # ==================================================================
     #                          视口（缩放/平移）
@@ -2136,40 +2538,527 @@ def _px(value):
 
 
 class LogPage(Page):
-    """日志：客户端运行日志（连接/命令/错误）。"""
+    """日志：服务端运行日志分页查询（0x0119）+ 客户端运行日志折叠副视图。
 
+    [数据源] 服务端 logs 表（关键运维事件定点入库：conn=会话接入/断开、
+    ctrl=控制受理/拒绝、alarm=阀告警、auto=自动运行/模式切换、auth=登录
+    成功/被拒），经 CMD_LOG_PAGE（proto.CMD_LOG_PAGE=0x0119）请求-应答
+    拉取。能力对齐 C 端 pages/HsfDataLog.c。
+
+    [结构（对齐 C HsfDataLog.c）]
+      · 筛选行：类别下拉（全部/连接/控制/告警/自动/鉴权）+ 起止时间窗 +
+        关键字 + 筛选/清除筛选（关键字回车=应用）；
+      · 分页行：每页条数(10/20/50) + 上一页/下一页 + 页码 + 行数统计 + 刷新；
+      · 工具行：导出 CSV + 「客户端运行日志」折叠开关；
+      · 数据表：时间/类别/事件 3 列（DataTable，与历史页同款表格构件）。
+
+    [窗口锚点（与 C logRequest 同口径）] 新查询（入页/筛选/换类别/改页
+    大小/刷新）先把锚点置 0，发包前定格为本地"现在"再发送；翻页沿用同一
+    锚点 ⇒ 整段分页钉在同一批数据上（logs 持续入库，不带锚翻页会被新行
+    顶偏，相邻两页重复/漏行）。
+
+    [应答归属（防串页，与历史页同机制）] 发包时登记 (offset, limit)，
+    应答必须回显同值才铺表；对不上的迟到应答丢弃（翻页连点/筛选抢先都
+    不会把旧页铺进新查询的表里）。
+
+    [老服务端兼容] server_py 不实现 0x0119，会回 ok=false err="未知命令"
+    ——状态行提示并保持空表，不崩。识别出"未知命令"后入页不再自动发（免
+    得每切一次页就敲一次老服务端）；任何显式操作（筛选/翻页/刷新）仍照发
+    ——重连到新服务端后自动恢复，无需重启客户端。ok=false 的其余 err
+    （如"落盘未启用：服务端没有日志可查"）原样显示服务端原因。
+
+    [导出 CSV] 复用本文件报警页/历史页的既有写法（csv.writer +
+    utf-8-sig，Excel 双击直开）。PERM_DOWNLOAD 闸在客户端：0x0119 无
+    export 键形态（C 端 HsfDataLog.c 注释：只读不涉密，服务端按读面
+    ViewTelemetry 放行），下载权限只能由界面把守；导**当前页**（与 C 端
+    "只导服务端返回的那一页"同口径）。
+
+    [客户端运行日志（原有能力保留）] bridge.statusMessage 的收流视图折叠
+    成页内副视图：勾选「客户端运行日志」展开，自动滚动/清空同原页。
+    """
+
+    #: 表头（3 列；与 C 端 kLogHeaders 同序同字面；CSV 导出共用）。
+    COLUMNS = ["时间", "类别", "事件"]
+
+    #: 类别下拉项：(入库字面, 显示名)。下标 0 = 全部（字面空串）。
+    #: 与 C 端 kLogCategoryKeys / kLogCategoryNames 同序同字面。
+    CATEGORY_ITEMS = (
+        ("", "全部类别"),
+        ("conn", "连接"),
+        ("ctrl", "控制"),
+        ("alarm", "告警"),
+        ("auto", "自动"),
+        ("auth", "鉴权"),
+    )
+    #: 入库字面 → 显示名（铺表用；未知字面原样显示，服务端将来加类别
+    #: 不至于显示空白）。
+    CATEGORY_TEXT = {key: name for key, name in CATEGORY_ITEMS[1:]}
+
+    #: 每页条数可选档（与 C 端 kLogPageSizes 同值；上限=服务端夹取 50）。
+    PAGE_SIZES = (10, 20, 50)
+
+    #: 老服务端"未知命令"否定应答的 err 字面（HsfServerApp.c 缺省分支）。
+    UNKNOWN_CMD_ERR = "未知命令"
+
+    #: 客户端运行日志缓冲上限（环形截断，原页同值）。
     MAX_LINES = 500
+
+    #: 服务端分页应答 / 失败（网络线程 emit，UI 线程收 —— Qt 线程规则）。
+    logReady = pyqtSignal(dict)
+    logFailed = pyqtSignal(str)
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
-        self.add_header("日志", "客户端运行日志")
+        self.add_header("日志", "服务端运行日志（连接/控制/告警/自动/鉴权）")
         self._lines = []
 
-        row = QHBoxLayout()
+        # ---- 数据 / 分页状态 ----
+        self._rows = []            # [[时间,类别,事件], ...] 当前页（应答序）
+        self._page_size = proto.LOG_PAGE_DEFAULT
+        self._offset = 0           # 已铺表的页起始偏移
+        self._total = 0            # 本窗口命中总行数（分页判界按它）
+        self._anchor_ts = 0        # 分页锚点 beforeTs（<=0 = 发包前取"现在"）
+        self._lo_ms = 0            # 时间窗下界（<=0 不限；筛选按钮才更新）
+        self._hi_ms = 0            # 时间窗上界（<=0 不限）
+        self._category = ""        # 当前生效类别字面（空=全部）
+        self._kw = ""              # 当前生效关键字（空=不筛）
+        self._inflight = False     # 在途请求（同一时刻只允许一个）
+        self._pending_offset = 0   # 在途请求的 offset（应答归属判定）
+        self._pending_limit = 0    # 在途请求的 limit（应答归属判定）
+        #: 老服务端已知不支持 0x0119（只拦 on_enter 的自动请求；显式操作
+        #: 照发——重连到新服务端后自动恢复）。
+        self._server_supported = True
+        self.logReady.connect(self._on_log_ready)
+        self.logFailed.connect(self._on_log_failed)
+
+        # ---- 筛选行：类别 + 起止时间窗 + 关键字 + 筛选/清除 ----
+        fbar = QHBoxLayout()
+        fbar.setSpacing(8)
+        fbar.addWidget(QLabel("类别"))
+        self._cat_combo = QComboBox()
+        for _key, name in self.CATEGORY_ITEMS:
+            self._cat_combo.addItem(name)
+        self._cat_combo.setMaximumWidth(110)
+        self._cat_combo.setToolTip("按服务端入库类别过滤（conn/ctrl/alarm/auto/auth）")
+        fbar.addWidget(self._cat_combo)
+        fbar.addWidget(QLabel("起始"))
+        self._f_start = TimePickerEdit("yyyy-MM-dd HH:MM 或 HH:MM")
+        self._f_start.setMaximumWidth(120)
+        fbar.addWidget(self._f_start)
+        fbar.addWidget(QLabel("结束"))
+        self._f_end = TimePickerEdit("yyyy-MM-dd HH:MM 或 HH:MM")
+        self._f_end.setMaximumWidth(120)
+        fbar.addWidget(self._f_end)
+        fbar.addWidget(QLabel("关键字"))
+        self._f_text = QLineEdit()
+        self._f_text.setPlaceholderText("包含…（事件/类别，回车应用）")
+        # [键盘类型声明] 关键字筛选是业务文本（可能中文），要拼音全键
+        # （与历史页同口径，让"这个框要什么键盘"在页面代码里可见）。
+        from .softkeyboard import KIND_PINYIN, set_keyboard_kind
+        set_keyboard_kind(self._f_text, KIND_PINYIN)
+        fbar.addWidget(self._f_text, 1)
+        btn_filter = QPushButton("筛选")
+        btn_filter.clicked.connect(self._apply_filter)
+        fbar.addWidget(btn_filter)
+        btn_clear = QPushButton("清除筛选")
+        btn_clear.clicked.connect(self._clear_filter)
+        fbar.addWidget(btn_clear)
+        self.root.addLayout(fbar)
+
+        # ---- 分页行：页大小 + 上下页 + 页码 + 行数统计 + 刷新 ----
+        # [分页控件在表上方] 板端竖屏时表格占满剩余高度，翻页钮放表下方
+        # 会被挤出屏幕（历史页同款布局理由）。
+        pbar = QHBoxLayout()
+        pbar.setSpacing(8)
+        pbar.addWidget(QLabel("每页"))
+        self._page_size_box = QComboBox()
+        for n in self.PAGE_SIZES:
+            self._page_size_box.addItem("%d 条" % n, n)
+        idx = self._page_size_box.findData(self._page_size)
+        self._page_size_box.setCurrentIndex(idx if idx >= 0 else 0)
+        self._page_size_box.setMaximumWidth(96)
+        self._page_size_box.currentIndexChanged.connect(self._on_page_size)
+        pbar.addWidget(self._page_size_box)
+        self._btn_prev = QPushButton("上一页")
+        self._btn_prev.clicked.connect(self._prev_page)
+        pbar.addWidget(self._btn_prev)
+        self._page_label = QLabel("")
+        self._page_label.setStyleSheet(theme.caption_label_qss())
+        pbar.addWidget(self._page_label)
+        self._btn_next = QPushButton("下一页")
+        self._btn_next.clicked.connect(self._next_page)
+        pbar.addWidget(self._btn_next)
+        self._total_label = QLabel("")
+        self._total_label.setStyleSheet(theme.caption_label_qss())
+        pbar.addWidget(self._total_label)
+        pbar.addStretch(1)
+        self._btn_reload = QPushButton("刷新")
+        self._btn_reload.clicked.connect(self._reload_current)
+        pbar.addWidget(self._btn_reload)
+        self.root.addLayout(pbar)
+
+        # ---- 工具行：导出 + 客户端运行日志折叠开关 ----
+        bar = QHBoxLayout()
+        bar.setSpacing(8)
+        btn_export = QPushButton("导出数据")
+        btn_export.clicked.connect(self._export_data)
+        bar.addWidget(btn_export)
+        bar.addStretch(1)
+        # [折叠开关] 客户端运行日志是"客户端自己发生了什么"，与服务端
+        # 事件是两个数据源；折叠成副视图后两边能力都不丢，一键切换。
+        self._client_toggle = QCheckBox("客户端运行日志")
+        self._client_toggle.toggled.connect(self._toggle_client_log)
+        bar.addWidget(self._client_toggle)
+        self.root.addLayout(bar)
+
+        # ---- 服务端日志表卡片（筛选/分页条件先设，表格后看）----
+        self._table = DataTable()
+        self._table.set_headers(self.COLUMNS)
+        # [列宽下限] 时间列装 "yyyy-MM-dd HH:MM:SS"（19 字符 ≈ 165px，
+        # 历史页同款下限）；类别列装"全部类别"四字；事件列吃剩余宽度。
+        self._table.set_column_weights((3, 2, 6),
+                                       min_widths={0: 165, 1: 72, 2: 260})
+        card = Card()
+        card.add(self._table)
+        self.root.addWidget(card, 1)
+
+        # ---- 客户端运行日志（折叠副视图；原页面的视图/自动滚动/清空原样保留）----
+        self._client_card = Card("客户端运行日志")
+        crow = QHBoxLayout()
         self._auto_scroll = QCheckBox("自动滚动")
         self._auto_scroll.setChecked(True)
-        row.addWidget(self._auto_scroll)
-        row.addStretch(1)
+        crow.addWidget(self._auto_scroll)
+        crow.addStretch(1)
         clear_btn = QPushButton("清空")
         clear_btn.clicked.connect(self._clear)
-        row.addWidget(clear_btn)
-        self.root.addLayout(row)
-
-        from PyQt5.QtWidgets import QPlainTextEdit
+        crow.addWidget(clear_btn)
+        self._client_card.body.addLayout(crow)
         self._view = QPlainTextEdit()
         self._view.setReadOnly(True)
+        self._view.setMaximumHeight(260)
         self._view.setStyleSheet(
             "QPlainTextEdit { background-color: #FFFFFF; border: 1px solid %s;"
             " border-radius: %dpx; font-family: monospace; font-size: 18px; }"
             % (theme.CLR_BORDER_SOFT, theme.RADIUS_CARD))
-        card = Card()
-        card.add(self._view)
-        self.root.addWidget(card, 1)
+        self._client_card.add(self._view)
+        self._client_card.setVisible(False)
+        self.root.addWidget(self._client_card)
 
-        # 接管 bridge 的状态消息 → 日志页。
+        # 接管 bridge 的状态消息 → 客户端运行日志副视图（原有接线不变）。
         self.ctx.bridge.statusMessage.connect(self.append)
+        # 类别下拉的立即重查放最后接（构造期 addItem 的 -1→0 跃迁不让它
+        # 触发请求——入页才有第一次请求，见 on_enter）。
+        self._cat_combo.currentIndexChanged.connect(self._on_category_changed)
+        self._f_text.returnPressed.connect(self._apply_filter)
+
+    # ==================================================================
+    #                 服务端查询：入页 / 请求 / 应答
+    # ==================================================================
+    def on_enter(self):
+        """入页：拉第 1 页服务端运行日志（重数据入页才取；C 端建页即发）。"""
+        if not self._server_supported:
+            # 已知老服务端回"未知命令"：不再自动敲它，保持提示。
+            self._show_unsupported()
+            return
+        self._anchor_ts = 0          # 新查询：重取"现在"作锚
+        self._request(0)
+
+    def _request(self, offset):
+        """向服务端要一页（offset 为该页起点；窗口/类别/关键字随包下发）。
+
+        [锚点] 与 C logRequest 同口径：锚点 <=0（新查询）先定格为本地
+        "现在"再发包；翻页沿用 ⇒ 整段分页钉在同一批数据上。
+        [归属登记] 发包前登记 (offset, limit)；应答回显同值才铺表
+        （_on_log_ready），迟到的旧应答丢弃——翻页连点不会叠出乱序页。
+        """
+        if self._inflight:
+            return
+        bridge = self.ctx.bridge
+        if not (bridge.is_connected() if hasattr(bridge, "is_connected")
+                else False):
+            self._show_failed("服务端未连接")
+            return
+        if offset < 0:
+            offset = 0
+        if self._page_size <= 0:
+            self._page_size = proto.LOG_PAGE_DEFAULT
+        if self._anchor_ts <= 0:
+            self._anchor_ts = int(time.time() * 1000)
+        self._inflight = True
+        self._pending_offset = offset
+        self._pending_limit = self._page_size
+
+        def _done(doc):
+            # 网络线程 → 信号排队回 UI 线程（Qt 线程规则，不可省）。
+            self.logReady.emit(doc)
+
+        def _err(msg):
+            self.logFailed.emit(str(msg))
+
+        try:
+            bridge.log_page(
+                offset=offset, limit=self._page_size,
+                before_ts=self._anchor_ts,
+                lo_ts=self._lo_ms or None, hi_ts=self._hi_ms or None,
+                category=self._category or None, kw=self._kw or None,
+                on_done=_done, on_error=_err)
+        except Exception as exc:                        # noqa: BLE001
+            self._inflight = False
+            self._show_failed("%s: %s" % (type(exc).__name__, exc))
+
+    def _on_log_ready(self, doc):
+        """应答到货（**UI 线程**）：归属判定 → 铺表 / 显示服务端原因。"""
+        if not isinstance(doc, dict):
+            return
+        if not doc.get("ok"):
+            self._inflight = False
+            err = str(doc.get("err") or "服务端拒绝")
+            if self.UNKNOWN_CMD_ERR in err:
+                # 老服务端不认 0x0119：提示 + 空表，不崩。
+                self._server_supported = False
+                self._show_unsupported()
+            else:
+                # 服务端明确拒绝（如"落盘未启用：服务端没有日志可查"）：
+                # 显示原因并清表（C logFillTable 否定分支同口径）。
+                self._rows = []
+                self._total = 0
+                self._fill_table()
+                self._total_label.setText("查询失败：%s" % err)
+                self.ctx.set_status("运行日志查询失败：%s" % err)
+            return
+        # [应答归属] offset/limit 必须回显我们发出的值，否则是迟到的旧
+        # 应答（翻页连点/筛选抢先）——丢弃，绝不铺表（防串页）；在途闸
+        # 也不动（本包应答还没回来，别提前放行下一个请求）。
+        try:
+            r_offset = int(doc.get(proto.KEY_LOG_OFFSET, -1))
+            r_limit = int(doc.get(proto.KEY_LOG_LIMIT, -1))
+        except (TypeError, ValueError):
+            return
+        if r_offset != self._pending_offset or r_limit != self._pending_limit:
+            return
+        self._inflight = False
+        self._server_supported = True
+        self._offset = self._pending_offset
+        self._total = int(doc.get(proto.KEY_LOG_TOTAL) or 0)
+        rows = doc.get(proto.KEY_LOG_ROWS) or []
+        self._rows = [self._row_texts(r) for r in rows if isinstance(r, dict)]
+        self._fill_table()
+
+    def _on_log_failed(self, msg):
+        """传输失败（超时/断链）：状态行说明，表格保持上一页内容。"""
+        self._inflight = False
+        self._show_failed(str(msg))
+
+    def _show_failed(self, msg):
+        """把失败原因顶到行数统计位 + 状态栏（别让页面停在"读取中"）。"""
+        self._total_label.setText("查询失败：%s" % msg)
+        self._btn_prev.setEnabled(False)
+        self._btn_next.setEnabled(False)
+        self.ctx.set_status("运行日志：%s" % msg)
+
+    def _show_unsupported(self):
+        """老服务端不认 0x0119：明确提示并保持空表（不崩、不假装有数据）。"""
+        self._rows = []
+        self._total = 0
+        self._fill_table()
+        self._total_label.setText(
+            "服务端不支持运行日志查询（0x0119），请升级服务端")
+        self.ctx.set_status(
+            "运行日志：服务端不支持该命令（未知命令），请升级服务端")
+
+    @classmethod
+    def _row_texts(cls, row):
+        """服务端一行对象 {ts,category,text} → [时间, 类别, 事件] 显示文本。
+
+        [类别显示名] 入库字面（conn/ctrl/…）翻成中文（与下拉同源表），
+        未知字面原样显示。
+        """
+        try:
+            ts = int(row.get(proto.KEY_LOG_TS) or 0)
+        except (TypeError, ValueError):
+            ts = 0
+        stamp = (time.strftime("%Y-%m-%d %H:%M:%S",
+                               time.localtime(ts / 1000.0))
+                 if ts > 0 else "--")
+        category = str(row.get(proto.KEY_LOG_CATEGORY) or "")
+        return [stamp, cls.CATEGORY_TEXT.get(category, category) or "--",
+                str(row.get(proto.KEY_LOG_TEXT) or "")]
+
+    def _fill_table(self):
+        """铺当前页 + 刷新页码/行数统计/翻页钮（对齐 C logFillTable）。"""
+        table = self._table.table
+        table.setRowCount(len(self._rows))
+        for r, row in enumerate(self._rows):
+            for c, text in enumerate(row):
+                item = table.item(r, c)
+                if item is None:
+                    item = QTableWidgetItem("")
+                    # 时间/类别居中，事件左对齐（长文本从左读）。
+                    item.setTextAlignment(
+                        (Qt.AlignLeft | Qt.AlignVCenter) if c == 2
+                        else Qt.AlignCenter)
+                    table.setItem(r, c, item)
+                item.setText(text)
+        self._update_pager_ui()
+
+    # ---- 分页操作 ----
+
+    def _page_count(self):
+        if self._page_size <= 0:
+            return 0
+        return max(1, (self._total + self._page_size - 1) // self._page_size)
+
+    def _update_pager_ui(self):
+        """页码 / 行数统计 / 翻页钮使能（对齐 C logFillTable 状态行口径）。"""
+        pages = self._page_count()
+        cur = (self._offset // self._page_size + 1) if self._page_size > 0 \
+            else 1
+        self._page_label.setText("第 %d/%d 页" % (cur, max(1, pages)))
+        shown = len(self._rows)
+        self._total_label.setText("共 %d 条（本页 %d）%s"
+                                  % (self._total, shown,
+                                     "" if shown else "（无数据）"))
+        self._btn_prev.setEnabled(self._offset > 0)
+        self._btn_next.setEnabled(self._offset + shown < self._total)
+
+    def _prev_page(self):
+        """上一页（翻页沿用当前锚点，不发新查询）。"""
+        if self._inflight or self._page_size <= 0 or self._offset <= 0:
+            return
+        self._request(self._offset - self._page_size)
+
+    def _next_page(self):
+        """下一页（判界用已铺页快照，与 C logNextSlot 同口径）。"""
+        if self._inflight or self._page_size <= 0 or not self._rows:
+            return
+        if self._offset + len(self._rows) >= self._total:
+            return
+        self._request(self._offset + self._page_size)
+
+    def _on_page_size(self):
+        """改每页条数：回第 1 页 + 锚点归零（行号口径变了，停在原页号没
+        意义；对齐 C logPageSizeSlot）。"""
+        size = self._page_size_box.currentData()
+        if not isinstance(size, int) or size <= 0 or size == self._page_size:
+            return
+        self._page_size = size
+        self._anchor_ts = 0
+        self._request(0)
+
+    def _reload_current(self):
+        """手动刷新：重取当前页 + 锚点归零（对齐 C Reload 分支——重新加载
+        想看的是"此刻"的状况，offset 不变、锚点重取）。"""
+        self._anchor_ts = 0
+        self._request(self._offset)
+
+    # ---- 筛选（类别立即生效；时间窗/关键字按「筛选」）----
+
+    def _time_window_ms(self):
+        """筛选框文本 → (lo_ms, hi_ms)；两侧都空 = (None, None) 不限。
+
+        归一化/换算复用历史页 _norm_stamp/_stamp_to_ms（报警页同款）。
+        """
+        lo = HistoryPage._norm_stamp(self._f_start.text(), is_end=False) \
+            if self._f_start.text().strip() else None
+        hi = HistoryPage._norm_stamp(self._f_end.text(), is_end=True) \
+            if self._f_end.text().strip() else None
+        if lo is None and hi is None:
+            return None, None
+        return HistoryPage._stamp_to_ms(lo), HistoryPage._stamp_to_ms(hi)
+
+    def _apply_filter(self):
+        """应用时间窗 + 关键字（对齐 C logApplyFilter：回第 1 页、锚点归零）。
+
+        [类别不在此处] 类别下拉是**立即生效**的（_on_category_changed）；
+        点筛选时以当前下拉值为准一并下发（同 C：筛选只改时间窗与关键字）。
+        """
+        raw_start = self._f_start.text().strip()
+        raw_end = self._f_end.text().strip()
+        if raw_start and HistoryPage._norm_stamp(raw_start, is_end=False) \
+                is None:
+            self.ctx.set_status("起始时间格式不对（HH:MM / MM-dd HH:MM / "
+                                "yyyy-MM-dd HH:MM）")
+            return
+        if raw_end and HistoryPage._norm_stamp(raw_end, is_end=True) is None:
+            self.ctx.set_status("结束时间格式不对（HH:MM / MM-dd HH:MM / "
+                                "yyyy-MM-dd HH:MM）")
+            return
+        lo_ms, hi_ms = self._time_window_ms()
+        if lo_ms and hi_ms and lo_ms > hi_ms:
+            self.ctx.set_status("起始时间晚于结束时间，未筛选")
+            return
+        self._lo_ms = lo_ms or 0
+        self._hi_ms = hi_ms or 0
+        self._kw = self._f_text.text().strip()
+        self._anchor_ts = 0          # 新查询：重取"现在"作锚
+        self._request(0)
+
+    def _on_category_changed(self, index):
+        """类别下拉（立即生效，对齐 C logBarAction 的 ChannelChanged 分支）：
+        换类别 = 新查询（锚点归零、回第 1 页）；时间窗/关键字保持。"""
+        if index < 0 or index >= len(self.CATEGORY_ITEMS):
+            index = 0
+        self._category = self.CATEGORY_ITEMS[index][0]
+        self._anchor_ts = 0
+        self._request(0)
+
+    def _clear_filter(self):
+        """清除筛选：清时间窗 + 关键字，回第 1 页；**类别保持**（对齐 C
+        logClearFilter：类别是"看哪一类"的视图设置，不随清除复位）。"""
+        self._lo_ms = 0
+        self._hi_ms = 0
+        self._kw = ""
+        self._f_start.clear()
+        self._f_end.clear()
+        self._f_text.clear()
+        self._anchor_ts = 0
+        self._request(0)
+
+    # ---- 导出 CSV（PERM_DOWNLOAD 客户端闸）----
+
+    def _export_data(self):
+        """导出**当前页**为 CSV（utf-8-sig，Excel 双击直开）。
+
+        [权限闸在客户端] 0x0119 服务端按只读面放行（无 export 键可验），
+        下载权限只能由界面把守——无 Download 权限直接提示、不落盘
+        （对齐 C logExportStart 的 HSF_PERM_DOWNLOAD 闸与拒绝文案）。
+        """
+        rows = self._rows
+        if not rows:
+            self.ctx.set_status("无可导出的数据")
+            return
+        if not self.ctx.bridge.can(proto.PERM_DOWNLOAD):
+            self.ctx.set_status("权限不足：下载数据需要普通用户及以上账户")
+            return
+        default = "hsf_log_%s.csv" % time.strftime("%Y%m%d_%H%M%S")
+        path, _selected = QFileDialog.getSaveFileName(
+            self, "导出运行日志", default, "CSV (*.csv)")
+        if not path:
+            return
+        self._write_export(path, rows)
+
+    def _write_export(self, path, rows):
+        """把（已授权的）行集写成 CSV（utf-8-sig；与报警页 _write_export
+        同款写法）。独立成方法：无头测试直接调这里。"""
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+        with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(self.COLUMNS)
+            for texts in rows:
+                writer.writerow([texts[c] if c < len(texts) else ""
+                                 for c in range(len(self.COLUMNS))])
+        self.ctx.set_status("已导出 %d 条 → %s" % (len(rows), path))
+
+    # ==================================================================
+    #        客户端运行日志（折叠副视图；原有能力原样保留）
+    # ==================================================================
+    def _toggle_client_log(self, checked):
+        """勾选展开 / 收起客户端运行日志副视图（一键切换，内容不清零）。"""
+        self._client_card.setVisible(bool(checked))
 
     def append(self, text):
+        """bridge 状态消息收流进客户端运行日志（原 LogPage.append 保留）。"""
         stamp = time.strftime("%H:%M:%S")
         self._lines.append("[%s] %s" % (stamp, text))
         if len(self._lines) > self.MAX_LINES:
@@ -2180,53 +3069,301 @@ class LogPage(Page):
                 self._view.verticalScrollBar().maximum())
 
     def _clear(self):
+        """清空客户端运行日志缓冲与视图（原 _clear 保留）。"""
         self._lines = []
         self._view.clear()
 
 
 class AlarmPage(Page):
-    """报警：设备健康里 health>=2（过期/离线/故障）的条目。"""
+    """报警：设备健康里 health>=2（过期/离线/故障）的条目。
+
+    [工具条筛选（2026-11-09 对齐 C HsfDataAlarm.c）]
+      · **类型下拉**：全部类型 + 8 类设备（与 model.KIND_TEXT 同源，即
+        C 端 alarmRowVisible 的类型集合）；选中类型后只显示该类型行。
+      · **起止时间窗**：语义对齐 C alarmRowVisible / histApplyFilter ——
+        每条记录带 epoch 毫秒时刻，`ts < 起点` 或 `ts > 终点` 的行不显示；
+        两侧留空 = 不限；起点晚于终点时提示并不应用。
+      · **筛选 / 清除筛选**：筛选按钮应用条件；清除把类型回「全部类型」、
+        时间窗回数据全区间（对齐 C alarmClearFilter：看得见的就是全部）。
+      · **列显隐下拉**：全部列 / 单列（对齐 C alarmApplyColumnFilter）。
+      · **行数统计**：「显示 N / 共 M 条」（对齐 C HsfDataBar_setTotalRows）。
+
+    [CSV 导出] 需 Download 权限（对照历史页闸法）；导出**当前筛选命中行**
+    （最新在上），utf-8-sig（Excel 双击直开）。
+
+    [报警次数/分钟折线图] 复用历史页的 LineChartDialog（QPainter 手绘）：
+    当前筛选命中行按分钟聚合（x=分钟、y=次数），表格/图表双视图切换
+    （图表以 Qt.Widget 旗标内嵌进页面，对齐 C alarmSetView 的表↔图）。
+
+    [环形截断] 保留 MAX_ROWS 上限，超出丢最旧（与 C ALARM_MAX_ROWS 同量级）。
+    """
 
     TOPICS = (proto.TOPIC_DEVICE_HEALTH,)
 
     MAX_ROWS = 200
 
+    #: 类型下拉项（下标 0 = 全部类型；其余与 model.KIND_TEXT 顺序一致，
+    #: 对齐 C HsfDataAlarm.c kKinds[8]）。
+    KIND_ITEMS = ("全部类型",) + tuple(model_mod.KIND_TEXT[k]
+                                       for k in range(8))
+
+    COLUMNS = ["时间", "设备", "类型", "状态"]
+
     def __init__(self, ctx):
         Page.__init__(self, ctx)
-        self.add_header("报警", "设备异常记录")
-        self._rows = []
-        self._seen = {}            # (name, health) -> 首次出现时间
+        self.add_header("报警", "设备异常记录（客户端侧边沿记录）")
+        #: [(ts_ms, [时间, 设备, 类型, 状态]), ...] 旧→新（ts 为 epoch 毫秒，
+        #: 时间窗筛选与分钟聚合都要用；显示文本只有 HH:MM:SS，与 C 同口径）。
+        self._records = []
+        self._seen = {}            # (name, health) -> 首次出现 ts（ms）
+        # ---- 筛选状态（对齐 C m_kindFilter / m_loTs / m_hiTs）----
+        self._kind_text = None     # None = 全部类型
+        self._lo_ms = 0            # 时间窗下界（<=0 不限）
+        self._hi_ms = 0            # 时间窗上界（<=0 不限）
+        # ---- 视图状态（0=表格 1=图表；对齐 C m_viewMode）----
+        self._view_mode = 0
+        self._chart_dialog = None
+
+        # ---- 筛选行：类型 + 起止时间窗 + 筛选/清除 + 列显隐 + 行数统计 ----
+        fbar = QHBoxLayout()
+        fbar.setSpacing(8)
+        fbar.addWidget(QLabel("类型"))
+        self._kind_combo = QComboBox()
+        for text in self.KIND_ITEMS:
+            self._kind_combo.addItem(text)
+        self._kind_combo.setMaximumWidth(132)
+        self._kind_combo.setToolTip("只显示选中类型的报警（全部类型 = 不限）")
+        fbar.addWidget(self._kind_combo)
+        fbar.addWidget(QLabel("起始"))
+        self._f_start = TimePickerEdit("yyyy-MM-dd HH:MM 或 HH:MM")
+        self._f_start.setMaximumWidth(120)
+        fbar.addWidget(self._f_start)
+        fbar.addWidget(QLabel("结束"))
+        self._f_end = TimePickerEdit("yyyy-MM-dd HH:MM 或 HH:MM")
+        self._f_end.setMaximumWidth(120)
+        fbar.addWidget(self._f_end)
+        btn_filter = QPushButton("筛选")
+        btn_filter.clicked.connect(self._apply_filter)
+        fbar.addWidget(btn_filter)
+        btn_clear = QPushButton("清除筛选")
+        btn_clear.clicked.connect(self._clear_filter)
+        fbar.addWidget(btn_clear)
+        # [列 = 显示哪一列] 与 C alarmApplyColumnFilter 同口径：0=全部列，
+        # 选中某列时只显示那一列（排查时聚焦"设备"或"状态"用）。
+        fbar.addWidget(QLabel("列"))
+        self._col_combo = QComboBox()
+        self._col_combo.addItem("全部列")
+        for text in self.COLUMNS:
+            self._col_combo.addItem(text)
+        self._col_combo.setMaximumWidth(110)
+        fbar.addWidget(self._col_combo)
+        fbar.addStretch(1)
+        self._count_label = QLabel("")
+        self._count_label.setStyleSheet(theme.caption_label_qss())
+        fbar.addWidget(self._count_label)
+        self.root.addLayout(fbar)
+
+        # ---- 工具行：表格/图表双视图 + 导出 ----
+        bar = QHBoxLayout()
+        bar.setSpacing(8)
+        self._btn_table_view = QPushButton("表格视图")
+        self._btn_table_view.setCheckable(True)
+        self._btn_table_view.setChecked(True)
+        self._btn_table_view.clicked.connect(lambda: self.set_view(0))
+        bar.addWidget(self._btn_table_view)
+        self._btn_chart_view = QPushButton("图表视图")
+        self._btn_chart_view.setCheckable(True)
+        self._btn_chart_view.clicked.connect(lambda: self.set_view(1))
+        bar.addWidget(self._btn_chart_view)
+        bar.addStretch(1)
+        btn_export = QPushButton("导出 CSV")
+        btn_export.clicked.connect(self._export_data)
+        bar.addWidget(btn_export)
+        self.root.addLayout(bar)
+
+        # ---- 数据表卡片（双视图第 0 页）----
         self._table = DataTable()
-        self._table.table.setColumnCount(4)
-        self._table.table.setHorizontalHeaderLabels(
-            ["时间", "设备", "类型", "状态"])
-        card = Card()
-        card.add(self._table)
-        self.root.addWidget(card, 1)
+        # [必须先 setColumnCount] DataTable 缺省 3 列，只设标签不会扩列。
+        self._table.table.setColumnCount(len(self.COLUMNS))
+        self._table.table.setRowCount(0)
+        self._table.table.setHorizontalHeaderLabels(list(self.COLUMNS))
+        self._table.set_column_weights((3, 4, 3, 3))
+        table_card = Card()
+        table_card.add(self._table)
+        table_page = QWidget()
+        tp_lay = QVBoxLayout(table_page)
+        tp_lay.setContentsMargins(0, 0, 0, 0)
+        tp_lay.addWidget(table_card)
+
+        # ---- 图表视图（双视图第 1 页；LineChartDialog 以 Qt.Widget 旗标
+        #      内嵌当普通控件用，复用历史页同一套缩放/平移/气泡交互）----
+        chart_page = QWidget()
+        cp_lay = QVBoxLayout(chart_page)
+        cp_lay.setContentsMargins(0, 0, 0, 0)
+        self._chart_holder = QWidget()
+        # [holder 要有自己的布局] 图表对话框是 set_view 时才建出来塞进来
+        # 的（首次切换才构造），holder 必须先备好布局。
+        ch_lay = QVBoxLayout(self._chart_holder)
+        ch_lay.setContentsMargins(0, 0, 0, 0)
+        self._chart_holder.setMinimumHeight(420)
+        cp_lay.addWidget(self._chart_holder)
+        cp_lay.addStretch(1)
+
+        self._view_stack = QStackedWidget()
+        self._view_stack.addWidget(table_page)      # index 0 = 表格
+        self._view_stack.addWidget(chart_page)      # index 1 = 图表
+        self.root.addWidget(self._view_stack, 1)
+
+        # 列显隐在表格建好之后再接（构造期信号早到也有 hasattr 兜底）。
+        self._col_combo.currentIndexChanged.connect(self._apply_column_filter)
+        self._rebuild()
+
+    # ==================================================================
+    #                        记录（边沿触发）
+    # ==================================================================
 
     def refresh(self):
         """健康状态进入异常时记一条（边沿触发，不重复刷同一状态）。"""
-        changed = False
         for dev in self.ctx.model.health.devices:
             key = (dev.name, dev.health)
             abnormal = dev.health >= 2
             if abnormal and key not in self._seen:
-                self._seen[key] = time.strftime("%H:%M:%S")
-                self._rows.append([self._seen[key], dev.name, dev.kind_text(),
-                                   dev.health_text()])
-                changed = True
+                ts_ms = int(time.time() * 1000)
+                self._seen[key] = ts_ms
+                self._record_alarm(dev.name, dev.kind_text(),
+                                   dev.health_text(), ts_ms)
             elif not abnormal and key in self._seen:
                 # 恢复正常：清掉「已报警」标记，下次再异常还能再记。
                 for k in list(self._seen):
                     if k[0] == dev.name:
                         del self._seen[k]
-        if not changed:
+
+    def _record_alarm(self, name, kind_text, state_text, ts_ms=None):
+        """记一条报警并重铺（测试/诊断入口；正常路径走 refresh 边沿触发）。"""
+        if ts_ms is None:
+            ts_ms = int(time.time() * 1000)
+        stamp = time.strftime("%H:%M:%S", time.localtime(ts_ms / 1000.0))
+        self._records.append((ts_ms, [stamp, name, kind_text, state_text]))
+        if len(self._records) > self.MAX_ROWS:
+            self._records = self._records[-self.MAX_ROWS:]
+        self._rebuild()
+        if self._view_mode == 1:
+            self._refresh_chart()
+
+    # ==================================================================
+    #                        筛选（类型 + 时间窗）
+    # ==================================================================
+
+    def _row_visible(self, ts_ms, row):
+        """一条记录是否落在当前筛选内（类型 + 时间窗）。
+
+        对齐 C alarmRowVisible：类型按文本全等（kindText(m_kindFilter-1)
+        == 行类型）；`ts > 0 且 ts < loTs` 不显示、`ts > hiTs` 不显示，
+        界（lo/hi）为 0 表示该侧不限。
+        """
+        if self._kind_text is not None and row[2] != self._kind_text:
+            return False
+        if self._lo_ms > 0 and ts_ms > 0 and ts_ms < self._lo_ms:
+            return False
+        if self._hi_ms > 0 and ts_ms > self._hi_ms:
+            return False
+        return True
+
+    def _visible_records(self):
+        """当前筛选命中的记录（**最新在前**，铺表/导出/图表共用）。"""
+        return [(ts_ms, row) for ts_ms, row in reversed(self._records)
+                if self._row_visible(ts_ms, row)]
+
+    def _time_window_ms(self):
+        """筛选框文本 → (lo_ms, hi_ms)；空框 = 0（不限）。
+
+        归一化复用历史页 _norm_stamp（HH:MM 当天 / 带日期全键），
+        再经 _stamp_to_ms 落成 epoch 毫秒 —— 与记录的 ts_ms 同一时间轴。
+        """
+        lo = HistoryPage._norm_stamp(self._f_start.text(), is_end=False) \
+            if self._f_start.text().strip() else None
+        hi = HistoryPage._norm_stamp(self._f_end.text(), is_end=True) \
+            if self._f_end.text().strip() else None
+        lo_ms = HistoryPage._stamp_to_ms(lo) if lo is not None else 0
+        hi_ms = HistoryPage._stamp_to_ms(hi) if hi is not None else 0
+        return lo_ms or 0, hi_ms or 0
+
+    def _apply_filter(self):
+        """应用类型 + 时间窗筛选（对齐 C alarmApplyFilter）。"""
+        raw_start = self._f_start.text().strip()
+        raw_end = self._f_end.text().strip()
+        if raw_start and HistoryPage._norm_stamp(raw_start, is_end=False) \
+                is None:
+            self.ctx.set_status("起始时间格式不对（HH:MM / MM-dd HH:MM / "
+                                "yyyy-MM-dd HH:MM）")
             return
-        if len(self._rows) > self.MAX_ROWS:
-            self._rows = self._rows[-self.MAX_ROWS:]
+        if raw_end and HistoryPage._norm_stamp(raw_end, is_end=True) is None:
+            self.ctx.set_status("结束时间格式不对（HH:MM / MM-dd HH:MM / "
+                                "yyyy-MM-dd HH:MM）")
+            return
+        lo_ms, hi_ms = self._time_window_ms()
+        if lo_ms > 0 and hi_ms > 0 and lo_ms > hi_ms:
+            self.ctx.set_status("起始时间晚于结束时间，未筛选")
+            return
+        idx = self._kind_combo.currentIndex()
+        self._kind_text = None if idx <= 0 else self.KIND_ITEMS[idx]
+        self._lo_ms = lo_ms
+        self._hi_ms = hi_ms
+        self._rebuild()
+        if self._view_mode == 1:
+            self._refresh_chart()
+
+    def _clear_filter(self):
+        """清除筛选：类型回全部、时间窗回数据全区间、列回全部。
+
+        [时间框回填成实际数据区间] 对齐 C alarmClearFilter 的注释：
+        「看得见的就是全部」，不清空也不复位成"过去 24h"——那会让人
+        以为只在看一天。
+        """
+        self._kind_combo.setCurrentIndex(0)
+        self._kind_text = None
+        if self._col_combo.currentIndex() != 0:
+            self._col_combo.setCurrentIndex(0)     # 触发 _apply_column_filter
+        else:
+            self._apply_column_filter()
+        self._lo_ms = 0
+        self._hi_ms = 0
+        if self._records:
+            first = time.strftime("%Y-%m-%d %H:%M:%S",
+                                  time.localtime(self._records[0][0] / 1000.0))
+            last = time.strftime("%Y-%m-%d %H:%M:%S",
+                                 time.localtime(self._records[-1][0] / 1000.0))
+            self._f_start.setText(first)
+            self._f_end.setText(last)
+        else:
+            self._f_start.clear()
+            self._f_end.clear()
+        self._rebuild()
+        if self._view_mode == 1:
+            self._refresh_chart()
+
+    def _apply_column_filter(self, *_args):
+        """按「列」下拉隐藏列（0=全部列；对齐 C alarmApplyColumnFilter）。
+
+        走 DataTable.set_visible_columns：列宽分配器只对可见列分像素，
+        隐藏列腾出的宽度不会留白。
+        """
+        if not hasattr(self, "_table"):
+            return                          # 构造期信号早到，表格还没建
+        idx = self._col_combo.currentIndex()
+        cols = list(range(len(self.COLUMNS))) if idx <= 0 else [idx - 1]
+        self._table.set_visible_columns(cols)
+
+    # ==================================================================
+    #                        铺表 / 行数统计
+    # ==================================================================
+
+    def _rebuild(self):
+        """把筛选命中的行铺进表格（最新在上）并刷新行数统计。"""
+        visible = self._visible_records()
         table = self._table.table
-        table.setRowCount(len(self._rows))
-        for r, row in enumerate(reversed(self._rows)):
+        table.setRowCount(len(visible))
+        for r, (_ts, row) in enumerate(visible):
             for c, text in enumerate(row):
                 item = table.item(r, c)
                 if item is None:
@@ -2235,6 +3372,93 @@ class AlarmPage(Page):
                     table.setItem(r, c, item)
                 item.setText(text)
         table.verticalHeader().setDefaultSectionSize(theme.TABLE_ROW_H)
+        self._count_label.setText("显示 %d / 共 %d 条"
+                                  % (len(visible), len(self._records)))
+
+    # ==================================================================
+    #                        CSV 导出（需 Download 权限）
+    # ==================================================================
+
+    def _export_data(self):
+        """导出**当前筛选命中行**（最新在上）为 CSV。
+
+        [权限闸对齐历史页] 无 Download 权限直接提示、不落盘（界面侧；
+        服务端还会验 export 帧）。文件 utf-8-sig，Excel 双击直开。
+        """
+        rows = [row for _ts, row in self._visible_records()]
+        if not rows:
+            self.ctx.set_status("无可导出的数据")
+            return
+        if not self.ctx.bridge.can(proto.PERM_DOWNLOAD):
+            self.ctx.set_status("权限不足：下载数据需要普通用户及以上账户")
+            return
+        default = "hsf_alarm_%s.csv" % time.strftime("%Y%m%d_%H%M%S")
+        path, _selected = QFileDialog.getSaveFileName(
+            self, "导出报警记录", default, "CSV (*.csv)")
+        if not path:
+            return
+        self._write_export(path, rows)
+
+    def _write_export(self, path, rows):
+        """把（已授权的）行集写成 CSV（utf-8-sig；与历史页 _write_export
+        的 CSV 分支同款写法）。独立成方法：无头测试直接调这里。"""
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+        with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(self.COLUMNS)
+            for texts in rows:
+                writer.writerow([texts[c] if c < len(texts) else ""
+                                 for c in range(len(self.COLUMNS))])
+        self.ctx.set_status("已导出 %d 条 → %s" % (len(rows), path))
+
+    # ==================================================================
+    #              报警次数/分钟折线图 + 表格/图表双视图
+    # ==================================================================
+
+    def _chart_series(self):
+        """当前筛选命中行按分钟聚合 → [(名称, [(分钟起点ms, 次数), ...])]。
+
+        对齐 C alarmBuildChart：只统计筛选命中的行；x 用**分钟起点的
+        epoch 毫秒**（LineChartDialog 的 X 轴按时间比例画刻度）；没有
+        报警的分钟不出点（断点不补——编造的数据比缺口更危险）。
+        """
+        buckets = {}
+        for ts_ms, _row in self._visible_records():
+            if ts_ms <= 0:
+                continue
+            minute = ts_ms // 60000 * 60000
+            buckets[minute] = buckets.get(minute, 0) + 1
+        return [("报警次数/分钟", sorted(buckets.items()))]
+
+    def _refresh_chart(self):
+        """（重）建图表视图数据：首次内嵌对话框，之后原地换数据。"""
+        series = self._chart_series()
+        if self._chart_dialog is None:
+            dialog = LineChartDialog(series, self)
+            # [内嵌] Qt.Widget 旗标让 QDialog 当普通控件进布局：表格/图表
+            # 双视图在同一页内切换（对齐 C alarmSetView），而不是弹独立窗。
+            dialog.setWindowFlags(Qt.Widget)
+            self._chart_holder.layout().addWidget(dialog)
+            self._chart_dialog = dialog
+        else:
+            self._chart_dialog.set_series(series)
+        if not series[0][1]:
+            self.ctx.set_status("暂无报警记录，图表为空")
+
+    def set_view(self, mode):
+        """表格/图表双视图切换（0=表格 1=图表；对齐 C alarmSetView）。"""
+        mode = 1 if mode == 1 else 0
+        if mode == self._view_mode:
+            return
+        self._view_mode = mode
+        if mode == 1:
+            self._refresh_chart()
+            if self._chart_dialog is not None:
+                self._chart_dialog.show()
+        self._view_stack.setCurrentIndex(mode)
+        self._btn_table_view.setChecked(mode == 0)
+        self._btn_chart_view.setChecked(mode == 1)
 
 
 # ============================================================================

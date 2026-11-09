@@ -72,6 +72,11 @@ static int homePx(int px)
 #define HOME_HEAD_H          34   /**< 表头高（px；行高 + 2px 分隔）。 */
 #define HOME_ALIGN_CENTER    XPAINTER_TEXT_ALIGN_CENTER  /**< 居中（Qt AlignCenter 口径）。 */
 
+/* [详情浮层手机档断点 2026-11-09] 页根宽 < 520（手机竖屏内容区）⇒ 浮层
+ * 贴满内容区（页根矩形内缩 8px、跳过定宽居中）；>=520 走原定宽居中，
+ * 宽档行为零变化。 */
+#define HOME_FLOAT_FILL_MAX_W 520
+
 /* ==================== 数值块 ==================== */
 
 /**
@@ -1086,6 +1091,23 @@ static void hsfHomeCenterFloat(HsfHomePage* self)
     if (!self || !self->m_detailFloat) return;
     pw = (int)XWidget_width(&self->m_base);
     ph = (int)XWidget_height(&self->m_base);
+    /* [手机档贴满内容区 2026-11-09] 页根 <520（手机竖屏档）时不再按定宽
+     * 居中：设备状态 980 / 阀浮层 760 / 泵浮层 640 的定宽会被下方 pw-24
+     * 钳成细条、浮层内容挤压（勘察缺口）。改为直接贴满内容区——几何=
+     * 页根矩形内缩 8px，居中逻辑与定宽下限全部跳过（表/读数交给滚动区
+     * 与自身布局收放）。幂等：几何由当前页根尺寸唯一决定，同尺寸重入
+     * 结果不变（与宽档同一口径的纯重算，无累积状态）。宽档（>=520）
+     * 不进此分支，原钳口居中行为零变化。 */
+    if (pw < HOME_FLOAT_FILL_MAX_W) {
+        int fw = pw - 16 > 0 ? pw - 16 : 0;   /* 内缩 8px × 2 */
+        int fh = ph - 16 > 0 ? ph - 16 : 0;
+        XWidget_setFixedSize((XWidget*)self->m_detailFloat, fw, fh);
+        XWidget_setGeometry((XWidget*)self->m_detailFloat, 8, 8, fw, fh);
+        /* [定尺之后才许算列宽] 与宽档同口径（见 hsfHomeFitTableColumns
+         * 说明）；窄档表格挤不下时该函数自留 60px 托底改横滚，不裁列。 */
+        hsfHomeFitTableColumns(self);
+        return;
+    }
     if (self->m_detailMode == HOME_DETAIL_HEALTH) {
         w = 980;
         h = 108 + self->m_tableRows * HOME_ROW_H;  /* 标题行 + 边距 + 表(表头+行) */
@@ -2242,6 +2264,15 @@ void HsfHomePage_adapt(XWidget* page, bool compact)
 
     /* 三卡：宽屏横排 / 窄屏竖排。 */
     XBoxLayout_setDirection(&self->m_cardsRow,
+                            compact ? XBoxLayoutDirection_TopToBottom
+                                    : XBoxLayoutDirection_LeftToRight);
+    /* [第二行同款翻排 2026-11-09] 压差/流量计/电磁阀三卡窄屏也竖排：
+     * 此前只翻 m_cardsRow，第二行 3 卡仍横排硬挤一行（勘察缺口）。照第
+     * 一行同款写法补齐——同方向翻转、宽档统一复原 LeftToRight；幂等由
+     * XBoxLayout_setDirection 同值早退保证（方向未变直接 return，每拍
+     * 重入无副作用），重排激活走下方 m_layout activate（子布局 activate
+     * 回归父布局统一重解算）。 */
+    XBoxLayout_setDirection(&self->m_cardsRow2,
                             compact ? XBoxLayoutDirection_TopToBottom
                                     : XBoxLayoutDirection_LeftToRight);
     /* 页边距：窄屏收窄腾内容宽。 */

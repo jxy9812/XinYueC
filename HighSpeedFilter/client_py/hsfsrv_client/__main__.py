@@ -10,6 +10,7 @@
 import argparse
 import os
 import sys
+import time
 
 # [双击兜底] 同 server 侧：直接运行本文件时 __package__ 为空，相对导入会抛
 # ImportError 并秒退（窗口一闪而过）。先加 sys.path 再以包方式重入；
@@ -245,7 +246,20 @@ def main(argv=None):
         QTimer.singleShot(args.seconds * 1000, app.quit)
 
     code = app.exec_()
+    # [顺序化拆卸 2026-11-09] 与 tests/test_vfd_combo 同款：断开(闸网络线程
+    # 发射)→关窗→泵循环消化 deleteLater→显式释放窗，再 return——return 时
+    # 局部引用无序释放会让主窗级联析构跑到一半有处理器 emit 进半死接收方
+    # （pyqtBoundSignal_emit 段错误，xcb 平台偶发，台账 §6.6）。
     bridge.disconnect_from()
+    win.close()
+    QTimer.singleShot(0, app.quit)
+    for _ in range(50):
+        app.processEvents()
+        time.sleep(0.02)
+    del win, bridge
+    import gc as _gc
+
+    _gc.collect()
     return code
 
 

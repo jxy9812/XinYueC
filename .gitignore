@@ -594,3 +594,7 @@ verify/wt/
 # client_py/tools/xlsx_bridge/ 与 HighSpeedFilter/CMakeLists.txt）
 HighSpeedFilter/client_py/hsfsrv_client/bin/
 HighSpeedFilter/client_py/tools/xlsx_bridge/build/
+
+# 段错误 core 转储（调试即弃；core_pattern=core 时按 cwd 落盘）
+core
+core.[0-9]*

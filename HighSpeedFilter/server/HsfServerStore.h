@@ -15,7 +15,7 @@ extern "C" {
 
 /**
  * @file       HsfServerStore.h
- * @brief      服务端 SQLite 落盘层：历史采样 / 告警事件 两张表。
+ * @brief      服务端 SQLite 落盘层：历史采样 / 告警事件 / 运行日志 三张表。
  * @details    对齐 Python 侧 `hsfsrv/store.py`（三表合一文件、失败不致命、
  *             WAL 写读不互锁）。本层只负责「把一行行数据写进库」；**采样
  *             内容的拼装在 HsfServerApp**（与推送同源——同一批设备对象、
@@ -25,6 +25,11 @@ extern "C" {
  *             服务端自身（设备名/模式文案/告警文字），无任何外部输入，
  *             故用字面量拼装 + 单引号加倍转义，不走过绑定期——少一层
  *             占位符风格（? 与 :name）的驱动差异面。
+ *
+ *             [logs 表与 Python 差异] Python store.py 的 logs 表是
+ *             (ts, text) 两列；C 端为日志页的类别筛选加了 category 列
+ *             （(ts, category, text) 三列，类别入库口径见 insertLog）。
+ *             库文件两端各自持有（不互开对方的库），列差异互不影响。
  *
  *             线程模型：单线程事件循环；全部 API 须在 XCoreApplication
  *             事件循环内调用。
@@ -223,6 +228,61 @@ bool HsfServerStore_insertHistory(HsfServerStore* st, const HsfHistoryRow* row);
  */
 bool HsfServerStore_insertAlarm(HsfServerStore* st, const char* kind,
                                 const char* source, const char* text);
+
+/* ==================== 运行日志（logs 表；HSF_CMD_LOG_PAGE 数据源） ==================== */
+
+/**
+ * @brief 运行日志一行（查询输出；text 截断到缓冲容量，不入库截断在调用方）。
+ * @details category 入库口径（HsfServerApp 关键事件定点入库）：
+ *            conn  —— 会话接入/断开；
+ *            ctrl  —— 控制命令受理/拒绝（数字量写、自动模式拒控制）；
+ *            alarm —— 阀告警等设备级异常事件；
+ *            auto  —— 自动运行启停/急停/复位、运行模式切换；
+ *            auth  —— 登录成功/被拒。
+ *          日常周期性日志（遥测、推送、采样）**不**入库——logs 表只收
+ *          运维要翻的事件，防止 5s 一行把分页冲成流水账。
+ */
+typedef struct HsfLogRow {
+    int64_t m_ts;            /**< 事件时刻（**墙钟** epoch 毫秒）。 */
+    char m_category[16];     /**< 类别（utf8；上表口径，空=旧无类别行）。 */
+    char m_text[256];        /**< 事件文本（utf8）。 */
+} HsfLogRow;
+
+/**
+ * @brief 写一条运行日志（logs 表；未开库=空操作返回 false，不抛错）。
+ * @param st 落盘层。
+ * @param tsMs 事件时刻（墙钟 epoch 毫秒；<=0 时取当前墙钟）。
+ * @param category 类别（utf8；可 NULL=空串）。
+ * @param text 事件文本（utf8；可 NULL=空串；超长按缓冲容量截断）。
+ * @return 写入成功返回 true。
+ */
+bool HsfServerStore_insertLog(HsfServerStore* st, int64_t tsMs,
+                              const char* category, const char* text);
+
+/**
+ * @brief 取一页运行日志（**时间正序**输出，与 queryHistory 同口径）。
+ * @param st 落盘层。
+ * @param offset 跳过多少行（按 ts 倒序数；0=最新那条）。
+ * @param limit 本页最多多少行（<=0 夹到 1）。
+ * @param loMs 时间下界（epoch 毫秒；<=0=不限）。
+ * @param hiMs 时间上界（epoch 毫秒；<=0=不限；同 queryHistory 只认
+ *             >= HSF_STORE_VALID_TS_MIN 的有效墙钟）。
+ * @param category 类别过滤（utf8 精确匹配；NULL/空=全部）。
+ * @param kw 关键字（utf8；NULL/空=不筛）。**下推服务端**：text 与
+ *           category 列拼接后 LIKE 匹配、ESCAPE 转义（口径照本文件
+ *           storeBuildKwCondition——总数与页内容共用同一条 WHERE）。
+ * @param outRows 行输出缓冲（调用方提供；容量 outMaxRows）。
+ * @param outMaxRows 行缓冲容量（行数）。
+ * @param outTotal 本窗口（时间+类别+关键字过滤后）命中总行数（可 NULL）。
+ * @return 实际写入的行数（<=0=无数据/未开库）。
+ * @details [窗口锚点] 与 queryHistory 同理：分页窗口由调用方给的 hiMs
+ *          固定，翻页不被新入库行顶偏（logs 表同样在持续入库）。
+ */
+int HsfServerStore_queryLogs(HsfServerStore* st, int offset, int limit,
+                             int64_t loMs, int64_t hiMs,
+                             const char* category, const char* kw,
+                             HsfLogRow* outRows, int outMaxRows,
+                             int* outTotal);
 
 #endif /* XSQL_ON */
 

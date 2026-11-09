@@ -55,6 +55,7 @@ static int XLinkServerPrivate_authLookup(void* userData, const char* user,
                                          uint8_t hashOut[XLINK_AUTH_NONCE_BYTES],
                                          uint8_t* roleOut);
 static void XLinkServerPrivate_authChanged(XObject* receiver, XVarList* args);
+static void XLinkServerPrivate_txResyncNeeded(XObject* receiver, XVarList* args);
 
 /**
  * @brief 凭据查询回调：从账户库按用户名取盐/迭代/摘要/角色。
@@ -107,6 +108,26 @@ static void XLinkServerPrivate_authChanged(XObject* receiver, XVarList* args)
 }
 
 #endif /* XLINK_AUTH_ON */
+
+/**
+ * @brief 「推送失步已排空」信号槽：转发给应用注册的失步补发回调。
+ * @note  会话在 txFlush/pump 栈上同步发射（Auto 连接=本栈直调），槽内
+ *        应用回调可安全对该会话补发（重新入队）。无回调注册时静默返回
+ *        ——踢线兜底仍在会话层生效，不会丢失保护。
+ */
+static void XLinkServerPrivate_txResyncNeeded(XObject* receiver, XVarList* args)
+{
+    XLinkServer* self = (XLinkServer*)receiver;
+
+    if (!self || !args)
+        return;
+    /* [args_N 遮蔽陷阱] 宏展开自带 const 声明，解包名不得在本块预声明。 */
+    XVarList_args_2(args, int, resyncFrames, XLinkSession*, resyncSession);
+    if (!self->m_resyncCallback || !resyncSession)
+        return;
+    self->m_resyncCallback(resyncSession, self->m_resyncUserData);
+    (void)resyncFrames;
+}
 
 /** @brief 接受全部待处理连接并建会话（套能力位/回调模板）。
  *  @note  accept 与建会话在调用栈上同步完成；会话挂载传输后自动接线
@@ -179,6 +200,14 @@ static void XLinkServerPrivate_acceptPending(XLinkServer* self)
         }
         XLinkSession_setDispatchCallback(session, self->m_dispatchCallback,
                                          self->m_userData);
+        /* [推送失步根修 2026-11-09] 每个新会话的「失步排空」信号接到服务端，
+         * 由槽转发给应用注册的补发回调（订阅表全量补发，消除拥塞窗丢帧的
+         * 状态分歧）。与 authChanged 同款 XObject_connect_1 接线。 */
+        XObject_connect_1((XObject*)session,
+                          XSignal(XLinkSession_txResyncNeeded_signal),
+                          (XObject*)self,
+                          XLinkServerPrivate_txResyncNeeded,
+                          XConnectionType_Auto);
 #if XLINK_FILE_ON
         /* 文件传输：能力位补 FileTransfer（对端据此判断能否发 File 帧），
            并把 File 消息类转给引擎。注意必须在上面模板能力位设置之后做，
@@ -510,6 +539,17 @@ bool XLinkServer_setDispatchCallback(XLinkServer* self,
         return false;
     self->m_dispatchCallback = callback;
     self->m_userData = userData;
+    return true;
+}
+
+bool XLinkServer_setResyncCallback(XLinkServer* self,
+                                   XLinkServerResyncCallback callback,
+                                   void* userData)
+{
+    if (ISNULL(self, "XLinkServer_setResyncCallback self"))
+        return false;
+    self->m_resyncCallback = callback;
+    self->m_resyncUserData = userData;
     return true;
 }
 

@@ -80,6 +80,9 @@ class LinkBridge(QObject):
         self.user = ""
         self.role = 0
         self.connected_flag = False
+        #: [退出竞态闸 2026-11-09] True = disconnect_from 已启动：网络线程
+        #  的一切 Qt 信号发射立即静默（Qt 对象可能正在被主线程析构）。
+        self._shutting_down = False
         #: 当前已订阅的主题集合（UI 线程读写，网络线程只读快照）。
         self._subscribed = set()
         self._lock = threading.Lock()
@@ -123,17 +126,34 @@ class LinkBridge(QObject):
             self._refresh_health()
         else:
             self.connected_flag = False
-            self.authFailed.emit(err)
+            self._emit_net(self.authFailed, err)
         return ok, err
 
     def disconnect_from(self):
+        # [退出竞态闸] 必须在关 client 之前置位：close 触发的断线/重连
+        # 状态迁移信号全部静默，杜绝「主线程拆卸中、网络线程还在 emit」
+        # 的段错误（pyqtBoundSignal_emit UAF，2026-11-09 根修，台账 §六）。
+        self._shutting_down = True
         self.connected_flag = False
         with self._lock:
             self._subscribed.clear()
         if self.client is not None:
+            self.client.auto_reconnect = False
             self.client.close()
             self.client = None
         self._refresh_timer.stop()
+
+    def _emit_net(self, signal, *args):
+        """网络线程发 Qt 信号的唯一入口：关闭流程中静默。
+
+        [为什么需要] request/push 的回调都在网络线程执行，`signal.emit`
+        是从非 UI 线程触碰桥对象——正常期 Qt 自动排队没问题，但退出
+        拆卸期主线程的 QObject 已析构，emit 就是 UAF（实测段错误，
+        core 栈 pyqtBoundSignal_emit ← asyncio 网络线程）。
+        """
+        if self._shutting_down:
+            return
+        signal.emit(*args)
 
     def is_connected(self):
         return self.connected_flag
@@ -169,16 +189,16 @@ class LinkBridge(QObject):
                 # 重连后订阅表已随旧会话作废，清空以便上层重新 set_topics。
                 with self._lock:
                     self._subscribed.clear()
-                self.connected.emit(self.role)
+                self._emit_net(self.connected, self.role)
             return
         if state == SessionState.DISCONNECTED and self.connected_flag:
             self.connected_flag = False
-            self.disconnected.emit("连接已断开")
+            self._emit_net(self.disconnected, "连接已断开")
 
     def _on_auth_result(self, ok, role, err):
         if not ok:
             self.connected_flag = False
-            self.authFailed.emit(err)
+            self._emit_net(self.authFailed, err)
 
     def _on_publish(self, topic, payload, data_type):
         """推送到达（**网络线程**）：解包成 model，再信号通知 UI。
@@ -194,7 +214,7 @@ class LinkBridge(QObject):
         except ValueError:
             return
         self._apply_doc(kind, doc)
-        self.dataUpdated.emit(kind)
+        self._emit_net(self.dataUpdated, kind)
 
     def _apply_doc(self, kind, doc):
         """把解出的 dict 合并进 model（按 kind 分派）。"""
@@ -328,7 +348,7 @@ class LinkBridge(QObject):
         doc = self.request_sync(proto.CMD_DEVICE_HEALTH, timeout=3.0)
         if doc:
             self.model.health.apply(doc)
-            self.dataUpdated.emit("health")
+            self._emit_net(self.dataUpdated, "health")
 
     def _apply_mode_doc(self, doc):
         """把模式帧落到 model（**模式位与运行位分开读**）。
@@ -350,7 +370,7 @@ class LinkBridge(QObject):
             except ValueError:
                 return
             self._apply_mode_doc(doc)
-            self.dataUpdated.emit("mode")
+            self._emit_net(self.dataUpdated, "mode")
             if on_done:
                 on_done(doc)
         self.request(proto.CMD_RUN_MODE, None, on_done=_done)
@@ -364,7 +384,7 @@ class LinkBridge(QObject):
                 return
             if doc.get("ok"):
                 self._apply_mode_doc(doc)
-                self.dataUpdated.emit("mode")
+                self._emit_net(self.dataUpdated, "mode")
             if on_done:
                 on_done(doc)
         self.request(proto.CMD_RUN_MODE, {"mode": int(mode)}, on_done=_done,
@@ -388,7 +408,7 @@ class LinkBridge(QObject):
                 doc = {}
             if doc.get("ok"):
                 self._apply_mode_doc(doc)
-                self.dataUpdated.emit("mode")
+                self._emit_net(self.dataUpdated, "mode")
             if on_done:
                 on_done(doc)
         self.request(proto.CMD_AUTO_CONTROL, {"on": bool(on)},
@@ -413,7 +433,7 @@ class LinkBridge(QObject):
         界面毫无反应（用户反馈"点了保存没生效"的根因）。
         """
         if on_error is None:
-            on_error = lambda e: self.statusMessage.emit(  # noqa: E731
+            on_error = lambda e: self._emit_net(self.statusMessage,   # noqa: E731
                 "配置请求失败：%s" % e)
 
         def _done(code, dtype, data):
@@ -436,7 +456,7 @@ class LinkBridge(QObject):
         应答 doc（约定同 config_get）。
         """
         if on_error is None:
-            on_error = lambda e: self.statusMessage.emit(  # noqa: E731
+            on_error = lambda e: self._emit_net(self.statusMessage,   # noqa: E731
                 "配置请求失败：%s" % e)
         payload = dict(values or {})
         payload["section"] = str(section)
@@ -493,7 +513,7 @@ class LinkBridge(QObject):
             # [下载权限] 导出意图上服务端验权（界面灰按钮拦不住直接发帧）。
             doc[proto.HIST_KEY_EXPORT] = True
         if on_error is None:
-            on_error = lambda e: self.statusMessage.emit(  # noqa: E731
+            on_error = lambda e: self._emit_net(self.statusMessage,   # noqa: E731
                 "历史数据请求失败：%s" % e)
 
         def _done(code, dtype, data):
@@ -505,6 +525,57 @@ class LinkBridge(QObject):
                 on_done(got)
 
         self.request(proto.CMD_HISTORY_PAGE, doc, on_done=_done,
+                     on_error=on_error, timeout=timeout)
+
+    def log_page(self, offset=0, limit=None, before_ts=None, lo_ts=None,
+                 hi_ts=None, category=None, kw=None,
+                 on_done=None, on_error=None, timeout=5.0):
+        """分页查询服务端运行日志（CMD_LOG_PAGE=0x0119；**C 端扩展**）。
+
+        :param offset: 跳过多少行（0 = 最新一段；时间 DESC 取页、页内正序）。
+        :param limit:  本页行数（客户端说了算；服务端夹到 1..50）。
+        :param before_ts: 分页窗口锚点。**新查询发一次、翻页原样回传**——
+            缺省/0 = 服务端取"现在"，但那样翻页时窗口会跟着走 ⇒ 客户端
+            在发包前把锚定格成自己的"现在"再发送（C 端 logRequest 同口径）。
+        :param lo_ts/hi_ts: 时间窗（epoch 毫秒；推到 SQL 里筛，total 与
+            页内容共用同一条 WHERE，与 0x0118 同机制）。
+        :param category: 类别过滤（conn/ctrl/alarm/auto/auth；None/空=全部）。
+        :param kw: 关键字（下推服务端，text+category 列 LIKE 匹配）。
+        on_done 收已解码的 doc：{"ok","rows":[{ts,category,text}…],
+        "total","count","offset","limit"}；offset/limit 由服务端原样回显，
+        客户端做在途应答归属判定（防串页，与 history_page 同机制）。
+
+        [为什么 server_py 连不上时本方法没有用] server_py 不实现 0x0119，
+        老服务端会回 {"ok":false,"err":"未知命令"}——页面按否定应答提示，
+        不会崩。
+        """
+        if limit is None:
+            limit = proto.LOG_PAGE_DEFAULT
+        doc = {proto.KEY_LOG_OFFSET: max(0, int(offset)),
+               proto.KEY_LOG_LIMIT: int(limit)}
+        if before_ts is not None and int(before_ts) > 0:
+            doc[proto.KEY_LOG_BEFORE_TS] = int(before_ts)
+        if lo_ts is not None and int(lo_ts) > 0:
+            doc[proto.KEY_LOG_LO_TS] = int(lo_ts)
+        if hi_ts is not None and int(hi_ts) > 0:
+            doc[proto.KEY_LOG_HI_TS] = int(hi_ts)
+        if category:
+            doc[proto.KEY_LOG_CATEGORY] = str(category)
+        if kw:
+            doc[proto.KEY_LOG_KW] = str(kw)
+        if on_error is None:
+            on_error = lambda e: self._emit_net(self.statusMessage,   # noqa: E731
+                "运行日志请求失败：%s" % e)
+
+        def _done(code, dtype, data):
+            try:
+                got = bson.decode(data) if dtype == proto.DATATYPE_BSON else {}
+            except ValueError:
+                got = {}
+            if on_done:
+                on_done(got)
+
+        self.request(proto.CMD_LOG_PAGE, doc, on_done=_done,
                      on_error=on_error, timeout=timeout)
 
     def send_digital_control(self, dev, on_done=None, on_error=None,
@@ -564,7 +635,7 @@ class LinkBridge(QObject):
         try:
             fn()
         except Exception as exc:                        # noqa: BLE001
-            self.statusMessage.emit("界面回调异常：%s" % exc)
+            self._emit_net(self.statusMessage, "界面回调异常：%s" % exc)
 
     def _on_refresh_tick(self):
         for fn in list(self._refresh_listeners):
@@ -572,4 +643,4 @@ class LinkBridge(QObject):
                 fn()
             except Exception as exc:                    # noqa: BLE001
                 # 单个页面的刷新异常不得拖垮整个界面。
-                self.statusMessage.emit("刷新异常：%s" % exc)
+                self._emit_net(self.statusMessage, "刷新异常：%s" % exc)

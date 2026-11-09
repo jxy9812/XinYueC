@@ -297,12 +297,16 @@ TOPIC_VALVE_STATUS = 0x00010007
 
 #: 阀动作超时告警主题（载荷 = 单条告警 BSON）。
 #:
-#: [为什么单独一个主题而不是塞进阀状态] 阀状态主题是**周期推送**（200ms
-#: 一拍），超时告警是**事件**（发生才推一次）。混在一起有两个问题：
-#:   ① 客户端每 200ms 收一帧重复告警，无法区分"新告警"与"仍在超时"；
-#:   ② 只看数字量页/主界面的客户端没订阅阀主题，就收不到这条告警。
-#: 故告警走独立主题，且**全推给所有已连接会话**（不要求订阅）——见
-#: app._broadcast_valve_alarm。
+#: [⚠ 口径订正 2026-11-09] 阀告警**实际并不走本主题**：与 C 侧
+#: HsfServerApp.c hsfAppPushValveAlarms 同口径，告警随 0x00010007
+#: （TOPIC_VALVE_STATUS）**合帧推送**——载荷带 "alarms" 数组 + "ac" 条数
+#: 键（见 app._publish_valve_alarms），客户端按"载荷里有 alarms 就走告警
+#: 分支"处理。本主题 0x00010008 为**遗留未用**：编号保留不回收（防止将来
+#: 新主题复用此号造成新旧客户端错配），勿在其上启用新语义。
+#:
+#: [历史备注] 当初单独开主题的理由（周期推送与事件混推会刷屏/漏订阅）
+#: 依然成立，只是落地方案改为"同主题内事件帧与状态帧按键空间区分"
+#: （状态用 v{i}_* 前缀，事件用 alarms 数组），效果等价。
 TOPIC_VALVE_ALARM = 0x00010008
 
 
@@ -485,6 +489,17 @@ CFG_LOGIN_MAX_SESSIONS_MAX = 256
 #: 值数组」压到约 230B/行。16KB 载荷上限下，单页上限因此从 ~48 行提到
 #: ~65 行（实测 50 行 = 11.8KB，留足余量）。
 CMD_HISTORY_PAGE = 0x0118
+
+#: 运行日志分页（**C 端扩展命令**，2026-11-09；server_py 不实现该命令）。
+#:
+#: C 侧 HighSpeedFilter/common/XhsfLinkProto.h 的 HSF_CMD_LOG_PAGE=0x0119u
+#: 与此处常量逐值同步（两端协议常量铁律）；server_py 的 logs 表列
+#: (ts, category, text) 中 category 是 C 端扩展列（store.py 同表只有
+#: ts/text，两端库文件各自持有）。Python 客户端（client_py）消费该命令。
+#: 载荷 {"limit":1..50,"offset":int,"beforeTs"?:epochMs,"loTs"?:,"hiTs"?:,
+#: "category"?:str,"kw":?}；应答 {"ok","err"?,"rows":[{ts,category,text}],
+#: "total","offset","limit"}（时间 DESC 取页、页内正序）。
+CMD_LOG_PAGE = 0x0119
 
 #: 分页载荷键。
 HIST_KEY_OFFSET = "offset"

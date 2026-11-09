@@ -65,6 +65,7 @@ typedef struct HsfLinkClientState {
     XVfdStatus m_vfdStatus;             /**< 最近遥测（解码产物）。 */
 #endif
     HsfHistoryPage m_history;          /**< 最近一次历史分页结果（0x0118）。 */
+    HsfLinkLogPage m_logPage;          /**< 最近一次运行日志分页结果（0x0119）。 */
     HsfConfig m_config;                /**< 最近一次远端配置快照（0x0116）。 */
     int m_cfgSeq;                      /**< 配置**写**应答序号（0=从未收到）。 */
     int m_cfgGetSeq;                   /**< 配置快照序号（GET 应答递增）。 */
@@ -137,6 +138,7 @@ static bool hsfLcParseValves(const uint8_t* data, uint32_t len);
 static void hsfLcParseValveCmdResult(const uint8_t* data, uint32_t len,
                                       int index);
 static void hsfLcNotifyValves(void);
+static bool hsfLcParseLogPage(const uint8_t* data, uint32_t len);
 
 /* ==================== 内部工具 ==================== */
 
@@ -787,6 +789,12 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
         if (frame->m_msgCode == HSF_CMD_HISTORY_PAGE) {
             (void)HsfHistoryPage_parse(payload, frame->m_payloadLen,
                                        &s_lc.m_history);
+            break;
+        }
+        if (frame->m_msgCode == HSF_CMD_LOG_PAGE) {
+            /* 日志分页应答：解析进独立槽（与 0x0118 的 m_history 互不覆盖，
+             * 两个页面各看各的，不存在历史页那种"单一应答槽串扰"问题）。 */
+            (void)hsfLcParseLogPage(payload, frame->m_payloadLen);
             break;
         }
         if (frame->m_msgCode == HSF_CMD_CONFIG_GET) {
@@ -2107,6 +2115,139 @@ bool HsfLinkClient_historyPage(int offset, int limit)
 const HsfHistoryPage* HsfLinkClient_history(void)
 {
     return &s_lc.m_history;
+}
+
+/* ==================== 运行日志分页（0x0119） ==================== */
+
+/**
+ * @brief 解析 0x0119 应答到日志页结果（行结构 {ts,category,text}）。
+ * @details [m_seq 跨解析保留] 与 HsfHistoryPage_parse 同款：整结构清零
+ *          重填，序号单独拎出来递增（页面按"序号变过"才处置）。
+ * @return 解析到有效应答返回 true（行数可为 0——空窗口也是有效应答）。
+ */
+static bool hsfLcParseLogPage(const uint8_t* data, uint32_t len)
+{
+    XBsonDocument* doc;
+    XBsonValue* v;
+    const XBsonArray* rows;
+    int i;
+    uint32_t seq = s_lc.m_logPage.m_seq;
+
+    memset(&s_lc.m_logPage, 0, sizeof(s_lc.m_logPage));
+    s_lc.m_logPage.m_seq = seq;
+    if (!data || len == 0) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    if (!XBsonDocument_from_bytes(doc, data, len)) {
+        XClassDelete((XClass*)doc);
+        return false;
+    }
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_OK);
+    /* [ok 键必查] 未开库/解析失败等否定应答也是应答：置 valid 让页面
+     * 别空等（页面按 m_err 文本提示）。 */
+    s_lc.m_logPage.m_ok = v ? XBsonValue_toBool(v, false) : false;
+    if (!s_lc.m_logPage.m_ok) {
+        const XBsonValue* ev = XBsonDocument_value_keyUtf8(doc, HSF_KEY_ERR);
+        if (ev) {
+            const XString* s = XBsonValue_toString(ev);
+            const char* u8 = s ? XString_toUtf8(s) : NULL;
+            if (u8) snprintf(s_lc.m_logPage.m_err, sizeof(s_lc.m_logPage.m_err),
+                             "%s", u8);
+        }
+        s_lc.m_logPage.m_valid = true;
+        ++s_lc.m_logPage.m_seq;
+        XClassDelete((XClass*)doc);
+        return true;
+    }
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_LOG_TOTAL);
+    if (v) s_lc.m_logPage.m_total = (int)XBsonValue_toInt32(v, 0);
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_LOG_OFFSET);
+    if (v) s_lc.m_logPage.m_offset = (int)XBsonValue_toInt32(v, 0);
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_LOG_LIMIT);
+    if (v) s_lc.m_logPage.m_limit = (int)XBsonValue_toInt32(v, 0);
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_LOG_ROWS);
+    rows = v ? XBsonValue_toArray(v) : NULL;
+    if (rows) {
+        const int64_t n = XBsonArray_count_base(rows);
+        for (i = 0; i < (int)n && i < HSF_LOG_PAGE_MAX; ++i) {
+            const XBsonValue* rowVal = XBsonArray_at_base(rows, (int64_t)i);
+            const XBsonDocument* row = rowVal ? XBsonValue_toDocument(rowVal) : NULL;
+            HsfLinkLogRow* dst = &s_lc.m_logPage.m_rows[s_lc.m_logPage.m_count];
+            XBsonValue* cell;
+            if (!row) continue;
+            cell = XBsonDocument_value_keyUtf8(row, HSF_KEY_LOG_TS);
+            if (cell) dst->m_ts = XBsonValue_toInt64(cell, 0);
+            cell = XBsonDocument_value_keyUtf8(row, HSF_KEY_LOG_CATEGORY);
+            if (cell) {
+                const XString* s = XBsonValue_toString(cell);
+                const char* u8 = s ? XString_toUtf8(s) : NULL;
+                if (u8) snprintf(dst->m_category, sizeof(dst->m_category), "%s", u8);
+            }
+            cell = XBsonDocument_value_keyUtf8(row, HSF_KEY_LOG_TEXT);
+            if (cell) {
+                const XString* s = XBsonValue_toString(cell);
+                const char* u8 = s ? XString_toUtf8(s) : NULL;
+                if (u8) snprintf(dst->m_text, sizeof(dst->m_text), "%s", u8);
+            }
+            ++s_lc.m_logPage.m_count;
+        }
+    }
+    s_lc.m_logPage.m_valid = true;
+    ++s_lc.m_logPage.m_seq;
+    XClassDelete((XClass*)doc);
+    return true;
+}
+
+bool HsfLinkClient_logQueryWindow(int offset, int limit, int64_t beforeTs,
+                                  int64_t loTs, int64_t hiTs,
+                                  const char* category, const char* kw)
+{
+    XLinkSession* session;
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    uint32_t reqId = 0;
+    bool ok = false;
+
+    if (!HsfLinkClient_isReady()) return false;
+    if (offset < 0) offset = 0;
+    if (limit <= 0) limit = HSF_LOG_PAGE_DEFAULT;
+    if (limit > HSF_LOG_PAGE_MAX) limit = HSF_LOG_PAGE_MAX;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+
+    /* [窗口锚点 beforeTs] 与 0x0118 同理：首屏把自己的"现在"发上去，
+     * 翻页原样回传——logs 表同样在持续入库，不带锚点翻页会被新行顶偏。 */
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_LOG_OFFSET, offset);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_LOG_LIMIT, limit);
+    XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_LOG_BEFORE_TS,
+                                       beforeTs > 0
+                                           ? beforeTs
+                                           : XDateTime_currentSecsSinceEpoch() * 1000LL);
+    if (loTs > 0)
+        XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_LOG_LO_TS, loTs);
+    if (hiTs > 0)
+        XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_LOG_HI_TS, hiTs);
+    if (category && category[0])
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_LOG_CATEGORY, category);
+    if (kw && kw[0])
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_LOG_KW, kw);
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    if (!bytes) return false;
+    ok = XLinkSession_sendRequest_ex(session, HSF_CMD_LOG_PAGE,
+                                     XLinkDataType_Bson,
+                                     (const uint8_t*)XByteArray_constData(bytes),
+                                     (uint32_t)XByteArray_size_base(bytes),
+                                     &reqId);
+    XClassDelete((XClass*)bytes);
+    return ok;
+}
+
+const HsfLinkLogPage* HsfLinkClient_logPage(void)
+{
+    return &s_lc.m_logPage;
 }
 
 /* ==================== 远端配置（0x0116 / 0x0117）+ 自动运行（0x0115） ==================== */

@@ -6,9 +6,11 @@
  *             加载/生成折线图（绿）+ 表格|图表切换（右靠）。
  *             「数据分析」按需求裁掉。各段说明用弱色标签（VFD 页弱化
  *             文案同口径），控件高 28 触控友好。
- *             **窄窗自适应**（HsfDataBar_adapt，按工具条实际可用宽分四档）：
+ *             **窄窗自适应**（HsfDataBar_adapt，按工具条实际可用宽分五档）：
  *             ⓪ 标签全显+常规宽 → ① 收说明标签 → ② 收控件最小宽+行距 →
- *             ③ 隐去「共 N 行」（1024 宽窗两行最小宽仍差几像素时）。
+ *             ③ 隐去「共 N 行」（1024 宽窗两行最小宽仍差几像素时）→
+ *             ④ 行1/行2 翻竖排（手机竖屏连双日期框横排都放不下时，
+ *             控件不搬家只翻容器方向）。
  *             「共 N 行」最小宽按**当前文本实测宽**取，5 位数不再被截字。
  *             槽连接口径=HsfMenuPage 同款（receiver=工具条对象；本模块
  *             m_base 是首成员，槽首参直转安全）。sender 分派用
@@ -87,7 +89,7 @@ typedef struct HsfDataBar
     int            m_fontPct;     /**< 已应用的字号百分比（实时重放用）。 */
     int            m_adaptW;      /**< 上次分档的可用宽（-1=未算）。 */
     int            m_adaptLevel;  /**< 上次分档结果：0=常规 1=收标签 2=收宽
-                                       3=再隐「共 N 行」。 */
+                                       3=再隐「共 N 行」 4=行1/行2 翻竖排。 */
     int            m_adaptCompact;/**< 上次分档的 compact 位（-1=未算）。 */
     int            m_rowsMinW;    /**< 「共 N 行」按当前文本算出的最小宽
                                        （大数字不再被自身最小宽截字）。 */
@@ -593,7 +595,7 @@ void HsfDataBar_setTotalRows(XWidget* bar, long long rows)
     if (textW != self->m_rowsMinW) {
         self->m_rowsMinW = textW;
         barSetWidths(self, self->m_adaptLevel >= 2);
-        self->m_adaptW = -1;   /* 文本变了 ⇒ 下一拍重新分档（可能升 3 档）。 */
+        self->m_adaptW = -1;   /* 文本变了 ⇒ 下一拍重新分档（可能升 3/4 档）。 */
     }
 }
 
@@ -821,12 +823,28 @@ static void barSetWidths(HsfDataBar* self, bool tight)
     }
 }
 
+/** @brief 行1/行2 横/竖排翻向（第 4 档专用；幂等，稳态零副作用）。
+ *  @details 控件不搬家，只翻容器方向（HsfMonitorVfd_adapt 控制行翻排
+ *           同款仓库惯用法）；两行尾部的伸展条是 magic 空白，
+ *           XBoxLayout_setDirection 翻向时自动把 Expanding 转到新主轴，
+ *           且**同值早退**（方向没变直接 return，不失效布局）——帧泵
+ *           每拍重放安全。宽档复原 LeftToRight：跨档 resize 不残留
+ *           （HsfWindowPage 窄宽分档「宽档恒复原」同口径）。 */
+static void barSetVertical(HsfDataBar* self, bool on)
+{
+    const XBoxLayoutDirection dir = on ? XBoxLayoutDirection_TopToBottom
+                                       : XBoxLayoutDirection_LeftToRight;
+    XBoxLayout_setDirection(&self->m_row1, dir);
+    XBoxLayout_setDirection(&self->m_row2, dir);
+}
+
 void HsfDataBar_adapt(XWidget* bar, bool compact)
 {
     HsfDataBar* self = (HsfDataBar*)bar;
     int avail;
     int need;
     int level;
+    int need1H = -1; /* 第 4 档判据值：行 1 横排最小宽（翻转前量得）。 */
     if (!self) return;
     /* [分档按**实际可用宽度**，不只看形态位 2026-11-08] 原实现只看
      * layoutMode（竖屏形态）决定收不收说明标签：1280 宽窗算「宽屏」，
@@ -839,18 +857,52 @@ void HsfDataBar_adapt(XWidget* bar, bool compact)
      *   ③ 仍放不下（1024 宽窗 + 导航栏实测 need≈816 > avail≈808）⇒
      *      **隐去「共 N 行」**：它是两行里唯一的纯只读计数，历史页状态
      *      行已给出「共 N 条 … 库内共 N 条」；继续压缩只会把末尾字截掉。
+     *   ④ 连行 1 双日期框都放不下（**行 1 单独**横排最小宽 > avail；
+     *      480 手机竖屏 avail≈456 << 行1最小宽，滚壳横向 AlwaysOff，
+     *      硬挤就是右端整段看不见）⇒ **行1/行2 各自翻竖排**：控件不
+     *      搬家只翻容器方向，行宽降到最宽单项（≈双日期框 168~280），
+     *      行高换行数由竖屏高度兜底。
      * [按宽度缓存分档结果] 帧泵每拍调用本函数；若每次都从头「先常规、量、
      * 再收紧」，会每拍把最小宽/间距来回改两遍 ⇒ 布局永久脏、每帧重排。
-     * 缓存 (avail, compact) 命中即直接套用上次档位，稳态零副作用。 */
+     * 缓存 (avail, compact) 命中即直接套用上次档位，稳态零副作用。
+     * [第 4 档判据必须横排口径 2026-11-09] 翻竖排后布局 minimumSize 变
+     * 竖排口径（宽=最宽单项），拿它再判「放不放得下」会横竖来回翻、每拍
+     * 两翻布局永久脏 ⇒ 档位缓存命中只按缓存档位重放（零量宽零翻向），
+     * 未命中先 barSetVertical(false) 复原横排再量。 */
     avail = barVisibleWidth(&self->m_base);
     if (compact || avail <= 0) {
-        /* 形态位判定（竖屏）或几何未定：按原口径收标签。 */
+        /* 形态位判定（竖屏）或几何未定：按原口径收标签；avail 已知且
+         * 连行 1 双日期框都放不下时再翻竖排（第 4 档——480 手机竖屏
+         * 窗宽 <860 恒走本分支，只在宽档级联里补 ④ 够不着真机）。
+         * [顺带对齐档位账本] 本分支原套常规宽、记 level 2，与
+         * setTotalRows 的 barSetWidths(m_adaptLevel>=2) 重放口径（紧缩）
+         * 互相打架；现按账本 level≥2 ⇒ 紧缩宽，两处不再来回改。 */
+        int lvl;
+        bool vertical;
+        if (self->m_adaptW == avail &&
+            self->m_adaptCompact == (compact ? 1 : 0) &&
+            self->m_adaptLevel >= 0) {
+            /* 同值早退：稳态只重放缓存档位（零量宽、零翻向）。 */
+            lvl = self->m_adaptLevel;
+            vertical = lvl >= 4;
+        } else {
+            barSetVertical(self, false); /* 量横排口径，先复原。 */
+            barSetLabels(self, !compact);
+            barSetWidths(self, compact); /* level≥2 ⇒ 紧缩宽（账本口径）。 */
+            barSetRowsVisible(self, !compact);
+            /* [第 4 档判据] 行 1 单独横排最小宽 > avail：连双日期框
+             * 都放不下，横排必裁（判据口径与宽档级联的 ④ 一致）。 */
+            vertical = compact && avail > 0 &&
+                       barMinWidthOf(&self->m_row1) > avail;
+            lvl = vertical ? 4 : (compact ? 2 : 0);
+        }
+        barSetVertical(self, vertical);
         barSetLabels(self, !compact);
-        barSetWidths(self, false);
+        barSetWidths(self, lvl >= 2);
         barSetRowsVisible(self, !compact);
         self->m_adaptW = avail;
         self->m_adaptCompact = compact ? 1 : 0;
-        self->m_adaptLevel = compact ? 2 : 0;
+        self->m_adaptLevel = lvl;
         return;
     }
     if (self->m_adaptW == avail && self->m_adaptCompact == 0 &&
@@ -858,11 +910,13 @@ void HsfDataBar_adapt(XWidget* bar, bool compact)
         barSetLabels(self, self->m_adaptLevel == 0);
         barSetWidths(self, self->m_adaptLevel >= 2);
         barSetRowsVisible(self, self->m_adaptLevel < 3);
+        barSetVertical(self, self->m_adaptLevel >= 4);
         return;
     }
     barSetLabels(self, true);
     barSetWidths(self, false);
     barSetRowsVisible(self, true);
+    barSetVertical(self, false); /* 宽档基线含方向：复原横排再量（不残留）。 */
     level = 0;
     need = barMinWidthOf(&self->m_row1);
     {
@@ -888,6 +942,16 @@ void HsfDataBar_adapt(XWidget* bar, bool compact)
             if (need > avail) {
                 barSetRowsVisible(self, false);
                 level = 3;
+                /* [第 4 档：竖排档 2026-11-09] 判据换**行 1 单独**的横排
+                 * 最小宽（双日期框是最宽段，它放不下横排就全放不下）：
+                 * 480 手机竖屏 avail≈456 << 行1最小宽，滚壳横向
+                 * AlwaysOff，硬挤右端整段看不见 ⇒ 两行各自翻 TopToBottom
+                 * （控件不搬家只翻向，翻向后行宽=最宽单项 ≤ avail）。 */
+                need1H = barMinWidthOf(&self->m_row1);
+                if (need1H > avail) {
+                    barSetVertical(self, true);
+                    level = 4;
+                }
             }
         }
     }
@@ -900,13 +964,22 @@ void HsfDataBar_adapt(XWidget* bar, bool compact)
         int pw = p ? XWidget_width((XWidget*)p) : -1;
         int winW = 0;
         XWidget* t = &self->m_base;
+        /* [档名+判据值 2026-11-09 补第 4 档] 竖排档翻转后布局 minimumSize
+         * 已变竖排口径（宽=最宽单项），故 need1/need2 在 level 4 是竖排行
+         * 宽；判据用的横排行 1 最小宽另印 need1H（翻转前量得，其余档=n1）。 */
+        static const char* const kLevelName[5] = {
+            "wide", "noLabels", "tight", "noRows", "vertical" };
+        const char* lname = (level >= 0 && level < 5)
+                                ? kLevelName[level] : "?";
+        const int crit1 = (level == 4 && need1H >= 0) ? need1H : n1;
         while (XObject_parent((XObject*)t) &&
                !((XWidget*)XObject_parent((XObject*)t))->m_isWindow)
             t = (XWidget*)XObject_parent((XObject*)t);
         if (XObject_parent((XObject*)t))
             winW = XWidget_width((XWidget*)XObject_parent((XObject*)t));
-        XPrintf("[bar-metrics] win=%d parentW=%d avail=%d level=%d "
-                "need1=%d need2=%d\n", winW, pw, avail, level, n1, n2);
+        XPrintf("[bar-metrics] win=%d parentW=%d avail=%d level=%d(%s) "
+                "need1=%d need2=%d need1H=%d\n",
+                winW, pw, avail, level, lname, n1, n2, crit1);
     }
 }
 

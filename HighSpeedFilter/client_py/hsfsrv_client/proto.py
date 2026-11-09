@@ -255,6 +255,50 @@ HISTORY_COLUMNS = (
     "turb1", "turb2", "flow", "flow_unit", "flow_total", "total_unit",
     "press_mpa", "press_note", "temp", "hum", "di", "do")
 
+#: 运行日志分页查询（**C 端扩展**，2026-11-09 起；与 C 侧
+#: XhsfLinkProto.h 的 HSF_CMD_LOG_PAGE=0x0119 同号，头注释里"Python 侧
+#: 暂无同号命令"的说法在本常量落库后即为历史——server_py 仍不实现该
+#: 命令，本客户端只作消费方）。载荷 {"limit","offset","beforeTs"?,
+#: "loTs"?,"hiTs"?,"category"?,"kw"}；应答 {"ok","rows":[{ts,category,
+#: text}…],"total","count","offset","limit"}。
+#:
+#: [与 0x0118 的两点不同] ① rows 是**对象数组**（{ts,category,text}），
+#: 0x0118 是按 cols 排的值数组；② 本命令无 export 键形态——导出走
+#: "当前页重拉"（C 端 logExportStart 同口径），下载权限闸只在客户端。
+#: [窗口锚点 beforeTs] 语义与 0x0118 完全一致：epoch 毫秒；上界 =
+#: min(hiTs, beforeTs)，缺省/0 = 服务端取"现在"。库在持续入库，翻页
+#: 必须沿用同一锚点，否则 offset 被新行顶偏 ⇒ 相邻页重复/漏行。
+#: [category] 类别过滤（精确匹配；服务端入库口径 conn/ctrl/alarm/auto/
+#: auth，见 C 端 HsfServerStore insertLog）；空/缺省 = 全部。
+CMD_LOG_PAGE = 0x0119
+
+# ---- 运行日志分页键（与 C 侧 XhsfLinkProto.h HSF_KEY_LOG_* 同字面）----
+# C 头注释互相点名：字面值与 0x0118 的 HIST_KEY_* 一致的键，改任何一个
+# 必须两处（本文件 + C 头）同步（铁律：同号同键）。
+KEY_LOG_LIMIT = "limit"        # 与 HIST_KEY_LIMIT 同字面
+KEY_LOG_OFFSET = "offset"      # 与 HIST_KEY_OFFSET 同字面
+KEY_LOG_BEFORE_TS = "beforeTs" # 与 HIST_KEY_BEFORE_TS 同字面
+KEY_LOG_LO_TS = "loTs"         # 与 HIST_KEY_LO_TS 同字面
+KEY_LOG_HI_TS = "hiTs"         # 与 HIST_KEY_HI_TS 同字面
+#: 类别过滤（utf8；conn=连接 / ctrl=控制 / alarm=告警 / auto=自动 /
+#: auth=鉴权；空/缺省 = 全部）。
+KEY_LOG_CATEGORY = "category"
+KEY_LOG_KW = "kw"              # 与 HIST_KEY_KW 同字面
+#: 应答行数组（每元素一个对象 {ts,category,text}；区别于 0x0118 值数组）。
+KEY_LOG_ROWS = "rows"          # 与 HIST_KEY_ROWS 同字面
+#: 应答：本窗口命中总行数（分页总数按它算）。
+KEY_LOG_TOTAL = "total"        # 与 HIST_KEY_TOTAL 同字面
+#: 应答：本页实际行数。
+KEY_LOG_COUNT = "count"
+#: 行对象内键（category 与请求过滤键同字面）。
+KEY_LOG_TS = "ts"              # 事件时刻（int64，epoch 毫秒）
+KEY_LOG_TEXT = "text"          # 事件文本（utf8）
+
+#: 日志页大小上限（服务端夹取；与 C 侧 HSF_LOG_PAGE_MAX 同值）。
+LOG_PAGE_MAX = 50
+#: 日志页大小缺省（与 C 侧 HSF_LOG_PAGE_DEFAULT 同值，= 历史页缺省）。
+LOG_PAGE_DEFAULT = 20
+
 #: 进水泵遥测推送主题。
 TOPIC_PUMP_STATUS = 0x0001000A
 CMD_DEVICE_HEALTH = 0x0107

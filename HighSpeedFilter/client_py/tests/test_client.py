@@ -12,6 +12,8 @@
   D. 数据推送落地到 model（连服务端时）
   E. 控制闸门：未连接/自动模式/非 root 时按钮禁用
   F. 主题色值/度量与 C 端口径一致
+  L. 主界面 压差/流量计/电磁阀 3 卡数据键更新 + 悬浮详情卡开合
+     （2026-11-09，对齐 C HsfHomePage）
 """
 
 import argparse
@@ -505,12 +507,13 @@ def main():
     #
     # 另一坑：`minimumSectionSize` 是**硬约束**。只按权重算、不管下限时
     # 5 列合计 1130 > 视口 1038 ⇒ 出现横向滚动条，看着还是挤。
-    section("K. 表格列宽按权重分配且不溢出")
+    section("K. 表格列宽按权重分配且不溢出（表已改悬浮卡：先弹开再量）")
 
     win.goto_page(reg.PAGE_HOME)
+    home2 = win.pages[reg.PAGE_HOME]
+    home2._toggle_detail("table")     # 设备表已改悬浮卡：弹开才有真实几何
     for _ in range(12):
         app.processEvents()
-    home2 = win.pages[reg.PAGE_HOME]
     tbl2 = home2._table.table
     widths = [tbl2.columnWidth(c) for c in range(tbl2.columnCount())]
     total = sum(widths)
@@ -524,6 +527,8 @@ def main():
           widths[3] > widths[1], "地址=%d 类型=%d" % (widths[3], widths[1]))
     check("权重生效：设备列比状态列宽",
           widths[0] > widths[2], "设备=%d 状态=%d" % (widths[0], widths[2]))
+    home2._close_detail()             # 量完收起，别影响后面的段落
+    app.processEvents()
 
     # ---- J. 设备表「地址」列（与「错误信息」分开）----
     #
@@ -545,7 +550,7 @@ def main():
     win.goto_page(reg.PAGE_HOME)
     app.processEvents()
     home = win.pages[reg.PAGE_HOME]
-    home.refresh()
+    home.refresh(force=True)          # 分帧刷新：force 一拍刷齐（含设备表）
     app.processEvents()
 
     check("地址已落到 model", m3.health.devices[0].addr == "COM17 · 115200 · 站 2",
@@ -574,11 +579,172 @@ def main():
     m3.health.apply({"devCount": 1, "seq": 2, "ts": 0,
                      "d0_name": "旧设备", "d0_kind": 0, "d0_health": 0,
                      "d0_error": 0, "d0_online": True, "d0_runState": 0})
-    home.refresh()
+    home.refresh(force=True)
     app.processEvents()
     check("老服务端无地址键 ⇒ 显示 '-'（不崩）",
           (tbl.item(0, 3).text() if tbl.item(0, 3) else "") == "-",
           tbl.item(0, 3).text() if tbl.item(0, 3) else "None")
+
+    # ---- L. 主界面 3 卡 + 悬浮详情（2026-11-09，对齐 C HsfHomePage）----
+    #
+    # [补什么] C 端主页有 6 张看板卡，Python 端原来只有 3 张（温湿度/
+    # 搅拌泵/设备健康）。这里补齐 压差（TOPIC_AI 通道 0）/ 流量计
+    # （TOPIC_FLOWMETER 瞬时+正反累计）/ 电磁阀（TOPIC_VALVE 六路色点，
+    # 色义对齐 pages_valve.VALVE_STATE_TEXT）三张卡的数据键更新，
+    # 以及「设备表+泵详情」悬浮详情卡的开合交互（点卡弹出、× /再点同卡/
+    # 点遮罩收起；对齐 C hsfHomeApplyDetail / hsfHomeFloatCloseSlot /
+    # hsfHomeShadeClicked）。
+    section("L. 主界面：压差/流量计/电磁阀 3 卡 + 悬浮详情卡")
+
+    win.goto_page(reg.PAGE_HOME)
+    app.processEvents()
+    home = win.pages[reg.PAGE_HOME]
+    m4 = bridge.model
+
+    # ① TOPICS 补齐 3 主题（切页订阅集合按此走）
+    check("主页 TOPICS 含压差(AI)主题", proto.TOPIC_AI_STATUS in home.TOPICS)
+    check("主页 TOPICS 含流量计主题",
+          proto.TOPIC_FLOWMETER_STATUS in home.TOPICS)
+    check("主页 TOPICS 含电磁阀主题",
+          proto.TOPIC_VALVE_STATUS in home.TOPICS)
+
+    # ② 压差卡：TOPIC_AI 通道 0（e0=350 → 0.350；单位/名字随服务端下发）
+    m4.analog.apply({"n": 8, "v": 1, "r0": 4200, "u0": 20000,
+                     "e0": 350, "eu0": "MPa", "en0": "压差计", "ew0": ""})
+    home.refresh(force=True)
+    check("压差卡数值落地（e0/1000 = 0.350）",
+          home.dp_value._value.text() == "0.350",
+          home.dp_value._value.text())
+    check("压差卡单位随服务端", home.dp_value._unit.text() == "MPa",
+          home.dp_value._unit.text())
+    check("压差卡小字 = 通道名", home.dp_note.text() == "压差计",
+          home.dp_note.text())
+
+    # 越限（断线/超量程）：夹到端点的值没有读数价值 → 只报说明（警示色）
+    m4.analog.apply({"n": 8, "v": 1, "e0": 0, "eu0": "MPa",
+                     "en0": "压差计", "ew0": "通道 0 断线"})
+    home.refresh(force=True)
+    check("压差越限 ⇒ 数值 --、说明显示原因",
+          home.dp_value._value.text() == "--"
+          and home.dp_note.text() == "通道 0 断线",
+          "%s / %s" % (home.dp_value._value.text(), home.dp_note.text()))
+    check("压差越限说明用警示色",
+          theme.CLR_WARN in home.dp_note.styleSheet(),
+          home.dp_note.styleSheet()[:70])
+
+    # 断流（不新鲜）：无数据（不拿旧值冒充实时）
+    m4.analog.updated_ms = 0
+    home.refresh(force=True)
+    check("压差断流 ⇒ 无数据",
+          home.dp_value._value.text() == "--"
+          and home.dp_note.text() == "无数据",
+          "%s / %s" % (home.dp_value._value.text(), home.dp_note.text()))
+    # 恢复正常值（供后续段落使用）
+    m4.analog.apply({"n": 8, "v": 1, "e0": 350, "eu0": "MPa",
+                     "en0": "压差计", "ew0": ""})
+
+    # ③ 流量计卡：瞬时流量 + 正/反向累计（单位随服务端单位码）
+    m4.flowmeter.apply({"flow": 12.5, "speed": 0.0,
+                        "forwardTotal": 123.4, "reverseTotal": 1.25,
+                        "flowUnit": 5, "totalUnit": 1,
+                        "alarms": 0, "valid": True, "staleMs": 5000})
+    home.refresh(force=True)
+    check("流量计卡瞬时流量落地",
+          home.fm_flow._value.text() == "12.50",
+          home.fm_flow._value.text())
+    check("流量计卡单位随单位码（5 = m³/h）",
+          home.fm_flow._unit.text() == "m³/h", home.fm_flow._unit.text())
+    check("流量计卡副行正/反累计",
+          home.fm_sub.text() == "正累计 123.40 m³ / 反累计 1.25 m³",
+          home.fm_sub.text())
+
+    # ④ 电磁阀卡：六路「● 状态」色点（色义对齐 pages_valve 卡片）
+    m4.valve.apply({"count": 6,
+                    "v0_name": "进水阀", "v0_state": 2, "v0_ready": True,
+                    "v1_name": "出水阀", "v1_state": 1, "v1_ready": True,
+                    "v2_name": "反洗阀", "v2_state": 3, "v2_ready": True,
+                    "v3_name": "排气阀", "v3_state": 4, "v3_ready": True,
+                    "v4_name": "备用阀A", "v4_state": 0, "v4_ready": True,
+                    "v5_name": "备用阀B", "v5_state": 2, "v5_ready": False})
+    home.refresh(force=True)
+    check("阀1 已开（文案+绿）",
+          home._valve_state[0].text() == "● 已开"
+          and "#2E7D32" in home._valve_state[0].styleSheet(),
+          "%s %s" % (home._valve_state[0].text(),
+                     home._valve_state[0].styleSheet()[:60]))
+    check("阀2 已关（灰蓝）",
+          home._valve_state[1].text() == "● 已关"
+          and "#37474F" in home._valve_state[1].styleSheet(),
+          home._valve_state[1].text())
+    check("阀4 故障（红）",
+          home._valve_state[3].text() == "● 故障"
+          and theme.CLR_FAULT in home._valve_state[3].styleSheet(),
+          home._valve_state[3].text())
+    check("阀5 未知（灰）", home._valve_state[4].text() == "● 状态未知",
+          home._valve_state[4].text())
+    check("阀6 未配置（灰，与『未知』是两件事）",
+          home._valve_state[5].text() == "● 未配置"
+          and "#9E9E9E" in home._valve_state[5].styleSheet(),
+          home._valve_state[5].text())
+    check("阀名由服务端下发", home._valve_name[0].text() == "进水阀",
+          home._valve_name[0].text())
+
+    # ⑤ 刷新分帧相位推进（数值卡每拍刷、设备表每 2 拍铺一次）
+    phase_before = home._refresh_phase
+    home.refresh()
+    check("刷新分帧相位推进", home._refresh_phase != phase_before,
+          "%d -> %d" % (phase_before, home._refresh_phase))
+
+    # ⑥ 悬浮详情卡开合（点卡弹出 / 再点同卡收起）
+    home._toggle_detail("table")
+    app.processEvents()
+    check("点健康卡 ⇒ 悬浮卡弹出（table 态）",
+          home._detail_mode == "table")
+    check("悬浮卡与遮罩可见",
+          home._detail_float.isVisibleTo(home)
+          and home._shade.isVisibleTo(home))
+    check("悬浮卡标题 = 设备状态", home._detail_title.text() == "设备状态")
+    check("表可见、泵详情隐藏",
+          home._table.isVisibleTo(home)
+          and not home._pump_detail.isVisibleTo(home))
+    home._toggle_detail("table")
+    check("再点同卡 ⇒ 收起", home._detail_mode == "none"
+          and not home._detail_float.isVisibleTo(home)
+          and not home._shade.isVisibleTo(home))
+
+    home._toggle_detail("pump")
+    app.processEvents()
+    check("点搅拌泵卡 ⇒ 泵详情态",
+          home._detail_mode == "pump"
+          and home._pump_detail.isVisibleTo(home)
+          and not home._table.isVisibleTo(home))
+    check("泵详情标题", home._detail_title.text() == "搅拌泵详情")
+
+    # ⑦ 泵详情数据键更新（悬浮卡 pump 态每拍刷，字段缺了给 "--"）
+    m4.vfd.apply({"runState": 3, "running": True, "faulted": False,
+                  "outputFreqHz": 48.5, "setFreqHz": 50.0,
+                  "outputCurrentA": 3.2, "speedRpm": 1450.0,
+                  "vm": 0xFFFF})
+    home.refresh(force=True)
+    check("泵详情：运行状态落地",
+          home.pd_state._value.text() == "正转运行",
+          home.pd_state._value.text())
+    check("泵详情：频率/电流/转速落地",
+          home.pd_freq._value.text() == "48.50"
+          and home.pd_cur._value.text() == "3.20"
+          and home.pd_rpm._value.text() == "1450",
+          "%s/%s/%s" % (home.pd_freq._value.text(),
+                        home.pd_cur._value.text(),
+                        home.pd_rpm._value.text()))
+
+    # ⑧ × 收起 + 遮罩收起
+    home._detail_close.click()
+    check("点 × ⇒ 收起", home._detail_mode == "none"
+          and not home._detail_float.isVisibleTo(home))
+    home._toggle_detail("pump")
+    home._shade.mousePressEvent(None)   # 点遮罩 ⇒ 收起（C hsfHomeShadeClicked）
+    check("点遮罩 ⇒ 收起", home._detail_mode == "none"
+          and not home._shade.isVisibleTo(home))
 
     # ---- I. 顶栏「自动运行」状态（与模式位/授权分开）----
     #

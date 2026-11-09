@@ -95,6 +95,7 @@
 """
 
 import asyncio
+import collections
 import time
 
 from . import proto
@@ -406,6 +407,14 @@ class AutoController(object):
     #: 异步任务，不能无限挂在那儿拖住关闭流程。
     STOP_ALL_TIMEOUT_S = 5.0
 
+    #: 在队报警容量（对齐 C 侧 XAUTO_CONTROL_ALARM_CAPACITY）。满了挤掉
+    #: 最旧一条再入队 —— 远端可以丢最老历史，不能丢最新告警。
+    ALARM_CAPACITY = 8
+
+    #: 报警文字上限（字节；对齐 C 侧 XAutoControlAlarm.m_text[128]，超长截断，
+    #: 且不得把 UTF-8 多字节字符拦腰截断）。
+    ALARM_TEXT_MAX_BYTES = 128
+
     def __init__(self, ctx, log=None):
         self.ctx = ctx
         self._log = log or (lambda msg: None)
@@ -423,6 +432,11 @@ class AutoController(object):
         self._estop_boot_warned = False
         #: 全停动作的投递记录（诊断：最近一次触发的批次序号）。
         self._stop_all_seq = 0
+        #: 在队报警（FIFO）。语义对齐 C 侧 XAutoController 报警面：
+        #: raiseAlarm 入队（满挤最旧，永不因满而丢新告警）；takeAlarm 取走
+        #: 即消费（一条只该推一次）。app 每拍循环 take 并经 XLink 发布
+        #: （TOPIC_AUTO_ALARM），见 app._auto_step。
+        self._alarms = collections.deque(maxlen=self.ALARM_CAPACITY)
 
     # ---- 生命周期 ----
     def start(self, now_ms=None):
@@ -469,11 +483,78 @@ class AutoController(object):
         self._sync_station()
         return True
 
+    # ---- 报警面（对齐 C 侧 XAutoController_raiseAlarm/takeAlarm 语义）----
+    def raise_alarm(self, kind, text, now_ms=None):
+        """上报一条报警：入队即返回（满则挤掉最旧一条，**永不因满丢新**）。
+
+        :param kind:  报警类型（proto.AUTO_ALARM_*，数值与 C 侧
+                      XAutoControlAlarmKind 逐值一致）。
+        :param text:  报警文字（给操作员看；超长按 UTF-8 字节截断）。
+        :param now_ms: 发生时刻（单调毫秒；缺省取 ctx.now_ms()）。
+
+        [为什么记账在这里] 与 C 同口径：用户逻辑几十个动作点若各自上报，
+        "有没有报警/推没推出去"必然漂移；收敛到本入口后，"在队报警"是
+        单一事实源，app 每拍统一 take + 发布 + 入库（一条只推一次）。
+
+        [急停报警由框架自动入队] 见 e_stop()：逻辑层不必（也不该）在
+        急停路径上再手动 raise 同一条。
+        """
+        if now_ms is None:
+            now_ms = self.ctx.now_ms()
+        self._alarms.append({
+            "kind": int(kind),
+            "atMs": int(now_ms),
+            "text": self._clip_text(text or ""),
+        })
+
+    def take_alarm(self):
+        """取走最旧一条在队报警（**取走即消费**；一条只该推一次）。
+
+        :returns: {"kind":int, "atMs":int, "text":str}；队列空返回 None。
+
+        [为什么用 take 不用读] 与按键沿（ctx.take_button_edges）同一
+        理由：事件只该被消费一次。app 循环 take 到空为止，同一条报警
+        绝不会出两次帧。
+        """
+        if not self._alarms:
+            return None
+        return self._alarms.popleft()
+
+    def pending_alarm_count(self):
+        """在队报警条数（诊断/测试用）。"""
+        return len(self._alarms)
+
+    @classmethod
+    def _clip_text(cls, text):
+        """报警文字按 UTF-8 字节截到 ALARM_TEXT_MAX_BYTES（不截断半字符）。"""
+        raw = text.encode("utf-8")
+        if len(raw) <= cls.ALARM_TEXT_MAX_BYTES:
+            return text
+        clipped = raw[:cls.ALARM_TEXT_MAX_BYTES]
+        # 尾部若截在多字节字符中间，解码会失败 —— 逐字节回退到能解码为止。
+        while True:
+            try:
+                return clipped.decode("utf-8")
+            except UnicodeDecodeError:
+                clipped = clipped[:-1]
+
     def e_stop(self, reason="急停"):
-        """急停：停控制器 + 停全部设备 + **锁存**（复位前拒绝启动）。"""
+        """急停：停控制器 + 停全部设备 + **锁存**（复位前拒绝启动）。
+
+        [报警随迁移自动入队] 对齐 C 侧 XAutoController_eStop：进入急停态
+        即 raise EmergencyStop（"自动运行急停触发（等待人工复位）"）。
+        已锁存时重复调用**不再重复报警**（C 同款：已是 EmergencyStop 态
+        直接 return false）—— 锁存期间每拍 _check_estop 都会再进这里，
+        不挡的话告警队列会被同一条急停灌满。
+        """
+        first = not self._estop_latched
         self._estop_latched = True
         self._running = False
         self.phase = "estop"
+        if first:
+            # 报警在状态迁移之后入队：app 本拍 take 时快照已含本条。
+            self.raise_alarm(proto.AUTO_ALARM_ESTOP,
+                             "自动运行急停触发（等待人工复位）")
         self.stop_all_devices(reason)
         self._sync_station()
         self._log("自动运行：急停（已锁存，需复位后才能再次启动）")
@@ -557,6 +638,15 @@ class AutoController(object):
             self._log("全停：完成（#%d）已停 %s%s"
                       % (seq, "、".join(stopped) or "无设备",
                          ("；失败 " + "、".join(failed)) if failed else ""))
+            if failed:
+                # [全停失败必须让人看见] 停机失败是安全事件：设备层只记
+                # last_error（被下一笔成功覆盖），这里补一条 ActionFailed
+                # 报警进队列（app 每拍 take → 发布/入库），远端与告警历史
+                # 都能查到"哪次全停没停干净"。对齐 C 侧"是否额外 raise
+                # Alarm(ActionFailed) 由逻辑层决定"的设备语义归属。
+                self.raise_alarm(
+                    proto.AUTO_ALARM_ACTION_FAILED,
+                    "全停部分失败（#%d）：%s" % (seq, "、".join(failed)))
 
         if loop is None:
             return
@@ -749,6 +839,8 @@ class AutoController(object):
             return
         if not self._estop_latched:
             self._log("自动控制：%s ⇒ 停止自动运行并全停设备" % reason)
+            # [急停触发点] 报警在本方法调用的 e_stop() 里自动入队
+            # （EmergencyStop），app._auto_step 每拍抽取发布 —— 这里不重复 raise。
             self.e_stop(reason)
 
     def _step_impl(self, now_ms):
@@ -773,6 +865,7 @@ class AutoController(object):
             "estopLatched": self._estop_latched,
             "actions": self.ctx.action_count,
             "lastError": self.ctx.last_error,
+            "pendingAlarms": self.pending_alarm_count(),
             "estopOk": self.ctx.estop_ok(),
             "buttonState": (None if st is None else st.state),
             "buttons": snap,

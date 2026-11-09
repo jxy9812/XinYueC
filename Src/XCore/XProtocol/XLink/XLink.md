@@ -2130,3 +2130,79 @@ PEEK 手段实现同一判定口径，`Src/` 不再出现平台分支。Windows 
 > - `SESSION_ON=0`：基线 3 个 TU 全 FAIL（C2061 如上）→ 改后全 PASS；
 > - 其余组合（全开 / `CLIENT_ON=0` / `FILE_ON=0` / `XLINK_ON=0`）基线与
 >   改后同为 PASS，无回归。
+
+## 15. 推送失步根修：队满拒帧的记账/排空补发/慢消费踢线（2026-11-09）
+
+> 现场症状（Windows 真机 + HSF 联调）：客户端「界面数据冻结、连接显示正常、
+> 切页订阅也发得出去」——与《Windows_IOCP读完成丢失_根修_20261106.md》§九
+> 的写提交失败现象同族，但那是**链路判死缺失**（已修）；本轮修的是它下游
+> 的另一半：**链路活着、发送队列长期高水位时，Publish 帧被整帧静默拒绝**。
+
+### 15.1 根因链
+
+1. 消费端读方向变慢/暂停（GUI 卡顿、IOCP 读槽波动、网络拥塞）⇒ 服务端
+   会话 TX 队列（128KB）堆积直至队满；
+2. `XLinkSessionPrivate_sendWithPrefix` 队满分支整帧拒绝：请求/应答有
+   超时重发兜底，**Publish 没有**——变值事件帧（设备健康变化、阀告警、
+   单次状态跃迁，都是「变化才推、只发一次」）丢一帧对端就永久停在旧状态；
+3. 三条既有判线全部不触发：慢滴漏每拍都写得出字节（发方向判线
+   「任一写出即复位」）、心跳小帧偶尔挤过（收方向静默判线）、双方互发
+   心跳（心跳判线）⇒ 会话停在 Ready，冻结无限期持续；
+4. 服务端侧 modbus 注入链路（进程内虚拟从站）完全健康 ⇒ 485 自愈看门狗
+   静默、设备健康页恒「在线」——现场「在线与遥测自相矛盾」即此。
+
+### 15.2 修法（会话层记账 + 信号，应用层补发；Qt 对齐「无静默丢失」）
+
+| 件 | 位置 | 行为 |
+|---|---|---|
+| 失步记账 | `XLinkSessionPrivate_sendWithPrefix` 队满拒绝分支 | Publish 拒帧计数 `m_txOverflowFrames`（镜像 `m_stats.m_txOverflowFrames`，累计口径）+ 失步起算戳 `m_desyncSinceTick`（`m_nowTick` 为 0 顺延到下一拍） |
+| 排空补发 | `XLinkSessionPrivate_txFlush` 末尾 | 失步期间队列一旦排空（`txUsed==0`）：先清失步戳（防补发入队递归二次触发）再发射 `XLinkSession_txResyncNeeded_signal`（参数=累计拒帧数+会话指针） |
+| 慢消费踢线 | `XLinkSession_pump`（`XLINK_TX_QUEUE_BYTES>0` 块内，发方向判线之后） | 失步持续 > `XLINK_TX_DESYNC_KICK_MS`（默认 15000，`XLinkSession_setTxDesyncKickMs` 可调，0=禁用）仍未排空 ⇒ `XPrintf` 留痕 + `reset`（客户端自动重连+重订阅+订阅即补发完成再同步） |
+| 服务端接线 | `XLinkServerPrivate_acceptPending` | 每个新会话 `XObject_connect_1(txResyncNeeded → XLinkServerPrivate_txResyncNeeded)`（与 authChanged 同款），槽转发给 `XLinkServer_setResyncCallback` 注册的应用回调 |
+| 应用补发 | `HsfServerApp.c hsfAppTxResync` | 按该会话订阅表逐主题 `hsfAppPublishTopicNow`（健康走 `hsfHealthCollect+hsfHealthToBson` 专用路径）——与「订阅即补发」同一条路径，不断链 |
+
+两级自愈分工：**瞬时拥塞**（排得空）⇒ 排空补发，无断链恢复丢失窗；
+**持续过慢**（排不空）⇒ 踢线淘汰，客户端重连兜底。与既有判线的关系：
+全停写（恒 0 进展）由发方向判线（6s）先杀，踢线只管「滴漏但排不空」的
+中间态——三者覆盖完备。
+
+### 15.3 两个框架级契约坑（本轮实证，信号函数作者必读）
+
+1. **信号函数必须容忍 `self=NULL`**：`XObject_signalIdOf` 以 NULL 调用
+   信号函数采集信号 id（id=函数地址），`XEmitSignal` 宏的 `if(object&&...)`
+   保护了发射路径，但**宏外的 self 解引用会直接崩**——本轮
+   `txResyncNeeded_signal` 首版在宏前取 `self->m_txOverflowFrames`，
+   acceptPending 建会话接线（connect 即 signalIdOf）当场 SEGV（core 栈
+   `#0 txResyncNeeded_signal(self=0x0)`）。修法：值参数先算好局部变量，
+   或 `self ? ... : 0`。
+2. **`XVar` 对表达式取址**：宏展开 `sizeof(type), &var`——右值（强转
+   表达式）取不了址，必须先落局部变量。
+3. （沿用既有备忘）`XVarList_args_N` 解包名自带 const，同块不得预声明
+   同名变量。
+
+### 15.4 回归
+
+`Test/XProtocolTest/XLinkTest.c` 新增 §七b `xlink_test_tx_desync`（注册进
+`XLinkTest_run` 与 `XLinkSessionTest` 双入口）13 断言：队满拒帧计数/失步
+戳置位/未排空不发射/排空恰好一次/信号携带拒帧数/失步戳清零/积压 FIFO
+全达/踢线阈值触发 reset。
+
+**测试装置注意（重要）**：标准夹具 64KB 环 + 回环设备「全有全无写」
+（`VXGuiRemoteLoopbackDevice_writeData` 剩余空间不足整块返回 0）与
+TX 队列分块写（`contiguous = qcap - txHead`）组合会**永久互等死锁**——
+队列任一分块 > 环剩余空间时永远写不出（真 TCP 短写无此问题）。失步用例
+必须自建 **256KB 环**夹具（> 队列 128KB），保证排空路径一次写尽。
+
+Linux 实测：`--test xlink` **830 通过 / 3 失败**——3 条失败为 HEAD 基线
+既有（A/B 对照：改动前后同为
+「publish_ex dataType=Json / broadcast 未订阅 B 也收到 / broadcast_ex
+dataType=Bson」，Windows 全绿，疑平台或测试计数口径，已登记待查，非本轮引入）。
+
+### 15.5 复现与判据（给下一次）
+
+- 网络侧复现用限速代理（`/tmp/hsf_throttle_proxy.py`：SO_RCVBUF 8KB +
+  下行限速）——**必须缩接收窗**，回环默认内核缓冲 MB 级会吞掉拥塞；
+  50B/s 全停档会先触发既有发方向判线（属正常），真实失步中间态要看
+  「滴漏但排不空」档位。
+- 看到冻结先数服务端日志：`推送失步补发` / `推送失步踢线` / `发方向判线`
+  三行各自对应一条自愈路径，都没有才是新问题。

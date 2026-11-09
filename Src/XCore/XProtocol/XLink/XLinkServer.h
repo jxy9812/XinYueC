@@ -86,6 +86,20 @@ typedef void (*XLinkServerNotifyCallback)(XLinkServer* self,
  */
 typedef void (*XLinkServerTickCallback)(XLinkServer* self, void* userData);
 
+/**
+ * @brief 推送失步补发回调：某会话的发送队列在「Publish 队满拒帧」（失步）
+ *        后重新排空时触发（推送失步根修 2026-11-09）。
+ * @param session 失步后排空的会话（借用）。
+ * @param userData 注册时传入的上下文（借用，原样回传）。
+ * @return 无。
+ * @note 拥塞窗内被丢弃的 Publish 帧没有重发兜底，接收方状态可能已分歧
+ *       （变值事件帧只发一次）。接收方应按该会话的订阅表补发全量快照。
+ *       回调在会话 txFlush/pump 栈上同步执行，可安全调用该会话的发送接口。
+ *       失步长期不排空的淘汰（踢线）由会话层自行处理，无需应用介入。
+ */
+typedef void (*XLinkServerResyncCallback)(XLinkSession* session,
+                                          void* userData);
+
 #if XLINK_AUTH_ON
 /**
  * @brief 认证审计事件。
@@ -130,6 +144,8 @@ typedef struct XLinkServer {
 uint16_t m_capability;  /**< 新会话的能力位模板（setCapability 预设）。 */
     XLinkSessionDispatchCallback m_dispatchCallback; /* 新会话的分发回调模板（借用）。 */
     void* m_userData;  /* 分发回调上下文（借用，原样透传给会话）。 */
+    XLinkServerResyncCallback m_resyncCallback; /* 推送失步补发回调（借用，可为 NULL）。 */
+    void* m_resyncUserData;  /* 失步补发回调上下文（借用，原样回传）。 */
     XLinkServerNotifyCallback m_notifyCallback; /* 会话增删通知回调（借用，可为 NULL）。 */
     XLinkServerTickCallback m_tickCallback; /* 周期业务回调（借用，可为 NULL）。 */
     void* m_tickUserData;  /* 周期业务回调上下文（借用，原样回传）。 */
@@ -235,6 +251,19 @@ bool XLinkServer_setCapability(XLinkServer* self, uint16_t capability);
 bool XLinkServer_setDispatchCallback(XLinkServer* self,
                                      XLinkSessionDispatchCallback callback,
                                      void* userData);
+
+/**
+ * @brief      设置推送失步补发回调（会话层 txResyncNeeded 信号的转发终点）。
+ * @param      self 服务端对象；传入 NULL 时函数不执行任何操作。
+ * @param      callback 回调（借用）；NULL 表示不处理（仅踢线兜底仍生效）。
+ * @param      userData 回调上下文（借用，原样回传）。
+ * @return     成功返回 true；self 为 NULL 返回 false。
+ * @note       每个新建会话的 txResyncNeeded 信号自动接到本服务并转发；
+ *             语义详见 XLinkServerResyncCallback。
+ */
+bool XLinkServer_setResyncCallback(XLinkServer* self,
+                                   XLinkServerResyncCallback callback,
+                                   void* userData);
 
 /**
  * @brief      设置会话增删通知回调。

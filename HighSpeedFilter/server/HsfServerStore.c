@@ -18,6 +18,14 @@
 
 #define HSF_STORE_CONN_NAME "hsf_store"
 
+/**
+ * @brief 合法墙钟毫秒下界（2020-01-01；与 Python VALID_TS_MIN 同值）。
+ * @details history 与 logs 两张表的查询共用（[2026-11-09 移位] 原先只挂在
+ *          「历史分页查询」小节，logs 查询插在它前面后按源序取不到宏——
+ *          移到文件头部共用区）。
+ */
+#define HSF_STORE_VALID_TS_MIN  1577836800000LL
+
 /* ==================== 内部工具 ==================== */
 
 /** @brief 前置声明：查询首行首列取整数（COUNT/MIN/MAX 用；见文件后段）。 */
@@ -215,10 +223,17 @@ bool HsfServerStore_open(HsfServerStore* st)
                   "CREATE TABLE IF NOT EXISTS alarms ("
                   " ts INTEGER, kind TEXT, source TEXT, text TEXT)");
         storeExec(st, "CREATE INDEX IF NOT EXISTS idx_alarms_ts ON alarms(ts)");
+        /* 运行日志表（HSF_CMD_LOG_PAGE=0x0119 数据源）。列名对齐 Python
+         * store.py 的 logs(ts, text)，category 是 C 端扩展列（类别筛选/
+         * 下拉用，入库口径见 HsfServerStore.h HsfLogRow）。 */
+        storeExec(st,
+                  "CREATE TABLE IF NOT EXISTS logs ("
+                  " ts INTEGER, category TEXT, text TEXT)");
+        storeExec(st, "CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts)");
         if (!st->m_openLogged) {
             st->m_openLogged = true;
             XPrintf("HsfServerStore: 落盘已启用（%s，采样 %dms，"
-                    "history+alarms 两表）\n",
+                    "history+alarms+logs 三表）\n",
                     XString_toUtf8(st->m_path), st->m_sampleMs);
         }
     }
@@ -364,10 +379,197 @@ bool HsfServerStore_insertAlarm(HsfServerStore* st, const char* kind,
     return storeExec(st, sql);
 }
 
+/* ==================== 运行日志（logs 表） ==================== */
+
+bool HsfServerStore_insertLog(HsfServerStore* st, int64_t tsMs,
+                              const char* category, const char* text)
+{
+    char sql[640];
+    char cCat[24];
+    char cText[256];
+    int64_t now;
+
+    if (!st || !st->m_db) return false;
+    storeText(cCat, (int)sizeof(cCat), category ? category : "");
+    storeText(cText, (int)sizeof(cText), text);
+    /* [时刻缺省=现在] 调用方一般用事件发生那一刻的墙钟；<=0 视为"就地取"。 */
+    now = (tsMs > 0) ? tsMs : XDateTime_currentSecsSinceEpoch() * 1000LL;
+    snprintf(sql, sizeof(sql),
+             "INSERT INTO logs(ts,category,text) VALUES(%lld,%s,%s)",
+             (long long)now, cCat, cText);
+    return storeExec(st, sql);
+}
+
+/**
+ * @brief 拼日志关键字条件（口径照 storeBuildKwCondition）。
+ * @param out 输出 SQL 片段（以 " AND (…)" 开头；"…" = 匹配列拼接）。
+ * @param cap 输出缓冲容量。
+ * @param kw 关键字（utf8；NULL/空=不筛，返回 0）。
+ * @return 写入条件返回 1；无需筛选返回 0。
+ * @details [匹配列] logs 表没有"显示表达式"一说，匹配列就是界面两列：
+ *          text 与 category（时间列的文本口径随本地时区漂移，关键字搜
+ *          时间不如直接用时间窗——故不纳入 LIKE 列）。单引号加倍 +
+ *          LIKE 的 \\ % _ 前加反斜杠并声明 ESCAPE '\\'，与历史表同一套
+ *          转义口径（用户输入 %/_ 不变成通配符）。
+ */
+static int storeBuildLogKwCondition(char* out, int cap, const char* kw)
+{
+    char lit[192];
+    size_t n = 0;
+    size_t kwLen;
+    size_t k;
+    int used;
+
+    if (!out || cap <= 0) return 0;
+    out[0] = '\0';
+    if (!kw || !kw[0]) return 0;
+    /* [与历史表同口径] 超长只取前 128 字符继续筛（不整条丢弃）。 */
+    kwLen = strlen(kw);
+    if (kwLen > 128) kwLen = 128;
+    for (k = 0; k < kwLen && n < sizeof(lit) - 8; ++k) {
+        unsigned char ch = (unsigned char)kw[k];
+        if (ch == '\'') { lit[n++] = '\''; lit[n++] = '\''; }
+        else if (ch == '\\' || ch == '%' || ch == '_') {
+            lit[n++] = '\\';
+            lit[n++] = (char)ch;
+        } else {
+            lit[n++] = (char)ch;
+        }
+    }
+    lit[n] = '\0';
+    used = snprintf(out, (size_t)cap,
+                    " AND (COALESCE(text, '') || ' ' || "
+                    "COALESCE(category, '')) LIKE '%%%s%%' ESCAPE '\\'", lit);
+    return (used > 0 && used < cap) ? 1 : 0;
+}
+
+int HsfServerStore_queryLogs(HsfServerStore* st, int offset, int limit,
+                             int64_t loMs, int64_t hiMs,
+                             const char* category, const char* kw,
+                             HsfLogRow* outRows, int outMaxRows,
+                             int* outTotal)
+{
+    char sql[1200];
+    char where[512];
+    char kwCond[320];
+    char catLit[24];
+    XSqlQuery* q;
+    XSqlRecord* rec;
+    int written = 0;
+    int64_t count = 0;
+    int whereLen;
+
+    if (outTotal) *outTotal = 0;
+    if (!st || !st->m_db || !outRows || outMaxRows <= 0) return 0;
+    if (offset < 0) offset = 0;
+    if (limit <= 0) limit = 1;
+
+    /* [时间窗] 与 queryHistory 同口径：只认有效墙钟（滤掉误写 monotonic
+     * 的坏行），上界缺省不限。 */
+    if (loMs > 0 && hiMs > 0) {
+        snprintf(where, sizeof(where),
+                 " WHERE ts >= %lld AND ts <= %lld AND ts >= %lld",
+                 (long long)loMs, (long long)hiMs,
+                 (long long)HSF_STORE_VALID_TS_MIN);
+    } else if (loMs > 0) {
+        snprintf(where, sizeof(where), " WHERE ts >= %lld AND ts >= %lld",
+                 (long long)loMs, (long long)HSF_STORE_VALID_TS_MIN);
+    } else if (hiMs > 0) {
+        snprintf(where, sizeof(where), " WHERE ts <= %lld AND ts >= %lld",
+                 (long long)hiMs, (long long)HSF_STORE_VALID_TS_MIN);
+    } else {
+        snprintf(where, sizeof(where), " WHERE ts >= %lld",
+                 (long long)HSF_STORE_VALID_TS_MIN);
+    }
+    whereLen = (int)strlen(where);
+    /* [类别精确匹配] 下拉给的字面就是入库字面（conn/ctrl/…），单引号
+     * 加倍转义后等值比较（LIKE 会把下划线当通配符，等值才对）。 */
+    if (category && category[0]) {
+        int wrote;
+        storeSqlQuote(catLit, (int)sizeof(catLit), category);
+        wrote = snprintf(where + whereLen, sizeof(where) - (size_t)whereLen,
+                         " AND category = '%s'", catLit);
+        if (wrote > 0 && whereLen + wrote < (int)sizeof(where))
+            whereLen += wrote;
+    }
+    /* [关键字下推] 与 0x0118 同口径：时间+类别+关键字共用同一条 WHERE，
+     * "总数"与"页内容"永远一致。 */
+    storeBuildLogKwCondition(kwCond, (int)sizeof(kwCond), kw);
+    if (kwCond[0] && whereLen < (int)sizeof(where))
+        snprintf(where + whereLen, sizeof(where) - (size_t)whereLen, "%s", kwCond);
+
+    /* 窗口内总行数（分页总数按它算）。 */
+    snprintf(sql, sizeof(sql), "SELECT COUNT(*) FROM logs%s", where);
+    if (storeQueryInt(st, sql, &count) && outTotal)
+        *outTotal = (int)count;
+
+    /* 本页行（按 ts 倒序取，再在内存里翻正 ⇒ 时间正序，与 queryHistory 同）。 */
+    snprintf(sql, sizeof(sql),
+             "SELECT ts,category,text FROM logs%s"
+             " ORDER BY ts DESC LIMIT %d OFFSET %d",
+             where, limit, offset);
+    q = XSqlDatabase_exec_utf8(st->m_db, sql);
+    if (!q) return 0;
+    if (XSqlQuery_isActive(q) && XSqlQuery_first(q)) {
+        do {
+            rec = XSqlQuery_record(q);
+            if (!rec) break;
+            if (written < outMaxRows) {
+                HsfLogRow* row = &outRows[written];
+                int c;
+                row->m_ts = 0;
+                row->m_category[0] = '\0';
+                row->m_text[0] = '\0';
+                /* [必须用 _const 借用版] 与 queryHistory 同款：XSqlRecord_value
+                 * 返回堆副本须调用方释放，_const 返回内部地址零分配。 */
+                for (c = 0; c < 3; ++c) {
+                    char buf[256];
+                    const XVariant* var = XSqlRecord_value_const(rec, c);
+                    XString* s;
+                    buf[0] = '\0';
+                    if (!var || !XVariant_isValid(var)) continue;
+                    s = XVariant_toString(var);
+                    if (s) {
+                        const char* utf8 = XString_toUtf8(s);
+                        if (utf8) snprintf(buf, sizeof(buf), "%s", utf8);
+                        XClassDelete((XClass*)s);
+                    }
+                    if (c == 0) {
+                        /* [大数值不走 atof] epoch 毫秒过 double 会丢精度
+                         * （storeCell 同款教训），直接按 int64 取。 */
+                        row->m_ts = XVariant_toInt64(var);
+                    } else if (c == 1) {
+                        snprintf(row->m_category, sizeof(row->m_category),
+                                 "%s", buf);
+                    } else {
+                        snprintf(row->m_text, sizeof(row->m_text), "%s", buf);
+                    }
+                }
+                written++;
+            }
+            /* [记录副本回收] XSqlQuery_record 返回新记录所有权，逐行释放
+             * （queryHistory 同款，不在此重复论证）。 */
+            XClassDelete((XClass*)rec);
+        } while (XSqlQuery_next(q));
+    }
+    XClassDelete((XClass*)q);
+
+    /* 倒序取的 ⇒ 反转让输出时间正序（与 queryHistory 同）。 */
+    if (written > 1) {
+        int i;
+        for (i = 0; i < written / 2; ++i) {
+            HsfLogRow tmp = outRows[i];
+            outRows[i] = outRows[written - 1 - i];
+            outRows[written - 1 - i] = tmp;
+        }
+    }
+    return written;
+}
+
 /* ==================== 历史分页查询 ==================== */
 
-/** @brief 合法墙钟毫秒下界（2020-01-01；与 Python VALID_TS_MIN 同值）。 */
-#define HSF_STORE_VALID_TS_MIN  1577836800000LL
+/* [HSF_STORE_VALID_TS_MIN 已移至文件头部共用区] history/logs 两表查询共用，
+ * 定义见顶部（源序在 logs 查询之前）。 */
 
 /** @brief 历史表列名（与 Python store.HISTORY_COLUMNS 同序）。 */
 static const char* const s_histColumns[HSF_HISTORY_COLUMNS] = {

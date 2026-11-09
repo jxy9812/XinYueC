@@ -107,6 +107,9 @@ static const char* hsfAppPermDeniedText(uint32_t perm);
 static bool hsfAppSessionCan(XLinkServer* srv, XLinkSession* session,
                              uint32_t perm);
 static uint32_t hsfAppCommandPerm(uint16_t cmd);
+/* 关键运维事件（终端留痕 + logs 表入库；定义在 hsfAppRespond 之后，
+ * HsfServerApp_setRunMode 等早于定义点的调用经本原型前置）。 */
+static void hsfAppEventLog(const char* category, const char* text);
 
 /**
  * @brief 登录策略（匿名登录/同账并发/会话上限）。
@@ -824,7 +827,7 @@ static void hsfAppApplyModeToDevices(void)
     }
     if (s_autoCtlReady && !enable && XAutoController_running(&s_autoCtl)) {
         XAutoController_stop(&s_autoCtl, (uint64_t)XDateTime_currentMSecsSinceEpoch());
-        XPrintf("HsfServerApp: 退出自动模式，自动运行已强制停止\n");
+        hsfAppEventLog("auto", "退出自动模式，自动运行已强制停止");
     }
 }
 
@@ -860,9 +863,13 @@ void HsfServerApp_setRunMode(HsfRunMode mode)
     s_runMode = mode;
     hsfAppApplyModeToDevices();
     HsfServerSettings_setInt("run/mode", (int)mode);
-    XPrintf("HsfServerApp: 运行模式切到 %s（远程控制%s）\n",
-            mode == HsfRunMode_Auto ? "自动" : "手动",
-            mode == HsfRunMode_Auto ? "已禁用" : "已启用");
+    {
+        char buf[96];
+        snprintf(buf, sizeof(buf), "运行模式切到 %s（远程控制%s）",
+                 mode == HsfRunMode_Auto ? "自动" : "手动",
+                 mode == HsfRunMode_Auto ? "已禁用" : "已启用");
+        hsfAppEventLog("auto", buf);
+    }
 }
 
 /**
@@ -905,6 +912,24 @@ static void hsfAppRespond(XLinkSession* session, const XLinkFrameHeader* frame,
                                  bytes ? (const uint8_t*)XByteArray_constData(bytes) : NULL,
                                  bytes ? (uint32_t)XByteArray_size_base(bytes) : 0);
     if (bytes) XClassDelete((XClass*)bytes);
+}
+
+/**
+ * @brief 关键运维事件：XPrintf 终端留痕 + logs 表入库（一句话一个事件点）。
+ * @param category 类别（utf8；入库口径见 HsfServerStore.h HsfLogRow：
+ *                 conn/ctrl/alarm/auto/auth）。
+ * @param text 事件文本（utf8；调用方 snprintf 拼好，末尾不带换行）。
+ * @details [定点入库] 只收运维要翻的事件（会话接入/断开、控制受理/拒绝、
+ *          阀告警、自动运行启停/急停、模式切换、登录成功/被拒）；周期性
+ *          日志（遥测推送/采样/推送节拍）**不**进库——logs 表要能按页翻，
+ *          不能被流水账冲掉。库未开=只打终端日志（与 Python
+ *          _log_with_store 的"库未开=空操作旁路"同口径；入库失败也不
+ *          影响命令路径）。
+ */
+static void hsfAppEventLog(const char* category, const char* text)
+{
+    XPrintf("HsfServerApp: %s\n", text);
+    (void)HsfServerStore_insertLog(&s_store, 0, category, text);
 }
 
 /* ==================== 命令处理 ==================== */
@@ -1180,8 +1205,14 @@ static void hsfAppHandleAutoControl(XLinkSession* session,
                       hsfAppMakeEnvelope(false, "非法 op 操作字（1启动/2停止/3急停/4复位）"));
         return;
     }
-    XPrintf("HsfServerApp: 自动运行请求%s（%s）\n", opName,
-            changed ? "已执行" : "已是该状态（幂等）");
+    /* [启停/急停入库] 自动运行的动作态变化是运维首要事件（急停尤其）；
+     * 每次请求都留痕（幂等重复也在文本里标明"已是该状态"），不丢线索。 */
+    {
+        char buf[96];
+        snprintf(buf, sizeof(buf), "自动运行请求%s（%s）", opName,
+                 changed ? "已执行" : "已是该状态（幂等）");
+        hsfAppEventLog("auto", buf);
+    }
     hsfAppRespond(session, frame, hsfAppMakeModeEnvelope(true, NULL));
 }
 
@@ -1200,6 +1231,18 @@ static void hsfAppHandleDeviceHealth(XLinkSession* session,
 
 /**
  * @brief 变频器遥测快照命令：编码指定侧当前状态回包。
+ * @details [额定点随快照下发（S7，2026-11-09）] 应答补 ratedRpm/ratedHz
+ *          两键（HSF_KEY_VFD_RATED_RPM/HZ，与 Python app.py _h_vfd_snapshot
+ *          同键同源）：客户端把"转速模式"的输入量程与换算对齐，不必再
+ *          写死一份 1440/50——两份必然漂移。C 侧取值与换算基准同源：
+ *            ratedRpm = XVfdDevice_ratedRpm()（未配置缺省 1440，与 Python
+ *                       DEFAULT_RATED_RPM 同值）；
+ *            ratedHz  = XVfdDevice_maxFrequency()（转速↔频率换算基准，
+ *                       未读得按 50 兜底，与 XVfdDevice_rpmToHz 内部基准
+ *                       同一口径；对应 Python cfg.serial.vfd_rated_hz）。
+ *          变频器状态由 XVfdCodec 编码、本端不重复那张键表，故沿用
+ *          「解码 → 插键 → 重编码」补键方式（与 hsfAppWithSide 同款，
+ *          一帧几十字节，成本可忽略）。
  */
 static void hsfAppHandleVfdSnapshot(XLinkSession* session,
                                     const XLinkFrameHeader* frame,
@@ -1211,8 +1254,36 @@ static void hsfAppHandleVfdSnapshot(XLinkSession* session,
     int keyCount = 0;
     const uint64_t* keys = XVfdCodec_telemetryKeys(&keyCount);
     XByteArray* bytes = XVfdCodec_statusToBson(st, keys, keyCount);
-    bytes = hsfAppWithSide(bytes, side);
-    hsfAppRespond(session, frame, bytes);
+    XBsonDocument* doc;
+    XByteArray* out;
+    double ratedRpm;
+    double ratedHz;
+
+    if (!bytes) {
+        hsfAppRespond(session, frame, NULL);
+        return;
+    }
+    doc = XBsonDocument_create();
+    if (!doc ||
+        !XBsonDocument_from_bytes(doc, (const uint8_t*)XByteArray_constData(bytes),
+                                  (size_t)XByteArray_size_base(bytes))) {
+        if (doc) XClassDelete((XClass*)doc);
+        XClassDelete((XClass*)bytes);
+        hsfAppRespond(session, frame, NULL);
+        return;
+    }
+    XClassDelete((XClass*)bytes);
+    hsfAppInsertSide(doc, side);
+    /* [缺省值对齐 Python] 设备未装配时也回缺省额定点（1440/50），客户端
+     * 输入框量程不至于为 0；数据本身带 valid 位，不影响遥测判读。 */
+    ratedRpm = dev ? XVfdDevice_ratedRpm(dev) : 1440.0;
+    ratedHz = (dev && XVfdDevice_maxFrequency(dev) > 0.0)
+                  ? XVfdDevice_maxFrequency(dev) : 50.0;
+    XBsonDocument_insert_keyUtf8_double(doc, HSF_KEY_VFD_RATED_RPM, ratedRpm);
+    XBsonDocument_insert_keyUtf8_double(doc, HSF_KEY_VFD_RATED_HZ, ratedHz);
+    out = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    hsfAppRespond(session, frame, out);
 }
 
 /**
@@ -1568,6 +1639,12 @@ static bool hsfAppControlGate(XLinkSession* session, const XLinkFrameHeader* fra
                           "\xEF\xBC\x9A\xE8\xBF\x9C\xE7\xA8\x8B\xE6\x8E\xA7\xE5\x88\xB6"
                           "\xE5\xB7\xB2\xE8\xA2\xAB\xE7\xA6\x81\xE7\x94\xA8"));
         /* 自动运行中：远程控制已被禁用 */
+        {
+            char buf[96];
+            snprintf(buf, sizeof(buf), "控制命令 0x%04X 被拒（自动运行中：远程控制已被禁用）",
+                     (unsigned)frame->m_msgCode);
+            hsfAppEventLog("ctrl", buf);
+        }
         return false;
     }
     /* [权限策略闸] 角色位图判定（零遍历）替代原硬比较；拒绝留痕由
@@ -1607,7 +1684,16 @@ static void hsfAppHandleDigitalSnapshot(XLinkSession* session,
 }
 
 /**
- * @brief 数字量输出控制（{"index":int,"on":bool}）。
+ * @brief 数字量输出控制（口径与 Python _h_digital_control 统一，S6 方案 A）。
+ * @details 载荷优先级：mask/values 在场 ⇒ 整组写（bit n=通道 n 目标值，
+ *          只写有变化的点，与 Python write_group 同口径）；否则 do/index
+ *          在场 ⇒ 单点写（dev 缺省 0，index 与 do 同义——旧客户端兼容）；
+ *          都没有 ⇒ 拒（"控制载荷缺 do 或 mask 字段"）。
+ *          dev=模块号：C 端单站聚合（HSF_DEV 恒 0），非 0 拒（越界文案
+ *          与 Python 同款）。
+ *          应答 {ok, err?, dev, di, do}：dev=受理的模块号、do=该站当前
+ *          DO 位图（与 Python extra 回显同键）；di 为 C 端附加键（老客户端
+ *          的响应刷新沿用，Python 端忽略未知键）。
  */
 static void hsfAppHandleDigitalControl(XLinkSession* session,
                                        const XLinkFrameHeader* frame,
@@ -1615,9 +1701,21 @@ static void hsfAppHandleDigitalControl(XLinkSession* session,
 {
     XBsonDocument* doc;
     XBsonValue* v;
-    int index = -1;
+    int devIdx = 0;
+    int channel = -1;
+    int64_t mask = 0;
+    bool hasGroup = false;
+    bool hasSingle = false;
     bool on = false;
-    bool ok;
+    bool ok = false;
+    uint32_t di = 0;
+    uint32_t doMask = 0;
+    bool valid = false;
+    char errBuf[192];
+    char logBuf[192];
+    int channels;
+
+    errBuf[0] = '\0';   /* 失败原因聚合（整组路径填充；单点路径见下方赋值）。 */
 
     if (!hsfAppControlGate(session, frame, srv)) return;
 
@@ -1628,35 +1726,123 @@ static void hsfAppHandleDigitalControl(XLinkSession* session,
                       hsfAppMakeEnvelope(false, "控制载荷解析失败"));
         return;
     }
-    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_DIG_INDEX);
-    if (v) index = XBsonValue_toInt32(v, -1);
+    /* [dev] 缺省 0（旧 {"index","on"} 载荷不带本键，兼容口径）。 */
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_DIG_DEV);
+    if (v) devIdx = (int)XBsonValue_toInt32(v, 0);
+    /* [整组优先] mask 与 values 同义，mask 优先（Python 同序）。
+     * [按 int64 取] bit31 在场时 Python 的 int 超 int32 编码为 BSON int64，
+     * toInt32 对 int64 变体返回缺省 0——整组写会静默变全 0，必须 toInt64。 */
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_DIG_MASK);
+    if (v) { mask = XBsonValue_toInt64(v, 0); hasGroup = true; }
+    if (!hasGroup) {
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_DIG_VALUES);
+        if (v) { mask = XBsonValue_toInt64(v, 0); hasGroup = true; }
+    }
+    /* [单点] do 与旧 index 同义，do 优先。 */
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_DIG_DO);
+    if (v) { channel = (int)XBsonValue_toInt32(v, -1); hasSingle = true; }
+    if (!hasSingle) {
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_DIG_INDEX);
+        if (v) { channel = (int)XBsonValue_toInt32(v, -1); hasSingle = true; }
+    }
     v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_DIG_ON);
     if (v) on = XBsonValue_toBool(v, false);
     XClassDelete((XClass*)doc);
 
-    if (index < 0 || index >= HsfServerIo_digitalCount()) {
+    /* [模块号闸] C 端是单站聚合（"dev"恒 0）；越界文案与 Python 同款
+     * （"数字量模块号越界（0~N）"，单站 N=0）。 */
+    if (devIdx < 0 || devIdx > 0) {
         hsfAppRespond(session, frame,
-                      hsfAppMakeEnvelope(false, "通道号越界"));
+                      hsfAppMakeEnvelope(false, "数字量模块号越界（0~0）"));
         return;
     }
-    ok = HsfServerIo_digitalWrite(index, on);
-    /* 应答带上最新位图：客户端不必等下一拍推送就能把按钮态对齐。 */
-    {
-        XByteArray* bytes = hsfAppEncodeDigital(false);  /* 控制应答只带状态。 */
-        if (bytes) {
-            XBsonDocument* resp = XBsonDocument_create();
-            if (resp) {
-                uint32_t di = 0;
-                uint32_t doMask = 0;
-                bool valid = false;
-                HsfServerIo_digitalMasks(&di, &doMask, &valid);
-                XBsonDocument_insert_keyUtf8_bool(resp, HSF_KEY_OK, ok);
-                XBsonDocument_insert_keyUtf8_int32(resp, HSF_KEY_DIG_DI, (int32_t)di);
-                XBsonDocument_insert_keyUtf8_int32(resp, HSF_KEY_DIG_DO, (int32_t)doMask);
-                XClassDelete((XClass*)bytes);
-                bytes = XBsonDocument_toBson(resp);
-                XClassDelete((XClass*)resp);
+    channels = HsfServerIo_digitalCount();
+    /* [站就绪闸] 站未装配时整组写会变成"无事可写"的假成功（单点写会被
+     * 通道越界/写入失败拦住，整组写不会）——统一前置拒绝。 */
+    if (!HsfServerIo_digitalReady()) {
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, "数字量站未装配"));
+        return;
+    }
+    if (!hasGroup && (!hasSingle || channel < 0 || channel >= channels)) {
+        /* 两种 reject 合一：整组形态不带单点键不算错，走下面的缺 do 分支；
+         * 单点形态通道越界才报通道越界（文案对齐 Python write_do）。 */
+        if (hasSingle) {
+            char buf[96];
+            snprintf(buf, sizeof(buf), "DO 通道号越界（0~%d）",
+                     channels > 0 ? channels - 1 : 0);
+            hsfAppRespond(session, frame, hsfAppMakeEnvelope(false, buf));
+        } else {
+            hsfAppRespond(session, frame,
+                          hsfAppMakeEnvelope(false, "控制载荷缺 do 或 mask 字段"));
+        }
+        return;
+    }
+
+    if (hasGroup) {
+        /* [整组写] 只写有变化的点（Python write_group 同口径）：先取当前
+         * 位图做基线，逐位 FC05。位图键语义与 Python 一致（bit n=目标值）。
+         * 失败聚合（最多报 4 条，"；"连接——Python 同款式）。 */
+        int i;
+        int failed = 0;
+        HsfServerIo_digitalMasks(&di, &doMask, &valid);
+        if (!valid) doMask = 0;   /* 无回显基线按全 0（与 Python 上电态一致）。 */
+        errBuf[0] = '\0';
+        ok = true;
+        for (i = 0; i < channels && i < 32; ++i) {
+            const bool target = ((((uint64_t)mask) >> i) & 1u) != 0u;
+            const bool cur = ((doMask >> i) & 1u) != 0u;
+            bool w;
+            if (target == cur) continue;
+            w = HsfServerIo_digitalWrite(i, target);
+            if (!w) {
+                ok = false;
+                if (failed < 4) {
+                    char seg[32];
+                    snprintf(seg, sizeof(seg), "%sDO%d: 写入失败",
+                             failed ? "；" : "", i);
+                    if (strlen(errBuf) + strlen(seg) < sizeof(errBuf))
+                        strcat(errBuf, seg);
+                }
+                ++failed;
             }
+        }
+    } else {
+        ok = HsfServerIo_digitalWrite(channel, on);
+        if (!ok)
+            snprintf(errBuf, sizeof(errBuf), "%s", "写入被拒");
+    }
+
+    /* [受理/拒绝入库] DO 是执行器输出，误动作要可追溯：结果（含失败
+     * 原因）定点进 logs 表 ctrl 类。 */
+    HsfServerIo_digitalMasks(&di, &doMask, &valid);
+    if (hasGroup) {
+        snprintf(logBuf, sizeof(logBuf),
+                 "数字量整组写 dev=%d mask=0x%08llX：%s%s",
+                 devIdx, (unsigned long long)((uint64_t)mask & 0xFFFFFFFFull),
+                 ok ? "已受理" : "被拒",
+                 ok ? "" : (errBuf[0] ? errBuf : "（写入失败）"));
+    } else {
+        snprintf(logBuf, sizeof(logBuf),
+                 "数字量控制 dev=%d 通道%d→%d：%s",
+                 devIdx, channel, on ? 1 : 0, ok ? "已受理" : "被拒");
+    }
+    hsfAppEventLog("ctrl", logBuf);
+
+    /* 应答带最新位图 + 模块号（Python 同键）：客户端不必等下一拍推送
+     * 就能把按钮态对齐。 */
+    {
+        XBsonDocument* resp = XBsonDocument_create();
+        XByteArray* bytes;
+        if (resp) {
+            XBsonDocument_insert_keyUtf8_bool(resp, HSF_KEY_OK, ok);
+            if (!ok && errBuf[0])
+                XBsonDocument_insert_keyUtf8_utf8(resp, HSF_KEY_ERR, errBuf);
+            XBsonDocument_insert_keyUtf8_int32(resp, HSF_KEY_DIG_DEV, devIdx);
+            XBsonDocument_insert_keyUtf8_int32(resp, HSF_KEY_DIG_DI, (int32_t)di);
+            XBsonDocument_insert_keyUtf8_int32(resp, HSF_KEY_DIG_DO, (int32_t)doMask);
+            bytes = XBsonDocument_toBson(resp);
+            XClassDelete((XClass*)resp);
             if (bytes) {
                 XLinkSession_sendResponse_ex(session, frame->m_requestId,
                                              frame->m_msgCode, XLinkDataType_Bson,
@@ -2042,6 +2228,144 @@ static void hsfAppHandleHistoryPage(XLinkSession* session,
         XBsonDocument_insert_keyUtf8_array_move(doc, HSF_KEY_HIST_ROWS, rowsArr);
         /* 同 colsArr：move 只转移内容，源数组壳由调用方释放。 */
         XClassDelete((XClass*)rowsArr);
+    }
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    hsfAppRespond(session, frame, bytes);
+}
+
+/**
+ * @brief 运行日志分页查询（HSF_CMD_LOG_PAGE=0x0119）。
+ * @details 载荷 {limit,offset,beforeTs?,loTs?,hiTs?,category?,kw?}（键名
+ *          与 0x0118 同风格，见 XhsfLinkProto.h HSF_KEY_LOG_*）；应答
+ *          {ok, rows:[{ts,category,text}…], total, count, offset, limit}。
+ *          [数据源] HsfServerStore 的 logs 表——由 hsfAppEventLog 定点入库
+ *          （conn/ctrl/alarm/auto/auth 五类关键事件，不是全量日志流）。
+ *          [窗口锚点/关键字] 语义与 0x0118 完全一致：上界 = min(hiTs,
+ *          beforeTs)（缺省=现在，库在持续入库 ⇒ 翻页必须钉锚）；kw 下推
+ *          服务端，total 与 rows 共用同一条 WHERE。offset/limit 原样回显
+ *          （客户端在途应答归属判定用，与 0x0118 同机制）。
+ *          [权限] 只读面，hsfAppCommandPerm 缺省已放 ViewTelemetry，此处
+ *          不再细分（无导出形态）。
+ */
+static void hsfAppHandleLogPage(XLinkSession* session,
+                                const XLinkFrameHeader* frame,
+                                const uint8_t* payload)
+{
+    XBsonDocument* doc;
+    XBsonArray* rowsArr;
+    XByteArray* bytes;
+    HsfLogRow rows[HSF_LOG_PAGE_MAX];
+    int64_t loMs = 0;
+    int64_t hiMs = 0;
+    int total = 0;
+    int offset = 0;
+    int limit = HSF_LOG_PAGE_DEFAULT;
+    int n = 0;
+    int i;
+    char categoryBuf[24];
+    char kwBuf[160];
+
+    categoryBuf[0] = '\0';
+    kwBuf[0] = '\0';
+
+    if (!HsfServerStore_isOpen(&s_store)) {
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, "落盘未启用：服务端没有日志可查"));
+        return;
+    }
+    doc = XBsonDocument_create();
+    if (!doc || !XBsonDocument_from_bytes(doc, payload, frame->m_payloadLen)) {
+        if (doc) XClassDelete((XClass*)doc);
+        hsfAppRespond(session, frame,
+                      hsfAppMakeEnvelope(false, "分页载荷解析失败"));
+        return;
+    }
+    {
+        XBsonValue* v;
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_LOG_OFFSET);
+        if (v) offset = (int)XBsonValue_toInt32(v, 0);
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_LOG_LIMIT);
+        if (v) limit = (int)XBsonValue_toInt32(v, 0);
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_LOG_LO_TS);
+        if (v) loMs = XBsonValue_toInt64(v, 0);
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_LOG_HI_TS);
+        if (v) hiMs = XBsonValue_toInt64(v, 0);
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_LOG_BEFORE_TS);
+        if (v) {
+            const int64_t before = XBsonValue_toInt64(v, 0);
+            /* [窗口取交集] 与 0x0118 同口径：上界 = min(hiTs, beforeTs)。 */
+            if (before > 0 && (hiMs <= 0 || before < hiMs)) hiMs = before;
+        }
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_LOG_CATEGORY);
+        if (v) {
+            const XString* s = XBsonValue_toString(v);
+            if (s) {
+                const char* u = XString_toUtf8(s);
+                if (u) snprintf(categoryBuf, sizeof(categoryBuf), "%s", u);
+            }
+        }
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_LOG_KW);
+        if (v) {
+            const XString* s = XBsonValue_toString(v);
+            if (s) {
+                const char* u = XString_toUtf8(s);
+                if (u) snprintf(kwBuf, sizeof(kwBuf), "%s", u);
+            }
+        }
+    }
+    XClassDelete((XClass*)doc);
+    if (offset < 0) offset = 0;
+    /* [窗口终点缺省=现在] 与 0x0118 同口径（客户端据此回显"截至现在"）。 */
+    if (hiMs <= 0)
+        hiMs = (int64_t)XDateTime_currentSecsSinceEpoch() * 1000LL;
+    if (limit < 1) limit = 1;
+    if (limit > HSF_LOG_PAGE_MAX) limit = HSF_LOG_PAGE_MAX;
+
+    n = HsfServerStore_queryLogs(&s_store, offset, limit, loMs, hiMs,
+                                 categoryBuf, kwBuf,
+                                 rows, HSF_LOG_PAGE_MAX, &total);
+
+    /* 应答文档：包络 + 行对象数组（区别于 0x0118 的值数组——行结构
+     * {ts,category,text} 字段名即语义，客户端解析直读键）。 */
+    doc = XBsonDocument_create();
+    if (!doc) {
+        hsfAppRespond(session, frame, hsfAppMakeEnvelope(false, "应答文档创建失败"));
+        return;
+    }
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_OK, true);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_LOG_TOTAL, total);
+    /* [count 2026-11-09 补契约] 页内行数（宏表定义了就回，C/Py 两端文档
+     * 都写了该键；客户端实际用 len(rows)，此键供观测对账）。 */
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_LOG_COUNT, n);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_LOG_OFFSET, offset);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_LOG_LIMIT, limit);
+    rowsArr = XBsonArray_create();
+    if (rowsArr) {
+        for (i = 0; i < n; ++i) {
+            XBsonDocument* rowDoc = XBsonDocument_create();
+            XBsonValue* rowVal;
+            if (!rowDoc) break;
+            XBsonDocument_insert_keyUtf8_int64(rowDoc, HSF_KEY_LOG_TS,
+                                              rows[i].m_ts);
+            XBsonDocument_insert_keyUtf8_utf8(rowDoc, HSF_KEY_LOG_CATEGORY,
+                                              rows[i].m_category);
+            XBsonDocument_insert_keyUtf8_utf8(rowDoc, HSF_KEY_LOG_TEXT,
+                                              rows[i].m_text);
+            rowVal = XBsonValue_create(XBSON_TYPE_DOCUMENT);
+            if (!rowVal) {
+                XClassDelete((XClass*)rowDoc);
+                continue;
+            }
+            /* [COW 共享] setDocument 走 create_copy＝COW（共享存储 + 引用
+             * 计数，见 XContainer_virtual），行文档所有权仍在调用方。 */
+            XBsonValue_setDocument(rowVal, rowDoc);
+            XBsonArray_append_move_base(rowsArr, rowVal);
+            XBsonValue_delete(rowVal);   /* move 后释放源壳。 */
+            XClassDelete((XClass*)rowDoc);
+        }
+        XBsonDocument_insert_keyUtf8_array_move(doc, HSF_KEY_LOG_ROWS, rowsArr);
+        XClassDelete((XClass*)rowsArr);   /* move 后源数组壳由调用方释放。 */
     }
     bytes = XBsonDocument_toBson(doc);
     XClassDelete((XClass*)doc);
@@ -2621,10 +2945,65 @@ static uint32_t hsfAppCommandPerm(uint16_t cmd)
         return (uint32_t)XAccessPerm_AutoControl;
     case HSF_CMD_CONFIG_SET:
         return (uint32_t)XAccessPerm_AccountAdmin;
+    case HSF_CMD_LOG_PAGE:
     default:
-        /* 全部读面（快照/健康/历史/配置读/RUN_MODE 查询）。 */
+        /* 全部读面（快照/健康/历史/日志/配置读/RUN_MODE 查询）。 */
         return (uint32_t)XAccessPerm_ViewTelemetry;
     }
+}
+
+/**
+ * @brief 推送失步补发（会话 TX 队列「队满拒帧→重新排空」时被回调）。
+ * @details [为什么必须补发] 拥塞窗内被整帧拒绝的 Publish 没有重发兜底：
+ *          周期遥测下一拍会带来新值，但**变值事件帧**（设备健康变化、阀
+ *          告警、单次状态跃迁）只发一次，丢一帧对端就永久停在旧状态——
+ *          现场即「界面数据冻结、连接显示正常、操作没反应」。此处按该
+ *          会话的订阅表把全部遥测主题补发一遍全量快照（与订阅即补发
+ *          同一条路径 hsfAppPublishTopicNow），不断链、不重置会话。
+ *          [踢线] 补发后若消费端仍然过慢、队列长期不排空，会话层的
+ *          失步踢线（XLINK_TX_DESYNC_KICK_MS）负责淘汰，客户端重连+
+ *          重订阅完成再同步——两级自愈各管一段。
+ */
+static void hsfAppTxResync(XLinkSession* session, void* userData)
+{
+    static const uint32_t kTopics[] = {
+        HSF_TOPIC_VFD_STATUS,
+        HSF_TOPIC_AI_STATUS,
+        HSF_TOPIC_TEMPHUM_STATUS,
+        HSF_TOPIC_FLOWMETER_STATUS,
+        HSF_TOPIC_DIGITAL_STATUS,
+        HSF_TOPIC_VALVE_STATUS,
+        HSF_TOPIC_TURBIDITY_STATUS,
+        HSF_TOPIC_PUMP_STATUS,
+        HSF_TOPIC_DEVICE_HEALTH,
+    };
+    int sent = 0;
+    size_t i;
+    (void)userData;
+
+    if (!session || !s_srv) return;
+    for (i = 0; i < sizeof(kTopics) / sizeof(kTopics[0]); ++i) {
+        if (!XLinkSession_isSubscribed(session, kTopics[i])) continue;
+        if (kTopics[i] == HSF_TOPIC_DEVICE_HEALTH) {
+            /* 健康是事件驱动主题：与订阅补发同路径，回一帧当前全量。 */
+            XByteArray* bytes;
+            hsfHealthCollect(&s_health);
+            s_health.m_primed = true;
+            bytes = hsfHealthToBson(&s_health);
+            if (bytes) {
+                if (XLinkSession_sendPublish_ex(session, HSF_TOPIC_DEVICE_HEALTH,
+                                                XLinkDataType_Bson,
+                                                (const uint8_t*)XByteArray_constData(bytes),
+                                                (uint32_t)XByteArray_size_base(bytes)))
+                    ++sent;
+                XClassDelete((XClass*)bytes);
+            }
+            continue;
+        }
+        hsfAppPublishTopicNow(s_srv, session, kTopics[i]);
+        ++sent;
+    }
+    XPrintf("HsfServerApp: 推送失步补发（%d 主题，会话已排空）\n", sent);
 }
 
 static void hsfAppDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
@@ -2689,6 +3068,9 @@ static void hsfAppDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
             break;
         case HSF_CMD_HISTORY_PAGE:
             hsfAppHandleHistoryPage(session, frame, payload);
+            break;
+        case HSF_CMD_LOG_PAGE:
+            hsfAppHandleLogPage(session, frame, payload);
             break;
         case HSF_CMD_CONFIG_GET:
             hsfAppHandleConfigGet(session, frame);
@@ -2903,6 +3285,13 @@ static void hsfAppOnAuthChanged(XObject* sender, XVarList* args)
     user = XLinkServer_sessionUser_const(s_srv, session);
     if (!user || !user[0]) return;
     XAccountManager_noteSuccess(&s_accounts, user);
+    /* [登录成功入库] 与登录被拒（hsfAppOnLoginRejected）同一 auth 类，
+     * 账户审计在日志页一张时间线上看得全。 */
+    {
+        char buf[96];
+        snprintf(buf, sizeof(buf), "登录成功：%s", user);
+        hsfAppEventLog("auth", buf);
+    }
 }
 
 static void hsfAppNotify(XLinkServer* self, XLinkSession* session,
@@ -2937,13 +3326,21 @@ static void hsfAppNotify(XLinkServer* self, XLinkSession* session,
         int st = dev ? (int)XAbstractSocket_state((XAbstractSocket*)dev) : -1;
         /* 对端端口是分辨"真重连"与"同一条连接被重复 accept"的唯一硬证据：
          * 同端口 = 同一条物理连接。取自 socket 自身的 peer 信息。 */
-        XPrintf("HsfServerApp: 会话接入（当前 %d 路，dev=%p sockState=%d "
-                "peerPort=%u）\n",
-                XLinkServer_sessionCount(self), (void*)dev, st,
-                dev ? (unsigned)XAbstractSocket_peerPort((XAbstractSocket*)dev) : 0u);
+        {
+            char buf[160];
+            snprintf(buf, sizeof(buf),
+                     "会话接入（当前 %d 路，dev=%p sockState=%d peerPort=%u）",
+                     XLinkServer_sessionCount(self), (void*)dev, st,
+                     dev ? (unsigned)XAbstractSocket_peerPort((XAbstractSocket*)dev) : 0u);
+            hsfAppEventLog("conn", buf);
+        }
     } else {
-        XPrintf("HsfServerApp: 会话断开（当前 %d 路）\n",
-                XLinkServer_sessionCount(self));
+        {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "会话断开（当前 %d 路）",
+                     XLinkServer_sessionCount(self));
+            hsfAppEventLog("conn", buf);
+        }
     }
 }
 
@@ -3651,10 +4048,17 @@ static void hsfAppPushValveAlarms(XLinkServer* self, uint64_t now)
                 doc, key,
                 (double)HsfServerIoValve_moveTimeoutMs(bank) / 1000.0);
         }
-        XPrintf("HsfServerApp: 阀告警 路%d(%s) 类型%d：%s\n",
-                i, it->m_name, kind, text);
         /* [告警入库] 与 Python insert_alarm("valve", name, text) 同表同分类。 */
         HsfServerStore_insertAlarm(&s_store, "valve", it->m_name, text);
+        /* [logs 旁路] alarms 表供报警页、logs 表供日志页——同一事件两处
+         * 可查（日志页 category="alarm" 筛得到）。hsfAppEventLog 同时承担
+         * 终端留痕（不再单打一条 XPrintf，防双份）。 */
+        {
+            char buf[224];
+            snprintf(buf, sizeof(buf), "阀告警 路%d(%s) 类型%d：%s",
+                     i, it->m_name, kind, text);
+            hsfAppEventLog("alarm", buf);
+        }
     }
 
     if (taken == 0) {
@@ -4096,6 +4500,13 @@ static void hsfAppOnLoginRejected(XObject* sender, XVarList* args)
     XPrintf("HsfServerApp: 登录拒绝留痕（%s：%s @%llu）\n",
             name ? name : "", reason ? reason : "",
             (unsigned long long)atMs);
+    /* [登录被拒入库] 与 hsfAppOnAuthChanged 的成功留痕同一 auth 类。 */
+    {
+        char buf[160];
+        snprintf(buf, sizeof(buf), "登录拒绝：%s（%s）",
+                 name ? name : "", reason ? reason : "");
+        hsfAppEventLog("auth", buf);
+    }
 }
 
 /**
@@ -4181,6 +4592,7 @@ bool HsfServerApp_start(uint16_t port)
         return false;
     }
     XLinkServer_setDispatchCallback(s_srv, hsfAppDispatch, NULL);
+    XLinkServer_setResyncCallback(s_srv, hsfAppTxResync, NULL);
     XLinkServer_setNotifyCallback(s_srv, hsfAppNotify);
     XLinkServer_setTickCallback(s_srv, hsfAppTick, NULL);
     XLinkServer_setTickInterval(s_srv, HSF_TELEMETRY_MS);

@@ -26,6 +26,15 @@ extern "C" {
 XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
                            void* userData);
 
+/**
+ * @brief      远端设置页窄宽自适应（帧泵/切页/形态切换驱动，幂等）。
+ * @param      page 页根控件（= create 返回值，内部强转回本页结构）。
+ * @param      compact true=窄档（窗口 <HSF_COMPACT_MAX_W）：收边距+压缩策略下拉。
+ * @return     无。
+ * @note       2026-11-09 竖屏适配批次补齐（原「固定五卡，无窄宽分档」登记缺口）。
+ */
+void HsfSettingsRemote_adapt(XWidget* page, bool compact);
+
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */
 
 #ifdef __cplusplus
