@@ -832,7 +832,7 @@ XWidget* HsfMonitorValve_create(XWidget* parent, HsfMenuNavFn navFn,
     }
     XLabel_setTextPixelSize(&self->m_title, valvePx(17));
     XLabel_setText_2(&self->m_title,
-                     "电磁阀");  /* 电磁阀 */
+                     "电动球阀");  /* 电动球阀 */
     XWidget_show((XWidget*)&self->m_title);
     XBoxLayout_addWidget(&self->m_titleRow, (XWidget*)&self->m_title);
 
@@ -928,7 +928,7 @@ XWidget* HsfMonitorValve_create(XWidget* parent, HsfMenuNavFn navFn,
             if (!s_valve.m_items[i].m_name[0])
                 snprintf(s_valve.m_items[i].m_name,
                          sizeof(s_valve.m_items[i].m_name),
-                         "电磁阀%d", i + 1);
+                         "电动球阀%d", i + 1);
         }
     }
     valveRebuildCards(self);

@@ -28,6 +28,8 @@ extern "C" {
 #include "XAbstractItemModel.h"
 #include "XItemSelectionModel.h"
 #include "XVector.h"
+#include "XStyleOption.h" /* 规范枚举 XAbstractItemViewTextElideMode（2026-11-10 自本头
+                             * 上移至样式层；类型名/常量名不变，见下方注记）。 */
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
@@ -99,24 +101,14 @@ typedef enum XAbstractItemViewScrollHint
     XAbstractItemViewScrollHint_PositionAtCenter = 3 /**< 定位到视口中央。 */
 } XAbstractItemViewScrollHint;
 
-/**
- * @brief      文本省略模式（对齐 Qt 6.8 `Qt::TextElideMode`，**数值一致**）。
- * @details    Qt 定义顺序为 `ElideLeft, ElideRight, ElideMiddle, ElideNone`
- *             （qnamespace.h:189-194），因此右省略是 **1**、中省略是 **2**。
- *             本枚举此前把 Right/Middle 的数值写反（Middle=1、Right=2），
- *             与自身「数值一致」的注释矛盾，也导致 `XTabBar` 里按 Qt 口径
- *             硬编码的数值 1（注释标为 Qt::ElideRight）在语义上落到了
- *             Middle。2026-11-03 按 Qt 源码修正为下述取值。
- * @note      `XCommonStyle_elideText` 的 mode 参数已在 2026-11-03 统一为
- *             同一套编号（Qt::TextElideMode），全库不再存在第二套编号。
- */
-typedef enum XAbstractItemViewTextElideMode
-{
-    XAbstractItemViewTextElideMode_ElideLeft = 0,   /**< 省略号置于左侧（对齐 `Qt::ElideLeft`）。 */
-    XAbstractItemViewTextElideMode_ElideRight = 1,  /**< 省略号置于右侧；**缺省值**（对齐 `Qt::ElideRight`）。 */
-    XAbstractItemViewTextElideMode_ElideMiddle = 2, /**< 省略号置于中间（对齐 `Qt::ElideMiddle`）。 */
-    XAbstractItemViewTextElideMode_ElideNone = 3    /**< 不省略（对齐 `Qt::ElideNone`）。 */
-} XAbstractItemViewTextElideMode;
+/* [文本省略模式枚举的去处 2026-11-10] 规范枚举
+ * `XAbstractItemViewTextElideMode`（对齐 Qt 6.8 `Qt::TextElideMode`，
+ * 数值一致）的**定义已移到样式层 `XStyleOption.h`**（类型名与常量名
+ * 不变 ⇒ 调用点零改动）：样式层也要用同一套编号（表头标签省略：
+ * `XStyleOptionHeader::m_textElideMode` 与 `XCommonStyle_elideText` 的
+ * mode 参数），而本头整段声明被 `#if XWIDGET_ON && XTABLEWIDGET_ON` 守卫
+ * 裁剪、样式层不能反向依赖视图层（视图层已依赖样式层，见
+ * `XTitleBar_Protected.h` 的先例）。全库仍只有这一套编号。 */
 
 /**
  * @brief      条目数据角色（对标 Qt 6.8 Qt::ItemDataRole，数值一致；

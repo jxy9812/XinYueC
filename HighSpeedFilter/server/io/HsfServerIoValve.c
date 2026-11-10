@@ -90,7 +90,7 @@ bool HsfServerIoValve_configure(HsfServerIoValve* st,
         }
         if (!it->m_name[0])
             snprintf(it->m_name, sizeof(it->m_name),
-                     "\xE7\x94\xB5\xE7\xA3\x81\xE9\x98\x80%d", i + 1);
+                     "\xE7\x94\xB5\xE5\x8A\xA8\xE7\x90\x83\xE9\x98\x80%d", i + 1);
         it->m_state = HsfValveState_Unknown;
         it->m_valid = false;
         /* [缺省乐观] 首拍 poll 之前没有在线信息，不能凭空判离线——否则装配
@@ -155,7 +155,7 @@ bool HsfServerIoValve_setOutput(HsfServerIoValve* st, int index, bool wantOpen,
     if (outErr && cap > 0) outErr[0] = '\0';
     if (!st || !st->m_enabled) {
         if (outErr) snprintf(outErr, (size_t)cap, "%s",
-                             "\xE7\x94\xB5\xE7\xA3\x81\xE9\x98\x80\xE7\xBB\x84\xE6\x9C\xAA\xE5\x90\xAF\xE7\x94\xA8"); /* 电磁阀组未启用 */
+                             "\xE7\x94\xB5\xE5\x8A\xA8\xE7\x90\x83\xE9\x98\x80\xE7\xBB\x84\xE6\x9C\xAA\xE5\x90\xAF\xE7\x94\xA8"); /* 电动球阀组未启用 */
         return false;
     }
     if (index < 0 || index >= st->m_count) {

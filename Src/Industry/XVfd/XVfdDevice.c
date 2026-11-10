@@ -21,6 +21,7 @@
 #include "XDateTime.h"
 #include "XTimer.h"
 #include <string.h>
+#include <stdlib.h>   /* getenv：XHSF_VFD_TRACE 诊断门控 */
 
 /** @brief 快照发布周期缺省值（毫秒）。 */
 #define XVFD_DEFAULT_STATUS_INTERVAL_MS 200u
@@ -171,8 +172,17 @@ static void xvfdOnWriteDone(XObject* receiver, XVarList* args)
     XIoPoint* point;
     uint16_t role;
     bool ok;
-    if (!dev || !args || !dev->m_busy) return;
+    if (!dev || !args) return;
     XVarList_args_2(args, uint16_t, roleArg, bool, okArg);
+    /* [诊断 XHSF_VFD_TRACE] 写落定到达（动作在途与否都打）：现场"每个动作
+     * 都要等满 8s 动作超时才放开"的唯一分水岭就是这条有没有到。 */
+    {
+        const char* tr = getenv("XHSF_VFD_TRACE");
+        if (tr && tr[0] && tr[0] != '0')
+            XPrintf("[vfd] writeDone role=%u ok=%d busy=%d\n",
+                    (unsigned)roleArg, (int)okArg, (int)dev->m_busy);
+    }
+    if (!dev->m_busy) return;
     role = roleArg;
     ok = okArg;
     /* [2026-11-02 参数点收口] 参数点的 role 是 128+paramId，不属于语义角色域
@@ -249,6 +259,33 @@ static bool VXVfdDevice_FreeStop(XVfdDevice* dev) { return xvfdNotSupported(dev)
 static bool VXVfdDevice_QuickStop(XVfdDevice* dev) { return xvfdNotSupported(dev); }
 static bool VXVfdDevice_Jog(XVfdDevice* dev, bool reverse) { (void)reverse; return xvfdNotSupported(dev); }
 static bool VXVfdDevice_SetFrequency(XVfdDevice* dev, double hz) { (void)hz; return xvfdNotSupported(dev); }
+/**
+ * @brief 缺省「带给定启动/点动」：先写给定、再发命令（尽力而为）。
+ * @details 仅适用于**没有设备级单飞闸冲突**的传输场景。M512 已重载为多阶段
+ *          单动作（见 XVfdM512.c），因为分两次调用会被单飞闸自拒。
+ */
+static bool VXVfdDevice_StartWithGiven(XVfdDevice* dev, XVfdOperation op,
+                                       bool reverse, double hz)
+{
+    if (!dev) return false;
+    if (op != XVfdOperation_Start && op != XVfdOperation_Jog) {
+        dev->m_lastError = XVfdError_InvalidParam;
+        return false;
+    }
+    if (hz > 0.0 && !XVfdDevice_setFrequency(dev, hz)) return false;
+    return (op == XVfdOperation_Start) ? XVfdDevice_start(dev, reverse)
+                                       : XVfdDevice_jog(dev, reverse);
+}
+
+bool XVfdDevice_startWithGiven(XVfdDevice* dev, XVfdOperation op, bool reverse,
+                               double hz)
+{
+    if (ISNULL(dev, "XVfdDevice") || ISNULL(XClassGetVtable(dev), "Vtable"))
+        return false;
+    return XClassGetVirtualFunc(dev, EXVfdDevice_StartWithGiven,
+        bool (*)(XVfdDevice*, XVfdOperation, bool, double))(dev, op, reverse, hz);
+}
+
 /**
  * @brief 缺省「按转速调速」：rpm → Hz 后转调本类的 SetFrequency。
  * @param dev 设备。
@@ -334,7 +371,8 @@ XVtable* XVfdDevice_class_init(void)
         VXVfdDevice_ResetFault, VXVfdDevice_SetDigitalOutput, VXVfdDevice_StartMotorTuning,
         VXVfdDevice_FactoryReset, VXVfdDevice_UnlockPassword, VXVfdDevice_SaveParameters,
         XVfdDevice_readParam_base, XVfdDevice_writeParam_base,
-        VXVfdDevice_ReadNameplate, VXVfdDevice_ReadFaultHistory
+        VXVfdDevice_ReadNameplate, VXVfdDevice_ReadFaultHistory,
+        VXVfdDevice_StartWithGiven
     };
     XVTABLE_INIT_DEFAULT(XVfdDevice)
     XVTABLE_INHERIT_XCLASS(XObject);
@@ -597,7 +635,13 @@ const XVfdStatus* XVfdDevice_status_const(const XVfdDevice* dev)
         XVfdStatus* st = (XVfdStatus*)&dev->m_status;
         uint32_t interval = dev->m_statusIntervalMs ? dev->m_statusIntervalMs
                                                     : 200u;
-        uint64_t limitMs = (uint64_t)interval * 5u;
+        /* [阈值可由装配层覆盖 2026-11-10] 缺省「发布周期 × 5」假定数据刷新
+         * 节拍 = 发布节拍；Modbus 总线是**轮转发读组**（一圈 = 组数 × 拍长，
+         * 现场变频器一圈 2.8s），阈值短于一圈就会每隔几拍误判陈旧 ⇒ 客户端
+         * 遥测在「---」与真值之间闪。装配层按真实轮转周期算好后经
+         * XVfdDevice_setStaleMs 传进来（m_staleMs=0 表示沿用缺省）。 */
+        uint64_t limitMs = dev->m_staleMs ? (uint64_t)dev->m_staleMs
+                                          : (uint64_t)interval * 5u;
         uint64_t nowMs = XDateTime_currentMSecsSinceEpoch();
         if (st->m_valid && st->m_timestampMs != 0 &&
             nowMs > st->m_timestampMs &&
@@ -641,6 +685,42 @@ void XVfdDevice_setStatusInterval(XVfdDevice* dev, uint32_t intervalMs)
 uint32_t XVfdDevice_statusInterval(const XVfdDevice* dev)
 {
     return dev ? dev->m_statusIntervalMs : 0;
+}
+
+/* ==================== 快照陈旧阈值（随轮转周期联动） ==================== */
+
+void XVfdDevice_setStaleMs(XVfdDevice* dev, uint32_t staleMs)
+{
+    if (!dev) return;
+    dev->m_staleMs = staleMs;
+    /* 阈值变了要立刻重判一次：否则旧阈值下已判失效的快照要等下一拍
+     * 才恢复（现场：改采集周期后界面仍闪几秒「---」）。 */
+    {
+        XVfdStatus* st = (XVfdStatus*)&dev->m_status;
+        if (st->m_valid && st->m_timestampMs != 0) {
+            const uint64_t nowMs = XDateTime_currentMSecsSinceEpoch();
+            const uint32_t interval = dev->m_statusIntervalMs
+                                          ? dev->m_statusIntervalMs : 200u;
+            const uint64_t limitMs = staleMs ? (uint64_t)staleMs
+                                             : (uint64_t)interval * 5u;
+            if (nowMs > st->m_timestampMs &&
+                (nowMs - st->m_timestampMs) > limitMs) {
+                st->m_valid = false;
+                st->m_validMask = 0;
+            }
+        }
+    }
+}
+
+uint32_t XVfdDevice_staleMs(const XVfdDevice* dev)
+{
+    if (!dev) return 0;
+    if (dev->m_staleMs) return dev->m_staleMs;
+    {
+        const uint32_t interval = dev->m_statusIntervalMs
+                                      ? dev->m_statusIntervalMs : 200u;
+        return interval * 5u;
+    }
 }
 
 /** @brief 阶段判定死区（Hz；与 Python VfdDevice.PHASE_DEADBAND_HZ 同值）。 */
@@ -1116,15 +1196,73 @@ void XVfdDevice_emitDone(XVfdDevice* dev, XVfdOperation op, bool ok)
     XVfdDevice_commandCompleted_signal(dev, op, ok);
 }
 
+/**
+ * @brief 只留存失败文本（不发射 errorOccurred 信号）。
+ * @param dev 设备实例。
+ * @param text 中文原因。
+ * @note  给「不发射信号也要留痕」的失败闸用（如控制闸未使能、设备忙）——
+ *        这些是**预期内**的拒绝，不必惊动日志监听者，但操作员仍要看到
+ *        为什么被拒。
+ */
+static void xvfdKeepErrorText(XVfdDevice* dev, const char* text)
+{
+    if (!dev || !text || !text[0]) return;
+    size_t n = strlen(text);
+    if (n >= sizeof(dev->m_lastErrorText)) n = sizeof(dev->m_lastErrorText) - 1;
+    memcpy(dev->m_lastErrorText, text, n);
+    dev->m_lastErrorText[n] = '\0';
+    dev->m_hasErrorText = true;
+}
+
 void XVfdDevice_emitError(XVfdDevice* dev, const char* message)
 {
     if (!dev) return;
+    /* [留住最后失败原因 2026-11-10] errorOccurred 信号是**瞬时**的：没挂
+     *   监听者就丢了。上层（HSF 服务端）要把「为什么拒绝」回给操作员，
+     *   靠的就是这份留存文本——此前设备层只留错误**枚举**（XVfdError_*），
+     *   具体原因（如「命令源未切到通讯」）随信号消失 ⇒ 服务端只能回笼统
+     *   文案（设备拒绝（在途动作/控制闸/能力不符）），现场无从判断。 */
+    if (message && message[0]) {
+        size_t n = strlen(message);
+        if (n >= sizeof(dev->m_lastErrorText)) n = sizeof(dev->m_lastErrorText) - 1;
+        memcpy(dev->m_lastErrorText, message, n);
+        dev->m_lastErrorText[n] = '\0';
+        dev->m_hasErrorText = true;
+    }
     XVfdDevice_errorOccurred_signal(dev, message);
 }
 
 void XVfdDevice_setLastError(XVfdDevice* dev, XVfdError error)
 {
-    if (dev) dev->m_lastError = error;
+    if (!dev) return;
+    dev->m_lastError = error;
+    /* 错误枚举变了 ⇒ 旧的文本不再对应（除非本次也带了具体原因）。 */
+    if (error == XVfdError_OK) dev->m_hasErrorText = false;
+}
+
+const char* XVfdDevice_lastErrorText(const XVfdDevice* dev)
+{
+    if (!dev || !dev->m_hasErrorText) return NULL;
+    return dev->m_lastErrorText;
+}
+
+const char* XVfdDevice_errorText(XVfdError error)
+{
+    switch (error) {
+    case XVfdError_OK:                return "无错误";
+    case XVfdError_NotAttached:       return "设备未挂接通道组或语义槽未绑定";
+    case XVfdError_Busy:              return "设备忙（上一动作在途）";
+    case XVfdError_WriteRejected:     return "写入被拒（点未实现/未登记/类型不符）";
+    case XVfdError_WriteFailed:       return "写落定失败";
+    case XVfdError_Timeout:           return "写落定监督超时";
+    case XVfdError_NoData:            return "所需点尚无数据（未首拍/数据源离线）";
+    case XVfdError_ParamRejected:     return "参数被拒绝（无绑定/越界）";
+    case XVfdError_ParamRunLocked:    return "参数运行禁改";
+    case XVfdError_NotSupported:      return "该品牌不支持此操作";
+    case XVfdError_InvalidParam:      return "调用参数非法";
+    case XVfdError_ControlDisabled:   return "控制闸未使能（设备被锁在只读）";
+    default:                          return "未知错误";
+    }
 }
 
 void XVfdDevice_setCapability(XVfdDevice* dev, uint32_t cap)
@@ -1171,14 +1309,17 @@ bool XVfdDevice_beginAction(XVfdDevice* dev, XVfdOperation op)
     if (!dev->m_controlEnabled) {
         /* 控制闸未使能：全部修改动作在咽喉处拒绝（读路径不经过本函数）。 */
         dev->m_lastError = XVfdError_ControlDisabled;
+        xvfdKeepErrorText(dev, "控制闸未使能（设备被锁在只读，或运行模式是自动）");
         return false;
     }
     if (!dev->m_group) {
         dev->m_lastError = XVfdError_NotAttached;
+        xvfdKeepErrorText(dev, "设备未挂接通道组或语义槽未绑定");
         return false;
     }
     if (dev->m_busy) {
         dev->m_lastError = XVfdError_Busy;
+        xvfdKeepErrorText(dev, "设备忙（上一动作在途）");
         return false;
     }
     dev->m_busy = true;
@@ -1230,9 +1371,15 @@ void XVfdDevice_stopActionTimer(XVfdDevice* dev)
 bool XVfdDevice_actionWrite(XVfdDevice* dev, XVfdOperation op,
                             XVfdPointRole role, int32_t nativeValue)
 {
+    const char* tr;
     if (!dev) return false;
     if (!XVfdDevice_beginAction(dev, op)) return false;
+    tr = getenv("XHSF_VFD_TRACE");
+    if (tr && tr[0] && tr[0] != '0')
+        XPrintf("[vfd] actionWrite op=%d role=%d raw=%ld -> writeRole\n",
+                (int)op, (int)role, (long)nativeValue);
     if (!XVfdDevice_writeRole(dev, role, nativeValue)) {
+        xvfdKeepErrorText(dev, XVfdDevice_errorText(dev->m_lastError));
         XVfdDevice_finishAction(dev, false);
         return false;
     }

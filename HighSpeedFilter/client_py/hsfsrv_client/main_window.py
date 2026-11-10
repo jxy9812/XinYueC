@@ -102,6 +102,8 @@ class MainWindow(QMainWindow):
         self.pages = {}             # page_index -> Page
         self.current = -1
         self._compact = False
+        #: 紧凑模式**强制覆盖**（None=按窗宽自动判；True/False=本机设置指定）。
+        self._compact_force = None
 
         # ---- 接线 ----
         self.nav.navigate.connect(self.goto_page)
@@ -226,14 +228,17 @@ class MainWindow(QMainWindow):
     def _refresh_chrome(self):
         """顶栏：温湿度 + 健康 + 运行模式 + **自动运行状态**。"""
         model = self.bridge.model
-        th = model.temphum
+        # [按侧择优] 服务端按两条侧轮流推同一温湿度主题；没装温湿度站的
+        # 那一侧推的是空帧 ⇒ 只留最后一帧时顶栏恒 "--"。口径对齐 C 端
+        # hsfHomePickTempHum（优先 A 侧，兜底 B 侧）。
+        th = model.temphum.pick()
         self.title_bar.set_temperature(
-            (th.temp_tenths or 0) / 10.0,
-            valid=bool(th.temp_valid and th.is_fresh()
+            (th.temp_tenths or 0) / 10.0 if th is not None else 0.0,
+            valid=bool(th is not None and th.temp_valid
                        and th.temp_tenths is not None))
         self.title_bar.set_humidity(
-            (th.hum_tenths or 0) / 10.0,
-            valid=bool(th.hum_valid and th.is_fresh()
+            (th.hum_tenths or 0) / 10.0 if th is not None else 0.0,
+            valid=bool(th is not None and th.hum_valid
                        and th.hum_tenths is not None))
         fault, offline = model.health.counts()
         self.title_bar.set_health(fault, offline)
@@ -276,16 +281,30 @@ class MainWindow(QMainWindow):
     # ==================================================================
     #                        窗口尺寸/形态
     # ==================================================================
+    def set_compact_override(self, force):
+        """强制紧凑模式（本地设置「紧凑模式」勾选；None=恢复按窗宽自动）。
+
+        [为什么要有覆盖] 本窗原来只按窗宽自动判（<COMPACT_MAX_W），桌面
+        用户想把小窗也按紧凑形态排时没法强制；偏好已由本地设置页落盘。
+        """
+        self._compact_force = None if force is None else bool(force)
+        self._apply_compact(self.width() < theme.COMPACT_MAX_W)
+
+    def _apply_compact(self, auto_compact):
+        compact = (auto_compact if self._compact_force is None
+                   else bool(self._compact_force))
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self.nav.set_compact(compact)
+        # 窄屏收起导航（由主菜单页承载导航）。
+        if compact:
+            self.nav.setVisible(False)
+        else:
+            self.nav.setVisible(True)
+        self.status_bar.set_message(
+            "紧凑模式（%dpx）" % self.width() if compact else "宽屏模式")
+
     def resizeEvent(self, event):
         QMainWindow.resizeEvent(self, event)
-        compact = self.width() < theme.COMPACT_MAX_W
-        if compact != self._compact:
-            self._compact = compact
-            self.nav.set_compact(compact)
-            # 窄屏收起导航（由主菜单页承载导航）。
-            if compact:
-                self.nav.setVisible(False)
-            else:
-                self.nav.setVisible(True)
-            self.status_bar.set_message(
-                "紧凑模式（%dpx）" % self.width() if compact else "宽屏模式")
+        self._apply_compact(self.width() < theme.COMPACT_MAX_W)

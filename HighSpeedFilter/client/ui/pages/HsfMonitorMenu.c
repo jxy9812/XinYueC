@@ -20,7 +20,7 @@ XWidget* HsfMonitorMenu_create(XWidget* parent, HsfMenuNavFn navFn,
                                void* userData)
 {
     /* 返回钮回主菜单页。 */
-    return HsfMenuPage_create(parent, "监视",
+    return HsfMenuPage_create(parent, "设备",
                               kEntries, (int)(sizeof(kEntries) / sizeof(kEntries[0])),
                               HSF_PAGE_MENU, navFn, userData);
 }

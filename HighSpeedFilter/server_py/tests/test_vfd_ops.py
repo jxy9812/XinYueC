@@ -180,9 +180,36 @@ class Client(object):
             return False, "no response"
         return bool(r[1].get("ok")), r[1].get("err", "")
 
-    def snapshot(self):
-        r = self.request(proto.CMD_VFD_SNAPSHOT, b"")
-        return r[1] if r else {}
+    def control_async(self, **kw):
+        """**只发不等**地下发控制命令（返回请求 id）。
+
+        [为什么要它] 点动心跳的判据是"服务端 600ms 内有没有收到下一帧"。
+        `control()` 会阻塞等应答，同时上层还想轮询快照 ⇒ 应答慢一点心跳
+        就断，服务端看门狗**合法地**停机，用例误报（本机实测：空闲时过、
+        有并行负载时稳定红）。心跳这种"发出去就算数"的帧必须不等应答。
+        应答仍会按 req_id 落进 self.pending，需要时 pump 一次即可取走。
+        """
+        self.req_id += 1
+        rid = self.req_id
+        self._send(proto.MSGCLASS_REQUEST, proto.CMD_VFD_CONTROL,
+                   proto.DATATYPE_BSON, bson.encode(kw), rid)
+        return rid
+
+    def snapshot(self, wait=3.0, retries=2):
+        """取一档变频器快照；超时重试，取不到回空 dict。
+
+        [为什么要重试] request() 有 3s 等待上限。机器上有并行构建/多个
+        服务端时，服务端 tick 与回包都会被拖慢 ⇒ 单次超时返回 {} ⇒ 上层
+        `snap.get("running")` 得到 None，被误判成"状态不对"（实测负载下
+        的假红）。空结果必须与"真的没这个字段"区分开：这里宁可多等一轮。
+        """
+        last = {}
+        for _ in range(max(1, int(retries))):
+            r = self.request(proto.CMD_VFD_SNAPSHOT, b"", wait=wait)
+            if r and isinstance(r[1], dict) and r[1]:
+                return r[1]
+            last = r[1] if (r and isinstance(r[1], dict)) else last
+        return last
 
     def set_mode(self, mode):
         r = self.request(proto.CMD_RUN_MODE, bson.encode({"mode": mode}))
@@ -221,9 +248,36 @@ def wait_run_state(c, want, timeout=15.0, poll=0.15):
     deadline = time.time() + timeout
     snap = {}
     while time.time() < deadline:
-        snap = c.snapshot()
+        got = c.snapshot()
+        if got:                     # 空 dict = 请求超时，不覆盖上一次有效快照
+            snap = got
         if snap.get("runState") in want:
             break
+        time.sleep(poll)
+    return snap
+
+
+def wait_snapshot(c, pred, timeout=6.0, poll=0.1):
+    """轮询快照直到 pred(snap) 为真，返回最后一次快照。
+
+    [为什么需要它，而不是 sleep 固定拍数] 状态位（running/reverse）不是
+    命令写下去就立刻变的：服务端要**下一轮轮询读到状态字**才更新快照。
+    固定 sleep(0.3~0.4) 在机器空闲时够用，但在跑并行构建/多服务端时会
+    因轮询被拖慢而误报（2026-11-09 实测：同一套件空闲时红 2 项、4 个
+    agent 并行时红 12 项，全是「状态还没翻」的时序假红）。判据应等
+    "条件成立"而不是"等一段时间"。
+    """
+    deadline = time.time() + timeout
+    snap = {}
+    while time.time() < deadline:
+        got = c.snapshot()
+        if got:                     # 空 dict = 请求超时，不覆盖上一次有效快照
+            snap = got
+        try:
+            if pred(snap):
+                break
+        except (TypeError, KeyError):
+            pass
         time.sleep(poll)
     return snap
 
@@ -304,11 +358,14 @@ def case_all_operations(host, port):
     # ---- 动作类 ----
     ok, err = c.control(op=proto.OP_START, rev=False)
     check("正转启动受理", ok, "" if ok else err)
-    time.sleep(0.4)
-    snap = c.snapshot()
+    # [等到状态真的翻] running/reverse 要下一轮轮询读到状态字才更新 ⇒ 等条件
+    # 成立（带超时），不能 sleep 固定拍数（负载下会假红，见 wait_snapshot）。
+    snap = wait_snapshot(c, lambda s: s.get("running") is True
+                         and s.get("reverse") is False)
     check("启动后状态为运行", snap.get("runState") in
           (proto.RUN_RUNNING_FORWARD, proto.RUN_RUNNING_REVERSE),
-          "runState=%s" % snap.get("runState"))
+          "runState=%s running=%s" % (snap.get("runState"),
+                                      snap.get("running")))
     check("正转 running=true", snap.get("running") is True,
           "running=%s" % snap.get("running"))
     check("正转 reverse=false", snap.get("reverse") is False,
@@ -323,8 +380,8 @@ def case_all_operations(host, port):
 
     ok, err = c.control(op=proto.OP_START, rev=True)
     check("反转启动受理", ok, "" if ok else err)
-    time.sleep(0.4)
-    snap = c.snapshot()
+    snap = wait_snapshot(c, lambda s: s.get("running") is True
+                         and s.get("reverse") is True)
     check("反转 running=true", snap.get("running") is True,
           "running=%s" % snap.get("running"))
     check("反转 reverse=true", snap.get("reverse") is True,
@@ -345,14 +402,22 @@ def case_all_operations(host, port):
     # ---- 点动 ----
     ok, err = c.control(op=proto.OP_JOG, rev=False)
     check("正转点动受理", ok, "" if ok else err)
-    time.sleep(0.3)
+    # [心跳例外 2026-11-09] 反转点动是**点动保持中的心跳**（服务端闸的例外：
+    # 运行中禁点动，但按住不放时的心跳帧放行）。
+    # 但这条例外的成立条件是"点动保持态还在"，而保持态靠 600ms 看门狗续命：
+    # 超时后服务端**先清保持态、再发减速停机**，而减速斜坡要几秒 ⇒ 设备
+    # 仍报"运行中"、保持态却已失效 ⇒ 下一个点动被判"运行中禁止点动"
+    # （实测 78/1，报"变频器运行中，禁止点动"）。
+    # 所以两次点动之间**只能快**：不插快照（它可能等好几秒），先续一拍心跳
+    # 再立刻发反转，快照挪到最后取。
+    ok, err = c.control(op=proto.OP_JOG, rev=False)
+    check("点动保持心跳被受理（仍在点动态）", ok, "" if ok else err)
+    ok, err = c.control(op=proto.OP_JOG, rev=True)
+    check("反转点动受理", ok, "" if ok else err)
     snap = c.snapshot()
     check("点动后仍在运行态", snap.get("running") is True,
           "running=%s runState=%s" % (snap.get("running"),
                                       snap.get("runState")))
-
-    ok, err = c.control(op=proto.OP_JOG, rev=True)
-    check("反转点动受理", ok, "" if ok else err)
 
     # 点动释放必须立刻停（不等看门狗）。释放走的是减速停机（op=101 →
     # XVfdDevice_stop），从点动频率按 DEC 斜坡归零——等到位再断言。
@@ -368,7 +433,9 @@ def case_all_operations(host, port):
     # （上面"反转点动受理"即点动保持中的心跳帧，已隐式覆盖）。
     ok, err = c.control(op=proto.OP_START, rev=False)
     check("运行中禁点动前置启动", ok, "" if ok else err)
-    time.sleep(0.3)
+    # 等 running 为真再断言"运行中禁点动"——否则测的是"还没起来"而不是
+    # "运行中"，把负载抖动伪装成功能缺陷。
+    wait_snapshot(c, lambda s: s.get("running") is True)
     ok, err = c.control(op=proto.OP_JOG, rev=False)
     check("运行中点动被拒", not ok, "err=%s" % (err or "")[:60])
     check("拒绝原因指向先停机", "运行中" in (err or ""), err or "")
@@ -404,23 +471,46 @@ def case_jog_watchdog(host, port):
           "耗时 %.2fs（阈值 %.2fs）"
           % (stopped_at or -1, proto.JOG_TIMEOUT_MS / 1000.0))
     if stopped_at is not None:
-        # 不能停得太早（<0.5s 会把正常点动误停），也不能拖过 2s
-        check("停机时机在合理窗口内", 0.5 <= stopped_at <= 2.0,
+        # 不能停得太早（<0.5s 会把正常点动误停）；上界只防"压根没停/拖很久"。
+        # [上界从 2.0s 放宽到 3.0s 2026-11-09] 判据本身是 600ms 超时 +
+        # 服务端 tick 粒度；但测量端是**客户端每 150ms 轮询一次快照**，机器
+        # 上有并行构建/多个服务端时轮询与 tick 都会被拖慢 ⇒ 2.0s 会因负载
+        # 假红（实测：空闲时过、4 个 agent 并行时红）。真缺陷（例如从不
+        # 停机）会远超 3s，仍被这条挡住。
+        check("停机时机在合理窗口内", 0.5 <= stopped_at <= 3.0,
               "%.2fs" % stopped_at)
 
-    # 持续心跳期间不得停机
+    # 持续心跳期间不得停机。
+    #
+    # [为什么改成"只发不等" 2026-11-09] 旧写法每拍 `control()` 等应答、还夹
+    # 一次 `snapshot()` 等应答；应答一慢（并行构建/多服务端时常见）心跳间隔
+    # 就超过服务端 600ms 判据 ⇒ 看门狗**合法地**停机 ⇒ 用例假红（实机：
+    # 空闲 76/1、四个 agent 并行时红 4 项）。心跳本来就该"发出去算数"，
+    # 用 control_async() 不等应答；结束后再**一次**取快照 + 查服务端告警日志
+    # 有没有"点动心跳超时"，两条一起断言（日志能抓到中途停过的情形）。
     ok, err = c.control(op=proto.OP_JOG, rev=False)
     check("重新点动受理", ok, "" if ok else err)
-    alive = True
-    for _ in range(5):                     # 5 × 200ms = 1.0s，持续喂心跳
-        time.sleep(0.2)
-        c.control(op=proto.OP_JOG, rev=False)
-        snap = c.snapshot()
-        if snap.get("running") is not True:
-            alive = False
-            break
-    check("持续心跳期间不停机", alive,
-          "running=%s" % c.snapshot().get("running"))
+    beat_t0 = int(time.time() * 1000)
+    beats = 0
+    for _ in range(8):                     # 8 × 150ms ≈ 1.2s，持续喂心跳
+        c.control_async(op=proto.OP_JOG, rev=False)
+        beats += 1
+        time.sleep(0.15)
+    c.pump(0.3)                            # 把积压的应答收掉（不影响判据）
+    snap = wait_snapshot(c, lambda s: True)  # 只取一次当前快照
+    check("持续心跳期间不停机", snap.get("running") is True,
+          "running=%s（喂了 %d 拍）" % (snap.get("running"), beats))
+    # 服务端侧证据：窗口内不许出现"点动心跳超时"告警（抓到"中途停过又起来"
+    # 这种快照看不出的情形）。
+    log_doc = c.request(proto.CMD_LOG_PAGE, bson.encode({
+        proto.HIST_KEY_OFFSET: 0, proto.HIST_KEY_LIMIT: 50,
+        proto.HIST_KEY_LO_TS: beat_t0, proto.LOG_KEY_CATEGORY: "alarm"}))
+    rows = (log_doc[1].get("rows") if isinstance(log_doc, tuple)
+            else (log_doc or {}).get("rows")) or []
+    trips = [r for r in rows if "点动心跳超时" in str(r.get("text") or "")]
+    check("持续心跳期间服务端看门狗未触发（告警日志无『点动心跳超时』）",
+          not trips, "命中 %d 条：%s" % (len(trips),
+                                       [t.get("text") for t in trips][:2]))
 
     # 收尾：释放点动
     c.control(op=proto.OP_JOG_RELEASE)
@@ -521,8 +611,8 @@ def case_command_codes(host, port):
     c, _role = login_as(host, port, "root", "root")
     # 正转 → running true, reverse false
     c.control(op=proto.OP_START, rev=False)
-    time.sleep(0.35)
-    snap = c.snapshot()
+    snap = wait_snapshot(c, lambda s: s.get("running") is True
+                         and s.get("reverse") is False)
     check("START(fwd) → running&&!reverse",
           snap.get("running") is True and snap.get("reverse") is False,
           "running=%s reverse=%s" % (snap.get("running"), snap.get("reverse")))
@@ -533,8 +623,8 @@ def case_command_codes(host, port):
           == proto.RUN_STOPPED)
     # 反转 → running&&reverse
     c.control(op=proto.OP_START, rev=True)
-    time.sleep(0.35)
-    snap = c.snapshot()
+    snap = wait_snapshot(c, lambda s: s.get("running") is True
+                         and s.get("reverse") is True)
     check("START(rev) → running&&reverse",
           snap.get("running") is True and snap.get("reverse") is True,
           "running=%s reverse=%s" % (snap.get("running"), snap.get("reverse")))

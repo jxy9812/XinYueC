@@ -2,6 +2,11 @@
  * @file       HsfSettingsStore.c
  * @brief      高速过滤器客户端界面设置持久化门面（XSettings 单例封装）。
  * @details    路径口径（逐级回落，取第一个可写的）：
+ *               0) [安卓] 应用私有目录 /data/data/<pkg>/files/hsf_client.ini
+ *                  —— 安卓进程的工作目录不可写、且无 HOME（XSettings 的
+ *                  POSIX 口径是 $HOME/.config，安卓上必失败），唯一可写的
+ *                  是应用私有目录（根 CMakeLists 安卓分支注入
+ *                  XAPP_PRIVATE_FILES_DIR，与字体释放目录同源派生）。
  *               1) <程序目录>/cfg/hsf_client.ini —— 主用。沿用仓库既有
  *                  部署约定（docs/cross-compile-rk3506.md:114 已为 demo
  *                  预留 cfg/ 目录）；板端 /data/cfg 与 exe 同级，便于随包
@@ -193,6 +198,24 @@ bool HsfSettingsStore_open(void)
 
     if (!s_enabled) return false;
     if (s_store) return true;
+
+#if defined(__ANDROID__) && defined(XAPP_PRIVATE_FILES_DIR)
+    /* ---- 第 0 级（安卓）：应用私有目录 ----
+     * 安卓上程序目录是 /system/bin（不可写）、且进程无 HOME（XSettings 的
+     * POSIX 口径 $HOME/.config 必失败），应用私有目录是唯一可写处。
+     * 目录已由安卓壳在启动时建好（字体释放会先建 files/fonts/），此处
+     * 仍走一次探测：目录不存在时建不出来就回落下面的链。 */
+    {
+        snprintf(fileBuf, sizeof(fileBuf), "%s/%s", XAPP_PRIVATE_FILES_DIR,
+                 HSF_CFG_FILE_NAME);
+        s_store = hsf_storeCreateAt(fileBuf);
+        if (s_store) {
+            snprintf(s_path, sizeof(s_path), "%s", fileBuf);
+            XPrintf("HsfClient: 设置文件 %s\n", s_path);
+            goto done;
+        }
+    }
+#endif
 
     /* 程序目录（本次调用内一次性持有，末尾统一释放——中途 goto 不漏释放）。 */
     appDir = XCoreApplication_applicationDirPath();

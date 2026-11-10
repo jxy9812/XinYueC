@@ -61,6 +61,14 @@ struct XModbusVirtualModel;
 /** @brief 一条 485 上可挂的从站模型槽数上限。 */
 #define XMODBUSVIRTUAL_UNIT_CAP 16
 
+/**
+ * @brief 「长帧」应答的数据区下限（字节）。
+ * @details 站 5 流量计 22 寄存器一帧 = 44 字节数据 + 5 字节帧头尾 = 49 字节
+ *          （现场唯一的长帧）；普通读（站 1/2 浊度 2~4 寄存器）数据区只有
+ *          4~8 字节。取 40 字节（20 寄存器）为界，两边都干净分开。
+ */
+#define XMODBUSVIRTUAL_LONG_FRAME_MIN_BYTES 40
+
 XCLASS_DEFINE_BEGING(XModbusVirtualClient)
 XCLASS_DEFINE_EXTEND_END(XModbusVirtualClient, XModbusClient)
 
@@ -97,6 +105,29 @@ typedef struct XModbusVirtualClient {
     uint64_t m_requestCount;
     /** @brief 已丢弃（模拟空应答）的请求计数。 */
     uint64_t m_dropCount;
+    /**
+     * @brief 各从站的应答时延下限（毫秒；下标 = 从站号，0 = 不加时延）。
+     * @details [2026-11-09 ttyS4 实测] 真实仪表应答不是零时延：站 1
+     *          37~43ms、站 2 31~33ms、站 5 68~69ms（docs/HSF板端ttyS4三设备
+     *          取数实测总表 §1.1「响应时延」列）。虚拟从站在**应答路径**
+     *          里按站号休眠区间内随机值，主站等待 semantics 与真串口一致。
+     */
+    int m_latencyLoMs[XMODBUSVIRTUAL_UNIT_CAP];
+    /** @brief 各从站的应答时延上限（毫秒；与 loMs 成对）。 */
+    int m_latencyHiMs[XMODBUSVIRTUAL_UNIT_CAP];
+    /**
+     * @brief 「长帧从站」站号（-1 = 恢复期建模关闭）。
+     * @details 站 5 流量计一帧读 22 寄存器 = 49 字节长帧（现场唯一的长帧）。
+     */
+    int m_longFrameUnit;
+    /** @brief 长帧后恢复期内**无应答**的受影响站号（现场 = 站 1 浊度仪）。 */
+    int m_blockedUnit;
+    /** @brief 恢复期窗口（毫秒；实测 ≥100~125ms 才恢复，0 = 关闭闸）。 */
+    int m_recoveryWindowMs;
+    /** @brief 最近一次长帧应答收口时刻（epoch 毫秒；0 = 还没收口过）。 */
+    int64_t m_longFrameEndMs;
+    /** @brief 因恢复期被拒（无应答）的请求数（诊断/断言用）。 */
+    uint64_t m_recoveryDropCount;
 } XModbusVirtualClient;
 
 /* ==================== 类初始化 / 生命周期 ==================== */
@@ -141,6 +172,55 @@ void XModbusVirtualClient_setDropRate(XModbusVirtualClient* client, double rate)
  * @param offline true=离线。
  */
 void XModbusVirtualClient_setOffline(XModbusVirtualClient* client, bool offline);
+
+/**
+ * @brief 设某从站的应答时延区间（毫秒；应答路径内按站号休眠）。
+ * @param client 目标客户端。
+ * @param unitId 从站号（0..XMODBUSVIRTUAL_UNIT_CAP-1；越界忽略）。
+ * @param loMs 下限（<0 夹 0；lo>hi 时取 lo=hi）。
+ * @param hiMs 上限。
+ * @details [时延放在从站应答路径，不放主站 sleep] 真实 RTU 里主站发出请求
+ *          后**等待**从站应答，等待时长由仪表决定；虚拟链路里等价位置就是
+ *          虚拟客户端构造应答之前。缺省 0（不时延）——既有测试的零时延
+ *          口径一字不改；模拟装配处按 2026-11-09 实测口径配（站 1 37~43、
+ *          站 2 31~33、站 5 68~69，宏见 HsfServerConfig.h 的 HSF_SIM_*）。
+ */
+void XModbusVirtualClient_setUnitReplyLatency(struct XModbusVirtualClient* client,
+                                              int unitId, int loMs, int hiMs);
+
+/**
+ * @brief 取某从站的应答时延区间（诊断/断言用）。
+ * @return true=取到（outLoMs/outHiMs 非空时写入）；未配置返回 false。
+ */
+bool XModbusVirtualClient_unitReplyLatency(
+    const struct XModbusVirtualClient* client, int unitId,
+    int* outLoMs, int* outHiMs);
+
+/**
+ * @brief 建「长帧后恢复期」闸：长帧从站收口后窗口内，受影响站无应答。
+ * @param client 目标客户端。
+ * @param longFrameUnit 发 49 字节级长帧的从站号（现场 = 站 5 流量计）；
+ *                      <0 = 关闭建模。
+ * @param blockedUnit 窗口内对任何请求都无应答的从站号（现场 = 站 1 浊度仪）。
+ * @param windowMs 恢复期窗口毫秒（实测 ≥100~125ms；0 = 关闭闸）。
+ * @details [为什么建模] 站 5 的长帧读完后**立刻**问站 1 → 几乎零应答
+ *          （0ms 间隙 2/10、75ms 0/10、125ms 起 10/10，实测文档 §8.3）——
+ *          主站的「站间 200ms 间隙 / 发帧前静默闸」正是为规避它存在的。
+ *          模拟它，主站的间隙/补齐逻辑才能在长稳里被真实锻炼。
+ *          长帧判据：长帧站读寄存器成功且数据 ≥ XMODBUSVIRTUAL_LONG_FRAME_
+ *          MIN_BYTES 字节（22 寄存器 = 44 字节数据 ⇒ 49 字节帧）。
+ */
+void XModbusVirtualClient_setRecoveryGate(struct XModbusVirtualClient* client,
+                                          int longFrameUnit, int blockedUnit,
+                                          int windowMs);
+
+/** @brief 恢复期窗口毫秒（诊断/断言用；0 = 未建模）。 */
+int XModbusVirtualClient_recoveryWindowMs(
+    const struct XModbusVirtualClient* client);
+
+/** @brief 因恢复期被拒（无应答）的请求数（诊断/断言用）。 */
+uint64_t XModbusVirtualClient_recoveryDropCount(
+    const struct XModbusVirtualClient* client);
 
 /**
  * @brief 绑定某个从站号的寄存器模型（多从站共一条链路时使用）。

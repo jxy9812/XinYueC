@@ -35,6 +35,22 @@ from . import proto
 #: 改端口只需改 `hsfsrv_client/ports.py` 里的 PY_SERVER_PORT。
 DEFAULT_PORT = ports.PY_SERVER_PORT
 
+#: 登录结果码 → 用户可读文案（登录窗/状态栏用）。
+#: [为什么要映射] 服务端线文本为了反枚举保持通用（"authentication rejected"），
+#: 直接显示给现场用户等于没信息；这里按**结果码**给出准确原因，尤其把
+#: 「账户已在线」从「口令错」里分出来（2026-11-09 根修：照着"口令错"重输
+#: 只会把服务端账户失败计数推向锁定）。
+AUTH_STATUS_TEXT = {
+    proto.AUTHSTATUS_BAD_USER: "用户不存在",
+    proto.AUTHSTATUS_BAD_PASSWORD: "口令错误",
+    proto.AUTHSTATUS_LOCKED: "账户已锁定（失败次数过多）",
+    proto.AUTHSTATUS_REJECTED: "服务端拒绝（该账户可能已在别处登录，"
+                               "或会话数已达上限）",
+    proto.AUTHSTATUS_NO_CREDENTIAL: "本端未配置登录凭据",
+    proto.AUTHSTATUS_TIMEOUT: "认证超时（服务器不可达或网络异常）",
+    proto.AUTHSTATUS_PROTOCOL: "认证帧畸形",
+}
+
 
 class SessionState(object):
     DISCONNECTED = "disconnected"
@@ -70,6 +86,13 @@ class XLinkClient(object):
         self.last_receive_ms = 0
         self.last_send_ms = 0
         self._closed = False
+        #: 本连接是否曾经登录成功过（READY 过一次）。决定认证失败是
+        #: 「永久」（首登失败，留在登录窗）还是「瞬时」（重连被策略拒绝，
+        #: 退避重试）。2026-11-09 根修，见 _on_auth_result。
+        self._ever_ready = False
+        #: 连续「策略性拒绝」次数（AUTHSTATUS_REJECTED），达
+        #: XLINK_AUTH_REJECT_RETRY_LIMIT 才收手；成功即清零。
+        self._auth_rejects = 0
 
         # ---- 协议 ----
         self.local_capability = proto.CAP_AUTH | proto.CAP_REQUEST_TIMEOUT
@@ -106,6 +129,10 @@ class XLinkClient(object):
 
         :returns: (ok: bool, err: str)
         """
+        # 一次显式登录 = 新会话意图：瞬时拒绝计数与「曾就绪」重新起算，
+        # 保证首登被拒仍走永久失败（留在登录窗），不被上一轮的计数污染。
+        self._auth_rejects = 0
+        self._ever_ready = False
         self._thread = threading.Thread(target=self._thread_main,
                                         name="XLinkClient", daemon=True)
         self._thread.start()
@@ -448,16 +475,48 @@ class XLinkClient(object):
         text = payload[4:4 + text_len].decode("utf-8", "replace")
         if status != proto.AUTHSTATUS_OK:
             self.auth_role = proto.ROLE_ANONYMOUS
-            self.auth_error = text or "认证被拒（%d）" % status
-            self._log("登录失败：%s" % self.auth_error)
+            # 线文本保持通用（反枚举），界面按**结果码**给准确原因。
+            self.auth_error = (AUTH_STATUS_TEXT.get(status)
+                               or text or "认证被拒（%d）" % status)
+            # [永久 vs 瞬时 —— 2026-11-09 根修]
+            # 只有**账户本身**的失败才永久收手：用户不存在 / 口令错 /
+            # 账户锁定 / 无凭据。策略性拒绝（REJECTED：同账并发、会话数
+            # 上限）与链路噪声（TIMEOUT/PROTOCOL）是**瞬时**的：客户端断线
+            # 重连时旧会话还没被服务端静默回收（~6s）就会撞上，若按永久
+            # 处理则网络线程整个退出、界面永久全 `--`（实锅：模拟模式下
+            # 客户端偶发无数据，换个时间重登又好了）。
+            # 瞬时失败保持 auto_reconnect=True 走退避重试，超过
+            # XLINK_AUTH_REJECT_RETRY_LIMIT 次才终局；首登（从未 READY）
+            # 仍是永久失败：登录窗要原地显示"账户已在线/被拒绝"，
+            # 不在后台无限重连。
+            transient = status in (proto.AUTHSTATUS_REJECTED,
+                                   proto.AUTHSTATUS_TIMEOUT,
+                                   proto.AUTHSTATUS_PROTOCOL)
+            retry = bool(transient and self._ever_ready
+                         and self.auto_reconnect)
+            if retry:
+                self._auth_rejects += 1
+                if self._auth_rejects > proto.XLINK_AUTH_REJECT_RETRY_LIMIT:
+                    retry = False
+            if not retry:
+                self.auto_reconnect = False
+            if retry:
+                self._log("登录被拒（%s）：账户可能已在线，"
+                          "%.0fs 后自动重试（%d/%d）"
+                          % (self.auth_error, self.reconnect_interval,
+                             self._auth_rejects,
+                             proto.XLINK_AUTH_REJECT_RETRY_LIMIT))
+            else:
+                self._log("登录失败：%s" % self.auth_error)
             if self.on_auth_result:
                 self.on_auth_result(False, 0, self.auth_error)
-            self.auto_reconnect = False     # 口令错属永久失败，不重试
             await self._teardown()
             return
         self.auth_role = role
         self.auth_error = ""
         self._challenge = None
+        self._ever_ready = True
+        self._auth_rejects = 0
         self._set_state(SessionState.READY)
         self._log("登录成功（%s，角色 %d）" % (self.user, role))
         if self.on_auth_result:

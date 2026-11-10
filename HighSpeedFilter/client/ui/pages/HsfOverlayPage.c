@@ -411,8 +411,11 @@ static void ov_masterSlot(XObject* receiver, XVarList* args)
     s_ov.m_syncing = true;
     ov_syncFromOverlay();
     s_ov.m_syncing = false;
-    ov_report(on ? "已打开展正"
-                  : "已滞已打开展");
+    /* [文案修复 2026-11-10] 原字符串是二次编码损坏的乱码
+     * （"已打开展正"/"已滞已打开展"），按语义还原为「已打开悬浮窗/
+     * 已关闭悬浮窗」。 */
+    ov_report(on ? "已打开悬浮窗"
+                  : "已关闭悬浮窗");
     ov_saveSettings();
 }
 
@@ -553,9 +556,10 @@ static void ov_fixedSlot(XObject* receiver, XVarList* args)
     if (!overlay || !s_ov.m_fixedCheck || s_ov.m_syncing) return;
     checked = XAbstractButton_isChecked((XAbstractButton*)s_ov.m_fixedCheck);
     XPerformanceOverlay_setFixed(overlay, checked);
-    ov_report(checked ? "已锁定位"
-                      "置" : "宸茶В闄"
-                      "已锁定位置/已解除固定"); /* 已锁定位置/已解除固定 */
+    /* [文案修复 2026-11-10] 原字符串被二次编码损坏成乱码（"宸茶В闄"），
+     * 按本行注释里的正确文案还原。 */
+    ov_report(checked ? "已锁定位置"
+                      : "已解除固定"); /* 已锁定位置/已解除固定 */
     ov_saveSettings();
 }
 
@@ -586,8 +590,9 @@ static void ov_fontSlot(XObject* receiver, XVarList* args)
     if (index < 0 || index >= OV_FONT_SIZE_COUNT)
         index = ov_fontIndexOf(OV_DEFAULT_FONT_PX);
     XPerformanceOverlay_setTextPixelSize(overlay, kOvFontSizes[index]);
-    ov_report("瀛楀彿宸叉洿鎹"
-              "¢"); /* 字号已更换 */
+    /* [文案修复 2026-11-10] 原字符串被二次编码损坏成乱码
+     * （"瀛楀彿宸叉洿鎹¢"），按本行注释里的正确文案还原。 */
+    ov_report("字号已更换"); /* 字号已更换 */
     ov_saveSettings();
 }
 
@@ -661,8 +666,9 @@ static void ov_resetSlot(XObject* receiver, XVarList* args)
     ov_syncFromOverlay();
     /* 默认值一并落盘（否则配置里留着旧的非默认值，下次启动又被恢复回来）。 */
     ov_saveSettings();
-    ov_report("宸叉仮澶嶉粯璁"
-              "¤"); /* 已恢复默认 */
+    /* [文案修复 2026-11-10] 原字符串被二次编码损坏成乱码
+     * （"宸叉仮澶嶉粯璁¤"），按本行注释里的正确文案还原。 */
+    ov_report("已恢复默认"); /* 已恢复默认 */
 }
 
 /* ==================== 装配 ==================== */

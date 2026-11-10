@@ -380,6 +380,21 @@ bool HsfServerBusHeal_step(HsfServerBusHeal* heal, XModbusHub* hub,
     lastOk = XModbusHub_deviceLastSuccessMs(hub, devId);
     refMs = (lastOk != 0) ? lastOk : heal->m_armedMs;
     elapsed = (nowMs > refMs) ? (nowMs - refMs) : 0;
+    /* [按从站粒度判停滞 2026-11-09 根修] 设备级"最后成功应答"会被**同一
+     * 设备上其它从站的成功掩盖**：一条 485 线上挂变频器+温湿度两台，变频器
+     * 一成功，设备级计时器就一直新鲜 ⇒ 温湿度那台从站停止刷新也看不出来
+     * （现场实证：温湿度恒"无数据"、看门狗全程无告警、只有重启服务端
+     * 才恢复）。改用"最陈旧从站"的块级新鲜度（块 lastOkMs = 这个点最后
+     * 一次真正被回填的时刻）作为停滞判据：从站从未回填（UINT64_MAX）
+     * 时仍退回设备级口径，避免刚装配完就误判停滞。 */
+    {
+        int worstUnit = -1;
+        uint64_t worstAge = 0;
+        if (XModbusHub_deviceWorstUnitAge(hub, devId, &worstUnit, &worstAge) &&
+            worstAge != UINT64_MAX && worstAge > elapsed) {
+            elapsed = worstAge;
+        }
+    }
 
     /* ---- 健康：状态在线且数据在阈值内刷新过 ⇒ 只补跃迁沿日志 ---- */
     if (state == XModbusDevice_ConnectedState && elapsed <= staleMs) {

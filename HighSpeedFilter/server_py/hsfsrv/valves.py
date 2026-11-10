@@ -114,7 +114,7 @@ class ValveItem(object):
     def __init__(self, index, name="", module=None, do=None,
                  open_di=None, close_di=None):
         self.index = index
-        self.name = name or ("电磁阀 %d" % (index + 1))
+        self.name = name or ("电动球阀%d" % (index + 1))
         #: 点位映射（None = 未装配）
         self.module = module
         self.do = do
@@ -168,7 +168,7 @@ class ValveItem(object):
 
     def apply_config(self, item_cfg):
         """从配置字典填充点位。"""
-        self.name = item_cfg.get("name") or ("电磁阀 %d" % (self.index + 1))
+        self.name = item_cfg.get("name") or ("电动球阀%d" % (self.index + 1))
         self.module = item_cfg.get("module")
         self.do = item_cfg.get("do")
         self.open_di = item_cfg.get("openDi")

@@ -14,6 +14,7 @@
 #include "XVarList.h"
 #include "XMap.h"
 #include "XEvent.h"
+#include "XDateTime.h"
 #include "XEventType.h"
 #include "XCursor.h"
 
@@ -36,7 +37,15 @@ static void xhv_modelHeaderDataChangedSlot(XObject* receiver, XVarList* args);
 /** @brief 发射 int 信号（载荷单值）。 */
 static void xhv_emitInt(XHeaderView* self, size_t signal, int value)
 {
-    XVarList* arguments = XVarList_Create(XVar(int, value));
+    XVarList* arguments;
+    /* [NULL 调用＝取信号地址，不发射 2026-11-09] XObject_signalIdOf 的
+     * 约定：以 NULL 调用信号函数取其返回值（真实地址）。故发射前必须判
+     * self——否则「连信号」这一步（XSignal(...) 展开即调用）就会拿 NULL
+     * 解引用崩掉（实测：客户端启动即段错误，栈 xhv_emitInt ←
+     * XHeaderView_sectionDoubleClicked_signal ← XObject_signalIdOf）。
+     * 其余发射助手同理。 */
+    if (!self) return;
+    arguments = XVarList_Create(XVar(int, value));
     if (!arguments) return;
     if (((XObject*)self)->m_signalSlot) {
         XObject_emitSignal((XObject*)self, signal, arguments, NULL, NULL,
@@ -49,7 +58,9 @@ static void xhv_emitInt(XHeaderView* self, size_t signal, int value)
 /** @brief 发射 bool 信号（载荷单值，对标 sortIndicatorClearableChanged）。 */
 static void xhv_emitBool(XHeaderView* self, size_t signal, bool value)
 {
-    XVarList* arguments = XVarList_Create(XVar(bool, value));
+    XVarList* arguments;
+    if (!self) return;   /* NULL 调用＝取信号地址（见 xhv_emitInt 注）。 */
+    arguments = XVarList_Create(XVar(bool, value));
     if (!arguments) return;
     if (((XObject*)self)->m_signalSlot) {
         XObject_emitSignal((XObject*)self, signal, arguments, NULL, NULL,
@@ -62,7 +73,9 @@ static void xhv_emitBool(XHeaderView* self, size_t signal, bool value)
 /** @brief 发射双 int 信号（载荷两值，对标 sectionCountChanged）。 */
 static void xhv_emitInt2(XHeaderView* self, size_t signal, int a, int b)
 {
-    XVarList* arguments = XVarList_Create(XVar(int, a), XVar(int, b));
+    XVarList* arguments;
+    if (!self) return;   /* NULL 调用＝取信号地址（见 xhv_emitInt 注）。 */
+    arguments = XVarList_Create(XVar(int, a), XVar(int, b));
     if (!arguments) return;
     if (((XObject*)self)->m_signalSlot) {
         XObject_emitSignal((XObject*)self, signal, arguments, NULL, NULL,
@@ -219,6 +232,7 @@ static void xhv_resizeRelease(const XHeaderView* view)
 static void VXHeaderView_mousePressEvent(XWidget* self, XEvent* event);
 static void VXHeaderView_mouseMoveEvent(XWidget* self, XEvent* event);
 static void VXHeaderView_mouseReleaseEvent(XWidget* self, XEvent* event);
+static void VXHeaderView_mouseDoubleClickEvent(XWidget* self, XEvent* event);
 
 /* 对标 Qt QHeaderView::mousePressEvent（qheaderview.cpp:2505）：先查
  * 分隔线手柄（sectionHandleAt，qheaderview.cpp:2511）——命中且该段
@@ -260,6 +274,25 @@ static void VXHeaderView_mousePressEvent(XWidget* self, XEvent* event)
     xhv_pressSet(header, section);
     if (section >= 0 && header->m_sectionsClickable)
         XHeaderView_sectionPressed_signal(header, section);
+    /* [双击段 2026-11-09 接入] sectionDoubleClicked 的句柄此前**只声明
+     * 没有发射点**（全仓无 XEmitSignal）⇒ 页面侧接了也永远收不到 ⇒
+     * 「双击列标题排序」在 C 端从未生效。这里按 Qt 口径补发射：同一段、
+     * 且距上次按压不超过双击间隔（400ms，Windows 默认）⇒ 发一次。
+     * 放在**按压**而非释放：与 Qt QHeaderView 一致（mouseDoubleClickEvent
+     * 在第二次按压时判定）。 */
+    if (section >= 0) {
+        const uint64_t now = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+        if (header->m_lastDblSection == section &&
+            header->m_lastDblPressMs != 0 && now >= header->m_lastDblPressMs &&
+            (now - header->m_lastDblPressMs) <= 400u) {
+            header->m_lastDblPressMs = 0;      /* 消耗掉：三击不连发 */
+            header->m_lastDblSection = -1;
+            XHeaderView_sectionDoubleClicked_signal(header, section);
+        } else {
+            header->m_lastDblPressMs = now;
+            header->m_lastDblSection = section;
+        }
+    }
     XEvent_accept(event);
 }
 
@@ -295,6 +328,15 @@ static void VXHeaderView_mouseMoveEvent(XWidget* self, XEvent* event)
         XWidget_update(self);
         XEvent_accept(event);
         return;
+    }
+    /* [悬停进入新段 ⇒ sectionEntered 2026-11-09 Qt 口径补全] */
+    {
+        const int sec = XHeaderView_logicalIndexAt(header, position);
+        if (sec != header->m_lastEnteredSection) {
+            header->m_lastEnteredSection = sec;
+            if (sec >= 0)
+                XHeaderView_sectionEntered_signal(header, sec);
+        }
     }
 #if XCURSOR_ON
     {
@@ -352,8 +394,61 @@ static void VXHeaderView_mouseReleaseEvent(XWidget* self, XEvent* event)
     section = XHeaderView_logicalIndexAt(header, position);
     pressed = xhv_pressGet(header);
     xhv_pressSet(header, -1);
-    if (header->m_sectionsClickable && section >= 0 && section == pressed)
+    /* [双击窗口让位 2026-11-10] 同段 400ms 内刚发过 sectionDoubleClicked
+     * ⇒ 本释放属于双击周期的收尾：应用侧的三态排序已在 DBL 里执行，
+     * 这里再翻转指示器会与应用排序态错位（实测：双击降序后指示器跳升序）。
+     * sectionClicked 照发（对齐 Qt：单击与双击信号在 Qt 里都发）。 */
+    const uint64_t dblEmitMs = header->m_lastDblEmitMs;
+    const int dblEmitSec = header->m_lastDblEmitSection;
+    const int afterDbl =
+        (dblEmitMs != 0 && dblEmitSec == section &&
+         dblEmitMs + 400u >= (uint64_t)XDateTime_currentMSecsSinceEpoch());
+    if (header->m_sectionsClickable && section >= 0 && section == pressed) {
+        /* [Qt 口径补全 2026-11-09] 释放于按压段 ⇒ 翻转排序指示器（同段
+         * 再点换向；点别的段切到该段升序），再发 sectionClicked——**单击
+         * 口径**。双击周期内（afterDbl）不翻转：排序已由页面在 DBL 槽里
+         * 三态推进，指示器由页面侧同步。 */
+        if (!afterDbl) {
+            const int curSec = header->m_sortIndicatorSection;
+            const int curOrd = header->m_sortIndicatorOrder;
+            const int newOrd = (curSec == section) ? (curOrd ? 0 : 1) : 0;
+            XHeaderView_setSortIndicator(header, section, newOrd);
+        }
         XHeaderView_sectionClicked_signal(header, section);
+    }
+    XEvent_accept(event);
+}
+
+/* 对标 Qt QHeaderView::mouseDoubleClickEvent（qheaderview.cpp:2685-2690）：
+ * 双击落在可点击段 ⇒ 发射 sectionDoubleClicked（「双击列标题排序」的
+ * 正源）；落在分隔线手柄区不发音（拖拽语义优先）。此前的实现把双击判定
+ * 挂在按压链的 400ms 窗口上，而真实点击路径里表头事件由 XTableWidget
+ * 转发进来（表头子件是隐藏的，见 XTableWidget 表头带转发），转发端直接
+ * 以 DBL 事件类型进来 ⇒ 这里必须有独立的双击处理器。 */
+static void VXHeaderView_mouseDoubleClickEvent(XWidget* self, XEvent* event)
+{
+    XHeaderView* header = (XHeaderView*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int position;
+    int section;
+    if (!header || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK) return;
+    me = (XMouseEvent*)event;
+    if (XMouseEvent_button(me) != XMouseButton_LeftButton) return;
+    pos = XMouseEvent_position(me);
+    position = (header->m_orientation == 0) ? pos.x : pos.y;
+    if (XHeaderView_resizeHandleSectionAt(header, position) >= 0) return;
+    section = XHeaderView_logicalIndexAt(header, position);
+    if (section >= 0 && header->m_sectionsClickable) {
+        XHeaderView_sectionDoubleClicked_signal(header, section);
+        /* [盖章 2026-11-10] 记下"刚发过双击"，释放处理器的单击翻转在窗口
+         * 内同段让位（否则一个双击周期里 DBL 排序(降)后被 RELEASE 翻转(升)
+         * ⇒ 指示器与应用排序态错位）。 */
+        header->m_lastDblEmitMs =
+            (uint64_t)XDateTime_currentMSecsSinceEpoch();
+        header->m_lastDblEmitSection = section;
+    }
     XEvent_accept(event);
 }
 
@@ -480,6 +575,30 @@ static void VXHeaderView_move(XHeaderView* self, XHeaderView* other)
     other->m_model = NULL;
 }
 
+/* [表头带事件转发入口 2026-11-10] XTableView/XTableWidget 把表头子件
+ * 隐藏、表头带由表格自绘 ⇒ 真实鼠标事件先落在表格上。表格在命中于表头
+ * 带（y < headerHeight）时负责把事件**换算成表头局部坐标**再调这三口
+ * （等价 Qt 里 QTableView::viewportEvent 对 header 的转发路径）。
+ * 只做直呼转发：判型/按键/命中/发射全在表头自己的虚槽里（与真实事件
+ * 走同一套代码，不另立第二套语义）。 */
+void XHeaderView_forwardPress(XHeaderView* self, XEvent* event)
+{
+    if (!self || !event) return;
+    VXHeaderView_mousePressEvent((XWidget*)self, event);
+}
+
+void XHeaderView_forwardRelease(XHeaderView* self, XEvent* event)
+{
+    if (!self || !event) return;
+    VXHeaderView_mouseReleaseEvent((XWidget*)self, event);
+}
+
+void XHeaderView_forwardDoubleClick(XHeaderView* self, XEvent* event)
+{
+    if (!self || !event) return;
+    VXHeaderView_mouseDoubleClickEvent((XWidget*)self, event);
+}
+
 XVtable* XHeaderView_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHeaderView)
@@ -496,6 +615,8 @@ XVtable* XHeaderView_class_init(void)
                              VXHeaderView_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
                              VXHeaderView_mouseReleaseEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent,
+                             VXHeaderView_mouseDoubleClickEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -545,6 +666,9 @@ void XHeaderView_init(XHeaderView* self, XWidget* parent, XWidgetFlags flags,
     self->m_hidden = XVector_Create(bool);
     self->m_hiddenCount = 0;
     self->m_sectionsClickable = false;
+    self->m_lastDblSection = -1;
+    self->m_lastEnteredSection = -1;
+    self->m_lastDblPressMs = 0;
     self->m_sectionsMovable = false;
     self->m_sortIndicatorShown = false;
     self->m_sortIndicatorSection = -1;
@@ -1722,17 +1846,20 @@ void* XHeaderView_sortIndicatorClearableChanged_signal(XHeaderView* self,
 
 void* XHeaderView_sectionDoubleClicked_signal(XHeaderView* self, int section)
 {
-    (void)section;
-    /* 鼠标事件路径未接入：句柄预留，暂无发射点。 */
+    /* 真实发射点：VXHeaderView_mousePressEvent（同一段 400ms 内的第二次
+     * 按压，对标 Qt mouseDoubleClickEvent）。2026-11-09 接入：此前本句柄
+     * 只有声明没有发射点 ⇒ 页面侧「双击列标题排序」接了也收不到。 */
+    xhv_emitInt(self, (size_t)XHeaderView_sectionDoubleClicked_signal, section);
     return (void*)(size_t)XHeaderView_sectionDoubleClicked_signal;
 }
 
 void* XHeaderView_sectionEntered_signal(XHeaderView* self, int section)
 {
-    (void)section;
-    /* 悬停事件路径未接入：句柄预留，暂无发射点。 */
+    /* 真实发射点：VXHeaderView_mouseMoveEvent（悬停进入新段）。 */
+    xhv_emitInt(self, (size_t)XHeaderView_sectionEntered_signal, section);
     return (void*)(size_t)XHeaderView_sectionEntered_signal;
 }
+
 
 void* XHeaderView_sectionHandleDoubleClicked_signal(XHeaderView* self,
                                                     int section)

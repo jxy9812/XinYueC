@@ -20,6 +20,7 @@ static void VXModbusTcpClient_close(XModbusDevice* device);
 static void VXModbusTcpClient_deinit(XModbusTcpClient* client);
 static void VXModbusTcpClient_timerEvent(XObject* obj, XTimerEvent* event);
 static XModbusReply* VXModbusTcpClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress, XFuncParamType type);
+static bool VXModbusTcpClient_abandonReply(XModbusClient* client, XModbusReply* reply);
 
 // =============== 内部函数前置声明 ===============
 static void XModbusTcpClient_attemptReconnect(XModbusTcpClient* client);
@@ -208,6 +209,7 @@ XVtable* XModbusTcpClient_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusTcpClient_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXModbusTcpClient_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXModbusClient_SendRawRequest, VXModbusTcpClient_sendRawRequest);
+    XVTABLE_OVERLOAD_DEFAULT(EXModbusClient_AbandonReply, VXModbusTcpClient_abandonReply);
 
     XCLASS_SHOW_SIZE_DEFAULT(XModbusTcpClient);
     return XVTABLE_DEFAULT;
@@ -444,6 +446,35 @@ static XModbusReply* VXModbusTcpClient_sendRawRequest(XModbusClient* baseClient,
     }
     XModbusReply_setState(reply, XModbusReply_State_Waiting);
     return reply;
+}
+
+/**
+ * @brief 放弃在途应答（虚函数）：把该 Reply 的在途表项摘掉。
+ * @details 上层（Hub 超时收口）释放 Reply **之前**必须先调本函数：本层
+ *          在途表（m_pendingRequests）持有 Reply，迟到的 TCP 应答会取出
+ *          它并解引用 ⇒ 上层先释放就是 UAF（与 RTU 侧同族问题）。
+ * @note 摘项时**不**再给 Reply 置终态：终态由上层（Hub）自己记账，
+ *      这里只解除「本层还持有它」这层引用。
+ */
+static bool VXModbusTcpClient_abandonReply(XModbusClient* baseClient, XModbusReply* reply)
+{
+    XModbusTcpClient* client = (XModbusTcpClient*)baseClient;
+
+    if (!client || !reply || !client->m_pendingRequests) return false;
+    for_each_iterator(client->m_pendingRequests, XHashMap, it)
+    {
+        XPair* pair = XHashMap_iterator_data(&it);
+        XModbusTcpPendingRequest* pending = XPair_second(pair);
+        if (!pending || pending->reply != reply) continue;
+        if (pending->timeoutTimer != XTIMER_INVALID_ID) {
+            XHashMap_remove_base(client->m_timerMap, &pending->timeoutTimer);
+            XObject_killTimer((XObject*)client, pending->timeoutTimer);
+            pending->timeoutTimer = XTIMER_INVALID_ID;
+        }
+        XHashMap_erase_base(client->m_pendingRequests, &it, NULL);
+        return true;
+    }
+    return false;
 }
 
 // =============== 响应处理 ===============

@@ -41,14 +41,20 @@ platforms/
 │   ├── external/             外部依赖落点（工具链 / Arduino 包的约定位置）
 │   └── docs/                 踩坑库 / 进度 / 交接
 └── android/                  安卓打包层（薄）
-    ├── CMakeLists.txt        CMake 编排层（lib/apk/install-apk 目标）
-    ├── CMakePresets.json     预设（x86_64 / arm64-v8a）
+    ├── CMakeLists.txt        CMake 编排层（lib/apk/install-apk 目标；按应用目录驱动）
+    ├── CMakePresets.json     预设（x86_64 / arm64-v8a / hsf / hsf-arm64）
     ├── build_apk.sh          APK 打包（bash，Linux/MSYS）
     ├── pack_apk.ps1          APK 打包（PowerShell，Windows 原生）
-    ├── AndroidManifest.xml   NativeActivity 清单
+    ├── AndroidManifest.xml   NativeActivity 清单（模板应用 XGuiDemo 的）
+    ├── app.env               应用描述（CMake 目标 / 构建目录前缀 / 产物名）
     ├── res/                  资源
-    └── README.md             详细文档（构建全流程 + 五个坑 + 字体路线）
+    ├── 环境准备.md            工具链安装 + 自检 + 真机验收清单 + 故障速查
+    └── README.md             详细文档（构建全流程 + 十个坑 + 字体路线 + 应用目录模型）
 ```
+
+> **安卓层不认识任何具体 app**：一个安卓应用 = 一个「应用目录」（清单 +
+> `app.env`），随应用自己走（如高速过滤器客户端的
+> `HighSpeedFilter/client/android/`）。见 `android/README.md` §一。
 
 ## CMake 编排层：两个平台都有，形态一致
 

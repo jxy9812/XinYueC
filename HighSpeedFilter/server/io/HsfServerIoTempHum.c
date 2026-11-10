@@ -77,11 +77,13 @@ static bool temphumEvaluateQuality(const HsfServerIoTempHum* st,
     if (!st || !st->m_bus) return false;
     hub = HsfServerBus_hub(st->m_bus);
     if (!hub) return false;
+    /* [用本站有效阈值 2026-11-10] 不再用编译期宏：宏是"基线下限"，
+     * 真阈值随采集周期联动（见 m_staleMs 注记）。0 = 不判陈旧。 */
     tv = XModbusHub_pointValid(hub, XModbusInputRegisters, st->m_vbase,
-                               HSF_TEMPHUM_STALE_MS);
+                               st->m_staleMs);
     hv = XModbusHub_pointValid(hub, XModbusInputRegisters,
                                (uint16_t)(st->m_vbase + HSF_TEMPHUM_OFF_HUM),
-                               HSF_TEMPHUM_STALE_MS);
+                               st->m_staleMs);
     if (outTempValid) *outTempValid = tv;
     if (outHumValid) *outHumValid = hv;
     return tv || hv;
@@ -318,6 +320,10 @@ bool HsfServerIoTempHum_mount(HsfServerIoTempHum* st, HsfServerBus* bus,
     st->m_dev = XTempHumTransmitter_create();
     if (!st->m_dev) goto fail;
     XTempHumTransmitter_setStaleMs(st->m_dev, staleMs);
+    /* [站点层也记住阈值 2026-11-10] 质量判定走 Hub 块级新鲜度，必须比
+     * **采集周期**而不是编译期基线（否则周期 > 阈值时两拍之间必判陈旧 ⇒
+     * 界面 "--"/"数据过期" 来回抖）。 */
+    st->m_staleMs = staleMs;
     if (!XTempHumTransmitter_attach(st->m_dev, st->m_group,
                                     XIoChannelGroup_pointAt(st->m_group,
                                                             HSF_TEMPHUM_ROLE_TEMP),

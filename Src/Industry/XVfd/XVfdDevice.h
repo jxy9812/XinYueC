@@ -506,6 +506,7 @@ XCLASS_DEFINE_ENUM(XVfdDevice, ReadParam),
 XCLASS_DEFINE_ENUM(XVfdDevice, WriteParam),
 XCLASS_DEFINE_ENUM(XVfdDevice, ReadNameplate),
 XCLASS_DEFINE_ENUM(XVfdDevice, ReadFaultHistory),
+XCLASS_DEFINE_ENUM(XVfdDevice, StartWithGiven),
 XCLASS_DEFINE_END(XVfdDevice)
 
 /* ========================================================================== */
@@ -536,6 +537,19 @@ typedef struct XVfdDevice {
     XTimerId m_statusTimer;         /**< 快照发布定时器 */
     XTimerId m_actionTimer;         /**< 动作监督定时器（写落定超时/品牌序列步进） */
     uint32_t m_statusIntervalMs;    /**< 快照发布周期（毫秒；默认 200） */
+    /** @brief 快照陈旧阈值（毫秒；0 = 缺省「发布周期 × 5」）。
+     *  @details [为什么要有独立的陈旧阈值 2026-11-10 现场"变频器 --- 循环"]
+     *           缺省阈值是「发布周期 × 5」（200ms → 1000ms），它假定**数据
+     *           刷新节拍 = 发布节拍**。但 Modbus Hub 每拍只发**一个**读组
+     *           ⇒ 一圈要把该总线上所有读组轮完：现场变频器 14 组 + 温湿度
+     *           1 组 × 拍长 200ms = **2.8s 才轮完一圈** ⇒ 快照有效期 1s
+     *           根本覆盖不了一圈 ⇒ 每隔两拍就判陈旧、掩码清零 ⇒ 客户端
+     *           变频器在「---」与真值之间来回闪（用户报"有时候显示 --- 然后
+     *           又恢复 循环"）。
+     *           ⇒ 陈旧阈值必须由**装配层按真实轮转周期**算出来传进来
+     *           （见 HsfServerIo.c 的 hsfIoStaleMs 用法），0 表示沿用缺省。
+     */
+    uint32_t m_staleMs;
     uint32_t m_actionTimeoutMs;     /**< 写落定监督超时（毫秒；默认 2000） */
     /* ---- 运行阶段推导（对齐 Python VfdDevice._derive_phase）---- */
     bool m_phaseDerive;             /**< 开启阶段推导（M512 开；状态字自带阶段的品牌关）。 */
@@ -551,6 +565,8 @@ typedef struct XVfdDevice {
     bool m_hasCmdReverse;
     bool m_cmdReverse;
     XVfdError m_lastError;          /**< 最近一次失败原因 */
+    char m_lastErrorText[160];      /**< 最近一次失败的**具体**原因（中文；emitError 留存）。 */
+    bool m_hasErrorText;            /**< m_lastErrorText 是否有效。 */
     double m_maxFreqHz;             /**< 最大频率缓存（相对口径频率换算基准；Hz） */
     bool m_maxFreqKnown;            /**< m_maxFreqHz 是否已从 MaxFreq 槽读得 */
     /**
@@ -756,6 +772,23 @@ bool XVfdDevice_isBusy(const XVfdDevice* dev);
 XVfdError XVfdDevice_lastError(const XVfdDevice* dev);
 
 /**
+ * @brief 取最近一次失败的**具体**原因文本（中文；借用）。
+ * @param dev 设备实例（可 NULL）。
+ * @return 有留存文本返回该串（借用，禁释放）；否则返回 NULL。
+ * @note  错误**枚举**（XVfdDevice_lastError）只说「哪一类失败」；这份文本
+ *        说「为什么」（如「命令源未切到通讯（P0.02=2）」）。errorOccurred
+ *        信号是瞬时的（没监听者就丢），上层要把原因回给操作员就得靠它。
+ */
+const char* XVfdDevice_lastErrorText(const XVfdDevice* dev);
+
+/**
+ * @brief 错误枚举 → 中文文案（品牌无关的通用说法）。
+ * @param error 错误枚举。
+ * @return 静态常量文本（禁释放）。
+ */
+const char* XVfdDevice_errorText(XVfdError error);
+
+/**
  * @brief 设置控制闸（统一修改许可开关）。
  * @param dev 设备实例；不能为 NULL。
  * @param enabled true=允许界面/通讯下发修改（启动/停止/给定/参数写等）；
@@ -782,6 +815,25 @@ bool XVfdDevice_controlEnabled(const XVfdDevice* dev);
  * @note 快照只在有变化（脏标记）时发布，周期只决定发布的最长延迟。
  */
 void XVfdDevice_setStatusInterval(XVfdDevice* dev, uint32_t intervalMs);
+
+/**
+ * @brief 设置快照陈旧阈值（超过这么久没有任何数据刷新 ⇒ 判快照失效）。
+ * @param dev 设备实例；不能为 NULL。
+ * @param staleMs 阈值毫秒；0 = 沿用缺省「发布周期 × 5」。
+ * @return 无。
+ * @note [为什么装配层要显式传 2026-11-10] 缺省阈值假定「数据刷新节拍 =
+ *       发布节拍」，但 Modbus 总线上是**轮转发读组**（一圈 = 组数 × 拍长），
+ *       阈值短于一圈就会每隔几拍判一次陈旧 ⇒ 客户端遥测在「---」与真值
+ *       之间闪（现场变频器）。装配层按真实轮转周期算好后传进来。
+ */
+void XVfdDevice_setStaleMs(XVfdDevice* dev, uint32_t staleMs);
+
+/**
+ * @brief 取快照陈旧阈值（0 = 用缺省「发布周期 × 5」）。
+ * @param dev 设备实例（可 NULL，返回 0）
+ * @return 阈值毫秒
+ */
+uint32_t XVfdDevice_staleMs(const XVfdDevice* dev);
 
 /**
  * @brief 获取状态快照发布周期。
@@ -922,6 +974,28 @@ double XVfdDevice_rawToFrequency(const XVfdDevice* dev, XVfdFreqBasis basis,
  * @return 请求已受理返回 true；未挂接/在途/不支持返回 false
  */
 bool XVfdDevice_start(XVfdDevice* dev, bool reverse);
+
+/**
+ * @brief 带给定启动/点动：**先写频率给定、再写命令字**，作为**一个**动作。
+ * @param dev 设备实例。
+ * @param op 只接受 XVfdOperation_Start / XVfdOperation_Jog。
+ * @param reverse true=反转。
+ * @param hz 给定频率（Hz）；<=0 表示不指定、沿用变频器当前给定。
+ * @return 请求已受理返回 true；未挂接/在途/不支持/op 非法返回 false。
+ * @details [为什么必须合成一个动作 2026-11-10 板端实机根因] 现场闭环是
+ *          「启动时捎带给定」（变频器会保留上一次给定，只发启动就会按旧
+ *          给定跑，界面与实况不一致）。上层若分两次调用
+ *          `XVfdDevice_setFrequency` + `XVfdDevice_start`，**第二次必然被
+ *          设备级单飞闸拒成「设备忙（上一动作在途）」**——第一笔写的落定
+ *          要等链路回执才算完，而两笔是同一拍发出的（板端实测：C 客户端
+ *          点「启动」恒回设备忙，Python 服务端无此闸所以能控）。
+ *          本接口把两笔合成一个多阶段动作（同一 m_busy 周期内推进），
+ *          既有单飞保护不变，又不再自相排斥。
+ * @note 未实现该虚槽的品牌走缺省实现（等价于「先 setFrequency 再 start」，
+ *       仅在两笔不冲突的传输上可用；M512 已按多阶段实现）。
+ */
+bool XVfdDevice_startWithGiven(XVfdDevice* dev, XVfdOperation op, bool reverse,
+                               double hz);
 
 /**
  * @brief 受控停机（按减速斜坡停机）。

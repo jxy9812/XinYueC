@@ -104,6 +104,21 @@ PERM_ACCOUNT_ADMIN = 1 << 4
 PERM_DOWNLOAD = 1 << 5
 PERM_ALL = 0x3F
 
+# ---- 登录结果码（AuthResult 载荷首字节）---------------------------------
+#
+# 与 C 侧 `Src/XCore/XProtocol/XLink/XLinkProto.h` 的 `XLinkAuthStatus`
+# 逐值一致；**语义分「永久」与「瞬时」两类**（2026-11-09 根修，见
+# `hsfsrv_client/xlink.py` 的 `_on_auth_result`）：
+#   · 永久（客户端停自动重连，登录窗留在原地）：
+#       BAD_USER / BAD_PASSWORD / LOCKED / NO_CREDENTIAL —— 重试同一凭据
+#       永远不会成功，且会把服务端账户失败计数推向锁定。
+#   · 瞬时（客户端退避重试）：
+#       REJECTED —— 服务端**策略**拒绝（同账并发「该账户已在线」/会话数
+#                   已达上限）。凭据可能是对的，旧会话被回收后重试即通过。
+#       TIMEOUT / PROTOCOL —— 链路噪声/半开连接。
+# 服务端镜像：`server_py/hsfsrv/proto.py` 同值；C 服务端策略闸返回
+# `XLinkSessionAuthLookup_Rejected`，框架直接下发 REJECTED（不再伪造成
+# BAD_PASSWORD）。
 AUTHSTATUS_OK = 0
 AUTHSTATUS_BAD_USER = 1
 AUTHSTATUS_BAD_PASSWORD = 2
@@ -112,6 +127,11 @@ AUTHSTATUS_REJECTED = 4
 AUTHSTATUS_NO_CREDENTIAL = 5
 AUTHSTATUS_TIMEOUT = 6
 AUTHSTATUS_PROTOCOL = 7
+
+#: 瞬时拒绝（REJECTED）后的自动重连上限（次数）。镜像 C 侧
+#: `XLINK_config.h` 的 XLINK_AUTH_REJECT_RETRY_LIMIT；达上限才终局，
+#: 避免「账户已在线」这类瞬时状态让客户端永久没数据，也避免无限重试。
+XLINK_AUTH_REJECT_RETRY_LIMIT = 30
 
 AUTH_METHOD_ITERATED_HMAC = 1
 AUTH_PROOF_DOMAIN = 0x01
@@ -162,12 +182,24 @@ CFGK_VFD_ENABLED = "vfdEnabled"
 CFGK_TEMPHUM_ENABLED = "temphumEnabled"
 CFGK_FLOWMETER_ENABLED = "flowmeterEnabled"
 CFGK_TURBIDITY_ENABLED = "turbidityEnabled"
+#: [逐台开关 2026-11-10] 两台浊度仪是两台独立设备，开关各自可设；与
+#: server_py proto.py 同名常量、C 侧 HSF_CFGK_TURBIDITY1_ENABLED/_TURBIDITY2_
+#: 逐值同步。老的 turbidityEnabled 保留为两台共同缺省（兼容旧服务端）。
+CFGK_TURBIDITY1_ENABLED = "turbidity1Enabled"
+CFGK_TURBIDITY2_ENABLED = "turbidity2Enabled"
 CFGK_ANALOG_ENABLED = "analogEnabled"
 CFGK_DIGITAL_ENABLED = "digitalEnabled"
 #: collect 节键：轮询周期（int 毫秒；服务端夹到 50~60000）。
 CFGK_VFD_POLL_MS = "vfdPollMs"
 CFGK_TEMPHUM_POLL_MS = "temphumPollMs"
 CFGK_TURBIDITY_POLL_MS = "turbidityPollMs"
+#: [逐台周期 2026-11-10] 两台浊度仪与流量计各按自己的周期采集（共用 485
+#: 但节拍互不影响）。与 server_py proto.py 的同名常量、C 侧
+#: XhsfLinkProto.h 的 HSF_CFGK_TURBIDITY1_POLL_MS/_TURBIDITY2_/_FLOWMETER_
+#: 逐值同步；老的 turbidityPollMs 仍作两台浊度的兼容缺省。
+CFGK_TURBIDITY1_POLL_MS = "turbidity1PollMs"
+CFGK_TURBIDITY2_POLL_MS = "turbidity2PollMs"
+CFGK_FLOWMETER_POLL_MS = "flowmeterPollMs"
 CFGK_ANALOG_POLL_MS = "analogPollMs"
 CFGK_DIGITAL_POLL_MS = "digitalPollMs"
 #: storage 节键：是否落盘 / 库文件路径（空串=服务端程序目录）/ 采样周期。
@@ -250,10 +282,13 @@ HISTORY_PAGE_MAX = 50
 HISTORY_PAGE_MIN = 1
 HISTORY_PAGE_DEFAULT = 20
 #: 历史表列名（应答 rows 的列序；与服务端 store.HISTORY_COLUMNS 同序）。
+#: [water_temp 在**末尾**] 2026-11-10 新增水温列；按位置追加是为了让 C
+#: 客户端的下标映射（HsfLinkHistory.c 的 kSrc/kDst）既有条目全不变。
+#: 显示列序另有一套（HistoryPage.COLUMNS，水温在第 8 位紧跟浊度2）。
 HISTORY_COLUMNS = (
     "ts", "mode", "vfd_state", "freq_hz", "current_a", "rpm",
     "turb1", "turb2", "flow", "flow_unit", "flow_total", "total_unit",
-    "press_mpa", "press_note", "temp", "hum", "di", "do")
+    "press_mpa", "press_note", "temp", "hum", "di", "do", "water_temp")
 
 #: 运行日志分页查询（**C 端扩展**，2026-11-09 起；与 C 侧
 #: XhsfLinkProto.h 的 HSF_CMD_LOG_PAGE=0x0119 同号，头注释里"Python 侧

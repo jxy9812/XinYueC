@@ -212,7 +212,9 @@ typedef enum HsfHomeGlyph {
     HOME_GLYPH_HEALTH,     /* 设备健康：盾牌 + 对勾 */
     HOME_GLYPH_PRESSURE,   /* 压差：表盘 + 指针 + 底接口 */
     HOME_GLYPH_FLOW,       /* 流量计：管路 + 叶轮 + 来流箭头 */
-    HOME_GLYPH_VALVE       /* 电磁阀：阀体蝶形 + 线圈块 */
+    HOME_GLYPH_VALVE,      /* 电磁阀：阀体蝶形 + 线圈块 */
+    HOME_GLYPH_TURBIDITY,  /* 浊度仪：水滴 + 水面波纹（2026-11-09） */
+    HOME_GLYPH_BUTTONS     /* 按钮组：立柱 + 三钮 + 顶灯（2026-11-09） */
 } HsfHomeGlyph;
 
 #define HOME_GLYPH_STROKE  0xFF9DBCE8u   /* 图形描边（软蓝）。 */
@@ -430,6 +432,61 @@ static void hsfGlyphValve(XPainter* p, int gx, int gy, int s)
     hsfGlyphValveColor(p, gx, gy, s, HOME_GLYPH_STROKE, HOME_GLYPH_FILL);
 }
 
+/* ---- 浊度仪：水滴 + 内部波纹（2026-11-09 新增卡）---- */
+static void hsfGlyphTurbidity(XPainter* p, int gx, int gy, int s)
+{
+    XRect r;
+    XPoint tri[3];
+    int cx = gx + s * 50 / 100;
+    int cy = gy + s * 60 / 100;      /* 圆心（水滴下半） */
+    int rad = s * 22 / 100;
+    int k;
+    hsfGlyphPen(p, HOME_GLYPH_STROKE);
+    /* 水滴：上尖三角 + 下圆。 */
+    tri[0].x = cx;              tri[0].y = gy + s * 10 / 100;
+    tri[1].x = cx + rad;        tri[1].y = cy;
+    tri[2].x = cx - rad;        tri[2].y = cy;
+    XPainter_drawPolyline(p, tri, 3);
+    XRect_init(&r, cx - rad, cy - rad, rad * 2, rad * 2);
+    XPainter_drawEllipse(p, &r);
+    /* 水面波纹（强调色）：两道横线。 */
+    XPainter_setPen(p, HOME_GLYPH_ACCENT);
+    for (k = 0; k < 2; ++k) {
+        int wy = cy - rad / 2 + k * (rad * 3 / 4);
+        XPainter_drawLine(p, cx - rad * 3 / 5, wy, cx + rad * 3 / 5, wy);
+    }
+    XPainter_setPen(p, HOME_GLYPH_STROKE);
+}
+
+/* ---- 按钮组（现场操作柱）：立柱 + 三个按钮 + 顶部指示灯（2026-11-09）---- */
+static void hsfGlyphButtons(XPainter* p, int gx, int gy, int s)
+{
+    XRect r;
+    int k;
+    hsfGlyphPen(p, HOME_GLYPH_STROKE);
+    /* 底座 + 立柱。 */
+    XPainter_drawLine(p, gx + s * 14 / 100, gy + s * 92 / 100,
+                      gx + s * 72 / 100, gy + s * 92 / 100);
+    XPainter_drawLine(p, gx + s * 44 / 100, gy + s * 92 / 100,
+                      gx + s * 44 / 100, gy + s * 34 / 100);
+    /* 三个按钮（圆），斜向排布。 */
+    for (k = 0; k < 3; ++k) {
+        int cx = gx + s * (26 + k * 17) / 100;
+        int cy = gy + s * (44 + k * 14) / 100;
+        int rad = s * 7 / 100;
+        XRect_init(&r, cx - rad, cy - rad, rad * 2, rad * 2);
+        XPainter_drawEllipse(p, &r);
+    }
+    /* 顶部指示灯（强调色）。 */
+    XPainter_setPen(p, HOME_GLYPH_ACCENT);
+    XPainter_setPenWidth(p, 3);
+    XRect_init(&r, gx + s * 62 / 100, gy + s * 10 / 100,
+               s * 16 / 100, s * 16 / 100);
+    XPainter_drawEllipse(p, &r);
+    XPainter_setPen(p, HOME_GLYPH_STROKE);
+    XPainter_setPenWidth(p, 2);
+}
+
 /** @brief 按种类分派绘制。 */
 static void hsfGlyphDraw(XPainter* p, int glyph, int gx, int gy, int s)
 {
@@ -440,6 +497,8 @@ static void hsfGlyphDraw(XPainter* p, int glyph, int gx, int gy, int s)
     case HOME_GLYPH_PRESSURE: hsfGlyphPressure(p, gx, gy, s); break;
     case HOME_GLYPH_FLOW:     hsfGlyphFlow(p, gx, gy, s); break;
     case HOME_GLYPH_VALVE:    hsfGlyphValve(p, gx, gy, s); break;
+    case HOME_GLYPH_TURBIDITY: hsfGlyphTurbidity(p, gx, gy, s); break;
+    case HOME_GLYPH_BUTTONS:  hsfGlyphButtons(p, gx, gy, s); break;
     default: break;
     }
 }
@@ -797,9 +856,18 @@ typedef struct HsfHomePage
     XLabel       m_dpNote;     /**< 压差越限/断流说明（服务端 ew0，小字）。 */
     HsfStatBlock* m_fmFlow;    /**< 流量计瞬时流量。 */
     XLabel       m_fmSub;      /**< 流量计正/反向累计（小字行）。 */
+    XLabel       m_fmAlarm;    /**< 流量计报警行（中文；2026-11-10）。 */
     HsfHomeCard* m_valveCard;  /**< 电磁阀卡（六路合一）。 */
     XLabel       m_valveState[6]; /**< 六路状态行（●+文字，按状态着色）。 */
     XLabel       m_valveName[6];  /**< 六路阀名（服务端下发，小字灰）。 */
+    /* ---- 第三行两卡（浊度仪 / 按钮组系统状态，2026-11-09）---- */
+    XBoxLayout   m_cardsRow3;  /**< 第三卡行横排。 */
+    HsfStatBlock* m_turbValue[2]; /**< 两台浊度仪读数（NTU）。 */
+    XLabel       m_turbTemp[2];  /**< 两台浊度仪水温（℃；无温度的机型空）。 */
+    XLabel       m_turbNote;     /**< 浊度说明（未收到数据等，小字）。 */
+    HsfHomeCard* m_btnCard;      /**< 按钮组系统状态卡。 */
+    XLabel       m_btnState[7];  /**< 4 触点 + 3 灯的状态行（●+文字，按状态着色）。 */
+    XLabel       m_btnName[7];   /**< 7 格的名字小字（急停/启动/…）。 */
     /* ---- 详情浮层（点卡弹出、居中悬浮；0 收起 / 1 设备状态表 / 2 泵详情）---- */
     HsfHomeCard*  m_detailFloat;   /**< 悬浮详情卡（页面根子控件，不在流内）。 */
     struct HsfHomeShade* m_detailShade; /**< 透明遮罩：盖满页面根，点它关浮层。 */
@@ -844,7 +912,15 @@ typedef struct HsfHomePage
 #define HOME_TXT_FM_CAP     "瞬时流量"  /* 瞬时流量 */
 #define HOME_TXT_FM_FWD     "正向累计"  /* 正向累计 */
 #define HOME_TXT_FM_REV     "反向累计"  /* 反向累计 */
-#define HOME_TXT_CARD_VALVE "电磁阀 · 6 路"                              /* 电磁阀 · 6 路 */
+/* [流量计报警中文 2026-11-10] 报警码直接说中文（说明书口径），不显示
+ * "0x0004"。口径照水质页 fmAlarmText（空管/上限/下限/系统）。 */
+#define HOME_TXT_FM_ALARM   "报警"              /* 报警 */
+#define HOME_TXT_FM_NORMAL  "正常"              /* 正常 */
+#define HOME_TXT_FM_EMPTY   "空管"              /* 空管 */
+#define HOME_TXT_FM_UPPER   "上限"              /* 上限 */
+#define HOME_TXT_FM_LOWER   "下限"              /* 下限 */
+#define HOME_TXT_FM_SYSTEM  "系统"              /* 系统 */
+#define HOME_TXT_CARD_VALVE "电动球阀 · 6 路"                              /* 电动球阀 · 6 路 */
 #define HOME_TXT_PUMP_DETAIL "搅拌泵详情" /* 搅拌泵详情 */
 #define HOME_TXT_DP_CURRENT "电流"                          /* 电流 */
 #define HOME_TXT_DP_VOLT    "电压"                          /* 电压 */
@@ -860,13 +936,34 @@ typedef struct HsfHomePage
 #define HOME_TXT_VALVE_UNCFG "未配置"             /* 未配置 */
 #define HOME_TXT_VALVE_FAULT "故障"                         /* 故障 */
 #define HOME_TXT_VALVE_UNKNOWN "未知"                       /* 未知 */
-#define HOME_TXT_VALVE_DETAIL "电磁阀详情"                                      /* 电磁阀详情 */
+#define HOME_TXT_VALVE_DETAIL "电动球阀详情"                                      /* 电动球阀详情 */
 #define HOME_TXT_FB_OPEN    "开到位"              /* 开到位 */
 #define HOME_TXT_FB_CLOSE   "关到位"              /* 关到位 */
 #define HOME_TXT_YES        "是"                                      /* 是 */
 #define HOME_TXT_NO         "否"                                      /* 否 */
+/* ---- 第三行两卡：浊度仪 / 按钮组系统状态（2026-11-09 新增）---- */
+#define HOME_TXT_CARD_TURB  "浊度仪"                 /* 浊度仪 */
+#define HOME_TXT_TURB_UNIT  "NTU"                                  /* NTU */
+#define HOME_TXT_CARD_BTN   "按钮组系统状态" /* 按钮组系统状态 */
+#define HOME_TXT_BTN_ESTOP  "急停"                                  /* 急停 */
+#define HOME_TXT_BTN_START  "启动"                                  /* 启动 */
+#define HOME_TXT_BTN_STOP   "停止"                                  /* 停止 */
+#define HOME_TXT_BTN_RESET  "复位"                                  /* 复位 */
+#define HOME_TXT_BTN_LAMP_START "启动灯"                      /* 启动灯 */
+#define HOME_TXT_BTN_LAMP_STOP  "停止灯"                       /* 停止灯 */
+#define HOME_TXT_BTN_LAMP_RESET "复位灯"                      /* 复位灯 */
+#define HOME_TXT_BTN_NORMAL "正常"                                  /* 急停回路正常 */
+#define HOME_TXT_BTN_TRIGGER "急停"              /* 急停已触发（按下或断线） */
+#define HOME_TXT_BTN_PRESSED "按下"               /* 按键按下 */
+#define HOME_TXT_BTN_RELEASED "未按"              /* 按键未按 */
+#define HOME_TXT_BTN_LAMP_ON "亮"                                  /* 灯亮 */
+#define HOME_TXT_BTN_LAMP_OFF "灭"                                 /* 灯灭 */
 #define HOME_VALVE_N         6   /**< 电磁阀六路（现场口径，与 HsfServerIoValve 同值）。 */
 #define HOME_DP_STALE_MS     5000u /* 压差卡断流判据（AI 无时间型 fresh，自记）。 */
+#define HOME_TURBIDITY_N     2   /**< 浊度仪台数（现场两台：站号 1 / 站号 2，2026-11-09 板端普查定案）。 */
+#define HOME_TURBIDITY_WARN_NTU 20.0 /**< 浊度标红阈值（NTU；仅显示口径，非报警判据）。 */
+#define HOME_BTN_SLOT_N      7   /**< 按钮组卡格子数：4 触点 + 3 灯。 */
+#define HOME_BTN_COLS        4   /**< 按钮组卡每行格数（4 触点一行、3 灯一行）。 */
 
 /* 详情槽三态。 */
 #define HOME_DETAIL_NONE    0   /**< 收起（默认）。 */
@@ -955,6 +1052,43 @@ static const char* hsfHomeFmTotalUnit(int code)
 }
 
 /**
+ * @brief 流量计报警位图 → 中文文案（对齐水质页 fmAlarmText）。
+ * @param bits 报警位（0=上限 1=下限 2=空管 3=系统）。
+ * @param buf  目标缓冲。
+ * @param cap  缓冲容量。
+ * @note [为什么要有这层] 报警码直接说中文（说明书口径：0x1022 上限 /
+ *       0x1023 下限 / 0x1024 空管 / 0x1025 系统），不显示 "0x0004"——
+ *       操作员看不懂十六进制。顺序与 C 端 fmAlarmText 一致：
+ *       空管 → 上限 → 下限 → 系统。
+ */
+static void hsfHomeFmAlarmText(int bits, char* buf, size_t cap)
+{
+    size_t n = 0;
+    if (!buf || cap == 0) return;
+    buf[0] = '\0';
+    if (bits == 0) {
+        snprintf(buf, cap, "%s", HOME_TXT_FM_NORMAL);
+        return;
+    }
+#define HOME_FM_APPEND(txt) \
+    do { if (n) { buf[n++] = ' '; buf[n] = '\0'; } \
+         n += (size_t)snprintf(buf + n, (n < cap) ? cap - n : 0, "%s", (txt)); \
+         if (n >= cap) n = cap - 1; } while (0)
+    if (bits & (1 << 2)) HOME_FM_APPEND(HOME_TXT_FM_EMPTY);   /* 空管 */
+    if (bits & (1 << 0)) HOME_FM_APPEND(HOME_TXT_FM_UPPER);   /* 上限 */
+    if (bits & (1 << 1)) HOME_FM_APPEND(HOME_TXT_FM_LOWER);   /* 下限 */
+    if (bits & (1 << 3)) HOME_FM_APPEND(HOME_TXT_FM_SYSTEM);  /* 系统 */
+    /* 说明书外的未知位（bit4 及以上）：留十六进制尾巴，避免把新报警类型
+     * 说没了（Python 端 flow_alarm_text 同一口径）。 */
+    if (bits & ~0x0F) {
+        char hex[16];
+        snprintf(hex, sizeof(hex), "0x%04X", (unsigned)(bits & ~0x0F));
+        HOME_FM_APPEND(hex);
+    }
+#undef HOME_FM_APPEND
+}
+
+/**
  * @brief 选「优先侧，其次另一侧」中当前新鲜的那一侧温湿度。
  * @return 命中侧的快照（借用）；两侧都不新鲜/无有效值返回 NULL。
  * @note  [为什么不是写死 A 侧] 主界面卡的职责是"把现场读数显示出来"，
@@ -978,16 +1112,20 @@ static const HsfLinkTempHum* hsfHomePickTempHum(void)
 }
 
 /**
- * @brief 选「优先侧，其次另一侧」中当前新鲜的流量计快照。
+ * @brief 取当前新鲜的流量计快照（优先服务端报告的活动侧）。
  * @return 命中侧的快照（借用）；两侧都不新鲜/无效返回 NULL。
- * @note  优先 B 侧（现场流量计挂 B 侧，标题栏副行口径同此），A 侧作兜底。
+ * @note  [活动侧优先 2026-11-10] 流量计挂在哪条 485 上是**服务端的装配
+ *       事实**，客户端不写死「B 优先」；先看活动侧（服务端告知），再兜底
+ *       另一侧（历史遗留的按侧缓存仍在，防服务端换侧瞬间断档）。
  */
 static const HsfLinkFlowMeter* hsfHomePickFlowMeter(void)
 {
-    static const int kPrefer[HSF_LINK_SIDE_COUNT] = { HSF_SIDE_B, HSF_SIDE_A };
     int i;
+    const int active = HsfLinkClient_flowMeterSide();
     for (i = 0; i < HSF_LINK_SIDE_COUNT; ++i) {
-        const int side = kPrefer[i];
+        const int side = (i == 0) ? active
+                                  : ((active == HSF_SIDE_A) ? HSF_SIDE_B
+                                                           : HSF_SIDE_A);
         if (HsfLinkClient_flowMeterFresh(side)) {
             const HsfLinkFlowMeter* fm = HsfLinkClient_flowMeter(side);
             if (fm && fm->m_valid) return fm;
@@ -1024,8 +1162,7 @@ static void hsfHomeLabelSetColor(XLabel* label, uint32_t clr)
     XWidget_setPalette((XWidget*)label, &p);
 }
 
-static void hsfHomeHealthClicked(void* userData);
-static void hsfHomePumpClicked(void* userData);
+static void hsfHomeHealthClicked(void* userData);static void hsfHomePumpClicked(void* userData);
 
 /**
  * @brief 设备状态表末列（错误信息）吃满表格可视宽，消除"末列右侧空表头"。
@@ -1263,6 +1400,28 @@ static void hsfHomeValveClicked(void* userData)
 /* ==================== 刷新 ==================== */
 
 /**
+ * @brief 在数字量通道名里按前缀找通道号；找不到返回 -1。
+ * @details [为什么按名字找而不写死通道号] 现场接线按图纸走，服务端点位
+ *          可配（Python 端 `buttons.items`）；客户端写死 12~15 / 7~9 就是
+ *          "接线一改、界面全错"。两个服务端下发的语义名逐字一致
+ *          （C 端 HsfServerApp.c 的按钮组登记链 / Python 端 app.py），
+ *          按名字匹配则两端同口径。
+ */
+static int hsfHomeFindChannel(const HsfLinkDigital* dg, const char* prefix,
+                              bool isDo)
+{
+    int i;
+    size_t n;
+    if (!dg || !prefix || !prefix[0]) return -1;
+    n = strlen(prefix);
+    for (i = 0; i < HSF_DIGITAL_CHANNELS; ++i) {
+        const char* nm = HsfLinkClient_digitalName(i, isDo);
+        if (nm && nm[0] && strncmp(nm, prefix, n) == 0) return i;
+    }
+    return -1;
+}
+
+/**
  * @brief 周期刷新三卡 + 设备表（遥控每拍调用）。
  * @details 无数据一律 "--"：0 与"没数据"是两种含义，不能混。
  */
@@ -1385,6 +1544,23 @@ static void hsfHomeRefresh(HsfHomePage* self)
             hsfStatSet(self->m_fmFlow, HOME_TXT_DASH, HOME_CLR_TEXT, false);
             XLabel_setText_2(&self->m_fmSub, HOME_TXT_NO_DATA);
         }
+        /* [报警行 2026-11-10] 报警码直接说中文（说明书口径：空管/上限/
+         * 下限/系统），不显示 "0x0004"；正常时写「正常」绿字。 */
+        {
+            char abuf[64];
+            int bits = (fm && fresh) ? fm->m_alarms : 0;
+            hsfHomeFmAlarmText(bits, abuf, sizeof(abuf));
+            if (bits) {
+                snprintf(buf, sizeof(buf), "%s: %s", HOME_TXT_FM_ALARM, abuf);
+                XLabel_setText_2(&self->m_fmAlarm, buf);
+                hsfHomeLabelSetColor(&self->m_fmAlarm, HOME_CLR_FAULT);
+            } else {
+                XLabel_setText_2(&self->m_fmAlarm, abuf);
+                hsfHomeLabelSetColor(&self->m_fmAlarm,
+                                     (fm && fresh) ? HOME_CLR_OK
+                                                   : HOME_CLR_OFFLINE);
+            }
+        }
     }
 
     /* ---------- 电磁阀（六路合一） ---------- */
@@ -1453,6 +1629,129 @@ static void hsfHomeRefresh(HsfHomePage* self)
                     hsfHomeDotSetFilled(&t->m_fbCloseDot, false);
                 }
             }
+        }
+    }
+
+    /* ---------- 浊度仪（两台；TURBIDITY 主题） ----------
+     * [数值口径] 服务端下发的是 NTU×100 的定点整数，显示 ÷100 两位小数。
+     * [标红阈值只是显示口径] 阈值在客户端（各端各算），不是报警判据。
+     * [仪器名由服务端给] 客户端不猜"原水/出水"。 */
+    {
+        const HsfLinkTurbiditySet* ts = HsfLinkClient_turbidity();
+        bool fresh = HsfLinkClient_turbidityFresh() && ts && ts->m_count > 0;
+        int k;
+        for (k = 0; k < HOME_TURBIDITY_N; ++k) {
+            if (fresh && k < ts->m_count && ts->m_items[k].m_online) {
+                char nb[64];
+                double ntu = (double)ts->m_items[k].m_ntu100 / 100.0;
+                snprintf(nb, sizeof(nb), "%.2f", ntu);
+                hsfStatSet(self->m_turbValue[k], nb, HOME_CLR_TEXT, false);
+                /* 读数超阈值标红（hsfStatSet 的 color 参数当前被忽略，
+                 * 数值块要着色只能走调色板，见 hsfHomeLabelSetColor）。 */
+                hsfHomeLabelSetColor(&self->m_turbValue[k]->m_value,
+                                     (ntu >= HOME_TURBIDITY_WARN_NTU)
+                                         ? HOME_CLR_FAULT : HOME_CLR_TEXT);
+                if (ts->m_items[k].m_name[0]) {
+                    XLabel_setText_2(&self->m_turbValue[k]->m_caption,
+                                     ts->m_items[k].m_name);
+                }
+                /* [水温 2026-11-10] 只有带温度的机型才有（站3 ZHEYI-5100ZDY
+                 * 一帧 0x0000×4 同刻带出；站1 WZT-701A 无）——缺键就是
+                 * 没有，不是 0℃，故空着不显示。 */
+                if (ts->m_items[k].m_tempValid) {
+                    char tb[48];
+                    snprintf(tb, sizeof(tb), "%.2f ℃",
+                             (double)ts->m_items[k].m_temp100 / 100.0);
+                    XLabel_setText_2(&self->m_turbTemp[k], tb);
+                } else {
+                    XLabel_setText_2(&self->m_turbTemp[k], "");
+                }
+            } else {
+                hsfStatSet(self->m_turbValue[k], HOME_TXT_DASH,
+                           HOME_CLR_TEXT, false);
+                hsfHomeLabelSetColor(&self->m_turbValue[k]->m_value,
+                                     0xFF9E9E9Eu);
+                XLabel_setText_2(&self->m_turbTemp[k], "");
+            }
+        }
+        if (!fresh) {
+            XLabel_setText_2(&self->m_turbNote, HOME_TXT_NO_DATA);
+            hsfHomeLabelSetColor(&self->m_turbNote, HOME_CLR_OFFLINE);
+        } else {
+            XLabel_setText_2(&self->m_turbNote, "");
+            hsfHomeLabelSetColor(&self->m_turbNote, HOME_CLR_TEXT_DIM);
+        }
+    }
+
+    /* ---------- 按钮组（4 触点 + 3 灯；DIGITAL 主题） ----------
+     * [通道按名字找] 见 hsfHomeFindChannel 的说明。
+     * [触点极性] 急停/停止 = 常闭（1=回路通=未按）、启动/复位 = 常开
+     * （1=按下），与服务端 buttons.py 的现场定义一致；急停的"按下"
+     * 显示为红色「急停」（回路断了也是这个态）。 */
+    {
+        const HsfLinkDigital* dg = HsfLinkClient_digital();
+        bool fresh = HsfLinkClient_digitalFresh() && dg && dg->m_valid;
+        char tile[96];
+        int chTouch[4];
+        int chLamp[3];
+        int k;
+        static const char* kTouchPrefix[4] = { "急停", "启动按钮",
+                                               "停止按钮", "复位按钮" };
+        static const char* kLampPrefix[3] = { "启动按钮灯", "停止按钮灯",
+                                             "复位按钮灯" };
+        static const char* kSlotName[HOME_BTN_SLOT_N] = {
+            HOME_TXT_BTN_ESTOP, HOME_TXT_BTN_START, HOME_TXT_BTN_STOP,
+            HOME_TXT_BTN_RESET, HOME_TXT_BTN_LAMP_START,
+            HOME_TXT_BTN_LAMP_STOP, HOME_TXT_BTN_LAMP_RESET };
+        /* 常闭触点：急停(0) / 停止(2)；常开：启动(1) / 复位(3) */
+        static const bool kNormallyClosed[4] = { true, false, true, false };
+        for (k = 0; k < 4; ++k)
+            chTouch[k] = hsfHomeFindChannel(dg, kTouchPrefix[k], false);
+        for (k = 0; k < 3; ++k)
+            chLamp[k] = hsfHomeFindChannel(dg, kLampPrefix[k], true);
+        for (k = 0; k < HOME_BTN_SLOT_N; ++k) {
+            const char* text = HOME_TXT_DASH;
+            uint32_t color = 0xFF9E9E9Eu;
+            if (fresh) {
+                if (k < 4) {
+                    if (chTouch[k] >= 0) {
+                        bool level = (dg->m_di & (1u << chTouch[k])) != 0;
+                        bool pressed = kNormallyClosed[k] ? !level : level;
+                        if (k == 0) {
+                            if (pressed) {
+                                text = HOME_TXT_BTN_TRIGGER;
+                                color = HOME_CLR_FAULT;
+                            } else {
+                                text = HOME_TXT_BTN_NORMAL;
+                                color = HOME_CLR_OK;
+                            }
+                        } else {
+                            if (pressed) {
+                                text = HOME_TXT_BTN_PRESSED;
+                                color = HOME_CLR_OK;
+                            } else {
+                                text = HOME_TXT_BTN_RELEASED;
+                                color = 0xFF9E9E9Eu;
+                            }
+                        }
+                    }
+                } else {
+                    int li = k - 4;
+                    if (chLamp[li] >= 0) {
+                        if (dg->m_do & (1u << chLamp[li])) {
+                            text = HOME_TXT_BTN_LAMP_ON;
+                            color = HOME_CLR_OK;
+                        } else {
+                            text = HOME_TXT_BTN_LAMP_OFF;
+                            color = 0xFF9E9E9Eu;
+                        }
+                    }
+                }
+            }
+            snprintf(tile, sizeof(tile), "● %s", text);
+            XLabel_setText_2(&self->m_btnState[k], tile);
+            hsfHomeLabelSetColor(&self->m_btnState[k], color);
+            XLabel_setText_2(&self->m_btnName[k], kSlotName[k]);
         }
     }
 
@@ -1630,7 +1929,7 @@ static void hsfHomeRefresh(HsfHomePage* self)
 static void homeApplyFonts(XWidget* page, int pct)
 {
     HsfHomePage* self = (HsfHomePage*)page;
-    HsfStatBlock* blocks[10];
+    HsfStatBlock* blocks[12];
     int i;
     if (!self || pct <= 0) return;
     XLabel_setTextPixelSize(&self->m_title, 17 * pct / 100);
@@ -1638,16 +1937,29 @@ static void homeApplyFonts(XWidget* page, int pct)
     XLabel_setTextPixelSize(&self->m_devTitle, 14 * pct / 100);
     XLabel_setTextPixelSize(&self->m_dpNote, 12 * pct / 100);
     XLabel_setTextPixelSize(&self->m_fmSub, 12 * pct / 100);
+    /* [报警行 2026-11-10] 漏登记则本地设置改字号时报警行不跟着缩放。 */
+    XLabel_setTextPixelSize(&self->m_fmAlarm, 12 * pct / 100);
+    XLabel_setTextPixelSize(&self->m_turbNote, 12 * pct / 100);
+    for (i = 0; i < HOME_TURBIDITY_N; ++i) {
+        XLabel_setTextPixelSize(&self->m_turbTemp[i], 12 * pct / 100);
+    }
     for (i = 0; i < 6; ++i) {
         XLabel_setTextPixelSize(&self->m_valveState[i], 12 * pct / 100);
         XLabel_setTextPixelSize(&self->m_valveName[i], 12 * pct / 100);
+    }
+    /* [按钮组 7 格：状态行 + 名字小字] 漏登记则本地设置改字号时新卡
+     * 文字不跟着缩放（与阀卡同类坑）。 */
+    for (i = 0; i < HOME_BTN_SLOT_N; ++i) {
+        XLabel_setTextPixelSize(&self->m_btnState[i], 12 * pct / 100);
+        XLabel_setTextPixelSize(&self->m_btnName[i], 12 * pct / 100);
     }
     blocks[0] = self->m_thTemp;  blocks[1] = self->m_thHum;
     blocks[2] = self->m_vfdState; blocks[3] = self->m_vfdFreq;
     blocks[4] = self->m_vfdSet;  blocks[5] = self->m_devTotal;
     blocks[6] = self->m_devFault; blocks[7] = self->m_devOff;
     blocks[8] = self->m_dpValue; blocks[9] = self->m_fmFlow;
-    for (i = 0; i < 10; ++i) {
+    blocks[10] = self->m_turbValue[0]; blocks[11] = self->m_turbValue[1];
+    for (i = 0; i < 12; ++i) {
         HsfStatBlock* sb = blocks[i];
         if (!sb) continue;
         XLabel_setTextPixelSize(&sb->m_caption, 12 * pct / 100);
@@ -1881,6 +2193,14 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
             XLabel_setText_2(&self->m_fmSub, HOME_TXT_DASH);
             XWidget_show((XWidget*)&self->m_fmSub);
             XBoxLayout_addWidget(&fmCard->m_body, (XWidget*)&self->m_fmSub);
+            /* [报警行 2026-11-10] 报警码直接说中文（空管/上限/下限/系统），
+             * 不显示 "0x0004"。口径照水质页 fmAlarmText。 */
+            XLabel_init(&self->m_fmAlarm, &fmCard->m_base, 0);
+            HsfTheme_applyDefaultFont((XWidget*)&self->m_fmAlarm);
+            XLabel_setTextPixelSize(&self->m_fmAlarm, homePx(12));
+            XLabel_setText_2(&self->m_fmAlarm, HOME_TXT_DASH);
+            XWidget_show((XWidget*)&self->m_fmAlarm);
+            XBoxLayout_addWidget(&fmCard->m_body, (XWidget*)&self->m_fmAlarm);
             XBoxLayout_addWidgetEx(&self->m_cardsRow2, &fmCard->m_base, 1, 0);
         }
 
@@ -1939,6 +2259,126 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
         }
     }
     XBoxLayout_addLayout(&self->m_layout, (XLayout*)&self->m_cardsRow2);
+
+    /* ---- 第三行两卡：浊度仪 / 按钮组系统状态（2026-11-09 新增）----
+     * [为什么单开一行] 第二行已三张卡，再塞两张会让每张只剩 ~240px：
+     * 浊度读数与按钮组 4+3 格都挤不下（触屏现场更糟）。首页在滚动壳
+     * 里，加行只是多滚一屏，不会裁切。
+     * [位置纪律] 必须加在页尾弹性项**之前**——放后面会被 stretch 收编的
+     * 剩余高度压到页面最底且行高塌陷。 */
+    XBoxLayout_init(&self->m_cardsRow3, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&self->m_cardsRow3, 10);
+    {
+        HsfHomeCard* turbCard = hsfCardCreate(&self->m_base, HOME_TXT_CARD_TURB);
+        HsfHomeCard* btnCard = hsfCardCreate(&self->m_base, HOME_TXT_CARD_BTN);
+        hsfCardSetGlyph(turbCard, HOME_GLYPH_TURBIDITY);
+        hsfCardSetGlyph(btnCard, HOME_GLYPH_BUTTONS);
+
+        /* --- 浊度仪卡：两台读数横排 + 说明小字 --- */
+        if (turbCard) {
+            XWidget_setMinimumHeight((XWidget*)turbCard, 120);
+            XBoxLayout* tRow = (XBoxLayout*)XMemory_malloc(sizeof(XBoxLayout),
+                                                          XCLASS_DEFAULT_MEMORY_TYPE);
+            if (tRow) {
+                int k;
+                XBoxLayout_init(tRow, XBoxLayoutDirection_LeftToRight);
+                XLayout_setSpacing((XLayout*)tRow, 16);
+                for (k = 0; k < HOME_TURBIDITY_N; ++k) {
+                    /* [每台一个容器 widget] 布局指针强转当 widget 塞进
+                     * 另一个布局是未定义行为——实测两台读数全甩到卡片
+                     * 左上角与标题叠成一团（板端截图 2026-11-10）。照本页
+                     * 按钮组卡的套路：先建容器 widget，再把竖排布局挂上去，
+                     * 最后把**容器**加进行布局。 */
+                    XWidget* colHost = XWidget_create(&turbCard->m_base, 0);
+                    XBoxLayout* tCol = (XBoxLayout*)XMemory_malloc(
+                        sizeof(XBoxLayout), XCLASS_DEFAULT_MEMORY_TYPE);
+                    if (!colHost || !tCol) continue;
+                    XBoxLayout_init(tCol, XBoxLayoutDirection_LeftToRight);
+                    XLayout_setSpacing((XLayout*)tCol, 6);
+                    XWidget_setLayout(colHost, (XLayout*)tCol);
+                    XWidget_show(colHost);
+                    /* [stat 块必须入布局] stat 块是卡片 base 的子控件，不进
+                     * 布局就没有几何管理，落在 (0,0) 与标题重叠。 */
+                    self->m_turbValue[k] = hsfStatCreate(
+                        colHost, HOME_TXT_CARD_TURB,
+                        HOME_TXT_TURB_UNIT, HOME_TXT_DASH, 26);
+                    if (self->m_turbValue[k]) {
+                        XBoxLayout_addWidgetEx(tCol,
+                            (XWidget*)&self->m_turbValue[k]->m_base, 1, 0);
+                        /* [水温 2026-11-10] 每台一个水温小字（带温度的机型
+                         * 才有；无温度的机型留空，不是 0℃）。 */
+                        XLabel_init(&self->m_turbTemp[k], colHost, 0);
+                        HsfTheme_applyDefaultFont(
+                            (XWidget*)&self->m_turbTemp[k]);
+                        XLabel_setTextPixelSize(&self->m_turbTemp[k],
+                                               homePx(12));
+                        XLabel_setText_2(&self->m_turbTemp[k], "");
+                        XWidget_show((XWidget*)&self->m_turbTemp[k]);
+                        XBoxLayout_addWidgetEx(tCol,
+                            (XWidget*)&self->m_turbTemp[k], 0, 0);
+                    }
+                    XBoxLayout_addWidgetEx(tRow, colHost, 1, 0);
+                }
+                XBoxLayout_addLayout(&turbCard->m_body, (XLayout*)tRow);
+            }
+            XLabel_init(&self->m_turbNote, &turbCard->m_base, 0);
+            HsfTheme_applyDefaultFont((XWidget*)&self->m_turbNote);
+            XLabel_setTextPixelSize(&self->m_turbNote, homePx(12));
+            XLabel_setText_2(&self->m_turbNote, HOME_TXT_DASH);
+            XWidget_show((XWidget*)&self->m_turbNote);
+            XBoxLayout_addWidget(&turbCard->m_body, (XWidget*)&self->m_turbNote);
+            XBoxLayout_addWidgetEx(&self->m_cardsRow3, &turbCard->m_base, 1, 0);
+        }
+
+        /* --- 按钮组卡：4 触点 + 3 灯（2 行 4 列，第 8 格留空）---
+         *  格子套路照抄电磁阀卡：每格先建容器 widget 再挂竖排布局。 */
+        if (btnCard) {
+            XWidget_setMinimumHeight((XWidget*)btnCard, 150);
+            XGridLayout* bGrid = (XGridLayout*)XMemory_malloc(
+                sizeof(XGridLayout), XCLASS_DEFAULT_MEMORY_TYPE);
+            XBoxLayout_addStretch(&btnCard->m_body, 1);
+            if (bGrid) {
+                int k;
+                XGridLayout_init(bGrid);
+                XLayout_setContentsMargins((XLayout*)bGrid, 0, 0, 0, 0);
+                XLayout_setSpacing((XLayout*)bGrid, 4);
+                for (k = 0; k < HOME_BTN_SLOT_N; ++k) {
+                    /* [每格容器 widget] 网格 addWidget 只收 widget——布局
+                     * 指针强转传入是未定义行为（实测首格甩到标题区、其余
+                     * 格子丢失）。每格先建容器再挂竖排布局。 */
+                    XWidget* tileHost = XWidget_create(&btnCard->m_base, 0);
+                    XBoxLayout* tile = (XBoxLayout*)XMemory_malloc(
+                        sizeof(XBoxLayout), XCLASS_DEFAULT_MEMORY_TYPE);
+                    if (!tileHost || !tile) continue;
+                    XBoxLayout_init(tile, XBoxLayoutDirection_TopToBottom);
+                    XLayout_setSpacing((XLayout*)tile, 2);
+                    XWidget_setLayout(tileHost, (XLayout*)tile);
+                    XWidget_show(tileHost);
+                    XLabel_init(&self->m_btnState[k], tileHost, 0);
+                    HsfTheme_applyDefaultFont((XWidget*)&self->m_btnState[k]);
+                    XLabel_setTextPixelSize(&self->m_btnState[k], homePx(12));
+                    XLabel_setAlignment(&self->m_btnState[k], XAlignment_Left);
+                    XLabel_setText_2(&self->m_btnState[k], HOME_TXT_DASH);
+                    XWidget_show((XWidget*)&self->m_btnState[k]);
+                    XBoxLayout_addWidget(tile, (XWidget*)&self->m_btnState[k]);
+                    XLabel_init(&self->m_btnName[k], tileHost, 0);
+                    HsfTheme_applyDefaultFont((XWidget*)&self->m_btnName[k]);
+                    XLabel_setTextPixelSize(&self->m_btnName[k], homePx(12));
+                    XWidget_setForegroundRole((XWidget*)&self->m_btnName[k],
+                                              XPaletteColorRole_Mid);
+                    XLabel_setText_2(&self->m_btnName[k], HOME_TXT_DASH);
+                    XWidget_show((XWidget*)&self->m_btnName[k]);
+                    XBoxLayout_addWidget(tile, (XWidget*)&self->m_btnName[k]);
+                    /* 行 0 = 4 个触点；行 1 = 3 盏灯（第 4 格留空） */
+                    XGridLayout_addWidget(bGrid, tileHost,
+                                          k / HOME_BTN_COLS, k % HOME_BTN_COLS, 0);
+                }
+                XBoxLayout_addLayout(&btnCard->m_body, (XLayout*)bGrid);
+            }
+            XBoxLayout_addWidgetEx(&self->m_cardsRow3, &btnCard->m_base, 1, 0);
+        }
+    }
+    XBoxLayout_addLayout(&self->m_layout, (XLayout*)&self->m_cardsRow3);
     /* [页尾弹性 2026-11-06] 设备状态表改浮层后页内容变矮，widgetResizable
      * 的滚动壳会把整页拉伸到视口高——无弹性项时多余高度全被卡片行/页头
      * 吃掉（卡内大片空白、标题下坠，实测）。尾部 stretch=1 收编全部剩余
@@ -2273,6 +2713,10 @@ void HsfHomePage_adapt(XWidget* page, bool compact)
      * 重入无副作用），重排激活走下方 m_layout activate（子布局 activate
      * 回归父布局统一重解算）。 */
     XBoxLayout_setDirection(&self->m_cardsRow2,
+                            compact ? XBoxLayoutDirection_TopToBottom
+                                    : XBoxLayoutDirection_LeftToRight);
+    /* [第三行同款翻排 2026-11-09] 浊度仪/按钮组两卡窄屏也竖排（同第二行）。 */
+    XBoxLayout_setDirection(&self->m_cardsRow3,
                             compact ? XBoxLayoutDirection_TopToBottom
                                     : XBoxLayoutDirection_LeftToRight);
     /* 页边距：窄屏收窄腾内容宽。 */

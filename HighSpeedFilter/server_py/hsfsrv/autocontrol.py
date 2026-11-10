@@ -228,7 +228,7 @@ class AutoContext(object):
     async def _valve_cmd(self, index, want_open):
         bank = self._valves()
         if bank is None:
-            return False, "电磁阀组未装配"
+            return False, "电动球阀组未装配"
         try:
             ok, err = await bank.set_valve(int(index), bool(want_open))
         except Exception as exc:                        # noqa: BLE001

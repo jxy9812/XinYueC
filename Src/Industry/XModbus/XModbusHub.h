@@ -77,6 +77,44 @@ extern "C" {
 #define XMODBUS_HUB_READ_MAX_BITS 2000
 
 /**
+  * @brief 在途读组**缺省收口时限**（毫秒）
+  * @details [2026-11-10 框架级根修] 从站对某一组**不应答**时（真机 M512
+  *          对 0xFA00×5 无应答），在途标记会一直挂着 ⇒ 单飞闸把该设备
+  *          后续**所有**读组永久堵死（现场：变频器整站离线、失败计数=0、
+  *          游标卡死）。泵侧据此收口：超时即判本次事务失败、记失败计数、
+  *          报从站退避、释放标记，继续下一组。
+  *          时限取值顺序：Hub 显式配置（setInflightTimeoutMs）→ 客户端超时
+  *          （XModbusClient_timeout）→ **本缺省值**（客户端超时被配成 0
+  *          时兜底，否则在途永远没有收口点）。
+  */
+#define XMODBUS_HUB_DEFAULT_INFLIGHT_TIMEOUT_MS 1000u
+/**
+  * @brief 在途收口的**宽限余量**（毫秒）
+  * @details 客户端自己也有超时（真实 RTU/TCP 客户端会在自己的超时点把
+  *          Reply 终结并释放引用）。Hub 的在途收口是**兜底**，必须晚于
+  *          客户端的超时，否则 Hub 会删掉客户端仍持有的 Reply ⇒ 悬垂指针。
+  *          故 Hub 的实际收口时限 = 客户端超时 + 本余量。
+  */
+#define XMODBUS_HUB_INFLIGHT_TIMEOUT_GRACE_MS 200u
+/**
+  * @brief 「发帧前静默闸」可配置的上限（毫秒）
+  * @details 配置侧若把 m_preTxQuietMs 留成未初始化的栈垃圾（Debug 构建
+  *          是 0xCCCCCCCC ≈ 34 亿毫秒），静默闸会让该从站的读组**永远**
+  *          轮不到（现场：变频器整站哑掉、失败计数=0、游标卡死）。Hub 在
+  *          登记约束时把超过本上限的值**夹到上限**并告警 ⇒ 垃圾值不会
+  *          直接变成"永久静默"。注意：夹到上限仍可能饿死该从站 ⇒ 另有
+  *          静默闸饥饿逃逸（见 XMODBUS_HUB_QUIET_ESCAPE_MS）保证活性。
+  */
+#define XMODBUS_HUB_MAX_PRE_TX_QUIET_MS 2000u
+/**
+  * @brief 「发帧前静默闸」饥饿逃逸时限（毫秒）
+  * @details 某从站的读组被静默闸**连续**挡住超过本时限 ⇒ 放行一帧（并
+  *          限频告警）。这是框架层的活性保证：任何从站都不会被静默闸
+  *          永久饿死（哪怕配置值离谱）。0=关闭逃逸（不推荐）。
+  */
+#define XMODBUS_HUB_QUIET_ESCAPE_MS 2000u
+
+/**
   * @brief 从站级通讯协议约束（作用域 = (设备, 从站)；表达「从站比通用 Modbus 更严」）
   * @details 部分变频器/仪表只支持 FC03+FC06、单次读数量有上限、且不允许
   *           一帧跨过其「功能码组」边界。通用 Hub 的读帧规划以「远端连续
@@ -109,6 +147,26 @@ typedef struct XModbusHubUnitLimits {
      *        是"该从站最早多久发一次"。本值 < 设备节拍时按设备节拍走。
      */
     uint32_t m_minPollIntervalMs;
+    /**
+     * @brief 该从站发帧前的**总线静默期**（毫秒；0=不设闸，缺省）。
+     * @details [2026-11-09 ttyS4 三设备实测，docs/HSF板端ttyS4三设备取数实测
+     *          总表_20261109.md §8] 某些仪表在总线上「长帧」之后需要恢复期：
+     *          站 5 流量计的 49 字节应答刚收完**立刻**问站 1 浊度仪 → 几乎
+     *          零应答（0ms 间隙 2/10 成功），间隔 ≥125ms 才恢复（200ms 稳定
+     *          10/10）。而 Hub 的读组序是**区优先**（IR 先于 HR），流量计
+     *          （IR）与浊度仪（HR）同周期时「流量计帧尾 → 浊度仪帧头」恒为
+     *          一个扫描节拍（≈20ms）——恰好落进恢复期死区，表现为站 1 长期
+     *          「无应答」。m_minPollIntervalMs 错不开这个相位（读组序锁定
+     *          相邻关系，改周期只会让漂移周期性扫过坏相位），故给**从站**
+     *          加一道发帧前静默闸：本从站的读组发出前，要求该设备（串口）
+     *          上一笔事务**收口**距今 ≥ 本值，不足则本拍跳过、下一扫描节拍
+     *          再试（总线让给其它从站，不空等）。
+     * @note  记账点是**收口**（应答完成，成败都算）不是发送——恢复期量的是
+     *          「上一帧把总线驱动完」之后过了多久。时钟回退时放行（同
+     *          m_minPollIntervalMs 的口径），不卡死。
+     * @note  缺省 0：全部既有装配（变频器/温湿度/数字量/模拟量）行为零变化。
+     */
+    uint32_t m_preTxQuietMs;
 } XModbusHubUnitLimits;
 
 /**
@@ -127,6 +185,18 @@ typedef struct XModbusHubUnitLimitEntry {
 typedef struct XModbusHubUnitSent {
     int unitId;                            /**< 从站地址（Modbus unit id）。 */
     uint64_t lastSentMs;                   /**< 该从站最近一次读帧发出时刻（单调毫秒）。 */
+    /**
+     * @brief 该从站被「发帧前静默闸」连续挡住的起点（单调毫秒；0=未挡）。
+     * @details [静默闸饥饿逃逸 2026-11-10] 静默闸量的是「本串口上一笔事务
+     *          收口至今」，而一个串口上往往挂着多个从站 ⇒ **别的从站的流量
+     *          会把静默窗口一直顶掉**，于是本从站的读组可能**永远轮不到**
+     *          （现场：变频器整站哑掉、失败计数=0、游标卡死；根因是配置
+     *          侧把 m_preTxQuietMs 留成未初始化的栈垃圾 0xCCCCCCCC ⇒ 要求
+     *          34 亿毫秒的总线静默）。本字段记连续被挡的起点：超过逃逸时限
+     *          （XMODBUS_HUB_QUIET_ESCAPE_MS）就**放行一帧**并告警 ⇒ 框架
+     *          层给出「任何从站都不会被静默闸永久饿死」的活性保证。
+     */
+    uint64_t quietBlockedSinceMs;
 } XModbusHubUnitSent;
 
 /**
@@ -263,11 +333,28 @@ typedef struct XModbusHubDevice {
     uint32_t pollErrCount;              /**< 累计轮询失败组数。 */
     uint32_t reconnectCount;            /**< 累计重连成功次数（离线→在线跃迁）。 */
     uint64_t lastSuccessMs;             /**< 最后一次成功应答时刻（单调毫秒）。 */
+    uint64_t lastErrLogMs;              /**< 上次打印失败诊断的时刻（限频用）。 */
+    uint64_t lastStallDiagMs;           /**< 上次打印轮询停滞诊断的时刻（限频用）。 */
     bool lastTxOk;                      /**< 最近一笔总线事务成败（写/轮询共用；
                                              失败后读写交替的饥饿保护判据，
                                              2026-11-01：从站失联后写恒超时重发
                                              会永久饿死轮询，unitLost 失败计数
                                              无从累计——现场实证 pollErr 冻结）。 */
+    uint64_t lastTxEndMs;               /**< 最近一笔总线事务**收口**时刻（单调
+                                             毫秒；成败都记；0=从未）。[从站
+                                             发帧前静默闸 m_preTxQuietMs 的
+                                             记账点]——恢复期量的是「上一帧把
+                                             总线驱动完」之后过了多久（ttyS4
+                                             站5→站1 实测，2026-11-09）。 */
+    uint64_t inflightStartMs;           /**< 在途请求发出时刻（单调毫秒；0=无）。
+                                             [读组超时收口 2026-11-10] 从站
+                                             对某组**不应答**时（真机 M512
+                                             对 0xFA00×5 无应答），在途标记
+                                             会一直挂着 ⇒ 单飞闸把该设备后续
+                                             所有读组**永久堵死**（现场：变频
+                                             器整体离线、失败计数=0、游标卡死）。
+                                             有了它，泵侧能在超时后收口该笔
+                                             事务、记账并继续下一组。 */
     uint16_t txAlternateTurn;           /**< 失败交替计数：偶数=轮询先走、
                                              奇数=写先走（仅 lastTxOk=false 期间
                                              生效；成功后恢复写优先）。 */
@@ -303,6 +390,10 @@ typedef struct XModbusHub {
     uint16_t m_spanStart[4];            /**< 该类型映射虚拟起点（无映射=0）。 */
     uint16_t m_spanCount[4];            /**< 该类型映射虚拟跨度（0=未映射；cacheCount 口径）。 */
     size_t m_pollIntervalDefaultMs;     /**< 新设备缺省轮询间隔。 */
+    size_t m_inflightTimeoutMs;         /**< 在途读组收口时限（毫秒；0=自动：
+                                         *   客户端超时 → 缺省 1000ms）。
+                                         *   [2026-11-10] 从站不应答时靠它
+                                         *   收口，否则单飞闸把整台设备堵死。 */
     unsigned m_pollAreas;               /**< 轮询区掩码（bit 1<<XModbusRegisterType 枚举值：DI=bit1 Coils=bit2 IR=bit3 HR=bit4；默认 DI|IR）。 */
     /* 开关类标志打包为位域（本结构为单实例对象，省字节意义有限，
      * 主要为后续布尔配置集中登记留位、消散落 padding）。 */
@@ -320,6 +411,11 @@ typedef struct XModbusHub {
     size_t m_writeCoalesceMs;           /**< 写合并窗口毫秒（0=不等窗口，受理即下发）。 */
     XTimerId m_flushTimer;              /**< 合并窗口到期刷写定时器（窗口内首笔写拉起）。 */
     uint64_t m_lastWriteMs;             /**< 最近一次写受理时刻（窗口起点；单调毫秒）。 */
+    uint8_t  m_syncFinishDepth;         /**< 同步终态收口嵌套深度（0=不在收口中；1=最外层；
+                                             *   >=2=嵌套层：完整记账但不再泵）。
+                                             *   [为什么要 per-hub 而非文件级全局] 原全局量在多 Hub
+                                             *   场景互相污染：A 呼收口触发 B 呼的写 ⇒ B 呼的同步
+                                             *   收口被误判成"嵌套" ⇒ 那一帧被整包丢弃。 */
 } XModbusHub;
 
 /* ==================== 类初始化 / 构造 ==================== */
@@ -465,6 +561,18 @@ void XModbusHub_setPollIntervalDefault(XModbusHub* hub, size_t ms);
   * @return true=已设置；轮询中修改即时生效
   */
 bool XModbusHub_setPollInterval(XModbusHub* hub, int deviceId, size_t ms);
+
+/**
+  * @brief 查询设备轮询节拍（Hub 每拍发**一个**读组 ⇒ 轮完一圈的时间
+  *        = 读组数 × 本值）。
+  * @param hub XModbusHub实例指针（非NULL）
+  * @param deviceId 设备句柄（addDevice 返回值）
+  * @return 轮询间隔毫秒（0=该设备不轮询/设备不存在）
+  * @note 上层据此推算「数据刷新节拍」：快照陈旧阈值必须盖得住一整圈，
+  *        否则每隔几拍就误判陈旧（现场变频器 --- 循环，见
+  *        HsfServerIoVfd_applyStaleMs）。
+  */
+size_t XModbusHub_pollInterval(XModbusHub* hub, int deviceId);
 /**
   * @brief 设置轮询区掩码
   * @param hub XModbusHub实例指针（非NULL）
@@ -475,6 +583,25 @@ bool XModbusHub_setPollInterval(XModbusHub* hub, int deviceId, size_t ms);
  *       setOutputSyncMode）；纳入掩码则交轮询对齐、不自动下发
   */
 void XModbusHub_setPollAreas(XModbusHub* hub, unsigned areaMask);
+/**
+  * @brief 设置在途读组的收口时限（毫秒）
+  * @param hub XModbusHub实例指针（非NULL）
+  * @param ms 收口时限；0=自动（客户端超时 → 缺省 XMODBUS_HUB_DEFAULT_INFLIGHT_TIMEOUT_MS）
+  * @note  [2026-11-10 框架级根修] 从站对某一组**不应答**时（真机 M512 对
+  *        0xFA00×5 无应答），在途标记会一直挂着 ⇒ 单飞闸把该设备后续
+  *        **所有**读组永久堵死（现场：变频器整站离线、失败计数=0、游标
+  *        卡死、其余组从不再发）。有了收口时限，超时即判本次事务失败、
+  *        记失败计数、报从站退避、释放标记并继续下一组——**一个组的沉默
+  *        拖不垮整条总线**。
+  * @note  实际收口时限 = 配置值 + XMODBUS_HUB_INFLIGHT_TIMEOUT_GRACE_MS
+  *        （宽限余量：必须晚于客户端自己的超时，否则 Hub 会删掉客户端
+  *        仍持有的 Reply ⇒ 悬垂指针）。
+  */
+void XModbusHub_setInflightTimeoutMs(XModbusHub* hub, size_t ms);
+/**
+  * @brief 读取在途读组的收口时限（毫秒；0=自动）
+  */
+size_t XModbusHub_inflightTimeoutMs(const XModbusHub* hub);
 /**
   * @brief 设置读合并空洞容限
   * @param hub XModbusHub实例指针（非NULL）
@@ -715,6 +842,23 @@ uint32_t XModbusHub_reconnectCount(const XModbusHub* hub, int deviceId);
   * @return 单调毫秒；从未=0
   */
 uint64_t XModbusHub_deviceLastSuccessMs(const XModbusHub* hub, int deviceId);
+/**
+ * @brief 返回设备上**最陈旧的那个从站**的点级新鲜度（按块 lastOkMs 算）
+ * @param hub XModbusHub实例指针（非NULL）
+ * @param deviceId 设备句柄（addDevice 返回值）
+ * @param outWorstUnitId 最陈旧的从站号（可NULL）
+ * @param outAgeMs 该从站距最后一次真正回填的毫秒数（UINT64_MAX=从未回填）
+ * @return 设备存在且至少有一个可轮询块返回true
+ * @details [为什么需要按从站粒度] 设备级"最后成功应答"会被同一设备上
+ *          **其它从站的成功掩盖**：一条 485 线上挂变频器+温湿度两台，
+ *          变频器一成功，设备级计时器就一直新鲜 ⇒ 温湿度那台从站停止
+ *          刷新也看不出来（现场实证：温湿度恒"无数据"，看门狗判健康、
+ *          重启才恢复）。块级 lastOkMs（"这个点最后一次真正被回填"）
+ *          才是对得上现场的粒度。
+ * @note 只写块（WriteOnly，不参与轮询）不计入。
+ */
+bool XModbusHub_deviceWorstUnitAge(const XModbusHub* hub, int deviceId,
+                                    int* outWorstUnitId, uint64_t* outAgeMs);
 /**
   * @brief 返回设备读组数
   * @param hub XModbusHub实例指针（非NULL）

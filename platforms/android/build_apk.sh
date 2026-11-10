@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # ============================================================
-# XGuiDemo APK 打包脚本（NativeActivity 壳，无 Java 代码）
-# 用法: build_apk.sh [x86_64|arm64-v8a|both]
+# 安卓 APK 打包脚本（NativeActivity 壳）
+# 用法: build_apk.sh [x86_64|arm64-v8a|both] [app-dir]
 # 依赖: ANDROID_SDK / ANDROID_NDK 环境变量或默认路径；JDK keytool
-# 产物: platforms/android/out/XGuiDemo-debug.apk
+# 产物: platforms/android/out/<app.env 的 APP_APK_NAME>
 #
 # 目录说明（2026-10-24 迁入 platforms/）：
-#   本目录只放**平台差异层**——打包脚本、清单、资源、签名。
-#   Android 的平台源码（Drive/Android/**）与 demo 源码（Test/XGuiDemo/**）
-#   属于框架/工程的公共部分，仍留在原处，由根 CMake 统一编译成
-#   libxguidemo.so；本脚本只负责把它装进 APK。
+#   本目录只放**平台差异层**——打包脚本、共用资源、签名。
+#   Android 的平台源码（Drive/Android/**）与应用源码（如
+#   HighSpeedFilter/client/**）属于框架/工程的公共部分，仍留在原处，
+#   由根 CMake 统一编译成共享库；本脚本只负责把它装进 APK。
+#
+#   本脚本**不认识任何具体 app**：应用由参数 app-dir 指定（目录里放
+#   AndroidManifest.xml + app.env 两个文件，见下方「应用目录」段）。
+#   平台层自带的模板应用（XGuiDemo）的应用目录即本目录；其它应用把
+#   自己的目录放在自己那边（如 HighSpeedFilter/client/android/）。
 # ============================================================
 set -e
 
@@ -46,13 +51,45 @@ if [ ! -f "$KEYSTORE" ] && [ -f "$OUT_APK_DIR/xgui.keystore" ]; then
     mv "$OUT_APK_DIR/xgui.keystore" "$KEYSTORE"
 fi
 ABIS="${1:-both}"
+# ---- 应用目录（app-dir）驱动：本脚本不认识任何具体 app -------------------
+# 用法: build_apk.sh [abi] [app-dir]
+#   app-dir 是一个「安卓应用」目录，内含两个文件：
+#     AndroidManifest.xml —— 应用身份的唯一事实源（应用 id / 原生库名 /
+#       应用名 / 权限）。打包脚本从中派生包名与 .so 名，故清单与 APK
+#       永远一致（改一处即可，不会出现「清单写 xguidemo、包里塞
+#       libxhsfclient.so」这种装得上跑不起来的错配）。
+#     app.env             —— 构建侧信息（CMake 目标名 / 构建目录前缀 /
+#       产物名），供本脚本定位原生库。
+#   应用目录随应用走（app 的东西不落在平台层）：
+#     demo → platforms/android/            （平台层自带的模板应用）
+#     hsf  → HighSpeedFilter/client/android/（高速过滤器客户端）
+APP_DIR="${2:-$SELF_DIR}"
+# 相对路径按**仓库根**解析（与文档里的用法一致）；绝对路径原样保留。
+case "$APP_DIR" in
+    /*|[A-Za-z]:*|*'\'*) : ;;
+    *) APP_DIR="$ROOT/$APP_DIR" ;;
+esac
+APP_ENV="$APP_DIR/app.env"
+APP_MANIFEST="$APP_DIR/AndroidManifest.xml"
+[ -f "$APP_ENV" ] || { echo "缺应用描述: $APP_ENV"; exit 1; }
+[ -f "$APP_MANIFEST" ] || { echo "缺清单: $APP_MANIFEST"; exit 1; }
+# shellcheck disable=SC1090
+. "$APP_ENV"
+# 从清单派生：包名（<manifest package="...">）与原生库名（meta-data
+# android.app.lib_name，即 .so 的基名）。awk 取 meta-data 块内的第一个
+# android:value，避免误取清单里其它带 value 的属性。
+APP_PKG=$(sed -n 's/^[[:space:]]*package="\([^"]*\)".*/\1/p' "$APP_MANIFEST" | head -1)
+APP_LIB=$(awk '/android:name="android.app.lib_name"/{f=1} f && /android:value=/{gsub(/.*android:value="/,""); gsub(/".*/,""); print; exit}' "$APP_MANIFEST")
+[ -n "$APP_PKG" ] || { echo "清单里读不到 package: $APP_MANIFEST"; exit 1; }
+[ -n "$APP_LIB" ] || { echo "清单里读不到 android.app.lib_name: $APP_MANIFEST"; exit 1; }
+echo "APP_DIR=$APP_DIR  target=$APP_TARGET  pkg=$APP_PKG  lib=$APP_LIB  apk=$APP_APK_NAME"
 
 rm -rf "$WORK"; mkdir -p "$WORK/jni" "$WORK/libs" "$OUT_APK_DIR"
 
 # ---- 1) 原生库（CMake 产物直拷，双 ABI） ----
 copy_lib() {
-    SRC="$ROOT/out/android-$1/libxguidemo.so"
-    [ -f "$SRC" ] || { echo "缺 $SRC，先 cmake --build out/android-$1 --target xguidemo"; exit 1; }
+    SRC="$ROOT/out/$APP_BUILD_PREFIX-$1/lib$APP_LIB.so"
+    [ -f "$SRC" ] || { echo "缺 $SRC，先 cmake --build out/$APP_BUILD_PREFIX-$1 --target $APP_TARGET"; exit 1; }
     mkdir -p "$WORK/libs/$2"
     cp "$SRC" "$WORK/libs/$2/"
 }
@@ -102,11 +139,11 @@ check_activity_manifest() {
         exit 1
     fi
     FQCN="$PKG.$CLS"
-    if ! grep -q "android:name=\"$FQCN\"" "$SELF_DIR/AndroidManifest.xml"; then
+    if ! grep -q "android:name=\"$FQCN\"" "$APP_MANIFEST"; then
         # 诊断输出用 ASCII：控制台代码页可能是 GBK，中文会成乱码。
         echo "MANIFEST / PLATFORM ACTIVITY MISMATCH:"
         echo "  platform Java : $FQCN   ($JFILE)"
-        echo "  manifest lacks: android:name=\"$FQCN\"   ($SELF_DIR/AndroidManifest.xml)"
+        echo "  manifest lacks: android:name=\"$FQCN\"   ($APP_MANIFEST)"
         echo "  -> fix the Java source or the manifest; they must agree."
         echo "     Otherwise the APK installs but never launches."
         exit 1
@@ -129,7 +166,7 @@ cp "$FONT_SRC" "$FONT_ASSETS/fonts/"
 "$BT/aapt2" compile --dir "$SELF_DIR/res" -o "$WORK/res.zip"
 "$BT/aapt2" link -o "$WORK/base.apk" \
     -I "$PLATFORM" \
-    --manifest "$SELF_DIR/AndroidManifest.xml" \
+    --manifest "$APP_MANIFEST" \
     "$WORK/res.zip"
 
 # ---- 3) 塞入原生库 + 字体 asset ----
@@ -140,7 +177,7 @@ cp "$FONT_SRC" "$FONT_ASSETS/fonts/"
 cd "$WORK"
 mkdir -p lib
 cp -r libs/* lib/
-"$BT/aapt" add -f base.apk $(cd lib && ls */libxguidemo.so | sed 's|^|lib/|') > /dev/null
+"$BT/aapt" add -f base.apk $(cd lib && ls */lib$APP_LIB.so | sed 's|^|lib/|') > /dev/null
 "$BT/aapt" add -f base.apk assets/fonts/XFontOutlineCommon.otf > /dev/null
 
 # ---- 3b) Java 侧（无障碍桥）编译 + dex ----
@@ -284,6 +321,9 @@ if [ -n "${JAVA_HOME:-}" ]; then
 fi
 
 if [ ! -f "$KEYSTORE" ]; then
+    # 首次构建（本机还没有签名密钥）：先建目录——keytool 不会自建父目录，
+    # 缺目录直接 FileNotFoundException 失败（2026-11-09 实锅）。
+    mkdir -p "$(dirname "$KEYSTORE")"
     keytool -genkeypair -keystore "$KEYSTORE" -alias xgui \
         -keyalg RSA -keysize 2048 -validity 10000 \
         -storepass xguidemo -keypass xguidemo \
@@ -299,6 +339,6 @@ case "$(uname -s)" in
 esac
 "$apksigner_cmd" sign --ks "$KEYSTORE" --ks-pass pass:xguidemo \
     --ks-key-alias xgui --key-pass pass:xguidemo \
-    --out "$OUT_APK_DIR/XGuiDemo-debug.apk" base-aligned.apk
+    --out "$OUT_APK_DIR/$APP_APK_NAME" base-aligned.apk
 
-echo "OK: $OUT_APK_DIR/XGuiDemo-debug.apk"
+echo "OK: $OUT_APK_DIR/$APP_APK_NAME"

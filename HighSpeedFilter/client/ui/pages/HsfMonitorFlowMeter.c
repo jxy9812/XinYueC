@@ -53,10 +53,22 @@
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON
 
+/**
+ * @brief 本机时区偏移（epoch ↔ 本地日历互转用；算法同历史页 histTzOffsetMs）。
+ */
+static int64_t fmTzOffsetMs(void)
+{
+    XDateTime now = XDateTime_currentDateTime();
+    return XDateTime_toMSecsSinceEpoch(&now) -
+           XDateTime_currentWallMSecsSinceEpoch();
+}
+
 /* ==================== 常量与配色 ==================== */
 
-/** @brief 流量计所在侧（现场：B 侧 485 / COM18 / 站号 5）。 */
-#define FM_SIDE              1
+/* [侧号不再由页面指定 2026-11-10] 流量计挂在哪条 485 上是**服务端的
+ * 装配事实**（现场：B 侧 / COM18 / 站号 5）：服务端按装配位置回答并在
+ * 帧里带 side，客户端据此知道活动侧。早先这里写死 FM_SIDE=1 ⇒ 现场
+ * 换接线就得改客户端；现在页面只管要数据。 */
 #define FM_BANNER_H          44
 #define FM_MAIN_H            84
 #define FM_GAUGE_H           132
@@ -253,6 +265,33 @@ static void fmAlarmText(int bits, char* buf, size_t cap)
     if (bits & FM_ALARM_LOWER)      FM_APPEND(FM_TXT_LOWER);
     if (bits & FM_ALARM_SYSTEM)     FM_APPEND(FM_TXT_SYSTEM);
 #undef FM_APPEND
+}
+
+/**
+ * @brief 趋势图 X 轴刻度标签：把「相对建页时刻的秒数」渲染成本地 时:分:秒。
+ * @details [口径 2026-11-10 与变频器页统一] 本页 X 轴原用缺省 "%g"（图上只
+ *          是 0/6/12 这样的秒数，读不出时刻）。数据点 X =
+ *          (now - m_trendT0)/1000，反向换算 m_trendT0 + value*1000 即该刻墙钟
+ *          毫秒，再补本地时区偏移展开成日历。
+ * @note 定义在页结构体之后（要读 m_trendT0）。
+ */
+static void fmTrendXLabelText(const XValueAxis* axis, double value, char* buf,
+                              int cap, void* userData)
+{
+    HsfFmPage* p = (HsfFmPage*)userData;
+    XDateTime dt;
+    XTime t;
+    int64_t ms;
+
+    (void)axis;
+    if (!buf || cap <= 0) return;
+    buf[0] = '\0';
+    if (!p || p->m_trendT0 == 0) return;
+    ms = (int64_t)p->m_trendT0 + (int64_t)(value * 1000.0) + fmTzOffsetMs();
+    if (!XDateTime_setMSecsSinceEpoch(&dt, ms)) return;
+    t = XDateTime_time(&dt);
+    snprintf(buf, (size_t)cap, "%02d:%02d:%02d",
+             XTime_hour(&t), XTime_minute(&t), XTime_second(&t));
 }
 
 /** @brief 当前单调秒（趋势图横轴用）。 */
@@ -947,6 +986,12 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
              * 6 个标签会挤成一团（竖屏 560x900 实测 Y 轴数字重叠）。 */
             XValueAxis_setTickCount(p->m_axisY, 5);
         }
+        /* [X 轴显示时钟时间 2026-11-10] 轴值是"相对建页时刻的秒数"，标签
+         * 渲染成本地 时:分:秒（与变频器页同口径；缺省 "%g" 只有秒数，现场
+         * 读不出是几点几分）。 */
+        if (p->m_axisX) {
+            XValueAxis_setLabelTextCallback(p->m_axisX, fmTrendXLabelText, p);
+        }
         XChartView_setChart(&p->m_trendView, p->m_trendChart);
     }
     XChartView_setPanEnabled(&p->m_trendView, true);
@@ -982,7 +1027,7 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
     XWidget_show(&p->m_root);
 
     /* ---- 接数据源 ---- */
-    p->m_prov = HsfFlowMeterProvider_remote(FM_SIDE);
+    p->m_prov = HsfFlowMeterProvider_remote();
     if (p->m_prov) {
         if (p->m_prov->subscribe)
             p->m_prov->subscribe(p->m_prov->m_userData, fmOnProviderNotify, p);
@@ -1051,10 +1096,14 @@ void HsfMonitorFlowMeter_adapt(XWidget* page, bool compact)
  * @param name 仪器名（服务端给；NULL=用"浊度仪N"占位）。
  * @param ntu 浊度值（NTU 原值；客户端内部按 ×100 定点口径换算）。
  * @param online 该台是否在线。
+ * @param hasTemp 该台是否带温度（2026-11-10：站3 ZHEYI-5100ZDY 一帧
+ *                0x0000×4 同刻带出；站1 WZT-701A 无温度）。
+ * @param tempC 水温（℃ 原值；hasTemp=false 时无意义）。
  * @note  ≥20 NTU 标红（现场水质告警线，对齐 Python 客户端口径）。
  */
 void HsfMonitorFlowMeter_setTurbidity(int index, const char* name,
-                                      double ntu, bool online)
+                                      double ntu, bool online,
+                                      bool hasTemp, double tempC)
 {
     HsfFmPage* p = s_fmPage;
     char buf[96];
@@ -1068,8 +1117,14 @@ void HsfMonitorFlowMeter_setTurbidity(int index, const char* name,
                                   XPaletteColorRole_Mid);
         return;
     }
-    snprintf(buf, sizeof(buf), "%s  %.2f NTU",
-             (name && name[0]) ? name : "浊度仪", ntu);
+    if (hasTemp) {
+        /* [带温度的机型] 浊度与水温同刻（一帧读出），并列显示。 */
+        snprintf(buf, sizeof(buf), "%s  %.2f NTU  %.2f \xE2\x84\x83",
+                 (name && name[0]) ? name : "浊度仪", ntu, tempC);
+    } else {
+        snprintf(buf, sizeof(buf), "%s  %.2f NTU",
+                 (name && name[0]) ? name : "浊度仪", ntu);
+    }
     XLabel_setText_2(&p->m_turbValue[index], buf);
     /* [≥20 NTU 标红] 现场水质告警线（对齐 Python 客户端 TURBIDITY_WARN_NTU）。 */
     XWidget_setForegroundRole((XWidget*)&p->m_turbValue[index],

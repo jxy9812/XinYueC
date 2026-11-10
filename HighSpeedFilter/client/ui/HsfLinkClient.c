@@ -42,6 +42,22 @@
 /** @brief 单类通知的订阅槽容量（登录窗/远端 provider/未来页各占一槽）。 */
 #define HSF_LC_SUB_SLOTS  4
 
+/**
+ * @brief 遥测补拍通道（自愈节流的下标）。
+ * @details 每类数据各自记账「上次向服务端要一拍的时刻」：同一个 tick 里可能
+ *          同时补拍模拟量 + 浊度 + 泵（水质页三主题同订），共用一个时间戳
+ *          会让后两类被前一类挤掉。流量计按侧独立（两侧是两台独立设备）。
+ */
+typedef enum HsfLcSnapshotChan {
+    HsfLcSnapshotCh_Ai = 0,          /**< 模拟量（全量快照）。 */
+    HsfLcSnapshotCh_FlowMeterA,      /**< 电磁流量计 A 侧。 */
+    HsfLcSnapshotCh_FlowMeterB,      /**< 电磁流量计 B 侧。 */
+    HsfLcSnapshotCh_Turbidity,       /**< 浊度仪组。 */
+    HsfLcSnapshotCh_Pump,            /**< 进水泵组。 */
+    HsfLcSnapshotCh_Vfd,             /**< 变频器遥测。 */
+    HsfLcSnapshotCh_Count
+} HsfLcSnapshotChan;
+
 /** @brief 通知订阅（回调+令牌对；空槽 m_cb=NULL）。 */
 typedef struct HsfLcSub {
     HsfLinkNotifyFn m_cb;               /**< 通知回调；NULL=空槽。 */
@@ -60,6 +76,10 @@ typedef struct HsfLinkClientState {
     HsfLcSub m_tempHum[HSF_LC_SUB_SLOTS];   /**< 温湿度遥测订阅槽。 */
     HsfLcSub m_flowMeter[HSF_LC_SUB_SLOTS]; /**< 电磁流量计遥测订阅槽。 */
     HsfLinkCommandFn m_cmdCb;    void* m_cmdUser;   /**< 控制应答（单槽）。 */
+    /* 状态栏提示（单槽；主窗建窗时注册一次，跨连接复用——不像 ready/fail
+       那样属于登录窗的一次性语义）。2026-11-09：自动重连被服务端瞬时
+       拒绝时用它告诉操作员「账户可能已在线，正在重试」。 */
+    HsfLinkNoticeFn m_noticeCb;  void* m_noticeUser;
     /* 变频器遥测快照。 */
 #if XVFD_ON
     XVfdStatus m_vfdStatus;             /**< 最近遥测（解码产物）。 */
@@ -73,6 +93,7 @@ typedef struct HsfLinkClientState {
     char m_cfgErr[96];                 /**< 最近一次配置写失败原因（UTF-8）。 */
     char m_serverAddr[96];              /**< 服务端地址（远端设置页显示用）。 */
     bool m_vfdValid;                    /**< 收到过至少一拍。 */
+    uint64_t m_vfdLastMs;               /**< 最近一次解析成功的本地时刻（毫秒）。 */
     /* 模拟量遥测快照。 */
     int32_t m_aiUa[HSF_LINK_AI_CH_MAX]; /**< 工程值（μA 定点）。 */
     int32_t m_aiRaw[HSF_LINK_AI_CH_MAX]; /**< 原始寄存器（毫伏）。 */
@@ -83,11 +104,17 @@ typedef struct HsfLinkClientState {
     uint32_t m_aiMask;                  /**< 有效位掩码。 */
     int m_aiCount;                      /**< 通道数。 */
     bool m_aiValid;                     /**< 收到过至少一拍。 */
+    uint64_t m_aiLastMs;                /**< 最近一次解析成功的本地时刻（毫秒）。 */
     char m_aiName[HSF_LINK_AI_CH_MAX][32]; /**< 通道名（服务端全量下发）。 */
     /* 温湿度遥测快照（按侧）。 */
     HsfLinkTempHum m_tempHumState[HSF_LINK_SIDE_COUNT]; /**< 每侧最近快照。 */
+    /* 温湿度快照补拍节流（自愈用）：最近一次「向服务端要一拍」的时刻。 */
+    uint64_t m_lastTempHumReqMs;              /**< 最近一次快照请求时刻（毫秒）。 */
+    /* 其余遥测的补拍节流（按通道，见 HsfLcSnapshotChan）。 */
+    uint64_t m_lastSnapReqMs[HsfLcSnapshotCh_Count];
     /* 电磁流量计遥测快照（按侧）。 */
     HsfLinkFlowMeter m_flowMeterState[HSF_LINK_SIDE_COUNT]; /**< 每侧最近快照。 */
+    int m_flowMeterSide;               /**< 服务端报告的流量计所在侧（活动侧）。 */
     /* 数字量遥测快照。 */
     HsfLinkDigital m_digital;               /**< 最近数字量位图。 */
     HsfLcSub m_digitalCb[HSF_LC_SUB_SLOTS]; /**< 数字量更新订阅槽。 */
@@ -134,6 +161,7 @@ static HsfLinkClientState s_lc;         /**< 模块单例（零初始化）。 *
 /* ---- 前向声明：分派函数在本文件前部，解析/广播实现在后部。 ---- */
 static bool hsfLcParseDigital(const uint8_t* data, uint32_t len);
 static void hsfLcNotifyDigital(void);
+static void hsfLcNotifyTempHum(void);
 static bool hsfLcParseValves(const uint8_t* data, uint32_t len);
 static void hsfLcParseValveCmdResult(const uint8_t* data, uint32_t len,
                                       int index);
@@ -261,6 +289,15 @@ static bool hsfLcParseAi(const uint8_t* data, uint32_t len)
         }
         s_lc.m_aiCount = n;
         s_lc.m_aiValid = true;
+        s_lc.m_aiLastMs = XDateTime_currentMSecsSinceEpoch();
+    } else {
+        /* [2026-11-09 畸形载荷口径] 此前无论解析成败都 return true，畸形帧
+         * 会被当成「解析成功」通知订阅者——订阅者读到的是上一拍的旧值，白
+         * 画一帧；快照应答路径也没法把畸形载荷当失败留痕。改为按失败返回
+         * （与温湿度/流量计/泵/浊度的解析器同口径：载荷不合法 = 没有新数据，
+         * 不写 model 也不通知）。 */
+        XClassDelete((XClass*)doc);
+        return false;
     }
     XClassDelete((XClass*)doc);
     return true;
@@ -382,6 +419,18 @@ static bool hsfLcParseTurbidity(const uint8_t* data, uint32_t len)
                  HSF_KEY_TURB_ONLINE);
         v = XBsonDocument_value_keyUtf8(doc, key);
         it->m_online = v ? XBsonValue_toBool(v, false) : false;
+        /* 温度（2026-11-10）：**缺键 = 该机型没有温度**，不是 0℃——
+         * 站1 WZT-701A 只有 2 个寄存器、无温度；站3 ZHEYI-5100ZDY 一帧
+         * 0x0000×4 同刻带出。显示时 m_temp100 ÷100。 */
+        it->m_tempValid = false;
+        it->m_temp100 = 0;
+        snprintf(key, sizeof(key), HSF_KEY_TURB_PREFIX_FMT, i,
+                 HSF_KEY_TURB_TEMP);
+        v = XBsonDocument_value_keyUtf8(doc, key);
+        if (v) {
+            it->m_temp100 = XBsonValue_toInt32(v, 0);
+            it->m_tempValid = true;
+        }
     }
     s_lc.m_turbidity.m_received = true;
     s_lc.m_turbidity.m_lastMs = XDateTime_currentMSecsSinceEpoch();
@@ -471,6 +520,9 @@ static bool hsfLcParseFlowMeter(const uint8_t* data, uint32_t len, int* outSide)
         return false;
     }
     snap = &s_lc.m_flowMeterState[side];
+    /* [活动侧 2026-11-10] 记下服务端报告的侧号：客户端据此知道设备挂在
+     * 哪条总线上（服务端的事实），自己不用猜现场接线。 */
+    s_lc.m_flowMeterSide = side;
     v = XBsonDocument_value_keyUtf8(doc, "valid");
     snap->m_valid = v ? XBsonValue_toBool(v, false) : false;
     if (snap->m_valid) {
@@ -778,15 +830,144 @@ void HsfLinkClient_unsubscribe(HsfLinkTopic topic)
 /* ==================== XLink 回调 ==================== */
 
 /**
+ * @brief 载荷是否为「否定包络」（有 ok 键且为 false）——命令的失败应答。
+ * @param data BSON 文档字节；len 字节数。
+ * @param outErr 失败原因输出（UTF-8；可为 NULL）；无 err 键时写空串。
+ * @param errCap outErr 容量。
+ * @return 是失败包络返回 true。
+ * @details [为什么必须单独认这个形状] 快照命令**成功**时的应答是裸快照文档
+ *          （根本没有 ok 键）；只有「进水泵组未装配」「权限不足」这类拒绝才
+ *          回 {"ok":false,"err":...}。若直接交给快照解析器，失败包络会被
+ *          当成「0 个条目」写进 model（界面从「有一台泵」变成「一台都没有」，
+ *          看着像数据丢了）。**注意**不能复用 hsfLcParseEnvelope：它对缺键
+ *          也给 ok=false，而快照文档本来就没有 ok 键。
+ */
+static bool hsfLcIsErrorEnvelope(const uint8_t* data, uint32_t len,
+                                 char* outErr, size_t errCap)
+{
+    XBsonDocument* doc;
+    XBsonValue* v;
+    bool isErr = false;
+
+    if (outErr && errCap > 0) outErr[0] = '\0';
+    if (!data || len == 0) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    if (XBsonDocument_from_bytes(doc, data, len)) {
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_OK);
+        if (v && !XBsonValue_toBool(v, true)) {
+            isErr = true;
+            v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_ERR);
+            if (v && outErr && errCap > 0)
+                hsfLcCopyValue(v, outErr, errCap);
+        }
+    }
+    XClassDelete((XClass*)doc);
+    return isErr;
+}
+
+/**
+ * @brief 快照应答可用性闸：失败包络（{"ok":false,"err":...}）直接留痕并拒绝。
+ * @param msgCode 业务命令码（日志用）。
+ * @param data BSON 文档字节；len 字节数。
+ * @return 载荷是快照（可继续解析）返回 true；是失败包络返回 false（已打日志）。
+ * @details [为什么每条快照应答都要过这道闸] 五条快照命令的成功应答都是**裸
+ *          快照文档**（没有 ok 键），而「权限不足」「设备未装配」「未知命令」
+ *          这类拒绝回的是负包络。若把负包络交给快照解析器：
+ *            · 模拟量 → n 缺失 ⇒ 通道数被清成 0（界面直接「无数据」，看起来
+ *              像设备掉线，实际只是这条请求被拒）；
+ *            · 浊度 → count 缺失 ⇒ 台数清零（同理）；
+ *            · 泵/流量计/变频器 → 只丢 valid 或保持旧值，危害小但同样不可取。
+ *          故统一在解析前认这个形状：失败就**不写 model**，只留一行日志
+ *          （含命令码与长度，现场能据此判断是权限问题还是设备未装配）。
+ */
+static bool hsfLcSnapshotPayloadOk(uint16_t msgCode, const uint8_t* data,
+                                   uint32_t len)
+{
+    char err[96];
+    if (!hsfLcIsErrorEnvelope(data, len, err, sizeof(err))) return true;
+    XPrintf("HsfLinkClient: 快照应答为失败包络（cmd=0x%04X len=%u）：%s\n",
+            (unsigned)msgCode, (unsigned)len, err[0] ? err : "未知原因");
+    return false;
+}
+
+/**
+ * @brief 模式包络回填（RUN_MODE 与 AUTO_CONTROL 同形应答共用）。
+ * @param doc 已解析的应答文档（借用；NULL 安全）。
+ * @param ok 应答是否成功（成功才回填模式/运行位，与既有 RUN_MODE 口径一致）。
+ * @param outErr 失败原因输出（UTF-8；可 NULL 表示不记录）。
+ * @param errCap outErr 容量。
+ * @details 服务端 0x0105（RUN_MODE）与 0x0115（AUTO_CONTROL）都用
+ *          hsfAppMakeModeEnvelope 回包：{ok, err?, mode, auto, autoRunning}。
+ *          两个命令的处理逻辑必须同源，否则「自动运行被拒后界面还显示旧的
+ *          运行位」这类漂移会只在一侧出现。
+ */
+static void hsfLcApplyModeDoc(XBsonDocument* doc, bool ok,
+                              char* outErr, size_t errCap)
+{
+    XBsonValue* v;
+    if (!doc) return;
+    if (ok) {
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_MODE);
+        if (v) {
+            s_lc.m_modeAuto = (XBsonValue_toInt32(v, 0) == 1) ? 1 : 0;
+            s_lc.m_modeKnown = true;
+        }
+        /* [自动运行状态] "自动模式"与"控制器真的在跑"是两件事：
+         * 服务端 0x0105 应答带 auto / autoRunning 两个键。缺失时
+         * 保持"未知"（三态：未知/已停止/运行中）——不能把缺失当
+         * false（那会把"服务端没上报"显示成"已停止"）。 */
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTO);
+        if (v) {
+            s_lc.m_autoRunning = -1;   /* 重置为未知 */
+            s_lc.m_autoRunningKnown = false;
+        }
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTO_RUNNING);
+        if (v) {
+            s_lc.m_autoRunning = XBsonValue_toBool(v, false) ? 1 : 0;
+            s_lc.m_autoRunningKnown = true;
+        }
+        return;
+    }
+    if (outErr && errCap > 0) {
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_ERR);
+        if (v) hsfLcCopyValue(v, outErr, errCap);
+    }
+}
+
+/**
  * @brief 业务帧分发（会话 pump 栈上同步执行；上下文=模块单例）。
  */
 static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
                           const uint8_t* payload)
 {
-    if (!session || !frame) return;
+    /* [只要求 frame 非空] 分发全程不读 session（Response/Publish 两个分支只用
+     * frame 与 payload）：白盒测试钩子 HsfLinkClient_testDispatchResponse 在
+     * 未连线（没有会话对象）时也要能喂应答帧，故不把会话当必要条件。 */
+    (void)session;
+    if (!frame) return;
     switch (frame->m_msgClass) {
     case XLinkMsgClass_Response:
         if (frame->m_msgCode == HSF_CMD_HISTORY_PAGE) {
+            /* [失败包络要留痕 2026-11-10] 落盘关闭时服务端回的是
+             * {"ok":false,"err":"落盘未启用：…"}（不是分页文档）。此前
+             * 直接当分页文档解析 ⇒ total=0、rows 空 ⇒ 界面「共 0 条」+
+             * 停在「读取中」，现场像「表格数据没了」，看不到真正原因。
+             * 现在先认包络：失败就把 err 原文带进结果结构，页面显示它。 */
+            char err[sizeof(s_lc.m_history.m_error)];
+            if (hsfLcIsErrorEnvelope(payload, frame->m_payloadLen, err,
+                                      sizeof(err))) {
+                s_lc.m_history.m_valid = false;
+                s_lc.m_history.m_count = 0;
+                s_lc.m_history.m_total = 0;
+                snprintf(s_lc.m_history.m_error,
+                         sizeof(s_lc.m_history.m_error), "%s",
+                         err[0] ? err : "服务端拒绝了历史查询");
+                XPrintf("HsfLinkClient: 历史查询被拒：%s\n",
+                        s_lc.m_history.m_error);
+                break;
+            }
+            s_lc.m_history.m_error[0] = '\0';
             (void)HsfHistoryPage_parse(payload, frame->m_payloadLen,
                                        &s_lc.m_history);
             break;
@@ -817,6 +998,156 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
             hsfLcOnHealthPayload(payload, frame->m_payloadLen);
             break;
         }
+        if (frame->m_msgCode == HSF_CMD_TEMPHUM_SNAPSHOT) {
+            /* [温湿度快照应答 2026-11-09 根修] 这条应答此前**无人处理**：
+             * HsfLinkClient_tempHumSnapshotRequest() 把请求发出去了，服务端
+             * 也回了（键表与推送帧完全同构：side/temp/hum/tempValid/humValid），
+             * 但客户端的 Response 分支里没有这一项 ⇒ 应答被**静默丢弃**，
+             * model 永远不更新 ⇒ 「立即要一拍」这条自愈路是死的。
+             * 现象：服务端周期推送一旦停摆（订阅退订/推送失步/服务端节拍
+             * 停摆），客户端温湿度只在「订阅即补发」那一帧里有值，3.5s 后
+             * 新鲜度判负 ⇒ 标题栏恒显「--℃ / --%」。此处补上应答解析：
+             * 走与推送帧同一个解析器（hsfLcParseTempHum）刷新 model，
+             * 再广播订阅者（标题栏/首页卡片同拍刷新）。 */
+            int side = HSF_SIDE_A;
+            if (!hsfLcSnapshotPayloadOk(frame->m_msgCode, payload,
+                                        frame->m_payloadLen))
+                break;
+            if (hsfLcParseTempHum(payload, frame->m_payloadLen, &side)) {
+                hsfLcNotifyTempHum();
+            }
+            break;
+        }
+        if (frame->m_msgCode == HSF_CMD_AI_SNAPSHOT) {
+            /* [模拟量快照应答 2026-11-09 根修] 与温湿度同一条系统性缺陷：
+             * HsfLinkClient 连上就发 HSF_CMD_AI_SNAPSHOT 要一次**全量**（名字
+             * 只在全量帧里下发），服务端 hsfAppHandleAiSnapshot→hsfAppEncodeAi
+             * (true) 回的帧与 HSF_TOPIC_AI_STATUS 推送帧完全同构（n/v{u}/raw/
+             * e/eu/en/ew/an + full），但 Response 分支此前没有这一项 ⇒ 应答
+             * 被静默丢弃：首拍名字/工程量拿不到，推送停摆时也没有兜底通道。
+             * 解析走与推送同一个 hsfLcParseAi（含"只接受显示侧"过滤），
+             * 之后广播订阅者（模拟量页/首页卡片同拍刷新）。 */
+            int si;
+            if (!hsfLcSnapshotPayloadOk(frame->m_msgCode, payload,
+                                        frame->m_payloadLen))
+                break;
+            if (!hsfLcParseAi(payload, frame->m_payloadLen)) {
+                XPrintf("HsfLinkClient: 模拟量快照应答解析失败"
+                        "（cmd=0x%04X len=%u），保持上次快照\n",
+                        (unsigned)frame->m_msgCode,
+                        (unsigned)frame->m_payloadLen);
+                break;
+            }
+            for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
+                if (s_lc.m_ai[si].m_cb)
+                    s_lc.m_ai[si].m_cb(s_lc.m_ai[si].m_user);
+            }
+            break;
+        }
+        if (frame->m_msgCode == HSF_CMD_FLOWMETER_SNAPSHOT) {
+            /* [流量计快照应答 2026-11-09 根修] 请求由
+             * HsfLinkClient_flowMeterSnapshotRequest（流量计页/首页自愈）发出，
+             * 应答 = hsfAppInsertSide + hsfAppFillFlowMeter 的裸快照文档
+             * （side/flow/speed/forwardTotal/reverseTotal/flowUnit/totalUnit/
+             * alarms/valid），与 HSF_TOPIC_FLOWMETER_STATUS 推送帧同构。
+             * 此前无应答分支 ⇒ 补拍请求发得出去、回包被丢，页面只能等奖下一
+             * 拍推送（推送停摆时永远等不到）。 */
+            int side = HSF_SIDE_A;
+            int si;
+            if (!hsfLcSnapshotPayloadOk(frame->m_msgCode, payload,
+                                        frame->m_payloadLen))
+                break;
+            if (!hsfLcParseFlowMeter(payload, frame->m_payloadLen, &side)) {
+                XPrintf("HsfLinkClient: 流量计快照应答解析失败"
+                        "（cmd=0x%04X len=%u），保持上次快照\n",
+                        (unsigned)frame->m_msgCode,
+                        (unsigned)frame->m_payloadLen);
+                break;
+            }
+            for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
+                if (s_lc.m_flowMeter[si].m_cb)
+                    s_lc.m_flowMeter[si].m_cb(s_lc.m_flowMeter[si].m_user);
+            }
+            break;
+        }
+        if (frame->m_msgCode == HSF_CMD_TURBIDITY_SNAPSHOT) {
+            /* [浊度仪快照应答 2026-11-09 根修] 应答 = side + 浊度仪组帧
+             * （count + v{i}_name/ntu/raw/online），与 HSF_TOPIC_TURBIDITY_STATUS
+             * 推送帧同构；解析器忽略 side（两台仪器是同一组成套设备）。 */
+            int si;
+            if (!hsfLcSnapshotPayloadOk(frame->m_msgCode, payload,
+                                        frame->m_payloadLen))
+                break;
+            if (!hsfLcParseTurbidity(payload, frame->m_payloadLen)) {
+                XPrintf("HsfLinkClient: 浊度仪快照应答解析失败"
+                        "（cmd=0x%04X len=%u），保持上次快照\n",
+                        (unsigned)frame->m_msgCode,
+                        (unsigned)frame->m_payloadLen);
+                break;
+            }
+            for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
+                if (s_lc.m_turbCb[si].m_cb)
+                    s_lc.m_turbCb[si].m_cb(s_lc.m_turbCb[si].m_user);
+            }
+            break;
+        }
+        if (frame->m_msgCode == HSF_CMD_PUMP_SNAPSHOT) {
+            /* [泵快照应答 2026-11-09 根修] 应答通常是 hsfAppEncodePump 的裸
+             * 快照（count + v{i}_index/name/on/ready/valid/text），键表与
+             * HSF_TOPIC_PUMP_STATUS 推送帧同构；但**未装配/权限不足**时服务端
+             * 回的是 {"ok":false,"err":...} 负包络（hsfLcSnapshotPayloadOk 挡）。 */
+            int si;
+            if (!hsfLcSnapshotPayloadOk(frame->m_msgCode, payload,
+                                        frame->m_payloadLen))
+                break;
+            if (!hsfLcParsePumps(payload, frame->m_payloadLen)) {
+                XPrintf("HsfLinkClient: 泵快照应答解析失败"
+                        "（cmd=0x%04X len=%u），保持上次快照\n",
+                        (unsigned)frame->m_msgCode,
+                        (unsigned)frame->m_payloadLen);
+                break;
+            }
+            for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
+                if (s_lc.m_pumpCb[si].m_cb)
+                    s_lc.m_pumpCb[si].m_cb(s_lc.m_pumpCb[si].m_user);
+            }
+            break;
+        }
+        if (frame->m_msgCode == HSF_CMD_VFD_SNAPSHOT) {
+            /* [变频器快照应答 2026-11-09 根修] 请求由
+             * HsfLinkClient_vfdSnapshotRequest（provider 就绪桥/自愈）发出，
+             * 应答 = XVfdCodec 遥测键表 + side + ratedRpm/ratedHz 的裸快照，
+             * 与 HSF_TOPIC_VFD_STATUS 推送帧同构（多出的两个额定点键由页面
+             * 量程用，解码器忽略未知键）。此前无应答分支 ⇒ 就绪后那一拍
+             * 快照是死的，变频器页只能等 100ms 周期推送。 */
+#if XVFD_ON
+            int side = HSF_SIDE_A;
+            int si;
+            if (!hsfLcSnapshotPayloadOk(frame->m_msgCode, payload,
+                                        frame->m_payloadLen))
+                break;
+            if (!XVfdCodec_statusFromBson_2(&s_lc.m_vfdStatus, &side,
+                                            payload, frame->m_payloadLen)) {
+                XPrintf("HsfLinkClient: 变频器快照应答解析失败"
+                        "（cmd=0x%04X len=%u），保持上次快照\n",
+                        (unsigned)frame->m_msgCode,
+                        (unsigned)frame->m_payloadLen);
+                break;
+            }
+            if (side != HSF_SIDE_A) break;   /* 界面只显示 A 侧（同推送口径）。 */
+            s_lc.m_vfdValid = true;
+            s_lc.m_vfdLastMs = XDateTime_currentMSecsSinceEpoch();
+            for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
+                if (s_lc.m_vfd[si].m_cb)
+                    s_lc.m_vfd[si].m_cb(s_lc.m_vfd[si].m_user);
+            }
+#else
+            XPrintf("HsfLinkClient: 收到变频器快照应答但本构建未启用 VFD"
+                    "（cmd=0x%04X len=%u）\n", (unsigned)frame->m_msgCode,
+                    (unsigned)frame->m_payloadLen);
+#endif
+            break;
+        }
         if (frame->m_msgCode == HSF_CMD_RUN_MODE) {
             XBsonDocument* doc = XBsonDocument_create();
             bool ok = false;
@@ -825,39 +1156,8 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
             if (doc && XBsonDocument_from_bytes(doc, payload, frame->m_payloadLen)) {
                 XBsonValue* v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_OK);
                 if (v) ok = XBsonValue_toBool(v, false);
-                if (ok) {
-                    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_MODE);
-                    if (v) {
-                        s_lc.m_modeAuto = (XBsonValue_toInt32(v, 0) == 1) ? 1 : 0;
-                        s_lc.m_modeKnown = true;
-                    }
-                    /* [自动运行状态] "自动模式"与"控制器真的在跑"是两件事：
-                     * 服务端 0x0105 应答带 auto / autoRunning 两个键。缺失时
-                     * 保持"未知"（三态：未知/已停止/运行中）——不能把缺失当
-                     * false（那会把"服务端没上报"显示成"已停止"）。 */
-                    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTO);
-                    if (v) {
-                        s_lc.m_autoRunning = -1;   /* 重置为未知 */
-                        s_lc.m_autoRunningKnown = false;
-                    }
-                    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTO_RUNNING);
-                    if (v) {
-                        s_lc.m_autoRunning = XBsonValue_toBool(v, false) ? 1 : 0;
-                        s_lc.m_autoRunningKnown = true;
-                    }
-                } else {
-                    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_ERR);
-                    if (v) {
-                        const XString* es = XBsonValue_toString(v);
-                        const char* eu = es ? XString_toUtf8(es) : NULL;
-                        if (eu) {
-                            size_t n = strlen(eu);
-                            if (n >= sizeof(s_lc.m_modeErr)) n = sizeof(s_lc.m_modeErr) - 1;
-                            XMemcpy(s_lc.m_modeErr, eu, n);
-                            s_lc.m_modeErr[n] = '\0';
-                        }
-                    }
-                }
+                hsfLcApplyModeDoc(doc, ok, s_lc.m_modeErr,
+                                  sizeof(s_lc.m_modeErr));
             }
             if (doc) XClassDelete((XClass*)doc);
             for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
@@ -927,6 +1227,73 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
                 s_lc.m_cmdCb(s_lc.m_cmdUser, HSF_CMD_VALVE_CONTROL, ok,
                              ok ? "" : s_lc.m_lastCmdErr);
         }
+        else if (frame->m_msgCode == HSF_CMD_PUMP_CONTROL) {
+            /* [泵控制应答 2026-11-09 根修] **不是被通用路径覆盖的**——
+             * 查过 hsfLcDispatch：本函数的 Response 分支全部按 m_msgCode
+             * 逐条分派，**没有任何按 frame->m_requestId 的统一 ok/err 包络
+             * 处理**（会话层的 XLinkSession_requestFinished 信号本文件也没接）。
+             * ⇒ 0x0114 的应答此前同样被静默丢弃：泵命令的成败/拒绝原因既
+             * 不写 m_lastCmdOk/m_lastCmdErr（页面轮询 commandSeq 拿不到推进），
+             * 也不触发 cmdCb。与 VALVE_CONTROL 同口径：成功时顺便应用应答里
+             * 带的整帧泵快照（服务端把 ok 与快照并成一帧），不必等下一拍推送。 */
+            bool ok = false;
+            s_lc.m_lastCmdOk = false;
+            hsfLcParseEnvelope(payload, frame->m_payloadLen, &ok,
+                               s_lc.m_lastCmdErr, sizeof(s_lc.m_lastCmdErr));
+            s_lc.m_lastCmdOk = ok;
+            ++s_lc.m_lastCmdSeq;
+            if (ok) {
+                int si;
+                if (hsfLcParsePumps(payload, frame->m_payloadLen)) {
+                    for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
+                        if (s_lc.m_pumpCb[si].m_cb)
+                            s_lc.m_pumpCb[si].m_cb(s_lc.m_pumpCb[si].m_user);
+                    }
+                }
+            }
+            if (s_lc.m_cmdCb)
+                s_lc.m_cmdCb(s_lc.m_cmdUser, HSF_CMD_PUMP_CONTROL, ok,
+                             ok ? "" : s_lc.m_lastCmdErr);
+        }
+        else if (frame->m_msgCode == HSF_CMD_AUTO_CONTROL) {
+            /* [自动运行控制应答 2026-11-09 根修] 同上：无按 requestId 的通用
+             * 命令结果路径 ⇒ 0x0115 应答此前被丢弃。远端设置页（
+             * HsfSettingsRemote）正是靠 HsfLinkClient_commandSeq()/lastCommandError()
+             * 轮询来把「启动/停止/急停/复位」的成败显示到状态行的——没有这条
+             * 分支，序列号永不推进，失败原因永远浮不上来（界面只停在
+             * 「正在启动自动运行…」）。
+             * 应答形状 = 模式包络 {ok,err?,mode,auto,autoRunning}
+             * （hsfAppMakeModeEnvelope），与 HSF_CMD_RUN_MODE 完全同形，故
+             * 模式/运行位回填复用 hsfLcApplyModeDoc（同一份逻辑，不另写一套）。
+             * 失败原因写 m_lastCmdErr **不写** m_modeErr：后者是「切换模式
+             * 失败」的专属文案，混进来会让状态行把自动运行失败显示成
+             * 「切换失败」。 */
+            XBsonDocument* doc = XBsonDocument_create();
+            bool ok = false;
+            int si;
+            s_lc.m_lastCmdOk = false;
+            s_lc.m_lastCmdErr[0] = '\0';
+            if (doc && XBsonDocument_from_bytes(doc, payload, frame->m_payloadLen)) {
+                XBsonValue* v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_OK);
+                if (v) ok = XBsonValue_toBool(v, false);
+                hsfLcApplyModeDoc(doc, ok, s_lc.m_lastCmdErr,
+                                  sizeof(s_lc.m_lastCmdErr));
+            } else {
+                XPrintf("HsfLinkClient: 自动运行应答解析失败"
+                        "（cmd=0x%04X len=%u）\n", (unsigned)frame->m_msgCode,
+                        (unsigned)frame->m_payloadLen);
+            }
+            if (doc) XClassDelete((XClass*)doc);
+            s_lc.m_lastCmdOk = ok;
+            ++s_lc.m_lastCmdSeq;      /* 失败也推进：页面据此弹错误文案。 */
+            for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
+                if (s_lc.m_modeCb[si].m_cb)
+                    s_lc.m_modeCb[si].m_cb(s_lc.m_modeCb[si].m_user);
+            }
+            if (s_lc.m_cmdCb)
+                s_lc.m_cmdCb(s_lc.m_cmdUser, HSF_CMD_AUTO_CONTROL, ok,
+                             ok ? "" : s_lc.m_lastCmdErr);
+        }
         break;
     case XLinkMsgClass_Publish: {
         /* 线上载荷 = [u32 topicId(小端)][BSON 文档]。 */
@@ -958,6 +1325,7 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
                 break;
             if (side != HSF_SIDE_A) break;
             s_lc.m_vfdValid = true;
+            s_lc.m_vfdLastMs = XDateTime_currentMSecsSinceEpoch();
             for (si = 0; si < HSF_LC_SUB_SLOTS; ++si) {
                 if (s_lc.m_vfd[si].m_cb)
                     s_lc.m_vfd[si].m_cb(s_lc.m_vfd[si].m_user);
@@ -1018,6 +1386,34 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
 }
 
 /**
+ * @brief 白盒测试入口：把一条 **Response** 业务帧喂给业务分发。
+ * @param msgCode 业务命令码（HSF_CMD_*；例如 HSF_CMD_AI_SNAPSHOT）。
+ * @param payload 载荷字节（BSON；借用）。
+ * @param len 载荷长度。
+ * @return 参数非法（len>0 但 payload 为 NULL）返回 false，其余返回 true。
+ * @details [为什么需要它] 五条快照命令的应答分支是「请求-应答」通道，离屏
+ *          （无服务端）根本收不到真实应答；靠界面截图验不出「应答被解析并
+ *          刷新了 model」。这里直接把构造好的应答帧喂进与线上**完全相同**的
+ *          分发函数（hsfLcDispatch），测试即可断言 model 被更新、订阅者被
+ *          通知。分发不依赖会话对象（见函数入口注记），未连线也可调用。
+ * @warning 仅供测试（Test/XProtocolTest/hsf_regression_test.c §I）使用；
+ *          生产路径请勿调用（它会绕过会话层的 pending/去重）。
+ */
+bool HsfLinkClient_testDispatchResponse(uint16_t msgCode,
+                                        const uint8_t* payload, uint32_t len)
+{
+    XLinkFrameHeader frame;
+
+    if (!payload && len > 0) return false;
+    memset(&frame, 0, sizeof(frame));
+    frame.m_msgClass = XLinkMsgClass_Response;
+    frame.m_msgCode = msgCode;
+    frame.m_payloadLen = len;
+    hsfLcDispatch(NULL, &frame, payload);
+    return true;
+}
+
+/**
  * @brief 连接状态翻转：就绪 → 订阅+ready；掉到未连接 → fail（仅首次）。
  */
 static void hsfLcOnStateChanged(XObject* sender, XVarList* args)
@@ -1036,13 +1432,9 @@ static void hsfLcOnStateChanged(XObject* sender, XVarList* args)
          * 数字量与模拟量的全量快照（服务端在 full 帧里带全部名字）。
          * 之后只收状态/数值增量；名字改了由服务端主动下发。 */
         HsfLinkClient_digitalSnapshotRequest();
-        {
-            XLinkSession* sess = XLinkClient_session(s_lc.m_client);
-            uint32_t rid = 0;
-            if (sess)
-                XLinkSession_sendRequest_ex(sess, HSF_CMD_AI_SNAPSHOT,
-                                            XLinkDataType_Bson, NULL, 0, &rid);
-        }
+        /* 模拟量首拍全量（名字/工程量只在全量帧里下发）；走公开接口，
+         * 自愈补拍（HsfLinkClient_aiEnsureFresh）用的是同一个发包函数。 */
+        (void)HsfLinkClient_aiSnapshotRequest();
         XPrintf("HsfLinkClient: 登录成功（用户 %s）\n",
                 XLinkClient_user_const(s_lc.m_client));
         for (i = 0; i < HSF_LC_SUB_SLOTS; ++i) {
@@ -1081,18 +1473,43 @@ static void hsfLcOnStateChanged(XObject* sender, XVarList* args)
 /**
  * @brief 认证失败（用户名/密码错等；客户端已停自动重连）。
  */
+/**
+ * @brief 认证失败：区分「永久失败（弹登录窗/收手）」与「瞬时拒绝（重试中）」
+ * @details [2026-11-09 根修] 框架把认证失败分为永久（BadUser/BadPassword/
+ *          Locked/NoCredential）与瞬时（Rejected：同账并发/会话上限，
+ *          Timeout/Protocol：链路噪声）。瞬时拒绝在「已登录过」的重连路径上
+ *          **不能**触发 fail 回调——那是登录窗语义，主窗开着时只会让状态栏
+ *          显示一句 "登录失败" 而界面继续等；框架此时仍在退避重试。
+ *          这里改为状态栏提示（notice），文案点明「账户可能已在线」，
+ *          数据会在旧会话被服务端回收后自动恢复。
+ *          首连（从未就绪）被拒仍走 fail 回调：登录窗留在原地给出准确原因。
+ */
 static void hsfLcOnAuthFailed(XObject* sender, XVarList* args)
 {
     int reason = -1;
     int status = -1;
     int i;
+    bool transient;
     (void)sender;
     if (args) {
         XVarList_start(args);
         reason = XVarList_arg(args, int);
         status = XVarList_arg(args, int);
     }
-    XPrintf("HsfLinkClient: 认证失败（reason=%d status=%d）\n", reason, status);
+    XPrintf("HsfLinkClient: 认证失败（reason=%d status=%d everReady=%d）\n",
+            reason, status, s_lc.m_everReady ? 1 : 0);
+
+    /* 与框架 XLinkClientAuthFailure 同源：4=Rejected，6=Timeout，8=Protocol。 */
+    transient = (reason == 4 || reason == 6 || reason == 8);
+    if (transient && s_lc.m_everReady) {
+        const char* text = (reason == 4)
+            ? "服务端拒绝（该账户可能已在别处登录），正在重试…"
+            : "认证暂时失败（链路超时/协议异常），正在重试…";
+        if (s_lc.m_noticeCb)
+            s_lc.m_noticeCb(s_lc.m_noticeUser, text);
+        return;    /* 框架已按 XLINK_AUTH_REJECT_RETRY_LIMIT 退避重连 */
+    }
+
     for (i = 0; i < HSF_LC_SUB_SLOTS; ++i) {
         if (s_lc.m_fail[i].m_cb)
             s_lc.m_fail[i].m_cb(s_lc.m_fail[i].m_user);
@@ -1121,12 +1538,16 @@ static void hsfLcResetConnectionState(void)
     memset(&s_lc.m_vfdStatus, 0, sizeof(s_lc.m_vfdStatus));
 #endif
     s_lc.m_vfdValid = false;
+    s_lc.m_vfdLastMs = 0;          /* 新连线：新鲜度与补拍节流从头计。 */
     memset(s_lc.m_aiUa, 0, sizeof(s_lc.m_aiUa));
     s_lc.m_aiMask = 0;
     s_lc.m_aiCount = 0;
     s_lc.m_aiValid = false;
+    s_lc.m_aiLastMs = 0;
     memset(s_lc.m_tempHumState, 0, sizeof(s_lc.m_tempHumState));
+    s_lc.m_lastTempHumReqMs = 0;   /* 新连线：补拍节流重新起算。 */
     memset(s_lc.m_flowMeterState, 0, sizeof(s_lc.m_flowMeterState));
+    memset(s_lc.m_lastSnapReqMs, 0, sizeof(s_lc.m_lastSnapReqMs));
     /* 应答观测。 */
     s_lc.m_lastCmdOk = false;
     s_lc.m_lastCmdErr[0] = '\0';
@@ -1225,6 +1646,12 @@ bool HsfLinkClient_isReady(void)
     return s_lc.m_client && XLinkClient_isReady(s_lc.m_client);
 }
 
+bool HsfLinkClient_isReconnecting(void)
+{
+    return s_lc.m_client
+        && XLinkClient_state(s_lc.m_client) == XLinkClient_ReconnectingState;
+}
+
 const char* HsfLinkClient_user(void)
 {
     return (s_lc.m_client && XLinkClient_isAuthenticated(s_lc.m_client))
@@ -1293,6 +1720,20 @@ void HsfLinkClient_setFailCallback(HsfLinkNotifyFn cb, void* userData)
     if (cb) hsfLcAddSub(s_lc.m_fail, cb, userData);
 }
 
+void HsfLinkClient_setNoticeCallback(HsfLinkNoticeFn cb, void* userData)
+{
+    /* 单槽：主窗建窗时注册一次；NULL 摘除。跨连接复用（不像 ready/fail
+       属于登录窗的一次性语义），故 hsfLcResetConnectionState 不动它。 */
+    s_lc.m_noticeCb = cb;
+    s_lc.m_noticeUser = cb ? userData : NULL;
+}
+
+int HsfLinkClient_lastAuthFailure(void)
+{
+    if (!s_lc.m_client) return 0;
+    return XLinkClient_lastAuthFailure(s_lc.m_client);
+}
+
 void HsfLinkClient_setVfdCallback(HsfLinkNotifyFn cb, void* userData)
 {
     if (cb) hsfLcAddSub(s_lc.m_vfd, cb, userData);
@@ -1333,6 +1774,21 @@ const HsfLinkFlowMeter* HsfLinkClient_flowMeter(int side)
 {
     if (side < 0 || side >= HSF_LINK_SIDE_COUNT) return NULL;
     return &s_lc.m_flowMeterState[side];
+}
+
+int HsfLinkClient_flowMeterSide(void)
+{
+    return s_lc.m_flowMeterSide;
+}
+
+const HsfLinkFlowMeter* HsfLinkClient_flowMeterActive(void)
+{
+    return HsfLinkClient_flowMeter(s_lc.m_flowMeterSide);
+}
+
+bool HsfLinkClient_flowMeterActiveFresh(void)
+{
+    return HsfLinkClient_flowMeterFresh(s_lc.m_flowMeterSide);
 }
 
 /* ==================== 数字量（16DI/16DO） ==================== */
@@ -1449,6 +1905,20 @@ static void hsfLcNotifyDigital(void)
     for (i = 0; i < HSF_LC_SUB_SLOTS; ++i) {
         if (s_lc.m_digitalCb[i].m_cb)
             s_lc.m_digitalCb[i].m_cb(s_lc.m_digitalCb[i].m_user);
+    }
+}
+
+/**
+ * @brief 广播温湿度更新给全部订阅槽。
+ * @note  推送帧与**快照应答**共用：两条路径都刷新同一份 model
+ *        （m_tempHumState），订阅者拿到的口径完全一致。
+ */
+static void hsfLcNotifyTempHum(void)
+{
+    int i;
+    for (i = 0; i < HSF_LC_SUB_SLOTS; ++i) {
+        if (s_lc.m_tempHum[i].m_cb)
+            s_lc.m_tempHum[i].m_cb(s_lc.m_tempHum[i].m_user);
     }
 }
 
@@ -1763,31 +2233,20 @@ bool HsfLinkClient_flowMeterInject(const uint8_t* data, uint32_t size)
     return true;
 }
 
-bool HsfLinkClient_flowMeterSnapshotRequest(int side)
+bool HsfLinkClient_flowMeterSnapshotRequest(void)
 {
     XLinkSession* session;
-    XBsonDocument* doc;
-    XByteArray* bytes;
     uint32_t reqId = 0;
-    bool ok;
 
-    if (side < 0 || side >= HSF_LINK_SIDE_COUNT) return false;
+    /* [载荷不带 side 2026-11-10] 设备挂在哪条 485 上是**服务端的装配
+     * 事实**：服务端按自己的装配位置回答，并在应答/推送帧里带上 side。
+     * 客户端早先在请求里点名侧号（现场流量计在 B 侧 ⇒ 写死 B）⇒ 现场
+     * 换接线就得改客户端；现在客户端只管要数据。 */
     if (!HsfLinkClient_isReady()) return false;
     session = XLinkClient_session(s_lc.m_client);
     if (!session) return false;
-    doc = XBsonDocument_create();
-    if (!doc) return false;
-    XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_SIDE, (int32_t)side);
-    bytes = XBsonDocument_toBson(doc);
-    XClassDelete((XClass*)doc);
-    if (!bytes) return false;
-    ok = XLinkSession_sendRequest_ex(session, HSF_CMD_FLOWMETER_SNAPSHOT,
-                                     XLinkDataType_Bson,
-                                     (const uint8_t*)XByteArray_constData(bytes),
-                                     (uint32_t)XByteArray_size_base(bytes),
-                                     &reqId);
-    XClassDelete((XClass*)bytes);
-    return ok;
+    return XLinkSession_sendRequest_ex(session, HSF_CMD_FLOWMETER_SNAPSHOT,
+                                       XLinkDataType_Bson, NULL, 0, &reqId);
 }
 
 void HsfLinkClient_setCommandCallback(HsfLinkCommandFn cb, void* userData)
@@ -1862,6 +2321,190 @@ bool HsfLinkClient_tempHumSnapshotRequest(int side)
                                      &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
+}
+
+/**
+ * @brief 温湿度自愈：数据不新鲜（或收到但无有效值）时向服务端补要一拍。
+ * @param side 侧号（0=A 1=B）；越界返回 false。
+ * @return 本次确实发出了补拍请求返回 true；数据本就新鲜/未就绪/节流中返回 false。
+ * @details [为什么需要] 周期推送是「推送即丢」的**单向**通道：服务端节拍
+ *          停摆、推送失步队列满被拒、或订阅登记丢失时，客户端侧收不到任何
+ *          帧，而**服务端的数据其实一直有**（现场：history 行 temp=26.5
+ *          恒有值，标题栏却恒显「--℃ / --%」）。只靠推送，界面只能停在
+ *          「无数据」。这里用**已有的快照命令**（HSF_CMD_TEMPHUM_SNAPSHOT）
+ *          做一条**请求-应答**的兜底通道：应答与推送帧同构，解析后刷新同一
+ *          份 model，标题栏/首页卡片同拍恢复。
+ * @note  节流：两次补拍请求至少间隔 HSF_LINK_TEMPHUM_RESYNC_MS，避免
+ *        服务端无温湿度站时每秒打一次请求（应答照样回来并把该侧标成
+ *        「收到但无效」，界面显示「--」是正确口径，不会空转刷屏）。
+ */
+bool HsfLinkClient_tempHumEnsureFresh(int side)
+{
+    const HsfLinkTempHum* th;
+    uint64_t now;
+
+    if (side < 0 || side >= HSF_LINK_SIDE_COUNT) return false;
+    if (!HsfLinkClient_isReady()) return false;
+    th = &s_lc.m_tempHumState[side];
+    /* 已收到且**距预取阈值还有余量**、且有有效值 ⇒ 无需补拍。
+     * [预取 2026-11-09] 判据不等到 HSF_LINK_TEMPHUM_STALE_MS 才补：那样
+     * 界面会先落成「--」再等应答写回，推送停摆期间每 3.5s 闪一次「--」
+     * （实测 25s 闪 7 次）。差值与理由见 HSF_LINK_TEMPHUM_PREFETCH_MS。 */
+    if (th->m_received && th->m_lastMs != 0) {
+        now = XDateTime_currentMSecsSinceEpoch();
+        if (now < th->m_lastMs ||
+            (now - th->m_lastMs) <= (uint64_t)HSF_LINK_TEMPHUM_PREFETCH_MS) {
+            if (th->m_tempValid || th->m_humValid) return false;
+        }
+    }
+    now = XDateTime_currentMSecsSinceEpoch();
+    if (s_lc.m_lastTempHumReqMs != 0 &&
+        now >= s_lc.m_lastTempHumReqMs &&
+        (now - s_lc.m_lastTempHumReqMs) < (uint64_t)HSF_LINK_TEMPHUM_RESYNC_MS)
+        return false;
+    s_lc.m_lastTempHumReqMs = now;
+    return HsfLinkClient_tempHumSnapshotRequest(side);
+}
+
+/* ==================== 遥测自愈补拍（快照命令兜底通道） ==================== */
+
+/**
+ * @brief 是否该向服务端再要一拍（从未收到，或剩余新鲜度不足预取阈值）。
+ * @param received 收到过至少一拍。
+ * @param lastMs 最近一次收到/解析成功的本地时刻（毫秒；0=从未）。
+ * @param prefetchMs 预取阈值（毫秒）。
+ * @return 需要补拍返回 true。
+ * @details 判据用**预取阈值**而不是陈旧阈值：等到数据真的过期（界面已落成
+ *          「--」）才补，会让应答回来之前先闪一次无数据（温湿度实测口径，
+ *          见 HSF_LINK_TEMPHUM_PREFETCH_MS 注释）。
+ */
+static bool hsfLcNeedsRefetch(bool received, uint64_t lastMs, uint32_t prefetchMs)
+{
+    uint64_t now;
+    if (!received || lastMs == 0) return true;
+    now = XDateTime_currentMSecsSinceEpoch();
+    if (now < lastMs) return false;              /* 时钟回退：当作刚收到。 */
+    return (now - lastMs) > (uint64_t)prefetchMs;
+}
+
+/**
+ * @brief 补拍节流闸：同一通道最短 HSF_LINK_SNAPSHOT_RESYNC_MS 才发一次。
+ * @param ch 补拍通道。
+ * @return 允许本次发送返回 true（并记下时刻）；节流中返回 false。
+ */
+static bool hsfLcSnapshotAllowed(HsfLcSnapshotChan ch)
+{
+    uint64_t now;
+    if ((int)ch < 0 || ch >= HsfLcSnapshotCh_Count) return false;
+    now = XDateTime_currentMSecsSinceEpoch();
+    if (s_lc.m_lastSnapReqMs[ch] != 0 && now >= s_lc.m_lastSnapReqMs[ch] &&
+        (now - s_lc.m_lastSnapReqMs[ch]) <
+            (uint64_t)HSF_LINK_SNAPSHOT_RESYNC_MS)
+        return false;
+    s_lc.m_lastSnapReqMs[ch] = now;
+    return true;
+}
+
+bool HsfLinkClient_aiSnapshotRequest(void)
+{
+    XLinkSession* session;
+    uint32_t reqId = 0;
+    if (!HsfLinkClient_isReady()) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    return XLinkSession_sendRequest_ex(session, HSF_CMD_AI_SNAPSHOT,
+                                       XLinkDataType_Bson, NULL, 0, &reqId);
+}
+
+bool HsfLinkClient_aiFresh(void)
+{
+    uint64_t now;
+    if (!s_lc.m_aiValid || s_lc.m_aiLastMs == 0) return false;
+    now = XDateTime_currentMSecsSinceEpoch();
+    if (now < s_lc.m_aiLastMs) return true;      /* 时钟回退：宽容放行。 */
+    return (now - s_lc.m_aiLastMs) <= (uint64_t)HSF_LINK_AI_STALE_MS;
+}
+
+bool HsfLinkClient_aiEnsureFresh(void)
+{
+    if (!HsfLinkClient_isReady()) return false;
+    if (!hsfLcNeedsRefetch(s_lc.m_aiValid, s_lc.m_aiLastMs,
+                           HSF_LINK_SNAPSHOT_PREFETCH_MS))
+        return false;
+    if (!hsfLcSnapshotAllowed(HsfLcSnapshotCh_Ai)) return false;
+    return HsfLinkClient_aiSnapshotRequest();
+}
+
+bool HsfLinkClient_flowMeterEnsureFresh(void)
+{
+    const HsfLinkFlowMeter* snap;
+    HsfLcSnapshotChan ch;
+    int side;
+    if (!HsfLinkClient_isReady()) return false;
+    /* 活动侧＝服务端报告的侧（客户端不猜现场接线）。 */
+    side = s_lc.m_flowMeterSide;
+    if (side < 0 || side >= HSF_LINK_SIDE_COUNT) return false;
+    snap = &s_lc.m_flowMeterState[side];
+    if (!hsfLcNeedsRefetch(snap->m_received, snap->m_lastMs,
+                           HSF_LINK_SNAPSHOT_PREFETCH_MS))
+        return false;
+    ch = (side == HSF_SIDE_A) ? HsfLcSnapshotCh_FlowMeterA
+                              : HsfLcSnapshotCh_FlowMeterB;
+    if (!hsfLcSnapshotAllowed(ch)) return false;
+    return HsfLinkClient_flowMeterSnapshotRequest();
+}
+
+bool HsfLinkClient_turbidityEnsureFresh(void)
+{
+    if (!HsfLinkClient_isReady()) return false;
+    if (!hsfLcNeedsRefetch(s_lc.m_turbidity.m_received,
+                           s_lc.m_turbidity.m_lastMs,
+                           HSF_LINK_SNAPSHOT_PREFETCH_MS))
+        return false;
+    if (!hsfLcSnapshotAllowed(HsfLcSnapshotCh_Turbidity)) return false;
+    return HsfLinkClient_turbiditySnapshotRequest();
+}
+
+bool HsfLinkClient_pumpEnsureFresh(void)
+{
+    if (!HsfLinkClient_isReady()) return false;
+    if (!hsfLcNeedsRefetch(s_lc.m_pumps.m_received, s_lc.m_pumps.m_lastMs,
+                           HSF_LINK_SNAPSHOT_PREFETCH_MS))
+        return false;
+    if (!hsfLcSnapshotAllowed(HsfLcSnapshotCh_Pump)) return false;
+    return HsfLinkClient_pumpSnapshotRequest();
+}
+
+bool HsfLinkClient_vfdEnsureFresh(void)
+{
+    if (!HsfLinkClient_isReady()) return false;
+    if (!hsfLcNeedsRefetch(s_lc.m_vfdValid, s_lc.m_vfdLastMs,
+                           HSF_LINK_SNAPSHOT_PREFETCH_MS))
+        return false;
+    if (!hsfLcSnapshotAllowed(HsfLcSnapshotCh_Vfd)) return false;
+    return HsfLinkClient_vfdSnapshotRequest();
+}
+
+void HsfLinkClient_ensureFreshTopics(uint32_t topicMask)
+{
+    if (!HsfLinkClient_isReady()) return;
+    /* 温湿度不在本表：它是常驻订阅，补拍入口是
+     * HsfLinkClient_tempHumEnsureFresh（标题栏 1Hz 刷新里逐拍调用），
+     * 此处再调一遍只会被它自己的节流挡掉，故不重复。 */
+    if (topicMask & (1u << (int)HsfLinkTopic_Vfd))
+        (void)HsfLinkClient_vfdEnsureFresh();
+    if (topicMask & (1u << (int)HsfLinkTopic_Ai))
+        (void)HsfLinkClient_aiEnsureFresh();
+    if (topicMask & (1u << (int)HsfLinkTopic_FlowMeter)) {
+        /* 流量计只有一台：补拍走活动侧（服务端报告的侧），客户端不点名。
+         * 早先这里是「A、B 各补一次」（按现场接线写死两侧），现在侧号由
+         * 服务端说了算 ⇒ 现场把流量计换到另一条 485，客户端零改动。 */
+        (void)HsfLinkClient_flowMeterEnsureFresh();
+    }
+    if (topicMask & (1u << (int)HsfLinkTopic_Turbidity))
+        (void)HsfLinkClient_turbidityEnsureFresh();
+    if (topicMask & (1u << (int)HsfLinkTopic_Pump))
+        (void)HsfLinkClient_pumpEnsureFresh();
 }
 
 #if XVFD_ON
@@ -2335,6 +2978,12 @@ bool HsfLinkClient_configSetCollect(const HsfConfigCollect* collect)
                                       collect->m_flowmeterEnabled);
     XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_TURBIDITY_ENABLED,
                                       collect->m_turbidityEnabled);
+    /* [逐台开关 2026-11-10] 两台浊度是独立设备，各发各的；旧服务端不认
+     * 这两个键时会回落共同键 ⇒ 向后兼容（两份 proto 同名常量）。 */
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_TURBIDITY1_ENABLED,
+                                      collect->m_turbidity1Enabled);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_TURBIDITY2_ENABLED,
+                                      collect->m_turbidity2Enabled);
     XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_ANALOG_ENABLED,
                                       collect->m_analogEnabled);
     XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_DIGITAL_ENABLED,
@@ -2345,6 +2994,13 @@ bool HsfLinkClient_configSetCollect(const HsfConfigCollect* collect)
                                         collect->m_temphumPollMs);
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_TURBIDITY_POLL_MS,
                                         collect->m_turbidityPollMs);
+    /* [逐台 2026-11-10] 两台浊度 + 流量计各自独立下发。 */
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_TURBIDITY1_POLL_MS,
+                                        collect->m_turbidity1PollMs);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_TURBIDITY2_POLL_MS,
+                                        collect->m_turbidity2PollMs);
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_FLOWMETER_POLL_MS,
+                                        collect->m_flowmeterPollMs);
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_ANALOG_POLL_MS,
                                         collect->m_analogPollMs);
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_DIGITAL_POLL_MS,

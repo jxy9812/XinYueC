@@ -102,7 +102,11 @@ class HomePage(Page):
 
     TOPICS = (proto.TOPIC_VFD_STATUS, proto.TOPIC_TEMPHUM_STATUS,
               proto.TOPIC_AI_STATUS, proto.TOPIC_FLOWMETER_STATUS,
-              proto.TOPIC_VALVE_STATUS, proto.TOPIC_DEVICE_HEALTH)
+              proto.TOPIC_VALVE_STATUS, proto.TOPIC_DEVICE_HEALTH,
+              # [2026-11-09 首页新增两卡] 浊度仪卡读 TURBIDITY 主题、
+              # 按钮组卡读 DIGITAL 主题（DI12~15 触点 + DO7~9 三灯）。
+              # 不订则两卡恒 "--"。
+              proto.TOPIC_TURBIDITY_STATUS, proto.TOPIC_DIGITAL_STATUS)
 
     #: 悬浮详情卡宽度（表格态 / 泵详情态）。
     #:
@@ -116,6 +120,39 @@ class HomePage(Page):
     VALVE_COUNT = 6
     #: 阀状态「未配置」的灰（对齐 pages_valve.VALVE_STATE_TEXT 的浅灰）。
     VALVE_NA_COLOR = "#9E9E9E"
+    #: 浊度视觉告警阈值（NTU）。
+    #:
+    #: [与水质监测页同一口径] pages_monitor.WaterPage.TURBIDITY_WARN_NTU。
+    #: [为什么阈值放客户端] 这只是**显示口径**（数字标不标红），不是报警判据：
+    #: 真要进报警列表必须挪到服务端（客户端各自算阈值必然漂移）。
+    TURBIDITY_WARN_NTU = 20.0
+    #: 浊度卡台数（服务端 count 决定；此处只固定显示槽位）。
+    TURBIDITY_COUNT = 2
+    #: 按钮组触点/灯的**服务端下发通道名**前缀（按名字匹配，不写死通道号）。
+    #:
+    #: [为什么不写死 12~15 / 7~9] 现场接线由图纸决定，Python 服务端的点位
+    #: 走 `buttons.items` 配置可改；客户端写死通道号 = 接线一改界面就错位。
+    #: 名字由两个服务端逐字一致地下发（C 端 HsfServerApp.c 与 Python 端
+    #: app.py 的按钮组登记链），按名字匹配则两端同口径。
+    BTN_ESTOP_NAME = "急停"
+    BTN_START_NAME = "启动按钮"
+    BTN_STOP_NAME = "停止按钮"
+    BTN_RESET_NAME = "复位按钮"
+    BTN_LAMP_NAMES = ("启动按钮灯", "停止按钮灯", "复位按钮灯")
+    #: 按钮组触点的**触点类型**（常开/常闭）——与位图电平的换算口径。
+    #:
+    #: [口径来源] 服务端 `server_py/hsfsrv/buttons.py` 的现场定义：
+    #:   急停 = 常闭（1=回路通=正常；0=按下或断线 ⇒ 禁止启动）
+    #:   停止 = 常闭（用户口径「停止跟急停一样，不按就是通的」）
+    #:   启动/复位 = 常开（1=按下）
+    #: 服务端可配 `buttons.items.normally_closed` 覆盖；覆盖后两端这张表
+    #: 也要跟着改（本次不扩到协议层）。
+    BTN_NORMALLY_CLOSED = (True, False, True, False)   # 急停/启动/停止/复位
+    #: 按钮组卡里 4 触点 + 3 灯 = 7 格（2 行 4 列，第 8 格留空）。
+    BTN_SLOT_COUNT = 7
+    #: 7 格的界面标签（槽位顺序：急停/启动/停止/复位 + 三灯）。
+    BTN_SLOT_LABELS = ("急停", "启动", "停止", "复位",
+                       "启动灯", "停止灯", "复位灯")
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
@@ -198,11 +235,16 @@ class HomePage(Page):
         self.fm_sub.setWordWrap(True)
         self.fm_sub.setStyleSheet(theme.caption_label_qss())
         fm_card.add(self.fm_sub)
+        # [报警行 2026-11-10] 报警码直接说中文（说明书口径：空管/上限/
+        # 下限/系统），不显示 "0x0004"。口径与 C 端 fmAlarmText 一致。
+        self.fm_alarm = QLabel("")
+        self.fm_alarm.setWordWrap(True)
+        fm_card.add(self.fm_alarm)
         cards2.addWidget(fm_card, 1)
 
         # 电磁阀卡 —— TOPIC_VALVE 六路状态色点（色义对齐 pages_valve 卡片：
         # 已开绿 / 已关灰蓝 / 动作中橙 / 故障红 / 未配置·未知浅灰）。
-        valve_card = Card("电磁阀")
+        valve_card = Card("电动球阀")
         self._valve_grid = QGridLayout()
         self._valve_grid.setSpacing(6)
         self._valve_state = []          # 每路「● 状态」标签（色随状态）
@@ -231,12 +273,91 @@ class HomePage(Page):
 
         self.root.addLayout(cards2)
 
+        # ---- 第三排看板卡：浊度仪 / 按钮组系统状态（2026-11-09）----
+        #
+        # [为什么单开一行而不是塞进第二行] 第二行已三张卡（压差/流量计/
+        # 电磁阀），再加两张会让每张只剩 ~240px：浊度读数与按钮组 4+3 格
+        # 都挤不下（触屏现场更糟）。首页在滚动壳里（page_base.Page 的
+        # QScrollArea），加行只是多滚一屏，不会裁切。
+        cards3 = QHBoxLayout()
+        cards3.setSpacing(10)
+
+        # ---- 浊度仪卡：两台各一个读数块（名字取服务端，值 = NTU÷100）----
+        turb_card = Card("浊度仪")
+        self._turb_grid = QGridLayout()
+        self._turb_grid.setSpacing(10)
+        self._turb_blocks = []          # [StatBlock]（标题 = 服务端仪器名）
+        self._turb_temps = []           # [QLabel]（水温；只有带温度的机型有）
+        self._turb_render = [None] * self.TURBIDITY_COUNT
+        for i in range(self.TURBIDITY_COUNT):
+            cell = QWidget()
+            v = QVBoxLayout(cell)
+            v.setContentsMargins(0, 0, 0, 0)
+            v.setSpacing(2)
+            block = StatBlock("浊度仪%d" % (i + 1), "NTU", "--",
+                              value_size=26)
+            v.addWidget(block)
+            # [水温 2026-11-10] 带温度的机型（站3 ZHEYI-5100ZDY）随帧带
+            # 水温；站1 WZT-701A 没有 ⇒ 该标签不显示（不是显示 0℃）。
+            temp = QLabel("")
+            temp.setStyleSheet(theme.caption_label_qss())
+            temp.setVisible(False)
+            v.addWidget(temp)
+            self._turb_grid.addWidget(cell, 0, i)
+            self._turb_blocks.append(block)
+            self._turb_temps.append(temp)
+        turb_card.body.addLayout(self._turb_grid)
+        self._turb_note = QLabel("")
+        self._turb_note.setWordWrap(True)
+        self._turb_note.setStyleSheet(theme.caption_label_qss())
+        turb_card.add(self._turb_note)
+        cards3.addWidget(turb_card, 1)
+
+        # ---- 按钮组卡：4 触点 + 3 灯（2 行 4 列，第 8 格留空）----
+        #
+        # [为什么用「● 状态」QLabel 而不是 LampDot] LampDot 的三色写死在
+        # paintEvent 里（绿=通/红=断/灰=禁用），按钮组需要「绿/灰/红」按
+        # 语义自由切换 ⇒ 照抄同页电磁阀卡的 QLabel + QSS 颜色写法。
+        btn_card = Card("按钮组系统状态")
+        self._btn_grid = QGridLayout()
+        self._btn_grid.setSpacing(6)
+        self._btn_state = []           # 每格「● 状态」标签
+        self._btn_name = []            # 每格名字小字
+        self._btn_render = [None] * self.BTN_SLOT_COUNT
+        for i in range(self.BTN_SLOT_COUNT):
+            cell = QWidget()
+            v = QVBoxLayout(cell)
+            v.setContentsMargins(0, 0, 0, 0)
+            v.setSpacing(0)
+            state_lbl = QLabel("● --")
+            state_lbl.setAlignment(Qt.AlignCenter)
+            state_lbl.setStyleSheet(
+                "QLabel { color: %s; font-size: 18px; background: transparent; }"
+                % self.VALVE_NA_COLOR)
+            name_lbl = QLabel("-")
+            name_lbl.setAlignment(Qt.AlignCenter)
+            name_lbl.setStyleSheet(theme.caption_label_qss())
+            v.addWidget(state_lbl)
+            v.addWidget(name_lbl)
+            # 行 0 = 4 个触点；行 1 = 3 盏灯（第 4 格留空）
+            self._btn_grid.addWidget(cell, i // 4, i % 4)
+            self._btn_state.append(state_lbl)
+            self._btn_name.append(name_lbl)
+        btn_card.body.addLayout(self._btn_grid)
+        self._btn_note = QLabel("")
+        self._btn_note.setWordWrap(True)
+        self._btn_note.setStyleSheet(theme.caption_label_qss())
+        btn_card.add(self._btn_note)
+        cards3.addWidget(btn_card, 1)
+
+        self.root.addLayout(cards3)
+
         # ---- 快捷入口 ----
         self.root.addWidget(section_title("快捷入口"))
         entry_row = QHBoxLayout()
         entry_row.setSpacing(10)
         entries = [
-            ("监视", "数字量 / 模拟量 / 搅拌泵 / 水质监测", reg.PAGE_MONITOR_MENU),
+            ("设备", "数字量 / 模拟量 / 搅拌泵 / 水质监测", reg.PAGE_MONITOR_MENU),
             ("数据", "历史数据 / 日志 / 报警", reg.PAGE_DATA_MENU),
             ("设置", "本地 / 远端 / 网络 / 悬浮窗 / 窗口", reg.PAGE_SETTINGS_MENU),
         ]
@@ -369,10 +490,13 @@ class HomePage(Page):
         """
         model = self.ctx.model
 
-        # ---- 温湿度 ----
-        th = model.temphum
-        self.th_temp.set_value(th.temp_text())
-        self.th_hum.set_value(th.hum_text())
+        # ---- 温湿度（按侧择优：A 侧优先，B 侧兜底）----
+        # [为什么择优而不是直接用最后一帧] 服务端按两条侧轮流推同一主题，
+        # 没装温湿度站的那一侧推的是空帧 ⇒ 只留最后一帧时界面恒 "--"
+        # （现场实测）。口径对齐 C 端 hsfHomePickTempHum。
+        th = model.temphum.pick()
+        self.th_temp.set_value(th.temp_text() if th is not None else "--")
+        self.th_hum.set_value(th.hum_text() if th is not None else "--")
 
         # ---- 变频器 ----
         vfd = model.vfd
@@ -404,6 +528,10 @@ class HomePage(Page):
         self._refresh_fm(model)
         # ---- 电磁阀（TOPIC_VALVE 六路）----
         self._refresh_valves(model)
+        # ---- 浊度仪（TOPIC_TURBIDITY 两台，2026-11-09）----
+        self._refresh_turb(model)
+        # ---- 按钮组（TOPIC_DIGITAL 的 DI 触点 + DO 灯，2026-11-09）----
+        self._refresh_buttons(model)
 
         # ---- 设备表（分帧：每 2 拍铺一次；force 一拍刷齐）----
         if force or self._refresh_phase % 2 == 0:
@@ -441,15 +569,20 @@ class HomePage(Page):
                        m.analog.eng_name.get(0, "") or "通道 0", "#5A6572")
 
     def _refresh_fm(self, m):
-        """流量计卡：瞬时流量 + 正/反向累计（B 侧快照；对齐 C 流量计段）。
+        """流量计卡：瞬时流量 + 正/反向累计（B 侧优先，A 侧兜底；对齐 C 流量计段）。
 
         单位随服务端单位码下发，不写死 m³/h（与历史页同一口径）。
+
+        [按侧择优] 服务端按两条侧轮流推同一主题；没装流量计的那一侧推的是
+        valid=false 的空帧 ⇒ 只留最后一帧时卡片恒"无数据"。口径对齐 C 端
+        hsfHomePickFlowMeter（优先 B 侧）。
         """
-        fm = m.flowmeter
-        if not fm.is_fresh():
+        fm = m.flowmeter.pick()
+        if fm is None:
             self.fm_flow.set_value("--")
             self.fm_flow.set_suffix("")
             self._set_note(self.fm_sub, "无数据", theme.CLR_OFFLINE)
+            self._set_note(self.fm_alarm, "", theme.CLR_OFFLINE)
             return
         self.fm_flow.set_value("%.2f" % fm.flow)
         self.fm_flow.set_suffix(fm.flow_unit_text())
@@ -458,6 +591,14 @@ class HomePage(Page):
                        % (fm.forward_total, fm.total_unit_text(),
                           fm.reverse_total, fm.total_unit_text()),
                        "#5A6572")
+        # [报警行 2026-11-10] 报警码直接说中文（说明书口径：空管/上限/
+        # 下限/系统），不显示 "0x0004"；正常时写「正常」绿字。
+        if fm.alarms:
+            self._set_note(self.fm_alarm,
+                           "报警: %s" % model_mod.flow_alarm_text(fm.alarms),
+                           theme.CLR_FAULT)
+        else:
+            self._set_note(self.fm_alarm, "正常", theme.CLR_OK)
 
     def _refresh_valves(self, m):
         """电磁阀卡：六路「● 状态」色点（色义对齐 pages_valve 卡片，
@@ -467,7 +608,7 @@ class HomePage(Page):
         for i in range(self.VALVE_COUNT):
             item = m.valve.items.get(i) if fresh else None
             if item:
-                name = str(item.get("name") or ("电磁阀 %d" % (i + 1)))
+                name = str(item.get("name") or ("电动球阀%d" % (i + 1)))
                 if item.get("ready"):
                     text, color = VALVE_STATE_TEXT.get(
                         int(item.get("state", 0)),
@@ -486,6 +627,171 @@ class HomePage(Page):
                 "QLabel { color: %s; font-size: 18px;"
                 " background: transparent; }" % color)
             self._valve_name[i].setText(name)
+
+    # ---- 浊度仪卡 / 按钮组卡（2026-11-09 首页新增）----
+
+    def _refresh_turb(self, m):
+        """浊度仪卡：两台 NTU 读数（口径对齐 pages_monitor.WaterPage）。
+
+        [超阈值标红只是显示口径] 阈值在客户端（各端各算），不是报警判据；
+        真要进报警列表必须挪到服务端。
+
+        [按侧择优] 服务端按两条侧轮流推同一主题；没装浊度仪的那一侧推的
+        是「两台都 online=false」的帧 ⇒ 只留最后一帧时卡片恒 "--"。两台
+        浊度仪在同一侧，故按侧取那一侧即可（不必按台分侧）。
+
+        [离线台] TurbiditySideState.ntu_of() 对 online=False 的台返回 None
+        （model.py 的口径），故这里 None ⇒ 该台显示 "--"，其余台照常。
+        """
+        st = m.turbidity.pick()
+        for idx, block in enumerate(self._turb_blocks):
+            name = ""
+            ntu = None
+            temp = None
+            if st is not None:
+                name = st.name_of(idx)
+                ntu = st.ntu_of(idx)
+                temp = st.temp_of(idx)
+            if ntu is None:
+                text, color = "--", self.VALVE_NA_COLOR
+            else:
+                text = "%.2f" % ntu
+                color = (theme.CLR_FAULT if ntu >= self.TURBIDITY_WARN_NTU
+                         else "#1A1A1A")
+            # 水温文案（缺值 = 该机型无温度 ⇒ 不显示）
+            temp_text = "" if temp is None else "水温 %.2f ℃" % temp
+            key = (text, color, name, temp_text)
+            if self._turb_render[idx] == key:
+                continue                   # 同值早退：稳态零重排
+            self._turb_render[idx] = key
+            # 仪器名由服务端给（客户端不猜"原水/出水"）。
+            block.set_caption(name or "浊度仪%d" % (idx + 1))
+            block.set_value_colored(text, color, 26)
+            self._turb_temps[idx].setText(temp_text)
+            self._turb_temps[idx].setVisible(bool(temp_text))
+        if st is None:
+            self._set_note(self._turb_note,
+                           "未收到浊度仪数据（服务端未装配 / 从站失联）",
+                           theme.CLR_OFFLINE)
+        elif st.count == 0:
+            self._set_note(self._turb_note, "服务端未装配浊度仪",
+                           theme.CLR_OFFLINE)
+        else:
+            self._set_note(self._turb_note, "", theme.CLR_OFFLINE)
+
+    def _find_button_channels(self, m):
+        """在数字量模块里按**服务端下发的通道名**找按钮组通道。
+
+        :returns: (dev, ch_map) —— dev 是数字量模块（DigitalState 或 None，
+                  None = 一个新鲜模块都没有）；ch_map = {slot: (ch, is_do)}，
+                  没找到的 slot 不在表里。
+
+        [为什么不写死通道号] 现场接线按图纸走，Python 服务端的点位走
+        `buttons.items` 配置可改；客户端写死 12~15/7~9 就是"接线一改、
+        界面全错"。服务端下发的语义名两个服务端逐字一致，按名字匹配即
+        两端同口径。
+
+        [模块也按名字找] 按钮组可能在数字量模块表里的任意一个（服务端
+        `button_items.module` 默认 0，但可配）⇒ 先扫出**含按钮语义名**的
+        那个模块，再在它里面找其余通道。
+
+        [有模块但没有按钮通道] 返回该模块 + 空映射 ⇒ 界面显示「未配置」
+        （与"模块离线"是两回事，别混）。
+        """
+        fresh = [m.digital[i] for i in sorted(m.digital)
+                 if m.digital[i].is_fresh()]
+        if not fresh:
+            return None, {}
+        dev = None
+        for cand in fresh:
+            names = (list(cand.di_names.values())
+                     + list(cand.do_names.values()))
+            if any(self.BTN_ESTOP_NAME in n for n in names) or \
+                    any(k in n for k in self.BTN_LAMP_NAMES for n in names):
+                dev = cand
+                break
+        if dev is None:
+            return fresh[0], {}
+        ch_map = {}
+        for slot, key in enumerate((self.BTN_ESTOP_NAME, self.BTN_START_NAME,
+                                    self.BTN_STOP_NAME, self.BTN_RESET_NAME)):
+            for ch, name in dev.di_names.items():
+                if name.startswith(key):
+                    ch_map[slot] = (ch, False)
+                    break
+        for slot, key in enumerate(self.BTN_LAMP_NAMES, start=4):
+            for ch, name in dev.do_names.items():
+                if name.startswith(key):
+                    ch_map[slot] = (ch, True)
+                    break
+        return dev, ch_map
+
+    def _refresh_buttons(self, m):
+        """按钮组卡：4 触点 + 3 灯（数据源 = 数字量模块的 DI/DO 位图）。
+
+        [触点极性] 急停/停止 = 常闭（1=未按/回路通）、启动/复位 = 常开
+        （1=按下），与服务端 `server_py/hsfsrv/buttons.py` 的现场定义一致。
+        急停的"按下"不是"按下"而是"急停生效"⇒ 显示红色「急停」。
+        """
+        dev, ch_map = self._find_button_channels(m)
+        if dev is None or not dev.is_fresh():
+            for i in range(self.BTN_SLOT_COUNT):
+                key = ("--", self.VALVE_NA_COLOR)
+                if self._btn_render[i] == key:
+                    continue
+                self._btn_render[i] = key
+                self._btn_state[i].setText("● --")
+                self._btn_state[i].setStyleSheet(
+                    "QLabel { color: %s; font-size: 18px;"
+                    " background: transparent; }" % self.VALVE_NA_COLOR)
+                self._btn_name[i].setText(self.BTN_SLOT_LABELS[i])
+            self._set_note(self._btn_note,
+                           "未收到按钮组数据（数字量模块离线）",
+                           theme.CLR_OFFLINE)
+            return
+
+        for slot in range(self.BTN_SLOT_COUNT):
+            text, color = "--", self.VALVE_NA_COLOR
+            hit = ch_map.get(slot)
+            if hit is not None:
+                ch, is_do = hit
+                if is_do:
+                    # 灯：亮/灭（亮=绿，灭=灰）
+                    if dev.do_bit(ch):
+                        text, color = "亮", theme.CLR_OK
+                    else:
+                        text, color = "灭", self.VALVE_NA_COLOR
+                else:
+                    level = dev.di_bit(ch)
+                    pressed = (not level) if self.BTN_NORMALLY_CLOSED[slot] \
+                        else level
+                    if slot == 0:
+                        # 急停：常闭，1=回路正常；0=按下或断线（故障态）
+                        if pressed:
+                            text, color = "急停", theme.CLR_FAULT
+                        else:
+                            text, color = "正常", theme.CLR_OK
+                    else:
+                        if pressed:
+                            text, color = "按下", theme.CLR_OK
+                        else:
+                            text, color = "未按", self.VALVE_NA_COLOR
+            key = (text, color)
+            if self._btn_render[slot] == key:
+                continue               # 同值早退：稳态零重排
+            self._btn_render[slot] = key
+            self._btn_state[slot].setText("● " + text)
+            self._btn_state[slot].setStyleSheet(
+                "QLabel { color: %s; font-size: 18px;"
+                " background: transparent; }" % color)
+
+        missing = [self.BTN_SLOT_LABELS[i] for i in range(self.BTN_SLOT_COUNT)
+                   if i not in ch_map]
+        if missing:
+            self._set_note(self._btn_note,
+                           "未配置：%s" % "、".join(missing), theme.CLR_WARN)
+        else:
+            self._set_note(self._btn_note, "", theme.CLR_OFFLINE)
 
     @staticmethod
     def _set_note(label, text, color):
@@ -604,12 +910,20 @@ class HomePage(Page):
             return
         if self._detail_mode == "table":
             width = self.DETAIL_TABLE_W
-            inner_h = self._table.minimumHeight()
+            # [必须取**内层 QTableWidget** 的高度] DataTable 是外壳 QWidget，
+            # 它的 minimumHeight() 是「显式最小高」属性，默认 0 —— 不是布局
+            # 算出来的最小高。拿它当内容高 ⇒ 浮层只剩标题行那点高度，
+            # 表格体被裁掉，设备状态一条都看不见（2026-11-09 实测截图）。
+            # fit_to_content() 把高度写在**内层表**上（setMinimum/Maximum），
+            # 这里读内层才是真高度。
+            inner_h = self._table.table.minimumHeight()
         else:
             width = self.DETAIL_PUMP_W
             inner_h = self._pump_detail.sizeHint().height()
         width = min(width, max(320, self.width() - 24))
         height = inner_h + 64            # 标题行 + 上下边距
+        # [高度也要夹取] 页高不够时浮层不能顶出页面（窄屏/小窗）。
+        height = min(height, max(160, self.height() - 24))
         if (self._detail_float.width(), self._detail_float.height()) != \
                 (width, height):
             self._detail_float.resize(width, height)
@@ -722,7 +1036,7 @@ class HistoryPage(Page):
 
     #: 列定义（表头与 CSV 导出共用一份，改这里两处同步）。
     COLUMNS = ["时间", "模式", "搅拌状态", "输出频率(Hz)", "输出电流(A)",
-               "搅拌转速(rpm)", "浊度1(NTU)", "浊度2(NTU)",
+               "搅拌转速(rpm)", "浊度1(NTU)", "浊度2(NTU)", "水温(℃)",
                "瞬时流量", "正累计", "压差(MPa)",
                "电箱温度(℃)", "电箱湿度(%RH)", "DI(32位)", "DO(32位)"]
 
@@ -746,6 +1060,17 @@ class HistoryPage(Page):
     #: 不拿它当"最前一条数据的时间"。
     VALID_TS_MIN = 1577836800000
 
+    #: 图表全量取数的行数上限（对齐 C 端 HIST_CHART_MAX_ROWS = 12000）。
+    #: 超过就不再取：再多画出来也看不出细节，而内存/取数轮次线性上涨。
+    CHART_MAX_ROWS = 12000
+    #: 图表单批请求行数。协议上限就是 50（proto.HISTORY_PAGE_MAX），
+    #: 用满可以少跑轮次（12000/50 = 240 批封顶）。
+    CHART_CHUNK = proto.HISTORY_PAGE_MAX
+    #: 每条折线最多画的点数（等距抽样，首尾必留）。
+    #: 对齐 C 端 histSamplePoints 的等距抽样口径：12000 点逐点 drawLine
+    #: 在板端会拖帧，抽到 2000 点肉眼看不出差别。
+    CHART_MAX_POINTS = 2000
+
     #: 服务端分页应答 / 失败（网络线程 emit，UI 线程收 —— Qt 线程规则）。
     pageReady = pyqtSignal(dict)
     pageFailed = pyqtSignal(str)
@@ -755,6 +1080,27 @@ class HistoryPage(Page):
         self.add_header("历史数据", "服务端历史库，分页浏览")
         self._rows = []              # [(texts, abnormal), ...] 旧→新（当前页）
         self._last_sample_ms = 0
+
+        # ---- 图表视图状态（2026-11-10 页内双视图）----
+        #: 0=表格 1=图表（同格二选一，对齐 C hsfDataHistorySetView）。
+        self._view_mode = 0
+        #: 内嵌折线图控件（首次切图表视图才建；Qt.Widget 旗标当普通控件）。
+        self._chart_dialog = None
+        #: 图表全量取数的累加缓冲：[(texts, abnormal), ...]（**全量筛选结果**，
+        #: 不是当前页）。切图表视图时按当前筛选条件分页取，上限
+        #: `CHART_MAX_ROWS` —— 与 C 端 HIST_CHART_MAX_ROWS=12000 同口径。
+        self._chart_rows = []
+        self._chart_fetch_offset = 0
+        self._chart_fetching = False
+        #: 图表取数的**冻结锚点**（epoch ms）。表格窗口锚点 `_window_end`
+        #: 会随刷新/探活重新锚定（"从现在往前看"），图表若跟着它变，筛选
+        #: 签名就每拍都变 ⇒ 每 3 秒重跑一次上百批全量取数（实测踩到）。
+        #: 故图表在**开始取数那一刻**冻结锚点，直到筛选条件真变才重取。
+        self._chart_anchor = None
+        #: 已累加批次的筛选签名（lo/hi/kw/列）。相同就不再重取。
+        self._chart_sig = None
+        #: 图表视图状态下标（"筛选共 N 行 · 图表 M 行"口径）。
+        self._chart_status = None
 
         # ---- 数据来源 / 分页状态 ----
         #: "server"=显示服务端某一页；"local"=未连接/未落盘时的本地缓存。
@@ -783,20 +1129,20 @@ class HistoryPage(Page):
 
         self._table = DataTable()
         self._table.set_headers(self.COLUMNS)
-        # [列宽：按内容给 per-列下限，再让剩余宽度按权重分]
+        # [列宽：下限按**当前字体实测**，不写死像素]
         #
-        # 全局最小档是 72px，但**表头文字**比数据行更长：
-        # "浊度1(NTU)"/"电箱温度(℃)"/"DI(32位)" 都要 ~95px 才不截断，
-        # 时间列 'yyyy-MM-dd HH:MM:SS' 要 165px。15 列 × 72 = 1080px，
-        # 1400 宽的窗口视口约 1150px，按权重分下来每列被压到刚过下限，
-        # 表头全变成 "浊度1(NTU" / "DI(32位" 这种（截图反馈）。
-        # 故这里给每列一个按其表头/典型内容量出来的下限；下限总和超出
-        # 视口时宁出横向滚动条，也不把文字截断（DataTable 的分配口径）。
+        # 全局最小档是 72px，但**表头文字**比数据行更长（"浊度1(NTU)"、
+        # "电箱湿度(%RH)"…）。早先这里写死了一组像素（165/78/96…），那是
+        # 按 10pt 量的 —— 客户端实际用 ui_scale 后的 15pt，2026-11-10 实锅：
+        # 15 列里 12 列表头被截成 "出频率(H"、"度1(NTU"（用户截图反馈
+        # 「列名显示不全」）。
+        # 现在交给 DataTable 的 auto_min_texts：每次重算列宽都按表头字体
+        # 现量（字号缩放后自动跟着变）；时间列额外按**内容**量（表头只有
+        # "时间"两个字，实际要装 'yyyy-MM-dd HH:MM:SS'）。
+        # 下限总和超出视口时宁出横向滚动条，也不把文字截断（分配器口径）。
         self._table.set_column_weights(
             (3, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 3, 3),
-            min_widths={0: 165, 1: 78, 2: 96, 3: 96, 4: 96, 5: 92,
-                        6: 96, 7: 96, 8: 104, 9: 92, 10: 88, 11: 100,
-                        12: 100, 13: 92, 14: 92})
+            auto_min_texts={0: "2026-11-10 00:00:00"})
 
         # ---- 排序 / 筛选状态（双击表头排序；筛选栏按此过滤显示视图）----
         self._sort_col = None          # None=不排序（默认最新在上）
@@ -867,6 +1213,11 @@ class HistoryPage(Page):
         self._page_size_box = QComboBox()
         for n in self.PAGE_SIZES:
             self._page_size_box.addItem("%d 条" % n, n)
+        # [本机记住每页条数 2026-11-10] 存过就按它开局（历史页）。
+        from . import settings as ui_settings
+        saved_size = ui_settings.hist_page_size()
+        if saved_size in self.PAGE_SIZES:
+            self._page_size = saved_size
         idx = self._page_size_box.findData(self._page_size)
         self._page_size_box.setCurrentIndex(idx if idx >= 0 else 0)
         self._page_size_box.setMaximumWidth(96)
@@ -898,7 +1249,7 @@ class HistoryPage(Page):
         # [折线列也做多选] 用户要求：「折线列的下拉也要做类似的设计可以
         # 多选」。与「列」显示开关同一个控件（MultiCheckCombo），交互一致
         # （点项不收起、点外面才收），只是这里 initial="none" + 至少 1 列
-        # ——没有勾任何列就没有线可画，所以点「生成折线图」时提示。
+        # ——没有勾任何列就没有线可画，所以点「图表视图」时提示。
         # 只列**数值列**（时间/模式/搅拌状态是文本，画不了折线）。
         self.CHART_COLUMNS = [c for c in range(len(self.COLUMNS))
                               if c not in (0, 1, 2)]
@@ -910,10 +1261,26 @@ class HistoryPage(Page):
         self._chart_col.setMinimumWidth(150)
         self._chart_col.setMaximumWidth(300)
         self._chart_col.setToolTip("可多选：勾中的列各画一条线（至少选一列）")
+        # [图表视图下改勾选列立即重画] 全量数据已经在 `_chart_rows` 里，
+        # 换列只需要重画、不用重取（对齐 C 端勾选框即时重建序列的口径）。
+        self._chart_col.selectionChanged.connect(self._on_chart_columns_changed)
         bar.addWidget(self._chart_col)
-        btn_chart = QPushButton("生成折线图")
-        btn_chart.clicked.connect(self._show_chart)
-        bar.addWidget(btn_chart)
+        # [2026-11-10 页内双视图] 原来是「生成折线图」弹一个独立窗口
+        # （LineChartDialog 以 QDialog 形式 show()）。用户明确要求
+        # 「图表不要新建一个窗口」，而 C 端历史页本来就是**表格/图表同格
+        # 二选一**（hsfDataHistorySetView → HsfDataBar_setViewMode）——
+        # 故改为与报警页同一套内嵌双视图（QStackedWidget + Qt.Widget）。
+        self._btn_table_view = QPushButton("表格视图")
+        self._btn_table_view.setCheckable(True)
+        self._btn_table_view.setChecked(True)
+        self._btn_table_view.clicked.connect(lambda: self.set_view(0))
+        bar.addWidget(self._btn_table_view)
+        self._btn_chart_view = QPushButton("图表视图")
+        self._btn_chart_view.setCheckable(True)
+        self._btn_chart_view.setToolTip(
+            "按当前筛选条件取全量历史画折线（最多 %d 行）" % self.CHART_MAX_ROWS)
+        self._btn_chart_view.clicked.connect(lambda: self.set_view(1))
+        bar.addWidget(self._btn_chart_view)
         bar.addStretch(1)
         self._freeze = QCheckBox("滚动锁定（停止刷表，后台照常采样）")
         self._freeze.toggled.connect(
@@ -924,10 +1291,35 @@ class HistoryPage(Page):
         bar.addWidget(btn_export)
         self.root.addLayout(bar)
 
-        # ---- 数据表卡片（在筛选/工具行之下：筛选条件先设，表格后看）----
+        # ---- 双视图（第 0 页=表格卡片，第 1 页=内嵌折线图）----
+        # [为什么不再弹窗] 见上面工具行的说明；这里照报警页的做法：
+        # LineChartDialog 加 Qt.Widget 旗标当普通控件进布局，缩放/平移/
+        # 气泡交互全部沿用同一份实现（不复制第二套图表代码）。
         card = Card()
         card.add(self._table)
-        self.root.addWidget(card, 1)
+        table_page = QWidget()
+        tp_lay = QVBoxLayout(table_page)
+        tp_lay.setContentsMargins(0, 0, 0, 0)
+        tp_lay.addWidget(card)
+
+        chart_page = QWidget()
+        cp_lay = QVBoxLayout(chart_page)
+        cp_lay.setContentsMargins(0, 0, 0, 0)
+        # 图表视图状态行（对齐 C 的 histChartStatusText：取回多少行、
+        # 每线多少点、是否抽样）。
+        self._chart_status = QLabel("")
+        self._chart_status.setStyleSheet(theme.caption_label_qss())
+        cp_lay.addWidget(self._chart_status)
+        self._chart_holder = QWidget()
+        ch_lay = QVBoxLayout(self._chart_holder)
+        ch_lay.setContentsMargins(0, 0, 0, 0)
+        self._chart_holder.setMinimumHeight(420)
+        cp_lay.addWidget(self._chart_holder, 1)
+
+        self._view_stack = QStackedWidget()
+        self._view_stack.addWidget(table_page)      # index 0 = 表格
+        self._view_stack.addWidget(chart_page)      # index 1 = 图表
+        self.root.addWidget(self._view_stack, 1)
 
         # 初始视图：全部列可见（构造期 selectionChanged 被跳过，这里补一次）。
         self._table.set_visible_columns(self.visible_columns())
@@ -1040,11 +1432,26 @@ class HistoryPage(Page):
         self._inflight = False
         if self._data_mode != "server":
             return
+        # [图表批次失败] 只更新图表状态行，不动表格的总数/状态（表格那一页
+        # 还是好的，不该因为图表取数失败显示"读取失败"）。
+        if self._pending_kind == "chart":
+            self._chart_fetching = False
+            self._chart_status.setText("图表取数失败：%s" % msg)
+            self.ctx.set_status("图表取数失败：%s" % msg)
+            return
         self._total_label.setText("读取失败：%s" % msg)
         self.ctx.set_status("历史数据读取失败：%s" % msg)
 
     def _on_page_ready(self, doc):
         """应答到货（**UI 线程**）：更新分页状态并重铺表格。"""
+        # [图表全量取数走自己的累加器] 早于表格逻辑返回：图表批不改页码、
+        # 不改表格行、不触发探活/夹取，否则翻页状态会被图表取数带乱。
+        if self._pending_kind == "chart":
+            if self._data_mode != "server":
+                self._inflight = False
+                return
+            self._chart_accumulate(doc)
+            return
         self._inflight = False
         if self._data_mode != "server":
             return
@@ -1078,6 +1485,14 @@ class HistoryPage(Page):
         if changed and self._pending_kind == "probe":
             # 服务端有新数据入库：不打扰当前页内容，只在总数上体现。
             pass
+        if self._view_mode == 1 and self._chart_filter_sig() != self._chart_sig:
+            # [只在筛选真变时重取] 对齐 C 端 page 应答尾部
+            # `if (viewMode == 1) histBuildChartEx(...)` 的意图，但不能无条件
+            # 调：历史页有 3s 探活/刷新，无条件调会每拍比对签名——而签名一旦
+            # 因窗口锚点漂移就会触发上百批重取（实测"正在加载图表数据…"永不
+            # 结束）。这里用签名闸住：筛选没变就什么都不做（图表保持当前
+            # 全量结果），用户点「刷新」/改筛选才重取。
+            self._chart_refresh()
 
     def _on_start_edited(self, _text):
         self._f_start_touched = True
@@ -1162,6 +1577,10 @@ class HistoryPage(Page):
             num("current_a"),
             num("rpm", "%.0f"),
             num("turb1"), num("turb2"),
+            # [水温 2026-11-10] 显示在第 8 位（紧跟浊度2）；线上列序里它在
+            # 末尾（proto.HISTORY_COLUMNS），此处按**列名**取值，位置无关。
+            # 无温度机型该列入库 NULL ⇒ 显示 "--"（不是 0℃）。
+            num("water_temp", "%.1f"),
             "--" if flow is None else "%.2f %s" % (float(flow), flow_unit),
             "--" if total is None else "%.2f %s" % (float(total), total_unit),
             press_note or num("press_mpa", "%.3f"),
@@ -1213,6 +1632,9 @@ class HistoryPage(Page):
         if not isinstance(size, int) or size <= 0 or size == self._page_size:
             return
         self._page_size = size
+        # 记住本机偏好（历史页）
+        from . import settings as ui_settings
+        ui_settings.set_value(ui_settings.K_HIST_PAGE_SIZE, int(size))
         if self._data_mode == "server":
             self._page_index = 0
             self._request_page(0)
@@ -1306,15 +1728,21 @@ class HistoryPage(Page):
         return "%.2f" % float(getattr(m.vfd, attr, 0.0) or 0.0)
 
     def _is_abnormal(self, m):
-        """采样那一刻是否异常（整行淡红底）。只认已有数据里的异常位。"""
+        """采样那一刻是否异常（整行淡红底）。只认已有数据里的异常位。
+
+        [按侧择优] 浊度/流量计都按「优先侧 + 兜底侧」取快照再判异常
+        （见 model 的 pick()）；空帧（另一侧没装设备）不算异常。
+        """
         if m.vfd.is_fresh() and m.vfd.faulted:
             return True
-        if m.turbidity.is_fresh():
-            for idx in range(min(m.turbidity.count, 2)):
-                ntu = m.turbidity.ntu_of(idx)
+        turb = m.turbidity.pick()
+        if turb is not None:
+            for idx in range(min(turb.count, 2)):
+                ntu = turb.ntu_of(idx)
                 if ntu is not None and ntu >= self.TURBIDITY_WARN_NTU:
                     return True
-        if m.flowmeter.is_fresh() and m.flowmeter.alarms:
+        fm = m.flowmeter.pick()
+        if fm is not None and fm.alarms:
             return True
         # 压差越限（断线/超量程）——服务端给说明文字即异常。
         if m.analog.is_fresh() and m.analog.eng_note.get(0, ""):
@@ -1327,25 +1755,27 @@ class HistoryPage(Page):
     @staticmethod
     def _turb_text(m, index):
         """浊度 NTU；该台离线（online=False）时 ntu_of 返回 None → "--"。"""
-        if not m.turbidity.is_fresh():
+        st = m.turbidity.pick()
+        if st is None:
             return "--"
-        ntu = m.turbidity.ntu_of(index)
+        ntu = st.ntu_of(index)
         return "--" if ntu is None else "%.2f" % ntu
 
     @staticmethod
     def _flow_text(m):
         """瞬时流量：单位随流量计下发的单位码走，不写死 m³/h。"""
-        if not m.flowmeter.is_fresh():
+        fm = m.flowmeter.pick()
+        if fm is None:
             return "--"
-        return "%.2f %s" % (m.flowmeter.flow, m.flowmeter.flow_unit_text())
+        return "%.2f %s" % (fm.flow, fm.flow_unit_text())
 
     @staticmethod
     def _total_text(m):
         """正向累积总量（单位码与瞬时流量分属两张表，见 model.FLOW_UNIT_TEXT）。"""
-        if not m.flowmeter.is_fresh():
+        fm = m.flowmeter.pick()
+        if fm is None:
             return "--"
-        return "%.2f %s" % (m.flowmeter.forward_total,
-                            m.flowmeter.total_unit_text())
+        return "%.2f %s" % (fm.forward_total, fm.total_unit_text())
 
     @staticmethod
     def _press_text(m):
@@ -1706,40 +2136,218 @@ class HistoryPage(Page):
 
     # ---- 折线图 / 导出 ----
 
-    def _show_chart(self):
-        """按当前筛选结果画选中列（可多列）的折线图（时间正序，X=时间）。
+    def set_view(self, mode):
+        """表格/图表双视图切换（0=表格 1=图表；对齐 C hsfDataHistorySetView）。
+
+        [为什么不弹窗] 用户 2026-11-10 明确要求「图表不要新建一个窗口」，
+        C 端历史页也是同格二选一（表格 ⇄ 图表）。故这里用 QStackedWidget
+        在同一页内切换，图表控件以 Qt.Widget 旗标内嵌（与报警页同款）。
+
+        [切进图表视图要取全量] 表格是分页的（一页 ≤50 行），图表画一页
+        看不出趋势 —— C 端是分页累加**全量筛选结果**（上限 12000 行）后
+        再画。这里同口径：切进来就按当前筛选条件分页取全量（见
+        `_chart_refresh`），已取过且筛选没变则不重复取。
+        """
+        mode = 1 if mode == 1 else 0
+        if mode == 1:
+            # [先取数再切页] 取数是异步的：先把视图切过去（显示"正在加载"），
+            # 应答回来再填图，用户点下去立刻有反应。
+            self._view_stack.setCurrentIndex(1)
+        else:
+            self._view_stack.setCurrentIndex(0)
+        self._view_mode = mode
+        self._btn_table_view.setChecked(mode == 0)
+        self._btn_chart_view.setChecked(mode == 1)
+        if mode == 1:
+            self._chart_refresh()
+
+    def _on_chart_columns_changed(self):
+        """勾选列变了：图表视图下立即重画（数据已在 `_chart_rows`，不重取）。
+
+        [为什么不重取] 全量取数是**按筛选条件**取的，与"画哪几列"无关；
+        换列只是换画法。重取一遍要跑上百批请求，纯属浪费（板端尤其明显）。
+        """
+        if self._view_mode == 1 and self._chart_rows:
+            self._chart_build(list(self._chart_rows), total=self._total)
+
+    def _chart_filter_sig(self):
+        """当前筛选条件的签名（时间窗 / 关键字 / 显示列）。
+
+        [为什么要签名] 图表取数是"全量累加"，重复取一次要跑上百批请求；
+        同一次筛选只该取一次。筛选项任一变化（时间/关键字/列）都必须重取，
+        否则画的是旧筛选条件下的数据 —— 那是**错误数据**，比不画更糟。
+
+        [为什么**不含**窗口锚点] `_window_end` 会被刷新/探活重新锚定成"现在"，
+        把它算进签名会让签名每拍都变 ⇒ 每 3 秒重跑一次全量取数（实测踩到，
+        状态行一直停在"正在加载图表数据…"）。图表自己冻结锚点
+        （`_chart_anchor`，取数那一刻定下），故签名不需要它。
+        """
+        lo_ms, hi_ms = (self._server_time_range() or (None, None))
+        kw = self._f_text.text().strip() or None
+        return (lo_ms, hi_ms, kw, tuple(self.visible_columns()))
+
+    def _chart_refresh(self):
+        """（重）建图表视图：需要时先分页取全量，取完再画。
+
+        [两条数据来源]
+          · **服务端模式**：按当前筛选分页取全量（≤CHART_MAX_ROWS 行）——
+            这才是 C 端口径，也是图表的意义所在（一页 50 行画不出水位
+            变化的全过程）。
+          · **本地缓存模式**（未连接/服务端未落盘）：直接用内存里的采样
+            缓冲画（`_filtered_rows()`），没有服务端可查。
+        """
+        if self._data_mode != "server":
+            self._chart_build(list(self._filtered_rows()), total=len(self._rows))
+            return
+        if self._chart_fetching:
+            # 已在取数中：别用**半截数据**重画（_chart_rows 是边取边累加的，
+            # 中途重建会让状态行/曲线都停在半路）。取完的收尾会自己 build。
+            return
+        sig = self._chart_filter_sig()
+        if self._chart_rows and sig == self._chart_sig:
+            # 筛选没变且已经取过：原地重画，不重跑上百批请求。
+            self._chart_build(list(self._chart_rows), total=self._total)
+            return
+        self._chart_sig = sig
+        # [冻结锚点] 取数开始那一刻定下 before_ts，本批全量都用它：
+        # 中途 `_window_end` 被刷新重锚定也不影响（否则签名/窗口每拍漂移）。
+        self._chart_anchor = self._window_end
+        self._chart_rows = []
+        self._chart_fetch_offset = 0
+        self._chart_fetching = True
+        self._chart_status.setText("正在加载图表数据…")
+        self._chart_request_chunk()
+
+    def _chart_request_chunk(self):
+        """取图表全量数据的一批（offset 递增，直到取满或遇到短批）。"""
+        bridge = self.ctx.bridge
+        offset = self._chart_fetch_offset
+        self._inflight = True
+        self._pending_kind = "chart"
+
+        def _done(doc):
+            self.pageReady.emit(doc)
+
+        def _err(msg):
+            self.pageFailed.emit(str(msg))
+
+        try:
+            lo_ms, hi_ms = (self._server_time_range() or (None, None))
+            kw = self._f_text.text().strip() or None
+            bridge.history_page(
+                offset=offset, limit=self.CHART_CHUNK,
+                before_ts=self._chart_anchor, lo_ts=lo_ms, hi_ts=hi_ms,
+                kw=kw, kw_cols=self.visible_columns(),
+                on_done=_done, on_error=_err)
+        except Exception as exc:                        # noqa: BLE001
+            self._inflight = False
+            self._chart_fetching = False
+            self._chart_status.setText("图表取数失败：%s" % exc)
+            self.ctx.set_status("图表取数失败：%s" % exc)
+
+    def _chart_accumulate(self, doc):
+        """一批图表数据到货：累加 → 决定继续取还是收尾画图。"""
+        self._inflight = False
+        if not self._chart_fetching:
+            return                       # 用户已切走/筛选已变，这批作废
+        if not doc.get("ok"):
+            self._chart_fetching = False
+            self._chart_status.setText("图表取数失败：%s"
+                                       % (doc.get("err") or "服务端拒绝"))
+            return
+        cols = list(doc.get(proto.HIST_KEY_COLS) or proto.HISTORY_COLUMNS)
+        rows = doc.get(proto.HIST_KEY_ROWS) or []
+        for row in rows:
+            self._chart_rows.append(self._server_row_texts(row, cols))
+        self._total = int(doc.get(proto.HIST_KEY_TOTAL) or self._total)
+        got = len(rows)
+        self._chart_fetch_offset += got
+
+        # [收尾判据] 短批 = 没有更多行了；或触到上报上限（同 C 端）。
+        if got < self.CHART_CHUNK or len(self._chart_rows) >= self.CHART_MAX_ROWS:
+            self._chart_fetching = False
+            self._chart_build(list(self._chart_rows), total=self._total)
+            return
+        self._chart_status.setText("正在加载图表数据… 已取 %d/%d 行"
+                                   % (len(self._chart_rows), self._total))
+        self._chart_request_chunk()
+
+    def _chart_build(self, rows, total=0):
+        """把（已取回的）全量行按勾选列画成折线并内嵌显示。
 
         [多列口径] 勾中的每一列各画一条线，颜色按 `LineChartDialog.
         SERIES_COLORS` 依次取、图例在标题下方。各列量纲不同（频率 Hz /
         电流 A / 浊度 NTU）时**不做双 Y 轴**：图是"看趋势"不是"读精确值"，
         每列各自归一化到绘图区高度（图例里标 min/max），否则小量纲的线
-        会被压成一条直线。这一点在标题下写明，避免误读。
+        会被压成一条直线。
+
+        [等距抽样] 每条线最多画 CHART_MAX_POINTS 点（首尾必留）——
+        与 C 端等距抽样同口径；12000 点逐点 drawLine 在板端会拖帧。
         """
         cols = [self.CHART_COLUMNS[i]
                 for i in self._chart_col.checked_indexes()
                 if i < len(self.CHART_COLUMNS)]
         if not cols:
+            self._chart_status.setText("请先在「折线列」里勾选至少一列")
             self.ctx.set_status("请先在「折线列」里勾选至少一列")
             return
-        rows = self._filtered_rows()                   # 时间正序
+        # [显式按时间正序] 服务端批次顺序不作为画图前提：图表 X 轴必须
+        # 旧→新，靠批序等于把正确性押在服务端 ORDER BY 上。
+        ordered = sorted(rows, key=lambda item: (
+            self._stamp_text_to_ms(item[0][0]) or 0))
         series = []
+        raw_counts = []
         for col in cols:
             points = []
-            for row, _abnormal in rows:
-                value = self._cell_float(row[col])
+            for row, _abnormal in ordered:
+                value = self._cell_float(row[col]) if col < len(row) else None
                 if value is None:
                     continue
                 stamp = self._stamp_text_to_ms(row[0])
                 if stamp is None:
                     continue
                 points.append((stamp, value))
+            raw_counts.append(len(points))
             if len(points) >= 2:
-                series.append((self.COLUMNS[col], points))
+                series.append((self.COLUMNS[col],
+                               self._sample_points(points,
+                                                   self.CHART_MAX_POINTS)))
         if not series:
+            self._chart_status.setText(
+                "可画的数值点不足 2 个（换列或放宽筛选）")
             self.ctx.set_status("可画的数值点不足 2 个（换列或放宽筛选）")
             return
-        dialog = LineChartDialog(series, self)
-        dialog.show()
+
+        if self._chart_dialog is None:
+            dialog = LineChartDialog(series, self)
+            # [内嵌] Qt.Widget 旗标让 QDialog 当普通控件进布局：表格/图表
+            # 双视图在同一页内切换（对齐报警页 set_view 的做法），不弹窗。
+            dialog.setWindowFlags(Qt.Widget)
+            self._chart_holder.layout().addWidget(dialog)
+            self._chart_dialog = dialog
+        else:
+            self._chart_dialog.set_series(series)
+
+        peak = max(raw_counts) if raw_counts else 0
+        self._chart_status.setText(
+            "筛选共 %d 行 · 图表取回 %d 行 · 每线最多 %d 点（%s）"
+            % (total or len(rows), len(rows), self.CHART_MAX_POINTS,
+               "已等距抽样" if peak > self.CHART_MAX_POINTS else "未抽样"))
+
+    @staticmethod
+    def _sample_points(points, limit):
+        """等距抽样：把 n 个点压到 <= limit 个，且**首尾必留**。
+
+        [为什么首尾必留] 曲线两端是"数据从哪开始/到哪结束"，抽样丢了端点
+        会让用户以为那段时间没数据。
+        """
+        n = len(points)
+        if limit <= 1 or n <= limit:
+            return points
+        step = (n - 1) / float(limit - 1)
+        out = [points[int(round(i * step))] for i in range(limit)]
+        out[-1] = points[-1]
+        return out
 
     @staticmethod
     def _stamp_text_to_ms(text):
@@ -1897,8 +2505,11 @@ class LineChartDialog(QDialog):
     [缩放只作用于时间轴] 纵向由每条线自己的 min/max 自适应，所以放大
     横轴时纵轴会自动跟着那一段的数据缩放 —— 这正是"看某段细节"想要的。
 
-    [非模态] 允许边看图边切筛选条件再点一次"生成折线图"——每次点击
-    都弹新图，旧图保留（对比两个时间段用）。
+    [用法：内嵌，不弹窗] 历史页与报警页都把它以 `Qt.Widget` 旗标塞进
+    页内的 `QStackedWidget`（表格/图表双视图），新数据到货用 `set_series`
+    原地换数据（对齐 C 端 `alarmSetView` / `hsfDataHistorySetView`）。
+    **不要再 `show()` 成独立窗口** —— 用户 2026-11-10 明确要求图表不新建
+    窗口；需要对比两个时间段时，改用筛选条件多次切换视图。
     """
 
     #: 绘图区边距（左留 Y 轴刻度、下留 X 轴时间标签）。
@@ -2407,13 +3018,27 @@ class LineChartDialog(QDialog):
         QGestureRecognizer（取决于 Qt 的触摸设备识别），原生 TouchBegin/
         TouchUpdate 更可靠；两路都接、以先到者为准（pinch 手势开始后
         忽略原生双指，避免重复缩放）。
+
+        [为什么整段兜 RuntimeError —— 2026-11-09] 本对话框是**非模态弹窗**
+        （历史页）/ 内嵌控件（报警页），页面销毁/窗口关闭后 Qt 事件队列里
+        可能仍压着发给它的事件；此时包装器的 C++ 对象已删除，再调
+        QDialog.event(self, ...) 就抛
+        "wrapped C/C++ object of type LineChartDialog has been deleted"。
+        PyQt5 对**虚函数里未处理的 Python 异常**缺省直接 abort() 整个进程
+        （sys.excepthook 只是被告知，拦不住 abort）⇒ 测试合到一个进程后
+        在段落边界随机崩（2026-11-09 实测三连）。一个弹窗的残留事件不值
+        一条命：C++ 已删就当事件没发生（返回 False），进程继续。
         """
-        if event.type() == QEvent.Gesture:
-            return self._on_gesture(event)
-        if event.type() in (QEvent.TouchBegin, QEvent.TouchUpdate,
-                            QEvent.TouchEnd):
-            return self._on_touch(event)
-        return QDialog.event(self, event)
+        try:
+            if event.type() == QEvent.Gesture:
+                return self._on_gesture(event)
+            if event.type() in (QEvent.TouchBegin, QEvent.TouchUpdate,
+                                QEvent.TouchEnd):
+                return self._on_touch(event)
+            return QDialog.event(self, event)
+        except RuntimeError:
+            # 包装器的 C++ 对象已删除：事件是残留的，吞掉。
+            return False
 
     def _on_gesture(self, event):
         """QPinchGesture → 与触摸路径同一口径（从起点算总倍率）。
@@ -2581,7 +3206,15 @@ class LogPage(Page):
     COLUMNS = ["时间", "类别", "事件"]
 
     #: 类别下拉项：(入库字面, 显示名)。下标 0 = 全部（字面空串）。
-    #: 与 C 端 kLogCategoryKeys / kLogCategoryNames 同序同字面。
+    #: 前五档与 C 端 kLogCategoryKeys / kLogCategoryNames 同序同字面。
+    #:
+    #: [第 6 档 "sys"/系统 —— 2026-11-10] **Python 服务端专有**：C 端 logs
+    #: 表只收 conn/ctrl/alarm/auto/auth 五类定点事件，而本端还收大量非事件
+    #: 类业务日志（采集失败、健康变化、配置变更、装配保真行…），统一归 sys
+    #: （见 server_py/hsfsrv/proto.py 的 LOG_CAT_SYS 说明）。
+    #: 不带这一档的后果：日志页「类别」列对这类行显示原始字面 "sys"
+    #: （用户截图反馈「中文」），而且筛不到。C 端也加了同档（C 服务端不产生
+    #: sys 行 ⇒ 选中它只会得到空列表，不是报错）。
     CATEGORY_ITEMS = (
         ("", "全部类别"),
         ("conn", "连接"),
@@ -2589,6 +3222,7 @@ class LogPage(Page):
         ("alarm", "告警"),
         ("auto", "自动"),
         ("auth", "鉴权"),
+        ("sys", "系统"),
     )
     #: 入库字面 → 显示名（铺表用；未知字面原样显示，服务端将来加类别
     #: 不至于显示空白）。
@@ -2674,6 +3308,11 @@ class LogPage(Page):
         self._page_size_box = QComboBox()
         for n in self.PAGE_SIZES:
             self._page_size_box.addItem("%d 条" % n, n)
+        # [本机记住每页条数 2026-11-10] 日志页与历史页各存一份。
+        from . import settings as ui_settings
+        saved_size = ui_settings.log_page_size()
+        if saved_size:
+            self._page_size = saved_size
         idx = self._page_size_box.findData(self._page_size)
         self._page_size_box.setCurrentIndex(idx if idx >= 0 else 0)
         self._page_size_box.setMaximumWidth(96)
@@ -2942,6 +3581,9 @@ class LogPage(Page):
         if not isinstance(size, int) or size <= 0 or size == self._page_size:
             return
         self._page_size = size
+        # 记住本机偏好（日志页）
+        from . import settings as ui_settings
+        ui_settings.set_value(ui_settings.K_LOG_PAGE_SIZE, int(size))
         self._anchor_ts = 0
         self._request(0)
 
@@ -3466,24 +4108,53 @@ class AlarmPage(Page):
 # ============================================================================
 
 class LocalSettingsPage(Page):
-    """本地设置：界面/显示（仅本机生效，不发给服务端）。"""
+    """本地设置：界面/显示（仅本机生效，不发给服务端）。
+
+    [2026-11-10 用户口径「可以持久化的配置都持久化下」] 本页原来三个旋钮
+    **全是死 UI**：`紧凑模式`/`界面缩放`/`界面刷新周期` 改了既不生效也不
+    落盘（只有「全屏显示」真接了）。现在：
+      · 全屏 / 紧凑 / 刷新周期：**改完立即生效 + 写本机设置**；
+      · 界面缩放：写本机设置，**下次启动生效**（QSS 与各页字号在建窗时
+        按比例算好，运行期改要重建整棵树，不值得）。
+    读写统一走 `settings` 模块（QSettings，桌面=注册表、板端=~/.config）。
+    """
+
+    #: 界面缩放档（百分比）。与 settings.K_UI_SCALE_PCT 对应。
+    SCALE_CHOICES = (100, 110, 125, 150)
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
-        self.add_header("本地设置", "仅本机生效")
+        from . import settings as ui_settings
+        self._settings = ui_settings
+        self.add_header("本地设置", "仅本机生效（本机保存，重启沿用）")
 
         card = Card("显示")
         self.compact_check = QCheckBox("紧凑模式（竖屏/小屏）")
-        self.compact_check.setToolTip("窄屏时自动启用")
+        self.compact_check.setToolTip("勾选=强制紧凑；不勾=按窗宽自动判"
+                                      "（宽 < %dpx 自动紧凑）" % theme.COMPACT_MAX_W)
+        self.compact_check.setChecked(ui_settings.get_bool(
+            ui_settings.K_FORCE_COMPACT, False))
         card.add(self.compact_check)
 
         self.fullscreen_check = QCheckBox("全屏显示")
+        self.fullscreen_check.setChecked(ui_settings.get_bool(
+            ui_settings.K_FULLSCREEN, False))
         card.add(self.fullscreen_check)
 
         row = QHBoxLayout()
         row.addWidget(QLabel("界面缩放"))
         self.scale_combo = QComboBox()
-        self.scale_combo.addItems(["100%", "110%", "125%", "150%"])
+        for pct in self.SCALE_CHOICES:
+            self.scale_combo.addItem("%d%%" % pct, pct)
+        # 当前值：存过就选它；没存过就按 theme 实际比例挑最近的档
+        saved_pct = ui_settings.get_int(ui_settings.K_UI_SCALE_PCT, 0)
+        if saved_pct <= 0:
+            saved_pct = int(round(theme.ui_scale() * 100))
+        idx = self.scale_combo.findData(
+            min(self.SCALE_CHOICES, key=lambda p: abs(p - saved_pct)))
+        self.scale_combo.setCurrentIndex(max(0, idx))
+        self.scale_combo.setToolTip("改完**下次启动生效**（QSS 与页面字号"
+                                    "在建窗时按比例算好）")
         row.addWidget(self.scale_combo)
         row.addStretch(1)
         card.body.addLayout(row)
@@ -3496,22 +4167,52 @@ class LocalSettingsPage(Page):
         self.refresh_spin.setRange(100, 2000)
         self.refresh_spin.setSingleStep(100)
         self.refresh_spin.setSuffix(" ms")
-        self.refresh_spin.setValue(200)
+        self.refresh_spin.setValue(ui_settings.refresh_ms())
+        self.refresh_spin.setToolTip("主界面的数据重绘节拍（改完立即生效）")
         row2.addWidget(self.refresh_spin)
         row2.addStretch(1)
         card2.body.addLayout(row2)
         self.root.addWidget(card2)
         self.root.addStretch(1)
 
+        # [信号必须在**全部初值就位之后**接线] 程序化 setChecked/setValue 同样
+        # 会发 toggled/valueChanged；先接线就会在建页时把初值"当成用户改动"
+        # 再写回设置（实测：一打开设置页 uiScalePct/refreshMs 就被写成默认值）。
+        self.compact_check.toggled.connect(self._on_compact)
+        self.scale_combo.currentIndexChanged.connect(self._on_scale)
+        self.refresh_spin.valueChanged.connect(self._on_refresh)
         self.fullscreen_check.toggled.connect(self._on_fullscreen)
 
+    # ---- 各旋钮：立即生效 + 落盘 ----
+    def _on_compact(self, checked):
+        self._settings.set_value(self._settings.K_FORCE_COMPACT, bool(checked))
+        win = self.window()
+        if hasattr(win, "set_compact_override"):
+            win.set_compact_override(bool(checked))
+        self.ctx.set_status("紧凑模式：%s（已保存）"
+                            % ("强制开" if checked else "按窗宽自动"))
+
+    def _on_scale(self, _idx):
+        pct = self.scale_combo.currentData() or self.SCALE_CHOICES[0]
+        self._settings.set_value(self._settings.K_UI_SCALE_PCT, int(pct))
+        self.ctx.set_status("界面缩放 %d%% 已保存，下次启动生效" % pct)
+
+    def _on_refresh(self, ms):
+        self._settings.set_value(self._settings.K_REFRESH_MS, int(ms))
+        win = self.window()
+        timer = getattr(win, "_refresh_timer", None)
+        if timer is not None:
+            timer.setInterval(int(ms))
+        self.ctx.set_status("界面刷新周期 %d ms（已保存）" % ms)
+
     def _on_fullscreen(self, checked):
+        self._settings.set_value(self._settings.K_FULLSCREEN, bool(checked))
         win = self.window()
         if checked:
             win.showFullScreen()
         else:
             win.showNormal()
-        self.ctx.set_status("全屏：%s" % ("开" if checked else "关"))
+        self.ctx.set_status("全屏：%s（已保存）" % ("开" if checked else "关"))
 
 
 # ============================================================================
@@ -3938,12 +4639,27 @@ class RemoteSettingsPage(Page):
         grid.addWidget(QLabel("采集"), 0, 1)
         grid.addWidget(QLabel("周期"), 0, 2)
         self._collect_rows = []     # (key_enabled, checkbox, key_poll, spin)
+        # [设备必须列全 2026-11-10 用户口径] 「采集的设备不全，浊度仪是两个，
+        # 流量计一个」——现场三台 485 表（流量计站5、浊度仪站1/站3）各有
+        # 自己的采集周期，服务端早已按台支持（flowmeterPollMs /
+        # turbidity1PollMs / turbidity2PollMs），界面却只列了合并的「浊度仪」
+        # 一行、流量计干脆没有 ⇒ 现场既看不到这几台在采、也改不了它们的周期。
+        # 现在 7 行：搅拌泵 / 温湿度 / 浊度仪1 / 浊度仪2 / 流量计 / 模拟量 /
+        # 数字量。
+        # [两台浊度各用各的开关 2026-11-10 用户定案] 「两台浊度仪要可以分开
+        # 设置，他们是两台设备」——服务端已支持 turbidity1Enabled /
+        # turbidity2Enabled（旧共同键 turbidityEnabled 降为缺省）；两行各勾
+        # 各的，不再互相同步（现场可能只装一台、或单独停一台检修）。
         for r, (label, key_enabled, key_poll) in enumerate((
                 ("搅拌泵", proto.CFGK_VFD_ENABLED, proto.CFGK_VFD_POLL_MS),
                 ("温湿度", proto.CFGK_TEMPHUM_ENABLED,
                  proto.CFGK_TEMPHUM_POLL_MS),
-                ("浊度仪", proto.CFGK_TURBIDITY_ENABLED,
-                 proto.CFGK_TURBIDITY_POLL_MS),
+                ("浊度仪1", proto.CFGK_TURBIDITY1_ENABLED,
+                 proto.CFGK_TURBIDITY1_POLL_MS),
+                ("浊度仪2", proto.CFGK_TURBIDITY2_ENABLED,
+                 proto.CFGK_TURBIDITY2_POLL_MS),
+                ("流量计", proto.CFGK_FLOWMETER_ENABLED,
+                 proto.CFGK_FLOWMETER_POLL_MS),
                 ("模拟量", proto.CFGK_ANALOG_ENABLED,
                  proto.CFGK_ANALOG_POLL_MS),
                 ("数字量", proto.CFGK_DIGITAL_ENABLED,
@@ -3958,9 +4674,10 @@ class RemoteSettingsPage(Page):
             grid.addWidget(spin, r, 2)
             self._collect_rows.append((key_enabled, chk, key_poll, spin))
         card3.body.addLayout(grid)
-        hint3 = QLabel("流量计跟随温湿度的周期；电磁阀/进水泵跟随数字量的"
-                       "开关。改开关立即生效（被停的设备健康转数据过期），"
-                       "改周期下一拍生效。")
+        hint3 = QLabel("流量计/两台浊度仪各按自己的周期采集（共用 485 但"
+                       "节拍互不影响）；两台浊度仪是两台独立设备，采集开关"
+                       "各自独立。电磁阀/进水泵跟随数字量的开关。改开关立即"
+                       "生效（被停的设备健康转数据过期），改周期下一拍生效。")
         hint3.setWordWrap(True)
         hint3.setStyleSheet(theme.caption_label_qss())
         card3.add(hint3)
@@ -4181,8 +4898,14 @@ class RemoteSettingsPage(Page):
         """
         collect = doc.get("collect") or {}
         if collect:
+            # [逐台键缺省回落共同键] 旧服务端只报 turbidityEnabled：逐台键
+            # 缺失时不能一律当 True（会把停用的浊度显示成启用）。
+            _t_all = bool(collect.get(proto.CFGK_TURBIDITY_ENABLED, True))
             for key_enabled, chk, key_poll, spin in self._collect_rows:
-                chk.setChecked(bool(collect.get(key_enabled, True)))
+                default = _t_all if key_enabled in (
+                    proto.CFGK_TURBIDITY1_ENABLED,
+                    proto.CFGK_TURBIDITY2_ENABLED) else True
+                chk.setChecked(bool(collect.get(key_enabled, default)))
                 spin.setValue(int(collect.get(key_poll, 200) or 200))
         storage = doc.get("storage") or {}
         if storage:
@@ -4201,10 +4924,17 @@ class RemoteSettingsPage(Page):
             self._storage_keep.setValue(int(
                 storage.get(proto.CFGK_STORAGE_KEEP_FILES, 3) or 3))
             self._on_storage_policy()
-        db_path = str(doc.get("storageDbPath", "") or "")
-        self._db_path_label.setText(
-            "当前库文件：%s" % (db_path or "未启用（落盘关闭）"))
-        self._populate_usage(doc.get("storageStats") or {})
+        # [谁给的字段谁负责 —— 2026-11-10 实锅] 这两行原来**无条件**按应答刷新：
+        # 应答里没有 storageDbPath / storageStats 时就被当成"落盘关闭"清成
+        # 「用量：--」「未启用（落盘关闭）」。而「应用登录策略」的应答只带
+        # login 节（采集节同理），于是点一下登录策略，数据存储卡就被清空，
+        # 要切页再切回来（重新 GET 全量配置）才恢复 —— 用户实测反馈。
+        # 现在只在应答**确实带了存储侧键**时才刷新这两行。
+        if "storageDbPath" in doc or "storageStats" in doc:
+            db_path = str(doc.get("storageDbPath", "") or "")
+            self._db_path_label.setText(
+                "当前库文件：%s" % (db_path or "未启用（落盘关闭）"))
+            self._populate_usage(doc.get("storageStats") or {})
         login = doc.get("login") or {}
         if login:
             self._login_anon.setChecked(bool(
@@ -4267,6 +4997,14 @@ class RemoteSettingsPage(Page):
         for key_enabled, chk, key_poll, spin in self._collect_rows:
             values[key_enabled] = chk.isChecked()
             values[key_poll] = spin.value()
+        # [逐台开关 2026-11-10] 两台浊度各发各的 turbidity{1,2}Enabled；共同键
+        # turbidityEnabled 仍发（任一台启用）——旧服务端只认它，新服务端按
+        # 逐台键覆盖。老的兼容周期键 turbidityPollMs 仍带（= 浊度仪1 的）。
+        values[proto.CFGK_TURBIDITY_ENABLED] = bool(
+            values.get(proto.CFGK_TURBIDITY1_ENABLED)
+            or values.get(proto.CFGK_TURBIDITY2_ENABLED))
+        values[proto.CFGK_TURBIDITY_POLL_MS] = values.get(
+            proto.CFGK_TURBIDITY1_POLL_MS, proto.CFG_POLL_MS_MIN)
         self.ctx.set_status("正在应用采集配置…")
 
         def _done(doc):
@@ -4465,34 +5203,46 @@ class NetworkPage(Page):
 
 
 class OverlayPage(Page):
-    """悬浮窗设置：标题栏/状态栏显隐 + 悬浮信息内容。"""
+    """悬浮窗设置：标题栏/状态栏显隐 + 悬浮信息内容。
+
+    [2026-11-10 持久化] 三个显隐开关以前只在本次会话内生效，重启就回全显。
+    现在一改就写本机设置（`settings` 模块），启动时由 `__main__` 还原。
+    """
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
-        self.add_header("悬浮窗设置", "界面元素显隐")
+        from . import settings as ui_settings
+        self._settings = ui_settings
+        self.add_header("悬浮窗设置", "界面元素显隐（本机保存）")
 
         card = Card("显示元素")
         self.show_title = QCheckBox("显示顶部标题栏")
-        self.show_title.setChecked(True)
-        self.show_title.toggled.connect(self._apply)
+        self.show_title.setChecked(ui_settings.get_bool(
+            ui_settings.K_SHOW_TITLE, True))
         card.add(self.show_title)
 
         self.show_status = QCheckBox("显示底部状态栏")
-        self.show_status.setChecked(True)
-        self.show_status.toggled.connect(self._apply)
+        self.show_status.setChecked(ui_settings.get_bool(
+            ui_settings.K_SHOW_STATUS, True))
         card.add(self.show_status)
 
         self.show_nav = QCheckBox("显示左侧导航栏")
-        self.show_nav.setChecked(True)
-        self.show_nav.toggled.connect(self._apply)
+        self.show_nav.setChecked(ui_settings.get_bool(
+            ui_settings.K_SHOW_NAV, True))
         card.add(self.show_nav)
         self.root.addWidget(card)
+        # [初值就位后再接线] 否则 setChecked 的 toggled 会在建页时写回设置。
+        self.show_title.toggled.connect(
+            lambda on: self._set(ui_settings.K_SHOW_TITLE, on))
+        self.show_status.toggled.connect(
+            lambda on: self._set(ui_settings.K_SHOW_STATUS, on))
+        self.show_nav.toggled.connect(
+            lambda on: self._set(ui_settings.K_SHOW_NAV, on))
 
         card2 = Card("标题栏内容")
         self.show_clock = QCheckBox("显示时钟")
         self.show_clock.setChecked(True)
-        self.show_clock.toggled.connect(self._apply
-                                        if hasattr(self, "_apply") else lambda: None)
+        self.show_clock.setToolTip("标题栏时钟（C 端同款，本端常显）")
         card2.add(self.show_clock)
         self.show_th = QCheckBox("显示温湿度")
         self.show_th.setChecked(True)
@@ -4500,30 +5250,59 @@ class OverlayPage(Page):
         self.root.addWidget(card2)
         self.root.addStretch(1)
 
-    def _apply(self):
-        """把显隐设置作用到主窗（win 是本页的顶层窗口）。"""
-        win = self.window()
-        if hasattr(win, "title_bar"):
-            win.title_bar.setVisible(self.show_title.isChecked())
-        if hasattr(win, "status_bar"):
-            win.status_bar.setVisible(self.show_status.isChecked())
-        if hasattr(win, "nav"):
-            win.nav.setVisible(self.show_nav.isChecked())
+    def _set(self, key, on):
+        """写设置 + 立即作用到主窗（与启动还原同一份 `apply_overlay`）。"""
+        self._settings.set_value(key, bool(on))
+        apply_overlay(self.window(), self._settings)
+        self.ctx.set_status("界面元素已更新（已保存）")
+
+
+def apply_overlay(win, ui_settings):
+    """按本机设置显隐主窗的标题栏/状态栏/导航（启动还原与页面共用）。
+
+    [为什么抽成函数] 启动路径（`__main__`，主窗刚建好）与本页的勾选回调
+    必须**同一套**判定，否则"重启后和当场看到的不一样"。缺属性时静默跳过
+    （测试里的轻量替身窗口没有这些部件）。
+    """
+    for attr, key in (("title_bar", ui_settings.K_SHOW_TITLE),
+                      ("status_bar", ui_settings.K_SHOW_STATUS),
+                      ("nav", ui_settings.K_SHOW_NAV)):
+        w = getattr(win, attr, None)
+        if w is None:
+            continue
+        w.setVisible(ui_settings.get_bool(key, True))
 
 
 class WindowPage(Page):
-    """窗口设置：窗口尺寸/形态。"""
+    """窗口设置：窗口尺寸/形态。
+
+    [2026-11-10 持久化] 「应用」后把尺寸写本机设置，下次启动按它还原；
+    下拉里补一档「上次的尺寸」，让"我现在是多大"看得出来。
+    """
+
+    #: 尺寸档（w, h）。
+    SIZE_CHOICES = ((1280, 720), (1024, 600), (800, 480))
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
-        self.add_header("窗口设置", "尺寸与形态")
+        from . import settings as ui_settings
+        self._settings = ui_settings
+        self.add_header("窗口设置", "尺寸与形态（本机保存）")
 
         card = Card("尺寸")
         row = QHBoxLayout()
         row.addWidget(QLabel("窗口大小"))
         self.size_combo = QComboBox()
-        self.size_combo.addItems(["1280 × 720（缺省）", "1024 × 600（紧凑）",
-                                  "800 × 480（小屏）", "全屏"])
+        for w, h in self.SIZE_CHOICES:
+            self.size_combo.addItem("%d × %d" % (w, h), (w, h))
+        self.size_combo.addItem("全屏", (0, 0))
+        # 上次保存的尺寸对应哪一档（对不上就留在第 0 档，不影响还原）
+        saved_w, saved_h = ui_settings.win_size()
+        if saved_w > 0:
+            for i, (w, h) in enumerate(self.SIZE_CHOICES):
+                if (w, h) == (saved_w, saved_h):
+                    self.size_combo.setCurrentIndex(i)
+                    break
         row.addWidget(self.size_combo)
         row.addStretch(1)
         card.body.addLayout(row)
@@ -4547,16 +5326,14 @@ class WindowPage(Page):
 
     def _apply(self):
         win = self.window()
-        idx = self.size_combo.currentIndex()
-        if idx == 0:
-            win.showNormal()
-            win.resize(theme.WIN_DEFAULT_W, theme.WIN_DEFAULT_H)
-        elif idx == 1:
-            win.showNormal()
-            win.resize(1024, 600)
-        elif idx == 2:
-            win.showNormal()
-            win.resize(800, 480)
-        else:
+        w, h = self.size_combo.currentData() or self.SIZE_CHOICES[0]
+        if w <= 0:
             win.showFullScreen()
-        self.ctx.set_status("窗口尺寸已应用")
+            self._settings.set_value(self._settings.K_FULLSCREEN, True)
+            self.ctx.set_status("窗口尺寸已应用（全屏，已保存）")
+            return
+        win.showNormal()
+        win.resize(w, h)
+        self._settings.set_value(self._settings.K_FULLSCREEN, False)
+        self._settings.set_value(self._settings.K_WIN_SIZE, "%dx%d" % (w, h))
+        self.ctx.set_status("窗口尺寸已应用（%d×%d，已保存）" % (w, h))

@@ -58,8 +58,13 @@
 
 /* ---------------- 路 A（现役：变频器 + 温湿度共用同一条 485） ---------------- */
 
-/** @brief 路 A 串口号（换口改这一行）。 */
+/** @brief 路 A 串口号（换口改这一行）。
+ *  @note  [可覆盖] 板端交叉构建用 -DHSF_BUS_A_PORT='"/dev/ttyS3"' 覆盖
+ *        （115200 与板端一致；路 B 的 HSF_BUS_B_PORT 本就有 #ifndef 守卫，
+ *         同样可用 -D 覆盖——两路端口都不必改头文件）。 */
+#ifndef HSF_BUS_A_PORT
 #define HSF_BUS_A_PORT          "COM17"
+#endif
 
 /** @brief 路 A 是否启用（1=装配并轮询，0=整路跳过）。 */
 #define HSF_BUS_A_ENABLED       1
@@ -155,6 +160,19 @@
 /** @brief 变频器状态快照发布周期（毫秒）。 */
 #define HSF_VFD_STATUS_MS       200
 
+/**
+ * @brief 变频器快照陈旧阈值**基线**（毫秒；实际生效值随轮转周期放大）。
+ * @details [为什么要有基线 2026-11-10 现场"变频器 --- 循环"]
+ *          设备层缺省阈值是「发布周期 × 5」=1000ms，它假定「数据刷新节拍
+ *          = 发布节拍」。但 Modbus Hub 每拍只发**一个**读组 ⇒ 一圈要把
+ *          该总线的读组轮完：现场变频器 14 组 × 拍长 200ms = **2.8s 一圈**
+ *          ⇒ 1000ms 的阈值连一圈都盖不住 ⇒ 每隔两拍就判陈旧、掩码清零
+ *          ⇒ 客户端变频器在「---」与真值之间来回闪。
+ *          口径：有效阈值 = max(本基线, 轮转周期 × 2)（见 HsfServerIo.c 的
+ *          hsfIoStaleMs 与 HsfServerIoVfd_applyStaleMs）。
+ */
+#define HSF_VFD_STALE_MS        3000
+
 /* ==================== 温湿度变送器（中盛 ZS-SHT30-1T-1H，Modbus-RTU 从站） ==================== */
 
 /**
@@ -174,6 +192,21 @@
 
 /** @brief 温湿度陈旧判定阈值（毫秒；超过即判数据失效）。 */
 #define HSF_TEMPHUM_STALE_MS    5000
+
+/**
+ * @brief 陈旧阈值随采集周期联动的倍数（stale = 采集周期 × 本倍数）。
+ * @details [为什么必须有这条] 陈旧阈值与采集周期是**两个独立的量**，但
+ *          它们有硬约束：**stale 必须 ≥ 采集周期**，否则两拍之间值必然
+ *          被判陈旧 ⇒ 界面显示 "--"。
+ *          实锅（2026-11-10 现场）：用户把温湿度采集周期改成 1 分钟，
+ *          几秒后主界面温湿度就变成 "--" —— 周期 60000ms > 固定 stale
+ *          5000ms，值在下一拍到达前必然"过期"。
+ *          [口径] 有效阈值 = max(设备基线 stale, 周期 × 本倍数)；
+ *          倍数 3 = 允许连丢 2 拍仍不判陈旧（1 拍是正常等待）。
+ *          与 HsfServerBus.c 的 healStaleMs（poll×20，夹在 2~5s）同款思路：
+ *          阈值跟着周期走，而不是写死。
+ */
+#define HSF_STALE_FROM_POLL_MULT 3u
 
 /**
  * @brief 温湿度采样拍周期（毫秒）：定时从 Hub 缓存重取当前值。
@@ -222,6 +255,13 @@
  * @brief 流量计从站最小发送间隔（毫秒；分级轮询）。
  * @note  流量计是快设备（22 个寄存器一条帧，RTT 数毫秒），但工艺上流量
  *        不需要 20ms 级刷新；500ms 与温湿度同档，减少总线占用。
+ * @note  [站 1 恢复期的关系] Hub 的读组序是**区优先**（IR 先于 HR，见
+ *        XModbusHub 块表构建），流量计（IR）与浊度仪（HR）同周期时
+ *        「流量计帧尾 → 站 1 帧头」恒为一个扫描节拍——落在站 1 的恢复期
+ *        死区（ttyS4 实测：站 5 的 49 字节帧后站 1 要 ≥125ms，200ms 稳定）。
+ *        这道间隙**不靠改节拍**（改周期只会让漂移周期性扫过坏相位），
+ *        而是给站 1 配了发帧前静默闸 HSF_TURBIDITY1_TX_QUIET_MS（见下）。
+ *        改本值与站 1 的恢复期无耦合，可独立调整。
  */
 #define HSF_FLOWMETER_MIN_POLL_MS 500
 
@@ -235,41 +275,71 @@
 #define HSF_TURBIDITY_COUNT     2
 
 /**
- * @brief 浊度仪 1 站号（仪表"机号设置"菜单里设的那个值）。
- * @note  [为什么是 1/3 而不是 1/2] 现场两台仪表的机号是手工在面板上设的，
- *        Python 客户端页面提示写的就是「站号 1 / 站号 3」。本文件原先把
- *        第二台占位写成 2，与现场不符——站号错了表现为"一台在线、另一台
- *        一直离线"，很容易被误判成仪表坏。
+ * @brief 浊度仪 1 站号（WZT-701A，仪表"机号设置"菜单里设的那个值）。
+ * @brief 浊度仪 2 站号（ZHEYI-5100ZDY）。
+ * @note  [2026-11-09 实测定案：1 / 2，不是 1 / 3] 板端 ttyS4 总线在线普查
+ *        1~20（docs/HSF板端ttyS4三设备取数实测总表_20261109.md 附录 B）：
+ *        站 1/2/5 有应答，**站 3 不存在**（零应答）；旧占位 1/3 作废。
+ *        [站号要改就改这两个定义] 用户明示「站 2 这台浊度仪后面要换，
+ *        站号等要可以修改」——现场在仪表面板改机号后，**只需改下面两行**
+ *        重新编译即可，装配（HsfServerIo/HsfServerIoSim）与显示名全部
+ *        跟着这两个宏走，没有第二处要同步。按 2026-11-05 的既定决策
+ *        （见 HsfServerSettings.h「数字量/电磁阀：参数在头文件」），站号
+ *        属于现场接线/部署参数，**不进 INI**，与设备一起版本化。
  */
 #define HSF_TURBIDITY1_UNIT_ID  1
-
-/** @brief 浊度仪 2 站号。 */
 #define HSF_TURBIDITY2_UNIT_ID  3
 
 /**
- * @brief 浊度仪寄存器在路 B 虚拟空间的起点（第一台）。
- * @note  每台占 2 个输入寄存器（32 位量），故第二台起点 = 本值 + 2。
+ * @brief 浊度仪寄存器在路 B 虚拟空间的起点（第一台 / 第二台）。
+ * @note  每台占各自 HSF_TURBIDITYx_REG_COUNT 个保持寄存器，第二台起点
+ *        = 本值 + 第一台的寄存器数（当前 2）⇒ 0x0302。
  *        路 B 现用段：0x0200~0x0215 流量计、0x0300 起浊度仪，互不重叠。
  */
 #define HSF_TURBIDITY_VADDR     0x0300
+#define HSF_TURBIDITY2_VADDR    (HSF_TURBIDITY_VADDR + (uint16_t)HSF_TURBIDITY1_REG_COUNT)
 
 /**
- * @brief 浊度仪寄存器起始地址（仪表侧，FC03 读 0x0000 ×2）。
- * @note  手册 4.3.10.2 的测试命令即 `01 03 00 00 00 02`。
+ * @brief 浊度仪寄存器起始地址（仪表侧，FC03 读 0x0000 起）。
+ * @note  站 1 手册 4.3.10.2 的测试命令即 `01 03 00 00 00 02`；站 2 实测
+ *        同样从 0x0000 起（×2 浊度 / ×4 浊度+温度）。两台同址。
  */
 #define HSF_TURBIDITY_REMOTE_ADDR 0x0000u
 
 /**
- * @brief 浊度仪寄存器数（32 位量 = 2 个）。
- * @note  与 Python 侧 devices.TurbidityMeter.READ_COUNT 同值。
+ * @brief 每台浊度仪一条帧读的寄存器数。
+ * @note  [2026-11-09 实测分台] 站 1（WZT-701A）只有浊度一个 32 位量
+ *        = 2 个寄存器；站 2（ZHEYI-5100ZDY）**一帧读 ×4**（浊度 + 温度
+ *        同刻快照，实测文档 §5.2/§5.4：前两字浊度、后两字温度）。站 2
+ *        按 ×4 读是"同刻"口径——分两次读会拿到两个时刻的浊度/温度。
+ *        改站号/换表时若新表不带温度，把 HSF_TURBIDITY2_REG_COUNT 改回 2
+ *        即可（温度通道自然缺席，其余逻辑不变）。
  */
-#define HSF_TURBIDITY_REG_COUNT   2
+#define HSF_TURBIDITY1_REG_COUNT  2
+#define HSF_TURBIDITY2_REG_COUNT  4
+
+/**
+ * @brief 每台浊度仪的 32 位量字序（XTurbidityMeterWordOrder 枚举值）。
+ * @note  [2026-11-09 实测：两家字节序不同，不能共用一套解码]
+ *          0 = LowHigh（CDAB，低字在前）——站 1 WZT-701A（手册 4.3.10.2
+ *              + 实测帧 8F 5C 40 12 → 2.29 NTU）；
+ *          1 = HighLow（ABCD，高字在前）；
+ *          2 = Dcba（整字节反序 = 小端 float32）——站 2 ZHEYI-5100ZDY
+ *              （实测帧 4F DD 37 3D → 0.0449 NTU；按旧 CDAB 口径会解出
+ *              1.1e-5 的假数且不报错，实测文档 §5.3 四口径对照）。
+ *        站 1 的解码语义一个比特都不能变（现有全量回归绿着）——改字序
+ *        只动 HSF_TURBIDITY2_WORD_ORDER 这一类。
+ */
+#define HSF_TURBIDITY1_WORD_ORDER 0
+#define HSF_TURBIDITY2_WORD_ORDER 2
 
 /**
  * @brief 浊度仪功能码：FC03（读保持寄存器）。
- * @note  [手册明确是 03 不是 04] 4.3.10.2 的测试命令是 `01 03 00 00 00 02`。
- *        这与温湿度（FC04）和流量计（FC04）都不同，写错会被从站拒绝或
- *        静默丢弃，表现为"仪表在线但读数一直是 0"。
+ * @note  [手册明确是 03 不是 04] 站 1 手册 4.3.10.2 的测试命令是
+ *        `01 03 00 00 00 02`；站 2 实测 FC03/FC04 都通但**应答恒回 03**
+ *        （实测文档 §5.5），故两台统一走 FC03。这与温湿度（FC04）和
+ *        流量计（FC04）不同，写错会被从站拒绝或静默丢弃，表现为
+ *        "仪表在线但读数一直是 0"。
  */
 #define HSF_TURBIDITY_FUNCTION    3
 
@@ -292,11 +362,72 @@
 #define HSF_TURBIDITY_MIN_POLL_MS 500
 
 /**
+ * @brief 每台浊度仪发帧前的**总线静默期**（毫秒；0=不设闸）。
+ * @note  [2026-11-09 板端实测硬结论] 站 5 流量计的 49 字节长帧收完**立刻**
+ *        问站 1 → 几乎零应答（0ms 间隙 2/10），≥100~125ms 才恢复，
+ *        **200ms 稳定 10/10**；站 2 完全免疫（0ms 也 10/10）。
+ *        （docs/HSF板端ttyS4三设备取数实测总表_20261109.md §8。）
+ *        [为什么不靠轮询节拍错相] Hub 的读组序是**区优先**（流量计 IR
+ *        恒排在浊度 HR 之前，与装配顺序无关），三站同周期下「流量计帧尾
+ *        → 站 1 帧头」恒 ≈ 一个扫描节拍（20ms）——恰好落进恢复期死区；
+ *        改各站周期只会让相对相位漂移、周期性扫过坏相位，不构成保证。
+ *        故站 1 配 200ms 静默闸（XModbusHubUnitLimits.m_preTxQuietMs）：
+ *        站 1 的帧发出前要求该串口上一笔事务收口已 ≥200ms，不足则本拍
+ *        跳过、下一扫描节拍再试（站 2 不受影响照常发）。站 1 有效轮询
+ *        周期因此 ≈700ms，仍远快于 1s 采样拍，够用。
+ *        [换表时] 新表若没有恢复期问题，把 HSF_TURBIDITY1_TX_QUIET_MS
+ *        改回 0 即可。
+ */
+#define HSF_TURBIDITY1_TX_QUIET_MS 200
+#define HSF_TURBIDITY2_TX_QUIET_MS 0
+
+/**
  * @brief 浊度仪遥测推送周期（毫秒）。
  * @note  与 Python 侧 TURBIDITY_PUSH_MS 同值。采集节拍 500ms，按 500ms 推
  *        刚好一拍一推；再快只是重复同一份缓存。
  */
 #define HSF_TURBIDITY_PUSH_MS   500
+
+/* ==================== 模拟器保真旋钮（--sim 虚拟从站应答路径） ====================
+ * [口径来源] docs/HSF板端ttyS4三设备取数实测总表_20261109.md（2026-11-09 板端
+ * 全量实测）：三台仪表的应答时延（§1.1「响应时延」列）与站 1 的长帧后恢复期
+ * （§8）。虚拟从站把这些行为带上，主站的站间间隙 / 发帧前静默闸才能在长稳
+ * 里被真实锻炼（否则模拟器永远零时延，间隙逻辑成了只跑不验的死代码）。
+ * [要压时长就 -D 覆盖] 时延会占用总线（三站合计约 140ms/轮，路 B 各站
+ * 500ms 级周期下占用 ≈28%，见 HsfServerIoSim.c 注记）；需要更快联调时可用
+ * -DHSF_SIM_TURBIDITY1_REPLY_MS_MIN=0 等把任一档清零，缺省=文档实测值。
+ * Python 侧同款旋钮在 hsfsrv/config.py 的 sim 节（两端逐值同口径）。 */
+/** @brief 站 1 WZT-701A 应答时延（毫秒区间，应答前按站号随机取值）。 */
+#ifndef HSF_SIM_TURBIDITY1_REPLY_MS_MIN
+#define HSF_SIM_TURBIDITY1_REPLY_MS_MIN   37
+#endif
+#ifndef HSF_SIM_TURBIDITY1_REPLY_MS_MAX
+#define HSF_SIM_TURBIDITY1_REPLY_MS_MAX   43
+#endif
+/** @brief 站 2 ZHEYI-5100ZDY 应答时延（毫秒区间）。 */
+#ifndef HSF_SIM_TURBIDITY2_REPLY_MS_MIN
+#define HSF_SIM_TURBIDITY2_REPLY_MS_MIN   31
+#endif
+#ifndef HSF_SIM_TURBIDITY2_REPLY_MS_MAX
+#define HSF_SIM_TURBIDITY2_REPLY_MS_MAX   33
+#endif
+/** @brief 站 5 LD 流量计应答时延（毫秒区间；49 字节长帧，最慢的一台）。 */
+#ifndef HSF_SIM_FLOWMETER_REPLY_MS_MIN
+#define HSF_SIM_FLOWMETER_REPLY_MS_MIN    68
+#endif
+#ifndef HSF_SIM_FLOWMETER_REPLY_MS_MAX
+#define HSF_SIM_FLOWMETER_REPLY_MS_MAX    69
+#endif
+/**
+ * @brief 站 1 的「长帧后恢复期」窗口（毫秒；0 = 关闭该建模）。
+ * @note  站 5 的 49 字节帧收口后 100~125ms 内站 1 对任何请求无应答
+ *        （实测 0ms 2/10、75ms 0/10、125ms 起 10/10，§8.3）——本窗口取
+ *        实测门槛 125ms；主站侧的规避闸是 HSF_TURBIDITY1_TX_QUIET_MS=200
+ *        （刻意大于本窗口 ⇒ 模拟联调时站 1 不掉线）。
+ */
+#ifndef HSF_SIM_RECOVERY_MS
+#define HSF_SIM_RECOVERY_MS               125
+#endif
 
 /** @brief 路 B 是否挂浊度仪站（1=挂两台，0=跳过）。 */
 #define HSF_BUS_B_HAS_TURBIDITY 1
@@ -343,6 +474,16 @@
 
 /** @brief 数字量模块 Unit ID（实测 1；0/2/3/255 一律超时）。 */
 #define HSF_DIG_UNIT_ID         1
+
+/**
+ * @brief 数字量模块名（首页设备表 / 数字量快照的 "name" 键）。
+ * @details [对齐 Python 2026-11-10] 板端 Python 服务端 cfg 的
+ *          digital.modules[0].name = "数字量2"（.12 聚合机拆除后 .13 成了
+ *          第二台，名字沿用现场登记）。C 端原先写死"数字量"，两端首页
+ *          设备表行名对不上 ⇒ 现场对行要换算。现场设备定义以 Python
+ *          服务端为准（用户已实机核对），故 C 端同名。
+ */
+#define HSF_DIG_MODULE_NAME     "数字量2"
 
 /**
  * @brief 扩展模块地址（**当前为空 = 无扩展模块**）。
@@ -421,16 +562,26 @@
  *          16 个点映射上去的位置）。现在 .13 直接作主模块、点表从 0 起，
  *          故原逻辑点 16..27 整体减 16 → 0..11，一一对应 .13 自己的点位：
  *
- *            阀1  DO0   开到位 DI1   关到位 DI0
- *            阀2  DO1   开到位 DI3   关到位 DI2
- *            阀3  DO2   开到位 DI5   关到位 DI4
- *            阀4  DO3   开到位 DI7   关到位 DI6
- *            阀5  DO4   开到位 DI9   关到位 DI8
- *            阀6  DO5   开到位 DI11  关到位 DI10
+ *            阀1  DO0   开到位 DI0   关到位 DI1
+ *            阀2  DO1   开到位 DI2   关到位 DI3
+ *            阀3  DO2   开到位 DI4   关到位 DI5
+ *            阀4  DO3   开到位 DI6   关到位 DI7
+ *            阀5  DO4   开到位 DI8   关到位 DI9
+ *            阀6  DO5   开到位 DI10  关到位 DI11
  *
  *          [为什么不是"重新接线"] 减 16 只是把**同一批物理端子**换个编号
  *          叫法：上半区的第 n 点本来就是 .13 自己的第 n 点。硬件没动，
  *          变的只是寻址口径。
+ *
+ *          [开/关位序 2026-11-10 按现场接线订正] 板端 Python 服务端
+ *          cfg（hsf_server_py.json 的 valves.items，用户已实机核对过
+ *          设备定义）是 **openDi=0,2,4…（开在前）/ closeDi=1,3,5…（关在后）**，
+ *          与本宏原来的取值**正好相反**（原来开=1+2i、关=2i）。
+ *          后果不是显示问题而是**结论反了**：同一块 DI 位图，两端读出
+ *          相反的阀位——板端实测 DI 位图=20482（bit1 置位）时，C 端判
+ *          「阀1 开到位」、Python 判「阀1 关到位」。现场定义以 Python 服务端
+ *          为准，故本宏改成开在前；DI 通道名（<阀名> 开到位/关到位）
+ *          由同一份点位推导，会自动跟随。
  *
  *          [与 Python 侧的一致性] Python 配置 hsf_server_py.json 的
  *          valves.items 同步改成 do 0..5 / DI 0..11（module 仍为 0 =
@@ -438,8 +589,8 @@
  *          不同的实际动作口。
  */
 #define HSF_VALVE_DO(i)         (((i) >= 0 && (i) < 6) ? (0 + (i)) : (-1))  /**< 第 i 路动作出口 DO 通道号。 */
-#define HSF_VALVE_OPEN_DI(i)    (((i) >= 0 && (i) < 6) ? (1 + 2 * (i)) : (-1)) /**< 第 i 路开到位 DI 通道号。 */
-#define HSF_VALVE_CLOSE_DI(i)   (((i) >= 0 && (i) < 6) ? (0 + 2 * (i)) : (-1)) /**< 第 i 路关到位 DI 通道号。 */
+#define HSF_VALVE_OPEN_DI(i)    (((i) >= 0 && (i) < 6) ? (0 + 2 * (i)) : (-1)) /**< 第 i 路开到位 DI 通道号（现场：开在前）。 */
+#define HSF_VALVE_CLOSE_DI(i)   (((i) >= 0 && (i) < 6) ? (1 + 2 * (i)) : (-1)) /**< 第 i 路关到位 DI 通道号（现场：关在后）。 */
 
 /* ==================== 进水泵（1 台，只有输出、无反馈） ==================== */
 

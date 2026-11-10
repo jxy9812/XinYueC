@@ -487,6 +487,123 @@ static void test_valveWithVirtualDevice(void)
      * Hub 随 unmount 释放时一并释放客户端。再删一次＝双重释放。 */
 }
 
+/* ==================== ⑤ Hub 收口记账（2026-11-09 框架级根修的回归锁） ==================== */
+
+/**
+ * @brief 锁三条框架级根修（进程内跑，无需外部从站）：
+ *   ① **Modbus 异常应答必须按失败记账**：原口径把异常帧当成功 ⇒
+ *      lastSuccessMs 假性推进（看门狗判健康、永不触发）、缓存永不回填
+ *      （界面"设备在线但无数据"）、pollOkCount 虚增（统计看不出异常）。
+ *   ② **嵌套同步收口不再整包丢帧**：原实现丢弃回填/计数/退避记账 ⇒
+ *      块级 lastOkMs 不推进 ⇒ 点级新鲜度判陈旧 ⇒ 某台从站的数据再也不
+ *      刷新，而看门狗（盯设备级 lastSuccessMs）被同设备其它从站的成功掩盖。
+ *   ③ 收口尾部只续写、不续轮询（2026-10-26 轮询风暴根修的落实）。
+ */
+static void test_hubSyncFinishAccounting(void)
+{
+    struct XVirtualModelDigital* model;
+    XModbusVirtualClient* client;
+    XModbusHub* hub;
+    XModbusMapping* map;
+    int devId;
+    uint32_t okCount = 0;
+    uint32_t errCount = 0;
+    uint64_t age = 0;
+
+    XPrintf("--- ⑤ Hub：异常帧按失败 + 嵌套收口不丢帧 ---\n");
+
+    /* ---- ⑤-1 异常帧按失败 ---- */
+    model = XVirtualModelDigital_create(16);
+    client = XModbusVirtualClient_create(model);
+    hub = XModbusHub_create();
+    CHECK("模型/客户端/Hub 建成", model && client && hub);
+    if (!model || !client || !hub) return;
+    CHECK("模型绑站 1",
+          XModbusVirtualClient_bindUnit(client, 1, XVirtualModel_base(model)));
+    devId = XModbusHub_addDevice_2(hub, (XModbusClient*)client, "虚拟站");
+    CHECK("设备挂 Hub 成功", devId >= 0);
+
+    map = XModbusMapping_create();
+    /* 读段 17 点 > 模型单次上限 16 ⇒ 模型回 EXC03 ⇒ 异常帧。 */
+    CHECK("映射段登记（DI 17 点，故意超模型上限）",
+          XModbusMapping_addRangeEx(map, XModbusDiscreteInputs, 0x100,
+                                    17, devId, 1, 0, 0, 0));
+    XModbusHub_setMapping(hub, map);      /* 所有权移交 Hub */
+    XModbusHub_setPollAreas(hub, (1u << XModbusDiscreteInputs));
+    XModbusHub_setPollIntervalDefault(hub, 20);
+    XModbusHub_setPollInterval(hub, devId, 20);
+    XModbusHub_connectAll(hub);
+    XModbusHub_startPolling(hub);
+
+    spinMs(400);
+    okCount = XModbusHub_pollOkCount(hub, devId);
+    errCount = XModbusHub_pollErrCount(hub, devId);
+    XPrintf("[INFO] 异常帧场景：pollOk=%u pollErr=%u lastSuccess=%llu\n",
+            okCount, errCount,
+            (unsigned long long)XModbusHub_deviceLastSuccessMs(hub, devId));
+    CHECK("异常应答按**失败**记账（pollErr>0）", errCount > 0);
+    CHECK("异常应答不算成功（pollOk 不增长）", okCount == 0);
+    CHECK("异常应答不推进 lastSuccessMs（看门狗得以看见）",
+          XModbusHub_deviceLastSuccessMs(hub, devId) == 0);
+    CHECK("异常从站的最陈旧点龄 = 从未（UINT64_MAX 口径）",
+          XModbusHub_deviceWorstUnitAge(hub, devId, NULL, &age) &&
+              age == UINT64_MAX);
+
+    /* ---- ⑤-2 嵌套收口不丢帧（写失败 + 读正常）---- */
+    {
+        struct XVirtualModelDigital* m2 = XVirtualModelDigital_create(16);
+        XModbusVirtualClient* c2 = XModbusVirtualClient_create(m2);
+        XModbusHub* h2 = XModbusHub_create();
+        XModbusMapping* map2 = XModbusMapping_create();
+        int id2;
+        uint32_t ok2 = 0;
+        uint32_t err2 = 0;
+
+        CHECK("② 模型/客户端/Hub 建成", m2 && c2 && h2 && map2);
+        if (m2 && c2 && h2 && map2) {
+            CHECK("② 模型绑站 1",
+                  XModbusVirtualClient_bindUnit(c2, 1, XVirtualModel_base(m2)));
+            id2 = XModbusHub_addDevice_2(h2, (XModbusClient*)c2, "虚拟站2");
+            /* 读段正常（DI 2 点）；写段越界（远端 30..31 > 模型 16 点）
+             * ⇒ 写必回异常 ⇒ 脏区间常驻 ⇒ 每拍都走"写收口→续泵→读收口"
+             * 的嵌套路径。原实现在这里把读帧整包丢弃（pollOk 冻结 0、
+             * 块级 lastOkMs 不推进 ⇒ 点级新鲜度恒陈旧）。 */
+            CHECK("② 映射段登记（DI 2 点 + Coils 越界写段）",
+                  XModbusMapping_addRangeEx(map2, XModbusDiscreteInputs, 0x100,
+                                            2, id2, 1, 0, 0, 0) &&
+                  XModbusMapping_addRangeEx(map2, XModbusCoils, 0x200,
+                                            2, id2, 1, 30, 0, 0));
+            XModbusHub_setMapping(h2, map2);
+            XModbusHub_setPollAreas(h2, (1u << XModbusDiscreteInputs));
+            XModbusHub_setPollIntervalDefault(h2, 20);
+            XModbusHub_setPollInterval(h2, id2, 20);
+            XModbusHub_connectAll(h2);
+            XModbusHub_startPolling(h2);
+            /* 制造一次写意图（写 Coils 越界地址 ⇒ 模型回异常 ⇒ 写失败）。 */
+            {
+                uint16_t vals[2];
+                vals[0] = 1;
+                vals[1] = 1;
+                XModbusHub_writeValues(h2, XModbusCoils, 0x200, 2, vals);
+            }
+            spinMs(3500);
+            ok2 = XModbusHub_pollOkCount(h2, id2);
+            err2 = XModbusHub_pollErrCount(h2, id2);
+            XPrintf("[INFO] 嵌套场景：pollOk=%u pollErr=%u\n", ok2, err2);
+            CHECK("② 读组成功被记账（嵌套丢帧已修，pollOk>0）", ok2 > 0);
+            /* [写失败不计入 pollErrCount] pollErrCount 记的是**读组**失败；
+             * 写失败走写路径自己的沿（writeDone）与脏区间保留。故这里断言
+             * 的是"写持续失败时读组仍拿得到数据"——原实现里失败的写在同拍
+             * 被立即重试两次 ⇒「读写交替让路」的交替计数奇偶不变 ⇒ 读永远
+             * 轮不到（pollOk=0），该从站的数据再也不刷新。 */
+            CHECK("② 写持续失败也不饿死读组（pollOk 持续增长）", ok2 > 10);
+            CHECK("② 点级新鲜度保持有效（块级 lastOkMs 推进）",
+                  XModbusHub_pointValid(h2, XModbusDiscreteInputs, 0x100, 3000));
+            (void)err2;
+        }
+    }
+}
+
 /* ==================== 入口 ==================== */
 
 int XModbusVirtualTest_run(void)
@@ -499,6 +616,7 @@ int XModbusVirtualTest_run(void)
     test_clientSwitches();
     test_fullChainDigitalStation();
     test_valveWithVirtualDevice();
+    test_hubSyncFinishAccounting();
     XPrintf("===== 结果：PASS %d / FAIL %d =====\n", g_pass, g_fail);
     return g_fail;
 }

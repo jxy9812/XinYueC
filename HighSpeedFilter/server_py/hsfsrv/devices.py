@@ -594,9 +594,18 @@ class VfdM512(object):
         given_hz = self._resolve_given_hz(hz, rpm)
         if given_hz is False:
             return False, "转速换算失败（额定点配置非法）"
-        if given_hz > self.max_freq_hz + 0.001:
-            return False, ("给定 %.1fHz 超出上限 %.1fHz"
-                           % (given_hz, self.max_freq_hz))
+        # [超量程一律钳位，不拒绝整条命令 2026-11-09 两端口径对齐]
+        # 口径以 C 端为准：`XVfdM512.c` 的 m512FreqToRaw() 走
+        # XVfdDevice_engineeringToRaw(percent, Div, -10000, 10000) ⇒ 写 0x1000
+        # 时按 ±100% **钳位**，超范围的给定仍然按满量程跑。
+        # 本端此前在写之前就 return False（"给定 999.0Hz 超出上限"）⇒ 同一个
+        # 操作在两端一个"按满速跑"、一个"整条启动命令失败"，现场上位机给
+        # 超范围值时行为随服务端实现而变。`test_vfd_ops.py` 的
+        # 「设频超量程被钳位（非失败）/ 钳位后 = 最大频率」正是锁这条口径。
+        # 说明：本函数只处理 START/JOG **捎带**的给定；独立下发给定
+        # （OP_SET_FREQUENCY）走 set_frequency()，那里本来就已钳位。
+        if given_hz > self.max_freq_hz:
+            given_hz = self.max_freq_hz
 
         if op == proto.OP_START:
             self._stop_requested = False      # 重新启动，退出停机窗口
@@ -638,9 +647,13 @@ class VfdM512(object):
             hz = self.hz_of(rpm)
             if hz is None:
                 return False, "转速换算失败（额定点配置非法）"
-            if hz > self.max_freq_hz + 0.001:
-                return False, ("转速 %.0frpm 超出上限（额定 %.0frpm ≈ %.1fHz）"
-                               % (rpm, self.rated_rpm, self.max_freq_hz))
+            # [超量程同样钳位，不拒绝 2026-11-09 两端口径对齐] C 端
+            # XVfdM512_SetSpeedRpm → 频率百分比 → engineeringToRaw(±10000)
+            # 同样是夹到满量程；本端此前在这里 return False，与上面 START
+            # 捎带给定的旧写法一样，会让"同一个超范围请求"在两端一个照跑、
+            # 一个整条失败。改钳位后与 set_frequency() 的口径一致。
+            if hz > self.max_freq_hz:
+                hz = self.max_freq_hz
             await self.set_frequency(hz)
         elif op == proto.OP_SET_PID_TARGET:
             return False, "PID 目标给定未在本实现中启用"
@@ -1214,35 +1227,80 @@ class TurbidityMeter(object):
     完全可能是 ABCD + 整数/100。C 侧 XTurbidityMeter 也是三个运行期旋钮
     （setWordOrder/setWordFormat/setWordDivisor），两边一一对应。
 
+    [第四个旋钮 BYTE_ORDER —— 2026-11-09 ttyS4 实测新增] 原有三个旋钮
+    表达不了「字内字节反序」：站2 ZHEYI-5100ZDY 是 **DCBA**（4 字节整字节
+    反序 = 小端 float32），站1 WZT-701A 是 CDAB。同一套解码常量服务两台时
+    站2 会解出小 4 个数量级的假数（0.0029 而非 0.0458）且**不报错**——
+    实测文档 docs/HSF板端ttyS4三设备取数实测总表_20261109.md §5.3/§7。
+    BYTE_ORDER 取 "CDAB"/"DCBA"/"ABCD"/"BADC" 之一；缺省 None 时按老旋钮
+    LOW_WORD_FIRST 推（True→CDAB / False→ABCD），老行为一字不改。
+
+    [温度（站2 独有）] 一帧读 0x0000×4：前两字浊度、后两字温度（同刻快照），
+    字节序同浊度。构造时 read_count=4 才读温度（read_count=2 的站1 温度
+    恒 None）。温度**随帧下发**（2026-11-10 改）：键 "v{i}_temp"（℃ ×100），
+    客户端主页浊度卡与水质监测页都要显示；旧口径「只进设备层日志、不进
+    推送帧」已作废。缺键 = 该机型没有温度（不是 0℃）。
+
     [为什么要留 raw] 换算口径一旦不对，raw 是唯一能反推真相的量。调试时先
     看 raw 是不是一个像浮点的位模式（比如 0x41 开头 ≈ 10 NTU 量级），再判
     字序/格式哪一项错了。
 
-    [站号] 两台仪器共用一个串口、站号不同（现场手工设定，实测 1 和 3）。
-    C 端 `HsfServerConfig.h` 的 HSF_TURBIDITY1/2_UNIT_ID 与之一致。
+    [站号] 两台仪器共用一个串口、站号不同。2026-11-09 ttyS4 实测在线的
+    是站 1（WZT-701A）与站 2（ZHEYI-5100ZDY）；**2026-11-10 现场把第二台
+    面板站号改为 3**（缺省配置 `[1, 3]`，字节序/读取数不变）。站号走
+    cfg.turbidity_unit_ids，代码不写死。
     """
 
-    #: 寄存器起始地址（手册：0x0000）。
+    #: 寄存器起始地址（手册：0x0000；站2 的温度在 0x0002/0x0003）。
     READ_ADDR = 0x0000
-    #: 读取寄存器数（32 位量 = 2 个）。
+    #: 读取寄存器数缺省（32 位量 = 2 个）。实例可被构造参数 read_count
+    #: 覆盖（站2 传 4：浊度+温度一帧同刻快照）。
     READ_COUNT = 2
     #: 功能码：手册明确是 FC03（读保持寄存器），**不是** FC04。
+    #: [站2 实测] FC04 也通但应答功能码恒回 03，故不碰 FC04。
     READ_FUNCTION = 3
-    #: 字序：True=低字在前（CDAB，真机口径）；False=高字在前（ABCD，流量计口径）。
+    #: 字序（老旋钮）：True=低字在前（CDAB，真机口径）；False=高字在前（ABCD）。
+    #: 仅在 BYTE_ORDER 为 None（未显式给）时参与推导。
     LOW_WORD_FIRST = True
+    #: 字节序（新旋钮）："CDAB"/"DCBA"/"ABCD"/"BADC"；None=由 LOW_WORD_FIRST 推。
+    BYTE_ORDER = None
+    #: 线上 4 字节 b0..b3 → float32 位模式（大端）的重排下标表。
+    #: [口径] Modbus 寄存器内高字节在前，故线上字节序 = 寄存器顺序逐字节：
+    #:   ABCD 高字在前原样；CDAB 低字在前（两字交换）；BADC 字内字节交换；
+    #:   DCBA 整 4 字节反序（= 小端 float32）。
+    BYTE_ORDER_PERM = {
+        "ABCD": (0, 1, 2, 3),
+        "CDAB": (2, 3, 0, 1),
+        "BADC": (1, 0, 3, 2),
+        "DCBA": (3, 2, 1, 0),
+    }
     #: 格式："float32" / "uint32" / "int32"。
     WORD_FORMAT = "float32"
     #: 整数格式下的除数（float32 格式下不参与计算）。
     SCALE_DIVISOR = 100.0
 
-    def __init__(self, master_factory, unit_id, name="", log=None):
+    def __init__(self, master_factory, unit_id, name="", log=None,
+                 byte_order=None, read_count=None):
         self._master_factory = master_factory
         self._master = None
         self.unit_id = unit_id
         self.name = name or ("浊度仪%d" % unit_id)
         self._log = log or (lambda msg: None)
+        if byte_order:
+            order = str(byte_order).strip().upper()
+            if order not in self.BYTE_ORDER_PERM:
+                raise ValueError(
+                    "浊度仪字节序非法：%r（支持 %s）"
+                    % (byte_order, sorted(self.BYTE_ORDER_PERM)))
+            self.BYTE_ORDER = order
+        #: 本台要读的寄存器数（2=只有浊度；4=浊度+温度）。
+        self.read_count = int(read_count) if read_count else self.READ_COUNT
         self.raw = 0
         self.ntu = 0.0
+        #: 温度（℃）。没有温度能力（read_count=2）或本拍没读到时为 None。
+        self.temperature = None
+        #: 是否已为温度打过日志（只打首拍一条，不刷屏）。
+        self._temp_logged = False
         self.online = False
         self.last_ok_ms = 0
         self.last_error = ""
@@ -1257,15 +1315,43 @@ class TurbidityMeter(object):
         await close_master(self._master)
         self._master = None
 
-    def _decode(self, vals):
-        """按实例口径把两个字解成 NTU（留 raw 位模式供诊断）。"""
-        v0 = int(vals[0]) & 0xFFFF
-        v1 = int(vals[1]) & 0xFFFF
-        if self.LOW_WORD_FIRST:
-            bits = (v1 << 16) | v0
-        else:
-            bits = (v0 << 16) | v1
-        self.raw = bits
+    # ---- 解码 ----
+    def _byte_order(self):
+        """生效的字节序：BYTE_ORDER 显式给过用它，否则按老旋钮 LOW_WORD_FIRST 推。
+
+        [为什么保留推导] 老配置/老调用只认 LOW_WORD_FIRST（站1 口径）；
+        BYTE_ORDER 缺省 None 时行为必须与历史一字不改（CDAB）。
+        """
+        if self.BYTE_ORDER:
+            return self.BYTE_ORDER
+        return "CDAB" if self.LOW_WORD_FIRST else "ABCD"
+
+    @classmethod
+    def bits_from_online_bytes(cls, b0, b1, b2, b3, order):
+        """线上 4 字节（寄存器序，字内高字节在前）→ float32 位模式（大端）。
+
+        :param order: "CDAB"/"DCBA"/"ABCD"/"BADC"（见 BYTE_ORDER_PERM）。
+        :raises ValueError: 字节序名不认识。
+
+        [验算（实测文档 §4.2/§5.3）]
+            站1  8F 5C 40 12 CDAB → 0x40128F5C = 2.29 NTU
+            站2  4F DD 37 3D DCBA → 0x3D37DD4F = 0.0449 NTU
+            站2  同帧按 CDAB 解   → 1.13e-5（假数，小 4 个数量级且不报错）
+        """
+        perm = cls.BYTE_ORDER_PERM.get(order)
+        if perm is None:
+            raise ValueError("浊度仪字节序非法：%r（支持 %s）"
+                             % (order, sorted(cls.BYTE_ORDER_PERM)))
+        online = [int(b0) & 0xFF, int(b1) & 0xFF,
+                  int(b2) & 0xFF, int(b3) & 0xFF]
+        packed = bytes(online[i] for i in perm)
+        return struct.unpack(">I", packed)[0]
+
+    def _decode_word_pair(self, v0, v1):
+        """两个寄存器按实例字节序/格式解成工程值（不动 raw —— raw 只留主值）。"""
+        order = self._byte_order()
+        bits = self.bits_from_online_bytes(v0 >> 8, v0 & 0xFF,
+                                           v1 >> 8, v1 & 0xFF, order)
         if self.WORD_FORMAT == "float32":
             return struct.unpack(">f", struct.pack(">I", bits))[0]
         if self.WORD_FORMAT == "int32":
@@ -1273,22 +1359,43 @@ class TurbidityMeter(object):
             return signed / float(self.SCALE_DIVISOR or 1.0)
         return bits / float(self.SCALE_DIVISOR or 1.0)
 
+    def _decode(self, vals):
+        """按实例口径把前两个字解成 NTU（留 raw 位模式供诊断）。"""
+        v0 = int(vals[0]) & 0xFFFF
+        v1 = int(vals[1]) & 0xFFFF
+        order = self._byte_order()
+        self.raw = self.bits_from_online_bytes(v0 >> 8, v0 & 0xFF,
+                                               v1 >> 8, v1 & 0xFF, order)
+        return self._decode_word_pair(v0, v1)
+
     # ---- 采集 ----
     async def poll(self, now_ms):
         master = self._master_get()
         try:
             vals = await master.read(self.READ_FUNCTION, self.READ_ADDR,
-                                     self.READ_COUNT, unit=self.unit_id)
+                                     self.read_count, unit=self.unit_id)
         except modbus.ModbusError as exc:
             self.online = False
             self.last_error = str(exc)
             raise
-        if len(vals) < self.READ_COUNT:
+        if len(vals) < self.read_count:
             self.online = False
             self.last_error = "读回寄存器不足（%d/%d)" % (
-                len(vals), self.READ_COUNT)
+                len(vals), self.read_count)
             raise modbus.ModbusError(self.last_error)
         self.ntu = self._decode(vals)
+        # [温度 = 后两个字] 站2（read_count=4）一帧同刻快照：0x0002/0x0003
+        # 两字按同一字节序解 ℃。读 2 字的站1 温度恒 None——"没有温度能力"
+        # 与"这拍失败"必须可区分，故成功读完后显式赋值而不是留着旧值。
+        if self.read_count >= 4 and len(vals) >= 4:
+            self.temperature = self._decode_word_pair(
+                int(vals[2]) & 0xFFFF, int(vals[3]) & 0xFFFF)
+            if not self._temp_logged:
+                self._temp_logged = True
+                self._log("%s 温度 %.2f ℃（0x0000×4 同刻快照，字节序 %s）"
+                          % (self.name, self.temperature, self._byte_order()))
+        else:
+            self.temperature = None
         self.online = True
         self.last_ok_ms = now_ms
         self.last_error = ""

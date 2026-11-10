@@ -43,9 +43,13 @@ void HsfMonitorFlowMeter_adapt(XWidget* page, bool compact);
 /**
  * @brief 设某台浊度仪读数（index 从 0 起；online=false 显示 "--"）。
  * @param ntu 浊度值（NTU 原值）；≥20 NTU 由页面标红。
+ * @param hasTemp 该台是否带温度（带温度的机型才有；false=不显示温度，
+ *                **不是 0℃**——站1 WZT-701A 无温度）。
+ * @param tempC 水温（℃ 原值；hasTemp=false 时无意义）。
  */
 void HsfMonitorFlowMeter_setTurbidity(int index, const char* name,
-                                      double ntu, bool online);
+                                      double ntu, bool online,
+                                      bool hasTemp, double tempC);
 
 /**
  * @brief 设进水泵状态（**命令状态**：现场无运行反馈点）。

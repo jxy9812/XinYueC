@@ -121,6 +121,9 @@ uint32_t m_reconnectInterval;     /**< 重连间隔（毫秒，默认 1000）。
     XString* m_authPassword;    /* 登录口令（对象拥有；XString 内部缓冲，
                                     清除/析构时先零化内容再释放）。 */
     int m_lastAuthFailure;      /* 最近一次认证失败原因（XLinkClientAuthFailure）。 */
+    int m_authRejects;          /* 连续「策略性拒绝」重连次数（XLinkAuthStatus_Rejected）：
+                                   瞬时失败可重试，达 XLINK_AUTH_REJECT_RETRY_LIMIT
+                                   才收手；认证成功/手动重连即清零。仅供实现使用。 */
 #endif
 } XLinkClient;
 

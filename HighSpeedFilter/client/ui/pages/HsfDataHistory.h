@@ -1,7 +1,10 @@
 ﻿/**
  * @file       HsfDataHistory.h
- * @brief      历史数据叶子页（占位）：说明文字 + 返回钮。
- * @details    页面骨架先以 HsfPlaceHolder 占位，真实内容后续在本模块内替换。
+ * @brief      历史数据叶子页：服务端历史分页（0x0118）→ 表格 + 折线图。
+ * @details    [2026-11-10] 本页**早已实装**（不是占位）：筛选/关键字/列
+ *             筛选、翻页、表格↔图表双视图、导出（CSV/XLSX）、表头双击
+ *             排序、悬浮气泡、缩放重采样、按页字号缩放。原先页头写的
+ *             「占位/真实内容后续替换」是历史遗留，会误导接手的人。
  */
 #ifndef HSFDATAHISTORY_H
 #define HSFDATAHISTORY_H

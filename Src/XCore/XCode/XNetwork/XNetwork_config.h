@@ -241,8 +241,8 @@ extern "C" {
  *              `GetQueuedCompletionStatus` 出队。
  *            - [2026-11-06 根修] 历史上"本机环回读完成丢失/挂死"已定性为
  *              本实现的三处缺陷（在飞 OVERLAPPED 复用、完成端口唤醒包饥饿、
- *              完成包归属按句柄数值判定），全部修掉并有跨进程联调 A/B 证据；
- *              见 `docs/Windows_IOCP读完成丢失_根修_20261106.md`。
+ *              完成包归属按句柄数值判定），全部修掉并有跨进程联调 A/B 证据
+ *              （机制级复现器见 `verify/iocp_overlapped_alias_repro.c`）。
  *
  *          `XNETWORK_WIN_BACKEND_WSAEVENT`（2，可回退）
  *            - 即 `XDeviceNetwork_win32_select.c`，口径对齐 Qt 6.8

@@ -23,6 +23,8 @@
 #include "XModbusDevice_Protected.h"   /* setState / setError_2 在本头，非公开头。 */
 #include "XByteArray.h"           /* push_back_1。 */
 #include "XPrintf.h"
+#include "XThread.h"              /* XThread_msleep：虚拟从站应答时延。 */
+#include "XDateTime.h"            /* 恢复期窗口的时刻戳（与 Hub 同一计时源）。 */
 #include <string.h>
 #include <stdlib.h>
 
@@ -76,6 +78,27 @@ void XModbusVirtualClient_init(XModbusVirtualClient* client,
     client->m_forceOffline = false;
     client->m_requestCount = 0;
     client->m_dropCount = 0;
+    memset(client->m_latencyLoMs, 0, sizeof(client->m_latencyLoMs));
+    memset(client->m_latencyHiMs, 0, sizeof(client->m_latencyHiMs));
+    client->m_longFrameUnit = -1;
+    client->m_blockedUnit = -1;
+    client->m_recoveryWindowMs = 0;
+    client->m_longFrameEndMs = 0;
+    client->m_recoveryDropCount = 0;
+    /* [诊断 2026-11-10] 打印本类的 sendRawRequest 实现地址：与 Hub/客户端侧
+     * 解析到的槽位指针对账——两者不一致 ⇒ 虚表槽位被别的实现占了（派发
+     * 到野函数 ⇒ 请求"发出去就没动静"）。env 门控：XMODBUS_VIRTUAL_TRACE=1 */
+    {
+        const char* env = getenv("XMODBUS_VIRTUAL_TRACE");
+        if (env && env[0] && env[0] != '0') {
+            static int s_addr;
+            if (s_addr < 2) {
+                ++s_addr;
+                XPrintf("[vsim] VXModbusVirtualClient_sendRawRequest=%p client=%p\n",
+                        (void*)VXModbusVirtualClient_sendRawRequest, (void*)client);
+            }
+        }
+    }
 }
 
 XModbusVirtualClient* XModbusVirtualClient_create_ex(XMemoryType memory,
@@ -112,6 +135,94 @@ void XModbusVirtualClient_setOffline(XModbusVirtualClient* client, bool offline)
 {
     if (!client) return;
     client->m_forceOffline = offline;
+}
+
+/* ==================== ttyS4 保真：应答时延 + 长帧后恢复期 ==================== */
+
+void XModbusVirtualClient_setUnitReplyLatency(
+    struct XModbusVirtualClient* client, int unitId, int loMs, int hiMs)
+{
+    if (!client) return;
+    if (unitId < 0 || unitId >= XMODBUSVIRTUAL_UNIT_CAP) return;
+    if (loMs < 0) loMs = 0;
+    if (hiMs < loMs) hiMs = loMs;
+    client->m_latencyLoMs[unitId] = loMs;
+    client->m_latencyHiMs[unitId] = hiMs;
+}
+
+bool XModbusVirtualClient_unitReplyLatency(
+    const struct XModbusVirtualClient* client, int unitId,
+    int* outLoMs, int* outHiMs)
+{
+    if (!client || unitId < 0 || unitId >= XMODBUSVIRTUAL_UNIT_CAP)
+        return false;
+    if (outLoMs) *outLoMs = client->m_latencyLoMs[unitId];
+    if (outHiMs) *outHiMs = client->m_latencyHiMs[unitId];
+    return true;
+}
+
+void XModbusVirtualClient_setRecoveryGate(struct XModbusVirtualClient* client,
+                                          int longFrameUnit, int blockedUnit,
+                                          int windowMs)
+{
+    if (!client) return;
+    if (windowMs < 0) windowMs = 0;
+    client->m_longFrameUnit = longFrameUnit;
+    client->m_blockedUnit = blockedUnit;
+    client->m_recoveryWindowMs = windowMs;
+    if (windowMs == 0 || longFrameUnit < 0) {
+        /* 显式关闭：清收口戳，避免残留时刻影响下一次开启后的判定。 */
+        client->m_longFrameEndMs = 0;
+    }
+}
+
+int XModbusVirtualClient_recoveryWindowMs(
+    const struct XModbusVirtualClient* client)
+{
+    return client ? client->m_recoveryWindowMs : 0;
+}
+
+uint64_t XModbusVirtualClient_recoveryDropCount(
+    const struct XModbusVirtualClient* client)
+{
+    return client ? client->m_recoveryDropCount : 0;
+}
+
+/**
+ * @brief 应答路径内的「恢复期闸 + 站时延」。
+ * @return false = 本次请求按「无应答」丢弃（调用方直接返回 NULL）。
+ * @details [顺序 = 真实时序] 真实总线上，站 1 在恢复期里根本不应答（主站
+ *          等到超时）；出了恢复期，仪表按自己的节奏延迟后回帧。虚拟侧：
+ *          先判恢复期（命中 ⇒ 丢请求计零应答），再按站号休眠时延区间内
+ *          随机值——两段都发生在**构造应答之前**，主站的等待语义与真串口
+ *          一致（约束：时延不放主站 sleep）。
+ */
+static bool virtualSlaveAccepts(XModbusVirtualClient* client,
+                                int serverAddress)
+{
+    if (client->m_recoveryWindowMs > 0 &&
+        serverAddress == client->m_blockedUnit &&
+        client->m_longFrameEndMs > 0) {
+        const int64_t since = XDateTime_currentMSecsSinceEpoch() -
+                              client->m_longFrameEndMs;
+        if (since >= 0 && since < client->m_recoveryWindowMs) {
+            /* [站1 恢复期] 站5 长帧收口后窗口内：任何请求零应答（上层按
+             * 超时处理，与真机「无应答（0 字节）」同口径）。 */
+            client->m_recoveryDropCount++;
+            return false;
+        }
+    }
+    if (serverAddress >= 0 && serverAddress < XMODBUSVIRTUAL_UNIT_CAP) {
+        const int lo = client->m_latencyLoMs[serverAddress];
+        const int hi = client->m_latencyHiMs[serverAddress];
+        if (hi > 0) {
+            int ms = lo + (int)(((double)rand() / ((double)RAND_MAX + 1.0)) *
+                                (double)(hi - lo + 1));
+            if (ms > hi) ms = hi;
+            if (ms > 0) XThread_msleep((uint32_t)ms);
+        }
+    }
+    return true;
 }
 
 /* ==================== 多从站分派 ==================== */
@@ -317,15 +428,49 @@ static XModbusReply* VXModbusVirtualClient_sendRawRequest(
 {
     XModbusVirtualClient* client;
     XModbusReply* reply = NULL;
-    uint8_t fc;
+    uint8_t fc = 0;
     uint16_t addr = 0;
     uint16_t second = 0;
     XModbusResponse* response;
     struct XModbusVirtualModel* model;
 
+    /* [诊断 2026-11-10] 函数入口即打（env 门控）：确认派发真的进了本函数，
+     * 以及收到的实参（站号/请求指针/所有权模式）是否合理。
+     * 用法：XMODBUS_VIRTUAL_TRACE=1 */
+    {
+        static int s_entry;
+        const char* env = getenv("XMODBUS_VIRTUAL_TRACE");
+        if (env && env[0] && env[0] != '0' && s_entry < 8) {
+            ++s_entry;
+            XPrintf("[vsim] enter sendRawRequest client=%p req=%p unit=%d type=%d\n",
+                    (void*)baseClient, (const void*)request, serverAddress,
+                    (int)type);
+        }
+    }
     if (!baseClient || !request || serverAddress < 0 || serverAddress > 247)
         return NULL;
     client = (XModbusVirtualClient*)baseClient;
+    /* [诊断 2026-11-10] 入口即打（此前打在模型选择之后，"没打"说明请求
+     * 压根没进这个函数 ⇒ 是 Hub 侧没发出来）。每站前 3 次。
+     *
+     * [2026-11-10 根修：不再打印未初始化的 fc]
+     * fc 在本函数**后面**才由请求 PDU 赋值，而本诊断块位于赋值之前。
+     * Debug 构建带 /RTC1（-RTCu：局部变量初始化检查）——读未初始化局部量
+     * 会触发运行期检查失败 ⇒ 进程停在 DebugBreak（等 JIT 调试器）⇒
+     * 现场表现"服务端启动后第一条 Modbus 请求就把进程冻住，客户端读不到
+     * 任何快照"。这正是本次读组发不出去的**直接触发点**（诊断代码自己
+     * 踩了未初始化缓冲这条红线）。此处只打印已赋值的实参。 */
+    {
+        static int s_traceN[XMODBUSVIRTUAL_UNIT_CAP];
+        const char* env = getenv("XMODBUS_VIRTUAL_TRACE");
+        if (env && env[0] && env[0] != '0' &&
+            serverAddress >= 0 && serverAddress < XMODBUSVIRTUAL_UNIT_CAP &&
+            s_traceN[serverAddress] < 3) {
+            ++s_traceN[serverAddress];
+            XPrintf("[vsim] unit=%d state=%d\n", serverAddress,
+                    (int)XModbusDevice_state((XModbusDevice*)client));
+        }
+    }
 
     if (XModbusDevice_state((XModbusDevice*)client) !=
         XModbusDevice_ConnectedState) {
@@ -346,17 +491,35 @@ static XModbusReply* VXModbusVirtualClient_sendRawRequest(
     if (!reply) return NULL;
 
     /* [模拟空应答] 按概率"收不到应答"：直接丢 Reply，上层按超时处理。
-     * 这是复现"单次空应答不该判设备失联"的唯一可控手段。 */
+     * 这是复现"单次空应答不该判设备失联"的唯一可控手段。
+     * [所有权账 2026-11-10] Reply 的 m_request 是 createReply_**自己拷贝**
+     * 出来的（Copy/Move/Ref 三态下都归 Reply 所有，deinit 统一删）——
+     * 丢 Reply 时**不许**把 m_request 摘成 NULL：那会孤儿化这份拷贝，
+     * 每次丢弃漏一个 Request（旧实现的注释写"摘所有权避免再删一次"，
+     * 实际上根本没有第二处会删它——本函数返回 NULL，Hub 拿不到 Reply）。
+     * [为什么直删不是 deleteLater] 丢弃的 Reply 还没进任何信号/队列，
+     * 生命周期只在本函数内；deleteLater 要靠事件循环投递，顶层（无嵌套
+     * 派发）post 的延迟删除按 shouldDeliver 判据永不投递 ⇒ 测试等非派发
+     * 场景整只 Reply 泄漏（K4 实测）。直删与上下文无关，事件派发期内
+     * 同样安全（deinit 自己清 posted 事件）。 */
     if (client->m_dropRate > 0.0) {
         double r = (double)rand() / (double)RAND_MAX;
         if (r < client->m_dropRate) {
             client->m_dropCount++;
-            reply->m_request = NULL;     /* 摘所有权，避免延迟删除再删一次。 */
-            XModbusReply_deleteLater(reply);
+            XClassDelete((XClass*)reply);
             return NULL;
         }
     }
     client->m_requestCount++;
+
+    /* [ttyS4 保真] 恢复期闸 + 站应答时延——都在构造应答之前（虚拟从站的
+     * 应答路径，模拟真实仪表的响应节奏；命中恢复期 ⇒ 无应答，上层按超时
+     * 处理，与 dropRate 的"空应答"同一条返回路径）。 */
+    if (!virtualSlaveAccepts(client, serverAddress)) {
+        /* [计数已在 virtualSlaveAccepts 内记过] 这里只丢 Reply。 */
+        XClassDelete((XClass*)reply);
+        return NULL;
+    }
 
     /* [按从站号选模型] 见 virtualModelFor 注记。 */
     model = virtualModelFor(client, serverAddress);
@@ -379,6 +542,26 @@ static XModbusReply* VXModbusVirtualClient_sendRawRequest(
         return reply;
     }
 
+    /* [诊断 2026-11-10] env 门控的取数诊断：模拟侧"某站全哑"时唯一能看清
+     * 的一行——请求到了没有？模型绑上没有？读成功没有？
+     * 用法：XMODBUS_VIRTUAL_TRACE=1（每站只打前 3 次，避免刷屏）。
+     * [2026-11-10 根修] 移到 fc/addr/second **赋值之后**再打：这三个量在
+     * 赋值前是未初始化局部量，Debug 构建的 /RTC1（-RTCu）会判"使用未初始化
+     * 变量"而让进程停在 DebugBreak（等 JIT 调试器）——诊断代码自己踩了
+     * 未初始化缓冲这条红线，现场表现为"服务端第一条读请求就把进程冻住"。 */
+    {
+        static int s_traceN[XMODBUSVIRTUAL_UNIT_CAP];
+        const char* env = getenv("XMODBUS_VIRTUAL_TRACE");
+        if (env && env[0] && env[0] != '0' &&
+            serverAddress >= 0 && serverAddress < XMODBUSVIRTUAL_UNIT_CAP &&
+            s_traceN[serverAddress] < 3) {
+            ++s_traceN[serverAddress];
+            XPrintf("[vsim] unit=%d fc=0x%02X addr=0x%04X count=%u model=%p\n",
+                    serverAddress, (unsigned)fc, (unsigned)addr,
+                    (unsigned)second, (void*)model);
+        }
+    }
+
     switch (fc) {
     /* ---- 读类 ---- */
     case (uint8_t)XModbusPdu_ReadCoils:
@@ -388,6 +571,9 @@ static XModbusReply* VXModbusVirtualClient_sendRawRequest(
     {
         const bool isBit = (fc == (uint8_t)XModbusPdu_ReadCoils ||
                             fc == (uint8_t)XModbusPdu_ReadDiscreteInputs);
+        /* [应答功能码可被模型覆盖] 站 2 ZHEYI 的怪癖：FC04 请求也受理，
+         * 但应答功能码恒回 FC03（2026-11-09 实测文档 §5.5）。缺省=原码。 */
+        const uint8_t respFc = XModbusVirtualModel_responseFunction(model, fc);
         uint16_t vals[256];
         uint16_t outLen = 0;
         XModbusVirtualResult r;
@@ -401,8 +587,15 @@ static XModbusReply* VXModbusVirtualClient_sendRawRequest(
             virtualBuildException(response, fc, r);
             break;
         }
-        virtualBuildReadBody(response, fc, second, isBit, vals, outLen);
-        /* 结构化结果也填上（Hub 走 processResponse 取数据）。 */
+        virtualBuildReadBody(response, respFc, second, isBit, vals, outLen);
+        /* [长帧收口戳] 长帧站的寄存器读成功且数据够长 ⇒ 记应答收口时刻，
+         * 供恢复期闸判定（站 5 的 49 字节帧 → 站 1 的 125ms 死区）。 */
+        if (!isBit && serverAddress == client->m_longFrameUnit &&
+            (uint32_t)outLen * 2u >= XMODBUSVIRTUAL_LONG_FRAME_MIN_BYTES) {
+            client->m_longFrameEndMs = XDateTime_currentMSecsSinceEpoch();
+        }
+        /* 结构化结果也填上（Hub 走 processResponse 取数据；按**应答**功能码
+         * 分派——站 2 的 FC04 请求应答是 03，结构化语义随之）。 */
         if (!reply->m_result) reply->m_result = XModbusDataUnit_create();
         if (reply->m_result) {
             XModbusClient_processResponse_base(baseClient, response,

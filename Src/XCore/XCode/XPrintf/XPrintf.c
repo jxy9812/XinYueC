@@ -218,6 +218,10 @@ static void xprintf_stdoutRelayStart(void)
         XPRINTF_CLOSE_FD(relay->pipeRead);
         XPRINTF_CLOSE_FD(relay->pipeWrite);
         relay->pipeRead = relay->pipeWrite = -1;
+        if (relay->queueMutex) {
+            XMutex_delete(relay->queueMutex);
+            relay->queueMutex = NULL;
+        }
         return;
     }
     *stop = 0;
@@ -244,6 +248,10 @@ static void xprintf_stdoutRelayStart(void)
         relay->stopFlag = NULL;
         relay->pipeRead = relay->pipeWrite = -1;
         relay->savedFd1 = -1;
+        if (relay->queueMutex) {
+            XMutex_delete(relay->queueMutex);
+            relay->queueMutex = NULL;
+        }
         return;
     }
     /* 冲刷 stdio 缓冲：改道前已写入但未落盘的字节属旧目标。 */
@@ -283,6 +291,20 @@ static void xprintf_stdoutRelayStop(void)
         XFree_System(relay->stopFlag);
         relay->stopFlag = NULL;
     }
+    /* [所有权 2026-11-09 修] 队列缓冲与互斥锁也是 Start 建、Stop 必收的
+     * 堆对象：此前只回收 fd/线程/标志，这两项留在 relay 上被下一次 Start
+     * 覆盖指针 ⇒ 每对 push/pop 漏 sizeof(XMutex)（实测 48B）+ 队列缓冲。
+     * Start 已把队列清零，这里释放后一并归零，保持"未建"状态可重入。 */
+    if (relay->queueMutex) {
+        XMutex_delete(relay->queueMutex);
+        relay->queueMutex = NULL;
+    }
+    if (relay->queueBuf) {
+        XFree_System(relay->queueBuf);
+        relay->queueBuf = NULL;
+    }
+    relay->queueLen = 0;
+    relay->queueCap = 0;
 }
 
 /* ==================== 排空抽水队列（主线程） ==================== */

@@ -231,6 +231,20 @@ void XStyleOptionHeader_init(XStyleOptionHeader* option, int type)
     option->m_selectedPosition = XStyleOptionHeaderSelectedPosition_NotAdjacent;
     option->m_sortIndicator = XStyleOptionHeaderSortIndicator_None;
     option->m_orientation = 0;
+    /* [Qt 6.8 对齐 2026-11-10] 表头标签省略模式。
+     * 取值用框架**规范枚举常量**（全库唯一一套编号，勿再手写数字）。
+     * [缺省为何是 ElideRight 而非 Qt 的 ElideNone]
+     *   Qt 的 QStyleOptionHeaderV2 构造缺省是 Qt::ElideNone
+     *   （qstyleoption.cpp:863-865），QHeaderView::initialize() 也置
+     *   ElideNone（qheaderview.cpp:314）⇒ 真实 Qt 表头是「放不下就裁剪」，
+     *   不是省略号。但 Qt 的**绘制**契约是「文本永远有输出」
+     *   （QCommonStyle CE_HeaderLabel 用 QFontMetrics::elidedText 后
+     *   仍 drawItemText，qcommonstyle.cpp:1694-1699）——绝无整段空白。
+     *   本库取 ElideRight：① 与**单元格**省略口径一致（视图缺省即
+     *   ElideRight，XAbstractItemView_elidedText 消费同一字段），
+     *   表头/单元格同口径；② 裁剪会把半截字形糊在段边，省略号语义更
+     *   明确。真正生效的值由 XTableWidget 从视图的 textElideMode 注入。 */
+    option->m_textElideMode = XAbstractItemViewTextElideMode_ElideRight;
 }
 
 void XStyleOptionTab_init(XStyleOptionTab* option, int type)

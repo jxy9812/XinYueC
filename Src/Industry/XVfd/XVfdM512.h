@@ -46,7 +46,7 @@ extern "C" {
 /* ========================================================================== */
 
 #define XVfdM512_AddrFreqSet        0x1000  /**< 通讯设定值（±10000 = ±100.00%，int16 补码） */
-#define XVfdM512_AddrTelemetry      0x1001  /**< 快捷遥测块起点：运行频率(0.1Hz) */
+#define XVfdM512_AddrTelemetry      0x1001  /**< 快捷遥测块起点：运行频率(0.01Hz，2026-11-10 板端实机复测) */
 #define XVfdM512_TelemetryCount     32      /**< 1001H~1020H 运行/停机参数条（手册一条） */
 #define XVfdM512_AddrPassword       0x1F00  /**< 用户密码校验（写入后回 8888H=通过） */
 #define XVfdM512_AddrParamInit      0x1F01  /**< 参数初始化（1/2 恢复出厂 3清记录 4备份 501 恢复备份） */

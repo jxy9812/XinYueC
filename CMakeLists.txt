@@ -225,6 +225,15 @@ endif()
 # 定义：自研 XFO1 字库数据已删，轮廓字统一走 FT 外挂文件 + 位图回退。）
 if(ANDROID)
     add_compile_definitions(XPLATFORM_FBDEV_ON=1)
+    # [2026-11-09 安卓多应用] 应用 id 参数化：同一棵构建树只能服务**一个**
+    # 应用 id——字体目录宏被 XFontFt.c（在静态库 XinYueCS 内）消费，属构建
+    # 树级常量，两个包名共用一棵树必然串（「释放到 A、FT 找 B」→ 中文整片
+    # 缺失，真机事故）。故每个 APK 用**独立构建目录**（demo: out/android-<abi>；
+    # HSF 客户端: out/android-hsf-<abi>），各自传 -DANDROID_APP_PKG。
+    # 缺省仍是 demo 的 com.xinyuec.xguidemo —— 不传该变量时行为与此前逐字
+    # 相同（demo 打包链路零改动）。
+    set(ANDROID_APP_PKG "com.xinyuec.xguidemo" CACHE STRING
+        "安卓应用 id（决定 /data/data/<pkg>/files 私有目录与清单包名）")
     # 外挂 FT 轮廓字目录（2026-10-24）：安卓无文件系统可写工作目录，
     # 字体由 android_main.c 启动时从 APK assets 释放到应用私有目录
     # fonts/，此处注入该绝对路径供 FT 链查找。
@@ -236,7 +245,12 @@ if(ANDROID)
     # android_main.c 的释放目标同源（同一宏 XFONT_EXTERNAL_FT_FONT_DIR，
     # 两处分离过一次导致「释放到 A、FT 找 B」→ 探测落空）。
     add_compile_definitions(
-        XFONT_EXTERNAL_FT_FONT_DIR="/data/data/com.xinyuec.xguidemo/files/fonts")
+        XFONT_EXTERNAL_FT_FONT_DIR="/data/data/${ANDROID_APP_PKG}/files/fonts")
+    # 应用私有可写目录（同源派生：字体目录的父目录）。安卓上 XSettings 的
+    # POSIX 口径是 $HOME/.config，而安卓进程无 HOME → 落盘必失败；客户端
+    # 的界面设置改落此处（HighSpeedFilter/client/ui/HsfSettingsStore.c）。
+    add_compile_definitions(
+        XAPP_PRIVATE_FILES_DIR="/data/data/${ANDROID_APP_PKG}/files")
 endif()
 # 强制 DPI（XGUI_FORCE_DPI，XGuiConfig.h 有 #ifndef 兜底 0）：命令行
 # -DXGUI_FORCE_DPI=2.0 调试缩放链/小屏放大画面。CMake -D 只建变量不自动

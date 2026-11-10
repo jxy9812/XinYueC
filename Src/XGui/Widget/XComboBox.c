@@ -24,9 +24,8 @@
  *             发射；editTextChanged 仅可编辑模式编辑变化时发射。
  * @author     XinYueC 团队
  ******************************************************************************/
-#if XGUI_ON
-
 #include "CXinYueConfig.h"
+#if XGUI_ON
 #include "XStringUtils.h"
 
 #include "XAlgorithm.h"
@@ -927,6 +926,12 @@ static void xcombo_updateSizeHint(XComboBox* self)
        收缩有真实下界（qGeomCalc 的 size < minimumSize 早退分支得以
        生效）。 */
     XWidget_setMinimumSizeHint((XWidget*)self, &hint);
+    /* [变更后必须让布局重协商 2026-11-10 对标 Qt] Qt 的 addItem/insertItem/
+     * setSizeAdjustPolicy 等都走 recomputeSizeHint 并触发 updateGeometry
+     * （qcombobox.cpp）。此前本函数只写 sizeHint 存储位、**不通知布局**：
+     * 运行期 addItem 加进更长的项（网卡名/SSID/落盘策略名）后下拉仍是旧宽
+     * ⇒ 长项被省略号截断，要等别的控件触发重排才恢复。 */
+    XWidget_updateGeometry((XWidget*)self);
 }
 
 /** @brief 结算插入策略（对标 QComboBoxPrivate::returnPressed 主体）。

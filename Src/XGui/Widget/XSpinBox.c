@@ -14,9 +14,8 @@
  *             value==minimum 且设置特殊值文本时整段显示特殊值文本。
  * @author     XinYueC 团队
  ******************************************************************************/
-#if XGUI_ON
-
 #include "CXinYueConfig.h"
+#if XGUI_ON
 #include "XStringUtils.h"
 
 #include "XAlgorithm.h"
@@ -1009,6 +1008,8 @@ static XSize spinbox_computeSizeHint(const XSpinBox* self)
     int textH = 0;
     int stepW = 12;
     int frame = 4;
+    int chromeW = 0;  /**< 内嵌编辑框自身的左右边框+边距（绘制路径要占）。 */
+    int chromeH = 0;  /**< 内嵌编辑框自身的上下边框+边距（绘制路径要占）。 */
     if (!self) { XSize_init(&out, -1, -1); return out; }
     font = XWidget_font((XWidget*)self);
     /* XAbstractSpinBox_text 返回 const char*（内嵌编辑框文本），非
@@ -1017,23 +1018,99 @@ static XSize spinbox_computeSizeHint(const XSpinBox* self)
     if (!text) text = "";
     textW = XPainter_textWidth(&font, text);
     textH = XPainter_textHeight(&font);
+    /* [按「最大可能值」量宽 2026-11-10 对标 Qt QAbstractSpinBox::sizeHint]
+     * 原实现只量**当前文本**：值从 3 位变 4 位时建议宽才跟着变，布局来不及
+     * 重协商 ⇒ 末位被裁（现场「转速框只显示三位数字」）。Qt 的口径是取
+     * textFromValue(minimum) 与 textFromValue(maximum) 里更宽的那个 ——
+     * 宽度一次到位，值与字号变化都不必重算。
+     * [为什么把当前值也纳入] 特殊值文本（specialValueText，如"自动"）可能比
+     * 两端都宽。 */
+    {
+        int i;
+        int probe[3];
+        probe[0] = XSpinBox_minimum(self);
+        probe[1] = XSpinBox_maximum(self);
+        probe[2] = XSpinBox_value(self);
+        for (i = 0; i < 3; ++i) {
+            char* s = XSpinBox_textFromValue_base(self, probe[i]);
+            if (s) {
+                const int w = XPainter_textWidth(&font, s);
+                if (w > textW) textW = w;
+                XFree_System(s);
+            }
+        }
+    }
     /* 空文本（初值未刷）时按三字位量宽：字体须在释放前量（用已释放的
      * font 复量=use-after-free）。 */
     if (textW <= 0) textW = XPainter_textWidth(&font, "000");
+    /* [内嵌编辑框的边框与边距也要算进来 2026-11-10 真机"10000 ms"显示成
+     * "0000 ms"根因] 绘制路径里文本落在**内嵌编辑框**内：样式给的编辑区
+     * 矩形（SC_SpinBoxEditField）之外，XLineEdit 还要再让出自己边框的
+     * 左右（textStartX/textEnd 各 frame?4:2 像素）与上下（lineEdit 的
+     * 上下内缩）。而 sizeHint 只量了「文本宽 + 按钮列 + 外框」⇒ 比实际
+     * 可用文本区**少 8px** ⇒ 文本放不下，编辑框按光标位置横向滚动（保后缀、
+     * 裁前导数字 ⇒「10000 ms」显示成「0000 ms」）。
+     *
+     * 这里用**编辑框自己的 sizeHint 减去它当前文本的度量**求出差值：差值
+     * 就是编辑框的边框+边距（与绘制同源，不写死像素），字号/主题变了自动
+     * 跟随。度量须用**编辑框自己的字体**（编辑框 sizeHint 用的是它的字体），
+     * 且字体须在释放前量。 */
+    {
+        XLineEdit* edit = self->m_base.m_lineEdit;
+        if (edit) {
+            XFont efont;
+            const char* lt = XLineEdit_text(edit);
+            int ltw = 0;
+            int lth = 0;
+            XSize lh;
+            efont = XWidget_font((XWidget*)edit);
+            if (lt) ltw = XPainter_textWidth(&efont, lt);
+            lth = XPainter_textHeight(&efont);
+            lh = XWidget_sizeHint((XWidget*)edit);
+            if (lh.width > ltw) chromeW = lh.width - ltw;
+            if (lh.height > lth) chromeH = lh.height - lth;
+            XClassDeinit(&efont);
+        }
+    }
     XClassDeinit(&font);
     {
-        /* 步进按钮区宽（上下箭头列）+ 边框留白：与绘制路径同量级。 */
+        /* 步进按钮区宽（上下箭头列）+ 边框留白：**从样式实量**，不写死。
+         * [为什么必须量 2026-11-10 真机"末位数字被裁"根因] 旧实现 `stepW=12`
+         * 是手估值，而样式侧 `xcs_spinBoxColumn()`（XCommonStyle.c）的按钮列
+         * 宽恒 ≥16px（Qt 口径 `qMax(16, qMin(bh*8/5, w/4))`，16 下限优先）。
+         * 于是「sizeHint 预留 12、绘制占 16」⇒ 文字区恒短 4px，四位数字的末位
+         * 正好压在箭头列下面（用户反馈"超出四位只能显示三位"）。这里改取
+         * 样式 `CT_SpinBox` 的 contents 尺寸（Qt `QStyle::sizeFromContents`：
+         * 内容宽 = 文本宽 + 按钮列宽），与绘制同源。
+         * [退路] 无样式（XSTYLE_ON=0）或量不出时回落到 16（≥ 已知下限，不会
+         * 再出现"预留小于实绘"的错位）。 */
         XStyleOption opt;
         XStyleOption_init(&opt, XStyleCT_SpinBox);
         if (XWidget_style((const XWidget*)self)) {
-            frame = XStyle_pixelMetric(XWidget_style((const XWidget*)self),
-                                       XStylePM_SpinBoxFrameWidth, &opt);
+            XStyle* st = XWidget_style((const XWidget*)self);
+            XSize cs;
+            XSize content;
+            XRect_init(&opt.m_rect, 0, 0, textW, textH);
+            frame = XStyle_pixelMetric(st, XStylePM_SpinBoxFrameWidth, &opt);
+            XSize_init(&content, textW, textH);
+            cs = XStyle_sizeFromContents(st, XStyleCT_SpinBox, &opt, content);
+            if (cs.width > 0) {
+                /* sizeFromContents 已含文本 + 按钮列 + 外框；**还要加上内嵌
+                 * 编辑框自身的边框/边距**（绘制时那部分从编辑区里再扣，
+                 * 不补进来就少 8px ⇒ 文本放不下 ⇒ 编辑框滚动显示，
+                 * 「10000 ms」被显示成「0000 ms」）。 */
+                XSize_init(&out, cs.width + chromeW,
+                           cs.height > 0 ? cs.height + chromeH
+                                         : textH + chromeH + frame * 2);
+                return out;
+            }
         }
         if (frame <= 0) frame = 1;
-        stepW = 12; /* 步进按钮列宽（上下箭头）：绘制路径同量级。 */
+        stepW = 16;   /* 退路：与样式按钮列下限同值（原先 12 会少 4px）。 */
     }
     if (textH <= 0) textH = 14;
-    XSize_init(&out, textW + stepW + frame * 2, textH + frame * 2);
+    XSize_init(&out, textW + chromeW + stepW + frame * 2,
+               textH + chromeH + frame * 2);
     return out;
 }
 
@@ -1148,6 +1225,15 @@ void XSpinBox_setRange(XSpinBox* self, int min, int max)
     self->m_min = min;
     self->m_max = (min < max) ? max : min;
     XSpinBox_setValue(self, self->m_value);
+    /* [量程变更 ⇒ 首选尺寸可能变 2026-11-10 对标 Qt] Qt 的
+     * QSpinBox::setRange 会清 sizeHint 并 updateGeometry：sizeHint 按
+     * textFromValue(minimum/maximum) 量宽，量程一改宽度就可能变（0..50 与
+     * 0..1440 差一位数）。此前不通知 ⇒ 换量程/换调速方式后控件宽度不跟，
+     * 四位值被旧宽度裁掉。 */
+    /* [2026-11-10 补] 量程变了要**重算** sizeHint（不是只 updateGeometry）：
+     * 新量程的最大值文本更宽时不重算，控件宽度不跟 ⇒ 新值被旧宽度裁掉。 */
+    spinbox_refreshSizeHint(self);
+    XWidget_updateGeometry((XWidget*)self);
 }
 
 int XSpinBox_value(const XSpinBox* self)
@@ -1203,6 +1289,10 @@ void XSpinBox_setPrefix(XSpinBox* self, const char* prefix)
     if (self->m_prefix)
         XString_assign_utf8(self->m_prefix, prefix);
     spinbox_refreshText(self);
+    /* [前缀变更 ⇒ 首选宽变] 与 setSuffix 同口径：前缀也是文本的一部分，
+     * 必须重算 sizeHint，否则带前缀的数字框宽度偏窄 ⇒ 文本被裁。 */
+    spinbox_refreshSizeHint(self);
+    XWidget_updateGeometry((XWidget*)self);
 }
 
 const char* XSpinBox_suffix(const XSpinBox* self)
@@ -1224,6 +1314,12 @@ void XSpinBox_setSuffix(XSpinBox* self, const char* suffix)
     if (self->m_suffix)
         XString_assign_utf8(self->m_suffix, suffix);
     spinbox_refreshText(self);
+    /* [后缀变更 ⇒ 首选宽变 2026-11-10 对标 Qt] " Hz" 与 " rpm" 差两个字符，
+     * Qt 的 setSuffix 会 updateGeometry；不通知则切调速方式后控件宽度不跟。
+     * [2026-11-10 补] 还要**重算 sizeHint**：后缀是文本的一部分，不算进去
+     * ⇒ 带单位的数字框宽度偏窄 ⇒ 文本放不下被裁（现场「10000 ms」→「0000 ms」）。 */
+    spinbox_refreshSizeHint(self);
+    XWidget_updateGeometry((XWidget*)self);
 }
 
 char* XSpinBox_cleanText(const XSpinBox* self)

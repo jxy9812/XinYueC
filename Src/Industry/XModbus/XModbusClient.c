@@ -9,6 +9,7 @@
 #include "XVariant.h"
 #include "XByteArray.h"
 #include "XHashMap.h"
+#include "XPrintf.h"
 #include <string.h>
 
 // 虚函数重载声明
@@ -16,6 +17,7 @@ static void VXModbusClient_deinit(XModbusClient* client);
 static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 static bool VXModbusClient_processPrivateResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 static XModbusReply* VXModbusClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress, XFuncParamType type);
+static bool VXModbusClient_abandonReply(XModbusClient* client, XModbusReply* reply);
 
 // =============== 字节序辅助函数 ===============
 // 从大端序数据读取uint16
@@ -42,7 +44,8 @@ XVtable* XModbusClient_class_init(void)
     void* table[] = {
         VXModbusClient_processResponse,
         VXModbusClient_processPrivateResponse,
-        VXModbusClient_sendRawRequest
+        VXModbusClient_sendRawRequest,
+        VXModbusClient_abandonReply
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
@@ -301,12 +304,41 @@ static XModbusRequest* buildReadWriteRequest(const XModbusDataUnit* readUnit, co
 // ================== Public API ==================
 XModbusReply* XModbusClient_sendReadRequest(XModbusClient* client, const XModbusDataUnit* read,
                                           int serverAddress, XModbusRequestPriority priority) {
+    /* [诊断 2026-11-10] 客户端侧入口诊断（env 门控，正式诊断手段）：
+     * 请求进到客户端了吗？构建 PDU 成功了吗？虚函数受理了吗？
+     * 与 Hub 侧的 "-> sendReadRequest" 一行配对使用：
+     *   · Hub 打了、这里没打 ⇒ 请求没进客户端（Hub 侧早退/参数不合法）；
+     *   · 这里打了 "build ok"、没打 "vtable" ⇒ 卡在请求构造；
+     *   · 两行都打 ⇒ 到了从站应答路径（此时没回应答才是从站的问题）。
+     * 用法：XMODBUS_VIRTUAL_TRACE=1 */
+    {
+        const char* env = getenv("XMODBUS_VIRTUAL_TRACE");
+        if (env && env[0] && env[0] != '0') {
+            static int s_n;
+            if (s_n < 12) {
+                ++s_n;
+                XPrintf("[vsim] client=%p unit=%d read=%p\n",
+                        (void*)client, serverAddress, (const void*)read);
+            }
+        }
+    }
     if (!client || !read || serverAddress < 0) {
         return NULL;
     }
     XModbusRequest* request = buildReadRequest(read);
     if (!request) {
         return NULL;
+    }
+    {
+        const char* env = getenv("XMODBUS_VIRTUAL_TRACE");
+        if (env && env[0] && env[0] != '0') {
+            static int s_b;
+            if (s_b < 12) {
+                ++s_b;
+                XPrintf("[vsim] client=%p unit=%d build ok req=%p -> vtable\n",
+                        (void*)client, serverAddress, (void*)request);
+            }
+        }
     }
     request->m_priority = (uint8_t)priority;
     XModbusReply* reply = XModbusClient_sendRawRequest_ref_base(client, request, serverAddress);
@@ -401,6 +433,27 @@ static XModbusReply* VXModbusClient_sendRawRequest(XModbusClient* client, const 
 }
 
 /**
+ * @brief 默认的 abandonReply 实现：基类没有在途表 ⇒ 无事可做。
+ * @note RTU/TCP 子类各自重写（RTU 清 m_currentReply；TCP 摘在途表项）。
+ */
+static bool VXModbusClient_abandonReply(XModbusClient* client, XModbusReply* reply) {
+    (void)client; (void)reply;
+    return false;
+}
+
+/**
+ * @brief 放弃在途应答（传输层摘手；Reply 本身不释放）。
+ * @details 上层（Hub 超时收口）释放 Reply **之前**必须先调本函数：
+ *          否则传输层仍持有该 Reply，迟到的应答/超时回调会解引用已释放
+ *          对象（UAF ⇒ 实测板端 SEGV）。
+ */
+bool XModbusClient_abandonReply(XModbusClient* client, XModbusReply* reply) {
+    if (!client || !reply || !XClassGetVtable(client)) return false;
+    return XClassGetVirtualFunc(client, EXModbusClient_AbandonReply,
+                                bool (*)(XModbusClient*, XModbusReply*))(client, reply);
+}
+
+/**
  * @brief 通过虚函数表调用 sendRawRequest
  */
 XModbusReply* XModbusClient_sendRawRequest_base(XModbusClient* client, const XModbusRequest* request, int serverAddress) {
@@ -417,6 +470,26 @@ XModbusReply* XModbusClient_sendRawRequest_move_base(XModbusClient* client, cons
 XModbusReply* XModbusClient_sendRawRequest_ref_base(XModbusClient* client, const XModbusRequest* request, int serverAddress)
 {
     if (!client || !XClassGetVtable(client)) return NULL;
+    /* [诊断 2026-11-10] 虚函数解析诊断（env 门控，正式诊断手段）：解析到的
+     * 槽位指针是谁？表容量/表长够不够？槽位为空 ⇒ 派发到野指针（现场表现
+     * 为"发出去就没动静"——请求卡在派发里，既不报错也不返回）。
+     * 用法：XMODBUS_VIRTUAL_TRACE=1 */
+    {
+        const char* env = getenv("XMODBUS_VIRTUAL_TRACE");
+        if (env && env[0] && env[0] != '0') {
+            static int s_v;
+            if (s_v < 6) {
+                ++s_v;
+                XPrintf("[vsim] vtable=%p size=%u cap=%u slot=%u func=%p\n",
+                        (void*)XClassGetVtable(client),
+                        (unsigned)XClassGetVtable(client)->m_size,
+                        (unsigned)XClassGetVtable(client)->m_capacity,
+                        (unsigned)EXModbusClient_SendRawRequest,
+                        (void*)(uintptr_t)XVtableGetFunc(XClassGetVtable(client),
+                            EXModbusClient_SendRawRequest, void*));
+            }
+        }
+    }
     return  XClassGetVirtualFunc(client, EXModbusClient_SendRawRequest, XModbusReply * (*)(XModbusClient*, const XModbusRequest*, int, XFuncParamType))(client, request, serverAddress, XFuncParamType_Ref);
 }
 

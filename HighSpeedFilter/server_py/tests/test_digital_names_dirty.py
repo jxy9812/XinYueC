@@ -90,11 +90,11 @@ async def _case_dirty_frame(basedir, log):
                     "名字帧不应带状态键 %s：%r" % (forbidden, sorted(doc))
         # 名字来自阀门点位映射（缺省 6 路全在模块 0：DO n / 开到位 2n+1 /
         # 关到位 2n）。
-        assert d0.get("din1") == "电磁阀1 开到位", \
+        assert d0.get("din1") == "电动球阀1 开到位", \
             "din1 应为阀1 开到位名：%r" % d0.get("din1")
-        assert d0.get("din0") == "电磁阀1 关到位", \
+        assert d0.get("din0") == "电动球阀1 关到位", \
             "din0 应为阀1 关到位名：%r" % d0.get("din0")
-        assert d0.get("don0") == "电磁阀1 控制", \
+        assert d0.get("don0") == "电动球阀1 控制", \
             "don0 应为阀1 控制名：%r" % d0.get("don0")
         # 模块 1 无点位占用 ⇒ 无名字键（客户端显示 CH<n>，不发默认名）。
         name_keys_1 = [k for k in d1 if k.startswith(("din", "don"))]

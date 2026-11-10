@@ -18,6 +18,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* [2026-11-09 安卓] 安卓 APK 是 NativeActivity 壳（Drive/Android/
+ * android_main.c），壳从 ANativeActivity_onCreate 起一个渲染线程跑
+ * 应用主逻辑——安卓没有「进程入口 main」，可执行文件那样的 main 由壳
+ * 接管。故本文件的 main 在 __ANDROID__ 下改名为 hsf_client_main，
+ * 壳按构建层注入的编译宏 XPAD_APP_ENTRY 调用它（同名改法见
+ * Test/XGuiDemo/xgui_window_demo.c 的 xgui_demo_main 宏）。
+ * 桌面端符号名不变。 */
+#ifdef __ANDROID__
+#define main hsf_client_main
+#endif
+
 int main(int argc, char** argv)
 {
     HsfUiOptions opts;

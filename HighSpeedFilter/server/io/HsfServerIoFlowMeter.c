@@ -297,6 +297,9 @@ bool HsfServerIoFlowMeter_mount(HsfServerIoFlowMeter* st, HsfServerBus* bus,
     st->m_dev = XFlowMeter_create();
     if (!st->m_dev) goto fail;
     XFlowMeter_setStaleMs(st->m_dev, staleMs);
+    /* [站点层也记住阈值 2026-11-10] 质量判定走 Hub 块级新鲜度，必须比
+     * **采集周期**而不是编译期基线（与温湿度/浊度站同款）。 */
+    st->m_staleMs = staleMs;
     if (!XFlowMeter_attach(st->m_dev, st->m_group)) {
         XPrintf("HsfServerIoFlowMeter: 设备挂组失败\n");
         goto fail;
@@ -397,7 +400,7 @@ bool HsfServerIoFlowMeter_values(const HsfServerIoFlowMeter* st,
     if (!st || !st->m_mounted || !st->m_dev || !st->m_bus) return false;
 
     /* 质量：Hub 数据源新鲜度（见文件头说明），不用设备层陈旧计时。 */
-    valid = flowMeterEvaluateQuality(st, HSF_FLOWMETER_STALE_MS);
+    valid = flowMeterEvaluateQuality(st, st->m_staleMs);
     if (outValid) *outValid = valid;
     if (!valid) return false;
 
@@ -430,4 +433,12 @@ bool HsfServerIoFlowMeter_sampleNow(HsfServerIoFlowMeter* st)
 {
     if (!st || !st->m_mounted) return false;
     return flowMeterSampleFromHub(st);
+}
+
+int HsfServerIoFlowMeter_health(int alarms, bool valid)
+{
+    /* 只有**系统报警**算设备告警；「空管」在泵停/无流时必然置位，
+     * 判成故障会让首页误报「电磁流量计 故障」（Python 侧同口径）。 */
+    if (alarms & (int)XFlowMeterAlarm_System) return HsfDeviceHealth_Warning;
+    return valid ? HsfDeviceHealth_Ok : HsfDeviceHealth_Stale;
 }

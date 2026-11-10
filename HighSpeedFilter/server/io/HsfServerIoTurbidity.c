@@ -2,16 +2,19 @@
  * @file       HsfServerIoTurbidity.c
  * @brief      服务端浊度仪站实现。
  * @details    数据流（本站自建，不经 XModbusLink 的直通通路）：
- *               Hub 轮询 FC03（2 个保持寄存器一段）
- *               → 缓存块（保持寄存器 vbase..vbase+1）
+ *               Hub 轮询 FC03（每台各自的寄存器数一段：站 1=2 仅浊度、
+ *               站 2=4 浊度+温度同刻）
+ *               → 缓存块（保持寄存器 vbase..vbase+regCount-1）
  *               → valueChanged(type=HR, vStart, count)
  *               → 本站槽：按区间逐地址重取 → 组 feedRole(role, raw)
- *               → XTurbidityMeter（CDAB 拼装 + float32 解释）→ 缓存/信号
+ *               → XTurbidityMeter（逐台字序拼装：站 1=CDAB、站 2=DCBA
+ *                 + float32 解释）→ 缓存/信号
  *
- *             [为什么一次喂全 2 个] 一帧回填 2 个字、发一次区间信号。本站据此
- *             把 2 个 role 全部 feed 一遍，设备层随后整拍重算——32 位量读到的
- *             高低两字必然同源。若改成"只喂变化的那个字"，高字到达时低字仍是
- *             上一帧值，会解出错值（流量计站同一个教训）。
+ *             [为什么一次喂全 regCount 个] 一帧回填 regCount 个字、发一次区间
+ *             信号。本站据此把全部 role feed 一遍，设备层随后整拍重算——
+ *             32 位量读到的高低两字（以及温度两字）必然同源。若改成"只喂
+ *             变化的那个字"，高字到达时低字仍是上一帧值，会解出错值
+ *             （流量计站同一个教训）。
  *
  *             [为什么读保持寄存器（HR）而流量计读输入寄存器（IR）]
  *             手册 4.3.10.2 的测试命令是 `01 03 00 00 00 02`——**功能码 03**
@@ -43,6 +46,19 @@
  */
 #define HSF_TURB_AREA   XModbusHoldingRegisters
 
+/**
+ * @brief 字序枚举值 → 装配日志短名（诊断用；与 XTurbidityMeterWordOrder 对齐）。
+ */
+static const char* wordOrderString(int order)
+{
+    switch (order) {
+    case (int)XTurbidityMeterWordOrder_LowHigh: return "CDAB";
+    case (int)XTurbidityMeterWordOrder_HighLow: return "ABCD";
+    case (int)XTurbidityMeterWordOrder_Dcba:    return "DCBA";
+    default: return "?";
+    }
+}
+
 /* ==================== 质量判定 ==================== */
 
 /**
@@ -63,7 +79,7 @@ static bool turbStationQuality(const HsfServerIoTurbidity* st, uint32_t staleMs)
     if (!st || !st->m_bus) return false;
     hub = HsfServerBus_hub(st->m_bus);
     if (!hub) return false;
-    for (i = 0; i < (int)HSF_TURBIDITY_REG_COUNT; ++i) {
+    for (i = 0; i < st->m_regCount; ++i) {
         if (XModbusHub_pointValid(hub, HSF_TURB_AREA,
                                   (uint16_t)(st->m_vbase + i), staleMs))
             return true;
@@ -93,7 +109,7 @@ static bool turbSampleFromHub(HsfServerIoTurbidity* st)
     if (!st || !st->m_bus || !st->m_group) return false;
     hub = HsfServerBus_hub(st->m_bus);
     if (!hub) return false;
-    for (i = 0; i < (int)HSF_TURBIDITY_REG_COUNT; ++i) {
+    for (i = 0; i < st->m_regCount; ++i) {
         uint16_t raw = 0;
         if (!XModbusHub_value(hub, HSF_TURB_AREA,
                               (uint16_t)(st->m_vbase + i), &raw))
@@ -118,6 +134,17 @@ static void VHsfServerIoTurbidity_timerEvent(XObject* obj, XTimerEvent* event)
     XEvent_accept(event);
     if (XTimerEvent_timerId(event) == st->m_sampleTimer) {
         (void)turbSampleFromHub(st);
+        /* [温度首拍一次性日志] 带温度的机型（站 2）解出第一拍温度时记一条，
+         * 供现场核对"浊度+温度同刻"确实在工作；只记一次（m_tempLogged），
+         * 周期性遥测值不进日志——日志页要能按页翻，不能被采样刷屏。 */
+        if (!st->m_tempLogged && st->m_dev) {
+            double c = 0.0;
+            if (XTurbidityMeter_temperature(st->m_dev, &c)) {
+                st->m_tempLogged = true;
+                XPrintf("HsfServerIoTurbidity: 浊度仪%d 温度首拍 %.2f℃"
+                        "（0x0000×4 同刻快照）\n", st->m_index + 1, c);
+            }
+        }
         return;
     }
     /* 未知 id 交父类，不吞。 */
@@ -153,9 +180,9 @@ static void VHsfServerIoTurbidity_onHubValueChanged(XObject* receiver,
     if (typeInt != (int)HSF_TURB_AREA) return;
     if (count <= 0) return;
 
-    /* 区间与 [vbase, vbase+2) 不相交则忽略。 */
+    /* 区间与 [vbase, vbase+regCount) 不相交则忽略。 */
     if (vStart < 0) return;
-    if ((uint32_t)vStart >= (uint32_t)st->m_vbase + HSF_TURBIDITY_REG_COUNT) return;
+    if ((uint32_t)vStart >= (uint32_t)st->m_vbase + (uint32_t)st->m_regCount) return;
     if ((uint32_t)vStart + (uint32_t)count <= (uint32_t)st->m_vbase) return;
 
     (void)turbSampleFromHub(st);
@@ -220,6 +247,8 @@ void HsfServerIoTurbidity_init(HsfServerIoTurbidity* st)
     st->m_unitId = -1;
     st->m_index = -1;
     st->m_vbase = 0;
+    st->m_regCount = 0;
+    st->m_tempLogged = false;
     st->m_mounted = false;
 }
 
@@ -238,7 +267,8 @@ HsfServerIoTurbidity* HsfServerIoTurbidity_create(void)
 
 bool HsfServerIoTurbidity_mount(HsfServerIoTurbidity* st, HsfServerBus* bus,
                                 XModbusMapping* map, int unitId,
-                                int index, uint16_t vbase, uint32_t staleMs)
+                                int index, uint16_t vbase, uint32_t staleMs,
+                                int regCount, int wordOrder, uint32_t txQuietMs)
 {
     XModbusHub* hub;
     XModbusHubUnitLimits limits;
@@ -247,6 +277,9 @@ bool HsfServerIoTurbidity_mount(HsfServerIoTurbidity* st, HsfServerBus* bus,
 
     if (!st || st->m_mounted) return false;
     if (!bus || !map) return false;
+    /* 寄存器数合法域 [2,4]：2=仅浊度（站 1）、4=浊度+温度同刻（站 2）。
+     * 映射段/从站约束/点表全按它登记，乱值等于静默改写协议，早失败。 */
+    if (regCount < 2 || regCount > 4) return false;
     hub = HsfServerBus_hub(bus);
     devId = HsfServerBus_deviceId(bus);
     if (!hub || devId < 0) {
@@ -259,41 +292,58 @@ bool HsfServerIoTurbidity_mount(HsfServerIoTurbidity* st, HsfServerBus* bus,
     st->m_unitId = unitId;
     st->m_index = index;
     st->m_vbase = vbase;
+    st->m_regCount = regCount;
+    st->m_tempLogged = false;
 
-    /* ① 映射段：保持寄存器 vbase..vbase+1 ↔ 远端 0x0000..0x0001（FC03）。 */
+    /* ① 映射段：保持寄存器 vbase..vbase+regCount-1 ↔ 远端 0x0000 起同宽
+     *    （FC03；站 2 的 ×4 是"浊度+温度同刻"口径，实测文档 §5.2）。 */
     if (!XModbusMapping_addRangeEx(map, HSF_TURB_AREA, vbase,
-                                   HSF_TURBIDITY_REG_COUNT, devId, unitId,
+                                   regCount, devId, unitId,
                                    HSF_TURBIDITY_REMOTE_ADDR, 0, 0)) {
         XPrintf("HsfServerIoTurbidity: 映射段登记失败（站 %d v=0x%04X）\n",
                 unitId, (unsigned)vbase);
         goto fail;
     }
-    /* ② 从站协议约束（作用域=从站）：单帧读 2 个 + 分级节拍。
-     *    本站只读不写，故不设 singleWriteOnly（没有写路径需要约束）。 */
+    /* ② 从站协议约束（作用域=从站）：单帧读本站寄存器数 + 分级节拍 +
+     *    发帧前总线静默期（站 1=200ms：流量计 49 字节长帧后的恢复期，
+     *    ttyS4 实测 §8；站 2 免疫=0）。本站只读不写，无 singleWriteOnly
+     *    需求之外的写约束。 */
     memset(&limits, 0, sizeof(limits));
-    limits.m_maxReadRegisters = (uint16_t)HSF_TURBIDITY_REG_COUNT;
+    limits.m_maxReadRegisters = (uint16_t)regCount;
     limits.m_rangeBarrier = true;      /* 一帧不跨通信组边界。 */
     limits.m_singleWriteOnly = true;   /* 本站无写路径；保持与其它站一致。 */
     limits.m_minPollIntervalMs = HSF_TURBIDITY_MIN_POLL_MS;
+    limits.m_preTxQuietMs = txQuietMs;
     if (!XModbusHub_setUnitLimits(hub, devId, unitId, &limits)) {
         XPrintf("HsfServerIoTurbidity: 从站约束登记失败（站 %d）\n", unitId);
         goto fail;
     }
-    /* ③ 通道组 + 2 个模拟量输入点（role 0/1 ↔ 寄存器偏移）。 */
+    /* ③ 通道组 + regCount 个模拟量输入点（role 0..regCount-1 ↔ 寄存器偏移；
+     *    role 0/1=浊度、role 2/3=温度（仅 regCount==4 的机型）。 */
     st->m_group = XIoChannelGroup_create();
     if (!st->m_group) goto fail;
-    for (i = 0; i < (int)HSF_TURBIDITY_REG_COUNT; ++i) {
+    for (i = 0; i < regCount; ++i) {
         if (!turbMakePoint(st->m_group, (uint16_t)i)) {
             XPrintf("HsfServerIoTurbidity: 输入点装配失败（role %d）\n", i);
             goto fail;
         }
     }
-    /* ④ 设备抽象（CDAB 拼装 + float32 解释）。
-     *    缺省口径即真机口径，**不要在这里改字序/格式**——那会把手册的实测帧
-     *    解释成天文数字，且质量仍然 valid（最难查的一类错）。 */
+    /* ④ 设备抽象（字序按台配置 + float32 解释）。
+     *    [字序必须逐台配] 2026-11-09 实测：站 1=CDAB（手册）、站 2=DCBA
+     *    （整字节反序）。字序错了不报错、只出假数（1.1e-5 这类），故在
+     *    attach **之前**设置——attach 里的播种重算就会用对口径。 */
     st->m_dev = XTurbidityMeter_create();
     if (!st->m_dev) goto fail;
     XTurbidityMeter_setStaleMs(st->m_dev, staleMs);
+    /* [站点层也记住阈值 2026-11-10] 质量判定走 Hub 块级新鲜度，必须比
+     * **采集周期**而不是编译期基线（与温湿度/流量计站同款）。 */
+    st->m_staleMs = staleMs;
+    if (!XTurbidityMeter_setWordOrder(st->m_dev,
+                                      (XTurbidityMeterWordOrder)wordOrder)) {
+        XPrintf("HsfServerIoTurbidity: 字序配置非法（站 %d，order=%d）\n",
+                unitId, wordOrder);
+        goto fail;
+    }
     if (!XTurbidityMeter_attach(st->m_dev, st->m_group)) {
         XPrintf("HsfServerIoTurbidity: 设备挂组失败（站 %d）\n", unitId);
         goto fail;
@@ -320,10 +370,12 @@ bool HsfServerIoTurbidity_mount(HsfServerIoTurbidity* st, HsfServerBus* bus,
     }
     st->m_mounted = true;
     XPrintf("HsfServerIoTurbidity: 浊度仪%d 装配完成（站 %d，HR v=0x%04X × %d，"
-            "远端 0x%04X，FC%02d，陈旧 %ums）\n",
+            "远端 0x%04X，FC%02d，字序 %s，静默 %ums，陈旧 %ums）\n",
             index + 1, unitId, (unsigned)vbase,
-            (int)HSF_TURBIDITY_REG_COUNT,
+            regCount,
             (unsigned)HSF_TURBIDITY_REMOTE_ADDR, HSF_TURBIDITY_FUNCTION,
+            wordOrderString(wordOrder),
+            (unsigned)txQuietMs,
             (unsigned)staleMs);
     return true;
 
@@ -377,13 +429,23 @@ bool HsfServerIoTurbidity_ntu(const HsfServerIoTurbidity* st, double* outNtu)
     if (outNtu) *outNtu = 0.0;
     if (!st || !st->m_dev) return false;
     /* 质量口径取 Hub 块级新鲜度（见文件头说明），而不是设备层自算的陈旧。 */
-    if (!turbStationQuality(st, HSF_TURBIDITY_STALE_MS)) {
+    if (!turbStationQuality(st, st->m_staleMs)) {
         double v = 0.0;
         (void)XTurbidityMeter_value(st->m_dev, &v);
         if (outNtu) *outNtu = v;    /* 值仍带出（可能是最后一次有效值）。 */
         return false;
     }
     return XTurbidityMeter_value(st->m_dev, outNtu);
+}
+
+bool HsfServerIoTurbidity_tempC(const HsfServerIoTurbidity* st, double* outC)
+{
+    if (outC) *outC = 0.0;
+    if (!st || !st->m_dev) return false;
+    /* 与 ntu 同一道闸：Hub 块级新鲜度。机型无温度（role 2/3 未登记）时
+     * 设备层恒 false，这里自然返回 false。 */
+    if (!turbStationQuality(st, st->m_staleMs)) return false;
+    return XTurbidityMeter_temperature(st->m_dev, outC);
 }
 
 bool HsfServerIoTurbidity_raw(const HsfServerIoTurbidity* st, uint32_t* outBits)
@@ -395,7 +457,7 @@ bool HsfServerIoTurbidity_raw(const HsfServerIoTurbidity* st, uint32_t* outBits)
 
 bool HsfServerIoTurbidity_isOnline(const HsfServerIoTurbidity* st)
 {
-    return turbStationQuality(st, HSF_TURBIDITY_STALE_MS);
+    return turbStationQuality(st, st->m_staleMs);
 }
 
 bool HsfServerIoTurbidity_isMounted(const HsfServerIoTurbidity* st)

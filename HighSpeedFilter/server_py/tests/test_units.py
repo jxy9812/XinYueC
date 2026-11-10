@@ -735,6 +735,26 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.analog.host, "192.168.0.11")
         self.assertEqual(cfg.analog.port, 8234)
 
+    def test_collect_poll_keys_per_device(self):
+        """采集节键：两台浊度 + 流量计逐台可设（与 C 端逐值同步）。
+
+        [2026-11-10 现场要求] 站1 有 200ms 发帧前静默期、站3 没有；流量计
+        49 字节长帧最慢 ⇒ 三者周期必须各自可调。老键 turbidityPollMs 仍是
+        两台共同缺省（向后兼容）。
+        """
+        from hsfsrv import proto
+        self.assertEqual(proto.CFGK_TURBIDITY1_POLL_MS, "turbidity1PollMs")
+        self.assertEqual(proto.CFGK_TURBIDITY2_POLL_MS, "turbidity2PollMs")
+        self.assertEqual(proto.CFGK_FLOWMETER_POLL_MS, "flowmeterPollMs")
+        # 兼容键必须还在（旧客户端只发它）
+        self.assertEqual(proto.CFGK_TURBIDITY_POLL_MS, "turbidityPollMs")
+        cfg = config.Config()
+        self.assertTrue(hasattr(cfg, "turbidity1_poll_ms"))
+        self.assertTrue(hasattr(cfg, "turbidity2_poll_ms"))
+        self.assertTrue(hasattr(cfg, "flowmeter_poll_ms"))
+        # 缺省：流量计 0 = 跟随温湿度（旧行为不变）
+        self.assertEqual(cfg.flowmeter_poll_ms, 0)
+
     def test_int_coercion_falls_back(self):
         """配置文件手改出错不应让服务起不来：非法类型回退缺省值。"""
         self.assertEqual(config._int("abc", 7), 7)
@@ -747,6 +767,7 @@ class TestConfig(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = config.Config()
             cfg.resolve_paths(tmp)
+            cfg.ensure_cfg_dir()       # cfg/ 目录可能还不存在，先建
             cfg.port = 6123
             cfg.vfd_unit_id = 9
             self.assertTrue(cfg.save())
@@ -763,6 +784,7 @@ class TestConfig(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = config.Config()
             cfg.resolve_paths(tmp)
+            cfg.ensure_cfg_dir()       # cfg/ 目录可能还不存在，先建
             cfg.save_run_mode(1)
             cfg2 = config.Config()
             cfg2.config_path = cfg.config_path
@@ -793,7 +815,12 @@ class TestValveBank(unittest.TestCase):
     DO 16..21 / DI 16..27。客户端完全不知道这层，只问"6 个阀什么状态"。
     """
 
-    #: 现场接线（.13 上的通道号）：(DO, 关到位DI, 开到位DI)。
+    #: 现场接线（.13 上的通道号）：(DO, 开到位DI, 关到位DI)。
+    #: [位序订正 2026-11-10] 现场是**开在前、关在后**（板端 cfg 的
+    #: valves.items = openDi 0,2,4… / closeDi 1,3,5…，用户已实机核对过
+    #: 设备定义）。本仓默认 valve_items 与 C 端宏 HSF_VALVE_OPEN_DI 同
+    #: 口径；原先这里是「关在前」，与板端实际接线**相反** ⇒ 同一张 DI
+    #: 位图两端读出相反的阀位（结论反了，不是显示差异）。
     WIRING_13 = [(i, i * 2, i * 2 + 1) for i in range(6)]
     #: 聚合偏移：.13 → 聚合者地址空间。
     #: [2026-11-06 起为 0] .12 已拆除，.13 直接作主模块、点表从 0 起，
@@ -809,22 +836,22 @@ class TestValveBank(unittest.TestCase):
             dev.online = True
             dev.last_ok_ms = 0
             mods.append(dev)
-        # 注意键名顺序：openDi 取「开到位」，即 DI 序号里的**后一个**。
-        items = [{"name": "电磁阀%d" % (i + 1), "module": 0,
+        # 注意键名顺序：openDi 取「开到位」，即 DI 序号里的**前一个**。
+        items = [{"name": "电动球阀%d" % (i + 1), "module": 0,
                   "do": do + self.AGG_OFFSET,
                   "openDi": op + self.AGG_OFFSET,
                   "closeDi": cl + self.AGG_OFFSET}
-                 for i, (do, cl, op) in enumerate(self.WIRING_13)]
+                 for i, (do, op, cl) in enumerate(self.WIRING_13)]
         return valves_mod.ValveBank(mods, items), mods
 
     def test_wiring_close_then_open(self):
-        """每路 DI 必须是「关在前、开在后」，且两路阀之间不重叠。"""
+        """每路 DI 必须是「开在前、关在后」，且两路阀之间不重叠。"""
         bank, _ = self._bank()
         for i, item in enumerate(bank.items):
-            self.assertEqual(item.close_di, self.AGG_OFFSET + i * 2,
-                             "阀%d 关到位 DI 位置错" % (i + 1))
-            self.assertEqual(item.open_di, self.AGG_OFFSET + i * 2 + 1,
-                             "阀%d 开到位 DI 位置错（应为关的下一路）" % (i + 1))
+            self.assertEqual(item.open_di, self.AGG_OFFSET + i * 2,
+                             "阀%d 开到位 DI 位置错" % (i + 1))
+            self.assertEqual(item.close_di, self.AGG_OFFSET + i * 2 + 1,
+                             "阀%d 关到位 DI 位置错（应为开的下一路）" % (i + 1))
             self.assertEqual(item.do, self.AGG_OFFSET + i)
         # 12 个 DI 必须被 6 路两两分完，不能有交叉占用。
         used = []
@@ -1317,7 +1344,7 @@ class TestValveReplyFreshness(unittest.TestCase):
         # 阀点位与现场接线一致（.13 单台 16 点、DI 关在前开在后）。
         do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
         di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
-        items = [{"name": "电磁阀%d" % (i + 1), "module": 0,
+        items = [{"name": "电动球阀%d" % (i + 1), "module": 0,
                   "do": do0 + i, "openDi": di0 + i * 2 + 1,
                   "closeDi": di0 + i * 2} for i in range(6)]
         bank = valves_mod.ValveBank([dev], items, move_timeout_ms=20000)
@@ -1787,12 +1814,13 @@ class TestFlowMeter(unittest.TestCase):
 
         dev = asyncio.run(go())
         self.assertTrue(dev.online)
-        # 虚拟模型基准 36.5 m³/h，±2% 波动
-        self.assertGreater(dev.flow, 35.0)
-        self.assertLess(dev.flow, 38.0)
-        # 流速由流量反算：Q / (π r²)，DN50 时约 5 m/s
-        self.assertGreater(dev.speed, 4.5)
-        self.assertLess(dev.speed, 5.5)
+        # [2026-11-09 ttyS4 实测口径] 虚拟模型基准 3.6 m³/h，±2% 波动
+        # （旧的 36.5 是模拟器自定的口径，与现场仪表读数不符，已改）
+        self.assertGreater(dev.flow, 3.4)
+        self.assertLess(dev.flow, 3.8)
+        # 流速由流量反算：Q / (π r²)，3.6 m³/h、DN50 时约 0.51 m/s
+        self.assertGreater(dev.speed, 0.4)
+        self.assertLess(dev.speed, 0.62)
 
     def test_unit_codes_from_config(self):
         """单位码原样透传（瞬时表与累积表**是两张表**）。"""
@@ -1822,7 +1850,7 @@ class TestFlowMeter(unittest.TestCase):
 
         first, second = asyncio.run(go())
         self.assertGreater(second, first, "累积量必须单调增长")
-        # 36 m³/h 跑 0.35s ≈ 0.0035 m³；给宽容区间（调度抖动）
+        # 3.6 m³/h 跑 0.35s ≈ 0.00035 m³；给宽容区间（调度抖动）
         self.assertLess(second - first, 0.05)
 
     def test_alarm_mask_bits(self):
@@ -1935,6 +1963,7 @@ class TestAnalogScale(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = config.Config()
             cfg.resolve_paths(tmp)
+            cfg.ensure_cfg_dir()       # cfg/ 目录可能还不存在，先建
             cfg.analog.scales[0] = config.AnalogChannelScale(
                 index=0, name="压差计", unit="MPa", fullScale=1.0)
             cfg.save()
@@ -2420,6 +2449,601 @@ class TestVirtualTurbidity(unittest.TestCase):
         self.assertEqual(model.read(3, 0x0010, 2), [0, 0])
 
 
+class TestTurbidityByteOrder(unittest.TestCase):
+    """浊度仪字节序旋钮（2026-11-09 ttyS4 三设备实测口径的回归锁）。
+
+    [口径来源] docs/HSF板端ttyS4三设备取数实测总表_20261109.md：
+        站1 WZT-701A    FC03 0x0000×2  CDAB（低字在前）        2.29 NTU
+        站2 ZHEYI-5100ZDY FC03 0x0000×2/×4  DCBA（整字节反序=小端）0.045 NTU + 19.3℃
+    断言全部用**实测原始帧字节**（文档附录 A），不用"模型喂模型"的自洽值
+    ——两边一起错时自洽照样绿，只有真机帧能钉死口径。
+    """
+
+    # 实测应答帧的数据区（站号/功能码/字节数之后的部分）：
+    #   站1  RSP: 01 03 04 8F 5C 40 12 A1 38   → regs [0x8F5C, 0x4012]
+    ST1_FRAME = (0x8F5C, 0x4012)
+    #   站2  RSP: 02 03 04 4F DD 37 3D 98 3C   → regs [0x4FDD, 0x373D]
+    ST2_FRAME = (0x4FDD, 0x373D)
+    #   站2  浊度+温度一帧：02 03 08 6E 65 3B 3D 00 00 99 41 EB 1F
+    ST2_FRAME4 = (0x6E65, 0x3B3D, 0x0000, 0x9941)
+
+    def test_station1_field_frame_cdab_is_default(self):
+        """站1 实测帧 8F 5C 40 12 → 2.29 NTU（缺省即 CDAB，老行为不改）。"""
+        dev = devices.TurbidityMeter(lambda: None, 1)
+        self.assertIsNone(dev.BYTE_ORDER)      # 未显式给 = 走老旋钮推导
+        ntu = dev._decode(list(self.ST1_FRAME))
+        self.assertAlmostEqual(ntu, 2.29, places=5)
+        self.assertEqual(dev.raw, 0x40128F5C)
+
+    def test_station1_manual_frame_still_9_99(self):
+        """手册帧 D7 0A 41 1F → 9.99 NTU（老口径回归，不许被新旋钮带坏）。"""
+        dev = devices.TurbidityMeter(lambda: None, 1)
+        self.assertAlmostEqual(dev._decode([0xD70A, 0x411F]), 9.99, places=6)
+
+    def test_station2_field_frame_dcba(self):
+        """站2 实测帧 4F DD 37 3D → ≈0.0449 NTU（DCBA 整字节反序）。"""
+        dev = devices.TurbidityMeter(lambda: None, 2, byte_order="DCBA")
+        ntu = dev._decode(list(self.ST2_FRAME))
+        self.assertAlmostEqual(ntu, 0.044897, places=4)
+        self.assertEqual(dev.raw, 0x3D37DD4F)
+
+    def test_station2_frame_under_cdab_is_the_documented_wrong_value(self):
+        """反证：站2 帧按 CDAB 解 = 1.13e-5（文档 §5.3，小 4 个数量级且不报错）。
+
+        [为什么锁错值] 这就是"两台统一 CDAB"旧口径的现场表现——必须让
+        它出现在断言里，才防得住"顺手把缺省改回 CDAB"这类回归。
+        """
+        dev = devices.TurbidityMeter(lambda: None, 2)   # 缺省 CDAB
+        ntu = dev._decode(list(self.ST2_FRAME))
+        self.assertLess(ntu, 1e-4)
+        self.assertNotAlmostEqual(ntu, 0.0449, places=3)
+
+    def test_four_orders_bit_patterns_on_same_frame(self):
+        """同一帧在四种字节序下的位模式（量级荒谬的 ABCD/BADC 也钉住）。"""
+        vals = list(self.ST2_FRAME)
+        dev = devices.TurbidityMeter(lambda: None, 2)
+        dev.BYTE_ORDER = "ABCD"
+        dev._decode(vals)
+        self.assertEqual(dev.raw, 0x4FDD373D)   # 大端原样（文档：7.4e9 ✗）
+        dev.BYTE_ORDER = "BADC"
+        dev._decode(vals)
+        self.assertEqual(dev.raw, 0xDD4F3D37)   # 字内交换（文档：负值 ✗）
+        dev.BYTE_ORDER = "DCBA"
+        dev._decode(vals)
+        self.assertEqual(dev.raw, 0x3D37DD4F)   # 小端（✓ 对上面板 0.04）
+        dev.BYTE_ORDER = "CDAB"
+        dev._decode(vals)
+        self.assertEqual(dev.raw, 0x373D4FDD)   # 低字在前（文档：1.13e-5 ✗）
+
+    def test_invalid_byte_order_rejected(self):
+        """构造传非法字节序要**当场炸**（不能等接上真机才解出假数）。"""
+        with self.assertRaises(ValueError):
+            devices.TurbidityMeter(lambda: None, 1, byte_order="ABBA")
+        # 大小写不敏感（配置文件可能手写小写）
+        dev = devices.TurbidityMeter(lambda: None, 2, byte_order="dcba")
+        self.assertEqual(dev.BYTE_ORDER, "DCBA")
+
+    def test_low_word_first_legacy_knob_still_maps(self):
+        """老旋钮 LOW_WORD_FIRST 的两态映射不变（BYTE_ORDER=None 时兜底）。"""
+        dev = devices.TurbidityMeter(lambda: None, 1)
+        dev.LOW_WORD_FIRST = True
+        self.assertEqual(dev._byte_order(), "CDAB")
+        dev.LOW_WORD_FIRST = False
+        self.assertEqual(dev._byte_order(), "ABCD")
+        # 显式 BYTE_ORDER 优先于老旋钮
+        dev.BYTE_ORDER = "DCBA"
+        self.assertEqual(dev._byte_order(), "DCBA")
+
+    def test_station2_temperature_frame_decode(self):
+        """站2 浊度+温度一帧（×4）：0.045751 NTU / 19.125 ℃（DCBA）。
+
+        帧来源：文档 §5.2「同时取温度」+ 附录 A
+            RSP: 02 03 08 6E 65 3B 3D 00 00 99 41 EB 1F
+        """
+        dev = devices.TurbidityMeter(lambda: None, 2, byte_order="DCBA",
+                                     read_count=4)
+        ntu = dev._decode(list(self.ST2_FRAME4))
+        self.assertAlmostEqual(ntu, 0.045751, places=4)
+        # 温度 = 后两个字，同一字节序
+        temp = dev._decode_word_pair(self.ST2_FRAME4[2], self.ST2_FRAME4[3])
+        self.assertAlmostEqual(temp, 19.125, places=6)
+
+    def test_poll_fills_temperature_only_for_read_count_4(self):
+        """poll 路径：×4 台拿到温度、×2 台温度恒 None（能力边界）。"""
+        import asyncio
+        from hsfsrv import virtualdev
+        # 站2：DCBA ×4，虚拟从站按同口径造帧（fixed 值便于精确断言）
+        model2 = virtualdev.VirtualTurbidity(index=1, base_ntu=0.045,
+                                             byte_order="DCBA",
+                                             temperature=19.3)
+        model2.fixed_ntu = 0.045
+        dev2 = devices.TurbidityMeter(
+            lambda: virtualdev.VirtualMaster(model2, name="虚拟浊度2"),
+            2, byte_order="DCBA", read_count=4)
+        asyncio.run(dev2.poll(1000))
+        self.assertAlmostEqual(dev2.ntu, 0.045, places=4)
+        self.assertAlmostEqual(dev2.temperature, 19.3, places=3)
+        # 站1：CDAB ×2，没有温度能力
+        model1 = virtualdev.VirtualTurbidity(index=0)
+        model1.fixed_ntu = 2.29
+        dev1 = devices.TurbidityMeter(
+            lambda: virtualdev.VirtualMaster(model1, name="虚拟浊度1"), 1)
+        asyncio.run(dev1.poll(1000))
+        self.assertAlmostEqual(dev1.ntu, 2.29, places=5)
+        self.assertIsNone(dev1.temperature)
+
+    def test_read_count_4_short_frame_is_error(self):
+        """要 4 个寄存器只回来 2 个 → 判失败（半帧不能当有效温度）。"""
+        import asyncio
+        from hsfsrv import virtualdev
+
+        class _Short(object):
+            def read(self, function, address, count):
+                return [0x6E65, 0x3B3D]         # 只给浊度两字
+
+            def write_single(self, *a, **kw):
+                raise AssertionError("不该写")
+
+            def on_access(self):
+                pass
+
+        dev = devices.TurbidityMeter(
+            lambda: virtualdev.VirtualMaster(_Short(), name="短帧"),
+            2, byte_order="DCBA", read_count=4)
+        with self.assertRaises(Exception):
+            asyncio.run(dev.poll(1000))
+        self.assertFalse(dev.online)
+
+    def test_sim_fidelity_dcba_roundtrip(self):
+        """模拟器保真（验收口径）：虚拟站2 造的帧经**真实解码路径**读回同值。"""
+        import asyncio
+        import struct
+        from hsfsrv import virtualdev
+        model = virtualdev.VirtualTurbidity(index=1, base_ntu=0.045,
+                                            byte_order="DCBA",
+                                            temperature=19.3)
+        model.fixed_ntu = 0.045
+        dev = devices.TurbidityMeter(
+            lambda: virtualdev.VirtualMaster(model, name="虚拟浊度2"),
+            2, byte_order="DCBA", read_count=4)
+        asyncio.run(dev.poll(1000))
+        self.assertAlmostEqual(dev.ntu, 0.045, places=4)
+        self.assertAlmostEqual(dev.temperature, 19.3, places=3)
+        # 寄存器形态也要对：把实测帧（6E 65 3B 3D）解出的 float32 喂回
+        # 模型，铺出来的寄存器必须**逐字等于实测帧**（文档 §5.4 的
+        # 0x6E65/0x3B3D；不直接写小数——文档印刷值有末位舍入）。
+        frame_ntu = struct.unpack("<f", bytes([0x6E, 0x65, 0x3B, 0x3D]))[0]
+        regs = virtualdev.VirtualTurbidity.regs_for_value(frame_ntu, "DCBA")
+        self.assertEqual(tuple(regs), (0x6E65, 0x3B3D))
+        # CDAB 方向同样钉住（站1 手册帧 9.99 → D7 0A 41 1F）
+        regs_cdab = virtualdev.VirtualTurbidity.regs_for_value(9.99, "CDAB")
+        self.assertEqual(tuple(regs_cdab), (0xD70A, 0x411F))
+
+
+class TestTtyS4DeviceConfig(unittest.TestCase):
+    """ttyS4 三设备的配置缺省与按台装配（站号必须可改，代码不写死）。"""
+
+    def test_field_defaults(self):
+        """缺省=现场口径：站 [1,3]（2026-11-10 站 2 浊度仪面板站号改为 3）、
+        序 [CDAB,DCBA]、数 [2,4]。"""
+        cfg = config.Config()
+        self.assertEqual(cfg.turbidity_unit_ids, [1, 3])
+        self.assertEqual(cfg.turbidity_byte_orders, ["CDAB", "DCBA"])
+        self.assertEqual(cfg.turbidity_read_counts, [2, 4])
+        self.assertEqual(cfg.flowmeter_unit_id, 5)
+        # --sim 基准值（虚拟从站缺省与现场一致）
+        self.assertEqual(cfg.turbidity_sim_ntu, [2.29, 0.045])
+        self.assertEqual(cfg.turbidity_sim_temp, [None, 19.3])
+        self.assertAlmostEqual(cfg.flowmeter_sim_flow, 3.6)
+        self.assertFalse(cfg.flowmeter_sim_empty)
+        # 路 B 事务间隙 200ms / 路 A 0（站5 长帧后站1 恢复期，文档 §8）
+        self.assertEqual(cfg.serial_b.poll_gap_ms, 200)
+        self.assertEqual(cfg.serial.poll_gap_ms, 0)
+
+    def test_load_station_ids_and_per_meter_knobs(self):
+        """配置文件改站号/字节序/读取数都要生效（用户：站号要可以修改）。"""
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = config.Config()
+            cfg.resolve_paths(tmp)
+            cfg.ensure_cfg_dir()       # cfg/ 目录可能还不存在，先建
+            doc = {
+                "serial": {
+                    "unit_ids": {
+                        "flowmeter": 6,
+                        "turbidity": [3, 7],
+                        "turbidity_byte_orders": ["ABCD", "BADC"],
+                        "turbidity_read_counts": [2, 4],
+                    },
+                },
+                "serial_b": {"poll_gap_ms": 250},
+            }
+            with open(cfg.config_path, "w", encoding="utf-8") as fh:
+                json.dump(doc, fh)
+            self.assertTrue(cfg.load())
+            self.assertEqual(cfg.turbidity_unit_ids, [3, 7])
+            self.assertEqual(cfg.turbidity_byte_orders, ["ABCD", "BADC"])
+            self.assertEqual(cfg.turbidity_read_counts, [2, 4])
+            self.assertEqual(cfg.flowmeter_unit_id, 6)
+            self.assertEqual(cfg.serial_b.poll_gap_ms, 250)
+
+    def test_load_drops_invalid_byte_order_entries(self):
+        """配置手写出错按条目丢弃（非法值不能让服务起不来）。"""
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = config.Config()
+            cfg.resolve_paths(tmp)
+            cfg.ensure_cfg_dir()       # cfg/ 目录可能还不存在，先建
+            doc = {"serial": {"unit_ids": {
+                "turbidity_byte_orders": ["CDAB", "abba", "  dcba  "],
+            }}}
+            with open(cfg.config_path, "w", encoding="utf-8") as fh:
+                json.dump(doc, fh)
+            self.assertTrue(cfg.load())
+            self.assertEqual(cfg.turbidity_byte_orders, ["CDAB", "DCBA"])
+
+    def test_load_floors_read_count_at_two(self):
+        """读取数下限 2：32 位量至少两个字，配 1 会被夹回 2。"""
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = config.Config()
+            cfg.resolve_paths(tmp)
+            cfg.ensure_cfg_dir()       # cfg/ 目录可能还不存在，先建
+            doc = {"serial": {"unit_ids": {"turbidity_read_counts": [1, 4]}}}
+            with open(cfg.config_path, "w", encoding="utf-8") as fh:
+                json.dump(doc, fh)
+            self.assertTrue(cfg.load())
+            self.assertEqual(cfg.turbidity_read_counts, [2, 4])
+
+    def test_roundtrip_preserves_station_config(self):
+        """save→load 往返：站号/按台旋钮/间隙不能被落盘悄悄冲回缺省。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = config.Config()
+            cfg.resolve_paths(tmp)
+            cfg.ensure_cfg_dir()       # cfg/ 目录可能还不存在，先建
+            cfg.turbidity_unit_ids = [3, 7]
+            cfg.turbidity_byte_orders = ["ABCD", "BADC"]
+            cfg.turbidity_read_counts = [2, 2]
+            cfg.flowmeter_unit_id = 6
+            cfg.serial_b.poll_gap_ms = 250
+            self.assertTrue(cfg.save())
+            cfg2 = config.Config()
+            cfg2.config_path = cfg.config_path
+            cfg2.resolve_paths(tmp)
+            self.assertTrue(cfg2.load())
+            self.assertEqual(cfg2.turbidity_unit_ids, [3, 7])
+            self.assertEqual(cfg2.turbidity_byte_orders, ["ABCD", "BADC"])
+            self.assertEqual(cfg2.turbidity_read_counts, [2, 2])
+            self.assertEqual(cfg2.flowmeter_unit_id, 6)
+            self.assertEqual(cfg2.serial_b.poll_gap_ms, 250)
+
+    def test_assembly_follows_config(self):
+        """改配置后装配出的设备/虚拟从站站号与旋钮跟着变（端到端）。"""
+        from hsfsrv import app as app_mod
+        from hsfsrv import virtualdev
+        cfg = config.Config()          # 不 load：改属性后直接装配
+        cfg.sim_enabled = True
+        cfg.turbidity_unit_ids = [3, 7]
+        cfg.turbidity_byte_orders = ["ABCD", "BADC"]
+        cfg.turbidity_read_counts = [2, 4]
+        cfg.flowmeter_unit_id = 6
+        a = app_mod.App(cfg, log=lambda m: None)
+        a.build_devices()
+        # 设备层：站号/字节序/读取数都来自 cfg
+        self.assertEqual([t.unit_id for t in a.turbidity], [3, 7])
+        self.assertEqual(a.turbidity[0]._byte_order(), "ABCD")
+        self.assertEqual(a.turbidity[0].read_count, 2)
+        self.assertEqual(a.turbidity[1]._byte_order(), "BADC")
+        self.assertEqual(a.turbidity[1].read_count, 4)
+        self.assertEqual(a.flowmeter.unit_id, 6)
+        # 虚拟从站挂在**改过的站号**上（模拟器站号从 config 来）
+        master = a.turbidity[0]._master_factory()
+        self.assertIn(3, master.models)
+        self.assertIn(7, master.models)
+        self.assertIn(6, master.models)
+        self.assertIsInstance(master.models[3], virtualdev.VirtualTurbidity)
+        self.assertEqual(master.models[3].byte_order, "ABCD")
+        self.assertEqual(master.models[7].byte_order, "BADC")
+        # 路 B 主站的间隙 = cfg.serial_b.poll_gap_ms（真串口下生效；
+        # sim 的 VirtualMultiMaster 没有该参数，属正常）
+
+    def test_assembly_defaults_match_field(self):
+        """纯缺省装配：台1 站1 CDAB×2、台2 站3(原2) DCBA×4，虚拟从站缺省=现场值。"""
+        from hsfsrv import app as app_mod
+        cfg = config.Config()
+        cfg.sim_enabled = True
+        a = app_mod.App(cfg, log=lambda m: None)
+        a.build_devices()
+        self.assertEqual(a.turbidity[0].unit_id, 1)
+        self.assertEqual(a.turbidity[0]._byte_order(), "CDAB")
+        self.assertEqual(a.turbidity[0].read_count, 2)
+        self.assertIsNone(a.turbidity[0].temperature)
+        # [2026-11-10 现场变更] 第二台面板站号 2 → 3
+        self.assertEqual(a.turbidity[1].unit_id, 3)
+        self.assertEqual(a.turbidity[1]._byte_order(), "DCBA")
+        self.assertEqual(a.turbidity[1].read_count, 4)
+        # 虚拟从站的基准值 = 现场实测口径（模型键跟随站号：1 与 3）
+        master = a.turbidity[0]._master_factory()
+        st1, st2 = master.models[1], master.models[3]
+        self.assertAlmostEqual(st1.base_ntu, 2.29)
+        self.assertIsNone(st1.temperature)
+        self.assertAlmostEqual(st2.base_ntu, 0.045)
+        self.assertAlmostEqual(st2.temperature, 19.3)
+        fm = master.models[5]
+        self.assertAlmostEqual(fm.base_flow, 3.6)
+        self.assertEqual(fm.alarm_empty, 0)      # 空管 False
+        self.assertEqual(fm.flow_unit, 5)        # 单位码 5 = m³/h
+
+
+class TestTtyS4Fidelity(unittest.TestCase):
+    """ttyS4 模拟器保真行为锁（2026-11-10，实测文档 §1.1/§1.3/§5.5/§8）。
+
+    [钉四件事 —— 与 C 端 hsf_regression_test.c §K6~K9 互为镜像]
+      · 站 1 恢复期：站 5 的 49 字节长帧收口后 125ms 内站 1 **无应答**
+        （ModbusTimeout）——主站的站间间隙（serial_b.poll_gap_ms=200）正是
+        为规避它存在的；模拟它，间隙/补齐逻辑才能在长稳里被真实锻炼。
+      · 站 2 功能码怪癖：FC04 请求也受理且**寄存器与 FC03 完全一致**
+        （帧级"应答功能码恒 03"由 C 侧 responseFunction 钩子逐字节复刻；
+        Python 虚拟层不落帧，怪癖在值层面表现为 FC04 读成功且同值）。
+      · 应答时延旋钮存在且可配：缺省 0（既有用法一字不改），配置后
+        **只断言行为方向**（应答照常到达），不量耗时（CI 抖动必假红）。
+      · 数值微抖动：站 1 恒定 2.29、站 2 0.045±0.001 + 温度 19.3±0.05、
+        流量计 3.6±2% 正弦、空管 False（带内断言，不锁逐拍相位）。
+    """
+
+    # ---------------------------------------------------------- 恢复期 ----
+    def _recovery_bus(self, window_ms=125):
+        from hsfsrv import virtualdev
+        t1 = virtualdev.VirtualTurbidity(index=0, base_ntu=2.29,
+                                         wobble_ntu=0)
+        fm = virtualdev.VirtualFlowMeter(base_flow=3.6)
+        bus = virtualdev.VirtualMultiMaster({1: t1, 5: fm})
+        # [时延全零] 恢复期是毫秒判据，配零时延保证确定性（不引入抖动）。
+        bus.set_unit_reply_latency(1, 0, 0)
+        bus.set_unit_reply_latency(5, 0, 0)
+        bus.set_recovery_gate(5, 1, window_ms)
+        return bus
+
+    def test_station1_silent_right_after_flow_long_frame(self):
+        """站5 长帧（22 寄存器 = 49 字节）收口后立刻问站1 ⇒ 无应答（超时）。"""
+        import asyncio
+        from hsfsrv import modbus
+        bus = self._recovery_bus()
+
+        async def go():
+            vals = await bus.read(3, 0x1010, 22, unit=5)
+            self.assertEqual(len(vals), 22)      # 长帧应答照常
+            with self.assertRaises(modbus.ModbusTimeout):
+                await bus.read(3, 0x0000, 2, unit=1)
+
+        asyncio.run(go())
+
+    def test_station1_recovers_after_window(self):
+        """恢复期窗口外（≥125ms）站1 恢复应答（真机 125ms 起 10/10）。"""
+        import asyncio
+        import time
+        bus = self._recovery_bus()
+
+        async def go():
+            await bus.read(3, 0x1010, 22, unit=5)
+            time.sleep(0.13)                     # 130ms > 125ms 窗口
+            return await bus.read(3, 0x0000, 2, unit=1)
+
+        vals = asyncio.run(go())
+        self.assertEqual(len(vals), 2)
+
+    def test_recovery_window_configurable(self):
+        """旋钮可配：窗口 0 = 关闸（立刻问站1 也照常应答）。"""
+        import asyncio
+        bus = self._recovery_bus(window_ms=0)
+
+        async def go():
+            await bus.read(3, 0x1010, 22, unit=5)
+            return await bus.read(3, 0x0000, 2, unit=1)
+
+        vals = asyncio.run(go())
+        self.assertEqual(len(vals), 2)
+
+    def test_master_gap_avoids_recovery(self):
+        """端到端方向锁：站间间隙 200ms（cfg.serial_b 缺省）> 125ms 窗口
+        ⇒ 长帧后紧跟的站1 事务不再落进死区（「被主站间隙规避」本体）。"""
+        import asyncio
+        from hsfsrv import virtualdev
+        t1 = virtualdev.VirtualTurbidity(index=0, base_ntu=2.29, wobble_ntu=0)
+        fm = virtualdev.VirtualFlowMeter(base_flow=3.6)
+        bus = virtualdev.VirtualMultiMaster({1: t1, 5: fm}, min_tx_gap_ms=200)
+        bus.set_unit_reply_latency(1, 0, 0)
+        bus.set_unit_reply_latency(5, 0, 0)
+        bus.set_recovery_gate(5, 1, 125)
+
+        async def go():
+            await bus.read(3, 0x1010, 22, unit=5)    # 站5 长帧收口
+            return await bus.read(3, 0x0000, 2, unit=1)   # 间隙垫到窗口外
+
+        vals = asyncio.run(go())
+        self.assertEqual(len(vals), 2)
+
+    def test_default_bus_has_no_gap_and_no_gate(self):
+        """缺省构造零间隙零闸零时延（既有用法一字不改）。"""
+        import asyncio
+        from hsfsrv import virtualdev
+        bus = virtualdev.VirtualMultiMaster(
+            {1: virtualdev.VirtualTurbidity(index=0)})
+
+        async def go():
+            self.assertEqual(bus.min_tx_gap_ms, 0)
+            self.assertIsNone(bus._recovery)
+            self.assertEqual(bus._unit_latency, {})
+            return await bus.read(3, 0x0000, 2, unit=1)
+
+        vals = asyncio.run(go())
+        self.assertEqual(len(vals), 2)
+
+    # ---------------------------------------------------- 时延旋钮 ----
+    def test_reply_latency_knob_configurable(self):
+        """时延旋钮存在、可配、(0,0) 立即应答；只断言方向不量耗时。"""
+        import asyncio
+        import time
+        from hsfsrv import virtualdev
+        bus = virtualdev.VirtualMultiMaster(
+            {1: virtualdev.VirtualTurbidity(index=0, base_ntu=2.29,
+                                            wobble_ntu=0)})
+
+        async def go():
+            bus.set_unit_reply_latency(1, 0, 0)
+            t0 = time.monotonic()
+            vals = await bus.read(3, 0x0000, 2, unit=1)
+            self.assertLess(time.monotonic() - t0, 0.05,
+                            "(0,0) 不应引入可感知时延")
+            # [实测档] 配成文档区间后同样应答（是否真睡了 37~43ms 不断言）
+            bus.set_unit_reply_latency(1, 37, 43)
+            vals2 = await bus.read(3, 0x0000, 2, unit=1)
+            return vals, vals2
+
+        vals, vals2 = asyncio.run(go())
+        self.assertEqual(len(vals), 2)
+        self.assertEqual(len(vals2), 2)
+        self.assertEqual(bus._unit_latency[1], (37, 43))
+
+    # ------------------------------------------------- 站2 功能码怪癖 ----
+    def test_station2_fc04_same_registers_as_fc03(self):
+        """站2 ZHEYI：FC04 请求受理且寄存器与 FC03 逐字一致（应答恒 03 的
+        帧级口径见 C 端 §K8；本层不落帧，锁值层面）。"""
+        from hsfsrv import virtualdev
+        m = virtualdev.VirtualTurbidity(index=1, base_ntu=0.045,
+                                        byte_order="DCBA", temperature=19.3,
+                                        wobble_ntu=0.001, temp_wobble_c=0.05)
+        self.assertEqual(m.read(4, 0x0000, 4), m.read(3, 0x0000, 4))
+        self.assertEqual(m.read(4, 0x0000, 2), m.read(3, 0x0000, 2))
+
+    def test_station1_fc04_still_rejected(self):
+        """站1 WZT 没有 FC04 怪癖：仍拒绝（实测 FC04 无应答；本层抛 KeyError
+        保持既有口径，与既有 test_only_fc03_and_readonly 同向）。"""
+        from hsfsrv import virtualdev
+        m = virtualdev.VirtualTurbidity(index=0, base_ntu=2.29, wobble_ntu=0)
+        with self.assertRaises(KeyError):
+            m.read(4, 0x0000, 2)
+
+    # ---------------------------------------------------- 数值微抖动 ----
+    def test_station1_ntu_constant(self):
+        """站1 浊度恒定（wobble_ntu=0；实测 20 轮最小=最大=2.29）。"""
+        import struct
+        from hsfsrv import virtualdev
+        m = virtualdev.VirtualTurbidity(index=0, base_ntu=2.29, wobble_ntu=0)
+        seen = set()
+        for _ in range(5):
+            vals = m.read(3, 0x0000, 2)
+            seen.add(tuple(vals))
+        self.assertEqual(len(seen), 1)
+        vals = m.read(3, 0x0000, 2)
+        bits = (vals[1] << 16) | vals[0]
+        ntu = struct.unpack(">f", struct.pack(">I", bits))[0]
+        self.assertAlmostEqual(ntu, 2.29, places=5)
+
+    def test_station2_ntu_wobble_band(self):
+        """站2 浊度带内 0.045±0.001（缓慢波动；不锁逐拍相位）。"""
+        from hsfsrv import virtualdev
+        m = virtualdev.VirtualTurbidity(index=1, base_ntu=0.045,
+                                        wobble_ntu=0.001)
+        for _ in range(5):
+            ntu = m._ntu_now()
+            self.assertGreaterEqual(ntu, 0.0438)
+            self.assertLessEqual(ntu, 0.0462)
+
+    def test_station2_temp_drift_band(self):
+        """站2 温度带内 19.3±0.05（缓慢漂移；实测 19.25~19.3125）。"""
+        from hsfsrv import virtualdev
+        m = virtualdev.VirtualTurbidity(index=1, temperature=19.3,
+                                        temp_wobble_c=0.05)
+        for _ in range(5):
+            temp = m._temp_now()
+            self.assertGreaterEqual(temp, 19.24)
+            self.assertLessEqual(temp, 19.36)
+        # 恒温语义不回退：幅 0 = 恒等于基准
+        m2 = virtualdev.VirtualTurbidity(index=1, temperature=19.3)
+        self.assertAlmostEqual(m2._temp_now(), 19.3)
+
+    def test_flowmeter_wobble_band_and_empty_false(self):
+        """流量计按基准 3.6 ±2% 正弦微波动；空管报警维持 False。"""
+        import asyncio
+        from hsfsrv import devices, virtualdev
+        model = virtualdev.VirtualFlowMeter(base_flow=3.6)
+        master = virtualdev.VirtualMaster(model, name="虚拟流量计")
+        dev = devices.FlowMeter(lambda: master, 5)
+
+        async def go():
+            await dev.poll(1000)
+
+        asyncio.run(go())
+        self.assertGreaterEqual(dev.flow, 3.52)   # 3.6 × (1 - 0.02)
+        self.assertLessEqual(dev.flow, 3.68)      # 3.6 × (1 + 0.02)
+        self.assertFalse(dev.alarm_empty)
+
+    # ------------------------------------------------- 配置与装配接线 ----
+    def test_cfg_fidelity_defaults(self):
+        """cfg 缺省 = 实测口径（与 C 端 HSF_SIM_* 宏逐值同源）。"""
+        cfg = config.Config()
+        self.assertEqual(cfg.sim_turbidity_reply_ms, [(37, 43), (31, 33)])
+        self.assertEqual(cfg.sim_flowmeter_reply_ms, (68, 69))
+        self.assertEqual(cfg.sim_recovery_ms, 125)
+        self.assertEqual(cfg.turbidity_sim_wobble, [0.0, 0.001])
+        self.assertEqual(cfg.turbidity_sim_temp_wobble, [0.0, 0.05])
+
+    def test_cfg_sim_section_overrides(self):
+        """配置文件 sim 节可覆盖时延/恢复期/波动（压联调时长用）。"""
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = config.Config()
+            cfg.resolve_paths(tmp)
+            cfg.ensure_cfg_dir()
+            doc = {"sim": {
+                "turbidity_reply_ms": [[0, 0], [0, 0]],
+                "flowmeter_reply_ms": [10, 20],
+                "recovery_ms": 0,
+                "turbidity_wobble_ntu": [0.0, 0.002],
+                "temp_wobble_c": [0.0, 0.1],
+            }}
+            with open(cfg.config_path, "w", encoding="utf-8") as fh:
+                json.dump(doc, fh)
+            self.assertTrue(cfg.load())
+            self.assertEqual(cfg.sim_turbidity_reply_ms, [(0, 0), (0, 0)])
+            self.assertEqual(cfg.sim_flowmeter_reply_ms, (10, 20))
+            self.assertEqual(cfg.sim_recovery_ms, 0)
+            self.assertEqual(cfg.turbidity_sim_wobble, [0.0, 0.002])
+            self.assertEqual(cfg.turbidity_sim_temp_wobble, [0.0, 0.1])
+
+    def test_assembly_wires_fidelity_knobs(self):
+        """装配把时延/恢复期/间隙按 cfg 接到路 B 虚拟总线（站号跟随配置）。"""
+        from hsfsrv import app as app_mod
+        cfg = config.Config()          # 不 load：改属性后直接装配
+        cfg.sim_enabled = True
+        cfg.turbidity_unit_ids = [3, 7]
+        cfg.flowmeter_unit_id = 6
+        a = app_mod.App(cfg, log=lambda m: None)
+        a.build_devices()
+        master = a.turbidity[0]._master_factory()
+        # [间隙] sim 主站 = VirtualMultiMaster，与真串口 RtuMaster 同参
+        self.assertEqual(master.min_tx_gap_ms, cfg.serial_b.poll_gap_ms)
+        self.assertEqual(master.min_tx_gap_ms, 200)
+        # [时延按站号] 站号改过（3/7/6）后旋钮跟到新站号上
+        self.assertEqual(master._unit_latency.get(3), (37, 43))
+        self.assertEqual(master._unit_latency.get(7), (31, 33))
+        self.assertEqual(master._unit_latency.get(6), (68, 69))
+        # [恢复期] 长帧站=流量计(6)、受影响站=浊度1(3)、窗口 125ms
+        self.assertEqual(master._recovery, (6, 3, 125))
+        # [微波动按台] 站3(台0) 恒定 / 站7(台1) ±0.001 + 温度 ±0.05
+        st3, st7 = master.models[3], master.models[7]
+        self.assertEqual(st3.wobble_ntu, 0.0)
+        self.assertAlmostEqual(st7.wobble_ntu, 0.001)
+        self.assertAlmostEqual(st7.temp_wobble_c, 0.05)
+        self.assertAlmostEqual(master.models[6].base_flow, 3.6)
+
+
 class _CountingMaster(object):
     """包一层数写次数（用于验证幂等：重复命令不该再发一帧）。"""
 
@@ -2823,6 +3447,13 @@ class TestAutoRunningExposed(unittest.TestCase):
             obj.auto_ctx, log=lambda m: None)
         obj._auto_err_at = {}
         obj._log = lambda m: None
+        # [夹具补齐日志入口] 2026-11-09 起「模式切换/退出自动」走
+        # _log_with_store(msg, category) 定点入库（类别 = auto）。白盒夹具
+        # 用 __new__ 跳过 __init__，没有 _log_raw/store ⇒ set_run_mode 会
+        # AttributeError。这里把带类别的入口替成空实现（_log 仍保持单参
+        # 口径，跟模块内 log(msg) 的约定一致）。
+        obj._log_raw = lambda m: None
+        obj._log_with_store = lambda msg, category=None: None
         return obj
 
     def test_manual_default_stopped(self):
@@ -2974,7 +3605,7 @@ class TestHealthAddr(unittest.TestCase):
         [2026-11-06 口径] .12 拆除后点位整体减 16 ⇒ 区间是 DO0~DO5。
         """
         a, _cfg = self._app()
-        valve = [e for e in self._entries(a) if e.name == "电磁阀组"][0]
+        valve = [e for e in self._entries(a) if e.name == "电动球阀组"][0]
         self.assertIn("DO0", valve.addr)
         self.assertIn("DO5", valve.addr)
         self.assertNotIn("DO16", valve.addr,
@@ -3098,21 +3729,23 @@ class TestDefaultsMatchField(unittest.TestCase):
         self.assertTrue(mods[0].publish, "唯一模块必须发布点位")
 
     def test_valves_default_to_field_wiring(self):
-        """6 路阀默认按图纸接线（DO0..5，关到位 DI 在前）。
+        """6 路阀默认按图纸接线（DO0..5，开到位 DI 在前）。
 
         [2026-11-06 口径变更] 原为 DO16..21（.12 聚合上半区）。.12 拆除后
         只剩 .13 一台 16 点模块、点表从 0 起 ⇒ 整体减 16。
+        [2026-11-10 位序订正] 开到位在前（板端 cfg 实机口径），原先默认
+        取的是关在前 ⇒ 与板端实际接线相反（阀位结论会反）。
         """
         _a, cfg = self._app()
         self.assertEqual(len(cfg.valve_items), 6)
         for i, item in enumerate(cfg.valve_items):
             self.assertEqual(item["module"], 0)
             self.assertEqual(item["do"], i)
-            self.assertEqual(item["close_di"] if "close_di" in item
-                             else item["closeDi"], i * 2,
-                             "阀%d 关到位应在开到位之前" % (i + 1))
             self.assertEqual(item["open_di"] if "open_di" in item
-                             else item["openDi"], i * 2 + 1)
+                             else item["openDi"], i * 2,
+                             "阀%d 开到位应在关到位之前" % (i + 1))
+            self.assertEqual(item["close_di"] if "close_di" in item
+                             else item["closeDi"], i * 2 + 1)
 
     def test_valve_bank_actually_ready_with_defaults(self):
         """纯默认配置下 6 路阀必须都"已装配"（不能显示未配置）。"""
@@ -3149,7 +3782,7 @@ class TestDefaultsMatchField(unittest.TestCase):
         doc = bson.decode(a.encode_health())
         names = [doc.get("d%d_name" % i) for i in range(doc.get("devCount", 0))]
         for expect in ("搅拌泵", "温湿度", "电磁流量计", "浊度仪1", "浊度仪2",
-                       "进水泵", "模拟量模块", "数字量", "电磁阀组"):
+                       "进水泵", "模拟量模块", "数字量", "电动球阀组"):
             self.assertIn(expect, names,
                           "缺设备 %r（别人拉取后会看到少一块）" % expect)
 
@@ -3268,8 +3901,12 @@ class TestButtonStation(unittest.TestCase):
         return buttons.ButtonStation(self._Ctx(dev), items or self.ITEMS,
                                      debounce_ms=debounce_ms), dev, model
 
-    def _tick(self, st, dev, now_ms):
+    def _tick(self, st, dev, now_ms, auto_mode=True):
         """一拍：采集 + 判定 + 让写灯协程落地。
+
+        :param auto_mode: 以哪个模式采集。**默认 True（自动模式）**——
+            灯跟随运行态是**自动模式**的契约（2026-11-10 用户口径：
+            手动模式灯归人工，自动逻辑一个字都不写）。
 
         [必须同一个事件循环] `ButtonStation._apply_lamps` 用
         `asyncio.ensure_future` 投递写灯协程——它挂在**当前** loop 上。
@@ -3280,7 +3917,7 @@ class TestButtonStation(unittest.TestCase):
 
         async def one():
             await dev.poll(now_ms)
-            st.poll(now_ms)
+            st.poll(now_ms, auto_mode)
             await asyncio.sleep(0.02)       # 让 ensure_future 的写灯跑完
 
         asyncio.run(one())
@@ -3593,7 +4230,9 @@ class TestAutoButtonLogic(unittest.TestCase):
         async def one():
             await dev.poll(now_ms)
             dev.online = bool(online)
-            st.poll(now_ms)
+            # 灯的归属按模式分（2026-11-10）：自动模式跟随运行态，
+            # 手动模式自动逻辑一个字都不写 ⇒ 同一个 auto_mode 传下去。
+            st.poll(now_ms, auto_mode)
             ctl.poll_idle(now_ms, auto_mode)
             await asyncio.sleep(0.02)       # 让灯/全停的协程落地
 
@@ -3728,16 +4367,30 @@ class TestAutoButtonLogic(unittest.TestCase):
 
     # ---- 4. 灯跟运行态，不跟按键 ----
     def test_lamps_follow_running_state_not_button(self):
-        """按下启动但被拒（手动模式）⇒ 灯**仍是停止**。
+        """按下启动但被拒 ⇒ 灯**不会**亮成"在跑"。
 
         [为什么这条重要] 若灯跟着按键走，操作员会看到"启动灯亮了"以为设备
         在跑，实际什么都没发生 —— 比不亮更危险。
+
+        [2026-11-10 契约变更：灯的归属按模式分]
+            · **自动模式**：灯跟随**运行态**（不跟按键）——启动被拒 ⇒ 仍是停止；
+            · **手动模式**：灯**不由自动逻辑写**（灯归人工，操作员可单独点
+              某一盏灯做检修指示）⇒ 按键既不点亮启动灯，也不去改停止灯。
         """
+        # ---- 自动模式：启动被拒 ⇒ 灯仍是停止（跟随运行态）----
         ctl, st, dev, model = self._rig()
         model.press_button(13, True)
-        self._tick(ctl, st, dev, 1000, auto_mode=False)
+        self._tick(ctl, st, dev, 1000, auto_mode=True)
         self.assertFalse(bool((model.do_mask >> 7) & 1), "启动灯不得亮")
         self.assertTrue(bool((model.do_mask >> 8) & 1), "停止灯应亮")
+
+        # ---- 手动模式：自动逻辑一个字都不写（灯归人工）----
+        ctl2, st2, dev2, model2 = self._rig()
+        model2.press_button(13, True)
+        self._tick(ctl2, st2, dev2, 1000, auto_mode=False)
+        self.assertFalse(bool((model2.do_mask >> 7) & 1), "启动灯不得亮")
+        self.assertFalse(bool((model2.do_mask >> 8) & 1),
+                         "手动模式：停止灯也不由自动逻辑写（灯归人工）")
 
     # ---- 5. 切回手动要全停 ----
     def test_leaving_auto_stops_everything(self):

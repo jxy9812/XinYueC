@@ -15,12 +15,15 @@
  *
  *               ① Words（数字量，RS-485/Modbus 一类）
  *                  浊度占据**连续两个 16 位寄存器**，拼成一个 32 位量再解释。
- *                  三个口径旋钮必须可配，因为它们**各厂家不同**：
- *                    · 字序（word order）：低字在前（CDAB）还是高字在前（ABCD）
+ *                  口径旋钮必须可配，因为它们**各厂家不同**：
+ *                    · 字序（word order）：CDAB（低字在前）/ ABCD（高字在前）/
+ *                      DCBA（整字节反序=小端，2026-11-09 ZHEYI-5100ZDY 实测新增）
  *                    · 格式（format）：IEEE754 单精度 / 无符号整数 / 有符号整数
  *                    · 除数（divisor）：整数格式下的 raw / divisor = NTU
  *                  缺省值取**实测真机**口径（WZT-701A：CDAB + Float32），
- *                  见下面 [真机实测帧]。
+ *                  见下面 [真机实测帧]。带温度的机型（ZHEYI-5100ZDY 按
+ *                  0x0000×4 一帧读浊度+温度）由装配层多登记两个点（role
+ *                  2/3），本类自动同刻解出温度（XTurbidityMeter_temperature）。
  *
  *               ② Analog（模拟量，4-20mA 一类）
  *                  浊度只占**一路**模拟量输入点，点内已有通道层标度
@@ -87,17 +90,29 @@ extern "C" {
  *          | role | Words 模式（数字量）        | Analog 模式（模拟量）  |
  *          |------|-----------------------------|------------------------|
  *          | 0    | 首字（配合 m_wordOrder 解释）| 唯一一路模拟量输入     |
- *          | 1    | 次字                        | 不使用                 |
+ *          | 1    | 次字（浊度 32 位量）        | 不使用                 |
+ *          | 2    | 温度低字（可选，见下）      | 不使用                 |
+ *          | 3    | 温度高字（可选，见下）      | 不使用                 |
  *
- *          [为什么 Words 模式的两个 role 固定相邻] 装配层按「从站起始地址 +
+ *          [为什么 Words 模式的前两个 role 固定相邻] 装配层按「从站起始地址 +
  *          偏移」登记点，相邻两寄存器天然相邻；把 role 做成可配项只会让
  *          装配代码多一处可以写错的地方，且没有任何现场需要非相邻。字序
  *          的差异由 XTurbidityMeterWordOrder 表达，与 role 无关。
+ *
+ *          [role 2/3 为什么是"可选"] 2026-11-09 板端实测（ttyS4 总线）：
+ *          ZHEYI-5100ZDY（2026-11-10 起面板站号 3）按 `0x0000×4` 一帧同刻读出浊度 + 温度
+ *          （前两字浊度、后两字温度，字序与浊度一致）；WZT-701A（站 1）
+ *          只有 2 个寄存器、无温度。装配层给带温度的机型登记 4 个点、
+ *          不带的登记 2 个——role 2/3 **同时**存在才解温度，缺一个按
+ *          "无温度"处理（不报错、不解半截）。温度只进设备层缓存与日志，
+ *          不进遥测推送帧（0x00010009 形状不变）。
  */
 typedef enum XTurbidityMeterRole {
-    XTurbidityMeterRole_Word0 = 0,  /**< 首字 / 模拟量通道。 */
-    XTurbidityMeterRole_Word1 = 1,  /**< 次字（Analog 模式不用）。 */
-    XTurbidityMeterRole_Count = 2   /**< 槽位总数（装配用上界，非真实槽）。 */
+    XTurbidityMeterRole_Word0 = 0,  /**< 首字（浊度 32 位量）/ 模拟量通道。 */
+    XTurbidityMeterRole_Word1 = 1,  /**< 次字（浊度 32 位量；Analog 模式不用）。 */
+    XTurbidityMeterRole_Word2 = 2,  /**< 温度低字（可选；两字齐备才解温度）。 */
+    XTurbidityMeterRole_Word3 = 3,  /**< 温度高字（可选）。 */
+    XTurbidityMeterRole_Count = 4   /**< 槽位总数（装配用上界，非真实槽）。 */
 } XTurbidityMeterRole;
 
 /**
@@ -110,14 +125,25 @@ typedef enum XTurbidityMeterSourceMode {
 
 /**
  * @brief 32 位量的字序（**各厂家不同，必须可配**）。
- * @details 拼装公式：
+ * @details 线上 4 字节 b0..b3（Modbus 寄存器载荷：w0=b0b1、w1=b2b3，寄存器
+ *          内高字节在前）拼成 float32 的四种常见口径里，本类支持三种：
  *            LowHigh（CDAB）：bits = ((uint32_t)w1 << 16) | w0
  *            HighLow（ABCD）：bits = ((uint32_t)w0 << 16) | w1
+ *            Dcba（整字节反序 = 小端）：bits 反推为
+ *              ((w1&0xFF)<<24) | ((w1&0xFF00)<<8) | ((w0&0xFF)<<8) | (w0>>8)
+ *              等价于「先按 ABCD 拼好再整 32 位字节反序」。
  *          其中 w0/w1 是 role 0/1 的原始 16 位字。
+ *
+ *          [Dcba 的来历] 2026-11-09 板端实测：ZHEYI-5100ZDY（时为站 2，
+          2026-11-10 起面板改 3）的
+ *          应答帧 `4F DD 37 3D` 按 DCBA（=struct.unpack("<f")）解出
+ *          0.0449 NTU，与面板显示一致；按旧 CDAB 口径解出 1.1e-5（小 4
+ *          个数量级的假数且不报错）。四口径对照见实测文档 §5.3/§7。
  */
 typedef enum XTurbidityMeterWordOrder {
     XTurbidityMeterWordOrder_LowHigh = 0, /**< 低字在前（CDAB；WZT-701A 实测口径）。 */
-    XTurbidityMeterWordOrder_HighLow = 1  /**< 高字在前（ABCD；流量计等同款口径）。 */
+    XTurbidityMeterWordOrder_HighLow = 1, /**< 高字在前（ABCD；流量计等同款口径）。 */
+    XTurbidityMeterWordOrder_Dcba = 2     /**< 整字节反序（DCBA=小端 float32；ZHEYI-5100ZDY 实测口径）。 */
 } XTurbidityMeterWordOrder;
 
 /**
@@ -163,6 +189,9 @@ typedef struct XTurbidityMeter {
     double m_ntu;                       /**< 最近浊度（NTU；未收到数据为 0）。 */
     uint32_t m_rawBits;                 /**< Words 模式：最近拼装出的 32 位原始位模式（诊断用）。 */
     int32_t m_analogEng;                /**< Analog 模式：最近一次通道工程值（诊断用）。 */
+    double m_tempC;                     /**< 最近水温（℃；机型不带温度恒 0）。 */
+    uint32_t m_tempRawBits;             /**< Words 模式：温度 32 位原始位模式（诊断用）。 */
+    bool m_tempReceived;                /**< 是否收到过至少一拍温度（role 2/3 齐备才有）。 */
     bool m_received;                    /**< 是否收到过至少一拍。 */
     uint64_t m_lastChangeMs;            /**< 最近一拍时刻（单调毫秒；XDateTime 口径）。 */
     uint32_t m_staleMs;                 /**< 陈旧判定阈值（毫秒）；0=不判陈旧。默认 5000。 */
@@ -329,6 +358,29 @@ uint32_t XTurbidityMeter_staleMs(const XTurbidityMeter* self);
  * @note 只读查询，无副作用、不发信号。
  */
 bool XTurbidityMeter_value(const XTurbidityMeter* self, double* outNtu);
+
+/**
+ * @brief 读水温（℃）。
+ * @param self 目标浊度仪；可为 NULL。
+ * @param outTempC 输出温度（调用方提供；可为 NULL——此时仅作"有没有"判定）。
+ * @return 机型带温度（role 2/3 齐备）且收到过至少一拍返回 true 并写
+ *         outTempC；否则 false（outTempC 写 0）。
+ * @note  [温度与浊度同刻] 温度字与浊度字在同一帧应答里（×4 按 0x0000×4
+ *        一帧读），整帧回填后整拍重算，两者的"最近一拍"天然同源。
+ *        [只进设备层/日志] 温度不参与遥测推送帧（0x00010009 形状铁律），
+ *        调用方拿它做日志/诊断，不要往推送载荷里加键。
+ */
+bool XTurbidityMeter_temperature(const XTurbidityMeter* self, double* outTempC);
+
+/**
+ * @brief 读 Words 模式的温度 32 位原始位模式（诊断/口径反推用）。
+ * @param self 目标浊度仪；可为 NULL。
+ * @param outBits 输出位模式（调用方提供；可为 NULL）。
+ * @return 当前是 Words 模式且收到过温度返回 true；否则 false（outBits 写 0）。
+ * @note 拼装字序与浊度同一配置（m_wordOrder）；raw 与浊度的 rawWords 同理，
+ *       是换算口径出错时唯一能反推真相的量。
+ */
+bool XTurbidityMeter_rawTemperature(const XTurbidityMeter* self, uint32_t* outBits);
 
 /**
  * @brief 查数据质量（等价 value 的返回值）。

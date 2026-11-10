@@ -13,6 +13,7 @@
 """
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFontMetrics
 from PyQt5.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
                              QPushButton, QScrollArea, QSizePolicy,
                              QVBoxLayout, QWidget)
@@ -197,6 +198,10 @@ class DataTable(QWidget):
         self._column_weights = (6, 3, 2)      # 项目 : 数值 : 单位
         #: 可见列集合（None = 全部；DataTable.set_visible_columns 改）
         self._visible_cols = None
+        #: 按**字体度量**自动算列下限时的"内容代表文本"（{列号: 文本}）。
+        #: 空 = 不启用自动下限（用调用方给的 min_widths / 全局档）。
+        #: 见 set_column_weights 的 auto_min_texts 说明。
+        self._auto_min_texts = {}
         #: 视口宽无效时的重试计数（0=正常；>0 表示在排队等布局稳定）
         self._width_retry = 0
         #: 上次算列宽用的可用宽度（用于判断是否需要重算）
@@ -225,13 +230,18 @@ class DataTable(QWidget):
         header.setSectionResizeMode(QHeaderView.Stretch)
         header.setStretchLastSection(False)
 
-    def set_column_weights(self, weights, min_widths=None):
+    def set_column_weights(self, weights, min_widths=None, auto_min_texts=None):
         """设置列宽比例（如 (6,3,2) = 项目 6 : 数值 3 : 单位 2）。
 
         :param min_widths: {列号: 最小像素} 按列下限（可选）。某列内容比
         全局最小档（72/150）更长时用它给硬保证 —— 历史页时间列
         （"yyyy-MM-dd HH:MM:SS" 19 字符 ≈ 130px）实锅：全局 72px 档把它
         压成 "202..."，日期看不见（2026-11-05 截图反馈）。
+        :param auto_min_texts: {列号: 代表文本} —— **按当前字体实测**这些
+        文本的宽度来定下限（未给某列就用该列表头文字）。**字号缩放后仍然
+        对**，这是它存在的理由：硬编码像素只在量它的那个字号下成立。
+        实锅 2026-11-10：客户端 15pt（ui_scale 1.5）下历史页 15 列里 12 列
+        表头被截成"出频率(H"、"度1(NTU"，而同一份像素值在 10pt 下正好。
         分配口径：先按各列下限预留，剩余宽度再按权重分。
 
         [实现要点 —— 踩过三次坑后的定稿]
@@ -250,6 +260,7 @@ class DataTable(QWidget):
         """
         self._column_weights = tuple(weights) or (1,)
         self._min_widths = dict(min_widths or {})
+        self._auto_min_texts = dict(auto_min_texts or {})
         self._apply_min_widths()
         self._apply_column_widths()
         # 调用方通常在建页期（show 之前）设权重，那时视口宽还是 0；
@@ -342,6 +353,25 @@ class DataTable(QWidget):
         # 剩余宽度再按权重分（下限总和超出视口时宁出横向滚动条，
         # 也不把任何一列压到内容以下）。
         min_map = getattr(self, "_min_widths", {}) or {}
+        auto = getattr(self, "_auto_min_texts", None)
+        if auto:
+            # [按当前字体实测，不写死像素] 每次重算列宽都现量一遍：字号被
+            # 「界面缩放」改掉后（15pt/10pt 都常见）这里跟着变，不会出现
+            # "换个字号表头就被截成'出频率(H'"（2026-11-10 实锅）。
+            min_map = dict(min_map)
+            fm = self.table.horizontalHeader().fontMetrics()
+            # 表头右侧要留排序指示器 + 左右单元格内边距。
+            pad = 30
+            for c in range(n):
+                txt = auto.get(c)
+                if txt is None:
+                    item = self.table.horizontalHeaderItem(c)
+                    txt = item.text() if item is not None else ""
+                if not txt:
+                    continue
+                need = fm.width(txt) + pad
+                if need > min_map.get(c, 0):
+                    min_map[c] = need
         floors = {i: max(min_w, int(min_map.get(i, 0))) for i in active}
         spare = max(0, avail - sum(floors.values()))   # 下限之外可自由分配
         targets = {}
@@ -517,6 +547,23 @@ class LampDot(QWidget):
         painter.end()
 
 
+def adaptive_columns(widget, max_columns, cell_min_w):
+    """按控件当前宽度算**能放下几列**（至少 1，至多 max_columns）。
+
+    [为什么要这个] 数字量页的灯阵/按钮阵原来固定 8 列：窗宽不够时每格被压
+    窄，第二行的语义名（"电动球阀1 控制"）被裁掉——用户截图反馈「显示不全」。
+    格子数不变，只改每行放几个：宽窗 8 列（与 C 端一致），窄窗自动折成
+    6/4/2 列，宁可多几行也不裁字。
+    """
+    try:
+        w = int(widget.width())
+    except Exception:                                   # noqa: BLE001
+        return max_columns
+    if w <= 0:
+        return max_columns
+    return max(1, min(int(max_columns), w // max(1, int(cell_min_w))))
+
+
 class LampRow(QWidget):
     """一排状态灯（数字量监视用）：自绘圆点 + 通道号。
 
@@ -526,16 +573,45 @@ class LampRow(QWidget):
     [点数由服务端决定] 构造时给一个**初值**，真正的点数在收到第一帧推送后
     调 set_count() 重建。不能写死 16：单模块 16 点、聚合后 32 点，写死会让
     上半区（16~31）永远看不到，而服务端明明在发。
+
+    [列数随宽度自适应 2026-11-10] 原来固定 8 列：窗宽不足时每格被压窄，
+    第二行的语义名（"电动球阀1 关到位"）被裁成"电动球阀1 关"——用户截图
+    反馈「显示不全」。现在按可用宽度算列数（每格至少装得下最长语义名），
+    窄窗自动折成 6/4/2 列。
     """
+
+    #: 每格最小宽（像素；语义名一行放得下才不裁）。
+    CELL_MIN_W = 108
 
     def __init__(self, count=16, columns=8, parent=None):
         QWidget.__init__(self, parent)
         self._cells = []
-        self._columns = max(1, int(columns))
+        self._max_columns = max(1, int(columns))
+        self._columns = self._max_columns
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setSpacing(8)
         self.set_count(count)
+
+    def resizeEvent(self, event):
+        QWidget.resizeEvent(self, event)
+        self._adapt_columns()
+
+    def _adapt_columns(self):
+        """按当前宽度重排列数（只在列数真的变了时重排，避免抖动）。"""
+        cols = adaptive_columns(self, self._max_columns, self.CELL_MIN_W)
+        if cols == self._columns:
+            return
+        self._columns = cols
+        self._reflow()
+
+    def _reflow(self):
+        """把已有格子按当前列数重新摆进网格（不重建控件）。"""
+        for cell in self._cells:
+            self._grid.removeWidget(cell[3])          # cell[3] = 容器
+        for i, cell in enumerate(self._cells):
+            self._grid.addWidget(cell[3], i // self._columns,
+                                 i % self._columns)
 
     def set_count(self, count):
         """按服务端下发的点数重建灯阵（幂等：数量未变直接返回）。"""
@@ -577,7 +653,7 @@ class LampRow(QWidget):
             v.addWidget(alias)
             self._grid.addWidget(cell, i // self._columns,
                                  i % self._columns)
-            self._cells.append((dot, name, alias))
+            self._cells.append((dot, name, alias, cell))
 
     def count(self):
         return len(self._cells)
@@ -617,17 +693,48 @@ class ToggleGrid(QWidget):
     #: 否则同一行里两行按钮把整行撑高、单行按钮出现空隙。
     ROW_HEIGHT = 46
 
+    #: 每格最小宽（像素）。要装得下最长语义名一行（"电动球阀1 控制"≈120）
+    #: + 左右内边距；不够就折行（见 adaptive_columns）。
+    CELL_MIN_W = 132
+
     def __init__(self, count=16, columns=8, parent=None):
         QWidget.__init__(self, parent)
         self._buttons = []
         #: 每路的语义名（服务端下发）；按索引存，set_count 后仍保留。
         self._aliases = {}
         self.on_toggle = None            # (index, want_on) -> None
-        self._columns = max(1, int(columns))
+        self._max_columns = max(1, int(columns))
+        self._columns = self._max_columns
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setSpacing(6)
         self.set_count(count)
+
+    def resizeEvent(self, event):
+        QWidget.resizeEvent(self, event)
+        cols = adaptive_columns(self, self._max_columns, self._min_cell_w())
+        if cols == self._columns:
+            return
+        self._columns = cols
+        for b in self._buttons:
+            self._grid.removeWidget(b)
+        for i, b in enumerate(self._buttons):
+            self._grid.addWidget(b, i // self._columns, i % self._columns)
+
+    def _min_cell_w(self):
+        """每格最小宽 = **实测**最长文字宽 + 内边距（不写死像素）。
+
+        [为什么实测] 字号随「界面缩放」变（10~15pt 常见），写死 132 在 15pt
+        下差 1~2px 就裁字（实测 900 宽窗口 139 < 实际需要 140）。这里按当前
+        字体量代表性语义名（"电动球阀0 控制"/"启动按钮灯"），再加 26px 给
+        QSS 的左右 padding，得到真正放得下的格子宽。
+        """
+        try:
+            fm = QFontMetrics(self._buttons[0].font())
+            need = max(fm.width("电动球阀0 控制"), fm.width("启动按钮灯"))
+        except Exception:                               # noqa: BLE001
+            need = self.CELL_MIN_W
+        return max(self.CELL_MIN_W, need + 26)
 
     def set_count(self, count):
         """按服务端下发的点数重建按钮阵（幂等）。"""

@@ -62,6 +62,50 @@ typedef enum HsfSide {
 bool HsfServerIo_start(void);
 
 /**
+ * @brief 采集节拍配置（各设备轮询/最小发送间隔；单位毫秒）。
+ * @details 缺省值来自 HsfServerConfig.h 的编译期宏；INI 的 `collect/*` 一旦
+ *          存在就覆盖它（`HsfServerIo_collectConfig` 读的就是"当前生效值"）。
+ */
+typedef struct HsfCollectConfig {
+    int vfdPollMs;         /**< 变频器（站2）最小发送间隔。 */
+    int temphumPollMs;     /**< 温湿度（站4）最小发送间隔。 */
+    int turbidityPollMs;   /**< 两台浊度的**缺省**（旧键；逐台键缺省时用它）。 */
+    int turbidity1PollMs;  /**< 浊度仪1（站1）。 */
+    int turbidity2PollMs;  /**< 浊度仪2（站3）。 */
+    int flowmeterPollMs;   /**< 电磁流量计（站5）。 */
+    int analogPollMs;      /**< 模拟量模块轮询周期（TCP，无总线）。 */
+    int digitalPollMs;     /**< 数字量模块轮询周期（TCP，无总线）。 */
+    /* [逐台开关 2026-11-10] 两台浊度仪是两台独立设备（站1/站3，型号与
+     * 字节序都不同）：现场可能只装一台、或单独停采一台检修。旧的共同开关
+     * `collect/turbidityEnabled` 降为缺省：缺逐台键时回落到它。
+     * Hub 的 XModbusHubUnitLimits 没有 enabled 概念 ⇒ 停用通过把该从站的
+     * 最小发送间隔设成天文数字实现（hubUnitDue 永远不到期，静默不读）。 */
+    bool turbidity1Enabled; /**< 浊度仪1（站1）。 */
+    bool turbidity2Enabled; /**< 浊度仪2（站3）。 */
+} HsfCollectConfig;
+
+/**
+ * @brief 取**当前生效**的采集节拍（已把 INI 覆盖算进去；未启动也给宏缺省）。
+ * @param out 输出（调用方提供；可为 NULL）。
+ */
+void HsfServerIo_collectConfig(HsfCollectConfig* out);
+
+/**
+ * @brief 应用采集节拍（**运行期生效**，不必重启）。
+ * @param cfg 目标值；NULL=从 INI 重新读一次。
+ * @return 至少应用了一项返回 true。
+ * @details 作用点：
+ *          · 变频器/温湿度/浊度仪/流量计 —— Hub 的**从站最小发送间隔**
+ *            （XModbusHubUnitLimits.m_minPollIntervalMs）+ 该侧设备节拍；
+ *          · 模拟量/数字量 —— TCP 站自己的轮询定时器周期。
+ *          [为什么需要这个入口] 此前 `collect/*` 只写 INI、**没有任何消费者**
+ *          （装配期只读编译期宏）⇒ 远端设置里改采集时间永远"无效"，连重启
+ *          都不生效。现在装配完成后应用一次，CONFIG_SET 时再应用一次。
+ * @warning 只改节拍，不动开关/接线/映射段；非法值（<=0）按缺省处理。
+ */
+bool HsfServerIo_applyCollectConfig(const HsfCollectConfig* cfg);
+
+/**
  * @brief 设置是否走模拟设备（运行期开关；须在 HsfServerIo_start 之前调用）。
  * @param enable true=全部从站换成进程内寄存器模型。
  * @details [用途] 设备拆走/没接线/CI 环境里也能把整条 C 链路跑通。
@@ -162,6 +206,29 @@ const HsfServerIoFlowMeter* HsfServerIo_flowMeter(HsfSide side);
  *          某台没接时另一台必须照常显示——调用方按 NULL 单独降级。
  */
 const HsfServerIoTurbidity* HsfServerIo_turbidity(HsfSide side, int index);
+
+/**
+ * @brief 解析「浊度仪实际装在哪一侧」。
+ * @param requested 客户端请求里带的侧号（只是提示，可为空/过时）。
+ * @return 该侧装了浊度仪就返回它；否则回落到**实际装配的那一侧**；
+ *         两侧都没装则返回 requested。
+ * @details [侧号是服务端装配事实，不该由客户端指定] 浊度仪挂哪条 485
+ *          总线是部署参数（现场：B 侧 /dev/ttyS4），服务端一直在采集、
+ *          一直知道；客户端只该问「浊度是多少」。早先快照按请求里的 side
+ *          取设备，而客户端请求不带 side（默认 A 侧）⇒ 服务端去 A 侧找
+ *          浊度仪（那儿根本没装）⇒ 回空帧 ⇒ 客户端页面恒"--"
+ *          （2026-11-10 板端实测：同一台服务器，带 side=1 出
+ *          v0_ntu=229/v1_ntu=4，不带 side 全空）。Python 服务端是
+ *          「只按装配位置答」（不看 side），本函数把 C 端对齐到同一口径。
+ */
+HsfSide HsfServerIo_turbiditySide(HsfSide requested);
+
+/**
+ * @brief 解析「流量计实际装在哪一侧」（口径同 HsfServerIo_turbiditySide）。
+ * @param requested 客户端请求里带的侧号（提示）。
+ * @return 实际装配侧；两侧都没装则返回 requested。
+ */
+HsfSide HsfServerIo_flowMeterSide(HsfSide requested);
 
 /* ==================== 兼容单侧查询（A 侧） ==================== */
 

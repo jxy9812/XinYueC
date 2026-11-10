@@ -33,8 +33,11 @@
 - **Python 参考实现对齐**：HighSpeedFilter 的 C 服务端对齐
   `HighSpeedFilter/server_py`（现场模拟口径以
   `server_py/run_server_sim.bat` 即 `python -m hsfsrv --sim --port 6200`
-  为准：阀 10s 行程/20s 超时、泵 DO22 仅输出无反馈、浊度仪站 1/3
-  约 12.5/3.2 NTU、流量计 36.5 m³/h ±2%、变频器爬坡按 ACC/DEC 满量程
+  为准：阀 10s 行程/20s 超时、泵 DO6 仅输出无反馈、浊度仪站 1/3 约 2.29 / 0.045 NTU（字节序不同：
+  站1 CDAB、站3 DCBA（原站 2，2026-11-10 面板改站号 3），站2 另有温度 ~19.3℃ 走 0x0000×4 同刻快照）、
+  流量计站 5 约 3.6 m³/h ±2%（单位码 5=m³/h 随数据上行、空管报警
+  0x1024；2026-11-09 板端 ttyS4 实测口径，取代旧 1/3·12.5/3.2·36.5，
+  站号在 config 可改，详见 docs/HSF板端ttyS4三设备取数实测总表_20261109.md）、变频器爬坡按 ACC/DEC 满量程
   时间（0xF011/0xF012 缺省各 10.0s ⇒ 5Hz/s）、运行中换向＝先减速过零
   再反向加速、运行中禁点动（服务端闸拒绝+两端按钮置灰，点动保持中的
   心跳例外）——两端模型 `XVirtualModelVfd`/`VirtualVfd` 同口径，改一侧
@@ -42,10 +45,110 @@
   TestVfdReversal 两组镜像用例）。
 - **两端协议常量**：C 侧 `HighSpeedFilter/common/XhsfLinkProto.h` 与
   Python 侧 `server_py/hsfsrv/proto.py` 必须逐值同步，注释互相点名。
-- **MSVC 编译注意**：源文件 UTF-8；向 C 字符串写 `\n` 时严禁在 bash
-  heredoc 里转义（会被吃掉变成真实换行导致 C2001）——用脚本文件或
-  chr(92) 拼接。
+- **安卓「多应用」模型（2026-11-09 定案，新增安卓应用照此接线）**：
+  平台层 `platforms/android/` **不认识任何具体 app**；一个安卓应用 = 一个
+  「应用目录」，内含 `AndroidManifest.xml`（应用 id/库名/应用名的**唯一
+  事实源**，打包脚本从它派生包名与 .so 名）+ `app.env`（CMake 目标 /
+  构建目录前缀 / 产物名）。应用目录**随应用走**（demo 在平台目录本身；
+  HSF 客户端在 `HighSpeedFilter/client/android/`）。
+  - **壳与 app 无关**：`Drive/Android/android_main.c` 只认编译宏
+    `XPAD_APP_ENTRY`（入口符号）/ `XPAD_APP_TAG`（logcat tag）/
+    `XPAD_APP_ARGS_ENV`/`XPAD_APP_ARGS_FILE`（参数来源），由各目标的
+    `target_compile_definitions` 注入。**新增安卓应用不改壳文件**。
+  - **一棵树只服务一个应用 id**：字体目录宏 `XFONT_EXTERNAL_FT_FONT_DIR`
+    被静态库内的 `XFontFt.c` 消费 ⇒ **构建树级**常量；两应用共用一棵树
+    必串（「字库释放到 A、FT 找 B」→ 中文整片缺失，真机事故）。故每个
+    应用一个构建目录（demo `out/android-<abi>` / HSF `out/android-hsf-<abi>`），
+    且 `-DANDROID_APP_PKG` 必须等于该应用清单里的 `package`。
+  - **新增安卓壳文件会炸**：`Drive/CMakeLists.txt` 的 `GLOB_RECURSE` 会把
+    新增 `.c` 收进主库 → 动态库 `--no-undefined` 链接因找不到应用入口而
+    失败。要新壳就改宏开关，不要加文件。
+  - 详见 `platforms/android/README.md` §一「一个安卓应用 = 一个应用目录」
+    与 §六「高速过滤器客户端在安卓上」。
+- **HSF 客户端上安卓（2026-11-09）**：`HighSpeedFilter/client/**` 是**纯
+  TCP/XLink 客户端**——零串口、零 Modbus 主站、零本地 DB（唯一 `XIoChannelGroup`
+  是离线演示的进程内假从站）；485 采集/滤波/落盘全在服务端。客户端与桌面
+  `HsfClient` **共用同一份源码**（安卓下 `main` 改名 `hsf_client_main`）。
+  竖屏适配**在既有客户端 UI 文件上就地改造**（不新开页面文件）：全局 compact
+  按窗宽 <860 判、13/18 页有 `_adapt` 按页根宽细分档、菜单页移动态树面板、
+  每页字号 50~200% 实时重放——这些 2026-11-09 三档化已具备，本次只补
+  「安卓窗口手机形 / 字体走家族名 / 设置落私有目录 / 登录窗滚动壳」。
+- **MSVC 编译注意**：源文件 UTF-8（CMake 已开 `/utf-8`，见 `CMake_Config.cmake`）；
+  向 C 字符串写 `\n` 时严禁在 bash heredoc 里转义（会被吃掉变成真实换行
+  导致 C2001）——用脚本文件或 chr(92) 拼接。
+  **块注释里禁写 `*/` 序列**：如 `**/system/bin**`（粗体包路径）里的
+  `*/` 会提前闭合注释 → 后续中文变代码 → C2143「缺少'{'」+ 一串
+  C3872/C3873「字符不允许在标识符中」。这类报错看着像编码问题，实际是
+  注释被截断（2026-11-09 实锅）。
+- **未初始化局部量在 Debug 构建会「冻住」进程（2026-11-10 实锅）**：
+  MSVC Debug 默认带 `/RTC1`（含 `-RTCu` 局部变量初始化检查）——**读一个
+  未初始化的局部量**（哪怕只是拿去 printf）就会触发运行期检查失败 ⇒
+  `DebugBreak()` ⇒ 进程被 JIT 调试器（`vsjitdebugger.exe`）挂住等人工
+  附加 ⇒ 现场表现为「服务端启动后第一条 Modbus 请求就把进程冻住，客户端
+  读不到任何快照、stdout 停在调用前一行、CPU 0%」。**排查口诀**：日志
+  停在某行且进程活着不动 ⇒ 先查那一行读了什么没初始化的量（本轮的
+  `[vsim]` 诊断读了尚未赋值的 `fc`）。同理，**结构体字段漏初始化**会让
+  后续逻辑读到栈垃圾（Debug 下是 0xCCCCCCCC）——`XModbusHubUnitLimits`
+  漏 `memset` ⇒ `m_preTxQuietMs` = 34 亿毫秒 ⇒ 该从站读组**永远**轮不到
+  （现场：变频器整站哑掉、失败计数=0、游标卡死）。**凡是"栈上局部结构体
+  交给框架"的调用点，一律先 `memset`。**
+- **Modbus Hub 读组活性三条契约（2026-11-10 框架级根修）**：
+  ① **在途必须有超时收口**：从站对某组不应答（真机 M512 对 0xFA00×5 无
+     应答）⇒ 在途标记永挂 ⇒ 单飞闸把该设备后续**所有**读组永久堵死。
+     现由 `XModbusHub_setInflightTimeoutMs` / 客户端超时 / 缺省 1000ms
+     三级取时限，超时即判失败 + 记失败计数 + 报从站退避 + 释放在途标记，
+     **一个组的沉默拖不垮整条总线**。
+  ② **异常应答是组级事实**：EXC02/EXC03 只进失败计数，**不进从站退避**
+     （否则连续 3 次后该从站所有组一起静默 ⇒ "一台设备整体离线"）。
+  ③ **静默闸不得饿死从站**：`m_preTxQuietMs` 超上限会被夹到 2000ms，
+     且某从站被静默闸连续挡住超 2s 会**逃逸放行一帧**。
+  回归锁在 `Test/XProtocolTest/hsf_regression_test.c` §M（M1/M2/M3）。
+- **栈数组长度必须与"列数常量"绑死（2026-11-10 实锅）**：历史页显示列
+  15→16，三处 `uint32_t cols[15]` 栈数组没跟着改 ⇒ `histVisibleCols()`
+  写满 16 个 ⇒ 越界 4 字节 ⇒ MSVC `/RTC1` 弹
+  `Run-Time Check Failure #2 - Stack around the variable 'cols' was corrupted`
+  ⇒ **客户端启动即崩**（历史页在 `HsfUi.c` 启动时全部建页 ⇒ 崩在开机）。
+  治法不是"记得改长度"，而是**编译期断言**：
+  `typedef uint32_t HistCols[HSF_HISTORY_DISPLAY_COLS];` +
+  `typedef char assert_t[(sizeof(HistCols)==sizeof(uint32_t)*N)?1:-1];`
+  **两个坑**：① 本项目是 C99，MSVC 默认 C 模式**不认 `_Static_assert`**
+  ⇒ 用**负数组长度 typedef 断言**（两家编译器都生效，不匹配报 C2118/C2148）；
+  ② **C 里 typedef 的数组名不可下标**（`sizeof(HistCols[0])` 非法）
+  ⇒ 文件级断言只能比 `sizeof(HistCols)==sizeof(uint32_t)*N`，
+  调用点宏（真变量）才能下标校验。
+- **陈旧阈值必须随采集周期联动，且"设备层+站级层"两层都要改**
+  （2026-11-10 板端实锅）：现场把温湿度周期改成 1 分钟（60000ms），
+  固定 stale 5000ms ⇒ 界面在「---」与真值之间反复闪。口径
+  `stale = max(设备基线, 周期 × HSF_STALE_FROM_POLL_MULT(=3))`
+  （倍数 3 = 允许连丢 2 拍）。**只改设备层修不好**：站级质量判定
+  （`HsfServerIoTempHum/Turbidity/FlowMeter` 的 `pointValid`）仍按编译期宏
+  ⇒ 必须给各站结构体加 `m_staleMs`、挂载时赋值、运行期改周期时同步。
+  变频器另有基线 `HSF_VFD_STALE_MS=3000`：Hub 每拍只发**一个**读组，
+  现场变频器 14 组 × 200ms = 2.8s 一圈 ⇒ 1000ms 连一圈都盖不住。
+- **SQL 条件缓冲长度要按"最宽一行"算，且构造失败必须 fail-closed**
+  （2026-11-10 实锅）：`kwCond[1536]` 而 16 列条件实长 **1544 字节**
+  ⇒ 截断 ⇒ SQL 语法错 ⇒ 查询返回 0 行，**且毫无错误提示**（用户看到的是
+  "筛不出东西"）。修法：缓冲放大到 8192 + 构造函数返回 bool，
+  失败即**显式记日志并返回 0 行**，不让截断 SQL 悄悄跑。
+  缓冲区不足的 bug **不会自己暴露**——必须主动构造超长条件去试。
 - **XString 是内码缓冲**：跨进程序列化/拷贝一律 `XString_toUtf8`。
+- **新鲜度阈值必须按「数据真实刷新节拍」算，不能按「发布周期 × N」**
+  （2026-11-10 现场"变频器 --- 与真值循环闪"根修）：Modbus Hub **每拍只发
+  一个读组** ⇒ 数据的刷新节拍是**轮转一圈**（该总线读组数 × 拍长；板端
+  变频器 14 组 × 200ms ≈ 2.8s），不是采集周期。设备层缺省阈值
+  「发布周期 × 5」=1s **盖不住一圈** ⇒ 每隔两拍把快照判陈旧、掩码清零 ⇒
+  客户端遥测闪 `--`。口径：阈值 = max(设备基线, 轮转周期 × 2)，由装配层
+  按**Hub 的真实拍长**算出来下发（`XVfdDevice_setStaleMs` /
+  `HsfServerIoVfd_applyStaleMs`；拍长取 `XModbusHub_pollInterval`）。
+  温湿度/流量计/浊度同理（`hsfIoStaleMs`）。
+- **应答里没有的字段不要当成「已关闭」**（C 端 2026-11-10 补齐，Python 端
+  早有）：远端设置里「落盘」勾选框**构造态是未勾选** ⇒ 服务端快照没到就点
+  「应用」⇒ 把 `storage/enabled=0` 写回服务端 ⇒ 落盘被静默关闭 ⇒ 历史表格
+  从此空（现场"表格数据咋没了"）。修法：`HsfConfig.m_storagePresent` 记录
+  应答里**确实有** storage 节，没收到就不写这一节；勾选框缺省与服务端口径
+  一致（勾上）。另外**失败包络不是分页文档**：服务端回
+  `{"ok":false,"err":"落盘未启用…"}` 时，客户端要认出来并把原文显示在状态行
+  （`HsfHistoryPage.m_error`），不能只剩「共 0 条 + 读取中」。
 - 构建入口：`build_hsf.bat`（HsfServer/HsfClient，build-hsf/）；
   测试宿主 `XinYueC_Static`（out/build/x64-Debug），跑法
   `bin\XinYueC_Static.exe --test <命令>`。
@@ -54,18 +157,179 @@
   `cmake --build` 会因缺 `INCLUDE` 报 `stdbool.h`/`stdint.h` C1083。
   `XGuiRegression_Test` 与 `XinYueC_Static` 在 `out/build/x64-Debug`，
   `HsfServer`/`HsfClient` 在 `build-hsf/`，两套互不覆盖，可分别重编。
+- **板端（RK3568）一键链路**：`Tools/posix/hsf-board-deploy.sh`
+  （Windows Git Bash 入口）= 同步工作区 → WSL 交叉编译 → scp 部署 →
+  板端重启 → 复检，一条命令跑完（板 192.168.1.249:6100，路 A
+  `/dev/ttyS3`、路 B `/dev/ttyS4`）。配套：`verify/board/build_board.sh`
+  （WSL 内编译）、`verify/board/restart_c_stack.sh`（板端起停 C 栈）、
+  `verify/board/verify_temphum_stale.py`（温湿度「数据过期」复检，零 Qt
+  依赖）。三条纪律：**板端 C 栈没有 systemd 单元**（只有
+  `hsfserverpy`/`hsfclientpy` 两个 Python 服务）⇒ 重启按手工 `nohup`
+  口径；**同账并发默认关** ⇒ 复检前只停客户端、不能停服务端（停了就没
+  帧可采）；**运行中的二进制不能被 scp 直写**（ETXTBSY）⇒ 先停再落盘或
+  传 `.new` 后 `mv`。
+- **板端手搓部署（2026-11-10 实操补充，一键脚本之外的细活）**：
+  ① **端口/总线开关必须走编译器宏**（`-DCMAKE_C_FLAGS="-DHSF_BUS_A_PORT=
+  \"/dev/ttyS3\" …"`）——当 CMake **变量**传是**无效的**（真实机制见
+  `verify/board/build_board.sh`）⇒ 传错则二进制用 Windows 缺省 COM17/COM18
+  ⇒ 板端 485 全离线（"服务在跑但一个设备都不在线"）；
+  ② **WSL 同步**：`rsync -a --delete --exclude='.git' --exclude='.vs'
+  --exclude='out' --exclude='bin' --exclude='.zcode' --exclude='docs'
+  /mnt/f/... /root/xinyuec-src/`——**`.vs` 必须排除**
+  （`FileContentIndex/*.vsidx` 权限拒绝 ⇒ 整条 rsync 失败）；
+  ③ `wsl.exe` 会把 `/root/...` 啃成 `D:/Program Files/Git/root/...`
+  ⇒ WSL 内执行的脚本先 `cp` 进 WSL 本地再 `bash /root/x.sh`，
+  且一律 `wsl.exe -e bash -lc "…"`；
+  ④ **SSH 无免密** ⇒ 用 askpass：`printf '#!/bin/sh\necho <口令>\n' >
+  /tmp/askpass.sh` + `export SSH_ASKPASS=/tmp/askpass.sh
+  SSH_ASKPASS_REQUIRE=force DISPLAY=dummy:0`；
+  ⑤ 板端 C 栈用 `systemd-run --unit=…` 起的是 **transient unit**，
+  `systemctl stop` 后单元即消失 ⇒ 重启必须**重建**；
+  ⑥ 板端截图：`xwd -root -silent` → `verify/xwd2png.py`（纯标准库，
+  无 PIL）转 PNG，再 `scp` 回本地看。
 - **HSF 跨端联调（改服务端快照键/字段名/设备类别必跑）**：
   `bin\HsfServer.exe --sim`（默认 6100）+
   `QT_QPA_PLATFORM=offscreen <python> HighSpeedFilter/client_py/tests/test_client.py --auto 127.0.0.1 --port 6100`
   （需 PyQt5；本机可用 `D:\anaconda3\python.exe`）。
   VFD 组合链路：`tests/test_vfd_combo.py --port 6100`。
   连续两次连接间隔 ~8s（DenyNew 下旧会话按静默超时回收，立即重连会被拒）。
-  已修复的 C/Python 口径：健康快照必须含进水泵/数字量/电磁阀组条目；
+  已修复的 C/Python 口径：健康快照必须含进水泵/数字量/电动球阀组条目；
   数字量 DO6 名必须是"进水泵"、阀通道名为"<阀名> 控制/开到位/关到位"
   （2026-11-06 .12 聚合器拆除、点表收窄为 16 点：阀 1~6=DO0~DO5、
   进水泵=DO6、按钮组=DO7~DO9；旧口径 DO21/DO22 是聚合编号，已作废）。
   停机斜坡期运行位必须报 False（「正在停机」口径，两端一致）；
   客户端重连后必须重发订阅帧（xlink 去重集合随连接作废，2026-11-07 修）。
+- **运行模式与按钮灯口径（2026-11-10 用户定案，两端同口径）**：
+  ① **手动模式不跑自动程序 ⇒ 按钮组灯归人工**：服务端按钮站**每拍写灯**
+  是老口径（灯态由「急停+自动运行位」推导）⇒ 人工点的灯每拍被覆盖，
+  现场表现「手动模式下无法单独控制按钮灯」。现改为：灯只在**自动模式**
+  跟随运行态；手动模式自动逻辑**一个 DO 都不写**（采集/急停/停止仍照做，
+  那是安全件）。
+  ② **切换模式 ⇒ 关闭所有设备**（手动⇄自动**双向**）：切自动也要全停
+  （自动模式拒掉全部远程控制、控制器又等人按"启动"，设备若还转着现场
+  既停不掉也看不到谁在驱动它）；切手动同样全停。**同一模式重复下发
+  不动设备**（手动模式下设备正由人操作）。
+  ③ **只有按「启动」后设备才允许工作**：模式开关只是授权，**不是**启动
+  按钮——切自动不启动控制器（自动运行位保持"已停止"）。
+  ④ 锁：服务端 `tests/test_mode_lamp_rules.py`（12 项）+ 客户端
+  `test_units.py` 的灯用例（自动/手动两态都断言）。
+- **设备命名与菜单分组（2026-11-10 用户定案，两端同口径）**：
+  ① 阀 = **电动球阀**（现场就是 6 台规格一样的电动球阀，不是"电磁阀"，
+     也没有加药/排气这类功能差别）：阀名统一 **电动球阀1~6**，阀组条目名
+     **电动球阀组**。两端都要改：服务端 cfg 阀名 + 缺省名（C
+     `HsfServerIoValve` 的组内缺省名、Python `valves.py`/`config.py` 的
+     兜底名）、客户端页标题/卡片名/导航名、健康表里的设备条目名。
+  ② 6 路各占各的点位（第 i 路 i=0..5）：**DO=i、开到位 DI=2i、关到位
+     DI=2i+1**（DI0~11 = 每阀一对）。板端 cfg 曾把第 5、6 路**复用**了
+     第 1、2 路的 DO/DI ⇒ 界面上多出两路"跟着别人动"的假阀、动作超时也
+     成对重复报。
+  ③ 动作超时 **20s**（仓库 cfg 与 C 端 `HSF_VALVE_MOVE_TIMEOUT_MS` 均为
+     20000）：真机行程约 9s，8s 必然误报「动作超时未到位」。
+  ④ 客户端菜单分组「**监视**」改名「**设备**」（导航组、菜单页标题、
+     首页快捷入口，两端同改；页名/导航树有跨端同形断言，改名必须同步改
+     `client_py/tests/test_hsf_regression.py` 的 `c_tree`/`c_names`）。
+- **浊度仪温度与流量计报警文案（2026-11-10）**：带温度的机型（浙仪
+  ZHEYI-5100ZDY，站3）随帧下发 `v{i}_temp`（℃×100，**缺键=该机型无
+  温度，不是 0℃**）；主页浊度卡与水质监测页都显示水温。流量计报警码
+  **直接说中文**（说明书口径：上限/下限/空管/系统），不显示 "0x0004"；
+  顺序照 C 端 `fmAlarmText`：空管→上限→下限→系统。
+- **两台浊度仪是两台独立设备（2026-11-10 用户定案，两端同口径）**：
+  ① **采集开关逐台**：`turbidity1Enabled` / `turbidity2Enabled`（C
+  `HSF_CFGK_TURBIDITY{1,2}_ENABLED`、两个 proto.py 同名常量），旧的
+  `turbidityEnabled` 降为**共同缺省**（缺逐台键时回落它；旧客户端只发
+  它时服务端视为"两台一起"）。远端设置页两行各勾各的，**禁止**再做
+  「勾一台同步另一台」；周期本来就逐台（`turbidity{1,2}PollMs`）。
+  ② **语义**：停用的台只停该从站轮询，另一台照采（Python 健康条目文字
+  「已停用」；C 端健康由 Hub 数据新鲜度推导 ⇒ 显示数据过期/离线，口径
+  差异已记，别把停用当故障去查接线）。C 服务端没有 Hub 级 enabled 字段
+  ⇒ 停用＝把该从站 `m_minPollIntervalMs` 顶到 `HSF_IO_UNIT_DISABLED_MS`
+  （≈24.8 天，`hubUnitDue` 永不到期）；重新启用同一入口写回正常周期。
+  ③ Python 服务端设备对象**无论开关都建**（逐台开关只门控轮询），
+  运行期改开关 `restart_polling` 立刻生效；sim 下停用的台不建模。
+- **历史表新增「水温(℃)」列（2026-11-10，两端同口径）**：
+  ① **线上列序追加在末尾**：`history.water_temp`（19 列）——
+     `HSF_HISTORY_WIRE_COLS`（`common/XhsfLinkProto.h`，**单一定义**，
+     服务端 `HSF_HISTORY_COLUMNS` 就是它）与 Python `store.HISTORY_COLUMNS`
+     同序。追加而非插中间：行值按**下标**发给 C 客户端
+     （`HsfLinkHistory.c` 的 `kSrc/kDst`），插中间会平移既有下标。
+  ② **显示列序另有一套**（16 列）：水温插在第 8 位（紧跟「浊度2」）——
+     服务端 `DISPLAY_COLUMNS/DISPLAY_EXPR`（PY+C 各一份、逐条同口径）、
+     C `kHistoryHeaders[16]`、PY `HistoryPage.COLUMNS` 三处同步。
+     显示列右移后 C 客户端 `HIST_NUM_LAST` 12→13（水温也画折线）。
+  ③ **老库必须迁移**：`CREATE TABLE IF NOT EXISTS` 不动已存在的表 ⇒
+     SELECT 点名 water_temp 会整页失败。C `storeEnsureHistoryWaterTemp`
+     / PY `_migrate_history_water_temp`（PRAGMA 探测 + ALTER TABLE）。
+  ④ **无温度机型入 NULL**（显示 "--"），不写 0℃。夹具里那份 18 列老载荷
+     保留作**向后兼容**证据（水温格缺失 → "--"）。
+- **远端设置：局部应答只刷新自己那一节（2026-11-10 实锅）**：
+  `RemoteSettingsPage._populate(doc)` 里「当前库文件」「用量」两行原来
+  **无条件**按 `storageDbPath/storageStats` 刷新 ⇒ 点「应用登录策略」
+  （应答只带 login 节）就把数据存储卡清成「用量：--」「未启用（落盘关闭）」，
+  切页再回来才恢复。原则：**应答里没有的字段不要当成"已关闭"**，
+  只在键存在时才刷新（回归锁 §19 A4a/A4b/A4c）。
+- **数字量页灯阵/按钮阵列数必须随宽度自适应（2026-11-10 用户「显示不全」）**：
+  `LampRow` / `ToggleGrid` 原来固定 8 列 ⇒ 窗宽不足时每格被压窄，
+  第二行语义名被裁（"电动球阀1 控制" 只剩半截）。现在走
+  `page_base.adaptive_columns(控件, 上限 8, 每格最小宽)`，每格最小宽按
+  **当前字体实测**最长语义名 + 26px（不写死像素，字号缩放后仍成立）。
+  宽屏仍 8 列（与 C 端口径一致），窄窗自动折成 6/5/4 列 —— 宁可多几行不裁字。
+  回归锁：`run_client` 段的 `adaptive_columns` 判定断言（4 项）。
+- **历史页图表必须「页内双视图 + 全量取数」（2026-11-10 用户定案）**：
+  ① **图表不弹独立窗**：`HistoryPage.set_view(0|1)` 用 `QStackedWidget`
+  在页内切表格/图表，`LineChartDialog` 以 **Qt.Widget 旗标**内嵌（与报警页
+  `set_view` 同款）；「生成折线图」按钮已换成「表格视图 / 图表视图」两个
+  可勾选按钮。**不要再加弹窗式图表**。
+  ② **图表数据不是"当前页"**：切图表视图时按**当前筛选条件分页累加全量**
+  （`limit=proto.HISTORY_PAGE_MAX` 50/批，offset 递增，短批即停），上限
+  `CHART_MAX_ROWS=12000`（对齐 C 端 `HIST_CHART_MAX_ROWS`）。旧实现只画
+  当前页 ≤50 行，趋势看不出来。
+  ③ **等距抽样**：每条线最多 `CHART_MAX_POINTS=2000` 点、**首尾必留**
+  （对齐 C 端 `histSamplePoints`）；状态行写明「筛选共 N 行 · 图表取回 M 行
+  · 每线最多 K 点（是否抽样）」。
+  ④ **筛选变化要重取**：页面应答尾部 `if view_mode == 1: _chart_refresh()`；
+  用筛选签名（lo/hi/kw/列/before_ts）避免同条件重复跑上百批请求。
+  ⑤ 回归锁：`client_py/tests/test_hsf_regression.py` 的 `run_histchart()`
+  （§14b，17 项，已挂进 `merge_history_page`）。
+  **本机验收配方**：`bin/HsfServer.exe --sim 6100` + 离屏脚本（真窗口
+  `render()` 出图，别用 `--shot`——离屏收不到 XLink 推送）。
+- **实时趋势图（搅拌泵页 / 水质页）轴与刷新率（2026-11-10 用户定案）**：
+  ① **X 轴必须显示本地时钟时间**（`HH:MM:SS`），不能只写相对秒
+  （"6 s / 8 s"）——对齐 C 端 `vfdTrendXLabelText` / `fmTrendXLabelText`
+  的回调口径。
+  ② **Y 轴必须有数值刻度**：`TrendChart` 原来左边距只有 14px、压根不画
+  Y 标签。现按**首序列**视口量程画 5 档（变频器页=输出频率 Hz、水质页=
+  瞬时流量 m³/h）；多序列仍各自归一化（量纲不同不做双轴），各线真实
+  量程看图例（`_trend_num` 按量级选小数位）。
+  ③ **刷新率可调**：趋势卡右上「刷新」下拉（200ms/500ms/1s/2s，
+  `TrendChart.SAMPLE_CHOICES`），**纯客户端节流**——只改本图记录密度，
+  服务端采集/推送不变；缺省 200ms = 原行为。节流闸在**页面层**
+  （`accept_sample(t_ms, stream)`），因为一拍要往多条序列各追一点；
+  变频器页一条流、水质页流量/浊度两条**独立时钟**（共用一个上次时刻会
+  互相压掉）。
+  **窗宽不随刷新率变**（第一版按 60×间隔放大，切档瞬间老点全挤左边、
+  像图坏了）——与 C 固定窗宽同口径，点变稀就是"采集慢了"的直观表现。
+  ④ 回归锁：`test_hsf_regression.py` 的 `m_trendch_part_h_pages` 段
+  I1~I8（下拉档位、X 时钟、Y 刻度、节流比例、窗宽不变、双流独立）。
+- **本地客户端设置必须持久化（2026-11-10 用户定案）**：统一走
+  `client_py/hsfsrv_client/settings.py`，**存程序目录的 INI、不用注册表**
+  —— `<程序目录>/cfg/hsf_client_py.ini`（板端 `/root/Desktop/XinYueC/
+  hsf_client_py/cfg/`；客户端与服务端同目录部署时它就在 `hsf_data.db`
+  旁边）。**不要在各页里各写一份 QSettings/ini**；登录记忆
+  （host/port/user/remember）也在这份文件里（旧版注册表值由
+  `settings.migrate_from_legacy()` 首启搬迁并清除）。`cfg/` 已进 .gitignore。
+  已持久化的项：
+  界面缩放（`uiScalePct`，**重启生效**——QSS 与页面字号在建窗时按比例算好）、
+  强制紧凑（`forceCompact`，`MainWindow.set_compact_override`）、启动全屏
+  （`fullscreen`）、主界面刷新周期（`refreshMs`，主窗 refresh 定时器）、
+  趋势刷新间隔（`trendSampleMs`）、窗口尺寸（`winSize`，应用/退出时都记）、
+  悬浮窗显隐（`showTitleBar/showStatusBar/showNav`，`pages_other.apply_overlay`
+  启动还原与设置页共用同一判定）、历史/日志每页条数
+  （`histPageSize/logPageSize`）。
+  **这些旋钮此前多数是死 UI**（改了既不生效也不落盘），改它们时务必同时：
+  ① 接上真实效应（定时器/字体/可见性/页大小）；② 写 settings；③ 启动路径
+  `__main__` 还原（命令行 `--size/--fullscreen` 优先于存档）。
+  回归锁：`test_hsf_regression.py` §19 A5a~A5j（隔离临时 INI、断言各页读到、
+  断言默认后端是程序目录 INI 而非注册表）。
 - **会话压测 / 泄漏回归（改会话、订阅、登录或服务端 per-session 状态必跑）**：
   `tests/test_stress_reconnect.py --port 6100 --clients 8 --cycles 1250`
   （8 进程 × 1250 轮 = 1 万次连接→登录→订阅 9 主题→快照→断开）。
@@ -107,6 +371,92 @@
   新增信号/清理代码先看台账 §6 的三机制取证（core vtable 指向匿名堆=
   已复用，追类名无意义）；测试/工具**禁止一进程创建多个 QApplication**
   （Qt5 未定义行为，复现器工件会污染归因）。
+
+## XGui 框架层：改尺寸/省略号必须对齐 Qt 6.8 原文
+
+**框架层改动不许"看着差不多就改"——先取 Qt 6.8 对应函数的原文当依据**
+（`cdn.jsdelivr.net/gh/qt/qtbase@v6.8.0/...` 可直取；`raw.githubusercontent`
+与 `code.qt.io` 在本机常超时/404）。本轮已取原文的两处：
+
+### 1. 表头放不下 ⇒ 省略号，**不是留空**（2026-11-10 实锅）
+
+- 现象：历史页 16 列里 4 个中文表头**整格空白**（输出频率(Hz)/
+  搅拌转速(rpm)/浊度1(NTU)/浊度2(NTU)）。
+- 根因两层：**应用层**列宽按经验值给，比 QSS 下表头实宽少 1~2px
+  （`padding: 6px 8px` + `border-right: 1px` + `font-weight:bold`）；
+  **框架层**QSS 表头绘制路径里有「文字放不下就**不画**」的分支
+  ⇒ 不是省略号而是空白。
+- 修法：应用层按**当前字体实测表头文字**给列宽（与 Python `auto_min_texts`
+  同口径）；框架层改成**先省略再画**，复用既有原语
+  `XCommonStyle_elideText`（Qt 6.8 语义：文字永远有输出）。
+- 顺带补齐 `QStyleOptionHeader::m_textElideMode`（枚举
+  `XAbstractItemViewTextElideMode` 迁到 `XStyleOption.h` 全树单一编号），
+  `XTableWidget` 注入与单元格同款。
+- **通用教训**：样式表有 padding/border 时，**列宽不能靠经验值**，
+  必须实测；框架层"放不下就不画"的分支一律违反 Qt。
+
+### 2. 微调框 sizeHint 必须预留**内嵌编辑框自身的边框内缩**（2026-11-10 实锅）
+
+- 现象：远端设置页「温湿度」周期框显示 `0000 ms`（应为 `10000 ms`），
+  **首位数字被裁**。
+- 根因（Qt 6.8 `qabstractspinbox.cpp:866-898` 原文比对）：Qt 的
+  `QAbstractSpinBox::sizeHint()` = 文本宽 + `style()->sizeFromContents(CT_SpinBox)`，
+  且高度取 `d->edit->sizeHint().height()`；我们的
+  `spinbox_computeSizeHint()` ① 只量**当前文本宽**（值变宽不跟）
+  ② **漏了内嵌编辑框自身的边框内缩**（`xlineedit_textStartX`/`textEnd`
+  各让 `frame?4:2` ⇒ 左右共 8px）⇒ 文本比可用区宽 ⇒ 行编辑按光标位置
+  **横向滚动**（保后缀、裁前导数字）。
+- 修法：取**最宽候选值**（`textFromValue(min/max)` + 当前值），
+  并用**内嵌编辑框自己的 sizeHint 减其当前文本度量**求差值
+  （`chromeW/chromeH`，**与绘制路径同源**、不写死像素、度量用编辑框
+  自己的字体），最终宽 = `sizeFromContents(CT_SpinBox)` + `chromeW`。
+- **通用教训**：复合控件（SpinBox/ComboBox 等）算首选宽时，
+  **子编辑框的边框/内缩必须计入**，否则"文本放不下"会退化成
+  "滚动显示"（表现为数字被裁、看不出是尺寸问题）。
+
+## 界面铁律：不许留"选了不兑现"的选项，也不许留占位控件
+
+**用户口径（2026-11-10）**：「检查下界面功能是否都是实现的，别是占位」
+「没有 XLSX writer 就只留 CSV 并删下拉（别留一个选了不兑现的选项）」。
+
+- **下拉/选项必须真兑现**：要么接真实现，要么**把选项删掉**。
+  半成品选项比没有选项更糟——用户会以为功能坏了。
+  本轮「导出格式」下拉据此接了**真 XLSX**：C 端直接用框架自带
+  **`XExcel`**（`Src/XCore/XData/XExcel`）写 xlsx，**不需要** Python 的
+  ctypes 桥（`xlsx_bridge.c`）；CSV 侧要求**字节级兼容旧实现**
+  （UTF-8 BOM + CRLF + 最小引号转义）。
+  共享模块落在 `HighSpeedFilter/client/ui/HsfExport.{c,h}`，
+  历史/日志/报警三页共用；导出格式在**导出开始时**快照取值，
+  避免导出中途改下拉产生半份 CSV 半份 XLSX。
+- **占位控件按页裁剪，不留着骗人**：`HsfDataBar` 新增按页裁剪 API
+  （`HsfDataBarFeature_Chart/ColFilter/Decimals/MaxPoints/ExportFmt` +
+  `HsfDataBar_setFeatures`）——日志页隐藏「生成折线图」+ 3 个无效控件、
+  报警页隐藏 2 个无效微调框。
+- **假数据 = 误控风险**：数字量页原**无条件**播种 16 个演示点，
+  这些点带**真实通道号** ⇒ 一旦有人点它就可能对真机下发控制。
+  现在只在离线演示模式（`--no-login` / `XHSF_DIGITAL_AUTOTEST`）下播种。
+- **头注释里的"占位"字样要同步改**：实现补齐后，头注释还写着
+  「（占位）…真实内容后续替换」= 文档骗人，按实际改写。
+
+## 文档管理：台账写完即收，别让 docs/ 变垃圾场
+
+**判据（三条全中才可删）**：① 内容已完成（自述"全部完成/根修完成/收口完成"）；
+② 结论已被 **AGENTS.md 或记忆库**取代；③ 无人接手且无按路径引用。
+
+- **活文档永远不删**：设备协议/寄存器映射、实测总表与使用指南、
+  交叉编译与移植指南、架构设计、以及 **AGENTS.md 按路径硬引用的台账**
+  （删它们要连带改写 AGENTS.md 的取证指引＝信息搬移，不是整理）。
+- **删文档必须连带清死链**（2026-11-10 实锅）：本轮删 41 份时发现
+  `Tools/analysis/xgui_api_scan.py` **会真的往已删目录写文件**（工具直接
+  跑不起来）＋ 4 处代码注释按路径引用 ⇒ 一律改指留存载体
+  （机制级复现器 / 配置头注释 / 记忆库），删完跑一遍全仓库引用扫描。
+- **归档史料（`docs/xgui/history/`）逐字保留**，不改历史记述；里面按裸文件名
+  提到的清单（已被删）加一句说明即可。
+- **删除用 `git rm`**（可回滚），**不自行提交** ⇒ 随时
+  `git checkout -- docs/` 整体撤销。
+- 台账索引：`docs/HSF现场口径与客户端完善_实施记录_20261110.md`（§续篇指向）、
+  `docs/HSF客户端崩溃与板端采集根修_实施记录_20261110.md`、
+  `docs/文档整理_实施记录_20261110.md`（本节判据的来源）。
 
 ## 文件修改工具铁律：禁止用 Python 脚本改源码
 

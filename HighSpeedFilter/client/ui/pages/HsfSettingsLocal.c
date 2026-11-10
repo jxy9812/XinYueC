@@ -184,7 +184,7 @@ static void lsFontValveSlot(XObject* receiver, XVarList* args)
                                           offsetof(HsfSettingsLocal, m_fontValve));
     (void)args;
     if (!self || self->m_noPersist) return;
-    lsFontPersist(self, &self->m_fontValve, LS_KEY_FONT_VALVE, "电磁阀页");
+    lsFontPersist(self, &self->m_fontValve, LS_KEY_FONT_VALVE, "电动球阀页");
     hsfUi_reapplyPageFonts(HSF_PAGE_MONITOR_VALVE);
 }
 
@@ -384,7 +384,7 @@ XWidget* HsfSettingsLocal_create(XWidget* parent, HsfMenuNavFn navFn,
     lsFontLabelInit(&self->m_fontLblFlow, &self->m_fontCard, "流量计页");
     lsFontSpinInit(&self->m_fontFlow, &self->m_fontCard,
                    LS_KEY_FONT_FLOW);
-    lsFontLabelInit(&self->m_fontLblValve, &self->m_fontCard, "电磁阀页");
+    lsFontLabelInit(&self->m_fontLblValve, &self->m_fontCard, "电动球阀页");
     lsFontSpinInit(&self->m_fontValve, &self->m_fontCard, LS_KEY_FONT_VALVE);
     lsFontLabelInit(&self->m_fontLblHistory, &self->m_fontCard, "历史数据页");
     lsFontSpinInit(&self->m_fontHistory, &self->m_fontCard,

@@ -23,6 +23,9 @@ from .page_base import DataTable, LampRow, Page, ToggleGrid, section_title
 # [import 复用] 趋势图的配色/整型收缩直接取历史折线图的同一份定义，
 # 不复制一份（两处图表读起来是同一套视觉口径）。
 from .pages_other import LineChartDialog, _px
+# [报警文案复用] 流量计报警位 → 中文（口径与 C 端 fmAlarmText 一致），
+# 首页流量计卡与本页共用同一份定义，别各写各的。
+from .model import flow_alarm_text
 from .widgets import Card
 
 
@@ -402,6 +405,21 @@ class _TouchSlider(QSlider):
 #                     实时趋势图（变频器 / 水质两页共用）
 # ============================================================================
 
+def _trend_num(value):
+    """Y 轴刻度文本：按量级选小数位（1440 → "1440"、48.62 → "48.6"）。
+
+    [为什么不用 %.4g] 小量程（浊度 0.04~0.05）会变成 "0.04458" 挤满轴；
+    大量程（转速 1440）又要 4 位整数。按 |v| 分档给 0/1/2 位小数，宽度可控。
+    """
+    v = float(value)
+    a = abs(v)
+    if a >= 100:
+        return "%.0f" % v
+    if a >= 10:
+        return "%.1f" % v
+    return "%.2f" % v
+
+
 class TrendChart(QWidget):
     """实时趋势图：**60 点滚动窗 + 视口归属仲裁**（QPainter 自绘，零依赖）。
 
@@ -454,9 +472,18 @@ class TrendChart(QWidget):
     #: 恢复跟随的右缘容差（毫秒；对齐 C 端 VFD_TREND_CATCHUP ≈ 1px）。
     CATCHUP_MS = 50
 
-    #: 绘图区边距：上留图例行、下留 X 轴刻度。左右窄——本图没有 Y 轴
-    #: 数值标签（各序列各自归一化，数值读图例与悬停）。
-    MARGIN_L, MARGIN_T, MARGIN_R, MARGIN_B = 14, 26, 12, 26
+    #: 可选采样间隔（毫秒）——「实时趋势」卡上的「刷新」下拉。
+    #: 200 = 每拍都记（服务端推送 ~5Hz、页面节拍 200ms，等于当前行为）；
+    #: 再快没有意义（数据本来就没有更细的分辨率），再慢曲线点变稀。
+    SAMPLE_CHOICES = (200, 500, 1000, 2000)
+
+    #: 绘图区边距：上留图例行、下留 X 轴刻度、**左留 Y 轴刻度**。
+    #: [2026-11-10 对齐 C 端] C 的趋势图是 XChartView + 真值轴：X 刻度渲染
+    #: 成本地时钟时间、Y 轴有数值刻度。本控件原来 X 只写"6 s/8 s"、左边距
+    #: 只有 14px（压根没有 Y 标签），现场读不出"几点、多少"——用户截图反馈
+    #: 「x 轴要显示时间，这里 y 轴缺失」。现在左边距按 Y 标签（"1440" /
+    #: "48.6" 这类 4~5 字符）留够，底部按 "HH:MM:SS" 留够。
+    MARGIN_L, MARGIN_T, MARGIN_R, MARGIN_B = 62, 26, 12, 30
 
     GRID_COLOR = "#E3E6EB"
     TEXT_COLOR = "#5A6572"
@@ -493,10 +520,58 @@ class TrendChart(QWidget):
         #: 交互中的临时状态。
         self._drag_origin = None         # (x, win_lo, win_hi)
         self._hover_pos = None           # QPoint 或 None
+        #: 采样间隔（毫秒；见 SAMPLE_CHOICES）。0=不节流。
+        self.sample_ms = self.SAMPLE_CHOICES[0]
+        #: 上一次真正收点的时刻（节拍闸用；**按数据流分开记**，见 accept_sample）。
+        self._last_fed_ms = {}
 
     # ==================================================================
     #                        数据（追点 / 滚动窗）
     # ==================================================================
+
+    def set_sample_ms(self, ms):
+        """设采样间隔（「刷新」下拉）：只改**记录密度**，不动视口窗宽。
+
+        [为什么不动窗宽] 第一版让窗宽 = 60×间隔（拉长采样时"窗内始终满屏
+        点"），实测副作用更糟：从 200ms 切到 1s 的瞬间，窗宽从 12s 跳到
+        60s，已有的点全挤在左边一小块、右边大片空白，看着像"图坏了"。
+        C 端趋势窗宽是固定值（30s）、与采样无关；这里同口径——点变稀就是
+        "采集慢了"的直观表现，窗宽由用户自己拖/缩决定。
+        """
+        try:
+            ms = int(ms)
+        except (TypeError, ValueError):
+            return
+        if ms <= 0:
+            ms = self.SAMPLE_CHOICES[0]
+        if ms != self.sample_ms:
+            self.sample_ms = ms
+            self.update()
+
+    def accept_sample(self, t_ms, stream=""):
+        """节拍闸：距上次收点不足 `sample_ms` 就丢弃（返回 False）。
+
+        [为什么闸在页面这一层而不是 append 里] 一拍会往多条序列各追一个点
+        （变频器页一次 3 条、水质页一次 2~3 条），闸放在 append 里会把同一
+        拍的第 2、3 条序列一起丢掉（时间戳相同）。页面每拍先问一次，
+        整拍一起收或一起丢。
+
+        :param stream: 数据流标识（""=变频器页；水质页用 "flow"/"turb"）。
+            不同流有**各自的时钟**（流量计与浊度仪独立推送），共用一个
+            "上次收点时刻"会互相把对方压掉（实测：浊度每拍被流量刚收过
+            的那一拍挡掉，浊度曲线几乎不长）。
+        """
+        if self.sample_ms <= 0:
+            return True
+        try:
+            t = int(t_ms)
+        except (TypeError, ValueError):
+            return False
+        last = self._last_fed_ms.get(stream, 0)
+        if last and t - last < self.sample_ms:
+            return False
+        self._last_fed_ms[stream] = t
+        return True
 
     def append(self, key, t_ms, value):
         """追一个遥测点；跟随态顺手把窗口右缘贴上去。
@@ -754,9 +829,11 @@ class TrendChart(QWidget):
             return
         lo, hi = window
         span = (hi - lo) or 1.0
-        origin = float(self._origin_ms or lo)
 
-        # ---- X 刻度：6 格（相对秒，对齐 C 端"%.0f s"标签）----
+        # ---- X 刻度：6 格，标签 = **本地时钟时间**（对齐 C 端 2026-11-10
+        # 口径 vfdTrendXLabelText / fmTrendXLabelText：轴值是相对建页时刻的
+        # 毫秒，标签按本地时间渲染成 时:分:秒 —— 图上直接读得出几点几分，
+        # 不再是 "6 s / 8 s"）。----
         font = painter.font()
         font.setPixelSize(11)
         painter.setFont(font)
@@ -766,9 +843,33 @@ class TrendChart(QWidget):
             painter.setPen(QPen(QColor(self.GRID_COLOR), 1))
             painter.drawLine(_px(x), _px(t), _px(x), _px(b))
             painter.setPen(QColor(self.TEXT_COLOR))
-            label = "%.0f s" % ((lo + span * frac - origin) / 1000.0)
-            painter.drawText(_px(x) - 24, _px(b) + 6, 48, 14,
+            stamp = (lo + span * frac) / 1000.0
+            label = time.strftime("%H:%M:%S", time.localtime(stamp))
+            painter.drawText(_px(x) - 34, _px(b) + 6, 68, 14,
                              Qt.AlignCenter, label)
+
+        # ---- Y 轴刻度：按**第一个序列**的视口量程画（对齐 C 端单序列值轴
+        # 的可读数口径）。[为什么按首序列] 本控件多序列、量纲不同（Hz/A /
+        # m³/h/NTU），各自归一化到绘图区高度是既定口径（见类 docstring b）；
+        # 画一条统一刻度必然与其它线不对应。首序列是各页的"主量"（变频器
+        # 页=输出频率、水质页=瞬时流量），Y 轴给出它的真实量程，其余线
+        # 的形状看趋势、数值看图例（图例逐条标了视口内 min/max）。----
+        if self._series:
+            first_key = self._series[0][0]
+            first_name = self._series[0][1]
+            scale = self._visible_scale(self._data[first_key])
+            if scale is not None:
+                vmin, vmax = scale
+                for i in range(5):
+                    frac = i / 4.0            # 0=底 1=顶
+                    y = b - plot_h * frac
+                    painter.setPen(QColor(self.TEXT_COLOR))
+                    painter.drawText(_px(l) - 58, _px(y) - 7, 54, 14,
+                                     Qt.AlignRight | Qt.AlignVCenter,
+                                     _trend_num(vmin + (vmax - vmin) * frac))
+                # [不画 Y 轴标题] 图例行已经写着首序列名与单位
+                # （"输出频率 Hz 0~0"）；再在左上角画一次会与图例文字重叠
+                # （实测第一版就是这样糊在一起）。
 
         # ---- 各序列折线（各自归一化，见类 docstring b）----
         for key, _name, color in self._series:
@@ -964,11 +1065,42 @@ class TrendChart(QWidget):
         self.update()
 
 
-def _trend_card(series):
-    """建「实时趋势」卡：接管提示 + 「跟随」按钮 + TrendChart。
+#: 趋势「刷新」间隔的本地设置键（统一走 settings 模块的 QSettings）。
+TREND_SAMPLE_KEY = "trendSampleMs"
 
-    变频器 / 水质两页共用同一版式（标题行右侧「跟随」按钮）。按钮直接
-    连 chart.follow（视口被拖动/缩放接管后，一键恢复自动跟随）。
+
+def trend_sample_ms_load(default=200):
+    """读本机保存的趋势刷新间隔（毫秒）；读不到/非法 ⇒ default。"""
+    from . import settings as _settings
+    try:
+        v = int(_settings.trend_ms())
+    except Exception:                                   # noqa: BLE001
+        return default
+    return v if v > 0 else default
+
+
+def trend_sample_ms_save(ms):
+    """把趋势刷新间隔写进本机设置（失败静默）。"""
+    from . import settings as _settings
+    _settings.set_value(_settings.K_TREND_MS, int(ms))
+
+
+def _on_trend_sample_changed(combo, chart):
+    """「刷新」下拉变更：应用节奏 + 写本机设置（两页共用一份存档）。
+
+    [为什么两页共用] 变频器页与水质页是两个 TrendChart 实例，但"我想看多密
+    的曲线"是同一个使用偏好；共用一个键后，改一页另一页下次建页也跟上。
+    """
+    ms = combo.currentData() or TrendChart.SAMPLE_CHOICES[0]
+    chart.set_sample_ms(ms)
+    trend_sample_ms_save(ms)
+
+
+def _trend_card(series):
+    """建「实时趋势」卡：接管提示 + 「刷新」下拉 + 「跟随」按钮 + TrendChart。
+
+    变频器 / 水质两页共用同一版式（标题行右侧「刷新」下拉 +「跟随」按钮）。
+    两页各自的图实例独立，但下拉口径相同（TrendChart.SAMPLE_CHOICES）。
     :return: (card, chart, hint_label)
     """
     card = Card("实时趋势")
@@ -978,10 +1110,34 @@ def _trend_card(series):
     hint.setStyleSheet(theme.caption_label_qss())
     row.addWidget(hint)
     row.addStretch(1)
+    chart = TrendChart(series)
+    # [采样间隔可调 2026-11-10 用户口径] 「采集速度好快，有可以设置的地方吗」：
+    # 曲线点密度由**服务端采集周期 × 推送节拍**决定，界面上原来没有任何旋钮。
+    # 这里给一个纯客户端的节流（只影响本图记录密度，不改服务端采集/推送）：
+    # 默认 200ms（= 现状），可放宽到 2s 把窗口拉长看更长的趋势。
+    sample = QComboBox()
+    sample.setObjectName("comboTrendSample")   # 测试按名定位
+    for ms in TrendChart.SAMPLE_CHOICES:
+        sample.addItem("%.1f s" % (ms / 1000.0), ms)
+    # [读本地存档 2026-11-10 用户问「刷新时间设置持久化吗」] 原来每次启动都
+    # 回 200ms。现在按本机保存的值找档；存的值不在档位里（老版本/手改配置）
+    # 就落到最近的档，避免下拉显示空档。
+    saved = trend_sample_ms_load(TrendChart.SAMPLE_CHOICES[0])
+    idx = sample.findData(saved)
+    if idx < 0:
+        idx = min(range(sample.count()),
+                  key=lambda i: abs((sample.itemData(i) or 0) - saved))
+    sample.setCurrentIndex(idx)
+    chart.set_sample_ms(sample.itemData(idx) or 200)
+    sample.setToolTip("曲线记录间隔（只影响本图密度；服务端采集/推送不变）"
+                      "\n设置会保存到本机，重启后沿用")
+    sample.currentIndexChanged.connect(
+        lambda _i: _on_trend_sample_changed(sample, chart))
+    row.addWidget(QLabel("刷新"))
+    row.addWidget(sample)
     btn = QPushButton("跟随")
     btn.setObjectName("btnTrendFollow")   # 测试按名定位（Qt 惯用法）
     btn.setToolTip("拖动/滚轮缩放会接管视口；点此恢复自动跟随最新数据")
-    chart = TrendChart(series)
     btn.clicked.connect(chart.follow)
     row.addWidget(btn)
     card.body.addLayout(row)
@@ -1712,7 +1868,8 @@ class VfdPage(Page):
         # [getattr 兜底] updated_ms 是 VfdState 的固定字段；取不到的桩
         # （离屏测试的轻量替身）视为"没有拍"，不追点。
         t_ms = int(getattr(st, "updated_ms", 0) or 0)
-        if fresh and t_ms and t_ms != self._trend_last_ms:
+        if (fresh and t_ms and t_ms != self._trend_last_ms
+                and self._trend.accept_sample(t_ms)):
             self._trend_last_ms = t_ms
             if st.has("outputFreqHz"):
                 self._trend.append("out", t_ms, st.output_freq_hz)
@@ -1892,6 +2049,7 @@ class WaterPage(Page):
         # 用 QHBoxLayout 让单位紧跟数值右侧，基线对齐更自然。
         self._turb_rows = []          # [(name_label, value_label)]
         self._turb_units = []         # [unit_label]（单独留一份，便于自测查重叠）
+        self._turb_temps = []         # [temp_label]（水温；只有带温度的机型有）
         for idx in range(2):
             row = QHBoxLayout()
             row.setSpacing(6)
@@ -1909,14 +2067,26 @@ class WaterPage(Page):
                 "QLabel { color: #5A6572; font-size: 20px;"
                 " background: transparent; padding-bottom: 8px; }")
             unit.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
+            # [水温 2026-11-10] 带温度的机型（站3 ZHEYI-5100ZDY）一帧
+            # 0x0000×4 同刻读出浊度+温度，温度跟浊度并列显示；站1
+            # WZT-701A 无温度 ⇒ 该标签不显示（不是显示 0℃）。
+            temp = QLabel("")
+            temp.setStyleSheet(
+                "QLabel { color: #5A6572; font-size: 20px;"
+                " background: transparent; padding-bottom: 8px; }")
+            temp.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
+            temp.setVisible(False)
             row.addWidget(name)
             row.addSpacing(6)
             row.addWidget(value)
             row.addWidget(unit)
+            row.addSpacing(14)
+            row.addWidget(temp)
             row.addStretch(1)
             turb_card.body.addLayout(row)
             self._turb_rows.append((name, value))
             self._turb_units.append(unit)
+            self._turb_temps.append(temp)
 
         self._turb_note = QLabel("")
         self._turb_note.setWordWrap(True)
@@ -1926,7 +2096,8 @@ class WaterPage(Page):
 
         # [用说明行填掉下方留白] 两块卡在同一横排会被拉成等高，浊度侧只有
         # 两行读数，不补内容就在下面留一大片空白。这里顺便把"共用 485 口、
-        # 站号 1/3"写清楚——现场查线最常问的就是这个。
+        # 站号 1/2（站 2 表后续会换，站号在服务端 config 可改）"写清楚——
+        # 现场查线最常问的就是这个。
         turb_hint = QLabel("与电磁流量计共用一路 485（站号 1 / 站号 3）；"
                            "超过 %.0f NTU 标红。"
                            % self.TURBIDITY_WARN_NTU)
@@ -2046,24 +2217,33 @@ class WaterPage(Page):
         是"实测曲线"，编造平点比缺口更危险。
         [同一拍只追一次] refresh() 200ms 一拍、遥测可能慢于它；按
         updated_ms 判重，同一拍重复喂会把 60 点窗灌满同值重复点。
+        [按侧择优] 取「优先侧 + 兜底侧」挑中的那一侧快照（model.pick()），
+        另一侧的空帧（没装设备）既不顶替读数、也不当成新点喂趋势。
         """
-        fm = self.ctx.model.flowmeter
-        fm_ms = int(getattr(fm, "updated_ms", 0) or 0)
-        if fm.is_fresh() and fm_ms and fm_ms != self._trend_last_flow_ms:
-            self._trend_last_flow_ms = fm_ms
-            self._trend.append("flow", fm_ms, fm.flow)
-        tb = self.ctx.model.turbidity
-        tb_ms = int(getattr(tb, "updated_ms", 0) or 0)
-        if tb.is_fresh() and tb_ms and tb_ms != self._trend_last_turb_ms:
-            self._trend_last_turb_ms = tb_ms
-            for key, idx in (("turb1", 0), ("turb2", 1)):
-                ntu = tb.ntu_of(idx)
-                if ntu is not None:
-                    self._trend.append(key, tb_ms, ntu)
+        fm = self.ctx.model.flowmeter.pick()
+        if fm is not None:
+            fm_ms = int(fm.updated_ms or 0)
+            if (fm_ms and fm_ms != self._trend_last_flow_ms
+                    and self._trend.accept_sample(fm_ms, "flow")):
+                self._trend_last_flow_ms = fm_ms
+                self._trend.append("flow", fm_ms, fm.flow)
+        tb = self.ctx.model.turbidity.pick()
+        if tb is not None:
+            tb_ms = int(tb.updated_ms or 0)
+            if (tb_ms and tb_ms != self._trend_last_turb_ms
+                    and self._trend.accept_sample(tb_ms, "turb")):
+                self._trend_last_turb_ms = tb_ms
+                for key, idx in (("turb1", 0), ("turb2", 1)):
+                    ntu = tb.ntu_of(idx)
+                    if ntu is not None:
+                        self._trend.append(key, tb_ms, ntu)
 
     def _render_flow(self):
-        st = self.ctx.model.flowmeter
-        if not st.is_fresh():
+        # [按侧择优] 服务端按两条侧轮流推同一主题；没装流量计的那一侧推的
+        # 是 valid=false 的空帧 ⇒ 只留最后一帧时整页恒"无数据"。口径对齐
+        # C 端 hsfHomePickFlowMeter（优先 B 侧）。
+        st = self.ctx.model.flowmeter.pick()
+        if st is None:
             for block in self._flow_blocks.values():
                 block.set_value("--")
             self._flow_alarm.setText("--")
@@ -2083,21 +2263,27 @@ class WaterPage(Page):
         self._flow_blocks["rev"].set_value("%.2f" % st.reverse_total)
         self._flow_blocks["rev"].set_suffix(st.total_unit_text())
         ok = (st.alarms == 0)
-        self._flow_alarm.setText("正常" if ok else "报警 0x%04X" % st.alarms)
+        # [报警码直接说中文 2026-11-10] 操作员看不懂 "0x0004"；说明书里写
+        # 的是「空管报警」。口径照 C 端 fmAlarmText：文案 + "报警: " 前缀。
+        self._flow_alarm.setText("正常" if ok
+                                 else "报警: %s" % flow_alarm_text(st.alarms))
         self._flow_alarm.setStyleSheet(
             "QLabel { font-size: 21px; font-weight: bold; color: %s;"
             " background: transparent; }"
             % (theme.CLR_OK if ok else theme.CLR_FAULT))
 
     def _render_turbidity(self):
-        st = self.ctx.model.turbidity
-        fresh = st.is_fresh()
+        # [按侧择优] 两台浊度仪在同一侧；另一侧的"两台都离线"帧不能顶替
+        # 真读数（model.pick()）。
+        st = self.ctx.model.turbidity.pick()
         for idx, (name_lbl, value_lbl) in enumerate(self._turb_rows):
-            if not fresh:
+            temp_lbl = self._turb_temps[idx]
+            if st is None:
                 value_lbl.setText("--")
                 value_lbl.setStyleSheet(
                     "QLabel { color: #9E9E9E; font-size: 45px;"
                     " font-weight: bold; background: transparent; }")
+                temp_lbl.setVisible(False)
                 continue
             # 名字由服务端给（客户端不猜"原水/出水"）
             server_name = st.name_of(idx)
@@ -2109,6 +2295,7 @@ class WaterPage(Page):
                 value_lbl.setStyleSheet(
                     "QLabel { color: #9E9E9E; font-size: 45px;"
                     " font-weight: bold; background: transparent; }")
+                temp_lbl.setVisible(False)
                 continue
             value_lbl.setText("%.2f" % ntu)
             warn = ntu >= self.TURBIDITY_WARN_NTU
@@ -2116,7 +2303,14 @@ class WaterPage(Page):
                 "QLabel { color: %s; font-size: 45px; font-weight: bold;"
                 " background: transparent; }"
                 % (theme.CLR_FAULT if warn else "#1A1A1A"))
-        if not fresh:
+            # 水温：缺值 = 这台表没有温度 ⇒ 不显示（不写 0℃）
+            temp = st.temp_of(idx)
+            if temp is None:
+                temp_lbl.setVisible(False)
+            else:
+                temp_lbl.setText("水温 %.2f ℃" % temp)
+                temp_lbl.setVisible(True)
+        if st is None:
             self._turb_note.setText(
                 "未收到浊度仪数据（服务端未装配 / 从站失联）")
             self._turb_note.setVisible(True)

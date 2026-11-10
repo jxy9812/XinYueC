@@ -10,7 +10,7 @@
 引入登录结果的跨线程同步，复杂度远大于收益。阻塞 + 转圈是合理取舍。
 """
 
-from PyQt5.QtCore import Qt, QSettings
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QCheckBox, QDialog, QFormLayout,
                              QHBoxLayout, QLabel, QLineEdit, QPushButton,
                              QVBoxLayout, QWidget)
@@ -143,12 +143,18 @@ QLabel#HsfLoginErr { color: %(fault)s; font-size: %(fz_sub)dpx; padding-top: 6px
 
     # ---- 记住上次输入 ----
     def _load_settings(self):
-        settings = QSettings("XinYueC", "HsfClientPy")
-        self.host_edit.setText(settings.value("host", "192.168.0.10", str))
-        self.port_edit.setText(settings.value("port", str(DEFAULT_PORT), str))
-        self.user_edit.setText(settings.value("user", "root", str))
-        remember = settings.value("remember", True, bool)
-        self.remember.setChecked(remember)
+        """从**程序目录 cfg/hsf_client_py.ini** 读上次输入。
+
+        [2026-11-10 用户定案：不用注册表] 与其它本机设置同一份文件（见
+        settings 模块）；旧版存在注册表的值由 settings.migrate_from_legacy
+        在启动时搬一次。
+        """
+        from . import settings as ui_settings
+        self.host_edit.setText(ui_settings.get_str("host", "192.168.0.10"))
+        self.port_edit.setText(ui_settings.get_str("port",
+                                                   str(DEFAULT_PORT)))
+        self.user_edit.setText(ui_settings.get_str("user", "root"))
+        self.remember.setChecked(ui_settings.get_bool("remember", True))
         # 记住用户名时给个口令提示（口令本身不落盘）。
         if self.user_edit.text() == "root":
             self.pass_edit.setPlaceholderText("口令（缺省 root）")
@@ -156,11 +162,11 @@ QLabel#HsfLoginErr { color: %(fault)s; font-size: %(fz_sub)dpx; padding-top: 6px
     def _save_settings(self):
         if not self.remember.isChecked():
             return
-        settings = QSettings("XinYueC", "HsfClientPy")
-        settings.setValue("host", self.host_edit.text().strip())
-        settings.setValue("port", self.port_edit.text().strip())
-        settings.setValue("user", self.user_edit.text().strip())
-        settings.setValue("remember", True)
+        from . import settings as ui_settings
+        ui_settings.set_value("host", self.host_edit.text().strip())
+        ui_settings.set_value("port", self.port_edit.text().strip())
+        ui_settings.set_value("user", self.user_edit.text().strip())
+        ui_settings.set_value("remember", True)
 
     # ---- 动作 ----
     def _read_inputs(self):

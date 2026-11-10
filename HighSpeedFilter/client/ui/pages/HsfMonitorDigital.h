@@ -91,6 +91,15 @@ void HsfMonitorDigital_setCount(int count);
 int HsfMonitorDigital_count(void);
 
 /**
+ * @brief      离线演示灌点（**仅 --no-login 路径**，由 HsfUi 建窗后调用）。
+ * @details    登录路径**不**调用：现场真实点位绝不能被假数据顶替
+ *             （2026-11-10 与模拟量页同口径收敛）。离线态没有服务端快照，
+ *             模型恒空 ⇒ 页面只有「无数字量点」空态，指定截图无法验收
+ *             点位字号/标签重叠。登录后服务端快照 setCount 整体覆盖。
+ */
+void HsfMonitorDigital_seedDemoForOffline(void);
+
+/**
  * @brief      写单点状态（读写 API；业务层轮询/订阅回显用）。
  * @param index 点位下标；越界忽略。
  * @param state 目标态（断开=红 / 通=绿）。

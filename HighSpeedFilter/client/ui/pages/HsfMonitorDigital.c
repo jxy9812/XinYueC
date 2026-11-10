@@ -1187,10 +1187,17 @@ XWidget* HsfMonitorDigital_create(XWidget* parent, HsfMenuNavFn navFn,
 
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_hint);
 
-    /* 模型为空（业务层尚未接入）时种缺省演示数据：页面首开即有内容
-     * 可看；业务层一句 setCount/setXxx 即可整体覆盖（真实接入后本批
-     * 演示点被换掉，不残留）。 */
-    if (s_digital.m_count <= 0)
+    /* [不再铺演示数据] 2026-11-10：与模拟量页**同口径**收敛。
+     * 现场只接了真实点位；铺 16 个编造的点位（风机启停/阀门1~6/清洗阀…，
+     * 通道号 CH101~CH208，**一半标成 DO 可点**）会让操作员以为那些点真的
+     * 在线，是**假数据**（现场最忌讳）。更险的是：演示点可点 ⇒ 点了会走
+     * hsfWinDigitalWrite 的 `index - n` 算出通道号发给服务端，**可能误控
+     * 真实通道**（点数少于演示下标时尤其危险）。故：模型为空时页面就是
+     * 空的，等服务端快照来了再长出点位；演示数据只在自测钩子
+     * （XHSF_DIGITAL_AUTOTEST）与**显式离线演示**（--no-login，由 HsfUi
+     * 建窗后调 seedDemoForOffline）两条非生产路径下灌。登录路径不灌；
+     * 登录后服务端快照 setCount 整体覆盖本批演示点。 */
+    if (s_digital.m_count <= 0 && XSystem_environment("XHSF_DIGITAL_AUTOTEST"))
         digital_seedDemo();
 
     /* 字号/联动度量一次到位（create 与 adapt/实时重放同一入口；100% 时
@@ -1232,6 +1239,17 @@ void HsfMonitorDigital_setCount(int count)
 int HsfMonitorDigital_count(void)
 {
     return s_digital.m_count;
+}
+
+void HsfMonitorDigital_seedDemoForOffline(void)
+{
+    /* [仅离线演示] 由 HsfUi 在 --no-login 建窗后调用（登录路径不调用）：
+     * 离线态没有服务端快照，数字量模型恒空，页面只有「无数字量点」空态，
+     * 指定截图无法验收点位字号/标签重叠。只在显式 --no-login 路径灌（登录
+     * 路径不灌——现场真实点位绝不能被假数据顶替；登录后服务端快照
+     * setCount 会整体覆盖本批演示点）。 */
+    if (s_digital.m_count > 0) return;
+    digital_seedDemo();
 }
 
 void HsfMonitorDigital_setValue(int index, HsfDigitalState state)

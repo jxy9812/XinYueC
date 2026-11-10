@@ -133,6 +133,14 @@ bool HsfConfig_parse(const uint8_t* data, uint32_t len, HsfConfig* out)
             hsfCfgSubBool(collect, "flowmeterEnabled", true);
         out->m_collect.m_turbidityEnabled =
             hsfCfgSubBool(collect, "turbidityEnabled", true);
+        /* [逐台开关 2026-11-10] 两台浊度是独立设备：缺逐台键回落共同键
+         * （旧服务端只报 turbidityEnabled）。 */
+        out->m_collect.m_turbidity1Enabled =
+            hsfCfgSubBool(collect, "turbidity1Enabled",
+                          out->m_collect.m_turbidityEnabled);
+        out->m_collect.m_turbidity2Enabled =
+            hsfCfgSubBool(collect, "turbidity2Enabled",
+                          out->m_collect.m_turbidityEnabled);
         out->m_collect.m_analogEnabled =
             hsfCfgSubBool(collect, "analogEnabled", true);
         out->m_collect.m_digitalEnabled =
@@ -143,12 +151,26 @@ bool HsfConfig_parse(const uint8_t* data, uint32_t len, HsfConfig* out)
             hsfCfgSubInt(collect, "temphumPollMs", 500);
         out->m_collect.m_turbidityPollMs =
             hsfCfgSubInt(collect, "turbidityPollMs", 500);
+        /* [逐台 2026-11-10] 缺键回落"两台共同缺省"，与 C 服务端同序。 */
+        out->m_collect.m_turbidity1PollMs =
+            hsfCfgSubInt(collect, "turbidity1PollMs",
+                         out->m_collect.m_turbidityPollMs);
+        out->m_collect.m_turbidity2PollMs =
+            hsfCfgSubInt(collect, "turbidity2PollMs",
+                         out->m_collect.m_turbidityPollMs);
+        out->m_collect.m_flowmeterPollMs =
+            hsfCfgSubInt(collect, "flowmeterPollMs", 500);
         out->m_collect.m_analogPollMs =
             hsfCfgSubInt(collect, "analogPollMs", 200);
         out->m_collect.m_digitalPollMs =
             hsfCfgSubInt(collect, "digitalPollMs", 200);
     }
     if (storage) {
+        /* [落盘节确实存在 2026-11-10] 记一笔：没有这一节时 m_storage 的
+         * 字段是结构体零值（enabled=false），界面若把它当「服务端说落盘
+         * 关闭」写回去就会静默关掉落盘 ⇒ 历史表格空（见 HsfConfig 的
+         * m_storagePresent 注记）。 */
+        out->m_storagePresent = true;
         out->m_storage.m_enabled = hsfCfgSubBool(storage, "enabled", true);
         hsfCfgSubText(storage, "path", out->m_storage.m_path,
                       (int)sizeof(out->m_storage.m_path));

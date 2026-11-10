@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XLineEdit.c
  * @brief      XLineEdit 单行编辑控件实现（对标 Qt 6.8 QLineEdit 全部公共
  *             API；壳-控制器架构）。
@@ -32,9 +32,8 @@
  *             迁移前一致）。
  * @author     XinYueC 团队
  ******************************************************************************/
-#if XGUI_ON
-
 #include "CXinYueConfig.h"
+#if XGUI_ON
 #include "XStringUtils.h"
 
 #include "XAlgorithm.h"
@@ -2221,8 +2220,17 @@ XSize XLineEdit_sizeHint(const XLineEdit* self)
                   ((self->m_clearButtonEnabled) ? 18 : 0));
     }
     if (w < 40) w = 40;
-    h = 14 + self->m_textMargins.top + self->m_textMargins.bottom +
-        (self->m_frame ? 4 : 2);
+    /* [高度按字体行高 2026-11-10 对标 Qt] 原为常量 14（≈100% 字号的经验
+     * 值）：本地设置把界面字号放大到 1.3~2.0 倍后，14 装不下字形 ⇒ 文字上下
+     * 被裁。Qt 的 QLineEdit::sizeHint 高度 = fontMetrics().height() +
+     * 2*(frame+margin)。 */
+    {
+        const XFont* font = &((XWidget*)self)->m_font;
+        int lineH = XPainter_textHeight(font);
+        if (lineH < 14) lineH = 14;      /* 下限：极小字号也别比原来矮。 */
+        h = lineH + self->m_textMargins.top + self->m_textMargins.bottom +
+            (self->m_frame ? 4 : 2);
+    }
     XSize_init(&s, w, h);
     return s;
 }
@@ -2240,8 +2248,13 @@ XSize XLineEdit_minimumSizeHint(const XLineEdit* self)
               self->m_textMargins.right + XLINEEDIT_CHAR_W +
               ((self->m_clearButtonEnabled) ? 18 : 0));
     if (w < 24) w = 24;
-    h = 14 + self->m_textMargins.top + self->m_textMargins.bottom +
-        (self->m_frame ? 4 : 2);
+    {
+        const XFont* font = &((XWidget*)self)->m_font;
+        int lineH = XPainter_textHeight(font);
+        if (lineH < 14) lineH = 14;
+        h = lineH + self->m_textMargins.top + self->m_textMargins.bottom +
+            (self->m_frame ? 4 : 2);
+    }
     XSize_init(&s, w, h);
     return s;
 }

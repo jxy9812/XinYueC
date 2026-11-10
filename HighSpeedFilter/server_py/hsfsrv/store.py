@@ -89,13 +89,15 @@ CREATE TABLE IF NOT EXISTS history (
     temp      REAL,                  -- 电箱温度 ℃
     hum       REAL,                  -- 电箱湿度 %RH
     di        INTEGER,               -- DI 位图（≤32 点，4 字节）
-    do        INTEGER                -- DO 位图
+    do        INTEGER,               -- DO 位图
+    water_temp REAL                  -- 水温 ℃（浊度仪2 随帧带出；无温度机型 NULL）
 );
 CREATE INDEX IF NOT EXISTS idx_history_ts ON history(ts);
 
 CREATE TABLE IF NOT EXISTS logs (
-    ts   INTEGER,                     -- epoch 毫秒
-    text TEXT
+    ts       INTEGER,                -- epoch 毫秒
+    category TEXT,                   -- 类别（conn/ctrl/alarm/auto/auth/sys；空=未分类）
+    text     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts);
 
@@ -315,6 +317,8 @@ class Store(object):
                          % WAL_AUTOCHECKPOINT_PAGES)
             conn.executescript(_SCHEMA)
             conn.commit()
+            self._migrate_logs_category(conn)
+            self._migrate_history_water_temp(conn)
             self._refresh_segments(target)
             self._log("数据落盘已启用：%s" % target)
             return True
@@ -324,6 +328,63 @@ class Store(object):
             self._open_cfg_path = None
             self._log("数据落盘打开失败（%s）：不影响采集与推送" % exc)
             return False
+
+    def _migrate_history_water_temp(self, conn):
+        """老库补 history.water_temp 列（2026-11-10，水温列落地）。
+
+        [为什么要迁移] `CREATE TABLE IF NOT EXISTS` 对**已存在**的表不动
+        ⇒ 现场已有 hsf_data.db 永远补不上 water_temp，而分页查询的 SELECT
+        点名了它 ⇒ **整页查询失败、历史页一行都取不到**（不是"少一列"，
+        是"整页空"）。
+
+        [为什么先查再改] ADD COLUMN 不幂等（第二次报 duplicate column
+        name）⇒ 先 PRAGMA table_info 看有没有。与 C 端
+        `storeEnsureHistoryWaterTemp`（HsfServerStore.c）同口径。
+        """
+        try:
+            cols = [row[1] for row in
+                    conn.execute("PRAGMA table_info(history)").fetchall()]
+        except sqlite3.Error as exc:
+            self._log("数据落盘：history 表结构探测失败（%s）：水温列不可用"
+                      % exc)
+            return
+        if "water_temp" in cols:
+            return
+        try:
+            conn.execute("ALTER TABLE history ADD COLUMN water_temp REAL")
+            conn.commit()
+            self._log("数据落盘：history 表已补 water_temp 列（水温）")
+        except sqlite3.Error as exc:
+            self._log("数据落盘：history 表补 water_temp 列失败（%s）："
+                      "历史页可能取不到数据" % exc)
+
+    def _migrate_logs_category(self, conn):
+        """老库补 logs.category 列（2026-11-09，类别列落地）。
+
+        [为什么要迁移] CREATE TABLE IF NOT EXISTS 对**已存在**的表不做任何
+        改动 ⇒ 现场已有 hsf_data.db（只有 ts/text 两列）永远补不上类别列，
+        0x0119 的类别筛选就一直是空的。
+
+        [为什么先查再改] SQLite 的 ADD COLUMN 不是幂等的（第二次会报
+        duplicate column name）⇒ 先 PRAGMA table_info 看有没有。
+
+        [失败不致命] 迁移失败只是类别筛选不可用，落盘主体照常工作。
+        """
+        try:
+            cols = [row[1] for row in
+                    conn.execute("PRAGMA table_info(logs)").fetchall()]
+        except sqlite3.Error as exc:
+            self._log("数据落盘：logs 表结构探测失败（%s）：类别筛选不可用" % exc)
+            return
+        if "category" in cols:
+            return
+        try:
+            conn.execute("ALTER TABLE logs ADD COLUMN category TEXT")
+            conn.commit()
+            self._log("数据落盘：logs 表已补 category 列（日志类别）")
+        except sqlite3.Error as exc:
+            self._log("数据落盘：logs 表补 category 列失败（%s）：类别筛选不可用"
+                      % exc)
 
     def _prepare_autovacuum(self, path):
         """把库切到 incremental auto_vacuum，让循环删除能真正还盘。
@@ -675,11 +736,15 @@ class Store(object):
             self._log_raw("数据落盘写入失败：%s" % exc)
             return False
 
-    def insert_log(self, text, now_ms=None):
-        """运行日志入库（app._log 的旁路；入此处不再回调 _log，防递归）。"""
+    def insert_log(self, text, now_ms=None, category=""):
+        """运行日志入库（app._log 的旁路；入此处不再回调 _log，防递归）。
+
+        :param category: 运行日志类别（conn/ctrl/alarm/auto/auth/sys；
+            空串 = 未分类）。老库（无 category 列）的行按未分类处理。
+        """
         ts = int(now_ms if now_ms is not None else time.time() * 1000)
-        return self._write("INSERT INTO logs(ts, text) VALUES(?, ?)",
-                           (ts, str(text)))
+        return self._write("INSERT INTO logs(ts, category, text) VALUES(?, ?, ?)",
+                           (ts, str(category or ""), str(text)))
 
     def insert_alarm(self, kind, source, text, now_ms=None):
         """告警事件入库（阀超时/自动运行告警…）。"""
@@ -698,7 +763,7 @@ class Store(object):
         cols = ("mode", "vfd_state", "freq_hz", "current_a", "rpm",
                 "turb1", "turb2", "flow", "flow_unit", "flow_total",
                 "total_unit", "press_mpa", "press_note", "temp", "hum",
-                "di", "do")
+                "di", "do", "water_temp")
         ts = int(row.get("ts") or time.time() * 1000)
         values = [ts] + [row.get(c) for c in cols]
         marks = ",".join("?" * (len(cols) + 1))
@@ -715,7 +780,7 @@ class Store(object):
             rows = self._conn.execute(
                 "SELECT ts, mode, vfd_state, freq_hz, current_a, rpm,"
                 " turb1, turb2, flow, flow_total, press_mpa, temp, hum,"
-                " di, do FROM history ORDER BY ts DESC LIMIT ?",
+                " di, do, water_temp FROM history ORDER BY ts DESC LIMIT ?",
                 (int(limit),)).fetchall()
         except sqlite3.Error:
             return []
@@ -728,7 +793,8 @@ class Store(object):
     #: 改这里必须同步客户端 COLUMNS 与 _server_row_texts（有测试锁两端一致）。
     DISPLAY_COLUMNS = (
         "时间", "模式", "搅拌状态", "输出频率(Hz)", "输出电流(A)",
-        "搅拌转速(rpm)", "浊度1(NTU)", "浊度2(NTU)", "瞬时流量", "正累计",
+        "搅拌转速(rpm)", "浊度1(NTU)", "浊度2(NTU)", "水温(℃)",
+        "瞬时流量", "正累计",
         "压差(MPa)", "电箱温度(℃)", "电箱湿度(%RH)", "DI(32位)", "DO(32位)")
 
     #: 每列的 SQLite 文本表达式 —— 与客户端 `_server_row_texts` 的
@@ -751,6 +817,10 @@ class Store(object):
         "CASE WHEN rpm IS NULL THEN '--' ELSE printf('%.0f', rpm) END",
         "CASE WHEN turb1 IS NULL THEN '--' ELSE printf('%.2f', turb1) END",
         "CASE WHEN turb2 IS NULL THEN '--' ELSE printf('%.2f', turb2) END",
+        # [水温：显示列第 8 位，紧跟浊度2] 线上列序里它在末尾（HISTORY_COLUMNS），
+        # 显示列序由 DISPLAY_COLUMNS 决定，两套顺序互不影响。
+        "CASE WHEN water_temp IS NULL THEN '--' "
+        "ELSE printf('%.1f', water_temp) END",
         "CASE WHEN flow IS NULL THEN '--' ELSE printf('%.2f', flow) || ' ' || COALESCE(flow_unit, '') END",
         "CASE WHEN flow_total IS NULL THEN '--' ELSE printf('%.2f', flow_total) || ' ' || COALESCE(total_unit, '') END",
         "CASE WHEN press_note IS NOT NULL AND press_note != '' THEN press_note WHEN press_mpa IS NULL THEN '--' ELSE printf('%.3f', press_mpa) END",
@@ -815,7 +885,11 @@ class Store(object):
     HISTORY_COLUMNS = (
         "ts", "mode", "vfd_state", "freq_hz", "current_a", "rpm",
         "turb1", "turb2", "flow", "flow_unit", "flow_total", "total_unit",
-        "press_mpa", "press_note", "temp", "hum", "di", "do")
+        "press_mpa", "press_note", "temp", "hum", "di", "do",
+        # [water_temp 追加在**末尾**] 行值按**位置**发给 C 客户端
+        # （kSrc/kDst 是下标映射表），插在中间会让后续下标整体平移；
+        # 追加在末尾则既有下标全不变。显示列序另由 DISPLAY_COLUMNS 决定。
+        "water_temp")
 
     #: 合法的墙钟毫秒下界（2020-01-01）。比它小的 ts 一律是坏数据。
     #:
@@ -887,4 +961,68 @@ class Store(object):
                 params).fetchone()[0])
         except sqlite3.Error:
             return [], 0
+        return list(reversed(rows)), window
+
+    def query_logs_page(self, offset=0, limit=50, lo_ms=None, hi_ms=None,
+                        before_ms=None, kw=None, category=None):
+        """取一页运行日志（**ts 降序**，与历史分页同口径：offset=0 是最新）。
+
+        [为什么需要] C 客户端的「日志」页走 0x0119（CMD_LOG_PAGE）；本服务端
+        原先**没有实现该命令** ⇒ C 客户端日志页永远停在"读取中"、一条都
+        看不到（跨端缺陷，2026-11-09 发现）。
+
+        :param offset: 跳过多少行（按 ts 倒序数，0 = 最新那行）。
+        :param limit:  本页最多多少行（调用方夹到协议上限）。
+        :param before_ms: 分页窗口锚点（翻页钉在同一批数据上）。
+        :param kw: 关键字（在事件文本**与类别**上匹配，与 C 端口径一致：
+            C 端 storeBuildLogKwCondition 拼的是 text||' '||category）。
+        :param category: 类别精确过滤（conn/ctrl/alarm/auto/auth；空/None
+            = 不过滤，即"全部类别"）。老库未分类的行（category 为空串）
+            不匹配任何具体类别，与 C 端 COALESCE 后等值比较的口径一致。
+        :returns: (rows, window_total)。rows 是 [(ts, category, text)]，
+            **页内按 ts 正序**（与 0x0118 历史分页、与 C 端
+            `HsfServerStore_queryLogs` 同口径：SQL 侧 ORDER BY ts DESC 取页，
+            再在内存里翻转 ⇒ 第 1 页 = 最新的一页，页内由旧到新）。
+            调用方（两个客户端）把它当"一行一行铺表"用，不依赖倒序。
+        """
+        if self._conn is None:
+            return [], 0
+        where = []
+        params = []
+        if before_ms is not None:
+            where.append("ts <= ?")
+            params.append(int(before_ms))
+        if lo_ms is not None:
+            where.append("ts >= ?")
+            params.append(int(lo_ms))
+        if hi_ms is not None:
+            where.append("ts <= ?")
+            params.append(int(hi_ms))
+        if kw:
+            # 关键字同时匹配类别列（C 端口径：text||' '||category），
+            # 否则"输入 conn 找不到连接类事件"——类别是用户看得见的一列，
+            # 搜不到它等于筛选器少了一半能力。
+            where.append("(COALESCE(text, '') || ' ' || COALESCE(category, ''))"
+                         " LIKE ? ESCAPE '\\'")
+            params.append("%" + str(kw).replace("\\", "\\\\")
+                          .replace("%", "\\%").replace("_", "\\_") + "%")
+        if category:
+            where.append("COALESCE(category, '') = ?")
+            params.append(str(category))
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        try:
+            rows = self._conn.execute(
+                "SELECT ts, COALESCE(category, ''), text FROM logs" + clause
+                + " ORDER BY ts DESC, rowid DESC LIMIT ? OFFSET ?",
+                params + [int(limit), int(offset)]).fetchall()
+            window = int(self._conn.execute(
+                "SELECT COUNT(*) FROM logs" + clause,
+                params).fetchone()[0])
+        except sqlite3.Error:
+            return [], 0
+        # [页内翻转成时间正序 2026-11-09 两端口径对齐] 与 C 端
+        # `HsfServerStore_queryLogs` 尾部的「倒序取的 ⇒ 反转让输出时间正序」
+        # 逐字同构，也与本文件 query_history_page 的 list(reversed(rows)) 一致。
+        # 此前这里直接回 SQL 的降序 ⇒ 同一个客户端连 C 服务端与连本服务端
+        # 看到的日志表是**反的**（同一个页面、同一批数据，顺序随服务端变）。
         return list(reversed(rows)), window

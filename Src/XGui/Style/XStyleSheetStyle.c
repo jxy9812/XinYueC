@@ -17,6 +17,9 @@
 #include "XChar.h" /* text-transform 码点映射（XChar_toUpper/ToLower/isSpace）。 */
 #include "XCssValue.h" /* palette(role)/渐变类型化解析（值解析线合同 API）。 */
 #include "XPalette.h" /* palette 角色色解析设施（XPalette_color）。 */
+#include "XCommonStyle.h" /* XCommonStyle_elideText（表头标签省略号收口）。 */
+#include "XStyleOption.h" /* XStyleOptionHeader（表头标签省略模式）+ 规范枚举
+                           * XAbstractItemViewTextElideMode（省略编号唯一来源）。 */
 
 /* ===== G3 新增 include（lane-image-box 线：渐变栅格化数学原语） ===== */
 #include <math.h> /* 渐变栅格化 sqrt/atan2/fmod（math.h 为白名单头）。 */
@@ -4611,6 +4614,9 @@ static bool xsssHdr_drawSectionHeader(XStyleSheetStyle* self,
                                  extraPseudos, &textColor);
     if (textColor) opt.m_textColor = textColor;
     if (option->m_text && option->m_text[0]) {
+        char elideBuf[256];
+        const char* shown = option->m_text;
+        int elideMode = (int)XAbstractItemViewTextElideMode_ElideRight;
         textW = XPainter_textWidth(XPainter_font(painter), option->m_text);
         textH = XPainter_textHeight(XPainter_font(painter));
         if (textH < 14) textH = 14;
@@ -4623,14 +4629,42 @@ static bool xsssHdr_drawSectionHeader(XStyleSheetStyle* self,
 #endif
             if (!opt.m_textColor) opt.m_textColor = 0xFF000000u;
         }
-        /* 超宽不画：段太窄时不溢到邻段（Qt 侧由 elide 收口）。 */
-        if (textW <= labelRect.width) {
-            XPainter_drawText(painter,
-                              labelRect.x + (labelRect.width - textW) / 2,
-                              labelRect.y + (labelRect.height - textH) / 2 +
-                                  textH - 4,
-                              option->m_text, opt.m_textColor);
+        /* [Qt 6.8 对齐 2026-11-10] 放不下时**省略号收口**，绝不整段
+         * 不画（Qt 6.8 QCommonStyle::drawControl(CE_HeaderLabel) 用
+         * QFontMetrics::elidedText 后仍绘制，qcommonstyle.cpp:1694-1699：
+         * 文本永远有输出，只是尾部带 "…"）。
+         *
+         * [原缺陷] 旧实现是「超宽整段不画」⇒ 表头文字**空白**：客户端
+         * 历史页 16 列里 4 列（输出频率(Hz)/搅拌转速(rpm)/浊度1(NTU)/
+         * 浊度2(NTU)）因 ::section 的 padding 6px 8px + border-right 1px
+         * 把可用宽压到 93/103/83/83，而文字宽 94/105/85/85 → 差 1~2px
+         * 就整列空白。Qt 语义下这 4 列应显示为「输出频率(H…」这类省略号
+         * 形态，与表格单元格的 elide 口径一致。
+         *
+         * 可用宽 = labelRect.width（= 段宽 − padding − border，
+         * 与 Qt SE_HeaderLabel 的 contentsRect 同源，见
+         * xsssHdr_labelRect 注释）。 */
+        /* 省略模式取自表头选项（框架规范枚举，编号与视图/单元格同源，
+         * 见 XStyleOptionHeader::m_textElideMode 与
+         * XAbstractItemView_elidedText）。 */
+        if (hdr) {
+            int m = (int)hdr->m_textElideMode;
+            if (m >= (int)XAbstractItemViewTextElideMode_ElideLeft &&
+                m <= (int)XAbstractItemViewTextElideMode_ElideNone)
+                elideMode = m;
         }
+        if (textW > labelRect.width) {
+            shown = XCommonStyle_elideText(elideBuf, (int)sizeof(elideBuf),
+                                           option->m_text, elideMode,
+                                           labelRect.width,
+                                           XPainter_font(painter));
+            textW = XPainter_textWidth(XPainter_font(painter), shown);
+        }
+        XPainter_drawText(painter,
+                          labelRect.x + (labelRect.width - textW) / 2,
+                          labelRect.y + (labelRect.height - textH) / 2 +
+                              textH - 4,
+                          shown, opt.m_textColor);
     }
     XPainter_restore(painter);
     return true;

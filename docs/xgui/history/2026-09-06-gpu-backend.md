@@ -5,8 +5,8 @@
 ## 14. GPU 渲染后端（Windows 实施记录，Linux 待续） — 2026-09-06
 
 > 本节专记 XGui GPU 光栅化后端与直通上屏的进度。Windows（WGL）已实现并验证
-> 主体，遗留问题计划在 Linux（GLX）继续。设计文档见
-> `docs/superpowers/specs/2026-09-06-xgui-gpu-render-backend-design.md`。
+> 主体，遗留问题计划在 Linux（GLX）继续（当时的设计稿已随文档整理删除，
+> 其结论已并入本节与 `docs/xgui/gpu-night2-report.md`）。
 > 运行时开关：`XGUI_RENDER_BACKEND=gpu`（默认软件）；编译裁剪：`XGPU_ON=0`。
 
 ### 14.1 已完成的架构

@@ -1,6 +1,12 @@
 # Qt 对齐战役批次记录（14.120~14.126 + 串行批次 3~26 前置）
 
 > 归档自 XGui.md §2026（2026-09-21 文档重构迁移，内容逐字保留）。后续更新见 XGui.md 当前版。
+>
+> **文件名说明**：本文件为逐字归档史料，其中提到的
+> `linecontrol-checklist.md` / `textcontrol-checklist.md` /
+> `editor-delta-audit.md` / `xgui-qt-alignment-scan.md` 等**当日盘点清单**
+> 已随 2026-11-10 文档整理删除（逐日审计快照无独立信息量），其结论已由本文件
+> 与 `Test/XGuiTest/XLineControlAcceptance.c` 的 68 条断言固化。
 
 ### 14.120 XLineControl 清单验收轮（2026-09-19 深夜）
 
@@ -227,8 +233,8 @@ xgui-qt-alignment-scan.md。
 QAbstractItemView)、XStackedWidget←XFrame(Qt 为 QWidget)、
 XWidget←XObject 内嵌窗口语义(C 单继承适配,全库一致)。初轮误判
 XMenuBar/XToolBar/XDialogButtonBox 为 XObject 派生系文件内桥接类
-干扰的提取误差,精确提取后三者均为 XWidget ✓。详见
-docs/xgui-audit/2026-09-19/xgui-qt-alignment-scan.md §六。
+干扰的提取误差,精确提取后三者均为 XWidget ✓（该次扫描的原始清单已随
+文档整理删除，结论以本节为准）。
 
 **阶段四补充（剪贴板 X11 Selection 后端 + 平台集成）**:
 - `XClipboard.h` 新增 `XClipboardBackend` 挂载点（text/setText/clear

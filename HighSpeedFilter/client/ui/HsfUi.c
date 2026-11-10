@@ -54,7 +54,9 @@ static void hsfWinTurbSync(void* userData)
     for (i = 0; i < t->m_count; ++i) {
         HsfMonitorFlowMeter_setTurbidity(i, t->m_items[i].m_name,
                                          (double)t->m_items[i].m_ntu100 / 100.0,
-                                         t->m_items[i].m_online);
+                                         t->m_items[i].m_online,
+                                         t->m_items[i].m_tempValid,
+                                         (double)t->m_items[i].m_temp100 / 100.0);
     }
 }
 
@@ -366,7 +368,12 @@ static uint32_t hsf_pageTopicMask(int pageIndex)
         return (1u << (int)HsfLinkTopic_Vfd) |
                (1u << (int)HsfLinkTopic_Ai) |
                (1u << (int)HsfLinkTopic_FlowMeter) |
-               (1u << (int)HsfLinkTopic_Valve);
+               (1u << (int)HsfLinkTopic_Valve) |
+               /* [2026-11-09 首页新增两卡] 浊度仪卡读 TURBIDITY 主题、
+                * 按钮组卡读 DIGITAL 主题（DI12~15 触点 + DO7~9 三灯）。
+                * 不订则两卡恒 "--"（与当初 VFD 主题漏订同一个坑）。 */
+               (1u << (int)HsfLinkTopic_Turbidity) |
+               (1u << (int)HsfLinkTopic_Digital);
     case HSF_PAGE_MONITOR_VFD:       return 1u << (int)HsfLinkTopic_Vfd;
     case HSF_PAGE_MONITOR_ANALOG:    return 1u << (int)HsfLinkTopic_Ai;
     /* [水质监测页三主题] 流量计 + 浊度仪 + 泵同属一条工艺链，放一页看
@@ -537,7 +544,19 @@ void HsfUi_setForceCompact(bool on)
 /* ---- 页面字体缩放（本地设置 FontScale/Page<N>，50–200%，100=默认） ----
  * [2026-11-07] 各页把写死的字号（及与字号联动的高度）过 hsfUi_pageFontPx
  * 折算，本地设置页「字体大小」区即可按页调；首次调用惰性读键，改动在
- * 下次建页生效（与刷新周期同口径——页实例不换则维持建页时折算）。 */
+ * 下次建页生效（与刷新周期同口径——页实例不换则维持建页时折算）。
+ *
+ * [2026-11-09 安卓] 缺省按**平台**取值，不按窗口形态取值：页面在建页期
+ * 就要读字号折算行高，而那时主窗尚未登记到 s_activeWin（形态未定），
+ * 按形态取会拿到宽屏缺省。手机屏逻辑宽约 400（dpr 3），桌面口径的
+ * 11~13px 折算后物理尺寸偏小 → 安卓缺省抬到 130%；桌面维持 100%
+ * （行为零变化）。用户仍可在本地设置页逐页调，覆盖缺省。 */
+#if defined(__ANDROID__)
+#define HSF_FONT_PCT_DEFAULT 130
+#else
+#define HSF_FONT_PCT_DEFAULT 100
+#endif
+
 static int  s_pageFontPct[HSF_PAGE_COUNT];
 static bool s_pageFontLoaded = false;
 
@@ -549,7 +568,8 @@ int hsfUi_pageFontPx(int page, int px)
         int i;
         for (i = 0; i < HSF_PAGE_COUNT; ++i) {
             snprintf(key, sizeof(key), "FontScale/Page%d", i);
-            s_pageFontPct[i] = HsfSettingsStore_getInt(key, 100);
+            s_pageFontPct[i] = HsfSettingsStore_getInt(key,
+                                                       HSF_FONT_PCT_DEFAULT);
             if (s_pageFontPct[i] < 50)  s_pageFontPct[i] = 50;
             if (s_pageFontPct[i] > 200) s_pageFontPct[i] = 200;
         }
@@ -566,9 +586,9 @@ int hsfUi_pageFontPct(int page)
 {
     char key[32];
     int pct;
-    if (page < 0 || page >= HSF_PAGE_COUNT) return 100;
+    if (page < 0 || page >= HSF_PAGE_COUNT) return HSF_FONT_PCT_DEFAULT;
     snprintf(key, sizeof(key), "FontScale/Page%d", page);
-    pct = HsfSettingsStore_getInt(key, 100);
+    pct = HsfSettingsStore_getInt(key, HSF_FONT_PCT_DEFAULT);
     if (pct < 50)  pct = 50;
     if (pct > 200) pct = 200;
     s_pageFontPct[page] = pct;
@@ -660,16 +680,45 @@ static void hsf_splitterMovedSlot(XObject* receiver, XVarList* args)
 static void hsfShotCapture(HsfWin* self);
 
 /**
- * @brief 把远端温湿度遥测同步到标题栏。
+ * @brief [诊断] 标题栏温湿度**显示文本**变化时打一行（env 门控）。
  * @param self 主窗。
- * @details 数据来源 = HsfLinkClient 订阅的 HSF_TOPIC_TEMPHUM_STATUS
- *          （服务端按 HSF_TEMPHUM_PUSH_MS 周期发布，A/B 两侧各一份）；
- *          标题栏显示 **A 侧**（主用侧）。未登录/未收到遥测时显示"--"。
- *          单位换算在此集中一次：快照是 0.1 定点（219=21.9℃、-250=-25.0℃），
- *          界面按摄氏度/百分比显示，故统一除 10。
- * @note  两个触发点：①温湿度推送回调（到达即刷，零延迟）；②时钟定时器
- *        同拍（兜底——推送停摆时也能把"无数据"状态刷出来）。
+ * @details `XHSF_TEMPHUM_TRACE=1` 打开。文本直接取自标题栏两个 XLabel
+ *          （`XLabel_text` + `XString_toUtf8`），即"屏幕上真正显示的字符串"，
+ *          不是拿快照值重新格式化——验收/现场取证要的是显示口径本身。
+ *          服务端重启这类"数据中断→恢复"的场景用它做日志断言：
+ *          正常值 → `--℃/--%` → 恢复值，三行即可。只在文本变化时输出，
+ *          1Hz 时钟节拍下不刷屏。
+ * @note  离屏截图（--shot）模式下 XLink 推送恒不到达，网络数据不能用截图
+ *        验收；本诊断就是替代通道（与 HSF_HEAP_TRACE 同类，env 门控常驻）。
  */
+static void hsf_titleTraceClimate(HsfWin* self)
+{
+    static int s_enabled = -1;
+    static char s_lastTemp[32];
+    static char s_lastHum[32];
+    const XString* ts;
+    const XString* hs;
+    const char* tu;
+    const char* hu;
+    const char* env;
+    if (!self || !self->m_titleBar.m_temp || !self->m_titleBar.m_humid) return;
+    if (s_enabled < 0) {
+        env = XSystem_environment("XHSF_TEMPHUM_TRACE");
+        s_enabled = (env && env[0] && env[0] != '0') ? 1 : 0;
+    }
+    if (!s_enabled) return;
+    ts = XLabel_text(self->m_titleBar.m_temp);
+    hs = XLabel_text(self->m_titleBar.m_humid);
+    tu = ts ? XString_toUtf8(ts) : NULL;
+    hu = hs ? XString_toUtf8(hs) : NULL;
+    if (!tu) tu = "";
+    if (!hu) hu = "";
+    if (strcmp(tu, s_lastTemp) == 0 && strcmp(hu, s_lastHum) == 0) return;
+    snprintf(s_lastTemp, sizeof(s_lastTemp), "%s", tu);
+    snprintf(s_lastHum, sizeof(s_lastHum), "%s", hu);
+    XPrintf("[temphum-title] temp=%s hum=%s\n", s_lastTemp, s_lastHum);
+}
+
 /**
  * @brief 把远端温湿度遥测同步到标题栏。
  * @param self 主窗。
@@ -683,6 +732,15 @@ static void hsfShotCapture(HsfWin* self);
  *        把最后一拍的旧值当实时数据显示（2026-11-04 实锅）。
  *        两个触发点：①推送回调（到达即刷）；②时钟定时器同拍（兜底，
  *        让"断流成 --"能在没有推送时也刷出来）。
+ * @note  [自愈 2026-11-09] 本函数是**唯一**会按新鲜度把温湿度打成"--"的
+ *        地方（首页卡片是事件驱动刷新，拿到最后一帧就一直显示）。而服务端
+ *        周期推送一旦停摆（节拍停摆/推送失步队列满/订阅登记丢失），客户端
+ *        就只剩「订阅即补发」那一帧 ⇒ 3.5s 后标题栏恒显「--℃ / --%」，
+ *        而服务端数据其实一直有（history 行 temp=26.5 恒有值）。
+ *        故本函数**每拍**调一次补拍通道（快照命令，请求-应答兜底）：应答
+ *        到达即刷新 model，标题栏下一拍自愈。是否真发请求由
+ *        HsfLinkClient_tempHumEnsureFresh 按预取阈值 + 节流判定（数据够新
+ *        时立即早退），不会变成轮询风暴。
  */
 static void hsf_titleSyncClimate(HsfWin* self)
 {
@@ -691,13 +749,24 @@ static void hsf_titleSyncClimate(HsfWin* self)
     th = HsfLinkClient_tempHum(HSF_SIDE_A);
     if (!th || !HsfLinkClient_tempHumFresh(HSF_SIDE_A)) {
         HsfTitleBar_setClimate(&self->m_titleBar, 0.0, 0.0, false, false);
-        return;
+    } else {
+        HsfTitleBar_setClimate(&self->m_titleBar,
+                               (double)th->m_tempC10 / 10.0,
+                               (double)th->m_humPct10 / 10.0,
+                               th->m_tempValid, th->m_humValid);
     }
-    HsfTitleBar_setClimate(&self->m_titleBar,
-                           (double)th->m_tempC10 / 10.0,
-                           (double)th->m_humPct10 / 10.0,
-                           th->m_tempValid, th->m_humValid);
+    /* 自愈补拍：**每拍都过一遍**，不放在上面「已判无数据」的分支里。
+     * [为什么必须移出来 2026-11-09 实测] 放在 stale 分支里 ⇒ 补拍请求只能
+     * 等到界面**已经**落成「--℃」才发出，应答再写回真值 ⇒ 推送停摆期间
+     * 标题栏每 ~4s 闪一次「--」（实测 40s 闪 10 次，age 序列 0/1.0/2.0/3.0
+     * → stale 4.0s）。移出来后按预取阈值（HSF_LINK_TEMPHUM_PREFETCH_MS）
+     * 在过期**之前**补，新鲜度判定就不会翻假，界面不闪。
+     * 数据正常时（推送 500ms 一拍）age 恒小于预取阈值 ⇒ 函数内立即早退，
+     * 一拍一次调用的开销可以忽略。 */
+    (void)HsfLinkClient_tempHumEnsureFresh(HSF_SIDE_A);
+    hsf_titleTraceClimate(self);
 }
+
 
 /** @brief 温湿度推送回调（HsfLinkClient）：到达即刷新标题栏。 */
 static void hsf_onTempHumPushed(void* userData)
@@ -725,7 +794,8 @@ static bool hsfShotDataReady(HsfWin* self)
 {
     if (!self) return false;
     if (self && HsfStack_current(&self->m_stack) == HSF_PAGE_MONITOR_FLOWMETER)
-        return HsfLinkClient_flowMeterFresh(HSF_SIDE_B);
+        /* [活动侧 2026-11-10] 流量计在哪侧由服务端告知，客户端不写死。 */
+        return HsfLinkClient_flowMeterActiveFresh();
     return HsfLinkClient_tempHumFresh(HSF_SIDE_A);
 }
 
@@ -740,6 +810,12 @@ static void VHsfWin_timerEvent(XObject* object, XTimerEvent* event)
         XTimerEvent_timerId(event) == self->m_clockTimer) {
         HsfTitleBar_refreshClock(&self->m_titleBar);
         hsf_titleSyncClimate(self);   /* 顺带刷新标题栏温湿度（远端推送驱动）。 */
+        /* [遥测自愈 2026-11-09] 当前页订阅的遥测按预取阈值补拍：推送停摆
+         * （服务端节拍停了/推送失步被拒/订阅登记丢了）时，界面靠这条 1Hz
+         * 兜底自己把数据要回来，不必等切页或重连。是否真发请求由
+         * HsfLinkClient_ensureFreshTopics 逐主题判新鲜度 + 节流，数据正常时
+         * 零请求（推送周期 100~500ms，新鲜度远高于预取阈值）。 */
+        HsfLinkClient_ensureFreshTopics(self->m_subTopics);
         XEvent_accept((XEvent*)event);
         return;
     }
@@ -1144,7 +1220,31 @@ static bool hsf_primaryScreenSize(int* outW, int* outH)
  *  @details 缺省取宽屏形态（逻辑宽 ≥ HSF_COMPACT_MAX_W ⇒ 宽屏/横屏
  *           布局，左侧导航常驻）；屏装不下时按 16:9 等比缩到屏内
  *           （留 HSF_WIN_SCREEN_PCT 余量给边框与任务栏），绝不裁切。
+ *
+ *  [安卓 2026-11-09] 安卓上窗口=全屏画布（无窗口管理器），尺寸必须跟
+ *  surface 的**逻辑**尺寸（竖屏手机约 400x869），不能用桌面的 1280x720
+ *  横屏基准：那段等比缩放会把 16:9 的横屏比例硬塞进竖屏（400x869 的屏
+ *  上算成 360x202 的扁条），页面被压扁，各页 adapt 读到的页根宽也随之
+ *  失真（分档全判错）。安卓分支改为「取屏尺寸，取不到给手机量级初值」，
+ *  真实全屏几何随后由平台层经 m_geomPending 通道回推
+ *  （XPlatformWindowAndroid.c 的 XWindow_setGeometry_rect）。
  */
+/**
+ * @brief 链路状态栏提示（自动重连被瞬时拒绝等「重试中」反馈）。
+ * @param userData 主窗（HsfWin*）。
+ * @param textUtf8 提示文本（借用；HsfStatusBar_setText 内部拷贝）。
+ * @details 2026-11-09 根修：模拟模式下客户端偶发「全页 --、换个时间重连
+ *          又好」的根因之一是自动重连被服务端策略拒绝（该账户已在线）后
+ *          框架永久收手。修复后框架退避重试，本回调负责让人看见"正在重试"，
+ *          而不是一个静默停住的界面。
+ */
+static void hsfWinNotice(void* userData, const char* textUtf8)
+{
+    HsfWin* win = (HsfWin*)userData;
+    if (!win || !textUtf8) return;
+    HsfStatusBar_setText(&win->m_statusBar, textUtf8);
+}
+
 static void hsf_defaultWinSize(int* outW, int* outH)
 {
     int w = HSF_WIN_DEFAULT_W;
@@ -1152,6 +1252,18 @@ static void hsf_defaultWinSize(int* outW, int* outH)
     int sw = 0;
     int sh = 0;
     if (!outW || !outH) return;
+#if defined(__ANDROID__)
+    if (hsf_primaryScreenSize(&sw, &sh) && sw > 0 && sh > 0) {
+        *outW = sw;
+        *outH = sh;
+    } else {
+        /* surface 尚未创建（首帧前）取不到屏尺寸：给手机量级初值，避免
+         * 首帧按桌面尺寸排布。 */
+        *outW = 400;
+        *outH = 800;
+    }
+    return;
+#else
     if (hsf_primaryScreenSize(&sw, &sh) && sw > 0 && sh > 0) {
         int availW = (sw * HSF_WIN_SCREEN_PCT) / 100;
         int availH = (sh * HSF_WIN_SCREEN_PCT) / 100;
@@ -1170,6 +1282,7 @@ static void hsf_defaultWinSize(int* outW, int* outH)
     }
     *outW = w;
     *outH = h;
+#endif
 }
 
 /** @brief 创建主窗：根垂直布局三段 + 分割条（导航|堆栈）+ builders 挂栈。 */
@@ -1226,6 +1339,17 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
                        (shotWidth > 0) ? shotWidth : defW,
                        (shotHeight > 0) ? shotHeight : defH);
     }
+#if defined(__ANDROID__)
+    /* [安卓无边框 2026-11-09] 安卓没有窗口管理器，框架的 CSD 自绘条件
+     * 命中（无原生窗口回落路径）→ 会画出一条桌面式系统标题栏（最小化/
+     * 最大化/关闭）。手机上无窗口可最小化，那条标题栏既无意义又挤占顶部
+     * 空间：置 FramelessWindowHint 抑制装饰，顶部改由本模块自绘的标题
+     * 栏承担（桌面形态保留 CSD 行为不变）。
+     * 与 XGuiWindowDemo 的安卓分支同款口径（xgui_window_demo.c）。 */
+    XWidget_setWindowFlags(&self->m_base,
+                           XWidget_windowFlags(&self->m_base) |
+                               (XWidgetFlags)XWindowType_FramelessWindowHint);
+#endif
     XWidget_setWindowTitle_2(&self->m_base, "PMMA有机玻璃高速过滤器");
 
     /* ---- 第一行：标题栏（菜单图标 + 标题文字，模块自理 chrome） ---- */
@@ -1237,6 +1361,11 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     HsfTitleBar_setModeHandler(&self->m_titleBar, hsfWinModeSlot, self);
     HsfLinkClient_setModeCallback(hsfWinModeNotify, self);
     HsfLinkClient_setHealthCallback(hsfWinHealthNotify, self);
+    /* [认证瞬时拒绝的状态栏反馈 2026-11-09] 自动重连撞上「该账户已在线」
+     * 时，框架退避重试、界面**不再**静默停在 `--`：主窗状态栏显示
+     * 「账户可能已在别处登录，正在重试…」，旧会话被服务端回收后自动恢复。
+     * 单槽、跨连接复用，故建窗时注册一次。 */
+    HsfLinkClient_setNoticeCallback(hsfWinNotice, self);
     /* 电磁阀：快照到达即灌页面（含控制闸重算）；按钮出口走同一链路。 */
     HsfLinkClient_setValveCallback(hsfWinValveSync, self);
     HsfLinkClient_setValveAlarmCallback(hsfWinValveAlarm, self);
@@ -1436,7 +1565,15 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
      * 尚未建立，判定结果会落在零内存对象上）。 */
     self->m_uiReady = true;
 
+#if defined(__ANDROID__)
+    /* [安卓沉浸式全屏 2026-11-09] 安卓无窗口管理器：窗口几何由平台层经
+     * m_geomPending 通道回推为全屏（surface 逻辑尺寸），窗口态须与之
+     * 对齐——showFullScreen 只翻状态位，几何本就全屏。与 XGuiWindowDemo
+     * 的安卓分支同款口径（xgui_window_demo.c）。 */
+    XWidget_showFullScreen(&self->m_base);
+#else
     XWidget_show(&self->m_base); /* 顶层窗口整体最后显示（子树已就绪）。 */
+#endif
 
     /* 形态初判（宽/窄）+ 导航尺寸初申——**必须在 show 之后**：show 递归
      * 显示子树，先前隐藏的紧凑态侧栏会被重新显示出来（竖屏侧栏不隐）。 */
@@ -2169,13 +2306,17 @@ static HsfWin* hsfUiMakeWin(const HsfUiOptions* opts)
         HsfMonitorVfd_rebindProvider();
         XPrintf("HsfClient: 变频器页数据源已切远端（已登录）\n");
     }
-    /* [--no-login 离线演示：模拟量页灌演示点] 离线态没有服务端快照，
-     * 模拟量模型恒空 ⇒ 页面只有「无模拟量点」空态，指定截图无法验收
+    /* [--no-login 离线演示：模拟量页/数字量页灌演示点] 离线态没有服务端快照，
+     * 数字量/模拟量模型恒空 ⇒ 页面只有「无…点」空态，指定截图无法验收
      * 卡片字号/角标/重叠。只在显式 --no-login 路径灌（登录路径不灌——
      * 现场真实点位绝不能被假数据顶替；登录后服务端快照 setCount 会整体
-     * 覆盖本批演示点）。 */
-    if (opts && opts->noLogin)
+     * 覆盖本批演示点）。[数字量 2026-11-10] 与模拟量页同口径收敛：数字量
+     * 演示点里一半是可点的 DO，点下去会按 `index - n` 算出通道号发给
+     * 服务端 ⇒ 可能误控真实通道，故登录路径一律不灌。 */
+    if (opts && opts->noLogin) {
         HsfMonitorAnalog_seedDemoForOffline();
+        HsfMonitorDigital_seedDemoForOffline();
+    }
 
     /* 顶栏账号（设备健康左侧）：
      *   · --login（无头）：回调里先登录成功、再由本函数建窗 ⇒ 这里已就绪，

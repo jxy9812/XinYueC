@@ -1,17 +1,24 @@
-﻿# XGuiDemo APK packaging (PowerShell port of build_apk.sh)
-# 本目录只放**平台差异层**：打包脚本 / 清单 / 资源 / 签名。
-# Android 平台源码（Drive/Android/**）与 demo 源码（Test/XGuiDemo/**）是
-# 公共部分，由根 CMake 编译成 libxguidemo.so，本脚本只负责装进 APK。
+﻿# Android APK packaging (PowerShell port of build_apk.sh)
+# 本目录只放**平台差异层**：打包脚本 / 共用资源 / 签名。
+# Android 平台源码（Drive/Android/**）与应用源码（如 HighSpeedFilter/client/**）
+# 是公共部分，由根 CMake 编译成共享库，本脚本只负责装进 APK。
 # Java 桥（无障碍宿主 Activity / WiFi / 网络 JNI 桥）源码在框架平台层
 # Drive/Android/java/com，本脚本与 build_apk.sh 都从那里编译，
 # 保证两条打包路径产物一致。
 #
+# 本脚本**不认识任何具体 app**：应用由 -AppDir 参数指定（目录里放
+# AndroidManifest.xml + app.env 两个文件）。平台层自带的模板应用
+# （XGuiDemo）的应用目录即本目录；其它应用把目录放在自己那边
+# （如 HighSpeedFilter\client\android\）。
+#
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File pack_apk.ps1
 #   powershell -ExecutionPolicy Bypass -File pack_apk.ps1 -Abi arm64-v8a
+#   powershell -ExecutionPolicy Bypass -File pack_apk.ps1 -AppDir ..\..\HighSpeedFilter\client\android
 param(
     [ValidateSet('x86_64', 'arm64-v8a', 'both')]
-    [string]$Abi = 'x86_64'
+    [string]$Abi = 'x86_64',
+    [string]$AppDir = ''
 )
 $ErrorActionPreference = 'Stop'
 $SDK   = if ($env:ANDROID_SDK) { $env:ANDROID_SDK } else { 'C:\Users\jxy\AppData\Local\Android\Sdk' }
@@ -27,6 +34,41 @@ if (-not $SELF) { throw "无法确定脚本所在目录（请用 -File 方式调
 $ROOT  = (Resolve-Path (Join-Path $SELF '..\..')).Path
 $OUT   = Join-Path $SELF 'out'
 $WORK  = "$OUT\work"
+
+# ---- app dir driven: this script knows no concrete app --------------------
+# An "android app" is a directory holding two files:
+#   AndroidManifest.xml -- the single source of truth for the app id /
+#       native lib name / label / permissions (the packer derives the
+#       package and the .so name from it, so the manifest and the APK
+#       can never drift apart).
+#   app.env             -- build-side info (CMake target / build dir
+#       prefix / artifact name).
+# The platform layer ships one template app (XGuiDemo) whose app dir is
+# this directory; other apps keep their dir on their own side
+# (e.g. HighSpeedFilter\client\android\).
+if (-not $AppDir) { $AppDir = $SELF }
+if (-not [System.IO.Path]::IsPathRooted($AppDir)) {
+    $AppDir = Join-Path $ROOT $AppDir
+}
+$APP_ENV = Join-Path $AppDir 'app.env'
+$APP_MANIFEST = Join-Path $AppDir 'AndroidManifest.xml'
+if (-not (Test-Path $APP_ENV)) { throw "missing app description: $APP_ENV" }
+if (-not (Test-Path $APP_MANIFEST)) { throw "missing manifest: $APP_MANIFEST" }
+# app.env is a KEY=VALUE list (sourced by the bash twin too).
+Get-Content $APP_ENV | ForEach-Object {
+    if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$') {
+        Set-Variable -Name $Matches[1] -Value $Matches[2] -Scope Script
+    }
+}
+# Derive package + native lib name from the manifest.
+$manifestRaw = Get-Content $APP_MANIFEST -Raw
+if ($manifestRaw -notmatch 'package="([^"]+)"') { throw "cannot read package from $APP_MANIFEST" }
+$APP_PKG = $Matches[1]
+if ($manifestRaw -notmatch 'android:name="android\.app\.lib_name"[\s\S]{0,120}?android:value="([^"]+)"') {
+    throw "cannot read android.app.lib_name from $APP_MANIFEST"
+}
+$APP_LIB = $Matches[1]
+Write-Host "APP_DIR=$AppDir target=$APP_TARGET pkg=$APP_PKG lib=$APP_LIB apk=$APP_APK_NAME"
 # 签名密钥放 signing\（**不在 out\ 下**）：out\ 是构建产物目录，会被清理。
 # 密钥一旦重新生成签名就变了——覆盖安装要么失败
 # （INSTALL_FAILED_UPDATE_INCOMPATIBLE），要么被系统当作换签名重装而
@@ -90,7 +132,7 @@ if ($cPkg -ne $jPkg) {
     throw "Java package mismatch (C macro $cPkg vs Java $jPkg)"
 }
 $fqcn = "$jPkg.$jCls"
-$manifestText = Get-Content (Join-Path $SELF "AndroidManifest.xml") -Raw
+$manifestText = Get-Content $APP_MANIFEST -Raw
 if ($manifestText -notlike "*android:name=`"$fqcn`"*") {
     Write-Host "manifest does not match the platform-layer Activity:" -ForegroundColor Red
     Write-Host "  platform Java : $fqcn   ($JFILE)"
@@ -103,14 +145,14 @@ Write-Host "  manifest Activity matches platform: $fqcn"
 
 Write-Host "== 1) copy native lib (ABI: $Abi) =="
 foreach ($a in $abiList) {
-    $srcDir = Join-Path $ROOT "out\android-$(Get-AbiDir $a)\libxguidemo.so"
+    $srcDir = Join-Path $ROOT "out\$APP_BUILD_PREFIX-$(Get-AbiDir $a)\lib$APP_LIB.so"
     if (-not (Test-Path $srcDir)) {
-        throw "缺 $srcDir`n  先构建：cmake --build out\android-$(Get-AbiDir $a) --target xguidemo"
+        throw "缺 $srcDir`n  先构建：cmake --build out\$APP_BUILD_PREFIX-$(Get-AbiDir $a) --target $APP_TARGET"
     }
     $dst = "$WORK\lib\$a"
     New-Item -ItemType Directory -Path $dst -Force | Out-Null
-    Copy-Item $srcDir "$dst\libxguidemo.so" -Force
-    Get-Item "$dst\libxguidemo.so" | Select-Object FullName, Length | Format-List
+    Copy-Item $srcDir "$dst\lib$APP_LIB.so" -Force
+    Get-Item "$dst\lib$APP_LIB.so" | Select-Object FullName, Length | Format-List
 }
 
 Write-Host "== 2) font assets (fonts/XFontOutlineCommon.otf) =="
@@ -147,14 +189,14 @@ if ($LASTEXITCODE -ne 0) { throw "d8 failed ($LASTEXITCODE)" }
 if (-not (Test-Path "$WORK\classes.dex")) { throw "d8 未产出 classes.dex" }
 
 Write-Host "== 3) aapt2 link =="
-& "$BT\aapt2.exe" link -o "$WORK\base.apk" -I "$PLAT" --manifest "$SELF\AndroidManifest.xml" "$WORK\res.zip"
+& "$BT\aapt2.exe" link -o "$WORK\base.apk" -I "$PLAT" --manifest "$APP_MANIFEST" "$WORK\res.zip"
 if ($LASTEXITCODE -ne 0) { throw "aapt2 link failed ($LASTEXITCODE)" }
 
 Write-Host "== 4) add native lib + font asset + classes.dex (forward slashes!) =="
 Push-Location $WORK
 foreach ($a in $abiList) {
     # 逐 ABI 加入；路径必须是正斜杠，否则 AAssetManager / 动态链接器找不到
-    & "$BT\aapt.exe" add -f base.apk "lib/$a/libxguidemo.so"
+    & "$BT\aapt.exe" add -f base.apk "lib/$a/lib$APP_LIB.so"
     if ($LASTEXITCODE -ne 0) { Pop-Location; throw "aapt add lib/$a failed ($LASTEXITCODE)" }
 }
 & "$BT\aapt.exe" add -f base.apk "assets/fonts/XFontOutlineCommon.otf"
@@ -169,6 +211,9 @@ if ($LASTEXITCODE -ne 0) { throw "zipalign failed ($LASTEXITCODE)" }
 
 Write-Host "== 6) keystore =="
 if (-not (Test-Path $KS)) {
+  # 首次构建（本机还没有签名密钥）：先建目录——keytool 不会自建父目录，
+  # 缺目录直接 FileNotFoundException 失败（2026-11-09 实锅）。
+  New-Item -ItemType Directory -Path "$SELF\signing" -Force | Out-Null
   & "$JAVA\bin\keytool.exe" -genkeypair -keystore $KS -alias xgui -keyalg RSA -keysize 2048 -validity 10000 `
       -storepass xguidemo -keypass xguidemo -dname "CN=XGuiDemo,O=XinYueC,C=CN"
   if ($LASTEXITCODE -ne 0) { throw "keytool failed ($LASTEXITCODE)" }
@@ -176,8 +221,8 @@ if (-not (Test-Path $KS)) {
 
 Write-Host "== 7) apksigner sign =="
 & "$BT\apksigner.bat" sign --ks $KS --ks-pass pass:xguidemo --ks-key-alias xgui --key-pass pass:xguidemo `
-    --out "$OUT\XGuiDemo-debug.apk" "$WORK\base-aligned.apk"
+    --out "$OUT\$APP_APK_NAME" "$WORK\base-aligned.apk"
 if ($LASTEXITCODE -ne 0) { throw "apksigner failed ($LASTEXITCODE)" }
 
 Write-Host "== OK =="
-Get-Item "$OUT\XGuiDemo-debug.apk" | Select-Object FullName,Length,LastWriteTime | Format-List
+Get-Item "$OUT\$APP_APK_NAME" | Select-Object FullName,Length,LastWriteTime | Format-List

@@ -19,6 +19,32 @@ def _now_ms():
     return int(time.monotonic() * 1000)
 
 
+#: 侧号（对齐服务端 HsfSide_A/B 与 C 端 HSF_SIDE_A/B：0=A，1=B）。
+SIDE_A = 0
+SIDE_B = 1
+
+
+def _pick_side(states, prefer, usable):
+    """按「优先侧 + 兜底侧」挑一个可用快照；挑不到返回 None。
+
+    [口径对齐 C 端] C 端 hsfHomePickTempHum / hsfHomePickFlowMeter 同款：
+    优先侧**新鲜且有有效值**才选它，否则退到兜底侧；两边都没有 ⇒ None
+    （界面显示 "--"，不拿旧值冒充实时）。
+
+    [不顶替] 挑中哪一侧就用哪一侧的值；那一侧某个值无效就显示 "--"，
+    **不因为另一侧有值就替它顶上去** —— 那是编造。
+
+    :param states: side -> 快照对象
+    :param prefer: 侧号优先序（(优先侧, 兜底侧)）
+    :param usable: 判定某侧快照能不能用的谓词
+    """
+    for side in prefer:
+        st = states.get(side)
+        if st is not None and usable(st):
+            return st
+    return None
+
+
 class VfdState(object):
     """变频器遥测快照。"""
 
@@ -135,19 +161,24 @@ FAULT_TEXT = {
 }
 
 
-class TempHumState(object):
-    """温湿度快照。值以 0.1 为单位（217 = 21.7℃）。"""
+class TempHumSideState(object):
+    """单侧温湿度快照（某一侧最近一帧）。值以 0.1 为单位（217 = 21.7℃）。
 
-    def __init__(self):
-        self.clear()
+    [为什么要按侧分存] 服务端按 485 的**两条侧**轮流推**同一个主题**：
+    装了温湿度站的那一侧推真值，没装的那一侧推**空帧**（只有
+    tempValid=false/humValid=false，没有 temp/hum 键）。客户端若只留
+    最后一帧，空帧会把真值盖掉 ⇒ 界面恒 "--"（现场实测：Python 客户端
+    温湿度恒无数据）。C 端早就按侧分存（HsfLinkClient m_tempHumState[side]），
+    这里对齐。
+    """
 
-    def clear(self):
+    def __init__(self, side=SIDE_A):
+        self.side = int(side)
         self.temp_tenths = None
         self.hum_tenths = None
         self.temp_valid = False
         self.hum_valid = False
         self.stale_ms = 5000
-        self.side = 0
         self.updated_ms = 0
 
     def apply(self, doc):
@@ -157,11 +188,14 @@ class TempHumState(object):
         self.temp_valid = bool(doc.get("tempValid", False))
         self.hum_valid = bool(doc.get("humValid", False))
         self.stale_ms = int(doc.get("staleMs", 5000) or 5000)
-        self.side = int(doc.get("side", 0) or 0)
         self.updated_ms = _now_ms()
 
     def is_fresh(self):
         return self.updated_ms > 0 and (_now_ms() - self.updated_ms) < self.stale_ms
+
+    def has_value(self):
+        """这一侧此刻有没有有效值（温或湿任一有效即可）。"""
+        return bool(self.temp_valid or self.hum_valid)
 
     def temp_text(self):
         if not self.temp_valid or self.temp_tenths is None or not self.is_fresh():
@@ -172,6 +206,54 @@ class TempHumState(object):
         if not self.hum_valid or self.hum_tenths is None or not self.is_fresh():
             return "--"
         return "%.1f" % (self.hum_tenths / 10.0)
+
+
+class TempHumState(object):
+    """温湿度快照（**按侧分存 + 择优取数**）。
+
+    [取数口径] 「优先侧 + 兜底侧」：优先 A 侧（现场温湿度站挂 A 侧），
+    A 侧不新鲜/无有效值才看 B 侧；两边都没有有效值 ⇒ 显示 "--"。
+    与 C 端 hsfHomePickTempHum 同口径。
+
+    [每侧只留最近一帧] 不缓存历史帧 ⇒ 内存不随运行时长增长。
+    """
+
+    #: 优先侧 + 兜底侧（现场温湿度站挂 A 侧；对齐 C hsfHomePickTempHum）。
+    PREFER = (SIDE_A, SIDE_B)
+
+    def __init__(self):
+        #: side -> TempHumSideState（**每侧只留最近一帧**）。
+        self.sides = {}
+
+    def apply(self, doc):
+        side = int(doc.get("side", 0) or 0)
+        if side not in (SIDE_A, SIDE_B):
+            return                      # 非法侧号：整帧丢弃（口径同 C 端）
+        st = self.sides.get(side)
+        if st is None:
+            st = TempHumSideState(side)
+            self.sides[side] = st
+        st.apply(doc)
+
+    def pick(self, prefer=None):
+        """挑一个可用快照（优先侧 + 兜底侧）；挑不到返回 None。
+
+        [挑不到 = 显示 "--"] 不用旧值冒充实时，也不拿另一侧的值顶替。
+        """
+        return _pick_side(self.sides, prefer or self.PREFER,
+                          lambda st: st.is_fresh() and st.has_value())
+
+    def is_fresh(self):
+        """任一侧有新鲜帧（哪怕这一帧没有有效值）。"""
+        return any(st.is_fresh() for st in self.sides.values())
+
+    def temp_text(self):
+        st = self.pick()
+        return st.temp_text() if st is not None else "--"
+
+    def hum_text(self):
+        st = self.pick()
+        return st.hum_text() if st is not None else "--"
 
 
 class AnalogState(object):
@@ -333,14 +415,16 @@ class DigitalState(object):
         return bool(self.do & (1 << index))
 
 
-class TurbidityState(object):
-    """两台浊度仪的合并状态（v{index}_ 前缀，与阀/数字量同一风格）。
+class TurbiditySideState(object):
+    """单侧浊度仪快照（某一侧最近一帧；v{index}_ 前缀，与阀/数字量同风格）。
 
-    [为什么合成一个对象而不是两台各一个] 它们总是成对显示、成对刷新，
-    分开存只会让页面写两遍同样的逻辑。台数由服务端 `count` 决定。
+    [为什么按侧分存] 服务端按两条侧轮流推同一个浊度主题；没装配浊度仪的
+    那一侧推的是「两台都 online=false」的帧。客户端若只留最后一帧，
+    读数会被空帧盖掉 ⇒ 首页浊度卡恒 "--"。
     """
 
-    def __init__(self):
+    def __init__(self, side=SIDE_A):
+        self.side = int(side)
         #: index -> {"name","ntu","raw","online"}
         self.items = {}
         self.count = 0
@@ -366,6 +450,10 @@ class TurbidityState(object):
         return (self.updated_ms > 0
                 and (_now_ms() - self.updated_ms) < self.stale_ms)
 
+    def has_online(self):
+        """这一侧此刻有没有在线的浊度仪（= 这一帧带得出读数）。"""
+        return any(bool(item.get("online")) for item in self.items.values())
+
     def name_of(self, index):
         return self.items.get(int(index), {}).get("name", "")
 
@@ -380,8 +468,126 @@ class TurbidityState(object):
     def raw_of(self, index):
         return self.items.get(int(index), {}).get("raw")
 
+    def temp_of(self, index):
+        """水温（℃；float 或 None）。
+
+        [为什么可能没有] 只有**带温度的机型**才随帧带 "v{i}_temp"（站3
+        ZHEYI-5100ZDY 一帧 0x0000×4 同刻读出；站1 WZT-701A 无温度）。
+        **缺键 = 没有温度**，不是 0℃——显示 0℃ 会被当成真实读数。
+        """
+        item = self.items.get(int(index), {})
+        if not item.get("online"):
+            return None
+        value = item.get("temp")
+        if value is None:
+            return None
+        return float(value) / 100.0
+
     def online_of(self, index):
         return bool(self.items.get(int(index), {}).get("online"))
+
+
+class TurbidityState(object):
+    """两台浊度仪的合并状态（**按侧分存 + 择优取数**）。
+
+    [为什么合成一个对象而不是两台各一个] 它们总是成对显示、成对刷新，
+    分开存只会让页面写两遍同样的逻辑。台数由服务端 `count` 决定。
+
+    [为什么还要按侧分存] 服务端按两条侧轮流推同一个主题；没装配浊度仪的
+    那一侧推「两台都 offline」的帧，只留最后一帧 ⇒ 读数被盖掉 ⇒ 首页浊度
+    卡恒 "--"。两台浊度仪在**同一侧**（服务端 HSF_BUS_B_HAS_TURBIDITY=1），
+    所以按侧分存后取那一侧即可，**不必再按台分侧**。
+
+    [每侧只留最近一帧] 不缓存历史帧 ⇒ 内存不随运行时长增长。
+    """
+
+    #: 优先侧 + 兜底侧（现场两台浊度仪挂 B 侧）。
+    PREFER = (SIDE_B, SIDE_A)
+
+    def __init__(self):
+        #: side -> TurbiditySideState（**每侧只留最近一帧**）。
+        self.sides = {}
+
+    def apply(self, doc):
+        side = int(doc.get("side", 0) or 0)
+        if side not in (SIDE_A, SIDE_B):
+            return                      # 非法侧号：整帧丢弃（口径同 C 端）
+        st = self.sides.get(side)
+        if st is None:
+            st = TurbiditySideState(side)
+            self.sides[side] = st
+        st.apply(doc)
+
+    def pick(self, prefer=None):
+        """挑一个可用快照；挑不到返回 None。
+
+        [两轮择优] 第一轮挑「有在线台」的那一侧（那才是真读数）；一轮都
+        没挑到（所有台都离线）时退到第一帧**新鲜**的 —— 这样界面照样显示
+        仪器名 + "--"，并把「从站失联」与「服务端没装配」区分开。
+        """
+        prefer = prefer or self.PREFER
+        st = _pick_side(self.sides, prefer,
+                        lambda s: s.is_fresh() and s.has_online())
+        if st is not None:
+            return st
+        return _pick_side(self.sides, prefer, lambda s: s.is_fresh())
+
+    def is_fresh(self):
+        """任一侧有新鲜帧（哪怕这一帧两台都离线）。"""
+        return any(st.is_fresh() for st in self.sides.values())
+
+    def _last_state(self):
+        """最近收到一帧的那一侧（挑不到可用侧时的兜底写入目标）。"""
+        best = None
+        for st in self.sides.values():
+            if best is None or st.updated_ms > best.updated_ms:
+                best = st
+        return best
+
+    # ---- 取值一律走「被选中的一侧」；挑不到 = 无数据 ----
+
+    @property
+    def count(self):
+        st = self.pick()
+        return st.count if st is not None else 0
+
+    @property
+    def stale_ms(self):
+        st = self.pick()
+        return st.stale_ms if st is not None else 5000
+
+    @property
+    def updated_ms(self):
+        """被选中那一侧的到达时间（趋势判重按这个，避免空帧灌重复点）。"""
+        st = self.pick()
+        return st.updated_ms if st is not None else 0
+
+    @updated_ms.setter
+    def updated_ms(self, value):
+        """改「当前这一帧」的到达时间（造拍/造过期用）。
+
+        写入目标 = 被选中的那一侧；没有可用侧时落到最近收到一帧的那一侧。
+        """
+        st = self.pick() or self._last_state()
+        if st is not None:
+            st.updated_ms = int(value)
+
+    def name_of(self, index):
+        st = self.pick()
+        return st.name_of(index) if st is not None else ""
+
+    def ntu_of(self, index):
+        """浊度值（NTU，float）；无数据返回 None。"""
+        st = self.pick()
+        return st.ntu_of(index) if st is not None else None
+
+    def raw_of(self, index):
+        st = self.pick()
+        return st.raw_of(index) if st is not None else None
+
+    def online_of(self, index):
+        st = self.pick()
+        return st.online_of(index) if st is not None else False
 
 
 class PumpState(object):
@@ -430,10 +636,11 @@ class PumpState(object):
         return self.items.get(int(index), {}).get("text", "")
 
 
-class FlowMeterState(object):
-    """电磁流量计快照（当前服务端未装配，保留结构以便对接）。"""
+class FlowMeterSideState(object):
+    """单侧流量计快照（某一侧最近一帧）。"""
 
-    def __init__(self):
+    def __init__(self, side=SIDE_A):
+        self.side = int(side)
         self.flow = 0.0
         self.speed = 0.0
         self.forward_total = 0.0
@@ -468,6 +675,128 @@ class FlowMeterState(object):
         return TOTAL_UNIT_TEXT.get(self.total_unit, "?")
 
 
+class FlowMeterState(object):
+    """电磁流量计快照（**按侧分存 + 择优取数**）。
+
+    [取数口径] 「优先侧 + 兜底侧」：优先 B 侧（现场流量计挂 B 侧），
+    B 侧不新鲜/无效才看 A 侧；两边都没有有效值 ⇒ 显示 "无数据"。
+    与 C 端 hsfHomePickFlowMeter 同口径。
+
+    [每侧只留最近一帧] 不缓存历史帧 ⇒ 内存不随运行时长增长。
+    """
+
+    #: 优先侧 + 兜底侧（现场流量计挂 B 侧；对齐 C hsfHomePickFlowMeter）。
+    PREFER = (SIDE_B, SIDE_A)
+
+    def __init__(self):
+        #: side -> FlowMeterSideState（**每侧只留最近一帧**）。
+        self.sides = {}
+
+    def apply(self, doc):
+        side = int(doc.get("side", 0) or 0)
+        if side not in (SIDE_A, SIDE_B):
+            return                      # 非法侧号：整帧丢弃（口径同 C 端）
+        st = self.sides.get(side)
+        if st is None:
+            st = FlowMeterSideState(side)
+            self.sides[side] = st
+        st.apply(doc)
+
+    def pick(self, prefer=None):
+        """挑一个可用快照（优先侧 + 兜底侧）；挑不到返回 None。
+
+        [无效帧不顶替] 流量计 valid=false = 「此刻无有效值」，那一侧直接
+        跳过去看兜底侧；两侧都无效 ⇒ None ⇒ 界面显示 "无数据"。
+        """
+        return _pick_side(self.sides, prefer or self.PREFER,
+                          lambda st: st.is_fresh())
+
+    def is_fresh(self):
+        """有可用的流量计快照（新鲜且 valid）。"""
+        return self.pick() is not None
+
+    def _last_state(self):
+        """最近收到一帧的那一侧（挑不到可用侧时的兜底写入目标）。"""
+        best = None
+        for st in self.sides.values():
+            if best is None or st.updated_ms > best.updated_ms:
+                best = st
+        return best
+
+    # ---- 取值一律走「被选中的一侧」；挑不到 = 无数据 ----
+
+    @property
+    def flow(self):
+        st = self.pick()
+        return st.flow if st is not None else 0.0
+
+    @property
+    def speed(self):
+        st = self.pick()
+        return st.speed if st is not None else 0.0
+
+    @property
+    def forward_total(self):
+        st = self.pick()
+        return st.forward_total if st is not None else 0.0
+
+    @property
+    def reverse_total(self):
+        st = self.pick()
+        return st.reverse_total if st is not None else 0.0
+
+    @property
+    def flow_unit(self):
+        st = self.pick()
+        return st.flow_unit if st is not None else 0xFF
+
+    @property
+    def total_unit(self):
+        st = self.pick()
+        return st.total_unit if st is not None else 0xFF
+
+    @property
+    def alarms(self):
+        st = self.pick()
+        return st.alarms if st is not None else 0
+
+    @property
+    def valid(self):
+        st = self.pick()
+        return bool(st.valid) if st is not None else False
+
+    @property
+    def stale_ms(self):
+        st = self.pick()
+        return st.stale_ms if st is not None else 5000
+
+    @property
+    def updated_ms(self):
+        """被选中那一侧的到达时间（趋势判重按这个，避免空帧灌重复点）。"""
+        st = self.pick()
+        return st.updated_ms if st is not None else 0
+
+    @updated_ms.setter
+    def updated_ms(self, value):
+        """改「当前这一帧」的到达时间（造拍/造过期用）。
+
+        写入目标 = 被选中的那一侧；没有可用侧时落到最近收到一帧的那一侧。
+        """
+        st = self.pick() or self._last_state()
+        if st is not None:
+            st.updated_ms = int(value)
+
+    def flow_unit_text(self):
+        st = self.pick()
+        return st.flow_unit_text() if st is not None else FLOW_UNIT_TEXT.get(
+            0xFF, "?")
+
+    def total_unit_text(self):
+        st = self.pick()
+        return st.total_unit_text() if st is not None else TOTAL_UNIT_TEXT.get(
+            0xFF, "?")
+
+
 #: 瞬时流量单位代码（0x1020）
 FLOW_UNIT_TEXT = {
     0: "L/s", 1: "L/min", 2: "L/h", 3: "m³/s", 4: "m³/min",
@@ -479,6 +808,46 @@ FLOW_UNIT_TEXT = {
 TOTAL_UNIT_TEXT = {
     0: "L", 1: "m³", 2: "kg", 3: "t", 4: "g", 5: "kL",
 }
+
+#: 流量计报警位 → 中文（**位定义照说明书，不写死序号**）。
+#:
+#: 依据 `docs/LD电磁流量计_RS485通讯实测与使用指南_20261104.md` §4.1
+#: 变量区表：0x1022 上限报警 / 0x1023 下限报警 / 0x1024 空管报警 /
+#: 0x1025 系统报警，四项各占一位，服务端压成位图（见 server_py
+#: `FlowMeter.alarm_mask`）：0=上限 1=下限 2=空管 3=系统。
+#: 位序与 C 端 `XFlowMeterAlarm`（Src/Industry/XFlowMeter/XFlowMeter.h）一致。
+#:
+#: **展示顺序照 C 端 `fmAlarmText`**（HsfMonitorFlowMeter.c）：空管 → 上限
+#: → 下限 → 系统 —— 两端文案必须逐字对齐。
+FLOW_ALARM_TEXT = (
+    (1 << 2, "空管"),      # 0x1024 空管报警
+    (1 << 0, "上限"),      # 0x1022 上限报警
+    (1 << 1, "下限"),      # 0x1023 下限报警
+    (1 << 3, "系统"),      # 0x1025 系统报警
+)
+
+
+def flow_alarm_text(bits):
+    """流量计报警位图 → 中文（0 → 「正常」）。
+
+    [为什么不再只显示十六进制] 操作员看不懂 "0x0004"；说明书里写的是
+    「空管报警」，现场问的就是"是不是空管"。故直接给中文。
+    未知位（说明书外的 bit）保留十六进制尾巴，避免把新报警类型说没了。
+
+    :param bits: 报警位图（int）。
+    :return: 中文文案，如 "空管"、"上限 下限"。
+    """
+    bits = int(bits or 0)
+    if not bits:
+        return "正常"
+    names = [txt for mask, txt in FLOW_ALARM_TEXT if bits & mask]
+    known = 0
+    for mask, _txt in FLOW_ALARM_TEXT:
+        known |= mask
+    unknown = bits & ~known
+    if unknown:
+        names.append("0x%04X" % unknown)
+    return " ".join(names) if names else "0x%04X" % bits
 
 
 class ValveState(object):
@@ -593,7 +962,7 @@ HEALTH_TEXT = {0: "正常", 1: "告警", 2: "数据过期", 3: "离线", 4: "故
 #: 设备类别 → 中文（必须与 proto.KIND_* 对齐；漏一个就会在界面上显示"未知"）。
 #: [实锅] 加电磁阀组时忘了同步这张表，首页"类型"列直接显示"未知"。
 KIND_TEXT = {0: "变频器", 1: "温湿度", 2: "流量计", 3: "模拟量",
-             4: "485总线", 5: "数字量", 6: "电磁阀组", 7: "水质"}
+             4: "485总线", 5: "数字量", 6: "电动球阀组", 7: "水质"}
 
 
 class HealthSnapshot(object):

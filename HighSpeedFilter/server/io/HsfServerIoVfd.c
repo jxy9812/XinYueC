@@ -162,6 +162,9 @@ static bool vfdMountBrand(HsfServerIoVfd* st)
     }
     groups = bind->m_groups;
     groupCount = bind->m_groupCount;
+    /* [记组数 2026-11-10] 快照陈旧阈值要按「轮转周期 = 组数 × 拍长」算：
+     * Hub 每拍只发一个读组，组数就是一圈要发多少帧。 */
+    st->m_groupCount = groupCount;
     for (i = 0; i < specCount; ++i) {
         XVfdPointBinding pb;
         int gi;
@@ -210,6 +213,17 @@ static bool vfdMountBrand(HsfServerIoVfd* st)
     if (bind->m_protocol) {
         XModbusHubUnitLimits lim;
         XModbusHub* hub = HsfServerBus_hub(st->m_bus);
+        /* [2026-11-10 根修：必须清零]
+         * XModbusHubUnitLimits 里本函数没显式填的字段（本次是
+         * m_preTxQuietMs）此前留着**栈垃圾**（Debug 构建 = 0xCCCCCCCC
+         * ≈ 34 亿毫秒）⇒ Hub 的「发帧前静默闸」要求 34 亿毫秒总线静默
+         * ⇒ 变频器站的读组**永远**轮不到：现场表现为"变频器整站离线、
+         * 失败计数=0、游标卡在 1、其余组从不再发"，而同一总线上温湿度站
+         * 一切正常。其它三站的装配（温湿度/流量计/浊度仪）都有 memset，
+         * 只有变频器这一处漏了。
+         * 框架侧另有兜底（setUnitLimits 夹住离谱值 + 静默闸饥饿逃逸），
+         * 但根因在本处 ⇒ 本处必须清零。 */
+        memset(&lim, 0, sizeof(lim));
         lim.m_maxReadRegisters = bind->m_protocol->m_maxReadRegisters;
         lim.m_rangeBarrier = bind->m_protocol->m_rangeBarrier;
         lim.m_singleWriteOnly = bind->m_protocol->m_singleWriteOnly;
@@ -332,4 +346,39 @@ XVfdM512* HsfServerIoVfd_device(const HsfServerIoVfd* st)
 bool HsfServerIoVfd_isMounted(const HsfServerIoVfd* st)
 {
     return st && st->m_mounted;
+}
+
+/* ==================== 快照陈旧阈值（随轮转周期） ==================== */
+
+uint32_t HsfServerIoVfd_applyStaleMs(HsfServerIoVfd* st, int pollMs)
+{
+    uint32_t roundMs;
+    uint32_t ms;
+    int tickMs = pollMs;
+    if (!st || !st->m_mounted) return 0;
+    /* [拍长取 Hub 的真实节拍 2026-11-10] 一圈 = 组数 × **Hub 的拍长**
+     * （Hub 每拍只发一个读组）。Hub 的拍长 = 该总线上各从站周期里最紧
+     * 的那档（不是变频器自己那档）——取错了会把阈值算大（链路真断了也
+     * 半天不报）。查不到才退回调用方给的拍长。 */
+    if (st->m_bus) {
+        XModbusHub* hub = HsfServerBus_hub(st->m_bus);
+        if (hub) {
+            const size_t t = XModbusHub_pollInterval(hub,
+                                            HsfServerBus_deviceId(st->m_bus));
+            if (t > 0) tickMs = (int)t;
+        }
+    }
+    /* 轮转周期 = 组数 × 拍长（Hub 每拍只发一个读组）。 */
+    roundMs = (tickMs > 0 && st->m_groupCount > 0)
+                  ? (uint32_t)tickMs * (uint32_t)st->m_groupCount : 0u;
+    ms = HSF_VFD_STALE_MS;
+    if (roundMs > 0) {
+        const uint32_t byRound = roundMs * 2u;   /* 容一圈抖动 */
+        if (byRound > ms) ms = byRound;
+    }
+    st->m_staleMs = ms;
+    if (st->m_dev) XVfdDevice_setStaleMs((XVfdDevice*)st->m_dev, ms);
+    XPrintf("HsfServerIoVfd: 陈旧阈值 %ums（组数=%d 拍长=%dms 轮转=%ums）\n",
+            (unsigned)ms, st->m_groupCount, tickMs, (unsigned)roundMs);
+    return ms;
 }

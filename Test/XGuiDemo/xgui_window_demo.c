@@ -2290,8 +2290,19 @@ XWidget* (*const g_extBuilders[19])(XWidget*, DemoPageStatusFn, void*) = {
     demo_page_window_settings_build, /* 2026-10-17 窗口设置页（系统设置）。 */
     demo_page_timeddns_build, /* 2026-10-16 时钟与 DDNS 页（系统设置）。 */
     demo_page_atv61_build, /* 2026-10-26 ATV61 变频器页（Modbus RTU 主站）。 */
+#if defined(__ANDROID__)
+    /* [安卓 2026-11-09] 测试菜单页与 Shell 页是**桌面测试宿主专有**：
+       Shell 页把 XTestCommand（console shell 的 test 命令表）注册进页面
+       内控制台，而 XTestCommand 连带整套桌面测试栈（XLink/XNtp/XSsh/…），
+       不该进安卓 APK。故安卓侧不编这两页的源文件（见 Test/CMakeLists.txt
+       的 xguidemo 目标），槽位置空——**页号与表长不变**，安卓上这两页
+       表现为「无内容」。桌面端行为零变化。 */
+    NULL,
+    NULL
+#else
     demo_page_testmenu_build, /* 2026-10-29 测试菜单页（控制台 test 菜单 GUI 化）。 */
     demo_page_shell_build /* 2026-10-29 Shell 页（页面内控制台，按需开关）。 */
+#endif
 #endif
 };
 /* 前向声明：扩展页状态回调定义在导航槽段（demo_nav19Slot 之后）。 */
@@ -2438,8 +2449,13 @@ static void demo_ext_pages_autotest(DemoWin* demo)
         demo_page_window_settings_autotest, /* 2026-10-17 窗口设置页。 */
         demo_page_timeddns_autotest, /* 2026-10-16 时钟与 DDNS 页。 */
         demo_page_atv61_autotest, /* 2026-10-26 ATV61 变频器页。 */
+#if defined(__ANDROID__)
+        NULL, /* 2026-10-29 测试菜单页（桌面测试宿主专有，见上）。 */
+        NULL  /* 2026-10-29 Shell 页（桌面测试宿主专有，见上）。 */
+#else
         demo_page_testmenu_autotest, /* 2026-10-29 测试菜单页。 */
         demo_page_shell_autotest /* 2026-10-29 Shell 页。 */
+#endif
     };
     int total = 0;
     int exti;
@@ -3886,10 +3902,14 @@ static void demo_layout_content(DemoWin* self)
         demo_page_timeddns_adapt(self->m_extPages[15]); /* 2026-10-16 时钟与 DDNS 页。 */
     if (self->m_extPages[16])
         demo_page_atv61_adapt(self->m_extPages[16]); /* 2026-10-26 ATV61 变频器页。 */
+#if !defined(__ANDROID__)
+    /* [安卓 2026-11-09] 测试菜单页 / Shell 页在安卓上不编（桌面测试宿主
+       专有，见 builders 表处注），故这两处 adapt 调用同款置空。 */
     if (self->m_extPages[17])
         demo_page_testmenu_adapt(self->m_extPages[17]); /* 2026-10-29 测试菜单页（横竖屏双栏翻转）。 */
     if (self->m_extPages[18])
         demo_page_shell_adapt(self->m_extPages[18]); /* 2026-10-29 Shell 页（契约空操作）。 */
+#endif
     /* 远程服务器页（2026-10-06 补入统一漏斗）：此前只在 resizeEvent
      * 单独调用，切页路径漏跑——XStackedLayout StackOne 只给当前页
      * 分配几何，resize 落在别的页时本页根保持陈旧尺寸，adapt 算出

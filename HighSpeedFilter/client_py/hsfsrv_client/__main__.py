@@ -60,6 +60,47 @@ def _parse_size(text):
         return None
 
 
+def _teardown(app, win, bridge):
+    """统一收尾：断开 → 关窗 → 泵事件（**正常路径与失败路径共用**）。
+
+    [为什么失败路径也必须走这套] main() 返回时局部变量的释放顺序是不
+    定的，QApplication 可能先于窗口析构 —— 板端 xcb 实测直接段错误
+    （systemd 记 `Main process exited, code=killed, status=11/SEGV`）。
+    登录被拒（账户已在线/会话数上限）时若只 `win.close(); return 2`，
+    每失败一次就崩一次；被 `Restart=on-failure` 拉起来就是「崩—重启—
+    再崩」循环。故与正常路径同款三闸收尾，失败路径同样要走。
+
+    @note 桥的断开放在最前：断网线程可能还在往 Qt 层 emit（见 bridge
+          的 `_emit_net` 闸），先断网再关窗才不会在关窗过程中被回调打到。
+    """
+    from PyQt5.QtCore import QTimer
+
+    # [退出即记窗口形态 2026-11-10] 用户没点「窗口设置→应用」、只是拖大了
+    # 窗口的话，上次尺寸也该沿用（C 端 HsfSettingsStore 同口径）。
+    # 全屏态记 fullscreen 标志，普通态记宽高。
+    try:
+        from . import settings as ui_settings
+        if win.isFullScreen():
+            ui_settings.set_value(ui_settings.K_FULLSCREEN, True)
+        else:
+            ui_settings.set_value(ui_settings.K_FULLSCREEN, False)
+            sz = win.size()
+            if sz.width() >= 400 and sz.height() >= 300:
+                ui_settings.set_value(ui_settings.K_WIN_SIZE,
+                                      "%dx%d" % (sz.width(), sz.height()))
+    except Exception:                                   # noqa: BLE001
+        pass
+    try:
+        bridge.disconnect_from()
+    except Exception:                                   # noqa: BLE001
+        pass
+    win.close()
+    QTimer.singleShot(0, app.quit)
+    for _ in range(50):
+        app.processEvents()
+        time.sleep(0.02)
+
+
 def probe_local_server(port=None, timeout=0.6):
     """探测本机是否已有服务端在监听。
 
@@ -108,6 +149,23 @@ def main(argv=None):
     app.setApplicationName("HsfClientPy")
 
     from . import theme
+    # [本机界面缩放在安装主题**之前**生效 2026-11-10] QSS 与各页字号都是
+    # 在 install / 建页时按 theme.ui_scale() 算好的（模块注释写明"求值发生
+    # 在导入时"），运行期改比例等于要重建整棵树；故「界面缩放」只在本机
+    # 设置里存档、启动时在这里覆盖。没存过（0）就保留环境变量/内置缺省。
+    from . import settings as ui_settings
+    # [旧注册表设置搬一次 2026-11-10] 设置改存程序目录 cfg/hsf_client_py.ini；
+    # 首次启动把旧版注册表里的登录记忆搬过来并删掉，之后就只看文件。
+    try:
+        moved = ui_settings.migrate_from_legacy()
+        if moved:
+            print("设置：已从注册表迁移 %d 项到 %s"
+                  % (moved, ui_settings.settings_path()), file=sys.stderr)
+    except Exception:                                   # noqa: BLE001
+        pass
+    scale = ui_settings.ui_scale()
+    if scale > 0:
+        theme.set_ui_scale(scale)
     theme.install(app)
     # [全局基准字号] 板端是 1280x800 / 7.9 寸屏，pt 10 偏小；
     # 与 QSS 里散落的像素字号同一缩放口径（theme.ui_scale()，缺省 1.15）。
@@ -143,12 +201,26 @@ def main(argv=None):
     # ---- 主窗（先建先显）----
     win = MainWindow(bridge)
     size = _parse_size(args.size) or (theme.WIN_DEFAULT_W, theme.WIN_DEFAULT_H)
+    # [启动还原本机设置 2026-11-10] 用户口径「可以持久化的配置都持久化」：
+    # 命令行显式给的（--size/--fullscreen）优先；没给就按上次保存的来。
+    if args.size is None:
+        saved_w, saved_h = ui_settings.win_size()
+        if saved_w > 0:
+            size = (saved_w, saved_h)
+    fullscreen = bool(args.fullscreen) or (
+        args.size is None and ui_settings.get_bool(ui_settings.K_FULLSCREEN,
+                                                   False))
+    # 刷新节拍：主窗 refresh 定时器（本地设置页可改，重启沿用）
+    win._refresh_timer.setInterval(ui_settings.refresh_ms())
+    # 紧凑模式：本机设置里勾了就强制（不勾/未存 = 按窗宽自动）
+    if ui_settings.get_bool(ui_settings.K_FORCE_COMPACT, False):
+        win.set_compact_override(True)
     # [必须在 show 前 resize] MainWindow 内部的 resize 在部分窗口管理器下
     # 会被「首次映射」覆盖成 1x1（实测板上 xcb + xfwm4：窗口树里
     # HsfClientPy 只有 1x1，截图看不到界面）。这里先钉死尺寸再 show。
     win.resize(*size)
     win.setMinimumSize(640, 420)
-    if args.fullscreen:
+    if fullscreen:
         win.showFullScreen()
         # [全屏后必须抢一次前台] xfwm4 在开机自启场景下不会把新窗口设为
         # 活动窗口：实测板端 `_NET_ACTIVE_WINDOW` 仍是 Thunar 的 Desktop，
@@ -168,6 +240,10 @@ def main(argv=None):
         # show 之后再 resize 一次：xfwm4 有时在 map 时才应用几何。
         win.resize(*size)
 
+    # 悬浮窗设置（标题栏/状态栏/导航显隐）：启动还原，与设置页同一套判定。
+    from .pages_other import apply_overlay
+    apply_overlay(win, ui_settings)
+
     # ---- 登录（四条路径）----
     if args.auto:
         # ① 显式指定了地址：无头登录（CI/联调）
@@ -176,7 +252,8 @@ def main(argv=None):
         ok, err = bridge.connect_to(args.auto, port, args.user, args.password)
         if not ok:
             print("登录失败：%s" % err, file=sys.stderr)
-            win.close()
+            _teardown(app, win, bridge)
+            del win, bridge
             return 2
         win.status_bar.set_connection("已连接 · %s" % args.user, ok=True)
     elif args.offline or args.shot or args.seconds:
@@ -206,10 +283,12 @@ def main(argv=None):
             dlg = LoginDialog(bridge, parent=win)
             dlg.setWindowModality(Qt.ApplicationModal)
             if dlg.exec_() != LoginDialog.Accepted:
-                win.close()
+                _teardown(app, win, bridge)
+                del win, bridge
                 return 0
             if dlg.error:
-                win.close()
+                _teardown(app, win, bridge)
+                del win, bridge
                 return 2
     else:
         # ④ 没探测到本地服务端 → 弹登录窗（大概要连别的机器）
@@ -218,10 +297,12 @@ def main(argv=None):
         dlg.setWindowModality(Qt.ApplicationModal)
         if dlg.exec_() != LoginDialog.Accepted:
             # 用户关掉登录窗（点 X 或取消）→ 退出，不留一个不可用的主窗
-            win.close()
+            _teardown(app, win, bridge)
+            del win, bridge
             return 0
         if dlg.error:
-            win.close()
+            _teardown(app, win, bridge)
+            del win, bridge
             return 2
 
     if args.page is not None:
@@ -250,12 +331,7 @@ def main(argv=None):
     # 发射)→关窗→泵循环消化 deleteLater→显式释放窗，再 return——return 时
     # 局部引用无序释放会让主窗级联析构跑到一半有处理器 emit 进半死接收方
     # （pyqtBoundSignal_emit 段错误，xcb 平台偶发，台账 §6.6）。
-    bridge.disconnect_from()
-    win.close()
-    QTimer.singleShot(0, app.quit)
-    for _ in range(50):
-        app.processEvents()
-        time.sleep(0.02)
+    _teardown(app, win, bridge)
     del win, bridge
     import gc as _gc
 

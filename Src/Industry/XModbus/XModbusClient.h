@@ -27,6 +27,7 @@ XCLASS_DEFINE_BEGING(XModbusClient)
 XCLASS_DEFINE_ENUM(XModbusClient, ProcessResponse) = XCLASS_VTABLE_GET_SIZE(XModbusDevice),
 XCLASS_DEFINE_ENUM(XModbusClient, ProcessPrivateResponse),
 XCLASS_DEFINE_ENUM(XModbusClient, SendRawRequest),    ///< 发送原始请求（虚函数，子类重写）
+XCLASS_DEFINE_ENUM(XModbusClient, AbandonReply),      ///< 放弃在途 Reply（虚函数，子类重写；上层超时收口用）
 XCLASS_DEFINE_END(XModbusClient)
 /* [单事务模式 2026-10-15] 单事务发送等待队列元素：等待空闲槽上线的
  * 请求（串行开关置位且在途>0 时入队，前序完成后按序发出）。队列常驻：
@@ -258,6 +259,21 @@ XModbusReply* XModbusClient_pollRawRequest_ref(XModbusClient* client,
 *       不再有结果/超时回调；对象本身不被本函数释放，仍由调用者负责
 */
 bool XModbusClient_cancelPoll(XModbusClient* client, XModbusReply*reply);
+
+/**
+* @brief 放弃在途应答：传输层不再持有该 Reply（Reply 本身不释放）。
+* @param client 客户端实例指针；NULL 返回 false
+* @param reply 要放弃的 Reply；NULL 返回 false
+* @return 传输层确实持有并已放弃该 Reply 返回 true；否则 false
+* @note  [为什么需要它] 传输层在等待应答期间会持有 Reply（RTU：
+*       m_currentReply；TCP：m_pendingRequests 表）。上层（Hub）若在
+*       **超时收口**时直接释放 Reply，而传输层仍持有它 ⇒ 迟到的应答/超时
+*       回调会解引用已释放对象（UAF，实测板端 SEGV：浊度站1 在站5 长帧
+*       恢复期内不应答 ⇒ 收口释放 Reply ⇒ 串口客户端超时再碰它 ⇒ 崩）。
+*       正确顺序：**先 abandon（传输层摘手）→ 再由上层释放 Reply**。
+* @note 非线程安全：须在拥有该客户端事件循环的同一线程内调用。
+*/
+bool XModbusClient_abandonReply(XModbusClient* client, XModbusReply* reply);
 
 /**
 * @brief 获取当前请求超时时间

@@ -8,10 +8,10 @@
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON
 
-/** 一级条目：主界面 / 监视 / 数据 / 设置。 */
+/** 一级条目：主界面 / 设备 / 数据 / 设置（「监视」于 2026-11-10 改名「设备」）。 */
 static const HsfMenuEntry kEntries[] = {
     { "主界面", HSF_PAGE_HOME },
-    { "监视",   HSF_PAGE_MONITOR_MENU },
+    { "设备",   HSF_PAGE_MONITOR_MENU },
     { "数据",   HSF_PAGE_DATA_MENU },
     { "设置",   HSF_PAGE_SETTINGS_MENU }
 };

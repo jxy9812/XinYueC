@@ -72,6 +72,14 @@ typedef struct HsfServerIoTempHum {
     XTimerId m_sampleTimer;                 /**< 采样定时器（周期拍；见实现说明）。 */
     int m_unitId;                           /**< 从站号。 */
     uint16_t m_vbase;                       /**< 本站寄存器在总线虚拟空间的起点。 */
+    /** @brief 陈旧阈值（毫秒；装配/应用时按**当前采集周期**算出的有效值）。
+     *  @details [为什么必须记住装配值 2026-11-10 现场实锅] 质量判定原先直接用
+     *           编译期宏 `HSF_TEMPHUM_STALE_MS`（5000）。现场把温湿度采集周期
+     *           调成 10000ms 后 ⇒ 阈值 5s < 周期 10s ⇒ 每拍之间**必然**有 5s
+     *           被判陈旧 ⇒ 主界面温湿度在「有值 ↔ --」之间来回抖，报警页同步
+     *           刷「数据过期」。口径：有效阈值 = max(宏基线, 采集周期 × 3)，
+     *           由 HsfServerIo.c 的 hsfIoStaleMs 算出并随 mount/apply 传入。 */
+    uint32_t m_staleMs;
     bool m_mounted;                         /**< 装配完成标志（幂等与诊断）。 */
 } HsfServerIoTempHum;
 

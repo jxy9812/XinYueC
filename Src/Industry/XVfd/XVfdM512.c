@@ -45,18 +45,20 @@ static const XVfdPointSpec s_m512Specs[] = {
     /* ---- 读点（遥测） ---- */
     { XVfdRole_StatusWord,     XIoPoint_AnalogInput,   1, "STATE", 0,                   0 },
     { XVfdRole_FaultCode,      XIoPoint_AnalogInput,   1, "FAULT", 0,                   0 },
-    /* [单位口径 2026-11-06 复核——0x1001 = 0.1Hz（÷10），实测定标口径]
-     * 依据现场实测定标文档（docs/M512M513_变频器RS485通讯实测与使用指南
-     * §11.3/§11.7，2026-11-03）：写 0x1000=2000 ⇒ 面板 10Hz、0x1001=100、
-     * U0.00=100 三源交叉验证；P0.22 频率指令分辨率实读 1（=0.1Hz）；
-     * P0.10 范围 50~5000Hz 在 16 位下只有 0.1Hz 装得下（数学强制）。
-     * 手册的 0.01Hz 与实测不符（U0.00/U0.01/0x1001 同为 0.1Hz——"与 U0.00
-     * 不同口径"的说法被实测帧证伪）。
-     * [教训] Python 侧 devices.py 按 ÷100（跟了手册）注释"实机标定"，
-     * 与本文档矛盾——模拟从站（XModbusVirtualModels.c 0x1001 = outHz×10）
-     * 与本处 div=10 必须同口径；跨仓库口径以**实测定标文档**为最终权威，
-     * 任何一侧的"自洽闭环"都证明不了刻度（循环论证）。 */
-    { XVfdRole_OutputFreq,     XIoPoint_AnalogInput,   10, "RFR",  0,                   0 },
+    /* [单位口径 2026-11-10 板端实机复测定案——0x1001 = 0.01Hz（÷100）]
+     * 本条曾是「÷10」，依据是旧实测定标文档里的一句「写 0x1000=2000 ⇒
+     * 面板 10Hz、0x1001=100」。2026-11-10 在板端 hd-rk3568 上对**真机**
+     * 复测（现场变频器实跑，非模拟）：
+     *   · 给定 9720（97.2% ⇒ 48.6Hz）→ 0x1001 raw = **4860**；
+     *   · 给定 2000（20%  ⇒ 10.0Hz）→ 稳态后 0x1001 raw = **1000**。
+     * 两点都精确等于 Hz×100 ⇒ 刻度是 **÷100**（0.01Hz），旧文档那句
+     * 「0x1001=100」是**漏了一个 0**（10.0Hz 的 raw 是 1000，不是 100）。
+     * 交叉验证：50Hz 机型的 P0.10 上限 50Hz，raw 4860÷10=486Hz 物理不可能；
+     * 而 48.6Hz 的转速 1399.68rpm 恰为 48.6/50×1440 ⇒ 频率值 48.6 正确。
+     * Python 侧 devices.py 的 ÷100 **本来就是对的**，本处与模拟从站
+     * （XModbusVirtualModels.c 0x1001 = outHz×100）同步订正为 ÷100，
+     * 两端口径归一（客户端显示的输出频率/转速不再差 10 倍）。 */
+    { XVfdRole_OutputFreq,     XIoPoint_AnalogInput, 100, "RFR",  0,                   0 },
     { XVfdRole_BusVoltage,     XIoPoint_AnalogInput,  10, "VBUS", 0,                   0 },
     { XVfdRole_OutputVoltage,  XIoPoint_AnalogInput,   1, "UOP",   0,                   0 },
     { XVfdRole_OutputCurrent,  XIoPoint_AnalogInput,  100, "LCR",   0,                   0 },
@@ -580,6 +582,15 @@ static bool VXVfdM512_UnlockPassword(XVfdDevice* d, uint32_t password)
 }
 
 /**
+ * @brief 记下当前错误枚举的通用文案（供多阶段动作的失败路径用）。
+ * @note  XVfdDevice 内部有同名静态函数，跨文件不可见，这里做一层薄封装。
+ */
+static void xvfdKeepErrorTextPublic(XVfdDevice* d)
+{
+    XVfdDevice_emitError(d, XVfdDevice_errorText(XVfdDevice_lastError(d)));
+}
+
+/**
  * @brief ActionWriteDone 重载：加减速两步写推进，其余默认收口。
  * @param d 设备实例。
  * @param point 落定的点（未用）。
@@ -591,6 +602,26 @@ static void VXVfdM512_ActionWriteDone(XVfdDevice* d, XIoPoint* point, bool ok)
     XVfdM512* dev = (XVfdM512*)d;
     (void)point;
     if (!dev) return;
+    /* [带给定启动/点动的第二阶段 2026-11-10] 阶段 1（m_stage==1）：给定已
+     * 落定，接着写命令字（m_pendingRaw 里存着命令码）。 */
+    if (XVfdDevice_currentOp(d) == XVfdOperation_Start ||
+        XVfdDevice_currentOp(d) == XVfdOperation_Jog) {
+        if (dev->m_stage == 1) {
+            dev->m_stage = 2;
+            if (!ok) {
+                XVfdDevice_finishAction(d, false);
+                return;
+            }
+            if (!XVfdDevice_writeRole(d, XVfdRole_CommandWord,
+                                      (int32_t)dev->m_pendingRaw)) {
+                xvfdKeepErrorTextPublic(d);
+                XVfdDevice_finishAction(d, false);
+                return;
+            }
+            XVfdDevice_armActionTimer(d, XVfdDevice_actionTimeout(d));
+            return;
+        }
+    }
     if (XVfdDevice_currentOp(d) == XVfdOperation_SetAccelDecel) {
         if (!ok) {
             XVfdDevice_finishAction(d, false);
@@ -609,6 +640,67 @@ static void VXVfdM512_ActionWriteDone(XVfdDevice* d, XIoPoint* point, bool ok)
     XVfdDevice_finishAction(d, ok);
 }
 
+/**
+ * @brief 带给定启动/点动（**多阶段单动作**）：先写 1000H 给定，回执后再写 2000H。
+ * @details [为什么必须合成一个动作 2026-11-10 板端实机根因] 现场闭环是
+ *          「启动时捎带给定」（变频器保留上次给定，只发启动会按旧给定跑）。
+ *          若上层分两次调用 setFrequency + start，第二笔会被设备级单飞闸
+ *          拒成「设备忙（上一动作在途）」——板端实测 C 客户端点「启动」
+ *          恒回设备忙（Python 服务端无此闸所以能控）。
+ *          本函数在**同一个 m_busy 周期**内分两阶段推进：先写给定，写落定
+ *          回调里再写命令字，最后收口。阶段号 m_stage 区分（0=待写命令字）。
+ * @param d 设备实例。
+ * @param op Start 或 Jog。
+ * @param reverse true=反转。
+ * @param hz 给定频率（Hz）；<=0 时跳过给定、直接发命令字。
+ * @return 受理返回 true。
+ */
+static bool VXVfdM512_StartWithGiven(XVfdDevice* d, XVfdOperation op,
+                                     bool reverse, double hz)
+{
+    XVfdM512* dev = (XVfdM512*)d;
+    int32_t code = 0;
+    const bool isJog = (op == XVfdOperation_Jog);
+
+    if (!dev) return false;
+    if (op != XVfdOperation_Start && op != XVfdOperation_Jog) {
+        XVfdDevice_setLastError(d, XVfdError_InvalidParam);
+        return false;
+    }
+    /* 命令源闸（与 Start/Jog 同口径）：未切通讯时命令字会被从站静默忽略。 */
+    if (!m512CheckSource(d, XVfdRole_CommandSource, XVfdM512_CmdSourceComm,
+                         "命令源未切到通讯（P0.02=2）：从站会忽略命令字，"
+                         "请先调用 XVfdM512_setCommandSourceComm")) {
+        return false;
+    }
+    if (!XVfdCommandEnum_findCode(&dev->m_base, (uint16_t)op, reverse, &code)) {
+        XVfdDevice_setLastError(d, XVfdError_NotSupported);
+        XVfdDevice_emitError(d, "该品牌命令码表未登记此动作");
+        return false;
+    }
+    /* 启动/点动都意味着"退出停机窗口"（与 XVfdDevice_start 同口径）。 */
+    if (!isJog) {
+        d->m_stopRequested = false;
+        d->m_hasCmdReverse = true;
+        d->m_cmdReverse = reverse;
+    }
+    if (!(hz > 0.0)) {
+        /* 无给定：单阶段直接发命令字。 */
+        return XVfdDevice_actionWrite(d, op, XVfdRole_CommandWord, code);
+    }
+    /* 两阶段：阶段 1 = 给定已下发、等落定后写命令字。 */
+    dev->m_pendingRaw = (uint16_t)(code & 0xFFFF);
+    dev->m_stage = 1;
+    if (!XVfdDevice_beginAction(d, op)) return false;
+    if (!XVfdDevice_writeRole(d, XVfdRole_FreqSet, m512FreqToRaw(d, hz))) {
+        xvfdKeepErrorTextPublic(d);
+        XVfdDevice_finishAction(d, false);
+        return false;
+    }
+    XVfdDevice_armActionTimer(d, XVfdDevice_actionTimeout(d));
+    return true;
+}
+
 /* ==================== 虚函数表 / 生命周期 ==================== */
 
 XVtable* XVfdM512_class_init(void)
@@ -618,6 +710,7 @@ XVtable* XVfdM512_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_DecodePoint, VXVfdM512_DecodePoint);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_ActionWriteDone, VXVfdM512_ActionWriteDone);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_Start, VXVfdM512_Start);
+    XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_StartWithGiven, VXVfdM512_StartWithGiven);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_Stop, VXVfdM512_Stop);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_FreeStop, VXVfdM512_FreeStop);
     XVTABLE_OVERLOAD_DEFAULT(EXVfdDevice_Jog, VXVfdM512_Jog);

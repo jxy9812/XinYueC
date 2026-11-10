@@ -1,7 +1,6 @@
 /**
  * @file       XLineControlAcceptance.c
- * @brief      XLineControl 控制器验收测试实现（对照
- *             docs/xgui-audit/2026-09-19/linecontrol-checklist.md 第 4 节
+ * @brief      XLineControl 控制器验收测试实现（2026-09-19 验收清单第 4 节
  *             的 68 条可脚本化断言，逐条编号对应）。
  * @details    验收口径：
  *             - 信号断言为「按序子序列匹配」+「缺失断言」：sigSeq(...)

@@ -33,7 +33,7 @@ PAGE_COUNT = 18
 PAGE_NAMES = [
     "主界面",
     "主菜单",
-    "监视",
+    "设备",
     "数字量",
     "模拟量",
     # [2026-11-05 现场口径] 这路设备驱动的是**搅拌泵**。页名按工艺用途叫
@@ -41,7 +41,7 @@ PAGE_NAMES = [
     # 操作员关心的是"哪个泵在转"，而不是"用的是什么调速器"。
     "搅拌泵",
     "水质监测",
-    "电磁阀",
+    "电动球阀",
     "数据",
     "历史数据",
     "日志",
@@ -59,12 +59,12 @@ PAGE_NAMES = [
 #: 与 C 端 kHsfNavTree **完全一致**（含顺序）。
 NAV_TREE = [
     ("主界面",     PAGE_HOME,               -1),
-    ("监视",       PAGE_MONITOR_MENU,       -1),
+    ("设备",       PAGE_MONITOR_MENU,       -1),
     ("数字量",     PAGE_MONITOR_DIGITAL,     1),
     ("模拟量",     PAGE_MONITOR_ANALOG,      1),
     ("搅拌泵",     PAGE_MONITOR_VFD,         1),
     ("水质监测",   PAGE_MONITOR_FLOWMETER,   1),
-    ("电磁阀",     PAGE_MONITOR_VALVE,       1),
+    ("电动球阀",   PAGE_MONITOR_VALVE,       1),
     ("数据",       PAGE_DATA_MENU,          -1),
     ("历史数据",   PAGE_DATA_HISTORY,        6),
     ("日志",       PAGE_DATA_LOG,            6),
@@ -79,7 +79,7 @@ NAV_TREE = [
 
 #: 主菜单页的条目（C 端 HsfMainMenu 同款：三大分类入口）。
 MAIN_MENU_ENTRIES = [
-    ("监视", PAGE_MONITOR_MENU, "\u25A4"),     # ▤
+    ("设备", PAGE_MONITOR_MENU, "\u25A4"),     # ▤
     ("数据", PAGE_DATA_MENU, "\u2263"),        # ≣
     ("设置", PAGE_SETTINGS_MENU, "\u2699"),    # ⚙
 ]
@@ -91,7 +91,7 @@ SUBMENU_ENTRIES = {
         ("模拟量", PAGE_MONITOR_ANALOG),
         ("搅拌泵", PAGE_MONITOR_VFD),
         ("水质监测", PAGE_MONITOR_FLOWMETER),
-        ("电磁阀", PAGE_MONITOR_VALVE),
+        ("电动球阀", PAGE_MONITOR_VALVE),
     ],
     PAGE_DATA_MENU: [
         ("历史数据", PAGE_DATA_HISTORY),

@@ -482,8 +482,11 @@ static void XLinkSessionPrivate_authConclude(XLinkSession* self,
         return;
     }
 
-    /* 失败：服务端按失败上限决定是否断链；客户端收到拒绝直接终局。 */
-    if (self->m_authFailures < 0xFFu)
+    /* 失败：服务端按失败上限决定是否断链；客户端收到拒绝直接终局。
+       [Rejected 不计入失败次数] 策略性拒绝（同账并发/会话上限）不是
+       凭据失败：计入会让客户端在同一连接上重试满 3 次就被断链，
+       也会把「账户已在线」这类瞬时状态错记成账户侧的失败痕迹。 */
+    if (status != XLinkAuthStatus_Rejected && self->m_authFailures < 0xFFu)
         self->m_authFailures++;
 
     if (notifyPeer) {
@@ -616,6 +619,20 @@ static void XLinkSessionPrivate_handleAuthRequest(XLinkSession* self,
         lookup = self->m_authLookup(self->m_authLookupUserData,
                                     request.m_name, lookupSalt, &iterations,
                                     lookupHash, &lookupRole);
+        if (lookup == XLinkSessionAuthLookup_Rejected) {
+            /* [策略性拒绝：真实码，不造假挑战 2026-11-09 根修]
+               同账并发/会话数上限等属**服务端瞬时状态**，与凭据无关。
+               此处若沿下面 BadUser/Locked 的假挑战路径，客户端算出的应答
+               必然不匹配 ⇒ 最终收到 BadPassword ⇒ 按"口令错误"永久放弃
+               自动重连。实锅：模拟模式下客户端与旧 root 会话的林接竞态
+               （旧会话还没被静默回收）⇒ 一次网络抖动后界面永久全 `--`，
+               换个时间重登又好。故这里直接下发 Rejected（客户端按瞬时失败
+               退避重试），同时**不消耗**认证失败次数（不把账户往锁定上推）。
+               反枚举不受影响：用户不存在/锁定仍走下面的假挑战路径。 */
+            XLinkSessionPrivate_authConclude(self, XLinkAuthStatus_Rejected,
+                                             true, 0, NULL, NULL);
+            return;
+        }
         if (lookup != XLinkSessionAuthLookup_Ok) {
             /* 用户不存在/锁定：下发随机盐 + 随机 nonce，但摘要保持全 0，
                应答永远不可能匹配（常量时间比较照样执行）。

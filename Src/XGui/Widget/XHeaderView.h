@@ -72,6 +72,17 @@ typedef struct XHeaderView
     uint8_t   m_firstSectionMovable : 1; /**< 首段可动状态（实际生效还需 m_sectionsMovable）。 */
     uint8_t   m_highlightSections : 1;  /**< 选中段高亮开关（默认 false）。 */
     uint8_t   m_cascadingResizes : 1;   /**< 级联调整开关（默认 false；级联行为未接）。 */
+    /* ---- 双击段跟踪（2026-11-09 接入 sectionDoubleClicked）---- */
+    int32_t   m_lastDblSection;   /**< 上次按压的段号（-1=无）。 */
+    int32_t   m_lastEnteredSection; /**< 上次悬停进入的段号（-1=无）。 */
+    uint64_t  m_lastDblPressMs;   /**< 上次按压时刻（单调毫秒；0=无）。 */
+    /* ---- 双击发射跟踪（2026-11-10）----
+     * [为什么] 应用侧（HSF 表格）用 sectionDoubleClicked 驱动三态排序，
+     * 而释放处理器里还有"同段点击翻转指示器"的单击口径——一个双击周期
+     * 里 DBL 排序(降)后紧跟着 RELEASE 翻转(升) ⇒ 指示器与页面排序态错位。
+     * 发射 sectionDoubleClicked 时盖章，释放处理器在窗口内同段不再翻转。 */
+    uint64_t  m_lastDblEmitMs;    /**< 上次发射 sectionDoubleClicked 时刻（0=无）。 */
+    int32_t   m_lastDblEmitSection; /**< 上次发射双击的段号（-1=无）。 */
 } XHeaderView;
 
 /** @brief 排序方向（对标 Qt::SortOrder，数值一致）。 */
@@ -671,6 +682,17 @@ void XHeaderView_setOffsetToSectionPosition(XHeaderView* self, int index);
  */
 void XHeaderView_setModel(XHeaderView* self, void* model);
 
+/* ==================== 表头带事件转发入口（2026-11-10） ====================
+ * [为什么要有] XTableView/XTableWidget 把表头子件隐藏、表头带由表格自绘
+ * ⇒ 真实鼠标事件先落在**表格**上；不经转发的话，段按压/释放/双击的发射
+ * 点（含「双击列标题排序」的 sectionDoubleClicked）在真实点击下是死代码。
+ * 调用方（XTableWidget）负责：命中判定（y < headerHeight）与**坐标换算**
+ * （换算成表头局部坐标：x 需扣除行号列宽），再调这三口。
+ * 内部直呼表头自身的鼠标虚槽——与真实事件同一套语义，无第二套判定。 */
+void XHeaderView_forwardPress(XHeaderView* self, XEvent* event);
+void XHeaderView_forwardRelease(XHeaderView* self, XEvent* event);
+void XHeaderView_forwardDoubleClick(XHeaderView* self, XEvent* event);
+
 /* ==================== 视口查询（对标 QAbstractScrollArea::viewport） ==================== */
 
 /**
@@ -716,13 +738,20 @@ void* XHeaderView_sortIndicatorClearableChanged_signal(XHeaderView* self,
 /**
  * @brief sectionDoubleClicked(int) 信号（对标 QHeaderView::sectionDoubleClicked；
  *        载荷：区间号）。
- * @note 本实现暂无表头鼠标事件路径，句柄预留（尚未有发射点）。
+ * @note 发射点：VXHeaderView_mousePressEvent（同一段 400ms 内的第二次按压，
+ *       对标 Qt 的 mouseDoubleClickEvent 判定时机）。2026-11-09 接入：
+ *       此前本句柄只有声明没有发射点，页面侧接了也收不到。
+ * @note [职责边界] 本信号是 Qt 就有的**信号**（框架层）；「双击表头 ⇒
+ *       三态切换排序」这个**行为** Qt 并不具备（Qt 是单击表头排序 +
+ *       QTableView::setSortingEnabled/sortByColumn），属应用层扩展，
+ *       故排序实现放在 HighSpeedFilter/client/ui/HsfTableSort.c。
  */
 void* XHeaderView_sectionDoubleClicked_signal(XHeaderView* self, int section);
 /**
  * @brief sectionEntered(int) 信号（对标 QHeaderView::sectionEntered；
  *        载荷：区间号）。
- * @note 本实现暂无悬停事件路径，句柄预留（尚未有发射点）。
+ * @note 发射点：VXHeaderView_mouseMoveEvent（悬停进入新段时；同一段内
+ *       移动不重复发，对标 Qt 的 entered 语义）。2026-11-09 接入。
  */
 void* XHeaderView_sectionEntered_signal(XHeaderView* self, int section);
 /**

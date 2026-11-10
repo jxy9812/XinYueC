@@ -52,6 +52,17 @@ extern "C" {
 	int XModbusCoreTest_run(void);
 #endif
 #if XPROTOCOL_ON && XMODBUS_CLIENT_ON
+	/* HSF C 端**总回归**（单文件入口）：框架 Modbus 四层根修 + 客户端
+	 * 协议契约（历史应答列映射）。见 hsf_regression_test.c 头注。 */
+	int HsfRegressionTest_run(void);
+	void HsfRegressionTest(XVariant* data);
+	/* 历史页「图表缩放取数」专项回归（独立文件）：批次计划（窗内逐行取）/
+	 * 可见窗换算（同基准）/ 视口判定 / limit 轮转 / 泄漏自检。
+	 * 见 hsf_chart_zoom_test.c 头注。 */
+	int HsfChartZoomTest_run(void);
+#endif
+#if XPROTOCOL_ON && XMODBUS_CLIENT_ON
+
 	/* 虚拟 Modbus 设备（进程内应答，无串口/套接字）：全 C 端离线联调载体。
 	 * 验证"设备物理层可替换"——Hub/链路/通道组/设备站一行不改即可跑通。 */
 	int XModbusVirtualTest_run(void);

@@ -29,6 +29,10 @@ DEFAULT_USERS_REL = "cfg/hsf_users.json"
 #: 改端口只需改 `hsfsrv/ports.py` 里的 PY_SERVER_PORT（那个文件有详细说明）。
 DEFAULT_PORT = ports.PY_SERVER_PORT
 
+#: 浊度仪字节序旋钮的合法值（与 devices.TurbidityMeter.BYTE_ORDER_PERM
+#: 的键一致；配置文件手写出错时按非法条目丢弃，不让服务起不来）。
+VALID_TURBIDITY_BYTE_ORDERS = ("CDAB", "DCBA", "ABCD", "BADC")
+
 
 def _next_serial_port(port):
     """从路 A 的串口名推路 B 的缺省口（COM17 → COM18；非 COM 形式原样返回 +2）。
@@ -60,7 +64,7 @@ class SerialConfig(object):
     速率不同），可由配置显式改。
     """
 
-    __slots__ = ("port", "baudrate", "timeout_ms", "retries",
+    __slots__ = ("port", "baudrate", "timeout_ms", "retries", "poll_gap_ms",
                  "vfd_poll_ms", "temphum_poll_ms", "temphum_push_ms",
                  "vfd_rated_rpm", "vfd_rated_hz", "vfd_max_hz")
 
@@ -69,6 +73,18 @@ class SerialConfig(object):
         self.baudrate = int(kw.get("baudrate", 115200))
         self.timeout_ms = int(kw.get("timeout_ms", 400))
         self.retries = int(kw.get("retries", 1))
+        #: 相邻两条 RTU 事务之间的**最小总线静默**（毫秒；0=不加间隙）。
+        #:
+        #: [路 B（serial_b）为什么缺省 200 —— 2026-11-09 ttyS4 实测]
+        #: 站1 WZT-701A 浊度仪在站5 LD 流量计的 49 字节长帧之后需要
+        #: ≥100~125ms 的恢复期才有应答（200ms 稳定 10/10，见实测文档
+        #: docs/HSF板端ttyS4三设备取数实测总表_20261109.md §8）。路 B 的
+        #: 三台从站各是**独立轮询任务**（app._poll_loop），节拍可能恰好
+        #: 对齐 ⇒ 流量计事务结束后浊度事务 0ms 跟上 ⇒ 站1 间歇无应答。
+        #: 间隙在 master 事务层兜底（modbus.RtuMaster.min_gap_s）——那是
+        #: 同总线事务唯一必经的串行化卡点；路 A 的变频器是快设备（100ms
+        #: 节拍），缺省 0 不加间隙、维持老节拍。
+        self.poll_gap_ms = int(kw.get("poll_gap_ms", 0))
         #: 变频器是快设备，每拍都给机会；温湿度物理更新 30Hz，500ms 绰绰有余。
         self.vfd_poll_ms = int(kw.get("vfd_poll_ms", 100))
         self.temphum_poll_ms = int(kw.get("temphum_poll_ms", 500))
@@ -276,17 +292,56 @@ class Config(object):
         # 再用 cfg 关掉（多挂一个未接从站会拖慢同一条总线的轮询）。
         self.enable_flowmeter = True
         self.flowmeter_unit_id = 5
+        #: [--sim] 虚拟流量计的基准值（缺省=2026-11-09 ttyS4 实测口径：
+        #: 瞬时流量 3.6 m³/h、管道已充液⇒空管报警 False。实测当天管道
+        #: 空置⇒读数 0.0+空管 True，模拟器取"灌水后"的可用水口径，空管
+        #: 报警链路由配置 `flowmeter_sim_empty=true` 复现）。单位码不在
+        #: 这里配：0x1020 单位由仪表侧寄存器上报（5=m³/h），不能写死。
+        self.flowmeter_sim_flow = 3.6
+        self.flowmeter_sim_empty = False
         #: 浊度仪 ×2（同一 485，不同站号）。**站号现场不确定**，走配置。
         #:
         #: [为什么默认关] 与流量计同理：现场还没接。且站号 1 可能与总线上
         #: 其它设备冲突，接上后要先确认再开。
         self.enable_turbidity = True
-        #: 两台浊度仪的站号（现场手工设定，C 端预留写的是 1 和 2，
-        #: 但现场实际可能是 1 和 3 —— 以实测为准，故走配置）。
+        #: [逐台开关 2026-11-10] 两台浊度仪是两台**独立设备**（站1/站3，
+        #: 型号与字节序都不同）：现场可能只装一台、或只停采一台做检修。
+        #: 上面那个 enable_turbidity 降为**共同缺省**（缺逐台键时回落它），
+        #: 实际门控看这两个；键名与 C 端 HSF_CFGK_TURBIDITY{1,2}_ENABLED 同字面。
+        self.enable_turbidity1 = True
+        self.enable_turbidity2 = True
+        #: 两台浊度仪的站号（现场手工设定，走配置，代码不写死）。
+        #:
+        #: [站号沿革] 2026-11-09 ttyS4 实测：站 3 全地址零应答（普查 1~20
+        #: 只有 1/2/5 在线），在线两台站 1 WZT-701A + 站 2 ZHEYI-5100ZDY。
+        #: 2026-11-10 现场变更：站 2 浊度仪（浙仪 ZHEYI-5100ZDY）面板站号
+        #: 已改为 3（原 2）。字节序/读取数不受站号影响（仍 DCBA/×4）。
         self.turbidity_unit_ids = [1, 3]
+        #: 每台的字节序（与 unit_ids 按下标一一对应）。
+        #:
+        #: [为什么按台配] 实测两家字节序**不同**：站1 CDAB（低字在前）、
+        #: 站2 DCBA（4 字节整字节反序 = 小端 float32）。按旧口径"两台通用
+        #: CDAB"读站2 得 0.0029（真值 0.0458），小 4 个数量级且**不报错**
+        #: （实测文档 §5.3 四口径对照）。值域 CDAB/DCBA/ABCD/BADC。
+        self.turbidity_byte_orders = ["CDAB", "DCBA"]
+        #: 每台一次读的寄存器数：站1 读 2（只有浊度）；站2 读 4——一帧
+        #: 同刻拿浊度+温度（0x0000~0x0003，温度在后两字；分两帧读会有
+        #: 非同刻误差）。温度只进设备层与日志，不进推送帧。
+        self.turbidity_read_counts = [2, 4]
+        #: [--sim] 虚拟浊度仪的基准值（NTU / ℃，缺省=2026-11-09 实测口径：
+        #: 站1 2.29 NTU 无温度；站2 0.045 NTU + 19.3 ℃）。温度 None=该台
+        #: 无温度能力，虚拟从站 0x0002/0x0003 回 0。模拟器的验收口径：
+        #: 用与真实设备**相同的解码路径**能读回相同值。
+        self.turbidity_sim_ntu = [2.29, 0.045]
+        self.turbidity_sim_temp = [None, 19.3]
         self.turbidity_stale_ms = 5000
         #: 浊度仪轮询/推送节拍：浊度是慢变量，500ms 足够。
         self.turbidity_poll_ms = 500
+        #: [2026-11-10 逐台] 两台浊度仪各自周期（缺省跟随共同缺省）。
+        self.turbidity1_poll_ms = 500
+        self.turbidity2_poll_ms = 500
+        #: 流量计周期（0=跟随温湿度，旧行为；显式设过就按该值）。
+        self.flowmeter_poll_ms = 0
         #: 进水泵（数字量模块上的一路 DO，只有输出、无反馈）。
         self.enable_pump = True
         #: 泵点位：DO6 = 第 6 路电磁阀（DO5）的下一个口。
@@ -342,6 +397,26 @@ class Config(object):
         self.sim_valve_move_ms = 10000
         #: 虚拟行程开关"没接"：DI 恒 0。
         self.sim_valve_no_feedback = False
+        #: [--sim] 虚拟从站**应答时延**（毫秒 [min,max]，应答路径内按站号
+        #: 随机取值）——2026-11-09 ttyS4 实测口径（docs/HSF板端ttyS4三设备
+        #: 取数实测总表 §1.1「响应时延」列）：站 1 37~43、站 2 31~33、
+        #: 站 5 68~69。真实仪表的应答从来不是零时延；模拟器带上它，主站的
+        #: 站间间隙逻辑才不是只跑不验的死代码。要压联调时长可经配置把任
+        #: 一档清零（C 侧同款旋钮 = HsfServerConfig.h 的 HSF_SIM_* 宏）。
+        self.sim_turbidity_reply_ms = [(37, 43), (31, 33)]
+        self.sim_flowmeter_reply_ms = (68, 69)
+        #: [--sim] 站 1 的「长帧后恢复期」窗口（毫秒）：站 5 的 49 字节长帧
+        #: 收口后窗口内站 1 对任何请求无应答（实测 §8.3：0ms 2/10、75ms
+        #: 0/10、125ms 起 10/10，取实测门槛 125）。主站侧
+        #: serial_b.poll_gap_ms=200 刻意大于它 ⇒ 模拟联调时站 1 不掉线。
+        #: 0 = 关闭该建模。
+        self.sim_recovery_ms = 125
+        #: [--sim] 浊度微波动幅（NTU，绝对值绕基准正弦；按下标分台）。
+        #: 实测 40s × 20 轮：站 1 恒定（幅 0）、站 2 0.045±0.001。
+        self.turbidity_sim_wobble = [0.0, 0.001]
+        #: [--sim] 温度漂移幅（℃，绕基准正弦；按下标分台）。
+        #: 实测温度 19.25~19.3125 ⇒ 站 2 传 0.05；站 1 无温度（幅不起作用）。
+        self.turbidity_sim_temp_wobble = [0.0, 0.05]
         self.vfd_unit_id = 2
         self.temphum_unit_id = 4
         self.vfd_stale_ms = 5000
@@ -355,8 +430,11 @@ class Config(object):
         #: 通常是相邻的两个 COM 口。缺省从路 A 的口名推一个"下一个口"
         #: （COM17 → COM18），也可由配置 `serial_b.port` 显式指定。
         #: 关键是**速率必须不同**：路 A 115200、路 B 9600。
+        #: [poll_gap_ms=200] 路 B 三台从站里站1（浊度）在站5（流量计）
+        #: 长帧后需要 ≥200ms 恢复期（SerialConfig.poll_gap_ms 注释有据）。
         self.serial_b = SerialConfig(port=_next_serial_port(self.serial.port),
-                                     baudrate=9600)
+                                     baudrate=9600,
+                                     poll_gap_ms=200)
         self.analog = AnalogConfig()
         # [默认值＝**现场口径**，不是"够用的最小集"]
         #
@@ -394,10 +472,19 @@ class Config(object):
         #: 原先六路在「.12 聚合上半区」DO16..21；.12 拆除后只剩 .13 一台
         #: 16 点模块、点表从 0 起，故整体减 16 → DO0..5。物理端子没动，
         #: 变的只是寻址口径（上半区第 n 点本来就是 .13 自己的第 n 点）。
-        #:   阀 n：DO n；**关到位 DI 在前、开到位 DI 在后**
+        #:   阀 n：DO n；**开到位 DI 在前、关到位 DI 在后**
+        #:
+        #: [开/关位序 2026-11-10 按现场接线订正] 板端在跑的 cfg
+        #: （hsf_server_py.json 的 valves.items）是 openDi=0,2,4…（开在前）
+        #: / closeDi=1,3,5…（关在后），用户已实机核对过设备定义；而本仓
+        #: 默认值原来取反了（openDi=2n+1）。两者不一致时**同一个 DI 位图
+        #: 两端读出相反的阀位**（板端实测 DI 位图=20482 时，一端判
+        #: 「阀1 开到位」、另一端判「阀1 关到位」）——这不是显示差异，是
+        #: 现场结论反了。故默认值订正为开在前，与板端 cfg 一致，也与
+        #: valves.py 顶部的接线示例一致。C 端宏 HSF_VALVE_OPEN_DI 同步。
         self.valve_items = [
-            {"name": "电磁阀%d" % (i + 1), "module": 0,
-             "do": i, "openDi": i * 2 + 1, "closeDi": i * 2}
+            {"name": "电动球阀%d" % (i + 1), "module": 0,
+             "do": i, "openDi": i * 2, "closeDi": i * 2 + 1}
             for i in range(6)
         ]
         # ---- 数据落盘（历史/日志/报警 → SQLite）----
@@ -423,6 +510,15 @@ class Config(object):
     @property
     def vfd_poll_ms(self):
         return self.serial.vfd_poll_ms
+
+    def turbidity_enabled(self, idx):
+        """第 idx 台（0 基）浊度仪的采集开关。
+
+        [逐台优先] 两台是独立设备，可能只装一台/只停一台；`enable_turbidity`
+        只是"共同缺省"（旧配置只有 turbidityEnabled 时两台都照它）。
+        """
+        return bool(getattr(self, "enable_turbidity%d" % (idx + 1),
+                            self.enable_turbidity))
 
     # ---- 路径解析 ----
     def resolve_paths(self, base_dir):
@@ -472,18 +568,36 @@ class Config(object):
         self.temphum_unit_id = _int(data_ids.get("temphum"), self.temphum_unit_id)
         self.flowmeter_unit_id = _int(data_ids.get("flowmeter"),
                                       self.flowmeter_unit_id)
-        # 浊度仪站号是**两个**，配置里给数组；缺省沿用旧的占位值。
+        # 浊度仪站号是**两个**，配置里给数组；缺省=2026-11-09 ttyS4 实测
+        # 口径（站1 WZT-701A / 站2 ZHEYI-5100ZDY，站3 已实测不存在）。
         turb_ids = data_ids.get("turbidity")
         if isinstance(turb_ids, list) and len(turb_ids) >= 2:
             self.turbidity_unit_ids = [_int(turb_ids[0],
                                             self.turbidity_unit_ids[0]),
                                        _int(turb_ids[1],
                                             self.turbidity_unit_ids[1])]
+        # 每台的字节序（按下标与站号对应）。只认四个合法值；非法条目丢弃，
+        # 剩下按前两台取（缺台回退装配处的类缺省 CDAB）。
+        turb_orders = data_ids.get("turbidity_byte_orders")
+        if isinstance(turb_orders, list) and turb_orders:
+            cleaned = [str(o).strip().upper() for o in turb_orders]
+            cleaned = [o for o in cleaned if o in VALID_TURBIDITY_BYTE_ORDERS]
+            if cleaned:
+                self.turbidity_byte_orders = cleaned
+        # 每台一次读的寄存器数（站2=4：浊度+温度一帧同刻）。下限 2——
+        # 32 位量至少两个字，配小了只会整拍读错。
+        turb_counts = data_ids.get("turbidity_read_counts")
+        if isinstance(turb_counts, list) and turb_counts:
+            cleaned = [max(2, _int(c, 2)) for c in turb_counts]
+            if cleaned:
+                self.turbidity_read_counts = cleaned
         self.serial = SerialConfig(
             port=serial.get("port", self.serial.port),
             baudrate=_int(serial.get("baudrate"), self.serial.baudrate),
             timeout_ms=_int(serial.get("timeout_ms"), self.serial.timeout_ms),
             retries=_int(serial.get("retries"), self.serial.retries),
+            poll_gap_ms=_int(serial.get("poll_gap_ms"),
+                             self.serial.poll_gap_ms),
             vfd_poll_ms=_int(serial.get("vfd_poll_ms"), self.serial.vfd_poll_ms),
             temphum_poll_ms=_int(serial.get("temphum_poll_ms"),
                                  self.serial.temphum_poll_ms),
@@ -491,7 +605,8 @@ class Config(object):
                                  self.serial.temphum_push_ms),
         )
         # ---- 第二条 485（流量计 + 浊度仪 ×2，9600）----
-        # 老配置文件没有 serial_b 节：沿用 __init__ 推出来的缺省口与 9600。
+        # 老配置文件没有 serial_b 节：沿用 __init__ 推出来的缺省口与 9600
+        # （含 200ms 事务间隙——站1 在站5 长帧后的恢复期，见 SerialConfig）。
         # 若路 A 的口名后来改了、而 serial_b 没配，就重新推一次，避免
         # 两条线悄悄落成同一个口（那样 9600 设备会被按 115200 访问）。
         sb = doc.get("serial_b") or {}
@@ -505,6 +620,8 @@ class Config(object):
             timeout_ms=_int(sb.get("timeout_ms"),
                             self.serial.timeout_ms),
             retries=_int(sb.get("retries"), self.serial.retries),
+            poll_gap_ms=_int(sb.get("poll_gap_ms"),
+                            self.serial_b.poll_gap_ms),
             vfd_poll_ms=self.serial.vfd_poll_ms,
             temphum_poll_ms=self.serial.temphum_poll_ms,
             temphum_push_ms=self.serial.temphum_push_ms,
@@ -517,6 +634,15 @@ class Config(object):
             self.enable_flowmeter = bool(serial.get("flowmeter_enabled"))
         if "turbidity_enabled" in serial:
             self.enable_turbidity = bool(serial.get("turbidity_enabled"))
+            # [逐台缺键回落共同缺省] 先按老键铺开，再由逐台键覆盖 —— 旧
+            # 配置文件只有 turbidity_enabled 时两台照它跑（向后兼容）。
+            self.enable_turbidity1 = self.enable_turbidity
+            self.enable_turbidity2 = self.enable_turbidity
+        for _idx, _key in enumerate(("turbidity1_enabled",
+                                     "turbidity2_enabled")):
+            if _key in serial:
+                setattr(self, "enable_turbidity%d" % (_idx + 1),
+                        bool(serial.get(_key)))
         #: 浊度轮询周期（远程采集配置可改；原先只在 __init__ 里赋值、无
         #: load/save 通路 —— 远程改完重启就丢，配置文件里根本不存在）。
         self.turbidity_poll_ms = _int(serial.get("turbidity_poll_ms"),
@@ -588,7 +714,7 @@ class Config(object):
                 if not isinstance(item, dict):
                     item = {}
                 built.append({
-                    "name": item.get("name") or ("电磁阀%d" % (i + 1)),
+                    "name": item.get("name") or ("电动球阀%d" % (i + 1)),
                     "module": _opt_int(item.get("module")),
                     "do": _opt_int(item.get("do")),
                     "openDi": _opt_int(item.get("openDi")),
@@ -643,6 +769,44 @@ class Config(object):
                     merged["normally_closed"] = [
                         str(k) for k in nc if str(k) in valid]
                 self.button_items = merged
+
+        # ---- 模拟器保真旋钮（--sim；ttyS4 2026-11-09 实测口径）----
+        # 老配置文件没有 sim 节：沿用 __init__ 的实测缺省。需要压联调时长
+        # 时在这里把任一档清零（时延单位毫秒；[min,max] 区间随机取值）。
+        sim_sec = doc.get("sim") or {}
+        if sim_sec:
+            def _one_pair(item):
+                """一个 [lo,hi]（或单整数）→ (lo, hi)，lo>=0 且 lo<=hi；非法返回 None。"""
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    lo = max(0, _int(item[0], 0))
+                    hi = max(lo, _int(item[1], lo))
+                    return (lo, hi)
+                if isinstance(item, int) and not isinstance(item, bool):
+                    v = max(0, item)
+                    return (v, v)
+                return None
+            raw = sim_sec.get("turbidity_reply_ms")
+            if isinstance(raw, list) and raw:
+                pairs = [_one_pair(item) for item in raw[:2]]
+                if all(p is not None for p in pairs) and len(pairs) == 2:
+                    self.sim_turbidity_reply_ms = pairs
+            fpair = _one_pair(sim_sec.get("flowmeter_reply_ms"))
+            if fpair is not None:
+                self.sim_flowmeter_reply_ms = fpair
+            self.sim_recovery_ms = max(0, _int(sim_sec.get("recovery_ms"),
+                                               self.sim_recovery_ms))
+            for key, attr in (("turbidity_wobble_ntu", "turbidity_sim_wobble"),
+                              ("temp_wobble_c", "turbidity_sim_temp_wobble")):
+                raw = sim_sec.get(key)
+                if isinstance(raw, list) and raw:
+                    vals = []
+                    for item in raw[:2]:
+                        try:
+                            vals.append(max(0.0, float(item)))
+                        except (TypeError, ValueError):
+                            continue
+                    if vals:
+                        setattr(self, attr, vals)
 
         stale = doc.get("stale") or {}
         self.vfd_stale_ms = _int(stale.get("vfd_ms"), self.vfd_stale_ms)
@@ -702,6 +866,7 @@ class Config(object):
                 "baudrate": self.serial.baudrate,
                 "timeout_ms": self.serial.timeout_ms,
                 "retries": self.serial.retries,
+                "poll_gap_ms": self.serial.poll_gap_ms,
                 "vfd_poll_ms": self.serial.vfd_poll_ms,
                 "temphum_poll_ms": self.serial.temphum_poll_ms,
                 "temphum_push_ms": self.serial.temphum_push_ms,
@@ -710,11 +875,23 @@ class Config(object):
                 # 浊度仪/流量计开关与浊度周期：load 侧有通路、save 侧
                 # 曾漏写 —— 远程改完重启丢配置（远程采集配置 e2e 实测抓到）。
                 "flowmeter_enabled": self.enable_flowmeter,
-                "turbidity_enabled": self.enable_turbidity,
+                # [逐台开关] 两台独立设备各存各的。旧键 turbidity_enabled
+                # 落盘时写**任一启用**（旧版读到它时的语义就是"这路开没开"；
+                # 逐台键存在时 load 会以逐台为准）。
+                "turbidity_enabled": bool(self.enable_turbidity1
+                                          or self.enable_turbidity2),
+                "turbidity1_enabled": self.enable_turbidity1,
+                "turbidity2_enabled": self.enable_turbidity2,
                 "turbidity_poll_ms": self.turbidity_poll_ms,
+                # 站号/按台旋钮同样不能只读不写（save 侧漏写 ⇒ 手改的
+                # 站号在下一次落盘时被静默冲回缺省，同一类实锅）。
                 "unit_ids": {
                     "vfd": self.vfd_unit_id,
                     "temphum": self.temphum_unit_id,
+                    "flowmeter": self.flowmeter_unit_id,
+                    "turbidity": list(self.turbidity_unit_ids),
+                    "turbidity_byte_orders": list(self.turbidity_byte_orders),
+                    "turbidity_read_counts": list(self.turbidity_read_counts),
                 },
             },
             # 第二条 485：与 serial 平级，避免把 9600 的口/速率混进路 A。
@@ -723,6 +900,7 @@ class Config(object):
                 "baudrate": self.serial_b.baudrate,
                 "timeout_ms": self.serial_b.timeout_ms,
                 "retries": self.serial_b.retries,
+                "poll_gap_ms": self.serial_b.poll_gap_ms,
             },
             "analog": {
                 "enabled": self.enable_analog,

@@ -248,38 +248,96 @@ static bool XLinkClientPrivate_authRespond(
 }
 
 /**
- * @brief 会话认证结果槽：失败时阻断自动重连并发射 authFailed。
+ * @brief 会话认证结果槽：区分「永久失败」与「瞬时拒绝」，前者停重连、
+ *        后者保留重连定时器退避重试。
+ * @details [永久 vs 瞬时 2026-11-09 根修]
+ *          永久（收手，现状）：BadUser / BadPassword / Locked / NoCredential
+ *          ——重试同一凭据永远不会成功，口令错还会计入服务端失败次数。
+ *          瞬时（退避重试）：Rejected / Timeout / Protocol
+ *          ——服务端瞬时状态（同账并发/会话数上限）或链路噪声。若把它们
+ *          也当永久，**一次 6s 的链路抖动就能让已登录的界面永久没数据**：
+ *          客户端自动重连时旧会话还没被服务端回收 ⇒ 新登录被策略拒绝 ⇒
+ *          （旧实现）停重连、UI 停在 `--` 直到人工重登（实锅）。
+ *          重试上限见 XLINK_AUTH_REJECT_RETRY_LIMIT（防无限重试）。
+ *  @note 本槽运行在会话的信号发射栈上——会话拆除必须延迟（deleteLater）。
  */
 static void VXLinkClient_onAuthChanged(XObject* receiver, XVarList* args)
 {
     XLinkClient* self = (XLinkClient*)receiver;
     int reason;
+    bool permanent;
+    bool retry;
 
     if (!self || !args)
         return;
     XVarList_args_3(args, bool, passed, uint8_t, status, uint8_t, role);
     (void)role;
-    if (passed || self->m_userDisconnect)
+    if (passed || self->m_userDisconnect) {
+        if (passed)
+            self->m_authRejects = 0;   /* 认证通过：瞬时拒绝计数归零。 */
         return;
+    }
 
     switch (status) {
     case XLinkAuthStatus_BadUser: reason = XLinkClientAuthFailure_BadUser; break;
     case XLinkAuthStatus_BadPassword:
         reason = XLinkClientAuthFailure_BadPassword; break;
     case XLinkAuthStatus_Locked: reason = XLinkClientAuthFailure_Locked; break;
+    case XLinkAuthStatus_NoCredential:
+        reason = XLinkClientAuthFailure_NoCredential; break;
     case XLinkAuthStatus_Timeout: reason = XLinkClientAuthFailure_Timeout; break;
     case XLinkAuthStatus_Protocol:
         reason = XLinkClientAuthFailure_Protocol; break;
     default: reason = XLinkClientAuthFailure_Rejected; break;
     }
 
+    permanent = (status == XLinkAuthStatus_BadUser
+                 || status == XLinkAuthStatus_BadPassword
+                 || status == XLinkAuthStatus_Locked
+                 || status == XLinkAuthStatus_NoCredential);
+    retry = false;
+    if (!permanent) {
+        /* 瞬时拒绝也要计数（同一个客户端可能连续撞上多次），达上限才收手。
+           计数上界取 LIMIT+1：让攻击性/长期被拒的链路最终落到「不重试」，
+           而不是卡在 == LIMIT 上永远重试。
+           [首连也重试，2026-11-09 二次修] 现场最常见的形态是「用户很快
+           重开客户端」：新进程**首登**就撞上服务端尚未回收的旧 root 会话
+           （半开/被强杀，回收窗口 ~6s）。若首连按永久失败收手，用户看到
+           「登录失败」后只能再等一会儿手工重登——正是用户报的「有时候
+           连不上，换个时间再连又好了」。故瞬时拒绝只要 autoReconnect 开着
+           就退避重试；界面侧由 authFailed 信号先给出准确原因（登录窗/
+           状态栏），成功后续的回调照常走 ready。 */
+        if (self->m_authRejects <= (int)XLINK_AUTH_REJECT_RETRY_LIMIT)
+            self->m_authRejects++;
+        retry = (self->m_autoReconnect
+                 && self->m_authRejects <= (int)XLINK_AUTH_REJECT_RETRY_LIMIT);
+    }
+
     self->m_lastAuthFailure = reason;
-    self->m_authFailed = true;
-    /* 认证失败是永久失败：停重连，直接把状态归一为未连接。
-       本槽运行在会话的信号发射栈上——会话拆除必须延迟（deleteLater）。 */
+    if (!retry)
+        self->m_authFailed = true;   /* 永久失败/重试耗尽：阻断自动重连 */
+
+    /* 先停已排的重连定时器，再拆会话；拆除本槽必须延迟（deleteLater）。 */
     XLinkClientPrivate_stopReconnectTimer(self);
     XLinkClientPrivate_teardown(self, false, true);
-    XLinkClientPrivate_setState(self, XLinkClient_UnconnectedState);
+
+    if (retry) {
+        /* 保持 ReconnectingState 并确保定时器在跑。teardown 里会话 Inactive
+           可能已经触发 handleLinkLost 并自行排好重连定时器（该路径对本态
+           是幂等早期返回），此时不要重复起表。 */
+        if (self->m_state != XLinkClient_ReconnectingState)
+            XLinkClientPrivate_setState(self, XLinkClient_ReconnectingState);
+        if (self->m_reconnectTimerId == XTIMER_INVALID_ID)
+            self->m_reconnectTimerId =
+                XObject_startTimer_ms((XObject*)self, self->m_reconnectInterval,
+                                      XTimerType_CoarseTimer);
+        XPrintf("XLinkClient: 认证被拒（瞬时，%d/%d）→ 退避重连 %ums\n",
+                (int)self->m_authRejects,
+                (int)XLINK_AUTH_REJECT_RETRY_LIMIT,
+                (unsigned)self->m_reconnectInterval);
+    } else {
+        XLinkClientPrivate_setState(self, XLinkClient_UnconnectedState);
+    }
     XLinkClient_authFailed_signal(self, reason, status);
 }
 
@@ -509,6 +567,7 @@ void XLinkClient_init(XLinkClient* obj)
     obj->m_authPassword = NULL;
     obj->m_lastAuthFailure = XLinkClientAuthFailure_None;
     obj->m_authFailed = false;
+    obj->m_authRejects = 0;
 #endif
 }
 
@@ -653,6 +712,7 @@ bool XLinkClient_connectToServer(XLinkClient* self)
 #if XLINK_AUTH_ON
     self->m_authFailed = false;
     self->m_lastAuthFailure = XLinkClientAuthFailure_None;
+    self->m_authRejects = 0;      /* 手动重连：瞬时拒绝计数重新起算。 */
 #endif
     XLinkClientPrivate_stopReconnectTimer(self);
     XLinkClientPrivate_teardown(self, false, false);

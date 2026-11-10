@@ -241,13 +241,29 @@
 #define HSF_CFGK_TEMPHUM_ENABLED    "temphumEnabled"
 #define HSF_CFGK_FLOWMETER_ENABLED  "flowmeterEnabled"
 #define HSF_CFGK_TURBIDITY_ENABLED  "turbidityEnabled"
+/* [逐台开关 2026-11-10] 两台浊度仪是两台**独立设备**（站1/站3，型号与
+ * 字节序都不同）：现场可能只装一台、或只停采其中一台做检修。老的
+ * `turbidityEnabled` 保留为**两台共同缺省**（旧配置/旧客户端只发它时
+ * 两台都照它跑，向后兼容）。回落链：
+ *   turbidityNEnabled → turbidityEnabled → 编译期 HSF_BUS_B_ENABLED。 */
+#define HSF_CFGK_TURBIDITY1_ENABLED "turbidity1Enabled"  /**< 浊度仪1（站1）。 */
+#define HSF_CFGK_TURBIDITY2_ENABLED "turbidity2Enabled"  /**< 浊度仪2（站3）。 */
 #define HSF_CFGK_ANALOG_ENABLED     "analogEnabled"
 #define HSF_CFGK_DIGITAL_ENABLED    "digitalEnabled"
 
-/* 采集节：轮询周期（毫秒）。 */
+/* 采集节：轮询周期（毫秒）。
+ * [2026-11-10 逐设备可设] 现场是**两台独立浊度仪 + 一台流量计**，采集周期
+ * 各自不同（站1 有 200ms 发帧前静默期、站3 没有；流量计 49 字节长帧最慢）
+ * ⇒ 新增三个键分别设置。老的 `turbidityPollMs` 保留为**两台浊度的共同缺省**
+ * （旧配置/旧客户端只发它时两台照它跑，向后兼容）。
+ * [为什么流量计原先没有键] 早期 C 端流量计跟随温湿度周期（Python 同款），
+ * 现场要求单列——本轮补 `flowmeterPollMs`。 */
 #define HSF_CFGK_VFD_POLL_MS        "vfdPollMs"
 #define HSF_CFGK_TEMPHUM_POLL_MS    "temphumPollMs"
-#define HSF_CFGK_TURBIDITY_POLL_MS  "turbidityPollMs"
+#define HSF_CFGK_TURBIDITY_POLL_MS  "turbidityPollMs"   /**< 两台浊度的缺省（兼容键）。 */
+#define HSF_CFGK_TURBIDITY1_POLL_MS "turbidity1PollMs"  /**< 浊度仪1（站1）。 */
+#define HSF_CFGK_TURBIDITY2_POLL_MS "turbidity2PollMs"  /**< 浊度仪2（站3）。 */
+#define HSF_CFGK_FLOWMETER_POLL_MS  "flowmeterPollMs"   /**< 电磁流量计（站5）。 */
 #define HSF_CFGK_ANALOG_POLL_MS     "analogPollMs"
 #define HSF_CFGK_DIGITAL_POLL_MS    "digitalPollMs"
 
@@ -300,10 +316,29 @@
  *          内容必须共用同一条 WHERE。
  */
 #define HSF_KEY_HIST_KW             "kw"
-/** @brief 关键字比对列下标数组（int32 数组；0..14 = 显示列；缺省=全部列）。 */
+/** @brief 关键字比对列下标数组（int32 数组；0..15 = 显示列；缺省=全部列）。 */
 #define HSF_KEY_HIST_KW_COLS        "kwCols"
-/** @brief 显示列数（与服务端 15 个显示表达式/客户端表格列一一对应）。 */
-#define HSF_HISTORY_DISPLAY_COLS    15
+/**
+ * @brief 线上列数（`rows[]` 每行的格数；**服务端与客户端共用这一处定义**）。
+ * @details 列序见 server/HsfServerStore.h 的 HSF_HISTORY_COLUMNS 注释；
+ *          2026-11-10 追加 `water_temp` 后 = 19。
+ *          [为什么放在公共头] 服务端按它拼 `cols[]`/`rows[]`，客户端按它
+ *          读格数（HsfLinkHistory.c 的 `cell[HSF_HISTORY_WIRE_COLS]`）。
+ *          两处各写一个数字的后果：改一端后另一端静默读错列（客户端不报错，
+ *          只是整列错位）—— 实锅级风险，故收成单一定义。
+ * @note  服务端头 HsfServerStore.h 的 `HSF_HISTORY_COLUMNS` 就是它。
+ */
+#define HSF_HISTORY_WIRE_COLS       19
+
+/**
+ * @brief 显示列数（与服务端显示表达式/客户端表格列一一对应）。
+ * @details [2026-11-10 15→16] 新增「水温(℃)」显示列（浊度仪2 随帧带出的
+ *          水温，插在「浊度2(NTU)」之后）。**显示列序与线上列序是两张表**：
+ *          线上列（HSF_HISTORY_WIRE_COLS=19）把 water_temp 追加在末尾，
+ *          显示列把它放在第 8 位 ⇒ 服务端 DISPLAY_EXPR、C 客户端
+ *          kHistoryHeaders、Python 客户端 HistoryPage.COLUMNS 三处同步。
+ */
+#define HSF_HISTORY_DISPLAY_COLS    16
 /**
  * @brief 导出/下载意图标记（bool；缺省 false=普通分页浏览）。
  * @details [为什么要上服务端] "下载数据"是权限点（XAccessPerm_Download），
@@ -336,7 +371,17 @@
 #define HSF_KEY_LOG_BEFORE_TS       "beforeTs" /**< 与 HSF_KEY_HIST_BEFORE_TS 同字面。 */
 #define HSF_KEY_LOG_LO_TS           "loTs"     /**< 与 HSF_KEY_HIST_LO_TS 同字面。 */
 #define HSF_KEY_LOG_HI_TS           "hiTs"     /**< 与 HSF_KEY_HIST_HI_TS 同字面。 */
-/** @brief 类别过滤（utf8；conn/ctrl/alarm/auto/auth；空/缺省=全部）。 */
+/**
+ * @brief 类别过滤（utf8；conn/ctrl/alarm/auto/auth/**sys**；空/缺省=全部）。
+ * @details [为什么多一个 sys] C 端 logs 表只登记五类定点事件（hsfAppEventLog）；
+ *          **Python 服务端**（server_py/hsfsrv/proto.py 的 LOG_CAT_SYS）另收
+ *          大量非事件类业务日志（采集失败/健康变化/配置变更/装配保真行…），
+ *          统一归 "sys"。服务端按字面直接下推 WHERE（**不做白名单校验**），
+ *          故请求 sys 永远不会被拒；C 服务端没有这类行 ⇒ 返回空列表。
+ *          两端客户端的类别下拉都已带上「系统」档，字面必须逐字一致
+ *          （Python `LogPage.CATEGORY_ITEMS` ↔ 本文件 ↔ C
+ *          `HsfDataLog.c` 的 kLogCategoryKeys）。
+ */
 #define HSF_KEY_LOG_CATEGORY        "category"
 #define HSF_KEY_LOG_KW              "kw"       /**< 与 HSF_KEY_HIST_KW 同字面。 */
 /** @brief 应答行数组（每元素一个对象 {ts,category,text}）。 */
@@ -744,6 +789,17 @@ typedef enum HsfValveState {
 #define HSF_KEY_TURB_RAW            "raw"
 /** @brief 该台是否在线（bool；已读到且未陈旧）。 */
 #define HSF_KEY_TURB_ONLINE         "online"
+/**
+ * @brief 该台水温 ℃ × 100 的**整数**（int）。
+ * @details [2026-11-10 新增] 只有**带温度的机型**才有（WZT-701A 站1 无
+ *          温度；ZHEYI-5100ZDY 站3 一帧 0x0000×4 同刻带出浊度+温度）。
+ *          口径与 NTU 一样走定点整数（客户端 ÷100 显示）。
+ * @note  **缺键 = 没有温度**（不是 0℃）：机型不带温度时服务端压根不给这个
+ *        键，客户端据此显示"--"，不能显示 0℃——0℃ 会被当成真实读数
+ *        （与 2026-11-10 同批修的「温度缺值当 0」是同一类坑）。
+ *        与 Python 侧 proto.KEY_TURB_TEMP 同名同义。
+ */
+#define HSF_KEY_TURB_TEMP           "temp"
 
 /* ==================== 进水泵（1 台；只有输出、无反馈） ==================== */
 

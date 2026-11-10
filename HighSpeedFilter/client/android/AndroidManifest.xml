@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 高速过滤器客户端（HsfClient）壳清单：主逻辑在 libxhsfclient.so
+     （ANativeActivity_onCreate 由 Drive/Android/android_main.c 提供）。
+
+     位置说明：本清单是**本应用的安卓身份**（应用 id / 原生库名 / 应用名），
+     故随应用放在 HighSpeedFilter/client/android/ 下——平台层
+     platforms/android/ 只放与 app 无关的打包工具与共用资源，不放某个
+     应用的清单。
+
+     与 XGuiDemo 的清单（platforms/android/AndroidManifest.xml）**同源**：
+     Activity 类、权限集、主题、configChanges 全部一致，只有三处不同：
+       ① package（应用 id）= com.xinyuec.hsfclient —— 与 demo 的
+          com.xinyuec.xguidemo 并存，同一台设备可共存互不覆盖；
+       ② android.app.lib_name = xhsfclient —— 系统据此 dlopen 原生库，
+          Java 侧 XGuiNativeActivity 也按同一 meta-data 加载；
+       ③ android:label 用字面量（demo 用 @string/app_name，资源在
+          platforms/android/res/ 下，两个应用共用一份 res 会撞名）。
+
+     ⚠ 清单里的 Activity 类名**不能**写成简写 ".XGuiNativeActivity"：
+       左边是清单包（本文件 package），右边必须是完整类名
+       com.xinyuec.android.XGuiNativeActivity（Java 包与清单包是两个概念）。
+       启动命令：am start -n com.xinyuec.hsfclient/com.xinyuec.android.XGuiNativeActivity
+
+     清单包名必须与构建时注入的 ANDROID_APP_PKG 一致——字体释放目录与
+     界面设置落盘目录都由该 id 派生（/data/data/<pkg>/files）。
+     改包名时三处同改：① 本文件 package ② 构建的 -DANDROID_APP_PKG
+     ③ 打包脚本的 APK 应用参数。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.xinyuec.hsfclient"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <!-- 网络：应用进程的 socket() 受 INTERNET 权限的 SELinux 门控，
+         缺失时 socket(AF_INET, SOCK_DGRAM/TCP) 一律 EACCES。客户端经
+         XLink/TCP 连服务端（默认 6100），此权限必需。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- WiFi 扫描/连接（XDeviceWiFi 安卓后端）：扫描结果自 API 26 起需
+         定位权限（运行时权限，缺失时结果恒空表——不抛异常，界面表现为
+         「网络下拉框永远是空的」）。Activity 启动时向用户申请。 -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>
+    <!-- [屏幕休眠] WRITE_SETTINGS：安卓无「应用主动关屏」原语，息屏是
+         系统行为——应用把「屏幕超时」写进 Settings.System 委托系统计时。
+         该权限为「特殊权限」：声明 ≠ 已获授权，须由用户在系统设置里
+         对本应用单独授权（未授权时写入抛 SecurityException，界面如实
+         提示「需授权」）。 -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS"/>
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="28" />
+
+    <application
+        android:label="高速过滤器客户端"
+        android:icon="@mipmap/ic_launcher"
+        android:hasCode="true"
+        android:debuggable="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+        <activity
+            android:name="com.xinyuec.android.XGuiNativeActivity"
+            android:label="高速过滤器客户端"
+            android:exported="true"
+            android:configChanges="orientation|keyboardHidden|screenSize">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="xhsfclient" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

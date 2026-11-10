@@ -194,6 +194,17 @@ static int main_run_test_dispatch(const char* testPath)
        也能跑通 Hub → 链路 → 通道组 → 设备站全链。返回码=失败数。 */
     if (strcmp(testPath, "xmodbus-virtual") == 0)
         return XModbusVirtualTest_run() == 0 ? 0 : 1;
+    /* HSF C 端**总回归**（单文件入口）：框架 Modbus 四层根修（异常帧按
+       失败/嵌套收口不丢帧/写失败不饿死读/按从站粒度新鲜度）+ 客户端历史
+       应答列映射契约。进程内假从站载体，不依赖传输层。
+       Python 端对照文件：HighSpeedFilter/client_py/tests/test_hsf_regression.py */
+    if (strcmp(testPath, "hsf-regression") == 0)
+        return HsfRegressionTest_run() == 0 ? 0 : 1;
+    /* 历史页「图表缩放取数」专项：2026-11-09 已并入 hsf_regression_test.c，
+     * 由总回归的 §H 调用（断言只此一份）。这个独立入口保留作单跑调试用，
+     * 指向同一函数，行为与 `--test hsf-regression` 的 §H 一致。 */
+    if (strcmp(testPath, "hsf-chart-zoom") == 0)
+        return HsfChartZoomTest_run() == 0 ? 0 : 1;
 #endif
 #if XPROTOCOL_ON && XVFD_ON
     /* XVfd 变频器闭环三件套（pty 路径走缺省文件回退）。 */

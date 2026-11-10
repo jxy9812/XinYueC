@@ -153,6 +153,20 @@ extern "C" {
 #define XLINK_AUTH_FAILURE_LIMIT 3
 #endif
 
+/** @brief 客户端「认证被策略拒绝」后的自动重连上限（次数；0=一遇拒绝就收手）。
+ *  @details 只对**瞬时**拒绝（XLinkAuthStatus_Rejected，例如「该账户已在线，
+ *           不允许同时在线」或会话数已达上限）计数；口令错/用户不存在/
+ *           账户锁定仍是永久失败，一次即停（见 XLinkClient 的 authChanged 槽）。
+ *           服务端回收旧会话的静默窗口量级是 XLINK_HEARTBEAT_TIMEOUT_MS（6s），
+ *           客户端默认重连间隔 2s ⇒ 3 次即可覆盖一个回收窗口；取 30 次
+ *           （约 60s）给现场网络抖动留余量，同时避免无限重试打爆服务端。
+ *           达上限后归一为 UnconnectedState 并照常发 authFailed。
+ *  @note   Counterpart: server_py/hsfsrv/proto.py 与
+ *          client_py/hsfsrv_client/proto.py 的 XLINK_AUTH_REJECT_RETRY_LIMIT。 */
+#ifndef XLINK_AUTH_REJECT_RETRY_LIMIT
+#define XLINK_AUTH_REJECT_RETRY_LIMIT 30
+#endif
+
 /* ========================================================================== */
 /*                        登录认证扩展常量                                   */
 /* ========================================================================== */

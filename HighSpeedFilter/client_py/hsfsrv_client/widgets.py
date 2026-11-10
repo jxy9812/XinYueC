@@ -89,6 +89,23 @@ class StatBlock(QWidget):
                 "QLabel { color: %s; font-size: 30px; font-weight: bold;"
                 " background: transparent; }" % color)
 
+    def set_value_colored(self, text, color, size):
+        """带颜色地写值，**保留传入的字号**。
+
+        [为什么要单独一个口] set_value(text, color) 把字号硬编码成 30px，
+        会覆盖构造时的 value_size（首页卡片用 26/22）。数值要随状态变色
+        （如浊度超阈值标红）时若走 set_value，字号会被拽成 30px、与同卡
+        其它读数不一致。这里按传入 size 重写样式表。
+        """
+        self._value.setText(str(text))
+        self._value.setStyleSheet(
+            "QLabel { color: %s; font-size: %dpx; font-weight: bold;"
+            " background: transparent; }" % (color, size))
+
+    def set_caption(self, text):
+        """改标题文字（服务端下发的仪器名/通道名等）。"""
+        self._caption.setText(str(text))
+
     def set_suffix(self, unit):
         self._unit.setText(unit)
 

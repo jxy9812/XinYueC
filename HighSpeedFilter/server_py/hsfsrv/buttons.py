@@ -183,12 +183,24 @@ class ButtonStation(object):
         self.running = bool(running)
 
     # ---- 单拍：采集 + 灯 ----
-    def poll(self, now_ms):
-        """采集一拍：读 DI → 判沿 → 写灯。
+    def poll(self, now_ms, auto_mode=False):
+        """采集一拍：读 DI → 判沿 →（自动模式才）写灯。
 
-        返回本拍是否有**运行态**变化（state 字段变了）。
+        :param auto_mode: 当前是不是自动模式。
+        :return: 本拍是否有**运行态**变化（state 字段变了）。
+
         按键沿放在 `start_edge` / `stop_edge` / `reset_edge` 上供外部读取，
         本方法**不推进运行态**（那由 autocontrol 决定）。
+
+        [⚠ 手动模式**不写灯** —— 2026-11-10 用户口径]
+        原来无论什么模式都每拍写灯：灯态由「急停 + 自动运行位」推导，
+        手动模式下也一样写 ⇒ 人工点亮的灯**每拍被自动逻辑覆盖回去**，
+        现场表现就是「手动模式下无法单独控制按钮灯」（用户原话）。
+        现在按模式分工：
+            · **自动模式**：灯跟随自动运行态（现场看灯就知道系统在跑没跑）；
+            · **手动模式**：灯归人，自动逻辑**一个字都不写** —— 人工设的
+              灯态保持不变（现场可以单独点某一盏灯做检修指示）。
+        采集与判沿在两种模式下都照做（急停/停止是安全件，与模式无关）。
         """
         mod = self.items.get(KEY_MODULE)
         mod = 0 if mod is None else int(mod)
@@ -277,8 +289,9 @@ class ButtonStation(object):
                 except Exception:                       # noqa: BLE001
                     pass
 
-        # ---- 5. 写灯 ----
-        self._apply_lamps(now_ms, mod)
+        # ---- 5. 写灯（**仅自动模式**；手动模式灯归人工，见 poll 的说明）----
+        if auto_mode:
+            self._apply_lamps(now_ms, mod)
         return changed
 
     def _debounce_ok(self, key, now_ms):

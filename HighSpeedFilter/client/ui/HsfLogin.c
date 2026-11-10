@@ -29,6 +29,9 @@
 #include "XCheckBox.h"
 #include "XSpinBox.h"
 #include "XPushButton.h"
+#include "XScrollArea.h"
+#include "XAbstractEventDispatcher.h"
+#include "XScreen.h"           /* 主屏几何（手机铺开用） */
 #include "XObject.h"
 #include "XDateTime.h"
 #include "XMemory.h"
@@ -64,7 +67,10 @@
 /** @brief 登录窗对象（m_base 必须第一成员）。 */
 struct HsfLoginWindow {
     XWidget      m_base;        /**< 顶层窗口；必须是第一个成员。 */
-    XVBoxLayout  m_layout;      /**< 表单垂直布局。 */
+    XVBoxLayout  m_rootLayout;  /**< 窗口根布局（只放滚动壳；边距让位自绘条）。 */
+    XScrollArea  m_scroll;      /**< 滚动壳（表单装不下时可滚，见下）。 */
+    XWidget*     m_form;        /**< 表单容器（滚动壳的内容视口；借用）。 */
+    XVBoxLayout  m_layout;      /**< 表单垂直布局（挂在 m_form 上）。 */
     XLabel       m_title;       /**< 标题。 */
     XLabel       m_hostLabel;   /**< 「服务器地址」。 */
     XLabel       m_portLabel;   /**< 「端口」。 */
@@ -87,6 +93,8 @@ struct HsfLoginWindow {
     bool           m_modalGate; /**< 已登记应用模态门（关闭时要摘）。 */
     XTimerId       m_shotTimer; /**< 离屏截图拍（XTIMER_INVALID_ID=无）。 */
     const char*    m_shotPath;  /**< 截图输出路径（借用；NULL=无）。 */
+    XHandle        m_focusPump; /**< 焦点跟随泵（焦点控件滚入可视区；0=无）。 */
+    XWidget*       m_lastFocus; /**< 上次见到的焦点控件（用于判变化）。 */
     /* ---- 无边框窗的拖动/关闭（自绘条，见 paintEvent） ---- */
     bool           m_dragArmed; /**< 条上按下（拖动武装）。 */
     bool           m_closeHot;  /**< [×] 悬停态（重绘驱动）。 */
@@ -100,6 +108,34 @@ XCLASS_DEFINE_EXTEND_END(HsfLoginWindow, XWidget)
 
 
 /* ==================== 无头登录（CI/联调） ==================== */
+
+/**
+ * @brief 认证失败原因 → 用户可读文案。
+ * @return 静态 UTF-8 文案（不释放）。
+ * @details [为什么要分] 失败回调不带参数，原先登录窗一律显示
+ *          「密码错误/服务器不可达/root 已在别处登录」三合一——用户照着
+ *          「密码错误」重输口令，结果把服务端账户失败计数打到锁定。
+ *          2026-11-09 起框架把「策略拒绝（账户已在线）」与「口令错」分成
+ *          不同结果码，这里按 HsfLinkClient_lastAuthFailure() 回填准确原因。
+ *          数值见 XLinkClientAuthFailure（1 BadUser / 2 BadPassword /
+ *          3 Locked / 4 Rejected / 5 NoCredential / 6 Timeout /
+ *          7 Proof / 8 Protocol）。
+ */
+static const char* hsfLoginFailureText(void)
+{
+    switch (HsfLinkClient_lastAuthFailure()) {
+    case 1:  return "登录失败：用户不存在";
+    case 2:  return "登录失败：口令错误";
+    case 3:  return "登录失败：账户已锁定（失败次数过多）";
+    case 4:  return "登录失败：服务端拒绝（该账户可能已在别处登录，"
+                    "或会话数已达上限）";
+    case 5:  return "登录失败：本端未配置登录凭据";
+    case 6:  return "登录超时：服务器不可达或网络异常";
+    case 7:  return "登录失败：服务端证明校验失败（可疑对端）";
+    case 8:  return "登录失败：认证帧畸形";
+    default: return "登录失败：认证失败/服务器不可达";
+    }
+}
 
 static HsfLoginDoneFn g_headlessDone = NULL;    /**< 结果回调。 */
 static void* g_headlessUser = NULL;             /**< 回调令牌。 */
@@ -119,18 +155,32 @@ static void hsfHeadlessOnReadyProxy(void* userData)
     if (done) done(user, true, "");
 }
 
-/** @brief 无头登录失败代理：转发 done(false)。 */
+/**
+ * @brief 无头登录失败代理：转发 done(false)；瞬时拒绝且框架仍在重试时继续等。
+ * @details [2026-11-09 根修] 首登撞上服务端未回收的旧会话（账户已在线）时，
+ *          框架会按 XLINK_AUTH_REJECT_RETRY_LIMIT 退避重连，通常几秒后即
+ *          自动登录成功。原实现收到第一次 authFailed 就置 pending=false 并
+ *          让进程退出，等于把自动恢复砍掉——现场（人或 CI 用 --login）看到
+ *          的就是「有时候登不上，等一会儿再开就好」。这里在「仍在重试」时
+ *          只记日志、保留 pending；真正收手（重试耗尽/永久失败）时框架状态
+ *          已不是 Reconnecting，最后一次 authFailed 正常转 done(false)。
+ */
 static void hsfHeadlessOnFailProxy(void* userData)
 {
     HsfLoginDoneFn done;
     void* user;
     (void)userData;
     if (!g_headlessPending) return;
+    if (HsfLinkClient_isReconnecting()) {
+        XPrintf("HsfLogin: 无头登录首试被拒（%s），框架重连中，继续等待\n",
+                hsfLoginFailureText());
+        return;
+    }
     g_headlessPending = false;
     done = g_headlessDone;
     user = g_headlessUser;
     g_headlessDone = NULL;
-    if (done) done(user, false, "认证失败/服务器不可达/root 已在别处登录");
+    if (done) done(user, false, hsfLoginFailureText());
 }
 
 /* ==================== 内部工具 ==================== */
@@ -294,7 +344,7 @@ static void hsfLoginOnFail(void* userData)
 {
     HsfLoginWindow* self = (HsfLoginWindow*)userData;
     if (!self || !self->m_pending) return;
-    XLabel_setText_2(&self->m_status, "登录失败：密码错误/服务器不可达/root 已在别处登录");
+    XLabel_setText_2(&self->m_status, hsfLoginFailureText());
     XWidget_setEnabled((XWidget*)&self->m_loginBtn, true);
 }
 
@@ -633,6 +683,23 @@ static void VHsfLoginWindow_timerEvent(XObject* obj, XTimerEvent* event)
     XGuiApplication_quit();
 }
 
+/* ==================== 生命周期 ==================== */
+
+/** @brief 析构：摘焦点跟随泵。
+ *  @details 泵注册在事件调度器上、**借用**本窗指针——不摘则窗口销毁后
+ *           泵仍被调用 → UAF（真机崩溃口径：悬挂回调读已释放对象）。
+ *           摘泵须在父类 deinit 之前（父类会释放子控件链）。 */
+static void VHsfLoginWindow_deinit(HsfLoginWindow* self)
+{
+    if (!self) return;
+    if (self->m_focusPump) {
+        XAbstractEventDispatcher_removePollCallback(self->m_focusPump);
+        self->m_focusPump = 0;
+    }
+    self->m_lastFocus = NULL;
+    XClass_Deinit_Parent(XWidget, (XWidget*)self);
+}
+
 /** @brief 登录窗类虚表初始化。 */
 static XVtable* HsfLoginWindow_class_init(void)
 {
@@ -650,6 +717,7 @@ static XVtable* HsfLoginWindow_class_init(void)
                              VHsfLoginWindow_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_LeaveEvent,
                              VHsfLoginWindow_leaveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VHsfLoginWindow_deinit);
     XCLASS_SHOW_SIZE_DEFAULT(HsfLoginWindow);
     return XVTABLE_DEFAULT;
 }
@@ -678,6 +746,25 @@ static void hsfLoginAddField(XVBoxLayout* layout, XLabel* label,
 HsfLoginWindow* HsfLoginWindow_create(HsfLoginDoneFn onDone, void* userData)
 {
     return HsfLoginWindow_createFor(NULL, onDone, userData);
+}
+
+/* ==================== 内部辅助（焦点跟随） ==================== */
+
+/** @brief 焦点跟随泵：焦点控件变化即滚入视口（手机窄屏必需）。
+ *  @details 桌面内容装得下 → ensureWidgetVisible 无滚动效果，泵只做一次
+ *           指针比较（每轮一次，代价可忽略）。 */
+static bool hsfLoginFocusPump(void* userData)
+{
+    HsfLoginWindow* self = (HsfLoginWindow*)userData;
+    XWidget* focus;
+    if (!self) return false;
+    focus = XWidget_appFocusWidget();
+    if (!focus || focus == self->m_lastFocus) return true;
+    self->m_lastFocus = focus;
+    /* 只滚本窗内的焦点控件（别的窗的焦点不归本窗管）。 */
+    if (XWidget_isAncestorOf(self->m_form, focus))
+        XScrollArea_ensureWidgetVisible(&self->m_scroll, focus, 8, 8);
+    return true;
 }
 
 HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
@@ -711,31 +798,76 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
     self->m_doneUser = userData;
     self->m_shotTimer = XTIMER_INVALID_ID;
 
-    XWidget_resize(&self->m_base, HSF_LOGIN_W, HSF_LOGIN_H);
+    /* [手机竖屏 2026-11-09] 登录窗尺寸：安卓按**屏尺寸**铺开，桌面维持
+     * 固定 420x560（行为零变化）。
+     *   安卓为什么不能沿用固定尺寸：手机竖屏逻辑宽约 400（dpr 3），固定
+     *   宽 420 直接溢出屏宽；且虚拟键盘停靠在窗口底部、把客户区压矮，
+     *   固定高 560 的窗口里「密码框 + 登录钮」落在可视区之外——用户
+     *   点不到登录钮。铺开后由滚动壳兜底（内容装不下时可滚）。
+     *   离屏截图（--login-shot）走固定尺寸（armShot 里另设几何）。 */
+    {
+        int winW = HSF_LOGIN_W;
+        int winH = HSF_LOGIN_H;
+#if defined(__ANDROID__)
+        XScreen* screen = XGuiApplication_primaryScreen();
+        if (screen) {
+            XRect g = XScreen_availableGeometry(screen);
+            if (g.width <= 0 || g.height <= 0)
+                g = XScreen_geometry(screen);
+            if (g.width > 0 && g.height > 0) {
+                winW = g.width;
+                winH = g.height;
+            }
+        }
+#endif
+        XWidget_resize(&self->m_base, winW, winH);
+    }
     XWidget_setWindowTitle_2(&self->m_base, "PMMA高速过滤器 - 登录");
 
-    XBoxLayout_init((XBoxLayout*)&self->m_layout, XBoxLayoutDirection_TopToBottom);
+    /* [滚动壳 2026-11-09] 窗口根布局只放滚动壳，表单内容挂滚动壳的
+     * 内容视口上。缘由：框架的虚拟键盘在**宿主顶层窗口底部**停靠
+     * （XVirtualKeyboard 的宿主分支③——键盘是宿主窗口的子控件浮层），
+     * 键盘弹起会把宿主客户区压矮；安卓手机竖屏（逻辑宽约 400、键盘
+     * 占下半屏）下固定 420x560 的登录窗装不下「密码框 + 登录钮」，
+     * 尾部被裁掉 → 登录不可用。有滚动壳则内容装不下时可滚。
+     * 桌面内容装得下，滚动壳不出现滚动条，形态零变化。 */
+    XBoxLayout_init((XBoxLayout*)&self->m_rootLayout,
+                    XBoxLayoutDirection_TopToBottom);
     /* 顶边距让位自绘标题条（无边框窗的条带画在客户区内，见
      * VHsfLoginWindow_paintEvent）；其余三边留表单呼吸位。 */
-    XLayout_setContentsMargins((XLayout*)&self->m_layout,
+    XLayout_setContentsMargins((XLayout*)&self->m_rootLayout,
                                28, HSF_LOGIN_BAR_H + 16, 28, 20);
+    XLayout_setSpacing((XLayout*)&self->m_rootLayout, 0);
+    XWidget_setLayout(&self->m_base, (XLayout*)&self->m_rootLayout);
+
+    XScrollArea_init(&self->m_scroll, (XWidget*)&self->m_base, 0);
+    XWidget_setSizePolicy((XWidget*)&self->m_scroll,
+                          XWidgetSizePolicy_Expanding,
+                          XWidgetSizePolicy_Expanding);
+    XScrollArea_setWidgetResizable(&self->m_scroll, true);
+    XBoxLayout_addWidget(&self->m_rootLayout, (XWidget*)&self->m_scroll.m_base);
+    self->m_form = XAbstractScrollArea_viewport(
+        (XAbstractScrollArea*)&self->m_scroll.m_base);
+
+    XBoxLayout_init((XBoxLayout*)&self->m_layout, XBoxLayoutDirection_TopToBottom);
+    XLayout_setContentsMargins((XLayout*)&self->m_layout, 0, 0, 0, 0);
     XLayout_setSpacing((XLayout*)&self->m_layout, 8);
-    XWidget_setLayout(&self->m_base, (XLayout*)&self->m_layout);
+    XWidget_setLayout(self->m_form, (XLayout*)&self->m_layout);
 
     /* 标题。 */
-    XLabel_init(&self->m_title, &self->m_base, 0);
+    XLabel_init(&self->m_title, self->m_form, 0);
     XLabel_setText_2(&self->m_title, "高速过滤器客户端登录");
     XLabel_setAlignment(&self->m_title, XAlignment_HCenter);
     XWidget_show((XWidget*)&self->m_title);
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_title);
 
     /* 服务器地址（预设下拉 + 编辑框 + 端口）。 */
-    XLabel_init(&self->m_hostLabel, &self->m_base, 0);
+    XLabel_init(&self->m_hostLabel, self->m_form, 0);
     XLabel_setText_2(&self->m_hostLabel, "服务器地址");
     XWidget_show((XWidget*)&self->m_hostLabel);
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_hostLabel);
 
-    XComboBox_init(&self->m_preset, &self->m_base, 0);
+    XComboBox_init(&self->m_preset, self->m_form, 0);
     XComboBox_addItem_2(&self->m_preset, "本机服务器 (127.0.0.1:6100)");
     XComboBox_addItem_2(&self->m_preset, "自定义地址");
     XComboBox_setCurrentIndex(&self->m_preset, HSF_LOGIN_PRESET_LOCAL);
@@ -745,18 +877,18 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
     XWidget_show((XWidget*)&self->m_preset);
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_preset);
 
-    XLineEdit_init(&self->m_hostEdit, &self->m_base, 0);
+    XLineEdit_init(&self->m_hostEdit, self->m_form, 0);
     XLineEdit_setPlaceholderText(&self->m_hostEdit, "服务器 IP，如 127.0.0.1");
     XWidget_setFixedHeight((XWidget*)&self->m_hostEdit, 36);
     XWidget_show((XWidget*)&self->m_hostEdit);
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_hostEdit);
 
-    XLabel_init(&self->m_portLabel, &self->m_base, 0);
+    XLabel_init(&self->m_portLabel, self->m_form, 0);
     XLabel_setText_2(&self->m_portLabel, "端口");
     XWidget_show((XWidget*)&self->m_portLabel);
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_portLabel);
 
-    XSpinBox_init(&self->m_portSpin, &self->m_base, 0);
+    XSpinBox_init(&self->m_portSpin, self->m_form, 0);
     XSpinBox_setRange(&self->m_portSpin, 1, 65535);
     XSpinBox_setValue(&self->m_portSpin, (int)HSF_XLINK_DEFAULT_PORT);
     XWidget_setFixedHeight((XWidget*)&self->m_portSpin, 36);
@@ -765,15 +897,15 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
 
     /* 凭据。 */
     hsfLoginAddField(&self->m_layout, &self->m_userLabel, "用户名",
-                     &self->m_userEdit, &self->m_base);
+                     &self->m_userEdit, self->m_form);
     XLineEdit_setPlaceholderText(&self->m_userEdit, "admin / root");
     hsfLoginAddField(&self->m_layout, &self->m_passLabel, "密码",
-                     &self->m_passEdit, &self->m_base);
+                     &self->m_passEdit, self->m_form);
     XLineEdit_setEchoMode(&self->m_passEdit, (int)XLineEditEchoMode_Password);
 
     /* 两个勾选框（QQ 口径联动）：记住账号 / 记住密码，同一行横排。 */
     {
-        XWidget* optRow = XWidget_create(&self->m_base, 0);
+        XWidget* optRow = XWidget_create(self->m_form, 0);
         XHBoxLayout* optBox;
         if (optRow) {
             XWidget_setFixedHeight(optRow, 30);
@@ -813,7 +945,7 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
     }
 
     /* 登录钮。 */
-    XPushButton_init(&self->m_loginBtn, &self->m_base, 0);
+    XPushButton_init(&self->m_loginBtn, self->m_form, 0);
     XPushButton_setText_2(&self->m_loginBtn, "登 录");
     XWidget_setFixedHeight((XWidget*)&self->m_loginBtn, 44);
     XObject_connect_1((XObject*)&self->m_loginBtn,
@@ -824,7 +956,7 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_loginBtn);
 
     /* 状态行。 */
-    XLabel_init(&self->m_status, &self->m_base, 0);
+    XLabel_init(&self->m_status, self->m_form, 0);
     XLabel_setAlignment(&self->m_status, XAlignment_HCenter);
     XLabel_setText_2(&self->m_status, "");
     XWidget_show((XWidget*)&self->m_status);
@@ -891,6 +1023,14 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
         XWidget_setApplicationModalWidget(&self->m_base);
         self->m_modalGate = true;
     }
+
+    /* [焦点跟随泵 2026-11-09] 焦点控件滚入可视区：手机竖屏下键盘停靠在
+     * 窗口底部、把客户区压矮，焦点框（密码框常在折线以下）可能被裁在
+     * 视口外——用户看不到自己正在输入什么。泵每轮比对应用焦点控件，
+     * 变化即把该控件滚进视口（XScrollArea_ensureWidgetVisible）。
+     * 桌面内容装得下，滚动壳不滚，泵空转（只做一次指针比较）。 */
+    self->m_focusPump = XAbstractEventDispatcher_addPollCallback(
+        hsfLoginFocusPump, self);
     return self;
 }
 

@@ -12,8 +12,12 @@
  *          本机环回链路上 `WSARecv` 的 IOCP 完成通知被实测证实不可靠：
  *          两端同时停止接收、之后各自继续发送 5~10 秒、最终静默判线。
  *          `GetOverlappedResult(FALSE)` + `ioctlsocket(FIONREAD)` 三态判定
- *          给出的结论是「挂起的读请求本身被平台挂死」，证据与排除项见
- *          `docs/Windows_IOCP读完成丢失_交接_20261104.md`。
+ *          曾把结论写成「平台丢完成包 / 挂起的读请求被平台挂死」——
+ *          **该定性已被推翻**（2026-11-06 根修）：完成包从来没丢，真因是
+ *          IOCP 后端**复用了在飞的 OVERLAPPED**、完成端口唤醒包饥饿、
+ *          完成包归属按句柄数值判定，三者叠加才造成读停摆。
+ *          既然重叠 I/O 的完成包语义在本框架里本就难做对（复用/归属/饥饿
+ *          三个坑），不如照 Qt 走**不用重叠 I/O**的路子。
  *
  *          Qt 6.8 `qnativesocketengine_win.cpp` 完全不用 overlapped I/O：
  *          `WSARecv/WSASend` 的 OVERLAPPED 参数一律传 `nullptr`，就绪检测

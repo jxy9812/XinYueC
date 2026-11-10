@@ -10,6 +10,9 @@ extern "C" {
 #include <stdint.h>
 
 #include "XObject.h"
+/* 线上列数（HSF_HISTORY_WIRE_COLS）与显示列数（HSF_HISTORY_DISPLAY_COLS）
+ * 是**两端共用的协议常量**，统一放公共头，避免服务端/客户端各写一个数字。 */
+#include "XhsfLinkProto.h"
 
 #if XSQL_ON
 
@@ -94,15 +97,30 @@ typedef struct HsfHistoryRow {
     bool diValid;
     uint32_t doMask;         /**< DO 位图。 */
     bool doValid;
+    /**
+     * @brief 水温（℃，**浊度仪2** 随帧带出的，2026-11-10 新增）。
+     * @note  只有带温度的机型才有（浙仪 ZHEYI-5100ZDY 一帧 0x0000×4 同刻
+     *        读出浊度+温度；WZT-701A 没有）⇒ waterTempValid=false 时该列
+     *        入 NULL、界面显示 "--"，**不能记 0℃**（0℃ 会被当成真实读数）。
+     */
+    double waterTemp;
+    bool waterTempValid;
 } HsfHistoryRow;
 
 /**
  * @brief 历史表的列数（与 Python store.HISTORY_COLUMNS 同序同数）。
  * @details 列序：ts, mode, vfd_state, freq_hz, current_a, rpm, turb1,
  *          turb2, flow, flow_unit, flow_total, total_unit, press_mpa,
- *          press_note, temp, hum, di, do。
+ *          press_note, temp, hum, di, do, **water_temp**。
+ *          [water_temp 为什么追加在**末尾**] 行值按**下标**发送（C 客户端
+ *          HsfLinkHistory.c 的 kSrc/kDst 是下标映射表），插在中间会让所有
+ *          后续下标平移一位；追加在末尾则既有下标全部不变，只在表尾多一格。
+ *          **显示顺序**不受影响：显示列有自己的表（HSF_HISTORY_DISPLAY_COLS），
+ *          水温显示在「浊度2」之后。
+ * @note  值来自公共头 XhsfLinkProto.h 的 HSF_HISTORY_WIRE_COLS（单一定义，
+ *        客户端也用它读格数）。
  */
-#define HSF_HISTORY_COLUMNS     18
+#define HSF_HISTORY_COLUMNS     HSF_HISTORY_WIRE_COLS
 
 /**
  * @brief 历史页的一格（原始值；NULL 与"空串"是两件事）。

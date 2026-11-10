@@ -23,11 +23,18 @@ typedef struct HsfConfigCollect {
     bool m_temphumEnabled;
     bool m_flowmeterEnabled;
     bool m_turbidityEnabled;
+    /** [逐台开关 2026-11-10] 两台浊度仪是两台独立设备（站1/站3），各设各的；
+     *  m_turbidityEnabled 只作**共同缺省**（旧服务端/旧配置无逐台键时用它）。 */
+    bool m_turbidity1Enabled;
+    bool m_turbidity2Enabled;
     bool m_analogEnabled;
     bool m_digitalEnabled;
     int  m_vfdPollMs;
     int  m_temphumPollMs;
-    int  m_turbidityPollMs;
+    int  m_turbidityPollMs;   /**< 两台浊度的缺省（兼容键）。 */
+    int  m_turbidity1PollMs;  /**< 浊度仪1（站1）周期。 */
+    int  m_turbidity2PollMs;  /**< 浊度仪2（站3）周期。 */
+    int  m_flowmeterPollMs;   /**< 流量计（站5）周期。 */
     int  m_analogPollMs;
     int  m_digitalPollMs;
 } HsfConfigCollect;
@@ -71,6 +78,14 @@ typedef struct HsfConfig {
     HsfConfigStats m_stats;
     HsfConfigLogin m_login; /**< 登录策略节。 */
     char m_dbPath[256];    /**< 实际库文件路径。 */
+    /** @brief 应答里**确实带了**落盘节（storage）。
+     *  @details [为什么要有这个标志 2026-11-10] 没有这一节时 m_storage 的
+     *           字段全是结构体零值（m_enabled=false）——若界面把它当成
+     *           「服务端说落盘关闭」并写回去，就会**静默关掉落盘** ⇒ 历史
+     *           表格从此空（现场"表格数据咋没了"）。缺省 ≠ 已关闭：
+     *           没收到就不写这一节（见 HsfSettingsRemote.c 的应用路径）。
+     */
+    bool m_storagePresent;
 } HsfConfig;
 
 /**

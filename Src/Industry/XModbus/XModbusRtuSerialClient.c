@@ -20,6 +20,7 @@ static void VXModbusRtuSerialClient_close(XModbusDevice* device);
 static void VXModbusRtuSerialClient_deinit(XModbusRtuSerialClient* client);
 static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XTimerEvent* event);
 static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress, XFuncParamType type);
+static bool VXModbusRtuSerialClient_abandonReply(XModbusClient* client, XModbusReply* reply);
 //static bool VXModbusRtuSerialClient_processResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 //static bool VXModbusRtuSerialClient_processPrivateResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 
@@ -85,6 +86,7 @@ XVtable* XModbusRtuSerialClient_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusRtuSerialClient_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXModbusRtuSerialClient_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXModbusClient_SendRawRequest, VXModbusRtuSerialClient_sendRawRequest);
+    XVTABLE_OVERLOAD_DEFAULT(EXModbusClient_AbandonReply, VXModbusRtuSerialClient_abandonReply);
     // 重写 ProcessResponse 和 ProcessPrivateResponse
     //XVTABLE_OVERLOAD_DEFAULT(EXModbusClient_ProcessResponse, VXModbusRtuSerialClient_processResponse);
     //XVTABLE_OVERLOAD_DEFAULT(EXModbusClient_ProcessPrivateResponse, VXModbusRtuSerialClient_processPrivateResponse);
@@ -856,6 +858,25 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
     if (!rtuClient->m_currentReply)//当前是空闲的
         startNewRequest(client);
     return reply;
+}
+
+/**
+ * @brief 放弃在途应答（虚函数）：摘掉 m_currentReply 并停超时定时器。
+ * @details 上层（Hub 超时收口）要释放 Reply 时**必须先调本函数**：本层
+ *          等待应答期间持有 m_currentReply，迟到的应答/超时回调会解引用
+ *          它 ⇒ 上层先释放 ⇒ UAF（实测板端 SEGV：浊度站1 在站5 长帧
+ *          恢复期内不应答，收口释放 Reply 后串口超时再碰它）。
+ * @note 只摘「当前这一个」；发送队列里排队的 Reply 由队列自己管。
+ */
+static bool VXModbusRtuSerialClient_abandonReply(XModbusClient* client, XModbusReply* reply)
+{
+    XModbusRtuSerialClient* rtuClient = (XModbusRtuSerialClient*)client;
+
+    if (!rtuClient || !reply) return false;
+    if (rtuClient->m_currentReply != reply) return false;
+    rtuClient->m_currentReply = NULL;
+    XModbusClient_timeoutTimerStop(client);
+    return true;
 }
 
 // =============== 错误处理槽函数 ===============

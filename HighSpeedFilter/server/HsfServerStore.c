@@ -96,6 +96,53 @@ static bool storeExec(HsfServerStore* st, const char* sql)
 
 /* ==================== 构造 / 析构 ==================== */
 
+/**
+ * @brief 老库补 history.water_temp 列（2026-11-10，水温列落地）。
+ * @details [为什么要迁移] `CREATE TABLE IF NOT EXISTS` 对**已存在**的表
+ *          不做任何改动 ⇒ 现场已有 hsf_data.db 永远补不上 water_temp，
+ *          而历史查询的 SELECT 里点名了这一列 ⇒ 查询整体失败、历史页
+ *          一行都取不到（不是"少一列"而是"整页空"）。
+ *          [先探测再改] SQLite 的 ADD COLUMN 不幂等（第二次报 duplicate
+ *          column name），先查 PRAGMA table_info。
+ *          [失败不致命] 补列失败只是水温列不可用；为不让整页挂掉，
+ *          查询侧对旧库仍走同一条 SQL —— 故失败时这里必须打印明确日志。
+ * @note  与 Python store._migrate_history_water_temp 同口径。
+ */
+static void storeEnsureHistoryWaterTemp(HsfServerStore* st)
+{
+    XSqlQuery* q;
+    bool has = false;
+
+    if (!st || !st->m_db) return;
+    q = XSqlDatabase_exec_utf8(st->m_db, "PRAGMA table_info(history)");
+    if (q) {
+        if (XSqlQuery_isActive(q) && XSqlQuery_first(q)) {
+            do {
+                XSqlRecord* rec = XSqlQuery_record(q);
+                const XVariant* var;
+                if (!rec) break;
+                /* 列 1 = 列名（PRAGMA table_info: cid,name,type,...）。 */
+                var = XSqlRecord_value_const(rec, 1);
+                if (var && XVariant_isValid(var)) {
+                    const XString* name = XVariant_toString(var);
+                    const char* u8 = name ? XString_toUtf8(name) : NULL;
+                    if (u8 && strcmp(u8, "water_temp") == 0) has = true;
+                }
+                XClassDelete((XClass*)rec);
+                if (has) break;
+            } while (XSqlQuery_next(q));
+        }
+        XClassDelete((XClass*)q);
+    }
+    if (has) return;
+    if (storeExec(st, "ALTER TABLE history ADD COLUMN water_temp REAL")) {
+        XPrintf("HsfServerStore: history 表已补 water_temp 列（水温）\n");
+    } else {
+        XPrintf("HsfServerStore: history 表补 water_temp 列失败"
+                "（历史页可能取不到数据）\n");
+    }
+}
+
 static void VXHsfServerStore_deinit(XObject* obj)
 {
     HsfServerStore* st = (HsfServerStore*)obj;
@@ -217,7 +264,7 @@ bool HsfServerStore_open(HsfServerStore* st)
                   " turb1 REAL, turb2 REAL, flow REAL, flow_unit TEXT,"
                   " flow_total REAL, total_unit TEXT, press_mpa REAL,"
                   " press_note TEXT, temp REAL, hum REAL,"
-                  " di INTEGER, do INTEGER)");
+                  " di INTEGER, do INTEGER, water_temp REAL)");
         storeExec(st, "CREATE INDEX IF NOT EXISTS idx_history_ts ON history(ts)");
         storeExec(st,
                   "CREATE TABLE IF NOT EXISTS alarms ("
@@ -230,6 +277,12 @@ bool HsfServerStore_open(HsfServerStore* st)
                   "CREATE TABLE IF NOT EXISTS logs ("
                   " ts INTEGER, category TEXT, text TEXT)");
         storeExec(st, "CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts)");
+        /* [老库补列 2026-11-10] 现场已有 hsf_data.db 的 history 表没有
+         * water_temp 列（CREATE TABLE IF NOT EXISTS 对已存在的表不动）⇒
+         * 不补的话历史查询 SELECT 里点名的这一列会报错、整页取不到数据。
+         * ADD COLUMN 不幂等，先探测再改（与 Python store 的
+         * _migrate_history_water_temp 同口径）。 */
+        storeEnsureHistoryWaterTemp(st);
         if (!st->m_openLogged) {
             st->m_openLogged = true;
             XPrintf("HsfServerStore: 落盘已启用（%s，采样 %dms，"
@@ -325,6 +378,7 @@ bool HsfServerStore_insertHistory(HsfServerStore* st, const HsfHistoryRow* row)
     char cPN[96];
     char cTemp[32];
     char cHum[32];
+    char cWTemp[32];
 
     if (!st || !st->m_db || !row) return false;
 
@@ -343,16 +397,22 @@ bool HsfServerStore_insertHistory(HsfServerStore* st, const HsfHistoryRow* row)
     storeText(cPN, (int)sizeof(cPN), row->pressNote);
     storeNum(cTemp, (int)sizeof(cTemp), row->temp, row->tempValid);
     storeNum(cHum, (int)sizeof(cHum), row->hum, row->humValid);
+    /* [水温] 带温度的机型（浊度仪2）才有；没有就写 NULL（"没数据"），
+     * 不写 0 —— 0℃ 会被当成真实读数。 */
+    storeNum(cWTemp, (int)sizeof(cWTemp), row->waterTemp,
+             row->waterTempValid);
 
     snprintf(sql, sizeof(sql),
              "INSERT OR REPLACE INTO history(ts,mode,vfd_state,freq_hz,"
              "current_a,rpm,turb1,turb2,flow,flow_unit,flow_total,"
-             "total_unit,press_mpa,press_note,temp,hum,di,do) VALUES("
-             "%lld,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%u,%u)",
+             "total_unit,press_mpa,press_note,temp,hum,di,do,water_temp)"
+             " VALUES("
+             "%lld,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%u,%u,%s)",
              (long long)row->tsMs, cMode, cVfd, cFreq, cCur, cRpm, cT1, cT2,
              cFlow, cFU, cTotal, cTU, cPress, cPN, cTemp, cHum,
              row->diValid ? (unsigned)row->di : 0u,
-             row->doValid ? (unsigned)row->doMask : 0u);
+             row->doValid ? (unsigned)row->doMask : 0u,
+             cWTemp);
     /* [di/do 位图不写 NULL] "没读到"与"全 0"在位图口径下都落 0；行级
      * 新鲜度由同行的设备列（freq/temp/...）是否 NULL 表达，与界面
      * "--"（列级 NULL）一致。 */
@@ -494,9 +554,18 @@ int HsfServerStore_queryLogs(HsfServerStore* st, int offset, int limit,
     }
     /* [关键字下推] 与 0x0118 同口径：时间+类别+关键字共用同一条 WHERE，
      * "总数"与"页内容"永远一致。 */
-    storeBuildLogKwCondition(kwCond, (int)sizeof(kwCond), kw);
-    if (kwCond[0] && whereLen < (int)sizeof(where))
-        snprintf(where + whereLen, sizeof(where) - (size_t)whereLen, "%s", kwCond);
+    if (kw && kw[0]) {
+        /* [筛选必须真的下推] 与历史表同款：条件建不出来就不查（返回 0 行
+         * + 日志），绝不"当没筛"——那会让用户以为筛选生效了。 */
+        if (!storeBuildLogKwCondition(kwCond, (int)sizeof(kwCond), kw)) {
+            XPrintf("HsfServerStore: 日志关键字条件未建出（kw=%s）⇒ 本次查询返回 0 行\n",
+                    kw);
+            return 0;
+        }
+        if (whereLen < (int)sizeof(where))
+            snprintf(where + whereLen, sizeof(where) - (size_t)whereLen, "%s",
+                     kwCond);
+    }
 
     /* 窗口内总行数（分页总数按它算）。 */
     snprintf(sql, sizeof(sql), "SELECT COUNT(*) FROM logs%s", where);
@@ -571,11 +640,14 @@ int HsfServerStore_queryLogs(HsfServerStore* st, int offset, int limit,
 /* [HSF_STORE_VALID_TS_MIN 已移至文件头部共用区] history/logs 两表查询共用，
  * 定义见顶部（源序在 logs 查询之前）。 */
 
-/** @brief 历史表列名（与 Python store.HISTORY_COLUMNS 同序）。 */
+/** @brief 历史表列名（与 Python store.HISTORY_COLUMNS 同序）。
+ *  @note  water_temp 追加在**末尾**（见 HsfServerStore.h：线上按下标发,
+ *         插中间会平移既有下标）。 */
 static const char* const s_histColumns[HSF_HISTORY_COLUMNS] = {
     "ts", "mode", "vfd_state", "freq_hz", "current_a", "rpm",
     "turb1", "turb2", "flow", "flow_unit", "flow_total", "total_unit",
-    "press_mpa", "press_note", "temp", "hum", "di", "do"
+    "press_mpa", "press_note", "temp", "hum", "di", "do",
+    "water_temp"
 };
 
 /**
@@ -622,6 +694,7 @@ static bool storeColIsNumeric(int col)
     case 0:   /* ts */
     case 3: case 4: case 5: case 6: case 7: case 8:
     case 10: case 12: case 14: case 15: case 16: case 17:
+    case 18:  /* water_temp（水温 ℃） */
         return true;
     default:
         return false;
@@ -680,6 +753,9 @@ static const char* const s_histDisplayExpr[HSF_HISTORY_DISPLAY_COLS] = {
     "CASE WHEN rpm IS NULL THEN '--' ELSE printf('%.0f', rpm) END",
     "CASE WHEN turb1 IS NULL THEN '--' ELSE printf('%.2f', turb1) END",
     "CASE WHEN turb2 IS NULL THEN '--' ELSE printf('%.2f', turb2) END",
+    /* [水温 —— 显示列第 8 位，紧跟「浊度2」] 线上列序里它在末尾
+     * （HSF_HISTORY_COLUMNS），显示列序由本表决定，两套顺序互不影响。 */
+    "CASE WHEN water_temp IS NULL THEN '--' ELSE printf('%.1f', water_temp) END",
     "CASE WHEN flow IS NULL THEN '--' ELSE printf('%.2f', flow) || ' ' || "
     "COALESCE(flow_unit, '') END",
     "CASE WHEN flow_total IS NULL THEN '--' ELSE printf('%.2f', flow_total)"
@@ -744,7 +820,17 @@ static int storeBuildKwCondition(char* out, int cap, const char* kw,
         wrote = snprintf(out + used, (size_t)(cap - used),
                          "%sCOALESCE(%s, '')",
                          first ? "" : " || ' ' || ", s_histDisplayExpr[idx]);
-        if (wrote < 0 || used + wrote >= cap) return 0;
+        if (wrote < 0 || used + wrote >= cap) {
+            /* [半截 SQL 绝不能交出去] 旧实现直接 return 0，out 里却留着
+             * 拼到一半的 " AND (…" ⇒ 调用方只判 out[0] 非空就把它拼进
+             * WHERE ⇒ SQL 语法错 ⇒ 查询报不出错、只是**返回 0 行** ⇒
+             * 用户看到"关键字筛选毫无反应"。2026-11-10 实锅：16 列时条件
+             * 1544 字节 vs 旧缓冲 1536，差 8 字节就踩中。缓冲已放大，
+             * 这里再兜一道：溢出即清空并置"未建出条件"标记，由调用方
+             * 决定是失败还是放行，绝不拿半截 SQL 去查。 */
+            out[0] = '\0';
+            return 0;
+        }
         used += wrote;
         first = false;
     }
@@ -774,9 +860,14 @@ int HsfServerStore_queryHistory(HsfServerStore* st, int offset, int limit,
                                 int* outWindowTotal, int64_t* outDbRows,
                                 int64_t* outLatestTs, int64_t* outEarliestTs)
 {
-    char sql[4096];
-    char where[2048];
-    char kwCond[1536];
+    /* [缓冲尺寸跟显示列数走] 关键字条件是「全部显示列的文本表达式」拼成的
+     * 一条长串：16 列实测 1544 字节（旧的 1536 缓冲**刚好差 8 字节**溢出
+     * ⇒ 拼出半截 SQL ⇒ 查询报语法错 ⇒ 关键字筛选静默失效、返回 0 行）。
+     * 加列只会让这条串更长，故缓冲按**最坏情况**给足（每列 ~120 字节 ×
+     * 32 列余量），不再按当前列数卡尺寸。 */
+    char sql[8192];
+    char where[8192];
+    char kwCond[8192];
     XSqlQuery* q;
     XSqlRecord* rec;
     int written = 0;
@@ -810,9 +901,20 @@ int HsfServerStore_queryHistory(HsfServerStore* st, int offset, int limit,
     /* [关键字下推] 与 Python 同口径：时间 + 关键字共用同一条 WHERE，
      * 保证"总数"与"页内容"永远一致。 */
     whereLen = (int)strlen(where);
-    storeBuildKwCondition(kwCond, (int)sizeof(kwCond), kw, kwCols, kwColCount);
-    if (kwCond[0] && whereLen < (int)sizeof(where))
-        snprintf(where + whereLen, sizeof(where) - (size_t)whereLen, "%s", kwCond);
+    if (kw && kw[0]) {
+        /* [筛选必须真的下推] 条件建不出来（缓冲不够等）就不能"当没筛"——
+         * 否则用户看到的是"筛了等于没筛"。宁可 0 行 + 一条明确日志，
+         * 也不把半截 SQL / 空条件交给查询。 */
+        if (!storeBuildKwCondition(kwCond, (int)sizeof(kwCond), kw, kwCols,
+                                   kwColCount)) {
+            XPrintf("HsfServerStore: 关键字条件未建出（kw=%s）⇒ 本次查询返回 0 行\n",
+                    kw);
+            return 0;
+        }
+        if (whereLen < (int)sizeof(where))
+            snprintf(where + whereLen, sizeof(where) - (size_t)whereLen, "%s",
+                     kwCond);
+    }
 
     /* 窗口内总行数（页码总数按它算，不是全库行数）。 */
     snprintf(sql, sizeof(sql), "SELECT COUNT(*) FROM history%s", where);
@@ -837,7 +939,7 @@ int HsfServerStore_queryHistory(HsfServerStore* st, int offset, int limit,
     snprintf(sql, sizeof(sql),
              "SELECT ts,mode,vfd_state,freq_hz,current_a,rpm,turb1,turb2,"
              "flow,flow_unit,flow_total,total_unit,press_mpa,press_note,"
-             "temp,hum,di,do FROM history%s"
+             "temp,hum,di,do,water_temp FROM history%s"
              " ORDER BY ts DESC LIMIT %d OFFSET %d",
              where, limit, offset);
     q = XSqlDatabase_exec_utf8(st->m_db, sql);

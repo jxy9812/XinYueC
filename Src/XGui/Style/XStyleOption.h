@@ -12,6 +12,36 @@ extern "C" {
 #include "XGeometry.h"
 #include "XPalette.h"
 
+/**
+ * @brief      文本省略模式（对齐 Qt 6.8 `Qt::TextElideMode`，**数值一致**）。
+ * @details    Qt 定义顺序为 `ElideLeft, ElideRight, ElideMiddle, ElideNone`
+ *             （qnamespace.h:189-194），因此右省略是 **1**、中省略是 **2**。
+ *             本枚举此前把 Right/Middle 的数值写反（Middle=1、Right=2），
+ *             与自身「数值一致」的注释矛盾，也导致 `XTabBar` 里按 Qt 口径
+ *             硬编码的数值 1（注释标为 Qt::ElideRight）在语义上落到了
+ *             Middle。2026-11-03 按 Qt 源码修正为下述取值。
+ * @note      `XCommonStyle_elideText` 的 mode 参数已在 2026-11-03 统一为
+ *             同一套编号（Qt::TextElideMode），全库不再存在第二套编号。
+ * @note      **[2026-11-10 上移至本头]** 本枚举原居视图层
+ *             `XAbstractItemView.h`，但那里整段声明被
+ *             `#if XWIDGET_ON && XTABLEWIDGET_ON` 守卫裁剪（表头/表格
+ *             模块关闭即消失），而**样式层也要用同一套编号**（表头标签
+ *             省略：XStyleOptionHeader::m_textElideMode 与
+ *             `XCommonStyle_elideText` 的 mode 参数）——样式层不能反向
+ *             依赖视图层（且视图层已依赖样式层，见
+ *             `XTitleBar_Protected.h` 的先例）。故把定义上移到样式层的
+ *             本头（**置于 `#if XSTYLE_ON` 守卫之外**，保证样式模块关闭
+ *             时视图层仍可见）。**类型名与常量名一律保持不变** ⇒ 既有
+ *             调用点零改动，全库仍只有这一套编号。
+ */
+typedef enum XAbstractItemViewTextElideMode
+{
+    XAbstractItemViewTextElideMode_ElideLeft = 0,   /**< 省略号置于左侧（对齐 `Qt::ElideLeft`）。 */
+    XAbstractItemViewTextElideMode_ElideRight = 1,  /**< 省略号置于右侧；**缺省值**（对齐 `Qt::ElideRight`）。 */
+    XAbstractItemViewTextElideMode_ElideMiddle = 2, /**< 省略号置于中间（对齐 `Qt::ElideMiddle`）。 */
+    XAbstractItemViewTextElideMode_ElideNone = 3    /**< 不省略（对齐 `Qt::ElideNone`）。 */
+} XAbstractItemViewTextElideMode;
+
 #if XSTYLE_ON
 
 typedef struct XIcon XIcon;   /**< 前向声明（对标 QIcon；借用指针）。 */
@@ -1165,6 +1195,24 @@ typedef struct XStyleOptionHeader
     int m_selectedPosition; /**< 相邻选中位置（XStyleOptionHeaderSelectedPosition 值）。 */
     int m_sortIndicator;    /**< 排序指示（XStyleOptionHeaderSortIndicator 值）。 */
     int m_orientation;      /**< 方向：0 水平/1 垂直（对标 orientation）。 */
+    XAbstractItemViewTextElideMode m_textElideMode;
+                            /**< 文本省略模式（对标 QStyleOptionHeader::
+                             * textElideMode，Qt 5.2 起由 V2 并入）。
+                             * 类型直接用框架**规范枚举**
+                             * `XAbstractItemViewTextElideMode`（=
+                             * Qt::TextElideMode 数值）——**全库只有这一套
+                             * 编号，勿另立**（XStyleOption.h 的「表头省略
+                             * 模式」条目即本处）。
+                             * **与单元格路径同源**：值由视图的
+                             * `textElideMode` 驱动（视图侧消费点见
+                             * `XAbstractItemView_elidedText`），表头标签
+                             * 放不下时按此模式省略（Qt 6.8 CE_HeaderLabel
+                             * 同语义），**绝不整段空白**。
+                             * 缺省 ElideRight（**本库**取值：与视图/单元格
+                             * 省略缺省一致；Qt 的 QStyleOptionHeaderV2
+                             * 构造缺省是 ElideNone，即「放不下就裁剪」，
+                             * qstyleoption.cpp:863-865——但两者都遵守
+                             * Qt 的「文本永远有输出」契约）。 */
 } XStyleOptionHeader;
 
 /**

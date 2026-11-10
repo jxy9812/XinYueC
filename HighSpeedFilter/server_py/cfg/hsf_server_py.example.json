@@ -58,42 +58,42 @@
     "move_timeout_ms": 20000,
     "items": [
       {
-        "name": "电磁阀1",
+        "name": "电动球阀1",
         "module": 0,
         "do": 0,
         "openDi": 1,
         "closeDi": 0
       },
       {
-        "name": "电磁阀2",
+        "name": "电动球阀2",
         "module": 0,
         "do": 1,
         "openDi": 3,
         "closeDi": 2
       },
       {
-        "name": "电磁阀3",
+        "name": "电动球阀3",
         "module": 0,
         "do": 2,
         "openDi": 5,
         "closeDi": 4
       },
       {
-        "name": "电磁阀4",
+        "name": "电动球阀4",
         "module": 0,
         "do": 3,
         "openDi": 7,
         "closeDi": 6
       },
       {
-        "name": "电磁阀5",
+        "name": "电动球阀5",
         "module": 0,
         "do": 4,
         "openDi": 9,
         "closeDi": 8
       },
       {
-        "name": "电磁阀6",
+        "name": "电动球阀6",
         "module": 0,
         "do": 5,
         "openDi": 11,

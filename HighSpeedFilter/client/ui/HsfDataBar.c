@@ -86,6 +86,11 @@ typedef struct HsfDataBar
     HsfDataBarActionFn m_fn;      /**< 动作回调（借用）。 */
     void*          m_fnUser;      /**< 回调上下文（借用）。 */
     int            m_viewMode;    /**< 当前视图：0=表格 1=图表。 */
+    unsigned int   m_features;    /**< 控件特性位掩码（HsfDataBarFeature_*）；
+                                       缺省 HsfDataBarFeature_All＝全显。 */
+    bool           m_labelsOn;    /**< 说明标签当前是否展开（窄档收标签时为
+                                       false）；与特性位掩码取交集，决定小数
+                                       位/最多点两张标签的显隐。 */
     int            m_fontPct;     /**< 已应用的字号百分比（实时重放用）。 */
     int            m_adaptW;      /**< 上次分档的可用宽（-1=未算）。 */
     int            m_adaptLevel;  /**< 上次分档结果：0=常规 1=收标签 2=收宽
@@ -184,6 +189,59 @@ static void barInitViewBtn(HsfDataBar* self, XPushButton* btn,
     XAbstractButton_setChecked((XAbstractButton*)btn, mode == 0);
 }
 
+/** @brief 控件显隐下发（幂等：已是目标态就不调 setVisible）。
+ *  @note  XWidget_setVisible **故意**没有同值早退（框架口径：显隐承载
+ *         布局激活与脏区补画，见 XWidget.c）——调用点必须自己先比显式隐
+ *         藏位，否则每拍重放会把父布局打成永久脏（布局风暴）。 */
+static void barSetVisible(XWidget* w, bool visible)
+{
+    if (!w) return;
+    if (XWidget_isHidden(w) == !visible) return; /* 已是目标态。 */
+    XWidget_setVisible(w, visible);
+}
+
+/** @brief 按特性位掩码裁剪控件（隐藏不在 mask 里的控件 + 配套标签）。
+ *  @details 控件与标签成对（标签在控件左邻）：只藏控件留标签会留下孤零
+ *           零的字。列筛选/导出格式两个下拉没有独立标签（占位文案在控件
+ *           内），随控件一起藏。
+ *           隐藏的布局条目按 XLayout 的 empty 条目口径跳过 ⇒ 不占位
+ *           （XLayoutItem.c 的 VXWidgetItem_isEmpty：控件隐藏且未保留隐藏
+ *           尺寸时条目为空）。
+ *           只改显隐，**不发任何动作**（隐藏不是用户操作）。 */
+static void barApplyFeatures(HsfDataBar* self)
+{
+    unsigned int f;
+    bool chart;
+    bool colFilter;
+    bool decimals;
+    bool maxPoints;
+    bool exportFmt;
+    if (!self) return;
+    f = self->m_features;
+    chart = (f & HsfDataBarFeature_Chart) != 0;
+    colFilter = (f & HsfDataBarFeature_ColFilter) != 0;
+    decimals = (f & HsfDataBarFeature_Decimals) != 0;
+    maxPoints = (f & HsfDataBarFeature_MaxPoints) != 0;
+    exportFmt = (f & HsfDataBarFeature_ExportFmt) != 0;
+    /* 图表形态：「生成折线图」+「表格/图表」切换钮——无图表形态的页上
+     * 「生成折线图」是假按钮（按下只会自己弹回表格），一并藏掉。 */
+    barSetVisible((XWidget*)&self->m_btnChart, chart);
+    barSetVisible((XWidget*)&self->m_btnTable, chart);
+    barSetVisible((XWidget*)&self->m_btnChartTab, chart);
+    /* 列筛选下拉（无独立标签）。 */
+    barSetVisible((XWidget*)&self->m_colFilter, colFilter);
+    /* 导出格式下拉（无独立标签）。 */
+    barSetVisible((XWidget*)&self->m_exportFmt, exportFmt);
+    /* 小数位 / 每图例最多点：微调框与标签成对；两张标签的显隐还要与
+     * 窄档收标签状态取交集（见 barSetLabels）。 */
+    barSetVisible((XWidget*)&self->m_decimals, decimals);
+    barSetVisible((XWidget*)&self->m_maxPoints, maxPoints);
+    barSetVisible((XWidget*)&self->m_lbDecimals,
+                  decimals && self->m_labelsOn);
+    barSetVisible((XWidget*)&self->m_lbMaxPts,
+                  maxPoints && self->m_labelsOn);
+}
+
 /* ==================== 槽 ==================== */
 
 /** @brief 统一动作槽：XObject_sender() 分派动作码 → 透传回调。
@@ -264,6 +322,8 @@ XWidget* HsfDataBar_create(XWidget* parent)
     self->m_adaptW = -1;          /* 分档缓存：未算过。 */
     self->m_adaptCompact = -1;
     self->m_rowsMinW = 88;        /* 「共 N 行」文本驱动最小宽（setTotalRows 重算）。 */
+    self->m_features = HsfDataBarFeature_All; /* 缺省全开＝行为与旧版逐字节一致。 */
+    self->m_labelsOn = true;      /* 说明标签默认展开（窄档才收）。 */
     HsfTheme_applyDefaultFont(&self->m_base);
 
     /* ---- 行 1：起始/结束时间 + 通道 + 列筛选 + 筛选/清除 + 行数 ---- */
@@ -440,6 +500,20 @@ void HsfDataBar_setActionCallback(XWidget* bar, HsfDataBarActionFn fn,
     if (!self) return;
     self->m_fn = fn;
     self->m_fnUser = userData;
+}
+
+void HsfDataBar_setFeatures(const XWidget* bar, unsigned int features)
+{
+    /* [const 形参] 首参按「只读视图」收 const 以免调用方误以为会改控件
+     * 几何；内部要写 m_features，故显式去 const（工具条是堆对象，调用
+     * 方本就是可写的那份）。 */
+    HsfDataBar* self = (HsfDataBar*)(void*)bar;
+    if (!self) return;
+    self->m_features = features;
+    barApplyFeatures(self);
+    /* 裁剪后两行的最小宽需求变了 ⇒ 自适应分档结论作废，下一拍 adapt
+     * 按新口径重算（否则行宽仍按旧需求判档，右端可能照样被裁）。 */
+    self->m_adaptW = -1;
 }
 
 void HsfDataBar_setChannelItems(XWidget* bar, const char* const* items,
@@ -775,21 +849,29 @@ static int barVisibleWidth(const XWidget* self)
     return minW;
 }
 
-/** @brief 说明标签显隐（幂等；setVisible 同值早退）。 */
+/** @brief 说明标签显隐（幂等；窄档收标签）。
+ *  @note  小数位/最多点两张标签还受**特性位掩码**管：窄档收标签是
+ *         「宽不够」（临时），特性位关掉是「本页用不上」（永久）——两者
+ *         取交集：特性位关掉的标签，窄档也不会把它放回来（否则每拍
+ *         adapt 又显出来，裁剪失效）。 */
 static void barSetLabels(HsfDataBar* self, bool on)
 {
-    XWidget_setVisible((XWidget*)&self->m_lbStart, on);
-    XWidget_setVisible((XWidget*)&self->m_lbEnd, on);
-    XWidget_setVisible((XWidget*)&self->m_lbChannel, on);
-    XWidget_setVisible((XWidget*)&self->m_lbDecimals, on);
-    XWidget_setVisible((XWidget*)&self->m_lbMaxPts, on);
+    if (!self) return;
+    self->m_labelsOn = on;
+    barSetVisible((XWidget*)&self->m_lbStart, on);
+    barSetVisible((XWidget*)&self->m_lbEnd, on);
+    barSetVisible((XWidget*)&self->m_lbChannel, on);
+    barSetVisible((XWidget*)&self->m_lbDecimals,
+                  on && (self->m_features & HsfDataBarFeature_Decimals) != 0);
+    barSetVisible((XWidget*)&self->m_lbMaxPts,
+                  on && (self->m_features & HsfDataBarFeature_MaxPoints) != 0);
 }
 
 /** @brief 「共 N 行」计数显隐（幂等；3 档窄到放不下时隐去）。 */
 static void barSetRowsVisible(HsfDataBar* self, bool on)
 {
     if (!self) return;
-    XWidget_setVisible((XWidget*)&self->m_lbRows, on);
+    barSetVisible((XWidget*)&self->m_lbRows, on);
 }
 
 /** @brief 控件标称最小宽两级：常规 / 极窄（幂等；setMinimumWidth 同值早退）。

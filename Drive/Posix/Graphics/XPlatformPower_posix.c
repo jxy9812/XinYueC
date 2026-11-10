@@ -430,6 +430,124 @@ static bool xpowFbSuspend(void)       { return false; }
 
 #endif /* XPOWER_FBDEV_ON */
 
+/* ==================== 背光通道（与 fbdev 解耦，2026-11-10） ====================
+ *
+ * [为什么必须独立于 XPOWER_FBDEV_ON] 本板（RK3568 + MIPI DSI 面板）实测：
+ *   · `xset dpms force off` 只把 **HDMI** 置 Off，**DSI 面板照旧亮着**
+ *     （/sys/class/drm/card0-DSI-1/dpms 恒 On）；
+ *   · 真正能熄面板的是背光节点 /sys/class/backlight/fe070000.dsi.0/brightness。
+ * 而 X11 构建里 XPOWER_FBDEV_ON=0 ⇒ 整段背光代码被编译掉、Off 只剩 DPMS
+ * ⇒ **点"立即熄屏"永远不熄**（用户报障「以前能熄、现在无效」；以前能熄是
+ * fbdev 变体）。故把背光读写提成不受该宏影响的公共能力，Off 优先用它。
+ */
+#define XPOW_BL_MAX_NODES 4
+
+static char g_xpowBlPath[256];      /**< 选定的背光节点（空=未探测）。 */
+static int  g_xpowBlMax = 255;      /**< 该节点量程。 */
+static int  g_xpowBlSaved = -1;     /**< 熄屏前亮度（唤醒写回；-1=未熄）。 */
+static bool g_xpowBlProbed = false; /**< 已探测（无论成败，避免每拍 opendir）。 */
+
+/** @brief 挑一个"能写"的背光节点；优先名字里带 dsi/panel 的（本板真屏）。 */
+static bool xpowBlProbe(void)
+{
+    DIR* dir;
+    struct dirent* ent;
+    char best[256] = "";
+
+    if (g_xpowBlProbed) return g_xpowBlPath[0] != '\0';
+    g_xpowBlProbed = true;
+    dir = opendir("/sys/class/backlight");
+    if (!dir) return false;
+    while ((ent = readdir(dir)) != NULL) {
+        char path[320];
+        int score = 0;
+        if (ent->d_name[0] == '.') continue;
+        snprintf(path, sizeof(path), "/sys/class/backlight/%s/brightness",
+                 ent->d_name);
+        if (access(path, W_OK) != 0) continue;
+        /* [选节点] 本板有三个：backlight / backlight1 / fe070000.dsi.0。
+         * dsi/panel 命中的是面板自身背光（实测只有它能熄屏），优先选它；
+         * 其余按目录名字典序取第一个可写者。 */
+        if (strstr(ent->d_name, "dsi") || strstr(ent->d_name, "panel"))
+            score = 100;
+        if (score > 0 || best[0] == '\0') {
+            if (score > 0) {
+                snprintf(best, sizeof(best), "%s", path);
+                break;      /* dsi 命中即定案。 */
+            }
+            snprintf(best, sizeof(best), "%s", path);
+        }
+    }
+    closedir(dir);
+    if (!best[0]) return false;
+    snprintf(g_xpowBlPath, sizeof(g_xpowBlPath), "%s", best);
+    {
+        char mb[288];
+        char buf[32];
+        char* slash = strrchr(g_xpowBlPath, '/');
+        if (slash) {
+            snprintf(mb, sizeof(mb), "%.*s/max_brightness",
+                     (int)(slash - g_xpowBlPath), g_xpowBlPath);
+            if (xpowReadText(mb, buf, sizeof(buf)) && atoi(buf) > 0)
+                g_xpowBlMax = atoi(buf);
+        }
+    }
+    return true;
+}
+
+static bool xpowBlAvailable(void)
+{
+    return xpowBlProbe() && g_xpowBlPath[0] != '\0';
+}
+
+/** @brief 写背光亮度（0=最暗=熄屏）。 */
+static bool xpowBlWrite(int value)
+{
+    char text[16];
+    if (!xpowBlAvailable()) return false;
+    snprintf(text, sizeof(text), "%d", value);
+    return xpowWriteText(g_xpowBlPath, text);
+}
+
+/** @brief 熄屏：记下当前亮度再写 0。 */
+static bool xpowBlOff(void)
+{
+    char buf[32];
+    if (!xpowBlAvailable()) return false;
+    if (g_xpowBlSaved < 0) {
+        if (xpowReadText(g_xpowBlPath, buf, sizeof(buf)))
+            g_xpowBlSaved = atoi(buf);
+        else
+            g_xpowBlSaved = g_xpowBlMax;
+    }
+    return xpowBlWrite(0);
+}
+
+/** @brief 点亮：写回熄屏前亮度（没记过就写满量程）。 */
+static bool xpowBlOn(void)
+{
+    int v;
+    if (!xpowBlAvailable()) return false;
+    v = (g_xpowBlSaved > 0) ? g_xpowBlSaved : g_xpowBlMax;
+    if (!xpowBlWrite(v)) return false;
+    g_xpowBlSaved = -1;
+    return true;
+}
+
+/** @brief 背光实况：0 ⇒ 熄。
+ *  @return true=读到；false=无背光节点（该通道不参与判定）。 */
+static bool xpowBlQueryActual(XPlatformPowerScreenActual* out)
+{
+    char buf[32];
+    if (!out) return false;
+    if (!xpowBlAvailable()) return false;
+    if (!xpowReadText(g_xpowBlPath, buf, sizeof(buf))) return false;
+    *out = (atoi(buf) == 0) ? XPlatformPowerScreenActual_Off
+                            : XPlatformPowerScreenActual_On;
+    return true;
+}
+
+
 /* ==================== X11 面 ==================== */
 
 #if XPOWER_X11_ON
@@ -449,9 +567,16 @@ static Display* g_xpowDisplay = NULL; /**< 惰性自开的 X 连接。 */
 extern int  DPMSQueryExtension(Display* display, int* eventBase, int* errorBase);
 extern int  DPMSInfo(Display* display, unsigned short* powerLevel, int* enabled);
 extern int  DPMSForceLevel(Display* display, unsigned short powerLevel);
+/* [2026-11-10 熄屏失效根因] 必须能"启用" DPMS：Xorg 在 !DPMSEnabled 时
+ * 对 ForceLevel 直接回 BadMatch。xset dpms force off 就是先 Enable 再
+ * ForceLevel；本库此前全历史从未调用过 Enable。真实签名同为 Status。 */
+extern int  DPMSEnable(Display* display);
 
 static bool     g_xpowDpmsProbed = false;
 static bool     g_xpowDpmsUsable = false;
+
+/* 前向声明：xpowDpmsForce 要用读回判定成败，而读回实现定义在其后。 */
+static bool xpowDpmsQueryLevel(int* outLevel);
 
 /** @brief 惰性取得 X 连接（失败缓存一次，重试由调用方决定）。 */
 static Display* xpowX11Display(void)
@@ -470,12 +595,17 @@ static bool xpowDpmsAvailable(void)
     int eventBase = 0;
     int errorBase = 0;
     if (g_xpowDpmsProbed) return g_xpowDpmsUsable;
-    g_xpowDpmsProbed = true;
     dpy = xpowX11Display();
+    /* [失败不落缓存 2026-11-10 熄屏失效根因之一] 原实现在**拿到 dpy 之前**
+     * 就把 g_xpowDpmsProbed 置真：进程启动早期若 XOpenDisplay 偶发失败
+     * （X 未就绪/授权未加载），本次返回 false 并把 probed 永久钉住 ⇒ 之后
+     * 能力位恒 0、「立即熄屏」按钮恒灰，公共层 10s 重探也被这层缓存抵消
+     * （现场"以前能熄、现在点了没反应"）。改为**只在成功时**落缓存。 */
     if (!dpy) return false;
     if (!DPMSQueryExtension(dpy, &eventBase, &errorBase)) return false;
     /* errorBase 非零表示服务端报告了扩展错误（不可用）。 */
     if (errorBase != 0) return false;
+    g_xpowDpmsProbed = true;
     g_xpowDpmsUsable = true;
     return true;
 }
@@ -484,10 +614,29 @@ static bool xpowDpmsAvailable(void)
 static bool xpowDpmsForce(int level)
 {
     Display* dpy = xpowX11Display();
+    int before = -1;
+    int after = -1;
     if (!dpy) return false;
     if (!xpowDpmsAvailable()) return false;
+    /* [必须先 DPMSEnable 2026-11-10 熄屏失效根因] Xorg 的
+     * ProcDPMSForceLevel 在 `!DPMSEnabled` 时直接回 BadMatch；而
+     * DPMSForceLevel 是**异步**请求（libXext 只 GetReq+Unlock，恒返回 1，
+     * 服务端错误随后异步到达并被本进程的 X error handler 吞掉）⇒ 旧实现
+     * 无论成败都 return true：界面报"已立即熄屏"，面板却亮着。
+     * `xset dpms force off` 能熄，正是因为它先 DPMSEnable 再 ForceLevel。 */
+    (void)DPMSEnable(dpy);
+    if (xpowDpmsQueryLevel(&before) && before == level) return true; /* 幂等 */
     DPMSForceLevel(dpy, (unsigned short)level);
-    XFlush(dpy);
+    XSync(dpy, False);   /* 清空输出队列，让服务端真正处理这一步。 */
+    /* [以读回为准 2026-11-10] 不能用调用返回值判成败（恒 1）；DPMSInfo 读到
+     * 的档位才是真相。读不到时退让为 true（老服务端可能无 DPMSInfo）。 */
+    if (xpowDpmsQueryLevel(&after) && after != level) {
+        fprintf(stderr,
+                "[xpow] DPMS force level=%d 未生效（读回=%d）——"
+                "确认 X 服务端允许 DPMS（xset +dpms）\n",
+                level, after);
+        return false;
+    }
     return true;
 }
 
@@ -675,6 +824,12 @@ XPlatformPowerScreenActual XPlatformPowerDriver_queryScreenState(void)
      * 实况 ⇒ 分发器就绪后最迟 1s 内注册上（只挂能力探测会漏：首次探测
      * 可能早于分发器就绪，而能力位非 0 后不再重探）。 */
     xpowEnsurePushRegistered();
+    /* 背光通道（与 fbdev 解耦）：本板 DSI 面板只有它能熄，DPMS 管不到。
+     * 放在 DPMS 之前——背光=0 就是真熄，优先于服务端 DPMS 档位。 */
+    {
+        XPlatformPowerScreenActual bl;
+        if (xpowBlQueryActual(&bl)) return bl;
+    }
     /* fbdev 背光/blank 节点可读回（真值，嵌入式构建的主通道）。 */
     actual = xpowFbQueryActual();
     if (actual != XPlatformPowerScreenActual_Unknown) return actual;
@@ -689,14 +844,20 @@ XPlatformPowerScreenActual XPlatformPowerDriver_queryScreenState(void)
 bool XPlatformPowerDriver_setScreenState(XPlatformPowerScreenState state)
 {
     if (state == XPlatformPowerScreenState_Off) {
-        /* 熄屏：fbdev 优先（嵌入式场景）；桌面走 DPMS。 */
-        if (xpowFbAvailable()) return xpowFbBlank();
-        if (xpowDpmsAvailable()) return xpowDpmsForce(XPOWER_DPMS_MODE_OFF);
-        return false;
+        /* [熄屏优先级 2026-11-10] 背光 → fbdev → DPMS。
+         * 本板实测：DPMS 关不掉 DSI 面板（xset dpms force off 只关 HDMI，
+         * card0-DSI-1/dpms 恒 On），只有背光写 0 才真熄 ⇒ 背光必须最前，
+         * 且不能只在 fbdev 构建里可用。 */
+        bool blOk = xpowBlOff();
+        bool any = blOk;
+        if (xpowFbAvailable()) any = xpowFbBlank() || any;
+        if (xpowDpmsAvailable()) any = xpowDpmsForce(XPOWER_DPMS_MODE_OFF) || any;
+        return any;
     }
     /* 点亮：两条通道都尝试唤醒（可能只有一条被用过），任一成功即算。 */
     {
         bool ok = false;
+        if (xpowBlOn()) ok = true;
         if (xpowFbAvailable() && xpowFbUnblank()) ok = true;
         if (xpowDpmsAvailable() && xpowDpmsForce(XPOWER_DPMS_MODE_ON)) ok = true;
         return ok;

@@ -25,6 +25,27 @@
       "cacheVariables": {
         "ANDROID_ABI_NAME": "arm64-v8a"
       }
+    },
+    {
+      "name": "hsf",
+      "displayName": "Android APK · 高速过滤器客户端 (x86_64)",
+      "description": "同 default，但应用目录换成高速过滤器客户端自己的（清单 + app.env 随应用走）；原生库由根工程 xhsfclient 目标编译",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../../build_android_hsf",
+      "cacheVariables": {
+        "ANDROID_ABI_NAME": "x86_64",
+        "ANDROID_API_LEVEL": "24",
+        "ANDROID_APP_DIR": "${sourceDir}/../../HighSpeedFilter/client/android"
+      }
+    },
+    {
+      "name": "hsf-arm64",
+      "displayName": "Android APK · 高速过滤器客户端 (arm64-v8a)",
+      "inherits": "hsf",
+      "binaryDir": "${sourceDir}/../../build_android_hsf_arm64",
+      "cacheVariables": {
+        "ANDROID_ABI_NAME": "arm64-v8a"
+      }
     }
   ],
   "buildPresets": [
@@ -44,6 +65,18 @@
       "name": "install",
       "displayName": "安装并启动到设备",
       "configurePreset": "default",
+      "targets": ["install-apk"]
+    },
+    {
+      "name": "hsf-apk",
+      "displayName": "编译 + 打包 APK（高速过滤器客户端）",
+      "configurePreset": "hsf",
+      "targets": ["apk"]
+    },
+    {
+      "name": "hsf-install",
+      "displayName": "安装并启动到设备（高速过滤器客户端）",
+      "configurePreset": "hsf",
       "targets": ["install-apk"]
     }
   ]

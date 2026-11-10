@@ -18,6 +18,8 @@
 #include "HsfLinkClient.h"
 #include "HsfLinkHistory.h"
 #include "HsfDataBar.h"
+#include "HsfExport.h"      /* 共享导出模块（CSV / 真 XLSX）。 */
+#include "HsfTableSort.h"
 #include "HsfTheme.h"
 #include "HsfUi.h"   /* hsfUi_pageFontPx（本地设置·按页字号） */
 #include "XBoxLayout.h"
@@ -30,12 +32,15 @@
 #include "XLabel.h"
 #include "XLineEdit.h"
 #include "XLineSeries.h"
+#include "HsfChartZoom.h"  /* 缩放取数的纯逻辑助手（批次计划/视口换算） */
 #include "XObject.h"     /* XObject_sender / XSignal / XObject_connect_1 */
 #include "XPushButton.h"
 #include "XTableWidget.h"
 #include "XTableView.h"     /* 列筛选（setColumnHidden） */
 #include "XToolTip.h"      /* 图表悬浮气泡（对标 QToolTip）。 */
 #include "XDateTime.h"     /* 气泡/轴刻度的绝对时间格式化。 */
+#include "XFont.h"         /* XFont（列宽实测用：XPainter_textWidth 的入参）。 */
+#include "XPainter.h"      /* XPainter_textWidth（按当前字体现量表头宽度）。 */
 #include "XTimer.h"
 #include "XValueAxis.h"
 #include "XVector.h"     /* 图表全量筛选结果的累加容器（框架组件） */
@@ -60,14 +65,67 @@ static int histPx(int px)
 /** @brief 页大小可选档（与 Python PAGE_SIZES 同值）。 */
 static const int kHistPageSizes[3] = { 10, 20, 50 };
 
-/** @brief 数值列区间（3 输出频率 … 12 电箱湿度；小数位重排/画曲线只动这段）。 */
+/** @brief 数值列区间（3 输出频率 … 13 电箱湿度；小数位重排/画曲线只动这段）。
+ *  @note  2026-11-10 插入「水温(℃)」显示列（第 8 位）⇒ 右端 12→13。 */
 #define HIST_NUM_FIRST   3
-#define HIST_NUM_LAST    12
+#define HIST_NUM_LAST    13
 /** @brief 折线序列数（=数值列数）。 */
 #define HIST_SERIES_MAX  (HIST_NUM_LAST - HIST_NUM_FIRST + 1)
 
+/**
+ * @brief 可见列下标数组类型（**容量 == 显示列数**）。
+ * @details [为什么要typedef 而不是到处写数字] 2026-11-10 实锅：
+ *          `HSF_HISTORY_DISPLAY_COLS` 从 15 增到 16（新增「水温」列），
+ *          本文件三处栈数组仍写死 `uint32_t cols[15]` ⇒
+ *          `histVisibleCols()` 按新宏写 16 个元素 ⇒ **越界写 4 字节踩坏栈**
+ *          ⇒ MSVC /RTC1 报「Stack around the variable 'cols' was corrupted」
+ *          ⇒ 客户端窗口一起来就崩（历史页是启动时逐页建出来的）。
+ *          改成 typedef 后**加列只改宏一处**，调用点不可能再漏。
+ */
+typedef uint32_t HistCols[HSF_HISTORY_DISPLAY_COLS];
+
+/**
+ * @brief 编译期断言：可见列数组的元素个数必须 == 显示列数。
+ * @details [为什么用「负数组长度」而不是 _Static_assert] 本工程 C 标准是
+ *          C99（CMakeLists.txt:109），MSVC 默认 C 模式不认 C11 的
+ *          `_Static_assert`（需 /std:c11+），裸用会被当隐式函数声明
+ *          ⇒ sizeof 前语法错误（同 XPlatformOrientation.c 的
+ *          XORI_STATIC_ASSERT 注记）。负数组长度是 C89 起就有的老写法，
+ *          两边编译器都在**编译期**报错。
+ *          [它拦的是什么] 有人把 HistCols 改回字面量 15、而宏仍是 16 ⇒
+ *          负长度 ⇒ 编译失败，不再拖到运行期变成栈越界。
+ *          [为什么比的是 sizeof(HistCols) 而不是 sizeof(HistCols[0])]
+ *          **C 语言里不能对 typedef 名取下标**（typedef 名不是指针），
+ *          写 `sizeof(HistCols[0])` 会报「负下标」C2118（实测 2026-11-10）。
+ *          故文件级断言按「字节数 == 元素数 × 元素大小」比。
+ */
+typedef char hist_cols_size_assert[
+    (sizeof(HistCols) == sizeof(uint32_t) * HSF_HISTORY_DISPLAY_COLS)
+        ? 1 : -1];
+
+/**
+ * @brief 调用点的编译期断言：可见列数组元素数必须 == 显示列数。
+ * @details [为什么要每处都断言] typedef 只能保证「谁用 HistCols 谁就是
+ *          对的容量」；但若有人绕过 typedef 写 `uint32_t cols[15]`，
+ *          文件级断言拦不住（它只看 HistCols）。故在**每个调用点**再断言
+ *          一次：把该点真实的 `sizeof(cols)/sizeof(cols[0])` 与宏比对，
+ *          谁漏改谁当场编译失败。
+ *          [这里可以取下标] 与文件级断言不同，`cols` 是**真变量**（不是
+ *          typedef 名）⇒ `cols[0]` 在 C 里合法，元素数可精确数出来。
+ * @param cols 调用点的可见列数组。
+ */
+/* [两级宏展开] `##` 的操作数不做宏展开 ⇒ 直接写 `##__LINE__` 会粘出
+ * 字面量 "__LINE__" 而不是行号 ⇒ 必须先经一层普通宏展开。 */
+#define HIST_COLS_ASSERT_CAT_(a, b) a##b
+#define HIST_COLS_ASSERT_CAT(a, b)  HIST_COLS_ASSERT_CAT_(a, b)
+#define HIST_COLS_SIZE_ASSERT(cols)                                        \
+    typedef char HIST_COLS_ASSERT_CAT(hist_cols_size_assert_at_,          \
+                                      __LINE__)[                           \
+        (sizeof(cols) / sizeof((cols)[0]) == HSF_HISTORY_DISPLAY_COLS)     \
+            ? 1 : -1]
+
 /** @brief 历史数据列头（与 Python HistoryPage.COLUMNS 逐字一致，含单位）。 */
-static const char* const kHistoryHeaders[15] = {
+static const char* const kHistoryHeaders[HSF_HISTORY_DISPLAY_COLS] = {
     "时间",
     "模式",
     "搅拌状态",
@@ -76,6 +134,7 @@ static const char* const kHistoryHeaders[15] = {
     "搅拌转速(rpm)",
     "浊度1(NTU)",
     "浊度2(NTU)",
+    "水温(℃)",
     "瞬时流量",
     "正累计",
     "压差(MPa)",
@@ -84,6 +143,45 @@ static const char* const kHistoryHeaders[15] = {
     "DI(32位)",
     "DO(32位)"
 };
+
+/**
+ * @brief 各显示列的**列宽下限**（像素；与 kHistoryHeaders 严格同序）。
+ * @details [为什么单列一张表] 列宽原先散在两处：建表时逐列 setColumnWidth
+ *          一遍、adapt 时又写一张 kW[] 表。两份手工清单必然漂移——2026-11-10
+ *          加「水温」列时只改了其中一份 ⇒ 建表 15 列 / adapt 15 列，与
+ *          16 列的表头对不上（列宽错位）。合到一张表后，加列只改这里。
+ *          [但这只是**下限**] 真列宽由 histCalcColWidths 按当前字体实测
+ *          表头文字得出（见该函数）；本表只兜底"别太窄"。
+ */
+static const int kHistoryColWidths[HSF_HISTORY_DISPLAY_COLS] = {
+    185,  /* 时间 */
+    80,   /* 模式 */
+    90,   /* 搅拌状态 */
+    110,  /* 输出频率(Hz) */
+    110,  /* 输出电流(A) */
+    120,  /* 搅拌转速(rpm) */
+    100,  /* 浊度1(NTU) */
+    100,  /* 浊度2(NTU) */
+    100,  /* 水温(℃) */
+    110,  /* 瞬时流量 */
+    110,  /* 正累计 */
+    100,  /* 压差(MPa) */
+    110,  /* 电箱温度(℃) */
+    110,  /* 电箱湿度(%RH) */
+    110,  /* DI(32位) */
+    110   /* DO(32位) */
+};
+
+/**
+ * @brief 列宽的额外余量（像素）：QSS 表头段的内缩 + 边框 + 粗体余量。
+ * @details 客户端 QSS 的 `XTableWidget::section` 规则带
+ *          `padding: 6px 8px` 与 `border-right: 1px`（见 HsfThemeCss.h），
+ *          且 `font-weight: bold` ⇒ 表头文字比常规字宽一截。列宽若只按
+ *          常规字量，文字放不进内缩后的标签矩形 ⇒ 表头被截/空白。
+ *          8+8+1 = 17 是 QSS 的硬内缩；再加 10% 给粗体。
+ */
+#define HIST_HEADER_EXTRA_PX  17
+#define HIST_HEADER_BOLD_NUM  10   /* 粗体余量 = 文字宽 × 该值 / 100 */
 
 /** @brief 图表全量数据点（一条图例上的一个原始样本）。
  *  @note  m_x 用**相对基准时刻的秒数**（base = 本批筛选结果首条 ts）：
@@ -108,6 +206,12 @@ typedef struct HsfDataHistory {
     XWidget*     m_bar;         /**< 通用工具条（本页自己一套；借用）。 */
     XLabel       m_status;      /**< 状态行（共 N 条 · 第 x/y 页）。 */
     XTableWidget m_table;       /**< 数据表。 */
+    /** @brief 各显示列的**实测列宽**（像素；100% 字号基准）。
+     *  @note  由 histCalcColWidths 按**当前字体**实测表头文字得出——写死的
+     *        像素只在量它的那个字号下成立（Python 端 auto_min_texts 同款
+     *        问题：15 列里 12 列表头被截成"出频率(H"、"度1(NTU"）。 */
+    int          m_colWidths[HSF_HISTORY_DISPLAY_COLS];
+    HsfTableSort m_sort;      /**< 双击表头排序状态（当前页内）。 */
     XChartView   m_chartView;   /**< 图表视图（与表格二选一显隐）。 */
     XChart*      m_chart;       /**< 折线图（create 所有权在页）。 */
     XLineSeries* m_series[HIST_SERIES_MAX]; /**< 逐数值列的折线。 */
@@ -125,8 +229,13 @@ typedef struct HsfDataHistory {
     int          m_exportLimit;   /**< 导出请求的 limit（应答归属校验）。 */
     /* [导出列定格] 发导出请求那一刻的可见列集合（异步应答回来时按它写盘，
      * 不回头读下拉——等待期间用户改列筛选不该影响已发出的导出）。 */
-    uint32_t     m_exportCols[15]; /**< 本次导出的列下标（0..14）。 */
+    uint32_t     m_exportCols[HSF_HISTORY_DISPLAY_COLS]; /**< 本次导出的列下标（0..N-1）。 */
     int          m_exportColCount; /**< m_exportCols 有效长度（0=未定格）。 */
+    /** @brief 本次导出的格式（发请求那一刻从工具条「导出格式」下拉定格）。
+     *  @note  导出是异步的（发请求→等应答→写盘），若写盘时才读下拉，
+     *         用户在等待期间改了下拉 ⇒ 落地格式与按下「导出」时选的不一致。
+     *         故在发起导出时定格。 */
+    HsfExportFormat m_exportFormat;
     XLineEdit    m_kw;          /**< 关键字输入（下推服务端）。 */
     XComboBox    m_pageSizeBox; /**< 每页条数（10/20/50）。 */
     char         m_kwText[160]; /**< 当前生效的关键字（为空=不筛）。 */
@@ -149,7 +258,7 @@ typedef struct HsfDataHistory {
     int          m_pageReqLimit;   /**< 在途表格页/导出请求的 limit。 */
     bool         m_pageReqValid;   /**< 有在途表格页/导出请求，等它那一条应答。 */
     int          m_chartReqOffset; /**< 在途图表批请求的 offset。 */
-    int          m_chartReqLimit;  /**< 在途图表批请求的 limit（探测批=1，正式批=HIST_CHART_CHUNK=49）。 */
+    int          m_chartReqLimit;  /**< 在途图表批请求的 limit（探测批=1..8，正式批=41..49；见 HIST_CHART_CHUNK）。 */
     bool         m_chartReqValid;  /**< 有在途图表批请求，等它那一条应答。 */
     int          m_rowBaseH;    /**< 建页时行高（随字号缩放）。 */
 
@@ -162,30 +271,110 @@ typedef struct HsfDataHistory {
     bool         m_chartRebuilding;     /**< 图表重建中（防 viewportChanged 重入）。 */
     bool         m_xLabelFull;          /**< X 轴标签用带年份秒级的完整格式。 */
     int64_t      m_chartBaseTs;         /**< 图表 X 基准时刻（首个有效 ts；0=未定）。 */
-    int          m_chartTotal;          /**< 服务端本次筛选总行数（首批应答记下）。 */
+    /* ---- 缩放取数（窗口模式）状态 ----
+     * [两种取数口径]
+     *   · 全量模式：跨区间跳批抽样（~N 点铺满全区间）——未缩放时看全貌；
+     *   · 窗口模式：按**可见时间窗**向服务端重取该窗的行（窗内全分辨率）
+     *     ——缩放后看细节，曲线连续不尖角。
+     * 两种口径的 X 值都以 m_chartBaseTs 为基准（相对秒数），故**窗口模式
+     * 换数据不换基准**：换了基准，用户视口与数据 X 值就脱钩，点会落到
+     * 轴域外（现场"缩放后只剩左边缘几条竖线"）。 */
+    int64_t      m_chartFullLo;         /**< 全量筛选域下界（绝对 epoch ms；0=未知）。 */
+    int64_t      m_chartFullHi;         /**< 全量筛选域上界（绝对 epoch ms）。 */
+    int64_t      m_chartWinLo;          /**< 已持有数据的窗口下界（绝对 ms；0=全量域数据）。 */
+    int64_t      m_chartWinHi;          /**< 已持有数据的窗口上界（绝对 ms）。 */
+    bool         m_chartWinMode;        /**< 已持有数据是"窗口模式"（窗内取数）。 */
+    bool         m_chartWinSampled;     /**< 窗口数据是窗内抽样（窗内行数超上限时）。 */
+    int64_t      m_chartFetchLo;        /**< 在途取数的窗口下界（绝对 ms；0=全量域取数）。 */
+    int64_t      m_chartFetchHi;        /**< 在途取数的窗口上界（绝对 ms）。 */
+    bool         m_chartFetchWin;       /**< 在途取数是窗口态。 */
+    bool         m_chartWantPending;    /**< 有待发起的取数（防抖/在途时排队）。 */
+    int64_t      m_chartWantLo;         /**< 待取窗口下界（绝对 ms；0=全量域）。 */
+    int64_t      m_chartWantHi;         /**< 待取窗口上界（绝对 ms）。 */
+    bool         m_chartWantWin;        /**< 待取是窗口态。 */
+    double       m_chartViewLo;         /**< 本轮窗口取数的**轴域**下界（相对基准秒）——
+                                             取数窗由它换算、收尾按同一对值重放轴域
+                                             （见 HsfChartZoom_view：同源同参）。 */
+    double       m_chartViewHi;         /**< 本轮窗口取数的轴域上界。 */
+    uint64_t     m_chartWinReqMs;       /**< 上次发起取数的时刻（滚轮防抖）。 */
+    int          m_chartLimitSeq;       /**< 取数 limit 轮转序号（防迟到应答串味）。 */
+    int          m_chartChunkLimit;     /**< 本轮正式批行数（轮转取值）。 */
+    int          m_chartProbeLimit;     /**< 本轮探测批行数（轮转取值）。 */
+    int          m_chartTotal;          /**< 服务端本次取数总行数（首批应答记下）。 */
     int          m_chartStep;           /**< 跨区间跳跃步长（行）；0=连续取。 */
     int          m_chartBatches;        /**< 计划批数（覆盖全区间用）。 */
     int          m_chartBatchDone;      /**< 已完成批数。 */
 } HsfDataHistory;
 
+/**
+ * @brief 按**当前字体实测**表头文字宽度，算出各列的列宽（写入 m_colWidths）。
+ * @details [为什么必须实测] 列宽写死像素只在量它的那个字号下成立。客户端
+ *          按本地设置放大字号后（板端 ui_scale 1.15+），表头文字比列宽长
+ *          ⇒ 放不进 QSS 内缩后的标签矩形 ⇒ 表头被截断甚至整段空白。
+ *          Python 端 2026-11-10 踩过同一个坑（历史页 15 列里 12 列表头被
+ *          截成"出频率(H"、"度1(NTU"），修法是 DataTable 的 auto_min_texts
+ *          ——按当前字体现量，本页同款。
+ *          [时间列按**内容**量] 表头只有"时间"两字，实际要装
+ *          "2026-11-10 00:00:00"（19 字符）⇒ 用代表内容量。
+ *          [余量] 叠 HIST_HEADER_EXTRA_PX（QSS padding + 边框）与粗体余量。
+ */
+static void histCalcColWidths(HsfDataHistory* self)
+{
+    XFont font;
+    int c;
+    if (!self) return;
+    font = XWidget_font((const XWidget*)&self->m_table.m_base);
+    for (c = 0; c < HSF_HISTORY_DISPLAY_COLS; ++c) {
+        const char* sample = (c == 0) ? "2026-11-10 00:00:00"
+                                     : kHistoryHeaders[c];
+        const int textW = XPainter_textWidth(&font, sample);
+        int w = textW + (textW * HIST_HEADER_BOLD_NUM) / 100
+                + HIST_HEADER_EXTRA_PX;
+        if (w < kHistoryColWidths[c]) w = kHistoryColWidths[c];
+        self->m_colWidths[c] = w;
+    }
+    XClassDeinit(&font);
+}
+
 /** @brief 取数内存硬上限（行）。step 采样后实际行数 ≈ 目标点数，
- *         本值只作异常情况（服务端 total 谎报/step 算错）的兜底。 */
-#define HIST_CHART_MAX_ROWS   5000
-/** @brief 图表累加分批行数。
- *  @details [为什么不是服务端上限 50] 应答归属目前只能靠服务端回显的
- *           (offset,limit) 认领（协议帧头有 m_requestId，但 HsfLinkClient
- *           还没把它交给页面）。页大小可选 10/20/50；正式批若也用 50，
- *           则"取消图表累加"后同 offset 的在途批与随后的页请求**完全同键**，
- *           histTimerCb 会把它误判成表格应答铺进表格（复审②的复现窗口）。
- *           取「协议上限 − 1」使三类消费者的 limit 两两不相交：
- *           探测批=1 / 正式批=49 / 页与导出=10·20·50。 */
-#define HIST_CHART_CHUNK      (HSF_HISTORY_PAGE_MAX - 1)
-/* 编译期兜底：批大小不得与页大小（kHistPageSizes）或探测批 1 撞键。
- * 改了 HSF_HISTORY_PAGE_MAX 或页大小档位时这里会直接拦住。 */
-#if (HIST_CHART_CHUNK == 1) || (HIST_CHART_CHUNK == 10) || \
-    (HIST_CHART_CHUNK == 20) || (HIST_CHART_CHUNK == 50)
-#error "HIST_CHART_CHUNK must be disjoint from page sizes 10/20/50 and probe limit 1"
+ *         本值只作异常情况（服务端 total 谎报/step 算错）的兜底。
+ *  @note  窗口模式要按"窗内每一行"取（曲线连续），行数比全量抽样模式
+ *         大一个量级 ⇒ 上限随之抬高。每行 10 个数值列各存一份
+ *         HsfHistPoint（24B）⇒ 12000 行约 2.9MB，可接受。 */
+#define HIST_CHART_MAX_ROWS   12000
+/** @brief 窗口模式下"窗内逐行全分辨率"的行数上限。
+ *  @details [为什么有上限] 窗口模式要取**窗内每一行**（不跳批、不丢段），
+ *         行数越多批越多、应答槽是**单份静态缓冲**（见 histTimerCb），
+ *         一批一应答地轮询取回。行数无上限 ⇒ 取数时间随窗宽线性增长
+ *         （库里最密的时段约 400 行/小时，缩放到 22 小时就有近万行）。
+ *         故：
+ *           · 窗内行数 ≤ 本上限 ⇒ 逐行取（曲线连续、不尖角）；
+ *           · 超过 ⇒ 窗内按跳批抽样（曲线铺满视窗但仍尖角），
+ *             并在状态行注明"窗内抽样"。
+ *         上限与内存上限 HIST_CHART_MAX_ROWS 同值（逐行取的行数不能
+ *         超过内存上限，否则会被中途截断成半截窗）。 */
+#define HIST_CHART_WIN_FULL_ROWS  HSF_CHART_ZOOM_WIN_FULL_ROWS_DEFAULT
+/** @brief 正式批行数（轮转区间见 HsfChartZoom.h 的 HSF_CHART_ZOOM_CHUNK_*）。 */
+#define HIST_CHART_CHUNK      HSF_CHART_ZOOM_CHUNK_MAX
+/* 编译期兜底：批大小不得与页大小（kHistPageSizes）撞键，探测批与正式批
+ * 也不得互撞。改了 HSF_HISTORY_PAGE_MAX 或页大小档位时这里会直接拦住。 */
+#if (HSF_CHART_ZOOM_CHUNK_MIN <= 10) || (HSF_CHART_ZOOM_CHUNK_MAX >= 50) || \
+    (HSF_CHART_ZOOM_PROBE_MAX >= 10) || \
+    (HSF_CHART_ZOOM_PROBE_MAX >= HSF_CHART_ZOOM_CHUNK_MIN)
+#error "chart batch limits must be disjoint from page sizes 10/20/50 and from each other"
 #endif
+/** @brief 取数期间的应答轮询周期（毫秒）。
+ *  @details [为什么要临时提速] 应答槽是单份静态缓冲，页面只能靠轮询
+ *         取回；页面默认轮询周期＝界面刷新周期（缺省 200ms）⇒ 一批
+ *         200ms，近万行的窗要等 40 多秒（用户观感＝"点了没反应"）。
+ *         取数期间临时降到本值（取完恢复），一批一跳，几千行秒级到。 */
+#define HIST_CHART_FETCH_POLL_MS   25
+/** @brief 窗口模式的重绘节奏（每 N 批重画一次）。
+ *  @details [为什么要攒批再画] 每批都要"排序+去重+重画"，而窗口模式
+ *         可能上百批：每批都排一遍是 O(n log n) 的大头（近万行 × 10 列
+ *         × 上百批 ⇒ CPU 全耗在排序上，界面反而卡住）。攒 8 批画一次，
+ *         观感上是"曲线一点点铺满"，CPU 只花 1/8。 */
+#define HIST_CHART_WIN_REDRAW_BATCH  8
 /**
  * @brief 有效墙钟下界（2020-01-01；与服务端 HSF_STORE_VALID_TS_MIN 同值）。
  * @details [为什么图表要单独过滤] 历史库里残留着旧版本误写的 monotonic
@@ -250,6 +439,34 @@ static int64_t histTzOffsetMs(void)
  *           （HsfLinkClient_history()），随时会被图表批/导出的应答覆盖；
  *           铺表时再回头读它，就可能把图表批的 50 行当成表格页（复审②的
  *           另一个入口）。调用方负责确认归属。 */
+
+/**
+ * @brief 双击表头：排序当前页（口径与 Python 客户端 _header_dblclicked 一致：
+ *        新列⇒降序；同列降⇒升序；同列升⇒取消排序）。
+ */
+/* [前向声明] 取消排序分支要回调请求函数（定义在下方）。 */
+static void histRequest(HsfDataHistory* self, int offset);
+
+static void HsfDataHistoryHeaderDblClicked(XObject* receiver, XVarList* args)
+{
+    HsfDataHistory* self = (HsfDataHistory*)receiver;
+    int col = -1;
+    if (!self) return;
+    if (args) {
+        XVarList_start(args);
+        col = XVarList_arg(args, int);
+    }
+    HsfTableSort_toggle(&self->m_sort, col);
+    if (self->m_sort.m_col < 0) {
+        /* [取消排序 ⇒ 回到服务端原序] 表里此刻已是排过序的行，本地没有
+         * 原序可还原 ⇒ 重取当前页（服务端按 ts 降序给回原序）。 */
+        histRequest(self, self->m_offset);
+        return;
+    }
+    HsfTableSort_apply(&self->m_sort, &self->m_table);
+    HsfTableSort_updateIndicator(&self->m_sort, &self->m_table);
+}
+
 static void histFillTable(HsfDataHistory* self, const HsfHistoryPage* page)
 {
     int i;
@@ -258,7 +475,7 @@ static void histFillTable(HsfDataHistory* self, const HsfHistoryPage* page)
     if (!self || !page || !page->m_valid) return;
     XTableWidget_setRowCount(&self->m_table, page->m_count);
     for (i = 0; i < page->m_count; ++i) {
-        for (c = 0; c < 15; ++c) {
+        for (c = 0; c < HSF_HISTORY_DISPLAY_COLS; ++c) {
             char text[48];
             XTableWidgetItem* it;
             histFormatCell(c, page->m_rows[i].m_cells[c], self->m_digits,
@@ -317,18 +534,18 @@ static void histFillTable(HsfDataHistory* self, const HsfHistoryPage* page)
 /* ==================== 翻页 ==================== */
 
 /** @brief 当前「可见列」集合（与 Python `visible_columns()` 同口径）。
- *  @details [单一口径] 本页的列显示是**下拉单选**（0=全部列，1..15=列
- *           0..14），不像 Python 是多选复选；但语义完全一致：可见列同时
- *           决定三件事——① 表格铺哪几列（histApplyColumnFilter 的
- *           setColumnHidden）；② 关键字在哪些列里比对（服务端 kwCols）；
- *           ③ 导出写哪几列。
+ *  @details [单一口径] 本页的列显示是**下拉单选**（0=全部列，
+ *           1..HSF_HISTORY_DISPLAY_COLS=列 0..N-1），不像 Python 是多选
+ *           复选；但语义完全一致：可见列同时决定三件事——① 表格铺哪几列
+ *           （histApplyColumnFilter 的 setColumnHidden）；② 关键字在哪些列
+ *           里比对（服务端 kwCols）；③ 导出写哪几列。
  *           [为什么必须收成一个函数] 旧实现三处各写一份：表格走下拉、
  *           关键字走下拉、导出**硬编码 15 列全量**。任何一处改了另一处
  *           就漂移——实锅：用户把 12 列收成 1 列再导出，CSV 仍是 15 列
  *           全量（与 Python `_write_export` 按 `visible_columns()` 取列
  *           的"导出=看到的样子"口径相反）。
  *  @param self 页面。
- *  @param out  输出数组（容量 >= 15）。
+ *  @param out  输出数组（容量 >= HSF_HISTORY_DISPLAY_COLS）。
  *  @return 写入的列数（至少 1：下拉为空/全部时回退全部列，与 Python
  *          `return cols or list(range(len(self.COLUMNS)))` 一致）。 */
 static int histVisibleCols(const HsfDataHistory* self, uint32_t* out)
@@ -337,11 +554,12 @@ static int histVisibleCols(const HsfDataHistory* self, uint32_t* out)
     int n = 0;
     if (!out) return 0;
     idx = self && self->m_bar ? HsfDataBar_columnFilterIndex(self->m_bar) : 0;
-    if (idx > 0 && idx <= 15) {
-        out[n++] = (uint32_t)(idx - 1);   /* 下拉 0="全部列"，1..15=列 0..14 */
+    if (idx > 0 && idx <= HSF_HISTORY_DISPLAY_COLS) {
+        /* 下拉 0="全部列"，1..N=列 0..N-1 */
+        out[n++] = (uint32_t)(idx - 1);
         return n;
     }
-    while (n < 15) { out[n] = (uint32_t)n; ++n; }
+    while (n < HSF_HISTORY_DISPLAY_COLS) { out[n] = (uint32_t)n; ++n; }
     return n;
 }
 
@@ -360,8 +578,9 @@ static int histKwCols(const HsfDataHistory* self, uint32_t* out)
 /** @brief 发起一页请求（offset 为该页起点；关键字/列/页大小随请求下发）。 */
 static void histRequest(HsfDataHistory* self, int offset)
 {
-    uint32_t cols[15];
+    HistCols cols;
     int n;
+    HIST_COLS_SIZE_ASSERT(cols);
     if (!self) return;
     if (offset < 0) offset = 0;
     if (self->m_pageSize <= 0) self->m_pageSize = HIST_PAGE_LIMIT;
@@ -379,10 +598,32 @@ static void histRequest(HsfDataHistory* self, int offset)
     if (self->m_chartFetching) {
         self->m_chartFetching = false;
         self->m_chartDataDirty = true;
+        /* [轮询周期恢复] 取数期间提速过（见 HIST_CHART_FETCH_POLL_MS），
+         * 中止即恢复界面刷新周期（否则页面一直按 25ms 轮询）。 */
+        if (self->m_timer)
+            XTimer_setInterval(self->m_timer, HsfSettingsLocal_refreshMs());
     }
+    /* [数据窗随筛选作废] 筛选条件/时间窗变了 ⇒ 已持有的图表数据窗属于
+     * 旧条件，必须清掉（否则下次取数还按旧窗要行）；全量域也要重新学
+     * （旧跨度是旧筛选条件的跨度）。 */
+    self->m_chartWinLo = 0;
+    self->m_chartWinHi = 0;
+    self->m_chartWinMode = false;
+    self->m_chartWinSampled = false;
+    self->m_chartViewLo = 0.0;
+    self->m_chartViewHi = 0.0;
+    self->m_chartFullLo = 0;
+    self->m_chartFullHi = 0;
+    self->m_chartWantPending = false;
+    self->m_chartWantWin = false;
+    self->m_chartWantLo = 0;
+    self->m_chartWantHi = 0;
+    self->m_chartFetchWin = false;
+    self->m_chartFetchLo = 0;
+    self->m_chartFetchHi = 0;
     /* 在途图表批的应答从此无主（见 histTimerCb 的归属判定）：作废它的
-     * 描述符；且图表批 limit=HIST_CHART_CHUNK(49) 与页大小 10/20/50 恒不
-     * 相等（见该宏注释），晚到的批次应答不可能再通过 isPageReply 铺进表格
+     * 描述符；且图表批 limit=41..49 与页大小 10/20/50 恒不相等（见该宏
+     * 注释），晚到的批次应答不可能再通过 isPageReply 铺进表格
      * （复审②的根因）。 */
     self->m_chartReqValid = false;
     self->m_pageReqValid = false;
@@ -427,75 +668,73 @@ static void histPrevSlot(XObject* receiver, XVarList* args)
  *  @param colCount cols 长度（>=1）。
  *  @param outPath  输出路径缓冲。
  *  @param cap      outPath 容量。 */
-static bool histWriteCsv(const HsfHistoryPage* page,
-                         const uint32_t* cols, int colCount,
-                         char* outPath, int cap)
+/** @brief 历史页导出取格上下文（网格列=可见列序 → 行内格）。 */
+typedef struct HistExportCtx {
+    const HsfHistoryPage* page;   /**< 服务端返回的那一页。 */
+    const uint32_t* cols;         /**< 可见列下标（升序）。 */
+    int              colCount;    /**< cols 长度。 */
+} HistExportCtx;
+
+/** @brief 导出取格回调：网格列（可见列序）→ 行内格文本（UTF-8）。 */
+static bool histExportCell(void* user, int row, int col, char* buf, int cap)
 {
-    XDeviceOpenOptions opts;
-    XString* target;
-    XFd fd;
-    int err = 0;
-    int i;
+    const HistExportCtx* ctx = (const HistExportCtx*)user;
+    int c;
+    if (buf && cap > 0) buf[0] = '\0';
+    if (!ctx || !ctx->page || !ctx->cols || !buf || cap <= 0) return false;
+    if (row < 0 || row >= ctx->page->m_count) return false;
+    if (col < 0 || col >= ctx->colCount) return false;
+    c = (int)ctx->cols[col];
+    if (c < 0 || c >= HSF_HISTORY_DISPLAY_COLS) return false;
+    snprintf(buf, (size_t)cap, "%s", ctx->page->m_rows[row].m_cells[c]);
+    return true;
+}
+
+/** @brief 把本页那一页写成导出文件（CSV 或真 XLSX）。
+ *  @details [走共享模块 2026-11-10] 工具条上的「导出格式」下拉此前是
+ *           **死控件**（选了 XLSX 落地仍是 CSV）。现在三页统一走
+ *           HsfExport：CSV 与 XLSX 共用同一套取数口径，XLSX 走框架
+ *           XExcel 原生 API（与 Python 端 xlsx_bridge 封的同一套）。
+ *  @param page     服务端返回的那一页。
+ *  @param cols     可见列下标（升序，非空）。
+ *  @param colCount cols 长度（>=1）。
+ *  @param format   导出格式（发请求那一刻从下拉定格）。
+ *  @param outPath  输出路径缓冲（回填最终落地路径）。
+ *  @param cap      outPath 容量。 */
+static bool histWriteExport(const HsfHistoryPage* page,
+                             const uint32_t* cols, int colCount,
+                             HsfExportFormat format,
+                             char* outPath, int cap)
+{
+    HsfExportGrid grid;
+    HistExportCtx ctx;
+    const char* headers[HSF_HISTORY_DISPLAY_COLS];
+    char prefix[96];
     int k;
-    char line[1024];
-    size_t n;
 
     if (!page || !page->m_valid || !cols || colCount <= 0 ||
         !outPath || cap <= 0)
         return false;
-    snprintf(outPath, (size_t)cap, "./hsf_history_%d.csv", page->m_offset);
-    target = XString_create_utf8(outPath);
-    if (!target) return false;
-    memset(&opts, 0, sizeof(opts));
-    opts.m_openMode = XIODevice_WriteOnly | XIODevice_Truncate;
-    opts.m_target = target;
-    fd = XDevice_open(XDeviceType_File, &opts, &err);
-    XClassDelete(target);
-    if (fd == XFD_INVALID) return false;
-
-    /* UTF-8 BOM：Excel 直接双击打开不乱码（与 Python 端 utf-8-sig 同口径）。 */
-    XDevice_write(fd, "\xEF\xBB\xBF", 3);
-    n = 0;
-    for (k = 0; k < colCount; ++k) {
+    for (k = 0; k < colCount && k < HSF_HISTORY_DISPLAY_COLS; ++k) {
         const int c = (int)cols[k];
-        const char* h = (c >= 0 && c < 15) ? kHistoryHeaders[c] : "";
-        n += (size_t)snprintf(line + n, sizeof(line) - n, "%s%s",
-                              k ? "," : "", h);
-        if (n >= sizeof(line) - 2) break;
+        headers[k] = (c >= 0 && c < HSF_HISTORY_DISPLAY_COLS)
+                         ? kHistoryHeaders[c] : "";
     }
-    XDevice_write(fd, line, (int64_t)n);
-    XDevice_write(fd, "\r\n", 2);
-
-    for (i = 0; i < page->m_count; ++i) {
-        n = 0;
-        for (k = 0; k < colCount; ++k) {
-            const int c = (int)cols[k];
-            const char* cell = (c >= 0 && c < 15)
-                                   ? page->m_rows[i].m_cells[c] : "";
-            bool quote = false;
-            const char* p;
-            for (p = cell; *p; ++p)
-                if (*p == ',' || *p == '"' || *p == '\n' || *p == '\r')
-                    quote = true;
-            if (quote) {
-                n += (size_t)snprintf(line + n, sizeof(line) - n, "%s\"",
-                                      k ? "," : "");
-                for (p = cell; *p && n + 2 < sizeof(line); ++p) {
-                    if (*p == '"') line[n++] = '"';
-                    line[n++] = *p;
-                }
-                line[n++] = '"';
-                line[n] = '\0';
-            } else {
-                n += (size_t)snprintf(line + n, sizeof(line) - n, "%s%s",
-                                      k ? "," : "", cell);
-            }
-            if (n >= sizeof(line) - 2) break;
-        }
-        XDevice_write(fd, line, (int64_t)n);
-        XDevice_write(fd, "\r\n", 2);
-    }
-    XDevice_close(fd);
+    snprintf(prefix, sizeof(prefix), "./hsf_history_%d", page->m_offset);
+    ctx.page = page;
+    ctx.cols = cols;
+    ctx.colCount = colCount;
+    memset(&grid, 0, sizeof(grid));
+    grid.path = prefix;
+    grid.sheetName = "历史数据";
+    grid.format = format;
+    grid.colCount = colCount;
+    grid.rowCount = page->m_count;
+    grid.header = headers;
+    grid.cell = histExportCell;
+    grid.user = &ctx;
+    if (!HsfExport_write(&grid)) return false;
+    (void)HsfExport_outputPath(&grid, outPath, cap);
     return true;
 }
 
@@ -509,9 +748,10 @@ static bool histWriteCsv(const HsfHistoryPage* page,
  *           写盘按 B 列"。故把本次列集合记进 m_exportCols。 */
 static void histExportStart(HsfDataHistory* self)
 {
-    uint32_t cols[15];
+    HistCols cols;
     int n;
     char buf[200];
+    HIST_COLS_SIZE_ASSERT(cols);
     if (!self) return;
     if (!HsfLinkClient_can(HSF_PERM_DOWNLOAD)) {
         XLabel_setText_2(&self->m_status,
@@ -523,9 +763,15 @@ static void histExportStart(HsfDataHistory* self)
     if (n <= 0) return;
     {   /* 定格本次导出的列集合（异步应答回来时按它写盘）。 */
         int k;
-        for (k = 0; k < n && k < 15; ++k) self->m_exportCols[k] = cols[k];
+        for (k = 0; k < n && k < HSF_HISTORY_DISPLAY_COLS; ++k)
+            self->m_exportCols[k] = cols[k];
         self->m_exportColCount = n;
     }
+    /* [导出格式定格] 按下「导出」这一刻从工具条下拉取格式（异步应答回来
+     * 后按它写盘）——下拉索引与 HsfExportFormat 数值相反，由共享模块的
+     * 映射函数转换，勿直接当枚举用。 */
+    self->m_exportFormat =
+        HsfExport_formatFromBarIndex(HsfDataBar_exportFormatIndex(self->m_bar));
     /* [应答归属] 导出请求用的是"当前页"的 offset/limit，服务端原样回显；
      * 记下来供 histTimerCb 认领（不能用应答序号：共用槽里序号也会被
      * 图表批等别的请求推着走，序号变不等于"这条是导出的"）。 */
@@ -570,7 +816,7 @@ static void histApplyColumnFilter(HsfDataHistory* self)
     int c;
     if (!self || !self->m_bar) return;
     idx = HsfDataBar_columnFilterIndex(self->m_bar);
-    for (c = 0; c < 15; ++c) {
+    for (c = 0; c < HSF_HISTORY_DISPLAY_COLS; ++c) {
         const bool hide = (idx > 0 && c != idx - 1);
         if (XTableView_isColumnHidden(&self->m_table.m_base, c) != hide)
             XTableView_setColumnHidden(&self->m_table.m_base, c, hide);
@@ -688,8 +934,14 @@ static void histPageSizeSlot(XObject* receiver, XVarList* args)
 
 /* ==================== 图表：全量筛选结果 + 等距降采样 ==================== */
 
-/** @brief 释放/清空全量图表数据（幂等；任何重建前先调）。 */
-static void histChartDataClear(HsfDataHistory* self)
+/** @brief 释放/清空全量图表数据（幂等；任何重建前先调）。
+ *  @param self      页面。
+ *  @param keepBase  true=保留 X 基准时刻（窗口模式换数据不换基准：
+ *                  换了基准，用户视口与数据 X 值脱钩 ⇒ 点落到轴域外，
+ *                  现场"缩放后只剩左边缘几条竖线"就是这个错位）；
+ *                  false=清掉基准（全量模式重新取基准）。
+ */
+static void histChartDataClear(HsfDataHistory* self, bool keepBase)
 {
     int k;
     if (!self) return;
@@ -701,7 +953,7 @@ static void histChartDataClear(HsfDataHistory* self)
     self->m_chartFetchOffset = 0;
     self->m_chartFetching = false;
     self->m_chartReqValid = false;   /* 在途图表批的描述符随之作废 */
-    self->m_chartBaseTs = 0;
+    if (!keepBase) self->m_chartBaseTs = 0;
     self->m_chartTotal = 0;
     self->m_chartStep = 0;
     self->m_chartBatches = 0;
@@ -792,6 +1044,44 @@ static bool histVisibleX(const HsfDataHistory* self, double* lo, double* hi)
     return true;
 }
 
+/** @brief 当前视口的「缩放视图」：轴域 + 绝对窗 + 取数窗**一次算齐**。
+ *  @details [单一事实源] 缩放取数的判据是「取回的数据点必须与当前坐标轴的
+ *           轴域同源同参」。这里把 轴域(xLo/xHi) → 绝对窗(viewLo/Hi) →
+ *           取数窗(fetchLo/Hi) 一次算完（HsfChartZoom_view），页面**只许**
+ *           把 fetchLo/Hi 发给服务端、把 xLo/xHi 留在轴域上；任何一处另算
+ *           一遍就是"数据与轴域不同参"的入口（现场错位根因）。
+ *  @note  图表 X 值是「相对基准时刻（m_chartBaseTs）的秒数」，绝对窗 =
+ *         base + x*1000；换算全在 HsfChartZoom_view 里（纯函数，回归锁 §Z3
+ *         /§Z9 逐条钉住）。
+ *  @return 基准/轴域可用返回 true。
+ */
+static bool histChartViewNow(const HsfDataHistory* self, HsfChartZoomView* out)
+{
+    double xlo = 0.0;
+    double xhi = 0.0;
+    if (!self || !out) return false;
+    if (self->m_chartBaseTs <= 0) return false;
+    if (!histVisibleX(self, &xlo, &xhi)) return false;
+    return HsfChartZoom_view(self->m_chartBaseTs, xlo, xhi, out);
+}
+
+/** @brief 当前是否「锁定视口」（窗口模式 / 窗口取数在途）。
+ *  @details [锁什么] 锁定期间**轴域只由用户视口决定**：取数过程中的预览
+ *           重绘、收尾重建一律按可见域裁数据，不许改写轴域。旧实现让
+ *           "全量态重绘"（useVisible=false）在窗口取数在途时跑，把用户的
+ *           缩放域改成"已到达那几行的时间跨度" ⇒ 请求窗与轴域脱钩，
+ *           取回的点被裁掉两端（现场「缩放后曲线不连续、贴左边缘」）。
+ */
+static bool histChartViewLocked(const HsfDataHistory* self)
+{
+    if (!self) return false;
+    return self->m_chartWinMode ||
+           (self->m_chartFetching && self->m_chartFetchWin);
+}
+
+/* [前向声明] 状态行按视口重算（实现在重建/取数段之后）。 */
+static void histChartStatusRefresh(HsfDataHistory* self);
+
 /** @brief X 轴刻度标签：相对秒 → 本地时间文本（"MM-dd HH:mm" / 带年份秒级）。
  *  @details 轴值是「相对基准时刻（m_chartBaseTs）的秒数」，服务端按 ts
  *           降序取页 ⇒ 早期数据是负数；这里换算成绝对时刻再按本地时间
@@ -823,9 +1113,12 @@ static void histXLabelText(const XValueAxis* axis, double value, char* buf,
                  XDate_year(&d), XDate_month(&d), XDate_day(&d),
                  XTime_hour(&t), XTime_minute(&t), XTime_second(&t));
     } else {
-        snprintf(buf, (size_t)cap, "%02d-%02d %02d:%02d",
+        /* [补秒 2026-11-10 用户口径「X 轴要时分秒」] 窄窗原为「MM-dd HH:mm」，
+         * 秒位缺失——历史数据一行一秒，缩放后同一分钟内的先后看不出来。
+         * 11→14 字符（"MM-dd HH:mm:ss" ≈ 98px），窄窗 4 个间隔仍放得下。 */
+        snprintf(buf, (size_t)cap, "%02d-%02d %02d:%02d:%02d",
                  XDate_month(&d), XDate_day(&d),
-                 XTime_hour(&t), XTime_minute(&t));
+                 XTime_hour(&t), XTime_minute(&t), XTime_second(&t));
     }
 }
 
@@ -1032,7 +1325,8 @@ static void histBuildChartEx(HsfDataHistory* self, bool useVisible)
     }
 
     /* Y 轴量程：归一化时固定 0~100（百分比）；单列按该列原值 ± 留白。
-     * X 轴只在"全量域"时重设（缩放态保持用户视口）。 */
+     * X 轴只在「全量视图」重设：锁定视口（窗口模式/窗口取数在途）时轴域
+     * 归用户视口所有——这里改它就把取数窗与轴域拆成两份不同参的值。 */
     if (self->m_axisY) {
         if (normalize) {
             XValueAxis_setRange(self->m_axisY, 0.0, 100.0);
@@ -1049,7 +1343,7 @@ static void histBuildChartEx(HsfDataHistory* self, bool useVisible)
             XValueAxis_setLabelFormat_2(self->m_axisY, "%g");
         }
     }
-    if (!useVisible) {
+    if (!useVisible && !histChartViewLocked(self)) {
         if (self->m_chartRootCount > 0) {
             double a = 0.0;
             double b = 0.0;
@@ -1119,12 +1413,189 @@ static void histBuildChart(HsfDataHistory* self)
     histBuildChartEx(self, false);
 }
 
-/** @brief viewportChanged：缩放/平移/复位后按当前可见 X 域重新等距抽样。
+/** @brief 按当前取数模式重建曲线。
+ *  @details [两种口径的轴域归属]
+ *           · 全量模式（m_chartWinMode=false 且无窗口取数在途）：轴域 = 数据
+ *             跨度（用户没缩放时看全貌；"生成折线图"后轴域自动铺满）。
+ *           · 锁定视口（窗口模式 / 窗口取数在途，见 histChartViewLocked）：
+ *             轴域 = **用户当前的视口**，页面不动它（动了就把用户的缩放
+ *             吃掉）；只按可见域重采样。取数窗由同一对轴域值换算
+ *             （HsfChartZoom_view）⇒ 数据与轴域同基同参，曲线铺满视窗。 */
+static void histChartRebuild(HsfDataHistory* self)
+{
+    if (!self) return;
+    histBuildChartEx(self, histChartViewLocked(self));
+}
+
+/* [前置声明] 视口变化 → 取数 → 重建，三者互相调用（取数收尾后还要再
+ * 判一次视口够不够数据），故先声明后定义。 */
+static bool histChartFetchBegin(HsfDataHistory* self, bool winMode,
+                                int64_t winLo, int64_t winHi);
+static bool histChartUpdateWant(HsfDataHistory* self);
+static void histChartTryStart(HsfDataHistory* self);
+
+/** @brief 当前持有数据覆盖的绝对时间范围（epoch ms；无数据返回 false）。
+ *  @details 全量模式下它就是"筛选域跨度"，用来判"用户是不是缩放了"
+ *           （见 histChartUpdateWant）。按行里的 m_ts 取极值，不依赖
+ *           X 基准（换基准不影响这个范围）。 */
+static bool histChartDataRange(const HsfDataHistory* self,
+                                int64_t* lo, int64_t* hi)
+{
+    int k;
+    int64_t mn = 0;
+    int64_t mx = 0;
+    bool got = false;
+    if (lo) *lo = 0;
+    if (hi) *hi = 0;
+    if (!self) return false;
+    for (k = 0; k < HIST_SERIES_MAX; ++k) {
+        const XVector* vec = self->m_chartPts[k];
+        const HsfHistPoint* base;
+        int total;
+        int i;
+        if (!vec) continue;
+        total = (int)XVector_size_base((const XContainer*)vec);
+        if (total <= 0) continue;
+        base = (const HsfHistPoint*)XVector_data((XVector*)vec);
+        if (!base) continue;
+        for (i = 0; i < total; ++i) {
+            if (base[i].m_ts <= 0) continue;
+            if (!got) { mn = base[i].m_ts; mx = base[i].m_ts; got = true; continue; }
+            if (base[i].m_ts < mn) mn = base[i].m_ts;
+            if (base[i].m_ts > mx) mx = base[i].m_ts;
+        }
+    }
+    if (!got) return false;
+    if (lo) *lo = mn;
+    if (hi) *hi = mx;
+    return true;
+}
+
+/** @brief 视口变化后判断"还缺什么数据"，并登记待取任务。
+ *  @return true=需要取数（待取任务已登记进 m_chartWant*）。
+ *  @details [判定口径]
+ *           ① 全量域 = 筛选结果的整段时间跨度（m_chartFullLo/Hi；全量
+ *              取数完成后由数据跨度得出；筛选条件变更后清零重学）。
+ *           ② 可见窗（轴域按基准换算回绝对时刻）≥ 全量域的 90% ⇒ 按
+ *              **全量视图**处理（未缩放）：手里已是全量数据就只本地
+ *              重采样；手里是窗口数据就换回全量数据。
+ *           ③ 可见窗明显小于全量域 ⇒ **窗口视图**：要可见窗那一段的
+ *              全部行（窗内全分辨率 ⇒ 曲线连续不尖角）。
+ *              · 可见窗落在已取窗内且该窗已是全分辨率 ⇒ 不用再取；
+ *              · 可见窗落在已取窗内但该窗是"窗内抽样"（行数超上限），
+ *                且可见窗比它小 4 倍以上 ⇒ 重取更小的窗（换连续度）；
+ *              · 可见窗越出已取窗（缩小/平移出界）⇒ 重取可见窗。
+ *  @note  [为什么不能只靠本地重采样] 本地数据是**跨区间跳批抽样**的
+ *         （见 histChartFetchContinue），簇与簇之间根本没有行；缩到
+ *         空档里一个点都没有 ⇒ 曲线只剩两条长直线，现场"缩放后曲线
+ *         几乎消失、只剩左边缘几条竖线"就是这么来的。 */
+static bool histChartUpdateWant(HsfDataHistory* self)
+{
+    HsfChartZoomView view;
+    int64_t fLo;
+    int64_t fHi;
+    if (!self || !self->m_chart) return false;
+    /* [轴域与取数窗同一份计算] 可见窗/取数窗都从 histChartViewNow 的同一个
+     * 视图里取；取数发起时只把 fetchLo/Hi 发出去，轴域一个字节都不动。 */
+    if (!histChartViewNow(self, &view)) return false;
+    fLo = self->m_chartFullLo;
+    fHi = self->m_chartFullHi;
+    if (fLo <= 0 || fHi <= fLo) {
+        /* 全量域未知（还没取过全量数据）⇒ 用筛选时间窗兜底；没筛时间
+         * 时兜底成可见窗 ⇒ 判不出"缩放态" ⇒ 本轮不取数（等全量数据
+         * 到手，第一次缩放就能判）。 */
+        fLo = (self->m_loTs > 0) ? self->m_loTs : view.viewLo;
+        fHi = (self->m_hiTs > 0) ? self->m_hiTs : view.viewHi;
+    }
+    if (fHi <= fLo) return false;
+
+    if (HsfChartZoom_isFullView(view.viewLo, view.viewHi, fLo, fHi)) {
+        /* 可见窗 ≈ 全量域 ⇒ 全量视图 */
+        if (!self->m_chartWinMode) return false;  /* 全量数据在手：本地重采样即可 */
+        self->m_chartWantPending = true;
+        self->m_chartWantWin = false;
+        self->m_chartWantLo = 0;
+        self->m_chartWantHi = 0;
+        self->m_chartViewLo = 0.0;
+        self->m_chartViewHi = 0.0;
+        return true;
+    }
+
+    /* 窗口视图 */
+    if (self->m_chartWinMode &&
+        HsfChartZoom_windowCovers(self->m_chartWinLo, self->m_chartWinHi,
+                                  view.viewLo, view.viewHi)) {
+        /* 可见窗在已取窗内 */
+        if (!self->m_chartWinSampled) return false;  /* 已是窗内全分辨率 */
+        if ((view.viewHi - view.viewLo) * HSF_CHART_ZOOM_RESAMPLE_DEN >=
+            (self->m_chartWinHi - self->m_chartWinLo) *
+                HSF_CHART_ZOOM_RESAMPLE_NUM)
+            return false;   /* 已取窗不算大，抽样也够密：不必重取 */
+    }
+    /* 取数窗 = 视图里的 fetchLo/Hi（= 可见窗各外扩 1%、最小 1s）⇒ 边界行
+     * 也在内，曲线能铺满视窗两端。[轴域] 记下同一视图的 xLo/xHi：收尾按
+     * 这一对值重放轴域，保证"取回的点与轴域同参"（见 histChartFetchFinish）。 */
+    self->m_chartWantPending = true;
+    self->m_chartWantWin = true;
+    self->m_chartWantLo = view.fetchLo;
+    self->m_chartWantHi = view.fetchHi;
+    self->m_chartViewLo = view.xLo;
+    self->m_chartViewHi = view.xHi;
+    return true;
+}
+
+/** @brief 尝试发起登记好的取数（防抖 + 在途判定）。
+ *  @details [为什么不立刻取] 滚轮连发会每帧触发视口变化 ⇒ 400ms 防抖；
+ *         已有在途取数时不并发（应答槽只有一份，见 histTimerCb 的归属
+ *         判定）。[谁来补发] 页面轮询定时器每拍调一次 ⇒ 防抖到期自动
+ *         发，不必等下一次视口事件（用户停下滚轮也能把数取回来）。 */
+static void histChartTryStart(HsfDataHistory* self)
+{
+    uint64_t now;
+    if (!self || !self->m_chartWantPending) return;
+    if (self->m_chartFetching) return;          /* 在途：等它收尾再发 */
+    now = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+    if (now - self->m_chartWinReqMs < 400u) return;   /* 防抖 */
+    self->m_chartWinReqMs = now;
+    self->m_chartWantPending = false;
+    if (!histChartFetchBegin(self, self->m_chartWantWin,
+                             self->m_chartWantLo, self->m_chartWantHi)) {
+        /* 发起失败（连接断/内存不足）⇒ 保留待取任务，下一拍再试。 */
+        self->m_chartWantPending = true;
+    }
+}
+
+/** @brief 回到全量域视图（框架复位 / 用户缩回全域）。
+ *  @details 手里有全量数据就直接重画（轴域回到数据跨度）；只有窗口数据
+ *           就重新取全量（在途时排队，收尾后自动发）。 */
+static void histChartResetFull(HsfDataHistory* self)
+{
+    if (!self) return;
+    self->m_chartWantPending = false;
+    self->m_chartWantWin = false;
+    self->m_chartWantLo = 0;
+    self->m_chartWantHi = 0;
+    if (!self->m_chartWinMode && self->m_chartRootCount > 0 &&
+        !self->m_chartDataDirty) {
+        self->m_chartWinLo = 0;
+        self->m_chartWinHi = 0;
+        self->m_chartWinSampled = false;
+        self->m_chartViewLo = 0.0;
+        self->m_chartViewHi = 0.0;
+        histBuildChart(self);
+        histChartStatusRefresh(self);
+        return;
+    }
+    self->m_chartWantPending = true;   /* 取全量 */
+    histChartTryStart(self);
+}
+
+/** @brief viewportChanged：缩放/平移/复位后按当前可见 X 域重采样或重取数。
  *  @note  Qt 对应语义=QChartView 轴范围变化后由应用侧重采样；框架信号
  *         载荷为 XChartView_ViewportChange（Zoom/Pan/Reset）。
  *  @note  [复位走全量域] 框架的 zoomReset 把轴域复位到图表创建时的默认
  *         值（0..10 秒，约等于 1970 年），对本页毫无意义（曲线空白）。
- *         收到 Reset 就按全量筛选结果重建一次（等价"重新生成图表"）。 */
+ *         收到 Reset 就回到全量域（等价"重新生成图表"）。 */
 static void histViewportSlot(XObject* receiver, XVarList* args)
 {
     HsfDataHistory* self = (HsfDataHistory*)receiver;
@@ -1137,10 +1608,35 @@ static void histViewportSlot(XObject* receiver, XVarList* args)
         reason = XVarList_arg(args, int);
     }
     if (reason == (int)XChartView_ViewportChange_Reset) {
-        histBuildChart(self);
+        histChartResetFull(self);
         return;
     }
+
+    /* ---------- 缩放取数：按可见时间窗向服务端重取该段行 ----------
+     *
+     * [为什么必须取数、不能只重采样] 本页的图表数据是**跨区间跳批抽样**
+     * （batches 批 × CHUNK 行铺满全区间，见 histChartFetchContinue）：
+     * 库里 18039 行只取到 ~500 行，分成若干段 49 行的簇，中间是**空的**
+     * ——那些行压根没取过。缩放只做本地重采样（histBuildChartEx(true)）
+     * 时，缩到簇与簇之间的空档里，窗内一个点都没有，曲线只剩两条长直
+     * 线段连成的斜线；缩到簇内部也只画那 49 行（用户 2026-11-09 实测：
+     * "图表缩放后不够连续"）。故缩放后要**按可见窗重新向服务端取数**，
+     * 取到的才是这一段的全部行（窗口模式逐行取，见
+     * histChartFetchContinue 的"窗口态·逐行取"分支）。
+     */
+    if (histChartUpdateWant(self)) {
+        /* [缺数据 ⇒ 先别重采样] 手里的数据是抽样来的，按新视口重采样会
+         * 把窗内的点滤没 ⇒ 曲线"几乎消失、只剩左边缘几条竖线"（现场
+         * 截图）。故缺数据时**保持原曲线不动**，等取回的窗内数据到位
+         * 再重画（histChartFetchFinish 里重建）。 */
+        histChartTryStart(self);
+        return;
+    }
+    /* [够用 ⇒ 本地重采样] 轴域不动（用它自己的那对值裁点）。重采样后状态行
+     * 必须按**当前窗口**重算：缩放态的"窗内 N 行"要随视口变，不能停在上
+     * 一次取数的文案（用户口径：状态行与可视窗口不一致）。 */
     histBuildChartEx(self, true);
+    histChartStatusRefresh(self);
 }
 
 /* ==================== 图表悬浮气泡（鼠标悬停 / 触摸点按） ====================
@@ -1182,6 +1678,87 @@ static void histFormatTsAbs(int64_t tsMs, int64_t tzOffsetMs,
     snprintf(out, (size_t)cap, "%04d-%02d-%02d %02d:%02d:%02d",
              XDate_year(&d), XDate_month(&d), XDate_day(&d),
              XTime_hour(&t), XTime_minute(&t), XTime_second(&t));
+}
+
+/** @brief ts 访问器：HsfHistPoint 数组的 m_ts（给 HsfChartZoom 的区间统计用）。
+ *  @note  用访问器而不是临时数组：统计与绘制读的是**同一批点**（不必为
+ *         了状态行另建/排序一份 ts 数组，也不会有"统计口径与绘制的点
+ *         不一致"的第二事实源）。 */
+static int64_t histChartPointTsAt(const void* user, int index)
+{
+    const HsfHistPoint* pts = (const HsfHistPoint*)user;
+    return pts ? pts[index].m_ts : 0;
+}
+
+/** @brief 当前图表的"行集"向量（取第一条有点的列）。
+ *  @details 各列的行集相同（同一批行按 m_hasNum 逐列入点，缺值的列少几条）；
+ *           统计视口行数只看一条列即可，不逐列累加（否则同一个行被数 N 遍）。 */
+static const XVector* histChartRowsVec(const HsfDataHistory* self)
+{
+    int k;
+    if (!self) return NULL;
+    for (k = 0; k < HIST_SERIES_MAX; ++k) {
+        const XVector* vec = self->m_chartPts[k];
+        if (vec && XVector_size_base((const XContainer*)vec) > 0) return vec;
+    }
+    return NULL;
+}
+
+/** @brief 图表状态行：按**当前视口**重算（不得残留全量区间的文案）。
+ *  @details [两套口径]
+ *           · 全量视图（未缩放）：整段筛选结果的抽样曲线；
+ *           · 锁定视口（缩放态）：窗口起止时刻 + 窗内行数 + 视口行数 +
+ *             逐行/抽样 + 是否铺满视口。
+ *           [为什么必须按视口重算] 缩放后用户看到的是**一段时间窗**，
+ *           状态行若还写"筛选共 18039 行"（全量区间），与可视窗口对不上
+ *           （用户口径："状态行文字仍是全量区间的描述"）。
+ *           [文案与回归锁共用] 窗口口径的拼装在 HsfChartZoom_statusText，
+ *           断言在 Test/XProtocolTest/hsf_chart_zoom_test.c §Z11。 */
+static void histChartStatusRefresh(HsfDataHistory* self)
+{
+    char buf[256];
+    char whenLo[32];
+    char whenHi[32];
+    int rows;
+    if (!self) return;
+    rows = self->m_chartTotal > 0 ? self->m_chartTotal : self->m_chartRootCount;
+    if (!histChartViewLocked(self)) {
+        /* 全量视图：整段筛选结果的抽样曲线（与全量取数收尾口径一致）。 */
+        if (rows <= 0)
+            snprintf(buf, sizeof(buf), "图表数据：筛选结果为 0 行");
+        else
+            snprintf(buf, sizeof(buf),
+                     "图表数据：筛选共 %d 行，已按全区间抽样", rows);
+        XLabel_setText_2(&self->m_status, buf);
+        return;
+    }
+    {
+        HsfChartZoomView view;
+        HsfChartZoomStatus st;
+        const XVector* vec;
+        const HsfHistPoint* base = NULL;
+        int n = 0;
+        if (!histChartViewNow(self, &view)) return;
+        histFormatTsAbs(view.viewLo, self->m_tzOffsetMs, whenLo,
+                        (int)sizeof(whenLo));
+        histFormatTsAbs(view.viewHi, self->m_tzOffsetMs, whenHi,
+                        (int)sizeof(whenHi));
+        memset(&st, 0, sizeof(st));
+        st.rowsHeld = rows;
+        st.sampled = self->m_chartWinSampled;
+        vec = histChartRowsVec(self);
+        if (vec) {
+            n = (int)XVector_size_base((const XContainer*)vec);
+            base = (const HsfHistPoint*)XVector_data((XVector*)vec);
+        }
+        st.rowsInView = HsfChartZoom_countInView(&view, histChartPointTsAt,
+                                                 base, n);
+        st.filled = HsfChartZoom_viewFilled(&view, histChartPointTsAt,
+                                            base, n);
+        (void)HsfChartZoom_statusText(whenLo, whenHi, &st, buf,
+                                      (int)sizeof(buf));
+        XLabel_setText_2(&self->m_status, buf);
+    }
 }
 
 /** @brief 某列在给定 X 附近最近的真实点（列向量按 m_x 升序，二分）。
@@ -1305,9 +1882,9 @@ static void histPressedSlot(XObject* receiver, XVarList* args)
 
 /** @brief 确保全量筛选数据已就绪（累加分批；未完成则续拉）。
  *  @details [为什么要分批] 单次请求 limit 协议上限 50（服务端还会夹到
- *           [1,50]；图表批实际取 HIST_CHART_CHUNK=49，见该宏注释），
+ *           [1,50]；图表批实际取 41..49，见 HIST_CHART_CHUNK 注释），
  *           而"筛选后全部数据"可达上千行。这里用**同一组筛选条件**
- *           （m_kwText/m_loTs/m_hiTs/列筛选）按 CHUNK 行游标累加，直到取满
+ *           （m_kwText/m_loTs/m_hiTs/列筛选）按批游标累加，直到取满
  *           服务端本次应答的 total 或触发 HIST_CHART_MAX_ROWS 安全上限。
  *           累加数据存 m_chartPts[k]（XVector，随页对象释放）。
  *  @note  累加期间库在持续入库：HsfLinkClient 每帧的 beforeTs 重取"现在"，
@@ -1366,17 +1943,27 @@ static void histChartDataDedup(HsfDataHistory* self)
  *           （见 HIST_CHART_CHUNK）。
  *  @param self   页面。
  *  @param offset 本批起点。
- *  @param limit  本批行数（探测批 1 / 正式批 HIST_CHART_CHUNK）。
+ *  @param limit  本批行数（探测批 1..8 / 正式批 41..49；见
+ *                HIST_CHART_CHUNK 的轮转说明）。
  *  @return 请求已发出返回 true。 */
 static bool histChartRequest(HsfDataHistory* self, int offset, int limit)
 {
-    uint32_t cols[15];
+    HistCols cols;
     int n;
+    int64_t loTs;
+    int64_t hiTs;
+    HIST_COLS_SIZE_ASSERT(cols);
     if (!self) return false;
     n = histKwCols(self, cols);
+    /* [取数窗] 窗口态按**本轮取数的窗快照**取（m_chartFetchLo/Hi，
+     * 不是"当前想取的窗"——一轮取数必须自始至终同一个窗，否则中途换窗
+     * 会把两个窗的行混在一批里）；全量态按筛选条件的时间窗取。
+     * 两者都带同一份关键字与列集 ⇒ 缩放窗里的行与表格口径一致。 */
+    loTs = (self->m_chartFetchLo > 0) ? self->m_chartFetchLo : self->m_loTs;
+    hiTs = (self->m_chartFetchHi > 0) ? self->m_chartFetchHi : self->m_hiTs;
     if (!HsfLinkClient_historyQueryWindow(offset, limit, false,
                                           self->m_kwText, cols, n,
-                                          self->m_loTs, self->m_hiTs))
+                                          loTs, hiTs))
         return false;
     self->m_chartReqOffset = offset;
     self->m_chartReqLimit = limit;
@@ -1384,32 +1971,113 @@ static bool histChartRequest(HsfDataHistory* self, int offset, int limit)
     return true;
 }
 
-/** @brief 取全量数据入口（生成图表按钮 / 切图表视图）。 */
-static void histChartFetchStart(HsfDataHistory* self)
+/** @brief 本轮取数的批行数（轮转取值；相邻两轮必不相等）。
+ *  @details [为什么要轮转] 应答归属只能靠服务端回显的 (offset,limit)
+ *           （应答槽只有一份，见 histTimerCb）。相邻两轮取数若用同一个
+ *           limit，上一轮**被顶掉**的在途应答会被下一轮按同键认领 ⇒
+ *           旧窗的行混进新窗（缩放取数最忌讳：数据与视口错位）。
+ *           正式批取 41..49、探测批取 1..8（都与页大小 10/20/50 不撞，
+ *           探测批与正式批也不撞）；轮转规则见 HsfChartZoom_nextLimits。 */
+static void histChartNextLimits(HsfDataHistory* self, int* probe, int* chunk)
 {
-    if (!self || !self->m_chart) return;
-    if (self->m_chartFetching) return;
-    if (!self->m_chartDataDirty && self->m_chartRootCount > 0) {
-        histBuildChart(self);   /* 数据已就绪：直接重建 */
-        return;
-    }
-    histChartDataClear(self);
+    int seq;
+    if (!self) return;
+    seq = self->m_chartLimitSeq;
+    self->m_chartLimitSeq = (seq + 1) % 72;   /* 8×9：探测/正式两档轮转周期 */
+    HsfChartZoom_nextLimits(seq, probe, chunk);
+}
+
+/** @brief 发起一轮图表取数（全量模式 or 窗口模式）。
+ *  @param winMode true=按窗口取（窗内逐行全分辨率）；false=按筛选域跨
+ *                 区间跳批抽样（未缩放时的全貌曲线）。
+ *  @param winLo   窗口下界（绝对 epoch ms；仅 winMode=true 时有效）。
+ *  @param winHi   窗口上界（绝对 epoch ms）。
+ *  @return 请求已发出返回 true。
+ *  @details [基准保持] 窗口模式**沿用旧基准**（m_chartBaseTs 不变）：
+ *           用户视口（轴域）与数据 X 值都以它为基准，换了基准两者就
+ *           脱钩 ⇒ 数据点落到轴域外（现场"缩放后只剩左边缘几条竖线"
+ *           就是这个错位）。全量模式重新取基准（数据整体换了，轴域
+ *           随重建一起换）。 */
+static bool histChartFetchBegin(HsfDataHistory* self, bool winMode,
+                                int64_t winLo, int64_t winHi)
+{
+    int probeLimit = HSF_CHART_ZOOM_PROBE_MIN;
+    int chunkLimit = HIST_CHART_CHUNK;
+    if (!self || !self->m_chart) return false;
+    if (self->m_chartFetching) return false;
+    /* [窗口态保留已持有窗口的元信息] 取完才落地新窗（见
+     * histChartFetchFinish），这里不动 m_chartWin*。 */
+    histChartDataClear(self, winMode);
     if (!histChartDataEnsure(self)) {
         XLabel_setText_2(&self->m_status, "图表失败：内存不足");
-        return;
+        return false;
     }
     self->m_chartFetching = true;
     self->m_chartFetchOffset = 0;
-    XLabel_setText_2(&self->m_status, "正在读取筛选结果（图表）…");
-    /* 首批只拿 1 行就够算 total（服务端 COUNT 与页内容同一条 WHERE）：
-     * 用 limit=1 换来"立刻知道总量"，再据此规划跨区间跳批，避免先拉
-     * 满页才发现有 20 万行。 */
-    if (!histChartRequest(self, 0, 1)) {
+    self->m_chartFetchWin = winMode;
+    self->m_chartFetchLo = winMode ? winLo : 0;
+    self->m_chartFetchHi = winMode ? winHi : 0;
+    /* [轴域只属于窗口取数] 全量取数没有"锁定轴域"这回事（轴域随数据跨度
+     * 重设）：把上一轮窗口的轴域快照与模式一起清掉，进度重绘与最终结果
+     * 才是同一口径（全量视图）。 */
+    if (!winMode) {
+        self->m_chartViewLo = 0.0;
+        self->m_chartViewHi = 0.0;
+        self->m_chartWinMode = false;
+    }
+    histChartNextLimits(self, &probeLimit, &chunkLimit);
+    self->m_chartProbeLimit = probeLimit;
+    self->m_chartChunkLimit = chunkLimit;
+    XLabel_setText_2(&self->m_status,
+                     winMode ? "正在读取缩放窗口（图表）…"
+                             : "正在读取筛选结果（图表）…");
+    /* [取数期间提速轮询] 一批一应答、应答槽单份 ⇒ 轮询周期直接决定取数
+     * 耗时（页面默认 200ms ⇒ 一批 200ms，几百行要等几十秒）。取数期间
+     * 临时降到 HIST_CHART_FETCH_POLL_MS，收尾恢复（见
+     * histChartFetchFinish）。 */
+    if (self->m_timer)
+        XTimer_setInterval(self->m_timer, HIST_CHART_FETCH_POLL_MS);
+    /* 首批只拿几行就够算 total（服务端 COUNT 与页内容同一条 WHERE） */
+    if (!histChartRequest(self, 0, probeLimit)) {
         self->m_chartFetching = false;
         self->m_chartDataDirty = true;   /* 没取到数：保持"需重取"，别当成已就绪 */
         XLabel_setText_2(&self->m_status, "图表失败：服务端未连接");
         XPrintf("HsfDataHistory: chart fetch failed to start\n");
+        if (self->m_timer)
+            XTimer_setInterval(self->m_timer, HsfSettingsLocal_refreshMs());
+        return false;
     }
+    return true;
+}
+
+/** @brief 取全量数据入口（生成图表按钮 / 切图表视图）。 */
+static void histChartFetchStart(HsfDataHistory* self)
+{
+    if (!self || !self->m_chart) return;
+    /* [锁定视口时不许"回全量重建"] 缩放态（或窗口取数在途）下点"生成折线图"，
+     * 走 histBuildChart（useVisible=false）会把用户视口改写成数据跨度——
+     * 与取数窗脱钩。锁定期间交给 histChartResetFull 的语义处理。 */
+    if (!self->m_chartDataDirty && self->m_chartRootCount > 0 &&
+        !histChartViewLocked(self)) {
+        /* 全量数据已在手：直接重建（轴域回到数据跨度） */
+        self->m_chartWantPending = false;
+        self->m_chartWinLo = 0;
+        self->m_chartWinHi = 0;
+        self->m_chartWinSampled = false;
+        self->m_chartViewLo = 0.0;
+        self->m_chartViewHi = 0.0;
+        histBuildChart(self);
+        histChartStatusRefresh(self);
+        return;
+    }
+    /* 需要重新取全量（数据脏 / 手里只有窗口数据） */
+    self->m_chartWantPending = false;
+    self->m_chartWantWin = false;
+    self->m_chartWantLo = 0;
+    self->m_chartWantHi = 0;
+    self->m_chartViewLo = 0.0;
+    self->m_chartViewHi = 0.0;
+    (void)histChartFetchBegin(self, false, 0, 0);
 }
 
 /** @brief 累加结束：清 fetching 态并按全量数据重建图表（幂等）。
@@ -1425,84 +2093,145 @@ static void histChartFetchFinish(HsfDataHistory* self, const char* note,
                                  bool complete)
 {
     if (!self) return;
-    self->m_chartFetching = false;
     self->m_chartReqValid = false;   /* 在途批的应答：到此为止 */
     /* 取完 ⇒ 数据可用（清 dirty）；半截 ⇒ 保持"需重取"（下见上）。 */
     self->m_chartDataDirty = !complete;
+    /* [轮询周期恢复] 取数期间提速过，这里恢复界面刷新周期。 */
+    if (self->m_timer)
+        XTimer_setInterval(self->m_timer, HsfSettingsLocal_refreshMs());
+    if (complete) {
+        if (self->m_chartFetchWin) {
+            /* 窗口态落地：已持有数据 = 本轮取的那个窗（绝对时刻）。 */
+            self->m_chartWinLo = self->m_chartFetchLo;
+            self->m_chartWinHi = self->m_chartFetchHi;
+            self->m_chartWinMode = true;
+            /* [轴域按同一对值重放] 取数窗就是由 m_chartViewLo/Hi 这一对轴域
+             * 值换算出来的（HsfChartZoom_view），收尾时把轴域**按原值放回**：
+             * 取数期间任何路径动过轴域，取回的点都会与轴域不同参（旧实现
+             * 的"全量态重绘"就把轴域改成了已到达几行的时间跨度 ⇒ 现场
+             * "缩放后曲线不连续、贴左边缘"）。
+             * [不覆盖用户的新视口] 用户在取数期间自己缩放过 ⇒ 轴域已是
+             * 另一个值，这里不覆盖（下方 UpdateWant 会按新视口补数据）。 */
+            {
+                double curLo = 0.0;
+                double curHi = 0.0;
+                if (histVisibleX(self, &curLo, &curHi) &&
+                    fabs(curLo - self->m_chartViewLo) <= 1e-6 &&
+                    fabs(curHi - self->m_chartViewHi) <= 1e-6)
+                    XChart_setXRange(self->m_chart, self->m_chartViewLo,
+                                     self->m_chartViewHi);
+            }
+        } else {
+            /* 全量态落地：已持有数据 = 筛选域的抽样曲线；
+             * 全量域 = 数据的时间跨度（用来判"用户是不是缩放了"）。 */
+            self->m_chartWinLo = 0;
+            self->m_chartWinHi = 0;
+            self->m_chartWinMode = false;
+            self->m_chartWinSampled = false;
+            self->m_chartViewLo = 0.0;
+            self->m_chartViewHi = 0.0;
+            {
+                int64_t dLo = 0;
+                int64_t dHi = 0;
+                if (histChartDataRange(self, &dLo, &dHi)) {
+                    self->m_chartFullLo = dLo;
+                    self->m_chartFullHi = dHi;
+                }
+            }
+        }
+    } else {
+        /* [半截 ⇒ 窗口元信息作废] 数据只取了一部分，与"已持有窗口"对不上
+         * （否则下一次缩放会以为该窗已取齐、实际是半截）。退回全量口径，
+         * 全量域也一并作废（下次全量取数后重新学）。 */
+        self->m_chartWinLo = 0;
+        self->m_chartWinHi = 0;
+        self->m_chartWinMode = false;
+        self->m_chartWinSampled = false;
+        self->m_chartFullLo = 0;
+        self->m_chartFullHi = 0;
+        self->m_chartViewLo = 0.0;
+        self->m_chartViewHi = 0.0;
+        /* [锁也要撤] 中止后手里是半截数据（全量口径），轴域必须回到数据跨度
+         * ⇒ 释放"窗口取数在途"这项锁定，否则重建会按老视口裁半截数据。 */
+        self->m_chartFetchWin = false;
+    }
+    /* [在途位最后清] 上面刚落地"本轮取的是窗口还是全量"：锁定判定
+     * （histChartViewLocked）要看到新状态，下面的重建与状态行才走对口径
+     * （窗口收尾 ⇒ 按可见域裁点、不改轴域；全量收尾 ⇒ 轴域回到数据跨度）。 */
+    self->m_chartFetching = false;
+    /* [收尾规整] 采样/二分/轴范围都要求 X 升序（服务端按 ts 降序返回，
+     * 跨批跳跃后整体无序）→ 收尾统一排序 + 去重（窗口模式攒批重绘，
+     * 这里最后一次全量规整）。 */
+    histChartDataDedup(self);
+
+    histChartRebuild(self);
+    /* [状态行按当前视口重算] note 只用于异常终局（断链/半截）；正常收尾
+     * 一律由 histChartStatusRefresh 按**当前窗口**出新文案——不能把全量
+     * 区间的"筛选共 N 行"留在缩放态（用户口径：状态行与可视窗口不一致）。 */
     if (note) XLabel_setText_2(&self->m_status, note);
-    histBuildChart(self);
+    else histChartStatusRefresh(self);
+    /* [收尾后补取] 用户在取数期间又缩放了 ⇒ 视口要的窗可能与刚取到的
+     * 不同 ⇒ 再判一次，缺就排队再取一轮（不取就会出现空图）。 */
+    if (histChartUpdateWant(self)) histChartTryStart(self);
 }
 
-/** @brief 每批应答到达：累加 → 跨区间推进下一批 → 取完重建。
- *  @details [跨全区间等距跳批] 每图例上限 N 点，而筛选结果可达 20 万行
- *           （实测 Python 参照库 202118 行）。若只连续取前 5000 行，图画
- *           的是"最近一小段"而不是"全部筛选结果的平均取点"——用户口径
- *           明确要后者。故：
- *             1) 首批拿 total（服务端同一 WHERE 的计数）；
- *             2) 计划批数 batches = min(total/chunk, 上限)，步长
- *                step = total / batches（行）；
- *             3) 第 b 批 offset = b * step，取 chunk 行；
- *             4) 各批拼起来天然覆盖 [0, total) 全区间，再交给
- *                等距抽样（histBuildChartEx）压到每图例 N 点。
- *           总请求数=batches（受内存上限约束），内存 ≤ batches*chunk 行，
- *           与库大小无关。 */
+/** @brief 每批应答到达：累加 → 推进下一批 → 取完重建。
+ *  @details [两种取数计划]
+ *           ① **全量模式**（未缩放）：跨全区间等距跳批。每图例上限 N 点，
+ *              而筛选结果可达 20 万行（实测 Python 参照库 202118 行）。
+ *              若只连续取前 5000 行，图画的是"最近一小段"而不是"全部
+ *              筛选结果的平均取点"——用户口径明确要后者。故：
+ *                a) 首批拿 total（服务端同一 WHERE 的计数）；
+ *                b) 计划批数 batches = min(total/chunk, 上限)，步长
+ *                   step = total / batches（行）；
+ *                c) 第 b 批 offset = b * step，取 chunk 行；
+ *                d) 各批拼起来天然覆盖 [0, total) 全区间，再交给
+ *                   等距抽样（histBuildChartEx）压到每图例 N 点。
+ *              总请求数=batches（受内存上限约束），内存 ≤ batches*chunk 行，
+ *              与库大小无关。
+ *           ② **窗口模式**（缩放后按可见时间窗取）：窗内行数不超
+ *              HIST_CHART_WIN_FULL_ROWS 时**连续取**（步长 = 批行数），
+ *              取回窗内**每一行** ⇒ 曲线是窗内全分辨率（连续、不尖角）；
+ *              超过上限则退回①的跳批（窗内抽样，状态行注明）。 */
 static void histChartFetchContinue(HsfDataHistory* self,
                                    const HsfHistoryPage* page)
 {
     int got;
+    const int chunk = (self && self->m_chartChunkLimit > 0)
+                          ? self->m_chartChunkLimit
+                          : HIST_CHART_CHUNK;
     if (!self || !page || !page->m_valid) return;
     got = page->m_count;
 
-    /* ---- 探测批（limit=1）：只取 total，用于规划跨区间跳批。 ---- */
+    /* ---- 探测批（limit=1..8）：只取 total，用于规划取数批。 ---- */
     if (self->m_chartBatches == 0) {
         int total = page->m_total > 0 ? page->m_total : got;
-        int batches;
-        int step;
+        HsfChartZoomPlan plan;
+        int want;
         if (total <= 0) {
-            /* 筛选结果确实为 0 行：这是一个**完整**的答案（不是半截）。 */
-            histChartFetchFinish(self, "图表数据：筛选结果为 0 行", true);
+            /* 筛选结果确实为 0 行：这是一个**完整**的答案（不是半截）。
+             * [文案交给状态行统一拼] 窗口态要说"该时间段无记录"（窗口口径），
+             * 不能复用全量区间的"筛选结果为 0 行"。 */
+            histChartFetchFinish(self, NULL, true);
             return;
         }
         self->m_chartTotal = total;
-        /* [批数 = 目标点数 / 每批点数] 每图例上限 N 点（可设置，缺省 500），
-         * 每批取 chunk=HIST_CHART_CHUNK 行（49）⇒ 批数 ≈ N/49（缺省 11 批）。
-         * 这样"拼起来"的点数恰好接近上限，等距抽样只做轻微压缩，不会出现
-         * "每批只用到几点"的分段锯齿（实测：100 批时曲线呈周期性尖齿）。
-         * 同时保证批数不超过内存上限可容纳的批数。 */
-        {
-            int want = self->m_bar ? HsfDataBar_maxPoints(self->m_bar)
-                                   : HSFDATABAR_MAX_POINTS_DEFAULT;
-            int maxBatches = HIST_CHART_MAX_ROWS / HIST_CHART_CHUNK;
-            if (want < HSFDATABAR_MAX_POINTS_MIN) want = HSFDATABAR_MAX_POINTS_MIN;
-            batches = (want + HIST_CHART_CHUNK - 1) / HIST_CHART_CHUNK;
-            if (batches < 1) batches = 1;
-            if (batches > maxBatches) batches = maxBatches;
-            /* 库比"批数×chunk"还小时，按实际行数算（避免空批）。 */
-            if (batches > (total + HIST_CHART_CHUNK - 1) / HIST_CHART_CHUNK)
-                batches = (total + HIST_CHART_CHUNK - 1) / HIST_CHART_CHUNK;
-            /* [至少 2 批] 单批只能取连续 CHUNK 行；total>CHUNK 时一批画的是
-             * "头部一小段"，不是覆盖面。哪怕每图例只要 CHUNK 点，也要
-             * 头尾各取一段（2 批）才叫"在全部结果里平均取点"。 */
-            if (batches < 2 &&
-                total > HIST_CHART_CHUNK)
-                batches = 2;
-            if (batches < 1) batches = 1;
-        }
-        /* [步长让末批贴区尾] 若用 total/batches，末批起点 + chunk 往往
-         * 短于 total（实测 20 万行量级时末批只覆盖到区中段，丢掉最近一段
-         * 数据）。改按 (total-chunk)/(batches-1) 均分剩余区间，使第
-         * batches-1 批起点 = total-chunk，末批正好覆盖区尾；batches=1 时
-         * 直接取 offset 0（一次 CHUNK 行，交给等距抽样压点）。 */
-        if (batches <= 1) step = HIST_CHART_CHUNK;
-        else {
-            step = (total - HIST_CHART_CHUNK) / (batches - 1);
-            if (step < HIST_CHART_CHUNK) step = HIST_CHART_CHUNK;
-        }
-        self->m_chartBatches = batches;
-        self->m_chartStep = step;
+        /* [批次计划] 窗口态＝窗内逐行取（不跳批、不丢段 ⇒ 曲线连续）；
+         * 全量态＝跨区间跳批抽样（未缩放时看全貌）。计划规则见
+         * HsfChartZoom_planBatches（纯函数，回归锁逐条钉住）。 */
+        want = self->m_bar ? HsfDataBar_maxPoints(self->m_bar)
+                           : HSFDATABAR_MAX_POINTS_DEFAULT;
+        if (want < HSFDATABAR_MAX_POINTS_MIN) want = HSFDATABAR_MAX_POINTS_MIN;
+        (void)HsfChartZoom_planBatches(total, chunk,
+                                        self->m_chartFetchWin,
+                                        HIST_CHART_WIN_FULL_ROWS, want,
+                                        HIST_CHART_MAX_ROWS, &plan);
+        self->m_chartBatches = plan.batches > 0 ? plan.batches : 1;
+        self->m_chartStep = plan.step > 0 ? plan.step : chunk;
+        self->m_chartWinSampled = plan.sampled;
         self->m_chartBatchDone = 0;
         self->m_chartFetchOffset = 0;
-        if (!histChartRequest(self, 0, HIST_CHART_CHUNK)) {
+        if (!histChartRequest(self, 0, chunk)) {
             XPrintf("HsfDataHistory: chart fetch aborted at offset=0\n");
             /* 首批就没发出去：一行都没有 ⇒ 半截（数据不可用），保持 dirty。 */
             histChartFetchFinish(self, "图表数据：连接中断", false);
@@ -1517,46 +2246,52 @@ static void histChartFetchContinue(HsfDataHistory* self,
     if (got <= 0) {
         /* 本批 0 行：服务端在这个 offset 已经没数据（总数比探测时更小），
          * 计划内的区间取不到更多了 ⇒ 按"取完"收尾（不是断链）。
-         * [收尾文案别停在进度行] 以前传 NULL 不清状态，界面会停在上一拍的
-         * "读取筛选结果（图表）… 第 k/N 批"，看上去还在取数。 */
-        histChartDataDedup(self);
-        histChartFetchFinish(self, "图表数据：已取完（末批无数据）", true);
+         * [收尾文案交给状态行统一拼] 以前传 NULL 不清状态，界面会停在上一拍
+         * 的"读取筛选结果（图表）… 第 k/N 批"，看上去还在取数；现在由
+         * histChartStatusRefresh 按当前窗口出终局文案。 */
+        histChartFetchFinish(self, NULL, true);
         return;
     }
     /* [规整成 X 升序] 采样/二分/轴范围都要求单调升序（服务端按 ts 降序
-     * 返回，跨批跳跃后整体无序）→ 每批排序 + 去重。 */
-    histChartDataDedup(self);
+     * 返回，跨批跳跃后整体无序）→ 每批排序 + 去重。
+     * [重绘节奏] 窗口模式可能上百批，每批都排序+重画是 O(n log n) 大头
+     * ⇒ 攒 HIST_CHART_WIN_REDRAW_BATCH 批画一次（数据仍在追加，画的是
+     * 预览）；全量模式批数少，照旧每批都画。 */
     {
         char prog[160];
         const int total = self->m_chartTotal > 0 ? self->m_chartTotal : page->m_total;
         snprintf(prog, sizeof(prog),
-                 "读取筛选结果（图表）… 第 %d/%d 批 · 共 %d 行",
+                 "%s… 第 %d/%d 批 · 共 %d 行",
+                 self->m_chartFetchWin ? "读取缩放窗口（图表）"
+                                       : "读取筛选结果（图表）",
                  self->m_chartBatchDone, self->m_chartBatches, total);
         XLabel_setText_2(&self->m_status, prog);
-        /* [必须传 false] useVisible=true 会按当前轴域过滤，此刻轴可能还是
-         * 初始 0..10 或上一组筛选的旧域 ⇒ 点全被滤掉、曲线空白（实测）。
-         * 累加期间按全量域重画，轴域在 finish 里统一定。 */
-        histBuildChartEx(self, false);
+        if (!self->m_chartFetchWin ||
+            (self->m_chartBatchDone % HIST_CHART_WIN_REDRAW_BATCH) == 0) {
+            histChartDataDedup(self);
+            /* [按模式重画] 全量态：轴域 = 数据跨度（此刻数据还只到一半，
+             * 轴域会跟着长，最后一批到齐时统一定）；窗口态：**不动轴域**
+             * （用户的视口要保住），只按可见域重画。 */
+            histChartRebuild(self);
+        }
     }
     /* 终止：批数用尽 / 已取到区尾 / 触及内存上限。 */
     if (self->m_chartBatchDone >= self->m_chartBatches ||
-        got < HIST_CHART_CHUNK ||
+        got < chunk ||
         self->m_chartRootCount >= HIST_CHART_MAX_ROWS) {
-        char buf[160];
-        histChartDataDedup(self);
-        snprintf(buf, sizeof(buf), "图表数据：筛选共 %d 行，已按全区间抽样",
-                 self->m_chartTotal > 0 ? self->m_chartTotal : self->m_chartRootCount);
-        histChartFetchFinish(self, buf, true);
+        /* [文案一律按窗口重算] 窗口态要写"窗口 HH:MM~HH:MM · 窗内 N 行（视口 M 行）"，
+         * 不能停在"筛选共 N 行"这种全量区间口径（用户口径：状态行与可视窗口
+         * 不一致）。拼装在 histChartStatusRefresh / HsfChartZoom_statusText。 */
+        histChartFetchFinish(self, NULL, true);
         return;
     }
     {
         const int nextOffset = self->m_chartStep * self->m_chartBatchDone;
-        if (!histChartRequest(self, nextOffset, HIST_CHART_CHUNK)) {
+        if (!histChartRequest(self, nextOffset, chunk)) {
             /* [失败终局可观测] 断链/背压拒发：保留已累加部分照常出图，
              * 并留一行日志（不反复重试，避免把连接打进死循环）。 */
             XPrintf("HsfDataHistory: chart fetch aborted at offset=%d\n",
                     nextOffset);
-            histChartDataDedup(self);
             /* 只取到一部分 ⇒ 保持 dirty：下次「生成折线图」整批重取，
              * 而不是把"已画已取部分"当成完整结果（复审①的同类根因）。 */
             histChartFetchFinish(self, "图表数据：连接中断（已画已取部分）",
@@ -1609,7 +2344,13 @@ static void histBarAction(void* userData, int action)
         histSetView(self, 1);
         break;
     case HsfDataBarAction_ChannelChanged:
-        if (self->m_viewMode == 1) histBuildChart(self);
+        /* [通道切换 = 只重画] 走 histChartRebuild（锁定视口时按可见域裁点、
+         * 不动轴域）；旧实现走 histBuildChart（useVisible=false）会把缩放
+         * 态的轴域改写成数据跨度 ⇒ 取数窗与轴域脱钩。 */
+        if (self->m_viewMode == 1) {
+            histChartRebuild(self);
+            histChartStatusRefresh(self);
+        }
         break;
     case HsfDataBarAction_ColumnFilterChanged:
         histApplyColumnFilter(self);
@@ -1673,10 +2414,10 @@ static void histBarAction(void* userData, int action)
  *           目前没把它随 HsfHistoryPage 交给页面（hsfLcDispatch 手里有 frame，
  *           见 HsfLinkClient.c:772）。在补上这条链路之前，页面只能按服务端
  *           回显的 offset/limit 认领，故必须靠**构造**保证三类消费者的 limit
- *           两两不相交（探测批 1 / 图表正式批 HIST_CHART_CHUNK=49 / 页与导出
+ *           两两不相交（探测批 1..8 / 图表正式批 41..49 / 页与导出
  *           10·20·50，见 HIST_CHART_CHUNK 注释）：
  *             · 分页/导出（limit=页大小） → 填表 / 写盘；
- *             · 图表探测批（limit=1）/ 正式批（limit=HIST_CHART_CHUNK） → 喂累加器；
+ *             · 图表探测批（limit=1..8）/ 正式批（limit=41..49） → 喂累加器；
  *             · 谁都对不上（被取消/已被新请求取代的迟到应答） → 丢弃。
  *           旧实现只看 m_chartFetching 标志猜归属：取消图表累加后，已在途
  *           的那一批应答一到，标志已是 false ⇒ 被 histFillTable 当表格页
@@ -1695,8 +2436,26 @@ static void histTimerCb(void* userData, XTimerData* timer)
     const HsfHistoryPage* page;
     (void)timer;
     if (!self) return;
+    /* [待发取数先补发] 视口变化登记的取数任务（缩放取数）在此补发：
+     *   · 防抖到期（滚轮连发后用户停手，不再有新的视口事件）；
+     *   · 上一轮在途取数刚收尾（histChartFetchFinish 排的任务）。
+     * 不必等下一次视口事件 ⇒ 用户停下滚轮也能把窗内数据取回来。 */
+    histChartTryStart(self);
     page = HsfLinkClient_history();
-    if (!page || !page->m_valid) return;
+    if (!page) return;
+    /* [服务端拒绝要显示出来 2026-11-10] 落盘关闭（storage/enabled=0）等
+     * 情况下服务端回的是失败包络 ⇒ 结果结构 m_valid=false 且带 m_error
+     * 原文。此前进到这里直接 return ⇒ 状态行永远停在「读取中」、表格空
+     * ⇒ 现场看着像「表格数据没了」，看不到真正原因。现在把服务端给的
+     * 原文显示在状态行上（XLabel 同值早退，不会每拍标脏）。 */
+    if (!page->m_valid) {
+        if (page->m_error[0]) {
+            char ebuf[224];
+            snprintf(ebuf, sizeof(ebuf), "查询失败：%s", page->m_error);
+            XLabel_setText_2(&self->m_status, ebuf);
+        }
+        return;
+    }
     /* [同一应答只处置一次] m_seq 每次成功解析 +1；重复读到同一条就返回，
      * 否则每拍都会把同一批再累加一遍。 */
     if (page->m_seq == self->m_seenSeq) return;
@@ -1722,8 +2481,9 @@ static void histTimerCb(void* userData, XTimerData* timer)
             self->m_exportPending = false;
             self->m_exportColCount = 0;
             self->m_seenSeq = page->m_seq;
-            if (histWriteCsv(page, self->m_exportCols, colCount,
-                             path, (int)sizeof(path))) {
+            if (histWriteExport(page, self->m_exportCols, colCount,
+                                self->m_exportFormat,
+                                path, (int)sizeof(path))) {
                 char buf[220];
                 snprintf(buf, sizeof(buf), "已导出 %d 行 × %d 列 → %s",
                          page->m_count, colCount, path);
@@ -1765,7 +2525,13 @@ static void histTimerCb(void* userData, XTimerData* timer)
         /* 图表数据未因筛选作废时，只按可见域重采样（不重拉）；
          * 作废（筛选/清除/重新加载）则整批重取。 */
         if (self->m_chartDataDirty) histChartFetchStart(self);
-        else histBuildChartEx(self, true);
+        else {
+            histBuildChartEx(self, true);
+            /* [状态行口径跟着视图走] 上面 histFillTable 刚把状态行写成
+             * "共 N 条（本页 M）· 第 x/y 页"——那是**表格页**的文案。图表
+             * 视图下要按图表口径（全量抽样 / 缩放窗口）重算回来。 */
+            histChartStatusRefresh(self);
+        }
     }
 }
 
@@ -1808,7 +2574,9 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
     self->m_bar = HsfDataBar_create(&self->m_base);
     if (self->m_bar) {
         const char* channelItems[HIST_SERIES_MAX + 1];
-        const char* colItems[16];
+        /* [项数 = 1（「全部列」）+ 显示列数] 列筛选下拉每一项对应一个显示列
+         * （0=全部列，1..N=列 0..N-1），故数组与项数都要 +1。 */
+        const char* colItems[HSF_HISTORY_DISPLAY_COLS + 1];
         XDateTime now;
         int i;
         /* 通道 = 数值列（全部通道 + 逐列；画折线图用）。 */
@@ -1820,8 +2588,10 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
         HsfDataBar_setChannelIndex(self->m_bar, 0);
         /* 列筛选 = 显示列（全部列 + 逐列）；改动即时生效。 */
         colItems[0] = "全部列";
-        for (i = 0; i < 15; ++i) colItems[i + 1] = kHistoryHeaders[i];
-        HsfDataBar_setColumnFilterItems(self->m_bar, colItems, 16);
+        for (i = 0; i < HSF_HISTORY_DISPLAY_COLS; ++i)
+            colItems[i + 1] = kHistoryHeaders[i];
+        HsfDataBar_setColumnFilterItems(self->m_bar, colItems,
+                                        HSF_HISTORY_DISPLAY_COLS + 1);
         HsfDataBar_setColumnFilterIndex(self->m_bar, 0);
         HsfDataBar_setDecimalDigits(self->m_bar, 2);
         now = XDateTime_currentDateTime();
@@ -1841,34 +2611,39 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
 
     XTableWidget_init(&self->m_table, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_table);
-    XTableWidget_setColumnCount(&self->m_table, 15);
-    XTableWidget_setHorizontalHeaderLabels(&self->m_table, kHistoryHeaders, 15);
+    XTableWidget_setColumnCount(&self->m_table, HSF_HISTORY_DISPLAY_COLS);
+    XTableWidget_setHorizontalHeaderLabels(&self->m_table, kHistoryHeaders,
+                                           HSF_HISTORY_DISPLAY_COLS);
     XTableWidget_setRowCount(&self->m_table, 0);
     self->m_rowBaseH = XTableView_rowHeight(&self->m_table.m_base, 0);
+    /* [列宽按当前字体实测] 必须在字体设好之后算（量的就是这份字体）。 */
+    histCalcColWidths(self);
     {
         XHeaderView* hh = XTableView_horizontalHeader(&self->m_table.m_base);
         if (hh)
             XHeaderView_setSectionResizeMode(hh, XHeaderViewResizeMode_Fixed);
-        /* [时间列较宽] "2026-11-06 17:56:23" 需 19 字符，150px 会截断
-         * （显示成"2026-11-06 17:5…"）。 */
-        XTableView_setColumnWidth(&self->m_table.m_base, 0, 185);
-        XTableView_setColumnWidth(&self->m_table.m_base, 1, 80);
-        XTableView_setColumnWidth(&self->m_table.m_base, 2, 90);
-        XTableView_setColumnWidth(&self->m_table.m_base, 3, 110);
-        XTableView_setColumnWidth(&self->m_table.m_base, 4, 110);
-        XTableView_setColumnWidth(&self->m_table.m_base, 5, 120);
-        XTableView_setColumnWidth(&self->m_table.m_base, 6, 100);
-        XTableView_setColumnWidth(&self->m_table.m_base, 7, 100);
-        XTableView_setColumnWidth(&self->m_table.m_base, 8, 110);
-        XTableView_setColumnWidth(&self->m_table.m_base, 9, 110);
-        XTableView_setColumnWidth(&self->m_table.m_base, 10, 100);
-        XTableView_setColumnWidth(&self->m_table.m_base, 11, 110);
-        XTableView_setColumnWidth(&self->m_table.m_base, 12, 110);
-        XTableView_setColumnWidth(&self->m_table.m_base, 13, 110);
-        XTableView_setColumnWidth(&self->m_table.m_base, 14, 110);
+        /* [列宽统一取自 m_colWidths] 按当前字体实测表头文字得出（见
+         * histCalcColWidths）；建表与 adapt 共用一份，不再两处手写。 */
+        {
+            int cw;
+            for (cw = 0; cw < HSF_HISTORY_DISPLAY_COLS; ++cw)
+                XTableView_setColumnWidth(&self->m_table.m_base, cw,
+                                          self->m_colWidths[cw]);
+        }
         /* [观感对齐 Python] 无行号列、无网格线。 */
         XTableWidget_setVerticalHeaderVisible(&self->m_table, false);
-        XTableView_setShowGrid(&self->m_table.m_base, false);
+        XTableView_setShowGrid(&self->m_table.m_base, false);    {
+        XHeaderView* hh = XTableView_horizontalHeader(&self->m_table.m_base);
+        HsfTableSort_init(&self->m_sort);
+        if (hh) {
+            /* [双击列标题排序] 与 Python 客户端同口径；作用于当前页。 */
+            XObject_connect_1((XObject*)hh,
+                              XSignal(XHeaderView_sectionDoubleClicked_signal),
+                              (XObject*)self, HsfDataHistoryHeaderDblClicked,
+                              XConnectionType_Direct);
+        }
+    }
+
     }
     XWidget_show((XWidget*)&self->m_table);
     XBoxLayout_addWidgetEx(&self->m_layout, (XWidget*)&self->m_table, 1, 0);
@@ -2111,12 +2886,11 @@ static void histApplyFonts(XWidget* page, int pct)
         for (i = 0; i < 4; ++i) XWidget_setFixedHeight(row2[i], h);
     }
     {
-        static const int kW[15] = { 185, 80, 90, 110, 110, 120, 100, 100,
-                                    110, 110, 100, 110, 110, 110, 110 };
+        /* [列宽同源] 与建表共用 m_colWidths（实测值，不再另抄一份 kW[]）。 */
         int c;
-        for (c = 0; c < 15; ++c)
+        for (c = 0; c < HSF_HISTORY_DISPLAY_COLS; ++c)
             XTableView_setColumnWidth(&self->m_table.m_base, c,
-                                      kW[c] * pct / 100);
+                                      self->m_colWidths[c] * pct / 100);
     }
 }
 

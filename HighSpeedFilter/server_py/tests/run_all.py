@@ -11,6 +11,7 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -56,6 +57,10 @@ def main():
     results.append(("端口一致性", run([py, "tests/test_ports.py"],
                                        "端口配置（单一事实源）")))
     results.append(("单元测试", run([py, "tests/test_units.py"], "单元测试")))
+    results.append(("模式规则", run([py, "tests/test_mode_lamp_rules.py"],
+                                     "模式规则（手动不写灯 + 切模式全停）")))
+    results.append(("浊度逐台", run([py, "tests/test_turbidity_per_meter.py"],
+                                     "两台浊度独立开关（逐台门控/兼容键）")))
     results.append(("RTU 帧解析", run([py, "tests/test_rtu_framing.py"],
                                        "RTU 帧解析（模拟从站）")))
 
@@ -68,9 +73,21 @@ def main():
               % args.port)
         return 2
 
+    # [stdout 必须落文件，不能用没人读的管道 —— 2026-11-09 根修]
+    # 原实现 `stdout=subprocess.PIPE` 且全流程**从不读**它：harness 打满
+    # 64KB（Windows 匿名管道缓冲）后 write() 阻塞 ⇒ 服务端协程被卡住 ⇒
+    # 客户端请求超时 ⇒ 端到端套件出现"偶发 no response / reverse=None"
+    # 的假红（单独手起 harness 全绿、经 run_all 跑就红几项，实测 74/5 vs
+    # 79/0）。日志量越大越容易触发（本次运行日志类别改动又增加了输出）。
+    # 落文件即可：既不会阻塞，又保留现场（跑挂时可直接 tail）。
+    # [落临时目录，不落仓库] 之前落在 tests/harness.out ⇒ 每次跑都多一个
+    # 未跟踪文件污染工作区。改到临时目录（跑完由临时目录自己回收）。
+    harness_log_path = os.path.join(tempfile.gettempdir(),
+                                    "hsf_harness_%d.out" % os.getpid())
+    harness_log = open(harness_log_path, "wb")
     harness = subprocess.Popen(
         [py, "tests/harness.py", "--port", str(args.port), "--seconds", "300"],
-        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        cwd=ROOT, stdout=harness_log, stderr=subprocess.STDOUT)
     try:
         # 等服务端就绪（读 harness 打印的 PORT 行）
         ready = False
@@ -99,6 +116,10 @@ def main():
             harness.wait(timeout=5)
         except subprocess.TimeoutExpired:
             harness.kill()
+        try:
+            harness_log.close()
+        except OSError:
+            pass
 
     return _summary(results)
 

@@ -622,6 +622,7 @@ typedef struct XTableWidget
     XString** m_hHeaders;         /**< 水平表头标签（对象拥有；下标=列号；元素可为 NULL）。 */
     XString** m_vHeaders;         /**< 垂直表头标签（对象拥有；下标=行号；元素可为 NULL）。 */
     XAbstractItemModel* m_model;  /**< 内建数据模型桥（对象拥有；与单元格同步）。 */
+    bool         m_headerSortEnabled; /**< 点表头即排序（对标 QTableView::setSortingEnabled；默认 false）。 */
     XTableWidgetItem* m_itemPrototype; /**< 原型条目（对象拥有；对齐 Qt setItemPrototype 接管所有权）。 */
     XTableWidgetCellWidget* m_cellWidgets; /**< 单元格挂载部件条目数组（部件对象拥有）。 */
     /* 行列数/容量/表头 px 收窄；selection/entered 依赖 -1/-2 哨兵语义。 */
@@ -1177,6 +1178,17 @@ bool XTableWidget_isPersistentEditorOpen(const XTableWidget* self,
  *        重排——行头标签留在原位（Qt 6.8 既有行为）。
  */
 void XTableWidget_sortItems(XTableWidget* self, int column, int order);
+
+/**
+ * @brief 开关"点表头即排序"（对标 QTableView::setSortingEnabled）。
+ * @details [Qt 口径] QTableView 在开启后把表头的 sectionClicked 连到
+ *          sortByColumn ⇒ 单击表头按该列排序（方向由排序指示器决定）。
+ *          本框架的排序落在 XTableWidget（它同时拥有 model 与单元格），
+ *          故实现在 XTableWidget_setSortingEnabled 里接线。
+ * @note 默认关闭：应用若自己定义"双击表头排序"（如 HSF 客户端历史/日志页），
+ *       不要再开这个，否则单击与双击会各排一次。
+ */
+void XTableWidget_setSortingEnabled(XTableWidget* self, bool enable);
 
 /**
  * @brief 滚动使指定条目可见（对齐 `QTableWidget::scrollToItem`）。

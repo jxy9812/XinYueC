@@ -44,6 +44,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "XhsfLinkProto.h"   /* HsfDeviceHealth_*（健康等级枚举）。 */
 #include "XObject.h"
 
 struct HsfServerBus;
@@ -70,6 +71,12 @@ typedef struct HsfServerIoFlowMeter {
     XTimerId m_sampleTimer;                 /**< 采样定时器（周期拍；静止量刷新用）。 */
     int m_unitId;                           /**< 从站号。 */
     uint16_t m_vbase;                       /**< 本站寄存器在总线虚拟空间的起点。 */
+    /** @brief 陈旧阈值（毫秒；装配/应用时按**当前采集周期**算出的有效值）。
+     *  @details [与温湿度/浊度站同款 2026-11-10] 质量判定原先直接用编译期宏
+     *           （5000）；周期被调大后阈值 < 周期 ⇒ 两拍之间必判陈旧 ⇒ 界面
+     *           "--" 与正常值来回抖。有效阈值 = max(宏基线, 周期 × 3)，由
+     *           HsfServerIo.c 的 hsfIoStaleMs 算出并随 mount/apply 传入。 */
+    uint32_t m_staleMs;
     bool m_mounted;                         /**< 装配完成标志（幂等与诊断）。 */
 } HsfServerIoFlowMeter;
 
@@ -162,6 +169,23 @@ bool HsfServerIoFlowMeter_isMounted(const HsfServerIoFlowMeter* st);
  *        组内 feedRole 自带「值未变则静默」，重复调用无副作用。
  */
 bool HsfServerIoFlowMeter_sampleNow(HsfServerIoFlowMeter* st);
+
+/**
+ * @brief 流量计健康等级（告警口径的唯一事实源）。
+ * @param alarms 告警位掩码（XFlowMeterAlarm 位序：0=上限 1=下限 2=空管
+ *               3=系统）。
+ * @param valid 是否有有效遥测。
+ * @return HsfDeviceHealth_* 之一：系统报警⇒Warning；否则有数据⇒Ok、
+ *         无数据⇒Stale。
+ * @details [只有系统报警算设备告警] 四个报警位里「空管」是**工况信息**：
+ *          泵停/无流时必然置位（板端实测 alarms=4 即空管位，流量 0.0 属
+ *          正常停机态）。早先「alarms != 0 ⇒ 故障」把首页显示成
+ *          「电磁流量计 故障」。Python 侧同口径：仅系统报警 ⇒
+ *          HEALTH_WARNING、err=0、文本「流量计系统报警」。
+ *          放在 io 层是为了让健康判定只有一处实现（首页设备表、服务端
+ *          健康快照、回归锁共用），也便于单测直接钉它。
+ */
+int HsfServerIoFlowMeter_health(int alarms, bool valid);
 
 #ifdef __cplusplus
 }

@@ -725,15 +725,22 @@ void VXTimerGroupBase_handler(XTimerGroupBase* group)
      * 轮刻度差 >40 拍（20ms 精度即 >800ms）打点——判主循环 handler
      * 调用断流（lag 巨大）vs 落槽/兑现 bug（lag 小仍不兑现）。 */
     if (tick > groupBase->m_current_tick &&
-        tick - groupBase->m_current_tick > 40)
+        tick - groupBase->m_current_tick > 40) {
         /* [复核修正 2026-10-29] 三个实参经 size_t-uint64_t 运算提升为
          * uint64_t，%zu 在 32 位 armel 按 32 位取参必错位——与 [WHEELCLK]
          * 的"绕开板上 %zu、%lu 直出"既有口径同规（armel/LP64 上
-         * unsigned long 与 size_t 同宽，转换无截断）。 */
-        XPrintf("[WHEEL] lag=%lu cur=%lu tick=%lu\n",
-                (unsigned long)(tick - groupBase->m_current_tick),
-                (unsigned long)groupBase->m_current_tick,
-                (unsigned long)tick);
+         * unsigned long 与 size_t 同宽，转换无截断）。
+         * [env 门控 2026-11-10] 此前这行**无条件打印**：主循环偶发滞后
+         * >40 拍就刷一行，模拟/现场日志里成片刷屏，属 AGENTS.md
+         * "临时诊断探针必须零残留"的常驻污染（正式诊断路径必须 env 门控，
+         * 如 HSF_HEAP_TRACE / XGUI_*_PROF）。改为 XGUI_WHEEL_TRACE=1 才打。 */
+        const char* traceEnv = getenv("XGUI_WHEEL_TRACE");
+        if (traceEnv && traceEnv[0] && traceEnv[0] != '0')
+            XPrintf("[WHEEL] lag=%lu cur=%lu tick=%lu\n",
+                    (unsigned long)(tick - groupBase->m_current_tick),
+                    (unsigned long)groupBase->m_current_tick,
+                    (unsigned long)tick);
+    }
 
     if (tick <= groupBase->m_current_tick)
     {

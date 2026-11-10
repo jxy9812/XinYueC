@@ -27,6 +27,7 @@
 #include "XComboBox.h"
 #include "XLabel.h"
 #include "XLineEdit.h"
+#include "XProgressBar.h"      /* 存储容量占用条（对齐 Python 客户端）。 */
 #include "XPushButton.h"
 #include "XSpinBox.h"
 #include "XTimer.h"
@@ -39,8 +40,10 @@
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON && XCHECKBOX_ON && XSPINBOX_ON
 
-/** @brief 采集配置行数（与 Python 五行一一对应）。 */
-#define SR_COLLECT_ROWS 5
+/** @brief 采集配置行数（与 Python/服务端键一一对应）。
+ *  [2026-11-10 逐台] 现场两台浊度仪 + 一台流量计各自可调，行序固定：
+ *  0=搅拌泵(变频器) 1=温湿度 2=浊度仪1 3=浊度仪2 4=流量计 5=模拟量 6=数字量。 */
+#define SR_COLLECT_ROWS 7
 
 /** @brief 轮询周期范围（与 Python CFG_POLL_MS_MIN/MAX 同值）。 */
 #define SR_POLL_MS_MIN 50
@@ -85,6 +88,7 @@ typedef struct HsfSettingsRemote {
     XComboBox    m_storePolicy;
     XSpinBox     m_storeKeep;
     XLabel       m_policyHint;
+    XProgressBar m_storageBar;   /**< 容量占用条（0..100%；上限不限时恒 0）。 */
     XLabel       m_storageUse;
     XLabel       m_dbPath;
     XPushButton  m_btnSave;
@@ -248,16 +252,24 @@ static void srCfgApplySlot(XObject* receiver, XVarList* args)
     memset(&c, 0, sizeof(c));
     c.m_vfdEnabled = XCheckBox_isChecked(&self->m_collect[0].m_chk);
     c.m_temphumEnabled = XCheckBox_isChecked(&self->m_collect[1].m_chk);
-    c.m_turbidityEnabled = XCheckBox_isChecked(&self->m_collect[2].m_chk);
-    c.m_analogEnabled = XCheckBox_isChecked(&self->m_collect[3].m_chk);
-    c.m_digitalEnabled = XCheckBox_isChecked(&self->m_collect[4].m_chk);
+    /* [逐台开关 2026-11-10] 两台浊度仪是两台独立设备（站1/站3）：行 2/3
+     * 各勾各的，不再互相联动。共同键 turbidityEnabled 仍发（旧服务端只认
+     * 它）：取「任一台启用」，语义与旧版"共用开关"一致。 */
+    c.m_turbidity1Enabled = XCheckBox_isChecked(&self->m_collect[2].m_chk);
+    c.m_turbidity2Enabled = XCheckBox_isChecked(&self->m_collect[3].m_chk);
+    c.m_turbidityEnabled = c.m_turbidity1Enabled || c.m_turbidity2Enabled;
+    c.m_flowmeterEnabled = XCheckBox_isChecked(&self->m_collect[4].m_chk);
+    c.m_analogEnabled = XCheckBox_isChecked(&self->m_collect[5].m_chk);
+    c.m_digitalEnabled = XCheckBox_isChecked(&self->m_collect[6].m_chk);
     c.m_vfdPollMs = XSpinBox_value(&self->m_collect[0].m_spin);
     c.m_temphumPollMs = XSpinBox_value(&self->m_collect[1].m_spin);
-    c.m_turbidityPollMs = XSpinBox_value(&self->m_collect[2].m_spin);
-    c.m_analogPollMs = XSpinBox_value(&self->m_collect[3].m_spin);
-    c.m_digitalPollMs = XSpinBox_value(&self->m_collect[4].m_spin);
-    /* 流量计跟随温湿度周期（服务端契约），客户端按同值带上。 */
-    c.m_flowmeterEnabled = c.m_temphumEnabled;
+    c.m_turbidity1PollMs = XSpinBox_value(&self->m_collect[2].m_spin);
+    c.m_turbidity2PollMs = XSpinBox_value(&self->m_collect[3].m_spin);
+    c.m_flowmeterPollMs = XSpinBox_value(&self->m_collect[4].m_spin);
+    c.m_analogPollMs = XSpinBox_value(&self->m_collect[5].m_spin);
+    c.m_digitalPollMs = XSpinBox_value(&self->m_collect[6].m_spin);
+    /* 兼容键：两台浊度的共同缺省取浊度仪1 的值（旧服务端只认这个键）。 */
+    c.m_turbidityPollMs = c.m_turbidity1PollMs;
     if (HsfLinkClient_configSetCollect(&c))
         srStatus(self, "正在应用采集配置…");
     else
@@ -321,6 +333,18 @@ static void srSaveSlot(XObject* receiver, XVarList* args)
     }
     path = XLineEdit_text(&self->m_storePath);
     if (!path) path = "";
+    /* [没有收到落盘节就不写回 2026-11-10] 服务端快照里**没有** storage 节
+     * （旧服务端/局部应答/解析失败）时，本页的勾选框是**初始态**（未勾选）
+     * ⇒ 此时点「应用」会把 storage/enabled=0 写回服务端 ⇒ 落盘被静默关闭
+     * ⇒ 历史表格从此空（现场"表格数据咋没了"）。口径：缺省值不能当成
+     * 「已关闭」——没收到就不写这一节。 */
+    {
+        const HsfConfig* cfg = HsfLinkClient_config();
+        if (!cfg || !cfg->m_valid || !cfg->m_storagePresent) {
+            srStatus(self, "未收到服务端的落盘配置，已跳过（避免误关落盘）");
+            return;
+        }
+    }
     if (HsfLinkClient_configSetStorageEx(
             XCheckBox_isChecked(&self->m_storeEnable), path,
             XSpinBox_value(&self->m_storeSample),
@@ -369,14 +393,22 @@ static void srPopulate(HsfSettingsRemote* self)
 
     XCheckBox_setChecked(&self->m_collect[0].m_chk, cfg->m_collect.m_vfdEnabled);
     XCheckBox_setChecked(&self->m_collect[1].m_chk, cfg->m_collect.m_temphumEnabled);
-    XCheckBox_setChecked(&self->m_collect[2].m_chk, cfg->m_collect.m_turbidityEnabled);
-    XCheckBox_setChecked(&self->m_collect[3].m_chk, cfg->m_collect.m_analogEnabled);
-    XCheckBox_setChecked(&self->m_collect[4].m_chk, cfg->m_collect.m_digitalEnabled);
+    /* [逐台开关 2026-11-10] 两台浊度各显示自己的开关（旧服务端无逐台键时
+     * HsfLinkConfig 已按共同键铺开，到这里就是两台同值）。 */
+    XCheckBox_setChecked(&self->m_collect[2].m_chk,
+                         cfg->m_collect.m_turbidity1Enabled);
+    XCheckBox_setChecked(&self->m_collect[3].m_chk,
+                         cfg->m_collect.m_turbidity2Enabled);
+    XCheckBox_setChecked(&self->m_collect[4].m_chk, cfg->m_collect.m_flowmeterEnabled);
+    XCheckBox_setChecked(&self->m_collect[5].m_chk, cfg->m_collect.m_analogEnabled);
+    XCheckBox_setChecked(&self->m_collect[6].m_chk, cfg->m_collect.m_digitalEnabled);
     XSpinBox_setValue(&self->m_collect[0].m_spin, cfg->m_collect.m_vfdPollMs);
     XSpinBox_setValue(&self->m_collect[1].m_spin, cfg->m_collect.m_temphumPollMs);
-    XSpinBox_setValue(&self->m_collect[2].m_spin, cfg->m_collect.m_turbidityPollMs);
-    XSpinBox_setValue(&self->m_collect[3].m_spin, cfg->m_collect.m_analogPollMs);
-    XSpinBox_setValue(&self->m_collect[4].m_spin, cfg->m_collect.m_digitalPollMs);
+    XSpinBox_setValue(&self->m_collect[2].m_spin, cfg->m_collect.m_turbidity1PollMs);
+    XSpinBox_setValue(&self->m_collect[3].m_spin, cfg->m_collect.m_turbidity2PollMs);
+    XSpinBox_setValue(&self->m_collect[4].m_spin, cfg->m_collect.m_flowmeterPollMs);
+    XSpinBox_setValue(&self->m_collect[5].m_spin, cfg->m_collect.m_analogPollMs);
+    XSpinBox_setValue(&self->m_collect[6].m_spin, cfg->m_collect.m_digitalPollMs);
 
     XCheckBox_setChecked(&self->m_storeEnable, cfg->m_storage.m_enabled);
     XLineEdit_setText(&self->m_storePath, cfg->m_storage.m_path);
@@ -403,24 +435,43 @@ static void srPopulate(HsfSettingsRemote* self)
     XLabel_setText_2(&self->m_dbPath,
                      cfg->m_dbPath[0] ? cfg->m_dbPath
                                       : "未启用（落盘关闭）");
-    /* 用量实况（与 Python _populate_usage 同字段）。 */
+    /* 用量实况（与 Python _populate_usage 同字段同序）。 */
     {
         const HsfConfigStats* st = &cfg->m_stats;
         char buf[384];
         const double usedMb = st->m_usedMb > 0.0
                                   ? st->m_usedMb
                                   : (double)st->m_usedBytes / (1024.0 * 1024.0);
+        int pct = 0;
         if (st->m_maxMb > 0) {
-            int pct = (int)(usedMb / (double)st->m_maxMb * 100.0 + 0.5);
+            pct = (int)(usedMb / (double)st->m_maxMb * 100.0 + 0.5);
             if (pct < 0) pct = 0;
             if (pct > 100) pct = 100;
             snprintf(buf, sizeof(buf),
                      "用量：已用 %.2f MB · 上限 %d MB · %d%% · 行数 %d",
                      usedMb, st->m_maxMb, pct, st->m_rows);
         } else {
+            /* 上限不限 ⇒ 条恒 0%：没有"用了百分之多少"可言，硬算会误导。 */
             snprintf(buf, sizeof(buf),
                      "用量：已用 %.2f MB · 上限不限 · 行数 %d",
                      usedMb, st->m_rows);
+        }
+        /* [策略名词并排 2026-11-10 对齐 Python] Python 端把落盘策略也拼进这行
+         * （"策略 循环覆盖"），现场一眼看出库满了会怎样（循环覆盖/停写/轮转）。 */
+        {
+            const char* pol = st->m_policy;
+            const char* polText = NULL;
+            if (pol && pol[0]) {
+                if (strcmp(pol, "ring") == 0) polText = "循环覆盖";
+                else if (strcmp(pol, "stop") == 0) polText = "停写";
+                else if (strcmp(pol, "rotate") == 0) polText = "轮转分段";
+                else polText = pol;
+            }
+            if (polText) {
+                char extra[64];
+                snprintf(extra, sizeof(extra), " · 策略 %s", polText);
+                strncat(buf, extra, sizeof(buf) - strlen(buf) - 1);
+            }
         }
         if (st->m_segments > 0) {
             char extra[64];
@@ -439,6 +490,8 @@ static void srPopulate(HsfSettingsRemote* self)
             strncat(buf, extra, sizeof(buf) - strlen(buf) - 1);
         }
         XLabel_setText_2(&self->m_storageUse, buf);
+        /* 容量条：上限已知才给百分比；未启用落盘（无统计）时清 0。 */
+        XProgressBar_setValue(&self->m_storageBar, pct);
     }
 }
 
@@ -566,6 +619,16 @@ static void srTimerCb(void* userData, XTimerData* timer)
     } else if (!self->m_fetched) {
         self->m_fetched = true;
         srFetchConfig(self, true);
+    } else {
+        /* [自愈 2026-11-10 板端实锅] 「拉过一次」不等于「拿到过快照」：
+         * 板端客户端与服务端同时启动，首发的 0x0116 若撞在会话就绪/推送
+         * 洪峰的窗口里可能丢掉 ⇒ 控件永远停在**出厂缺省**（全部未勾、
+         * 周期 200ms），而服务端其实一直在按 INI 采集 —— 现场看到的就是
+         * 「勾没打上、间隔改不了」。故：**没有有效快照就继续拉**，拿到后
+         * 立刻停（否则每拍新快照都会覆盖用户正在改的值）。 */
+        const HsfConfig* cfg = HsfLinkClient_config();
+        if (!cfg || !cfg->m_valid)
+            (void)srFetchConfig(self, true);
     }
     srRefresh(self);
 }
@@ -601,7 +664,7 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
                                   void* userData)
 {
     static const char* const kCollectLabels[SR_COLLECT_ROWS] = {
-        "搅拌泵", "温湿度", "浊度仪", "模拟量", "数字量"
+        "搅拌泵", "温湿度", "浊度仪1", "浊度仪2", "流量计", "模拟量", "数字量"
     };
     HsfSettingsRemote* self;
     int i;
@@ -720,7 +783,10 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
         XLabel_init(name, &self->m_base, 0);
         HsfTheme_applyDefaultFont((XWidget*)name);
         XLabel_setText_2(name, kCollectLabels[i]);
-        XWidget_setFixedWidth((XWidget*)name, 96);
+        /* [宽度交布局 2026-11-10] 原先定宽 96（按"4 个汉字"估）——放大字号
+         * 后"浊度仪1"等标签就裁字。改由 XLabel 的 sizeHint 定宽、行尾 stretch
+         * 吃掉余量。 */
+
         XWidget_show((XWidget*)name);
         XBoxLayout_addWidget(row, (XWidget*)name);
 
@@ -737,14 +803,17 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
         XSpinBox_setSingleStep(&self->m_collect[i].m_spin, 50);
         XSpinBox_setSuffix(&self->m_collect[i].m_spin, " ms");
         XSpinBox_setValue(&self->m_collect[i].m_spin, 200);
-        XWidget_setFixedWidth((XWidget*)&self->m_collect[i].m_spin, 150);
+        /* [宽度交布局] 150 是"3600000 ms"的经验值；XSpinBox::sizeHint 现已按
+         * 最大可能值量宽，不再需要页面定宽。 */
         XWidget_show((XWidget*)&self->m_collect[i].m_spin);
         XBoxLayout_addWidget(row, (XWidget*)&self->m_collect[i].m_spin);
         XBoxLayout_addStretch(row, 1);
         XBoxLayout_addLayout(&self->m_layout, (XLayout*)row);
     }
     srInitHint(&self->m_collectHint, &self->m_base,
-               "流量计跟随温湿度的周期；电磁阀/进水泵跟随数字量的开关。"
+               "两台浊度仪是两台独立设备：采集开关与周期各自独立（可单独停一台检修）；"
+               "流量计周期也单列。\n"
+               "电磁阀/进水泵跟随数字量的开关。"
                "改开关立即生效（被停的设备健康转数据过期），改周期下一拍生效。");
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_collectHint);
     {
@@ -780,6 +849,10 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
     XCheckBox_init(&self->m_storeEnable, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_storeEnable);
     XCheckBox_setText_2(&self->m_storeEnable, "启用落盘");
+    /* [缺省勾上 2026-11-10] 服务端落盘缺省是**开**（storage/enabled 缺省 1）。
+     * 勾选框默认未勾 ⇒ 服务端快照没到就点「应用」会把落盘关掉 ⇒ 历史
+     * 表格从此空（现场"表格数据咋没了"）。缺省态与服务端口径一致。 */
+    XCheckBox_setChecked(&self->m_storeEnable, true);
     XWidget_show((XWidget*)&self->m_storeEnable);
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_storeEnable);
 
@@ -794,7 +867,9 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
             XLabel_init(name, &self->m_base, 0);
             HsfTheme_applyDefaultFont((XWidget*)name);
             XLabel_setText_2(name, "库文件路径");
-            XWidget_setFixedWidth((XWidget*)name, 96);
+            /* [宽度交布局 2026-11-10] 原先定宽 96：字号放大后「库文件路径」
+             * 四个字就裁字。改由 XLabel 的 sizeHint 定宽，余量给右边的路径
+             * 输入框（stretch=1）。 */
             XWidget_show((XWidget*)name);
             XBoxLayout_addWidget(row, (XWidget*)name);
 
@@ -832,7 +907,9 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
             XSpinBox_setSingleStep(&self->m_storeSample, 1000);
             XSpinBox_setSuffix(&self->m_storeSample, " ms");
             XSpinBox_setValue(&self->m_storeSample, 5000);
-            XWidget_setFixedWidth((XWidget*)&self->m_storeSample, 150);
+            /* [宽度交布局 2026-11-10] 原先定宽 150：字号放大后 "3600000 ms"
+             * 装不下（末位被裁）。改由 XSpinBox::sizeHint 定宽——它按量程
+             * 两端 + 当前值里最宽的文本量（含后缀），布局按需给。 */
             XWidget_show((XWidget*)&self->m_storeSample);
             XBoxLayout_addWidget(row, (XWidget*)&self->m_storeSample);
 
@@ -847,7 +924,6 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
             XSpinBox_setSingleStep(&self->m_storeMax, 50);
             XSpinBox_setSuffix(&self->m_storeMax, " MB");
             XSpinBox_setValue(&self->m_storeMax, 0);
-            XWidget_setFixedWidth((XWidget*)&self->m_storeMax, 150);
             XWidget_show((XWidget*)&self->m_storeMax);
             XBoxLayout_addWidget(row, (XWidget*)&self->m_storeMax);
             XBoxLayout_addStretch(row, 1);
@@ -901,7 +977,6 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
             HsfTheme_applyDefaultFont((XWidget*)&self->m_storeKeep);
             XSpinBox_setRange(&self->m_storeKeep, 1, 99);
             XSpinBox_setValue(&self->m_storeKeep, 3);
-            XWidget_setFixedWidth((XWidget*)&self->m_storeKeep, 100);
             XWidget_show((XWidget*)&self->m_storeKeep);
             XBoxLayout_addWidget(row, (XWidget*)&self->m_storeKeep);
             XBoxLayout_addStretch(row, 1);
@@ -914,6 +989,19 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
     }
     srInitHint(&self->m_policyHint, &self->m_base, srPolicyHintText("ring"));
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_policyHint);
+
+    /* [容量条 2026-11-10 对齐 Python 客户端] Python 版存储卡里是「进度条 +
+     * 用量文字」两件套（pages_other.py `_storage_usage` / `_populate_usage`）：
+     * 条宽随页宽、高 12、不显示内嵌文本（百分比在下方文字里），上限为 0
+     * （不限）时恒 0% —— 这时候没有"用了百分之多少"可言，硬算会误导。 */
+    XProgressBar_init(&self->m_storageBar, &self->m_base, 0);
+    HsfTheme_applyDefaultFont((XWidget*)&self->m_storageBar);
+    XProgressBar_setRange(&self->m_storageBar, 0, 100);
+    XProgressBar_setValue(&self->m_storageBar, 0);
+    XProgressBar_setTextVisible(&self->m_storageBar, false);
+    XWidget_setFixedHeight((XWidget*)&self->m_storageBar, 12);
+    XWidget_show((XWidget*)&self->m_storageBar);
+    XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_storageBar);
 
     srInitHint(&self->m_storageUse, &self->m_base, "用量：--");
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_storageUse);
@@ -961,7 +1049,7 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
             XLabel_init(name, &self->m_base, 0);
             HsfTheme_applyDefaultFont((XWidget*)name);
             XLabel_setText_2(name, "会话上限");
-            XWidget_setFixedWidth((XWidget*)name, 96);
+            /* [宽度交布局 2026-11-10] 同上：标签宽度交给 sizeHint。 */
             XWidget_show((XWidget*)name);
             XBoxLayout_addWidget(row, (XWidget*)name);
             XSpinBox_init(&self->m_loginMax, &self->m_base, 0);
@@ -970,7 +1058,6 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
             XSpinBox_setSingleStep(&self->m_loginMax, 1);
             XSpinBox_setSuffix(&self->m_loginMax, " 个（0=不限）");
             XSpinBox_setValue(&self->m_loginMax, 8);
-            XWidget_setFixedWidth((XWidget*)&self->m_loginMax, 170);
             XWidget_show((XWidget*)&self->m_loginMax);
             XBoxLayout_addWidget(row, (XWidget*)&self->m_loginMax);
             XBoxLayout_addStretch(row, 1);
@@ -981,7 +1068,7 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
         }
     }
     srInitHint(&self->m_loginHint, &self->m_base,
-               "写入立即对下一次登录生效并落盘 hsf_login_policy.json；"
+               "写入立即对下一次登录生效并落盘 hsf_login_policy.json；\n"
                "已在线会话不受影响（关闭同账并发不会踢人）。");
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_loginHint);
 

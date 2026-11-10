@@ -62,6 +62,8 @@ typedef struct HsfServerIoVfd {
     int m_unitId;                           /**< 从站号。 */
     uint16_t m_vbase[48];                   /**< 各通信组的虚拟起点（惰性建段结果）。 */
     uint8_t  m_vbaseBuilt[48];              /**< 该组是否已建段。 */
+    int m_groupCount;                       /**< 本站通信组数（一圈轮转发读组的组数）。 */
+    uint32_t m_staleMs;                     /**< 生效的快照陈旧阈值（随轮转周期算）。 */
     bool m_mounted;                         /**< 装配完成标志。 */
 } HsfServerIoVfd;
 
@@ -115,6 +117,21 @@ struct XVfdM512* HsfServerIoVfd_device(const HsfServerIoVfd* st);
  * @brief 本站是否已装配完成。
  */
 bool HsfServerIoVfd_isMounted(const HsfServerIoVfd* st);
+
+/**
+ * @brief 按当前轮询节拍重算并下发快照陈旧阈值。
+ * @param st 变频器站；不能为 NULL。
+ * @param pollMs 该总线的轮询节拍（毫秒；Hub 每拍发一个读组）。
+ * @return 生效的阈值毫秒（0 = 未装配）。
+ * @details [为什么阈值要跟着「轮转周期」走 2026-11-10 现场"变频器 --- 循环"]
+ *          Hub 每拍只发**一个**读组 ⇒ 一圈要把本站的组轮完 ⇒ 数据刷新
+ *          节拍 = 组数 × 拍长（现场 14 组 × 200ms = 2.8s）。设备层缺省
+ *          阈值「发布周期 × 5」=1s **盖不住一圈** ⇒ 每隔两拍判一次陈旧、
+ *          掩码清零 ⇒ 客户端变频器在「---」与真值之间来回闪。
+ *          口径：有效阈值 = max(基线, 轮转周期 × 2)（容一轮的抖动）。
+ *          采集周期改了要重算（调用点在 HsfServerIo.c 的采集节拍应用处）。
+ */
+uint32_t HsfServerIoVfd_applyStaleMs(HsfServerIoVfd* st, int pollMs);
 
 #ifdef __cplusplus
 }

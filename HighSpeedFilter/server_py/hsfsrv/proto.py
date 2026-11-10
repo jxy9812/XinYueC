@@ -106,6 +106,20 @@ PERM_ACCOUNT_ADMIN = 1 << 4    # 账户/服务端配置（管理员）
 PERM_DOWNLOAD = 1 << 5         # 数据下载/导出（普通用户+；追加位）
 PERM_ALL = 0x3F
 
+# ---- 登录结果码（AuthResult 载荷首字节）---------------------------------
+#
+# 与 C 侧 `Src/XCore/XProtocol/XLink/XLinkProto.h` 的 `XLinkAuthStatus`
+# 逐值一致。**语义分永久/瞬时两类**（2026-11-09 根修）：
+#   · 永久：BAD_USER（用户不存在）/ BAD_PASSWORD / LOCKED / NO_CREDENTIAL
+#           —— 客户端停自动重连，留在登录窗。
+#   · 瞬时：REJECTED —— **登录策略**拒绝（同账并发「该账户已在线」/
+#           会话数已达上限）。服务端（本文件所在实现 + C 侧
+#           XLinkSessionAuthLookup_Rejected）必须用它，**不得**伪造成
+#           BAD_USER/BAD_PASSWORD：客户端据此退避重试，旧会话一被回收即
+#           自动恢复。若伪装成凭据错误，一次链路抖动会让已登录界面永久
+#           全 `--`（实锅）。
+#           TIMEOUT / PROTOCOL 同属瞬时（链路噪声）。
+# 客户端镜像：`client_py/hsfsrv_client/proto.py` 同值同注释。
 AUTHSTATUS_OK = 0
 AUTHSTATUS_BAD_USER = 1
 AUTHSTATUS_BAD_PASSWORD = 2
@@ -114,6 +128,11 @@ AUTHSTATUS_REJECTED = 4
 AUTHSTATUS_NO_CREDENTIAL = 5
 AUTHSTATUS_TIMEOUT = 6
 AUTHSTATUS_PROTOCOL = 7
+
+#: 瞬时拒绝（REJECTED）后的自动重连上限（次数）。镜像 C 侧
+#: `XLINK_config.h` 的 XLINK_AUTH_REJECT_RETRY_LIMIT（客户端消费；
+#: 服务端仅登记以保持常量表同步）。
+XLINK_AUTH_REJECT_RETRY_LIMIT = 30
 
 AUTH_METHOD_ITERATED_HMAC = 1
 AUTH_PROOF_DOMAIN = 0x01
@@ -408,12 +427,23 @@ CFGK_VFD_ENABLED = "vfdEnabled"
 CFGK_TEMPHUM_ENABLED = "temphumEnabled"
 CFGK_FLOWMETER_ENABLED = "flowmeterEnabled"
 CFGK_TURBIDITY_ENABLED = "turbidityEnabled"
+#: [2026-11-10 逐台开关] 两台浊度仪是两台独立设备（站1/站3），开关各自可设；
+#: 与 C 端 XhsfLinkProto.h 的 HSF_CFGK_TURBIDITY1_ENABLED / _TURBIDITY2_ 同值。
+#: 老的 turbidityEnabled 保留为两台共同缺省（缺键时回落它）。
+CFGK_TURBIDITY1_ENABLED = "turbidity1Enabled"
+CFGK_TURBIDITY2_ENABLED = "turbidity2Enabled"
 CFGK_ANALOG_ENABLED = "analogEnabled"
 CFGK_DIGITAL_ENABLED = "digitalEnabled"
 #: collect 节键：轮询周期（int 毫秒；服务端夹到 50~60000）。
 CFGK_VFD_POLL_MS = "vfdPollMs"
 CFGK_TEMPHUM_POLL_MS = "temphumPollMs"
 CFGK_TURBIDITY_POLL_MS = "turbidityPollMs"
+#: [2026-11-10 逐台] 两台浊度仪 + 流量计各自可设采集周期；与 C 端
+#: XhsfLinkProto.h 的 HSF_CFGK_TURBIDITY1_POLL_MS / _TURBIDITY2_ / _FLOWMETER_
+#: 逐值同步。老的 turbidityPollMs 仍作两台共同缺省（向后兼容）。
+CFGK_TURBIDITY1_POLL_MS = "turbidity1PollMs"
+CFGK_TURBIDITY2_POLL_MS = "turbidity2PollMs"
+CFGK_FLOWMETER_POLL_MS = "flowmeterPollMs"
 CFGK_ANALOG_POLL_MS = "analogPollMs"
 CFGK_DIGITAL_POLL_MS = "digitalPollMs"
 #: storage 节键：是否落盘（bool）/ 库文件路径（空串=程序目录）/ 采样周期。
@@ -490,15 +520,16 @@ CFG_LOGIN_MAX_SESSIONS_MAX = 256
 #: ~65 行（实测 50 行 = 11.8KB，留足余量）。
 CMD_HISTORY_PAGE = 0x0118
 
-#: 运行日志分页（**C 端扩展命令**，2026-11-09；server_py 不实现该命令）。
+#: 运行日志分页（**C 端扩展命令**，2026-11-09；本端已实现，见 app._h_log_page）。
 #:
 #: C 侧 HighSpeedFilter/common/XhsfLinkProto.h 的 HSF_CMD_LOG_PAGE=0x0119u
-#: 与此处常量逐值同步（两端协议常量铁律）；server_py 的 logs 表列
-#: (ts, category, text) 中 category 是 C 端扩展列（store.py 同表只有
-#: ts/text，两端库文件各自持有）。Python 客户端（client_py）消费该命令。
+#: 与此处常量逐值同步（两端协议常量铁律）；本端 logs 表列
+#: (ts, category, text) —— category 是与 C 端 hsfAppEventLog 同口径的类别
+#: 字面（conn/ctrl/alarm/auto/auth/sys，见 LOG_CAT_*）。Python 客户端
+#: （client_py）消费该命令。
 #: 载荷 {"limit":1..50,"offset":int,"beforeTs"?:epochMs,"loTs"?:,"hiTs"?:,
 #: "category"?:str,"kw":?}；应答 {"ok","err"?,"rows":[{ts,category,text}],
-#: "total","offset","limit"}（时间 DESC 取页、页内正序）。
+#: "total","count"?,"offset","limit"}（时间 DESC 取页、页内正序）。
 CMD_LOG_PAGE = 0x0119
 
 #: 分页载荷键。
@@ -525,6 +556,39 @@ HIST_KEY_EARLIEST_TS = "earliestTs"
 HIST_KEY_WINDOW_START_TS = "windowStartTs"
 HIST_KEY_WINDOW_END_TS = "windowEndTs"
 
+# ==================== 运行日志分页（0x0119，C 侧扩展命令） ====================
+#: [为什么单独一套键] 与历史分页**同字面**的键（offset/limit/beforeTs/loTs/
+#: hiTs/kw/total/rows）直接复用 HIST_KEY_*；只有日志特有的三个另起：
+#: 类别（category）、事件时刻（ts）、事件文本（text）。
+#: [与 C 侧逐字一致] C 侧 HighSpeedFilter/common/XhsfLinkProto.h 的
+#: HSF_KEY_LOG_* —— 字面不同则 C 客户端日志页读不到任何行。
+LOG_KEY_CATEGORY = "category"
+LOG_KEY_TS = "ts"
+LOG_KEY_TEXT = "text"
+#: 本页实际行数（C 侧同名字段；C 端商店铺按行数自行计数也兼容）。
+LOG_KEY_COUNT = "count"
+
+# ==================== 运行日志类别（logs.category 列的字面） ====================
+#: [口径与 C 端一致] C 侧 server/HsfServerApp.c 的 hsfAppEventLog() 只用这
+#: 五个字面；C 客户端「类别」下拉（client/ui/pages/HsfDataLog.c 的
+#: kLogCategoryKeys）也正是这五个 ⇒ 字面必须逐字相同，否则筛选落空。
+LOG_CAT_CONN = "conn"      #: 会话接入/断开
+LOG_CAT_CTRL = "ctrl"      #: 控制受理/拒绝（启停/设频/写 DO/点动…）
+LOG_CAT_ALARM = "alarm"    #: 告警（阀超时、自动运行告警…）
+LOG_CAT_AUTO = "auto"      #: 自动运行/模式切换/全停
+LOG_CAT_AUTH = "auth"      #: 登录成功/被拒
+#: [为什么多一个 sys] C 端的 logs 表**只**收上面五类定点事件；本端 logs 表
+#: 还收了大量非事件类业务日志（采集失败、配置变更、健康变化…），统一归 sys
+#: ⇒ C 客户端「类别」列不留空白，而下拉里的五类筛选仍精确命中。
+#: **两端客户端的下拉都已带「系统」档**（2026-11-10：不带的话日志页「类别」
+#: 列对这类行显示原始字面 "sys"，用户截图反馈「中文」）；字面必须逐字
+#: 一致：本文件 ↔ XhsfLinkProto.h 的 HSF_KEY_LOG_CATEGORY 注释 ↔
+#: client_py `LogPage.CATEGORY_ITEMS` ↔ C `HsfDataLog.c` 的 kLogCategoryKeys。
+LOG_CAT_SYS = "sys"
+#: C 侧客户端「类别」下拉可筛的五个字面（"全部类别"=空串，不在此列）。
+LOG_CATEGORIES = (LOG_CAT_CONN, LOG_CAT_CTRL, LOG_CAT_ALARM, LOG_CAT_AUTO,
+                   LOG_CAT_AUTH)
+
 #: 单页行数上限：由 XLINK_MAX_PAYLOAD(16KB) 反推。
 #: 实测一行（18 列，含中文模式/状态与单位串）≈230B，50 行 = 11.8KB，
 #: 留 4KB 给包络与异常大的字符串。客户端可以要得更少（板端小屏一次
@@ -543,6 +607,17 @@ KEY_TURB_NTU = "ntu"
 KEY_TURB_RAW = "raw"
 #: 该台是否在线（bool）。
 KEY_TURB_ONLINE = "online"
+#: 该台水温 ×100（int；℃ × 100，与 NTU 同口径）。
+#:
+#: [2026-11-10 新增] 只有**带温度的机型**才有（WZT-701A 站1 无温度；
+#: ZHEYI-5100ZDY 站3 一帧 0x0000×4 同刻带出浊度+温度）。
+#:
+#: [缺键 = 没有温度，不是 0℃] 机型不带温度时服务端压根不给这个键，
+#: 客户端显示 "--"。若给 0℃ 会被当成真实读数（现场 0℃ 与"没这功能"
+#: 差着一条温度报警的量级）。
+#:
+#: 与 C 侧 XhsfLinkProto.h 的 HSF_KEY_TURB_TEMP 同名同义。
+KEY_TURB_TEMP = "temp"
 
 # ---- 进水泵键 ----
 

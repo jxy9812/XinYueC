@@ -27,6 +27,8 @@
 
 #include "HsfLinkClient.h"
 #include "HsfDataBar.h"
+#include "HsfExport.h"      /* 共享导出模块（CSV / 真 XLSX）。 */
+#include "HsfTableSort.h"
 #include "HsfTheme.h"
 #include "HsfUi.h"   /* hsfUi_pageFontPx（本地设置·按页字号） */
 #include "XBoxLayout.h"
@@ -60,10 +62,20 @@ static int logPx(int px)
 
 /** @brief 每页行数缺省（与 HSF_LOG_PAGE_DEFAULT 同值；档位对齐历史页）。 */
 #define LOG_PAGE_LIMIT   20
-/** @brief 类别数（conn/ctrl/alarm/auto/auth；下拉 0 号位是"全部类别"）。 */
-#define LOG_CATEGORY_COUNT 5
+/** @brief 类别数（conn/ctrl/alarm/auto/auth/sys；下拉 0 号位是"全部类别"）。
+ *  @details [为什么有第 6 档 sys] C 端 logs 表只收五个定点事件类；
+ *           **Python 服务端**另收大量非事件类业务日志（采集失败、健康变化、
+ *           配置变更、装配保真行…），统一归 "sys"（见 server_py/hsfsrv/
+ *           proto.py 的 LOG_CAT_SYS）。表里不认这一档的话，那类行的
+ *           「类别」列会显示原始字面 "sys"（2026-11-10 现场截图反馈
+ *           「中文」），且下拉筛不到它。C 服务端不产生 sys 行 ⇒ 选中它
+ *           只会得到空列表（服务端按字面下推 WHERE，不做白名单校验），
+ *           不是报错。
+ */
+#define LOG_CATEGORY_COUNT 6
 /** @brief 页大小可选档（与历史页同档口径）。 */
 static const int kLogPageSizes[3] = { 10, 20, 50 };
+
 
 /** @brief 日志列头（3 列；静态存活：表格直存指针）。 */
 static const char* const kLogHeaders[3] = {
@@ -79,7 +91,8 @@ static const char* const kLogCategoryNames[LOG_CATEGORY_COUNT + 1] = {
     "控制",   /* ctrl */
     "告警",   /* alarm */
     "自动",   /* auto */
-    "鉴权"    /* auth */
+    "鉴权",   /* auth */
+    "系统"    /* sys（Python 服务端专有的一类业务日志） */
 };
 /** @brief 类别入库字面（与 HsfServerStore.h HsfLogRow 口径一致；0=空=全部）。 */
 static const char* const kLogCategoryKeys[LOG_CATEGORY_COUNT + 1] = {
@@ -88,8 +101,26 @@ static const char* const kLogCategoryKeys[LOG_CATEGORY_COUNT + 1] = {
     "ctrl",
     "alarm",
     "auto",
-    "auth"
+    "auth",
+    "sys"
 };
+
+/** @brief 类别码 → 中文显示名（与下拉同表；未知码原样显示，不丢信息）。
+ *  @details [为什么要映射] 协议里传的是 ASCII 类别码（conn/ctrl/alarm/auto/
+ *           auth，与 C 服务端 HsfServerStore 的口径一致），界面要给人看的
+ *           是中文；下拉早就用 kLogCategoryNames 显示中文了，只有表格
+ *           单元格漏了映射，整列是 auth/conn（现场截图确认）。
+ */
+static const char* logCategoryText(const char* key)
+{
+    int i;
+    if (!key || !key[0]) return "-";
+    for (i = 1; i <= LOG_CATEGORY_COUNT; ++i) {
+        if (strcmp(key, kLogCategoryKeys[i]) == 0) return kLogCategoryNames[i];
+    }
+    return key;
+}
+
 
 /**
  * @brief 日志页对象。
@@ -105,6 +136,7 @@ typedef struct HsfDataLogPage {
     /* [布局兼容前缀] ↑↑ 以上四成员勿动 ↑↑ */
     XLabel       m_status;      /**< 状态行（共 N 条 · 第 x/y 页）。 */
     XTableWidget m_table;       /**< 数据表（时间/类别/事件 3 列）。 */
+    HsfTableSort m_sort;      /**< 双击表头排序状态（当前页内）。 */
     XPushButton  m_prev;        /**< 上一页。 */
     XPushButton  m_next;        /**< 下一页。 */
     XComboBox    m_pageSizeBox; /**< 每页条数（10/20/50）。 */
@@ -132,6 +164,10 @@ typedef struct HsfDataLogPage {
     bool         m_exportPending;  /**< 已发导出请求，等应答。 */
     int          m_exportOffset;   /**< 导出请求的 offset（应答归属校验）。 */
     int          m_exportLimit;    /**< 导出请求的 limit（应答归属校验）。 */
+    /** @brief 本次导出的格式（发请求那一刻从工具条「导出格式」下拉定格）。
+     *  @note  导出是异步的（发请求→等应答→写盘），写盘时才读下拉会让
+     *         落地格式与按下「导出」时选的不一致。 */
+    HsfExportFormat m_exportFormat;
     int          m_rowBaseH;    /**< 建页时行高（随字号缩放）。 */
 } HsfDataLogPage;
 
@@ -184,6 +220,34 @@ static int64_t logTzOffsetMs(void)
  *  @param page 已按 offset/limit 归属确认为"本页那一页"的应答。
  *  @details 应答槽独立于历史页（0x0119 专用 m_logPage），但导出与分页
  *           同槽，仍要调用方先做归属判定（logTimerCb）。 */
+
+/**
+ * @brief 双击表头：排序当前页（口径与 Python 客户端 _header_dblclicked 一致：
+ *        新列⇒降序；同列降⇒升序；同列升⇒取消排序）。
+ */
+/* [前向声明] 取消排序分支要回调请求函数（定义在下方）。 */
+static void logRequest(HsfDataLogPage* self, int offset);
+
+static void HsfDataLogPageHeaderDblClicked(XObject* receiver, XVarList* args)
+{
+    HsfDataLogPage* self = (HsfDataLogPage*)receiver;
+    int col = -1;
+    if (!self) return;
+    if (args) {
+        XVarList_start(args);
+        col = XVarList_arg(args, int);
+    }
+    HsfTableSort_toggle(&self->m_sort, col);
+    if (self->m_sort.m_col < 0) {
+        /* [取消排序 ⇒ 回到服务端原序] 表里此刻已是排过序的行，本地没有
+         * 原序可还原 ⇒ 重取当前页（服务端按 ts 降序给回原序）。 */
+        logRequest(self, self->m_offset);
+        return;
+    }
+    HsfTableSort_apply(&self->m_sort, &self->m_table);
+    HsfTableSort_updateIndicator(&self->m_sort, &self->m_table);
+}
+
 static void logFillTable(HsfDataLogPage* self, const HsfLinkLogPage* page)
 {
     int i;
@@ -212,7 +276,8 @@ static void logFillTable(HsfDataLogPage* self, const HsfLinkLogPage* page)
         logFormatTs(page->m_rows[i].m_ts, tsText, (int)sizeof(tsText));
         it = XTableWidgetItem_create_utf8(tsText, 0);
         if (it) XTableWidget_setItem(&self->m_table, i, 0, it);
-        it = XTableWidgetItem_create_utf8(page->m_rows[i].m_category, 0);
+        it = XTableWidgetItem_create_utf8(
+                logCategoryText(page->m_rows[i].m_category), 0);
         if (it) XTableWidget_setItem(&self->m_table, i, 1, it);
         it = XTableWidgetItem_create_utf8(page->m_rows[i].m_text, 0);
         if (it) XTableWidget_setItem(&self->m_table, i, 2, it);
@@ -379,71 +444,63 @@ static void logPageSizeSlot(XObject* receiver, XVarList* args)
  *  @param page     服务端返回的那一页。
  *  @param outPath  输出路径缓冲。
  *  @param cap      outPath 容量。 */
-static bool logWriteCsv(const HsfLinkLogPage* page, char* outPath, int cap)
+/** @brief 日志页导出取格上下文。 */
+typedef struct LogExportCtx {
+    const HsfLinkLogPage* page; /**< 服务端返回的那一页。 */
+} LogExportCtx;
+
+/** @brief 导出取格回调：时间（格式化）/ 类别 / 事件 三列。 */
+static bool logExportCell(void* user, int row, int col, char* buf, int cap)
 {
-    XDeviceOpenOptions opts;
-    XString* target;
-    XFd fd;
-    int err = 0;
-    int i;
-    int k;
-    char line[512];
-    size_t n;
-
-    if (!page || !page->m_valid || !outPath || cap <= 0)
+    const LogExportCtx* ctx = (const LogExportCtx*)user;
+    if (buf && cap > 0) buf[0] = '\0';
+    if (!ctx || !ctx->page || !buf || cap <= 0) return false;
+    if (row < 0 || row >= ctx->page->m_count) return false;
+    switch (col) {
+    case 0:
+        logFormatTs(ctx->page->m_rows[row].m_ts, buf, cap);
+        return true;
+    case 1:
+        snprintf(buf, (size_t)cap, "%s", ctx->page->m_rows[row].m_category);
+        return true;
+    case 2:
+        snprintf(buf, (size_t)cap, "%s", ctx->page->m_rows[row].m_text);
+        return true;
+    default:
         return false;
-    snprintf(outPath, (size_t)cap, "./hsf_log_%d.csv", page->m_offset);
-    target = XString_create_utf8(outPath);
-    if (!target) return false;
-    memset(&opts, 0, sizeof(opts));
-    opts.m_openMode = XIODevice_WriteOnly | XIODevice_Truncate;
-    opts.m_target = target;
-    fd = XDevice_open(XDeviceType_File, &opts, &err);
-    XClassDelete(target);
-    if (fd == XFD_INVALID) return false;
-
-    /* UTF-8 BOM：Excel 直接双击打开不乱码（历史页同款）。 */
-    XDevice_write(fd, "\xEF\xBB\xBF", 3);
-    n = 0;
-    for (k = 0; k < 3; ++k)
-        n += (size_t)snprintf(line + n, sizeof(line) - n, "%s%s",
-                              k ? "," : "", kLogHeaders[k]);
-    XDevice_write(fd, line, (int64_t)n);
-    XDevice_write(fd, "\r\n", 2);
-
-    for (i = 0; i < page->m_count; ++i) {
-        char tsText[40];
-        const char* cells[3];
-        logFormatTs(page->m_rows[i].m_ts, tsText, (int)sizeof(tsText));
-        cells[0] = tsText;
-        cells[1] = page->m_rows[i].m_category;
-        cells[2] = page->m_rows[i].m_text;
-        n = 0;
-        for (k = 0; k < 3; ++k) {
-            bool quote = false;
-            const char* p;
-            for (p = cells[k]; *p; ++p)
-                if (*p == ',' || *p == '"' || *p == '\n' || *p == '\r')
-                    quote = true;
-            if (quote) {
-                n += (size_t)snprintf(line + n, sizeof(line) - n, "%s\"",
-                                      k ? "," : "");
-                for (p = cells[k]; *p && n + 2 < sizeof(line); ++p) {
-                    if (*p == '"') line[n++] = '"';
-                    line[n++] = *p;
-                }
-                line[n++] = '"';
-                line[n] = '\0';
-            } else {
-                n += (size_t)snprintf(line + n, sizeof(line) - n, "%s%s",
-                                      k ? "," : "", cells[k]);
-            }
-            if (n >= sizeof(line) - 2) break;
-        }
-        XDevice_write(fd, line, (int64_t)n);
-        XDevice_write(fd, "\r\n", 2);
     }
-    XDevice_close(fd);
+}
+
+/** @brief 把本页那一页写成导出文件（CSV 或真 XLSX）。
+ *  @details [走共享模块 2026-11-10] 与历史页同款：工具条「导出格式」
+ *           下拉此前是死控件（选了 XLSX 落地仍是 CSV），现在统一走
+ *           HsfExport（XLSX 走框架 XExcel 原生 API）。
+ *  @param page     服务端返回的那一页。
+ *  @param format   导出格式（发请求那一刻从下拉定格）。
+ *  @param outPath  输出路径缓冲（回填最终落地路径）。
+ *  @param cap      outPath 容量。 */
+static bool logWriteExport(const HsfLinkLogPage* page,
+                            HsfExportFormat format,
+                            char* outPath, int cap)
+{
+    HsfExportGrid grid;
+    LogExportCtx ctx;
+    char prefix[96];
+
+    if (!page || !page->m_valid || !outPath || cap <= 0) return false;
+    snprintf(prefix, sizeof(prefix), "./hsf_log_%d", page->m_offset);
+    ctx.page = page;
+    memset(&grid, 0, sizeof(grid));
+    grid.path = prefix;
+    grid.sheetName = "运行日志";
+    grid.format = format;
+    grid.colCount = 3;
+    grid.rowCount = page->m_count;
+    grid.header = kLogHeaders;
+    grid.cell = logExportCell;
+    grid.user = &ctx;
+    if (!HsfExport_write(&grid)) return false;
+    (void)HsfExport_outputPath(&grid, outPath, cap);
     return true;
 }
 
@@ -463,6 +520,11 @@ static void logExportStart(HsfDataLogPage* self)
     self->m_exportOffset = self->m_offset;
     self->m_exportLimit = self->m_pageSize;
     self->m_exportPending = true;
+    /* [导出格式定格] 按下「导出」这一刻取工具条下拉的格式（异步应答回来
+     * 后按它写盘）；下拉索引与 HsfExportFormat 数值相反，由共享模块的
+     * 映射函数转换。 */
+    self->m_exportFormat =
+        HsfExport_formatFromBarIndex(HsfDataBar_exportFormatIndex(self->m_bar));
     /* 导出走"当前页重拉"：与分页请求同键，anchor 沿用当前值。 */
     if (!HsfLinkClient_logQueryWindow(self->m_offset, self->m_pageSize,
                                       self->m_anchorTs,
@@ -507,7 +569,8 @@ static void logBarAction(void* userData, int action)
         XLabel_setText_2(&self->m_status, "重新加载…");
         break;
     case HsfDataBarAction_ChannelChanged:
-        /* 类别下拉（挂在工具条通道口）：0=全部，1..5=conn/ctrl/alarm/auto/auth。 */
+        /* 类别下拉（挂在工具条通道口）：0=全部，1..6=conn/ctrl/alarm/auto/
+         * auth/sys（sys 见 LOG_CATEGORY_COUNT 的说明）。 */
         idx = self->m_bar ? HsfDataBar_channelIndex(self->m_bar) : 0;
         if (idx < 0 || idx > LOG_CATEGORY_COUNT) idx = 0;
         snprintf(self->m_category, sizeof(self->m_category), "%s",
@@ -560,7 +623,8 @@ static void logTimerCb(void* userData, XTimerData* timer)
         char path[160];
         self->m_exportPending = false;
         self->m_seenSeq = page->m_seq;
-        if (logWriteCsv(page, path, (int)sizeof(path))) {
+        if (logWriteExport(page, self->m_exportFormat,
+                           path, (int)sizeof(path))) {
             char buf[220];
             snprintf(buf, sizeof(buf), "已导出 %d 行 → %s",
                      page->m_count, path);
@@ -679,6 +743,17 @@ XWidget* HsfDataLog_create(XWidget* parent, HsfMenuNavFn navFn,
         now = XDateTime_currentDateTime();
         HsfDataBar_setEndDateTime(self->m_bar, &now);
         HsfDataBar_setActionCallback(self->m_bar, logBarAction, self);
+        /* [按页裁剪工具条控件 2026-11-10] 本页**没有图表形态**，也没有
+         * 列筛选/小数位/最大点数的处理分支 ⇒ 共享工具条上这几个控件是
+         * 「可见但改了没反应」的假控件；「生成折线图」按下也只会自己弹回
+         * 表格（假按钮）。Python 端日志页**根本没有**这些控件。故一律
+         * 藏掉，别让假控件占着用户的注意力。 */
+        HsfDataBar_setFeatures(self->m_bar,
+            HsfDataBarFeature_All
+            & ~(unsigned int)(HsfDataBarFeature_Chart
+                              | HsfDataBarFeature_ColFilter
+                              | HsfDataBarFeature_Decimals
+                              | HsfDataBarFeature_MaxPoints));
         XBoxLayout_addWidget(&self->m_layout, self->m_bar);
     }
 
@@ -706,7 +781,18 @@ XWidget* HsfDataLog_create(XWidget* parent, HsfMenuNavFn navFn,
         XTableView_setColumnWidth(&self->m_table.m_base, 2, 560);
         /* [观感对齐历史页] 无行号列、无网格线。 */
         XTableWidget_setVerticalHeaderVisible(&self->m_table, false);
-        XTableView_setShowGrid(&self->m_table.m_base, false);
+        XTableView_setShowGrid(&self->m_table.m_base, false);    {
+        XHeaderView* hh = XTableView_horizontalHeader(&self->m_table.m_base);
+        HsfTableSort_init(&self->m_sort);
+        if (hh) {
+            /* [双击列标题排序] 与 Python 客户端同口径；作用于当前页。 */
+            XObject_connect_1((XObject*)hh,
+                              XSignal(XHeaderView_sectionDoubleClicked_signal),
+                              (XObject*)self, HsfDataLogPageHeaderDblClicked,
+                              XConnectionType_Direct);
+        }
+    }
+
     }
     XWidget_show((XWidget*)&self->m_table);
     XBoxLayout_addWidgetEx(&self->m_layout, (XWidget*)&self->m_table, 1, 0);

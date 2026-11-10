@@ -110,12 +110,34 @@ class LinkBridge(QObject):
         """
         from .xlink import XLinkClient
         self.disconnect_from()
+        # [退出竞态闸必须重新开闸] disconnect_from() 会把 _shutting_down
+        # 置 True（那是"真退出"的语义），但这里只是**换一条连接**：
+        # 若不重新开闸，网络线程发的 connected 信号会被 _emit_net 静默
+        # 吞掉 ⇒ MainWindow._on_connected 永不执行 ⇒ 首屏页面的
+        # set_topics 永远不调用 ⇒ 首屏无主题订阅（卡片全是 "--"），
+        # 切页才恢复（切页走 goto_page 里的 set_topics 直连，不经信号）。
+        # 实锤：2026-11-09 首屏温湿度/搅拌泵/压差/流量计/电磁阀全 "--"，
+        # 唯独设备健康有数（那是一次性快照请求，不靠订阅）。
+        self._shutting_down = False
         self.user = user
         self.client = XLinkClient(host, port, user, password,
                                   log=self.statusMessage.emit)
-        self.client.on_state_changed = self._on_state
-        self.client.on_publish = self._on_publish
-        self.client.on_auth_result = self._on_auth_result
+        # [旧会话的迟到回调必须忽略 2026-11-09]
+        # 连接重建时，旧 client 的拆链沿还会回调状态（DISCONNECTED）⇒ 把
+        # connected_flag 翻成 False ⇒ 界面假"未连接"（实测：重连刚成功就被
+        # 旧会话的迟到沿打掉；connect_to() 会重新开 _shutting_down，旧会话
+        # 的 teardown 信号因此不再被静默）。
+        # 故把三个回调都按 client 身份绑：非当前 client 的事件一律丢弃
+        # （旧会话的迟到推送/认证结果同理，否则会写进新会话的 model）。
+        _client = self.client
+        _client.on_state_changed = (
+            lambda st, c=_client: self._on_state(st, c))
+        _client.on_publish = (
+            lambda topic, payload, data_type, c=_client:
+            self._on_publish(topic, payload, data_type, c))
+        _client.on_auth_result = (
+            lambda ok, role, err, c=_client:
+            self._on_auth_result(ok, role, err, c))
         ok, err = self.client.start(timeout)
         if ok:
             # 注意：connected 信号由 _on_state(READY) 统一发出，
@@ -173,7 +195,7 @@ class LinkBridge(QObject):
     # ==================================================================
     #                      网络线程 → UI 线程
     # ==================================================================
-    def _on_state(self, state):
+    def _on_state(self, state, client=None):
         """状态迁移 → UI 信号。
 
         [为什么 READY 要在这里也处理] 自动重连成功后状态会重新变成 READY，
@@ -182,6 +204,9 @@ class LinkBridge(QObject):
         否则界面会永远停在"未连接"（实测：断线 6 秒后重连成功，界面不变）。
         """
         from .xlink import SessionState
+        # [旧会话的迟到事件] 非当前 client 的状态迁移一律忽略。
+        if client is not None and client is not self.client:
+            return
         if state == SessionState.READY:
             if not self.connected_flag:
                 self.connected_flag = True
@@ -195,12 +220,16 @@ class LinkBridge(QObject):
             self.connected_flag = False
             self._emit_net(self.disconnected, "连接已断开")
 
-    def _on_auth_result(self, ok, role, err):
+    def _on_auth_result(self, ok, role, err, client=None):
+        if client is not None and client is not self.client:
+            return
         if not ok:
             self.connected_flag = False
             self._emit_net(self.authFailed, err)
 
-    def _on_publish(self, topic, payload, data_type):
+    def _on_publish(self, topic, payload, data_type, client=None):
+        if client is not None and client is not self.client:
+            return
         """推送到达（**网络线程**）：解包成 model，再信号通知 UI。
 
         [为什么在这里就解包] 解 BSON 是纯 CPU 活，放网络线程不影响 UI；

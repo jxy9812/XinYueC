@@ -317,12 +317,21 @@ class RtuMaster(object):
     正常读应答（byte_count=0x80 → 数据不足）。故必须显式按此形态识别。
     """
 
-    def __init__(self, port, baudrate, unit, timeout=0.4, retries=1, log=None):
+    def __init__(self, port, baudrate, unit, timeout=0.4, retries=1, log=None,
+                 min_tx_gap_ms=0):
         self.port = port
         self.baudrate = baudrate
         self.unit = unit
         self.timeout = timeout
         self.retries = max(0, retries)
+        #: [站间最小间隙 2026-11-09] 同一 485 上相邻两次事务的**最小间隔**。
+        #: ttyS4 三台混跑实测（docs/HSF板端ttyS4三设备取数实测总表 §9）：
+        #: 站5 的 49 字节长帧读完后立刻问站1 → 几乎零应答；间隔 ≥100~125ms
+        #: 才恢复，200ms 稳定 10/10。9600 路 B 传 200；115200 路 A 传 0
+        #: （变频器 100ms 轮询不能被拖慢）。
+        self.min_tx_gap_ms = max(0, int(min_tx_gap_ms))
+        #: 上一次事务结束的时刻（loop.time()），配合 min_tx_gap_ms 用。
+        self._last_tx_end = 0.0
         self._serial = None
         self._lock = asyncio.Lock()
         self._log = log or (lambda msg: None)
@@ -439,6 +448,44 @@ class RtuMaster(object):
             await asyncio.sleep(0.001)
         return bytes(buf)
 
+    #: 补齐读的上限（毫秒）：内核第二批交付的批间隔实测 ~20.6ms，取 3 倍余量。
+    #: 只在「长度不足」时才等，正常短帧零开销。
+    RTU_TOPUP_MS = 60
+
+    async def _top_up_short_read(self, raw, deadline):
+        """[按长度收满] 对「标准读应答但长度不足」的帧补一次收齐。
+
+        只认读功能码（1/2/3/4）的 `[站号][fc][byteCount][data][CRC2]` 形态：
+        异常应答（fc|0x80，固定 5 字节）与写应答（固定 8 字节回显）长度本就
+        确定，不需要补。M512 的 byteCount=0x80 错误帧形态特殊，也不补。
+        """
+        if len(raw) < 3:
+            return raw
+        fc = raw[1]
+        if fc & 0x80:
+            return raw                      # 异常应答固定 5 字节
+        if fc not in (1, 2, 3, 4):
+            return raw                      # 写应答等固定长度，按原口径
+        byte_count = raw[2]
+        if byte_count == 0x80:
+            return raw                      # M512 错误帧（长度另行判定）
+        need = byte_count + 5
+        if len(raw) >= need:
+            return raw                      # 已收满（正常路径，零开销）
+        loop = asyncio.get_event_loop()
+        top_deadline = loop.time() + self.RTU_TOPUP_MS / 1000.0
+        buf = bytearray(raw)
+        while loop.time() < top_deadline and len(buf) < need:
+            try:
+                chunk = self._serial.read(256)
+            except Exception as exc:        # noqa: BLE001
+                raise ModbusError("串口读失败：%s" % exc)
+            if chunk:
+                buf += chunk
+                continue
+            await asyncio.sleep(0.001)
+        return bytes(buf)
+
     async def _transact(self, pdu, unit=None):
         """发一条 RTU PDU 并收应答 PDU（不含 CRC）。
 
@@ -448,6 +495,14 @@ class RtuMaster(object):
         if unit is None:
             unit = self.unit
         self.ensure_open()
+        # [站间最小间隙] 上一帧收完后若还没到 min_tx_gap_ms，先等到期再发。
+        # 站5 长帧后立刻问站1 会得到零应答（接收器恢复期），200ms 稳定。
+        if self.min_tx_gap_ms > 0 and self._last_tx_end > 0:
+            loop = asyncio.get_event_loop()
+            earliest = self._last_tx_end + self.min_tx_gap_ms / 1000.0
+            delay = earliest - loop.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
         request = append_crc(bytes([unit]) + pdu)
         self._flush_input()
         try:
@@ -469,6 +524,15 @@ class RtuMaster(object):
         # sleep），把一帧拆断。RTU 帧本身很短（≤256 字节），直接**读到
         # 静默或超时为止**再整体解析，比"按字段精确读"稳得多。
         raw = await self._read_until_idle(deadline)
+        # [按长度收满 2026-11-09] 静默判帧尾在「内核分批交付」的长应答上恒定
+        # 截断（ttyS4 9600 实测：49 字节应答被拆成 32+17 两批，批间隔
+        # ~20.6ms，3ms 静默口径下 20/20 全断在 32 字节——证据与复现见
+        # docs/HSF板端ttyS4三设备取数实测总表_20261109.md §3.2）。这里对
+        # 「读应答但长度不足」的帧做一次补齐读（最多 RTU_TOPUP_MS），把
+        # 第二批收进来；多收的字节由下面的 CRC/长度校验自然丢弃。
+        raw = await self._top_up_short_read(raw, deadline)
+        # [站间最小间隙] 收发完成时刻（后续只是解析，不再上总线）。
+        self._last_tx_end = asyncio.get_event_loop().time()
         if not raw:
             raise ModbusTimeout("无应答（0 字节）")
         if len(raw) < 2:

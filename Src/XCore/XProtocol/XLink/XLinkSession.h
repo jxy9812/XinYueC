@@ -152,11 +152,28 @@ typedef struct XLinkTopicSubscription {
 
 /**
  * @brief 服务端凭据查询结果（XLinkSessionAuthLookupCallback 返回值）。
+ * @details [Rejected 与 BadUser/Locked 的语义分界 —— 2026-11-09 根修]
+ *          `BadUser`/`Locked` 属**账户本身**的失败：用户不存在或被锁，
+ *          对端重试同一凭据永远不会成功 ⇒ 框架按反枚举口径下发
+ *          「随机盐 + 全 0 摘要」的假挑战（对端必然比对失败，最终看到
+ *          BadPassword），客户端据此**永久放弃**（正确）。
+ *          `Rejected` 属**服务端瞬时状态**的拒绝（同账并发/会话数上限/
+ *          KickOld 未实现等）：凭据本身可能是对的，稍后重试就会通过。
+ *          框架必须**直接下发真实 Rejected 码**、绝不伪造口令失败——
+ *          否则客户端把「账户已在线」当成「口令错误」而永久停止重连，
+ *          一次链路抖动就会让已登录的界面永久无数据（实锅：
+ *          HighSpeedFilter 模拟模式下客户端全页 `--`、换个时间重连又好了）。
+ * @note  Counterpart: `server_py/hsfsrv/proto.py` 的 AUTHSTATUS_* 与
+ *        `client_py/hsfsrv_client/proto.py` 同值镜像；三处语义必须同步。
  */
 typedef enum XLinkSessionAuthLookupResult {
-    XLinkSessionAuthLookup_Ok      = 0, /**< 用户存在且允许认证：盐/迭代/H/角色已填。 */
-    XLinkSessionAuthLookup_BadUser = 1, /**< 用户不存在。 */
-    XLinkSessionAuthLookup_Locked  = 2  /**< 用户被锁定。 */
+    XLinkSessionAuthLookup_Ok       = 0, /**< 用户存在且允许认证：盐/迭代/H/角色已填。 */
+    XLinkSessionAuthLookup_BadUser  = 1, /**< 用户不存在。 */
+    XLinkSessionAuthLookup_Locked   = 2, /**< 用户被锁定。 */
+    XLinkSessionAuthLookup_Rejected = 3  /**< 策略性拒绝（瞬时，可重试）：
+                                             同账并发/会话数上限等。框架直接回
+                                             XLinkAuthStatus_Rejected，**不下发
+                                             假挑战**，避免伪装成口令错误。 */
 } XLinkSessionAuthLookupResult;
 
 /**

@@ -30,15 +30,38 @@ public class XGuiNativeActivity extends NativeActivity {
     /** 定位权限请求码（WiFi 扫描结果用）。 */
     private static final int REQ_WIFI_SCAN_LOCATION = 0x5757;
 
-    static {
-        // NativeActivity 由系统按 meta-data android.app.lib_name 直接
-        // dlopen 本库，**不经过 System.loadLibrary**——ART 因而不会调用
-        // 库的 JNI_OnLoad，无障碍桥的 RegisterNatives 就不会执行
-        // （真机实证：Java 侧报 "No implementation found"）。这里显式
-        // 加载一次：ART 会调 JNI_OnLoad 完成方法绑定。系统侧的加载在
-        // 之前已完成，重复 load 同一 so 是幂等的（同一 dlopen 句柄）。
+    /**
+     * 显式加载原生库（拿到 JNI_OnLoad 的方法绑定）。
+     *
+     * 背景（2026-10-24 安卓无障碍接入）：NativeActivity 由系统按 meta-data
+     * android.app.lib_name 直接 dlopen 本库，**不经过 System.loadLibrary**
+     * ——ART 因而不会调用库的 JNI_OnLoad，无障碍桥的 RegisterNatives 就不会
+     * 执行（真机实证：Java 侧报 "No implementation found"）。这里显式加载
+     * 一次：ART 会调 JNI_OnLoad 完成方法绑定。系统侧的加载在之后已完成，
+     * 重复 load 同一 so 是幂等的（同一 dlopen 句柄）。
+     *
+     * 库名从清单 meta-data 取：同一份 Java 桥服务多个 APK（demo =
+     * libxguidemo.so / 高速过滤器客户端 = libxhsfclient.so），各自清单给
+     * 各自的 android.app.lib_name，不必为此维护两份 Java 类。取不到时
+     * 回落到历史默认 xguidemo。
+     */
+    private void loadNativeLibrary() {
+        String lib = "xguidemo";
         try {
-            System.loadLibrary("xguidemo");
+            android.content.pm.ApplicationInfo info = getPackageManager()
+                    .getApplicationInfo(getPackageName(),
+                            PackageManager.GET_META_DATA);
+            if (info != null && info.metaData != null) {
+                String m = info.metaData.getString("android.app.lib_name");
+                if (m != null && m.length() > 0) {
+                    lib = m;
+                }
+            }
+        } catch (Throwable ignored) {
+            // 读不到 meta-data：沿用历史默认库名。
+        }
+        try {
+            System.loadLibrary(lib);
         } catch (Throwable ignored) {
             // 加载失败：原生侧仍由 NativeActivity 正常拉起（系统 dlopen
             // 路径不受影响），仅无障碍桥不可用。
@@ -47,6 +70,9 @@ public class XGuiNativeActivity extends NativeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        /* 显式加载原生库须在 super.onCreate 之前：super 会触发系统的
+         * NativeActivity 加载路径，我们要保证 JNI_OnLoad 先被调用一次。 */
+        loadNativeLibrary();
         super.onCreate(savedInstanceState);
         installImmersive();
         requestWifiScanPermissions();
@@ -55,6 +81,13 @@ public class XGuiNativeActivity extends NativeActivity {
 
     /**
      * 申请 WiFi 扫描所需的定位权限（ACCESS_FINE_LOCATION）。
+     *
+     * **是否申请由应用自己决定**（2026-11-09）：清单里放
+     * <pre>meta-data android:name="android.app.request_wifi_location" android:value="true"</pre>
+     * 的应用才申请（XGuiDemo —— 它的网络设置页要扫 AP）。不带此 meta-data
+     * 的应用**启动不弹系统权限框**：那个框会把应用首屏整个压在下面（用户
+     * 只看到一个系统弹窗，看不到自己的界面），而按 IP 连服务端的应用
+     * （如高速过滤器客户端）压根不需要 WiFi 扫描权限。
      *
      * 背景（2026-10-25 真机实证）：安卓自 API 26 起把 WiFi 扫描结果列为
      * **位置数据**——没有定位权限时 `WifiManager.getScanResults()` 不抛
@@ -74,6 +107,9 @@ public class XGuiNativeActivity extends NativeActivity {
      * 应用强制；本应用 targetSdk=28，FINE 即可，不引入多余权限。
      */
     private void requestWifiScanPermissions() {
+        if (!manifestBool("android.app.request_wifi_location", false)) {
+            return;
+        }
         try {
             if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
                     == PackageManager.PERMISSION_GRANTED) {
@@ -85,6 +121,27 @@ public class XGuiNativeActivity extends NativeActivity {
         } catch (Throwable ignored) {
             // 申请失败不阻断启动：扫描结果为空，功能其余部分照常。
         }
+    }
+
+    /**
+     * 读清单 meta-data 的布尔值（缺省 false）。
+     *
+     * @param key   meta-data 名字
+     * @param def   读不到时的缺省值
+     * @return meta-data 的布尔值；任何异常都回落到缺省值
+     */
+    private boolean manifestBool(String key, boolean def) {
+        try {
+            android.content.pm.ApplicationInfo info = getPackageManager()
+                    .getApplicationInfo(getPackageName(),
+                            PackageManager.GET_META_DATA);
+            if (info != null && info.metaData != null) {
+                return info.metaData.getBoolean(key, def);
+            }
+        } catch (Throwable ignored) {
+            // 读不到（应用刚装、或清单没写）→ 缺省。
+        }
+        return def;
     }
 
     /**

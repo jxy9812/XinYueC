@@ -208,8 +208,8 @@ static void test_providerSnapshot(void)
     const HsfFlowMeterSnapshot* snap;
 
     XPrintf("---- provider 翻译与双层质量 ----\n");
-    prov = HsfFlowMeterProvider_remote(1);
-    CHECK("取 B 侧 provider", prov != NULL);
+    prov = HsfFlowMeterProvider_remote();
+    CHECK("取 provider（不按侧寻址，2026-11-10）", prov != NULL);
     CHECK("snapshot 槽非空", prov && prov->snapshot != NULL);
     if (!prov || !prov->snapshot) return;
 
@@ -236,17 +236,20 @@ static void test_providerSnapshot(void)
     CHECK("本地陈旧时 provider m_valid = false（双层质量生效）",
           snap && !snap->m_valid);
 
-    /* ④ 未注入的 A 侧 → 无效 */
-    {
-        const HsfFlowMeterProvider* pa = HsfFlowMeterProvider_remote(0);
-        const HsfFlowMeterSnapshot* sa = pa && pa->snapshot
-            ? pa->snapshot(pa->m_userData) : NULL;
-        CHECK("A 侧 provider 快照 m_valid = false", sa && !sa->m_valid);
-    }
+    /* ④ 活动侧由服务端帧告知：注入 side=1 的帧后，客户端知道流量计在
+     *    1 侧，provider 取的就是该侧的数据（客户端自己不点名侧号）。 */
+    CHECK("活动侧取自服务端帧（注入 side=1 后为 1）",
+          HsfLinkClient_flowMeterSide() == 1);
+    CHECK("provider 快照走活动侧（与 HsfLinkClient_flowMeterActive 同源）",
+          HsfLinkClient_flowMeterActive() == HsfLinkClient_flowMeter(1));
+    injectFrame(1, -625.5, true, 0x00);
+    snap = prov->snapshot(prov->m_userData);
+    CHECK("活动侧数据可取到（flow=-625.5）",
+          snap && snap->m_flow < -625.49 && snap->m_flow > -625.51);
 
-    CHECK("侧号越界 provider 返回 NULL",
-          HsfFlowMeterProvider_remote(-1) == NULL &&
-          HsfFlowMeterProvider_remote(2) == NULL);
+    /* ⑤ provider 不按侧寻址：多次取回同一个表对象。 */
+    CHECK("provider 不按侧寻址（同一表对象）",
+          HsfFlowMeterProvider_remote() == prov);
 }
 
 /**
@@ -269,7 +272,7 @@ static void test_subscribe(void)
     int marker = 0x5A5A;
 
     XPrintf("---- 订阅转发 ----\n");
-    prov = HsfFlowMeterProvider_remote(1);
+    prov = HsfFlowMeterProvider_remote();
     if (!prov || !prov->subscribe) { CHECK("subscribe 槽", false); return; }
 
     g_notifyCount = 0;

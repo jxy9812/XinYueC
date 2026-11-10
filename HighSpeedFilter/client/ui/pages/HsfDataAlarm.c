@@ -17,6 +17,7 @@
 
 #include "HsfLinkClient.h"
 #include "HsfDataBar.h"
+#include "HsfExport.h"      /* 共享导出模块（CSV / 真 XLSX）。 */
 #include "HsfTheme.h"
 #include "HsfUi.h"   /* hsfUi_pageFontPx（本地设置·按页字号） */
 #include "XBoxLayout.h"
@@ -80,6 +81,8 @@ typedef struct HsfDataAlarm {
     XChart*      m_chart;     /**< 折线图（create 所有权在页）。 */
     XLineSeries* m_series;    /**< 次数曲线。 */
     XValueAxis*  m_axisY;     /**< 数值轴。 */
+    XValueAxis*  m_axisX;     /**< 时间轴（刻度＝分钟桶序号；标签渲染 时:分）。 */
+    int64_t      m_chartFirstMin; /**< 图首桶的分钟号（epoch 毫秒/60000）。 */
     int          m_viewMode;  /**< 0=表格 1=图表。 */
     int          m_kindFilter;/**< 类型筛选：0=全部；1..8 → 设备类型 0..7。 */
     int64_t      m_loTs;      /**< 时间窗下界（<=0 不限）。 */
@@ -94,6 +97,36 @@ typedef struct HsfDataAlarm {
     bool         m_seenFlag[32];
     int          m_seenCount;
 } HsfDataAlarm;
+
+/**
+ * @brief 图表 X 轴刻度标签：分钟桶序号 → 本地 时:分。
+ * @param axis 轴（未用）。
+ * @param value 桶序号（0=图首桶）。
+ * @param buf 输出缓冲。
+ * @param cap 缓冲容量。
+ * @param userData 页面实例。
+ * @details [口径 2026-11-10] 图上原来只有裸桶序号（0/1/2…），看不出是几点
+ *          几分。桶号 × 60000 + 首桶分钟号即该桶的墙钟毫秒，再补本地时区
+ *          偏移展开成日历。
+ */
+static void alarmXLabelText(const XValueAxis* axis, double value, char* buf,
+                            int cap, void* userData)
+{
+    HsfDataAlarm* self = (HsfDataAlarm*)userData;
+    XDateTime dt;
+    XTime t;
+    int64_t ms;
+
+    (void)axis;
+    if (!buf || cap <= 0) return;
+    buf[0] = '\0';
+    if (!self || self->m_chartFirstMin <= 0) return;
+    ms = (self->m_chartFirstMin + (int64_t)(value + 0.5)) * 60000 +
+         self->m_tzOffsetMs;
+    if (!XDateTime_setMSecsSinceEpoch(&dt, ms)) return;
+    t = XDateTime_time(&dt);
+    snprintf(buf, (size_t)cap, "%02d:%02d", XTime_hour(&t), XTime_minute(&t));
+}
 
 /** @brief 记一条报警（同一设备的同一次异常不重复记）。 */
 static void alarmAppend(HsfDataAlarm* self, const HsfLinkDeviceHealth* dev,
@@ -219,44 +252,76 @@ static void alarmFillTable(HsfDataAlarm* self)
     XWidget_update((XWidget*)&self->m_table);
 }
 
-/** @brief 导出当前筛选命中行到 CSV（需 Download 权限；闸在服务端账户）。 */
+/** @brief 报警页导出取格上下文（网格行 → 报警记录行号）。 */
+typedef struct AlarmExportCtx {
+    const HsfDataAlarm* page; /**< 页面（取 m_rows / m_count）。 */
+    const int*          map;   /**< 网格行 → 报警记录行号（可见行，倒序）。 */
+} AlarmExportCtx;
+
+/** @brief 导出取格回调：时间 / 类型 / 描述 / 状态 四列。 */
+static bool alarmExportCell(void* user, int row, int col, char* buf, int cap)
+{
+    const AlarmExportCtx* ctx = (const AlarmExportCtx*)user;
+    const HsfAlarmRow* r;
+    if (buf && cap > 0) buf[0] = '\0';
+    if (!ctx || !ctx->page || !ctx->map || !buf || cap <= 0) return false;
+    if (row < 0 || row >= ctx->page->m_count) return false;
+    r = &ctx->page->m_rows[ctx->map[row]];
+    switch (col) {
+    case 0: snprintf(buf, (size_t)cap, "%s", r->m_time); return true;
+    case 1: snprintf(buf, (size_t)cap, "%s", r->m_kind); return true;
+    case 2: snprintf(buf, (size_t)cap, "%s", r->m_name); return true;
+    case 3: snprintf(buf, (size_t)cap, "%s", r->m_state); return true;
+    default: return false;
+    }
+}
+
+/** @brief 导出当前筛选命中行到文件（CSV 或真 XLSX；需 Download 权限）。 */
 static void alarmExportCsv(HsfDataAlarm* self)
 {
-    XDeviceOpenOptions opts;
-    XString* target;
-    XFd fd;
-    int err = 0;
+    HsfExportGrid grid;
+    AlarmExportCtx ctx;
+    static const char* const kHead[4] = { "时间", "类型", "描述", "状态" };
+    int map[ALARM_MAX_ROWS];
+    int n = 0;
     int r;
     char path[96];
+    char prefix[96];
     char buf[256];
-    static const char* const kHead = "时间,类型,描述,状态\r\n";
 
     if (!self) return;
     if (!HsfLinkClient_can(HSF_PERM_DOWNLOAD)) {
         XLabel_setText_2(&self->m_status, "权限不足：下载数据需要普通用户及以上账户");
         return;
     }
-    snprintf(path, sizeof(path), "./hsf_alarm_%lld.csv",
-             (long long)(XDateTime_currentMSecsSinceEpoch() / 1000));
-    target = XString_create_utf8(path);
-    if (!target) return;
-    memset(&opts, 0, sizeof(opts));
-    opts.m_openMode = XIODevice_WriteOnly | XIODevice_Truncate;
-    opts.m_target = target;
-    fd = XDevice_open(XDeviceType_File, &opts, &err);
-    XClassDelete(target);
-    if (fd == XFD_INVALID) return;
-    XDevice_write(fd, "\xEF\xBB\xBF", 3);   /* UTF-8 BOM：Excel 不乱码 */
-    XDevice_write(fd, kHead, (int64_t)strlen(kHead));
+    /* [可见行倒序] 与旧实现一致：最新的在前，且只导**当前筛选命中**的行
+     * （类型过滤 + 时间窗）。网格行 → 记录行的映射先算好，取格回调按
+     * 映射取。 */
     for (r = self->m_count - 1; r >= 0; --r) {
-        const HsfAlarmRow* row = &self->m_rows[r];
         if (!alarmRowVisible(self, r)) continue;
-        snprintf(buf, sizeof(buf), "%s,%s,%s,%s\r\n",
-                 row->m_time, row->m_kind, row->m_name, row->m_state);
-        XDevice_write(fd, buf, (int64_t)strlen(buf));
+        if (n >= ALARM_MAX_ROWS) break;
+        map[n++] = r;
     }
-    XDevice_close(fd);
-    snprintf(buf, sizeof(buf), "已导出 → %s", path);
+    snprintf(prefix, sizeof(prefix), "./hsf_alarm_%lld",
+             (long long)(XDateTime_currentMSecsSinceEpoch() / 1000));
+    ctx.page = self;
+    ctx.map = map;
+    memset(&grid, 0, sizeof(grid));
+    grid.path = prefix;
+    grid.sheetName = "报警";
+    grid.format = HsfExport_formatFromBarIndex(
+        HsfDataBar_exportFormatIndex(self->m_bar));
+    grid.colCount = 4;
+    grid.rowCount = n;
+    grid.header = kHead;
+    grid.cell = alarmExportCell;
+    grid.user = &ctx;
+    if (!HsfExport_write(&grid)) {
+        XLabel_setText_2(&self->m_status, "导出失败：文件写入错误");
+        return;
+    }
+    (void)HsfExport_outputPath(&grid, path, (int)sizeof(path));
+    snprintf(buf, sizeof(buf), "已导出 %d 行 → %s", n, path);
     XLabel_setText_2(&self->m_status, buf);
 }
 
@@ -291,6 +356,9 @@ static void alarmBuildChart(HsfDataAlarm* self)
                              (double)cnt[i]);
         if (cnt[i] > vmax) vmax = cnt[i];
     }
+    /* [X 轴刻度＝分钟桶] 记住首桶分钟号，标签回调据此还原 时:分
+     * （原先只有裸桶序号，图上读不出时间）。 */
+    self->m_chartFirstMin = (nb > 0) ? mins[0] : 0;
     if (self->m_axisY)
         XValueAxis_setRange(self->m_axisY, 0.0,
                             vmax > 0 ? (double)vmax + 1.0 : 1.0);
@@ -482,7 +550,7 @@ XWidget* HsfDataAlarm_create(XWidget* parent, HsfMenuNavFn navFn,
     if (self->m_bar) {
         static const char* const kKinds[8] = {
             "变频器", "温湿度", "流量计", "模拟量",
-            "485总线", "数字量", "电磁阀组", "水质"
+            "485总线", "数字量", "电动球阀组", "水质"
         };
         const char* channelItems[9];
         const char* colItems[5];
@@ -499,6 +567,15 @@ XWidget* HsfDataAlarm_create(XWidget* parent, HsfMenuNavFn navFn,
         now = XDateTime_currentDateTime();
         HsfDataBar_setEndDateTime(self->m_bar, &now);
         HsfDataBar_setActionCallback(self->m_bar, alarmBarAction, self);
+        /* [按页裁剪工具条控件 2026-11-10] 本页有图表形态、有列筛选，但
+         * **没有**「小数位」与「每图例最多点数」的处理分支（alarmBarAction
+         * 里无对应 case）⇒ 共享工具条上这两个微调框是「可见但改了没反应」
+         * 的假控件，藏掉。本页其余控件（图表/列筛选/导出格式）都真实接线，
+         * 保持显示。 */
+        HsfDataBar_setFeatures(self->m_bar,
+            HsfDataBarFeature_All
+            & ~(unsigned int)(HsfDataBarFeature_Decimals
+                              | HsfDataBarFeature_MaxPoints));
         XBoxLayout_addWidget(&self->m_layout, self->m_bar);
     }
 
@@ -534,6 +611,13 @@ XWidget* HsfDataAlarm_create(XWidget* parent, HsfMenuNavFn navFn,
                              XChartSeriesType_Line);
         XChart_createDefaultAxes(self->m_chart);
         self->m_axisY = (XValueAxis*)XChart_axisY(self->m_chart);
+        self->m_axisX = (XValueAxis*)XChart_axisX(self->m_chart);
+        if (self->m_axisX) {
+            /* [X 轴显示 时:分 2026-11-10] 桶序号 → 本地时钟（每分钟一桶）。
+             * 缺省格式串只有桶号，图上读不出是几点几分。 */
+            XValueAxis_setLabelTextCallback(self->m_axisX, alarmXLabelText,
+                                            self);
+        }
         XChartView_setChart(&self->m_chartView, self->m_chart);
     }
     XChartView_setPanEnabled(&self->m_chartView, true);

@@ -37,6 +37,7 @@
 #include "XModbusHub.h"
 #include "XModbusClient_Protected.h"
 #include "XModbusDevice_Protected.h"
+#include "XModbusPdu.h"      /* 异常帧判定（XModbusPdu_isException）。 */
 #include "XMemory.h"
 #include "XVector.h"
 #include "XString.h"
@@ -45,17 +46,68 @@
 #include <string.h>
 #include <stdio.h>
 
+/* ==================== 诊断开关（env 门控，正式诊断手段） ====================
+ *
+ * XMODBUS_HUB_TRACE=1
+ *   打开 Hub 侧逐组/逐笔诊断：① 读组被选中（过了哪几道闸）② 客户端受理
+ *   结果（Reply 指针/终态/错误码）③ 泵每拍的在途状态（inflight/时刻戳）。
+ *   现场定位"某站读组发不出去 / 游标卡死"时，这三行是唯一能分辨
+ *   「请求没出 Hub」「客户端拒收」「从站不应答」的分水岭。
+ *   限频打印（每设备 8 条），不刷屏。
+ * XMODBUS_VIRTUAL_TRACE=1
+ *   打开虚拟从站侧的取数诊断（请求到了没有、模型绑上没有、读成功没有）。
+ *   两个开关互相配合：Hub 侧说"发了"但虚拟侧没打 ⇒ 请求在客户端里被
+ *   吞掉（未连接/拒收/丢弃路径）；两侧都打了 ⇒ 到了从站，是从站不应答。
+ */
+#define XMODBUS_HUB_TRACE_DEV_CAP 16
+
+/**
+ * @brief 诊断限频闸：按 **Hub 指针**分桶计数。
+ * @details [为什么按 Hub 而不是 dev->id] 同一个进程里每个 Hub 的设备句柄
+ *          都从 1 起算（dev->id=1 是常态）⇒ 只按 dev->id 计数时，先跑的
+ *          Hub 会吃光额度，后面的 Hub **一行都打不出来**——现场"逐组 trace
+ *          零输出"就是这么来的假象（那台设备其实一直在被闸门跳过）。
+ * @param hub Hub 指针（NULL=不打印）。
+ * @param limit 该 Hub 的打印条数上限。
+ * @return true=本条应当打印（并已计入额度）。
+ */
+static bool hubTraceAllow(XModbusHub* hub, int limit)
+{
+    static XModbusHub* s_bucket[XMODBUS_HUB_TRACE_DEV_CAP];
+    static int s_count[XMODBUS_HUB_TRACE_DEV_CAP];
+    int b = 0;
+    if (!hub || limit <= 0) return false;
+    while (b < XMODBUS_HUB_TRACE_DEV_CAP && s_bucket[b] && s_bucket[b] != hub)
+        ++b;
+    if (b >= XMODBUS_HUB_TRACE_DEV_CAP) return false;
+    if (!s_bucket[b]) {
+        s_bucket[b] = hub;
+        s_count[b] = 0;
+    }
+    if (s_count[b] >= limit) return false;
+    ++s_count[b];
+    return true;
+}
+
 /* ==================== 槽前置声明 ==================== */
 static void XModbusHub_onDeviceStateChanged(XObject* sender, XVarList* args);
 static void XModbusHub_onReplyFinished(XObject* sender, XVarList* args);
+static void hubPumpDeviceEx(XModbusHub* hub, XModbusHubDevice* dev,
+                            bool allowPoll);
 static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev);
 static void hubPumpWriteQueue(XModbusHub* hub);
 static void hubRebuildUnitSched(XModbusHub* hub, XModbusHubDevice* dev);
 
-/* [A3 时序缺口兜底] 同步终态收口重入护栏：收口尾部续泵理论上可经防御性
- * 忙分支再次同步终态（可达路径均被连接态门槛挡住），护栏兜底防栈爆；
- * 重入层改为就地释放+清 inflight（语义良性：脏区间留表下拍重试）。 */
-static int s_hubInSyncFinish = 0;
+/* [同步终态收口嵌套深度 2026-11-09]
+ *
+ * [为什么从文件级全局改成 per-hub 字段] 原 `static int s_hubInSyncFinish`
+ * 是**进程级**的：多 Hub 场景下 A 呼的收口若经 valueChanged 槽触发 B 呼的
+ * 写，B 呼的同步收口会被误判成"嵌套"⇒ 那一帧被整包丢弃。
+ *
+ * [语义] 0=不在收口中；1=最外层同步收口；>=2=嵌套层。
+ * 嵌套层**不再丢弃结果**（改为完整记账），但**不再泵**（深度上界）——
+ * 见 hubSendPollGroup / hubSendDirtyRange 的就地收口段与收口尾部。 */
+#define HUB_SYNC_FINISH_MAX_DEPTH 2
 
 /* ==================== 虚函数前置声明（class_init 在文件前部引用） ==================== */
 static void VXModbusHub_deinit(XModbusHub* hub);
@@ -167,6 +219,12 @@ static inline bool hubUnitSingleWriteOnly(const XModbusHubDevice* dev, int unitI
     const XModbusHubUnitLimits* lim = hubUnitLimitsOf(dev, unitId);
     return (lim && lim->m_singleWriteOnly) ? true : false;
 }
+/** @brief 该从站的发帧前总线静默期（毫秒；0=不设闸）。 */
+static inline uint32_t hubUnitPreTxQuietMs(const XModbusHubDevice* dev, int unitId)
+{
+    const XModbusHubUnitLimits* lim = hubUnitLimitsOf(dev, unitId);
+    return (lim && lim->m_preTxQuietMs != 0) ? lim->m_preTxQuietMs : 0u;
+}
 
 /* ==================== 从站分级轮询（每从站最小发送间隔） ==================== */
 
@@ -185,6 +243,66 @@ static uint64_t hubUnitLastSentOf(const XModbusHubDevice* dev, int unitId)
         if (e && e->unitId == unitId) return e->lastSentMs;
     }
     return 0;
+}
+
+/**
+ * @brief 取某从站的「静默闸连续被挡起点」簿记条目（可写；不存在返回 NULL）。
+ */
+static XModbusHubUnitSent* hubUnitSentEntryOf(XModbusHubDevice* dev, int unitId)
+{
+    size_t i;
+    if (!dev || unitId < 0 || !dev->m_unitLastSent) return NULL;
+    for (i = 0; i < XVector_size_base(dev->m_unitLastSent); ++i) {
+        XModbusHubUnitSent* e =
+            (XModbusHubUnitSent*)XVector_at_base(dev->m_unitLastSent, (int64_t)i);
+        if (e && e->unitId == unitId) return e;
+    }
+    return NULL;
+}
+
+/**
+ * @brief 「发帧前静默闸」的饥饿逃逸判定。
+ * @details [2026-11-10 框架级根修·活性保证]
+ *          静默闸量的是「本串口上一笔事务收口至今」，而一条 485 上往往
+ *          挂着多个从站 ⇒ **别的从站的流量会把静默窗口一直顶掉**。若配置
+ *          值离谱（现场根因：配置侧把 m_preTxQuietMs 留成未初始化的栈
+ *          垃圾 0xCCCCCCCC ≈ 34 亿毫秒），该从站的读组就**永远轮不到**
+ *          ——现场表现"变频器整站哑掉、失败计数=0、游标卡死"，而总线上
+ *          别的站一切正常。
+ *          框架层的活性保证：某从站被静默闸**连续**挡住超过
+ *          XMODBUS_HUB_QUIET_ESCAPE_MS ⇒ 放行一帧（限频告警），此后该
+ *          从站恢复正常轮询。**任何从站都不会被静默闸永久饿死。**
+ * @param dev 设备槽；unitId 从站号；nowMs 当前时刻。
+ * @return true=本拍应当放行（逃逸生效）；false=静默闸照常拦截。
+ */
+static bool hubUnitQuietEscape(XModbusHubDevice* dev, int unitId, uint64_t nowMs)
+{
+    XModbusHubUnitSent* e = hubUnitSentEntryOf(dev, unitId);
+    uint64_t blockedSince;
+    if (!e) return false;
+    if (e->quietBlockedSinceMs == 0) {
+        e->quietBlockedSinceMs = nowMs;    /* 本次连续被挡的起点。 */
+        return false;
+    }
+    if (nowMs < e->quietBlockedSinceMs) {  /* 时钟回退：重新起算。 */
+        e->quietBlockedSinceMs = nowMs;
+        return false;
+    }
+    blockedSince = nowMs - e->quietBlockedSinceMs;
+    if (blockedSince < (uint64_t)XMODBUS_HUB_QUIET_ESCAPE_MS) return false;
+    /* 逃逸：放行一帧，并清零起点（下一轮重新计时）。 */
+    e->quietBlockedSinceMs = 0;
+    {
+        static int s_escape = 0;
+        if (s_escape < 5) {
+            ++s_escape;
+            XPrintf("XModbusHub: 从站 %d 被发帧前静默闸连续挡住 %llu ms ——"
+                    "逃逸放行一帧（静默期配置过大或总线上其它从站流量过密："
+                    "静默闸按**串口级**收口时刻量，别站流量会把窗口顶掉）\n",
+                    unitId, (unsigned long long)blockedSince);
+        }
+    }
+    return true;
 }
 
 /**
@@ -211,6 +329,7 @@ static bool hubUnitMarkSent(XModbusHubDevice* dev, int unitId, uint64_t nowMs)
     }
     entry.unitId = unitId;
     entry.lastSentMs = nowMs;
+    entry.quietBlockedSinceMs = 0;   /* [静默闸饥饿逃逸] 新条目：未在挡。 */
     return XVector_push_back_1_base(dev->m_unitLastSent, &entry);
 }
 
@@ -1181,10 +1300,48 @@ static bool hubSendPollGroup(XModbusHub* hub, XModbusHubDevice* dev,
     if (!hub || !dev || !dev->client || !group || group->count == 0) return false;
     XModbusDataUnit_init_ex(&unit, (XModbusRegisterType)group->type,
                             group->remoteStart, group->count);
+    /* [诊断 2026-11-10] 进入发送点（区分"没进来"与"进来后卡住"）。 */
+    {
+        const char* env = getenv("XMODBUS_HUB_TRACE");
+        if (env && env[0] && env[0] != '0' && hubTraceAllow(hub, 8)) {
+            XPrintf("[hub] dev=%d sendReadRequest -> unit=%d client=%p\n",
+                    dev->id, (int)group->unitId, (void*)dev->client);
+        }
+    }
     reply = XModbusClient_sendReadRequest(dev->client, &unit, group->unitId,
                                           XModbusRequestPriority_Normal);
     XClassDeinit(&unit);
-    if (!reply) return false;
+    /* [诊断 2026-11-10 正式诊断手段] 读组发出后的**受理结果**一行：
+     * 请求由客户端受理了吗？受理的是哪一支（Reply 指针/终态/错误码）？
+     * 现场"某站全哑"时，这一行是分水岭——
+     *   · 没这行 ⇒ 请求压根没进客户端（Hub 侧的问题）；
+     *   · 有这行且 finished=0 ⇒ 客户端收下了但**从站不应答**（真机
+     *     M512 对 0xFA00×5 无应答）⇒ 必须在途超时收口，否则整站被拖死。
+     * 用法：XMODBUS_HUB_TRACE=1（每设备限 8 条，避免刷屏）。 */
+    {
+        const char* env = getenv("XMODBUS_HUB_TRACE");
+        if (env && env[0] && env[0] != '0' && hubTraceAllow(hub, 8)) {
+            XPrintf("[hub] dev=%d unit=%d start=%u count=%u -> client=%p "
+                    "reply=%p finished=%d err=%d\n",
+                    dev->id, (int)group->unitId,
+                    (unsigned)group->remoteStart, (unsigned)group->count,
+                    (void*)dev->client, (void*)reply,
+                    reply ? (XModbusReply_isFinished(reply) ? 1 : 0) : -1,
+                    reply ? (int)XModbusReply_error(reply) : -1);
+        }
+    }
+    if (!reply) {
+        /* [诊断 2026-11-10] 组被选中却发不出去（客户端拒收）——限频打印，
+         * 否则现场只看到"某站全哑"却查不到是谁拒收的。 */
+        static int s_noReply = 0;
+        if (s_noReply < 5) {
+            ++s_noReply;
+            XPrintf("XModbusHub: 读组发不出去（客户端拒收）unit=%d 起始=%u 数量=%u\n",
+                    (int)group->unitId,
+                    (unsigned)group->remoteStart, (unsigned)group->count);
+        }
+        return false;
+    }
     /* 刷新标记在发送时清除（一次尝试即算响应请求；失败由退避/重试兜底）。 */
     for (bi = group->firstBlock; bi < group->firstBlock + group->blockCount; ++bi) {
         XModbusHubCacheBlock* b;
@@ -1196,6 +1353,7 @@ static bool hubSendPollGroup(XModbusHub* hub, XModbusHubDevice* dev,
     XObject_setParent((XObject*)reply, (XObject*)hub);
     dev->inflight = reply;
     dev->inflightKind = XModbusHubInflight_Poll;
+    dev->inflightStartMs = XDateTime_currentMSecsSinceEpoch();
     dev->inflightPayload.group = *group;
     /* [A3 时序缺口兜底] reply 可能在 send 内部即同步终态（未连接/io 关闭/
      * 忙/空 PDU/发送失败等收口分支，setError 同步发射 finished）——此刻
@@ -1206,11 +1364,26 @@ static bool hubSendPollGroup(XModbusHub* hub, XModbusHubDevice* dev,
      * 把设备拉成 Unconnected，收口尾部续泵会被 hubPumpDevice 的连接态
      * 门槛挡住。 */
     if (XModbusReply_isFinished(reply)) {
-        if (!s_hubInSyncFinish) {
-            s_hubInSyncFinish = 1;
+        /* [嵌套不再丢帧 2026-11-09 框架级根修]
+         *
+         * 原实现：嵌套层（收口尾部续泵又发一帧、同步终态再次就地收口）
+         * **只清 inflight + 释放 reply**，那一帧的结果整包消失——
+         *   · 不回填缓存 ⇒ b->lastOkMs 不推进 ⇒ 点级新鲜度判陈旧 ⇒
+         *     上层显示"无数据"；
+         *   · 不记账 ⇒ pollOkCount/pollErrCount/从站退避簿记全缺
+         *     ⇒ 死从站永远不升级静默、活从站被它占住单飞槽；
+         *   · 不发沿 ⇒ unitLost/unitAlive/valueChanged 全缺。
+         * 而外层那一帧往往是**写收口**，内层被丢的正是**读帧** ⇒ 现场
+         * 表现为"某台从站的数据再也不刷新"，看门狗却判健康。
+         *
+         * 现在：嵌套层**完整收口**（回填+记账+沿），只是**不再泵**
+         * （深度上界 HUB_SYNC_FINISH_MAX_DEPTH），杜绝栈递归与总线风暴。 */
+        if (hub->m_syncFinishDepth < HUB_SYNC_FINISH_MAX_DEPTH) {
+            ++hub->m_syncFinishDepth;
             XModbusHub_onReplyFinished((XObject*)reply, NULL);
-            s_hubInSyncFinish = 0;
+            --hub->m_syncFinishDepth;
         } else {
+            /* 深度超限：只做必要的清理（不再回填，也不泵）。 */
             dev->inflight = NULL;
             dev->inflightKind = XModbusHubInflight_None;
             XObject_deleteLater((XObject*)reply);
@@ -1290,14 +1463,30 @@ static bool hubSendDirtyRange(XModbusHub* hub, XModbusHubDevice* dev,
     }
     dev->inflight = reply;
     dev->inflightKind = XModbusHubInflight_Write;
+    dev->inflightStartMs = XDateTime_currentMSecsSinceEpoch();
     /* [A3 时序缺口兜底] 同上：send 内部同步终态就地带 inflight 登记直调
      * 收口槽（脏区间留表 + 续泵等价），防 dev->inflight 永卡单飞。 */
     if (XModbusReply_isFinished(reply)) {
-        if (!s_hubInSyncFinish) {
-            s_hubInSyncFinish = 1;
+        /* [嵌套不再丢帧 2026-11-09 框架级根修]
+         *
+         * 原实现：嵌套层（收口尾部续泵又发一帧、同步终态再次就地收口）
+         * **只清 inflight + 释放 reply**，那一帧的结果整包消失——
+         *   · 不回填缓存 ⇒ b->lastOkMs 不推进 ⇒ 点级新鲜度判陈旧 ⇒
+         *     上层显示"无数据"；
+         *   · 不记账 ⇒ pollOkCount/pollErrCount/从站退避簿记全缺
+         *     ⇒ 死从站永远不升级静默、活从站被它占住单飞槽；
+         *   · 不发沿 ⇒ unitLost/unitAlive/valueChanged 全缺。
+         * 而外层那一帧往往是**写收口**，内层被丢的正是**读帧** ⇒ 现场
+         * 表现为"某台从站的数据再也不刷新"，看门狗却判健康。
+         *
+         * 现在：嵌套层**完整收口**（回填+记账+沿），只是**不再泵**
+         * （深度上界 HUB_SYNC_FINISH_MAX_DEPTH），杜绝栈递归与总线风暴。 */
+        if (hub->m_syncFinishDepth < HUB_SYNC_FINISH_MAX_DEPTH) {
+            ++hub->m_syncFinishDepth;
             XModbusHub_onReplyFinished((XObject*)reply, NULL);
-            s_hubInSyncFinish = 0;
+            --hub->m_syncFinishDepth;
         } else {
+            /* 深度超限：只做必要的清理（不再回填，也不泵）。 */
             dev->inflight = NULL;
             dev->inflightKind = XModbusHubInflight_None;
             XObject_deleteLater((XObject*)reply);
@@ -1349,14 +1538,295 @@ static bool hubSendNextWrite(XModbusHub* hub, XModbusHubDevice* dev)
 }
 
 /**
+ * @brief 该设备是否有陈旧块（块级 lastOkMs 太久没回填）。
+ * @param staleMs 判定阈值（毫秒）。
+ * @details [为什么按块] 设备级"最后成功应答"会被同一 Hub 上其它从站掩盖：
+ *          485 一条线挂变频器+温湿度，变频器一成功，设备级计时器就一直
+ *          新鲜 ⇒ 温湿度那台不刷新也看不出来（现场实证：温湿度恒 "--"，
+ *          看门狗判健康、重启才恢复）。块级 lastOkMs 才是"这个点最后
+ *          一次真正被回填"的时刻。
+ */
+static bool hubDeviceHasStaleBlock(const XModbusHubDevice* dev, uint64_t nowMs,
+                                   uint64_t staleMs)
+{
+    size_t bn;
+    size_t i;
+    if (!dev || !dev->blocks) return false;
+    bn = XVector_size_base((const XContainer*)dev->blocks);
+    for (i = 0; i < bn; ++i) {
+        const XModbusHubCacheBlock* b =
+            *(XModbusHubCacheBlock* const*)XVector_at_base(
+                (const XContainer*)dev->blocks, (int64_t)i);
+        if (!b) continue;
+        if (b->flags & XModbusMapRange_WriteOnly) continue;  /* 只写块不轮询 */
+        if (b->lastOkMs == 0) return true;                   /* 从未回填过 */
+        if (nowMs > b->lastOkMs && nowMs - b->lastOkMs > staleMs) return true;
+    }
+    return false;
+}
+
+/**
+ * @brief 轮询停滞诊断：打印设备状态、**陈旧的块**与读组表的跳过原因。
+ * @details [为什么按块看] 设备级"最后成功应答"会把一台 Hub 上的其它从站
+ *          掩盖掉：485 一条线上挂着变频器+温湿度两台，变频器一成功，设备
+ *          级计时器就一直新鲜 ⇒ 温湿度那台从站不刷新也看不出来（现场实证：
+ *          温湿度恒为"--"，看门狗判健康、重启才恢复）。块级 lastOkMs 才是
+ *          "这个点最后一次真正被回填"的时刻 ⇒ 按块定位才对得上现场。
+ *
+ *          读组被三道闸门静默跳过时（从站静默 / 分级节拍未到期 / 区域不在
+ *          轮询掩码），既不记失败也不打日志 ⇒ 现场只看到"没数据"，无从
+ *          判断是"读失败"还是"压根没读"。这里把跳过原因逐组列出。
+ */
+static void hubDumpStallDiag(const XModbusHub* hub, XModbusHubDevice* dev,
+                              uint64_t nowMs)
+{
+    size_t gn = 0;
+    size_t i;
+    size_t bn = 0;
+    if (!hub || !dev) return;
+    if (dev->groups)
+        gn = XVector_size_base((const XContainer*)dev->groups);
+    if (dev->blocks)
+        bn = XVector_size_base((const XContainer*)dev->blocks);
+    XPrintf("XModbusHub: 设备 %d 轮询停滞（成功=%u 失败=%u 组数=%u 游标=%u "
+            "轮询区掩码=0x%X）\n",
+            dev->id,
+            (unsigned)dev->pollOkCount, (unsigned)dev->pollErrCount,
+            (unsigned)gn, (unsigned)dev->groupCursor,
+            (unsigned)hub->m_pollAreas);
+    /* ---- 陈旧块（最后一次真正回填太久之前）---- */
+    for (i = 0; i < bn; ++i) {
+        const XModbusHubCacheBlock* b =
+            *(XModbusHubCacheBlock* const*)XVector_at_base(
+                (const XContainer*)dev->blocks, (int64_t)i);
+        uint64_t age;
+        if (!b) continue;
+        if (b->flags & XModbusMapRange_WriteOnly) continue;  /* 只写块不参与轮询 */
+        age = (b->lastOkMs == 0) ? 0 : (nowMs - b->lastOkMs);
+        if (b->lastOkMs != 0 && age <= 3000u) continue;      /* 还新鲜 */
+        XPrintf("    陈旧块[%u] unit=%d 类型=%d 起始=%u 数量=%u "
+                "最后回填=%s%llu ms 失败计数=%u\n",
+                (unsigned)i, (int)b->unitId, (int)b->type,
+                (unsigned)b->remoteStart, (unsigned)b->count,
+                (b->lastOkMs == 0) ? "从未 " : "",
+                (unsigned long long)age, (unsigned)b->failCount);
+    }
+    /* ---- 读组表与每组的跳过原因 ---- */
+    for (i = 0; i < gn; ++i) {
+        const XModbusHubReadGroup* g =
+            (const XModbusHubReadGroup*)XVector_at_base(
+                (const XContainer*)dev->groups, (int64_t)i);
+        if (!g) continue;
+        XPrintf("    组[%u] unit=%d 类型=%d 起始=%u 数量=%u %s%s%s\n",
+                (unsigned)i, g->unitId, (int)g->type,
+                (unsigned)g->remoteStart, (unsigned)g->count,
+                hubUnitMuted(dev, g->unitId, nowMs) ? "[静默] " : "",
+                hubUnitDue(dev, g->unitId, nowMs) ? "" : "[未到期] ",
+                hubGroupReadable(hub, dev, g) ? "" : "[不在掩码]",
+                /* [静默期闸 2026-11-10] 诊断补标：这一闸用**设备级**
+                 * lastTxEndMs 记账，而另两闸是从站级 ⇒ 同总线上另一站每
+                 * 500ms 一拍就能把设备级收口时刻刷掉，要求 200ms 静默的站
+                 * 永远等不到窗口（现场：变频器整站哑掉、失败计数=0）。 */
+                (hubUnitPreTxQuietMs(dev, g->unitId) != 0 &&
+                 dev->lastTxEndMs != 0 && nowMs >= dev->lastTxEndMs &&
+                 (nowMs - dev->lastTxEndMs) <
+                     (uint64_t)hubUnitPreTxQuietMs(dev, g->unitId))
+                    ? "[静默期闸] " : "");
+    }
+}
+
+/**
+ * @brief 在途读组的收口时限（毫秒）。
+ * @details [2026-11-10 框架级根修] 取值顺序：
+ *          ① Hub 显式配置（XModbusHub_setInflightTimeoutMs）；
+ *          ② 客户端超时（XModbusClient_timeout）；
+ *          ③ **缺省兜底** XMODBUS_HUB_DEFAULT_INFLIGHT_TIMEOUT_MS。
+ *          缺省兜底是必需的：注入的虚拟客户端可能把超时配成 0，此时若只
+ *          依赖客户端超时，在途标记就**永远没有收口点** ⇒ 单飞闸把整台
+ *          设备堵死（现场：变频器整站离线、失败计数=0、游标卡住）。
+ *          另加宽限余量（XMODBUS_HUB_INFLIGHT_TIMEOUT_GRACE_MS）：Hub 的
+ *          收口必须晚于客户端自己的超时，否则 Hub 会删掉客户端仍持有的
+ *          Reply ⇒ 悬垂指针。
+ */
+static uint64_t hubInflightTimeoutMs(const XModbusHub* hub,
+                                      const XModbusHubDevice* dev)
+{
+    uint64_t ms = 0;
+    if (hub && hub->m_inflightTimeoutMs > 0) ms = (uint64_t)hub->m_inflightTimeoutMs;
+    if (ms == 0 && dev && dev->client)
+        ms = (uint64_t)XModbusClient_timeout(dev->client);
+    if (ms == 0) ms = (uint64_t)XMODBUS_HUB_DEFAULT_INFLIGHT_TIMEOUT_MS;
+    return ms + (uint64_t)XMODBUS_HUB_INFLIGHT_TIMEOUT_GRACE_MS;
+}
+
+/**
+ * @brief 在途事务超时收口：判失败 + 记账 + 释放标记 + 继续下一组。
+ * @details [2026-11-10 框架级根修] 从站对某一组**不应答**时（真机 M512
+ *          对 0xFA00×5 无应答；模拟器越界地址亦然），在途标记会一直挂着
+ *          ⇒ 单飞闸（`if (dev->inflight) return;`）把该设备后续**所有**
+ *          读组永久堵死：现场表现"变频器整站离线、失败计数=0、游标卡在 1、
+ *          其余组从不再发"，而同一总线上的别的站一切正常。
+ *          收口动作（与"收到失败应答"的路径同口径）：
+ *            · 记失败计数（pollErrCount / 块级 failCount）；
+ *            · 报从站退避（XPollScheduler_reportResultKey(false)）——
+ *              真不答应的从站该退避，不该被无限重试打爆总线；
+ *            · 清 inflight / inflightKind / inflightStartMs ⇒ 下一组可发；
+ *            · 释放 Reply：**先断开 Hub 与该 Reply 的 finished 连接**，
+ *              免得迟到的应答再进收口槽二次释放（双删）。
+ */
+static void hubCloseTimedOutInflight(XModbusHub* hub, XModbusHubDevice* dev,
+                                      uint64_t nowMs, uint64_t timeoutMs)
+{
+    XModbusReply* reply;
+    const uint8_t kind = dev->inflightKind;
+    /* [联合体按类别读] inflightPayload 是「读组 / 写快照」的联合体 ⇒
+     * 只能按 inflightKind 取对应成员（读组有 firstBlock，写快照没有）。 */
+    const XModbusHubReadGroup group = (kind == XModbusHubInflight_Write)
+                                          ? (XModbusHubReadGroup){0}
+                                          : dev->inflightPayload.group;
+    const int unitId = (kind == XModbusHubInflight_Write)
+                           ? dev->inflightPayload.write.unitId
+                           : group.unitId;
+    const uint16_t remoteStart = (kind == XModbusHubInflight_Write)
+                                     ? dev->inflightPayload.write.remoteStart
+                                     : group.remoteStart;
+    const uint16_t count = (kind == XModbusHubInflight_Write)
+                               ? dev->inflightPayload.write.count
+                               : group.count;
+    if (!hub || !dev) return;
+    reply = dev->inflight;
+    {
+        /* 限频打印（每设备 1s 一条）：否则现场只看到"某站全哑"。 */
+        const bool show = (dev->lastErrLogMs == 0 ||
+                           nowMs - dev->lastErrLogMs >= 1000u);
+        if (show) {
+            dev->lastErrLogMs = nowMs;
+            XPrintf("XModbusHub: 设备 %d 在途超时收口（%s unit=%d 起始=%u "
+                    "数量=%u，超过 %llu ms 无应答）——判失败并继续下一组\n",
+                    dev->id, (kind == XModbusHubInflight_Write) ? "写" : "读",
+                    unitId,
+                    (unsigned)remoteStart,
+                    (unsigned)count,
+                    (unsigned long long)timeoutMs);
+        }
+    }
+    /* ① 断链：迟到的应答不再进本 Hub 的收口槽（否则二次 deleteLater ⇒ 双删）。
+     *    [receiver 必须传 NULL] Hub 侧是用 XObject_connect_2 挂的（**无接收
+     *    者** ⇒ 连接记录的 receiver 字段是 NULL），而 XConnection_equal 的
+     *    匹配规则是「receiver 非空才比对」⇒ 传 hub 会匹配不上、断链失败。 */
+    if (reply) {
+        (void)XObject_disconnect_1((XObject*)reply,
+                                    XSignal(XModbusReply_finished_signal),
+                                    NULL, XModbusHub_onReplyFinished);
+        /* ①b 传输层摘手（**必须先于释放 Reply**）：RTU/TCP 传输层在等待
+         *     应答期间都持有这个 Reply（RTU=m_currentReply、TCP=在途表），
+         *     Hub 若直接释放它，迟到的应答/超时回调就会解引用已释放对象
+         *     ⇒ UAF ⇒ 实测板端 SEGV（浊度站1 在站5 长帧恢复期内不应答
+         *     ⇒ 收口释放 Reply ⇒ 串口超时再碰它 ⇒ 崩）。
+         *     XModbusClient_abandonReply 只解除「传输层还持有它」，不碰
+         *     Reply 本身（所有权仍归 Hub）。 */
+        (void)XModbusClient_abandonReply(dev->client, reply);
+    }
+    /* ② 记账：按"失败应答"同口径（失败计数 + 从站退避 + 块级失败计数）。 */
+    dev->lastTxOk = false;
+    if (kind == XModbusHubInflight_Poll) {
+        const bool wasLost = (unitId >= 0) &&
+            XPollScheduler_isLostKey(&dev->unitSched, unitId);
+        const bool enteredMute = (unitId >= 0) &&
+            XPollScheduler_reportResultKey(&dev->unitSched, unitId, false, nowMs);
+        ++dev->pollErrCount;
+        if (group.firstBlock < XVector_size_base(dev->blocks)) {
+            XModbusHubCacheBlock* b =
+                *(XModbusHubCacheBlock**)XVector_at_base(dev->blocks,
+                                                         (int64_t)group.firstBlock);
+            if (b) ++b->failCount;
+        }
+        if (enteredMute && !wasLost)
+            XModbusHub_unitLost_signal(hub, dev->id, unitId);
+    } else if (kind == XModbusHubInflight_Write) {
+        /* 写超时：脏区间原样保留（写重发拍会重试），快照内存在此释放。 */
+        if (dev->inflightPayload.write.values) {
+            XFree_System(dev->inflightPayload.write.values);
+            dev->inflightPayload.write.values = NULL;
+        }
+        memset(&dev->inflightPayload.write, 0, sizeof(dev->inflightPayload.write));
+    }
+    /* ③ 释放标记 ⇒ 单飞闸放行，下一拍继续下一个读组。 */
+    dev->inflight = NULL;
+    dev->inflightKind = XModbusHubInflight_None;
+    dev->inflightStartMs = 0;
+    if (reply) XObject_deleteLater((XObject*)reply);
+    XModbusHub_deviceStatsChanged_signal(hub, dev->id);
+}
+
+/**
  * @brief 统一泵：设备空闲（单飞未占用且在线）时——先写后轮询（写延迟优先）。
  *        轮询拍/重连恢复/写入队/重发拍/应答收口共用此入口。
- */
-static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev)
+ * @param allowPoll false=**只续写、不发读**（应答收口尾部用）。
+ *        [为什么收口路径不许发读 2026-11-09] 2026-10-26 那次"轮询风暴"根修
+ *        的注释说"收口只补写、不续轮询"，但代码调的是写+轮询的统一泵 ⇒
+ *        只要写分支被跳过（合并窗口未开/失败期让路），收口路径就会**再发
+ *        一帧读**；异步客户端上这是时间轴上无界的读帧链（2ms/请求、tid
+ *        数千的风暴形态），同步客户端上则是栈递归。现按参数分开。 */
+static void hubPumpDeviceEx(XModbusHub* hub, XModbusHubDevice* dev,
+                            bool allowPoll)
 {
     if (!hub || !dev || !dev->client) return;
-        if (dev->inflight) return;                                   /* 单飞占用。 */
+    /* [诊断 2026-11-10] 泵入口快照：这一拍为什么没发出去？把三个可能一次性
+     * 摊开——① 在途标记还挂着（单飞闸）② 在途时刻戳（超时收口的判据）
+     * ③ 设备在线态。现场"游标卡住"时，先看这一行再决定往哪查。 */
+    {
+        const char* env = getenv("XMODBUS_HUB_TRACE");
+        if (env && env[0] && env[0] != '0' && hubTraceAllow(hub, 8)) {
+            XPrintf("[hub] dev=%d pump state=%d inflight=%p kind=%u "
+                    "startMs=%llu cursor=%u\n",
+                    dev->id, (int)dev->state, (void*)dev->inflight,
+                    (unsigned)dev->inflightKind,
+                    (unsigned long long)dev->inflightStartMs,
+                    (unsigned)dev->groupCursor);
+        }
+    }
+    if (dev->inflight) {
+        /* [在途超时收口 2026-11-10 框架级根修] 从站对某一组不应答时（真机
+         * M512 对 0xFA00×5 无应答；模拟器越界地址亦然），在途标记会一直挂
+         * 着 ⇒ 单飞闸把该设备后续**所有**读组永久堵死（现场：变频器整体
+         * 离线、失败计数=0、游标卡在 1、其余组从不再发）。
+         * 收口：超时即判本次事务失败、记失败计数、报从站退避、释放标记，
+         * 让轮询继续下一组（**不能**让一个组的沉默拖垮整条总线）。 */
+        const uint64_t nowMs = XDateTime_currentMSecsSinceEpoch();
+        const uint64_t timeoutMs = hubInflightTimeoutMs(hub, dev);
+        if (dev->inflightStartMs != 0 && nowMs >= dev->inflightStartMs &&
+            (nowMs - dev->inflightStartMs) > timeoutMs) {
+            hubCloseTimedOutInflight(hub, dev, nowMs, timeoutMs);
+            /* 继续往下走：本拍再发一个组（不空等）。 */
+        } else {
+            return;                                     /* 单飞占用。 */
+        }
+    }
     if (dev->state != XModbusDevice_ConnectedState) return;      /* 离线安静跳过。 */
+
+    /* [轮询停滞诊断 2026-11-09 框架级补可观测]
+     *
+     * 现象：设备报"在线"、Hub 记"成功"，但某一台从站的数据再也不刷新，
+     * 且**没有任何失败日志**（因为那条读组根本没发出去）。三道跳过闸门
+     * （从站静默 / 分级节拍未到期 / 区域不在轮询掩码）都是静默 return
+     * ⇒ 现场只能看到"没数据"，定位不到是哪一组、为什么没发。
+     *
+     * 处置：**按块**判陈旧（块级 lastOkMs = 这个点最后一次真正被回填的
+     * 时刻；设备级 lastSuccessMs 会被同一 Hub 上其它从站的成功掩盖），
+     * 一旦有块陈旧超过 3s ⇒ 打印一次诊断（限频 5s），逐块逐组列出
+     * 陈旧点与跳过原因。 */
+    {
+        const uint64_t nowMs = XDateTime_currentMSecsSinceEpoch();
+        if (hubDeviceHasStaleBlock(dev, nowMs, 3000u)) {
+            if (dev->lastStallDiagMs == 0 ||
+                nowMs - dev->lastStallDiagMs >= 5000u) {
+                dev->lastStallDiagMs = nowMs;
+                hubDumpStallDiag(hub, dev, nowMs);
+            }
+        }
+    }
+
 
     /* ① 写优先（带饥饿保护）：该设备有脏区间；合并窗口未到期时等窗口。
      *    [2026-11-01 失败交替] 从站失联后写恒超时重发会把单飞总线永久占住
@@ -1381,6 +1851,9 @@ static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev)
      *    静默从站的组跳过——RTU 共口多从站时把总线让给活从站（死从站
      *    不再占用单飞槽吃超时），静默到期自动恢复探活；全部静默则本拍
      *    让总线。 */
+    /* [只续写模式 2026-11-09] 收口尾部调用本泵时 allowPoll=false：写
+     * 意图照发，**不发读**（避免收口链上再叠一帧读 → 轮询风暴/栈递归）。 */
+    if (!allowPoll) return;
     if (!hub->m_polling || !dev->groups) return;
     {
         const size_t gn = XVector_size_base(dev->groups);
@@ -1391,12 +1864,63 @@ static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev)
             const size_t idx = (dev->groupCursor + scanned) % gn;
             const XModbusHubReadGroup* g =
                 (const XModbusHubReadGroup*)XVector_at_base(dev->groups, (int64_t)idx);
+            bool muted;
+            bool due;
+            bool quietBlocked;
+            bool readable;
+            uint32_t quietMs;
             if (!g) continue;
-            if (hubUnitMuted(dev, g->unitId, nowMs)) continue;
+            muted = hubUnitMuted(dev, g->unitId, nowMs);
             /* [2026-11-04 分级轮询] 该从站还没到最小发送间隔 ⇒ 跳过，
              * 让快从站立刻拿到本拍（慢从站不再按整轮陪跑）。 */
-            if (!hubUnitDue(dev, g->unitId, nowMs)) continue;
-            if (!hubGroupReadable(hub, dev, g)) continue;
+            due = hubUnitDue(dev, g->unitId, nowMs);
+            /* [2026-11-10 发帧前总线静默闸] 该从站要求「上一笔事务收口后
+             * 总线静默 ≥ m_preTxQuietMs」才许发（ttyS4 站5→站1 实测恢复期，
+             * 见 XModbusHubUnitLimits 字段说明）。不满足则跳过该组——
+             * 总线让给同拍扫描到的其它从站，本组等下一个扫描节拍再试；
+             * 时钟回退放行（与 hubUnitDue 同口径），不卡死。 */
+            quietMs = hubUnitPreTxQuietMs(dev, g->unitId);
+            quietBlocked = (quietMs != 0 && dev->lastTxEndMs != 0 &&
+                            nowMs >= dev->lastTxEndMs &&
+                            (nowMs - dev->lastTxEndMs) < (uint64_t)quietMs);
+            readable = hubGroupReadable(hub, dev, g);
+            /* [诊断 2026-11-10 正式诊断手段] 逐组闸门裁决：把四道闸的
+             * 判定结果**逐组**打出来（不只打被选中的那一组）——现场"某站
+             * 全哑"时，这一行直接给出"哪一道闸把这组掐了"，不用再猜。
+             * 计数按**Hub 指针**分桶（不同 Hub 的 dev->id 都从 1 起算，
+             * 只按 dev->id 计数会让先跑的 Hub 吃光额度、后面的 Hub 一行都
+             * 打不出来——这正是"逐组 trace 零输出"的假象来源）。
+             * 用法：XMODBUS_HUB_TRACE=1 */
+            {
+                const char* env = getenv("XMODBUS_HUB_TRACE");
+                if (env && env[0] && env[0] != '0' && hubTraceAllow(hub, 24)) {
+                    XPrintf("[hub] dev=%d idx=%zu unit=%d type=%u start=%u "
+                            "count=%u muted=%d due=%d quiet=%u quietBlocked=%d "
+                            "readable=%d -> %s\n",
+                            dev->id, idx, (int)g->unitId, (unsigned)g->type,
+                            (unsigned)g->remoteStart, (unsigned)g->count,
+                            muted ? 1 : 0, due ? 1 : 0, (unsigned)quietMs,
+                            quietBlocked ? 1 : 0, readable ? 1 : 0,
+                            (muted || !due || quietBlocked || !readable)
+                                ? "skip" : "send");
+                }
+            }
+            if (muted) continue;
+            if (!due) continue;
+            if (quietBlocked) {
+                /* [静默闸饥饿逃逸 2026-11-10] 连续被挡过久 ⇒ 放行一帧，
+                 * 否则配置离谱（未初始化的栈垃圾）或总线上别的从站流量过密
+                 * 时，本从站的读组会**永远**轮不到（现场：变频器整站哑掉、
+                 * 失败计数=0、游标卡死）。 */
+                if (!hubUnitQuietEscape(dev, g->unitId, nowMs)) continue;
+            } else {
+                /* 未被挡：清零连续被挡起点（下一轮重新计时）。 */
+                {
+                    XModbusHubUnitSent* se = hubUnitSentEntryOf(dev, g->unitId);
+                    if (se) se->quietBlockedSinceMs = 0;
+                }
+            }
+            if (!readable) continue;
             if (hubSendPollGroup(hub, dev, g)) {
                 (void)hubUnitMarkSent(dev, g->unitId, nowMs);
                 dev->groupCursor = (idx + 1) % gn;
@@ -1405,6 +1929,13 @@ static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev)
             }
         }
     }
+}
+
+/** @brief 统一泵（写+轮询都许）。绝大多数调用点用它；
+ *        只有"应答收口尾部"用 hubPumpDeviceEx(..., false) 走只续写。 */
+static void hubPumpDevice(XModbusHub* hub, XModbusHubDevice* dev)
+{
+    hubPumpDeviceEx(hub, dev, true);
 }
 
 /** @brief 写队列泵：逐设备尝试下发（空闲设备才发）。 */
@@ -1559,6 +2090,8 @@ void XModbusHub_init(XModbusHub* hub)
         hub->m_spanCount[t] = 0;
     }
     hub->m_pollIntervalDefaultMs = 1000;
+    /* [2026-11-10 在途收口] 0=自动（客户端超时 → 缺省 1000ms + 宽限余量）。 */
+    hub->m_inflightTimeoutMs = 0;
     /* 默认只轮询输入区（DI|IR）——效率最大化：输出区以写回显为准，
      * 不花流量读回。setPollAreas 可放宽。 */
     hub->m_pollAreas = (1u << XModbusDiscreteInputs) | (1u << XModbusInputRegisters);
@@ -1577,6 +2110,7 @@ void XModbusHub_init(XModbusHub* hub)
     hub->m_writeCoalesceMs = 0;
     hub->m_flushTimer = XTIMER_INVALID_ID;
     hub->m_lastWriteMs = 0;
+    hub->m_syncFinishDepth = 0;
 }
 
 XModbusHub* XModbusHub_create_ex(XMemoryType memory)
@@ -1603,6 +2137,7 @@ int XModbusHub_addDevice(XModbusHub* hub, XModbusClient* client, const XString* 
     dev.inflight = NULL;
     dev.inflightKind = XModbusHubInflight_None;
     dev.lastTxOk = true;      /* 健康起点：写优先。 */
+    dev.lastTxEndMs = 0;      /* 从未收口：静默闸放行（见 XModbusHubDevice）。 */
     dev.txAlternateTurn = 0;
     dev.blocks = NULL;
     dev.groups = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
@@ -1819,11 +2354,29 @@ bool XModbusHub_setPollInterval(XModbusHub* hub, int deviceId, size_t ms)
     dev->pollIntervalMs = ms;
     if (hub->m_polling) {
         hubStopDevicePollTimer(hub, dev);
-        if (ms > 0)
+        if (ms > 0) {
             dev->pollTimer = XObject_startTimer_ms((XObject*)hub,
                                                    (int)ms, XTimerType_CoarseTimer);
+            /* [注册失败必须可见 2026-11-09] XObject_startTimer_ms 注册失败
+             * 时返回 XTIMER_INVALID_ID（见 XAbstractEventDispatcher 的
+             * registerTimer：dispatcher 无 deviceCtx 就会失败）。原实现
+             * **丢弃返回值** ⇒ 该设备的轮询定时器静默死亡：既不轮询、
+             * 也不报错，看门狗盯的是"最后成功应答"（别的从站还在成功）
+             * ⇒ 永远判健康 ⇒ 只有重启进程能恢复。 */
+            if (dev->pollTimer == XTIMER_INVALID_ID) {
+                XPrintf("XModbusHub: 设备 %d 轮询定时器注册失败（间隔 %u ms）"
+                        "——该设备将停止轮询\n", dev->id, (unsigned)ms);
+            }
+        }
     }
     return true;
+}
+
+size_t XModbusHub_pollInterval(XModbusHub* hub, int deviceId)
+{
+    XModbusHubDevice* dev = hubDeviceById(hub, deviceId);
+    if (!dev) return 0;
+    return dev->pollIntervalMs;
 }
 
 void XModbusHub_setPollAreas(XModbusHub* hub, unsigned areaMask)
@@ -1832,6 +2385,17 @@ void XModbusHub_setPollAreas(XModbusHub* hub, unsigned areaMask)
     if (hub->m_pollAreas == areaMask) return;
     hub->m_pollAreas = areaMask;
     hubRebuildAll(hub);
+}
+
+void XModbusHub_setInflightTimeoutMs(XModbusHub* hub, size_t ms)
+{
+    if (!hub) return;
+    hub->m_inflightTimeoutMs = ms;
+}
+
+size_t XModbusHub_inflightTimeoutMs(const XModbusHub* hub)
+{
+    return hub ? hub->m_inflightTimeoutMs : 0u;
 }
 
 void XModbusHub_setReadMergeGap(XModbusHub* hub, uint16_t gap)
@@ -1846,6 +2410,32 @@ void XModbusHub_setReadMergeGap(XModbusHub* hub, uint16_t gap)
             (XModbusHubDevice*)XVector_at_base(hub->m_devices, (int64_t)i);
         if (d) hubRebuildGroups(hub, d);
     }
+}
+
+/**
+ * @brief 登记从站约束前的**入口体检**（2026-11-10 框架级根修）。
+ * @details 调用方常按"只填自己关心的字段"的方式构造 XModbusHubUnitLimits
+ *          （栈上局部变量，未 memset）⇒ 漏掉的字段是**栈垃圾**。现场实证：
+ *          变频器站的约束只填了 4 个字段，m_preTxQuietMs 留成 0xCCCCCCCC
+ *          （Debug 构建的未初始化填充）⇒ 静默闸要求"34 亿毫秒总线静默"
+ *          ⇒ 该从站的读组**永远**轮不到（现场：变频器整站哑掉、失败计数=0、
+ *          游标卡死、其余组从不再发）。
+ *          框架层不能判断调用方"忘了填"还是"故意填大"，但可以**夹住离谱值**：
+ *          静默期超过 XMODBUS_HUB_MAX_PRE_TX_QUIET_MS 一律夹到上限并告警
+ *          （配合静默闸饥饿逃逸 ⇒ 该从站仍会被放行，不会被永久饿死）。
+ */
+static XModbusHubUnitLimits hubSanitizeUnitLimits(XModbusHubUnitLimits lim,
+                                                   int unitId)
+{
+    if (lim.m_preTxQuietMs > (uint32_t)XMODBUS_HUB_MAX_PRE_TX_QUIET_MS) {
+        XPrintf("XModbusHub: 从站 %d 的发帧前静默期 %u ms 超过上限 %u ms ——"
+                "已夹到上限（多半是调用方漏填该字段留下的栈垃圾；"
+                "不夹 ⇒ 该从站的读组永远轮不到）\n",
+                unitId, (unsigned)lim.m_preTxQuietMs,
+                (unsigned)XMODBUS_HUB_MAX_PRE_TX_QUIET_MS);
+        lim.m_preTxQuietMs = (uint32_t)XMODBUS_HUB_MAX_PRE_TX_QUIET_MS;
+    }
+    return lim;
 }
 
 bool XModbusHub_setUnitLimits(XModbusHub* hub, int deviceId, int unitId,
@@ -1868,7 +2458,7 @@ bool XModbusHub_setUnitLimits(XModbusHub* hub, int deviceId, int unitId,
         if (!limits) {
             XVector_remove_base(dev->m_unitLimits, (int64_t)i, 1);
         } else {
-            e->m_limits = *limits;
+            e->m_limits = hubSanitizeUnitLimits(*limits, unitId);
         }
         hubRebuildAll(hub);
         return true;
@@ -1877,7 +2467,7 @@ bool XModbusHub_setUnitLimits(XModbusHub* hub, int deviceId, int unitId,
     {
         XModbusHubUnitLimitEntry e;
         e.unitId = unitId;
-        e.m_limits = *limits;
+        e.m_limits = hubSanitizeUnitLimits(*limits, unitId);
         if (!XVector_push_back_1_base(dev->m_unitLimits, &e)) return false;
     }
     /* 屏障约束会改块结构（映射段不再合并），必须整表重建；只重建读组
@@ -1935,6 +2525,14 @@ void XModbusHub_startPolling(XModbusHub* hub)
                 d->pollTimer = XObject_startTimer_ms((XObject*)hub,
                                                      (int)d->pollIntervalMs,
                                                      XTimerType_CoarseTimer);
+                /* [注册失败必须可见 2026-11-09] 见 setPollInterval 的
+                 * 同名注：注册失败返回 XTIMER_INVALID_ID，原实现丢弃返回
+                 * 值 ⇒ 该设备静默停止轮询且无任何日志。 */
+                if (d->pollTimer == XTIMER_INVALID_ID) {
+                    XPrintf("XModbusHub: 设备 %d 轮询定时器注册失败（间隔 %u ms）"
+                            "——该设备将停止轮询\n", d->id,
+                            (unsigned)d->pollIntervalMs);
+                }
             }
         }
     }
@@ -2046,7 +2644,34 @@ bool XModbusHub_valueAge(const XModbusHub* hub, XModbusRegisterType type,
     const XModbusHubCacheSlice* s;
     if (!hub || t < 0 || !hub->m_view[t]) return false;
     vi = hubViewFind(hub->m_view[t], virtualAddr);
-    if (vi < 0) return false;
+    if (vi < 0) {
+        /* [诊断 2026-11-09] 视图里二分查不到该虚拟地址 ⇒ 上层读值失败、
+         * 点级有效性判为假 ⇒ 界面"无数据"。此前这条路径**完全静默**，
+         * 现场只能看到"没数据"，查不到是"地址没进视图"还是"视图被重建
+         * 后没重建回来"。限频打印视图内容。 */
+        {
+            static uint64_t s_lastDiagMs = 0;
+            const uint64_t now = XDateTime_currentMSecsSinceEpoch();
+            if (now - s_lastDiagMs >= 1000u) {
+                size_t vn = XVector_size_base((const XContainer*)hub->m_view[t]);
+                size_t k;
+                s_lastDiagMs = now;
+                XPrintf("XModbusHub: 视图查不到地址（类型=%d 地址=%u）"
+                        "——视图切片数=%u\n", (int)type, (unsigned)virtualAddr,
+                        (unsigned)vn);
+                for (k = 0; k < vn; ++k) {
+                    const XModbusHubCacheSlice* s2 =
+                        (const XModbusHubCacheSlice*)XVector_at_base(
+                            (const XContainer*)hub->m_view[t], (int64_t)k);
+                    if (!s2) continue;
+                    XPrintf("    切片[%u] 虚拟起始=%u 数量=%u 块=%p\n",
+                            (unsigned)k, (unsigned)s2->virtualStart,
+                            (unsigned)s2->count, (void*)s2->block);
+                }
+            }
+        }
+        return false;
+    }
     s = (const XModbusHubCacheSlice*)XVector_at_base(hub->m_view[t], (int64_t)vi);
     if (!s || !s->block) return false;
     if (ageMs) {
@@ -2264,6 +2889,42 @@ uint64_t XModbusHub_deviceLastSuccessMs(const XModbusHub* hub, int deviceId)
     return dev ? dev->lastSuccessMs : 0;
 }
 
+bool XModbusHub_deviceWorstUnitAge(const XModbusHub* hub, int deviceId,
+                                    int* outWorstUnitId, uint64_t* outAgeMs)
+{
+    XModbusHubDevice* dev = hubDeviceById((XModbusHub*)hub, deviceId);
+    size_t bn;
+    size_t i;
+    uint64_t worst = 0;
+    int worstUnit = -1;
+    bool got = false;
+    const uint64_t now = XDateTime_currentMSecsSinceEpoch();
+
+    if (outWorstUnitId) *outWorstUnitId = -1;
+    if (outAgeMs) *outAgeMs = 0;
+    if (!dev || !dev->blocks) return false;
+    bn = XVector_size_base((const XContainer*)dev->blocks);
+    for (i = 0; i < bn; ++i) {
+        const XModbusHubCacheBlock* b =
+            *(XModbusHubCacheBlock* const*)XVector_at_base(
+                (const XContainer*)dev->blocks, (int64_t)i);
+        uint64_t age;
+        if (!b) continue;
+        if (b->flags & XModbusMapRange_WriteOnly) continue;  /* 只写块不轮询 */
+        age = (b->lastOkMs == 0) ? UINT64_MAX
+                                 : ((now > b->lastOkMs) ? now - b->lastOkMs : 0);
+        if (!got || age > worst) {
+            worst = age;
+            worstUnit = (int)b->unitId;
+            got = true;
+        }
+    }
+    if (!got) return false;
+    if (outWorstUnitId) *outWorstUnitId = worstUnit;
+    if (outAgeMs) *outAgeMs = worst;
+    return true;
+}
+
 int XModbusHub_readGroupCount(const XModbusHub* hub, int deviceId)
 {
     XModbusHubDevice* dev = hubDeviceById((XModbusHub*)hub, deviceId);
@@ -2459,9 +3120,56 @@ static void XModbusHub_onReplyFinished(XObject* sender, XVarList* args)
 
     {
         const uint64_t now = XDateTime_currentMSecsSinceEpoch();
-        const bool ok = (XModbusReply_error(reply) == XModbusDevice_NoError);
+        bool ok = (XModbusReply_error(reply) == XModbusDevice_NoError);
+
+        /* [异常帧＝失败 2026-11-09 框架级根修]
+         *
+         * Modbus 的"异常应答"是**失败**：功能码|0x80 + 1 字节异常码。
+         * 但 XModbusVirtualClient 只把异常编进 PDU，`reply->m_error` 始终
+         * 是 NoError（见 XModbusVirtualClient.c 的 virtualBuildException
+         * 分支）⇒ 原口径把它当**成功**：
+         *   · lastSuccessMs 照常推进 ⇒ 应用层看门狗判"健康"、永不触发；
+         *   · 但 m_result 为 NULL ⇒ 不回填缓存、valueChanged 不发射
+         *     ⇒ 上层按"值陈旧"判 ⇒ 界面"无数据"；
+         *   · pollOkCount 虚增、pollErrCount 不动 ⇒ 统计上看不出异常。
+         * 现场实证（C 模拟服务端）：浊度从站的读组一旦回异常帧，设备就永久
+         * "在线但无数据"，看门狗全程无告警，只有重启服务端能恢复。
+         *
+         * 口径：异常帧一律按失败记账（pollErrCount++、从站退避表报失败、
+         * lastSuccessMs 不推进），让上层与看门狗都能看见。 */
+        /* [异常应答不牵连整站 2026-11-10 框架级根修]
+         * 异常帧＝"这个地址不支持"（EXC02 等），是**组级**事实；把它按
+         * 从站级失败回报退避表，会让**同一从站的所有组**一起被静默
+         * ⇒ 现场表现"一台设备整体离线"，而真机只是其中一组不支持
+         * （实测：M512 对 0xFA00×5 无应答、C 端却把整台变频器判离线）。
+         * 处置：异常帧仍计 pollErrCount（可观测），但**不进从站退避**，
+         * 该组下轮自然重试；其余组照常轮询。 */
+        bool isExceptionReply = false;
+        if (ok) {
+            const XModbusResponse* raw = XModbusReply_rawResult_const(reply);
+            if (raw && XModbusPdu_isException((const XModbusPdu*)&raw->m_base)) {
+                ok = false;
+                isExceptionReply = true;
+                /* [可观测] 限频打印：哪一组的读组、远端地址、异常码。
+                 * [为什么必须留这行] 异常帧此前既不计数也不打印，现场只能
+                 * 看到"没数据"，查不到是哪一组的哪条命令被拒。 */
+                if (dev->pollErrCount <= 3) {
+                    XPrintf("XModbusHub: 设备 %d 收到异常应答（组 unit=%d 起始=%u "
+                            "数量=%u 异常码=%d）——按失败记账\n",
+                            dev->id, dev->inflightPayload.group.unitId,
+                            (unsigned)dev->inflightPayload.group.remoteStart,
+                            (unsigned)dev->inflightPayload.group.count,
+                            (int)XModbusPdu_exceptionCode(
+                                (const XModbusPdu*)&raw->m_base));
+                }
+            }
+        }
 
         dev->lastTxOk = ok;   /* 饥饿交替判据：失败期读写交替让路（见泵①）。 */
+        /* [发帧前静默闸的记账点] 收口（成败都算）＝「上一帧把总线驱动完」
+         * 的时刻；从站级 m_preTxQuietMs 按它判恢复期（异步与同步终态两条
+         * 收口路径都经过本函数，一处记账全覆盖）。 */
+        dev->lastTxEndMs = now;
 
         if (dev->inflightKind == XModbusHubInflight_Poll) {
             /* [2026-10-28 单元退避] 组/从站定位提前到成败分支之前，结果先
@@ -2470,7 +3178,7 @@ static void XModbusHub_onReplyFinished(XObject* sender, XVarList* args)
             const int unitId = group.unitId;
             const bool wasLost = (unitId >= 0) &&
                 XPollScheduler_isLostKey(&dev->unitSched, unitId);
-            const bool enteredMute = (unitId >= 0) &&
+            const bool enteredMute = (unitId >= 0) && !isExceptionReply &&
                 XPollScheduler_reportResultKey(&dev->unitSched, unitId, ok, now);
             if (ok) {
                 const XModbusDataUnit* result = XModbusReply_result_const(reply);
@@ -2482,6 +3190,33 @@ static void XModbusHub_onReplyFinished(XObject* sender, XVarList* args)
                     XModbusHub_unitAlive_signal(hub, dev->id, unitId);
             } else {
                 ++dev->pollErrCount; /* 不风暴：静默计数，下轮计划重试该组。 */
+                /* [失败可观测 2026-11-09] 失败此前**完全静默**（只加计数），
+                 * 现场只表现为"某台从站的数据不再刷新"，查不到是哪一组、哪条
+                 * 命令、什么错误码。限频打印（每设备每秒一条）——用时间限频而
+                 * 不是失败次数：同一 Hub 上多个从站共用计数，先出错的从站会把
+                 * 次数额度吃光，后面那个真正停摆的从站反而永远打不出来。 */
+                if (dev->lastErrLogMs == 0 ||
+                    now - dev->lastErrLogMs >= 1000u) {
+                    /* [所有权 2026-11-09 修] errorString() 按契约返回**堆副本**
+                     * （调用方 XClassDelete），此前在 printf 实参里调了两次、
+                     * 副本全没人释放 ⇒ 每条失败日志漏 2×sizeof(XString)=192B
+                     * （回归 §G 实测按轮线性上涨）。另外 `%s` 只认 char*：直接
+                     * 传 XString* 打印的是结构体字节（现场日志"错误="后面是
+                     * 乱码）。故：只取一次副本 → 取 UTF-8 借用视图（XString
+                     * 内部缓存，随副本释放）→ 打完释放副本。 */
+                    XString* errStr = XModbusReply_errorString(reply);
+                    /* toUtf8 对空串返回 NULL（XString_isEmpty_base 早退），
+                     * 空错误文本一律显示 "-"，不能落到 printf 的 "(null)"。 */
+                    const char* errUtf8 = errStr ? XString_toUtf8(errStr) : NULL;
+                    dev->lastErrLogMs = now;
+                    XPrintf("XModbusHub: 设备 %d 读组失败（unit=%d 类型=%d 起始=%u "
+                            "数量=%u 错误码=%d 错误=%s）\n",
+                            dev->id, unitId, (int)group.type,
+                            (unsigned)group.remoteStart, (unsigned)group.count,
+                            (int)XModbusReply_error(reply),
+                            errUtf8 ? errUtf8 : "-");
+                    if (errStr) XClassDelete(errStr);
+                }
                 if (enteredMute && !wasLost)
                     XModbusHub_unitLost_signal(hub, dev->id, unitId);
                 if (group.firstBlock < XVector_size_base(dev->blocks)) {
@@ -2541,9 +3276,22 @@ static void XModbusHub_onReplyFinished(XObject* sender, XVarList* args)
         /* [2026-10-26 节拍根修] 收口只补写、不续轮询：若在此续泵，计划轮跑完
          * 回卷后立刻又发下一轮（实测 2ms/请求、tid 数千的轮询风暴，回填在
          * 风暴中概率性失败）。轮询节奏一律交还设备周期定时器——pollInterval
-         * 语义=段发送节拍。写意图仍即时续泵（写延迟优先）。 */
-        if (hubDeviceHasDirty(dev))
-            hubPumpDevice(hub, dev);
+         * 语义=段发送节拍。写意图仍即时续泵（写延迟优先）。
+         *
+         * [2026-11-09 落实] 原代码调的是写+轮询的统一泵 ⇒ 注释说的"只补写"
+         * 实际没做到（写分支被跳过时就会再发一帧读）。现在：
+         *   · allowPoll=false ⇒ 收口路径**只发写**；
+         *   · 深度上界：嵌套收口（depth>=2）不再泵 ⇒ 脏区间永不消失时
+         *     不会 close→write→close→write 栈递归、也不会总线写风暴。
+         *
+         * [失败不在同拍重试 2026-11-09] 若上一笔**失败**（写被从站拒了）
+         * 还在同拍立刻重发，同一个脏区间会被写两遍 ⇒「读写交替让路」的
+         * 交替计数同拍加两次、奇偶不变 ⇒ **读永远轮不到**（单飞槽被写占
+         * 满）⇒ 该从站的数据再也不刷新（现场 485 停摆的一种成因）。
+         * 失败的重试交给退避定时器（写重发拍），同拍不再补发。 */
+        if (hub->m_syncFinishDepth <= 1 && dev->lastTxOk &&
+            hubDeviceHasDirty(dev))
+            hubPumpDeviceEx(hub, dev, false);
     }
 }
 

@@ -123,8 +123,12 @@ def load_config(args):
             cfg.enable_flowmeter = True
             log("虚拟设备模式：补挂流量计（站%d），"
                 "真实模式下它默认关闭" % cfg.flowmeter_unit_id)
-        if not cfg.enable_turbidity:
+        # [逐台开关 2026-11-10] sim 要看到两台都跳数；配置里单独停了某台
+        # 也一并打开（这只影响 --sim，真实模式仍按配置）。
+        if not (cfg.turbidity_enabled(0) and cfg.turbidity_enabled(1)):
             cfg.enable_turbidity = True
+            cfg.enable_turbidity1 = True
+            cfg.enable_turbidity2 = True
             log("虚拟设备模式：补挂两台浊度仪（站%s），"
                 "真实模式下它默认关闭（站号需现场确认）"
                 % "/".join(str(u) for u in cfg.turbidity_unit_ids[:2]))
@@ -340,10 +344,14 @@ def _device_summary(cfg):
         parts.append("流量计(%s/%d站%d)"
                      % (cfg.serial_b.port, cfg.serial_b.baudrate,
                         cfg.flowmeter_unit_id))
-    if cfg.enable_turbidity:
+    # [逐台开关] 启动横幅只列真正在采的台（单独停用的不冒充在线）。
+    _turb_on = [str(cfg.turbidity_unit_ids[i])
+                for i in (0, 1)
+                if i < len(cfg.turbidity_unit_ids)
+                and cfg.turbidity_enabled(i)]
+    if _turb_on:
         parts.append("浊度仪(%s/%d站%s)" % (
-            cfg.serial_b.port, cfg.serial_b.baudrate,
-            "/".join(str(u) for u in cfg.turbidity_unit_ids[:2])))
+            cfg.serial_b.port, cfg.serial_b.baudrate, "/".join(_turb_on)))
     if cfg.enable_pump:
         dos = [str(it.get("do")) for it in cfg.pump_items
                if it.get("do") is not None]

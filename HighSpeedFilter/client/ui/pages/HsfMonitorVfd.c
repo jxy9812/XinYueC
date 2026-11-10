@@ -1156,6 +1156,54 @@ static void vfdSpeedModeSlot(XObject* receiver, XVarList* args)
 }
 
 /**
+ * @brief 本机时区偏移（epoch ↔ 本地日历互转用）。
+ * @return 毫秒偏移（东八区 = +28800000）。
+ * @note 算法同历史页 histTzOffsetMs：XDateTime 的日历展开按 UTC，界面统一
+ *       显示本地时间，故取「本地日历 → epoch」与「墙钟 epoch」之差。
+ */
+static int64_t vfdTzOffsetMs(void)
+{
+    XDateTime now = XDateTime_currentDateTime();
+    return XDateTime_toMSecsSinceEpoch(&now) -
+           XDateTime_currentWallMSecsSinceEpoch();
+}
+
+/**
+ * @brief 趋势图 X 轴刻度标签：把「相对建页时刻的秒数」渲染成**本地时钟时间**。
+ * @param axis 轴（未用）。
+ * @param value 刻度值（秒）。
+ * @param buf 输出缓冲。
+ * @param cap 缓冲容量。
+ * @param userData 页面实例。
+ * @details [口径 2026-11-10 用户反馈] 原标签是 "%.0f s"（图上是 0s/6s/12s…），
+ *          看趋势时读不出"这是几点几分"。改成绝对时刻的 时分秒（不含日期：
+ *          趋势窗最大也就几分钟）。
+ *          与数据点的 X 同源：X = (now - m_trendStartMs)/1000 ⇒ 反向换算
+ *          startMs + value*1000 即该刻的墙钟毫秒（m_trendStartMs 取自
+ *          XDateTime_currentMSecsSinceEpoch，同为 UTC 纪元毫秒），再加本地
+ *          时区偏移展开成日历。
+ */
+static void vfdTrendXLabelText(const XValueAxis* axis, double value, char* buf,
+                               int cap, void* userData)
+{
+    HsfMonitorVfd* self = (HsfMonitorVfd*)userData;
+    XDateTime dt;
+    XTime t;
+    int64_t ms;
+
+    (void)axis;
+    if (!buf || cap <= 0) return;
+    buf[0] = '\0';
+    if (!self || self->m_trendStartMs <= 0) return;
+    ms = (int64_t)self->m_trendStartMs + (int64_t)(value * 1000.0) +
+         vfdTzOffsetMs();
+    if (!XDateTime_setMSecsSinceEpoch(&dt, ms)) return;
+    t = XDateTime_time(&dt);
+    snprintf(buf, (size_t)cap, "%02d:%02d:%02d",
+             XTime_hour(&t), XTime_minute(&t), XTime_second(&t));
+}
+
+/**
  * @brief 调速方式切换：改输入框量程/后缀/步进与初值（对齐 Python）。
  * @details [为什么切换时重置值] 15Hz 直接当成 15rpm 下发是荒谬的（几乎不转）。
  *          按当前「设定频率」换算给初值（而非固定值），保证切过去显示的就是
@@ -2254,16 +2302,14 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     XSpinBox_init(&self->m_setSpin, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_setSpin);
     XWidget_setFixedHeight((XWidget*)&self->m_setSpin, 40);  /* 见组合框处注。 */
-    /* [定宽 2026-11-08] 合并成单行后本框与方向下拉/四枚按钮同排：按文本
-     * 自动量宽会随「1440 rpm / 50 Hz」变档而抖动（整行控件跟着跳）。定宽
-     * 100 覆盖最长文本（4 位数字 + " rpm" + 步进箭头列 ≈ 85），同时作为
-     * 单行宽度预算里的确定项（见 VFD_CTRL_MIN_ROW_W 注）。 */
-    XWidget_setFixedWidth((XWidget*)&self->m_setSpin, 100);
-    /* [量程/后缀/步进随调速方式走] 频率调速：0..额定Hz 步进 1；转速调速：
-     * 0..额定rpm 步进 10（见 vfdApplySpeedMode）。
-     * [单位] 输入框是**用户量纲**（Hz / rpm），不是滑块那种 0.1Hz 定点
-     * ——旧实现按定点给量程（0..500），界面于是能填出 500Hz（设备上限
-     * 只有 50Hz）。 */
+    /* [宽度交给布局，别写死 2026-11-10 用户口径] 原先这里 `setFixedWidth(100)`
+     * ——板端字号放大后四位转速只显示三位（微调框裁字）。宽度本就该由
+     * 「控件的 sizeHint + 布局」决定：框架的 XSpinBox::sizeHint 现在按
+     * **最大可能值**量宽（对齐 Qt QAbstractSpinBox::sizeHint，取
+     * textFromValue(minimum)/(maximum) 里更宽者），换量程/换字号都自动跟着
+     * 走，业务层不需要也不应该再定宽。
+     * [抖动顾虑已消除] sizeHint 取决于量程上限而不是当前值，所以 Hz↔rpm 切换
+     * 时行内宽度只变一次（切档那次），不会随每拍数值跳动。 */
     XSpinBox_setRange(&self->m_setSpin, 0, (int)(VFD_RATED_HZ_DEF + 0.5));
     XSpinBox_setSingleStep(&self->m_setSpin, 1);
     XSpinBox_setSuffix(&self->m_setSpin, " Hz");
@@ -2372,9 +2418,15 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
         self->m_axisY = (XValueAxis*)XChart_axisY(self->m_trendChart);
         if (self->m_axisX) {
             XValueAxis_setRange(self->m_axisX, 0.0, 30.0);
-            /* 轴标签经 XSnprintf(fmt, double) 渲染：须用 %f 族（%d 读
-             * double 是 UB，恒出 0——2026-11-03 出图实锅）。 */
+            /* [X 轴显示时钟时间 2026-11-10 用户口径] 轴值是"相对建页时刻的
+             * 秒数"（数据点同源），标签渲染成本地 时:分:秒——图上直接读得出
+             * 几点几分，不再是 0s/6s/12s。
+             * [为什么用回调不是格式串] printf 格式串拿不到"建页基准时刻"，
+             * 表达不了绝对时间（框架为此留了 setLabelTextCallback，历史页
+             * 折线图同款）。保留 "%.0f s" 作为回退（未设回调时的口径）。 */
             XValueAxis_setLabelFormat_2(self->m_axisX, "%.0f s");
+            XValueAxis_setLabelTextCallback(self->m_axisX, vfdTrendXLabelText,
+                                            self);
         }
         if (self->m_axisY) XValueAxis_setRange(self->m_axisY, 0.0, 60.0);
         XChartView_setChart(&self->m_trendView, self->m_trendChart);

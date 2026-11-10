@@ -140,6 +140,10 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
        真设备拆了也能跑通 Hub → 链路 → 通道组 → 设备站全链。 */
     } else if (strcmp(name, "xmodbus-virtual") == 0) {
         result = XModbusVirtualTest_run() == 0;
+    /* HSF C 端总回归（单文件）：框架 Modbus 四层根修 + 客户端协议契约。
+     * 进程内假从站载体，**不依赖传输层**（无 socket/无串口）。 */
+    } else if (strcmp(name, "hsf-regression") == 0) {
+        result = HsfRegressionTest_run() == 0;
 #endif
     /* XVfd 从站级约束单测（Hub 单帧读上限 / 功能码组边界 / 只 FC06）：
      * 进程内假从站载体，**不依赖传输层**（无 socket/pty），本机环回

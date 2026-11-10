@@ -38,6 +38,34 @@ extern "C" {
 /** @brief 客户端侧模拟量通道上限（与服务端 HSF_AI_CHANNELS 对齐）。 */
 #define HSF_LINK_AI_CH_MAX   8
 
+/* ==================== 遥测自愈补拍（快照命令兜底通道） ==================== */
+
+/**
+ * @brief 同一类遥测两次**补拍请求**之间的最小间隔（毫秒）。
+ * @details 快照命令是周期推送的兜底通道：服务端节拍停摆、推送失步队列满被拒、
+ *          订阅登记丢失时，客户端靠「请求-应答」自己把数据要回来。但兜底不能
+ *          变成轮询风暴——取 1000ms：比任何推送周期（100~500ms）都慢一个量级，
+ *          请求量可忽略；又比陈旧阈值（3.5s）快，应答能在判负之前回来。
+ * @note  与 HSF_LINK_TEMPHUM_RESYNC_MS 同值同理由（温湿度是最先做自愈的
+ *        通道，两处口径必须一致，否则同一拍里两类数据的恢复节奏打架）。
+ */
+#define HSF_LINK_SNAPSHOT_RESYNC_MS 1000u
+
+/**
+ * @brief 补拍的**预取**阈值（毫秒）：剩余新鲜度不足一个补拍周期就要一拍。
+ * @details 值 = 各遥测主题共同的陈旧阈值 3500ms − 补拍间隔 1000ms。等到真的
+ *          过期（界面已落成「--」）才补会让界面先闪一次无数据再写回真值
+ *          （温湿度实测每 3.5s 闪一次，见 HSF_LINK_TEMPHUM_PREFETCH_MS）。
+ */
+#define HSF_LINK_SNAPSHOT_PREFETCH_MS 2500u
+
+/**
+ * @brief 模拟量数据陈旧阈值（毫秒）：超过即视为断流（服务端推送 100ms/拍）。
+ * @note  取 3.5s（35 个推送周期）已足够宽松：既不会把偶发丢帧判成断流，
+ *        又能让「推送彻底停摆」在几秒内被界面/自愈识别。
+ */
+#define HSF_LINK_AI_STALE_MS  3500u
+
 /** @brief 客户端支持的侧数（与服务端 HsfSide 对齐：0=A 1=B）。 */
 #define HSF_LINK_SIDE_COUNT  2
 
@@ -62,6 +90,26 @@ typedef struct HsfLinkTempHum {
 
 /** @brief 温湿度数据陈旧阈值（毫秒）：超过即视为断流，界面显示无数据。 */
 #define HSF_LINK_TEMPHUM_STALE_MS  3500u
+
+/**
+ * @brief 温湿度补拍（向服务端要一拍快照）的最小间隔（毫秒）。
+ * @details 自愈用的兜底通道不能变成轮询风暴：两次补拍至少隔这么久。
+ *          取 1000ms：既能在陈旧阈值（3.5s）内恢复，又不产生可观的请求量。
+ */
+#define HSF_LINK_TEMPHUM_RESYNC_MS 1000u
+
+/**
+ * @brief 温湿度补拍的**预取**阈值（毫秒）：剩余新鲜度不足一个补拍周期就补。
+ * @details 若等到数据真的过期（HSF_LINK_TEMPHUM_STALE_MS）才补，界面会先
+ *          落成「--」再等应答回来写回数值——推送停摆期间每 3.5s 闪一次
+ *          「--℃ / --%」（2026-11-09 实测：模拟推送停摆 25s，标题栏在
+ *          「--」与真值之间闪了 7 次）。预取阈值取「过期阈值 − 补拍节流」，
+ *          保证应答到达之前新鲜度判定不会翻假，界面不再闪。
+ * @note  必须满足 HSF_LINK_TEMPHUM_STALE_MS > HSF_LINK_TEMPHUM_RESYNC_MS
+ *        （当前 3500 > 1000）。
+ */
+#define HSF_LINK_TEMPHUM_PREFETCH_MS \
+    (HSF_LINK_TEMPHUM_STALE_MS - HSF_LINK_TEMPHUM_RESYNC_MS)
 
 /**
  * @brief 电磁流量计遥测快照（客户端口径）。
@@ -96,6 +144,8 @@ typedef struct HsfLinkTurbidity {
     int    m_ntu100;      /**< 浊度值 ×100（定点整数）。 */
     int    m_raw;         /**< 32 位原始寄存器位模式（排查真相用）。 */
     bool   m_online;      /**< 该台在线（已读到且未陈旧）。 */
+    int    m_temp100;     /**< 水温 ×100（℃；**m_tempValid=false 时无意义**）。 */
+    bool   m_tempValid;   /**< 该台带温度且这一拍解出了（缺键=该机型无温度）。 */
 } HsfLinkTurbidity;
 
 /**
@@ -149,6 +199,17 @@ typedef struct HsfLinkPumps {
 typedef void (*HsfLinkNotifyFn)(void* userData);
 
 /**
+ * @brief 提示回调（带一条 UTF-8 文本；状态栏类反馈用）。
+ * @param userData 注册令牌（原样回传）。
+ * @param textUtf8 提示文本（借用；回调内可即刻使用）。
+ * @details [用途] 自动重连期间「认证被服务端瞬时拒绝（账户可能已在线）」
+ *          这类**不弹登录窗、但要让人看见**的状态。与 fail 回调的区别：
+ *          fail 是登录窗语义（首登失败/永久失败），notice 是主界面状态栏
+ *          语义（正在重试，无需人工干预）。2026-11-09 根修。
+ */
+typedef void (*HsfLinkNoticeFn)(void* userData, const char* textUtf8);
+
+/**
  * @brief 控制应答回调。
  * @param userData 注册令牌；op 动作（XVfdOperation）；ok 受理成功；
  * @param errUtf8 失败原因（UTF-8，借用；成功时为空串）。
@@ -184,6 +245,17 @@ bool HsfLinkClient_isOpen(void);
 bool HsfLinkClient_isReady(void);
 
 /**
+ * @brief 是否处于「认证被瞬时拒绝、框架正在退避重连」的状态。
+ * @return 正在重试返回 true；未连接/已就绪/永久失败返回 false。
+ * @details [无头登录用它决定"等还是退] 首登撞上服务端尚未回收的旧会话时，
+ *          框架按 XLINK_AUTH_REJECT_RETRY_LIMIT 退避重试（几秒后旧会话被
+ *          回收即自动登录成功）。`--login` 无头路径原先收到第一次 authFailed
+ *          就退出进程，等于把这段自动恢复砍掉；改为「仍在重试就继续等」。
+ *          2026-11-09 根修。
+ */
+bool HsfLinkClient_isReconnecting(void);
+
+/**
  * @brief 当前登录用户名（借用；未就绪为空串）。
  */
 const char* HsfLinkClient_user(void);
@@ -215,9 +287,29 @@ bool HsfLinkClient_can(uint32_t perm);
 void HsfLinkClient_setReadyCallback(HsfLinkNotifyFn cb, void* userData);
 
 /**
- * @brief 注册失败回调（认证失败；回调后连接停止重连，须重新 open）。
+ * @brief 注册失败回调（永久认证失败或首连不可达；其后连接停止重连，
+ *        须重新 open）。
+ * @note  瞬时拒绝（服务端策略拒绝：账户已在线/会话数上限）**不走**本回调，
+ *        走 setNoticeCallback 并在后台退避重试（2026-11-09 根修）。
  */
 void HsfLinkClient_setFailCallback(HsfLinkNotifyFn cb, void* userData);
+
+/**
+ * @brief 注册状态栏提示回调（自动重连被瞬时拒绝等「重试中」反馈）。
+ * @param cb   提示回调（NULL 摘除）。
+ * @param userData 回调令牌。
+ * @note  与 fail 回调不同：本回调**不会**让连接收手，仅用于让人看见
+ *        「账户可能已在线，正在重试」。可在建主窗时注册一次，生命周期
+ *        与主窗一致（close 不清，重连后照常复用）。
+ */
+void HsfLinkClient_setNoticeCallback(HsfLinkNoticeFn cb, void* userData);
+
+/**
+ * @brief 最近一次认证失败原因（XLinkClientAuthFailure；0=无）。
+ * @details 登录窗据此把「口令错」与「服务端拒绝（账户已在线）」分开显示
+ *          （失败回调本身不带参数，2026-11-09 根修）。
+ */
+int HsfLinkClient_lastAuthFailure(void);
 
 /**
  * @brief 注册变频器遥测更新回调（每拍推送后触发）。
@@ -304,6 +396,22 @@ bool HsfLinkClient_aiEngineering(int index, int32_t* outValue1000,
 int32_t HsfLinkClient_aiRawMv(int index);
 
 /**
+ * @brief 模拟量数据是否**当前新鲜**（收到过且未超时）。
+ * @return 新鲜返回 true；从未收到或距今超过 HSF_LINK_AI_STALE_MS 返回 false。
+ * @note  与其余遥测同口径：推送停摆后 m_aiValid 仍是 true（只在换连接时
+ *        复位），故判断实时性必须走本函数而不是直读有效位。
+ */
+bool HsfLinkClient_aiFresh(void);
+
+/**
+ * @brief 请求一拍模拟量**全量**快照（0x0103；连上时由就绪流程自动发一次）。
+ * @return 已入发送队列返回 true；连接未就绪返回 false。
+ * @note  全量帧才带通道名与标定工程量（增量推送只带数值）。应答走与推送帧
+ *        同一个解析器（hsfLcParseAi）并广播订阅者。
+ */
+bool HsfLinkClient_aiSnapshotRequest(void);
+
+/**
  * @brief 取数字量通道名（服务端全量快照下发）。
  * @param index 通道号。
  * @param isDo  false=DI、true=DO。
@@ -335,8 +443,26 @@ bool HsfLinkClient_tempHumFresh(int side);
  * @param side 侧号（0=A 1=B）。
  * @return 已入发送队列返回 true；连接未就绪或侧号非法返回 false。
  * @note  正常数据由服务端周期推送驱动；本接口只用于「立即要一拍」的场合。
+ * @note  [2026-11-09] 回包**会**重建快照（走与推送帧同一个解析器）——本条
+ *        注释是旧口径；当时的实现没有处理应答，等于这条路是死的，现已补上。
  */
 bool HsfLinkClient_tempHumSnapshotRequest(int side);
+
+/**
+ * @brief 温湿度自愈：剩余新鲜度不足预取阈值（或收到但无有效值）时补要一拍。
+ * @param side 侧号（0=A 1=B）；越界返回 false。
+ * @return 本次确实发出了补拍请求返回 true；数据仍够新/未就绪/节流中返回 false。
+ * @details [为什么需要] 周期推送是单向通道：服务端节拍停摆、推送失步队列满
+ *          被拒、或订阅登记丢失时，客户端收不到任何帧，而**服务端的数据一直
+ *          有**（现场：服务端 history 行 temp=26.5 恒有值，客户端标题栏却恒显
+ *          「--℃ / --%」）。只靠推送，界面只能停在「无数据」。本接口用**快照
+ *          命令**（请求-应答）做一条兜底通道：应答与推送帧同构，解析后刷新同一
+ *          份 model，标题栏/首页卡片同拍恢复。
+ * @note  内部自带节流（HSF_LINK_TEMPHUM_RESYNC_MS），可被**每拍**调用；
+ *        判据是 HSF_LINK_TEMPHUM_PREFETCH_MS 而不是过期阈值——等到过期才补
+ *        会让界面先闪一次「--」。
+ */
+bool HsfLinkClient_tempHumEnsureFresh(int side);
 
 /* ==================== 电磁流量计遥测 ==================== */
 
@@ -358,12 +484,36 @@ const HsfLinkFlowMeter* HsfLinkClient_flowMeter(int side);
 bool HsfLinkClient_flowMeterFresh(int side);
 
 /**
- * @brief 请求一拍电磁流量计快照（载荷带 side；异步回包触发回调）。
- * @param side 侧号（0=A 1=B）。
- * @return 已入发送队列返回 true；连接未就绪或侧号非法返回 false。
- * @note  正常数据由服务端周期推送驱动；本接口只用于「立即要一拍」的场合。
+ * @brief 取服务端最近一次报告的流量计所在侧（= 设备实际装在哪条总线上）。
+ * @return 侧号（0=A 1=B）；从未收到过流量计数据时返回缺省侧（A）。
+ * @note  [侧号是服务端的事实] 客户端**不点名**侧号：请求里不带 side，
+ *        服务端按自己的装配位置回答并在帧里带上 side ⇒ 客户端据此知道
+ *        数据来自哪条总线，但自己不需要知道现场怎么接线（现场流量计换到
+ *        另一条 485 上，客户端零改动）。
  */
-bool HsfLinkClient_flowMeterSnapshotRequest(int side);
+int HsfLinkClient_flowMeterSide(void);
+
+/**
+ * @brief 取流量计快照（借用；按服务端报告的活动侧取）。
+ * @return 快照指针（内部存储，禁释放）；从未收到过数据时 m_received=false。
+ * @note  想要指定侧的原始数据用 HsfLinkClient_flowMeter(side)。
+ */
+const HsfLinkFlowMeter* HsfLinkClient_flowMeterActive(void);
+
+/**
+ * @brief 活动侧流量计数据是否**当前新鲜**（收到过且未超时）。
+ * @return 新鲜返回 true。
+ */
+bool HsfLinkClient_flowMeterActiveFresh(void);
+
+/**
+ * @brief 请求一拍电磁流量计快照（**载荷不带 side**；异步回包触发回调）。
+ * @return 已入发送队列返回 true；连接未就绪返回 false。
+ * @note  正常数据由服务端周期推送驱动；本接口只用于「立即要一拍」的场合。
+ *        [为什么请求里没有 side] 设备挂在哪条总线是**服务端的装配事实**，
+ *        客户端不该知道；服务端按装配位置回答并在应答里带上 side。
+ */
+bool HsfLinkClient_flowMeterSnapshotRequest(void);
 
 /**
  * @brief 注入一帧流量计遥测 BSON（离线回放 / 单测用）。
@@ -399,6 +549,43 @@ bool HsfLinkClient_pumpSnapshotRequest(void);
 bool HsfLinkClient_pumpControl(int index, bool on);
 /** @brief 注册泵更新回调。 */
 void HsfLinkClient_setPumpCallback(HsfLinkNotifyFn cb, void* userData);
+
+/* ==================== 自愈补拍（页面激活 / 数据过期时的兜底取数） ==================== */
+
+/**
+ * @brief 电磁流量计自愈：活动侧数据不新鲜（或从未收到）时补要一拍。
+ * @return 本次确实发出了补拍请求返回 true；数据够新/未就绪/节流中返回 false。
+ * @details 流量计页只在**建页时**要过一次快照（provider 的 requestSnapshot），
+ *          之后完全依赖推送；推送停摆时页面就停在最后一帧。本接口按预取阈值
+ *          补拍，内部节流 HSF_LINK_SNAPSHOT_RESYNC_MS，可被每拍调用。
+ * @note  [不点名侧号] 活动侧由服务端在帧里告知，客户端不猜现场接线。
+ */
+bool HsfLinkClient_flowMeterEnsureFresh(void);
+
+/** @brief 浊度仪自愈补拍（判据/节流同上；数据够新时立即早退）。 */
+bool HsfLinkClient_turbidityEnsureFresh(void);
+
+/** @brief 进水泵自愈补拍（判据/节流同上；数据够新时立即早退）。 */
+bool HsfLinkClient_pumpEnsureFresh(void);
+
+/** @brief 变频器遥测自愈补拍（判据/节流同上；数据够新时立即早退）。 */
+bool HsfLinkClient_vfdEnsureFresh(void);
+
+/** @brief 模拟量自愈补拍（判据/节流同上；数据够新时立即早退）。 */
+bool HsfLinkClient_aiEnsureFresh(void);
+
+/**
+ * @brief 按「当前页正在订阅的主题集合」为不新鲜的遥测各补一拍。
+ * @param topicMask 主题位掩码（bit i = HsfLinkTopic i；HsfUi 传 m_subTopics）。
+ * @details 页面激活时的订阅会让服务端**立即定向补发一拍**，但那条路只覆盖
+ *          「订阅帧真的送到」的情形；订阅帧丢失或推送通道整体停摆时，界面
+ *          没有任何自我恢复能力。本接口是那条路的兜底：由主窗 1Hz 时钟逐拍
+ *          调用，每个主题各自判预取阈值 + 各自节流（HsfLinkClient 内部记账），
+ *          数据正常时零请求。
+ * @note  温湿度不在本表：它是常驻订阅，补拍入口是
+ *        HsfLinkClient_tempHumEnsureFresh（标题栏刷新逐拍调用）。
+ */
+void HsfLinkClient_ensureFreshTopics(uint32_t topicMask);
 
 /* ==================== 控制下发 ==================== */
 
@@ -930,6 +1117,23 @@ void HsfLinkClient_unsubscribe(HsfLinkTopic topic);
  *        永久「--」），本函数补上这条重试路径。
  */
 bool HsfLinkClient_ensureSubscriptions(void);
+
+/* ==================== 白盒测试钩子（生产路径请勿调用） ==================== */
+
+/**
+ * @brief 把一条构造好的 **Response** 业务帧喂给业务分发（白盒测试专用）。
+ * @param msgCode 业务命令码（HSF_CMD_*）。
+ * @param payload 载荷字节（BSON；借用，调用期间有效即可）。
+ * @param len 载荷长度。
+ * @return 参数非法（len>0 而 payload 为 NULL）返回 false，其余返回 true。
+ * @details 快照命令的应答分支是「请求-应答」通道，离屏测试收不到真实应答；
+ *          本钩子直接调用线上同一条分发函数（hsfLcDispatch），从而是"应答
+ *          →解析→刷新 model→通知订阅者"全链路的可断言入口。
+ *          当前用例：Test/XProtocolTest/hsf_regression_test.c §I。
+ * @warning 绕过会话层的 pending 登记/去重/应答认领，**只能**在测试里用。
+ */
+bool HsfLinkClient_testDispatchResponse(uint16_t msgCode,
+                                        const uint8_t* payload, uint32_t len);
 
 #ifdef __cplusplus
 }

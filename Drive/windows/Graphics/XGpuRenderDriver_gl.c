@@ -478,10 +478,9 @@ static void xgld_clear_current_tracker(void)
 /* ==================== L-固定成本（2026-09-26 夜三）状态镜像辅助 ==================== */
 
 /* 逐项排障开关（沿排障开关先例：默认开=新路径，"0"=逐位回退旧行为，
- * 其余非空值视为开）。固定成本归因（docs/xgui/night3-attribution.md
- * §5）：~0.59ms/派发 × 每迭代 2.18-3.62 次派发的会话级开销，头号
- * 假设=会话开关驱动成本（makeCurrent/绑定往返），本组开关即其逐项
- * 兑现与 A/B 计量手段。 */
+ * 其余非空值视为开）。固定成本归因（2026-09-26 夜三实测）：~0.59ms/派发
+ * × 每迭代 2.18-3.62 次派发的会话级开销，头号假设=会话开关驱动成本
+ * （makeCurrent/绑定往返），本组开关即其逐项兑现与 A/B 计量手段。 */
 static bool xgld_fbo_persist_enabled(void)
 {
     static int enabled = -1;
@@ -2653,9 +2652,9 @@ static bool xgld_pbo_full_readback_requested(void)
 }
 
 /** @brief XGPU_PBO_LAG_FIX 环境开关（默认开=修复生效；"0"=回退滞后通道）。
- *  @note  为什么默认关掉滞后通道：三夜九波定向二分（docs/xgui/
- *         night3-bisect.md，2026-09-27）在确定性拖动轨迹下，唯一让拖动
- *         全程 clean 的配置是 XGPU_PBO_READBACK=0（同步直读）；滞后命中
+ *  @note  为什么默认关掉滞后通道：三夜九波定向二分（2026-09-27）在确定性
+ *         拖动轨迹下，唯一让拖动全程 clean 的配置是
+ *         XGPU_PBO_READBACK=0（同步直读）；滞后命中
  *         条件（bbox 包含 + fence 探测）在交互态失效，拷出呈现陈旧/半成
  *         品帧——整窗白/碎片且松开不自愈。同步直读同 FBO 同渲染全程干
  *         净，反证 FBO 内容本身无腐坏，病灶只在滞后拷出这一层。修复=
@@ -2812,8 +2811,8 @@ static void xgld_pbo_issue_async_read(XGpuRenderDriverSession* self,
  * （否则同步帧不写 PBO，链路永远建立不起来）。
  * 三夜九波起（2026-09-27）滞后通道默认休眠：XGPU_PBO_LAG_FIX 默认把
  * pboLag 压为假，拷出与异步写入一并跳过（呈现链逐位等同同步直读）——
- * 交互拖动二分实证上述命中条件在交互态失效、拷出产出陈旧/半成品帧
- * （docs/xgui/night3-bisect.md）；置 0 恢复下列命中条件与保温链路。 */
+ * 交互拖动二分实证上述命中条件在交互态失效、拷出产出陈旧/半成品帧；
+ * 置 0 恢复下列命中条件与保温链路。 */
 static bool xgld_readback_region(XGpuRenderDriverSession* self,
                                  XImage* target, int x, int y,
                                  int width, int height, bool allowPboLag)

@@ -56,7 +56,7 @@ const HsfServerIoSimModels* HsfServerIoSim_ensure(void)
     s_sim.m_digMain = XVirtualModelDigital_create(HSF_SIM_DIG_CHANNELS_PER_DEV);
     s_sim.m_digExt = XVirtualModelDigital_create(HSF_SIM_DIG_CHANNELS_PER_DEV);
     s_sim.m_analog = XVirtualModelAnalog_create(HSF_AI_CHANNELS);
-    /* 浊度仪两台：index 决定基准浊度与波动相位（0=原水高、1=出水低）。
+    /* 浊度仪两台：index 决定缺省基准/字序（0=站1 CDAB、1=站2 DCBA）。
      * 两台必须能看出是两台独立仪器，而不是同一个值贴两遍。 */
     s_sim.m_turbidity[0] = XVirtualModelTurbidity_create(0);
     s_sim.m_turbidity[1] = XVirtualModelTurbidity_create(1);
@@ -96,21 +96,53 @@ const HsfServerIoSimModels* HsfServerIoSim_ensure(void)
     }
     /* [DI/DO 初值对齐 Python VirtualDigital]
      *  · DO 全部为 0（Python do_init 缺省 0）：开机没有输出带电。
-     *  · DI 静态位 = 0x00001000：只有按钮组的**急停回路**（DI12）常态
-     *    吸合（常闭触点），三个按键（DI13..15）未按；阀区那 12 位由
-     *    行程动态推导（开机六路全部"已关" ⇒ 关到位位吸合）。
+     *  · DI 静态位 = 0x00005000：按钮组的**急停（DI12）与停止（DI14）
+     *    都是常闭触点**——静止时回路通 ⇒ DI=1（按下才是 0）。启动/复位
+     *    （DI13/DI15）是常开：未按 = 0。阀区那 12 位由行程动态推导
+     *    （开机六路全部"已关" ⇒ 关到位位吸合）。
+     *    [2026-11-09 修] 原为 0x00001000（只把急停置位），等于把停止键
+     *    当常开 ⇒ 模拟器一开机就认为停止键被按住（服务端判 pressed 恒真，
+     *    客户端按钮组卡显示「停止●按下」）。与 Python 侧同改。
      *    ⇒ 两端数字量页开机看到的位图完全一致。 */
     XVirtualModelDigital_setDo(s_sim.m_digMain, 0u);
     XVirtualModelDigital_setDo(s_sim.m_digExt, 0u);
-    XVirtualModelDigital_setDi(s_sim.m_digMain, 0x00001000u);
+    XVirtualModelDigital_setDi(s_sim.m_digMain, 0x00005000u);
     XVirtualModelDigital_setDi(s_sim.m_digExt, 0u);
+
+    /* ---- 路 B 三台设备的寄存器值按 **2026-11-09 板端实测口径** 布
+     * （docs/HSF板端ttyS4三设备取数实测总表_20261109.md §1.1/§1.3/§9）：
+     *  · 站 1 浊度仪（模型台 0）：CDAB、恒定 2.29f NTU（实测 20 轮完全
+     *    不动 ⇒ 波动幅 0，"恒定"本身是实测口径）；
+     *  · 第二台浊度仪（模型台 1；面板站号 2026-11-10 起为 3）：DCBA
+     *    （整字节反序=小端 float32）、基准
+     *    0.045f NTU **±0.001 缓慢波动** + 温度 19.3℃ **±0.05 缓慢漂移**，
+     *    0x0000×4 一帧同刻（实测 40s 窗：浊度 0.04458~0.04577、温度
+     *    19.25~19.3125）；
+     *  · 站 5 流量计：ABCD、基准 3.6f m³/h **±2% 正弦微波动**（周期 60s）、
+     *    空管报警 False、单位码 5=m³/h。
+     * [站号跟随 HsfServerConfig.h] 虚拟客户端按 HSF_TURBIDITYx_UNIT_ID /
+     * HSF_FLOWMETER_UNIT_ID 绑模型（见 createBusClient），这里不出现任何
+     * 写死的站号——改站号只改那个头文件，模拟与真机装配同步生效。
+     * [保真口径] 基准值与实测一一对应；波动让"数据在刷新"可见（恒定值
+     * 容易误判成界面卡住）。需要逐位断言的用例（回归 §K3）自己用
+     * setNtu/setInstantFlow 钉死固定值，与本装配口径互补。 */
+    XVirtualModelTurbidity_setWordOrder(s_sim.m_turbidity[0],
+                                        (int)XVirtualModelTurbWordOrder_Cdab);
+    XVirtualModelTurbidity_setNtu(s_sim.m_turbidity[0], 2.29);
+    XVirtualModelTurbidity_setWobble(s_sim.m_turbidity[0], 0.0);
+    XVirtualModelTurbidity_setWordOrder(s_sim.m_turbidity[1],
+                                        (int)XVirtualModelTurbWordOrder_Dcba);
+    XVirtualModelTurbidity_setWobble(s_sim.m_turbidity[1], 0.001);
+    XVirtualModelTurbidity_setTempC(s_sim.m_turbidity[1], 19.3);
+    XVirtualModelTurbidity_setTempWobble(s_sim.m_turbidity[1], 0.05);
+    XVirtualModelFlow_setBaseFlow(s_sim.m_flowMeter, 3.6);
 
     s_simReady = true;
     XPrintf("HsfServerIoSim: 模拟设备已装配（变频器 %.0fHz 上限 / 温湿度 %.1f℃ %.1f%% / "
-            "流量 %.1fm3/h±2%%波动 / 浊度 12.5与3.2NTU / 数字量 %d 点（阀在%s模块）"
-            " / 模拟量 %d 路）\n",
+            "流量 3.6m3/h ±2%%波动·空管False·单位5 / 浊度 站1 2.29CDAB恒定·"
+            "站2 0.045DCBA±0.001+19.3℃±0.05 / 数字量 %d 点（阀在%s模块） / 模拟量 %d 路）\n",
             HSF_SIM_VFD_MAX_HZ,
-            (double)265 / 10.0, (double)550 / 10.0, 36.5,
+            (double)265 / 10.0, (double)550 / 10.0,
             HSF_DIG_HOST_EXT[0] ? (HSF_DIG_CHANNELS * 2) : HSF_DIG_CHANNELS,
             simValveOnExt() ? "扩展" : "主",
             HSF_AI_CHANNELS);
@@ -212,6 +244,26 @@ XModbusVirtualClient* HsfServerIoSim_createBusClient(bool hasVfd,
             }
         }
     }
+    /* ---- ttyS4 保真：应答时延 + 站1 长帧后恢复期（2026-11-09 实测口径）----
+     * [时延在从站应答路径] 虚拟从站构造应答前按站号休眠（宏缺省=实测值，
+     * 可 -D 覆盖，见 HsfServerConfig.h 的 HSF_SIM_* 注记）。真实仪表的应答
+     * 从来不是零时延；带上它，主站的站间间隙/静默闸才不是只跑不验的死代码。
+     * [恢复期] 站 5 的 49 字节长帧收口后 HSF_SIM_RECOVERY_MS 内站 1 无应答
+     * ——主站侧 HSF_TURBIDITY1_TX_QUIET_MS(200) 刻意大于它 ⇒ 联调时站 1
+     * 不掉线，但间隙逻辑被真实锻炼。只在与真机同接法的路 B 客户端上生效；
+     * 时延数值不进回归断言（CI 抖动），行为方向由 §K 锁。 */
+    XModbusVirtualClient_setUnitReplyLatency(c, HSF_TURBIDITY1_UNIT_ID,
+                                             HSF_SIM_TURBIDITY1_REPLY_MS_MIN,
+                                             HSF_SIM_TURBIDITY1_REPLY_MS_MAX);
+    XModbusVirtualClient_setUnitReplyLatency(c, HSF_TURBIDITY2_UNIT_ID,
+                                             HSF_SIM_TURBIDITY2_REPLY_MS_MIN,
+                                             HSF_SIM_TURBIDITY2_REPLY_MS_MAX);
+    XModbusVirtualClient_setUnitReplyLatency(c, HSF_FLOWMETER_UNIT_ID,
+                                             HSF_SIM_FLOWMETER_REPLY_MS_MIN,
+                                             HSF_SIM_FLOWMETER_REPLY_MS_MAX);
+    XModbusVirtualClient_setRecoveryGate(c, HSF_FLOWMETER_UNIT_ID,
+                                         HSF_TURBIDITY1_UNIT_ID,
+                                         HSF_SIM_RECOVERY_MS);
     return c;
 }
 

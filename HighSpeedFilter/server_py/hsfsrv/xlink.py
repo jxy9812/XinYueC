@@ -162,7 +162,9 @@ class Session(object):
                 hdr = proto.decode_header(head)
                 if hdr is None:
                     # 协议违例：断链前告知原因，不继续按垃圾当帧头读。
-                    self.server.log("会话 %s 帧头非法 → 断链" % self.peer)
+                    # 类别 = conn（链路层异常导致会话终结，不属登录事件）。
+                    self.server.log_event("会话 %s 帧头非法 → 断链" % self.peer,
+                                          proto.LOG_CAT_CONN)
                     await self.send_goodbye(proto.GOODBYE_PROTOCOL)
                     break
                 plen, mclass, mcode, rid, dtype = hdr
@@ -179,8 +181,10 @@ class Session(object):
             raise
         except Exception as exc:                       # noqa: BLE001
             # 兜底：单个会话的任何异常不得拖垮服务端。
-            self.server.log("会话 %s 异常终止：%s: %s"
-                            % (self.peer, type(exc).__name__, exc))
+            # 类别 = conn（异常终止 = 会话终结事件）。
+            self.server.log_event("会话 %s 异常终止：%s: %s"
+                                  % (self.peer, type(exc).__name__, exc),
+                                  proto.LOG_CAT_CONN)
         finally:
             await self.close()
 
@@ -229,7 +233,9 @@ class Session(object):
             return
         elif code == proto.SESSION_GOODBYE:
             reason = payload[0] if payload else proto.GOODBYE_NORMAL
-            self.server.log("会话 %s 对端主动断开（原因 %d）" % (self.peer, reason))
+            # 类别 = conn（登出＝对端主动断开，属会话生命周期）。
+            self.server.log_event("会话 %s 对端主动断开（原因 %d）"
+                                  % (self.peer, reason), proto.LOG_CAT_CONN)
             self.closed = True
         elif code == proto.SESSION_AUTH_REQUEST:
             await self._on_auth_request(payload)
@@ -244,14 +250,15 @@ class Session(object):
             # [兼容性] Hello 载荷是可选的（C 侧 XLinkCodec_decodeHello 解不出
             # 就静默跳过，不断链）。早期客户端/探针会发空载荷 Hello，
             # 直接断链会让它们连不上——故这里同样只记日志、不处理。
-            self.server.log("会话 %s Hello 载荷不可解（%d 字节），按无声握手忽略"
-                            % (self.peer, len(payload)))
+            self.server.log_event(
+                "会话 %s Hello 载荷不可解（%d 字节），按无声握手忽略"
+                % (self.peer, len(payload)), proto.LOG_CAT_CONN)
             return
         version, capability = hello
         # 主版本必须一致（帧头宽度变了），次版本不校验（属兼容扩展）。
         if (version >> 8) != (proto.XLINK_VERSION >> 8):
-            self.server.log("会话 %s 协议主版本不符（0x%04X）→ 断链"
-                            % (self.peer, version))
+            self.server.log_event("会话 %s 协议主版本不符（0x%04X）→ 断链"
+                                  % (self.peer, version), proto.LOG_CAT_CONN)
             await self.send_goodbye(proto.GOODBYE_PROTOCOL)
             self.closed = True
             return
@@ -281,7 +288,8 @@ class Session(object):
             else:
                 # 本端要求认证但对端不宣告 Auth（老对端/恶意降级）：默认拒绝，
                 # 绝不回落匿名——否则去掉一个能力位就绕过登录。
-                self.server.log("会话 %s 不支持认证 → 拒绝" % self.peer)
+                self.server.log_event("会话 %s 不支持认证 → 拒绝" % self.peer,
+                                      proto.LOG_CAT_AUTH)
                 await self.send_goodbye(proto.GOODBYE_AUTH_REQUIRED)
                 self.closed = True
         else:
@@ -308,12 +316,24 @@ class Session(object):
 
         # [登录策略闸] app 侧 policy_blocks_login 三键判定（总数上限 /
         # 匿名 / 同账并发，具体哪道闸拒绝由 app 侧记日志）。
-        # 拒绝走 BadUser 口径（对齐 C 侧 XLoginPolicy 准入拒绝 →
-        # XLinkSessionAuthLookup_BadUser：客户端看到干净的 authFailed，
-        # 登录窗留在原地），具体拒绝码不在链路层展开。
+        # [拒绝码 = REJECTED，不是 BAD_USER 2026-11-09 根修]
+        # 这三道闸拒绝的是**服务端瞬时状态**（同账并发/会话数上限），与
+        # 口令对错无关。原先回 BAD_USER("unknown user") 会让客户端把
+        # 「root 已在别处登录」当成「账户不存在/口令错」而**永久停止自动
+        # 重连**：客户端断线重连时旧会话还没被静默回收（~6s）就会撞上，
+        # 一次网络抖动即让界面永久全 `--`，人工重登才好（实锅）。
+        # 回 REJECTED 后客户端按瞬时失败退避重试，旧会话一回收即自动恢复。
+        # 反枚举口径不变：真正的「用户不存在/锁定」仍在下面回 BAD_USER/
+        # LOCKED；文本故意保持通用（不在链路上宣告"该账户存在但已在线"）。
+        # C 侧对应：XLinkSessionAuthLookup_Rejected → XLinkAuthStatus_Rejected
+        # （见 Src/XCore/XProtocol/XLink/XLinkSession.h 的同款说明）。
         if self.server.server_policy_blocks(name, self):
-            self.server.log("会话 %s 登录被策略拒绝（%s）" % (self.peer, name))
-            await self._auth_reject(proto.AUTHSTATUS_BAD_USER, "unknown user")
+            # 类别 = auth（登录被策略拒绝；具体哪道闸由 app 侧另记一条 auth）。
+            self.server.log_event(
+                "会话 %s 登录被策略拒绝（%s）" % (self.peer, name),
+                proto.LOG_CAT_AUTH)
+            await self._auth_reject(proto.AUTHSTATUS_REJECTED,
+                                    "authentication rejected")
             return
 
         rec = self.server.users.find(name)
@@ -371,18 +391,26 @@ class Session(object):
         self.auth_user = user
         self.auth_failures = 0
         self.state = SessionState.READY
-        self.server.log("会话 %s 登录成功（%s，角色 %d）"
-                        % (self.peer, user, role))
+        self.server.log_event("会话 %s 登录成功（%s，角色 %d）"
+                              % (self.peer, user, role), proto.LOG_CAT_AUTH)
         await self.server.on_ready(self)
 
     async def _auth_reject(self, status, text):
-        """认证失败：下发失败结果，累计失败次数，达上限即断链。"""
+        """认证失败：下发失败结果，累计失败次数，达上限即断链。
+
+        [REJECTED 不计失败次数 2026-11-09] 策略性拒绝（同账并发/会话上限）
+        是服务端瞬时状态，不是凭据失败：计入会让同一连接上重试三次就被
+        Goodbye 断链，也会把「账户已在线」错记成账户侧失败痕迹。与 C 侧
+        XLinkSessionPrivate_authConclude 的 `status != Rejected` 判定同口径。
+        """
         await self.send_session(
             proto.SESSION_AUTH_RESULT,
             auth_mod.encode_result(status, 0, text, None))
-        self.auth_failures += 1
-        self.server.log("会话 %s 登录失败（状态 %d，累计 %d）"
-                        % (self.peer, status, self.auth_failures))
+        if status != proto.AUTHSTATUS_REJECTED:
+            self.auth_failures += 1
+        self.server.log_event("会话 %s 登录失败（状态 %d，累计 %d）"
+                              % (self.peer, status, self.auth_failures),
+                              proto.LOG_CAT_AUTH)
         if self.auth_failures >= proto.XLINK_AUTH_FAILURE_LIMIT:
             await self.send_goodbye(proto.GOODBYE_AUTH_FAILED)
             self.closed = True
@@ -451,19 +479,23 @@ class Session(object):
         if (self.state == SessionState.AUTHENTICATING
                 and self.auth_start_ms
                 and now_ms - self.auth_start_ms > proto.XLINK_AUTH_TIMEOUT_MS):
-            self.server.log("会话 %s 认证超时 → 断链" % self.peer)
+            self.server.log_event("会话 %s 认证超时 → 断链" % self.peer,
+                                  proto.LOG_CAT_CONN)
             await self.send_goodbye(proto.GOODBYE_TIMEOUT)
             return False
         # 握手超时：建链后迟迟不握手（防半开连接占资源）。
         if (self.state == SessionState.CONNECTED
                 and now_ms - self.connected_ms > proto.XLINK_HANDSHAKE_TIMEOUT_MS):
-            self.server.log("会话 %s 握手超时 → 断链" % self.peer)
+            self.server.log_event("会话 %s 握手超时 → 断链" % self.peer,
+                                  proto.LOG_CAT_CONN)
             await self.send_goodbye(proto.GOODBYE_TIMEOUT)
             return False
         # 静默超时：对端（含心跳）完全无声超过阈值即判链路断开。
         if now_ms - self.last_receive_ms > proto.XLINK_HEARTBEAT_TIMEOUT_MS:
-            self.server.log("会话 %s 静默超时（%dms）→ 断链"
-                            % (self.peer, now_ms - self.last_receive_ms))
+            # 三类超时都归 conn（会话超时回收，不是登录失败）。
+            self.server.log_event("会话 %s 静默超时（%dms）→ 断链"
+                                  % (self.peer, now_ms - self.last_receive_ms),
+                                  proto.LOG_CAT_CONN)
             return False
         # 主动心跳：静默达间隔即发一帧，供对端刷新其静默计时。
         if self.state == SessionState.READY:
@@ -510,11 +542,34 @@ class Server(object):
         self.on_session_removed = None
         #: 订阅/首连补发回调：(session, topic_id) → (payload, dataType) 或 None。
         self.on_publish_now = None
+        #: 运维事件日志出口：(msg, category) → None（由 app.attach 接到
+        #: 业务日志写库路径）。None = 未装配，事件只打终端（见 log_event）。
+        self.on_event_log = None
         # 会话策略：返回 True 即拒绝本次登录（root 单会话等）
         self.policy_hook = None
 
     def log(self, msg):
+        """终端日志出口（**流水账**：订阅/退订、tick 异常、协议细节）。
+
+        [为什么与 log_event 分开] 链路层逐帧日志进 logs 表会把日志页冲满
+        （一次登录 9 条订阅 ×N 会话）；运维事件表只收"事后要翻"的事件，
+        与 C 侧 hsfsrv 的「定点入库」同口径。故流水账只留终端。
+        """
         self._log(msg)
+
+    def log_event(self, msg, category=proto.LOG_CAT_SYS):
+        """运维事件日志（会话接入/断开/超时、登录成功/被拒/登出）。
+
+        :param category: 运行日志类别（conn/ctrl/alarm/auto/auth/sys）。
+            [类别由调用点给] 同一条消息属于"会话生命周期"还是"登录认证"，
+            是**调用点的属性**，看不出文本差异 —— 只有调用点知道。
+        [未装配时退化] 测试装置/裸 Server 没有 on_event_log ⇒ 退回终端日志，
+        事件不会丢，只是不入库。
+        """
+        if self.on_event_log is not None:
+            self.on_event_log(msg, category)
+        else:
+            self._log(msg)
 
     def server_policy_blocks(self, user_name, session):
         """账户级登录策略钩子（默认不拦）。"""
@@ -570,7 +625,9 @@ class Server(object):
             pass
         session = Session(reader, writer, self)
         self.sessions.append(session)
-        self.log("会话接入 %s（当前 %d 路）" % (session.peer, len(self.sessions)))
+        # 类别 = conn（会话接入；C 侧 hsfAppNotify 的 Added 分支同分类）。
+        self.log_event("会话接入 %s（当前 %d 路）"
+                       % (session.peer, len(self.sessions)), proto.LOG_CAT_CONN)
         try:
             if self.on_session_added:
                 await self._maybe_await(self.on_session_added(session))
@@ -578,7 +635,10 @@ class Server(object):
         finally:
             if session in self.sessions:
                 self.sessions.remove(session)
-            self.log("会话断开 %s（当前 %d 路）" % (session.peer, len(self.sessions)))
+            # 类别 = conn（会话断开/超时回收都在此收口）。
+            self.log_event("会话断开 %s（当前 %d 路）"
+                           % (session.peer, len(self.sessions)),
+                           proto.LOG_CAT_CONN)
             if self.on_session_removed:
                 await self._maybe_await(self.on_session_removed(session))
 

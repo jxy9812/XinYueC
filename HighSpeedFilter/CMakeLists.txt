@@ -48,7 +48,16 @@ set(HSF_SERVER_MAIN_FILE ${HSF_SERVER_FILE})
 list(FILTER HSF_SERVER_MAIN_FILE EXCLUDE REGEX "/server/io/")
 
 add_executable(HsfServer ${HSF_SERVER_MAIN_FILE})
-add_executable(HsfClient ${HSF_CLIENT_FILE})
+# [2026-11-09 安卓] HsfClient 是**桌面**目标（自带 main 的可执行文件）；
+# 安卓端改为共享库 xhsfclient（NativeActivity 壳 + 同一份客户端源码，见
+# 本文件末尾 ANDROID 段）。安卓下桌面目标必须整体不建：
+#   ① 客户端 main 在 __ANDROID__ 下改名为 hsf_client_main（供安卓壳调用），
+#      桌面目标没有 main → 链接失败（undefined reference: main）；
+#   ② xinyue_link_rescan_group() 对不存在的目标直接报错。
+#   注意：CMake 的 UNIX 在安卓下**为真**，故下面的 UNIX 分支同样要守。
+if(NOT ANDROID)
+    add_executable(HsfClient ${HSF_CLIENT_FILE})
+endif()
 
 # [2026-11-04 电磁流量计联调] 同源码的第二个服务端可执行，输出名
 # HsfServerFlow.exe —— 现场常有「另一路在测其他功能」同时跑 HsfServer.exe
@@ -70,9 +79,11 @@ target_include_directories(HsfServer PRIVATE
 target_include_directories(HsfServerFlow PRIVATE
     ${HSF_COMMON_INCLUDE_DIRS}
     ${HSF_SERVER_INCLUDE_DIRS})
-target_include_directories(HsfClient PRIVATE
-    ${HSF_COMMON_INCLUDE_DIRS}
-    ${HSF_CLIENT_INCLUDE_DIRS})
+if(NOT ANDROID)
+    target_include_directories(HsfClient PRIVATE
+        ${HSF_COMMON_INCLUDE_DIRS}
+        ${HSF_CLIENT_INCLUDE_DIRS})
+endif()
 
 if(UNIX)
     target_link_libraries(HsfServer
@@ -84,9 +95,12 @@ if(UNIX)
         ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS}
         mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
     # 客户端走 GUI 栈：链接序对齐 XGuiWindowDemo_Test（sqlite/freetype 同配置）。
-    target_link_libraries(HsfClient
-        ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS}
-        mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
+    # ANDROID 下桌面目标不存在（见上），故守一道。
+    if(NOT ANDROID)
+        target_link_libraries(HsfClient
+            ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS}
+            mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
+    endif()
 else()
     target_link_libraries(HsfServer
         XHsfServerIoLib
@@ -94,8 +108,10 @@ else()
     target_link_libraries(HsfServerFlow
         XHsfServerIoLib
         mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
-    target_link_libraries(HsfClient
-        mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
+    if(NOT ANDROID)
+        target_link_libraries(HsfClient
+            mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
+    endif()
 endif()
 
 # ==================== 静态归档环依赖收口（模块化拆分遗留）====================
@@ -106,7 +122,64 @@ endif()
 xinyue_link_rescan_group(HsfServer)
 xinyue_link_rescan_group(XHsfServerIoLib)
 xinyue_link_rescan_group(HsfServerFlow)
-xinyue_link_rescan_group(HsfClient)
+if(NOT ANDROID)
+    xinyue_link_rescan_group(HsfClient)
+endif()
+
+# ==================== 安卓：客户端共享库（NativeActivity 壳）====================
+# [2026-11-09] 高速过滤器客户端的安卓产物：libxhsfclient.so。
+# 与 XGuiDemo 的 xguidemo 目标**同构**（见 Test/CMakeLists.txt 的 xguidemo 段）：
+#   - 壳 = Drive/Android/android_main.c（提供 ANativeActivity_onCreate）；
+#     该文件被 Drive/CMakeLists.txt 的 GLOB 剔除出框架库，只归壳目标所有。
+#   - 客户端源码 = 桌面 HsfClient 的**同一份**（HSF_CLIENT_FILE 的 GLOB），
+#     不产生副本；main 在 __ANDROID__ 下改名为 hsf_client_main（壳调用它）。
+#   - 应用身份（入口符号/logcat tag/参数来源）由本目标用编译宏注入，
+#     壳文件本身不含任何 app 专有内容（新增安卓应用不改壳）。
+# 打包（清单/so 名/apk 名/包名）见 platforms/android/。
+if(ANDROID)
+    add_library(xhsfclient SHARED
+        "${CMAKE_CURRENT_LIST_DIR}/../Drive/Android/android_main.c"
+        ${HSF_CLIENT_FILE}
+    )
+    # 应用身份注入：安卓壳（Drive/Android/android_main.c）与 app 无关，
+    # 新增安卓应用不改壳文件，只在这里给宏（demo 侧同款，见
+    # Test/CMakeLists.txt 的 xguidemo 目标）。
+    #   XPAD_APP_ENTRY     壳要调的应用主逻辑符号（客户端 main 在
+    #                      __ANDROID__ 下改名为 hsf_client_main）
+    #   XPAD_APP_TAG       logcat tag（adb logcat -s HsfClient）
+    #   XPAD_APP_ARGS_ENV  参数环境变量名（如 "--login admin:pass@host:port"
+    #                      无头登录 / "--no-login" 离线演示）
+    #   XPAD_APP_ARGS_FILE 设备上的参数文件（adb 可写，无人值守验证）
+    target_compile_definitions(xhsfclient PRIVATE
+        XPAD_APP_ENTRY=hsf_client_main
+        XPAD_APP_NAME="hsf_client_main"
+        XPAD_APP_TAG="HsfClient"
+        XPAD_APP_ARGS_ENV="HSF_ARGS"
+        XPAD_APP_ARGS_FILE="/data/local/tmp/hsf_args.txt")
+    # 产物落到**构建根**（out/<前缀>-<abi>/libxhsfclient.so）：共享库默认
+    # 落在目标的二进制子目录（HighSpeedFilter/），而打包脚本按构建根找
+    # （app.env 的 APP_BUILD_PREFIX 口径）——不钉住就「编译成功、打包说缺
+    # 库」。CMAKE_RUNTIME_OUTPUT_DIRECTORY 只管可执行文件，管不到 .so。
+    set_target_properties(xhsfclient PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    target_include_directories(xhsfclient PRIVATE
+        ${HSF_COMMON_INCLUDE_DIRS}
+        ${HSF_CLIENT_INCLUDE_DIRS})
+    # 链接序对齐 xguidemo 目标：框架静态库 + 第三方 + sqlite/freetype
+    # （客户端 UI 走 GUI 栈，freetype 供 FT 轮廓字，sqlite 为传递依赖）。
+    # 安卓 bionic 把 pthread/数学库内置于 libc，不链 -lpthread（根 CMake
+    # 的 XINYUE_UNIX_THREAD_LIBS 在 ANDROID 下已置空）。
+    target_link_libraries(xhsfclient
+        ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS}
+        mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
+    target_link_libraries(xhsfclient android log)
+    # [安卓无障碍接入] 保活 JNI_OnLoad：链接参数含 -Wl,--gc-sections，未被引
+    # 用的符号（含 JNI_OnLoad）会被裁掉，ART 加载 .so 时找不到 JNI_OnLoad
+    # → RegisterNatives 不执行 → Java 侧 native 方法报 "No implementation
+    # found"（真机实证崩溃）。--undefined 把符号标记为外部引用，阻止裁剪。
+    target_link_options(xhsfclient PRIVATE
+        "LINKER:--undefined=JNI_OnLoad")
+endif()
 
 # ==================== xlsx_bridge（Python 客户端 Excel 导出动态库）====================
 # 高速过滤器 Python 客户端（client_py/）导出 Excel 用：把 XExcel（XCore/XData）

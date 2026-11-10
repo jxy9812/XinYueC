@@ -2,8 +2,8 @@
  * @file       XPlainTextEdit.c
  * @brief      多行纯文本编辑控件壳实现（对标 Qt 6.8 QPlainTextEdit 全部
  *             公共 API；编辑能力面迁入 XTextControl 私有文本控制器）。
- * @details    与同名头文件的公共 API 一一对应。壳化拆分（对照
- *             docs/xgui-audit/2026-09-19/editor-delta-audit.md 第三章）：
+ * @details    与同名头文件的公共 API 一一对应。壳化拆分（2026-09-19
+ *             增量审计的第三章口径）：
  *             - 迁入控制器：行存储/文本读写/撤销重做/编辑原语/键盘分派/
  *               IME 提交/命中测试/光标矩形/查找/剪贴板/选区锚点模型/
  *               块数承载/块数字符统计/覆盖模式与交互标志语义/moveCursor

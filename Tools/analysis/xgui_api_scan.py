@@ -11,7 +11,7 @@ void 信号名、public Q_SLOTS、Q_PROPERTY 的 READ/WRITE 访问器），与
 XGui 侧 `X<类>_<Qt方法驼峰名>`（含全部祖先类的函数，_signal/_base
 后缀归一）做匹配，输出剩余缺口清单：
 
-    docs/xgui-audit/2026-09-16/xgui-api-gaps-phase3-v2.txt
+    docs/xgui/xgui-api-gaps-phase3-v2.txt
 
 匹配规则：Qt 方法 foo 被满足，当且仅当 XGui 侧（本类 + 祖先链）存在
 foo、foo_2 或 foo_3（QString 双版本约定：主版本返回 XString*，
@@ -45,7 +45,7 @@ from collections import OrderedDict
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QT_SRC = os.environ.get("QT_SRC", "/home/xinyue/Qt/6.8.3/Src/qtbase/src/widgets")
 XGUI_SRC = os.path.join(REPO, "Src", "XGui")
-OUT_PATH = os.path.join(REPO, "docs", "xgui-audit", "2026-09-16",
+OUT_PATH = os.path.join(REPO, "docs", "xgui",
                         "xgui-api-gaps-phase3-v2.txt")
 
 # ============================================================

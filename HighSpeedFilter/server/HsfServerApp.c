@@ -33,6 +33,8 @@
 #include "XVfdDevice.h"
 #include "XTempHumTransmitter.h"
 #include "XTempHumTransmitterCodec.h"
+#include "XTurbidityMeter.h" /* XTurbidityMeter_staleMs（陈旧阈值回读）。 */
+#include "XFlowMeter.h"   /* XFlowMeterAlarm_System（流量计告警位定义）。 */
 #include "XBson.h"
 #include "XBsonDocument.h"
 #include "XBsonValue.h"
@@ -372,19 +374,28 @@ static void hsfHealthCollect(HsfAppHealthState* st)
                        (side == HsfSide_A) ? HSF_BUS_A_PORT : HSF_BUS_B_PORT,
                        (side == HsfSide_A) ? HSF_BUS_A_BAUDRATE : HSF_BUS_B_BAUDRATE,
                        HSF_FLOWMETER_UNIT_ID);
+            /* [告警口径对齐 Python 2026-11-10] 四个报警位打包成一个掩码
+             * （0=上限 1=下限 2=空管 3=系统），只有**系统报警**算设备告警；
+             * 其余三位是工况信息——「空管」在泵停/无流时必然置位，早先
+             * 「alarms != 0 ⇒ 故障」把首页显示成「电磁流量计 故障」
+             * （板端实测 alarms=4 即空管位，流量 0.0 属正常停机态）。
+             * Python 侧同口径：仅系统报警 ⇒ HEALTH_WARNING、err=0、
+             * 文本「流量计系统报警」。位定义见 XFlowMeter_alarms()。 */
+            const bool systemAlarm =
+                (alarms & (int)XFlowMeterAlarm_System) != 0;
             hsfHealthAdd(st, "电磁流量计", HsfDeviceKind_FlowMeter, (int)side,
-                         alarms != 0 ? HsfDeviceHealth_Fault
-                                     : (valid ? HsfDeviceHealth_Ok
-                                              : HsfDeviceHealth_Stale),
-                         alarms, valid || alarms != 0, 0,
-                         alarms != 0 ? "流量计告警" : (valid ? "" : "无有效数据"),
+                         HsfServerIoFlowMeter_health(alarms, valid),
+                         0, valid || alarms != 0, 0,
+                         systemAlarm ? "流量计系统报警"
+                                     : (valid ? "" : "无有效数据"),
                          addr);
         }
 
         /* ---- 浊度仪 ×2（逐台一条）----
          * [现场接法] 两条 485 总线：
          *   · 485-A：变频器 + 温湿度
-         *   · 485-B：流量计 + 浊度仪 ×2（站 1/3，与流量计同一条总线）
+         *   · 485-B：流量计 + 浊度仪 ×2（站 1/2，与流量计同一条总线；
+         *     2026-11-09 板端普查定案，站号定义在 HsfServerConfig.h）
          * 全系统**总共就 2 台浊度仪**，配置里也只有 B 侧挂了
          * （HSF_BUS_B_HAS_TURBIDITY=1 / HSF_BUS_A_HAS_TURBIDITY=0）。
          *
@@ -430,29 +441,14 @@ static void hsfHealthCollect(HsfAppHealthState* st)
         }
     }
 
-    /* ---- 模拟量模块（TCP，单台） ---- */
-    {
-        double ma[8];
-        bool valid[8];
-        char addr[64];
-        int n = HsfServerIo_aiValues(ma, valid, 8);
-        hsfAddrTcp(addr, (int)sizeof(addr), HSF_AI_HOST, HSF_AI_TCP_PORT);
-        if (n > 0) {
-            bool any = false;
-            int i;
-            for (i = 0; i < n; ++i)
-                if (valid[i]) { any = true; break; }
-            hsfHealthAdd(st, "模拟量模块", HsfDeviceKind_AnalogIo, (int)HsfSide_A,
-                         any ? HsfDeviceHealth_Ok : HsfDeviceHealth_Stale,
-                         0, any, 0, any ? "" : "无有效数据", addr);
-        }
-    }
-
     /* ---- 进水泵（数字量模块上的一路 DO，归类为数字量） ----
      * [与 Python 侧 pumps.health_summary 同口径] 无数字量模块→离线；
      * 未配置点位→离线；有配置但回显无效→陈旧；否则正常。
      * 泵没有独立通讯口，side 记数字量模块所在侧(A)，客户端按
-     * (kind=DIGITAL, side=0) 找到它。 */
+     * (kind=DIGITAL, side=0) 找到它。
+     * [顺序 2026-11-10 对齐 Python] 设备表行序与 Python 服务端一致
+     * （进水泵 → 模拟量模块 → 按钮组 → 数字量 → 电动球阀组）：两端首页
+     * 设备表逐行对齐，现场对台数/对行不必换算。 */
     {
         const HsfServerIoPump* pumps = HsfServerIo_pumps();
         if (pumps && HsfServerIoPump_count(pumps) > 0) {
@@ -527,6 +523,27 @@ static void hsfHealthCollect(HsfAppHealthState* st)
                      (int)HsfSide_A, health, 0, online, 0, text, addr);
     }
 
+    /* ---- 模拟量模块（TCP，单台） ----
+     * [位置 2026-11-10 对齐 Python] 设备表行序与 Python 服务端逐行一致
+     * （…进水泵 → 按钮组 → 模拟量模块 → 数字量 → 电动球阀组）：两端首页
+     * 设备表逐行对齐，现场对台数/对行不必换算。 */
+    {
+        double ma[8];
+        bool valid[8];
+        char addr[64];
+        int n = HsfServerIo_aiValues(ma, valid, 8);
+        hsfAddrTcp(addr, (int)sizeof(addr), HSF_AI_HOST, HSF_AI_TCP_PORT);
+        if (n > 0) {
+            bool any = false;
+            int i;
+            for (i = 0; i < n; ++i)
+                if (valid[i]) { any = true; break; }
+            hsfHealthAdd(st, "模拟量模块", HsfDeviceKind_AnalogIo, (int)HsfSide_A,
+                         any ? HsfDeviceHealth_Ok : HsfDeviceHealth_Stale,
+                         0, any, 0, any ? "" : "无有效数据", addr);
+        }
+    }
+
     /* ---- 数字量模块（C 版为聚合后的单站；当前现场 .13 单台 16 点） ---- */
     {
         uint32_t di = 0;
@@ -536,12 +553,12 @@ static void hsfHealthCollect(HsfAppHealthState* st)
         hsfAddrTcp(addr, (int)sizeof(addr), HSF_DIG_HOST, HSF_DIG_TCP_PORT);
         if (HsfServerIo_digitalReady()) {
             (void)HsfServerIo_digitalMasks(&di, &doMask, &valid);
-            hsfHealthAdd(st, "数字量", HSF_DEVICE_KIND_DIGITAL,
+            hsfHealthAdd(st, HSF_DIG_MODULE_NAME, HSF_DEVICE_KIND_DIGITAL,
                          (int)HsfSide_A,
                          valid ? HsfDeviceHealth_Ok : HsfDeviceHealth_Stale,
                          0, valid, 0, valid ? "" : "无有效数据", addr);
         } else {
-            hsfHealthAdd(st, "数字量", HSF_DEVICE_KIND_DIGITAL,
+            hsfHealthAdd(st, HSF_DIG_MODULE_NAME, HSF_DEVICE_KIND_DIGITAL,
                          (int)HsfSide_A, HsfDeviceHealth_Offline,
                          0, false, 0, "未装配", addr);
         }
@@ -587,7 +604,7 @@ static void hsfHealthCollect(HsfAppHealthState* st)
                     }
                 }
             }
-            hsfHealthAdd(st, "电磁阀组", HSF_DEVICE_KIND_VALVE,
+            hsfHealthAdd(st, "电动球阀组", HSF_DEVICE_KIND_VALVE,
                          (int)HsfSide_A, health, 0, online, 0, text, addr);
         }
     }
@@ -810,14 +827,69 @@ static XByteArray* hsfAppMakeEnvelope(bool ok, const char* errUtf8)
 }
 
 /**
+ * @brief 停全部受控设备（变频器 / 进水泵 / 电磁阀）。
+ * @param reason 日志里写明原因（"切到自动" / "切回手动"）。
+ * @details [为什么要有这个动作 —— 2026-11-10 用户口径]
+ *          「切换模式后要关闭所有设备，只有按了启动按钮后设备才允许工作，
+ *          这是自动模式的运行逻辑」：
+ *            · 切到自动：自动模式**拒掉全部远程控制**、控制器又要等人按
+ *              "启动"才跑 —— 设备若还按手动命令转着，现场看到的是"切了
+ *              自动，泵还在转，而且谁也停不了它"（远程控制已被关掉）。
+ *            · 切到手动：自动逻辑退出，设备不能继续按自动命令跑。
+ *          逐台独立处理、一台失败不挡其它台（设备离线是常态，不能因为
+ *          一台掉线就不停其余的）。
+ * @note 与 Python 侧 AutoController.stop_all_devices 同口径（同一动作
+ *       序列：变频器减速停机 → 逐台停泵 → 逐路关阀）。
+ */
+static void hsfAppStopAllDevices(const char* reason)
+{
+    HsfSide side;
+    int i;
+    int count;
+    char err[96];
+
+    /* 1) 变频器：受控停机（减速停，不用自由停车——现场泵是搅拌设备，
+     *    瞬断对机械冲击更大）。 */
+    for (side = HsfSide_A; side < HsfSide_Count; ++side) {
+        XVfdDevice* dev = HsfServerIo_vfdDevice(side);
+        if (dev) {
+            XVfdControlRequest req;
+            memset(&req, 0, sizeof(req));
+            req.m_op = XVfdOperation_Stop;
+            (void)XVfdCodec_applyControl(dev, &req);
+        }
+    }
+    /* 2) 进水泵：逐台停（现场无反馈点，停即输出断开）。 */
+    count = HsfServerIoPump_count(HsfServerIo_pumps());
+    for (i = 0; i < count; ++i) {
+        (void)HsfServerIo_pumpSet(i, false, err, (int)sizeof(err));
+    }
+    /* 3) 电磁阀：逐路关。 */
+    count = HsfServerIoValve_count(HsfServerIo_valves());
+    for (i = 0; i < count; ++i) {
+        (void)HsfServerIo_valveSet(i, false, err, (int)sizeof(err));
+    }
+    {
+        char msg[160];
+        snprintf(msg, sizeof(msg), "切换模式：设备全停（%s）",
+                 reason ? reason : "");
+        hsfAppEventLog("auto", msg);
+    }
+}
+
+/**
  * @brief 把所有已装配变频器的控制闸同步到当前模式。
+ * @param switched 本次是**模式真的发生了切换**（不是幂等重放）。
  * @details 自动 → 关闸（设备层也拒绝写入，双保险）；手动 → 开闸。
  *          控制闸是 XVfdDevice 的单一咽喉，覆盖全品牌全命令模型。
  *          [自动控制器单向安全] 退自动 ⇒ 强制停控制器（切回手动还在自动跑
  *          = 手动模式下设备被偷偷驱动，硬性安全问题）；进自动 ⇒ **不**启动
  *          （模式开关不是设备启动按钮，见 s_autoCtl 说明）。
+ *          [切换 ⇒ 设备全停] 见 hsfAppStopAllDevices 的说明；幂等重放
+ *          （同一模式再下一遍）**不**动设备：手动模式下设备正由人操作，
+ *          一句重复的模式指令把人家手动开的泵停掉是事故。
  */
-static void hsfAppApplyModeToDevices(void)
+static void hsfAppApplyModeToDevices(bool switched)
 {
     HsfSide side;
     bool enable = (s_runMode == HsfRunMode_Manual);
@@ -828,6 +900,10 @@ static void hsfAppApplyModeToDevices(void)
     if (s_autoCtlReady && !enable && XAutoController_running(&s_autoCtl)) {
         XAutoController_stop(&s_autoCtl, (uint64_t)XDateTime_currentMSecsSinceEpoch());
         hsfAppEventLog("auto", "退出自动模式，自动运行已强制停止");
+    }
+    if (switched) {
+        hsfAppStopAllDevices(s_runMode == HsfRunMode_Auto ? "切到自动"
+                                                          : "切回手动");
     }
 }
 
@@ -857,11 +933,13 @@ void HsfServerApp_setRunMode(HsfRunMode mode)
 {
     if (mode != HsfRunMode_Manual && mode != HsfRunMode_Auto) return;
     if (s_runMode == mode) {
-        hsfAppApplyModeToDevices();      /* 幂等：闸同步一次。 */
+        /* 幂等：闸同步一次，**不动设备**（手动模式下设备正由人操作）。 */
+        hsfAppApplyModeToDevices(false);
         return;
     }
     s_runMode = mode;
-    hsfAppApplyModeToDevices();
+    /* 真切换 ⇒ 关闭所有设备（双向；2026-11-10 用户口径）。 */
+    hsfAppApplyModeToDevices(true);
     HsfServerSettings_setInt("run/mode", (int)mode);
     {
         char buf[96];
@@ -1025,17 +1103,35 @@ static void hsfAppHandleVfdControl(XLinkSession* session,
         !(req.m_valueHz > 0.0) && req.m_valueRpm > 0.0) {
         req.m_valueHz = XVfdDevice_rpmToHz(dev, (int)req.m_valueRpm);
     }
-    if ((req.m_op == XVfdOperation_Start || req.m_op == XVfdOperation_Jog) &&
-        req.m_valueHz > 0.0) {
-        if (!XVfdDevice_setFrequency(dev, req.m_valueHz)) {
-            hsfAppRespond(session, frame,
-                          hsfAppMakeEnvelope(false,
-                                             "频率给定写入失败（请检查变频器参数与频率源）"));
-            return;
+    /* [带给定启动合成一个动作 2026-11-10 板端实机根因] 早先这里是两次调用
+     *   （先 XVfdDevice_setFrequency 再 XVfdCodec_applyControl）：**第一笔
+     *   写把设备级单飞闸占住，第二笔立刻被拒成「设备忙（上一动作在途）」**
+     *   ⇒ C 客户端点「启动」恒失败（Python 服务端没有这道设备闸所以能控）。
+     *   现在合成一个多阶段动作（先写给定、回执后再写命令字），单飞保护不变。
+     *   [为什么不先判 m_valueHz>0 再决定调哪个] 无给定也要走同一个入口：
+     *   它内部会跳过给定阶段，直接发命令字（口径只需一处）。 */
+    if (req.m_op == XVfdOperation_Start || req.m_op == XVfdOperation_Jog) {
+        ok = XVfdDevice_startWithGiven(dev, req.m_op, req.m_reverse,
+                                       req.m_valueHz);
+    } else {
+        ok = XVfdCodec_applyControl(dev, &req);
+    }
+    if (!ok) {
+        /* [把原因带出来 2026-11-10] 此前这里只回笼统的「设备拒绝（在途动作/
+         *   控制闸/能力不符）」——现场看不到到底哪一闸拦的（板端实机复现：
+         *   点「启动」被拒，日志无任何线索）。设备层现在留有**具体**原因
+         *   （XVfdDevice_lastErrorText，如「命令源未切到通讯（P0.02=2）」），
+         *   没有文本时退回错误枚举的通用说法。与 Python 侧「apply_control
+         *   返回中文原因」的粒度对齐。 */
+        const char* why = XVfdDevice_lastErrorText(dev);
+        if (why && why[0]) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "设备拒绝：%s", why);
+            err = msg;
+        } else {
+            err = "设备拒绝（在途动作/控制闸/能力不符）";
         }
     }
-    ok = XVfdCodec_applyControl(dev, &req);
-    if (!ok) err = "设备拒绝（在途动作/控制闸/能力不符）";
     /* [点动手持] 心跳刷新判据：**不要求本次写入成功**。
      * 点动是持续意图，同一命令字反复下发时设备层单飞会把后续帧判 Busy
      * （上一笔写落定未回），若此时不刷新看门狗，心跳就被判"丢失"而误停机
@@ -1316,8 +1412,16 @@ static void hsfAppHandleTempHumSnapshot(XLinkSession* session,
         }
         XBsonDocument_insert_keyUtf8_bool(doc, "tempValid", tv);
         XBsonDocument_insert_keyUtf8_bool(doc, "humValid", hv);
-        XBsonDocument_insert_keyUtf8_int32(doc, "staleMs",
-                                          (int32_t)HSF_TEMPHUM_STALE_MS);
+        /* [陈旧阈值回读 2026-11-10] 报**设备层当前生效**的阈值（随采集
+         * 周期联动，见 HsfServerIo.c 的 hsfIoStaleMs），而不是写死宏——
+         * 否则周期改大后这里仍报 5s，与实际判定口径不符（排查时会被带偏）。 */
+        {
+            XTempHumTransmitter* thDev = HsfServerIoTempHum_device(th);
+            XBsonDocument_insert_keyUtf8_int32(
+                doc, "staleMs",
+                thDev ? (int32_t)XTempHumTransmitter_staleMs(thDev)
+                      : (int32_t)HSF_TEMPHUM_STALE_MS);
+        }
     }
     bytes = XBsonDocument_toBson(doc);
     XClassDelete((XClass*)doc);
@@ -1359,8 +1463,14 @@ static void hsfAppFillFlowMeter(XBsonDocument* doc, const HsfServerIoFlowMeter* 
         }
     }
     XBsonDocument_insert_keyUtf8_bool(doc, "valid", valid);
-    XBsonDocument_insert_keyUtf8_int32(doc, "staleMs",
-                                      (int32_t)HSF_FLOWMETER_STALE_MS);
+    /* [陈旧阈值回读 2026-11-10] 报设备层当前生效阈值（随采集周期联动）。 */
+    {
+        XFlowMeter* fmDev = HsfServerIoFlowMeter_device(fm);
+        XBsonDocument_insert_keyUtf8_int32(
+            doc, "staleMs",
+            fmDev ? (int32_t)XFlowMeter_staleMs(fmDev)
+                  : (int32_t)HSF_FLOWMETER_STALE_MS);
+    }
 }
 
 /**
@@ -1392,8 +1502,10 @@ static void hsfAppFillTurbidity(XBsonDocument* doc, HsfSide side)
         char key[64];
         char name[32];
         double ntu = 0.0;
+        double tempC = 0.0;
         uint32_t raw = 0;
         bool online = false;
+        bool hasTemp = false;
 
         /* 名字恒带出（未装配也给出，客户端据此占位显示）。 */
         snprintf(name, sizeof(name), "浊度仪%d", i + 1);
@@ -1404,6 +1516,8 @@ static void hsfAppFillTurbidity(XBsonDocument* doc, HsfSide side)
             online = HsfServerIoTurbidity_isOnline(tm);
             (void)HsfServerIoTurbidity_ntu(tm, &ntu);
             (void)HsfServerIoTurbidity_raw(tm, &raw);
+            /* 温度只有"机型带温度（role 2/3）且这一拍解出来"才有 */
+            hasTemp = HsfServerIoTurbidity_tempC(tm, &tempC);
         }
         snprintf(key, sizeof(key), HSF_KEY_TURB_PREFIX_FMT, i, HSF_KEY_TURB_ONLINE);
         XBsonDocument_insert_keyUtf8_bool(doc, key, online);
@@ -1418,10 +1532,33 @@ static void hsfAppFillTurbidity(XBsonDocument* doc, HsfSide side)
             snprintf(key, sizeof(key), HSF_KEY_TURB_PREFIX_FMT, i,
                      HSF_KEY_TURB_RAW);
             XBsonDocument_insert_keyUtf8_int64(doc, key, (int64_t)raw);
+            /* 温度随帧下发（2026-11-10）：缺键 = 该机型没有温度（不是 0℃） */
+            if (hasTemp) {
+                snprintf(key, sizeof(key), HSF_KEY_TURB_PREFIX_FMT, i,
+                         HSF_KEY_TURB_TEMP);
+                XBsonDocument_insert_keyUtf8_int32(doc, key,
+                    (int32_t)(tempC * 100.0 + (tempC >= 0.0 ? 0.5 : -0.5)));
+            }
         }
     }
-    XBsonDocument_insert_keyUtf8_int32(doc, "staleMs",
-                                       (int32_t)HSF_TURBIDITY_STALE_MS);
+    /* [陈旧阈值回读 2026-11-10] 两台浊度各自按自己的采集周期算阈值
+     * （逐台可调），故报**两台的较小者**（客户端按一个阈值理解）。 */
+    {
+        uint32_t stale = HSF_TURBIDITY_STALE_MS;
+        int t;
+        for (t = 0; t < HSF_TURBIDITY_COUNT; ++t) {
+            const HsfServerIoTurbidity* tb = HsfServerIo_turbidity(side, t);
+            XTurbidityMeter* dev;
+            uint32_t v;
+            if (!tb) continue;
+            dev = HsfServerIoTurbidity_device(tb);
+            if (!dev) continue;
+            v = XTurbidityMeter_staleMs(dev);
+            if (v && (stale == HSF_TURBIDITY_STALE_MS || v < stale))
+                stale = v;
+        }
+        XBsonDocument_insert_keyUtf8_int32(doc, "staleMs", (int32_t)stale);
+    }
 }
 
 /**
@@ -1433,7 +1570,10 @@ static void hsfAppHandleTurbiditySnapshot(XLinkSession* session,
                                           const XLinkFrameHeader* frame,
                                           const uint8_t* payload)
 {
-    const HsfSide side = hsfAppSideFromPayload(payload, frame->m_payloadLen);
+    const HsfSide requested = hsfAppSideFromPayload(payload, frame->m_payloadLen);
+    /* [侧号由服务端解析 2026-11-10] 请求里的 side 只是提示；浊度仪挂在
+     * 哪侧是服务端装配事实 ⇒ 按实际装配侧取数，响应的 side 也填实际侧。 */
+    const HsfSide side = HsfServerIo_turbiditySide(requested);
     XBsonDocument* doc = XBsonDocument_create();
     XByteArray* bytes;
     if (!doc) {
@@ -1454,7 +1594,9 @@ static void hsfAppHandleFlowMeterSnapshot(XLinkSession* session,
                                           const XLinkFrameHeader* frame,
                                           const uint8_t* payload)
 {
-    const HsfSide side = hsfAppSideFromPayload(payload, frame->m_payloadLen);
+    const HsfSide requested = hsfAppSideFromPayload(payload, frame->m_payloadLen);
+    /* [侧号由服务端解析 2026-11-10] 同浊度：请求侧没装就按实际装配侧答。 */
+    const HsfSide side = HsfServerIo_flowMeterSide(requested);
     XBsonDocument* doc = XBsonDocument_create();
     XByteArray* bytes;
     if (!doc) {
@@ -1865,7 +2007,7 @@ static void hsfAppHandleValveSnapshot(XLinkSession* session,
     XByteArray* bytes = hsfAppEncodeValves();
     if (!bytes) {
         hsfAppRespond(session, frame,
-                      hsfAppMakeEnvelope(false, "电磁阀组未装配"));
+                      hsfAppMakeEnvelope(false, "电动球阀组未装配"));
         return;
     }
     XLinkSession_sendResponse_ex(session, frame->m_requestId, frame->m_msgCode,
@@ -2146,7 +2288,7 @@ static void hsfAppHandleHistoryPage(XLinkSession* session,
             "ts", "mode", "vfd_state", "freq_hz", "current_a", "rpm",
             "turb1", "turb2", "flow", "flow_unit", "flow_total",
             "total_unit", "press_mpa", "press_note", "temp", "hum",
-            "di", "do"
+            "di", "do", "water_temp"
         };
         for (c = 0; c < HSF_HISTORY_COLUMNS; ++c) {
             XBsonValue* val = XBsonValue_create(XBSON_TYPE_STRING);
@@ -2404,6 +2546,10 @@ static bool hsfCollectEnabled(const char* key, int def)
  *          （浊度仪+流量计）各自**共用一条总线**，故同一路的两个设备开关
  *          只能同生死 ⇒ vfdEnabled 与 temphumEnabled 报同一个值
  *          （如实反映"路 A 装没装"，不谎称能单独关一台）。
+ *          [浊度是例外 2026-11-10] 两台浊度仪虽是同一路 B，但它们是两台
+ *          **独立设备**（用户定案）：各自有 turbidity1Enabled/2Enabled，
+ *          停用只停该从站的轮询，另一台照采；turbidityEnabled 仍回"任一
+ *          启用"，作旧客户端的兼容缺省。
  */
 static void hsfAppHandleConfigGet(XLinkSession* session,
                                   const XLinkFrameHeader* frame)
@@ -2423,32 +2569,50 @@ static void hsfAppHandleConfigGet(XLinkSession* session,
     /* ---- 采集节 ---- */
     collect = XBsonDocument_create();
     if (collect) {
+        HsfCollectConfig eff;
         const bool sideA = hsfCollectEnabled("vfdEnabled", HSF_BUS_A_ENABLED);
         const bool sideB = hsfCollectEnabled("turbidityEnabled", HSF_BUS_B_ENABLED);
+        HsfServerIo_collectConfig(&eff);
         XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_VFD_ENABLED, sideA);
         XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_TEMPHUM_ENABLED, sideA);
-        XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_TURBIDITY_ENABLED, sideB);
+        /* [旧键 = 任一启用] 旧客户端把它当"浊度这路开没开"；逐台键见下。 */
+        XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_TURBIDITY_ENABLED,
+                                          eff.turbidity1Enabled
+                                              || eff.turbidity2Enabled);
         XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_FLOWMETER_ENABLED, sideB);
         XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_ANALOG_ENABLED,
                                          hsfCollectEnabled("analogEnabled", 1));
         XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_DIGITAL_ENABLED,
                                          hsfCollectEnabled("digitalEnabled",
                                                            HSF_DIG_ENABLED));
-        XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_VFD_POLL_MS,
-                                           hsfCollectInt("vfdPollMs",
-                                                         HSF_VFD_MIN_POLL_MS));
-        XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_TEMPHUM_POLL_MS,
-                                           hsfCollectInt("temphumPollMs",
-                                                         HSF_TEMPHUM_MIN_POLL_MS));
-        XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_TURBIDITY_POLL_MS,
-                                           hsfCollectInt("turbidityPollMs",
-                                                         HSF_TURBIDITY_MIN_POLL_MS));
-        XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_ANALOG_POLL_MS,
-                                           hsfCollectInt("analogPollMs",
-                                                         HSF_AI_POLL_MS));
-        XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_DIGITAL_POLL_MS,
-                                           hsfCollectInt("digitalPollMs",
-                                                         HSF_DIG_POLL_MS));
+        /* [回显真值 2026-11-10] 从 HsfServerIo 取**当前生效**的节拍（INI 已在
+         * 装配期/HOT 应用时落到 Hub）——不再直接回显 INI 字面值，避免"界面
+         * 显示新值、实际还是旧节拍"的假象。 */
+        {
+            /* [逐台开关 2026-11-10] 两台浊度是独立设备，开关各报各的. */
+            XBsonDocument_insert_keyUtf8_bool(collect,
+                                              HSF_CFGK_TURBIDITY1_ENABLED,
+                                              eff.turbidity1Enabled);
+            XBsonDocument_insert_keyUtf8_bool(collect,
+                                              HSF_CFGK_TURBIDITY2_ENABLED,
+                                              eff.turbidity2Enabled);
+            XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_VFD_POLL_MS,
+                                               eff.vfdPollMs);
+            XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_TEMPHUM_POLL_MS,
+                                               eff.temphumPollMs);
+            XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_TURBIDITY_POLL_MS,
+                                               eff.turbidityPollMs);
+            XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_TURBIDITY1_POLL_MS,
+                                               eff.turbidity1PollMs);
+            XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_TURBIDITY2_POLL_MS,
+                                               eff.turbidity2PollMs);
+            XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_FLOWMETER_POLL_MS,
+                                               eff.flowmeterPollMs);
+            XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_ANALOG_POLL_MS,
+                                               eff.analogPollMs);
+            XBsonDocument_insert_keyUtf8_int32(collect, HSF_CFGK_DIGITAL_POLL_MS,
+                                               eff.digitalPollMs);
+        }
         XBsonDocument_insert_keyUtf8_document(doc, HSF_CFG_SECTION_COLLECT,
                                                collect);
         /* [config-get 泄漏根修 2026-11-08] 所有权口径（按实现核对）：
@@ -2707,12 +2871,17 @@ static void hsfAppHandleConfigSet(XLinkSession* session,
         static const char* const kBoolKeys[] = {
             HSF_CFGK_VFD_ENABLED, HSF_CFGK_TEMPHUM_ENABLED,
             HSF_CFGK_FLOWMETER_ENABLED, HSF_CFGK_TURBIDITY_ENABLED,
+            /* [逐台开关 2026-11-10] 两台浊度各设各的。 */
+            HSF_CFGK_TURBIDITY1_ENABLED, HSF_CFGK_TURBIDITY2_ENABLED,
             HSF_CFGK_ANALOG_ENABLED, HSF_CFGK_DIGITAL_ENABLED
         };
         static const char* const kIntKeys[] = {
             HSF_CFGK_VFD_POLL_MS, HSF_CFGK_TEMPHUM_POLL_MS,
-            HSF_CFGK_TURBIDITY_POLL_MS, HSF_CFGK_ANALOG_POLL_MS,
-            HSF_CFGK_DIGITAL_POLL_MS
+            HSF_CFGK_TURBIDITY_POLL_MS,
+            /* [逐台 2026-11-10] 两台浊度 + 流量计各自可设。 */
+            HSF_CFGK_TURBIDITY1_POLL_MS, HSF_CFGK_TURBIDITY2_POLL_MS,
+            HSF_CFGK_FLOWMETER_POLL_MS,
+            HSF_CFGK_ANALOG_POLL_MS, HSF_CFGK_DIGITAL_POLL_MS
         };
         int i;
         for (i = 0; i < (int)(sizeof(kBoolKeys) / sizeof(kBoolKeys[0])); ++i) {
@@ -2722,6 +2891,14 @@ static void hsfAppHandleConfigSet(XLinkSession* session,
                 char iniKey[96];
                 snprintf(iniKey, sizeof(iniKey), "collect/%s", kBoolKeys[i]);
                 HsfServerSettings_setInt(iniKey, XBsonValue_toBool(v, false) ? 1 : 0);
+                /* [旧客户端只发共同键] 它没有逐台概念 ⇒ 视作"两台一起"。必须
+                 * 同步写逐台键：否则逐台键一旦存在，共同键就改不动实际门控
+                 * （hsfIoCollectFromIni 优先逐台），表现为"改了没反应"。 */
+                if (strcmp(kBoolKeys[i], HSF_CFGK_TURBIDITY_ENABLED) == 0) {
+                    const int on = XBsonValue_toBool(v, false) ? 1 : 0;
+                    HsfServerSettings_setInt("collect/turbidity1Enabled", on);
+                    HsfServerSettings_setInt("collect/turbidity2Enabled", on);
+                }
                 any = true;
             }
         }
@@ -2739,10 +2916,23 @@ static void hsfAppHandleConfigSet(XLinkSession* session,
             hsfAppRespond(session, frame, hsfAppMakeEnvelope(false, "载荷里没有配置键"));
             return;
         }
-        XPrintf("HsfServerApp: 远程配置：采集节已保存（重启服务端后生效）\n");
-        hsfAppRespond(session, frame,
-                      hsfAppMakeEnvelope(true,
-                                         "采集配置已保存（重启服务端后生效）"));
+        /* [运行期生效 2026-11-10 根修] 此前这里只写 INI 并回「重启后生效」，
+         * 而**没有任何代码消费 collect/***（装配期只读编译期宏）⇒ 远端设置
+         * 改采集时间永远无效，连重启都不生效——用户反馈「某些设备的采集时间
+         * 貌似设置时无效」的真正根因。现在写完 INI 立刻应用到 Hub 的从站最小
+         * 发送间隔 / 设备节拍 / 两个 TCP 站的轮询周期（HsfServerIo），与
+         * Python 端「下一拍生效」终于同口径。 */
+        {
+            const bool applied = HsfServerIo_applyCollectConfig(NULL);
+            XPrintf("HsfServerApp: 远程配置：采集节%s\n",
+                    applied ? "已应用（运行期生效）"
+                            : "已保存（无装配成功的从站，下次启动生效）");
+            hsfAppRespond(session, frame,
+                          hsfAppMakeEnvelope(true,
+                                             applied
+                                                 ? "采集配置已应用（运行期立即生效）"
+                                                 : "采集配置已保存（无在线从站，下次启动生效）"));
+        }
         return;
     }
 
@@ -3202,9 +3392,17 @@ static uint32_t hsfAppSameAccountSessions(const XLinkSession* except,
  *          自带的文件副本只作启动兜底；否则 noteFailure 记的锁定/到期
  *          解锁不会反映到认证路径（两份副本漂移是最危险的静默故障）。
  *          [登录策略闸] 原"root 单会话"硬编码特例收编为 XLoginPolicy
- *          缺省策略（匿名关/同账并发关/上限 8），语义零漂移。拒绝走
- *          BadUser——框架按认证失败发 AuthResult(Rejected)+Goodbye
- *          (AuthFailed)，客户端收到干净的 authFailed（登录窗留在原地）。
+ *          缺省策略（匿名关/同账并发关/上限 8），语义零漂移。
+ *          [拒绝码：Rejected，不是 BadUser 2026-11-09 根修]
+ *          策略闸拒绝的是**服务端瞬时状态**（同账并发/会话数上限/
+ *          KickOld 未实现），凭据本身可能是对的。原先返回 BadUser 会被
+ *          框架的反枚举路径改写成「假挑战 → 必然不匹配 → BadPassword」，
+ *          客户端把「root 已在别处登录」误判成「口令错误」而**永久停止
+ *          自动重连**：一次 6s 链路抖动（旧会话尚未回收）就让界面永久
+ *          全 `--`，人工重登才好（实锅）。改返回 Rejected 后框架直接下发
+ *          真实拒绝码，客户端按瞬时失败退避重试，旧会话一被回收即自动
+ *          恢复；用户不存在/锁定仍走 BadUser/Locked 的假挑战路径，反枚举
+ *          口径不变。
  *          [KickOld 说明] 本批链路层无"服务端关单个会话"API，KickOld
  *          暂按拒绝处理并打日志（策略缺省 DenyNew，行为不受影响）。
  *          查表在会话 pump 栈上同步执行。
@@ -3238,13 +3436,13 @@ static int hsfAppAuthLookup(void* userData, const char* user,
                                    reason, (int)sizeof(reason), &kick)) {
         XPrintf("HsfServerApp: 登录被策略拒绝（%s：%s）\n", user,
                 reason[0] ? reason : "未说明");
-        return XLinkSessionAuthLookup_BadUser;
+        return XLinkSessionAuthLookup_Rejected;
     }
     if (kick) {
         /* 本批无单会话关闭 API：按拒绝处理（见函数头说明）。 */
         XPrintf("HsfServerApp: KickOld 模式暂不支持（无单会话关闭 API），"
                 "按拒绝处理：%s\n", user);
-        return XLinkSessionAuthLookup_BadUser;
+        return XLinkSessionAuthLookup_Rejected;
     }
 
     /* [凭据材料] 从账户管理器读（盐/迭代/摘要/角色，与 XLink 格式逐字节
@@ -3458,8 +3656,16 @@ static XByteArray* hsfAppEncodeTempHum(HsfSide side,
         }
         XBsonDocument_insert_keyUtf8_bool(doc, "tempValid", tv);
         XBsonDocument_insert_keyUtf8_bool(doc, "humValid", hv);
-        XBsonDocument_insert_keyUtf8_int32(doc, "staleMs",
-                                          (int32_t)HSF_TEMPHUM_STALE_MS);
+        /* [陈旧阈值回读 2026-11-10] 报**设备层当前生效**的阈值（随采集
+         * 周期联动，见 HsfServerIo.c 的 hsfIoStaleMs），而不是写死宏——
+         * 否则周期改大后这里仍报 5s，与实际判定口径不符（排查时会被带偏）。 */
+        {
+            XTempHumTransmitter* thDev = HsfServerIoTempHum_device(th);
+            XBsonDocument_insert_keyUtf8_int32(
+                doc, "staleMs",
+                thDev ? (int32_t)XTempHumTransmitter_staleMs(thDev)
+                      : (int32_t)HSF_TEMPHUM_STALE_MS);
+        }
     }
     bytes = XBsonDocument_toBson(doc);
     XClassDelete((XClass*)doc);
@@ -3492,9 +3698,19 @@ static void hsfAppTickTempHum(XLinkServer* self)
     const uint64_t nowMs = XDateTime_currentMSecsSinceEpoch();
     for (si = 0; si < (int)HsfSide_Count; ++si) {
         const HsfSide side = (HsfSide)si;
+        const HsfServerIoTempHum* th;
         if (!hsfAppPushDue(&s_pushGates[HSF_PUSH_GATE_TEMPHUM][si], nowMs))
             continue;
-        hsfAppPublishTempHum(self, side, HsfServerIo_tempHum(side));
+        /* [未装配的侧不推空帧 2026-11-09 根修]
+         * 同一主题被两条侧轮流推时，客户端只保留**最后一帧**（Python 端
+         * TempHumState 就是这样），所以"这一侧没装温湿度站"推出去的空帧
+         * 会把另一侧的真数据盖掉 ⇒ 界面恒为 "--"（现场实测：Python 客户端
+         * 温湿度恒无数据；C 客户端按侧取快照所以当时看着正常）。
+         * 口径与变频器一致（hsfAppTickVfd：未就绪的侧跳过）——没装设备的
+         * 侧不占这个主题。 */
+        th = HsfServerIo_tempHum(side);
+        if (!th) continue;
+        hsfAppPublishTempHum(self, side, th);
     }
 }
 
@@ -3509,8 +3725,17 @@ static void hsfAppTickTurbidity(XLinkServer* self)
     for (si = 0; si < (int)HsfSide_Count; ++si) {
         XBsonDocument* doc;
         XByteArray* bytes;
+        int ti;
+        bool hasTurb = false;
         if (!hsfAppPushDue(&s_pushGates[HSF_PUSH_GATE_TURBIDITY][si], nowMs))
             continue;
+        /* [未装配的侧不推空帧 2026-11-09] 同温湿度主题：客户端只保留
+         * 最后一帧，未装配侧的空帧（online=false）会把真数据盖掉 ⇒ 界面
+         * 恒"--"。口径同 hsfAppTickVfd（未就绪的侧跳过）。 */
+        for (ti = 0; ti < HSF_TURBIDITY_COUNT; ++ti) {
+            if (HsfServerIo_turbidity((HsfSide)si, ti)) { hasTurb = true; break; }
+        }
+        if (!hasTurb) continue;
         doc = XBsonDocument_create();
         if (!doc) continue;
         hsfAppInsertSide(doc, (HsfSide)si);
@@ -3537,12 +3762,17 @@ static void hsfAppTickFlowMeter(XLinkServer* self)
     for (si = 0; si < (int)HsfSide_Count; ++si) {
         XBsonDocument* doc;
         XByteArray* bytes;
+        const HsfServerIoFlowMeter* fm;
         if (!hsfAppPushDue(&s_pushGates[HSF_PUSH_GATE_FLOWMETER][si], nowMs))
             continue;
+        /* [未装配的侧不推空帧 2026-11-09] 同温湿度主题：未装配侧的空帧
+         * 会覆盖另一侧的真数据 ⇒ 客户端恒"无数据"。 */
+        fm = HsfServerIo_flowMeter((HsfSide)si);
+        if (!fm) continue;
         doc = XBsonDocument_create();
         if (!doc) continue;
         hsfAppInsertSide(doc, (HsfSide)si);
-        hsfAppFillFlowMeter(doc, HsfServerIo_flowMeter((HsfSide)si));
+        hsfAppFillFlowMeter(doc, fm);
         bytes = XBsonDocument_toBson(doc);
         XClassDelete((XClass*)doc);
         if (bytes) {
@@ -3701,17 +3931,23 @@ static void hsfAppPublishTopicNow(XLinkServer* srv, XLinkSession* session,
         bytes = hsfAppEncodeTempHum(HsfSide_A, HsfServerIo_tempHum(HsfSide_A));
     } else if ((topic & 0xFFFFu) == (HSF_TOPIC_FLOWMETER_STATUS & 0xFFFFu)) {
         XBsonDocument* doc = XBsonDocument_create();
+        /* [侧号由服务端解析 2026-11-10] 补发也按**实际装配侧**——原先
+         * 硬编码 A 侧，而现场流量计在 B 侧 ⇒ 客户端首连拿到的是空帧
+         * （valid=false），首屏显示"无数据"。 */
+        const HsfSide fmSide = HsfServerIo_flowMeterSide(HsfSide_A);
         if (doc) {
-            hsfAppInsertSide(doc, HsfSide_A);
-            hsfAppFillFlowMeter(doc, HsfServerIo_flowMeter(HsfSide_A));
+            hsfAppInsertSide(doc, fmSide);
+            hsfAppFillFlowMeter(doc, HsfServerIo_flowMeter(fmSide));
             bytes = XBsonDocument_toBson(doc);
             XClassDelete((XClass*)doc);
         }
     } else if ((topic & 0xFFFFu) == (HSF_TOPIC_TURBIDITY_STATUS & 0xFFFFu)) {
         XBsonDocument* doc = XBsonDocument_create();
+        /* [侧号由服务端解析 2026-11-10] 同上：浊度仪在 B 侧。 */
+        const HsfSide tbSide = HsfServerIo_turbiditySide(HsfSide_A);
         if (doc) {
-            hsfAppInsertSide(doc, HsfSide_A);
-            hsfAppFillTurbidity(doc, HsfSide_A);
+            hsfAppInsertSide(doc, tbSide);
+            hsfAppFillTurbidity(doc, tbSide);
             bytes = XBsonDocument_toBson(doc);
             XClassDelete((XClass*)doc);
         }
@@ -3855,6 +4091,12 @@ static XByteArray* hsfAppEncodeDigital(bool full)
      * 不靠"有没有名字键"猜（猜错会漏更新或重复建点）。 */
     XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_FULL, full);
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_DIG_DEV, 0);
+    /* [name/staleMs 对齐 Python 2026-11-10] Python 侧 encode_digital 恒发
+     * 这两个键（模块名 + 陈旧阈值）；C 端原先不发 ⇒ Python 客户端连 C
+     * 服务端时数字量模块名取不到、也没法判陈旧。键名逐字对齐。 */
+    XBsonDocument_insert_keyUtf8_utf8(doc, "name", HSF_DIG_MODULE_NAME);
+    XBsonDocument_insert_keyUtf8_int32(doc, "staleMs",
+                                       (int32_t)HSF_DIG_TIMEOUT_MS);
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_DIG_DI, (int32_t)di);
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_DIG_DO, (int32_t)doMask);
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_DIG_COUNT, count);
@@ -4235,6 +4477,25 @@ static const char* const s_totalUnitText[6] = {
     "L", "m³", "kg", "t", "g", "kL"
 };
 
+/* [历史行热身门 2026-11-09] 逐字段记「是否见过有效值」。
+ *
+ * [为什么需要] 服务端刚起的 1~2 秒里，485 的变频器还没上报 ⇒ 采到的行
+ * 变频器四列全是 NULL ⇒ 界面整行半屏是 "--"（现场截图确认：每次重启
+ * 后紧跟着的那一行如此）。NULL＝无数据的口径本身是对的（设备真掉线时
+ * 就该记 NULL），但"**还没开始报**"与"**报过又掉**"要分开：后者该留
+ * 无数据行（有信息量：那段确实没数据），前者只是启动瞬态，不该进库。
+ *
+ * [口径] 某字段还没见过有效值之前，带该字段空洞的行**不写**；见过之后
+ * 照写（掉线留痕）。这样设备长期离线也不会让整张历史表停摆。
+ */
+#define HSF_HIST_WARM_VFD    0x01u   /**< 变频器（状态/频率/电流/转速）。 */
+#define HSF_HIST_WARM_TH     0x02u   /**< 温湿度。 */
+#define HSF_HIST_WARM_TURB   0x04u   /**< 浊度 ×2。 */
+#define HSF_HIST_WARM_FLOW   0x08u   /**< 流量计（含正累计）。 */
+#define HSF_HIST_WARM_PRESS  0x10u   /**< 压差。 */
+#define HSF_HIST_WARM_DIO    0x20u   /**< 数字量位图。 */
+static uint32_t s_histWarmMask = 0;   /**< 已见过有效值的字段位（见上）。 */
+
 static void hsfAppTickHistory(void)
 {
     HsfHistoryRow row;
@@ -4322,6 +4583,22 @@ static void hsfAppTickHistory(void)
             row.turb2 = ntu;
             row.turb2Valid = true;
         }
+        /* ---- 水温（浊度仪2 随帧带出的，2026-11-10）----
+         * [只有带温度的机型才有] 浙仪 ZHEYI-5100ZDY 一帧 0x0000×4 同刻读出
+         * 浊度+温度；WZT-701A 只有 2 个寄存器。tempC() 返回 false 时**不写**
+         * ⇒ 该列入 NULL、界面显示 "--"，不能记 0℃（0℃ 是真实读数值）。
+         * [优先第 2 台，退化到"任意带温度的那台"] 站号可以改（现场改过
+         * 1/2/3），按"谁带温度就用谁"取，避免站号一换这列就永久空。 */
+        {
+            double tC = 0.0;
+            if (t2 && HsfServerIoTurbidity_tempC(t2, &tC)) {
+                row.waterTemp = tC;
+                row.waterTempValid = true;
+            } else if (t1 && HsfServerIoTurbidity_tempC(t1, &tC)) {
+                row.waterTemp = tC;
+                row.waterTempValid = true;
+            }
+        }
     }
     /* ---- 流量计（路 B）---- */
     {
@@ -4380,6 +4657,31 @@ static void hsfAppTickHistory(void)
             row.doMask = doMask;
             row.doValid = true;
         }
+    }
+
+    /* [热身门] 还没见过有效值的字段 ⇒ 本行不写（启动瞬态不留空洞行）。 */
+    {
+        uint32_t need = 0;
+        if (!row.vfdState || !row.freqHzValid || !row.currentAValid ||
+            !row.rpmValid) {
+            need |= HSF_HIST_WARM_VFD;
+        }
+        if (!row.tempValid || !row.humValid) need |= HSF_HIST_WARM_TH;
+        if (!row.turb1Valid || !row.turb2Valid) need |= HSF_HIST_WARM_TURB;
+        if (!row.flowValid || !row.flowTotalValid) need |= HSF_HIST_WARM_FLOW;
+        if (!row.pressValid) need |= HSF_HIST_WARM_PRESS;
+        if (!row.diValid || !row.doValid) need |= HSF_HIST_WARM_DIO;
+        if (need & ~s_histWarmMask) {
+            /* 还有"从未见过有效值"的字段 ⇒ 这一行是启动瞬态，不入库。 */
+            return;
+        }
+        /* 本行全值 ⇒ 该字段组算热身完成。 */
+        if (!(need & HSF_HIST_WARM_VFD)) s_histWarmMask |= HSF_HIST_WARM_VFD;
+        if (!(need & HSF_HIST_WARM_TH)) s_histWarmMask |= HSF_HIST_WARM_TH;
+        if (!(need & HSF_HIST_WARM_TURB)) s_histWarmMask |= HSF_HIST_WARM_TURB;
+        if (!(need & HSF_HIST_WARM_FLOW)) s_histWarmMask |= HSF_HIST_WARM_FLOW;
+        if (!(need & HSF_HIST_WARM_PRESS)) s_histWarmMask |= HSF_HIST_WARM_PRESS;
+        if (!(need & HSF_HIST_WARM_DIO)) s_histWarmMask |= HSF_HIST_WARM_DIO;
     }
 
     if (!HsfServerStore_insertHistory(&s_store, &row)) {
@@ -4611,7 +4913,9 @@ bool HsfServerApp_start(uint16_t port)
      * 重启 = 没人按过启动，设备不能自己动（模式位只是授权态）。 */
     s_runMode = (HsfServerSettings_getInt("run/mode", 0) == (int)HsfRunMode_Auto)
                     ? HsfRunMode_Auto : HsfRunMode_Manual;
-    hsfAppApplyModeToDevices();
+    /* 启动恢复：**不是模式切换**（没有"切"这个动作），故不做全停——
+     * 刚起进程时设备本来就没被本进程驱动过。 */
+    hsfAppApplyModeToDevices(false);
     hsfAppAutoCtlSetup();
     XPrintf("HsfServerApp: 运行模式 = %s（自动运行 %s）\n",
             s_runMode == HsfRunMode_Auto ? "自动（远程控制禁用）" : "手动",

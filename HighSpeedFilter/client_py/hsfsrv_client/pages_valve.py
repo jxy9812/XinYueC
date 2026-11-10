@@ -140,7 +140,7 @@ class ValveCard(Card):
         self.status_dot.setFixedSize(16, 16)
         top.addWidget(self.status_dot)
 
-        self.name_label = QLabel("电磁阀 %d" % (index + 1))
+        self.name_label = QLabel("电动球阀%d" % (index + 1))
         self.name_label.setStyleSheet(
             "QLabel { font-size: 22px; font-weight: bold; color: #1A1A1A;"
             " background: transparent; }")
@@ -218,7 +218,7 @@ class ValveCard(Card):
             state, ("未知", "#9E9E9E"))
 
         self.name_label.setText(item.get("name") or
-                                ("电磁阀 %d" % (self.index + 1)))
+                                ("电动球阀%d" % (self.index + 1)))
         if not ready:
             self._style_state("未配置", "#9E9E9E")
             self.status_dot.set_on(False)
@@ -277,7 +277,7 @@ class ValvePage(Page):
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
-        self.add_header("电磁阀", "%d 路 · 1 路输出 + 2 路到位反馈"
+        self.add_header("电动球阀", "%d 路 · 1 路输出 + 2 路到位反馈"
                         % proto.HSF_VALVE_COUNT)
 
         # ---- 顶部：控制可用性提示 ----

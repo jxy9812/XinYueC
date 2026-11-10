@@ -63,6 +63,14 @@ XModbusVirtualResult XModbusVirtualModel_write(struct XModbusVirtualModel* model
                                   count, values);
 }
 
+uint8_t XModbusVirtualModel_responseFunction(
+    const struct XModbusVirtualModel* model, uint8_t requestFc)
+{
+    if (!model || !model->m_vtable || !model->m_vtable->responseFunction)
+        return requestFc;
+    return model->m_vtable->responseFunction(model->m_self, requestFc);
+}
+
 /* ============================================================================
  *                            变频器（M512 / ATV61）
  * ============================================================================ */
@@ -82,11 +90,14 @@ XModbusVirtualResult XModbusVirtualModel_write(struct XModbusVirtualModel* model
  *              与 XVfdM512.c 驱动（1=正转…7=复位，见 XVfdM512.h CmdRunForward=1）
  *              相反——模拟模式下客户端发"启动"写 1，旧模型却当成"停机"。
  *              旧注释"与 XVfdM512.c 同口径"与事实相反，勿再沿用。
- *            · 0x1001 刻度 = ×10（0.1Hz）：以现场实测定标文档为准
- *              （docs/M512M513_变频器RS485通讯实测与使用指南 §11.3/§11.7：
- *              写 0x1000=2000 ⇒ 面板 10Hz、0x1001=100，三源交叉验证；
- *              P0.10 数学上只有 0.1Hz 装得下）。Python 侧 devices.py 的
- *              ÷100 是跟了手册（已被实测证伪），已作为缺陷上报待实机核。
+ *            · 0x1001 刻度 = **×100（0.01Hz）**：2026-11-10 板端实机复测
+ *              定案（此前本文件按 ×10，与 Python 侧 ÷100 相反，导致两端
+ *              显示的输出频率/转速差 10 倍）：
+ *              给定 9720（97.2% ⇒ 48.6Hz）→ raw=**4860**；给定 2000
+ *              （20% ⇒ 10.0Hz）→ 稳态 raw=**1000**；两点都精确等于
+ *              Hz×100 ⇒ ÷100。旧实测定标文档里「0x1001=100」是**漏了
+ *              一个 0**（10.0Hz 的 raw 是 1000）。现在模拟从站与真机、
+ *              与 Python 侧 devices.py 三方同口径。
  *            · 状态字旧为位掩码（RUN|REVERSE|…）；真机 0x3000 是**枚举**
  *              1=正转 2=反转 3=停机（读数量必须=1，XVfdM512.c DecodePoint
  *              按 1/2/3 解码——模型与驱动两侧同错时闭环测不出来，此为教训）。
@@ -248,6 +259,12 @@ static const XVfdRange s_vfdRanges[] = {
     { 0xF001, 0xF013 },   /* 命令/频率源 + 加/减速时间等参数。 */
     { 0xFA00, 0xFA04 },   /* PID 参数。 */
     { 0xFC00, 0xFC0F },   /* 参数组 PC。 */
+    /* [2026-11-10 板端实测补齐] 真机 M512 对 0xFC18 起也**正常应答**
+     * （板端 ttyS3 探针：0xFC18x4 → 13 字节 OK），而模型区间只到
+     * 0xFC0F ⇒ C 端通信组[14]（0xFC18×4）拿到 EXC02 ⇒ 异常被当成
+     * 该从站失败 ⇒ 整站退避 ⇒ 变频器在模拟里也"离线"（真机同样受害：
+     * 组[12] 0xFA00×5 真机无应答，Hub 又缺超时收口）。 */
+    { 0xFC18, 0xFC1B },   /* 参数组 PD（真机应答，模型原先漏建）。 */
 };
 
 static bool vfdAddrKnown(uint16_t addr)
@@ -356,8 +373,8 @@ static XModbusVirtualResult vfdRead(void* self, uint8_t fc, uint16_t addr,
         case 0x1000:    /* 给定频率（百分比 ±10000 = ±100%，int16 补码） */
             v = (int32_t)(m->m_setPct & 0xFFFFu);
             break;
-        case 0x1001:    /* 输出频率（**0.1Hz**，实测定标 ÷10；勿按手册 ÷100） */
-            v = (int32_t)(m->m_outHz * 10.0 +
+        case 0x1001:    /* 输出频率（**0.01Hz**，2026-11-10 板端实机复测 ÷100） */
+            v = (int32_t)(m->m_outHz * 100.0 +
                           (m->m_outHz >= 0.0 ? 0.5 : -0.5));
             break;
         case 0x1002:    /* 母线电压（0.1V）：真机稳定在 553.2V 左右 */
@@ -997,6 +1014,13 @@ void XVirtualModelTempHum_set(struct XVirtualModelTempHum* m, int temp_tenths,
 typedef struct XVirtualModelFlow {
     XModbusVirtualModel m_base;
     double m_fixedFlow;      /**< 固定瞬时流量（m³/h）；<0=未固定（按正弦波动）。 */
+    /**
+     * @brief 波动基准流量（m³/h）。
+     * @details [缺省与现场] 缺省 36.5（DN50 量程中点的老口径，FLOW_BASE_M3H）；
+     *          模拟装配处用 setBaseFlow 换成 2026-11-09 ttyS4 实测的 3.6
+     *          （灌水后口径）。±2% 正弦、60s 周期绕本基准波动。
+     */
+    double m_baseFlow;
     double m_forwardTotal;   /**< 正向累积量（m³）。 */
     double m_reverseTotal;   /**< 反向累积量（m³）。 */
     int64_t m_lastMs;        /**< 上次积分时刻（单调毫秒）。 */
@@ -1038,7 +1062,7 @@ typedef struct XVirtualModelFlow {
 #define FLOW_PIPE_DIAMETER   0.05
 #define FLOW_PI              3.14159265358979323846
 
-/** @brief 当前瞬时流量（固定值优先，否则 ±2% 正弦波动，周期 60s）。 */
+/** @brief 当前瞬时流量（固定值优先，否则绕基准 ±2% 正弦波动，周期 60s）。 */
 static double flowNow(const XVirtualModelFlow* m)
 {
     double phase;
@@ -1046,7 +1070,7 @@ static double flowNow(const XVirtualModelFlow* m)
     if (m->m_fixedFlow >= 0.0) return m->m_fixedFlow;
     phase = (double)((XDateTime_currentMSecsSinceEpoch() - m->m_t0Ms) %
                      (int64_t)FLOW_PERIOD_MS) / FLOW_PERIOD_MS * 2.0 * FLOW_PI;
-    return FLOW_BASE_M3H * (1.0 + FLOW_WOBBLE * sin(phase));
+    return m->m_baseFlow * (1.0 + FLOW_WOBBLE * sin(phase));
 }
 
 /**
@@ -1116,7 +1140,7 @@ static XModbusVirtualResult flowRead(void* self, uint8_t fc, uint16_t addr,
         const double speed =
             (flow / 3600.0) / (FLOW_PI * (FLOW_PIPE_DIAMETER / 2.0) *
                                (FLOW_PIPE_DIAMETER / 2.0));
-        const double pct = 100.0 * flow / (FLOW_BASE_M3H * 2.0);
+        const double pct = 100.0 * flow / (m->m_baseFlow * 2.0);
         const double fwdIntD = (m->m_forwardTotal < 0.0)
                                    ? 0.0 : m->m_forwardTotal;
         const double revIntD = (m->m_reverseTotal < 0.0)
@@ -1209,6 +1233,9 @@ struct XVirtualModelFlow* XVirtualModelFlow_create(void)
     m->m_flowUnit = 5;
     m->m_totalUnit = 1;
     m->m_fixedFlow = -1.0;   /* 缺省不固定，按正弦波动。 */
+    /* [波动基准缺省] DN50 量程中点 36.5（老口径）；现场口径由装配处
+     * setBaseFlow 切到实测值。 */
+    m->m_baseFlow = FLOW_BASE_M3H;
     /* [低字非 0 不是靠选缺省值了] 波动使瞬时流量每拍都变，32 位量的两字
      * 每帧都会被组层喂到——旧实现靠 12.53f（0x41487AE1 两字非 0）躲
      * "低字恰为 0 不被喂"的坑，波动口径下该坑不存在（仅启动瞬间相位≈0
@@ -1228,22 +1255,37 @@ void XVirtualModelFlow_setInstantFlow(struct XVirtualModelFlow* m, float v)
     if (m) m->m_fixedFlow = (double)v;
 }
 
-/* ==================== 在线浊度仪（WZT-701A） ==================== */
+void XVirtualModelFlow_setBaseFlow(struct XVirtualModelFlow* m, double base)
+{
+    if (!m || !(base > 0.0)) return;
+    /* [绕基准波动] 与 setInstantFlow（钉死）互补：设基准并把固定值摘掉，
+     * 恢复 ±2% 正弦微波动（2026-11-09 ttyS4 实测口径：3.6 m³/h ±2%）。 */
+    m->m_baseFlow = base;
+    m->m_fixedFlow = -1.0;
+}
+
+/* ==================== 在线浊度仪（站 1 WZT-701A / 站 2 ZHEYI-5100ZDY） ==================== */
 
 /**
  * @struct XVirtualModelTurbidity
- * @brief 浊度仪模型：FC03 读 0x0000 ×2，**CDAB 低字在前 + IEEE754 float32**。
+ * @brief 浊度仪模型：FC03 读 0x0000 起，**逐台字序 + IEEE754 float32**。
  *
- * @details [口径来源是真机手册，不是"市面常见"猜测]
- *          WZT-701A 说明书 4.3.10.2「测试命令」给出可复现帧：
+ * @details [口径来源是实测，不是"市面常见"猜测]
+ *          站 1（WZT-701A，CDAB）说明书 4.3.10.2「测试命令」给出可复现帧：
  *              发送：01 03 00 00 00 02 C4 0B
  *              回复：01 03 04 D7 0A 41 1F 92 1D
  *              原文：按照低字在前高字在后传输(CDAB)…对应的浮点型数据为 9.99NTU
  *          即 (0x411F << 16) | 0xD70A = 0x411FD70A，memcpy 成 float 恰为 9.99f。
+ *          站 2（ZHEYI-5100ZDY，DCBA = 整字节反序 = 小端 float32）2026-11-09
+ *          板端实测帧：`4F DD 37 3D` 按 <f 解 = 0.0449NTU（按旧 CDAB 口径解
+ *          出 1.1e-5 假数且不报错）；温度字 `00 00 99 41` 按 DCBA = 19.125℃，
+ *          与浊度同一帧（0x0000×4）同刻读出。四口径对照见
+ *          docs/HSF板端ttyS4三设备取数实测总表_20261109.md §5.3/§7。
  *
- *          [与电磁流量计的口径**不同**，不要照抄]
- *          XVirtualModelFlow 是**高字在前（ABCD）**。两者来自不同厂家协议表；
- *          任何"统一成一种字序"的改动都会让其中一台读数变成天文数字。
+ *          [两家字序不同，模型必须逐台可配]
+ *          XVirtualModelFlow 是**高字在前（ABCD）**，站 1 是 CDAB、站 2 是
+ *          DCBA——任何"统一成一种字序"的改动都会让其中一台读数变成假数。
+ *          字序由 setWordOrder 配（create 按台号给实测缺省）。
  *
  *          [功能码也不同于流量计/温湿度] 手册明确是 **FC03**（读保持寄存器），
  *          而流量计/温湿度是 FC04。写错会被从站拒绝，现场表现为"仪表在线但
@@ -1253,12 +1295,24 @@ typedef struct XVirtualModelTurbidity {
     XModbusVirtualModel m_base;
     int m_index;            /**< 台号 0/1（决定基准值与相位）。 */
     double m_baseNtu;       /**< 基准浊度（NTU）。 */
-    double m_fixedNtu;      /**< 固定值；<0 表示未固定（按正弦波动）。 */
+    double m_fixedNtu;      /**< 固定值；<0 表示未固定（按波动口径）。 */
+    /**
+     * @brief 浊度微波动幅度（NTU，绝对值）；<0 = 未配过（旧口径：相对 ±3%）。
+     * @details [2026-11-09 实测分台] 站 1 WZT-701A 20 轮完全恒定（幅 0）、
+     *          站 2 ZHEYI-5100ZDY 0.045±0.001 缓慢波动（幅 0.001，45s 周期）。
+     *          由 setWobble 配置；未配置时保持历史行为（相对 ±3% 正弦）。
+     */
+    double m_wobbleAmp;
+    int m_wordOrder;        /**< 线上字序（XVirtualModelTurbWordOrder）。 */
+    double m_tempC;         /**< 水温（℃）；<0 = 本机不带温度（0x0002/3 恒 0）。 */
+    /** @brief 温度漂移幅度（℃，绕 m_tempC 正弦；0 = 恒温；周期 60s）。 */
+    double m_tempAmp;
     int64_t m_t0Ms;         /**< 起算时刻（毫秒）。 */
 } XVirtualModelTurbidity;
 
-#define TURB_WOBBLE     0.03    /**< 波动幅度（相对值 ±3%）。 */
-#define TURB_PERIOD_MS  45000.0 /**< 波动周期（毫秒；与 Python 侧 45s 同值）。 */
+#define TURB_WOBBLE     0.03    /**< 旧口径波动幅度（相对值 ±3%；未配 setWobble 时用）。 */
+#define TURB_PERIOD_MS  45000.0 /**< 浊度波动周期（毫秒；与 Python 侧 45s 同值）。 */
+#define TURB_TEMP_PERIOD_MS 60000.0 /**< 温度漂移周期（毫秒；与流量计同档慢变量）。 */
 #define TURB_PI         3.14159265358979323846
 
 /** @brief 取当前应在寄存器里的 NTU 值。 */
@@ -1273,10 +1327,29 @@ static double turbModelNtuNow(const XVirtualModelTurbidity* m)
     /* 两台相位错开 180°：一眼能看出是两个独立仪器，而不是同一个值贴两遍。 */
     phase = (t / TURB_PERIOD_MS) * 2.0 * TURB_PI;
     phase += TURB_PI * (double)m->m_index;
-    return m->m_baseNtu * (1.0 + TURB_WOBBLE * sin(phase));
+    if (m->m_wobbleAmp < 0.0)
+        return m->m_baseNtu * (1.0 + TURB_WOBBLE * sin(phase));
+    /* [绝对幅口径] 站 1 幅 0 = 恒定（实测 20 轮不动）、站 2 幅 0.001 =
+     * 0.045±0.001 缓慢波动——分台幅值由 setWobble 配。 */
+    return m->m_baseNtu + m->m_wobbleAmp * sin(phase);
 }
 
-/** @brief 取当前 32 位位模式（CDAB 的字序只在**线上**体现，模型给出位模式）。 */
+/** @brief 取当前温度值（未开温度返回 <0；含 0 幅恒温与漂移两态）。 */
+static double turbModelTempNow(const XVirtualModelTurbidity* m)
+{
+    double phase;
+    double t;
+
+    if (!m) return -1.0;
+    if (m->m_tempC < 0.0) return -1.0;
+    if (m->m_tempAmp <= 0.0) return m->m_tempC;
+    t = (double)(XDateTime_currentMSecsSinceEpoch() - m->m_t0Ms);
+    phase = (t / TURB_TEMP_PERIOD_MS) * 2.0 * TURB_PI;
+    /* [站 2 实测] 温度 19.25~19.3125℃（40s 窗）——按 19.3±0.05 缓慢漂移。 */
+    return m->m_tempC + m->m_tempAmp * sin(phase);
+}
+
+/** @brief 取当前浊度 32 位位模式（字序只在**寄存器拆字**时体现）。 */
 static uint32_t turbModelBits(const XVirtualModelTurbidity* m)
 {
     float f = (float)turbModelNtuNow(m);
@@ -1285,32 +1358,89 @@ static uint32_t turbModelBits(const XVirtualModelTurbidity* m)
     return bits;
 }
 
+/** @brief 取当前温度的 32 位位模式（未开温度返回 0）。 */
+static uint32_t turbModelTempBits(const XVirtualModelTurbidity* m)
+{
+    float f;
+    uint32_t bits = 0;
+    const double t = turbModelTempNow(m);
+    if (!m || t < 0.0) return 0u;
+    f = (float)t;
+    memcpy(&bits, &f, sizeof(bits));
+    return bits;
+}
+
+/**
+ * @brief 按模型字序把 32 位位模式拆成线上寄存器字（reg0/reg1）。
+ * @details CDAB：reg0=低字、reg1=高字（WZT-701A：`8F 5C 40 12` →
+ *          reg0=0x8F5C、reg1=0x4012，设备层 CDAB 拼回 0x40128F5C=2.29f）。
+ *          DCBA：线上 4 字节 = float32 的小端字节序 ⇒ reg0 = 位模式低 16 位
+ *          的整字节反序、reg1 = 高 16 位的整字节反序（ZHEYI：位模式
+ *          0x3D37DD4F → reg0=0x4FDD、reg1=0x373D，设备层 DCBA 拼回原位模式
+ *          = 0.0449f）。两台分别与各自设备层字序旋钮配套 ⇒ 读回保真。
+ */
+static void turbModelSplitRegs(uint32_t bits, int wordOrder,
+                               uint16_t* reg0, uint16_t* reg1)
+{
+    if (wordOrder == (int)XVirtualModelTurbWordOrder_Dcba) {
+        *reg0 = (uint16_t)(((bits & 0x000000FFu) << 8) |
+                           ((bits & 0x0000FF00u) >> 8));
+        *reg1 = (uint16_t)(((bits & 0x00FF0000u) >> 8) |
+                           ((bits & 0xFF000000u) >> 24));
+        return;
+    }
+    *reg0 = (uint16_t)(bits & 0xFFFFu);        /* CDAB：低字在前 */
+    *reg1 = (uint16_t)(bits >> 16);
+}
+
 static XModbusVirtualResult turbRead(void* self, uint8_t fc, uint16_t addr,
                                      uint16_t count, uint16_t* out,
                                      uint16_t outCap, uint16_t* outLen)
 {
     XVirtualModelTurbidity* m = (XVirtualModelTurbidity*)self;
-    uint32_t bits;
+    uint16_t r0, r1, t0, t1;
     uint16_t i;
 
     if (!m || !out || !outLen) return XModbusVirtual_IllegalValue;
-    /* 手册：只支持 FC03（读保持寄存器）。 */
-    if (fc != FC_READ_HOLDING) return XModbusVirtual_IllegalFunction;
+    /* [功能码分台] 手册：站 1 WZT-701A 只支持 FC03（FC04 无应答）；
+     * 站 2 ZHEYI-5100ZDY **FC04 也受理**（2026-11-09 实测文档 §5.5），
+     * 但应答功能码恒回 FC03——由 turbResponseFunction 带到线上帧，
+     * 模型层只需按同一份寄存器地图回值。 */
+    if (fc != FC_READ_HOLDING &&
+        !(fc == FC_READ_INPUT && m->m_index == 1))
+        return XModbusVirtual_IllegalFunction;
     if (outCap < count) return XModbusVirtual_IllegalValue;
     /* [越界不抛异常，回 0] 与真机同口径：对"有但不用"的寄存器回 0 而不是
      * 异常帧。抛异常会把"读成功但值为 0"变成"整拍失败 ⇒ 设备永远离线"。 */
-    bits = turbModelBits(m);
+    turbModelSplitRegs(turbModelBits(m), m->m_wordOrder, &r0, &r1);
+    turbModelSplitRegs(turbModelTempBits(m), m->m_wordOrder, &t0, &t1);
     for (i = 0; i < count; ++i) {
         const uint16_t reg = (uint16_t)(addr + i);
-        if (reg == 0u)
-            out[i] = (uint16_t)(bits & 0xFFFFu);        /* CDAB：低字在前 */
-        else if (reg == 1u)
-            out[i] = (uint16_t)(bits >> 16);
-        else
-            out[i] = 0u;
+        if (reg == 0u)          out[i] = r0;
+        else if (reg == 1u)     out[i] = r1;
+        else if (reg == 2u)     out[i] = t0;   /* 温度低字（未开温度=0）。 */
+        else if (reg == 3u)     out[i] = t1;   /* 温度高字。 */
+        else                    out[i] = 0u;
     }
     *outLen = count;
     return XModbusVirtual_Ok;
+}
+
+/**
+ * @brief 浊度仪的应答功能码覆盖（站 2 怪癖：FC04 请求也回 FC03）。
+ * @details [实测依据] docs/HSF板端ttyS4三设备取数实测总表_20261109.md
+ *          §5.5/附录 A：`02 04 00 00 00 02 …` → `02 03 04 …`——应答功能码
+ *          **恒为 03**，即使请求的是 FC04。按「应答功能码 == 请求功能码」
+ *          校验的主站会误判；模拟从站必须把这条怪癖如实带上。
+ *          站 1 WZT-701A 没有这个怪癖（FC04 直接被拒，见 turbRead）。
+ */
+static uint8_t turbResponseFunction(void* self, uint8_t requestFc)
+{
+    const XVirtualModelTurbidity* m = (const XVirtualModelTurbidity*)self;
+    if (!m) return requestFc;
+    if (m->m_index == 1 && requestFc == FC_READ_INPUT)
+        return FC_READ_HOLDING;
+    return requestFc;
 }
 
 static XModbusVirtualResult turbWrite(void* self, uint8_t fc, uint16_t addr,
@@ -1321,7 +1451,9 @@ static XModbusVirtualResult turbWrite(void* self, uint8_t fc, uint16_t addr,
     return XModbusVirtual_IllegalFunction;
 }
 
-static const XModbusVirtualModelVtable s_turbVtable = { turbRead, turbWrite, NULL };
+static const XModbusVirtualModelVtable s_turbVtable = {
+    turbRead, turbWrite, NULL, turbResponseFunction
+};
 
 struct XVirtualModelTurbidity* XVirtualModelTurbidity_create(int index)
 {
@@ -1331,14 +1463,22 @@ struct XVirtualModelTurbidity* XVirtualModelTurbidity_create(int index)
     m->m_base.m_vtable = &s_turbVtable;
     m->m_base.m_self = m;
     m->m_index = (index != 0) ? 1 : 0;
-    /* 基准浊度：1 号（原水）高、2 号（出水）低——与 Python 侧 BASE_BY_INDEX 同值。 */
-    m->m_baseNtu = (m->m_index == 0) ? 12.5 : 3.2;
+    /* [2026-11-09 现场口径布值] 台 0 = 站 1 WZT-701A（原水）：CDAB、基准
+     * 2.29NTU（实测 20 轮恒定值）、无温度；台 1 = 站 2 ZHEYI-5100ZDY（出水）：
+     * DCBA、基准 0.045NTU（实测均值 0.04507）、温度 19.3℃（实测均值 19.27）。
+     * 字序/温度可被 setWordOrder / setTempC 覆盖；基准值可用 setNtu 固定。 */
+    m->m_baseNtu = (m->m_index == 0) ? 2.29 : 0.045;
+    m->m_wordOrder = (m->m_index == 0)
+                         ? (int)XVirtualModelTurbWordOrder_Cdab
+                         : (int)XVirtualModelTurbWordOrder_Dcba;
+    m->m_tempC = (m->m_index == 0) ? -1.0 : 19.3;
     /* [缺省不固定，按正弦波动] 恒定值看不出"数据在刷新"；两台用不同相位，
      * 这样一眼能看出是两台独立的仪器。需要精确断言时用 setNtu 固定。
-     * 基准值保持"低字非 0"：12.5f = 0x41480000 的低字恰为 0，但本模型每拍
-     * 重算位模式（正弦波动使值持续变化），不存在流量计那个"低字永不被喂"
-     * 的巧合。若调用方 setNtu 固定了一个低字为 0 的值，属测试自己选定的口径。 */
+     * [幅值未配 = 旧口径] m_wobbleAmp<0 时走相对 ±3%（历史行为一字不改）；
+     * 模拟装配处按实测分台给绝对幅（站 1 恒定 / 站 2 ±0.001）。 */
     m->m_fixedNtu = -1.0;
+    m->m_wobbleAmp = -1.0;
+    m->m_tempAmp = 0.0;
     m->m_t0Ms = XDateTime_currentMSecsSinceEpoch();
     return m;
 }
@@ -1349,10 +1489,51 @@ void XVirtualModelTurbidity_setNtu(struct XVirtualModelTurbidity* m, double ntu)
     m->m_fixedNtu = (ntu > 0.0) ? ntu : 0.0;
 }
 
+void XVirtualModelTurbidity_setWobble(struct XVirtualModelTurbidity* m,
+                                      double ampNtu)
+{
+    if (!m) return;
+    if (!(ampNtu >= 0.0)) return;       /* 负幅非法：忽略，不回退旧口径。 */
+    /* [幅值接管波动口径] 设过绝对幅后由它说了算（0=恒定、>0=±幅正弦）；
+     * 同时摘掉固定值——两者并存时 fixedNtu 恒赢，wobble 配了也不生效，
+     * 与"最后设的旋钮生效"直觉相反。setNtu 仍可随时重新钉死。 */
+    m->m_wobbleAmp = ampNtu;
+    m->m_fixedNtu = -1.0;
+}
+
+void XVirtualModelTurbidity_setTempWobble(struct XVirtualModelTurbidity* m,
+                                          double ampC)
+{
+    if (!m) return;
+    if (!(ampC >= 0.0)) return;
+    m->m_tempAmp = ampC;
+}
+
 double XVirtualModelTurbidity_ntu(const struct XVirtualModelTurbidity* m)
 {
     if (!m) return 0.0;
     return turbModelNtuNow(m);
+}
+
+void XVirtualModelTurbidity_setWordOrder(struct XVirtualModelTurbidity* m, int order)
+{
+    if (!m) return;
+    if (order != (int)XVirtualModelTurbWordOrder_Cdab &&
+        order != (int)XVirtualModelTurbWordOrder_Dcba)
+        return;                 /* 非法值忽略：模型不该能被配成假口径。 */
+    m->m_wordOrder = order;
+}
+
+void XVirtualModelTurbidity_setTempC(struct XVirtualModelTurbidity* m, double tempC)
+{
+    if (!m) return;
+    m->m_tempC = tempC;
+}
+
+double XVirtualModelTurbidity_tempC(const struct XVirtualModelTurbidity* m)
+{
+    if (!m || m->m_tempC < 0.0) return 0.0;
+    return m->m_tempC;
 }
 
 #endif /* XMODBUS_ON && XMODBUS_CLIENT_ON */

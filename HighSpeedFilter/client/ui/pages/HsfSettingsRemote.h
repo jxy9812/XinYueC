@@ -1,7 +1,11 @@
 ﻿/**
  * @file       HsfSettingsRemote.h
- * @brief      远端设置叶子页（占位）：说明文字 + 返回钮。
- * @details    页面骨架先以 HsfPlaceHolder 占位，真实内容后续在本模块内替换。
+ * @brief      远端设置叶子页：运行模式 / 自动运行 / 采集配置 / 数据存储 / 登录策略。
+ * @details    [2026-11-10] 本页早已实装**（不是占位）：模式切换、自动
+ *             运行启停、7 行采集开关+周期（刷新/应用）、数据存储 6 项 +
+ *             容量占用条 + 用量实况、登录策略 3 项 + 应用、按服务端快照
+ *             回填。原先页头写的「占位/真实内容后续替换」是历史遗留，会
+ *             误导接手的人。
  */
 #ifndef HSFSETTINGSREMOTE_H
 #define HSFSETTINGSREMOTE_H

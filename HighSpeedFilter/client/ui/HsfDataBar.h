@@ -68,6 +68,40 @@ XWidget* HsfDataBar_create(XWidget* parent);
 void HsfDataBar_setActionCallback(XWidget* bar, HsfDataBarActionFn fn,
                                   void* userData);
 
+/* ---- 按页裁剪控件（特性位掩码） ---- */
+
+/**
+ * @brief 工具条控件特性位（按页裁剪；缺省全开＝保持现状不变）。
+ * @details 历史/日志/报警三页共用本工具条，但各页能力不同：日志页没有
+ *          图表形态、没有列筛选，小数位与最大点数也无对应处理分支；报
+ *          警页有图表与列筛选，但没有小数位/最大点数的处理分支。这些
+ *          控件原先「可见但改了没反应」（假控件），现由各页用本掩码声
+ *          明自己要哪些控件，工具条据此把其余控件（含配套文字标签）藏
+ *          起来。
+ */
+#define HsfDataBarFeature_Chart      (1u << 0)  /**< 生成折线图 + 表格/图表切换钮。 */
+#define HsfDataBarFeature_ColFilter  (1u << 1)  /**< 列筛选下拉。 */
+#define HsfDataBarFeature_Decimals   (1u << 2)  /**< 显示小数位数（标签 + 微调框）。 */
+#define HsfDataBarFeature_MaxPoints  (1u << 3)  /**< 每图例最多点（标签 + 微调框）。 */
+#define HsfDataBarFeature_ExportFmt  (1u << 4)  /**< 导出格式下拉。 */
+#define HsfDataBarFeature_All        0xFFFFFFFFu /**< 全部（缺省）。 */
+
+/**
+ * @brief      按页裁剪工具条控件（隐藏不在 mask 里的控件）。
+ * @param bar      工具条（HsfDataBar_create 返回值）。
+ * @param features 特性位掩码（HsfDataBarFeature_* 的按位或）。
+ * @note  缺省全开 ⇒ 现有三页行为不变。
+ *        隐藏控件时**关联的文字标签也要一起隐藏**（「显示小数位数」「每
+ *        图例最多点」两个标签）——只藏控件留标签会留下孤零零的字；列筛
+ *        选/导出格式两个下拉没有独立标签（占位文案在控件内），随控件一
+ *        起藏。
+ *        框架布局按 hiddenWidget 跳过（XLayout 的 empty 条目口径），隐藏
+ *        后不占位。
+ *        不触发任何动作（隐藏不是用户操作，不会发动作回调）。
+ *        可在工具条建好之后随时调用；幂等（状态没变不重复下发显隐）。
+ */
+void HsfDataBar_setFeatures(const XWidget* bar, unsigned int features);
+
 /* ---- 通道 / 列筛选 ---- */
 
 /** @brief 重设通道下拉项（UTF-8 数组；内部深拷贝；NULL/0=清空）。 */

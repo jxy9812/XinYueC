@@ -6,8 +6,8 @@
  *             实现只依赖 XinYueC 抽象层。
  * @author     XinYueC 团队
  ******************************************************************************/
+#include "CXinYueConfig.h"
 #if XGUI_ON
-
 #include "XTableWidget.h"
 
 #include "XStringUtils.h"
@@ -50,7 +50,9 @@
 
 static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event);
 static void VX_tableWidget_mousePressEvent(XWidget* self, XEvent* event);
+static void VX_tableWidget_mouseReleaseEvent(XWidget* self, XEvent* event);
 static void VX_tableWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event);
+static bool xtw_forwardHeaderBand(XTableWidget* tw, XEvent* event);
 static bool VX_tableWidget_visualRect(const XAbstractItemView* self,
                                       int row, int col, XRect* out);
 static bool VX_tableWidget_shouldEdit(const XAbstractItemView* self,
@@ -1350,6 +1352,8 @@ XVtable* XTableWidget_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_tableWidget_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VX_tableWidget_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
+                             VX_tableWidget_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent,
                              VX_tableWidget_mouseDoubleClickEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_VisualRect,
@@ -2392,6 +2396,40 @@ XString* XTableWidget_takeVerticalHeaderItem(XTableWidget* self, int row)
 
 /* ==================== 行为 ==================== */
 
+/** @brief 表头单击 ⇒ 按该列排序（Qt 口径：setSortingEnabled 后
+ *         sectionClicked → sortByColumn）。 */
+static void xtwHeaderClicked(XObject* receiver, XVarList* args)
+{
+    XTableWidget* self = (XTableWidget*)receiver;
+    XHeaderView* hh;
+    int col = -1;
+    if (!self) return;
+    if (args) {
+        XVarList_start(args);
+        col = XVarList_arg(args, int);
+    }
+    hh = XTableView_horizontalHeader(&self->m_base);
+    if (!hh || col < 0) return;
+    XTableWidget_sortItems(self, col, XHeaderView_sortIndicatorOrder(hh));
+}
+
+void XTableWidget_setSortingEnabled(XTableWidget* self, bool enable)
+{
+    XHeaderView* hh;
+    if (!self) return;
+    self->m_headerSortEnabled = enable;
+    hh = XTableView_horizontalHeader(&self->m_base);
+    if (!hh) return;
+    /* Qt：开了排序才让表头可点（点击排序）；否则表头只用于拖分隔线。 */
+    XHeaderView_setSectionsClickable(hh, enable);
+    if (enable) {
+        XObject_connect_1((XObject*)hh,
+                          XSignal(XHeaderView_sectionClicked_signal),
+                          (XObject*)self, xtwHeaderClicked,
+                          XConnectionType_Direct);
+    }
+}
+
 void XTableWidget_sortItems(XTableWidget* self, int column, int order)
 {
     int i;
@@ -3197,6 +3235,17 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
 #endif
             hs.m_section = col;
             hs.m_text = hs.m_base.m_text;
+            /* [与单元格路径同源 2026-11-10] 表头省略模式取**视图的**
+             * textElideMode——与单元格省略（XAbstractItemView_elidedText
+             * 消费的同一个字段）同一来源，表头与单元格永远同一套省略口径
+             * （Qt 6.8 同款：QHeaderView 的表头文本与视图项文本共用
+             * textElideMode）。当前全库无人调
+             * XAbstractItemView_setTextElideMode ⇒ 实际恒为缺省
+             * ElideRight（**本库**视图缺省；Qt 的 QHeaderView 表头缺省是
+             * ElideNone 即裁剪，qheaderview.cpp:314——本库统一按省略号
+             * 收口，表头与单元格同口径）。 */
+            hs.m_textElideMode = (XAbstractItemViewTextElideMode)
+                XAbstractItemView_textElideMode(&tw->m_base.m_base);
             /* 水平表头缺省居中（Qt QHeaderViewPrivate::setDefaultValues，
              * qheaderview_p.h:152）。 */
             hs.m_textAlignment = XPAINTER_TEXT_ALIGN_HCENTER |
@@ -3447,6 +3496,46 @@ static void xtw_cellAt(const XTableWidget* self, int x, int y,
 }
 
 /** @brief 按下：选中单元格 + cellClicked。 */
+/** @brief 命中在**表头带**（y < headerHeight）⇒ 把事件换算成表头局部
+ *  坐标转发给水平表头（真实点击路径：段按压/释放/双击的发射点都在表头
+ *  自己的虚槽里；表头子件是隐藏的、事件先落在表格上）。
+ *  @return 事件已被表头消费（调用方应 accept 并返回，不再走单元格逻辑）。
+ *  [坐标换算] x 扣除行号列宽（列段从行号列右缘起），y 不变（带贴顶）。
+ *  [实现位置] XHeaderView_forwardPress/Release/DoubleClick（框架层），
+ *  内部直呼表头自身鼠标虚槽——与真实事件同一套语义，无第二套判定。 */
+static bool xtw_forwardHeaderBand(XTableWidget* tw, XEvent* event)
+{
+    XHeaderView* hh;
+    XMouseEvent local;
+    XMouseEvent* me;
+    XPoint pos;
+    if (!tw || !event) return false;
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    if (pos.y >= tw->m_headerHeight) return false;   /* 不在表头带 */
+    hh = XTableView_horizontalHeader(&tw->m_base);
+    if (!hh) return false;
+    local = *me;                                     /* 原事件为底版 */
+    pos.x -= xtw_vHeaderW(tw);
+    XMouseEvent_init(&local, XEvent_type(event),
+                     XMouseEvent_button(me),
+                     XMouseEvent_modifiers(me), pos);
+    switch (XEvent_type(event)) {
+    case XEVENT_TYPE_MOUSE_BUTTON_PRESS:
+        XHeaderView_forwardPress(hh, (XEvent*)&local);
+        break;
+    case XEVENT_TYPE_MOUSE_BUTTON_RELEASE:
+        XHeaderView_forwardRelease(hh, (XEvent*)&local);
+        break;
+    case XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK:
+        XHeaderView_forwardDoubleClick(hh, (XEvent*)&local);
+        break;
+    default:
+        return false;
+    }
+    return true;
+}
+
 static void VX_tableWidget_mousePressEvent(XWidget* self, XEvent* event)
 {
     XTableWidget* tw = (XTableWidget*)self;
@@ -3456,6 +3545,11 @@ static void VX_tableWidget_mousePressEvent(XWidget* self, XEvent* event)
     if (!tw || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) return;
+    /* [表头带转发 2026-11-10] 段按压/双击排序的发射点在表头虚槽里。 */
+    if (xtw_forwardHeaderBand(tw, event)) {
+        XEvent_accept(event);
+        return;
+    }
     /* 左键按压交付键盘焦点（对齐 Qt giveFocusAccordingToFocusPolicy；
      * 窗口型视图不抢——弹层焦点归组合框自身机制）。 */
     if (!self->m_isWindow) XWidget_setFocus(self);
@@ -3473,6 +3567,22 @@ static void VX_tableWidget_mousePressEvent(XWidget* self, XEvent* event)
             (size_t)XTableWidget_itemClicked_signal, cell);
         xtw_emitCellSignal(tw,
             (size_t)XTableWidget_cellClicked_signal, row, col);
+    }
+    XEvent_accept(event);
+}
+
+/** @brief 释放：表头带转发（指示器翻转/段点击收口在表头虚槽内）；
+ *  单元格区暂无释放语义（与改前行为一致），接受即可。 */
+static void VX_tableWidget_mouseReleaseEvent(XWidget* self, XEvent* event)
+{
+    XTableWidget* tw = (XTableWidget*)self;
+    if (!tw || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
+    if (XMouseEvent_button((XMouseEvent*)event) != XMouseButton_LeftButton)
+        return;
+    if (xtw_forwardHeaderBand(tw, event)) {
+        XEvent_accept(event);
+        return;
     }
     XEvent_accept(event);
 }
@@ -3511,6 +3621,11 @@ static void VX_tableWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event)
     int col;
     if (!tw || !event || XEvent_type(event) !=
         XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK) return;
+    /* [表头带转发] 双击列标题 ⇒ sectionDoubleClicked（排序正源）。 */
+    if (xtw_forwardHeaderBand(tw, event)) {
+        XEvent_accept(event);
+        return;
+    }
     xtw_cellAt(tw, XMouseEvent_position(me).x, XMouseEvent_position(me).y,
                &row, &col);
     if (row >= 0 && col >= 0) {

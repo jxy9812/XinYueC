@@ -64,6 +64,7 @@
 """
 
 import math
+import random
 import struct
 import time
 
@@ -173,19 +174,129 @@ class VirtualMultiMaster(object):
 
     [与 VirtualMaster 的区别] 单模型版不需要 unit（一对一）；总线版必须
     按 unit 分派，否则变频器的寄存器会被温湿度读到。
+
+    [ttyS4 保真 2026-11-10] 本类是路 B 的「总线 + 全部从站」，因此也承担
+    真实总线的三条时序行为（与 C 侧 XModbusVirtualClient 同款）：
+      · 事务串行 + 站间最小间隙 `min_tx_gap_ms`（对齐 RtuMaster 同名参数：
+        站 5 长帧后立刻问站 1 是坏相位，200ms 稳定——cfg.serial_b 传入）；
+      · 从站**应答时延**（set_unit_reply_latency：站 1 37~43ms、站 2
+        31~33ms、站 5 68~69ms，应答路径内 await asyncio.sleep，不阻塞
+        事件循环——真实仪表的应答从来不是零时延）；
+      · 站 1 的「长帧后恢复期」（set_recovery_gate：站 5 的 49 字节长帧
+        收口后 125ms 内站 1 对任何请求**无应答**（ModbusTimeout）——
+        主站的站间间隙正是为规避它存在的，模拟它才能长稳锻炼间隙逻辑）。
+    三项缺省全关（时延 0 / 无恢复期），既有用法一字不改。
     """
 
-    def __init__(self, models, name="", flaky_rate=0.0, log=None):
+    #: 「长帧」读的寄存器数下限：站 5 一帧读 22 寄存器 = 44 字节数据 +
+    #: 5 字节帧头尾 = 49 字节（现场唯一的长帧）；浊度 2~4 寄存器差一个量级。
+    LONG_FRAME_REGS = 20
+
+    def __init__(self, models, name="", flaky_rate=0.0, log=None,
+                 min_tx_gap_ms=0):
         """models: {unit_id: 模型对象}"""
         self.models = dict(models)
         self.name = name
         self.flaky_rate = float(flaky_rate)
+        #: [站间最小间隙] 相邻两次事务的最小总线静默（毫秒；0=不加）。
+        #: 语义与 modbus.RtuMaster.min_tx_gap_ms 逐字对齐——sim 下主站就是
+        #: 本类，间隙逻辑只有在这里也生效才能被端到端锻炼。
+        self.min_tx_gap_ms = max(0, int(min_tx_gap_ms))
         self._log = log or (lambda m: None)
         self._counter = 0
         self.closed = False
         # [墙钟节拍] 见 VirtualMaster.advance_ms 同名说明。
         self._poll_clock_last_ms = None
         self._poll_clock_debt_ms = 0
+        # ---- ttyS4 保真状态 ----
+        #: {unit: (lo_ms, hi_ms)} 应答时延区间（缺省空 = 全零时延）。
+        self._unit_latency = {}
+        #: (长帧站, 受影响站, 窗口ms)（window<=0 = 闸关）。
+        self._recovery = None
+        #: 最近一次长帧应答收口时刻（monotonic 秒；None = 还没收口过）。
+        self._long_frame_end = None
+        #: 事务串行锁（懒建：asyncio.Lock 必须在有事件循环的语境里创建，
+        #: 服务端在 asyncio.run 里才用到读路径，故不能在 __init__ 建）。
+        self._tx_lock = None
+        #: 上一次事务收口时刻（loop.time() 秒；配合 min_tx_gap_ms）。
+        self._last_tx_end = 0.0
+
+    # ---- ttyS4 保真旋钮 ----
+    def set_unit_reply_latency(self, unit, lo_ms, hi_ms):
+        """设某从站的应答时延区间（毫秒；应答路径内 sleep）。
+
+        [为什么放在这里] 这是从站的行为（仪表算完才回帧），不是主站的
+        节流—— await 在从站应答路径上，主站等待语义与真串口一致。
+        """
+        lo = max(0, int(lo_ms))
+        hi = max(lo, int(hi_ms))
+        self._unit_latency[unit] = (lo, hi)
+
+    def set_recovery_gate(self, long_frame_unit, blocked_unit, window_ms):
+        """建「长帧后恢复期」闸：长帧站收口后窗口内受影响站无应答。
+
+        :param long_frame_unit: 发 49 字节级长帧的从站（现场=站 5 流量计）。
+        :param blocked_unit: 窗口内对任何请求都无应答的从站（现场=站 1）。
+        :param window_ms: 恢复期窗口毫秒（实测 ≥100~125ms；0=关闭闸）。
+        """
+        window = max(0, int(window_ms))
+        if window <= 0 or long_frame_unit is None or blocked_unit is None:
+            self._recovery = None
+            self._long_frame_end = None
+            return
+        self._recovery = (long_frame_unit, blocked_unit, window)
+
+    # ---- 事务内部节拍 ----
+    async def _begin_tx(self):
+        """事务串行 + 站间最小间隙（读/写共用，对齐 RtuMaster 口径）。"""
+        if self._tx_lock is None:
+            import asyncio
+            self._tx_lock = asyncio.Lock()
+        import asyncio
+        await self._tx_lock.acquire()
+        if self.min_tx_gap_ms > 0 and self._last_tx_end > 0:
+            loop = asyncio.get_event_loop()
+            earliest = self._last_tx_end + self.min_tx_gap_ms / 1000.0
+            delay = earliest - loop.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+
+    def _end_tx(self):
+        """事务收口：记时刻（下一事务的间隙从这一刻起算）。"""
+        import asyncio
+        self._last_tx_end = asyncio.get_event_loop().time()
+        self._tx_lock.release()
+
+    def _reject_if_in_recovery(self, unit):
+        """站 1 恢复期：长帧收口后窗口内的请求 → 无应答（ModbusTimeout）。"""
+        from . import modbus
+        if not self._recovery or self._long_frame_end is None:
+            return
+        long_unit, blocked_unit, window = self._recovery
+        if unit != blocked_unit:
+            return
+        since = (time.monotonic() - self._long_frame_end) * 1000.0
+        if 0.0 <= since < window:
+            raise modbus.ModbusTimeout(
+                "%s: 站 %s 恢复期无应答（站 %s 长帧后 %.0fms < %dms）"
+                % (self.name, blocked_unit, long_unit, since, window))
+
+    async def _sleep_unit_latency(self, unit):
+        """从站应答时延：按站号在区间内随机取值后 sleep（不阻塞事件循环）。"""
+        import asyncio
+        rng = self._unit_latency.get(unit)
+        if not rng:
+            return
+        lo, hi = rng
+        if hi <= 0:
+            return
+        await asyncio.sleep(random.uniform(lo, hi) / 1000.0)
+
+    def _mark_long_frame(self, unit, count):
+        """长帧站的读收口：记时刻（恢复期窗口的起点）。"""
+        if self._recovery and unit == self._recovery[0] \
+                and count >= self.LONG_FRAME_REGS:
+            self._long_frame_end = time.monotonic()
 
     def advance_ms(self, now_ms):
         """设备层每拍调用：按墙钟间隔给 `wants_poll_clock` 模型补推进。
@@ -222,22 +333,37 @@ class VirtualMultiMaster(object):
         self._tick()
         if self.closed:
             raise modbus.ModbusError("%s: 连接已关闭" % self.name)
+        await self._begin_tx()
         try:
-            return self._model(unit).read(function, address, count)
-        except KeyError as exc:
-            raise modbus.ModbusError("%s: 读失败 unit=%s addr=0x%04X (%s)"
-                                     % (self.name, unit, address, exc))
+            # [恢复期先于时延] 真实时序：恢复期里的站 1 根本不应答（主站
+            # 等到超时）；出了恢复期仪表按自己的节奏延迟后回帧。
+            self._reject_if_in_recovery(unit)
+            await self._sleep_unit_latency(unit)
+            try:
+                vals = self._model(unit).read(function, address, count)
+            except KeyError as exc:
+                raise modbus.ModbusError("%s: 读失败 unit=%s addr=0x%04X (%s)"
+                                         % (self.name, unit, address, exc))
+            self._mark_long_frame(unit, count)
+            return vals
+        finally:
+            self._end_tx()
 
     async def write_single(self, function, address, value, unit=None):
         from . import modbus
         self._tick()
         if self.closed:
             raise modbus.ModbusError("%s: 连接已关闭" % self.name)
+        await self._begin_tx()
         try:
-            self._model(unit).write_single(function, address, value)
-        except KeyError as exc:
-            raise modbus.ModbusError("%s: 写失败 unit=%s addr=0x%04X (%s)"
-                                     % (self.name, unit, address, exc))
+            await self._sleep_unit_latency(unit)
+            try:
+                self._model(unit).write_single(function, address, value)
+            except KeyError as exc:
+                raise modbus.ModbusError("%s: 写失败 unit=%s addr=0x%04X (%s)"
+                                         % (self.name, unit, address, exc))
+        finally:
+            self._end_tx()
         return True
 
     async def close(self):
@@ -581,22 +707,31 @@ class VirtualFlowMeter(object):
     曾经把累积单位填成 10（瞬时表的邻居码）导致界面显示 "?"。
     """
 
-    #: DN50 量程中点（瞬时流量基准，m³/h）。
-    BASE_FLOW = 36.5
+    #: 瞬时流量基准（m³/h）。缺省=2026-11-09 ttyS4 实测现场口径（站5 LD
+    #: 流量计灌水后约 3.6 m³/h；实测当天管道空置读数 0.0+空管报警 True，
+    #: 模拟器取"可用"口径，空管态由 empty_pipe=True 复现——空管时瞬时
+    #: 流量归 0，与真机行为一致）。
+    BASE_FLOW = 3.6
     #: 管道内径（m），用于由流量反算流速。
     PIPE_DIAMETER = 0.05
 
-    def __init__(self, flow_unit=5, total_unit=1):
+    def __init__(self, flow_unit=5, total_unit=1, base_flow=None,
+                 empty_pipe=False):
         self.flow_unit = int(flow_unit)     #: 5 = m³/h
         self.total_unit = int(total_unit)   #: 1 = m³
+        #: 基准流量：构造可覆盖（app 装配处传 cfg.flowmeter_sim_flow），
+        #: 缺省用类常量（=现场实测口径）。
+        self.base_flow = (self.BASE_FLOW if base_flow is None
+                          else float(base_flow))
         self._t0 = time.monotonic()
         self._forward_total = 0.0
         self._reverse_total = 0.0
         self._last_ms = self._t0
-        #: 报警位（0=正常）。测试超时/告警链路时可直接改。
+        #: 报警位（0=正常）。测试超时/告警链路时可直接改；
+        #: empty_pipe=True 时 0x1024 恒 1 且瞬时流量归 0（空管口径）。
         self.alarm_upper = 0
         self.alarm_lower = 0
-        self.alarm_empty = 0
+        self.alarm_empty = 1 if empty_pipe else 0
         self.alarm_system = 0
 
     # ---- 内部：推进累积量 ----
@@ -611,9 +746,16 @@ class VirtualFlowMeter(object):
         return flow
 
     def _flow_now(self):
-        """当前瞬时流量（±2% 正弦波动，周期 60s）。"""
+        """当前瞬时流量（±2% 正弦波动，周期 60s）；空管恒 0。
+
+        [空管为什么归 0] 真机空管时瞬时流量报 0.0000、电导比异常、空管
+        报警置位（实测文档 §6.3：流量 0 + 电导比 3354 + 空管 True）。
+        模拟器照抄：有流量却报空管是自相矛盾的假态。
+        """
+        if self.alarm_empty:
+            return 0.0
         phase = (time.monotonic() % 60.0) / 60.0 * 2.0 * math.pi
-        return self.BASE_FLOW * (1.0 + 0.02 * math.sin(phase))
+        return self.base_flow * (1.0 + 0.02 * math.sin(phase))
 
     # ---- 寄存器读写 ----
     @staticmethod
@@ -642,9 +784,12 @@ class VirtualFlowMeter(object):
         rev_int = int(self._reverse_total)
         rev_frac = self._reverse_total - rev_int
         regs = {}
+        # 电导比：空管 3354（实测文档 §6.3 空管态特征值）、正常 1.0（老口径）。
+        cond = 3354.0 if self.alarm_empty else 1.0
         for base, value in ((0x1010, flow), (0x1012, speed),
-                            (0x1014, 100.0 * flow / (self.BASE_FLOW * 2)),
-                            (0x1016, 1.0)):
+                            (0x1014, 100.0 * flow / (self.base_flow * 2)
+                             if self.base_flow > 0 else 0.0),
+                            (0x1016, cond)):
             hi, lo = self._split_float(value)
             regs[base] = hi
             regs[base + 1] = lo
@@ -681,7 +826,7 @@ class VirtualFlowMeter(object):
 # ============================================================================
 
 class VirtualTurbidity(object):
-    """浊度仪（FC03 读 0x0000 ×2，**CDAB 低字在前 + IEEE754 float32**）。
+    """浊度仪（FC03 读 0x0000 起 2/4 字，字节序可配 + IEEE754 float32）。
 
     [口径与真机同源] WZT-701A 说明书 4.3.10.2 的可复现帧：
 
@@ -692,25 +837,80 @@ class VirtualTurbidity(object):
     位模式按 IEEE754 单精度解释，**不除以 100**。
     `devices.TurbidityMeter` 按同一套口径实现；两处必须一起改。
 
+    [字节序按台 —— 2026-11-09 ttyS4 实测新增] 现场两台不同厂家：
+      站1 WZT-701A   = **CDAB**（低字在前）——老口径，缺省保持；
+      站2 ZHEYI-5100ZDY = **DCBA**（4 字节整字节反序 = 小端 float32），
+        且一帧读 4 个寄存器同刻拿浊度+温度（0x0002/0x0003 = 温度 ℃）。
+    构造时 byte_order/temperature 从 cfg（turbidity_byte_orders 等）传入。
+    模拟器的验收口径：用 devices.TurbidityMeter **相同的解码路径**（同
+    字节序、同寄存器布局）能读回相同的值——模型造帧与解析互为镜像。
+
     [初版错在哪] 初版造的是"32 位整数 ÷100"（ABCD 高字在前）。用它自己的
     模型去喂自己的解析器当然自洽，但**与真机不符** —— 真实仪表接上来就会
     读出错值。模拟器的价值是复刻真机行为，不是复刻一个自洽的假设。
 
     [为什么要波动] 恒定值看不出"数据在刷新"。两台用**不同相位**波动，
     这样一眼能看出是两个独立的仪器，而不是同一个值贴了两遍。
+
+    [波动幅按台 —— 2026-11-09 实测分台] 40s × 20 轮混跑：站 1 浊度
+    2.29 完全恒定（最小=最大）、站 2 在 0.04458~0.04577 缓慢波动、温度
+    19.25~19.3125℃ 几乎不动。装配处传 wobble_ntu（0=恒定 / >0=绝对幅）
+    与 temp_wobble_c 复现；不传保持旧口径（相对 ±3% 波动、恒温）。
     """
 
-    #: 基准浊度（NTU）：1 号（原水）高、2 号（出水）低。
-    BASE_BY_INDEX = (12.5, 3.2)
-    #: 波动幅度（相对值，±3%）。
+    #: 基准浊度（NTU）缺省：=2026-11-09 ttyS4 实测口径（站1 2.29、
+    #: 站2 0.045）。app 装配处用 cfg.turbidity_sim_ntu 覆盖，这里只是
+    #: 模型自身的兜底缺省。
+    BASE_BY_INDEX = (2.29, 0.045)
+    #: 波动幅度（相对值，±3%）——**旧缺省口径**。装配处按实测分台给
+    #: 绝对幅（wobble_ntu：站1 恒定 0 / 站2 ±0.001）后本常量不再参与。
     WOBBLE = 0.03
+    #: 温度漂移周期（秒，慢变量；与流量计波动同档）。
+    TEMP_PERIOD_S = 60.0
 
-    def __init__(self, index=0):
+    #: 字节序 → 寄存器字的拼装（与 devices.TurbidityMeter.BYTE_ORDER_PERM
+    #: 同一张表的两个方向：那边把线上字节重排回位模式，这边把位模式铺成
+    #: 线上字节再两字一组）。改一处必须核对面那边的镜像用例。
+    ORDER_TO_REGS = {
+        "ABCD": lambda b: (b[0] << 8 | b[1], b[2] << 8 | b[3]),
+        "CDAB": lambda b: (b[2] << 8 | b[3], b[0] << 8 | b[1]),
+        "BADC": lambda b: (b[1] << 8 | b[0], b[3] << 8 | b[2]),
+        "DCBA": lambda b: (b[3] << 8 | b[2], b[1] << 8 | b[0]),
+    }
+
+    def __init__(self, index=0, base_ntu=None, byte_order="CDAB",
+                 temperature=None, wobble_ntu=None, temp_wobble_c=None):
         self.index = int(index) & 1
-        self.base_ntu = self.BASE_BY_INDEX[self.index]
+        #: 基准浊度：app 装配处传 cfg.turbidity_sim_ntu[index]（缺省与
+        #: 现场实测一致），未传用类缺省。
+        self.base_ntu = (self.BASE_BY_INDEX[self.index]
+                         if base_ntu is None else float(base_ntu))
+        #: 线上字节序（"CDAB"/"DCBA"/"ABCD"/"BADC"），与对端设备层的
+        #: BYTE_ORDER 旋钮**必须同值**——一边造帧一边解，不同值必假数。
+        order = str(byte_order or "CDAB").strip().upper()
+        if order not in self.ORDER_TO_REGS:
+            raise ValueError("浊度仪字节序非法：%r（支持 %s）"
+                             % (byte_order, sorted(self.ORDER_TO_REGS)))
+        self.byte_order = order
+        #: 温度（℃，同帧 0x0002/0x0003）。None=该台无温度能力（真机
+        #: 站1），此时读 0x0002/0x0003 回 0。app 传 cfg.turbidity_sim_temp。
+        self.temperature = None if temperature is None else float(temperature)
         self._t0 = time.monotonic()
         #: 手动固定值（测试/演示用；非 None 时不波动）。
         self.fixed_ntu = None
+        #: 温度固定值（测试用；缺省=给定的温度常量，本身不波动——实测
+        #: 温度 40s 内几乎不动）。
+        self.fixed_temp = None
+        #: 浊度微波动幅（NTU，绝对值绕 base_ntu 正弦）。三态：
+        #:   None = 未配（旧口径：相对 ±3% 波动，历史行为一字不改）；
+        #:   0    = 恒定（站 1 WZT 实测 20 轮完全不动）；
+        #:   >0   = 绕基准 ±幅缓慢波动（站 2 ZHEYI 实测 0.045±0.001）。
+        self.wobble_ntu = None if wobble_ntu is None else max(0.0,
+                                                             float(wobble_ntu))
+        #: 温度漂移幅（℃，绕 temperature 正弦；None/0 = 恒温；站 2 实测
+        #: 19.25~19.3125℃ ⇒ 装配处传 0.05）。
+        self.temp_wobble_c = (None if temp_wobble_c is None
+                              else max(0.0, float(temp_wobble_c)))
 
     def _ntu_now(self):
         if self.fixed_ntu is not None:
@@ -718,20 +918,61 @@ class VirtualTurbidity(object):
         # 两台相位错开 180°，避免两条曲线完全重合
         phase = (time.monotonic() % 45.0) / 45.0 * 2.0 * math.pi
         phase += math.pi * self.index
-        return self.base_ntu * (1.0 + self.WOBBLE * math.sin(phase))
+        if self.wobble_ntu is None:
+            # 旧口径：相对 ±3%（未配 wobble_ntu 的既有用法一字不改）
+            return self.base_ntu * (1.0 + self.WOBBLE * math.sin(phase))
+        # [绝对幅口径 2026-11-09 实测分台] 幅 0 = 恒定；幅 >0 = ±幅缓慢波动
+        return self.base_ntu + self.wobble_ntu * math.sin(phase)
+
+    def _temp_now(self):
+        """当前温度：恒温（旧口径）或绕基准 ±temp_wobble_c 缓慢漂移。"""
+        base = (self.fixed_temp if self.fixed_temp is not None
+                else self.temperature)
+        if base is None:
+            return None
+        if not self.temp_wobble_c:
+            return float(base)
+        phase = (time.monotonic() % self.TEMP_PERIOD_S) \
+            / self.TEMP_PERIOD_S * 2.0 * math.pi
+        return float(base) + self.temp_wobble_c * math.sin(phase)
+
+    @classmethod
+    def regs_for_value(cls, value, order):
+        """工程值 →（寄存器0，寄存器1）：按字节序铺线上字节，与设备层
+        `TurbidityMeter.bits_from_online_bytes` 互为逆操作。
+
+        [验算（实测文档附录 A）] 9.99 NTU（bits=0x411FD70A）按 CDAB 应得
+        [0xD70A, 0x411F]；站2 帧 0.045751（bits=0x3D3B656E）按 DCBA 应得
+        [0x6E65, 0x3B3D]。
+        """
+        bits = struct.unpack(">I", struct.pack(">f", float(value)))[0]
+        b = [(bits >> 24) & 0xFF, (bits >> 16) & 0xFF,
+             (bits >> 8) & 0xFF, bits & 0xFF]
+        return cls.ORDER_TO_REGS[order](b)
 
     def read(self, function, address, count):
-        if function != 3:
+        # [功能码分台] 手册：站 1 WZT-701A 只支持 FC03（FC04 无应答）；
+        # 站 2 ZHEYI-5100ZDY **FC04 也受理**（2026-11-09 实测文档 §5.5）
+        # ——值与 FC03 完全一致，只是应答功能码恒回 03。Python 虚拟层
+        # 不落帧（设备层按值取数），怪癖在这里表现为 FC04 读成功且同值；
+        # 应答功能码恒 03 的帧级口径由 C 侧 XModbusVirtualModel 的
+        # responseFunction 钩子逐字节复刻。
+        if not (function == 3 or (function == 4 and self.index == 1)):
             raise KeyError("浊度仪只支持 FC03，收到 FC%02d" % function)
-        if not (0x0000 <= address <= 0x0001):
+        if not (0x0000 <= address <= 0x0003):
             # 未建模地址返回 0（真机对"有但不用"的寄存器同样回 0；
             # 抛异常会把"读成功但值为 0"变成"整拍失败"→ 设备永远离线）
             return [0] * count
-        # [CDAB 低字在前] 寄存器 0x0000 是**低** 16 位、0x0001 是高 16 位。
-        # 手册原文「按照低字在前高字在后传输(CDAB)」；顺序写反会让解析侧
-        # 拼出完全不同的浮点（实测 ABCD 解释得到 -1.5e14）。
-        bits = struct.unpack(">I", struct.pack(">f", float(self._ntu_now())))[0]
-        regs = {0x0000: bits & 0xFFFF, 0x0001: (bits >> 16) & 0xFFFF}
+        # [按字节序铺寄存器] CDAB：0x0000=低 16 位、0x0001=高 16 位（老口径
+        # 一字不改）；DCBA 等其余序见 ORDER_TO_REGS。
+        reg0, reg1 = self.regs_for_value(self._ntu_now(), self.byte_order)
+        regs = {0x0000: reg0, 0x0001: reg1}
+        # 温度在同帧后两个字（站2 一次读 4 的同刻快照口径）
+        temp = self._temp_now()
+        if temp is not None:
+            t0, t1 = self.regs_for_value(temp, self.byte_order)
+            regs[0x0002] = t0
+            regs[0x0003] = t1
         return [regs.get(address + i, 0) for i in range(count)]
 
     def write_single(self, function, address, value):
@@ -822,9 +1063,14 @@ class VirtualDigital(object):
     VALVE_DI_BASE = 0
     VALVE_COUNT = 6
     #: 非阀区域的 DI 初值。点表 0 起后阀占满 DO0..5 / DI0..11，剩下
-    #: DI12..15 是按钮组（急停/启动/停止/复位）。默认**急停回路正常**
-    #: （DI12=1，常闭触点），三个按键都未按（0）。
-    BASE_DI = 0x00001000
+    #: DI12..15 是按钮组（急停/启动/停止/复位）。
+    #:
+    #: [常闭触点的静止电平] 急停（DI12）与停止（DI14）都是**常闭**：
+    #: 静止时回路通 ⇒ DI=1。按下才是 0。所以初值必须把这两位置 1，
+    #: 否则模拟器会"一开机就认为停止键被按住"（服务端 buttons.py 的
+    #: `pressed = (cur is False)` 恒真，客户端也会显示「停止●按下」）。
+    #: 启动/复位（DI13/DI15）是常开：未按 = 0。
+    BASE_DI = 0x00005000
     #: 按钮组点位（与 cfg.button_items 同口径）。
     BUTTON_ESTOP_DI = 12
     BUTTON_START_DI = 13
@@ -1035,7 +1281,11 @@ def make_digital_master(channels=32, flaky_rate=0.0, move_ms=None,
     return VirtualMaster(model, name=kind, flaky_rate=flaky_rate, log=log)
 
 
-def make_turbidity_master(index=0, log=None):
-    """虚拟浊度仪（index 0/1 决定基准浊度与波动相位）。"""
-    model = VirtualTurbidity(index=index)
+def make_turbidity_master(index=0, log=None, **kw):
+    """虚拟浊度仪（index 0/1 决定基准浊度与波动相位）。
+
+    其余关键字参数（base_ntu / byte_order / temperature）原样透传给
+    VirtualTurbidity——app 装配处按 cfg 逐台传入。
+    """
+    model = VirtualTurbidity(index=index, **kw)
     return VirtualMaster(model, name="虚拟浊度仪%d" % (index + 1), log=log)

@@ -43,10 +43,36 @@ void XPad_setActivity(ANativeActivity* activity);
 void XAndroid_setJavaVm(JavaVM* vm);
 void XAndroid_setMainActivity(jobject activity);
 
-/* XGuiWindowDemo 主逻辑（Test/XGuiDemo，桌面 main 的同一实现）。 */
-extern int xgui_window_demo_main(int argc, char* argv[]);
+/* ---- 应用身份（全部由构建层按目标注入）--------------------------------
+ * 新增一个安卓应用**不需要改本文件**：在对应目标的
+ * target_compile_definitions 里给出下面这组宏即可。
+ *   XPAD_APP_ENTRY      应用主逻辑符号（int (*)(int, char**)）
+ *   XPAD_APP_NAME       入口符号名（仅日志用）
+ *   XPAD_APP_TAG        logcat tag
+ *   XPAD_APP_ARGS_ENV   参数环境变量名（空格分隔的应用参数）
+ *   XPAD_APP_ARGS_FILE  设备上的参数文件路径（adb 可写，无人值守验证用）
+ * 现有两个目标：xguidemo（Test/CMakeLists.txt）/ xhsfclient
+ * （HighSpeedFilter/CMakeLists.txt）。
+ */
+#ifndef XPAD_APP_ENTRY
+#error "XPAD_APP_ENTRY 未定义：安卓壳的应用入口须由构建层按目标注入（见 Test/CMakeLists.txt 的 xguidemo 目标）"
+#endif
+#ifndef XPAD_APP_NAME
+#define XPAD_APP_NAME "app"
+#endif
+#ifndef XPAD_APP_TAG
+#define XPAD_APP_TAG "XGuiApp"
+#endif
+#ifndef XPAD_APP_ARGS_ENV
+#define XPAD_APP_ARGS_ENV "XAPP_ARGS"
+#endif
+#ifndef XPAD_APP_ARGS_FILE
+#define XPAD_APP_ARGS_FILE "/data/local/tmp/xapp_args.txt"
+#endif
 
-#define XPAD_LOG(...) ((void)__android_log_print(ANDROID_LOG_INFO, "XGuiDemo", __VA_ARGS__))
+extern int XPAD_APP_ENTRY(int argc, char* argv[]);
+
+#define XPAD_LOG(...) ((void)__android_log_print(ANDROID_LOG_INFO, XPAD_APP_TAG, __VA_ARGS__))
 
 /* ---- 外挂字库释放（2026-10-24）--------------------------------------
  * 框架的 FT 轮廓字按编译期目录 XFONT_EXTERNAL_FT_FONT_DIR 查找
@@ -184,11 +210,16 @@ ANativeActivity* g_padActivityRef = NULL;   /* 渲染线程 finish 用 */
 static ALooper* g_padLooper = NULL;
 static AInputQueue* g_padQueue = NULL;
 
-/** @brief 渲染线程：跑 demo 主逻辑；返回即请求结束 Activity。
- *  支持 XGUI_DEMO_ARGS 环境变量拆分传参（如 "--screenshot /data/local/tmp/x.png"）。 */
+/** @brief 渲染线程：跑应用主逻辑；返回即请求结束 Activity。
+ *  支持应用专属环境变量拆分传参（demo: XGUI_DEMO_ARGS，如
+ *  "--screenshot /data/local/tmp/x.png"；HSF 客户端: HSF_ARGS，如
+ *  "--login admin:pass@192.168.0.10:6100"）。 */
 static void* xpad_demoThread(void* arg)
 {
-    char argv0[] = "XGuiWindowDemo";
+    /* argv[0]：进程名（不带目录——带目录会被 applicationDirPath() 当成
+       程序目录，桌面上 exe 同级找字库、安卓上则落到 /system/bin）。
+       这里用中性名，各应用的身份由 XPAD_APP_NAME 承担。 */
+    char argv0[] = "XApp";
     char* argv[8] = { argv0 };
     int argc = 1;
     char argsBuf[256] = {0};
@@ -227,20 +258,37 @@ static void* xpad_demoThread(void* arg)
     probe = fopen("/proc/meminfo", "r");
     XPAD_LOG("probe /proc/meminfo = %s", probe ? "OK" : "DENIED/FAIL");
     if (probe) fclose(probe);
-    envArgs = getenv("XGUI_DEMO_ARGS");
+    /* [2026-11-09 多应用] 参数来源按应用优先级：应用专属环境变量
+     * （demo=XGUI_DEMO_ARGS / HSF 客户端=HSF_ARGS）→ 通用环境变量
+     * （XAPP_ARGS，两个应用都认）→ 设备上的参数文件（adb 可写，便于
+     * 无人值守验证；先试应用专属文件，再试通用文件）。
+     * HSF 客户端的参数有实际意义（--login user:pass@host:port 无头登录、
+     * --no-login 离线演示），故这条通道必须保留。 */
+    envArgs = getenv(XPAD_APP_ARGS_ENV);
+    if (!envArgs || strlen(envArgs) == 0)
+        envArgs = getenv("XAPP_ARGS");
     if (!envArgs || strlen(envArgs) == 0) {
-        /* APK 壳兜底：读 /data/local/tmp/xgui_args.txt（adb 可写），
-           内容为空格分隔的 demo 参数，便于无人值守验证。 */
-        FILE* f = fopen("/data/local/tmp/xgui_args.txt", "rb");
-        if (f) {
-            size_t n = fread(argsBuf, 1, sizeof(argsBuf) - 1, f);
-            fclose(f);
-            if (n > 0) {
-                argsBuf[n] = 0;
-                /* 去掉结尾换行 */
-                while (n > 0 && (argsBuf[n - 1] == '\n' || argsBuf[n - 1] == '\r'))
-                    argsBuf[--n] = 0;
-                envArgs = argsBuf;
+        /* APK 壳兜底：读 /data/local/tmp 下的参数文件（空格分隔），
+           内容为空格分隔的应用参数，便于无人值守验证。 */
+        const char* argFiles[2];
+        int nFile;
+        argFiles[0] = XPAD_APP_ARGS_FILE;
+        argFiles[1] = "/data/local/tmp/xapp_args.txt";
+        for (nFile = 0; nFile < 2; ++nFile) {
+            FILE* f = fopen(argFiles[nFile], "rb");
+            if (!f)
+                continue;
+            {
+                size_t n = fread(argsBuf, 1, sizeof(argsBuf) - 1, f);
+                fclose(f);
+                if (n > 0) {
+                    argsBuf[n] = 0;
+                    /* 去掉结尾换行 */
+                    while (n > 0 && (argsBuf[n - 1] == '\n' || argsBuf[n - 1] == '\r'))
+                        argsBuf[--n] = 0;
+                    envArgs = argsBuf;
+                    break;
+                }
             }
         }
     }
@@ -249,9 +297,9 @@ static void* xpad_demoThread(void* arg)
         tok = strtok(argsBuf, " ");
         while (tok && argc < 8) { argv[argc++] = tok; tok = strtok(NULL, " "); }
     }
-    XPAD_LOG("demo thread: enter xgui_window_demo_main argc=%d", argc);
-    rc = xgui_window_demo_main(argc, argv);
-    XPAD_LOG("demo thread: main returned rc=%d, exiting process", rc);
+    XPAD_LOG("app thread: enter %s argc=%d", XPAD_APP_NAME, argc);
+    rc = XPAD_APP_ENTRY(argc, argv);
+    XPAD_LOG("app thread: main returned rc=%d, exiting process", rc);
     g_padQuitRequested = true;
     g_padThreadStarted = false; /* 允许后续新 Activity 实例重建线程 */
     /* demo 退出 -> 完全退出程序：先 ANativeActivity_finish 让系统正常

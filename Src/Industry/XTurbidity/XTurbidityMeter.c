@@ -80,11 +80,20 @@ static bool turbidityReadRaw(XIoChannelGroup* group, XIoPoint* point, int32_t* o
  * @return 32 位位模式。
  * @note CDAB（缺省）= 低字在前：w0 是低 16 位、w1 是高 16 位。
  *       ABCD = 高字在前：w0 是高 16 位。
+ *       DCBA = 整字节反序（小端 float32）：线上 4 字节按小端解释。等价于
+ *       「先按 ABCD 拼好再整 32 位字节反序」；逐字节展开写法比先拼后反转
+ *       少一次来回，且两台实测帧都验过（ZHEYI 4F DD 37 3D → 0x3D37DD4F
+ *       = 0.0449f；WZT 8F 5C 40 12 在本分支不变——它走 CDAB 分支）。
  */
 static uint32_t turbidityPackBits(const XTurbidityMeter* self, uint16_t w0, uint16_t w1)
 {
     if (self->m_wordOrder == XTurbidityMeterWordOrder_HighLow)
         return ((uint32_t)w0 << 16) | (uint32_t)w1;
+    if (self->m_wordOrder == XTurbidityMeterWordOrder_Dcba)
+        return ((uint32_t)(w1 & 0xFFu) << 24) |
+               ((uint32_t)(w1 & 0xFF00u) << 8) |
+               ((uint32_t)(w0 & 0xFFu) << 8) |
+               ((uint32_t)(w0 >> 8) & 0xFFu);
     return ((uint32_t)w1 << 16) | (uint32_t)w0;
 }
 
@@ -148,6 +157,43 @@ static bool turbidityDecodeWords(XTurbidityMeter* self, double* outNtu)
     bits = turbidityPackBits(self, (uint16_t)raw0, (uint16_t)raw1);
     self->m_rawBits = bits;
     *outNtu = turbidityDecodeNtu(self, bits);
+    return true;
+}
+
+/**
+ * @brief 解码一次 Words 模式的水温（可选能力，机型不带则跳过）。
+ * @param self 浊度仪。
+ * @return 解出温度返回 true；role 2/3 未齐备（无温度机型）或任一字读不到
+ *         返回 false（缓存保持上一次值）。
+ * @note [为什么"两字齐备才解"] 装配层给带温度的机型登记 4 个点；缺一个
+ *       按"无温度"处理，不报错也不解半截——解半截会把"没有的能力"伪装
+ *       成"读数 0"，现场会拿 0℃ 当真值。
+ * @note [与浊度同刻] 温度字与浊度字在同一帧应答里（0x0000×4 一帧读、
+ *       整块回填），本函数在 turbidityRefresh 内紧随浊度解码执行，
+ *       两者的"最近一拍"天然同源。字序与浊度共用同一配置：实测第二台
+ *       的温度字 `00 00 99 41` 按 DCBA 解 = 19.125℃。
+ */
+static bool turbidityDecodeTempWords(XTurbidityMeter* self)
+{
+    int32_t raw2 = 0;
+    int32_t raw3 = 0;
+    uint32_t bits;
+    float f;
+
+    if (!self->m_group) return false;
+    if (!self->m_points[XTurbidityMeterRole_Word2] ||
+        !self->m_points[XTurbidityMeterRole_Word3])
+        return false;
+    if (!turbidityReadRaw(self->m_group, self->m_points[XTurbidityMeterRole_Word2], &raw2))
+        return false;
+    if (!turbidityReadRaw(self->m_group, self->m_points[XTurbidityMeterRole_Word3], &raw3))
+        return false;
+
+    bits = turbidityPackBits(self, (uint16_t)raw2, (uint16_t)raw3);
+    memcpy(&f, &bits, sizeof(f));
+    self->m_tempRawBits = bits;
+    self->m_tempC = (double)f;
+    self->m_tempReceived = true;
     return true;
 }
 
@@ -229,6 +275,11 @@ static void turbidityRefresh(XTurbidityMeter* self)
         got = turbidityDecodeWords(self, &ntu);
     if (!got) return;
 
+    /* 温度是可选能力：role 2/3 齐备才解（无温度机型这里是空操作，
+     * 站 1 的解码路径一个比特都没变）。 */
+    if (self->m_source == XTurbidityMeterSource_Words)
+        (void)turbidityDecodeTempWords(self);
+
     self->m_lastChangeMs = XDateTime_currentMSecsSinceEpoch();
     self->m_received = true;
     if (self->m_ntu != ntu) {
@@ -301,15 +352,15 @@ static void VXTurbidityMeter_onInputChanged(XObject* receiver, XVarList* args)
     (void)chEng;    /* 值本身不用：整拍重算会按形态重新取值。 */
     if (role >= (uint16_t)XTurbidityMeterRole_Count) return;
 
-    /* 只看本形态需要的 role：Analog 只关心 role 0；Words 关心 0 和 1。
+    /* 只看本形态需要的 role：Analog 只关心 role 0；Words 关心 0~3
+     * （0/1=浊度、2/3=可选温度，四字同一帧回填，任一到达都意味着新帧就位）。
      * [为什么要过滤] 同一组里可能还有别的设备登记的点（多设备共用一组），
      * 不过滤会让他人的数据拍触发本设备的整拍重算——功能上无害但会把
      * "最近一拍"刷新成不属于本设备的时刻，掩盖真实的陈旧。 */
     if (self->m_source == XTurbidityMeterSource_Analog)
         relevant = (role == (uint16_t)XTurbidityMeterRole_Word0);
     else
-        relevant = (role == (uint16_t)XTurbidityMeterRole_Word0 ||
-                    role == (uint16_t)XTurbidityMeterRole_Word1);
+        relevant = (role <= (uint16_t)XTurbidityMeterRole_Word3);
     if (!relevant) return;
     if (!self->m_points[role]) return;
     turbidityRefresh(self);
@@ -377,6 +428,9 @@ void XTurbidityMeter_init(XTurbidityMeter* obj)
     obj->m_ntu = 0.0;
     obj->m_rawBits = 0u;
     obj->m_analogEng = 0;
+    obj->m_tempC = 0.0;
+    obj->m_tempRawBits = 0u;
+    obj->m_tempReceived = false;
     obj->m_received = false;
     obj->m_lastChangeMs = 0;
     obj->m_staleMs = XTURBIDITY_DEFAULT_STALE_MS;
@@ -474,7 +528,8 @@ bool XTurbidityMeter_setWordOrder(XTurbidityMeter* self, XTurbidityMeterWordOrde
 {
     if (ISNULL(self, "XTurbidityMeter")) return false;
     if (order != XTurbidityMeterWordOrder_LowHigh &&
-        order != XTurbidityMeterWordOrder_HighLow)
+        order != XTurbidityMeterWordOrder_HighLow &&
+        order != XTurbidityMeterWordOrder_Dcba)
         return false;
     self->m_wordOrder = order;
     if (self->m_group) turbidityRefresh(self);   /* 重算并（值变时）发信号。 */
@@ -575,6 +630,15 @@ bool XTurbidityMeter_value(const XTurbidityMeter* self, double* outNtu)
     return valid;
 }
 
+bool XTurbidityMeter_temperature(const XTurbidityMeter* self, double* outTempC)
+{
+    if (outTempC) *outTempC = 0.0;
+    if (!self || !self->m_group) return false;
+    if (!self->m_tempReceived) return false;
+    if (outTempC) *outTempC = self->m_tempC;
+    return true;
+}
+
 bool XTurbidityMeter_isValid(const XTurbidityMeter* self)
 {
     if (!self) return false;
@@ -595,6 +659,15 @@ bool XTurbidityMeter_rawWords(const XTurbidityMeter* self, uint32_t* outBits)
     if (!self || self->m_source != XTurbidityMeterSource_Words) return false;
     if (!self->m_received) return false;
     if (outBits) *outBits = self->m_rawBits;
+    return true;
+}
+
+bool XTurbidityMeter_rawTemperature(const XTurbidityMeter* self, uint32_t* outBits)
+{
+    if (outBits) *outBits = 0;
+    if (!self || self->m_source != XTurbidityMeterSource_Words) return false;
+    if (!self->m_tempReceived) return false;
+    if (outBits) *outBits = self->m_tempRawBits;
     return true;
 }
 

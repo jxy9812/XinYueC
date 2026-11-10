@@ -19,10 +19,14 @@ REM  this launcher is safe to double-click with hardware wired up.
 REM
 REM  Default behaviour of the simulated devices
 REM  ------------------------------------------
+REM    (2026-11-10: aligned with the 2026-11-09 ttyS4 field measurement
+REM     doc -- station ids and per-meter byte order are config-driven,
+REM     not hardcoded)
 REM    valves   : 10s full travel (matches the field), 20s timeout threshold
-REM    pump     : DO22, output only, no run feedback
-REM    turbidity: stations 1 and 3, ~12.5 / ~3.2 NTU
-REM    flowmeter: 36.5 m3/h +/-2%
+REM    pump     : DO6, output only, no run feedback
+REM    turbidity: stations 1 and 2, ~2.29 NTU (CDAB) / ~0.045 NTU + 19.3 C
+REM               (DCBA, temperature kept device-side only)
+REM    flowmeter: 3.6 m3/h +/-2%, empty-pipe alarm off, unit code 5 = m3/h
 REM
 REM  Useful overrides (edit the CMD line below, or pass on the command line):
 REM    --sim-valve-move 25    valve travel 25s > 20s threshold -> alarm fires
@@ -63,7 +67,7 @@ echo  Working dir : %CD%
 echo  Default port: 6200 (C edition uses 6100)
 echo  Stop with   : Ctrl+C
 echo.
-echo  Simulated: valves 10s travel / pump DO22 / turbidity st.1+3
+echo  Simulated: valves 10s travel / pump DO6 / turbidity st.1+2
 echo  Override :  run_server_sim.bat --sim-valve-move 25   (alarm test)
 echo             run_server_sim.bat --sim-valve-move -1   (stuck valve)
 echo             run_server_sim.bat --port 6201

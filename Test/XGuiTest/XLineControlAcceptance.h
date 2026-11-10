@@ -1,7 +1,7 @@
 /**
  * @file       XLineControlAcceptance.h
- * @brief      XLineControl 控制器验收测试（对拍 docs/xgui-audit/2026-09-19/
- *             linecontrol-checklist.md 的 64 条断言）。
+ * @brief      XLineControl 控制器验收测试（对拍 2026-09-19 验收清单的
+ *             64 条断言）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XLINECONTROL_ACCEPTANCE_H

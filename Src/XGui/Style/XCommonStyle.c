@@ -12,6 +12,8 @@
 #include "XPixmap.h"
 #include "XIcon.h"
 #include "XWidget.h" /* XWidget_focusWidget/isAncestorOf（CC_SpinBox 焦点子树判据）。 */
+#include "XStyleOption.h" /* XStyleOptionHeader（表头标签省略模式）+ 规范枚举
+                           * XAbstractItemViewTextElideMode（省略编号唯一来源）。 */
 #include "XTextUtf8.h" /* UTF-8 码点序列长度（停靠标题省略号截断）。 */
 #include <limits.h> /* INT_MAX（刻度循环溢出护栏）。 */
 #include <math.h>
@@ -1101,9 +1103,16 @@ const char* XCommonStyle_elideText(char* buf, int bufCap, const char* text,
     if (!text || !text[0] || maxW <= 0) return text;
     fullW = XPainter_textWidth(font, text);
     if (fullW <= maxW) return text;
+    /* [容量闸 2026-11-10] 输出 = 截取片段 + 省略号（3 字节：U+2026 或
+     * "..."）+ '\0'，三者合计必须 ≤ bufCap：扫描窗口最多取 bufCap-5 字节
+     * （3 字节省略号 + 1 字节 '\0' + 1 字节余量）。旧实现只夹到
+     * bufCap-1 ⇒ 文本长于 ~250 字节时，末尾 XStrncat 拼省略号会**越界写**
+     * 1~4 字节（表头/单元格的长文本可触发；四种模式都按本窗口口径
+     * head ≤ tail ⇒ 内容字节 ≤ len + 4）。bufCap 太小（< 8，装不下
+     * 「省略号 + 至少 1 字节」）时直接原样返回，不做截断。 */
+    if (!buf || bufCap < 8) return text;
     len = (int)XStrlen(text);
-    if (len >= bufCap) len = bufCap - 1;
-    if (!buf || bufCap <= 1) return text;
+    if (len > bufCap - 5) len = bufCap - 5;
     /* 省略号字形：优先 U+2026；本库内置点阵字体缺该字形时回退 "..."。
      * 与 Qt 的 elidedText 缺字退化口径一致（Qt 亦优先 U+2026）。 */
     ell = "\xe2\x80\xa6";
@@ -2893,7 +2902,27 @@ static void xcs_drawHeaderSection(XStyle* self, const XStyleOption* option,
     (void)mid;
 }
 
-/** @brief 绘制表头标签（CE_HeaderLabel：居中文本）。 */
+/** @brief 取表头选项的省略模式（非表头选项 ⇒ 缺省 ElideRight）。
+ *  @note  表头选项以 m_optionType 判别（XStyleOptionType_Header）；只有
+ *         确认是表头选项才回读其段语义字段，避免按基类指针越界读。 */
+static int xcs_headerElideMode(const XStyleOption* option)
+{
+    if (option && option->m_optionType == XStyleOptionType_Header) {
+        const XStyleOptionHeader* hdr = (const XStyleOptionHeader*)option;
+        int mode = (int)hdr->m_textElideMode;
+        if (mode >= (int)XAbstractItemViewTextElideMode_ElideLeft &&
+            mode <= (int)XAbstractItemViewTextElideMode_ElideNone)
+            return mode;
+    }
+    return (int)XAbstractItemViewTextElideMode_ElideRight;
+}
+
+/** @brief 绘制表头标签（CE_HeaderLabel：居中文本；放不下→省略号）。
+ *  @details [Qt 6.8 对齐 2026-11-10] 与 QSS 表头分支
+ *           （XStyleSheetStyle 的 xsssHdr_drawSectionHeader）**同一口径**：
+ *           段宽放不下文本时按 m_textElideMode 省略后**照画**，绝不整段
+ *           空白、也绝不溢出压到邻段。Qt 两条路最终都汇到 QCommonStyle 的
+ *           CE_HeaderLabel 省略（qcommonstyle.cpp:1694-1699）。 */
 static void xcs_drawHeaderLabel(XStyle* self, const XStyleOption* option,
                                 XPainter* painter, const XWidget* widget)
 {
@@ -2907,12 +2936,22 @@ static void xcs_drawHeaderLabel(XStyle* self, const XStyleOption* option,
     textColor = xcs_color(option, XPaletteColorRole_WindowText);
     if (textColor == 0) textColor = 0xFF000000u;
     if (option->m_text && option->m_text[0]) {
-        textW = XPainter_textWidth(XPainter_font(painter), option->m_text);
-        textH = XPainter_textHeight(XPainter_font(painter));
+        const char* shown = option->m_text;
+        const XFont* font = XPainter_font(painter);
+        textW = XPainter_textWidth(font, option->m_text);
+        textH = XPainter_textHeight(font);
         if (textH < 14) textH = 14;
+        if (textW > r.width) {
+            char elideBuf[256];
+            shown = XCommonStyle_elideText(elideBuf, (int)sizeof(elideBuf),
+                                           option->m_text,
+                                           xcs_headerElideMode(option),
+                                           r.width, font);
+            textW = XPainter_textWidth(font, shown);
+        }
         XPainter_drawText(painter, r.x + (r.width - textW) / 2,
                           r.y + (r.height - textH) / 2 + textH - 4,
-                          option->m_text, textColor);
+                          shown, textColor);
     }
 }
 
@@ -2973,17 +3012,27 @@ static void xcs_drawProgressBar(XStyle* self, const XStyleOption* option,
 static void xcs_drawHeader(XStyle* self, const XStyleOption* option,
                            XPainter* painter, const XWidget* widget)
 {
-    XStyleOption sub;
+    XStyleOptionHeader sub;
     if (!option || !painter) return;
-    sub = *option;
-    sub.m_type = XStyleCE_HeaderSection;
-    sub.m_rect = option->m_rect;
-    xcs_drawHeaderSection(self, &sub, painter, widget);
-    sub.m_type = XStyleCE_HeaderLabel;
-    sub.m_rect = XStyle_subElementRect((XStyle*)self, XStyleSE_HeaderLabel,
-                                       option, widget);
-    if (sub.m_rect.width > 0 && sub.m_rect.height > 0)
-        xcs_drawHeaderLabel(self, &sub, painter, widget);
+    /* [表头选项整份保留 2026-11-10] 段语义字段（m_textElideMode 等）在
+     * 基类选项**之外**：按基类拷贝会丢字段（而 m_optionType 仍是 Header
+     * ⇒ 样式层回读 m_textElideMode 会越界）——故表头选项整份拷贝。 */
+    if (option->m_optionType == XStyleOptionType_Header) {
+        sub = *(const XStyleOptionHeader*)option;
+    } else {
+        XStyleOptionHeader_init(&sub, XStyleCE_Header);
+        sub.m_base = *option;              /* 基类字段（文本/调色板/状态）照旧。 */
+        sub.m_base.m_optionType = XStyleOptionType_Header;
+    }
+    sub.m_base.m_type = XStyleCE_HeaderSection;
+    sub.m_base.m_rect = option->m_rect;
+    xcs_drawHeaderSection(self, &sub.m_base, painter, widget);
+    sub.m_base.m_type = XStyleCE_HeaderLabel;
+    sub.m_base.m_rect = XStyle_subElementRect((XStyle*)self,
+                                              XStyleSE_HeaderLabel,
+                                              option, widget);
+    if (sub.m_base.m_rect.width > 0 && sub.m_base.m_rect.height > 0)
+        xcs_drawHeaderLabel(self, &sub.m_base, painter, widget);
 }
 
 /** @brief 绘制工具栏控件（CE_ToolBar：面板 + 顶层工具栏分隔线，

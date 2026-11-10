@@ -598,3 +598,7 @@ HighSpeedFilter/client_py/tools/xlsx_bridge/build/
 # 段错误 core 转储（调试即弃；core_pattern=core 时按 cwd 落盘）
 core
 core.[0-9]*
+
+# 客户端本机设置（2026-11-10 起存程序目录 cfg/，不再用注册表；
+# 每台机器各一份，不入库）
+HighSpeedFilter/client_py/cfg/

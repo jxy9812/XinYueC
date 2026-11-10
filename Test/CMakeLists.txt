@@ -242,10 +242,29 @@ set(HSF_CLIENT_TEST_MODULE_SOURCES
     "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/HsfLinkHistory.c"
     "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/HsfLinkConfig.c"
     "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/HsfFlowMeterProvider.c"
+    # [2026-11-10 §N 现场口径对齐] 服务端 IO 编排（server/HsfServerIo.c：
+    # 全局 s_io 的装配与侧号解析）。原先它只随 HsfServer 可执行编译，测试
+    # 宿主链不到 ⇒ 「侧号由服务端解析」这条口径无法被单测钉住。编进来后
+    # §N2 可以起模拟 IO（＝现场拓扑：A 侧 VFD/温湿度、B 侧浊度×2/流量计）
+    # 直接断言解析结果。该文件不依赖 App 层（已核），不与库内符号撞键。
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/server/HsfServerIo.c"
+    # [2026-11-10 采集节拍] HsfServerIo.c 现在读 INI 的 collect/*（缺键回落宏），
+    # 依赖 HsfServerSettings 的 contains/getInt；测试宿主须一并编进来。
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/server/HsfServerSettings.c"
 )
 # 并入 TEST_FILE：凡引用 TEST_FILE 的目标（主程序双 exe / XGuiTestMenuSweep /
 # XGuiWindowDemo 测试树）都自动带上这两个实现，避免逐目标重复接线漏掉符号。
 list(APPEND TEST_FILE ${HSF_CLIENT_TEST_MODULE_SOURCES})
+# [2026-11-09 历史页图表缩放取数专项回归] 已并入 hsf_regression_test.c 的 §H
+#   ——用户口径「C 端只留一个测试文件」：原来它是独立文件
+#   Test/XProtocolTest/hsf_chart_zoom_test.c（避免与并行任务撞同一文件），
+#   现已物理并入总回归文件，断言只此一份；`--test hsf-chart-zoom` 这个旧
+#   入口仍由根 main.c 分派到同一个函数（行为不变，仅作单跑调试用）。
+#   app 层纯逻辑助手 HighSpeedFilter/client/ui/pages/HsfChartZoom.c（缩放取数
+#   的批次计划/视口换算/窗口覆盖/limit 轮转）由 hsf_regression_test.c 单 TU
+#   收录 —— 与它收录 HsfTableSort.c 同款做法。助手本体只随 HsfClient 编译
+#   （不进任何库），故测试里单 TU 收录不会与库内符号撞键。
+#   依赖的 include 路径（client/ui/pages）见上方 include_directories 段。
 add_executable(${EXPORT_NAME}_Static
 ${TEST_FILE}
 "${CMAKE_CURRENT_LIST_DIR}/../main.c"
@@ -999,6 +1018,12 @@ if(XGUI_ON AND ANDROID)
         # 漏列 → 链接期 undefined symbol: demo_page_atv61_build 等三个
         # （与上方 remote 页同款漏列的复发，按同一纪律补齐）。
         "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_page_atv61.c"
+        # [2026-11-09] xgui_demo_page_shell.c / xgui_demo_page_testmenu.c
+        # **不进安卓目标**：Shell 页把 XTestCommand（console shell 的 test
+        # 命令表）注册进页面内控制台，而 XTestCommand 连带整套桌面测试栈
+        # （XLink/XNtp/XSsh/XIndustry…）——不该进安卓 APK。demo 侧对应
+        # 引用点已按平台置空（xgui_window_demo.c 的 builders/autotest/adapt
+        # 三处），页号与表长不变。
         "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_apitest_buttons.c"
         "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_apitest_labels.c"
         "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_apitest_input.c"
@@ -1011,6 +1036,26 @@ if(XGUI_ON AND ANDROID)
     )
     target_link_libraries(xguidemo ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
     target_link_libraries(xguidemo android log)
+    # [2026-11-09 多应用] 应用身份注入：安卓壳（Drive/Android/android_main.c）
+    # 本身与 app 无关——新增安卓应用不改壳文件，只在本目标这类地方给宏。
+    #   XPAD_APP_ENTRY     壳要调的应用主逻辑符号（xgui_window_demo_main 是
+    #                      桌面 main 的同一实现，见 xgui_window_demo.c 的
+    #                      __ANDROID__ 改名宏）
+    #   XPAD_APP_TAG       logcat tag（adb logcat -s <tag>）
+    #   XPAD_APP_ARGS_ENV  参数环境变量名（空格分隔的 demo 参数）
+    #   XPAD_APP_ARGS_FILE 设备上的参数文件（adb 可写，无人值守验证）
+    target_compile_definitions(xguidemo PRIVATE
+        XPAD_APP_ENTRY=xgui_window_demo_main
+        XPAD_APP_NAME="xgui_window_demo_main"
+        XPAD_APP_TAG="XGuiDemo"
+        XPAD_APP_ARGS_ENV="XGUI_DEMO_ARGS"
+        XPAD_APP_ARGS_FILE="/data/local/tmp/xgui_args.txt")
+    # 产物落到**构建根**（out/<前缀>-<abi>/libxguidemo.so）：共享库默认
+    # 落在目标的二进制子目录（Test/），而打包脚本按构建根找——不钉住就
+    # 「编译成功、打包说缺库」。CMAKE_RUNTIME_OUTPUT_DIRECTORY 只管可执行
+    # 文件，管不到 .so。
+    set_target_properties(xguidemo PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     # [2026-10-24 安卓无障碍接入] 保活 JNI_OnLoad：链接参数含
     # -Wl,--gc-sections，未被引用的符号（含 JNI_OnLoad）会被裁掉，
     # ART 加载 .so 时找不到 JNI_OnLoad → RegisterNatives 不执行 →

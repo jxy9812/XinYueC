@@ -60,6 +60,23 @@ _ESTOP_BLOCKED_OPS = frozenset({
     proto.OP_SET_SPEED,
 })
 
+#: 控制动作的中文名（ctrl 类日志用：日志页是给运维翻的，写 op=4 没人看得懂；
+#: 数值定义见 proto.OP_* / XVfdOperation，本表只做显示）。
+_VFD_OP_NAMES = {
+    proto.OP_START: "启动",
+    proto.OP_STOP: "停止",
+    proto.OP_FREE_STOP: "自由停车",
+    proto.OP_QUICK_STOP: "快速停车",
+    proto.OP_RESET_FAULT: "故障复位",
+    proto.OP_JOG: "点动",
+    proto.OP_SELECT_PRESET_SPEED: "选预置速",
+    proto.OP_SET_PRESET_SPEED_HZ: "设预置速",
+    proto.OP_SET_ACCEL_DECEL: "设加减速",
+    proto.OP_SET_PID_TARGET: "设 PID 目标",
+    proto.OP_SET_FREQUENCY: "设频率",
+    proto.OP_SET_SPEED: "设转速",
+}
+
 
 class PushGate(object):
     """按「主题 × 设备」独立计时的推送闸。
@@ -127,6 +144,25 @@ class JogWatch(object):
         self.active = False
         self.reverse = False
         self.last_ms = 0
+
+
+def turbidity_enabled(cfg, idx):
+    """第 idx 台（0 基）浊度仪是否在采（逐台优先，回落共同键）。
+
+    [为什么用函数而不是直接 cfg.turbidity_enabled(idx)] 单测/工具会用
+    `object.__new__` + 假 cfg 造"半初始化"实例（cfg 没有 Config 的方法），
+    直接点方法会 AttributeError。这里兼容三种形态：
+    ① 真 Config：有 turbidity_enabled(idx) 方法；
+    ② 只给了 enable_turbidity{1,2} 属性；
+    ③ 只有旧的共同 enable_turbidity（缺属性时按"开"处理，与旧行为一致）。
+    """
+    fn = getattr(cfg, "turbidity_enabled", None)
+    if callable(fn):
+        return bool(fn(idx))
+    per = getattr(cfg, "enable_turbidity%d" % (idx + 1), None)
+    if per is not None:
+        return bool(per)
+    return bool(getattr(cfg, "enable_turbidity", True))
 
 
 class App(object):
@@ -227,13 +263,50 @@ class App(object):
         #: 自动运行控制器（**预留骨架，控制逻辑待扩展**）。
         #: 见 autocontrol.py 模块头：现在 step() 什么都不做，把"模式门禁"和
         #: "服务端自己驱动设备"两层职责先分开，将来逻辑直接填进去即可。
-        self.auto_ctx = autocontrol.AutoContext(self, log=self._log)
+        #:
+        #: [日志类别 = auto] 本模块全部日志都是自动运行生命周期事件
+        #: （启动/停止/急停/复位/全停/运行相位/现场按钮受理），类别是
+        #: **调用点的属性** ⇒ 装配处绑定一次，模块内经单参 log() 自然带上。
+        self.auto_ctx = autocontrol.AutoContext(
+            self, log=self._log_as(proto.LOG_CAT_AUTO))
         self.auto_controller = autocontrol.AutoController(
-            self.auto_ctx, log=self._log)
+            self.auto_ctx, log=self._log_as(proto.LOG_CAT_AUTO))
 
     # ==================================================================
     #                          装配 / 拆除
     # ==================================================================
+    def _wire_sim_bus_fidelity(self, master):
+        """给 --sim 的路 B 虚拟总线接上 ttyS4 实测的时序行为（2026-11-09）。
+
+        [为什么要在装配处接] 站 1/2/5 的应答时延与「站 5 长帧后站 1 恢复期」
+        都是从站的物理行为；旋钮值全部从 cfg 来（sim 节可覆盖，缺省=实测
+        文档值），站号跟着 cfg 走（改站号后时延/恢复期自动跟到新站号上）。
+        同时打一条装配日志——回归用它断言「旋钮存在且按配置生效」。
+        """
+        turb_ids = list(self.cfg.turbidity_unit_ids[:2])
+        t_lohi = list(getattr(self.cfg, "sim_turbidity_reply_ms", None) or [])
+        f_lohi = tuple(getattr(self.cfg, "sim_flowmeter_reply_ms", None)
+                       or (0, 0))
+        t_ranges = []
+        for idx, uid in enumerate(turb_ids):
+            lo, hi = (t_lohi[idx] if idx < len(t_lohi) else (0, 0))
+            master.set_unit_reply_latency(uid, lo, hi)
+            t_ranges.append("%d~%d" % (lo, hi))
+        master.set_unit_reply_latency(self.cfg.flowmeter_unit_id,
+                                      f_lohi[0], f_lohi[1])
+        recovery_ms = int(getattr(self.cfg, "sim_recovery_ms", 0) or 0)
+        if recovery_ms > 0 and turb_ids:
+            master.set_recovery_gate(self.cfg.flowmeter_unit_id,
+                                     turb_ids[0], recovery_ms)
+        self._log(
+            "虚拟485路B 保真：事务间隙 %dms / 应答时延(ms) 浊1 %s 浊2 %s "
+            "流量 %d~%d / 站1 恢复期 %dms（站%d 长帧后）"
+            % (getattr(master, "min_tx_gap_ms", 0),
+               t_ranges[0] if t_ranges else "0~0",
+               t_ranges[1] if len(t_ranges) > 1 else "0~0",
+               f_lohi[0], f_lohi[1],
+               recovery_ms, self.cfg.flowmeter_unit_id))
+
     def build_devices(self):
         """按配置装配设备对象（不打开任何端口/连接，纯对象构造）。
 
@@ -260,6 +333,24 @@ class App(object):
         # 同一个实例（RtuMaster 内部 asyncio.Lock 保证事务串行）。
         rtu_masters = {}
 
+        # ---- 浊度「按台」旋钮（字节序 / 读取寄存器数 / --sim 基准值）----
+        # [为什么按下标取] cfg.turbidity_* 与站号表 turbidity_unit_ids 一一
+        # 对应：站1 CDAB/2 字、站2 DCBA/4 字（2026-11-09 ttyS4 实测口径，
+        # 见 config.py 注释）。配置缺台时回 None → 设备/模型各自落类缺省
+        # （CDAB、2 字），老配置文件一字不改也照跑。
+        turb_orders = list(getattr(self.cfg, "turbidity_byte_orders", None)
+                           or [])
+        turb_counts = list(getattr(self.cfg, "turbidity_read_counts", None)
+                           or [])
+        sim_ntu = list(getattr(self.cfg, "turbidity_sim_ntu", None) or [])
+        sim_temp = list(getattr(self.cfg, "turbidity_sim_temp", None) or [])
+
+        def turb_order(idx):
+            return turb_orders[idx] if idx < len(turb_orders) else None
+
+        def turb_count(idx):
+            return turb_counts[idx] if idx < len(turb_counts) else None
+
         def make_rtu(unit_id, bus="a"):
             """取（必要时创建）该串口的主站。
 
@@ -276,29 +367,92 @@ class App(object):
             master = rtu_masters.get(key)
             if master is None:
                 if sim:
-                    # 虚拟模式仍用一台多模型 master 模拟全部从站（不涉及
-                    # 真实串口，无所谓两条线）；站号各不相同即可。
-                    models = {
-                        self.cfg.vfd_unit_id: virtualdev.VirtualVfd(
-                            max_hz=self.cfg.serial.vfd_max_hz,
-                            log=self._log),
-                        self.cfg.temphum_unit_id:
-                            virtualdev.VirtualTempHum(),
-                    }
-                    if self.cfg.enable_flowmeter:
-                        models[self.cfg.flowmeter_unit_id] = \
-                            virtualdev.VirtualFlowMeter()
-                    if self.cfg.enable_turbidity:
-                        for idx, uid in enumerate(
-                                self.cfg.turbidity_unit_ids[:2]):
-                            models[uid] = virtualdev.VirtualTurbidity(index=idx)
-                    master = virtualdev.VirtualMultiMaster(
-                        models, name="虚拟485总线", log=self._log)
+                    # [虚拟模式按现场分两条总线 2026-11-10] 真实链路是两条
+                    # 独立 485（路 A：变频器+温湿度；路 B：流量计+浊度×2），
+                    # sim 也按 bus 各建一台 VirtualMultiMaster——不能像早先
+                    # 那样把全部从站塞进同一张表：站号表按配置走之后，浊度
+                    # 站 2 会把变频器站 2（两路缺省都指向 2）从表里**覆盖**
+                    # ⇒ VFD 写 0x1000 落进"浊度仪只读"。真实现场两台从站
+                    # 根本不在同一条线上，建模必须与接线一致。
+                    if bus == "b":
+                        models = {}
+                        if self.cfg.enable_flowmeter:
+                            # [--sim 基准值从 cfg 来] 缺省=2026-11-09 实测
+                            # 口径（3.6 m³/h、空管 False）。验收口径：设备
+                            # 层同一条解码路径读回的值与模型给定值一致。
+                            models[self.cfg.flowmeter_unit_id] = \
+                                virtualdev.VirtualFlowMeter(
+                                    base_flow=getattr(
+                                        self.cfg, "flowmeter_sim_flow", None),
+                                    empty_pipe=bool(getattr(
+                                        self.cfg, "flowmeter_sim_empty",
+                                        False)))
+                        if (turbidity_enabled(self.cfg, 0)
+                                or turbidity_enabled(self.cfg, 1)):
+                            # [微波动幅按台 2026-11-09 实测] 站 1 恒定（幅 0，
+                            # 20 轮完全不动）、第二台（2026-11-10 起面板站号
+                            # 3）±0.001 缓慢波动；温度 ±0.05 漂移。缺省
+                            # None=旧口径（±3% 相对波动）。
+                            sim_wob = list(getattr(
+                                self.cfg, "turbidity_sim_wobble", None) or [])
+                            sim_twob = list(getattr(
+                                self.cfg, "turbidity_sim_temp_wobble",
+                                None) or [])
+                            for idx, uid in enumerate(
+                                    self.cfg.turbidity_unit_ids[:2]):
+                                # [停采的台不建模 2026-11-10] 读它只会超时，
+                                # 与真机"这台没装/没接"表现一致，免得界面
+                                # 上停用的表还显示在跳数。
+                                if not turbidity_enabled(self.cfg, idx):
+                                    continue
+                                # [字节序按台] 模型造帧与设备层解码必须同序
+                                # （站1 CDAB / 站2 DCBA，实测文档 §5.3）；
+                                # temperature=None 的台不建模 0x0002/0x0003。
+                                models[uid] = virtualdev.VirtualTurbidity(
+                                    index=idx,
+                                    base_ntu=(sim_ntu[idx]
+                                              if idx < len(sim_ntu) else None),
+                                    byte_order=turb_order(idx) or "CDAB",
+                                    temperature=(sim_temp[idx]
+                                                 if idx < len(sim_temp)
+                                                 else None),
+                                    wobble_ntu=(sim_wob[idx]
+                                                if idx < len(sim_wob)
+                                                else None),
+                                    temp_wobble_c=(sim_twob[idx]
+                                                   if idx < len(sim_twob)
+                                                   else None))
+                        master = virtualdev.VirtualMultiMaster(
+                            models, name="虚拟485路B", log=self._log,
+                            min_tx_gap_ms=c.poll_gap_ms)
+                        # [ttyS4 保真] 从站应答时延 + 站1 长帧后恢复期，
+                        # 旋钮与缺省值见 config.py 的 sim 相关注记。
+                        self._wire_sim_bus_fidelity(master)
+                    else:
+                        models = {
+                            self.cfg.vfd_unit_id: virtualdev.VirtualVfd(
+                                max_hz=self.cfg.serial.vfd_max_hz,
+                                log=self._log),
+                            self.cfg.temphum_unit_id:
+                                virtualdev.VirtualTempHum(),
+                        }
+                        master = virtualdev.VirtualMultiMaster(
+                            models, name="虚拟485路A", log=self._log,
+                            min_tx_gap_ms=c.poll_gap_ms)
                 else:
-                    # 超时/重试取该路配置（同总线的从站共用一套链路参数）
+                    # 超时/重试取该路配置（同总线的从站共用一套链路参数）。
+                    # [路 B 站间最小间隙 200ms 2026-11-09] ttyS4 三台混跑实测
+                    # （docs/HSF板端ttyS4三设备取数实测总表 §9）：站5 的 49 字节
+                    # 长帧读完后立刻问站1 → 几乎零应答（接收器恢复期）；≥125ms
+                    # 才恢复，200ms 稳定 10/10。路 A 115200 变频器 100ms 轮询
+                    # 不能拖，间隙取 0。
+                    # [数值从 cfg 来] serial_b 缺省 poll_gap_ms=200、serial
+                    # 缺省 0（config.SerialConfig 注释有据）——与上面口径
+                    # 同值，但现场可经配置文件/CLI 调，不必改代码。
                     master = RtuMaster(c.port, c.baudrate, unit_id,
                                        c.timeout_ms / 1000.0, c.retries,
-                                       self._log)
+                                       self._log,
+                                       min_tx_gap_ms=c.poll_gap_ms)
                 rtu_masters[key] = master
             return master
 
@@ -337,13 +491,20 @@ class App(object):
                                                    self._log)
                 self._gates[proto.TOPIC_FLOWMETER_STATUS].append(
                     PushGate(self.FLOWMETER_PUSH_MS))
-            if self.cfg.enable_turbidity:
-                for idx, uid in enumerate(self.cfg.turbidity_unit_ids[:2]):
-                    self.turbidity.append(devices.TurbidityMeter(
-                        (lambda u=uid: make_turb_master(u)), uid,
-                        name="浊度仪%d" % (idx + 1), log=self._log))
-                self._gates[proto.TOPIC_TURBIDITY_STATUS].append(
-                    PushGate(self.TURBIDITY_PUSH_MS))
+            # [两台独立设备 2026-11-10] 不管开关都建对象：逐台开关只门控
+            # **轮询**（运行期改开关后 restart_polling 立刻生效）；停采的台
+            # 在健康表里显示"已停用"，而不是整组消失。
+            for idx, uid in enumerate(self.cfg.turbidity_unit_ids[:2]):
+                # [字节序/读取数按台] 站1 CDAB×2 字（老口径一字不改）、
+                # 站2 DCBA×4 字（同刻快照带温度，实测文档 §5.2/§5.3）。
+                # 站号本身就是 uid——全从 cfg 来，代码不写死。
+                self.turbidity.append(devices.TurbidityMeter(
+                    (lambda u=uid: make_turb_master(u)), uid,
+                    name="浊度仪%d" % (idx + 1), log=self._log,
+                    byte_order=turb_order(idx),
+                    read_count=turb_count(idx)))
+            self._gates[proto.TOPIC_TURBIDITY_STATUS].append(
+                PushGate(self.TURBIDITY_PUSH_MS))
 
         if self.cfg.enable_analog:
             ai = self.cfg.analog
@@ -383,8 +544,11 @@ class App(object):
 
         # ---- 电磁阀组（依赖数字量模块：DI 反馈来自它们的缓存）----
         if self.cfg.enable_valves:
+            # 日志类别 = ctrl：本模块只记"阀命令下发/已到位/被外部改动"，
+            # 全部是控制受理事件（与 C 侧 ctrl 类的"控制受理/拒绝"同属性）。
             self.valve_bank = valves.ValveBank(
-                self.digital, self.cfg.valve_items, self._log,
+                self.digital, self.cfg.valve_items,
+                self._log_as(proto.LOG_CAT_CTRL),
                 move_timeout_ms=self.cfg.valve_move_timeout_ms)
             self._gates[proto.TOPIC_VALVE_STATUS] = [
                 PushGate(self.VALVE_PUSH_MS)]
@@ -397,8 +561,10 @@ class App(object):
 
         # ---- 进水泵（同样依赖数字量模块的 DO 回显）----
         if self.cfg.enable_pump:
+            # 日志类别 = ctrl（同电磁阀：只记泵命令下发/重复命令/外部改动）。
             self.pump_bank = pumps_mod.PumpBank(
-                self.digital, self.cfg.pump_items, self._log)
+                self.digital, self.cfg.pump_items,
+                self._log_as(proto.LOG_CAT_CTRL))
             self._gates[proto.TOPIC_PUMP_STATUS] = [
                 PushGate(self.PUMP_PUSH_MS)]
             ready = self.pump_bank.ready_count()
@@ -421,7 +587,9 @@ class App(object):
             self.button_station = buttons.ButtonStation(
                 self.auto_ctx, self.cfg.button_items,
                 debounce_ms=getattr(self.cfg, "button_debounce_ms", 300),
-                log=self._log)
+                # 日志类别 = ctrl：本模块记的是三盏灯（DO7~DO9）的写入状态，
+                # 属执行器输出控制；按键迁移由 app._on_button_state 记。
+                log=self._log_as(proto.LOG_CAT_CTRL))
             self.button_station.on_state_change = self._on_button_state
             self.button_station.set_running(
                 bool(getattr(self.auto_controller, "running", False)))
@@ -454,6 +622,10 @@ class App(object):
         server.on_ready = self.on_session_ready
         server.on_tick = self
         server.policy_hook = self.policy_blocks_login
+        # [链路层运维事件入库] 会话接入/断开/超时（conn）、登录成功/被拒/
+        # 策略拒登（auth）由会话层带上类别送进来；流水账（订阅/退订/tick
+        # 异常）不走这里——见 xlink.Server.log_event 的取舍说明。
+        server.on_event_log = self._log_with_store
 
     #: xlink.Server 读取本属性决定 tick 周期（基准节拍）。
     @property
@@ -463,8 +635,12 @@ class App(object):
     # ==================================================================
     #                       运行模式（持久化）
     # ==================================================================
-    def apply_mode_to_devices(self):
+    def apply_mode_to_devices(self, switched=False):
         """模式同步到设备层 / 自动控制器。
+
+        :param switched: 本次是**模式真的发生了切换**（不是幂等重放）。
+            切换 ⇒ 关闭所有设备（双向，见下面的「切模式 ⇒ 全停」）；
+            幂等重放 ⇒ 不动设备（见「幂等重放不动设备」）。
 
         [⚠ 安全口径 2026-11-05 订正：进自动**不**自动启动控制器]
         原实现是"进自动就 ctl.start()"，等于把一个模式开关变成了**设备启动
@@ -478,9 +654,17 @@ class App(object):
         还在自动跑 = 手动模式下设备被偷偷驱动，是硬性安全问题）。
         启动路径在独立的 CMD_AUTO_CONTROL 里，见 _h_auto_control。
 
-        [2026-11-06 强化：退自动要**停全部设备**] 用户明确要求：
-        「一旦切换到手动，为了安全要停止全部设备，并且按钮在自动模式下
-        启动后，客户端顶部的状态要显示更新状态」。
+        [2026-11-10 用户口径：切换模式 ⇒ 关闭所有设备（**双向**）]
+        「切换模式后要关闭所有设备，只有按了启动按钮后设备才允许工作，
+        这是自动模式的运行逻辑」：
+            · 切到自动：自动模式会**拒掉全部远程控制**、控制器又要等人按
+              "启动"才跑 —— 设备若还按手动命令转着，现场看到的是"切了自动，
+              泵还在转，而且谁也停不了它"（远程控制已被关掉）。故切自动也
+              要先全停。
+            · 切到手动：自动逻辑退出，设备不能继续按自动命令跑。
+        [幂等重放不动设备] 同一模式**重复**下发（客户端重发、启动时恢复）
+        **不**全停：手动模式下设备正由人操作，一句重复的模式指令把人家手动
+        开的泵停掉是事故。
 
         原来只停控制器（ctl.stop），变频器/泵/阀**照旧转着** —— 控制器
         停了但设备没停，等于"手动模式下设备还在被上次的自动命令驱动"，
@@ -490,15 +674,32 @@ class App(object):
         ctl = getattr(self, "auto_controller", None)
         if ctl is None:
             return
+        now = self._now_ms()
         if not self.is_auto():
-            # 退自动 ⇒ 必须停控制器**并停全部设备**（安全，单向）。
+            # 退自动 ⇒ 必须停控制器（安全，单向，与是否切换无关：手动模式
+            # 下控制器还跑着 = 设备被偷偷驱动）。
             # [不判 ctl.running] 控制器可能已经停了但设备还在转（比如上一批
             # 全停失败了一台），此时切手动仍要再停一次 —— 这是补漏机会。
-            ctl.stop(self._now_ms(), stop_devices=True, reason="切回手动")
-            self._log("退出自动模式：自动控制已强制停止，设备全停")
-            # 按钮组灯立刻切到"停止"（不等到下一拍：切模式是个显著动作，
-            # 现场盯着灯看的那一眼必须已经是停止态）。
+            # [全停只在真切换时做] 幂等重放（同一模式再下一遍）不动设备：
+            # 手动模式下设备正由人操作，停掉人家手动开的泵是事故。
+            ctl.stop(now, stop_devices=switched, reason="切回手动")
+            # 类别 = auto（模式切换，与 C 侧 hsfAppApplyModeToDevices 的
+            # hsfAppEventLog("auto", ...) 同口径）。
+            self._log_with_store(
+                "退出自动模式：自动控制已强制停止%s"
+                % ("，设备全停" if switched else ""), proto.LOG_CAT_AUTO)
+            # 按钮组运行态立刻同步（灯本身在手动模式下**不写**——灯归人工，
+            # 见 buttons.ButtonStation.poll；自动模式下才跟随运行态）。
             ctl._sync_station()
+        elif switched:
+            # 切到自动 ⇒ 也全停设备（2026-11-10 用户口径「切换模式后要关闭
+            # 所有设备」）：自动模式拒掉全部远程控制，控制器又要等人按启动
+            # 才跑 —— 设备若还转着，现场既停不掉也看不到谁在驱动它。
+            # [不启动控制器] 模式开关不是启动按钮：设备要等"启动"才允许工作。
+            ctl.stop(now, stop_devices=True, reason="切到自动")
+            self._log_with_store(
+                "切到自动模式：设备全停，等待人工启动自动运行",
+                proto.LOG_CAT_AUTO)
 
     def restore_run_mode(self, mode):
         """启动时从配置恢复运行模式（**不落盘**，因为值本来就来自磁盘）。
@@ -525,14 +726,18 @@ class App(object):
         if mode not in (self.MODE_MANUAL, self.MODE_AUTO):
             return False
         if mode == self.run_mode:
-            self.apply_mode_to_devices()
+            # 幂等重放：闸同步一次，但**不动设备**（见 apply_mode_to_devices
+            # 的「幂等重放不动设备」）。
+            self.apply_mode_to_devices(switched=False)
             return True
         self.run_mode = mode
-        self.apply_mode_to_devices()
+        # 真切换 ⇒ 关闭所有设备（双向；2026-11-10 用户口径）。
+        self.apply_mode_to_devices(switched=True)
         self.cfg.save_run_mode(mode)
-        self._log("运行模式切到 %s（远程控制%s）"
-                  % ("自动" if mode == self.MODE_AUTO else "手动",
-                     "已禁用" if mode == self.MODE_AUTO else "已启用"))
+        self._log_with_store("运行模式切到 %s（远程控制%s）"
+                             % ("自动" if mode == self.MODE_AUTO else "手动",
+                                "已禁用" if mode == self.MODE_AUTO else "已启用"),
+                             proto.LOG_CAT_AUTO)
         return True
 
     def is_auto(self):
@@ -578,16 +783,30 @@ class App(object):
                 self._log("温湿度采集已停用（配置 temphumEnabled=false）")
         if self.flowmeter is not None:
             if self.cfg.enable_flowmeter:
+                # [独立周期 2026-11-10] flowmeter_poll_ms=0 时跟随温湿度
+                # （旧行为），显式设过就按它跑。
+                _fm_ms = (self.cfg.flowmeter_poll_ms
+                          or self.cfg.temphum_poll_ms)
                 self._poll_tasks.append(asyncio.ensure_future(
-                    self._poll_loop(self.flowmeter, self.cfg.temphum_poll_ms,
-                                    "流量计", "temphum_poll_ms")))
+                    self._poll_loop(self.flowmeter, _fm_ms,
+                                    "流量计", "flowmeter_poll_ms")))
             else:
                 self._log("流量计采集已停用（配置 flowmeterEnabled=false）")
         for idx, tdev in enumerate(self.turbidity):
-            if self.cfg.enable_turbidity:
-                self._poll_tasks.append(asyncio.ensure_future(
-                    self._poll_loop(tdev, self.cfg.turbidity_poll_ms,
-                                    tdev.name, "turbidity_poll_ms")))
+            # [逐台开关 2026-11-10] 两台是独立设备：只停一台时另一台照采。
+            # 旧的共同键 turbidityEnabled 已降为缺省（见 cfg.turbidity_enabled）。
+            if not turbidity_enabled(self.cfg, idx):
+                self._log("%s 采集已停用（配置 turbidity%dEnabled=false）"
+                          % (tdev.name, idx + 1))
+                continue
+            # [逐台周期 2026-11-10] 站1/站3 各按自己的周期跑。
+            _t_ms = (self.cfg.turbidity1_poll_ms if idx == 0
+                     else self.cfg.turbidity2_poll_ms)
+            self._poll_tasks.append(asyncio.ensure_future(
+                self._poll_loop(tdev, _t_ms,
+                                tdev.name,
+                                "turbidity1_poll_ms" if idx == 0
+                                else "turbidity2_poll_ms")))
         if self.analog is not None:
             if self.cfg.enable_analog:
                 self._poll_tasks.append(asyncio.ensure_future(
@@ -638,15 +857,19 @@ class App(object):
             try:
                 await dev.poll(started)
                 if failures:
-                    self._log("%s 恢复通讯（此前连续失败 %d 次）"
-                              % (label, failures))
+                    # 类别 = alarm：485 通信恢复与"故障"成对，运维要能在
+                    # 日志页按 alarm 筛出整条通信质量时间线。
+                    self._log_with_store("%s 恢复通讯（此前连续失败 %d 次）"
+                                         % (label, failures),
+                                         proto.LOG_CAT_ALARM)
                 failures = 0
             except Exception as exc:                    # noqa: BLE001
                 failures += 1
                 # 只在首次与每 60 次失败时打日志（约 1 分钟一条）。
                 if failures == 1 or failures % 60 == 0:
-                    self._log("%s 采集失败（连续 %d 次）：%s"
-                              % (label, failures, exc))
+                    self._log_with_store("%s 采集失败（连续 %d 次）：%s"
+                                         % (label, failures, exc),
+                                         proto.LOG_CAT_ALARM)
             if period_attr:
                 period = max(proto.CFG_POLL_MS_MIN,
                              int(getattr(self.cfg, period_attr,
@@ -709,14 +932,28 @@ class App(object):
                       14: "g/h"}
     TOTAL_UNIT_TEXT = {0: "L", 1: "m³", 2: "kg", 3: "t", 4: "g", 5: "kL"}
 
-    def _log_with_store(self, msg):
+    def _log_with_store(self, msg, category=proto.LOG_CAT_SYS):
         """业务日志入口：原始回调 + SQLite 旁路（库未开=空操作）。
 
         [防递归] 入库失败走 _log_raw 报错，不再进本函数 —— 否则写库失败
         → 打日志 → 又写库 → 死循环。
+
+        :param category: 运行日志类别（C 端口径 conn/ctrl/alarm/auto/auth；
+            缺省 sys = 非上述五类的普通运行日志）。
         """
         self._log_raw(msg)
-        self.store.insert_log(msg)
+        self.store.insert_log(msg, category=category)
+
+    def _log_as(self, category):
+        """返回一个**定类别**的日志回调（给只接受单参 log(msg) 的子模块用）。
+
+        [为什么要它] 子模块（autocontrol/valves/pumps/buttons…）的 log 回调
+        约定是单参 log(msg)；类别是**调用点**的属性（同一条消息在哪一类事情
+        里发生），不是消息文本的属性 ⇒ 由装配处按模块语义绑定。
+        """
+        def _log(msg):
+            self._log_with_store(msg, category)
+        return _log
 
     def storage_apply(self):
         """按当前 cfg.storage 开/关/重开数据库（启动与远程改配置共用）。"""
@@ -760,10 +997,46 @@ class App(object):
             if self.store.db_path is None:
                 continue             # 落盘未启用/打开失败：空转，开了自动恢复
             try:
-                self.store.insert_history(self._history_snapshot())
+                row = self._history_snapshot()
+                # [历史行热身门 2026-11-09] 逐字段记「是否见过有效值」：
+                # 服务端刚起的 1~2 秒里 485 变频器还没上报 ⇒ 那行变频器
+                # 四列全是 NULL ⇒ 界面整行半屏 "--"（现场截图确认）。
+                # NULL＝无数据的口径本身对（设备真掉线就该记 NULL），但
+                # "还没开始报"与"报过又掉"要分开：后者该留无数据行。
+                # 某字段还没见过有效值之前，带该字段空洞的行不入库；
+                # 见过之后照写（设备长期离线也不会让历史表停摆）。
+                if not self._history_row_ready(row):
+                    continue
+                self.store.insert_history(row)
             except Exception as exc:                 # noqa: BLE001
                 self._log_raw("历史采样入库异常（不影响采集）：%s: %s"
                               % (type(exc).__name__, exc))
+
+
+    # 历史行热身门用：每组字段「是否见过有效值」（见 _store_loop 注）。
+    _HIST_WARM_GROUPS = (
+        ("vfd", ("vfd_state", "freq_hz", "current_a", "rpm")),
+        ("temphum", ("temp", "hum")),
+        ("turbidity", ("turb1", "turb2")),
+        ("flow", ("flow", "flow_total")),
+        ("press", ("press_mpa",)),
+        ("digital", ("di", "do")),
+    )
+
+    def _history_row_ready(self, row):
+        """热身门判定：True=可入库；False=启动瞬态（带从未见过有效的空洞）不入库。"""
+        warm = getattr(self, "_hist_warm", None)
+        if warm is None:
+            warm = set()
+            self._hist_warm = warm
+        need = set()
+        for name, keys in self._HIST_WARM_GROUPS:
+            if any(row.get(k) is None for k in keys):
+                need.add(name)
+            else:
+                warm.add(name)
+        # 还有"从未见过有效值"的组 ⇒ 这一行是启动瞬态，不入库。
+        return not (need - warm)
 
     def _history_snapshot(self):
         """一拍历史快照（dict，键 = store.history 表列名）。
@@ -821,6 +1094,13 @@ class App(object):
             if doc.get(prefix + proto.KEY_TURB_ONLINE):
                 row["turb%d" % (idx + 1)] = (
                     int(doc[prefix + proto.KEY_TURB_NTU]) / 100.0)
+                # [水温 2026-11-10] 带温度的机型（浙仪 ZHEYI-5100ZDY）随帧带
+                # "v{i}_temp"（℃×100）；**缺键 = 该机型没有温度**，不写列
+                # ⇒ 入库 NULL、界面 "--"（写 0℃ 会被当成真实读数）。
+                # 多台都有温度时后面的台覆盖前面的（口径=「浊度仪2 的水温」）。
+                if (prefix + proto.KEY_TURB_TEMP) in doc:
+                    row["water_temp"] = float(
+                        int(doc[prefix + proto.KEY_TURB_TEMP])) / 100.0
         # ---- 流量计 ----
         if self.flowmeter is not None:
             payload = self.encode_flowmeter(self.flowmeter)
@@ -874,12 +1154,24 @@ class App(object):
             proto.CFGK_VFD_ENABLED: bool(c.enable_vfd),
             proto.CFGK_TEMPHUM_ENABLED: bool(c.enable_temphum),
             proto.CFGK_FLOWMETER_ENABLED: bool(c.enable_flowmeter),
-            proto.CFGK_TURBIDITY_ENABLED: bool(c.enable_turbidity),
+            # [旧键报"任一启用"] 旧客户端把它当"浊度这路开没开"；逐台值
+            # 下面的两个键给新客户端。
+            proto.CFGK_TURBIDITY_ENABLED: bool(turbidity_enabled(c, 0)
+                                               or turbidity_enabled(c, 1)),
+            # [逐台开关] 两台独立设备各报各的。
+            proto.CFGK_TURBIDITY1_ENABLED: turbidity_enabled(c, 0),
+            proto.CFGK_TURBIDITY2_ENABLED: turbidity_enabled(c, 1),
             proto.CFGK_ANALOG_ENABLED: bool(c.enable_analog),
             proto.CFGK_DIGITAL_ENABLED: bool(c.enable_digital),
             proto.CFGK_VFD_POLL_MS: int(c.vfd_poll_ms),
             proto.CFGK_TEMPHUM_POLL_MS: int(c.temphum_poll_ms),
             proto.CFGK_TURBIDITY_POLL_MS: int(c.turbidity_poll_ms),
+            proto.CFGK_TURBIDITY1_POLL_MS: int(getattr(
+                c, "turbidity1_poll_ms", c.turbidity_poll_ms)),
+            proto.CFGK_TURBIDITY2_POLL_MS: int(getattr(
+                c, "turbidity2_poll_ms", c.turbidity_poll_ms)),
+            proto.CFGK_FLOWMETER_POLL_MS: int(getattr(
+                c, "flowmeter_poll_ms", 0) or c.temphum_poll_ms),
             proto.CFGK_ANALOG_POLL_MS: int(c.analog_poll_ms),
             proto.CFGK_DIGITAL_POLL_MS: int(c.digital_poll_ms),
         }
@@ -927,6 +1219,9 @@ class App(object):
             proto.CFGK_TEMPHUM_ENABLED: "enable_temphum",
             proto.CFGK_FLOWMETER_ENABLED: "enable_flowmeter",
             proto.CFGK_TURBIDITY_ENABLED: "enable_turbidity",
+            # [逐台开关 2026-11-10] 两台浊度是独立设备，各写各的门控。
+            proto.CFGK_TURBIDITY1_ENABLED: "enable_turbidity1",
+            proto.CFGK_TURBIDITY2_ENABLED: "enable_turbidity2",
             proto.CFGK_ANALOG_ENABLED: "enable_analog",
             proto.CFGK_DIGITAL_ENABLED: "enable_digital",
         }
@@ -936,6 +1231,9 @@ class App(object):
             attr = bool_keys[key]
             changed = getattr(c, attr) != value
             setattr(c, attr, value)
+            # [旧键扇出在 handler 里按"整条载荷"判定] 不能在这里立刻写逐台
+            # 键：客户端同一条 SET 里先发逐台键、再发共同键（= 任一启用），
+            # 在这里扇出会把刚设的逐台值又盖回共同值（实测 B3c 红）。
             return changed, True          # 开关变化 ⇒ 要重启轮询任务
         poll_keys = {
             # 值 = (对象名或 None, 属性名)；None = cfg 顶层属性。
@@ -945,6 +1243,10 @@ class App(object):
             proto.CFGK_VFD_POLL_MS: ("serial", "vfd_poll_ms"),
             proto.CFGK_TEMPHUM_POLL_MS: ("serial", "temphum_poll_ms"),
             proto.CFGK_TURBIDITY_POLL_MS: (None, "turbidity_poll_ms"),
+            # [逐台 2026-11-10] 三台各设各的；turbidityPollMs 仍作两台共同缺省。
+            proto.CFGK_TURBIDITY1_POLL_MS: (None, "turbidity1_poll_ms"),
+            proto.CFGK_TURBIDITY2_POLL_MS: (None, "turbidity2_poll_ms"),
+            proto.CFGK_FLOWMETER_POLL_MS: (None, "flowmeter_poll_ms"),
             proto.CFGK_ANALOG_POLL_MS: ("analog", "poll_ms"),
             proto.CFGK_DIGITAL_POLL_MS: (None, "digital_poll_ms"),
         }
@@ -1072,6 +1374,19 @@ class App(object):
                     _, affects_enable = self._cfg_set_collect_key(
                         key, doc[key])
                     enables_changed = enables_changed or affects_enable
+                # [旧共同键只在不带逐台键时扇出 2026-11-10] 旧客户端只有
+                # turbidityEnabled ⇒ 视作"两台一起"；新客户端同一条 SET 里
+                # 也带它（= 任一启用，兼容旧服务端），此时**以逐台键为准**，
+                # 否则会把单独停用的那台又打开。
+                if (proto.CFGK_TURBIDITY_ENABLED in doc
+                        and proto.CFGK_TURBIDITY1_ENABLED not in doc
+                        and proto.CFGK_TURBIDITY2_ENABLED not in doc):
+                    _all = bool(doc[proto.CFGK_TURBIDITY_ENABLED])
+                    for _i in (1, 2):
+                        _a = "enable_turbidity%d" % _i
+                        if getattr(self.cfg, _a) != _all:
+                            setattr(self.cfg, _a, _all)
+                            enables_changed = True
             except ValueError as exc:
                 await self._reply(session, request_id, msg_code, False,
                                   str(exc))
@@ -1206,16 +1521,20 @@ class App(object):
                 await self.server.publish(proto.TOPIC_AUTO_ALARM, payload)
             except Exception as exc:                    # noqa: BLE001
                 # 推送失败不挡入库与下一条：告警链路自身不能成为新故障源。
-                self._log("自动告警发布失败（已留痕入库）：%s: %s"
-                          % (type(exc).__name__, exc))
-            self._log("自动运行告警 类型%d @%d：%s" % (kind, at_ms, text))
+                self._log_with_store("自动告警发布失败（已留痕入库）：%s: %s"
+                                     % (type(exc).__name__, exc),
+                                     proto.LOG_CAT_ALARM)
+            # 类别 = alarm（自动运行告警；与 C 侧告警入库同分类口径）。
+            self._log_with_store("自动运行告警 类型%d @%d：%s"
+                                 % (kind, at_ms, text), proto.LOG_CAT_ALARM)
             # 告警入库（kind=来源分类；与 C 侧 insertAlarm("auto",...) 同表
             # 同分类；写失败不影响推送与采集）。
             try:
                 self.store.insert_alarm("auto", "自动运行", text)
             except Exception as exc:                    # noqa: BLE001
-                self._log("自动告警入库失败：%s: %s"
-                          % (type(exc).__name__, exc))
+                self._log_with_store("自动告警入库失败：%s: %s"
+                                     % (type(exc).__name__, exc),
+                                     proto.LOG_CAT_ALARM)
 
     def _log_auto_error(self, exc):
         """自动层异常限频记日志（同一类错误 1 分钟一条）。"""
@@ -1229,8 +1548,10 @@ class App(object):
         last = self._auto_err_at.get(key, 0)
         if (not last) or (now_ms_i - last > 60000):
             self._auto_err_at[key] = now_ms_i or 1
-            self._log("自动控制异常（已隔离，不影响采集/推送）：%s: %s"
-                      % (key, exc))
+            # 类别 = auto：自动控制层自身的异常（与 autocontrol.py 内部
+            # 「本拍异常」同一类事件，只是这层是外泄到 app 的兜底）。
+            self._log_with_store("自动控制异常（已隔离，不影响采集/推送）：%s: %s"
+                                 % (key, exc), proto.LOG_CAT_AUTO)
 
     async def _publish_telemetry(self, now_ms):
         # ---- 变频器 ----
@@ -1301,7 +1622,10 @@ class App(object):
         # 由回读校准，不影响本拍推送出去的数据自洽性。
         if getattr(self, "button_station", None) is not None:
             try:
-                self.button_station.poll(now_ms)
+                # [自动模式才写灯 2026-11-10] 手动模式下灯归人工：自动逻辑
+                # 每拍写灯会把人工点的灯覆盖回去（现场「手动模式无法单独
+                # 控制按钮灯」的根因）。详见 buttons.ButtonStation.poll。
+                self.button_station.poll(now_ms, self.is_auto())
             except Exception as exc:                    # noqa: BLE001
                 # 按钮组异常不能把整个 tick 带死（自动/手动都要继续跑）
                 self._log("按钮组：本拍处理失败 %s: %s"
@@ -1339,8 +1663,11 @@ class App(object):
             text = "%s（%s）" % (_ALARM_KIND_NAMES.get(
                 alarm.get(proto.KEY_ALARM_KIND), "?"),
                 alarm.get(proto.KEY_ALARM_TEXT))
-            self._log("阀告警：%s → %s"
-                      % (alarm.get(proto.KEY_ALARM_VALVE_NAME), text))
+            # 类别 = alarm（阀超时/无反馈；与 C 侧 hsfAppEventLog("alarm",...)
+            # 的"阀告警 路%d..."同口径：alarms 表与 logs 表同一事件两处可查）。
+            self._log_with_store("阀告警：%s → %s"
+                                 % (alarm.get(proto.KEY_ALARM_VALVE_NAME), text),
+                                 proto.LOG_CAT_ALARM)
             # 告警事件入库（kind=来源分类；写失败不影响推送与采集）。
             self.store.insert_alarm("valve",
                                     alarm.get(proto.KEY_ALARM_VALVE_NAME),
@@ -1427,6 +1754,12 @@ class App(object):
 
         [ntu 发 ×100 的整数] 与模拟量工程值同一口径（定点整数），避免
         浮点在 BSON 上的精度争议。客户端 ÷100 显示两位小数。
+
+        [温度随帧下发 —— 2026-11-10 改] 带温度的机型（ZHEYI-5100ZDY 站3）
+        一帧 0x0000×4 同刻读出浊度+温度，界面要显示就得让它过线，故给
+        "v{i}_temp"（℃ ×100，与 ntu 同口径）。**缺键 = 该机型没有温度**
+        （站1 WZT-701A 只有 2 个寄存器、无温度）——不给 0℃，客户端显示
+        "--"。旧口径「温度只进设备层日志、不进推送帧」已作废。
         """
         doc = {proto.KEY_COUNT: len(self.turbidity)}
         for idx, tm in enumerate(self.turbidity):
@@ -1437,6 +1770,10 @@ class App(object):
             if tm.online:
                 doc[prefix + proto.KEY_TURB_NTU] = int(round(tm.ntu * 100.0))
                 doc[prefix + proto.KEY_TURB_RAW] = int(tm.raw)
+                # 温度只有"这台表带温度且这一拍读到了"才有值
+                if tm.temperature is not None:
+                    doc[prefix + proto.KEY_TURB_TEMP] = int(
+                        round(tm.temperature * 100.0))
         doc[proto.KEY_STALE_MS] = self.cfg.turbidity_stale_ms
         return bson.encode(doc)
 
@@ -1688,7 +2025,10 @@ class App(object):
         不该知道"怎么发告警/健康"。app 在这里接住状态变化，统一走既有
         日志与健康通道，两边职责不混。
         """
-        self._log("按钮组：%s → %s" % (old, new))
+        # 类别 = ctrl：现场操作柱的按键迁移（启动/停止/急停/复位）属于控制
+        # 输入事件，与远程控制命令同一类，运维审计时要在一条时间线上看。
+        self._log_with_store("按钮组：%s → %s" % (old, new),
+                             proto.LOG_CAT_CTRL)
         # 状态变化必然影响健康表（健康里带按钮组这一条），打脏让下一拍重算
         self._health_dirty = True
 
@@ -1931,12 +2271,21 @@ class App(object):
                                                self.cfg.flowmeter_unit_id, "b")))
         # ---- 浊度仪（逐台）----
         for idx, tm in enumerate(self.turbidity):
-            health, err, online, text = tm.health(
-                now_ms, self.cfg.turbidity_stale_ms)
             # [类别必须是"水质"] 曾经误用 KIND_TEMPHUM，首页"类型"列把两台
             # 浊度仪显示成"温湿度"，现场会以为是电箱里的温湿度变送器。
             unit = (self.cfg.turbidity_unit_ids[idx]
                     if idx < len(self.cfg.turbidity_unit_ids) else "?")
+            if not turbidity_enabled(self.cfg, idx):
+                # [逐台开关 2026-11-10] 停采的台明确报"已停用"，别伪装成
+                # 掉线（会误导现场去查接线）。
+                entries.append(HealthEntry("浊度仪%d" % (idx + 1),
+                                           proto.KIND_WATER, 0,
+                                           proto.HEALTH_OFFLINE, 0, False, 0,
+                                           "已停用",
+                                           self._addr_rtu(unit, "b")))
+                continue
+            health, err, online, text = tm.health(
+                now_ms, self.cfg.turbidity_stale_ms)
             entries.append(HealthEntry("浊度仪%d" % (idx + 1),
                                        proto.KIND_WATER, 0,
                                        health, err, online, 0, text,
@@ -1982,7 +2331,7 @@ class App(object):
         # ---- 电磁阀组（一个条目，含几路故障的摘要）----
         if self.valve_bank is not None:
             health, online, text = self.valve_bank.health_summary(now_ms)
-            entries.append(HealthEntry("电磁阀组", proto.KIND_VALVE, 0,
+            entries.append(HealthEntry("电动球阀组", proto.KIND_VALVE, 0,
                                        health, 0, online, 0, text,
                                        self._valve_addr()))
         return entries
@@ -2094,8 +2443,12 @@ class App(object):
         # ---- 闸1：会话总数上限（0=不限）----
         max_sessions = int(getattr(self.cfg, "login_max_sessions", 0) or 0)
         if max_sessions > 0 and self.server.session_count() >= max_sessions:
-            self._log("登录策略：拒绝 %s（会话数已达上限 %d，当前 %d）"
-                      % (user_name, max_sessions, self.server.session_count()))
+            # 三条策略拒绝都是 auth 类（与 C 侧"登录拒绝留痕"同分类）：
+            # 账户审计要在日志页 category="auth" 下看到完整时间线。
+            self._log_with_store("登录策略：拒绝 %s（会话数已达上限 %d，当前 %d）"
+                                 % (user_name, max_sessions,
+                                    self.server.session_count()),
+                                 proto.LOG_CAT_AUTH)
             return True
         # ---- 闸2：匿名未开放 → 拒绝未宣告认证的会话 ----
         if not getattr(self.cfg, "login_allow_anonymous", True):
@@ -2105,8 +2458,9 @@ class App(object):
             except AttributeError:
                 declared = True          # 无该接口的会话对象：不拦（保守放行）
             if not declared:
-                self._log("登录策略：拒绝 %s（匿名登录未开放：会话未宣告认证）"
-                          % user_name)
+                self._log_with_store(
+                    "登录策略：拒绝 %s（匿名登录未开放：会话未宣告认证）"
+                    % user_name, proto.LOG_CAT_AUTH)
                 return True
         # ---- 闸3：同账并发（现状维持：root 单会话）----
         if getattr(self.cfg, "login_allow_concurrent", False):
@@ -2117,8 +2471,9 @@ class App(object):
             if other is session or not other.is_ready():
                 continue
             if other.auth_user == proto.DEFAULT_ROOT_NAME:
-                self._log("登录策略：拒绝 %s（该账户已登录，不允许同时在线）"
-                          % user_name)
+                self._log_with_store(
+                    "登录策略：拒绝 %s（该账户已登录，不允许同时在线）"
+                    % user_name, proto.LOG_CAT_AUTH)
                 return True
         return False
 
@@ -2147,6 +2502,7 @@ class App(object):
             proto.CMD_CONFIG_GET: self._h_config_get,
             proto.CMD_CONFIG_SET: self._h_config_set,
             proto.CMD_HISTORY_PAGE: self._h_history_page,
+            proto.CMD_LOG_PAGE: self._h_log_page,
         }.get(msg_code)
         if handler is None:
             # 未知命令必须回否定应答：不发则客户端空等到超时（观感「服务端死了」）。
@@ -2173,6 +2529,11 @@ class App(object):
     async def _h_vfd_control(self, session, request_id, msg_code, payload):
         # 1) 自动模式闸（最前置：连角色都不看）
         if self.is_auto():
+            # 类别 = ctrl（拒绝留痕：与 C 侧 hsfAppControlGate 的
+            # "控制命令 0x%04X 被拒（自动运行中…）"同文案同分类）。
+            self._log_with_store(
+                "控制命令 0x%04X 被拒（自动运行中：远程控制已被禁用）"
+                % msg_code, proto.LOG_CAT_CTRL)
             await self._reply(session, request_id, msg_code, False,
                               "自动运行中：远程控制已被禁用（现场切换到手动后可用）")
             return
@@ -2277,9 +2638,24 @@ class App(object):
             ok, err = await self.vfd.apply_control(op, reverse, hz, rpm,
                                                    value, index)
         except Exception as exc:                        # noqa: BLE001
+            # 类别 = ctrl：写入异常也是"控制被拒"的一种。
+            self._log_with_store(
+                "变频器控制 %s：被拒（写入异常 %s）"
+                % (_VFD_OP_NAMES.get(op, "op%d" % op),
+                   type(exc).__name__), proto.LOG_CAT_CTRL)
             await self._reply(session, request_id, msg_code, False,
                               "设备写入失败：%s" % exc)
             return
+        # [控制受理/拒绝留痕 = ctrl] 5) 各类闸门通过后的**真实结果**。
+        # [为什么跳过 op=JOG] 点动手持每 200ms 一帧心跳，逐帧记会把日志页
+        # 冲满；点动的开始/释放已由 _jog_touch/_jog_release 各记一条。
+        if op != proto.OP_JOG:
+            self._log_with_store(
+                "变频器控制 %s：%s%s"
+                % (_VFD_OP_NAMES.get(op, "op%d" % op),
+                   "已受理" if ok else "被拒",
+                   "" if ok else "（%s）" % (err or "设备写入失败")),
+                proto.LOG_CAT_CTRL)
         # 6) 点动手持心跳
         if op == proto.OP_JOG and ok:
             self._jog_touch(reverse)
@@ -2369,6 +2745,10 @@ class App(object):
         DO 是驱动现场执行器的输出，安全等级与控制变频器相同，不另开口子。
         """
         if self.is_auto():
+            # 类别 = ctrl（与 C 侧 hsfAppControlGate 的拒绝留痕同分类）。
+            self._log_with_store(
+                "控制命令 0x%04X 被拒（自动运行中：远程控制已被禁用）"
+                % msg_code, proto.LOG_CAT_CTRL)
             await self._reply(session, request_id, msg_code, False,
                               "自动运行中：远程控制已被禁用（现场切换到手动后可用）")
             return
@@ -2393,14 +2773,25 @@ class App(object):
         if proto.KEY_MASK in doc or proto.KEY_VALUES in doc:
             values = doc.get(proto.KEY_MASK, doc.get(proto.KEY_VALUES, 0))
             ok, err = await dev.write_group(values)
+            log_text = ("数字量整组写 dev=%d mask=0x%08X：%s%s"
+                        % (index, int(values or 0) & 0xFFFFFFFF,
+                           "已受理" if ok else "被拒",
+                           "" if ok else "（%s）" % (err or "写入失败")))
         elif proto.KEY_DO in doc:
             channel = int(doc.get(proto.KEY_DO, 0) or 0)
             on = bool(doc.get(proto.KEY_ON, False))
             ok, err = await dev.write_do(channel, on)
+            log_text = ("数字量控制 dev=%d 通道%d→%d：%s%s"
+                        % (index, channel, 1 if on else 0,
+                           "已受理" if ok else "被拒",
+                           "" if ok else "（%s）" % (err or "写入失败")))
         else:
             await self._reply(session, request_id, msg_code, False,
                               "控制载荷缺 do 或 mask 字段")
             return
+        # 类别 = ctrl（DO 是执行器输出，误动作要可追溯；与 C 侧
+        # "数字量整组写…已受理/被拒" 逐字同文案同分类）。
+        self._log_with_store(log_text, proto.LOG_CAT_CTRL)
         await self._reply(session, request_id, msg_code, ok, err or None,
                           extra={proto.KEY_DEV: index,
                                  proto.KEY_DO: dev.do_mask()})
@@ -2432,6 +2823,10 @@ class App(object):
                               "电磁阀未装配")
             return
         if self.is_auto():
+            # 类别 = ctrl（拒绝留痕，与其它控制命令同一口径）。
+            self._log_with_store(
+                "控制命令 0x%04X 被拒（自动运行中：远程控制已被禁用）"
+                % msg_code, proto.LOG_CAT_CTRL)
             await self._reply(session, request_id, msg_code, False,
                               "自动运行中：远程控制已被禁用（现场切换到手动后可用）")
             return
@@ -2489,7 +2884,9 @@ class App(object):
                 await devices.read_fresh(tm, now)
             except Exception as exc:                    # noqa: BLE001
                 # 单台失败不影响另一台（真实现场常有一台在修）
-                self._log("%s 现读失败：%s" % (tm.name, exc))
+                # 类别 = alarm：485 读失败（通信故障）。
+                self._log_with_store("%s 现读失败：%s" % (tm.name, exc),
+                                     proto.LOG_CAT_ALARM)
         await session.send_response(request_id, msg_code,
                                     self.encode_turbidity())
 
@@ -2536,6 +2933,10 @@ class App(object):
                               "进水泵未装配")
             return
         if self.is_auto():
+            # 类别 = ctrl（拒绝留痕，与其它控制命令同一口径）。
+            self._log_with_store(
+                "控制命令 0x%04X 被拒（自动运行中：远程控制已被禁用）"
+                % msg_code, proto.LOG_CAT_CTRL)
             await self._reply(session, request_id, msg_code, False,
                               "自动运行中：远程控制已被禁用（现场切换到手动后可用）")
             return
@@ -2804,6 +3205,76 @@ class App(object):
         })
 
     # ==================================================================
+    #                      运行日志分页读取（0x0119）
+    # ==================================================================
+    async def _h_log_page(self, session, request_id, msg_code, payload):
+        """分页读运行日志：{"offset","limit","beforeTs"?,"loTs"?,"hiTs"?,
+        "category"?,"kw"?}。
+
+        [为什么补这个命令 2026-11-09] C 客户端的「日志」页走 0x0119；本
+        服务端原先**没有实现** ⇒ C 客户端日志页永远停在"读取中"、一条都
+        看不到（跨端缺陷）。
+
+        [口径] 与 C 侧逐字对齐：应答 {"ok","err"?,"total","offset","limit",
+        "rows":[{ts,category,text}]}；时间 DESC 取页、页内正序。
+
+        [类别 2026-11-09] 老库经 `_migrate_logs_category` 已补出
+        `logs.category` 列；写入侧 `_log_with_store(msg, cat)` 按**调用点
+        语义**给类别（conn/ctrl/alarm/auto/auth；其余 sys）。故本处**如实
+        回类别并支持精确过滤**——此前硬编码空串导致 C 客户端「类型」列
+        全是空白、按类别筛选恒空（跨端缺陷）。
+        """
+        doc = {}
+        try:
+            doc = bson.decode(payload) if payload else {}
+        except ValueError:
+            doc = {}
+
+        def _int(key, default=None):
+            value = doc.get(key)
+            if value is None:
+                return default
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        offset = max(0, _int(proto.HIST_KEY_OFFSET, 0) or 0)
+        limit = max(1, min(proto.HISTORY_PAGE_MAX,
+                           _int(proto.HIST_KEY_LIMIT,
+                                proto.HISTORY_PAGE_DEFAULT)
+                           or proto.HISTORY_PAGE_DEFAULT))
+        before_ts = _int(proto.HIST_KEY_BEFORE_TS)
+        lo_ts = _int(proto.HIST_KEY_LO_TS)
+        hi_ts = _int(proto.HIST_KEY_HI_TS)
+        kw = str(doc.get(proto.HIST_KEY_KW) or "")[:128]
+        # 类别精确过滤：键字面 "category"（与 C 侧 HSF_KEY_LOG_CATEGORY 同字面）；
+        # 空串/缺省 = 全部类别（不过滤）。
+        category = str(doc.get(proto.LOG_KEY_CATEGORY) or "")[:32]
+        rows, window_total = self.store.query_logs_page(
+            offset=offset, limit=limit, before_ms=before_ts, lo_ms=lo_ts,
+            hi_ms=hi_ts, kw=kw or None, category=category or None)
+        payload_rows = []
+        for row in rows:
+            payload_rows.append({
+                proto.LOG_KEY_TS: int(row[0] or 0),
+                proto.LOG_KEY_CATEGORY: str(row[1] or ""),
+                proto.LOG_KEY_TEXT: str(row[2] or ""),
+            })
+        await self._reply(session, request_id, msg_code, True, extra={
+            proto.HIST_KEY_TOTAL: int(window_total),
+            # [count 2026-11-09 补契约] C 端 0x0119 应答含 count（页内行数，
+            # HSF_KEY_LOG_COUNT，见 HsfServerApp.c 的「count 补契约」段）；
+            # 本端此前只回 total/offset/limit/rows ⇒ 两端应答键集不一致，
+            # 观测对账（total vs 本页行数）在 Python 服务端上做不了。
+            # 客户端实际用 len(rows)，此键纯供对账，故按本页实际行数回。
+            proto.LOG_KEY_COUNT: len(payload_rows),
+            proto.HIST_KEY_OFFSET: int(offset),
+            proto.HIST_KEY_LIMIT: int(limit),
+            proto.HIST_KEY_ROWS: payload_rows,
+        })
+
+    # ==================================================================
     #                      点动手持看门狗
     # ==================================================================
     def _jog_slot(self):
@@ -2823,7 +3294,10 @@ class App(object):
         """收到点动帧：刷新看门狗（首次进入点动态时打日志）。"""
         watch = self._jog_slot()
         if not watch.active:
-            self._log("点动开始（%s）" % ("反转" if reverse else "正转"))
+            # 类别 = ctrl（点动是控制动作；每 200ms 的心跳不重复记，只在
+            # 进入点动态这一拍留痕 —— 否则日志页被心跳冲满）。
+            self._log_with_store("点动开始（%s）" % ("反转" if reverse else "正转"),
+                                 proto.LOG_CAT_CTRL)
         watch.active = True
         watch.reverse = reverse
         watch.last_ms = self._now_ms()
@@ -2843,9 +3317,13 @@ class App(object):
         try:
             await self.vfd.send_command(devices.VfdM512.CMD_DECEL_STOP)
         except Exception as exc:                        # noqa: BLE001
-            self._log("点动释放停机失败：%s" % exc)
+            # 类别 = ctrl：控制动作执行失败（与受理/拒绝同一类留痕）。
+            self._log_with_store("点动释放停机失败：%s" % exc,
+                                 proto.LOG_CAT_CTRL)
             return
-        self._log("点动释放 → 停机%s" % ("" if was_active else "（无活动点动）"))
+        self._log_with_store("点动释放 → 停机%s"
+                             % ("" if was_active else "（无活动点动）"),
+                             proto.LOG_CAT_CTRL)
 
     def _jog_watchdog(self, now_ms):
         """超时未收到点动帧 → 自动停机（安全兜底）。
@@ -2860,7 +3338,10 @@ class App(object):
             return
         watch.active = False
         idle = now_ms - watch.last_ms
-        self._log("点动心跳超时（%dms 无帧）→ 自动停机" % idle)
+        # 类别 = alarm：点动心跳超时是安全看门狗动作（链路断了设备还在转），
+        # 运维必须能在告警时间线上看到这次兜底停机。
+        self._log_with_store("点动心跳超时（%dms 无帧）→ 自动停机" % idle,
+                             proto.LOG_CAT_ALARM)
         if self.vfd is not None:
             asyncio.ensure_future(self._safe_stop())
 
@@ -2868,4 +3349,6 @@ class App(object):
         try:
             await self.vfd.send_command(devices.VfdM512.CMD_DECEL_STOP)
         except Exception as exc:                        # noqa: BLE001
-            self._log("点动超时自动停机失败：%s" % exc)
+            # 类别 = alarm：安全兜底动作失败（比"停机成功"严重一档）。
+            self._log_with_store("点动超时自动停机失败：%s" % exc,
+                                 proto.LOG_CAT_ALARM)
