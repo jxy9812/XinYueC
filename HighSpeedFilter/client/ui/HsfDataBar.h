@@ -180,6 +180,19 @@ void HsfDataBar_setMaxPoints(XWidget* bar, int points);
 void HsfDataBar_attachRow2(XWidget* bar, XWidget** widgets, int count,
                            XWidget** rightWidgets, int rightCount);
 
+/**
+ * @brief 下拉「当前选项可读」下限：当前字体实测最宽选项文本 + 箭头列/
+ *        框边，与 floorW 取大（页级下拉共用工具条同款机制，2026-11-11）。
+ * @param combo 目标下拉（借用；可为 NULL → 回落 floorW）。
+ * @param floorW 档位基准宽（实测不足时兜底）。
+ * @return 建议最小宽（像素）。
+ * @details 页面经 HsfDataBar_attachRow2 挂进行 2 的自有下拉（如历史页
+ *          「每页条数」）不归 HsfDataBar_adapt 管，窄档收紧时按本入口
+ *          量同一套下限，所选值不再被省略号截断（「20 条」→「20…」，
+ *          1024x768 走查实锅）。口径详见 HsfDataBar.c 同名静态实现。
+ */
+int HsfDataBar_comboMinWidth(const XComboBox* combo, int floorW);
+
 /* [无 detachRow2] 曾有的 HsfDataBar_detachRow2 全库零调用，已删（详见
  * HsfDataBar.c 同位置注记）。挂接经 XLayout_linkItem 把控件 reparent 成
  * 工具条的子对象，之后随工具条级联销毁，不存在"控件还在、需先摘条目"

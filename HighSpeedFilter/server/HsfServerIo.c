@@ -528,13 +528,21 @@ static void hsfIoCollectFromIni(HsfCollectConfig* out)
                                        out->turbidityPollMs)
             : out->turbidityPollMs;
     /* [逐台开关 2026-11-10] 两台浊度是两台独立设备：缺逐台键回落共同开关
-     * （旧配置/旧客户端只写 turbidityEnabled），再回落编译期宏。 */
+     * （旧配置/旧客户端只写 turbidityEnabled），再回落「路 B 是否装配」。
+     * [模拟模式跟随装配 2026-11-10] 路 B 在模拟模式下被强制装配（见
+     * HsfServerIo_start 路 B 注释）：从站对象都建出来了，开关缺省若仍按
+     * 编译期宏（桌面构建=0）走，两台浊度缺省恒「停」⇒ 健康快照恒
+     * 「数据过期·无有效数据」（2026-11-10 桌面 --sim 实锅：同一条
+     * 485-B 上流量计无运行时开关照采「正常」、两台浊度停采「过期」，
+     * 同屏三种口径）。缺省改跟装配事实（宏或模拟模式），与 Python
+     * 模拟器全采口径对齐；INI 显式覆盖仍然最高。 */
     {
+        const bool bMounted = (HSF_BUS_B_ENABLED || s_ioSimMode) != 0;
         const bool allOn =
             HsfServerSettings_contains("collect/turbidityEnabled")
                 ? (HsfServerSettings_getInt("collect/turbidityEnabled",
-                                            HSF_BUS_B_ENABLED) != 0)
-                : (HSF_BUS_B_ENABLED != 0);
+                                            bMounted ? 1 : 0) != 0)
+                : bMounted;
         out->turbidity1Enabled =
             HsfServerSettings_contains("collect/turbidity1Enabled")
                 ? (HsfServerSettings_getInt("collect/turbidity1Enabled",

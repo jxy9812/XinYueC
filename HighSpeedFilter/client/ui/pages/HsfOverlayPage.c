@@ -84,7 +84,12 @@
  *     本应用的出厂默认——主窗建层时显式改过（见 HsfUi.c）。
  * 「复位默认」按钮也复位到这套值（此前复位只清采样数据，开关一个没复位）。
  */
-#define OV_DEFAULT_VISIBLE      true
+/* [缺省改为隐藏 2026-11-11 多尺寸走查] 悬浮层是诊断工具，缺省右下角
+ * 在小窗（720x720 / 600x960）恰好压住变频器页右列遥测卡（母线电压/
+ * 输出转矩数值）——生产触屏不该默认让 FPS 面板占掉数据区。总开关
+ * （Overlay/Visible）仍在设置页，打开后行为/位置记忆完全不变；
+ * 「复位默认」也回到隐藏。 */
+#define OV_DEFAULT_VISIBLE      false
 #define OV_DEFAULT_FPS          true
 #define OV_DEFAULT_FRAME_TIME   true
 #define OV_DEFAULT_SYS_STAT     true

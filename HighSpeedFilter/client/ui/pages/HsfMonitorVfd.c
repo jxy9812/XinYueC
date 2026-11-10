@@ -107,8 +107,10 @@ static int vfdPx(int px)
  *           给定组末尾的可伸展空隙）。
  * @note 以上按 100% 字号计。标签定宽随 Page5 字号折算（vfdPx(72)，
  *       150% = 108），单行预算同比 +36；1280 窗口行内可用 1048，仍够
- *       （150% 预算 996）。字号再放大时两排回退阈值仍按 1024 判，页宽
- *       不足时由 adapt 翻两排兜底。
+ *       （150% 预算 996）。字号再放大时两排回退阈值按**同一折算**判
+ *       （adapt 里 vfdPx(VFD_CTRL_MIN_ROW_W)，50~200%），页宽不足时由
+ *       adapt 翻两排兜底——预算与阈值同一口径，大字号档不再出现
+ *       「单行预算放大、阈值不动」的挤压窗口。
  * @note [为什么阈值比最小宽高 16px] 页根被滚动区按**布局最小宽**兜底
  *       （XScrollArea.c:xsa_updateWidgetGeometry `minHint.width > w`）。
  *       若阈值等于页根最小宽，窄窗下页根会被钉在"刚好等于阈值"的宽度，
@@ -136,6 +138,15 @@ static int vfdPx(int px)
 #define VFD_COLOR_GAUGE      0xFF1F4E79u  /**< 仪表进度（品牌蓝）。 */
 #define VFD_COLOR_TEXT       0xFF1A2733u  /**< 主文本。 */
 #define VFD_COLOR_TEXT_DIM   0xFF5A6572u  /**< 弱文本。 */
+
+/* [随主题取套 2026-11-11 双主题走查] 页面自绘面/进度弧按当前主题取
+ * 亮/深套：亮套=上表现行值零改动；深套取 HsfTheme.h 深色令牌（进度弧
+ * 翻强调线 #4DA3FF——品牌深蓝 #1F4E79 落深面板仅 1.6:1，非文本件
+ * ≥3:1 不达）。横幅自带深底白字（0xFF24313F），两主题恒定不经此路。 */
+static uint32_t vfdThemeClr(uint32_t light, uint32_t dark)
+{
+    return HsfTheme_isDarkSkin() ? dark : light;
+}
 
 /**
  * @brief 运行状态 → 横幅底色/文本（对齐 Python RUN_STATE_TEXT + 配色口径）。
@@ -250,6 +261,9 @@ typedef struct HsfVfdGaugeWidget {
     XImage* m_staticCache;              /**< 静态层（NULL=未建；随画布析构释放）。 */
     int     m_cacheW;                   /**< 缓存宽（0=失效）。 */
     int     m_cacheH;                   /**< 缓存高。 */
+    bool    m_cacheDark;                /**< [随主题 2026-11-11] 缓存渲染时的
+         *  主题（深色盘取色入图）；与当前主题不符即重建（尺寸不变时旧盘
+         *  缓存会残留——切主题只触发重绘不触发 resize，2026-11-11 走查）。 */
 } HsfVfdGaugeWidget;
 
 /**
@@ -550,12 +564,20 @@ static void vfdGaugeRenderStatic(HsfVfdGaugeWidget* gauge, int w, int h,
                       (const XRect*)&(XRect){0, 0, w, h}, 0x00000000u);
     XPainter_setCompositionMode(&painter, XPainterCompositionMode_SourceOver);
     XPainter_setRenderHint(&painter, XPainterRenderHint_Antialiasing, true);
-    /* 底盘（整圆）+ 底轨带（270°：135° 起、顺时针 270°）。 */
-    vfdFillCircle(&painter, cx, cy, r, 0xFFF7F9FB);
+    /* 底盘（整圆）+ 底轨带（270°：135° 起、顺时针 270°）。
+     * [随主题 2026-11-11 双主题走查] 底盘/底轨原是常量：深色盘下白盘
+     * 仍在，而盘心数值标签走调色板 WindowText 翻亮 ⇒ #E8EAED 落白盘
+     * ≈1.2:1（380.0 不可读，走查实锅）。深套=面板 #23282F（与 QSS
+     * 控件底同源）+ 软描边 #39414C——盘心亮字落深盘 12.3:1。 */
+    vfdFillCircle(&painter, cx, cy, r,
+                  vfdThemeClr(0xFFF7F9FB, HSF_COLOR_PANEL_DARK));
     vfdFillArcBand(&painter, cx, cy, bandInner, bandOuter, 135.0, -270.0,
-                   VFD_COLOR_TRACK);
+                   vfdThemeClr(VFD_COLOR_TRACK, HSF_COLOR_SOFT_BORDER_DARK));
     XPainter_end(&painter);
     XPainter_deinit(&painter);
+    /* 缓存键补主题维（只在成功渲染后记账）：主题切换只触发重绘不触发
+     * resize，旧键（仅尺寸）会让亮盘缓存残留到深色页（双向同理）。 */
+    gauge->m_cacheDark = HsfTheme_isDarkSkin();
 }
 
 /**
@@ -583,7 +605,9 @@ static void vfdGaugePaint(XWidget* self, XEvent* event, double value, double max
     int bandOuter = (r > 6) ? r - 4 : r;
     int bandInner = (bandOuter > 10) ? bandOuter - 9 : bandOuter / 2;
     double frac = (maxV > 0.0) ? (value / maxV) : 0.0;
-    uint32_t arcColor = faultColor ? VFD_COLOR_FAULT : VFD_COLOR_GAUGE;
+    uint32_t arcColor = faultColor
+        ? vfdThemeClr(VFD_COLOR_FAULT, HSF_COLOR_STATE_FAULT_FILL_DARK)
+        : vfdThemeClr(VFD_COLOR_GAUGE, HSF_COLOR_ACCENT_DARK);
 
     (void)event;
     if (frac < 0.0) frac = 0.0;
@@ -591,8 +615,9 @@ static void vfdGaugePaint(XWidget* self, XEvent* event, double value, double max
 
     image = XWidget_paintImage(self);
     if (!image) return;
-    /* 静态层按尺寸惰性重建（尺寸不变则复用）。 */
-    if (gauge->m_cacheW != w || gauge->m_cacheH != h)
+    /* 静态层按「尺寸+主题」惰性重建（两者都不变才复用）。 */
+    if (gauge->m_cacheW != w || gauge->m_cacheH != h ||
+        gauge->m_cacheDark != HsfTheme_isDarkSkin())
         vfdGaugeRenderStatic(gauge, w, h, cx, cy, r, bandOuter, bandInner);
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -1893,7 +1918,8 @@ static void vfdInitGauge(HsfVfdGauge* g, XWidget* parent, const char* title,
     XLabel_setText_2(&g->m_title, title);
     XLabel_setTextPixelSize(&g->m_title, vfdPx(13));
     XLabel_setAlignment(&g->m_title, XAlignment_HCenter | XAlignment_VCenter);
-    XWidget_setForegroundRole((XWidget*)&g->m_title, XPaletteColorRole_Mid);
+    /* 仪表标题：主题感知次级文本（原 Mid 落深底不可读，走查实锅）。 */
+    HsfTheme_applySecondaryText((XWidget*)&g->m_title);
 
     XLabel_init(&g->m_value, &g->m_canvas.m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&g->m_value);
@@ -1912,7 +1938,7 @@ static void vfdInitGauge(HsfVfdGauge* g, XWidget* parent, const char* title,
     XLabel_setText_2(&g->m_unit, unit);
     XLabel_setTextPixelSize(&g->m_unit, vfdPx(12));
     XLabel_setAlignment(&g->m_unit, XAlignment_HCenter | XAlignment_VCenter);
-    XWidget_setForegroundRole((XWidget*)&g->m_unit, XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&g->m_unit);
 
     vfdGaugeRelayout(g);
     XWidget_show((XWidget*)&g->m_title);
@@ -2461,7 +2487,7 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     XLabel_init(&self->m_hint, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_hint);
     XLabel_setTextPixelSize(&self->m_hint, vfdPx(12));
-    XWidget_setForegroundRole((XWidget*)&self->m_hint, XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&self->m_hint);
     /* [宽度上限 = 单行预算的封顶项 2026-11-08] 提示是行末唯一按文本量宽
      * 的控件：模式文案「服务端自动运行中：远程控制已禁用」16 字 × 12px
      * ≈ 192；不封顶时更长的应答错误会顶宽整行，把方向下拉/按钮挤出窗口。
@@ -2641,8 +2667,14 @@ void HsfMonitorVfd_adapt(XWidget* page, bool compact)
      * 阈值高于页根最小宽 1008：页根被滚动区按布局最小宽兜底，若阈值等于
      * 它，窄窗下 adapt 只会读到"刚好等于阈值"的宽度、回退永不触发——
      * 详见 VFD_CTRL_MIN_ROW_W 的注。宽未知（0，建页当帧）按宽档走：
-     * 几何定下来后 adapt 会按页宽重跑。 */
-    ctrlTwoLine = compact || (pw > 0 && pw < VFD_CTRL_MIN_ROW_W);
+     * 几何定下来后 adapt 会按页宽重跑。
+     * [阈值随字号折算 2026-11-10] 单行预算里「频率给定」定宽（vfdPx(72)）
+     * 与行末提示字号都随 Page5 字号折算，预算同比放大而阈值不动 ⇒ 大字号
+     * 档页宽刚好过阈值的窗口单行放不下，行内挤压把数字框压到最小宽以下
+     * （四位给定值被裁——本页截断的第二成因，与框架 sizeHint 缺口独立）。
+     * 阈值按同一折算走（vfdPx 口径=整阈值×字号百分比，50~200%），100%
+     * 恒等于原值、行为零变化。 */
+    ctrlTwoLine = compact || (pw > 0 && pw < vfdPx(VFD_CTRL_MIN_ROW_W));
     /* 宽档单行（LeftToRight）；窄档竖向两排：给定组一行、操作组一行
        ——控件不搬家，只翻容器方向。 */
     XBoxLayout_setDirection(&self->m_ctrlRow,

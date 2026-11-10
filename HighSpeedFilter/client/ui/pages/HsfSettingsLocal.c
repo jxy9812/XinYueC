@@ -340,7 +340,7 @@ XWidget* HsfSettingsLocal_create(XWidget* parent, HsfMenuNavFn navFn,
             XLabel_init(hint, &self->m_base, 0);
             HsfTheme_applyDefaultFont((XWidget*)hint);
             XLabel_setTextPixelSize(hint, 12);
-            XWidget_setForegroundRole((XWidget*)hint, XPaletteColorRole_Mid);
+            HsfTheme_applySecondaryText((XWidget*)hint);
             XLabel_setWordWrap(hint, true);
             XLabel_setText_2(hint,
                 "只影响本机轮询（历史/日志/报警/远端设置页），不改变服务端推送节拍；"

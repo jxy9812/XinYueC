@@ -27,6 +27,7 @@
 #include "XComboBox.h"
 #include "XLabel.h"
 #include "XLineEdit.h"
+#include "XPainter.h" /* adapt：说明行保高按标签自字实测行高。 */
 #include "XProgressBar.h"      /* 存储容量占用条（对齐 Python 客户端）。 */
 #include "XPushButton.h"
 #include "XSpinBox.h"
@@ -635,13 +636,13 @@ static void srTimerCb(void* userData, XTimerData* timer)
 
 /* ==================== 创建 ==================== */
 
-/** @brief 建一个说明标签（小字、自动换行）。 */
+/** @brief 建一个说明标签（小字、自动换行；主题感知次级文本色）。 */
 static void srInitHint(XLabel* label, XWidget* parent, const char* text)
 {
     XLabel_init(label, parent, 0);
     HsfTheme_applyDefaultFont((XWidget*)label);
     XLabel_setTextPixelSize(label, 12);
-    XWidget_setForegroundRole((XWidget*)label, XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)label);
     XLabel_setWordWrap(label, true);
     XLabel_setText_2(label, text);
     XWidget_show((XWidget*)label);
@@ -1106,12 +1107,53 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
 void HsfSettingsRemote_adapt(XWidget* page, bool compact)
 {
     HsfSettingsRemote* self = (HsfSettingsRemote*)page;
+    /* 说明标签全集（wordWrap=true 的 prose 行；adapt 期按实测钉保高下限）。
+     * 注：局部数组取 self 成员地址，不能做成 static 初始化器（非常量）。 */
+    XLabel* const kHints[] = {
+        &self->m_modeHint,   &self->m_autoHint,
+        &self->m_conn,       &self->m_collectHint,
+        &self->m_policyHint, &self->m_storageUse,
+        &self->m_dbPath,     &self->m_loginHint,
+    };
+    int availW;
+    int i;
     if (!self) return;
     XLayout_setContentsMargins((XLayout*)&self->m_layout,
                                compact ? 8 : 16, compact ? 6 : 12,
                                compact ? 8 : 16, compact ? 6 : 12);
     XWidget_setMinimumWidth((XWidget*)&self->m_storePolicy,
                             compact ? 160 : 240);
+    /* [换行说明行保高 2026-11-11 走查] wordWrap 说明标签在窄档（600 竖档
+     * 等）会换到第 2 行，但布局对「自动换行」标签分配的高度不足其
+     * heightForWidth 应答（600x960 实测「…停止状态。」第 2 行整行被裁、
+     * 句号丢失；探针取证 label 实分 18px < hfw(584)=24）——框架布局链的
+     * 既有缺口（见下风险注）。这里用既有 _adapt 档位机制兜底：按实测判
+     * 「当前档会换行」（标签无换行宽 = minimumSizeHint().width > 可用宽）
+     * 才把最小高钉到 2 行（行高取标签自字实测，同 HsfDataHistory_adapt
+     * 的按实测口径）；宽档/不换行标签恢复 0（不松布局）。幂等：帧泵每轮
+     * 驱动，同值早退。
+     * 【框架根因待立 ticket】XBoxLayout 对 hfw 条目的几何分配与
+     * XScrollArea 两遍收敛的提示缓存交错时，自动换行标签实分高度可低于
+     * 其 hfw 应答（含硬 \n 标签不受影响——其 sizeHint 已含多行高）。 */
+    availW = XWidget_width(page) -
+             (compact ? 8 * 2 : 16 * 2);
+    if (availW < 1) availW = 1;
+    for (i = 0; i < (int)(sizeof(kHints) / sizeof(kHints[0])); ++i) {
+        XLabel* lb = kHints[i];
+        XSize noWrap;
+        XFont font;
+        int lineH;
+        int floorH = 0;
+        if (!lb) continue;
+        noWrap = XWidget_minimumSizeHint((XWidget*)lb);
+        if (noWrap.width > availW) {
+            font = XWidget_font((XWidget*)lb);
+            lineH = XPainter_textHeight(&font);
+            XClassDeinit(&font);
+            floorH = lineH * 2;
+        }
+        XWidget_setMinimumHeight((XWidget*)lb, floorH);
+    }
     XLayout_activate((XLayout*)&self->m_layout);
 }
 

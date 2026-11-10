@@ -9,10 +9,14 @@
 #include "HsfTitleBar.h"
 
 #include "HsfTheme.h"
+#include "XCommonStyle.h"
 #include "XDateTime.h"
 #include "XObject.h"
 #include "XPixmap.h"
 #include "XPainter.h"
+#include "XPalette.h" /* chrome 文本令牌钉自身盘 */
+#include "XColor.h"
+#include "XStringUtils.h"
 #include "XWidget_Protected.h"
 #include <stdio.h>
 #include <string.h>
@@ -59,6 +63,33 @@ static void hsfTitleFormatTime(char* buf, size_t size)
              XTime_second(&now.m_time));
 }
 
+/** @brief 标题栏文本钉 chrome 白令牌（自身盘 HighlightedText=白）。
+ *  @details [脱钩调色板 2026-11-11 双主题走查] 标题栏底=品牌蓝恒定
+ *           （HSF_COLOR_BRAND 不随主题翻），文字原先挂调色板
+ *           HighlightedText——旗舰深色盘把该角色定制成 #101820（语义=
+ *           「强调蓝上的文字」），落品牌蓝上 2.07:1（未登录/设备/模式/
+ *           时钟/温湿度全部发暗，走查实锅）。改按 HSF_COLOR_CHROME_TEXT
+ *           （两主题同值白，vs 品牌蓝 ≈8.4:1）钉自身盘，口径见
+ *           HsfTheme.h 该令牌注释。 */
+static void hsfTitlePinChromeText(XLabel* label)
+{
+    XPalette p;
+    XColor c;
+    const uint32_t argb = HSF_COLOR_CHROME_TEXT;
+    if (!label) return;
+    c = XColor_create_rgb((int)((argb >> 16) & 0xFFu),
+                          (int)((argb >> 8) & 0xFFu),
+                          (int)(argb & 0xFFu), 0xFF);
+    p = XWidget_palette((XWidget*)label);
+    XPalette_setColor(&p, XPaletteColorGroup_Active,
+                      XPaletteColorRole_HighlightedText, c);
+    XPalette_setColor(&p, XPaletteColorGroup_Inactive,
+                      XPaletteColorRole_HighlightedText, c);
+    XWidget_setPalette((XWidget*)label, &p);
+    XWidget_setForegroundRole((XWidget*)label,
+                              XPaletteColorRole_HighlightedText);
+}
+
 /** @brief 右对齐小标签（时钟/温湿度）：白字、鼠标穿透。 */
 static XLabel* hsfTitleMakeSideLabel(XWidget* bar, int pixelSize)
 {
@@ -70,8 +101,7 @@ static XLabel* hsfTitleMakeSideLabel(XWidget* bar, int pixelSize)
     XClassDeinit(&font);
     XLabel_setTextPixelSize(label, pixelSize);
     XLabel_setAlignment(label, XAlignment_Right | XAlignment_VCenter);
-    XWidget_setForegroundRole((XWidget*)label,
-                              XPaletteColorRole_HighlightedText);
+    hsfTitlePinChromeText(label);
     XWidget_setAttribute((XWidget*)label,
                          XWidgetAttribute_TransparentForMouseEvents, true);
     return label;
@@ -240,13 +270,40 @@ static void hsfTitleRelayout(HsfTitleBar* self)
         }
     }
 
-    /* 标题：☰ 区右侧 ~ 右侧块左侧，居中（右侧块宽度变化不影响居中）。 */
+    /* 标题：☰ 区右侧 ~ 右侧块左侧，居中（右侧块宽度变化不影响居中）。
+     * [窄栏省略号 2026-11-11 走查] 标题是本栏布局的弹性元素，600 宽窗
+     * 下被压得比文本窄，XLabel 按 Qt 口径放不下宁可裁切 ⇒ 两端半字形
+     * 硬裁（「4有机玻璃高速|」）。XLabel 的省略须由使用方按框架文档
+     * 出口 XCommonStyle_elideText 自理（XLabel.h:424 注）——这里按
+     * 可用宽做**中段省略**（保品牌头尾「PMMA…过滤器」），宽回涨自动
+     * 还原完整文本；同值早退避免重排每拍 setText。 */
     {
         int left = HSF_TITLE_ICON_W;
         int right = (x > left + 40) ? (x - gap) : (left + 40);
-        if (self->m_title)
+        int availW = right - left;
+        if (self->m_title) {
             XWidget_setGeometry((XWidget*)self->m_title, left, 0,
-                                right - left, barH);
+                                availW, barH);
+            if (self->m_titleFull[0]) {
+                XFont f = XWidget_font((XWidget*)self->m_title);
+                const XString* cur = XLabel_text(self->m_title);
+                const char* curTxt = cur ? XString_toUtf8(cur) : NULL;
+                if (XPainter_textWidth(&f, self->m_titleFull) > availW) {
+                    char elided[128];
+                    XCommonStyle_elideText(elided, (int)sizeof(elided),
+                                           self->m_titleFull,
+                                           2 /* ElideMiddle */,
+                                           availW, &f);
+                    if (curTxt == NULL ||
+                        XStrcmp(curTxt, elided) != 0)
+                        XLabel_setText_2(self->m_title, elided);
+                } else if (curTxt == NULL ||
+                           XStrcmp(curTxt, self->m_titleFull) != 0) {
+                    XLabel_setText_2(self->m_title, self->m_titleFull);
+                }
+                XClassDeinit(&f);
+            }
+        }
     }
 }
 
@@ -380,8 +437,7 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
         XLabel_setTextPixelSize(self->m_title, 16);
         XLabel_setAlignment(self->m_title,
                             XAlignment_HCenter | XAlignment_VCenter);
-        XWidget_setForegroundRole((XWidget*)self->m_title,
-                                  XPaletteColorRole_HighlightedText);
+        hsfTitlePinChromeText(self->m_title);
         XWidget_setAttribute((XWidget*)self->m_title,
                              XWidgetAttribute_TransparentForMouseEvents,
                              true);
@@ -457,7 +513,12 @@ void HsfTitleBar_refreshClock(HsfTitleBar* self)
 void HsfTitleBar_setTitle(HsfTitleBar* self, const char* utf8)
 {
     if (!self || !self->m_title) return;
+    /* [窄栏省略号母本 2026-11-11] 完整文本存栏内（m_titleFull），重排时
+       按可用宽中段省略（见 hsfTitleRelayout 标题块）。 */
+    snprintf(self->m_titleFull, sizeof(self->m_titleFull), "%s",
+             utf8 ? utf8 : "");
     XLabel_setText_2(self->m_title, utf8 ? utf8 : "");
+    hsfTitleRelayout(self); /* 新文本按当前可用宽立即重算省略态。 */
 }
 
 /** @brief 注册 ☰ 点击回调。 */

@@ -59,13 +59,29 @@ static int homePx(int px)
 
 /* ==================== 配色（与主题同源） ==================== */
 
-#define HOME_CLR_TEXT        0xFF1A1A1Au
-#define HOME_CLR_TEXT_DIM    0xFF5A6572u
-#define HOME_CLR_TITLE       0xFF1F4E79u
-#define HOME_CLR_OK          0xFF2E7D32u
-#define HOME_CLR_WARN        0xFFED6C02u
-#define HOME_CLR_FAULT       0xFFC62828u
-#define HOME_CLR_OFFLINE     0xFF757575u
+/* [深色主题令牌化 2026-11-11 双主题走查] 主页卡片/读数是**页面自绘面 +
+ * 文本**，旗舰深色盘挂上后白卡面不变、而跟随调色板的卡标题翻亮 ⇒
+ * (232,234,237) 落白底 1.21:1（8 张卡标题+「无数据」「0 台」等全中，
+ * 走查实锅）。现按 HsfTheme_isDarkSkin() 取亮/深两套：亮套字面量维持
+ * 现行值零改动（亮色走查达标，不为改而改）；深套取 HsfTheme.h 深色
+ * 令牌（面板/正文/次级/四态语义深套，取值登记见 HsfTheme.h）。宏展开
+ * 为函数调用：刷新每拍按当前主题取色，主题切换后下一拍即换套。 */
+static uint32_t homeThemeClr(uint32_t light, uint32_t dark)
+{
+    return HsfTheme_isDarkSkin() ? dark : light;
+}
+
+#define HOME_CLR_TEXT        homeThemeClr(0xFF1A1A1Au, HSF_COLOR_TEXT_DARK)
+#define HOME_CLR_TEXT_DIM    homeThemeClr(0xFF5A6572u, \
+                                          HSF_COLOR_TEXT_SECONDARY_DARK)
+#define HOME_CLR_OK          homeThemeClr(0xFF2E7D32u, \
+                                          HSF_COLOR_STATE_OK_DARK)
+#define HOME_CLR_WARN        homeThemeClr(0xFFED6C02u, \
+                                          HSF_COLOR_STATE_WARN_DARK)
+#define HOME_CLR_FAULT       homeThemeClr(0xFFC62828u, \
+                                          HSF_COLOR_STATE_FAULT_DARK)
+#define HOME_CLR_OFFLINE     homeThemeClr(0xFF757575u, \
+                                          HSF_COLOR_STATE_OFFLINE_DARK)
 
 /* 设备表观感（对齐 Python theme.TABLE_ROW_H 与 DataTable 的做法）。 */
 #define HOME_ROW_H           32   /**< 行高（px；Python theme.TABLE_ROW_H）。 */
@@ -120,8 +136,9 @@ static HsfStatBlock* hsfStatCreate(XWidget* parent, const char* caption,
     XLabel_init(&sb->m_caption, &sb->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&sb->m_caption);
     XLabel_setTextPixelSize(&sb->m_caption, homePx(12));
-    XWidget_setForegroundRole((XWidget*)&sb->m_caption,
-                              XPaletteColorRole_Mid);
+    /* 次级文本令牌（原 Mid 角色：深色盘 Mid=#2E353D 是斜面色，落深底
+     * 不可读——走查实锅，全页说明小字同口径）。 */
+    HsfTheme_applySecondaryText((XWidget*)&sb->m_caption);
     XLabel_setText_2(&sb->m_caption, caption ? caption : "");
     XWidget_show((XWidget*)&sb->m_caption);
     XBoxLayout_addWidget(&sb->m_layout, (XWidget*)&sb->m_caption);
@@ -147,7 +164,7 @@ static HsfStatBlock* hsfStatCreate(XWidget* parent, const char* caption,
     HsfTheme_applyDefaultFont((XWidget*)&sb->m_unit);
     XLabel_setTextPixelSize(&sb->m_unit, homePx(12));
     XLabel_setAlignment(&sb->m_unit, XAlignment_Left | XAlignment_Bottom);
-    XWidget_setForegroundRole((XWidget*)&sb->m_unit, XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&sb->m_unit);
     XLabel_setText_2(&sb->m_unit, unit ? unit : "");
     XWidget_show((XWidget*)&sb->m_unit);
     XBoxLayout_addWidget(&sb->m_row, (XWidget*)&sb->m_unit);
@@ -217,9 +234,12 @@ typedef enum HsfHomeGlyph {
     HOME_GLYPH_BUTTONS     /* 按钮组：立柱 + 三钮 + 顶灯（2026-11-09） */
 } HsfHomeGlyph;
 
-#define HOME_GLYPH_STROKE  0xFF9DBCE8u   /* 图形描边（软蓝）。 */
-#define HOME_GLYPH_FILL    0xFFE3EDFBu   /* 图形浅填充。 */
-#define HOME_GLYPH_ACCENT  0xFF7EA6E0u   /* 图形强调（水银/指针等）。 */
+/* 卡角水印简笔三色：亮套=软蓝系（浅填充在白卡上成水印）；深套换暗色
+ * 系（浅填充落深面板会成刺眼亮块，走查同源口径）。描边/强调用中性灰蓝，
+ * 在深面板上 ≥3:1（#8A98A6 vs #23282F ≈ 3.5）。 */
+#define HOME_GLYPH_STROKE  homeThemeClr(0xFF9DBCE8u, 0xFF8A98A6u)
+#define HOME_GLYPH_FILL    homeThemeClr(0xFFE3EDFBu, 0xFF2A313Au)
+#define HOME_GLYPH_ACCENT  homeThemeClr(0xFF7EA6E0u, 0xFF8A98A6u)
 
 /** @brief 统一笔触：软蓝 2px + 浅填充 + 抗锯齿（每个图形绘制前调用）。 */
 static void hsfGlyphPen(XPainter* p, uint32_t color)
@@ -587,12 +607,13 @@ static void VHsfHomeDot_paintEvent(XWidget* self, XEvent* event)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
     side = XWidget_width(self);
     if (side > XWidget_height(self)) side = XWidget_height(self);
-    /* [阀简笔模式 2026-11-07] 状态点画成小阀图形（色随状态），替代圆点。 */
+    /* [阀简笔模式 2026-11-07] 状态点画成小阀图形（色随状态），替代圆点。
+     * 填充第二参走 HOME_GLYPH_FILL（随主题，原浅蓝常量落深面板成亮块）。 */
     if (dot->m_glyphValve) {
         hsfGlyphValveColor(&painter,
                            (XWidget_width(self) - side) / 2,
                            (XWidget_height(self) - side) / 2, side,
-                           dot->m_color, 0xFFE3EDFBu);
+                           dot->m_color, HOME_GLYPH_FILL);
         XPainter_end(&painter);
         XPainter_deinit(&painter);
         return;
@@ -750,9 +771,15 @@ static void VHsfHomeCard_paintEvent(XWidget* self, XEvent* event)
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
     XRect_init(&r, 0, 0, XWidget_width(self), XWidget_height(self));
-    XPainter_setPen(&painter, 0xFFD5DBE2u);          /* 软描边。 */
+    /* [卡面随主题 2026-11-11 双主题走查] 白卡原先是常量：深色盘下标题
+     * 翻亮落白底 1.21:1。亮套白底/软描边维持原值；深套=面板 #23282F +
+     * 软描边 #39414C（HsfTheme.h 深色令牌，与 QSS 控件底/软描边同源），
+     * 卡标题走调色板 WindowText（#E8EAED）在深面板上 12.3:1。 */
+    XPainter_setPen(&painter, homeThemeClr(0xFFD5DBE2u,
+                                           HSF_COLOR_SOFT_BORDER_DARK));
     XPainter_setPenWidth(&painter, 1);
-    XPainter_setBrush(&painter, 0xFFFFFFFFu);        /* 白底。 */
+    XPainter_setBrush(&painter, homeThemeClr(0xFFFFFFFFu,
+                                             HSF_COLOR_PANEL_DARK));
     XPainter_drawRoundedRect(&painter, &r, 5, 5);
     /* [设备图形 2026-11-06] 卡片右上角水印式简笔（软蓝描边 + 浅填充），
      * 给每张卡一个"一眼认设备"的视觉锚点；在水印色下不与数据争夺注意力。 */
@@ -1011,7 +1038,11 @@ static void hsfHomeValveStateInfo(int state, bool ready, bool valid,
         return;
     }
     switch (state) {
-    case 1:  *text = HOME_TXT_VALVE_CLOSE; *color = 0xFF37474Fu; break; /* 已关 灰蓝 */
+    case 1:  *text = HOME_TXT_VALVE_CLOSE;
+             *color = homeThemeClr(0xFF37474Fu,
+                                   HSF_COLOR_TEXT_SECONDARY_DARK);
+             break; /* 已关 灰蓝（深套换次级令牌：#37474F 落深面板 1.54:1
+                       不可读，2026-11-11 走查；#A9B2BC vs 深面板 6.91）。 */
     case 2:  *text = HOME_TXT_VALVE_OPEN;  *color = HOME_CLR_OK;   break; /* 已开 绿 */
     case 3:  *text = HOME_TXT_VALVE_MOVE;  *color = HOME_CLR_WARN; break; /* 动作中 橙 */
     case 4:  *text = HOME_TXT_VALVE_FAULT; *color = HOME_CLR_FAULT; break; /* 故障 红 */
@@ -2042,8 +2073,7 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
     XLabel_setTextPixelSize(&self->m_subtitle, homePx(12));
     XLabel_setAlignment(&self->m_subtitle,
                         XAlignment_Left | XAlignment_Bottom);
-    XWidget_setForegroundRole((XWidget*)&self->m_subtitle,
-                              XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&self->m_subtitle);
     XLabel_setText_2(&self->m_subtitle, HOME_TXT_SUBTITLE);
     XWidget_show((XWidget*)&self->m_subtitle);
     XBoxLayout_addWidget(&self->m_headerRow, (XWidget*)&self->m_subtitle);
@@ -2241,8 +2271,8 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
                     XLabel_init(&self->m_valveName[k], tileHost, 0);
                     HsfTheme_applyDefaultFont((XWidget*)&self->m_valveName[k]);
                     XLabel_setTextPixelSize(&self->m_valveName[k], homePx(12));
-                    XWidget_setForegroundRole((XWidget*)&self->m_valveName[k],
-                                              XPaletteColorRole_Mid);
+                    HsfTheme_applySecondaryText(
+                        (XWidget*)&self->m_valveName[k]);
                     XLabel_setText_2(&self->m_valveName[k], HOME_TXT_DASH);
                     XWidget_show((XWidget*)&self->m_valveName[k]);
                     XBoxLayout_addWidget(tile, (XWidget*)&self->m_valveName[k]);
@@ -2364,8 +2394,8 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
                     XLabel_init(&self->m_btnName[k], tileHost, 0);
                     HsfTheme_applyDefaultFont((XWidget*)&self->m_btnName[k]);
                     XLabel_setTextPixelSize(&self->m_btnName[k], homePx(12));
-                    XWidget_setForegroundRole((XWidget*)&self->m_btnName[k],
-                                              XPaletteColorRole_Mid);
+                    HsfTheme_applySecondaryText(
+                        (XWidget*)&self->m_btnName[k]);
                     XLabel_setText_2(&self->m_btnName[k], HOME_TXT_DASH);
                     XWidget_show((XWidget*)&self->m_btnName[k]);
                     XBoxLayout_addWidget(tile, (XWidget*)&self->m_btnName[k]);
@@ -2612,8 +2642,7 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
             XLabel_init(&t->m_fbOpenCap, &t->m_base, 0);
             HsfTheme_applyDefaultFont((XWidget*)&t->m_fbOpenCap);
             XLabel_setTextPixelSize(&t->m_fbOpenCap, homePx(11));
-            XWidget_setForegroundRole((XWidget*)&t->m_fbOpenCap,
-                                      XPaletteColorRole_Mid);
+            HsfTheme_applySecondaryText((XWidget*)&t->m_fbOpenCap);
             XLabel_setText_2(&t->m_fbOpenCap, HOME_TXT_FB_OPEN);
             XWidget_show((XWidget*)&t->m_fbOpenCap);
             {
@@ -2629,8 +2658,7 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
             XLabel_init(&t->m_fbCloseCap, &t->m_base, 0);
             HsfTheme_applyDefaultFont((XWidget*)&t->m_fbCloseCap);
             XLabel_setTextPixelSize(&t->m_fbCloseCap, homePx(11));
-            XWidget_setForegroundRole((XWidget*)&t->m_fbCloseCap,
-                                      XPaletteColorRole_Mid);
+            HsfTheme_applySecondaryText((XWidget*)&t->m_fbCloseCap);
             XLabel_setText_2(&t->m_fbCloseCap, HOME_TXT_FB_CLOSE);
             XWidget_show((XWidget*)&t->m_fbCloseCap);
             {

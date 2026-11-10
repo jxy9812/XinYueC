@@ -58,8 +58,17 @@ typedef struct HsfServerStore {
 
 /** @brief 库文件缺省名（落 cfg/ 数据目录，与 Python DEFAULT_DB_NAME 同值）。 */
 #define HSF_STORE_DB_NAME       "hsf_data.db"
-/** @brief 历史采样周期缺省（毫秒；与 Python StorageConfig.sample_ms 同值）。 */
-#define HSF_STORE_SAMPLE_MS     5000
+/** @brief 历史采样周期缺省（毫秒）。历史是慢变量（趋势排查用），分钟级
+ *          一行足够（2026-11-10 定案：60s/行 ⇒ 一天约 1440 行）。
+ * @note  Python 模拟器 StorageConfig.sample_ms 仍为 5000——模拟器要快出
+ *        数据喂测试，两侧缺省**有意分叉**（原「同值」承诺解除）；测试
+ *        隔离实例要快首行时在 cfg 里显式播种小周期（见
+ *        test_hsf_regression.py IsolatedCServer.start）。 */
+#define HSF_STORE_SAMPLE_MS     60000
+/** @brief 库容量上限缺省（MB；0=不限；2026-11-10 定案 50MB）。
+ * @note  C 端目前**只上报不裁剪**（满额策略/保留分段同——仅协议与 INI
+ *        层；真正按上限裁剪目前只有 Python 端 store._ring_trim）。 */
+#define HSF_STORE_MAX_MB        50
 
 /**
  * @brief 一行历史快照（可空列 = 不可用，入库记 NULL）。

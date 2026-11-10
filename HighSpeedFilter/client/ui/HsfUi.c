@@ -1178,6 +1178,25 @@ void demo_main_refreshChrome(void* user)
     hsf_navApplySizes(win);
 }
 
+/** @brief 旗舰深色主题恢复（窗口页皮肤恢复之后的覆盖步，2026-11-11）。
+ *  @details Window/Skin 键的取值空间扩展到 6（旗舰深色·控制室 墨青，
+ *           HSF_THEME_SKIN_DARK）：窗口设置页的规格表路径
+ *           （hsf_page_window_applyStoredSkin/restoreSettings →
+ *           wn_applySkin）只认 0..5、越界夹回 0（亮色），会把 6 洗成
+ *           亮色——本辅助在其后重读键值，命中 6 时经
+ *           HsfTheme_applyFlagshipSkin 覆盖回旗舰深色（定制深色调色板 +
+ *           hsf_theme_dark_css + Dark 方案；XApplication_setStyleSheet_2
+ *           安装并全顶层重绘 = 仓库既有换肤即时生效机制，不引入新脏源）。
+ *           启动序在 XWidget_show 之前调用 ⇒ 首帧即深色，不闪亮；
+ *           索引 0..5 时本辅助不动作（规格表皮肤照旧）。 */
+static void hsfUiApplyFlagshipThemeOverride(void)
+{
+    int skin = HsfSettingsStore_getInt(HSF_THEME_KEY_SKIN,
+                                       HSF_THEME_SKIN_LIGHT);
+    if (skin == HSF_THEME_SKIN_DARK)
+        HsfTheme_applyFlagshipSkin(skin);
+}
+
 /* ==================== 主窗创建与三段装配 ==================== */
 
 /** @brief 取主屏尺寸（逻辑像素）；屏信息不可得时返回 false。
@@ -1560,6 +1579,15 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
      * 方向/光标/电源策略。皮肤必须在此落定——窗口映射后首帧即新配色，
      * 不会先闪一下默认皮肤再跳变（对标 Qt：设置恢复在界面呈现前完成）。 */
     hsf_page_window_restoreSettings();
+    /* [旗舰深色 2026-11-11] 窗口页规格表把 Window/Skin 越界值夹回 0，
+     * 这里把 6（旗舰深色·控制室）覆盖回去——仍在 show 之前，首帧即深色。 */
+    hsfUiApplyFlagshipThemeOverride();
+    /* [次级文本随主题重钉 2026-11-11 双主题走查] 页面在上面的装配循环里
+     * 已建完（早于本覆盖步），其间 HsfTheme_applySecondaryText 按当时的
+     * 亮套钉了说明小字色 ⇒ 深色恢复后那批标签仍持亮色值（#5A6572 落深底
+     * ~2.8:1 偏暗）。主题落定后沿主窗子树重钉（精确识别+同值早退，
+     * HsfTheme_refreshSecondaryTexts 契约见 HsfTheme.h）。 */
+    HsfTheme_refreshSecondaryTexts(&self->m_base);
 
     /* UI 装配就绪（此前 resize 事件的形态判定一律跳过——侧栏/分割条
      * 尚未建立，判定结果会落在零内存对象上）。 */
@@ -2522,6 +2550,8 @@ int HsfUi_start(const HsfUiOptions* opts)
              * hsf_page_window_restoreSettings），再建窗——截图与产品
              * 形态一致（CI 基线不因缺主窗而失真）。 */
             hsf_page_window_applyStoredSkin();
+            /* [旗舰深色 2026-11-11] 同主窗路径：规格表夹回 0 后补覆盖。 */
+            hsfUiApplyFlagshipThemeOverride();
             login = HsfLoginWindow_create(hsfUiLoginDone, &ctx);
             if (!login) {
                 XPrintf("HsfClient: 登录窗创建失败\n");

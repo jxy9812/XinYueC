@@ -57,6 +57,12 @@ typedef struct HsfTitleBar
     bool         m_modeAuto;    /**< 服务端是否自动模式。 */
     HsfTitleBarModeFn m_modeFn; /**< 模式钮点击回调。 */
     void*        m_modeUserData;/**< 回调用户数据。 */
+    /* ---- 窄栏标题省略号（2026-11-11 走查：600 宽两端半字形硬裁） ----
+     * 标题是本栏布局的弹性元素（几何随右块让位被压窄）；XLabel 契约是
+     * 「放不下宁可裁切」（XLabel.h Qt 对齐注），省略号须由本栏按框架
+     * 文档出口 XCommonStyle_elideText 自行处理——原件存这里，重排时
+     * 按可用宽中段省略，宽回涨自动还原。 */
+    char         m_titleFull[128]; /**< 完整标题文本（UTF-8，省略的母本）。 */
 } HsfTitleBar;
 
 /**

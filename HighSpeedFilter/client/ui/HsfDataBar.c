@@ -111,7 +111,7 @@ static void barActionSlot(XObject* receiver, XVarList* args);
 static void barSetWidths(HsfDataBar* self, bool tight);
 static void barSetRowsVisible(HsfDataBar* self, bool on);
 
-/** @brief 弱色说明标签（13px；Mid 色——VFD 页弱化文案同口径）。 */
+/** @brief 弱色说明标签（13px；主题感知次级文本——VFD 页弱化文案同口径）。 */
 static void barInitLabel(XLabel* lb, XWidget* parent, const char* text)
 {
     XLabel_init(lb, parent, 0);
@@ -119,7 +119,10 @@ static void barInitLabel(XLabel* lb, XWidget* parent, const char* text)
     XLabel_setText_2(lb, text);
     XLabel_setTextPixelSize(lb, 13);
     XLabel_setAlignment(lb, XAlignment_Left | XAlignment_VCenter);
-    XWidget_setForegroundRole((XWidget*)lb, XPaletteColorRole_Mid);
+    /* [次级文本令牌 2026-11-11 双主题走查] 原 Mid 角色在深色盘是斜面色
+     * #2E353D，落深底不可读；改 HsfTheme_applySecondaryText（装配期钉
+     * 亮/深套令牌，主题落定后 HsfUi 统一重钉）。 */
+    HsfTheme_applySecondaryText((XWidget*)lb);
     XWidget_show((XWidget*)lb);
 }
 
@@ -874,18 +877,77 @@ static void barSetRowsVisible(HsfDataBar* self, bool on)
     barSetVisible((XWidget*)&self->m_lbRows, on);
 }
 
+/** @brief 下拉「当前选项可读」下限：当前字体实测最宽选项 + 箭头列/框边。
+ *  @details [2026-11-11 多尺寸走查] 紧缩档写死 80/72px 的下拉只剩
+ *           「全部…」/「全…」——当前所选值不可读，得点开才能确认（界面
+ *           铁律：不留不可读的当前值）。改按**当前字体实测**最宽项文本
+ *           + 箭头列 ~20 + 左右框边 ~4 取下限（对齐数字量页
+ *           adaptive_columns「按当前字体实测最长语义名」口径，字号缩放
+ *           后仍成立）；无选项/量不出时回退 floor。选项是页面运行期
+ *           加进来的，逐拍重算即自动跟随。 */
+static int barComboMinWidth(const XComboBox* combo, int floorW)
+{
+    XFont font;
+    int n;
+    int i;
+    int w = 0;
+    if (!combo) return floorW;
+    font = XWidget_font((const XWidget*)combo);
+    n = XComboBox_count(combo);
+    for (i = 0; i < n; ++i) {
+        const char* t = XComboBox_itemText_2(combo, i);
+        if (t && t[0]) {
+            int tw = XPainter_textWidth(&font, t);
+            if (tw > w) w = tw;
+        }
+    }
+    XClassDeinit(&font);
+    /* [ allowances 对齐框架绘制公式 2026-11-11] XComboBox 闭态文本可用宽
+     * = 控件宽 − 6（左内边距）− 16（箭头列 XCOMBOBOX_BUTTON_W）− 8（右
+     * 留白）（XComboBox.c 闭态文本省略分支的 avail 表达式）——此前按
+     * 「箭头 20 + 框边 4」估 24px，少 6px ⇒ 实测达标的宽度上仍差半字、
+     * 「20 条」被省略成「20…」（历史页 1024x768 走查实锅）。 */
+    w += 6 /* 左内边距 */ + 16 /* 箭头列 */ + 8 /* 右留白 */;
+    return w > floorW ? w : floorW;
+}
+
+/** @brief 公开包装：页级下拉（attachRow2 挂进的「每页条数」等）与工具条
+ *         自有下拉共用同一套「当前选项可读」下限（机制单一来源）。 */
+int HsfDataBar_comboMinWidth(const XComboBox* combo, int floorW)
+{
+    return barComboMinWidth(combo, floorW);
+}
+
 /** @brief 控件标称最小宽两级：常规 / 极窄（幂等；setMinimumWidth 同值早退）。
  *  @details 时间框显示 `2026-11-07 12:15:56`（19 字符）+ 日历箭头，168 是
- *           能完整显示该格式的下限；下拉/导出格式同口径按文案缩。
+ *           能完整显示该格式的下限；下拉/导出格式**不再按文案写死**——
+ *           走 barComboMinWidth 实测（当前所选必须可读，见其注）。
  *           极窄档同时把行间距 8→4（行 2 有 12 个条目 = 11 个间距，省 ~44px
  *           ——比继续压控件宽更好：间距是纯留白，压它不影响可读性）。 */
 static void barSetWidths(HsfDataBar* self, bool tight)
 {
-    XWidget_setMinimumWidth((XWidget*)&self->m_dtStart, tight ? 168 : 210);
-    XWidget_setMinimumWidth((XWidget*)&self->m_dtEnd, tight ? 168 : 210);
-    XWidget_setMinimumWidth((XWidget*)&self->m_channel, tight ? 80 : 96);
-    XWidget_setMinimumWidth((XWidget*)&self->m_colFilter, tight ? 72 : 88);
-    XWidget_setMinimumWidth((XWidget*)&self->m_exportFmt, tight ? 84 : 110);
+    /* [时间框下限按实测 2026-11-11 走查第二轮] 旧「常规 210 / 紧缩 168」
+     * 是按旧字体估的：主题字体下 19 字符文本 ~150px + 内嵌框边 8 + 日历
+     * 箭头列 24 + 外框 6 ≈ 188 才装得下，168 紧缩档必裁末位秒（600x960
+     * 日志页走查实锅）。XDateTimeEdit 的 sizeHint 现在就是按「格式最宽
+     * 渲染 + 步进列 + 外框」预算的整框宽度（随字体走），直接拿它当下限
+     * ——文本定宽，压到下限以下只会裁字，故两档同值。 */
+    {
+        int dtW = XWidget_sizeHint((XWidget*)&self->m_dtStart).width;
+        if (dtW < 168) dtW = 168;
+        XWidget_setMinimumWidth((XWidget*)&self->m_dtStart, dtW);
+        dtW = XWidget_sizeHint((XWidget*)&self->m_dtEnd).width;
+        if (dtW < 168) dtW = 168;
+        XWidget_setMinimumWidth((XWidget*)&self->m_dtEnd, dtW);
+    }
+    {
+        int chW = barComboMinWidth(&self->m_channel, 96);
+        int cfW = barComboMinWidth(&self->m_colFilter, 88);
+        int efW = barComboMinWidth(&self->m_exportFmt, 110);
+        XWidget_setMinimumWidth((XWidget*)&self->m_channel, chW);
+        XWidget_setMinimumWidth((XWidget*)&self->m_colFilter, cfW);
+        XWidget_setMinimumWidth((XWidget*)&self->m_exportFmt, efW);
+    }
     /* 两个微调框是固定宽（64/84）：极窄档各让 8px（值仍完整显示）。 */
     XWidget_setFixedWidth((XWidget*)&self->m_decimals, tight ? 56 : 64);
     XWidget_setFixedWidth((XWidget*)&self->m_maxPoints, tight ? 76 : 84);
@@ -908,14 +970,40 @@ static void barSetWidths(HsfDataBar* self, bool tight)
 /** @brief 行1/行2 横/竖排翻向（第 4 档专用；幂等，稳态零副作用）。
  *  @details 控件不搬家，只翻容器方向（HsfMonitorVfd_adapt 控制行翻排
  *           同款仓库惯用法）；两行尾部的伸展条是 magic 空白，
- *           XBoxLayout_setDirection 翻向时自动把 Expanding 转到新主轴，
- *           且**同值早退**（方向没变直接 return，不失效布局）——帧泵
- *           每拍重放安全。宽档复原 LeftToRight：跨档 resize 不残留
- *           （HsfWindowPage 窄宽分档「宽档恒复原」同口径）。 */
+ *           XBoxLayout_setDirection 翻向时自动把 Expanding 转到新主轴。
+ *           宽档复原 LeftToRight：跨档 resize 不残留（HsfWindowPage
+ *           窄宽分档「宽档恒复原」同口径）。
+ *           [失效向宿主链收口＝框架职责 2026-11-11 根修落地] 行盒是
+ *           addLayout 挂进来的**子布局**，其 m_parentWidget 恒为 NULL
+ *           （XLayout_linkItem 挂接分支只记 m_parentLayout）；翻向若只
+ *           清子布局自身缓存，宿主方向（页布局等）的合计度量缓存与
+ *           脏位不清，页侧 XLayout_activate 的幂等闸（已激活+未脏+矩形
+ *           同）会放行**翻向前**的旧高度分配 ⇒ 工具条按横排时代的高度
+ *           估算继续占位，竖排内容总高溢出条底，末项「图表」被下方
+ *           表格盖掉半截（600x960/720x720 实锅）。
+ *           该缺口已按 Qt 6.8.3 在框架层根修：QLayout::invalidate 沿
+ *           布局链清 activated、链顶宿主投 LayoutRequest
+ *           （qlayout.cpp:469-474、971-984），子布局宿主经
+ *           QLayout::parentWidget **沿父布局链解析**（qlayout.cpp:
+ *           399-411）——XLayout 失效的跨控件清缓存段起点已改为
+ *           XLayout_parentWidget(self)（子布局解析到工具条控件，
+ *           根布局行为不变）。setDirection 末尾的
+ *           XLayoutItem_invalidate_base 自此天然向宿主全链清缓存置脏，
+ *           覆盖「运行中翻向」与「启动即竖排」两个入口；本函数曾在
+ *           真实翻向后手动补的 XLayout_invalidate(m_root)（应用层
+ *           收口补丁）由框架修替代，已撤（撤前已 grep：本文件 5 处
+ *           调用全在 HsfDataBar_adapt 内，补丁无其它依赖面）。 */
 static void barSetVertical(HsfDataBar* self, bool on)
 {
     const XBoxLayoutDirection dir = on ? XBoxLayoutDirection_TopToBottom
                                        : XBoxLayoutDirection_LeftToRight;
+    bool flipped;
+    if (!self) return;
+    /* 同值早退（方向没变不失效布局）——帧泵每拍重放安全；真实翻向
+     * 由 setDirection 内部失效收口到宿主链（见上注），稳态零副作用。 */
+    flipped = (XBoxLayout_direction(&self->m_row1) != dir) ||
+              (XBoxLayout_direction(&self->m_row2) != dir);
+    if (!flipped) return;
     XBoxLayout_setDirection(&self->m_row1, dir);
     XBoxLayout_setDirection(&self->m_row2, dir);
 }

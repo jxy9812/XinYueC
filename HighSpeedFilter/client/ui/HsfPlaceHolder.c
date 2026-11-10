@@ -71,8 +71,7 @@ XWidget* HsfPlaceHolder_create(XWidget* parent, const char* title,
     XLabel_setTextPixelSize(&self->m_desc, 13);
     XLabel_setAlignment(&self->m_desc,
                         XAlignment_HCenter | XAlignment_VCenter);
-    XWidget_setForegroundRole((XWidget*)&self->m_desc,
-                              XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&self->m_desc);
     XWidget_setFixedHeight((XWidget*)&self->m_desc, 22);
     XWidget_show((XWidget*)&self->m_desc);
 
@@ -83,8 +82,7 @@ XWidget* HsfPlaceHolder_create(XWidget* parent, const char* title,
     XLabel_setTextPixelSize(&self->m_hint, 12);
     XLabel_setAlignment(&self->m_hint,
                         XAlignment_HCenter | XAlignment_VCenter);
-    XWidget_setForegroundRole((XWidget*)&self->m_hint,
-                              XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&self->m_hint);
     XWidget_setFixedHeight((XWidget*)&self->m_hint, 20);
     XWidget_show((XWidget*)&self->m_hint);
 

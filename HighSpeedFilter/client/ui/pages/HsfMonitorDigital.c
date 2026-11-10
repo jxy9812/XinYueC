@@ -78,6 +78,19 @@
 #define DIGITAL_COLOR_TEXT     0xE6202020u  /**< 名称文本。 */
 #define DIGITAL_COLOR_HINT     0xFF8A8A8Au  /**< 空态/提示。 */
 
+/* [随主题取套 2026-11-11 双主题走查] 看板自绘面/文字按当前主题取亮/深
+ * 套（与流量计页 fmThemeClr 同款）：亮套=上表现行值零改动；深套=
+ * HsfTheme.h 深色令牌——原整块白底在深色页面上成「墨青中央白块」
+ * （走查实锅，五档白占比 0.96~1.00）。深套核算：看板底=窗底
+ * #1B1F24（正文落底 13.74/次级 7.71）；圆点面=面板 #23282F；
+ * 灯色 OK_DARK/FAULT_FILL_DARK（非文本件 vs 窗底 6.22/4.22 ≥3）、
+ * 名称 TEXT_DARK、提示 SECONDARY_DARK。DI 空心圆的白底填充同取套
+ * （深套=面板底，状态色环 vs 面板 4.30/3.20 ≥3）。 */
+static uint32_t digitalThemeClr(uint32_t light, uint32_t dark)
+{
+    return HsfTheme_isDarkSkin() ? dark : light;
+}
+
 /* ==================== 看板控件（文件内自定义控件） ==================== */
 
 /**
@@ -492,7 +505,10 @@ static void digital_drawPoint(XPainter* painter, const HsfDigitalBoard* board,
     int cx = cellX + cellW / 2;
     int cy = cellY + DIGITAL_DOT_MAX / 2;
     uint32_t color = (s_digital.m_points[index].m_state == HSF_DIGITAL_ON)
-                         ? DIGITAL_COLOR_ON : DIGITAL_COLOR_OFF;
+                         ? digitalThemeClr(DIGITAL_COLOR_ON,
+                                           HSF_COLOR_STATE_OK_DARK)
+                         : digitalThemeClr(DIGITAL_COLOR_OFF,
+                                           HSF_COLOR_STATE_FAULT_FILL_DARK);
     char name[DIGITAL_NAME_MAX];
     /* [禁用态视觉：对齐 Qt 的 disabled 调色板] 自动模式/权限不足时 DO 点
      * 虽然内部已拒绝下发（digital_tryWrite），但此前**外观完全不变**——
@@ -525,7 +541,9 @@ static void digital_drawPoint(XPainter* painter, const HsfDigitalBoard* board,
             XPainter_drawEllipse_2(painter, (float)cx, (float)cy,
                                    (float)dotR, (float)dotR);
         } else {
-            XPainter_setBrush(painter, 0xFFFFFFFFu);
+            XPainter_setBrush(painter,
+                              digitalThemeClr(0xFFFFFFFFu,
+                                              HSF_COLOR_PANEL_DARK));
             XPainter_setPen(painter, color);
             XPainter_setPenWidth(painter, 3);
             XPainter_drawEllipse_2(painter, (float)cx, (float)cy,
@@ -544,7 +562,9 @@ static void digital_drawPoint(XPainter* painter, const HsfDigitalBoard* board,
                               XPAINTER_TEXT_ALIGN_HCENTER |
                                   XPAINTER_TEXT_ALIGN_TOP |
                                   XPAINTER_TEXT_DONT_CLIP,
-                              name, DIGITAL_COLOR_TEXT);
+                              name,
+                              digitalThemeClr(DIGITAL_COLOR_TEXT,
+                                              HSF_COLOR_TEXT_DARK));
     }
 }
 
@@ -563,7 +583,9 @@ static void digital_drawSectionTitle(XPainter* painter, int y, int width,
     XPainter_drawTextRect(painter, &rect,
                           XPAINTER_TEXT_ALIGN_LEFT |
                               XPAINTER_TEXT_ALIGN_VCENTER,
-                          text, DIGITAL_COLOR_TEXT);
+                          text,
+                          digitalThemeClr(DIGITAL_COLOR_TEXT,
+                                          HSF_COLOR_TEXT_DARK));
 }
 
 /** @brief 绘制事件：清背景 → DI 段（标题+网格）→ DO 段（标题+网格）。 */
@@ -616,9 +638,11 @@ static void VDigitalBoard_paintEvent(XWidget* self, XEvent* event)
     }
 #endif /* XPAINTER_CLIP_ON */
 
-    /* 页面底色（对标 autoFillBackground 手工版：看板自绘透明底）。 */
-    XPainter_fillRect(&painter,
-                      (const XRect*)&(XRect){0, 0, w, h}, 0xFFFFFFFFu);
+    /* 页面底色（对标 autoFillBackground 手工版：看板自绘透明底）。
+     * [随主题取套 2026-11-11] 深套落窗底令牌——原写死白底在深色页面
+     * 中央浮出白块（走查实锅），正文/灯色各点已随 digitalThemeClr 取套。 */
+    XPainter_fillRect(&painter, (const XRect*)&(XRect){0, 0, w, h},
+                      digitalThemeClr(0xFFFFFFFFu, HSF_COLOR_WINDOW_DARK));
 
     font = XWidget_font(self);
     XPainter_setFont(&painter, &font);
@@ -672,7 +696,9 @@ static void VDigitalBoard_paintEvent(XWidget* self, XEvent* event)
             XPainter_drawTextRect(&painter, &hintRect,
                                   XPAINTER_TEXT_ALIGN_RIGHT |
                                       XPAINTER_TEXT_ALIGN_VCENTER,
-                                  hint, 0xFF9A9A9Au);
+                                  hint,
+                                  digitalThemeClr(0xFF9A9A9Au,
+                                                  HSF_COLOR_TEXT_SECONDARY_DARK));
         }
         for (slot = 0; slot < doCount; ++slot) {
             int row = slot / cols;
@@ -696,7 +722,8 @@ static void VDigitalBoard_paintEvent(XWidget* self, XEvent* event)
                               XPAINTER_TEXT_ALIGN_HCENTER |
                                   XPAINTER_TEXT_ALIGN_VCENTER,
                               "无数字量点",
-                              DIGITAL_COLOR_HINT);
+                              digitalThemeClr(DIGITAL_COLOR_HINT,
+                                              HSF_COLOR_TEXT_SECONDARY_DARK));
     }
     XPainter_end(&painter);
     XPainter_deinit(&painter);
@@ -1161,8 +1188,7 @@ XWidget* HsfMonitorDigital_create(XWidget* parent, HsfMenuNavFn navFn,
     /* 绿=通 红=断开 — 空心=DI只读 实心=DO可操作（只读原因见输出区右上角） */
     XLabel_setAlignment(&self->m_hint,
                         XAlignment_HCenter | XAlignment_VCenter);
-    XWidget_setForegroundRole((XWidget*)&self->m_hint,
-                              XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&self->m_hint);
     XWidget_show((XWidget*)&self->m_hint);
 
     /* ---- 页内垂直布局 ---- */

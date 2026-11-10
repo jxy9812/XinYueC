@@ -42,6 +42,10 @@
   §21 变频器与数字量：滑块单位 / 启动给定值自检（并入 test_vfd_slider
                 + test_vfd_start_given）
   §22 界面字号缩放（并入 test_ui_scale）
+  §31 全量筛选枚举：N>单页容量 → 筛选 → 枚举行数=命中总数且跨页
+      （导出=按当前筛选条件拉全的判界，2026-11-10 导出改造）
+  §32 导出文件无头写 CSV/XLSX 并回读校验（BOM/CRLF/最小引号/包内容）
+  §33 筛选谓词与翻页判界（时间/关键字/列选择/清除筛选 + 上下页边界）
   §30 主窗 UI 真实点击回归（真实 MainWindow + 私有 sim：导航切页 /
                 变频器启停 / 历史筛选·折线图·翻页·排序 / 日志类别·
                 刷新·导出闸 / 报警类型筛选 / 本地设置控件）
@@ -2290,6 +2294,9 @@ def merge_history_page():
     run_hispage()     # 段落：test_history_page
     run_hisside()     # 段落：test_history_side_frames
     run_histchart()   # 段落：图表视图（页内双视图 + 全量取数，2026-11-10）
+    run_expfull()     # §31 全量筛选枚举（导出=按筛选条件跨页拉全）
+    run_expwr()       # §32 导出文件无头写 CSV/XLSX + 回读校验
+    run_expflt()      # §33 筛选谓词与翻页判界
 
 
 def merge_log_page():
@@ -13719,6 +13726,535 @@ def ui_click_pages(app, win, bridge, reg, proto, pump, wait_until,
     click_indicator(localp.compact_check)
     check("§30⑦ 再点还原（勾选复位）",
           localp.compact_check.isChecked() == before)
+
+
+# ============================================================================
+#   §31 全量筛选枚举（导出=按当前筛选条件跨页拉全；2026-11-10 导出改造）
+# ============================================================================
+#
+# [锁什么] 导出不再是"当前页那 10/20/50 行"，而是**按当前筛选条件的全部
+# 命中行**：与图表全量取数同一条路——同一组 WHERE 连续分页（短批即末批、
+# 写满 total 即停）。C 端实现在 HsfDataHistory.c 的 histExportContinue /
+# HsfDataLog.c 的 logExportContinue（Python 端是本段的参照口径）。
+# 本段造 N>单批上限的数据 → 设置筛选 → 按同一判界连续分页枚举 → 断言：
+# 枚举行数 == 筛选命中总数、批数 == 上取整页数、跨页且无重无漏。
+# [数据源] 私有 sim 每秒才采一行，攒 137 行等不起 ⇒ 在服务端**起动前**
+# 直接把种子行落进它将要打开的库文件（storage_apply 在启动路径 open_for
+# 现有库；CREATE TABLE IF NOT EXISTS 不动已有表）。种子的 mode='枚举模式'
+# ——sim 采的行只有 手动/自动·运行中/自动·停止/未知，关键字筛它即精确
+# 命中这批种子，总数与库的实时增长无关。
+
+#: §31 种子行的 ts 基准（epoch 毫秒；2026-01-01，在 VALID_TS_MIN 之上）。
+m_expfull_BASE_MS = 1767225600000
+#: §31 种子行数（> 协议单批上限 50 ⇒ 枚举必跨页）。
+m_expfull_SEED_N = 137
+
+
+def m_expfull_seed_db(db_path, count):
+    """在私有实例将要打开的库里预播 count 行种子；返回首行 ts（毫秒）。"""
+    import sqlite3
+    ddl = ("CREATE TABLE IF NOT EXISTS history ("
+           "ts INTEGER PRIMARY KEY, mode TEXT, vfd_state TEXT,"
+           " freq_hz REAL, current_a REAL, rpm REAL, turb1 REAL, turb2 REAL,"
+           " flow REAL, flow_unit TEXT, flow_total REAL, total_unit TEXT,"
+           " press_mpa REAL, press_note TEXT, temp REAL, hum REAL,"
+           " di INTEGER, do INTEGER, water_temp REAL);")
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(ddl)
+        conn.executemany(
+            "INSERT OR REPLACE INTO history (ts, mode, vfd_state, freq_hz,"
+            " temp) VALUES (?, '枚举模式', '停机', 25.0, 26.5)",
+            [(m_expfull_BASE_MS + i * 1000,) for i in range(count)])
+        conn.commit()
+    finally:
+        conn.close()
+    return m_expfull_BASE_MS
+
+
+def m_expfull_query(bridge, **kw):
+    """同步发一次历史查询（泵事件循环等应答）。返回 (doc, err)。"""
+    got = {}
+
+    def done(d, _g=got):
+        _g["doc"] = d
+
+    def bad(m, _g=got):
+        _g["err"] = m
+
+    bridge.history_page(on_done=done, on_error=bad, **kw)
+    deadline = time.time() + 8
+    while "doc" not in got and "err" not in got and time.time() < deadline:
+        _pump()
+        time.sleep(0.02)
+    return got.get("doc"), got.get("err")
+
+
+def m_expfull_enum(bridge, limit=20, max_batches=400, **query):
+    """按 C 端导出的同一套判界连续分页拉全。
+
+    判界（与 histExportContinue 逐条同构）：短批（got < limit）即末批；
+    累计 >= total 即停；0 行即停。逐批校验 offset/limit 回显（C 客户端
+    靠它认领应答）。
+    :return: (rows, total, batches, echoes, err)
+        echoes = 每批 (请求 offset, 回显 offset, 回显 limit) 列表。
+    """
+    rows = []
+    echoes = []
+    total = 0
+    batches = 0
+    offset = 0
+    while True:
+        doc, err = m_expfull_query(bridge, offset=offset, limit=limit,
+                                   **query)
+        if err or not doc or not doc.get("ok"):
+            return rows, total, batches, echoes, (err or "无应答/被拒")
+        if total == 0:
+            total = int(doc.get("total") or 0)
+        got_rows = doc.get("rows") or []
+        rows.extend(got_rows)
+        # [不能用 `x or -1`] offset=0 是合法回显（0 为假值会被吞成 -1）。
+        echoes.append((offset, int(doc.get("offset", -1)),
+                       int(doc.get("limit", -1))))
+        batches += 1
+        got = len(got_rows)
+        if got <= 0 or got < limit or (total and len(rows) >= total) \
+                or batches >= max_batches:
+            break
+        offset += got
+    return rows, total, batches, echoes, ""
+
+
+def run_expfull():
+    """§31 全量筛选枚举：造 N>单页容量的数据 → 筛选 → 枚举行数=命中总数。"""
+    section("§31 全量筛选枚举：筛选命中总数 == 跨页枚举行数（导出全量口径）")
+    srv = PrivateServer()
+    kw = "枚举模式"
+    limit = 20                     # 单页容量（页大小档；137 ⇒ 7 批）
+    try:
+        db = os.path.join(srv.cfg_dir, "hsf_data.db")
+        m_expfull_seed_db(db, m_expfull_SEED_N)
+    except Exception as exc:                      # noqa: BLE001
+        check("§31 种子库预置", False, "%s: %s" % (type(exc).__name__, exc))
+        return
+    try:
+        if not srv.start():
+            check("§31 私有服务端起动", False, "端口 %d" % srv.port)
+            return
+    except Exception as exc:                      # noqa: BLE001
+        check("§31 私有服务端起动", False, "%s: %s" % (type(exc).__name__, exc))
+        return
+    try:
+        from hsfsrv_client.bridge import LinkBridge
+        bridge = LinkBridge()
+        ok, err = _connect_with_retry(bridge, srv.port, tries=4, gap=2.0,
+                                      srv=srv)
+        check("§31 连上私有服务端（admin/admin）", ok, err or "")
+        if not ok:
+            return
+        # 锚点取"未来"：种子行全部 <= 它（sim 新采的行在锚点之后的不存在，
+        # 在锚点之前的按 ts 排在最前，不影响 kw 筛选的确定性）。
+        before = int(time.time() * 1000) + 60000
+
+        # ---- E1 无筛选：种子行可见（total >= 种子数；sim 另有自采行） ----
+        doc, err = m_expfull_query(bridge, offset=0, limit=1, before_ts=before)
+        check("§31 E1 无筛选查询有应答", bool(doc) and not err,
+              err or ("total=%s" % (doc or {}).get("total")))
+        if doc:
+            check("§31 E1b 种子行入库可见（total ≥ 种子数）",
+                  int(doc.get("total") or 0) >= m_expfull_SEED_N,
+                  "total=%s 种子=%d" % (doc.get("total"), m_expfull_SEED_N))
+
+        # ---- E2 关键字筛选：命中总数 == 种子数；跨页枚举行数一致 ----
+        rows, total, batches, echoes, err = m_expfull_enum(
+            bridge, limit=limit, before_ts=before, kw=kw)
+        check("§31 E2 关键字筛选枚举成功", not err, err)
+        if not err:
+            check("§31 E2b 命中总数 == 种子数",
+                  total == m_expfull_SEED_N,
+                  "total=%d 期望=%d" % (total, m_expfull_SEED_N))
+            check("§31 E2c 枚举行数 == 命中总数（全量，非当前页）",
+                  len(rows) == m_expfull_SEED_N,
+                  "rows=%d" % len(rows))
+            want_batches = (m_expfull_SEED_N + limit - 1) // limit
+            check("§31 E2d 批数 == 上取整页数（短批判界正确）",
+                  batches == want_batches,
+                  "batches=%d 期望=%d" % (batches, want_batches))
+            check("§31 E2e 确实跨页（批数 > 1）", batches > 1,
+                  "batches=%d" % batches)
+            ts_list = [int(r[0]) for r in rows]
+            check("§31 E2f 无重复行（锚点定格，翻页不被新行顶偏）",
+                  len(set(ts_list)) == len(ts_list),
+                  "去重=%d 原始=%d" % (len(set(ts_list)), len(ts_list)))
+            want_ts = set(m_expfull_BASE_MS + i * 1000
+                          for i in range(m_expfull_SEED_N))
+            check("§31 E2g 无漏行（种子 ts 全部取到）",
+                  set(ts_list) == want_ts,
+                  "缺=%d 多=%d" % (len(want_ts - set(ts_list)),
+                                   len(set(ts_list) - want_ts)))
+            bad_echo = [e for e in echoes
+                        if e[1] != e[0] or e[2] != limit]
+            check("§31 E2h 每批 offset/limit 回显一致（C 端认领依据）",
+                  not bad_echo, str(bad_echo[:3]))
+            want_offsets = [b * limit for b in range(batches)]
+            check("§31 E2i 批游标按行数连续推进（不跳批不采样）",
+                  [e[0] for e in echoes] == want_offsets,
+                  str([e[0] for e in echoes]))
+
+        # ---- E3 时间窗筛选：闭区间子窗口的命中数 == 枚举行数 ----
+        lo = m_expfull_BASE_MS + 30 * 1000
+        hi = m_expfull_BASE_MS + 59 * 1000      # 含两端：30 行
+        rows, total, batches, _echoes, err = m_expfull_enum(
+            bridge, limit=limit, before_ts=before, lo_ts=lo, hi_ts=hi)
+        check("§31 E3 时间窗子窗口枚举成功", not err, err)
+        if not err:
+            check("§31 E3b 时间窗命中总数 == 30（含端点）",
+                  total == 30 and len(rows) == 30,
+                  "total=%d rows=%d" % (total, len(rows)))
+            check("§31 E3c 时间窗内枚举跨 2 页（30/20）", batches == 2,
+                  "batches=%d" % batches)
+
+        # ---- E4 关键字 + 时间窗组合：同一条 WHERE，两条件都生效 ----
+        rows, total, _b, _e2, err = m_expfull_enum(
+            bridge, limit=limit, before_ts=before, lo_ts=lo, hi_ts=hi, kw=kw)
+        check("§31 E4 组合筛选枚举成功", not err, err)
+        if not err:
+            check("§31 E4b 组合筛选命中数 == 30（种子行全带关键字）",
+                  total == 30 and len(rows) == 30,
+                  "total=%d rows=%d" % (total, len(rows)))
+
+        # ---- E5 无命中：首批即短批（total=0 → 枚举 0 行即停，不死循环） ----
+        rows, total, batches, _e2, err = m_expfull_enum(
+            bridge, limit=limit, before_ts=before, kw="绝不可能命中的关键字")
+        check("§31 E5 无命中查询成功", not err, err)
+        if not err:
+            check("§31 E5b 无命中 → total=0、0 行、1 批收尾",
+                  total == 0 and len(rows) == 0 and batches == 1,
+                  "total=%d rows=%d batches=%d" % (total, len(rows), batches))
+
+        # ---- E6 导出意图帧（export=true）放行（admin 持 Download）----
+        doc, err = m_expfull_query(bridge, offset=0, limit=5, before_ts=before,
+                                   kw=kw, export_mode=True)
+        check("§31 E6 export=true 被服务端放行（Download 权限在服务端生效）",
+              bool(doc) and doc.get("ok") and not err,
+              err or ("ok=%s total=%s" % ((doc or {}).get("ok"),
+                                          (doc or {}).get("total"))))
+    finally:
+        try:
+            bridge.disconnect_from()
+        except Exception:                         # noqa: BLE001
+            pass
+        srv.stop()
+
+
+# ============================================================================
+#     §32 导出文件无头写 + 回读校验（CSV 字节级口径 / XLSX 包内容）
+# ============================================================================
+#
+# [锁什么] 三页导出落盘的字节级口径（C 端 HsfExport.c 与 Python 端
+# _write_export 同一套契约）：
+#   · CSV = UTF-8 BOM（\xEF\xBB\xBF）+ CRLF 行分隔 + 最小化引号（含逗号/
+#     双引号/换行的格才加引号，格内双引号加倍）——Excel 双击直开不乱码。
+#   · XLSX = 一个 zip 包，工作表名"历史数据"，表头+数据行都在包 XML 里。
+# [怎么测] 不连服务端、无头跑：直接调 Python 客户端 HistoryPage._write_export
+# 写临时文件，按字节/按 csv.reader 回读比对；XLSX 按 zipfile 解包核对
+# （xlsx_bridge 动态库缺失时 SKIP——与 §25 同口径，CSV 不受影响）。
+
+
+def m_expwr_rows():
+    """造 4 行 16 列文本（含逗号/双引号/换行/中文等"引号判定"边界格）。"""
+    def row(stamp, last):
+        return (["%s" % stamp, "手动", "停机", "25.00", "3.20", "750",
+                 "12.50", "3.20", "26.5", "36.50 m³/h", "123.40 m³",
+                 "0.499", "26.5", "55.0", "0x0000FFFF", last], False)
+    return [
+        row("2026-11-10 01:00:00", "普通格"),
+        row("2026-11-10 02:00:00", "带,逗号"),
+        row("2026-11-10 03:00:00", '带"引号'),
+        row("2026-11-10 04:00:00", "带\n换行"),
+    ]
+
+
+def run_expwr():
+    """§32 导出模块无头写 CSV/XLSX 并回读校验。"""
+    import csv as _csv
+    import io as _io
+    section("§32 导出文件无头写 CSV/XLSX 并回读校验")
+    _app, page, _st = m_hisflt_make_page()   # 复用总回归唯一的 QApplication
+    rows = m_expwr_rows()
+    tmpdir = tempfile.mkdtemp(prefix="hsf_expwr_")
+    try:
+        # ---------- CSV：字节级口径 ----------
+        csv_path = os.path.join(tmpdir, "hist.csv")
+        page._write_export(csv_path, rows)
+        check("§32 C1 CSV 落盘", os.path.isfile(csv_path), csv_path)
+        if os.path.isfile(csv_path):
+            with open(csv_path, "rb") as fh:
+                raw = fh.read()
+            check("§32 C2 UTF-8 BOM 开头（utf-8-sig 同口径）",
+                  raw[:3] == b"\xef\xbb\xbf", repr(raw[:4]))
+            check("§32 C3 行分隔 = CRLF（含表头共 5 行）",
+                  raw.count(b"\r\n") == len(rows) + 1,
+                  "CRLF=%d 期望=%d" % (raw.count(b"\r\n"), len(rows) + 1))
+            text = raw.decode("utf-8-sig")
+            got = list(_csv.reader(_io.StringIO(text)))
+            check("§32 C4 表头 == 列定义",
+                  got and list(got[0]) == list(page.COLUMNS),
+                  str(got[0] if got else None))
+            body = got[1:]
+            check("§32 C5 数据行数一致", len(body) == len(rows),
+                  "%d/%d" % (len(body), len(rows)))
+            ok_rows = (len(body) == len(rows)
+                       and all(list(body[i]) == list(rows[i][0])
+                               for i in range(len(rows))))
+            check("§32 C6 逐格回读一致（含逗号/双引号/换行/中文格）",
+                  ok_rows, "" if ok_rows else str(body[:1]))
+            first_data_line = text.split("\r\n")[1]
+            check("§32 C7 无特殊字符的格不加引号（最小化引号）",
+                  first_data_line.endswith("普通格")
+                  and '"' not in first_data_line, repr(first_data_line[-24:]))
+            check("§32 C8 含逗号的格被引号包裹",
+                  '"带,逗号"' in text, "")
+            check("§32 C9 格内双引号加倍（"" 转义）",
+                  '"带""引号"' in text, "")
+        # ---------- XLSX：zip 包回读 ----------
+        xlsx_path = os.path.join(tmpdir, "hist.xlsx")
+        page._write_export(xlsx_path, rows)
+        if not os.path.isfile(xlsx_path):
+            skip("§32 X 组 XLSX 回读",
+                 "xlsx_bridge 动态库未编译（Excel 导出需它；CSV 不受影响）")
+            return
+        import zipfile
+        with zipfile.ZipFile(xlsx_path) as z:
+            names = z.namelist()
+            sheets = [n for n in names if n.startswith("xl/worksheets/")
+                      and n.endswith(".xml")]
+            check("§32 X1 包内有工作表 XML", bool(sheets), str(names))
+            wb = ""
+            try:
+                wb = z.read("xl/workbook.xml").decode("utf-8", "replace")
+            except KeyError:
+                pass
+            check("§32 X2 工作表名 = 历史数据", "历史数据" in wb, wb[:120])
+            # 数据表 = add_sheet 追加的「历史数据」表；xlsx_create 自带的
+            # 缺省 Sheet1 是空壳且仍占 zip 里的 sheet1.xml（xlsx_bridge.c
+            # 自 491e8038 的口径：add_sheet 只追加+选中，不动缺省表），
+            # 故**不能**拿 sheets[0] 当数据表——首版断言盲写（库在本机
+            # 从未加载成、从未跑过）就栽在这里。按 OOXML 正道解析：
+            # workbook.xml 的 <sheet name="历史数据"> r:id → workbook.xml
+            # .rels 的 Target → zip 内路径。
+            import re as _re
+            sheet_xml = ""
+            m_tag = _re.search(r'<sheet\b[^>]*name="历史数据"[^>]*>', wb)
+            m_rid = _re.search(r'r:id="(rId\d+)"', m_tag.group(0)) \
+                if m_tag else None
+            if m_rid:
+                rels = ""
+                try:
+                    rels = z.read("xl/_rels/workbook.xml.rels").decode(
+                        "utf-8", "replace")
+                except KeyError:
+                    pass
+                m_rel = _re.search(
+                    r'<Relationship\b[^>]*Id="%s"[^>]*/?>'
+                    % _re.escape(m_rid.group(1)), rels)
+                m_tgt = _re.search(r'Target="([^"]+)"', m_rel.group(0)) \
+                    if m_rel else None
+                if m_tgt:
+                    tgt = m_tgt.group(1).lstrip("/")
+                    if not tgt.startswith("xl/"):
+                        tgt = "xl/" + tgt
+                    sheet_xml = z.read(tgt).decode("utf-8", "replace")
+            if not sheet_xml and sheets:
+                sheet_xml = z.read(sheets[0]).decode("utf-8", "replace")
+            shared_xml = ""
+            if "xl/sharedStrings.xml" in names:
+                shared_xml = z.read("xl/sharedStrings.xml").decode(
+                    "utf-8", "replace")
+            all_xml = sheet_xml + shared_xml
+            check("§32 X3 表头在包内（数值列名）",
+                  "输出频率(Hz)" in all_xml, "")
+            check("§32 X4 数据格在包内（含逗号/中文格）",
+                  "带,逗号" in all_xml and "普通格" in all_xml, "")
+            check("§32 X5 行数 = 表头 + 数据（4+1）",
+                  sheet_xml.count("<row") == len(rows) + 1,
+                  "row=%d" % sheet_xml.count("<row"))
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ============================================================================
+#     §33 筛选谓词与翻页判界（时间 / 关键字 / 列选择 / 清除筛选）
+# ============================================================================
+#
+# [锁什么] 与 C 端 histApplyFilter / histClearFilter / histPrevSlot /
+# histNextSlot 同一套口径的**谓词与判界**（在 Python 孪生页上锁；两端
+# 同口径是仓库铁律）：
+#   · 时间范围：只起点 / 只终点 / 闭区间含两端 / 起始晚于结束拒筛；
+#   · 关键字：在**当前显示列**里包含匹配（列收窄 ⇒ 谓词范围收窄）；
+#   · 清除筛选：时间/关键字复位、行全回来（列选择是视图设置，不随清
+#     除复位——与 C 端 histClearFilter 注记同口径）；
+#   · 翻页判界：页数上取整、末页「下一页」不动、首页「上一页」不动、
+#     库裁剪后页码夹取、筛选回第 0 页。
+
+
+def m_expflt_seed(page):
+    """造 5 行散布两天+的种子（16 列，含水温列；列序同 HistoryPage.COLUMNS）。"""
+    def row(stamp, turb="12.50", mode="手动"):
+        return ([stamp, mode, "停机", "25.00", "3.20", "750", turb, "3.20",
+                 "26.5", "36.50 m³/h", "123.40 m³", "0.499", "26.5", "55.0",
+                 "0x0000FFFF", "0x000000FF"], False)
+    page._rows = [
+        row("2026-11-04 23:00:00"),
+        row("2026-11-05 08:00:00"),
+        row("2026-11-05 12:00:00", turb="25.00"),   # 浊度越限行（异常）
+        row("2026-11-05 18:00:00"),
+        row("2026-11-06 09:00:00", mode="自动·运行中"),
+    ]
+    page._rebuild()
+
+
+def m_expflt_stamps(page):
+    return [r[0][0] for r in page._filtered_rows()]
+
+
+def run_expflt():
+    """§33 筛选谓词各条件与清除筛选 + 翻页判界。"""
+    section("§33 筛选谓词与翻页判界（时间/关键字/列选择/清除筛选）")
+    _app, page, _st = m_hisflt_make_page()
+    page._data_mode = "local"     # 谓词走本地路径（服务端路径在 §14b/I 段）
+    m_expflt_seed(page)
+
+    def clear_inputs():
+        page._clear_inputs()
+
+    # ---------- 时间范围 ----------
+    clear_inputs()
+    page._f_start.setText("2026-11-05 12:00")
+    check("§33 P1 只给起点 → 该时刻及之后（含端点，3 行）",
+          m_expflt_stamps(page) == ["2026-11-05 12:00:00",
+                                    "2026-11-05 18:00:00",
+                                    "2026-11-06 09:00:00"],
+          str(m_expflt_stamps(page)))
+    clear_inputs()
+    page._f_end.setText("2026-11-05 12:00")
+    check("§33 P2 只给终点 → 该时刻及之前（含端点，3 行）",
+          m_expflt_stamps(page) == ["2026-11-04 23:00:00",
+                                    "2026-11-05 08:00:00",
+                                    "2026-11-05 12:00:00"],
+          str(m_expflt_stamps(page)))
+    clear_inputs()
+    page._f_start.setText("2026-11-05 08:00")
+    page._f_end.setText("2026-11-05 18:00")
+    check("§33 P3 起止闭区间 → 含两端（3 行）",
+          m_expflt_stamps(page) == ["2026-11-05 08:00:00",
+                                    "2026-11-05 12:00:00",
+                                    "2026-11-05 18:00:00"],
+          str(m_expflt_stamps(page)))
+    page._f_start.setText("2026-11-05 18:00")
+    page._f_end.setText("2026-11-05 08:00")
+    check("§33 P4 起始晚于结束 → 谓词为空集（无行能同时满足两侧）",
+          m_expflt_stamps(page) == [], str(m_expflt_stamps(page)))
+    page._clear_inputs()
+
+    # ---------- 关键字 + 列选择（谓词范围 = 当前显示列） ----------
+    clear_inputs()
+    page._f_text.setText("自动")
+    check("§33 P5 关键字包含匹配（在可见列里找，1 行）",
+          m_expflt_stamps(page) == ["2026-11-06 09:00:00"],
+          str(m_expflt_stamps(page)))
+    # 列收窄成只有「时间」列：关键字在新谓词范围内不再命中
+    from PyQt5.QtCore import Qt as _Qt
+    page._f_col.clear_all()
+    page._f_col._model.item(0).setCheckState(_Qt.Checked)   # 只剩「时间」
+    check("§33 P6 列收窄后关键字不命中（列选择参与谓词）",
+          m_expflt_stamps(page) == [], str(m_expflt_stamps(page)))
+    page._f_col.check_all()                                  # 恢复全列
+    check("§33 P7 列恢复后同一关键字重新命中（谓词范围随列回宽）",
+          m_expflt_stamps(page) == ["2026-11-06 09:00:00"],
+          str(m_expflt_stamps(page)))
+    page._f_text.clear()
+
+    # ---------- 清除筛选 ----------
+    clear_inputs()
+    page._f_start.setText("2026-11-05")
+    page._f_text.setText("停机")
+    page._apply_filter()
+    hit = len(m_expflt_stamps(page))
+    page._clear_filter()
+    check("§33 P8 清除筛选 → 输入框全空",
+          page._f_start.text() == "" and page._f_text.text() == ""
+          and page._f_end.text() == "",
+          "start=%r text=%r" % (page._f_start.text(), page._f_text.text()))
+    check("§33 P9 清除筛选 → 行全回来（5 行，不再按旧条件筛）",
+          len(m_expflt_stamps(page)) == 5 and hit < 5,
+          "清除前=%d 清除后=%d" % (hit, len(m_expflt_stamps(page))))
+    check("§33 P10 清除筛选不动列选择（列是视图设置，不是筛选条件）",
+          len(page.visible_columns()) == len(page.COLUMNS),
+          str(page.visible_columns()))
+
+    # ---------- 翻页判界（服务端模式 + 桩桥，不发网络） ----------
+    calls = []
+
+    class _Stub(object):
+        def is_connected(self):
+            return True
+
+        def history_page(self, **kw):
+            calls.append(dict(kw))
+
+    page.ctx.bridge = _Stub()
+    page._data_mode = "server"
+    page._page_size = 20
+    page._total = 95                     # → 5 页（上取整）
+    page._page_index = 0
+    page._inflight = False
+    calls[:] = []
+    page._prev_page()
+    check("§33 P11 首页「上一页」不动（不发请求）", len(calls) == 0,
+          "calls=%d" % len(calls))
+    page._next_page()
+    check("§33 P12 首页「下一页」→ 请求第 2 页（offset=20）",
+          len(calls) == 1 and calls[0].get("offset") == 20
+          and calls[0].get("limit") == 20,
+          str(calls[:1]))
+    page._page_index = 4                 # 末页（第 5 页）
+    page._inflight = False
+    calls[:] = []
+    page._next_page()
+    check("§33 P13 末页「下一页」不动（页数上取整判界）", len(calls) == 0,
+          "calls=%d" % len(calls))
+    check("§33 P14 页数 == 上取整(95/20)=5", page._page_count() == 5,
+          "pages=%d" % page._page_count())
+    # 库被裁剪后总数变小：页码夹取（不停在空页上）
+    page._pending_kind = "page"
+    page._total = 30                     # 只剩 2 页
+    page._page_index = 4
+    page._on_page_ready({"ok": True, "total": 30, "rows": [],
+                         "cols": list(page.COLUMNS)})
+    check("§33 P15 库裁剪后页码夹到最后一页（第 2 页）",
+          page._page_index == 1, "index=%d" % page._page_index)
+    # 筛选必回第 0 页（服务端模式）
+    page._page_index = 3
+    page._inflight = False
+    calls[:] = []
+    page._f_text.setText("运行")
+    page._apply_filter()
+    check("§33 P16 筛选回第 0 页且请求带关键字",
+          page._page_index == 0 and len(calls) == 1
+          and calls[0].get("kw") == "运行",
+          "index=%d calls=%d" % (page._page_index, len(calls)))
+    # 页大小变化也回第 0 页（行号口径变了，停在原页号没意义）
+    page._page_index = 2
+    page._inflight = False
+    calls[:] = []
+    page._page_size_box.setCurrentIndex(0)   # 10 条
+    page._on_page_size()
+    check("§33 P17 改页大小回第 0 页", page._page_index == 0
+          and page._page_size == 10 and len(calls) == 1,
+          "index=%d size=%s calls=%d"
+          % (page._page_index, page._page_size, len(calls)))
+    page._data_mode = "local"    # 还原（页对象随段结束丢弃）
 
 
 if __name__ == "__main__":

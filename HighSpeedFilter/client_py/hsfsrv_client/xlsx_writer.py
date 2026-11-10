@@ -90,7 +90,10 @@ def write_rows(path, sheet_name, headers, rows, col_widths=None):
         if not dll.xlsx_add_sheet(doc, str(sheet_name).encode("utf-8")):
             raise RuntimeError("添加工作表失败：%s" % sheet_name)
         for col, text in enumerate(headers):
-            if not dll.xlsx_write_str(doc, col + 1, col + 1,
+            # 表头都在第 1 行（列随 col 走）——原写法 row=col+1 把表头
+            # 摆成主对角线（第 i 个表头落 (i,i)），数据行再覆盖之，导出
+            # 首行残缺（§32 X5 首次真跑时暴露，此前库在本机从未加载成）。
+            if not dll.xlsx_write_str(doc, 1, col + 1,
                                       str(text).encode("utf-8")):
                 raise RuntimeError("写表头第 %d 列失败" % (col + 1))
         for r, row in enumerate(rows):

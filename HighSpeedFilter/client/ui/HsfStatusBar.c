@@ -8,6 +8,8 @@
 #include "XWidget_Protected.h" /* XWidget_paintImage/paintOffset（自绘用） */
 #include "XPixmap.h"
 #include "XPainter.h"
+#include "XPalette.h" /* chrome 文本令牌钉自身盘 */
+#include "XColor.h"
 
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
 
@@ -61,8 +63,28 @@ void HsfStatusBar_init(HsfStatusBar* self, XWidget* parent,
                         XAlignment_Left | XAlignment_VCenter);
     /* 定高条减去上下 margin 后内容区易为负，缩进用 indent 不用 margin。 */
     XLabel_setIndent((XLabel*)self, 16);
-    XWidget_setForegroundRole((XWidget*)self,
-                              XPaletteColorRole_HighlightedText);
+    /* [chrome 文本走令牌不走 HighlightedText 2026-11-11 双主题走查]
+     * 黑底不随主题翻（HSF_COLOR_STATUS_BG 恒黑），文字原先挂调色板
+     * HighlightedText——旗舰深色盘把该角色定制成 #101820（其语义是
+     * 「强调蓝上的文字」），落在黑底上 1.17:1 全部不可读（55 张深色
+     * 截图全中）。改按 HSF_COLOR_CHROME_TEXT（两主题同值白）钉自身盘，
+     * 口径见 HsfTheme.h 该令牌注释。 */
+    {
+        XPalette p;
+        XColor c;
+        const uint32_t argb = HSF_COLOR_CHROME_TEXT;
+        c = XColor_create_rgb((int)((argb >> 16) & 0xFFu),
+                              (int)((argb >> 8) & 0xFFu),
+                              (int)(argb & 0xFFu), 0xFF);
+        p = XWidget_palette((XWidget*)self);
+        XPalette_setColor(&p, XPaletteColorGroup_Active,
+                          XPaletteColorRole_HighlightedText, c);
+        XPalette_setColor(&p, XPaletteColorGroup_Inactive,
+                          XPaletteColorRole_HighlightedText, c);
+        XWidget_setPalette((XWidget*)self, &p);
+        XWidget_setForegroundRole((XWidget*)self,
+                                  XPaletteColorRole_HighlightedText);
+    }
     XWidget_setFixedHeight((XWidget*)self, HSF_STATUS_BAR_H);
     XWidget_show((XWidget*)self);
 }

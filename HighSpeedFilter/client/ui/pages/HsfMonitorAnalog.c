@@ -91,6 +91,19 @@
 #define ANALOG_COLOR_CARD_BG  0x0A1F4E79u  /**< 卡片底（极淡品牌蓝）。 */
 #define ANALOG_COLOR_CARD_ED  0x241F4E79u  /**< 卡片描边（淡品牌蓝）。 */
 
+/* [随主题取套 2026-11-11 双主题走查] 卡片看板自绘面/文字按当前主题取
+ * 亮/深套（与流量计页 fmThemeClr 同款）：亮套=上表现行值零改动；深套=
+ * HsfTheme.h 深色令牌——原整块白底在深色页面上成「墨青中央白块」
+ * （走查实锅，与数字量看板同根因，五档白占比 0.95~1.00）。深套核算：
+ * 看板底=窗底 #1B1F24（正文落底 13.74/次级 7.71）；卡底=面板 #23282F、
+ * 卡框=软描边 #39414C（登记值）；转换值/按压框=强调 #4DA3FF（=Highlight，
+ * vs 面板 5.64 ≥4.5 文本档）；越限=FAULT_DARK 文字档（vs 面板 5.55）；
+ * 名称=TEXT_DARK，原始/单位/提示=SECONDARY_DARK。 */
+static uint32_t analogThemeClr(uint32_t light, uint32_t dark)
+{
+    return HsfTheme_isDarkSkin() ? dark : light;
+}
+
 /* ==================== 数据模型（模块级；API 唯一落点） ==================== */
 
 /** @brief 模拟量单点（名称/单位深拷贝；双值/类型/描述符随 API 翻转）。 */
@@ -750,17 +763,24 @@ static void analog_drawCard(XPainter* painter, const HsfAnalogBoard* board,
     char unit[ANALOG_NAME_MAX];
     char line[ANALOG_NAME_MAX + 40];
     char rawLine[48];
-    uint32_t valueColor = analog_isAlarmed(index) ? ANALOG_COLOR_ALARM
-                                                  : ANALOG_COLOR_VALUE;
-    /* 卡片底 + 细描边（按压中的卡描边加重反馈）。 */
+    uint32_t valueColor = analog_isAlarmed(index)
+                              ? analogThemeClr(ANALOG_COLOR_ALARM,
+                                               HSF_COLOR_STATE_FAULT_DARK)
+                              : analogThemeClr(ANALOG_COLOR_VALUE,
+                                               HSF_COLOR_ACCENT_DARK);
+    /* 卡片底 + 细描边（按压中的卡描边加重反馈）。[随主题取套] 深套：
+     * 卡底=面板令牌、卡框=软描边令牌、按压框=强调令牌（登记见上）。 */
     {
         XRect card;
         XRect_init(&card, x, y, w, h);
         XPainter_setPenWidth(painter, board->m_pressedIndex == index ? 2 : 1);
         XPainter_setPen(painter, board->m_pressedIndex == index
-                                     ? ANALOG_COLOR_VALUE
-                                     : ANALOG_COLOR_CARD_ED);
-        XPainter_setBrush(painter, ANALOG_COLOR_CARD_BG);
+                                     ? analogThemeClr(ANALOG_COLOR_VALUE,
+                                                      HSF_COLOR_ACCENT_DARK)
+                                     : analogThemeClr(ANALOG_COLOR_CARD_ED,
+                                                      HSF_COLOR_SOFT_BORDER_DARK));
+        XPainter_setBrush(painter, analogThemeClr(ANALOG_COLOR_CARD_BG,
+                                                  HSF_COLOR_PANEL_DARK));
         XPainter_drawRect(painter, &card);
     }
     /* 第一行：通道号+名称（左对齐，顶部）；AI/AO 角标（右上角，AI 灰
@@ -785,15 +805,18 @@ static void analog_drawCard(XPainter* painter, const HsfAnalogBoard* board,
                                   XPAINTER_TEXT_DONT_CLIP,
                               XCommonStyle_elideText(shown, (int)sizeof(shown),
                                                      name, 1, r.width, font),
-                              ANALOG_COLOR_TEXT);
+                              analogThemeClr(ANALOG_COLOR_TEXT,
+                                             HSF_COLOR_TEXT_DARK));
         XRect_init(&r, x + w - 8 - badgeW, y + 6, badgeW, textH);
         XPainter_drawTextRect(painter, &r,
                               XPAINTER_TEXT_ALIGN_RIGHT |
                                   XPAINTER_TEXT_ALIGN_TOP |
                                   XPAINTER_TEXT_DONT_CLIP,
                               isAo ? "AO" : "AI",
-                              isAo ? ANALOG_COLOR_VALUE
-                                   : ANALOG_COLOR_UNIT);
+                              isAo ? analogThemeClr(ANALOG_COLOR_VALUE,
+                                                    HSF_COLOR_ACCENT_DARK)
+                                   : analogThemeClr(ANALOG_COLOR_UNIT,
+                                                    HSF_COLOR_TEXT_SECONDARY_DARK));
     }
     /* 第二行：原始寄存器（毫伏口径；与服务端 r{i} 同值，排查真相用）。
      * [2026-11-08 实锅] 这里原先是空语句 `"原始: N mV";`，真正画的是
@@ -809,7 +832,9 @@ static void analog_drawCard(XPainter* painter, const HsfAnalogBoard* board,
                               XPAINTER_TEXT_ALIGN_LEFT |
                                   XPAINTER_TEXT_ALIGN_TOP |
                                   XPAINTER_TEXT_DONT_CLIP,
-                              rawLine, ANALOG_COLOR_RAW);
+                              rawLine,
+                              analogThemeClr(ANALOG_COLOR_RAW,
+                                             HSF_COLOR_TEXT_SECONDARY_DARK));
     }
     /* 第三行：电流值（品牌蓝/报警红）+ 单位（弱灰跟随）。
      * [有标定工程量时并列显示] "11.988 mA  0.499 MPa"——量程是设备铭牌
@@ -854,7 +879,8 @@ static void analog_drawCard(XPainter* painter, const HsfAnalogBoard* board,
                                   XPAINTER_TEXT_ALIGN_TOP |
                                   XPAINTER_TEXT_DONT_CLIP,
                               s_analog.m_points[index].m_engNote,
-                              ANALOG_COLOR_ALARM);
+                              analogThemeClr(ANALOG_COLOR_ALARM,
+                                             HSF_COLOR_STATE_FAULT_DARK));
     }
 }
 
@@ -926,9 +952,11 @@ static void VAnalogBoard_paintEvent(XWidget* self, XEvent* event)
     }
 #endif /* XPAINTER_CLIP_ON */
 
-    /* 页面底色（对标 autoFillBackground 手工版：看板自绘透明底）。 */
-    XPainter_fillRect(&painter,
-                      (const XRect*)&(XRect){0, 0, w, h}, 0xFFFFFFFFu);
+    /* 页面底色（对标 autoFillBackground 手工版：看板自绘透明底）。
+     * [随主题取套 2026-11-11] 深套落窗底令牌——原写死白底在深色页面
+     * 中央浮出白块（走查实锅，与数字量看板同根因同修法）。 */
+    XPainter_fillRect(&painter, (const XRect*)&(XRect){0, 0, w, h},
+                      analogThemeClr(0xFFFFFFFFu, HSF_COLOR_WINDOW_DARK));
 
     font = XWidget_font(self);
     XPainter_setFont(&painter, &font);
@@ -995,7 +1023,8 @@ static void VAnalogBoard_paintEvent(XWidget* self, XEvent* event)
                               XPAINTER_TEXT_ALIGN_HCENTER |
                                   XPAINTER_TEXT_ALIGN_VCENTER,
                               "无模拟量点", /* 无模拟量点 */
-                              ANALOG_COLOR_HINT);
+                              analogThemeClr(ANALOG_COLOR_HINT,
+                                             HSF_COLOR_TEXT_SECONDARY_DARK));
     }
     XPainter_end(&painter);
     XPainter_deinit(&painter);
@@ -1018,7 +1047,9 @@ static void analog_drawSectionTitle(XPainter* painter, int y, int width,
     XPainter_drawTextRect(painter, &rect,
                           XPAINTER_TEXT_ALIGN_LEFT |
                               XPAINTER_TEXT_ALIGN_VCENTER,
-                          text, ANALOG_COLOR_TEXT);
+                          text,
+                          analogThemeClr(ANALOG_COLOR_TEXT,
+                                         HSF_COLOR_TEXT_DARK));
 }
 
 /** @brief 命中测试：坐标 → 卡片下标（区段制：AI 上段/AO 下段各自反解，
@@ -1386,8 +1417,7 @@ XWidget* HsfMonitorAnalog_create(XWidget* parent, HsfMenuNavFn navFn,
                      "每卡: 原始值 + 转换值（越限报警红） — 点击卡片操作（手动模式可用）");
     XLabel_setAlignment(&self->m_hint,
                         XAlignment_HCenter | XAlignment_VCenter);
-    XWidget_setForegroundRole((XWidget*)&self->m_hint,
-                              XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&self->m_hint);
     XWidget_show((XWidget*)&self->m_hint);
 
     /* ---- 页内垂直布局 ---- */

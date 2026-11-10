@@ -2571,7 +2571,14 @@ static void hsfAppHandleConfigGet(XLinkSession* session,
     if (collect) {
         HsfCollectConfig eff;
         const bool sideA = hsfCollectEnabled("vfdEnabled", HSF_BUS_A_ENABLED);
-        const bool sideB = hsfCollectEnabled("turbidityEnabled", HSF_BUS_B_ENABLED);
+        /* [模拟模式跟随装配 2026-11-10] 流量计勾选值=「路 B 装没装」：
+         * 模拟模式强制装配路 B（HsfServerIo_start），缺省应报已装配，
+         * 否则 UI 不勾选而实际在采（2026-11-10 桌面 --sim 实锅）。
+         * INI 覆盖仍最高。 */
+        const bool sideB = hsfCollectEnabled("turbidityEnabled",
+                                             (HSF_BUS_B_ENABLED
+                                              || HsfServerIo_simMode())
+                                                 ? 1 : 0);
         HsfServerIo_collectConfig(&eff);
         XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_VFD_ENABLED, sideA);
         XBsonDocument_insert_keyUtf8_bool(collect, HSF_CFGK_TEMPHUM_ENABLED, sideA);
@@ -2641,7 +2648,8 @@ static void hsfAppHandleConfigGet(XLinkSession* session,
                                            HsfServerStore_sampleMs(&s_store));
         XBsonDocument_insert_keyUtf8_int32(storage, HSF_CFGK_STORAGE_MAX_MB,
                                            HsfServerSettings_getInt(
-                                               "storage/max_mb", 0));
+                                               "storage/max_mb",
+                                               HSF_STORE_MAX_MB));
         {
             /* [策略键与 Python 同词] ring/stop/rotate；旧 INI
              * （keepOldest）与"键不存在读到 0"一律归一为 ring。 */
@@ -2697,7 +2705,8 @@ static void hsfAppHandleConfigGet(XLinkSession* session,
     if (stats) {
         int64_t used = HsfServerStore_usedBytes(&s_store);
         int64_t rows = HsfServerStore_rowCount(&s_store);
-        const int maxMb = HsfServerSettings_getInt("storage/max_mb", 0);
+        const int maxMb = HsfServerSettings_getInt("storage/max_mb",
+                                                   HSF_STORE_MAX_MB);
         XBsonDocument_insert_keyUtf8_int64(stats, "usedBytes", used);
         XBsonDocument_insert_keyUtf8_double(stats, "usedMb",
                                            (double)used / (1024.0 * 1024.0));

@@ -4,7 +4,7 @@
  * @details    [层次]（TopToBottom）
  *               1) 页标题行（粗体大标题 + 副标题说明）
  *               2) 控制横幅（控制被禁用原因 / N 路点位未配置；可隐藏）
- *               3) 卡片网格（宽屏 3 列 × 2 行 / 窄屏 1 列）
+ *               3) 卡片网格（宽屏按视口宽自适应 1~3 列 / 窄屏 1 列）
  *               4) 底部提示
  *
  *             [卡片结构] 每路一张卡（白底软描边）：
@@ -68,6 +68,13 @@ static int valvePx(int px)
 #define VALVE_DOT_FB          12
 /** @brief 宽屏列数。 */
 #define VALVE_COLS_WIDE       3
+/** @brief 网格行/列间距（建网格 setSpacing 与 adapt 估列、网格宿主最小高
+ *         同取此处，三处绑死防漂移）。 */
+#define VALVE_GRID_SPACING    12
+/** @brief 页根左右边距（adapt 的 setContentsMargins 与估列减宽绑死）。 */
+#define VALVE_MARGIN_SIDE_WIDE     24
+/** @brief 页根左右边距（紧凑形态）。 */
+#define VALVE_MARGIN_SIDE_COMPACT  12
 
 /* ---- 状态色（与 Python 侧 VALVE_STATE_TEXT 逐值一致） ---- */
 #define VALVE_CLR_UNKNOWN     0xFF9E9E9Eu  /**< 状态未知（浅灰）。 */
@@ -85,6 +92,13 @@ static int valvePx(int px)
 #define VALVE_CLR_BANNER_BG   0xFFFFF4E5u  /**< 提示横幅底（浅橙）。 */
 #define VALVE_CLR_BANNER_LINE 0xFFFFD8A8u  /**< 提示横幅描边。 */
 #define VALVE_CLR_BANNER_TEXT 0xFFB26500u  /**< 提示横幅字。 */
+
+/* [随主题取套 2026-11-11 双主题走查] 页面自绘卡面按当前主题取亮/深套
+ * （亮套=上表现行值零改动；深套见 VValveCard_paintEvent 注）。 */
+static uint32_t valveThemeClr(uint32_t light, uint32_t dark)
+{
+    return HsfTheme_isDarkSkin() ? dark : light;
+}
 
 /* ==================== 数据模型（模块级） ==================== */
 
@@ -310,9 +324,15 @@ static void VValveCard_paintEvent(XWidget* self, XEvent* event)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
 
     XRect_init(&r, 0, 0, XWidget_width(self), XWidget_height(self));
-    XPainter_setPen(&painter, VALVE_CLR_CARD_LINE);
+    /* [卡面随主题 2026-11-11 双主题走查] 白卡常量在深色盘下成整片白块
+     * （主页卡同款实锅）。亮套维持原值；深套=面板 #23282F + 软描边
+     * #39414C（HsfTheme.h 深色令牌），卡内标签走调色板随盘。 */
+    XPainter_setPen(&painter,
+                    valveThemeClr(VALVE_CLR_CARD_LINE,
+                                  HSF_COLOR_SOFT_BORDER_DARK));
     XPainter_setPenWidth(&painter, 1);
-    XPainter_setBrush(&painter, VALVE_CLR_CARD_BG);
+    XPainter_setBrush(&painter,
+                      valveThemeClr(VALVE_CLR_CARD_BG, HSF_COLOR_PANEL_DARK));
     XPainter_drawRoundedRect(&painter, &r, VALVE_CARD_RADIUS, VALVE_CARD_RADIUS);
     XPainter_end(&painter);
     XPainter_deinit(&painter);
@@ -580,8 +600,7 @@ static ValveCard* valveCardCreate(XWidget* parent, int index)
     XLabel_setTextPixelSize(&card->m_openText, valvePx(12));
     XLabel_setAlignment(&card->m_openText,
                         XAlignment_Left | XAlignment_VCenter);
-    XWidget_setForegroundRole((XWidget*)&card->m_openText,
-                              XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&card->m_openText);
     XLabel_setText_2(&card->m_openText,
                      "开到位：--");
     XWidget_show((XWidget*)&card->m_openText);
@@ -601,8 +620,7 @@ static ValveCard* valveCardCreate(XWidget* parent, int index)
     XLabel_setTextPixelSize(&card->m_closeText, valvePx(12));
     XLabel_setAlignment(&card->m_closeText,
                         XAlignment_Left | XAlignment_VCenter);
-    XWidget_setForegroundRole((XWidget*)&card->m_closeText,
-                              XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&card->m_closeText);
     XLabel_setText_2(&card->m_closeText,
                      "关到位：--");
     XWidget_show((XWidget*)&card->m_closeText);
@@ -644,8 +662,19 @@ static ValveCard* valveCardCreate(XWidget* parent, int index)
     HsfTheme_applyDefaultFont((XWidget*)&card->m_hint);
     XLabel_setTextPixelSize(&card->m_hint, valvePx(11));
     XLabel_setAlignment(&card->m_hint, XAlignment_Left | XAlignment_VCenter);
-    XWidget_setForegroundRole((XWidget*)&card->m_hint,
-                              XPaletteColorRole_Mid);
+    /* [长提示必须换行 2026-11-11 多尺寸走查] 「点位未配置（服务端
+     * HsfServerConfig.h 的 HSF_VALVE_DO/OPEN_DI/CLOSE_DI 里填通道号）」
+     * 单行 ~500px：XLabel 不换行时 minimumSizeHint=整行文本宽（Qt 同
+     * 口径）⇒ 卡片布局最小宽被它顶到 ~494，比 VALVE_CARD_MIN_W=240
+     * 大一倍 ⇒ 网格 3 列最小合计 ~1506 > 视口 1092，滚动壳按内容最小
+     * 宽撑开页面 ⇒ 第 3 列只剩 ~86px 被窗缘硬裁（1280x800 实测；滚壳
+     * 横向条被 HsfUi 设 AlwaysOff，无路可滚）。Qt 口径 wordWrap=true
+     * 时 minimumSizeHint 走 sizeForWidth(0)（XLabel_minimumSizeHint 已
+     * 对齐 qlabel.cpp），最小宽回落到"最宽单词"，卡片最小宽重新由
+     * 240 兜底。与 Python 客户端同位（pages_valve.py:180
+     * hint_label.setWordWrap(True)）同口径。 */
+    XLabel_setWordWrap(&card->m_hint, true);
+    HsfTheme_applySecondaryText((XWidget*)&card->m_hint);
     XLabel_setText_2(&card->m_hint, " ");
     XWidget_show((XWidget*)&card->m_hint);
     XBoxLayout_addWidget(lay, (XWidget*)&card->m_hint);
@@ -841,8 +870,7 @@ XWidget* HsfMonitorValve_create(XWidget* parent, HsfMenuNavFn navFn,
     XLabel_setTextPixelSize(&self->m_subtitle, valvePx(12));
     XLabel_setAlignment(&self->m_subtitle,
                         XAlignment_Left | XAlignment_Bottom);
-    XWidget_setForegroundRole((XWidget*)&self->m_subtitle,
-                              XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&self->m_subtitle);
     {
         char sub[96];
         snprintf(sub, sizeof(sub),
@@ -882,7 +910,7 @@ XWidget* HsfMonitorValve_create(XWidget* parent, HsfMenuNavFn navFn,
 
     /* ---- 卡片网格 ---- */
     XGridLayout_init(&self->m_grid);
-    XGridLayout_setSpacing(&self->m_grid, 12);
+    XGridLayout_setSpacing(&self->m_grid, VALVE_GRID_SPACING);
     {
         int cols = s_valve.m_compact ? 1 : VALVE_COLS_WIDE;
         for (i = 0; i < VALVE_COLS_WIDE; ++i)
@@ -906,8 +934,7 @@ XWidget* HsfMonitorValve_create(XWidget* parent, HsfMenuNavFn navFn,
     HsfTheme_applyDefaultFont((XWidget*)&self->m_footHint);
     XLabel_setTextPixelSize(&self->m_footHint, valvePx(11));
     XLabel_setAlignment(&self->m_footHint, XAlignment_Left | XAlignment_VCenter);
-    XWidget_setForegroundRole((XWidget*)&self->m_footHint,
-                              XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&self->m_footHint);
     XLabel_setText_2(&self->m_footHint,
                      "阀位状态只"
                      "由到位反馈"
@@ -957,16 +984,47 @@ void HsfMonitorValve_adapt(XWidget* page, bool compact)
      * 窄于此时网格不缩、窗口又把横向滚动条关掉了
      * （HsfUi 对滚动壳设 AlwaysOff）→ 第 3 列被**硬裁**、文字只剩一半
      * （实测 900x600：「未配置」只显示一半）。
-     * 正确做法：按**当前可用宽度**算出能放几列（1~3）。 */
+     * [2026-11-11 按卡片实测最小宽估列] 上版按常量 VALVE_CARD_MIN_W=240
+     * 估「放得下」，但网格真正认的条目最小宽是
+     * max(显式最小宽, 内容最小宽)（XLayoutItem.c
+     * VXWidgetItem_minimumSize）：卡内提示行不换行时整行文本 ~494px，
+     * 内容最小宽把 240 顶穿 → 3 列按 ~494 合计远超视口 1092，页根被
+     * 滚动壳按最小宽撑开（XScrollArea.c xsa_updateWidgetGeometry 只按
+     * minimumSizeHint 顶宽），第 3 列整列落在视口外被窗缘硬裁
+     * （1280x800 实测电动球阀3/6 两卡不可达；1024x768 第 2 列「关阀」
+     * 裁半）。字号 50~200% 缩放（valveApplyFonts）同样会推高内容最小宽。
+     * 修法：perCol 改按**卡片实测 minimumSizeHint**（内容驱动，随字号/
+     * 文案联动；基类虚槽走 XLayout_totalMinimumSize，不含卡片显式最小
+     * 宽，正是网格条目最小宽里「内容那一半」的真值）与 240 兜底取大，
+     * 估出几列放几列——宁少列不溢出；多列时再把显式最小宽设回 240，
+     * 与估列同一口径。availW 同步改读**父容器宽**：滚动壳把页根挂在
+     * viewport 下（XScrollArea_setWidget 的 XWidget_setParent(widget,
+     * viewport)），页根被内容撑开时页根宽=撑开后宽（污染值，拿它估列
+     * 会把溢出态当正常态维持住），viewport 宽才是真实显示宽；无滚动壳
+     * （XScrollArea_create 失败直挂栈宿主，HsfUi 建页循环兜底）时父宽
+     * 同样是真实可用宽。 */
     {
-        int availW = XWidget_width(&self->m_base);
-        int margins = compact ? 24 : 48;          /* 左右边距合计。 */
-        int perCol = VALVE_CARD_MIN_W + 12;       /* 卡宽 + 一份间距。 */
+        XWidget* shellHost = XWidget_parentWidget(&self->m_base);
+        int availW = shellHost ? XWidget_width(shellHost) : 0;
+        int margins = compact ? (VALVE_MARGIN_SIDE_COMPACT * 2)
+                              : (VALVE_MARGIN_SIDE_WIDE * 2);
+        int cardMinW = 0;
+        int perCol;
         int fit;
+        if (availW <= 0)
+            availW = XWidget_width(&self->m_base); /* 壳未定：回落页宽。 */
+        for (i = 0; i < HSF_VALVE_COUNT; ++i) {
+            XSize msh;
+            if (!self->m_cards[i]) continue;
+            msh = XWidget_minimumSizeHint(&self->m_cards[i]->m_base);
+            if (msh.width > cardMinW) cardMinW = msh.width;
+        }
+        if (cardMinW < VALVE_CARD_MIN_W) cardMinW = VALVE_CARD_MIN_W;
+        perCol = cardMinW + VALVE_GRID_SPACING;   /* 卡宽 + 一份间距。 */
         if (availW <= 0) {
             cols = compact ? 1 : VALVE_COLS_WIDE; /* 几何未定：用缺省。 */
         } else {
-            fit = (availW - margins + 12) / perCol;
+            fit = (availW - margins + VALVE_GRID_SPACING) / perCol;
             if (fit < 1) fit = 1;
             if (fit > VALVE_COLS_WIDE) fit = VALVE_COLS_WIDE;
             if (compact && fit > 1) fit = 1;      /* 紧凑形态强制单列。 */
@@ -1000,7 +1058,8 @@ void HsfMonitorValve_adapt(XWidget* page, bool compact)
      * （行数 × 卡高 + 行间距），滚动壳就能算出真实内容高。 */
     if (self->m_gridHost && s_valve.m_count > 0) {
         int rows = (s_valve.m_count + cols - 1) / cols;
-        int needH = rows * VALVE_CARD_H + (rows > 0 ? (rows - 1) * 12 : 0);
+        int needH = rows * VALVE_CARD_H
+                    + (rows > 0 ? (rows - 1) * VALVE_GRID_SPACING : 0);
         XWidget_setMinimumHeight(self->m_gridHost, needH);
     }
     XLayout_activate((XLayout*)&self->m_layout);

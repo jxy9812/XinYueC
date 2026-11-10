@@ -35,9 +35,8 @@
 #include "XComboBox.h"
 #include "XDate.h"
 #include "XDateTime.h"
-#include "XDevice.h"
+#include "XFileDialog.h"  /* 导出走框架文件对话框（格式=过滤器档位） */
 #include "XHeaderView.h"
-#include "XIODevice.h"   /* XIODevice_WriteOnly/_Truncate（导出 CSV 打开模式）。 */
 #include "XLabel.h"
 #include "XLineEdit.h"
 #include "XObject.h"     /* XObject_connect_1 / destroyed 信号。 */
@@ -75,6 +74,27 @@ static int logPx(int px)
 #define LOG_CATEGORY_COUNT 6
 /** @brief 页大小可选档（与历史页同档口径）。 */
 static const int kLogPageSizes[3] = { 10, 20, 50 };
+
+/** @brief 全量导出拉取的单批行数（固定值，独占一档 limit）。 */
+#define LOG_EXPORT_CHUNK   40
+/** @brief 导出批的应答看门狗拍数（25ms × 40 ≈ 1s 没等到就重发）。 */
+#define LOG_EXPORT_WATCHDOG_TICKS  40
+/** @brief 导出批最多重发次数（连续不回才放弃）。 */
+#define LOG_EXPORT_MAX_RETRIES     3
+/** @brief 导出期间的应答轮询周期（毫秒；一批一跳，取完恢复）。 */
+#define LOG_EXPORT_POLL_MS   25
+/** @brief XLSX 全量导出的行数上限（in-memory 工作簿；与历史页同预算）。
+ *  @details CSV 流式写盘无上限；XLSX 的 zip 包要整体写出（finish 才
+ *           saveAs），行数无上限会把板端内存吃穿。触顶按已取部分收尾
+ *           并在状态行注明——绝不静默少行。 */
+#define LOG_EXPORT_XLSX_MAX_ROWS   12000
+/* 编译期兜底：导出批 limit 必须与页大小 10/20/50 不相交（应答槽单份，
+ * 本页按服务端回显的 (offset,limit) 认领应答，见 logTimerCb）。 */
+#if (LOG_EXPORT_CHUNK == 10) || (LOG_EXPORT_CHUNK == 20) || \
+    (LOG_EXPORT_CHUNK == 50) || (LOG_EXPORT_CHUNK < 1) || \
+    (LOG_EXPORT_CHUNK > 50)
+#error "log export chunk limit must be disjoint from page sizes 10/20/50"
+#endif
 
 
 /** @brief 日志列头（3 列；静态存活：表格直存指针）。 */
@@ -155,19 +175,31 @@ typedef struct HsfDataLogPage {
     int          m_shownTotal;  /**< 已填表那一页的命中总行数（翻页判界用）。 */
     uint32_t     m_seenSeq;     /**< 已处置（填表或丢弃）的应答序号。 */
     /* ---- 在途请求归属（应答槽只有一份；页面拿不到 reqId） ----
-     * 与 HsfDataHistory 同款：按服务端回显的 offset/limit 认领。本页只有
-     * 表格页与导出两类消费者且共用同组键值（导出=当前页重拉），归并
-     * 逻辑见 logTimerCb。 */
+     * 与 HsfDataHistory 同款：按服务端回显的 offset/limit 认领。本页两类
+     * 消费者（表格页 10/20/50、导出批 40）limit 恒不相交，见 logTimerCb。 */
     bool         m_pageReqValid;   /**< 有在途分页请求。 */
     int          m_pageReqOffset;  /**< 在途分页请求的 offset。 */
     int          m_pageReqLimit;   /**< 在途分页请求的 limit。 */
-    bool         m_exportPending;  /**< 已发导出请求，等应答。 */
-    int          m_exportOffset;   /**< 导出请求的 offset（应答归属校验）。 */
-    int          m_exportLimit;    /**< 导出请求的 limit（应答归属校验）。 */
-    /** @brief 本次导出的格式（发请求那一刻从工具条「导出格式」下拉定格）。
-     *  @note  导出是异步的（发请求→等应答→写盘），写盘时才读下拉会让
-     *         落地格式与按下「导出」时选的不一致。 */
-    HsfExportFormat m_exportFormat;
+    /* ---- 全量导出（按当前筛选条件逐批拉全；0x0119 连续分页） ----
+     * [定格语义] 发起那一刻把 锚点/时间窗/类别/关键字/路径/格式定格进
+     * m_export* 快照；等待期间用户改界面（翻页/改筛选/改类别）不影响
+     * 在途导出的内容——logs 表持续入库，锚点不定格会每批漂移。 */
+    bool         m_exportFetching; /**< 全量导出累加中（逐批在途）。 */
+    int          m_exportOffset;   /**< 在途导出批的 offset（应答归属校验）。 */
+    int          m_exportLimit;    /**< 在途导出批的 limit（恒 LOG_EXPORT_CHUNK）。 */
+    int          m_exportTotal;    /**< 首批应答记下的命中总行数（0=未知）。 */
+    int          m_exportWritten;  /**< 已写进行文件的行数。 */
+    int          m_exportIdle;     /**< 在途批等应答的拍数（看门狗）。 */
+    int          m_exportRetries;  /**< 当前批已重发次数（超限放弃）。 */
+    bool         m_exportTruncated;/**< XLSX 触上限截断（状态行注明）。 */
+    HsfExportWriter m_exportWriter;/**< 流式写出器（open..finish 生命周期）。 */
+    HsfExportFormat m_exportFormat;/**< 本次导出的格式（对话框过滤器定格）。 */
+    char         m_exportPath[HSF_EXPORT_PATH_CAP]; /**< 落地路径前缀（无扩展名）。 */
+    int64_t      m_exportAnchor;   /**< 冻结的分页锚点 beforeTs。 */
+    int64_t      m_exportLoTs;     /**< 冻结的时间窗下界。 */
+    int64_t      m_exportHiTs;     /**< 冻结的时间窗上界。 */
+    char         m_exportCategory[16]; /**< 冻结的类别字面（空=全部）。 */
+    char         m_exportKw[160];  /**< 冻结的关键字（空=不筛）。 */
     int          m_rowBaseH;    /**< 建页时行高（随字号缩放）。 */
 } HsfDataLogPage;
 
@@ -434,16 +466,15 @@ static void logPageSizeSlot(XObject* receiver, XVarList* args)
     logRequest(self, 0);
 }
 
-/* ==================== 导出 ==================== */
+/* ==================== 全量导出（文件对话框 + 逐批拉全） ====================
+ * [口径] 与历史页同款：导出 = **按当前筛选条件的全部日志行**（同一组
+ * WHERE 连续分页拉全），不是表格当前页那几行。格式由文件对话框的过滤
+ * 器档位决定（"Excel 工作簿 (*.xlsx);;CSV (*.csv)"）；行走共享模块的
+ * 流式写出器来一批写一批；锚点/时间窗/类别/关键字在发起那一刻定格。
+ * [权限闸] 0x0119 无 export 形态（服务端按读面放行），**下载权限闸在
+ * 客户端这里**：无 HSF_PERM_DOWNLOAD 直接拒（与历史页同一款客户端闸）；
+ * 0x0119 只读不涉密，权限面比 0x0118 宽是协议设计使然。 */
 
-/** @brief 导出 CSV（当前页 3 列）到工作目录；返回是否成功。
- *  @details [只导服务端返回的那一页] 与历史页同口径：导出走 0x0119 请求
- *           （本命令无 export 形态，服务端按读面 ViewTelemetry 放行——
- *           **下载权限闸在客户端这里**：无 HSF_PERM_DOWNLOAD 直接拒，
- *           0x0119 只读不涉密，权限面比对 0x0118 宽是协议设计使然）。
- *  @param page     服务端返回的那一页。
- *  @param outPath  输出路径缓冲。
- *  @param cap      outPath 容量。 */
 /** @brief 日志页导出取格上下文。 */
 typedef struct LogExportCtx {
     const HsfLinkLogPage* page; /**< 服务端返回的那一页。 */
@@ -471,78 +502,195 @@ static bool logExportCell(void* user, int row, int col, char* buf, int cap)
     }
 }
 
-/** @brief 把本页那一页写成导出文件（CSV 或真 XLSX）。
- *  @details [走共享模块 2026-11-10] 与历史页同款：工具条「导出格式」
- *           下拉此前是死控件（选了 XLSX 落地仍是 CSV），现在统一走
- *           HsfExport（XLSX 走框架 XExcel 原生 API）。
- *  @param page     服务端返回的那一页。
- *  @param format   导出格式（发请求那一刻从下拉定格）。
- *  @param outPath  输出路径缓冲（回填最终落地路径）。
- *  @param cap      outPath 容量。 */
-static bool logWriteExport(const HsfLinkLogPage* page,
-                            HsfExportFormat format,
-                            char* outPath, int cap)
+/** @brief 按当前导出状态设置应答轮询周期（导出期间提速，空闲恢复）。 */
+static void logTimerIntervalApply(HsfDataLogPage* self)
 {
-    HsfExportGrid grid;
-    LogExportCtx ctx;
-    char prefix[96];
+    if (!self || !self->m_timer) return;
+    XTimer_setInterval(self->m_timer,
+                       self->m_exportFetching ? LOG_EXPORT_POLL_MS
+                                              : HsfSettingsLocal_refreshMs());
+}
 
-    if (!page || !page->m_valid || !outPath || cap <= 0) return false;
-    snprintf(prefix, sizeof(prefix), "./hsf_log_%d", page->m_offset);
-    ctx.page = page;
-    memset(&grid, 0, sizeof(grid));
-    grid.path = prefix;
-    grid.sheetName = "运行日志";
-    grid.format = format;
-    grid.colCount = 3;
-    grid.rowCount = page->m_count;
-    grid.header = kLogHeaders;
-    grid.cell = logExportCell;
-    grid.user = &ctx;
-    if (!HsfExport_write(&grid)) return false;
-    (void)HsfExport_outputPath(&grid, outPath, cap);
+/** @brief 收尾导出（写完 or 中途放弃）：落盘/清理 + 状态行 + 周期重算。
+ *  @param complete true=按计划写完（finish：XLSX saveAs/CSV 关闭）；
+ *                  false=中途放弃（abort：删半成品 CSV/丢弃 XLSX 文档）。
+ *  @param failNote 失败文案（complete=false 时用；NULL=保留状态行现文）。 */
+static void logExportDone(HsfDataLogPage* self, bool complete,
+                          const char* failNote)
+{
+    char buf[300];
+    bool ok = false;
+    if (!self) return;
+    if (complete) ok = HsfExportWriter_finish(&self->m_exportWriter);
+    else HsfExportWriter_abort(&self->m_exportWriter);
+    self->m_exportFetching = false;
+    self->m_exportIdle = 0;
+    self->m_exportRetries = 0;
+    logTimerIntervalApply(self);
+    if (!complete) {
+        if (failNote) XLabel_setText_2(&self->m_status, failNote);
+        return;
+    }
+    if (!ok) {
+        XLabel_setText_2(&self->m_status, "导出失败：文件写入错误");
+        return;
+    }
+    snprintf(buf, sizeof(buf), "已导出 %d 行 → %s%s",
+             self->m_exportWritten,
+             HsfExportWriter_path_const(&self->m_exportWriter),
+             self->m_exportTruncated ? "（超出 Excel 上限，已截断）" : "");
+    XLabel_setText_2(&self->m_status, buf);
+}
+
+/** @brief 发一批导出请求（按**定格**的锚点/时间窗/类别/关键字）。
+ *  @return 请求已发出返回 true；发出失败由调用方收尾。 */
+static bool logExportRequest(HsfDataLogPage* self, int offset)
+{
+    if (!self) return false;
+    if (!HsfLinkClient_logQueryWindow(offset, LOG_EXPORT_CHUNK,
+                                      self->m_exportAnchor,
+                                      self->m_exportLoTs, self->m_exportHiTs,
+                                      self->m_exportCategory[0]
+                                          ? self->m_exportCategory : NULL,
+                                      self->m_exportKw[0]
+                                          ? self->m_exportKw : NULL))
+        return false;
+    /* [应答归属] 导出批 limit 恒 LOG_EXPORT_CHUNK（40），与页大小
+     * 10/20/50 不相交（编译期锁见 LOG_EXPORT_CHUNK），一条应答只会落进
+     * 一个分支。 */
+    self->m_exportOffset = offset;
+    self->m_exportLimit = LOG_EXPORT_CHUNK;
+    self->m_exportIdle = 0;
     return true;
 }
 
-/** @brief 发起导出（工具条「导出」）：无权限→状态行拒绝；有权限→重拉
- *  当前页，应答到达后落盘（logTimerCb 认领）。
- *  @details [权限闸] 导出需要 HSF_PERM_DOWNLOAD（普通用户+），与历史页
- *           同一款客户端闸（灰按钮 + 拒绝文案）。 */
+/** @brief 导出批应答到达：写一批 → 推进下一批 → 取完收尾（连续取，不跳批）。 */
+static void logExportContinue(HsfDataLogPage* self,
+                              const HsfLinkLogPage* page)
+{
+    LogExportCtx ctx;
+    char prog[160];
+    int got;
+    int i;
+    bool done;
+    if (!self || !page || !page->m_valid) {
+        logExportDone(self, false, "导出失败：查询失败");
+        return;
+    }
+    if (!page->m_ok) {
+        /* [否定应答] 服务端拒绝（未开库等）：保留原文收尾。 */
+        char ebuf[160];
+        snprintf(ebuf, sizeof(ebuf), "导出失败：%s",
+                 page->m_err[0] ? page->m_err : "服务端拒绝");
+        logExportDone(self, false, ebuf);
+        return;
+    }
+    self->m_exportIdle = 0;
+    got = page->m_count;
+    if (got > 0) {
+        ctx.page = page;
+        for (i = 0; i < got; ++i) {
+            /* [XLSX 内存闸] 同历史页：CSV 全量到底，XLSX 触上限截断。 */
+            if (self->m_exportFormat == HsfExportFormat_Xlsx &&
+                self->m_exportWritten >= LOG_EXPORT_XLSX_MAX_ROWS) {
+                self->m_exportTruncated = true;
+                break;
+            }
+            if (!HsfExportWriter_writeRow(&self->m_exportWriter, i,
+                                          logExportCell, &ctx)) {
+                logExportDone(self, false, "导出失败：文件写入错误");
+                return;
+            }
+            ++self->m_exportWritten;
+        }
+    }
+    if (self->m_exportTotal <= 0 && page->m_total > 0)
+        self->m_exportTotal = page->m_total;
+    done = self->m_exportTruncated || got <= 0 ||
+           got < self->m_exportLimit ||
+           (self->m_exportTotal > 0 &&
+            self->m_exportWritten >= self->m_exportTotal);
+    if (done) {
+        logExportDone(self, true, NULL);
+        return;
+    }
+    snprintf(prog, sizeof(prog), "正在导出… 已写 %d 行 / 共 %d 行",
+             self->m_exportWritten, self->m_exportTotal);
+    XLabel_setText_2(&self->m_status, prog);
+    if (!logExportRequest(self, self->m_exportOffset + got))
+        logExportDone(self, false, "导出失败：服务端未连接");
+}
+
+/** @brief 发起导出（工具条「导出」）：无权限→状态行拒绝；有权限→弹
+ *  文件对话框（格式=过滤器档位）→ 按当前筛选条件全量逐批拉取落盘。 */
 static void logExportStart(HsfDataLogPage* self)
 {
-    char buf[200];
+    XString* chosen = NULL;
+    int filterIdx = 0;
+    char defName[96];
+    XDateTime now;
+    XDate d;
+    XTime t;
     if (!self) return;
     if (!HsfLinkClient_can(HSF_PERM_DOWNLOAD)) {
         XLabel_setText_2(&self->m_status,
                          "权限不足：下载数据需要普通用户及以上账户");
         return;
     }
-    self->m_exportOffset = self->m_offset;
-    self->m_exportLimit = self->m_pageSize;
-    self->m_exportPending = true;
-    /* [导出格式定格] 按下「导出」这一刻取工具条下拉的格式（异步应答回来
-     * 后按它写盘）；下拉索引与 HsfExportFormat 数值相反，由共享模块的
-     * 映射函数转换。 */
-    self->m_exportFormat =
-        HsfExport_formatFromBarIndex(HsfDataBar_exportFormatIndex(self->m_bar));
-    /* 导出走"当前页重拉"：与分页请求同键，anchor 沿用当前值。 */
-    if (!HsfLinkClient_logQueryWindow(self->m_offset, self->m_pageSize,
-                                      self->m_anchorTs,
-                                      self->m_loTs, self->m_hiTs,
-                                      self->m_category[0] ? self->m_category : NULL,
-                                      self->m_kwText[0] ? self->m_kwText : NULL)) {
-        self->m_exportPending = false;
-        XLabel_setText_2(&self->m_status, "导出失败：服务端未连接");
+    if (self->m_exportFetching) {
+        XLabel_setText_2(&self->m_status, "正在导出中，请等本轮完成");
         return;
     }
-    /* 导出应答与页应答同键同内容：页请求描述符同步登记，应答既写盘也
-     * 顺带刷表（logTimerCb 的归并分支）。 */
-    self->m_pageReqOffset = self->m_offset;
-    self->m_pageReqLimit = self->m_pageSize;
-    self->m_pageReqValid = true;
-    snprintf(buf, sizeof(buf), "正在请求导出第 %d 页…",
-             self->m_offset / self->m_pageSize + 1);
-    XLabel_setText_2(&self->m_status, buf);
+    /* [格式=对话框过滤器档位] 框架文件对话框；过滤器串与历史页/Python
+     * 客户端同串同序：0=Excel 工作簿、1=CSV。 */
+    now = XDateTime_currentDateTime();
+    d = XDateTime_date(&now);
+    t = XDateTime_time(&now);
+    snprintf(defName, sizeof(defName),
+             "./hsf_log_%04d%02d%02d_%02d%02d%02d",
+             XDate_year(&d), XDate_month(&d), XDate_day(&d),
+             XTime_hour(&t), XTime_minute(&t), XTime_second(&t));
+    chosen = XFileDialog_getSaveFileName_2(
+        (XWidget*)&self->m_base, "导出运行日志", defName,
+        "Excel 工作簿 (*.xlsx);;CSV (*.csv)", &filterIdx);
+    if (chosen) {
+        const char* u8 = XString_toUtf8(chosen);
+        snprintf(self->m_exportPath, sizeof(self->m_exportPath), "%s",
+                 u8 ? u8 : "");
+        XClassDelete(chosen);
+    } else {
+        self->m_exportPath[0] = '\0';
+    }
+    if (!self->m_exportPath[0]) return;   /* 用户取消：静默收场 */
+    HsfExport_stripKnownExt(self->m_exportPath);
+    self->m_exportFormat = HsfExport_formatFromFilterIndex(filterIdx);
+    /* [定格] 锚点 + 时间窗 + 类别 + 关键字快照（后续批次全按快照下发）。
+     * logs 表持续入库：锚点不定格，相邻两批会被新行顶偏（漏行/重行）。 */
+    self->m_exportAnchor = (self->m_anchorTs > 0)
+        ? self->m_anchorTs
+        : XDateTime_currentWallMSecsSinceEpoch();
+    self->m_exportLoTs = self->m_loTs;
+    self->m_exportHiTs = self->m_hiTs;
+    snprintf(self->m_exportCategory, sizeof(self->m_exportCategory), "%s",
+             self->m_category);
+    snprintf(self->m_exportKw, sizeof(self->m_exportKw), "%s", self->m_kwText);
+    /* 打开写出器（BOM/建文档 + 表头）。 */
+    if (!HsfExportWriter_open(&self->m_exportWriter, self->m_exportFormat,
+                              self->m_exportPath, "运行日志",
+                              kLogHeaders, 3)) {
+        XLabel_setText_2(&self->m_status, "导出失败：文件无法创建");
+        return;
+    }
+    self->m_exportFetching = true;
+    self->m_exportTotal = 0;
+    self->m_exportWritten = 0;
+    self->m_exportTruncated = false;
+    self->m_exportIdle = 0;
+    self->m_exportRetries = 0;
+    XLabel_setText_2(&self->m_status, "正在导出…");
+    logTimerIntervalApply(self);   /* 取数期间提速轮询（一批一跳） */
+    if (!logExportRequest(self, 0))
+        logExportDone(self, false, "导出失败：服务端未连接");
 }
 
 /* ==================== 工具条 / 轮询 ==================== */
@@ -594,11 +742,13 @@ static void logBarAction(void* userData, int action)
     }
 }
 
-/** @brief 界面刷新周期拍：应答到达 → 按**归属**分派（表格页 / 导出）。
+/** @brief 界面刷新周期拍：应答到达 → 按**归属**分派（表格页 / 导出批）。
  *  @details 与 histTimerCb 同机制：应答槽只有一份（HsfLinkClient_logPage），
- *           按服务端回显的 offset/limit 认领；本页两类消费者（分页/导出）
- *           同键同内容，导出应答写盘后顺带填表。对不上的迟到应答丢弃并
- *           留痕（防错页铺表——历史页复审②的教训）。 */
+ *           按服务端回显的 offset/limit 认领。本页两类消费者的 limit 恒
+ *           不相交（页=10/20/50、导出批=40）⇒ 一条应答只落进一个分支。
+ *           [导出批看门狗] 在途导出批的应答可能被同拍到达的页应答顶出
+ *           单份缓冲（用户在导出期间翻了页）：约 1s 没等到就按同一键
+ *           重发，连续 3 次不回才放弃。 */
 static void logTimerCb(void* userData, XTimerData* timer)
 {
     HsfDataLogPage* self = (HsfDataLogPage*)userData;
@@ -607,6 +757,18 @@ static void logTimerCb(void* userData, XTimerData* timer)
     bool isExportReply;
     (void)timer;
     if (!self) return;
+    /* [导出批看门狗] 同历史页 histTimerCb 的兜底（被顶掉 ≠ 丢终局）。 */
+    if (self->m_exportFetching) {
+        ++self->m_exportIdle;
+        if (self->m_exportIdle > LOG_EXPORT_WATCHDOG_TICKS) {
+            self->m_exportIdle = 0;
+            if (++self->m_exportRetries > LOG_EXPORT_MAX_RETRIES) {
+                logExportDone(self, false, "导出失败：服务端应答超时");
+            } else if (!logExportRequest(self, self->m_exportOffset)) {
+                logExportDone(self, false, "导出失败：服务端未连接");
+            }
+        }
+    }
     page = HsfLinkClient_logPage();
     if (!page || !page->m_valid) return;
     /* [同一应答只处置一次] 序号每拍比对，重复读到同一条就返回。 */
@@ -615,26 +777,14 @@ static void logTimerCb(void* userData, XTimerData* timer)
     isPageReply = self->m_pageReqValid &&
                   page->m_offset == self->m_pageReqOffset &&
                   page->m_limit == self->m_pageReqLimit;
-    isExportReply = self->m_exportPending &&
+    isExportReply = self->m_exportFetching &&
                     page->m_offset == self->m_exportOffset &&
                     page->m_limit == self->m_exportLimit;
 
     if (isExportReply) {
-        char path[160];
-        self->m_exportPending = false;
         self->m_seenSeq = page->m_seq;
-        if (logWriteExport(page, self->m_exportFormat,
-                           path, (int)sizeof(path))) {
-            char buf[220];
-            snprintf(buf, sizeof(buf), "已导出 %d 行 → %s",
-                     page->m_count, path);
-            XLabel_setText_2(&self->m_status, buf);
-        } else {
-            XLabel_setText_2(&self->m_status, "导出失败：文件写入错误");
-        }
-        /* 导出应答同时就是当前页内容：继续走下面的填表分派（页描述符
-         * 同键，必然也对得上——同一次发包双登记）。 */
-        if (!isPageReply) return;
+        logExportContinue(self, page);
+        return;
     }
     if (!isPageReply) {
         /* [无主应答 = 丢弃] 被取消/被取代的请求晚到的应答绝不铺表。 */
@@ -665,6 +815,10 @@ static void logPageDestroyedSlot(XObject* sender, XVarList* args)
         XClassDelete(self->m_timer);
         self->m_timer = NULL;
     }
+    /* [导出在途收尾] 关掉 CSV 句柄/丢弃 XLSX 文档（半成品 CSV 尽力删除），
+     * 别把句柄与行缓冲随页一起带走（泄漏）。 */
+    if (self->m_exportFetching)
+        HsfExportWriter_abort(&self->m_exportWriter);
 }
 
 /** @brief 字号实时重放：标题/状态/表格行高/工具条/行 2 控件同一比例。 */
@@ -747,20 +901,23 @@ XWidget* HsfDataLog_create(XWidget* parent, HsfMenuNavFn navFn,
          * 列筛选/小数位/最大点数的处理分支 ⇒ 共享工具条上这几个控件是
          * 「可见但改了没反应」的假控件；「生成折线图」按下也只会自己弹回
          * 表格（假按钮）。Python 端日志页**根本没有**这些控件。故一律
-         * 藏掉，别让假控件占着用户的注意力。 */
+         * 藏掉，别让假控件占着用户的注意力。
+         * [导出格式下拉也删 2026-11-10] 导出格式改由文件对话框的过滤器
+         * 档位决定（logExportStart），下拉没有存在意义——一并藏掉。 */
         HsfDataBar_setFeatures(self->m_bar,
             HsfDataBarFeature_All
             & ~(unsigned int)(HsfDataBarFeature_Chart
                               | HsfDataBarFeature_ColFilter
                               | HsfDataBarFeature_Decimals
-                              | HsfDataBarFeature_MaxPoints));
+                              | HsfDataBarFeature_MaxPoints
+                              | HsfDataBarFeature_ExportFmt));
         XBoxLayout_addWidget(&self->m_layout, self->m_bar);
     }
 
     XLabel_init(&self->m_status, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_status);
     XLabel_setTextPixelSize(&self->m_status, logPx(12));
-    XWidget_setForegroundRole((XWidget*)&self->m_status, XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&self->m_status);
     XLabel_setText_2(&self->m_status, "读取中");
     XWidget_show((XWidget*)&self->m_status);
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_status);

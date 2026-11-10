@@ -23,6 +23,7 @@
 #include "XByteArray.h"
 #include "XClass.h"
 #include "XDevice.h"
+#include "XDeviceFile.h"
 #include "XDocument.h"
 #include "XIODevice.h"
 #include "XString.h"
@@ -52,12 +53,36 @@ bool HsfExport_outputPath(const HsfExportGrid* grid, char* out, int cap)
                          out, cap);
 }
 
-HsfExportFormat HsfExport_formatFromBarIndex(int index)
+HsfExportFormat HsfExport_formatFromFilterIndex(int index)
 {
-    /* HsfDataBar 下拉项顺序：[Excel (.xlsx), CSV (.csv)] ⇒ 0=XLSX、1=CSV，
-     * 与 HsfExportFormat 的数值正好相反，接线处必须走本函数映射。 */
+    /* 文件对话框过滤器顺序：[Excel 工作簿 (*.xlsx), CSV (*.csv)]
+     * ⇒ 0=XLSX、1=CSV，与 HsfExportFormat 的数值正好相反，
+     * 接线处必须走本函数映射（与 Python 客户端同串同序）。 */
     if (index == 0) return HsfExportFormat_Xlsx;
     return HsfExportFormat_Csv;
+}
+
+void HsfExport_stripKnownExt(char* path)
+{
+    size_t n;
+    if (!path) return;
+    n = strlen(path);
+    if (n >= 5 && strcmp(path + n - 5, ".xlsx") == 0) {
+        path[n - 5] = '\0';
+        return;
+    }
+    /* 不分大小写：大写变小写比一次（.CSV / .Csv 等）。 */
+    if (n >= 4) {
+        char tail[5];
+        int i;
+        for (i = 0; i < 4; ++i) {
+            char ch = path[n - 4 + i];
+            if (ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
+            tail[i] = ch;
+        }
+        tail[4] = '\0';
+        if (strcmp(tail, ".csv") == 0) path[n - 4] = '\0';
+    }
 }
 
 /* ==================== CSV ==================== */
@@ -261,6 +286,221 @@ static bool xlsxWriteGrid(const HsfExportGrid* grid, const char* path)
     if (ok) ok = XDocument_saveAs_utf8(doc, path);
     XDocument_delete(doc);   /* 失败路径也要释放，别泄漏。 */
     return ok;
+}
+
+/* ==================== 流式写出器 ====================
+ * 历史/日志页的「按当前筛选条件全量导出」是**分页拉取**：数据按批
+ * （offset 递增）从服务端到达，不像报警页那样一次拿全。写出器把
+ * 「来一批写一批」变成可能：CSV 常驻内存 O(1)（行缓冲 + 文件句柄），
+ * XLSX 在 finish 时才 saveAs（zip 包必须整体写出，取数期间文档留在
+ * 内存是 XExcel 的固有口径，与 Python 端 xlsx_writer 相同）。 */
+
+/** @brief CSV：写一行（各格经回调取文本；行缓冲拼好一次性落盘）。 */
+static bool writerWriteCsvRow(HsfExportWriter* w, HsfExportCellFn cell,
+                              void* user, bool isHeader,
+                              const char* const* header, int row)
+{
+    int c;
+    bool ok = true;
+    char buf[HSF_EXPORT_CELL_CAP];
+    for (c = 0; ok && c < w->m_colCount; ++c) {
+        if (c > 0 && !XByteArray_append_2((XVector*)w->m_row, ",", 1)) {
+            ok = false;
+            break;
+        }
+        buf[0] = '\0';
+        if (isHeader) {
+            const char* h = header[c];
+            if (h) snprintf(buf, sizeof(buf), "%s", h);
+        } else if (cell && cell(user, row, c, buf, (int)sizeof(buf))) {
+            buf[sizeof(buf) - 1] = '\0';
+        } else {
+            buf[0] = '\0';
+        }
+        if (buf[0] && !csvAppendCell(w->m_row, buf)) ok = false;
+    }
+    if (ok && !XByteArray_append_2((XVector*)w->m_row, "\r\n", 2)) ok = false;
+    if (ok) ok = csvFlushRow(w->m_fd, w->m_row);
+    if (!ok) w->m_failed = true;
+    return ok;
+}
+
+/** @brief XLSX：写一行（1 基行号；空格跳过不建格，与 write 同口径）。 */
+static bool writerWriteXlsxRow(HsfExportWriter* w, HsfExportCellFn cell,
+                               void* user, bool isHeader,
+                               const char* const* header, int row)
+{
+    int c;
+    char buf[HSF_EXPORT_CELL_CAP];
+    for (c = 0; c < w->m_colCount; ++c) {
+        buf[0] = '\0';
+        if (isHeader) {
+            const char* h = header[c];
+            if (h) snprintf(buf, sizeof(buf), "%s", h);
+        } else if (cell && cell(user, row, c, buf, (int)sizeof(buf))) {
+            buf[sizeof(buf) - 1] = '\0';
+        }
+        if (buf[0] == '\0') continue;
+        if (!XWorksheet_writeString_utf8(w->m_ws, w->m_nextRow, c + 1,
+                                         buf, NULL)) {
+            w->m_failed = true;
+            return false;
+        }
+    }
+    ++w->m_nextRow;
+    return true;
+}
+
+bool HsfExportWriter_open(HsfExportWriter* w, HsfExportFormat format,
+                          const char* pathPrefix, const char* sheetName,
+                          const char* const* header, int colCount)
+{
+    const char* sheet;
+    if (!w || !pathPrefix || !pathPrefix[0] || colCount <= 0) return false;
+    if (w->m_open) return false;   /* 未 finish/abort 不得重复 open */
+    memset(w, 0, sizeof(*w));
+    w->m_format = format;
+    w->m_colCount = colCount;
+    w->m_fd = XFD_INVALID;
+    if (!exportJoinExt(pathPrefix,
+                       (format == HsfExportFormat_Xlsx) ? ".xlsx" : ".csv",
+                       w->m_path, (int)sizeof(w->m_path)))
+        return false;
+    if (format == HsfExportFormat_Xlsx) {
+        w->m_doc = XDocument_create();
+        if (!w->m_doc) return false;
+        sheet = (sheetName && sheetName[0]) ? sheetName : "Sheet1";
+        if (strcmp(sheet, "Sheet1") != 0) {
+            if (!XDocument_renameSheet_utf8(w->m_doc, "Sheet1", sheet) &&
+                !XDocument_addSheet_utf8(w->m_doc, sheet,
+                                         XAbstractSheet_ST_WorkSheet))
+                sheet = "Sheet1";
+        }
+        if (!XDocument_selectSheet_utf8(w->m_doc, sheet)) {
+            XDocument_delete(w->m_doc);
+            w->m_doc = NULL;
+            return false;
+        }
+        w->m_ws = XDocument_currentWorksheet(w->m_doc);
+        if (!w->m_ws) {
+            XDocument_delete(w->m_doc);
+            w->m_doc = NULL;
+            return false;
+        }
+        w->m_nextRow = 1;
+    } else {
+        XDeviceOpenOptions opts;
+        XString* target;
+        int err = 0;
+        w->m_row = XByteArray_create();
+        if (!w->m_row) return false;
+        target = XString_create_utf8(w->m_path);
+        if (!target) {
+            XClassDelete(w->m_row);
+            w->m_row = NULL;
+            return false;
+        }
+        memset(&opts, 0, sizeof(opts));
+        opts.m_openMode = XIODevice_WriteOnly | XIODevice_Truncate;
+        opts.m_target = target;
+        w->m_fd = XDevice_open(XDeviceType_File, &opts, &err);
+        XClassDelete(target);
+        if (w->m_fd == XFD_INVALID) {
+            XClassDelete(w->m_row);
+            w->m_row = NULL;
+            return false;
+        }
+        /* UTF-8 BOM：Excel 双击直开不乱码（与一次性写同口径）。 */
+        if (XDevice_write(w->m_fd, "\xEF\xBB\xBF", 3) != 3) {
+            w->m_failed = true;
+            HsfExportWriter_abort(w);
+            return false;
+        }
+    }
+    w->m_open = true;
+    /* 表头行（header=NULL ⇒ 不写，与一次性写同口径）。 */
+    if (header) {
+        if (format == HsfExportFormat_Xlsx)
+            writerWriteXlsxRow(w, NULL, NULL, true, header, 0);
+        else
+            writerWriteCsvRow(w, NULL, NULL, true, header, 0);
+    }
+    return true;
+}
+
+bool HsfExportWriter_writeRow(HsfExportWriter* w, int row,
+                              HsfExportCellFn cell, void* user)
+{
+    if (!w || !w->m_open || row < 0) return false;
+    if (w->m_format == HsfExportFormat_Xlsx)
+        return writerWriteXlsxRow(w, cell, user, false, NULL, row);
+    return writerWriteCsvRow(w, cell, user, false, NULL, row);
+}
+
+bool HsfExportWriter_finish(HsfExportWriter* w)
+{
+    bool ok;
+    if (!w || !w->m_open) return false;
+    ok = !w->m_failed;
+    if (w->m_format == HsfExportFormat_Xlsx && ok) {
+        ok = XDocument_saveAs_utf8(w->m_doc, w->m_path);
+        if (!ok) w->m_failed = true;
+    }
+    if (w->m_format == HsfExportFormat_Csv) {
+        if (w->m_fd != XFD_INVALID) {
+            XDevice_close(w->m_fd);
+            w->m_fd = XFD_INVALID;
+        }
+        if (w->m_row) {
+            XClassDelete(w->m_row);
+            w->m_row = NULL;
+        }
+    } else if (w->m_doc) {
+        XDocument_delete(w->m_doc);
+        w->m_doc = NULL;
+        w->m_ws = NULL;
+    }
+    w->m_open = false;
+    return ok;
+}
+
+void HsfExportWriter_abort(HsfExportWriter* w)
+{
+    if (!w) return;
+    if (w->m_format == HsfExportFormat_Csv) {
+        if (w->m_fd != XFD_INVALID) {
+            XDevice_close(w->m_fd);
+            w->m_fd = XFD_INVALID;
+        }
+        if (w->m_row) {
+            XClassDelete(w->m_row);
+            w->m_row = NULL;
+        }
+        /* 半成品文件尽力删掉（用户点了筛选/翻页把导出取消时，盘上
+         * 不能留一份截断的 CSV 冒充完整导出）。删除失败就算了：
+         * 下一次同名导出会 Truncate 覆盖它。 */
+#if XDEVICE_ON && XDEVICE_FILE_ON
+        if (w->m_path[0]) {
+            XString* p = XString_create_utf8(w->m_path);
+            if (p) {
+                (void)XDeviceFile_removePermanent(p);
+                XClassDelete(p);
+            }
+        }
+#endif
+    } else if (w->m_doc) {
+        /* XLSX 未 saveAs 盘上本就无文件：直接丢文档。 */
+        XDocument_delete(w->m_doc);
+        w->m_doc = NULL;
+        w->m_ws = NULL;
+    }
+    w->m_open = false;
+}
+
+const char* HsfExportWriter_path_const(const HsfExportWriter* w)
+{
+    if (!w) return "";
+    return w->m_path;
 }
 
 /* ==================== 对外入口 ==================== */

@@ -4,7 +4,8 @@
  * @details    [2026-11-09 真实现替换占位] 数据源 = 服务端 logs 表（关键运维
  *             事件定点入库：conn/ctrl/alarm/auto/auth 五类），经
  *             HSF_CMD_LOG_PAGE 请求-应答拉取；工具条（时间范围/类别下拉/
- *             关键字/分页/导出 CSV）+ 表格（时间/类别/事件）。
+ *             关键字/分页）+ 表格（时间/类别/事件）；导出走文件对话框
+ *             （格式=过滤器档位）按当前筛选条件全量拉取（CSV/XLSX）。
  *             [形态约束] HsfUi.c 的 kHsfPageAdapt[10] 固定调
  *             HsfDataTablePage_adapt（HsfUi.c 本模块不可改），故本页结构
  *             前四成员与 HsfDataTablePage **同型同序**（见 HsfDataLog.c

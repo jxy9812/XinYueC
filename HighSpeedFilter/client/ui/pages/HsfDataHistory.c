@@ -26,8 +26,7 @@
 #include "XChart.h"
 #include "XChartView.h"
 #include "XComboBox.h"
-#include "XDevice.h"
-#include "XIODevice.h"   /* XIODevice_WriteOnly/_Truncate（导出 CSV 打开模式） */
+#include "XFileDialog.h"  /* 导出走框架文件对话框（格式=过滤器档位） */
 #include "XHeaderView.h"
 #include "XLabel.h"
 #include "XLineEdit.h"
@@ -224,18 +223,32 @@ typedef struct HsfDataHistory {
     int64_t      m_tzOffsetMs;  /**< 本地时区偏移（epoch 与日历显示互转用）。 */
     XPushButton  m_prev;        /**< 上一页。 */
     XPushButton  m_next;        /**< 下一页。 */
-    bool         m_exportPending; /**< 已发导出请求，等应答。 */
-    int          m_exportOffset;  /**< 导出请求的 offset（应答归属校验）。 */
-    int          m_exportLimit;   /**< 导出请求的 limit（应答归属校验）。 */
+    /* ---- 全量导出（按当前筛选条件逐批拉全，与图表全量取数同路） ----
+     * [定格语义] 发起导出那一刻把 筛选条件（关键字/时间窗）、可见列集合、
+     * 落地路径与格式全部定格进 m_export* 快照；后续每一批请求都按快照
+     * 下发——等待期间用户改界面（翻页/改筛选/改列）不影响在途导出的
+     * 内容，绝不出现"半份旧条件 + 半份新条件"的文件。 */
+    bool         m_exportFetching; /**< 全量导出累加中（逐批在途）。 */
+    int          m_exportOffset;   /**< 在途导出批的 offset（应答归属校验）。 */
+    int          m_exportLimit;    /**< 在途导出批的 limit（恒 HIST_EXPORT_CHUNK）。 */
+    int          m_exportTotal;    /**< 首批应答记下的筛选总行数（0=未知）。 */
+    int          m_exportWritten;  /**< 已写进行文件的行数。 */
+    int          m_exportIdle;     /**< 在途批等应答的拍数（看门狗）。 */
+    int          m_exportRetries;  /**< 当前批已重发次数（超限放弃）。 */
+    bool         m_exportTruncated;/**< XLSX 触上限截断（状态行注明）。 */
+    HsfExportWriter m_exportWriter;/**< 流式写出器（open..finish 生命周期）。 */
     /* [导出列定格] 发导出请求那一刻的可见列集合（异步应答回来时按它写盘，
      * 不回头读下拉——等待期间用户改列筛选不该影响已发出的导出）。 */
     uint32_t     m_exportCols[HSF_HISTORY_DISPLAY_COLS]; /**< 本次导出的列下标（0..N-1）。 */
     int          m_exportColCount; /**< m_exportCols 有效长度（0=未定格）。 */
-    /** @brief 本次导出的格式（发请求那一刻从工具条「导出格式」下拉定格）。
-     *  @note  导出是异步的（发请求→等应答→写盘），若写盘时才读下拉，
-     *         用户在等待期间改了下拉 ⇒ 落地格式与按下「导出」时选的不一致。
-     *         故在发起导出时定格。 */
+    /** @brief 本次导出的格式（发起那一刻按文件对话框选中的过滤器档定格）。
+     *  @note  导出是异步的（多批请求→逐批写盘），写盘时才看界面会让
+     *         落地格式与按下「导出」时选的不一致，故发起时定格。 */
     HsfExportFormat m_exportFormat;
+    char         m_exportPath[HSF_EXPORT_PATH_CAP]; /**< 本次导出的落地路径前缀（无扩展名）。 */
+    char         m_exportKw[160];  /**< 本次导出冻结的关键字（快照）。 */
+    int64_t      m_exportLoTs;     /**< 本次导出冻结的时间窗下界（快照）。 */
+    int64_t      m_exportHiTs;     /**< 本次导出冻结的时间窗上界（快照）。 */
     XLineEdit    m_kw;          /**< 关键字输入（下推服务端）。 */
     XComboBox    m_pageSizeBox; /**< 每页条数（10/20/50）。 */
     char         m_kwText[160]; /**< 当前生效的关键字（为空=不筛）。 */
@@ -385,6 +398,22 @@ static void histCalcColWidths(HsfDataHistory* self)
  *          图表侧统一丢弃 ts < 本门限的行。
  */
 #define HIST_CHART_VALID_TS_MIN  1577836800000LL
+
+/** @brief 全量导出拉取的单批行数（固定值，独占一档 limit）。 */
+#define HIST_EXPORT_CHUNK   40
+/** @brief 导出批的应答看门狗拍数（25ms × 40 ≈ 1s 没等到就重发）。 */
+#define HIST_EXPORT_WATCHDOG_TICKS  40
+/** @brief 导出批最多重发次数（连续不回才放弃）。 */
+#define HIST_EXPORT_MAX_RETRIES     3
+/* 编译期兜底：导出批 limit 必须与页大小 10/20/50、图表探测批 1..8、
+ * 图表正式批 41..49 两两不相交（应答槽单份，页面只能按服务端回显的
+ * (offset,limit) 认领，见 histTimerCb）。档位动了这里直接编译失败，
+ * 不把串台拖到运行期。 */
+#if (HIST_EXPORT_CHUNK <= 10) || (HIST_EXPORT_CHUNK == 20) || \
+    (HIST_EXPORT_CHUNK == 50) || (HIST_EXPORT_CHUNK >= HIST_CHART_CHUNK) || \
+    (HIST_EXPORT_CHUNK <= HSF_CHART_ZOOM_PROBE_MAX)
+#error "export chunk limit must be disjoint from page sizes and chart batch ranges"
+#endif
 
 /* ==================== 填表 ==================== */
 
@@ -575,6 +604,43 @@ static int histKwCols(const HsfDataHistory* self, uint32_t* out)
     return histVisibleCols(self, out);
 }
 
+/** @brief 按当前取数状态设置应答轮询周期（取数期间提速，空闲恢复）。
+ *  @details [为什么收口成一个函数] 应答槽是单份静态缓冲，页面靠轮询取
+ *           回（见 histTimerCb）；图表累加与全量导出期间临时降到
+ *           HIST_CHART_FETCH_POLL_MS，一批一跳。三处写周期的调用点
+ *           （中止图表/取数收尾/导出收尾）必须算**同一个**口径——否则
+ *           一方收尾把另一方在途的提速覆盖回慢拍，取数观感"点了没反应"。
+ */
+static void histTimerIntervalApply(HsfDataHistory* self)
+{
+    if (!self || !self->m_timer) return;
+    XTimer_setInterval(self->m_timer,
+                       (self->m_chartFetching || self->m_exportFetching)
+                           ? HIST_CHART_FETCH_POLL_MS
+                           : HsfSettingsLocal_refreshMs());
+}
+
+/** @brief 中止图表全量累加（数据作废、在途批应答无主、轮询周期重算）。
+ *  @details [串扰防护 + 中止即作废] 图表全量累加与表格分页/全量导出共用
+ *           同一个应答槽（HsfLinkClient_history()）。若图表还在累加时
+ *           用户翻页/改筛选/点导出，新应答会被 histTimerCb 的图表分支
+ *           当成图表批次吞掉，别的消费者就饿死了。故任何其它请求发出前
+ *           先走这里中止图表累加。
+ *           [为什么必须标脏] 已经累加进来的那几批只是**半截数据**（例如
+ *           10 批里只取到第 1 批的 50 行）。旧实现只清 m_chartFetching
+ *           不标脏，于是 histChartFetchStart 命中「未过期且有数据」的
+ *           早退分支，直接把半截曲线当完整结果显示（复审①：「生成折线
+ *           图→翻页→再生成」画出半截并标「共 50 行」）。中止 = 数据作废，
+ *           下次生成必须整批重取。 */
+static void histChartAbort(HsfDataHistory* self)
+{
+    if (!self || !self->m_chartFetching) return;
+    self->m_chartFetching = false;
+    self->m_chartDataDirty = true;
+    self->m_chartReqValid = false;   /* 在途图表批的应答从此无主 */
+    histTimerIntervalApply(self);
+}
+
 /** @brief 发起一页请求（offset 为该页起点；关键字/列/页大小随请求下发）。 */
 static void histRequest(HsfDataHistory* self, int offset)
 {
@@ -586,23 +652,11 @@ static void histRequest(HsfDataHistory* self, int offset)
     if (self->m_pageSize <= 0) self->m_pageSize = HIST_PAGE_LIMIT;
     n = histKwCols(self, cols);
     self->m_offset = offset;
-    /* [串扰防护 + 中止即作废] 图表全量累加与表格分页共用同一个应答槽
-     * （HsfLinkClient_history()）。若图表还在累加时用户翻页/改筛选，
-     * 新应答会被 histTimerCb 的图表分支当成图表批次吞掉，表格就不刷新了。
-     * 故任何普通分页请求发出即中止图表累加。
-     * [为什么必须标脏] 已经累加进来的那几批只是**半截数据**（例如 10 批里
-     * 只取到第 1 批的 50 行）。旧实现只清 m_chartFetching 不标脏，于是
-     * histChartFetchStart 命中「未过期且有数据」的早退分支，直接把半截
-     * 曲线当完整结果显示（复审①：「生成折线图→翻页→再生成」画出半截并
-     * 标「共 50 行」）。中止 = 数据作废，下次生成必须整批重取。 */
-    if (self->m_chartFetching) {
-        self->m_chartFetching = false;
-        self->m_chartDataDirty = true;
-        /* [轮询周期恢复] 取数期间提速过（见 HIST_CHART_FETCH_POLL_MS），
-         * 中止即恢复界面刷新周期（否则页面一直按 25ms 轮询）。 */
-        if (self->m_timer)
-            XTimer_setInterval(self->m_timer, HsfSettingsLocal_refreshMs());
-    }
+    /* 任何普通分页请求发出即中止图表累加（见 histChartAbort 的串扰防护
+     * 注记）；全量导出不中止——它的内容已定格、批 limit 与页请求不相交，
+     * 在途导出批的应答归属不受影响（看门狗兜住被顶掉的那一拍，见
+     * histTimerCb）。 */
+    histChartAbort(self);
     /* [数据窗随筛选作废] 筛选条件/时间窗变了 ⇒ 已持有的图表数据窗属于
      * 旧条件，必须清掉（否则下次取数还按旧窗要行）；全量域也要重新学
      * （旧跨度是旧筛选条件的跨度）。 */
@@ -654,20 +708,6 @@ static void histPrevSlot(XObject* receiver, XVarList* args)
     histRequest(self, self->m_offset - self->m_pageSize);
 }
 
-/** @brief 导出 CSV（当前页的**可见列**）到工作目录；返回是否成功。
- *  @details [只导服务端返回的那一页 + 只看得到的列] 导出走 0x0118 的
- *           export=true 请求，服务端验 Download 权限后返回数据；客户端只
- *           落盘，**不另开旁路读写**——权限在服务端生效，绕过界面直发帧
- *           也拿不到数据。
- *           [列集合=可见列] 与 Python `_write_export` 的
- *           `cols = self.visible_columns()` 同口径：界面上收成 1 列，
- *           导出的就是那 1 列（"导出=看到的样子"）。旧实现硬编码 15 列
- *           全量，用户明明只勾了一列却拿到全部 15 列。
- *  @param page     服务端返回的那一页。
- *  @param cols     可见列下标（0..14；升序，非空）。
- *  @param colCount cols 长度（>=1）。
- *  @param outPath  输出路径缓冲。
- *  @param cap      outPath 容量。 */
 /** @brief 历史页导出取格上下文（网格列=可见列序 → 行内格）。 */
 typedef struct HistExportCtx {
     const HsfHistoryPage* page;   /**< 服务端返回的那一页。 */
@@ -690,67 +730,164 @@ static bool histExportCell(void* user, int row, int col, char* buf, int cap)
     return true;
 }
 
-/** @brief 把本页那一页写成导出文件（CSV 或真 XLSX）。
- *  @details [走共享模块 2026-11-10] 工具条上的「导出格式」下拉此前是
- *           **死控件**（选了 XLSX 落地仍是 CSV）。现在三页统一走
- *           HsfExport：CSV 与 XLSX 共用同一套取数口径，XLSX 走框架
- *           XExcel 原生 API（与 Python 端 xlsx_bridge 封的同一套）。
- *  @param page     服务端返回的那一页。
- *  @param cols     可见列下标（升序，非空）。
- *  @param colCount cols 长度（>=1）。
- *  @param format   导出格式（发请求那一刻从下拉定格）。
- *  @param outPath  输出路径缓冲（回填最终落地路径）。
- *  @param cap      outPath 容量。 */
-static bool histWriteExport(const HsfHistoryPage* page,
-                             const uint32_t* cols, int colCount,
-                             HsfExportFormat format,
-                             char* outPath, int cap)
-{
-    HsfExportGrid grid;
-    HistExportCtx ctx;
-    const char* headers[HSF_HISTORY_DISPLAY_COLS];
-    char prefix[96];
-    int k;
+/* ==================== 全量导出（文件对话框 + 逐批拉全） ====================
+ * [口径] 导出 = **按当前筛选条件的全部行**（与图表全量取数同一条路：同
+ * 一组 WHERE 逐批拉），不是表格当前页那 10/20/50 行。取数与落盘解耦：
+ *  · 格式由**文件对话框的过滤器档位**决定（"Excel 工作簿 (*.xlsx);;
+ *    CSV (*.csv)"，与 Python 客户端同串同序）——工具条上不再有「导出
+ *    格式」下拉（那颗下拉曾是选了不兑现的死控件）。
+ *  · 行走共享模块的流式写出器（HsfExportWriter）：来一批写一批，
+ *    CSV 常驻内存 O(1)；XLSX 收尾才 saveAs。
+ *  · 筛选条件/列集合/路径/格式在发起那一刻定格（m_export* 快照），
+ *    等待期间用户改界面不影响在途导出的内容。 */
 
-    if (!page || !page->m_valid || !cols || colCount <= 0 ||
-        !outPath || cap <= 0)
-        return false;
-    for (k = 0; k < colCount && k < HSF_HISTORY_DISPLAY_COLS; ++k) {
-        const int c = (int)cols[k];
+/** @brief XLSX 全量导出的行数上限（in-memory 工作簿的内存预算）。
+ *  @details [为什么 XLSX 有上限而 CSV 没有] CSV 是流式写盘（写出器只
+ *           持有一行缓冲），多少行都不涨内存；XLSX 的 zip 包必须整体
+ *           写出（finish 时才 saveAs），取数期间整个工作簿都在内存——
+ *           行数无上限会把板端内存吃穿。上限对齐图表全量取数的内存预算
+ *           （HIST_CHART_MAX_ROWS）。触顶按**已取部分**收尾导出，状态行
+ *           注明截断——绝不静默少行。CSV 无此上限（全量到底）。 */
+#define HIST_EXPORT_XLSX_MAX_ROWS  HIST_CHART_MAX_ROWS
+
+/** @brief 按定格列集合拼表头数组（写文件的第一行）。 */
+static void histExportHeaders(const uint32_t* cols, int colCount,
+                              const char** headers, int cap)
+{
+    int k;
+    for (k = 0; k < cap; ++k) {
+        const int c = (k < colCount) ? (int)cols[k] : -1;
         headers[k] = (c >= 0 && c < HSF_HISTORY_DISPLAY_COLS)
                          ? kHistoryHeaders[c] : "";
     }
-    snprintf(prefix, sizeof(prefix), "./hsf_history_%d", page->m_offset);
-    ctx.page = page;
-    ctx.cols = cols;
-    ctx.colCount = colCount;
-    memset(&grid, 0, sizeof(grid));
-    grid.path = prefix;
-    grid.sheetName = "历史数据";
-    grid.format = format;
-    grid.colCount = colCount;
-    grid.rowCount = page->m_count;
-    grid.header = headers;
-    grid.cell = histExportCell;
-    grid.user = &ctx;
-    if (!HsfExport_write(&grid)) return false;
-    (void)HsfExport_outputPath(&grid, outPath, cap);
+}
+
+/** @brief 收尾导出（写完 or 中途放弃）：落盘/清理 + 状态行 + 周期重算。
+ *  @param complete true=按计划写完（finish 收尾：XLSX saveAs/CSV 关闭）；
+ *                  false=中途放弃（abort：删半成品 CSV/丢弃 XLSX 文档）。
+ *  @param failNote 失败文案（complete=false 时用；NULL=保留状态行现文——
+ *                  服务端失败包络的原文已由调用方写好，别盖掉）。 */
+static void histExportDone(HsfDataHistory* self, bool complete,
+                           const char* failNote)
+{
+    char buf[300];
+    bool ok = false;
+    if (!self) return;
+    if (complete) ok = HsfExportWriter_finish(&self->m_exportWriter);
+    else HsfExportWriter_abort(&self->m_exportWriter);
+    self->m_exportFetching = false;
+    self->m_exportIdle = 0;
+    self->m_exportRetries = 0;
+    histTimerIntervalApply(self);
+    if (!complete) {
+        if (failNote) XLabel_setText_2(&self->m_status, failNote);
+        return;
+    }
+    if (!ok) {
+        XLabel_setText_2(&self->m_status, "导出失败：文件写入错误");
+        return;
+    }
+    snprintf(buf, sizeof(buf), "已导出 %d 行 × %d 列 → %s%s",
+             self->m_exportWritten, self->m_exportColCount,
+             HsfExportWriter_path_const(&self->m_exportWriter),
+             self->m_exportTruncated ? "（超出 Excel 上限，已截断）" : "");
+    XLabel_setText_2(&self->m_status, buf);
+}
+
+/** @brief 发一批导出请求（按**定格**的筛选/列集合；offset 原样回显认领）。
+ *  @return 请求已发出返回 true；发出失败由调用方收尾。 */
+static bool histExportRequest(HsfDataHistory* self, int offset)
+{
+    if (!self) return false;
+    if (!HsfLinkClient_historyQueryWindow(offset, HIST_EXPORT_CHUNK, true,
+                                          self->m_exportKw,
+                                          self->m_exportCols,
+                                          self->m_exportColCount,
+                                          self->m_exportLoTs,
+                                          self->m_exportHiTs))
+        return false;
+    /* [应答归属] 服务端把 offset/limit 原样回显；导出批 limit 恒
+     * HIST_EXPORT_CHUNK（40），与页 10/20/50、图表批 1..8/41..49 两两
+     * 不相交（编译期锁见 HIST_EXPORT_CHUNK），晚到的别家应答认不走。 */
+    self->m_exportOffset = offset;
+    self->m_exportLimit = HIST_EXPORT_CHUNK;
+    self->m_exportIdle = 0;
     return true;
 }
 
-/** @brief 发起导出（工具条「导出」）：无权限→状态行拒绝；有权限→带
- *  export 标记重拉当前页。
- *  @details [闸在服务端] 界面只做提示，真正验权在服务端（export=true
- *           帧会被拒）——绕过界面直发帧也拿不到数据。
- *           [列集合随请求定格] 导出用**发请求那一刻**的可见列（下推
- *           服务端 kwCols + 落盘时取同集合）。落盘发生在异步应答回来时，
- *           若那时再读下拉，用户在等待期间改了列筛选就会"请求按 A 列、
- *           写盘按 B 列"。故把本次列集合记进 m_exportCols。 */
+/** @brief 导出批应答到达：写一批 → 推进下一批 → 取完收尾（连续取，不跳批）。
+ *  @details [判界] 短批（got < limit）= 服务端在这个 offset 已到数据尾
+ *           ⇒ 本批即末批；written >= total（首批记下）同理。导出与图表
+ *           取数不同：**不采样**，offset 按行数连续推进，一行不落。 */
+static void histExportContinue(HsfDataHistory* self,
+                               const HsfHistoryPage* page)
+{
+    HistExportCtx ctx;
+    char prog[160];
+    int got;
+    int i;
+    bool done;
+    if (!self || !page || !page->m_valid) {
+        histExportDone(self, false, "导出失败：查询失败");
+        return;
+    }
+    self->m_exportIdle = 0;
+    got = page->m_count;
+    if (got > 0) {
+        ctx.page = page;
+        ctx.cols = self->m_exportCols;
+        ctx.colCount = self->m_exportColCount;
+        for (i = 0; i < got; ++i) {
+            /* [XLSX 内存闸] 工作簿在收尾前都在内存，行数超上限按已取
+             * 部分收尾（状态行注明截断）；CSV 不设限。 */
+            if (self->m_exportFormat == HsfExportFormat_Xlsx &&
+                self->m_exportWritten >= HIST_EXPORT_XLSX_MAX_ROWS) {
+                self->m_exportTruncated = true;
+                break;
+            }
+            if (!HsfExportWriter_writeRow(&self->m_exportWriter, i,
+                                          histExportCell, &ctx)) {
+                histExportDone(self, false, "导出失败：文件写入错误");
+                return;
+            }
+            ++self->m_exportWritten;
+        }
+    }
+    if (self->m_exportTotal <= 0 && page->m_total > 0)
+        self->m_exportTotal = page->m_total;
+    done = self->m_exportTruncated || got <= 0 ||
+           got < self->m_exportLimit ||
+           (self->m_exportTotal > 0 &&
+            self->m_exportWritten >= self->m_exportTotal);
+    if (done) {
+        histExportDone(self, true, NULL);
+        return;
+    }
+    snprintf(prog, sizeof(prog), "正在导出… 已写 %d 行 / 共 %d 行",
+             self->m_exportWritten, self->m_exportTotal);
+    XLabel_setText_2(&self->m_status, prog);
+    if (!histExportRequest(self, self->m_exportOffset + got)) {
+        histExportDone(self, false, "导出失败：服务端未连接");
+    }
+}
+
+/** @brief 发起导出（工具条「导出」）：无权限→状态行拒绝；有权限→弹
+ *  文件对话框（格式=过滤器档位）→ 按当前筛选条件全量逐批拉取落盘。
+ *  @details [闸在服务端] 界面只做提示，真正验权在服务端（每一批都带
+ *           export=true，帧会被拒）——绕过界面直发帧也拿不到数据。
+ *  @details [对话框取消不误伤] 用户在保存框按了取消（返回空串）＝本次
+ *           不导出，界面保持原样（连状态行都不动），不发任何请求。 */
 static void histExportStart(HsfDataHistory* self)
 {
     HistCols cols;
+    const char* headers[HSF_HISTORY_DISPLAY_COLS];
+    XString* chosen = NULL;
+    int filterIdx = 0;
     int n;
-    char buf[200];
+    char defName[96];
+    XDateTime now;
+    XDate d;
+    XTime t;
     HIST_COLS_SIZE_ASSERT(cols);
     if (!self) return;
     if (!HsfLinkClient_can(HSF_PERM_DOWNLOAD)) {
@@ -758,37 +895,67 @@ static void histExportStart(HsfDataHistory* self)
                          "权限不足：下载数据需要普通用户及以上账户");
         return;
     }
-    /* histVisibleCols 保证 >=1 列（下拉为空/全部时回退全部 15 列）。 */
+    if (self->m_exportFetching) {
+        XLabel_setText_2(&self->m_status, "正在导出中，请等本轮完成");
+        return;
+    }
+    /* [图表累加让路] 同一应答槽单飞：先中止图表累加（histChartAbort
+     * 作废其描述符并标脏），导出收尾后图表按需整批重取。 */
+    histChartAbort(self);
+    /* [格式=对话框过滤器档位] 框架文件对话框（Qt 同名 API 面）；过滤器
+     * 串与 Python 客户端同串同序：0=Excel 工作簿、1=CSV。 */
+    now = XDateTime_currentDateTime();
+    d = XDateTime_date(&now);
+    t = XDateTime_time(&now);
+    snprintf(defName, sizeof(defName),
+             "./hsf_history_%04d%02d%02d_%02d%02d%02d",
+             XDate_year(&d), XDate_month(&d), XDate_day(&d),
+             XTime_hour(&t), XTime_minute(&t), XTime_second(&t));
+    chosen = XFileDialog_getSaveFileName_2(
+        (XWidget*)&self->m_base, "导出历史数据", defName,
+        "Excel 工作簿 (*.xlsx);;CSV (*.csv)", &filterIdx);
+    if (chosen) {
+        const char* u8 = XString_toUtf8(chosen);
+        snprintf(self->m_exportPath, sizeof(self->m_exportPath), "%s",
+                 u8 ? u8 : "");
+        XClassDelete(chosen);
+    } else {
+        self->m_exportPath[0] = '\0';
+    }
+    if (!self->m_exportPath[0]) return;   /* 用户取消：静默收场 */
+    /* 剥掉用户输入的尾缀，按定格格式追加规范扩展名（HsfExport_writer） */
+    HsfExport_stripKnownExt(self->m_exportPath);
+    self->m_exportFormat = HsfExport_formatFromFilterIndex(filterIdx);
+    /* [定格] 列集合 + 筛选条件快照（后续批次全按快照下发）。 */
     n = histVisibleCols(self, cols);
     if (n <= 0) return;
-    {   /* 定格本次导出的列集合（异步应答回来时按它写盘）。 */
+    {
         int k;
         for (k = 0; k < n && k < HSF_HISTORY_DISPLAY_COLS; ++k)
             self->m_exportCols[k] = cols[k];
         self->m_exportColCount = n;
     }
-    /* [导出格式定格] 按下「导出」这一刻从工具条下拉取格式（异步应答回来
-     * 后按它写盘）——下拉索引与 HsfExportFormat 数值相反，由共享模块的
-     * 映射函数转换，勿直接当枚举用。 */
-    self->m_exportFormat =
-        HsfExport_formatFromBarIndex(HsfDataBar_exportFormatIndex(self->m_bar));
-    /* [应答归属] 导出请求用的是"当前页"的 offset/limit，服务端原样回显；
-     * 记下来供 histTimerCb 认领（不能用应答序号：共用槽里序号也会被
-     * 图表批等别的请求推着走，序号变不等于"这条是导出的"）。 */
-    self->m_exportOffset = self->m_offset;
-    self->m_exportLimit = self->m_pageSize;
-    self->m_exportPending = true;
-    if (!HsfLinkClient_historyQueryWindow(self->m_offset, self->m_pageSize,
-                                          true, self->m_kwText, cols, n,
-                                          self->m_loTs, self->m_hiTs)) {
-        self->m_exportPending = false;
-        self->m_exportColCount = 0;
-        XLabel_setText_2(&self->m_status, "导出失败：服务端未连接");
+    snprintf(self->m_exportKw, sizeof(self->m_exportKw), "%s", self->m_kwText);
+    self->m_exportLoTs = self->m_loTs;
+    self->m_exportHiTs = self->m_hiTs;
+    /* 打开写出器（BOM/建文档 + 表头）。 */
+    histExportHeaders(self->m_exportCols, n, headers,
+                      HSF_HISTORY_DISPLAY_COLS);
+    if (!HsfExportWriter_open(&self->m_exportWriter, self->m_exportFormat,
+                              self->m_exportPath, "历史数据", headers, n)) {
+        XLabel_setText_2(&self->m_status, "导出失败：文件无法创建");
         return;
     }
-    snprintf(buf, sizeof(buf), "正在请求导出第 %d 页…",
-             self->m_offset / self->m_pageSize + 1);
-    XLabel_setText_2(&self->m_status, buf);
+    self->m_exportFetching = true;
+    self->m_exportTotal = 0;
+    self->m_exportWritten = 0;
+    self->m_exportTruncated = false;
+    self->m_exportIdle = 0;
+    self->m_exportRetries = 0;
+    XLabel_setText_2(&self->m_status, "正在导出…");
+    histTimerIntervalApply(self);   /* 取数期间提速轮询（一批一跳） */
+    if (!histExportRequest(self, 0))
+        histExportDone(self, false, "导出失败：服务端未连接");
 }
 
 static void histApplyFilter(HsfDataHistory* self);
@@ -1554,6 +1721,7 @@ static void histChartTryStart(HsfDataHistory* self)
     uint64_t now;
     if (!self || !self->m_chartWantPending) return;
     if (self->m_chartFetching) return;          /* 在途：等它收尾再发 */
+    if (self->m_exportFetching) return;         /* 导出批在途：收尾后下一拍再发 */
     now = (uint64_t)XDateTime_currentMSecsSinceEpoch();
     if (now - self->m_chartWinReqMs < 400u) return;   /* 防抖 */
     self->m_chartWinReqMs = now;
@@ -2005,6 +2173,10 @@ static bool histChartFetchBegin(HsfDataHistory* self, bool winMode,
     int chunkLimit = HIST_CHART_CHUNK;
     if (!self || !self->m_chart) return false;
     if (self->m_chartFetching) return false;
+    /* [导出批在途不并发] 应答槽只有一份：导出与图表同时取会互相顶掉
+     * 应答。导出期间缩放取数保持登记（m_chartWant*），导出收尾后由
+     * histTimerCb 的补发口自动接续。 */
+    if (self->m_exportFetching) return false;
     /* [窗口态保留已持有窗口的元信息] 取完才落地新窗（见
      * histChartFetchFinish），这里不动 m_chartWin*。 */
     histChartDataClear(self, winMode);
@@ -2032,19 +2204,16 @@ static bool histChartFetchBegin(HsfDataHistory* self, bool winMode,
                      winMode ? "正在读取缩放窗口（图表）…"
                              : "正在读取筛选结果（图表）…");
     /* [取数期间提速轮询] 一批一应答、应答槽单份 ⇒ 轮询周期直接决定取数
-     * 耗时（页面默认 200ms ⇒ 一批 200ms，几百行要等几十秒）。取数期间
-     * 临时降到 HIST_CHART_FETCH_POLL_MS，收尾恢复（见
-     * histChartFetchFinish）。 */
-    if (self->m_timer)
-        XTimer_setInterval(self->m_timer, HIST_CHART_FETCH_POLL_MS);
+     * 耗时（页面默认 200ms ⇒ 一批 200ms，几百行要等几十秒）。周期统一
+     * 由 histTimerIntervalApply 按状态算（导出也在途时仍保持提速）。 */
+    histTimerIntervalApply(self);
     /* 首批只拿几行就够算 total（服务端 COUNT 与页内容同一条 WHERE） */
     if (!histChartRequest(self, 0, probeLimit)) {
         self->m_chartFetching = false;
         self->m_chartDataDirty = true;   /* 没取到数：保持"需重取"，别当成已就绪 */
         XLabel_setText_2(&self->m_status, "图表失败：服务端未连接");
         XPrintf("HsfDataHistory: chart fetch failed to start\n");
-        if (self->m_timer)
-            XTimer_setInterval(self->m_timer, HsfSettingsLocal_refreshMs());
+        histTimerIntervalApply(self);
         return false;
     }
     return true;
@@ -2096,9 +2265,8 @@ static void histChartFetchFinish(HsfDataHistory* self, const char* note,
     self->m_chartReqValid = false;   /* 在途批的应答：到此为止 */
     /* 取完 ⇒ 数据可用（清 dirty）；半截 ⇒ 保持"需重取"（下见上）。 */
     self->m_chartDataDirty = !complete;
-    /* [轮询周期恢复] 取数期间提速过，这里恢复界面刷新周期。 */
-    if (self->m_timer)
-        XTimer_setInterval(self->m_timer, HsfSettingsLocal_refreshMs());
+    /* [轮询周期恢复] 取数期间提速过，这里按状态重算（导出若在途仍提速）。 */
+    histTimerIntervalApply(self);
     if (complete) {
         if (self->m_chartFetchWin) {
             /* 窗口态落地：已持有数据 = 本轮取的那个窗（绝对时刻）。 */
@@ -2407,35 +2575,54 @@ static void histBarAction(void* userData, int action)
     }
 }
 
-/** @brief 200ms 拍：应答到达 → 按**归属**分派（表格页 / 图表批 / 导出）。
+/** @brief 界面刷新周期拍：应答到达 → 按**归属**分派（表格页 / 图表批 / 导出批）。
  *  @details [根因②：单一应答槽] HsfLinkClient 只有一份静态历史应答缓冲
  *           （HsfLinkClient_history()）。协议帧头其实带 m_requestId，Response
  *           会原样回带对端 id（XLinkProto.h:43/:111/:253），只是 HsfLinkClient
  *           目前没把它随 HsfHistoryPage 交给页面（hsfLcDispatch 手里有 frame，
  *           见 HsfLinkClient.c:772）。在补上这条链路之前，页面只能按服务端
- *           回显的 offset/limit 认领，故必须靠**构造**保证三类消费者的 limit
- *           两两不相交（探测批 1..8 / 图表正式批 41..49 / 页与导出
- *           10·20·50，见 HIST_CHART_CHUNK 注释）：
- *             · 分页/导出（limit=页大小） → 填表 / 写盘；
+ *           回显的 offset/limit 认领，故必须靠**构造**保证各消费者的 limit
+ *           两两不相交（探测批 1..8 / 图表正式批 41..49 / 导出批 40 / 页
+ *           10·20·50，见 HIST_CHART_CHUNK 与 HIST_EXPORT_CHUNK 注释）：
+ *             · 分页（limit=页大小） → 填表；
  *             · 图表探测批（limit=1..8）/ 正式批（limit=41..49） → 喂累加器；
+ *             · 导出批（limit=40） → 逐批写文件；
  *             · 谁都对不上（被取消/已被新请求取代的迟到应答） → 丢弃。
  *           旧实现只看 m_chartFetching 标志猜归属：取消图表累加后，已在途
  *           的那一批应答一到，标志已是 false ⇒ 被 histFillTable 当表格页
  *           铺进去（表格显示图表批内容、页码按图表 offset 跳成第 401 页，
- *           复审②）。现在取消时连描述符一并作废，且图表批与页请求的 limit
- *           恒不相交，迟到批只可能"对不上"。
- *  @note  [残余局限] 键相同的重复请求（连点两次同一页、筛选后立刻再筛选/
- *         导出——页与导出同用 m_offset/m_pageSize，键也相同）仍无法按
- *         offset/limit 区分，那需要 reqId 链路。修法已明确：
- *         HsfLinkClient 记录 XLinkSession_sendRequest_ex 的 reqId（hsfLcHistoryQuery
- *         现在拿到就丢）并在 hsfLcDispatch 把 frame->m_requestId 写进
- *         HsfHistoryPage，本函数改成 reqId 比对即可，分派结构不变。 */
+ *           复审②）。现在取消时连描述符一并作废，且各消费者批与页请求的
+ *           limit 恒不相交，迟到批只可能"对不上"。
+ *           [导出批看门狗] 导出批的应答可能被同拍到达的页应答顶出单份
+ *           缓冲（用户在导出期间翻了页）。顶掉 ≠ 丢终局：同一批按同一
+ *           (offset,limit) 重发即可（数据是死的）；约 1s 没等到就重发，
+ *           连续 3 次不回才放弃。页应答被顶掉仍是既有接受的残余局限
+ *           （用户再点一次即恢复）。
+ *  @note  [残余局限] 键相同的重复请求（连点两次同一页、筛选后立刻再筛选
+ *         ——页与页同用页大小档）仍无法按 offset/limit 区分，那需要 reqId
+ *         链路。修法已明确：HsfLinkClient 记录 XLinkSession_sendRequest_ex
+ *         的 reqId（hsfLcHistoryQuery 现在拿到就丢）并在 hsfLcDispatch 把
+ *         frame->m_requestId 写进 HsfHistoryPage，本函数改成 reqId 比对
+ *         即可，分派结构不变。 */
 static void histTimerCb(void* userData, XTimerData* timer)
 {
     HsfDataHistory* self = (HsfDataHistory*)userData;
     const HsfHistoryPage* page;
     (void)timer;
     if (!self) return;
+    /* [导出批看门狗] 在途导出批的应答若被别的应答顶出单份缓冲，这里
+     * 按 1s 节奏重发同一批；连续不回才终局（服务端断了/被拒了）。 */
+    if (self->m_exportFetching) {
+        ++self->m_exportIdle;
+        if (self->m_exportIdle > HIST_EXPORT_WATCHDOG_TICKS) {
+            self->m_exportIdle = 0;
+            if (++self->m_exportRetries > HIST_EXPORT_MAX_RETRIES) {
+                histExportDone(self, false, "导出失败：服务端应答超时");
+            } else if (!histExportRequest(self, self->m_exportOffset)) {
+                histExportDone(self, false, "导出失败：服务端未连接");
+            }
+        }
+    }
     /* [待发取数先补发] 视口变化登记的取数任务（缩放取数）在此补发：
      *   · 防抖到期（滚轮连发后用户停手，不再有新的视口事件）；
      *   · 上一轮在途取数刚收尾（histChartFetchFinish 排的任务）。
@@ -2454,6 +2641,12 @@ static void histTimerCb(void* userData, XTimerData* timer)
             snprintf(ebuf, sizeof(ebuf), "查询失败：%s", page->m_error);
             XLabel_setText_2(&self->m_status, ebuf);
         }
+        /* [失败包络也是导出批的终局] 导出批被拒（权限/落盘关闭）＝本轮
+         * 导出就此放弃：abort 写出器（删半成品）、状态行保留上面的服务端
+         * 原文（failNote=NULL 不覆盖）。旧实现此处直接 return，导出标志
+         * 永挂 ⇒ 后续同键页应答会被误当导出批写盘。 */
+        if (self->m_exportFetching)
+            histExportDone(self, false, NULL);
         return;
     }
     /* [同一应答只处置一次] m_seq 每次成功解析 +1；重复读到同一条就返回，
@@ -2470,35 +2663,19 @@ static void histTimerCb(void* userData, XTimerData* timer)
             page->m_offset == self->m_pageReqOffset &&
             page->m_limit == self->m_pageReqLimit;
         const bool isExportReply =
-            self->m_exportPending && self->m_exportColCount > 0 &&
+            self->m_exportFetching && self->m_exportColCount > 0 &&
             page->m_offset == self->m_exportOffset &&
             page->m_limit == self->m_exportLimit;
 
-        /* [导出等应答] 只认自己那条（offset/limit 与发出时一致）。 */
+        /* [导出批] 只认自己那条（offset/limit 与发出时一致），逐批写盘。
+         * 导出批与页/图表批的 limit 恒不相交 ⇒ 一条应答只会落进一个分支，
+         * 不再像旧实现那样"导出应答顺带填表"（那是导出=当前页重拉时代
+         * 的同键产物；现在导出有自己的键）。 */
         if (isExportReply) {
-            char path[160];
-            const int colCount = self->m_exportColCount;
-            self->m_exportPending = false;
-            self->m_exportColCount = 0;
             self->m_seenSeq = page->m_seq;
-            if (histWriteExport(page, self->m_exportCols, colCount,
-                                self->m_exportFormat,
-                                path, (int)sizeof(path))) {
-                char buf[220];
-                snprintf(buf, sizeof(buf), "已导出 %d 行 × %d 列 → %s",
-                         page->m_count, colCount, path);
-                XLabel_setText_2(&self->m_status, buf);
-            } else {
-                XLabel_setText_2(&self->m_status, "导出失败：文件写入错误");
-            }
-            /* 导出应答同时就是当前页的内容：继续走下面的填表分派（页请求
-             * 描述符若也对得上，表格顺带刷新一次，与 Python 同行为）。 */
+            histExportContinue(self, page);
+            return;
         }
-        /* 导出应答已处置且与表格/图表无关：到此为止。不能落到下面的
-         * 「无主应答」分支——那会把一次**正常**导出记成 "drop unattributed
-         * reply"（现场排查会误以为应答丢了；本分支的 drop 只该用于被取消/
-         * 被取代的迟到应答）。 */
-        if (isExportReply && !isPageReply && !isChartReply) return;
 
         if (isChartReply) {
             self->m_seenSeq = page->m_seq;
@@ -2597,13 +2774,19 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
         now = XDateTime_currentDateTime();
         HsfDataBar_setEndDateTime(self->m_bar, &now);
         HsfDataBar_setActionCallback(self->m_bar, histBarAction, self);
+        /* [按页裁剪：删「导出格式」下拉 2026-11-10] 格式改由文件对话框的
+         * 过滤器档位决定（histExportStart），工具条上那颗下拉既没有存在
+         * 的意义、还曾是"选了不兑现"的死控件——按界面铁律直接藏掉，别
+         * 留着骗人。 */
+        HsfDataBar_setFeatures(self->m_bar,
+            HsfDataBarFeature_All & ~(unsigned int)HsfDataBarFeature_ExportFmt);
         XBoxLayout_addWidget(&self->m_layout, self->m_bar);
     }
 
     XLabel_init(&self->m_status, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_status);
     XLabel_setTextPixelSize(&self->m_status, histPx(12));
-    XWidget_setForegroundRole((XWidget*)&self->m_status, XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&self->m_status);
     XLabel_setText_2(&self->m_status,
                      "读取中"); /* 读取中 */
     XWidget_show((XWidget*)&self->m_status);
@@ -2830,8 +3013,8 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
  *         **独立堆对象、无父对象**（XTimer_create_ex 不挂 parent），页
  *         字段是它唯一的持有者。旧实现页面销毁只清 m_chartPts，于是
  *         ① 定时器对象本身泄漏；② 更致命的是它继续按 200ms 触发，回调
- *         `histTimerCb(void* userData=self)` 拿着**已释放的页对象**去读
- *         m_exportPending/m_chartFetching 并写 m_status——标准 UAF。
+     *         `histTimerCb(void* userData=self)` 拿着**已释放的页对象**去读
+     *         m_exportFetching/m_chartFetching 并写 m_status——标准 UAF。
  *         `VXObject_deinit` 里的 unregisterTimers 救不了：它按**注册者**
  *         反查（这里注册者是那个 XTimer 对象），不是按 userData 反查，
  *         所以页面析构时那张表项纹丝不动。故必须显式 stop + delete
@@ -2848,6 +3031,10 @@ static void histPageDestroyedSlot(XObject* sender, XVarList* args)
         XClassDelete(self->m_timer);
         self->m_timer = NULL;
     }
+    /* [导出在途收尾] 关掉 CSV 句柄/丢弃 XLSX 文档（半成品 CSV 一并尽力
+     * 删除），别把句柄与行缓冲随页一起带走（泄漏）。 */
+    if (self->m_exportFetching)
+        HsfExportWriter_abort(&self->m_exportWriter);
     for (k = 0; k < HIST_SERIES_MAX; ++k) {
         if (self->m_chartPts[k]) {
             XClassDelete(self->m_chartPts[k]);
@@ -2916,7 +3103,15 @@ void HsfDataHistory_adapt(XWidget* page, bool compact)
         const int pw = XWidget_width(page);
         const bool tight = (pw > 0 && pw < 1100);
         XWidget_setMinimumWidth((XWidget*)&self->m_kw, tight ? 64 : 160);
-        XWidget_setMinimumWidth((XWidget*)&self->m_pageSizeBox, tight ? 64 : 92);
+        /* [「每页条数」下限按实测 2026-11-11 走查] 紧缩档写死 64px：字号
+         * 实测「50 条」文本 + 箭头列 ~24 之后 ≈70 > 64 ⇒ 档位显示成
+         * 「20…」（10/20/50 分不清；1024x768 走查实锅，判低危）。改走
+         * 工具条同款 HsfDataBar_comboMinWidth（当前字体实测最宽项 +
+         * 箭头/框边，与 floorW 取大）——选项是固定三档，量一次随字号
+         * 重放自适应；宽档 floor 92 口径不变。 */
+        XWidget_setMinimumWidth(
+            (XWidget*)&self->m_pageSizeBox,
+            HsfDataBar_comboMinWidth(&self->m_pageSizeBox, tight ? 64 : 92));
     }
     XLayout_activate((XLayout*)&self->m_layout);
 }

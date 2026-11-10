@@ -192,6 +192,11 @@ if(EXISTS "${XLSX_BRIDGE_SRC}")
     add_library(xlsx_bridge SHARED "${XLSX_BRIDGE_SRC}")
     set_target_properties(xlsx_bridge PROPERTIES
         PREFIX "" OUTPUT_NAME "xlsx_bridge"
+        # 产物名是与 client_py/hsfsrv_client/xlsx_writer.py 的加载契约
+        # （非 Windows 固定找 xlsx_bridge.so），不带框架 Debug 后缀 "d"
+        # （根 CMakeLists.txt:111 的 CMAKE_DEBUG_POSTFIX）——Debug 树
+        # 照常编出规范名，POST_BUILD 拷贝后 Python 端直接可用。
+        DEBUG_POSTFIX ""
         POSITION_INDEPENDENT_CODE ON)
     if(UNIX)
         target_link_libraries(xlsx_bridge

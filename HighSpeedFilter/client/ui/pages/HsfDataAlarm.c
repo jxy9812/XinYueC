@@ -25,8 +25,7 @@
 #include "XChartView.h"
 #include "XComboBox.h"
 #include "XDateTime.h"
-#include "XDevice.h"
-#include "XIODevice.h"   /* XIODevice_WriteOnly/_Truncate（导出 CSV） */
+#include "XFileDialog.h"  /* 导出走框架文件对话框（格式=过滤器档位） */
 #include "XHeaderView.h"
 #include "XLabel.h"
 #include "XLineSeries.h"
@@ -276,7 +275,14 @@ static bool alarmExportCell(void* user, int row, int col, char* buf, int cap)
     }
 }
 
-/** @brief 导出当前筛选命中行到文件（CSV 或真 XLSX；需 Download 权限）。 */
+/** @brief 导出当前筛选命中行到文件（CSV 或真 XLSX；需 Download 权限）。
+ *  @details [数据全在本页] 报警记录是**客户端侧的边沿历史**（服务端健康
+ *           推送的下游产物，上限 ALARM_MAX_ROWS 行），不经过任何分页查询
+ *           ——"全量"就是当前筛选命中的全部行（与旧口径一致），一次写盘
+ *           即可，无需历史/日志页那套逐批拉取。
+ *           [格式=对话框过滤器档位] 框架文件对话框（与历史/日志页同串
+ *           同序：0=Excel 工作簿、1=CSV）——工具条上不再有「导出格式」
+ *           下拉。用户取消（返回空串）＝本次不导出，界面保持原样。 */
 static void alarmExportCsv(HsfDataAlarm* self)
 {
     HsfExportGrid grid;
@@ -285,18 +291,19 @@ static void alarmExportCsv(HsfDataAlarm* self)
     int map[ALARM_MAX_ROWS];
     int n = 0;
     int r;
-    char path[96];
-    char prefix[96];
-    char buf[256];
+    int filterIdx = 0;
+    char path[320];
+    char prefix[320];
+    char buf[400];
+    XString* chosen = NULL;
 
     if (!self) return;
     if (!HsfLinkClient_can(HSF_PERM_DOWNLOAD)) {
         XLabel_setText_2(&self->m_status, "权限不足：下载数据需要普通用户及以上账户");
         return;
     }
-    /* [可见行倒序] 与旧实现一致：最新的在前，且只导**当前筛选命中**的行
-     * （类型过滤 + 时间窗）。网格行 → 记录行的映射先算好，取格回调按
-     * 映射取。 */
+    /* [可见行倒序] 最新的在前，且只导**当前筛选命中**的行（类型过滤 +
+     * 时间窗）。网格行 → 记录行的映射先算好，取格回调按映射取。 */
     for (r = self->m_count - 1; r >= 0; --r) {
         if (!alarmRowVisible(self, r)) continue;
         if (n >= ALARM_MAX_ROWS) break;
@@ -304,13 +311,24 @@ static void alarmExportCsv(HsfDataAlarm* self)
     }
     snprintf(prefix, sizeof(prefix), "./hsf_alarm_%lld",
              (long long)(XDateTime_currentMSecsSinceEpoch() / 1000));
+    chosen = XFileDialog_getSaveFileName_2(
+        (XWidget*)&self->m_base, "导出报警记录", prefix,
+        "Excel 工作簿 (*.xlsx);;CSV (*.csv)", &filterIdx);
+    if (chosen) {
+        const char* u8 = XString_toUtf8(chosen);
+        snprintf(prefix, sizeof(prefix), "%s", u8 ? u8 : "");
+        XClassDelete(chosen);
+    } else {
+        prefix[0] = '\0';
+    }
+    if (!prefix[0]) return;   /* 用户取消：静默收场 */
+    HsfExport_stripKnownExt(prefix);
     ctx.page = self;
     ctx.map = map;
     memset(&grid, 0, sizeof(grid));
     grid.path = prefix;
     grid.sheetName = "报警";
-    grid.format = HsfExport_formatFromBarIndex(
-        HsfDataBar_exportFormatIndex(self->m_bar));
+    grid.format = HsfExport_formatFromFilterIndex(filterIdx);
     grid.colCount = 4;
     grid.rowCount = n;
     grid.header = kHead;
@@ -540,7 +558,7 @@ XWidget* HsfDataAlarm_create(XWidget* parent, HsfMenuNavFn navFn,
     XLabel_init(&self->m_status, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_status);
     XLabel_setTextPixelSize(&self->m_status, 12);
-    XWidget_setForegroundRole((XWidget*)&self->m_status, XPaletteColorRole_Mid);
+    HsfTheme_applySecondaryText((XWidget*)&self->m_status);
     XLabel_setText_2(&self->m_status, "异常边沿记录（客户端侧）");
     XWidget_show((XWidget*)&self->m_status);
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)&self->m_status);
@@ -570,12 +588,15 @@ XWidget* HsfDataAlarm_create(XWidget* parent, HsfMenuNavFn navFn,
         /* [按页裁剪工具条控件 2026-11-10] 本页有图表形态、有列筛选，但
          * **没有**「小数位」与「每图例最多点数」的处理分支（alarmBarAction
          * 里无对应 case）⇒ 共享工具条上这两个微调框是「可见但改了没反应」
-         * 的假控件，藏掉。本页其余控件（图表/列筛选/导出格式）都真实接线，
-         * 保持显示。 */
+         * 的假控件，藏掉。
+         * [导出格式下拉也删 2026-11-10] 格式改由文件对话框的过滤器档位
+         * 决定（alarmExportCsv），下拉没有存在意义——一并藏掉。本页其余
+         * 控件（图表/列筛选）都真实接线，保持显示。 */
         HsfDataBar_setFeatures(self->m_bar,
             HsfDataBarFeature_All
             & ~(unsigned int)(HsfDataBarFeature_Decimals
-                              | HsfDataBarFeature_MaxPoints));
+                              | HsfDataBarFeature_MaxPoints
+                              | HsfDataBarFeature_ExportFmt));
         XBoxLayout_addWidget(&self->m_layout, self->m_bar);
     }
 

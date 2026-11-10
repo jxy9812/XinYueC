@@ -90,6 +90,15 @@ static int64_t fmTzOffsetMs(void)
 #define FM_COLOR_TEXT        0xFF1A2733u  /**< 主文本。 */
 #define FM_COLOR_TEXT_DIM    0xFF5A6572u  /**< 弱文本。 */
 
+/* [随主题取套 2026-11-11 双主题走查] 表盘自绘面/进度弧按当前主题取
+ * 亮/深套：亮套=上表现行值零改动；深套=面板 #23282F + 软描边 #39414C
+ * （HsfTheme.h 深色令牌）——原白盘常量在深色页面上成白块、盘内「--」
+ * 弱字（调色板/弱色）落白盘不可读。刻度锚点用次级文本深套保可读。 */
+static uint32_t fmThemeClr(uint32_t light, uint32_t dark)
+{
+    return HsfTheme_isDarkSkin() ? dark : light;
+}
+
 /* 报警位（与服务端 XFlowMeterAlarm 对齐）。 */
 #define FM_ALARM_UPPER       (1 << 0)
 #define FM_ALARM_LOWER       (1 << 1)
@@ -435,16 +444,24 @@ static void VHsfFmGauge_paintEvent(XWidget* self, XEvent* event)
     bandOuter = r;
 
     ratio = fmGaugeRatio(g->m_owner, g->m_slot);
-    color = (g->m_slot == 0) ? FM_COLOR_GAUGE : FM_COLOR_GAUGE_2;
+    /* [进度弧随主题 2026-11-11 双主题走查] 第一枚品牌蓝 #1F4E79 落深
+     * 面板仅 1.72:1（非文本件 <3，弧几乎不可见）——对齐变频器页同位
+     * 口径（vfdGaugePaint 的 arcColor）翻深套强调蓝 #4DA3FF（vs 深面板
+     * 5.65 ≥3）。第二枚青 #0E8F8F vs 深面板 3.77 / vs 白 3.93 双 ≥3
+     * 达标，两主题同值保留（区分两枚仪表的色彩语义）。 */
+    color = (g->m_slot == 0)
+        ? fmThemeClr(FM_COLOR_GAUGE, HSF_COLOR_ACCENT_DARK)
+        : FM_COLOR_GAUGE_2;
 
-    /* ① 底盘（浅色填充，与卡片同底）。 */
+    /* ① 底盘（浅色填充，与卡片同底；深套翻面板色，见 fmThemeClr 注）。 */
     XPainter_setPenWidth(&painter, 1);
-    XPainter_setBrush(&painter, 0xFFF7F9FB);
-    XPainter_setPen(&painter, 0xFFF7F9FB);
+    XPainter_setBrush(&painter, fmThemeClr(0xFFF7F9FB, HSF_COLOR_PANEL_DARK));
+    XPainter_setPen(&painter, fmThemeClr(0xFFF7F9FB, HSF_COLOR_PANEL_DARK));
     fmDrawArcBand(&painter, cx, cy, 0, r, 0.0, 360.0);
 
     /* ② 底轨（整弧，浅灰）。 */
-    XPainter_setPen(&painter, FM_COLOR_TRACK);
+    XPainter_setPen(&painter,
+                    fmThemeClr(FM_COLOR_TRACK, HSF_COLOR_SOFT_BORDER_DARK));
     fmDrawArcBand(&painter, cx, cy, bandInner, bandOuter, 135.0, -270.0);
 
     /* ③ 进度带（按比例；从起点顺时针）。 */
@@ -465,7 +482,9 @@ static void VHsfFmGauge_paintEvent(XWidget* self, XEvent* event)
             float x1 = (float)(cx + (r + 2) * cos(rad));
             float y1 = (float)(cy - (r + 2) * sin(rad));
             XPainter_setPenWidth(&painter, 2);
-            XPainter_setPen(&painter, FM_COLOR_TEXT_DIM);
+            XPainter_setPen(&painter,
+                            fmThemeClr(FM_COLOR_TEXT_DIM,
+                                       HSF_COLOR_TEXT_SECONDARY_DARK));
             XPainter_drawLine_3(&painter, x0, y0, x1, y1);
         }
     }
@@ -475,6 +494,13 @@ static void VHsfFmGauge_paintEvent(XWidget* self, XEvent* event)
 
 /**
  * @brief 横幅 paintEvent：圆角胶囊底色（状态文字由子 XLabel 承载）。
+ * @details [随主题取套 2026-11-11 双主题走查] 亮套维持实心状态色胶囊
+ *          （原口径零改动）。深套改「面板底 + 状态色描边」：深色盘的
+ *          横幅文字走调色板 WindowText #E8EAED，落在亮灰/中亮状态色
+ *          实心底上只有 1.9~2.5:1（走查实锅，#E8EAED×#8A98A6 ≈2.45）；
+ *          面板 #23282F 上文字 12.3:1，状态语义由描边承载（深套状态色
+ *          vs 面板 3.78~5.71，均 ≥3 非文本件档，登记见 HsfTheme.h），
+ *          且横幅文字本身即状态文案（双通道）。
  */
 static void VHsfFmBanner_paintEvent(XWidget* self, XEvent* event)
 {
@@ -482,7 +508,8 @@ static void VHsfFmBanner_paintEvent(XWidget* self, XEvent* event)
     XPainter painter;
     XImage* image;
     XRect rect;
-    uint32_t color;
+    uint32_t fill;
+    uint32_t edge;
     int w;
     int h;
     int radius;
@@ -510,19 +537,29 @@ static void VHsfFmBanner_paintEvent(XWidget* self, XEvent* event)
         }
         radius = (h / 2) > 14 ? 14 : (h / 2);
 
-        if (!b->m_owner->m_snap.m_valid)
-            color = FM_COLOR_IDLE;
-        else if (b->m_owner->m_snap.m_alarms != 0)
-            color = FM_COLOR_ALARM;
-        else
-            color = FM_COLOR_OK;
+        if (!b->m_owner->m_snap.m_valid) {
+            fill = fmThemeClr(FM_COLOR_IDLE,
+                              HSF_COLOR_PANEL_DARK);
+            edge = fmThemeClr(FM_COLOR_IDLE,
+                              HSF_COLOR_STATE_OFFLINE_DARK);
+        } else if (b->m_owner->m_snap.m_alarms != 0) {
+            fill = fmThemeClr(FM_COLOR_ALARM,
+                              HSF_COLOR_PANEL_DARK);
+            edge = fmThemeClr(FM_COLOR_ALARM,
+                              HSF_COLOR_STATE_FAULT_FILL_DARK);
+        } else {
+            fill = fmThemeClr(FM_COLOR_OK,
+                              HSF_COLOR_PANEL_DARK);
+            edge = fmThemeClr(FM_COLOR_OK,
+                              HSF_COLOR_STATE_OK_DARK);
+        }
 
         rect.x = 0;
         rect.y = 0;
         rect.width = w;
         rect.height = h;
-        XPainter_setBrush(&painter, color);
-        XPainter_setPen(&painter, color);
+        XPainter_setBrush(&painter, fill);
+        XPainter_setPen(&painter, edge);
         XPainter_setPenWidth(&painter, 1);
         XPainter_drawRoundedRect(&painter, &rect, radius, radius);
     }
@@ -554,7 +591,7 @@ static void fmSetFont(XWidget* w, int px, bool bold, bool dim)
     XClassDeinit(&f);
     XLabel_setTextPixelSize((XLabel*)w, fmH(px));
     if (dim)
-        XWidget_setForegroundRole(w, XPaletteColorRole_Mid);
+        HsfTheme_applySecondaryText(w);
 }
 
 /** @brief 建一个展示标签（左对齐/居中由 align 决定）。 */
@@ -1113,8 +1150,10 @@ void HsfMonitorFlowMeter_setTurbidity(int index, const char* name,
         snprintf(buf, sizeof(buf), "%s  --",
                  (name && name[0]) ? name : "浊度仪");
         XLabel_setText_2(&p->m_turbValue[index], buf);
-        XWidget_setForegroundRole((XWidget*)&p->m_turbValue[index],
-                                  XPaletteColorRole_Mid);
+        /* 离线态弱显：主题感知次级文本（原 Mid 落深底不可读，走查实锅）。
+         * 联机后的 Text/BrightText 角色分支不变；自身盘被本入口钉成当前
+         * 应用盘副本（只覆 WindowText），角色取色仍随盘。 */
+        HsfTheme_applySecondaryText((XWidget*)&p->m_turbValue[index]);
         return;
     }
     if (hasTemp) {
